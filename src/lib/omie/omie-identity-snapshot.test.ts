@@ -45,3 +45,46 @@ describe('parseIdentitySnapshot (fail-closed do contrato da RPC omie_sync_identi
     expect(() => parseIdentitySnapshot({ doc_to_user: {}, ambiguous_docs: [123] })).toThrow(/não-string/);
   });
 });
+
+// ── PR-2/A2: client_to_user (prova positiva codigo_cliente→user, mesma RPC/snapshot) ──
+// A validação de client_to_user é a ÚLTIMA (depois de doc_to_user/ambiguous_docs) → os casos de falha
+// do PR-1 que passam objetos SEM client_to_user seguem lançando pelo motivo original, não por este.
+describe('parseIdentitySnapshot — client_to_user (PR-2/A2, prova positiva codigo→user)', () => {
+  it('client_to_user válido → clientToUserMap (codigo→user)', () => {
+    const { clientToUserMap } = parseIdentitySnapshot({
+      doc_to_user: { '11111111111': U1 },
+      ambiguous_docs: [],
+      client_to_user: { '1001': U1 },
+    });
+    expect(clientToUserMap.get('1001')).toBe(U1);
+    expect(clientToUserMap.size).toBe(1);
+  });
+
+  it('client_to_user vazio → clientToUserMap vazio, NÃO lança', () => {
+    const { clientToUserMap } = parseIdentitySnapshot({ doc_to_user: {}, ambiguous_docs: [], client_to_user: {} });
+    expect(clientToUserMap.size).toBe(0);
+  });
+
+  it('client_to_user null → LANÇA (RPC revertida em HTTP 200 não degrada p/ Map vazio silencioso)', () => {
+    expect(() => parseIdentitySnapshot({ doc_to_user: {}, ambiguous_docs: [], client_to_user: null })).toThrow(/client_to_user/);
+  });
+
+  it('client_to_user não-objeto (array) → LANÇA', () => {
+    expect(() => parseIdentitySnapshot({ doc_to_user: {}, ambiguous_docs: [], client_to_user: [] })).toThrow(/client_to_user/);
+  });
+
+  it('valor não-UUID em client_to_user → LANÇA (pegaria atribuição corrompida a jusante)', () => {
+    expect(() => parseIdentitySnapshot({ doc_to_user: {}, ambiguous_docs: [], client_to_user: { '1001': 'nope' } })).toThrow(/não-UUID em client_to_user/);
+  });
+
+  it('snapshot completo → os 3 mapas coerentes', () => {
+    const { docToUserMap, ambiguousDocs, clientToUserMap } = parseIdentitySnapshot({
+      doc_to_user: { '11111111111': U1 },
+      ambiguous_docs: ['22222222222'],
+      client_to_user: { '1001': U1 },
+    });
+    expect(docToUserMap.get('11111111111')).toBe(U1);
+    expect(ambiguousDocs.has('22222222222')).toBe(true);
+    expect(clientToUserMap.get('1001')).toBe(U1);
+  });
+});

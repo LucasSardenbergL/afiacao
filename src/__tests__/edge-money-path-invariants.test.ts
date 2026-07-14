@@ -659,49 +659,59 @@ describe('guardrail money-path: omie-sync self-service USA view fresca account-c
   });
 });
 
-// ── P0-B-bis PR-2 (omie-vendas-sync syncPedidos: cache codigo->user pela view fresca account-correta) ──
-// O cache que resolve codigo_cliente->user_id nos pedidos vinha do espelho poluído omie_clientes SEM filtro
-// de conta. Código Omie é numerado POR conta → o mesmo número em contas diferentes colidia na chave global
-// do cache e mapeava o user_id ERRADO (bug #4 do design; o espelho é sobrescrito ao longo do dia pelos
-// writers colacor_sc, então a colisão é intermitente). Migrado p/ a view fresca account-correta
-// (.eq('account', account)) + .order estável no .range (armadilha PostgREST). A paridade textual aqui pega
-// a reversão do deploy do Lovable. As leituras de omie_clientes em ~:1703/~:2393 são o guard
-// codeBelongsToWrongAccount (P0-A, precisa ver TODAS as contas) — FORA desta PR, intocadas. Ver design §4/§5.
+// ── PR-2/A2 (omie-vendas-sync syncPedidos: cache codigo->user pelo client_to_user do snapshot atômico) ──
+// P0-B-bis PR-2 pré-carregava o clientCache da view fresca omie_customer_account_map_fresco (TTL 7d) e o
+// consultava ANTES do docToUserMap: um hit cache-first retornava sem o fail-closed de doc-ambíguo (A2). Pior
+// (Codex xhigh): a proof-table NÃO registrava o DOC da prova → filtrar "sem doc ambíguo" era AUSÊNCIA de
+// contraindicação (fail-open sutil). Agora o clientCache vem do client_to_user do MESMO snapshot MVCC do
+// docToUserMap (prova positiva: source=document + evidence viva/única/consistente + frescor 7d, provado em
+// db/test-omie-identidade-snapshot.sh). A view fresca é aposentada no cache. As leituras de omie_clientes em
+// ~:1703/~:2393 são o guard codeBelongsToWrongAccount (P0-A, TODAS as contas) — FORA desta PR. Ver design §4.4.
 const VENDAS_SYNC = 'supabase/functions/omie-vendas-sync/index.ts';
 
-describe('guardrail money-path: syncPedidos resolve user pela view fresca account-correta (P0-B-bis PR-2)', () => {
+describe('guardrail money-path: syncPedidos resolve user pelo client_to_user do snapshot atômico (PR-2/A2)', () => {
   const src = read(VENDAS_SYNC);
+  const analytics = read('supabase/functions/omie-analytics-sync/index.ts');
 
   it('sentinela: leu o arquivo real (edge)', () => {
     expect(src).toContain('syncPedidos');
     expect(src).toContain('clientCache');
   });
 
-  it('o cache codigo->user vem da VIEW FRESCA account-correta, por conta, paginado por KEYSET', () => {
-    // Exige a cadeia keyset completa: from(fresco) → eq(account) → gt(codigo) → limit. Fecha o furo Codex P3
-    // (o regex antigo não exigia paginação: remover o .limit truncaria o cache em 1 página e passaria).
+  it('o clientCache vem do clientToUserMap do MESMO snapshot atômico (prova positiva), não de query separada', () => {
+    // clientToUserMap é desestruturado do MESMO parseIdentitySnapshot(snap) do docToUserMap → mesmo snapshot MVCC.
     expect(
       src,
-      'REVERSÃO Lovable? o cache do syncPedidos não lê a view fresca por conta com paginação keyset (.gt+.limit)',
-    ).toMatch(/from\('omie_customer_account_map_fresco'\)[\s\S]{0,180}\.eq\('account', account\)[\s\S]{0,80}\.gt\('omie_codigo_cliente'[\s\S]{0,80}\.limit\(/);
+      'REGRESSÃO: clientToUserMap não vem mais do parseIdentitySnapshot (perdeu o snapshot único)',
+    ).toMatch(/const \{ docToUserMap, ambiguousDocs, clientToUserMap \} = parseIdentitySnapshot\(snap\)/);
+    expect(
+      src,
+      'REGRESSÃO: o clientCache não é mais montado a partir do clientToUserMap',
+    ).toMatch(/clientCache[\s\S]{0,140}for \(const \[codigo, userId\] of clientToUserMap\)/);
   });
 
-  it('o pré-load do cache é FAIL-CLOSED em erro de query (não engole o error → cache parcial, Codex P2)', () => {
+  it('o writer (analytics) grava evidence_document_normalized na proof-table (provenance da prova A2)', () => {
+    // sem evidence, a RPC não inclui o vínculo em client_to_user (fail-closed) → o writer É a fonte da prova.
     expect(
-      src,
-      'REGRESSÃO: o pré-load engole o erro da query — cache parcial silencioso → rate-limit no fallback',
-    ).toMatch(/if \(cacheErr\) throw new Error/);
+      analytics,
+      'REVERSÃO Lovable? o writer parou de gravar evidence_document_normalized (client_to_user esvazia → tudo cai no fallback)',
+    ).toMatch(/evidence_document_normalized: doc,/);
   });
 
-  it('o cache NÃO voltou a carregar do espelho poluído omie_clientes (anti-reversão do bug #4)', () => {
+  it('o clientCache NÃO lê mais a VIEW FRESCA nem o espelho poluído (A2 aposenta a fonte stale de TTL 7d)', () => {
+    // menção em COMENTÁRIO é permitida; o que não pode VOLTAR é a QUERY .from(fresco) no cache.
     expect(
       src,
-      'REGRESSÃO: o cache do syncPedidos voltou a carregar do espelho omie_clientes (bug #4 reaberto)',
+      'REVERSÃO Lovable? o clientCache voltou a consultar a view fresca (cache-first bypass reaberto)',
+    ).not.toMatch(/\.from\('omie_customer_account_map_fresco'\)/);
+    expect(
+      src,
+      'REGRESSÃO: o cache voltou a carregar do espelho poluído omie_clientes (bug #4 reaberto)',
     ).not.toMatch(/Client cache from omie_clientes/);
     expect(
       src,
-      'sentinela do log novo: o cache reporta a fonte account-correta',
-    ).toMatch(/Client cache from omie_customer_account_map_fresco/);
+      'REGRESSÃO: o log do cache não reporta mais a fonte snapshot (client_to_user)',
+    ).toMatch(/Client cache from identity snapshot \(client_to_user\)/);
   });
 
   it('o guard codeBelongsToWrongAccount (FORA desta PR) segue lendo TODAS as contas do espelho', () => {

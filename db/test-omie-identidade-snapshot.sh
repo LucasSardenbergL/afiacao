@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
 # ╔══════════════════════════════════════════════════════════════════════════════╗
-# ║  PROVA PG17 — RPC omie_sync_identity_snapshot (PR-1, achado A1)                ║
-# ║  Migration: supabase/migrations/20260711140000_omie_sync_identity_snapshot.sql║
+# ║  PROVA PG17 — RPC omie_sync_identity_snapshot (PR-1/A1 + PR-2/A2)              ║
+# ║  Migrations: 20260711140000_omie_sync_identity_snapshot.sql (PR-1)            ║
+# ║             20260713140000_omie_identity_snapshot_client_to_user.sql (PR-2)   ║
 # ║  Rode:  bash db/test-omie-identidade-snapshot.sh > /tmp/t.log 2>&1; echo $?    ║
 # ║                                                                                ║
-# ║  Prova: doc único → doc_to_user (prova positiva); doc com 2+ users → FORA de   ║
-# ║  doc_to_user E em ambiguous_docs (fail-closed, precisão>recall); doc<11 e doc  ║
-# ║  nulo excluídos; máscara normaliza; client_to_user vazio no PR-1; anon/        ║
-# ║  authenticated BARRADOS no EXECUTE (42501); service_role executa. Falsifica:   ║
-# ║  remover o filtro n_users=1 → doc ambíguo vaza p/ doc_to_user → vermelho.      ║
+# ║  PR-1 (doc_to_user): doc único → prova positiva; doc 2+ users → FORA + em      ║
+# ║  ambiguous_docs (fail-closed); doc<11/nulo/só-pontuação excluídos.             ║
+# ║  PR-2 (client_to_user): prova POSITIVA codigo→user SÓ com account=p_account +  ║
+# ║  source=document + evidence NOT NULL + doc único (n_users=1) + evidence ainda  ║
+# ║  aponta pro MESMO user (da.user_id=m.user_id) + frescor 7d. Falsifica: remove  ║
+# ║  n_users=1 → doc ambíguo vaza (B2 vermelho); remove user_id-match → doc de     ║
+# ║  OUTRO user vaza (B6 vermelho, cenário A2). anon/authenticated barrados (42501).║
 # ╚══════════════════════════════════════════════════════════════════════════════╝
 set -euo pipefail
 
@@ -54,51 +57,79 @@ RS()  { Pq -c "SET ROLE service_role; $1" | tail -1; }
 
 echo "═══ setup pronto (PG17 :$PORT) ═══"
 
-# ══ ZONA 1 — pré-requisito: profiles (a RPC lê user_id + document) ══
+# ══ ZONA 1 — pré-requisitos: profiles + proof-table SEM a coluna (a migration prova o ALTER) ══
 P -q <<'SQL'
 CREATE TABLE public.profiles (user_id uuid PRIMARY KEY, document text);
+-- proof-table fiel ao schema prod (psql-ro 2026-07-13), SEM evidence_document_normalized: o ALTER da
+-- migration PR-2 a adiciona (ZONA 2). Uniques reais (código,account)/(user,account) — pegam seed inválido.
+CREATE TABLE public.omie_customer_account_map (
+  id                   uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id              uuid   NOT NULL,
+  account              text   NOT NULL,
+  omie_codigo_cliente  bigint NOT NULL,
+  omie_codigo_vendedor bigint,
+  source               text   NOT NULL,
+  created_at           timestamptz NOT NULL DEFAULT now(),
+  updated_at           timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT uq_ocam_codigo_account UNIQUE (omie_codigo_cliente, account),
+  CONSTRAINT uq_ocam_user_account   UNIQUE (user_id, account)
+);
 SQL
 
-# ══ ZONA 2 — aplicar a migration REAL (Lei #1) ══
-MIG="$REPO_ROOT/supabase/migrations/20260711140000_omie_sync_identity_snapshot.sql"
-P -q -f "$MIG"
-echo "migration aplicada: $(basename "$MIG")"
+# ══ ZONA 2 — aplicar as migrations REAIS na ORDEM de deploy (PR-1 → PR-2) ══
+MIG1="$REPO_ROOT/supabase/migrations/20260711140000_omie_sync_identity_snapshot.sql"
+MIG2="$REPO_ROOT/supabase/migrations/20260713140000_omie_identity_snapshot_client_to_user.sql"
+P -q -f "$MIG1"; echo "migration aplicada: $(basename "$MIG1")"
+P -q -f "$MIG2"; echo "migration aplicada: $(basename "$MIG2")"
+# a coluna tem de existir após o ALTER da PR-2 (prova o passo 1 do design §4.2)
+eq "Z2 coluna evidence_document_normalized criada pela migration" \
+   "$(Pq -c "SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='omie_customer_account_map' AND column_name='evidence_document_normalized';")" "1"
 
-# ══ ZONA 3 — seed + grant p/ o caminho real (service_role lê profiles) ══
-# RLS ON em profiles: prova o caminho SECURITY INVOKER + service_role BYPASSRLS (Codex challenge PR-1).
+# ══ ZONA 3 — seed + grants (service_role lê profiles + proof-table; RLS on prova SECURITY INVOKER) ══
 P -q <<'SQL'
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.omie_customer_account_map ENABLE ROW LEVEL SECURITY;
 INSERT INTO auth.users(id) VALUES
-  ('00000000-0000-0000-0000-000000000001'),
-  ('00000000-0000-0000-0000-000000000002'),
-  ('00000000-0000-0000-0000-000000000003'),
-  ('00000000-0000-0000-0000-000000000004'),
-  ('00000000-0000-0000-0000-000000000005'),
-  ('00000000-0000-0000-0000-000000000006'),
-  ('00000000-0000-0000-0000-000000000007') ON CONFLICT DO NOTHING;
+  ('00000000-0000-0000-0000-000000000001'),('00000000-0000-0000-0000-000000000002'),
+  ('00000000-0000-0000-0000-000000000003'),('00000000-0000-0000-0000-000000000004'),
+  ('00000000-0000-0000-0000-000000000005'),('00000000-0000-0000-0000-000000000006'),
+  ('00000000-0000-0000-0000-000000000007'),('00000000-0000-0000-0000-000000000008'),
+  ('00000000-0000-0000-0000-000000000009'),('00000000-0000-0000-0000-000000000010'),
+  ('00000000-0000-0000-0000-000000000011'),('00000000-0000-0000-0000-000000000012') ON CONFLICT DO NOTHING;
 INSERT INTO public.profiles(user_id, document) VALUES
-  ('00000000-0000-0000-0000-000000000001', '11111111111'),      -- único
-  ('00000000-0000-0000-0000-000000000002', '222.222.222-22'),   -- ambíguo (mascarado), colide com o 3
-  ('00000000-0000-0000-0000-000000000003', '22222222222'),      -- ambíguo (mesmo doc normalizado, outro user)
+  ('00000000-0000-0000-0000-000000000001', '11111111111'),      -- único → base do B1 positivo
+  ('00000000-0000-0000-0000-000000000002', '222.222.222-22'),   -- ambíguo (mascarado), colide c/ o 3
+  ('00000000-0000-0000-0000-000000000003', '22222222222'),      -- ambíguo (mesmo doc normalizado)
   ('00000000-0000-0000-0000-000000000004', '333.333.333-33'),   -- único, normaliza da máscara
   ('00000000-0000-0000-0000-000000000005', '123'),              -- doc<11 → excluído
-  ('00000000-0000-0000-0000-000000000006', NULL),               -- doc NULL → excluído (WHERE document IS NOT NULL)
-  ('00000000-0000-0000-0000-000000000007', './-');              -- só pontuação → regexp vira '' (len 0) → excluído
+  ('00000000-0000-0000-0000-000000000006', NULL),               -- doc NULL → excluído
+  ('00000000-0000-0000-0000-000000000007', './-'),              -- só pontuação → '' → excluído
+  ('00000000-0000-0000-0000-000000000008', '44444444444'),      -- único → B3 (evidence NULL)
+  ('00000000-0000-0000-0000-000000000009', '55555555555'),      -- único → B4 (source=code)
+  ('00000000-0000-0000-0000-000000000010', '66666666666'),      -- único → B5 (conta colacor)
+  ('00000000-0000-0000-0000-000000000011', '77777777777'),      -- único → B6 (dono do vínculo, evidence de OUTRO)
+  ('00000000-0000-0000-0000-000000000012', '88888888888');      -- único → B7 (stale)
+-- proof-table: os 7 cenários de client_to_user (evidence_document_normalized existe pós-ZONA 2)
+INSERT INTO public.omie_customer_account_map (user_id, account, omie_codigo_cliente, source, evidence_document_normalized, updated_at) VALUES
+  ('00000000-0000-0000-0000-000000000001','oben',    1001,'document','11111111111', now()),          -- B1 doc único → MAPEIA
+  ('00000000-0000-0000-0000-000000000002','oben',    1002,'document','22222222222', now()),          -- B2 doc ambíguo → FORA (user2=min)
+  ('00000000-0000-0000-0000-000000000008','oben',    1003,'document', NULL,          now()),          -- B3 evidence NULL → FORA
+  ('00000000-0000-0000-0000-000000000009','oben',    1004,'code',    '55555555555', now()),          -- B4 source=code → FORA
+  ('00000000-0000-0000-0000-000000000010','colacor', 1005,'document','66666666666', now()),          -- B5 conta colacor (dentro só p/ colacor)
+  ('00000000-0000-0000-0000-000000000011','oben',    1006,'document','11111111111', now()),          -- B6 evidence do user1, vínculo do user11 → FORA (A2)
+  ('00000000-0000-0000-0000-000000000012','oben',    1007,'document','88888888888', now() - interval '8 days'); -- B7 stale → FORA
 GRANT SELECT ON public.profiles TO service_role;
+GRANT SELECT ON public.omie_customer_account_map TO service_role;
 SQL
 
-# ══ ZONA 4 — asserts (positivo / fail-closed / gate 42501) ══
-echo "── asserts ──"
-
-# POSITIVO — prova positiva de doc único (via service_role = caminho do edge)
+# ══ ZONA 4 — asserts ══
+echo "── asserts PR-1 (doc_to_user) ──"
 eq "A1 doc único → doc_to_user aponta pro user" \
    "$(RS "SELECT public.omie_sync_identity_snapshot('oben')->'doc_to_user'->>'11111111111';")" \
    "00000000-0000-0000-0000-000000000001"
 eq "A2 máscara normaliza (333.333.333-33 → 33333333333)" \
    "$(RS "SELECT public.omie_sync_identity_snapshot('oben')->'doc_to_user'->>'33333333333';")" \
    "00000000-0000-0000-0000-000000000004"
-
-# NEGATIVO (fail-closed) — doc ambíguo FORA de doc_to_user, DENTRO de ambiguous_docs
 eq "A3 doc ambíguo FORA de doc_to_user (precisão>recall)" \
    "$(RS "SELECT (public.omie_sync_identity_snapshot('oben')->'doc_to_user'->>'22222222222') IS NULL;")" "t"
 eq "A4 doc ambíguo LISTADO em ambiguous_docs" \
@@ -107,19 +138,34 @@ eq "A5 doc<11 excluído de doc_to_user" \
    "$(RS "SELECT (public.omie_sync_identity_snapshot('oben')->'doc_to_user'->>'123') IS NULL;")" "t"
 eq "A6 doc<11 excluído de ambiguous_docs" \
    "$(RS "SELECT public.omie_sync_identity_snapshot('oben')->'ambiguous_docs' @> '[\"123\"]';")" "f"
-eq "A7 client_to_user vazio no PR-1" \
-   "$(RS "SELECT public.omie_sync_identity_snapshot('oben')->>'client_to_user';")" "{}"
-
-# NULL / só-pontuação / totais (Codex PR-1: o cabeçalho prometia NULL mas o seed não tinha; faltava pontuação)
 eq "A7b '' (doc só-pontuação) não vira chave em doc_to_user" \
    "$(RS "SELECT (public.omie_sync_identity_snapshot('oben')->'doc_to_user') ? '';")" "f"
-eq "A7c docs únicos = 2 (NULL, só-pontuação e doc<11 excluídos; sobram 111... e 333...)" \
-   "$(RS "SELECT count(*) FROM jsonb_object_keys(public.omie_sync_identity_snapshot('oben')->'doc_to_user');")" "2"
 eq "A7d ambiguous_docs = 1 (só 222...)" \
    "$(RS "SELECT jsonb_array_length(public.omie_sync_identity_snapshot('oben')->'ambiguous_docs');")" "1"
 
-# GATE — pelo CATÁLOGO (has_function_privilege), NÃO por execução real (Codex PR-1): executar como anon
-# confunde "denied na FUNÇÃO" com "denied na TABELA profiles" — ambos 42501, o A8 ficaria verde-falso.
+echo "── asserts PR-2 (client_to_user — prova positiva codigo→user) ──"
+eq "B1 doc único + evidence consistente → client_to_user MAPEIA (positivo)" \
+   "$(RS "SELECT public.omie_sync_identity_snapshot('oben')->'client_to_user'->>'1001';")" \
+   "00000000-0000-0000-0000-000000000001"
+eq "B2 doc AMBÍGUO → FORA de client_to_user (fail-closed)" \
+   "$(RS "SELECT (public.omie_sync_identity_snapshot('oben')->'client_to_user') ? '1002';")" "f"
+eq "B3 evidence NULL → FORA (backfill fail-closed: sem prova, cai no fallback)" \
+   "$(RS "SELECT (public.omie_sync_identity_snapshot('oben')->'client_to_user') ? '1003';")" "f"
+eq "B4 source='code' → FORA (v1 só document)" \
+   "$(RS "SELECT (public.omie_sync_identity_snapshot('oben')->'client_to_user') ? '1004';")" "f"
+eq "B5 conta colacor → FORA quando p_account='oben' (filtro por conta)" \
+   "$(RS "SELECT (public.omie_sync_identity_snapshot('oben')->'client_to_user') ? '1005';")" "f"
+eq "B5b MESMO vínculo colacor → DENTRO quando p_account='colacor' (account é filtro, não exclusão cega)" \
+   "$(RS "SELECT public.omie_sync_identity_snapshot('colacor')->'client_to_user'->>'1005';")" \
+   "00000000-0000-0000-0000-000000000010"
+eq "B6 evidence aponta p/ OUTRO user (doc migrou) → FORA (cenário A2, prova positiva)" \
+   "$(RS "SELECT (public.omie_sync_identity_snapshot('oben')->'client_to_user') ? '1006';")" "f"
+eq "B7 vínculo stale (updated_at > 7d) → FORA (frescor)" \
+   "$(RS "SELECT (public.omie_sync_identity_snapshot('oben')->'client_to_user') ? '1007';")" "f"
+eq "B8 client_to_user('oben') tem EXATAMENTE 1 chave (só o 1001)" \
+   "$(RS "SELECT count(*) FROM jsonb_object_keys(public.omie_sync_identity_snapshot('oben')->'client_to_user');")" "1"
+
+echo "── gate de privilégio (catálogo) + SECURITY INVOKER ──"
 FN='public.omie_sync_identity_snapshot(text)'
 eq "A8a service_role TEM execute"           "$(Pq -c "SELECT has_function_privilege('service_role','$FN','EXECUTE');")" "t"
 eq "A8b anon SEM execute (REVOKE)"          "$(Pq -c "SELECT has_function_privilege('anon','$FN','EXECUTE');")" "f"
@@ -127,14 +173,11 @@ eq "A8c authenticated SEM execute (REVOKE)" "$(Pq -c "SELECT has_function_privil
 eq "A8d PUBLIC SEM execute"                 "$(Pq -c "SELECT has_function_privilege('public','$FN','EXECUTE');")" "f"
 eq "A8e função é SECURITY INVOKER (prosecdef=false)" \
    "$(Pq -c "SELECT prosecdef FROM pg_proc WHERE proname='omie_sync_identity_snapshot';")" "f"
-
-# service_role CONSEGUE executar de verdade (runtime; complementa o catálogo, prova SECURITY INVOKER+BYPASSRLS)
-eq "A9 service_role executa a RPC (RLS on em profiles)" \
+eq "A9 service_role executa a RPC (RLS on em profiles + proof-table)" \
    "$(RS "SELECT (public.omie_sync_identity_snapshot('oben') IS NOT NULL);")" "t"
 
-# ══ ZONA 5 — FALSIFICAÇÃO (Lei #3: sabota → exija vermelho → restaura) ══
-echo "── falsificação ──"
-# SABOTA: remove o filtro n_users=1 do doc_to_user → doc ambíguo passa a vazar
+# ══ ZONA 5 — FALSIFICAÇÃO (Lei #3: sabota → exige vermelho → restaura) ══
+echo "── falsificação PR-1 (doc_to_user) ──"
 P -q <<'SQL'
 CREATE OR REPLACE FUNCTION public.omie_sync_identity_snapshot(p_account text)
 RETURNS jsonb LANGUAGE sql STABLE SECURITY INVOKER SET search_path = '' BEGIN ATOMIC
@@ -148,18 +191,73 @@ RETURNS jsonb LANGUAGE sql STABLE SECURITY INVOKER SET search_path = '' BEGIN AT
     'client_to_user', '{}'::jsonb);
 END;
 SQL
-# Re-roda a EXPRESSÃO EXATA do A3 ("doc ambíguo IS NULL em doc_to_user", que o A3 exige ='t'). Sob o
-# mutante ela vira 'f' → o assert A3 ficaria VERMELHO. Prova MECÂNICA de que A3 mata este mutante (Codex
-# PR-1: só mostrar que o doc vaza não prova que o conjunto de asserts o pega).
 A3_EXPR="SELECT (public.omie_sync_identity_snapshot('oben')->'doc_to_user'->>'22222222222') IS NULL;"
-SOB_MUTANTE=$(Pq -c "$A3_EXPR")
-case "$SOB_MUTANTE" in
-  f) ok "F1 sob o mutante (sem n_users=1) a expressão do A3 vira 'f' → A3 ficaria VERMELHO (dente mecânico)" ;;
-  *) bad "F1 mutante não mudou a expressão do A3 (veio '$SOB_MUTANTE') → A3 não mata o mutante, assert fraco" ;;
+case "$(Pq -c "$A3_EXPR")" in
+  f) ok "F1 sem n_users=1 no doc_to_user → expressão do A3 vira 'f' → A3 ficaria VERMELHO (dente mecânico)" ;;
+  *) bad "F1 mutante não mudou a expressão do A3 → assert fraco" ;;
 esac
-# RESTAURA e reconfirma que a MESMA expressão do A3 volta a 't' (verde)
-P -q -f "$MIG"
-eq "F2 restaurada: a expressão do A3 volta a 't' (doc ambíguo FORA de doc_to_user)" "$(Pq -c "$A3_EXPR")" "t"
+
+echo "── falsificação PR-2 (client_to_user) ──"
+# M1: remove n_users=1 do client_valid → o doc AMBÍGUO (1002, user2=min) passa a mapear → B2 vaza.
+P -q <<'SQL'
+CREATE OR REPLACE FUNCTION public.omie_sync_identity_snapshot(p_account text)
+RETURNS jsonb LANGUAGE sql STABLE SECURITY INVOKER SET search_path = '' BEGIN ATOMIC
+  WITH doc_valid AS (
+    SELECT regexp_replace(p.document,'\D','','g') AS doc, p.user_id FROM public.profiles p
+    WHERE p.document IS NOT NULL AND length(regexp_replace(p.document,'\D','','g'))>=11),
+  doc_agg AS (SELECT doc, count(DISTINCT user_id) AS n_users, min(user_id::text) AS user_id FROM doc_valid GROUP BY doc),
+  client_valid AS (
+    SELECT m.omie_codigo_cliente::text AS codigo, da.user_id AS user_id
+    FROM public.omie_customer_account_map m JOIN doc_agg da
+      ON da.doc = m.evidence_document_normalized AND da.user_id = m.user_id::text  -- SABOTADO: sem n_users=1
+    WHERE m.account=p_account AND m.source='document' AND m.evidence_document_normalized IS NOT NULL
+      AND m.updated_at >= now() - interval '7 days')
+  SELECT jsonb_build_object(
+    'doc_to_user',    coalesce((SELECT jsonb_object_agg(doc,user_id) FROM doc_agg WHERE n_users=1),'{}'::jsonb),
+    'ambiguous_docs', coalesce((SELECT jsonb_agg(doc ORDER BY doc) FROM doc_agg WHERE n_users>1),'[]'::jsonb),
+    'client_to_user', coalesce((SELECT jsonb_object_agg(codigo,user_id) FROM client_valid),'{}'::jsonb));
+END;
+SQL
+B2_EXPR="SELECT (public.omie_sync_identity_snapshot('oben')->'client_to_user') ? '1002';"
+case "$(RS "$B2_EXPR")" in
+  t) ok "F3 sem n_users=1 no client_valid → doc ambíguo (1002) VAZA → B2 ficaria VERMELHO (dente mecânico)" ;;
+  *) bad "F3 mutante não vazou o 1002 → B2 não mata o mutante, assert fraco" ;;
+esac
+# M2: remove o user_id-match do client_valid → o vínculo cujo doc migrou p/ OUTRO user (1006) passa a mapear → B6 vaza.
+P -q <<'SQL'
+CREATE OR REPLACE FUNCTION public.omie_sync_identity_snapshot(p_account text)
+RETURNS jsonb LANGUAGE sql STABLE SECURITY INVOKER SET search_path = '' BEGIN ATOMIC
+  WITH doc_valid AS (
+    SELECT regexp_replace(p.document,'\D','','g') AS doc, p.user_id FROM public.profiles p
+    WHERE p.document IS NOT NULL AND length(regexp_replace(p.document,'\D','','g'))>=11),
+  doc_agg AS (SELECT doc, count(DISTINCT user_id) AS n_users, min(user_id::text) AS user_id FROM doc_valid GROUP BY doc),
+  client_valid AS (
+    SELECT m.omie_codigo_cliente::text AS codigo, da.user_id AS user_id
+    FROM public.omie_customer_account_map m JOIN doc_agg da
+      ON da.doc = m.evidence_document_normalized AND da.n_users = 1  -- SABOTADO: sem da.user_id=m.user_id
+    WHERE m.account=p_account AND m.source='document' AND m.evidence_document_normalized IS NOT NULL
+      AND m.updated_at >= now() - interval '7 days')
+  SELECT jsonb_build_object(
+    'doc_to_user',    coalesce((SELECT jsonb_object_agg(doc,user_id) FROM doc_agg WHERE n_users=1),'{}'::jsonb),
+    'ambiguous_docs', coalesce((SELECT jsonb_agg(doc ORDER BY doc) FROM doc_agg WHERE n_users>1),'[]'::jsonb),
+    'client_to_user', coalesce((SELECT jsonb_object_agg(codigo,user_id) FROM client_valid),'{}'::jsonb));
+END;
+SQL
+B6_EXPR="SELECT (public.omie_sync_identity_snapshot('oben')->'client_to_user') ? '1006';"
+case "$(RS "$B6_EXPR")" in
+  t) ok "F4 sem user_id-match no client_valid → vínculo com doc migrado (1006) VAZA → B6 ficaria VERMELHO (cenário A2)" ;;
+  *) bad "F4 mutante não vazou o 1006 → B6 não mata o mutante, assert fraco" ;;
+esac
+
+# RESTAURA a versão boa (PR-2 vencedora, a última a recriar) e reconfirma B1/B2/B6 corretos
+P -q -f "$MIG2"
+eq "F5 restaurada: B1 volta a mapear o 1001" \
+   "$(RS "SELECT public.omie_sync_identity_snapshot('oben')->'client_to_user'->>'1001';")" \
+   "00000000-0000-0000-0000-000000000001"
+eq "F6 restaurada: B2 (ambíguo) volta a FORA" \
+   "$(RS "SELECT (public.omie_sync_identity_snapshot('oben')->'client_to_user') ? '1002';")" "f"
+eq "F7 restaurada: B6 (doc migrado) volta a FORA" \
+   "$(RS "SELECT (public.omie_sync_identity_snapshot('oben')->'client_to_user') ? '1006';")" "f"
 
 # ── veredito ──
 echo "──────────────────────────────"

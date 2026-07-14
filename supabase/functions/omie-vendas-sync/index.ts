@@ -901,10 +901,10 @@ async function syncPedidos(
   // Validação ESTRITA do contrato (Codex challenge PR-1): .rpc() error=null só prova HTTP/SQL, NÃO o JSON.
   // Uma RPC revertida devolvendo {doc_to_user:null,...} (HTTP 200) degradaria p/ Map(0) SILENCIOSO → pedidos
   // pulados. parseIdentitySnapshot LANÇA em shape inválido (null/array/não-UUID/doc ambíguo vazado) — fail-closed.
-  const { docToUserMap, ambiguousDocs } = parseIdentitySnapshot(snap);
-  console.log(`[sync_pedidos][${account}] Identity snapshot: ${docToUserMap.size} doc(s) único(s), ${ambiguousDocs.size} ambíguo(s) excluído(s) (fail-closed server-side)`);
+  const { docToUserMap, ambiguousDocs, clientToUserMap } = parseIdentitySnapshot(snap);
+  console.log(`[sync_pedidos][${account}] Identity snapshot: ${docToUserMap.size} doc(s) único(s), ${ambiguousDocs.size} ambíguo(s) excluído(s), ${clientToUserMap.size} código(s) provado(s) (fail-closed server-side)`);
 
-  // pgSize/hasMore ficam declarados aqui pois o pré-load do clientCache (abaixo) os reusa.
+  // pgSize/hasMore ficam declarados aqui pois o pré-load do productMap (abaixo) os reusa.
   const pgSize = 1000;
   let hasMore = true;
 
@@ -915,40 +915,24 @@ async function syncPedidos(
   // era pulado pelo hash do pai e os itens nunca eram restaurados.
   const seenHashes = new Set<string>();
 
-  // ── Pre-load mapping (codigo_cliente -> user_id) da VIEW FRESCA account-correta p/ EVITAR chamadas API ──
-  // P0-B-bis PR-2: a fonte era o espelho poluído omie_clientes SEM filtro de conta. Como o código Omie é
-  // numerado POR conta, um código desta conta podia colidir com o mesmo número em OUTRA conta e o cache (1
-  // chave global codigo->user) mapeava o user_id ERRADO — pedido atribuído ao cliente errado (bug #4 do
-  // design; o espelho é sobrescrito ao longo do dia pelos writers colacor_sc, então a colisão é intermitente).
-  // A view omie_customer_account_map_fresco é account-correta (UNIQUE(codigo,account)) e document-first; o
-  // miss aqui cai no resolveClientUserId → API ConsultarCliente (fail-safe).
-  // Paginação KEYSET (.gt no código + .limit), não offset: a view filtra updated_at>=now()-7d, então uma
-  // linha pode cruzar o TTL ENTRE páginas; keyset é imune a esse deslocamento (offset .range pularia/repetiria
-  // — Codex P2). O código é UNIQUE(codigo,account) → ordenação sem empate. Erro de query é FAIL-CLOSED (throw):
-  // engolir o error (capa silenciosa do PostgREST) deixaria um cache parcial → milhares de miss → rate-limit
-  // no Omie → skip/atribuição arbitrária no fallback. Melhor abortar o run e retomar na próxima janela.
+  // ── Cache codigo_cliente -> user_id do MESMO snapshot atômico (client_to_user, prova positiva) — fecha A2 ──
+  // P0-B-bis PR-2 pré-carregava o clientCache da view fresca omie_customer_account_map_fresco (TTL 7d) e o
+  // consultava ANTES do docToUserMap: um hit cache-first retornava sem passar pelo fail-closed de doc-ambíguo
+  // (achado A2). Pior (Codex xhigh 2026-07-11): a proof-table NÃO registrava o DOCUMENTO da prova → filtrar
+  // "sem doc ambíguo" era AUSÊNCIA de contraindicação (fail-open sutil) — um vínculo código→u1 criado com doc
+  // X sobrevivia mesmo depois de u1 migrar p/ Y e u2 receber X. Agora o clientCache vem do client_to_user do
+  // MESMO snapshot MVCC do docToUserMap: vínculo só com source='document' + evidence viva/única/consistente
+  // (da.user_id=m.user_id) + frescor 7d — prova POSITIVA resolvida no SQL. Aposenta a query da view fresca; o
+  // miss cai no resolveClientUserId → API ConsultarCliente (fail-safe, resolve via docToUserMap, mesmo snapshot).
+  // Chave numérica (o JSON traz o código como string); guard inteiro>0 descarta lixo de chave (nunca casaria).
   const clientCache = new Map<number, string | null>();
-  let lastCodigo = 0;
-  hasMore = true;
-  while (hasMore) {
-    const { data: batch, error: cacheErr } = await supabase
-      .from('omie_customer_account_map_fresco')
-      .select('omie_codigo_cliente, user_id')
-      .eq('account', account)
-      .gt('omie_codigo_cliente', lastCodigo)
-      .order('omie_codigo_cliente')
-      .limit(pgSize);
-    if (cacheErr) throw new Error(`pre-load client cache (${account}): ${cacheErr.message}`);
-    if (!batch || batch.length === 0) { hasMore = false; }
-    else {
-      for (const oc of batch) {
-        clientCache.set(oc.omie_codigo_cliente, oc.user_id);
-      }
-      lastCodigo = batch[batch.length - 1].omie_codigo_cliente;
-      if (batch.length < pgSize) hasMore = false;
-    }
+  for (const [codigo, userId] of clientToUserMap) {
+    const n = Number(codigo);
+    // bigint-safe (money-path): código ≥ 2^53 perderia precisão no Number() → NÃO entra no cache (miss →
+    // fallback resolveClientUserId/API, fail-safe), em vez de casar o pedido errado por colisão de arredondamento.
+    if (Number.isSafeInteger(n) && n > 0) clientCache.set(n, userId);
   }
-  console.log(`[sync_pedidos][${account}] Client cache from omie_customer_account_map_fresco: ${clientCache.size}`);
+  console.log(`[sync_pedidos][${account}] Client cache from identity snapshot (client_to_user): ${clientCache.size}`);
 
   // ── Pre-load product mapping ──
   const productMap = new Map<number, string>();
@@ -1649,7 +1633,7 @@ const OMIE_SNAPSHOT_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-
 
 function parseIdentitySnapshot(
   snap: unknown,
-): { docToUserMap: Map<string, string>; ambiguousDocs: Set<string> } {
+): { docToUserMap: Map<string, string>; ambiguousDocs: Set<string>; clientToUserMap: Map<string, string> } {
   if (!snap || typeof snap !== "object" || Array.isArray(snap)) {
     throw new Error("identity snapshot: resposta não é objeto (fail-closed)");
   }
@@ -1678,7 +1662,21 @@ function parseIdentitySnapshot(
     }
     docToUserMap.set(doc, user);
   }
-  return { docToUserMap, ambiguousDocs };
+  // PR-2/A2: client_to_user (código Omie → user, prova positiva por documento no MESMO snapshot atômico).
+  // Validado por ÚLTIMO — os casos inválidos de doc_to_user/ambiguous_docs lançam antes, pelo motivo próprio.
+  // Mesmo rigor fail-closed: shape inválido (ausente/não-objeto/valor não-UUID) LANÇA, não degrada p/ Map(0).
+  const c2u = s.client_to_user;
+  if (!c2u || typeof c2u !== "object" || Array.isArray(c2u)) {
+    throw new Error("identity snapshot: client_to_user ausente ou não-objeto (fail-closed)");
+  }
+  const clientToUserMap = new Map<string, string>();
+  for (const [codigo, user] of Object.entries(c2u)) {
+    if (typeof user !== "string" || !OMIE_SNAPSHOT_UUID_RE.test(user)) {
+      throw new Error("identity snapshot: user_id não-UUID em client_to_user (fail-closed)");
+    }
+    clientToUserMap.set(codigo, user);
+  }
+  return { docToUserMap, ambiguousDocs, clientToUserMap };
 }
 // MIRROR-END
 
@@ -3137,11 +3135,13 @@ serve(async (req) => {
         let parseErro: string | null = null;
         let docsUnicos = 0;
         let ambiguos = 0;
+        let clientesMapeados = 0;
         if (!snapProbeErr) {
           try {
             const p = parseIdentitySnapshot(snapProbe);
             docsUnicos = p.docToUserMap.size;
             ambiguos = p.ambiguousDocs.size;
+            clientesMapeados = p.clientToUserMap.size;
             parsedOk = true;
           } catch (e) {
             parseErro = (e as Error).message;
@@ -3155,6 +3155,7 @@ serve(async (req) => {
           ok: !snapProbeErr && parsedOk,
           docs_unicos: docsUnicos,
           ambiguos,
+          clientes_mapeados: clientesMapeados,
           erro: snapProbeErr?.message ?? parseErro,
         };
         break;
