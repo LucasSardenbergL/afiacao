@@ -177,6 +177,7 @@ export const FRONTEIRAS_BASELINE: Aresta[] = [
   { de: "src/lib/venda-assistida/montar-embalagens.ts", para: "src/lib/reposicao/sayerlack-sku.ts", deModulo: "vendas", paraModulo: "reposicao", kind: "runtime" },
   { de: "src/lib/venda-assistida/selos.ts", para: "src/lib/knowledge-base/catalisador-link.ts", deModulo: "vendas", paraModulo: "knowledge-base", kind: "runtime" },
   { de: "src/lib/venda-assistida/selos.ts", para: "src/lib/knowledge-base/spec-link.ts", deModulo: "vendas", paraModulo: "knowledge-base", kind: "runtime" },
+  { de: "src/lib/whatsapp/proposta-cotacao.ts", para: "src/lib/pricing/mergeCustomerPrices.ts", deModulo: "telefonia-whatsapp-rota", paraModulo: "vendas", kind: "runtime" },
   { de: "src/pages/Admin.tsx", para: "src/components/KanbanBoard.tsx", deModulo: "admin-crm", paraModulo: "tarefas", kind: "runtime" },
   { de: "src/pages/AdminAnalyticsSync.tsx", para: "src/components/carteira/CarteiraSaudePanel.tsx", deModulo: "governanca", paraModulo: "farmer-inteligencia", kind: "runtime" },
   { de: "src/pages/AdminCalculadora.tsx", para: "src/components/knowledge-base/RendimentoCalculator.tsx", deModulo: "admin-crm", paraModulo: "knowledge-base", kind: "runtime" },
@@ -231,4 +232,5 @@ export const FRONTEIRAS_BASELINE: Aresta[] = [
   { de: "src/queries/useRegistrarContato.ts", para: "src/lib/route/route-outcome.ts", deModulo: "farmer-inteligencia", paraModulo: "telefonia-whatsapp-rota", kind: "type" },
   { de: "src/services/orderSubmission/buildPrintData.ts", para: "src/components/OrderPrintLayout.tsx", deModulo: "vendas", paraModulo: "loja-afiacao", kind: "type" },
   { de: "src/services/orderSubmission/types.ts", para: "src/components/OrderPrintLayout.tsx", deModulo: "vendas", paraModulo: "loja-afiacao", kind: "type" },
+  { de: "src/services/whatsappProposta/enviarProposta.ts", para: "src/lib/pricing/mergeCustomerPrices.ts", deModulo: "telefonia-whatsapp-rota", paraModulo: "vendas", kind: "runtime" },
 ];

@@ -1,7 +1,9 @@
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { montarCestaRecompra } from '@/lib/whatsapp/cesta-recompra';
+import type { CestaResult } from '@/lib/whatsapp/cesta-recompra';
 import { filtrarCestaPorAtivos } from '@/lib/whatsapp/cesta-ativos';
+import type { CrossSellCand } from '@/lib/whatsapp/cross-sell';
 import { formatarPropostaRecompra } from '@/lib/whatsapp/proposta-format';
 import type { PropostaFormatada } from '@/lib/whatsapp/proposta-format';
 import { selecionarCrossSell } from '@/lib/whatsapp/cross-sell';
@@ -20,7 +22,7 @@ function addDays(iso: string, n: number): string {
 }
 
 interface ProdRow { omie_codigo_produto: number; descricao: string; ativo: boolean }
-interface ProfileRow { name: string | null; razao_social: string | null }
+interface ProfileRow { name: string | null; razao_social: string | null; cnpj: string | null; document: string | null }
 
 export interface PropostaPreview {
   proposta: PropostaFormatada;
@@ -31,11 +33,18 @@ export interface PropostaPreview {
   statusesVistos: string[];     // ajuda o founder a definir a whitelist real
   nomeCliente: string | null;
   semHistorico: boolean;
+  // estrutura pro ENVIO (PR-4): a recotação cota EXATAMENTE o que o preview mostrou
+  cesta: CestaResult;
+  nomesPorSku: Record<number, string>;
+  crossSell: CrossSellCand[];
+  documentoCliente: string | null; // cnpj/document do profile — âncora P0-B do orçamento
 }
 
+const CESTA_VAZIA: CestaResult = { principal: [], secundarios: [], totalPedidos: 0, confianca: 'baixa' };
 const VAZIO: PropostaPreview = {
   proposta: { texto: '', itensPrincipais: 0, vazia: true },
   account: null, totalPedidos: 0, removidosInativos: 0, crossSellCount: 0, statusesVistos: [], nomeCliente: null, semHistorico: true,
+  cesta: CESTA_VAZIA, nomesPorSku: {}, crossSell: [], documentoCliente: null,
 };
 
 export function usePropostaPreview(customerUserId: string | undefined, opts?: { enabled?: boolean }) {
@@ -89,7 +98,7 @@ export function usePropostaPreview(customerUserId: string | undefined, opts?: { 
       const { cesta: cestaFiltrada, removidos } = filtrarCestaPorAtivos(cesta, ativos);
 
       // 4b) cross-sell ("experimente também") — só com cesta-base; degrada honesto (vazio sem rec)
-      let crossSell: { nome: string }[] = [];
+      let crossSell: CrossSellCand[] = [];
       if (cestaFiltrada.principal.length > 0) {
         const cestaSkus = new Set([...cestaFiltrada.principal, ...cestaFiltrada.secundarios].map(i => i.omie_codigo_produto));
         const { data: recData } = await supabase
@@ -105,15 +114,16 @@ export function usePropostaPreview(customerUserId: string | undefined, opts?: { 
             .eq('account', account)
             .in('id', recIds);
           const candidatos = buildCrossSellCandidatos(recs, (prodById ?? []) as PreviewProdById[]);
-          crossSell = selecionarCrossSell(cestaSkus, candidatos, MAX_CROSS_SELL).map(x => ({ nome: x.nome }));
+          crossSell = selecionarCrossSell(cestaSkus, candidatos, MAX_CROSS_SELL);
         }
       }
 
-      // 5) nome do cliente + formata
+      // 5) nome + documento do cliente + formata
       const { data: prof } = await supabase
-        .from('profiles').select('name, razao_social').eq('user_id', customerUserId!).maybeSingle();
+        .from('profiles').select('name, razao_social, cnpj, document').eq('user_id', customerUserId!).maybeSingle();
       const p = (prof ?? null) as ProfileRow | null;
       const nomeCliente = p?.razao_social || p?.name || null;
+      const documentoCliente = p?.cnpj || p?.document || null;
       const primeiroNome = nomeCliente ? nomeCliente.split(' ')[0] : undefined;
 
       const proposta = formatarPropostaRecompra(cestaFiltrada, { nomesPorSku, primeiroNome, crossSell });
@@ -121,6 +131,7 @@ export function usePropostaPreview(customerUserId: string | undefined, opts?: { 
       return {
         proposta, account, totalPedidos: cesta.totalPedidos, removidosInativos: removidos,
         crossSellCount: crossSell.length, statusesVistos, nomeCliente, semHistorico: false,
+        cesta: cestaFiltrada, nomesPorSku, crossSell, documentoCliente,
       };
     },
   });

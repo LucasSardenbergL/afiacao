@@ -552,6 +552,7 @@ export const MODULOS: ModuloApp[] = [
       "src/contexts/webrtc-call-context.ts",
       "src/types/call-log.ts",
       "src/utils/whatsappShare.ts",
+      "src/services/whatsappProposta/**",
     ],
     testes: [
       "src/contexts/__tests__/WebRTCCallContext.test.tsx",
@@ -564,7 +565,8 @@ export const MODULOS: ModuloApp[] = [
       "src/pages/__tests__/Telefonia.test.tsx",
       "src/utils/__tests__/whatsappShare.test.ts",
     ],
-    risco: { moneyPath: false, offlineFirst: false, authSensitive: true },
+    // moneyPath: true desde o PR-4 (proposta 1-toque) — recotação Omie + orçamento com elo.
+    risco: { moneyPath: true, offlineFirst: false, authSensitive: true },
   },
   {
     id: "plataforma",
