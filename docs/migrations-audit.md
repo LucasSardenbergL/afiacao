@@ -21,13 +21,13 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **363** custom migrations totais
-- **1299** objetos esperados (criados por estas migrations)
+- **364** custom migrations totais
+- **1301** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 365
   - `rls_policy`: 288
   - `index`: 217
-  - `cron_job`: 146
+  - `cron_job`: 148
   - `table`: 141
   - `trigger`: 78
   - `view`: 60
@@ -3112,6 +3112,13 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.get_whatsapp_funil` | — |
 | `index` | `public.idx_so_whatsapp_conv` | `sales_orders` |
+
+### `20260714215547_omie_nfe_recebimento_crons.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `cron_job` | `cron.omie-nfe-recebimento-import-1h` | — |
+| `cron_job` | `cron.omie-nfe-reconcile-1h` | — |
 
 ## Próximos passos por status
 

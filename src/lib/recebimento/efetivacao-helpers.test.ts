@@ -14,8 +14,11 @@ import {
   validarGatesEscrita,
   confirmarEfetivacao,
   decidirStatusComConfirmacao,
+  decidirEfeitoReconcileLote,
+  resumirReconcileLote,
   type PassoFlags,
   type ItemApp,
+  type EfeitoReconcile,
 } from './efetivacao-helpers';
 
 // Fixture: body REAL do ConsultarRecebimento (diagnóstico CALL 2 — NF 000234012 ACRE CAXIAS, modelo 55).
@@ -442,5 +445,88 @@ describe('decidirStatusComConfirmacao', () => {
   });
   it('concluir falhou + confirmado → parcial (status base já não é efetivado)', () => {
     expect(decidirStatusComConfirmacao({ ...todosOk, concluirOk: false }, true)).toBe('efetivacao_parcial');
+  });
+});
+
+describe('decidirEfeitoReconcileLote (varredura automática — reconcile-only)', () => {
+  const clsOk = { sucesso: true, erro: null, omieStatus: null };
+  const esperadoCall2 = { nIdReceb: 12077966878, chaveAcesso: CHAVE_CALL2 };
+
+  it('cRecebido=S + identidade ok → reconciliar (caso dominante: humano já entrou no Omie)', () => {
+    const r = decidirEfeitoReconcileLote(clsOk, CONSULTA_CALL2, esperadoCall2);
+    expect(r).toEqual({ efeito: 'reconciliar' });
+  });
+
+  it('consulta falhou (ex. REDUNDANT do rate-limit) → pular, mesmo com body de NF recebida', () => {
+    const cls = { sucesso: false, erro: 'Consumo redundante detectado (REDUNDANT)', omieStatus: null };
+    const r = decidirEfeitoReconcileLote(cls, CONSULTA_CALL2, esperadoCall2);
+    expect(r).toEqual({ efeito: 'pular', motivo: 'consulta_falhou' });
+  });
+
+  it('identidade divergente (nIdReceb de outra NF) → pular; NUNCA reconcilia NF errada mesmo com cRecebido=S', () => {
+    const r = decidirEfeitoReconcileLote(clsOk, CONSULTA_CALL2, { nIdReceb: 999, chaveAcesso: CHAVE_CALL2 });
+    expect(r).toEqual({ efeito: 'pular', motivo: 'identidade_divergente' });
+  });
+
+  it('chave de acesso divergente → pular por identidade', () => {
+    const r = decidirEfeitoReconcileLote(clsOk, CONSULTA_CALL2, { nIdReceb: 12077966878, chaveAcesso: '9'.repeat(44) });
+    expect(r).toEqual({ efeito: 'pular', motivo: 'identidade_divergente' });
+  });
+
+  it('cRecebido≠S e etapa<80 → pular (aguardando conferência legítima; varredura não escreve no Omie)', () => {
+    const body = { ...CONSULTA_CALL2, cabec: { ...CONSULTA_CALL2.cabec, cEtapa: '20' }, infoCadastro: { cRecebido: 'N' } };
+    const r = decidirEfeitoReconcileLote(clsOk, body, esperadoCall2);
+    expect(r).toEqual({ efeito: 'pular', motivo: 'aguardando_conferencia' });
+  });
+
+  it('cEtapa=80 sem cRecebido=S → pular como inconsistente (sinal fica no resumo, não no painel)', () => {
+    const body = { ...CONSULTA_CALL2, infoCadastro: { cRecebido: 'N' } };
+    const r = decidirEfeitoReconcileLote(clsOk, body, esperadoCall2);
+    expect(r).toEqual({ efeito: 'pular', motivo: 'inconsistente' });
+  });
+
+  it('body malformado (sem cabec/nIdReceb) → pular por identidade (fail-closed, nunca reconciliar às cegas)', () => {
+    const r = decidirEfeitoReconcileLote(clsOk, {}, esperadoCall2);
+    expect(r).toEqual({ efeito: 'pular', motivo: 'identidade_divergente' });
+  });
+
+  it('NF cancelada no Omie → pular como cancelada, mesmo com cRecebido=S (recebida-e-cancelada não vira efetivada)', () => {
+    const body = { ...CONSULTA_CALL2, infoCadastro: { ...CONSULTA_CALL2.infoCadastro, cCancelada: 'S' } };
+    const r = decidirEfeitoReconcileLote(clsOk, body, esperadoCall2);
+    expect(r).toEqual({ efeito: 'pular', motivo: 'cancelada' });
+  });
+
+  it('resposta sem chave de acesso → pular por identidade (varredura exige chave; só o fluxo manual tolera ausência)', () => {
+    const body = { ...CONSULTA_CALL2, cabec: { ...CONSULTA_CALL2.cabec, cChaveNfe: undefined } };
+    const r = decidirEfeitoReconcileLote(clsOk, body, esperadoCall2);
+    expect(r).toEqual({ efeito: 'pular', motivo: 'identidade_divergente' });
+  });
+});
+
+describe('resumirReconcileLote', () => {
+  it('conta reconciliadas e puladas por motivo; processadas = total', () => {
+    const efeitos: EfeitoReconcile[] = [
+      { efeito: 'reconciliar' },
+      { efeito: 'reconciliar' },
+      { efeito: 'pular', motivo: 'consulta_falhou' },
+      { efeito: 'pular', motivo: 'aguardando_conferencia' },
+      { efeito: 'pular', motivo: 'aguardando_conferencia' },
+      { efeito: 'pular', motivo: 'inconsistente' },
+      { efeito: 'pular', motivo: 'identidade_divergente' },
+      { efeito: 'pular', motivo: 'cancelada' },
+    ];
+    expect(resumirReconcileLote(efeitos)).toEqual({
+      processadas: 8,
+      reconciliadas: 2,
+      puladas: { consulta_falhou: 1, cancelada: 1, identidade_divergente: 1, aguardando_conferencia: 2, inconsistente: 1 },
+    });
+  });
+
+  it('lote vazio → tudo zero', () => {
+    expect(resumirReconcileLote([])).toEqual({
+      processadas: 0,
+      reconciliadas: 0,
+      puladas: { consulta_falhou: 0, cancelada: 0, identidade_divergente: 0, aguardando_conferencia: 0, inconsistente: 0 },
+    });
   });
 });

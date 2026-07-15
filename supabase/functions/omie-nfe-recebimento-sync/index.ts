@@ -33,6 +33,7 @@ interface OmieRecebimentoCabec {
 
 interface OmieRecebimentoInfoCadastro {
   cCancelada?: string;
+  cRecebido?: string;
 }
 
 interface OmieRecebimentoListItem {
@@ -67,6 +68,7 @@ interface OmieRecebimentoItem {
 interface OmieConsultarRecebimentoResponse {
   cabec?: OmieRecebimentoCabec;
   itensRecebimento?: OmieRecebimentoItem[];
+  infoCadastro?: OmieRecebimentoInfoCadastro;
 }
 
 interface WarehouseRow {
@@ -192,8 +194,11 @@ Deno.serve(async (req) => {
         .not("omie_id_receb", "is", null);
 
       const existingRecebRows = (existingRecebimentos ?? []) as unknown as NfeRecebimentoExistingRow[];
+      // Normaliza pra number: o Omie pode devolver nIdReceb como string na listagem — sem
+      // isso o has() nunca casa e as MAX_DETAIL_CALLS se esgotam re-consultando NFs já
+      // importadas (starvation: NF nova nunca chega a ser vista). (Codex P2)
       const existingIds = new Set(
-        existingRecebRows.map((r) => r.omie_id_receb)
+        existingRecebRows.map((r) => Number(r.omie_id_receb))
       );
 
       // Filter last 30 days to get recent NF-es with cChaveNfe
@@ -244,8 +249,8 @@ Deno.serve(async (req) => {
         const nIdReceb = cabec.nIdReceb;
         if (!nIdReceb) continue;
 
-        // Quick skip if already imported
-        if (existingIds.has(nIdReceb)) {
+        // Quick skip if already imported (normalizado pra number, como o Set)
+        if (existingIds.has(Number(nIdReceb))) {
           totalSkipped++;
           continue;
         }
@@ -278,6 +283,15 @@ Deno.serve(async (req) => {
         if (detailCalls <= 2) {
           console.log(`[sync] Detail cabec keys for ${nIdReceb}: ${JSON.stringify(Object.keys(detCabec))}`);
           console.log(`[sync] Detail cabec sample: ${JSON.stringify(detCabec).slice(0, 500)}`);
+        }
+
+        // NF que o Omie JÁ recebeu (cRecebido=S) não nasce 'pendente' no app — a entrada
+        // foi feita lá (humano); importá-la só criaria pendência fantasma no painel de
+        // conferência (a varredura omie-nfe-reconcile teria que baixá-la em seguida).
+        if (detail.infoCadastro?.cRecebido === "S") {
+          totalSkipped++;
+          console.log(`[sync] Recebimento ${nIdReceb} já recebido no Omie (cRecebido=S), pulando`);
+          continue;
         }
 
         const chaveAcesso = detCabec.cChaveNFe || detCabec.cChaveNfe || null;

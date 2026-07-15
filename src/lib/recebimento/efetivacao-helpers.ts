@@ -398,3 +398,56 @@ export function decidirStatusComConfirmacao(flags: PassoFlags, recebidoConfirmad
   if (s === 'efetivado' && !recebidoConfirmado) return 'efetivacao_parcial';
   return s;
 }
+
+// ── Reconciliação em lote (varredura automática, reconcile-only) ──
+
+export type EfeitoReconcile =
+  | { efeito: 'reconciliar' }
+  | { efeito: 'pular'; motivo: 'consulta_falhou' | 'cancelada' | 'identidade_divergente' | 'aguardando_conferencia' | 'inconsistente' };
+
+/**
+ * Política da varredura automática sobre NF 'pendente': SÓ reconcilia (cRecebido=S no
+ * Omie → marca efetivado no app, read-only no Omie). Qualquer outro caminho PULA sem
+ * tocar o status — a varredura nunca escreve no Omie nem pinta falha no painel; falha
+ * visível é reservada à ação humana (Efetivar/Reprocessar). Fail-closed além do fluxo
+ * manual (Codex, design review 2026-07-14): NF cancelada no Omie nunca reconcilia
+ * (recebida-e-depois-cancelada viraria entrada fantasma) e a varredura EXIGE a chave
+ * de acesso na resposta (o fluxo manual tolera chave ausente; automático, não).
+ */
+export function decidirEfeitoReconcileLote(
+  cls: OmieClassificacao,
+  body: unknown,
+  esperado: { nIdReceb: number; chaveAcesso: string },
+): EfeitoReconcile {
+  if (!cls.sucesso) return { efeito: 'pular', motivo: 'consulta_falhou' };
+  const cancelada = asRecord(asRecord(body).infoCadastro).cCancelada;
+  if (typeof cancelada === 'string' && cancelada.trim().toUpperCase() === 'S') {
+    return { efeito: 'pular', motivo: 'cancelada' };
+  }
+  const estado = extrairEstadoConsulta(body);
+  if (estado.cChaveNfe == null) return { efeito: 'pular', motivo: 'identidade_divergente' };
+  if (!validarIdentidade(estado, esperado).ok) return { efeito: 'pular', motivo: 'identidade_divergente' };
+  const acao = decidirAcaoRecebimento(estado);
+  if (acao === 'reconciliar') return { efeito: 'reconciliar' };
+  if (acao === 'inconsistente') return { efeito: 'pular', motivo: 'inconsistente' };
+  return { efeito: 'pular', motivo: 'aguardando_conferencia' };
+}
+
+export interface ResumoReconcileLote {
+  processadas: number;
+  reconciliadas: number;
+  puladas: { consulta_falhou: number; cancelada: number; identidade_divergente: number; aguardando_conferencia: number; inconsistente: number };
+}
+
+export function resumirReconcileLote(efeitos: EfeitoReconcile[]): ResumoReconcileLote {
+  const resumo: ResumoReconcileLote = {
+    processadas: efeitos.length,
+    reconciliadas: 0,
+    puladas: { consulta_falhou: 0, cancelada: 0, identidade_divergente: 0, aguardando_conferencia: 0, inconsistente: 0 },
+  };
+  for (const e of efeitos) {
+    if (e.efeito === 'reconciliar') resumo.reconciliadas++;
+    else resumo.puladas[e.motivo]++;
+  }
+  return resumo;
+}
