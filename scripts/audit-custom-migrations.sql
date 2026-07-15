@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 363
+-- Total de custom migrations: 364
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -402,7 +402,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260712150000', 'carteira_membership_ledger_fatia0', '20260712150000_carteira_membership_ledger_fatia0.sql'),
   ('20260713010000', 'whatsapp_templates_hsm', '20260713010000_whatsapp_templates_hsm.sql'),
   ('20260713020000', 'whatsapp_pendentes_rpc', '20260713020000_whatsapp_pendentes_rpc.sql'),
-  ('20260713030000', 'whatsapp_funil', '20260713030000_whatsapp_funil.sql')
+  ('20260713030000', 'whatsapp_funil', '20260713030000_whatsapp_funil.sql'),
+  ('20260714215547', 'omie_nfe_recebimento_crons', '20260714215547_omie_nfe_recebimento_crons.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -1692,7 +1693,9 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('whatsapp_pendentes_rpc', 'index', 'public', 'idx_wa_conv_pendentes', 'whatsapp_conversations'),
   ('whatsapp_pendentes_rpc', 'trigger', 'public', 'trg_wa_msg_last_outbound', 'whatsapp_messages'),
   ('whatsapp_funil', 'function', 'public', 'get_whatsapp_funil', ''),
-  ('whatsapp_funil', 'index', 'public', 'idx_so_whatsapp_conv', 'sales_orders')
+  ('whatsapp_funil', 'index', 'public', 'idx_so_whatsapp_conv', 'sales_orders'),
+  ('omie_nfe_recebimento_crons', 'cron_job', 'cron', 'omie-nfe-recebimento-import-1h', ''),
+  ('omie_nfe_recebimento_crons', 'cron_job', 'cron', 'omie-nfe-reconcile-1h', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -3030,7 +3033,9 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('whatsapp_pendentes_rpc', 'index', 'public', 'idx_wa_conv_pendentes', 'whatsapp_conversations'),
   ('whatsapp_pendentes_rpc', 'trigger', 'public', 'trg_wa_msg_last_outbound', 'whatsapp_messages'),
   ('whatsapp_funil', 'function', 'public', 'get_whatsapp_funil', ''),
-  ('whatsapp_funil', 'index', 'public', 'idx_so_whatsapp_conv', 'sales_orders')
+  ('whatsapp_funil', 'index', 'public', 'idx_so_whatsapp_conv', 'sales_orders'),
+  ('omie_nfe_recebimento_crons', 'cron_job', 'cron', 'omie-nfe-recebimento-import-1h', ''),
+  ('omie_nfe_recebimento_crons', 'cron_job', 'cron', 'omie-nfe-reconcile-1h', '')
 )
 SELECT
   e.migration,
