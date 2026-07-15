@@ -1,6 +1,6 @@
 # Fase 0 — Spike go/no-go da captura de preços Sayerlack (Implementation Plan)
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. Este plano é **exploratório-empírico** (browser + verificação em banco): executar INLINE na sessão, não via subagente (exige possível intervenção do founder no login e leitura visual do portal).
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking. Este plano é **exploratório-empírico** (browser + verificação em banco): executar INLINE na sessão, não via subagente (exige possível intervenção do founder no login e leitura visual do portal).
 
 **Goal:** Provar (ou refutar) no portal Sayerlack real os 3 critérios do gate da spec: (1) preço QT/GL legível de forma inequívoca num rascunho não-efetivado; (2) rascunho limpável explicitamente; (3) nenhum pedido (PO) nasce do processo. Colher os seletores/colunas reais para a edge da Fase 1.
 
@@ -25,7 +25,7 @@
 **Interfaces:**
 - Produces: `baseline_pos` (contagem e max de PO no espelho) e lista de POs visíveis no portal — comparados na Task 4.
 
-- [ ] **Step 1: Baseline do espelho de POs (psql-ro)**
+- [x] **Step 1: Baseline do espelho de POs (psql-ro)**
 
 Run:
 ```bash
@@ -34,7 +34,7 @@ Run:
 ```
 Expected: descrição da tabela + baseline `{total, ultimo}` anotado no chat. (Se os nomes de coluna divergirem, usar os reais — o critério é ter um antes/depois estável.)
 
-- [ ] **Step 2: Confirmar de-para dos 2 SKUs de teste**
+- [x] **Step 2: Confirmar de-para dos 2 SKUs de teste**
 
 Run:
 ```bash
@@ -42,7 +42,7 @@ Run:
 ```
 Expected: 2 linhas ativas com os `sku_portal` que serão digitados no select2. Anotar os códigos.
 
-- [ ] **Step 3: Registrar POs visíveis no portal (pré)**
+- [x] **Step 3: Registrar POs visíveis no portal (pré)**
 
 No browser, na área logada do portal: abrir a listagem de pedidos e capturar screenshot da primeira página (protocolos/datas visíveis). Anotar o protocolo mais recente.
 
@@ -53,22 +53,22 @@ No browser, na área logada do portal: abrir a listagem de pedidos e capturar sc
 **Interfaces:**
 - Produces: preços lidos de QT e GL (R$/embalagem), mapa de colunas do `#datatable_itens` (índice da coluna de preço unitário/total/Prz Ent), seletor do botão de remover item — insumos do plano da Fase 1.
 
-- [ ] **Step 1: Login/entrada** — navegar ao portal (`SAYERLACK_PORTAL_URL` dos bookmarks do founder); se deslogado, founder loga.
+- [x] **Step 1: Login/entrada** — navegar ao portal (`SAYERLACK_PORTAL_URL` dos bookmarks do founder); se deslogado, founder loga.
 
-- [ ] **Step 2: Novo pedido + cliente** — iniciar novo pedido; selecionar o cliente OBEN no select2 de cliente (`#select2-cliente-container`), como a edge de envio faz.
+- [x] **Step 2: Novo pedido + cliente** — iniciar novo pedido; selecionar o cliente OBEN no select2 de cliente (`#select2-cliente-container`), como a edge de envio faz.
 
-- [ ] **Step 3: Adicionar QT com qtde 1** — select2 de item: digitar o `sku_portal` do QT (Task 1/Step 2); selecionar a opção; qtde `1`; gravar item (`#btnGravarItem`). Screenshot da linha no `#datatable_itens`.
+- [x] **Step 3: Adicionar QT com qtde 1** — select2 de item: digitar o `sku_portal` do QT (Task 1/Step 2); selecionar a opção; qtde `1`; gravar item (`#btnGravarItem`). Screenshot da linha no `#datatable_itens`.
 
-- [ ] **Step 4: Adicionar GL com qtde 1** — idem para o GL. Screenshot.
+- [x] **Step 4: Adicionar GL com qtde 1** — idem para o GL. Screenshot.
 
-- [ ] **Step 5: Ler e conferir os preços** — ler do datatable o valor por linha; conferir contra os últimos preços manuais do banco:
+- [x] **Step 5: Ler e conferir os preços** — ler do datatable o valor por linha; conferir contra os últimos preços manuais do banco:
 
 ```bash
 ~/.config/afiacao/psql-ro -c "SELECT sku_codigo_omie, preco, capturado_em FROM sku_preco_fornecedor_capturado WHERE empresa='oben' AND sku_codigo_omie IN ('8689775044','12078998671') ORDER BY capturado_em DESC LIMIT 4;"
 ```
 Expected: preço do portal ≈ preço manual de hoje (founder digitou hoje; pequena divergência = ele arredondou ou reajuste — anotar). **Critério (1) do gate:** fica inequívoco QUAL campo é o preço por embalagem (não por litro/subtotal). Anotar o índice/header exato das colunas.
 
-- [ ] **Step 6: Testar busca sem resultado (embalagem inativada)** — no select2 de item, digitar um código inexistente (ex. `ZZZTESTE`) e registrar o comportamento (mensagem "nenhum resultado"/`.select2-results__message`). Se o founder souber um código WP realmente inativado, usar também esse. Screenshot. Insumo do `nao_encontrado` da Fase 1.
+- [x] **Step 6: Testar busca sem resultado (embalagem inativada)** — no select2 de item, digitar um código inexistente (ex. `ZZZTESTE`) e registrar o comportamento (mensagem "nenhum resultado"/`.select2-results__message`). Se o founder souber um código WP realmente inativado, usar também esse. Screenshot. Insumo do `nao_encontrado` da Fase 1.
 
 ### Task 3: Limpeza explícita do rascunho
 
@@ -77,9 +77,9 @@ Expected: preço do portal ≈ preço manual de hoje (founder digitou hoje; pequ
 **Interfaces:**
 - Produces: procedimento de limpeza reproduzível pela edge (seletores de remover item / descartar rascunho) — **critério (2) do gate**.
 
-- [ ] **Step 1: Remover os 2 itens** — localizar o controle de exclusão por linha no `#datatable_itens` (ícone/botão de remover), remover GL e QT; screenshot do datatable vazio. Anotar o seletor.
-- [ ] **Step 2: Abandonar** — navegar para fora da tela de pedido SEM efetivar.
-- [ ] **Step 3: Verificar que não sobrou rascunho ativo** — voltar à área de pedidos/rascunhos do portal e confirmar que não há rascunho pendente do run (ou que o rascunho vazio é inócuo). Screenshot. Se o portal exibir rascunho pendente NÃO-limpável → anotar como risco (a spec de junho manda cleanup explícito; auto-expire é rede, não plano).
+- [x] **Step 1: Remover os 2 itens** — localizar o controle de exclusão por linha no `#datatable_itens` (ícone/botão de remover), remover GL e QT; screenshot do datatable vazio. Anotar o seletor.
+- [x] **Step 2: Abandonar** — navegar para fora da tela de pedido SEM efetivar.
+- [x] **Step 3: Verificar que não sobrou rascunho ativo** — voltar à área de pedidos/rascunhos do portal e confirmar que não há rascunho pendente do run (ou que o rascunho vazio é inócuo). Screenshot. Se o portal exibir rascunho pendente NÃO-limpável → anotar como risco (a spec de junho manda cleanup explícito; auto-expire é rede, não plano).
 
 ### Task 4: Verificação pós-spike — nenhum PO nasceu (critério 3)
 
@@ -88,7 +88,7 @@ Expected: preço do portal ≈ preço manual de hoje (founder digitou hoje; pequ
 **Interfaces:**
 - Consumes: `baseline_pos` da Task 1.
 
-- [ ] **Step 1: Espelho inalterado**
+- [x] **Step 1: Espelho inalterado**
 
 Run:
 ```bash
@@ -96,16 +96,16 @@ Run:
 ```
 Expected: idêntico à baseline (nenhum PO novo).
 
-- [ ] **Step 2: Portal inalterado** — re-abrir a listagem de pedidos do portal; protocolo mais recente = o mesmo da Task 1/Step 3. Screenshot.
+- [x] **Step 2: Portal inalterado** — re-abrir a listagem de pedidos do portal; protocolo mais recente = o mesmo da Task 1/Step 3. Screenshot.
 
 ### Task 5: Relatório go/no-go + registro
 
 **Files:**
 - Modify: `docs/superpowers/specs/2026-07-14-sayerlack-captura-preco-embalagem-design.md` (status da Fase 0 + achados empíricos: colunas do datatable, seletor de remoção, comportamento do select2 vazio)
 
-- [ ] **Step 1: Redigir veredito no chat** — os 3 critérios com evidência (screenshots + queries); decisão GO (→ escrever plano da Fase 1 com os seletores colhidos) ou NO-GO (→ registrar que o scraping sai do roadmap; manual permanece).
-- [ ] **Step 2: Anexar achados à spec** — seção "Achados do spike-A (2026-07-14)" com os dados empíricos.
-- [ ] **Step 3: Commit**
+- [x] **Step 1: Redigir veredito no chat** — os 3 critérios com evidência (screenshots + queries); decisão GO (→ escrever plano da Fase 1 com os seletores colhidos) ou NO-GO (→ registrar que o scraping sai do roadmap; manual permanece).
+- [x] **Step 2: Anexar achados à spec** — seção "Achados do spike-A (2026-07-14)" com os dados empíricos.
+- [x] **Step 3: Commit**
 
 ```bash
 git add docs/superpowers/specs/2026-07-14-sayerlack-captura-preco-embalagem-design.md docs/superpowers/plans/2026-07-14-sayerlack-captura-preco-fase0-spike.md
