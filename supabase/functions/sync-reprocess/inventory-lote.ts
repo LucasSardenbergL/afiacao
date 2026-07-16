@@ -66,14 +66,32 @@ export function acumularPosicoesDaPagina(
   for (const prod of produtos) {
     const codProd = Number(prod.nCodProd); // Omie pode devolver string; chave do Map é number
     if (!Number.isSafeInteger(codProd) || codProd <= 0) continue;
-    posicoes.set(codProd, {
-      saldo: prod.nSaldo ?? 0,
-      cmc: prod.nCMC ?? 0,
-      precoMedio: prod.nPrecoMedio ?? 0,
-    });
+    const saldo = Number(prod.nSaldo ?? 0);
+    const cmc = Number(prod.nCMC ?? 0);
+    const precoMedio = Number(prod.nPrecoMedio ?? 0);
+    // Drift de contrato (NaN/±Inf/lixo) descarta o ITEM, não o lote: em chunk de 500 um único
+    // valor malformado derrubaria o statement inteiro no Postgres (no N+1 o dano era 1 produto).
+    // Nunca clampa lixo para 0 — seria fabricação.
+    if (!Number.isFinite(saldo) || !Number.isFinite(cmc) || !Number.isFinite(precoMedio)) continue;
+    posicoes.set(codProd, { saldo, cmc, precoMedio });
     validos++;
   }
   return validos;
+}
+
+// Valida o nTotPaginas DECLARADO na resposta — fail-FAST (Codex P1): um nTotPaginas lixo
+// gigante (ex.: 100000) não pode ser descoberto só na página maxPaginas+1, depois de ~90s de
+// chamadas Omie — isso reproduziria o próprio 546. Lixo não-inteiro/0/negativo degrada para 1
+// (fiel ao `|| 1` histórico: processa a página que JÁ veio e para).
+export function validarTotalPaginas(nTot: number | undefined, maxPaginas: number): number {
+  const total = Number(nTot ?? 1);
+  if (!Number.isSafeInteger(total) || total < 1) return 1;
+  if (total > maxPaginas) {
+    throw new Error(
+      `nTotPaginas=${total} acima do teto anti-runaway (${maxPaginas}) — abortando fail-fast antes de paginar`,
+    );
+  }
+  return total;
 }
 
 export type VeredictoPagina = "processar" | "fim" | "anomalia";

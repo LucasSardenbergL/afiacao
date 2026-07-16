@@ -18,6 +18,7 @@ import {
   MAX_PAGINAS_POS_ESTOQUE,
   particionarCustos,
   planejarEscritaInventario,
+  validarTotalPaginas,
   type LinhaProdutoLocal,
   type PosicaoEstoque,
 } from "./inventory-lote.ts";
@@ -530,7 +531,6 @@ async function reprocessInventory(
   const windowStart = new Date(windowEnd.getTime() - 1 * 24 * 60 * 60 * 1000);
   const logId = await createReprocessLog(db, "inventory", account, reprocessType, windowStart, windowEnd);
   const startTime = Date.now();
-  const nowIso = new Date().toISOString();
 
   let upserts = 0;
   let divergences = 0;
@@ -543,16 +543,15 @@ async function reprocessInventory(
     let totalPaginas = 1;
 
     while (pagina <= totalPaginas) {
-      if (pagina > MAX_PAGINAS_POS_ESTOQUE) {
-        throw new Error(`guard anti-runaway: >${MAX_PAGINAS_POS_ESTOQUE} páginas (nTotPaginas=${totalPaginas})`);
-      }
       const result = (await callOmie(account, "estoque/consulta/", "ListarPosEstoque", {
         nPagina: pagina,
         nRegPorPagina: 100,
         dDataPosicao: formatOmieDate(new Date()),
       })) as unknown as OmieListarPosEstoqueResponse;
 
-      totalPaginas = result.nTotPaginas || 1;
+      // Teto anti-runaway fail-FAST sobre o total DECLARADO (Codex P1): descobrir o runaway
+      // só na página 501, após ~90s de chamadas, reproduziria o próprio 546.
+      totalPaginas = validarTotalPaginas(result.nTotPaginas, MAX_PAGINAS_POS_ESTOQUE);
       const produtos = result.produtos || [];
       const veredicto = avaliarPagina(produtos.length, pagina, totalPaginas);
       if (veredicto === "anomalia") {
@@ -567,10 +566,23 @@ async function reprocessInventory(
       pagina++;
     }
 
+    // Snapshot VAZIO é anomalia, não sucesso (Codex P1): OBEN/COLACOR têm catálogo real
+    // (~785 posições oben) — 0 posições = transitório do Omie mascarado de 200 ou drift de
+    // contrato (nCodProd inválido em massa). Completar 'complete' com 0 mentiria que o
+    // reconcile aconteceu. Nada foi escrito; o ciclo de 2h re-tenta.
     const codProds = [...posicoes.keys()];
+    if (codProds.length === 0) {
+      throw new Error(
+        `snapshot do ListarPosEstoque veio VAZIO (0 posições válidas em ${totalPaginas} página(s) declarada(s)) — fail-closed, nada escrito`,
+      );
+    }
+
+    // Timestamp único da run, capturado APÓS a coleta Omie (Codex P2): encolhe a janela de
+    // regressão de updated_at contra writers concorrentes (computeCosts/analytics-sync).
+    const nowIso = new Date().toISOString();
     let falhasChunk = 0;
 
-    if (codProds.length > 0) {
+    {
       // 2) Resolve omie_products em LOTE (.in() chunked ≤300 fica sob o cap silencioso de
       //    1000 linhas do PostgREST por construção; `account` aqui é convenção EMPRESA —
       //    docs/agent/database.md §5 — igual ao filtro do N+1). Falha de SELECT → THROW:
@@ -604,6 +616,14 @@ async function reprocessInventory(
         } else {
           upserts += chunk.length;
         }
+      }
+      // Falha TOTAL da tabela primária ≠ sucesso parcial (Codex P2): se NENHUM chunk escreveu,
+      // a infra PostgREST está degradada — abortar antes de estoque/custos (status 'error'
+      // honesto via catch), em vez de 'complete' com error_message.
+      if (plano.invRows.length > 0 && upserts === 0) {
+        throw new Error(
+          `todos os ${chunked(plano.invRows, 500).length} chunk(s) de inventory_position falharam — abortando antes de estoque/custos`,
+        );
       }
 
       // 4) omie_products.estoque em LOTE pela PK id (ids vieram de linhas existentes → o

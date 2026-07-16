@@ -20,6 +20,7 @@ import {
   chunked,
   particionarCustos,
   planejarEscritaInventario,
+  validarTotalPaginas,
   type PosicaoEstoque,
 } from "./inventory-lote.ts";
 
@@ -78,6 +79,62 @@ Deno.test("acumular — mesmo código em páginas sucessivas: last-wins (dedupe 
   acumularPosicoesDaPagina(pos, [{ nCodProd: 9, nSaldo: 4, nCMC: 2, nPrecoMedio: 2 }]);
   assertEquals(pos.get(9), { saldo: 4, cmc: 2, precoMedio: 2 });
   assertEquals(pos.size, 1); // duplicata no MESMO statement de upsert quebraria (21000)
+});
+
+// Drift de contrato (Codex P2): um único valor não-numérico (NaN/±Inf/lixo) derrubaria o
+// chunk INTEIRO de 500 no Postgres; no N+1 o dano era restrito àquele produto. Descarta o
+// ITEM (fiel em efeito: produto não atualizado neste ciclo), nunca fabrica 0 de lixo.
+Deno.test("acumular — nSaldo/nCMC/nPrecoMedio não-finito descarta o ITEM, não o lote", () => {
+  const pos = new Map<number, PosicaoEstoque>();
+  const n = acumularPosicoesDaPagina(pos, [
+    { nCodProd: 1, nSaldo: Number.NaN },
+    { nCodProd: 2, nCMC: Number.POSITIVE_INFINITY },
+    { nCodProd: 3, nSaldo: "lixo" as unknown as number },
+    { nCodProd: 4, nSaldo: "5.5" as unknown as number }, // string numérica coage normal
+  ]);
+  assertEquals(n, 1);
+  assertEquals(pos.has(1), false);
+  assertEquals(pos.has(2), false);
+  assertEquals(pos.has(3), false);
+  assertEquals(pos.get(4), { saldo: 5.5, cmc: 0, precoMedio: 0 });
+});
+
+// ════════ validarTotalPaginas — teto fail-FAST (Codex P1: falhar na página 501 é tarde) ════════
+// nTotPaginas=100000 na página 1 faria 500 chamadas Omie (~90s+) antes do guard antigo
+// disparar — reproduzindo o próprio 546. O teto tem de rejeitar a DECLARAÇÃO, não a página.
+
+Deno.test("validarTotalPaginas — declarado dentro do teto passa", () => {
+  assertEquals(validarTotalPaginas(9, 500), 9);
+  assertEquals(validarTotalPaginas(500, 500), 500);
+});
+
+Deno.test("validarTotalPaginas — ausente/0/negativo/fracional/NaN degrada para 1 (fiel ao `|| 1`)", () => {
+  assertEquals(validarTotalPaginas(undefined, 500), 1);
+  assertEquals(validarTotalPaginas(0, 500), 1);
+  assertEquals(validarTotalPaginas(-5, 500), 1);
+  assertEquals(validarTotalPaginas(3.7, 500), 1);
+  assertEquals(validarTotalPaginas(Number.NaN, 500), 1);
+});
+
+Deno.test("validarTotalPaginas — acima do teto LANÇA imediatamente (fail-fast anti-runaway)", () => {
+  let lancou = false;
+  try {
+    validarTotalPaginas(100000, 500);
+  } catch {
+    lancou = true;
+  }
+  assertEquals(lancou, true);
+});
+
+Deno.test("validarTotalPaginas — string numérica do Omie coage antes de validar", () => {
+  assertEquals(validarTotalPaginas("9" as unknown as number, 500), 9);
+  let lancou = false;
+  try {
+    validarTotalPaginas("100000" as unknown as number, 500);
+  } catch {
+    lancou = true;
+  }
+  assertEquals(lancou, true);
 });
 
 // ════════ avaliarPagina — guard de paginação (nTotPaginas é PISO, não verdade) ════════
