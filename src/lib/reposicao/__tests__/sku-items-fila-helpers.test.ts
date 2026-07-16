@@ -3,6 +3,7 @@ import {
   skuItemsBackoffMs,
   skuItemsElegivel,
   skuItemsCompararFila,
+  skuItemsDedupPorRecebimento,
   type SkuItemsFilaControle,
 } from '../sku-items-fila-helpers';
 
@@ -93,5 +94,67 @@ describe('skuItemsCompararFila — nunca-tentadas primeiro, poison pro fim', () 
       'tentada-1x',
       'poison',
     ]);
+  });
+});
+
+describe('skuItemsDedupPorRecebimento', () => {
+  it('N linhas com o MESMO nIdReceb viram 1 (a NFe que fatura N pedidos)', () => {
+    // A forma do passivo medido em prod: 1 NFe fatura N pedidos → N linhas em
+    // purchase_orders_tracking com a mesma chave, e o backfill do sync de NFes grava o
+    // MESMO recebimento no raw_data de todas. Sem dedup, cada uma consultava o mesmo
+    // recebimento e regravava os mesmos itens sob o seu tracking_id: peso N×.
+    const out = skuItemsDedupPorRecebimento([
+      { id: 'pedido-a', nIdReceb: '555' },
+      { id: 'pedido-b', nIdReceb: '555' },
+      { id: 'pedido-c', nIdReceb: '555' },
+    ]);
+    expect(out.map((o) => o.id)).toEqual(['pedido-a']);
+  });
+
+  it('recebimentos DISTINTOS passam todos (não colapsa o legítimo)', () => {
+    const out = skuItemsDedupPorRecebimento([
+      { id: 'a', nIdReceb: '1' },
+      { id: 'b', nIdReceb: '2' },
+      { id: 'c', nIdReceb: '3' },
+    ]);
+    expect(out.map((o) => o.id)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('linha sem nIdReceb passa direto e NÃO deduplica contra outra sem nIdReceb', () => {
+    // Sem nIdReceb não há o que consultar: são o gap de cobertura, contadas à parte pelo
+    // chamador. Colapsá-las entre si (todas com chave `null`) esconderia o gap.
+    const out = skuItemsDedupPorRecebimento([
+      { id: 'sem-1', nIdReceb: null },
+      { id: 'sem-2', nIdReceb: null },
+      { id: 'com', nIdReceb: '9' },
+    ]);
+    expect(out.map((o) => o.id)).toEqual(['sem-1', 'sem-2', 'com']);
+  });
+
+  it('a eleita é a PRIMEIRA da ordem da fila — dedup preserva a prioridade, não a atropela', () => {
+    // A fila chega ordenada earliest-deadline-first. Se o dedup elegesse outra que não a
+    // primeira, a NFe prestes a expirar perderia a vez pra uma folgada.
+    const fila = [
+      { id: 'poison', tentativas: 5, t2: '2026-07-14T00:00:00+00:00', nIdReceb: '777' },
+      { id: 'virgem', tentativas: 0, t2: '2026-06-15T00:00:00+00:00', nIdReceb: '777' },
+    ].sort(skuItemsCompararFila);
+    const out = skuItemsDedupPorRecebimento(fila);
+    expect(out.map((o) => o.id)).toEqual(['virgem']);
+  });
+
+  it('eleição é DETERMINÍSTICA entre runs quando as irmãs empatam', () => {
+    // Irmãs da mesma NFe têm t2 DIFERENTE em prod (o sync de NFes preserva o t2
+    // pré-existente de cada pedido via `??`), mas quando empatam o id desempata. Sem
+    // ordem total, dois runs elegeriam linhas diferentes e o item sem pedido casado
+    // pousaria ora numa, ora noutra — criando a duplicata que o dedup veio matar.
+    const mesmoT2 = '2026-07-01T00:00:00+00:00';
+    const eleger = (ordemDeChegada: Array<{ id: string; tentativas: number; t2: string; nIdReceb: string }>) =>
+      skuItemsDedupPorRecebimento([...ordemDeChegada].sort(skuItemsCompararFila))[0].id;
+
+    const x = { id: 'bbb', tentativas: 0, t2: mesmoT2, nIdReceb: '42' };
+    const y = { id: 'aaa', tentativas: 0, t2: mesmoT2, nIdReceb: '42' };
+    // a MESMA fila chegando em ordens opostas tem de eleger a MESMA linha
+    expect(eleger([x, y])).toBe('aaa');
+    expect(eleger([y, x])).toBe('aaa');
   });
 });

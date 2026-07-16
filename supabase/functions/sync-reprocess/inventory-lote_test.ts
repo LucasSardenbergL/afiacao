@@ -182,8 +182,8 @@ function posicoesBase(): Map<number, PosicaoEstoque> {
 }
 
 const LOCAIS_BASE = [
-  { id: "a", omie_codigo_produto: 10, estoque: 5 },
-  { id: "b", omie_codigo_produto: 20, estoque: 7 },
+  { id: "a", omie_codigo_produto: 10, estoque: 5, codigo: "SKU-A", descricao: "Produto A" },
+  { id: "b", omie_codigo_produto: 20, estoque: 7, codigo: "SKU-B", descricao: "Produto B" },
 ];
 
 Deno.test("planejar — divergência conta APENAS produto local com estoque !== saldo", () => {
@@ -203,10 +203,31 @@ Deno.test("planejar — invRows cobre TODOS os códigos; sem linha local → pro
 Deno.test("planejar — stockRows só para produto local resolvido (espelha estoque mesmo sem divergência)", () => {
   const plano = planejarEscritaInventario(posicoesBase(), LOCAIS_BASE, "oben", NOW);
   // O N+1 atualizava omie_products.estoque INCONDICIONALMENTE quando a linha existia — preservado.
+  // Shape do hotfix pós-prod (23502): o upsert de estoque conflita por (omie_codigo_produto,
+  // account) — o payload TEM de carregar as colunas NOT NULL sem default (codigo, descricao)
+  // lidas do próprio resolve, senão a tupla proposta do INSERT..ON CONFLICT viola NOT NULL
+  // ANTES de o conflito ser arbitrado (foi o que derrubou os 2 chunks no ciclo 18:15 UTC).
+  // Upsert pela PK id com payload completo seria pior: conflito DUPLO (PK + uniq) → 23505.
   assertEquals(plano.stockRows, [
-    { id: "a", estoque: 5, updated_at: NOW },
-    { id: "b", estoque: 1, updated_at: NOW },
+    { omie_codigo_produto: 10, account: "oben", codigo: "SKU-A", descricao: "Produto A", estoque: 5, updated_at: NOW },
+    { omie_codigo_produto: 20, account: "oben", codigo: "SKU-B", descricao: "Produto B", estoque: 1, updated_at: NOW },
   ]);
+});
+
+Deno.test("planejar — linha local sem codigo/descricao NÃO entra em stockRows (nunca propõe NULL em NOT NULL)", () => {
+  const pos = new Map<number, PosicaoEstoque>();
+  pos.set(10, { saldo: 5, cmc: 2, precoMedio: 3 });
+  const plano = planejarEscritaInventario(
+    pos,
+    [{ id: "a", omie_codigo_produto: 10, estoque: 5, codigo: null, descricao: "Produto A" }],
+    "oben",
+    NOW,
+  );
+  // Impossível pelo schema (NOT NULL), mas se o resolve devolver null: pular o item preserva
+  // posição/custos e não derruba o chunk de estoque — nunca fabricar ""/placeholder.
+  assertEquals(plano.stockRows, []);
+  assertEquals(plano.invRows.length, 1);
+  assertEquals(plano.custoCandidatos, [{ product_id: "a", cmc: 2 }]);
 });
 
 Deno.test("planejar — custoCandidatos exige product_id resolvido E cmc > 0 (nunca custo fabricado)", () => {
