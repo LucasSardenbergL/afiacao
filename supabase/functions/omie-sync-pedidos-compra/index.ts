@@ -445,28 +445,26 @@ async function syncEmpresa(
       break;
     }
 
-    // Resposta 2xx (sem fault) que NÃO seja exatamente uma LISTA conhecida de pedidos = shape ANÔMALO (2xx
-    // não-JSON → {raw}; alias em tipo CONFLITANTE como pedidos_pesquisa:"" ; mudança de contrato). NÃO é "página
-    // vazia legítima" (o Omie sinaliza fim com HTTP 500 + faultstring "sem registros", tratado acima) → é
-    // TRUNCAMENTO: aborta e invalida a publicação (senão um run parcial vira "válido" e carimba last_seen
-    // incompleto — Codex v3.3/v3.4 P2). RIGOROSO: exige ≥1 alias ARRAY e NENHUM alias presente em tipo conflitante
-    // (o `??` da extração pegava o 1º não-null, mesmo string vazia → length 0 → fim espúrio).
+    // Resposta 2xx (sem fault) que NÃO seja exatamente UMA lista conhecida de pedidos = shape ANÔMALO (2xx
+    // não-JSON → {raw}; alias em tipo CONFLITANTE como pedidos_pesquisa:"" ; 2 aliases array divergentes;
+    // mudança de contrato). NÃO é "página vazia legítima" (o Omie sinaliza fim com HTTP 500 + faultstring "sem
+    // registros", tratado acima) → é TRUNCAMENTO: aborta e invalida a publicação (senão um run parcial vira
+    // "válido" e carimba last_seen incompleto — Codex v3.3/v3.4/v3.5 P2).
     const aliases = [resp?.pedidos_pesquisa, resp?.pedido_compra_produto, resp?.pedidoCompraProduto];
-    const algumArray = aliases.some((a) => Array.isArray(a));
+    const listas = aliases.filter((a): a is OmiePedido[] => Array.isArray(a));
     const algumConflitante = aliases.some((a) => a !== undefined && a !== null && !Array.isArray(a));
-    const temListaConhecida = algumArray && !algumConflitante;
+    // EXATAMENTE 1 lista: o contrato do Omie declara só `pedidos_pesquisa`. Com 2 aliases array a extração
+    // escolhia o 1º — se ele viesse VAZIO e o outro CHEIO, virava fim espúrio e publicava marcador vazio
+    // falso-válido (Codex v3.5 P2). Fail-closed: 0 listas, 2+ listas ou alias conflitante → abort.
+    const temListaConhecida = listas.length === 1 && !algumConflitante;
     if (!temListaConhecida) {
-      console.error(`[sync-pedidos] empresa=${empresa} pagina=${pagina} resposta anômala (lista ausente ou em tipo conflitante) — abort/invalida publicação`);
+      console.error(`[sync-pedidos] empresa=${empresa} pagina=${pagina} resposta anômala (listas=${listas.length}, conflitante=${algumConflitante}) — abort/invalida publicação`);
       summary.erros++;
       abortado = true;
       break;
     }
 
-    let pedidos: OmiePedido[] =
-      (Array.isArray(resp.pedidos_pesquisa) ? resp.pedidos_pesquisa : null) ??
-      (Array.isArray(resp.pedido_compra_produto) ? resp.pedido_compra_produto : null) ??
-      (Array.isArray(resp.pedidoCompraProduto) ? resp.pedidoCompraProduto : null) ??
-      [];
+    let pedidos: OmiePedido[] = listas[0];
 
     if (pedidos.length === 0) { // lista conhecida VAZIA = página vazia legítima = FIM real (não nTotalPaginas)
       fim = true;
@@ -487,13 +485,17 @@ async function syncEmpresa(
     // via reposicao_publicar_run_completo — NUNCA carimba last_seen durante o upsert (Codex P1 #1).
     for (const p of pedidos) {
       const raw = p?.cabecalho_consulta?.nCodPed ?? p?.cabecalho?.nCodPed;
-      const nCodPed = Number(raw);
-      if (raw !== null && raw !== undefined && raw !== "" && Number.isSafeInteger(nCodPed) && nCodPed > 0) {
-        idsVistos.add(nCodPed);
+      // CANÔNICO = number inteiro seguro > 0, ou string de DÍGITOS (o contrato do Omie declara nCodPed integer).
+      // Não usar Number(raw) direto: ele COAGE true→1, "1e3"→1000, [5]→5, " 7 "→7 — entraria um ID ERRADO no
+      // sinal sem invalidar nada (Codex v3.5 P2). Qualquer outra representação = ilegível → fail-closed.
+      const canonico = (typeof raw === "number" && Number.isSafeInteger(raw) && raw > 0) ||
+        (typeof raw === "string" && /^\d+$/.test(raw) && Number.isSafeInteger(Number(raw)) && Number(raw) > 0);
+      if (canonico) {
+        idsVistos.add(Number(raw));
       } else {
-        // nCodPed AUSENTE/ilegível/inseguro (>2^53): o registro não é rastreável no sinal → o run ficaria
-        // incompleto e o PO viraria candidato espúrio. Fail-closed: invalida a PUBLICAÇÃO (Codex v3.4 P2). Não
-        // incrementa erros (não polui o heartbeat/sync). Na prática o nCodPed do Omie é sempre canônico e ≪ 2^53.
+        // nCodPed AUSENTE/ilegível/não-canônico/inseguro (>2^53): o registro não é rastreável no sinal → o run
+        // ficaria incompleto e o PO viraria candidato espúrio. Fail-closed: invalida a PUBLICAÇÃO (Codex v3.4/v3.5
+        // P2). Não incrementa erros (não polui o heartbeat/sync). Na prática o nCodPed do Omie é sempre canônico.
         console.error(`[sync-pedidos] empresa=${empresa} nCodPed não-canônico (${JSON.stringify(raw)}) — invalida publicação`);
         coletaInvalidada = true;
       }

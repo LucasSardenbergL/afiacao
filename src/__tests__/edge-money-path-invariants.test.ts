@@ -902,7 +902,11 @@ describe('guardrail money-path: publicação diferida de run (edge USA os predic
     expect(
       src,
       'REGRESSÃO: coleta voltou a isFinite — nCodPed > 2^53 arredondaria e carimbaria bigint errado',
-    ).toMatch(/Number\.isSafeInteger\(nCodPed\)/);
+    ).toMatch(/Number\.isSafeInteger\(raw\)/);
+    expect(
+      src,
+      'REGRESSÃO Codex v3.5 P2: coleta voltou a Number(raw) cru — coage true→1, "1e3"→1000, [5]→5 (ID ERRADO no sinal)',
+    ).toContain('const canonico');
     expect(
       src,
       'REGRESSÃO Codex v3.4 P2: coleta não invalida mais a publicação em nCodPed não-canônico',
@@ -939,6 +943,9 @@ describe('guardrail money-path: publicação diferida de run (edge USA os predic
     // ambos); e um alias presente em tipo conflitante (pedidos_pesquisa:"") não pode virar fim espúrio.
     expect(src, 'a checagem de fault não cobre faultcode (só faultstring)').toMatch(/faultstring \|\| resp\?\.faultcode/);
     expect(src, 'a edge não rejeita aliases em tipo conflitante (Codex v3.4 P2)').toContain('algumConflitante');
+    // v3.5 P2: 2 aliases ARRAY (um vazio, outro cheio) → a extração pegava o 1º (vazio) → fim espúrio + marcador
+    // vazio falso-válido. O contrato do Omie declara só pedidos_pesquisa → exigir EXATAMENTE 1 lista.
+    expect(src, 'a edge não exige EXATAMENTE 1 lista de pedidos (Codex v3.5 P2)').toMatch(/listas\.length === 1/);
   });
 
   it('PARIDADE: o bloco espelhado no edge é IDÊNTICO ao helper de src/ (pega reversão do Lovable)', () => {
