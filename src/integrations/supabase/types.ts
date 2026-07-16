@@ -17230,6 +17230,36 @@ export type Database = {
         }
         Relationships: []
       }
+      v_sku_leadtime_efetivo: {
+        Row: {
+          dedup_key: string | null
+          empresa: Database["public"]["Enums"]["empresa_reposicao"] | null
+          fornecedor_codigo_omie: number | null
+          fornecedor_nome: string | null
+          grupo_leadtime: string | null
+          lt_bruto_dias_uteis: number | null
+          lt_faturamento_dias_uteis: number | null
+          lt_logistica_dias_uteis: number | null
+          n_copias_origem: number | null
+          nfe_chave_acesso: string | null
+          origem_compra: string | null
+          quantidade_pedida: number | null
+          quantidade_recebida: number | null
+          sku_codigo: string | null
+          sku_codigo_omie: number | null
+          sku_descricao: string | null
+          sku_ncm: string | null
+          sku_unidade: string | null
+          t1_data_pedido: string | null
+          t2_data_faturamento: string | null
+          t3_data_cte: string | null
+          t4_data_recebimento: string | null
+          valor_total: number | null
+          valor_unitario: number | null
+          veio_de_duplicata: boolean | null
+        }
+        Relationships: []
+      }
       v_sku_leadtime_estatisticas: {
         Row: {
           empresa: string | null
