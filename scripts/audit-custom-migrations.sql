@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 364
+-- Total de custom migrations: 367
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -403,7 +403,10 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260713010000', 'whatsapp_templates_hsm', '20260713010000_whatsapp_templates_hsm.sql'),
   ('20260713020000', 'whatsapp_pendentes_rpc', '20260713020000_whatsapp_pendentes_rpc.sql'),
   ('20260713030000', 'whatsapp_funil', '20260713030000_whatsapp_funil.sql'),
-  ('20260714215547', 'omie_nfe_recebimento_crons', '20260714215547_omie_nfe_recebimento_crons.sql')
+  ('20260713160000', 'carteira_rebuild_lease', '20260713160000_carteira_rebuild_lease.sql'),
+  ('20260714215547', 'omie_nfe_recebimento_crons', '20260714215547_omie_nfe_recebimento_crons.sql'),
+  ('20260715001500', 'sku_items_sync_controle', '20260715001500_sku_items_sync_controle.sql'),
+  ('20260716162000', 'sayerlack_captura_precos_fase1', '20260716162000_sayerlack_captura_precos_fase1.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -1694,8 +1697,23 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('whatsapp_pendentes_rpc', 'trigger', 'public', 'trg_wa_msg_last_outbound', 'whatsapp_messages'),
   ('whatsapp_funil', 'function', 'public', 'get_whatsapp_funil', ''),
   ('whatsapp_funil', 'index', 'public', 'idx_so_whatsapp_conv', 'sales_orders'),
+  ('carteira_rebuild_lease', 'function', 'public', 'claim_carteira_rebuild', ''),
+  ('carteira_rebuild_lease', 'function', 'public', 'finalizar_carteira_rebuild', ''),
+  ('carteira_rebuild_lease', 'rls_policy', 'public', 'carteira_rebuild_lease_no_insert', 'sync_state'),
+  ('carteira_rebuild_lease', 'rls_policy', 'public', 'carteira_rebuild_lease_no_update', 'sync_state'),
+  ('carteira_rebuild_lease', 'rls_policy', 'public', 'carteira_rebuild_lease_no_delete', 'sync_state'),
   ('omie_nfe_recebimento_crons', 'cron_job', 'cron', 'omie-nfe-recebimento-import-1h', ''),
-  ('omie_nfe_recebimento_crons', 'cron_job', 'cron', 'omie-nfe-reconcile-1h', '')
+  ('omie_nfe_recebimento_crons', 'cron_job', 'cron', 'omie-nfe-reconcile-1h', ''),
+  ('sku_items_sync_controle', 'table', 'public', 'sku_items_sync_controle', ''),
+  ('sku_items_sync_controle', 'index', 'public', 'idx_sku_items_sync_controle_fila', 'sku_items_sync_controle'),
+  ('sayerlack_captura_precos_fase1', 'table', 'public', 'sku_preco_captura_run', ''),
+  ('sayerlack_captura_precos_fase1', 'table', 'public', 'sku_preco_captura_run_item', ''),
+  ('sayerlack_captura_precos_fase1', 'index', 'public', 'idx_sku_preco_captura_run_lookup', 'sku_preco_captura_run'),
+  ('sayerlack_captura_precos_fase1', 'index', 'public', 'idx_sku_preco_captura_run_item_run', 'sku_preco_captura_run_item'),
+  ('sayerlack_captura_precos_fase1', 'index', 'public', 'idx_sku_preco_captura_run_item_recente', 'sku_preco_captura_run_item'),
+  ('sayerlack_captura_precos_fase1', 'cron_job', 'cron', 'sayerlack-captura-precos-mensal', ''),
+  ('sayerlack_captura_precos_fase1', 'rls_policy', 'public', 'sku_preco_captura_run_select_staff', 'sku_preco_captura_run'),
+  ('sayerlack_captura_precos_fase1', 'rls_policy', 'public', 'sku_preco_captura_run_item_select_staff', 'sku_preco_captura_run_item')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -3034,8 +3052,23 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('whatsapp_pendentes_rpc', 'trigger', 'public', 'trg_wa_msg_last_outbound', 'whatsapp_messages'),
   ('whatsapp_funil', 'function', 'public', 'get_whatsapp_funil', ''),
   ('whatsapp_funil', 'index', 'public', 'idx_so_whatsapp_conv', 'sales_orders'),
+  ('carteira_rebuild_lease', 'function', 'public', 'claim_carteira_rebuild', ''),
+  ('carteira_rebuild_lease', 'function', 'public', 'finalizar_carteira_rebuild', ''),
+  ('carteira_rebuild_lease', 'rls_policy', 'public', 'carteira_rebuild_lease_no_insert', 'sync_state'),
+  ('carteira_rebuild_lease', 'rls_policy', 'public', 'carteira_rebuild_lease_no_update', 'sync_state'),
+  ('carteira_rebuild_lease', 'rls_policy', 'public', 'carteira_rebuild_lease_no_delete', 'sync_state'),
   ('omie_nfe_recebimento_crons', 'cron_job', 'cron', 'omie-nfe-recebimento-import-1h', ''),
-  ('omie_nfe_recebimento_crons', 'cron_job', 'cron', 'omie-nfe-reconcile-1h', '')
+  ('omie_nfe_recebimento_crons', 'cron_job', 'cron', 'omie-nfe-reconcile-1h', ''),
+  ('sku_items_sync_controle', 'table', 'public', 'sku_items_sync_controle', ''),
+  ('sku_items_sync_controle', 'index', 'public', 'idx_sku_items_sync_controle_fila', 'sku_items_sync_controle'),
+  ('sayerlack_captura_precos_fase1', 'table', 'public', 'sku_preco_captura_run', ''),
+  ('sayerlack_captura_precos_fase1', 'table', 'public', 'sku_preco_captura_run_item', ''),
+  ('sayerlack_captura_precos_fase1', 'index', 'public', 'idx_sku_preco_captura_run_lookup', 'sku_preco_captura_run'),
+  ('sayerlack_captura_precos_fase1', 'index', 'public', 'idx_sku_preco_captura_run_item_run', 'sku_preco_captura_run_item'),
+  ('sayerlack_captura_precos_fase1', 'index', 'public', 'idx_sku_preco_captura_run_item_recente', 'sku_preco_captura_run_item'),
+  ('sayerlack_captura_precos_fase1', 'cron_job', 'cron', 'sayerlack-captura-precos-mensal', ''),
+  ('sayerlack_captura_precos_fase1', 'rls_policy', 'public', 'sku_preco_captura_run_select_staff', 'sku_preco_captura_run'),
+  ('sayerlack_captura_precos_fase1', 'rls_policy', 'public', 'sku_preco_captura_run_item_select_staff', 'sku_preco_captura_run_item')
 )
 SELECT
   e.migration,

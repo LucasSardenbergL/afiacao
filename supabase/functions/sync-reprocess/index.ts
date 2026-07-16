@@ -11,6 +11,17 @@ import {
   type ItemDesejado,
   type ItemLocal,
 } from "../_shared/omie-pedido.ts";
+import {
+  acumularPosicoesDaPagina,
+  avaliarPagina,
+  chunked,
+  MAX_PAGINAS_POS_ESTOQUE,
+  particionarCustos,
+  planejarEscritaInventario,
+  validarTotalPaginas,
+  type LinhaProdutoLocal,
+  type PosicaoEstoque,
+} from "./inventory-lote.ts";
 
 const OMIE_API_URL = "https://app.omie.com.br/api/v1";
 
@@ -505,6 +516,11 @@ async function reprocessProducts(
 }
 
 // ======== REPROCESS INVENTORY ========
+// Em LOTE por invocação, NÃO N+1: o desenho antigo fazia até 5 round-trips PostgREST POR
+// produto (~3.000+ requests p/ ~785 produtos OBEN) e estourava o worker budget → HTTP 546
+// WORKER_RESOURCE_LIMIT no cron operational, morte SEM exceção (o catch não roda) e órfã
+// `running` em sync_reprocess_log. Espelha o syncInventory do omie-analytics-sync (a MESMA
+// operação ListarPosEstoque, em lote). Decisão pura + testes: ./inventory-lote.ts.
 
 async function reprocessInventory(
   db: SupabaseClient,
@@ -520,6 +536,9 @@ async function reprocessInventory(
   let divergences = 0;
 
   try {
+    // 1) COLETA todas as páginas do Omie em memória (dedupe last-wins por código — duplicata
+    //    no MESMO statement de upsert daria 21000 "cannot affect row a second time").
+    const posicoes = new Map<number, PosicaoEstoque>();
     let pagina = 1;
     let totalPaginas = 1;
 
@@ -530,75 +549,133 @@ async function reprocessInventory(
         dDataPosicao: formatOmieDate(new Date()),
       })) as unknown as OmieListarPosEstoqueResponse;
 
-      totalPaginas = result.nTotPaginas || 1;
+      // Teto anti-runaway fail-FAST sobre o total DECLARADO (Codex P1): descobrir o runaway
+      // só na página 501, após ~90s de chamadas, reproduziria o próprio 546.
+      totalPaginas = validarTotalPaginas(result.nTotPaginas, MAX_PAGINAS_POS_ESTOQUE);
       const produtos = result.produtos || [];
-
-      for (const prod of produtos) {
-        const codProd = prod.nCodProd;
-        if (!codProd) continue;
-
-        const saldo = prod.nSaldo ?? 0;
-        const cmc = prod.nCMC ?? 0;
-        const precoMedio = prod.nPrecoMedio ?? 0;
-
-        // Check divergence with local
-        const { data: existing } = await db
-          .from("omie_products")
-          .select("id, estoque")
-          .eq("omie_codigo_produto", codProd)
-          .eq("account", account)
-          .maybeSingle();
-
-        if (existing && existing.estoque !== saldo) {
-          divergences++;
-        }
-
-        // Upsert inventory_position
-        await db.from("inventory_position").upsert({
-          omie_codigo_produto: codProd,
-          product_id: existing?.id || null,
-          saldo,
-          cmc,
-          preco_medio: precoMedio,
-          account,
-          synced_at: new Date().toISOString(),
-        }, { onConflict: "omie_codigo_produto,account" });
-
-        // Update omie_products stock
-        if (existing?.id) {
-          await db.from("omie_products")
-            .update({ estoque: saldo, updated_at: new Date().toISOString() })
-            .eq("id", existing.id);
-        }
-
-        // Update product_costs CMC
-        if (existing?.id && cmc > 0) {
-          const { data: costRow } = await db
-            .from("product_costs")
-            .select("id")
-            .eq("product_id", existing.id)
-            .maybeSingle();
-
-          if (costRow) {
-            await db.from("product_costs")
-              .update({ cmc, updated_at: new Date().toISOString() })
-              .eq("id", costRow.id);
-          } else {
-            await db.from("product_costs").insert({
-              product_id: existing.id,
-              cost_price: cmc,
-              cmc,
-              cost_source: "CMC",
-              cost_confidence: 0.7,
-            });
-          }
-        }
-
-        upserts++;
+      const veredicto = avaliarPagina(produtos.length, pagina, totalPaginas);
+      if (veredicto === "anomalia") {
+        // nTotPaginas é PISO (docs/agent/sync.md): página vazia ANTES do fim declarado =
+        // fault transiente disfarçado → aborta fail-closed em vez de completar retrato parcial.
+        throw new Error(`página ${pagina}/${totalPaginas} do ListarPosEstoque veio vazia antes do fim declarado — abortando (retrato parcial)`);
       }
+      if (veredicto === "fim") break;
+      acumularPosicoesDaPagina(posicoes, produtos);
 
       console.log(`[Reprocess][${account}] Inventory page ${pagina}/${totalPaginas}`);
       pagina++;
+    }
+
+    // Snapshot VAZIO é anomalia, não sucesso (Codex P1): OBEN/COLACOR têm catálogo real
+    // (~785 posições oben) — 0 posições = transitório do Omie mascarado de 200 ou drift de
+    // contrato (nCodProd inválido em massa). Completar 'complete' com 0 mentiria que o
+    // reconcile aconteceu. Nada foi escrito; o ciclo de 2h re-tenta.
+    const codProds = [...posicoes.keys()];
+    if (codProds.length === 0) {
+      throw new Error(
+        `snapshot do ListarPosEstoque veio VAZIO (0 posições válidas em ${totalPaginas} página(s) declarada(s)) — fail-closed, nada escrito`,
+      );
+    }
+
+    // Timestamp único da run, capturado APÓS a coleta Omie (Codex P2): encolhe a janela de
+    // regressão de updated_at contra writers concorrentes (computeCosts/analytics-sync).
+    const nowIso = new Date().toISOString();
+    let falhasChunk = 0;
+
+    {
+      // 2) Resolve omie_products em LOTE (.in() chunked ≤300 fica sob o cap silencioso de
+      //    1000 linhas do PostgREST por construção; `account` aqui é convenção EMPRESA —
+      //    docs/agent/database.md §5 — igual ao filtro do N+1). Falha de SELECT → THROW:
+      //    seguir sem o chunk (como o canônico) faria o upsert de posição CLOBBERar
+      //    product_id existente para null. Precisão > recall; o ciclo de 2h re-tenta.
+      const locais: LinhaProdutoLocal[] = [];
+      for (const chunk of chunked(codProds, 300)) {
+        const { data, error } = await db
+          .from("omie_products")
+          .select("id, omie_codigo_produto, estoque, codigo, descricao")
+          .eq("account", account)
+          .in("omie_codigo_produto", chunk);
+        if (error) throw new Error(`resolve omie_products: ${error.message}`);
+        locais.push(...((data ?? []) as unknown as LinhaProdutoLocal[]));
+      }
+
+      const plano = planejarEscritaInventario(posicoes, locais, account, nowIso);
+      divergences = plano.divergences;
+
+      // 3) inventory_position em LOTE (onConflict = UNIQUE(omie_codigo_produto,account)).
+      //    Chunk com erro NÃO derruba a run (idempotente — o próximo ciclo reconcilia), mas
+      //    upserts_count só soma o que FOI escrito e o error_message surfaça (padrão do
+      //    reprocessOrders: nunca 'complete' limpo mentindo).
+      for (const chunk of chunked(plano.invRows, 500)) {
+        const { error } = await db
+          .from("inventory_position")
+          .upsert(chunk, { onConflict: "omie_codigo_produto,account" });
+        if (error) {
+          falhasChunk++;
+          console.error(`[Reprocess][${account}] upsert inventory_position: ${error.message}`);
+        } else {
+          upserts += chunk.length;
+        }
+      }
+      // Falha TOTAL da tabela primária ≠ sucesso parcial (Codex P2): se NENHUM chunk escreveu,
+      // a infra PostgREST está degradada — abortar antes de estoque/custos (status 'error'
+      // honesto via catch), em vez de 'complete' com error_message.
+      if (plano.invRows.length > 0 && upserts === 0) {
+        throw new Error(
+          `todos os ${chunked(plano.invRows, 500).length} chunk(s) de inventory_position falharam — abortando antes de estoque/custos`,
+        );
+      }
+
+      // 4) omie_products.estoque em LOTE por (omie_codigo_produto, account) — o conflito
+      //    arbitrado SEMPRE existe (linhas resolvidas) e a PK gerada nunca conflita. O payload
+      //    carrega codigo/descricao (NOT NULL sem default) lidos do resolve: a tupla proposta
+      //    do INSERT..ON CONFLICT é validada contra NOT NULL ANTES do conflito — payload
+      //    mínimo {id, estoque} tomava 23502 e derrubava o chunk (provado em prod 18:15 UTC;
+      //    upsert pela PK id com payload completo arriscaria 23505 por conflito DUPLO PK+uniq).
+      for (const chunk of chunked(plano.stockRows, 500)) {
+        const { error } = await db
+          .from("omie_products")
+          .upsert(chunk, { onConflict: "omie_codigo_produto,account" });
+        if (error) {
+          falhasChunk++;
+          console.error(`[Reprocess][${account}] upsert estoque omie_products: ${error.message}`);
+        }
+      }
+
+      // 5) product_costs em LOTE: 1 SELECT .in() por chunk → partição update × insert
+      //    (particionarCustos). SELECT falho degrada: os candidatos do chunk caem no insert
+      //    e o ignoreDuplicates (ON CONFLICT DO NOTHING) pula os que já existem — custo
+      //    stale por 1 ciclo, nunca corrupção/clobber de proveniência.
+      if (plano.custoCandidatos.length > 0) {
+        const jaTemCusto = new Set<string>();
+        for (const chunk of chunked(plano.custoCandidatos.map((c) => c.product_id), 300)) {
+          const { data, error } = await db.from("product_costs").select("product_id").in("product_id", chunk);
+          if (error) {
+            falhasChunk++;
+            console.error(`[Reprocess][${account}] resolve product_costs: ${error.message}`);
+            continue;
+          }
+          for (const r of data || []) jaTemCusto.add(r.product_id as string);
+        }
+
+        const { atualizar, inserir } = particionarCustos(plano.custoCandidatos, jaTemCusto, nowIso);
+        for (const chunk of chunked(atualizar, 500)) {
+          const { error } = await db.from("product_costs").upsert(chunk, { onConflict: "product_id" });
+          if (error) {
+            falhasChunk++;
+            console.error(`[Reprocess][${account}] upsert cmc product_costs: ${error.message}`);
+          }
+        }
+        for (const chunk of chunked(inserir, 500)) {
+          const { error } = await db
+            .from("product_costs")
+            .upsert(chunk, { onConflict: "product_id", ignoreDuplicates: true });
+          if (error) {
+            falhasChunk++;
+            console.error(`[Reprocess][${account}] insert product_costs: ${error.message}`);
+          }
+        }
+      }
     }
 
     await completeReprocessLog(db, logId, {
@@ -606,6 +683,14 @@ async function reprocessInventory(
       divergences_found: divergences,
       corrections_applied: divergences,
       duration_ms: Date.now() - startTime,
+      metadata: {
+        pages: totalPaginas,
+        total_posicoes: codProds.length,
+        ...(falhasChunk > 0 ? { falhas_chunk: falhasChunk } : {}),
+      },
+      ...(falhasChunk > 0
+        ? { error_message: `${falhasChunk} chunk(s) com erro de escrita (lote parcial — próximo ciclo reconcilia)` }
+        : {}),
     });
 
     return { upserts, divergences, duration_ms: Date.now() - startTime };
