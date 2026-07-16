@@ -12733,6 +12733,107 @@ export type Database = {
           },
         ]
       }
+      sku_preco_captura_run: {
+        Row: {
+          criado_por: string | null
+          disparo: string
+          empresa: string
+          erro: string | null
+          evidencia_url: string | null
+          id: string
+          iniciado_em: string
+          linhas_finais_portal: number | null
+          modo: string
+          status: string
+          terminado_em: string | null
+          total_alvo: number | null
+          total_falha: number | null
+          total_nao_encontrado: number | null
+          total_ok: number | null
+        }
+        Insert: {
+          criado_por?: string | null
+          disparo: string
+          empresa: string
+          erro?: string | null
+          evidencia_url?: string | null
+          id?: string
+          iniciado_em?: string
+          linhas_finais_portal?: number | null
+          modo: string
+          status?: string
+          terminado_em?: string | null
+          total_alvo?: number | null
+          total_falha?: number | null
+          total_nao_encontrado?: number | null
+          total_ok?: number | null
+        }
+        Update: {
+          criado_por?: string | null
+          disparo?: string
+          empresa?: string
+          erro?: string | null
+          evidencia_url?: string | null
+          id?: string
+          iniciado_em?: string
+          linhas_finais_portal?: number | null
+          modo?: string
+          status?: string
+          terminado_em?: string | null
+          total_alvo?: number | null
+          total_falha?: number | null
+          total_nao_encontrado?: number | null
+          total_ok?: number | null
+        }
+        Relationships: []
+      }
+      sku_preco_captura_run_item: {
+        Row: {
+          criado_em: string
+          detalhe: string | null
+          empresa: string
+          fonte: string | null
+          id: number
+          preco: number | null
+          resultado: string
+          run_id: string
+          sku_codigo_omie: string
+          sku_portal: string
+        }
+        Insert: {
+          criado_em?: string
+          detalhe?: string | null
+          empresa: string
+          fonte?: string | null
+          id?: never
+          preco?: number | null
+          resultado: string
+          run_id: string
+          sku_codigo_omie: string
+          sku_portal: string
+        }
+        Update: {
+          criado_em?: string
+          detalhe?: string | null
+          empresa?: string
+          fonte?: string | null
+          id?: never
+          preco?: number | null
+          resultado?: string
+          run_id?: string
+          sku_codigo_omie?: string
+          sku_portal?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sku_preco_captura_run_item_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: false
+            referencedRelation: "sku_preco_captura_run"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       sku_preco_fornecedor_capturado: {
         Row: {
           capturado_em: string
