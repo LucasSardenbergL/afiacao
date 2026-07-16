@@ -47,18 +47,49 @@ export interface CtxPagina {
 
 export const PISO_ZERO: PisoTotais = { registros: 0, paginas: 0 };
 
-const FIM_SEM_REGISTROS_RE = /n[ãa]o existem registros/i;
+// Vocabulário do fault TERMINAL ("sem registros" = fim legítimo, NÃO erro). VERBATIM de
+// pendente-entrada-po.ts:FIM_SEM_REGISTROS — a fonte canônica, já endurecida por 2 rodadas (P2-D: o `\b` após
+// `h[áa]` falhava porque `á` não é `\w`; o `.{0,30}?` entre o verbo e "registros" abria OVER-MATCH — "Não há
+// PERMISSÃO PARA ACESSAR registros" era ERRO virando fim → parava cedo → double-buy). Reescrever este vocabulário
+// aqui divergiu da camada HTTP (que aceita o amplo) e congelava o run: fault terminal legítimo virava anomalia →
+// NENHUM run publicava → o marcador velho persistia → PO excluído nunca virava candidato (Codex #10 P1).
+const FIM_SEM_REGISTROS_RE =
+  /(\bsem\s+registros?\b|\bnenhum\s+registros?\b|n[ãa]o\s+(existem?|h[áa])\s+registros?\b|n[ãa]o\s+foram\s+encontrad\w*\s+registros?\b|\bregistros?\s+n[ãa]o\s+(existem?|foram\s+encontrad\w*|encontrad\w*)\b)/i;
+
+/**
+ * Metadado inteiro do Omie (nPagina/nTotalPaginas/nTotalRegistros) em 3 estados:
+ *   número  = canônico (inteiro seguro >= 0, ou string de DÍGITOS — o contrato do Omie declara integer);
+ *   null    = AUSENTE (undefined/null/"") — legítimo, nem toda resposta traz os totais;
+ *   NaN     = ILEGÍVEL (presente mas não-canônico: true, "x", 1.5, "1e3", [], {}).
+ * Pelo mesmo motivo do lerNCodPed: `Number()` direto COAGE (true→1, "1e3"→1000, [5]→5) e NaN some no
+ * `isFinite`, então ilegível viraria "ausente" e um vazio malformado passaria por "empresa vazia legítima".
+ */
+export function lerInteiroOmie(raw: unknown): number | null {
+  if (raw === undefined || raw === null || raw === "") return null;
+  if (typeof raw === "number") return Number.isSafeInteger(raw) && raw >= 0 ? raw : NaN;
+  if (typeof raw === "string" && /^\d+$/.test(raw)) {
+    const n = Number(raw);
+    return Number.isSafeInteger(n) && n >= 0 ? n : NaN;
+  }
+  return NaN;
+}
+
+/** true = o metadado está PRESENTE mas não é canônico (≠ ausente). */
+function ilegivel(v: number | null): boolean {
+  return typeof v === "number" && Number.isNaN(v);
+}
 
 /**
  * PISO ACUMULADO: o maior total declarado até agora. Nunca decresce — uma resposta terminal SEM totais não pode
  * apagar o que uma página anterior declarou (senão um run que perde as últimas páginas parece completo).
+ * Só acumula CANÔNICO; ilegível é barrado antes, no classificarPagina (aqui seria silencioso).
  */
 export function acumularPiso(resp: OmiePaginaResp, piso: PisoTotais): PisoTotais {
-  const reg = Number(resp?.nTotalRegistros);
-  const pag = Number(resp?.nTotalPaginas);
+  const reg = lerInteiroOmie(resp?.nTotalRegistros);
+  const pag = lerInteiroOmie(resp?.nTotalPaginas);
   return {
-    registros: Number.isFinite(reg) && reg > piso.registros ? reg : piso.registros,
-    paginas: Number.isFinite(pag) && pag > piso.paginas ? pag : piso.paginas,
+    registros: reg !== null && !Number.isNaN(reg) && reg > piso.registros ? reg : piso.registros,
+    paginas: pag !== null && !Number.isNaN(pag) && pag > piso.paginas ? pag : piso.paginas,
   };
 }
 
@@ -107,14 +138,26 @@ function incoerencia(ctx: CtxPagina, o_que: string): string {
 export function classificarPagina(resp: OmiePaginaResp, ctx: CtxPagina): ClassificacaoPagina {
   if (!resp || typeof resp !== "object") return { tipo: "anomalia", motivo: "resposta não é um objeto" };
 
+  // (a0) metadado PRESENTE tem de ser CANÔNICO. Ilegível (true, "x", 1.5, [], {}) NÃO é "ausente": tratá-lo como
+  //      ausente APAGA a evidência de resposta malformada e promove o vazio a "empresa vazia legítima" → publica
+  //      marcador vazio falso-válido (Codex #10 P1). Ausente/"" segue tolerado. Fail-closed: shape torto = anomalia.
+  const nPagina = lerInteiroOmie(resp.nPagina);
+  const nTotalPaginas = lerInteiroOmie(resp.nTotalPaginas);
+  const nTotalRegistros = lerInteiroOmie(resp.nTotalRegistros);
+  if (ilegivel(nPagina)) {
+    return { tipo: "anomalia", motivo: `nPagina não-canônica (${String(resp.nPagina)}) — resposta malformada` };
+  }
+  if (ilegivel(nTotalPaginas)) {
+    return { tipo: "anomalia", motivo: `nTotalPaginas não-canônico (${String(resp.nTotalPaginas)}) — resposta malformada` };
+  }
+  if (ilegivel(nTotalRegistros)) {
+    return { tipo: "anomalia", motivo: `nTotalRegistros não-canônico (${String(resp.nTotalRegistros)}) — resposta malformada` };
+  }
+
   // (a) a página DECLARADA tem de ser a SOLICITADA — resposta stale/misrouted ({nPagina:3} quando pedimos a 2)
   //     publicaria um fim falso. Ausente é tolerado (nem toda resposta traz nPagina); divergente é anomalia.
-  const npRaw = resp.nPagina;
-  if (npRaw !== undefined && npRaw !== null && npRaw !== "") {
-    const np = Number(npRaw);
-    if (!Number.isSafeInteger(np) || np !== ctx.pagina) {
-      return { tipo: "anomalia", motivo: `nPagina declarada (${String(npRaw)}) != solicitada (${ctx.pagina})` };
-    }
+  if (nPagina !== null && nPagina !== ctx.pagina) {
+    return { tipo: "anomalia", motivo: `nPagina declarada (${String(resp.nPagina)}) != solicitada (${ctx.pagina})` };
   }
 
   const aliases = [resp.pedidos_pesquisa, resp.pedido_compra_produto, resp.pedidoCompraProduto];

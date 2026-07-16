@@ -34,9 +34,79 @@ describe('acumularPiso — os totais do Omie são PISO (só crescem, nunca são 
     expect(acumularPiso({ nTotalRegistros: 10, nTotalPaginas: 1 }, piso)).toEqual({ registros: 500, paginas: 5 });
   });
 
-  it('totais ausentes/ilegíveis mantêm o piso zero (empresa vazia legítima)', () => {
+  it('totais AUSENTES mantêm o piso zero (empresa vazia legítima)', () => {
     expect(acumularPiso({}, PISO_ZERO)).toEqual({ registros: 0, paginas: 0 });
-    expect(acumularPiso({ nTotalRegistros: 'x', nTotalPaginas: null }, PISO_ZERO)).toEqual({ registros: 0, paginas: 0 });
+    expect(acumularPiso({ nTotalRegistros: null, nTotalPaginas: undefined }, PISO_ZERO)).toEqual({ registros: 0, paginas: 0 });
+  });
+
+  it('Codex #10: total ILEGÍVEL não acumula lixo — mas quem BARRA é o classificarPagina (ilegível ≠ ausente)', () => {
+    // ⚠️ O teste ANTIGO aqui era FALSO-VERDE: dizia "ausentes/ilegíveis ... (empresa vazia legítima)" e
+    // afirmava {0,0} p/ nTotalRegistros:'x' — CONSAGRANDO o bug. Fundir ausente com ilegível é o erro: ausente
+    // é legítimo (nem toda resposta traz totais); ilegível é resposta MALFORMADA. O piso segue 0 (não há número
+    // para acumular), e a rejeição vive no classificarPagina — provada no describe dele.
+    expect(acumularPiso({ nTotalRegistros: 'x', nTotalPaginas: 'x' }, PISO_ZERO)).toEqual({ registros: 0, paginas: 0 });
+  });
+
+  it('Codex #10: total ilegível NÃO apaga um piso já declarado (não rebaixa)', () => {
+    const piso = acumularPiso({ nTotalRegistros: 505, nTotalPaginas: 6 }, PISO_ZERO);
+    expect(acumularPiso({ nTotalRegistros: 'x', nTotalPaginas: true }, piso)).toEqual({ registros: 505, paginas: 6 });
+  });
+});
+
+describe('Codex #10 P1: metadado do Omie PRESENTE mas não-canônico = anomalia (ilegível ≠ ausente)', () => {
+  // Input do Codex: {nPagina:1, nTotalRegistros:"x", nTotalPaginas:"x", pedidos_pesquisa:[]} → Number("x")=NaN →
+  // isFinite(NaN)=false → o piso conservava {0,0} → lista vazia com piso zero virava "fim" → run completo publicava
+  // ids=[] → marcador VAZIO falso-válido, e TODO PO viraria candidato de uma vez. A raiz é a mesma do lerNCodPed
+  // (Number() COAGE): fui canônico no ID e descuidado nos metadados.
+  it('nTotalRegistros/nTotalPaginas ilegíveis com lista vazia → anomalia (não "empresa vazia")', () => {
+    expect(classificarPagina({ nPagina: 1, nTotalRegistros: 'x', nTotalPaginas: 'x', pedidos_pesquisa: [] }, ctx()))
+      .toMatchObject({ tipo: 'anomalia' });
+  });
+
+  it('nPagina:true escapava porque Number(true)===1 → anomalia', () => {
+    expect(classificarPagina({ nPagina: true, pedidos_pesquisa: [] }, ctx())).toMatchObject({ tipo: 'anomalia' });
+  });
+
+  it('rejeita toda a classe de coerção (1.5, "1e3", [], {}, " 7 ")', () => {
+    for (const lixo of [1.5, '1e3', [], {}, ' 7 ', -1, true] as unknown[]) {
+      expect(classificarPagina({ nTotalRegistros: lixo, pedidos_pesquisa: [] }, ctx()), String(lixo))
+        .toMatchObject({ tipo: 'anomalia' });
+    }
+  });
+
+  it('AUSENTE segue legítimo — empresa vazia real publica (não pode virar falso truncamento)', () => {
+    expect(classificarPagina({ pedidos_pesquisa: [] }, ctx())).toEqual({ tipo: 'fim' });
+    expect(classificarPagina({ nPagina: 1, nTotalRegistros: 0, nTotalPaginas: 0, pedidos_pesquisa: [] }, ctx()))
+      .toEqual({ tipo: 'fim' });
+    // string de dígitos é canônica (o Omie declara integer, mas serializa número às vezes como string)
+    expect(classificarPagina({ nPagina: '1', pedidos_pesquisa: [] }, ctx())).toEqual({ tipo: 'fim' });
+  });
+});
+
+describe('Codex #10 P1: vocabulário do fault terminal = o CANÔNICO (senão o run congela para sempre)', () => {
+  // A camada HTTP (callOmie) aceita estas frases como terminal e DEVOLVE o json ao loop; o parser extraído só
+  // conhecia /não existem registros/ → devolvia anomalia → abort → NENHUM run publicava → o marcador velho
+  // congelava → um PO excluído cujo last_seen == marcador nunca virava candidato → a prova por ID nunca rodava.
+  // Falso-negativo puro. Fix: reusar o regex canônico (pendente-entrada-po.ts), não reescrevê-lo.
+  it('aceita TODO o vocabulário terminal que a camada HTTP aceita', () => {
+    for (
+      const fs of [
+        'Não existem registros para a página informada',
+        'Nenhum registro',
+        'Sem registros',
+        'Não há registros',
+        'Não foram encontrados registros',
+        'Registros não encontrados',
+      ]
+    ) {
+      expect(classificarPagina({ faultcode: '5113', faultstring: fs }, ctx()), fs).toEqual({ tipo: 'fim' });
+    }
+  });
+
+  it('mantém o anti-OVER-MATCH do P2-D: "registros" não-adjacente ao verbo é ERRO, não fim', () => {
+    // "Não há PERMISSÃO PARA ACESSAR registros" = erro real; virar fim pararia a paginação cedo → double-buy.
+    expect(classificarPagina({ faultstring: 'Não há PERMISSÃO PARA ACESSAR registros' }, ctx()))
+      .toMatchObject({ tipo: 'anomalia' });
   });
 });
 
