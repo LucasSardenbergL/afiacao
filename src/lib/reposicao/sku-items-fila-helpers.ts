@@ -43,12 +43,55 @@ export function skuItemsElegivel(
  *  O empate é earliest-deadline-first, não "mais recente primeiro": a NFe só é
  *  visível enquanto está dentro da janela de `dias` do run, então a mais antiga é
  *  a de menor folga — se o guard de 50s corta o run, quem fica de fora deve ser
- *  quem volta amanhã (folga grande), não quem expira sem nunca virar leadtime. */
+ *  quem volta amanhã (folga grande), não quem expira sem nunca virar leadtime.
+ *
+ *  O 3º critério (id) NÃO é cosmético: ele dá ordem TOTAL à fila, e a eleição de
+ *  skuItemsDedupPorRecebimento depende disso pra ser determinística entre runs. Sem
+ *  ele, duas linhas irmãs empatadas elegeriam vencedores diferentes a cada execução e
+ *  o item sem pedido casado pousaria ora numa, ora noutra. (t2 NÃO desempata as irmãs:
+ *  linhas que dividem a mesma NFe têm t2 DIFERENTE — o sync de NFes preserva o valor
+ *  pré-existente de cada pedido via `??`. Auditado em prod 2026-07-16.) */
 export function skuItemsCompararFila(
-  a: { tentativas: number; t2: string },
-  b: { tentativas: number; t2: string },
+  a: { tentativas: number; t2: string; id?: string },
+  b: { tentativas: number; t2: string; id?: string },
 ): number {
   if (a.tentativas !== b.tentativas) return a.tentativas - b.tentativas;
-  return a.t2 === b.t2 ? 0 : a.t2 < b.t2 ? -1 : 1;
+  if (a.t2 !== b.t2) return a.t2 < b.t2 ? -1 : 1;
+  const ai = a.id ?? "";
+  const bi = b.id ?? "";
+  return ai === bi ? 0 : ai < bi ? -1 : 1;
+}
+
+/** Elege UMA linha por (empresa, nIdReceb), preservando a ordem da fila.
+ *
+ *  Por que existe: uma NFe que fatura N pedidos deixa N linhas em
+ *  purchase_orders_tracking com a MESMA nfe_chave_acesso — e o backfillRawData do sync
+ *  de NFes grava o MESMO recebimento (logo o MESMO nIdReceb) no raw_data de todas. Sem
+ *  deduplicar, cada uma consulta o MESMO recebimento e regrava os MESMOS itens sob o
+ *  seu próprio tracking_id: peso N× pra mesma nota na estatística de leadtime, e N
+ *  chamadas Omie onde 1 basta (a pressão de rate-limit que causou o poison de 07-14).
+ *
+ *  ⚠️ A eleita NÃO vira dona do dado: cada item é gravado sob o tracking do SEU pedido
+ *  (nNumPedCompra → numero_contrato_fornecedor). A eleita decide só QUEM chama a Omie,
+ *  e serve de pouso pros itens que não casaram com pedido nenhum. Como o recebimento
+ *  traz os itens dos N pedidos, as N linhas ganham suas linhas de leadtime na MESMA
+ *  chamada e saem da fila juntas — por isso deduplicar aqui não cria poison.
+ *
+ *  Linha sem nIdReceb passa direto (é contada como gap de cobertura pelo chamador). */
+export function skuItemsDedupPorRecebimento<T extends { id: string; nIdReceb: string | null }>(
+  fila: readonly T[],
+): T[] {
+  const vistos = new Set<string>();
+  const out: T[] = [];
+  for (const linha of fila) {
+    if (!linha.nIdReceb) {
+      out.push(linha);
+      continue;
+    }
+    if (vistos.has(linha.nIdReceb)) continue;
+    vistos.add(linha.nIdReceb);
+    out.push(linha);
+  }
+  return out;
 }
 // MIRROR-END

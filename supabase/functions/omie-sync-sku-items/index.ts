@@ -93,6 +93,9 @@ interface EmpresaSummary {
   empresa: Empresa;
   fila_pendente: number;
   fila_em_backoff: number;
+  /** Linhas tiradas da fila por dividirem o nIdReceb com uma já eleita (NFe que fatura
+   *  N pedidos). = chamadas Omie economizadas E duplicatas de leadtime não criadas. */
+  recebimentos_deduplicados: number;
   nfes_processadas: number;
   nfes_sem_nidreceb: number;
   nfes_sem_nidreceb_dias_max: number;
@@ -145,13 +148,56 @@ function skuItemsElegivel(
  *  O empate é earliest-deadline-first, não "mais recente primeiro": a NFe só é
  *  visível enquanto está dentro da janela de `dias` do run, então a mais antiga é
  *  a de menor folga — se o guard de 50s corta o run, quem fica de fora deve ser
- *  quem volta amanhã (folga grande), não quem expira sem nunca virar leadtime. */
+ *  quem volta amanhã (folga grande), não quem expira sem nunca virar leadtime.
+ *
+ *  O 3º critério (id) NÃO é cosmético: ele dá ordem TOTAL à fila, e a eleição de
+ *  skuItemsDedupPorRecebimento depende disso pra ser determinística entre runs. Sem
+ *  ele, duas linhas irmãs empatadas elegeriam vencedores diferentes a cada execução e
+ *  o item sem pedido casado pousaria ora numa, ora noutra. (t2 NÃO desempata as irmãs:
+ *  linhas que dividem a mesma NFe têm t2 DIFERENTE — o sync de NFes preserva o valor
+ *  pré-existente de cada pedido via `??`. Auditado em prod 2026-07-16.) */
 function skuItemsCompararFila(
-  a: { tentativas: number; t2: string },
-  b: { tentativas: number; t2: string },
+  a: { tentativas: number; t2: string; id?: string },
+  b: { tentativas: number; t2: string; id?: string },
 ): number {
   if (a.tentativas !== b.tentativas) return a.tentativas - b.tentativas;
-  return a.t2 === b.t2 ? 0 : a.t2 < b.t2 ? -1 : 1;
+  if (a.t2 !== b.t2) return a.t2 < b.t2 ? -1 : 1;
+  const ai = a.id ?? "";
+  const bi = b.id ?? "";
+  return ai === bi ? 0 : ai < bi ? -1 : 1;
+}
+
+/** Elege UMA linha por (empresa, nIdReceb), preservando a ordem da fila.
+ *
+ *  Por que existe: uma NFe que fatura N pedidos deixa N linhas em
+ *  purchase_orders_tracking com a MESMA nfe_chave_acesso — e o backfillRawData do sync
+ *  de NFes grava o MESMO recebimento (logo o MESMO nIdReceb) no raw_data de todas. Sem
+ *  deduplicar, cada uma consulta o MESMO recebimento e regrava os MESMOS itens sob o
+ *  seu próprio tracking_id: peso N× pra mesma nota na estatística de leadtime, e N
+ *  chamadas Omie onde 1 basta (a pressão de rate-limit que causou o poison de 07-14).
+ *
+ *  ⚠️ A eleita NÃO vira dona do dado: cada item é gravado sob o tracking do SEU pedido
+ *  (nNumPedCompra → numero_contrato_fornecedor). A eleita decide só QUEM chama a Omie,
+ *  e serve de pouso pros itens que não casaram com pedido nenhum. Como o recebimento
+ *  traz os itens dos N pedidos, as N linhas ganham suas linhas de leadtime na MESMA
+ *  chamada e saem da fila juntas — por isso deduplicar aqui não cria poison.
+ *
+ *  Linha sem nIdReceb passa direto (é contada como gap de cobertura pelo chamador). */
+function skuItemsDedupPorRecebimento<T extends { id: string; nIdReceb: string | null }>(
+  fila: readonly T[],
+): T[] {
+  const vistos = new Set<string>();
+  const out: T[] = [];
+  for (const linha of fila) {
+    if (!linha.nIdReceb) {
+      out.push(linha);
+      continue;
+    }
+    if (vistos.has(linha.nIdReceb)) continue;
+    vistos.add(linha.nIdReceb);
+    out.push(linha);
+  }
+  return out;
 }
 // MIRROR-END
 
@@ -258,6 +304,12 @@ interface NFeRow {
   fornecedor_nome: string | null;
   raw_data: NFeRawData | null;
 }
+
+/** NFeRow com o nIdReceb já extraído do raw_data — a fila dedup-a por ele, e o
+ *  raw_data é jsonb MULTI-WRITER (o sync de pedidos o sobrescreve com o payload do
+ *  pedido e apaga o nIdReceb), então lê-lo UMA vez por run evita depender de um campo
+ *  que pode mudar debaixo do loop. */
+type NFeFilaRow = NFeRow & { nIdReceb: string | null };
 
 async function authorizeCronOrStaff(req: Request): Promise<boolean> {
   const SUPA_URL = Deno.env.get("SUPABASE_URL")!;
@@ -476,19 +528,32 @@ Deno.serve(async (req) => {
 
     const agoraMs = Date.now();
     const pendentes = ((nfes ?? []) as NFeRow[]).filter((n) => !existingTrackingIds.has(n.id));
-    const fila = pendentes
+    const filaOrdenada: NFeFilaRow[] = pendentes
+      .map((n) => ({
+        ...n,
+        nIdReceb: n.raw_data?.cabec?.nIdReceb != null
+          ? String(n.raw_data.cabec.nIdReceb)
+          : null,
+      }))
       .filter((n) => skuItemsElegivel(controleMap.get(n.id), agoraMs))
       .sort((a, b) =>
         skuItemsCompararFila(
-          { tentativas: controleMap.get(a.id)?.tentativas ?? 0, t2: a.t2_data_faturamento },
-          { tentativas: controleMap.get(b.id)?.tentativas ?? 0, t2: b.t2_data_faturamento },
+          { tentativas: controleMap.get(a.id)?.tentativas ?? 0, t2: a.t2_data_faturamento, id: a.id },
+          { tentativas: controleMap.get(b.id)?.tentativas ?? 0, t2: b.t2_data_faturamento, id: b.id },
         )
       );
+    // Uma NFe que fatura N pedidos deixa N linhas com o MESMO nIdReceb (o backfill do
+    // sync de NFes o grava em todas). Sem isto, cada uma consulta o MESMO recebimento e
+    // regrava os MESMOS itens sob o seu tracking_id — peso N× na estatística de leadtime.
+    // A eleita só faz a CHAMADA; o destino de cada item é o pedido dele (ver upsert).
+    const fila = skuItemsDedupPorRecebimento(filaOrdenada);
+    const recebimentosDeduplicados = filaOrdenada.length - fila.length;
 
     const summary: EmpresaSummary = {
       empresa,
       fila_pendente: pendentes.length,
-      fila_em_backoff: pendentes.length - fila.length,
+      fila_em_backoff: pendentes.length - filaOrdenada.length,
+      recebimentos_deduplicados: recebimentosDeduplicados,
       nfes_processadas: 0,
       nfes_sem_nidreceb: 0,
       nfes_sem_nidreceb_dias_max: 0,
@@ -519,7 +584,7 @@ Deno.serve(async (req) => {
       summary.nfes_processadas++;
       const tentativasPrevias = controleMap.get(nfeRaw.id)?.tentativas ?? 0;
 
-      const nIdReceb = nfeRaw.raw_data?.cabec?.nIdReceb;
+      const nIdReceb = nfeRaw.nIdReceb;
       if (!nIdReceb) {
         // Sem nIdReceb não há o que consultar. NÃO marca tentativa (re-checar não custa
         // chamada Omie), mas também NÃO se auto-resolve: a linha com pedido casado quase
@@ -605,8 +670,18 @@ Deno.serve(async (req) => {
         const t3 = nfeRaw.t3_data_cte;
         const t4 = nfeRaw.t4_data_recebimento;
 
+        // O item vai pro tracking do SEU pedido, não pro da linha que estava iterando.
+        // Era ESTE o defeito: gravar sob `nfeRaw.id` fazia cada uma das N linhas da NFe
+        // regravar a NFe inteira. Com o dedup da fila (1 linha por nIdReceb) + este
+        // destino, as N linhas ganham só os SEUS itens, da MESMA chamada Omie.
+        //
+        // ⚠️ Sem pedido casado o item cai na linha eleita (fallback). NÃO é o dono
+        // correto — é um pouso determinístico (a eleição é estável: a fila tem ordem
+        // total, com id de desempate). O destino honesto seria tracking_id=NULL +
+        // match_status, mas a coluna é NOT NULL: o modelo atual não sabe dizer "não sei"
+        // (por isso o receipt-first ledger é a fase seguinte, não este patch).
         const upsertRow = {
-          tracking_id: nfeRaw.id,
+          tracking_id: pedidoMatch?.id ?? nfeRaw.id,
           empresa,
           sku_codigo_omie: skuCodigoOmie,
           sku_codigo: toStr(cab?.cCodigoProduto),
