@@ -934,6 +934,16 @@ describe('guardrail money-path: publicação diferida de run (edge USA os predic
       idxAloca < idxSync,
       'REGRESSÃO Codex v3.3 P1: o fencing token deve ser alocado ANTES de syncEmpresa (ordem de INÍCIO, não de publicação)',
     ).toBe(true);
+    // Codex #9 P1: NENHUM await de REDE entre o token e a 1ª página. Com o heartbeatRunning no meio, um run mais
+    // NOVO coleta e publica primeiro enquanto o R1 trava no heartbeat; o token velho deixa de refletir a ordem de
+    // início, e um PO excluído nessa janela fica com last_seen == marcador → nunca vira candidato, a prova por ID
+    // nunca roda e o fantasma sobrevive. O heartbeat tem de vir ANTES da alocação.
+    const idxHeartbeat = src.indexOf('await heartbeatRunning(');
+    expect(idxHeartbeat, 'heartbeatRunning não encontrado').toBeGreaterThan(0);
+    expect(
+      idxHeartbeat < idxAloca,
+      'REGRESSÃO Codex #9 P1: heartbeatRunning (await de REDE) voltou a ficar ENTRE o fencing token e a coleta',
+    ).toBe(true);
   });
 
   it('PARIDADE: o parser omie-pagina espelhado no edge é IDÊNTICO ao de src/ (pega reversão do Lovable)', () => {
