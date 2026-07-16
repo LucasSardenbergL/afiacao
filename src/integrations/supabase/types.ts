@@ -12383,6 +12383,45 @@ export type Database = {
         }
         Relationships: []
       }
+      sku_items_sync_controle: {
+        Row: {
+          criado_em: string
+          motivo: string | null
+          tentativas: number
+          tracking_id: string
+          ultima_tentativa: string
+        }
+        Insert: {
+          criado_em?: string
+          motivo?: string | null
+          tentativas?: number
+          tracking_id: string
+          ultima_tentativa?: string
+        }
+        Update: {
+          criado_em?: string
+          motivo?: string | null
+          tentativas?: number
+          tracking_id?: string
+          ultima_tentativa?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sku_items_sync_controle_tracking_id_fkey"
+            columns: ["tracking_id"]
+            isOneToOne: true
+            referencedRelation: "purchase_orders_tracking"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sku_items_sync_controle_tracking_id_fkey"
+            columns: ["tracking_id"]
+            isOneToOne: true
+            referencedRelation: "v_pedidos_em_aberto"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       sku_leadtime_history: {
         Row: {
           created_at: string

@@ -4,7 +4,7 @@ import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { fetchAll } from "../_shared/paginate.ts";
 import { montarUpsertsDeCusto } from "../_shared/cost-compute.ts";
 import { recomporCustoProducao } from "../_shared/recompor-custo-producao.ts";
-import { buildProductIdMap } from "./product-idmap.ts";
+import { buildProductIdMap } from "../_shared/product-idmap.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",

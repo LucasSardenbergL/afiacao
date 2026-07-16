@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **365** custom migrations totais
-- **1309** objetos esperados (criados por estas migrations)
+- **367** custom migrations totais
+- **1316** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 365
-  - `rls_policy`: 290
-  - `index`: 220
+  - `function`: 367
+  - `rls_policy`: 293
+  - `index`: 221
   - `cron_job`: 149
-  - `table`: 143
+  - `table`: 144
   - `trigger`: 78
   - `view`: 60
   - `enum_value`: 4
@@ -3113,12 +3113,29 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.get_whatsapp_funil` | — |
 | `index` | `public.idx_so_whatsapp_conv` | `sales_orders` |
 
+### `20260713160000_carteira_rebuild_lease.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.claim_carteira_rebuild` | — |
+| `function` | `public.finalizar_carteira_rebuild` | — |
+| `rls_policy` | `public.carteira_rebuild_lease_no_insert` | `sync_state` |
+| `rls_policy` | `public.carteira_rebuild_lease_no_update` | `sync_state` |
+| `rls_policy` | `public.carteira_rebuild_lease_no_delete` | `sync_state` |
+
 ### `20260714215547_omie_nfe_recebimento_crons.sql`
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `cron_job` | `cron.omie-nfe-recebimento-import-1h` | — |
 | `cron_job` | `cron.omie-nfe-reconcile-1h` | — |
+
+### `20260715001500_sku_items_sync_controle.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.sku_items_sync_controle` | — |
+| `index` | `public.idx_sku_items_sync_controle_fila` | `sku_items_sync_controle` |
 
 ### `20260716162000_sayerlack_captura_precos_fase1.sql`
 
