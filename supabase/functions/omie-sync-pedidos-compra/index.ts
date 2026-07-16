@@ -262,9 +262,6 @@ const PRESERVE_FIELDS = new Set([
   "lt_bruto_dias_uteis",
   "lt_faturamento_dias_uteis",
   "lt_logistica_dias_uteis",
-  // single-writer da publicação diferida (escritas SÓ pela RPC reposicao_publicar_run_completo, nunca no upsert)
-  "last_seen_pedidos_full_run_id",
-  "last_seen_pedidos_full_at",
 ]);
 
 /**
