@@ -306,6 +306,7 @@ Deno.serve(async (req) => {
     let puladasCredencial = 0;
     let estadoMudou = 0;
     let errosUpdate = 0;
+    const errosConsulta: string[] = []; // amostra (até 3 distintos) do motivo de consulta_falhou
 
     for (let i = 0; i < rows.length; i++) {
       if (i > 0) await new Promise((r) => setTimeout(r, TREGUA_MS));
@@ -373,6 +374,13 @@ Deno.serve(async (req) => {
           const erroIdent = validarIdentidade(extrairEstadoConsulta(consulta.data), esperado).erro ?? "identidade não confere";
           await registrarTentativa(supabase, { nfe_recebimento_id: nfe.id, tentativa: nfe.efetivacao_tentativas ?? 0, operacao: "reconcile_identidade", sucesso: false, erro: erroIdent, omie_status: null });
           console.warn(`[omie-nfe-reconcile] NF ${nfe.numero_nfe}: ${erroIdent} — pulada.`);
+        } else if (efeito.motivo === "consulta_falhou") {
+          // Observabilidade (lição 2026-07-16: 15/15 consultas falharam e o MOTIVO não era
+          // visível de fora — só contadores). Amostra na resposta → fica em net._http_response,
+          // legível via psql-ro sem depender de clique/log; warn por NF cobre o resto.
+          const erroConsulta = `${cls.erro ?? "erro desconhecido"}${cls.omieStatus ? ` (omie_status ${cls.omieStatus})` : ""}`;
+          if (errosConsulta.length < 3 && !errosConsulta.includes(erroConsulta)) errosConsulta.push(erroConsulta);
+          console.warn(`[omie-nfe-reconcile] NF ${nfe.numero_nfe}: consulta falhou — ${erroConsulta}`);
         }
       } finally {
         // libera o lock só se ainda é o MEU (compare-and-clear pelo timestamp gravado)
@@ -399,6 +407,7 @@ Deno.serve(async (req) => {
       puladas_credencial: puladasCredencial,
       estado_mudou: estadoMudou,
       erros_update: errosUpdate,
+      amostra_erros_consulta: errosConsulta,
       reconciliadas_nfe: reconciliadasNfe,
       restantes_pendentes: restantes ?? null,
     });
