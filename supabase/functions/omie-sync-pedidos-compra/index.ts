@@ -389,7 +389,7 @@ async function syncEmpresa(
     varredura_completa: false,
   };
   let coletaInvalidada = false; // nCodPed ausente/ilegível/inseguro (>2^53) → invalida a publicação (sinal incompleto)
-  let registrosVistos = 0;      // registros já lidos — piso de sanidade contra vazio que contradiz nTotalRegistros
+  let registrosVistos = 0;      // LINHAS lidas (observabilidade: linhas × ids_distintos denuncia sobreposição)
 
   const { app_key, app_secret } = getCredentials(empresa);
 
@@ -417,6 +417,12 @@ async function syncEmpresa(
   const fpsVistos = new Set<string>();
   let fim = false;       // vi o fim legítimo dos dados (página vazia / fault "sem registros")
   let abortado = false;  // saí por erro/anomalia (fetch, fault real, loop) — já contado em summary.erros
+  // [v3.8] PISO de sanidade ACUMULADO — o MAIOR nTotalRegistros/nTotalPaginas que o Omie declarou em QUALQUER
+  // resposta (fault inclusive). NUNCA é teto: o Omie SUB-REPORTA (#979/#1009), por isso paginamos até a vazia e
+  // jamais paramos pelo total. ACUMULA porque uma resposta terminal SEM totais não pode apagar o piso que uma
+  // anterior declarou (Codex v3.7 P1: os totais eram lidos só da página atual → run terminava faltando POs).
+  let maxTotalRegistros = 0;
+  let maxTotalPaginas = 0;
 
   for (let pagina = 1; pagina <= MAX_PAGINAS; pagina++) {
     let resp: OmieSearchResponse;
@@ -430,11 +436,45 @@ async function syncEmpresa(
       break;
     }
 
+    // [v3.8] Atualiza o PISO acumulado com o que ESTA resposta declarar — ANTES de qualquer classificação,
+    // porque os totais podem vir no PRÓPRIO fault (Codex v3.7 P1: fault "sem registros" trazendo
+    // nTotalRegistros=500 virava fim sem nunca passar pelo guard → marcador vazio falso-válido).
+    const tReg = Number(resp?.nTotalRegistros);
+    if (Number.isFinite(tReg) && tReg > maxTotalRegistros) maxTotalRegistros = tReg;
+    const tPag = Number(resp?.nTotalPaginas);
+    if (Number.isFinite(tPag) && tPag > maxTotalPaginas) maxTotalPaginas = tPag;
+
+    // [v3.8] Classificador TERMINAL ÚNICO — lista VAZIA e fault "sem registros" passam pelo MESMO guard: o fim
+    // só é legítimo se COERENTE com o piso acumulado. Fim que CONTRADIZ totais positivos = TRUNCAMENTO (não
+    // "empresa vazia"): publicá-lo daria ids=0 → volume_ok=true → marcador VAZIO falso-válido e TODO PO viraria
+    // candidato de uma vez. Compara com IDs canônicos DISTINTOS — não com linhas vistas, pois 100 linhas podem
+    // render 99 IDs por sobreposição de página (Codex v3.7 P1). Totais ausentes/zerados => empresa vazia
+    // legítima, segue válida. O piso NUNCA vira teto (sub-reporte do Omie não gera falso truncamento: se o real
+    // é maior que o declarado, faltamRegistros é false e paginaDeveriaExistir também).
+    const fimEhCoerente = (): boolean => {
+      const faltamRegistros = maxTotalRegistros > idsVistos.size;
+      const paginaDeveriaExistir = maxTotalPaginas >= pagina;
+      if (faltamRegistros || paginaDeveriaExistir) {
+        console.error(
+          `[sync-pedidos] empresa=${empresa} pagina=${pagina} FIM contradiz os totais do Omie ` +
+            `(registros=${maxTotalRegistros} ids_distintos=${idsVistos.size} linhas=${registrosVistos}, ` +
+            `paginas=${maxTotalPaginas}) — abort/invalida publicação`,
+        );
+        summary.erros++;
+        abortado = true;
+        return false;
+      }
+      return true;
+    };
+
     if (resp?.faultstring || resp?.faultcode) {
       const fs = String(resp.faultstring ?? "");
       if (fs && FIM_SEM_REGISTROS.test(fs)) {
-        console.log(`[sync-pedidos] empresa=${empresa} pagina=${pagina} sem registros — fim`);
-        fim = true;
+        // fault terminal do Omie: só é fim se coerente com o piso (senão é truncamento disfarçado de "vazio").
+        if (fimEhCoerente()) {
+          console.log(`[sync-pedidos] empresa=${empresa} pagina=${pagina} sem registros — fim`);
+          fim = true;
+        }
         break;
       }
       // erro de APLICAÇÃO do Omie: pode vir como HTTP 200 carregando faultcode E/OU faultstring (a irmã
@@ -468,26 +508,8 @@ async function syncEmpresa(
     let pedidos: OmiePedido[] = listas[0];
 
     if (pedidos.length === 0) {
-      // Lista VAZIA: só é FIM legítimo se for COERENTE com os totais que o próprio Omie declarou. Os totais são
-      // PISO de sanidade, NUNCA teto — o Omie SUB-REPORTA nTotalPaginas (armadilha #979/#1009: por isso paginamos
-      // até a vazia e jamais paramos por causa do total). Mas um vazio que CONTRADIZ totais POSITIVOS é
-      // TRUNCAMENTO, não fim: publicá-lo como "empresa vazia válida" (ids=0 → volume_ok=true) faria nascer um
-      // marcador VAZIO falso-válido e TODO PO viraria candidato (Codex v3.6 P1). Totais ausentes/zerados =>
-      // empresa vazia legítima, segue válido. Precedente: omie-vendas-sync/pagination.ts, omie-sync-status-produtos.
-      const totalReg = Number(resp.nTotalRegistros);
-      const totalPag = Number(resp.nTotalPaginas);
-      const faltamRegistros = Number.isFinite(totalReg) && totalReg > registrosVistos;
-      const paginaDeveriaExistir = Number.isFinite(totalPag) && totalPag >= pagina;
-      if (faltamRegistros || paginaDeveriaExistir) {
-        console.error(
-          `[sync-pedidos] empresa=${empresa} pagina=${pagina} lista VAZIA contradiz os totais do Omie ` +
-            `(registros=${totalReg} vistos=${registrosVistos}, paginas=${totalPag}) — abort/invalida publicação`,
-        );
-        summary.erros++;
-        abortado = true;
-        break;
-      }
-      fim = true; // vazio COERENTE com os totais (ou sem totais) = fim real (não nTotalPaginas)
+      // Lista VAZIA passa pelo MESMO classificador terminal do fault (piso ACUMULADO × IDs canônicos DISTINTOS).
+      if (fimEhCoerente()) fim = true;
       break;
     }
     registrosVistos += pedidos.length;

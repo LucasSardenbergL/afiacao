@@ -948,18 +948,26 @@ describe('guardrail money-path: publicação diferida de run (edge USA os predic
     expect(src, 'a edge não exige EXATAMENTE 1 lista de pedidos (Codex v3.5 P2)').toMatch(/listas\.length === 1/);
   });
 
-  it('v3.6 P1: lista VAZIA que contradiz os totais do Omie é TRUNCAMENTO, não fim (piso, nunca teto)', () => {
-    // {nTotalPaginas:5, nTotalRegistros:500, pedidos_pesquisa:[]} passava como "empresa vazia" → volume_ok=true →
-    // marcador VAZIO falso-válido → TODO PO viraria candidato. Os totais são PISO de sanidade; nunca teto (o Omie
-    // SUB-REPORTA nTotalPaginas — paginar-até-vazia é invariante anti-#979/#1009).
+  it('v3.7 P1: FIM (vazio OU fault) que contradiz os totais ACUMULADOS é TRUNCAMENTO — piso, nunca teto', () => {
+    // Os 3 furos que o Codex #8 achou na v3.7 e a v3.8 fecha:
+    //  (1) o fault "sem registros" marcava fim ANTES do guard → {faultstring:"...", nTotalRegistros:500} publicava
+    //      marcador VAZIO falso-válido. Agora fault e vazio passam pelo MESMO classificador (fimEhCoerente).
+    //  (2) os totais eram lidos só da página ATUAL → uma resposta terminal sem totais apagava o piso declarado
+    //      antes (pág1: 505/6; págs1-5: 500 IDs; pág6 faulta sem totais → publicava faltando 5). Agora ACUMULA.
+    //  (3) o piso comparava LINHAS (registrosVistos), não IDs canônicos DISTINTOS → 100 linhas/99 IDs passava.
+    // O teto segue PROIBIDO: parar de paginar por nTotalPaginas reintroduz #979/#1009 (o Omie SUB-REPORTA).
+    expect(src, 'REGRESSÃO Codex #8: o piso de REGISTROS não ACUMULA entre páginas').toContain('maxTotalRegistros');
+    expect(src, 'REGRESSÃO Codex #8: o piso de PÁGINAS não ACUMULA entre páginas').toContain('maxTotalPaginas');
+    // classificador ÚNICO: definido 1× e chamado no fault E no vazio (≥3 ocorrências).
+    expect(
+      count(src, 'fimEhCoerente'),
+      'REGRESSÃO Codex #8: fault e lista-vazia não passam pelo MESMO classificador terminal (≥3: def + fault + vazio)',
+    ).toBeGreaterThanOrEqual(3);
+    // o piso compara IDs canônicos DISTINTOS, não linhas lidas (sobreposição de página mascarava PO faltando).
     expect(
       src,
-      'REGRESSÃO Codex v3.6 P1: a edge não checa mais se o vazio contradiz nTotalRegistros (piso de sanidade)',
-    ).toContain('faltamRegistros');
-    expect(
-      src,
-      'REGRESSÃO Codex v3.6 P1: a edge não checa mais se o vazio contradiz nTotalPaginas (piso de sanidade)',
-    ).toContain('paginaDeveriaExistir');
+      'REGRESSÃO Codex #8: o piso voltou a comparar LINHAS em vez de IDs distintos (100 linhas/99 IDs passava)',
+    ).toMatch(/maxTotalRegistros > idsVistos\.size/);
     // o teto continua PROIBIDO: nada de parar a paginação por nTotalPaginas (isso reintroduziria o #1072/#979).
     expect(
       src,
