@@ -855,6 +855,128 @@ describe('guardrail: fin-valor-cockpit lê o código do cliente pela view fresca
   });
 });
 
+// ── PR1 reconciliação PO excluído: publicação diferida (edge USA os predicados espelhados) — Codex xhigh 2026-07-12 ──
+// A edge omie-sync-pedidos-compra publica o marcador de run + last_seen SÓ no fim de um completo LIMPO e
+// NÃO-filtrado (P1#1/#2) e só avança a cadência com volume_ok=true (P1#3). Essas 2 decisões são helpers puros
+// (vitest) espelhados no edge; a paridade textual aqui pega a reversão do deploy do Lovable. O coração
+// money-path (volume_ok robusto, atomicidade, RLS) é provado no PG17 (db/test-reposicao-publicar-run-completo.sh).
+const SYNC_PEDIDOS = 'supabase/functions/omie-sync-pedidos-compra/index.ts';
+const PUBLICACAO_RUN = 'src/lib/reposicao/publicacao-run.ts';
+const OMIE_PAGINA = 'src/lib/reposicao/omie-pagina.ts';
+
+describe('guardrail money-path: publicação diferida de run (edge USA os predicados espelhados) — PR1 PO excluído', () => {
+  const src = read(SYNC_PEDIDOS);
+  const helper = read(PUBLICACAO_RUN);
+  const parser = read(OMIE_PAGINA);
+
+  it('sentinela: leu os arquivos reais (edge + helpers)', () => {
+    expect(src).toContain('reposicao_publicar_run_completo');
+    expect(helper).toContain('devePublicarRun');
+    expect(parser).toContain('classificarPagina');
+  });
+
+  it('o helper puro existe e exporta devePublicarRun', () => {
+    expect(helper).toMatch(/export function devePublicarRun/);
+  });
+
+  it('o edge USA o predicado: define o MIRROR de devePublicarRun E o chama (≥2 menções)', () => {
+    expect(src, 'edge não define mais devePublicarRun espelhado').toMatch(/function devePublicarRun/);
+    expect(count(src, 'devePublicarRun'), 'devePublicarRun deve ser DEFINIDO e CHAMADO (≥2)').toBeGreaterThanOrEqual(2);
+  });
+
+  it('v3.2 P1#2: devePublicarRun NÃO gateia por summary.erros (erro de persistência do espelho não barra)', () => {
+    // erro de PERSISTÊNCIA (upsert torto) não corrompe idsVistos; erro de COLETA já vira varredura_completa=false.
+    const bloco = mirrorBlockNamed(src, 'reposicao publicacao-run');
+    expect(bloco, 'REGRESSÃO Codex v3.2 P1#2: devePublicarRun voltou a checar erros===0 (trava em upsert torto)')
+      .not.toMatch(/erros\s*===\s*0/);
+  });
+
+  it('P1#1/single-writer: a edge NÃO escreve o last_seen direto (só a RPC toca reposicao_po_last_seen)', () => {
+    // o last_seen mora numa tabela DEDICADA service_role-only — a edge só chama a RPC, nunca escreve nela.
+    expect(
+      src,
+      'REGRESSÃO: a edge escreve reposicao_po_last_seen direto (deveria ser só pela RPC service_role-only)',
+    ).not.toMatch(/from\(["']reposicao_po_last_seen["']\)/);
+  });
+
+  it('P1#3/v3.2 P1: marcarCompletoOk é gated pelo SUCESSO da publicação (publicou), NÃO por volume_ok', () => {
+    // a cadência avança se a RPC publicou (marcador gravado) — não pelo volume_ok, senão um run de baixo
+    // volume/vazio travaria o completo permanentemente (Codex v3.2 P1). Erro da RPC → publicou=false → não avança.
+    expect(
+      src,
+      'REGRESSÃO P1#3: a cadência não é mais gated pelo sucesso da publicação',
+    ).toMatch(/if\s*\(publicou\)\s*await marcarCompletoOk/);
+    expect(
+      src,
+      'REGRESSÃO Codex v3.2 P1: a cadência voltou a depender de volume_ok (trava o completo em baixo volume)',
+    ).not.toMatch(/cadenciaPodeAvancar/);
+  });
+
+  it('v3.9: a edge DELEGA a classificação ao parser PURO e falha fechado em anomalia', () => {
+    // SEIS Codex challenge xhigh acharam furos na classificação inline, um shape por vez — e os guardrails eram
+    // textuais (grep de nome), que não provam comportamento. Agora a decisão vive no parser PURO
+    // (src/lib/reposicao/omie-pagina.ts) com matriz COMPORTAMENTAL em omie-pagina.test.ts; aqui só garantimos
+    // que a edge realmente delega, trata anomalia fail-closed e não reintroduz o TETO.
+    expect(src, 'a edge não acumula o piso pelo parser (acumularPiso)').toContain('piso = acumularPiso(resp, piso)');
+    expect(
+      src,
+      'a edge não classifica a página pelo parser (classificarPagina)',
+    ).toMatch(/classificarPagina\(resp,\s*\{\s*pagina,\s*idsVistos,\s*piso\s*\}\)/);
+    expect(src, 'a edge não aborta em anomalia do parser (fail-closed)').toMatch(/cls\.tipo === "anomalia"/);
+    expect(src, 'a edge não encerra pelo fim do parser').toMatch(/cls\.tipo === "fim"/);
+    expect(
+      src,
+      'varredura_completa deixou de exigir fim && !abortado (toda invalidação vem como anomalia → abortado)',
+    ).toMatch(/varredura_completa = fim && !abortado/);
+    // o TETO segue PROIBIDO: parar a paginação por nTotalPaginas reintroduz #979/#1009 (o Omie SUB-REPORTA).
+    expect(
+      src,
+      'REGRESSÃO: a edge voltou a PARAR a paginação por nTotalPaginas (sub-reporta → perde POs)',
+    ).not.toMatch(/pagina\s*>\s*(resp\.)?nTotalPaginas|>=\s*(resp\.)?nTotalPaginas\)\s*(\{)?\s*break/);
+  });
+
+  it('v3.3 P1/fencing: a edge aloca o run_seq ANTES da coleta e passa p_seq à RPC (ordem de INÍCIO)', () => {
+    // fencing token (reposicao_alocar_run_seq) alocado ANTES de syncEmpresa e passado como p_seq: um coletor que
+    // começa antes mas publica depois recebe seq MENOR → NÃO suprime a prova por ID de um PO excluído (Codex v3.3 P1).
+    expect(src, 'a edge não aloca o fencing token (reposicao_alocar_run_seq)').toContain('reposicao_alocar_run_seq');
+    expect(src, 'a RPC de publicação não recebe p_seq (perdeu a ordem total de INÍCIO)').toMatch(/p_seq:\s*runSeq/);
+    const idxAloca = src.indexOf('await alocarRunSeq(');
+    const idxSync = src.indexOf('await syncEmpresa(');
+    expect(idxAloca, 'alocarRunSeq não é chamado com await').toBeGreaterThan(0);
+    expect(
+      idxAloca < idxSync,
+      'REGRESSÃO Codex v3.3 P1: o fencing token deve ser alocado ANTES de syncEmpresa (ordem de INÍCIO, não de publicação)',
+    ).toBe(true);
+    // Codex #9 P1: NENHUM await de REDE entre o token e a 1ª página. Com o heartbeatRunning no meio, um run mais
+    // NOVO coleta e publica primeiro enquanto o R1 trava no heartbeat; o token velho deixa de refletir a ordem de
+    // início, e um PO excluído nessa janela fica com last_seen == marcador → nunca vira candidato, a prova por ID
+    // nunca roda e o fantasma sobrevive. O heartbeat tem de vir ANTES da alocação.
+    const idxHeartbeat = src.indexOf('await heartbeatRunning(');
+    expect(idxHeartbeat, 'heartbeatRunning não encontrado').toBeGreaterThan(0);
+    expect(
+      idxHeartbeat < idxAloca,
+      'REGRESSÃO Codex #9 P1: heartbeatRunning (await de REDE) voltou a ficar ENTRE o fencing token e a coleta',
+    ).toBe(true);
+  });
+
+  it('PARIDADE: o parser omie-pagina espelhado no edge é IDÊNTICO ao de src/ (pega reversão do Lovable)', () => {
+    // A classificação de página é a lógica que SEIS Codex challenge furaram, um shape por vez. Ela vive no parser
+    // PURO (matriz comportamental em src/lib/reposicao/omie-pagina.test.ts); o edge carrega um espelho, porque
+    // Deno não importa de src/. Se o deploy do Lovable reescrever o espelho, a divergência aparece AQUI.
+    expect(
+      mirrorBlockNamed(src, 'reposicao omie-pagina'),
+      'edge divergiu do parser de src/ — o Lovable reescreveu a classificação de página no deploy?',
+    ).toBe(mirrorBlockNamed(parser, 'reposicao omie-pagina'));
+  });
+
+  it('PARIDADE: o helper publicacao-run espelhado no edge é IDÊNTICO ao de src/ (pega reversão do Lovable)', () => {
+    expect(
+      mirrorBlockNamed(src, 'reposicao publicacao-run'),
+      'edge divergiu do helper de src/ — o Lovable reescreveu os predicados no deploy?',
+    ).toBe(mirrorBlockNamed(helper, 'reposicao publicacao-run'));
+  });
+});
+
 // ── P0-B-bis ponta 3 (ai-ops-agent: farmer_id vem da carteira canônica, não do espelho circular) ──
 // DOIS bugs (investigados 2026-07-12, psql-ro + leitura): BUG-1 (circular, PRÉ-EXISTENTE) — o edge fazia
 // `farmer_id: assignment?.user_id` com assignment.user_id === m.customer_user_id → o "dono" era o PRÓPRIO
