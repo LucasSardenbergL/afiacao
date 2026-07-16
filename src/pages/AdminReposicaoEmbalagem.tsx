@@ -15,7 +15,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Package, Info, RefreshCw } from 'lucide-react';
+import { Package, Info, RefreshCw, Download } from 'lucide-react';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { EmptyState } from '@/components/EmptyState';
 import { escolherEmbalagemEconomica } from '@/lib/reposicao/embalagem-helpers';
@@ -200,6 +200,45 @@ export default function AdminReposicaoEmbalagem() {
       }),
   });
 
+  // Dispara a edge de captura (disparo manual staff — roda mesmo com a automação
+  // mensal desligada no kill-switch). A edge é síncrona e o full leva minutos;
+  // se o fetch cair antes, a captura CONTINUA no servidor e o run-log registra.
+  const capturarPortal = useMutation({
+    mutationFn: async () => {
+      const { data, error } = await supabase.functions.invoke('sayerlack-captura-precos', {
+        body: { modo: 'full' },
+      });
+      if (error) throw error;
+      const r = data as {
+        ok: boolean;
+        motivo?: string;
+        status_run?: string;
+        total_nao_encontrado?: number;
+        precos_gravados?: number;
+        erro?: string | null;
+      };
+      if (!r.ok) throw new Error(r.motivo ?? r.erro ?? 'captura não rodou');
+      return r;
+    },
+    onSuccess: (r) => {
+      queryClient.invalidateQueries({ queryKey: ['embalagem-consulta'] });
+      const naoEnc = r.total_nao_encontrado ?? 0;
+      toast.success('Preços capturados do portal', {
+        description: `${r.precos_gravados ?? 0} preços gravados${naoEnc > 0 ? ` · ${naoEnc} não encontrado(s) no portal (pedir reativação?)` : ''}`,
+      });
+    },
+    onError: (e) => {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg === 'run_ativo') {
+        toast.info('Já existe uma captura em andamento', { description: 'Aguarde alguns minutos e recarregue.' });
+        return;
+      }
+      toast.error('Captura do portal não concluiu', {
+        description: `${msg} — se foi timeout, a captura pode continuar em segundo plano; recarregue em alguns minutos.`,
+      });
+    },
+  });
+
   return (
     <div className="space-y-4 p-4 max-w-3xl">
       <div className="flex items-start justify-between gap-3">
@@ -211,25 +250,37 @@ export default function AdminReposicaoEmbalagem() {
           </p>
         </div>
         {isStaff && (
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => sincronizar.mutate()}
-            disabled={sincronizar.isPending}
-            title="Detecta no Omie os WP com quartinho e galão ativos e cadastra os pares que faltam"
-          >
-            <RefreshCw className={`w-4 h-4 mr-1.5 ${sincronizar.isPending ? 'animate-spin' : ''}`} />
-            Sincronizar cadastro
-          </Button>
+          <div className="flex gap-2 shrink-0">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => capturarPortal.mutate()}
+              disabled={capturarPortal.isPending}
+              title="Entra no portal Sayerlack e captura o preço líquido de todas as embalagens cadastradas (leva alguns minutos)"
+            >
+              <Download className={`w-4 h-4 mr-1.5 ${capturarPortal.isPending ? 'animate-pulse' : ''}`} />
+              {capturarPortal.isPending ? 'Capturando…' : 'Atualizar do portal'}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => sincronizar.mutate()}
+              disabled={sincronizar.isPending}
+              title="Detecta no Omie os WP com quartinho e galão ativos e cadastra os pares que faltam"
+            >
+              <RefreshCw className={`w-4 h-4 mr-1.5 ${sincronizar.isPending ? 'animate-spin' : ''}`} />
+              Sincronizar cadastro
+            </Button>
+          </div>
         )}
       </div>
 
       <div className="rounded-md border bg-status-info/5 p-3 text-sm flex gap-2">
         <Info className="h-4 w-4 mt-0.5 text-status-info shrink-0" />
         <div>
-          Os preços vêm do <strong>portal Sayerlack</strong> — você atualiza manualmente. A quantidade é sempre em{' '}
-          <strong>unidade-base</strong> (a menor embalagem). A compra é feita no Omie; esta tela só recomenda{' '}
-          <strong>qual embalagem</strong> sai mais barata.
+          Os preços vêm do <strong>portal Sayerlack</strong> — “Atualizar do portal” captura todos de uma vez; dá pra
+          ajustar manualmente em cada grupo. A quantidade é sempre em <strong>unidade-base</strong> (a menor embalagem).
+          A compra é feita no Omie; esta tela só recomenda <strong>qual embalagem</strong> sai mais barata.
         </div>
       </div>
 
