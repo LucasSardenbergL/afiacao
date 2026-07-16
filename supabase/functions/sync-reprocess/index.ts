@@ -592,7 +592,7 @@ async function reprocessInventory(
       for (const chunk of chunked(codProds, 300)) {
         const { data, error } = await db
           .from("omie_products")
-          .select("id, omie_codigo_produto, estoque")
+          .select("id, omie_codigo_produto, estoque, codigo, descricao")
           .eq("account", account)
           .in("omie_codigo_produto", chunk);
         if (error) throw new Error(`resolve omie_products: ${error.message}`);
@@ -626,10 +626,16 @@ async function reprocessInventory(
         );
       }
 
-      // 4) omie_products.estoque em LOTE pela PK id (ids vieram de linhas existentes → o
-      //    upsert sempre faz UPDATE, nunca INSERT).
+      // 4) omie_products.estoque em LOTE por (omie_codigo_produto, account) — o conflito
+      //    arbitrado SEMPRE existe (linhas resolvidas) e a PK gerada nunca conflita. O payload
+      //    carrega codigo/descricao (NOT NULL sem default) lidos do resolve: a tupla proposta
+      //    do INSERT..ON CONFLICT é validada contra NOT NULL ANTES do conflito — payload
+      //    mínimo {id, estoque} tomava 23502 e derrubava o chunk (provado em prod 18:15 UTC;
+      //    upsert pela PK id com payload completo arriscaria 23505 por conflito DUPLO PK+uniq).
       for (const chunk of chunked(plano.stockRows, 500)) {
-        const { error } = await db.from("omie_products").upsert(chunk, { onConflict: "id" });
+        const { error } = await db
+          .from("omie_products")
+          .upsert(chunk, { onConflict: "omie_codigo_produto,account" });
         if (error) {
           falhasChunk++;
           console.error(`[Reprocess][${account}] upsert estoque omie_products: ${error.message}`);
