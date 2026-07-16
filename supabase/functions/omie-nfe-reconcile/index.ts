@@ -1,19 +1,26 @@
-// omie-nfe-reconcile — varredura de reconciliação (reconcile-only, idempotente).
+// omie-nfe-reconcile — varredura de reconciliação (reconcile-only, idempotente). v3.
 //
 // PROBLEMA: a operação dá entrada das NF-e DIRETO no Omie (humano), e o app nunca
 // fica sabendo — as NFs importadas ficam 'pendente' eternas no painel de recebimento.
-// Esta edge alinha o app com a realidade do Omie SEM escrever nada no Omie:
-//   - consulta cada NF 'pendente' (ConsultarRecebimento, chave como identidade);
-//   - cRecebido=S no Omie → marca 'efetivado' no app (reconciliação, read-only no Omie);
-//   - QUALQUER outro caso (aguardando conferência, inconsistente, consulta falhou,
-//     identidade em dúvida) → PULA sem tocar o status. Varredura automática nunca
-//     pinta falha no painel — falha visível é reservada à ação humana (Efetivar/
-//     Reprocessar na edge omie-nfe-recebimento).
+// Esta edge alinha o app com a realidade do Omie SEM escrever nada no Omie.
 //
-// Chamada: cron (x-cron-secret) ou staff. Body opcional: { limite?: number } (1..30, default 15).
-// Rate-limit Omie: lote sequencial com trégua de 1.1s entre consultas (a trava
-// "Consumo redundante" do Omie é por chamada idêntica <60s; NFs distintas passam,
-// mas a trégua protege o limite global de req/min).
+// HISTÓRICO DO DESENHO:
+// - v1 (consulta por NF, trégua 1.1s): 15/15 REDUNDANT em 3 rodadas — a trava
+//   anti-redundância do Omie morde o MÉTODO ConsultarRecebimento por conta
+//   (provado: params distintos a 4s → REDUNDANT), e o retry em 5xx renovava o timer.
+// - v2 (listagem + confirmação espaçada 61s): descartada no design review (Codex):
+//   2×61s no caminho síncrono de 150s é frágil, e até a paginação do mesmo método
+//   pode conflitar com a trava.
+// - v3 (ATUAL): ListarRecebimentos traz cabec.cChaveNfe (doc oficial) → IDENTIDADE
+//   FORTE direto da listagem, SEM ConsultarRecebimento nenhum:
+//     1 página por conta por rodada (janela de emissão estreita a partir da pendente
+//     mais antiga — janela avança sozinha conforme reconcilia) → cruzamento forte
+//     (conta exata + nIdReceb + chave 44 idêntica + cRecebido=S + não-cancelada +
+//     cardinalidade 1:1) → reconciliação em lote com lock + compare-and-update.
+//   Dúvida de identidade NUNCA reconcilia (fail-closed); falha visível no painel é
+//   reservada à ação humana (Efetivar/Reprocessar na edge omie-nfe-recebimento).
+//
+// Chamada: cron (x-cron-secret) ou staff. Body opcional: { limite?: number } (1..25, default 25).
 
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff, corsHeaders } from "../_shared/auth.ts";
@@ -26,24 +33,13 @@ function jsonRes(body: Record<string, unknown>, status = 200) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// ESPELHO VERBATIM (subset) de src/lib/recebimento/efetivacao-helpers.ts
+// ESPELHO VERBATIM (subset usado pela v3) de src/lib/recebimento/efetivacao-helpers.ts
 // (Edge Functions bundle independently — manter sincronizado com o src.)
 // ════════════════════════════════════════════════════════════════════════════
 interface OmieClassificacao { sucesso: boolean; erro: string | null; omieStatus: string | null; }
-interface ItemOmie {
-  nSequencia: number; nIdProduto: number | null; cCodigoProduto: string | null;
-  nQtdeNFe: number; nQtdeRecebida: number | null; cUnidadeNfe: string | null;
-  cIgnorarItem: boolean; nFatorConversao: number | null;
-}
-interface EstadoConsulta { cRecebido: string | null; cEtapa: string | null; nIdReceb: number | null; cChaveNfe: string | null; itensOmie: ItemOmie[]; }
 
 function asRecord(v: unknown): Record<string, unknown> {
   return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
-}
-function asNum(v: unknown): number | null {
-  if (v == null) return null;
-  const n = Number(v);
-  return Number.isFinite(n) ? n : null;
 }
 function asStr(v: unknown): string | null {
   if (v == null) return null;
@@ -70,107 +66,116 @@ function classificarRespostaOmie(r: { httpOk: boolean; status?: number; body: un
   return { sucesso: true, erro: null, omieStatus };
 }
 
-function fatorEfetivo(candidatos: unknown[]): number | null {
-  const nums = candidatos.map(asNum).filter((n): n is number => n != null && n > 0);
-  if (nums.length === 0) return null;
-  const naoUm = nums.find((n) => Math.abs(n - 1) > 1e-9);
-  return naoUm != null ? naoUm : 1;
-}
-function parseItemOmie(raw: unknown): ItemOmie {
-  const it = asRecord(raw);
-  const itc = asRecord(it.itensCabec);
-  const aj = asRecord(it.itensAjustes);
-  const conv = asRecord(it.itensConversao);
-  const nfe = asRecord(it.itensNfe);
-  return {
-    nSequencia: asNum(itc.nSequencia) ?? 0,
-    nIdProduto: asNum(itc.nIdProduto),
-    cCodigoProduto: asStr(itc.cCodigoProduto),
-    nQtdeNFe: asNum(itc.nQtdeNFe) ?? 0,
-    nQtdeRecebida: asNum(aj.nQtdeRecebida),
-    cUnidadeNfe: asStr(itc.cUnidadeNfe) ?? asStr(aj.cUnidade),
-    cIgnorarItem: asStr(itc.cIgnorarItem) === "S",
-    nFatorConversao: fatorEfetivo([
-      itc.nFatorConversao, itc.nFatorConv, aj.nFatorConversao, aj.nFatorConv, conv.nFatorConversao, nfe.nFatorConversao,
-    ]),
-  };
-}
-function extrairEstadoConsulta(body: unknown): EstadoConsulta {
-  const obj = asRecord(body);
-  const cabec = asRecord(obj.cabec);
-  const infoCadastro = asRecord(obj.infoCadastro);
-  const itensRaw = Array.isArray(obj.itensRecebimento) ? obj.itensRecebimento : [];
-  return {
-    cRecebido: asStr(infoCadastro.cRecebido),
-    cEtapa: asStr(cabec.cEtapa),
-    nIdReceb: asNum(cabec.nIdReceb),
-    cChaveNfe: asStr(cabec.cChaveNfe),
-    itensOmie: itensRaw.map(parseItemOmie),
-  };
-}
-function validarIdentidade(estado: EstadoConsulta, esperado: { nIdReceb: number; chaveAcesso: string }): { ok: boolean; erro: string | null } {
-  if (estado.nIdReceb == null) return { ok: false, erro: "consulta do Omie sem nIdReceb" };
-  if (estado.nIdReceb !== esperado.nIdReceb) {
-    return { ok: false, erro: `nIdReceb diverge (Omie ${estado.nIdReceb} ≠ app ${esperado.nIdReceb})` };
-  }
-  if (estado.cChaveNfe != null && estado.cChaveNfe !== esperado.chaveAcesso) {
-    return { ok: false, erro: "chave de acesso diverge entre Omie e app" };
-  }
-  return { ok: true, erro: null };
-}
-function decidirAcaoRecebimento(estado: EstadoConsulta): "reconciliar" | "escrever" | "inconsistente" {
-  const rec = (estado.cRecebido ?? "").trim().toUpperCase();
-  const etapa = (estado.cEtapa ?? "").trim();
-  if (rec === "S") return "reconciliar";
-  if (etapa === "80") return "inconsistente";
-  return "escrever";
+/** A trava do Omie: re-tentar renova o timer — retry PRECISA parar neste erro. */
+function ehErroRedundante(erro: string | null | undefined): boolean {
+  if (!erro) return false;
+  return /redundant|redundante/i.test(erro);
 }
 
-type EfeitoReconcile =
-  | { efeito: "reconciliar" }
-  | { efeito: "pular"; motivo: "consulta_falhou" | "cancelada" | "identidade_divergente" | "aguardando_conferencia" | "inconsistente" };
+interface EstadoListagem {
+  recebido: boolean;
+  cancelada: boolean;
+  /** cChaveNfe/cChaveNFe do cabec da listagem (identidade forte), quando presente. */
+  chave: string | null;
+  /** nIdReceb apareceu mais de uma vez na listagem → fail-closed no cruzamento. */
+  duplicado: boolean;
+}
 
 /**
- * Política da varredura automática sobre NF 'pendente': SÓ reconcilia (cRecebido=S no
- * Omie → marca efetivado no app, read-only no Omie). Qualquer outro caminho PULA sem
- * tocar o status. Fail-closed além do fluxo manual (Codex, design review 2026-07-14):
- * NF cancelada no Omie nunca reconcilia e a varredura EXIGE a chave de acesso na resposta.
+ * Extrai de páginas do ListarRecebimentos o mapa nIdReceb → {recebido, cancelada, chave}.
+ * Parse defensivo: nIdReceb no cabec OU na raiz, string ou number; chave em ambas as
+ * grafias (cChaveNfe/cChaveNFe); página malformada é ignorada (nunca lança — a decisão
+ * fail-closed acontece no cruzamento). nIdReceb repetido → marcado `duplicado`.
  */
-function decidirEfeitoReconcileLote(
-  cls: OmieClassificacao,
-  body: unknown,
-  esperado: { nIdReceb: number; chaveAcesso: string },
-): EfeitoReconcile {
-  if (!cls.sucesso) return { efeito: "pular", motivo: "consulta_falhou" };
-  const cancelada = asRecord(asRecord(body).infoCadastro).cCancelada;
-  if (typeof cancelada === "string" && cancelada.trim().toUpperCase() === "S") {
-    return { efeito: "pular", motivo: "cancelada" };
+function extrairRecebidosDaListagem(paginas: unknown[]): Map<number, EstadoListagem> {
+  const mapa = new Map<number, EstadoListagem>();
+  for (const pagina of paginas) {
+    const recs = asRecord(pagina).recebimentos;
+    if (!Array.isArray(recs)) continue;
+    for (const raw of recs) {
+      const rec = asRecord(raw);
+      const cabec = asRecord(rec.cabec);
+      const id = Number(cabec.nIdReceb ?? rec.nIdReceb);
+      if (!Number.isFinite(id) || id <= 0) continue;
+      const info = asRecord(rec.infoCadastro);
+      const chaveRaw = cabec.cChaveNfe ?? cabec.cChaveNFe;
+      const estado: EstadoListagem = {
+        recebido: String(info.cRecebido ?? "").trim().toUpperCase() === "S",
+        cancelada: String(info.cCancelada ?? "").trim().toUpperCase() === "S",
+        chave: typeof chaveRaw === "string" && chaveRaw.trim() !== "" ? chaveRaw.trim() : null,
+        duplicado: false,
+      };
+      if (mapa.has(id)) {
+        estado.duplicado = true;
+        const prev = mapa.get(id)!;
+        mapa.set(id, { ...prev, duplicado: true });
+        continue;
+      }
+      mapa.set(id, estado);
+    }
   }
-  const estado = extrairEstadoConsulta(body);
-  if (estado.cChaveNfe == null) return { efeito: "pular", motivo: "identidade_divergente" };
-  if (!validarIdentidade(estado, esperado).ok) return { efeito: "pular", motivo: "identidade_divergente" };
-  const acao = decidirAcaoRecebimento(estado);
-  if (acao === "reconciliar") return { efeito: "reconciliar" };
-  if (acao === "inconsistente") return { efeito: "pular", motivo: "inconsistente" };
-  return { efeito: "pular", motivo: "aguardando_conferencia" };
+  return mapa;
 }
 
-interface ResumoReconcileLote {
-  processadas: number;
-  reconciliadas: number;
-  puladas: { consulta_falhou: number; cancelada: number; identidade_divergente: number; aguardando_conferencia: number; inconsistente: number };
+interface PendenteReconcile {
+  id: string;
+  omie_id_receb: number | null;
+  chave_acesso: string | null;
 }
-function resumirReconcileLote(efeitos: EfeitoReconcile[]): ResumoReconcileLote {
-  const resumo: ResumoReconcileLote = {
-    processadas: efeitos.length,
-    reconciliadas: 0,
-    puladas: { consulta_falhou: 0, cancelada: 0, identidade_divergente: 0, aguardando_conferencia: 0, inconsistente: 0 },
+
+interface SelecaoCandidatas<T extends PendenteReconcile> {
+  /** Correspondências FORTES (id + chave 44 iguais, recebida, não-cancelada, sem duplicata) — reconciliáveis direto. */
+  candidatas: T[];
+  foraDaListagem: number;
+  naoRecebidas: number;
+  canceladas: number;
+  /** Sem chave em um dos lados, chave inválida (≠44 dígitos) ou divergente — fail-closed. */
+  identidadeFraca: number;
+  /** nIdReceb duplicado na listagem OU repetido entre as pendentes do app (sem UNIQUE no banco). */
+  duplicadas: number;
+}
+
+/**
+ * Cruza as pendentes do app com o mapa da listagem usando IDENTIDADE FORTE (Codex v2 P1):
+ * reconciliável direto da listagem SOMENTE quando (nIdReceb igual) E (chave de acesso
+ * presente nos DOIS lados, com 44 dígitos, idêntica) E (cRecebido=S) E (não cancelada)
+ * E (cardinalidade 1:1 — sem duplicata na listagem nem entre as pendentes).
+ * Qualquer identidade em dúvida → contador, nunca candidata. `cap` limita o lote.
+ * A ordem de `pendentes` é preservada (chame com mais antigas primeiro).
+ */
+function selecionarCandidatasReconcile<T extends PendenteReconcile>(
+  pendentes: T[],
+  listagem: Map<number, EstadoListagem>,
+  cap: number,
+): SelecaoCandidatas<T> {
+  const sel: SelecaoCandidatas<T> = {
+    candidatas: [], foraDaListagem: 0, naoRecebidas: 0, canceladas: 0, identidadeFraca: 0, duplicadas: 0,
   };
-  for (const e of efeitos) {
-    if (e.efeito === "reconciliar") resumo.reconciliadas++;
-    else resumo.puladas[e.motivo]++;
+  const idsRepetidos = new Set<number>();
+  const vistos = new Set<number>();
+  for (const p of pendentes) {
+    const id = Number(p.omie_id_receb);
+    if (!Number.isFinite(id) || id <= 0) continue;
+    if (vistos.has(id)) idsRepetidos.add(id);
+    vistos.add(id);
   }
-  return resumo;
+  for (const p of pendentes) {
+    const id = Number(p.omie_id_receb);
+    if (!Number.isFinite(id) || id <= 0) continue;
+    if (idsRepetidos.has(id)) { sel.duplicadas++; continue; }
+    const estado = listagem.get(id);
+    if (!estado) { sel.foraDaListagem++; continue; }
+    if (estado.duplicado) { sel.duplicadas++; continue; }
+    if (estado.cancelada) { sel.canceladas++; continue; }
+    if (!estado.recebido) { sel.naoRecebidas++; continue; }
+    const chaveApp = (p.chave_acesso ?? "").trim();
+    if (chaveApp.length !== 44 || estado.chave == null || estado.chave !== chaveApp) {
+      sel.identidadeFraca++;
+      continue;
+    }
+    if (sel.candidatas.length < cap) sel.candidatas.push(p);
+  }
+  return sel;
 }
 // ════════════════════════════════════════════════════════════════════════════
 // (fim do espelho)
@@ -194,7 +199,7 @@ async function registrarTentativa(
   }
 }
 
-// ── Retry with exponential backoff (mesmo padrão da edge omie-nfe-recebimento) ──
+// ── Retry with exponential backoff — PARA em REDUNDANT (re-tentar renova a trava) ──
 async function omieCall(
   url: string,
   payload: Record<string, unknown>,
@@ -215,6 +220,11 @@ async function omieCall(
         data = { raw: text };
       }
       if (!res.ok) {
+        const faultstring = asStr(asRecord(data).faultstring);
+        if (ehErroRedundante(faultstring)) {
+          // trava anti-redundância: retry só renova o timer — devolve na hora
+          return { error: true, status: res.status, data };
+        }
         if (attempt < maxRetries && res.status >= 500) {
           const delay = Math.pow(2, attempt) * 500;
           console.warn(`[omie-nfe-reconcile] Omie ${res.status}, retry ${attempt}/${maxRetries} in ${delay}ms`);
@@ -237,25 +247,33 @@ async function omieCall(
   return { error: true, data: { message: "exhausted retries" } };
 }
 
-// ── Credential mapping by warehouse code (mesmo padrão da edge omie-nfe-recebimento) ──
-function getOmieCredentials(warehouseCode: string): { appKey: string; appSecret: string } {
+// ── Credential mapping by warehouse code — SEM fallback (Codex v2 P1: conta exata) ──
+function getOmieCredentials(warehouseCode: string): { appKey: string; appSecret: string } | null {
   if (warehouseCode === "CC") {
-    return {
-      appKey: Deno.env.get("OMIE_COLACOR_SC_APP_KEY") ?? "",
-      appSecret: Deno.env.get("OMIE_COLACOR_SC_APP_SECRET") ?? "",
-    };
+    const appKey = Deno.env.get("OMIE_COLACOR_SC_APP_KEY") ?? "";
+    const appSecret = Deno.env.get("OMIE_COLACOR_SC_APP_SECRET") ?? "";
+    return appKey && appSecret ? { appKey, appSecret } : null;
   }
-  return {
-    appKey: Deno.env.get("OMIE_OBEN_APP_KEY") ?? "",
-    appSecret: Deno.env.get("OMIE_OBEN_APP_SECRET") ?? "",
-  };
+  if (warehouseCode === "OB") {
+    const appKey = Deno.env.get("OMIE_OBEN_APP_KEY") ?? "";
+    const appSecret = Deno.env.get("OMIE_OBEN_APP_SECRET") ?? "";
+    return appKey && appSecret ? { appKey, appSecret } : null;
+  }
+  return null;
+}
+
+function formatarDataOmie(d: Date): string {
+  return `${String(d.getUTCDate()).padStart(2, "0")}/${String(d.getUTCMonth() + 1).padStart(2, "0")}/${d.getUTCFullYear()}`;
 }
 
 const RECEB_URL = "https://app.omie.com.br/api/v1/produtos/recebimentonfe/";
 const LOCK_TTL_MIN = 5;
-const TREGUA_MS = 1100;
-const LIMITE_DEFAULT = 15;
-const LIMITE_MAX = 15;
+const LIMITE_DEFAULT = 25;
+const LIMITE_MAX = 25;
+const REGISTROS_POR_PAGINA = 50;
+const JANELA_EMISSAO_MARGEM_DIAS = 7;
+const JANELA_EMISSAO_LARGURA_DIAS = 60;
+const JANELA_EMISSAO_FALLBACK_DIAS = 210;
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -282,46 +300,99 @@ Deno.serve(async (req) => {
   } catch { /* body vazio (cron) — usa default */ }
 
   try {
-    // Mais antigas primeiro: são as que seguram o alerta ">24h" do painel.
+    // Mais antigas primeiro: são as que seguram o alerta ">24h" do painel — e a janela
+    // de emissão da listagem parte delas (avança sozinha conforme reconcilia).
     const { data: pendData, error: pendErr } = await supabase
       .from("nfe_recebimentos")
-      .select("id, numero_nfe, omie_id_receb, chave_acesso, efetivacao_tentativas, warehouses(code)")
+      .select("id, numero_nfe, omie_id_receb, chave_acesso, data_emissao, efetivacao_tentativas, warehouses(code)")
       .eq("status", "pendente")
       .not("omie_id_receb", "is", null)
       .not("chave_acesso", "is", null)
       .order("created_at", { ascending: true })
-      .limit(limite);
+      .limit(100);
     if (pendErr) {
       console.error("[omie-nfe-reconcile] erro ao listar pendentes:", pendErr);
       return jsonRes({ error: "Erro ao listar pendentes" }, 500);
     }
     const rows = (pendData ?? []) as Array<{
       id: string; numero_nfe: string; omie_id_receb: number; chave_acesso: string;
-      efetivacao_tentativas: number | null; warehouses: WarehouseJoin | null;
+      data_emissao: string | null; efetivacao_tentativas: number | null; warehouses: WarehouseJoin | null;
     }>;
 
-    const efeitos: EfeitoReconcile[] = [];
-    const reconciliadasNfe: string[] = [];
-    let puladasLock = 0;
+    // ── Fase 1: 1 página de ListarRecebimentos por conta (método sem trava de rajada
+    //    observada, mas 1 página/rodada por prudência — paginação fica pro follow-up) ──
+    const porConta = new Map<string, typeof rows>();
+    let semWarehouse = 0;
+    for (const r of rows) {
+      const wh = r.warehouses?.code;
+      if (wh !== "OB" && wh !== "CC") { semWarehouse++; continue; } // sem fallback (Codex P1)
+      const arr = porConta.get(wh) ?? [];
+      arr.push(r);
+      porConta.set(wh, arr);
+    }
+
+    type Candidata = (typeof rows)[number];
+    const candidatas: Candidata[] = [];
+    let foraDaListagem = 0;
+    let naoRecebidas = 0;
+    let canceladasListagem = 0;
+    let identidadeFraca = 0;
+    let duplicadas = 0;
     let puladasCredencial = 0;
-    let estadoMudou = 0;
-    let errosUpdate = 0;
-    const errosConsulta: string[] = []; // amostra (até 3 distintos) do motivo de consulta_falhou
+    let listagemTruncada = false;
+    const errosListagem: string[] = [];
 
-    for (let i = 0; i < rows.length; i++) {
-      if (i > 0) await new Promise((r) => setTimeout(r, TREGUA_MS));
-      const nfe = rows[i];
-
-      const whCode = nfe.warehouses?.code ?? "OB";
+    for (const [whCode, pendentesConta] of porConta) {
       const creds = getOmieCredentials(whCode);
-      if (!creds.appKey || !creds.appSecret) {
-        puladasCredencial++;
-        console.warn(`[omie-nfe-reconcile] NF ${nfe.numero_nfe}: credenciais ausentes p/ warehouse ${whCode}, pulando`);
+      if (!creds) {
+        puladasCredencial += pendentesConta.length;
+        console.warn(`[omie-nfe-reconcile] credenciais ausentes p/ warehouse ${whCode} — ${pendentesConta.length} pendentes puladas`);
         continue;
       }
 
-      // Lock atômico compartilhado com a efetivação manual (RPC claim_nfe_efetivacao_lock,
-      // compare-and-clear) — se um humano está efetivando esta NF agora, a varredura pula.
+      // Janela de emissão estreita: [mais antiga - 7d, mais antiga + 60d]. Concentra os 50
+      // slots da página onde as pendentes estão; conforme reconciliam, a janela avança.
+      const emissoes = pendentesConta.map((p) => p.data_emissao).filter((d): d is string => !!d).sort();
+      const base = emissoes[0] ? new Date(`${emissoes[0]}T00:00:00Z`) : new Date(Date.now() - JANELA_EMISSAO_FALLBACK_DIAS * 86_400_000);
+      const de = new Date(base.getTime() - JANELA_EMISSAO_MARGEM_DIAS * 86_400_000);
+      const ate = new Date(de.getTime() + (JANELA_EMISSAO_MARGEM_DIAS + JANELA_EMISSAO_LARGURA_DIAS) * 86_400_000);
+
+      const lst = await omieCall(RECEB_URL, {
+        call: "ListarRecebimentos",
+        app_key: creds.appKey,
+        app_secret: creds.appSecret,
+        param: [{ nPagina: 1, nRegistrosPorPagina: REGISTROS_POR_PAGINA, dtEmissaoDe: formatarDataOmie(de), dtEmissaoAte: formatarDataOmie(ate) }],
+      });
+      const cls = classificarRespostaOmie({ httpOk: !lst.error, status: lst.error ? lst.status : 200, body: lst.data });
+      if (!cls.sucesso) {
+        const msg = `${whCode}: ${cls.erro ?? "erro"}`;
+        if (errosListagem.length < 3) errosListagem.push(msg);
+        console.warn(`[omie-nfe-reconcile] listagem falhou — ${msg}`);
+        continue;
+      }
+      const recsPagina = asRecord(lst.data).recebimentos;
+      const cheia = Array.isArray(recsPagina) && recsPagina.length >= REGISTROS_POR_PAGINA;
+      if (cheia) listagemTruncada = true; // honestidade de cobertura: pode haver mais além da página 1
+
+      const mapa = extrairRecebidosDaListagem([lst.data]);
+      const sel = selecionarCandidatasReconcile(pendentesConta, mapa, limite - candidatas.length);
+      candidatas.push(...sel.candidatas);
+      foraDaListagem += sel.foraDaListagem;
+      naoRecebidas += sel.naoRecebidas;
+      canceladasListagem += sel.canceladas;
+      identidadeFraca += sel.identidadeFraca;
+      duplicadas += sel.duplicadas;
+      console.log(`[omie-nfe-reconcile] ${whCode}: listagem ${mapa.size} registros (${formatarDataOmie(de)}–${formatarDataOmie(ate)}${cheia ? ", TRUNCADA" : ""}), pendentes ${pendentesConta.length}, candidatas ${sel.candidatas.length}, nao_recebidas ${sel.naoRecebidas}, canceladas ${sel.canceladas}, identidade_fraca ${sel.identidadeFraca}, duplicadas ${sel.duplicadas}, fora ${sel.foraDaListagem}`);
+      if (candidatas.length >= limite) break;
+    }
+
+    // ── Fase 2: reconciliação DIRETA em lote (só escrita local — zero chamadas ao Omie) ──
+    const reconciliadasNfe: string[] = [];
+    let puladasLock = 0;
+    let estadoMudou = 0;
+    let errosUpdate = 0;
+
+    for (const nfe of candidatas) {
       const lockTs = new Date().toISOString();
       const cutoff = new Date(Date.now() - LOCK_TTL_MIN * 60_000).toISOString();
       const { data: claimRows, error: claimErr } = await supabase
@@ -330,58 +401,28 @@ Deno.serve(async (req) => {
         puladasLock++;
         continue;
       }
-
       try {
-        const consulta = await omieCall(RECEB_URL, {
-          call: "ConsultarRecebimento",
-          app_key: creds.appKey,
-          app_secret: creds.appSecret,
-          param: [{ nIdReceb: nfe.omie_id_receb, cChaveNfe: nfe.chave_acesso }],
-        });
-        const cls = classificarRespostaOmie({ httpOk: !consulta.error, status: consulta.error ? consulta.status : 200, body: consulta.data });
-        const esperado = { nIdReceb: nfe.omie_id_receb, chaveAcesso: nfe.chave_acesso };
-        const efeito = decidirEfeitoReconcileLote(cls, consulta.data, esperado);
-
-        if (efeito.efeito === "reconciliar") {
-          const tentativa = (nfe.efetivacao_tentativas ?? 0) + 1;
-          // Compare-and-update (Codex P1): só reconcilia se a NF AINDA está 'pendente' e o
-          // lock ainda é meu — se um humano moveu o status entre o SELECT e aqui, 0 linhas.
-          const { data: updRows, error: updErr } = await supabase.from("nfe_recebimentos").update({
-            status: "efetivado", efetivado_at: new Date().toISOString(),
-            alterar_recebimento_ok: true, alterar_etapa_ok: true, concluir_recebimento_ok: true,
-            efetivacao_erro: null, efetivacao_tentativas: tentativa,
-          }).eq("id", nfe.id).eq("status", "pendente").eq("efetivacao_lock_at", lockTs).select("id");
-          if (updErr) {
-            errosUpdate++;
-            console.error(`[omie-nfe-reconcile] NF ${nfe.numero_nfe}: erro ao marcar efetivado:`, updErr);
-            continue;
-          }
-          if (!updRows || updRows.length === 0) {
-            estadoMudou++;
-            console.warn(`[omie-nfe-reconcile] NF ${nfe.numero_nfe}: estado mudou entre o SELECT e o update — pulada.`);
-            continue;
-          }
-          efeitos.push(efeito); // só conta como reconciliada com o update confirmado
-          await registrarTentativa(supabase, { nfe_recebimento_id: nfe.id, tentativa, operacao: "reconciliado_auto", sucesso: true, erro: null, omie_status: null });
-          reconciliadasNfe.push(nfe.numero_nfe);
-          console.log(`[omie-nfe-reconcile] NF ${nfe.numero_nfe} reconciliada (já recebida no Omie).`);
+        const tentativa = (nfe.efetivacao_tentativas ?? 0) + 1;
+        // Compare-and-update (Codex P1): só reconcilia se a NF AINDA está 'pendente' e o
+        // lock ainda é meu — se um humano moveu o status entre o SELECT e aqui, 0 linhas.
+        const { data: updRows, error: updErr } = await supabase.from("nfe_recebimentos").update({
+          status: "efetivado", efetivado_at: new Date().toISOString(),
+          alterar_recebimento_ok: true, alterar_etapa_ok: true, concluir_recebimento_ok: true,
+          efetivacao_erro: null, efetivacao_tentativas: tentativa,
+        }).eq("id", nfe.id).eq("status", "pendente").eq("efetivacao_lock_at", lockTs).select("id");
+        if (updErr) {
+          errosUpdate++;
+          console.error(`[omie-nfe-reconcile] NF ${nfe.numero_nfe}: erro ao marcar efetivado:`, updErr);
           continue;
         }
-
-        efeitos.push(efeito);
-        if (efeito.motivo === "identidade_divergente") {
-          // Grave o bastante pra deixar rastro no ledger, mas o status/painel ficam intactos.
-          const erroIdent = validarIdentidade(extrairEstadoConsulta(consulta.data), esperado).erro ?? "identidade não confere";
-          await registrarTentativa(supabase, { nfe_recebimento_id: nfe.id, tentativa: nfe.efetivacao_tentativas ?? 0, operacao: "reconcile_identidade", sucesso: false, erro: erroIdent, omie_status: null });
-          console.warn(`[omie-nfe-reconcile] NF ${nfe.numero_nfe}: ${erroIdent} — pulada.`);
-        } else if (efeito.motivo === "consulta_falhou") {
-          // Observabilidade (lição 2026-07-16: 15/15 consultas falharam e o MOTIVO não era
-          // visível de fora — só contadores). Amostra na resposta → fica em net._http_response,
-          // legível via psql-ro sem depender de clique/log; warn por NF cobre o resto.
-          const erroConsulta = `${cls.erro ?? "erro desconhecido"}${cls.omieStatus ? ` (omie_status ${cls.omieStatus})` : ""}`;
-          if (errosConsulta.length < 3 && !errosConsulta.includes(erroConsulta)) errosConsulta.push(erroConsulta);
-          console.warn(`[omie-nfe-reconcile] NF ${nfe.numero_nfe}: consulta falhou — ${erroConsulta}`);
+        if (!updRows || updRows.length === 0) {
+          estadoMudou++;
+          console.warn(`[omie-nfe-reconcile] NF ${nfe.numero_nfe}: estado mudou entre o SELECT e o update — pulada.`);
+          continue;
         }
+        await registrarTentativa(supabase, { nfe_recebimento_id: nfe.id, tentativa, operacao: "reconciliado_auto", sucesso: true, erro: null, omie_status: null });
+        reconciliadasNfe.push(nfe.numero_nfe);
+        console.log(`[omie-nfe-reconcile] NF ${nfe.numero_nfe} reconciliada (recebida no Omie — listagem, identidade forte).`);
       } finally {
         // libera o lock só se ainda é o MEU (compare-and-clear pelo timestamp gravado)
         await supabase.from("nfe_recebimentos")
@@ -391,23 +432,33 @@ Deno.serve(async (req) => {
       }
     }
 
-    const resumo = resumirReconcileLote(efeitos);
     const { count: restantes } = await supabase
       .from("nfe_recebimentos")
       .select("id", { count: "exact", head: true })
       .eq("status", "pendente");
 
-    console.log(`[omie-nfe-reconcile] lote=${rows.length} reconciliadas=${resumo.reconciliadas} aguardando=${resumo.puladas.aguardando_conferencia} falha_consulta=${resumo.puladas.consulta_falhou} canceladas=${resumo.puladas.cancelada} inconsistentes=${resumo.puladas.inconsistente} identidade=${resumo.puladas.identidade_divergente} lock=${puladasLock} estado_mudou=${estadoMudou} erros_update=${errosUpdate} restantes_pendentes=${restantes ?? "?"}`);
+    console.log(`[omie-nfe-reconcile] v3: pendentes=${rows.length} candidatas=${candidatas.length} reconciliadas=${reconciliadasNfe.length} nao_recebidas=${naoRecebidas} canceladas=${canceladasListagem} identidade_fraca=${identidadeFraca} duplicadas=${duplicadas} fora_listagem=${foraDaListagem} sem_warehouse=${semWarehouse} lock=${puladasLock} estado_mudou=${estadoMudou} truncada=${listagemTruncada} restantes_pendentes=${restantes ?? "?"}`);
 
     return jsonRes({
       success: true,
-      lote: rows.length,
-      ...resumo,
+      versao: "v3-listagem-direta",
+      pendentes_avaliadas: rows.length,
+      candidatas: candidatas.length,
+      reconciliadas: reconciliadasNfe.length,
+      listagem: {
+        nao_recebidas: naoRecebidas,
+        canceladas: canceladasListagem,
+        identidade_fraca: identidadeFraca,
+        duplicadas,
+        fora_da_listagem: foraDaListagem,
+        truncada: listagemTruncada,
+      },
+      sem_warehouse: semWarehouse,
       puladas_lock: puladasLock,
       puladas_credencial: puladasCredencial,
       estado_mudou: estadoMudou,
       erros_update: errosUpdate,
-      amostra_erros_consulta: errosConsulta,
+      amostra_erros_listagem: errosListagem,
       reconciliadas_nfe: reconciliadasNfe,
       restantes_pendentes: restantes ?? null,
     });

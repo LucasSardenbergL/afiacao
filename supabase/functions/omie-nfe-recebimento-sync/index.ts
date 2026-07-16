@@ -240,7 +240,11 @@ Deno.serve(async (req) => {
       console.log(`[sync] ${allRecebimentos.length} registros recentes (últimos 30 dias)`);
 
       let detailCalls = 0;
-      const MAX_DETAIL_CALLS = 10;
+      // 1 por conta/rodada: ConsultarRecebimento tem trava anti-redundância POR MÉTODO
+      // (~60s) no Omie — rajada de detalhes = "1 passa, resto REDUNDANT" (visto em prod
+      // 2026-07-16). Com o cron horário, 1/rodada importa 13/dia por conta — dá conta do
+      // fluxo. Follow-up no GOAL: migrar pra ListarRecebimentos(cExibirDetalhes:'S').
+      const MAX_DETAIL_CALLS = 1;
 
       for (const rec of allRecebimentos) {
         if (detailCalls >= MAX_DETAIL_CALLS) break;
