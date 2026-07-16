@@ -968,3 +968,62 @@ describe('guardrail money-path: ai-ops-agent resolve farmer_id da carteira (Opç
     ).toBe(mirrorBlockNamed(helper, 'owner-map'));
   });
 });
+
+// ── Fila do sync de leadtime por item de NFe (omie-sync-sku-items) ──
+// Incidente OBEN 2026-07-14: NFe cuja ConsultarRecebimento responde 0 itens não upserta,
+// então nunca saía da fila (a fila era "sem linha em sku_leadtime_history") e era
+// re-consultada em todo run — sob rate-limit, UMA consulta come os 50s do guard e as NFes
+// antigas expiram da janela sem virar leadtime. O backoff vive num helper puro espelhado
+// aqui; sem a paridade, um deploy do Lovable pode reverter o espelho e ressuscitar o poison.
+const SKU_ITEMS = 'supabase/functions/omie-sync-sku-items/index.ts';
+const SKU_ITEMS_FILA = 'src/lib/reposicao/sku-items-fila-helpers.ts';
+
+describe('guardrail money-path: omie-sync-sku-items (fila de leadtime)', () => {
+  const src = read(SKU_ITEMS);
+  const helper = read(SKU_ITEMS_FILA);
+
+  it('sentinela: leu os arquivos reais (edge + helper)', () => {
+    expect(src).toContain('sku_leadtime_history');
+    expect(src).toContain('ConsultarRecebimento');
+    expect(helper).toContain('skuItemsBackoffMs');
+  });
+
+  it('o edge USA o helper espelhado: define E chama a elegibilidade + a ordenação', () => {
+    expect(src, 'edge não define mais skuItemsElegivel').toMatch(/function skuItemsElegivel/);
+    expect(src, 'REGRESSÃO: edge não filtra mais por elegibilidade — poison volta a entupir a fila')
+      .toMatch(/skuItemsElegivel\(/);
+    expect(src, 'REGRESSÃO: edge não ordena mais a fila — antigas voltam a nunca ser alcançadas')
+      .toMatch(/skuItemsCompararFila\(/);
+  });
+
+  it('PARIDADE: o bloco espelhado no edge é IDÊNTICO ao helper de src/ (pega reversão do Lovable)', () => {
+    expect(
+      mirrorBlockNamed(src, 'sku-items-fila'),
+      'edge divergiu de sku-items-fila-helpers.ts — o Lovable reescreveu a fila no deploy?',
+    ).toBe(mirrorBlockNamed(helper, 'sku-items-fila'));
+  });
+
+  it('toda consulta marca tentativa: sem isso a NFe de 0 itens nunca sai da fila', () => {
+    expect(
+      count(src, 'marcarTentativa('),
+      'marcarTentativa deve ser DEFINIDA e chamada no sucesso E na falha (≥3 menções)',
+    ).toBeGreaterThanOrEqual(3);
+  });
+
+  it('erro sistêmico mede consultas TENTADAS, não NFes pendentes (mata o alerta falso)', () => {
+    expect(
+      src,
+      'REGRESSÃO: voltou a marcar error por NFes pendentes — janela só com NFe sem nIdReceb ' +
+        'acorda o Sentinela com "rate-limit?" falso, sem ter chamado a Omie (OBEN 2026-07-14)',
+    ).toMatch(/consultas_tentadas\s*>\s*0\s*&&\s*\w*\.?consultas_detalhadas\s*===\s*0/);
+    expect(src).not.toMatch(/nfes_processadas\s*>\s*0\s*&&\s*\w*\.?consultas_detalhadas\s*===\s*0/);
+  });
+
+  it('controle da fila é FAIL-CLOSED: tabela ausente grita, não degrada em silêncio', () => {
+    expect(
+      src,
+      'REGRESSÃO: voltou a degradar quando sku_items_sync_controle falha — o poison ' +
+        'reviveria sem ninguém saber (edge deployada antes da migration)',
+    ).toMatch(/throw new Error\(\s*\n?\s*`sku_items_sync_controle ilegível/);
+  });
+});
