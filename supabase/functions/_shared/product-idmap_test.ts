@@ -1,5 +1,5 @@
 // Testa o CÓDIGO REAL de product-idmap.ts (não uma cópia) no runtime real (Deno).
-// Roda com: deno test supabase/functions/omie-analytics-sync/product-idmap_test.ts
+// Roda com: deno test supabase/functions/_shared/product-idmap_test.ts
 //
 // Money-path: buildProductIdMap resolve omie_codigo_produto -> product_id NULIFICANDO o
 // código AMBÍGUO (mesmo número em >1 account — omie_products é UNIQUE (omie_codigo_produto,
