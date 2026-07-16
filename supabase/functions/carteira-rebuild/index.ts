@@ -199,6 +199,41 @@ Deno.serve(async (req) => {
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
   );
 
+  // LEASE anti-intercalação (fecha o mosaico rebuild × rebuild — spec 2026-07-13, Codex xhigh). run_id via
+  // crypto.randomUUID() (não Date.now(): sem colisão). Claim ANTES de qualquer leitura/baseline (Codex #5:
+  // travar tarde deixaria dois runs lerem baselines diferentes e o mais lento sobrescrever o mais novo,
+  // burlando a catraca). Lease ocupado → 409 fail-closed, sem ler nem escrever. Advisory de SESSÃO via
+  // PostgREST NÃO serve (o pool não dá afinidade de conexão) → lease row-based (claim_carteira_rebuild).
+  const runId = crypto.randomUUID();
+  const claimRes = await supabase.rpc('claim_carteira_rebuild', { p_run_id: runId });
+  if (claimRes.error) { console.error('[carteira-rebuild] claim erro:', claimRes.error.message); return fail(`claim: ${claimRes.error.message}`); }
+  if (claimRes.data !== true) {
+    console.warn('[carteira-rebuild] lease ocupado — outro rebuild em andamento; abortando 409 (fail-closed)');
+    return fail('rebuild em andamento (lease ocupado)', 409);
+  }
+
+  // Libera o lease com OWNERSHIP (a RPC só fecha se ESTE run ainda é dono). Idempotente (flag). await sempre
+  // (Codex #3: NÃO best-effort silencioso). retorno 'ownership'/'transport' = incidente (console.error). Os
+  // aborts de guard liberam via failLease; uma exceção não-capturada (rara) conta com o auto-expiry de 15min
+  // (mesmo backstop de crash — Codex #3: lease preso ≤15min é aceitável, fail-closed).
+  let leaseReleased = false;
+  const releaseLease = async (status: 'complete' | 'error'): Promise<'ok' | 'ownership' | 'transport'> => {
+    if (leaseReleased) return 'ok';   // já liberado COM SUCESSO — a flag marca só no 'ok' (Codex: "iniciado" ≠ "liberado")
+    for (let attempt = 1; attempt <= 2; attempt++) {   // retry curto; a RPC é IDEMPOTENTE p/ o mesmo run_id (finalize repetido → true)
+      const { data, error } = await supabase.rpc('finalizar_carteira_rebuild', { p_run_id: runId, p_status: status });
+      if (error) { console.error(`[carteira-rebuild] finalize transporte (tent ${attempt}):`, error.message); continue; }
+      if (data !== true) { console.error('[carteira-rebuild] finalize SEM ownership (fencing quebrado/lease adulterado?):', runId); return 'ownership'; }
+      leaseReleased = true;
+      return 'ok';
+    }
+    return 'transport';
+  };
+  // Abort pós-claim: libera o lease ('error') ANTES de responder o fail (senão fica preso até o TTL).
+  const failLease = async (msg: string, status = 500): Promise<Response> => {
+    await releaseLease('error');
+    return fail(msg, status);
+  };
+
   // 1. Carregar mapa + hunter (tabelas pequenas). FAIL-CLOSED: erro de leitura estrutural aborta ANTES
   // de qualquer upsert — senão vendedorMap=[] mandaria a carteira inteira pro Hunter (P1.4 Codex).
   const [mapRes, hunterRes, baselineRes] = await Promise.all([
@@ -206,16 +241,16 @@ Deno.serve(async (req) => {
     supabase.from('company_config').select('value').eq('key', 'carteira_hunter_user_id').maybeSingle(),
     supabase.from('company_config').select('value').eq('key', 'carteira_omie_baseline').maybeSingle(),
   ]);
-  if (mapRes.error) { console.error('[carteira-rebuild] load vendedor_map error:', mapRes.error.message); return fail(`vendedor_map: ${mapRes.error.message}`); }
-  if (hunterRes.error) { console.error('[carteira-rebuild] load hunter error:', hunterRes.error.message); return fail(`hunter: ${hunterRes.error.message}`); }
-  if (baselineRes.error) { console.error('[carteira-rebuild] load baseline error:', baselineRes.error.message); return fail(`baseline: ${baselineRes.error.message}`); }
+  if (mapRes.error) { console.error('[carteira-rebuild] load vendedor_map error:', mapRes.error.message); return await failLease(`vendedor_map: ${mapRes.error.message}`); }
+  if (hunterRes.error) { console.error('[carteira-rebuild] load hunter error:', hunterRes.error.message); return await failLease(`hunter: ${hunterRes.error.message}`); }
+  if (baselineRes.error) { console.error('[carteira-rebuild] load baseline error:', baselineRes.error.message); return await failLease(`baseline: ${baselineRes.error.message}`); }
   // Baseline saudável persistido (omie elegível do último rebuild bom). Ausente → 0 (bootstrap). Valor CORROMPIDO
   // (não-decimal / > 2^53) → ABORTA (Codex R3 P2: não deixar "4797lixo"→4797, "1e9"→1, gigante→Infinity/congelar).
   const baselinePersistido = parseBaselineSaudavel((baselineRes.data?.value as string | null | undefined) ?? '0');
-  if (baselinePersistido === null) { console.error('[carteira-rebuild] baseline corrompido:', baselineRes.data?.value); return fail(`baseline corrompido: ${baselineRes.data?.value}`); }
+  if (baselinePersistido === null) { console.error('[carteira-rebuild] baseline corrompido:', baselineRes.data?.value); return await failLease(`baseline corrompido: ${baselineRes.data?.value}`); }
   const vendedorMap = (mapRes.data ?? []) as VendedorMapRow[];
   // vendedor_map vazio é anômalo (sempre há vendedores) e mandaria todos pro Hunter → aborta.
-  if (vendedorMap.length === 0) { console.error('[carteira-rebuild] vendedor_map vazio — abortando'); return fail('vendedor_map vazio (anômalo)'); }
+  if (vendedorMap.length === 0) { console.error('[carteira-rebuild] vendedor_map vazio — abortando'); return await failLease('vendedor_map vazio (anômalo)'); }
   // value pode vir como uuid puro ou JSON-quoted ("uuid") — normaliza removendo aspas.
   const rawHunter = (hunterRes.data?.value as string | null | undefined) ?? null;
   const hunterUserId = rawHunter ? (rawHunter.replace(/^"|"$/g, '').trim() || null) : null;
@@ -233,7 +268,7 @@ Deno.serve(async (req) => {
         .eq('status', 'active')
         .order('alias_user_id', { ascending: true })
         .range(from, from + PAGE - 1);
-      if (error) { console.error('[carteira-rebuild] load aliases error:', error.message); return fail(`aliases: ${error.message}`); }
+      if (error) { console.error('[carteira-rebuild] load aliases error:', error.message); return await failLease(`aliases: ${error.message}`); }
       const page = (data ?? []) as Array<{ alias_user_id: string; canonical_user_id: string }>;
       for (const r of page) if (r.alias_user_id && r.canonical_user_id) aliasMap.set(r.alias_user_id, r.canonical_user_id);
       if (page.length < PAGE) break;
@@ -256,12 +291,12 @@ Deno.serve(async (req) => {
       .select('user_id')
       .order('user_id', { ascending: true })
       .range(from, from + PAGE - 1);
-    if (error) { console.error('[carteira-rebuild] load ledger error:', error.message); return fail(error.message); }
+    if (error) { console.error('[carteira-rebuild] load ledger error:', error.message); return await failLease(error.message); }
     const page = (data ?? []) as Array<{ user_id: string }>;
     for (const r of page) membroIds.push(r.user_id);
     if (page.length === 0) break;
     from += page.length;
-    if (from > MAX_ROWS) { console.error('[carteira-rebuild] ledger excedeu MAX_ROWS'); return fail('paginacao ledger excedeu limite'); }
+    if (from > MAX_ROWS) { console.error('[carteira-rebuild] ledger excedeu MAX_ROWS'); return await failLease('paginacao ledger excedeu limite'); }
   }
 
   // VENDEDOR account-correto = view FRESCA omie_customer_account_map_fresco (account='oben') → Map por
@@ -277,7 +312,7 @@ Deno.serve(async (req) => {
       .not('user_id', 'is', null)
       .order('user_id', { ascending: true })
       .range(from, from + PAGE - 1);
-    if (error) { console.error('[carteira-rebuild] load proof oben error:', error.message); return fail(`proof oben: ${error.message}`); }
+    if (error) { console.error('[carteira-rebuild] load proof oben error:', error.message); return await failLease(`proof oben: ${error.message}`); }
     const page = (data ?? []) as Array<{ user_id: string; omie_codigo_vendedor: number | string | null }>;
     for (const r of page) {
       const cod = coerceCodigoVendedor(r.omie_codigo_vendedor);
@@ -286,7 +321,7 @@ Deno.serve(async (req) => {
     }
     if (page.length === 0) break;
     from += page.length;
-    if (from > MAX_ROWS) { console.error('[carteira-rebuild] proof oben excedeu MAX_ROWS'); return fail('paginacao proof oben excedeu limite'); }
+    if (from > MAX_ROWS) { console.error('[carteira-rebuild] proof oben excedeu MAX_ROWS'); return await failLease('paginacao proof oben excedeu limite'); }
   }
 
   // Denominador do guard de frescor = proof oben CRUA (sem TTL), não o espelho misto (#4 Codex): isola a
@@ -294,13 +329,13 @@ Deno.serve(async (req) => {
   // persistido — senão baseline=0 && atual>0, após uma persistência falha, reabriria a catraca).
   const { count: proofCruaRaw, error: cruaErr } = await supabase
     .from('omie_customer_account_map').select('*', { count: 'exact', head: true }).eq('account', 'oben').not('user_id', 'is', null);
-  if (cruaErr) { console.error('[carteira-rebuild] count proof crua error:', cruaErr.message); return fail(`proof crua: ${cruaErr.message}`); }
+  if (cruaErr) { console.error('[carteira-rebuild] count proof crua error:', cruaErr.message); return await failLease(`proof crua: ${cruaErr.message}`); }
   const proofCrua = proofCruaRaw ?? 0;
 
   // Guard PRÉ-compute fail-closed: proof oben anômala → aborta ANTES de qualquer upsert (senão a carteira
   // zeraria p/ Hunter silenciosamente). Análogo ao guard de vendedor_map vazio (:155).
   const guardPre = avaliarGuardProof({ proofCrua, proofFresca: proofOben.size, comVendedor });
-  if (guardPre.abortar) { console.error('[carteira-rebuild] guard proof oben:', guardPre.motivo); return fail(`guard proof oben: ${guardPre.motivo}`); }
+  if (guardPre.abortar) { console.error('[carteira-rebuild] guard proof oben:', guardPre.motivo); return await failLease(`guard proof oben: ${guardPre.motivo}`); }
 
   // Merge: LISTA (ledger) × VENDEDOR (proof oben). Clone ausente da proof → null → herda do gêmeo no grupo.
   const clientes = montarClientes(membroIds, proofOben);
@@ -318,7 +353,7 @@ Deno.serve(async (req) => {
         .eq('excluir_da_carteira', true)
         .order('user_id', { ascending: true })
         .range(from, from + FPAGE - 1);
-      if (error) { console.error('[carteira-rebuild] load flaggeds error:', error.message); return fail(`flaggeds: ${error.message}`); }
+      if (error) { console.error('[carteira-rebuild] load flaggeds error:', error.message); return await failLease(`flaggeds: ${error.message}`); }
       const page = (data ?? []) as Array<{ user_id: string }>;
       for (const r of page) flaggeds.add(r.user_id);
       if (page.length < FPAGE) break;
@@ -331,7 +366,7 @@ Deno.serve(async (req) => {
   // 2b. Cadeia de alias (A→B→C) detectada → ABORTA sem escrever (P2.7 Codex). Aliases devem ser 1 nível.
   if (chainViolations.length) {
     console.error('[carteira-rebuild] cadeia de alias detectada — abortando:', JSON.stringify(chainViolations.slice(0, 20)));
-    return fail(`cadeia de alias (${chainViolations.length}) — corrija customer_canonical_alias`);
+    return await failLease(`cadeia de alias (${chainViolations.length}) — corrija customer_canonical_alias`);
   }
 
   // 2c. Rows finais — eligible EXPLÍCITO pós-flaggeds (clone a.eligible E não-fornecedor: é o que esconde
@@ -352,15 +387,47 @@ Deno.serve(async (req) => {
   // (fator 0.8, monotônico → sem catraca). Nunca grava carteira integralmente órfã.
   const omieElegivelNovo = rows.filter((r) => r.source === 'omie' && r.eligible).length;
   const guardPos = avaliarGuardResultado({ omieElegivelNovo, baselinePersistido, autorizado });
-  if (guardPos.abortar) { console.error('[carteira-rebuild] guard resultado:', guardPos.motivo); return fail(`guard resultado: ${guardPos.motivo}`); }
+  if (guardPos.abortar) { console.error('[carteira-rebuild] guard resultado:', guardPos.motivo); return await failLease(`guard resultado: ${guardPos.motivo}`); }
 
   // 3. Upsert idempotente.
 
   let upserted = 0;
   for (let i = 0; i < rows.length; i += 500) {
     const chunk = rows.slice(i, i + 500);
-    const { error } = await supabase.from('carteira_assignments').upsert(chunk, { onConflict: 'customer_user_id' });
-    if (error) { console.error('[carteira-rebuild] upsert error:', error.message); return fail(error.message); }
+    // Retry idempotente do chunk (Codex re-challenge): o upsert é idempotente por customer_user_id → re-tentar
+    // reduz o mosaico por erro TRANSITÓRIO. Erro persistente ainda deixa parcial (reportado honesto abaixo); o
+    // reparo total (staging + swap atômico = opção B) é dívida v2.
+    let chunkErr: { message: string } | null = null;
+    let chunkStatus = 0;
+    for (let tent = 1; tent <= 3; tent++) {
+      const { error, status } = await supabase.from('carteira_assignments').upsert(chunk, { onConflict: 'customer_user_id' });
+      if (!error) { chunkErr = null; break; }
+      chunkErr = error; chunkStatus = status ?? 0;
+      console.warn(`[carteira-rebuild] upsert chunk ${i} falhou (tent ${tent}, http ${chunkStatus}):`, error.message);
+    }
+    if (chunkErr) {
+      // Upsert parcial (chunks anteriores JÁ commitaram — PostgREST = 1 tx/chunk). Codex re-challenge #4: NÃO
+      // declarar writes_committed:false sob RESPOSTA PERDIDA. `status:0` do SDK = falha de fetch → o chunk PODE
+      // ter commitado (commit DESCONHECIDO); `status>=400` = o banco recusou (chunk NÃO commitou). Reporte:
+      // upserted_confirmed (só chunks que retornaram ok) + current_chunk_commit. Propaga ownership/transport do
+      // finalize. Reparo total (staging + swap atômico = opção B) é dívida v2.
+      const commitDesconhecido = chunkStatus === 0;
+      console.error(`[carteira-rebuild] upsert parcial (chunk ${i}, http ${chunkStatus}, commit ${commitDesconhecido ? 'DESCONHECIDO' : 'nao'}):`, chunkErr.message);
+      const rel = await releaseLease('error');
+      const base = {
+        ok: false, error: chunkErr.message, runId,
+        upserted_confirmed: upserted,                                  // só os chunks que retornaram sucesso
+        current_chunk_commit: commitDesconhecido ? 'unknown' : 'no',
+        writes_committed: upserted > 0 || commitDesconhecido,          // honesto: transporte pode ter escrito
+        partial: upserted > 0 || commitDesconhecido,
+      };
+      const body = rel === 'ownership' ? { ...base, ownership_lost: true, integrity: 'unknown' }
+                 : rel === 'transport' ? { ...base, finalize: 'unknown' }
+                 : base;
+      // 503 se o commit do chunk é incerto (transporte) OU o finalize teve transporte; 500 no erro real de banco.
+      const httpStatus = (commitDesconhecido || rel === 'transport') ? 503 : 500;
+      return new Response(JSON.stringify(body), { status: httpStatus, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
     upserted += chunk.length;
   }
 
@@ -374,9 +441,31 @@ Deno.serve(async (req) => {
     if (bErr) console.warn('[carteira-rebuild] falha ao persistir baseline (nao-fatal):', bErr.message);
   }
 
+  // Finalize honesto do lease. 'ownership' e 'transport' são DISTINTOS (Codex #3):
+  const finalize = await releaseLease('complete');
+  if (finalize === 'ownership') {
+    // perdeu o lease no FIM = fencing quebrado ou lease adulterado → integridade DESCONHECIDA. NÃO é
+    // transitório nem retentável (500, distinto do 503 de transporte). A escrita saiu, mas outro run pode
+    // ter concorrido: alerta forte.
+    console.error('[carteira-rebuild] OWNERSHIP perdido no finalize (integridade desconhecida):', runId);
+    return new Response(JSON.stringify({
+      ok: false, error: 'ownership perdido no finalize', ownership_lost: true, integrity: 'unknown',
+      writes_committed: true, upserted, omieElegivelNovo, novoBaseline: guardPos.novoBaseline, runId,
+    }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+  }
+  if (finalize === 'transport') {
+    // transporte falhou APÓS o upsert commitado → 503 honesto (writes_committed:true, finalize:'unknown').
+    // A escrita ESTÁ boa; só o selo do lease ficou incerto. O lease auto-expira em 15min (fail-closed; sem
+    // force-release, sem reduzir TTL).
+    return new Response(JSON.stringify({
+      ok: false, error: 'finalize falhou (transporte)', writes_committed: true, finalize: 'unknown',
+      upserted, omieElegivelNovo, novoBaseline: guardPos.novoBaseline, runId,
+    }), { status: 503, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+  }
+
   return new Response(JSON.stringify({
     ok: true, upserted, orphanCount, omieElegivelNovo, comVendedor,
     proofFresca: proofOben.size, proofCrua, baselinePersistido, novoBaseline: guardPos.novoBaseline,
-    autorizado, via: auth.via, conflicts, hunterUserId, aliasesAtivos: aliasMap.size,
+    autorizado, via: auth.via, conflicts, hunterUserId, aliasesAtivos: aliasMap.size, runId,
   }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 });
