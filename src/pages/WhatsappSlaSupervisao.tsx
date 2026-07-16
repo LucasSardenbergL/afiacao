@@ -2,12 +2,64 @@ import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { Card } from '@/components/ui/card';
+import { Skeleton } from '@/components/ui/skeleton';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useWhatsappSla, type WaSlaRow } from '@/queries/useWhatsappSla';
+import { useWhatsappFunil } from '@/hooks/useWhatsappFunil';
 import { formatSlaWait } from '@/lib/whatsapp/sla-format';
 
+// formatador local (padrão do repo: cada módulo tem o seu — evita aresta cross-módulo)
+const BRL = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
+
 interface Grupo { ownerId: string | null; total: number; vermelhos: number; amarelos: number; pior: number; }
+
+/** Funil do canal (PR-3): estágios agregados dos últimos 30 dias, atribuição por elo explícito. */
+function FunilDoCanal() {
+  const { data: funil, isLoading, isError } = useWhatsappFunil(30);
+
+  if (isLoading) return <Card className="p-3"><Skeleton className="h-10 w-full" /></Card>;
+  if (isError || !funil) {
+    return (
+      <Card className="p-3 text-xs text-muted-foreground">
+        Funil do canal indisponível agora — não significa que não houve envios.
+      </Card>
+    );
+  }
+
+  const estagios: Array<{ label: string; valor: string; destaque?: string }> = [
+    { label: 'Enviadas', valor: String(funil.enviados) },
+    { label: 'Entregues', valor: String(funil.entregues) },
+    { label: 'Lidas', valor: String(funil.lidos) },
+    { label: 'Responderam', valor: String(funil.respondidos), destaque: 'text-status-success' },
+    { label: 'Falhas', valor: String(funil.falhas), destaque: funil.falhas > 0 ? 'text-status-error' : undefined },
+    { label: 'Propostas', valor: String(funil.propostas) },
+    { label: 'Pedidos Omie', valor: String(funil.pedidosOmie), destaque: 'text-status-info' },
+    // ausente ≠ zero: sem pedido com total conhecido mostra "—", nunca R$ 0
+    { label: 'Receita', valor: funil.receitaOmie === null ? '—' : BRL.format(funil.receitaOmie) },
+  ];
+
+  return (
+    <Card className="p-3 space-y-2">
+      <div className="flex items-baseline justify-between">
+        <div className="text-sm font-medium">Funil do canal — últimos 30 dias</div>
+        <div className="text-[11px] text-muted-foreground">templates HSM</div>
+      </div>
+      <div className="grid grid-cols-4 sm:grid-cols-8 gap-2">
+        {estagios.map((e) => (
+          <div key={e.label}>
+            <div className={`text-lg font-semibold tabular-nums ${e.destaque ?? ''}`}>{e.valor}</div>
+            <div className="text-[11px] text-muted-foreground">{e.label}</div>
+          </div>
+        ))}
+      </div>
+      <p className="text-[11px] text-muted-foreground">
+        Atribuição conservadora: proposta/pedido contam só com elo explícito à conversa
+        (nasce no envio de proposta pela conversa — PR-4). Pedido por telefone não entra.
+      </p>
+    </Card>
+  );
+}
 
 function agrupar(rows: WaSlaRow[]): Grupo[] {
   const map = new Map<string, Grupo>();
@@ -57,6 +109,7 @@ export default function WhatsappSlaSupervisao() {
         <h1 className="text-xl font-semibold">SLA do WhatsApp — supervisão</h1>
         <p className="text-xs text-muted-foreground">Clientes sem resposta, por vendedora. Atualiza ao vivo.</p>
       </div>
+      <FunilDoCanal />
       {grupos.length === 0 ? (
         <Card className="p-4 text-sm text-muted-foreground">Nenhum cliente esperando agora. 👌</Card>
       ) : grupos.map((g) => (

@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **358** custom migrations totais
-- **1280** objetos esperados (criados por estas migrations)
+- **367** custom migrations totais
+- **1316** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 360
-  - `rls_policy`: 285
-  - `index`: 211
-  - `cron_job`: 146
-  - `table`: 138
-  - `trigger`: 76
+  - `function`: 367
+  - `rls_policy`: 293
+  - `index`: 221
+  - `cron_job`: 149
+  - `table`: 144
+  - `trigger`: 78
   - `view`: 60
   - `enum_value`: 4
 
@@ -3050,6 +3050,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `rls_policy` | `public.prime_uso_staff_update` | `prime_beneficio_uso` |
 | `rls_policy` | `public.prime_uso_cliente_read` | `prime_beneficio_uso` |
 
+### `20260711140000_omie_sync_identity_snapshot.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.omie_sync_identity_snapshot` | — |
+
 ### `20260711145000_v_grupo_contatos_fresca.sql`
 
 | Tipo | Objeto | Parent |
@@ -3068,6 +3074,81 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.atualizar_parametros_numericos_skus` | — |
 | `function` | `public.reposicao_param_auto_resumo_tick` | — |
+
+### `20260712150000_carteira_membership_ledger_fatia0.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tg_omie_clientes_to_ledger` | — |
+| `table` | `public.carteira_membership_ledger` | — |
+| `index` | `public.idx_cml_identity_state` | `carteira_membership_ledger` |
+| `trigger` | `public.trg_omie_clientes_to_ledger` | `omie_clientes` |
+
+### `20260713010000_whatsapp_templates_hsm.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.whatsapp_templates` | — |
+| `table` | `public.whatsapp_template_sends` | — |
+| `index` | `public.idx_wts_conversation` | `whatsapp_template_sends` |
+| `index` | `public.idx_wts_wa_message_id` | `whatsapp_template_sends` |
+| `index` | `public.idx_wts_pendentes` | `whatsapp_template_sends` |
+| `rls_policy` | `public.wt_staff_read` | `whatsapp_templates` |
+| `rls_policy` | `public.wt_master_write` | `whatsapp_templates` |
+| `rls_policy` | `public.wts_staff_read` | `whatsapp_template_sends` |
+
+### `20260713020000_whatsapp_pendentes_rpc.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.wa_msg_touch_last_outbound` | — |
+| `function` | `public.get_whatsapp_pendentes` | — |
+| `index` | `public.idx_wa_conv_pendentes` | `whatsapp_conversations` |
+| `trigger` | `public.trg_wa_msg_last_outbound` | `whatsapp_messages` |
+
+### `20260713030000_whatsapp_funil.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.get_whatsapp_funil` | — |
+| `index` | `public.idx_so_whatsapp_conv` | `sales_orders` |
+
+### `20260713160000_carteira_rebuild_lease.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.claim_carteira_rebuild` | — |
+| `function` | `public.finalizar_carteira_rebuild` | — |
+| `rls_policy` | `public.carteira_rebuild_lease_no_insert` | `sync_state` |
+| `rls_policy` | `public.carteira_rebuild_lease_no_update` | `sync_state` |
+| `rls_policy` | `public.carteira_rebuild_lease_no_delete` | `sync_state` |
+
+### `20260714215547_omie_nfe_recebimento_crons.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `cron_job` | `cron.omie-nfe-recebimento-import-1h` | — |
+| `cron_job` | `cron.omie-nfe-reconcile-1h` | — |
+
+### `20260715001500_sku_items_sync_controle.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.sku_items_sync_controle` | — |
+| `index` | `public.idx_sku_items_sync_controle_fila` | `sku_items_sync_controle` |
+
+### `20260716162000_sayerlack_captura_precos_fase1.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.sku_preco_captura_run` | — |
+| `table` | `public.sku_preco_captura_run_item` | — |
+| `index` | `public.idx_sku_preco_captura_run_lookup` | `sku_preco_captura_run` |
+| `index` | `public.idx_sku_preco_captura_run_item_run` | `sku_preco_captura_run_item` |
+| `index` | `public.idx_sku_preco_captura_run_item_recente` | `sku_preco_captura_run_item` |
+| `cron_job` | `cron.sayerlack-captura-precos-mensal` | — |
+| `rls_policy` | `public.sku_preco_captura_run_select_staff` | `sku_preco_captura_run` |
+| `rls_policy` | `public.sku_preco_captura_run_item_select_staff` | `sku_preco_captura_run_item` |
 
 ## Próximos passos por status
 

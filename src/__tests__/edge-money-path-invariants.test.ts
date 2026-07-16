@@ -482,68 +482,74 @@ describe('guardrail money-path: P1b doc-ambíguo-Omie (syncCustomers USA o helpe
 });
 
 // ── P1/P2 hardening do resolver de identidade do syncPedidos (omie-vendas-sync) — Codex xhigh 2026-07-10 ──
-// Dois furos PRÉ-EXISTENTES no resolver de identidade dos pedidos (fora do escopo da PR-2 #1285, que migrou
-// só o cache codigo->user): (P1) o docToUserMap (doc->user de profiles) fazia last-write-wins → doc
-// compartilhado por 2 users mapeava o ARBITRÁRIO, e um pedido no fallback ConsultarCliente ia pro cliente
-// ERRADO. (P2) o resolveClientUserId só passava throwOnTransient no modo cursor → no incremental um
-// transitório do ConsultarCliente virava null cacheado + skip PERMANENTE (success:true). Fail-closed via
-// helper puro espelhado (buildDocUserMapFailClosed) + throwOnTransient incondicional. A paridade textual
-// aqui pega a reversão do deploy do Lovable (mesma armadilha do #1272). Ver docs/agent/money-path.md.
-const DOC_USER_MAP = 'src/lib/omie/omie-doc-user-map.ts';
+// Resolver de identidade dos pedidos (evolução: #1288 fez o fail-closed em TS; PR-1/A1 moveu p/ SQL).
+// (A1) o docToUserMap (doc->user de profiles) era montado por paginação NO EDGE — não-atômica (Codex xhigh):
+// um profile nascendo/mudando entre páginas escapava da detecção de doc-ambíguo. Migrado p/ a RPC atômica
+// omie_sync_identity_snapshot (doc com 2+ users DISTINTOS fica FORA de doc_to_user, fail-closed no SQL,
+// provado em db/test-omie-identidade-snapshot.sh). (P2, do #1288, MANTIDO) o resolveClientUserId passa
+// throwOnTransient INCONDICIONAL — transitório no incremental não vira skip permanente. A sentinela textual
+// aqui pega a reversão do deploy do Lovable. Ver docs/superpowers/specs/2026-07-11-omie-identidade-snapshot-atomico-design.md.
 
-describe('guardrail money-path: syncPedidos resolve identidade fail-closed (P1 doc-ambíguo + P2 transitório)', () => {
+const IDENTITY_SNAPSHOT = 'src/lib/omie/omie-identity-snapshot.ts';
+
+describe('guardrail money-path: identidade dos pedidos pela RPC atômica + contrato fail-closed (A1 + P2)', () => {
   const src = read(VENDAS);
-  const helper = read(DOC_USER_MAP);
+  const analytics = read(ANALYTICS);
+  const helper = read(IDENTITY_SNAPSHOT);
 
-  it('sentinela: leu os arquivos reais (edge + helper)', () => {
+  it('sentinela: leu os arquivos reais (edge vendas + edge analytics + helper)', () => {
     expect(src).toContain('async function syncPedidos');
-    expect(helper).toContain('buildDocUserMapFailClosed');
+    expect(analytics).toContain('async function fetchProfileDocUserMap');
+    expect(helper).toContain('parseIdentitySnapshot');
   });
 
-  it('o helper puro existe e exporta buildDocUserMapFailClosed', () => {
-    expect(helper).toMatch(/export function buildDocUserMapFailClosed/);
+  // ── A1 VENDAS: docToUserMap vem do snapshot atômico + validação estrita de contrato ──
+  it('A1 vendas: docToUserMap vem da RPC via parseIdentitySnapshot (não paginação, não helper antigo)', () => {
+    expect(src, 'edge vendas não chama mais a RPC').toContain("rpc('omie_sync_identity_snapshot'");
+    expect(src, 'REGRESSÃO: docToUserMap não vem mais de parseIdentitySnapshot').toMatch(/docToUserMap[\s\S]{0,40}=[\s\S]{0,40}parseIdentitySnapshot\(/);
+    expect(src, 'erro da RPC deve ser FAIL-CLOSED (throw)').toMatch(/if \(snapErr\) throw new Error/);
+    expect(src, 'REVERSÃO Lovable? voltou a paginar profiles por keyset').not.toMatch(/from\('profiles'\)[\s\S]{0,200}\.order\('user_id'\)[\s\S]{0,120}\.gt\('user_id'/);
+    expect(src, 'REVERSÃO: voltou a chamar o helper TS antigo').not.toMatch(/buildDocUserMapFailClosed\(/);
   });
 
-  // ── P1: docToUserMap fail-closed (helper) + keyset estável + error-throw ──
-  it('P1: o docToUserMap vem do helper fail-closed (não mais last-write-wins com .set direto)', () => {
+  // ── A1 ANALYTICS: fetchProfileDocUserMap idem (Codex PR-1: o analytics podia ser revertido sem o CI ver) ──
+  it('A1 analytics: fetchProfileDocUserMap usa a RPC + parseIdentitySnapshot + fail-closed, não paginação OFFSET', () => {
+    // escopa ao CORPO da função (o analytics tem outros leitores legítimos de profiles com .range noutros pontos)
+    const bloco = analytics.match(/async function fetchProfileDocUserMap[\s\S]*?\n}/)?.[0] ?? '';
+    expect(bloco, 'não achei o corpo de fetchProfileDocUserMap (âncora quebrada)').not.toBe('');
+    expect(bloco, 'analytics não chama mais a RPC').toContain("rpc('omie_sync_identity_snapshot'");
+    expect(bloco, 'REGRESSÃO: analytics não usa mais parseIdentitySnapshot').toContain('parseIdentitySnapshot(snap)');
+    expect(bloco, 'erro da RPC deve ser FAIL-CLOSED (throw)').toMatch(/if \(error\) throw new Error/);
+    expect(
+      bloco,
+      'REVERSÃO Lovable? fetchProfileDocUserMap voltou a paginar profiles por OFFSET (.range)',
+    ).not.toMatch(/\.range\(/);
+  });
+
+  // ── Contrato fail-closed (Codex challenge PR-1): error=null não prova o JSON; shape inválido LANÇA ──
+  it('contrato: o helper valida shape/UUID/disjunção e LANÇA (não Map vazio silencioso)', () => {
+    expect(helper).toMatch(/throw new Error/);
+    expect(helper, 'valida UUID dos user_id').toMatch(/OMIE_SNAPSHOT_UUID_RE/);
+    expect(helper, 'valida disjunção doc_to_user × ambiguous_docs').toMatch(/ambiguousDocs\.has\(doc\)/);
+  });
+
+  it('canário identidade_snapshot_probe valida o contrato e reprova deploy quebrado (PGRST202/nulls)', () => {
+    expect(src, 'canário de deploy da RPC ausente').toContain('identidade_snapshot_probe');
+    expect(src, 'canário deve VALIDAR o contrato via parseIdentitySnapshot').toContain('parseIdentitySnapshot(snapProbe)');
     expect(
       src,
-      'REGRESSÃO: o docToUserMap não é mais montado pelo helper fail-closed — last-write-wins reintroduzido?',
-    ).toMatch(/docToUserMap = buildDocUserMapFailClosed\(/);
-    expect(
-      src,
-      'REGRESSÃO: voltou docToUserMap.set(...) direto no pré-load — o fail-closed do helper foi contornado',
-    ).not.toMatch(/docToUserMap\.set\(/);
+      'REGRESSÃO (Codex PR-1): canário voltou a success:true fixo — PGRST202/nulls davam falso-verde',
+    ).toMatch(/success: !snapProbeErr && parsedOk/);
   });
 
-  it('P1: o edge USA o helper — define o MIRROR E chama (≥2 menções)', () => {
-    expect(src, 'edge não define mais o helper espelhado').toMatch(/function buildDocUserMapFailClosed/);
-    expect(
-      count(src, 'buildDocUserMapFailClosed'),
-      'helper deve ser DEFINIDO (MIRROR) e CHAMADO (real-path) — ≥2 menções',
-    ).toBeGreaterThanOrEqual(2);
+  // ── PARIDADE: o MIRROR do helper é idêntico entre src e os DOIS edges (pega reversão do Lovable) ──
+  it('PARIDADE: parseIdentitySnapshot idêntico em src × vendas × analytics', () => {
+    const h = mirrorBlockNamed(helper, 'omie identity-snapshot-parse');
+    expect(mirrorBlockNamed(src, 'omie identity-snapshot-parse'), 'vendas divergiu do helper de src/').toBe(h);
+    expect(mirrorBlockNamed(analytics, 'omie identity-snapshot-parse'), 'analytics divergiu do helper de src/').toBe(h);
   });
 
-  it('P1: o pré-load de profiles pagina por KEYSET estável (.order + .gt) e é FAIL-CLOSED em erro de query', () => {
-    // Sem .order o PostgREST não garante ordem entre páginas → profile pulado (some do mapa). Codex.
-    expect(
-      src,
-      'REVERSÃO Lovable? o pré-load do docToUserMap não pagina mais por keyset (.order(user_id) + .gt)',
-    ).toMatch(/from\('profiles'\)[\s\S]{0,200}\.order\('user_id'\)[\s\S]{0,120}\.gt\('user_id', lastUserId\)/);
-    expect(
-      src,
-      'REGRESSÃO: o pré-load do docToUserMap engole o erro da query — mapa parcial silencioso (fail-open)',
-    ).toMatch(/if \(profErr\) throw new Error/);
-  });
-
-  it('P1 PARIDADE: o bloco espelhado no edge é IDÊNTICO ao helper de src/ (pega reversão do Lovable)', () => {
-    expect(
-      mirrorBlockNamed(src, 'omie doc-user-fail-closed'),
-      'edge divergiu do helper de src/ — o Lovable reescreveu a detecção fail-closed no deploy?',
-    ).toBe(mirrorBlockNamed(helper, 'omie doc-user-fail-closed'));
-  });
-
-  // ── P2: resolveClientUserId fail-safe em transitório nos DOIS modos (cursor E incremental) ──
+  // ── P2 (do #1288, MANTIDO): resolveClientUserId fail-safe em transitório nos DOIS modos ──
   it('P2: resolveClientUserId passa throwOnTransient INCONDICIONAL (não só no cursor) e sem catch fail-open', () => {
     const bloco = src.match(/async function resolveClientUserId[\s\S]*?async function getClientAddressPhone/)?.[0] ?? '';
     expect(bloco, 'não achei o corpo de resolveClientUserId (âncora quebrada)').not.toBe('');
@@ -773,11 +779,18 @@ describe('guardrail money-path: carteira-rebuild lê o vendedor da PROOF oben (P
     ).toMatch(/from\(['"]omie_customer_account_map_fresco['"]\)[\s\S]{0,220}\.eq\(['"]account['"],\s*['"]oben['"]\)/);
   });
 
-  it('anti-reversão: o load de omie_clientes NÃO tira mais o vendedor (só a LISTA de user_id)', () => {
+  it('A LISTA de membros vem do carteira_membership_ledger (Fatia 1 — não mais do espelho)', () => {
     expect(
       rebuild,
-      'REGRESSÃO: o rebuild voltou a ler omie_codigo_vendedor do espelho poluído (mix de contas)',
-    ).not.toMatch(/from\(['"]omie_clientes['"]\)[\s\S]{0,80}select\(['"]user_id,\s*omie_codigo_vendedor['"]\)/);
+      'REVERSÃO Lovable? a LISTA de membros não vem mais do ledger — voltou ao espelho omie_clientes?',
+    ).toMatch(/from\(['"]carteira_membership_ledger['"]\)[\s\S]{0,80}select\(['"]user_id['"]\)/);
+  });
+
+  it('anti-reversão: o carteira-rebuild NÃO lê mais omie_clientes em lugar nenhum (nem lista, nem vendedor)', () => {
+    expect(
+      rebuild,
+      'REGRESSÃO: o carteira-rebuild voltou a ler o espelho poluído omie_clientes (lista ou vendedor)',
+    ).not.toMatch(/from\(['"]omie_clientes['"]\)/);
   });
 
   it('guards presentes E USADOS — não ignorados (wiring, P2 Codex)', () => {
@@ -956,10 +969,183 @@ describe('guardrail money-path: publicação diferida de run (edge USA os predic
     ).toBe(mirrorBlockNamed(parser, 'reposicao omie-pagina'));
   });
 
-  it('PARIDADE: o bloco espelhado no edge é IDÊNTICO ao helper de src/ (pega reversão do Lovable)', () => {
+  it('PARIDADE: o helper publicacao-run espelhado no edge é IDÊNTICO ao de src/ (pega reversão do Lovable)', () => {
     expect(
       mirrorBlockNamed(src, 'reposicao publicacao-run'),
       'edge divergiu do helper de src/ — o Lovable reescreveu os predicados no deploy?',
     ).toBe(mirrorBlockNamed(helper, 'reposicao publicacao-run'));
+  });
+});
+
+// ── P0-B-bis ponta 3 (ai-ops-agent: farmer_id vem da carteira canônica, não do espelho circular) ──
+// DOIS bugs (investigados 2026-07-12, psql-ro + leitura): BUG-1 (circular, PRÉ-EXISTENTE) — o edge fazia
+// `farmer_id: assignment?.user_id` com assignment.user_id === m.customer_user_id → o "dono" era o PRÓPRIO
+// cliente (useExcecoesGestor.ts:112 `donoNome: nome(d.farmer_id)` mostra o nome do cliente como dono no
+// Console de Exceções do gestor). BUG-2 (regressão da ponta 1 #1293) — omie_clientes.omie_codigo_vendedor
+// virou 100% NULL (o vendedor mudou-se p/ a proof). Fix (Opção A, decisão do founder 2026-07-12): resolve o
+// farmer da fonte CANÔNICA carteira_assignments.owner_user_id via owner-map (buildOwnerMap/resolveOwner),
+// herdando os guards fail-closed + Hunter/B-lite/eligible da ponta 2 (carteira-rebuild). Edge TS puro, sem SQL.
+// Este canário textual pega a reversão do deploy do Lovable (mesma armadilha do #1272). Ver
+// docs/agent/money-path.md e o design da ponta 2 (2026-07-11-carteira-rebuild-vendedor-proof-ponta2-design.md).
+const AIOPS = 'supabase/functions/ai-ops-agent/index.ts';
+const OWNER_MAP = 'src/lib/carteira/owner-map.ts';
+
+describe('guardrail money-path: ai-ops-agent resolve farmer_id da carteira (Opção A, anti-circular)', () => {
+  const src = read(AIOPS);
+  const helper = read(OWNER_MAP);
+
+  it('sentinela: leu os arquivos reais (edge + helper)', () => {
+    expect(src).toContain('farmer_id');
+    expect(helper).toContain('buildOwnerMap');
+  });
+
+  it('o helper puro existe e exporta buildOwnerMap + resolveOwner', () => {
+    expect(helper).toMatch(/export function buildOwnerMap/);
+    expect(helper).toMatch(/export function resolveOwner/);
+  });
+
+  it('o edge LÊ a carteira canônica (carteira_assignments) por KEYSET, e monta o mapa dos dados REAIS', () => {
+    expect(
+      src,
+      'REVERSÃO Lovable? o ai-ops não lê mais carteira_assignments — o farmer voltou ao espelho circular?',
+    ).toMatch(/from\(["']carteira_assignments["']\)/);
+    // Keyset (.gt + .limit), não offset: carteira_assignments é dinâmica (rebuild concorrente 07:30) e o
+    // offset pularia linha por churn → farmer_id null (Codex ponta 3 #3). Sem paginação a cauda >1000 sumiria.
+    expect(
+      src,
+      'a leitura da carteira precisa ser KEYSET: .gt(customer_user_id) + .order + .limit',
+    ).toMatch(/from\(["']carteira_assignments["']\)[\s\S]{0,260}\.gt\(["']customer_user_id["'][\s\S]{0,140}\.limit\(/);
+    expect(
+      src,
+      'REGRESSÃO (Codex #2): a paginação keyset perdeu o avanço do cursor — truncaria em 1 página',
+    ).toMatch(/lastCustomerId\s*=\s*rows\[rows\.length - 1\]/);
+    // REGRESSÃO real (o 1º deploy ABORTOU em runtime): o cursor keyset em coluna UUID não pode iniciar em
+    // "" — "" não casta para uuid no Postgres (invalid input syntax for type uuid ""). Sentinela = nil UUID.
+    expect(
+      src,
+      'REGRESSÃO: cursor keyset inicia em "" — inválido em coluna UUID; derrubou o 1º deploy do ai-ops-agent',
+    ).not.toMatch(/lastCustomerId\s*=\s*""/);
+    expect(
+      src,
+      'o cursor keyset precisa de sentinela nil UUID válida (00000000-...-000000000000)',
+    ).toMatch(/0{8}-0{4}-0{4}-0{4}-0{12}/);
+    // Falso-verde que o Codex #2 pegou: buildOwnerMap([]) passaria os asserts frouxos. Trava o argumento REAL.
+    expect(
+      src,
+      'REGRESSÃO (Codex #2): o ownerMap não é montado dos assignments reais (virou buildOwnerMap([])?)',
+    ).toMatch(/buildOwnerMap\(assignmentsRaw\)/);
+  });
+
+  it('ANTI-CIRCULAR (BUG-1): farmer_id NÃO é mais o user_id do próprio cliente — vem de resolveOwner', () => {
+    expect(
+      src,
+      'REGRESSÃO BUG-1: farmer_id voltou a ser assignment.user_id (o próprio cliente) — referência circular',
+    ).not.toMatch(/farmer_id:\s*assignment\?\.user_id/);
+    // Args EXATOS (Codex #2): fallback null e chave = customer_user_id. `farmer_id: m.customer_user_id`
+    // (o bug circular) NÃO casaria isto — fecha o falso-verde do resolveOwner-sem-args.
+    expect(
+      src,
+      'farmer_id deveria vir de resolveOwner(ownerMap, m.customer_user_id, null) — dono account-safe da carteira',
+    ).toMatch(/farmer_id:\s*resolveOwner\(ownerMap,\s*m\.customer_user_id,\s*null\)/);
+  });
+
+  it('ANTI-REVERSÃO (BUG-2): o farmer NÃO vem mais do espelho poluído nem do dead code de employees', () => {
+    expect(
+      src,
+      'REGRESSÃO BUG-2: o ai-ops voltou a ler omie_clientes p/ o vendedor (espelho 100% NULL)',
+    ).not.toMatch(/from\(["']omie_clientes["']\)/);
+    expect(
+      src,
+      'sumiu a limpeza do dead code — o edge ainda busca profiles is_employee sem usar (mapeamento fantasma)?',
+    ).not.toContain('is_employee');
+  });
+
+  it('PURGE completo (Codex #1): apaga TODAS as pending, sem filtro de data — limpa o farmer_id circular antigo', () => {
+    // O delete antigo filtrava created_at de HOJE → as 228 linhas circulares antigas (BUG-1) sobreviviam e
+    // reapareciam no Console de Exceções quando a run gerava < 200 decisões. Purge sem data limpa o legado.
+    expect(
+      src,
+      'REGRESSÃO (Codex #1): o purge de pending voltou a filtrar por created_at — o circular antigo sobrevive',
+    ).not.toMatch(/\.eq\("status",\s*"pending"\)[\s\S]{0,140}created_at/);
+    expect(
+      src,
+      'o purge de pending deveria ser fail-closed (erro do delete aborta antes de inserir → sem duplicata)',
+    ).toMatch(/if \(purgeError\) throw/);
+  });
+
+  it('o edge USA o helper espelhado (define buildOwnerMap E chama), ≥2 menções', () => {
+    expect(src, 'edge não define mais o helper espelhado owner-map').toMatch(/function buildOwnerMap/);
+    expect(src, 'edge não chama mais buildOwnerMap — voltou à lógica inline?').toMatch(/buildOwnerMap\(/);
+    expect(src, 'edge não chama mais resolveOwner').toMatch(/resolveOwner\(/);
+    expect(
+      count(src, 'buildOwnerMap'),
+      'helper deve ser DEFINIDO e CHAMADO (≥2 menções)',
+    ).toBeGreaterThanOrEqual(2);
+  });
+
+  it('PARIDADE: o bloco espelhado no edge é IDÊNTICO ao owner-map de src/ (pega reversão do Lovable)', () => {
+    expect(
+      mirrorBlockNamed(src, 'owner-map'),
+      'edge divergiu de owner-map.ts — o Lovable reescreveu o mapeamento no deploy?',
+    ).toBe(mirrorBlockNamed(helper, 'owner-map'));
+  });
+});
+
+// ── Fila do sync de leadtime por item de NFe (omie-sync-sku-items) ──
+// Incidente OBEN 2026-07-14: NFe cuja ConsultarRecebimento responde 0 itens não upserta,
+// então nunca saía da fila (a fila era "sem linha em sku_leadtime_history") e era
+// re-consultada em todo run — sob rate-limit, UMA consulta come os 50s do guard e as NFes
+// antigas expiram da janela sem virar leadtime. O backoff vive num helper puro espelhado
+// aqui; sem a paridade, um deploy do Lovable pode reverter o espelho e ressuscitar o poison.
+const SKU_ITEMS = 'supabase/functions/omie-sync-sku-items/index.ts';
+const SKU_ITEMS_FILA = 'src/lib/reposicao/sku-items-fila-helpers.ts';
+
+describe('guardrail money-path: omie-sync-sku-items (fila de leadtime)', () => {
+  const src = read(SKU_ITEMS);
+  const helper = read(SKU_ITEMS_FILA);
+
+  it('sentinela: leu os arquivos reais (edge + helper)', () => {
+    expect(src).toContain('sku_leadtime_history');
+    expect(src).toContain('ConsultarRecebimento');
+    expect(helper).toContain('skuItemsBackoffMs');
+  });
+
+  it('o edge USA o helper espelhado: define E chama a elegibilidade + a ordenação', () => {
+    expect(src, 'edge não define mais skuItemsElegivel').toMatch(/function skuItemsElegivel/);
+    expect(src, 'REGRESSÃO: edge não filtra mais por elegibilidade — poison volta a entupir a fila')
+      .toMatch(/skuItemsElegivel\(/);
+    expect(src, 'REGRESSÃO: edge não ordena mais a fila — antigas voltam a nunca ser alcançadas')
+      .toMatch(/skuItemsCompararFila\(/);
+  });
+
+  it('PARIDADE: o bloco espelhado no edge é IDÊNTICO ao helper de src/ (pega reversão do Lovable)', () => {
+    expect(
+      mirrorBlockNamed(src, 'sku-items-fila'),
+      'edge divergiu de sku-items-fila-helpers.ts — o Lovable reescreveu a fila no deploy?',
+    ).toBe(mirrorBlockNamed(helper, 'sku-items-fila'));
+  });
+
+  it('toda consulta marca tentativa: sem isso a NFe de 0 itens nunca sai da fila', () => {
+    expect(
+      count(src, 'marcarTentativa('),
+      'marcarTentativa deve ser DEFINIDA e chamada no sucesso E na falha (≥3 menções)',
+    ).toBeGreaterThanOrEqual(3);
+  });
+
+  it('erro sistêmico mede consultas TENTADAS, não NFes pendentes (mata o alerta falso)', () => {
+    expect(
+      src,
+      'REGRESSÃO: voltou a marcar error por NFes pendentes — janela só com NFe sem nIdReceb ' +
+        'acorda o Sentinela com "rate-limit?" falso, sem ter chamado a Omie (OBEN 2026-07-14)',
+    ).toMatch(/consultas_tentadas\s*>\s*0\s*&&\s*\w*\.?consultas_detalhadas\s*===\s*0/);
+    expect(src).not.toMatch(/nfes_processadas\s*>\s*0\s*&&\s*\w*\.?consultas_detalhadas\s*===\s*0/);
+  });
+
+  it('controle da fila é FAIL-CLOSED: tabela ausente grita, não degrada em silêncio', () => {
+    expect(
+      src,
+      'REGRESSÃO: voltou a degradar quando sku_items_sync_controle falha — o poison ' +
+        'reviveria sem ninguém saber (edge deployada antes da migration)',
+    ).toMatch(/throw new Error\(\s*\n?\s*`sku_items_sync_controle ilegível/);
   });
 });

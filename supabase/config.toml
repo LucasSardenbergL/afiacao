@@ -57,6 +57,9 @@ verify_jwt = false
 [functions.tint-sync-agent]
 verify_jwt = false
 
+[functions.omie-nfe-reconcile]
+verify_jwt = false
+
 [functions.omie-nfe-recebimento-sync]
 verify_jwt = false
 
@@ -133,4 +136,7 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.enviar-push]
+verify_jwt = false
+
+[functions.sayerlack-captura-precos]
 verify_jwt = false

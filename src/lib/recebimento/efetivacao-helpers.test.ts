@@ -14,8 +14,14 @@ import {
   validarGatesEscrita,
   confirmarEfetivacao,
   decidirStatusComConfirmacao,
+  decidirEfeitoReconcileLote,
+  resumirReconcileLote,
+  ehErroRedundante,
+  extrairRecebidosDaListagem,
+  selecionarCandidatasReconcile,
   type PassoFlags,
   type ItemApp,
+  type EfeitoReconcile,
 } from './efetivacao-helpers';
 
 // Fixture: body REAL do ConsultarRecebimento (diagnóstico CALL 2 — NF 000234012 ACRE CAXIAS, modelo 55).
@@ -442,5 +448,211 @@ describe('decidirStatusComConfirmacao', () => {
   });
   it('concluir falhou + confirmado → parcial (status base já não é efetivado)', () => {
     expect(decidirStatusComConfirmacao({ ...todosOk, concluirOk: false }, true)).toBe('efetivacao_parcial');
+  });
+});
+
+describe('decidirEfeitoReconcileLote (varredura automática — reconcile-only)', () => {
+  const clsOk = { sucesso: true, erro: null, omieStatus: null };
+  const esperadoCall2 = { nIdReceb: 12077966878, chaveAcesso: CHAVE_CALL2 };
+
+  it('cRecebido=S + identidade ok → reconciliar (caso dominante: humano já entrou no Omie)', () => {
+    const r = decidirEfeitoReconcileLote(clsOk, CONSULTA_CALL2, esperadoCall2);
+    expect(r).toEqual({ efeito: 'reconciliar' });
+  });
+
+  it('consulta falhou (ex. REDUNDANT do rate-limit) → pular, mesmo com body de NF recebida', () => {
+    const cls = { sucesso: false, erro: 'Consumo redundante detectado (REDUNDANT)', omieStatus: null };
+    const r = decidirEfeitoReconcileLote(cls, CONSULTA_CALL2, esperadoCall2);
+    expect(r).toEqual({ efeito: 'pular', motivo: 'consulta_falhou' });
+  });
+
+  it('identidade divergente (nIdReceb de outra NF) → pular; NUNCA reconcilia NF errada mesmo com cRecebido=S', () => {
+    const r = decidirEfeitoReconcileLote(clsOk, CONSULTA_CALL2, { nIdReceb: 999, chaveAcesso: CHAVE_CALL2 });
+    expect(r).toEqual({ efeito: 'pular', motivo: 'identidade_divergente' });
+  });
+
+  it('chave de acesso divergente → pular por identidade', () => {
+    const r = decidirEfeitoReconcileLote(clsOk, CONSULTA_CALL2, { nIdReceb: 12077966878, chaveAcesso: '9'.repeat(44) });
+    expect(r).toEqual({ efeito: 'pular', motivo: 'identidade_divergente' });
+  });
+
+  it('cRecebido≠S e etapa<80 → pular (aguardando conferência legítima; varredura não escreve no Omie)', () => {
+    const body = { ...CONSULTA_CALL2, cabec: { ...CONSULTA_CALL2.cabec, cEtapa: '20' }, infoCadastro: { cRecebido: 'N' } };
+    const r = decidirEfeitoReconcileLote(clsOk, body, esperadoCall2);
+    expect(r).toEqual({ efeito: 'pular', motivo: 'aguardando_conferencia' });
+  });
+
+  it('cEtapa=80 sem cRecebido=S → pular como inconsistente (sinal fica no resumo, não no painel)', () => {
+    const body = { ...CONSULTA_CALL2, infoCadastro: { cRecebido: 'N' } };
+    const r = decidirEfeitoReconcileLote(clsOk, body, esperadoCall2);
+    expect(r).toEqual({ efeito: 'pular', motivo: 'inconsistente' });
+  });
+
+  it('body malformado (sem cabec/nIdReceb) → pular por identidade (fail-closed, nunca reconciliar às cegas)', () => {
+    const r = decidirEfeitoReconcileLote(clsOk, {}, esperadoCall2);
+    expect(r).toEqual({ efeito: 'pular', motivo: 'identidade_divergente' });
+  });
+
+  it('NF cancelada no Omie → pular como cancelada, mesmo com cRecebido=S (recebida-e-cancelada não vira efetivada)', () => {
+    const body = { ...CONSULTA_CALL2, infoCadastro: { ...CONSULTA_CALL2.infoCadastro, cCancelada: 'S' } };
+    const r = decidirEfeitoReconcileLote(clsOk, body, esperadoCall2);
+    expect(r).toEqual({ efeito: 'pular', motivo: 'cancelada' });
+  });
+
+  it('resposta sem chave de acesso → pular por identidade (varredura exige chave; só o fluxo manual tolera ausência)', () => {
+    const body = { ...CONSULTA_CALL2, cabec: { ...CONSULTA_CALL2.cabec, cChaveNfe: undefined } };
+    const r = decidirEfeitoReconcileLote(clsOk, body, esperadoCall2);
+    expect(r).toEqual({ efeito: 'pular', motivo: 'identidade_divergente' });
+  });
+});
+
+describe('resumirReconcileLote', () => {
+  it('conta reconciliadas e puladas por motivo; processadas = total', () => {
+    const efeitos: EfeitoReconcile[] = [
+      { efeito: 'reconciliar' },
+      { efeito: 'reconciliar' },
+      { efeito: 'pular', motivo: 'consulta_falhou' },
+      { efeito: 'pular', motivo: 'aguardando_conferencia' },
+      { efeito: 'pular', motivo: 'aguardando_conferencia' },
+      { efeito: 'pular', motivo: 'inconsistente' },
+      { efeito: 'pular', motivo: 'identidade_divergente' },
+      { efeito: 'pular', motivo: 'cancelada' },
+    ];
+    expect(resumirReconcileLote(efeitos)).toEqual({
+      processadas: 8,
+      reconciliadas: 2,
+      puladas: { consulta_falhou: 1, cancelada: 1, identidade_divergente: 1, aguardando_conferencia: 2, inconsistente: 1 },
+    });
+  });
+
+  it('lote vazio → tudo zero', () => {
+    expect(resumirReconcileLote([])).toEqual({
+      processadas: 0,
+      reconciliadas: 0,
+      puladas: { consulta_falhou: 0, cancelada: 0, identidade_divergente: 0, aguardando_conferencia: 0, inconsistente: 0 },
+    });
+  });
+});
+
+describe('ehErroRedundante (trava anti-redundância do Omie — por MÉTODO, provada em prod 2026-07-16)', () => {
+  it('faultstring REDUNDANT → true (não re-tentar: cada hit renova a trava)', () => {
+    expect(ehErroRedundante('ERROR: Consumo redundante detectado. Aguarde 58 segundos para tentar novamente (REDUNDANT).')).toBe(true);
+  });
+  it('variações de caixa e sem o sufixo (REDUNDANT) → true', () => {
+    expect(ehErroRedundante('consumo REDUNDANTE detectado')).toBe(true);
+    expect(ehErroRedundante('(REDUNDANT)')).toBe(true);
+  });
+  it('erros comuns não-redundantes → false', () => {
+    expect(ehErroRedundante('HTTP 500')).toBe(false);
+    expect(ehErroRedundante('O preenchimento da tag [nValUnit] é obrigatório')).toBe(false);
+    expect(ehErroRedundante(null)).toBe(false);
+    expect(ehErroRedundante(undefined)).toBe(false);
+  });
+});
+
+describe('extrairRecebidosDaListagem (ListarRecebimentos → mapa nIdReceb → estado + chave)', () => {
+  const CH = (n: number) => String(n).repeat(44).slice(0, 44);
+  const paginaReal = {
+    nTotalPaginas: 1,
+    recebimentos: [
+      { cabec: { nIdReceb: 111, cChaveNfe: CH(1) }, infoCadastro: { cRecebido: 'S', cCancelada: 'N' } },
+      { cabec: { nIdReceb: 222, cChaveNfe: CH(2) }, infoCadastro: { cRecebido: 'N', cCancelada: 'N' } },
+      { cabec: { nIdReceb: 333, cChaveNfe: CH(3) }, infoCadastro: { cRecebido: 'S', cCancelada: 'S' } },
+      { nIdReceb: 444, infoCadastro: { cRecebido: 'S' } }, // raiz, sem chave
+      { cabec: { nIdReceb: '555', cChaveNFe: CH(5) }, infoCadastro: { cRecebido: 'S' } }, // string + grafia cChaveNFe
+      { cabec: {} }, // sem id → ignorado
+    ],
+  };
+
+  it('mapeia nIdReceb (cabec ou raiz, string ou number) → {recebido, cancelada, chave} (ambas grafias de chave)', () => {
+    const m = extrairRecebidosDaListagem([paginaReal]);
+    expect(m.get(111)).toEqual({ recebido: true, cancelada: false, chave: CH(1), duplicado: false });
+    expect(m.get(222)).toEqual({ recebido: false, cancelada: false, chave: CH(2), duplicado: false });
+    expect(m.get(333)).toEqual({ recebido: true, cancelada: true, chave: CH(3), duplicado: false });
+    expect(m.get(444)).toEqual({ recebido: true, cancelada: false, chave: null, duplicado: false });
+    expect(m.get(555)).toEqual({ recebido: true, cancelada: false, chave: CH(5), duplicado: false });
+    expect(m.size).toBe(5);
+  });
+
+  it('nIdReceb repetido na listagem → marcado duplicado (fail-closed no cruzamento)', () => {
+    const m = extrairRecebidosDaListagem([{
+      recebimentos: [
+        { cabec: { nIdReceb: 7, cChaveNfe: CH(7) }, infoCadastro: { cRecebido: 'S' } },
+        { cabec: { nIdReceb: 7, cChaveNfe: CH(8) }, infoCadastro: { cRecebido: 'S' } },
+      ],
+    }]);
+    expect(m.get(7)?.duplicado).toBe(true);
+  });
+
+  it('páginas malformadas/vazias → mapa vazio (nunca lança)', () => {
+    expect(extrairRecebidosDaListagem([]).size).toBe(0);
+    expect(extrairRecebidosDaListagem([null, 'x', 42, {}]).size).toBe(0);
+  });
+});
+
+describe('selecionarCandidatasReconcile (identidade forte DIRETO da listagem — Codex v2 P1)', () => {
+  const CH = (n: number) => String(n).repeat(44).slice(0, 44);
+  const listagem = extrairRecebidosDaListagem([{
+    recebimentos: [
+      { cabec: { nIdReceb: 1, cChaveNfe: CH(1) }, infoCadastro: { cRecebido: 'S', cCancelada: 'N' } },
+      { cabec: { nIdReceb: 2, cChaveNfe: CH(2) }, infoCadastro: { cRecebido: 'N' } },
+      { cabec: { nIdReceb: 3, cChaveNfe: CH(3) }, infoCadastro: { cRecebido: 'S', cCancelada: 'S' } },
+      { cabec: { nIdReceb: 4 }, infoCadastro: { cRecebido: 'S' } },                       // sem chave na listagem
+      { cabec: { nIdReceb: 5, cChaveNfe: CH(9) }, infoCadastro: { cRecebido: 'S' } },     // chave diverge do app
+      { cabec: { nIdReceb: 6, cChaveNfe: CH(6) }, infoCadastro: { cRecebido: 'S' } },
+      { cabec: { nIdReceb: 6, cChaveNfe: CH(6) }, infoCadastro: { cRecebido: 'S' } },     // duplicado
+    ],
+  }]);
+
+  it('reconcilia SÓ com id+chave iguais, recebida, não-cancelada, sem duplicata', () => {
+    const pendentes = [
+      { id: 'a', omie_id_receb: 1, chave_acesso: CH(1) },  // ✓ tudo certo
+      { id: 'b', omie_id_receb: 2, chave_acesso: CH(2) },  // não recebida
+      { id: 'c', omie_id_receb: 3, chave_acesso: CH(3) },  // cancelada
+      { id: 'd', omie_id_receb: 4, chave_acesso: CH(4) },  // listagem sem chave → fail-closed
+      { id: 'e', omie_id_receb: 5, chave_acesso: CH(5) },  // chave diverge → fail-closed
+      { id: 'f', omie_id_receb: 6, chave_acesso: CH(6) },  // duplicado na listagem → fail-closed
+      { id: 'g', omie_id_receb: 9, chave_acesso: CH(9) },  // fora da listagem
+    ];
+    const r = selecionarCandidatasReconcile(pendentes, listagem, 10);
+    expect(r.candidatas.map((c) => c.id)).toEqual(['a']);
+    expect(r.naoRecebidas).toBe(1);
+    expect(r.canceladas).toBe(1);
+    expect(r.identidadeFraca).toBe(2); // 'd' (sem chave) + 'e' (chave divergente)
+    expect(r.duplicadas).toBe(1);      // 'f'
+    expect(r.foraDaListagem).toBe(1);  // 'g'
+  });
+
+  it('pendentes do app com o MESMO omie_id_receb (dado sujo, sem UNIQUE no banco) → nenhuma reconcilia', () => {
+    const pendentes = [
+      { id: 'x1', omie_id_receb: 1, chave_acesso: CH(1) },
+      { id: 'x2', omie_id_receb: 1, chave_acesso: CH(1) },
+    ];
+    const r = selecionarCandidatasReconcile(pendentes, listagem, 10);
+    expect(r.candidatas).toEqual([]);
+    expect(r.duplicadas).toBe(2);
+  });
+
+  it('pendente sem chave de acesso no app ou id nulo → ignorada fail-closed', () => {
+    const r = selecionarCandidatasReconcile(
+      [
+        { id: 'x', omie_id_receb: null, chave_acesso: CH(1) },  // sem id → ignorada (nenhum contador)
+        { id: 'y', omie_id_receb: 1, chave_acesso: null },      // app sem chave → identidade fraca
+        { id: 'z', omie_id_receb: 4, chave_acesso: CH(4) },     // listagem sem chave → identidade fraca
+      ],
+      listagem,
+      10,
+    );
+    expect(r.candidatas).toEqual([]);
+    expect(r.identidadeFraca).toBe(2);
+  });
+
+  it('cap limita as candidatas (as primeiras na ordem dada — mais antigas primeiro)', () => {
+    const lst = extrairRecebidosDaListagem([{
+      recebimentos: [1, 2, 3].map((n) => ({ cabec: { nIdReceb: n, cChaveNfe: CH(n) }, infoCadastro: { cRecebido: 'S' } })),
+    }]);
+    const pend = [1, 2, 3].map((n) => ({ id: `p${n}`, omie_id_receb: n, chave_acesso: CH(n) }));
+    const r = selecionarCandidatasReconcile(pend, lst, 2);
+    expect(r.candidatas.map((c) => c.id)).toEqual(['p1', 'p2']);
   });
 });

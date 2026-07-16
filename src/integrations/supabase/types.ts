@@ -468,6 +468,30 @@ export type Database = {
         }
         Relationships: []
       }
+      carteira_membership_ledger: {
+        Row: {
+          first_seen_at: string
+          identity_state: string
+          source: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          first_seen_at: string
+          identity_state?: string
+          source?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          first_seen_at?: string
+          identity_state?: string
+          source?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       carteira_positivacao_snapshot: {
         Row: {
           churn_risk_at_month_start: number | null
@@ -11251,6 +11275,7 @@ export type Database = {
           empresa: string
           estoque_maximo_antes: number | null
           estoque_maximo_depois: number | null
+          estoque_maximo_sugerido: number | null
           estoque_minimo_antes: number | null
           estoque_minimo_depois: number | null
           estoque_seguranca_antes: number | null
@@ -11260,6 +11285,7 @@ export type Database = {
           lt_medio_dias_uteis: number | null
           ponto_pedido_antes: number | null
           ponto_pedido_depois: number | null
+          ponto_pedido_sugerido: number | null
           qtde_compra_antes: number | null
           qtde_compra_depois: number | null
           revertido_em: string | null
@@ -11281,6 +11307,7 @@ export type Database = {
           empresa: string
           estoque_maximo_antes?: number | null
           estoque_maximo_depois?: number | null
+          estoque_maximo_sugerido?: number | null
           estoque_minimo_antes?: number | null
           estoque_minimo_depois?: number | null
           estoque_seguranca_antes?: number | null
@@ -11290,6 +11317,7 @@ export type Database = {
           lt_medio_dias_uteis?: number | null
           ponto_pedido_antes?: number | null
           ponto_pedido_depois?: number | null
+          ponto_pedido_sugerido?: number | null
           qtde_compra_antes?: number | null
           qtde_compra_depois?: number | null
           revertido_em?: string | null
@@ -11311,6 +11339,7 @@ export type Database = {
           empresa?: string
           estoque_maximo_antes?: number | null
           estoque_maximo_depois?: number | null
+          estoque_maximo_sugerido?: number | null
           estoque_minimo_antes?: number | null
           estoque_minimo_depois?: number | null
           estoque_seguranca_antes?: number | null
@@ -11320,6 +11349,7 @@ export type Database = {
           lt_medio_dias_uteis?: number | null
           ponto_pedido_antes?: number | null
           ponto_pedido_depois?: number | null
+          ponto_pedido_sugerido?: number | null
           qtde_compra_antes?: number | null
           qtde_compra_depois?: number | null
           revertido_em?: string | null
@@ -11828,6 +11858,7 @@ export type Database = {
           subtotal: number
           total: number
           updated_at: string
+          whatsapp_conversation_id: string | null
         }
         Insert: {
           account?: string
@@ -11857,6 +11888,7 @@ export type Database = {
           subtotal?: number
           total?: number
           updated_at?: string
+          whatsapp_conversation_id?: string | null
         }
         Update: {
           account?: string
@@ -11886,6 +11918,7 @@ export type Database = {
           subtotal?: number
           total?: number
           updated_at?: string
+          whatsapp_conversation_id?: string | null
         }
         Relationships: [
           {
@@ -11893,6 +11926,13 @@ export type Database = {
             columns: ["pedido_programado_envio_id"]
             isOneToOne: false
             referencedRelation: "pedidos_programados_envios"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sales_orders_whatsapp_conversation_id_fkey"
+            columns: ["whatsapp_conversation_id"]
+            isOneToOne: false
+            referencedRelation: "whatsapp_conversations"
             referencedColumns: ["id"]
           },
         ]
@@ -12342,6 +12382,45 @@ export type Database = {
           sku_codigo_omie?: string
         }
         Relationships: []
+      }
+      sku_items_sync_controle: {
+        Row: {
+          criado_em: string
+          motivo: string | null
+          tentativas: number
+          tracking_id: string
+          ultima_tentativa: string
+        }
+        Insert: {
+          criado_em?: string
+          motivo?: string | null
+          tentativas?: number
+          tracking_id: string
+          ultima_tentativa?: string
+        }
+        Update: {
+          criado_em?: string
+          motivo?: string | null
+          tentativas?: number
+          tracking_id?: string
+          ultima_tentativa?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sku_items_sync_controle_tracking_id_fkey"
+            columns: ["tracking_id"]
+            isOneToOne: true
+            referencedRelation: "purchase_orders_tracking"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sku_items_sync_controle_tracking_id_fkey"
+            columns: ["tracking_id"]
+            isOneToOne: true
+            referencedRelation: "v_pedidos_em_aberto"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       sku_leadtime_history: {
         Row: {
@@ -15658,6 +15737,7 @@ export type Database = {
           id: string
           last_inbound_at: string | null
           last_message_at: string | null
+          last_outbound_at: string | null
           opt_in_status: string
           phone_e164: string | null
           phone_key: string
@@ -15671,6 +15751,7 @@ export type Database = {
           id?: string
           last_inbound_at?: string | null
           last_message_at?: string | null
+          last_outbound_at?: string | null
           opt_in_status?: string
           phone_e164?: string | null
           phone_key: string
@@ -15684,6 +15765,7 @@ export type Database = {
           id?: string
           last_inbound_at?: string | null
           last_message_at?: string | null
+          last_outbound_at?: string | null
           opt_in_status?: string
           phone_e164?: string | null
           phone_key?: string
@@ -15759,6 +15841,99 @@ export type Database = {
         Update: {
           created_at?: string
           data_local?: string
+        }
+        Relationships: []
+      }
+      whatsapp_template_sends: {
+        Row: {
+          body_params: Json
+          conversation_id: string | null
+          created_at: string
+          dedupe_key: string
+          disparado_por: string | null
+          erro: string | null
+          id: string
+          origem: string
+          phone_e164: string
+          status: string
+          template_nome: string
+          wa_message_id: string | null
+        }
+        Insert: {
+          body_params?: Json
+          conversation_id?: string | null
+          created_at?: string
+          dedupe_key: string
+          disparado_por?: string | null
+          erro?: string | null
+          id?: string
+          origem?: string
+          phone_e164: string
+          status?: string
+          template_nome: string
+          wa_message_id?: string | null
+        }
+        Update: {
+          body_params?: Json
+          conversation_id?: string | null
+          created_at?: string
+          dedupe_key?: string
+          disparado_por?: string | null
+          erro?: string | null
+          id?: string
+          origem?: string
+          phone_e164?: string
+          status?: string
+          template_nome?: string
+          wa_message_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "whatsapp_template_sends_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "whatsapp_conversations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "whatsapp_template_sends_template_nome_fkey"
+            columns: ["template_nome"]
+            isOneToOne: false
+            referencedRelation: "whatsapp_templates"
+            referencedColumns: ["nome"]
+          },
+        ]
+      }
+      whatsapp_templates: {
+        Row: {
+          ativo: boolean
+          categoria: string
+          corpo_referencia: string
+          created_at: string
+          id: string
+          idioma: string
+          nome: string
+          num_body_params: number
+        }
+        Insert: {
+          ativo?: boolean
+          categoria: string
+          corpo_referencia: string
+          created_at?: string
+          id?: string
+          idioma?: string
+          nome: string
+          num_body_params?: number
+        }
+        Update: {
+          ativo?: boolean
+          categoria?: string
+          corpo_referencia?: string
+          created_at?: string
+          id?: string
+          idioma?: string
+          nome?: string
+          num_body_params?: number
         }
         Relationships: []
       }
@@ -18346,6 +18521,29 @@ export type Database = {
       get_user_role: {
         Args: { _user_id: string }
         Returns: Database["public"]["Enums"]["app_role"]
+      }
+      get_whatsapp_funil: {
+        Args: { p_dias?: number }
+        Returns: {
+          entregues: number
+          enviados: number
+          falhas: number
+          lidos: number
+          pedidos_omie: number
+          propostas: number
+          receita_omie: number
+          respondidos: number
+        }[]
+      }
+      get_whatsapp_pendentes: {
+        Args: never
+        Returns: {
+          contact_name: string
+          conversation_id: string
+          customer_user_id: string
+          last_inbound_at: string
+          phone_e164: string
+        }[]
       }
       has_role: {
         Args: {

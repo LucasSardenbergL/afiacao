@@ -398,3 +398,177 @@ export function decidirStatusComConfirmacao(flags: PassoFlags, recebidoConfirmad
   if (s === 'efetivado' && !recebidoConfirmado) return 'efetivacao_parcial';
   return s;
 }
+
+// ── Reconciliação em lote (varredura automática, reconcile-only) ──
+
+export type EfeitoReconcile =
+  | { efeito: 'reconciliar' }
+  | { efeito: 'pular'; motivo: 'consulta_falhou' | 'cancelada' | 'identidade_divergente' | 'aguardando_conferencia' | 'inconsistente' };
+
+/**
+ * Política da varredura automática sobre NF 'pendente': SÓ reconcilia (cRecebido=S no
+ * Omie → marca efetivado no app, read-only no Omie). Qualquer outro caminho PULA sem
+ * tocar o status — a varredura nunca escreve no Omie nem pinta falha no painel; falha
+ * visível é reservada à ação humana (Efetivar/Reprocessar). Fail-closed além do fluxo
+ * manual (Codex, design review 2026-07-14): NF cancelada no Omie nunca reconcilia
+ * (recebida-e-depois-cancelada viraria entrada fantasma) e a varredura EXIGE a chave
+ * de acesso na resposta (o fluxo manual tolera chave ausente; automático, não).
+ */
+export function decidirEfeitoReconcileLote(
+  cls: OmieClassificacao,
+  body: unknown,
+  esperado: { nIdReceb: number; chaveAcesso: string },
+): EfeitoReconcile {
+  if (!cls.sucesso) return { efeito: 'pular', motivo: 'consulta_falhou' };
+  const cancelada = asRecord(asRecord(body).infoCadastro).cCancelada;
+  if (typeof cancelada === 'string' && cancelada.trim().toUpperCase() === 'S') {
+    return { efeito: 'pular', motivo: 'cancelada' };
+  }
+  const estado = extrairEstadoConsulta(body);
+  if (estado.cChaveNfe == null) return { efeito: 'pular', motivo: 'identidade_divergente' };
+  if (!validarIdentidade(estado, esperado).ok) return { efeito: 'pular', motivo: 'identidade_divergente' };
+  const acao = decidirAcaoRecebimento(estado);
+  if (acao === 'reconciliar') return { efeito: 'reconciliar' };
+  if (acao === 'inconsistente') return { efeito: 'pular', motivo: 'inconsistente' };
+  return { efeito: 'pular', motivo: 'aguardando_conferencia' };
+}
+
+export interface ResumoReconcileLote {
+  processadas: number;
+  reconciliadas: number;
+  puladas: { consulta_falhou: number; cancelada: number; identidade_divergente: number; aguardando_conferencia: number; inconsistente: number };
+}
+
+export function resumirReconcileLote(efeitos: EfeitoReconcile[]): ResumoReconcileLote {
+  const resumo: ResumoReconcileLote = {
+    processadas: efeitos.length,
+    reconciliadas: 0,
+    puladas: { consulta_falhou: 0, cancelada: 0, identidade_divergente: 0, aguardando_conferencia: 0, inconsistente: 0 },
+  };
+  for (const e of efeitos) {
+    if (e.efeito === 'reconciliar') resumo.reconciliadas++;
+    else resumo.puladas[e.motivo]++;
+  }
+  return resumo;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// v3 (2026-07-16): a trava anti-redundância do Omie é por MÉTODO+conta (provado
+// em prod: params distintos a 4s → REDUNDANT; lote de 15 nIdReceb com trégua
+// 1.1s → 15/15 REDUNDANT em 3 rodadas, escalando pra bloqueio de 30min). A
+// varredura vira listagem-DIRETA: 1 ListarRecebimentos por conta (método sem a
+// trava de rajada) + identidade FORTE (id + chave 44 idêntica) direto da página —
+// zero ConsultarRecebimento. Espelhado verbatim na edge omie-nfe-reconcile.
+// ════════════════════════════════════════════════════════════════════════════
+
+/** A trava do Omie: re-tentar renova o timer — retry PRECISA parar neste erro. */
+export function ehErroRedundante(erro: string | null | undefined): boolean {
+  if (!erro) return false;
+  return /redundant|redundante/i.test(erro);
+}
+
+export interface EstadoListagem {
+  recebido: boolean;
+  cancelada: boolean;
+  /** cChaveNfe/cChaveNFe do cabec da listagem (identidade forte), quando presente. */
+  chave: string | null;
+  /** nIdReceb apareceu mais de uma vez na listagem → fail-closed no cruzamento. */
+  duplicado: boolean;
+}
+
+/**
+ * Extrai de páginas do ListarRecebimentos o mapa nIdReceb → {recebido, cancelada, chave}.
+ * Parse defensivo: nIdReceb no cabec OU na raiz, string ou number; chave em ambas as
+ * grafias (cChaveNfe/cChaveNFe); página malformada é ignorada (nunca lança — a decisão
+ * fail-closed acontece no cruzamento). nIdReceb repetido → marcado `duplicado`.
+ */
+export function extrairRecebidosDaListagem(paginas: unknown[]): Map<number, EstadoListagem> {
+  const mapa = new Map<number, EstadoListagem>();
+  for (const pagina of paginas) {
+    const recs = asRecord(pagina).recebimentos;
+    if (!Array.isArray(recs)) continue;
+    for (const raw of recs) {
+      const rec = asRecord(raw);
+      const cabec = asRecord(rec.cabec);
+      const id = Number(cabec.nIdReceb ?? rec.nIdReceb);
+      if (!Number.isFinite(id) || id <= 0) continue;
+      const info = asRecord(rec.infoCadastro);
+      const chaveRaw = cabec.cChaveNfe ?? cabec.cChaveNFe;
+      const estado: EstadoListagem = {
+        recebido: String(info.cRecebido ?? '').trim().toUpperCase() === 'S',
+        cancelada: String(info.cCancelada ?? '').trim().toUpperCase() === 'S',
+        chave: typeof chaveRaw === 'string' && chaveRaw.trim() !== '' ? chaveRaw.trim() : null,
+        duplicado: false,
+      };
+      if (mapa.has(id)) {
+        estado.duplicado = true;
+        const prev = mapa.get(id)!;
+        mapa.set(id, { ...prev, duplicado: true });
+        continue;
+      }
+      mapa.set(id, estado);
+    }
+  }
+  return mapa;
+}
+
+export interface PendenteReconcile {
+  id: string;
+  omie_id_receb: number | null;
+  chave_acesso: string | null;
+}
+
+export interface SelecaoCandidatas<T extends PendenteReconcile> {
+  /** Correspondências FORTES (id + chave 44 iguais, recebida, não-cancelada, sem duplicata) — reconciliáveis direto. */
+  candidatas: T[];
+  foraDaListagem: number;
+  naoRecebidas: number;
+  canceladas: number;
+  /** Sem chave em um dos lados, chave inválida (≠44 dígitos) ou divergente — fail-closed. */
+  identidadeFraca: number;
+  /** nIdReceb duplicado na listagem OU repetido entre as pendentes do app (sem UNIQUE no banco). */
+  duplicadas: number;
+}
+
+/**
+ * Cruza as pendentes do app com o mapa da listagem usando IDENTIDADE FORTE (Codex v2 P1):
+ * reconciliável direto da listagem SOMENTE quando (nIdReceb igual) E (chave de acesso
+ * presente nos DOIS lados, com 44 dígitos, idêntica) E (cRecebido=S) E (não cancelada)
+ * E (cardinalidade 1:1 — sem duplicata na listagem nem entre as pendentes).
+ * Qualquer identidade em dúvida → contador, nunca candidata. `cap` limita o lote.
+ * A ordem de `pendentes` é preservada (chame com mais antigas primeiro).
+ */
+export function selecionarCandidatasReconcile<T extends PendenteReconcile>(
+  pendentes: T[],
+  listagem: Map<number, EstadoListagem>,
+  cap: number,
+): SelecaoCandidatas<T> {
+  const sel: SelecaoCandidatas<T> = {
+    candidatas: [], foraDaListagem: 0, naoRecebidas: 0, canceladas: 0, identidadeFraca: 0, duplicadas: 0,
+  };
+  const idsRepetidos = new Set<number>();
+  const vistos = new Set<number>();
+  for (const p of pendentes) {
+    const id = Number(p.omie_id_receb);
+    if (!Number.isFinite(id) || id <= 0) continue;
+    if (vistos.has(id)) idsRepetidos.add(id);
+    vistos.add(id);
+  }
+  for (const p of pendentes) {
+    const id = Number(p.omie_id_receb);
+    if (!Number.isFinite(id) || id <= 0) continue;
+    if (idsRepetidos.has(id)) { sel.duplicadas++; continue; }
+    const estado = listagem.get(id);
+    if (!estado) { sel.foraDaListagem++; continue; }
+    if (estado.duplicado) { sel.duplicadas++; continue; }
+    if (estado.cancelada) { sel.canceladas++; continue; }
+    if (!estado.recebido) { sel.naoRecebidas++; continue; }
+    const chaveApp = (p.chave_acesso ?? '').trim();
+    if (chaveApp.length !== 44 || estado.chave == null || estado.chave !== chaveApp) {
+      sel.identidadeFraca++;
+      continue;
+    }
+    if (sel.candidatas.length < cap) sel.candidatas.push(p);
+  }
+  return sel;
+}

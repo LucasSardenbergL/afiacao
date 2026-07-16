@@ -14,7 +14,9 @@ import { PriorityCard } from '@/components/customerDashboard/PriorityCard';
 import { GamificationMini } from '@/components/customerDashboard/GamificationMini';
 import { PedidosAndamento } from '@/components/customerDashboard/PedidosAndamento';
 import { FerramentasAtencao } from '@/components/customerDashboard/FerramentasAtencao';
+import { RecomendacoesCliente } from '@/components/customerDashboard/RecomendacoesCliente';
 import { AcoesRapidas } from '@/components/customerDashboard/AcoesRapidas';
+import { CentralEntryCard } from '@/components/customerDashboard/CentralEntryCard';
 import type { Profile, Order, UserTool } from '@/components/customerDashboard/types';
 
 interface CustomerDashboardProps {
@@ -58,6 +60,11 @@ export function CustomerDashboard({ profile, pendingOrders, userTools, getGreeti
         {/* Onboarding */}
         <OnboardingWizard hasTools={userTools.length > 0} hasOrders={pendingOrders.length > 0} />
 
+        {/* Central da Ferramenta — hub que reúne o ciclo da afiação (aposta central) */}
+        <motion.div variants={fadeUp}>
+          <CentralEntryCard navigate={navigate} />
+        </motion.div>
+
         {/* ─── SEÇÃO 1: Ação Recomendada ─── */}
         <motion.div variants={fadeUp}>
           <PriorityCard priority={priority} navigate={navigate} />
@@ -87,6 +94,9 @@ export function CustomerDashboard({ profile, pendingOrders, userTools, getGreeti
             <FerramentasAtencao urgentTools={urgentTools} navigate={navigate} />
           </motion.section>
         )}
+
+        {/* ─── Recomendações consultivas determinísticas (PR2 · benchmark #13) ─── */}
+        <RecomendacoesCliente userTools={userTools} navigate={navigate} />
 
         {/* ─── SEÇÃO 4: Ações Rápidas ─── */}
         <motion.section variants={fadeUp}>
