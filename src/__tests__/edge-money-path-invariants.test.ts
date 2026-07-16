@@ -932,9 +932,9 @@ describe('guardrail money-path: publicação diferida de run (edge USA os predic
     // carimba last_seen incompleto — Codex v3.3 P2). Deve setar abortado → varredura_completa=false, ANTES do fim-por-vazio.
     expect(src, 'a edge não distingue lista conhecida de resposta anômala').toContain('temListaConhecida');
     const idxCheck = src.indexOf('if (!temListaConhecida)'); // o abort da resposta anômala
-    const idxFim = src.indexOf('lista conhecida VAZIA');     // âncora única do fim-por-vazio (case-sensitive)
+    const idxFim = src.indexOf('if (pedidos.length === 0)'); // âncora no CÓDIGO do fim-por-vazio (não no comentário)
     expect(idxCheck, 'o abort de resposta anômala (if (!temListaConhecida)) não encontrado').toBeGreaterThan(0);
-    expect(idxFim, 'o fim-por-vazio (lista conhecida VAZIA) não encontrado').toBeGreaterThan(0);
+    expect(idxFim, 'o fim-por-vazio (if (pedidos.length === 0)) não encontrado').toBeGreaterThan(0);
     expect(
       idxCheck < idxFim,
       'REGRESSÃO Codex v3.3 P2: a checagem de lista conhecida deve vir ANTES do fim-por-vazio (senão {raw} vira [] → fim)',
@@ -946,6 +946,25 @@ describe('guardrail money-path: publicação diferida de run (edge USA os predic
     // v3.5 P2: 2 aliases ARRAY (um vazio, outro cheio) → a extração pegava o 1º (vazio) → fim espúrio + marcador
     // vazio falso-válido. O contrato do Omie declara só pedidos_pesquisa → exigir EXATAMENTE 1 lista.
     expect(src, 'a edge não exige EXATAMENTE 1 lista de pedidos (Codex v3.5 P2)').toMatch(/listas\.length === 1/);
+  });
+
+  it('v3.6 P1: lista VAZIA que contradiz os totais do Omie é TRUNCAMENTO, não fim (piso, nunca teto)', () => {
+    // {nTotalPaginas:5, nTotalRegistros:500, pedidos_pesquisa:[]} passava como "empresa vazia" → volume_ok=true →
+    // marcador VAZIO falso-válido → TODO PO viraria candidato. Os totais são PISO de sanidade; nunca teto (o Omie
+    // SUB-REPORTA nTotalPaginas — paginar-até-vazia é invariante anti-#979/#1009).
+    expect(
+      src,
+      'REGRESSÃO Codex v3.6 P1: a edge não checa mais se o vazio contradiz nTotalRegistros (piso de sanidade)',
+    ).toContain('faltamRegistros');
+    expect(
+      src,
+      'REGRESSÃO Codex v3.6 P1: a edge não checa mais se o vazio contradiz nTotalPaginas (piso de sanidade)',
+    ).toContain('paginaDeveriaExistir');
+    // o teto continua PROIBIDO: nada de parar a paginação por nTotalPaginas (isso reintroduziria o #1072/#979).
+    expect(
+      src,
+      'REGRESSÃO: a edge voltou a PARAR a paginação por nTotalPaginas (sub-reporta → perde POs)',
+    ).not.toMatch(/pagina\s*>\s*(resp\.)?nTotalPaginas|>=\s*(resp\.)?nTotalPaginas\)\s*(\{)?\s*break/);
   });
 
   it('PARIDADE: o bloco espelhado no edge é IDÊNTICO ao helper de src/ (pega reversão do Lovable)', () => {

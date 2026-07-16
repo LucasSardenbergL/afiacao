@@ -1,21 +1,24 @@
 #!/usr/bin/env bash
 # ╔══════════════════════════════════════════════════════════════════════════════╗
 # ║  PROVA PG17 — reposicao_publicar_run_completo (publicação diferida atômica)    ║
-# ║  Migration: supabase/migrations/20260713040000_reposicao_pedidos_compra_run.sql║
+# ║  Migration: supabase/migrations/20260713193000_reposicao_pedidos_compra_run.sql║
 # ║  Rode: bash db/test-reposicao-publicar-run-completo.sh > /tmp/t.log 2>&1; echo $?
 # ║        (NÃO pipe pra tail — engole o exit code)                                 ║
 # ║                                                                                ║
-# ║  Fecha os 6 P1 do design + 3 Codex challenge xhigh (2026-07-12/13):              ║
+# ║  Fecha os 6 P1 do design + 7 Codex challenge xhigh (2026-07-12/14):              ║
 # ║   A  volume_ok robusto: bootstrap→null, exclui truncados/degenerados, baseline  ║
 # ║      por MESMA largura de janela (Aw) + últimos 10d (Ai); ids=0 em run LIMPO =   ║
 # ║      empresa vazia → VÁLIDO (Az) — anti-latch/anti-starvation.                   ║
 # ║   B  last_seen em tabela DEDICADA service_role-only, SÓ em run VÁLIDO (P1#1),    ║
-# ║      anti-regressão por SEQ lógica (Bt, não wall-clock), atomicidade.            ║
+# ║      anti-regressão por FENCING TOKEN (Bt/Bf: ordem de INÍCIO da coleta, não de  ║
+# ║      publicação nem wall-clock), atomicidade marcador+last_seen.                 ║
 # ║   C  lock EFETIVO em RUNTIME: bloqueia OBEN sob lock tomado (C2), COLACOR passa  ║
 # ║      (C3, serializa POR EMPRESA) — não é só grep.                                ║
 # ║   D  base NÃO-forjável: RPC service_role-only, RLS sem policy de escrita; nem    ║
 # ║      INSERT nem UPDATE forjam o last_seen (D5/D6).                               ║
-# ║  Falsifica: sabota cada guard → exige VAZAMENTO (dente). 37 asserts.             ║
+# ║  Falsifica: sabota cada guard → exige VAZAMENTO (dente). 44 asserts / 12 falsif. ║
+# ║  NB: a validação de resposta do Omie (fault/aliases/nCodPed canônico/vazio-que-  ║
+# ║      contradiz-totais) é lógica da EDGE (TS) → coberta em vitest, não aqui.      ║
 # ╚══════════════════════════════════════════════════════════════════════════════╝
 set -euo pipefail
 

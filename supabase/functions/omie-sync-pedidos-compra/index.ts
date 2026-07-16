@@ -389,6 +389,7 @@ async function syncEmpresa(
     varredura_completa: false,
   };
   let coletaInvalidada = false; // nCodPed ausente/ilegível/inseguro (>2^53) → invalida a publicação (sinal incompleto)
+  let registrosVistos = 0;      // registros já lidos — piso de sanidade contra vazio que contradiz nTotalRegistros
 
   const { app_key, app_secret } = getCredentials(empresa);
 
@@ -466,10 +467,30 @@ async function syncEmpresa(
 
     let pedidos: OmiePedido[] = listas[0];
 
-    if (pedidos.length === 0) { // lista conhecida VAZIA = página vazia legítima = FIM real (não nTotalPaginas)
-      fim = true;
+    if (pedidos.length === 0) {
+      // Lista VAZIA: só é FIM legítimo se for COERENTE com os totais que o próprio Omie declarou. Os totais são
+      // PISO de sanidade, NUNCA teto — o Omie SUB-REPORTA nTotalPaginas (armadilha #979/#1009: por isso paginamos
+      // até a vazia e jamais paramos por causa do total). Mas um vazio que CONTRADIZ totais POSITIVOS é
+      // TRUNCAMENTO, não fim: publicá-lo como "empresa vazia válida" (ids=0 → volume_ok=true) faria nascer um
+      // marcador VAZIO falso-válido e TODO PO viraria candidato (Codex v3.6 P1). Totais ausentes/zerados =>
+      // empresa vazia legítima, segue válido. Precedente: omie-vendas-sync/pagination.ts, omie-sync-status-produtos.
+      const totalReg = Number(resp.nTotalRegistros);
+      const totalPag = Number(resp.nTotalPaginas);
+      const faltamRegistros = Number.isFinite(totalReg) && totalReg > registrosVistos;
+      const paginaDeveriaExistir = Number.isFinite(totalPag) && totalPag >= pagina;
+      if (faltamRegistros || paginaDeveriaExistir) {
+        console.error(
+          `[sync-pedidos] empresa=${empresa} pagina=${pagina} lista VAZIA contradiz os totais do Omie ` +
+            `(registros=${totalReg} vistos=${registrosVistos}, paginas=${totalPag}) — abort/invalida publicação`,
+        );
+        summary.erros++;
+        abortado = true;
+        break;
+      }
+      fim = true; // vazio COERENTE com os totais (ou sem totais) = fim real (não nTotalPaginas)
       break;
     }
+    registrosVistos += pedidos.length;
 
     const fp = fingerprintPagina(pedidos);
     if (fp && fpsVistos.has(fp)) {
