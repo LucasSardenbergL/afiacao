@@ -32,6 +32,8 @@ export interface LinhaProdutoLocal {
   id: string | null;
   omie_codigo_produto: number | string | null;
   estoque: unknown;
+  codigo?: string | null;
+  descricao?: string | null;
 }
 
 export interface PlanoEscritaInventario {
@@ -44,7 +46,14 @@ export interface PlanoEscritaInventario {
     account: string;
     synced_at: string;
   }>;
-  stockRows: Array<{ id: string; estoque: number; updated_at: string }>;
+  stockRows: Array<{
+    omie_codigo_produto: number;
+    account: string;
+    codigo: string;
+    descricao: string;
+    estoque: number;
+    updated_at: string;
+  }>;
   custoCandidatos: Array<{ product_id: string; cmc: number }>;
   divergences: number;
 }
@@ -132,6 +141,19 @@ export function planejarEscritaInventario(
     if (idByCod.get(cod) === String(l.id)) estoquePorCod.set(cod, l.estoque);
   }
 
+  // Colunas NOT NULL sem default de omie_products, por código resolvido: o upsert de estoque
+  // conflita por (omie_codigo_produto, account) e a tupla proposta do INSERT..ON CONFLICT é
+  // validada contra NOT NULL ANTES de o conflito ser arbitrado — payload sem codigo/descricao
+  // derruba o chunk inteiro com 23502 (provado em prod no ciclo 2026-07-16 18:15 UTC).
+  const catalogoPorCod = new Map<number, { codigo: string; descricao: string }>();
+  for (const l of locais) {
+    if (l.omie_codigo_produto == null || l.id == null) continue;
+    const cod = Number(l.omie_codigo_produto);
+    if (idByCod.get(cod) === String(l.id) && l.codigo != null && l.descricao != null) {
+      catalogoPorCod.set(cod, { codigo: l.codigo, descricao: l.descricao });
+    }
+  }
+
   const plano: PlanoEscritaInventario = { invRows: [], stockRows: [], custoCandidatos: [], divergences: 0 };
   for (const [cod, p] of posicoes) {
     const id = idByCod.get(cod) ?? null;
@@ -146,7 +168,19 @@ export function planejarEscritaInventario(
       synced_at: nowIso,
     });
     if (id) {
-      plano.stockRows.push({ id, estoque: p.saldo, updated_at: nowIso });
+      const cat = catalogoPorCod.get(cod);
+      if (cat) {
+        // Sem codigo/descricao (impossível pelo schema NOT NULL, mas fail-closed): pula o item
+        // do espelho de estoque — nunca propõe NULL/placeholder; posição e custos seguem.
+        plano.stockRows.push({
+          omie_codigo_produto: cod,
+          account,
+          codigo: cat.codigo,
+          descricao: cat.descricao,
+          estoque: p.saldo,
+          updated_at: nowIso,
+        });
+      }
       if (p.cmc > 0) plano.custoCandidatos.push({ product_id: id, cmc: p.cmc });
     }
   }
