@@ -154,6 +154,167 @@ function devePublicarRun(s: RunPublicacaoStatus): boolean {
 }
 // MIRROR-END reposicao publicacao-run
 
+// MIRROR-START reposicao omie-pagina  (espelho de src/lib/reposicao/omie-pagina.ts — paridade normalizada no CI)
+interface OmiePaginaResp {
+  faultstring?: unknown;
+  faultcode?: unknown;
+  nPagina?: unknown;
+  nTotalPaginas?: unknown;
+  nTotalRegistros?: unknown;
+  pedidos_pesquisa?: unknown;
+  pedido_compra_produto?: unknown;
+  pedidoCompraProduto?: unknown;
+}
+
+/** Maior total já declarado pelo Omie em QUALQUER resposta deste run (fault inclusive). Só cresce. */
+interface PisoTotais {
+  registros: number;
+  paginas: number;
+}
+
+type ClassificacaoPagina =
+  | { tipo: "dados"; ids: number[]; pedidos: unknown[] }
+  | { tipo: "fim" }
+  | { tipo: "anomalia"; motivo: string };
+
+interface CtxPagina {
+  /** página SOLICITADA nesta chamada */
+  pagina: number;
+  /** IDs canônicos distintos já coletados nas páginas ANTERIORES */
+  idsVistos: ReadonlySet<number>;
+  /** piso acumulado até aqui (já incluindo esta resposta — ver acumularPiso) */
+  piso: PisoTotais;
+}
+
+const PISO_ZERO: PisoTotais = { registros: 0, paginas: 0 };
+
+const FIM_SEM_REGISTROS_RE = /n[ãa]o existem registros/i;
+
+/**
+ * PISO ACUMULADO: o maior total declarado até agora. Nunca decresce — uma resposta terminal SEM totais não pode
+ * apagar o que uma página anterior declarou (senão um run que perde as últimas páginas parece completo).
+ */
+function acumularPiso(resp: OmiePaginaResp, piso: PisoTotais): PisoTotais {
+  const reg = Number(resp?.nTotalRegistros);
+  const pag = Number(resp?.nTotalPaginas);
+  return {
+    registros: Number.isFinite(reg) && reg > piso.registros ? reg : piso.registros,
+    paginas: Number.isFinite(pag) && pag > piso.paginas ? pag : piso.paginas,
+  };
+}
+
+/**
+ * nCodPed CANÔNICO: presente, inteiro SEGURO (>2^53 o Number arredondaria → carimbaria um bigint ERRADO no
+ * sinal) e positivo. Qualquer coisa fora disso é null → o chamador invalida a coleta (o PO não é rastreável).
+ */
+function lerNCodPed(pedido: unknown): number | null {
+  const p = pedido as
+    | { cabecalho_consulta?: { nCodPed?: unknown }; cabecalho?: { nCodPed?: unknown } }
+    | null
+    | undefined;
+  const raw = p?.cabecalho_consulta?.nCodPed ?? p?.cabecalho?.nCodPed;
+  // NÃO usar Number(raw) direto: ele COAGE true→1, "1e3"→1000, [5]→5, " 7 "→7 — um ID ERRADO entraria no sinal
+  // sem invalidar nada. Canônico = number inteiro seguro >0, ou string de DÍGITOS (o contrato do Omie declara
+  // nCodPed integer). Qualquer outra representação = ilegível → null → o chamador invalida a coleta.
+  if (typeof raw === "number") return Number.isSafeInteger(raw) && raw > 0 ? raw : null;
+  if (typeof raw === "string" && /^\d+$/.test(raw)) {
+    const n = Number(raw);
+    return Number.isSafeInteger(n) && n > 0 ? n : null;
+  }
+  return null;
+}
+
+/**
+ * O FIM (lista vazia OU fault "sem registros") só é legítimo se COERENTE com o piso: se o Omie declarou mais
+ * registros do que os IDs distintos coletados, ou declarou que ESTA página existe, então é TRUNCAMENTO — não
+ * "empresa vazia". Publicar um vazio contraditório daria ids=0 → volume_ok=true → marcador VAZIO falso-válido,
+ * e TODO PO viraria candidato de uma vez. Piso zerado/ausente => empresa vazia legítima, segue válida.
+ */
+function fimCoerente(ctx: CtxPagina): boolean {
+  const faltamRegistros = ctx.piso.registros > ctx.idsVistos.size;
+  const paginaDeveriaExistir = ctx.piso.paginas >= ctx.pagina;
+  return !faltamRegistros && !paginaDeveriaExistir;
+}
+
+function incoerencia(ctx: CtxPagina, o_que: string): string {
+  return `${o_que} contradiz o piso do Omie (registros=${ctx.piso.registros} ids_distintos=${ctx.idsVistos.size} paginas=${ctx.piso.paginas} pagina=${ctx.pagina})`;
+}
+
+/**
+ * Classifica UMA página: `dados` (seguir), `fim` (encerrar limpo) ou `anomalia` (abortar e INVALIDAR a
+ * publicação). Fail-closed: na dúvida, anomalia — publicar sinal de run inválido envenena a base de verdade que
+ * o PR2 usa para decidir o que provar por ID.
+ */
+function classificarPagina(resp: OmiePaginaResp, ctx: CtxPagina): ClassificacaoPagina {
+  if (!resp || typeof resp !== "object") return { tipo: "anomalia", motivo: "resposta não é um objeto" };
+
+  // (a) a página DECLARADA tem de ser a SOLICITADA — resposta stale/misrouted ({nPagina:3} quando pedimos a 2)
+  //     publicaria um fim falso. Ausente é tolerado (nem toda resposta traz nPagina); divergente é anomalia.
+  const npRaw = resp.nPagina;
+  if (npRaw !== undefined && npRaw !== null && npRaw !== "") {
+    const np = Number(npRaw);
+    if (!Number.isSafeInteger(np) || np !== ctx.pagina) {
+      return { tipo: "anomalia", motivo: `nPagina declarada (${String(npRaw)}) != solicitada (${ctx.pagina})` };
+    }
+  }
+
+  const aliases = [resp.pedidos_pesquisa, resp.pedido_compra_produto, resp.pedidoCompraProduto];
+  const listas = aliases.filter((a): a is unknown[] => Array.isArray(a));
+  const algumConflitante = aliases.some((a) => a !== undefined && a !== null && !Array.isArray(a));
+
+  // (b) fault: erro de APLICAÇÃO do Omie — pode vir com HTTP 200 carregando faultcode E/OU faultstring.
+  const temFault = (resp.faultstring !== undefined && resp.faultstring !== null && resp.faultstring !== "") ||
+    (resp.faultcode !== undefined && resp.faultcode !== null && resp.faultcode !== "");
+  if (temFault) {
+    const fs = String(resp.faultstring ?? "");
+    if (fs && FIM_SEM_REGISTROS_RE.test(fs)) {
+      // fault TERMINAL ("não existem registros"). Se a PRÓPRIA resposta traz pedidos ou shape torto, ela se
+      // CONTRADIZ → anomalia (senão publicaríamos ids=[] com um PO visível na mão).
+      if (algumConflitante || listas.length > 1) {
+        return { tipo: "anomalia", motivo: 'fault "sem registros" com aliases tortos' };
+      }
+      if (listas.length === 1 && listas[0].length > 0) {
+        return { tipo: "anomalia", motivo: `fault "sem registros" mas a resposta traz ${listas[0].length} pedido(s)` };
+      }
+      return fimCoerente(ctx) ? { tipo: "fim" } : { tipo: "anomalia", motivo: incoerencia(ctx, 'fault "sem registros"') };
+    }
+    return { tipo: "anomalia", motivo: `fault: ${fs || String(resp.faultcode)}` };
+  }
+
+  // (c) 2xx sem fault: precisa ser EXATAMENTE 1 lista conhecida (o contrato do Omie declara só pedidos_pesquisa;
+  //     2 listas divergentes ou alias em tipo conflitante já viraram fim espúrio antes).
+  if (listas.length !== 1 || algumConflitante) {
+    return {
+      tipo: "anomalia",
+      motivo: `shape anômalo (listas=${listas.length}, alias conflitante=${algumConflitante})`,
+    };
+  }
+  const pedidos = listas[0];
+
+  // (d) lista vazia → mesmo classificador terminal do fault.
+  if (pedidos.length === 0) {
+    return fimCoerente(ctx) ? { tipo: "fim" } : { tipo: "anomalia", motivo: incoerencia(ctx, "lista vazia") };
+  }
+
+  // (e) dados: todo registro precisa de nCodPed CANÔNICO, e nenhum pode REPETIR um ID (de página anterior ou da
+  //     própria página). Sobreposição = a paginação girou/duplicou: o Set deduplicaria em silêncio e o piso
+  //     bateria com menos POs do que o universo real → um PO sumiria do sinal sem ninguém notar.
+  const ids: number[] = [];
+  const idsDaPagina = new Set<number>();
+  for (const p of pedidos) {
+    const id = lerNCodPed(p);
+    if (id === null) return { tipo: "anomalia", motivo: "pedido sem nCodPed canônico (ausente/ilegível/inseguro)" };
+    if (ctx.idsVistos.has(id)) {
+      return { tipo: "anomalia", motivo: `nCodPed ${id} repetido de página anterior (sobreposição de paginação)` };
+    }
+    if (idsDaPagina.has(id)) return { tipo: "anomalia", motivo: `nCodPed ${id} duplicado na mesma página` };
+    idsDaPagina.add(id);
+    ids.push(id);
+  }
+  return { tipo: "dados", ids, pedidos };
+}
+// MIRROR-END reposicao omie-pagina
+
 function getCredentials(empresa: Empresa): { app_key: string; app_secret: string } {
   if (empresa === "OBEN") {
     const app_key = Deno.env.get("OMIE_OBEN_APP_KEY");
@@ -388,7 +549,6 @@ async function syncEmpresa(
     ids_distintos: 0,
     varredura_completa: false,
   };
-  let coletaInvalidada = false; // nCodPed ausente/ilegível/inseguro (>2^53) → invalida a publicação (sinal incompleto)
   let registrosVistos = 0;      // LINHAS lidas (observabilidade: linhas × ids_distintos denuncia sobreposição)
 
   const { app_key, app_secret } = getCredentials(empresa);
@@ -417,12 +577,10 @@ async function syncEmpresa(
   const fpsVistos = new Set<string>();
   let fim = false;       // vi o fim legítimo dos dados (página vazia / fault "sem registros")
   let abortado = false;  // saí por erro/anomalia (fetch, fault real, loop) — já contado em summary.erros
-  // [v3.8] PISO de sanidade ACUMULADO — o MAIOR nTotalRegistros/nTotalPaginas que o Omie declarou em QUALQUER
-  // resposta (fault inclusive). NUNCA é teto: o Omie SUB-REPORTA (#979/#1009), por isso paginamos até a vazia e
-  // jamais paramos pelo total. ACUMULA porque uma resposta terminal SEM totais não pode apagar o piso que uma
-  // anterior declarou (Codex v3.7 P1: os totais eram lidos só da página atual → run terminava faltando POs).
-  let maxTotalRegistros = 0;
-  let maxTotalPaginas = 0;
+  // PISO acumulado dos totais do Omie (nTotalRegistros/nTotalPaginas). Semântica e guards no parser puro
+  // (omie-pagina.ts): é PISO de sanidade, NUNCA teto — o Omie SUB-REPORTA (#979/#1009), então paginamos até a
+  // página vazia e jamais paramos pelo total; e só cresce (resposta terminal sem totais não apaga o piso).
+  let piso: PisoTotais = PISO_ZERO;
 
   for (let pagina = 1; pagina <= MAX_PAGINAS; pagina++) {
     let resp: OmieSearchResponse;
@@ -436,82 +594,36 @@ async function syncEmpresa(
       break;
     }
 
-    // [v3.8] Atualiza o PISO acumulado com o que ESTA resposta declarar — ANTES de qualquer classificação,
-    // porque os totais podem vir no PRÓPRIO fault (Codex v3.7 P1: fault "sem registros" trazendo
-    // nTotalRegistros=500 virava fim sem nunca passar pelo guard → marcador vazio falso-válido).
-    const tReg = Number(resp?.nTotalRegistros);
-    if (Number.isFinite(tReg) && tReg > maxTotalRegistros) maxTotalRegistros = tReg;
-    const tPag = Number(resp?.nTotalPaginas);
-    if (Number.isFinite(tPag) && tPag > maxTotalPaginas) maxTotalPaginas = tPag;
+    // [v3.9] PISO acumulado + classificação da página são do PARSER PURO (espelhado abaixo; fonte em
+    // src/lib/reposicao/omie-pagina.ts). SEIS Codex challenge xhigh acharam furos nesta lógica um shape por vez
+    // (raw→[]; faultcode sem faultstring; alias conflitante; 2 listas; vazio contradizendo totais; fault
+    // escapando do guard; piso não acumulando; linhas vs IDs distintos; sobreposição parcial; nPagina stale) —
+    // remendo não convergia e guardrail textual não prova comportamento. Agora a matriz inteira é teste de
+    // vitest (omie-pagina.test.ts). O piso entra ANTES de classificar: os totais podem vir no PRÓPRIO fault.
+    piso = acumularPiso(resp, piso);
+    const cls = classificarPagina(resp, { pagina, idsVistos, piso });
 
-    // [v3.8] Classificador TERMINAL ÚNICO — lista VAZIA e fault "sem registros" passam pelo MESMO guard: o fim
-    // só é legítimo se COERENTE com o piso acumulado. Fim que CONTRADIZ totais positivos = TRUNCAMENTO (não
-    // "empresa vazia"): publicá-lo daria ids=0 → volume_ok=true → marcador VAZIO falso-válido e TODO PO viraria
-    // candidato de uma vez. Compara com IDs canônicos DISTINTOS — não com linhas vistas, pois 100 linhas podem
-    // render 99 IDs por sobreposição de página (Codex v3.7 P1). Totais ausentes/zerados => empresa vazia
-    // legítima, segue válida. O piso NUNCA vira teto (sub-reporte do Omie não gera falso truncamento: se o real
-    // é maior que o declarado, faltamRegistros é false e paginaDeveriaExistir também).
-    const fimEhCoerente = (): boolean => {
-      const faltamRegistros = maxTotalRegistros > idsVistos.size;
-      const paginaDeveriaExistir = maxTotalPaginas >= pagina;
-      if (faltamRegistros || paginaDeveriaExistir) {
-        console.error(
-          `[sync-pedidos] empresa=${empresa} pagina=${pagina} FIM contradiz os totais do Omie ` +
-            `(registros=${maxTotalRegistros} ids_distintos=${idsVistos.size} linhas=${registrosVistos}, ` +
-            `paginas=${maxTotalPaginas}) — abort/invalida publicação`,
-        );
-        summary.erros++;
-        abortado = true;
-        return false;
-      }
-      return true;
-    };
-
-    if (resp?.faultstring || resp?.faultcode) {
-      const fs = String(resp.faultstring ?? "");
-      if (fs && FIM_SEM_REGISTROS.test(fs)) {
-        // fault terminal do Omie: só é fim se coerente com o piso (senão é truncamento disfarçado de "vazio").
-        if (fimEhCoerente()) {
-          console.log(`[sync-pedidos] empresa=${empresa} pagina=${pagina} sem registros — fim`);
-          fim = true;
-        }
-        break;
-      }
-      // erro de APLICAÇÃO do Omie: pode vir como HTTP 200 carregando faultcode E/OU faultstring (a irmã
-      // omie-sync-status-produtos rejeita ambos). Sem a faultstring "sem registros" = erro real → abort e
-      // invalida a publicação (Codex v3.4 P2: um faultcode SEM faultstring passava como sucesso → virava fim).
-      console.error(`[sync-pedidos] empresa=${empresa} pagina=${pagina} fault: ${fs || resp.faultcode}`);
+    if (cls.tipo === "anomalia") {
+      // fail-closed: qualquer shape que não seja dados/fim COERENTE invalida a publicação (um sinal parcial
+      // publicado como válido envenena a base de verdade que o PR2 usa p/ decidir quem provar por ID).
+      console.error(`[sync-pedidos] empresa=${empresa} pagina=${pagina} ${cls.motivo} — abort/invalida publicação`);
       summary.erros++;
       abortado = true;
       break;
     }
-
-    // Resposta 2xx (sem fault) que NÃO seja exatamente UMA lista conhecida de pedidos = shape ANÔMALO (2xx
-    // não-JSON → {raw}; alias em tipo CONFLITANTE como pedidos_pesquisa:"" ; 2 aliases array divergentes;
-    // mudança de contrato). NÃO é "página vazia legítima" (o Omie sinaliza fim com HTTP 500 + faultstring "sem
-    // registros", tratado acima) → é TRUNCAMENTO: aborta e invalida a publicação (senão um run parcial vira
-    // "válido" e carimba last_seen incompleto — Codex v3.3/v3.4/v3.5 P2).
-    const aliases = [resp?.pedidos_pesquisa, resp?.pedido_compra_produto, resp?.pedidoCompraProduto];
-    const listas = aliases.filter((a): a is OmiePedido[] => Array.isArray(a));
-    const algumConflitante = aliases.some((a) => a !== undefined && a !== null && !Array.isArray(a));
-    // EXATAMENTE 1 lista: o contrato do Omie declara só `pedidos_pesquisa`. Com 2 aliases array a extração
-    // escolhia o 1º — se ele viesse VAZIO e o outro CHEIO, virava fim espúrio e publicava marcador vazio
-    // falso-válido (Codex v3.5 P2). Fail-closed: 0 listas, 2+ listas ou alias conflitante → abort.
-    const temListaConhecida = listas.length === 1 && !algumConflitante;
-    if (!temListaConhecida) {
-      console.error(`[sync-pedidos] empresa=${empresa} pagina=${pagina} resposta anômala (listas=${listas.length}, conflitante=${algumConflitante}) — abort/invalida publicação`);
-      summary.erros++;
-      abortado = true;
+    if (cls.tipo === "fim") {
+      console.log(
+        `[sync-pedidos] empresa=${empresa} pagina=${pagina} fim legítimo (piso registros=${piso.registros} ` +
+          `paginas=${piso.paginas} · ids_distintos=${idsVistos.size} linhas=${registrosVistos})`,
+      );
+      fim = true;
       break;
     }
 
-    let pedidos: OmiePedido[] = listas[0];
-
-    if (pedidos.length === 0) {
-      // Lista VAZIA passa pelo MESMO classificador terminal do fault (piso ACUMULADO × IDs canônicos DISTINTOS).
-      if (fimEhCoerente()) fim = true;
-      break;
-    }
+    // dados: o parser já garantiu 1 lista conhecida, nCodPed CANÔNICO em todo registro e ZERO sobreposição
+    // (ID repetido de página anterior/da mesma página → anomalia acima, pois o Set deduplicaria em silêncio e
+    // um PO sumiria do sinal — Codex #9 P1).
+    let pedidos = cls.pedidos as OmiePedido[];
     registrosVistos += pedidos.length;
 
     const fp = fingerprintPagina(pedidos);
@@ -523,26 +635,10 @@ async function syncEmpresa(
     }
     fpsVistos.add(fp);
 
-    // [publicação diferida v3] coleta os nCodPed VISTOS na varredura (ANTES do filtro fornecedor — no run
-    // de publicação não há filtro; representa TODOS os POs da janela completa). Publicados 1× no fim LIMPO
-    // via reposicao_publicar_run_completo — NUNCA carimba last_seen durante o upsert (Codex P1 #1).
-    for (const p of pedidos) {
-      const raw = p?.cabecalho_consulta?.nCodPed ?? p?.cabecalho?.nCodPed;
-      // CANÔNICO = number inteiro seguro > 0, ou string de DÍGITOS (o contrato do Omie declara nCodPed integer).
-      // Não usar Number(raw) direto: ele COAGE true→1, "1e3"→1000, [5]→5, " 7 "→7 — entraria um ID ERRADO no
-      // sinal sem invalidar nada (Codex v3.5 P2). Qualquer outra representação = ilegível → fail-closed.
-      const canonico = (typeof raw === "number" && Number.isSafeInteger(raw) && raw > 0) ||
-        (typeof raw === "string" && /^\d+$/.test(raw) && Number.isSafeInteger(Number(raw)) && Number(raw) > 0);
-      if (canonico) {
-        idsVistos.add(Number(raw));
-      } else {
-        // nCodPed AUSENTE/ilegível/não-canônico/inseguro (>2^53): o registro não é rastreável no sinal → o run
-        // ficaria incompleto e o PO viraria candidato espúrio. Fail-closed: invalida a PUBLICAÇÃO (Codex v3.4/v3.5
-        // P2). Não incrementa erros (não polui o heartbeat/sync). Na prática o nCodPed do Omie é sempre canônico.
-        console.error(`[sync-pedidos] empresa=${empresa} nCodPed não-canônico (${JSON.stringify(raw)}) — invalida publicação`);
-        coletaInvalidada = true;
-      }
-    }
+    // [publicação diferida v3] IDs VISTOS na varredura (ANTES do filtro fornecedor — no run de publicação não há
+    // filtro; representa TODOS os POs da janela). Publicados 1× no fim LIMPO via reposicao_publicar_run_completo
+    // — NUNCA carimba last_seen durante o upsert (Codex P1 #1).
+    for (const id of cls.ids) idsVistos.add(id);
 
     // DEBUG: log shape do primeiro pedido (página 1) e top-level keys
     if (pagina === 1) {
@@ -586,7 +682,9 @@ async function syncEmpresa(
   }
 
   summary.ids_distintos = idsVistos.size;
-  summary.varredura_completa = fim && !abortado && !coletaInvalidada; // limpo = fim sem abort/truncamento/coleta inválida
+  // limpo = vi o FIM legítimo (coerente com o piso) e nenhuma anomalia abortou. Toda invalidação da coleta
+  // (shape torto, nCodPed não-canônico, sobreposição, fim contraditório) já veio como anomalia → abortado.
+  summary.varredura_completa = fim && !abortado;
   return summary;
 }
 
@@ -869,13 +967,17 @@ Deno.serve(async (req) => {
       const meta = { trigger: triggerLabel, modo, dias };
 
       const idsVistos = new Set<number>(); // POs vistos neste run (publicados 1× no fim do completo limpo)
-      // fencing token (ordem de INÍCIO da coleta) — alocado ANTES de syncEmpresa, só p/ o run que PODE publicar
-      // (completo não-filtrado). Ordena a publicação pela ordem de INÍCIO, não de fim (Codex v3.3 P1: coletor
-      // que começa antes mas publica depois NÃO pode suprimir um mais novo). null = não-publicável ou alocação
-      // falhou → não publica (fail-closed).
+      // heartbeat ANTES do fencing token: qualquer await de REDE entre o token e a 1ª página alarga a janela em
+      // que um run mais NOVO coleta e publica primeiro — aí o token velho deixa de refletir a ordem de início e
+      // o PO excluído no meio fica com last_seen == marcador (não vira candidato, a prova por ID nunca roda e o
+      // fantasma sobrevive). Codex #9 P1: o heartbeatRunning estava exatamente nessa janela.
+      if (gravaHeartbeat) await heartbeatRunning(supabase, empresa, meta);
+      // fencing token (ordem de INÍCIO da coleta) — alocado IMEDIATAMENTE antes de syncEmpresa, sem nenhum await
+      // de rede no meio; só p/ o run que PODE publicar (completo não-filtrado). Ordena a publicação pela ordem de
+      // INÍCIO, não de fim (Codex v3.3 P1: coletor que começa antes mas publica depois NÃO suprime um mais novo).
+      // null = não-publicável ou alocação falhou → não publica (fail-closed).
       const podePublicarRun = modo === "completo" && !fornecedorCodigo;
       const runSeq = podePublicarRun ? await alocarRunSeq(supabase, empresa) : null;
-      if (gravaHeartbeat) await heartbeatRunning(supabase, empresa, meta);
       let s: EmpresaSummary;
       let errFatal: string | null = null;
       try {

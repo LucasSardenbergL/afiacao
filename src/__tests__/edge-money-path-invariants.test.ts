@@ -849,14 +849,17 @@ describe('guardrail: fin-valor-cockpit lê o código do cliente pela view fresca
 // money-path (volume_ok robusto, atomicidade, RLS) é provado no PG17 (db/test-reposicao-publicar-run-completo.sh).
 const SYNC_PEDIDOS = 'supabase/functions/omie-sync-pedidos-compra/index.ts';
 const PUBLICACAO_RUN = 'src/lib/reposicao/publicacao-run.ts';
+const OMIE_PAGINA = 'src/lib/reposicao/omie-pagina.ts';
 
 describe('guardrail money-path: publicação diferida de run (edge USA os predicados espelhados) — PR1 PO excluído', () => {
   const src = read(SYNC_PEDIDOS);
   const helper = read(PUBLICACAO_RUN);
+  const parser = read(OMIE_PAGINA);
 
-  it('sentinela: leu os arquivos reais (edge + helper)', () => {
+  it('sentinela: leu os arquivos reais (edge + helpers)', () => {
     expect(src).toContain('reposicao_publicar_run_completo');
     expect(helper).toContain('devePublicarRun');
+    expect(parser).toContain('classificarPagina');
   });
 
   it('o helper puro existe e exporta devePublicarRun', () => {
@@ -896,21 +899,27 @@ describe('guardrail money-path: publicação diferida de run (edge USA os predic
     ).not.toMatch(/cadenciaPodeAvancar/);
   });
 
-  it('v3.4 P2: coleta fail-closed — nCodPed não-canônico (ausente/ilegível/inseguro) INVALIDA a publicação', () => {
-    // isSafeInteger (não isFinite): nCodPed > 2^53 arredondaria e carimbaria bigint errado. E um registro SEM
-    // nCodPed NÃO pode ser "continue" silencioso (o sinal ficaria incompleto → candidato espúrio) — invalida.
+  it('v3.9: a edge DELEGA a classificação ao parser PURO e falha fechado em anomalia', () => {
+    // SEIS Codex challenge xhigh acharam furos na classificação inline, um shape por vez — e os guardrails eram
+    // textuais (grep de nome), que não provam comportamento. Agora a decisão vive no parser PURO
+    // (src/lib/reposicao/omie-pagina.ts) com matriz COMPORTAMENTAL em omie-pagina.test.ts; aqui só garantimos
+    // que a edge realmente delega, trata anomalia fail-closed e não reintroduz o TETO.
+    expect(src, 'a edge não acumula o piso pelo parser (acumularPiso)').toContain('piso = acumularPiso(resp, piso)');
     expect(
       src,
-      'REGRESSÃO: coleta voltou a isFinite — nCodPed > 2^53 arredondaria e carimbaria bigint errado',
-    ).toMatch(/Number\.isSafeInteger\(raw\)/);
+      'a edge não classifica a página pelo parser (classificarPagina)',
+    ).toMatch(/classificarPagina\(resp,\s*\{\s*pagina,\s*idsVistos,\s*piso\s*\}\)/);
+    expect(src, 'a edge não aborta em anomalia do parser (fail-closed)').toMatch(/cls\.tipo === "anomalia"/);
+    expect(src, 'a edge não encerra pelo fim do parser').toMatch(/cls\.tipo === "fim"/);
     expect(
       src,
-      'REGRESSÃO Codex v3.5 P2: coleta voltou a Number(raw) cru — coage true→1, "1e3"→1000, [5]→5 (ID ERRADO no sinal)',
-    ).toContain('const canonico');
+      'varredura_completa deixou de exigir fim && !abortado (toda invalidação vem como anomalia → abortado)',
+    ).toMatch(/varredura_completa = fim && !abortado/);
+    // o TETO segue PROIBIDO: parar a paginação por nTotalPaginas reintroduz #979/#1009 (o Omie SUB-REPORTA).
     expect(
       src,
-      'REGRESSÃO Codex v3.4 P2: coleta não invalida mais a publicação em nCodPed não-canônico',
-    ).toContain('coletaInvalidada');
+      'REGRESSÃO: a edge voltou a PARAR a paginação por nTotalPaginas (sub-reporta → perde POs)',
+    ).not.toMatch(/pagina\s*>\s*(resp\.)?nTotalPaginas|>=\s*(resp\.)?nTotalPaginas\)\s*(\{)?\s*break/);
   });
 
   it('v3.3 P1/fencing: a edge aloca o run_seq ANTES da coleta e passa p_seq à RPC (ordem de INÍCIO)', () => {
@@ -927,52 +936,14 @@ describe('guardrail money-path: publicação diferida de run (edge USA os predic
     ).toBe(true);
   });
 
-  it('v3.3 P2: resposta 2xx sem lista de pedidos conhecida INVALIDA a varredura (não vira fim/run válido)', () => {
-    // resposta malformada ({raw}) não pode virar "página vazia = fim" (senão publica um run parcial como válido e
-    // carimba last_seen incompleto — Codex v3.3 P2). Deve setar abortado → varredura_completa=false, ANTES do fim-por-vazio.
-    expect(src, 'a edge não distingue lista conhecida de resposta anômala').toContain('temListaConhecida');
-    const idxCheck = src.indexOf('if (!temListaConhecida)'); // o abort da resposta anômala
-    const idxFim = src.indexOf('if (pedidos.length === 0)'); // âncora no CÓDIGO do fim-por-vazio (não no comentário)
-    expect(idxCheck, 'o abort de resposta anômala (if (!temListaConhecida)) não encontrado').toBeGreaterThan(0);
-    expect(idxFim, 'o fim-por-vazio (if (pedidos.length === 0)) não encontrado').toBeGreaterThan(0);
+  it('PARIDADE: o parser omie-pagina espelhado no edge é IDÊNTICO ao de src/ (pega reversão do Lovable)', () => {
+    // A classificação de página é a lógica que SEIS Codex challenge furaram, um shape por vez. Ela vive no parser
+    // PURO (matriz comportamental em src/lib/reposicao/omie-pagina.test.ts); o edge carrega um espelho, porque
+    // Deno não importa de src/. Se o deploy do Lovable reescrever o espelho, a divergência aparece AQUI.
     expect(
-      idxCheck < idxFim,
-      'REGRESSÃO Codex v3.3 P2: a checagem de lista conhecida deve vir ANTES do fim-por-vazio (senão {raw} vira [] → fim)',
-    ).toBe(true);
-    // v3.4 P2: fault do Omie pode vir como faultcode SEM faultstring (a irmã omie-sync-status-produtos rejeita
-    // ambos); e um alias presente em tipo conflitante (pedidos_pesquisa:"") não pode virar fim espúrio.
-    expect(src, 'a checagem de fault não cobre faultcode (só faultstring)').toMatch(/faultstring \|\| resp\?\.faultcode/);
-    expect(src, 'a edge não rejeita aliases em tipo conflitante (Codex v3.4 P2)').toContain('algumConflitante');
-    // v3.5 P2: 2 aliases ARRAY (um vazio, outro cheio) → a extração pegava o 1º (vazio) → fim espúrio + marcador
-    // vazio falso-válido. O contrato do Omie declara só pedidos_pesquisa → exigir EXATAMENTE 1 lista.
-    expect(src, 'a edge não exige EXATAMENTE 1 lista de pedidos (Codex v3.5 P2)').toMatch(/listas\.length === 1/);
-  });
-
-  it('v3.7 P1: FIM (vazio OU fault) que contradiz os totais ACUMULADOS é TRUNCAMENTO — piso, nunca teto', () => {
-    // Os 3 furos que o Codex #8 achou na v3.7 e a v3.8 fecha:
-    //  (1) o fault "sem registros" marcava fim ANTES do guard → {faultstring:"...", nTotalRegistros:500} publicava
-    //      marcador VAZIO falso-válido. Agora fault e vazio passam pelo MESMO classificador (fimEhCoerente).
-    //  (2) os totais eram lidos só da página ATUAL → uma resposta terminal sem totais apagava o piso declarado
-    //      antes (pág1: 505/6; págs1-5: 500 IDs; pág6 faulta sem totais → publicava faltando 5). Agora ACUMULA.
-    //  (3) o piso comparava LINHAS (registrosVistos), não IDs canônicos DISTINTOS → 100 linhas/99 IDs passava.
-    // O teto segue PROIBIDO: parar de paginar por nTotalPaginas reintroduz #979/#1009 (o Omie SUB-REPORTA).
-    expect(src, 'REGRESSÃO Codex #8: o piso de REGISTROS não ACUMULA entre páginas').toContain('maxTotalRegistros');
-    expect(src, 'REGRESSÃO Codex #8: o piso de PÁGINAS não ACUMULA entre páginas').toContain('maxTotalPaginas');
-    // classificador ÚNICO: definido 1× e chamado no fault E no vazio (≥3 ocorrências).
-    expect(
-      count(src, 'fimEhCoerente'),
-      'REGRESSÃO Codex #8: fault e lista-vazia não passam pelo MESMO classificador terminal (≥3: def + fault + vazio)',
-    ).toBeGreaterThanOrEqual(3);
-    // o piso compara IDs canônicos DISTINTOS, não linhas lidas (sobreposição de página mascarava PO faltando).
-    expect(
-      src,
-      'REGRESSÃO Codex #8: o piso voltou a comparar LINHAS em vez de IDs distintos (100 linhas/99 IDs passava)',
-    ).toMatch(/maxTotalRegistros > idsVistos\.size/);
-    // o teto continua PROIBIDO: nada de parar a paginação por nTotalPaginas (isso reintroduziria o #1072/#979).
-    expect(
-      src,
-      'REGRESSÃO: a edge voltou a PARAR a paginação por nTotalPaginas (sub-reporta → perde POs)',
-    ).not.toMatch(/pagina\s*>\s*(resp\.)?nTotalPaginas|>=\s*(resp\.)?nTotalPaginas\)\s*(\{)?\s*break/);
+      mirrorBlockNamed(src, 'reposicao omie-pagina'),
+      'edge divergiu do parser de src/ — o Lovable reescreveu a classificação de página no deploy?',
+    ).toBe(mirrorBlockNamed(parser, 'reposicao omie-pagina'));
   });
 
   it('PARIDADE: o bloco espelhado no edge é IDÊNTICO ao helper de src/ (pega reversão do Lovable)', () => {
