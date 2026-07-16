@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { acumularPiso, classificarPagina, lerNCodPed, PISO_ZERO, type PisoTotais } from './omie-pagina';
+import { acumularPiso, CAMPOS_INTEIROS, classificarPagina, lerNCodPed, PISO_ZERO, type PisoTotais } from './omie-pagina';
 
 // Matriz COMPORTAMENTAL da classificação de página do PesquisarPedCompra (money-path, PR1 reconciliação de PO
 // excluído no Omie). Cada caso aqui é um shape que um Codex challenge xhigh (v3.3→v3.8, 9 rodadas) provou que
@@ -50,6 +50,69 @@ describe('acumularPiso — os totais do Omie são PISO (só crescem, nunca são 
   it('Codex #10: total ilegível NÃO apaga um piso já declarado (não rebaixa)', () => {
     const piso = acumularPiso({ nTotalRegistros: 505, nTotalPaginas: 6 }, PISO_ZERO);
     expect(acumularPiso({ nTotalRegistros: 'x', nTotalPaginas: true }, piso)).toEqual({ registros: 505, paginas: 6 });
+  });
+});
+
+// A CLASSE inteira de lixo × TODO campo inteiro do contrato. Table-driven de propósito: escolher os casos à mão
+// foi exatamente o que deixou "" e nRegsPorPagina escaparem (Codex #11 P1) — três rodadas seguidas o fix de um
+// campo abriu o furo no vizinho. Campo novo entra em CAMPOS_INTEIROS e ganha validação + cobertura de graça.
+const LIXO_NAO_CANONICO: unknown[] = ['', 'x', '1e3', ' 7 ', '01x', '1.234', true, false, [], {}, [5], 1.5, -1, NaN, Infinity];
+
+describe('Codex #11: classe INTEIRA de lixo × TODO campo inteiro do contrato → anomalia', () => {
+  it('ÂNCORA: CAMPOS_INTEIROS bate com o contrato (lista INDEPENDENTE — senão a matriz encolhe junto)', () => {
+    // Sem esta âncora a varredura é FALSO-VERDE estrutural: como a matriz itera CAMPOS_INTEIROS, remover um campo
+    // da lista faz o código parar de validar E a matriz parar de testar → verde. Pego na própria falsificação
+    // (tirei nRegsPorPagina e o teste passou 91/91). A lista aqui é escrita à mão de propósito: é o gabarito.
+    expect([...CAMPOS_INTEIROS].sort()).toEqual(['nPagina', 'nRegsPorPagina', 'nTotalPaginas', 'nTotalRegistros']);
+  });
+
+  for (const campo of CAMPOS_INTEIROS) {
+    for (const lixo of LIXO_NAO_CANONICO) {
+      it(`${campo} = ${JSON.stringify(lixo) ?? String(lixo)} → anomalia (presente e não-canônico)`, () => {
+        const resp = { pedidos_pesquisa: [], [campo]: lixo };
+        expect(classificarPagina(resp, ctx())).toMatchObject({ tipo: 'anomalia' });
+      });
+    }
+  }
+
+  it('AUSENTE (omitido/null/undefined) segue legítimo em todo campo — empresa vazia real publica', () => {
+    expect(classificarPagina({ pedidos_pesquisa: [] }, ctx())).toEqual({ tipo: 'fim' });
+    for (const campo of CAMPOS_INTEIROS) {
+      expect(classificarPagina({ pedidos_pesquisa: [], [campo]: null }, ctx()), `${campo}=null`)
+        .toEqual({ tipo: 'fim' });
+      expect(classificarPagina({ pedidos_pesquisa: [], [campo]: undefined }, ctx()), `${campo}=undefined`)
+        .toEqual({ tipo: 'fim' });
+    }
+  });
+
+  it('canônico segue aceito (número e string de dígitos) — sem falso truncamento', () => {
+    expect(classificarPagina({ nPagina: 1, nTotalPaginas: 0, nTotalRegistros: 0, nRegsPorPagina: 100, pedidos_pesquisa: [] }, ctx()))
+      .toEqual({ tipo: 'fim' });
+    expect(classificarPagina({ nPagina: '1', nRegsPorPagina: '100', pedidos_pesquisa: [] }, ctx()))
+      .toEqual({ tipo: 'fim' });
+  });
+});
+
+describe('Codex #11 P1: faultstring/faultcode não-canônicos = anomalia (String()/test() COAGEM)', () => {
+  it('faultstring ARRAY com a frase terminal NÃO vira fim (String(array) devolvia a frase)', () => {
+    expect(classificarPagina(
+      { faultcode: '5113', faultstring: ['Não existem registros para a página informada'], pedidos_pesquisa: [] },
+      ctx(),
+    )).toMatchObject({ tipo: 'anomalia' });
+  });
+
+  it('rejeita a classe toda em faultstring e faultcode', () => {
+    for (const lixo of [['x'], { a: 1 }, true, 5, [] as unknown]) {
+      expect(classificarPagina({ faultstring: lixo }, ctx()), `faultstring=${JSON.stringify(lixo)}`)
+        .toMatchObject({ tipo: 'anomalia' });
+      expect(classificarPagina({ faultcode: lixo, pedidos_pesquisa: [] }, ctx()), `faultcode=${JSON.stringify(lixo)}`)
+        .toMatchObject({ tipo: 'anomalia' });
+    }
+  });
+
+  it('faultstring string segue funcionando (terminal → fim; erro → anomalia)', () => {
+    expect(classificarPagina({ faultcode: '5113', faultstring: 'Não existem registros' }, ctx())).toEqual({ tipo: 'fim' });
+    expect(classificarPagina({ faultstring: 'Erro de autenticação' }, ctx())).toMatchObject({ tipo: 'anomalia' });
   });
 });
 

@@ -161,6 +161,8 @@ interface OmiePaginaResp {
   nPagina?: unknown;
   nTotalPaginas?: unknown;
   nTotalRegistros?: unknown;
+  /** o PesquisarPedCompra devolve o tamanho de página que ecoou o nRegsPorPagina da chamada (contrato: integer) */
+  nRegsPorPagina?: unknown;
   pedidos_pesquisa?: unknown;
   pedido_compra_produto?: unknown;
   pedidoCompraProduto?: unknown;
@@ -188,6 +190,13 @@ interface CtxPagina {
 
 const PISO_ZERO: PisoTotais = { registros: 0, paginas: 0 };
 
+/**
+ * TODO campo inteiro que o PesquisarPedCompra declara (contrato: integer). O classificarPagina varre esta lista —
+ * a matriz de testes varre a MESMA lista × a classe inteira de lixo. Campo novo do contrato entra AQUI e ganha
+ * validação + teste de graça. Escolher à mão quais validar foi o que deixou nRegsPorPagina sem cobertura (Codex #11).
+ */
+const CAMPOS_INTEIROS = ["nPagina", "nTotalPaginas", "nTotalRegistros", "nRegsPorPagina"] as const;
+
 // Vocabulário do fault TERMINAL ("sem registros" = fim legítimo, NÃO erro). VERBATIM de
 // pendente-entrada-po.ts:FIM_SEM_REGISTROS — a fonte canônica, já endurecida por 2 rodadas (P2-D: o `\b` após
 // `h[áa]` falhava porque `á` não é `\w`; o `.{0,30}?` entre o verbo e "registros" abria OVER-MATCH — "Não há
@@ -206,13 +215,32 @@ const FIM_SEM_REGISTROS_RE =
  * `isFinite`, então ilegível viraria "ausente" e um vazio malformado passaria por "empresa vazia legítima".
  */
 function lerInteiroOmie(raw: unknown): number | null {
-  if (raw === undefined || raw === null || raw === "") return null;
+  // AUSENTE é só o campo OMITIDO (undefined/null). "" NÃO é ausente: é valor PRESENTE e não-canônico — o contrato
+  // do Omie declara os totais como integer, e "" não é integer (Codex #11 P1: {"nTotalRegistros":""} escapava como
+  // ausente → vazio virava "empresa vazia legítima" → marcador vazio falso-válido). Ele cai no ramo string abaixo,
+  // não casa /^\d+$/ e vira NaN = ILEGÍVEL.
+  if (raw === undefined || raw === null) return null;
   if (typeof raw === "number") return Number.isSafeInteger(raw) && raw >= 0 ? raw : NaN;
   if (typeof raw === "string" && /^\d+$/.test(raw)) {
     const n = Number(raw);
     return Number.isSafeInteger(n) && n >= 0 ? n : NaN;
   }
   return NaN;
+}
+
+/**
+ * String CANÔNICA do Omie (faultstring/faultcode) em 3 estados:
+ *   string = presente (pode ser "" = presente-sem-conteúdo);
+ *   null   = AUSENTE (omitido/null);
+ *   false  = ILEGÍVEL (array/objeto/boolean/número — o contrato declara string).
+ * Existe porque `String(raw)` e `regex.test(raw)` COAGEM: String(["Não existem registros"]) devolve a frase
+ * TERMINAL e o fault vira "fim" → publica marcador vazio (Codex #11 P1). Mesma classe do lerInteiroOmie/lerNCodPed:
+ * todo campo que entra do Omie passa por leitor canônico — nunca por coerção implícita.
+ */
+function lerStringOmie(raw: unknown): string | null | false {
+  if (raw === undefined || raw === null) return null;
+  if (typeof raw === "string") return raw;
+  return false;
 }
 
 /** true = o metadado está PRESENTE mas não é canônico (≠ ausente). */
@@ -279,21 +307,17 @@ function incoerencia(ctx: CtxPagina, o_que: string): string {
 function classificarPagina(resp: OmiePaginaResp, ctx: CtxPagina): ClassificacaoPagina {
   if (!resp || typeof resp !== "object") return { tipo: "anomalia", motivo: "resposta não é um objeto" };
 
-  // (a0) metadado PRESENTE tem de ser CANÔNICO. Ilegível (true, "x", 1.5, [], {}) NÃO é "ausente": tratá-lo como
-  //      ausente APAGA a evidência de resposta malformada e promove o vazio a "empresa vazia legítima" → publica
-  //      marcador vazio falso-válido (Codex #10 P1). Ausente/"" segue tolerado. Fail-closed: shape torto = anomalia.
+  // (a0) TODO metadado inteiro do contrato tem de ser CANÔNICO quando PRESENTE. Ilegível ("" , true, "x", 1.5,
+  //      [], {}) NÃO é "ausente": tratá-lo como ausente APAGA a evidência de resposta malformada e promove o vazio
+  //      a "empresa vazia legítima" → marcador vazio falso-válido (Codex #10/#11 P1). Só o campo OMITIDO
+  //      (undefined/null) é ausente. Varredura pela LISTA do contrato — escolher à mão quais validar foi o que
+  //      deixou "" e nRegsPorPagina escaparem. Fail-closed: shape torto = anomalia.
+  for (const campo of CAMPOS_INTEIROS) {
+    if (ilegivel(lerInteiroOmie(resp[campo]))) {
+      return { tipo: "anomalia", motivo: `${campo} não-canônico (${String(resp[campo])}) — resposta malformada` };
+    }
+  }
   const nPagina = lerInteiroOmie(resp.nPagina);
-  const nTotalPaginas = lerInteiroOmie(resp.nTotalPaginas);
-  const nTotalRegistros = lerInteiroOmie(resp.nTotalRegistros);
-  if (ilegivel(nPagina)) {
-    return { tipo: "anomalia", motivo: `nPagina não-canônica (${String(resp.nPagina)}) — resposta malformada` };
-  }
-  if (ilegivel(nTotalPaginas)) {
-    return { tipo: "anomalia", motivo: `nTotalPaginas não-canônico (${String(resp.nTotalPaginas)}) — resposta malformada` };
-  }
-  if (ilegivel(nTotalRegistros)) {
-    return { tipo: "anomalia", motivo: `nTotalRegistros não-canônico (${String(resp.nTotalRegistros)}) — resposta malformada` };
-  }
 
   // (a) a página DECLARADA tem de ser a SOLICITADA — resposta stale/misrouted ({nPagina:3} quando pedimos a 2)
   //     publicaria um fim falso. Ausente é tolerado (nem toda resposta traz nPagina); divergente é anomalia.
@@ -306,10 +330,19 @@ function classificarPagina(resp: OmiePaginaResp, ctx: CtxPagina): ClassificacaoP
   const algumConflitante = aliases.some((a) => a !== undefined && a !== null && !Array.isArray(a));
 
   // (b) fault: erro de APLICAÇÃO do Omie — pode vir com HTTP 200 carregando faultcode E/OU faultstring.
-  const temFault = (resp.faultstring !== undefined && resp.faultstring !== null && resp.faultstring !== "") ||
-    (resp.faultcode !== undefined && resp.faultcode !== null && resp.faultcode !== "");
+  //     LEITOR canônico, nunca String()/test() direto: ambos COAGEM, e String(["Não existem registros"]) devolve
+  //     a frase terminal → o fault viraria "fim" e publicaria marcador vazio (Codex #11 P1).
+  const fsLido = lerStringOmie(resp.faultstring);
+  const fcLido = lerStringOmie(resp.faultcode);
+  if (fsLido === false) {
+    return { tipo: "anomalia", motivo: "faultstring não-canônica (não é string) — resposta malformada" };
+  }
+  if (fcLido === false) {
+    return { tipo: "anomalia", motivo: "faultcode não-canônico (não é string) — resposta malformada" };
+  }
+  const temFault = (fsLido !== null && fsLido !== "") || (fcLido !== null && fcLido !== "");
   if (temFault) {
-    const fs = String(resp.faultstring ?? "");
+    const fs = fsLido ?? "";
     if (fs && FIM_SEM_REGISTROS_RE.test(fs)) {
       // fault TERMINAL ("não existem registros"). Se a PRÓPRIA resposta traz pedidos ou shape torto, ela se
       // CONTRADIZ → anomalia (senão publicaríamos ids=[] com um PO visível na mão).
@@ -321,7 +354,7 @@ function classificarPagina(resp: OmiePaginaResp, ctx: CtxPagina): ClassificacaoP
       }
       return fimCoerente(ctx) ? { tipo: "fim" } : { tipo: "anomalia", motivo: incoerencia(ctx, 'fault "sem registros"') };
     }
-    return { tipo: "anomalia", motivo: `fault: ${fs || String(resp.faultcode)}` };
+    return { tipo: "anomalia", motivo: `fault: ${fs || (fcLido ?? "")}` };
   }
 
   // (c) 2xx sem fault: precisa ser EXATAMENTE 1 lista conhecida (o contrato do Omie declara só pedidos_pesquisa;
@@ -423,7 +456,10 @@ async function callOmie(
       json = { raw: text };
     }
 
-    if (res.status === 429 || (json?.faultstring && /rate limit/i.test(json.faultstring))) {
+    // typeof string ANTES do .test(): RegExp.test() COAGE o argumento — test(["rate limit"]) é true (Codex #11 P1,
+    // mesma classe do faultstring array virando fault terminal). faultstring não-string = shape torto: o parser o
+    // rejeita adiante como anomalia; aqui só não podemos LER como se fosse texto.
+    if (res.status === 429 || (typeof json?.faultstring === "string" && /rate limit/i.test(json.faultstring))) {
       console.warn(`[omie] rate limit atingido (tentativa ${attempt}/${MAX_RETRIES}), aguardando ${RETRY_DELAY_MS}ms`);
       await sleep(RETRY_DELAY_MS);
       continue;
@@ -432,7 +468,10 @@ async function callOmie(
     // [fix paginação] O Omie sinaliza FIM DE PÁGINAS com HTTP 500 + faultstring "Não existem registros para a
     // página [N]" (faultcode 5113), NÃO com 200+lista-vazia. Sem isto, o throw em !res.ok mataria a paginação-
     // até-vazia na 1ª página-além-do-fim. Devolve o json p/ o loop tratar como fim (via FIM_SEM_REGISTROS).
-    if (!res.ok && json?.faultstring && FIM_SEM_REGISTROS.test(json.faultstring)) {
+    // typeof string ANTES do .test() (Codex #11 P1): test() coage, então faultstring:["Não existem registros"]
+    // devolveria o json como TERMINAL e o fim viraria "empresa vazia" → marcador vazio falso-válido. Não-string
+    // cai no throw abaixo e o loop invalida a publicação — fail-closed.
+    if (!res.ok && typeof json?.faultstring === "string" && FIM_SEM_REGISTROS.test(json.faultstring)) {
       return json;
     }
 
