@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **366** custom migrations totais
-- **1308** objetos esperados (criados por estas migrations)
+- **367** custom migrations totais
+- **1316** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 367
-  - `rls_policy`: 291
-  - `index`: 218
-  - `cron_job`: 148
-  - `table`: 142
+  - `rls_policy`: 293
+  - `index`: 221
+  - `cron_job`: 149
+  - `table`: 144
   - `trigger`: 78
   - `view`: 60
   - `enum_value`: 4
@@ -3136,6 +3136,19 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `table` | `public.sku_items_sync_controle` | — |
 | `index` | `public.idx_sku_items_sync_controle_fila` | `sku_items_sync_controle` |
+
+### `20260716162000_sayerlack_captura_precos_fase1.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.sku_preco_captura_run` | — |
+| `table` | `public.sku_preco_captura_run_item` | — |
+| `index` | `public.idx_sku_preco_captura_run_lookup` | `sku_preco_captura_run` |
+| `index` | `public.idx_sku_preco_captura_run_item_run` | `sku_preco_captura_run_item` |
+| `index` | `public.idx_sku_preco_captura_run_item_recente` | `sku_preco_captura_run_item` |
+| `cron_job` | `cron.sayerlack-captura-precos-mensal` | — |
+| `rls_policy` | `public.sku_preco_captura_run_select_staff` | `sku_preco_captura_run` |
+| `rls_policy` | `public.sku_preco_captura_run_item_select_staff` | `sku_preco_captura_run_item` |
 
 ## Próximos passos por status
 

@@ -137,3 +137,6 @@ verify_jwt = false
 
 [functions.enviar-push]
 verify_jwt = false
+
+[functions.sayerlack-captura-precos]
+verify_jwt = false
