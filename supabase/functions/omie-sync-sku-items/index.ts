@@ -7,9 +7,14 @@
 //
 // Estratégia:
 //   1) Lê NFes da empresa no período com t2_data_faturamento e nfe_chave_acesso.
-//   2) Para cada NFe → ConsultarRecebimento(nIdReceb) → itera itensRecebimento[].
-//   3) Para cada item, tenta achar o pedido específico via numero_contrato_fornecedor = nNumPedCompra.
-//   4) UPSERT em sku_leadtime_history (tracking_id, sku_codigo_omie).
+//   2) Fila = pendentes (sem linha em sku_leadtime_history) ELEGÍVEIS pelo controle de
+//      tentativas (sku_items_sync_controle + backoff 6h/24h/72h), nunca-tentadas primeiro —
+//      NFe cuja consulta retorna 0 itens não upserta e não sairia nunca da fila (poison que
+//      consumia o guard de 50s a cada run e deixava as antigas inalcançáveis; OBEN 2026-07-14).
+//   3) Para cada NFe → ConsultarRecebimento(nIdReceb) → itera itensRecebimento[]; TODA
+//      consulta (sucesso, 0 itens ou falha) marca tentativa no controle.
+//   4) Para cada item, tenta achar o pedido específico via numero_contrato_fornecedor = nNumPedCompra.
+//   5) UPSERT em sku_leadtime_history (tracking_id, sku_codigo_omie).
 
 import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 
@@ -86,19 +91,69 @@ interface RequestBody {
 
 interface EmpresaSummary {
   empresa: Empresa;
+  fila_pendente: number;
+  fila_em_backoff: number;
   nfes_processadas: number;
+  nfes_sem_nidreceb: number;
+  nfes_sem_nidreceb_dias_max: number;
+  consultas_tentadas: number;
   consultas_detalhadas: number;
   itens_processados: number;
   itens_com_pedido_mapeado: number;
   itens_sem_pedido: number;
   skus_distintos: number;
   erros: number;
+  controle_falhas: number;
   interrompido_por_timeout: boolean;
 }
 
 interface ExistingTrackingRow {
   tracking_id: string;
 }
+
+// ─── Fila com backoff (espelho verbatim de src/lib/reposicao/sku-items-fila-helpers.ts;
+//     paridade provada em src/__tests__/edge-money-path-invariants.test.ts) ───
+// MIRROR-START sku-items-fila
+interface SkuItemsFilaControle {
+  tentativas: number;
+  ultima_tentativa: string | null;
+}
+
+/** Backoff entre re-tentativas de consulta por NFe: 1ª falha re-tenta em 6h,
+ *  2ª em 24h, da 3ª em diante 72h. Tentativas <=0 = virgem (sempre elegível). */
+function skuItemsBackoffMs(tentativas: number): number {
+  if (tentativas <= 0) return 0;
+  if (tentativas === 1) return 6 * 3_600_000;
+  if (tentativas === 2) return 24 * 3_600_000;
+  return 72 * 3_600_000;
+}
+
+/** Elegível para consultar se nunca tentada, controle ilegível ou backoff vencido. */
+function skuItemsElegivel(
+  controle: SkuItemsFilaControle | undefined,
+  agoraMs: number,
+): boolean {
+  if (!controle || controle.tentativas <= 0 || !controle.ultima_tentativa) return true;
+  const ultimaMs = Date.parse(controle.ultima_tentativa);
+  if (!Number.isFinite(ultimaMs)) return true;
+  return agoraMs - ultimaMs >= skuItemsBackoffMs(controle.tentativas);
+}
+
+/** Ordem da fila: nunca-tentadas primeiro (tentativas ASC); empate → faturamento
+ *  mais ANTIGO primeiro. Poison (muitas tentativas) naturalmente vai pro fim.
+ *
+ *  O empate é earliest-deadline-first, não "mais recente primeiro": a NFe só é
+ *  visível enquanto está dentro da janela de `dias` do run, então a mais antiga é
+ *  a de menor folga — se o guard de 50s corta o run, quem fica de fora deve ser
+ *  quem volta amanhã (folga grande), não quem expira sem nunca virar leadtime. */
+function skuItemsCompararFila(
+  a: { tentativas: number; t2: string },
+  b: { tentativas: number; t2: string },
+): number {
+  if (a.tentativas !== b.tentativas) return a.tentativas - b.tentativas;
+  return a.t2 === b.t2 ? 0 : a.t2 < b.t2 ? -1 : 1;
+}
+// MIRROR-END
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -295,6 +350,43 @@ async function completeSync(
   }
 }
 
+// Marca tentativa de consulta no controle da fila (writer único desta tabela é esta edge).
+// Não derruba o run (o leadtime já upsertado continua válido), mas devolve `false` para
+// o chamador contar: se NENHUMA marcação persistir, o backoff está inoperante e o run
+// termina 'error' — sem isso o fix falharia em silêncio, que é o defeito original.
+// Corrida (cron × manual): dois runs podem ler `tentativas` e gravar o mesmo valor,
+// perdendo um incremento. Custo = uma consulta Omie a mais lá na frente (backoff mais
+// curto), nunca dado errado — o upsert do leadtime é idempotente por (tracking, sku).
+async function marcarTentativa(
+  db: SupabaseClient,
+  trackingId: string,
+  tentativas: number,
+  motivo: string,
+): Promise<boolean> {
+  try {
+    const { error } = await db.from("sku_items_sync_controle").upsert(
+      {
+        tracking_id: trackingId,
+        tentativas,
+        ultima_tentativa: new Date().toISOString(),
+        motivo: motivo.slice(0, 300),
+      },
+      { onConflict: "tracking_id" },
+    );
+    if (error) {
+      console.warn("[sync-sku-items] marcarTentativa falhou (segue):", error.message);
+      return false;
+    }
+    return true;
+  } catch (e) {
+    console.warn(
+      "[sync-sku-items] marcarTentativa exceção (segue):",
+      e instanceof Error ? e.message : e,
+    );
+    return false;
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -353,22 +445,68 @@ Deno.serve(async (req) => {
       }
     }
 
+    // Controle de tentativas — FAIL-CLOSED, antes de qualquer chamada Omie.
+    // Sem o controle não há backoff: a NFe que responde 0 itens volta à fila para
+    // sempre e consome o guard de 50s (o incidente que esta edge conserta). Degradar
+    // aqui reviveria o poison EM SILÊNCIO, então a ausência da tabela (deploy fora de
+    // ordem: edge antes da migration) tem de gritar — 'error' acionável no Sentinela.
+    const controleMap = new Map<string, SkuItemsFilaControle>();
+    if (trackingIds.length > 0) {
+      const { data: controleRows, error: controleErr } = await supabase
+        .from("sku_items_sync_controle")
+        .select("tracking_id, tentativas, ultima_tentativa")
+        .in("tracking_id", trackingIds);
+      if (controleErr) {
+        throw new Error(
+          `sku_items_sync_controle ilegível (migration aplicada? cache do PostgREST?): ${controleErr.message}`,
+        );
+      }
+      for (
+        const row of (controleRows ?? []) as Array<
+          { tracking_id: string; tentativas: number | null; ultima_tentativa: string | null }
+        >
+      ) {
+        if (!row?.tracking_id) continue;
+        controleMap.set(row.tracking_id, {
+          tentativas: row.tentativas ?? 0,
+          ultima_tentativa: row.ultima_tentativa,
+        });
+      }
+    }
+
+    const agoraMs = Date.now();
+    const pendentes = ((nfes ?? []) as NFeRow[]).filter((n) => !existingTrackingIds.has(n.id));
+    const fila = pendentes
+      .filter((n) => skuItemsElegivel(controleMap.get(n.id), agoraMs))
+      .sort((a, b) =>
+        skuItemsCompararFila(
+          { tentativas: controleMap.get(a.id)?.tentativas ?? 0, t2: a.t2_data_faturamento },
+          { tentativas: controleMap.get(b.id)?.tentativas ?? 0, t2: b.t2_data_faturamento },
+        )
+      );
+
     const summary: EmpresaSummary = {
       empresa,
+      fila_pendente: pendentes.length,
+      fila_em_backoff: pendentes.length - fila.length,
       nfes_processadas: 0,
+      nfes_sem_nidreceb: 0,
+      nfes_sem_nidreceb_dias_max: 0,
+      consultas_tentadas: 0,
       consultas_detalhadas: 0,
       itens_processados: 0,
       itens_com_pedido_mapeado: 0,
       itens_sem_pedido: 0,
       skus_distintos: 0,
       erros: 0,
+      controle_falhas: 0,
       interrompido_por_timeout: false,
     };
 
     const skusVistos = new Set<number>();
     let nfesInspecionadas = 0;
 
-    for (const nfeRaw of (nfes ?? []) as NFeRow[]) {
+    for (const nfeRaw of fila) {
       nfesInspecionadas++;
       if (
         nfesInspecionadas % TIMEOUT_CHECK_EVERY_NFES === 0 &&
@@ -378,36 +516,57 @@ Deno.serve(async (req) => {
         break;
       }
 
-      if (existingTrackingIds.has(nfeRaw.id)) {
-        continue;
-      }
-
       summary.nfes_processadas++;
+      const tentativasPrevias = controleMap.get(nfeRaw.id)?.tentativas ?? 0;
 
       const nIdReceb = nfeRaw.raw_data?.cabec?.nIdReceb;
       if (!nIdReceb) {
-        console.warn(`[sync-sku-items] NFe ${nfeRaw.id} sem nIdReceb`);
+        // Sem nIdReceb não há o que consultar. NÃO marca tentativa (re-checar não custa
+        // chamada Omie), mas também NÃO se auto-resolve: a linha com pedido casado quase
+        // nunca ganha nIdReceb — o raw_data dela é o do PEDIDO, e o recebimento só traz
+        // nIdReceb nas linhas órfãs (uma mesma chave de NFe não aparece nos dois papéis).
+        // Ou seja, estas NFes nunca viram leadtime: é um gap de COBERTURA pré-existente,
+        // não o poison deste fix. Fica contado aqui (nfes_sem_nidreceb + idade da mais
+        // antiga) para não seguir invisível; a correção é rastreada à parte.
+        summary.nfes_sem_nidreceb++;
+        const idadeDias = Math.floor(
+          (agoraMs - Date.parse(nfeRaw.t2_data_faturamento)) / 86_400_000,
+        );
+        if (Number.isFinite(idadeDias) && idadeDias > summary.nfes_sem_nidreceb_dias_max) {
+          summary.nfes_sem_nidreceb_dias_max = idadeDias;
+        }
+        console.warn(`[sync-sku-items] NFe ${nfeRaw.id} sem nIdReceb (${idadeDias}d)`);
         continue;
       }
 
       let detalhe: OmieConsultarRecebimentoResponse;
       try {
         await sleep(RATE_LIMIT_DELAY_MS);
+        summary.consultas_tentadas++;
         detalhe = await callOmie(app_key, app_secret, "ConsultarRecebimento", {
           nIdReceb: Number(nIdReceb),
         });
         summary.consultas_detalhadas++;
       } catch (e) {
-        console.error(
-          `[sync-sku-items] ConsultarRecebimento ${nIdReceb} falhou:`,
-          e instanceof Error ? e.message : e,
+        const msg = e instanceof Error ? e.message : String(e);
+        const marcou = await marcarTentativa(
+          supabase,
+          nfeRaw.id,
+          tentativasPrevias + 1,
+          `consulta_falhou: ${msg}`,
         );
+        if (!marcou) summary.controle_falhas++;
+        console.error(`[sync-sku-items] ConsultarRecebimento ${nIdReceb} falhou:`, msg);
         continue;
       }
 
       const itens: OmieRecebimentoItem[] = Array.isArray(detalhe?.itensRecebimento)
         ? detalhe.itensRecebimento
         : [];
+      const faultstring = typeof detalhe?.faultstring === "string" && detalhe.faultstring
+        ? detalhe.faultstring
+        : null;
+      let itensDaNfe = 0;
 
       for (const item of itens) {
         const cab = item?.itensCabec ?? {};
@@ -484,8 +643,22 @@ Deno.serve(async (req) => {
           continue;
         }
         summary.itens_processados++;
+        itensDaNfe++;
         skusVistos.add(skuCodigoOmie);
       }
+
+      // Consulta feita → marca tentativa SEMPRE. Sem isto, NFe com 0 itens upsertados
+      // nunca sai da fila (não ganha linha em sku_leadtime_history) e vira poison
+      // re-consultado a cada run — o backoff só funciona se a tentativa for registrada.
+      const marcou = await marcarTentativa(
+        supabase,
+        nfeRaw.id,
+        tentativasPrevias + 1,
+        itensDaNfe > 0
+          ? "ok_com_itens"
+          : (faultstring ? `fault: ${faultstring}` : "ok_0_itens"),
+      );
+      if (!marcou) summary.controle_falhas++;
 
       if (Date.now() - startedAt > TIMEOUT_GUARD_MS) {
         summary.interrompido_por_timeout = true;
@@ -494,12 +667,28 @@ Deno.serve(async (req) => {
     }
 
     summary.skus_distintos = skusVistos.size;
-    // Rate-limit Omie total: havia NFes a processar mas NENHUMA consulta teve sucesso
-    // → falha real (não "nada novo") → marca 'error'. Erro parcial fica em results.
-    const falhaSistemica = summary.nfes_processadas > 0 && summary.consultas_detalhadas === 0
-      ? `${summary.nfes_processadas} NFes mas 0 consultas Omie OK — rate-limit?`
+    // Falha sistêmica = consultas Omie foram TENTADAS e nenhuma respondeu (rate-limit 3x /
+    // HTTP). NFe pendente sem nIdReceb NÃO é tentativa (não há chamada) — janela só com
+    // elas marcava 'error' "rate-limit?" falso e acordava o Sentinela (OBEN 2026-07-14).
+    // Resposta 200 com faultstring de negócio ("recebimento inexistente") CONTA como
+    // respondida: é defeito de uma NFe (vai pro `motivo` do controle e sai por backoff),
+    // não indisponibilidade da Omie — tratá-la como falha recriaria o alerta falso.
+    const falhaSistemica = summary.consultas_tentadas > 0 && summary.consultas_detalhadas === 0
+      ? `${summary.consultas_tentadas} consultas Omie tentadas, 0 OK — rate-limit/indisponibilidade?`
       : undefined;
-    await completeSync(supabase, logId, summary as unknown as Record<string, unknown>, falhaSistemica, Date.now() - startedAt);
+    // Backoff inoperante (grant/RLS): o leadtime gravado continua válido, mas sem
+    // persistir tentativa o poison volta — falha silenciosa. Só grita se NENHUMA marcou.
+    const falhaControle = !falhaSistemica && summary.consultas_tentadas > 0 &&
+        summary.controle_falhas === summary.consultas_tentadas
+      ? `controle não persistiu em ${summary.controle_falhas}/${summary.consultas_tentadas} tentativas — backoff inoperante (grant/RLS?)`
+      : undefined;
+    await completeSync(
+      supabase,
+      logId,
+      summary as unknown as Record<string, unknown>,
+      falhaSistemica ?? falhaControle,
+      Date.now() - startedAt,
+    );
 
     return new Response(
       JSON.stringify({
