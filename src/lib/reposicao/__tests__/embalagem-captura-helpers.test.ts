@@ -6,10 +6,12 @@ import { describe, it, expect } from 'vitest';
 import {
   parseBRL,
   parsePercentBR,
+  conferirCodigoNaLinha,
   decidirLeituraEmbalagem,
   decidirExecucaoRun,
   resumirRun,
   montarInsertPreco,
+  podePersistirRun,
   escolherGrupoSpike,
   diaSaoPaulo,
   mesSaoPaulo,
@@ -138,6 +140,74 @@ describe('decidirLeituraEmbalagem', () => {
   it('codigo_confere=true ou ausente (compat) não muda a decisão', () => {
     expect(decidirLeituraEmbalagem({ ...base, codigo_confere: true }).resultado).toBe('ok');
     expect(decidirLeituraEmbalagem(base).resultado).toBe('ok');
+  });
+
+  it('texto_linha_raw decide por TOKEN exato: WP01.3900QTX na linha NÃO confere p/ WP01.3900QT (achado Codex P1)', () => {
+    const r = decidirLeituraEmbalagem({ ...base, texto_linha_raw: 'WP01.3900QTX - CONCENTRADO AZUL 0,81L' });
+    expect(r.resultado).toBe('falha');
+    expect(r.preco).toBeNull();
+  });
+
+  it('texto_linha_raw com o token exato confere (tolerando descrição em volta)', () => {
+    const r = decidirLeituraEmbalagem({ ...base, texto_linha_raw: 'WP01.3900QT - CONCENTRADO AZUL  0,81 L' });
+    expect(r.resultado).toBe('ok');
+    expect(r.preco).toBe(74.4348);
+  });
+
+  it('texto_linha_raw vence codigo_confere legado quando ambos presentes', () => {
+    const r = decidirLeituraEmbalagem({ ...base, codigo_confere: true, texto_linha_raw: 'WP01.3900QTX - OUTRO' });
+    expect(r.resultado).toBe('falha');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// conferirCodigoNaLinha — identidade por token exato (não substring)
+// ---------------------------------------------------------------------------
+describe('conferirCodigoNaLinha', () => {
+  it('token exato confere, case-insensitive', () => {
+    expect(conferirCodigoNaLinha('wp01.3900qt - Concentrado', 'WP01.3900QT')).toBe(true);
+  });
+  it('código como PREFIXO de outro token NÃO confere (WP01.3900QTX)', () => {
+    expect(conferirCodigoNaLinha('WP01.3900QTX - Concentrado', 'WP01.3900QT')).toBe(false);
+  });
+  it('texto vazio/ausente → não confere (fail-closed)', () => {
+    expect(conferirCodigoNaLinha('', 'WP01.3900QT')).toBe(false);
+    expect(conferirCodigoNaLinha('   ', 'WP01.3900QT')).toBe(false);
+  });
+  it('código esperado vazio → não confere', () => {
+    expect(conferirCodigoNaLinha('WP01.3900QT', '')).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// podePersistirRun — gate duro: preço oficial SÓ entra com o portal
+// comprovadamente limpo (achado Codex P0: cancelamento falho/linha sobrando
+// era só registrado; agora bloqueia a persistência — precisão > recall)
+// ---------------------------------------------------------------------------
+describe('podePersistirRun', () => {
+  const itemOk = { cancelamento_ok: true };
+  const itemSujo = { cancelamento_ok: false };
+
+  it('todos cancelados + 0 linhas finais → pode persistir', () => {
+    expect(podePersistirRun([itemOk, itemOk], 0)).toEqual({ pode: true, motivo: null });
+  });
+  it('qualquer cancelamento falho → NÃO persiste', () => {
+    const r = podePersistirRun([itemOk, itemSujo], 0);
+    expect(r.pode).toBe(false);
+    expect(r.motivo).toMatch(/cancelamento/i);
+  });
+  it('linhas sobrando no rascunho → NÃO persiste', () => {
+    expect(podePersistirRun([itemOk], 1).pode).toBe(false);
+  });
+  it('linhas finais não reportadas (null/-1) → NÃO persiste (fail-closed: sem prova de limpeza)', () => {
+    expect(podePersistirRun([itemOk], null).pode).toBe(false);
+    expect(podePersistirRun([itemOk], -1).pode).toBe(false);
+  });
+  it('cancelamento_ok ausente num item processado → NÃO persiste (sem prova)', () => {
+    expect(podePersistirRun([itemOk, {}], 0).pode).toBe(false);
+  });
+  it('zero itens processados → pode (nada a persistir; vazio é decidido pelo resumo)', () => {
+    expect(podePersistirRun([], 0)).toEqual({ pode: true, motivo: null });
   });
 });
 

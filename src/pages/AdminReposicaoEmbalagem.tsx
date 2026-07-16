@@ -214,6 +214,7 @@ export default function AdminReposicaoEmbalagem() {
         motivo?: string;
         status_run?: string;
         total_nao_encontrado?: number;
+        total_falha?: number;
         precos_gravados?: number;
         erro?: string | null;
       };
@@ -223,6 +224,15 @@ export default function AdminReposicaoEmbalagem() {
     onSuccess: (r) => {
       queryClient.invalidateQueries({ queryKey: ['embalagem-consulta'] });
       const naoEnc = r.total_nao_encontrado ?? 0;
+      const falhas = r.total_falha ?? 0;
+      // run parcial NÃO é sucesso integral (achado Codex): toast honesto com os
+      // números — o cron re-tenta nos dias seguintes do ciclo.
+      if (r.status_run === 'parcial') {
+        toast.warning('Captura parcial do portal', {
+          description: `${r.precos_gravados ?? 0} preços gravados · ${naoEnc} não encontrado(s) · ${falhas} falha(s). A rotina re-tenta nos próximos dias do ciclo.`,
+        });
+        return;
+      }
       toast.success('Preços capturados do portal', {
         description: `${r.precos_gravados ?? 0} preços gravados${naoEnc > 0 ? ` · ${naoEnc} não encontrado(s) no portal (pedir reativação?)` : ''}`,
       });

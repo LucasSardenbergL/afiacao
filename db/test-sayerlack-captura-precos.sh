@@ -261,15 +261,16 @@ SQL
 )
 eq "A12 service_role escreve" "$V" "GRAVOU"
 
-# A13 cron agendado com schedule + timeout explícito no comando
-V=$(Pq -c "SELECT schedule || '|' || (command LIKE '%timeout_milliseconds := 150000%')::text || '|' || (command LIKE '%sayerlack-captura-precos%')::text FROM cron.job WHERE jobname='sayerlack-captura-precos-mensal';")
+# A13 cron agendado com schedule + timeout explícito no comando (395s: o run
+# full leva até ~390s e a resposta REAL deve chegar em net._http_response)
+V=$(Pq -c "SELECT schedule || '|' || (command LIKE '%timeout_milliseconds := 395000%')::text || '|' || (command LIKE '%sayerlack-captura-precos%')::text FROM cron.job WHERE jobname='sayerlack-captura-precos-mensal';")
 eq "A13 cron mensal agendado" "$V" "0 9 10-12 * *|true|true"
 
 # A14 o COMANDO do job é SQL executável (late-bound: só executar prova) e chama
 #     a edge certa com timeout 150000 e body modo=full
 P -q -c "$(Pq -c "SELECT command FROM cron.job WHERE jobname='sayerlack-captura-precos-mensal';")"
 V=$(Pq -c "SELECT (url LIKE '%/functions/v1/sayerlack-captura-precos')::text || '|' || timeout_ms::text || '|' || (body->>'modo') || '|' || (headers->>'x-cron-secret') FROM net._stub_calls ORDER BY id DESC LIMIT 1;")
-eq "A14 comando do job executa e chama a edge" "$V" "true|150000|full|stub-secret"
+eq "A14 comando do job executa e chama a edge" "$V" "true|395000|full|stub-secret"
 
 # A15 config subiu 24 → 960
 V=$(Pq -c "SELECT value FROM public.company_config WHERE key='embalagem_preco_stale_horas';")

@@ -97,6 +97,11 @@ CREATE POLICY "sku_preco_captura_run_item_select_staff"
 --    de NEGÓCIO, não de scheduler)
 --    net.http_post SÓ ENFILEIRA; timeout_milliseconds EXPLÍCITO (o default de
 --    5s mata silencioso — sync.md); a verdade HTTP vive em net._http_response.
+--    395000 (não os 150000 padrão): o run full leva até ~390s (browser 340s +
+--    persistência) e queremos a RESPOSTA REAL registrada em net._http_response
+--    — com 150s ela viraria timed_out (a edge completaria em background, mas a
+--    observabilidade mentiria; achado Codex P2). pg_net é worker async: o
+--    timeout maior NÃO segura transação nem o tick do cron.
 -- ------------------------------------------------------------
 DO $do$
 BEGIN
@@ -116,7 +121,7 @@ SELECT cron.schedule(
       'x-cron-secret', (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name='CRON_SECRET' LIMIT 1)
     ),
     body := '{"modo":"full","empresa":"oben"}'::jsonb,
-    timeout_milliseconds := 150000
+    timeout_milliseconds := 395000
   );
   $job$
 );

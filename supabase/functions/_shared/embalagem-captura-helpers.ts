@@ -25,14 +25,32 @@ export function parsePercentBR(s: string): number | null {
   return parseBRL(s);
 }
 
+// Identidade do item na linha em edição por TOKEN exato (não substring — Codex
+// P1: "WP01.3900QTX" contém "WP01.3900QT" e passaria num indexOf). Tokeniza o
+// texto da linha por qualquer separador fora de [A-Z0-9.], apara pontos das
+// pontas e exige igualdade exata com o código esperado.
+export function conferirCodigoNaLinha(textoLinha: string, esperado: string): boolean {
+  const alvo = (esperado ?? '').trim().toUpperCase();
+  if (!alvo) return false;
+  const tokens = (textoLinha ?? '')
+    .toUpperCase()
+    .split(/[^A-Z0-9.]+/)
+    .map((t) => t.replace(/^\.+|\.+$/g, ''))
+    .filter(Boolean);
+  return tokens.includes(alvo);
+}
+
 // O que o browser devolve por embalagem (células cruas da linha em edição).
 export interface CapturaItemBruto {
   sku_portal: string;
   achado: boolean;
   motivo_nao_achado?: string | null;
-  // false = o texto da linha em edição NÃO contém o sku_portal esperado (o
-  // select2 pode ter selecionado outro item) → fail-closed. undefined = não
-  // verificado (compat) → segue o fluxo normal.
+  // Texto completo da linha em edição (innerText + values) — a identidade do
+  // item é decidida AQUI por token exato (conferirCodigoNaLinha); quando
+  // presente e não-vazio, VENCE o codigo_confere legado.
+  texto_linha_raw?: string | null;
+  // false = o browser (legado) julgou que a linha não contém o sku esperado →
+  // fail-closed. undefined = não verificado (compat) → segue o fluxo normal.
   codigo_confere?: boolean | null;
   preco_venda_raw?: string | null; // "Preço Venda" = R$/embalagem LÍQUIDO (o número-alvo)
   preco_un_raw?: string | null; // "Preço UN" = R$/embalagem tabela (contraprova)
@@ -64,7 +82,9 @@ export function decidirLeituraEmbalagem(item: CapturaItemBruto): LeituraEmbalage
       detalhe: `item não localizado no portal (${item.motivo_nao_achado ?? 'sem_motivo'})`,
     };
   }
-  if (item.codigo_confere === false) {
+  const textoLinha = (item.texto_linha_raw ?? '').trim();
+  const confere = textoLinha ? conferirCodigoNaLinha(textoLinha, sku) : item.codigo_confere !== false;
+  if (!confere) {
     return {
       sku_portal: sku,
       resultado: 'falha',
@@ -249,6 +269,30 @@ export function montarInsertPreco(
     observacao: l.detalhe,
     criado_por: 'edge:sayerlack-captura-precos',
   };
+}
+
+// Gate duro de persistência (Codex P0): o preço OFICIAL só entra com o portal
+// comprovadamente limpo — todo item processado cancelou a linha (prova
+// positiva) E o browser reportou 0 linhas restantes no rascunho. Sem prova →
+// não persiste (precisão > recall; o retry dos dias 11/12 cobre o recall).
+export function podePersistirRun(
+  itensProcessados: { cancelamento_ok?: boolean | null }[],
+  linhasFinais: number | null | undefined,
+): { pode: boolean; motivo: string | null } {
+  if (linhasFinais !== 0) {
+    return {
+      pode: false,
+      motivo: `estado do rascunho não comprovado limpo (linhas_finais=${linhasFinais ?? 'não reportado'}) — nenhum preço persistido`,
+    };
+  }
+  const semProva = itensProcessados.filter((i) => i.cancelamento_ok !== true).length;
+  if (semProva > 0) {
+    return {
+      pode: false,
+      motivo: `cancelamento da linha não comprovado em ${semProva} item(ns) — nenhum preço persistido`,
+    };
+  }
+  return { pode: true, motivo: null };
 }
 
 // Modo spike captura 1 grupo, determinístico: o grupo do menor sku_portal

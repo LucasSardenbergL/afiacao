@@ -24,6 +24,7 @@ import {
   decidirExecucaoRun,
   resumirRun,
   montarInsertPreco,
+  podePersistirRun,
   escolherGrupoSpike,
   type CapturaItemBruto,
   type LeituraEmbalagem,
@@ -123,8 +124,8 @@ export default async ({ page, context }) => {
   // Lê as células da ÚLTIMA linha do #datatable_itens (a linha em edição) por
   // header-matching — robusto a mudança de ordem de colunas. Célula com input
   // usa .value; senão innerText (a linha em edição pode renderizar inputs).
-  // codigo_confere: o texto completo da linha precisa conter o sku esperado —
-  // guarda contra o select2 ter selecionado OUTRO item (primeira option errada).
+  // texto_linha_raw: o texto completo da linha viaja CRU pro Deno — a decisão
+  // de identidade do item é do helper espelhado (token exato, não substring).
   const lerLinhaEdicao = (skuEsperado) => page.evaluate(function(skuEsp) {
     var table = document.querySelector('#datatable_itens');
     if (!table) return { ok: false, motivo: 'sem_tabela' };
@@ -151,12 +152,12 @@ export default async ({ page, context }) => {
         textoLinha += ' ' + (el.selectedOptions[0].innerText || '');
       }
     });
-    var confere = textoLinha.toUpperCase().indexOf(String(skuEsp || '').toUpperCase()) !== -1;
     return {
       ok: true,
       headers: ths,
       n_rows: rows.length,
-      codigo_confere: confere,
+      texto_linha_raw: textoLinha.substring(0, 600),
+      sku_esperado_eco: skuEsp,
       preco_venda_raw: cell(idxPrecoVenda),
       preco_un_raw: cell(idxPrecoUN),
       desconto_raw: cell(idxDesc),
@@ -165,10 +166,10 @@ export default async ({ page, context }) => {
   }, skuEsperado);
 
   // Cancela a linha em edição (X vermelho — spike-A: cancela sem dialog).
-  // Cascata: #btnCancelarItem → botão/link com pista de cancelar na última linha →
-  // na área da tabela. Melhor esforço: mesmo sem cancelar, nada persiste sem o
-  // "Salvar Proposta" (provado no spike-A), mas a linha pendurada pode atrapalhar
-  // o próximo "+ Incluir Item" — por isso registramos e verificamos rows depois.
+  // ESCOPO ESTRITO (achado Codex P0): só #btnCancelarItem OU botões DENTRO da
+  // última linha (a em edição). NUNCA a tabela/tfoot inteira — um matcher amplo
+  // fora da linha poderia acertar um botão errado do formulário. Sem fa-trash
+  // (lixeira é de linha GRAVADA; a captura nunca grava).
   const cancelarLinhaEdicao = () => page.evaluate(function() {
     function visivel(el) { return el && el.offsetParent !== null; }
     var byId = document.querySelector('#btnCancelarItem');
@@ -176,25 +177,21 @@ export default async ({ page, context }) => {
     var table = document.querySelector('#datatable_itens');
     if (!table) return { clicked: false, motivo: 'sem_tabela' };
     var rows = table.querySelectorAll('tbody tr');
-    var escopos = [];
-    if (rows.length) escopos.push(rows[rows.length - 1]);
-    escopos.push(table);
-    for (var e = 0; e < escopos.length; e++) {
-      var cands = Array.from(escopos[e].querySelectorAll('button, a')).filter(visivel);
-      var alvo = cands.find(function(b){
-        var blob = ((b.className || '') + ' ' + (b.getAttribute('title') || '') + ' ' + (b.getAttribute('aria-label') || '') + ' ' + (b.innerHTML || '')).toLowerCase();
-        return /cancel|descart|fa-times|fa-ban|btn-danger|fa-trash|times-circle/.test(blob);
-      });
-      if (alvo) {
-        alvo.click();
-        return { clicked: true, via: e === 0 ? 'linha_match' : 'tabela_match', debug: (alvo.outerHTML || '').substring(0, 120) };
-      }
+    if (!rows.length) return { clicked: true, via: 'sem_linha' };
+    var cands = Array.from(rows[rows.length - 1].querySelectorAll('button, a')).filter(visivel);
+    var alvo = cands.find(function(b){
+      var blob = ((b.className || '') + ' ' + (b.getAttribute('title') || '') + ' ' + (b.getAttribute('aria-label') || '') + ' ' + (b.innerHTML || '')).toLowerCase();
+      return /cancel|fa-times|fa-ban|times-circle|btn-danger/.test(blob);
+    });
+    if (alvo) {
+      alvo.click();
+      return { clicked: true, via: 'linha_match', debug: (alvo.outerHTML || '').substring(0, 120) };
     }
     return {
       clicked: false,
-      botoes_visiveis: Array.from(table.querySelectorAll('button, a')).filter(visivel).map(function(b){
+      botoes_na_linha: cands.map(function(b){
         return { id: b.id || '', cls: (b.className || '').substring(0, 60), txt: (b.innerText || '').trim().substring(0, 30) };
-      }).slice(0, 12),
+      }).slice(0, 8),
     };
   });
 
@@ -202,6 +199,20 @@ export default async ({ page, context }) => {
     var table = document.querySelector('#datatable_itens');
     return table ? table.querySelectorAll('tbody tr').length : -1;
   });
+
+  // Cancelamento é PROVA, não best-effort (Codex P0): sem comprovação (clique +
+  // 0 linhas), aborta o run inteiro — o Deno não persiste nada sem essa prova.
+  const exigirCancelamento = async (i, contexto) => {
+    const cancel = await cancelarLinhaEdicao().catch(function() { return { clicked: false, motivo: 'evaluate_erro' }; });
+    await sleep(600);
+    const rowsApos = await contarRows().catch(function() { return -1; });
+    trace.push({ step: 'item_' + i + '_cancel_' + contexto, cancel, rows_apos: rowsApos, t: Date.now() - t0 });
+    if (!(cancel && cancel.clicked) || rowsApos !== 0) {
+      const err = new Error('cancelamento não comprovado no item ' + i + ' (' + contexto + '): rows_apos=' + rowsApos);
+      err.code = 'CANCEL_NAO_COMPROVADO';
+      throw err;
+    }
+  };
 
   const runFlow = async () => {
     const itens = [];
@@ -241,7 +252,7 @@ export default async ({ page, context }) => {
     ]);
 
     if (!loginCheck.ok) {
-      const errorScreenshot = await page.screenshot({ type: 'png', encoding: 'base64' }).catch(() => null);
+      const errorScreenshot = await page.screenshot({ type: 'jpeg', quality: 70, encoding: 'base64' }).catch(() => null);
       return {
         data: {
           success: false,
@@ -292,7 +303,7 @@ export default async ({ page, context }) => {
       return false;
     });
     if (!clicouPedidos) {
-      const errorScreenshot = await page.screenshot({ type: 'png', encoding: 'base64' }).catch(() => null);
+      const errorScreenshot = await page.screenshot({ type: 'jpeg', quality: 70, encoding: 'base64' }).catch(() => null);
       return {
         data: {
           success: false,
@@ -324,7 +335,7 @@ export default async ({ page, context }) => {
     await sleep(2000);
     const clienteOption = await page.$('.select2-results__option:not(.select2-results__message)');
     if (!clienteOption) {
-      const errorScreenshot = await page.screenshot({ type: 'png', encoding: 'base64' }).catch(() => null);
+      const errorScreenshot = await page.screenshot({ type: 'jpeg', quality: 70, encoding: 'base64' }).catch(() => null);
       return {
         data: {
           success: false,
@@ -339,7 +350,27 @@ export default async ({ page, context }) => {
     }
     await clienteOption.click();
     await sleep(500);
-    trace.push({ step: 'cliente_selecionado', t: Date.now() - t0 });
+    // Identidade do CLIENTE conferida pós-seleção (Codex P1: a primeira option
+    // pode não ser o cliente esperado; preço líquido é POR CLIENTE).
+    const clienteSelecionado = await page.evaluate(function() {
+      var c = document.querySelector('#select2-cliente-container');
+      return c ? (c.getAttribute('title') || c.innerText || '').trim() : '';
+    });
+    if (String(clienteSelecionado).indexOf(String(clienteCodigo)) === -1) {
+      const errorScreenshot = await page.screenshot({ type: 'jpeg', quality: 70, encoding: 'base64' }).catch(() => null);
+      return {
+        data: {
+          success: false,
+          erro: 'Cliente selecionado ("' + String(clienteSelecionado).substring(0, 80) + '") não contém o código esperado ' + clienteCodigo,
+          erroTipo: 'CLIENTE_MISMATCH',
+          itens, itens_nao_processados: items.map(function(it){ return it.sku_portal; }),
+          trace,
+        },
+        type: 'application/json',
+        screenshot: errorScreenshot,
+      };
+    }
+    trace.push({ step: 'cliente_selecionado', cliente: String(clienteSelecionado).substring(0, 80), t: Date.now() - t0 });
 
     // === Loop de captura: selecionar → ler linha em edição → cancelar ===
     for (let i = 0; i < items.length; i++) {
@@ -368,6 +399,9 @@ export default async ({ page, context }) => {
       }, { timeout: budgetFor('item-' + i + '-incluir-visivel', 12_000, { minMs: 1_000 }), polling: 250 }).catch(() => null);
       await sleep(300);
 
+      // Só seletores allowlisted: texto exato "Incluir Item" (sem Múltiplos) e o
+      // ID #colSpanBtnIncluirItem no 1º item. SEM fallback genérico de tfoot —
+      // um btn-primary desconhecido nunca deve receber clique (Codex P0).
       const addItemClicado = await page.evaluate(function(idx) {
         const allBtns = Array.from(document.querySelectorAll('button'));
         const visibleBtns = allBtns.filter(function(b) { return b.offsetParent !== null; });
@@ -380,8 +414,6 @@ export default async ({ page, context }) => {
           const primario = document.querySelector('#colSpanBtnIncluirItem button.btn-primary');
           if (primario && primario.offsetParent !== null) { primario.click(); return { clicked: true, via: 'colSpanBtnIncluirItem' }; }
         }
-        const tfootBtn = document.querySelector('tfoot button.btn-primary');
-        if (tfootBtn && tfootBtn.offsetParent !== null) { tfootBtn.click(); return { clicked: true, via: 'tfoot' }; }
         return { clicked: false };
       }, i);
       trace.push({ step: 'incluir_item_' + i, addItemClicado, t: Date.now() - t0 });
@@ -405,9 +437,8 @@ export default async ({ page, context }) => {
       if (!domInfo.exact && domInfo.cands.length > 0) select2Sel = '#' + domInfo.cands[0];
       const select2Ok = await page.waitForSelector(select2Sel, { timeout: budgetFor('item-' + i + '-select2', 10_000, { minMs: 1_000 }) }).then(() => true).catch(() => false);
       if (!select2Ok) {
-        itens.push({ sku_portal: item.sku_portal, achado: false, motivo_nao_achado: 'select2_item_indisponivel' });
-        const cancel0 = await cancelarLinhaEdicao().catch(() => ({ clicked: false }));
-        trace.push({ step: 'item_' + i + '_select2_indisponivel', cancel: cancel0, t: Date.now() - t0 });
+        await exigirCancelamento(i, 'select2_indisponivel');
+        itens.push({ sku_portal: item.sku_portal, achado: false, motivo_nao_achado: 'select2_item_indisponivel', cancelamento_ok: true });
         continue;
       }
       await page.click(select2Sel);
@@ -426,10 +457,9 @@ export default async ({ page, context }) => {
         });
         await page.keyboard.press('Escape').catch(() => null);
         await sleep(300);
-        const cancelNE = await cancelarLinhaEdicao().catch(() => ({ clicked: false }));
-        await sleep(500);
-        itens.push({ sku_portal: item.sku_portal, achado: false, motivo_nao_achado: msg || 'nenhum_resultado_select2' });
-        trace.push({ step: 'item_' + i + '_nao_encontrado', msg, cancel: cancelNE, t: Date.now() - t0 });
+        await exigirCancelamento(i, 'nao_encontrado');
+        itens.push({ sku_portal: item.sku_portal, achado: false, motivo_nao_achado: msg || 'nenhum_resultado_select2', cancelamento_ok: true });
+        trace.push({ step: 'item_' + i + '_nao_encontrado', msg, t: Date.now() - t0 });
         continue;
       }
       await skuOption.click();
@@ -454,24 +484,20 @@ export default async ({ page, context }) => {
 
       const linha = await lerLinhaEdicao(item.sku_portal);
       if (linha && Array.isArray(linha.headers)) headersVistos = linha.headers;
-      trace.push({ step: 'item_' + i + '_lido', linha_ok: !!(linha && linha.ok), codigo_confere: linha ? linha.codigo_confere : null, t: Date.now() - t0 });
+      trace.push({ step: 'item_' + i + '_lido', linha_ok: !!(linha && linha.ok), t: Date.now() - t0 });
 
-      // Cancela a linha em edição (nada pode ficar no rascunho).
-      const cancel = await cancelarLinhaEdicao().catch(() => ({ clicked: false }));
-      await sleep(600);
-      const rowsApos = await contarRows().catch(() => -1);
-      trace.push({ step: 'item_' + i + '_cancelado', cancel, rows_apos: rowsApos, t: Date.now() - t0 });
+      // Cancelamento é PROVA (Codex P0): sem comprovação, aborta o run.
+      await exigirCancelamento(i, 'pos_leitura');
 
       itens.push({
         sku_portal: item.sku_portal,
         achado: true,
-        codigo_confere: linha && linha.ok ? linha.codigo_confere : undefined,
+        texto_linha_raw: linha && linha.ok ? linha.texto_linha_raw : '',
         preco_venda_raw: linha && linha.ok ? linha.preco_venda_raw : '',
         preco_un_raw: linha && linha.ok ? linha.preco_un_raw : '',
         desconto_raw: linha && linha.ok ? linha.desconto_raw : '',
         prz_ent_raw: linha && linha.ok ? linha.prz_ent_raw : '',
-        cancelamento_ok: !!(cancel && cancel.clicked) && rowsApos === 0,
-        n_rows_apos: rowsApos,
+        cancelamento_ok: true,
       });
     }
 
@@ -494,9 +520,13 @@ export default async ({ page, context }) => {
       screenshot,
     };
    } catch (err) {
-    const errorScreenshot = await page.screenshot({ type: 'png', encoding: 'base64' }).catch(() => null);
+    const errorScreenshot = await page.screenshot({ type: 'jpeg', quality: 70, encoding: 'base64' }).catch(() => null);
     const erroTipo = (err && err.code) ? err.code : 'EXCEPTION';
     // Aborto limpo: devolve o que já foi lido; os demais viram não-processados.
+    // linhas_finais best-effort mesmo no erro — é a prova que o gate de
+    // persistência exige (abort por budget com portal limpo ainda persiste).
+    let linhasFinaisErr = null;
+    try { linhasFinaisErr = await contarRows(); } catch (e2) { linhasFinaisErr = null; }
     const lidos = {};
     for (const it of itens) lidos[it.sku_portal] = true;
     const pendentes = items.map(function(it){ return it.sku_portal; }).filter(function(s){ return !lidos[s]; });
@@ -508,6 +538,7 @@ export default async ({ page, context }) => {
         budgetLabel: (err && err.label) || null,
         itens,
         itens_nao_processados: pendentes,
+        linhas_finais: linhasFinaisErr,
         elapsedMs: Date.now() - t0,
         trace,
       },
@@ -547,12 +578,16 @@ function jsonResponse(status: number, body: Record<string, unknown>): Response {
   });
 }
 
+// Screenshots do fluxo são SEMPRE jpeg (Codex P2: bytes jpeg com extensão png
+// confundem visualizador). Persistimos o PATH durável no run (signed URL expira
+// em 30d — quem exibe gera sob demanda); a resposta HTTP leva uma signed URL
+// de conveniência.
 async function uploadEvidencia(
   supabase: SupabaseClient,
   runId: string,
   base64: string | null | undefined,
-): Promise<string | null> {
-  if (!base64) return null;
+): Promise<{ path: string | null; signedUrl: string | null }> {
+  if (!base64) return { path: null, signedUrl: null };
   try {
     let cleaned = base64;
     if (cleaned.startsWith("data:")) {
@@ -560,21 +595,21 @@ async function uploadEvidencia(
       if (commaIdx !== -1) cleaned = cleaned.substring(commaIdx + 1);
     }
     const bytes = Uint8Array.from(atob(cleaned), (c) => c.charCodeAt(0));
-    const path = `captura_${runId}_${Date.now()}.png`;
+    const path = `captura_${runId}_${Date.now()}.jpg`;
     const { error: upErr } = await supabase.storage
       .from("portal_screenshots")
-      .upload(path, bytes, { contentType: "image/png", upsert: false });
+      .upload(path, bytes, { contentType: "image/jpeg", upsert: false });
     if (upErr) {
       console.error(`[captura-precos] run ${runId}: falha upload screenshot:`, upErr.message);
-      return null;
+      return { path: null, signedUrl: null };
     }
     const { data: signed } = await supabase.storage
       .from("portal_screenshots")
       .createSignedUrl(path, 60 * 60 * 24 * 30);
-    return signed?.signedUrl ?? path;
+    return { path, signedUrl: signed?.signedUrl ?? null };
   } catch (e) {
     console.error(`[captura-precos] run ${runId}: exceção upload screenshot:`, e instanceof Error ? e.message : String(e));
-    return null;
+    return { path: null, signedUrl: null };
   }
 }
 
@@ -674,10 +709,23 @@ Deno.serve(async (req) => {
     .eq("ativo", true)
     .in("sku_omie", skusGrupo);
   if (deparaErr) return jsonResponse(500, { ok: false, erro: `de-para indisponível: ${deparaErr.message}` });
+  // De-para ambíguo (Codex P2): o mesmo sku_omie com >1 sku_portal ATIVO
+  // distinto (fornecedores nominais "%SAYERLACK%" diferentes) → fail-closed:
+  // não capturar esse SKU em vez de escolher um mapeamento por acaso.
   const portalPorOmie = new Map<string, string>();
+  const deparaAmbiguo = new Set<string>();
   for (const d of (deparaRaw ?? []) as { sku_omie: string; sku_portal: string | null }[]) {
-    if (d.sku_portal) portalPorOmie.set(String(d.sku_omie), String(d.sku_portal).trim().toUpperCase());
+    if (!d.sku_portal) continue;
+    const k = String(d.sku_omie);
+    const v = String(d.sku_portal).trim().toUpperCase();
+    const atual = portalPorOmie.get(k);
+    if (atual !== undefined && atual !== v) {
+      deparaAmbiguo.add(k);
+      continue;
+    }
+    portalPorOmie.set(k, v);
   }
+  for (const k of deparaAmbiguo) portalPorOmie.delete(k);
 
   let alvo = equiv.map((e) => ({
     grupo_id: String(e.grupo_id),
@@ -697,26 +745,31 @@ Deno.serve(async (req) => {
   const semDepara = alvo.filter((a) => !a.sku_portal);
   if (comDepara.length === 0) return jsonResponse(200, { ok: false, motivo: "sem_depara" });
 
-  // Prioriza por staleness (sem preço primeiro, depois o mais velho): se o budget
-  // do browser abortar antes do fim, os runs dos dias 10/11/12 completam a cauda
-  // em vez de re-capturar sempre os mesmos primeiros (anti-starvation).
+  // Prioriza por última TENTATIVA (run-item), não por último preço (Codex P1):
+  // SKU que falha repetidamente também "gasta a vez" — senão um item que só
+  // consome timeout ficaria eternamente no topo e a cauda nunca rodaria.
+  // "Nunca tentado" vem primeiro; erro na consulta só degrada a ordenação
+  // (vira ordem por sku), nunca aborta o run.
   {
-    const { data: precosRaw } = await supabase
-      .from("sku_preco_fornecedor_capturado")
-      .select("sku_codigo_omie, capturado_em")
+    const { data: tentativasRaw, error: tentativasErr } = await supabase
+      .from("sku_preco_captura_run_item")
+      .select("sku_codigo_omie, criado_em")
       .eq("empresa", empresa)
       .in("sku_codigo_omie", comDepara.map((a) => a.sku_codigo_omie))
-      .gte("capturado_em", new Date(Date.now() - 90 * 24 * 3600 * 1000).toISOString())
-      .order("capturado_em", { ascending: false })
+      .gte("criado_em", new Date(Date.now() - 90 * 24 * 3600 * 1000).toISOString())
+      .order("criado_em", { ascending: false })
       .limit(1000);
-    const ultimoPreco = new Map<string, string>();
-    for (const p of (precosRaw ?? []) as { sku_codigo_omie: string; capturado_em: string }[]) {
+    if (tentativasErr) {
+      console.error(`[captura-precos] ordenação por tentativa indisponível (${tentativasErr.message}) — usando ordem por sku`);
+    }
+    const ultimaTentativa = new Map<string, string>();
+    for (const p of (tentativasRaw ?? []) as { sku_codigo_omie: string; criado_em: string }[]) {
       const k = String(p.sku_codigo_omie);
-      if (!ultimoPreco.has(k)) ultimoPreco.set(k, p.capturado_em);
+      if (!ultimaTentativa.has(k)) ultimaTentativa.set(k, p.criado_em);
     }
     comDepara.sort((a, b) => {
-      const ta = ultimoPreco.get(a.sku_codigo_omie) ?? "";
-      const tb = ultimoPreco.get(b.sku_codigo_omie) ?? "";
+      const ta = ultimaTentativa.get(a.sku_codigo_omie) ?? "";
+      const tb = ultimaTentativa.get(b.sku_codigo_omie) ?? "";
       return ta < tb ? -1 : ta > tb ? 1 : a.sku_portal!.localeCompare(b.sku_portal!, "en");
     });
   }
@@ -782,7 +835,6 @@ Deno.serve(async (req) => {
     console.log(`[captura-precos] run ${runId}: Browserless retornou em ${browserlessMs}ms — status=${httpStatus}${httpErr ? ` erro=${httpErr}` : ""}`);
 
     const envelope: BrowserlessData = bResp?.data ?? {};
-    const evidenciaUrl = await uploadEvidencia(supabase, runId, bResp?.screenshot ?? null);
 
     const brutoPorPortal = new Map<string, CapturaItemBruto>();
     for (const it of envelope.itens ?? []) {
@@ -830,7 +882,10 @@ Deno.serve(async (req) => {
       if (insert) insertsPreco.push(insert);
     }
     for (const a of semDepara) {
-      const leitura: LeituraEmbalagem = { sku_portal: a.sku_codigo_omie, resultado: "falha", preco: null, fonte: null, detalhe: "sem de-para ativo em sku_fornecedor_externo" };
+      const motivoDepara = deparaAmbiguo.has(a.sku_codigo_omie)
+        ? "de-para ambíguo: múltiplos sku_portal ativos p/ o mesmo SKU em sku_fornecedor_externo"
+        : "sem de-para ativo em sku_fornecedor_externo";
+      const leitura: LeituraEmbalagem = { sku_portal: a.sku_codigo_omie, resultado: "falha", preco: null, fonte: null, detalhe: motivoDepara };
       leituras.push(leitura);
       runItems.push({
         run_id: runId,
@@ -847,21 +902,46 @@ Deno.serve(async (req) => {
     let resumo = resumirRun(leituras);
     let erroFinal = erroGlobal;
 
-    // Persistência: preços PRIMEIRO (é o efeito money-path); falha aqui rebaixa o run.
+    // Gate duro (Codex P0): preço OFICIAL só entra com o portal comprovadamente
+    // limpo — todos os itens processados com cancelamento provado E 0 linhas
+    // restantes reportadas pelo browser. Sem prova → nada persiste (o run-log
+    // ainda registra as leituras para auditoria; o retry 11/12 cobre o recall).
+    let precosGravados = 0;
+    if (insertsPreco.length > 0) {
+      const gate = podePersistirRun(
+        (envelope.itens ?? []).map((i) => ({ cancelamento_ok: (i as { cancelamento_ok?: boolean | null }).cancelamento_ok })),
+        typeof envelope.linhas_finais === "number" ? envelope.linhas_finais : null,
+      );
+      if (!gate.pode) {
+        erroFinal = `${erroFinal ? erroFinal + " | " : ""}${gate.motivo}`;
+        resumo = { ...resumo, status: "falha" };
+        insertsPreco.length = 0;
+      }
+    }
+
+    // Persistência money-path PRIMEIRO (Codex P1: a evidência não-crítica não
+    // pode consumir a margem de wall-clock antes dos inserts).
     if (insertsPreco.length > 0) {
       const { error: precoErr } = await supabase.from("sku_preco_fornecedor_capturado").insert(insertsPreco);
       if (precoErr) {
         erroFinal = `${erroFinal ? erroFinal + " | " : ""}insert de preços falhou: ${precoErr.message}`;
         resumo = { ...resumo, status: "falha" };
-        insertsPreco.length = 0;
+      } else {
+        precosGravados = insertsPreco.length;
       }
     }
     if (runItems.length > 0) {
       const { error: itemErr } = await supabase.from("sku_preco_captura_run_item").insert(runItems);
       if (itemErr) {
+        // Contenção (Codex P1): o run-log é de onde UI/vigia leem ausência e o
+        // guard mensal lê idempotência — sem ele o run NÃO pode se declarar
+        // ok/parcial (cegaria o resto do mês).
         erroFinal = `${erroFinal ? erroFinal + " | " : ""}insert de run-items falhou: ${itemErr.message}`;
+        resumo = { ...resumo, status: "falha" };
       }
     }
+
+    const evidencia = await uploadEvidencia(supabase, runId, bResp?.screenshot ?? null);
 
     const { error: updErr } = await supabase
       .from("sku_preco_captura_run")
@@ -871,14 +951,24 @@ Deno.serve(async (req) => {
         total_ok: resumo.total_ok,
         total_nao_encontrado: resumo.total_nao_encontrado,
         total_falha: resumo.total_falha,
-        evidencia_url: evidenciaUrl,
+        evidencia_url: evidencia.path,
         erro: erroFinal,
         linhas_finais_portal: typeof envelope.linhas_finais === "number" ? envelope.linhas_finais : null,
       })
       .eq("id", runId);
-    if (updErr) console.error(`[captura-precos] run ${runId}: falha ao finalizar run:`, updErr.message);
+    if (updErr) {
+      // Codex P1: run não-finalizado não pode virar HTTP 200 — ficaria 'running'
+      // órfão com cara de sucesso pro chamador.
+      console.error(`[captura-precos] run ${runId}: falha ao finalizar run:`, updErr.message);
+      return jsonResponse(500, {
+        ok: false,
+        run_id: runId,
+        erro: `processamento concluído (${precosGravados} preços gravados) mas o run não foi finalizado: ${updErr.message}`,
+        precos_gravados: precosGravados,
+      });
+    }
 
-    console.log(`[captura-precos] run ${runId} terminou: status=${resumo.status} ok=${resumo.total_ok} nao_encontrado=${resumo.total_nao_encontrado} falha=${resumo.total_falha} precos_gravados=${insertsPreco.length}`);
+    console.log(`[captura-precos] run ${runId} terminou: status=${resumo.status} ok=${resumo.total_ok} nao_encontrado=${resumo.total_nao_encontrado} falha=${resumo.total_falha} precos_gravados=${precosGravados}`);
 
     return jsonResponse(200, {
       ok: resumo.status !== "falha",
@@ -890,9 +980,9 @@ Deno.serve(async (req) => {
       total_ok: resumo.total_ok,
       total_nao_encontrado: resumo.total_nao_encontrado,
       total_falha: resumo.total_falha,
-      precos_gravados: insertsPreco.length,
+      precos_gravados: precosGravados,
       linhas_finais_portal: envelope.linhas_finais ?? null,
-      evidencia_url: evidenciaUrl,
+      evidencia_url: evidencia.signedUrl ?? evidencia.path,
       erro: erroFinal,
     });
   } catch (e) {
