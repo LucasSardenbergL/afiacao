@@ -66,4 +66,9 @@ describe('t4DoRecebimento', () => {
   it('payload inutilizável e sem fallback => null', () => {
     expect(t4DoRecebimento(null, null)).toBeNull();
   });
+
+  it('infoCadastro ausente => preserva o fallback (nunca inventa, nunca descarta)', () => {
+    const fallback = '2026-01-20T00:00:00-03:00';
+    expect(t4DoRecebimento({}, fallback)).toBe(fallback);
+  });
 });
