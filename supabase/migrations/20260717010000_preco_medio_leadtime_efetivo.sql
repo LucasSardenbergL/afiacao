@@ -1,44 +1,89 @@
--- Migration: embalagem econômica DENTRO do motor de pedidos (QT↔GL) + consolidação de estoque de grupo
--- ⚠️ APLICADA MANUALMENTE no SQL Editor do Lovable em 2026-06-26 (NÃO vai em supabase/migrations/ — CLAUDE.md §5;
---     é CREATE OR REPLACE de função existente). Este arquivo é a FONTE versionada + fixture da regressão db/test-embalagem-motor.sh.
--- Spec: docs/superpowers/specs/2026-06-26-reposicao-embalagem-no-motor-spec.md
--- Money-path. Recria gerar_pedidos_sugeridos_ciclo (pré-flight pg_get_functiondef feito; base = prod 26/06).
+-- Fase 0-quater — a CTE de PREÇO do motor de compra passa a ler a fonte deduplicada por NFe.
 --
--- DUAS mudanças cirúrgicas, tudo o mais PRESERVADO:
---   1) CONSOLIDA o estoque no nível do grupo de equivalência (Σ membros: GREATEST(inv,sea) físico + pendente + trânsito).
---      O gatilho passa a olhar o estoque do GRUPO → para de comprar quando há galão parado.
---   2) ESCOLHE a embalagem mais barata por unidade-base (galão), ESTRITO: só troca o quartinho pelo galão
---      quando AMBOS têm preço-app fresco (≤ N dias) + portal-map + catálogo OK, e o galão é estritamente mais barato/base.
---      Senão mantém o quartinho. Custo da linha do galão = preço-app (R$/embalagem), nunca 0.
+-- CONTEXTO: uma NFe que fatura N pedidos gera N cópias do mesmo item em
+-- sku_leadtime_history (writer corrigido em #1345; o passivo é resíduo finito que não
+-- cresce). Quem agrega sobre as LINHAS pondera a estatística pela multiplicidade. A
+-- leitura vem sendo quarentenada consumidor a consumidor via v_sku_leadtime_efetivo
+-- (1 linha por (empresa, NFe, SKU)): #1343 cobriu v_sku_leadtime_estatisticas, #1354
+-- cobriu v_sku_sla_compliance + os leitores React, #1357 cobriu a stack de outliers.
+-- Esta migration cobre a CTE `preco_medio` do motor de pedidos.
 --
--- Unidade (cravada em prod): qtde_final = nº de EMBALAGENS do SKU; preco_unitario = R$/embalagem; o disparo
--- consome ceil(qtde_final) direto (fator_conversao=1). Quartinho NÃO é tocado (mantém cmc cru).
--- ⚠️ Case: equivalencia/preço_capturado = lower(empresa); parametros/estoque/fornecedor_externo = empresa (upper).
+-- O defeito: AVG(valor_total / qtde_recebida) sobre as LINHAS. A NFe duplicada N× pesa
+-- N× na média, então o "preço médio de compra" tende à NFe mais fatiada, não à média das
+-- compras. Corrigido trocando a fonte da CTE — e SÓ isso: o corpo restante desta função é
+-- byte-a-byte o da prod (conferido via pg_get_functiondef antes do REPLACE). A tabela crua
+-- aparecia exatamente UMA vez na função.
 --
--- Revisão pós-Codex (xhigh) — 6 correções vs. o 1º rascunho:
---   P0-a GREATEST(inventory_position.saldo, sku_estoque_atual): galão parado vive em fontes DIFERENTES por SKU.
---   P0-b em_transito do galão × fator_para_base (2 galões em voo = 8 unidades-base, não 2) → anti double-buy.
---   P1-c âncora NÃO pode ser membro fator>1 (galão) de um grupo → impede 2 linhas do mesmo GL.
---   P1-d anti-duplicidade de oportunidade cobre a âncora E o SKU escolhido (galão).
---   P1-e minimo_forcado_manual respeitado também na troca p/ galão (piso aplicado ANTES de dividir pelo fator).
---   P1-f filtros de catálogo (ativo/tipo 04/família/status omie) aplicados ao MEMBRO escolhido, não só à âncora.
--- Granularidade (P2 Codex, aceito): nº_galões = ceil(necessidade / fator) na escala "unidades-âncora" — NUNCA
---   compra menos que o legado QT (herda o descasamento litros↔embalagem pré-existente, fora de escopo).
+-- ─── HONESTIDADE SOBRE O GANHO: o delta em produção HOJE é ZERO ───────────────────────
+-- Medido na prod antes do apply, por dois ângulos independentes:
+--   • Partindo dos SKUs ATIVOS de reposição: a esmagadora maioria tem cmc, e a âncora é
+--     COALESCE(cmc do inventory_position, preço do leadtime) — cmc-first. Dos poucos que
+--     caem no fallback, NENHUM muda de preço.
+--   • Partindo dos SKUs cujo preço DIVERGE entre a fonte crua e a efetiva: todos têm cmc.
+--     Nenhum deles chega a usar o preço do leadtime.
+-- Ou seja: o viés é real e no pior SKU chega à casa das dezenas de por cento, mas está
+-- inteiramente atrás da cortina do cmc-first. Esta migration NÃO conserta um número errado
+-- que o app mostra hoje; ela remove a dependência de uma única cortina e fecha a
+-- quarentena. Vale porque o motor é quente (roda várias vezes por semana) e porque o
+-- fallback é justamente a população SEM cmc — SKU novo, pouca observação, onde uma
+-- duplicata distorce a média com mais força. Não inflar o ganho é parte do conserto.
 --
--- ➕ 2026-06-27 — GATE de estoque-NÃO-CONFIRMADO (money-path; spec 2026-06-27-reposicao-gate-estoque-nao-confirmado).
---   Bug provado: cold-start semeia sku_estoque_atual de omie_products.estoque (82% zerado na OBEN), fonte_sync=
---   'cold_start_seed'. Se o motor roda na janela cold-start→ListarPosEstoque, lê o seed=0 e compra por cima de
---   estoque existente. FIX (Codex consult 019f0968 + ausente≠zero): estoque cuja ÚNICA fonte é cold_start_seed (sem
---   inventory_position) é DESCONHECIDO → o motor SUPRIME a sugestão (nível LINHA e GRUPO) + LOGA em
---   reposicao_estoque_nao_confirmado_log. Zero CONFIRMADO (ListarPosEstoque/0) segue comprando — auto-liberante.
---   ⚠️ Esta fixture é SÓ a função; a tabela de log + RLS vivem na migration formal (e nos harnesses de teste).
---   Migration: supabase/migrations/20260627180000_reposicao_gate_estoque_nao_confirmado.sql (corpo da função idêntico).
+-- ─── REGRA DE COLAPSO: repontar NÃO é trocar o FROM ───────────────────────────────────
+-- A view efetiva emite NULL onde as cópias divergem ("concorda-ou-NULL"). Decidido campo a
+-- campo, MEDINDO — só os 4 campos que esta CTE lê importam:
+--   • valor_total → as cópias SEMPRE concordam (medido: nenhum par perde o campo). Era a
+--     suspeita principal antes de medir; não se confirmou.
+--   • quantidade_recebida → um punhado de pares perde o campo (cópias divergem na
+--     quantidade mas concordam no valor). Esses pares saem do FILTER de PREÇO (NULL > 0 é
+--     NULL) — mas NÃO da CTE: seguem contando em `n`, logo o SKU continua "já comprado".
+--     É a única leitura honesta: sabemos o valor mas não a quantidade ⇒ o preço unitário
+--     daquela NFe é genuinamente incognoscível, e escolher um representante fabricaria
+--     precisão. Ausente ≠ zero. (Ver o bloco [2 CONSUMIDORES] na CTE: é exatamente aqui que
+--     mandar o par p/ fora da CTE INTEIRA — e não só do preço — faria o badge mentir.)
+--   • empresa / sku_codigo_omie → chaves do GROUP BY, nunca nulas na view (dedup_key é
+--     garantidamente não-nulo). Tipos idênticos aos da tabela crua (empresa segue o enum
+--     empresa_reposicao; o ::text de saída é preservado p/ casar com sku_parametros.empresa,
+--     que é text). A repontagem não introduz cast novo.
 --
--- ➕ 2026-07-08 — MARCADOR DE RUN (reposicao_motor_run) — a fila da tela ancora no ÚLTIMO recálculo, NÃO no último
---   recálculo QUE TEVE supressão. Bug: run limpo não grava no log de suprimidos → a mensagem "N fora da compra"
---   grudava por até 24h após o sync já ter confirmado o estoque (Codex 2026-07-08 → Opção 2: fonte-de-verdade, não
---   render). A RPC carimba TODO run (limpo ou não) ao fim; a tela lê o último marker (some quando suprimidos_n=0).
---   Tabela reposicao_motor_run + RLS na migration *_reposicao_motor_run_marker.sql (mesmo padrão do log; corpo idêntico).
+-- ─── OS DOIS CONSUMIDORES DA CTE (o segundo é fácil de esquecer — e foi o que mordeu) ──
+--   1. preco_unitario_ancora = COALESCE(cmc, pm.preco_unitario) — protegido por cmc-first.
+--   2. primeira_compra = (pm.n IS NULL) — SEM proteção nenhuma. Era o risco real: se o
+--      colapso derrubasse um SKU INTEIRO da CTE, o badge passaria a mentir "primeira compra"
+--      num SKU já comprado.
+--
+-- ⚠️ ESTA É A PARTE QUE UMA MEDIÇÃO SÓ NÃO PEGARIA — E QUASE NÃO PEGOU.
+--    No pré-flight, ZERO SKUs sumiam da CTE ⇒ zero viradas ⇒ a conclusão foi "risco latente,
+--    não vale guarda". Poucas HORAS depois, na mesma sessão, a re-medição deu DOIS — ambos
+--    ativos. O sync grava (a fonte crua cresceu no intervalo) e o resíduo se move. A regra
+--    "meça" tem um corolário: **uma medição é um RETRATO, e um invariante que depende de
+--    resíduo vivo não se prova com um retrato.** Quando o custo da guarda é uma linha e o
+--    custo do erro é o app mentir, guarde — não aposte no retrato.
+--    Por isso o filtro de preço virou FILTER (ver o comentário na CTE): `n` passa a contar
+--    EXISTÊNCIA (que o dedup preserva por construção), e o preço agrega só o precificável.
+--    Medido nos dois sentidos: o conjunto de primeira_compra fica IDÊNTICO ao de hoje —
+--    nenhum SKU entra, nenhum sai. A magnitude de `n` muda (conta NFes, não linhas) e é
+--    imaterial: `n` só é lido como IS NULL, nunca comparado.
+--
+-- ─── EFEITO COLATERAL DE ESCOPO: o filtro origem_compra='normal' vem de brinde ─────────
+-- v_sku_leadtime_efetivo lê v_sku_leadtime_history_normal (WHERE origem_compra='normal'),
+-- não a tabela crua. A CTE antiga não tinha esse filtro. Hoje é NO-OP (medido: a tabela
+-- inteira é 'normal' — nenhuma linha de outra origem existe). Registrado porque é uma
+-- mudança silenciosa de semântica: se um dia nascer linha não-'normal', ela deixará de
+-- compor o preço médio — o que é provavelmente o comportamento DESEJADO (origem anormal
+-- não deve formar preço de compra), mas passaria a valer sem ninguém decidir. Fica o aviso.
+--
+-- ⚠️ NÃO corrige (fora de escopo, medido e registrado): v_sku_parametros_sugeridos tem uma
+--    CTE GÊMEA com o mesmo defeito — calcula `preco_compra_real` com o mesmo
+--    AVG(valor_total/qtde) sobre v_sku_leadtime_history_normal (tem o filtro 'normal', não
+--    tem o dedup). Ela NÃO estava na lista de consumidores crus do sync-registry (a lista
+--    estava incompleta; corrigida neste PR). É objeto diferente (VIEW), read-only (nenhuma
+--    função persiste esse número) e com dependentes próprios ⇒ merece PR e baseline
+--    próprios. Chip aberto.
+--
+-- Prova: db/test-preco-medio-leadtime-efetivo.sh (PG17, asserts + falsificação).
+-- Baseline pré-apply (prova de não-colateral, esperado delta ZERO nos dois — esta migration
+-- não toca a view): distribuição de `fonte_lt` e soma-controle de `preco_compra_real` em
+-- v_sku_parametros_sugeridos. Ver a nota do PR.
 
 CREATE OR REPLACE FUNCTION public.gerar_pedidos_sugeridos_ciclo(p_empresa text DEFAULT 'OBEN'::text, p_data_ciclo date DEFAULT CURRENT_DATE)
  RETURNS TABLE(pedidos_gerados integer, skus_incluidos integer, valor_total_ciclo numeric, bloqueados integer)
