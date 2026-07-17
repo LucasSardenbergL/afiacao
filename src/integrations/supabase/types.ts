@@ -18135,6 +18135,7 @@ export type Database = {
           skus_incluidos: number
         }[]
       }
+      claim_carteira_rebuild: { Args: { p_run_id: string }; Returns: boolean }
       claim_estoque_full_sync: {
         Args: { p_account: string; p_at: string; p_run_id: number }
         Returns: boolean
@@ -18432,6 +18433,10 @@ export type Database = {
       fin_sync_watchdog_check: { Args: never; Returns: undefined }
       fin_user_can_access: {
         Args: { check_company?: string }
+        Returns: boolean
+      }
+      finalizar_carteira_rebuild: {
+        Args: { p_run_id: string; p_status: string }
         Returns: boolean
       }
       finalizar_estoque_full_sync: {
