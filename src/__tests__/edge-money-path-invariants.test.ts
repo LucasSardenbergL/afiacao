@@ -1168,3 +1168,160 @@ describe('guardrail money-path: omie-sync-sku-items (fila de leadtime)', () => {
     ).toMatch(/throw new Error\(\s*\n?\s*`sku_items_sync_controle ilegível/);
   });
 });
+
+// ── Fatia 3-edges PR-A (omie-cliente: os 3 LEITORES saem do espelho → proof fresca account-correta) ──
+// Os 3 leitores do edge de cadastro resolviam identidade por um código de conta INDETERMINADA. O espelho
+// omie_clientes é UNIQUE(user_id) — 1 linha por user, sobrescrita pelo writer da vez (oben, colacor_sc…) —
+// e empresa_omie está 'colacor' em 6.909/6.909 linhas (o DEFAULT, nunca populado): o rótulo de conta é
+// mentiroso. Migrados p/ omie_customer_account_map_fresco, que é UNIQUE(user_id, account) e
+// UNIQUE(omie_codigo_cliente, account) → .maybeSingle() seguro. A conta de CADA leitor saiu do CHAMADOR,
+// não de presunção (as credenciais do edge enganam: callOmieApi é colacor_sc, mas não é ela que decide):
+//   • criar_perfil_local → 'oben'  — useUnifiedOrder.handleStaffAddTool passa selectedCustomer.codigo_cliente
+//     (código OBEN) e resolve o MESMO código com .eq('account','oben') logo antes de invocar (#1331);
+//   • sync_all_clients   → conta do account_index (useAnalyticsSync itera "Conta N/3", 0→2);
+//   • sync_addresses     → multi-conta por natureza: usa o account de CADA linha da proof (não filtra uma).
+// Restam 3 omie_clientes, todos WRITERS (inserts → migram na Fatia 4 p/ register_carteira_member).
+// A paridade textual pega a reversão do deploy do Lovable (armadilha do #1272). Ver design §4/§5.
+const OMIE_CLIENTE = 'supabase/functions/omie-cliente/index.ts';
+const UNIFIED_ORDER = 'src/hooks/useUnifiedOrder.ts';
+
+// Recorta o corpo de um `case "<nome>": {` do edge (até o próximo case na mesma indentação). Necessário
+// porque o omie-cliente tem 9 handlers e vários compartilham vocabulário: `for (const account of accounts)`
+// é REGRESSÃO no sync_addresses (chutar o código nas 3 contas) e LEGÍTIMO no buscar_logos_empresas, que
+// varre as contas de propósito. Um assert no arquivo inteiro confundiria os dois.
+function blocoCaseCliente(s: string, nome: string): string {
+  const i = s.indexOf(`case "${nome}": {`);
+  if (i < 0) throw new Error(`case "${nome}" não encontrado no omie-cliente`);
+  const resto = s.slice(i);
+  const fim = resto.search(/\n {6}case "/);
+  return fim < 0 ? resto : resto.slice(0, fim);
+}
+
+// Recorta handleStaffAddTool (o único chamador de criar_perfil_local) para amarrar edge × chamador
+// dentro do MESMO fluxo, sem depender de contar caracteres entre as duas âncoras.
+function blocoHandleStaffAddTool(s: string): string {
+  const i = s.indexOf('const handleStaffAddTool = async () => {');
+  if (i < 0) throw new Error('handleStaffAddTool não encontrada em useUnifiedOrder');
+  const resto = s.slice(i);
+  const fim = resto.search(/\n {2}\};\n/);
+  return fim < 0 ? resto : resto.slice(0, fim);
+}
+
+describe('guardrail money-path: omie-cliente lê a proof fresca account-correta (Fatia 3-edges PR-A)', () => {
+  const src = read(OMIE_CLIENTE);
+
+  it('sentinela: leu o arquivo real (edge) e os 3 handlers migrados', () => {
+    expect(src).toContain('criar_perfil_local');
+    expect(src).toContain('sync_all_clients');
+    expect(src).toContain('sync_addresses');
+  });
+
+  it('os 3 LEITORES vêm da view fresca; omie_clientes só resta como WRITER', () => {
+    expect(
+      count(src, '.from("omie_customer_account_map_fresco")'),
+      'REVERSÃO Lovable? sumiu leitura da view fresca (esperado 3: criar_perfil_local, sync_all_clients, sync_addresses)',
+    ).toBe(3);
+    expect(
+      count(src, '.from("omie_clientes")'),
+      'REGRESSÃO: omie_clientes voltou como LEITOR (deveria restar só os 3 writers INSERT → Fatia 4)',
+    ).toBe(3);
+    // Os 3 restantes TÊM de ser inserts: contar == 3 sozinho não impede trocar um insert por um select.
+    expect(
+      (src.match(/\.from\("omie_clientes"\)\s*\.insert\(/g) ?? []).length,
+      'REGRESSÃO: algum dos 3 omie_clientes restantes deixou de ser o writer INSERT',
+    ).toBe(3);
+    expect(
+      src,
+      'REVERSÃO Lovable? voltou a .select() do espelho poluído omie_clientes (código de conta indeterminada)',
+    ).not.toMatch(/\.from\("omie_clientes"\)\s*\.select/);
+  });
+
+  it('a credencial Omie carrega o slug canônico da conta (não o índice instável nem o nome de UI)', () => {
+    // getOmieAccounts monta a lista CONDICIONALMENTE (só com as env vars presentes): faltar
+    // OMIE_OBEN_APP_KEY faria o índice 1 virar Colacor e o filtro de conta mentir em silêncio.
+    expect(src, 'sumiu o slug canônico do OmieAccountConfig — o filtro de conta volta a depender do índice')
+      .toMatch(/account:\s*OmieAccountSlug/);
+    expect(
+      count(src, 'account: "colacor_sc"') + count(src, 'account: "oben"') + count(src, 'account: "colacor"'),
+      'as 3 contas devem declarar seu slug canônico (domínio do CHECK chk_ocam_account)',
+    ).toBe(3);
+  });
+
+  it('criar_perfil_local resolve codigo->user na fresca account=oben (a conta do chamador)', () => {
+    expect(
+      src,
+      'REVERSÃO Lovable? criar_perfil_local não resolve mais o código pela fresca com account=oben',
+    ).toMatch(
+      /\.from\("omie_customer_account_map_fresco"\)[\s\S]{0,200}\.eq\("omie_codigo_cliente", cliente\.codigo_cliente\)[\s\S]{0,120}\.eq\("account", "oben"\)/,
+    );
+    // Miss (ausente/stale >7d) NÃO pode virar código chutado: o ramo cai no fallback por documento.
+    expect(
+      src,
+      'REGRESSÃO: sumiu o guard de miss (existingMapping?.user_id) — user_id null da view viraria hit falso',
+    ).toMatch(/if \(existingMapping\?\.user_id\)/);
+  });
+
+  it('COERÊNCIA cross-file: o edge usa a MESMA conta que o chamador — senão resolvem users diferentes', () => {
+    // O frontend resolve o código pela fresca account=oben e SÓ ENTÃO invoca criar_perfil_local com ele.
+    // Se um dos dois mudar de conta, o edge acha um user diferente do que o chamador acabou de achar e
+    // a ferramenta é anexada ao cliente ERRADO (Codex P2). Este assert amarra os dois lados no MESMO fluxo.
+    const fluxo = blocoHandleStaffAddTool(read(UNIFIED_ORDER));
+    expect(
+      fluxo,
+      'sentinela: handleStaffAddTool deixou de ser o chamador de criar_perfil_local',
+    ).toMatch(/action: 'criar_perfil_local'/);
+    expect(
+      fluxo,
+      'o chamador de criar_perfil_local não resolve mais o código pela fresca account=oben — o edge divergiu dele?',
+    ).toMatch(/omie_customer_account_map_fresco[\s\S]{0,260}\.eq\('account', 'oben'\)/);
+  });
+
+  it('sync_all_clients dedupa pela conta DO LOTE, paginado e fail-closed em erro de query', () => {
+    expect(
+      src,
+      'REVERSÃO Lovable? o dedup do sync_all_clients não lê a fresca filtrando a conta do account_index',
+    ).toMatch(
+      /\.from\("omie_customer_account_map_fresco"\)[\s\S]{0,120}\.eq\("account", account\.account\)[\s\S]{0,120}\.order\("omie_codigo_cliente"\)[\s\S]{0,120}\.range\(/,
+    );
+    // Sem .range o PostgREST capa em 1.000 linhas SILENCIOSO (eram 1.000 de 6.909 → o dedup enxergava 1/7).
+    expect(
+      src,
+      'REGRESSÃO: o pré-load do dedup perdeu a paginação — volta a capar em 1.000 e reprocessar o resto',
+    ).toMatch(/codePage\.length < codePageSize/);
+    // Codex P2 do PR-2: engolir o erro deixa o Set vazio e o loop tenta RECRIAR milhares de clientes.
+    expect(
+      src,
+      'REGRESSÃO: o pré-load do dedup engole o erro da query — Set vazio → reimportação em massa',
+    ).toMatch(/if \(codeErr\) throw new Error/);
+  });
+
+  it('sync_addresses lê (user, conta, código) da proof e consulta a conta CERTA de cada código', () => {
+    // Ancorado no bloco do handler: `for (const account of accounts)` é regressão AQUI e legítimo no
+    // buscar_logos_empresas (que varre as contas de propósito) — no arquivo inteiro os dois se confundem.
+    const bloco = blocoCaseCliente(src, 'sync_addresses');
+    expect(
+      bloco,
+      'REVERSÃO Lovable? sync_addresses não lê mais (user_id, account, omie_codigo_cliente) da fresca paginada',
+    ).toMatch(
+      /\.from\("omie_customer_account_map_fresco"\)[\s\S]{0,120}\.select\("user_id, account, omie_codigo_cliente"\)[\s\S]{0,160}\.range\(/,
+    );
+    // O código agora vem PAREADO com a conta dele: nada de chutar o mesmo código nas 3 contas.
+    expect(
+      bloco,
+      'REGRESSÃO: sync_addresses voltou a varrer as 3 contas com o mesmo código indeterminado',
+    ).not.toMatch(/for \(const account of accounts\)/);
+    expect(
+      bloco,
+      'sentinela: a consulta usa a credencial da conta DA LINHA da proof',
+    ).toMatch(/accountBySlug\.get\(entry\.account\)/);
+    // A proof tem até 1 linha por (user, conta) — sem agrupar, batch_size=30 viraria ~10 users.
+    expect(
+      bloco,
+      'REGRESSÃO: sumiu o agrupamento por user — o lote passa a contar LINHAS da proof, não clientes',
+    ).toMatch(/codesByUser/);
+    expect(
+      bloco,
+      'REGRESSÃO: o pré-load dos mapeamentos engole o erro — vira "No client mappings found" (no-op mudo)',
+    ).toMatch(/if \(pageErr\) throw new Error/);
+  });
+});
