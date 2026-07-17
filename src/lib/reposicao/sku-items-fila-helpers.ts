@@ -95,3 +95,100 @@ export function skuItemsDedupPorRecebimento<T extends { id: string; nIdReceb: st
   return out;
 }
 // MIRROR-END
+
+// ─── Agregação de itens de NFe por (tracking, sku) antes do upsert ───
+// ESPELHADO verbatim na edge omie-sync-sku-items (bloco sku-items-agregacao abaixo);
+// paridade provada em src/__tests__/edge-money-path-invariants.test.ts.
+// MIRROR-START sku-items-agregacao
+export interface ItemRecebimentoResolvido {
+  tracking_id: string;
+  sku_codigo_omie: number;
+  sku_codigo: string | null;
+  sku_descricao: string | null;
+  sku_unidade: string | null;
+  sku_ncm: string | null;
+  fornecedor_codigo_omie: number | null;
+  fornecedor_nome: string | null;
+  grupo_leadtime: string | null;
+  quantidade_pedida: number | null;
+  quantidade_recebida: number | null;
+  valor_unitario: number | null;
+  valor_total: number | null;
+  t1_data_pedido: string;
+  t2_data_faturamento: string;
+  t3_data_cte: string | null;
+  t4_data_recebimento: string | null;
+}
+
+export interface ItemRecebimentoAgregado extends ItemRecebimentoResolvido {
+  /** Quantos itens crus da NFe foram fundidos neste (tracking, sku). 1 = caso comum. */
+  n_itens_agregados: number;
+}
+
+/** Soma tratando null como AUSENTE, não como 0 (money-path.md: ausente ≠ zero). Grupo
+ *  inteiro null → devolve null, nunca 0 fabricado. */
+function somaOuNull(valores: readonly (number | null)[]): number | null {
+  let soma = 0;
+  let temAlgum = false;
+  for (const v of valores) {
+    if (v === null) continue;
+    soma += v;
+    temAlgum = true;
+  }
+  return temAlgum ? soma : null;
+}
+
+/** valor_unitario agregado = média PONDERADA por quantidade_pedida (não AVG simples — o
+ *  achado de 2ª ordem da função dropada #1373). Só os itens com (vu, qp) ambos presentes
+ *  entram na ponderação; fallback à média simples dos vu presentes se nenhum qp servir;
+ *  null se não há vu algum (ausente ≠ zero). */
+function valorUnitarioPonderado(itens: readonly ItemRecebimentoResolvido[]): number | null {
+  let numerador = 0;
+  let pesoTotal = 0;
+  for (const i of itens) {
+    if (i.valor_unitario === null || i.quantidade_pedida === null) continue;
+    numerador += i.valor_unitario * i.quantidade_pedida;
+    pesoTotal += i.quantidade_pedida;
+  }
+  if (pesoTotal > 0) return numerador / pesoTotal;
+  const vus = itens
+    .map((i) => i.valor_unitario)
+    .filter((v): v is number => v !== null);
+  if (vus.length === 0) return null;
+  return vus.reduce((a, b) => a + b, 0) / vus.length;
+}
+
+/** Agrega os itens de UMA NFe por (tracking_id, sku_codigo_omie): soma quantidade_pedida,
+ *  quantidade_recebida e valor_total; deriva valor_unitario como média ponderada por qtd;
+ *  toma descritivos e datas do 1º item do grupo (iguais entre itens do mesmo tracking).
+ *
+ *  POR QUE existe: o writer fazia 1 upsert por item com onConflict (tracking_id,
+ *  sku_codigo_omie). SKU repetido na NFe caindo no mesmo tracking → o 2º upsert
+ *  SOBRESCREVIA o 1º (valor_total virava o do ÚLTIMO item, não o total). Medido em prod
+ *  (psql-ro 2026-07-17): PRD02377 gravou R$139,90 de R$1.214,37; PRD03594 R$1.190,98 de
+ *  R$1.984,96; 10,9% das NFes recentes têm SKU repetido. */
+export function agregarItensRecebimento(
+  itens: readonly ItemRecebimentoResolvido[],
+): ItemRecebimentoAgregado[] {
+  const buckets = new Map<string, ItemRecebimentoResolvido[]>();
+  for (const item of itens) {
+    const chave = `${item.tracking_id}::${item.sku_codigo_omie}`;
+    const bucket = buckets.get(chave);
+    if (bucket) bucket.push(item);
+    else buckets.set(chave, [item]);
+  }
+  const out: ItemRecebimentoAgregado[] = [];
+  for (const bucket of buckets.values()) {
+    const base = bucket[0];
+    out.push({
+      ...base,
+      quantidade_pedida: somaOuNull(bucket.map((i) => i.quantidade_pedida)),
+      quantidade_recebida: somaOuNull(bucket.map((i) => i.quantidade_recebida)),
+      valor_unitario: valorUnitarioPonderado(bucket),
+      valor_total: somaOuNull(bucket.map((i) => i.valor_total)),
+      n_itens_agregados: bucket.length,
+    });
+  }
+  return out;
+}
+// MIRROR-END
