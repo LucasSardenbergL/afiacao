@@ -19122,13 +19122,6 @@ export type Database = {
         Args: { p_empresa?: string }
         Returns: Json
       }
-      reprocessar_sku_items_via_raw_data: {
-        Args: { p_empresa: string }
-        Returns: {
-          etapa: string
-          valor: number
-        }[]
-      }
       resgatar_recompensa: { Args: { p_reward_key: string }; Returns: string }
       resolve_markup_policy: {
         Args: {
