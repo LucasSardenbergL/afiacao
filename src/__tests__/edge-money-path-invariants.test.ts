@@ -798,11 +798,39 @@ describe('guardrail money-path: carteira-rebuild lê o vendedor da PROOF oben (P
     ).toMatch(/from\(['"]omie_customer_account_map_fresco['"]\)[\s\S]{0,220}\.eq\(['"]account['"],\s*['"]oben['"]\)/);
   });
 
-  it('A LISTA de membros vem do carteira_membership_ledger (Fatia 1 — não mais do espelho)', () => {
+  it('A LISTA de membros vem do carteira_membership_ledger, COM identity_state (Fatia 1 + 2)', () => {
     expect(
       rebuild,
       'REVERSÃO Lovable? a LISTA de membros não vem mais do ledger — voltou ao espelho omie_clientes?',
-    ).toMatch(/from\(['"]carteira_membership_ledger['"]\)[\s\S]{0,80}select\(['"]user_id['"]\)/);
+    ).toMatch(/from\(['"]carteira_membership_ledger['"]\)[\s\S]{0,80}select\(['"]user_id,\s*identity_state['"]\)/);
+  });
+
+  // ── P0-B-bis Fatia 2 (quarantine). O erro CATASTRÓFICO seria filtrar o quarantinado no BANCO: o membro
+  // sumiria da entrada e o upsert-only (sem DELETE) preservaria o assignment antigo STALE — vendedor errado,
+  // válido, cobrando comissão. É o mecanismo exato pelo qual o Codex refutou a opção A′ deste épico.
+  it('o rebuild NÃO filtra identity_state no banco — o membro quarantinado TEM que vir na lista', () => {
+    const selectLedger = /from\(['"]carteira_membership_ledger['"]\)[\s\S]{0,200}?\.range\(/;
+    const bloco = rebuild.match(selectLedger)?.[0] ?? '';
+    expect(bloco, 'sentinela: não achei o bloco de leitura do ledger').toContain('carteira_membership_ledger');
+    expect(
+      bloco,
+      'REGRESSÃO GRAVE: o rebuild passou a filtrar identity_state no banco → o membro quarantinado SOME da entrada → o upsert-only deixa o assignment antigo STALE (vendedor errado cobrando comissão). Filtre em memória (extrairQuarantinados), nunca na query.',
+    ).not.toMatch(/\.(eq|neq|in|not|filter)\(\s*['"]identity_state['"]/);
+  });
+
+  it('o quarantine é aplicado às rows finais (máscara ligada — não é dead code)', () => {
+    expect(rebuild, 'sumiu a extração dos quarantinados do ledger').toContain('extrairQuarantinados(ledgerRows)');
+    expect(
+      rebuild,
+      'REVERSÃO: as rows finais não passam mais por aplicarMascaras(flaggeds, quarantinados) → quarantine inerte, ambíguo volta a gerar comissão',
+    ).toMatch(/aplicarMascaras\(assignments,\s*flaggeds,\s*quarantinados\)/);
+  });
+
+  it('o consumo de identity_state é FAIL-CLOSED (!== verified), não === ambiguous', () => {
+    expect(
+      rebuildHelper,
+      'FAIL-OPEN: extrairQuarantinados passou a testar um estado específico — estado futuro/NULL deixaria de quarantinar',
+    ).toMatch(/identity_state\s*!==\s*['"]verified['"]/);
   });
 
   it('anti-reversão: o carteira-rebuild NÃO lê mais omie_clientes em lugar nenhum (nem lista, nem vendedor)', () => {
@@ -844,6 +872,50 @@ describe('guardrail money-path: carteira-rebuild lê o vendedor da PROOF oben (P
       mirrorBlockNamed(rebuild, 'carteira-load'),
       'edge divergiu de rebuild-helpers.ts — Lovable reescreveu o load/guard?',
     ).toBe(mirrorBlockNamed(rebuildHelper, 'carteira-load'));
+  });
+});
+
+// ── P0-B-bis Fatia 2 — ESCRITOR do identity_state (omie-analytics-sync). Par do DELETE da proof: o vínculo
+// sai da proof, mas o MEMBRO fica no ledger marcado `ambiguous` → o rebuild o quarantina. Sem a marcação o
+// ambíguo perde o vendedor, vira órfão e cai no Hunter com eligible=TRUE (comissão sobre identidade que não
+// conhecemos). Sem a REVERSÃO vira catraca de mão única (doc corrigido → cliente invisível para sempre).
+describe('guardrail money-path: omie-analytics-sync popula identity_state no ledger (P0-B-bis Fatia 2)', () => {
+  const src = read(ANALYTICS);
+
+  it('sentinela: leu o arquivo real', () => {
+    expect(src).toContain('docsComCodigoAmbiguoNoOmie');
+  });
+
+  it('marca `ambiguous` no ledger — o par do DELETE da proof', () => {
+    expect(
+      src,
+      'REVERSÃO: sumiu a marcação de ambiguous no ledger → o doc ambíguo volta a cair no Hunter ELEGÍVEL (comissão indevida)',
+    ).toMatch(/from\(["']carteira_membership_ledger["']\)[\s\S]{0,160}identity_state:\s*["']ambiguous["']/);
+  });
+
+  it('reverte `ambiguous`→`verified` p/ quem o run PROVOU limpo (senão: catraca de mão única)', () => {
+    expect(
+      src,
+      'REGRESSÃO: sumiu a reversão → doc corrigido no Omie deixaria o cliente quarantinado (invisível, sem comissão) PARA SEMPRE',
+    ).toMatch(/identity_state:\s*["']verified["']/);
+    expect(
+      src,
+      'a reversão não está escopada ao que o run provou limpo (accountMapByUser) → risco de reverter ambíguo real',
+    ).toMatch(/accountMapByUser\.has\(/);
+  });
+
+  it('SÓ o run oben (account===vendas) escreve o ledger — identity_state é global, ambiguidade é por conta', () => {
+    // D5: os 3 runs escrevendo se sobrescreveriam (flapping — um marca, o outro desmarca).
+    const marcacao = src.match(/if \(account === "vendas" && usersAmbiguosOmie\.size > 0\)/);
+    expect(marcacao, 'a marcação de ambiguous não está gateada em account==="vendas" → flapping entre contas').not.toBeNull();
+  });
+
+  it('o ledger NUNCA recebe INSERT/upsert aqui — quem popula é o trigger da Fatia 0 (acumulador)', () => {
+    const blocos = src.match(/from\(["']carteira_membership_ledger["']\)\s*\.\w+/g) ?? [];
+    expect(blocos.length, 'sentinela: não achei acesso ao ledger no sync').toBeGreaterThan(0);
+    for (const b of blocos) {
+      expect(b, `o sync está escrevendo no ledger com algo que não é update/select ("${b}") — o ledger é acumulador; inserir aqui fura o trigger da Fatia 0`).toMatch(/\.(update|select)$/);
+    }
   });
 });
 
@@ -1166,5 +1238,246 @@ describe('guardrail money-path: omie-sync-sku-items (fila de leadtime)', () => {
       'REGRESSÃO: voltou a degradar quando sku_items_sync_controle falha — o poison ' +
         'reviveria sem ninguém saber (edge deployada antes da migration)',
     ).toMatch(/throw new Error\(\s*\n?\s*`sku_items_sync_controle ilegível/);
+  });
+
+  // O recompute derivado (RPC recomputar_leadtime_derivado) conserta o leadtime que nasce
+  // NULL no faturamento e nunca volta à fila quando o t4 chega. Ele é LOCAL — não gasta Omie.
+  it('o recompute derivado roda ANTES do loop da Omie, não depois', () => {
+    const chamada = src.indexOf('await recomputarLeadtimeDerivado(supabase');
+    const loop = src.indexOf('for (const nfeRaw of fila)');
+    expect(chamada, 'edge não chama mais o recompute derivado — o leadtime volta a morrer NULL').toBeGreaterThan(-1);
+    expect(loop, 'sentinela: o loop da fila sumiu do edge').toBeGreaterThan(-1);
+    expect(
+      chamada,
+      'REGRESSÃO: o recompute saiu do início do run. O guard de 50s dá break no meio do ' +
+        'loop justamente quando a fila está grande — no fim, ele deixaria de rodar EXATAMENTE ' +
+        'nos dias com mais t4 novo para derivar.',
+    ).toBeLessThan(loop);
+  });
+
+  it('falha do recompute é reportada ao Sentinela, não engolida', () => {
+    expect(
+      src,
+      'REGRESSÃO: recompute falhando em silêncio — a causa provável é migration não ' +
+        'aplicada (deploy fora de ordem), e o gap de ~30% voltaria a crescer sem ninguém saber',
+    ).toMatch(/falhaSistemica \?\? falhaControle \?\? falhaRecompute/);
+  });
+});
+
+// ── Fatia 3-edges PR-B (omie-analytics-sync: o snapshot de não-vinculados lê a proof por conta) ──
+// classifyClienteForSnapshot decide se um cliente Omie entra no relatório omie_clientes_nao_vinculados:
+// código no Set = "linked" (fica de fora). O Set vinha do espelho omie_clientes SEM filtro de conta —
+// mas o espelho é UNIQUE(user_id) (1 linha/user, sobrescrita pelo writer da vez, hoje dominado por oben)
+// e por isso NÃO contém os códigos das outras contas. Medido em prod (2026-07-16), códigos da proof
+// ausentes do espelho: colacor 5.148/5.148 (100%), colacor_sc 3.604/5.275 (68%), oben 0/5.238 (0%).
+// Rodar o snapshot de colacor/colacor_sc reportava clientes VINCULADOS como não-vinculados em massa;
+// só oben roda hoje, o que mascarava o furo. Agora o Set vem da fresca com .eq("account", empresa).
+// Os outros omie_clientes deste edge NÃO migram nesta PR e o motivo é estrutural, não esquecimento:
+//   • :238 fetchOmieClienteUserMap alimenta o upsertByUser CODE-FIRST → é a leitura de suporte do
+//     WRITER do espelho (:515), par indivisível: morre junto com ele na Fatia 4;
+//   • :1669 fetchAlvosSemProfile / :1890 fetchOmieCodigoPorUser operam sobre os CLONES (user sem
+//     profile). Medido: 1.633 alvos pelo espelho, 0 pela proof (clone não tem linha lá), 1.633 pelo
+//     ledger — mas o ledger não tem omie_codigo_cliente, e essas funções precisam do par
+//     (clone → código). Migrá-las p/ a proof zeraria syncBackfillCadastro e mapaConsolidacao em
+//     SILÊNCIO. Bloqueio de design escalado — o DROP (Fatia 5) depende de resolvê-lo.
+const OMIE_ANALYTICS = 'supabase/functions/omie-analytics-sync/index.ts';
+
+describe('guardrail money-path: snapshot de não-vinculados lê a proof por conta (Fatia 3-edges PR-B)', () => {
+  const src = read(OMIE_ANALYTICS);
+
+  it('sentinela: leu o arquivo real (edge)', () => {
+    expect(src).toContain('syncNaoVinculados');
+    expect(src).toContain('classifyClienteForSnapshot');
+  });
+
+  it('o Set de "já vinculados" vem da fresca, filtrado pela conta do run, paginado com .order', () => {
+    expect(
+      src,
+      'REVERSÃO Lovable? o Set de vinculados não lê a fresca com .eq("account", empresa) + .order + .range',
+    ).toMatch(
+      /\.from\("omie_customer_account_map_fresco"\)[\s\S]{0,120}\.eq\("account", empresa\)[\s\S]{0,240}\.order\("omie_codigo_cliente"\)[\s\S]{0,120}\.range\(/,
+    );
+    // A conta TEM de chegar na função: sem o parâmetro o Set volta a ser global (o bug).
+    expect(
+      src,
+      'REGRESSÃO: fetchAllOmieClienteCodigos perdeu o parâmetro de conta — Set global de novo',
+    ).toMatch(/async function fetchAllOmieClienteCodigos\(db: SupabaseClient, empresa: Empresa\)/);
+    expect(
+      src,
+      'REGRESSÃO: o chamador não passa mais a empresa do run para o Set de vinculados',
+    ).toMatch(/fetchAllOmieClienteCodigos\(db, empresa\)/);
+  });
+
+  it('o Set de vinculados NÃO voltou ao espelho poluído', () => {
+    expect(
+      src,
+      'REGRESSÃO: fetchAllOmieClienteCodigos voltou a ler omie_clientes (Set global → falso não-vinculado)',
+    ).not.toMatch(/fetch omie_clientes codigos/);
+  });
+
+  it('os omie_clientes restantes são o writer + as 2 funções de CLONE (bloqueadas), nunca mais', () => {
+    // Trava o escopo: 4 = :238 (leitura de suporte do writer) + :515 (upsert) + fetchAlvosSemProfile
+    // + fetchOmieCodigoPorUser. Se virar 5, alguém reabriu uma leitura do espelho neste edge.
+    expect(
+      count(src, '.from("omie_clientes")'),
+      'omie_clientes mudou de contagem neste edge — leitura nova do espelho ou migração não registrada aqui',
+    ).toBe(4);
+  });
+});
+
+// ── Fatia 3-edges PR-A (omie-cliente: os 3 LEITORES saem do espelho → proof fresca account-correta) ──
+// Os 3 leitores do edge de cadastro resolviam identidade por um código de conta INDETERMINADA. O espelho
+// omie_clientes é UNIQUE(user_id) — 1 linha por user, sobrescrita pelo writer da vez (oben, colacor_sc…) —
+// e empresa_omie está 'colacor' em 6.909/6.909 linhas (o DEFAULT, nunca populado): o rótulo de conta é
+// mentiroso. Migrados p/ omie_customer_account_map_fresco, que é UNIQUE(user_id, account) e
+// UNIQUE(omie_codigo_cliente, account) → .maybeSingle() seguro. A conta de CADA leitor saiu do CHAMADOR,
+// não de presunção (as credenciais do edge enganam: callOmieApi é colacor_sc, mas não é ela que decide):
+//   • criar_perfil_local → 'oben'  — useUnifiedOrder.handleStaffAddTool passa selectedCustomer.codigo_cliente
+//     (código OBEN) e resolve o MESMO código com .eq('account','oben') logo antes de invocar (#1331);
+//   • sync_all_clients   → conta do account_index (useAnalyticsSync itera "Conta N/3", 0→2);
+//   • sync_addresses     → multi-conta por natureza: usa o account de CADA linha da proof (não filtra uma).
+// Restam 3 omie_clientes, todos WRITERS (inserts → migram na Fatia 4 p/ register_carteira_member).
+// A paridade textual pega a reversão do deploy do Lovable (armadilha do #1272). Ver design §4/§5.
+const OMIE_CLIENTE = 'supabase/functions/omie-cliente/index.ts';
+const UNIFIED_ORDER = 'src/hooks/useUnifiedOrder.ts';
+
+// Recorta o corpo de um `case "<nome>": {` do edge (até o próximo case na mesma indentação). Necessário
+// porque o omie-cliente tem 9 handlers e vários compartilham vocabulário: `for (const account of accounts)`
+// é REGRESSÃO no sync_addresses (chutar o código nas 3 contas) e LEGÍTIMO no buscar_logos_empresas, que
+// varre as contas de propósito. Um assert no arquivo inteiro confundiria os dois.
+function blocoCaseCliente(s: string, nome: string): string {
+  const i = s.indexOf(`case "${nome}": {`);
+  if (i < 0) throw new Error(`case "${nome}" não encontrado no omie-cliente`);
+  const resto = s.slice(i);
+  const fim = resto.search(/\n {6}case "/);
+  return fim < 0 ? resto : resto.slice(0, fim);
+}
+
+// Recorta handleStaffAddTool (o único chamador de criar_perfil_local) para amarrar edge × chamador
+// dentro do MESMO fluxo, sem depender de contar caracteres entre as duas âncoras.
+function blocoHandleStaffAddTool(s: string): string {
+  const i = s.indexOf('const handleStaffAddTool = async () => {');
+  if (i < 0) throw new Error('handleStaffAddTool não encontrada em useUnifiedOrder');
+  const resto = s.slice(i);
+  const fim = resto.search(/\n {2}\};\n/);
+  return fim < 0 ? resto : resto.slice(0, fim);
+}
+
+describe('guardrail money-path: omie-cliente lê a proof fresca account-correta (Fatia 3-edges PR-A)', () => {
+  const src = read(OMIE_CLIENTE);
+
+  it('sentinela: leu o arquivo real (edge) e os 3 handlers migrados', () => {
+    expect(src).toContain('criar_perfil_local');
+    expect(src).toContain('sync_all_clients');
+    expect(src).toContain('sync_addresses');
+  });
+
+  it('os 3 LEITORES vêm da view fresca; omie_clientes só resta como WRITER', () => {
+    expect(
+      count(src, '.from("omie_customer_account_map_fresco")'),
+      'REVERSÃO Lovable? sumiu leitura da view fresca (esperado 3: criar_perfil_local, sync_all_clients, sync_addresses)',
+    ).toBe(3);
+    expect(
+      count(src, '.from("omie_clientes")'),
+      'REGRESSÃO: omie_clientes voltou como LEITOR (deveria restar só os 3 writers INSERT → Fatia 4)',
+    ).toBe(3);
+    // Os 3 restantes TÊM de ser inserts: contar == 3 sozinho não impede trocar um insert por um select.
+    expect(
+      (src.match(/\.from\("omie_clientes"\)\s*\.insert\(/g) ?? []).length,
+      'REGRESSÃO: algum dos 3 omie_clientes restantes deixou de ser o writer INSERT',
+    ).toBe(3);
+    expect(
+      src,
+      'REVERSÃO Lovable? voltou a .select() do espelho poluído omie_clientes (código de conta indeterminada)',
+    ).not.toMatch(/\.from\("omie_clientes"\)\s*\.select/);
+  });
+
+  it('a credencial Omie carrega o slug canônico da conta (não o índice instável nem o nome de UI)', () => {
+    // getOmieAccounts monta a lista CONDICIONALMENTE (só com as env vars presentes): faltar
+    // OMIE_OBEN_APP_KEY faria o índice 1 virar Colacor e o filtro de conta mentir em silêncio.
+    expect(src, 'sumiu o slug canônico do OmieAccountConfig — o filtro de conta volta a depender do índice')
+      .toMatch(/account:\s*OmieAccountSlug/);
+    expect(
+      count(src, 'account: "colacor_sc"') + count(src, 'account: "oben"') + count(src, 'account: "colacor"'),
+      'as 3 contas devem declarar seu slug canônico (domínio do CHECK chk_ocam_account)',
+    ).toBe(3);
+  });
+
+  it('criar_perfil_local resolve codigo->user na fresca account=oben (a conta do chamador)', () => {
+    expect(
+      src,
+      'REVERSÃO Lovable? criar_perfil_local não resolve mais o código pela fresca com account=oben',
+    ).toMatch(
+      /\.from\("omie_customer_account_map_fresco"\)[\s\S]{0,200}\.eq\("omie_codigo_cliente", cliente\.codigo_cliente\)[\s\S]{0,120}\.eq\("account", "oben"\)/,
+    );
+    // Miss (ausente/stale >7d) NÃO pode virar código chutado: o ramo cai no fallback por documento.
+    expect(
+      src,
+      'REGRESSÃO: sumiu o guard de miss (existingMapping?.user_id) — user_id null da view viraria hit falso',
+    ).toMatch(/if \(existingMapping\?\.user_id\)/);
+  });
+
+  it('COERÊNCIA cross-file: o edge usa a MESMA conta que o chamador — senão resolvem users diferentes', () => {
+    // O frontend resolve o código pela fresca account=oben e SÓ ENTÃO invoca criar_perfil_local com ele.
+    // Se um dos dois mudar de conta, o edge acha um user diferente do que o chamador acabou de achar e
+    // a ferramenta é anexada ao cliente ERRADO (Codex P2). Este assert amarra os dois lados no MESMO fluxo.
+    const fluxo = blocoHandleStaffAddTool(read(UNIFIED_ORDER));
+    expect(
+      fluxo,
+      'sentinela: handleStaffAddTool deixou de ser o chamador de criar_perfil_local',
+    ).toMatch(/action: 'criar_perfil_local'/);
+    expect(
+      fluxo,
+      'o chamador de criar_perfil_local não resolve mais o código pela fresca account=oben — o edge divergiu dele?',
+    ).toMatch(/omie_customer_account_map_fresco[\s\S]{0,260}\.eq\('account', 'oben'\)/);
+  });
+
+  it('sync_all_clients dedupa pela conta DO LOTE, paginado e fail-closed em erro de query', () => {
+    expect(
+      src,
+      'REVERSÃO Lovable? o dedup do sync_all_clients não lê a fresca filtrando a conta do account_index',
+    ).toMatch(
+      /\.from\("omie_customer_account_map_fresco"\)[\s\S]{0,120}\.eq\("account", account\.account\)[\s\S]{0,120}\.order\("omie_codigo_cliente"\)[\s\S]{0,120}\.range\(/,
+    );
+    // Sem .range o PostgREST capa em 1.000 linhas SILENCIOSO (eram 1.000 de 6.909 → o dedup enxergava 1/7).
+    expect(
+      src,
+      'REGRESSÃO: o pré-load do dedup perdeu a paginação — volta a capar em 1.000 e reprocessar o resto',
+    ).toMatch(/codePage\.length < codePageSize/);
+    // Codex P2 do PR-2: engolir o erro deixa o Set vazio e o loop tenta RECRIAR milhares de clientes.
+    expect(
+      src,
+      'REGRESSÃO: o pré-load do dedup engole o erro da query — Set vazio → reimportação em massa',
+    ).toMatch(/if \(codeErr\) throw new Error/);
+  });
+
+  it('sync_addresses lê (user, conta, código) da proof e consulta a conta CERTA de cada código', () => {
+    // Ancorado no bloco do handler: `for (const account of accounts)` é regressão AQUI e legítimo no
+    // buscar_logos_empresas (que varre as contas de propósito) — no arquivo inteiro os dois se confundem.
+    const bloco = blocoCaseCliente(src, 'sync_addresses');
+    expect(
+      bloco,
+      'REVERSÃO Lovable? sync_addresses não lê mais (user_id, account, omie_codigo_cliente) da fresca paginada',
+    ).toMatch(
+      /\.from\("omie_customer_account_map_fresco"\)[\s\S]{0,120}\.select\("user_id, account, omie_codigo_cliente"\)[\s\S]{0,160}\.range\(/,
+    );
+    // O código agora vem PAREADO com a conta dele: nada de chutar o mesmo código nas 3 contas.
+    expect(
+      bloco,
+      'REGRESSÃO: sync_addresses voltou a varrer as 3 contas com o mesmo código indeterminado',
+    ).not.toMatch(/for \(const account of accounts\)/);
+    expect(
+      bloco,
+      'sentinela: a consulta usa a credencial da conta DA LINHA da proof',
+    ).toMatch(/accountBySlug\.get\(entry\.account\)/);
+    // A proof tem até 1 linha por (user, conta) — sem agrupar, batch_size=30 viraria ~10 users.
+    expect(
+      bloco,
+      'REGRESSÃO: sumiu o agrupamento por user — o lote passa a contar LINHAS da proof, não clientes',
+    ).toMatch(/codesByUser/);
+    expect(
+      bloco,
+      'REGRESSÃO: o pré-load dos mapeamentos engole o erro — vira "No client mappings found" (no-op mudo)',
+    ).toMatch(/if \(pageErr\) throw new Error/);
   });
 });

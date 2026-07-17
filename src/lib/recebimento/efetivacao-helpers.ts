@@ -572,3 +572,56 @@ export function selecionarCandidatasReconcile<T extends PendenteReconcile>(
   }
   return sel;
 }
+
+// ── v3.1 (2026-07-16): cobertura da listagem por janelas de emissão consecutivas ──
+// A 1ª rodada v3 em prod provou o transporte (zero REDUNDANT) mas cobriu pouco:
+// janela única de 60d ancorada na pendente mais antiga (janeiro) deixou 15 de 24
+// pendentes "fora_da_listagem" (emissões mar–mai). Este helper gera janelas
+// DISJUNTAS e consecutivas da mais antiga até hoje (ou até a maior emissão
+// registrada — dados sujos do Omie têm emissão futura), com cap de chamadas.
+
+export interface JanelaEmissao { de: Date; ate: Date }
+
+function parseEmissao(iso: string | null): Date | null {
+  if (!iso) return null;
+  const d = new Date(`${iso.slice(0, 10)}T00:00:00Z`);
+  return Number.isFinite(d.getTime()) ? d : null;
+}
+
+/**
+ * Janelas de emissão para o ListarRecebimentos: [emissãoMin - margem, +largura],
+ * consecutivas e DISJUNTAS (de_{k+1} = ate_k + 1d — sobreposição faria a mesma NF
+ * aparecer em 2 páginas e cair no fail-closed de duplicata), até alcançar
+ * max(agora, emissãoMax) + 1d, com no máximo `maxJanelas` (cap de chamadas ao Omie
+ * por conta por rodada). Âncora muito antiga → cobertura parcial honesta: o
+ * chamador reporta `truncada` e a cobertura avança quando as antigas resolverem.
+ * Datas inválidas/ausentes caem no fallback (agora - fallbackDias). Determinístico
+ * (recebe `agora`); dias em UTC puro.
+ */
+export function janelasEmissaoConsecutivas(
+  emissaoMinIso: string | null,
+  emissaoMaxIso: string | null,
+  agora: Date,
+  opts?: { margemDias?: number; larguraDias?: number; maxJanelas?: number; fallbackDias?: number },
+): JanelaEmissao[] {
+  const DIA = 86_400_000;
+  const margem = (opts?.margemDias ?? 7) * DIA;
+  const largura = (opts?.larguraDias ?? 60) * DIA;
+  const max = opts?.maxJanelas ?? 4;
+  const fallback = (opts?.fallbackDias ?? 210) * DIA;
+
+  const min = parseEmissao(emissaoMinIso);
+  const maxEmissao = parseEmissao(emissaoMaxIso);
+  const base = min ? new Date(min.getTime() - margem) : new Date(agora.getTime() - fallback);
+  const alvo = new Date(Math.max(agora.getTime(), maxEmissao?.getTime() ?? 0) + DIA);
+
+  const janelas: JanelaEmissao[] = [];
+  let de = base;
+  while (janelas.length < max) {
+    const ate = new Date(de.getTime() + largura);
+    janelas.push({ de, ate });
+    if (ate.getTime() >= alvo.getTime()) break;
+    de = new Date(ate.getTime() + DIA);
+  }
+  return janelas;
+}

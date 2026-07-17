@@ -165,7 +165,9 @@ export default async ({ page, context }) => {
     };
   }, skuEsperado);
 
-  // Cancela a linha em edição (X vermelho — spike-A: cancela sem dialog).
+  // Cancela a linha em edição (X vermelho). Spike-B 50e669c7: o portal pode
+  // auto-gravar a linha na seleção (Seq preenchido) e o X de linha gravada
+  // abre confirm() nativo — aceito pelo handler page.on('dialog') do runFlow.
   // ESCOPO ESTRITO (achado Codex P0): só #btnCancelarItem OU botões DENTRO da
   // última linha (a em edição). NUNCA a tabela/tfoot inteira — um matcher amplo
   // fora da linha poderia acertar um botão errado do formulário. Sem fa-trash
@@ -202,10 +204,16 @@ export default async ({ page, context }) => {
 
   // Cancelamento é PROVA, não best-effort (Codex P0): sem comprovação (clique +
   // 0 linhas), aborta o run inteiro — o Deno não persiste nada sem essa prova.
+  // Poll (não sleep fixo): a remoção pode ser AJAX/confirm assíncrono; sai no
+  // primeiro rows==0, aborta se não zerar dentro da janela (spike-B 50e669c7).
   const exigirCancelamento = async (i, contexto) => {
     const cancel = await cancelarLinhaEdicao().catch(function() { return { clicked: false, motivo: 'evaluate_erro' }; });
-    await sleep(600);
-    const rowsApos = await contarRows().catch(function() { return -1; });
+    let rowsApos = -1;
+    for (let tent = 0; tent < 16; tent++) {
+      await sleep(300);
+      rowsApos = await contarRows().catch(function() { return -1; });
+      if (rowsApos === 0) break;
+    }
     trace.push({ step: 'item_' + i + '_cancel_' + contexto, cancel, rows_apos: rowsApos, t: Date.now() - t0 });
     if (!(cancel && cancel.clicked) || rowsApos !== 0) {
       const err = new Error('cancelamento não comprovado no item ' + i + ' (' + contexto + '): rows_apos=' + rowsApos);
@@ -220,6 +228,14 @@ export default async ({ page, context }) => {
     let headersVistos = [];
    try {
     await applyStealth();
+    // Confirm nativo do portal (ex.: remoção de linha gravada): o default do
+    // puppeteer DISMISSA (= linha fica e o cancel nunca comprova — spike-B
+    // 50e669c7). Aceitar é seguro NESTE fluxo: a captura nunca salva/efetiva,
+    // então todo dialog aqui é de descarte/remoção.
+    page.on('dialog', function(d) {
+      trace.push({ step: 'dialog_accept', tipo: d.type(), msg: String(d.message() || '').substring(0, 80), t: Date.now() - t0 });
+      d.accept().catch(function() {});
+    });
     trace.push({ step: 'login_start', t: Date.now() - t0 });
     await page.goto(portalUrl + '/login', { waitUntil: 'domcontentloaded', timeout: budgetFor('login-goto', 30_000) });
     await page.waitForSelector('#user', { timeout: budgetFor('login-form', 10_000) });
@@ -371,6 +387,26 @@ export default async ({ page, context }) => {
       };
     }
     trace.push({ step: 'cliente_selecionado', cliente: String(clienteSelecionado).substring(0, 80), t: Date.now() - t0 });
+
+    // Guard: a grade de um pedido NOVO nasce vazia. Linha pré-existente =
+    // rascunho sujo (auto-save do portal ou resíduo de run anterior) — abortar
+    // ANTES de mexer: não é nosso papel apagar linha possivelmente humana, e
+    // seguir adiante faria o rows==0 do cancel nunca comprovar (erro enganoso).
+    const rowsIniciais = await contarRows().catch(function() { return -1; });
+    if (rowsIniciais !== 0) {
+      const errorScreenshot = await page.screenshot({ type: 'jpeg', quality: 70, encoding: 'base64' }).catch(() => null);
+      return {
+        data: {
+          success: false,
+          erro: 'Rascunho de proposta com ' + rowsIniciais + ' linha(s) pré-existente(s) — limpar no portal (Vendas → Pedidos/Propostas) antes de re-rodar a captura',
+          erroTipo: 'RASCUNHO_SUJO_INICIAL',
+          itens, itens_nao_processados: items.map(function(it){ return it.sku_portal; }),
+          trace,
+        },
+        type: 'application/json',
+        screenshot: errorScreenshot,
+      };
+    }
 
     // === Loop de captura: selecionar → ler linha em edição → cancelar ===
     for (let i = 0; i < items.length; i++) {

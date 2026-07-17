@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **369** custom migrations totais
-- **1319** objetos esperados (criados por estas migrations)
+- **372** custom migrations totais
+- **1331** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 367
-  - `rls_policy`: 293
-  - `index`: 221
+  - `function`: 374
+  - `rls_policy`: 295
+  - `index`: 222
   - `cron_job`: 149
-  - `table`: 144
+  - `table`: 146
   - `trigger`: 78
   - `view`: 63
   - `enum_value`: 4
@@ -3123,6 +3123,18 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `rls_policy` | `public.carteira_rebuild_lease_no_update` | `sync_state` |
 | `rls_policy` | `public.carteira_rebuild_lease_no_delete` | `sync_state` |
 
+### `20260713193000_reposicao_pedidos_compra_run.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.reposicao_alocar_run_seq` | — |
+| `function` | `public.reposicao_publicar_run_completo` | — |
+| `table` | `public.reposicao_pedidos_compra_run` | — |
+| `table` | `public.reposicao_po_last_seen` | — |
+| `index` | `public.idx_reposicao_pedidos_compra_run_baseline` | `reposicao_pedidos_compra_run` |
+| `rls_policy` | `public.reposicao_pedidos_compra_run_sel` | `reposicao_pedidos_compra_run` |
+| `rls_policy` | `public.reposicao_po_last_seen_sel` | `reposicao_po_last_seen` |
+
 ### `20260714215547_omie_nfe_recebimento_crons.sql`
 
 | Tipo | Objeto | Parent |
@@ -3157,11 +3169,26 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `view` | `public.v_sku_leadtime_efetivo` | — |
 | `view` | `public.v_sku_leadtime_estatisticas` | — |
 
+### `20260716200000_reposicao_recompute_leadtime_derivado.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.leadtime_t1_e_data_de_pedido` | — |
+| `function` | `public.recomputar_leadtime_derivado` | — |
+
 ### `20260716230000_sla_compliance_le_leadtime_efetivo.sql`
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `view` | `public.v_sku_sla_compliance` | — |
+
+### `20260717003000_outliers_leadtime_stack_efetivo.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.detectar_outliers_empresa` | — |
+| `function` | `public.estimar_impacto_exclusao_outlier` | — |
+| `function` | `public.resolver_outlier` | — |
 
 ## Próximos passos por status
 

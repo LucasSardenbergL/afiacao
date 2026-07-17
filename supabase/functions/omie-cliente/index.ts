@@ -125,8 +125,16 @@ async function callOmieApi(
   return callOmieApiWithCredentials(endpoint, call, params, OMIE_APP_KEY, OMIE_APP_SECRET);
 }
 
+// Slug canônico da conta, igual ao domínio de omie_customer_account_map.account
+// (CHECK chk_ocam_account: 'oben' | 'colacor' | 'colacor_sc'). É a chave que amarra a credencial
+// Omie usada na chamada à linha correspondente da proof — o `name` é rótulo de UI e não serve
+// (buscar_logos_empresas já erra ao casar por nome), e o ÍNDICE em getOmieAccounts() é instável:
+// a lista é montada condicionalmente, então faltar OMIE_OBEN_APP_KEY faz o índice 1 virar Colacor.
+type OmieAccountSlug = "colacor_sc" | "oben" | "colacor";
+
 interface OmieAccountConfig {
   name: string;
+  account: OmieAccountSlug;
   appKey: string;
   appSecret: string;
 }
@@ -137,19 +145,19 @@ function getOmieAccounts(): OmieAccountConfig[] {
   const colacorScKey = Deno.env.get("OMIE_COLACOR_SC_APP_KEY");
   const colacorScSecret = Deno.env.get("OMIE_COLACOR_SC_APP_SECRET");
   if (colacorScKey && colacorScSecret) {
-    accounts.push({ name: "Colacor SC (Afiação)", appKey: colacorScKey, appSecret: colacorScSecret });
+    accounts.push({ name: "Colacor SC (Afiação)", account: "colacor_sc", appKey: colacorScKey, appSecret: colacorScSecret });
   }
 
   const obenKey = Deno.env.get("OMIE_OBEN_APP_KEY");
   const obenSecret = Deno.env.get("OMIE_OBEN_APP_SECRET");
   if (obenKey && obenSecret) {
-    accounts.push({ name: "Oben", appKey: obenKey, appSecret: obenSecret });
+    accounts.push({ name: "Oben", account: "oben", appKey: obenKey, appSecret: obenSecret });
   }
 
   const colacorKey = Deno.env.get("OMIE_COLACOR_APP_KEY");
   const colacorSecret = Deno.env.get("OMIE_COLACOR_APP_SECRET");
   if (colacorKey && colacorSecret) {
-    accounts.push({ name: "Colacor", appKey: colacorKey, appSecret: colacorSecret });
+    accounts.push({ name: "Colacor", account: "colacor", appKey: colacorKey, appSecret: colacorSecret });
   }
 
   return accounts;
@@ -622,14 +630,23 @@ serve(async (req) => {
         const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
         const adminClient = createClient(supabaseUrl, supabaseServiceKey);
 
-        // Check if mapping already exists by omie_codigo_cliente
+        // Resolve codigo->user_id pela proof fresca account-correta (account='oben').
+        // O ÚNICO chamador é o fluxo de vendas OBEN (useUnifiedOrder.handleStaffAddTool), que passa
+        // selectedCustomer.codigo_cliente — código da conta OBEN — e JÁ resolve esse mesmo código pela
+        // fresca com .eq('account','oben') antes de invocar (#1331). Buscá-lo no espelho omie_clientes
+        // SEM conta lia um código de conta INDETERMINADA: o espelho é UNIQUE(user_id) (1 linha/user,
+        // sobrescrita pelo writer da vez) e empresa_omie é 'colacor' em 100% das linhas — rótulo
+        // mentiroso. Divergir da conta do chamador aqui anexaria a ferramenta ao cliente ERRADO.
+        // Miss (ausente ou stale >7d) cai no fallback por documento abaixo — fail-closed.
         const { data: existingMapping } = await adminClient
-          .from("omie_clientes")
+          .from("omie_customer_account_map_fresco")
           .select("user_id")
           .eq("omie_codigo_cliente", cliente.codigo_cliente)
+          .eq("account", "oben")
           .maybeSingle();
 
-        if (existingMapping) {
+        // user_id da view é nulável (view sem NOT NULL) → null = miss, cai no fallback por documento.
+        if (existingMapping?.user_id) {
           result = { user_id: existingMapping.user_id };
           break;
         }
@@ -745,11 +762,31 @@ serve(async (req) => {
         let accErrors = 0;
         let pagesProcessed = 0;
 
-        // Pre-load all existing omie_clientes mappings for fast lookup
-        const { data: allMappings } = await adminClient
-          .from("omie_clientes")
-          .select("omie_codigo_cliente");
-        const existingCodes = new Set((allMappings || []).map(m => m.omie_codigo_cliente));
+        // Códigos JÁ mapeados NESTA conta, pela proof fresca account-correta. Antes vinha de
+        // .select("omie_codigo_cliente") do espelho omie_clientes: (a) SEM filtro de conta — e o
+        // espelho é UNIQUE(user_id), 1 linha/user sobrescrita pelo writer da vez, com empresa_omie
+        // 'colacor' em 100% das linhas → o Set misturava códigos de contas diferentes; (b) SEM
+        // .range() → capado em 1.000 linhas silencioso (armadilha PostgREST) de 6.909 → o dedup
+        // enxergava 1/7 dos códigos e o loop reprocessava o resto. A fresca dá os códigos DESTA
+        // conta, paginados com .order estável.
+        const existingCodes = new Set<number>();
+        let codeOffset = 0;
+        const codePageSize = 1000;
+        while (true) {
+          const { data: codePage, error: codeErr } = await adminClient
+            .from("omie_customer_account_map_fresco")
+            .select("omie_codigo_cliente")
+            .eq("account", account.account)
+            .order("omie_codigo_cliente")
+            .range(codeOffset, codeOffset + codePageSize - 1);
+          // Fail-closed: engolir o erro deixaria o Set vazio/parcial e o loop tentaria RECRIAR
+          // milhares de clientes já existentes (Codex P2 do PR-2, mesma armadilha).
+          if (codeErr) throw new Error(`Falha ao carregar códigos já mapeados (${account.account}): ${codeErr.message}`);
+          if (!codePage || codePage.length === 0) break;
+          for (const row of codePage) existingCodes.add(row.omie_codigo_cliente as number);
+          if (codePage.length < codePageSize) break;
+          codeOffset += codePageSize;
+        }
 
         // Pre-load all profiles with documents for dedup
         const { data: allProfiles } = await adminClient
@@ -900,47 +937,76 @@ serve(async (req) => {
         }
         const usersWithAddress = new Set(allAddressUserIds);
 
-        // Get ALL omie_clientes mappings (paginate to bypass 1000 row limit)
-        let allMappings: Array<{ user_id: string; omie_codigo_cliente: number }> = [];
+        // Mapeamentos (user, conta, código) pela proof fresca account-correta, paginado com .order
+        // estável. Antes vinha de .select("user_id, omie_codigo_cliente") do espelho omie_clientes,
+        // que é UNIQUE(user_id): 1 linha por user com o código da ÚLTIMA conta que escreveu (e
+        // empresa_omie 'colacor' em 100% das linhas, rótulo mentiroso) — o loop abaixo então chutava
+        // esse código indeterminado nas 3 contas até uma responder. A proof tem 1 linha por
+        // (user, conta), então sabemos a conta CERTA de cada código.
+        let allMappings: Array<{ user_id: string; account: string; omie_codigo_cliente: number }> = [];
         let fetchOffset = 0;
         const fetchPageSize = 1000;
         while (true) {
-          const { data: page } = await adminClient
-            .from("omie_clientes")
-            .select("user_id, omie_codigo_cliente")
+          const { data: page, error: pageErr } = await adminClient
+            .from("omie_customer_account_map_fresco")
+            .select("user_id, account, omie_codigo_cliente")
+            .order("user_id")
+            .order("account")
             .range(fetchOffset, fetchOffset + fetchPageSize - 1);
+          // Fail-closed: engolir o erro daria "No client mappings found" — um NO-OP mudo que parece sucesso.
+          if (pageErr) throw new Error(`Falha ao carregar mapeamentos da proof: ${pageErr.message}`);
           if (!page || page.length === 0) break;
-          allMappings = allMappings.concat(page);
+          allMappings = allMappings.concat(page as typeof allMappings);
           if (page.length < fetchPageSize) break;
           fetchOffset += fetchPageSize;
         }
-        const totalCount = allMappings.length;
 
-        if (allMappings.length === 0) {
+        // Agrupa por user: a proof tem até 1 linha por (user, conta) e o batch conta USERS (o espelho
+        // tinha 1 linha/user, então sem agrupar um batch_size=30 viraria ~10 users e o lote encolheria).
+        const codesByUser = new Map<string, Array<{ account: string; codigo: number }>>();
+        for (const m of allMappings) {
+          const list = codesByUser.get(m.user_id) ?? [];
+          list.push({ account: m.account, codigo: m.omie_codigo_cliente });
+          codesByUser.set(m.user_id, list);
+        }
+        const totalCount = codesByUser.size;
+
+        if (totalCount === 0) {
           result = { synced: 0, skipped: 0, errors: 0, hasMore: false, message: "No client mappings found" };
           break;
         }
 
         // Filter to those without addresses
-        const clientsNeedingAddress = allMappings.filter((m) => !usersWithAddress.has(m.user_id));
+        const clientsNeedingAddress = [...codesByUser.keys()].filter((userId) => !usersWithAddress.has(userId));
         const totalNeeding = clientsNeedingAddress.length;
 
         // Always take from the beginning since the list shrinks as addresses are created
         const batch = clientsNeedingAddress.slice(0, batchSize);
         console.log(`[sync_addresses] Processing batch size=${batch.length}, totalNeeding=${totalNeeding}`);
 
-        for (const mapping of batch) {
+        // Chave `string` de propósito: o account vem da proof (dado externo). Slug desconhecido ou
+        // sem credencial nesta edge → .get() undefined → o guard abaixo pula (fail-closed).
+        const accountBySlug = new Map<string, OmieAccountConfig>(accounts.map((a) => [a.account, a]));
+
+        for (const userId of batch) {
           try {
             let clienteData: OmieCliente | null = null;
-            
-            for (const account of accounts) {
+
+            // Só as contas onde o user REALMENTE tem cadastro, cada uma com o código DAQUELA conta
+            // (a proof garante o par). Antes: o mesmo código indeterminado era chutado nas 3 contas
+            // até uma responder — até 3x chamadas Omie e, sob colisão de código entre contas, o
+            // endereço de OUTRO cliente. Mantém "tenta até achar endereço" entre as contas do user.
+            for (const entry of codesByUser.get(userId) ?? []) {
+              const conta = accountBySlug.get(entry.account);
+              // Conta sem credencial nesta edge → pula (fail-closed: não tenta o código em outra conta).
+              if (!conta) continue;
               try {
                 const detailResult = await callOmieApiWithCredentials(
                   "geral/clientes/",
                   "ConsultarCliente",
-                  { codigo_cliente_omie: mapping.omie_codigo_cliente },
-                  account.appKey,
-                  account.appSecret
+                  { codigo_cliente_omie: entry.codigo },
+                  conta.appKey,
+                  conta.appSecret
                 ) as unknown as OmieCliente;
 
                 if (detailResult && detailResult.endereco && detailResult.cidade) {
@@ -948,7 +1014,7 @@ serve(async (req) => {
                   break;
                 }
               } catch {
-                // Client not in this account, try next
+                // Sem cadastro/endereço nesta conta do user → tenta a próxima conta DELE
               }
             }
 
@@ -957,14 +1023,14 @@ serve(async (req) => {
               continue;
             }
 
-            const inserted = await upsertAddressFromOmie(adminClient, mapping.user_id, clienteData);
+            const inserted = await upsertAddressFromOmie(adminClient, userId, clienteData);
             if (inserted) {
               totalSynced++;
             } else {
               totalSkipped++;
             }
           } catch (err) {
-            console.error(`[sync_addresses] Error for user ${mapping.user_id}:`, err);
+            console.error(`[sync_addresses] Error for user ${userId}:`, err);
             totalErrors++;
           }
         }
@@ -976,7 +1042,7 @@ serve(async (req) => {
           skipped: totalSkipped,
           errors: totalErrors,
           totalNeeding,
-          totalClients: totalCount || allMappings.length,
+          totalClients: totalCount,
           processed: batch.length,
           hasMore,
         };
