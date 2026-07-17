@@ -55,11 +55,26 @@ CREATE TYPE public.app_role AS ENUM ('employee','master','customer');
 CREATE FUNCTION public.has_role(_uid uuid, _role public.app_role) RETURNS boolean
   LANGUAGE sql STABLE AS $$ SELECT current_setting('test.is_staff', true) = 'on' $$;
 
--- fonte + MV em public (como em prod, com índice único p/ CONCURRENTLY)
-CREATE TABLE public.clientes_src (user_id uuid, metric int);
-INSERT INTO public.clientes_src VALUES ('11111111-1111-1111-1111-111111111111', 10), ('22222222-2222-2222-2222-222222222222', 20);
-CREATE MATERIALIZED VIEW public.customer_metrics_mv AS SELECT user_id, metric FROM public.clientes_src;
-CREATE UNIQUE INDEX idx_customer_metrics_mv_uid ON public.customer_metrics_mv(user_id);
+-- fonte + MV em public (como em prod, com índice único p/ CONCURRENTLY).
+-- #1380: as 13 colunas REAIS (medidas no psql-ro) — antes eram 2 fake (user_id,
+-- metric). O view-gate da 20260717120000 as lista explicitamente, então um schema
+-- fake fazia a migration real falhar aqui (42703) e o harness não podia aplicá-la.
+CREATE TABLE public.clientes_src (
+  customer_user_id uuid, razao_social text, document text, ultima_compra_data timestamptz,
+  dias_desde_ultima_compra int, pedidos_90d bigint, faturamento_90d numeric,
+  ticket_medio_90d numeric, faturamento_prev_90d numeric, intervalo_medio_dias numeric,
+  atraso_relativo numeric, is_cold_start boolean, calculated_at timestamptz
+);
+INSERT INTO public.clientes_src VALUES
+  ('11111111-1111-1111-1111-111111111111','ACME MARCENARIA LTDA','11111111000191', now(), 10, 4, 40000, 10000, 30000, 25, 0.4, false, now()),
+  ('22222222-2222-2222-2222-222222222222','BETA MOVEIS LTDA','22222222000172', now(), 5, 9, 90000, 10000, 70000, 12, 0.4, false, now());
+CREATE MATERIALIZED VIEW public.customer_metrics_mv AS
+  SELECT customer_user_id, razao_social, document, ultima_compra_data,
+         dias_desde_ultima_compra, pedidos_90d, faturamento_90d, ticket_medio_90d,
+         faturamento_prev_90d, intervalo_medio_dias, atraso_relativo, is_cold_start,
+         calculated_at
+    FROM public.clientes_src;
+CREATE UNIQUE INDEX idx_customer_metrics_mv_uid ON public.customer_metrics_mv(customer_user_id);
 GRANT SELECT ON public.customer_metrics_mv TO authenticated, service_role;  -- estado pós-Onda1 (anon já revogado)
 
 -- RPC que lê a MV (deve seguir funcionando após virar view)
@@ -77,9 +92,17 @@ BEGIN
 END $$;
 SQL
 
-# ══ ZONA 2 — aplicar a migração REAL ═════════════════════════════════════════
+# ══ ZONA 2 — aplicar as migrações REAIS, NA ORDEM ════════════════════════════
 P -q -f "$REPO_ROOT/supabase/migrations/20260629120000_seg_customer_metrics_viewgate.sql"
-echo "migração aplicada"
+# ⚠️ #1380: a 20260629120000 sozinha DEIXA O VAZAMENTO ABERTO — ela fechava o lint
+# "Materialized View in API", não a autorização (o cabeçalho dela diz "SEM mudar
+# comportamento"). Este harness parava aqui e, com M3/M6 exigindo `2`, CONSAGRAVA
+# o vazamento como esperado (achado do Codex challenge no #1382). Aplicamos também
+# o fix, e os asserts abaixo passam a descrever o estado FINAL: staff lê, customer
+# NÃO. Ver db/test-customer-metrics-viewgate.sh p/ a prova dedicada do gate.
+P -q -f "$REPO_ROOT/supabase/migrations/20260717120000_seg_customer_metrics_gate_staff.sql"
+P -q -f "$REPO_ROOT/supabase/migrations/20260717130000_seg_customer_metrics_acl_least_privilege.sql"
+echo "migrações aplicadas (lint + view-gate + ACL)"
 
 # ══ ZONA 4 — ASSERTS ═════════════════════════════════════════════════════════
 echo "── asserts ──"
@@ -88,16 +111,25 @@ V=$(Pq -c "SELECT c.relkind FROM pg_class c JOIN pg_namespace n ON n.oid=c.relna
 eq "M1 public.customer_metrics_mv e VIEW" "$V" "v"
 V=$(Pq -c "SELECT c.relkind FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='private' AND c.relname='customer_metrics_mv';")
 eq "M2 private.customer_metrics_mv e MATVIEW" "$V" "m"
-# M3: authenticated lê via view
+# M3: authenticated SEM staff (= customer) NÃO lê — o gate filtra (0 ≠ 42501).
+# Era `eq ... "2"`, que EXIGIA o vazamento; corrigido no #1380 (o assert estava
+# travando o bug como comportamento esperado — falso-verde estrutural).
 V=$(Pq -c "SET ROLE authenticated; SELECT count(*) FROM public.customer_metrics_mv;" | tail -1)
-eq "M3 authenticated le via view" "$V" "2"
+eq "M3 authenticated SEM staff NAO le (gate filtra)" "$V" "0"
+# M3b: authenticated COM staff segue lendo — o gate não quebra as telas.
+V=$(Pq -c "SET test.is_staff='on'; SET ROLE authenticated; SELECT count(*) FROM public.customer_metrics_mv;" | tail -1)
+eq "M3b authenticated COM staff le via view" "$V" "2"
 # M4: anon NÃO lê a view (sem grant)
 deny "SET ROLE anon; SELECT 1 FROM public.customer_metrics_mv;" "M4 anon NAO le a view"
 # M5: authenticated NÃO lê a MV em private (trancada)
 deny "SET ROLE authenticated; SELECT 1 FROM private.customer_metrics_mv;" "M5 authenticated NAO le a MV private"
-# M6: get_customer_metrics (RPC) ainda funciona
+# M6: get_customer_metrics (RPC SECDEF) segue funcionando p/ staff — o SECDEF
+# troca o ROLE, não o JWT, então o gate da view vale dentro dela.
+V=$(Pq -c "SET test.is_staff='on'; SELECT count(*) FROM public.get_customer_metrics();" | tail -1)
+eq "M6 get_customer_metrics segue funcionando p/ staff" "$V" "2"
+# M6b: e NÃO vaza p/ quem não é staff (era `eq ... "2"`, que exigia o vazamento).
 V=$(Pq -c "SELECT count(*) FROM public.get_customer_metrics();" | tail -1)
-eq "M6 get_customer_metrics ainda funciona" "$V" "2"
+eq "M6b get_customer_metrics NAO vaza p/ nao-staff" "$V" "0"
 # M7: refresh_customer_metrics agora aponta p/ private
 V=$(Pq -c "SELECT pg_get_functiondef('public.refresh_customer_metrics'::regproc) LIKE '%private.customer_metrics_mv%';")
 eq "M7 refresh aponta p/ private" "$V" "t"

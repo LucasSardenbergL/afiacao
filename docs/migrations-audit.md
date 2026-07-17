@@ -21,16 +21,16 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **372** custom migrations totais
-- **1331** objetos esperados (criados por estas migrations)
+- **378** custom migrations totais
+- **1334** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 374
+  - `function`: 375
   - `rls_policy`: 295
   - `index`: 222
   - `cron_job`: 149
   - `table`: 146
   - `trigger`: 78
-  - `view`: 63
+  - `view`: 65
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -3189,6 +3189,36 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.detectar_outliers_empresa` | — |
 | `function` | `public.estimar_impacto_exclusao_outlier` | — |
 | `function` | `public.resolver_outlier` | — |
+
+### `20260717010000_drop_reprocessar_sku_items_via_raw_data.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260717010000_preco_medio_leadtime_efetivo.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.gerar_pedidos_sugeridos_ciclo` | — |
+
+### `20260717015000_restaurar_security_invoker_views.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260717020000_precos_compra_leadtime_efetivo.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `view` | `public.v_sku_parametros_sugeridos` | — |
+
+### `20260717120000_seg_customer_metrics_gate_staff.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `view` | `public.customer_metrics_mv` | — |
+
+### `20260717130000_seg_customer_metrics_acl_least_privilege.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ## Próximos passos por status
 

@@ -12,12 +12,14 @@ import { cn } from '@/lib/utils';
 import { useAuth } from '@/contexts/AuthContext';
 import { useDeliveredOrders12m } from '@/queries/useOrders';
 import { track } from '@/lib/analytics';
-import { gerarRecomendacoes, resumirEconomia, type ToolInput, type Recomendacao } from '@/lib/afiacao/recomendacoes';
+import { gerarRecomendacoes, filtrarRecomendacoes, resumirEconomia, type ToolInput, type Recomendacao } from '@/lib/afiacao/recomendacoes';
 import type { UserTool } from './types';
 
 interface RecomendacoesClienteProps {
   userTools: UserTool[];
   navigate: ReturnType<typeof useNavigate>;
+  /** Tipos a NÃO exibir nesta tela. Ex.: a Central oculta 'economia' — já tem o herói. */
+  ocultarTipos?: Recomendacao['tipo'][];
 }
 
 const brl = (v: number) => `R$ ${Math.round(v).toLocaleString('pt-BR')}`;
@@ -28,7 +30,7 @@ function nomesResumidos(ferramentas: { nome: string }[]): string {
   return resto > 0 ? `${nomes.join(', ')} +${resto}` : nomes.join(', ');
 }
 
-export function RecomendacoesCliente({ userTools, navigate }: RecomendacoesClienteProps) {
+export function RecomendacoesCliente({ userTools, navigate, ocultarTipos }: RecomendacoesClienteProps) {
   const { user } = useAuth();
   const { data: orders = [] } = useDeliveredOrders12m(user?.id);
 
@@ -41,8 +43,9 @@ export function RecomendacoesCliente({ userTools, navigate }: RecomendacoesClien
       sharpening_interval_days: t.sharpening_interval_days,
       suggested_interval_days: t.tool_categories?.suggested_interval_days ?? null,
     }));
-    return gerarRecomendacoes({ tools, economia: resumirEconomia(orders) });
-  }, [userTools, orders]);
+    const geradas = gerarRecomendacoes({ tools, economia: resumirEconomia(orders) });
+    return filtrarRecomendacoes(geradas, ocultarTipos ?? []);
+  }, [userTools, orders, ocultarTipos]);
 
   if (recomendacoes.length === 0) return null;
 
