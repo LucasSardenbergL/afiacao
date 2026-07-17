@@ -30,6 +30,7 @@ import {
   type LeituraEmbalagem,
   type RunResumo,
   type InsertPreco,
+  classificarLinhasRascunho,
 } from "../_shared/embalagem-captura-helpers.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? Deno.env.get("VITE_SUPABASE_URL")!;
@@ -48,9 +49,13 @@ const BROWSERLESS_TOKEN = Deno.env.get("BROWSERLESS_TOKEN");
 // Regex dentro deste template literal: '\\' produz '\' no código enviado.
 const BROWSERLESS_FUNCTION = `
 export default async ({ page, context }) => {
-  const { user, pass, portalUrl, clienteCodigo, items } = context;
+  const { user, pass, portalUrl, clienteCodigo, items, todosSkusPortal } = context;
   const trace = [];
   const t0 = Date.now();
+
+  // Regra compartilhada (interpolada do _shared via .toString() — fonte única,
+  // testada em vitest): decide se linha pré-existente é resíduo nosso ou humana.
+  const classificarLinhasRascunho = ${classificarLinhasRascunho.toString()};
 
   // === Budget management (deadline global, aborto limpo) ===
   // Supabase edge tem wall-clock ~400s; Browserless Prototyping aceita mais.
@@ -206,17 +211,18 @@ export default async ({ page, context }) => {
   // 0 linhas), aborta o run inteiro — o Deno não persiste nada sem essa prova.
   // Poll (não sleep fixo): a remoção pode ser AJAX/confirm assíncrono; sai no
   // primeiro rows==0, aborta se não zerar dentro da janela (spike-B 50e669c7).
-  const exigirCancelamento = async (i, contexto) => {
+  const exigirCancelamento = async (i, contexto, rowsAlvo) => {
+    const alvo = typeof rowsAlvo === 'number' ? rowsAlvo : 0;
     const cancel = await cancelarLinhaEdicao().catch(function() { return { clicked: false, motivo: 'evaluate_erro' }; });
     let rowsApos = -1;
     for (let tent = 0; tent < 16; tent++) {
       await sleep(300);
       rowsApos = await contarRows().catch(function() { return -1; });
-      if (rowsApos === 0) break;
+      if (rowsApos === alvo) break;
     }
-    trace.push({ step: 'item_' + i + '_cancel_' + contexto, cancel, rows_apos: rowsApos, t: Date.now() - t0 });
-    if (!(cancel && cancel.clicked) || rowsApos !== 0) {
-      const err = new Error('cancelamento não comprovado no item ' + i + ' (' + contexto + '): rows_apos=' + rowsApos);
+    trace.push({ step: 'item_' + i + '_cancel_' + contexto, cancel, rows_apos: rowsApos, rows_alvo: alvo, t: Date.now() - t0 });
+    if (!(cancel && cancel.clicked) || rowsApos !== alvo) {
+      const err = new Error('cancelamento não comprovado no item ' + i + ' (' + contexto + '): rows_apos=' + rowsApos + ' alvo=' + alvo);
       err.code = 'CANCEL_NAO_COMPROVADO';
       throw err;
     }
@@ -389,23 +395,45 @@ export default async ({ page, context }) => {
     trace.push({ step: 'cliente_selecionado', cliente: String(clienteSelecionado).substring(0, 80), t: Date.now() - t0 });
 
     // Guard: a grade de um pedido NOVO nasce vazia. Linha pré-existente =
-    // rascunho sujo (auto-save do portal ou resíduo de run anterior) — abortar
-    // ANTES de mexer: não é nosso papel apagar linha possivelmente humana, e
-    // seguir adiante faria o rows==0 do cancel nunca comprovar (erro enganoso).
+    // rascunho re-hidratado pelo portal (proposta "em digitação" do usuário da
+    // captura — em prod a 341069 renasce mesmo após exclusão manual). Se TODAS
+    // as linhas são de SKUs do NOSSO mapa (todosSkusPortal, os 28 — não só os
+    // do run atual), é resíduo nosso → auto-limpeza comprovada linha a linha.
+    // Qualquer linha fora do mapa → rascunho possivelmente HUMANO → aborta sem
+    // tocar (RASCUNHO_SUJO_HUMANO).
     const rowsIniciais = await contarRows().catch(function() { return -1; });
     if (rowsIniciais !== 0) {
-      const errorScreenshot = await page.screenshot({ type: 'jpeg', quality: 70, encoding: 'base64' }).catch(() => null);
-      return {
-        data: {
-          success: false,
-          erro: 'Rascunho de proposta com ' + rowsIniciais + ' linha(s) pré-existente(s) — limpar no portal (Vendas → Pedidos/Propostas) antes de re-rodar a captura',
-          erroTipo: 'RASCUNHO_SUJO_INICIAL',
-          itens, itens_nao_processados: items.map(function(it){ return it.sku_portal; }),
-          trace,
-        },
-        type: 'application/json',
-        screenshot: errorScreenshot,
-      };
+      const textosLinhas = await page.evaluate(function() {
+        var table = document.querySelector('#datatable_itens');
+        if (!table) return [];
+        return Array.from(table.querySelectorAll('tbody tr')).map(function(tr) {
+          return (tr.innerText || '').trim().substring(0, 200);
+        });
+      }).catch(function() { return []; });
+      const cls = classificarLinhasRascunho(textosLinhas, todosSkusPortal || []);
+      trace.push({ step: 'rascunho_sujo_detectado', rows: rowsIniciais, cancelaveis: cls.cancelaveis, desconhecidas: cls.desconhecidas.slice(0, 3), t: Date.now() - t0 });
+      if (!cls.cancelaveis || rowsIniciais < 0 || textosLinhas.length !== rowsIniciais) {
+        const errorScreenshot = await page.screenshot({ type: 'jpeg', quality: 70, encoding: 'base64' }).catch(() => null);
+        return {
+          data: {
+            success: false,
+            erro: 'Rascunho com ' + rowsIniciais + ' linha(s) pré-existente(s) NÃO reconhecida(s) como resíduo da captura' +
+              (cls.desconhecidas.length ? ' (ex.: "' + cls.desconhecidas[0] + '")' : '') +
+              ' — pode ser rascunho humano; limpar no portal antes de re-rodar',
+            erroTipo: 'RASCUNHO_SUJO_HUMANO',
+            itens, itens_nao_processados: items.map(function(it){ return it.sku_portal; }),
+            trace,
+          },
+          type: 'application/json',
+          screenshot: errorScreenshot,
+        };
+      }
+      // Resíduo nosso comprovado: cancela da última à primeira, cada remoção
+      // provada pelo decremento exato da contagem (mesma prova do fluxo normal).
+      for (let alvoRows = rowsIniciais - 1; alvoRows >= 0; alvoRows--) {
+        await exigirCancelamento('preexistente', 'limpeza_inicial_' + alvoRows, alvoRows);
+      }
+      trace.push({ step: 'rascunho_limpo', linhas_removidas: rowsIniciais, t: Date.now() - t0 });
     }
 
     // === Loop de captura: selecionar → ler linha em edição → cancelar ===
@@ -768,6 +796,9 @@ Deno.serve(async (req) => {
     sku_codigo_omie: String(e.sku_codigo_omie),
     sku_portal: portalPorOmie.get(String(e.sku_codigo_omie)) ?? null,
   }));
+  // Capturado ANTES do filtro de spike: a auto-limpeza de rascunho reconhece
+  // resíduo de qualquer grupo do mapa, não só do grupo deste run.
+  const todosSkusPortal = [...new Set(alvo.filter((a) => a.sku_portal).map((a) => a.sku_portal!))];
 
   if (modo === "spike") {
     const grupoSpike = escolherGrupoSpike(
@@ -852,6 +883,9 @@ Deno.serve(async (req) => {
               portalUrl: SAYERLACK_PORTAL_URL,
               clienteCodigo: SAYERLACK_PORTAL_CLIENTE_CODIGO,
               items: comDepara.map((a) => ({ sku_portal: a.sku_portal })),
+              // Universo COMPLETO do mapa (pré-filtro de spike): a auto-limpeza
+              // reconhece resíduo de QUALQUER run nosso, não só do grupo atual.
+              todosSkusPortal,
             },
           }),
         },
