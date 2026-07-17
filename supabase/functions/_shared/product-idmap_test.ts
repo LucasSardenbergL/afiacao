@@ -6,7 +6,7 @@
 // account)). Sem isso, o CMC/saldo lido de UMA empresa seria gravado no product_id de OUTRA
 // (contaminação de custo cross-company → EOQ/reposição errado). É a paridade que faltava
 // entre syncInventoryFull (que NÃO tinha o guard) e syncInventory (que já nulifica ambíguo).
-import { buildProductIdMap } from "./product-idmap.ts";
+import { buildProductIdMap, montarCatalogoPorCod } from "./product-idmap.ts";
 
 function assertEquals(a: unknown, b: unknown, msg?: string) {
   if (JSON.stringify(a) !== JSON.stringify(b)) {
@@ -108,4 +108,70 @@ Deno.test("borda — 0, negativo, fracional, string vazia e inteiro inseguro sã
   assertEquals(map.has(Number.MAX_SAFE_INTEGER + 1), false);
   assertEquals(map.get(7), "id-ok");
   assertEquals(map.size, 1);
+});
+
+// ════════ montarCatalogoPorCod — codigo/descricao da linha DONA do código ════════
+// Money-path (hotfix 23502): o upsert de omie_products.estoque conflita por
+// (omie_codigo_produto, account) e o payload TEM de carregar codigo/descricao (NOT NULL sem
+// default) lidos do próprio resolve — a tupla proposta do INSERT..ON CONFLICT é validada
+// contra NOT NULL ANTES de o conflito ser arbitrado. Este mapa entrega esses campos SÓ para
+// o código cuja linha é a VENCEDORA do idByCod (ambíguo/perdedora fica fora — nunca gravar
+// codigo/descricao de uma linha no registro de outra; precisão > recall).
+
+Deno.test("catálogo — linha resolvida com codigo/descricao entra no mapa", () => {
+  const rows = [
+    { id: "id-a", omie_codigo_produto: 10, codigo: "SKU-A", descricao: "Produto A" },
+    { id: "id-b", omie_codigo_produto: 20, codigo: "SKU-B", descricao: "Produto B" },
+  ];
+  const cat = montarCatalogoPorCod(rows, buildProductIdMap(rows));
+  assertEquals(cat.get(10), { codigo: "SKU-A", descricao: "Produto A" });
+  assertEquals(cat.get(20), { codigo: "SKU-B", descricao: "Produto B" });
+  assertEquals(cat.size, 2);
+});
+
+Deno.test("catálogo — código AMBÍGUO (idByCod null) fica FORA (nenhuma das linhas entra)", () => {
+  const rows = [
+    { id: "id-1", omie_codigo_produto: 7, codigo: "SKU-1", descricao: "Um" },
+    { id: "id-2", omie_codigo_produto: 7, codigo: "SKU-2", descricao: "Dois" },
+  ];
+  const cat = montarCatalogoPorCod(rows, buildProductIdMap(rows));
+  assertEquals(cat.has(7), false); // gravar o codigo de UMA linha no registro da outra seria contaminação
+});
+
+Deno.test("catálogo — codigo ou descricao null/ausente fica FORA (nunca propõe NULL em NOT NULL)", () => {
+  const rows = [
+    { id: "id-a", omie_codigo_produto: 1, codigo: null, descricao: "Tem descricao" },
+    { id: "id-b", omie_codigo_produto: 2, codigo: "SKU-B", descricao: null },
+    { id: "id-c", omie_codigo_produto: 3 },
+    { id: "id-d", omie_codigo_produto: 4, codigo: "SKU-D", descricao: "Produto D" },
+  ];
+  const cat = montarCatalogoPorCod(rows, buildProductIdMap(rows));
+  assertEquals(cat.has(1), false);
+  assertEquals(cat.has(2), false);
+  assertEquals(cat.has(3), false);
+  assertEquals(cat.get(4), { codigo: "SKU-D", descricao: "Produto D" });
+});
+
+Deno.test("catálogo — linha cujo id NÃO é o vencedor do idByCod fica fora (defense-in-depth)", () => {
+  // idByCod construído de OUTRO conjunto (o vencedor do cod 5 é id-x, não id-y): a linha
+  // id-y não pode emprestar codigo/descricao ao registro do vencedor.
+  const idByCod = buildProductIdMap([{ id: "id-x", omie_codigo_produto: 5 }]);
+  const cat = montarCatalogoPorCod(
+    [{ id: "id-y", omie_codigo_produto: 5, codigo: "SKU-Y", descricao: "Y" }],
+    idByCod,
+  );
+  assertEquals(cat.has(5), false);
+});
+
+Deno.test("catálogo — id/código null são ignorados; linha repetida (paginação .range()) é inócua", () => {
+  const rows = [
+    { id: null, omie_codigo_produto: 6, codigo: "SKU", descricao: "D" },
+    { id: "id-a", omie_codigo_produto: null, codigo: "SKU", descricao: "D" },
+    { id: "id-b", omie_codigo_produto: 8, codigo: "SKU-8", descricao: "Oito" },
+    { id: "id-b", omie_codigo_produto: 8, codigo: "SKU-8", descricao: "Oito" }, // repetida
+  ];
+  const cat = montarCatalogoPorCod(rows, buildProductIdMap(rows));
+  assertEquals(cat.has(6), false);
+  assertEquals(cat.get(8), { codigo: "SKU-8", descricao: "Oito" });
+  assertEquals(cat.size, 1);
 });

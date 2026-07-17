@@ -30,3 +30,30 @@ export function buildProductIdMap(
   }
   return map;
 }
+
+// codigo/descricao da linha VENCEDORA do idByCod, por código. Money-path (hotfix 23502
+// #1344 + canônico): o upsert de omie_products.estoque conflita por (omie_codigo_produto,
+// account) e a tupla proposta do INSERT..ON CONFLICT é validada contra NOT NULL ANTES de o
+// conflito ser arbitrado — o payload TEM de carregar codigo/descricao (NOT NULL sem default)
+// lidos do próprio resolve. Só a linha cujo id é o vencedor do idByCod empresta os campos
+// (ambíguo/perdedora fica fora — nunca gravar codigo/descricao de uma linha no registro de
+// outra); linha sem codigo/descricao fica fora fail-closed (nunca propõe NULL/placeholder).
+export function montarCatalogoPorCod(
+  rows: Array<{
+    id: string | null;
+    omie_codigo_produto: number | string | null;
+    codigo?: string | null;
+    descricao?: string | null;
+  }>,
+  idByCod: Map<number, string | null>,
+): Map<number, { codigo: string; descricao: string }> {
+  const catalogo = new Map<number, { codigo: string; descricao: string }>();
+  for (const r of rows) {
+    if (r.omie_codigo_produto == null || r.id == null) continue;
+    const cod = Number(r.omie_codigo_produto);
+    if (idByCod.get(cod) !== String(r.id)) continue; // ambíguo (null) ou linha não-vencedora
+    if (r.codigo == null || r.descricao == null) continue;
+    catalogo.set(cod, { codigo: r.codigo, descricao: r.descricao });
+  }
+  return catalogo;
+}

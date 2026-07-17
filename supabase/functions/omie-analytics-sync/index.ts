@@ -4,7 +4,8 @@ import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { fetchAll } from "../_shared/paginate.ts";
 import { montarUpsertsDeCusto } from "../_shared/cost-compute.ts";
 import { recomporCustoProducao } from "../_shared/recompor-custo-producao.ts";
-import { buildProductIdMap } from "../_shared/product-idmap.ts";
+import { buildProductIdMap, montarCatalogoPorCod } from "../_shared/product-idmap.ts";
+import { avaliarPagina, MAX_PAGINAS_POS_ESTOQUE, proximoTotalPaginas } from "../_shared/omie-paginacao.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -782,7 +783,6 @@ async function syncInventory(db: SupabaseClient, account: OmieAccount) {
   await updateSyncState(db, "inventory", account, { status: "running", error_message: null });
   let pagina = 1;
   let totalPaginas = 1;
-  const nowIso = new Date().toISOString();
 
   try {
     // 1) COLETA todas as páginas do Omie em memória (dedupe last-wins por código).
@@ -796,8 +796,20 @@ async function syncInventory(db: SupabaseClient, account: OmieAccount) {
         dDataPosicao: new Date().toLocaleDateString("pt-BR"),
       })) as unknown as OmieListarPosEstoqueResponse;
 
-      totalPaginas = result.nTotPaginas || 1;
+      // Piso MONOTÔNICO + teto fail-fast (_shared/omie-paginacao.ts, Codex P1 #1341/#1353):
+      // o `nTotPaginas || 1` POR RESPOSTA encolhia o teto quando uma resposta intermediária
+      // vinha sem o campo (retrato PARCIAL completava como 'complete'), e um nTotPaginas
+      // lixo/gigante giraria a edge por ~90s+ de chamadas antes de qualquer guard de contagem.
+      totalPaginas = proximoTotalPaginas(totalPaginas, result.nTotPaginas, MAX_PAGINAS_POS_ESTOQUE);
       const produtos = result.produtos || [];
+      const veredicto = avaliarPagina(produtos.length, pagina, totalPaginas);
+      if (veredicto === "anomalia") {
+        // nTotPaginas é PISO (docs/agent/sync.md): página vazia ANTES do fim declarado =
+        // fault transiente disfarçado → aborta fail-closed (status error; o cron re-tenta)
+        // em vez de completar retrato parcial. Nada foi escrito ainda (coleta antecede escrita).
+        throw new Error(`página ${pagina}/${totalPaginas} do ListarPosEstoque veio vazia antes do fim declarado — abortando (retrato parcial)`);
+      }
+      if (veredicto === "fim") break;
 
       for (const prod of produtos) {
         const codProd = Number(prod.nCodProd); // normaliza: a API Omie pode devolver string; a chave do idMap é number
@@ -812,6 +824,11 @@ async function syncInventory(db: SupabaseClient, account: OmieAccount) {
       console.log(`[Sync ${account}] Estoque página ${pagina}/${totalPaginas} (${produtos.length})`);
       pagina++;
     }
+
+    // Timestamp único da run, capturado APÓS a coleta Omie (Codex P2 #1341): encolhe a janela
+    // de regressão de updated_at contra writers concorrentes (sync-reprocess/computeCosts).
+    const nowIso = new Date().toISOString();
+    let falhasChunk = 0;
 
     const codProds = [...posicoes.keys()];
     const totalSynced = codProds.length;
@@ -834,17 +851,22 @@ async function syncInventory(db: SupabaseClient, account: OmieAccount) {
     //    buildProductIdMap nulifica qualquer ambíguo residual (defense-in-depth: se o filtro/UNIQUE
     //    falhar, degrada p/ null em vez de gravar no errado — esperado 0 com o filtro).
     const empresa = accountToEmpresa(account);
-    const prodRows: Array<{ id: string | null; omie_codigo_produto: number | string | null }> = [];
+    const prodRows: Array<{
+      id: string | null;
+      omie_codigo_produto: number | string | null;
+      codigo?: string | null;
+      descricao?: string | null;
+    }> = [];
     for (const chunk of chunked(codProds, 300)) {
       const { data, error } = await db
         .from("omie_products")
-        .select("id, omie_codigo_produto")
+        .select("id, omie_codigo_produto, codigo, descricao")
         .eq("account", empresa)
         .in("omie_codigo_produto", chunk);
-      if (error) {
-        console.error(`[Sync ${account}] resolve product_id:`, error);
-        continue;
-      }
+      // Falha de SELECT → THROW (defeito registrado no #1341: "o canônico segue sem o chunk"):
+      // seguir faria o upsert de posição abaixo CLOBBERar product_id existente para null.
+      // Precisão > recall; o cron re-tenta no próximo ciclo.
+      if (error) throw new Error(`resolve omie_products: ${error.message}`);
       prodRows.push(...(data ?? []));
     }
     const idByCod = buildProductIdMap(prodRows);
@@ -870,18 +892,52 @@ async function syncInventory(db: SupabaseClient, account: OmieAccount) {
       const { error } = await db
         .from("inventory_position")
         .upsert(chunk, { onConflict: "omie_codigo_produto,account" });
-      if (error) console.error(`[Sync ${account}] upsert inventory_position:`, error);
+      if (error) {
+        falhasChunk++;
+        console.error(`[Sync ${account}] upsert inventory_position:`, error);
+      }
     }
 
-    // 4) omie_products.estoque — upsert em LOTE pela PK id (só estoque+updated_at).
-    //    Todos os ids vieram de linhas existentes → ON CONFLICT sempre faz UPDATE, nunca INSERT.
-    const stockRows = codProds
-      .map((cod) => ({ id: idByCod.get(cod), saldo: posicoes.get(cod)!.saldo }))
-      .filter((x): x is { id: string; saldo: number } => !!x.id)
-      .map((x) => ({ id: x.id, estoque: x.saldo, updated_at: nowIso }));
+    // 4) omie_products.estoque — upsert em LOTE por (omie_codigo_produto, account=EMPRESA).
+    //    ⚠️ NUNCA pela PK id com payload mínimo: codigo/descricao/omie_codigo_produto são
+    //    NOT NULL sem default e a tupla proposta do INSERT..ON CONFLICT é validada contra
+    //    NOT NULL ANTES de o conflito ser arbitrado → o payload {id, estoque, updated_at}
+    //    tomava 23502 no chunk INTEIRO, silencioso, em TODO ciclo (provado em prod 2026-07-17
+    //    via psql-ro: zero cluster de updated_at nas janelas deste sync em 48h; mesmo padrão
+    //    do hotfix #1344 no sync-reprocess). O payload carrega codigo/descricao lidos no
+    //    próprio resolve (montarCatalogoPorCod); linha sem eles fica fora fail-closed.
+    //    Upsert pela PK id com payload completo seria pior: conflito DUPLO PK+uniq → 23505.
+    //    `account` aqui é EMPRESA (convenção omie_products, database.md §5) — ≠ o account de
+    //    sync usado em inventory_position acima.
+    const catalogoPorCod = montarCatalogoPorCod(prodRows, idByCod);
+    const stockRows: Array<{
+      omie_codigo_produto: number;
+      account: string;
+      codigo: string;
+      descricao: string;
+      estoque: number;
+      updated_at: string;
+    }> = [];
+    for (const cod of codProds) {
+      const cat = catalogoPorCod.get(cod);
+      if (!cat) continue; // não-resolvido/ambíguo/sem codigo-descricao: posição e custos seguem
+      stockRows.push({
+        omie_codigo_produto: cod,
+        account: empresa,
+        codigo: cat.codigo,
+        descricao: cat.descricao,
+        estoque: posicoes.get(cod)!.saldo,
+        updated_at: nowIso,
+      });
+    }
     for (const chunk of chunked(stockRows, 500)) {
-      const { error } = await db.from("omie_products").upsert(chunk, { onConflict: "id" });
-      if (error) console.error(`[Sync ${account}] upsert estoque omie_products:`, error);
+      const { error } = await db
+        .from("omie_products")
+        .upsert(chunk, { onConflict: "omie_codigo_produto,account" });
+      if (error) {
+        falhasChunk++;
+        console.error(`[Sync ${account}] upsert estoque omie_products:`, error);
+      }
     }
 
     // 5) product_costs — só onde há product_id E cmc>0. Preserva a semântica anterior:
@@ -900,6 +956,10 @@ async function syncInventory(db: SupabaseClient, account: OmieAccount) {
       for (const chunk of chunked(costCandidatos.map((x) => x.id), 300)) {
         const { data, error } = await db.from("product_costs").select("product_id").in("product_id", chunk);
         if (error) {
+          // SELECT falho degrada (≠ resolve de omie_products, que aborta): os candidatos do
+          // chunk caem no "inserir" e o ignoreDuplicates abaixo pula os que já existem —
+          // custo stale por 1 ciclo, nunca corrupção/clobber de proveniência.
+          falhasChunk++;
           console.error(`[Sync ${account}] resolve product_costs:`, error);
           continue;
         }
@@ -915,21 +975,37 @@ async function syncInventory(db: SupabaseClient, account: OmieAccount) {
 
       for (const chunk of chunked(aAtualizar, 500)) {
         const { error } = await db.from("product_costs").upsert(chunk, { onConflict: "product_id" });
-        if (error) console.error(`[Sync ${account}] upsert cmc product_costs:`, error);
+        if (error) {
+          falhasChunk++;
+          console.error(`[Sync ${account}] upsert cmc product_costs:`, error);
+        }
       }
       for (const chunk of chunked(aInserir, 500)) {
-        const { error } = await db.from("product_costs").insert(chunk);
-        if (error) console.error(`[Sync ${account}] insert product_costs:`, error);
+        // ignoreDuplicates (ON CONFLICT DO NOTHING) anti-corrida (#1341): um candidato "novo"
+        // que outro writer inseriu entre o SELECT e aqui derrubaria o chunk inteiro com 23505.
+        const { error } = await db
+          .from("product_costs")
+          .upsert(chunk, { onConflict: "product_id", ignoreDuplicates: true });
+        if (error) {
+          falhasChunk++;
+          console.error(`[Sync ${account}] insert product_costs:`, error);
+        }
       }
     }
 
+    // Falha parcial de chunk NÃO derruba a run (idempotente; o próximo ciclo reconcilia), mas
+    // SURFAÇA no error_message (lição #1344: o 23502 deste sync ficou invisível por meses
+    // porque o console.error era engolido — 'complete' limpo nunca pode mentir de novo).
     await updateSyncState(db, "inventory", account, {
       status: "complete",
       total_synced: totalSynced,
       last_sync_at: nowIso,
       last_page: totalPaginas,
+      error_message: falhasChunk > 0
+        ? `${falhasChunk} chunk(s) com erro de escrita (lote parcial — próximo ciclo reconcilia)`
+        : null,
     });
-    return { totalSynced };
+    return { totalSynced, falhasChunk };
   } catch (error) {
     await updateSyncState(db, "inventory", account, { status: "error", error_message: String(error) });
     throw error;
@@ -992,9 +1068,20 @@ async function syncInventoryFull(db: SupabaseClient, account: OmieAccount) {
         cExibeTodos: "S",
       })) as unknown as OmieListarPosEstoqueResponse;
 
-      totalPaginas = result.nTotPaginas || 1;
+      // Piso MONOTÔNICO + teto fail-fast (_shared/omie-paginacao.ts): mesmo defeito do
+      // syncInventory — `nTotPaginas || 1` por resposta encolhia o teto e completava retrato
+      // parcial. Com cExibeTodos:"S" o catálogo inteiro (~43 págs colacor) fica sob o teto 500.
+      totalPaginas = proximoTotalPaginas(totalPaginas, result.nTotPaginas, MAX_PAGINAS_POS_ESTOQUE);
+      const produtos = result.produtos || [];
+      const veredicto = avaliarPagina(produtos.length, pagina, totalPaginas);
+      if (veredicto === "anomalia") {
+        // Página vazia ANTES do fim declarado = fault disfarçado → aborta fail-closed antes
+        // de qualquer escrita (invRows só upserta após a coleta completa).
+        throw new Error(`página ${pagina}/${totalPaginas} do ListarPosEstoque (full) veio vazia antes do fim declarado — abortando (retrato parcial)`);
+      }
+      if (veredicto === "fim") break;
       const now = new Date().toISOString();
-      for (const prod of result.produtos || []) {
+      for (const prod of produtos) {
         const codProd = Number(prod.nCodProd); // normaliza: a API Omie pode devolver string; a chave do idMap é number
         if (!Number.isSafeInteger(codProd) || codProd <= 0) continue;
         invRows.push({

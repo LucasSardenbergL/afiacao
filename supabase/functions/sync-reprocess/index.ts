@@ -12,13 +12,15 @@ import {
   type ItemLocal,
 } from "../_shared/omie-pedido.ts";
 import {
-  acumularPosicoesDaPagina,
   avaliarPagina,
-  chunked,
   MAX_PAGINAS_POS_ESTOQUE,
+  proximoTotalPaginas,
+} from "../_shared/omie-paginacao.ts";
+import {
+  acumularPosicoesDaPagina,
+  chunked,
   particionarCustos,
   planejarEscritaInventario,
-  proximoTotalPaginas,
   type LinhaProdutoLocal,
   type PosicaoEstoque,
 } from "./inventory-lote.ts";

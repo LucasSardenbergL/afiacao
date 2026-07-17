@@ -13,7 +13,7 @@
 // - custo só com product_id resolvido E cmc > 0 (nunca fabrica custo zero);
 // - update de custo com payload MÍNIMO (proveniência cost_price/source/confidence é do
 //   computeCosts — este writer nunca promove).
-import { buildProductIdMap } from "../_shared/product-idmap.ts";
+import { buildProductIdMap, montarCatalogoPorCod } from "../_shared/product-idmap.ts";
 
 export interface PosicaoEstoque {
   saldo: number;
@@ -58,10 +58,6 @@ export interface PlanoEscritaInventario {
   divergences: number;
 }
 
-// Guard anti-runaway: nTotPaginas lixo/gigante não pode girar a edge por horas.
-// 500 páginas × 100 = 50k posições ≈ 60× o catálogo OBEN atual (~785).
-export const MAX_PAGINAS_POS_ESTOQUE = 500;
-
 // Normaliza e acumula uma página do ListarPosEstoque no Map (dedupe last-wins por código —
 // código repetido no MESMO statement de upsert daria 21000 "cannot affect row a second time").
 // ⚠️ Os `?? 0` são fabricação CONSCIENTE preservada do N+1: a posição VEIO na resposta do
@@ -86,45 +82,6 @@ export function acumularPosicoesDaPagina(
     validos++;
   }
   return validos;
-}
-
-// Valida o nTotPaginas DECLARADO na resposta — fail-FAST (Codex P1): um nTotPaginas lixo
-// gigante (ex.: 100000) não pode ser descoberto só na página maxPaginas+1, depois de ~90s de
-// chamadas Omie — isso reproduziria o próprio 546. Lixo não-inteiro/0/negativo degrada para 1
-// (fiel ao `|| 1` histórico: processa a página que JÁ veio e para).
-export function validarTotalPaginas(nTot: number | undefined, maxPaginas: number): number {
-  const total = Number(nTot ?? 1);
-  if (!Number.isSafeInteger(total) || total < 1) return 1;
-  if (total > maxPaginas) {
-    throw new Error(
-      `nTotPaginas=${total} acima do teto anti-runaway (${maxPaginas}) — abortando fail-fast antes de paginar`,
-    );
-  }
-  return total;
-}
-
-// Piso MONOTÔNICO do total declarado (Codex P1 do #1353): o total é piso da RUN inteira —
-// uma resposta intermediária SEM total (degrada p/ 1 pelo `|| 1` histórico) encolhia o teto
-// e o loop completava retrato PARCIAL como 'complete' (ex.: p1 declara 5, p2 vem sem o campo
-// → run terminava em 2/5). Declaração nova só MANTÉM ou CRESCE o teto; o fail-fast do
-// anti-runaway continua o de validarTotalPaginas.
-export function proximoTotalPaginas(
-  atual: number,
-  declarado: number | undefined,
-  maxPaginas: number,
-): number {
-  return Math.max(atual, validarTotalPaginas(declarado, maxPaginas));
-}
-
-export type VeredictoPagina = "processar" | "fim" | "anomalia";
-
-// nTotPaginas do Omie é PISO, não verdade (docs/agent/sync.md): página vazia ANTES do fim
-// declarado = fault transiente/rate-limit disfarçado — completar aqui deixaria a cauda stale
-// com 'complete' mentindo → anomalia (o caller aborta fail-closed; o próximo ciclo tenta).
-// Vazia NA última declarada (ou além) = fim normal.
-export function avaliarPagina(nItens: number, pagina: number, totalPaginas: number): VeredictoPagina {
-  if (nItens > 0) return "processar";
-  return pagina < totalPaginas ? "anomalia" : "fim";
 }
 
 export function chunked<T>(arr: T[], size: number): T[][] {
@@ -158,14 +115,9 @@ export function planejarEscritaInventario(
   // conflita por (omie_codigo_produto, account) e a tupla proposta do INSERT..ON CONFLICT é
   // validada contra NOT NULL ANTES de o conflito ser arbitrado — payload sem codigo/descricao
   // derruba o chunk inteiro com 23502 (provado em prod no ciclo 2026-07-16 18:15 UTC).
-  const catalogoPorCod = new Map<number, { codigo: string; descricao: string }>();
-  for (const l of locais) {
-    if (l.omie_codigo_produto == null || l.id == null) continue;
-    const cod = Number(l.omie_codigo_produto);
-    if (idByCod.get(cod) === String(l.id) && l.codigo != null && l.descricao != null) {
-      catalogoPorCod.set(cod, { codigo: l.codigo, descricao: l.descricao });
-    }
-  }
+  // Extraído p/ _shared/product-idmap.ts: o syncInventory canônico (omie-analytics-sync)
+  // tomava o MESMO 23502 e agora compartilha esta resolução.
+  const catalogoPorCod = montarCatalogoPorCod(locais, idByCod);
 
   const plano: PlanoEscritaInventario = { invRows: [], stockRows: [], custoCandidatos: [], divergences: 0 };
   for (const [cod, p] of posicoes) {
