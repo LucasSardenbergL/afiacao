@@ -798,6 +798,40 @@ describe('guardrail money-path: carteira-rebuild lê o vendedor da PROOF oben (P
     ).toMatch(/from\(['"]omie_customer_account_map_fresco['"]\)[\s\S]{0,220}\.eq\(['"]account['"],\s*['"]oben['"]\)/);
   });
 
+  // D1/D6: o outro lado do join TEM de ser account-scoped. Esta é a única defesa contra a remoção do filtro:
+  // a quarentena do conflito (D2) NÃO pega o caso mais perigoso — um código oben que casa com UMA única linha
+  // de outra conta resolve users.size===1 → source='omie', eligible=true, vendedor ERRADO, sem conflito nenhum
+  // (misatribuição SILENCIOSA). O helper puro não pode detectá-la: ele só vê o mapa que o edge lhe entrega.
+  it('D1: o omie_vendedor_map é lido account-scoped (oben) — sem isso o join cruza namespaces de conta', () => {
+    expect(
+      rebuild,
+      'REVERSÃO Lovable? sumiu o .eq(omie_account, oben) do vendedor_map — código oben pode casar com linha colacor/colacor_sc de OUTRO vendedor → source=omie + eligible=true + vendedor ERRADO, sem sinal de conflito',
+    ).toMatch(/from\(['"]omie_vendedor_map['"]\)[\s\S]{0,160}\.eq\(['"]omie_account['"],\s*['"]oben['"]\)/);
+  });
+
+  // D3: sem Hunter o helper não emite órfão NEM conflito (owner_user_id é NOT NULL) → ~4162 membros sem row →
+  // upsert-only preserva o assignment ANTIGO (stale). Nenhum guard de cardinalidade pega (contam linhas).
+  it('D3: aborta quando carteira_hunter_user_id está ausente (senão órfão/conflito somem → stale)', () => {
+    expect(
+      rebuild,
+      'sumiu o guard fail-closed de Hunter ausente — órfãos e conflitos ficariam sem row e o assignment antigo seguiria válido',
+    ).toMatch(/if\s*\(!hunterUserId\)\s*\{[\s\S]{0,200}failLease\(/);
+  });
+
+  // D4: a pós-condição prova o CONJUNTO (os outros guards contam LINHAS e são cegos ao membro omitido).
+  it('D4: pós-condição de cobertura roda sobre o payload real e ANTES do upsert', () => {
+    expect(rebuild, 'sumiu a chamada de verificarCobertura').toMatch(/verificarCobertura\(membroIds,\s*rows\)/);
+    expect(
+      rebuild,
+      'cobertura não aborta o run — membro sem row entraria como assignment antigo STALE',
+    ).toMatch(/if\s*\(!cobertura\.ok\)[\s\S]{0,160}failLease\(/);
+    const iCobertura = rebuild.indexOf('verificarCobertura(membroIds, rows)');
+    const iUpsert = rebuild.indexOf(".from('carteira_assignments')");
+    expect(iCobertura, 'âncora: não achei a chamada de verificarCobertura').toBeGreaterThan(-1);
+    expect(iUpsert, 'âncora: não achei o upsert de carteira_assignments').toBeGreaterThan(-1);
+    expect(iCobertura, 'a cobertura é verificada DEPOIS do upsert — inútil: o stale já foi gravado').toBeLessThan(iUpsert);
+  });
+
   it('A LISTA de membros vem do carteira_membership_ledger, COM identity_state (Fatia 1 + 2)', () => {
     expect(
       rebuild,
@@ -872,6 +906,24 @@ describe('guardrail money-path: carteira-rebuild lê o vendedor da PROOF oben (P
       mirrorBlockNamed(rebuild, 'carteira-load'),
       'edge divergiu de rebuild-helpers.ts — Lovable reescreveu o load/guard?',
     ).toBe(mirrorBlockNamed(rebuildHelper, 'carteira-load'));
+  });
+
+  // D5: computeCarteira (o CORE money-path) vivia duplicada no edge FORA de qualquer guarda de paridade —
+  // dava p/ corrigir o helper testado e esquecer o edge real (achado Codex). Agora está no bloco carteira-compute.
+  it('PARIDADE: computeCarteira é IDÊNTICA ao src/ (o core money-path — pega reversão do Lovable)', () => {
+    expect(
+      mirrorBlockNamed(rebuild, 'carteira-compute'),
+      'edge divergiu de rebuild-helpers.ts — Lovable reescreveu computeCarteira?',
+    ).toBe(mirrorBlockNamed(rebuildHelper, 'carteira-compute'));
+  });
+
+  // D2: o conflito de mapeamento é QUARANTINADO no edge, não omitido (senão upsert-only → stale).
+  it('D2: emitLegado quarantina o conflito (hunter_orphan + eligible:false), não omite', () => {
+    const bloco = mirrorBlockNamed(rebuild, 'carteira-compute');
+    expect(
+      bloco,
+      'REGRESSÃO: o ramo de conflito de emitLegado voltou a NÃO emitir → membro some → assignment antigo STALE',
+    ).toMatch(/else if \(hunterUserId\)[\s\S]{0,220}source: 'hunter_orphan'[\s\S]{0,80}eligible: false/);
   });
 });
 
