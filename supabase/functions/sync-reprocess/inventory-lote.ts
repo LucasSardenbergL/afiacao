@@ -103,6 +103,19 @@ export function validarTotalPaginas(nTot: number | undefined, maxPaginas: number
   return total;
 }
 
+// Piso MONOTÔNICO do total declarado (Codex P1 do #1353): o total é piso da RUN inteira —
+// uma resposta intermediária SEM total (degrada p/ 1 pelo `|| 1` histórico) encolhia o teto
+// e o loop completava retrato PARCIAL como 'complete' (ex.: p1 declara 5, p2 vem sem o campo
+// → run terminava em 2/5). Declaração nova só MANTÉM ou CRESCE o teto; o fail-fast do
+// anti-runaway continua o de validarTotalPaginas.
+export function proximoTotalPaginas(
+  atual: number,
+  declarado: number | undefined,
+  maxPaginas: number,
+): number {
+  return Math.max(atual, validarTotalPaginas(declarado, maxPaginas));
+}
+
 export type VeredictoPagina = "processar" | "fim" | "anomalia";
 
 // nTotPaginas do Omie é PISO, não verdade (docs/agent/sync.md): página vazia ANTES do fim

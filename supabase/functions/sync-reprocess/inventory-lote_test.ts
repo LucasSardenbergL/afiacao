@@ -20,6 +20,7 @@ import {
   chunked,
   particionarCustos,
   planejarEscritaInventario,
+  proximoTotalPaginas,
   validarTotalPaginas,
   type PosicaoEstoque,
 } from "./inventory-lote.ts";
@@ -131,6 +132,33 @@ Deno.test("validarTotalPaginas — string numérica do Omie coage antes de valid
   let lancou = false;
   try {
     validarTotalPaginas("100000" as unknown as number, 500);
+  } catch {
+    lancou = true;
+  }
+  assertEquals(lancou, true);
+});
+
+// ════════ proximoTotalPaginas — piso MONOTÔNICO entre respostas (Codex P1 do #1353) ════════
+// O total declarado é PISO da run inteira, não só de cada resposta: uma página intermediária
+// SEM total_de_paginas (degrada p/ 1) encolhia o teto e o loop completava retrato PARCIAL
+// como 'complete' (ex.: p1 declara 5, p2 vem sem total → run terminava em 2/5 páginas).
+// O maior total já declarado vence — declaração nova só pode MANTER ou CRESCER o teto.
+
+Deno.test("proximoTotalPaginas — declaração maior cresce o teto", () => {
+  assertEquals(proximoTotalPaginas(1, 5, 500), 5);
+  assertEquals(proximoTotalPaginas(5, 9, 500), 9);
+});
+
+Deno.test("proximoTotalPaginas — declaração ausente/lixo NÃO encolhe o teto já declarado", () => {
+  assertEquals(proximoTotalPaginas(5, undefined, 500), 5); // degradaria p/ 1 sem o piso
+  assertEquals(proximoTotalPaginas(5, 0, 500), 5);
+  assertEquals(proximoTotalPaginas(5, 3, 500), 5); // declaração MENOR também não encolhe
+});
+
+Deno.test("proximoTotalPaginas — acima do teto anti-runaway LANÇA (herda o fail-fast)", () => {
+  let lancou = false;
+  try {
+    proximoTotalPaginas(5, 100000, 500);
   } catch {
     lancou = true;
   }
