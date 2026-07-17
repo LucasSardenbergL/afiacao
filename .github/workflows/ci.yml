@@ -101,6 +101,15 @@ jobs:
       - name: Authz gate check (RPCs SECDEF sensíveis)
         run: bun run authz:check
 
+      # Anti-regressão do pin do bun (follow-up do PR #1352). Prova que TODO `bun-version` é semver
+      # ESTRITO x.y.z e que as ocorrências convergem — as 3 armadilhas do comentário lá em cima.
+      # Existe porque a regressão é INVISÍVEL: com `latest` (ou `1.3`/`1.3.x`/`bun-v1.3.15`) a action
+      # cai na api.github.com, o CI fica VERDE, e o SPOF só aparece quando a API do GitHub degrada —
+      # como em 2026-07-16, que matou todo PR do repo em ~6s. Comentário não barra ninguém e todo PR
+      # não-draft auto-mergeia no verde. Estático: lê .github/workflows/, sem rede.
+      - name: Bun pin gate check (semver estrito x.y.z)
+        run: bun run bunpin:check
+
       # ─── Alerta de regressão (Componente 1 — mitigação de reversão Lovable) ──
       # O bot do Lovable commita DIRETO na main sem PR/CI; quando quebra build/
       # typecheck (ex.: types.ts stale #1079), o CI fica vermelho mas passa
