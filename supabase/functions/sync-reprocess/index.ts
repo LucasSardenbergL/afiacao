@@ -18,7 +18,7 @@ import {
   MAX_PAGINAS_POS_ESTOQUE,
   particionarCustos,
   planejarEscritaInventario,
-  validarTotalPaginas,
+  proximoTotalPaginas,
   type LinhaProdutoLocal,
   type PosicaoEstoque,
 } from "./inventory-lote.ts";
@@ -426,9 +426,10 @@ async function reprocessProducts(
         filtrar_apenas_omiepdv: "N",
       })) as unknown as OmieListarProdutosResponse;
 
-      // Teto anti-runaway fail-FAST sobre o total DECLARADO (lição Codex P1 do #1341):
-      // descobrir o runaway só na página 501 reproduziria o próprio 546.
-      totalPaginas = validarTotalPaginas(result.total_de_paginas, MAX_PAGINAS_PRODUTOS);
+      // Teto anti-runaway fail-FAST sobre o total DECLARADO (lição Codex P1 do #1341) com
+      // piso MONOTÔNICO (Codex P1 do #1353): resposta intermediária sem total não pode
+      // encolher o teto e completar retrato parcial como 'complete'.
+      totalPaginas = proximoTotalPaginas(totalPaginas, result.total_de_paginas, MAX_PAGINAS_PRODUTOS);
       const produtos = result.produto_servico_cadastro || [];
       const veredicto = avaliarPagina(produtos.length, pagina, totalPaginas);
       if (veredicto === "anomalia") {
@@ -480,9 +481,12 @@ async function reprocessProducts(
     // 3) omie_products em LOTE (onConflict = UNIQUE(omie_codigo_produto,account); o payload
     //    completo JÁ carrega as NOT NULL sem default codigo/descricao com os fallbacks do
     //    N+1 — sem o 23502 do #1344). Chunk com erro NÃO derruba a run (idempotente — o
-    //    próximo ciclo reconcilia), mas upserts_count só soma o que FOI escrito e o
-    //    error_message surfaça (padrão reprocessOrders/reprocessInventory: nunca 'complete'
-    //    limpo mentindo).
+    //    próximo ciclo reconcilia), mas upserts_count só soma o que FOI escrito, corrections
+    //    só conta divergência de chunk ESCRITO (Codex P2 do #1353: corrections=divergences
+    //    afirmaria correção que nunca aconteceu) e o error_message surfaça (padrão
+    //    reprocessOrders/reprocessInventory: nunca 'complete' limpo mentindo).
+    const divergentes = new Set(plano.codigosDivergentes);
+    let corrections = 0;
     for (const chunk of chunked(plano.rows, 500)) {
       const { error } = await db
         .from("omie_products")
@@ -492,6 +496,7 @@ async function reprocessProducts(
         console.error(`[Reprocess][${account}] upsert omie_products: ${error.message}`);
       } else {
         upserts += chunk.length;
+        for (const row of chunk) if (divergentes.has(row.omie_codigo_produto)) corrections++;
       }
     }
     // Falha TOTAL ≠ sucesso parcial (lição #1341): se NENHUM chunk escreveu, a infra
@@ -506,7 +511,7 @@ async function reprocessProducts(
     await completeReprocessLog(db, logId, {
       upserts_count: upserts,
       divergences_found: divergences,
-      corrections_applied: divergences,
+      corrections_applied: corrections,
       duration_ms: Date.now() - startTime,
       metadata: {
         pages: totalPaginas,
@@ -568,8 +573,10 @@ async function reprocessInventory(
       })) as unknown as OmieListarPosEstoqueResponse;
 
       // Teto anti-runaway fail-FAST sobre o total DECLARADO (Codex P1): descobrir o runaway
-      // só na página 501, após ~90s de chamadas, reproduziria o próprio 546.
-      totalPaginas = validarTotalPaginas(result.nTotPaginas, MAX_PAGINAS_POS_ESTOQUE);
+      // só na página 501, após ~90s de chamadas, reproduziria o próprio 546. Piso MONOTÔNICO
+      // (Codex P1 do #1353): resposta intermediária sem nTotPaginas degradava o teto p/ 1 e
+      // completava retrato parcial como 'complete' — mesmo defeito latente do products.
+      totalPaginas = proximoTotalPaginas(totalPaginas, result.nTotPaginas, MAX_PAGINAS_POS_ESTOQUE);
       const produtos = result.produtos || [];
       const veredicto = avaliarPagina(produtos.length, pagina, totalPaginas);
       if (veredicto === "anomalia") {

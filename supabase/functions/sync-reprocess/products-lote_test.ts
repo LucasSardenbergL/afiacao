@@ -133,6 +133,52 @@ Deno.test("acumular — descrição com '810ml'/'810 ml' é descartada, case-ins
   assertEquals(cat.has(3), true);
 });
 
+// Codex P1 do #1353: Number(true)===1 — um boolean no codigo_produto viraria o código 1 e
+// SOBRESCREVERIA o produto real de código 1 com dados de um item malformado (corrupção de
+// catálogo). Código só pode chegar como number ou string (contrato Omie); o resto descarta.
+Deno.test("acumular — codigo_produto boolean/array/objeto é descartado (nunca coage p/ código válido)", () => {
+  const cat = new Map<number, ProdutoCadastroOmie>();
+  const n = acumularProdutosDaPagina(cat, [
+    { codigo_produto: true as unknown as number, descricao: "boolean vira 1 sem o guard" },
+    { codigo_produto: [5] as unknown as number, descricao: "Number([5])===5 sem o guard" },
+    { codigo_produto: {} as unknown as number, descricao: "objeto" },
+  ]);
+  assertEquals(n, 0);
+  assertEquals(cat.size, 0);
+});
+
+// Codex P1 do #1353: no N+1, valor_unitario "abc" (truthy) ia pro payload e falhava SÓ aquele
+// produto (22P02 silencioso); em lote derrubaria o chunk INTEIRO de 500. Descarta o ITEM —
+// fiel em efeito (produto não escrito neste ciclo), nunca clampa lixo para 0 (fabricação).
+Deno.test("acumular — valor_unitario/quantidade_estoque LIXO (string não-numérica, NaN, ±Inf, boolean) descarta o ITEM", () => {
+  const cat = new Map<number, ProdutoCadastroOmie>();
+  const n = acumularProdutosDaPagina(cat, [
+    { codigo_produto: 1, valor_unitario: "abc" as unknown as number },
+    { codigo_produto: 2, quantidade_estoque: "lixo" as unknown as number },
+    { codigo_produto: 3, valor_unitario: Number.NaN },
+    { codigo_produto: 4, quantidade_estoque: Number.POSITIVE_INFINITY },
+    { codigo_produto: 5, valor_unitario: true as unknown as number },
+    { codigo_produto: 6, valor_unitario: 9.9, quantidade_estoque: 3 }, // válido no meio do lixo
+  ]);
+  assertEquals(n, 1);
+  assertEquals(cat.size, 1);
+  assertEquals(cat.has(6), true);
+});
+
+// String numérica coage na ENTRADA (canônica): o N+1 mandava "5.5" cru e o Postgres coagia —
+// funcionava. Coagir aqui preserva o efeito E mata o falso-positivo perpétuo de divergência
+// (local 5.5 number vs "5.5" string divergia TODO ciclo no N+1 — decisão deliberada, ver
+// comentário no módulo).
+Deno.test("acumular — valor_unitario/quantidade_estoque string NUMÉRICA coage para number", () => {
+  const cat = new Map<number, ProdutoCadastroOmie>();
+  const n = acumularProdutosDaPagina(cat, [
+    { codigo_produto: 1, valor_unitario: "5.5" as unknown as number, quantidade_estoque: "3" as unknown as number },
+  ]);
+  assertEquals(n, 1);
+  assertEquals(cat.get(1)?.valor_unitario, 5.5);
+  assertEquals(cat.get(1)?.quantidade_estoque, 3);
+});
+
 Deno.test("acumular — mesmo código em páginas sucessivas: last-wins (dedupe p/ upsert em lote)", () => {
   const cat = new Map<number, ProdutoCadastroOmie>();
   acumularProdutosDaPagina(cat, [{ codigo_produto: 9, descricao: "v1", valor_unitario: 1 }]);
@@ -331,6 +377,30 @@ Deno.test("planejar — MESMA linha repetida (mesmo id 2x) não é ambígua; com
     NOW,
   );
   assertEquals(plano.divergences, 1); // repetição de transporte ≠ ambiguidade de dados
+});
+
+// Codex P2 do #1353: corrections_applied=divergences mentia sob falha PARCIAL de chunk
+// (contava correção de linha que nunca foi escrita). O plano expõe QUAIS códigos divergiram;
+// o caller soma corrections só dos chunks que ESCREVERAM.
+Deno.test("planejar — codigosDivergentes lista exatamente os códigos que contaram divergência", () => {
+  const cat = new Map<number, ProdutoCadastroOmie>();
+  acumularProdutosDaPagina(cat, [
+    { codigo_produto: 1, descricao: "Nova", valor_unitario: 5 },
+    { codigo_produto: 2, descricao: "Igual", valor_unitario: 3 },
+    { codigo_produto: 3, descricao: "Preço mudou", valor_unitario: 9 },
+  ]);
+  const plano = planejarEscritaProdutos(
+    cat,
+    [
+      { id: "u1", omie_codigo_produto: 1, descricao: "Antiga", valor_unitario: 5 },
+      { id: "u2", omie_codigo_produto: 2, descricao: "Igual", valor_unitario: 3 },
+      { id: "u3", omie_codigo_produto: 3, descricao: "Preço mudou", valor_unitario: 4 },
+    ],
+    "oben",
+    NOW,
+  );
+  assertEquals(plano.codigosDivergentes, [1, 3]);
+  assertEquals(plano.divergences, 2); // divergences === codigosDivergentes.length, sempre
 });
 
 // ════════ constantes ════════

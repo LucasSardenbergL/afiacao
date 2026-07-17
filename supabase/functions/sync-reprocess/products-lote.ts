@@ -65,6 +65,10 @@ export interface RowUpsertProduto {
 export interface PlanoEscritaProdutos {
   rows: RowUpsertProduto[];
   divergences: number;
+  // Quais códigos contaram divergência (divergences === codigosDivergentes.length): o caller
+  // soma corrections_applied só dos chunks que ESCREVERAM — sob falha parcial,
+  // corrections=divergences afirmaria correção que nunca aconteceu (Codex P2 do #1353).
+  codigosDivergentes: number[];
 }
 
 // Famílias fora do catálogo vendável (fiel ao N+1 — matching por INCLUDES na família
@@ -81,10 +85,24 @@ export const EXCLUDED_FAMILIES = [
 // 500 páginas × 100 = 50k produtos ≈ ordens de grandeza acima do catálogo real.
 export const MAX_PAGINAS_PRODUTOS = 500;
 
-// Aplica os filtros de exclusão do N+1 e acumula os elegíveis no Map (dedupe last-wins por
-// código — duplicata no MESMO statement de upsert daria 21000 "cannot affect row a second
-// time"). Guarda o produto CRU do Omie; fallbacks de escrita ficam em planejarEscritaProdutos
-// (chamado com o nowIso capturado APÓS a coleta — Codex P2 do #1341). Retorna quantos entraram.
+// Campo numérico OPCIONAL de escrita (vai em coluna numeric): ausente passa (o fallback || 0
+// é do planejar), number finito passa, string numérica coage (o N+1 mandava a string crua e o
+// Postgres coagia — funcionava; coagir AQUI preserva o efeito e mata o falso-positivo perpétuo
+// de divergência local-number vs omie-string). Lixo (NaN/±Inf/boolean/string não-numérica)
+// invalida o ITEM: em chunk de 500 um único valor malformado derruba o statement inteiro
+// (22P02); no N+1 o dano era 1 produto, silencioso. Nunca clampa lixo para 0 — fabricação.
+function coagirNumericoOpcional(v: unknown): number | undefined | "invalido" {
+  if (v == null) return undefined;
+  if (typeof v === "number") return Number.isFinite(v) ? v : "invalido";
+  if (typeof v === "string" && v.trim() !== "" && Number.isFinite(Number(v))) return Number(v);
+  return "invalido";
+}
+
+// Aplica os filtros de exclusão do N+1, SANEIA os campos que podem corromper/derrubar o lote
+// (Codex P1 do #1353) e acumula os elegíveis no Map (dedupe last-wins por código — duplicata
+// no MESMO statement de upsert daria 21000 "cannot affect row a second time"). Demais
+// fallbacks de escrita ficam em planejarEscritaProdutos (chamado com o nowIso capturado APÓS
+// a coleta — Codex P2 do #1341). Retorna quantos entraram.
 export function acumularProdutosDaPagina(
   catalogo: Map<number, ProdutoCadastroOmie>,
   produtos: ProdutoCadastroOmie[],
@@ -98,9 +116,22 @@ export function acumularProdutosDaPagina(
     const descLower = (prod.descricao || "").toLowerCase();
     if (descLower.includes("810ml") || descLower.includes("810 ml")) continue;
 
-    const codProd = Number(prod.codigo_produto); // Omie pode devolver string; chave do Map é number
-    if (!Number.isSafeInteger(codProd) || codProd <= 0) continue; // Number(undefined)=NaN / Number("")=0 nunca viram entrada
-    catalogo.set(codProd, prod);
+    // Código só chega como number|string no contrato Omie; Number(true)===1 e Number([5])===5
+    // coagiriam lixo para um código VÁLIDO e sobrescreveriam o produto real (Codex P1).
+    if (typeof prod.codigo_produto !== "number" && typeof prod.codigo_produto !== "string") continue;
+    const codProd = Number(prod.codigo_produto); // string numérica normaliza; chave do Map é number
+    if (!Number.isSafeInteger(codProd) || codProd <= 0) continue; // Number("")=0 nunca vira entrada
+
+    const valorUnitario = coagirNumericoOpcional(prod.valor_unitario);
+    const quantidadeEstoque = coagirNumericoOpcional(prod.quantidade_estoque);
+    if (valorUnitario === "invalido" || quantidadeEstoque === "invalido") continue;
+
+    catalogo.set(codProd, {
+      ...prod,
+      codigo_produto: codProd,
+      valor_unitario: valorUnitario,
+      quantidade_estoque: quantidadeEstoque,
+    });
     elegiveis++;
   }
   return elegiveis;
@@ -131,17 +162,21 @@ export function planejarEscritaProdutos(
     }
   }
 
-  const plano: PlanoEscritaProdutos = { rows: [], divergences: 0 };
+  const plano: PlanoEscritaProdutos = { rows: [], divergences: 0, codigosDivergentes: [] };
   for (const [cod, prod] of catalogo) {
     const local = localPorCod.get(cod);
     if (local != null) {
       // Comparação ESTRITA fiel ao N+1 (fallback "" ≠ o "Sem descrição" do row — deliberado;
-      // null local diverge de 0 — nada de coerção Number(null)===0).
+      // null local diverge de 0 — nada de coerção Number(null)===0). Código Omie DUPLICADO
+      // (degenerado) compara a versão final (last-wins) contra o estado inicial do banco —
+      // o N+1 comparava cada ocorrência contra um banco já mutado no meio do loop, contagem
+      // igualmente incoerente; o estado FINAL escrito é idêntico (Codex P2 do #1353, registrado).
       if (
         local.descricao !== (prod.descricao || "") ||
         local.valor_unitario !== (prod.valor_unitario || 0)
       ) {
         plano.divergences++;
+        plano.codigosDivergentes.push(cod);
       }
     }
     plano.rows.push({
