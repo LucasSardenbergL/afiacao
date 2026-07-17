@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # ╔══════════════════════════════════════════════════════════════════════════════╗
-# ║  PROVA — as views anon-readable com `security_invoker=true` NÃO vazam         ║
+# ║  PROVA — `security_invoker=true` LIGA o invoker (⇒ o relatório das ~19 é      ║
+# ║  falso-positivo de detector), + as 2 topologias anon-readable auditadas       ║
+# ║  ⚠️ ESCOPO: prova o LITERAL (vale p/ as 19) e executa 2 das 10 views          ║
+# ║  anon-readable do bucket `=true` — as 2 apontadas como suspeitas ALTAS.       ║
+# ║  As outras 8 têm o veredito por VARREDURA estrutural de prod, não por         ║
+# ║  execução aqui (ver §7 no rodapé).                                            ║
 # ║  bash db/test-views-anon-invoker-literal.sh > /tmp/t.log 2>&1; echo "exit=$?" ║
 # ║  (NÃO pipe pra tail — engole o exit≠0; §2 do CLAUDE.md.)                      ║
 # ║                                                                               ║
@@ -33,10 +38,14 @@
 # ║  Lei de Ferro:                                                                ║
 # ║   1. Topologia REAL (pg_depend recursivo + pg_get_viewdef da prod), não um    ║
 # ║      stub da view lendo a tabela direto — stub mente nos DOIS sentidos.       ║
-# ║      As expressões de PROJEÇÃO (jsonb_array_elements, agregações) foram       ║
-# ║      simplificadas de propósito: não afetam autorização. O que é reproduzido  ║
-# ║      fielmente é o que decide o veredito: a relação-raiz do FROM, por qual    ║
-# ║      JOIN cada tabela-RLS entra, as policies REAIS e os GRANTS REAIS.         ║
+# ║      Reproduzido fielmente o que decide o veredito: a relação-raiz do FROM,   ║
+# ║      por qual JOIN cada tabela-RLS entra, as policies REAIS e os GRANTS       ║
+# ║      REAIS. As projeções jsonb destas 2 views foram simplificadas por serem   ║
+# ║      expressões CORRELACIONADAS (jsonb_array_elements sobre a própria linha:  ║
+# ║      não tocam outra relação, não chamam SECDEF; a linha já passou por        ║
+# ║      ACL+RLS antes da projeção). ⚠️ NÃO generalize p/ "projeção nunca afeta   ║
+# ║      autorização" (achado do Codex challenge): uma projeção com subquery em   ║
+# ║      OUTRA tabela ou chamada a função SECDEF afeta — aí reproduza verbatim.   ║
 # ║   2. Assert negativo distingue 0-linhas de permission-denied; nada de         ║
 # ║      WHEN OTHERS mudo.                                                         ║
 # ║   3. Falsificação: sabota (=false) → exige VERMELHO → restaura.               ║
@@ -322,15 +331,55 @@ eq "restaurado após falsificação B" "$(como_anon v_grupo_contas_receber)" "0"
 
 # Falsificação C: o customer também precisa ter dente no order_feed — se a policy
 # own-scope sumir, ele para de ver os próprios pedidos (prova que é o RLS que decide).
+# ⚠️ Assert EXATO (=1), não "qualquer coisa != 2" (achado do Codex challenge): a forma
+# negada aceitava DENIED/vazio/erro como sucesso — um assert que passa por acidente não
+# prova nada. O customer perde o sales_order (own-scope) e MANTÉM o order de `orders`
+# (policy própria, intacta) ⇒ exatamente 1.
 P -q -c "DROP POLICY \"Customers can view their own sales orders\" ON sales_orders;"
-n="$(como_customer order_feed)"
-if [ "$n" = "2" ]; then
-  bad "FALSIFICAÇÃO C: dropei a policy own-scope e o customer seguiu vendo 2 — o assert não prova RLS"
-else
-  ok "FALSIFICAÇÃO C: sem a policy own-scope o customer cai p/ =$n — quem autoriza é o RLS, não o acaso do seed"
-fi
+eq "FALSIFICAÇÃO C: sem a policy own-scope o customer cai de 2 p/ 1 (perde o sales, mantém o order) — quem autoriza é o RLS" \
+   "$(como_customer order_feed)" "1"
 P -q -c "CREATE POLICY \"Customers can view their own sales orders\" ON sales_orders FOR SELECT TO authenticated USING (auth.uid() = customer_user_id);"
 eq "restaurado após falsificação C" "$(como_customer order_feed)" "2"
+
+echo ""
+echo '═══ 6. "invoker LIGADO" NÃO é sinônimo de "não vaza" — o RLS da base é o gate ═══'
+# Buraco do meu próprio veredito, achado ao auditá-lo: o invoker só DELEGA ao RLS.
+# Se a base não tem RLS (ou tem policy permissiva), a view `on` vaza igual.
+# Varredura de prod (2026-07-17) que fecha isto para o repo: das 67 tabelas-base de
+# TODAS as views anon-legíveis de `public`, ZERO sem RLS e ZERO com policy permissiva
+# alcançável por anon; as únicas bases sem RLS são 2 MV em `private` (sem grant a anon).
+P -q <<'SQL'
+CREATE TABLE _sem_rls (id int, segredo text);          -- RLS NUNCA ligado
+INSERT INTO _sem_rls VALUES (1,'CUSTO INTERNO');
+CREATE VIEW _v_on_sem_rls WITH (security_invoker = on) AS SELECT * FROM _sem_rls;
+GRANT SELECT ON _sem_rls, _v_on_sem_rls TO authenticated, anon;
+SQL
+eq "view invoker=ON sobre tabela SEM RLS: anon LÊ (invoker ligado NÃO basta)" "$(como_anon _v_on_sem_rls)" "1"
+
+echo ""
+echo "═══ 7. A regra do FROM: o que decide é o LADO PRESERVADO do join, não a raiz ═══"
+# O #1378 gravou "olhe a relação-raiz do FROM". É heurística, não regra — o Codex
+# challenge derrubou meu contraexemplo (que estava invertido) e deu os reais.
+P -q <<'SQL'
+CREATE VIEW _base_on WITH (security_invoker = on) AS SELECT * FROM _lit_base;
+-- (a) MEU contraexemplo, que o Codex REFUTOU: LEFT preserva a ESQUERDA ⇒ view_on=0 ⇒ 0.
+CREATE VIEW _c_from_on_left_tab AS
+  SELECT v.id, t.segredo FROM _base_on v LEFT JOIN _lit_base t ON t.id = v.id;
+-- (b) contraexemplo REAL: RIGHT preserva o lado da TABELA, lida como owner ⇒ VAZA.
+CREATE VIEW _c_from_on_right_tab AS
+  SELECT t.id, t.segredo FROM _base_on v RIGHT JOIN _lit_base t ON t.id = v.id;
+-- (c) contraexemplo REAL: a raiz é a TABELA (o "FROM view_on" nem existe) ⇒ VAZA.
+CREATE VIEW _c_from_tab_left_on AS
+  SELECT t.id, t.segredo FROM _lit_base t LEFT JOIN _base_on v ON v.id = t.id;
+GRANT SELECT ON _base_on, _c_from_on_left_tab, _c_from_on_right_tab, _c_from_tab_left_on TO authenticated, anon;
+SQL
+eq "(a) FROM view_on LEFT JOIN tabela_rls: NÃO vaza — LEFT preserva a esquerda (meu contraexemplo era FALSO)" \
+   "$(como_customer _c_from_on_left_tab)" "0"
+eq "(b) FROM view_on RIGHT JOIN tabela_rls: VAZA — RIGHT preserva o lado da TABELA (a heurística da raiz erra aqui)" \
+   "$(como_customer _c_from_on_right_tab)" "1"
+eq "(c) FROM tabela_rls LEFT JOIN view_on: VAZA — a raiz é a tabela" \
+   "$(como_customer _c_from_tab_left_on)" "1"
+eq "(b) staff continua lendo"  "$(como_staff _c_from_on_right_tab)" "1"
 
 echo ""
 echo "═══════════════════════════════════════════"
