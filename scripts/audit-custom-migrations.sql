@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 377
+-- Total de custom migrations: 378
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -413,6 +413,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260716230000', 'sla_compliance_le_leadtime_efetivo', '20260716230000_sla_compliance_le_leadtime_efetivo.sql'),
   ('20260717003000', 'outliers_leadtime_stack_efetivo', '20260717003000_outliers_leadtime_stack_efetivo.sql'),
   ('20260717010000', 'drop_reprocessar_sku_items_via_raw_data', '20260717010000_drop_reprocessar_sku_items_via_raw_data.sql'),
+  ('20260717010000', 'preco_medio_leadtime_efetivo', '20260717010000_preco_medio_leadtime_efetivo.sql'),
   ('20260717015000', 'restaurar_security_invoker_views', '20260717015000_restaurar_security_invoker_views.sql'),
   ('20260717020000', 'precos_compra_leadtime_efetivo', '20260717020000_precos_compra_leadtime_efetivo.sql'),
   ('20260717120000', 'seg_customer_metrics_gate_staff', '20260717120000_seg_customer_metrics_gate_staff.sql'),
@@ -1739,6 +1740,7 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('outliers_leadtime_stack_efetivo', 'function', 'public', 'detectar_outliers_empresa', ''),
   ('outliers_leadtime_stack_efetivo', 'function', 'public', 'estimar_impacto_exclusao_outlier', ''),
   ('outliers_leadtime_stack_efetivo', 'function', 'public', 'resolver_outlier', ''),
+  ('preco_medio_leadtime_efetivo', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
   ('precos_compra_leadtime_efetivo', 'view', 'public', 'v_sku_parametros_sugeridos', ''),
   ('seg_customer_metrics_gate_staff', 'view', 'public', 'customer_metrics_mv', '')
 ),
@@ -3111,6 +3113,7 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('outliers_leadtime_stack_efetivo', 'function', 'public', 'detectar_outliers_empresa', ''),
   ('outliers_leadtime_stack_efetivo', 'function', 'public', 'estimar_impacto_exclusao_outlier', ''),
   ('outliers_leadtime_stack_efetivo', 'function', 'public', 'resolver_outlier', ''),
+  ('preco_medio_leadtime_efetivo', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
   ('precos_compra_leadtime_efetivo', 'view', 'public', 'v_sku_parametros_sugeridos', ''),
   ('seg_customer_metrics_gate_staff', 'view', 'public', 'customer_metrics_mv', '')
 )
