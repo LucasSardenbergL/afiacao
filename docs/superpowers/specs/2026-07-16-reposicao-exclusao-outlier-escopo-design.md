@@ -152,7 +152,9 @@ Money-path + função SQL alterada ⇒ `prove-sql-money-path` (PG17 + falsifica�
 - **negativo:** `resolver_outlier(...,'excluir')` levanta a SQLSTATE esperada, re-lançando o resto
   (nada de `WHEN OTHERS THEN 'OK'`);
 - **invariante:** após o fluxo completo, `observacoes_excluidas` continua vazia;
-- **gate preservado:** não-staff segue barrado (`42501`), provado sob `SET ROLE authenticated` + GUC;
+- **gate preservado:** não-staff segue barrado (`42501`), provado trocando a GUC `test.uid` (uid sem
+  role, e `auth.uid()` nulo). Aqui **não** cabe `SET ROLE authenticated`: o gate é interno à função
+  (`has_role`), não uma policy RLS — `SET ROLE` provaria outra coisa;
 - **falsificação:** sabotar a migration (reintroduzir o INSERT) e exigir vermelho.
 
 Pré-flight obrigatório: `pg_get_functiondef('resolver_outlier')` da PROD antes do `CREATE OR REPLACE`
