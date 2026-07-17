@@ -18983,6 +18983,7 @@ export type Database = {
         }[]
       }
       refresh_customer_metrics: { Args: never; Returns: undefined }
+      request_customer_metrics_refresh: { Args: never; Returns: undefined }
       refresh_oportunidade_badge: { Args: never; Returns: undefined }
       refresh_sku_ranking_negociacao: {
         Args: never

@@ -230,9 +230,13 @@ serve(async (req) => {
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, serviceKey);
 
-    // 1. Refresh materialized view
+    // 1. Refresh materialized view. supabase-js devolve {error}, NÃO lança → checar explicitamente
+    //    (sem isto a falha do refresh era engolida e as métricas serviam stale — achado 2026-07-17).
     console.log("[ai-ops-agent] Refreshing customer metrics...");
-    await supabase.rpc("refresh_customer_metrics");
+    const { error: refreshError } = await supabase.rpc("refresh_customer_metrics");
+    if (refreshError) {
+      throw new Error(`[ai-ops-agent] refresh_customer_metrics falhou: ${refreshError.message}`);
+    }
 
     // 2. Get all customer metrics with pagination (bypass 1000-row limit)
     let allMetrics: CustomerMetric[] = [];
