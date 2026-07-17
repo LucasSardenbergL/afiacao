@@ -18760,6 +18760,15 @@ export type Database = {
         Returns: boolean
       }
       kb_normalizar_catalisador: { Args: { p: string }; Returns: string }
+      leadtime_t1_e_data_de_pedido: {
+        Args: {
+          p_hist_t1: string
+          p_hist_t2: string
+          p_omie_codigo_pedido: number
+          p_tracking_t1: string
+        }
+        Returns: boolean
+      }
       limpar_sugestoes_antigas: {
         Args: never
         Returns: {
@@ -18966,6 +18975,13 @@ export type Database = {
       }
       rank_precisao: { Args: { p: string }; Returns: number }
       recalcular_picking_task: { Args: { p_task_id: string }; Returns: Json }
+      recomputar_leadtime_derivado: {
+        Args: { p_empresa: string }
+        Returns: {
+          etapa: string
+          valor: number
+        }[]
+      }
       refresh_customer_metrics: { Args: never; Returns: undefined }
       refresh_oportunidade_badge: { Args: never; Returns: undefined }
       refresh_sku_ranking_negociacao: {
