@@ -31,6 +31,7 @@ import {
   type RunResumo,
   type InsertPreco,
   classificarLinhasRascunho,
+  ehPlaceholderDataTables,
 } from "../_shared/embalagem-captura-helpers.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? Deno.env.get("VITE_SUPABASE_URL")!;
@@ -53,8 +54,10 @@ export default async ({ page, context }) => {
   const trace = [];
   const t0 = Date.now();
 
-  // Regra compartilhada (interpolada do _shared via .toString() — fonte única,
-  // testada em vitest): decide se linha pré-existente é resíduo nosso ou humana.
+  // Regras compartilhadas (interpoladas do _shared via .toString() — fonte
+  // única, testada em vitest): placeholder de tabela vazia do DataTables
+  // (não é linha real — spike-B f4d9fd92) e classificação de rascunho.
+  const ehPlaceholderDataTables = ${ehPlaceholderDataTables.toString()};
   const classificarLinhasRascunho = ${classificarLinhasRascunho.toString()};
 
   // === Budget management (deadline global, aborto limpo) ===
@@ -202,9 +205,20 @@ export default async ({ page, context }) => {
     };
   });
 
+  // Conta só linhas REAIS: o DataTables renderiza "Nenhum dado disponível na
+  // tabela" como <tr> quando vazio (classe dataTables_empty) — contá-lo dava
+  // falso "rascunho sujo" em grade limpa E falso "cancel não comprovado" após
+  // remover a última linha (spike-B f4d9fd92). O filtro por texto abaixo é
+  // espelho inline de ehPlaceholderDataTables (page.evaluate roda no contexto
+  // da página, sem acesso ao escopo daqui) — manter em sincronia.
   const contarRows = () => page.evaluate(function() {
     var table = document.querySelector('#datatable_itens');
-    return table ? table.querySelectorAll('tbody tr').length : -1;
+    if (!table) return -1;
+    return Array.from(table.querySelectorAll('tbody tr')).filter(function(tr) {
+      if (tr.querySelector('td.dataTables_empty')) return false;
+      var t = (tr.innerText || '').trim().toLowerCase();
+      return t.indexOf('nenhum dado dispon') === -1 && t.indexOf('no data available') === -1;
+    }).length;
   });
 
   // Cancelamento é PROVA, não best-effort (Codex P0): sem comprovação (clique +
@@ -406,7 +420,11 @@ export default async ({ page, context }) => {
       const textosLinhas = await page.evaluate(function() {
         var table = document.querySelector('#datatable_itens');
         if (!table) return [];
-        return Array.from(table.querySelectorAll('tbody tr')).map(function(tr) {
+        return Array.from(table.querySelectorAll('tbody tr')).filter(function(tr) {
+          if (tr.querySelector('td.dataTables_empty')) return false;
+          var t = (tr.innerText || '').trim().toLowerCase();
+          return t.indexOf('nenhum dado dispon') === -1 && t.indexOf('no data available') === -1;
+        }).map(function(tr) {
           return (tr.innerText || '').trim().substring(0, 200);
         });
       }).catch(function() { return []; });

@@ -303,6 +303,17 @@ export function escolherGrupoSpike(pares: { grupo_id: string; sku_portal: string
   return ordenado[0].grupo_id;
 }
 
+// Linha-placeholder do DataTables em tabela vazia ("Nenhum dado disponível na
+// tabela" / "No data available in table"): renderiza como <tr> real e por isso
+// contamina contagem e classificação (spike-B f4d9fd92: grade LIMPA acusada de
+// rascunho sujo). Não é linha de rascunho — nem nossa, nem humana.
+// ⚠️ Interpolada no Browserless via .toString(): self-contained, sem template literal.
+export function ehPlaceholderDataTables(texto: string): boolean {
+  const t = String(texto || '').trim().toLowerCase();
+  if (t.length === 0) return false;
+  return t.indexOf('nenhum dado dispon') !== -1 || t.indexOf('no data available') !== -1;
+}
+
 export interface ClassificacaoRascunho {
   cancelaveis: boolean;
   desconhecidas: string[];
@@ -323,14 +334,17 @@ export function classificarLinhasRascunho(
   const mapa = skusDoMapa
     .map(function (s) { return String(s || '').trim().toUpperCase(); })
     .filter(function (s) { return s.length > 0; });
+  // Placeholder de tabela vazia NÃO é linha de rascunho: fora da decisão
+  // (defesa em profundidade — a contagem no browser também o exclui).
+  const reais = textosLinhas.filter(function (t) { return !ehPlaceholderDataTables(t); });
   const desconhecidas: string[] = [];
-  for (const texto of textosLinhas) {
+  for (const texto of reais) {
     const t = String(texto || '').toUpperCase();
     const pertence = t.trim().length > 0 && mapa.some(function (sku) { return t.indexOf(sku) !== -1; });
     if (!pertence) desconhecidas.push(String(texto || '').trim().substring(0, 80));
   }
   return {
-    cancelaveis: textosLinhas.length > 0 && desconhecidas.length === 0,
+    cancelaveis: reais.length > 0 && desconhecidas.length === 0,
     desconhecidas,
   };
 }
