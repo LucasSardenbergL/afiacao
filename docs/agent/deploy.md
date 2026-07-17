@@ -11,6 +11,12 @@
 ## Edge — armadilhas
 
 - **Deploy SÓ depois do merge** — o chat lê a `main`; deployar antes pega o código velho.
+- **Deployar uma edge sobe o ARQUIVO INTEIRO da `main`, não só o seu diff** → o pré-flight é das dependências de banco de TODO o arquivo, inclusive código de PRs de TERCEIROS mergeados desde o último deploy dela. É a irmã da armadilha da migration silenciosa, vista do outro lado: não foi a migration que faltou aplicar — foi o **deploy do código que a exigia** que chegou depois e revelou a falta. Mordido 2026-07-17 (Fatia 2 do épico-drop): deployei `carteira-rebuild` verbatim (a MINHA mudança tinha as deps checadas: `identity_state` existia no schema) — mas o arquivo da main carregava junto o lease do #1333 (`claim_carteira_rebuild`/`finalizar_carteira_rebuild`), mergeado dias antes, cuja migration NUNCA fora aplicada. As duas metades faltando (edge do #1333 nunca deployada + migration nunca aplicada) se cancelavam; meu deploy correto trouxe só a metade-código → **rebuild 500 em produção por ~40min** (`claim: Could not find the function ... in the schema cache`), carteira congelada no snapshot do dia anterior (modo-falha seguro: o `claim` é o 1º passo, morre ANTES de escrever). **Pré-flight barato (roda em segundos, teria pego):** antes de dar o prompt de deploy de uma edge, cruze as RPCs que ela chama com o que existe em prod —
+  ```bash
+  grep -rhoE "\.rpc\('[a-z_]+'" supabase/functions/<edge>/ | sed "s/.*rpc('//;s/'//" | sort -u
+  # cada uma: ~/.config/afiacao/psql-ro -c "select 1 from pg_proc where proname='<rpc>';"  (vazio = bomba armada)
+  ```
+  Varredura do repo inteiro em 2026-07-17: das 16 RPCs chamadas por edges, as 16 existem em prod — o `claim_carteira_rebuild` era o único caso. Vale o mesmo raciocínio p/ tabela/coluna/view nova que o arquivo referencie.
 - **Proibir "melhorias"** — instrua o chat a deployar **verbatim** o arquivo do repo (o Lovable tende a reescrever a função).
 - **Verificar por comportamento/bytes, não pela palavra do Lovable** — `503 LOAD_FUNCTION_ERROR` + zero `running` no log = a edge não BOOTA → fix é **redeploy**, não código (ver `docs/agent/sync.md`).
 - **`config.toml` pode vir com `[functions.<x>]` DUPLICADO** (bug do bot do Lovable) → TOML inválido (`redefine an already defined table`) que **quebra o `supabase` CLI** no parse. Fix: apagar a 2ª entrada (se idêntica = no-op de comportamento) — pode reaparecer num "Changes" do bot. (#974)
