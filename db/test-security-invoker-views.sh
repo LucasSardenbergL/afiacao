@@ -10,6 +10,15 @@
 # ║      dependência; nem chega a criar 2 das 5 views).                           ║
 # ║   2. Assert negativo captura a condição esperada; nada de WHEN OTHERS mudo.   ║
 # ║   3. Falsificação: desfaz o fix → exige VERMELHO → restaura.                  ║
+# ║                                                                               ║
+# ║  ⚠️ ESCOPO HONESTO (corrigido após o merge do #1375):                         ║
+# ║  os stubs abaixo fazem cada view ler a TABELA direto. Isso é fiel APENAS      ║
+# ║  para v_sku_sla_compliance (na prod: `FROM sku_parametros` + LEFT JOINs)      ║
+# ║  — a única das 5 que vazava de verdade, e a que tem grant `anon`.             ║
+# ║  As outras 4 partem de um `FROM` que já é view `on` (v_sku_parametros_        ║
+# ║  sugeridos / v_venda_items_history_efetivo), que devolve 0 ao customer e      ║
+# ║  colapsa os INNER JOINs ⇒ elas NÃO vazavam; ligar o invoker nelas foi         ║
+# ║  defense-in-depth. A seção 6 prova essa regra — é o que faltava aqui.         ║
 # ╚══════════════════════════════════════════════════════════════════════════════╝
 set -euo pipefail
 
@@ -224,6 +233,30 @@ if [ "$n" = "0" ]; then
 else
   ok "FALSIFICAÇÃO C: o reset reabre o vazamento (customer lê =$n) — é assim que o #1354 regrediu"
 fi
+
+echo ""
+echo "═══ 6. A REGRA QUE DECIDE: é o FROM, não o reloptions ═══"
+# Esta seção existe porque o #1375 quase virou um PR inútil: eu deduzi "invoker=off +
+# toca tabela-RLS ⇒ vaza" e afirmei vazamento em 4 views que NÃO vazavam. O que decide
+# é a relação-RAIZ do FROM. Prova executável dos dois lados:
+P -q <<'SQL'
+-- Caso A (fiel a v_sku_sla_compliance): FROM = TABELA-RLS direto, resto LEFT JOIN.
+CREATE VIEW caso_a_from_tabela AS
+  SELECT h.empresa, h.sku_codigo_omie, g.grupo
+  FROM sku_leadtime_history h
+  LEFT JOIN (SELECT 'OBEN'::text AS empresa, 'G1'::text AS grupo) g ON g.empresa = h.empresa::text;
+-- Caso B (fiel às outras 4): FROM = view ON; a tabela-RLS entra só por INNER JOIN.
+CREATE VIEW fonte_on WITH (security_invoker = on) AS SELECT * FROM sku_leadtime_history;
+CREATE VIEW caso_b_from_view_on AS
+  SELECT f.empresa, f.sku_codigo_omie
+  FROM fonte_on f
+  JOIN sku_leadtime_history h ON h.id = f.id;
+GRANT SELECT ON caso_a_from_tabela, caso_b_from_view_on, fonte_on TO authenticated;
+SQL
+eq "caso A — view OFF com FROM = tabela-RLS: VAZA (é o v_sku_sla_compliance)"        "$(como_customer caso_a_from_tabela)"  "2"
+eq "caso B — view OFF com FROM = view ON: NÃO vaza (são as outras 4 do #1375)"       "$(como_customer caso_b_from_view_on)" "0"
+eq "caso B — staff continua lendo"                                                    "$(como_staff caso_b_from_view_on)"    "2"
+# dente: se o caso B desse >0, a regra estaria errada e as 4 views seriam vazamento real.
 
 echo ""
 echo "═══════════════════════════════════════════"
