@@ -629,16 +629,29 @@ function classifyClienteForSnapshot(
 }
 
 // Lê TODOS os omie_codigo_cliente de omie_clientes (paginado p/ furar o cap de 1000 do PostgREST).
-async function fetchAllOmieClienteCodigos(db: SupabaseClient): Promise<Set<number>> {
+// Códigos JÁ vinculados NA CONTA do run, pela proof fresca account-correta. Alimenta o
+// classifyClienteForSnapshot: um código presente aqui é "linked" e NÃO entra no relatório de
+// não-vinculados. Antes vinha do espelho omie_clientes SEM filtro de conta — e o espelho é
+// UNIQUE(user_id) (1 linha/user, sobrescrita pelo writer da vez, hoje dominado por oben), então
+// ele NÃO contém os códigos das outras contas: medido em prod, dos códigos da proof faltavam no
+// espelho 5.148/5.148 (colacor, 100%) e 3.604/5.275 (colacor_sc, 68%) contra 0/5.238 (oben).
+// Consequência: rodar o snapshot de colacor/colacor_sc classificaria clientes VINCULADOS como
+// não-vinculados em massa (o relatório de oben, o único que roda hoje, mascarava o furo).
+// A fresca é UNIQUE(omie_codigo_cliente, account) → o Set é exatamente a conta do run.
+async function fetchAllOmieClienteCodigos(db: SupabaseClient, empresa: Empresa): Promise<Set<number>> {
   const set = new Set<number>();
   const pageSize = 1000;
   let from = 0;
   while (true) {
     const { data, error } = await db
-      .from("omie_clientes")
+      .from("omie_customer_account_map_fresco")
       .select("omie_codigo_cliente")
+      .eq("account", empresa)
+      // .order estável: sem ele o .range pagina sobre ordem indefinida (armadilha PostgREST) e
+      // uma linha pode repetir ou sumir entre páginas — num Set de dedup, sumir vira falso "unlinked".
+      .order("omie_codigo_cliente")
       .range(from, from + pageSize - 1);
-    if (error) throw new Error(`fetch omie_clientes codigos: ${error.message}`);
+    if (error) throw new Error(`fetch codigos vinculados (${empresa}): ${error.message}`);
     const rows = (data ?? []) as { omie_codigo_cliente: number | null }[];
     for (const r of rows) if (r.omie_codigo_cliente != null) set.add(Number(r.omie_codigo_cliente));
     if (rows.length < pageSize) break;
@@ -680,7 +693,9 @@ async function syncNaoVinculados(db: SupabaseClient, account: OmieAccount) {
 
   try {
     // 2 leituras em massa (sets) — substitui ~2 queries POR cliente do laço de linking.
-    const codigosVinculados = await fetchAllOmieClienteCodigos(db);
+    // `empresa` (=accountToEmpresa(account)) escopa os códigos à conta DESTE run — ver a nota em
+    // fetchAllOmieClienteCodigos: o Set global do espelho classificava errado fora de oben.
+    const codigosVinculados = await fetchAllOmieClienteCodigos(db, empresa);
     const docsComProfile = await fetchAllProfileDocs(db);
 
     const naoVinculados: NaoVinculadoRow[] = [];

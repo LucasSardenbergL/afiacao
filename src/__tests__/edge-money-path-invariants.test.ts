@@ -1264,6 +1264,67 @@ describe('guardrail money-path: omie-sync-sku-items (fila de leadtime)', () => {
   });
 });
 
+// ── Fatia 3-edges PR-B (omie-analytics-sync: o snapshot de não-vinculados lê a proof por conta) ──
+// classifyClienteForSnapshot decide se um cliente Omie entra no relatório omie_clientes_nao_vinculados:
+// código no Set = "linked" (fica de fora). O Set vinha do espelho omie_clientes SEM filtro de conta —
+// mas o espelho é UNIQUE(user_id) (1 linha/user, sobrescrita pelo writer da vez, hoje dominado por oben)
+// e por isso NÃO contém os códigos das outras contas. Medido em prod (2026-07-16), códigos da proof
+// ausentes do espelho: colacor 5.148/5.148 (100%), colacor_sc 3.604/5.275 (68%), oben 0/5.238 (0%).
+// Rodar o snapshot de colacor/colacor_sc reportava clientes VINCULADOS como não-vinculados em massa;
+// só oben roda hoje, o que mascarava o furo. Agora o Set vem da fresca com .eq("account", empresa).
+// Os outros omie_clientes deste edge NÃO migram nesta PR e o motivo é estrutural, não esquecimento:
+//   • :238 fetchOmieClienteUserMap alimenta o upsertByUser CODE-FIRST → é a leitura de suporte do
+//     WRITER do espelho (:515), par indivisível: morre junto com ele na Fatia 4;
+//   • :1669 fetchAlvosSemProfile / :1890 fetchOmieCodigoPorUser operam sobre os CLONES (user sem
+//     profile). Medido: 1.633 alvos pelo espelho, 0 pela proof (clone não tem linha lá), 1.633 pelo
+//     ledger — mas o ledger não tem omie_codigo_cliente, e essas funções precisam do par
+//     (clone → código). Migrá-las p/ a proof zeraria syncBackfillCadastro e mapaConsolidacao em
+//     SILÊNCIO. Bloqueio de design escalado — o DROP (Fatia 5) depende de resolvê-lo.
+const OMIE_ANALYTICS = 'supabase/functions/omie-analytics-sync/index.ts';
+
+describe('guardrail money-path: snapshot de não-vinculados lê a proof por conta (Fatia 3-edges PR-B)', () => {
+  const src = read(OMIE_ANALYTICS);
+
+  it('sentinela: leu o arquivo real (edge)', () => {
+    expect(src).toContain('syncNaoVinculados');
+    expect(src).toContain('classifyClienteForSnapshot');
+  });
+
+  it('o Set de "já vinculados" vem da fresca, filtrado pela conta do run, paginado com .order', () => {
+    expect(
+      src,
+      'REVERSÃO Lovable? o Set de vinculados não lê a fresca com .eq("account", empresa) + .order + .range',
+    ).toMatch(
+      /\.from\("omie_customer_account_map_fresco"\)[\s\S]{0,120}\.eq\("account", empresa\)[\s\S]{0,240}\.order\("omie_codigo_cliente"\)[\s\S]{0,120}\.range\(/,
+    );
+    // A conta TEM de chegar na função: sem o parâmetro o Set volta a ser global (o bug).
+    expect(
+      src,
+      'REGRESSÃO: fetchAllOmieClienteCodigos perdeu o parâmetro de conta — Set global de novo',
+    ).toMatch(/async function fetchAllOmieClienteCodigos\(db: SupabaseClient, empresa: Empresa\)/);
+    expect(
+      src,
+      'REGRESSÃO: o chamador não passa mais a empresa do run para o Set de vinculados',
+    ).toMatch(/fetchAllOmieClienteCodigos\(db, empresa\)/);
+  });
+
+  it('o Set de vinculados NÃO voltou ao espelho poluído', () => {
+    expect(
+      src,
+      'REGRESSÃO: fetchAllOmieClienteCodigos voltou a ler omie_clientes (Set global → falso não-vinculado)',
+    ).not.toMatch(/fetch omie_clientes codigos/);
+  });
+
+  it('os omie_clientes restantes são o writer + as 2 funções de CLONE (bloqueadas), nunca mais', () => {
+    // Trava o escopo: 4 = :238 (leitura de suporte do writer) + :515 (upsert) + fetchAlvosSemProfile
+    // + fetchOmieCodigoPorUser. Se virar 5, alguém reabriu uma leitura do espelho neste edge.
+    expect(
+      count(src, '.from("omie_clientes")'),
+      'omie_clientes mudou de contagem neste edge — leitura nova do espelho ou migração não registrada aqui',
+    ).toBe(4);
+  });
+});
+
 // ── Fatia 3-edges PR-A (omie-cliente: os 3 LEITORES saem do espelho → proof fresca account-correta) ──
 // Os 3 leitores do edge de cadastro resolviam identidade por um código de conta INDETERMINADA. O espelho
 // omie_clientes é UNIQUE(user_id) — 1 linha por user, sobrescrita pelo writer da vez (oben, colacor_sc…) —
