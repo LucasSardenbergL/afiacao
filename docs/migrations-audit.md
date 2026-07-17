@@ -21,13 +21,13 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **378** custom migrations totais
-- **1334** objetos esperados (criados por estas migrations)
+- **379** custom migrations totais
+- **1337** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 375
+  - `function`: 377
   - `rls_policy`: 295
   - `index`: 222
-  - `cron_job`: 149
+  - `cron_job`: 150
   - `table`: 146
   - `trigger`: 78
   - `view`: 65
@@ -3219,6 +3219,14 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20260717130000_seg_customer_metrics_acl_least_privilege.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260717154500_refresh_customer_metrics_automacao.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.refresh_customer_metrics` | — |
+| `function` | `public.request_customer_metrics_refresh` | — |
+| `cron_job` | `cron.afiacao_customer_metrics_refresh_6h` | — |
 
 ## Próximos passos por status
 

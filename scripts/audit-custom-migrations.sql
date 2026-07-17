@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 378
+-- Total de custom migrations: 379
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -417,7 +417,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260717015000', 'restaurar_security_invoker_views', '20260717015000_restaurar_security_invoker_views.sql'),
   ('20260717020000', 'precos_compra_leadtime_efetivo', '20260717020000_precos_compra_leadtime_efetivo.sql'),
   ('20260717120000', 'seg_customer_metrics_gate_staff', '20260717120000_seg_customer_metrics_gate_staff.sql'),
-  ('20260717130000', 'seg_customer_metrics_acl_least_privilege', '20260717130000_seg_customer_metrics_acl_least_privilege.sql')
+  ('20260717130000', 'seg_customer_metrics_acl_least_privilege', '20260717130000_seg_customer_metrics_acl_least_privilege.sql'),
+  ('20260717154500', 'refresh_customer_metrics_automacao', '20260717154500_refresh_customer_metrics_automacao.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -1742,7 +1743,10 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('outliers_leadtime_stack_efetivo', 'function', 'public', 'resolver_outlier', ''),
   ('preco_medio_leadtime_efetivo', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
   ('precos_compra_leadtime_efetivo', 'view', 'public', 'v_sku_parametros_sugeridos', ''),
-  ('seg_customer_metrics_gate_staff', 'view', 'public', 'customer_metrics_mv', '')
+  ('seg_customer_metrics_gate_staff', 'view', 'public', 'customer_metrics_mv', ''),
+  ('refresh_customer_metrics_automacao', 'function', 'public', 'refresh_customer_metrics', ''),
+  ('refresh_customer_metrics_automacao', 'function', 'public', 'request_customer_metrics_refresh', ''),
+  ('refresh_customer_metrics_automacao', 'cron_job', 'cron', 'afiacao_customer_metrics_refresh_6h', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -3115,7 +3119,10 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('outliers_leadtime_stack_efetivo', 'function', 'public', 'resolver_outlier', ''),
   ('preco_medio_leadtime_efetivo', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
   ('precos_compra_leadtime_efetivo', 'view', 'public', 'v_sku_parametros_sugeridos', ''),
-  ('seg_customer_metrics_gate_staff', 'view', 'public', 'customer_metrics_mv', '')
+  ('seg_customer_metrics_gate_staff', 'view', 'public', 'customer_metrics_mv', ''),
+  ('refresh_customer_metrics_automacao', 'function', 'public', 'refresh_customer_metrics', ''),
+  ('refresh_customer_metrics_automacao', 'function', 'public', 'request_customer_metrics_refresh', ''),
+  ('refresh_customer_metrics_automacao', 'cron_job', 'cron', 'afiacao_customer_metrics_refresh_6h', '')
 )
 SELECT
   e.migration,
