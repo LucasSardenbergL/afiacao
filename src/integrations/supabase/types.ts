@@ -468,6 +468,30 @@ export type Database = {
         }
         Relationships: []
       }
+      carteira_membership_ledger: {
+        Row: {
+          first_seen_at: string
+          identity_state: string
+          source: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          first_seen_at: string
+          identity_state?: string
+          source?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          first_seen_at?: string
+          identity_state?: string
+          source?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       carteira_positivacao_snapshot: {
         Row: {
           churn_risk_at_month_start: number | null
@@ -9524,6 +9548,158 @@ export type Database = {
         }
         Relationships: []
       }
+      prime_assinaturas: {
+        Row: {
+          created_at: string
+          created_by: string
+          customer_user_id: string
+          data_fim: string | null
+          data_inicio: string
+          franquia_dentes_contratada: number
+          id: string
+          observacao: string | null
+          plano_id: string
+          preco_contratado: number
+          status: string
+          suspensa_em: string | null
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          created_by: string
+          customer_user_id: string
+          data_fim?: string | null
+          data_inicio?: string
+          franquia_dentes_contratada: number
+          id?: string
+          observacao?: string | null
+          plano_id: string
+          preco_contratado: number
+          status?: string
+          suspensa_em?: string | null
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string
+          customer_user_id?: string
+          data_fim?: string | null
+          data_inicio?: string
+          franquia_dentes_contratada?: number
+          id?: string
+          observacao?: string | null
+          plano_id?: string
+          preco_contratado?: number
+          status?: string
+          suspensa_em?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "prime_assinaturas_plano_id_fkey"
+            columns: ["plano_id"]
+            isOneToOne: false
+            referencedRelation: "prime_planos"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      prime_beneficio_uso: {
+        Row: {
+          assinatura_id: string
+          competencia: string
+          created_at: string
+          created_by: string
+          descricao: string | null
+          estornado_em: string | null
+          estornado_por: string | null
+          id: string
+          preco_unitario_snapshot: number | null
+          quantidade: number
+          referencia: string | null
+          tipo: string
+          valor_tabela: number | null
+        }
+        Insert: {
+          assinatura_id: string
+          competencia: string
+          created_at?: string
+          created_by: string
+          descricao?: string | null
+          estornado_em?: string | null
+          estornado_por?: string | null
+          id?: string
+          preco_unitario_snapshot?: number | null
+          quantidade: number
+          referencia?: string | null
+          tipo: string
+          valor_tabela?: number | null
+        }
+        Update: {
+          assinatura_id?: string
+          competencia?: string
+          created_at?: string
+          created_by?: string
+          descricao?: string | null
+          estornado_em?: string | null
+          estornado_por?: string | null
+          id?: string
+          preco_unitario_snapshot?: number | null
+          quantidade?: number
+          referencia?: string | null
+          tipo?: string
+          valor_tabela?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "prime_beneficio_uso_assinatura_id_fkey"
+            columns: ["assinatura_id"]
+            isOneToOne: false
+            referencedRelation: "prime_assinaturas"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "prime_beneficio_uso_assinatura_id_fkey"
+            columns: ["assinatura_id"]
+            isOneToOne: false
+            referencedRelation: "v_prime_extrato_mensal"
+            referencedColumns: ["assinatura_id"]
+          },
+        ]
+      }
+      prime_planos: {
+        Row: {
+          ativo: boolean
+          beneficios: Json
+          created_at: string
+          franquia_dentes: number
+          id: string
+          nome: string
+          preco_mensal: number
+          updated_at: string
+        }
+        Insert: {
+          ativo?: boolean
+          beneficios?: Json
+          created_at?: string
+          franquia_dentes: number
+          id?: string
+          nome: string
+          preco_mensal: number
+          updated_at?: string
+        }
+        Update: {
+          ativo?: boolean
+          beneficios?: Json
+          created_at?: string
+          franquia_dentes?: number
+          id?: string
+          nome?: string
+          preco_mensal?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
       priority_score_log: {
         Row: {
           calculated_at: string
@@ -11099,6 +11275,7 @@ export type Database = {
           empresa: string
           estoque_maximo_antes: number | null
           estoque_maximo_depois: number | null
+          estoque_maximo_sugerido: number | null
           estoque_minimo_antes: number | null
           estoque_minimo_depois: number | null
           estoque_seguranca_antes: number | null
@@ -11108,6 +11285,7 @@ export type Database = {
           lt_medio_dias_uteis: number | null
           ponto_pedido_antes: number | null
           ponto_pedido_depois: number | null
+          ponto_pedido_sugerido: number | null
           qtde_compra_antes: number | null
           qtde_compra_depois: number | null
           revertido_em: string | null
@@ -11129,6 +11307,7 @@ export type Database = {
           empresa: string
           estoque_maximo_antes?: number | null
           estoque_maximo_depois?: number | null
+          estoque_maximo_sugerido?: number | null
           estoque_minimo_antes?: number | null
           estoque_minimo_depois?: number | null
           estoque_seguranca_antes?: number | null
@@ -11138,6 +11317,7 @@ export type Database = {
           lt_medio_dias_uteis?: number | null
           ponto_pedido_antes?: number | null
           ponto_pedido_depois?: number | null
+          ponto_pedido_sugerido?: number | null
           qtde_compra_antes?: number | null
           qtde_compra_depois?: number | null
           revertido_em?: string | null
@@ -11159,6 +11339,7 @@ export type Database = {
           empresa?: string
           estoque_maximo_antes?: number | null
           estoque_maximo_depois?: number | null
+          estoque_maximo_sugerido?: number | null
           estoque_minimo_antes?: number | null
           estoque_minimo_depois?: number | null
           estoque_seguranca_antes?: number | null
@@ -11168,6 +11349,7 @@ export type Database = {
           lt_medio_dias_uteis?: number | null
           ponto_pedido_antes?: number | null
           ponto_pedido_depois?: number | null
+          ponto_pedido_sugerido?: number | null
           qtde_compra_antes?: number | null
           qtde_compra_depois?: number | null
           revertido_em?: string | null
@@ -11284,6 +11466,69 @@ export type Database = {
           pinado_por?: string | null
           ponto_pedido_rejeitado?: number
           sku_codigo_omie?: string
+        }
+        Relationships: []
+      }
+      reposicao_pedidos_compra_run: {
+        Row: {
+          empresa: Database["public"]["Enums"]["empresa_reposicao"]
+          finalizado_em: string
+          ids_distintos: number
+          janela_ate: string
+          janela_de: string
+          run_id: string
+          seq: number
+          status: string
+          volume_baseline: number | null
+          volume_ok: boolean | null
+        }
+        Insert: {
+          empresa: Database["public"]["Enums"]["empresa_reposicao"]
+          finalizado_em?: string
+          ids_distintos: number
+          janela_ate: string
+          janela_de: string
+          run_id: string
+          seq?: number
+          status?: string
+          volume_baseline?: number | null
+          volume_ok?: boolean | null
+        }
+        Update: {
+          empresa?: Database["public"]["Enums"]["empresa_reposicao"]
+          finalizado_em?: string
+          ids_distintos?: number
+          janela_ate?: string
+          janela_de?: string
+          run_id?: string
+          seq?: number
+          status?: string
+          volume_baseline?: number | null
+          volume_ok?: boolean | null
+        }
+        Relationships: []
+      }
+      reposicao_po_last_seen: {
+        Row: {
+          empresa: Database["public"]["Enums"]["empresa_reposicao"]
+          omie_codigo_pedido: number
+          run_id: string
+          visto_em: string
+          visto_seq: number
+        }
+        Insert: {
+          empresa: Database["public"]["Enums"]["empresa_reposicao"]
+          omie_codigo_pedido: number
+          run_id: string
+          visto_em: string
+          visto_seq: number
+        }
+        Update: {
+          empresa?: Database["public"]["Enums"]["empresa_reposicao"]
+          omie_codigo_pedido?: number
+          run_id?: string
+          visto_em?: string
+          visto_seq?: number
         }
         Relationships: []
       }
@@ -11676,6 +11921,7 @@ export type Database = {
           subtotal: number
           total: number
           updated_at: string
+          whatsapp_conversation_id: string | null
         }
         Insert: {
           account?: string
@@ -11705,6 +11951,7 @@ export type Database = {
           subtotal?: number
           total?: number
           updated_at?: string
+          whatsapp_conversation_id?: string | null
         }
         Update: {
           account?: string
@@ -11734,6 +11981,7 @@ export type Database = {
           subtotal?: number
           total?: number
           updated_at?: string
+          whatsapp_conversation_id?: string | null
         }
         Relationships: [
           {
@@ -11741,6 +11989,13 @@ export type Database = {
             columns: ["pedido_programado_envio_id"]
             isOneToOne: false
             referencedRelation: "pedidos_programados_envios"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sales_orders_whatsapp_conversation_id_fkey"
+            columns: ["whatsapp_conversation_id"]
+            isOneToOne: false
+            referencedRelation: "whatsapp_conversations"
             referencedColumns: ["id"]
           },
         ]
@@ -12191,6 +12446,45 @@ export type Database = {
         }
         Relationships: []
       }
+      sku_items_sync_controle: {
+        Row: {
+          criado_em: string
+          motivo: string | null
+          tentativas: number
+          tracking_id: string
+          ultima_tentativa: string
+        }
+        Insert: {
+          criado_em?: string
+          motivo?: string | null
+          tentativas?: number
+          tracking_id: string
+          ultima_tentativa?: string
+        }
+        Update: {
+          criado_em?: string
+          motivo?: string | null
+          tentativas?: number
+          tracking_id?: string
+          ultima_tentativa?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sku_items_sync_controle_tracking_id_fkey"
+            columns: ["tracking_id"]
+            isOneToOne: true
+            referencedRelation: "purchase_orders_tracking"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sku_items_sync_controle_tracking_id_fkey"
+            columns: ["tracking_id"]
+            isOneToOne: true
+            referencedRelation: "v_pedidos_em_aberto"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       sku_leadtime_history: {
         Row: {
           created_at: string
@@ -12498,6 +12792,107 @@ export type Database = {
             columns: ["sku_parametro_id"]
             isOneToOne: false
             referencedRelation: "sku_parametros"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      sku_preco_captura_run: {
+        Row: {
+          criado_por: string | null
+          disparo: string
+          empresa: string
+          erro: string | null
+          evidencia_url: string | null
+          id: string
+          iniciado_em: string
+          linhas_finais_portal: number | null
+          modo: string
+          status: string
+          terminado_em: string | null
+          total_alvo: number | null
+          total_falha: number | null
+          total_nao_encontrado: number | null
+          total_ok: number | null
+        }
+        Insert: {
+          criado_por?: string | null
+          disparo: string
+          empresa: string
+          erro?: string | null
+          evidencia_url?: string | null
+          id?: string
+          iniciado_em?: string
+          linhas_finais_portal?: number | null
+          modo: string
+          status?: string
+          terminado_em?: string | null
+          total_alvo?: number | null
+          total_falha?: number | null
+          total_nao_encontrado?: number | null
+          total_ok?: number | null
+        }
+        Update: {
+          criado_por?: string | null
+          disparo?: string
+          empresa?: string
+          erro?: string | null
+          evidencia_url?: string | null
+          id?: string
+          iniciado_em?: string
+          linhas_finais_portal?: number | null
+          modo?: string
+          status?: string
+          terminado_em?: string | null
+          total_alvo?: number | null
+          total_falha?: number | null
+          total_nao_encontrado?: number | null
+          total_ok?: number | null
+        }
+        Relationships: []
+      }
+      sku_preco_captura_run_item: {
+        Row: {
+          criado_em: string
+          detalhe: string | null
+          empresa: string
+          fonte: string | null
+          id: number
+          preco: number | null
+          resultado: string
+          run_id: string
+          sku_codigo_omie: string
+          sku_portal: string
+        }
+        Insert: {
+          criado_em?: string
+          detalhe?: string | null
+          empresa: string
+          fonte?: string | null
+          id?: never
+          preco?: number | null
+          resultado: string
+          run_id: string
+          sku_codigo_omie: string
+          sku_portal: string
+        }
+        Update: {
+          criado_em?: string
+          detalhe?: string | null
+          empresa?: string
+          fonte?: string | null
+          id?: never
+          preco?: number | null
+          resultado?: string
+          run_id?: string
+          sku_codigo_omie?: string
+          sku_portal?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sku_preco_captura_run_item_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: false
+            referencedRelation: "sku_preco_captura_run"
             referencedColumns: ["id"]
           },
         ]
@@ -15506,6 +15901,7 @@ export type Database = {
           id: string
           last_inbound_at: string | null
           last_message_at: string | null
+          last_outbound_at: string | null
           opt_in_status: string
           phone_e164: string | null
           phone_key: string
@@ -15519,6 +15915,7 @@ export type Database = {
           id?: string
           last_inbound_at?: string | null
           last_message_at?: string | null
+          last_outbound_at?: string | null
           opt_in_status?: string
           phone_e164?: string | null
           phone_key: string
@@ -15532,6 +15929,7 @@ export type Database = {
           id?: string
           last_inbound_at?: string | null
           last_message_at?: string | null
+          last_outbound_at?: string | null
           opt_in_status?: string
           phone_e164?: string | null
           phone_key?: string
@@ -15607,6 +16005,99 @@ export type Database = {
         Update: {
           created_at?: string
           data_local?: string
+        }
+        Relationships: []
+      }
+      whatsapp_template_sends: {
+        Row: {
+          body_params: Json
+          conversation_id: string | null
+          created_at: string
+          dedupe_key: string
+          disparado_por: string | null
+          erro: string | null
+          id: string
+          origem: string
+          phone_e164: string
+          status: string
+          template_nome: string
+          wa_message_id: string | null
+        }
+        Insert: {
+          body_params?: Json
+          conversation_id?: string | null
+          created_at?: string
+          dedupe_key: string
+          disparado_por?: string | null
+          erro?: string | null
+          id?: string
+          origem?: string
+          phone_e164: string
+          status?: string
+          template_nome: string
+          wa_message_id?: string | null
+        }
+        Update: {
+          body_params?: Json
+          conversation_id?: string | null
+          created_at?: string
+          dedupe_key?: string
+          disparado_por?: string | null
+          erro?: string | null
+          id?: string
+          origem?: string
+          phone_e164?: string
+          status?: string
+          template_nome?: string
+          wa_message_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "whatsapp_template_sends_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "whatsapp_conversations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "whatsapp_template_sends_template_nome_fkey"
+            columns: ["template_nome"]
+            isOneToOne: false
+            referencedRelation: "whatsapp_templates"
+            referencedColumns: ["nome"]
+          },
+        ]
+      }
+      whatsapp_templates: {
+        Row: {
+          ativo: boolean
+          categoria: string
+          corpo_referencia: string
+          created_at: string
+          id: string
+          idioma: string
+          nome: string
+          num_body_params: number
+        }
+        Insert: {
+          ativo?: boolean
+          categoria: string
+          corpo_referencia: string
+          created_at?: string
+          id?: string
+          idioma?: string
+          nome: string
+          num_body_params?: number
+        }
+        Update: {
+          ativo?: boolean
+          categoria?: string
+          corpo_referencia?: string
+          created_at?: string
+          id?: string
+          idioma?: string
+          nome?: string
+          num_body_params?: number
         }
         Relationships: []
       }
@@ -16457,6 +16948,47 @@ export type Database = {
         }
         Relationships: []
       }
+      v_pcp_malha_oben: {
+        Row: {
+          comp_oben: number | null
+          pai_oben: number | null
+          quantidade: number | null
+          unidade: string | null
+        }
+        Relationships: []
+      }
+      v_pcp_malha_oben_cand: {
+        Row: {
+          comp_ativo: boolean | null
+          comp_codigo_prd: string | null
+          comp_oben: number | null
+          componente_codigo: number | null
+          n_comp_oben: number | null
+          n_pai_oben: number | null
+          pai_codigo: number | null
+          pai_codigo_prd: string | null
+          pai_oben: number | null
+          perc_perda: number | null
+          quantidade: number | null
+          un_estoque: string | null
+          un_ficha: string | null
+        }
+        Relationships: []
+      }
+      v_pcp_malha_oben_quarentena: {
+        Row: {
+          comp_oben: number | null
+          componente_codigo: number | null
+          motivo: string | null
+          pai_codigo: number | null
+          pai_oben: number | null
+          perc_perda: number | null
+          quantidade: number | null
+          un_estoque: string | null
+          un_ficha: string | null
+        }
+        Relationships: []
+      }
       v_pedidos_em_aberto: {
         Row: {
           dias_desde_pedido: number | null
@@ -16499,6 +17031,24 @@ export type Database = {
           t2_data_faturamento?: string | null
           t3_data_cte?: string | null
           t4_data_recebimento?: string | null
+        }
+        Relationships: []
+      }
+      v_prime_extrato_mensal: {
+        Row: {
+          assinatura_id: string | null
+          competencia: string | null
+          customer_user_id: string | null
+          dentes_bonus: number | null
+          dentes_excedentes: number | null
+          dentes_restantes: number | null
+          dentes_usados: number | null
+          franquia_total: number | null
+          mensalidade_contratada: number | null
+          monetizado_total: number | null
+          n_registros: number | null
+          status: string | null
+          usos_operacionais: number | null
         }
         Relationships: []
       }
@@ -16780,6 +17330,33 @@ export type Database = {
         }
         Relationships: []
       }
+      v_sku_demanda_efetiva: {
+        Row: {
+          cfop: string | null
+          cliente_cidade: string | null
+          cliente_cnpj_cpf: string | null
+          cliente_codigo_omie: number | null
+          cliente_razao_social: string | null
+          cliente_uf: string | null
+          created_at: string | null
+          data_emissao: string | null
+          empresa: string | null
+          id: string | null
+          nfe_chave_acesso: string | null
+          nfe_numero: string | null
+          nfe_serie: string | null
+          quantidade: number | null
+          raw_data: Json | null
+          sku_codigo: string | null
+          sku_codigo_omie: number | null
+          sku_descricao: string | null
+          sku_ncm: string | null
+          sku_unidade: string | null
+          valor_total: number | null
+          valor_unitario: number | null
+        }
+        Relationships: []
+      }
       v_sku_demanda_estatisticas: {
         Row: {
           coef_variacao_ordem: number | null
@@ -16814,6 +17391,36 @@ export type Database = {
           sku_descricao: string | null
           sku_unidade: string | null
           valor_total_180d: number | null
+        }
+        Relationships: []
+      }
+      v_sku_leadtime_efetivo: {
+        Row: {
+          dedup_key: string | null
+          empresa: Database["public"]["Enums"]["empresa_reposicao"] | null
+          fornecedor_codigo_omie: number | null
+          fornecedor_nome: string | null
+          grupo_leadtime: string | null
+          lt_bruto_dias_uteis: number | null
+          lt_faturamento_dias_uteis: number | null
+          lt_logistica_dias_uteis: number | null
+          n_copias_origem: number | null
+          nfe_chave_acesso: string | null
+          origem_compra: string | null
+          quantidade_pedida: number | null
+          quantidade_recebida: number | null
+          sku_codigo: string | null
+          sku_codigo_omie: number | null
+          sku_descricao: string | null
+          sku_ncm: string | null
+          sku_unidade: string | null
+          t1_data_pedido: string | null
+          t2_data_faturamento: string | null
+          t3_data_cte: string | null
+          t4_data_recebimento: string | null
+          valor_total: number | null
+          valor_unitario: number | null
+          veio_de_duplicata: boolean | null
         }
         Relationships: []
       }
@@ -18109,6 +18716,29 @@ export type Database = {
         Args: { _user_id: string }
         Returns: Database["public"]["Enums"]["app_role"]
       }
+      get_whatsapp_funil: {
+        Args: { p_dias?: number }
+        Returns: {
+          entregues: number
+          enviados: number
+          falhas: number
+          lidos: number
+          pedidos_omie: number
+          propostas: number
+          receita_omie: number
+          respondidos: number
+        }[]
+      }
+      get_whatsapp_pendentes: {
+        Args: never
+        Returns: {
+          contact_name: string
+          conversation_id: string
+          customer_user_id: string
+          last_inbound_at: string
+          phone_e164: string
+        }[]
+      }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]
@@ -18130,6 +18760,15 @@ export type Database = {
         Returns: boolean
       }
       kb_normalizar_catalisador: { Args: { p: string }; Returns: string }
+      leadtime_t1_e_data_de_pedido: {
+        Args: {
+          p_hist_t1: string
+          p_hist_t2: string
+          p_omie_codigo_pedido: number
+          p_tracking_t1: string
+        }
+        Returns: boolean
+      }
       limpar_sugestoes_antigas: {
         Args: never
         Returns: {
@@ -18218,6 +18857,10 @@ export type Database = {
           p_user_id: string
         }
         Returns: string
+      }
+      omie_sync_identity_snapshot: {
+        Args: { p_account: string }
+        Returns: Json
       }
       pedido_compra_split: {
         Args: { p_chunk_size?: number; p_pedido_id: number }
@@ -18332,7 +18975,15 @@ export type Database = {
       }
       rank_precisao: { Args: { p: string }; Returns: number }
       recalcular_picking_task: { Args: { p_task_id: string }; Returns: Json }
+      recomputar_leadtime_derivado: {
+        Args: { p_empresa: string }
+        Returns: {
+          etapa: string
+          valor: number
+        }[]
+      }
       refresh_customer_metrics: { Args: never; Returns: undefined }
+      request_customer_metrics_refresh: { Args: never; Returns: undefined }
       refresh_oportunidade_badge: { Args: never; Returns: undefined }
       refresh_sku_ranking_negociacao: {
         Args: never
@@ -18421,6 +19072,7 @@ export type Database = {
         Returns: undefined
       }
       reposicao_alerta_pedido_minimo_tick: { Args: never; Returns: undefined }
+      reposicao_alocar_run_seq: { Args: never; Returns: number }
       reposicao_aplicar_depara_sayerlack_auto: {
         Args: {
           p_candidatos: Json
@@ -18456,16 +19108,20 @@ export type Database = {
         Args: { p_pedido_id: number }
         Returns: number
       }
+      reposicao_publicar_run_completo: {
+        Args: {
+          p_empresa: string
+          p_ids: number[]
+          p_janela_ate: string
+          p_janela_de: string
+          p_run_id: string
+          p_seq: number
+        }
+        Returns: boolean
+      }
       reposicao_sincronizar_embalagem_wp: {
         Args: { p_empresa?: string }
         Returns: Json
-      }
-      reprocessar_sku_items_via_raw_data: {
-        Args: { p_empresa: string }
-        Returns: {
-          etapa: string
-          valor: number
-        }[]
       }
       resgatar_recompensa: { Args: { p_reward_key: string }; Returns: string }
       resolve_markup_policy: {

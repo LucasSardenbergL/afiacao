@@ -273,9 +273,12 @@ export function useAnalyticsSync() {
       }
     }
 
-    // Refresh materialized view after import
+    // Refresh materialized view after import. Via o WRAPPER staff request_customer_metrics_refresh:
+    // o primitive refresh_customer_metrics passou a ser service-only (cron/edge). supabase-js NÃO
+    // lança → checar o erro (antes era engolido). O cron a cada 6h cobre o frescor de base.
     setOrdersSyncProgress("Atualizando métricas de clientes...");
-    await supabase.rpc("refresh_customer_metrics");
+    const { error: refreshError } = await supabase.rpc("request_customer_metrics_refresh");
+    if (refreshError) throw new Error(`Falha ao atualizar métricas de clientes: ${refreshError.message}`);
 
     setOrdersSyncProgress(null);
     return { grandTotalSynced, grandTotalItems, grandTotalSkipped };

@@ -1,73 +1,15 @@
-import { useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useAuth } from '@/contexts/AuthContext';
-import { useDeliveredOrders12m } from '@/queries/useOrders';
+import { useSavingsSummary } from '@/queries/useSavings';
+import { AVG_NEW_TOOL_COST } from '@/lib/afiacao/savings';
 import { TrendingUp, DollarSign, Wrench, Leaf, PiggyBank } from 'lucide-react';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip, CartesianGrid, LineChart, Line } from 'recharts';
-import { format, subMonths } from 'date-fns';
-import { ptBR } from 'date-fns/locale';
-
-// Estimated average cost of buying a new tool (no real data available)
-const AVG_NEW_TOOL_COST = 250; // R$ estimated
-
-interface MonthlyData {
-  month: string;
-  sharpeningCost: number;
-  newToolCost: number;
-  savings: number;
-  toolCount: number;
-}
 
 const SavingsDashboard = () => {
   const { user } = useAuth();
-  const { data: orders = [], isPending: loading } = useDeliveredOrders12m(user?.id);
-
-  const { monthlyData, totalTools, totalSpent } = useMemo(() => {
-    // Group by month
-    const monthMap = new Map<string, { total: number; toolCount: number }>();
-    let allToolsCount = 0;
-    let allSpent = 0;
-
-    orders.forEach(order => {
-      const monthKey = format(new Date(order.created_at), 'yyyy-MM');
-      const items = Array.isArray(order.items) ? order.items : [];
-      const toolCount: number = (items as unknown as Array<{ quantity?: number }>).reduce((sum: number, item) => sum + (Number(item?.quantity) || 1), 0);
-
-      const orderTotal = Number(order.total) || 0;
-      const existing = monthMap.get(monthKey) || { total: 0, toolCount: 0 };
-      monthMap.set(monthKey, {
-        total: existing.total + orderTotal,
-        toolCount: existing.toolCount + toolCount,
-      });
-
-      allToolsCount += toolCount;
-      allSpent += orderTotal;
-    });
-
-    // Generate last 6 months data
-    const data: MonthlyData[] = [];
-    for (let i = 5; i >= 0; i--) {
-      const date = subMonths(new Date(), i);
-      const key = format(date, 'yyyy-MM');
-      const monthData = monthMap.get(key) || { total: 0, toolCount: 0 };
-      const newToolCost = monthData.toolCount * AVG_NEW_TOOL_COST;
-      const savings = newToolCost - monthData.total;
-
-      data.push({
-        month: format(date, 'MMM', { locale: ptBR }),
-        sharpeningCost: monthData.total,
-        newToolCost: newToolCost,
-        savings: savings > 0 ? savings : 0,
-        toolCount: monthData.toolCount,
-      });
-    }
-
-    return { monthlyData: data, totalTools: allToolsCount, totalSpent: allSpent };
-  }, [orders]);
-
-  const totalSavings = totalTools * AVG_NEW_TOOL_COST - totalSpent;
-  const savingsPercent = totalTools > 0 ? Math.round(((totalTools * AVG_NEW_TOOL_COST - totalSpent) / (totalTools * AVG_NEW_TOOL_COST)) * 100) : 0;
+  const { summary, isPending: loading } = useSavingsSummary(user?.id);
+  const { monthlyData, totalTools, totalSpent, totalSavings, savingsPercent } = summary;
 
   if (loading) {
     return (

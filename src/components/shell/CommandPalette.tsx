@@ -13,7 +13,7 @@ import {
   LayoutDashboard, ShoppingCart, Users, Wrench, Package, Truck,
   BarChart3, DollarSign, Palette, Settings, BookOpen, PlusCircle,
   ClipboardList, FileCheck, Boxes, Beaker, Shield, User, Beaker as Bottle,
-  FileText, Loader2, Clock, X,
+  FileText, Loader2, Clock, X, Crown,
 } from 'lucide-react';
 import {
   useCommandsRegistry,
@@ -83,6 +83,7 @@ export function CommandPalette() {
       // Navegar — Principal
       { id: 'nav.dashboard', label: 'Ir para Dashboard', group: 'Navegar', icon: LayoutDashboard, perform: go('/') },
       { id: 'nav.clientes', label: 'Ir para Clientes', group: 'Navegar', icon: Users, keywords: ['CRM', 'carteira'], perform: go('/admin/customers') },
+      { id: 'nav.prime', label: 'Prime Colacor', group: 'Navegar', icon: Crown, keywords: ['assinatura', 'fidelidade', 'franquia', 'dentes'], perform: go('/admin/prime') },
       // Vendas
       { id: 'nav.sales', label: 'Pedidos de venda', group: 'Vendas', icon: ShoppingCart, perform: go('/sales') },
       { id: 'action.new-order', label: 'Novo pedido', group: 'Vendas', icon: PlusCircle, hint: 'Criar pedido', perform: go('/sales/new') },

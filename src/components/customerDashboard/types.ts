@@ -19,12 +19,13 @@ export interface UserTool {
   id: string;
   tool_category_id: string;
   next_sharpening_due: string | null;
+  last_sharpened_at: string | null;
   sharpening_interval_days: number | null;
-  tool_categories: { name: string };
+  tool_categories: { name: string; suggested_interval_days: number | null };
 }
 
 export interface PriorityAction {
-  type: 'quote' | 'order_issue' | 'tools_overdue' | 'no_tools' | 'no_address' | 'all_good';
+  type: 'quote' | 'order_issue' | 'tools_overdue' | 'no_tools' | 'no_address' | 'nunca_afiada' | 'all_good';
   title: string;
   description: string;
   buttonLabel?: string;

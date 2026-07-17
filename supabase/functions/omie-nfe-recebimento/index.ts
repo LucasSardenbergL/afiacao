@@ -504,6 +504,12 @@ Deno.serve(async (req) => {
       const consulta1 = await callReceb("ConsultarRecebimento", { nIdReceb, cChaveNfe: chaveAcesso });
       const cls1 = classificarRespostaOmie({ httpOk: !consulta1.error, status: consulta1.error ? consulta1.status : 200, body: consulta1.data });
       await registrarTentativa(supabase, { nfe_recebimento_id: nfeRecebimentoId, tentativa, operacao: "consultar", sucesso: cls1.sucesso, erro: cls1.erro, omie_status: cls1.omieStatus });
+      // Trava anti-redundância do Omie (mesma consulta <60s) é TRANSITÓRIA — não pinta
+      // falha_efetivacao (falso vermelho visto em prod 2026-07-14: diagnóstico + Reconciliar
+      // em 4s → REDUNDANT). Preserva o status; o lock libera no finally. (Codex P1)
+      if (!cls1.sucesso && /redundante|REDUNDANT/i.test(cls1.erro ?? "")) {
+        return jsonRes({ success: false, modo: "throttle", nfe_recebimento_id: nfeRecebimentoId, numero_nfe: nfe.numero_nfe, erro: "Omie em trégua de consulta (~60s) — tente novamente em instantes" }, 200);
+      }
       if (!cls1.sucesso) return await falhaOp("consultar", cls1.erro ?? "erro na consulta");
       const estado = extrairEstadoConsulta(consulta1.data);
 

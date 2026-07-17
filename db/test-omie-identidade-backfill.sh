@@ -53,7 +53,13 @@ P -q <<'SQL'
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO anon, authenticated, service_role;
 -- stub mínimo p/ o ALTER TABLE ... ADD COLUMN customer_document
 CREATE TABLE public.sales_orders (id uuid);
--- omie_clientes FIEL: colunas + os DOIS unique indexes reais (o RPC depende deles)
+-- omie_clientes FIEL: colunas + os TRÊS unique indexes reais (o RPC depende deles).
+-- [2026-07-16] `unique_user_omie` FALTAVA aqui, e o stub se dizia "fiel": ele modelava o mundo do
+-- DESIGN (§4.4: chave (user_id, empresa)) em vez do da PROD, onde a UNIQUE(user_id) singular também
+-- existe e VENCE por ser mais restritiva — a "Fatia 3" criou a composta e nunca dropou a singular.
+-- Custo do engano: o backfill 'oben' de um user que já tem a linha default 'colacor' viola a singular
+-- e a RPC devolve 'contested' → o edge barrava PV LEGÍTIMO (PC 214820). O teste ficava verde porque
+-- aqui a colisão não acontecia. Confirmado por pg_indexes na prod. Ver o assert N4.
 CREATE TABLE public.omie_clientes (
   id uuid DEFAULT gen_random_uuid() NOT NULL,
   user_id uuid NOT NULL,
@@ -67,6 +73,7 @@ CREATE TABLE public.omie_clientes (
 );
 CREATE UNIQUE INDEX idx_omie_clientes_codigo_empresa ON public.omie_clientes (omie_codigo_cliente, empresa_omie);
 CREATE UNIQUE INDEX idx_omie_clientes_user_empresa  ON public.omie_clientes (user_id, empresa_omie);
+CREATE UNIQUE INDEX unique_user_omie ON public.omie_clientes (user_id);
 SQL
 
 # ── ZONA 2: aplicar a migration REAL ──
@@ -97,6 +104,22 @@ eq "N1 NAO sobrescreve (fica 100)" "$ROW" "100"
 # N2 — outro user tentando o código 100 (já do UA) → contested, sem linha nova
 V=$(Pq -c "SELECT public.omie_cliente_upsert_mapping('$UB','oben',100,5);"); eq "N2 contested (codigo de outro user)" "$V" "contested"
 N=$(Pq -c "SELECT count(*) FROM omie_clientes;"); eq "N2 sem linha nova (continua 1)" "$N" "1"
+
+# N4 — MULTI-CONTA REAL (regressão do PC 214820, money-path): o user já tem a linha do espelho gravada
+# pelos writers que NÃO setam empresa_omie — semeada aqui do mesmo jeito (coluna OMITIDA, o DEFAULT real
+# produz 'colacor'), sem escrever a premissa à mão. O backfill então tenta gravar o código OBEN do MESMO
+# user: sob `unique_user_omie UNIQUE(user_id)` isso é unique_violation → a RPC devolve 'contested' → o
+# edge barrava um PV LEGÍTIMO. Não é conflito de identidade nenhum: é a chave errada. Enquanto este
+# assert disser 'contested', o backfill NÃO pode voltar ao caminho de criação de PV (ver o tombstone em
+# omie-vendas-sync). Quando a Fatia 3 dropar a singular, este assert vira 'inserted' — e aí ele pode.
+UC='cccccccc-cccc-cccc-cccc-cccccccccccc'
+P -q -c "INSERT INTO omie_clientes (user_id, omie_codigo_cliente) VALUES ('$UC', 8689689628);"
+EMP=$(Pq -c "SELECT empresa_omie FROM omie_clientes WHERE user_id='$UC';")
+eq "N4 o DEFAULT real da coluna produz o rótulo poluído" "$EMP" "colacor"
+V=$(Pq -c "SELECT public.omie_cliente_upsert_mapping('$UC','oben',8689689628,7);")
+eq "N4 backfill oben do MESMO user → contested (unique_user_omie) = bloqueio #2 do PC 214820" "$V" "contested"
+N=$(Pq -c "SELECT count(*) FROM omie_clientes WHERE user_id='$UC';")
+eq "N4 o espelho segue com 1 linha (a 'colacor' poluída) — auto-cura impossível sob a chave singular" "$N" "1"
 
 # N3 — argumento nulo → RAISE 22004 (sentinela anti-teatro, não contém o texto do código)
 R=$(P -tA 2>&1 <<SQL || true

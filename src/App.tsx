@@ -40,11 +40,13 @@ const AdminRoutePlanner = lazy(() => import("./pages/AdminRoutePlanner"));
 const AdminMonthlyReports = lazy(() => import("./pages/AdminMonthlyReports"));
 const AdminProductivity = lazy(() => import("./pages/AdminProductivity"));
 const AdminLoyalty = lazy(() => import("./pages/AdminLoyalty"));
+const AdminPrime = lazy(() => import("./pages/AdminPrime"));
 const AdminGamification = lazy(() => import("./pages/AdminGamification"));
 const Gamification = lazy(() => import("./pages/Gamification"));
 const QualityChecklist = lazy(() => import("./pages/QualityChecklist"));
 const RecurringSchedules = lazy(() => import("./pages/RecurringSchedules"));
 const SavingsDashboard = lazy(() => import("./pages/SavingsDashboard"));
+const CentralFerramenta = lazy(() => import("./pages/CentralFerramenta"));
 const Loyalty = lazy(() => import("./pages/Loyalty"));
 const ToolHistory = lazy(() => import("./pages/ToolHistory"));
 const ToolPublicHistory = lazy(() => import("./pages/ToolPublicHistory"));
@@ -245,6 +247,7 @@ const App = () => {
               <Route path="support" element={<Support />} />
               <Route path="recurring-schedules" element={<RecurringSchedules />} />
               <Route path="savings" element={<SavingsDashboard />} />
+              <Route path="central" element={<CentralFerramenta />} />
               <Route path="loyalty" element={<Loyalty />} />
               <Route path="gamification" element={<Gamification />} />
               <Route path="training" element={<Training />} />
@@ -303,6 +306,7 @@ const App = () => {
                 <Route path="admin/monthly-reports" element={<AdminMonthlyReports />} />
                 <Route path="admin/productivity" element={<AdminProductivity />} />
                 <Route path="admin/loyalty" element={<AdminLoyalty />} />
+                <Route path="admin/prime" element={<AdminPrime />} />
                 <Route path="admin/gamification" element={<AdminGamification />} />
                 <Route path="admin/training" element={<AdminTraining />} />
                 <Route path="admin/price-table" element={<AdminPriceTable />} />
@@ -353,7 +357,7 @@ const App = () => {
                 <Route path="tintometrico/corantes" element={<Navigate to="/tintometrico/catalogo?tab=corantes" replace />} />
                 <Route path="tintometrico/mapeamento" element={<Navigate to="/tintometrico/catalogo?tab=mapeamento" replace />} />
                 <Route path="tintometrico/precos" element={<Navigate to="/tintometrico/catalogo?tab=precificacao" replace />} />
-                <Route path="tintometrico/importar" element={<Navigate to="/tintometrico/integracao?tab=importar&csv=emergencia" replace />} />
+                <Route path="tintometrico/importar" element={<Navigate to="/tintometrico/integracao?tab=importar" replace />} />
                 <Route path="tintometrico/integracoes" element={<Navigate to="/tintometrico/integracao?tab=integracoes" replace />} />
                 <Route path="tintometrico/reconciliacao" element={<Navigate to="/tintometrico/integracao?tab=reconciliacao" replace />} />
                 <Route path="tintometrico/sync-runs" element={<Navigate to="/tintometrico/integracao?tab=sync-runs" replace />} />

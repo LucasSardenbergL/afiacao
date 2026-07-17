@@ -888,51 +888,25 @@ async function syncPedidos(
   let reachedEnd = false;            // true SÓ no fim real do Omie (null = "Não existem registros", ou página vazia)
   let lastErrorKind: 'rate_limit' | 'transient' | 'http' | null = null;
 
-  // ── Pre-load document -> user_id mapping from profiles (KEYSET + fail-closed) ──
-  // P1 (Codex xhigh 2026-07-10): doc compartilhado por 2+ profiles (users DISTINTOS) é AMBÍGUO — o
-  // last-write-wins gravava um user ARBITRÁRIO e um pedido no fallback resolveClientUserId (ConsultarCliente
-  // -> doc -> docToUserMap.get) era atribuído ao cliente ERRADO (money-path). Fail-closed via helper puro
-  // espelhado buildDocUserMapFailClosed (análogo VENDAS do fetchProfileDocUserMap P1b): doc ambíguo fica FORA
-  // do mapa. Paginação KEYSET (.order('user_id') + .gt) troca o offset .range: elimina o pular/duplicar por
-  // DESLOCAMENTO (uma linha inserida/removida entre páginas desloca as janelas .range sem .order). ATENÇÃO
-  // (Codex xhigh): a leitura multi-página NÃO é atômica — um profile que nasce/muda ENTRE páginas com user_id
-  // < cursor ainda escapa desta janela (mesma limitação do fetchProfileDocUserMap P1b, que usa offset). O
-  // fechamento TOTAL da corrida exige resolver a unicidade num único snapshot server-side (RPC GROUP BY doc
-  // HAVING count(distinct user)=1) — follow-up v2. Erro de query é FAIL-CLOSED (throw): engolir o error
-  // deixaria um mapa PARCIAL silencioso → miss no fallback → skip/atribuição arbitrária. Aborta e retoma.
+  // ── Snapshot atômico de identidade doc→user (RPC server-side) — fecha a corrida A1 ──
+  // Antes: paginação KEYSET de profiles montava o docToUserMap com buildDocUserMapFailClosed. Era
+  // não-atômica (Codex xhigh 2026-07-10): um profile que nascia/mudava ENTRE páginas escapava da
+  // detecção de doc-ambíguo. Agora a unicidade doc→user é resolvida num ÚNICO snapshot MVCC server-side
+  // (omie_sync_identity_snapshot, sql STABLE): doc com 2+ users DISTINTOS já vem FORA de doc_to_user e
+  // listado em ambiguous_docs (métrica). O fail-closed (precisão>recall) vive no SQL, não mais no TS.
+  // .rpc() NÃO lança em erro (resolve {error}) → checar e FAIL-CLOSED (throw): um mapa PARCIAL silencioso
+  // causaria miss no fallback resolveClientUserId → skip/atribuição arbitrária. Aborta e retoma.
+  const { data: snap, error: snapErr } = await supabase.rpc('omie_sync_identity_snapshot', { p_account: account });
+  if (snapErr) throw new Error(`identity snapshot (${account}): ${snapErr.message}`);
+  // Validação ESTRITA do contrato (Codex challenge PR-1): .rpc() error=null só prova HTTP/SQL, NÃO o JSON.
+  // Uma RPC revertida devolvendo {doc_to_user:null,...} (HTTP 200) degradaria p/ Map(0) SILENCIOSO → pedidos
+  // pulados. parseIdentitySnapshot LANÇA em shape inválido (null/array/não-UUID/doc ambíguo vazado) — fail-closed.
+  const { docToUserMap, ambiguousDocs } = parseIdentitySnapshot(snap);
+  console.log(`[sync_pedidos][${account}] Identity snapshot: ${docToUserMap.size} doc(s) único(s), ${ambiguousDocs.size} ambíguo(s) excluído(s) (fail-closed server-side)`);
+
+  // pgSize/hasMore ficam declarados aqui pois o pré-load do clientCache (abaixo) os reusa.
   const pgSize = 1000;
-  const profileDocRegistros: Array<{ doc: string; userId: string }> = [];
-  let lastUserId: string | null = null;
   let hasMore = true;
-  while (hasMore) {
-    let query = supabase
-      .from('profiles')
-      .select('user_id, document')
-      .not('document', 'is', null)
-      .order('user_id')
-      .limit(pgSize);
-    if (lastUserId !== null) query = query.gt('user_id', lastUserId);
-    const { data: batch, error: profErr } = await query;
-    if (profErr) throw new Error(`pre-load profile doc map (${account}): ${profErr.message}`);
-    if (!batch || batch.length === 0) { hasMore = false; }
-    else {
-      for (const p of batch) {
-        if (p.document) {
-          const cleanDoc = p.document.replace(/\D/g, '');
-          if (cleanDoc.length >= 11) profileDocRegistros.push({ doc: cleanDoc, userId: p.user_id });
-        }
-      }
-      lastUserId = batch[batch.length - 1].user_id;
-      if (batch.length < pgSize) hasMore = false;
-    }
-  }
-  const docsDistintos = new Set(profileDocRegistros.map((r) => r.doc)).size;
-  const docToUserMap = buildDocUserMapFailClosed(profileDocRegistros);
-  // Observabilidade do fail-closed (Codex): todo doc distinto (todos têm user_id) ou vira 1 entry (não-ambíguo)
-  // ou é removido (2+ users) → docsAmbiguos = distintos - map.size. Hoje 0 (docs_com_2mais_users=0), mas
-  // quando surgir a 1ª duplicata-doc no lado profile este log é o 1º sinal (o dado não denuncia sozinho).
-  const docsAmbiguos = docsDistintos - docToUserMap.size;
-  console.log(`[sync_pedidos][${account}] Document map: ${docToUserMap.size} profiles (fail-closed; ${docsAmbiguos} doc(s) ambíguo(s) excluído(s))`);
 
   // Dedupe DENTRO da run (evita mandar o mesmo pedido 2x na mesma chamada). NÃO pré-carregamos
   // hashes do banco: todos os pedidos válidos da janela vão para a RPC criar_pedidos_com_itens,
@@ -1590,23 +1564,14 @@ async function assertOmieItemsAtivos(
   }
 }
 
-// MIRROR-START omie account-coherence — espelhado de src/lib/omie/account-coherence.ts
-// Coerência conta×código por PROVA POSITIVA (money-path): true só quando `code` é o código de OUTRA
-// conta Omie do MESMO cliente (linhas de omie_clientes filtradas por user_id). NÃO acusa por
-// AUSÊNCIA — oben/colacor_sc resolvem o código via API e podem não estar no espelho local. Guard na
-// FRONTEIRA comum (todas as vias de criar_pedido passam aqui). Paridade textual no CI.
-function codeBelongsToWrongAccount(
-  rows: ReadonlyArray<{ omie_codigo_cliente: number; empresa_omie: string }>,
-  code: number,
-  account: string,
-): boolean {
-  if (!Number.isSafeInteger(code) || code <= 0) return false;
-  const eq = (a: number): boolean => String(a) === String(code); // bigint-safe: string decimal canonica (Number colapsa >= 2^53)
-  const matchesTarget = rows.some((r) => eq(r.omie_codigo_cliente) && r.empresa_omie === account);
-  if (matchesTarget) return false;
-  return rows.some((r) => eq(r.omie_codigo_cliente) && r.empresa_omie !== account);
-}
-// MIRROR-END
+// [2026-07-16] `codeBelongsToWrongAccount` (P0-A) foi REMOVIDO daqui — não restaure sem ler isto.
+// Ele provava "conta errada" pelo rótulo `empresa_omie` do espelho `omie_clientes`, e o rótulo é
+// DEFAULT POLUÍDO: 6909/6909 linhas da prod são 'colacor' (ZERO 'oben'), com código oben do bulk
+// syncCustomers morando sob esse rótulo. Para account='oben' a prova positiva era estruturalmente
+// falsa — `matchesTarget` nunca casava e QUALQUER código conhecido acusava. Barrou o PC 214820 com
+// o código oben CORRETO. O design do P0-B (§4.3) já o dava como redundante: a divergência
+// advisory×derivado em decideAccountIdentity é fail-closed e cobre o mesmo ataque com a âncora certa
+// (documento + API Omie), sem depender de rótulo local. Invariante em edge-money-path-invariants.
 
 // MIRROR-START omie derive-account-identity — espelhado verbatim em supabase/functions/omie-vendas-sync/index.ts
 // Decisão de identidade Omie por conta (money-path P0-B). PURA: recebe dados já buscados (espelho local
@@ -1663,29 +1628,48 @@ function decideAccountIdentity(input: DecideInput): DecideResult {
 }
 // MIRROR-END
 
-// MIRROR-START omie doc-user-fail-closed — espelhado verbatim em supabase/functions/omie-vendas-sync/index.ts
-// P1 (fail-closed money-path): no syncPedidos, o docToUserMap (doc normalizado -> user_id de profiles)
-// alimenta o fallback resolveClientUserId (ConsultarCliente devolve o doc -> docToUserMap.get(doc)). Se 2
-// profiles DISTINTOS compartilham o mesmo CPF/CNPJ, o last-write-wins gravava o user do ÚLTIMO da paginação
-// e o pedido money-path era atribuído ao cliente ARBITRÁRIO. Fail-closed: doc com 2+ users distintos fica
-// FORA do mapa (precisão > recall — melhor cair no skip/log que atribuir errado). Análogo VENDAS do lado
-// profile (fetchProfileDocUserMap, P1b). Espelhado no edge (Deno não importa de src/); paridade textual no
-// CI em src/__tests__/edge-money-path-invariants.test.ts.
-function buildDocUserMapFailClosed(
-  registros: ReadonlyArray<{ doc: string; userId: string }>,
-): Map<string, string> {
-  const map = new Map<string, string>();
-  const ambiguos = new Set<string>();
-  for (const r of registros) {
-    if (!r.doc || !r.userId) continue;         // sem doc ou sem user → não vira vínculo
-    if (ambiguos.has(r.doc)) continue;          // já ambíguo → permanece FORA (sticky)
-    const prev = map.get(r.doc);
-    if (prev === undefined) { map.set(r.doc, r.userId); continue; }
-    if (prev === r.userId) continue;            // mesmo user repetido (duplicata de paginação, idempotente)
-    map.delete(r.doc);                          // 2º user DISTINTO → ambíguo, fail-closed
-    ambiguos.add(r.doc);
+// [PR-1/A1] O fail-closed doc→user (doc com 2+ users FORA do mapa) migrou do TS para a RPC SQL
+// omie_sync_identity_snapshot (snapshot atômico). O helper abaixo valida o CONTRATO da resposta.
+// MIRROR-START omie identity-snapshot-parse — espelhado verbatim nos edges omie-vendas-sync e omie-analytics-sync
+// Valida o CONTRATO JSON da RPC omie_sync_identity_snapshot e constrói os mapas. FAIL-CLOSED (Codex
+// challenge PR-1): supabase-js .rpc() resolve {error} — error=null só prova HTTP/SQL bem-sucedido, NÃO o
+// contrato. Uma RPC revertida/malformada pode devolver HTTP 200 com {doc_to_user:null,...}; o `?? {}` a
+// degradaria para Map(0) SILENCIOSO (vendas pula pedidos, analytics não vincula) sem SQLSTATE. Aqui shape
+// inválido (null/array/tipo errado/valor não-UUID/doc ambíguo vazado em doc_to_user) LANÇA — precisão>recall.
+const OMIE_SNAPSHOT_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function parseIdentitySnapshot(
+  snap: unknown,
+): { docToUserMap: Map<string, string>; ambiguousDocs: Set<string> } {
+  if (!snap || typeof snap !== "object" || Array.isArray(snap)) {
+    throw new Error("identity snapshot: resposta não é objeto (fail-closed)");
   }
-  return map;
+  const s = snap as Record<string, unknown>;
+  const d2u = s.doc_to_user;
+  const amb = s.ambiguous_docs;
+  if (!d2u || typeof d2u !== "object" || Array.isArray(d2u)) {
+    throw new Error("identity snapshot: doc_to_user ausente ou não-objeto (fail-closed)");
+  }
+  if (!Array.isArray(amb)) {
+    throw new Error("identity snapshot: ambiguous_docs ausente ou não-array (fail-closed)");
+  }
+  const ambiguousDocs = new Set<string>();
+  for (const doc of amb) {
+    if (typeof doc !== "string") throw new Error("identity snapshot: ambiguous_docs com item não-string (fail-closed)");
+    ambiguousDocs.add(doc);
+  }
+  const docToUserMap = new Map<string, string>();
+  for (const [doc, user] of Object.entries(d2u)) {
+    if (typeof user !== "string" || !OMIE_SNAPSHOT_UUID_RE.test(user)) {
+      throw new Error("identity snapshot: user_id não-UUID em doc_to_user (fail-closed)");
+    }
+    // disjunção: um doc não pode estar em doc_to_user E em ambiguous_docs (seria fail-open da RPC)
+    if (ambiguousDocs.has(doc)) {
+      throw new Error("identity snapshot: doc presente em doc_to_user E ambiguous_docs — fail-open da RPC (fail-closed)");
+    }
+    docToUserMap.set(doc, user);
+  }
+  return { docToUserMap, ambiguousDocs };
 }
 // MIRROR-END
 
@@ -1710,7 +1694,8 @@ async function buscarClienteVendasMatches(document: string, account: Account = "
 }
 
 // Deriva a identidade Omie AUTORITATIVA de (documento do pedido, conta) — money-path P0-B. Âncora = documento
-// (imune ao fallback customer_user_id || user.id). Espelho → Omie-por-doc → fail-closed. Backfill gated.
+// (imune ao fallback customer_user_id || user.id). Omie-por-doc → fail-closed. Sem espelho: ver o bloco
+// abaixo (o rótulo local não prova conta e o backfill barrava PV legítimo).
 async function deriveOmieAccountIdentity(
   supabase: SupabaseClient,
   soRow: { customer_user_id: string | null; customer_document: string | null; created_by: string | null },
@@ -1719,69 +1704,36 @@ async function deriveOmieAccountIdentity(
 ): Promise<{ codigo_cliente: number; codigo_vendedor: number | null }> {
   const rawDoc = (soRow.customer_document || "").trim();
   let doc = rawDoc.replace(/\D/g, "");
-  let profileRaw = "";
   // Fallback p/ profiles.document SÓ quando customer_user_id é CONFIÁVEL (≠ created_by). O submit faz
   // customer_user_id = customerUserId || created_by → quando cai no created_by (staff sem cliente local),
   // derivar do doc do VENDEDOR rotearia o PV pro vendedor (Codex P1 #1). Sem doc confiável → fail-closed.
   if (!doc && soRow.customer_user_id && soRow.customer_user_id !== soRow.created_by) {
     const { data: prof } = await supabase.from("profiles").select("document").eq("user_id", soRow.customer_user_id).maybeSingle();
-    profileRaw = ((prof?.document as string | undefined) || "").trim();
-    doc = profileRaw.replace(/\D/g, "");
+    doc = ((prof?.document as string | undefined) || "").trim().replace(/\D/g, "");
   }
   if (!doc) {
     throw new Error(`Pedido rejeitado: sem documento CONFIÁVEL do cliente para provar a identidade Omie na conta ${account} — envio bloqueado (não roteia pelo vendedor).`);
   }
 
-  // profiles.document em prod existe raw E limpo (resolveLocalUserId casa ambos) — casar os dois p/ não
-  // perder o fast-path do espelho quando o formato armazenado difere do documento do pedido.
-  const docCandidates = [...new Set([doc, rawDoc, profileRaw].filter((d) => d.length > 0))];
-  const { data: users } = await supabase.from("profiles").select("user_id").in("document", docCandidates);
-  const userIds = ((users ?? []) as Array<{ user_id: string }>).map((u) => u.user_id);
-  // Espelho SÓ com 1 dono do documento: dup-profiles (mesmo doc, user_ids distintos) podem ter uma linha
-  // de espelho de perfil ERRADO/stale que não vale como prova (Codex P1 #5) → força o Omie autoritativo
-  // (regs:2, dup-safe). Alinha com o gate do backfill (também 1 dono).
-  // Fatia 1 do fix de rótulo (BUG-1, money-path): empresa_omie='colacor' no espelho é o DEFAULT
-  // POLUÍDO — os 5 writers gravam sem setar a coluna, então 'colacor' é um MIX de código oben (bulk
-  // syncCustomers, conta 'vendas') + colacor_sc (writers manuais), ZERO colacor real (provado via
-  // psql-ro 2026-07-07). Confiar nele rotearia o pedido colacor ao cliente ERRADO. Para account=
-  // 'colacor' NÃO usa o espelho → mirrorRows=[] força a verificação Omie por documento (needOmie).
-  // Temporário: a Fatia 3 re-rotula por conta e reverte. Ver docs/superpowers/specs/2026-07-07-
-  // espelho-omie-rotulo-por-conta-design.md.
-  const mirrorRows: MirrorRow[] = (userIds.length === 1 && account !== "colacor")
-    ? (((await supabase.from("omie_clientes").select("omie_codigo_cliente, omie_codigo_vendedor, empresa_omie").in("user_id", userIds).eq("empresa_omie", account)).data ?? []) as MirrorRow[])
-    : [];
-
-  let decision = decideAccountIdentity({ account, suppliedCodigo, mirrorRows, omieMatches: null });
-  if (!decision.ok && "needOmie" in decision) {
-    const omieMatches = await buscarClienteVendasMatches(doc, account);
-    decision = decideAccountIdentity({ account, suppliedCodigo, mirrorRows, omieMatches });
-  }
-  // Codex round-2 [P1]: sem advisory (ex.: conversão de orçamento) NÃO há rede de divergência p/ pegar um
-  // ESPELHO DESATUALIZADO (o código Omie do cliente mudou). Confirma o espelho contra o Omie — re-decide
-  // com o Omie autoritativo e o código do espelho como advisory: divergência/ausência/ambiguidade cai no
-  // throw abaixo (fail-closed). Custo: 1 chamada Omie só no caminho SEM código (orçamento), infrequente.
-  if (decision.ok && decision.source === "mirror" && suppliedCodigo === null) {
-    const omieMatches = await buscarClienteVendasMatches(doc, account);
-    decision = decideAccountIdentity({ account, suppliedCodigo: decision.codigo_cliente, mirrorRows: [], omieMatches });
-  }
+  // [2026-07-16] Espelho `omie_clientes` FORA do caminho de PV — a leitura era morta e a escrita
+  // bloqueava. Não religue sem antes re-rotular o espelho por conta (a "Fatia 3" nunca aconteceu):
+  //  • LER era inútil: mirrorRows filtrava `empresa_omie = account`, e o rótulo é DEFAULT POLUÍDO —
+  //    6909/6909 linhas da prod são 'colacor' (ZERO 'oben'/'colacor_sc'), e 'colacor' já era forçado
+  //    a [] pelo BUG-1. O fast-path NUNCA casava em NENHUMA conta: a API Omie por documento sempre
+  //    foi o caminho real. Remover não muda comportamento nem adiciona 1 chamada sequer.
+  //  • ESCREVER bloqueava: o backfill upsertava sob `unique_user_omie UNIQUE(user_id)` — a constraint
+  //    REAL da prod (o design §4.4 assumiu `(user_id, empresa)`, e o harness espelhou a suposição, por
+  //    isso o teste nunca viu). Com a linha 'colacor' do user já presente, o INSERT 'oben' violava a
+  //    UNIQUE → a RPC devolve 'contested' → este edge barrava um PV LEGÍTIMO (2º bloqueio, em série
+  //    com o P0-A; ambos atingiram o PC 214820). Auto-cura do espelho é trabalho do sync diário, não
+  //    do caminho de dinheiro — e a proof-table account-correta é `omie_customer_account_map`.
+  // Sobra UMA fonte autoritativa: documento (âncora) + API Omie, com divergência advisory×derivado,
+  // ambiguidade, ausência e bigint fora de range todos fail-closed em decideAccountIdentity.
+  const omieMatches = await buscarClienteVendasMatches(doc, account);
+  const decision = decideAccountIdentity({ account, suppliedCodigo, mirrorRows: [], omieMatches });
   if (!decision.ok) {
     const reason = "reason" in decision ? decision.reason : "unknown";
     throw new Error(`Pedido rejeitado: identidade Omie do cliente na conta ${account} não pôde ser provada (${reason}) — envio bloqueado para não registrar no cliente errado.`);
-  }
-
-  // Backfill gated (auto-cura do espelho): só derivação inequívoca por Omie E com user confiável
-  // (exatamente 1 dono do documento). Contested (código de outro/diferente) → fail-closa o PV.
-  // Fatia 1 (BUG-1): NÃO backfilla colacor enquanto unique_user_omie (1 linha/user) existir. A
-  // verificação Omie forçada acima produz decision.backfill=true; o upsert p_empresa='colacor' sob a
-  // constraint singular poderia CONTESTAR/falhar (a linha do user já existe como 'colacor' poluído) e
-  // BLOQUEAR um pedido colacor legítimo (Codex). A Fatia 3 (onConflict composto) reverte.
-  if (decision.backfill && userIds.length === 1 && account !== "colacor") {
-    const { data: status } = await supabase.rpc("omie_cliente_upsert_mapping", {
-      p_user_id: userIds[0], p_empresa: account, p_codigo_cliente: decision.codigo_cliente, p_codigo_vendedor: decision.codigo_vendedor,
-    });
-    if (status === "contested") {
-      throw new Error(`Pedido rejeitado: identidade Omie contestada no espelho (conta ${account}) — envio bloqueado.`);
-    }
   }
   return { codigo_cliente: decision.codigo_cliente, codigo_vendedor: decision.codigo_vendedor };
 }
@@ -2429,27 +2381,11 @@ serve(async (req) => {
             `Conta do payload (${account}) diverge do pedido local (${soRow.account}) — pedido não enviado`,
           );
         }
-        // Guard money-path (coerência conta×código, prova positiva): fecha o vazamento cross-conta
-        // em TODAS as vias de criação (SalesQuotes, selectCustomerByUserId, IA, futuras). Um caller
-        // pode resolver o código no espelho parcial `omie_clientes` sem filtrar empresa e mandar o
-        // código de OUTRA conta do mesmo cliente. Deriva do pedido local (customer_user_id) e recusa
-        // só com PROVA POSITIVA (o código é de outra conta) — nunca por ausência (oben vem da API).
-        // Gate Codex P1 #2/#7: só quando customer_user_id é CONFIÁVEL (≠ created_by/vendedor) — senão as
-        // linhas do VENDEDOR fariam false-reject de pedido legítimo por colisão de código cross-conta.
-        if (soRow?.customer_user_id && soRow.customer_user_id !== soRow.created_by) {
-          const { data: idRows, error: idErr } = await supabaseAdmin
-            .from("omie_clientes")
-            .select("omie_codigo_cliente, empresa_omie")
-            .eq("user_id", soRow.customer_user_id);
-          if (idErr) {
-            throw new Error(`Pedido rejeitado: falha ao validar a conta do cliente (${idErr.message}). Tente novamente.`);
-          }
-          if (codeBelongsToWrongAccount(idRows ?? [], Number(codigo_cliente), account)) {
-            throw new Error(
-              `Pedido rejeitado: código de cliente ${codigo_cliente} pertence a outra conta Omie (não ${account}) — envio bloqueado para não registrar no cliente errado.`,
-            );
-          }
-        }
+        // [2026-07-16] O guard de coerência conta×código (P0-A) saiu daqui: ele lia o rótulo
+        // `empresa_omie` do espelho `omie_clientes`, que é default poluído (ver o tombstone acima),
+        // e barrava pedido oben LEGÍTIMO por prova positiva falsa. A cobertura real do cross-conta
+        // é a derivação abaixo: âncora no DOCUMENTO + API Omie, com divergência advisory×derivado
+        // fail-closed — o mesmo ataque, provado pela fonte certa.
         // P0-B: identidade Omie AUTORITATIVA derivada do DOCUMENTO do pedido (prova positiva). Fecha o gap
         // do guard acima (código de OUTRO user passava) e destrava a conversão oben. codigo_cliente do
         // payload é advisory; fail-closed em ambiguidade/ausência/divergência/contested. USA o derivado.
@@ -3128,6 +3064,41 @@ serve(async (req) => {
           account,
           ok: casosId.every((c) => c.ok), // true = a tabela-verdade deployada bate em TODOS os fixtures
           casos: casosId,
+        };
+        break;
+      }
+
+      case "identidade_snapshot_probe": {
+        // CANÁRIA DE DEPLOY da RPC omie_sync_identity_snapshot (PR-1/A1) — read-only, NÃO escreve, NÃO
+        // chama o Omie. Prova que a RPC subiu no MESMO build (senão PGRST202) E que a resposta satisfaz o
+        // CONTRATO (parseIdentitySnapshot valida shape/UUID/disjunção e LANÇA). NÃO prova o fail-closed
+        // comportamental (doc-ambíguo=0 em prod hoje); esse é provado no PG17 semeado
+        // (db/test-omie-identidade-snapshot.sh). ⚠️ success/ok refletem o DEPLOY REAL — Codex challenge PR-1:
+        // success:true em PGRST202/nulls era falso-verde (typeof null==='object' + `?? {}` mascaravam).
+        const { data: snapProbe, error: snapProbeErr } = await supabaseAdmin.rpc('omie_sync_identity_snapshot', { p_account: account });
+        let parsedOk = false;
+        let parseErro: string | null = null;
+        let docsUnicos = 0;
+        let ambiguos = 0;
+        if (!snapProbeErr) {
+          try {
+            const p = parseIdentitySnapshot(snapProbe);
+            docsUnicos = p.docToUserMap.size;
+            ambiguos = p.ambiguousDocs.size;
+            parsedOk = true;
+          } catch (e) {
+            parseErro = (e as Error).message;
+          }
+        }
+        result = {
+          success: !snapProbeErr && parsedOk, // falso em PGRST202 (deploy quebrado) OU contrato inválido
+          canary: true,
+          probe_no_ar: !snapProbeErr,
+          account,
+          ok: !snapProbeErr && parsedOk,
+          docs_unicos: docsUnicos,
+          ambiguos,
+          erro: snapProbeErr?.message ?? parseErro,
         };
         break;
       }

@@ -25,6 +25,7 @@
 | financeiro (engines A1-A4/DRE/funding, data de baixa/DSO-DPO) | [financeiro.md](docs/agent/financeiro.md) |
 | reposição/compras (motor, cmc-first, portal Sayerlack) | [reposicao.md](docs/agent/reposicao.md) |
 | base de conhecimento (boletim↔SKU, versionamento) | [knowledge-base.md](docs/agent/knowledge-base.md) |
+| tintométrico (fórmula↔receita, preço fail-closed, import) | [tintometrico.md](docs/agent/tintometrico.md) |
 | lente "Ver como" (impersonação, write-guard) | [impersonation.md](docs/agent/impersonation.md) |
 | telefonia (WebRTC, SIP, LGPD) | [telefonia.md](docs/agent/telefonia.md) |
 | skills & MCPs (roteamento canônico) | [skills.md](docs/agent/skills.md) |
@@ -38,16 +39,18 @@ Diário de PR/entregas: `docs/historico/` (`bugs-resolvidos.md`, `programas-vend
 - **Lovable = 3 deploys MANUAIS** (Publish frontend · edge pelo chat · migration no SQL Editor) — **merge na `main` ≠ produção**. Migration custom **não** auto-aplica (falha SILENCIOSA). **Nunca** mexer em `supabase/migrations/` (snapshot é a fonte de DR). → `deploy.md`/`database.md`
 - **Acesso ao banco:** **leitura/diagnóstico EU rodo direto** via `~/.config/afiacao/psql-ro` (role `claude_ro`, read-only blindado — confiro migration aplicada/frescor/`pg_get_functiondef`/`net._http_response` sem o founder). **Escrita** só via SQL Editor do Lovable (founder cola). → `database.md` §1
 - **PL/pgSQL é late-bound:** `CREATE` passa, a função só falha em RUNTIME → **teste EXECUTANDO** (PG17 `db/test-*.sh` / skill `prove-sql-money-path`), nunca só criando. → `money-path.md`
-- **`CREATE OR REPLACE` função/view:** pré-flight `pg_get_functiondef`/`pg_get_viewdef` da PROD (apply manual diverge do repo); a última a recriar **vence**. VIEW só ACRESCENTA coluna no fim (preservar ordem exata). → `database.md`
+- **`CREATE OR REPLACE` função/view:** pré-flight `pg_get_functiondef`/`pg_get_viewdef` da PROD (apply manual diverge do repo); a última a recriar **vence**. VIEW só ACRESCENTA coluna no fim (preservar ordem exata). **Omitir o `WITH (security_invoker=on)` RESETA a opção** (não preserva) → a view passa a ler como o OWNER e **bypassa RLS**: falha ABERTA, muda autorização e não comportamento — o CI não vê. Repita o `WITH` em TODO replace (#1375: 5 views vazando, 1 p/ `anon`). → `database.md`
 - **Cron `net.http_post` precisa de `timeout_milliseconds` explícito** (default 5s mata silencioso; `cron.job_run_details=succeeded` só prova o ENQUEUE — a verdade HTTP está em `net._http_response`). `_data_health_compute`+`data_health_watchdog`+`fin_sync_heartbeat` são um conjunto ACOPLADO. → `sync.md`
 - **PostgREST:** capa em 1.000 linhas silencioso (`.range()` + `.order` estável); **`.or()` quebra em UPDATE** (42703 mesmo a coluna existindo) → RPC SQL-pura; negação é **NULL-blind**. **Nunca** interpolar input em `.or()` cru (ESLint `no-restricted-syntax` barra — usar helpers `@/lib/postgrest`). → `database.md`
 - **Supabase RLS:** `REVOKE FROM PUBLIC` **NÃO** tira `anon`/`authenticated` (grant explícito — revogar por nome); SECURITY DEFINER bypassa RLS (gate na fronteira). Tabela nova **sempre** com RLS. → `database.md`
 - **Money-path: ausente ≠ zero** (`Number(null)===0` é fabricação) → degradar para `null`/baixa-confiança, **nunca** fabricar número. Sinal money-path **nunca** em coluna jsonb multi-writer (upsert destrutivo) → coluna dedicada + 1 writer. → `money-path.md`
+- **Cliente do grupo = 2 cadastros Omie LEGÍTIMOS** (`servicos`/Colacor SC + `vendas`/Oben — CNPJs distintos por vantagem fiscal): os **1.633 users `@placeholder.local` sem `profiles`** (fora da proof, `eligible=false`) **NÃO são lixo de import** — limpeza **descartada por design** (B-lite, prod desde 2026-06-13); os pedidos deles são faturamento Colacor SC (re-apontar ao gêmeo corrompe o DRE por empresa). `@placeholder.local`/`ja_logou=0` valem p/ **6.910 dos 6.914** users → não distinguem nada. Já redescoberto 2× como "órfãos a limpar". → `database.md` §5
 - **Omie:** não confiar em `total_de_paginas` (paginar até página vazia + guard); enumeração pesada (~10k+) → bulk + `waitUntil` + retry, nunca N+1; após corrigir a FONTE, re-invocar o recompute (snapshots derivados não se regeneram). → `reposicao.md`/`sync.md`
 - **Lente "Ver como":** `useAuth()` é SEMPRE real (escrita/identidade/RLS); só LEITURA usa `display*`/`effectiveUserId`. WebRTC fura o write-guard → gatear na fonte. → `impersonation.md`
 - **Multi-sessão (worktrees paralelas):** coordene antes de tocar arquivo/função QUENTE — o "como" e o isolamento ficam na §Multi-sessão ao fim. → `worktrees.md`
 - **Teste SQL negativo** com `WHEN OTHERS THEN 'OK'` é teatro → capturar a SQLSTATE esperada + re-lançar o resto + **falsificar** (sabotar a migration e exigir vermelho); RLS prova-se sob `SET ROLE authenticated` + GUC (psql é superuser, bypassaria). → `money-path.md`
 - **Shell:** `cmd | tail` **ENGOLE o exit code** → `> log 2>&1; echo $?` quando o exit importa. Comandos pesados (test/build/typecheck/vitest) → prefixar **`heavy`** (semáforo de RAM da M2 8GB). → `worktrees.md`
+- **Manifesto de módulos:** arquivo NOVO em `src/` precisa de dono em `src/lib/modulos/manifesto.ts` (`codigo`/`testes`) — senão `manifesto.gate` falha no CI (órfão, falha SÓ no CI, não no typecheck/lint local). Teste que importa código de OUTRO módulo (ex.: `.test` sob glob de `plataforma` importando `loja-afiacao`) = vazamento de fronteira → co-localize fonte+teste no MESMO módulo, não registre na baseline. → `docs/historico/modularizacao.md`
 
 ## Merge (auto)
 

@@ -50,10 +50,20 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # ⚠️ bun-version tem que ser semver ESTRITO (x.y.z) — NÃO `latest`, `1.3`,
+      # `^1.3.14` nem `1.3.x` (o exemplo da doc do input!). Só o estrito casa o
+      # `validateStrict()` da action (src/download-url.ts) e pula a chamada a
+      # api.github.com/repos/oven-sh/bun/git/refs/tags; qualquer outro formato cai
+      # nela e reintroduz a dependência de rede no caminho de entrega. Com
+      # `latest` a action também desliga o cache de propósito (isCacheEnabled).
+      # Lição de 2026-07-16: incidente "Degraded REST API Availability" do GitHub
+      # (~35% das chamadas REST falhando) derrubou TODO PR do repo em ~6s no setup
+      # do bun — inclusive PRs de 1 linha de markdown. Bump: conferir `bun --version`
+      # local e alinhar aqui (as duas ocorrências) + no job mutation-check.
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: 1.3.14
 
       - name: Install deps
         run: bun install --frozen-lockfile
@@ -90,6 +100,15 @@ jobs:
       # Manifest: scripts/authz-manifest.ts. Spec: docs/superpowers/specs/2026-07-09-authz-gate-regression-check-design.md
       - name: Authz gate check (RPCs SECDEF sensíveis)
         run: bun run authz:check
+
+      # Anti-regressão do pin do bun (follow-up do PR #1352). Prova que TODO `bun-version` é semver
+      # ESTRITO x.y.z e que as ocorrências convergem — as 3 armadilhas do comentário lá em cima.
+      # Existe porque a regressão é INVISÍVEL: com `latest` (ou `1.3`/`1.3.x`/`bun-v1.3.15`) a action
+      # cai na api.github.com, o CI fica VERDE, e o SPOF só aparece quando a API do GitHub degrada —
+      # como em 2026-07-16, que matou todo PR do repo em ~6s. Comentário não barra ninguém e todo PR
+      # não-draft auto-mergeia no verde. Estático: lê .github/workflows/, sem rede.
+      - name: Bun pin gate check (semver estrito x.y.z)
+        run: bun run bunpin:check
 
       # ─── Alerta de regressão (Componente 1 — mitigação de reversão Lovable) ──
       # O bot do Lovable commita DIRETO na main sem PR/CI; quando quebra build/
@@ -160,10 +179,11 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # Semver estrito, mesmo motivo do job `validate` acima (manter as duas em sincronia).
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: 1.3.14
 
       - name: Install deps
         run: bun install --frozen-lockfile
