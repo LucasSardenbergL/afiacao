@@ -18983,7 +18983,6 @@ export type Database = {
         }[]
       }
       refresh_customer_metrics: { Args: never; Returns: undefined }
-      request_customer_metrics_refresh: { Args: never; Returns: undefined }
       refresh_oportunidade_badge: { Args: never; Returns: undefined }
       refresh_sku_ranking_negociacao: {
         Args: never
@@ -19123,6 +19122,7 @@ export type Database = {
         Args: { p_empresa?: string }
         Returns: Json
       }
+      request_customer_metrics_refresh: { Args: never; Returns: undefined }
       resgatar_recompensa: { Args: { p_reward_key: string }; Returns: string }
       resolve_markup_policy: {
         Args: {
