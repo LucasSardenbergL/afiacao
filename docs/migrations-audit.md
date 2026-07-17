@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **379** custom migrations totais
-- **1337** objetos esperados (criados por estas migrations)
+- **380** custom migrations totais
+- **1338** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 377
+  - `function`: 378
   - `rls_policy`: 295
   - `index`: 222
   - `cron_job`: 150
@@ -3227,6 +3227,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.refresh_customer_metrics` | — |
 | `function` | `public.request_customer_metrics_refresh` | — |
 | `cron_job` | `cron.afiacao_customer_metrics_refresh_6h` | — |
+
+### `20260717160000_data_health_customer_metrics_watchdog.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
 
 ## Próximos passos por status
 
