@@ -790,6 +790,7 @@ async function syncInventory(db: SupabaseClient, account: OmieAccount) {
     //    Antes: ~4 writes PostgREST POR produto (N+1) → ~3M statements e saturava o disk IO.
     //    Agora: acumula e escreve em LOTE (upsert chunked), o padrão que o resto deste arquivo já usa.
     const posicoes = new Map<number, PosicaoEstoque>();
+    let itensRecebidos = 0;
     while (pagina <= totalPaginas) {
       const result = (await callOmie(account, "estoque/consulta/", "ListarPosEstoque", {
         nPagina: pagina,
@@ -815,10 +816,20 @@ async function syncInventory(db: SupabaseClient, account: OmieAccount) {
       // Normalização compartilhada (_shared/pos-estoque.ts): código inválido fora, valor
       // não-finito descarta o ITEM (um único malformado derrubaria o chunk de 500 com 22P02),
       // dedupe last-wins por código (repetido no MESMO statement de upsert daria 21000).
+      itensRecebidos += produtos.length;
       acumularPosicoesDaPagina(posicoes, produtos);
 
       console.log(`[Sync ${account}] Estoque página ${pagina}/${totalPaginas} (${produtos.length})`);
       pagina++;
+    }
+
+    // Recebi itens mas descartei TODOS na normalização = drift de contrato TOTAL (Codex P1
+    // rodada 2): completar 'complete/0' aqui mentiria com o inventário integralmente stale.
+    // ≠ resposta legitimamente vazia do Omie (0 recebidos), que segue complete-0 (servicos).
+    if (itensRecebidos > 0 && posicoes.size === 0) {
+      throw new Error(
+        `ListarPosEstoque devolveu ${itensRecebidos} item(ns) e TODOS foram descartados na normalização — drift de contrato, abortando fail-closed`,
+      );
     }
 
     // Timestamp único da run, capturado APÓS a coleta Omie (Codex P2 #1341): encolhe a janela
@@ -1062,6 +1073,7 @@ async function syncInventoryFull(db: SupabaseClient, account: OmieAccount) {
     let pagina = 1;
     let totalPaginas = 1;
     const posicoes = new Map<number, PosicaoEstoque>();
+    let itensRecebidos = 0;
     while (pagina <= totalPaginas) {
       const result = (await callOmie(account, "estoque/consulta/", "ListarPosEstoque", {
         nPagina: pagina,
@@ -1082,9 +1094,18 @@ async function syncInventoryFull(db: SupabaseClient, account: OmieAccount) {
         throw new Error(`página ${pagina}/${totalPaginas} do ListarPosEstoque (full) veio vazia antes do fim declarado — abortando (retrato parcial)`);
       }
       if (veredicto === "fim") break;
+      itensRecebidos += produtos.length;
       acumularPosicoesDaPagina(posicoes, produtos);
       console.log(`[Sync ${account}] inventory_full página ${pagina}/${totalPaginas} — ${posicoes.size} itens acumulados`);
       pagina++;
+    }
+
+    // Recebi itens mas descartei TODOS na normalização = drift de contrato TOTAL (Codex P1
+    // rodada 2): completar 'complete/0' mentiria com o catálogo de CMC integralmente stale.
+    if (itensRecebidos > 0 && posicoes.size === 0) {
+      throw new Error(
+        `ListarPosEstoque (full) devolveu ${itensRecebidos} item(ns) e TODOS foram descartados na normalização — drift de contrato, abortando fail-closed`,
+      );
     }
 
     // 3) Upsert em lote (chunks de 500) — onConflict igual ao syncInventory. synced_at único
