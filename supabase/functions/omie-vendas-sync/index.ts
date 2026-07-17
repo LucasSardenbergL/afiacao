@@ -1564,23 +1564,14 @@ async function assertOmieItemsAtivos(
   }
 }
 
-// MIRROR-START omie account-coherence — espelhado de src/lib/omie/account-coherence.ts
-// Coerência conta×código por PROVA POSITIVA (money-path): true só quando `code` é o código de OUTRA
-// conta Omie do MESMO cliente (linhas de omie_clientes filtradas por user_id). NÃO acusa por
-// AUSÊNCIA — oben/colacor_sc resolvem o código via API e podem não estar no espelho local. Guard na
-// FRONTEIRA comum (todas as vias de criar_pedido passam aqui). Paridade textual no CI.
-function codeBelongsToWrongAccount(
-  rows: ReadonlyArray<{ omie_codigo_cliente: number; empresa_omie: string }>,
-  code: number,
-  account: string,
-): boolean {
-  if (!Number.isSafeInteger(code) || code <= 0) return false;
-  const eq = (a: number): boolean => String(a) === String(code); // bigint-safe: string decimal canonica (Number colapsa >= 2^53)
-  const matchesTarget = rows.some((r) => eq(r.omie_codigo_cliente) && r.empresa_omie === account);
-  if (matchesTarget) return false;
-  return rows.some((r) => eq(r.omie_codigo_cliente) && r.empresa_omie !== account);
-}
-// MIRROR-END
+// [2026-07-16] `codeBelongsToWrongAccount` (P0-A) foi REMOVIDO daqui — não restaure sem ler isto.
+// Ele provava "conta errada" pelo rótulo `empresa_omie` do espelho `omie_clientes`, e o rótulo é
+// DEFAULT POLUÍDO: 6909/6909 linhas da prod são 'colacor' (ZERO 'oben'), com código oben do bulk
+// syncCustomers morando sob esse rótulo. Para account='oben' a prova positiva era estruturalmente
+// falsa — `matchesTarget` nunca casava e QUALQUER código conhecido acusava. Barrou o PC 214820 com
+// o código oben CORRETO. O design do P0-B (§4.3) já o dava como redundante: a divergência
+// advisory×derivado em decideAccountIdentity é fail-closed e cobre o mesmo ataque com a âncora certa
+// (documento + API Omie), sem depender de rótulo local. Invariante em edge-money-path-invariants.
 
 // MIRROR-START omie derive-account-identity — espelhado verbatim em supabase/functions/omie-vendas-sync/index.ts
 // Decisão de identidade Omie por conta (money-path P0-B). PURA: recebe dados já buscados (espelho local
@@ -1703,7 +1694,8 @@ async function buscarClienteVendasMatches(document: string, account: Account = "
 }
 
 // Deriva a identidade Omie AUTORITATIVA de (documento do pedido, conta) — money-path P0-B. Âncora = documento
-// (imune ao fallback customer_user_id || user.id). Espelho → Omie-por-doc → fail-closed. Backfill gated.
+// (imune ao fallback customer_user_id || user.id). Omie-por-doc → fail-closed. Sem espelho: ver o bloco
+// abaixo (o rótulo local não prova conta e o backfill barrava PV legítimo).
 async function deriveOmieAccountIdentity(
   supabase: SupabaseClient,
   soRow: { customer_user_id: string | null; customer_document: string | null; created_by: string | null },
@@ -1712,69 +1704,36 @@ async function deriveOmieAccountIdentity(
 ): Promise<{ codigo_cliente: number; codigo_vendedor: number | null }> {
   const rawDoc = (soRow.customer_document || "").trim();
   let doc = rawDoc.replace(/\D/g, "");
-  let profileRaw = "";
   // Fallback p/ profiles.document SÓ quando customer_user_id é CONFIÁVEL (≠ created_by). O submit faz
   // customer_user_id = customerUserId || created_by → quando cai no created_by (staff sem cliente local),
   // derivar do doc do VENDEDOR rotearia o PV pro vendedor (Codex P1 #1). Sem doc confiável → fail-closed.
   if (!doc && soRow.customer_user_id && soRow.customer_user_id !== soRow.created_by) {
     const { data: prof } = await supabase.from("profiles").select("document").eq("user_id", soRow.customer_user_id).maybeSingle();
-    profileRaw = ((prof?.document as string | undefined) || "").trim();
-    doc = profileRaw.replace(/\D/g, "");
+    doc = ((prof?.document as string | undefined) || "").trim().replace(/\D/g, "");
   }
   if (!doc) {
     throw new Error(`Pedido rejeitado: sem documento CONFIÁVEL do cliente para provar a identidade Omie na conta ${account} — envio bloqueado (não roteia pelo vendedor).`);
   }
 
-  // profiles.document em prod existe raw E limpo (resolveLocalUserId casa ambos) — casar os dois p/ não
-  // perder o fast-path do espelho quando o formato armazenado difere do documento do pedido.
-  const docCandidates = [...new Set([doc, rawDoc, profileRaw].filter((d) => d.length > 0))];
-  const { data: users } = await supabase.from("profiles").select("user_id").in("document", docCandidates);
-  const userIds = ((users ?? []) as Array<{ user_id: string }>).map((u) => u.user_id);
-  // Espelho SÓ com 1 dono do documento: dup-profiles (mesmo doc, user_ids distintos) podem ter uma linha
-  // de espelho de perfil ERRADO/stale que não vale como prova (Codex P1 #5) → força o Omie autoritativo
-  // (regs:2, dup-safe). Alinha com o gate do backfill (também 1 dono).
-  // Fatia 1 do fix de rótulo (BUG-1, money-path): empresa_omie='colacor' no espelho é o DEFAULT
-  // POLUÍDO — os 5 writers gravam sem setar a coluna, então 'colacor' é um MIX de código oben (bulk
-  // syncCustomers, conta 'vendas') + colacor_sc (writers manuais), ZERO colacor real (provado via
-  // psql-ro 2026-07-07). Confiar nele rotearia o pedido colacor ao cliente ERRADO. Para account=
-  // 'colacor' NÃO usa o espelho → mirrorRows=[] força a verificação Omie por documento (needOmie).
-  // Temporário: a Fatia 3 re-rotula por conta e reverte. Ver docs/superpowers/specs/2026-07-07-
-  // espelho-omie-rotulo-por-conta-design.md.
-  const mirrorRows: MirrorRow[] = (userIds.length === 1 && account !== "colacor")
-    ? (((await supabase.from("omie_clientes").select("omie_codigo_cliente, omie_codigo_vendedor, empresa_omie").in("user_id", userIds).eq("empresa_omie", account)).data ?? []) as MirrorRow[])
-    : [];
-
-  let decision = decideAccountIdentity({ account, suppliedCodigo, mirrorRows, omieMatches: null });
-  if (!decision.ok && "needOmie" in decision) {
-    const omieMatches = await buscarClienteVendasMatches(doc, account);
-    decision = decideAccountIdentity({ account, suppliedCodigo, mirrorRows, omieMatches });
-  }
-  // Codex round-2 [P1]: sem advisory (ex.: conversão de orçamento) NÃO há rede de divergência p/ pegar um
-  // ESPELHO DESATUALIZADO (o código Omie do cliente mudou). Confirma o espelho contra o Omie — re-decide
-  // com o Omie autoritativo e o código do espelho como advisory: divergência/ausência/ambiguidade cai no
-  // throw abaixo (fail-closed). Custo: 1 chamada Omie só no caminho SEM código (orçamento), infrequente.
-  if (decision.ok && decision.source === "mirror" && suppliedCodigo === null) {
-    const omieMatches = await buscarClienteVendasMatches(doc, account);
-    decision = decideAccountIdentity({ account, suppliedCodigo: decision.codigo_cliente, mirrorRows: [], omieMatches });
-  }
+  // [2026-07-16] Espelho `omie_clientes` FORA do caminho de PV — a leitura era morta e a escrita
+  // bloqueava. Não religue sem antes re-rotular o espelho por conta (a "Fatia 3" nunca aconteceu):
+  //  • LER era inútil: mirrorRows filtrava `empresa_omie = account`, e o rótulo é DEFAULT POLUÍDO —
+  //    6909/6909 linhas da prod são 'colacor' (ZERO 'oben'/'colacor_sc'), e 'colacor' já era forçado
+  //    a [] pelo BUG-1. O fast-path NUNCA casava em NENHUMA conta: a API Omie por documento sempre
+  //    foi o caminho real. Remover não muda comportamento nem adiciona 1 chamada sequer.
+  //  • ESCREVER bloqueava: o backfill upsertava sob `unique_user_omie UNIQUE(user_id)` — a constraint
+  //    REAL da prod (o design §4.4 assumiu `(user_id, empresa)`, e o harness espelhou a suposição, por
+  //    isso o teste nunca viu). Com a linha 'colacor' do user já presente, o INSERT 'oben' violava a
+  //    UNIQUE → a RPC devolve 'contested' → este edge barrava um PV LEGÍTIMO (2º bloqueio, em série
+  //    com o P0-A; ambos atingiram o PC 214820). Auto-cura do espelho é trabalho do sync diário, não
+  //    do caminho de dinheiro — e a proof-table account-correta é `omie_customer_account_map`.
+  // Sobra UMA fonte autoritativa: documento (âncora) + API Omie, com divergência advisory×derivado,
+  // ambiguidade, ausência e bigint fora de range todos fail-closed em decideAccountIdentity.
+  const omieMatches = await buscarClienteVendasMatches(doc, account);
+  const decision = decideAccountIdentity({ account, suppliedCodigo, mirrorRows: [], omieMatches });
   if (!decision.ok) {
     const reason = "reason" in decision ? decision.reason : "unknown";
     throw new Error(`Pedido rejeitado: identidade Omie do cliente na conta ${account} não pôde ser provada (${reason}) — envio bloqueado para não registrar no cliente errado.`);
-  }
-
-  // Backfill gated (auto-cura do espelho): só derivação inequívoca por Omie E com user confiável
-  // (exatamente 1 dono do documento). Contested (código de outro/diferente) → fail-closa o PV.
-  // Fatia 1 (BUG-1): NÃO backfilla colacor enquanto unique_user_omie (1 linha/user) existir. A
-  // verificação Omie forçada acima produz decision.backfill=true; o upsert p_empresa='colacor' sob a
-  // constraint singular poderia CONTESTAR/falhar (a linha do user já existe como 'colacor' poluído) e
-  // BLOQUEAR um pedido colacor legítimo (Codex). A Fatia 3 (onConflict composto) reverte.
-  if (decision.backfill && userIds.length === 1 && account !== "colacor") {
-    const { data: status } = await supabase.rpc("omie_cliente_upsert_mapping", {
-      p_user_id: userIds[0], p_empresa: account, p_codigo_cliente: decision.codigo_cliente, p_codigo_vendedor: decision.codigo_vendedor,
-    });
-    if (status === "contested") {
-      throw new Error(`Pedido rejeitado: identidade Omie contestada no espelho (conta ${account}) — envio bloqueado.`);
-    }
   }
   return { codigo_cliente: decision.codigo_cliente, codigo_vendedor: decision.codigo_vendedor };
 }
@@ -2422,27 +2381,11 @@ serve(async (req) => {
             `Conta do payload (${account}) diverge do pedido local (${soRow.account}) — pedido não enviado`,
           );
         }
-        // Guard money-path (coerência conta×código, prova positiva): fecha o vazamento cross-conta
-        // em TODAS as vias de criação (SalesQuotes, selectCustomerByUserId, IA, futuras). Um caller
-        // pode resolver o código no espelho parcial `omie_clientes` sem filtrar empresa e mandar o
-        // código de OUTRA conta do mesmo cliente. Deriva do pedido local (customer_user_id) e recusa
-        // só com PROVA POSITIVA (o código é de outra conta) — nunca por ausência (oben vem da API).
-        // Gate Codex P1 #2/#7: só quando customer_user_id é CONFIÁVEL (≠ created_by/vendedor) — senão as
-        // linhas do VENDEDOR fariam false-reject de pedido legítimo por colisão de código cross-conta.
-        if (soRow?.customer_user_id && soRow.customer_user_id !== soRow.created_by) {
-          const { data: idRows, error: idErr } = await supabaseAdmin
-            .from("omie_clientes")
-            .select("omie_codigo_cliente, empresa_omie")
-            .eq("user_id", soRow.customer_user_id);
-          if (idErr) {
-            throw new Error(`Pedido rejeitado: falha ao validar a conta do cliente (${idErr.message}). Tente novamente.`);
-          }
-          if (codeBelongsToWrongAccount(idRows ?? [], Number(codigo_cliente), account)) {
-            throw new Error(
-              `Pedido rejeitado: código de cliente ${codigo_cliente} pertence a outra conta Omie (não ${account}) — envio bloqueado para não registrar no cliente errado.`,
-            );
-          }
-        }
+        // [2026-07-16] O guard de coerência conta×código (P0-A) saiu daqui: ele lia o rótulo
+        // `empresa_omie` do espelho `omie_clientes`, que é default poluído (ver o tombstone acima),
+        // e barrava pedido oben LEGÍTIMO por prova positiva falsa. A cobertura real do cross-conta
+        // é a derivação abaixo: âncora no DOCUMENTO + API Omie, com divergência advisory×derivado
+        // fail-closed — o mesmo ataque, provado pela fonte certa.
         // P0-B: identidade Omie AUTORITATIVA derivada do DOCUMENTO do pedido (prova positiva). Fecha o gap
         // do guard acima (código de OUTRO user passava) e destrava a conversão oben. codigo_cliente do
         // payload é advisory; fail-closed em ambiguidade/ausência/divergência/contested. USA o derivado.
