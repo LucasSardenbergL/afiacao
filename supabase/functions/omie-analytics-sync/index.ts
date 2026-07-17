@@ -475,6 +475,30 @@ async function syncCustomers(db: SupabaseClient, account: OmieAccount) {
       console.log(`[Sync ${account}] P1b: ${ambiguosList.length} user(s) ambíguo(s) — vínculo document removido da proof-table`);
     }
 
+    // ── P0-B-bis Fatia 2: marca `ambiguous` no carteira_membership_ledger. O par do DELETE acima: o vínculo
+    // sai da proof, mas o MEMBRO permanece no ledger (acumulador) e o carteira-rebuild o QUARANTINA
+    // (eligible=false, zero comissão, row preservada). Sem isto, o ambíguo perde o vendedor, vira órfão e cai
+    // no Hunter com eligible=TRUE — comissão sobre um cliente cuja identidade não sabemos.
+    // SÓ o run oben escreve (D5): identity_state é coluna GLOBAL (1 row/user) e a ambiguidade é detectada POR
+    // CONTA → os 3 runs escrevendo se sobrescreveriam (flapping: um marca, o outro desmarca). A carteira lê a
+    // proof account='oben' — é a conta que decide. Mesma regra do espelho (:488) e das tags.
+    // FAIL-CLOSED: marca ANTES da reversão (abaixo). UPDATE .in() nunca INSERE — quem popula o ledger é o
+    // trigger da Fatia 0; membro fora do ledger simplesmente não é tocado.
+    if (account === "vendas" && usersAmbiguosOmie.size > 0) {
+      const ambiguosList = Array.from(usersAmbiguosOmie);
+      const nowIso = new Date().toISOString();
+      for (let i = 0; i < ambiguosList.length; i += 200) {
+        const { error: ledErr } = await db
+          .from("carteira_membership_ledger")
+          .update({ identity_state: "ambiguous", updated_at: nowIso })
+          .in("user_id", ambiguosList.slice(i, i + 200));
+        if (ledErr) throw new Error(`marca ambiguous carteira_membership_ledger: ${ledErr.message}`);
+      }
+      console.warn(
+        `[Sync ${account}] Fatia 2: ${ambiguosList.length} membro(s) → identity_state='ambiguous' no ledger; serão QUARANTINADOS no próximo carteira-rebuild (preservados, eligible=false, zero comissão)`,
+      );
+    }
+
     // Bulk upsert em chunks (onConflict user_id = unique_user_omie). empresa_omie NÃO é setado
     // (preserva o default 'colacor' do comportamento anterior).
     // Fatia 4 (money-path, Codex): SÓ 'vendas'(oben) mantém o espelho legado omie_clientes. Este
@@ -507,6 +531,47 @@ async function syncCustomers(db: SupabaseClient, account: OmieAccount) {
       if (mapErr) throw new Error(`upsert omie_customer_account_map: ${mapErr.message}`);
     }
     console.log(`[Sync ${account}] proof-table omie_customer_account_map: ${mapRows.length} vínculos por documento`);
+
+    // ── P0-B-bis Fatia 2: reversão `ambiguous` → `verified`, SIMÉTRICA ao delete/marcação acima. Quem ESTE run
+    // PROVOU limpo volta a valer: `accountMapByUser` é exatamente o conjunto casado por DOCUMENTO, e os
+    // ambíguos já foram retirados dele (:447) → os dois conjuntos são disjuntos de graça.
+    // Sem isto o quarantine seria CATRACA DE MÃO ÚNICA: doc corrigido no Omie deixaria o cliente invisível e
+    // sem comissão PARA SEMPRE, dependendo de um UPDATE manual que ninguém saberia que precisa fazer.
+    // Barato no caso normal: 1 SELECT indexado (idx_cml_identity_state) que hoje volta VAZIO → nada a fazer.
+    // Paginado (a capa de 1000 do PostgREST é silenciosa). Run parcial reverte só o que viu (fail-safe).
+    if (account === "vendas") {
+      const ambNoLedger: string[] = [];
+      for (let from = 0; ;) {
+        const { data, error: ambErr } = await db
+          .from("carteira_membership_ledger")
+          .select("user_id")
+          .eq("identity_state", "ambiguous")
+          .order("user_id", { ascending: true })
+          .range(from, from + 999);
+        if (ambErr) throw new Error(`lê ambiguous do carteira_membership_ledger: ${ambErr.message}`);
+        const page = (data ?? []) as Array<{ user_id: string }>;
+        for (const r of page) ambNoLedger.push(r.user_id);
+        if (page.length === 0) break;
+        from += page.length;
+        if (from > 500_000) throw new Error("paginacao ambiguous do ledger excedeu limite");
+      }
+      // só os que ESTE run provou limpos (casados por documento, não-ambíguos)
+      const reverter = ambNoLedger.filter((uid) => accountMapByUser.has(uid));
+      if (reverter.length > 0) {
+        const nowIso = new Date().toISOString();
+        for (let i = 0; i < reverter.length; i += 200) {
+          const { error: revErr } = await db
+            .from("carteira_membership_ledger")
+            .update({ identity_state: "verified", updated_at: nowIso })
+            .eq("identity_state", "ambiguous") // restringe ao que a Fatia 2 populou (não toca outros estados)
+            .in("user_id", reverter.slice(i, i + 200));
+          if (revErr) throw new Error(`reverte verified carteira_membership_ledger: ${revErr.message}`);
+        }
+        console.log(
+          `[Sync ${account}] Fatia 2: ${reverter.length} membro(s) ambiguous→verified (documento voltou a ser inequívoco) — saem do quarantine no próximo carteira-rebuild`,
+        );
+      }
+    }
 
     // Fatia 4: para contas não-oben o espelho não é tocado; o "sincronizado" reportado é a proof-table.
     if (account !== "vendas") totalSynced = mapRows.length;

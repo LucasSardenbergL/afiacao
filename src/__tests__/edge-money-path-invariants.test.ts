@@ -798,11 +798,39 @@ describe('guardrail money-path: carteira-rebuild lê o vendedor da PROOF oben (P
     ).toMatch(/from\(['"]omie_customer_account_map_fresco['"]\)[\s\S]{0,220}\.eq\(['"]account['"],\s*['"]oben['"]\)/);
   });
 
-  it('A LISTA de membros vem do carteira_membership_ledger (Fatia 1 — não mais do espelho)', () => {
+  it('A LISTA de membros vem do carteira_membership_ledger, COM identity_state (Fatia 1 + 2)', () => {
     expect(
       rebuild,
       'REVERSÃO Lovable? a LISTA de membros não vem mais do ledger — voltou ao espelho omie_clientes?',
-    ).toMatch(/from\(['"]carteira_membership_ledger['"]\)[\s\S]{0,80}select\(['"]user_id['"]\)/);
+    ).toMatch(/from\(['"]carteira_membership_ledger['"]\)[\s\S]{0,80}select\(['"]user_id,\s*identity_state['"]\)/);
+  });
+
+  // ── P0-B-bis Fatia 2 (quarantine). O erro CATASTRÓFICO seria filtrar o quarantinado no BANCO: o membro
+  // sumiria da entrada e o upsert-only (sem DELETE) preservaria o assignment antigo STALE — vendedor errado,
+  // válido, cobrando comissão. É o mecanismo exato pelo qual o Codex refutou a opção A′ deste épico.
+  it('o rebuild NÃO filtra identity_state no banco — o membro quarantinado TEM que vir na lista', () => {
+    const selectLedger = /from\(['"]carteira_membership_ledger['"]\)[\s\S]{0,200}?\.range\(/;
+    const bloco = rebuild.match(selectLedger)?.[0] ?? '';
+    expect(bloco, 'sentinela: não achei o bloco de leitura do ledger').toContain('carteira_membership_ledger');
+    expect(
+      bloco,
+      'REGRESSÃO GRAVE: o rebuild passou a filtrar identity_state no banco → o membro quarantinado SOME da entrada → o upsert-only deixa o assignment antigo STALE (vendedor errado cobrando comissão). Filtre em memória (extrairQuarantinados), nunca na query.',
+    ).not.toMatch(/\.(eq|neq|in|not|filter)\(\s*['"]identity_state['"]/);
+  });
+
+  it('o quarantine é aplicado às rows finais (máscara ligada — não é dead code)', () => {
+    expect(rebuild, 'sumiu a extração dos quarantinados do ledger').toContain('extrairQuarantinados(ledgerRows)');
+    expect(
+      rebuild,
+      'REVERSÃO: as rows finais não passam mais por aplicarMascaras(flaggeds, quarantinados) → quarantine inerte, ambíguo volta a gerar comissão',
+    ).toMatch(/aplicarMascaras\(assignments,\s*flaggeds,\s*quarantinados\)/);
+  });
+
+  it('o consumo de identity_state é FAIL-CLOSED (!== verified), não === ambiguous', () => {
+    expect(
+      rebuildHelper,
+      'FAIL-OPEN: extrairQuarantinados passou a testar um estado específico — estado futuro/NULL deixaria de quarantinar',
+    ).toMatch(/identity_state\s*!==\s*['"]verified['"]/);
   });
 
   it('anti-reversão: o carteira-rebuild NÃO lê mais omie_clientes em lugar nenhum (nem lista, nem vendedor)', () => {
@@ -844,6 +872,50 @@ describe('guardrail money-path: carteira-rebuild lê o vendedor da PROOF oben (P
       mirrorBlockNamed(rebuild, 'carteira-load'),
       'edge divergiu de rebuild-helpers.ts — Lovable reescreveu o load/guard?',
     ).toBe(mirrorBlockNamed(rebuildHelper, 'carteira-load'));
+  });
+});
+
+// ── P0-B-bis Fatia 2 — ESCRITOR do identity_state (omie-analytics-sync). Par do DELETE da proof: o vínculo
+// sai da proof, mas o MEMBRO fica no ledger marcado `ambiguous` → o rebuild o quarantina. Sem a marcação o
+// ambíguo perde o vendedor, vira órfão e cai no Hunter com eligible=TRUE (comissão sobre identidade que não
+// conhecemos). Sem a REVERSÃO vira catraca de mão única (doc corrigido → cliente invisível para sempre).
+describe('guardrail money-path: omie-analytics-sync popula identity_state no ledger (P0-B-bis Fatia 2)', () => {
+  const src = read(ANALYTICS);
+
+  it('sentinela: leu o arquivo real', () => {
+    expect(src).toContain('docsComCodigoAmbiguoNoOmie');
+  });
+
+  it('marca `ambiguous` no ledger — o par do DELETE da proof', () => {
+    expect(
+      src,
+      'REVERSÃO: sumiu a marcação de ambiguous no ledger → o doc ambíguo volta a cair no Hunter ELEGÍVEL (comissão indevida)',
+    ).toMatch(/from\(["']carteira_membership_ledger["']\)[\s\S]{0,160}identity_state:\s*["']ambiguous["']/);
+  });
+
+  it('reverte `ambiguous`→`verified` p/ quem o run PROVOU limpo (senão: catraca de mão única)', () => {
+    expect(
+      src,
+      'REGRESSÃO: sumiu a reversão → doc corrigido no Omie deixaria o cliente quarantinado (invisível, sem comissão) PARA SEMPRE',
+    ).toMatch(/identity_state:\s*["']verified["']/);
+    expect(
+      src,
+      'a reversão não está escopada ao que o run provou limpo (accountMapByUser) → risco de reverter ambíguo real',
+    ).toMatch(/accountMapByUser\.has\(/);
+  });
+
+  it('SÓ o run oben (account===vendas) escreve o ledger — identity_state é global, ambiguidade é por conta', () => {
+    // D5: os 3 runs escrevendo se sobrescreveriam (flapping — um marca, o outro desmarca).
+    const marcacao = src.match(/if \(account === "vendas" && usersAmbiguosOmie\.size > 0\)/);
+    expect(marcacao, 'a marcação de ambiguous não está gateada em account==="vendas" → flapping entre contas').not.toBeNull();
+  });
+
+  it('o ledger NUNCA recebe INSERT/upsert aqui — quem popula é o trigger da Fatia 0 (acumulador)', () => {
+    const blocos = src.match(/from\(["']carteira_membership_ledger["']\)\s*\.\w+/g) ?? [];
+    expect(blocos.length, 'sentinela: não achei acesso ao ledger no sync').toBeGreaterThan(0);
+    for (const b of blocos) {
+      expect(b, `o sync está escrevendo no ledger com algo que não é update/select ("${b}") — o ledger é acumulador; inserir aqui fura o trigger da Fatia 0`).toMatch(/\.(update|select)$/);
+    }
   });
 });
 
