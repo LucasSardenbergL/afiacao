@@ -1027,3 +1027,42 @@ describe('guardrail money-path: omie-sync-sku-items (fila de leadtime)', () => {
     ).toMatch(/throw new Error\(\s*\n?\s*`sku_items_sync_controle ilegível/);
   });
 });
+
+// ── Atribuição do item de recebimento (omie-sync-sku-items) ──
+// Uma chave de NFe pode cobrir vários pedidos. A edge gravava o histórico sob a linha que
+// FEZ a consulta, então cada irmã regravava os mesmos itens sob si (duplicata) e com o t4
+// dela (divergência). O helper puro é espelhado aqui; sem a paridade, um deploy do Lovable
+// pode reverter o espelho e ressuscitar a duplicação.
+const SKU_ITEMS_ATRIB = 'src/lib/reposicao/sku-items-atribuicao.ts';
+
+describe('guardrail money-path: omie-sync-sku-items (atribuição do item)', () => {
+  const src = read(SKU_ITEMS);
+  const helper = read(SKU_ITEMS_ATRIB);
+
+  it('sentinela: leu os arquivos reais (edge + helper)', () => {
+    expect(src).toContain('sku_leadtime_history');
+    expect(helper).toContain('trackingIdDoItem');
+  });
+
+  it('o edge USA o helper espelhado: define E chama a atribuição', () => {
+    expect(src, 'edge não define mais trackingIdDoItem').toMatch(/function trackingIdDoItem/);
+    expect(src, 'REGRESSÃO: edge não atribui mais o item ao pedido — duplicata volta')
+      .toMatch(/trackingIdDoItem\(/);
+    expect(src, 'REGRESSÃO: edge não exige mais match único — t1 de outro pedido volta')
+      .toMatch(/resolverPedidoDoItem\(/);
+    expect(src, 'REGRESSÃO: edge não usa mais o t4 do recebimento — divergência volta')
+      .toMatch(/t4DoRecebimento\(/);
+  });
+
+  it('REGRESSÃO: o item NÃO volta a ser gravado sob a linha que consultou', () => {
+    expect(src, 'tracking_id: nfeRaw.id direto no upsert = a duplicação de volta')
+      .not.toMatch(/tracking_id:\s*nfeRaw\.id/);
+  });
+
+  it('PARIDADE: o bloco espelhado no edge é IDÊNTICO ao helper de src/ (pega reversão do Lovable)', () => {
+    expect(
+      mirrorBlockNamed(src, 'sku-items-atribuicao'),
+      'edge divergiu de sku-items-atribuicao.ts — o Lovable reescreveu a atribuição no deploy?',
+    ).toBe(mirrorBlockNamed(helper, 'sku-items-atribuicao'));
+  });
+});

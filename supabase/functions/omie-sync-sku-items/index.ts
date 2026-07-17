@@ -53,14 +53,6 @@ interface NFeRawData {
   cabec?: { nIdReceb?: number | string };
 }
 
-interface PedidoTrackingMatchRow {
-  id: string;
-  t1_data_pedido: string;
-  numero_pedido: string | null;
-  grupo_leadtime: string | null;
-  fornecedor_nome: string | null;
-}
-
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
@@ -152,6 +144,71 @@ function skuItemsCompararFila(
 ): number {
   if (a.tentativas !== b.tentativas) return a.tentativas - b.tentativas;
   return a.t2 === b.t2 ? 0 : a.t2 < b.t2 ? -1 : 1;
+}
+// MIRROR-END
+
+// ─── Atribuição do item de recebimento (espelho verbatim de
+//     src/lib/reposicao/sku-items-atribuicao.ts; paridade provada em
+//     src/__tests__/edge-money-path-invariants.test.ts) ───
+// MIRROR-START sku-items-atribuicao
+interface PedidoCandidato {
+  id: string;
+  t1_data_pedido: string;
+  numero_pedido: string | null;
+  grupo_leadtime: string | null;
+  fornecedor_nome: string | null;
+}
+
+/** Data BR (dd/mm/aaaa [+ hh:mm]) → ISO com offset de São Paulo. */
+function parseBRDateToISO(
+  dateBR?: string | null,
+  timeBR?: string | null,
+): string | null {
+  if (!dateBR) return null;
+  const m = dateBR.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (!m) return null;
+  const [, dd, mm, yyyy] = m;
+  const time = timeBR && /^\d{2}:\d{2}(:\d{2})?$/.test(timeBR)
+    ? (timeBR.length === 5 ? `${timeBR}:00` : timeBR)
+    : "00:00:00";
+  return `${yyyy}-${mm}-${dd}T${time}-03:00`;
+}
+
+/** O pedido dono do item. AMBÍGUO (mais de um candidato) ⇒ null: precisão > recall.
+ *  O `.limit(1)` sem `.order()` que existia antes escolhia de forma NÃO-determinística e
+ *  podia carimbar no item o t1 de um pedido que não é o dele. */
+function resolverPedidoDoItem(
+  candidatos: PedidoCandidato[],
+): PedidoCandidato | null {
+  return candidatos.length === 1 ? candidatos[0] : null;
+}
+
+/** tracking_id do histórico: o PEDIDO do item quando resolvido; senão a linha da NFe
+ *  (comportamento atual). É isto que faz irmãs da mesma NFe convergirem para a mesma
+ *  chave — sem isto, cada irmã regrava os mesmos itens sob si. */
+function trackingIdDoItem(
+  pedido: PedidoCandidato | null,
+  fallbackNfeId: string,
+): string {
+  return pedido?.id ?? fallbackNfeId;
+}
+
+/** t4 do PAYLOAD do recebimento (autoritativo p/ todas as irmãs), não da linha que
+ *  consultou. Não recebido ⇒ null (ausente ≠ data errada). Payload ilegível ⇒ degrada
+ *  para o valor da linha. */
+function t4DoRecebimento(
+  detalhe: unknown,
+  fallbackT4: string | null,
+): string | null {
+  const info = (detalhe as { infoCadastro?: Record<string, unknown> } | null)?.infoCadastro;
+  if (!info) return fallbackT4;
+  const recebido = String(info.cRecebido ?? "N").toUpperCase() === "S";
+  if (!recebido) return null;
+  const iso = parseBRDateToISO(
+    info.dRec as string | null | undefined,
+    info.hRec as string | null | undefined,
+  );
+  return iso ?? fallbackT4;
 }
 // MIRROR-END
 
@@ -580,20 +637,20 @@ Deno.serve(async (req) => {
 
         const nNumPedCompra = toStr(adic?.nNumPedCompra);
 
-        // Tentar mapear o pedido específico via numero_contrato_fornecedor
-        let pedidoMatch: PedidoTrackingMatchRow | null = null;
+        // Resolver o pedido DONO do item. `.limit(2)`: precisamos DISTINGUIR "1 match" de
+        // "ambíguo" — com `.limit(1)` os dois casos são indistinguíveis e a escolha vira
+        // loteria (sem `.order()`, o Postgres devolve qualquer um).
+        let pedidoMatch: PedidoCandidato | null = null;
         if (nNumPedCompra && nNumPedCompra !== "0") {
           const { data: pedidoRows, error: pedErr } = await supabase
             .from("purchase_orders_tracking")
-            .select(
-              "id, t1_data_pedido, numero_pedido, grupo_leadtime, fornecedor_nome",
-            )
+            .select("id, t1_data_pedido, numero_pedido, grupo_leadtime, fornecedor_nome")
             .eq("empresa", empresa)
             .eq("fornecedor_codigo_omie", nfeRaw.fornecedor_codigo_omie)
             .eq("numero_contrato_fornecedor", nNumPedCompra)
-            .limit(1);
-          if (!pedErr && pedidoRows && pedidoRows.length > 0) {
-            pedidoMatch = pedidoRows[0] as unknown as PedidoTrackingMatchRow;
+            .limit(2);
+          if (!pedErr && pedidoRows) {
+            pedidoMatch = resolverPedidoDoItem(pedidoRows as unknown as PedidoCandidato[]);
           }
         }
 
@@ -603,10 +660,18 @@ Deno.serve(async (req) => {
         const t1 = pedidoMatch?.t1_data_pedido ?? nfeRaw.t2_data_faturamento;
         const t2 = nfeRaw.t2_data_faturamento;
         const t3 = nfeRaw.t3_data_cte;
-        const t4 = nfeRaw.t4_data_recebimento;
+        // t4 do PAYLOAD (autoritativo p/ todas as irmãs) — o da linha é o da irmã que
+        // consultou, e irmãs divergem entre si.
+        const t4 = t4DoRecebimento(detalhe, nfeRaw.t4_data_recebimento);
 
         const upsertRow = {
-          tracking_id: nfeRaw.id,
+          // O item pertence ao PEDIDO dele, não à linha que fez a consulta. É isto que
+          // faz as irmãs da mesma NFe convergirem para a mesma chave e deduplicarem.
+          tracking_id: trackingIdDoItem(pedidoMatch, nfeRaw.id),
+          // Proveniência: de QUAL recebimento veio esta linha. Entra na unicidade, para
+          // que entregas parciais (mesmo SKU/pedido em NFes distintas) coexistam em vez
+          // de uma sobrescrever a outra.
+          nid_receb: Number(nIdReceb),
           empresa,
           sku_codigo_omie: skuCodigoOmie,
           sku_codigo: toStr(cab?.cCodigoProduto),
@@ -614,8 +679,7 @@ Deno.serve(async (req) => {
           sku_unidade: toStr(cab?.cUnidadeNfe),
           sku_ncm: toStr(cab?.cNCM),
           fornecedor_codigo_omie: nfeRaw.fornecedor_codigo_omie,
-          fornecedor_nome: pedidoMatch?.fornecedor_nome ??
-            nfeRaw.fornecedor_nome,
+          fornecedor_nome: pedidoMatch?.fornecedor_nome ?? nfeRaw.fornecedor_nome,
           grupo_leadtime: pedidoMatch?.grupo_leadtime ?? "OUTRO",
           quantidade_pedida: toNum(cab?.nQtdeNFe),
           quantidade_recebida: toNum(ajustes?.nQtdeRecebida),
@@ -631,9 +695,14 @@ Deno.serve(async (req) => {
           updated_at: new Date().toISOString(),
         };
 
+        // ⚠️ DEPLOY: onConflict inclui nid_receb — depende da migration da Task 3
+        // (coluna sku_leadtime_history.nid_receb + constraint
+        // uq_sku_hist_tracking_sku_receb). Sem ela aplicada ANTES do redeploy desta
+        // edge, TODO upsert falha (coluna/constraint inexistente) e o leadtime para de
+        // gerar por completo. Ordem de deploy: limpeza → migration → redeploy da edge.
         const { error: upErr } = await supabase
           .from("sku_leadtime_history")
-          .upsert(upsertRow, { onConflict: "tracking_id,sku_codigo_omie" });
+          .upsert(upsertRow, { onConflict: "tracking_id,sku_codigo_omie,nid_receb" });
         if (upErr) {
           summary.erros++;
           console.error(
