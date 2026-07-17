@@ -33,24 +33,38 @@
 
 ---
 
-## Fase 1 (P0) — Fronteira de escrita do import: fail-closed por-linha + transacional
+## Fase 1 (P0) — Fronteira de escrita fail-closed por-linha (DOIS writers)
 
-**Por quê primeiro:** é o único defeito ATIVO que corrompe dado novo. As 240 parciais calculam preço baixo *válido* (fail-open); o contador "N sem receita" que eu havia proposto é observabilidade, não defesa (achado Codex). O preflight cliente (`preflight-formulas.ts`) NÃO cobre o endpoint de escrita quando o CSV entra por chunks — a fronteira única é o cliente, mas o writer server-side tem de ser defesa-em-profundidade fail-closed por-linha.
+**Por quê primeiro:** é o único defeito ATIVO que corrompe dado novo. As 240 parciais calculam preço baixo *válido* (fail-open); o contador "N sem receita" que eu havia proposto é observabilidade, não defesa (achado Codex).
 
-**Files:**
-- Modify: `supabase/functions/tint-import/index.ts` — `processFormulas` (~235-333) e o lookup (~304)
-- Possível: nova RPC SQL `tint_upsert_formula_com_itens(...)` para atomicidade header+itens (migration)
-- Prova: `db/test-tint-import-fail-closed.sh` (PG17)
+⚠️ **São DOIS writers com o MESMO padrão delete-incondicional + insert-filtrado, e o PRIORITÁRIO é o vivo:**
 
-**Mudanças (cada uma é um assert do prove-sql):**
-1. **Rejeitar receita parcial:** se QUALQUER slot de corante presente falhar a conversão (`qtd` null/≤0) → rejeitar a LINHA inteira (`errors++` + `errosDetalhe`), não gravar os corantes válidos. Hoje (`:282-294`) o slot ruim é pulado silenciosamente → receita parcial gravada.
-2. **Header+itens atômicos:** hoje `delete` (`:325`) + `insert` (`:327`) não são transacionais e o erro do insert só vai a `console.error` (`:328`). Envolver numa RPC `SECURITY DEFINER` transacional (BEGIN/EXCEPTION) OU garantir rollback. O insert de itens que falha DEVE reverter o header e contar como erro.
-3. **Contar sucesso só após commit dos itens:** `imported++`/`updated++` (`:319`/`:314`) sobem antes/independente dos itens. Mover para depois do commit. Guard de reconciliação: `imported + updated + errors == total` (senão status `parcial`, nunca `concluido`).
-4. **Corrigir lookup de subcoleção (`:304`):** `.is("subcolecao_id", subcolecaoId ? undefined : null)` — para subcoleção não-nula, usar `.eq("subcolecao_id", subcolecaoId)`; tratar o erro da consulta (hoje ignorado). Mitigado pelo `upsert onConflict:'chave'` no else, mas o UPDATE pode ir ao registro errado.
+### 1a — `tint_promote_sync_run` (writer VIVO — prioridade)
+O catálogo é alimentado automaticamente desde 18/06 pelo **sync SayerSystem**: `tint-sync-agent` (`index.ts:397,542`) chama a RPC `tint_promote_sync_run`. É ela que produz a geração `SL` viva. O import CSV manual foi **aposentado no frontend** (#1314, 12/07 — removeu `TintImport`/`ImportCard`/`useDirectTintImport`/`preflight-files`), mas o edge ainda responde (ver 1b).
 
-**Critério de aceite:** PG17 prova que (a) linha com corante+qtd-inválida é REJEITADA (não grava parcial), (b) falha de insert de item reverte o header, (c) `imported+updated+errors==total`, (d) falsificação: reverter cada guard → vermelho no assert certo. Canária: reprocessar um CSV com 1 linha parcial → `registros_erro >= 1`, receita não gravada.
+Padrão em prod (confirmado via `psql-ro`, cadeia `20260609150000_tint_sync_promote.sql` + fixes):
+```sql
+DELETE FROM tint_formula_itens fi USING _promoted pr WHERE fi.formula_id = pr.formula_id;
+INSERT INTO tint_formula_itens (...)
+  SELECT DISTINCT ON (pr.formula_id, co.id) ...
+  FROM _promoted pr JOIN tint_staging_formula_itens si ON ... JOIN tint_corantes co ON ...
+  WHERE si.id_corante IS NOT NULL AND si.id_corante <> '' AND COALESCE(si.qtd_ml,0) > 0;
+```
+- **DELETE incondicional** dos itens das fórmulas em `_promoted`, INSERT filtrando `qtd_ml>0 AND id_corante<>''`. Se o staging traz um corante com qtd inválida, ele é filtrado → **receita PARCIAL** (fail-open); se TODOS caem no filtro → **receita ZERO** (a fórmula fica vazia com "sucesso").
+- **Está INOCENTADO para as 28.609 de março** (elas vieram do CSV, `importacao_id` NULL, o promote nem existia) — mas carrega o MESMO defeito para o dado NOVO/vivo.
+- **Files:** migration nova recriando `tint_promote_sync_run` (pré-flight `pg_get_functiondef` da prod — apply manual diverge do repo; a última a recriar VENCE). Helper: `src/lib/tint/sync-promote.ts`. Prova: `db/test-tint-promote.sh` (já existe — estender).
+- **Fix:** o INSERT deve ser **all-or-nothing por fórmula** — se a fórmula do staging tem ≥1 corante com `id_corante` presente mas `qtd_ml<=0` (linha que DEVERIA ter receita mas está quebrada), NÃO promover essa fórmula (deixar a receita anterior intacta, marcar no `tint_sync_errors`), em vez de gravar parcial. Distinguir "fórmula legitimamente sem corante" de "corante presente com qtd inválida".
 
-**Risco:** o edge é reescrito pelo Lovable no deploy ("melhora") → deploy VERBATIM do repo + verificar por comportamento. Atomicidade via RPC muda o contrato do edge — testar chunk mode + finalize.
+### 1b — `tint-import`/`processFormulas` (RESIDUAL — endpoint ainda responde)
+Frontend aposentado (#1314), mas `supabase/functions/tint-import/index.ts` mantém `processFormulas` (`:235`), `handleFileMode` (`:336`), `handleChunkMode` (`:484`) e o `serve()` roteia (`:562,571`) → alcançável por chamada DIRETA ao edge. O `preflight-formulas.ts` (linhas) pode ter ficado órfão (o hook que o chamava, `useDirectTintImport`, foi removido). **Decidir na fase:** desativar o edge de vez (retornar 410) OU aplicar o mesmo fail-closed. Mudanças se mantiver:
+1. **Rejeitar receita parcial:** slot de corante presente com `qtd` null/≤0 → rejeitar a LINHA (hoje `:282-294` pula o slot ruho → parcial gravada).
+2. **Header+itens atômicos:** `delete` (`:325`)+`insert` (`:327`) não-transacional, erro só em `console.error` (`:328`) → RPC transacional ou rollback.
+3. **Contar após commit:** `imported++` (`:319`) sobe antes dos itens → mover; guard `imported+updated+errors==total`.
+4. **Lookup de subcoleção (`:304`):** `.is("subcolecao_id", subcolecaoId ? undefined : null)` → `.eq` quando não-nula; tratar erro (hoje ignorado). Mitigado pelo `upsert onConflict:'chave'`, mas UPDATE pode ir ao registro errado.
+
+**Critério de aceite (ambos):** PG17 prova (a) fórmula com corante+qtd-inválida NÃO grava receita parcial (promove nada OU rejeita a linha), (b) receita anterior preservada quando o novo lote é inválido, (c) falsificação: reverter cada guard → vermelho no assert certo. Canária: sync run com 1 fórmula de corante-qtd-inválida → `tint_sync_errors` registra, receita íntegra.
+
+**Risco:** `tint_promote_sync_run` é money-path de escrita VIVO — `prove-sql` + Codex xhigh no diff obrigatórios; recriar preservando os fixes já aplicados (`20260611190000`/`20260617*`/`20260622*` — a última a recriar vence, garanta a ordem). Edge reescrito pelo Lovable no deploy → verbatim + verificar por comportamento.
 
 ---
 
