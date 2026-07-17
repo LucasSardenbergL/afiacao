@@ -6,6 +6,7 @@ import {
   conferirCodigoNaLinha,
   decidirExecucaoRun,
   decidirLeituraEmbalagem,
+  ehPlaceholderDataTables,
   escolherGrupoSpike,
   parseBRL,
   podePersistirRun,
@@ -82,6 +83,41 @@ describe('classificarLinhasRascunho', () => {
 
   it('é self-contained para interpolação no Browserless (sem crase/${ no corpo)', () => {
     const codigo = classificarLinhasRascunho.toString();
+    expect(codigo).not.toContain('`');
+    expect(codigo).not.toContain('${');
+  });
+
+  // Placeholder do DataTables em grade vazia (spike-B f4d9fd92): não é linha.
+  it('placeholder "Nenhum dado disponível" é ignorado — grade limpa não é rascunho', () => {
+    const r = classificarLinhasRascunho(['Nenhum dado disponível na tabela'], MAPA);
+    expect(r.cancelaveis).toBe(false);
+    expect(r.desconhecidas).toEqual([]);
+  });
+
+  it('placeholder junto de linha nossa não contamina a decisão', () => {
+    const r = classificarLinhasRascunho(
+      ['Nenhum dado disponível na tabela', '1 WP01.3900QT SELADORA'],
+      MAPA,
+    );
+    expect(r.cancelaveis).toBe(true);
+    expect(r.desconhecidas).toEqual([]);
+  });
+});
+
+describe('ehPlaceholderDataTables', () => {
+  it('reconhece os textos padrão pt-BR e en', () => {
+    expect(ehPlaceholderDataTables('Nenhum dado disponível na tabela')).toBe(true);
+    expect(ehPlaceholderDataTables('  nenhum dado disponível  ')).toBe(true);
+    expect(ehPlaceholderDataTables('No data available in table')).toBe(true);
+  });
+
+  it('linha real e vazia NÃO são placeholder', () => {
+    expect(ehPlaceholderDataTables('1 WP01.3900QT SELADORA 74,43')).toBe(false);
+    expect(ehPlaceholderDataTables('')).toBe(false);
+  });
+
+  it('é self-contained para interpolação no Browserless', () => {
+    const codigo = ehPlaceholderDataTables.toString();
     expect(codigo).not.toContain('`');
     expect(codigo).not.toContain('${');
   });
