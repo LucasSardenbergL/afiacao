@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   gerarRecomendacoes,
+  filtrarRecomendacoes,
   resumirEconomia,
   CUSTO_MEDIO_FERRAMENTA_NOVA_BRL,
   type ToolInput,
@@ -238,5 +239,31 @@ describe('resumirEconomia — parse defensivo dos itens (jsonb)', () => {
       { items: undefined as unknown as unknown[], total: 50 },
     ]);
     expect(res).toEqual({ totalAfiacoes: 0, totalGastoReal: 50 });
+  });
+});
+
+describe('filtrarRecomendacoes — corte de apresentação por tela', () => {
+  const atrasada: Recomendacao = { tipo: 'possivelmente_atrasada', ferramentas: [{ id: 'a', nome: 'Serra' }] };
+  const semProg: Recomendacao = { tipo: 'sem_programacao', ferramentas: [{ id: 'b', nome: 'Faca' }] };
+  const eco: Recomendacao = { tipo: 'economia', economiaComprovada: 500, economiaPotencial: 100, nAtrasadas: 2 };
+  const todas: Recomendacao[] = [atrasada, semProg, eco];
+
+  it('sem tipos a ocultar → devolve tudo na mesma ordem', () => {
+    expect(filtrarRecomendacoes(todas, [])).toEqual(todas);
+  });
+
+  it("oculta 'economia' (a Central já tem o herói) preservando as consultivas", () => {
+    const r = filtrarRecomendacoes(todas, ['economia']);
+    expect(r.map((x) => x.tipo)).toEqual(['possivelmente_atrasada', 'sem_programacao']);
+  });
+
+  it('ocultar todos os tipos presentes → lista vazia (dispara o null no componente)', () => {
+    expect(filtrarRecomendacoes(todas, ['possivelmente_atrasada', 'sem_programacao', 'economia'])).toEqual([]);
+  });
+
+  it('é puro: não muta o array de entrada', () => {
+    const entrada = [...todas];
+    filtrarRecomendacoes(entrada, ['economia']);
+    expect(entrada).toEqual(todas);
   });
 });

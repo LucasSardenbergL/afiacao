@@ -151,6 +151,20 @@ export function gerarRecomendacoes(input: GerarRecomendacoesInput): Recomendacao
 }
 
 /**
+ * Corte de APRESENTAÇÃO por tela: remove os tipos em `ocultarTipos`, preservando
+ * a ordem dos demais. Ex.: a Central da Ferramenta já exibe um herói de economia,
+ * então oculta ali o card 'economia' (não duplicar). Puro — não muta a entrada;
+ * se o resultado ficar vazio, o consumidor não renderiza a seção (sem header órfão).
+ */
+export function filtrarRecomendacoes(
+  recs: Recomendacao[],
+  ocultarTipos: Recomendacao['tipo'][],
+): Recomendacao[] {
+  if (ocultarTipos.length === 0) return recs;
+  return recs.filter((r) => !ocultarTipos.includes(r.tipo));
+}
+
+/**
  * Agrega pedidos entregues em totais REAIS. Parse defensivo do jsonb `items`:
  * item sem quantidade conta como 1 (espelha o SavingsDashboard); items não-array
  * e total nulo viram 0 — nunca quebram nem fabricam número.
