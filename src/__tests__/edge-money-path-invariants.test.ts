@@ -32,6 +32,26 @@ function mirrorBlock(s: string): string {
     .join('\n');
 }
 
+// Recortes do edge de vendas para vigiar o WIRING da criação de PV (e não só a presença de tokens):
+// o corpo do `case "criar_pedido"` (até o próximo `case` na mesma indentação) e a função de derivação
+// de identidade. Textual pelo mesmo motivo do resto do arquivo: o edge roda no Lovable Cloud, fora do
+// typecheck/vitest, e o deploy pelo chat pode reverter o fix e commitar a reversão na `main`.
+function blocoCriarPedido(s: string): string {
+  const i = s.indexOf('case "criar_pedido": {');
+  if (i < 0) throw new Error('case "criar_pedido" não encontrado no edge');
+  const resto = s.slice(i);
+  const fim = resto.search(/\n {6}case "/);
+  return fim < 0 ? resto : resto.slice(0, fim);
+}
+
+function blocoDeriveIdentity(s: string): string {
+  const i = s.indexOf('async function deriveOmieAccountIdentity(');
+  if (i < 0) throw new Error('deriveOmieAccountIdentity não encontrada no edge');
+  const resto = s.slice(i);
+  const fim = resto.search(/\n\}\n/);
+  return fim < 0 ? resto : resto.slice(0, fim + 2);
+}
+
 // Variante que casa o bloco MIRROR por NOME (`// MIRROR-START <label>`), para arquivos com >1 bloco
 // (o edge omie-vendas-sync tem account-coherence E derive-account-identity).
 function mirrorBlockNamed(s: string, label: string): string {
@@ -209,52 +229,74 @@ describe('guardrail money-path: trava de crédito Fase 2 (gate + log durável + 
   });
 });
 
-// ── Coerência conta×código (prova positiva) — guard na FRONTEIRA comum de criar_pedido ──
-// [P0-A, veredito Codex 2026-07-05] Fecha o vazamento cross-conta em TODAS as vias de criação de PV
-// (SalesQuotes, selectCustomerByUserId, fallback de IA, futuras): um caller pode resolver o código no
-// espelho PARCIAL omie_clientes sem filtrar empresa e mandar o código de OUTRA conta do mesmo cliente.
-// O edge deriva a conta do PEDIDO LOCAL (customer_user_id) e recusa só com PROVA POSITIVA — nunca por
-// ausência (oben resolve o código via API e não vive no espelho). Helper puro em src/ (vitest)
-// ESPELHADO verbatim no edge (Deno); a paridade textual aqui pega a reversão do deploy do Lovable.
-const ACCOUNT_COHERENCE = 'src/lib/omie/account-coherence.ts';
-
-describe('guardrail money-path: coerência conta×código no criar_pedido (edge USA o helper espelhado)', () => {
+// ── criar_pedido NÃO depende do espelho legado omie_clientes (inverte o P0-A — 2026-07-16) ──
+// O P0-A provava "conta errada" pelo RÓTULO `empresa_omie` do espelho. O rótulo é DEFAULT POLUÍDO:
+// 6909/6909 linhas da prod estão como 'colacor' (ZERO 'oben'), e o código oben do bulk syncCustomers
+// mora ali sob esse rótulo. Para account='oben' a "prova positiva" era então estruturalmente falsa —
+// `matchesTarget` nunca casa e qualquer código conhecido acusa. Bloqueou o PC 214820 (Lider) portando
+// o código OBEN CORRETO: 8689689628 é oben na proof-table omie_customer_account_map (user 2ff308c9,
+// account='oben', source='document'). A premissa escrita no invariante antigo ("oben não vive no
+// espelho") é falsa — oben vive nele, rotulado 'colacor'.
+// O design do P0-B já registrava o guard como REDUNDANTE nesta via (§4.3 de docs/superpowers/specs/
+// 2026-07-05-identidade-omie-por-conta-design.md): a divergência advisory×derivado já é fail-closed,
+// então o guard não barra nenhum código errado que a derivação aceitaria — só adiciona falso-positivo.
+// LER era inútil (mirrorRows filtra empresa_omie=account → sempre vazio); ESCREVER era o 2º bloqueio,
+// em série: o backfill upsertava sob `unique_user_omie UNIQUE(user_id)` — a constraint REAL da prod,
+// enquanto o design §4.4 assumiu (user_id, empresa) — violava, a RPC devolvia 'contested' e o edge
+// barrava o MESMO PV legítimo. Fonte única agora: documento + API Omie, divergência fail-closed.
+describe('guardrail money-path: criar_pedido não confia no espelho legado omie_clientes', () => {
   const src = read(VENDAS);
-  const helper = read(ACCOUNT_COHERENCE);
+  const criar = blocoCriarPedido(src);
+  const derive = blocoDeriveIdentity(src);
 
-  it('sentinela: leu os arquivos reais (edge + helper)', () => {
-    expect(src).toContain('criar_pedido');
-    expect(helper).toContain('codeBelongsToWrongAccount');
+  it('sentinela: extraiu os blocos REAIS do edge (case criar_pedido + derivação de identidade)', () => {
+    expect(criar).toContain('criarPedidoVenda(');
+    expect(derive).toContain('decideAccountIdentity(');
   });
 
-  it('o helper puro existe e exporta codeBelongsToWrongAccount', () => {
-    expect(helper).toMatch(/export function codeBelongsToWrongAccount/);
-  });
-
-  it('o edge USA o helper: define o espelho E o chama (não só define)', () => {
-    expect(src, 'edge não define mais o helper espelhado de coerência').toMatch(/function codeBelongsToWrongAccount/);
+  // Vigia DEFINIÇÃO e CHAMADA, não a menção: o tombstone no edge cita o nome de propósito, para que
+  // quem for restaurá-lo leia antes por que ele saiu.
+  it('não define nem chama codeBelongsToWrongAccount (o rótulo do espelho não é prova de conta)', () => {
     expect(
       src,
-      'REGRESSÃO: edge não chama mais codeBelongsToWrongAccount — voltou a confiar no código do payload?',
-    ).toMatch(/codeBelongsToWrongAccount\(/);
+      'guard A voltou (definição): empresa_omie é default poluído (6909/6909 "colacor") — prova positiva falsa',
+    ).not.toMatch(/function codeBelongsToWrongAccount/);
     expect(
-      count(src, 'codeBelongsToWrongAccount'),
-      'helper deve ser DEFINIDO e CHAMADO (≥2 menções)',
-    ).toBeGreaterThanOrEqual(2);
+      src,
+      'guard A voltou (chamada): o rótulo local não prova conta — barra PV legítimo (PC 214820)',
+    ).not.toMatch(/codeBelongsToWrongAccount\(/);
+  });
+
+  it('NÃO LÊ o espelho omie_clientes em nenhuma via do edge', () => {
+    expect(
+      src,
+      'voltou a ler o espelho: o rótulo mente e mirrorRows nunca casa (não há linha "oben"/"colacor_sc")',
+    ).not.toMatch(/from\("omie_clientes"\)/);
+  });
+
+  it('NÃO ESCREVE no espelho (o backfill contesta sob UNIQUE(user_id) e barra PV legítimo)', () => {
+    expect(
+      src,
+      'backfill voltou: upsert sob unique_user_omie devolve "contested" e bloqueia o pedido — 2º bloqueio em série',
+    ).not.toMatch(/omie_cliente_upsert_mapping/);
+  });
+
+  it('criarPedidoVenda recebe o código DERIVADO (ident), nunca o advisory do payload', () => {
+    expect(criar).toMatch(
+      /criarPedidoVenda\(\s*supabaseAdmin,\s*sales_order_id,\s*ident\.codigo_cliente,\s*ident\.codigo_vendedor,/,
+    );
+  });
+
+  it('a derivação autoritativa (documento + API Omie) segue na fronteira', () => {
+    expect(criar).toMatch(/deriveOmieAccountIdentity\(/);
+    expect(derive, 'a derivação parou de consultar o Omie por documento').toMatch(/buscarClienteVendasMatches\(/);
   });
 
   it('deriva do PEDIDO LOCAL (customer_user_id + customer_document), não confia no payload', () => {
     expect(
       src,
-      'o guard deixou de ler customer_user_id/customer_document do pedido local — voltaria a confiar no payload',
+      'o edge deixou de ler customer_user_id/customer_document do pedido local — voltaria a confiar no payload',
     ).toMatch(/select\("account, customer_user_id, customer_document, created_by"\)/);
-  });
-
-  it('PARIDADE: o bloco espelhado no edge é IDÊNTICO ao helper de src/ (pega reversão do Lovable)', () => {
-    expect(
-      mirrorBlock(src),
-      'edge divergiu do helper de src/ — o Lovable reescreveu a coerência no deploy?',
-    ).toBe(mirrorBlock(helper));
   });
 });
 
@@ -351,35 +393,16 @@ describe('guardrail money-path: derivação de identidade Omie por conta (edge U
   });
 });
 
-// ── Fatia 1 do fix de rótulo (BUG-1): edge não confia no espelho 'colacor' POLUÍDO ──
-// empresa_omie='colacor' é o default nunca-setado pelos 5 writers → MIX de código oben (bulk
-// syncCustomers) + colacor_sc (writers manuais), ZERO colacor real (provado via psql-ro 2026-07-07).
-// Confiar nele rotearia o pedido colacor ao cliente ERRADO (BUG-1, integridade, silencioso). Para
-// account='colacor' o derive NÃO usa o espelho (força verificação Omie por documento) e NÃO backfilla
-// (evitando contest/block sob unique_user_omie). O deploy do Lovable pode reverter isso na main; este
-// guard textual reexpõe no CI. Temporário: a Fatia 3 re-rotula por conta e reverte. Ver
-// docs/superpowers/specs/2026-07-07-espelho-omie-rotulo-por-conta-design.md.
-describe('guardrail money-path: edge ignora o espelho colacor poluído (BUG-1, Fatia 1)', () => {
-  const src = read(VENDAS);
-
-  it('sentinela: leu o edge e o derive existe', () => {
-    expect(src).toContain('deriveOmieAccountIdentity');
-  });
-
-  it('mirror do derive NÃO é usado para account=colacor (força needOmie → Omie por documento)', () => {
-    expect(
-      src,
-      'REGRESSÃO: o derive voltou a usar o espelho para colacor — pedido colacor rotearia ao cliente errado (BUG-1)',
-    ).toMatch(/userIds\.length === 1 && account !== "colacor"/);
-  });
-
-  it('backfill do espelho é desabilitado para colacor (evita contest/block sob unique_user_omie)', () => {
-    expect(
-      src,
-      'REGRESSÃO: o backfill colacor voltou — a verificação forçada poderia bloquear pedido colacor legítimo',
-    ).toMatch(/decision\.backfill && userIds\.length === 1 && account !== "colacor"/);
-  });
-});
+// ── Fatia 1 do fix de rótulo (BUG-1) — SUPERADA em 2026-07-16, ver o invariante do espelho acima ──
+// A Fatia 1 tirava o espelho poluído do derive SÓ para account='colacor' (gates `account !== "colacor"`
+// no mirrorRows e no backfill), porque o rótulo 'colacor' é o default nunca-setado pelos 5 writers.
+// A premissa que sobrou era falsa: "oben não vive no espelho". Vive — 6909/6909 linhas da prod estão
+// rotuladas 'colacor', e é lá que mora o código oben do bulk syncCustomers. Com oben fora dos gates,
+// o backfill oben violava `unique_user_omie` e devolvia 'contested' → bloqueava PV legítimo, o mesmo
+// perigo que os gates evitavam para colacor. Em vez de estender os gates conta a conta, o espelho saiu
+// INTEIRO do caminho de criação (todas as contas) — o invariante 'criar_pedido não confia no espelho
+// legado omie_clientes' cobre isto e é estritamente mais forte: sem leitura, sem escrita, em conta
+// nenhuma. Não recrie gates por conta aqui; se o espelho voltar, é este describe que precisa voltar.
 
 // ── P1b (fail-closed no doc-dup-Omie) — syncCustomers USA o helper espelhado ──
 // A proof-table omie_customer_account_map é populada document-first. Se 2 registros Omie DISTINTOS na
@@ -704,15 +727,11 @@ describe('guardrail money-path: syncPedidos resolve user pela view fresca accoun
     ).toMatch(/Client cache from omie_customer_account_map_fresco/);
   });
 
-  it('o guard codeBelongsToWrongAccount (FORA desta PR) segue lendo TODAS as contas do espelho', () => {
-    // Precisão>recall: o guard PRECISA ver linhas de outras contas p/ provar que o código é de outra conta.
-    // Filtrar só a conta-alvo o desligaria (design §4 FORA). Este assert trava a NÃO-migração dele.
-    expect(src, 'REGRESSÃO: sumiu o guard codeBelongsToWrongAccount').toMatch(/codeBelongsToWrongAccount\(/);
-    expect(
-      src,
-      'REGRESSÃO: o guard parou de ler o espelho por user (sem filtro de conta) — proteção desligada?',
-    ).toMatch(/\.from\("omie_clientes"\)\s*\.select\("omie_codigo_cliente, empresa_omie"\)/);
-  });
+  // [2026-07-16] O assert que travava a NÃO-migração do guard `codeBelongsToWrongAccount` saiu com o
+  // guard. Ele exigia que o guard lesse o espelho por user SEM filtro de conta — correto para a ideia
+  // ("filtrar só a conta-alvo o desligaria"), mas a leitura sem filtro é justamente o que trazia a
+  // linha rotulada 'colacor' com o código OBEN e produzia a prova positiva FALSA. O guard foi removido
+  // (ver o invariante do espelho no topo); esta via segue vigiada pelo assert do cache acima.
 });
 
 // ── P0-B-bis (incidente carteira, ponta 1/2): o writer popula o vendedor de recomendacoes NA PROOF ──
@@ -779,11 +798,39 @@ describe('guardrail money-path: carteira-rebuild lê o vendedor da PROOF oben (P
     ).toMatch(/from\(['"]omie_customer_account_map_fresco['"]\)[\s\S]{0,220}\.eq\(['"]account['"],\s*['"]oben['"]\)/);
   });
 
-  it('A LISTA de membros vem do carteira_membership_ledger (Fatia 1 — não mais do espelho)', () => {
+  it('A LISTA de membros vem do carteira_membership_ledger, COM identity_state (Fatia 1 + 2)', () => {
     expect(
       rebuild,
       'REVERSÃO Lovable? a LISTA de membros não vem mais do ledger — voltou ao espelho omie_clientes?',
-    ).toMatch(/from\(['"]carteira_membership_ledger['"]\)[\s\S]{0,80}select\(['"]user_id['"]\)/);
+    ).toMatch(/from\(['"]carteira_membership_ledger['"]\)[\s\S]{0,80}select\(['"]user_id,\s*identity_state['"]\)/);
+  });
+
+  // ── P0-B-bis Fatia 2 (quarantine). O erro CATASTRÓFICO seria filtrar o quarantinado no BANCO: o membro
+  // sumiria da entrada e o upsert-only (sem DELETE) preservaria o assignment antigo STALE — vendedor errado,
+  // válido, cobrando comissão. É o mecanismo exato pelo qual o Codex refutou a opção A′ deste épico.
+  it('o rebuild NÃO filtra identity_state no banco — o membro quarantinado TEM que vir na lista', () => {
+    const selectLedger = /from\(['"]carteira_membership_ledger['"]\)[\s\S]{0,200}?\.range\(/;
+    const bloco = rebuild.match(selectLedger)?.[0] ?? '';
+    expect(bloco, 'sentinela: não achei o bloco de leitura do ledger').toContain('carteira_membership_ledger');
+    expect(
+      bloco,
+      'REGRESSÃO GRAVE: o rebuild passou a filtrar identity_state no banco → o membro quarantinado SOME da entrada → o upsert-only deixa o assignment antigo STALE (vendedor errado cobrando comissão). Filtre em memória (extrairQuarantinados), nunca na query.',
+    ).not.toMatch(/\.(eq|neq|in|not|filter)\(\s*['"]identity_state['"]/);
+  });
+
+  it('o quarantine é aplicado às rows finais (máscara ligada — não é dead code)', () => {
+    expect(rebuild, 'sumiu a extração dos quarantinados do ledger').toContain('extrairQuarantinados(ledgerRows)');
+    expect(
+      rebuild,
+      'REVERSÃO: as rows finais não passam mais por aplicarMascaras(flaggeds, quarantinados) → quarantine inerte, ambíguo volta a gerar comissão',
+    ).toMatch(/aplicarMascaras\(assignments,\s*flaggeds,\s*quarantinados\)/);
+  });
+
+  it('o consumo de identity_state é FAIL-CLOSED (!== verified), não === ambiguous', () => {
+    expect(
+      rebuildHelper,
+      'FAIL-OPEN: extrairQuarantinados passou a testar um estado específico — estado futuro/NULL deixaria de quarantinar',
+    ).toMatch(/identity_state\s*!==\s*['"]verified['"]/);
   });
 
   it('anti-reversão: o carteira-rebuild NÃO lê mais omie_clientes em lugar nenhum (nem lista, nem vendedor)', () => {
@@ -828,6 +875,50 @@ describe('guardrail money-path: carteira-rebuild lê o vendedor da PROOF oben (P
   });
 });
 
+// ── P0-B-bis Fatia 2 — ESCRITOR do identity_state (omie-analytics-sync). Par do DELETE da proof: o vínculo
+// sai da proof, mas o MEMBRO fica no ledger marcado `ambiguous` → o rebuild o quarantina. Sem a marcação o
+// ambíguo perde o vendedor, vira órfão e cai no Hunter com eligible=TRUE (comissão sobre identidade que não
+// conhecemos). Sem a REVERSÃO vira catraca de mão única (doc corrigido → cliente invisível para sempre).
+describe('guardrail money-path: omie-analytics-sync popula identity_state no ledger (P0-B-bis Fatia 2)', () => {
+  const src = read(ANALYTICS);
+
+  it('sentinela: leu o arquivo real', () => {
+    expect(src).toContain('docsComCodigoAmbiguoNoOmie');
+  });
+
+  it('marca `ambiguous` no ledger — o par do DELETE da proof', () => {
+    expect(
+      src,
+      'REVERSÃO: sumiu a marcação de ambiguous no ledger → o doc ambíguo volta a cair no Hunter ELEGÍVEL (comissão indevida)',
+    ).toMatch(/from\(["']carteira_membership_ledger["']\)[\s\S]{0,160}identity_state:\s*["']ambiguous["']/);
+  });
+
+  it('reverte `ambiguous`→`verified` p/ quem o run PROVOU limpo (senão: catraca de mão única)', () => {
+    expect(
+      src,
+      'REGRESSÃO: sumiu a reversão → doc corrigido no Omie deixaria o cliente quarantinado (invisível, sem comissão) PARA SEMPRE',
+    ).toMatch(/identity_state:\s*["']verified["']/);
+    expect(
+      src,
+      'a reversão não está escopada ao que o run provou limpo (accountMapByUser) → risco de reverter ambíguo real',
+    ).toMatch(/accountMapByUser\.has\(/);
+  });
+
+  it('SÓ o run oben (account===vendas) escreve o ledger — identity_state é global, ambiguidade é por conta', () => {
+    // D5: os 3 runs escrevendo se sobrescreveriam (flapping — um marca, o outro desmarca).
+    const marcacao = src.match(/if \(account === "vendas" && usersAmbiguosOmie\.size > 0\)/);
+    expect(marcacao, 'a marcação de ambiguous não está gateada em account==="vendas" → flapping entre contas').not.toBeNull();
+  });
+
+  it('o ledger NUNCA recebe INSERT/upsert aqui — quem popula é o trigger da Fatia 0 (acumulador)', () => {
+    const blocos = src.match(/from\(["']carteira_membership_ledger["']\)\s*\.\w+/g) ?? [];
+    expect(blocos.length, 'sentinela: não achei acesso ao ledger no sync').toBeGreaterThan(0);
+    for (const b of blocos) {
+      expect(b, `o sync está escrevendo no ledger com algo que não é update/select ("${b}") — o ledger é acumulador; inserir aqui fura o trigger da Fatia 0`).toMatch(/\.(update|select)$/);
+    }
+  });
+});
+
 // ── P0-B-bis PR-4 #8 (fin-valor-cockpit: mapa user->codigo de DISPLAY pela view fresca account=oben) ──
 // O cockpit (COMPANY='oben') montava o mapa user_id->omie_codigo_cliente lendo o espelho poluído
 // omie_clientes SEM filtro de conta — o código exibido podia ser de OUTRA conta do mesmo user (colacor_sc
@@ -852,6 +943,128 @@ describe('guardrail: fin-valor-cockpit lê o código do cliente pela view fresca
       src,
       'REGRESSÃO: fin-valor-cockpit ainda lê o espelho poluído omie_clientes no mapa de display',
     ).not.toMatch(/from\("omie_clientes"\)/);
+  });
+});
+
+// ── PR1 reconciliação PO excluído: publicação diferida (edge USA os predicados espelhados) — Codex xhigh 2026-07-12 ──
+// A edge omie-sync-pedidos-compra publica o marcador de run + last_seen SÓ no fim de um completo LIMPO e
+// NÃO-filtrado (P1#1/#2) e só avança a cadência com volume_ok=true (P1#3). Essas 2 decisões são helpers puros
+// (vitest) espelhados no edge; a paridade textual aqui pega a reversão do deploy do Lovable. O coração
+// money-path (volume_ok robusto, atomicidade, RLS) é provado no PG17 (db/test-reposicao-publicar-run-completo.sh).
+const SYNC_PEDIDOS = 'supabase/functions/omie-sync-pedidos-compra/index.ts';
+const PUBLICACAO_RUN = 'src/lib/reposicao/publicacao-run.ts';
+const OMIE_PAGINA = 'src/lib/reposicao/omie-pagina.ts';
+
+describe('guardrail money-path: publicação diferida de run (edge USA os predicados espelhados) — PR1 PO excluído', () => {
+  const src = read(SYNC_PEDIDOS);
+  const helper = read(PUBLICACAO_RUN);
+  const parser = read(OMIE_PAGINA);
+
+  it('sentinela: leu os arquivos reais (edge + helpers)', () => {
+    expect(src).toContain('reposicao_publicar_run_completo');
+    expect(helper).toContain('devePublicarRun');
+    expect(parser).toContain('classificarPagina');
+  });
+
+  it('o helper puro existe e exporta devePublicarRun', () => {
+    expect(helper).toMatch(/export function devePublicarRun/);
+  });
+
+  it('o edge USA o predicado: define o MIRROR de devePublicarRun E o chama (≥2 menções)', () => {
+    expect(src, 'edge não define mais devePublicarRun espelhado').toMatch(/function devePublicarRun/);
+    expect(count(src, 'devePublicarRun'), 'devePublicarRun deve ser DEFINIDO e CHAMADO (≥2)').toBeGreaterThanOrEqual(2);
+  });
+
+  it('v3.2 P1#2: devePublicarRun NÃO gateia por summary.erros (erro de persistência do espelho não barra)', () => {
+    // erro de PERSISTÊNCIA (upsert torto) não corrompe idsVistos; erro de COLETA já vira varredura_completa=false.
+    const bloco = mirrorBlockNamed(src, 'reposicao publicacao-run');
+    expect(bloco, 'REGRESSÃO Codex v3.2 P1#2: devePublicarRun voltou a checar erros===0 (trava em upsert torto)')
+      .not.toMatch(/erros\s*===\s*0/);
+  });
+
+  it('P1#1/single-writer: a edge NÃO escreve o last_seen direto (só a RPC toca reposicao_po_last_seen)', () => {
+    // o last_seen mora numa tabela DEDICADA service_role-only — a edge só chama a RPC, nunca escreve nela.
+    expect(
+      src,
+      'REGRESSÃO: a edge escreve reposicao_po_last_seen direto (deveria ser só pela RPC service_role-only)',
+    ).not.toMatch(/from\(["']reposicao_po_last_seen["']\)/);
+  });
+
+  it('P1#3/v3.2 P1: marcarCompletoOk é gated pelo SUCESSO da publicação (publicou), NÃO por volume_ok', () => {
+    // a cadência avança se a RPC publicou (marcador gravado) — não pelo volume_ok, senão um run de baixo
+    // volume/vazio travaria o completo permanentemente (Codex v3.2 P1). Erro da RPC → publicou=false → não avança.
+    expect(
+      src,
+      'REGRESSÃO P1#3: a cadência não é mais gated pelo sucesso da publicação',
+    ).toMatch(/if\s*\(publicou\)\s*await marcarCompletoOk/);
+    expect(
+      src,
+      'REGRESSÃO Codex v3.2 P1: a cadência voltou a depender de volume_ok (trava o completo em baixo volume)',
+    ).not.toMatch(/cadenciaPodeAvancar/);
+  });
+
+  it('v3.9: a edge DELEGA a classificação ao parser PURO e falha fechado em anomalia', () => {
+    // SEIS Codex challenge xhigh acharam furos na classificação inline, um shape por vez — e os guardrails eram
+    // textuais (grep de nome), que não provam comportamento. Agora a decisão vive no parser PURO
+    // (src/lib/reposicao/omie-pagina.ts) com matriz COMPORTAMENTAL em omie-pagina.test.ts; aqui só garantimos
+    // que a edge realmente delega, trata anomalia fail-closed e não reintroduz o TETO.
+    expect(src, 'a edge não acumula o piso pelo parser (acumularPiso)').toContain('piso = acumularPiso(resp, piso)');
+    expect(
+      src,
+      'a edge não classifica a página pelo parser (classificarPagina)',
+    ).toMatch(/classificarPagina\(resp,\s*\{\s*pagina,\s*idsVistos,\s*piso\s*\}\)/);
+    expect(src, 'a edge não aborta em anomalia do parser (fail-closed)').toMatch(/cls\.tipo === "anomalia"/);
+    expect(src, 'a edge não encerra pelo fim do parser').toMatch(/cls\.tipo === "fim"/);
+    expect(
+      src,
+      'varredura_completa deixou de exigir fim && !abortado (toda invalidação vem como anomalia → abortado)',
+    ).toMatch(/varredura_completa = fim && !abortado/);
+    // o TETO segue PROIBIDO: parar a paginação por nTotalPaginas reintroduz #979/#1009 (o Omie SUB-REPORTA).
+    expect(
+      src,
+      'REGRESSÃO: a edge voltou a PARAR a paginação por nTotalPaginas (sub-reporta → perde POs)',
+    ).not.toMatch(/pagina\s*>\s*(resp\.)?nTotalPaginas|>=\s*(resp\.)?nTotalPaginas\)\s*(\{)?\s*break/);
+  });
+
+  it('v3.3 P1/fencing: a edge aloca o run_seq ANTES da coleta e passa p_seq à RPC (ordem de INÍCIO)', () => {
+    // fencing token (reposicao_alocar_run_seq) alocado ANTES de syncEmpresa e passado como p_seq: um coletor que
+    // começa antes mas publica depois recebe seq MENOR → NÃO suprime a prova por ID de um PO excluído (Codex v3.3 P1).
+    expect(src, 'a edge não aloca o fencing token (reposicao_alocar_run_seq)').toContain('reposicao_alocar_run_seq');
+    expect(src, 'a RPC de publicação não recebe p_seq (perdeu a ordem total de INÍCIO)').toMatch(/p_seq:\s*runSeq/);
+    const idxAloca = src.indexOf('await alocarRunSeq(');
+    const idxSync = src.indexOf('await syncEmpresa(');
+    expect(idxAloca, 'alocarRunSeq não é chamado com await').toBeGreaterThan(0);
+    expect(
+      idxAloca < idxSync,
+      'REGRESSÃO Codex v3.3 P1: o fencing token deve ser alocado ANTES de syncEmpresa (ordem de INÍCIO, não de publicação)',
+    ).toBe(true);
+    // Codex #9 P1: NENHUM await de REDE entre o token e a 1ª página. Com o heartbeatRunning no meio, um run mais
+    // NOVO coleta e publica primeiro enquanto o R1 trava no heartbeat; o token velho deixa de refletir a ordem de
+    // início, e um PO excluído nessa janela fica com last_seen == marcador → nunca vira candidato, a prova por ID
+    // nunca roda e o fantasma sobrevive. O heartbeat tem de vir ANTES da alocação.
+    const idxHeartbeat = src.indexOf('await heartbeatRunning(');
+    expect(idxHeartbeat, 'heartbeatRunning não encontrado').toBeGreaterThan(0);
+    expect(
+      idxHeartbeat < idxAloca,
+      'REGRESSÃO Codex #9 P1: heartbeatRunning (await de REDE) voltou a ficar ENTRE o fencing token e a coleta',
+    ).toBe(true);
+  });
+
+  it('PARIDADE: o parser omie-pagina espelhado no edge é IDÊNTICO ao de src/ (pega reversão do Lovable)', () => {
+    // A classificação de página é a lógica que SEIS Codex challenge furaram, um shape por vez. Ela vive no parser
+    // PURO (matriz comportamental em src/lib/reposicao/omie-pagina.test.ts); o edge carrega um espelho, porque
+    // Deno não importa de src/. Se o deploy do Lovable reescrever o espelho, a divergência aparece AQUI.
+    expect(
+      mirrorBlockNamed(src, 'reposicao omie-pagina'),
+      'edge divergiu do parser de src/ — o Lovable reescreveu a classificação de página no deploy?',
+    ).toBe(mirrorBlockNamed(parser, 'reposicao omie-pagina'));
+  });
+
+  it('PARIDADE: o helper publicacao-run espelhado no edge é IDÊNTICO ao de src/ (pega reversão do Lovable)', () => {
+    expect(
+      mirrorBlockNamed(src, 'reposicao publicacao-run'),
+      'edge divergiu do helper de src/ — o Lovable reescreveu os predicados no deploy?',
+    ).toBe(mirrorBlockNamed(helper, 'reposicao publicacao-run'));
   });
 });
 
@@ -1025,5 +1238,246 @@ describe('guardrail money-path: omie-sync-sku-items (fila de leadtime)', () => {
       'REGRESSÃO: voltou a degradar quando sku_items_sync_controle falha — o poison ' +
         'reviveria sem ninguém saber (edge deployada antes da migration)',
     ).toMatch(/throw new Error\(\s*\n?\s*`sku_items_sync_controle ilegível/);
+  });
+
+  // O recompute derivado (RPC recomputar_leadtime_derivado) conserta o leadtime que nasce
+  // NULL no faturamento e nunca volta à fila quando o t4 chega. Ele é LOCAL — não gasta Omie.
+  it('o recompute derivado roda ANTES do loop da Omie, não depois', () => {
+    const chamada = src.indexOf('await recomputarLeadtimeDerivado(supabase');
+    const loop = src.indexOf('for (const nfeRaw of fila)');
+    expect(chamada, 'edge não chama mais o recompute derivado — o leadtime volta a morrer NULL').toBeGreaterThan(-1);
+    expect(loop, 'sentinela: o loop da fila sumiu do edge').toBeGreaterThan(-1);
+    expect(
+      chamada,
+      'REGRESSÃO: o recompute saiu do início do run. O guard de 50s dá break no meio do ' +
+        'loop justamente quando a fila está grande — no fim, ele deixaria de rodar EXATAMENTE ' +
+        'nos dias com mais t4 novo para derivar.',
+    ).toBeLessThan(loop);
+  });
+
+  it('falha do recompute é reportada ao Sentinela, não engolida', () => {
+    expect(
+      src,
+      'REGRESSÃO: recompute falhando em silêncio — a causa provável é migration não ' +
+        'aplicada (deploy fora de ordem), e o gap de ~30% voltaria a crescer sem ninguém saber',
+    ).toMatch(/falhaSistemica \?\? falhaControle \?\? falhaRecompute/);
+  });
+});
+
+// ── Fatia 3-edges PR-B (omie-analytics-sync: o snapshot de não-vinculados lê a proof por conta) ──
+// classifyClienteForSnapshot decide se um cliente Omie entra no relatório omie_clientes_nao_vinculados:
+// código no Set = "linked" (fica de fora). O Set vinha do espelho omie_clientes SEM filtro de conta —
+// mas o espelho é UNIQUE(user_id) (1 linha/user, sobrescrita pelo writer da vez, hoje dominado por oben)
+// e por isso NÃO contém os códigos das outras contas. Medido em prod (2026-07-16), códigos da proof
+// ausentes do espelho: colacor 5.148/5.148 (100%), colacor_sc 3.604/5.275 (68%), oben 0/5.238 (0%).
+// Rodar o snapshot de colacor/colacor_sc reportava clientes VINCULADOS como não-vinculados em massa;
+// só oben roda hoje, o que mascarava o furo. Agora o Set vem da fresca com .eq("account", empresa).
+// Os outros omie_clientes deste edge NÃO migram nesta PR e o motivo é estrutural, não esquecimento:
+//   • :238 fetchOmieClienteUserMap alimenta o upsertByUser CODE-FIRST → é a leitura de suporte do
+//     WRITER do espelho (:515), par indivisível: morre junto com ele na Fatia 4;
+//   • :1669 fetchAlvosSemProfile / :1890 fetchOmieCodigoPorUser operam sobre os CLONES (user sem
+//     profile). Medido: 1.633 alvos pelo espelho, 0 pela proof (clone não tem linha lá), 1.633 pelo
+//     ledger — mas o ledger não tem omie_codigo_cliente, e essas funções precisam do par
+//     (clone → código). Migrá-las p/ a proof zeraria syncBackfillCadastro e mapaConsolidacao em
+//     SILÊNCIO. Bloqueio de design escalado — o DROP (Fatia 5) depende de resolvê-lo.
+const OMIE_ANALYTICS = 'supabase/functions/omie-analytics-sync/index.ts';
+
+describe('guardrail money-path: snapshot de não-vinculados lê a proof por conta (Fatia 3-edges PR-B)', () => {
+  const src = read(OMIE_ANALYTICS);
+
+  it('sentinela: leu o arquivo real (edge)', () => {
+    expect(src).toContain('syncNaoVinculados');
+    expect(src).toContain('classifyClienteForSnapshot');
+  });
+
+  it('o Set de "já vinculados" vem da fresca, filtrado pela conta do run, paginado com .order', () => {
+    expect(
+      src,
+      'REVERSÃO Lovable? o Set de vinculados não lê a fresca com .eq("account", empresa) + .order + .range',
+    ).toMatch(
+      /\.from\("omie_customer_account_map_fresco"\)[\s\S]{0,120}\.eq\("account", empresa\)[\s\S]{0,240}\.order\("omie_codigo_cliente"\)[\s\S]{0,120}\.range\(/,
+    );
+    // A conta TEM de chegar na função: sem o parâmetro o Set volta a ser global (o bug).
+    expect(
+      src,
+      'REGRESSÃO: fetchAllOmieClienteCodigos perdeu o parâmetro de conta — Set global de novo',
+    ).toMatch(/async function fetchAllOmieClienteCodigos\(db: SupabaseClient, empresa: Empresa\)/);
+    expect(
+      src,
+      'REGRESSÃO: o chamador não passa mais a empresa do run para o Set de vinculados',
+    ).toMatch(/fetchAllOmieClienteCodigos\(db, empresa\)/);
+  });
+
+  it('o Set de vinculados NÃO voltou ao espelho poluído', () => {
+    expect(
+      src,
+      'REGRESSÃO: fetchAllOmieClienteCodigos voltou a ler omie_clientes (Set global → falso não-vinculado)',
+    ).not.toMatch(/fetch omie_clientes codigos/);
+  });
+
+  it('os omie_clientes restantes são o writer + as 2 funções de CLONE (bloqueadas), nunca mais', () => {
+    // Trava o escopo: 4 = :238 (leitura de suporte do writer) + :515 (upsert) + fetchAlvosSemProfile
+    // + fetchOmieCodigoPorUser. Se virar 5, alguém reabriu uma leitura do espelho neste edge.
+    expect(
+      count(src, '.from("omie_clientes")'),
+      'omie_clientes mudou de contagem neste edge — leitura nova do espelho ou migração não registrada aqui',
+    ).toBe(4);
+  });
+});
+
+// ── Fatia 3-edges PR-A (omie-cliente: os 3 LEITORES saem do espelho → proof fresca account-correta) ──
+// Os 3 leitores do edge de cadastro resolviam identidade por um código de conta INDETERMINADA. O espelho
+// omie_clientes é UNIQUE(user_id) — 1 linha por user, sobrescrita pelo writer da vez (oben, colacor_sc…) —
+// e empresa_omie está 'colacor' em 6.909/6.909 linhas (o DEFAULT, nunca populado): o rótulo de conta é
+// mentiroso. Migrados p/ omie_customer_account_map_fresco, que é UNIQUE(user_id, account) e
+// UNIQUE(omie_codigo_cliente, account) → .maybeSingle() seguro. A conta de CADA leitor saiu do CHAMADOR,
+// não de presunção (as credenciais do edge enganam: callOmieApi é colacor_sc, mas não é ela que decide):
+//   • criar_perfil_local → 'oben'  — useUnifiedOrder.handleStaffAddTool passa selectedCustomer.codigo_cliente
+//     (código OBEN) e resolve o MESMO código com .eq('account','oben') logo antes de invocar (#1331);
+//   • sync_all_clients   → conta do account_index (useAnalyticsSync itera "Conta N/3", 0→2);
+//   • sync_addresses     → multi-conta por natureza: usa o account de CADA linha da proof (não filtra uma).
+// Restam 3 omie_clientes, todos WRITERS (inserts → migram na Fatia 4 p/ register_carteira_member).
+// A paridade textual pega a reversão do deploy do Lovable (armadilha do #1272). Ver design §4/§5.
+const OMIE_CLIENTE = 'supabase/functions/omie-cliente/index.ts';
+const UNIFIED_ORDER = 'src/hooks/useUnifiedOrder.ts';
+
+// Recorta o corpo de um `case "<nome>": {` do edge (até o próximo case na mesma indentação). Necessário
+// porque o omie-cliente tem 9 handlers e vários compartilham vocabulário: `for (const account of accounts)`
+// é REGRESSÃO no sync_addresses (chutar o código nas 3 contas) e LEGÍTIMO no buscar_logos_empresas, que
+// varre as contas de propósito. Um assert no arquivo inteiro confundiria os dois.
+function blocoCaseCliente(s: string, nome: string): string {
+  const i = s.indexOf(`case "${nome}": {`);
+  if (i < 0) throw new Error(`case "${nome}" não encontrado no omie-cliente`);
+  const resto = s.slice(i);
+  const fim = resto.search(/\n {6}case "/);
+  return fim < 0 ? resto : resto.slice(0, fim);
+}
+
+// Recorta handleStaffAddTool (o único chamador de criar_perfil_local) para amarrar edge × chamador
+// dentro do MESMO fluxo, sem depender de contar caracteres entre as duas âncoras.
+function blocoHandleStaffAddTool(s: string): string {
+  const i = s.indexOf('const handleStaffAddTool = async () => {');
+  if (i < 0) throw new Error('handleStaffAddTool não encontrada em useUnifiedOrder');
+  const resto = s.slice(i);
+  const fim = resto.search(/\n {2}\};\n/);
+  return fim < 0 ? resto : resto.slice(0, fim);
+}
+
+describe('guardrail money-path: omie-cliente lê a proof fresca account-correta (Fatia 3-edges PR-A)', () => {
+  const src = read(OMIE_CLIENTE);
+
+  it('sentinela: leu o arquivo real (edge) e os 3 handlers migrados', () => {
+    expect(src).toContain('criar_perfil_local');
+    expect(src).toContain('sync_all_clients');
+    expect(src).toContain('sync_addresses');
+  });
+
+  it('os 3 LEITORES vêm da view fresca; omie_clientes só resta como WRITER', () => {
+    expect(
+      count(src, '.from("omie_customer_account_map_fresco")'),
+      'REVERSÃO Lovable? sumiu leitura da view fresca (esperado 3: criar_perfil_local, sync_all_clients, sync_addresses)',
+    ).toBe(3);
+    expect(
+      count(src, '.from("omie_clientes")'),
+      'REGRESSÃO: omie_clientes voltou como LEITOR (deveria restar só os 3 writers INSERT → Fatia 4)',
+    ).toBe(3);
+    // Os 3 restantes TÊM de ser inserts: contar == 3 sozinho não impede trocar um insert por um select.
+    expect(
+      (src.match(/\.from\("omie_clientes"\)\s*\.insert\(/g) ?? []).length,
+      'REGRESSÃO: algum dos 3 omie_clientes restantes deixou de ser o writer INSERT',
+    ).toBe(3);
+    expect(
+      src,
+      'REVERSÃO Lovable? voltou a .select() do espelho poluído omie_clientes (código de conta indeterminada)',
+    ).not.toMatch(/\.from\("omie_clientes"\)\s*\.select/);
+  });
+
+  it('a credencial Omie carrega o slug canônico da conta (não o índice instável nem o nome de UI)', () => {
+    // getOmieAccounts monta a lista CONDICIONALMENTE (só com as env vars presentes): faltar
+    // OMIE_OBEN_APP_KEY faria o índice 1 virar Colacor e o filtro de conta mentir em silêncio.
+    expect(src, 'sumiu o slug canônico do OmieAccountConfig — o filtro de conta volta a depender do índice')
+      .toMatch(/account:\s*OmieAccountSlug/);
+    expect(
+      count(src, 'account: "colacor_sc"') + count(src, 'account: "oben"') + count(src, 'account: "colacor"'),
+      'as 3 contas devem declarar seu slug canônico (domínio do CHECK chk_ocam_account)',
+    ).toBe(3);
+  });
+
+  it('criar_perfil_local resolve codigo->user na fresca account=oben (a conta do chamador)', () => {
+    expect(
+      src,
+      'REVERSÃO Lovable? criar_perfil_local não resolve mais o código pela fresca com account=oben',
+    ).toMatch(
+      /\.from\("omie_customer_account_map_fresco"\)[\s\S]{0,200}\.eq\("omie_codigo_cliente", cliente\.codigo_cliente\)[\s\S]{0,120}\.eq\("account", "oben"\)/,
+    );
+    // Miss (ausente/stale >7d) NÃO pode virar código chutado: o ramo cai no fallback por documento.
+    expect(
+      src,
+      'REGRESSÃO: sumiu o guard de miss (existingMapping?.user_id) — user_id null da view viraria hit falso',
+    ).toMatch(/if \(existingMapping\?\.user_id\)/);
+  });
+
+  it('COERÊNCIA cross-file: o edge usa a MESMA conta que o chamador — senão resolvem users diferentes', () => {
+    // O frontend resolve o código pela fresca account=oben e SÓ ENTÃO invoca criar_perfil_local com ele.
+    // Se um dos dois mudar de conta, o edge acha um user diferente do que o chamador acabou de achar e
+    // a ferramenta é anexada ao cliente ERRADO (Codex P2). Este assert amarra os dois lados no MESMO fluxo.
+    const fluxo = blocoHandleStaffAddTool(read(UNIFIED_ORDER));
+    expect(
+      fluxo,
+      'sentinela: handleStaffAddTool deixou de ser o chamador de criar_perfil_local',
+    ).toMatch(/action: 'criar_perfil_local'/);
+    expect(
+      fluxo,
+      'o chamador de criar_perfil_local não resolve mais o código pela fresca account=oben — o edge divergiu dele?',
+    ).toMatch(/omie_customer_account_map_fresco[\s\S]{0,260}\.eq\('account', 'oben'\)/);
+  });
+
+  it('sync_all_clients dedupa pela conta DO LOTE, paginado e fail-closed em erro de query', () => {
+    expect(
+      src,
+      'REVERSÃO Lovable? o dedup do sync_all_clients não lê a fresca filtrando a conta do account_index',
+    ).toMatch(
+      /\.from\("omie_customer_account_map_fresco"\)[\s\S]{0,120}\.eq\("account", account\.account\)[\s\S]{0,120}\.order\("omie_codigo_cliente"\)[\s\S]{0,120}\.range\(/,
+    );
+    // Sem .range o PostgREST capa em 1.000 linhas SILENCIOSO (eram 1.000 de 6.909 → o dedup enxergava 1/7).
+    expect(
+      src,
+      'REGRESSÃO: o pré-load do dedup perdeu a paginação — volta a capar em 1.000 e reprocessar o resto',
+    ).toMatch(/codePage\.length < codePageSize/);
+    // Codex P2 do PR-2: engolir o erro deixa o Set vazio e o loop tenta RECRIAR milhares de clientes.
+    expect(
+      src,
+      'REGRESSÃO: o pré-load do dedup engole o erro da query — Set vazio → reimportação em massa',
+    ).toMatch(/if \(codeErr\) throw new Error/);
+  });
+
+  it('sync_addresses lê (user, conta, código) da proof e consulta a conta CERTA de cada código', () => {
+    // Ancorado no bloco do handler: `for (const account of accounts)` é regressão AQUI e legítimo no
+    // buscar_logos_empresas (que varre as contas de propósito) — no arquivo inteiro os dois se confundem.
+    const bloco = blocoCaseCliente(src, 'sync_addresses');
+    expect(
+      bloco,
+      'REVERSÃO Lovable? sync_addresses não lê mais (user_id, account, omie_codigo_cliente) da fresca paginada',
+    ).toMatch(
+      /\.from\("omie_customer_account_map_fresco"\)[\s\S]{0,120}\.select\("user_id, account, omie_codigo_cliente"\)[\s\S]{0,160}\.range\(/,
+    );
+    // O código agora vem PAREADO com a conta dele: nada de chutar o mesmo código nas 3 contas.
+    expect(
+      bloco,
+      'REGRESSÃO: sync_addresses voltou a varrer as 3 contas com o mesmo código indeterminado',
+    ).not.toMatch(/for \(const account of accounts\)/);
+    expect(
+      bloco,
+      'sentinela: a consulta usa a credencial da conta DA LINHA da proof',
+    ).toMatch(/accountBySlug\.get\(entry\.account\)/);
+    // A proof tem até 1 linha por (user, conta) — sem agrupar, batch_size=30 viraria ~10 users.
+    expect(
+      bloco,
+      'REGRESSÃO: sumiu o agrupamento por user — o lote passa a contar LINHAS da proof, não clientes',
+    ).toMatch(/codesByUser/);
+    expect(
+      bloco,
+      'REGRESSÃO: o pré-load dos mapeamentos engole o erro — vira "No client mappings found" (no-op mudo)',
+    ).toMatch(/if \(pageErr\) throw new Error/);
   });
 });

@@ -11,12 +11,15 @@
 // - v2 (listagem + confirmação espaçada 61s): descartada no design review (Codex):
 //   2×61s no caminho síncrono de 150s é frágil, e até a paginação do mesmo método
 //   pode conflitar com a trava.
-// - v3 (ATUAL): ListarRecebimentos traz cabec.cChaveNfe (doc oficial) → IDENTIDADE
-//   FORTE direto da listagem, SEM ConsultarRecebimento nenhum:
-//     1 página por conta por rodada (janela de emissão estreita a partir da pendente
-//     mais antiga — janela avança sozinha conforme reconcilia) → cruzamento forte
-//     (conta exata + nIdReceb + chave 44 idêntica + cRecebido=S + não-cancelada +
-//     cardinalidade 1:1) → reconciliação em lote com lock + compare-and-update.
+// - v3: ListarRecebimentos traz cabec.cChaveNfe (doc oficial) → IDENTIDADE
+//   FORTE direto da listagem, SEM ConsultarRecebimento nenhum. 1ª rodada em prod
+//   (2026-07-16 23:10 UTC): transporte OK (zero REDUNDANT), mas janela ÚNICA de 60d
+//   ancorada na pendente mais antiga (janeiro) deixou 15/24 "fora_da_listagem".
+// - v3.1 (ATUAL): janelas de emissão CONSECUTIVAS e disjuntas (até 4 por conta,
+//   trégua 1.5s entre chamadas — o import v2 pagina o mesmo método sem trava) da
+//   pendente mais antiga até hoje/maior emissão → cruzamento forte (conta exata +
+//   nIdReceb + chave 44 idêntica + cRecebido=S + não-cancelada + cardinalidade 1:1)
+//   → reconciliação em lote com lock + compare-and-update.
 //   Dúvida de identidade NUNCA reconcilia (fail-closed); falha visível no painel é
 //   reservada à ação humana (Efetivar/Reprocessar na edge omie-nfe-recebimento).
 //
@@ -177,6 +180,52 @@ function selecionarCandidatasReconcile<T extends PendenteReconcile>(
   }
   return sel;
 }
+
+interface JanelaEmissao { de: Date; ate: Date }
+
+function parseEmissao(iso: string | null): Date | null {
+  if (!iso) return null;
+  const d = new Date(`${iso.slice(0, 10)}T00:00:00Z`);
+  return Number.isFinite(d.getTime()) ? d : null;
+}
+
+/**
+ * Janelas de emissão para o ListarRecebimentos: [emissãoMin - margem, +largura],
+ * consecutivas e DISJUNTAS (de_{k+1} = ate_k + 1d — sobreposição faria a mesma NF
+ * aparecer em 2 páginas e cair no fail-closed de duplicata), até alcançar
+ * max(agora, emissãoMax) + 1d, com no máximo `maxJanelas` (cap de chamadas ao Omie
+ * por conta por rodada). Âncora muito antiga → cobertura parcial honesta: o
+ * chamador reporta `truncada` e a cobertura avança quando as antigas resolverem.
+ * Datas inválidas/ausentes caem no fallback (agora - fallbackDias). Determinístico
+ * (recebe `agora`); dias em UTC puro.
+ */
+function janelasEmissaoConsecutivas(
+  emissaoMinIso: string | null,
+  emissaoMaxIso: string | null,
+  agora: Date,
+  opts?: { margemDias?: number; larguraDias?: number; maxJanelas?: number; fallbackDias?: number },
+): JanelaEmissao[] {
+  const DIA = 86_400_000;
+  const margem = (opts?.margemDias ?? 7) * DIA;
+  const largura = (opts?.larguraDias ?? 60) * DIA;
+  const max = opts?.maxJanelas ?? 4;
+  const fallback = (opts?.fallbackDias ?? 210) * DIA;
+
+  const min = parseEmissao(emissaoMinIso);
+  const maxEmissao = parseEmissao(emissaoMaxIso);
+  const base = min ? new Date(min.getTime() - margem) : new Date(agora.getTime() - fallback);
+  const alvo = new Date(Math.max(agora.getTime(), maxEmissao?.getTime() ?? 0) + DIA);
+
+  const janelas: JanelaEmissao[] = [];
+  let de = base;
+  while (janelas.length < max) {
+    const ate = new Date(de.getTime() + largura);
+    janelas.push({ de, ate });
+    if (ate.getTime() >= alvo.getTime()) break;
+    de = new Date(ate.getTime() + DIA);
+  }
+  return janelas;
+}
 // ════════════════════════════════════════════════════════════════════════════
 // (fim do espelho)
 // ════════════════════════════════════════════════════════════════════════════
@@ -271,9 +320,7 @@ const LOCK_TTL_MIN = 5;
 const LIMITE_DEFAULT = 25;
 const LIMITE_MAX = 25;
 const REGISTROS_POR_PAGINA = 50;
-const JANELA_EMISSAO_MARGEM_DIAS = 7;
-const JANELA_EMISSAO_LARGURA_DIAS = 60;
-const JANELA_EMISSAO_FALLBACK_DIAS = 210;
+const TREGUA_LISTAGEM_MS = 1500;
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -293,10 +340,15 @@ Deno.serve(async (req) => {
   );
 
   let limite = LIMITE_DEFAULT;
+  let diagnosticoListagem = false;
   try {
-    const body = await req.json();
-    const l = Number((body as Record<string, unknown> | null)?.limite);
+    const body = (await req.json()) as Record<string, unknown> | null;
+    const l = Number(body?.limite);
     if (Number.isFinite(l)) limite = Math.min(LIMITE_MAX, Math.max(1, Math.trunc(l)));
+    // Modo diagnóstico read-only: devolve registros CRUS da listagem (sem cruzar nem
+    // reconciliar) — pra mapear os campos reais que o Omie retorna na LISTAGEM
+    // (23 NFs avaliadas × zero cRecebido=S contradiz o ConsultarRecebimento de 04/jun).
+    diagnosticoListagem = body?.diagnostico_listagem === true;
   } catch { /* body vazio (cron) — usa default */ }
 
   try {
@@ -340,7 +392,10 @@ Deno.serve(async (req) => {
     let duplicadas = 0;
     let puladasCredencial = 0;
     let listagemTruncada = false;
+    let janelasConsultadas = 0;
     const errosListagem: string[] = [];
+    const amostraCrua: Array<Record<string, unknown>> = [];
+    const amostraNaoRecebidas: Array<Record<string, unknown>> = [];
 
     for (const [whCode, pendentesConta] of porConta) {
       const creds = getOmieCredentials(whCode);
@@ -350,40 +405,97 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      // Janela de emissão estreita: [mais antiga - 7d, mais antiga + 60d]. Concentra os 50
-      // slots da página onde as pendentes estão; conforme reconciliam, a janela avança.
+      // v3.1: janelas de emissão consecutivas e disjuntas, da pendente mais antiga até
+      // hoje (ou a maior emissão registrada — dado sujo do Omie tem emissão futura).
+      // Cap de 4 chamadas/conta/rodada com trégua — o import v2 pagina o mesmo método
+      // ListarRecebimentos na mesma conta sem morder a trava anti-redundância.
       const emissoes = pendentesConta.map((p) => p.data_emissao).filter((d): d is string => !!d).sort();
-      const base = emissoes[0] ? new Date(`${emissoes[0]}T00:00:00Z`) : new Date(Date.now() - JANELA_EMISSAO_FALLBACK_DIAS * 86_400_000);
-      const de = new Date(base.getTime() - JANELA_EMISSAO_MARGEM_DIAS * 86_400_000);
-      const ate = new Date(de.getTime() + (JANELA_EMISSAO_MARGEM_DIAS + JANELA_EMISSAO_LARGURA_DIAS) * 86_400_000);
+      const janelas = janelasEmissaoConsecutivas(emissoes[0] ?? null, emissoes[emissoes.length - 1] ?? null, new Date());
 
-      const lst = await omieCall(RECEB_URL, {
-        call: "ListarRecebimentos",
-        app_key: creds.appKey,
-        app_secret: creds.appSecret,
-        param: [{ nPagina: 1, nRegistrosPorPagina: REGISTROS_POR_PAGINA, dtEmissaoDe: formatarDataOmie(de), dtEmissaoAte: formatarDataOmie(ate) }],
-      });
-      const cls = classificarRespostaOmie({ httpOk: !lst.error, status: lst.error ? lst.status : 200, body: lst.data });
-      if (!cls.sucesso) {
-        const msg = `${whCode}: ${cls.erro ?? "erro"}`;
-        if (errosListagem.length < 3) errosListagem.push(msg);
-        console.warn(`[omie-nfe-reconcile] listagem falhou — ${msg}`);
-        continue;
+      const paginas: unknown[] = [];
+      for (const [j, janela] of janelas.entries()) {
+        if (j > 0) await new Promise((r) => setTimeout(r, TREGUA_LISTAGEM_MS));
+        janelasConsultadas++;
+        const lst = await omieCall(RECEB_URL, {
+          call: "ListarRecebimentos",
+          app_key: creds.appKey,
+          app_secret: creds.appSecret,
+          param: [{ nPagina: 1, nRegistrosPorPagina: REGISTROS_POR_PAGINA, dtEmissaoDe: formatarDataOmie(janela.de), dtEmissaoAte: formatarDataOmie(janela.ate) }],
+        });
+        const cls = classificarRespostaOmie({ httpOk: !lst.error, status: lst.error ? lst.status : 200, body: lst.data });
+        if (!cls.sucesso) {
+          const msg = `${whCode} janela ${formatarDataOmie(janela.de)}–${formatarDataOmie(janela.ate)}: ${cls.erro ?? "erro"}`;
+          if (errosListagem.length < 3) errosListagem.push(msg);
+          console.warn(`[omie-nfe-reconcile] listagem falhou — ${msg}`);
+          continue; // as demais janelas ainda podem cobrir outras pendentes
+        }
+        const recsPagina = asRecord(lst.data).recebimentos;
+        const cheia = Array.isArray(recsPagina) && recsPagina.length >= REGISTROS_POR_PAGINA;
+        if (cheia) listagemTruncada = true; // honestidade: há mais registros além da página 1 desta janela
+        paginas.push(lst.data);
+        if (diagnosticoListagem && amostraCrua.length < 4 && Array.isArray(recsPagina)) {
+          for (const r of recsPagina.slice(0, 2)) amostraCrua.push({ conta: whCode, registro: r });
+        }
       }
-      const recsPagina = asRecord(lst.data).recebimentos;
-      const cheia = Array.isArray(recsPagina) && recsPagina.length >= REGISTROS_POR_PAGINA;
-      if (cheia) listagemTruncada = true; // honestidade de cobertura: pode haver mais além da página 1
+      if (janelas.length > 0 && janelas[janelas.length - 1].ate.getTime() < Date.now()) {
+        listagemTruncada = true; // cap de janelas não alcançou hoje — cobertura parcial
+      }
 
-      const mapa = extrairRecebidosDaListagem([lst.data]);
+      const mapa = extrairRecebidosDaListagem(paginas);
       const sel = selecionarCandidatasReconcile(pendentesConta, mapa, limite - candidatas.length);
+
+      // Observabilidade: amostra CRUA dos matches "não-recebidos" — se a listagem não
+      // trouxer infoCadastro/cRecebido de verdade (doc diz que traz), isto revela.
+      if (amostraNaoRecebidas.length < 3) {
+        const rawPorId = new Map<number, unknown>();
+        for (const pg of paginas) {
+          const recs = asRecord(pg).recebimentos;
+          if (!Array.isArray(recs)) continue;
+          for (const raw of recs) {
+            const rec = asRecord(raw);
+            const id = Number(asRecord(rec.cabec).nIdReceb ?? rec.nIdReceb);
+            if (Number.isFinite(id) && id > 0 && !rawPorId.has(id)) rawPorId.set(id, raw);
+          }
+        }
+        for (const p of pendentesConta) {
+          if (amostraNaoRecebidas.length >= 3) break;
+          const id = Number(p.omie_id_receb);
+          const estado = mapa.get(id);
+          if (!estado || estado.recebido || estado.cancelada) continue;
+          const raw = asRecord(rawPorId.get(id));
+          const info = asRecord(raw.infoCadastro);
+          amostraNaoRecebidas.push({
+            numero_nfe: p.numero_nfe,
+            nIdReceb: id,
+            cEtapa: asRecord(raw.cabec).cEtapa ?? null,
+            cRecebido_cru: info.cRecebido ?? null,
+            keys_registro: Object.keys(raw),
+            keys_infoCadastro: Object.keys(info),
+          });
+        }
+      }
       candidatas.push(...sel.candidatas);
       foraDaListagem += sel.foraDaListagem;
       naoRecebidas += sel.naoRecebidas;
       canceladasListagem += sel.canceladas;
       identidadeFraca += sel.identidadeFraca;
       duplicadas += sel.duplicadas;
-      console.log(`[omie-nfe-reconcile] ${whCode}: listagem ${mapa.size} registros (${formatarDataOmie(de)}–${formatarDataOmie(ate)}${cheia ? ", TRUNCADA" : ""}), pendentes ${pendentesConta.length}, candidatas ${sel.candidatas.length}, nao_recebidas ${sel.naoRecebidas}, canceladas ${sel.canceladas}, identidade_fraca ${sel.identidadeFraca}, duplicadas ${sel.duplicadas}, fora ${sel.foraDaListagem}`);
+      console.log(`[omie-nfe-reconcile] ${whCode}: ${janelas.length} janelas, listagem ${mapa.size} registros${listagemTruncada ? " (TRUNCADA)" : ""}, pendentes ${pendentesConta.length}, candidatas ${sel.candidatas.length}, nao_recebidas ${sel.naoRecebidas}, canceladas ${sel.canceladas}, identidade_fraca ${sel.identidadeFraca}, duplicadas ${sel.duplicadas}, fora ${sel.foraDaListagem}`);
       if (candidatas.length >= limite) break;
+    }
+
+    // Modo diagnóstico: para AQUI — devolve o payload cru da listagem, sem reconciliar nada.
+    if (diagnosticoListagem) {
+      return jsonRes({
+        success: true,
+        versao: "v3.1-janelas-consecutivas",
+        modo: "diagnostico_listagem",
+        pendentes_avaliadas: rows.length,
+        janelas_consultadas: janelasConsultadas,
+        amostra_erros_listagem: errosListagem,
+        amostra_nao_recebidas: amostraNaoRecebidas,
+        amostra_crua: amostraCrua,
+      });
     }
 
     // ── Fase 2: reconciliação DIRETA em lote (só escrita local — zero chamadas ao Omie) ──
@@ -437,15 +549,16 @@ Deno.serve(async (req) => {
       .select("id", { count: "exact", head: true })
       .eq("status", "pendente");
 
-    console.log(`[omie-nfe-reconcile] v3: pendentes=${rows.length} candidatas=${candidatas.length} reconciliadas=${reconciliadasNfe.length} nao_recebidas=${naoRecebidas} canceladas=${canceladasListagem} identidade_fraca=${identidadeFraca} duplicadas=${duplicadas} fora_listagem=${foraDaListagem} sem_warehouse=${semWarehouse} lock=${puladasLock} estado_mudou=${estadoMudou} truncada=${listagemTruncada} restantes_pendentes=${restantes ?? "?"}`);
+    console.log(`[omie-nfe-reconcile] v3.1: pendentes=${rows.length} janelas=${janelasConsultadas} candidatas=${candidatas.length} reconciliadas=${reconciliadasNfe.length} nao_recebidas=${naoRecebidas} canceladas=${canceladasListagem} identidade_fraca=${identidadeFraca} duplicadas=${duplicadas} fora_listagem=${foraDaListagem} sem_warehouse=${semWarehouse} lock=${puladasLock} estado_mudou=${estadoMudou} truncada=${listagemTruncada} restantes_pendentes=${restantes ?? "?"}`);
 
     return jsonRes({
       success: true,
-      versao: "v3-listagem-direta",
+      versao: "v3.1-janelas-consecutivas",
       pendentes_avaliadas: rows.length,
       candidatas: candidatas.length,
       reconciliadas: reconciliadasNfe.length,
       listagem: {
+        janelas_consultadas: janelasConsultadas,
         nao_recebidas: naoRecebidas,
         canceladas: canceladasListagem,
         identidade_fraca: identidadeFraca,
@@ -459,6 +572,7 @@ Deno.serve(async (req) => {
       estado_mudou: estadoMudou,
       erros_update: errosUpdate,
       amostra_erros_listagem: errosListagem,
+      amostra_nao_recebidas: amostraNaoRecebidas,
       reconciliadas_nfe: reconciliadasNfe,
       restantes_pendentes: restantes ?? null,
     });

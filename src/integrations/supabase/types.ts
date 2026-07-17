@@ -11469,6 +11469,69 @@ export type Database = {
         }
         Relationships: []
       }
+      reposicao_pedidos_compra_run: {
+        Row: {
+          empresa: Database["public"]["Enums"]["empresa_reposicao"]
+          finalizado_em: string
+          ids_distintos: number
+          janela_ate: string
+          janela_de: string
+          run_id: string
+          seq: number
+          status: string
+          volume_baseline: number | null
+          volume_ok: boolean | null
+        }
+        Insert: {
+          empresa: Database["public"]["Enums"]["empresa_reposicao"]
+          finalizado_em?: string
+          ids_distintos: number
+          janela_ate: string
+          janela_de: string
+          run_id: string
+          seq?: number
+          status?: string
+          volume_baseline?: number | null
+          volume_ok?: boolean | null
+        }
+        Update: {
+          empresa?: Database["public"]["Enums"]["empresa_reposicao"]
+          finalizado_em?: string
+          ids_distintos?: number
+          janela_ate?: string
+          janela_de?: string
+          run_id?: string
+          seq?: number
+          status?: string
+          volume_baseline?: number | null
+          volume_ok?: boolean | null
+        }
+        Relationships: []
+      }
+      reposicao_po_last_seen: {
+        Row: {
+          empresa: Database["public"]["Enums"]["empresa_reposicao"]
+          omie_codigo_pedido: number
+          run_id: string
+          visto_em: string
+          visto_seq: number
+        }
+        Insert: {
+          empresa: Database["public"]["Enums"]["empresa_reposicao"]
+          omie_codigo_pedido: number
+          run_id: string
+          visto_em: string
+          visto_seq: number
+        }
+        Update: {
+          empresa?: Database["public"]["Enums"]["empresa_reposicao"]
+          omie_codigo_pedido?: number
+          run_id?: string
+          visto_em?: string
+          visto_seq?: number
+        }
+        Relationships: []
+      }
       reposition_parameters: {
         Row: {
           aplicado_em: string | null
@@ -18697,6 +18760,15 @@ export type Database = {
         Returns: boolean
       }
       kb_normalizar_catalisador: { Args: { p: string }; Returns: string }
+      leadtime_t1_e_data_de_pedido: {
+        Args: {
+          p_hist_t1: string
+          p_hist_t2: string
+          p_omie_codigo_pedido: number
+          p_tracking_t1: string
+        }
+        Returns: boolean
+      }
       limpar_sugestoes_antigas: {
         Args: never
         Returns: {
@@ -18903,6 +18975,13 @@ export type Database = {
       }
       rank_precisao: { Args: { p: string }; Returns: number }
       recalcular_picking_task: { Args: { p_task_id: string }; Returns: Json }
+      recomputar_leadtime_derivado: {
+        Args: { p_empresa: string }
+        Returns: {
+          etapa: string
+          valor: number
+        }[]
+      }
       refresh_customer_metrics: { Args: never; Returns: undefined }
       refresh_oportunidade_badge: { Args: never; Returns: undefined }
       refresh_sku_ranking_negociacao: {
@@ -18992,6 +19071,7 @@ export type Database = {
         Returns: undefined
       }
       reposicao_alerta_pedido_minimo_tick: { Args: never; Returns: undefined }
+      reposicao_alocar_run_seq: { Args: never; Returns: number }
       reposicao_aplicar_depara_sayerlack_auto: {
         Args: {
           p_candidatos: Json
@@ -19026,6 +19106,17 @@ export type Database = {
       reposicao_persistir_qtde_inteira: {
         Args: { p_pedido_id: number }
         Returns: number
+      }
+      reposicao_publicar_run_completo: {
+        Args: {
+          p_empresa: string
+          p_ids: number[]
+          p_janela_ate: string
+          p_janela_de: string
+          p_run_id: string
+          p_seq: number
+        }
+        Returns: boolean
       }
       reposicao_sincronizar_embalagem_wp: {
         Args: { p_empresa?: string }

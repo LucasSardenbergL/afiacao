@@ -1,6 +1,6 @@
 // src/lib/carteira/__tests__/rebuild-helpers.test.ts
 import { describe, it, expect } from 'vitest';
-import { computeCarteira, coerceCodigoVendedor, montarClientes, avaliarGuardProof, avaliarGuardResultado, parseBaselineSaudavel } from '../rebuild-helpers';
+import { computeCarteira, coerceCodigoVendedor, montarClientes, avaliarGuardProof, avaliarGuardResultado, parseBaselineSaudavel, extrairQuarantinados, aplicarMascaras } from '../rebuild-helpers';
 
 const HUNTER = 'hunter-uid';
 
@@ -347,5 +347,147 @@ describe('herança B-lite via proof (integração — P1 #1): clone AUSENTE da p
       customer_user_id: 'clone', owner_user_id: HUNTER, source: 'hunter_orphan', omie_codigo_vendedor: null, eligible: false,
     });
     expect(r.orphanCount).toBe(0); // o gêmeo não é órfão; o clone escondido não infla a métrica
+  });
+});
+
+// ── P0-B-bis Fatia 2 — quarantine de identidade ambígua.
+// Hoje um doc ambíguo é deletado da proof pelo sync → o rebuild vê vendedor null → o cliente cai no Hunter
+// com eligible=TRUE → comissão sobre um cliente cuja identidade NÃO sabemos. O quarantine derruba o eligible
+// preservando o membro. O que NÃO se pode fazer é tirá-lo da LISTA: o upsert-only não reconcilia ausentes
+// (onConflict customer_user_id, sem DELETE) → o assignment antigo persistiria STALE (vendedor errado, válido).
+describe('extrairQuarantinados (Fatia 2 — consumo FAIL-CLOSED de identity_state)', () => {
+  it('verified → NÃO quarantina (o caso de 100% da produção hoje: 6909/6909)', () => {
+    expect(extrairQuarantinados([{ user_id: 'u1', identity_state: 'verified' }])).toEqual(new Set());
+  });
+
+  it('ambiguous → quarantina (o único estado que a Fatia 2 popula)', () => {
+    expect(extrairQuarantinados([{ user_id: 'u1', identity_state: 'ambiguous' }])).toEqual(new Set(['u1']));
+  });
+
+  it('FAIL-CLOSED: estados que a Fatia 2 não popula (inactive/conflict) já quarantinam', () => {
+    // D2: consumimos `!== verified`, não `=== ambiguous`. Se um gatilho real de inactive/conflict aparecer,
+    // a rede já está armada — em vez de falhar ABERTO (cliente de identidade dúbia pagando comissão).
+    const r = extrairQuarantinados([
+      { user_id: 'a', identity_state: 'inactive' },
+      { user_id: 'b', identity_state: 'conflict' },
+    ]);
+    expect(r).toEqual(new Set(['a', 'b']));
+  });
+
+  it('FAIL-CLOSED: null/undefined/estado desconhecido quarantinam (nunca vira verified por omissão)', () => {
+    const r = extrairQuarantinados([
+      { user_id: 'a', identity_state: null },
+      { user_id: 'b', identity_state: undefined as unknown as string },
+      { user_id: 'c', identity_state: 'estado_futuro_qualquer' },
+      { user_id: 'd', identity_state: 'Verified' }, // case-sensitive de propósito: só o literal exato passa
+      { user_id: 'e', identity_state: ' verified' }, // idem — espaço não é verified
+    ]);
+    expect(r).toEqual(new Set(['a', 'b', 'c', 'd', 'e']));
+  });
+
+  it('lista mista → só os não-verified entram', () => {
+    const r = extrairQuarantinados([
+      { user_id: 'ok1', identity_state: 'verified' },
+      { user_id: 'amb', identity_state: 'ambiguous' },
+      { user_id: 'ok2', identity_state: 'verified' },
+    ]);
+    expect(r).toEqual(new Set(['amb']));
+  });
+
+  it('lista vazia → set vazio (ledger vazio degrada p/ comportamento de hoje, aditivo)', () => {
+    expect(extrairQuarantinados([])).toEqual(new Set());
+  });
+});
+
+describe('aplicarMascaras (Fatia 2 — quarantine + flaggeds derrubam eligible, NUNCA a presença)', () => {
+  const base = [
+    { customer_user_id: 'c1', owner_user_id: 'regina', source: 'omie' as const, omie_codigo_vendedor: 10, eligible: true },
+    { customer_user_id: 'c2', owner_user_id: HUNTER, source: 'hunter_orphan' as const, omie_codigo_vendedor: null, eligible: true },
+  ];
+
+  it('sem máscara nenhuma → passa idêntico (aditivo: 0 ambíguos = comportamento de hoje)', () => {
+    expect(aplicarMascaras(base, new Set(), new Set())).toEqual(base);
+  });
+
+  it('O INVARIANTE: quarantinado PERMANECE na saída, só com eligible=false', () => {
+    const r = aplicarMascaras(base, new Set(), new Set(['c1']));
+    // Presença preservada — se sumisse, o upsert-only deixaria o assignment antigo STALE (o furo do A′).
+    expect(r).toHaveLength(2);
+    expect(r.find((a) => a.customer_user_id === 'c1')).toEqual({
+      customer_user_id: 'c1', owner_user_id: 'regina', source: 'omie', omie_codigo_vendedor: 10, eligible: false,
+    });
+    // e o não-quarantinado fica intocado
+    expect(r.find((a) => a.customer_user_id === 'c2')?.eligible).toBe(true);
+  });
+
+  it('flagged (fornecedor fora da carteira) continua derrubando eligible — regressão do padrão existente', () => {
+    const r = aplicarMascaras(base, new Set(['c2']), new Set());
+    expect(r.find((a) => a.customer_user_id === 'c2')?.eligible).toBe(false);
+    expect(r.find((a) => a.customer_user_id === 'c1')?.eligible).toBe(true);
+  });
+
+  it('flagged E quarantinado compõem (nenhum "ressuscita" o outro)', () => {
+    const r = aplicarMascaras(base, new Set(['c1']), new Set(['c1']));
+    expect(r.find((a) => a.customer_user_id === 'c1')?.eligible).toBe(false);
+  });
+
+  it('eligible=false de origem (clone B-lite) NUNCA é promovido a true pela máscara', () => {
+    const clone = [{ customer_user_id: 'clone', owner_user_id: HUNTER, source: 'hunter_orphan' as const, omie_codigo_vendedor: null, eligible: false }];
+    expect(aplicarMascaras(clone, new Set(), new Set())[0].eligible).toBe(false);
+  });
+
+  it('não muta a entrada (o caller reusa assignments p/ métricas)', () => {
+    const entrada = structuredClone(base);
+    aplicarMascaras(entrada, new Set(['c1']), new Set(['c1']));
+    expect(entrada).toEqual(base);
+  });
+});
+
+describe('quarantine (integração Fatia 2): doc ambíguo → membro vivo, invisível, ZERO comissão', () => {
+  it('o ambíguo (deletado da proof pelo sync) fica no ledger, tem row e NÃO gera comissão', () => {
+    // Cenário de produção: `amb` teve o doc ambíguo → o sync o deletou da proof e marcou o ledger.
+    // `ok` é saudável. AMBOS continuam na LISTA do ledger (acumulador — nunca encolhe).
+    const membroIds = ['amb', 'ok'];
+    const proofOben = new Map<string, number | null>([['ok', 10]]); // `amb` foi deletado da proof
+    const ledger = [
+      { user_id: 'amb', identity_state: 'ambiguous' },
+      { user_id: 'ok', identity_state: 'verified' },
+    ];
+
+    const clientes = montarClientes(membroIds, proofOben);
+    const { assignments } = computeCarteira(clientes, [{ omie_codigo_vendedor: 10, user_id: 'regina' }], HUNTER);
+    const rows = aplicarMascaras(assignments, new Set(), extrairQuarantinados(ledger));
+
+    const amb = rows.find((a) => a.customer_user_id === 'amb');
+    // 1. o membro NÃO some (senão: assignment antigo STALE = vendedor errado cobrando comissão)
+    expect(amb).toBeDefined();
+    // 2. zero comissão + invisível: todos os leitores filtram por `WHERE eligible`
+    expect(amb?.eligible).toBe(false);
+    // 3. sem vendedor (já perdido na proof) — o Hunter recebe a row morta, mas ela é inerte
+    expect(amb?.omie_codigo_vendedor).toBeNull();
+
+    // 4. o saudável segue intocado com seu vendedor
+    expect(rows.find((a) => a.customer_user_id === 'ok')).toEqual({
+      customer_user_id: 'ok', owner_user_id: 'regina', source: 'omie', omie_codigo_vendedor: 10, eligible: true,
+    });
+  });
+
+  it('CONTRASTE (o que a Fatia 2 conserta): sem o quarantine, o ambíguo iria pro Hunter ELEGÍVEL', () => {
+    // Este é o comportamento de HOJE — o teste existe p/ deixar o delta explícito e pegar uma reversão.
+    const clientes = montarClientes(['amb'], new Map());
+    const { assignments } = computeCarteira(clientes, [{ omie_codigo_vendedor: 10, user_id: 'regina' }], HUNTER);
+    expect(assignments[0]).toEqual({
+      customer_user_id: 'amb', owner_user_id: HUNTER, source: 'hunter_orphan', omie_codigo_vendedor: null, eligible: true,
+    });
+    // com o ledger marcando `ambiguous`, o MESMO input vira eligible=false:
+    const rows = aplicarMascaras(assignments, new Set(), extrairQuarantinados([{ user_id: 'amb', identity_state: 'ambiguous' }]));
+    expect(rows[0].eligible).toBe(false);
+  });
+
+  it('ledger 100% verified (a produção de hoje) → saída IDÊNTICA à sem quarantine (aditivo/fail-safe)', () => {
+    const clientes = montarClientes(['a', 'b'], new Map<string, number | null>([['a', 10], ['b', 10]]));
+    const { assignments } = computeCarteira(clientes, [{ omie_codigo_vendedor: 10, user_id: 'regina' }], HUNTER);
+    const ledger = [{ user_id: 'a', identity_state: 'verified' }, { user_id: 'b', identity_state: 'verified' }];
+    expect(aplicarMascaras(assignments, new Set(), extrairQuarantinados(ledger))).toEqual(assignments);
   });
 });

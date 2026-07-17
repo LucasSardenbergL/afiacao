@@ -112,24 +112,31 @@ export default function AdminReposicaoAlertas() {
           .map(([dia, q]) => ({ dia, qtde: q, isOutlier: dia === outlierDay }))
           .sort((a, b) => a.dia.localeCompare(b.dia));
       } else {
-        // NOTE: schema generated em `types.ts` está desincronizado com a tabela
-        // real `sku_leadtime_history` (faltam `data_pedido`/`lt_bruto_dias_uteis`).
-        // Usamos cast pra row local até o schema ser regenerado.
-        type LeadtimeRow = { data_pedido: string; lt_bruto_dias_uteis: number };
+        // A coluna é `t1_data_pedido` — `data_pedido` NUNCA existiu (conferido na prod:
+        // `column "data_pedido" does not exist`). O drill-down de lt_atipico levava 400
+        // e lançava; ninguém notava porque o próprio viés do leadtime escondia o bug —
+        // cópias idênticas zeram o desvio e `z = (lt-media)/NULLIF(desvio,0)` vira NULL,
+        // então o detector quase não emitia lt_atipico. Corrigir a fonte EXPÕE a tela.
+        // Fonte = v_sku_leadtime_efetivo: 1 ponto por NFe, não por linha-de-pedido.
+        // t1 NOT NULL: a view emite t1 NULL quando as cópias divergem e
+        // sem data não há eixo X — a observação é omitida do gráfico, não inventada.
+        type LeadtimeRow = { t1_data_pedido: string; lt_bruto_dias_uteis: number };
         const { data, error } = await supabase
-          .from("sku_leadtime_history")
-          .select("data_pedido, lt_bruto_dias_uteis" as never)
+          .from("v_sku_leadtime_efetivo")
+          .select("t1_data_pedido, lt_bruto_dias_uteis" as never)
           .eq("empresa", drillEvento.empresa as never)
           .eq("sku_codigo_omie", drillEvento.sku_codigo_omie as never)
-          .order("data_pedido", { ascending: true });
+          .not("t1_data_pedido", "is", null)
+          .not("lt_bruto_dias_uteis", "is", null)
+          .order("t1_data_pedido", { ascending: true });
         if (error) throw error;
         const outlierDay = drillEvento.data_evento.slice(0, 10);
         const rows = (data ?? []) as unknown as LeadtimeRow[];
         return rows.map((r, i: number) => ({
           idx: i + 1,
-          dia: String(r.data_pedido).slice(0, 10),
+          dia: String(r.t1_data_pedido).slice(0, 10),
           lt: Number(r.lt_bruto_dias_uteis),
-          isOutlier: String(r.data_pedido).slice(0, 10) === outlierDay,
+          isOutlier: String(r.t1_data_pedido).slice(0, 10) === outlierDay,
         }));
       }
     },
