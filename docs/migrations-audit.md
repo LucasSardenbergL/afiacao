@@ -21,8 +21,8 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **373** custom migrations totais
-- **1331** objetos esperados (criados por estas migrations)
+- **375** custom migrations totais
+- **1332** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 374
   - `rls_policy`: 295
@@ -30,7 +30,7 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
   - `cron_job`: 149
   - `table`: 146
   - `trigger`: 78
-  - `view`: 63
+  - `view`: 64
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -3193,6 +3193,16 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20260717010000_drop_reprocessar_sku_items_via_raw_data.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260717015000_restaurar_security_invoker_views.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260717020000_precos_compra_leadtime_efetivo.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `view` | `public.v_sku_parametros_sugeridos` | — |
 
 ## Próximos passos por status
 
