@@ -420,7 +420,11 @@ Deno.serve(async (req) => {
           call: "ListarRecebimentos",
           app_key: creds.appKey,
           app_secret: creds.appSecret,
-          param: [{ nPagina: 1, nRegistrosPorPagina: REGISTROS_POR_PAGINA, dtEmissaoDe: formatarDataOmie(janela.de), dtEmissaoAte: formatarDataOmie(janela.ate) }],
+          // cExibirDetalhes:'S' — SEM ele a listagem NÃO retorna infoCadastro (provado em
+          // prod 2026-07-17 via diagnostico_listagem: keys_registro sem infoCadastro,
+          // cRecebido null, com as NFs em cEtapa=80). Com o flag, cRecebido=S volta a vir
+          // e o cruzamento forte reconcilia. Parse permanece fail-closed se faltar.
+          param: [{ nPagina: 1, nRegistrosPorPagina: REGISTROS_POR_PAGINA, dtEmissaoDe: formatarDataOmie(janela.de), dtEmissaoAte: formatarDataOmie(janela.ate), cExibirDetalhes: "S" }],
         });
         const cls = classificarRespostaOmie({ httpOk: !lst.error, status: lst.error ? lst.status : 200, body: lst.data });
         if (!cls.sucesso) {
@@ -488,7 +492,7 @@ Deno.serve(async (req) => {
     if (diagnosticoListagem) {
       return jsonRes({
         success: true,
-        versao: "v3.1-janelas-consecutivas",
+        versao: "v3.2-exibir-detalhes",
         modo: "diagnostico_listagem",
         pendentes_avaliadas: rows.length,
         janelas_consultadas: janelasConsultadas,
@@ -553,7 +557,7 @@ Deno.serve(async (req) => {
 
     return jsonRes({
       success: true,
-      versao: "v3.1-janelas-consecutivas",
+      versao: "v3.2-exibir-detalhes",
       pendentes_avaliadas: rows.length,
       candidatas: candidatas.length,
       reconciliadas: reconciliadasNfe.length,
