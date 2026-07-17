@@ -19,6 +19,7 @@ import {
   ehErroRedundante,
   extrairRecebidosDaListagem,
   selecionarCandidatasReconcile,
+  janelasEmissaoConsecutivas,
   type PassoFlags,
   type ItemApp,
   type EfeitoReconcile,
@@ -654,5 +655,52 @@ describe('selecionarCandidatasReconcile (identidade forte DIRETO da listagem —
     const pend = [1, 2, 3].map((n) => ({ id: `p${n}`, omie_id_receb: n, chave_acesso: CH(n) }));
     const r = selecionarCandidatasReconcile(pend, lst, 2);
     expect(r.candidatas.map((c) => c.id)).toEqual(['p1', 'p2']);
+  });
+});
+
+describe('janelasEmissaoConsecutivas (v3.1 — cobertura da listagem)', () => {
+  const AGORA = new Date('2026-07-16T20:00:00Z');
+  const iso = (d: Date) => d.toISOString().slice(0, 10);
+
+  it('caso real da 1ª rodada v3: pendentes jan→mai, hoje jul → 4 janelas disjuntas cobrindo até hoje+1', () => {
+    const j = janelasEmissaoConsecutivas('2026-01-04', '2026-05-14', AGORA);
+    expect(j.length).toBe(4);
+    expect(iso(j[0].de)).toBe('2025-12-28');           // mais antiga -7d
+    for (let k = 1; k < j.length; k++) {
+      const seguinte = new Date(j[k - 1].ate.getTime() + 86_400_000);
+      expect(iso(j[k].de)).toBe(iso(seguinte));         // disjuntas: de_{k+1} = ate_k + 1d
+    }
+    const fim = j[j.length - 1].ate.getTime();
+    expect(fim).toBeGreaterThanOrEqual(new Date('2026-07-17T00:00:00Z').getTime()); // alcança hoje+1
+  });
+
+  it('todas as pendentes recentes → 1 janela só', () => {
+    const j = janelasEmissaoConsecutivas('2026-07-01', '2026-07-10', AGORA);
+    expect(j.length).toBe(1);
+  });
+
+  it('emissão mais recente FUTURA (dado sujo do Omie) estende o alvo, respeitando o cap', () => {
+    const j = janelasEmissaoConsecutivas('2026-06-20', '2026-10-04', AGORA);
+    const fim = j[j.length - 1].ate.getTime();
+    expect(fim).toBeGreaterThanOrEqual(new Date('2026-10-05T00:00:00Z').getTime());
+    expect(j.length).toBeLessThanOrEqual(4);
+  });
+
+  it('sem emissão conhecida → fallback 210d atrás, cap de 4 janelas', () => {
+    const j = janelasEmissaoConsecutivas(null, null, AGORA);
+    expect(j.length).toBe(4);
+    expect(iso(j[0].de)).toBe(iso(new Date(AGORA.getTime() - 210 * 86_400_000)));
+  });
+
+  it('data inválida tratada como ausente (fallback), nunca lança', () => {
+    const j = janelasEmissaoConsecutivas('não-é-data', 'também-não', AGORA);
+    expect(j.length).toBe(4);
+  });
+
+  it('cap duro: âncora MUITO antiga não gera mais de 4 janelas (cobertura parcial honesta)', () => {
+    const j = janelasEmissaoConsecutivas('2024-01-01', null, AGORA);
+    expect(j.length).toBe(4);
+    const fim = j[j.length - 1].ate.getTime();
+    expect(fim).toBeLessThan(AGORA.getTime());          // NÃO alcança hoje — chamador reporta truncamento
   });
 });
