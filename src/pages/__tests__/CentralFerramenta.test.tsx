@@ -170,6 +170,26 @@ describe('CentralFerramenta', () => {
     expect(mockNavigate).toHaveBeenCalledWith('/savings');
   });
 
+  it('cliente novo (ferramentas all-null, categoria com intervalo, 0 pedidos): empurra a 1ª afiação', () => {
+    // Réplica do estado REAL de produção: cadastrou, categoria dá intervalo (120),
+    // mas next_due/last/intervalo-próprio NULL e nenhum pedido → cai no limbo nunca_afiada.
+    const { container } = setup({
+      summary: { ...EMPTY_SUMMARY, totalTools: 0 }, // sem economia (cliente novo)
+      tools: [
+        { id: 't1', next_sharpening_due: null, last_sharpened_at: null, sharpening_interval_days: null, tool_categories: { name: 'Serra Circular de Widea', suggested_interval_days: 120 } },
+        { id: 't2', next_sharpening_due: null, last_sharpened_at: null, sharpening_interval_days: null, tool_categories: { name: 'Serra Circular de Widea', suggested_interval_days: 120 } },
+      ],
+      deliveredOrders: [], // nenhum pedido entregue
+    });
+    const txt = container.textContent ?? '';
+    expect(txt).toContain('Recomendações para você');
+    expect(txt).toContain('ainda sem afiação'); // card nunca_afiada aparece
+    expect(txt).not.toContain('Você já economizou'); // sem economia fabricada
+    // o CTA leva a criar o primeiro pedido
+    fireEvent.click(screen.getByRole('button', { name: /agendar afiação/i }));
+    expect(mockNavigate).toHaveBeenCalledWith('/new-order');
+  });
+
   it('mostra recomendação consultiva (atraso) mas NUNCA o card de economia — o herói já cobre', () => {
     const { container } = setup({
       summary: { ...EMPTY_SUMMARY, totalTools: 5, totalSpent: 500, totalSavings: 1500, savingsPercent: 75 },

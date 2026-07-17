@@ -39,6 +39,7 @@ export interface FerramentaAfetada {
 
 export type Recomendacao =
   | { tipo: 'possivelmente_atrasada'; ferramentas: FerramentaAfetada[] }
+  | { tipo: 'nunca_afiada'; ferramentas: FerramentaAfetada[] }
   | { tipo: 'sem_programacao'; ferramentas: FerramentaAfetada[] }
   | {
       tipo: 'economia';
@@ -85,9 +86,23 @@ function ehPossivelmenteAtrasada(t: ToolInput, hoje: Date): boolean {
   return differenceInCalendarDays(hoje, projetada) > 0;
 }
 
-/** Sem next_due E sem intervalo algum → não há base para lembrete. */
+/**
+ * Cadastrada mas SEM nenhuma afiação: não-agendada E nunca afiada. Independe do
+ * intervalo — ter cadência não substitui a 1ª afiação, e sem `last` não há data
+ * alguma para projetar. Fato verificável (não inferência). Atinge o cliente novo,
+ * onde o empurrão mais importa. Precede `sem_programacao` (que exige já ter afiado).
+ */
+export function ehNuncaAfiada(t: Pick<ToolInput, 'next_sharpening_due' | 'last_sharpened_at'>): boolean {
+  return t.next_sharpening_due == null && t.last_sharpened_at == null;
+}
+
+/**
+ * JÁ afiou antes (last set), mas sem next_due E sem intervalo → sem base para o
+ * próximo lembrete. O recorte `last != null` cede o caso "nunca afiada" à regra
+ * `nunca_afiada` (baldes exclusivos: nenhuma ferramenta gera dois cards).
+ */
 function ehSemProgramacao(t: ToolInput): boolean {
-  return t.next_sharpening_due == null && intervaloEfetivo(t) == null;
+  return t.last_sharpened_at != null && t.next_sharpening_due == null && intervaloEfetivo(t) == null;
 }
 
 /** Atrasada de fato: agendada-vencida OU possivelmente-atrasada (não-agendada projetada). */
@@ -123,7 +138,8 @@ function calcularEconomia(
 
 /**
  * Recomendações consultivas determinísticas, na ordem de prioridade:
- * possivelmente_atrasada → sem_programacao → economia. Só entra o que o dado sustenta.
+ * possivelmente_atrasada → nunca_afiada → sem_programacao → economia.
+ * Só entra o que o dado sustenta.
  */
 export function gerarRecomendacoes(input: GerarRecomendacoesInput): Recomendacao[] {
   const { tools, economia } = input;
@@ -135,6 +151,11 @@ export function gerarRecomendacoes(input: GerarRecomendacoesInput): Recomendacao
   const atrasadas = tools.filter((t) => ehPossivelmenteAtrasada(t, hoje));
   if (atrasadas.length > 0) {
     recs.push({ tipo: 'possivelmente_atrasada', ferramentas: atrasadas.map((t) => ({ id: t.id, nome: t.nome })) });
+  }
+
+  const nuncaAfiadas = tools.filter(ehNuncaAfiada);
+  if (nuncaAfiadas.length > 0) {
+    recs.push({ tipo: 'nunca_afiada', ferramentas: nuncaAfiadas.map((t) => ({ id: t.id, nome: t.nome })) });
   }
 
   const semProgramacao = tools.filter(ehSemProgramacao);
