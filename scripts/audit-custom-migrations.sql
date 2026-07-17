@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 371
+-- Total de custom migrations: 372
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -409,6 +409,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260715001500', 'sku_items_sync_controle', '20260715001500_sku_items_sync_controle.sql'),
   ('20260716162000', 'sayerlack_captura_precos_fase1', '20260716162000_sayerlack_captura_precos_fase1.sql'),
   ('20260716180000', 'leadtime_efetivo_dedup_nfe', '20260716180000_leadtime_efetivo_dedup_nfe.sql'),
+  ('20260716200000', 'reposicao_recompute_leadtime_derivado', '20260716200000_reposicao_recompute_leadtime_derivado.sql'),
   ('20260716230000', 'sla_compliance_le_leadtime_efetivo', '20260716230000_sla_compliance_le_leadtime_efetivo.sql'),
   ('20260717003000', 'outliers_leadtime_stack_efetivo', '20260717003000_outliers_leadtime_stack_efetivo.sql')
 ),
@@ -1727,6 +1728,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('sayerlack_captura_precos_fase1', 'rls_policy', 'public', 'sku_preco_captura_run_item_select_staff', 'sku_preco_captura_run_item'),
   ('leadtime_efetivo_dedup_nfe', 'view', 'public', 'v_sku_leadtime_efetivo', ''),
   ('leadtime_efetivo_dedup_nfe', 'view', 'public', 'v_sku_leadtime_estatisticas', ''),
+  ('reposicao_recompute_leadtime_derivado', 'function', 'public', 'leadtime_t1_e_data_de_pedido', ''),
+  ('reposicao_recompute_leadtime_derivado', 'function', 'public', 'recomputar_leadtime_derivado', ''),
   ('sla_compliance_le_leadtime_efetivo', 'view', 'public', 'v_sku_sla_compliance', ''),
   ('outliers_leadtime_stack_efetivo', 'function', 'public', 'detectar_outliers_empresa', ''),
   ('outliers_leadtime_stack_efetivo', 'function', 'public', 'estimar_impacto_exclusao_outlier', ''),
@@ -3095,6 +3098,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('sayerlack_captura_precos_fase1', 'rls_policy', 'public', 'sku_preco_captura_run_item_select_staff', 'sku_preco_captura_run_item'),
   ('leadtime_efetivo_dedup_nfe', 'view', 'public', 'v_sku_leadtime_efetivo', ''),
   ('leadtime_efetivo_dedup_nfe', 'view', 'public', 'v_sku_leadtime_estatisticas', ''),
+  ('reposicao_recompute_leadtime_derivado', 'function', 'public', 'leadtime_t1_e_data_de_pedido', ''),
+  ('reposicao_recompute_leadtime_derivado', 'function', 'public', 'recomputar_leadtime_derivado', ''),
   ('sla_compliance_le_leadtime_efetivo', 'view', 'public', 'v_sku_sla_compliance', ''),
   ('outliers_leadtime_stack_efetivo', 'function', 'public', 'detectar_outliers_empresa', ''),
   ('outliers_leadtime_stack_efetivo', 'function', 'public', 'estimar_impacto_exclusao_outlier', ''),

@@ -6,6 +6,12 @@
 //   { "empresa": "OBEN" | "COLACOR", "dias": 30, "fornecedor_codigo_omie": 8689681266 }
 //
 // Estratégia:
+//   0) RECOMPUTE DERIVADO (RPC recomputar_leadtime_derivado, LOCAL — zero Omie), ANTES de
+//      qualquer chamada externa. A linha de leadtime nasce no FATURAMENTO, quando o t4 ainda
+//      é NULL ⇒ lt_bruto NULL (correto: não fabrica). O t4 chega dias depois pelo sync irmão,
+//      mas a fila daqui é "NFe SEM linha em sku_leadtime_history" ⇒ a NFe nunca volta ⇒ o
+//      lt_bruto morria NULL para sempre (1103 linhas, ~30% do histórico OBEN em 2026-07-16).
+//      Os itens já estão gravados; só as DATAS faltavam — a Omie não tem o que acrescentar.
 //   1) Lê NFes da empresa no período com t2_data_faturamento e nfe_chave_acesso.
 //   2) Fila = pendentes (sem linha em sku_leadtime_history) ELEGÍVEIS pelo controle de
 //      tentativas (sku_items_sync_controle + backoff 6h/24h/72h), nunca-tentadas primeiro —
@@ -91,6 +97,12 @@ interface RequestBody {
 
 interface EmpresaSummary {
   empresa: Empresa;
+  /** Linhas cujo lt_* foi derivado do t4 que já estava no tracking (sem Omie). */
+  recompute_recomputadas: number;
+  /** Linhas cujo lt_bruto/lt_faturamento foi ANULADO por o t1 não ser data de pedido
+   *  (NFe órfã ou fallback provado da edge) — mentira que subestimava o leadtime. */
+  recompute_anuladas: number;
+  recompute_erro: string | null;
   fila_pendente: number;
   fila_em_backoff: number;
   /** Linhas tiradas da fila por dividirem o nIdReceb com uma já eleita (NFe que fatura
@@ -439,6 +451,54 @@ async function marcarTentativa(
   }
 }
 
+interface RecomputeEtapa {
+  etapa: string;
+  valor: number;
+}
+
+interface RecomputeResultado {
+  recomputadas: number;
+  anuladas: number;
+  erro: string | null;
+}
+
+// Recompute derivado dos leadtimes — LOCAL, sem tocar a Omie (a RPC deriva do t4 que o sync
+// irmão já gravou em purchase_orders_tracking). Ver a migration
+// 20260716200000_reposicao_recompute_leadtime_derivado.sql para o porquê e as medições.
+//
+// Best-effort de propósito: se o recompute falhar, o leadtime fica como está hoje (não
+// PIORA), e derrubar o run aqui desperdiçaria a quota Omie do sync de itens, que é o
+// trabalho principal. Mas a falha NÃO some: vira `recompute_erro` no summary e marca o
+// fin_sync_log como 'error' (o Sentinela acorda) — senão o gap voltaria a crescer em
+// silêncio, que é exatamente o defeito original.
+async function recomputarLeadtimeDerivado(
+  db: SupabaseClient,
+  empresa: Empresa,
+): Promise<RecomputeResultado> {
+  try {
+    // supabase-js NÃO lança em erro PostgREST — retorna { error }. Checar explícito.
+    const { data, error } = await db.rpc("recomputar_leadtime_derivado", {
+      p_empresa: empresa,
+    });
+    if (error) {
+      console.error("[sync-sku-items] recompute derivado falhou (segue):", error.message);
+      return { recomputadas: 0, anuladas: 0, erro: error.message };
+    }
+    const etapas = (data ?? []) as RecomputeEtapa[];
+    const valorDe = (nome: string): number =>
+      etapas.find((e) => e?.etapa === nome)?.valor ?? 0;
+    return {
+      recomputadas: valorDe("leadtime_recomputado"),
+      anuladas: valorDe("leadtime_anulado_t1_nao_e_pedido"),
+      erro: null,
+    };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error("[sync-sku-items] recompute derivado exceção (segue):", msg);
+    return { recomputadas: 0, anuladas: 0, erro: msg };
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -466,6 +526,18 @@ Deno.serve(async (req) => {
 
     const { app_key, app_secret } = getCredentials(empresa);
     logId = await logSync(supabase, "sync_sku_items", [empresaParaLog(empresa)], triggeredBy);
+
+    // ── ETAPA 0: recompute derivado, ANTES de qualquer chamada Omie ──
+    // No INÍCIO, não no fim: o guard de TIMEOUT_GUARD_MS dá `break` no meio do loop
+    // justamente quando a fila está grande — um recompute no fim deixaria de rodar
+    // EXATAMENTE nos dias em que mais há t4 novo para derivar. Aqui ele independe da fila
+    // (roda até com fila vazia), do rate-limit e do guard de 50s.
+    const recompute = await recomputarLeadtimeDerivado(supabase, empresa);
+    if (recompute.recomputadas > 0 || recompute.anuladas > 0) {
+      console.log(
+        `[sync-sku-items] recompute derivado: ${recompute.recomputadas} recomputadas, ${recompute.anuladas} anuladas`,
+      );
+    }
 
     const cutoffIso = new Date(Date.now() - dias * 86_400_000).toISOString();
 
@@ -551,6 +623,9 @@ Deno.serve(async (req) => {
 
     const summary: EmpresaSummary = {
       empresa,
+      recompute_recomputadas: recompute.recomputadas,
+      recompute_anuladas: recompute.anuladas,
+      recompute_erro: recompute.erro,
       fila_pendente: pendentes.length,
       fila_em_backoff: pendentes.length - filaOrdenada.length,
       recebimentos_deduplicados: recebimentosDeduplicados,
@@ -757,11 +832,18 @@ Deno.serve(async (req) => {
         summary.controle_falhas === summary.consultas_tentadas
       ? `controle não persistiu em ${summary.controle_falhas}/${summary.consultas_tentadas} tentativas — backoff inoperante (grant/RLS?)`
       : undefined;
+    // Recompute quebrado é acionável: a causa provável é migration não aplicada (deploy fora
+    // de ordem — edge antes do SQL Editor) ou grant faltando no service_role. Não derruba o
+    // run (o leadtime só deixa de MELHORAR, não piora), mas tem de gritar: em silêncio, o
+    // gap de ~30% volta a crescer sem ninguém saber — o defeito que esta edge conserta.
+    const falhaRecompute = recompute.erro
+      ? `recompute derivado do leadtime falhou (migration 20260716200000 aplicada? grant do service_role?): ${recompute.erro}`
+      : undefined;
     await completeSync(
       supabase,
       logId,
       summary as unknown as Record<string, unknown>,
-      falhaSistemica ?? falhaControle,
+      falhaSistemica ?? falhaControle ?? falhaRecompute,
       Date.now() - startedAt,
     );
 

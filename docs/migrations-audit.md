@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **371** custom migrations totais
-- **1329** objetos esperados (criados por estas migrations)
+- **372** custom migrations totais
+- **1331** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 372
+  - `function`: 374
   - `rls_policy`: 295
   - `index`: 222
   - `cron_job`: 149
@@ -3168,6 +3168,13 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `view` | `public.v_sku_leadtime_efetivo` | — |
 | `view` | `public.v_sku_leadtime_estatisticas` | — |
+
+### `20260716200000_reposicao_recompute_leadtime_derivado.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.leadtime_t1_e_data_de_pedido` | — |
+| `function` | `public.recomputar_leadtime_derivado` | — |
 
 ### `20260716230000_sla_compliance_le_leadtime_efetivo.sql`
 

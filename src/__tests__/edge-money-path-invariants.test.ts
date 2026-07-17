@@ -1239,6 +1239,29 @@ describe('guardrail money-path: omie-sync-sku-items (fila de leadtime)', () => {
         'reviveria sem ninguém saber (edge deployada antes da migration)',
     ).toMatch(/throw new Error\(\s*\n?\s*`sku_items_sync_controle ilegível/);
   });
+
+  // O recompute derivado (RPC recomputar_leadtime_derivado) conserta o leadtime que nasce
+  // NULL no faturamento e nunca volta à fila quando o t4 chega. Ele é LOCAL — não gasta Omie.
+  it('o recompute derivado roda ANTES do loop da Omie, não depois', () => {
+    const chamada = src.indexOf('await recomputarLeadtimeDerivado(supabase');
+    const loop = src.indexOf('for (const nfeRaw of fila)');
+    expect(chamada, 'edge não chama mais o recompute derivado — o leadtime volta a morrer NULL').toBeGreaterThan(-1);
+    expect(loop, 'sentinela: o loop da fila sumiu do edge').toBeGreaterThan(-1);
+    expect(
+      chamada,
+      'REGRESSÃO: o recompute saiu do início do run. O guard de 50s dá break no meio do ' +
+        'loop justamente quando a fila está grande — no fim, ele deixaria de rodar EXATAMENTE ' +
+        'nos dias com mais t4 novo para derivar.',
+    ).toBeLessThan(loop);
+  });
+
+  it('falha do recompute é reportada ao Sentinela, não engolida', () => {
+    expect(
+      src,
+      'REGRESSÃO: recompute falhando em silêncio — a causa provável é migration não ' +
+        'aplicada (deploy fora de ordem), e o gap de ~30% voltaria a crescer sem ninguém saber',
+    ).toMatch(/falhaSistemica \?\? falhaControle \?\? falhaRecompute/);
+  });
 });
 
 // ── Fatia 3-edges PR-A (omie-cliente: os 3 LEITORES saem do espelho → proof fresca account-correta) ──
