@@ -146,6 +146,29 @@ function montarClientes(espelhoIds: string[], proofOben: Map<string, number | nu
     omie_codigo_vendedor: proofOben.get(customer_user_id) ?? null,
   }));
 }
+function extrairQuarantinados(rows: Array<{ user_id: string; identity_state: string | null }>): Set<string> {
+  // FAIL-CLOSED (Fatia 2 D2): quarantina tudo que não for EXATAMENTE 'verified' — inclui null, estado
+  // futuro e qualquer valor que o CHECK venha a aceitar. A Fatia 2 só POPULA 'ambiguous', mas testar
+  // `=== 'ambiguous'` falharia ABERTO (cliente de identidade dúbia pagando comissão) no dia em que outro
+  // estado ganhasse gatilho. Ledger vazio → set vazio → rebuild degrada p/ o comportamento de hoje.
+  const quarantinados = new Set<string>();
+  for (const r of rows) if (r.identity_state !== 'verified') quarantinados.add(r.user_id);
+  return quarantinados;
+}
+function aplicarMascaras(
+  assignments: ComputedAssignment[],
+  flaggeds: Set<string>,
+  quarantinados: Set<string>,
+): ComputedAssignment[] {
+  // As 2 máscaras derrubam ELEGIBILIDADE, nunca PRESENÇA. Tirar o membro da saída faria o upsert-only
+  // (onConflict customer_user_id, sem DELETE) preservar o assignment ANTIGO — vendedor errado, válido,
+  // cobrando comissão (o furo que refutou o A′). eligible=false já entrega zero comissão + invisível
+  // (todo leitor filtra `WHERE eligible`), e é REVERSÍVEL: volta a 'verified' → volta a valer.
+  return assignments.map((a) => ({
+    ...a,
+    eligible: a.eligible && !flaggeds.has(a.customer_user_id) && !quarantinados.has(a.customer_user_id),
+  }));
+}
 function avaliarGuardProof(m: { proofCrua: number; proofFresca: number; comVendedor: number }): { abortar: boolean; motivo: string | null } {
   if (m.proofFresca === 0) {
     return { abortar: true, motivo: 'proof oben fresca vazia (sync parado / TTL 7d expirado)' };
@@ -278,25 +301,32 @@ Deno.serve(async (req) => {
   // LISTA de membros = carteira_membership_ledger (P0-B-bis Fatia 1). Acumulador durável (append-only:
   // backfill + trigger AFTER INSERT no espelho; CASCADE só em delete de auth.users) → cobertura monotônica,
   // nunca encolhe → sem stale. Preserva a herança B-lite (gêmeo + clones no mesmo grupo) E a cobertura. O
-  // VENDEDOR vem da proof oben (abaixo), não daqui. Sem filtro de identity_state (quarantine é da Fatia 2).
+  // VENDEDOR vem da proof oben (abaixo), não daqui. identity_state vem JUNTO (Fatia 2): o não-'verified'
+  // é QUARANTINADO — sai da elegibilidade, NUNCA da lista (tirá-lo daqui faria o upsert-only preservar o
+  // assignment antigo STALE — o furo que refutou o A′). Populado pelo omie-analytics-sync no run oben.
   // Paginação robusta a max_rows (#7 Codex): avança pela quantidade REAL retornada e para na página VAZIA
   // — não presume PAGE=1000 (se o servidor capar em 500, `< PAGE` truncaria na 1ª página). Guard anti-loop.
   // user_id é PK NOT NULL no ledger → sem o `.not(is null)` do espelho.
   const PAGE = 1000;
   const MAX_ROWS = 500_000;
   const membroIds: string[] = [];
+  const ledgerRows: Array<{ user_id: string; identity_state: string | null }> = [];
   for (let from = 0; ;) {
     const { data, error } = await supabase
       .from('carteira_membership_ledger')
-      .select('user_id')
+      .select('user_id, identity_state')
       .order('user_id', { ascending: true })
       .range(from, from + PAGE - 1);
     if (error) { console.error('[carteira-rebuild] load ledger error:', error.message); return await failLease(error.message); }
-    const page = (data ?? []) as Array<{ user_id: string }>;
-    for (const r of page) membroIds.push(r.user_id);
+    const page = (data ?? []) as Array<{ user_id: string; identity_state: string | null }>;
+    for (const r of page) { membroIds.push(r.user_id); ledgerRows.push(r); }
     if (page.length === 0) break;
     from += page.length;
     if (from > MAX_ROWS) { console.error('[carteira-rebuild] ledger excedeu MAX_ROWS'); return await failLease('paginacao ledger excedeu limite'); }
+  }
+  const quarantinados = extrairQuarantinados(ledgerRows);
+  if (quarantinados.size > 0) {
+    console.warn(`[carteira-rebuild] Fatia 2: ${quarantinados.size} membro(s) QUARANTINADO(s) (identity_state != verified) — preservados, eligible=false, zero comissão`);
   }
 
   // VENDEDOR account-correto = view FRESCA omie_customer_account_map_fresco (account='oben') → Map por
@@ -369,15 +399,17 @@ Deno.serve(async (req) => {
     return await failLease(`cadeia de alias (${chainViolations.length}) — corrija customer_canonical_alias`);
   }
 
-  // 2c. Rows finais — eligible EXPLÍCITO pós-flaggeds (clone a.eligible E não-fornecedor: é o que esconde
-  // os clones / reativa no rollback / retira fornecedor). Conserta o bug do upsert que omitia eligible.
+  // 2c. Rows finais — eligible EXPLÍCITO pós-máscaras (clone a.eligible E não-fornecedor E não-quarantinado:
+  // é o que esconde os clones / reativa no rollback / retira fornecedor / neutraliza identidade ambígua).
+  // Conserta o bug do upsert que omitia eligible. Máscara = elegibilidade, nunca presença (todo membro do
+  // ledger sai com row → reconciliado, nada stale).
   const now = new Date().toISOString();
-  const rows = assignments.map((a) => ({
+  const rows = aplicarMascaras(assignments, flaggeds, quarantinados).map((a) => ({
     customer_user_id: a.customer_user_id,
     owner_user_id: a.owner_user_id,
     source: a.source,
     omie_codigo_vendedor: a.omie_codigo_vendedor,
-    eligible: a.eligible && !flaggeds.has(a.customer_user_id),
+    eligible: a.eligible,
     updated_at: now,
     last_synced_at: now,
   }));

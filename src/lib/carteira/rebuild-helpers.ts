@@ -195,6 +195,29 @@ export function montarClientes(espelhoIds: string[], proofOben: Map<string, numb
     omie_codigo_vendedor: proofOben.get(customer_user_id) ?? null,
   }));
 }
+export function extrairQuarantinados(rows: Array<{ user_id: string; identity_state: string | null }>): Set<string> {
+  // FAIL-CLOSED (Fatia 2 D2): quarantina tudo que não for EXATAMENTE 'verified' — inclui null, estado
+  // futuro e qualquer valor que o CHECK venha a aceitar. A Fatia 2 só POPULA 'ambiguous', mas testar
+  // `=== 'ambiguous'` falharia ABERTO (cliente de identidade dúbia pagando comissão) no dia em que outro
+  // estado ganhasse gatilho. Ledger vazio → set vazio → rebuild degrada p/ o comportamento de hoje.
+  const quarantinados = new Set<string>();
+  for (const r of rows) if (r.identity_state !== 'verified') quarantinados.add(r.user_id);
+  return quarantinados;
+}
+export function aplicarMascaras(
+  assignments: ComputedAssignment[],
+  flaggeds: Set<string>,
+  quarantinados: Set<string>,
+): ComputedAssignment[] {
+  // As 2 máscaras derrubam ELEGIBILIDADE, nunca PRESENÇA. Tirar o membro da saída faria o upsert-only
+  // (onConflict customer_user_id, sem DELETE) preservar o assignment ANTIGO — vendedor errado, válido,
+  // cobrando comissão (o furo que refutou o A′). eligible=false já entrega zero comissão + invisível
+  // (todo leitor filtra `WHERE eligible`), e é REVERSÍVEL: volta a 'verified' → volta a valer.
+  return assignments.map((a) => ({
+    ...a,
+    eligible: a.eligible && !flaggeds.has(a.customer_user_id) && !quarantinados.has(a.customer_user_id),
+  }));
+}
 export function avaliarGuardProof(m: { proofCrua: number; proofFresca: number; comVendedor: number }): { abortar: boolean; motivo: string | null } {
   if (m.proofFresca === 0) {
     return { abortar: true, motivo: 'proof oben fresca vazia (sync parado / TTL 7d expirado)' };
