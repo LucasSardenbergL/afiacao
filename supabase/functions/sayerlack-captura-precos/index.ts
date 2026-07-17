@@ -61,10 +61,13 @@ export default async ({ page, context }) => {
   const classificarLinhasRascunho = ${classificarLinhasRascunho.toString()};
 
   // === Budget management (deadline global, aborto limpo) ===
-  // Supabase edge tem wall-clock ~400s; Browserless Prototyping aceita mais.
-  // 340s interno + 20s de margem antes do ?timeout=360000 da URL. Sem reserva de
-  // submit: esta função não tem etapa de finalização — o que sobra é só o return.
-  const HARD_CEILING_MS = 340_000;
+  // Supabase edge tem wall-clock ~400s e a PERSISTÊNCIA pós-browser (uploads +
+  // inserts) leva ~10-20s: 300s interno + 330s na URL + 335s no abort do fetch
+  // deixam ≥60s de margem real. Run full 7b452dcb morreu órfão com 340s (a edge
+  // estourou o wall-clock DURANTE a persistência — running eterno, 0 gravado);
+  // full que não couber fecha PARCIAL limpo e a ordenação por última tentativa
+  // gira a cauda nos retries dos dias 11/12 (design do cron mensal).
+  const HARD_CEILING_MS = 300_000;
   const RETURN_GUARD_MS = 2_000;
   const ITEM_MIN_BUDGET_MS = 5_000;
   const deadline = t0 + HARD_CEILING_MS;
@@ -905,9 +908,9 @@ Deno.serve(async (req) => {
     let httpErr: string | null = null;
     try {
       const ctrl = new AbortController();
-      const timeout = setTimeout(() => ctrl.abort(), 380_000);
+      const timeout = setTimeout(() => ctrl.abort(), 335_000);
       const resp = await fetch(
-        `https://chrome.browserless.io/function?token=${BROWSERLESS_TOKEN}&timeout=360000`,
+        `https://chrome.browserless.io/function?token=${BROWSERLESS_TOKEN}&timeout=330000`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
