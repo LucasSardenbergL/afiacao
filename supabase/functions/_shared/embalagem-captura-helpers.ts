@@ -302,3 +302,35 @@ export function escolherGrupoSpike(pares: { grupo_id: string; sku_portal: string
   const ordenado = [...pares].sort((a, b) => a.sku_portal.localeCompare(b.sku_portal, 'en'));
   return ordenado[0].grupo_id;
 }
+
+export interface ClassificacaoRascunho {
+  cancelaveis: boolean;
+  desconhecidas: string[];
+}
+
+// Rascunho sujo ao abrir pedido novo: o portal re-hidrata a proposta "em
+// digitação" do usuário da captura (visto em prod: proposta 341069 renascendo
+// com WP01.3900QT — spike-B f33bc51d). Linha cujo texto contém um SKU do NOSSO
+// mapa de captura é resíduo dos nossos próprios runs → seguro cancelar (a
+// captura nunca grava/efetiva). Qualquer linha fora do mapa pode ser rascunho
+// HUMANO → não é nosso papel apagar (abortar sem tocar).
+// ⚠️ Esta função é interpolada via .toString() no código Browserless: precisa
+// ser SELF-CONTAINED (sem referenciar símbolos externos) e sem template literal.
+export function classificarLinhasRascunho(
+  textosLinhas: string[],
+  skusDoMapa: string[],
+): ClassificacaoRascunho {
+  const mapa = skusDoMapa
+    .map(function (s) { return String(s || '').trim().toUpperCase(); })
+    .filter(function (s) { return s.length > 0; });
+  const desconhecidas: string[] = [];
+  for (const texto of textosLinhas) {
+    const t = String(texto || '').toUpperCase();
+    const pertence = t.trim().length > 0 && mapa.some(function (sku) { return t.indexOf(sku) !== -1; });
+    if (!pertence) desconhecidas.push(String(texto || '').trim().substring(0, 80));
+  }
+  return {
+    cancelaveis: textosLinhas.length > 0 && desconhecidas.length === 0,
+    desconhecidas,
+  };
+}
