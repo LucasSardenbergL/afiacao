@@ -340,10 +340,15 @@ Deno.serve(async (req) => {
   );
 
   let limite = LIMITE_DEFAULT;
+  let diagnosticoListagem = false;
   try {
-    const body = await req.json();
-    const l = Number((body as Record<string, unknown> | null)?.limite);
+    const body = (await req.json()) as Record<string, unknown> | null;
+    const l = Number(body?.limite);
     if (Number.isFinite(l)) limite = Math.min(LIMITE_MAX, Math.max(1, Math.trunc(l)));
+    // Modo diagnóstico read-only: devolve registros CRUS da listagem (sem cruzar nem
+    // reconciliar) — pra mapear os campos reais que o Omie retorna na LISTAGEM
+    // (23 NFs avaliadas × zero cRecebido=S contradiz o ConsultarRecebimento de 04/jun).
+    diagnosticoListagem = body?.diagnostico_listagem === true;
   } catch { /* body vazio (cron) — usa default */ }
 
   try {
@@ -389,6 +394,8 @@ Deno.serve(async (req) => {
     let listagemTruncada = false;
     let janelasConsultadas = 0;
     const errosListagem: string[] = [];
+    const amostraCrua: Array<Record<string, unknown>> = [];
+    const amostraNaoRecebidas: Array<Record<string, unknown>> = [];
 
     for (const [whCode, pendentesConta] of porConta) {
       const creds = getOmieCredentials(whCode);
@@ -426,6 +433,9 @@ Deno.serve(async (req) => {
         const cheia = Array.isArray(recsPagina) && recsPagina.length >= REGISTROS_POR_PAGINA;
         if (cheia) listagemTruncada = true; // honestidade: há mais registros além da página 1 desta janela
         paginas.push(lst.data);
+        if (diagnosticoListagem && amostraCrua.length < 4 && Array.isArray(recsPagina)) {
+          for (const r of recsPagina.slice(0, 2)) amostraCrua.push({ conta: whCode, registro: r });
+        }
       }
       if (janelas.length > 0 && janelas[janelas.length - 1].ate.getTime() < Date.now()) {
         listagemTruncada = true; // cap de janelas não alcançou hoje — cobertura parcial
@@ -433,6 +443,37 @@ Deno.serve(async (req) => {
 
       const mapa = extrairRecebidosDaListagem(paginas);
       const sel = selecionarCandidatasReconcile(pendentesConta, mapa, limite - candidatas.length);
+
+      // Observabilidade: amostra CRUA dos matches "não-recebidos" — se a listagem não
+      // trouxer infoCadastro/cRecebido de verdade (doc diz que traz), isto revela.
+      if (amostraNaoRecebidas.length < 3) {
+        const rawPorId = new Map<number, unknown>();
+        for (const pg of paginas) {
+          const recs = asRecord(pg).recebimentos;
+          if (!Array.isArray(recs)) continue;
+          for (const raw of recs) {
+            const rec = asRecord(raw);
+            const id = Number(asRecord(rec.cabec).nIdReceb ?? rec.nIdReceb);
+            if (Number.isFinite(id) && id > 0 && !rawPorId.has(id)) rawPorId.set(id, raw);
+          }
+        }
+        for (const p of pendentesConta) {
+          if (amostraNaoRecebidas.length >= 3) break;
+          const id = Number(p.omie_id_receb);
+          const estado = mapa.get(id);
+          if (!estado || estado.recebido || estado.cancelada) continue;
+          const raw = asRecord(rawPorId.get(id));
+          const info = asRecord(raw.infoCadastro);
+          amostraNaoRecebidas.push({
+            numero_nfe: p.numero_nfe,
+            nIdReceb: id,
+            cEtapa: asRecord(raw.cabec).cEtapa ?? null,
+            cRecebido_cru: info.cRecebido ?? null,
+            keys_registro: Object.keys(raw),
+            keys_infoCadastro: Object.keys(info),
+          });
+        }
+      }
       candidatas.push(...sel.candidatas);
       foraDaListagem += sel.foraDaListagem;
       naoRecebidas += sel.naoRecebidas;
@@ -441,6 +482,20 @@ Deno.serve(async (req) => {
       duplicadas += sel.duplicadas;
       console.log(`[omie-nfe-reconcile] ${whCode}: ${janelas.length} janelas, listagem ${mapa.size} registros${listagemTruncada ? " (TRUNCADA)" : ""}, pendentes ${pendentesConta.length}, candidatas ${sel.candidatas.length}, nao_recebidas ${sel.naoRecebidas}, canceladas ${sel.canceladas}, identidade_fraca ${sel.identidadeFraca}, duplicadas ${sel.duplicadas}, fora ${sel.foraDaListagem}`);
       if (candidatas.length >= limite) break;
+    }
+
+    // Modo diagnóstico: para AQUI — devolve o payload cru da listagem, sem reconciliar nada.
+    if (diagnosticoListagem) {
+      return jsonRes({
+        success: true,
+        versao: "v3.1-janelas-consecutivas",
+        modo: "diagnostico_listagem",
+        pendentes_avaliadas: rows.length,
+        janelas_consultadas: janelasConsultadas,
+        amostra_erros_listagem: errosListagem,
+        amostra_nao_recebidas: amostraNaoRecebidas,
+        amostra_crua: amostraCrua,
+      });
     }
 
     // ── Fase 2: reconciliação DIRETA em lote (só escrita local — zero chamadas ao Omie) ──
@@ -517,6 +572,7 @@ Deno.serve(async (req) => {
       estado_mudou: estadoMudou,
       erros_update: errosUpdate,
       amostra_erros_listagem: errosListagem,
+      amostra_nao_recebidas: amostraNaoRecebidas,
       reconciliadas_nfe: reconciliadasNfe,
       restantes_pendentes: restantes ?? null,
     });
