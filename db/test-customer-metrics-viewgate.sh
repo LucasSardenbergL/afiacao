@@ -58,6 +58,21 @@ ALTER ROLE service_role BYPASSRLS;
 -- harness). Concedido aqui, local, p/ não mexer no stub que 40 worktrees usam.
 GRANT USAGE ON SCHEMA auth TO anon, authenticated, service_role;
 GRANT EXECUTE ON FUNCTION auth.uid(), auth.role() TO anon, authenticated, service_role;
+
+-- FIDELIDADE À PROD (2): o DEFAULT PRIVILEGE do Supabase no schema `public`.
+-- Medido em pg_default_acl 2026-07-17 — o concedente `postgres` tem, p/ o tipo
+-- `r` (relações): anon=arwdDxtm, authenticated=arwdDxtm, service_role=arwdDxtm;
+-- e p/ o tipo `f` (funções): anon=X, authenticated=X, service_role=X.
+-- ⇒ TODA relação nova em `public` nasce com TODOS os privilégios p/ anon E
+-- authenticated, e toda função nova nasce EXECUTÁVEL por eles. Ninguém precisa
+-- conceder nada — é o objeto que nasce aberto. É a causa-raiz do
+-- `authenticated=arwdDxtm` da view (a migration 20260305000443 só dá SELECT) e
+-- a razão de o repo estar cheio de `REVOKE ... FROM anon`.
+-- Sem isto o harness nasce FECHADO por acidente e não reproduz a dívida de ACL
+-- que a 20260717130000 existe p/ pagar (o assert "authenticated tem INSERT"
+-- falhava — era o harness otimista, não a prod).
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL     ON TABLES    TO anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO anon, authenticated, service_role;
 SQL
 
 PASS=0; FAIL=0
@@ -178,7 +193,24 @@ CREATE MATERIALIZED VIEW public.customer_metrics_mv AS
          calculated_at
     FROM public._metrics_src;
 CREATE UNIQUE INDEX customer_metrics_mv_pk ON public.customer_metrics_mv(customer_user_id);
-GRANT SELECT ON public.customer_metrics_mv TO authenticated;   -- o grant de 20260305000443
+GRANT SELECT ON public.customer_metrics_mv TO authenticated, service_role;  -- os grants de 20260305000443
+-- (redundantes na prática: o default privilege acima já deu arwdDxtm — que é
+--  exatamente a dívida de ACL que a 20260717130000 paga.)
+
+-- RPC real da prod, criada AQUI (não na seção de teste) p/ que o assert do ACL
+-- real signifique algo: SECDEF, corpo \`SELECT * FROM public.customer_metrics_mv\`
+-- (late-bound — hoje aponta pra MV, depois da 20260629120000 aponta pra view).
+CREATE OR REPLACE FUNCTION public.get_customer_metrics()
+  RETURNS TABLE(customer_user_id uuid, razao_social text, document text, ultima_compra_data timestamptz,
+                dias_desde_ultima_compra int, pedidos_90d bigint, faturamento_90d numeric,
+                ticket_medio_90d numeric, faturamento_prev_90d numeric, intervalo_medio_dias numeric,
+                atraso_relativo numeric, is_cold_start boolean, calculated_at timestamptz)
+  LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public'
+AS \$function\$ SELECT * FROM public.customer_metrics_mv; \$function\$;
+-- ACL REAL medido na prod: proacl = postgres/service_role/sandbox_exec — SEM
+-- authenticated. Como o default privilege acima concede EXECUTE a todos, alguém
+-- revogou explicitamente em algum momento; reproduzimos esse estado.
+REVOKE ALL ON FUNCTION public.get_customer_metrics() FROM PUBLIC, anon, authenticated;
 SQL
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -248,24 +280,65 @@ eq "a migration é idempotente (2º apply não quebra nem afrouxa)" \
    "$(P -q -f "$REPO_ROOT/supabase/migrations/20260717120000_seg_customer_metrics_gate_staff.sql" >/dev/null 2>&1 && como_customer public.customer_metrics_mv)" "0"
 
 echo ""
-echo '═══ 4. get_customer_metrics (SECDEF, SELECT * da view) herda o gate ═══'
-# A RPC é dead code (ninguém chama) e não tem grant p/ authenticated, mas se um dia
-# ganhar um, o SECDEF troca o ROLE e NÃO o JWT: auth.uid() segue sendo o do caller
-# ⇒ o gate continua valendo. Provar > deduzir.
-P -q <<'SQL'
-CREATE OR REPLACE FUNCTION public.get_customer_metrics()
-  RETURNS TABLE(customer_user_id uuid, razao_social text, document text, ultima_compra_data timestamptz,
-                dias_desde_ultima_compra int, pedidos_90d bigint, faturamento_90d numeric,
-                ticket_medio_90d numeric, faturamento_prev_90d numeric, intervalo_medio_dias numeric,
-                atraso_relativo numeric, is_cold_start boolean, calculated_at timestamptz)
-  LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public'
-AS $function$ SELECT * FROM public.customer_metrics_mv; $function$;
-GRANT EXECUTE ON FUNCTION public.get_customer_metrics() TO authenticated;
-SQL
-eq "🔒 customer via a RPC SECDEF → 0 (o SECDEF troca o role, não o JWT)" \
+echo '═══ 4. ACL least-privilege (migration 20260717130000 — Codex ponto 2) ═══'
+# O relacl da prod é `authenticated=arwdDxtm/postgres`: SELECT + INSERT/UPDATE/
+# DELETE/TRUNCATE/REFERENCES/TRIGGER/MAINTAIN, herdados de quando era MV em
+# `public`. GRANT SELECT não remove privilégio antigo — só REVOKE remove.
+eq "antes do REVOKE: authenticated carrega INSERT herdado (a dívida existe)" \
+   "$(Pq -c "SELECT has_table_privilege('authenticated','public.customer_metrics_mv','INSERT')::text;")" "true"
+P -q -f "$REPO_ROOT/supabase/migrations/20260717130000_seg_customer_metrics_acl_least_privilege.sql"
+for PRIV in INSERT UPDATE DELETE TRUNCATE REFERENCES TRIGGER; do
+  eq "🔒 authenticated NÃO tem $PRIV na view (least privilege)" \
+     "$(Pq -c "SELECT has_table_privilege('authenticated','public.customer_metrics_mv','$PRIV')::text;")" "false"
+done
+eq "✅ authenticated mantém SELECT (o gate filtra, não o grant)" \
+   "$(Pq -c "SELECT has_table_privilege('authenticated','public.customer_metrics_mv','SELECT')::text;")" "true"
+eq "✅ service_role mantém SELECT (edge ai-ops-agent)" \
+   "$(Pq -c "SELECT has_table_privilege('service_role','public.customer_metrics_mv','SELECT')::text;")" "true"
+eq "🔒 anon segue sem SELECT" \
+   "$(Pq -c "SELECT has_table_privilege('anon','public.customer_metrics_mv','SELECT')::text;")" "false"
+eq "✅ o REVOKE/GRANT não afrouxou o gate: customer segue em 0" \
+   "$(como_customer public.customer_metrics_mv)" "0"
+eq "✅ ...e o staff segue lendo" "$(como_employee public.customer_metrics_mv)" "3"
+
+echo ""
+echo '═══ 5. get_customer_metrics (SECDEF, SELECT * da view) ═══'
+# A RPC foi criada na ZONA 1 com o ACL REAL da prod — não aqui. Criá-la já com um
+# grant artificial (como a 1ª versão fazia) provaria só o cenário artificial.
+# (a) O ACL REAL: authenticated não executa. Este é o assert que importa —
+#     o Codex apontou que só testar com um GRANT artificial demonstra defesa em
+#     profundidade mas NÃO prova que o ACL real permaneceu fechado.
+eq "🔒 ACL real: authenticated NÃO tem EXECUTE na RPC (é o que fecha hoje)" \
+   "$(Pq -c "SELECT has_function_privilege('authenticated','public.get_customer_metrics()','EXECUTE')::text;")" "false"
+eq "🔒 ACL real: anon NÃO tem EXECUTE na RPC" \
+   "$(Pq -c "SELECT has_function_privilege('anon','public.get_customer_metrics()','EXECUTE')::text;")" "false"
+# (b) Defesa em profundidade, HIPOTÉTICA e rotulada como tal: SE um grant futuro
+#     reativar a RPC, o gate ainda vale — o SECDEF troca o ROLE, não o JWT
+#     (auth.uid() lê request.jwt.claim.sub, GUC do caller). Cenário artificial.
+P -q -c "GRANT EXECUTE ON FUNCTION public.get_customer_metrics() TO authenticated;"
+eq "🔒 [hipotético: COM grant] customer via RPC SECDEF → 0 (SECDEF troca role, não JWT)" \
    "$(_conta "SET LOCAL ROLE authenticated; SET LOCAL test.role='authenticated'; SET LOCAL test.uid='$CUST_UID';" "public.get_customer_metrics()")" "0"
-eq "✅ employee via a RPC SECDEF → 3" \
+eq "✅ [hipotético: COM grant] employee via RPC SECDEF → 3" \
    "$(_conta "SET LOCAL ROLE authenticated; SET LOCAL test.role='authenticated'; SET LOCAL test.uid='$EMPL_UID';" "public.get_customer_metrics()")" "3"
+P -q -c "REVOKE ALL ON FUNCTION public.get_customer_metrics() FROM authenticated;"
+
+echo ""
+echo '═══ 6. O gate não é vazado por ordem de avaliação (barrier + never executed) ═══'
+# Codex ponto 4: com barrier=true + gate constante por statement, a varredura da
+# MV nem chega a executar para o customer. Prova que não há leak por predicado
+# aplicado antes do filtro.
+PLANO="$(P -tAq <<SQL 2>&1 || true
+BEGIN;
+SET LOCAL ROLE authenticated; SET LOCAL test.role='authenticated'; SET LOCAL test.uid='$CUST_UID';
+EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, SUMMARY OFF) SELECT * FROM public.customer_metrics_mv;
+COMMIT;
+SQL
+)"
+if echo "$PLANO" | grep -qi 'never executed'; then
+  ok "customer: a varredura da MV aparece como 'never executed' (gate curto-circuita)"
+else
+  bad "customer: esperava 'never executed' no plano — veio: $(echo "$PLANO" | tr '\n' ' ' | cut -c1-120)"
+fi
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ZONA 3 — FALSIFICAÇÃO (Lei #3): sabota → EXIGE vermelho → restaura.
@@ -273,7 +346,7 @@ eq "✅ employee via a RPC SECDEF → 3" \
 #   texto que o próprio código emite.
 # ══════════════════════════════════════════════════════════════════════════════
 echo ""
-echo '═══ 5. FALSIFICAÇÃO — os asserts têm dente? ═══'
+echo '═══ 7. FALSIFICAÇÃO — os asserts têm dente? ═══'
 
 # (a) Sabotagem 1: remover o gate (a view volta ao estado de hoje).
 P -q <<'SQL'

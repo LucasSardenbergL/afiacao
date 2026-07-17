@@ -21,7 +21,7 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **376** custom migrations totais
+- **377** custom migrations totais
 - **1333** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 374
@@ -3209,6 +3209,10 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `view` | `public.customer_metrics_mv` | — |
+
+### `20260717130000_seg_customer_metrics_acl_least_privilege.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ## Próximos passos por status
 
