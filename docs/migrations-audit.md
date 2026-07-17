@@ -21,16 +21,16 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **375** custom migrations totais
-- **1332** objetos esperados (criados por estas migrations)
+- **380** custom migrations totais
+- **1338** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 374
+  - `function`: 378
   - `rls_policy`: 295
   - `index`: 222
-  - `cron_job`: 149
+  - `cron_job`: 150
   - `table`: 146
   - `trigger`: 78
-  - `view`: 64
+  - `view`: 65
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -3194,6 +3194,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
+### `20260717010000_preco_medio_leadtime_efetivo.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.gerar_pedidos_sugeridos_ciclo` | — |
+
 ### `20260717015000_restaurar_security_invoker_views.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
@@ -3203,6 +3209,30 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `view` | `public.v_sku_parametros_sugeridos` | — |
+
+### `20260717120000_seg_customer_metrics_gate_staff.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `view` | `public.customer_metrics_mv` | — |
+
+### `20260717130000_seg_customer_metrics_acl_least_privilege.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260717154500_refresh_customer_metrics_automacao.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.refresh_customer_metrics` | — |
+| `function` | `public.request_customer_metrics_refresh` | — |
+| `cron_job` | `cron.afiacao_customer_metrics_refresh_6h` | — |
+
+### `20260717160000_data_health_customer_metrics_watchdog.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
 
 ## Próximos passos por status
 
