@@ -25,6 +25,7 @@
 | financeiro (engines A1-A4/DRE/funding, data de baixa/DSO-DPO) | [financeiro.md](docs/agent/financeiro.md) |
 | reposição/compras (motor, cmc-first, portal Sayerlack) | [reposicao.md](docs/agent/reposicao.md) |
 | base de conhecimento (boletim↔SKU, versionamento) | [knowledge-base.md](docs/agent/knowledge-base.md) |
+| tintométrico (fórmula↔receita, preço fail-closed, import) | [tintometrico.md](docs/agent/tintometrico.md) |
 | lente "Ver como" (impersonação, write-guard) | [impersonation.md](docs/agent/impersonation.md) |
 | telefonia (WebRTC, SIP, LGPD) | [telefonia.md](docs/agent/telefonia.md) |
 | skills & MCPs (roteamento canônico) | [skills.md](docs/agent/skills.md) |
