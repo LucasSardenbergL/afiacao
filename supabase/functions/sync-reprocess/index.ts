@@ -16,13 +16,12 @@ import {
   MAX_PAGINAS_POS_ESTOQUE,
   proximoTotalPaginas,
 } from "../_shared/omie-paginacao.ts";
+import { acumularPosicoesDaPagina, type PosicaoEstoque } from "../_shared/pos-estoque.ts";
 import {
-  acumularPosicoesDaPagina,
   chunked,
   particionarCustos,
   planejarEscritaInventario,
   type LinhaProdutoLocal,
-  type PosicaoEstoque,
 } from "./inventory-lote.ts";
 import {
   acumularProdutosDaPagina,

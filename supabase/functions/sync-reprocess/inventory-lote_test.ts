@@ -14,12 +14,11 @@
 // N+1 (existing.estoque !== saldo, null incluso), (b) ambíguo degrada para null e NÃO escreve
 // estoque/custo no produto errado (precisão > recall), (c) update de custo com payload MÍNIMO
 // (não sobrescreve cost_price/cost_source/cost_confidence — proveniência é do computeCosts).
+import type { PosicaoEstoque } from "../_shared/pos-estoque.ts";
 import {
-  acumularPosicoesDaPagina,
   chunked,
   particionarCustos,
   planejarEscritaInventario,
-  type PosicaoEstoque,
 } from "./inventory-lote.ts";
 
 function assertEquals(a: unknown, b: unknown, msg?: string) {
@@ -29,73 +28,6 @@ function assertEquals(a: unknown, b: unknown, msg?: string) {
 }
 
 const NOW = "2026-07-16T12:00:00.000Z";
-
-// ════════ acumularPosicoesDaPagina — normalização do ListarPosEstoque ════════
-
-Deno.test("acumular — posição válida entra normalizada; retorna quantos válidos", () => {
-  const pos = new Map<number, PosicaoEstoque>();
-  const n = acumularPosicoesDaPagina(pos, [
-    { nCodProd: 10, nSaldo: 5, nCMC: 2.5, nPrecoMedio: 3 },
-  ]);
-  assertEquals(n, 1);
-  assertEquals(pos.get(10), { saldo: 5, cmc: 2.5, precoMedio: 3 });
-});
-
-Deno.test("acumular — nCodProd string numérica normaliza para chave number", () => {
-  const pos = new Map<number, PosicaoEstoque>();
-  acumularPosicoesDaPagina(pos, [{ nCodProd: "77", nSaldo: 1, nCMC: 1, nPrecoMedio: 1 }]);
-  assertEquals(pos.has(77), true);
-  assertEquals(pos.size, 1);
-});
-
-Deno.test("acumular — código inválido (0/negativo/fracional/não-numérico/ausente) é descartado", () => {
-  const pos = new Map<number, PosicaoEstoque>();
-  const n = acumularPosicoesDaPagina(pos, [
-    { nCodProd: 0, nSaldo: 1 },
-    { nCodProd: -2, nSaldo: 1 },
-    { nCodProd: 1.5, nSaldo: 1 },
-    { nCodProd: "abc", nSaldo: 1 },
-    { nSaldo: 1 },
-  ]);
-  assertEquals(n, 0);
-  assertEquals(pos.size, 0); // Number(undefined)=NaN / Number("")=0 nunca viram entrada
-});
-
-// ⚠️ Fabricação CONSCIENTE (não é violação do "ausente ≠ zero"): o N+1 atual já faz
-// nSaldo/nCMC/nPrecoMedio `?? 0` — no ListarPosEstoque a posição VEIO na resposta; campo
-// ausente = posição zerada no Omie, não "dado indisponível". O gate money-path real está
-// adiante: cmc<=0 NÃO vira candidato a product_costs (nunca fabrica custo zero).
-Deno.test("acumular — campos ausentes viram 0 (comportamento preservado do N+1, deliberado)", () => {
-  const pos = new Map<number, PosicaoEstoque>();
-  acumularPosicoesDaPagina(pos, [{ nCodProd: 5 }]);
-  assertEquals(pos.get(5), { saldo: 0, cmc: 0, precoMedio: 0 });
-});
-
-Deno.test("acumular — mesmo código em páginas sucessivas: last-wins (dedupe p/ upsert em lote)", () => {
-  const pos = new Map<number, PosicaoEstoque>();
-  acumularPosicoesDaPagina(pos, [{ nCodProd: 9, nSaldo: 1, nCMC: 1, nPrecoMedio: 1 }]);
-  acumularPosicoesDaPagina(pos, [{ nCodProd: 9, nSaldo: 4, nCMC: 2, nPrecoMedio: 2 }]);
-  assertEquals(pos.get(9), { saldo: 4, cmc: 2, precoMedio: 2 });
-  assertEquals(pos.size, 1); // duplicata no MESMO statement de upsert quebraria (21000)
-});
-
-// Drift de contrato (Codex P2): um único valor não-numérico (NaN/±Inf/lixo) derrubaria o
-// chunk INTEIRO de 500 no Postgres; no N+1 o dano era restrito àquele produto. Descarta o
-// ITEM (fiel em efeito: produto não atualizado neste ciclo), nunca fabrica 0 de lixo.
-Deno.test("acumular — nSaldo/nCMC/nPrecoMedio não-finito descarta o ITEM, não o lote", () => {
-  const pos = new Map<number, PosicaoEstoque>();
-  const n = acumularPosicoesDaPagina(pos, [
-    { nCodProd: 1, nSaldo: Number.NaN },
-    { nCodProd: 2, nCMC: Number.POSITIVE_INFINITY },
-    { nCodProd: 3, nSaldo: "lixo" as unknown as number },
-    { nCodProd: 4, nSaldo: "5.5" as unknown as number }, // string numérica coage normal
-  ]);
-  assertEquals(n, 1);
-  assertEquals(pos.has(1), false);
-  assertEquals(pos.has(2), false);
-  assertEquals(pos.has(3), false);
-  assertEquals(pos.get(4), { saldo: 5.5, cmc: 0, precoMedio: 0 });
-});
 
 // ════════ chunked ════════
 

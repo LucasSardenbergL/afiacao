@@ -6,6 +6,7 @@ import { montarUpsertsDeCusto } from "../_shared/cost-compute.ts";
 import { recomporCustoProducao } from "../_shared/recompor-custo-producao.ts";
 import { buildProductIdMap, montarCatalogoPorCod } from "../_shared/product-idmap.ts";
 import { avaliarPagina, MAX_PAGINAS_POS_ESTOQUE, proximoTotalPaginas } from "../_shared/omie-paginacao.ts";
+import { acumularPosicoesDaPagina, type PosicaoEstoque } from "../_shared/pos-estoque.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -788,7 +789,7 @@ async function syncInventory(db: SupabaseClient, account: OmieAccount) {
     // 1) COLETA todas as páginas do Omie em memória (dedupe last-wins por código).
     //    Antes: ~4 writes PostgREST POR produto (N+1) → ~3M statements e saturava o disk IO.
     //    Agora: acumula e escreve em LOTE (upsert chunked), o padrão que o resto deste arquivo já usa.
-    const posicoes = new Map<number, { saldo: number; cmc: number; precoMedio: number }>();
+    const posicoes = new Map<number, PosicaoEstoque>();
     while (pagina <= totalPaginas) {
       const result = (await callOmie(account, "estoque/consulta/", "ListarPosEstoque", {
         nPagina: pagina,
@@ -811,15 +812,10 @@ async function syncInventory(db: SupabaseClient, account: OmieAccount) {
       }
       if (veredicto === "fim") break;
 
-      for (const prod of produtos) {
-        const codProd = Number(prod.nCodProd); // normaliza: a API Omie pode devolver string; a chave do idMap é number
-        if (!Number.isSafeInteger(codProd) || codProd <= 0) continue;
-        posicoes.set(codProd, {
-          saldo: prod.nSaldo ?? 0,
-          cmc: prod.nCMC ?? 0,
-          precoMedio: prod.nPrecoMedio ?? 0,
-        });
-      }
+      // Normalização compartilhada (_shared/pos-estoque.ts): código inválido fora, valor
+      // não-finito descarta o ITEM (um único malformado derrubaria o chunk de 500 com 22P02),
+      // dedupe last-wins por código (repetido no MESMO statement de upsert daria 21000).
+      acumularPosicoesDaPagina(posicoes, produtos);
 
       console.log(`[Sync ${account}] Estoque página ${pagina}/${totalPaginas} (${produtos.length})`);
       pagina++;
@@ -888,6 +884,7 @@ async function syncInventory(db: SupabaseClient, account: OmieAccount) {
         synced_at: nowIso,
       };
     });
+    let upsertsPosicao = 0;
     for (const chunk of chunked(invRows, 500)) {
       const { error } = await db
         .from("inventory_position")
@@ -895,7 +892,18 @@ async function syncInventory(db: SupabaseClient, account: OmieAccount) {
       if (error) {
         falhasChunk++;
         console.error(`[Sync ${account}] upsert inventory_position:`, error);
+      } else {
+        upsertsPosicao += chunk.length;
       }
+    }
+    // Falha TOTAL da tabela primária ≠ sucesso parcial (Codex P1, espelho do sync-reprocess):
+    // se NENHUM chunk escreveu, a infra PostgREST está degradada — abortar antes de
+    // estoque/custos (status 'error' honesto via catch) em vez de 'complete' com a fonte do
+    // cockpit/EOQ integralmente stale.
+    if (invRows.length > 0 && upsertsPosicao === 0) {
+      throw new Error(
+        `todos os ${chunked(invRows, 500).length} chunk(s) de inventory_position falharam — abortando antes de estoque/custos`,
+      );
     }
 
     // 4) omie_products.estoque — upsert em LOTE por (omie_codigo_produto, account=EMPRESA).
@@ -1047,19 +1055,13 @@ async function syncInventoryFull(db: SupabaseClient, account: OmieAccount) {
       console.warn(`[Sync ${account}] ${ambiguos} código(s) ambíguo(s) em omie_products(${empresa}) — product_id nulificado (esperado 0 com filtro account-aware)`);
     }
 
-    // 2) Paginar ListarPosEstoque com cExibeTodos:"S" (callOmie já tem retry/backoff p/ falha transitória)
+    // 2) Paginar ListarPosEstoque com cExibeTodos:"S" (callOmie já tem retry/backoff p/ falha
+    //    transitória). Coleta em Map (_shared/pos-estoque.ts, Codex P2×2): dedupe last-wins
+    //    por código (repetido no MESMO chunk de upsert daria 21000 — o array antigo deixava
+    //    passar) + valor não-finito descarta o ITEM (um malformado derrubaria o chunk de 500).
     let pagina = 1;
     let totalPaginas = 1;
-    let totalSynced = 0;
-    const invRows: Array<{
-      omie_codigo_produto: number;
-      product_id: string | null;
-      saldo: number;
-      cmc: number;
-      preco_medio: number;
-      account: string;
-      synced_at: string;
-    }> = [];
+    const posicoes = new Map<number, PosicaoEstoque>();
     while (pagina <= totalPaginas) {
       const result = (await callOmie(account, "estoque/consulta/", "ListarPosEstoque", {
         nPagina: pagina,
@@ -1080,26 +1082,25 @@ async function syncInventoryFull(db: SupabaseClient, account: OmieAccount) {
         throw new Error(`página ${pagina}/${totalPaginas} do ListarPosEstoque (full) veio vazia antes do fim declarado — abortando (retrato parcial)`);
       }
       if (veredicto === "fim") break;
-      const now = new Date().toISOString();
-      for (const prod of produtos) {
-        const codProd = Number(prod.nCodProd); // normaliza: a API Omie pode devolver string; a chave do idMap é number
-        if (!Number.isSafeInteger(codProd) || codProd <= 0) continue;
-        invRows.push({
-          omie_codigo_produto: codProd,
-          product_id: idMap.get(codProd) ?? null,
-          saldo: prod.nSaldo ?? 0,
-          cmc: prod.nCMC ?? 0,
-          preco_medio: prod.nPrecoMedio ?? 0,
-          account,
-          synced_at: now,
-        });
-        totalSynced++;
-      }
-      console.log(`[Sync ${account}] inventory_full página ${pagina}/${totalPaginas} — ${totalSynced} itens acumulados`);
+      acumularPosicoesDaPagina(posicoes, produtos);
+      console.log(`[Sync ${account}] inventory_full página ${pagina}/${totalPaginas} — ${posicoes.size} itens acumulados`);
       pagina++;
     }
 
-    // 3) Upsert em lote (chunks de 500) — onConflict igual ao syncInventory
+    // 3) Upsert em lote (chunks de 500) — onConflict igual ao syncInventory. synced_at único
+    //    capturado APÓS a coleta (mesma janela curta do syncInventory); total_synced passa a
+    //    contar posições ÚNICAS (dedupe), consistente com o syncInventory.
+    const now = new Date().toISOString();
+    const invRows = [...posicoes.entries()].map(([cod, p]) => ({
+      omie_codigo_produto: cod,
+      product_id: idMap.get(cod) ?? null,
+      saldo: p.saldo,
+      cmc: p.cmc,
+      preco_medio: p.precoMedio,
+      account,
+      synced_at: now,
+    }));
+    const totalSynced = invRows.length;
     const CHUNK = 500;
     for (let i = 0; i < invRows.length; i += CHUNK) {
       const slice = invRows.slice(i, i + CHUNK);
