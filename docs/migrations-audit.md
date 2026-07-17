@@ -21,8 +21,8 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **367** custom migrations totais
-- **1316** objetos esperados (criados por estas migrations)
+- **369** custom migrations totais
+- **1319** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 367
   - `rls_policy`: 293
@@ -30,7 +30,7 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
   - `cron_job`: 149
   - `table`: 144
   - `trigger`: 78
-  - `view`: 60
+  - `view`: 63
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -3149,6 +3149,19 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `cron_job` | `cron.sayerlack-captura-precos-mensal` | — |
 | `rls_policy` | `public.sku_preco_captura_run_select_staff` | `sku_preco_captura_run` |
 | `rls_policy` | `public.sku_preco_captura_run_item_select_staff` | `sku_preco_captura_run_item` |
+
+### `20260716180000_leadtime_efetivo_dedup_nfe.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `view` | `public.v_sku_leadtime_efetivo` | — |
+| `view` | `public.v_sku_leadtime_estatisticas` | — |
+
+### `20260716230000_sla_compliance_le_leadtime_efetivo.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `view` | `public.v_sku_sla_compliance` | — |
 
 ## Próximos passos por status
 
