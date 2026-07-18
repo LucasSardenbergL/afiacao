@@ -104,7 +104,12 @@ BEGIN
   -- ⚠️ NUNCA gatear por auth.role()='service_role' — o pg_cron roda como postgres SEM JWT (auth.role()=NULL)
   -- e o gate mataria o cron em SILÊNCIO (reposicao.md: mordido 2x, migrations 20260627130000/20260627200000).
   IF (SELECT auth.uid()) IS NOT NULL
-     AND NOT (SELECT public.pode_ver_carteira_completa((SELECT auth.uid()))) THEN
+     -- ⚠️ IS NOT TRUE, não NOT(...): pode_ver_carteira_completa() é TRI-STATE. Para um `employee` SEM linha
+     -- em commercial_roles ela retorna NULL, e `NOT NULL` = NULL — o IF não entrava e a SECURITY DEFINER
+     -- ENTREGAVA TUDO (protocolo, fornecedor, JSON cru). Bypass real (Codex v11), e viola o fail-closed do
+     -- CLAUDE.md ("query de role falha → role null, approval false"). IS NOT TRUE trata NULL como negado e
+     -- preserva o uid NULL do cron, que é barrado antes pelo primeiro AND.
+     AND (SELECT public.pode_ver_carteira_completa((SELECT auth.uid()))) IS NOT TRUE THEN
     RAISE EXCEPTION 'reposicao_pos_candidatos: acesso negado' USING ERRCODE = '42501';
   END IF;
 
@@ -183,7 +188,10 @@ BEGIN
       -- nunca foi visto — a linha pode ter sido apagada/reconstruída (Codex v10). "Nunca" é afirmação de
       -- histórico, e histórico esta RPC não consulta.
       WHEN b.visto_run_id IS NULL                                THEN 'sem_registro_last_seen'
-      ELSE 'visto_em_run_anterior'
+      -- 'outro_run', não 'anterior': a RPC só prova `run_id <> marcador`. O outro run pode ser POSTERIOR
+      -- (seq maior, ainda não promovido a marcador) ou um UUID sem linha na tabela de runs (Codex v11).
+      -- Afirmar "anterior" seria temporalidade não apurada.
+      ELSE 'visto_em_outro_run'
     END AS visto_status,
     -- SINAL FRACO: o sync do tracking é upsert-only (nunca remove) → ausência do espelho NÃO prova exclusão.
     b.po_no_espelho,

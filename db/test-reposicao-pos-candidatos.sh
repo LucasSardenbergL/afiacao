@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ╔══════════════════════════════════════════════════════════════════════════════╗
 # ║  PROVA PG17 — reposicao_pos_candidatos (detector de PO excluído, NÃO-MUTANTE)  ║
-# ║  Migration: supabase/migrations/20260721120000_reposicao_pos_candidatos.sql    ║
+# ║  Migration: supabase/migrations/20260721190000_reposicao_pos_candidatos.sql    ║
 # ║  Rode: bash db/test-reposicao-pos-candidatos.sh > /tmp/t.log 2>&1; echo $?     ║
 # ║        (NÃO pipe pra tail — engole o exit code)                                 ║
 # ║                                                                                ║
@@ -23,7 +23,7 @@ PORT="${PGPORT_TEST:-5477}"
 SLUG="reposicao-pos-candidatos"
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
 export LC_ALL=C LANG=C
-MIG="$REPO_ROOT/supabase/migrations/20260721120000_reposicao_pos_candidatos.sql"
+MIG="$REPO_ROOT/supabase/migrations/20260721190000_reposicao_pos_candidatos.sql"
 
 [ -x "$PGBIN/initdb" ] || { echo "postgresql@${PGVER} ausente: brew install postgresql@${PGVER}"; exit 1; }
 CELLAR="$(brew --prefix "postgresql@${PGVER}")"
@@ -102,6 +102,9 @@ INSERT INTO auth.users(id) VALUES
   ('33333333-3333-3333-3333-333333333333'),  -- master (staff)
   ('44444444-4444-4444-4444-444444444444');  -- customer (não-staff)
 INSERT INTO public.user_roles(user_id, role) VALUES ('33333333-3333-3333-3333-333333333333','master');
+-- Codex v11: employee SEM linha em commercial_roles -> pode_ver_carteira_completa() retorna NULL (tri-state)
+INSERT INTO auth.users(id) VALUES ('66666666-6666-6666-6666-666666666666');
+INSERT INTO public.user_roles(user_id, role) VALUES ('66666666-6666-6666-6666-666666666666','employee');
 SQL
 
 # ── ZONA 2: migration REAL ──
@@ -248,7 +251,7 @@ eq "E2 aceita a empresa em caixa/espaço divergentes (upper+btrim)" "$(Pq -c "SE
 echo "── Bloco B: quem é candidato ──"
 eq "B1 candidatos = todos os não-vistos no marcador" "$(cand)" "101,102,103,104,105,110,111,112,113,114,115,116,117,118,119,120,121,122,123,124,130,131,132,133,134,135,136,139,140,141,142,146,147,151,160,161,162,163,164,165,166,167,168,170,171,172,173,174,175"
 eq "B2 PO visto NO marcador NÃO é candidato (100 fora)" "$(Pq -c "SELECT count(*) FROM public.reposicao_pos_candidatos('OBEN') WHERE pedido_id=100;" | tail -1)" "0"
-eq "B3 visto em run ANTERIOR é candidato, marcado como tal" "$(campo 101 visto_status)" "visto_em_run_anterior"
+eq "B3 visto em run ANTERIOR é candidato, marcado como tal" "$(campo 101 visto_status)" "visto_em_outro_run"
 eq "B4 NUNCA carimbado é candidato, marcado como tal" "$(campo 102 visto_status)" "sem_registro_last_seen"
 eq "B5 status fora do alvo (concluido_recebido) não entra" "$(Pq -c "SELECT count(*) FROM public.reposicao_pos_candidatos('OBEN') WHERE pedido_id=106;" | tail -1)" "0"
 eq "B6 pedido sem PO / PO vazio não entra" "$(Pq -c "SELECT count(*) FROM public.reposicao_pos_candidatos('OBEN') WHERE pedido_id IN (107,108);" | tail -1)" "0"
@@ -324,6 +327,19 @@ eq "N9 itens_sem_valor e POR PEDIDO (2 nulos aqui)" "$(campo 175 itens_sem_valor
 eq "N10 pedido SEM item nulo tem itens_sem_valor=0 (mata a subquery descorrelacionada)" "$(campo 167 itens_sem_valor)" "0"
 eq "N11 campos CRUS retornados: 'sucesso' e 'sem sucesso' sao distinguiveis" "$(campo 104 status_envio_portal)|$(campo 132 status_envio_portal)" "sucesso_portal|sem sucesso"
 
+echo "── Bloco O: BYPASS do gate por NULL + campos crus (Codex v11) ──"
+# pode_ver_carteira_completa() e TRI-STATE: employee SEM commercial_role retorna NULL. Com `NOT NULL` = NULL
+# o IF nao entrava e a SECURITY DEFINER entregava TUDO. Este e o unico furo de SEGURANCA do PR.
+R=$(P -tA 2>&1 <<'SQL' || true
+SET test.uid='66666666-6666-6666-6666-666666666666';
+DO $$ BEGIN PERFORM * FROM public.reposicao_pos_candidatos('OBEN'); RAISE EXCEPTION 'BYPASS';
+EXCEPTION WHEN insufficient_privilege THEN RAISE NOTICE 'DENY_OK'; END $$;
+SQL
+)
+case "$R" in *DENY_OK*) ok "O1 employee SEM commercial_role (role NULL) e BARRADO — sem bypass por tri-state";; *) bad "O1 BYPASS: $R";; esac
+eq "O2 campo cru portal_protocolo e retornado (mata b.portal_protocolo -> NULL::text)" "$(campo 103 portal_protocolo)" "2097501"
+eq "O3 campo cru resposta_canal e retornado (mata b.resposta_canal -> NULL::jsonb)" "$(Pq -c "SELECT (resposta_canal->>'fornecedor_notificado') FROM public.reposicao_pos_candidatos('OBEN') WHERE pedido_id=103;" | tail -1)" "true"
+
 echo "── Bloco A: marcador FAIL-CLOSED ──"
 P -q -c "UPDATE public.reposicao_pedidos_compra_run SET volume_ok=false;" >/dev/null
 eq "A1 sem run VÁLIDO (todos truncados) → VAZIO (não classifica ninguém)" "$(Pq -c "SELECT count(*) FROM public.reposicao_pos_candidatos('OBEN');" | tail -1)" "0"
@@ -372,7 +388,7 @@ case "$V" in 0) bad "F2 nao vazou (esperava >0)";; *) ok "F2 sem volume_ok, run 
 P -q -f "$MIG" >/dev/null; seed
 
 # F3 — gate por auth.role() (em vez de uid NULL-aware) MATA o cron SQL-local.
-saboto_real2 "s/IF (SELECT auth.uid()) IS NOT NULL/IF auth.role() IS DISTINCT FROM 'service_role' THEN --/" "s/AND NOT (SELECT public.pode_ver_carteira_completa((SELECT auth.uid()))) THEN//"
+saboto_real2 "s/IF (SELECT auth.uid()) IS NOT NULL/IF auth.role() IS DISTINCT FROM 'service_role' THEN --/" "s/AND (SELECT public.pode_ver_carteira_completa((SELECT auth.uid()))) IS NOT TRUE THEN//"
 R=$(P -tA 2>&1 <<'SQL' || true
 DO $$ BEGIN PERFORM * FROM public.reposicao_pos_candidatos('OBEN'); RAISE NOTICE 'CRON_OK';
 EXCEPTION WHEN insufficient_privilege THEN RAISE NOTICE 'CRON_MORREU'; END $$;
@@ -389,6 +405,19 @@ case "$V" in 20) bad "F6 nao vazou (marcador ainda seq=20)";; "") bad "F6 inconc
 P -q -f "$MIG" >/dev/null
 
 
+
+# F9 — o BYPASS por tri-state: voltando p/ `NOT (...)`, o employee sem commercial_role (role NULL) passa.
+saboto_real "s/IS NOT TRUE THEN/IS NOT TRUE OR TRUE THEN/"
+P -q -f "$MIG" >/dev/null   # (restaura antes: a sabotagem acima e no sentido oposto, so p/ garantir estado)
+saboto_real "s/AND (SELECT public.pode_ver_carteira_completa((SELECT auth.uid()))) IS NOT TRUE THEN/AND NOT (SELECT public.pode_ver_carteira_completa((SELECT auth.uid()))) THEN/"
+R=$(P -tA 2>&1 <<'SQL' || true
+SET test.uid='66666666-6666-6666-6666-666666666666';
+DO $$ BEGIN PERFORM * FROM public.reposicao_pos_candidatos('OBEN'); RAISE NOTICE 'BYPASS_VAZOU';
+EXCEPTION WHEN insufficient_privilege THEN RAISE NOTICE 'AINDA_BARRA'; END $$;
+SQL
+)
+case "$R" in *BYPASS_VAZOU*) ok "F9 com NOT(...) o employee-role-NULL ENTRA (bypass) — O1 tem dente";; *) bad "F9 nao vazou ($R)";; esac
+P -q -f "$MIG" >/dev/null
 
 echo "──────────────────────────────"
 echo "RESULTADO: $PASS ok / $FAIL fail"
