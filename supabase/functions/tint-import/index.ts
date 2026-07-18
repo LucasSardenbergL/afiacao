@@ -551,6 +551,36 @@ serve(async (req) => {
   const auth = await authorizeCronOrStaff(req);
   if (!auth.ok) return auth.response;
 
+  // ══════════════════════════════════════════════════════════════════════════════
+  // APOSENTADO — 410 Gone (FASE 1b money-path, 2026-07-17).
+  // O import CSV manual saiu do frontend no #1314 (12/07: removidos TintImport/
+  // ImportCard/useDirectTintImport/preflight-files) e NÃO tem mais nenhum chamador.
+  // Medido em prod antes de fechar: 0 invocações desde o #1314 (última linha
+  // não-`sync_agent` em tint_importacoes é de 2026-04-17), 0 crons apontando pra cá,
+  // 0 imports em andamento. O writer VIVO do catálogo é `tint_promote_sync_run`
+  // (via tint-sync-agent), que ganhou a fronteira fail-closed por-linha na migration
+  // 20260717163000_tint_promote_fail_closed_receita_parcial.sql.
+  //
+  // POR QUE 410 EM VEZ DE CONSERTAR: `processFormulas` carrega o MESMO fail-open de
+  // receita PARCIAL do promote — um slot com corante presente e qtd inválida é PULADO
+  // (:282-294) em vez de rejeitar a linha, e o delete+insert de itens (:325-327) não é
+  // transacional (erro só em console.error). Manter uma via de ESCRITA money-path capaz
+  // de corromper receita EM SILÊNCIO, sem nenhum consumidor, é superfície pura:
+  // precisão > recall manda FECHAR, não remendar. O 410 torna qualquer dependência
+  // oculta VISÍVEL (erro explícito) em vez de deixá-la corromper dado silenciosamente.
+  //
+  // SE O IMPORT MANUAL VOLTAR A SER REQUISITO: implemente o fail-closed por-linha
+  // (all-or-nothing por fórmula, como o Guard 4 do promote) ANTES de remover este 410 —
+  // não reative o writer antigo direto. O código abaixo fica inalcançável de propósito.
+  // Decisão validada por Codex (gpt-5.6-sol) + fatos de prod. docs/agent/tintometrico.md.
+  // ══════════════════════════════════════════════════════════════════════════════
+  console.log(`[tint-import] 410 RETIRED — method=${req.method} content-type=${req.headers.get("content-type") ?? "-"}`);
+  return new Response(JSON.stringify({
+    error: "tint-import foi aposentado",
+    code: "TINT_IMPORT_RETIRED",
+    detail: "O catálogo tintométrico é alimentado pelo sync SayerSystem (tint-sync-agent → tint_promote_sync_run). O import CSV manual foi removido no #1314.",
+  }), { status: 410, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;

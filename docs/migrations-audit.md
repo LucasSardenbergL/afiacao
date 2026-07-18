@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **385** custom migrations totais
-- **1342** objetos esperados (criados por estas migrations)
+- **388** custom migrations totais
+- **1344** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 381
+  - `function`: 383
   - `rls_policy`: 295
   - `index`: 223
   - `cron_job`: 150
@@ -3240,6 +3240,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public._data_health_compute` | — |
 
+### `20260717163000_tint_promote_fail_closed_receita_parcial.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tint_promote_sync_run` | — |
+
 ### `20260717181500_carteira_visivel_para_filtra_eligible.sql`
 
 | Tipo | Objeto | Parent |
@@ -3255,11 +3261,21 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
+### `20260718100000_filas_recalc_rls_master_only.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
 ### `20260718120000_pot_nid_receb_retencao.sql`
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `index` | `public.idx_pot_backfill_nid_receb` | `purchase_orders_tracking` |
+
+### `20260718140000_tint_promote_guard4_v3.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tint_promote_sync_run` | — |
 
 ## Próximos passos por status
 
