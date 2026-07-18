@@ -21,16 +21,16 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **371** custom migrations totais
-- **1329** objetos esperados (criados por estas migrations)
+- **392** custom migrations totais
+- **1353** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 372
+  - `function`: 391
   - `rls_policy`: 295
-  - `index`: 222
-  - `cron_job`: 149
+  - `index`: 223
+  - `cron_job`: 150
   - `table`: 146
-  - `trigger`: 78
-  - `view`: 63
+  - `trigger`: 79
+  - `view`: 65
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -3169,6 +3169,13 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `view` | `public.v_sku_leadtime_efetivo` | — |
 | `view` | `public.v_sku_leadtime_estatisticas` | — |
 
+### `20260716200000_reposicao_recompute_leadtime_derivado.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.leadtime_t1_e_data_de_pedido` | — |
+| `function` | `public.recomputar_leadtime_derivado` | — |
+
 ### `20260716230000_sla_compliance_le_leadtime_efetivo.sql`
 
 | Tipo | Objeto | Parent |
@@ -3182,6 +3189,121 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.detectar_outliers_empresa` | — |
 | `function` | `public.estimar_impacto_exclusao_outlier` | — |
 | `function` | `public.resolver_outlier` | — |
+
+### `20260717010000_drop_reprocessar_sku_items_via_raw_data.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260717010000_preco_medio_leadtime_efetivo.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.gerar_pedidos_sugeridos_ciclo` | — |
+
+### `20260717015000_restaurar_security_invoker_views.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260717020000_precos_compra_leadtime_efetivo.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `view` | `public.v_sku_parametros_sugeridos` | — |
+
+### `20260717020000_reposicao_exclusao_outlier_remover.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.resolver_outlier` | — |
+
+### `20260717120000_seg_customer_metrics_gate_staff.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `view` | `public.customer_metrics_mv` | — |
+
+### `20260717130000_seg_customer_metrics_acl_least_privilege.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260717154500_refresh_customer_metrics_automacao.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.refresh_customer_metrics` | — |
+| `function` | `public.request_customer_metrics_refresh` | — |
+| `cron_job` | `cron.afiacao_customer_metrics_refresh_6h` | — |
+
+### `20260717160000_data_health_customer_metrics_watchdog.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
+
+### `20260717163000_tint_promote_fail_closed_receita_parcial.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tint_promote_sync_run` | — |
+
+### `20260717181500_carteira_visivel_para_filtra_eligible.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.carteira_visivel_para` | — |
+| `function` | `public.minha_carteira` | — |
+
+### `20260718091409_drop_omie_cliente_upsert_mapping_orfa.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260718093248_drop_estimar_impacto_exclusao_outlier_orfa.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260718100000_filas_recalc_rls_master_only.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260718120000_pot_nid_receb_retencao.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `index` | `public.idx_pot_backfill_nid_receb` | `purchase_orders_tracking` |
+
+### `20260718140000_tint_promote_guard4_v3.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tint_promote_sync_run` | — |
+
+### `20260718150000_fu7_helpers_rls_schema_privado.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260718160000_tactical_plans_eligible_fail_closed.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.criar_plano_tatico` | — |
+| `function` | `public.registrar_resultado_plano` | — |
+| `function` | `public.tactical_plan_recusa_cliente_mascarado` | — |
+| `trigger` | `public.trg_tactical_plan_recusa_mascarado` | `farmer_tactical_plans` |
+
+### `20260718170000_fu7_conserta_callers_orfaos.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.criar_plano_tatico` | — |
+| `function` | `public.registrar_resultado_plano` | — |
+| `function` | `public.registrar_contato_rota` | — |
+| `function` | `public.protect_master_config` | — |
+
+### `20260718170000_tint_fase1c_expected_item_count.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tint_promote_sync_run` | — |
 
 ## Próximos passos por status
 

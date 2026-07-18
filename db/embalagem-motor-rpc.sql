@@ -92,11 +92,26 @@ BEGIN
       )
     GROUP BY pcs2.empresa, pci.sku_codigo_omie
   ),
+  -- [DEDUP-NFE] 1 obs por (empresa, NFe, SKU); antes: 1 por LINHA de sku_leadtime_history, o que
+  -- ponderava o AVG pela multiplicidade (NFe que fatura N pedidos regravava o item N×).
+  -- [2 CONSUMIDORES] O filtro de preço saiu do WHERE e virou FILTER na agregação — de propósito.
+  -- Esta CTE serve a DOIS consumidores, que fazem perguntas DIFERENTES:
+  --   · preco_unitario → "quanto custou?"  ⇒ agrega só a obs precificável (FILTER). Sem nenhuma
+  --     ⇒ NULL, e o COALESCE(cmc, …) decide. Ausente ≠ zero.
+  --   · n (lido SÓ como `pm.n IS NULL` ⇒ primeira_compra) → "já foi comprado?" ⇒ conta TODA obs.
+  --     COMPRAR ≠ SABER QUANTO CUSTOU. Com o filtro no WHERE, a obs cuja quantidade a view NULLa
+  --     (cópias divergem) derrubaria o SKU INTEIRO da CTE ⇒ o badge mentiria "primeira compra"
+  --     num SKU já comprado. Não é hipótese: medido ZERO no pré-flight e DOIS poucas horas
+  --     depois, na MESMA sessão — o resíduo se move (o sync grava). Com o FILTER, o conjunto de
+  --     primeira_compra fica IDÊNTICO ao de hoje (medido nos dois sentidos: nenhum SKU entra,
+  --     nenhum sai), enquanto o preço passa a ser o deduplicado. É o único ponto em que esta
+  --     migration se afasta do "trocar só o FROM" — e é o que a impede de trocar viés por mentira.
   preco_medio AS (
     SELECT slh.empresa::text AS empresa, slh.sku_codigo_omie::text AS sku_codigo_omie,
-           AVG(slh.valor_total / NULLIF(slh.quantidade_recebida, 0)) AS preco_unitario, COUNT(*) AS n
-    FROM sku_leadtime_history slh
-    WHERE slh.quantidade_recebida > 0 AND slh.valor_total > 0
+           AVG(slh.valor_total / NULLIF(slh.quantidade_recebida, 0))
+             FILTER (WHERE slh.quantidade_recebida > 0 AND slh.valor_total > 0) AS preco_unitario,
+           COUNT(*) AS n
+    FROM v_sku_leadtime_efetivo slh
     GROUP BY slh.empresa, slh.sku_codigo_omie
   ),
   -- ── EMBALAGEM (novo) ─────────────────────────────────────────────────────────────────────

@@ -4,6 +4,24 @@ import { supabase } from '@/integrations/supabase/client';
 
 export type CommercialRole = 'operacional' | 'gerencial' | 'estrategico' | 'super_admin';
 
+/**
+ * 🔐 Trava do contrato de autorização gerencial (E1 do FU4 — ver spec de 2026-07-18).
+ *
+ * Os papéis gerenciais acionam `pode_ver_carteira_completa` no banco, que NÃO é o gate da
+ * carteira: medido em prod 2026-07-18, ele gateia **64 policies em 34 tabelas** — incluindo
+ * ESCRITA em `cliente_tier_preco` (tier de preço do cliente) e `venda_excecao_credito`
+ * (aprovação de crédito), e LEITURA de `cmc_ledger` (custo médio) e `markup_policy`.
+ * Conceder um papel gerencial hoje entrega preço + crédito + custo junto, de uma vez.
+ *
+ * Enquanto a matriz de capability por recurso×ação (E2) não existir no BANCO, o app trata
+ * esses papéis como NÃO concedidos, mesmo que a linha exista em `commercial_roles` — o dado
+ * é preservado, a capability não. Fail-closed por construção.
+ *
+ * A E2 vira isto para `true` na MESMA migration que habilita o papel no banco. Não vire
+ * antes: sem a migration aplicada, isto reabre o furo silenciosamente.
+ */
+const CONTRATO_GERENCIAL_ATIVO: boolean = false;
+
 interface UseCommercialRoleReturn {
   commercialRole: CommercialRole | null;
   isSuperAdmin: boolean;
@@ -66,8 +84,9 @@ export function useCommercialRole(): UseCommercialRoleReturn {
     isEstrategico,
     isGerencial,
     isOperacional,
-    canViewStrategic: isSuperAdmin || isEstrategico,
-    canViewManagerial: isSuperAdmin || isEstrategico || isGerencial,
+    // Gateados pela trava acima: o papel no banco não basta enquanto a E2 não existir.
+    canViewStrategic: CONTRATO_GERENCIAL_ATIVO && (isSuperAdmin || isEstrategico),
+    canViewManagerial: CONTRATO_GERENCIAL_ATIVO && (isSuperAdmin || isEstrategico || isGerencial),
     loading,
     refetch: fetchRole,
   };

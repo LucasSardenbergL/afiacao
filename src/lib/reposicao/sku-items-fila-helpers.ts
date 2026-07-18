@@ -95,3 +95,116 @@ export function skuItemsDedupPorRecebimento<T extends { id: string; nIdReceb: st
   return out;
 }
 // MIRROR-END
+
+// ─── Agregação de itens de NFe por (tracking, sku) antes do upsert ───
+// ESPELHADO verbatim na edge omie-sync-sku-items (bloco sku-items-agregacao abaixo);
+// paridade provada em src/__tests__/edge-money-path-invariants.test.ts.
+// MIRROR-START sku-items-agregacao
+export interface ItemRecebimentoResolvido {
+  tracking_id: string;
+  sku_codigo_omie: number;
+  sku_codigo: string | null;
+  sku_descricao: string | null;
+  sku_unidade: string | null;
+  sku_ncm: string | null;
+  fornecedor_codigo_omie: number | null;
+  fornecedor_nome: string | null;
+  grupo_leadtime: string | null;
+  quantidade_pedida: number | null;
+  quantidade_recebida: number | null;
+  valor_unitario: number | null;
+  valor_total: number | null;
+  t1_data_pedido: string;
+  /** Proveniência do t1: true = veio do PEDIDO casado (nNumPedCompra → tracking do pedido);
+   *  false = fallback para o t2 da própria NFe. Sem isto, dois itens do mesmo SKU com
+   *  proveniências distintas caem no mesmo bucket e o t1 emitido dependeria da ORDEM da
+   *  resposta da Omie. */
+  t1_de_pedido: boolean;
+  t2_data_faturamento: string;
+  t3_data_cte: string | null;
+  t4_data_recebimento: string | null;
+}
+
+export interface ItemRecebimentoAgregado extends ItemRecebimentoResolvido {
+  /** Quantos itens crus da NFe foram fundidos neste (tracking, sku). 1 = caso comum. */
+  n_itens_agregados: number;
+  /** true = o bucket mistura itens com t1 DIFERENTE (proveniências distintas). Não dá para
+   *  saber qual t1 vale, e leadtime derivado de t1 errado é exatamente o defeito que o #1365
+   *  matou → o chamador grava lt_* = NULL em vez de escolher. Medido em prod (psql-ro
+   *  2026-07-18): 40 itens / 12 trackings casam o PRÓPRIO tracking e podem produzir bucket
+   *  misto. [Codex xhigh, bloqueador] */
+  t1_ambiguo: boolean;
+}
+
+/** Soma COMPLETO-ou-NULL para campo aditivo money-path: qualquer parcela ausente anula o
+ *  total. Somar só o que existe faria o total representar um SUBCONJUNTO e o consumidor
+ *  (AVG(valor_total/NULLIF(quantidade_recebida,0)) com filtro qr>0 AND vt>0) o aceitaria
+ *  como se fosse a compra inteira — fabricando um preço que nenhum item real teve
+ *  (vt=100/qr=null + vt=null/qr=10 → par (100,10), preço 10). [Codex xhigh, bloqueador] */
+function somaCompletaOuNull(valores: readonly (number | null)[]): number | null {
+  if (valores.length === 0) return null;
+  let soma = 0;
+  for (const v of valores) {
+    if (v === null) return null;
+    soma += v;
+  }
+  return soma;
+}
+
+/** valor_unitario agregado = média PONDERADA por quantidade_pedida (não AVG simples — o
+ *  achado de 2ª ordem da função dropada #1373), FAIL-CLOSED: só pondera se TODO item do
+ *  grupo tiver vu presente e qp > 0. Peso ausente, zero ou negativo → null, nunca um preço
+ *  derivado de peso inválido (vu=100/qp=-1 + vu=10/qp=2 daria -80) nem média de subconjunto
+ *  apresentada como média do grupo. [Codex xhigh] */
+function valorUnitarioPonderado(itens: readonly ItemRecebimentoResolvido[]): number | null {
+  if (itens.length === 0) return null;
+  let numerador = 0;
+  let pesoTotal = 0;
+  for (const i of itens) {
+    if (i.valor_unitario === null) return null;
+    if (i.quantidade_pedida === null || !(i.quantidade_pedida > 0)) return null;
+    numerador += i.valor_unitario * i.quantidade_pedida;
+    pesoTotal += i.quantidade_pedida;
+  }
+  if (!(pesoTotal > 0)) return null;
+  return numerador / pesoTotal;
+}
+
+/** Agrega os itens de UMA NFe por (tracking_id, sku_codigo_omie): soma quantidade_pedida,
+ *  quantidade_recebida e valor_total; deriva valor_unitario como média ponderada por qtd;
+ *  toma descritivos e datas do 1º item do grupo (iguais entre itens do mesmo tracking).
+ *
+ *  POR QUE existe: o writer fazia 1 upsert por item com onConflict (tracking_id,
+ *  sku_codigo_omie). SKU repetido na NFe caindo no mesmo tracking → o 2º upsert
+ *  SOBRESCREVIA o 1º (valor_total virava o do ÚLTIMO item, não o total). Medido em prod
+ *  (psql-ro 2026-07-17): PRD02377 gravou R$139,90 de R$1.214,37; PRD03594 R$1.190,98 de
+ *  R$1.984,96; 10,9% das NFes recentes têm SKU repetido. */
+export function agregarItensRecebimento(
+  itens: readonly ItemRecebimentoResolvido[],
+): ItemRecebimentoAgregado[] {
+  const buckets = new Map<string, ItemRecebimentoResolvido[]>();
+  for (const item of itens) {
+    const chave = `${item.tracking_id}::${item.sku_codigo_omie}`;
+    const bucket = buckets.get(chave);
+    if (bucket) bucket.push(item);
+    else buckets.set(chave, [item]);
+  }
+  const out: ItemRecebimentoAgregado[] = [];
+  for (const bucket of buckets.values()) {
+    // Base DETERMINÍSTICA: prefere o item cujo t1 veio de PEDIDO real (mais informativo para
+    // auditoria) em vez do 1º da resposta da Omie — assim o t1 emitido não depende da ordem.
+    const base = bucket.find((i) => i.t1_de_pedido) ?? bucket[0];
+    const t1Ambiguo = new Set(bucket.map((i) => i.t1_data_pedido)).size > 1;
+    out.push({
+      ...base,
+      quantidade_pedida: somaCompletaOuNull(bucket.map((i) => i.quantidade_pedida)),
+      quantidade_recebida: somaCompletaOuNull(bucket.map((i) => i.quantidade_recebida)),
+      valor_unitario: valorUnitarioPonderado(bucket),
+      valor_total: somaCompletaOuNull(bucket.map((i) => i.valor_total)),
+      n_itens_agregados: bucket.length,
+      t1_ambiguo: t1Ambiguo,
+    });
+  }
+  return out;
+}
+// MIRROR-END

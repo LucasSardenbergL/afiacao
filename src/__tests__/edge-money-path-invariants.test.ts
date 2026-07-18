@@ -637,19 +637,24 @@ describe('guardrail money-path: omie-sync self-service USA view fresca account-c
       count(src, '.eq("account", "colacor_sc")'),
       'cada uma das 3 leituras da view DEVE filtrar account=colacor_sc (fail-closed por-conta)',
     ).toBe(3);
-    // O espelho poluído só pode restar como WRITER (o write-back INSERT → Fatia 4), nunca como LEITOR.
+    // [Fatia 4] O write-back saiu do espelho p/ a RPC: este edge não toca mais omie_clientes, em via
+    // nenhuma. Zero é o teto — qualquer reaparição é reversão de deploy do Lovable ou regressão.
     expect(
       count(src, '.from("omie_clientes")'),
-      'REGRESSÃO: omie_clientes voltou como LEITOR (deveria restar só o write-back INSERT)',
-    ).toBe(1);
+      'REGRESSÃO: omie_clientes voltou ao omie-sync (o write-back migrou p/ register_carteira_member na Fatia 4)',
+    ).toBe(0);
+    // O write-back continua existindo — só mudou de destino. Some-lo silenciosamente deixaria o vínculo
+    // do self-service sem registro nenhum (nem ledger, nem proof).
     expect(
       src,
-      'REGRESSÃO: o único omie_clientes restante não é o write-back (upsert) — leitura do espelho voltou?',
-    ).toMatch(/\.from\("omie_clientes"\)\s*\.upsert\(/);
+      'REGRESSÃO: sumiu o write-back do vínculo self-service (deveria chamar register_carteira_member)',
+    ).toMatch(/\.rpc\("register_carteira_member"/);
+    // A conta é o coração do fail-closed: colacor_sc é a conta que TODO este caminho consulta. Gravar
+    // com outra conta anexaria o cliente ao vendedor errado.
     expect(
       src,
-      'REVERSÃO Lovable? voltou a .select() do espelho poluído omie_clientes no caminho money-path',
-    ).not.toMatch(/\.from\("omie_clientes"\)\s*\.select/);
+      'REGRESSÃO: o write-back do self-service não grava mais na conta colacor_sc',
+    ).toMatch(/register_carteira_member"[\s\S]{0,200}p_account:\s*"colacor_sc"/);
   });
 
   it('fallback API do PEDIDO é fail-closed: registros:2 + guard de truncamento (não 1=last-write-wins)', () => {
@@ -798,6 +803,40 @@ describe('guardrail money-path: carteira-rebuild lê o vendedor da PROOF oben (P
     ).toMatch(/from\(['"]omie_customer_account_map_fresco['"]\)[\s\S]{0,220}\.eq\(['"]account['"],\s*['"]oben['"]\)/);
   });
 
+  // D1/D6: o outro lado do join TEM de ser account-scoped. Esta é a única defesa contra a remoção do filtro:
+  // a quarentena do conflito (D2) NÃO pega o caso mais perigoso — um código oben que casa com UMA única linha
+  // de outra conta resolve users.size===1 → source='omie', eligible=true, vendedor ERRADO, sem conflito nenhum
+  // (misatribuição SILENCIOSA). O helper puro não pode detectá-la: ele só vê o mapa que o edge lhe entrega.
+  it('D1: o omie_vendedor_map é lido account-scoped (oben) — sem isso o join cruza namespaces de conta', () => {
+    expect(
+      rebuild,
+      'REVERSÃO Lovable? sumiu o .eq(omie_account, oben) do vendedor_map — código oben pode casar com linha colacor/colacor_sc de OUTRO vendedor → source=omie + eligible=true + vendedor ERRADO, sem sinal de conflito',
+    ).toMatch(/from\(['"]omie_vendedor_map['"]\)[\s\S]{0,160}\.eq\(['"]omie_account['"],\s*['"]oben['"]\)/);
+  });
+
+  // D3: sem Hunter o helper não emite órfão NEM conflito (owner_user_id é NOT NULL) → ~4162 membros sem row →
+  // upsert-only preserva o assignment ANTIGO (stale). Nenhum guard de cardinalidade pega (contam linhas).
+  it('D3: aborta quando carteira_hunter_user_id está ausente (senão órfão/conflito somem → stale)', () => {
+    expect(
+      rebuild,
+      'sumiu o guard fail-closed de Hunter ausente — órfãos e conflitos ficariam sem row e o assignment antigo seguiria válido',
+    ).toMatch(/if\s*\(!hunterUserId\)\s*\{[\s\S]{0,200}failLease\(/);
+  });
+
+  // D4: a pós-condição prova o CONJUNTO (os outros guards contam LINHAS e são cegos ao membro omitido).
+  it('D4: pós-condição de cobertura roda sobre o payload real e ANTES do upsert', () => {
+    expect(rebuild, 'sumiu a chamada de verificarCobertura').toMatch(/verificarCobertura\(membroIds,\s*rows\)/);
+    expect(
+      rebuild,
+      'cobertura não aborta o run — membro sem row entraria como assignment antigo STALE',
+    ).toMatch(/if\s*\(!cobertura\.ok\)[\s\S]{0,160}failLease\(/);
+    const iCobertura = rebuild.indexOf('verificarCobertura(membroIds, rows)');
+    const iUpsert = rebuild.indexOf(".from('carteira_assignments')");
+    expect(iCobertura, 'âncora: não achei a chamada de verificarCobertura').toBeGreaterThan(-1);
+    expect(iUpsert, 'âncora: não achei o upsert de carteira_assignments').toBeGreaterThan(-1);
+    expect(iCobertura, 'a cobertura é verificada DEPOIS do upsert — inútil: o stale já foi gravado').toBeLessThan(iUpsert);
+  });
+
   it('A LISTA de membros vem do carteira_membership_ledger, COM identity_state (Fatia 1 + 2)', () => {
     expect(
       rebuild,
@@ -873,6 +912,68 @@ describe('guardrail money-path: carteira-rebuild lê o vendedor da PROOF oben (P
       'edge divergiu de rebuild-helpers.ts — Lovable reescreveu o load/guard?',
     ).toBe(mirrorBlockNamed(rebuildHelper, 'carteira-load'));
   });
+
+  // ── CANÁRIA DE DEPLOY (?canary=1) — prova o que está SERVIDO (a paridade textual só cobre a FONTE) ──
+  describe('canária de deploy ?canary=1', () => {
+    const bloco = rebuild.match(/searchParams\.get\('canary'\) === '1'\)[\s\S]*?\n {2}\}/)?.[0] ?? '';
+
+    it('sentinela: o bloco da canária existe no edge', () => {
+      expect(bloco, 'sumiu a canária ?canary=1 — sem ela não há prova do DEPLOY, só da fonte').not.toBe('');
+    });
+
+    it('roda o helper REAL (computeCarteira + verificarCobertura), não uma reimplementação', () => {
+      expect(bloco, 'canária não chama computeCarteira — não provaria o helper deployado').toContain('computeCarteira(');
+      expect(bloco, 'canária não chama verificarCobertura').toContain('verificarCobertura(');
+    });
+
+    it('o `expected` casa a verdade-base provada em rebuild-helpers.test.ts (senão a canária mente verde)', () => {
+      expect(bloco).toMatch(/membroConflitadoPresente: true/);
+      expect(bloco).toMatch(/conflitadoSource: 'hunter_orphan'/);
+      expect(bloco).toMatch(/conflitadoEligible: false/);
+      expect(bloco).toMatch(/conflitadoCodigo: 222/);
+      expect(bloco).toMatch(/coberturaOk: true/);
+    });
+
+    it('a fixture tem o CONFLITO (código 222 → 2 vendedores) — é o que discrimina velho×novo', () => {
+      expect(bloco, 'fixture sem código repetido p/ 2 user_ids → canária não discrimina deploy velho').toMatch(
+        /omie_codigo_vendedor: 222, user_id: '[^']*a'[\s\S]{0,120}omie_codigo_vendedor: 222, user_id: '[^']*b'/,
+      );
+    });
+
+    it('NÃO escreve e NÃO toma o lease: roda ANTES do claim e retorna dentro do próprio bloco', () => {
+      const iCanary = rebuild.indexOf("searchParams.get('canary')");
+      const iClaim = rebuild.indexOf('claim_carteira_rebuild');
+      expect(iCanary, 'âncora: não achei a canária').toBeGreaterThan(-1);
+      expect(iClaim, 'âncora: não achei o claim do lease').toBeGreaterThan(-1);
+      expect(iCanary, 'canária DEPOIS do lease — uma checagem bloquearia um rebuild real').toBeLessThan(iClaim);
+      expect(bloco, 'canária faz escrita (upsert/insert/update/delete) — deve ser PURA').not.toMatch(/\.(upsert|insert|update|delete)\(/);
+      expect(bloco, 'canária não retorna dentro do bloco — cairia no fluxo de rebuild real').toContain('return new Response(');
+    });
+
+    it('é staff-gated: vem DEPOIS do authorizeCronOrStaff', () => {
+      const iAuth = rebuild.indexOf('authorizeCronOrStaff(req)');
+      expect(iAuth).toBeGreaterThan(-1);
+      expect(iAuth, 'canária ANTES do gate de auth — exposta a anônimo').toBeLessThan(rebuild.indexOf("searchParams.get('canary')"));
+    });
+  });
+
+  // D5: computeCarteira (o CORE money-path) vivia duplicada no edge FORA de qualquer guarda de paridade —
+  // dava p/ corrigir o helper testado e esquecer o edge real (achado Codex). Agora está no bloco carteira-compute.
+  it('PARIDADE: computeCarteira é IDÊNTICA ao src/ (o core money-path — pega reversão do Lovable)', () => {
+    expect(
+      mirrorBlockNamed(rebuild, 'carteira-compute'),
+      'edge divergiu de rebuild-helpers.ts — Lovable reescreveu computeCarteira?',
+    ).toBe(mirrorBlockNamed(rebuildHelper, 'carteira-compute'));
+  });
+
+  // D2: o conflito de mapeamento é QUARANTINADO no edge, não omitido (senão upsert-only → stale).
+  it('D2: emitLegado quarantina o conflito (hunter_orphan + eligible:false), não omite', () => {
+    const bloco = mirrorBlockNamed(rebuild, 'carteira-compute');
+    expect(
+      bloco,
+      'REGRESSÃO: o ramo de conflito de emitLegado voltou a NÃO emitir → membro some → assignment antigo STALE',
+    ).toMatch(/else if \(hunterUserId\)[\s\S]{0,220}source: 'hunter_orphan'[\s\S]{0,80}eligible: false/);
+  });
 });
 
 // ── P0-B-bis Fatia 2 — ESCRITOR do identity_state (omie-analytics-sync). Par do DELETE da proof: o vínculo
@@ -910,11 +1011,28 @@ describe('guardrail money-path: omie-analytics-sync popula identity_state no led
     expect(marcacao, 'a marcação de ambiguous não está gateada em account==="vendas" → flapping entre contas').not.toBeNull();
   });
 
-  it('o ledger NUNCA recebe INSERT/upsert aqui — quem popula é o trigger da Fatia 0 (acumulador)', () => {
+  // [ATUALIZADO na Fatia 4] Este invariante dizia "o ledger NUNCA recebe INSERT/upsert aqui — quem
+  // popula é o trigger da Fatia 0". Isso valia enquanto o trigger existia. A Fatia 4 corta o writer do
+  // espelho, e a Fatia 5 dropa a tabela — o trigger `AFTER INSERT` cai junto. Se o bulk não passasse a
+  // popular o ledger direto, NENHUM cliente novo entraria na carteira depois do DROP (sem vendedor, sem
+  // comissão, em silêncio). Medido em 18/07: ledger = 6909 linhas, TODAS source='backfill' — zero
+  // 'trigger', a via de admissão já estava inerte.
+  // O que o invariante protege AGORA não é "não escreva", é "escreva sem destruir": o acumulador exige
+  // ON CONFLICT DO NOTHING, senão o upsert sobrescreve `first_seen_at` e RESSUSCITA quarantinado
+  // (ambiguous → verified = comissão sobre cliente de identidade desconhecida).
+  it('o ledger só recebe update/select/upsert — e TODO upsert é acumulador (ignoreDuplicates)', () => {
     const blocos = src.match(/from\(["']carteira_membership_ledger["']\)\s*\.\w+/g) ?? [];
     expect(blocos.length, 'sentinela: não achei acesso ao ledger no sync').toBeGreaterThan(0);
     for (const b of blocos) {
-      expect(b, `o sync está escrevendo no ledger com algo que não é update/select ("${b}") — o ledger é acumulador; inserir aqui fura o trigger da Fatia 0`).toMatch(/\.(update|select)$/);
+      expect(b, `acesso destrutivo ao ledger ("${b}") — delete/insert cru fura o acumulador`).toMatch(/\.(update|select|upsert)$/);
+    }
+    // CADA upsert (não "algum") precisa do ignoreDuplicates: um único sem ele já ressuscita quarantinado.
+    const upserts = src.match(/from\(["']carteira_membership_ledger["']\)[\s\S]{0,240}?\.upsert\([\s\S]{0,240}?\)/g) ?? [];
+    for (const u of upserts) {
+      expect(
+        u,
+        'upsert no ledger SEM ignoreDuplicates: sobrescreve first_seen_at e devolve um quarantinado a verified (comissão indevida)',
+      ).toMatch(/ignoreDuplicates:\s*true/);
     }
   });
 });
@@ -1238,5 +1356,579 @@ describe('guardrail money-path: omie-sync-sku-items (fila de leadtime)', () => {
       'REGRESSÃO: voltou a degradar quando sku_items_sync_controle falha — o poison ' +
         'reviveria sem ninguém saber (edge deployada antes da migration)',
     ).toMatch(/throw new Error\(\s*\n?\s*`sku_items_sync_controle ilegível/);
+  });
+
+  // O recompute derivado (RPC recomputar_leadtime_derivado) conserta o leadtime que nasce
+  // NULL no faturamento e nunca volta à fila quando o t4 chega. Ele é LOCAL — não gasta Omie.
+  it('o recompute derivado roda ANTES do loop da Omie, não depois', () => {
+    const chamada = src.indexOf('await recomputarLeadtimeDerivado(supabase');
+    const loop = src.indexOf('for (const nfeRaw of fila)');
+    expect(chamada, 'edge não chama mais o recompute derivado — o leadtime volta a morrer NULL').toBeGreaterThan(-1);
+    expect(loop, 'sentinela: o loop da fila sumiu do edge').toBeGreaterThan(-1);
+    expect(
+      chamada,
+      'REGRESSÃO: o recompute saiu do início do run. O guard de 50s dá break no meio do ' +
+        'loop justamente quando a fila está grande — no fim, ele deixaria de rodar EXATAMENTE ' +
+        'nos dias com mais t4 novo para derivar.',
+    ).toBeLessThan(loop);
+  });
+
+  it('falha do recompute é reportada ao Sentinela, não engolida', () => {
+    expect(
+      src,
+      'REGRESSÃO: recompute falhando em silêncio — a causa provável é migration não ' +
+        'aplicada (deploy fora de ordem), e o gap de ~30% voltaria a crescer sem ninguém saber',
+    ).toMatch(/falhaSistemica \?\? falhaControle \?\? falhaRecompute/);
+  });
+});
+
+// ── Fatia 3-edges PR-B (omie-analytics-sync: o snapshot de não-vinculados lê a proof por conta) ──
+// classifyClienteForSnapshot decide se um cliente Omie entra no relatório omie_clientes_nao_vinculados:
+// código no Set = "linked" (fica de fora). O Set vinha do espelho omie_clientes SEM filtro de conta —
+// mas o espelho é UNIQUE(user_id) (1 linha/user, sobrescrita pelo writer da vez, hoje dominado por oben)
+// e por isso NÃO contém os códigos das outras contas. Medido em prod (2026-07-16), códigos da proof
+// ausentes do espelho: colacor 5.148/5.148 (100%), colacor_sc 3.604/5.275 (68%), oben 0/5.238 (0%).
+// Rodar o snapshot de colacor/colacor_sc reportava clientes VINCULADOS como não-vinculados em massa;
+// só oben roda hoje, o que mascarava o furo. Agora o Set vem da fresca com .eq("account", empresa).
+// O omie_clientes que sobra neste edge é a leitura :240 fetchOmieClienteUserMap, que alimenta o
+// upsertByUser CODE-FIRST. [CORRIGIDO na Fatia 4] esta baseline dizia que ela era "par indivisível do
+// WRITER (:515) → morrem juntos na Fatia 4" — o writer morreu e ela NÃO: `userByCodigo` também chaveia
+// `tagsByUser` e a própria lista code-first, que na Fatia 4 passou a alimentar o LEDGER (o writer do
+// espelho virou upsert no ledger). É a code-first que cobre os ~1633 aliases fiscais ausentes da proof
+// document-first — trocá-la pela proof ENCOLHERIA a membership. Resíduo estrutural da Fatia 5.
+//
+// ── PR-C: as 2 funções de CLONE foram DELETADAS (não migradas) ────────────────────────────────
+// fetchAlvosSemProfile/fetchOmieCodigoPorUser (+ syncBackfillCadastro/mapaConsolidacao) liam o
+// espelho para achar clones (user sem profile). O bloqueio "só o espelho tem o par (clone→código)"
+// era FALSO: customer_canonical_alias.alias_omie_codigo tem o par e o ledger tem a data. Paridade
+// medida em prod (2026-07-18): `ledger ⋈ alias` = 1.633 = espelho, diferença simétrica 0 nos DOIS
+// sentidos, sobre a tripla (user_id, código, created_at/first_seen_at).
+// Não foram migradas porque as duas eram INVOCÁVEIS-BOMBA, não capacidade viva:
+//   • syncBackfillCadastro inseria 0 PERMANENTEMENTE (telemetria do único run, 12/06:
+//     alvos_total=1633 → doc_em_outro_profile=1633 → seriam_inseridos=0 — o gêmeo bloqueia por
+//     documento) e dar profile ao clone é PROIBIDO pela spec da consolidação (criaria 2 entradas
+//     para o mesmo cliente);
+//   • mapaConsolidacao gravava status:'inactive' FIXO com dry_run default FALSE → re-executá-la
+//     é, verbatim, o rollback da B-lite documentado no spec ("update customer_canonical_alias set
+//     status='inactive' + rodar o rebuild"): rebaixaria os 1.633 aliases active de uma vez.
+// Nenhuma tinha cron (0 de 82) nem chamador de UI; rodaram 1x cada, em jun/2026. Deletá-las
+// PRESERVA a canonicalização completa (follow-up legítimo de produto, database.md §clones): ela
+// consome customer_canonical_alias como ENTRADA, e o mapa era o único capaz de destruí-la.
+// A Fatia 2 (identity_state) não depende delas — lê a TABELA de aliases, não a função que a gerou.
+const OMIE_ANALYTICS = 'supabase/functions/omie-analytics-sync/index.ts';
+
+describe('guardrail money-path: snapshot de não-vinculados lê a proof por conta (Fatia 3-edges PR-B)', () => {
+  const src = read(OMIE_ANALYTICS);
+
+  it('sentinela: leu o arquivo real (edge)', () => {
+    expect(src).toContain('syncNaoVinculados');
+    expect(src).toContain('classifyClienteForSnapshot');
+  });
+
+  it('o Set de "já vinculados" vem da fresca, filtrado pela conta do run, paginado com .order', () => {
+    expect(
+      src,
+      'REVERSÃO Lovable? o Set de vinculados não lê a fresca com .eq("account", empresa) + .order + .range',
+    ).toMatch(
+      /\.from\("omie_customer_account_map_fresco"\)[\s\S]{0,120}\.eq\("account", empresa\)[\s\S]{0,240}\.order\("omie_codigo_cliente"\)[\s\S]{0,120}\.range\(/,
+    );
+    // A conta TEM de chegar na função: sem o parâmetro o Set volta a ser global (o bug).
+    expect(
+      src,
+      'REGRESSÃO: fetchAllOmieClienteCodigos perdeu o parâmetro de conta — Set global de novo',
+    ).toMatch(/async function fetchAllOmieClienteCodigos\(db: SupabaseClient, empresa: Empresa\)/);
+    expect(
+      src,
+      'REGRESSÃO: o chamador não passa mais a empresa do run para o Set de vinculados',
+    ).toMatch(/fetchAllOmieClienteCodigos\(db, empresa\)/);
+  });
+
+  it('o Set de vinculados NÃO voltou ao espelho poluído', () => {
+    expect(
+      src,
+      'REGRESSÃO: fetchAllOmieClienteCodigos voltou a ler omie_clientes (Set global → falso não-vinculado)',
+    ).not.toMatch(/fetch omie_clientes codigos/);
+  });
+
+  it('o que resta de omie_clientes é SÓ a leitura code-first — nunca mais', () => {
+    // Trava o escopo: 1 = a leitura de suporte CODE-FIRST (:240). Era 4 antes da PR-C (que deletou as 2
+    // funções de clone), 2 depois dela, e 1 agora que a Fatia 4 tirou o WRITER — o upsert do espelho
+    // virou upsert no LEDGER. Se virar 2, alguém reabriu uma leitura ou reintroduziu o writer.
+    expect(
+      count(src, '.from("omie_clientes")'),
+      'omie_clientes mudou de contagem neste edge — leitura nova do espelho ou writer reintroduzido',
+    ).toBe(1);
+    // A leitura que sobra NÃO morreu com o writer, como a baseline supunha: userByCodigo também chaveia
+    // tagsByUser e a lista code-first que agora alimenta o ledger — e é a code-first que cobre os ~1633
+    // aliases fiscais que a proof document-first nunca vê. Resíduo estrutural da Fatia 5.
+    expect(
+      src,
+      'REGRESSÃO: o espelho omie_clientes voltou a ser ESCRITO neste edge (a Fatia 4 o desacoplou)',
+    ).not.toMatch(/\.from\("omie_clientes"\)\s*\.(insert|upsert|update|delete)\(/);
+    // E a membership tem de continuar sendo alimentada: sem isto, nenhum cliente novo entra na carteira
+    // depois que a Fatia 5 dropar o espelho e o trigger AFTER INSERT cair junto.
+    expect(
+      src,
+      'REGRESSÃO: o bulk parou de alimentar o ledger — admissão de membro novo morre no DROP da Fatia 5',
+    ).toMatch(/\.from\("carteira_membership_ledger"\)\s*\.upsert\(/);
+    expect(
+      src,
+      'REGRESSÃO: o upsert do ledger perdeu o ignoreDuplicates — sobrescreveria first_seen_at e ' +
+        'RESSUSCITARIA quarantinado (ambiguous → verified = comissão indevida)',
+    ).toMatch(/carteira_membership_ledger"\)[\s\S]{0,160}ignoreDuplicates:\s*true/);
+  });
+
+  it('PR-C: as 2 funções de clone não voltaram (re-adicioná-las rearma o rollback da B-lite)', () => {
+    // mapaConsolidacao gravava status:'inactive' fixo com dry_run default false: uma invocação
+    // rebaixaria os 1.633 aliases ATIVOS de uma vez — o rollback da consolidação, por acidente.
+    for (const simbolo of [
+      'fetchAlvosSemProfile',
+      'fetchOmieCodigoPorUser',
+      'syncBackfillCadastro',
+      'mapaConsolidacao',
+      'start_backfill_cadastro',
+    ]) {
+      expect(
+        src,
+        `REGRESSÃO: ${simbolo} voltou ao edge — reabre leitura do espelho e rearma o rollback da B-lite (ver PR-C)`,
+      ).not.toContain(simbolo);
+    }
+  });
+});
+
+// ── Fatia 3-edges PR-A (omie-cliente: os 3 LEITORES saem do espelho → proof fresca account-correta) ──
+// Os 3 leitores do edge de cadastro resolviam identidade por um código de conta INDETERMINADA. O espelho
+// omie_clientes é UNIQUE(user_id) — 1 linha por user, sobrescrita pelo writer da vez (oben, colacor_sc…) —
+// e empresa_omie está 'colacor' em 6.909/6.909 linhas (o DEFAULT, nunca populado): o rótulo de conta é
+// mentiroso. Migrados p/ omie_customer_account_map_fresco, que é UNIQUE(user_id, account) e
+// UNIQUE(omie_codigo_cliente, account) → .maybeSingle() seguro. A conta de CADA leitor saiu do CHAMADOR,
+// não de presunção (as credenciais do edge enganam: callOmieApi é colacor_sc, mas não é ela que decide):
+//   • criar_perfil_local → 'oben'  — useUnifiedOrder.handleStaffAddTool passa selectedCustomer.codigo_cliente
+//     (código OBEN) e resolve o MESMO código com .eq('account','oben') logo antes de invocar (#1331);
+//   • sync_all_clients   → conta do account_index (useAnalyticsSync itera "Conta N/3", 0→2);
+//   • sync_addresses     → multi-conta por natureza: usa o account de CADA linha da proof (não filtra uma).
+// [Fatia 4] Os 3 WRITERS que restavam migraram para a RPC `register_carteira_member`, que escreve as
+// duas pontas (ledger + proof) e não toca mais o espelho — este edge foi a ZERO.
+// A paridade textual pega a reversão do deploy do Lovable (armadilha do #1272). Ver design §4/§5.
+const OMIE_CLIENTE = 'supabase/functions/omie-cliente/index.ts';
+const UNIFIED_ORDER = 'src/hooks/useUnifiedOrder.ts';
+
+// Recorta o corpo de um `case "<nome>": {` do edge (até o próximo case na mesma indentação). Necessário
+// porque o omie-cliente tem 9 handlers e vários compartilham vocabulário: `for (const account of accounts)`
+// é REGRESSÃO no sync_addresses (chutar o código nas 3 contas) e LEGÍTIMO no buscar_logos_empresas, que
+// varre as contas de propósito. Um assert no arquivo inteiro confundiria os dois.
+function blocoCaseCliente(s: string, nome: string): string {
+  const i = s.indexOf(`case "${nome}": {`);
+  if (i < 0) throw new Error(`case "${nome}" não encontrado no omie-cliente`);
+  const resto = s.slice(i);
+  const fim = resto.search(/\n {6}case "/);
+  return fim < 0 ? resto : resto.slice(0, fim);
+}
+
+// Recorta handleStaffAddTool (o único chamador de criar_perfil_local) para amarrar edge × chamador
+// dentro do MESMO fluxo, sem depender de contar caracteres entre as duas âncoras.
+function blocoHandleStaffAddTool(s: string): string {
+  const i = s.indexOf('const handleStaffAddTool = async () => {');
+  if (i < 0) throw new Error('handleStaffAddTool não encontrada em useUnifiedOrder');
+  const resto = s.slice(i);
+  const fim = resto.search(/\n {2}\};\n/);
+  return fim < 0 ? resto : resto.slice(0, fim);
+}
+
+describe('guardrail money-path: omie-cliente lê a proof fresca account-correta (Fatia 3-edges PR-A)', () => {
+  const src = read(OMIE_CLIENTE);
+
+  it('sentinela: leu o arquivo real (edge) e os 3 handlers migrados', () => {
+    expect(src).toContain('criar_perfil_local');
+    expect(src).toContain('sync_all_clients');
+    expect(src).toContain('sync_addresses');
+  });
+
+  it('os 3 LEITORES vêm da view fresca e os 3 WRITERS migraram para a RPC (Fatia 4)', () => {
+    expect(
+      count(src, '.from("omie_customer_account_map_fresco")'),
+      'REVERSÃO Lovable? sumiu leitura da view fresca (esperado 3: criar_perfil_local, sync_all_clients, sync_addresses)',
+    ).toBe(3);
+    // [Fatia 4] Os 3 writers INSERT viraram 3 chamadas da RPC. Este edge não toca mais o espelho.
+    expect(
+      count(src, '.from("omie_clientes")'),
+      'REGRESSÃO: omie_clientes voltou ao omie-cliente (os 3 writers migraram p/ register_carteira_member)',
+    ).toBe(0);
+    // Contar 0 sozinho não prova que os writers sobreviveram — some-los deixaria o cliente sem vínculo
+    // nenhum, falha silenciosa pior que o espelho poluído.
+    expect(
+      count(src, '.rpc("register_carteira_member"'),
+      'REGRESSÃO: os 3 writers de vínculo do omie-cliente não são mais 3 (perdeu um caminho de admissão?)',
+    ).toBe(3);
+    // A conta de cada writer é o que impede anexar o cliente ao vendedor de OUTRA conta: os 2 do
+    // criar_perfil_local são 'oben' (o chamador é o fluxo de vendas OBEN) e o do sync_all_clients usa a
+    // conta do run. Nenhum pode virar literal errado nem cair no default.
+    expect(
+      (src.match(/p_account:\s*"oben"/g) ?? []).length,
+      'REGRESSÃO: os writers do criar_perfil_local perderam a conta oben (chamador é o fluxo OBEN)',
+    ).toBe(2);
+    expect(
+      src,
+      'REGRESSÃO: o writer do sync_all_clients não usa mais a conta DO RUN (account.account)',
+    ).toMatch(/p_account:\s*account\.account/);
+  });
+
+  it('a credencial Omie carrega o slug canônico da conta (não o índice instável nem o nome de UI)', () => {
+    // getOmieAccounts monta a lista CONDICIONALMENTE (só com as env vars presentes): faltar
+    // OMIE_OBEN_APP_KEY faria o índice 1 virar Colacor e o filtro de conta mentir em silêncio.
+    expect(src, 'sumiu o slug canônico do OmieAccountConfig — o filtro de conta volta a depender do índice')
+      .toMatch(/account:\s*OmieAccountSlug/);
+    // Lookbehind `(?<!p_)`: a Fatia 4 introduziu `p_account: "oben"` nas chamadas da RPC, que contém
+    // `account: "oben"` como SUBSTRING — sem a âncora, os writers inflariam a contagem das declarações
+    // de credencial e o assert passaria a medir outra coisa.
+    expect(
+      (src.match(/(?<!p_)account:\s*"(?:colacor_sc|oben|colacor)"/g) ?? []).length,
+      'as 3 contas devem declarar seu slug canônico (domínio do CHECK chk_ocam_account)',
+    ).toBe(3);
+  });
+
+  it('criar_perfil_local resolve codigo->user na fresca account=oben (a conta do chamador)', () => {
+    expect(
+      src,
+      'REVERSÃO Lovable? criar_perfil_local não resolve mais o código pela fresca com account=oben',
+    ).toMatch(
+      /\.from\("omie_customer_account_map_fresco"\)[\s\S]{0,200}\.eq\("omie_codigo_cliente", cliente\.codigo_cliente\)[\s\S]{0,120}\.eq\("account", "oben"\)/,
+    );
+    // Miss (ausente/stale >7d) NÃO pode virar código chutado: o ramo cai no fallback por documento.
+    expect(
+      src,
+      'REGRESSÃO: sumiu o guard de miss (existingMapping?.user_id) — user_id null da view viraria hit falso',
+    ).toMatch(/if \(existingMapping\?\.user_id\)/);
+  });
+
+  it('COERÊNCIA cross-file: o edge usa a MESMA conta que o chamador — senão resolvem users diferentes', () => {
+    // O frontend resolve o código pela fresca account=oben e SÓ ENTÃO invoca criar_perfil_local com ele.
+    // Se um dos dois mudar de conta, o edge acha um user diferente do que o chamador acabou de achar e
+    // a ferramenta é anexada ao cliente ERRADO (Codex P2). Este assert amarra os dois lados no MESMO fluxo.
+    const fluxo = blocoHandleStaffAddTool(read(UNIFIED_ORDER));
+    expect(
+      fluxo,
+      'sentinela: handleStaffAddTool deixou de ser o chamador de criar_perfil_local',
+    ).toMatch(/action: 'criar_perfil_local'/);
+    expect(
+      fluxo,
+      'o chamador de criar_perfil_local não resolve mais o código pela fresca account=oben — o edge divergiu dele?',
+    ).toMatch(/omie_customer_account_map_fresco[\s\S]{0,260}\.eq\('account', 'oben'\)/);
+  });
+
+  it('sync_all_clients dedupa pela conta DO LOTE, paginado por keyset e fail-closed em erro de query', () => {
+    expect(
+      src,
+      'REVERSÃO Lovable? o dedup do sync_all_clients não lê a fresca filtrando a conta do account_index',
+    ).toMatch(
+      /\.from\("omie_customer_account_map_fresco"\)[\s\S]{0,140}\.eq\("account", account\.account\)[\s\S]{0,140}\.order\("omie_codigo_cliente"\)[\s\S]{0,140}\.limit\(codePageSize\)/,
+    );
+    // Sem paginar, o PostgREST capa em 1.000 linhas SILENCIOSO (eram 1.000 de 6.909 → o dedup enxergava 1/7).
+    expect(
+      src,
+      'REGRESSÃO: o pré-load do dedup perdeu a paginação — volta a capar em 1.000 e reprocessar o resto',
+    ).toMatch(/codePage\.length < codePageSize/);
+    // Keyset e não offset: a fresca é uma view DESLIZANTE (TTL 7d) — linha que expira entre páginas
+    // desloca as seguintes, o dedup PULA códigos, e código pulado vira cliente RECRIADO.
+    expect(
+      src,
+      'REGRESSÃO: o dedup trocou keyset por offset — numa view deslizante isso pula códigos → clientes recriados',
+    ).toMatch(/codeQuery\.gt\("omie_codigo_cliente", codeCursor\)/);
+    // Codex P2 do PR-2: engolir o erro deixa o Set vazio e o loop tenta RECRIAR milhares de clientes.
+    expect(
+      src,
+      'REGRESSÃO: o pré-load do dedup engole o erro da query — Set vazio → reimportação em massa',
+    ).toMatch(/if \(codeErr\) throw new Error/);
+  });
+
+  it('sync_addresses lê (user, conta, código) da proof e consulta a conta CERTA de cada código', () => {
+    // Ancorado no bloco do handler: `for (const account of accounts)` é regressão AQUI e legítimo no
+    // buscar_logos_empresas (que varre as contas de propósito) — no arquivo inteiro os dois se confundem.
+    const bloco = blocoCaseCliente(src, 'sync_addresses');
+    expect(
+      bloco,
+      'REVERSÃO Lovable? sync_addresses não lê mais (user_id, account, omie_codigo_cliente) da fresca paginada',
+    ).toMatch(
+      /\.from\("omie_customer_account_map_fresco"\)[\s\S]{0,140}\.select\("user_id, account, omie_codigo_cliente"\)[\s\S]{0,200}\.limit\(fetchPageSize\)/,
+    );
+    // Keyset com `.gte` (não `.gt`): a fronteira da página parte um user multi-conta ao meio e `.gt`
+    // descartaria as contas restantes dele — o Set de pares desduplica a sobra reprocessada.
+    expect(
+      bloco,
+      'REGRESSÃO: a paginação dos mapeamentos trocou keyset por offset — view deslizante pula users',
+    ).toMatch(/query\.gte\("user_id", userCursor\)/);
+    // O código agora vem PAREADO com a conta dele: nada de chutar o mesmo código nas 3 contas.
+    expect(
+      bloco,
+      'REGRESSÃO: sync_addresses voltou a varrer as 3 contas com o mesmo código indeterminado',
+    ).not.toMatch(/for \(const account of accounts\)/);
+    expect(
+      bloco,
+      'sentinela: a consulta usa a credencial da conta DA LINHA da proof',
+    ).toMatch(/accountBySlug\.get\(entry\.account\)/);
+    // A proof tem até 1 linha por (user, conta) — sem agrupar, batch_size=30 viraria ~10 users.
+    expect(
+      bloco,
+      'REGRESSÃO: sumiu o agrupamento por user — o lote passa a contar LINHAS da proof, não clientes',
+    ).toMatch(/codesByUser/);
+    expect(
+      bloco,
+      'REGRESSÃO: o pré-load dos mapeamentos engole o erro — vira "No client mappings found" (no-op mudo)',
+    ).toMatch(/if \(pageErr\) throw new Error/);
+  });
+});
+
+// ── Hardening P1 do omie-cliente (parecer Codex sobre a Fatia 3-edges PR-A) — 2026-07-18 ──
+// Migrar os 3 leitores para a proof trocou a FONTE do dedup e deixou de pé a porta que fabricou os
+// clones já existentes. Medido em prod (psql-ro 2026-07-18): profiles=5.276 · users na proof=5.276 ·
+// espelho=6.909 → 1.633 linhas do espelho SEM profile. O `profileByDoc` do sync_all_clients lia
+// `profiles` sem paginar — 1.000 de 5.276 (19%) — e para os outros 81% o dedup por documento
+// devolvia undefined: o handler criava um usuário Auth NOVO para quem já tinha cadastro. Como o
+// supabase-js devolve `{ error }` em vez de lançar, os inserts falhos passavam mudos e o contador
+// ainda somava "importado". A fresca é a base filtrada por `updated_at >= now() - 7 dias`: se o
+// omie-analytics-sync parar uma semana ela ESVAZIA, e consulta OK com zero linhas não acusa erro
+// nenhum — dedup cego reimporta tudo. Estas canárias travam as PORTAS; a fonte já foi migrada.
+describe('guardrail money-path: omie-cliente não fabrica identidade (hardening P1 do Codex)', () => {
+  const src = read(OMIE_CLIENTE);
+
+  it('a varredura de profiles passa por uma helper paginada por keyset (teto de 1.000 é silencioso)', () => {
+    expect(src, 'sumiu a helper de paginação de profiles').toMatch(
+      /async function\* paginarProfilesComDocumento/,
+    );
+    // Keyset e não offset: o sync_all_clients INSERE profiles enquanto varre — com `.range()` cada
+    // inserção desloca as páginas seguintes e pula linhas.
+    expect(src, 'REGRESSÃO: a paginação de profiles deixou de ser keyset').toMatch(
+      /query\.gt\("user_id", cursor\)/,
+    );
+    // Os DOIS deduplicadores por documento (criar_perfil_local e sync_all_clients) passam por ela.
+    expect(
+      count(src, 'for await (const pagina of paginarProfilesComDocumento(adminClient))'),
+      'REGRESSÃO: algum dedup por documento voltou a varrer profiles fora da helper paginada',
+    ).toBe(2);
+    // A varredura crua que fabricou os clones não pode voltar em handler nenhum.
+    expect(
+      src,
+      'REGRESSÃO: voltou o SELECT cru de profiles — 1.000 de 5.276 lidas como se fossem todas',
+    ).not.toMatch(/\.from\("profiles"\)\s*\.select\("user_id, document"\)\s*\.not\("document", "is", null\);/);
+  });
+
+  it('proof degradada barra a importação ANTES de criar identidade (zero linhas não é erro SQL)', () => {
+    expect(src, 'sumiu o guard de cobertura da proof').toMatch(/async function assertProofFrescaSaudavel/);
+    const bloco = blocoCaseCliente(src, 'sync_all_clients');
+    const posGuard = bloco.indexOf('await assertProofFrescaSaudavel(');
+    const posCreate = bloco.indexOf('auth.admin.createUser(');
+    expect(posGuard, 'REGRESSÃO: sumiu a chamada do guard de cobertura no sync_all_clients').toBeGreaterThan(-1);
+    expect(posCreate, 'sentinela: sync_all_clients deixou de criar usuários?').toBeGreaterThan(-1);
+    expect(
+      posGuard,
+      'REGRESSÃO: o guard de cobertura passou a rodar DEPOIS da criação de usuários — não barra nada',
+    ).toBeLessThan(posCreate);
+    // A base entra só como DENOMINADOR (count/head). Ler vínculo dela é o stale infinito que o
+    // épico-drop existe para fechar — nem "para consertar a cobertura".
+    expect(
+      src,
+      'REGRESSÃO: o guard passou a LER vínculo da tabela base — reabre o stale infinito',
+    ).not.toMatch(/\.from\("omie_customer_account_map"\)\s*\.select\("user_id/);
+  });
+
+  it('erro de escrita conta como erro — o supabase-js devolve {error}, não lança', () => {
+    const bloco = blocoCaseCliente(src, 'sync_all_clients');
+    expect(
+      bloco,
+      'REGRESSÃO: o insert de profiles voltou a ser disparado sem checar o retorno — Auth órfão contado como importado',
+    ).toMatch(/const \{ error: profileError \} = await adminClient\.from\("profiles"\)\.insert\(/);
+    expect(
+      bloco,
+      'REGRESSÃO: falha no insert de profiles deixou de abortar o cliente (segue para vínculo e endereço)',
+    ).toMatch(/if \(profileError\)[\s\S]{0,240}accErrors\+\+;[\s\S]{0,60}continue;/);
+    // [Fatia 4] O vínculo saiu do espelho para a RPC `register_carteira_member` (ledger + proof). O que
+    // este assert protege é inalterado e continua valendo: o supabase-js devolve `{error}` em vez de
+    // lançar, então ignorar o retorno marcaria como "importado" um cliente SEM vínculo — que some do
+    // dedup e é recriado na execução seguinte (a fábrica de clones do #1425, agora sobre a RPC).
+    expect(
+      bloco,
+      'REGRESSÃO: a escrita do vínculo voltou a ignorar o retorno — "importado" sem vínculo é recriado na próxima execução',
+    ).toMatch(/const \{ error: mappingError \} = await adminClient\.rpc\("register_carteira_member"/);
+    expect(bloco, 'REGRESSÃO: falha no vínculo deixou de contar erro').toMatch(
+      /if \(mappingError\)[\s\S]{0,240}accErrors\+\+;/,
+    );
+  });
+
+  it('upsertAddressFromOmie devolve false quando a escrita falha (senão o synced mente)', () => {
+    expect(
+      src,
+      'REGRESSÃO: o update de endereço voltou a ignorar o retorno — synced conta endereço que não gravou',
+    ).toMatch(/const \{ error: updateError \} = await adminClient[\s\S]{0,160}\.update\(addressData\)/);
+    expect(src, 'REGRESSÃO: falha no update deixou de devolver false').toMatch(
+      /if \(updateError\)[\s\S]{0,200}return false;/,
+    );
+    expect(src, 'REGRESSÃO: o insert de endereço voltou a ignorar o retorno').toMatch(
+      /const \{ error: insertError \} = await adminClient\.from\("addresses"\)\.insert\(addressData\)/,
+    );
+    expect(src, 'REGRESSÃO: falha no insert deixou de devolver false').toMatch(
+      /if \(insertError\)[\s\S]{0,200}return false;/,
+    );
+  });
+
+  it('sync_addresses drena: lote que não progride não repete para sempre', () => {
+    const bloco = blocoCaseCliente(src, 'sync_addresses');
+    // Bastam batchSize "poison users" (sem credencial da conta, sem endereço na Omie) para o
+    // slice(0, n) devolver sempre os mesmos e o `while (hasMore)` do useAnalyticsSync girar sem fim.
+    expect(
+      bloco,
+      'REGRESSÃO: o lote voltou a sair sempre do início — poison users travam o caller em loop',
+    ).toMatch(/clientsNeedingAddress\.slice\(offset, offset \+ batchSize\)/);
+    expect(bloco, 'REGRESSÃO: sumiu o avanço do offset pelos não-drenados').toMatch(
+      /naoDrenados = batch\.length - totalSynced/,
+    );
+    expect(
+      bloco,
+      'REGRESSÃO: hasMore voltou a ignorar se ALGO drenou — o caller legado (sem offset) gira para sempre',
+    ).toMatch(/totalSynced > 0 && nextOffset < totalNeeding/);
+  });
+
+  it('a conta que dá o endereço é escolha explícita, não ordem alfabética', () => {
+    const bloco = blocoCaseCliente(src, 'sync_addresses');
+    // Sem rank, a ordem caía do `.order("account")` da consulta: colacor < colacor_sc < oben — ou
+    // seja, collation virando regra de negócio (a ordem declarada em getOmieAccounts é outra).
+    expect(
+      bloco,
+      'REGRESSÃO: a prioridade de conta voltou a cair da ordenação alfabética da consulta',
+    ).toMatch(/accountRank/);
+    expect(bloco, 'REGRESSÃO: as contas do user deixaram de ser ordenadas pela prioridade declarada').toMatch(
+      /entradasDoUser[\s\S]{0,240}\.sort\(/,
+    );
+  });
+
+  it('proof fresca vazia é erro, não "concluído"', () => {
+    const bloco = blocoCaseCliente(src, 'sync_addresses');
+    expect(
+      bloco,
+      'REGRESSÃO: proof vazia voltou a responder 200/zeros — a UI pinta "concluído" com a base inteira por fazer',
+    ).toMatch(/Proof fresca vazia com \$\{baseCount\}/);
+  });
+
+  it('criar_perfil_local não confunde erro de consulta com miss', () => {
+    const bloco = blocoCaseCliente(src, 'criar_perfil_local');
+    expect(
+      bloco,
+      'REGRESSÃO: erro da view voltou a ser indistinguível de miss — falha transitória vira clone permanente',
+    ).toMatch(/if \(mappingLookupError\)[\s\S]{0,240}throw new Error/);
+  });
+});
+
+// ── Fix da sobrescrita item-a-item no writer de leadtime (omie-sync-sku-items) — 2026-07-17 ──
+// O writer fazia 1 upsert por item de NFe com onConflict (tracking_id, sku_codigo_omie). SKU
+// repetido na NFe caindo no mesmo tracking → o 2º upsert SOBRESCREVIA o 1º em vez de somar
+// (valor_total virava o do ÚLTIMO item). Medido em prod (psql-ro 2026-07-17): PRD02377 gravou
+// R$139,90 de R$1.214,37; 10,9% das NFes recentes têm SKU repetido — e o volume subestimado
+// rebaixa o SKU no score_volume (peso 1.0) do ranking de negociação. Fix: helper puro
+// agregarItensRecebimento agrega por (tracking, sku) ANTES do upsert, espelhado MIRROR no edge.
+// A paridade textual aqui pega a reversão do deploy do Lovable (mesma armadilha do resto do arquivo).
+const SYNC_SKU_ITEMS = 'supabase/functions/omie-sync-sku-items/index.ts';
+const SKU_ITEMS_HELPER = 'src/lib/reposicao/sku-items-fila-helpers.ts';
+
+describe('guardrail money-path: omie-sync-sku-items agrega itens por (tracking, sku) antes do upsert', () => {
+  const src = read(SYNC_SKU_ITEMS);
+  const helper = read(SKU_ITEMS_HELPER);
+
+  it('sentinela: leu os arquivos reais (edge + helper)', () => {
+    expect(src).toContain('agregarItensRecebimento');
+    expect(helper).toContain('agregarItensRecebimento');
+  });
+
+  it('o helper puro existe e exporta agregarItensRecebimento', () => {
+    expect(helper).toMatch(/export function agregarItensRecebimento/);
+  });
+
+  it('o edge USA o helper: define o espelho E o chama (≥2 menções)', () => {
+    expect(src, 'edge não define mais o helper espelhado de agregação').toMatch(/function agregarItensRecebimento/);
+    expect(
+      src,
+      'REGRESSÃO: edge não chama mais agregarItensRecebimento — voltou ao upsert item-a-item (sobrescrita)?',
+    ).toMatch(/agregarItensRecebimento\(/);
+    expect(
+      count(src, 'agregarItensRecebimento'),
+      'helper deve ser DEFINIDO e CHAMADO (≥2 menções)',
+    ).toBeGreaterThanOrEqual(2);
+  });
+
+  it('WIRING: o upsert de sku_leadtime_history itera sobre os AGREGADOS, não sobre os itens crus', () => {
+    // O bug era upsertar dentro de `for (const item of itens)`. Anti-regressão: a agregação
+    // acontece, o upsert itera os agregados, e a passada 1 (itens crus) NÃO toca a tabela.
+    expect(src, 'sumiu a agregação dos itens resolvidos').toMatch(/agregarItensRecebimento\(resolvidos\)/);
+    expect(src, 'REGRESSÃO: o upsert não itera mais sobre os agregados').toMatch(/for \(const ag of agregados\)/);
+    const passada1 = src.match(/for \(const item of itens\)[\s\S]*?const agregados = agregarItensRecebimento\(resolvidos\)/)?.[0] ?? '';
+    expect(passada1, 'não achei a passada 1 (âncora quebrada)').not.toBe('');
+    expect(
+      passada1,
+      'REGRESSÃO: o upsert de sku_leadtime_history voltou para dentro do loop de itens crus — sobrescrita de novo',
+    ).not.toMatch(/from\("sku_leadtime_history"\)\s*\.upsert/);
+  });
+
+  it('PARIDADE: o bloco espelhado no edge é IDÊNTICO ao helper de src/ (pega reversão do Lovable)', () => {
+    expect(
+      mirrorBlockNamed(src, 'sku-items-agregacao'),
+      'edge divergiu do helper de src/ — o Lovable reescreveu a agregação no deploy?',
+    ).toBe(mirrorBlockNamed(helper, 'sku-items-agregacao'));
+  });
+});
+
+// ── Retenção do sinal do recebimento (nid_receb) ──
+// purchase_orders_tracking.raw_data é jsonb MULTI-WRITER: o sync de pedidos grava o payload
+// do PEDIDO por cima e apaga o nIdReceb que o sync de NFes acabou de resolver. A cada rodada
+// do cron o reparo é desfeito — o backfill nunca converge (contador de identificadas travado
+// por dias no fin_sync_log) e queima rate-limit da Omie re-resolvendo o que já estava pronto.
+// O sinal foi para uma COLUNA DEDICADA com UM escritor. Os três guardrails abaixo vigiam as
+// três pontas do circuito; se qualquer uma cair, o Sísifo volta em silêncio.
+const POT_PEDIDOS = 'supabase/functions/omie-sync-pedidos-compra/index.ts';
+const POT_NFES = 'supabase/functions/omie-sync-nfes-recebidas/index.ts';
+
+describe('guardrail money-path: retenção do nid_receb (coluna dedicada + 1 writer)', () => {
+  const pedidos = read(POT_PEDIDOS);
+  const nfes = read(POT_NFES);
+  const skuItems = read(SKU_ITEMS);
+
+  it('sentinela: leu os arquivos reais das três edges', () => {
+    expect(pedidos).toContain('PRESERVE_FIELDS');
+    expect(nfes).toContain('ConsultarRecebimento');
+    expect(skuItems).toContain('sku_leadtime_history');
+  });
+
+  it('pedidos-compra PRESERVA o sinal (não pode voltar a apagá-lo a cada rodada)', () => {
+    const bloco = pedidos.match(/const PRESERVE_FIELDS = new Set\(\[([\s\S]*?)\]\)/);
+    expect(bloco, 'PRESERVE_FIELDS sumiu do sync de pedidos').not.toBeNull();
+    expect(
+      bloco![1],
+      'REGRESSÃO: nid_receb saiu do PRESERVE_FIELDS — o sync de pedidos volta a apagar o sinal a cada rodada e o backfill volta ao Sísifo',
+    ).toContain('nid_receb');
+  });
+
+  it('nfes-recebidas decide o pendente pela COLUNA, no banco (não pelo jsonb, em memória)', () => {
+    // Ancorado no SELECT do backfill, não solto no arquivo: `.is("nid_receb", null)` também
+    // aparece no compare-and-set do UPDATE, e um regex solto passaria verde com o filtro do
+    // select removido — o Sísifo voltaria sem ninguém ver. (Pego pela falsificação F2.)
+    expect(
+      nfes,
+      'REGRESSÃO: o SELECT do backfill não filtra mais por nid_receb no banco — volta a redescobrir como pendente o que já resolveu, e o teto de 1.000 linhas do PostgREST volta a truncar em silêncio',
+    ).toMatch(/\.not\("nfe_chave_acesso",\s*"is",\s*null\)\s*\n\s*\.is\("nid_receb",\s*null\)/);
+  });
+
+  it('nfes-recebidas é o writer ÚNICO e grava com compare-and-set', () => {
+    expect(
+      nfes,
+      'REGRESSÃO: o writer não grava mais a coluna — a migration fica inerte e nada converge',
+    ).toMatch(/updateRow\.nid_receb/);
+    expect(
+      nfes,
+      'REGRESSÃO: sumiu a trava da chave no update — um run concorrente pode carimbar nesta linha o recebimento de OUTRA NFe',
+    ).toMatch(/\.eq\("nfe_chave_acesso",\s*linha\.nfe_chave_acesso\)/);
+  });
+
+  it('sku-items lê a COLUNA primeiro (jsonb só como fallback da transição)', () => {
+    expect(
+      skuItems,
+      'REGRESSÃO: o leitor voltou a depender só do jsonb — quando o backfill convergir ele para de regravar o raw_data e o leadtime morre em silêncio',
+    ).toMatch(/n\.nid_receb\s*!=\s*null/);
   });
 });

@@ -6,7 +6,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useSavingsSummary } from '@/queries/useSavings';
 import { useUserToolsSummary } from '@/queries/useUserTools';
 import { useActiveRecurringSchedules } from '@/queries/useRecurringSchedules';
-import { useCustomerPendingOrders } from '@/queries/useOrders';
+import { useCustomerPendingOrders, useDeliveredOrders12m } from '@/queries/useOrders';
 
 const mockNavigate = vi.fn();
 vi.mock('react-router-dom', async (io) => ({
@@ -23,7 +23,14 @@ const EMPTY_SUMMARY = { monthlyData: [], totalTools: 0, totalSpent: 0, totalSavi
 
 interface Overrides {
   summary?: typeof EMPTY_SUMMARY;
-  tools?: Array<{ id: string; next_sharpening_due: string | null }>;
+  tools?: Array<{
+    id: string;
+    next_sharpening_due: string | null;
+    last_sharpened_at?: string | null;
+    sharpening_interval_days?: number | null;
+    tool_categories?: { name: string; suggested_interval_days: number | null };
+  }>;
+  deliveredOrders?: Array<{ items: unknown; total: number | null }>;
   schedules?: Array<{ id: string; next_order_date: string }>;
   orders?: Array<{ id: string; status: string }>;
   savingsLoading?: boolean;
@@ -59,6 +66,10 @@ function setup(over: Overrides = {}) {
     isLoading: over.ordersLoading ?? false,
     isError: over.ordersError ?? false,
   } as unknown as ReturnType<typeof useCustomerPendingOrders>);
+  // RecomendacoesCliente (embutido na Central) busca os entregues p/ a economia.
+  vi.mocked(useDeliveredOrders12m).mockReturnValue({
+    data: over.deliveredOrders ?? [],
+  } as unknown as ReturnType<typeof useDeliveredOrders12m>);
   return render(
     <MemoryRouter>
       <CentralFerramenta />
@@ -157,5 +168,46 @@ describe('CentralFerramenta', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /economia/i }));
     expect(mockNavigate).toHaveBeenCalledWith('/savings');
+  });
+
+  it('cliente novo (ferramentas all-null, categoria com intervalo, 0 pedidos): empurra a 1ª afiação', () => {
+    // Réplica do estado REAL de produção: cadastrou, categoria dá intervalo (120),
+    // mas next_due/last/intervalo-próprio NULL e nenhum pedido → cai no limbo nunca_afiada.
+    const { container } = setup({
+      summary: { ...EMPTY_SUMMARY, totalTools: 0 }, // sem economia (cliente novo)
+      tools: [
+        { id: 't1', next_sharpening_due: null, last_sharpened_at: null, sharpening_interval_days: null, tool_categories: { name: 'Serra Circular de Widea', suggested_interval_days: 120 } },
+        { id: 't2', next_sharpening_due: null, last_sharpened_at: null, sharpening_interval_days: null, tool_categories: { name: 'Serra Circular de Widea', suggested_interval_days: 120 } },
+      ],
+      deliveredOrders: [], // nenhum pedido entregue
+    });
+    const txt = container.textContent ?? '';
+    expect(txt).toContain('Recomendações para você');
+    expect(txt).toContain('ainda sem afiação'); // card nunca_afiada aparece
+    expect(txt).not.toContain('Você já economizou'); // sem economia fabricada
+    // o CTA leva a criar o primeiro pedido
+    fireEvent.click(screen.getByRole('button', { name: /agendar afiação/i }));
+    expect(mockNavigate).toHaveBeenCalledWith('/new-order');
+  });
+
+  it('mostra recomendação consultiva (atraso) mas NUNCA o card de economia — o herói já cobre', () => {
+    const { container } = setup({
+      summary: { ...EMPTY_SUMMARY, totalTools: 5, totalSpent: 500, totalSavings: 1500, savingsPercent: 75 },
+      tools: [
+        {
+          id: 't1',
+          next_sharpening_due: null, // não-agendada
+          last_sharpened_at: '2020-01-01', // muito no passado → sempre atrasada (teste estável)
+          sharpening_interval_days: 30,
+          tool_categories: { name: 'Plaina', suggested_interval_days: null },
+        },
+      ],
+      // Economia REAL existiria (10 afiações a R$500 vs. R$250/nova) — mas o card fica OCULTO na Central.
+      deliveredOrders: [{ items: [{ quantity: 10 }], total: 500 }],
+    });
+    const txt = container.textContent ?? '';
+    expect(txt).toContain('Recomendações para você');
+    expect(txt).toContain('passando do ponto de afiação'); // possivelmente_atrasada aparece
+    expect(txt).not.toContain('Você já economizou'); // card 'economia' suprimido (herói cobre)
   });
 });

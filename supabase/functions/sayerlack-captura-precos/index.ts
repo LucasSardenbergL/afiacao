@@ -30,6 +30,8 @@ import {
   type LeituraEmbalagem,
   type RunResumo,
   type InsertPreco,
+  classificarLinhasRascunho,
+  ehPlaceholderDataTables,
 } from "../_shared/embalagem-captura-helpers.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? Deno.env.get("VITE_SUPABASE_URL")!;
@@ -48,15 +50,24 @@ const BROWSERLESS_TOKEN = Deno.env.get("BROWSERLESS_TOKEN");
 // Regex dentro deste template literal: '\\' produz '\' no código enviado.
 const BROWSERLESS_FUNCTION = `
 export default async ({ page, context }) => {
-  const { user, pass, portalUrl, clienteCodigo, items } = context;
+  const { user, pass, portalUrl, clienteCodigo, items, todosSkusPortal } = context;
   const trace = [];
   const t0 = Date.now();
 
+  // Regras compartilhadas (interpoladas do _shared via .toString() — fonte
+  // única, testada em vitest): placeholder de tabela vazia do DataTables
+  // (não é linha real — spike-B f4d9fd92) e classificação de rascunho.
+  const ehPlaceholderDataTables = ${ehPlaceholderDataTables.toString()};
+  const classificarLinhasRascunho = ${classificarLinhasRascunho.toString()};
+
   // === Budget management (deadline global, aborto limpo) ===
-  // Supabase edge tem wall-clock ~400s; Browserless Prototyping aceita mais.
-  // 340s interno + 20s de margem antes do ?timeout=360000 da URL. Sem reserva de
-  // submit: esta função não tem etapa de finalização — o que sobra é só o return.
-  const HARD_CEILING_MS = 340_000;
+  // Supabase edge tem wall-clock ~400s e a PERSISTÊNCIA pós-browser (uploads +
+  // inserts) leva ~10-20s: 300s interno + 330s na URL + 335s no abort do fetch
+  // deixam ≥60s de margem real. Run full 7b452dcb morreu órfão com 340s (a edge
+  // estourou o wall-clock DURANTE a persistência — running eterno, 0 gravado);
+  // full que não couber fecha PARCIAL limpo e a ordenação por última tentativa
+  // gira a cauda nos retries dos dias 11/12 (design do cron mensal).
+  const HARD_CEILING_MS = 300_000;
   const RETURN_GUARD_MS = 2_000;
   const ITEM_MIN_BUDGET_MS = 5_000;
   const deadline = t0 + HARD_CEILING_MS;
@@ -165,29 +176,39 @@ export default async ({ page, context }) => {
     };
   }, skuEsperado);
 
-  // Cancela a linha em edição (X vermelho). Spike-B 50e669c7: o portal pode
-  // auto-gravar a linha na seleção (Seq preenchido) e o X de linha gravada
-  // abre confirm() nativo — aceito pelo handler page.on('dialog') do runFlow.
+  // Remove a ÚLTIMA linha da grade. Spike-B 91de2708 (screenshot): o portal
+  // AUTO-GRAVA a linha na seleção do item (Seq preenchido) e em modo edição o
+  // ✖ vermelho só CANCELA A EDIÇÃO — a linha gravada FICA. A remoção real é a
+  // LIXEIRA (fa-trash), visível fora do modo edição (comprovado manualmente
+  // pelo founder: lixeira + confirm removeu e persistiu). Por isso 2 tiers:
+  //   tier 'remocao' — trash/excluir/delete: remove de fato (confirm aceito
+  //     pelo handler page.on('dialog') do runFlow);
+  //   tier 'edicao' — X/cancel: só sai do modo edição; o chamador re-tenta a
+  //     remoção em seguida (a lixeira aparece fora da edição).
   // ESCOPO ESTRITO (achado Codex P0): só #btnCancelarItem OU botões DENTRO da
-  // última linha (a em edição). NUNCA a tabela/tfoot inteira — um matcher amplo
-  // fora da linha poderia acertar um botão errado do formulário. Sem fa-trash
-  // (lixeira é de linha GRAVADA; a captura nunca grava).
-  const cancelarLinhaEdicao = () => page.evaluate(function() {
+  // última linha. NUNCA a tabela/tfoot inteira — um matcher amplo fora da
+  // linha poderia acertar um botão errado do formulário.
+  const removerUltimaLinha = () => page.evaluate(function() {
     function visivel(el) { return el && el.offsetParent !== null; }
-    var byId = document.querySelector('#btnCancelarItem');
-    if (visivel(byId)) { byId.click(); return { clicked: true, via: 'btnCancelarItem' }; }
+    function blob(b) {
+      return ((b.className || '') + ' ' + (b.getAttribute('title') || '') + ' ' + (b.getAttribute('aria-label') || '') + ' ' + (b.innerHTML || '')).toLowerCase();
+    }
     var table = document.querySelector('#datatable_itens');
     if (!table) return { clicked: false, motivo: 'sem_tabela' };
     var rows = table.querySelectorAll('tbody tr');
-    if (!rows.length) return { clicked: true, via: 'sem_linha' };
+    if (!rows.length) return { clicked: true, tier: 'sem_linha' };
     var cands = Array.from(rows[rows.length - 1].querySelectorAll('button, a')).filter(visivel);
-    var alvo = cands.find(function(b){
-      var blob = ((b.className || '') + ' ' + (b.getAttribute('title') || '') + ' ' + (b.getAttribute('aria-label') || '') + ' ' + (b.innerHTML || '')).toLowerCase();
-      return /cancel|fa-times|fa-ban|times-circle|btn-danger/.test(blob);
-    });
-    if (alvo) {
-      alvo.click();
-      return { clicked: true, via: 'linha_match', debug: (alvo.outerHTML || '').substring(0, 120) };
+    var remocao = cands.find(function(b){ return /fa-trash|trash|lixeira|excluir|delete|remover/.test(blob(b)); });
+    if (remocao) {
+      remocao.click();
+      return { clicked: true, tier: 'remocao', debug: (remocao.outerHTML || '').substring(0, 120) };
+    }
+    var byId = document.querySelector('#btnCancelarItem');
+    if (visivel(byId)) { byId.click(); return { clicked: true, tier: 'edicao', via: 'btnCancelarItem' }; }
+    var edicao = cands.find(function(b){ return /cancel|fa-times|fa-ban|times-circle|btn-danger/.test(blob(b)); });
+    if (edicao) {
+      edicao.click();
+      return { clicked: true, tier: 'edicao', debug: (edicao.outerHTML || '').substring(0, 120) };
     }
     return {
       clicked: false,
@@ -197,26 +218,47 @@ export default async ({ page, context }) => {
     };
   });
 
+  // Conta só linhas REAIS: o DataTables renderiza "Nenhum dado disponível na
+  // tabela" como <tr> quando vazio (classe dataTables_empty) — contá-lo dava
+  // falso "rascunho sujo" em grade limpa E falso "cancel não comprovado" após
+  // remover a última linha (spike-B f4d9fd92). O filtro por texto abaixo é
+  // espelho inline de ehPlaceholderDataTables (page.evaluate roda no contexto
+  // da página, sem acesso ao escopo daqui) — manter em sincronia.
   const contarRows = () => page.evaluate(function() {
     var table = document.querySelector('#datatable_itens');
-    return table ? table.querySelectorAll('tbody tr').length : -1;
+    if (!table) return -1;
+    return Array.from(table.querySelectorAll('tbody tr')).filter(function(tr) {
+      if (tr.querySelector('td.dataTables_empty')) return false;
+      var t = (tr.innerText || '').trim().toLowerCase();
+      return t.indexOf('nenhum dado dispon') === -1 && t.indexOf('no data available') === -1;
+    }).length;
   });
 
   // Cancelamento é PROVA, não best-effort (Codex P0): sem comprovação (clique +
-  // 0 linhas), aborta o run inteiro — o Deno não persiste nada sem essa prova.
-  // Poll (não sleep fixo): a remoção pode ser AJAX/confirm assíncrono; sai no
-  // primeiro rows==0, aborta se não zerar dentro da janela (spike-B 50e669c7).
-  const exigirCancelamento = async (i, contexto) => {
-    const cancel = await cancelarLinhaEdicao().catch(function() { return { clicked: false, motivo: 'evaluate_erro' }; });
+  // contagem no alvo), aborta o run inteiro — o Deno não persiste nada sem essa
+  // prova. Até 3 fases de clique (spike-B 91de2708): a 1ª pode só SAIR do modo
+  // edição (tier 'edicao'); as seguintes acham a lixeira e removem de fato.
+  // Poll por fase (não sleep fixo): remoção é roundtrip AJAX no portal legado.
+  const exigirCancelamento = async (i, contexto, rowsAlvo) => {
+    const alvo = typeof rowsAlvo === 'number' ? rowsAlvo : 0;
+    const fases = [];
     let rowsApos = -1;
-    for (let tent = 0; tent < 16; tent++) {
-      await sleep(300);
-      rowsApos = await contarRows().catch(function() { return -1; });
-      if (rowsApos === 0) break;
+    for (let fase = 0; fase < 3; fase++) {
+      const clique = await removerUltimaLinha().catch(function() { return { clicked: false, motivo: 'evaluate_erro' }; });
+      fases.push(clique);
+      const polls = clique && clique.tier === 'remocao' ? 34 : 8; // ~10s remoção; ~2.4s pós-saída-de-edição
+      for (let tent = 0; tent < polls; tent++) {
+        await sleep(300);
+        rowsApos = await contarRows().catch(function() { return -1; });
+        if (rowsApos === alvo) break;
+      }
+      if (rowsApos === alvo) break;
+      if (!(clique && clique.clicked)) break; // nada clicável — re-tentar não muda
+      await sleep(500);
     }
-    trace.push({ step: 'item_' + i + '_cancel_' + contexto, cancel, rows_apos: rowsApos, t: Date.now() - t0 });
-    if (!(cancel && cancel.clicked) || rowsApos !== 0) {
-      const err = new Error('cancelamento não comprovado no item ' + i + ' (' + contexto + '): rows_apos=' + rowsApos);
+    trace.push({ step: 'item_' + i + '_cancel_' + contexto, fases, rows_apos: rowsApos, rows_alvo: alvo, t: Date.now() - t0 });
+    if (rowsApos !== alvo) {
+      const err = new Error('cancelamento não comprovado no item ' + i + ' (' + contexto + '): rows_apos=' + rowsApos + ' alvo=' + alvo + ' fases=' + fases.map(function(f){ return (f && f.tier) || 'sem_clique'; }).join('>'));
       err.code = 'CANCEL_NAO_COMPROVADO';
       throw err;
     }
@@ -389,23 +431,49 @@ export default async ({ page, context }) => {
     trace.push({ step: 'cliente_selecionado', cliente: String(clienteSelecionado).substring(0, 80), t: Date.now() - t0 });
 
     // Guard: a grade de um pedido NOVO nasce vazia. Linha pré-existente =
-    // rascunho sujo (auto-save do portal ou resíduo de run anterior) — abortar
-    // ANTES de mexer: não é nosso papel apagar linha possivelmente humana, e
-    // seguir adiante faria o rows==0 do cancel nunca comprovar (erro enganoso).
+    // rascunho re-hidratado pelo portal (proposta "em digitação" do usuário da
+    // captura — em prod a 341069 renasce mesmo após exclusão manual). Se TODAS
+    // as linhas são de SKUs do NOSSO mapa (todosSkusPortal, os 28 — não só os
+    // do run atual), é resíduo nosso → auto-limpeza comprovada linha a linha.
+    // Qualquer linha fora do mapa → rascunho possivelmente HUMANO → aborta sem
+    // tocar (RASCUNHO_SUJO_HUMANO).
     const rowsIniciais = await contarRows().catch(function() { return -1; });
     if (rowsIniciais !== 0) {
-      const errorScreenshot = await page.screenshot({ type: 'jpeg', quality: 70, encoding: 'base64' }).catch(() => null);
-      return {
-        data: {
-          success: false,
-          erro: 'Rascunho de proposta com ' + rowsIniciais + ' linha(s) pré-existente(s) — limpar no portal (Vendas → Pedidos/Propostas) antes de re-rodar a captura',
-          erroTipo: 'RASCUNHO_SUJO_INICIAL',
-          itens, itens_nao_processados: items.map(function(it){ return it.sku_portal; }),
-          trace,
-        },
-        type: 'application/json',
-        screenshot: errorScreenshot,
-      };
+      const textosLinhas = await page.evaluate(function() {
+        var table = document.querySelector('#datatable_itens');
+        if (!table) return [];
+        return Array.from(table.querySelectorAll('tbody tr')).filter(function(tr) {
+          if (tr.querySelector('td.dataTables_empty')) return false;
+          var t = (tr.innerText || '').trim().toLowerCase();
+          return t.indexOf('nenhum dado dispon') === -1 && t.indexOf('no data available') === -1;
+        }).map(function(tr) {
+          return (tr.innerText || '').trim().substring(0, 200);
+        });
+      }).catch(function() { return []; });
+      const cls = classificarLinhasRascunho(textosLinhas, todosSkusPortal || []);
+      trace.push({ step: 'rascunho_sujo_detectado', rows: rowsIniciais, cancelaveis: cls.cancelaveis, desconhecidas: cls.desconhecidas.slice(0, 3), t: Date.now() - t0 });
+      if (!cls.cancelaveis || rowsIniciais < 0 || textosLinhas.length !== rowsIniciais) {
+        const errorScreenshot = await page.screenshot({ type: 'jpeg', quality: 70, encoding: 'base64' }).catch(() => null);
+        return {
+          data: {
+            success: false,
+            erro: 'Rascunho com ' + rowsIniciais + ' linha(s) pré-existente(s) NÃO reconhecida(s) como resíduo da captura' +
+              (cls.desconhecidas.length ? ' (ex.: "' + cls.desconhecidas[0] + '")' : '') +
+              ' — pode ser rascunho humano; limpar no portal antes de re-rodar',
+            erroTipo: 'RASCUNHO_SUJO_HUMANO',
+            itens, itens_nao_processados: items.map(function(it){ return it.sku_portal; }),
+            trace,
+          },
+          type: 'application/json',
+          screenshot: errorScreenshot,
+        };
+      }
+      // Resíduo nosso comprovado: cancela da última à primeira, cada remoção
+      // provada pelo decremento exato da contagem (mesma prova do fluxo normal).
+      for (let alvoRows = rowsIniciais - 1; alvoRows >= 0; alvoRows--) {
+        await exigirCancelamento('preexistente', 'limpeza_inicial_' + alvoRows, alvoRows);
+      }
+      trace.push({ step: 'rascunho_limpo', linhas_removidas: rowsIniciais, t: Date.now() - t0 });
     }
 
     // === Loop de captura: selecionar → ler linha em edição → cancelar ===
@@ -483,22 +551,40 @@ export default async ({ page, context }) => {
       await fillInput('.select2-search__field', item.sku_portal);
       await sleep(2000);
 
-      const skuOption = await page.$('.select2-results__option:not(.select2-results__message)');
-      if (!skuOption) {
-        // "Nenhum resultado encontrado" = sinal de item inativado (spike-A) →
-        // marca e SEGUE (≠ fluxo de pedido, que aborta). Fecha o dropdown e cancela a linha.
-        const msg = await page.evaluate(function() {
-          const m = document.querySelector('.select2-results__message');
-          return m ? (m.innerText || '').trim().substring(0, 80) : null;
-        });
+      // Seleção EXATA no dropdown (run a5094f98: clicar a 1ª opção selecionou
+      // item ERRADO — a conferência de identidade do Deno reprovou os 2 itens).
+      // A opção certa é a cujo texto TOKENIZA o código exato (mesma regra do
+      // helper: separadores fora de [A-Z0-9.]); sem match exato = tratado como
+      // não-encontrado (precisão > recall), nunca "a primeira que veio".
+      const escolha = await page.evaluate(function(cod) {
+        var alvo = String(cod || '').trim().toUpperCase();
+        var ops = Array.from(document.querySelectorAll('.select2-results__option:not(.select2-results__message)'));
+        for (var k = 0; k < ops.length; k++) {
+          var txt = (ops[k].innerText || '').trim();
+          var tokens = txt.toUpperCase().split(/[^A-Z0-9.]+/).filter(Boolean);
+          if (tokens.indexOf(alvo) !== -1) {
+            ops[k].click();
+            return { clicked: true, opcao: txt.substring(0, 90), n_opcoes: ops.length };
+          }
+        }
+        var msgEl = document.querySelector('.select2-results__message');
+        return {
+          clicked: false,
+          n_opcoes: ops.length,
+          msg: msgEl ? (msgEl.innerText || '').trim().substring(0, 80) : null,
+          amostra: ops.slice(0, 3).map(function(o){ return (o.innerText || '').trim().substring(0, 60); }),
+        };
+      }, item.sku_portal);
+      trace.push({ step: 'item_' + i + '_select2_escolha', escolha, t: Date.now() - t0 });
+      if (!escolha.clicked) {
+        // Nenhuma opção EXATA: inativada ("Nenhum resultado") ou só matches
+        // parciais — ambos marcam e SEGUEM (≠ fluxo de pedido, que aborta).
         await page.keyboard.press('Escape').catch(() => null);
         await sleep(300);
         await exigirCancelamento(i, 'nao_encontrado');
-        itens.push({ sku_portal: item.sku_portal, achado: false, motivo_nao_achado: msg || 'nenhum_resultado_select2', cancelamento_ok: true });
-        trace.push({ step: 'item_' + i + '_nao_encontrado', msg, t: Date.now() - t0 });
+        itens.push({ sku_portal: item.sku_portal, achado: false, motivo_nao_achado: escolha.msg || (escolha.n_opcoes > 0 ? 'sem_opcao_exata (' + escolha.n_opcoes + ' parciais)' : 'nenhum_resultado_select2'), cancelamento_ok: true });
         continue;
       }
-      await skuOption.click();
 
       // Espera o preço popular na linha em edição (o portal preenche ao selecionar).
       await page.waitForFunction(function() {
@@ -768,6 +854,9 @@ Deno.serve(async (req) => {
     sku_codigo_omie: String(e.sku_codigo_omie),
     sku_portal: portalPorOmie.get(String(e.sku_codigo_omie)) ?? null,
   }));
+  // Capturado ANTES do filtro de spike: a auto-limpeza de rascunho reconhece
+  // resíduo de qualquer grupo do mapa, não só do grupo deste run.
+  const todosSkusPortal = [...new Set(alvo.filter((a) => a.sku_portal).map((a) => a.sku_portal!))];
 
   if (modo === "spike") {
     const grupoSpike = escolherGrupoSpike(
@@ -837,9 +926,9 @@ Deno.serve(async (req) => {
     let httpErr: string | null = null;
     try {
       const ctrl = new AbortController();
-      const timeout = setTimeout(() => ctrl.abort(), 380_000);
+      const timeout = setTimeout(() => ctrl.abort(), 335_000);
       const resp = await fetch(
-        `https://chrome.browserless.io/function?token=${BROWSERLESS_TOKEN}&timeout=360000`,
+        `https://chrome.browserless.io/function?token=${BROWSERLESS_TOKEN}&timeout=330000`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -852,6 +941,9 @@ Deno.serve(async (req) => {
               portalUrl: SAYERLACK_PORTAL_URL,
               clienteCodigo: SAYERLACK_PORTAL_CLIENTE_CODIGO,
               items: comDepara.map((a) => ({ sku_portal: a.sku_portal })),
+              // Universo COMPLETO do mapa (pré-filtro de spike): a auto-limpeza
+              // reconhece resíduo de QUALQUER run nosso, não só do grupo atual.
+              todosSkusPortal,
             },
           }),
         },
@@ -975,6 +1067,16 @@ Deno.serve(async (req) => {
         erroFinal = `${erroFinal ? erroFinal + " | " : ""}insert de run-items falhou: ${itemErr.message}`;
         resumo = { ...resumo, status: "falha" };
       }
+    }
+
+    // Observabilidade de falha (spike-B 91de2708: ficamos cegos sem o trace —
+    // o screenshot mostra o estado final, não a SEQUÊNCIA): run falho carrega
+    // os últimos passos do trace do browser no próprio erro (truncado).
+    if (resumo.status === "falha" && Array.isArray(envelope.trace) && envelope.trace.length > 0) {
+      try {
+        const tail = JSON.stringify(envelope.trace.slice(-8)).slice(0, 1600);
+        erroFinal = `${erroFinal ?? "falha"} | trace_tail: ${tail}`;
+      } catch { /* trace não-serializável não pode derrubar o fechamento do run */ }
     }
 
     const evidencia = await uploadEvidencia(supabase, runId, bResp?.screenshot ?? null);

@@ -27,11 +27,18 @@ export interface CarteiraScoreRow {
  * Busca farmer_client_scores da MINHA carteira (Opção A: farmer_id = dono).
  * Expande pra cobertura ativa: farmer_id IN [eu, ...donos que eu cubro agora].
  *
- * ⚠️ SEGURANÇA: o filtro por farmer_id aqui é display-only, NÃO é fronteira de
- * segurança — a RLS de farmer_client_scores é ampla (qualquer staff lê tudo).
- * A impersonação (effectiveUserId ≠ eu) é master-only (gate no ImpersonationContext)
- * e o master já lê tudo, então isto não abre vazamento novo. Endurecer a RLS dessa
- * tabela (master OR farmer_id=auth.uid() OR cobertura) é follow-up de segurança.
+ * 🔐 RLS de LEITURA (medida em prod 2026-07-18 — `fcs_select_carteira`):
+ * `pode_ver_carteira_completa(uid) OR private.carteira_visivel_para(customer_user_id, uid)`
+ * (a 2ª migrou p/ o schema `private` no #1421 — `pode_ver_carteira_completa` segue em `public`)
+ * — carteira-scoped, NÃO staff-wide. O SELECT não tem braço de autoria; quem tem é
+ * INSERT/UPDATE/DELETE (`... OR farmer_id = uid`) — não confundir os dois.
+ * Consequência: para GESTOR (`pode_ver_carteira_completa` = master, ou employee com
+ * commercial_role gerencial/estrategico/super_admin) o filtro daqui é display-only,
+ * porque ele lê tudo mesmo. Para vendedor NÃO-gestor a RLS é a fronteira real, e ela
+ * recorta pelo CLIENTE (`carteira_assignments` com `eligible IS TRUE` desde #1398, +
+ * cobertura ativa) — eixo distinto do `farmer_id` filtrado aqui, que segue sendo só o
+ * recorte de exibição. Impersonação é master-only (gate no ImpersonationContext) e o
+ * master passa nos dois braços, então não abre vazamento.
  */
 export function useMyCarteiraScores() {
   const { user } = useAuth();

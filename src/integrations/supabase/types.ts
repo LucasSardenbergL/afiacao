@@ -10340,6 +10340,7 @@ export type Database = {
           nfe_chave_acesso: string | null
           nfe_numero: string | null
           nfe_serie: string | null
+          nid_receb: number | null
           numero_contrato_fornecedor: string | null
           numero_pedido: string | null
           numero_pedido_fornecedor: string | null
@@ -10381,6 +10382,7 @@ export type Database = {
           nfe_chave_acesso?: string | null
           nfe_numero?: string | null
           nfe_serie?: string | null
+          nid_receb?: number | null
           numero_contrato_fornecedor?: string | null
           numero_pedido?: string | null
           numero_pedido_fornecedor?: string | null
@@ -10422,6 +10424,7 @@ export type Database = {
           nfe_chave_acesso?: string | null
           nfe_numero?: string | null
           nfe_serie?: string | null
+          nid_receb?: number | null
           numero_contrato_fornecedor?: string | null
           numero_pedido?: string | null
           numero_pedido_fornecedor?: string | null
@@ -14610,6 +14613,7 @@ export type Database = {
           cod_produto: string | null
           cor_id: string
           created_at: string
+          expected_item_count: number | null
           id: string
           id_base: string | null
           id_embalagem: string | null
@@ -14629,6 +14633,7 @@ export type Database = {
           cod_produto?: string | null
           cor_id: string
           created_at?: string
+          expected_item_count?: number | null
           id?: string
           id_base?: string | null
           id_embalagem?: string | null
@@ -14648,6 +14653,7 @@ export type Database = {
           cod_produto?: string | null
           cor_id?: string
           created_at?: string
+          expected_item_count?: number | null
           id?: string
           id_base?: string | null
           id_embalagem?: string | null
@@ -18107,10 +18113,6 @@ export type Database = {
           zip_code: string
         }[]
       }
-      carteira_visivel_para: {
-        Args: { _customer_user_id: string; _uid: string }
-        Returns: boolean
-      }
       cep_geo_upsert: {
         Args: {
           p_cep: string
@@ -18135,6 +18137,7 @@ export type Database = {
           skus_incluidos: number
         }[]
       }
+      claim_carteira_rebuild: { Args: { p_run_id: string }; Returns: boolean }
       claim_estoque_full_sync: {
         Args: { p_account: string; p_at: string; p_run_id: number }
         Returns: boolean
@@ -18293,10 +18296,6 @@ export type Database = {
           status_envio_portal: string
         }[]
       }
-      estimar_impacto_exclusao_outlier: {
-        Args: { p_evento_id: number }
-        Returns: Json
-      }
       expandir_promocao_item:
         | { Args: { p_item_id: number }; Returns: Json }
         | {
@@ -18432,6 +18431,10 @@ export type Database = {
       fin_sync_watchdog_check: { Args: never; Returns: undefined }
       fin_user_can_access: {
         Args: { check_company?: string }
+        Returns: boolean
+      }
+      finalizar_carteira_rebuild: {
+        Args: { p_run_id: string; p_status: string }
         Returns: boolean
       }
       finalizar_estoque_full_sync: {
@@ -18754,12 +18757,20 @@ export type Database = {
         Args: { p_pedido_id: number }
         Returns: boolean
       }
-      is_super_admin: { Args: { _user_id: string }; Returns: boolean }
       kb_extraction_draft_claim: {
         Args: { p_claim_token: string; p_document_id: string }
         Returns: boolean
       }
       kb_normalizar_catalisador: { Args: { p: string }; Returns: string }
+      leadtime_t1_e_data_de_pedido: {
+        Args: {
+          p_hist_t1: string
+          p_hist_t2: string
+          p_omie_codigo_pedido: number
+          p_tracking_t1: string
+        }
+        Returns: boolean
+      }
       limpar_sugestoes_antigas: {
         Args: never
         Returns: {
@@ -18840,15 +18851,6 @@ export type Database = {
       }
       norm_cidade: { Args: { t: string }; Returns: string }
       normalizar_cep: { Args: { p: string }; Returns: string }
-      omie_cliente_upsert_mapping: {
-        Args: {
-          p_codigo_cliente: number
-          p_codigo_vendedor: number
-          p_empresa: string
-          p_user_id: string
-        }
-        Returns: string
-      }
       omie_sync_identity_snapshot: {
         Args: { p_account: string }
         Returns: Json
@@ -18966,6 +18968,13 @@ export type Database = {
       }
       rank_precisao: { Args: { p: string }; Returns: number }
       recalcular_picking_task: { Args: { p_task_id: string }; Returns: Json }
+      recomputar_leadtime_derivado: {
+        Args: { p_empresa: string }
+        Returns: {
+          etapa: string
+          valor: number
+        }[]
+      }
       refresh_customer_metrics: { Args: never; Returns: undefined }
       refresh_oportunidade_badge: { Args: never; Returns: undefined }
       refresh_sku_ranking_negociacao: {
@@ -18974,6 +18983,15 @@ export type Database = {
           atualizado_em: string
           skus_ranqueados: number
         }[]
+      }
+      register_carteira_member: {
+        Args: {
+          p_account: string
+          p_omie_codigo_cliente: number
+          p_omie_codigo_vendedor?: number
+          p_user_id: string
+        }
+        Returns: undefined
       }
       registrar_aumento_via_vision: {
         Args: {
@@ -19106,13 +19124,7 @@ export type Database = {
         Args: { p_empresa?: string }
         Returns: Json
       }
-      reprocessar_sku_items_via_raw_data: {
-        Args: { p_empresa: string }
-        Returns: {
-          etapa: string
-          valor: number
-        }[]
-      }
+      request_customer_metrics_refresh: { Args: never; Returns: undefined }
       resgatar_recompensa: { Args: { p_reward_key: string }; Returns: string }
       resolve_markup_policy: {
         Args: {

@@ -34,9 +34,11 @@ type Resolved =
   | { kind: 'conflict'; code: number; users: string[] }
   | { kind: 'orphan'; code: number | null };
 
-// ESPELHO de src/lib/carteira/rebuild-helpers.ts (manter idêntico)
+// MIRROR-START carteira-compute — computeCarteira espelhado verbatim de src/lib/carteira/rebuild-helpers.ts (P0-B-bis)
 function computeCarteira(
-  clientes: OmieClienteRow[], vendedorMap: VendedorMapRow[], hunterUserId: string | null,
+  clientes: OmieClienteRow[],
+  vendedorMap: VendedorMapRow[],
+  hunterUserId: string | null,
   aliasMap: Map<string, string> = new Map(),
 ): RebuildResult {
   const codeToUsers = new Map<number, Set<string>>();
@@ -46,6 +48,7 @@ function computeCarteira(
   }
   const cloneIds = new Set(aliasMap.keys());
 
+  // Detecta cadeia/ciclo: um canônico que é, ele mesmo, um clone. NÃO degrada — sinaliza p/ abortar.
   const chainViolations: string[] = [];
   for (const [alias, canonical] of aliasMap) {
     if (cloneIds.has(canonical)) chainViolations.push(alias);
@@ -60,9 +63,11 @@ function computeCarteira(
     return { kind: 'conflict', code, users: [...users] };
   };
 
+  // Ordena por id (determinismo de paginação e de escolha de código).
   const ordenados = [...clientes].sort((a, b) =>
     a.customer_user_id < b.customer_user_id ? -1 : a.customer_user_id > b.customer_user_id ? 1 : 0);
 
+  // Agrupa MEMBROS por canonicalId (o gêmeo + os clones que apontam pra ele).
   const grupos = new Map<string, OmieClienteRow[]>();
   const canonicalIds: string[] = [];
   const seen = new Set<string>();
@@ -83,13 +88,25 @@ function computeCarteira(
     if (v.kind === 'omie') {
       assignments.push({ customer_user_id: c.customer_user_id, owner_user_id: v.user, source: 'omie', omie_codigo_vendedor: v.code, eligible });
     } else if (v.kind === 'orphan') {
+      // conta só órfão VISÍVEL (clone escondido não infla a métrica)
       if (eligible) orphanCount++;
       if (hunterUserId) assignments.push({ customer_user_id: c.customer_user_id, owner_user_id: hunterUserId, source: 'hunter_orphan', omie_codigo_vendedor: c.omie_codigo_vendedor ?? null, eligible });
+    } else if (hunterUserId) {
+      // CONFLITO de mapeamento (código → 2+ vendedores): QUARANTINA em vez de omitir. Omitir + upsert-only
+      // (onConflict customer_user_id, sem DELETE) preservaria o assignment ANTIGO — vendedor errado, válido,
+      // cobrando comissão: o furo que refutou o A′. Mesmo padrão da Fatia 2 (membro preservado, eligible=false,
+      // zero comissão, reversível). Hunter é PLACEHOLDER inerte (owner_user_id é NOT NULL e o CHECK de source
+      // só aceita omie|hunter_orphan → zero DDL), NÃO um palpite de dono: eligible=false já nega o efeito.
+      // Preserva o código ambíguo p/ observabilidade (qual code causou). `eligible` do caller é ignorado de
+      // propósito — conflito nunca é elegível, nem no ramo do clone.
+      assignments.push({ customer_user_id: c.customer_user_id, owner_user_id: hunterUserId, source: 'hunter_orphan', omie_codigo_vendedor: v.code, eligible: false });
     }
   };
 
   for (const canonicalId of canonicalIds) {
     const membros = grupos.get(canonicalId)!;
+
+    // Vendedores do grupo + flags de conflito.
     const vendedoresOmie: Array<{ user: string; code: number }> = [];
     let conflitoMapeamento = false;
     let codeConflito: number | null = null;
@@ -102,6 +119,7 @@ function computeCarteira(
     const usersDistintos = [...new Set(vendedoresOmie.map((x) => x.user))].sort();
 
     if (conflitoMapeamento || usersDistintos.length > 1) {
+      // CONFLITO → fail-closed seguro: não canonicaliza, cada membro vira legado VISÍVEL (eligible=true).
       conflicts.push({
         customer_user_id: canonicalId,
         omie_codigo_vendedor: codeConflito ?? (vendedoresOmie.length ? vendedoresOmie[0].code : 0),
@@ -111,8 +129,10 @@ function computeCarteira(
       continue;
     }
 
+    // GRUPO LIMPO → canonicaliza.
     if (usersDistintos.length === 1) {
       const user = usersDistintos[0];
+      // código determinístico: menor code do vendedor herdado.
       const code = Math.min(...vendedoresOmie.filter((x) => x.user === user).map((x) => x.code));
       assignments.push({ customer_user_id: canonicalId, owner_user_id: user, source: 'omie', omie_codigo_vendedor: code, eligible: true });
     } else {
@@ -122,6 +142,7 @@ function computeCarteira(
         assignments.push({ customer_user_id: canonicalId, owner_user_id: hunterUserId, source: 'hunter_orphan', omie_codigo_vendedor: canonRow?.omie_codigo_vendedor ?? null, eligible: true });
       }
     }
+    // clones do grupo (membros ≠ canônico) → eligible=false (escondidos, preservados).
     for (const m of membros) {
       if (m.customer_user_id === canonicalId) continue;
       emitLegado(m, false);
@@ -130,6 +151,7 @@ function computeCarteira(
 
   return { assignments, conflicts, orphanCount, chainViolations };
 }
+// MIRROR-END
 
 // MIRROR-START carteira-load — espelhado verbatim de src/lib/carteira/rebuild-helpers.ts (P0-B-bis 2/2)
 function coerceCodigoVendedor(raw: unknown): number | null {
@@ -168,6 +190,40 @@ function aplicarMascaras(
     ...a,
     eligible: a.eligible && !flaggeds.has(a.customer_user_id) && !quarantinados.has(a.customer_user_id),
   }));
+}
+function verificarCobertura(
+  membroIds: string[],
+  rows: Array<{ customer_user_id: string }>,
+): { ok: boolean; motivo: string | null } {
+  // PÓS-CONDIÇÃO ESTRUTURAL (tripwire): a saída cobre EXATAMENTE o conjunto de membros do ledger.
+  // Por que existe: "membro não chegou na saída" é UMA classe de bug — o conflito de mapeamento, o Hunter
+  // ausente e qualquer omissão futura são instâncias dela — e o upsert-only (onConflict customer_user_id,
+  // sem DELETE) transforma toda omissão em assignment ANTIGO vivo (vendedor errado, elegível, cobrando
+  // comissão: o furo que refutou o A′). Os guards de cardinalidade NÃO pegam isto: contam linhas, e o
+  // membro omitido some silenciosamente sem mudar contagem nenhuma. Aqui provamos o CONJUNTO.
+  // Fail-closed: em anomalia o caller ABORTA sem escrever — nada novo entra, o run fica ruidoso, e o
+  // estado velho é preservado por decisão explícita em vez de por omissão silenciosa.
+  const esperados = new Set(membroIds);
+  const vistos = new Set<string>();
+  const duplicados = new Set<string>();
+  const extras = new Set<string>();
+  for (const r of rows) {
+    if (vistos.has(r.customer_user_id)) duplicados.add(r.customer_user_id);
+    vistos.add(r.customer_user_id);
+    if (!esperados.has(r.customer_user_id)) extras.add(r.customer_user_id);
+  }
+  const faltantes: string[] = [];
+  for (const id of esperados) if (!vistos.has(id)) faltantes.push(id);
+  if (faltantes.length > 0) {
+    return { ok: false, motivo: `cobertura: ${faltantes.length} membro(s) do ledger sem row (ex.: ${faltantes.slice(0, 3).join(', ')}) — upsert-only deixaria o assignment ANTIGO vivo (stale)` };
+  }
+  if (extras.size > 0) {
+    return { ok: false, motivo: `cobertura: ${extras.size} row(s) p/ nao-membro do ledger (ex.: ${[...extras].slice(0, 3).join(', ')})` };
+  }
+  if (duplicados.size > 0) {
+    return { ok: false, motivo: `cobertura: ${duplicados.size} customer_user_id duplicado(s) na saida (ex.: ${[...duplicados].slice(0, 3).join(', ')})` };
+  }
+  return { ok: true, motivo: null };
 }
 function avaliarGuardProof(m: { proofCrua: number; proofFresca: number; comVendedor: number }): { abortar: boolean; motivo: string | null } {
   if (m.proofFresca === 0) {
@@ -210,6 +266,66 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   const auth = await authorizeCronOrStaff(req);
   if (!auth.ok) return auth.response;
+
+  // ── CANÁRIA DE DEPLOY (?canary=1) — a ÚNICA prova do que está SERVIDO em produção ──────────────
+  // Por que existe (lacuna exposta no deploy do #1397): a paridade textual do CI cobre a FONTE (o repo),
+  // não o DEPLOY — o bot do Lovable pode servir a cópia interna VELHA sem refletir na `main`. E o #1397 é
+  // um no-op nos dados de hoje (0 conflitos de mapeamento), então a resposta do run REAL é byte-idêntica
+  // com o código velho ou o novo: não discrimina. Esta canária discrimina em 1 request, sem escrever nada.
+  //
+  // A fixture é o comportamento que o #1397 mudou: código Omie → 2 vendedores (conflito de mapeamento).
+  //   • código VELHO  → emitLegado NÃO emite → assignments VAZIO (o membro some → upsert-only deixaria
+  //                     o assignment antigo STALE: vendedor errado, elegível, cobrando comissão);
+  //   • código NOVO   → 1 row hunter_orphan + eligible=false, código preservado (quarentena: membro
+  //                     preservado, zero comissão, nada stale) E verificarCobertura devolve ok=true.
+  // Roda o helper REAL deployado (não uma reimplementação) — é isso que a torna prova de DEPLOY.
+  // ANTES do lease e de qualquer I/O: pura, não toma o lease (senão uma canária bloquearia um rebuild
+  // real, e vice-versa), não lê nem escreve tabela nenhuma. Staff-gated pelo authorizeCronOrStaff acima.
+  //
+  // ⚠️ LENDO O RESULTADO: só é canária se a resposta tiver `"canary":true`. Um deploy ANTERIOR a esta
+  // fatia não conhece o param, ignora o `?canary=1` e roda um REBUILD REAL (escrita: lease + 6909 upserts,
+  // idempotente e guardado, mas é o ciclo completo) devolvendo `{"ok":true,"upserted":...}`. Ou seja:
+  // resposta SEM `canary:true` = a canária NÃO rodou E o deploy é velho — que é, em si, o veredito.
+  if (new URL(req.url).searchParams.get('canary') === '1') {
+    const HUNTER_FIX = '00000000-0000-4000-8000-0000000000ff';
+    const membrosFix = ['00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000002'];
+    const clientesFix: OmieClienteRow[] = [
+      { customer_user_id: membrosFix[0], omie_codigo_vendedor: 111 }, // limpo → 1 vendedor
+      { customer_user_id: membrosFix[1], omie_codigo_vendedor: 222 }, // CONFLITO → 2 vendedores
+    ];
+    const mapFix: VendedorMapRow[] = [
+      { omie_codigo_vendedor: 111, user_id: '00000000-0000-4000-8000-00000000000a' },
+      { omie_codigo_vendedor: 222, user_id: '00000000-0000-4000-8000-00000000000a' },
+      { omie_codigo_vendedor: 222, user_id: '00000000-0000-4000-8000-00000000000b' },
+    ];
+    const out = computeCarteira(clientesFix, mapFix, HUNTER_FIX);
+    const conflitado = out.assignments.find((a) => a.customer_user_id === membrosFix[1]) ?? null;
+    const cobertura = verificarCobertura(membrosFix, out.assignments);
+    const resolved = {
+      membroConflitadoPresente: conflitado !== null,
+      conflitadoSource: conflitado?.source ?? null,
+      conflitadoEligible: conflitado?.eligible ?? null,
+      conflitadoCodigo: conflitado?.omie_codigo_vendedor ?? null,
+      conflictsRegistrados: out.conflicts.length,
+      coberturaOk: cobertura.ok,
+    };
+    const expected = {
+      membroConflitadoPresente: true,
+      conflitadoSource: 'hunter_orphan',
+      conflitadoEligible: false,
+      conflitadoCodigo: 222,
+      conflictsRegistrados: 1,
+      coberturaOk: true,
+    };
+    const ok = (Object.keys(expected) as Array<keyof typeof expected>)
+      .every((k) => resolved[k] === expected[k]);
+    if (!ok) {
+      console.error('[carteira-rebuild] CANÁRIA VERMELHA — deploy servido diverge do repo:', JSON.stringify({ resolved, expected }));
+    }
+    return new Response(JSON.stringify({ canary: true, ok, resolved, expected }), {
+      status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
 
   // Flag de bootstrap: ?bootstrap=1 autoriza gravar quando não há baseline saudável (ou resetá-lo numa queda
   // legítima grande). Gated em service_role/cron-secret — NÃO staff comum (Codex R3 #2: employee comprometido
@@ -260,7 +376,15 @@ Deno.serve(async (req) => {
   // 1. Carregar mapa + hunter (tabelas pequenas). FAIL-CLOSED: erro de leitura estrutural aborta ANTES
   // de qualquer upsert — senão vendedorMap=[] mandaria a carteira inteira pro Hunter (P1.4 Codex).
   const [mapRes, hunterRes, baselineRes] = await Promise.all([
-    supabase.from('omie_vendedor_map').select('omie_codigo_vendedor, user_id'),
+    // account-scoped (D1): o código do vendedor PERTENCE à conta Omie — o mesmo humano tem número
+    // diferente em cada conta. A proof já fixa account='oben' (:338); ler o map de TODAS as contas era
+    // join entre namespaces incompatíveis. Sem o filtro, um código oben que casasse com UMA linha
+    // colacor/colacor_sc de OUTRO vendedor resolveria users.size===1 → source='omie', eligible=true,
+    // vendedor ERRADO e sem sinal de conflito (misatribuição silenciosa — pior que stale, porque é
+    // invisível). Com o filtro, UNIQUE(omie_account, omie_codigo_vendedor) garante que DENTRO da conta
+    // código→vendedor é FUNÇÃO ⇒ o ramo 'conflict' de mapeamento fica inalcançável por construção do
+    // BANCO. Provado no-op pré-deploy por equivalência de entrada (0/4 códigos do domínio divergem).
+    supabase.from('omie_vendedor_map').select('omie_codigo_vendedor, user_id').eq('omie_account', 'oben'),
     supabase.from('company_config').select('value').eq('key', 'carteira_hunter_user_id').maybeSingle(),
     supabase.from('company_config').select('value').eq('key', 'carteira_omie_baseline').maybeSingle(),
   ]);
@@ -272,11 +396,18 @@ Deno.serve(async (req) => {
   const baselinePersistido = parseBaselineSaudavel((baselineRes.data?.value as string | null | undefined) ?? '0');
   if (baselinePersistido === null) { console.error('[carteira-rebuild] baseline corrompido:', baselineRes.data?.value); return await failLease(`baseline corrompido: ${baselineRes.data?.value}`); }
   const vendedorMap = (mapRes.data ?? []) as VendedorMapRow[];
-  // vendedor_map vazio é anômalo (sempre há vendedores) e mandaria todos pro Hunter → aborta.
-  if (vendedorMap.length === 0) { console.error('[carteira-rebuild] vendedor_map vazio — abortando'); return await failLease('vendedor_map vazio (anômalo)'); }
+  // vendedor_map oben vazio é anômalo (sempre há vendedores oben) e mandaria todos pro Hunter → aborta.
+  if (vendedorMap.length === 0) { console.error('[carteira-rebuild] vendedor_map oben vazio — abortando'); return await failLease('vendedor_map oben vazio (anômalo)'); }
   // value pode vir como uuid puro ou JSON-quoted ("uuid") — normaliza removendo aspas.
   const rawHunter = (hunterRes.data?.value as string | null | undefined) ?? null;
   const hunterUserId = rawHunter ? (rawHunter.replace(/^"|"$/g, '').trim() || null) : null;
+  // FAIL-CLOSED (D3): sem Hunter o helper não consegue emitir órfão NEM quarantinado (owner_user_id é NOT
+  // NULL) → esses membros sumiriam da saída e o upsert-only (:403, sem DELETE) manteria o assignment ANTIGO
+  // vivo. Hoje isso são ~4162 membros (2069+2093 hunter_orphan): um cliente que ERA omie→V e perdeu o código
+  // continuaria com V elegível, cobrando comissão. Nenhum guard pegava: os de cardinalidade contam LINHAS e
+  // o omitido some sem mudar contagem; avaliarGuardResultado só olha omie elegível, que segue intacto.
+  // Mesmo padrão do guard de vendedor_map vazio acima. No-op hoje (Hunter configurado no company_config).
+  if (!hunterUserId) { console.error('[carteira-rebuild] carteira_hunter_user_id ausente/vazio — abortando'); return await failLease('carteira_hunter_user_id ausente (órfãos e conflitos ficariam sem row → assignment antigo STALE)'); }
 
   // 1b. Aliases de consolidação ATIVOS (clone→canônico). FAIL-CLOSED em erro (não re-expor clones
   // escondidos). Map vazio se a Fase 2 não foi ativada → rebuild legado + eligible explícito.
@@ -413,6 +544,15 @@ Deno.serve(async (req) => {
     updated_at: now,
     last_synced_at: now,
   }));
+
+  // 2c-bis. PÓS-CONDIÇÃO DE COBERTURA (D4) — a saída cobre EXATAMENTE os membros do ledger. Prova o CONJUNTO;
+  // os guards abaixo contam LINHAS e são CEGOS ao membro omitido (ele some sem mudar contagem nenhuma). Como o
+  // upsert é upsert-only (:403, onConflict customer_user_id, sem DELETE), TODA omissão vira assignment ANTIGO
+  // vivo — vendedor errado, elegível, cobrando comissão (o furo que refutou o A′). Tripwire: com o filtro de
+  // conta + a quarentena do conflito + o guard do Hunter, isto deve ser INALCANÇÁVEL; se disparar, computeCarteira
+  // tem bug e o certo é NÃO escrever. Roda sobre `rows` (o payload real do upsert), não sobre `assignments`.
+  const cobertura = verificarCobertura(membroIds, rows);
+  if (!cobertura.ok) { console.error('[carteira-rebuild] pós-condição de cobertura:', cobertura.motivo); return await failLease(`cobertura: ${cobertura.motivo}`); }
 
   // 2d. Guard PÓS-compute (Codex R1-R3): conta só omie ELEGÍVEL (#3); BLOQUEIA o bootstrap quando o baseline
   // PERSISTIDO é 0 sem ?bootstrap=1 — INDEPENDENTE da carteira atual (R3 #1); compara SÓ com o baseline persistido

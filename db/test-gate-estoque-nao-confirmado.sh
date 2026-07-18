@@ -50,6 +50,12 @@ CREATE TABLE public.company_config (key text, value text);
 CREATE TABLE public.omie_products (omie_codigo_produto bigint, account text, descricao text, familia text, ativo boolean, tipo_produto text, metadata jsonb DEFAULT '{}');
 CREATE TABLE public.sku_grupo_producao (empresa text, sku_codigo_omie text, grupo_codigo text);
 CREATE TABLE public.sku_leadtime_history (empresa text, sku_codigo_omie text, quantidade_recebida numeric, valor_total numeric);
+-- [#1366] A CTE preco_medio do motor passou a ler a fonte deduplicada por NFe. Stub 1:1 sobre a tabela acima:
+-- o assunto DESTE harness é o gate de estoque-não-confirmado, não o dedup (esse é provado com a view REAL em
+-- db/test-preco-medio-leadtime-efetivo.sh), e os seeds daqui não têm NFe duplicada — 1:1 é fiel para eles.
+-- Sem este stub a função dá 'relation does not exist' em RUNTIME: o CREATE OR REPLACE passa (late-bound).
+CREATE VIEW public.v_sku_leadtime_efetivo AS
+  SELECT empresa, sku_codigo_omie, quantidade_recebida, valor_total FROM public.sku_leadtime_history;
 CREATE TABLE public.fornecedor_habilitado_reposicao (empresa text, fornecedor_nome text, horario_corte_pedido interval, valor_maximo_mensal numeric, delta_max_perc numeric, lt_logistica_dias int);
 CREATE TABLE public.familia_nao_comprada (id bigserial PRIMARY KEY, empresa text, familia text);
 CREATE TABLE public.sku_status_omie (empresa text, sku_codigo_omie text, ativo_no_omie boolean);

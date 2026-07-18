@@ -6,17 +6,16 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import { Badge } from "@/components/ui/badge";
-import { CheckCircle2, XCircle, EyeOff, Loader2 } from "lucide-react";
+import { CheckCircle2, Loader2 } from "lucide-react";
 import {
   ResponsiveContainer, BarChart, Bar, ScatterChart, Scatter,
   XAxis, YAxis, CartesianGrid, Tooltip as ReTooltip, ReferenceLine, Cell,
 } from "recharts";
 import { sevBadge, statusBadge } from "./badges";
-import { tipoLabel, fmt, type EventoOutlier, type SkuInfo, type ImpactoData, type GrupoRow } from "./types";
+import { tipoLabel, fmt, type EventoOutlier, type SkuInfo, type GrupoRow } from "./types";
 
 export function AlertaDrillSheet({
-  drillEvento, onClose, isSemGrupo, skuInfo, historico, impacto, gruposFornecedor,
+  drillEvento, onClose, isSemGrupo, skuInfo, historico, mediaLt, gruposFornecedor,
   grupoEscolhido, setGrupoEscolhido, atribuirGrupoPending, onAtribuirGrupo,
   justificativa, setJustificativa, onAcao,
 }: {
@@ -25,7 +24,7 @@ export function AlertaDrillSheet({
   isSemGrupo: boolean;
   skuInfo?: SkuInfo | null;
   historico: unknown;
-  impacto?: ImpactoData;
+  mediaLt?: number | null;
   gruposFornecedor?: GrupoRow[];
   grupoEscolhido: string;
   setGrupoEscolhido: (s: string) => void;
@@ -33,7 +32,7 @@ export function AlertaDrillSheet({
   onAtribuirGrupo: () => void;
   justificativa: string;
   setJustificativa: (s: string) => void;
-  onAcao: (tipo: "aceitar" | "excluir" | "ignorar") => void;
+  onAcao: () => void;
 }) {
   return (
     <Sheet open={!!drillEvento} onOpenChange={(o) => !o && onClose()}>
@@ -96,8 +95,11 @@ export function AlertaDrillSheet({
                             <XAxis dataKey="idx" tick={{ fontSize: 10 }} name="#" />
                             <YAxis dataKey="lt" tick={{ fontSize: 10 }} name="LT (dias)" />
                             <ReTooltip />
-                            {impacto?.media_atual != null && (
-                              <ReferenceLine y={impacto.media_atual} stroke="hsl(var(--muted-foreground))" strokeDasharray="3 3" />
+                            {/* Média derivada do MESMO histórico que desenha os pontos. Antes vinha
+                                da RPC estimar_impacto_exclusao_outlier, cuja janela e fórmula divergiam
+                                do que o gráfico plota — e que sai junto com o card de impacto. */}
+                            {mediaLt != null && (
+                              <ReferenceLine y={mediaLt} stroke="hsl(var(--muted-foreground))" strokeDasharray="3 3" />
                             )}
                             <Scatter data={(historico as Array<{ idx: number; lt: number; isOutlier: boolean }> | null) ?? []}>
                               {((historico as Array<{ isOutlier: boolean }> | null) ?? []).map((d, i) => (
@@ -108,31 +110,6 @@ export function AlertaDrillSheet({
                         )}
                       </ResponsiveContainer>
                     </div>
-                  </CardContent>
-                </Card>
-              )}
-
-              {/* Seção 4 - Impacto (não aplicável a sku_sem_grupo) */}
-              {!isSemGrupo && (
-                <Card>
-                  <CardHeader className="pb-2"><CardTitle className="text-sm">4. Impacto se excluir</CardTitle></CardHeader>
-                  <CardContent className="text-sm space-y-1">
-                    {impacto && !impacto.error ? (
-                      <>
-                        <div>σ atual: <span className="font-mono">{fmt(impacto.sigma_atual)}</span> → sem outlier: <span className="font-mono">{fmt(impacto.sigma_sem)}</span></div>
-                        <div>Média atual: <span className="font-mono">{fmt(impacto.media_atual)}</span> → sem: <span className="font-mono">{fmt(impacto.media_sem)}</span></div>
-                        {impacto.em_atual !== undefined && impacto.delta_em !== undefined && (
-                          <div className="pt-2 p-2 bg-muted/50 rounded">
-                            Estoque mínimo sugerido: <span className="font-mono">{impacto.em_atual}</span> → <span className="font-mono">{impacto.em_sem}</span>{" "}
-                            <Badge variant={impacto.delta_em < 0 ? "success" : "warning"}>
-                              {impacto.delta_em > 0 ? "+" : ""}{impacto.delta_em} un
-                            </Badge>
-                          </div>
-                        )}
-                      </>
-                    ) : (
-                      <div className="text-muted-foreground">Calculando…</div>
-                    )}
                   </CardContent>
                 </Card>
               )}
@@ -185,10 +162,10 @@ export function AlertaDrillSheet({
                 </Card>
               )}
 
-              {/* Seção 5 - Decisão padrão (oculta para sku_sem_grupo) */}
+              {/* Seção 4 - Revisão (oculta para sku_sem_grupo, que tem fluxo próprio acima) */}
               {!isSemGrupo && drillEvento.status === "pendente" && (
                 <Card>
-                  <CardHeader className="pb-2"><CardTitle className="text-sm">5. Decisão</CardTitle></CardHeader>
+                  <CardHeader className="pb-2"><CardTitle className="text-sm">4. Revisão</CardTitle></CardHeader>
                   <CardContent className="space-y-3">
                     <div>
                       <Label className="text-xs">Justificativa (opcional)</Label>
@@ -199,19 +176,12 @@ export function AlertaDrillSheet({
                         placeholder="Ex: pedido excepcional cliente X, não se repete"
                       />
                     </div>
-                    <div className="grid grid-cols-3 gap-2">
-                      <Button variant="default" className="bg-success hover:bg-success/90 text-success-foreground" onClick={() => onAcao("aceitar")}>
-                        <CheckCircle2 className="h-4 w-4 mr-1" /> Aceitar
-                      </Button>
-                      <Button variant="destructive" onClick={() => onAcao("excluir")}>
-                        <XCircle className="h-4 w-4 mr-1" /> Excluir
-                      </Button>
-                      <Button variant="secondary" onClick={() => onAcao("ignorar")}>
-                        <EyeOff className="h-4 w-4 mr-1" /> Ignorar
-                      </Button>
-                    </div>
+                    <Button className="w-full" onClick={() => onAcao()}>
+                      <CheckCircle2 className="h-4 w-4 mr-1" /> Marcar como revisado
+                    </Button>
                     <p className="text-xs text-muted-foreground">
-                      <strong>Aceitar:</strong> evento real, mantém no cálculo. <strong>Excluir:</strong> one-off, remove da estatística. <strong>Ignorar:</strong> não mexe no dado.
+                      Esta tela é de <strong>revisão</strong>: o alerta sai da fila e a observação
+                      permanece no cálculo. Os parâmetros de reposição não são alterados por aqui.
                     </p>
                   </CardContent>
                 </Card>

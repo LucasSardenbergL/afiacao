@@ -47,20 +47,13 @@ export type SkuInfo = {
   preco_compra_real: number | null;
 };
 
-export type ImpactoData = {
-  error?: string;
-  media_atual?: number | null;
-  media_sem?: number | null;
-  sigma_atual?: number | null;
-  sigma_sem?: number | null;
-  em_atual?: number | null;
-  em_sem?: number | null;
-  delta_em?: number;
-} | null;
-
 export type GrupoRow = { id: number; codigo_grupo: string; descricao: string | null; lt_producao_dias: number };
 
-export type AcaoConfirm = { tipo: "aceitar" | "excluir" | "ignorar"; lote: boolean };
+// Sem `tipo`: 'aceitar' virou a única decisão, então o campo não distingue mais nada e
+// ninguém o lê. 'excluir' saiu (prometia remover da estatística e nunca alcançou o motor —
+// spec 2026-07-16); 'ignorar' saiu junto (arquivava igual a 'aceitar' e nunca foi usado).
+// Resta só o que ainda decide layout e alvo: se a confirmação é de lote ou individual.
+export type AcaoConfirm = { lote: boolean };
 
 export const tipoLabel = (tipo: string) =>
   tipo === "venda_atipica"

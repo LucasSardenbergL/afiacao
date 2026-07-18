@@ -360,22 +360,20 @@ async function syncClienteOmie(
   console.log(`[Omie] Cliente encontrado no Omie: ${omieCodigoCliente} - ${cliente?.razao_social ?? ''}`);
   console.log(`[Omie] Vendedor associado: ${omieCodigoVendedor ?? 'Nenhum'}`);
 
-  // TODO Fatia 4: este write-back é WRITER do espelho poluído omie_clientes (grava sem conta, rótulo
-  // 'colacor' default) — será migrado/aposentado na Fatia 4. Mantido por ora: não corrompe leitor que
-  // já lê a view fresca, e ainda serve o cache legado até todos os leitores migrarem.
-  // upsert ON CONFLICT DO NOTHING (ignoreDuplicates): o fluxo agora entra aqui após ausência na VIEW, e
-  // ~24% dos users (1634) têm linha antiga no espelho (UNIQUE(user_id)) — insert cru colidiria e engoliria
-  // o erro (Codex P2). DO NOTHING não sobrescreve a linha existente (não corrompe leitor ainda-não-migrado
-  // que poderia esperar o código de outra conta) e não deixa erro silencioso.
-  const { error: writeErr } = await supabase
-    .from("omie_clientes")
-    .upsert({
-      user_id: userId,
-      omie_codigo_cliente: omieCodigoCliente,
-      omie_codigo_cliente_integracao: cliente?.codigo_cliente_integracao || null,
-      omie_codigo_vendedor: omieCodigoVendedor,
-    }, { onConflict: "user_id", ignoreDuplicates: true });
-  if (writeErr) console.error("[Omie] write-back no espelho falhou (não bloqueia o pedido):", writeErr.message);
+  // [P0-B-bis Fatia 4] O write-back saiu do espelho poluído `omie_clientes` (que gravava SEM conta, sob
+  // o rótulo default 'colacor') para a RPC, que escreve as duas pontas: membership no ledger + vínculo na
+  // proof account-correta. A conta é 'colacor_sc' e não é chute — todo este caminho consulta a conta
+  // colacor_sc (credencial default do `omie-sync`), como o erro de doc-ambíguo logo acima já explicita.
+  // Segue NÃO-BLOQUEANTE: o pedido não depende do write-back (o código já foi resolvido acima). O
+  // `omie_codigo_cliente_integracao` foi descartado junto com o espelho (resíduo §9 do design: 41 de
+  // 6909 linhas o tinham, todas de março, e nenhum leitor o consome).
+  const { error: writeErr } = await supabase.rpc("register_carteira_member", {
+    p_user_id: userId,
+    p_account: "colacor_sc",
+    p_omie_codigo_cliente: omieCodigoCliente,
+    p_omie_codigo_vendedor: omieCodigoVendedor ?? null,
+  });
+  if (writeErr) console.error("[Omie] write-back do vínculo falhou (não bloqueia o pedido):", writeErr.message);
 
   return {
     omieCodigoCliente,

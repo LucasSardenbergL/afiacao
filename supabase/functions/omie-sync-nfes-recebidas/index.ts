@@ -76,7 +76,8 @@ const MAIN_LOOP_GUARD_MS = 120_000;
 
 // Tipos minimos pra responses da Omie (campos opcionais — Omie nem sempre devolve tudo)
 interface OmieNFeCabec {
-  nIdReceb?: number;
+  /** A Omie devolve ora número, ora string — quem lê normaliza (e rejeita não-numérico). */
+  nIdReceb?: number | string;
   cChaveNFe?: string;
   cChaveNfe?: string;
   nIdFornecedor?: number;
@@ -140,6 +141,8 @@ interface PurchaseOrderTrackingRow {
   t4_data_recebimento?: string | null;
   nfe_chave_acesso?: string | null;
   raw_data?: Record<string, unknown> | null;
+  /** Sinal do recebimento em coluna DEDICADA (o raw_data é multi-writer e perde o valor). */
+  nid_receb?: number | null;
   transportadora_nome?: string | null;
   transportadora_cnpj?: string | null;
 }
@@ -373,6 +376,9 @@ async function insertOrfa(
     transportadora_cnpj: m.transp_cnpj,
     transportadora_nome: m.transp_nome,
     raw_data: nfe,
+    // Coluna dedicada: a órfã nasce com o sinal já resolvido, então nunca entra na fila
+    // do backfill. (O raw_data aqui é do recebimento, mas é multi-writer e não sobrevive.)
+    nid_receb: nIdReceb,
   };
 
   const { data: existing } = await supabase
@@ -600,11 +606,20 @@ async function backfillRawData(
 
   const { app_key, app_secret } = getCredentials(empresa);
 
+  // O pendente é decidido pela COLUNA DEDICADA, no BANCO — não pelo jsonb, em memória.
+  // Por quê: raw_data é multi-writer (o sync de pedidos o sobrescreve com o payload do
+  // PEDIDO), então filtrar por ele redescobria como "pendente" toda linha que este mesmo
+  // backfill já havia resolvido na rodada anterior — o contador de identificadas ficava
+  // travado por dias enquanto a Omie era consultada à toa. nid_receb sobrevive ao sync
+  // concorrente (está no PRESERVE_FIELDS dele), então o trabalho ACUMULA e a fila drena.
+  // Filtrar no banco também tira a lista inteira da memória — o teto de 1.000 linhas do
+  // PostgREST truncava em silêncio conforme a tabela crescesse.
   let q = supabase
     .from("purchase_orders_tracking")
-    .select("id, nfe_chave_acesso, raw_data, t2_data_faturamento, t4_data_recebimento, transportadora_nome, transportadora_cnpj")
+    .select("id, nfe_chave_acesso, raw_data, nid_receb, t2_data_faturamento, t4_data_recebimento, transportadora_nome, transportadora_cnpj")
     .eq("empresa", empresa)
-    .not("nfe_chave_acesso", "is", null);
+    .not("nfe_chave_acesso", "is", null)
+    .is("nid_receb", null);
   if (fornecedorCodigo) q = q.eq("fornecedor_codigo_omie", fornecedorCodigo);
 
   const { data: linhas, error: selErr } = await q;
@@ -614,14 +629,7 @@ async function backfillRawData(
     return out;
   }
 
-  const linhasTyped = (linhas ?? []) as PurchaseOrderTrackingRow[];
-  const incompletos = linhasTyped.filter((l) => {
-    const rd = l.raw_data as { cabec?: { nIdReceb?: number } } | null | undefined;
-    if (!rd || typeof rd !== "object") return true;
-    const cab = rd.cabec;
-    if (!cab || typeof cab !== "object") return true;
-    return !cab.nIdReceb;
-  });
+  const incompletos = (linhas ?? []) as PurchaseOrderTrackingRow[];
 
   out.nfes_identificadas_para_backfill = incompletos.length;
   console.log(`[backfill] ${empresa} identificadas=${incompletos.length}`);
@@ -652,9 +660,19 @@ async function backfillRawData(
 
       const m = mapNFe(detalhe);
       const updateRow: Record<string, unknown> = {
+        // Dual-write: a coluna dedicada é a fonte de verdade daqui pra frente, mas o
+        // raw_data segue sendo gravado enquanto houver leitor legado do jsonb.
         raw_data: detalhe,
         updated_at: new Date().toISOString(),
       };
+
+      // Sinal money-path: só entra se for numérico. Ausente/ilegível ⇒ deixa NULL — um
+      // nIdReceb fabricado consultaria o recebimento ERRADO no ERP (ausente ≠ zero).
+      const nidBruto = detalhe?.cabec?.nIdReceb;
+      const nid = typeof nidBruto === "number"
+        ? nidBruto
+        : (typeof nidBruto === "string" && /^\d+$/.test(nidBruto) ? Number(nidBruto) : null);
+      if (nid !== null) updateRow.nid_receb = nid;
       if (!linha.t2_data_faturamento && m.data_emissao_iso) {
         updateRow.t2_data_faturamento = m.data_emissao_iso;
       }
@@ -668,10 +686,16 @@ async function backfillRawData(
         updateRow.transportadora_cnpj = m.transp_cnpj;
       }
 
+      // Compare-and-set: só grava se o sinal ainda estiver ausente E a chave da linha for
+      // a MESMA que foi consultada. Sem isto, dois runs concorrentes (ou uma chave trocada
+      // no meio da chamada à Omie) poderiam carimbar nesta linha o recebimento de outra
+      // NFe. Perder a corrida é inócuo — quem venceu já gravou o mesmo sinal.
       const { error: updErr } = await supabase
         .from("purchase_orders_tracking")
         .update(updateRow)
-        .eq("id", linha.id);
+        .eq("id", linha.id)
+        .eq("nfe_chave_acesso", linha.nfe_chave_acesso)
+        .is("nid_receb", null);
       if (updErr) {
         console.error(`[backfill] ${empresa} chave=${chave} update erro: ${updErr.message}`);
         out.erros++;

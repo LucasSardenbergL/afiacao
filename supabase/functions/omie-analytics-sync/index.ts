@@ -4,7 +4,9 @@ import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { fetchAll } from "../_shared/paginate.ts";
 import { montarUpsertsDeCusto } from "../_shared/cost-compute.ts";
 import { recomporCustoProducao } from "../_shared/recompor-custo-producao.ts";
-import { buildProductIdMap } from "../_shared/product-idmap.ts";
+import { buildProductIdMap, montarCatalogoPorCod } from "../_shared/product-idmap.ts";
+import { avaliarPagina, MAX_PAGINAS_POS_ESTOQUE, proximoTotalPaginas } from "../_shared/omie-paginacao.ts";
+import { acumularPosicoesDaPagina, type PosicaoEstoque } from "../_shared/pos-estoque.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -499,21 +501,44 @@ async function syncCustomers(db: SupabaseClient, account: OmieAccount) {
       );
     }
 
-    // Bulk upsert em chunks (onConflict user_id = unique_user_omie). empresa_omie NÃO é setado
-    // (preserva o default 'colacor' do comportamento anterior).
-    // Fatia 4 (money-path, Codex): SÓ 'vendas'(oben) mantém o espelho legado omie_clientes. Este
-    // upsert é CODE-FIRST (userByCodigo do espelho poluído vence o documento) e sem empresa_omie —
-    // para contas não-oben ele SOBRESCREVERIA (last-wins, 1 linha/user) a linha de um cliente
-    // multi-conta com o código de OUTRA conta, corrompendo o espelho que readers legados ainda leem
-    // (sync_pedidos sem filtro de conta, carteira-rebuild/ai-ops-agent via vendedor, hooks de UI). As
-    // demais contas alimentam SÓ a proof-table document-first (account-correta) abaixo.
+    // [P0-B-bis Fatia 4] O espelho legado `omie_clientes` NÃO é mais escrito aqui — este era o ÚLTIMO
+    // writer vivo (5239 linhas/dia; os 6 writers pontuais somaram 2 INSERTs em 4 meses). No lugar, a
+    // MEMBERSHIP vai direto ao ledger.
+    //
+    // Por que direto, e não pela RPC `register_carteira_member`: são 5239 membros por run — chamar a RPC
+    // por linha seria o N+1 que o CLAUDE.md proíbe em enumeração pesada. A RPC serve os writers PONTUAIS;
+    // o bulk escreve em massa, como já faz com a proof logo abaixo.
+    //
+    // Por que a lista code-first (`upsertByUser`) e não a document-first (`accountMapByUser`): a
+    // code-first é MAIS ABRANGENTE — cobre os ~1633 aliases fiscais (users Omie sem `profiles.document`)
+    // que nunca entram na proof. Era exatamente esse conjunto que o espelho levava ao ledger pelo trigger
+    // `AFTER INSERT` da Fatia 0. Trocar pela document-first ENCOLHERIA a membership, e membership que
+    // encolhe é a falha que a opção D existe para impedir.
+    //
+    // ON CONFLICT DO NOTHING (ignoreDuplicates) é o invariante do acumulador: preserva `first_seen_at`
+    // (a data REAL do vínculo, consumida em :1761) e NUNCA rebaixa `identity_state` — um membro
+    // quarantinado pela Fatia 2 (`ambiguous`) não volta a `verified` no run seguinte, o que devolveria
+    // vendedor e comissão a um cliente cuja identidade não sabemos.
+    //
+    // Só o run oben escreve, mesma regra do espelho e do `identity_state` acima (:484): a carteira lê a
+    // proof `account='oben'` — é a conta que decide quem é membro.
     const rows = Array.from(upsertByUser.values());
     let totalSynced = 0;
     if (account === "vendas") {
-      for (let i = 0; i < rows.length; i += 500) {
-        const chunk = rows.slice(i, i + 500);
-        const { error: upErr } = await db.from("omie_clientes").upsert(chunk, { onConflict: "user_id" });
-        if (upErr) throw new Error(`upsert omie_clientes: ${upErr.message}`);
+      const nowIsoLedger = new Date().toISOString();
+      const ledgerRows = rows.map((r) => ({
+        user_id: r.user_id,
+        identity_state: "verified",
+        first_seen_at: nowIsoLedger,
+        source: "sync",
+        updated_at: nowIsoLedger,
+      }));
+      for (let i = 0; i < ledgerRows.length; i += 500) {
+        const chunk = ledgerRows.slice(i, i + 500);
+        const { error: upErr } = await db
+          .from("carteira_membership_ledger")
+          .upsert(chunk, { onConflict: "user_id", ignoreDuplicates: true });
+        if (upErr) throw new Error(`upsert carteira_membership_ledger: ${upErr.message}`);
         totalSynced += chunk.length;
       }
     }
@@ -629,16 +654,29 @@ function classifyClienteForSnapshot(
 }
 
 // Lê TODOS os omie_codigo_cliente de omie_clientes (paginado p/ furar o cap de 1000 do PostgREST).
-async function fetchAllOmieClienteCodigos(db: SupabaseClient): Promise<Set<number>> {
+// Códigos JÁ vinculados NA CONTA do run, pela proof fresca account-correta. Alimenta o
+// classifyClienteForSnapshot: um código presente aqui é "linked" e NÃO entra no relatório de
+// não-vinculados. Antes vinha do espelho omie_clientes SEM filtro de conta — e o espelho é
+// UNIQUE(user_id) (1 linha/user, sobrescrita pelo writer da vez, hoje dominado por oben), então
+// ele NÃO contém os códigos das outras contas: medido em prod, dos códigos da proof faltavam no
+// espelho 5.148/5.148 (colacor, 100%) e 3.604/5.275 (colacor_sc, 68%) contra 0/5.238 (oben).
+// Consequência: rodar o snapshot de colacor/colacor_sc classificaria clientes VINCULADOS como
+// não-vinculados em massa (o relatório de oben, o único que roda hoje, mascarava o furo).
+// A fresca é UNIQUE(omie_codigo_cliente, account) → o Set é exatamente a conta do run.
+async function fetchAllOmieClienteCodigos(db: SupabaseClient, empresa: Empresa): Promise<Set<number>> {
   const set = new Set<number>();
   const pageSize = 1000;
   let from = 0;
   while (true) {
     const { data, error } = await db
-      .from("omie_clientes")
+      .from("omie_customer_account_map_fresco")
       .select("omie_codigo_cliente")
+      .eq("account", empresa)
+      // .order estável: sem ele o .range pagina sobre ordem indefinida (armadilha PostgREST) e
+      // uma linha pode repetir ou sumir entre páginas — num Set de dedup, sumir vira falso "unlinked".
+      .order("omie_codigo_cliente")
       .range(from, from + pageSize - 1);
-    if (error) throw new Error(`fetch omie_clientes codigos: ${error.message}`);
+    if (error) throw new Error(`fetch codigos vinculados (${empresa}): ${error.message}`);
     const rows = (data ?? []) as { omie_codigo_cliente: number | null }[];
     for (const r of rows) if (r.omie_codigo_cliente != null) set.add(Number(r.omie_codigo_cliente));
     if (rows.length < pageSize) break;
@@ -680,7 +718,9 @@ async function syncNaoVinculados(db: SupabaseClient, account: OmieAccount) {
 
   try {
     // 2 leituras em massa (sets) — substitui ~2 queries POR cliente do laço de linking.
-    const codigosVinculados = await fetchAllOmieClienteCodigos(db);
+    // `empresa` (=accountToEmpresa(account)) escopa os códigos à conta DESTE run — ver a nota em
+    // fetchAllOmieClienteCodigos: o Set global do espelho classificava errado fora de oben.
+    const codigosVinculados = await fetchAllOmieClienteCodigos(db, empresa);
     const docsComProfile = await fetchAllProfileDocs(db);
 
     const naoVinculados: NaoVinculadoRow[] = [];
@@ -847,13 +887,13 @@ async function syncInventory(db: SupabaseClient, account: OmieAccount) {
   await updateSyncState(db, "inventory", account, { status: "running", error_message: null });
   let pagina = 1;
   let totalPaginas = 1;
-  const nowIso = new Date().toISOString();
 
   try {
     // 1) COLETA todas as páginas do Omie em memória (dedupe last-wins por código).
     //    Antes: ~4 writes PostgREST POR produto (N+1) → ~3M statements e saturava o disk IO.
     //    Agora: acumula e escreve em LOTE (upsert chunked), o padrão que o resto deste arquivo já usa.
-    const posicoes = new Map<number, { saldo: number; cmc: number; precoMedio: number }>();
+    const posicoes = new Map<number, PosicaoEstoque>();
+    let itensRecebidos = 0;
     while (pagina <= totalPaginas) {
       const result = (await callOmie(account, "estoque/consulta/", "ListarPosEstoque", {
         nPagina: pagina,
@@ -861,22 +901,44 @@ async function syncInventory(db: SupabaseClient, account: OmieAccount) {
         dDataPosicao: new Date().toLocaleDateString("pt-BR"),
       })) as unknown as OmieListarPosEstoqueResponse;
 
-      totalPaginas = result.nTotPaginas || 1;
+      // Piso MONOTÔNICO + teto fail-fast (_shared/omie-paginacao.ts, Codex P1 #1341/#1353):
+      // o `nTotPaginas || 1` POR RESPOSTA encolhia o teto quando uma resposta intermediária
+      // vinha sem o campo (retrato PARCIAL completava como 'complete'), e um nTotPaginas
+      // lixo/gigante giraria a edge por ~90s+ de chamadas antes de qualquer guard de contagem.
+      totalPaginas = proximoTotalPaginas(totalPaginas, result.nTotPaginas, MAX_PAGINAS_POS_ESTOQUE);
       const produtos = result.produtos || [];
-
-      for (const prod of produtos) {
-        const codProd = Number(prod.nCodProd); // normaliza: a API Omie pode devolver string; a chave do idMap é number
-        if (!Number.isSafeInteger(codProd) || codProd <= 0) continue;
-        posicoes.set(codProd, {
-          saldo: prod.nSaldo ?? 0,
-          cmc: prod.nCMC ?? 0,
-          precoMedio: prod.nPrecoMedio ?? 0,
-        });
+      const veredicto = avaliarPagina(produtos.length, pagina, totalPaginas);
+      if (veredicto === "anomalia") {
+        // nTotPaginas é PISO (docs/agent/sync.md): página vazia ANTES do fim declarado =
+        // fault transiente disfarçado → aborta fail-closed (status error; o cron re-tenta)
+        // em vez de completar retrato parcial. Nada foi escrito ainda (coleta antecede escrita).
+        throw new Error(`página ${pagina}/${totalPaginas} do ListarPosEstoque veio vazia antes do fim declarado — abortando (retrato parcial)`);
       }
+      if (veredicto === "fim") break;
+
+      // Normalização compartilhada (_shared/pos-estoque.ts): código inválido fora, valor
+      // não-finito descarta o ITEM (um único malformado derrubaria o chunk de 500 com 22P02),
+      // dedupe last-wins por código (repetido no MESMO statement de upsert daria 21000).
+      itensRecebidos += produtos.length;
+      acumularPosicoesDaPagina(posicoes, produtos);
 
       console.log(`[Sync ${account}] Estoque página ${pagina}/${totalPaginas} (${produtos.length})`);
       pagina++;
     }
+
+    // Recebi itens mas descartei TODOS na normalização = drift de contrato TOTAL (Codex P1
+    // rodada 2): completar 'complete/0' aqui mentiria com o inventário integralmente stale.
+    // ≠ resposta legitimamente vazia do Omie (0 recebidos), que segue complete-0 (servicos).
+    if (itensRecebidos > 0 && posicoes.size === 0) {
+      throw new Error(
+        `ListarPosEstoque devolveu ${itensRecebidos} item(ns) e TODOS foram descartados na normalização — drift de contrato, abortando fail-closed`,
+      );
+    }
+
+    // Timestamp único da run, capturado APÓS a coleta Omie (Codex P2 #1341): encolhe a janela
+    // de regressão de updated_at contra writers concorrentes (sync-reprocess/computeCosts).
+    const nowIso = new Date().toISOString();
+    let falhasChunk = 0;
 
     const codProds = [...posicoes.keys()];
     const totalSynced = codProds.length;
@@ -899,17 +961,22 @@ async function syncInventory(db: SupabaseClient, account: OmieAccount) {
     //    buildProductIdMap nulifica qualquer ambíguo residual (defense-in-depth: se o filtro/UNIQUE
     //    falhar, degrada p/ null em vez de gravar no errado — esperado 0 com o filtro).
     const empresa = accountToEmpresa(account);
-    const prodRows: Array<{ id: string | null; omie_codigo_produto: number | string | null }> = [];
+    const prodRows: Array<{
+      id: string | null;
+      omie_codigo_produto: number | string | null;
+      codigo?: string | null;
+      descricao?: string | null;
+    }> = [];
     for (const chunk of chunked(codProds, 300)) {
       const { data, error } = await db
         .from("omie_products")
-        .select("id, omie_codigo_produto")
+        .select("id, omie_codigo_produto, codigo, descricao")
         .eq("account", empresa)
         .in("omie_codigo_produto", chunk);
-      if (error) {
-        console.error(`[Sync ${account}] resolve product_id:`, error);
-        continue;
-      }
+      // Falha de SELECT → THROW (defeito registrado no #1341: "o canônico segue sem o chunk"):
+      // seguir faria o upsert de posição abaixo CLOBBERar product_id existente para null.
+      // Precisão > recall; o cron re-tenta no próximo ciclo.
+      if (error) throw new Error(`resolve omie_products: ${error.message}`);
       prodRows.push(...(data ?? []));
     }
     const idByCod = buildProductIdMap(prodRows);
@@ -931,22 +998,68 @@ async function syncInventory(db: SupabaseClient, account: OmieAccount) {
         synced_at: nowIso,
       };
     });
+    let upsertsPosicao = 0;
     for (const chunk of chunked(invRows, 500)) {
       const { error } = await db
         .from("inventory_position")
         .upsert(chunk, { onConflict: "omie_codigo_produto,account" });
-      if (error) console.error(`[Sync ${account}] upsert inventory_position:`, error);
+      if (error) {
+        falhasChunk++;
+        console.error(`[Sync ${account}] upsert inventory_position:`, error);
+      } else {
+        upsertsPosicao += chunk.length;
+      }
+    }
+    // Falha TOTAL da tabela primária ≠ sucesso parcial (Codex P1, espelho do sync-reprocess):
+    // se NENHUM chunk escreveu, a infra PostgREST está degradada — abortar antes de
+    // estoque/custos (status 'error' honesto via catch) em vez de 'complete' com a fonte do
+    // cockpit/EOQ integralmente stale.
+    if (invRows.length > 0 && upsertsPosicao === 0) {
+      throw new Error(
+        `todos os ${chunked(invRows, 500).length} chunk(s) de inventory_position falharam — abortando antes de estoque/custos`,
+      );
     }
 
-    // 4) omie_products.estoque — upsert em LOTE pela PK id (só estoque+updated_at).
-    //    Todos os ids vieram de linhas existentes → ON CONFLICT sempre faz UPDATE, nunca INSERT.
-    const stockRows = codProds
-      .map((cod) => ({ id: idByCod.get(cod), saldo: posicoes.get(cod)!.saldo }))
-      .filter((x): x is { id: string; saldo: number } => !!x.id)
-      .map((x) => ({ id: x.id, estoque: x.saldo, updated_at: nowIso }));
+    // 4) omie_products.estoque — upsert em LOTE por (omie_codigo_produto, account=EMPRESA).
+    //    ⚠️ NUNCA pela PK id com payload mínimo: codigo/descricao/omie_codigo_produto são
+    //    NOT NULL sem default e a tupla proposta do INSERT..ON CONFLICT é validada contra
+    //    NOT NULL ANTES de o conflito ser arbitrado → o payload {id, estoque, updated_at}
+    //    tomava 23502 no chunk INTEIRO, silencioso, em TODO ciclo (provado em prod 2026-07-17
+    //    via psql-ro: zero cluster de updated_at nas janelas deste sync em 48h; mesmo padrão
+    //    do hotfix #1344 no sync-reprocess). O payload carrega codigo/descricao lidos no
+    //    próprio resolve (montarCatalogoPorCod); linha sem eles fica fora fail-closed.
+    //    Upsert pela PK id com payload completo seria pior: conflito DUPLO PK+uniq → 23505.
+    //    `account` aqui é EMPRESA (convenção omie_products, database.md §5) — ≠ o account de
+    //    sync usado em inventory_position acima.
+    const catalogoPorCod = montarCatalogoPorCod(prodRows, idByCod);
+    const stockRows: Array<{
+      omie_codigo_produto: number;
+      account: string;
+      codigo: string;
+      descricao: string;
+      estoque: number;
+      updated_at: string;
+    }> = [];
+    for (const cod of codProds) {
+      const cat = catalogoPorCod.get(cod);
+      if (!cat) continue; // não-resolvido/ambíguo/sem codigo-descricao: posição e custos seguem
+      stockRows.push({
+        omie_codigo_produto: cod,
+        account: empresa,
+        codigo: cat.codigo,
+        descricao: cat.descricao,
+        estoque: posicoes.get(cod)!.saldo,
+        updated_at: nowIso,
+      });
+    }
     for (const chunk of chunked(stockRows, 500)) {
-      const { error } = await db.from("omie_products").upsert(chunk, { onConflict: "id" });
-      if (error) console.error(`[Sync ${account}] upsert estoque omie_products:`, error);
+      const { error } = await db
+        .from("omie_products")
+        .upsert(chunk, { onConflict: "omie_codigo_produto,account" });
+      if (error) {
+        falhasChunk++;
+        console.error(`[Sync ${account}] upsert estoque omie_products:`, error);
+      }
     }
 
     // 5) product_costs — só onde há product_id E cmc>0. Preserva a semântica anterior:
@@ -965,6 +1078,10 @@ async function syncInventory(db: SupabaseClient, account: OmieAccount) {
       for (const chunk of chunked(costCandidatos.map((x) => x.id), 300)) {
         const { data, error } = await db.from("product_costs").select("product_id").in("product_id", chunk);
         if (error) {
+          // SELECT falho degrada (≠ resolve de omie_products, que aborta): os candidatos do
+          // chunk caem no "inserir" e o ignoreDuplicates abaixo pula os que já existem —
+          // custo stale por 1 ciclo, nunca corrupção/clobber de proveniência.
+          falhasChunk++;
           console.error(`[Sync ${account}] resolve product_costs:`, error);
           continue;
         }
@@ -980,21 +1097,37 @@ async function syncInventory(db: SupabaseClient, account: OmieAccount) {
 
       for (const chunk of chunked(aAtualizar, 500)) {
         const { error } = await db.from("product_costs").upsert(chunk, { onConflict: "product_id" });
-        if (error) console.error(`[Sync ${account}] upsert cmc product_costs:`, error);
+        if (error) {
+          falhasChunk++;
+          console.error(`[Sync ${account}] upsert cmc product_costs:`, error);
+        }
       }
       for (const chunk of chunked(aInserir, 500)) {
-        const { error } = await db.from("product_costs").insert(chunk);
-        if (error) console.error(`[Sync ${account}] insert product_costs:`, error);
+        // ignoreDuplicates (ON CONFLICT DO NOTHING) anti-corrida (#1341): um candidato "novo"
+        // que outro writer inseriu entre o SELECT e aqui derrubaria o chunk inteiro com 23505.
+        const { error } = await db
+          .from("product_costs")
+          .upsert(chunk, { onConflict: "product_id", ignoreDuplicates: true });
+        if (error) {
+          falhasChunk++;
+          console.error(`[Sync ${account}] insert product_costs:`, error);
+        }
       }
     }
 
+    // Falha parcial de chunk NÃO derruba a run (idempotente; o próximo ciclo reconcilia), mas
+    // SURFAÇA no error_message (lição #1344: o 23502 deste sync ficou invisível por meses
+    // porque o console.error era engolido — 'complete' limpo nunca pode mentir de novo).
     await updateSyncState(db, "inventory", account, {
       status: "complete",
       total_synced: totalSynced,
       last_sync_at: nowIso,
       last_page: totalPaginas,
+      error_message: falhasChunk > 0
+        ? `${falhasChunk} chunk(s) com erro de escrita (lote parcial — próximo ciclo reconcilia)`
+        : null,
     });
-    return { totalSynced };
+    return { totalSynced, falhasChunk };
   } catch (error) {
     await updateSyncState(db, "inventory", account, { status: "error", error_message: String(error) });
     throw error;
@@ -1036,19 +1169,14 @@ async function syncInventoryFull(db: SupabaseClient, account: OmieAccount) {
       console.warn(`[Sync ${account}] ${ambiguos} código(s) ambíguo(s) em omie_products(${empresa}) — product_id nulificado (esperado 0 com filtro account-aware)`);
     }
 
-    // 2) Paginar ListarPosEstoque com cExibeTodos:"S" (callOmie já tem retry/backoff p/ falha transitória)
+    // 2) Paginar ListarPosEstoque com cExibeTodos:"S" (callOmie já tem retry/backoff p/ falha
+    //    transitória). Coleta em Map (_shared/pos-estoque.ts, Codex P2×2): dedupe last-wins
+    //    por código (repetido no MESMO chunk de upsert daria 21000 — o array antigo deixava
+    //    passar) + valor não-finito descarta o ITEM (um malformado derrubaria o chunk de 500).
     let pagina = 1;
     let totalPaginas = 1;
-    let totalSynced = 0;
-    const invRows: Array<{
-      omie_codigo_produto: number;
-      product_id: string | null;
-      saldo: number;
-      cmc: number;
-      preco_medio: number;
-      account: string;
-      synced_at: string;
-    }> = [];
+    const posicoes = new Map<number, PosicaoEstoque>();
+    let itensRecebidos = 0;
     while (pagina <= totalPaginas) {
       const result = (await callOmie(account, "estoque/consulta/", "ListarPosEstoque", {
         nPagina: pagina,
@@ -1057,27 +1185,46 @@ async function syncInventoryFull(db: SupabaseClient, account: OmieAccount) {
         cExibeTodos: "S",
       })) as unknown as OmieListarPosEstoqueResponse;
 
-      totalPaginas = result.nTotPaginas || 1;
-      const now = new Date().toISOString();
-      for (const prod of result.produtos || []) {
-        const codProd = Number(prod.nCodProd); // normaliza: a API Omie pode devolver string; a chave do idMap é number
-        if (!Number.isSafeInteger(codProd) || codProd <= 0) continue;
-        invRows.push({
-          omie_codigo_produto: codProd,
-          product_id: idMap.get(codProd) ?? null,
-          saldo: prod.nSaldo ?? 0,
-          cmc: prod.nCMC ?? 0,
-          preco_medio: prod.nPrecoMedio ?? 0,
-          account,
-          synced_at: now,
-        });
-        totalSynced++;
+      // Piso MONOTÔNICO + teto fail-fast (_shared/omie-paginacao.ts): mesmo defeito do
+      // syncInventory — `nTotPaginas || 1` por resposta encolhia o teto e completava retrato
+      // parcial. Com cExibeTodos:"S" o catálogo inteiro (~43 págs colacor) fica sob o teto 500.
+      totalPaginas = proximoTotalPaginas(totalPaginas, result.nTotPaginas, MAX_PAGINAS_POS_ESTOQUE);
+      const produtos = result.produtos || [];
+      const veredicto = avaliarPagina(produtos.length, pagina, totalPaginas);
+      if (veredicto === "anomalia") {
+        // Página vazia ANTES do fim declarado = fault disfarçado → aborta fail-closed antes
+        // de qualquer escrita (invRows só upserta após a coleta completa).
+        throw new Error(`página ${pagina}/${totalPaginas} do ListarPosEstoque (full) veio vazia antes do fim declarado — abortando (retrato parcial)`);
       }
-      console.log(`[Sync ${account}] inventory_full página ${pagina}/${totalPaginas} — ${totalSynced} itens acumulados`);
+      if (veredicto === "fim") break;
+      itensRecebidos += produtos.length;
+      acumularPosicoesDaPagina(posicoes, produtos);
+      console.log(`[Sync ${account}] inventory_full página ${pagina}/${totalPaginas} — ${posicoes.size} itens acumulados`);
       pagina++;
     }
 
-    // 3) Upsert em lote (chunks de 500) — onConflict igual ao syncInventory
+    // Recebi itens mas descartei TODOS na normalização = drift de contrato TOTAL (Codex P1
+    // rodada 2): completar 'complete/0' mentiria com o catálogo de CMC integralmente stale.
+    if (itensRecebidos > 0 && posicoes.size === 0) {
+      throw new Error(
+        `ListarPosEstoque (full) devolveu ${itensRecebidos} item(ns) e TODOS foram descartados na normalização — drift de contrato, abortando fail-closed`,
+      );
+    }
+
+    // 3) Upsert em lote (chunks de 500) — onConflict igual ao syncInventory. synced_at único
+    //    capturado APÓS a coleta (mesma janela curta do syncInventory); total_synced passa a
+    //    contar posições ÚNICAS (dedupe), consistente com o syncInventory.
+    const now = new Date().toISOString();
+    const invRows = [...posicoes.entries()].map(([cod, p]) => ({
+      omie_codigo_produto: cod,
+      product_id: idMap.get(cod) ?? null,
+      saldo: p.saldo,
+      cmc: p.cmc,
+      preco_medio: p.precoMedio,
+      account,
+      synced_at: now,
+    }));
+    const totalSynced = invRows.length;
     const CHUNK = 500;
     for (let i = 0; i < invRows.length; i += CHUNK) {
       const slice = invRows.slice(i, i + CHUNK);
@@ -1545,446 +1692,6 @@ async function computeAssociationRules(db: SupabaseClient) {
   return { rules_generated: inserted, total_transactions: totalTx, frequent_items: frequentItems.size };
 }
 
-// ======== BACKFILL DE CADASTRO — profiles dos clientes-fantasma da carteira ========
-// Dá NOME (do Omie) aos clientes vinculados (omie_clientes) que têm auth.users mas não têm profile,
-// fazendo /admin/customers mostrar a carteira inteira da vendedora. DESACOPLADO: só escreve profiles
-// (não toca omie_clientes/carteira/scores). Insert-only. Spec:
-// docs/superpowers/specs/2026-06-12-clientes-cadastro-backfill-design.md
-// Os 3 helpers abaixo são ESPELHO VERBATIM de src/lib/clientes-cadastro/backfill-helpers.ts.
-
-function cpfDvValido(cpf: string): boolean {
-  let soma = 0;
-  for (let i = 0; i < 9; i++) soma += Number(cpf[i]) * (10 - i);
-  let resto = soma % 11;
-  const dv1 = resto < 2 ? 0 : 11 - resto;
-  if (dv1 !== Number(cpf[9])) return false;
-  soma = 0;
-  for (let i = 0; i < 10; i++) soma += Number(cpf[i]) * (11 - i);
-  resto = soma % 11;
-  const dv2 = resto < 2 ? 0 : 11 - resto;
-  return dv2 === Number(cpf[10]);
-}
-
-function cnpjDvValido(cnpj: string): boolean {
-  const p1 = [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2];
-  const p2 = [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2];
-  let soma = 0;
-  for (let i = 0; i < 12; i++) soma += Number(cnpj[i]) * p1[i];
-  let resto = soma % 11;
-  const dv1 = resto < 2 ? 0 : 11 - resto;
-  if (dv1 !== Number(cnpj[12])) return false;
-  soma = 0;
-  for (let i = 0; i < 13; i++) soma += Number(cnpj[i]) * p2[i];
-  resto = soma % 11;
-  const dv2 = resto < 2 ? 0 : 11 - resto;
-  return dv2 === Number(cnpj[13]);
-}
-
-function normalizarDocumento(raw: string | null | undefined): string | null {
-  const d = (raw ?? "").replace(/\D/g, "");
-  if (d.length !== 11 && d.length !== 14) return null;
-  if (/^(\d)\1+$/.test(d)) return null;
-  if (d.length === 11 && !cpfDvValido(d)) return null;
-  if (d.length === 14 && !cnpjDvValido(d)) return null;
-  return d;
-}
-
-function montarTelefone(ddd: string | null | undefined, numero: string | null | undefined): string | null {
-  const full = ((ddd ?? "") + (numero ?? "")).replace(/\D/g, "");
-  return full.length >= 8 ? full : null;
-}
-
-interface BackfillCadastro {
-  razao_social?: string | null;
-  nome_fantasia?: string | null;
-  cnpj_cpf?: string | null;
-  telefone_ddd?: string | null;
-  telefone_numero?: string | null;
-}
-interface BackfillProfileRow {
-  user_id: string; name: string; phone: string | null; document: string | null;
-  customer_type: string | null; prospect_source: "omie_import";
-  is_employee: false; is_approved: false; created_at: string;
-}
-type BackfillDecisao =
-  | { acao: "inserir"; row: BackfillProfileRow }
-  | { acao: "pular"; motivo: "master_cnpj" | "doc_em_outro_profile" | "doc_duplicado_no_lote" };
-
-function decidirLinhaProfile(args: {
-  userId: string; authCreatedAt: string; cadastro: BackfillCadastro;
-  masterCnpj: string | null; docsExistentes: Set<string>; docsNoLote: Set<string>;
-}): BackfillDecisao {
-  const { userId, authCreatedAt, cadastro, masterCnpj, docsExistentes, docsNoLote } = args;
-  const doc = normalizarDocumento(cadastro.cnpj_cpf);
-  if (doc) {
-    const masterNorm = (masterCnpj ?? "").replace(/\D/g, "");
-    if (masterNorm && doc === masterNorm) return { acao: "pular", motivo: "master_cnpj" };
-    if (docsExistentes.has(doc)) return { acao: "pular", motivo: "doc_em_outro_profile" };
-    if (docsNoLote.has(doc)) return { acao: "pular", motivo: "doc_duplicado_no_lote" };
-  }
-  const nome = (cadastro.nome_fantasia?.trim() || cadastro.razao_social?.trim() || "").trim();
-  const row: BackfillProfileRow = {
-    user_id: userId, name: nome || "Cliente",
-    phone: montarTelefone(cadastro.telefone_ddd, cadastro.telefone_numero),
-    document: doc, customer_type: null, prospect_source: "omie_import",
-    is_employee: false, is_approved: false, created_at: authCreatedAt,
-  };
-  return { acao: "inserir", row };
-}
-
-// Mapa codigo_cliente_omie → [{ userId, createdAt }] dos clientes SEM profile (carteira-fantasma).
-// É LISTA, não last-wins: o mesmo código pode apontar p/ >1 user_id (vínculo bagunçado) → ambíguo,
-// nunca sobrescreve silenciosamente. createdAt = omie_clientes.created_at (data REAL do vínculo, ~março)
-// — preservar evita que o backfill marque os profiles como "criados hoje" e o visit-score os trate como
-// prospecção recente.
-async function fetchAlvosSemProfile(
-  db: SupabaseClient,
-): Promise<Map<number, { userId: string; createdAt: string }[]>> {
-  const comProfile = new Set<string>();
-  for (let from = 0; ; from += 1000) {
-    const { data, error } = await db.from("profiles").select("user_id").range(from, from + 999);
-    if (error) throw new Error(`fetch profiles user_id: ${error.message}`);
-    const rows = (data ?? []) as { user_id: string }[];
-    for (const r of rows) comProfile.add(r.user_id);
-    if (rows.length < 1000) break;
-  }
-  const map = new Map<number, { userId: string; createdAt: string }[]>();
-  for (let from = 0; ; from += 1000) {
-    const { data, error } = await db
-      .from("omie_clientes")
-      .select("user_id, omie_codigo_cliente, created_at")
-      .range(from, from + 999);
-    if (error) throw new Error(`fetch omie_clientes: ${error.message}`);
-    const rows = (data ?? []) as { user_id: string; omie_codigo_cliente: number | null; created_at: string }[];
-    for (const r of rows) {
-      if (r.omie_codigo_cliente == null || !r.user_id || comProfile.has(r.user_id)) continue;
-      const codigo = Number(r.omie_codigo_cliente);
-      const arr = map.get(codigo) ?? [];
-      arr.push({ userId: r.user_id, createdAt: r.created_at });
-      map.set(codigo, arr);
-    }
-    if (rows.length < 1000) break;
-  }
-  return map;
-}
-
-// Insere um chunk de profiles. ON CONFLICT(user_id) DO NOTHING cobre o profiles_user_id_key, MAS não o
-// idx_profiles_document_unique (UNIQUE parcial em document) — um documento que colidiu entre o fetch e o
-// insert (corrida/profile criado no meio) abortaria o chunk inteiro. Em erro, cai p/ linha-a-linha: conta
-// inseridos, registra conflito de documento (23505) e segue; só erro inesperado aborta o run.
-async function inserirProfilesComFallback(
-  db: SupabaseClient,
-  chunk: BackfillProfileRow[],
-): Promise<{ inseridos: number; conflitosDocumento: number }> {
-  const { data, error } = await db
-    .from("profiles")
-    .upsert(chunk, { onConflict: "user_id", ignoreDuplicates: true })
-    .select("user_id");
-  if (!error) return { inseridos: data?.length ?? 0, conflitosDocumento: 0 };
-  let inseridos = 0, conflitosDocumento = 0;
-  for (const row of chunk) {
-    const { data: d, error: e } = await db
-      .from("profiles")
-      .upsert([row], { onConflict: "user_id", ignoreDuplicates: true })
-      .select("user_id");
-    if (e) {
-      if (e.code === "23505") { conflitosDocumento++; continue; } // doc duplicado (índice parcial) — esperado
-      throw new Error(`insert profile (linha-a-linha): ${e.message}`);
-    }
-    inseridos += d?.length ?? 0;
-  }
-  return { inseridos, conflitosDocumento };
-}
-
-// Backfill de cadastro Omie → profiles dos clientes-fantasma da carteira. Enumera as 3 contas Omie numa
-// invocação (casa por código em TODAS) p/ NUNCA pegar cadastro da conta errada por last-wins; clientes
-// ambíguos (mesmo código em >1 conta, ou >1 user_id no mesmo código) são PULADOS+reportados, nunca
-// adivinhados. dryRun só conta. limite (canário) insere no máx N, ordenado por user_id (determinístico).
-async function syncBackfillCadastro(db: SupabaseClient, dryRun: boolean, limite: number | null) {
-  const startedAt = new Date().toISOString();
-  await updateSyncState(db, "backfill_cadastro", "all", {
-    status: "running", error_message: null,
-    metadata: { dry_run: dryRun, limite, started_at: startedAt },
-  });
-  try {
-    // master_cnpj FAIL-CLOSED: sem ele (erro de leitura OU ausente/inválido) o guard que impede promover
-    // a master não funcionaria → abortar em vez de arriscar. Não confiar em null silencioso do maybeSingle.
-    const { data: cfg, error: cfgErr } = await db
-      .from("company_config").select("value").eq("key", "master_cnpj").maybeSingle();
-    if (cfgErr) throw new Error(`master_cnpj read: ${cfgErr.message}`);
-    const masterCnpj = ((cfg?.value as string | null) ?? "").replace(/^"|"$/g, "").replace(/\D/g, "");
-    if (masterCnpj.length !== 11 && masterCnpj.length !== 14) {
-      throw new Error("master_cnpj ausente/inválido em company_config — backfill abortado (fail-closed: evita promover cliente a master)");
-    }
-
-    const alvosPorCodigo = await fetchAlvosSemProfile(db);
-    const docsExistentes = await fetchAllProfileDocs(db);
-
-    // userId → { codigo, createdAt } (omie_clientes é UNIQUE(user_id) → 1 código por user); e códigos com
-    // >1 user_id = ambíguos (não dá p/ saber qual auth.user é qual cliente).
-    const alvoPorUser = new Map<string, { codigo: number; createdAt: string }>();
-    const codigosAmbiguos = new Set<number>();
-    for (const [codigo, lista] of alvosPorCodigo) {
-      if (lista.length > 1) codigosAmbiguos.add(codigo);
-      for (const a of lista) alvoPorUser.set(a.userId, { codigo, createdAt: a.createdAt });
-    }
-    const alvosTotal = alvoPorUser.size;
-
-    // Enumera as contas COM credencial → candidatos POR user (1 por conta onde o código existe).
-    const candidatosPorUser = new Map<string, { account: OmieAccount; cadastro: BackfillCadastro }[]>();
-    const contasProcessadas: OmieAccount[] = [];
-    const contasSemCredencial: OmieAccount[] = [];
-    let totalOmie = 0;
-    for (const account of ["vendas", "colacor_vendas", "servicos"] as OmieAccount[]) {
-      const creds = getCredentials(account);
-      if (!creds.key || !creds.secret) { contasSemCredencial.push(account); continue; }
-      contasProcessadas.push(account);
-      let pagina = 1, totalPaginas = 1;
-      while (pagina <= totalPaginas) {
-        const result = (await callOmie(account, "geral/clientes/", "ListarClientes", {
-          pagina, registros_por_pagina: 100, apenas_importado_api: "N",
-        })) as unknown as OmieListarClientesResponse;
-        totalPaginas = result.total_de_paginas || 1;
-        for (const c of result.clientes_cadastro || []) {
-          totalOmie++;
-          if (c.codigo_cliente_omie == null) continue;
-          const alvos = alvosPorCodigo.get(Number(c.codigo_cliente_omie));
-          if (!alvos) continue;
-          const raw = c as unknown as { telefone1_ddd?: string | null; telefone1_numero?: string | null };
-          const cadastro: BackfillCadastro = {
-            razao_social: c.razao_social ?? null,
-            nome_fantasia: c.nome_fantasia ?? null,
-            cnpj_cpf: c.cnpj_cpf ?? null,
-            telefone_ddd: raw.telefone1_ddd ?? null,
-            telefone_numero: raw.telefone1_numero ?? null,
-          };
-          for (const a of alvos) {
-            const arr = candidatosPorUser.get(a.userId) ?? [];
-            arr.push({ account, cadastro });
-            candidatosPorUser.set(a.userId, arr);
-          }
-        }
-        pagina++;
-      }
-      console.log(`[BackfillCadastro] ${account}: ${totalPaginas} páginas`);
-    }
-
-    // Decide por user (ordem determinística). Ambíguo = candidatos de >1 conta OU código com >1 user_id.
-    const docsNoLote = new Set<string>();
-    const rows: BackfillProfileRow[] = [];
-    const pulados = { master_cnpj: 0, doc_em_outro_profile: 0, doc_duplicado_no_lote: 0 };
-    let semMatch = 0, ambiguos = 0, comMatch = 0;
-    for (const userId of [...alvoPorUser.keys()].sort()) {
-      const info = alvoPorUser.get(userId)!;
-      const cands = candidatosPorUser.get(userId) ?? [];
-      if (cands.length === 0) { semMatch++; continue; }
-      comMatch++;
-      const contasDistintas = new Set(cands.map((c) => c.account));
-      if (contasDistintas.size > 1 || codigosAmbiguos.has(info.codigo)) { ambiguos++; continue; }
-      const d = decidirLinhaProfile({
-        userId, authCreatedAt: info.createdAt, cadastro: cands[0].cadastro,
-        masterCnpj, docsExistentes, docsNoLote,
-      });
-      if (d.acao === "pular") { pulados[d.motivo]++; continue; }
-      rows.push(d.row);
-      if (d.row.document) docsNoLote.add(d.row.document);
-    }
-
-    // Ordena por user_id (determinismo do canário) e aplica o limite.
-    rows.sort((a, b) => (a.user_id < b.user_id ? -1 : a.user_id > b.user_id ? 1 : 0));
-    const rowsAlvo = limite && limite > 0 ? rows.slice(0, limite) : rows;
-
-    let inseridos = 0, conflitosDocumento = 0;
-    if (!dryRun) {
-      for (let i = 0; i < rowsAlvo.length; i += 500) {
-        const r = await inserirProfilesComFallback(db, rowsAlvo.slice(i, i + 500));
-        inseridos += r.inseridos;
-        conflitosDocumento += r.conflitosDocumento;
-      }
-    }
-
-    // created_at recente (< 35d) sinaliza vínculo novo (relink) — improvável no lote de março; se aparecer
-    // é alerta p/ revisar antes de confiar no created_at preservado.
-    const limiteRecente = Date.now() - 35 * 24 * 60 * 60 * 1000;
-    const createdAtRecente = rows.filter((r) => new Date(r.created_at).getTime() > limiteRecente).length;
-
-    const relatorio = {
-      dry_run: dryRun, limite,
-      contas_processadas: contasProcessadas, contas_sem_credencial: contasSemCredencial,
-      alvos_total: alvosTotal, total_omie: totalOmie, com_match: comMatch, sem_match: semMatch,
-      ambiguos, inseriveis: rows.length, seriam_inseridos: rowsAlvo.length, inseridos,
-      conflitos_documento: conflitosDocumento, pulados, created_at_recente: createdAtRecente,
-      amostra: rowsAlvo.slice(0, 5).map((r) => ({ user_id: r.user_id, document: r.document, name: r.name })),
-      finished_at: new Date().toISOString(),
-    };
-    await updateSyncState(db, "backfill_cadastro", "all", {
-      status: "complete", total_synced: inseridos, metadata: relatorio,
-    });
-    console.log(`[BackfillCadastro] ${JSON.stringify(relatorio)}`);
-    return relatorio;
-  } catch (error) {
-    await updateSyncState(db, "backfill_cadastro", "all", { status: "error", error_message: String(error) });
-    throw error;
-  }
-}
-
-// ======== MAPA DE CONSOLIDAÇÃO — popula customer_canonical_alias (clone → gêmeo) ========
-// Fase 1 da consolidação (estratégia "B-lite", spec 2026-06-13). Casa cada clone (omie_clientes SEM
-// profile) ao gêmeo (profile com o mesmo CNPJ) e grava o apelido com status='inactive' (INERTE: só o
-// carteira-rebuild da Fase 2 lê aliases ATIVOS; até ativar, NÃO afeta carteira/tela). Captura a conta
-// Omie de cada código (clone X e gêmeo Y) p/ revelar mesma-conta (duplicata real) vs cross-account
-// (mesmo CNPJ em empresas diferentes — NÃO é duplicata). NÃO toca omie_clientes/carteira/scores.
-
-interface AliasRow {
-  alias_user_id: string;
-  canonical_user_id: string;
-  documento: string | null;
-  alias_omie_codigo: number | null;
-  alias_conta: string | null;
-  canonical_omie_codigo: number | null;
-  canonical_conta: string | null;
-  status: "inactive" | "conflict";
-  reason: string | null;
-  batch_id: string;
-}
-
-// Map<doc_normalizado, {userId, name}> de profiles (resolve o gêmeo por documento; 1º vence).
-async function fetchProfileDocNameMap(
-  db: SupabaseClient,
-): Promise<Map<string, { userId: string; name: string | null }>> {
-  const map = new Map<string, { userId: string; name: string | null }>();
-  for (let from = 0; ; from += 1000) {
-    const { data, error } = await db
-      .from("profiles").select("user_id, name, document").not("document", "is", null).range(from, from + 999);
-    if (error) throw new Error(`fetch profiles doc/name: ${error.message}`);
-    const rows = (data ?? []) as { user_id: string; name: string | null; document: string | null }[];
-    for (const r of rows) {
-      const d = (r.document ?? "").replace(/\D/g, "");
-      if (d && r.user_id && !map.has(d)) map.set(d, { userId: r.user_id, name: r.name });
-    }
-    if (rows.length < 1000) break;
-  }
-  return map;
-}
-
-// Map<user_id, omie_codigo_cliente> (p/ achar o código Y do gêmeo).
-async function fetchOmieCodigoPorUser(db: SupabaseClient): Promise<Map<string, number>> {
-  const map = new Map<string, number>();
-  for (let from = 0; ; from += 1000) {
-    const { data, error } = await db
-      .from("omie_clientes").select("user_id, omie_codigo_cliente").range(from, from + 999);
-    if (error) throw new Error(`fetch omie_clientes codigo: ${error.message}`);
-    const rows = (data ?? []) as { user_id: string; omie_codigo_cliente: number | null }[];
-    for (const r of rows) if (r.user_id && r.omie_codigo_cliente != null) map.set(r.user_id, Number(r.omie_codigo_cliente));
-    if (rows.length < 1000) break;
-  }
-  return map;
-}
-
-async function mapaConsolidacao(db: SupabaseClient, dryRun: boolean, batchId: string) {
-  const startedAt = new Date().toISOString();
-  await updateSyncState(db, "mapa_consolidacao", "all", {
-    status: "running", error_message: null, metadata: { dry_run: dryRun, batch_id: batchId, started_at: startedAt },
-  });
-  try {
-    // 1. clones (omie sem profile): user → código (omie_clientes é UNIQUE(user_id) → 1 código/user);
-    //    código com >1 user (ambíguo) fica de fora — não dá p/ apelidar com segurança.
-    const alvosPorCodigo = await fetchAlvosSemProfile(db);
-    const codigoPorCloneUser = new Map<string, number>();
-    let ambiguos = 0;
-    for (const [codigo, lista] of alvosPorCodigo) {
-      if (lista.length > 1) { ambiguos += lista.length; continue; }
-      codigoPorCloneUser.set(lista[0].userId, codigo);
-    }
-    const codigosClone = new Set(codigoPorCloneUser.values());
-
-    // 2. gêmeo por documento + código Y do gêmeo.
-    const gemeoPorDoc = await fetchProfileDocNameMap(db);
-    const codigoPorUser = await fetchOmieCodigoPorUser(db);
-
-    // 3. enumera as 3 contas: doc por código (só clones) + conta por código (todos, p/ achar a conta de Y).
-    const docPorCodigo = new Map<number, string | null>();
-    const contaPorCodigo = new Map<number, string>();
-    const codigoMultiConta = new Set<number>();
-    const contasProcessadas: OmieAccount[] = [];
-    const contasSemCredencial: OmieAccount[] = [];
-    for (const account of ["vendas", "colacor_vendas", "servicos"] as OmieAccount[]) {
-      const creds = getCredentials(account);
-      if (!creds.key || !creds.secret) { contasSemCredencial.push(account); continue; }
-      contasProcessadas.push(account);
-      let pagina = 1, totalPaginas = 1;
-      while (pagina <= totalPaginas) {
-        const result = (await callOmie(account, "geral/clientes/", "ListarClientes", {
-          pagina, registros_por_pagina: 100, apenas_importado_api: "N",
-        })) as unknown as OmieListarClientesResponse;
-        totalPaginas = result.total_de_paginas || 1;
-        for (const c of result.clientes_cadastro || []) {
-          if (c.codigo_cliente_omie == null) continue;
-          const codigo = Number(c.codigo_cliente_omie);
-          const prev = contaPorCodigo.get(codigo);
-          if (prev && prev !== account) codigoMultiConta.add(codigo);
-          contaPorCodigo.set(codigo, account);
-          if (codigosClone.has(codigo)) docPorCodigo.set(codigo, normalizarDocumento(c.cnpj_cpf ?? null));
-        }
-        pagina++;
-      }
-      console.log(`[MapaConsolidacao] ${account}: ${totalPaginas} páginas`);
-    }
-
-    // 4. monta os apelidos (clone → gêmeo) + classifica mesma-conta vs cross-account.
-    const aliases: AliasRow[] = [];
-    const stats = { mesma_conta: 0, cross_account: 0, conta_indefinida: 0, sem_gemeo: 0, conta_multipla: 0 };
-    for (const [cloneUserId, codigoX] of codigoPorCloneUser) {
-      const doc = docPorCodigo.get(codigoX) ?? null;
-      const gemeo = doc ? gemeoPorDoc.get(doc) : undefined;
-      if (!gemeo) { stats.sem_gemeo++; continue; }
-      const codigoY = codigoPorUser.get(gemeo.userId) ?? null;
-      const contaX = contaPorCodigo.get(codigoX) ?? null;
-      const contaY = codigoY != null ? (contaPorCodigo.get(codigoY) ?? null) : null;
-      if (codigoMultiConta.has(codigoX) || (codigoY != null && codigoMultiConta.has(codigoY))) stats.conta_multipla++;
-      if (contaY == null) stats.conta_indefinida++;
-      else if (contaX === contaY) stats.mesma_conta++;
-      else stats.cross_account++;
-      aliases.push({
-        alias_user_id: cloneUserId, canonical_user_id: gemeo.userId, documento: doc,
-        alias_omie_codigo: codigoX, alias_conta: contaX,
-        canonical_omie_codigo: codigoY, canonical_conta: contaY,
-        status: "inactive", reason: null, batch_id: batchId,
-      });
-    }
-
-    // 5. persiste com status='inactive' (inerte). Upsert por alias_user_id (idempotente).
-    let gravados = 0;
-    if (!dryRun) {
-      for (let i = 0; i < aliases.length; i += 500) {
-        const chunk = aliases.slice(i, i + 500);
-        const { error } = await db.from("customer_canonical_alias").upsert(chunk, { onConflict: "alias_user_id" });
-        if (error) throw new Error(`upsert customer_canonical_alias: ${error.message}`);
-        gravados += chunk.length;
-      }
-    }
-
-    const relatorio = {
-      dry_run: dryRun, batch_id: batchId,
-      contas_processadas: contasProcessadas, contas_sem_credencial: contasSemCredencial,
-      clones_total: codigoPorCloneUser.size, ambiguos, aliases: aliases.length, gravados,
-      mesma_conta: stats.mesma_conta, cross_account: stats.cross_account,
-      conta_indefinida: stats.conta_indefinida, conta_multipla: stats.conta_multipla, sem_gemeo: stats.sem_gemeo,
-      amostra: aliases.slice(0, 10).map((a) => ({
-        alias: a.alias_user_id, canonical: a.canonical_user_id, doc: a.documento,
-        contaX: a.alias_conta, contaY: a.canonical_conta,
-      })),
-      finished_at: new Date().toISOString(),
-    };
-    await updateSyncState(db, "mapa_consolidacao", "all", { status: "complete", total_synced: gravados, metadata: relatorio });
-    console.log(`[MapaConsolidacao] ${JSON.stringify(relatorio)}`);
-    return relatorio;
-  } catch (error) {
-    await updateSyncState(db, "mapa_consolidacao", "all", { status: "error", error_message: String(error) });
-    throw error;
-  }
-}
-
 // ======== MAIN HANDLER ========
 
 serve(async (req) => {
@@ -2001,7 +1708,7 @@ serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
 
-    const { action, account = "vendas", start_page, max_pages, dry_run, limite, batch_id } = await req.json();
+    const { action, account = "vendas", start_page, max_pages } = await req.json();
     let result: unknown;
 
     switch (action) {
@@ -2158,81 +1865,6 @@ serve(async (req) => {
           EdgeRuntime.waitUntil(bgTask);
         }
         return new Response(JSON.stringify({ accepted: true }), {
-          status: 202, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-      case "start_backfill_cadastro": {
-        // Backfill de cadastro Omie → profiles (clientes-fantasma da carteira). Enumera as 3 contas numa
-        // invocação (não recebe `account`). dry_run default TRUE: só conta/relata (em sync_state.metadata),
-        // nunca escreve sem pedir. `limite` (canário): insere no máximo N, ordenado por user_id.
-        const dryRun = dry_run !== false;
-        const limiteNum =
-          typeof limite === "number" && Number.isFinite(limite) && limite > 0 ? Math.floor(limite) : null;
-        // Gate master/gestor server-side (mesmo do start_nao_vinculados; cron/service_role passam).
-        if (auth.via === "staff") {
-          const { data: pode } = await supabaseAdmin.rpc("pode_ver_carteira_completa", { _uid: auth.userId });
-          if (!pode) {
-            return new Response(JSON.stringify({ error: "Forbidden: requer master ou gestor comercial" }), {
-              status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
-            });
-          }
-        }
-        // Guard "já em andamento" (não duplicar trabalho). Estado único (account="all").
-        const stBf = await getSyncState(supabaseAdmin, "backfill_cadastro", "all");
-        const runningBf = stBf?.status === "running" && stBf?.updated_at &&
-          (Date.now() - new Date(stBf.updated_at as string).getTime() < 15 * 60 * 1000);
-        if (runningBf) {
-          return new Response(JSON.stringify({ accepted: false, already_running: true }), {
-            status: 202, headers: { ...corsHeaders, "Content-Type": "application/json" },
-          });
-        }
-        const bgTask = syncBackfillCadastro(supabaseAdmin, dryRun, limiteNum).catch((e) => {
-          console.error("[backfill_cadastro][bg]", e instanceof Error ? e.message : e);
-        });
-        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-        // @ts-ignore - EdgeRuntime existe no runtime do Supabase Edge
-        if (typeof EdgeRuntime !== "undefined" && typeof EdgeRuntime.waitUntil === "function") {
-          // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-          // @ts-ignore
-          EdgeRuntime.waitUntil(bgTask);
-        }
-        return new Response(JSON.stringify({ accepted: true, dry_run: dryRun, limite: limiteNum }), {
-          status: 202, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-      case "mapa_consolidacao": {
-        // Fase 1 da consolidação (B-lite). Casa clone→gêmeo, popula customer_canonical_alias com
-        // status='inactive' (INERTE até o canário). dry_run=true só conta (não grava). Reporta
-        // mesma-conta vs cross-account. Gate master/gestor; background.
-        const dryRun = dry_run === true; // padrão: GRAVA (alias inativo é inerte); dry_run=true só conta.
-        const batchId = typeof batch_id === "string" && batch_id.trim() ? batch_id.trim() : "mapa-inicial";
-        if (auth.via === "staff") {
-          const { data: pode } = await supabaseAdmin.rpc("pode_ver_carteira_completa", { _uid: auth.userId });
-          if (!pode) {
-            return new Response(JSON.stringify({ error: "Forbidden: requer master ou gestor comercial" }), {
-              status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
-            });
-          }
-        }
-        const stMapa = await getSyncState(supabaseAdmin, "mapa_consolidacao", "all");
-        const runningMapa = stMapa?.status === "running" && stMapa?.updated_at &&
-          (Date.now() - new Date(stMapa.updated_at as string).getTime() < 15 * 60 * 1000);
-        if (runningMapa) {
-          return new Response(JSON.stringify({ accepted: false, already_running: true }), {
-            status: 202, headers: { ...corsHeaders, "Content-Type": "application/json" },
-          });
-        }
-        const bgTask = mapaConsolidacao(supabaseAdmin, dryRun, batchId).catch((e) => {
-          console.error("[mapa_consolidacao][bg]", e instanceof Error ? e.message : e);
-        });
-        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-        // @ts-ignore - EdgeRuntime existe no runtime do Supabase Edge
-        if (typeof EdgeRuntime !== "undefined" && typeof EdgeRuntime.waitUntil === "function") {
-          // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-          // @ts-ignore
-          EdgeRuntime.waitUntil(bgTask);
-        }
-        return new Response(JSON.stringify({ accepted: true, dry_run: dryRun, batch_id: batchId }), {
           status: 202, headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }

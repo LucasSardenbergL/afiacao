@@ -321,6 +321,9 @@ const LIMITE_DEFAULT = 25;
 const LIMITE_MAX = 25;
 const REGISTROS_POR_PAGINA = 50;
 const TREGUA_LISTAGEM_MS = 1500;
+// Guard global de chamadas de listagem por rodada (janelas × páginas). 7-8 chamadas/rodada
+// provadas sem trava em prod; 12 dá folga pra paginação sem virar rajada (~18s de tréguas).
+const MAX_CHAMADAS_LISTAGEM = 12;
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -340,10 +343,15 @@ Deno.serve(async (req) => {
   );
 
   let limite = LIMITE_DEFAULT;
+  let diagnosticoListagem = false;
   try {
-    const body = await req.json();
-    const l = Number((body as Record<string, unknown> | null)?.limite);
+    const body = (await req.json()) as Record<string, unknown> | null;
+    const l = Number(body?.limite);
     if (Number.isFinite(l)) limite = Math.min(LIMITE_MAX, Math.max(1, Math.trunc(l)));
+    // Modo diagnóstico read-only: devolve registros CRUS da listagem (sem cruzar nem
+    // reconciliar) — pra mapear os campos reais que o Omie retorna na LISTAGEM
+    // (23 NFs avaliadas × zero cRecebido=S contradiz o ConsultarRecebimento de 04/jun).
+    diagnosticoListagem = body?.diagnostico_listagem === true;
   } catch { /* body vazio (cron) — usa default */ }
 
   try {
@@ -388,7 +396,10 @@ Deno.serve(async (req) => {
     let puladasCredencial = 0;
     let listagemTruncada = false;
     let janelasConsultadas = 0;
+    let chamadasListagem = 0;
     const errosListagem: string[] = [];
+    const amostraCrua: Array<Record<string, unknown>> = [];
+    const amostraNaoRecebidas: Array<Record<string, unknown>> = [];
 
     for (const [whCode, pendentesConta] of porConta) {
       const creds = getOmieCredentials(whCode);
@@ -409,23 +420,43 @@ Deno.serve(async (req) => {
       for (const [j, janela] of janelas.entries()) {
         if (j > 0) await new Promise((r) => setTimeout(r, TREGUA_LISTAGEM_MS));
         janelasConsultadas++;
-        const lst = await omieCall(RECEB_URL, {
-          call: "ListarRecebimentos",
-          app_key: creds.appKey,
-          app_secret: creds.appSecret,
-          param: [{ nPagina: 1, nRegistrosPorPagina: REGISTROS_POR_PAGINA, dtEmissaoDe: formatarDataOmie(janela.de), dtEmissaoAte: formatarDataOmie(janela.ate) }],
-        });
-        const cls = classificarRespostaOmie({ httpOk: !lst.error, status: lst.error ? lst.status : 200, body: lst.data });
-        if (!cls.sucesso) {
-          const msg = `${whCode} janela ${formatarDataOmie(janela.de)}–${formatarDataOmie(janela.ate)}: ${cls.erro ?? "erro"}`;
-          if (errosListagem.length < 3) errosListagem.push(msg);
-          console.warn(`[omie-nfe-reconcile] listagem falhou — ${msg}`);
-          continue; // as demais janelas ainda podem cobrir outras pendentes
+        // v3.3: PAGINA janelas cheias (7 fora_da_listagem estagnaram em prod com janelas
+        // OBEN >50 registros truncadas na página 1). Padrão da casa p/ Omie: paginar até
+        // página VAZIA/incompleta + guard — nTotalPaginas NÃO é confiável (CLAUDE.md §Omie).
+        let nPagina = 1;
+        while (true) {
+          if (chamadasListagem >= MAX_CHAMADAS_LISTAGEM) {
+            listagemTruncada = true; // cap global cortou — cobertura parcial honesta
+            break;
+          }
+          if (nPagina > 1) await new Promise((r) => setTimeout(r, TREGUA_LISTAGEM_MS));
+          chamadasListagem++;
+          const lst = await omieCall(RECEB_URL, {
+            call: "ListarRecebimentos",
+            app_key: creds.appKey,
+            app_secret: creds.appSecret,
+            // cExibirDetalhes:'S' — SEM ele a listagem NÃO retorna infoCadastro (provado em
+            // prod 2026-07-17 via diagnostico_listagem: keys_registro sem infoCadastro,
+            // cRecebido null, com as NFs em cEtapa=80). Com o flag, cRecebido=S volta a vir
+            // e o cruzamento forte reconcilia. Parse permanece fail-closed se faltar.
+            param: [{ nPagina, nRegistrosPorPagina: REGISTROS_POR_PAGINA, dtEmissaoDe: formatarDataOmie(janela.de), dtEmissaoAte: formatarDataOmie(janela.ate), cExibirDetalhes: "S" }],
+          });
+          const cls = classificarRespostaOmie({ httpOk: !lst.error, status: lst.error ? lst.status : 200, body: lst.data });
+          if (!cls.sucesso) {
+            const msg = `${whCode} janela ${formatarDataOmie(janela.de)}–${formatarDataOmie(janela.ate)} p${nPagina}: ${cls.erro ?? "erro"}`;
+            if (errosListagem.length < 3) errosListagem.push(msg);
+            console.warn(`[omie-nfe-reconcile] listagem falhou — ${msg}`);
+            break; // desiste DESTA janela; as demais ainda podem cobrir outras pendentes
+          }
+          const recsPagina = asRecord(lst.data).recebimentos;
+          paginas.push(lst.data);
+          if (diagnosticoListagem && amostraCrua.length < 4 && Array.isArray(recsPagina)) {
+            for (const r of recsPagina.slice(0, 2)) amostraCrua.push({ conta: whCode, registro: r });
+          }
+          // Página incompleta/vazia = última desta janela (critério que não depende de nTotalPaginas).
+          if (!Array.isArray(recsPagina) || recsPagina.length < REGISTROS_POR_PAGINA) break;
+          nPagina++;
         }
-        const recsPagina = asRecord(lst.data).recebimentos;
-        const cheia = Array.isArray(recsPagina) && recsPagina.length >= REGISTROS_POR_PAGINA;
-        if (cheia) listagemTruncada = true; // honestidade: há mais registros além da página 1 desta janela
-        paginas.push(lst.data);
       }
       if (janelas.length > 0 && janelas[janelas.length - 1].ate.getTime() < Date.now()) {
         listagemTruncada = true; // cap de janelas não alcançou hoje — cobertura parcial
@@ -433,6 +464,37 @@ Deno.serve(async (req) => {
 
       const mapa = extrairRecebidosDaListagem(paginas);
       const sel = selecionarCandidatasReconcile(pendentesConta, mapa, limite - candidatas.length);
+
+      // Observabilidade: amostra CRUA dos matches "não-recebidos" — se a listagem não
+      // trouxer infoCadastro/cRecebido de verdade (doc diz que traz), isto revela.
+      if (amostraNaoRecebidas.length < 3) {
+        const rawPorId = new Map<number, unknown>();
+        for (const pg of paginas) {
+          const recs = asRecord(pg).recebimentos;
+          if (!Array.isArray(recs)) continue;
+          for (const raw of recs) {
+            const rec = asRecord(raw);
+            const id = Number(asRecord(rec.cabec).nIdReceb ?? rec.nIdReceb);
+            if (Number.isFinite(id) && id > 0 && !rawPorId.has(id)) rawPorId.set(id, raw);
+          }
+        }
+        for (const p of pendentesConta) {
+          if (amostraNaoRecebidas.length >= 3) break;
+          const id = Number(p.omie_id_receb);
+          const estado = mapa.get(id);
+          if (!estado || estado.recebido || estado.cancelada) continue;
+          const raw = asRecord(rawPorId.get(id));
+          const info = asRecord(raw.infoCadastro);
+          amostraNaoRecebidas.push({
+            numero_nfe: p.numero_nfe,
+            nIdReceb: id,
+            cEtapa: asRecord(raw.cabec).cEtapa ?? null,
+            cRecebido_cru: info.cRecebido ?? null,
+            keys_registro: Object.keys(raw),
+            keys_infoCadastro: Object.keys(info),
+          });
+        }
+      }
       candidatas.push(...sel.candidatas);
       foraDaListagem += sel.foraDaListagem;
       naoRecebidas += sel.naoRecebidas;
@@ -441,6 +503,21 @@ Deno.serve(async (req) => {
       duplicadas += sel.duplicadas;
       console.log(`[omie-nfe-reconcile] ${whCode}: ${janelas.length} janelas, listagem ${mapa.size} registros${listagemTruncada ? " (TRUNCADA)" : ""}, pendentes ${pendentesConta.length}, candidatas ${sel.candidatas.length}, nao_recebidas ${sel.naoRecebidas}, canceladas ${sel.canceladas}, identidade_fraca ${sel.identidadeFraca}, duplicadas ${sel.duplicadas}, fora ${sel.foraDaListagem}`);
       if (candidatas.length >= limite) break;
+    }
+
+    // Modo diagnóstico: para AQUI — devolve o payload cru da listagem, sem reconciliar nada.
+    if (diagnosticoListagem) {
+      return jsonRes({
+        success: true,
+        versao: "v3.3-paginacao-janelas",
+        modo: "diagnostico_listagem",
+        pendentes_avaliadas: rows.length,
+        janelas_consultadas: janelasConsultadas,
+        chamadas_listagem: chamadasListagem,
+        amostra_erros_listagem: errosListagem,
+        amostra_nao_recebidas: amostraNaoRecebidas,
+        amostra_crua: amostraCrua,
+      });
     }
 
     // ── Fase 2: reconciliação DIRETA em lote (só escrita local — zero chamadas ao Omie) ──
@@ -498,12 +575,13 @@ Deno.serve(async (req) => {
 
     return jsonRes({
       success: true,
-      versao: "v3.1-janelas-consecutivas",
+      versao: "v3.3-paginacao-janelas",
       pendentes_avaliadas: rows.length,
       candidatas: candidatas.length,
       reconciliadas: reconciliadasNfe.length,
       listagem: {
         janelas_consultadas: janelasConsultadas,
+        chamadas_listagem: chamadasListagem,
         nao_recebidas: naoRecebidas,
         canceladas: canceladasListagem,
         identidade_fraca: identidadeFraca,
@@ -517,6 +595,7 @@ Deno.serve(async (req) => {
       estado_mudou: estadoMudou,
       erros_update: errosUpdate,
       amostra_erros_listagem: errosListagem,
+      amostra_nao_recebidas: amostraNaoRecebidas,
       reconciliadas_nfe: reconciliadasNfe,
       restantes_pendentes: restantes ?? null,
     });

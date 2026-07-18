@@ -196,6 +196,7 @@ export const MODULOS: ModuloApp[] = [
       "src/pages/__tests__/SalesQuotes.accountGuard.test.tsx",
       "src/pages/__tests__/SalesQuotes.priceGuard.test.tsx",
       "src/pages/__tests__/displayReaders.viewFresca.test.ts",
+      "src/pages/__tests__/writersCarteiraRpc.fatia4.test.ts",
     ],
     risco: { moneyPath: true, offlineFirst: false, authSensitive: false },
   },
@@ -303,7 +304,6 @@ export const MODULOS: ModuloApp[] = [
     rotaPrefixos: ["/admin"],
     gates: ["RequireStaff"],
     codigo: [
-      "src/lib/clientes-cadastro/**",
       "src/lib/clientes-nao-vinculados/**",
       "src/lib/customer-contact/**",
       "src/lib/customer-process/**",
@@ -676,6 +676,7 @@ export const MODULOS: ModuloApp[] = [
     testes: [
       "src/__tests__/app-route-dedupe.test.ts",
       "src/__tests__/auth.test.ts",
+      "src/__tests__/edge-app-url.test.ts",
       "src/__tests__/index-html.test.ts",
       "src/lib/escape-html.test.ts",
       "src/lib/__tests__/**",
@@ -692,6 +693,7 @@ export const MODULOS: ModuloApp[] = [
       "src/hooks/__tests__/useInfiniteScroll.test.ts",
       "src/hooks/__tests__/useDisplayAccess.test.tsx",
       "src/hooks/__tests__/useImpersonationTargets.test.tsx",
+      "src/hooks/__tests__/useCommercialRole.test.tsx",
       "src/hooks/__tests__/useMyCommercialRole.test.tsx",
       "src/hooks/__tests__/useUserDepartment.test.tsx",
     ],

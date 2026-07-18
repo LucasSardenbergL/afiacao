@@ -443,8 +443,11 @@ Deno.serve(async (req) => {
         }
       }
 
-      // Bulk insert valid formulas with .select("id") to get back inserted IDs
+      // Bulk insert valid formulas. Fase 1c (Codex P2): o id do header é PRÉ-GERADO aqui — a
+      // associação header→itens deixa de depender da ORDEM do retorno de .insert().select("id")
+      // (IDs fora de ordem ligariam a receita de A ao header de B com COUNT=expected batendo nos dois).
       const formulaRows: Record<string, unknown>[] = validFormulas.map((f) => ({
+        id: crypto.randomUUID(),
         sync_run_id: runId,
         account: agent.account,
         store_code: agent.storeCode,
@@ -459,6 +462,15 @@ Deno.serve(async (req) => {
         personalizada: f.personalizada || false,
         raw_data: f,
         staging_status: "pending",
+        // Fase 1c — protocolo de staging como UNIDADE: declara quantas linhas de item a edge
+        // RECEBEU e vai inserir p/ este header. A promoção (tint_promote_sync_run v4) só aceita a
+        // fórmula quando o COUNT bruto ingerido bate (fecha subconjunto por fronteira de chunk +
+        // corrida de ingestão×promoção). ⚠️ Codex P1: `itens` AUSENTE (regressão de serialização)
+        // NUNCA vira 0 — grava NULL (protocolo ambíguo → a promoção barra fail-closed); 0 declarado
+        // também NÃO autoriza limpeza de receita (o conector filtra inválidos antes do POST — sinal
+        // semântico de base pura é a Fase 1d). Simulação/sintéticos não declaram (NULL).
+        // ⚠️ Deploy: a migration 20260718170000 (cria a coluna) vai ANTES desta edge.
+        expected_item_count: Array.isArray(f.itens) ? f.itens.length : null,
       }));
 
       // Insert in chunks of 500, collecting returned IDs
@@ -468,9 +480,8 @@ Deno.serve(async (req) => {
 
       for (let i = 0; i < formulaRows.length; i += FORMULA_CHUNK) {
         const chunk = formulaRows.slice(i, i + FORMULA_CHUNK);
-        const { data: chunkData, error: chunkErr } = await sb.from("tint_staging_formulas")
-          .insert(chunk)
-          .select("id");
+        const { error: chunkErr } = await sb.from("tint_staging_formulas")
+          .insert(chunk);
         if (chunkErr) {
           // All formulas in this chunk fail — count as errors
           const chunkFormulas = validFormulas.slice(i, i + FORMULA_CHUNK);
@@ -482,10 +493,10 @@ Deno.serve(async (req) => {
           // Push nulls so index alignment is preserved for item insertion
           for (let j = 0; j < chunk.length; j++) insertedFormulaIds.push(null);
         } else {
-          inserts += (chunkData?.length ?? 0);
-          for (const row of (chunkData ?? [])) {
-            insertedFormulaIds.push((row as { id: string }).id);
-          }
+          inserts += chunk.length;
+          // Fase 1c (Codex P2): ids pré-gerados na edge — o alinhamento é com o array LOCAL,
+          // não com a ordem que o servidor devolveria.
+          for (const row of chunk) insertedFormulaIds.push(row.id as string);
         }
       }
 
