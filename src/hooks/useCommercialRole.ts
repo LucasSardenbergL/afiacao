@@ -1,26 +1,30 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
+import { useAuthzContract } from '@/hooks/useAuthzContract';
 
 export type CommercialRole = 'operacional' | 'gerencial' | 'estrategico' | 'super_admin';
 
 /**
- * 🔐 Trava do contrato de autorização gerencial (E1 do FU4 — ver spec de 2026-07-18).
+ * 🔐 Contrato de autorização gerencial (E1 #1424 → E2/FU4 — spec de 2026-07-18).
  *
- * Os papéis gerenciais acionam `pode_ver_carteira_completa` no banco, que NÃO é o gate da
- * carteira: medido em prod 2026-07-18, ele gateia **64 policies em 34 tabelas** — incluindo
- * ESCRITA em `cliente_tier_preco` (tier de preço do cliente) e `venda_excecao_credito`
- * (aprovação de crédito), e LEITURA de `cmc_ledger` (custo médio) e `markup_policy`.
- * Conceder um papel gerencial hoje entrega preço + crédito + custo junto, de uma vez.
+ * Os papéis gerenciais acionavam `pode_ver_carteira_completa`, que NÃO era o gate da carteira:
+ * medido em prod 2026-07-18, gateava **64 policies em 34 tabelas** — incluindo ESCRITA em
+ * `cliente_tier_preco` (tier de preço) e `venda_excecao_credito` (crédito), e LEITURA de
+ * `cmc_ledger` (custo) e `markup_policy`. Conceder o papel entregava tudo isso junto.
  *
- * Enquanto a matriz de capability por recurso×ação (E2) não existir no BANCO, o app trata
- * esses papéis como NÃO concedidos, mesmo que a linha exista em `commercial_roles` — o dado
- * é preservado, a capability não. Fail-closed por construção.
+ * A E1 travou isso com uma constante `false` no código. A E2 substituiu o gate único por uma
+ * matriz de capability por recurso × ação no BANCO — e esta trava virou uma PERGUNTA ao banco
+ * (`useAuthzContract`) em vez de uma constante:
  *
- * A E2 vira isto para `true` na MESMA migration que habilita o papel no banco. Não vire
- * antes: sem a migration aplicada, isto reabre o furo silenciosamente.
+ *   · banco em v2 (matriz aplicada) ⇒ o papel gerencial é concedido, e já não carrega
+ *     preço/crédito/custo/compras — as policies dessas tabelas agora exigem capability própria.
+ *   · banco em v1, RPC ausente, erro ou carregando ⇒ capability NEGADA.
+ *
+ * A pergunta importa porque no Lovable merge ≠ produção: a migration é aplicada à mão e falha em
+ * silêncio se esquecida. Uma constante `true` publicada sem a migration reabriria o furo sem
+ * nenhum sinal. Perguntando, o esquecimento vira "gestor sem acesso" — barulhento e seguro.
  */
-const CONTRATO_GERENCIAL_ATIVO: boolean = false;
 
 interface UseCommercialRoleReturn {
   commercialRole: CommercialRole | null;
@@ -38,6 +42,7 @@ interface UseCommercialRoleReturn {
 
 export function useCommercialRole(): UseCommercialRoleReturn {
   const { user } = useAuth();
+  const { matrizAtiva, loading: loadingContrato } = useAuthzContract();
   const [commercialRole, setCommercialRole] = useState<CommercialRole | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -84,10 +89,13 @@ export function useCommercialRole(): UseCommercialRoleReturn {
     isEstrategico,
     isGerencial,
     isOperacional,
-    // Gateados pela trava acima: o papel no banco não basta enquanto a E2 não existir.
-    canViewStrategic: CONTRATO_GERENCIAL_ATIVO && (isSuperAdmin || isEstrategico),
-    canViewManagerial: CONTRATO_GERENCIAL_ATIVO && (isSuperAdmin || isEstrategico || isGerencial),
-    loading,
+    // O papel no banco não basta: a matriz de capability (v2) precisa estar aplicada.
+    // `matrizAtiva` é false enquanto carrega e em qualquer erro — fail-closed.
+    canViewStrategic: matrizAtiva && (isSuperAdmin || isEstrategico),
+    canViewManagerial: matrizAtiva && (isSuperAdmin || isEstrategico || isGerencial),
+    // Só está "pronto" quando as DUAS perguntas responderam — senão o consumidor leria
+    // `canView* = false` como decisão final e não como "ainda não sei".
+    loading: loading || loadingContrato,
     refetch: fetchRole,
   };
 }

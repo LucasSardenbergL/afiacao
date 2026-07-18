@@ -4,7 +4,9 @@
 > ("gestor deve respeitar a máscara `eligible`?") e cresceu ao medir o alcance real do gate.
 > Estado **medido em PROD via psql-ro em 2026-07-18**. Revisão adversária **Codex `gpt-5.6-sol` xhigh**,
 > 2 rodadas — o parecer derrubou a proposta inicial e corrigiu 6 afirmações.
-> **E1 entregue (só código, zero migration). E2 especificada, não construída.**
+> **E1 entregue ([#1424](https://github.com/LucasSardenbergL/afiacao/pull/1424), só código).
+> E2 entregue ([#1434](https://github.com/LucasSardenbergL/afiacao/pull/1434)) — ver §8 para o que
+> mudou entre o especificado aqui e o construído.**
 
 ## 1. A descoberta que redefine o problema
 
@@ -158,8 +160,46 @@ como especificado (o `trg_auto_commercial_super_admin` insere `super_admin` pelo
 
 ## 7. Follow-ups
 
-- **FU4-A:** matriz de capability por recurso × ação para os 34 recursos — é a E2 inteira, merece sessão própria.
+- ~~**FU4-A:** matriz de capability por recurso × ação~~ — **ENTREGUE** no #1434 (§8).
 - **FU4-B:** agregação server-side dos KPIs estratégicos (§4.3), independente da máscara.
-- **FU4-C:** o TS `CommercialRole` tem 4 valores; o enum do Postgres tem 7 (falta `farmer`, `hunter`, `closer`,
-  `master`). `useCommercialRole` classifica `master` como nenhum dos 4 — hoje inerte porque o master passa por
+- **FU4-C:** o TS `CommercialRole` tem 4 valores; o enum do Postgres tem **8** (`operacional, gerencial,
+  estrategico, super_admin, farmer, hunter, closer, master` — medido 2026-07-18; o "7" acima estava errado).
+  `useCommercialRole` classifica `master` como nenhum dos 4 — hoje inerte porque o master passa por
   `isAdmin`, mas é divergência de contrato.
+- **FU4-D:** `ineligibility_reason` (enum+coluna+backfill com `legacy_unknown`) + RPC de quarentena read-only.
+  Cortados da E2 por decisão do dono: a matriz não depende deles (a coorte filtra por `eligible`, que já
+  existe), e mantê-los engordaria o bloco aplicado à mão misturando autorização com qualidade de dado.
+- **FU4-E:** 3 RPCs de ESCRITA em compras (`despinar_parametro`, `reverter_parametro_auto`,
+  `reverter_run_auto`) seguem no gate antigo. Como a E2 tirou do gerencial a LEITURA da telemetria de
+  compras, sobrou a incoerência "não lê, mas escreve". Não é vazamento de custo/preço/crédito. Ao tratar:
+  criar `private.cap_compras_escrever` — não reusar a de leitura (§4.2).
+
+## 8. E2 — o que foi construído (2026-07-18, #1434)
+
+Divergências conscientes entre o especificado acima e o entregue:
+
+| §4.1 | especificado | entregue | porquê |
+|---|---|---|---|
+| passos 3-4 | `ineligibility_reason` + backfill | **cortado** → FU4-D | a matriz não depende; reduz o bloco aplicado à mão |
+| passo 7 | RPC de quarentena | **cortado** → FU4-D | observabilidade, não autorização |
+| passo 8 | RPC de KPIs estratégicos | **cortado** → FU4-B | §4.3 já dizia que é bug independente |
+| passo 1 | "gate de versão fail-closed (já entregue como E1)" | **construído de verdade** | a E1 era uma constante literal; virou consulta a `authz_contract_version()`. Sem isso, um Publish sem a migration reabriria o furo em silêncio |
+
+**A matriz.** 6 capabilities em `private`: `cap_preco_escrever` e `cap_credito_escrever` (master),
+`cap_custo_ler` (master+estrategico+super_admin), `cap_compras_ler` (master), `cap_carteira_ler` e
+`cap_carteira_escrever` (mantêm a concessão do gate antigo). As duas de carteira coincidem hoje **de
+propósito**: é a junta onde a matriz dobra — apertar a escrita depois custa 1 função, não 28 policies.
+
+**Alcance real medido — maior que as 64 policies.** Além delas, 4 RPCs `SECURITY DEFINER` liberavam custo:
+`fin_estimar_estoque_omie`, `medir_abaixo_piso_tier`, `get_preco_cockpit`, `get_defasagem_cliente`. As duas
+últimas quase escaparam: o comentário no `authz-manifest.ts` as descreve como "afina o detalhe", mas o
+código mostra que a variável gateada é o que decide se `cmc`/`markup`/`piso`/`folga` saem preenchidos.
+**Lição: classifique gate lendo o corpo da função, não o comentário do manifesto.**
+
+**O que a revisão adversária (Codex `gpt-5.6-sol` xhigh, rodada 1) derrubou:** as 2 RPCs acima (bloqueador);
+`FOR ALL USING(ler) WITH CHECK(escrever)` em `selfservice_cliente_allowlist` (DELETE só consulta `USING` →
+latentemente inseguro); um assert do harness que era falso-verde por `SET LOCAL` fora de transação; e
+`useAuthzContract` não sendo fail-closed após sucesso→erro (react-query preserva o último `data` bom).
+
+**Prova:** `db/test-authz-capability-matrix.sh` — 50 asserts, PG17, `SET ROLE authenticated`, com guard que
+aborta se o SET ROLE não pegar, e falsificação em 6 pontos.
