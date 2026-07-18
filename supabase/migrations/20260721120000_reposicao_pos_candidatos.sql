@@ -78,7 +78,12 @@ RETURNS TABLE (
   po_no_espelho          boolean,
   fornecedor_nome        text,
   canal_usado            text,
-  -- FATOS binários, sem interpretação (ver o comentário no corpo). O consumidor lê os campos crus.
+  -- CAMPOS CRUS: sem eles, os fatos binários abaixo tornam 'sucesso' e 'sem sucesso' INDISTINGUÍVEIS —
+  -- o comentário prometia que o consumidor leria os campos, mas eles não eram retornados (Codex v10).
+  portal_protocolo       text,
+  status_envio_portal    text,
+  resposta_canal         jsonb,
+  -- FATOS binários, sem interpretação (ver o comentário no corpo).
   tem_protocolo          boolean,
   tem_status_portal      boolean,
   tem_resposta_canal     boolean,
@@ -174,7 +179,10 @@ BEGIN
     -- era falha ABERTA (Codex v6 P1) — e o assert J3 chegava a FIXAR esse falso-positivo como esperado.
     CASE
       WHEN public.reposicao__po_id(b.omie_codigo_pedido) IS NULL THEN 'identidade_nao_interpretavel'
-      WHEN b.visto_run_id IS NULL                                THEN 'nunca_carimbado'
+      -- 'sem_registro_last_seen', não 'nunca_carimbado': a RPC prova a ausência ATUAL da linha, não que o PO
+      -- nunca foi visto — a linha pode ter sido apagada/reconstruída (Codex v10). "Nunca" é afirmação de
+      -- histórico, e histórico esta RPC não consulta.
+      WHEN b.visto_run_id IS NULL                                THEN 'sem_registro_last_seen'
       ELSE 'visto_em_run_anterior'
     END AS visto_status,
     -- SINAL FRACO: o sync do tracking é upsert-only (nunca remove) → ausência do espelho NÃO prova exclusão.
@@ -188,14 +196,19 @@ BEGIN
     -- não converge, e o rótulo não decide nada desde que a coluna `rota` morreu na v4.
     -- Ficam só FATOS BINÁRIOS incontestáveis. O humano/PR3 lê os campos crus (portal_protocolo,
     -- status_envio_portal, resposta_canal, canal_usado) e interpreta com o contexto que a RPC não tem.
+    b.portal_protocolo,
+    b.status_envio_portal,
+    b.resposta_canal,
     (public.reposicao__trim(b.portal_protocolo) <> '')    AS tem_protocolo,
     (public.reposicao__trim(b.status_envio_portal) <> '') AS tem_status_portal,
-    (b.resposta_canal IS NOT NULL)                        AS tem_resposta_canal,
+    -- ⚠️ JSON null ('null'::jsonb) NÃO é SQL NULL: `IS NOT NULL` dava true e a RPC afirmava resposta
+    -- existente onde não há nenhuma (Codex v10).
+    (b.resposta_canal IS NOT NULL AND jsonb_typeof(b.resposta_canal) <> 'null') AS tem_resposta_canal,
     (public.reposicao__trim(b.canal_usado) <> '')         AS tem_canal,
     -- "há algum indício de que o fornecedor foi acionado?" — OR simples, sem inferência.
     (public.reposicao__trim(b.portal_protocolo) <> ''
       OR public.reposicao__trim(b.status_envio_portal) <> ''
-      OR b.resposta_canal IS NOT NULL
+      OR (b.resposta_canal IS NOT NULL AND jsonb_typeof(b.resposta_canal) <> 'null')
       OR public.reposicao__trim(b.canal_usado) <> '')     AS algum_sinal_de_canal,
     b.marcador_run_id,
     b.marcador_seq

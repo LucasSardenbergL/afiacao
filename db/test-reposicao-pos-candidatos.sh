@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ╔══════════════════════════════════════════════════════════════════════════════╗
 # ║  PROVA PG17 — reposicao_pos_candidatos (detector de PO excluído, NÃO-MUTANTE)  ║
-# ║  Migration: supabase/migrations/20260720190000_reposicao_pos_candidatos.sql    ║
+# ║  Migration: supabase/migrations/20260721120000_reposicao_pos_candidatos.sql    ║
 # ║  Rode: bash db/test-reposicao-pos-candidatos.sh > /tmp/t.log 2>&1; echo $?     ║
 # ║        (NÃO pipe pra tail — engole o exit code)                                 ║
 # ║                                                                                ║
@@ -23,7 +23,7 @@ PORT="${PGPORT_TEST:-5477}"
 SLUG="reposicao-pos-candidatos"
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
 export LC_ALL=C LANG=C
-MIG="$REPO_ROOT/supabase/migrations/20260720190000_reposicao_pos_candidatos.sql"
+MIG="$REPO_ROOT/supabase/migrations/20260721120000_reposicao_pos_candidatos.sql"
 
 [ -x "$PGBIN/initdb" ] || { echo "postgresql@${PGVER} ausente: brew install postgresql@${PGVER}"; exit 1; }
 CELLAR="$(brew --prefix "postgresql@${PGVER}")"
@@ -203,9 +203,16 @@ INSERT INTO public.pedido_compra_sugerido
  (164,' OBEN ','disparado','164', now()::date-50,'F','omie',NULL,NULL,NULL),
  (165,'OBEN','disparado','165', now()::date+3,'F','omie',NULL,NULL,NULL),
  (166,'OBEN','disparado','166', now()::date-50,'F','omie',NULL,'login: sucesso',NULL),
- (167,'OBEN','disparado','167', now()::date-50,'F','omie',NULL,NULL,NULL);
+ (167,'OBEN','disparado','167', now()::date-50,'F','omie',NULL,NULL,NULL),
+ -- one-hot do OR (Codex v10): cada sinal ISOLADO tem de acender algum_sinal_de_canal
+ (170,'OBEN','disparado','170', now()::date-50,'F','omie',NULL,NULL,NULL),
+ (171,'OBEN','disparado','171', now()::date-50,'F',NULL,NULL,'x',NULL),
+ (172,'OBEN','disparado','172', now()::date-50,'F',NULL,NULL,NULL,'{"a":1}'::jsonb),
+ (173,'OBEN','disparado','173', now()::date-50,'F',NULL,'PROTO-1',NULL,NULL),
+ (174,'OBEN','disparado','174', now()::date-50,'F',NULL,NULL,NULL,'null'::jsonb),
+ (175,'OBEN','disparado','175', now()::date-50,'F','omie',NULL,NULL,NULL);
 -- multi-item TOTALMENTE valorado: mata o mutante sum() -> max() (Codex v9)
-INSERT INTO public.pedido_compra_item (pedido_id,sku_codigo_omie,valor_linha) VALUES (167,'P',10.00),(167,'Q',20.00);
+INSERT INTO public.pedido_compra_item (pedido_id,sku_codigo_omie,valor_linha) VALUES (167,'P',10.00),(167,'Q',20.00),(175,'R',NULL),(175,'S',NULL);
 -- empresa MINUSCULA armazenada: mata o mutante que remove upper() de p.empresa (Codex v9)
 INSERT INTO public.pedido_compra_sugerido (id,empresa,status,omie_pedido_compra_id,data_ciclo,fornecedor_nome,canal_usado)
 VALUES (168,'oben','disparado','168', now()::date-50,'F','omie');
@@ -236,13 +243,13 @@ case "$R" in
   *"operator does not exist"*|*"does not exist"*|*ERROR*) bad "E1 a RPC QUEBROU em runtime: $R";;
   *) ok "E1 a RPC EXECUTA com empresa TEXT × ENUM (comparação com cast explícito)";;
 esac
-eq "E2 aceita a empresa em caixa/espaço divergentes (upper+btrim)" "$(Pq -c "SELECT count(*) FROM public.reposicao_pos_candidatos('  oben ');" | tail -1)" "43"
+eq "E2 aceita a empresa em caixa/espaço divergentes (upper+btrim)" "$(Pq -c "SELECT count(*) FROM public.reposicao_pos_candidatos('  oben ');" | tail -1)" "49"
 
 echo "── Bloco B: quem é candidato ──"
-eq "B1 candidatos = todos os não-vistos no marcador" "$(cand)" "101,102,103,104,105,110,111,112,113,114,115,116,117,118,119,120,121,122,123,124,130,131,132,133,134,135,136,139,140,141,142,146,147,151,160,161,162,163,164,165,166,167,168"
+eq "B1 candidatos = todos os não-vistos no marcador" "$(cand)" "101,102,103,104,105,110,111,112,113,114,115,116,117,118,119,120,121,122,123,124,130,131,132,133,134,135,136,139,140,141,142,146,147,151,160,161,162,163,164,165,166,167,168,170,171,172,173,174,175"
 eq "B2 PO visto NO marcador NÃO é candidato (100 fora)" "$(Pq -c "SELECT count(*) FROM public.reposicao_pos_candidatos('OBEN') WHERE pedido_id=100;" | tail -1)" "0"
 eq "B3 visto em run ANTERIOR é candidato, marcado como tal" "$(campo 101 visto_status)" "visto_em_run_anterior"
-eq "B4 NUNCA carimbado é candidato, marcado como tal" "$(campo 102 visto_status)" "nunca_carimbado"
+eq "B4 NUNCA carimbado é candidato, marcado como tal" "$(campo 102 visto_status)" "sem_registro_last_seen"
 eq "B5 status fora do alvo (concluido_recebido) não entra" "$(Pq -c "SELECT count(*) FROM public.reposicao_pos_candidatos('OBEN') WHERE pedido_id=106;" | tail -1)" "0"
 eq "B6 pedido sem PO / PO vazio não entra" "$(Pq -c "SELECT count(*) FROM public.reposicao_pos_candidatos('OBEN') WHERE pedido_id IN (107,108);" | tail -1)" "0"
 eq "B7 outra EMPRESA não vaza (109 é COLACOR)" "$(Pq -c "SELECT count(*) FROM public.reposicao_pos_candidatos('OBEN') WHERE pedido_id=109;" | tail -1)" "0"
@@ -302,6 +309,21 @@ eq "M6 canal vazio NAO conta como canal" "$(campo 142 tem_canal)" "f"
 eq "M7 algum_sinal_de_canal = OR dos 4 (103 tem tudo)" "$(campo 103 algum_sinal_de_canal)" "t"
 eq "M8 SEM nenhum campo -> algum_sinal_de_canal falso (o unico caso honesto)" "$(campo 139 algum_sinal_de_canal)" "f"
 
+echo "── Bloco N: mutantes do Codex v10 (identidade retornada, one-hot do OR, correlacao) ──"
+eq "N1 a IDENTIDADE retornada e o PO, nao o pedido_id (nenhum assert lia essa coluna)" "$(campo 101 omie_codigo_pedido)" "101"
+eq "N2 identidade retornada preserva o texto CRU ('00152', nao 152)" "$(campo 162 omie_codigo_pedido)" "00152"
+# ONE-HOT: sem estes, remover ramos do OR passava verde (M7 tinha tudo, M8 nada — nenhum caso isolado)
+eq "N3 one-hot SO canal -> algum_sinal true" "$(campo 170 algum_sinal_de_canal)" "t"
+eq "N4 one-hot SO status -> algum_sinal true" "$(campo 171 algum_sinal_de_canal)" "t"
+eq "N5 one-hot SO resposta -> algum_sinal true" "$(campo 172 algum_sinal_de_canal)" "t"
+eq "N6 one-hot SO protocolo -> algum_sinal true" "$(campo 173 algum_sinal_de_canal)" "t"
+eq "N7 JSON null ('null'::jsonb) NAO e resposta presente" "$(campo 174 tem_resposta_canal)" "f"
+eq "N8 JSON null tambem nao vira algum_sinal (com os outros vazios)" "$(campo 174 algum_sinal_de_canal)" "f"
+# CORRELACAO: 2 pedidos com item NULL em quantidades DIFERENTES matam a subquery sem WHERE pedido_id
+eq "N9 itens_sem_valor e POR PEDIDO (2 nulos aqui)" "$(campo 175 itens_sem_valor)" "2"
+eq "N10 pedido SEM item nulo tem itens_sem_valor=0 (mata a subquery descorrelacionada)" "$(campo 167 itens_sem_valor)" "0"
+eq "N11 campos CRUS retornados: 'sucesso' e 'sem sucesso' sao distinguiveis" "$(campo 104 status_envio_portal)|$(campo 132 status_envio_portal)" "sucesso_portal|sem sucesso"
+
 echo "── Bloco A: marcador FAIL-CLOSED ──"
 P -q -c "UPDATE public.reposicao_pedidos_compra_run SET volume_ok=false;" >/dev/null
 eq "A1 sem run VÁLIDO (todos truncados) → VAZIO (não classifica ninguém)" "$(Pq -c "SELECT count(*) FROM public.reposicao_pos_candidatos('OBEN');" | tail -1)" "0"
@@ -320,8 +342,8 @@ EXCEPTION WHEN insufficient_privilege THEN RAISE NOTICE 'DENY_OK'; END $$;
 SQL
 )
 case "$R" in *DENY_OK*) ok "D1 authenticated NÃO-staff é barrado (42501)";; *) bad "D1 — veio: $R";; esac
-eq "D2 staff (master) enxerga" "$(Pq -c "SET test.uid='33333333-3333-3333-3333-333333333333'; SELECT count(*) FROM public.reposicao_pos_candidatos('OBEN');" | tail -1)" "43"
-eq "D3 uid NULL (service_role / cron SQL-local) passa — auth.role() aqui MATARIA o cron" "$(Pq -c "SELECT count(*) FROM public.reposicao_pos_candidatos('OBEN');" | tail -1)" "43"
+eq "D2 staff (master) enxerga" "$(Pq -c "SET test.uid='33333333-3333-3333-3333-333333333333'; SELECT count(*) FROM public.reposicao_pos_candidatos('OBEN');" | tail -1)" "49"
+eq "D3 uid NULL (service_role / cron SQL-local) passa — auth.role() aqui MATARIA o cron" "$(Pq -c "SELECT count(*) FROM public.reposicao_pos_candidatos('OBEN');" | tail -1)" "49"
 
 # ══════════════════════════════════════════════════════════════════════════════
 echo "── FALSIFICAÇÃO ──"
