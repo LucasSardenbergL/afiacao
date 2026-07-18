@@ -18854,15 +18854,6 @@ export type Database = {
       }
       norm_cidade: { Args: { t: string }; Returns: string }
       normalizar_cep: { Args: { p: string }; Returns: string }
-      omie_cliente_upsert_mapping: {
-        Args: {
-          p_codigo_cliente: number
-          p_codigo_vendedor: number
-          p_empresa: string
-          p_user_id: string
-        }
-        Returns: string
-      }
       omie_sync_identity_snapshot: {
         Args: { p_account: string }
         Returns: Json
