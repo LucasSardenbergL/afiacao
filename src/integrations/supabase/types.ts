@@ -17769,6 +17769,23 @@ export type Database = {
         }
         Relationships: []
       }
+      v_tint_formula_canonica: {
+        Row: {
+          account: string | null
+          cor_id: string | null
+          id: string | null
+          is_sl: boolean | null
+          nome_cor: string | null
+          personalizada: boolean | null
+          preco_final_sayersystem: number | null
+          receita_valida: boolean | null
+          sku_id: string | null
+          subcolecao_id: string | null
+          tem_receita: boolean | null
+          updated_at: string | null
+        }
+        Relationships: []
+      }
       v_titulo_baixas: {
         Row: {
           company: string | null
