@@ -126,7 +126,14 @@ Ambos espelhados **verbatim** no edge (Deno não importa de `src/`) — paridade
 
 1. Membro **nunca** sai do ledger nem da lista do rebuild. Quarantine muda `eligible`, **nunca** a presença.
 2. Todo membro do ledger → **uma** row em `carteira_assignments` (reconciliação; nada fica stale).
-3. Quarantinado → `eligible=false` → zero comissão e invisível (todos os leitores usam `WHERE eligible`).
+3. Quarantinado → `eligible=false` → zero comissão (protegido: `_carteira_positivacao_for_owner`) e
+   invisível na carteira operacional (`escopo-clientes.ts`). ⚠️ **CORRIGIDO 2026-07-17:** a afirmação
+   original *"todos os leitores usam `WHERE eligible`"* era **FALSA** — `carteira_visivel_para` e
+   `minha_carteira` ignoravam `eligible` e vazavam artefatos do cliente via RLS (medido em prod:
+   8/14 consumidores). Fechado o gate + RPC em
+   [2026-07-17-carteira-rls-eligible-visibilidade-design.md](2026-07-17-carteira-rls-eligible-visibilidade-design.md);
+   os braços de **autoria** (`farmer_id`), **`pode_ver_carteira_completa`** (gestor) e **edge service_role**
+   seguem eligible-blind por design — para identidade ambígua isso é um gap de reidentificação aberto (FU1 do design acima).
 4. Consumo é fail-closed (`!== 'verified'`); população é conservadora (só `ambiguous`, só conta oben).
 5. Aditivo: com 0 ambíguos (o caso de hoje), o rebuild produz **exatamente** o resultado atual.
 6. O `owner_user_id` do quarantinado permanece na row (NOT NULL), inerte — o quarantine é **máscara reversível**,

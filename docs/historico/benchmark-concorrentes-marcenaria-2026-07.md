@@ -1,6 +1,6 @@
 # Benchmark competitivo — distribuidores de marcenaria (2026-07-11)
 
-> Análise de gaps: o que copiar de **7 concorrentes** de distribuição para marcenaria/móveis para o app do cliente (Afiação/Colacor). Método: skill `benchmark-externo` (fonte externa → tabela de gaps com evidência → programa em fases-PR). 2ª opinião pelo **Codex** (`gpt-5.6-sol`, reasoning high). **Status: análise/proposta — NÃO iniciada.** Nada aqui foi construído; é o mapa priorizado para quando/se atacarmos.
+> Análise de gaps: o que copiar de **7 concorrentes** de distribuição para marcenaria/móveis para o app do cliente (Afiação/Colacor). Método: skill `benchmark-externo` (fonte externa → tabela de gaps com evidência → programa em fases-PR). 2ª opinião pelo **Codex** (`gpt-5.6-sol`, reasoning high). **Status: Onda 1 EM PRODUÇÃO (parcial).** Os 2 quick-wins de maior prioridade saíram (mergeados; Publish do frontend parcial): a aposta principal **#8 — Central da Ferramenta e Serviços v1** (PR #1323) e **#13 — recomendações consultivas determinísticas** (PR #1327 → movidas do dashboard para a Central em PR #1372 → 4ª regra `nunca_afiada`, que empurra a 1ª afiação do cliente novo, em PR #1389 — este também corrigiu o `PriorityCard` da home que dizia "Tudo em dia" a quem nunca afiou). **Ainda NÃO construído:** o resto da Onda 1 (PR3 recompensas próprias, PR4 treinamento contextual, PR5 PWA), as Ondas 2-4 e os itens ✂️ CORTAR / 🟥 deferido — o mapa abaixo segue válido para o que falta.
 
 Concorrentes: **Leo Madeiras, GMAD, Rede PRÓ, Rede Sim, Rede W Brasil, Madeiranit, Gasômetro**. (A "Rede W Brasil" não tem presença digital rastreável — rede regional; modelo idêntico ao da PRÓ/Sim.)
 
@@ -15,11 +15,11 @@ Concorrentes: **Leo Madeiras, GMAD, Rede PRÓ, Rede Sim, Rede W Brasil, Madeiran
 | 5 | Crédito/financiamento AO cliente (Leo) | 🔴 gap | cliente | só controle de risco: `UnifiedOrder.tsx:23` `AlertaCreditoCliente` (bloqueia, não oferta) | 🟥 money-path |
 | 6 | BNPL B2B2C — cliente do marceneiro parcela, marceneiro recebe à vista (GMAIS/G+) | 🔴 gap | cliente | — | 🟥 deferido (perímetro regulatório) |
 | 4 | Resgate por benefícios externos (vale-combustível/eletro — Amigo Leo) | 🔴 gap | cliente | `Loyalty.tsx:30` só 2 rewards internos | reposicionar (benefícios próprios) |
-| 13 | Consultoria de melhoria de processo ao cliente | 🔴 gap | cliente | Farmer é staff-side (`farmer/*`) | reposicionar: "consultoria em produto" via dados |
+| 13 | Consultoria de melhoria de processo ao cliente | ✅ entregue · PR #1327/#1372/#1389 | cliente | Farmer é staff-side (`farmer/*`) | recomendações consultivas determinísticas no app do cliente (4 regras; `nunca_afiada` empurra a 1ª afiação) |
 | 1 | Plano de corte / nesting self-service (LeoPlan) | 🔴 gap | cliente | grep vazio | ✂️ CORTAR (sem chapa em escala; integrar via CSV/BOM se houver demanda) |
 | 2 | Projeto 3D + orçamento (LeoMob) | 🔴 gap | cliente | grep vazio | ✂️ CORTAR (outro negócio; integrar c/ Promob/LeoMob) |
 | 11 | Marketplace multi-fornecedor (Rede PRÓ) | 🔴 gap | cliente | — | ✂️ CORTAR (somos fornecedor único do grupo) |
-| 8 | Central de serviços (corte/beneficiamento) | 🔴 gap (corte) | cliente | — | ⭐ REPOSICIONAR → "Central da Ferramenta e Serviços" (aposta principal) |
+| 8 | Central de serviços (corte/beneficiamento) | ✅ entregue · PR #1323 | cliente | — | ⭐ Central da Ferramenta e Serviços v1 NO AR (aposta principal); corte/beneficiamento literal segue fora de escopo (foi reposicionamento) |
 | 3 | Fidelidade: 1pt/R$ + tiers + resgate rico (Amigo Leo) | 🟡→🔴 mais raso que parece | cliente | `Loyalty.tsx:23` TIERS, `:30` REWARDS(2), ganho por ajuste manual (`loyalty/AdjustDialog.tsx:19`) | 🟥 money-path; Codex: "ajuste manual não é motor de fidelidade" |
 | 9 | Rastreio de entrega ao cliente | 🟡→🔴 quase gap | cliente | `OrderDetail.tsx:44` STATUS_LABELS, mas `statusHistory:[]` hardcoded (`:107`) | Codex: fabricar evento inferido NÃO é quick-win |
 | 7 | App mobile instalável | 🟡 parcial | cliente+staff | `main.tsx:47` service worker + VitePWA + `sw.js` | polir PWA (manifest/update/offline), não app nativo |
@@ -39,9 +39,9 @@ Concorrentes: **Leo Madeiras, GMAD, Rede PRÓ, Rede Sim, Rede W Brasil, Madeiran
 
 ## Programa em fases-PR (priorizado)
 
-### 🎯 Onda 1 — Quick-wins que reusam infra (1 PR cada, sem risco financeiro)
-- ⏳ **PR1 — Central da Ferramenta e Serviços v1** (#8): home do cliente agregando `Tools`+`Savings`+`recurring-schedules`+`orders`. Só orquestra dado existente. 🖱️ Publish.
-- ⏳ **PR2 — Recomendações operacionais determinísticas** (#13): cards "ferramenta possivelmente atrasada"/"economia potencial" de `Tools`/`Savings`. Determinístico, nada de inferência. 🖱️ Publish.
+### 🎯 Onda 1 — Quick-wins que reusam infra (1 PR cada, sem risco financeiro) · **2/5 entregues (PR1, PR2)**
+- ✅ **PR1 — Central da Ferramenta e Serviços v1** (#8) — **entregue (PR #1323)**: home do cliente agregando `Tools`+`Savings`+`recurring-schedules`+`orders`. Só orquestra dado existente.
+- ✅ **PR2 — Recomendações consultivas determinísticas** (#13) — **entregue (PR #1327)**, refinado em **#1372** (movidas do dashboard para a Central) e **#1389** (4ª regra `nunca_afiada`, empurra a 1ª afiação do cliente novo; corrigiu o `PriorityCard` "Tudo em dia" a quem nunca afiou): cards determinísticos de `Tools`/`Savings`, nada de inferência.
 - ⏳ **PR3 — Catálogo de recompensas próprias** (#3 parcial, SEM ganho automático): expandir `Loyalty` REWARDS (crédito de afiação, frete, treinamento, acessórios, inspeção). Reusa RPC de resgate atômico. 🟥 money-path leve. 🖱️ Publish.
 - ⏳ **PR4 — Treinamento contextual** (#12): conteúdo dentro de `Tools`/pedido/`Savings`. 🖱️ Publish.
 - ⏳ **PR5 — Polimento PWA** (#7): manifest, install, update de SW, cuidado com preço/estoque obsoleto no cache. 🖱️ Publish.
