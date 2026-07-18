@@ -59,7 +59,9 @@ Separar 4 conceitos que hoje estão colapsados no espelho:
 - sync que deleta da proof por ambiguidade ([analytics-sync:444](../../../supabase/functions/omie-analytics-sync/index.ts)) → `ambiguous` no ledger (em vez de o user sumir).
 - `mapaConsolidacao` alias `inactive`/`conflict` → reflete no ledger do clone.
 
-## 4. Levantamento — 17 sítios (classificados; ruído de tipos/comentários/UI excluído)
+## 4. Levantamento — 17 sítios de CÓDIGO (classificados; ruído de tipos/comentários/UI excluído)
+
+> ⚠️ Esta seção varreu **apenas o repo** (edges + frontend). Objetos SQL criados no SQL Editor não aparecem num `grep` — estão na **§4-bis**, levantada depois.
 
 ### 🔴 ESCRITORES — 6 pontuais (migram p/ RPC `register_carteira_member` na Fatia 4) + 1 bulk (§9)
 | sítio | fluxo | nota |
@@ -81,6 +83,51 @@ Separar 4 conceitos que hoje estão colapsados no espelho:
 - **edges:** `omie-cliente:627/750/909`, `ai-ops-agent:250` (vendedor), `analytics-sync:238/550/1566` (auto-consumo; `:1566` precisa de `created_at` → coberto pelo ledger)
 - **JÁ migrado (não bloqueia):** `SalesPrintDashboard:215` (via view fresca)
 
+## 4-bis. Objetos SQL NO BANCO — a classe que o grep do repo não vê (medido 2026-07-18)
+
+> O inventário §4 varreu só **código** (edges + frontend). Função/view criada direto no SQL Editor do Lovable **não tem `CREATE` no repo** (`database.md` §3: ~210 objetos assim) → invisível a `grep`. Levantado no `/codex` challenge de 2026-07-17 (PR #1399) e **re-medido/CORRIGIDO** por psql-ro em 18/07. Varredura canônica agora versionada: [`db/preflight-dependencia-tabela.sql`](../../../db/preflight-dependencia-tabela.sql) (regra em `database.md` §5).
+
+### ⚠️ A query `ilike '%omie_clientes%'` produz 3 FALSOS POSITIVOS
+`omie_clientes` é **prefixo** de `omie_clientes_nao_vinculados` — tabela **diferente**, que sobrevive ao DROP. Use word-boundary: `~* '\momie_clientes\M'`.
+
+| falso positivo | o que realmente toca |
+|---|---|
+| `finalize_nao_vinculados_snapshot` | só `omie_clientes_nao_vinculados` |
+| `radar_recruzar_ja_cliente` | só `omie_clientes_nao_vinculados` |
+| `v_clientes_nao_vinculados_atual` (view) | só `omie_clientes_nao_vinculados` |
+
+→ o cron `nao-vinculados-refresh-diario` (30 8) **NÃO** depende de `omie_clientes`. Falsificação: rodando o preflight nos dois alvos, cada objeto aparece em **exatamente um** — bloqueadores reais são **3, não 6**.
+
+### Os 3 bloqueadores reais + destino
+
+| objeto | como usa hoje | destino | por quê |
+|---|---|---|---|
+| `_data_health_compute` | `max(omie_clientes.updated_at)` no check `vendas_cadastros` | **MIGRA → `omie_customer_account_map` (proof)** | o check mede **frescor de SYNC de cadastro**; a proof é escrita pelo mesmo bulk (`analytics-sync:468/482`) e está **mais fresca** que o espelho (05:40 × 05:02 em 18/07) |
+| `seed_targets_faltantes` | `FROM omie_clientes` — universo do seed de `farmer_client_scores` | **MIGRA → `carteira_membership_ledger`** | é a **LISTA de membros**, exatamente o que o ledger passou a ser. Paridade medida: **6909 = 6909, diferença simétrica 0** |
+| `omie_cliente_upsert_mapping` | writer (INSERT no espelho) | **APOSENTA JUNTO (`DROP FUNCTION`)** | **órfã**: zero chamador vivo; o único hit no código é o invariante que a **PROÍBE** (`edge-money-path-invariants.test.ts:281` — "backfill voltou … bloqueia o pedido"). **Não** é um dos 6 writers da Fatia 4 — é resíduo do P0-B (2026-07-05) já desarmado |
+
+### Cai junto no DROP (correto, não bloqueia)
+`trg_omie_clientes_to_ledger` (Fatia 0) · `update_omie_clientes_updated_at` · 2 índices · 2 policies · pkey/unique/check/defaults. `pg_depend` confirma: **todo objeto com `refobjid=omie_clientes` é da própria tabela**; zero externo.
+
+### Medido ZERO (nenhum bloqueador escondido)
+views/matviews · RLS policy em **outra** tabela · cron com SQL **inline** · FK entrante (`confrelid`) · constraint/default/índice-expressão externos.
+
+### ⚠️ O ledger NÃO serve como fonte de frescor
+`carteira_membership_ledger.updated_at` está **congelado há 5 dias** (18/07: max = 13/07 23:05) — é **acumulador**: `updated_at` só anda em transição de `identity_state`, e a Fatia 2 nem rodou. Migrar o check `vendas_cadastros` para o ledger deixaria o Sentinela **vermelho permanente**. Frescor-de-sync e membership-histórica são perguntas diferentes → fontes diferentes (**proof** × **ledger**).
+
+### Risco de ordem / raio de explosão
+- **`_data_health_compute` é `LANGUAGE sql` com um ÚNICO `UNION ALL`:** se `omie_clientes` some, a função **inteira** falha — não o check isolado. É **blackout dos 24 checks** do Sentinela, não degradação de um. Consumida por 2 crons (`data-health-watchdog` `*/30` e `fin-sync-heartbeat`), **ambos** com `vendas_cadastros` no IN-list.
+- **É função QUENTE:** 5 migrations recentes, a última de **ontem** (`20260717160000`). `CREATE OR REPLACE` sem pré-flight `pg_get_functiondef` da PROD reverte trabalho de outra sessão (a última a recriar vence). Prod × repo conferidos em 18/07: **alinhados, 24 checks idênticos**.
+- **`seed_targets_faltantes` é fail-closed** por design (`throw` em `calculate-scores:301`) → o DROP **para** o seed do scoring (cron `daily-calculate-scores` 0 6), não corrompe dado. Tem prova PG17 própria (`db/test-seed-targets-faltantes.sh`) — estender, não recriar.
+- **O espelho ainda recebe escrita:** 5239 linhas em 18/07. A Fatia 4 não começou; o DROP está a **2 fatias** de distância.
+
+### Ordem revisada da Fatia 5
+1. `CREATE OR REPLACE _data_health_compute` (pré-flight `pg_get_functiondef` da PROD) — `vendas_cadastros` → proof.
+2. `CREATE OR REPLACE seed_targets_faltantes` — `FROM carteira_membership_ledger`. **Paridade sem filtro de `identity_state`**: o quarantine governa vendedor/comissão, não a existência de score — mudar isso é escopo da Fatia 2, não da 5.
+3. `DROP FUNCTION public.omie_cliente_upsert_mapping(uuid, text, bigint, bigint)`.
+4. **Só então** `DROP TABLE omie_clientes` + regenerar `types.ts`.
+5. **prove-sql PG17 com falsificação** nos passos 1-2 (sabotar → exigir vermelho) + re-rodar o preflight exigindo **zero** linhas acionáveis.
+
 ## 5. Fatiamento (multi-PR, aditivo → cada passo fail-safe)
 
 - **Fatia 0 — fundação (migration):** cria `carteira_membership_ledger` + backfill dos 6909 (com `first_seen_at`=`omie_clientes.created_at`) + trigger `AFTER INSERT` em `omie_clientes` (`ON CONFLICT DO NOTHING`, `source='trigger'`). O trigger cobre os 6 writers **sem tocá-los** durante a transição. **prove-sql PG17** (CREATE + RLS sob `SET ROLE` + trigger + falsificação).
@@ -88,7 +135,7 @@ Separar 4 conceitos que hoje estão colapsados no espelho:
 - **Fatia 2 — popular `identity_state`:** sync marca `ambiguous` no ledger ao deletar da proof (`:444`); `mapaConsolidacao` reflete `inactive`/`conflict`. Torna o `quarantined` real. **Independente da Fatia 1:** até rodar, todos ficam `verified` (default) → rebuild = comportamento de hoje; a Fatia 2 só ATIVA o quarantine (aditivo, fail-safe).
 - **Fatia 3 — migrar leitores de código → proof:** 6 OBEN + edges. Baixo risco (já degradados). Frontend Publish + edges.
 - **Fatia 4 — migrar 6 writers → RPC `register_carteira_member`:** escreve ledger (membership) + proof (`source='manual'` p/ o código account-correto) e **para** de escrever o espelho. Ordem: leitores antes dos writers; gate `AdminApprovals:92` casa com seu writer `:113`.
-- **Fatia 5 — DROP:** removido o último leitor/escritor e o trigger ocioso → `DROP TABLE omie_clientes` + regenerar `types.ts`. **prove-sql PG17 + lovable-db-operator**.
+- **Fatia 5 — DROP:** removido o último leitor/escritor e o trigger ocioso → migrar os **3 objetos SQL do banco** (§4-bis: `_data_health_compute` → proof, `seed_targets_faltantes` → ledger, `DROP` da órfã `omie_cliente_upsert_mapping`) → `DROP TABLE omie_clientes` + regenerar `types.ts`. **prove-sql PG17 + lovable-db-operator**. Ordem detalhada e raio de explosão em **§4-bis**.
 
 ## 6. Invariantes / error handling
 - Ledger **nunca** perde membro (acumulador). "Ausente" ≠ revogação.
