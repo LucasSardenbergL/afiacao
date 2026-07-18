@@ -153,8 +153,11 @@ VALUES ('44444444-4444-4444-4444-444444444444','ambiguous','2026-03-01 10:00:00+
 INSERT INTO public.omie_customer_account_map(user_id, account, omie_codigo_cliente, source)
 VALUES ('55555555-5555-5555-5555-555555555555','oben',90001,'document');
 
-GRANT SELECT, INSERT, UPDATE, DELETE ON public.carteira_membership_ledger, public.omie_customer_account_map TO authenticated, anon;
-GRANT SELECT ON public.user_roles TO authenticated, anon;
+-- Espelha os GRANTs medidos em prod (pg_class.relacl): anon/authenticated/service_role têm privilégio
+-- de tabela; quem barra o customer é a RLS, não a falta de GRANT. Sem isto o A9 ficaria verde pelo
+-- motivo ERRADO (permission denied da tabela, não a policy) e não provaria nada sobre a RLS.
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.carteira_membership_ledger, public.omie_customer_account_map TO authenticated, anon, service_role;
+GRANT SELECT ON public.user_roles TO authenticated, anon, service_role;
 SQL
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -347,6 +350,26 @@ case "$R" in
   *ANON_EXECUTOU_BUG*) bad "A12 anon executou a RPC" ;;
   *)                  bad "A12 resultado inesperado: $R" ;;
 esac
+
+# A14 — service_role EXECUTA. É o caminho de 4 dos 5 writers (as 3 chamadas do omie-cliente + a do
+# omie-sync rodam com a service key). Provar staff e customer e SUPOR o service_role deixaria de fora
+# justamente a maioria das chamadas: BYPASSRLS ignora a RLS mas NÃO concede GRANT — se faltasse o
+# GRANT EXECUTE (ou o das tabelas), as edges quebrariam em produção com o harness verde.
+# [achado do Caminho B: o Codex estava sem cota e esta lacuna saiu da auto-revisão adversária]
+R=$(P -tA 2>&1 <<'SQL'
+SET ROLE service_role;
+DO $$ BEGIN
+  PERFORM public.register_carteira_member('33333333-3333-3333-3333-333333333333','colacor',60777,42);
+  RAISE NOTICE 'SERVICE_ROLE_ESCREVEU_OK';
+END $$;
+SQL
+)
+case "$R" in
+  *SERVICE_ROLE_ESCREVEU_OK*) ok "A14 service_role executa a RPC (caminho das edges)" ;;
+  *) bad "A14 service_role NÃO conseguiu executar — as 4 chamadas das edges quebrariam em prod: $R" ;;
+esac
+V=$(Pq -c "SELECT count(*) FROM public.omie_customer_account_map WHERE omie_codigo_cliente=60777;")
+eq "A14b o vínculo escrito pelo service_role existe" "$V" "1"
 
 # A13 — o CHECK ampliado aceita 'sync' (o bulk escreve o ledger direto, em massa, sem N+1).
 R=$(P -tA 2>&1 <<'SQL'
