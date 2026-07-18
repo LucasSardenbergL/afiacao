@@ -3247,7 +3247,7 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.carteira_visivel_para` | — |
 | `function` | `public.minha_carteira` | — |
 
-### `20260718100000_tint_promote_guard4_hardening.sql`
+### `20260718140000_tint_promote_guard4_v3.sql`
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |

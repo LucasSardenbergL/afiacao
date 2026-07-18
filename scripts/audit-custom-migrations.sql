@@ -422,7 +422,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260717160000', 'data_health_customer_metrics_watchdog', '20260717160000_data_health_customer_metrics_watchdog.sql'),
   ('20260717163000', 'tint_promote_fail_closed_receita_parcial', '20260717163000_tint_promote_fail_closed_receita_parcial.sql'),
   ('20260717181500', 'carteira_visivel_para_filtra_eligible', '20260717181500_carteira_visivel_para_filtra_eligible.sql'),
-  ('20260718100000', 'tint_promote_guard4_hardening', '20260718100000_tint_promote_guard4_hardening.sql')
+  ('20260718140000', 'tint_promote_guard4_v3', '20260718140000_tint_promote_guard4_v3.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -1755,7 +1755,7 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('tint_promote_fail_closed_receita_parcial', 'function', 'public', 'tint_promote_sync_run', ''),
   ('carteira_visivel_para_filtra_eligible', 'function', 'public', 'carteira_visivel_para', ''),
   ('carteira_visivel_para_filtra_eligible', 'function', 'public', 'minha_carteira', ''),
-  ('tint_promote_guard4_hardening', 'function', 'public', 'tint_promote_sync_run', '')
+  ('tint_promote_guard4_v3', 'function', 'public', 'tint_promote_sync_run', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -3136,7 +3136,7 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('tint_promote_fail_closed_receita_parcial', 'function', 'public', 'tint_promote_sync_run', ''),
   ('carteira_visivel_para_filtra_eligible', 'function', 'public', 'carteira_visivel_para', ''),
   ('carteira_visivel_para_filtra_eligible', 'function', 'public', 'minha_carteira', ''),
-  ('tint_promote_guard4_hardening', 'function', 'public', 'tint_promote_sync_run', '')
+  ('tint_promote_guard4_v3', 'function', 'public', 'tint_promote_sync_run', '')
 )
 SELECT
   e.migration,

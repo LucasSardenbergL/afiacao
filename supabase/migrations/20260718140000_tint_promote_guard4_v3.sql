@@ -1,23 +1,36 @@
--- 20260718100000_tint_promote_guard4_hardening.sql
--- FASE 1 (P0) money-path — HARDENING do Guard 4. SUPERSEDE a 20260717163000 (mesma sessão): este corpo é
--- AUTO-SUFICIENTE (CREATE OR REPLACE completo, a última a recriar VENCE) → aplicar SÓ ESTA já basta; se a
--- 20260717163000 tiver sido aplicada antes, esta a corrige por cima. Fecha 5 bypasses P1 achados pelo Codex
--- (gpt-5.6-sol xhigh) no diff da v1 — a v1 fechava o caso original mas só em staging estável e sem colisão:
---   P1-1 CORRIDA: _formulas_latest lia header de run AINDA EM INGESTÃO (o edge commita headers ANTES dos
---        itens; o advisory lock serializa a PROMOÇÃO, não a ingestão) → o guard via "0 corantes", tratava
---        como base pura, promovia e APAGAVA a receita oficial. Fix: só considera run status='complete'.
---   P1-2 CLEANUP FALHO: item falha → o edge tenta apagar os headers e IGNORA o erro, marca 'complete' e
---        promove → header sem itens substituía a receita. Fix: defesa em profundidade no DELETE (abaixo).
---   P1-3 ITEM ÓRFÃO COM DOSE: id_corante='' + qtd_ml>0 (o edge converte ID ausente em '' PRESERVANDO a
---        dose) — o guard ignorava e o writer filtrava → a dose sumia = receita incompleta. Fix: dose
---        positiva sem corante identificado agora CORROMPE a fórmula.
---   P1-4 COLISÃO DE CHAVE OFICIAL: o guard removia o candidato corrompido ANTES do _expand_uniq → o
---        PERDEDOR virava vencedor e substituía header/preço/receita. Fix: o vencedor é escolhido PRIMEIRO
---        e o guard é aplicado DEPOIS — se o vencedor está corrompido, a chave oficial INTEIRA é omitida.
---   P1-5 DOSE NÃO-FINITA: em numeric, NaN <= 0 é FALSO e NaN > 0 é VERDADEIRO → NaN/Infinity passavam pelo
---        guard E entravam na receita. Fix: predicado ÚNICO de "dose válida" (positiva E finita), reusado
---        no guard, no itens_dedup do preço, no stub de corante e no INSERT de itens.
--- Provado: db/test-tint-promote.sh C14-C20 + falsificação. SQL Editor (§deploy.md).
+-- 20260718140000_tint_promote_guard4_v3.sql
+-- FASE 1 (P0) money-path — v3 do Guard 4. SUPERSEDE a 20260717163000 (aplicada em prod em 17/07). Corpo
+-- CREATE OR REPLACE completo e AUTO-SUFICIENTE — aplicar só esta basta; a última a recriar VENCE.
+--
+-- HISTÓRICO DE DECISÃO (2 rodadas adversariais do Codex gpt-5.6-sol xhigh):
+--   A v1 (20260717163000) fechava o caso original mas só em staging estável e sem colisão. Uma v2
+--   intermediária tentou fechar TUDO e foi DESCARTADA sem nunca ser aplicada: ela filtrava o staging por
+--   `tint_sync_runs.status='complete'` e a contagem em PROD mostrou que isso é CATASTRÓFICO — 129.079 dos
+--   217.635 headers de staging de fórmula (59%) pertencem a runs marcados 'error' (o E5 marca como 'error'
+--   TODO run órfão >30min, cujo staging está íntegro e é lido legitimamente). O filtro congelaria a maior
+--   parte do catálogo e ainda deixaria o purge apagar o último 'complete' por tratar um 'error' como
+--   sucessor. LIÇÃO (a mesma do `empresa_omie`, CLAUDE.md): antes de gatear por coluna categórica, CONTE a
+--   distribuição REAL em prod — rótulo não é fato.
+--
+-- ESTA v3 leva só o que fecha SEM introduzir regressão:
+--   (1) COLISÃO — o guard é aplicado DEPOIS do DISTINCT ON que escolhe o vencedor da chave oficial
+--       (DELETE sobre _expand_uniq). Filtrar antes fazia o PERDEDOR virar vencedor e substituir
+--       header/preço/receita. Única regressão que a v1 introduziu; o Codex validou esta correção.
+--   (2) DOSE VÁLIDA = positiva E FINITA, num predicado ÚNICO reusado em guard/preço/stub/INSERT
+--       (em numeric, `NaN > 0` é VERDADEIRO → NaN entrava na receita), + finitude do VOLUME (fator
+--       não-finito corrompia a dose expandida mesmo com dose bruta finita).
+--   (3) ÓRFÃO — dose sem corante identificado corrompe a fórmula. Critério `qtd_ml IS NOT NULL AND <> 0`
+--       (não "dose válida"): um órfão com dose NaN/negativa escaparia dos dois ramos e promoveria parcial.
+--   (4) STAGING SEM RECEITA sobre fórmula que TEM receita → não promove NADA (all-or-nothing). Cobre o
+--       header que chega sem itens (corrida de ingestão / cleanup falho) sem criar o HÍBRIDO que sairia
+--       de suprimir apenas o DELETE de itens.
+--
+-- RESÍDUO CONHECIDO (Fase 1c — exige protocolo de staging, não remendo nesta RPC): ingestão de itens de
+--   UMA fórmula pode atravessar a fronteira de chunk (1.000) e sobrar um SUBCONJUNTO válido — indistinguível
+--   de receita legítima sem `expected_item_count`/hash ou publicação pai+filhos atômica. Idem a transição
+--   legítima p/ base pura, que precisa de sinal explícito da fonte. Ver plano Fase 1c.
+--
+-- Provado: db/test-tint-promote.sh C14-C21 + falsificação. SQL Editor (§deploy.md).
 --
 -- ══════════════════════════════════════════════════════════════════════════════════════════════════════
 -- [HERDADO da 20260717163000_tint_promote_fail_closed_receita_parcial.sql:]
@@ -370,18 +383,6 @@ BEGIN
     SELECT s.*
     FROM tint_staging_formulas s
     JOIN _pares p ON p.cod_produto = s.cod_produto AND p.id_base = s.id_base
-    -- P1-1 CORRIDA (Codex xhigh): SÓ considera header de run FINALIZADO. O tint-sync-agent insere os
-    -- headers (chunks de 500) ANTES dos itens (chunks de 1000) e só então marca o run 'complete' e chama
-    -- esta RPC; o pg_advisory_xact_lock serializa as PROMOÇÕES, NÃO a ingestão. Sem este filtro, o run A
-    -- promovia lendo o header recém-commitado do run B cujos itens ainda não chegaram → o Guard 4 via
-    -- "0 corantes presentes", tratava como BASE PURA, promovia, e o DELETE...USING _promoted APAGAVA a
-    -- receita oficial (zero/parcial) — bypass direto do fail-closed. Com o filtro, staging em voo é
-    -- invisível até o run fechar. Também é fail-closed p/ run 'error' (staging de run que falhou não
-    -- promove) e p/ o run órfão >30min que o E5 marca 'error'.
-    -- ⚠️ alias `sr` (NÃO `r`): `r` é uma VARIÁVEL record declarada nesta função (usada nos FOR loops de
-    -- E1/E4). Em plpgsql o identificador da variável VENCE o alias da tabela, então `JOIN ... r ON r.id`
-    -- compila e só explode em RUNTIME com `record "r" has no field "id"` (late-bound). Pego pelo PG17.
-    JOIN tint_sync_runs sr ON sr.id = s.sync_run_id AND sr.status = 'complete'
     WHERE s.account = v_account AND s.store_code = v_store
       AND s.cor_id IS NOT NULL AND s.cod_produto IS NOT NULL AND s.id_base IS NOT NULL
   )
@@ -463,14 +464,11 @@ BEGIN
   --   dosagem em 2 etapas legítima (mesmo corante em 2 ordens ambas >0, 20260622210000): ali o corante
   --   TEM dose válida → NÃO dispara. Base pura (todos os slots com id_corante vazio) → nenhum corante
   --   presente → NÃO dispara. Money-path: precisão>recall, ausente≠zero, nunca gravar número parcial.
-  -- PREDICADO ÚNICO de DOSE VÁLIDA (P1-5, Codex xhigh) — positiva E FINITA:
-  --     COALESCE(qtd_ml > 0 AND qtd_ml < 'Infinity'::numeric, false)
-  -- Em `numeric` o NaN é ordenado ACIMA de tudo: `NaN <= 0` é FALSO e `NaN > 0` é VERDADEIRO — então o
-  -- critério antigo (`COALESCE(qtd_ml,0) <= 0`) dava NaN como "dose válida" no guard, e o INSERT
-  -- (`COALESCE(qtd_ml,0) > 0`) TAMBÉM o aceitava → NaN/Infinity entravam na receita e contaminavam
-  -- preço/cálculo. `qtd_ml < 'Infinity'` derruba NaN e +Inf; `qtd_ml > 0` derruba -Inf, zero e negativo;
-  -- o COALESCE derruba NULL. Este MESMO predicado é reusado no itens_dedup (preço), no stub de corante e
-  -- no INSERT de itens — "dose válida" tem UMA definição só na função inteira (era a recomendação do Codex).
+  -- PREDICADO ÚNICO de DOSE VÁLIDA (positiva E FINITA), reusado no guard, no itens_dedup do preço, no
+  -- stub de corante e no INSERT de itens:  COALESCE(qtd_ml > 0 AND qtd_ml < 'Infinity'::numeric, false)
+  -- Em `numeric` o NaN ordena ACIMA de tudo: `NaN <= 0` é FALSO e `NaN > 0` é VERDADEIRO — o critério
+  -- ingênuo dava NaN como dose VÁLIDA no guard E no INSERT, e NaN entrava na receita contaminando preço.
+  -- `< 'Infinity'` derruba NaN e +Inf; `> 0` derruba -Inf/zero/negativo; o COALESCE derruba NULL.
   CREATE TEMP TABLE _fl_corrompida ON COMMIT DROP AS
   SELECT DISTINCT staging_formula_id FROM (
     -- (a) corante PRESENTE cujo conjunto de linhas não tem NENHUMA dose válida → o INSERT filtraria esse
@@ -485,33 +483,32 @@ BEGIN
     GROUP BY si.staging_formula_id, si.id_corante
     HAVING bool_and(NOT COALESCE(si.qtd_ml > 0 AND si.qtd_ml < 'Infinity'::numeric, false))
     UNION ALL
-    -- (b) P1-3 ITEM ÓRFÃO (Codex xhigh): dose VÁLIDA sem corante identificado (id_corante vazio/só-espaços).
-    --     O edge converte ID ausente em '' PRESERVANDO a dose (tint-sync-agent :506) — o guard antigo
-    --     ignorava a linha e o writer também a filtrava, então a dose SUMIA: sozinha, o DELETE zerava a
-    --     receita e gravava header vazio; junto de itens válidos, gravava PARCIAL. Uma dose positiva é a
-    --     prova de que a fórmula TEM esse componente — não conseguir identificá-lo é corrupção, não
-    --     "ausência legítima". Placeholder vazio com dose zero/nula segue inócuo (base pura de verdade).
+    -- (b) ITEM ÓRFÃO: dose sem corante identificado. O edge converte ID ausente em '' PRESERVANDO a dose
+    --     (tint-sync-agent :506) — ignorar a linha perdia um componente da receita. ⚠️ O critério é
+    --     `qtd_ml IS NOT NULL AND qtd_ml <> 0` — NÃO "dose válida": um órfão com dose NaN/Infinity/negativa
+    --     cairia FORA dos dois ramos (o ramo (a) exige corante presente; um ramo (b) que exigisse dose
+    --     positiva-finita não pegaria o não-finito) e a fórmula promoveria PARCIAL. Só NULL/0 é placeholder
+    --     legítimo de slot vazio; qualquer outra quantidade sem corante é corrupção. (`NaN <> 0` é TRUE.)
     SELECT si.staging_formula_id
     FROM tint_staging_formula_itens si
     JOIN _fl_resolved fl ON fl.staging_formula_id = si.staging_formula_id
     WHERE fl.produto_id IS NOT NULL AND fl.base_id IS NOT NULL
       AND fl.volume_final_ml IS NOT NULL AND fl.volume_final_ml > 0
       AND btrim(COALESCE(si.id_corante, '')) = ''
-      AND COALESCE(si.qtd_ml > 0 AND si.qtd_ml < 'Infinity'::numeric, false)
+      AND si.qtd_ml IS NOT NULL AND si.qtd_ml <> 0
   ) q;
 
   -- Loga UMA linha de erro por fórmula corrompida (espelha os guards 1-3; entity_id = cor_id).
   INSERT INTO tint_sync_errors (sync_run_id, entity_type, entity_id, error_message, error_details)
   SELECT p_sync_run_id, 'formula_promote', fl.cor_id,
-         'receita corrompida: corante presente sem dose válida, ou dose válida sem corante identificado — fórmula NÃO promovida, receita anterior preservada',
+         'receita corrompida: corante presente sem dose válida (qtd_ml <= 0/nula) — fórmula NÃO promovida, receita anterior preservada',
          jsonb_build_object(
            'cod_produto', fl.cod_produto, 'id_base', fl.id_base,
-           -- TODOS os itens do staging (inclusive os de corante vazio) — o órfão com dose é uma das
-           -- famílias de corrupção, esconder a linha esconderia o diagnóstico.
            'itens', (
              SELECT jsonb_agg(jsonb_build_object('id_corante', si.id_corante, 'ordem', si.ordem, 'qtd_ml', si.qtd_ml) ORDER BY si.ordem)
              FROM tint_staging_formula_itens si
              WHERE si.staging_formula_id = fl.staging_formula_id
+               AND si.id_corante IS NOT NULL AND btrim(si.id_corante) <> ''
            ))
   FROM _fl_resolved fl
   JOIN _fl_corrompida c ON c.staging_formula_id = fl.staging_formula_id;
@@ -541,12 +538,15 @@ BEGIN
    AND sub.id_subcolecao_sayersystem = fl.subcolecao
   WHERE fl.produto_id IS NOT NULL AND fl.base_id IS NOT NULL
     AND fl.volume_final_ml IS NOT NULL AND fl.volume_final_ml > 0
-    AND e.volume_ml IS NOT NULL AND e.volume_ml > 0;
-  -- P1-4 (Codex xhigh): o Guard 4 deliberadamente NÃO filtra AQUI. Vários candidatos de _formulas_latest
-  -- (separados por subcoleção crua/personalizada) podem COLAPSAR na mesma chave oficial; remover o
-  -- candidato corrompido ANTES do _expand_uniq fazia o PERDEDOR da colisão virar vencedor e substituir
-  -- header/preço/receita da chave oficial (podendo até reativá-la) em vez de PRESERVAR o oficial.
-  -- O filtro foi movido p/ DEPOIS da escolha do vencedor — ver o DELETE em _expand_uniq abaixo.
+    AND e.volume_ml IS NOT NULL AND e.volume_ml > 0
+    -- fator não-finito (P1-7): volume 'Infinity'/'NaN' geraria fator 0/NaN e dose expandida corrompida
+    -- mesmo com a dose bruta finita. A finitude tem de valer para TODOS os operandos, não só qtd_ml.
+    AND fl.volume_final_ml < 'Infinity'::numeric
+    AND e.volume_ml < 'Infinity'::numeric;
+  -- ⚠️ O Guard 4 deliberadamente NÃO filtra AQUI. Vários candidatos de _formulas_latest (separados por
+  -- subcoleção crua/personalizada) podem COLAPSAR na mesma chave oficial; remover o candidato corrompido
+  -- ANTES do _expand_uniq fazia o PERDEDOR da colisão virar vencedor e substituir header/preço/receita da
+  -- chave oficial em vez de PRESERVAR o oficial. O guard é aplicado DEPOIS da escolha do vencedor.
 
   -- Preço pág 9 por expansão — SET-BASED, NULL-honesto (espelho precoFinalSayer + S2 store + S3
   -- latest não-nulo). base ausente OU qualquer corante sem custo/volume(>0)/finito → preço NULL.
@@ -573,8 +573,8 @@ BEGIN
   -- (precos_base vazio → soma NULL → COALESCE preserva o piso), mas alinha os 2 caminhos para o dia em
   -- que precos_base for populado. Mesma ordem de desempate do INSERT de itens.
   itens_dedup AS (
-    -- P1-5: MESMO predicado de dose válida do guard/stub/INSERT (positiva E finita) — sem isto o preço
-    -- somaria um item NaN/Infinity que o guard já considera inválido (duas definições de fórmula).
+    -- MESMO predicado de dose válida do guard/stub/INSERT (positiva E finita): sem isto o preço somaria
+    -- um item NaN/Infinity que o guard já considera inválido — duas definições da mesma fórmula.
     SELECT DISTINCT ON (staging_formula_id, id_corante) staging_formula_id, id_corante, qtd_ml
       FROM tint_staging_formula_itens
      WHERE btrim(COALESCE(id_corante, '')) <> ''
@@ -628,23 +628,59 @@ BEGIN
            COALESCE(ex.subcolecao, '') DESC, ex.personalizada DESC, ex.eid DESC;
 
   -- ══════════════════════════════════════════════════════════════════════════
-  -- GUARD 4 APLICADO AQUI (P1-4, Codex xhigh) — DEPOIS de o vencedor da chave oficial estar escolhido.
-  -- Se o VENCEDOR está corrompido, a chave oficial INTEIRA sai: sem fallback pro perdedor da colisão.
-  -- Consequência (a que queremos): aquela `tint_formulas` não entra em _promoted → não sofre o upsert de
-  -- header NEM o DELETE de itens → header (preço, importacao_id, desativada_em) E receita ficam INTACTOS.
+  -- GUARD 4 APLICADO AQUI — DEPOIS de o vencedor da chave oficial estar escolhido. Se o VENCEDOR está
+  -- corrompido, a chave oficial INTEIRA sai: sem fallback pro perdedor da colisão. Consequência (a
+  -- desejada): aquela tint_formulas não entra em _promoted → não sofre o upsert de header NEM o DELETE
+  -- de itens → header (preço, importacao_id, desativada_em) E receita ficam INTACTOS e COERENTES.
   DELETE FROM _expand_uniq eu
   USING _fl_corrompida c
   WHERE c.staging_formula_id = eu.staging_formula_id;
 
+  -- (c) STAGING SEM RECEITA sobre fórmula oficial QUE JÁ TEM RECEITA → all-or-nothing: não promove NADA.
+  --   Cobre o header que chega sem itens (corrida de ingestão: headers commitam antes dos itens; cleanup
+  --   de item falho cujo DELETE do edge falhou silenciosamente). Antes, "sem itens" era lido como base
+  --   pura e o DELETE ZERAVA a receita — o padrão que produziu as 28.609 fórmulas vazias de março.
+  --   ⚠️ É a fórmula INTEIRA que sai, não só o DELETE de itens: suprimir só o DELETE deixaria um HÍBRIDO
+  --   (header novo dizendo base pura + receita velha pigmentada), com o preço calculado sobre uma
+  --   definição e os itens sobre outra. Vazio AMBÍGUO barra tudo e registra erro; a transição legítima
+  --   p/ base pura precisa de sinal explícito da fonte (expected_item_count/is_base_pura — Fase 1c).
+  CREATE TEMP TABLE _eu_sem_receita ON COMMIT DROP AS
+  SELECT eu.staging_formula_id, eu.cor_id, eu.emb_id
+  FROM _expand_uniq eu
+  WHERE NOT EXISTS (
+      SELECT 1 FROM tint_staging_formula_itens si
+      WHERE si.staging_formula_id = eu.staging_formula_id
+        AND btrim(COALESCE(si.id_corante, '')) <> ''
+        AND COALESCE(si.qtd_ml > 0 AND si.qtd_ml < 'Infinity'::numeric, false)
+    )
+    AND EXISTS (
+      SELECT 1 FROM tint_formulas f
+      JOIN tint_formula_itens fi ON fi.formula_id = f.id
+      WHERE f.account = v_account
+        AND f.cor_id = eu.cor_id AND f.produto_id = eu.produto_id AND f.base_id = eu.base_id
+        AND COALESCE(f.subcolecao_id, v_zero_uuid) = COALESCE(eu.subcolecao_id, v_zero_uuid)
+        AND f.embalagem_id = eu.emb_id
+    );
+
+  INSERT INTO tint_sync_errors (sync_run_id, entity_type, entity_id, error_message, error_details)
+  SELECT DISTINCT p_sync_run_id, 'formula_promote', s.cor_id,
+         'staging sem receita sobre fórmula que TEM receita — fórmula NÃO promovida (receita anterior preservada; transição p/ base pura exige sinal explícito da fonte)',
+         jsonb_build_object('staging_formula_id', s.staging_formula_id)
+  FROM _eu_sem_receita s;
+  GET DIAGNOSTICS v_tmp = ROW_COUNT; v_erros := v_erros + v_tmp;
+
+  DELETE FROM _expand_uniq eu
+  USING _eu_sem_receita s
+  WHERE s.staging_formula_id = eu.staging_formula_id AND s.emb_id = eu.emb_id;
+
   -- v_promovidas conta o que REALMENTE será gravado (linhas oficiais upsertadas), não as expansões
-  -- pré-dedup. Antes contava _expand — com o guard movido pra cá, isso reportaria como "promovida" uma
-  -- fórmula que o guard barrou: número fabricado num contador money-path (registros_importados /
-  -- tint_sync_runs.inserts). Ausente ≠ zero, e "promovida" tem de significar promovida.
+  -- pré-dedup: com o guard aqui, contar _expand reportaria como "promovida" uma fórmula barrada —
+  -- número fabricado num contador money-path (registros_importados / tint_sync_runs.inserts).
   SELECT count(*) INTO v_promovidas FROM _expand_uniq;
 
   -- Corante stubs em massa ANTES dos itens (espelha tint_ensure_corante_stub: volume 1000).
-  -- A partir de _expand_uniq (pós-guard) — NÃO materializa corante de fórmula barrada. Predicado de
-  -- dose válida idêntico ao do guard/INSERT (P1-5: NaN/Infinity fora).
+  -- A partir de _expand_uniq (PÓS-guard) — não materializa corante de fórmula barrada. Mesmo predicado
+  -- de dose válida do guard/INSERT (NaN/Infinity fora).
   INSERT INTO tint_corantes (account, id_corante_sayersystem, descricao, volume_total_ml)
   SELECT DISTINCT v_account, si.id_corante, si.id_corante, 1000
   FROM tint_staging_formula_itens si
@@ -689,23 +725,7 @@ BEGIN
   -- Itens em massa: limpa + reinsere (espelha o delete+insert por fórmula do loop). qtd expandida
   -- = qtd_formulacao × fator, arredondada a 6 casas (sub-µL — elimina artefato de escala da divisão
   -- numeric sem mudar o valor prático). Corante já garantido (stub acima) → JOIN resolve o id.
-  -- DEFESA EM PROFUNDIDADE (P1-1 corrida / P1-2 cleanup falho, Codex xhigh): 0 item VÁLIDO no staging
-  -- NUNCA apaga uma receita oficial existente. O `EXISTS` faz o DELETE só rodar quando o staging traz ao
-  -- menos uma dose válida para SUBSTITUIR a receita — "trocar" a receita exige receita nova.
-  -- Cobre os dois furos que sobram fora desta RPC: (a) header cujo run fechou mas cujos itens se perderam
-  -- (o edge apaga o header no cleanup e IGNORA o erro dessa deleção, depois promove com errors>0); e
-  -- (b) qualquer outra via em que o header chegue sem itens. Sem isto, "sem itens" era lido como base pura
-  -- e o DELETE ZERAVA a receita — exatamente o padrão que produziu as 28.609 fórmulas vazias de março.
-  -- Fórmula NOVA sem receita anterior segue virando base pura legítima (nada a apagar, nada a preservar).
-  DELETE FROM tint_formula_itens fi
-  USING _promoted pr
-  WHERE fi.formula_id = pr.formula_id
-    AND EXISTS (
-      SELECT 1 FROM tint_staging_formula_itens si
-      WHERE si.staging_formula_id = pr.staging_formula_id
-        AND btrim(COALESCE(si.id_corante, '')) <> ''
-        AND COALESCE(si.qtd_ml > 0 AND si.qtd_ml < 'Infinity'::numeric, false)
-    );
+  DELETE FROM tint_formula_itens fi USING _promoted pr WHERE fi.formula_id = pr.formula_id;
 
   INSERT INTO tint_formula_itens (formula_id, corante_id, ordem, qtd_ml)
   -- 20260622210000 (estanca RE-LOOP): DEDUP por (formula_id, corante_id). A FORMULA do SayerSystem
@@ -721,8 +741,8 @@ BEGIN
   FROM _promoted pr
   JOIN tint_staging_formula_itens si ON si.staging_formula_id = pr.staging_formula_id
   JOIN tint_corantes co ON co.account = v_account AND co.id_corante_sayersystem = si.id_corante
-  -- P1-5: MESMO predicado de dose válida do guard/stub/itens_dedup (positiva E finita). O antigo
-  -- `COALESCE(qtd_ml,0) > 0` deixava NaN entrar na receita (em numeric, NaN > 0 é VERDADEIRO).
+  -- MESMO predicado de dose válida (positiva E finita). O antigo `COALESCE(qtd_ml,0) > 0` deixava NaN
+  -- entrar na receita: em numeric, `NaN > 0` é VERDADEIRO.
   WHERE btrim(COALESCE(si.id_corante, '')) <> ''
     AND COALESCE(si.qtd_ml > 0 AND si.qtd_ml < 'Infinity'::numeric, false)
   -- tie-break determinístico (Codex P2): se 2 itens compartilham (formula,corante,ordem) — dado sujo —
