@@ -551,22 +551,40 @@ export default async ({ page, context }) => {
       await fillInput('.select2-search__field', item.sku_portal);
       await sleep(2000);
 
-      const skuOption = await page.$('.select2-results__option:not(.select2-results__message)');
-      if (!skuOption) {
-        // "Nenhum resultado encontrado" = sinal de item inativado (spike-A) →
-        // marca e SEGUE (≠ fluxo de pedido, que aborta). Fecha o dropdown e cancela a linha.
-        const msg = await page.evaluate(function() {
-          const m = document.querySelector('.select2-results__message');
-          return m ? (m.innerText || '').trim().substring(0, 80) : null;
-        });
+      // Seleção EXATA no dropdown (run a5094f98: clicar a 1ª opção selecionou
+      // item ERRADO — a conferência de identidade do Deno reprovou os 2 itens).
+      // A opção certa é a cujo texto TOKENIZA o código exato (mesma regra do
+      // helper: separadores fora de [A-Z0-9.]); sem match exato = tratado como
+      // não-encontrado (precisão > recall), nunca "a primeira que veio".
+      const escolha = await page.evaluate(function(cod) {
+        var alvo = String(cod || '').trim().toUpperCase();
+        var ops = Array.from(document.querySelectorAll('.select2-results__option:not(.select2-results__message)'));
+        for (var k = 0; k < ops.length; k++) {
+          var txt = (ops[k].innerText || '').trim();
+          var tokens = txt.toUpperCase().split(/[^A-Z0-9.]+/).filter(Boolean);
+          if (tokens.indexOf(alvo) !== -1) {
+            ops[k].click();
+            return { clicked: true, opcao: txt.substring(0, 90), n_opcoes: ops.length };
+          }
+        }
+        var msgEl = document.querySelector('.select2-results__message');
+        return {
+          clicked: false,
+          n_opcoes: ops.length,
+          msg: msgEl ? (msgEl.innerText || '').trim().substring(0, 80) : null,
+          amostra: ops.slice(0, 3).map(function(o){ return (o.innerText || '').trim().substring(0, 60); }),
+        };
+      }, item.sku_portal);
+      trace.push({ step: 'item_' + i + '_select2_escolha', escolha, t: Date.now() - t0 });
+      if (!escolha.clicked) {
+        // Nenhuma opção EXATA: inativada ("Nenhum resultado") ou só matches
+        // parciais — ambos marcam e SEGUEM (≠ fluxo de pedido, que aborta).
         await page.keyboard.press('Escape').catch(() => null);
         await sleep(300);
         await exigirCancelamento(i, 'nao_encontrado');
-        itens.push({ sku_portal: item.sku_portal, achado: false, motivo_nao_achado: msg || 'nenhum_resultado_select2', cancelamento_ok: true });
-        trace.push({ step: 'item_' + i + '_nao_encontrado', msg, t: Date.now() - t0 });
+        itens.push({ sku_portal: item.sku_portal, achado: false, motivo_nao_achado: escolha.msg || (escolha.n_opcoes > 0 ? 'sem_opcao_exata (' + escolha.n_opcoes + ' parciais)' : 'nenhum_resultado_select2'), cancelamento_ok: true });
         continue;
       }
-      await skuOption.click();
 
       // Espera o preço popular na linha em edição (o portal preenche ao selecionar).
       await page.waitForFunction(function() {
