@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 379
+-- Total de custom migrations: 380
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -418,7 +418,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260717020000', 'precos_compra_leadtime_efetivo', '20260717020000_precos_compra_leadtime_efetivo.sql'),
   ('20260717120000', 'seg_customer_metrics_gate_staff', '20260717120000_seg_customer_metrics_gate_staff.sql'),
   ('20260717130000', 'seg_customer_metrics_acl_least_privilege', '20260717130000_seg_customer_metrics_acl_least_privilege.sql'),
-  ('20260717154500', 'refresh_customer_metrics_automacao', '20260717154500_refresh_customer_metrics_automacao.sql')
+  ('20260717154500', 'refresh_customer_metrics_automacao', '20260717154500_refresh_customer_metrics_automacao.sql'),
+  ('20260717163000', 'tint_promote_fail_closed_receita_parcial', '20260717163000_tint_promote_fail_closed_receita_parcial.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -1746,7 +1747,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('seg_customer_metrics_gate_staff', 'view', 'public', 'customer_metrics_mv', ''),
   ('refresh_customer_metrics_automacao', 'function', 'public', 'refresh_customer_metrics', ''),
   ('refresh_customer_metrics_automacao', 'function', 'public', 'request_customer_metrics_refresh', ''),
-  ('refresh_customer_metrics_automacao', 'cron_job', 'cron', 'afiacao_customer_metrics_refresh_6h', '')
+  ('refresh_customer_metrics_automacao', 'cron_job', 'cron', 'afiacao_customer_metrics_refresh_6h', ''),
+  ('tint_promote_fail_closed_receita_parcial', 'function', 'public', 'tint_promote_sync_run', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -3122,7 +3124,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('seg_customer_metrics_gate_staff', 'view', 'public', 'customer_metrics_mv', ''),
   ('refresh_customer_metrics_automacao', 'function', 'public', 'refresh_customer_metrics', ''),
   ('refresh_customer_metrics_automacao', 'function', 'public', 'request_customer_metrics_refresh', ''),
-  ('refresh_customer_metrics_automacao', 'cron_job', 'cron', 'afiacao_customer_metrics_refresh_6h', '')
+  ('refresh_customer_metrics_automacao', 'cron_job', 'cron', 'afiacao_customer_metrics_refresh_6h', ''),
+  ('tint_promote_fail_closed_receita_parcial', 'function', 'public', 'tint_promote_sync_run', '')
 )
 SELECT
   e.migration,

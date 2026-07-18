@@ -979,6 +979,205 @@ DOK=$(P -tA -c "SELECT _dif_count();")
 [ "$DOK" = "0" ] || { echo "✗ restauração falhou: _dif_count=$DOK (esperado 0)"; exit 1; }
 echo "  ✓ restauração OK — set-based≡loop de novo (_dif_count=0)"
 
+# ═══════════════════════════════════════════════════════════════════════════════════════════════════
+# FASE 1 (P0) — GUARD 4: fronteira de escrita fail-closed por-linha (RECEITA CORROMPIDA).
+# Aplica a CADEIA COMPLETA de fixes de prod (17130→22210) + a migration nova do guard 4 POR CIMA do
+# set-based → o corpo sob teste = corpo REAL da prod + guard 4 (pré-flight pg_get_functiondef 2026-07-17:
+# repo 22210 == prod, sem deriva). Os fixes 17-22 têm seus próprios testes; aqui provamos o GUARD 4:
+#   C14 — corrompida sobre fórmula EXISTENTE preserva a receita anterior (não grava parcial) + loga erro;
+#   C15 — base pura promove; fórmula NOVA toda-quebrada NÃO cria header vazio (o mal das 28.609 ativas);
+#   C16 — dose em 2 etapas com uma linha zero NÃO barra (o corante tem dose válida) — bool_and POR corante.
+echo ""
+echo "════════ FASE 1 — aplica cadeia de fixes de prod + migration do Guard 4 ════════"
+for MG in 20260617130000_tint_promote_preserva_preco 20260617150000_tint_promote_reexpand_skus_novos \
+          20260618130000_tint_promote_e4_so_com_custo 20260622130000_tint_promote_nome_cor_fallback \
+          20260622210000_tint_promote_dedup_itens_corante 20260717163000_tint_promote_fail_closed_receita_parcial; do
+  echo "→ $MG.sql"
+  P -v ON_ERROR_STOP=1 -q -f "$REPO_ROOT/supabase/migrations/$MG.sql" >/dev/null
+done
+# Sanidade: o guard 4 está no corpo aplicado (o _fl_corrompida existe na definição em runtime).
+P -tA -c "SELECT CASE WHEN pg_get_functiondef('public.tint_promote_sync_run(uuid)'::regprocedure) LIKE '%_fl_corrompida%' THEN 'OK' ELSE 'FALTA' END;" | grep -qx OK \
+  || { echo "✗ FASE1: guard 4 (_fl_corrompida) não está no corpo aplicado"; exit 1; }
+echo "  ✓ corpo consolidado + guard 4 aplicado (contém _fl_corrompida)"
+
+echo ""
+echo "════════ CENÁRIO 14 — receita CORROMPIDA preserva a anterior + loga erro (Guard 4) ════════"
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+-- Catálogo P14/B14/E14 (900ml vendável). Fórmula BOA COR14: AX14=10 (ordem1) + VM14=5 (ordem2).
+INSERT INTO tint_sync_runs (id, setting_id, account, store_code, sync_type, status)
+VALUES ('e1400000-0000-0000-0000-000000000001','aaaaaaaa-0000-0000-0000-000000000001','oben','L1','catalogs','complete');
+INSERT INTO tint_staging_produtos (sync_run_id, account, store_code, cod_produto, descricao)
+VALUES ('e1400000-0000-0000-0000-000000000001','oben','L1','P14','Produto 14');
+INSERT INTO tint_staging_bases (sync_run_id, account, store_code, id_base_sayersystem, descricao)
+VALUES ('e1400000-0000-0000-0000-000000000001','oben','L1','B14','Base 14');
+INSERT INTO tint_staging_embalagens (sync_run_id, account, store_code, id_embalagem_sayersystem, descricao, volume_ml)
+VALUES ('e1400000-0000-0000-0000-000000000001','oben','L1','E14','Galão 14',900);
+INSERT INTO tint_staging_skus (sync_run_id, account, store_code, cod_produto, id_base, id_embalagem)
+VALUES ('e1400000-0000-0000-0000-000000000001','oben','L1','P14','B14','E14');
+INSERT INTO tint_sync_runs (id, setting_id, account, store_code, sync_type, status)
+VALUES ('e1400000-0000-0000-0000-000000000002','aaaaaaaa-0000-0000-0000-000000000001','oben','L1','formulas','complete');
+INSERT INTO tint_staging_formulas (id, sync_run_id, account, store_code, cor_id, nome_cor, cod_produto, id_base, id_embalagem, volume_final_ml, personalizada)
+VALUES ('ff140000-0000-0000-0000-000000000001','e1400000-0000-0000-0000-000000000002','oben','L1','COR14','Boa','P14','B14','E14',900,false);
+INSERT INTO tint_staging_formula_itens (sync_run_id, staging_formula_id, id_corante, ordem, qtd_ml)
+VALUES ('e1400000-0000-0000-0000-000000000002','ff140000-0000-0000-0000-000000000001','AX14',1,10),
+       ('e1400000-0000-0000-0000-000000000002','ff140000-0000-0000-0000-000000000001','VM14',2,5);
+SELECT tint_promote_sync_run('e1400000-0000-0000-0000-000000000001');
+SELECT tint_promote_sync_run('e1400000-0000-0000-0000-000000000002');
+SQL
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+DO $$
+DECLARE n int; qax numeric; qvm numeric;
+BEGIN
+  SELECT count(*) INTO n FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id WHERE f.account='oben' AND f.cor_id='COR14';
+  IF n <> 2 THEN RAISE EXCEPTION 'C14.1 FALHOU: COR14 boa deveria ter 2 itens, achei %', n; END IF;
+  SELECT max(fi.qtd_ml) FILTER (WHERE c.id_corante_sayersystem='AX14'),
+         max(fi.qtd_ml) FILTER (WHERE c.id_corante_sayersystem='VM14')
+    INTO qax, qvm
+    FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id JOIN tint_corantes c ON c.id=fi.corante_id
+    WHERE f.account='oben' AND f.cor_id='COR14';
+  IF qax <> 10 OR qvm <> 5 THEN RAISE EXCEPTION 'C14.1b FALHOU: receita boa COR14 = AX14 % / VM14 % (esperado 10/5)', qax, qvm; END IF;
+  RAISE NOTICE 'OK C14.1 — receita boa COR14 gravada: AX14=10, VM14=5';
+END $$;
+SQL
+# Run CORROMPIDO: COR14 com AX14=10 (ok) mas VM14=0 (corante presente, qtd inválida).
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+INSERT INTO tint_sync_runs (id, setting_id, account, store_code, sync_type, status)
+VALUES ('e1400000-0000-0000-0000-0000000000c0','aaaaaaaa-0000-0000-0000-000000000001','oben','L1','formulas','complete');
+INSERT INTO tint_staging_formulas (id, sync_run_id, account, store_code, cor_id, nome_cor, cod_produto, id_base, id_embalagem, volume_final_ml, personalizada)
+VALUES ('ff140000-0000-0000-0000-0000000000c0','e1400000-0000-0000-0000-0000000000c0','oben','L1','COR14','Boa','P14','B14','E14',900,false);
+INSERT INTO tint_staging_formula_itens (sync_run_id, staging_formula_id, id_corante, ordem, qtd_ml)
+VALUES ('e1400000-0000-0000-0000-0000000000c0','ff140000-0000-0000-0000-0000000000c0','AX14',1,10),
+       ('e1400000-0000-0000-0000-0000000000c0','ff140000-0000-0000-0000-0000000000c0','VM14',2,0);
+SELECT tint_promote_sync_run('e1400000-0000-0000-0000-0000000000c0');
+SQL
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+DO $$
+DECLARE n int; qax numeric; qvm numeric; nerr int;
+BEGIN
+  -- (a) receita PRESERVADA: ainda 2 itens {AX14:10, VM14:5}, NÃO parcial {AX14:10}.
+  SELECT count(*) INTO n FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id WHERE f.account='oben' AND f.cor_id='COR14';
+  IF n <> 2 THEN RAISE EXCEPTION 'C14.2 FALHOU: receita PARCIAL gravada (COR14 tem % itens, esperado 2 preservados)', n; END IF;
+  SELECT max(fi.qtd_ml) FILTER (WHERE c.id_corante_sayersystem='AX14'),
+         max(fi.qtd_ml) FILTER (WHERE c.id_corante_sayersystem='VM14')
+    INTO qax, qvm
+    FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id JOIN tint_corantes c ON c.id=fi.corante_id
+    WHERE f.account='oben' AND f.cor_id='COR14';
+  IF qax <> 10 OR qvm <> 5 THEN RAISE EXCEPTION 'C14.2b FALHOU: receita COR14 mudou p/ AX14 % / VM14 % (esperado 10/5 preservados)', qax, qvm; END IF;
+  -- (b) erro registrado.
+  SELECT count(*) INTO nerr FROM tint_sync_errors WHERE sync_run_id='e1400000-0000-0000-0000-0000000000c0'
+    AND entity_type='formula_promote' AND entity_id='COR14' AND error_message LIKE '%corrompida%';
+  IF nerr < 1 THEN RAISE EXCEPTION 'C14.3 FALHOU: corrompida não logou tint_sync_errors (nerr=%)', nerr; END IF;
+  RAISE NOTICE 'OK C14 — corrompida (VM14 qtd=0) NÃO grava parcial: {AX14:10, VM14:5} preservada + erro logado';
+END $$;
+SQL
+
+echo ""
+echo "════════ CENÁRIO 15 — base pura promove; fórmula nova toda-quebrada NÃO cria header (Guard 4) ════════"
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+-- C15a: COR15 base pura (SEM itens de corante) → promove normal (fórmula legitimamente sem corante).
+-- C15b: COR15Q toda-quebrada (único corante AX14 com qtd=0) → NÃO cria header vazio ativo.
+INSERT INTO tint_sync_runs (id, setting_id, account, store_code, sync_type, status)
+VALUES ('e1500000-0000-0000-0000-000000000001','aaaaaaaa-0000-0000-0000-000000000001','oben','L1','formulas','complete');
+INSERT INTO tint_staging_formulas (id, sync_run_id, account, store_code, cor_id, nome_cor, cod_produto, id_base, id_embalagem, volume_final_ml, personalizada)
+VALUES ('ff150000-0000-0000-0000-000000000001','e1500000-0000-0000-0000-000000000001','oben','L1','COR15','Base Pura','P14','B14','E14',900,false),
+       ('ff150000-0000-0000-0000-0000000000b0','e1500000-0000-0000-0000-000000000001','oben','L1','COR15Q','Toda Quebrada','P14','B14','E14',900,false);
+INSERT INTO tint_staging_formula_itens (sync_run_id, staging_formula_id, id_corante, ordem, qtd_ml)
+VALUES ('e1500000-0000-0000-0000-000000000001','ff150000-0000-0000-0000-0000000000b0','AX14',1,0);
+SELECT tint_promote_sync_run('e1500000-0000-0000-0000-000000000001');
+SQL
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+DO $$
+DECLARE n15 int; n15q int; nerr15 int; nerr15q int; ni int;
+BEGIN
+  -- C15a: base pura promoveu (header ativo, 0 itens de receita), sem erro corrompida.
+  SELECT count(*) INTO n15 FROM tint_formulas WHERE account='oben' AND cor_id='COR15' AND desativada_em IS NULL;
+  IF n15 <> 1 THEN RAISE EXCEPTION 'C15.1 FALHOU: COR15 base pura deveria promover 1 fórmula ativa, achei %', n15; END IF;
+  SELECT count(*) INTO ni FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id WHERE f.account='oben' AND f.cor_id='COR15';
+  IF ni <> 0 THEN RAISE EXCEPTION 'C15.1b FALHOU: COR15 base pura deveria ter 0 itens, achei %', ni; END IF;
+  SELECT count(*) INTO nerr15 FROM tint_sync_errors WHERE entity_id='COR15' AND error_message LIKE '%corrompida%';
+  IF nerr15 <> 0 THEN RAISE EXCEPTION 'C15.1c FALHOU: COR15 base pura NÃO deveria logar corrompida (nerr=%)', nerr15; END IF;
+  -- C15b: toda-quebrada NÃO virou header (o mal das 28.609 fórmulas vazias ativas).
+  SELECT count(*) INTO n15q FROM tint_formulas WHERE account='oben' AND cor_id='COR15Q';
+  IF n15q <> 0 THEN RAISE EXCEPTION 'C15.2 FALHOU: COR15Q toda-quebrada criou % fórmula(s) (esperado 0 — não vira vazia ativa)', n15q; END IF;
+  SELECT count(*) INTO nerr15q FROM tint_sync_errors WHERE entity_id='COR15Q' AND error_message LIKE '%corrompida%';
+  IF nerr15q < 1 THEN RAISE EXCEPTION 'C15.3 FALHOU: COR15Q toda-quebrada não logou corrompida'; END IF;
+  RAISE NOTICE 'OK C15 — base pura COR15 promove (0 itens, sem erro); COR15Q toda-quebrada NÃO cria header + loga erro';
+END $$;
+SQL
+
+echo ""
+echo "════════ CENÁRIO 16 — dose em 2 etapas com linha zero NÃO barra (bool_and POR corante) ════════"
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+-- COR16: AX14 em 2 ordens — ordem1 qtd=0 (linha zero) + ordem2 qtd=12 (dose válida). O corante AX14
+-- TEM dose válida (ordem2) → NÃO corrompido → promove com AX14=12 (dedup max-ordem). "≥1 linha ruim"
+-- barraria erroneamente — este cenário prova que o critério é bool_and POR (formula,corante).
+INSERT INTO tint_sync_runs (id, setting_id, account, store_code, sync_type, status)
+VALUES ('e1600000-0000-0000-0000-000000000001','aaaaaaaa-0000-0000-0000-000000000001','oben','L1','formulas','complete');
+INSERT INTO tint_staging_formulas (id, sync_run_id, account, store_code, cor_id, nome_cor, cod_produto, id_base, id_embalagem, volume_final_ml, personalizada)
+VALUES ('ff160000-0000-0000-0000-000000000001','e1600000-0000-0000-0000-000000000001','oben','L1','COR16','Dose 2 Etapas','P14','B14','E14',900,false);
+INSERT INTO tint_staging_formula_itens (sync_run_id, staging_formula_id, id_corante, ordem, qtd_ml)
+VALUES ('e1600000-0000-0000-0000-000000000001','ff160000-0000-0000-0000-000000000001','AX14',1,0),
+       ('e1600000-0000-0000-0000-000000000001','ff160000-0000-0000-0000-000000000001','AX14',2,12);
+SELECT tint_promote_sync_run('e1600000-0000-0000-0000-000000000001');
+SQL
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+DO $$
+DECLARE n int; q numeric; nerr int;
+BEGIN
+  SELECT count(*) INTO n FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id WHERE f.account='oben' AND f.cor_id='COR16';
+  IF n <> 1 THEN RAISE EXCEPTION 'C16.1 FALHOU: COR16 deveria ter 1 item (AX14 dedup), achei %', n; END IF;
+  SELECT fi.qtd_ml INTO q FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id JOIN tint_corantes c ON c.id=fi.corante_id
+    WHERE f.account='oben' AND f.cor_id='COR16' AND c.id_corante_sayersystem='AX14';
+  IF q <> 12 THEN RAISE EXCEPTION 'C16.1b FALHOU: AX14 em COR16 = % (esperado 12 = max-ordem, dose válida)', q; END IF;
+  SELECT count(*) INTO nerr FROM tint_sync_errors WHERE entity_id='COR16' AND error_message LIKE '%corrompida%';
+  IF nerr <> 0 THEN RAISE EXCEPTION 'C16.2 FALHOU: COR16 (dose 2 etapas) NÃO deveria ser barrada (nerr=%)', nerr; END IF;
+  RAISE NOTICE 'OK C16 — dose 2 etapas (AX14 ordem1=0 + ordem2=12) promove com AX14=12; NÃO barrada';
+END $$;
+SQL
+
+echo ""
+echo "── falsificação Guard 4 (prova que C14.2 'não grava parcial' tem DENTE) ──"
+MIGG="$REPO_ROOT/supabase/migrations/20260717163000_tint_promote_fail_closed_receita_parcial.sql"
+# Cenário dedicado: COR14F boa (AX14=10, VM14=5), promovida com a migration REAL; run corrompido semeado.
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+INSERT INTO tint_sync_runs (id, setting_id, account, store_code, sync_type, status)
+VALUES ('e14f0000-0000-0000-0000-000000000001','aaaaaaaa-0000-0000-0000-000000000001','oben','L1','formulas','complete');
+INSERT INTO tint_staging_formulas (id, sync_run_id, account, store_code, cor_id, nome_cor, cod_produto, id_base, id_embalagem, volume_final_ml, personalizada)
+VALUES ('ff14f000-0000-0000-0000-000000000001','e14f0000-0000-0000-0000-000000000001','oben','L1','COR14F','Falsif','P14','B14','E14',900,false);
+INSERT INTO tint_staging_formula_itens (sync_run_id, staging_formula_id, id_corante, ordem, qtd_ml)
+VALUES ('e14f0000-0000-0000-0000-000000000001','ff14f000-0000-0000-0000-000000000001','AX14',1,10),
+       ('e14f0000-0000-0000-0000-000000000001','ff14f000-0000-0000-0000-000000000001','VM14',2,5);
+SELECT tint_promote_sync_run('e14f0000-0000-0000-0000-000000000001');
+INSERT INTO tint_sync_runs (id, setting_id, account, store_code, sync_type, status)
+VALUES ('e14f0000-0000-0000-0000-0000000000c0','aaaaaaaa-0000-0000-0000-000000000001','oben','L1','formulas','complete');
+INSERT INTO tint_staging_formulas (id, sync_run_id, account, store_code, cor_id, nome_cor, cod_produto, id_base, id_embalagem, volume_final_ml, personalizada)
+VALUES ('ff14f000-0000-0000-0000-0000000000c0','e14f0000-0000-0000-0000-0000000000c0','oben','L1','COR14F','Falsif','P14','B14','E14',900,false);
+INSERT INTO tint_staging_formula_itens (sync_run_id, staging_formula_id, id_corante, ordem, qtd_ml)
+VALUES ('e14f0000-0000-0000-0000-0000000000c0','ff14f000-0000-0000-0000-0000000000c0','AX14',1,10),
+       ('e14f0000-0000-0000-0000-0000000000c0','ff14f000-0000-0000-0000-0000000000c0','VM14',2,0);
+SQL
+# BASELINE VERDE: migration REAL → promover o corrompido preserva 2 itens.
+P -v ON_ERROR_STOP=1 -q -c "SELECT tint_promote_sync_run('e14f0000-0000-0000-0000-0000000000c0');" >/dev/null
+NBASE=$(P -tA -c "SELECT count(*) FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id WHERE f.account='oben' AND f.cor_id='COR14F';")
+[ "$NBASE" = "2" ] || { echo "✗ baseline falsif: COR14F deveria ter 2 itens com a migration real, achei $NBASE"; exit 1; }
+echo "  ✓ baseline VERDE — migration real: corrompido preserva 2 itens (COR14F)"
+# SABOTAGEM: remove o filtro NOT EXISTS do _expand → a corrompida volta a expandir → grava parcial.
+sed 's/    AND NOT EXISTS (SELECT 1 FROM _fl_corrompida fc WHERE fc.staging_formula_id = fl.staging_formula_id);/    ;/' "$MIGG" > /tmp/sab-tint-guard4.sql
+grep -q '_fl_corrompida fc' /tmp/sab-tint-guard4.sql && { echo "✗ sabotagem guard4: sed não removeu o filtro do _expand"; exit 1; }
+P -v ON_ERROR_STOP=1 -q -f /tmp/sab-tint-guard4.sql >/dev/null
+P -v ON_ERROR_STOP=1 -q -c "SELECT tint_promote_sync_run('e14f0000-0000-0000-0000-0000000000c0');" >/dev/null
+NSAB=$(P -tA -c "SELECT count(*) FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id WHERE f.account='oben' AND f.cor_id='COR14F';")
+case "$NSAB" in
+  1) echo "  ✓ guard4 furado — corrompida gravou receita PARCIAL (COR14F: 1 item, VM14 sumiu) → C14.2 tem dente" ;;
+  2) echo "✗ FALSIF FALHOU: sabotei o guard4 e a receita NÃO corrompeu (ainda 2 itens) → C14.2 é fraco"; exit 1 ;;
+  *) echo "✗ FALSIF inesperado: COR14F com $NSAB itens após sabotagem (esperado 1 parcial)"; exit 1 ;;
+esac
+# RESTAURA a migration real.
+P -v ON_ERROR_STOP=1 -q -f "$MIGG" >/dev/null
+P -tA -c "SELECT CASE WHEN pg_get_functiondef('public.tint_promote_sync_run(uuid)'::regprocedure) LIKE '%_fl_corrompida%' THEN 'OK' ELSE 'FALTA' END;" | grep -qx OK \
+  || { echo "✗ restauração guard4 falhou"; exit 1; }
+echo "  ✓ restauração OK — guard4 de volta no corpo"
+
 P -v ON_ERROR_STOP=1 -q <<'SQL'
 SELECT 'TODOS OS TESTES PG17 DA PROMOÇÃO PASSARAM ✓' AS resultado;
 SQL
