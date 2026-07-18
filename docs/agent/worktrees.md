@@ -46,6 +46,21 @@ Limite conhecido (fase 1): não pega a *race fria* (duas sessões, nenhum arquiv
 
 Prefixe comandos PESADOS (test/build/typecheck/vitest) com **`heavy`** (`~/.local/bin/heavy`, fonte `scripts/heavy.sh`) — limita quantos rodam ao mesmo tempo entre TODOS os worktrees (auto-dimensiona; 1 slot na M2 8GB). Override `AFIACAO_MAX_HEAVY=N`. Hook `heavy-guard` (PreToolUse Bash, `.claude/hooks/heavy-guard.sh`) **REESCREVE** test/build/typecheck sem `heavy` (updatedInput prefixa o semáforo — sem round-trip de negação nem classificador; fail-safe: não age sem `heavy` instalado nem em leitura; testes `scripts/test-heavy-guard.sh`). Comando LONGO (codex, verify por bytes, build grande) → `timeout: 600000` no Bash tool — o default de 2min mata no meio (35 mortes por exit 143 no diagnóstico 2026-07).
 
+## `git stash` em script + fila do `heavy` = trabalho fora do working tree (2026-07-18)
+
+Script de diagnóstico que faz `git stash push` → roda algo pesado → `git stash pop` **fica preso na fila
+do semáforo com o stash JÁ empilhado**. Enquanto espera slot, `git status` está limpo e o diff parece ter
+evaporado — e se o processo morrer ali (timeout do Bash tool, `pkill`, teardown da sessão), o `pop` nunca
+roda. Aconteceu no #1425 com 407 linhas de money-path: recuperado íntegro de `stash@{0}` (o `git stash
+list` mostra `WIP on <seu-branch>`), mas o susto é evitável.
+
+- **Commite ANTES de qualquer experimento que mexa em git** — commit local é reversível e tira o trabalho
+  do limbo; stash não sobrevive a processo morto no meio.
+- Para comparar "com × sem" a mudança, prefira **worktree separado em `origin/main`** a stash no worktree vivo.
+- `pgrep -f <id-do-background>` **não** encontra o processo (o ID do harness não aparece no comando) —
+  concluir "morreu" por aí é falso negativo. Confira pelo comando real (`pgrep -f "<trecho do script>"`).
+- **`bunx vitest` também passa pelo `heavy`** (o hook reescreve): tirar o prefixo não tira da fila.
+
 ## MCPs enxutas
 
 `.claude/settings.json` (comitado, **project > user**) desabilita 11 plugins sem uso no dev TS (adobe/mercadopago/sentry/slack/telegram/airtable/zapier/github/posthog/chrome-devtools/serena) + `ENABLE_CLAUDEAI_MCP_SERVERS=false`. **Mantidos:** superpowers/claude-mem/claude-md-management/context7. Religar pontual em `.claude/settings.local.json` (gitignored, precedência maior) + `/reload-plugins`. ⚠️ Desabilitar o **plugin** mata MCP **+ skills + hooks** dele. Worktrees criados via `bun run wt` (de `origin/main`) já nascem enxutos.

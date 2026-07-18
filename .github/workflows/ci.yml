@@ -18,7 +18,11 @@
 #   noFallthroughCasesInSwitch). O `tsconfig.strict.json` paralelo foi DELETADO e o
 #   2º passo de typecheck removido — este passo único agora é o gate strict de TODO
 #   o src + testes. A migração incremental (539→855 files) está concluída.
-# - test (vitest run): blocking — regressão de comportamento documentado
+# - test (vitest run): blocking — regressão de comportamento documentado. ⚠️ Cobre só `src/**` +
+#   `scripts/**` (o `include` do vitest.config.ts) — NÃO as edge functions, que são Deno.
+# - test:edges (deno test --no-remote): blocking — os 119 testes das edge functions. Rodavam em
+#   lugar NENHUM até 2026-07-18: existiam no repo, com script pronto no package.json, e o CI nunca
+#   os chamou. Detalhe (inclusive por que NÃO existe um gate de pin do deno) no próprio step.
 # - build (vite build): blocking — pega Tailwind quebrado + import errors + PWA setup
 # - lint (eslint): blocking em ERRORS — a dívida de `no-explicit-any` foi zerada
 #   (era ~1300 errors, hoje 0; ver CLAUDE.md §10/§13), então o lint virou gate
@@ -74,6 +78,39 @@ jobs:
 
       - name: Tests
         run: bun run test
+
+      # Testes das EDGE FUNCTIONS (Deno) — blocking. Os 119 testes em
+      # supabase/functions/**/*_test.ts existiam com script pronto (`test:edges`) e NADA no CI os
+      # rodava: o `bun run test` acima é vitest, cujo `include` (vitest.config.ts) é só `src/**` +
+      # `scripts/**`. Eram documentação executável, não guarda de regressão — um PR podia quebrá-los
+      # com o CI VERDE e, como todo PR não-draft auto-mergeia no verde, a regressão entrava sozinha.
+      # Motivador concreto: os invariantes de CUSTO de _shared/relatorio-mensal_test.ts existem pra
+      # impedir que o N+1 de ~5.285 consultas volte (PR #1432) — e hoje não impediriam nada.
+      # Custo: ~0,6s de teste; o setup do Deno domina. Roda DEPOIS de typecheck+vitest de propósito
+      # (PR quebrado no comum falha antes, sem pagar o setup).
+      #
+      # ⚠️ NÃO espelhar aqui o gate `bunpin:check`: o raciocínio do pin do bun NÃO transfere. A
+      # `oven-sh/setup-bun` só PULA a api.github.com quando o valor casa `validateStrict()` — é ISSO
+      # que o gate protege. A `denoland/setup-deno` não tem esse fast-path: com `2.9.2` ela cai em
+      # resolveRelease(range) → fetch `dl.deno.land/versions.json`; com `latest`, em
+      # `release-latest.txt`. Mesma rede nos dois casos → um gate espelhado não removeria UM request
+      # sequer, só daria falsa segurança. O pin estrito aqui é por REPRODUTIBILIDADE (o runtime não
+      # muda sozinho num PR alheio), não anti-SPOF. Bump: conferir `deno --version` e alinhar.
+      #
+      # O `--no-remote` (dentro de `test:edges`) é a invariante que substitui aquele gate: prova que
+      # a suíte é 100% OFFLINE, mantendo jsr.io/npm FORA do caminho de entrega de todo PR — a mesma
+      # forma do incidente de 2026-07-16. Ele foi introduzido junto com a troca do `jsr:@std/assert@1`
+      # de omie-sync-status-produtos/paginacao.test.ts (único dos 11 arquivos fora do padrão) por
+      # helper local. Consequência a saber: teste de edge que precise de `npm:`/`jsr:` NÃO roda aqui
+      # — a saída é extrair a lógica PURA e testar ela (o que os 11 arquivos já fazem), não afrouxar
+      # o flag.
+      - name: Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: 2.9.2
+
+      - name: Tests (edge functions — Deno, offline)
+        run: bun run test:edges
 
       - name: Build
         run: bun run build

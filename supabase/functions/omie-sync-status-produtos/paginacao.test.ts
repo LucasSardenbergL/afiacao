@@ -1,7 +1,55 @@
 // Testa a paginação concorrente PURA da omie-sync-status-produtos (coletarProdutosAlvo).
 // Rodar: deno test supabase/functions/omie-sync-status-produtos/paginacao.test.ts
-import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
 import { coletarProdutosAlvo, type OmieProduto, type PaginaOmie } from "./paginacao.ts";
+
+// ⚠️ Asserts LOCAIS de propósito — este arquivo já usou `jsr:@std/assert@1` e foi trocado quando
+// o `deno test` entrou no job `validate` do CI (todo PR do repo). Import remoto aqui põe o jsr.io
+// no caminho de ENTREGA: se ele degradar, nenhum PR mergeia — a mesma forma do incidente de
+// 2026-07-16 (a REST API do GitHub derrubou todo PR em ~6s no setup do bun). Os outros 10 arquivos
+// de teste das edges já usavam helper local; este era o único fora do padrão. `deno test --no-remote
+// supabase/functions/` tem que sair 0 — é o critério que mantém a suíte offline. NÃO reintroduza
+// import remoto em teste de edge.
+
+function assert(cond: unknown, msg?: string): asserts cond {
+  if (!cond) throw new Error(msg ?? "assert falhou");
+}
+
+function assertEquals(a: unknown, b: unknown, msg?: string) {
+  if (JSON.stringify(a) !== JSON.stringify(b)) {
+    throw new Error(msg ?? `assertEquals falhou: ${JSON.stringify(a)} !== ${JSON.stringify(b)}`);
+  }
+}
+
+// Fiel ao @std/assert: exige rejeição, a CLASSE do erro e a substring da mensagem. Um try/catch que
+// só checasse "rejeitou" seria teatro — passaria com um TypeError de código quebrado e deixaria de
+// provar QUAL guard disparou (os 3 usos abaixo distinguem anti-parada-prematura × tempo × anti-loop).
+// Os 3 eixos foram falsificados na entrega (mensagem errada / classe errada / promise que resolve).
+async function assertRejects(
+  fn: () => Promise<unknown>,
+  ErrorClass: new (...args: never[]) => Error,
+  msgInclui: string,
+): Promise<Error> {
+  let capturado: unknown;
+  let rejeitou = false;
+  try {
+    await fn();
+  } catch (e) {
+    rejeitou = true;
+    capturado = e;
+  }
+  if (!rejeitou) throw new Error(`assertRejects: esperava rejeição, mas a promise RESOLVEU`);
+  if (!(capturado instanceof ErrorClass)) {
+    throw new Error(
+      `assertRejects: esperava ${ErrorClass.name}, veio ${
+        capturado === null ? "null" : typeof capturado === "object" ? capturado.constructor?.name : typeof capturado
+      }`,
+    );
+  }
+  if (!capturado.message.includes(msgInclui)) {
+    throw new Error(`assertRejects: mensagem não contém ${JSON.stringify(msgInclui)} — veio ${JSON.stringify(capturado.message)}`);
+  }
+  return capturado;
+}
 
 const OPTS = { concurrency: 4, maxPaginas: 500, maxDuracaoMs: 120_000 };
 

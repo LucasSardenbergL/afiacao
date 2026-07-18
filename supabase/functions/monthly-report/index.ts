@@ -1,6 +1,13 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
+import {
+  type BancoPostgrest,
+  montarRelatorios,
+  type MotivoSemEnvio,
+  motivoSemEnvio,
+  type RelatorioCliente,
+} from "../_shared/relatorio-mensal.ts";
 // Resend usado via fetch direto à REST API (https://api.resend.com/emails) para evitar dep npm
 
 const corsHeaders = {
@@ -12,29 +19,9 @@ const corsHeaders = {
 // (gerar-pedidos-diario / disparar-pedidos-aprovados) — nunca hardcodar o domínio.
 const APP_URL = Deno.env.get('APP_URL') ?? 'https://steu.lovable.app';
 
-interface ToolSummary {
-  name: string;
-  internal_code: string | null;
-  category: string;
-  last_sharpened_at: string | null;
-  next_sharpening_due: string | null;
-  sharpening_count: number;
-  anomaly_count: number;
-  is_overdue: boolean;
-  is_due_soon: boolean;
-  days_until_due: number | null;
-}
-
-interface CustomerReport {
-  user_id: string;
-  name: string;
-  email: string | null;
-  phone: string | null;
-  tools: ToolSummary[];
-  overdue_count: number;
-  due_soon_count: number;
-  total_tools: number;
-}
+// A montagem do relatório (e o custo de banco dela) vive em `_shared/relatorio-mensal.ts`,
+// coberta por teste. Aqui ficam só HTTP, auth, template e envio.
+type CustomerReport = RelatorioCliente;
 
 function formatDate(dateStr: string | null): string {
   if (!dateStr) return 'N/A';
@@ -260,84 +247,37 @@ serve(async (req) => {
     const sendEmail = body.send_email !== false;
     const previewOnly = body.preview_only === true;
 
-    let profilesQuery = supabase
-      .from('profiles')
-      .select('user_id, name, email, phone');
-    
-    if (targetUserId) {
-      profilesQuery = profilesQuery.eq('user_id', targetUserId);
-    }
+    // 3 consultas, independentemente do tamanho da base de clientes (medido: 5.276 perfis →
+    // 3 idas ao banco; a versão anterior fazia ~5.285 e não terminava). O invariante de custo
+    // é testado em `_shared/relatorio-mensal_test.ts`, não aqui.
+    const reports: CustomerReport[] = await montarRelatorios(
+      supabase as unknown as BancoPostgrest,
+      { userIdAlvo: targetUserId, agora: new Date() },
+    );
 
-    const { data: profiles, error: profilesError } = await profilesQuery;
-    if (profilesError) throw profilesError;
+    // Contadores de entrega: é o que distingue "rodou e não havia para quem enviar" de
+    // "rodou e entregou". Sem eles, uma execução que entrega ZERO é indistinguível de uma
+    // bem-sucedida — foi assim que o cron entregou zero e-mails por meses sem ninguém notar.
+    // Os logs identificam por `user_id`, NUNCA por e-mail/telefone: log de edge não é lugar
+    // de dado pessoal de cliente.
+    const semContato: Record<MotivoSemEnvio, number> = { sem_email: 0, sem_canal_nenhum: 0 };
+    let enviados = 0;
+    let falhasEnvio = 0;
 
-    const reports: CustomerReport[] = [];
-
-    for (const profile of (profiles || [])) {
-      const { data: tools } = await supabase
-        .from('user_tools')
-        .select('*, tool_categories(name)')
-        .eq('user_id', profile.user_id);
-
-      if (!tools || tools.length === 0) continue;
-
-      const now = new Date();
-      const toolSummaries: ToolSummary[] = [];
-
-      for (const tool of tools) {
-        const { count: sharpeningCount } = await supabase
-          .from('tool_events')
-          .select('*', { count: 'exact', head: true })
-          .eq('user_tool_id', tool.id)
-          .eq('event_type', 'sharpening');
-
-        const { count: anomalyCount } = await supabase
-          .from('tool_events')
-          .select('*', { count: 'exact', head: true })
-          .eq('user_tool_id', tool.id)
-          .eq('event_type', 'anomaly');
-
-        const nextDue = tool.next_sharpening_due ? new Date(tool.next_sharpening_due) : null;
-        const daysUntilDue = nextDue 
-          ? Math.ceil((nextDue.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
-          : null;
-
-        toolSummaries.push({
-          name: tool.generated_name || tool.custom_name || (tool.tool_categories as { name?: string } | null)?.name || 'Ferramenta',
-          internal_code: tool.internal_code,
-          category: (tool.tool_categories as { name?: string } | null)?.name || '',
-          last_sharpened_at: tool.last_sharpened_at,
-          next_sharpening_due: tool.next_sharpening_due,
-          sharpening_count: sharpeningCount || 0,
-          anomaly_count: anomalyCount || 0,
-          is_overdue: daysUntilDue !== null && daysUntilDue < 0,
-          is_due_soon: daysUntilDue !== null && daysUntilDue >= 0 && daysUntilDue <= 7,
-          days_until_due: daysUntilDue,
-        });
+    for (const report of reports) {
+      // Classificado SEMPRE, inclusive em preview/`send_email:false` — "quantos clientes estão
+      // inalcançáveis" é um fato sobre o cadastro, não sobre o modo desta invocação.
+      const motivo = motivoSemEnvio(report);
+      if (motivo) {
+        semContato[motivo]++;
+        console.warn(
+          `monthly-report: user_id ${report.user_id} PULADO (${motivo}) — ` +
+          `${report.total_tools} ferramenta(s), ${report.overdue_count} atrasada(s)`,
+        );
+        continue;
       }
 
-      toolSummaries.sort((a, b) => {
-        if (a.is_overdue && !b.is_overdue) return -1;
-        if (!a.is_overdue && b.is_overdue) return 1;
-        if (a.is_due_soon && !b.is_due_soon) return -1;
-        if (!a.is_due_soon && b.is_due_soon) return 1;
-        return (a.days_until_due ?? 999) - (b.days_until_due ?? 999);
-      });
-
-      const report: CustomerReport = {
-        user_id: profile.user_id,
-        name: profile.name,
-        email: profile.email,
-        phone: profile.phone,
-        tools: toolSummaries,
-        overdue_count: toolSummaries.filter(t => t.is_overdue).length,
-        due_soon_count: toolSummaries.filter(t => t.is_due_soon).length,
-        total_tools: toolSummaries.length,
-      };
-
-      reports.push(report);
-
-      if (sendEmail && !previewOnly && resendApiKey && profile.email) {
+      if (sendEmail && !previewOnly && resendApiKey) {
         const html = generateEmailHtml(report);
 
         try {
@@ -349,20 +289,32 @@ serve(async (req) => {
             },
             body: JSON.stringify({
               from: 'Colacor <noreply@colacor.com.br>',
-              to: [profile.email],
+              to: [report.email],
               subject: `🔧 Relatório Mensal de Ferramentas - ${report.overdue_count > 0 ? `${report.overdue_count} ferramenta(s) atrasada(s)` : 'Tudo em dia!'}`,
               html,
             }),
           });
           if (!resp.ok) {
-            console.error(`Failed to send email to ${profile.email}: HTTP ${resp.status}`);
+            falhasEnvio++;
+            console.error(`monthly-report: envio FALHOU p/ user_id ${report.user_id}: HTTP ${resp.status}`);
           } else {
-            console.log(`Email sent to ${profile.email}`);
+            enviados++;
+            console.log(`monthly-report: enviado p/ user_id ${report.user_id}`);
           }
         } catch (emailErr) {
-          console.error(`Failed to send email to ${profile.email}:`, emailErr);
+          falhasEnvio++;
+          console.error(`monthly-report: envio FALHOU p/ user_id ${report.user_id}:`, emailErr);
         }
       }
+    }
+
+    const puladosTotal = semContato.sem_email + semContato.sem_canal_nenhum;
+    if (puladosTotal > 0) {
+      console.warn(
+        `monthly-report: ${puladosTotal} de ${reports.length} cliente(s) com ferramenta ficaram ` +
+        `SEM relatório por falta de contato (${semContato.sem_email} sem e-mail mas com telefone, ` +
+        `${semContato.sem_canal_nenhum} sem canal nenhum).`,
+      );
     }
 
     const reportsWithWhatsApp = reports.map(report => ({
@@ -374,9 +326,15 @@ serve(async (req) => {
       email_html: previewOnly ? generateEmailHtml(report) : undefined,
     }));
 
-    return new Response(JSON.stringify({ 
-      success: true, 
+    return new Response(JSON.stringify({
+      success: true,
       reports_count: reportsWithWhatsApp.length,
+      // `success: true` + `reports_count: 0` sempre foi ambíguo entre "ninguém tem ferramenta"
+      // e "todo mundo ficou sem contato". Estes campos desambiguam sem precisar ir ao banco.
+      emails_enviados: enviados,
+      falhas_envio: falhasEnvio,
+      pulados_sem_contato: puladosTotal,
+      pulados_detalhe: semContato,
       reports: reportsWithWhatsApp,
     }), {
       status: 200,

@@ -231,24 +231,145 @@ async function updateSyncState(
 // sync_state preso em 'running'). Mesmo padrão provado do syncNaoVinculados (#383): paginado p/
 // furar o cap de 1000 do PostgREST.
 
-// Map<omie_codigo_cliente, user_id> de omie_clientes (quem JÁ está vinculado).
-async function fetchOmieClienteUserMap(db: SupabaseClient): Promise<Map<number, string>> {
+// Map<omie_codigo_cliente, user_id> — quem JÁ está vinculado, resolvido por CÓDIGO.
+//
+// [P0-B-bis Fatia 5] Esta era a ÚLTIMA leitura de `omie_clientes` em edge alguma, e o `DROP TABLE`
+// a quebraria.
+//
+// ⚠️ PARA QUE ESTE MAPA AINDA SERVE, depois do hotfix Codex-C (#1444): **só para chavear as TAGS**
+// do cadastro Omie (`is_fornecedor` / `excluir_da_carteira`, :733). Ele NÃO alimenta mais nem o
+// ledger nem a proof — o #1444 passou os dois para a lista DOCUMENT-first (`accountMapByUser`),
+// justamente porque resolver por código a partir do espelho sem conta podia escolher o user errado
+// numa admissão nova. Uma versão anterior deste comentário justificava a união dizendo que "migrar
+// só para a proof ENCOLHERIA a membership": esse argumento MORREU com o #1444 e não deve ser
+// ressuscitado — a membership dos 1633 clones já está no ledger desde o backfill da Fatia 0, e o
+// acumulador não encolhe.
+//
+// O que continua valendo, e é o motivo REAL da união: a tag `excluir_da_carteira` decide se um
+// cliente sai da carteira. Aplicá-la ao user errado — ou deixar de aplicá-la — é money-path. Então o
+// mapa tem de resolver o user CERTO, e resolver o máximo de clientes DA CONTA DO RUN:
+//   • `omie_customer_account_map` (proof) é DOCUMENT-first ⇒ os ~1633 "clones" (users Omie sem
+//     `profiles.document`, os aliases fiscais legítimos do grupo) nunca entram nela.
+//   • `customer_canonical_alias.alias_omie_codigo` tem justamente o par (clone → código) que falta.
+// Sem o alias, no run `servicos` os clones deixariam de ser resolvidos por código e cairiam em
+// `userByDoc` — que não os tem (não têm profile) ⇒ ficariam SEM tag, mudança silenciosa de
+// comportamento. Com o filtro de conta abaixo, o alias só entra no run a que pertence (todos os
+// 1633 são `alias_conta='servicos'`; na conta oben eles são ZERO, medido).
+//
+// ⚠️ O MAPA É POR CONTA, não global — corrigido após `/codex challenge` xhigh, que refutou a 1ª
+// versão (Map global) e a refutação foi VERIFICADA por medição. `omie_codigo_cliente` é único
+// DENTRO de uma conta; a constraint `UNIQUE(codigo, account)` NÃO o torna globalmente único. Num Map
+// global, o último `map.set` vence em silêncio e um código do run oben podia resolver o user de
+// colacor — que então receberia as tags Omie de OUTRO cliente, inclusive `excluir_da_carteira`.
+// Colisão hoje é zero, mas isso é coincidência de DADO, não invariante de schema.
+//
+// É também o que responde à crítica do hotfix Codex-C a este mapa ("vem do espelho legado SEM conta
+// — a mesma fonte poluída que este épico inteiro existe para aposentar"): com o filtro de conta ele
+// deixa de ser sem-conta. A resolução por código passa a ser account-correta, como já era em
+// `fetchAllOmieClienteCodigos`.
+//
+// A medição que fechou a questão (psql-ro, 2026-07-18) — filtrar por conta parece "perder" 37 pares
+// do espelho, e não perde nada:
+//   • 37/37 têm o par (código, user) casando em OUTRA conta ⇒ era o espelho guardando o código
+//     NÃO-oben do user (ele é `UNIQUE(user_id)`, 1 linha sobrescrita — o "mix de contas" conhecido).
+//     No run oben esses códigos NUNCA aparecem: o Omie oben só devolve códigos oben. Filtrar CORRIGE
+//     um falso-positivo, não encolhe cobertura.
+//   • 37/37 já estão no ledger ⇒ a membership não muda.
+//   • Códigos de alias presentes na conta oben: ZERO. Os 1.633 aliases são todos `alias_conta =
+//     'servicos'`; no Map global eles eram 1.633 entradas que jamais casavam no run oben.
+// É a mesma correção que `fetchAllOmieClienteCodigos` já aplica logo abaixo (`.eq("account", ...)`).
+//
+// FILTRA `customer_canonical_alias.status='active'` — também correção do Codex. O argumento "não
+// encolher a membership" que eu usara para não filtrar é INVÁLIDO aqui: o ledger é acumulador, então
+// filtrar na ADMISSÃO não remove ninguém já admitido. Sem o filtro, um alias rebaixado a `inactive`
+// seguiria admitindo membro novo como `verified` — e a admissão é irreversível.
+async function fetchCodigoUserMap(
+  db: SupabaseClient,
+  account: OmieAccount,
+): Promise<Map<number, string>> {
   const map = new Map<number, string>();
   const pageSize = 1000;
+  const empresa = accountToEmpresa(account); // vendas->oben · servicos->colacor_sc · colacor_vendas->colacor
+
+  // Guard de colisão: dentro de UMA conta o código é único, então dois users para o mesmo código é
+  // corrupção de dado — e resolver "o último que chegou" anexaria cliente ao vendedor errado.
+  // Fail-closed (precisão > recall): aborta o run em vez de gravar identidade adivinhada.
+  const setOuFalha = (fonte: string, cod: number, uid: string) => {
+    const anterior = map.get(cod);
+    if (anterior && anterior !== uid) {
+      throw new Error(
+        `colisão de código na conta ${empresa}: omie_codigo_cliente=${cod} aponta para ` +
+          `${anterior} e ${uid} (fonte: ${fonte}). Duas identidades para o mesmo código dentro da ` +
+          `MESMA conta é corrupção — abortando antes de admitir o user errado no ledger.`,
+      );
+    }
+    map.set(cod, uid);
+  };
+
+  // Os dois laços são escritos por extenso (em vez de um helper com `.select()` montado por
+  // template string) porque o supabase-js infere o tipo da linha a partir do LITERAL do select —
+  // uma string dinâmica vira `ParserError` e o `deno check` recusa. É também o padrão que
+  // `fetchAllOmieClienteCodigos` já segue neste arquivo.
+  //
+  // `.order` estável é obrigatório com `.range()` (§CLAUDE.md): sem ele a paginação corre sobre
+  // ordem indefinida e uma linha pode repetir ou SUMIR entre páginas — e sumir aqui vira cliente
+  // não-resolvido, isto é, membro a menos no ledger.
+
+  // 1) aliases fiscais (clones) DA CONTA DO RUN: o par (código → user) que a proof document-first
+  // nunca tem. `alias_conta` guarda o slug INTERNO do Omie (o mesmo enum de `account`), ≠ da proof,
+  // que guarda o canônico (`empresa`).
   let from = 0;
   while (true) {
     const { data, error } = await db
-      .from("omie_clientes")
-      .select("omie_codigo_cliente, user_id")
+      .from("customer_canonical_alias")
+      .select("alias_omie_codigo, alias_user_id")
+      .eq("alias_conta", account)
+      .eq("status", "active")
+      .not("alias_omie_codigo", "is", null)
+      // desempate por user: com `.range()`, ordenar só pelo código deixa a paginação INSTÁVEL se o
+      // código repetir — e linha que some entre páginas vira membro a menos no ledger, em silêncio.
+      .order("alias_omie_codigo")
+      .order("alias_user_id")
       .range(from, from + pageSize - 1);
-    if (error) throw new Error(`fetch omie_clientes map: ${error.message}`);
-    const rows = (data ?? []) as { omie_codigo_cliente: number | null; user_id: string | null }[];
+    if (error) throw new Error(`fetch customer_canonical_alias map (${account}): ${error.message}`);
+    const rows = (data ?? []) as { alias_omie_codigo: number | null; alias_user_id: string | null }[];
     for (const r of rows) {
-      if (r.omie_codigo_cliente != null && r.user_id) map.set(Number(r.omie_codigo_cliente), r.user_id);
+      if (r.alias_omie_codigo != null && r.alias_user_id) {
+        setOuFalha("alias", Number(r.alias_omie_codigo), r.alias_user_id);
+      }
     }
     if (rows.length < pageSize) break;
     from += pageSize;
   }
+  const nAlias = map.size;
+
+  // 2) proof account-correta DA MESMA conta. Se um código aparecer nas duas fontes com users
+  // diferentes, `setOuFalha` aborta — dentro de uma conta isso é corrupção, não preferência.
+  from = 0;
+  while (true) {
+    const { data, error } = await db
+      .from("omie_customer_account_map")
+      .select("omie_codigo_cliente, user_id")
+      .eq("account", empresa)
+      .not("omie_codigo_cliente", "is", null)
+      .order("omie_codigo_cliente")
+      .order("user_id")
+      .range(from, from + pageSize - 1);
+    if (error) throw new Error(`fetch omie_customer_account_map map (${empresa}): ${error.message}`);
+    const rows = (data ?? []) as { omie_codigo_cliente: number | null; user_id: string | null }[];
+    for (const r of rows) {
+      if (r.omie_codigo_cliente != null && r.user_id) {
+        setOuFalha("proof", Number(r.omie_codigo_cliente), r.user_id);
+      }
+    }
+    if (rows.length < pageSize) break;
+    from += pageSize;
+  }
+
+  console.log(
+    `[Sync ${account}] mapa código→user (conta ${empresa}): ${map.size} códigos ` +
+      `(alias ${nAlias} + proof ${map.size - nAlias})`,
+  );
   return map;
 }
 
@@ -354,7 +475,10 @@ async function syncCustomers(db: SupabaseClient, account: OmieAccount) {
 
   try {
     // 2 leituras em massa ANTES do laço (substitui o N+1: ~2-3 round-trips POR cliente × ~10k).
-    const userByCodigo = await fetchOmieClienteUserMap(db);
+    // `userByCodigo` deixou de vir do espelho `omie_clientes` na Fatia 5 — a fonte agora é
+    // `customer_canonical_alias ∪ omie_customer_account_map`, FILTRADA pela conta do run (ver a
+    // função: o código só é único dentro de uma conta, e o run só enumera códigos da sua).
+    const userByCodigo = await fetchCodigoUserMap(db, account);
     const userByDoc = await fetchProfileDocUserMap(db, account);
 
     // Enumera o Omie e resolve o user_id em MEMÓRIA. Dedup por user_id (last-wins) — a constraint
@@ -462,8 +586,12 @@ async function syncCustomers(db: SupabaseClient, account: OmieAccount) {
     // P1b: DELETE cirúrgico do vínculo PRÉ-EXISTENTE dos users ambíguos NESTA conta, ANTES do upsert
     // (delete-first fail-closed: remove o código errado antes de gravar o bom — se o upsert falhar depois,
     // o errado já saiu; challenge Codex item 1/7). Escopado por (account, user_id) PROVADOS ambíguos, e SÓ
-    // source='document' (preserva override humano source='manual' — challenge Codex item 3). Não é
+    // fontes AUTOMATIZADAS (preserva override humano source='manual' — challenge Codex item 3). Não é
     // delete-em-massa: run parcial vê menos ocorrências → detecta menos → deleta menos (fail-safe).
+    // [HOTFIX Codex-A] 'rpc' entrou no filtro: a `register_carteira_member` é writer AUTOMATIZADO e suas
+    // linhas TÊM de continuar alcançáveis por este fail-closed. Enquanto ela gravava 'manual', todo
+    // vínculo que criava ficava imune à detecção de ambiguidade — vendedor possivelmente errado
+    // sobrevivendo à detecção, com comissão em cima. Só override HUMANO merece imunidade.
     if (usersAmbiguosOmie.size > 0) {
       const ambiguosList = Array.from(usersAmbiguosOmie);
       for (let i = 0; i < ambiguosList.length; i += 200) {
@@ -471,7 +599,7 @@ async function syncCustomers(db: SupabaseClient, account: OmieAccount) {
           .from("omie_customer_account_map")
           .delete()
           .eq("account", empresaMap)
-          .eq("source", "document")
+          .in("source", ["document", "rpc"])
           .in("user_id", ambiguosList.slice(i, i + 200));
         if (delErr) throw new Error(`delete ambíguos omie_customer_account_map: ${delErr.message}`);
       }
@@ -510,11 +638,20 @@ async function syncCustomers(db: SupabaseClient, account: OmieAccount) {
     // por linha seria o N+1 que o CLAUDE.md proíbe em enumeração pesada. A RPC serve os writers PONTUAIS;
     // o bulk escreve em massa, como já faz com a proof logo abaixo.
     //
-    // Por que a lista code-first (`upsertByUser`) e não a document-first (`accountMapByUser`): a
-    // code-first é MAIS ABRANGENTE — cobre os ~1633 aliases fiscais (users Omie sem `profiles.document`)
-    // que nunca entram na proof. Era exatamente esse conjunto que o espelho levava ao ledger pelo trigger
-    // `AFTER INSERT` da Fatia 0. Trocar pela document-first ENCOLHERIA a membership, e membership que
-    // encolhe é a falha que a opção D existe para impedir.
+    // [HOTFIX Codex-C] A lista é a DOCUMENT-FIRST (`accountMapByUser`), não a code-first. O raciocínio
+    // original — "a code-first cobre os ~1633 aliases fiscais que a proof nunca vê" — confundiu duas
+    // coisas: cobertura de ESTOQUE e correção de FLUXO.
+    //   · ESTOQUE: os 1633 aliases JÁ estão no ledger, copiados pelo backfill da Fatia 0. Como o ledger
+    //     é acumulador e NUNCA encolhe, deixar de reinseri-los diariamente não os remove. Não havia o que
+    //     "cobrir".
+    //   · FLUXO: para uma admissão NOVA, o que importa é acertar QUEM é o user. A code-first resolve por
+    //     `userByCodigo`, que vem do espelho legado SEM conta — a mesma fonte poluída que este épico
+    //     inteiro existe para aposentar — e ela VENCE o documento (`userByCodigo ?? userByDoc`, :402).
+    //     Caminho concreto do erro: código Omie reaproveitado/corrigido, legado diz "K → user X", o
+    //     documento atual prova "K → user Y"; a code-first escolhe X, que já está no ledger (upsert vira
+    //     no-op) e Y — o cliente novo e CORRETO — nunca entra na membership.
+    // A document-first é account-safe e não perde ninguém aqui: tanto este bulk quanto o `sync_all_clients`
+    // já descartam registro sem documento antes deste ponto.
     //
     // ON CONFLICT DO NOTHING (ignoreDuplicates) é o invariante do acumulador: preserva `first_seen_at`
     // (a data REAL do vínculo, consumida em :1761) e NUNCA rebaixa `identity_state` — um membro
@@ -523,11 +660,10 @@ async function syncCustomers(db: SupabaseClient, account: OmieAccount) {
     //
     // Só o run oben escreve, mesma regra do espelho e do `identity_state` acima (:484): a carteira lê a
     // proof `account='oben'` — é a conta que decide quem é membro.
-    const rows = Array.from(upsertByUser.values());
     let totalSynced = 0;
     if (account === "vendas") {
       const nowIsoLedger = new Date().toISOString();
-      const ledgerRows = rows.map((r) => ({
+      const ledgerRows = Array.from(accountMapByUser.values()).map((r) => ({
         user_id: r.user_id,
         identity_state: "verified",
         first_seen_at: nowIsoLedger,
