@@ -13,6 +13,11 @@
 # relógio saltou o deadline, e o script desistiu após 2 tentativas reais em vez
 # de 45min de rede fora — por isso a cartada final abaixo, com backoff.
 #
+# A JANELA CONTA VIGÍLIA, não relógio de parede (ver `dormir`): no suspend o
+# `sleep` não avança mas o `date` sim, então o tempo dormido é devolvido ao
+# deadline. Um watcher pode viver bem mais que os N min nominais — intencional:
+# cada wake compra um poll, e é esse poll que encontra o desfecho.
+#
 # Por quê (diagnóstico 2026-07): o founder virou o poller do auto-merge ("por
 # que o #868 não mergeou?", PR órfão descoberto dias depois). Rode via Bash com
 # run_in_background:true logo após criar/atualizar o PR: quando este processo
@@ -32,6 +37,10 @@ command -v jq >/dev/null 2>&1 || { echo "ERRO: jq ausente" >&2; exit 64; }
 # transitória (Wi-Fi reassociando depois do sono, rate limit passando).
 # Sobrescrevível por env — os testes usam "0 0 0" pra não esperar de verdade.
 read -ra backoffs <<< "${PR_WATCH_BACKOFFS:-5 15 45}"
+
+# Tolerância do detector de salto: `sleep N` estoura o esperado por 0–1s
+# (quantização do `date +%s` + scheduler); suspend estoura por MINUTOS.
+tolerancia_salto="${PR_WATCH_TOLERANCIA_SALTO:-5}"
 
 ultimo_estado=""   # preenchido só por consulta BEM-SUCEDIDA; "" = nunca soube
 ultimo_url=""
@@ -97,6 +106,24 @@ cartada_final() {
   exit 6
 }
 
+# Dorme o intervalo e DEVOLVE ao deadline o tempo em que a máquina esteve
+# suspensa. A janela conta tempo VIGIANDO, não relógio de parede: durante o
+# suspend o `sleep` não avança mas o `date` sim, então sem isso um laptop
+# fechado queima os 45min tendo consultado 2× (o gatilho do #1396).
+# Sem teto de extensão de propósito: cada wake compra ao menos 1 poll, e esse
+# poll quase sempre já resolve o PR — além de o watcher morrer com a sessão.
+dormir() {
+  local antes depois excesso
+  antes="$(date +%s)"
+  sleep "$intervalo"
+  depois="$(date +%s)"
+  excesso=$(( depois - antes - intervalo ))
+  if [ "$excesso" -gt "$tolerancia_salto" ]; then
+    deadline=$(( deadline + excesso ))
+    echo "AVISO: o relógio saltou ${excesso}s neste poll (máquina dormiu?) — a janela conta vigília, então foi estendida" >&2
+  fi
+}
+
 deadline=$(( $(date +%s) + timeout_min * 60 ))
 echo "vigiando PR #$pr (timeout ${timeout_min}min, poll ${intervalo}s)…"
 
@@ -107,5 +134,5 @@ while :; do
     [ "$(date +%s)" -ge "$deadline" ] && cartada_final
     echo "AVISO: gh pr view falhou (rede/rate-limit?); nova tentativa em ${intervalo}s" >&2
   fi
-  sleep "$intervalo"
+  dormir
 done
