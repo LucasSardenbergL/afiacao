@@ -3,6 +3,8 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { RefreshCw, Loader2, Sparkles, ShoppingCart, Users, MapPin } from "lucide-react";
+import { UltimaExecucao } from "@/components/execucoes/UltimaExecucao";
+import { ACOES_ANALYTICS_SYNC } from "./acoes";
 
 export function ImportClientesCard({
   isRunning,
@@ -32,6 +34,7 @@ export function ImportClientesCard({
             Importar Todos
           </Button>
         </div>
+        <UltimaExecucao acao={ACOES_ANALYTICS_SYNC.importarClientes} />
       </CardHeader>
       <CardContent>
         <p className="text-xs text-muted-foreground">
@@ -78,6 +81,7 @@ export function ImportEnderecosCard({
             Sincronizar Endereços
           </Button>
         </div>
+        <UltimaExecucao acao={ACOES_ANALYTICS_SYNC.sincronizarEnderecos} />
       </CardHeader>
       <CardContent>
         <p className="text-xs text-muted-foreground">
@@ -137,6 +141,9 @@ export function ImportPedidosCard({
             </Button>
           </div>
         </div>
+        <UltimaExecucao
+          acao={[ACOES_ANALYTICS_SYNC.importarPedidosRecentes, ACOES_ANALYTICS_SYNC.importarPedidosTodos]}
+        />
       </CardHeader>
       <CardContent>
         <p className="text-xs text-muted-foreground">
