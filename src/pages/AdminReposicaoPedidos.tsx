@@ -37,7 +37,7 @@ import { OverrideMinimoButton } from '@/components/reposicao/pedidos/OverrideMin
 import { ehGateMinimoFaturamento, particionarAtencao } from '@/components/reposicao/pedidos/shared';
 import { AbaixoMinimoCard } from '@/components/reposicao/pedidos/AbaixoMinimoCard';
 import { PoSumidoCard } from '@/components/reposicao/pedidos/PoSumidoCard';
-import { ehAcessoNegado, ordenarCandidatos, type PoCandidato } from '@/components/reposicao/pedidos/po-sumido';
+import { ehAcessoNegado, normalizarCandidatos, ordenarCandidatos, type PoCandidato } from '@/components/reposicao/pedidos/po-sumido';
 import { useAuth } from '@/contexts/AuthContext';
 import { track } from '@/lib/analytics';
 
@@ -94,7 +94,7 @@ export default function AdminReposicaoPedidos() {
   const queryClient = useQueryClient();
   // Override do mínimo de faturamento é privilegiado: só gestor comercial/master. A tela é
   // RequireStaff (employee|master), então gateamos o botão aqui (o edge reforça no servidor).
-  const { isMaster, isGestorComercial } = useAuth();
+  const { isMaster, isGestorComercial, user } = useAuth();
   const podeOverride = isMaster || isGestorComercial;
   const [searchParams, setSearchParams] = useSearchParams();
   const [detalhesPedido, setDetalhesPedido] = useState<PedidoSugerido | null>(null);
@@ -285,13 +285,19 @@ export default function AdminReposicaoPedidos() {
   // `retry: false` de propósito: o gate nega com 42501 e repetir 3x só gera ruído — quem não pode ver não vê.
   // Distinguir NEGADO de FALHOU importa: falha vira aviso visível (ver PoSumidoCard), nunca ausência silenciosa.
   const { data: posSumidos, error: erroPosSumidos, isPending: apurandoPosSumidos } = useQuery({
-    queryKey: ['pedidos-ciclo', 'pos-candidatos', EMPRESA],
+    // A chave inclui o USUÁRIO porque o app não limpa o queryClient no signOut: sem isso, A (autorizado)
+    // popula o cache, B entra na mesma sessão de app e vê a carteira de A até a negativa do servidor
+    // chegar — e, no sentido inverso, o `refetchInterval: false` de um 42501 grudaria na chave e
+    // deixaria o próximo usuário AUTORIZADO sem polling. Chave por principal resolve os dois.
+    queryKey: ['pedidos-ciclo', 'pos-candidatos', EMPRESA, user?.id],
     queryFn: async (): Promise<PoCandidato[]> => {
       const { data, error } = await supabase.rpc('reposicao_pos_candidatos' as never, {
         p_empresa: EMPRESA,
       } as never);
       if (error) throw error;
-      return (data as unknown as PoCandidato[] | null) ?? [];
+      // Normaliza na FRONTEIRA: a resposta entra por cast (a RPC não está no types.ts gerado), então
+      // um valor não-finito passaria direto e viraria total NaN / ordenação embaralhada em silêncio.
+      return normalizarCandidatos((data as unknown as PoCandidato[] | null) ?? []);
     },
     retry: false,
     // Negado uma vez, negado sempre nesta sessão: sem isto o poll repetiria o 42501 a cada minuto,
@@ -714,12 +720,14 @@ export default function AdminReposicaoPedidos() {
         </Card>
       )}
 
-      {/* Em QUALQUER erro a lista vai vazia de propósito: o react-query preserva o `data` do último
-          sucesso, então um 42501 após uma leitura bem-sucedida (permissão revogada, troca de usuário no
-          mesmo cache) deixaria a carteira antiga na tela depois de o servidor ter negado — falha ABERTA.
-          Negado → nada; falhou → o aviso do próprio card. */}
+      {/* ACESSO NEGADO esconde os dados: o servidor acabou de dizer que este usuário não pode vê-los, e
+          o react-query preserva o `data` do último sucesso — deixá-lo na tela seria falha ABERTA.
+          FALHA DE APURAÇÃO (rede, RPC quebrada) mantém a última lista BOA e mostra o aviso junto: como a
+          chave é escopada pelo usuário, esses dados são dele mesmo, e apagá-los tiraria da tela pedido,
+          protocolo e valor legítimos por causa de um erro transitório. Sumir não é mais honesto que
+          avisar — o card diz que a informação pode estar desatualizada. */}
       <PoSumidoCard
-        candidatos={erroPosSumidos ? [] : ordenarCandidatos(posSumidos ?? [])}
+        candidatos={ehAcessoNegado(erroPosSumidos) ? [] : ordenarCandidatos(posSumidos ?? [])}
         falhaApuracao={erroPosSumidos != null && !ehAcessoNegado(erroPosSumidos)}
         apurando={apurandoPosSumidos}
       />

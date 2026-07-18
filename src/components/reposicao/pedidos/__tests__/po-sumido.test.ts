@@ -2,7 +2,9 @@ import { describe, it, expect } from 'vitest';
 import {
   acaoSugerida,
   classificarAcao,
+  contarIlegiveis,
   ehAcessoNegado,
+  normalizarCandidatos,
   ordenarCandidatos,
   resumirValores,
   type PoCandidato,
@@ -65,10 +67,13 @@ describe('acaoSugerida — NUNCA sugere cancelar (o erro de R$3k)', () => {
     expect(txt).not.toMatch(/recrie/i);
   });
 
-  it('INVARIANTE: nenhuma combinação de evidência produz sugestão de cancelamento automático', () => {
-    // Sem regex de âncora/pontuação (a 1ª versão tinha furo em "cancelamento", "cancela isso" e no
-    // "não cancele agora; cancele depois"): remove-se a ÚNICA forma permitida e exige-se que não sobre
-    // nenhum "cancel" no texto. Pega qualquer flexão, em qualquer posição, com qualquer pontuação.
+  it('INVARIANTE: nenhuma combinação de evidência manda desfazer o pedido', () => {
+    // Duas gerações de furo antes desta: (1) regex de âncora deixava passar "Faça o cancelamento" e
+    // "Não cancele agora; cancele depois"; (2) checar só "cancel" deixava passar os SINÔNIMOS — anule,
+    // exclua, remova, delete, desfaça mandam desfazer sem conter "cancel".
+    // Proibimos o IMPERATIVO (instrução), não a menção: "se o PO foi excluído" é observação legítima e
+    // precisa continuar passando; "exclua o pedido" não.
+    const IMPERATIVOS = /\b(cancele|cancelem|cancelar|anule|anular|exclua|excluir|remova|remover|delete|deletar|desfaça|desfazer|apague|apagar)\b/i;
     for (const sinal of [true, false]) {
       for (const proto of ['2097501', null]) {
         for (const status of ['sem_registro_last_seen', 'visto_em_outro_run', 'identidade_nao_interpretavel']) {
@@ -76,10 +81,20 @@ describe('acaoSugerida — NUNCA sugere cancelar (o erro de R$3k)', () => {
             algum_sinal_de_canal: sinal, portal_protocolo: proto, visto_status: status,
           }));
           const semAExcecao = txt.replace(/não cancele/gi, '');
-          expect(/cancel/i.test(semAExcecao), `instruiu cancelamento: "${txt}"`).toBe(false);
+          expect(IMPERATIVOS.test(semAExcecao), `instruiu desfazer o pedido: "${txt}"`).toBe(false);
         }
       }
     }
+  });
+
+  it('o guarda tem dente: uma copy que mandasse excluir SERIA pega', () => {
+    // Falsificação do próprio teste — sem isto, ampliar o léxico seria fé, não prova.
+    const IMPERATIVOS = /\b(cancele|cancelem|cancelar|anule|anular|exclua|excluir|remova|remover|delete|deletar|desfaça|desfazer|apague|apagar)\b/i;
+    expect(IMPERATIVOS.test('Exclua o pedido no Omie.')).toBe(true);
+    expect(IMPERATIVOS.test('Anule e refaça.')).toBe(true);
+    expect(IMPERATIVOS.test('Faça o cancelamento depois.'.replace(/não cancele/gi, ''))).toBe(false); // substantivo escapa: aceito
+    // e a MENÇÃO legítima continua passando (é o texto real de 'conferir_no_omie'):
+    expect(IMPERATIVOS.test('Confira no Omie se o PO foi excluído e decida com o histórico.')).toBe(false);
   });
 });
 
@@ -106,9 +121,39 @@ describe('resumirValores — R$ 0,00 nunca pode nascer de "não sei"', () => {
     expect(r).toEqual({ tipo: 'parcial', total: 120, comValor: 2, semValor: 1 });
   });
 
+  it('lista VAZIA é "vazio", distinto de "nenhum precificado" — a função é exportada', () => {
+    // Colapsar os dois deixaria o próximo consumidor sem distinguir "não há pedido" de "há pedidos e
+    // nenhum tem preço". O card hoje nem chama com [], mas o contrato exportado não exige lista cheia.
+    expect(resumirValores([])).toEqual({ tipo: 'vazio' });
+  });
+
   it('zero LEGÍTIMO (pedido que de fato vale 0) não vira "não apurado"', () => {
     const r = resumirValores([c({ pedido_id: 1, valor_total: 0 })]);
     expect(r).toEqual({ tipo: 'completo', total: 0 });
+  });
+});
+
+describe('normalizarCandidatos — NaN não pode entrar (a resposta chega por cast)', () => {
+  it('valor não-finito vira null: é "não apurado", não um número', () => {
+    // NaN != null é TRUE, então sem isto ele entraria na soma como valor apurado (total NaN) e no
+    // comparador NaN !== NaN devolveria NaN, que o sort lê como EMPATE — lista fora de ordem, sem erro.
+    const r = normalizarCandidatos([
+      c({ pedido_id: 1, valor_total: NaN }),
+      c({ pedido_id: 2, valor_total: Infinity }),
+      c({ pedido_id: 3, valor_total: 100 }),
+    ]);
+    expect(r.map((x) => x.valor_total)).toEqual([null, null, 100]);
+  });
+
+  it('null continua null e zero legítimo sobrevive', () => {
+    const r = normalizarCandidatos([c({ pedido_id: 1, valor_total: null }), c({ pedido_id: 2, valor_total: 0 })]);
+    expect(r.map((x) => x.valor_total)).toEqual([null, 0]);
+  });
+
+  it('NaN normalizado NÃO contamina o total nem a ordem', () => {
+    const norm = normalizarCandidatos([c({ pedido_id: 1, valor_total: NaN }), c({ pedido_id: 2, valor_total: 500 })]);
+    expect(resumirValores(norm)).toEqual({ tipo: 'parcial', total: 500, comValor: 1, semValor: 1 });
+    expect(ordenarCandidatos(norm).map((x) => x.pedido_id)).toEqual([1, 2]); // desconhecido encabeça
   });
 });
 
@@ -140,6 +185,20 @@ describe('ehAcessoNegado — separa "não pode ver" de "não consegui apurar"', 
     expect(ehAcessoNegado(undefined)).toBe(false);
     expect(ehAcessoNegado('42501')).toBe(false);
     expect(ehAcessoNegado({ code: 42501, message: 'reposicao_pos_candidatos: acesso negado' })).toBe(false);
+  });
+});
+
+describe('contarIlegiveis — quantas linhas a RPC nem conseguiu comparar', () => {
+  it('conta só identidade_nao_interpretavel', () => {
+    expect(contarIlegiveis([
+      c({ pedido_id: 1, visto_status: 'identidade_nao_interpretavel' }),
+      c({ pedido_id: 2, visto_status: 'sem_registro_last_seen' }),
+      c({ pedido_id: 3, visto_status: 'identidade_nao_interpretavel' }),
+    ])).toBe(2);
+  });
+
+  it('zero quando todas são comparáveis', () => {
+    expect(contarIlegiveis([c({ visto_status: 'visto_em_outro_run' })])).toBe(0);
   });
 });
 

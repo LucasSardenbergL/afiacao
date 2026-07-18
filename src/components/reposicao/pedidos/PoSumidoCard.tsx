@@ -5,7 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { formatBRL } from './shared';
-import { acaoSugerida, resumirValores, type PoCandidato } from './po-sumido';
+import { acaoSugerida, contarIlegiveis, resumirValores, type PoCandidato } from './po-sumido';
 
 // Seção NEUTRA (recolhida) da fila de atenção: pedidos `disparado` cujo PO NÃO apareceu no último run
 // VÁLIDO do omie-sync-pedidos-compra — ou seja, o PO sumiu do Omie mas o pedido segue disparado aqui.
@@ -39,7 +39,12 @@ export function PoSumidoCard({
   // "Não consegui apurar" ≠ "não há nada" (money-path). Se a RPC falhou, sumir em silêncio faria o
   // detector parecer saudável justamente quando ele está cego — o mesmo tipo de silêncio que deixou o
   // PO fantasma passar 7 dias despercebido. Então falha vira aviso VISÍVEL, não ausência.
-  if (falhaApuracao) {
+  //
+  // Só ocupa a tela SOZINHO quando não há lista anterior. Havendo, o aviso entra por cima dela (mais
+  // abaixo): apagar pedido, protocolo e valor legítimos por um erro de rede transitório seria trocar
+  // uma mentira por uma perda — e a lista antiga é do próprio usuário, porque a chave da query é
+  // escopada pelo principal autenticado.
+  if (falhaApuracao && candidatos.length === 0) {
     return (
       <Card className="border-border">
         <CardHeader>
@@ -76,6 +81,7 @@ export function PoSumidoCard({
 
   const comDanoAtivo = candidatos.filter((c) => c.na_janela_7d).length;
   const valores = resumirValores(candidatos);
+  const ilegiveis = contarIlegiveis(candidatos);
 
   return (
     <Card className="border-border">
@@ -89,12 +95,36 @@ export function PoSumidoCard({
               {comDanoAtivo} na janela de 7 dias
             </Badge>
           )}
+          {falhaApuracao && (
+            <Badge variant="outline" className="text-status-warning border-status-warning/40">
+              pode estar desatualizado
+            </Badge>
+          )}
         </CardTitle>
+        {/* A lista continua na tela, mas o usuário precisa saber que ela é a ÚLTIMA conhecida e não a
+            atual — "desatualizado" é informação, "sumiu" seria perda, e nenhum dos dois pode virar
+            silêncio. */}
+        {falhaApuracao && (
+          <p className="text-sm text-status-warning">
+            A última verificação falhou. A lista abaixo é a mais recente que conseguimos apurar e pode
+            estar desatualizada.
+          </p>
+        )}
         <p className="text-sm text-muted-foreground">
-          O pedido está <strong>disparado</strong> aqui, mas o PO não foi encontrado na última varredura
+          {/* "não foi CONFIRMADO", não "não foi encontrado": para as linhas com identidade ilegível a
+              RPC não chegou a comparar nada, e afirmar ausência aqui seria falso — no lugar mais lido
+              do card, já que a ressalva por linha só aparece depois de expandir. Neutralizar só o
+              título teria sido meia-correção: trocar o rótulo sem mudar a afirmação. */}
+          O pedido está <strong>disparado</strong> aqui, mas o PO não foi confirmado na última varredura
           do Omie. Dentro da janela de 7 dias isso infla o estoque e o item some do cockpit; fora dela, o
           motor já voltou a sugerir o SKU. <strong>Não cancele sem conferir</strong> — o fornecedor pode
           estar com o pedido (o portal é acionado antes do Omie).{' '}
+          {ilegiveis > 0 && (
+            <>
+              Em {ilegiveis} {ilegiveis === 1 ? 'desse pedido' : 'desses pedidos'} o código do PO não é
+              legível, então aí <strong>não foi possível comparar</strong> com o Omie.{' '}
+            </>
+          )}
           {/* Nunca imprimir R$ 0,00 quando nada foi apurado: zero afirma "não há dinheiro em jogo", e a
               verdade é "não sabemos quanto". Caso misto é SUBTOTAL declarado, jamais "total". */}
           {valores.tipo === 'nao_apurado' && (

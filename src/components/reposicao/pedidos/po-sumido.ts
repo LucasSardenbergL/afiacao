@@ -80,8 +80,26 @@ export function ehAcessoNegado(erro: unknown): boolean {
   return e.code === '42501' && typeof e.message === 'string' && e.message.includes(SENTINELA_GATE);
 }
 
+/**
+ * Normaliza o que veio da RPC ANTES de qualquer conta. A resposta chega por um cast (`as never`,
+ * porque a função ainda não está no types.ts gerado), então nada garante que `valor_total` seja um
+ * número finito. Um `NaN` que passe daqui contamina tudo em silêncio: `NaN != null` é true, então
+ * entraria na soma como se fosse valor apurado (total NaN), e no comparador `NaN !== NaN` devolve NaN,
+ * que o sort lê como EMPATE — a lista sai fora de ordem sem erro nenhum.
+ *
+ * Valor não-finito vira null, que é exatamente o que ele significa: não apurado.
+ */
+export function normalizarCandidatos(cs: readonly PoCandidato[]): PoCandidato[] {
+  return cs.map((c) =>
+    typeof c.valor_total === 'number' && Number.isFinite(c.valor_total)
+      ? c
+      : { ...c, valor_total: null },
+  );
+}
+
 /** Como apresentar a soma dos valores sem inventar número. */
 export type ResumoValor =
+  | { tipo: 'vazio' }
   | { tipo: 'nao_apurado' }
   | { tipo: 'parcial'; total: number; comValor: number; semValor: number }
   | { tipo: 'completo'; total: number };
@@ -90,13 +108,23 @@ export type ResumoValor =
  * Money-path: ausente ≠ zero. Se NENHUM pedido tem valor apurado, o resultado é "não apurado" — e não
  * R$ 0,00. `[].reduce(soma, 0)` devolvendo zero é fabricação: zero afirma "não há dinheiro em jogo",
  * quando a verdade é "não sabemos quanto". Caso misto vira SUBTOTAL declarado, nunca "total".
+ *
+ * `vazio` existe separado de `nao_apurado` porque são perguntas diferentes: "não há pedido nenhum" vs.
+ * "há pedidos e nenhum está precificado". Hoje o card só chama com lista não-vazia, mas a função é
+ * exportada — colapsar os dois deixaria bomba armada para o próximo consumidor.
  */
 export function resumirValores(cs: readonly PoCandidato[]): ResumoValor {
+  if (cs.length === 0) return { tipo: 'vazio' };
   const comValor = cs.filter((c) => c.valor_total != null);
   if (comValor.length === 0) return { tipo: 'nao_apurado' };
   const total = comValor.reduce((s, c) => s + Number(c.valor_total), 0);
   if (comValor.length === cs.length) return { tipo: 'completo', total };
   return { tipo: 'parcial', total, comValor: comValor.length, semValor: cs.length - comValor.length };
+}
+
+/** Quantas linhas a RPC não conseguiu sequer comparar com o Omie (identidade do PO ilegível). */
+export function contarIlegiveis(cs: readonly PoCandidato[]): number {
+  return cs.filter((c) => c.visto_status === 'identidade_nao_interpretavel').length;
 }
 
 /**

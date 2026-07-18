@@ -63,4 +63,37 @@ describe('PoSumidoCard — os estados em que dá para mentir', () => {
     render(<PoSumidoCard candidatos={[c()]} />);
     expect(screen.getByText(/não cancele sem conferir/i)).toBeInTheDocument();
   });
+
+  it('a copy recolhida NÃO afirma ausência: diz "não foi confirmado", não "não foi encontrado"', () => {
+    // Neutralizar só o título era meia-correção — o parágrafo logo abaixo continuava afirmando que o
+    // PO "não foi encontrado", falso para as linhas em que nem foi possível comparar.
+    render(<PoSumidoCard candidatos={[c()]} />);
+    expect(screen.getByText(/não foi confirmado na última varredura/i)).toBeInTheDocument();
+    expect(screen.queryByText(/não foi encontrado/i)).not.toBeInTheDocument();
+  });
+
+  it('havendo linha ilegível, o card recolhido DIZ que ali não deu para comparar', () => {
+    render(<PoSumidoCard candidatos={[
+      c({ pedido_id: 1, visto_status: 'identidade_nao_interpretavel' }),
+      c({ pedido_id: 2 }),
+    ]} />);
+    expect(screen.getByText(/não foi possível comparar/i)).toBeInTheDocument();
+    expect(screen.getByText(/1 desse pedido/i)).toBeInTheDocument();
+  });
+
+  it('sem linha ilegível, não inventa a ressalva', () => {
+    render(<PoSumidoCard candidatos={[c()]} />);
+    expect(screen.queryByText(/não foi possível comparar/i)).not.toBeInTheDocument();
+  });
+
+  it('falha transitória COM lista anterior: mantém os dados e marca como desatualizado', () => {
+    // Apagar pedido/protocolo/valor legítimos por um erro de rede seria trocar uma mentira por uma
+    // perda. A lista é do próprio usuário (a chave da query é escopada pelo principal).
+    render(<PoSumidoCard candidatos={[c({ fornecedor_nome: 'Sayerlack' })]} falhaApuracao />);
+    // O aviso aparece em DOIS lugares de propósito (badge no título + parágrafo), por isso texto exato
+    // em cada um: uma regex frouxa casaria os dois e o getByText exige elemento único.
+    expect(screen.getByText('pode estar desatualizado')).toBeInTheDocument();
+    expect(screen.getByText(/a última verificação falhou/i)).toBeInTheDocument();
+    expect(screen.getByText(/a reconciliar no Omie/i)).toBeInTheDocument();
+  });
 });
