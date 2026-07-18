@@ -303,7 +303,6 @@ export const MODULOS: ModuloApp[] = [
     rotaPrefixos: ["/admin"],
     gates: ["RequireStaff"],
     codigo: [
-      "src/lib/clientes-cadastro/**",
       "src/lib/clientes-nao-vinculados/**",
       "src/lib/customer-contact/**",
       "src/lib/customer-process/**",

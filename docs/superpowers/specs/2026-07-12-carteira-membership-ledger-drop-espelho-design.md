@@ -128,12 +128,41 @@ views/matviews · RLS policy em **outra** tabela · cron com SQL **inline** · F
 4. **Só então** `DROP TABLE omie_clientes` + regenerar `types.ts`.
 5. **prove-sql PG17 com falsificação** nos passos 1-2 (sabotar → exigir vermelho) + re-rodar o preflight exigindo **zero** linhas acionáveis.
 
+## 4-ter. As 2 funções de CLONE — bloqueio DISSOLVIDO por deleção (PR-C, 2026-07-18)
+
+> A PR-B escalou um bloqueio: `fetchAlvosSemProfile` + `fetchOmieCodigoPorUser` operam sobre os CLONES (user sem profile) e não podiam migrar para a proof — migrá-las zeraria `syncBackfillCadastro` e `mapaConsolidacao` em silêncio. **As duas premissas do bloqueio eram falsas.**
+
+### Premissa falsa 1 — "só o espelho tem o par (clone → código)"
+`customer_canonical_alias.alias_omie_codigo` tem o par; o ledger tem a data. Paridade medida em prod (18/07), sobre a tripla `(user_id, código, created_at/first_seen_at)`:
+
+| fonte | linhas | só nela | só na outra |
+|---|---|---|---|
+| `omie_clientes` (espelho, hoje) | 1.633 | — | — |
+| `carteira_membership_ledger ⋈ customer_canonical_alias` | **1.633** | **0** | **0** |
+
+### Premissa falsa 2 — "existem 2 processos ativos que dependem delas"
+Nenhuma tinha cron (**0 de 82**) nem chamador de UI. Rodaram **1× cada**, em jun/2026, e o `sync_state` guarda o desfecho.
+
+### Por que DELETAR e não migrar
+- **`syncBackfillCadastro` inseria 0 permanentemente.** Telemetria do único run (12/06): `alvos_total=1633` → `doc_em_outro_profile=1633` → `seriam_inseridos=0`. O gêmeo bloqueia por documento, e dar profile ao clone é **proibido** pela [spec da consolidação](2026-06-13-consolidacao-clientes-duplicados-design.md) (criaria 2 entradas para o mesmo cliente).
+- **`mapaConsolidacao` era uma bomba armada.** Gravava `status:'inactive'` **fixo**, com `dry_run` default **false** — re-executá-la é, verbatim, o rollback da B-lite que o spec documenta (*"`update customer_canonical_alias set status='inactive'` + rodar o rebuild"*): rebaixaria os **1.633 aliases `active`** de uma vez. Já constava como "bomba concreta e executável hoje" no §2 deste design.
+- **Migrar o mapa para o alias seria circular:** ele existe para *produzir* aliases; lê-los para achar clones só reencontraria os 1.633 que ele mesmo criou — para rebaixá-los.
+
+### O que a deleção NÃO fecha (importante)
+- **A canonicalização completa segue decisão legítima de produto** (`database.md` §clones, corrigido pelo `/codex challenge` #1399). Ela consome `customer_canonical_alias` como **ENTRADA** — e o `mapaConsolidacao` era o único capaz de destruí-la. **Deletar protege esse follow-up.**
+- **Dano ativo medido (18/07):** **1.459 clones** têm `farmer_client_scores` + `customer_visit_scores` realimentados por cron diário (mais fresco: 06:00 do dia). `eligible` é convenção, não fronteira: scoring/agenda/RLS não filtram. Escopo próprio — **não** bloqueia a Fatia 5.
+- **A Fatia 2 não depende delas:** o estado dos aliases vive na TABELA, não na função que a gerou.
+
+### Escopo da PR-C
+2 funções + 2 helpers de suporte (`fetchProfileDocNameMap`, `inserirProfilesComFallback`) + os puros `normalizarDocumento`/`cpf|cnpjDvValido`/`montarTelefone`/`decidirLinhaProfile` + as 2 actions do switch + `dry_run|limite|batch_id` do body + o helper espelhado `src/lib/clientes-cadastro/`. `fetchAllProfileDocs` **fica** (usada por `syncNaoVinculados`). Verificado por varredura de símbolos: nenhum escapa do bloco. Canário: `.toBe(4)` → **`.toBe(2)`** + guard `not.toContain` nos 5 símbolos, **falsificado** (reintroduzir a função → vermelho com a mensagem certa).
+
 ## 5. Fatiamento (multi-PR, aditivo → cada passo fail-safe)
 
 - **Fatia 0 — fundação (migration):** cria `carteira_membership_ledger` + backfill dos 6909 (com `first_seen_at`=`omie_clientes.created_at`) + trigger `AFTER INSERT` em `omie_clientes` (`ON CONFLICT DO NOTHING`, `source='trigger'`). O trigger cobre os 6 writers **sem tocá-los** durante a transição. **prove-sql PG17** (CREATE + RLS sob `SET ROLE` + trigger + falsificação).
 - **Fatia 1 — rebuild lê o ledger:** `carteira-rebuild:251` → ledger; reconcilia `identity_state`→eligible/quarantined; vendedor da proof. **prove-sql** (paridade do helper `rebuild-helpers` + guard). Fecha a decisão-chave.
 - **Fatia 2 — popular `identity_state`:** sync marca `ambiguous` no ledger ao deletar da proof (`:444`); `mapaConsolidacao` reflete `inactive`/`conflict`. Torna o `quarantined` real. **Independente da Fatia 1:** até rodar, todos ficam `verified` (default) → rebuild = comportamento de hoje; a Fatia 2 só ATIVA o quarantine (aditivo, fail-safe).
 - **Fatia 3 — migrar leitores de código → proof:** 6 OBEN + edges. Baixo risco (já degradados). Frontend Publish + edges.
+  - **PR-C — as 2 funções de CLONE: DELETADAS, não migradas** (ver §4-ter). Fecha o bloqueio escalado na PR-B.
 - **Fatia 4 — migrar 6 writers → RPC `register_carteira_member`:** escreve ledger (membership) + proof (`source='manual'` p/ o código account-correto) e **para** de escrever o espelho. Ordem: leitores antes dos writers; gate `AdminApprovals:92` casa com seu writer `:113`.
 - **Fatia 5 — DROP:** removido o último leitor/escritor e o trigger ocioso → migrar os **3 objetos SQL do banco** (§4-bis: `_data_health_compute` → proof, `seed_targets_faltantes` → ledger, `DROP` da órfã `omie_cliente_upsert_mapping`) → `DROP TABLE omie_clientes` + regenerar `types.ts`. **prove-sql PG17 + lovable-db-operator**. Ordem detalhada e raio de explosão em **§4-bis**.
 
