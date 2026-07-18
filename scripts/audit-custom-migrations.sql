@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 391
+-- Total de custom migrations: 392
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -432,7 +432,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260718140000', 'tint_promote_guard4_v3', '20260718140000_tint_promote_guard4_v3.sql'),
   ('20260718150000', 'fu7_helpers_rls_schema_privado', '20260718150000_fu7_helpers_rls_schema_privado.sql'),
   ('20260718160000', 'tactical_plans_eligible_fail_closed', '20260718160000_tactical_plans_eligible_fail_closed.sql'),
-  ('20260718170000', 'fu7_conserta_callers_orfaos', '20260718170000_fu7_conserta_callers_orfaos.sql')
+  ('20260718170000', 'fu7_conserta_callers_orfaos', '20260718170000_fu7_conserta_callers_orfaos.sql'),
+  ('20260718170000', 'tint_fase1c_expected_item_count', '20260718170000_tint_fase1c_expected_item_count.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -1773,7 +1774,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('fu7_conserta_callers_orfaos', 'function', 'public', 'criar_plano_tatico', ''),
   ('fu7_conserta_callers_orfaos', 'function', 'public', 'registrar_resultado_plano', ''),
   ('fu7_conserta_callers_orfaos', 'function', 'public', 'registrar_contato_rota', ''),
-  ('fu7_conserta_callers_orfaos', 'function', 'public', 'protect_master_config', '')
+  ('fu7_conserta_callers_orfaos', 'function', 'public', 'protect_master_config', ''),
+  ('tint_fase1c_expected_item_count', 'function', 'public', 'tint_promote_sync_run', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -3162,7 +3164,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('fu7_conserta_callers_orfaos', 'function', 'public', 'criar_plano_tatico', ''),
   ('fu7_conserta_callers_orfaos', 'function', 'public', 'registrar_resultado_plano', ''),
   ('fu7_conserta_callers_orfaos', 'function', 'public', 'registrar_contato_rota', ''),
-  ('fu7_conserta_callers_orfaos', 'function', 'public', 'protect_master_config', '')
+  ('fu7_conserta_callers_orfaos', 'function', 'public', 'protect_master_config', ''),
+  ('tint_fase1c_expected_item_count', 'function', 'public', 'tint_promote_sync_run', '')
 )
 SELECT
   e.migration,
