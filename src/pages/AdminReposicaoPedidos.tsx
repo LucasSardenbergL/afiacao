@@ -284,7 +284,7 @@ export default function AdminReposicaoPedidos() {
   // A RPC é a fonte: ela decide quem é candidato E carrega a evidência (protocolo/canal), com gate próprio.
   // `retry: false` de propósito: o gate nega com 42501 e repetir 3x só gera ruído — quem não pode ver não vê.
   // Distinguir NEGADO de FALHOU importa: falha vira aviso visível (ver PoSumidoCard), nunca ausência silenciosa.
-  const { data: posSumidos, error: erroPosSumidos } = useQuery({
+  const { data: posSumidos, error: erroPosSumidos, isPending: apurandoPosSumidos } = useQuery({
     queryKey: ['pedidos-ciclo', 'pos-candidatos', EMPRESA],
     queryFn: async (): Promise<PoCandidato[]> => {
       const { data, error } = await supabase.rpc('reposicao_pos_candidatos' as never, {
@@ -294,7 +294,9 @@ export default function AdminReposicaoPedidos() {
       return (data as unknown as PoCandidato[] | null) ?? [];
     },
     retry: false,
-    refetchInterval: 60_000,
+    // Negado uma vez, negado sempre nesta sessão: sem isto o poll repetiria o 42501 a cada minuto,
+    // por aba, para sempre. Falha de apuração continua repolando — essa a gente QUER que se recupere.
+    refetchInterval: (q) => (ehAcessoNegado(q.state.error) ? false : 60_000),
     staleTime: 30_000,
   });
 
@@ -712,9 +714,14 @@ export default function AdminReposicaoPedidos() {
         </Card>
       )}
 
+      {/* Em QUALQUER erro a lista vai vazia de propósito: o react-query preserva o `data` do último
+          sucesso, então um 42501 após uma leitura bem-sucedida (permissão revogada, troca de usuário no
+          mesmo cache) deixaria a carteira antiga na tela depois de o servidor ter negado — falha ABERTA.
+          Negado → nada; falhou → o aviso do próprio card. */}
       <PoSumidoCard
-        candidatos={ordenarCandidatos(posSumidos ?? [])}
+        candidatos={erroPosSumidos ? [] : ordenarCandidatos(posSumidos ?? [])}
         falhaApuracao={erroPosSumidos != null && !ehAcessoNegado(erroPosSumidos)}
+        apurando={apurandoPosSumidos}
       />
 
       <AbaixoMinimoCard
