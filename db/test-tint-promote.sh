@@ -1293,6 +1293,15 @@ VALUES ('e2000000-0000-0000-0000-0000000000c0','aaaaaaaa-0000-0000-0000-00000000
 INSERT INTO tint_staging_formulas (id, sync_run_id, account, store_code, cor_id, nome_cor, cod_produto, id_base, id_embalagem, volume_final_ml, personalizada)
 VALUES ('ff200000-0000-0000-0000-0000000000c0','e2000000-0000-0000-0000-0000000000c0','oben','L1','COR20','SemItens','P14','B14','E14',900,false);
 -- (nenhum item — o header chegou sozinho)
+SQL
+# sentinelas do header ANTES (Codex 3ª rodada: sem isto, um híbrido header-novo/receita-velha passaria)
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+DROP TABLE IF EXISTS _c20_header_antes;
+CREATE TABLE _c20_header_antes AS
+  SELECT id, preco_final_sayersystem, importacao_id, updated_at, desativada_em
+  FROM tint_formulas WHERE account='oben' AND cor_id='COR20';
+SQL
+P -v ON_ERROR_STOP=1 -q <<'SQL'
 SELECT tint_promote_sync_run('e2000000-0000-0000-0000-0000000000c0');
 SQL
 P -v ON_ERROR_STOP=1 -q <<'SQL'
@@ -1307,7 +1316,71 @@ BEGIN
   -- all-or-nothing: a fórmula INTEIRA não promove (sem híbrido header-novo/receita-velha) e loga erro.
   IF NOT EXISTS (SELECT 1 FROM tint_sync_errors WHERE entity_id='COR20' AND error_message ILIKE '%staging sem receita%') THEN
     RAISE EXCEPTION 'C20.3 FALHOU: staging sem receita não logou erro (deveria barrar a fórmula inteira)'; END IF;
-  RAISE NOTICE 'OK C20 — staging sem receita sobre fórmula COM receita: nada promovido, {AX14:10} preservada + erro';
+  -- (Codex 3ª rodada) sem snapshot do header, um HÍBRIDO header-novo/receita-velha passaria neste cenário.
+  IF EXISTS (
+    SELECT 1 FROM tint_formulas f JOIN _c20_header_antes a ON a.id = f.id
+    WHERE f.preco_final_sayersystem IS DISTINCT FROM a.preco_final_sayersystem
+       OR f.importacao_id           IS DISTINCT FROM a.importacao_id
+       OR f.updated_at              IS DISTINCT FROM a.updated_at
+       OR f.desativada_em           IS DISTINCT FROM a.desativada_em
+  ) THEN RAISE EXCEPTION 'C20.4 FALHOU: HÍBRIDO — o header de COR20 foi atualizado enquanto a receita velha ficou'; END IF;
+  RAISE NOTICE 'OK C20 — staging sem receita: nada promovido (receita E header intactos, sem híbrido) + erro';
+END $$;
+SQL
+
+echo ""
+echo "════════ CENÁRIO 21 — volume NÃO-FINITO não expande (fator NaN/Infinity) ════════"
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+-- volume_final_ml = 'Infinity' → fator = e.volume_ml/Infinity = 0 → dose expandida ZERADA mesmo com a
+-- dose bruta finita. A finitude tem de valer p/ TODOS os operandos do fator, não só p/ qtd_ml.
+INSERT INTO tint_sync_runs (id, setting_id, account, store_code, sync_type, status)
+VALUES ('e2300000-0000-0000-0000-000000000001','aaaaaaaa-0000-0000-0000-000000000001','oben','L1','formulas','complete');
+INSERT INTO tint_staging_formulas (id, sync_run_id, account, store_code, cor_id, nome_cor, cod_produto, id_base, id_embalagem, volume_final_ml, personalizada)
+VALUES ('ff230000-0000-0000-0000-000000000001','e2300000-0000-0000-0000-000000000001','oben','L1','COR23INF','VolInf','P14','B14','E14','Infinity'::numeric,false);
+INSERT INTO tint_staging_formula_itens (sync_run_id, staging_formula_id, id_corante, ordem, qtd_ml)
+VALUES ('e2300000-0000-0000-0000-000000000001','ff230000-0000-0000-0000-000000000001','AX14',1,10);
+SELECT tint_promote_sync_run('e2300000-0000-0000-0000-000000000001');
+SQL
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+DO $$
+DECLARE n int; n_ruim int;
+BEGIN
+  SELECT count(*) INTO n FROM tint_formulas WHERE account='oben' AND cor_id='COR23INF';
+  IF n <> 0 THEN RAISE EXCEPTION 'C21.1 FALHOU: volume Infinity promoveu % fórmula(s) (esperado 0)', n; END IF;
+  -- nenhuma dose zerada/não-finita entrou na receita do account
+  SELECT count(*) INTO n_ruim FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id
+    WHERE f.account='oben' AND (fi.qtd_ml = 'NaN'::numeric OR fi.qtd_ml <= 0 OR NOT (fi.qtd_ml < 'Infinity'::numeric));
+  IF n_ruim <> 0 THEN RAISE EXCEPTION 'C21.2 FALHOU: % item(ns) com dose zerada/não-finita na receita', n_ruim; END IF;
+  RAISE NOTICE 'OK C21 — volume Infinity não expande (0 fórmulas); 0 doses zeradas/não-finitas na receita';
+END $$;
+SQL
+
+echo ""
+echo "════════ CENÁRIO 23 — ANTI-REGRESSÃO: staging de run 'error' DEVE ser promovido ════════"
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+-- ⚠️ TRAVA DE LIÇÃO (Codex 3ª rodada). Uma versão intermediária desta migration filtrava o staging por
+-- tint_sync_runs.status='complete'. Medição em PROD: 129.079 dos 217.635 headers de staging de fórmula
+-- (59%) pertencem a runs marcados 'error' — o E5 marca como 'error' TODO run órfão >30min, cujo staging
+-- está ÍNTEGRO e é lido legitimamente. O filtro congelaria a maior parte do catálogo. Este cenário fica
+-- VERMELHO se alguém reintroduzir esse filtro. NÃO relaxe este assert sem contar a distribuição em prod.
+INSERT INTO tint_sync_runs (id, setting_id, account, store_code, sync_type, status)
+VALUES ('e2400000-0000-0000-0000-000000000001','aaaaaaaa-0000-0000-0000-000000000001','oben','L1','formulas','error');
+INSERT INTO tint_staging_formulas (id, sync_run_id, account, store_code, cor_id, nome_cor, cod_produto, id_base, id_embalagem, volume_final_ml, personalizada)
+VALUES ('ff240000-0000-0000-0000-000000000001','e2400000-0000-0000-0000-000000000001','oben','L1','COR24ERR','StagingDeRunError','P14','B14','E14',900,false);
+INSERT INTO tint_staging_formula_itens (sync_run_id, staging_formula_id, id_corante, ordem, qtd_ml)
+VALUES ('e2400000-0000-0000-0000-000000000001','ff240000-0000-0000-0000-000000000001','AX14',1,6);
+SELECT tint_promote_sync_run('e2400000-0000-0000-0000-000000000001');
+SQL
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+DO $$
+DECLARE n int; q numeric;
+BEGIN
+  SELECT count(*) INTO n FROM tint_formulas WHERE account='oben' AND cor_id='COR24ERR' AND desativada_em IS NULL;
+  IF n <> 1 THEN RAISE EXCEPTION 'C23.1 FALHOU: staging de run ''error'' NÃO promoveu (n=%). Alguém reintroduziu o filtro status=''complete''? Em prod isso congela 59%% do catálogo — leia o cabeçalho da migration', n; END IF;
+  SELECT fi.qtd_ml INTO q FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id JOIN tint_corantes c ON c.id=fi.corante_id
+    WHERE f.account='oben' AND f.cor_id='COR24ERR' AND c.id_corante_sayersystem='AX14';
+  IF q IS DISTINCT FROM 6 THEN RAISE EXCEPTION 'C23.2 FALHOU: receita de COR24ERR = % (esperado 6)', q; END IF;
+  RAISE NOTICE 'OK C23 — staging de run ''error'' é promovido normalmente (trava contra o filtro catastrófico)';
 END $$;
 SQL
 
