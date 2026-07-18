@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **391** custom migrations totais
-- **1352** objetos esperados (criados por estas migrations)
+- **392** custom migrations totais
+- **1353** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 390
+  - `function`: 391
   - `rls_policy`: 295
   - `index`: 223
   - `cron_job`: 150
@@ -3298,6 +3298,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.registrar_resultado_plano` | — |
 | `function` | `public.registrar_contato_rota` | — |
 | `function` | `public.protect_master_config` | — |
+
+### `20260718170000_tint_fase1c_expected_item_count.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tint_promote_sync_run` | — |
 
 ## Próximos passos por status
 

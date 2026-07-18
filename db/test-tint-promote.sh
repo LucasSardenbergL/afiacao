@@ -992,14 +992,18 @@ echo "════════ FASE 1 — aplica cadeia de fixes de prod + migra
 for MG in 20260617130000_tint_promote_preserva_preco 20260617150000_tint_promote_reexpand_skus_novos \
           20260618130000_tint_promote_e4_so_com_custo 20260622130000_tint_promote_nome_cor_fallback \
           20260622210000_tint_promote_dedup_itens_corante 20260717163000_tint_promote_fail_closed_receita_parcial \
-          20260718140000_tint_promote_guard4_v3; do
+          20260718140000_tint_promote_guard4_v3 20260718170000_tint_fase1c_expected_item_count; do
   echo "→ $MG.sql"
   P -v ON_ERROR_STOP=1 -q -f "$REPO_ROOT/supabase/migrations/$MG.sql" >/dev/null
 done
 # Sanidade: o guard 4 está no corpo aplicado (o _fl_corrompida existe na definição em runtime).
 P -tA -c "SELECT CASE WHEN pg_get_functiondef('public.tint_promote_sync_run(uuid)'::regprocedure) LIKE '%_fl_corrompida%' THEN 'OK' ELSE 'FALTA' END;" | grep -qx OK \
   || { echo "✗ FASE1: guard 4 (_fl_corrompida) não está no corpo aplicado"; exit 1; }
-echo "  ✓ corpo consolidado + guard 4 aplicado (contém _fl_corrompida)"
+# FASE 1c: o gate de integridade de transporte também precisa estar no corpo (C14-C23 rodam sobre a
+# v4 — os seeds legados não declaram expected_item_count, o que prova a NÃO-REGRESSÃO do caminho NULL).
+P -tA -c "SELECT CASE WHEN pg_get_functiondef('public.tint_promote_sync_run(uuid)'::regprocedure) LIKE '%_eu_incompleta%' THEN 'OK' ELSE 'FALTA' END;" | grep -qx OK \
+  || { echo "✗ FASE1c: gate _eu_incompleta não está no corpo aplicado"; exit 1; }
+echo "  ✓ corpo consolidado + guard 4 + gate 1c aplicados (_fl_corrompida + _eu_incompleta)"
 
 echo ""
 echo "════════ CENÁRIO 14 — receita CORROMPIDA preserva a anterior + loga erro (Guard 4) ════════"
@@ -1420,7 +1424,9 @@ END $$;
 SQL
 
 echo "── falsificação Guard 4 (prova que C14.2 'não grava parcial' tem DENTE) ──"
-MIGG="$REPO_ROOT/supabase/migrations/20260718140000_tint_promote_guard4_v3.sql"
+# FASE 1c: a migration vigente do guard4 agora é a v4 (corpo VERBATIM da v3 + gate 1c) — sabotar e
+# restaurar a v4 mantém o estado consistente p/ os cenários C24+ que rodam depois deste bloco.
+MIGG="$REPO_ROOT/supabase/migrations/20260718170000_tint_fase1c_expected_item_count.sql"
 # Cenário dedicado: COR14F boa (AX14=10, VM14=5), promovida com a migration REAL; run corrompido semeado.
 P -v ON_ERROR_STOP=1 -q <<'SQL'
 INSERT INTO tint_sync_runs (id, setting_id, account, store_code, sync_type, status)
@@ -1462,6 +1468,293 @@ P -v ON_ERROR_STOP=1 -q -f "$MIGG" >/dev/null
 P -tA -c "SELECT CASE WHEN pg_get_functiondef('public.tint_promote_sync_run(uuid)'::regprocedure) LIKE '%_fl_corrompida%' THEN 'OK' ELSE 'FALTA' END;" | grep -qx OK \
   || { echo "✗ restauração guard4 falhou"; exit 1; }
 echo "  ✓ restauração OK — guard4 de volta no corpo"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# FASE 1c — protocolo de staging como UNIDADE (expected_item_count). Cenários C24-C29 + falsificação.
+# Pós-Codex xhigh 2026-07-18: expected NÃO autoriza limpeza de receita (o conector filtra inválidos
+# antes do POST — 0/ausente não distingue base pura de corrupção filtrada; sinal explícito = Fase 1d).
+#   C24 — subconjunto (COUNT<expected) NÃO substitui receita íntegra (fecha R1: chunk perdido);
+#   C25 — subconjunto em chave NOVA não cria header nem itens (fecha R2: corrida de ingestão);
+#   C26 — expected=0 (vazio DECLARADO) ainda BARRA sobre oficial com receita (guard (c) verbatim);
+#   C27 — vazio AMBÍGUO (expected NULL) segue barrado (caminho v3/legado INTACTO);
+#   C28 — expected=0 com itens presentes é mismatch (barra);
+#   C29 — N placeholders completos (id_corante='', qtd 0/NULL) BARRAM (não são sinal de base pura).
+# ═══════════════════════════════════════════════════════════════════════════════
+echo ""
+echo "════════ CENÁRIO 24 — Fase 1c: subconjunto (COUNT<expected) NÃO substitui receita íntegra ════════"
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+-- Catálogo P24/B24/E24 (900ml) + fórmula BOA COR24 (protocolo novo: expected=2, itens {AX24:10, VM24:5}).
+INSERT INTO tint_sync_runs (id, setting_id, account, store_code, sync_type, status)
+VALUES ('e1c24000-0000-0000-0000-000000000001','aaaaaaaa-0000-0000-0000-000000000001','oben','L1','catalogs','complete');
+INSERT INTO tint_staging_produtos (sync_run_id, account, store_code, cod_produto, descricao)
+VALUES ('e1c24000-0000-0000-0000-000000000001','oben','L1','P24','Produto 24');
+INSERT INTO tint_staging_bases (sync_run_id, account, store_code, id_base_sayersystem, descricao)
+VALUES ('e1c24000-0000-0000-0000-000000000001','oben','L1','B24','Base 24');
+INSERT INTO tint_staging_embalagens (sync_run_id, account, store_code, id_embalagem_sayersystem, descricao, volume_ml)
+VALUES ('e1c24000-0000-0000-0000-000000000001','oben','L1','E24','Galão 24',900);
+INSERT INTO tint_staging_skus (sync_run_id, account, store_code, cod_produto, id_base, id_embalagem)
+VALUES ('e1c24000-0000-0000-0000-000000000001','oben','L1','P24','B24','E24');
+INSERT INTO tint_sync_runs (id, setting_id, account, store_code, sync_type, status)
+VALUES ('e1c24000-0000-0000-0000-000000000002','aaaaaaaa-0000-0000-0000-000000000001','oben','L1','formulas','complete');
+INSERT INTO tint_staging_formulas (id, sync_run_id, account, store_code, cor_id, nome_cor, cod_produto, id_base, id_embalagem, volume_final_ml, personalizada, expected_item_count)
+VALUES ('f1c24000-0000-0000-0000-000000000001','e1c24000-0000-0000-0000-000000000002','oben','L1','COR24','Boa24','P24','B24','E24',900,false,2);
+INSERT INTO tint_staging_formula_itens (sync_run_id, staging_formula_id, id_corante, ordem, qtd_ml)
+VALUES ('e1c24000-0000-0000-0000-000000000002','f1c24000-0000-0000-0000-000000000001','AX24',1,10),
+       ('e1c24000-0000-0000-0000-000000000002','f1c24000-0000-0000-0000-000000000001','VM24',2,5);
+SELECT tint_promote_sync_run('e1c24000-0000-0000-0000-000000000001');
+SELECT tint_promote_sync_run('e1c24000-0000-0000-0000-000000000002');
+SQL
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+DO $$
+DECLARE n int;
+BEGIN
+  SELECT count(*) INTO n FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id WHERE f.account='oben' AND f.cor_id='COR24';
+  IF n <> 2 THEN RAISE EXCEPTION 'C24.0 FALHOU: COR24 boa (protocolo novo íntegro) deveria ter 2 itens, achei %', n; END IF;
+  RAISE NOTICE 'OK C24.0 — protocolo novo íntegro (expected=2, 2 itens) promove normal';
+END $$;
+SQL
+# Sentinela de header + run com SUBCONJUNTO: expected=3 mas só 2 itens chegaram (chunk perdido).
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+DROP TABLE IF EXISTS _c24_header_antes;
+CREATE TABLE _c24_header_antes AS
+  SELECT id, preco_final_sayersystem, importacao_id, updated_at, desativada_em
+  FROM tint_formulas WHERE account='oben' AND cor_id='COR24';
+INSERT INTO tint_sync_runs (id, setting_id, account, store_code, sync_type, status)
+VALUES ('e1c24000-0000-0000-0000-0000000000c0','aaaaaaaa-0000-0000-0000-000000000001','oben','L1','formulas','complete');
+INSERT INTO tint_staging_formulas (id, sync_run_id, account, store_code, cor_id, nome_cor, cod_produto, id_base, id_embalagem, volume_final_ml, personalizada, expected_item_count)
+VALUES ('f1c24000-0000-0000-0000-0000000000c0','e1c24000-0000-0000-0000-0000000000c0','oben','L1','COR24','Boa24','P24','B24','E24',900,false,3);
+INSERT INTO tint_staging_formula_itens (sync_run_id, staging_formula_id, id_corante, ordem, qtd_ml)
+VALUES ('e1c24000-0000-0000-0000-0000000000c0','f1c24000-0000-0000-0000-0000000000c0','AX24',1,99),
+       ('e1c24000-0000-0000-0000-0000000000c0','f1c24000-0000-0000-0000-0000000000c0','VM24',2,99);
+SELECT tint_promote_sync_run('e1c24000-0000-0000-0000-0000000000c0');
+SQL
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+DO $$
+DECLARE n int; qax numeric; nerr int;
+BEGIN
+  -- (a) receita ÍNTEGRA preservada (10/5) — o subconjunto VÁLIDO (99/99) NÃO entrou.
+  SELECT count(*) INTO n FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id WHERE f.account='oben' AND f.cor_id='COR24';
+  IF n <> 2 THEN RAISE EXCEPTION 'C24.1 FALHOU: COR24 deveria seguir com 2 itens, achei %', n; END IF;
+  SELECT max(fi.qtd_ml) FILTER (WHERE c.id_corante_sayersystem='AX24') INTO qax
+    FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id JOIN tint_corantes c ON c.id=fi.corante_id
+    WHERE f.account='oben' AND f.cor_id='COR24';
+  IF qax IS DISTINCT FROM 10 THEN RAISE EXCEPTION 'C24.2 FALHOU: receita substituída pelo subconjunto (AX24=%, esperado 10)', qax; END IF;
+  -- (b) erro 'staging incompleto' logado com os counts certos.
+  SELECT count(*) INTO nerr FROM tint_sync_errors WHERE sync_run_id='e1c24000-0000-0000-0000-0000000000c0'
+    AND entity_type='formula_promote' AND entity_id='COR24' AND error_message LIKE '%staging incompleto%'
+    AND (error_details->>'declarados')::int = 3 AND (error_details->>'ingeridos')::int = 2;
+  IF nerr < 1 THEN RAISE EXCEPTION 'C24.3 FALHOU: incompleta não logou com declarados=3/ingeridos=2 (nerr=%)', nerr; END IF;
+  -- (c) header intacto (upsert não rodou p/ a fórmula barrada).
+  IF EXISTS (
+    SELECT 1 FROM tint_formulas f JOIN _c24_header_antes a ON a.id = f.id
+    WHERE f.preco_final_sayersystem IS DISTINCT FROM a.preco_final_sayersystem
+       OR f.importacao_id           IS DISTINCT FROM a.importacao_id
+       OR f.updated_at              IS DISTINCT FROM a.updated_at
+       OR f.desativada_em           IS DISTINCT FROM a.desativada_em
+  ) THEN RAISE EXCEPTION 'C24.4 FALHOU: header de COR24 alterado pelo run incompleto'; END IF;
+  RAISE NOTICE 'OK C24 — subconjunto (declarados=3, ingeridos=2) barrado: receita {10,5} + header intactos, erro logado';
+END $$;
+SQL
+
+echo ""
+echo "════════ CENÁRIO 25 — Fase 1c: subconjunto em chave NOVA não cria fórmula ════════"
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+INSERT INTO tint_sync_runs (id, setting_id, account, store_code, sync_type, status)
+VALUES ('e1c25000-0000-0000-0000-000000000001','aaaaaaaa-0000-0000-0000-000000000001','oben','L1','formulas','complete');
+-- Chave NOVA COR25 no catálogo P24/B24/E24 (já vendável): expected=2 mas SÓ 1 item chegou.
+INSERT INTO tint_staging_formulas (id, sync_run_id, account, store_code, cor_id, nome_cor, cod_produto, id_base, id_embalagem, volume_final_ml, personalizada, expected_item_count)
+VALUES ('f1c25000-0000-0000-0000-000000000001','e1c25000-0000-0000-0000-000000000001','oben','L1','COR25','Nova25','P24','B24','E24',900,false,2);
+INSERT INTO tint_staging_formula_itens (sync_run_id, staging_formula_id, id_corante, ordem, qtd_ml)
+VALUES ('e1c25000-0000-0000-0000-000000000001','f1c25000-0000-0000-0000-000000000001','AX24',1,7);
+SELECT tint_promote_sync_run('e1c25000-0000-0000-0000-000000000001');
+SQL
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+DO $$
+DECLARE n int; nerr int;
+BEGIN
+  SELECT count(*) INTO n FROM tint_formulas WHERE account='oben' AND cor_id='COR25';
+  IF n <> 0 THEN RAISE EXCEPTION 'C25.1 FALHOU: chave nova incompleta criou % header(s) — fórmula parcial/vazia ativa (o mal das 28.609)', n; END IF;
+  SELECT count(*) INTO nerr FROM tint_sync_errors WHERE sync_run_id='e1c25000-0000-0000-0000-000000000001'
+    AND entity_type='formula_promote' AND entity_id='COR25' AND error_message LIKE '%staging incompleto%';
+  IF nerr < 1 THEN RAISE EXCEPTION 'C25.2 FALHOU: incompleta em chave nova não logou'; END IF;
+  RAISE NOTICE 'OK C25 — chave nova com transporte incompleto: nada criado, erro logado';
+END $$;
+SQL
+
+echo ""
+echo "════════ CENÁRIO 26 — Fase 1c: expected=0 (vazio DECLARADO) ainda BARRA sobre oficial com receita ════════"
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+-- COR24 tem receita {10,5}. Chega expected=0 com 0 itens: o COUNT bate (íntegro), mas pós-Codex o
+-- expected NÃO é sinal semântico de base pura (o conector filtra inválidos antes do POST — 0 pode
+-- ser "tudo filtrado por corrupção"). O guard (c) verbatim barra: limpeza explícita é a Fase 1d.
+INSERT INTO tint_sync_runs (id, setting_id, account, store_code, sync_type, status)
+VALUES ('e1c26000-0000-0000-0000-000000000001','aaaaaaaa-0000-0000-0000-000000000001','oben','L1','formulas','complete');
+INSERT INTO tint_staging_formulas (id, sync_run_id, account, store_code, cor_id, nome_cor, cod_produto, id_base, id_embalagem, volume_final_ml, personalizada, expected_item_count)
+VALUES ('f1c26000-0000-0000-0000-000000000001','e1c26000-0000-0000-0000-000000000001','oben','L1','COR24','Boa24','P24','B24','E24',900,false,0);
+SELECT tint_promote_sync_run('e1c26000-0000-0000-0000-000000000001');
+SQL
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+DO $$
+DECLARE n int; nerr int;
+BEGIN
+  -- (a) receita PRESERVADA (expected=0 não limpa).
+  SELECT count(*) INTO n FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id WHERE f.account='oben' AND f.cor_id='COR24';
+  IF n <> 2 THEN RAISE EXCEPTION 'C26.1 FALHOU: expected=0 mexeu na receita (COR24 tem % itens, esperado 2 {10,5})', n; END IF;
+  -- (b) barrado pelo guard (c) — 'sem receita' — e NÃO pelo gate de transporte (0=0 é íntegro).
+  SELECT count(*) INTO nerr FROM tint_sync_errors WHERE sync_run_id='e1c26000-0000-0000-0000-000000000001'
+    AND entity_id='COR24' AND error_message LIKE '%sem receita%';
+  IF nerr < 1 THEN RAISE EXCEPTION 'C26.2 FALHOU: expected=0 vazio não logou o guard (c)'; END IF;
+  SELECT count(*) INTO nerr FROM tint_sync_errors WHERE sync_run_id='e1c26000-0000-0000-0000-000000000001'
+    AND entity_id='COR24' AND error_message LIKE '%staging incompleto%';
+  IF nerr <> 0 THEN RAISE EXCEPTION 'C26.3 FALHOU: 0 declarado = 0 ingerido é ÍNTEGRO — o gate de transporte não devia disparar'; END IF;
+  RAISE NOTICE 'OK C26 — expected=0 vazio: transporte íntegro, guard (c) barra, receita {10,5} intacta';
+END $$;
+SQL
+
+echo ""
+echo "════════ CENÁRIO 27 — Fase 1c: vazio AMBÍGUO (expected NULL) segue barrado (v3 preservada) ════════"
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+-- Recompõe receita em COR24 pelo protocolo novo (expected=2, {11,6}), depois manda vazio AMBÍGUO (NULL).
+INSERT INTO tint_sync_runs (id, setting_id, account, store_code, sync_type, status)
+VALUES ('e1c27000-0000-0000-0000-000000000001','aaaaaaaa-0000-0000-0000-000000000001','oben','L1','formulas','complete');
+INSERT INTO tint_staging_formulas (id, sync_run_id, account, store_code, cor_id, nome_cor, cod_produto, id_base, id_embalagem, volume_final_ml, personalizada, expected_item_count)
+VALUES ('f1c27000-0000-0000-0000-000000000001','e1c27000-0000-0000-0000-000000000001','oben','L1','COR24','Boa24','P24','B24','E24',900,false,2);
+INSERT INTO tint_staging_formula_itens (sync_run_id, staging_formula_id, id_corante, ordem, qtd_ml)
+VALUES ('e1c27000-0000-0000-0000-000000000001','f1c27000-0000-0000-0000-000000000001','AX24',1,11),
+       ('e1c27000-0000-0000-0000-000000000001','f1c27000-0000-0000-0000-000000000001','VM24',2,6);
+SELECT tint_promote_sync_run('e1c27000-0000-0000-0000-000000000001');
+-- Vazio ambíguo: header SEM expected e SEM itens (protocolo legado / corrida antiga).
+INSERT INTO tint_sync_runs (id, setting_id, account, store_code, sync_type, status)
+VALUES ('e1c27000-0000-0000-0000-0000000000c0','aaaaaaaa-0000-0000-0000-000000000001','oben','L1','formulas','complete');
+INSERT INTO tint_staging_formulas (id, sync_run_id, account, store_code, cor_id, nome_cor, cod_produto, id_base, id_embalagem, volume_final_ml, personalizada)
+VALUES ('f1c27000-0000-0000-0000-0000000000c0','e1c27000-0000-0000-0000-0000000000c0','oben','L1','COR24','Boa24','P24','B24','E24',900,false);
+SELECT tint_promote_sync_run('e1c27000-0000-0000-0000-0000000000c0');
+SQL
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+DO $$
+DECLARE n int; nerr int;
+BEGIN
+  SELECT count(*) INTO n FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id WHERE f.account='oben' AND f.cor_id='COR24';
+  IF n <> 2 THEN RAISE EXCEPTION 'C27.1 FALHOU: vazio ambíguo mexeu na receita (COR24 tem % itens, esperado 2 {11,6})', n; END IF;
+  SELECT count(*) INTO nerr FROM tint_sync_errors WHERE sync_run_id='e1c27000-0000-0000-0000-0000000000c0'
+    AND entity_id='COR24' AND error_message LIKE '%sem receita%';
+  IF nerr < 1 THEN RAISE EXCEPTION 'C27.2 FALHOU: vazio ambíguo não logou o guard (c)'; END IF;
+  RAISE NOTICE 'OK C27 — vazio ambíguo (NULL) barrado + logado: caminho v3/legado intacto';
+END $$;
+SQL
+
+echo ""
+echo "════════ CENÁRIO 28 — Fase 1c: expected=0 com itens presentes barra (mismatch) ════════"
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+INSERT INTO tint_sync_runs (id, setting_id, account, store_code, sync_type, status)
+VALUES ('e1c28000-0000-0000-0000-000000000001','aaaaaaaa-0000-0000-0000-000000000001','oben','L1','formulas','complete');
+INSERT INTO tint_staging_formulas (id, sync_run_id, account, store_code, cor_id, nome_cor, cod_produto, id_base, id_embalagem, volume_final_ml, personalizada, expected_item_count)
+VALUES ('f1c28000-0000-0000-0000-000000000001','e1c28000-0000-0000-0000-000000000001','oben','L1','COR24','Boa24','P24','B24','E24',900,false,0);
+INSERT INTO tint_staging_formula_itens (sync_run_id, staging_formula_id, id_corante, ordem, qtd_ml)
+VALUES ('e1c28000-0000-0000-0000-000000000001','f1c28000-0000-0000-0000-000000000001','AX24',1,42);
+SELECT tint_promote_sync_run('e1c28000-0000-0000-0000-000000000001');
+SQL
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+DO $$
+DECLARE n int; qax numeric; nerr int;
+BEGIN
+  SELECT count(*) INTO n FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id WHERE f.account='oben' AND f.cor_id='COR24';
+  IF n <> 2 THEN RAISE EXCEPTION 'C28.1 FALHOU: mismatch 0≠1 mexeu na receita (esperado 2 itens {11,6} preservados, achei %)', n; END IF;
+  SELECT max(fi.qtd_ml) FILTER (WHERE c.id_corante_sayersystem='AX24') INTO qax
+    FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id JOIN tint_corantes c ON c.id=fi.corante_id
+    WHERE f.account='oben' AND f.cor_id='COR24';
+  IF qax IS DISTINCT FROM 11 THEN RAISE EXCEPTION 'C28.2 FALHOU: item 42 do mismatch entrou (AX24=%)', qax; END IF;
+  SELECT count(*) INTO nerr FROM tint_sync_errors WHERE sync_run_id='e1c28000-0000-0000-0000-000000000001'
+    AND entity_id='COR24' AND error_message LIKE '%staging incompleto%';
+  IF nerr < 1 THEN RAISE EXCEPTION 'C28.3 FALHOU: mismatch 0≠1 não logou'; END IF;
+  RAISE NOTICE 'OK C28 — expected=0 com 1 item = mismatch: barrado + logado, receita {11,6} intacta';
+END $$;
+SQL
+
+echo ""
+echo "════════ CENÁRIO 29 — Fase 1c: N placeholders completos BARRAM (não são sinal de base pura) ════════"
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+-- COR24 tem {11,6}. Conjunto DECLARADO e ÍNTEGRO (expected=2, 2 linhas) mas só placeholders
+-- (id_corante='', qtd NULL/0). Pós-Codex: o conector NÃO emite placeholders (ele os OMITE) — se
+-- aparecerem é mudança de protocolo/artefato, NÃO evidência de base pura. Transporte íntegro (2=2)
+-- passa o gate 1c; o guard (c) verbatim barra (sem item válido sobre oficial COM receita).
+INSERT INTO tint_sync_runs (id, setting_id, account, store_code, sync_type, status)
+VALUES ('e1c29000-0000-0000-0000-000000000001','aaaaaaaa-0000-0000-0000-000000000001','oben','L1','formulas','complete');
+INSERT INTO tint_staging_formulas (id, sync_run_id, account, store_code, cor_id, nome_cor, cod_produto, id_base, id_embalagem, volume_final_ml, personalizada, expected_item_count)
+VALUES ('f1c29000-0000-0000-0000-000000000001','e1c29000-0000-0000-0000-000000000001','oben','L1','COR24','Boa24','P24','B24','E24',900,false,2);
+INSERT INTO tint_staging_formula_itens (sync_run_id, staging_formula_id, id_corante, ordem, qtd_ml)
+VALUES ('e1c29000-0000-0000-0000-000000000001','f1c29000-0000-0000-0000-000000000001','',1,NULL),
+       ('e1c29000-0000-0000-0000-000000000001','f1c29000-0000-0000-0000-000000000001','',2,0);
+SELECT tint_promote_sync_run('e1c29000-0000-0000-0000-000000000001');
+SQL
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+DO $$
+DECLARE n int; nerr int;
+BEGIN
+  SELECT count(*) INTO n FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id WHERE f.account='oben' AND f.cor_id='COR24';
+  IF n <> 2 THEN RAISE EXCEPTION 'C29.1 FALHOU: placeholders completos mexeram na receita (COR24 tem % itens, esperado 2 {11,6})', n; END IF;
+  SELECT count(*) INTO nerr FROM tint_sync_errors WHERE sync_run_id='e1c29000-0000-0000-0000-000000000001'
+    AND entity_id='COR24' AND error_message LIKE '%sem receita%';
+  IF nerr < 1 THEN RAISE EXCEPTION 'C29.2 FALHOU: placeholders completos não logaram o guard (c)'; END IF;
+  RAISE NOTICE 'OK C29 — placeholders completos (2=2, transporte ok): guard (c) barra, receita {11,6} intacta';
+END $$;
+SQL
+
+echo ""
+echo "── falsificação F1c (prova que o gate _eu_incompleta tem DENTE) ──"
+MIGF="$REPO_ROOT/supabase/migrations/20260718170000_tint_fase1c_expected_item_count.sql"
+# BASELINE: re-popula COR24 pelo protocolo novo íntegro (expected=2, {AX24:10, VM24:5}).
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+INSERT INTO tint_sync_runs (id, setting_id, account, store_code, sync_type, status)
+VALUES ('e1c24000-0000-0000-0000-0000000000f1','aaaaaaaa-0000-0000-0000-000000000001','oben','L1','formulas','complete');
+INSERT INTO tint_staging_formulas (id, sync_run_id, account, store_code, cor_id, nome_cor, cod_produto, id_base, id_embalagem, volume_final_ml, personalizada, expected_item_count)
+VALUES ('f1c24000-0000-0000-0000-0000000000f1','e1c24000-0000-0000-0000-0000000000f1','oben','L1','COR24','Boa24','P24','B24','E24',900,false,2);
+INSERT INTO tint_staging_formula_itens (sync_run_id, staging_formula_id, id_corante, ordem, qtd_ml)
+VALUES ('e1c24000-0000-0000-0000-0000000000f1','f1c24000-0000-0000-0000-0000000000f1','AX24',1,10),
+       ('e1c24000-0000-0000-0000-0000000000f1','f1c24000-0000-0000-0000-0000000000f1','VM24',2,5);
+SELECT tint_promote_sync_run('e1c24000-0000-0000-0000-0000000000f1');
+SQL
+NBASE1C=$(P -tA -c "SELECT count(*) FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id WHERE f.account='oben' AND f.cor_id='COR24';")
+[ "$NBASE1C" = "2" ] || { echo "✗ baseline F1c: COR24 deveria ter 2 itens, achei $NBASE1C"; exit 1; }
+echo "  ✓ baseline VERDE — COR24 re-populada {10,5} pelo protocolo íntegro"
+# SABOTAGEM: neutraliza o predicado do gate (mismatch nunca detectado) e re-aplica SÓ a função.
+sed 's/AND fl.expected_item_count <> COALESCE(si.n, 0)/AND false/' "$MIGF" > /tmp/sab-tint-1c.sql
+grep -q 'AND fl.expected_item_count <> COALESCE(si.n, 0)' /tmp/sab-tint-1c.sql && { echo "✗ sabotagem F1c: sed não neutralizou o predicado do gate"; exit 1; }
+grep -q 'AND false' /tmp/sab-tint-1c.sql || { echo "✗ sabotagem F1c: predicado não encontrado (a migration mudou?)"; exit 1; }
+P -v ON_ERROR_STOP=1 -q -f /tmp/sab-tint-1c.sql >/dev/null
+# Run SUBCONJUNTO (declarados=3, ingeridos=2, doses 77): SEM o gate, SUBSTITUI a receita.
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+INSERT INTO tint_sync_runs (id, setting_id, account, store_code, sync_type, status)
+VALUES ('e1c24000-0000-0000-0000-0000000000f2','aaaaaaaa-0000-0000-0000-000000000001','oben','L1','formulas','complete');
+INSERT INTO tint_staging_formulas (id, sync_run_id, account, store_code, cor_id, nome_cor, cod_produto, id_base, id_embalagem, volume_final_ml, personalizada, expected_item_count)
+VALUES ('f1c24000-0000-0000-0000-0000000000f2','e1c24000-0000-0000-0000-0000000000f2','oben','L1','COR24','Boa24','P24','B24','E24',900,false,3);
+INSERT INTO tint_staging_formula_itens (sync_run_id, staging_formula_id, id_corante, ordem, qtd_ml)
+VALUES ('e1c24000-0000-0000-0000-0000000000f2','f1c24000-0000-0000-0000-0000000000f2','AX24',1,77),
+       ('e1c24000-0000-0000-0000-0000000000f2','f1c24000-0000-0000-0000-0000000000f2','VM24',2,77);
+SELECT tint_promote_sync_run('e1c24000-0000-0000-0000-0000000000f2');
+SQL
+# Comparação NUMÉRICA no SQL (a promoção grava round(qtd*fator, 6) → '77.000000'; string-compare
+# no bash daria falso vermelho).
+QSAB=$(P -tA -c "SELECT (max(fi.qtd_ml) FILTER (WHERE c.id_corante_sayersystem='AX24') = 77) FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id JOIN tint_corantes c ON c.id=fi.corante_id WHERE f.account='oben' AND f.cor_id='COR24';")
+[ "$QSAB" = "t" ] || { echo "✗ F1c FALHOU: gate sabotado NÃO produziu o dano (AX24=77? $QSAB) — C24.2 não depende do gate"; exit 1; }
+echo "  ✓ gate furado — subconjunto SUBSTITUIU a receita (AX24=77): C24 tem dente"
+# RESTAURA a v4 íntegra e re-prova: novo run subconjunto (88) tem de ser BARRADO (receita segue 77).
+P -v ON_ERROR_STOP=1 -q -f "$MIGF" >/dev/null
+P -tA -c "SELECT CASE WHEN pg_get_functiondef('public.tint_promote_sync_run(uuid)'::regprocedure) LIKE '%expected_item_count <> COALESCE%' THEN 'OK' ELSE 'FALTA' END;" | grep -qx OK \
+  || { echo "✗ restauração F1c falhou (predicado do gate ausente)"; exit 1; }
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+INSERT INTO tint_sync_runs (id, setting_id, account, store_code, sync_type, status)
+VALUES ('e1c24000-0000-0000-0000-0000000000f3','aaaaaaaa-0000-0000-0000-000000000001','oben','L1','formulas','complete');
+INSERT INTO tint_staging_formulas (id, sync_run_id, account, store_code, cor_id, nome_cor, cod_produto, id_base, id_embalagem, volume_final_ml, personalizada, expected_item_count)
+VALUES ('f1c24000-0000-0000-0000-0000000000f3','e1c24000-0000-0000-0000-0000000000f3','oben','L1','COR24','Boa24','P24','B24','E24',900,false,3);
+INSERT INTO tint_staging_formula_itens (sync_run_id, staging_formula_id, id_corante, ordem, qtd_ml)
+VALUES ('e1c24000-0000-0000-0000-0000000000f3','f1c24000-0000-0000-0000-0000000000f3','AX24',1,88),
+       ('e1c24000-0000-0000-0000-0000000000f3','f1c24000-0000-0000-0000-0000000000f3','VM24',2,88);
+SELECT tint_promote_sync_run('e1c24000-0000-0000-0000-0000000000f3');
+SQL
+QRES=$(P -tA -c "SELECT (max(fi.qtd_ml) FILTER (WHERE c.id_corante_sayersystem='AX24') = 77) FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id JOIN tint_corantes c ON c.id=fi.corante_id WHERE f.account='oben' AND f.cor_id='COR24';")
+[ "$QRES" = "t" ] || { echo "✗ F1c FALHOU: v4 restaurada não barrou o run incompleto (AX24=77? $QRES — o run 88 devia ser barrado)"; exit 1; }
+echo "  ✓ restauração OK — run incompleto (88) barrado de novo: receita preservada (AX24=77)"
 
 P -v ON_ERROR_STOP=1 -q <<'SQL'
 SELECT 'TODOS OS TESTES PG17 DA PROMOÇÃO PASSARAM ✓' AS resultado;
