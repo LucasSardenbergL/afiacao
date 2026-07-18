@@ -4,6 +4,8 @@ import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import {
   type BancoPostgrest,
   montarRelatorios,
+  type MotivoSemEnvio,
+  motivoSemEnvio,
   type RelatorioCliente,
 } from "../_shared/relatorio-mensal.ts";
 // Resend usado via fetch direto à REST API (https://api.resend.com/emails) para evitar dep npm
@@ -253,8 +255,29 @@ serve(async (req) => {
       { userIdAlvo: targetUserId, agora: new Date() },
     );
 
+    // Contadores de entrega: é o que distingue "rodou e não havia para quem enviar" de
+    // "rodou e entregou". Sem eles, uma execução que entrega ZERO é indistinguível de uma
+    // bem-sucedida — foi assim que o cron entregou zero e-mails por meses sem ninguém notar.
+    // Os logs identificam por `user_id`, NUNCA por e-mail/telefone: log de edge não é lugar
+    // de dado pessoal de cliente.
+    const semContato: Record<MotivoSemEnvio, number> = { sem_email: 0, sem_canal_nenhum: 0 };
+    let enviados = 0;
+    let falhasEnvio = 0;
+
     for (const report of reports) {
-      if (sendEmail && !previewOnly && resendApiKey && report.email) {
+      // Classificado SEMPRE, inclusive em preview/`send_email:false` — "quantos clientes estão
+      // inalcançáveis" é um fato sobre o cadastro, não sobre o modo desta invocação.
+      const motivo = motivoSemEnvio(report);
+      if (motivo) {
+        semContato[motivo]++;
+        console.warn(
+          `monthly-report: user_id ${report.user_id} PULADO (${motivo}) — ` +
+          `${report.total_tools} ferramenta(s), ${report.overdue_count} atrasada(s)`,
+        );
+        continue;
+      }
+
+      if (sendEmail && !previewOnly && resendApiKey) {
         const html = generateEmailHtml(report);
 
         try {
@@ -272,14 +295,26 @@ serve(async (req) => {
             }),
           });
           if (!resp.ok) {
-            console.error(`Failed to send email to ${report.email}: HTTP ${resp.status}`);
+            falhasEnvio++;
+            console.error(`monthly-report: envio FALHOU p/ user_id ${report.user_id}: HTTP ${resp.status}`);
           } else {
-            console.log(`Email sent to ${report.email}`);
+            enviados++;
+            console.log(`monthly-report: enviado p/ user_id ${report.user_id}`);
           }
         } catch (emailErr) {
-          console.error(`Failed to send email to ${report.email}:`, emailErr);
+          falhasEnvio++;
+          console.error(`monthly-report: envio FALHOU p/ user_id ${report.user_id}:`, emailErr);
         }
       }
+    }
+
+    const puladosTotal = semContato.sem_email + semContato.sem_canal_nenhum;
+    if (puladosTotal > 0) {
+      console.warn(
+        `monthly-report: ${puladosTotal} de ${reports.length} cliente(s) com ferramenta ficaram ` +
+        `SEM relatório por falta de contato (${semContato.sem_email} sem e-mail mas com telefone, ` +
+        `${semContato.sem_canal_nenhum} sem canal nenhum).`,
+      );
     }
 
     const reportsWithWhatsApp = reports.map(report => ({
@@ -291,9 +326,15 @@ serve(async (req) => {
       email_html: previewOnly ? generateEmailHtml(report) : undefined,
     }));
 
-    return new Response(JSON.stringify({ 
-      success: true, 
+    return new Response(JSON.stringify({
+      success: true,
       reports_count: reportsWithWhatsApp.length,
+      // `success: true` + `reports_count: 0` sempre foi ambíguo entre "ninguém tem ferramenta"
+      // e "todo mundo ficou sem contato". Estes campos desambiguam sem precisar ir ao banco.
+      emails_enviados: enviados,
+      falhas_envio: falhasEnvio,
+      pulados_sem_contato: puladosTotal,
+      pulados_detalhe: semContato,
       reports: reportsWithWhatsApp,
     }), {
       status: 200,
