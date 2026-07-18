@@ -16,8 +16,12 @@
 -- **46 `portal_sayerlack` + 13 `portal_b2b`, 100% com `resposta_canal`, ZERO sem sinal de fornecedor**.
 -- O `disparar-pedidos-aprovados` só grava canal de portal — a allowlist ('omie','manual','interno') que
 -- a v2/v3 usavam NÃO corresponde a nenhum canal real: era suposição minha.
--- ⇒ Neste sistema, `disparado` implica fornecedor acionado. "Elegível a auto-cancelamento" é
---   logicamente VAZIO, e defendê-lo com heurística só criava superfície de bug.
+-- ⇒ OBSERVAÇÃO (não implicação lógica — Codex v4): em prod, todo `disparado` tem canal de portal e
+--   resposta_canal. Isso torna "elegível a auto-cancelamento" VAZIO na prática, e defendê-lo com heurística
+--   sobre campos livres só criava superfície de bug. Ressalvas honestas: (a) "portal tentado" ≠ "fornecedor
+--   compromissado" (timeout/rejeição existem); (b) `aprovado_aguardando_disparo` — hoje com ZERO registros —
+--   é, pelo nome, anterior ao disparo e poderia legitimamente não ter compromisso. Uma rota automática
+--   estreita para ESSE estado é possível no futuro, se houver garantia transacional do dispatcher.
 --
 -- Consequência para o PR3: cancelar automaticamente NÃO é seguro com os dados atuais. O caminho é
 -- (a) prova por ID no Omie (`ConsultarPedCompra`) para saber se o PO existe, e (b) decisão HUMANA
@@ -94,9 +98,12 @@ BEGIN
         WHERE t.empresa = v_empresa
           -- compara NUMERICAMENTE (não texto): '00101' e '101' são o MESMO PO. Comparar `bigint::text`
           -- com o texto cru faria o PO "desaparecer" do espelho por leading zero (Codex v3).
+          -- {1,18} dígitos: 19+ estoura o bigint e o cast DERRUBA a RPC inteira ('numeric value out of
+          -- range' — Codex v4). btrim ANTES da regex: o filtro já usava btrim, a regex não (' 00126 ' virava
+          -- NULL e o PO "desaparecia"). Comparação NUMÉRICA: '00126' e 126 são o MESMO PO.
           AND t.omie_codigo_pedido = (
-            CASE WHEN p.omie_pedido_compra_id ~ '^[0-9]+$'
-                 THEN p.omie_pedido_compra_id::bigint END
+            CASE WHEN btrim(p.omie_pedido_compra_id) ~ '^[0-9]{1,18}$'
+                 THEN btrim(p.omie_pedido_compra_id)::bigint END
           )
       ) AS po_no_espelho
     FROM public.pedido_compra_sugerido p
@@ -104,8 +111,8 @@ BEGIN
     LEFT JOIN public.reposicao_po_last_seen ls
            ON ls.empresa = v_empresa
           AND ls.omie_codigo_pedido = (
-            CASE WHEN p.omie_pedido_compra_id ~ '^[0-9]+$'
-                 THEN p.omie_pedido_compra_id::bigint END
+            CASE WHEN btrim(p.omie_pedido_compra_id) ~ '^[0-9]{1,18}$'
+                 THEN btrim(p.omie_pedido_compra_id)::bigint END
           )
     -- ⚠️ `pedido_compra_sugerido.empresa` é **text** ('OBEN'); as outras tabelas usam o ENUM empresa_reposicao.
     -- text = enum direto é erro de TIPO em runtime (PL/pgSQL late-bound: o CREATE passa, quebra ao EXECUTAR).
@@ -131,13 +138,19 @@ BEGIN
     b.canal_usado,
     -- EVIDÊNCIA, não decisão. As regexes provam PRESENÇA de compromisso; a ausência delas NÃO prova
     -- ausência de compromisso — por isso o rótulo final é 'sem_sinal_conhecido', não 'nenhum'.
+    -- Rótulos FACTUAIS: dizem o que foi OBSERVADO, não o que se conclui. 'protocolado' afirmava que HÁ
+    -- protocolo — mas portal_protocolo='N/A' e {"erro":"protocolo ausente"} também casavam, produzindo
+    -- EVIDÊNCIA FALSA (Codex v4 P1-1: o problema "chave não prova valor" migrou de rota falsa p/ rótulo falso).
+    -- E 'sem_sinal_conhecido' mentia quando canal_usado estava preenchido: o canal É um sinal (P1-2).
     CASE
-      WHEN b.portal_protocolo IS NOT NULL AND btrim(b.portal_protocolo) <> ''            THEN 'protocolado'
-      WHEN COALESCE(b.resposta_canal::text, '') ~* 'protocolo'                            THEN 'protocolo_na_resposta'
-      WHEN lower(btrim(COALESCE(b.status_envio_portal, ''))) ~ '(^|[^a-z])sucesso'        THEN 'enviado_portal'
-      WHEN COALESCE(b.resposta_canal::text, '') ~* 'fornecedor.?notificad|notificado'     THEN 'notificado'
-      WHEN b.status_envio_portal IS NOT NULL OR b.resposta_canal IS NOT NULL              THEN 'sinal_nao_reconhecido'
-      ELSE 'sem_sinal_conhecido'
+      WHEN b.portal_protocolo IS NOT NULL AND btrim(b.portal_protocolo) <> ''         THEN 'protocolo_preenchido'
+      WHEN COALESCE(b.resposta_canal::text, '') ~* 'protocolo'                         THEN 'resposta_menciona_protocolo'
+      WHEN lower(btrim(COALESCE(b.status_envio_portal, ''))) ~ '(^|[^a-z])sucesso'     THEN 'status_menciona_sucesso'
+      WHEN COALESCE(b.resposta_canal::text, '') ~* 'fornecedor.?notificad|notificado'  THEN 'resposta_menciona_notificacao'
+      WHEN b.canal_usado IS NOT NULL
+        OR b.status_envio_portal IS NOT NULL
+        OR b.resposta_canal IS NOT NULL                                               THEN 'sinal_presente_nao_reconhecido'
+      ELSE 'sem_dado_de_canal'
     END AS compromisso_fornecedor,
     b.marcador_run_id,
     b.marcador_seq
