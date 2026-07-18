@@ -3,12 +3,11 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { ilikeOr, isSearchablePostgrestTerm } from "@/lib/postgrest";
 import { useAuth } from "@/contexts/AuthContext";
-import { useReposicaoEmpresa } from "@/contexts/ReposicaoEmpresaContext";
 import { toast } from "sonner";
 import { AlertTriangle } from "lucide-react";
 import {
   PAGE_SIZE,
-  type EventoOutlier, type SkuInfo, type ImpactoData, type GrupoRow, type AcaoConfirm,
+  type EventoOutlier, type SkuInfo, type GrupoRow, type AcaoConfirm,
 } from "@/components/reposicao/alertas/types";
 import { StatsCards } from "@/components/reposicao/alertas/StatsCards";
 import { AlertasFiltros } from "@/components/reposicao/alertas/AlertasFiltros";
@@ -18,7 +17,10 @@ import { ConfirmacaoDialog } from "@/components/reposicao/alertas/ConfirmacaoDia
 
 export default function AdminReposicaoAlertas() {
   const { user } = useAuth();
-  const { empresa } = useReposicaoEmpresa();
+  // Sem `useReposicaoEmpresa`: a empresa do contexto só alimentava o recálculo
+  // pós-exclusão (removido). A lista nunca filtrou por ela — o que, aliás, deixava o
+  // recálculo ainda mais solto: dava para decidir um alerta de uma empresa e recalcular
+  // outra, a do seletor.
   const qc = useQueryClient();
 
   const [page, setPage] = useState(1);
@@ -159,19 +161,15 @@ export default function AdminReposicaoAlertas() {
     },
   });
 
-  // Impacto previsto
-  const { data: impacto } = useQuery<ImpactoData>({
-    enabled: !!drillEvento && !isSemGrupo,
-    queryKey: ["outlier-impacto", drillEvento?.id],
-    queryFn: async () => {
-      if (!drillEvento) return null;
-      const { data, error } = await supabase.rpc("estimar_impacto_exclusao_outlier", {
-        p_evento_id: drillEvento.id,
-      });
-      if (error) throw error;
-      return (data ?? null) as unknown as ImpactoData;
-    },
-  });
+  // Média do LT para a linha de referência do gráfico. Derivada do MESMO histórico que
+  // desenha os pontos — antes vinha da RPC estimar_impacto_exclusao_outlier (removida do
+  // fluxo), cuja fórmula e janela divergiam do que o gráfico plota.
+  const mediaLt = useMemo(() => {
+    if (drillEvento?.tipo === "venda_atipica") return null;
+    const rows = (historico as Array<{ lt: number }> | null) ?? [];
+    if (rows.length === 0) return null;
+    return rows.reduce((acc, r) => acc + r.lt, 0) / rows.length;
+  }, [historico, drillEvento?.tipo]);
 
   // Grupos disponíveis do fornecedor (só para sku_sem_grupo)
   const { data: gruposFornecedor } = useQuery({
@@ -237,30 +235,24 @@ export default function AdminReposicaoAlertas() {
   });
 
   const resolverMut = useMutation({
-    mutationFn: async ({ ids, decisao, just }: { ids: number[]; decisao: string; just: string }) => {
+    mutationFn: async ({ ids, just }: { ids: number[]; just: string }) => {
       const results = [];
       for (const id of ids) {
         const { data, error } = await supabase.rpc("resolver_outlier", {
           p_evento_id: id,
-          p_decisao: decisao,
+          p_decisao: "aceitar",
           p_justificativa: just || undefined,
           p_usuario_email: user?.email || undefined,
         });
         if (error) throw error;
         results.push(data);
       }
-      // Recálculo automático após exclusão
-      if (decisao === "excluir") {
-        try {
-          await supabase.rpc("atualizar_parametros_numericos_skus", { p_empresa: empresa });
-        } catch (e) {
-          console.warn("Recálculo falhou:", e);
-        }
-      }
+      // Sem recálculo aqui: o que existia rodava sobre a MESMA base, sem relação com a
+      // decisão (teatro). O recálculo do fluxo sku_sem_grupo fica — ali o LT muda de fato.
       return results;
     },
     onSuccess: (_, vars) => {
-      toast.success(`${vars.ids.length} alerta(s) ${vars.decisao === "aceitar" ? "aceito(s)" : vars.decisao === "excluir" ? "excluído(s)" : "ignorado(s)"}`);
+      toast.success(`${vars.ids.length} alerta(s) marcado(s) como revisado(s)`);
       qc.invalidateQueries({ queryKey: ["outliers-lista"] });
       qc.invalidateQueries({ queryKey: ["outlier-stats"] });
       qc.invalidateQueries({ queryKey: ["outlier-pendentes-count"] });
@@ -296,7 +288,7 @@ export default function AdminReposicaoAlertas() {
     if (!acaoConfirm) return;
     const ids = acaoConfirm.lote ? Array.from(selecionados) : drillEvento ? [drillEvento.id] : [];
     if (ids.length === 0) return;
-    resolverMut.mutate({ ids, decisao: acaoConfirm.tipo, just: justificativa });
+    resolverMut.mutate({ ids, just: justificativa });
   };
 
   return (
@@ -326,8 +318,7 @@ export default function AdminReposicaoAlertas() {
         setFiltroStatus={setFiltroStatus}
         setPage={setPage}
         selecionadosCount={selecionados.size}
-        onAceitarLote={() => setAcaoConfirm({ tipo: "aceitar", lote: true })}
-        onExcluirLote={() => setAcaoConfirm({ tipo: "excluir", lote: true })}
+        onAceitarLote={() => setAcaoConfirm({ lote: true })}
         onLimparSelecao={() => setSelecionados(new Set())}
       />
 
@@ -353,7 +344,7 @@ export default function AdminReposicaoAlertas() {
         isSemGrupo={!!isSemGrupo}
         skuInfo={skuInfo}
         historico={historico}
-        impacto={impacto}
+        mediaLt={mediaLt}
         gruposFornecedor={gruposFornecedor}
         grupoEscolhido={grupoEscolhido}
         setGrupoEscolhido={setGrupoEscolhido}
@@ -361,7 +352,7 @@ export default function AdminReposicaoAlertas() {
         onAtribuirGrupo={() => atribuirGrupoMut.mutate()}
         justificativa={justificativa}
         setJustificativa={setJustificativa}
-        onAcao={(tipo) => setAcaoConfirm({ tipo, lote: false })}
+        onAcao={() => setAcaoConfirm({ lote: false })}
       />
 
       {/* Confirmação */}

@@ -1,4 +1,4 @@
-// Dialog de confirmação de ação (aceitar/excluir/ignorar) dos Alertas de Outlier.
+// Dialog de confirmação da revisão de um alerta de outlier.
 // Extraído de src/pages/AdminReposicaoAlertas.tsx (god-component split).
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -23,15 +23,13 @@ export function ConfirmacaoDialog({
       <DialogContent>
         <DialogHeader>
           <DialogTitle>
-            Confirmar {acaoConfirm?.tipo === "aceitar" ? "aceitação" : acaoConfirm?.tipo === "excluir" ? "exclusão" : "ignorar"}
+            {acaoConfirm?.lote
+              ? `Marcar ${selecionadosCount} alerta(s) como revisado(s)`
+              : "Marcar alerta como revisado"}
           </DialogTitle>
           <DialogDescription>
-            {acaoConfirm?.lote
-              ? `Aplicar a ${selecionadosCount} alerta(s). Críticos não estão incluídos.`
-              : `Aplicar ao alerta selecionado.`}
-            {acaoConfirm?.tipo === "excluir" && (
-              <div className="mt-2 text-warning">⚠ Esta ação remove os eventos do cálculo estatístico e dispara recálculo automático dos parâmetros.</div>
-            )}
+            {acaoConfirm?.lote && "Críticos não estão incluídos. "}
+            A observação permanece no cálculo — esta tela registra a revisão, não altera parâmetros de reposição.
           </DialogDescription>
         </DialogHeader>
         {acaoConfirm?.lote && (
@@ -42,11 +40,7 @@ export function ConfirmacaoDialog({
         )}
         <DialogFooter>
           <Button variant="ghost" onClick={onClose}>Cancelar</Button>
-          <Button
-            variant={acaoConfirm?.tipo === "excluir" ? "destructive" : "default"}
-            onClick={onConfirm}
-            disabled={isPending}
-          >
+          <Button onClick={onConfirm} disabled={isPending}>
             {isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />}
             Confirmar
           </Button>
