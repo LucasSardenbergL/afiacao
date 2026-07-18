@@ -189,20 +189,32 @@ eq "C7 a_positivar lista só o elegível sem pedido" "$V" "1"
 # gate de autorização das RPCs expostas (não é o foco, mas é a fronteira)
 V=$(Pq -c "SET test.uid='$E_UID'; SET ROLE authenticated; SELECT public.get_minha_positivacao() IS NOT NULL;" | tail -1)
 eq "C8 employee lê a PRÓPRIA positivação"          "$V" "t"
+# ⚠️ NÃO sinalize "não barrou" com `RAISE EXCEPTION` genérico: ele levanta P0001, o MESMO
+# SQLSTATE do `RAISE EXCEPTION 'forbidden: master only'` da RPC → o handler `WHEN raise_exception`
+# capturaria o PRÓPRIO sentinel e o assert ficaria verde com o gate ESCANCARADO. (Achado Codex
+# xhigh no #1416; F2 abaixo falsifica.) Use uma FLAG, que não colide com SQLSTATE nenhum.
 R=$(P -tA 2>&1 <<SQL
 SET test.uid='$E_UID';
 SET ROLE authenticated;
 DO \$\$
+DECLARE v_passou boolean := false;
 BEGIN
-  PERFORM public.get_minha_positivacao_for('33333333-3333-3333-3333-333333333333'::uuid);
-  RAISE EXCEPTION 'GATE_NAO_BARROU';
-EXCEPTION
-  WHEN raise_exception THEN RAISE NOTICE 'GATE_MASTER_OK';
-  WHEN OTHERS THEN RAISE;
+  BEGIN
+    PERFORM public.get_minha_positivacao_for('33333333-3333-3333-3333-333333333333'::uuid);
+    v_passou := true;                       -- chegou aqui = o gate deixou passar
+  EXCEPTION
+    WHEN raise_exception THEN NULL;         -- P0001 = o 'forbidden: master only' ESPERADO
+    WHEN OTHERS THEN RAISE;                 -- qualquer outro erro: relança
+  END;
+  IF v_passou THEN RAISE NOTICE 'GATE_ABERTO_BUG'; ELSE RAISE NOTICE 'GATE_MASTER_OK'; END IF;
 END \$\$;
 SQL
 )
-case "$R" in *GATE_MASTER_OK*) ok "C9 employee NÃO lê positivação de outro (master-only)" ;; *) bad "C9 — veio: $R" ;; esac
+case "$R" in
+  *GATE_MASTER_OK*)  ok "C9 employee NÃO lê positivação de outro (master-only)" ;;
+  *GATE_ABERTO_BUG*) bad "C9 gate ABERTO — employee leu positivação de outro" ;;
+  *)                 bad "C9 — resultado inesperado: $R" ;;
+esac
 
 # mixgap: função IRMÃ na mesma migration, com a MESMA CTE `eleg` filtrando eligible.
 # Aqui só se prova que EXECUTA (plpgsql é late-bound: um SQL inválido passaria no CREATE
@@ -260,6 +272,42 @@ else
 fi
 P -q -f "$MIG"   # restaura a versão real
 eq "F1-restore migration real de volta"            "$(Q receita_mtd)" "1000"
+
+# F2 — abre o gate master de get_minha_positivacao_for e exige que C9 fique VERMELHO.
+# É esta sabotagem que a versão ANTERIOR do C9 não pegava: o sentinel `RAISE EXCEPTION` era
+# P0001 igual ao erro da RPC, então o handler engolia o próprio sentinel e pintava verde.
+P -q <<'SQL'
+CREATE OR REPLACE FUNCTION public.get_minha_positivacao_for(p_target uuid)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public'
+AS $function$
+BEGIN
+  -- GATE REMOVIDO (sabotagem): sem o IF NOT has_role(...,'master') THEN RAISE
+  IF p_target IS NULL THEN RAISE EXCEPTION 'target required'; END IF;
+  RETURN public._carteira_positivacao_for_owner(p_target);
+END; $function$;
+SQL
+R=$(P -tA 2>&1 <<SQL
+SET test.uid='$E_UID';
+SET ROLE authenticated;
+DO \$\$
+DECLARE v_passou boolean := false;
+BEGIN
+  BEGIN
+    PERFORM public.get_minha_positivacao_for('33333333-3333-3333-3333-333333333333'::uuid);
+    v_passou := true;
+  EXCEPTION
+    WHEN raise_exception THEN NULL;
+    WHEN OTHERS THEN RAISE;
+  END;
+  IF v_passou THEN RAISE NOTICE 'GATE_ABERTO_BUG'; ELSE RAISE NOTICE 'GATE_MASTER_OK'; END IF;
+END \$\$;
+SQL
+)
+case "$R" in
+  *GATE_ABERTO_BUG*) ok "F2 gate removido → C9 detecta (o assert tem dente de verdade)" ;;
+  *) bad "F2 removi o gate master e C9 NÃO detectou → C9 ainda é teatro. Veio: $R" ;;
+esac
+P -q -f "$MIG"   # restaura
 
 echo "──────────────────────────────"
 echo "RESULTADO: $PASS ok / $FAIL fail"
