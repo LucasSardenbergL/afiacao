@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 380
+-- Total de custom migrations: 381
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -419,7 +419,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260717120000', 'seg_customer_metrics_gate_staff', '20260717120000_seg_customer_metrics_gate_staff.sql'),
   ('20260717130000', 'seg_customer_metrics_acl_least_privilege', '20260717130000_seg_customer_metrics_acl_least_privilege.sql'),
   ('20260717154500', 'refresh_customer_metrics_automacao', '20260717154500_refresh_customer_metrics_automacao.sql'),
-  ('20260717160000', 'data_health_customer_metrics_watchdog', '20260717160000_data_health_customer_metrics_watchdog.sql')
+  ('20260717160000', 'data_health_customer_metrics_watchdog', '20260717160000_data_health_customer_metrics_watchdog.sql'),
+  ('20260718100000', 'filas_recalc_rls_master_only', '20260718100000_filas_recalc_rls_master_only.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
