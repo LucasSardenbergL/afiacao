@@ -35,11 +35,15 @@
 -- ============================================================================
 BEGIN;
 
--- Normaliza texto para decisão de "tem conteúdo?": remove TODO whitespace unicode (btrim() padrão só
--- remove espaço ASCII, então E'\t' e NBSP passavam como valor preenchido — Codex v5).
-CREATE OR REPLACE FUNCTION public.reposicao__nz(p text)
+-- Remove whitespace unicode apenas nas BORDAS. Substituiu a antiga nz(), que removia TAMBÉM o interno:
+-- isso fazia a REGEX mentir — status_envio_portal='su cesso' virava 'sucesso' e o rótulo afirmava
+-- 'status_menciona_sucesso' para um valor que NÃO menciona sucesso (Codex v8). Para "tem conteúdo?" o trim
+-- de bordas basta; para identidade existe reposicao__po_id().
+CREATE OR REPLACE FUNCTION public.reposicao__trim(p text)
 RETURNS text LANGUAGE sql IMMUTABLE PARALLEL SAFE AS
-$fn$ SELECT COALESCE(regexp_replace(p, '[[:space:]\u0085\u00a0\u1680\u2000-\u200b\u2028\u2029\u202f\u205f\u3000\ufeff]+', '', 'g'), '') $fn$;
+$fn$ SELECT COALESCE(regexp_replace(regexp_replace(p,
+       '^[[:space:]\u0085\u00a0\u1680\u2000-\u200b\u2028\u2029\u202f\u205f\u3000\ufeff]+', ''),
+       '[[:space:]\u0085\u00a0\u1680\u2000-\u200b\u2028\u2029\u202f\u205f\u3000\ufeff]+$', ''), '') $fn$;
 
 -- IDENTIDADE do PO — função SEPARADA da nz(), porque os propósitos são INCOMPATÍVEIS (Codex v6):
 --   nz() responde "tem conteúdo?" → remover whitespace INTERNO é inofensivo;
@@ -69,6 +73,7 @@ RETURNS TABLE (
   idade_dias             integer,
   dano_ativo             boolean,
   valor_total            numeric,
+  itens_sem_valor        integer,
   visto_status           text,
   po_no_espelho          boolean,
   fornecedor_nome        text,
@@ -118,7 +123,14 @@ BEGIN
       m.run_id AS marcador_run_id,
       m.seq AS marcador_seq,
       ls.run_id AS visto_run_id,
-      (SELECT sum(i.valor_linha) FROM public.pedido_compra_item i WHERE i.pedido_id = p.id) AS valor_total,
+      -- ⚠️ sum() IGNORA NULL: itens (100.00, NULL) davam 100.00, apresentando SUBTOTAL como total apurado —
+      -- fabricação de número, o que o money-path.md proíbe ("ausente ≠ zero"). Agora o total só existe se
+      -- TODOS os itens têm valor; senão NULL, e itens_sem_valor diz por quê (Codex v8).
+      (SELECT CASE WHEN count(*) FILTER (WHERE i.valor_linha IS NULL) = 0
+                   THEN sum(i.valor_linha) END
+         FROM public.pedido_compra_item i WHERE i.pedido_id = p.id) AS valor_total,
+      (SELECT count(*) FILTER (WHERE i.valor_linha IS NULL)
+         FROM public.pedido_compra_item i WHERE i.pedido_id = p.id)::integer AS itens_sem_valor,
       -- ⚠️ NULL (não FALSE) quando a identidade é ILEGÍVEL: `EXISTS(... = NULL)` retorna false, e a RPC
       -- estaria AFIRMANDO ausência no espelho sem sequer conseguir identificar o PO (Codex v7).
       -- "Não apurei" ≠ "não há" — a mesma distinção de visto_status='identidade_nao_interpretavel'.
@@ -149,8 +161,9 @@ BEGIN
     b.data_ciclo,
     b.idade_dias,
     -- DANO ATIVO = a CTE em_transito só soma disparados dos últimos 7d. Idade = PRIORIDADE, não verdade.
-    (b.idade_dias <= 7) AS dano_ativo,
+    (b.idade_dias BETWEEN 0 AND 7) AS dano_ativo,
     b.valor_total,
+    b.itens_sem_valor,
     -- ⚠️ identidade ILEGÍVEL não é "nunca visto": o LEFT JOIN não pôde nem comparar. Afirmar ausência aqui
     -- era falha ABERTA (Codex v6 P1) — e o assert J3 chegava a FIXAR esse falso-positivo como esperado.
     CASE
@@ -171,22 +184,26 @@ BEGIN
     -- ⚠️ btrim() padrão só remove ESPAÇO ASCII: E'\t' e NBSP passavam como "preenchido" (Codex v5).
     -- nz() abaixo normaliza TODO whitespace unicode antes de decidir se o campo tem conteúdo.
     CASE
-      WHEN public.reposicao__nz(b.portal_protocolo) <> ''                             THEN 'protocolo_preenchido'
+      WHEN public.reposicao__trim(b.portal_protocolo) <> ''                             THEN 'protocolo_preenchido'
       WHEN COALESCE(b.resposta_canal::text, '') ~* 'protocolo'                         THEN 'resposta_menciona_protocolo'
-      -- limite à DIREITA também: sem ele 'sucessor' virava 'menciona sucesso' (Codex v5).
-      WHEN lower(public.reposicao__nz(b.status_envio_portal)) ~ '(^|[^a-z])sucesso([^a-z]|$)' THEN 'status_menciona_sucesso'
+      -- Limite à DIREITA (senão 'sucessor' casava — Codex v5) E guarda de NEGAÇÃO: 'sem sucesso',
+      -- 'insucesso', 'falha ... sucesso' mencionam a palavra mas são evidência do OPOSTO. Rotular isso como
+      -- 'menciona_sucesso' seria literalmente verdadeiro e ENGANOSO para quem consome a evidência.
+      WHEN lower(public.reposicao__trim(b.status_envio_portal)) ~ '(^|[^a-z])sucesso([^a-z]|$)'
+       AND lower(public.reposicao__trim(b.status_envio_portal)) !~ '(sem|n[ãa]o|in|falh|erro|fail)[^a-z]*sucesso'
+      THEN 'status_menciona_sucesso'
       WHEN COALESCE(b.resposta_canal::text, '') ~* 'fornecedor.?notificad|notificado'  THEN 'resposta_menciona_notificacao'
       -- "presente" = tem CONTEÚDO (canal='' NÃO é sinal). portal_protocolo não entra aqui: se tivesse
       -- conteúdo já teria retornado 'protocolo_preenchido' acima — o ramo era redundante (Codex v6).
-      WHEN public.reposicao__nz(b.canal_usado) <> ''
-        OR public.reposicao__nz(b.status_envio_portal) <> ''
+      WHEN public.reposicao__trim(b.canal_usado) <> ''
+        OR public.reposicao__trim(b.status_envio_portal) <> ''
         OR b.resposta_canal IS NOT NULL                                               THEN 'sinal_presente_nao_reconhecido'
       ELSE 'sem_dado_de_canal'
     END AS compromisso_fornecedor,
     b.marcador_run_id,
     b.marcador_seq
   FROM base b
-  ORDER BY (b.idade_dias <= 7) DESC, b.valor_total DESC NULLS LAST, b.pedido_id;
+  ORDER BY (b.idade_dias BETWEEN 0 AND 7) DESC, b.valor_total DESC NULLS LAST, b.pedido_id;
 END;
 $$;
 
