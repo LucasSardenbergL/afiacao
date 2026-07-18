@@ -85,12 +85,15 @@ export function decidirLeituraEmbalagem(item: CapturaItemBruto): LeituraEmbalage
   const textoLinha = (item.texto_linha_raw ?? '').trim();
   const confere = textoLinha ? conferirCodigoNaLinha(textoLinha, sku) : item.codigo_confere !== false;
   if (!confere) {
+    // Eco do texto real da linha (run a5094f98: sem ele o diagnóstico do "não
+    // confere" fica cego — não dá pra saber QUAL item o portal pôs na linha).
+    const eco = textoLinha ? ` | linha: "${textoLinha.substring(0, 120)}"` : '';
     return {
       sku_portal: sku,
       resultado: 'falha',
       preco: null,
       fonte: null,
-      detalhe: 'item selecionado na linha não confere com o sku_portal esperado — preço não gravado (precisão > recall)',
+      detalhe: `item selecionado na linha não confere com o sku_portal esperado — preço não gravado (precisão > recall)${eco}`,
     };
   }
   const pv = parseBRL(item.preco_venda_raw ?? '');
