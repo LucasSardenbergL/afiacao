@@ -196,6 +196,7 @@ export const MODULOS: ModuloApp[] = [
       "src/pages/__tests__/SalesQuotes.accountGuard.test.tsx",
       "src/pages/__tests__/SalesQuotes.priceGuard.test.tsx",
       "src/pages/__tests__/displayReaders.viewFresca.test.ts",
+      "src/pages/__tests__/writersCarteiraRpc.fatia4.test.ts",
     ],
     risco: { moneyPath: true, offlineFirst: false, authSensitive: false },
   },

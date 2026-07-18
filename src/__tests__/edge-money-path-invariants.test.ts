@@ -637,19 +637,24 @@ describe('guardrail money-path: omie-sync self-service USA view fresca account-c
       count(src, '.eq("account", "colacor_sc")'),
       'cada uma das 3 leituras da view DEVE filtrar account=colacor_sc (fail-closed por-conta)',
     ).toBe(3);
-    // O espelho poluído só pode restar como WRITER (o write-back INSERT → Fatia 4), nunca como LEITOR.
+    // [Fatia 4] O write-back saiu do espelho p/ a RPC: este edge não toca mais omie_clientes, em via
+    // nenhuma. Zero é o teto — qualquer reaparição é reversão de deploy do Lovable ou regressão.
     expect(
       count(src, '.from("omie_clientes")'),
-      'REGRESSÃO: omie_clientes voltou como LEITOR (deveria restar só o write-back INSERT)',
-    ).toBe(1);
+      'REGRESSÃO: omie_clientes voltou ao omie-sync (o write-back migrou p/ register_carteira_member na Fatia 4)',
+    ).toBe(0);
+    // O write-back continua existindo — só mudou de destino. Some-lo silenciosamente deixaria o vínculo
+    // do self-service sem registro nenhum (nem ledger, nem proof).
     expect(
       src,
-      'REGRESSÃO: o único omie_clientes restante não é o write-back (upsert) — leitura do espelho voltou?',
-    ).toMatch(/\.from\("omie_clientes"\)\s*\.upsert\(/);
+      'REGRESSÃO: sumiu o write-back do vínculo self-service (deveria chamar register_carteira_member)',
+    ).toMatch(/\.rpc\("register_carteira_member"/);
+    // A conta é o coração do fail-closed: colacor_sc é a conta que TODO este caminho consulta. Gravar
+    // com outra conta anexaria o cliente ao vendedor errado.
     expect(
       src,
-      'REVERSÃO Lovable? voltou a .select() do espelho poluído omie_clientes no caminho money-path',
-    ).not.toMatch(/\.from\("omie_clientes"\)\s*\.select/);
+      'REGRESSÃO: o write-back do self-service não grava mais na conta colacor_sc',
+    ).toMatch(/register_carteira_member"[\s\S]{0,200}p_account:\s*"colacor_sc"/);
   });
 
   it('fallback API do PEDIDO é fail-closed: registros:2 + guard de truncamento (não 1=last-write-wins)', () => {
@@ -1006,11 +1011,28 @@ describe('guardrail money-path: omie-analytics-sync popula identity_state no led
     expect(marcacao, 'a marcação de ambiguous não está gateada em account==="vendas" → flapping entre contas').not.toBeNull();
   });
 
-  it('o ledger NUNCA recebe INSERT/upsert aqui — quem popula é o trigger da Fatia 0 (acumulador)', () => {
+  // [ATUALIZADO na Fatia 4] Este invariante dizia "o ledger NUNCA recebe INSERT/upsert aqui — quem
+  // popula é o trigger da Fatia 0". Isso valia enquanto o trigger existia. A Fatia 4 corta o writer do
+  // espelho, e a Fatia 5 dropa a tabela — o trigger `AFTER INSERT` cai junto. Se o bulk não passasse a
+  // popular o ledger direto, NENHUM cliente novo entraria na carteira depois do DROP (sem vendedor, sem
+  // comissão, em silêncio). Medido em 18/07: ledger = 6909 linhas, TODAS source='backfill' — zero
+  // 'trigger', a via de admissão já estava inerte.
+  // O que o invariante protege AGORA não é "não escreva", é "escreva sem destruir": o acumulador exige
+  // ON CONFLICT DO NOTHING, senão o upsert sobrescreve `first_seen_at` e RESSUSCITA quarantinado
+  // (ambiguous → verified = comissão sobre cliente de identidade desconhecida).
+  it('o ledger só recebe update/select/upsert — e TODO upsert é acumulador (ignoreDuplicates)', () => {
     const blocos = src.match(/from\(["']carteira_membership_ledger["']\)\s*\.\w+/g) ?? [];
     expect(blocos.length, 'sentinela: não achei acesso ao ledger no sync').toBeGreaterThan(0);
     for (const b of blocos) {
-      expect(b, `o sync está escrevendo no ledger com algo que não é update/select ("${b}") — o ledger é acumulador; inserir aqui fura o trigger da Fatia 0`).toMatch(/\.(update|select)$/);
+      expect(b, `acesso destrutivo ao ledger ("${b}") — delete/insert cru fura o acumulador`).toMatch(/\.(update|select|upsert)$/);
+    }
+    // CADA upsert (não "algum") precisa do ignoreDuplicates: um único sem ele já ressuscita quarantinado.
+    const upserts = src.match(/from\(["']carteira_membership_ledger["']\)[\s\S]{0,240}?\.upsert\([\s\S]{0,240}?\)/g) ?? [];
+    for (const u of upserts) {
+      expect(
+        u,
+        'upsert no ledger SEM ignoreDuplicates: sobrescreve first_seen_at e devolve um quarantinado a verified (comissão indevida)',
+      ).toMatch(/ignoreDuplicates:\s*true/);
     }
   });
 });
@@ -1368,8 +1390,12 @@ describe('guardrail money-path: omie-sync-sku-items (fila de leadtime)', () => {
 // ausentes do espelho: colacor 5.148/5.148 (100%), colacor_sc 3.604/5.275 (68%), oben 0/5.238 (0%).
 // Rodar o snapshot de colacor/colacor_sc reportava clientes VINCULADOS como não-vinculados em massa;
 // só oben roda hoje, o que mascarava o furo. Agora o Set vem da fresca com .eq("account", empresa).
-// O omie_clientes que sobra neste edge é o par indivisível do WRITER: :238 fetchOmieClienteUserMap
-// alimenta o upsertByUser CODE-FIRST do upsert (:515) → morrem juntos na Fatia 4.
+// O omie_clientes que sobra neste edge é a leitura :240 fetchOmieClienteUserMap, que alimenta o
+// upsertByUser CODE-FIRST. [CORRIGIDO na Fatia 4] esta baseline dizia que ela era "par indivisível do
+// WRITER (:515) → morrem juntos na Fatia 4" — o writer morreu e ela NÃO: `userByCodigo` também chaveia
+// `tagsByUser` e a própria lista code-first, que na Fatia 4 passou a alimentar o LEDGER (o writer do
+// espelho virou upsert no ledger). É a code-first que cobre os ~1633 aliases fiscais ausentes da proof
+// document-first — trocá-la pela proof ENCOLHERIA a membership. Resíduo estrutural da Fatia 5.
 //
 // ── PR-C: as 2 funções de CLONE foram DELETADAS (não migradas) ────────────────────────────────
 // fetchAlvosSemProfile/fetchOmieCodigoPorUser (+ syncBackfillCadastro/mapaConsolidacao) liam o
@@ -1424,13 +1450,32 @@ describe('guardrail money-path: snapshot de não-vinculados lê a proof por cont
     ).not.toMatch(/fetch omie_clientes codigos/);
   });
 
-  it('o que resta de omie_clientes é SÓ o par do writer — nunca mais', () => {
-    // Trava o escopo: 2 = a leitura de suporte CODE-FIRST + o upsert. Era 4 antes da PR-C (as 2
-    // funções de clone). Se virar 3, alguém reabriu uma leitura do espelho neste edge.
+  it('o que resta de omie_clientes é SÓ a leitura code-first — nunca mais', () => {
+    // Trava o escopo: 1 = a leitura de suporte CODE-FIRST (:240). Era 4 antes da PR-C (que deletou as 2
+    // funções de clone), 2 depois dela, e 1 agora que a Fatia 4 tirou o WRITER — o upsert do espelho
+    // virou upsert no LEDGER. Se virar 2, alguém reabriu uma leitura ou reintroduziu o writer.
     expect(
       count(src, '.from("omie_clientes")'),
-      'omie_clientes mudou de contagem neste edge — leitura nova do espelho ou migração não registrada aqui',
-    ).toBe(2);
+      'omie_clientes mudou de contagem neste edge — leitura nova do espelho ou writer reintroduzido',
+    ).toBe(1);
+    // A leitura que sobra NÃO morreu com o writer, como a baseline supunha: userByCodigo também chaveia
+    // tagsByUser e a lista code-first que agora alimenta o ledger — e é a code-first que cobre os ~1633
+    // aliases fiscais que a proof document-first nunca vê. Resíduo estrutural da Fatia 5.
+    expect(
+      src,
+      'REGRESSÃO: o espelho omie_clientes voltou a ser ESCRITO neste edge (a Fatia 4 o desacoplou)',
+    ).not.toMatch(/\.from\("omie_clientes"\)\s*\.(insert|upsert|update|delete)\(/);
+    // E a membership tem de continuar sendo alimentada: sem isto, nenhum cliente novo entra na carteira
+    // depois que a Fatia 5 dropar o espelho e o trigger AFTER INSERT cair junto.
+    expect(
+      src,
+      'REGRESSÃO: o bulk parou de alimentar o ledger — admissão de membro novo morre no DROP da Fatia 5',
+    ).toMatch(/\.from\("carteira_membership_ledger"\)\s*\.upsert\(/);
+    expect(
+      src,
+      'REGRESSÃO: o upsert do ledger perdeu o ignoreDuplicates — sobrescreveria first_seen_at e ' +
+        'RESSUSCITARIA quarantinado (ambiguous → verified = comissão indevida)',
+    ).toMatch(/carteira_membership_ledger"\)[\s\S]{0,160}ignoreDuplicates:\s*true/);
   });
 
   it('PR-C: as 2 funções de clone não voltaram (re-adicioná-las rearma o rollback da B-lite)', () => {
@@ -1462,7 +1507,8 @@ describe('guardrail money-path: snapshot de não-vinculados lê a proof por cont
 //     (código OBEN) e resolve o MESMO código com .eq('account','oben') logo antes de invocar (#1331);
 //   • sync_all_clients   → conta do account_index (useAnalyticsSync itera "Conta N/3", 0→2);
 //   • sync_addresses     → multi-conta por natureza: usa o account de CADA linha da proof (não filtra uma).
-// Restam 3 omie_clientes, todos WRITERS (inserts → migram na Fatia 4 p/ register_carteira_member).
+// [Fatia 4] Os 3 WRITERS que restavam migraram para a RPC `register_carteira_member`, que escreve as
+// duas pontas (ledger + proof) e não toca mais o espelho — este edge foi a ZERO.
 // A paridade textual pega a reversão do deploy do Lovable (armadilha do #1272). Ver design §4/§5.
 const OMIE_CLIENTE = 'supabase/functions/omie-cliente/index.ts';
 const UNIFIED_ORDER = 'src/hooks/useUnifiedOrder.ts';
@@ -1498,24 +1544,33 @@ describe('guardrail money-path: omie-cliente lê a proof fresca account-correta 
     expect(src).toContain('sync_addresses');
   });
 
-  it('os 3 LEITORES vêm da view fresca; omie_clientes só resta como WRITER', () => {
+  it('os 3 LEITORES vêm da view fresca e os 3 WRITERS migraram para a RPC (Fatia 4)', () => {
     expect(
       count(src, '.from("omie_customer_account_map_fresco")'),
       'REVERSÃO Lovable? sumiu leitura da view fresca (esperado 3: criar_perfil_local, sync_all_clients, sync_addresses)',
     ).toBe(3);
+    // [Fatia 4] Os 3 writers INSERT viraram 3 chamadas da RPC. Este edge não toca mais o espelho.
     expect(
       count(src, '.from("omie_clientes")'),
-      'REGRESSÃO: omie_clientes voltou como LEITOR (deveria restar só os 3 writers INSERT → Fatia 4)',
-    ).toBe(3);
-    // Os 3 restantes TÊM de ser inserts: contar == 3 sozinho não impede trocar um insert por um select.
+      'REGRESSÃO: omie_clientes voltou ao omie-cliente (os 3 writers migraram p/ register_carteira_member)',
+    ).toBe(0);
+    // Contar 0 sozinho não prova que os writers sobreviveram — some-los deixaria o cliente sem vínculo
+    // nenhum, falha silenciosa pior que o espelho poluído.
     expect(
-      (src.match(/\.from\("omie_clientes"\)\s*\.insert\(/g) ?? []).length,
-      'REGRESSÃO: algum dos 3 omie_clientes restantes deixou de ser o writer INSERT',
+      count(src, '.rpc("register_carteira_member"'),
+      'REGRESSÃO: os 3 writers de vínculo do omie-cliente não são mais 3 (perdeu um caminho de admissão?)',
     ).toBe(3);
+    // A conta de cada writer é o que impede anexar o cliente ao vendedor de OUTRA conta: os 2 do
+    // criar_perfil_local são 'oben' (o chamador é o fluxo de vendas OBEN) e o do sync_all_clients usa a
+    // conta do run. Nenhum pode virar literal errado nem cair no default.
+    expect(
+      (src.match(/p_account:\s*"oben"/g) ?? []).length,
+      'REGRESSÃO: os writers do criar_perfil_local perderam a conta oben (chamador é o fluxo OBEN)',
+    ).toBe(2);
     expect(
       src,
-      'REVERSÃO Lovable? voltou a .select() do espelho poluído omie_clientes (código de conta indeterminada)',
-    ).not.toMatch(/\.from\("omie_clientes"\)\s*\.select/);
+      'REGRESSÃO: o writer do sync_all_clients não usa mais a conta DO RUN (account.account)',
+    ).toMatch(/p_account:\s*account\.account/);
   });
 
   it('a credencial Omie carrega o slug canônico da conta (não o índice instável nem o nome de UI)', () => {
@@ -1523,8 +1578,11 @@ describe('guardrail money-path: omie-cliente lê a proof fresca account-correta 
     // OMIE_OBEN_APP_KEY faria o índice 1 virar Colacor e o filtro de conta mentir em silêncio.
     expect(src, 'sumiu o slug canônico do OmieAccountConfig — o filtro de conta volta a depender do índice')
       .toMatch(/account:\s*OmieAccountSlug/);
+    // Lookbehind `(?<!p_)`: a Fatia 4 introduziu `p_account: "oben"` nas chamadas da RPC, que contém
+    // `account: "oben"` como SUBSTRING — sem a âncora, os writers inflariam a contagem das declarações
+    // de credencial e o assert passaria a medir outra coisa.
     expect(
-      count(src, 'account: "colacor_sc"') + count(src, 'account: "oben"') + count(src, 'account: "colacor"'),
+      (src.match(/(?<!p_)account:\s*"(?:colacor_sc|oben|colacor)"/g) ?? []).length,
       'as 3 contas devem declarar seu slug canônico (domínio do CHECK chk_ocam_account)',
     ).toBe(3);
   });
@@ -1683,10 +1741,14 @@ describe('guardrail money-path: omie-cliente não fabrica identidade (hardening 
       bloco,
       'REGRESSÃO: falha no insert de profiles deixou de abortar o cliente (segue para vínculo e endereço)',
     ).toMatch(/if \(profileError\)[\s\S]{0,240}accErrors\+\+;[\s\S]{0,60}continue;/);
+    // [Fatia 4] O vínculo saiu do espelho para a RPC `register_carteira_member` (ledger + proof). O que
+    // este assert protege é inalterado e continua valendo: o supabase-js devolve `{error}` em vez de
+    // lançar, então ignorar o retorno marcaria como "importado" um cliente SEM vínculo — que some do
+    // dedup e é recriado na execução seguinte (a fábrica de clones do #1425, agora sobre a RPC).
     expect(
       bloco,
-      'REGRESSÃO: o insert do vínculo voltou a ignorar o retorno — "importado" sem vínculo é recriado na próxima execução',
-    ).toMatch(/const \{ error: mappingError \} = await adminClient\.from\("omie_clientes"\)\.insert\(/);
+      'REGRESSÃO: a escrita do vínculo voltou a ignorar o retorno — "importado" sem vínculo é recriado na próxima execução',
+    ).toMatch(/const \{ error: mappingError \} = await adminClient\.rpc\("register_carteira_member"/);
     expect(bloco, 'REGRESSÃO: falha no vínculo deixou de contar erro').toMatch(
       /if \(mappingError\)[\s\S]{0,240}accErrors\+\+;/,
     );
