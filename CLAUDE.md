@@ -54,7 +54,7 @@ Diário de PR/entregas: `docs/historico/` (`bugs-resolvidos.md`, `programas-vend
 
 ## Merge (auto)
 
-Todo PR não-draft **auto-mergeia (squash) quando o CI `validate` passa** (`.github/workflows/auto-merge.yml`, zero clique do founder). Para **segurar** um PR, deixe-o **DRAFT**. Nunca `gh pr merge --admin` de rotina (o auto-merge espera o verde — não bypassa o CI). **Ao criar/atualizar PR: arme `scripts/pr-watch.sh <nº>` em background** (Bash `run_in_background:true`) e, no desfecho, avise via PushNotification (mergeado/conflito/CI vermelho) — o founder não fica de poller. **Exit 6 ≠ 5:** 5 = consultei e o PR segue sem desfecho; **6 = NÃO consegui consultar** (rede/rate-limit/máquina dormindo) → estado DESCONHECIDO, confirme com `gh pr view <nº>` **antes** de avisar — reportar "não mergeou" num 6 é falso negativo (o #1396 tinha mergeado).
+Todo PR não-draft **auto-mergeia (squash) quando o CI `validate` passa** (`.github/workflows/auto-merge.yml`, zero clique do founder). Para **segurar** um PR, deixe-o **DRAFT**. Nunca `gh pr merge --admin` de rotina (o auto-merge espera o verde — não bypassa o CI). **Ao criar/atualizar PR: arme `scripts/pr-watch.sh <nº>` em background** (Bash `run_in_background:true`) e, no desfecho, avise via PushNotification (mergeado/conflito/CI vermelho) — o founder não fica de poller. **Exit 6 ≠ 5:** 5 = consultei e o PR segue sem desfecho; **6 = NÃO consegui consultar** (rede/rate-limit/máquina dormindo) → estado DESCONHECIDO, confirme com `gh pr view <nº>` **antes** de avisar — reportar "não mergeou" num 6 é falso negativo (o #1396 tinha mergeado). A janela conta **vigília**, não relógio de parede (o tempo suspenso volta pro deadline) → watcher vivo além dos N min nominais é esperado, não travamento.
 
 ## Produto
 
