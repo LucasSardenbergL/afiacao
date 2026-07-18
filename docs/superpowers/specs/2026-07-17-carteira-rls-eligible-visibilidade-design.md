@@ -145,7 +145,8 @@ identidade ambígua ficar vivo (hoje 0 ambíguos).
 2. O gate é **total** (`_uid IS NOT NULL AND …`, nunca NULL) → callers `IF NOT gate()` são fail-closed.
 3. **NÃO é verdade** que "todos os leitores usam `WHERE eligible`". Continuam eligible-**blind**, por design:
    os braços de **autoria** (`farmer_id`/`visited_by = auth.uid()`) em recommendations/calls/visits/bundle;
-   **`pode_ver_carteira_completa`** (gestor/master); e **edge functions com `service_role`** (bypassam RLS).
+   **`pode_ver_carteira_completa`** (gestor/master — **decisão explícita `master-as-auditor`**, §8-FU4);
+   e **edge functions com `service_role`** (bypassam RLS).
 4. Para **fornecedor-excluído / clone-escondido**, o resíduo de autoria é aceitável (o vendedor já conhece
    esses clientes; não é caso de esconder identidade). Para **identidade-ambígua** (futuro) o braço de
    autoria é um **gap de reidentificação aberto** (Codex §5) → FU1.
@@ -190,11 +191,24 @@ construídos aqui:
   `master OR employee` → qualquer funcionário lê pares `(cliente,owner)` mascarados (ids-only, transiente).
   Estreitar p/ master/service ou carteira-scoped. Reaplicar `eligible` no consumo/comissão, não só no
   enqueue (Codex §1.4-6).
-- **FU4 — modelo de auditoria do gestor:** decidir se `pode_ver_carteira_completa` deve respeitar a máscara
-  ou se o quarantine precisa de superfície de auditoria dedicada. Default hoje: **master-as-auditor**
-  (vê tudo via `Master manage`). (Codex §2.)
-- **FU5 — `criar_plano_tatico` caller `IS NOT TRUE`:** micro-hardening (redundante dado o gate total; belt
-  contra refactor futuro do gate). (Codex §1.2/§4.2.)
+- **FU4 — modelo de auditoria do gestor: ✅ RESOLVIDO (decisão do founder, 2026-07-17) → `master-as-auditor`.**
+  O gestor (`pode_ver_carteira_completa`: employee + gerencial/estratégico/super_admin) **segue lendo** os
+  artefatos de cliente mascarado; só o **master** audita o quarantine (vê tudo via `Master manage` +
+  o braço `master` do gate). **Zero mudança de RLS** — o comportamento vigente vira escolha explícita, não
+  acidente. A assimetria conhecida fica registrada: o gestor não-master vê o *artefato* mas **não** a linha
+  de `carteira_assignments` que explica owner/source/eligible. **Gatilho pra reabrir:** se um gestor
+  não-master virar owner de linha `eligible=false` (hoje: nenhum — os 3 owners são o master + 2 farmers),
+  ou se auditoria de quarantine virar necessidade operacional → aí sim avaliar RPC/view dedicada
+  (o Codex §2 veta alargar acesso à tabela sem escolher o modelo).
+- **FU5 — `criar_plano_tatico` caller `IS NOT TRUE`: ✅ RESOLVIDO → DESCARTADO por redundância guardada.**
+  Não é bug: `has_role` é `SELECT EXISTS(...)` (nunca NULL), o gate é **total** por construção e a função
+  já guarda `_uid IS NULL` antes. O que torna o descarte seguro **não é a promessa deste doc** — é o
+  assert **A6** do harness commitado (`db/test-carteira-visivel-eligible.sh`, *"gate NUNCA retorna NULL"*):
+  se alguém enfraquecer a totalidade do gate, **A6 fica vermelho** e pega exatamente o cenário que o cinto
+  cobriria. Reescrever 60 linhas de função money-path (risco de transcrição real) por um cinto já coberto
+  por teste seria trocar risco por risco. **Gatilho pra reabrir:** se A6 for removido/enfraquecido, ou se o
+  gate deixar de ser total → aí o caller precisa de `IS NOT TRUE`. (Codex §1.2/§4.2 — premissa dele
+  verificada e refutada: ver §3.1.)
 - **FU6 — `eligible DEFAULT true` é fail-open** p/ um writer futuro de identidade não-resolvida (estado
   inicial seguro = pending/false). (Codex §4.1.)
 - **FU7 — hardening repo-wide de SECURITY DEFINER:** `search_path` com `pg_temp` por último + mover helpers
