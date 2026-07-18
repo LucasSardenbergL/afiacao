@@ -12,7 +12,7 @@
 const APP_URL = Deno.env.get("APP_URL") ?? "https://steu.lovable.app";
 ```
 
-Padrão em `gerar-pedidos-diario`/`disparar-pedidos-aprovados`. O guard `src/__tests__/edge-app-url.test.ts` quebra o CI se alguma edge voltar a citar host nu ou o domínio morto (#1409: o CTA "Agendar Afiação" do `monthly-report` apontava para o 404 — e só era renderizado para o cliente COM ferramenta atrasada, o de maior intenção).
+Padrão em `gerar-pedidos-diario`/`disparar-pedidos-aprovados`. O guard `src/__tests__/edge-app-url.test.ts` quebra o CI se alguma edge voltar a citar host nu ou o domínio morto (#1413: o CTA "Agendar Afiação" do `monthly-report` apontava para o 404 — e só era renderizado para o cliente COM ferramenta atrasada, o de maior intenção).
 
 Como provar o que está **SERVIDO** nesse host (hash do index + grep nos chunks): skill `lovable-deploy-verify` — o método vive lá, não é duplicado aqui.
 
