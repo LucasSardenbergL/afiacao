@@ -13850,6 +13850,13 @@ export type Database = {
             referencedRelation: "tint_formulas"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "tint_formula_itens_formula_id_fkey"
+            columns: ["formula_id"]
+            isOneToOne: false
+            referencedRelation: "v_tint_formula_canonica"
+            referencedColumns: ["id"]
+          },
         ]
       }
       tint_formulas: {
@@ -15170,6 +15177,13 @@ export type Database = {
             columns: ["formula_id"]
             isOneToOne: false
             referencedRelation: "tint_formulas"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tint_vendas_itens_formula_id_fkey"
+            columns: ["formula_id"]
+            isOneToOne: false
+            referencedRelation: "v_tint_formula_canonica"
             referencedColumns: ["id"]
           },
           {
@@ -17784,7 +17798,22 @@ export type Database = {
           tem_receita: boolean | null
           updated_at: string | null
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "tint_formulas_sku_id_fkey"
+            columns: ["sku_id"]
+            isOneToOne: false
+            referencedRelation: "tint_skus"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tint_formulas_subcolecao_id_fkey"
+            columns: ["subcolecao_id"]
+            isOneToOne: false
+            referencedRelation: "tint_subcolecoes"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       v_titulo_baixas: {
         Row: {
@@ -19089,6 +19118,8 @@ export type Database = {
         }
         Returns: undefined
       }
+      reposicao__po_id: { Args: { p: string }; Returns: number }
+      reposicao__trim: { Args: { p: string }; Returns: string }
       reposicao_alerta_pedido_minimo_tick: { Args: never; Returns: undefined }
       reposicao_alocar_run_seq: { Args: never; Returns: number }
       reposicao_aplicar_depara_sayerlack_auto: {
@@ -19125,6 +19156,32 @@ export type Database = {
       reposicao_persistir_qtde_inteira: {
         Args: { p_pedido_id: number }
         Returns: number
+      }
+      reposicao_pos_candidatos: {
+        Args: { p_empresa: string }
+        Returns: {
+          algum_sinal_de_canal: boolean
+          canal_usado: string
+          data_ciclo: string
+          fornecedor_nome: string
+          idade_dias: number
+          itens_sem_valor: number
+          marcador_run_id: string
+          marcador_seq: number
+          na_janela_7d: boolean
+          omie_codigo_pedido: string
+          pedido_id: number
+          po_no_espelho: boolean
+          portal_protocolo: string
+          resposta_canal: Json
+          status_envio_portal: string
+          tem_canal: boolean
+          tem_protocolo: boolean
+          tem_resposta_canal: boolean
+          tem_status_portal: boolean
+          valor_total: number
+          visto_status: string
+        }[]
       }
       reposicao_publicar_run_completo: {
         Args: {
