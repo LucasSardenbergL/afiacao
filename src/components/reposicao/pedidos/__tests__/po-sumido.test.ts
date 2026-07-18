@@ -6,6 +6,7 @@ import {
   ehAcessoNegado,
   normalizarCandidatos,
   ordenarCandidatos,
+  planoDeAcao,
   resumirValores,
   type PoCandidato,
 } from '../po-sumido';
@@ -111,26 +112,60 @@ describe('acaoSugerida — NUNCA sugere cancelar (o erro de R$3k)', () => {
     expect(instruiDesfazer('Se o pedido existe lá, recrie o PO no Omie — não cancele.')).toBe(false);
   });
 
-  // A prova ESTRUTURAL, que nenhum furo lexical contorna: as 4 saídas são fixas e estão aqui inteiras.
-  // Qualquer mudança de copy quebra este teste e força revisão consciente — inclusive uma que o léxico
-  // não pegasse. O guarda lexical acima é rede complementar, não a garantia.
-  it('as QUATRO saídas são exatamente estas (mudou a copy? revise o invariante)', () => {
-    const saidas = {
-      identidade_ilegivel: acaoSugerida(c({ visto_status: 'identidade_nao_interpretavel' })),
-      confirmar_com_protocolo: acaoSugerida(c({ algum_sinal_de_canal: true, portal_protocolo: '2097501' })),
-      confirmar_sem_protocolo: acaoSugerida(c({ algum_sinal_de_canal: true })),
-      conferir_no_omie: acaoSugerida(c({ algum_sinal_de_canal: false })),
-    };
-    expect(saidas).toEqual({
-      identidade_ilegivel:
-        'O código do PO neste pedido não é legível — não foi possível comparar com o Omie. Corrija o cadastro antes de qualquer conclusão.',
-      confirmar_com_protocolo:
-        'Confirme com o fornecedor pelo protocolo 2097501. Se o pedido existe lá, recrie o PO no Omie — não cancele.',
-      confirmar_sem_protocolo:
-        'Há sinal de envio ao fornecedor. Confirme com ele antes de agir; se o pedido existe, recrie o PO no Omie.',
-      conferir_no_omie:
-        'Nenhum sinal de envio registrado aqui. Confira no Omie se o PO foi excluído e decida com o histórico do pedido.',
-    });
+  it('a copy REFLETE o plano: se o plano exige reconferir o Omie, o texto diz isso', () => {
+    // Amarra texto ↔ plano. Sem isto, o plano poderia exigir a reconferência e a frase omiti-la — que é
+    // justamente onde o dano mora (o comprador age pelo texto, não pelo tipo).
+    for (const cand of [
+      c({ algum_sinal_de_canal: true, portal_protocolo: '2097501' }),
+      c({ algum_sinal_de_canal: true }),
+    ]) {
+      expect(planoDeAcao(cand)).toContain('confirmar_ausencia_atual_no_omie');
+      expect(acaoSugerida(cand)).toMatch(/continua ausente no Omie/i);
+      expect(acaoSugerida(cand)).toMatch(/só então recrie/i);
+    }
+  });
+});
+
+// A trava ESTRUTURAL do invariante: não depende de nenhuma palavra. O universo de operações é fechado
+// e não contém "cancelar"; e `recriar_po` carrega precondições que impedem agir sobre evidência velha.
+describe('planoDeAcao — o invariante que não se contorna com sinônimo', () => {
+  const TODOS = [
+    c({ visto_status: 'identidade_nao_interpretavel' }),
+    c({ algum_sinal_de_canal: true, portal_protocolo: '2097501' }),
+    c({ algum_sinal_de_canal: true }),
+    c({ algum_sinal_de_canal: false }),
+    c({ visto_status: 'visto_em_outro_run', algum_sinal_de_canal: true, portal_protocolo: '1' }),
+  ];
+
+  it('recriar_po NUNCA aparece sem confirmar fornecedor E reconferir o Omie agora', () => {
+    // A precondição que fecha o PO duplicado: a evidência tem até ~1min de idade (staleTime 30s +
+    // poll 60s), e outro comprador pode ter recriado o PO nesse intervalo.
+    for (const cand of TODOS) {
+      const plano = planoDeAcao(cand);
+      if (plano.includes('recriar_po')) {
+        expect(plano, JSON.stringify(cand)).toContain('confirmar_fornecedor');
+        expect(plano, JSON.stringify(cand)).toContain('confirmar_ausencia_atual_no_omie');
+        // e a reconferência vem ANTES de recriar
+        expect(plano.indexOf('confirmar_ausencia_atual_no_omie')).toBeLessThan(plano.indexOf('recriar_po'));
+      }
+    }
+  });
+
+  it('nenhum plano contém operação destrutiva — o tipo não a admite', () => {
+    const PERMITIDAS = new Set([
+      'corrigir_cadastro', 'confirmar_fornecedor', 'confirmar_ausencia_atual_no_omie',
+      'recriar_po', 'conferir_no_omie',
+    ]);
+    for (const cand of TODOS) {
+      for (const op of planoDeAcao(cand)) {
+        expect(PERMITIDAS.has(op), `operação fora do universo fechado: ${op}`).toBe(true);
+        expect(op).not.toMatch(/cancel|exclu|remov|anul|delet|apag|desfaz/i);
+      }
+    }
+  });
+
+  it('todo candidato produz plano não-vazio (nenhum cai em "nada a fazer" silencioso)', () => {
+    for (const cand of TODOS) expect(planoDeAcao(cand).length).toBeGreaterThan(0);
   });
 });
 

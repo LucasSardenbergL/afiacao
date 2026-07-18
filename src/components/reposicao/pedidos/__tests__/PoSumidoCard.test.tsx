@@ -123,20 +123,50 @@ describe('PoSumidoCard — os estados em que dá para mentir', () => {
     const { container } = render(<PoSumidoCard candidatos={[c({ na_janela_7d: true })]} falhaApuracao />);
     const texto = container.textContent ?? '';
     expect(texto).toMatch(/na última apuração/i);
-    // "está disparado ... infla o estoque" e o badge "na janela de 7 dias" afirmam o AGORA, e o agora
-    // não foi verificado.
+    // "está disparado ... infla o estoque" afirma o AGORA, e o agora não foi verificado.
     expect(texto).not.toMatch(/isso infla o estoque/i);
     expect(texto).not.toMatch(/na janela de 7 dias/i);
   });
 
+  it('DESATUALIZADO não ESCONDE a urgência: diz que estava na janela', () => {
+    // Suprimir o badge era o pior dos dois lados — escondia dano que de fato havia na última apuração.
+    // O fato fica visível, no tempo verbal certo.
+    render(<PoSumidoCard candidatos={[c({ na_janela_7d: true })]} falhaApuracao />);
+    expect(screen.getByText(/1 estava na janela na última apuração/i)).toBeInTheDocument();
+  });
+
+  it('DESATUALIZADO, EXPANDIDO: a linha também não afirma "na janela" no presente', () => {
+    // O teste anterior não pegava isto porque a tabela nem é montada com o card recolhido — mesmo erro
+    // que já tinha me escapado uma vez.
+    const { container } = render(<PoSumidoCard candidatos={[c({ na_janela_7d: true })]} falhaApuracao />);
+    fireEvent.click(screen.getByText(/a reconciliar no Omie/i));
+    const texto = container.textContent ?? '';
+    expect(texto).toMatch(/estava na janela/i);
+    expect(texto).not.toMatch(/· na janela(?! na última)/i);
+  });
+
   it('apuração OK volta a afirmar o presente e a instruir', () => {
-    // Espelho do teste acima: sem isto, suprimir tudo sempre também passaria.
+    // Espelho: sem isto, suprimir tudo sempre também passaria.
     const { container } = render(
       <PoSumidoCard candidatos={[c({ na_janela_7d: true, algum_sinal_de_canal: true, portal_protocolo: '2097501' })]} />,
     );
+    fireEvent.click(screen.getByText(/a reconciliar no Omie/i));
     const texto = container.textContent ?? '';
     expect(texto).toMatch(/isso infla o estoque/i);
     expect(texto).toMatch(/na janela de 7 dias/i);
     expect(texto).not.toMatch(/na última apuração/i);
+    expect(texto).not.toMatch(/estava na janela/i);
+  });
+
+  it('apuração OK exige RECONFERIR o Omie antes de recriar (evidência tem ~1min de idade)', () => {
+    // Outro comprador pode ter recriado o PO entre a apuração e a leitura: mandar recriar sem
+    // reconferir produz PO duplicado mesmo com a apuração "boa".
+    const { container } = render(
+      <PoSumidoCard candidatos={[c({ algum_sinal_de_canal: true, portal_protocolo: '2097501' })]} />,
+    );
+    fireEvent.click(screen.getByText(/a reconciliar no Omie/i));
+    const texto = container.textContent ?? '';
+    expect(texto).toMatch(/continua ausente no Omie/i);
+    expect(texto).toMatch(/só então recrie/i);
   });
 });

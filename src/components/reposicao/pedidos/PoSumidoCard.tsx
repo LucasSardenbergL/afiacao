@@ -90,12 +90,15 @@ export function PoSumidoCard({
           {aberto ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
           <FileSearch className="w-4 h-4" />
           {TITULO} ({candidatos.length})
-          {/* "na janela de 7 dias" é afirmação sobre o estado ATUAL (o dano está acontecendo agora).
-              Com a apuração desatualizada isso não se sustenta — a janela pode ter passado ou o pedido
-              ter sido resolvido. */}
-          {comDanoAtivo > 0 && !falhaApuracao && (
+          {/* "na janela de 7 dias" afirma o estado ATUAL (o dano está acontecendo agora), e com a
+              apuração velha isso não se sustenta. Mas SUPRIMIR era o pior dos dois lados: escondia
+              urgência que de fato existia na última apuração. Então o fato continua visível, no tempo
+              verbal certo. */}
+          {comDanoAtivo > 0 && (
             <Badge variant="outline" className="text-status-warning border-status-warning/40">
-              {comDanoAtivo} na janela de 7 dias
+              {falhaApuracao
+                ? `${comDanoAtivo} estava${comDanoAtivo > 1 ? 'm' : ''} na janela na última apuração`
+                : `${comDanoAtivo} na janela de 7 dias`}
             </Badge>
           )}
           {falhaApuracao && (
@@ -176,8 +179,11 @@ export function PoSumidoCard({
                 <TableRow key={c.pedido_id}>
                   <TableCell className="text-xs tabular-nums whitespace-nowrap">
                     {format(new Date(c.data_ciclo + 'T12:00:00'), 'dd/MM/yyyy')}
+                    {/* Mesmo cuidado do badge, por linha: "na janela" é presente. Com a apuração velha
+                        o rótulo vai para o passado em vez de afirmar um estado não verificado. */}
                     <div className="text-muted-foreground">
-                      {c.idade_dias}d{c.na_janela_7d && ' · na janela'}
+                      {c.idade_dias}d
+                      {c.na_janela_7d && (falhaApuracao ? ' · estava na janela' : ' · na janela')}
                     </div>
                   </TableCell>
                   <TableCell>

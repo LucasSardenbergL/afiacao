@@ -49,15 +49,49 @@ export function classificarAcao(c: PoCandidato): ClasseAcao {
   return 'conferir_no_omie';
 }
 
-/** O texto mostrado ao humano. NUNCA instrui cancelar — ver o cabeçalho deste arquivo. */
+/**
+ * As operações que o card pode sugerir. O universo é FECHADO e não inclui nenhuma forma de desfazer o
+ * pedido — o invariante "nunca instruir cancelamento" passa a valer por CONSTRUÇÃO, não por inspeção de
+ * texto. (A versão anterior fixava as 4 frases por igualdade exata; isso é golden test de copy, que
+ * alguém atualiza mecanicamente junto com a implementação — sentinela útil, garantia nenhuma.)
+ */
+export type Operacao =
+  | 'corrigir_cadastro'
+  | 'confirmar_fornecedor'
+  | 'confirmar_ausencia_atual_no_omie'
+  | 'recriar_po'
+  | 'conferir_no_omie';
+
+/**
+ * O plano de operações, em ordem. A precondição que importa: `recriar_po` NUNCA aparece sozinho —
+ * exige `confirmar_fornecedor` E `confirmar_ausencia_atual_no_omie` antes.
+ *
+ * Por que a 2ª precondição existe: a evidência tem idade. Mesmo com a apuração bem-sucedida, o dado
+ * pode ter até um minuto (staleTime 30s + poll 60s) e outro comprador pode ter recriado o PO nesse
+ * intervalo — mandar recriar sem reconferir o Omie AGORA produz PO duplicado. É o mesmo dano que este
+ * PR combate, chegando pelo caminho feliz.
+ */
+export function planoDeAcao(c: PoCandidato): Operacao[] {
+  switch (classificarAcao(c)) {
+    case 'identidade_ilegivel':
+      return ['corrigir_cadastro'];
+    case 'confirmar_com_protocolo':
+    case 'confirmar_sem_protocolo':
+      return ['confirmar_fornecedor', 'confirmar_ausencia_atual_no_omie', 'recriar_po'];
+    case 'conferir_no_omie':
+      return ['conferir_no_omie'];
+  }
+}
+
+/** O texto mostrado ao humano, derivado do plano. NUNCA instrui desfazer — ver o cabeçalho. */
 export function acaoSugerida(c: PoCandidato): string {
   switch (classificarAcao(c)) {
     case 'identidade_ilegivel':
       return 'O código do PO neste pedido não é legível — não foi possível comparar com o Omie. Corrija o cadastro antes de qualquer conclusão.';
     case 'confirmar_com_protocolo':
-      return `Confirme com o fornecedor pelo protocolo ${c.portal_protocolo}. Se o pedido existe lá, recrie o PO no Omie — não cancele.`;
+      return `Confirme com o fornecedor pelo protocolo ${c.portal_protocolo} e confira se o PO continua ausente no Omie. Só então recrie o PO — não cancele.`;
     case 'confirmar_sem_protocolo':
-      return 'Há sinal de envio ao fornecedor. Confirme com ele antes de agir; se o pedido existe, recrie o PO no Omie.';
+      return 'Há sinal de envio ao fornecedor. Confirme com ele e confira se o PO continua ausente no Omie. Só então recrie o PO.';
     case 'conferir_no_omie':
       return 'Nenhum sinal de envio registrado aqui. Confira no Omie se o PO foi excluído e decida com o histórico do pedido.';
   }
