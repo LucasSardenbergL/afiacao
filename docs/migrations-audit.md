@@ -21,12 +21,12 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **384** custom migrations totais
-- **1341** objetos esperados (criados por estas migrations)
+- **385** custom migrations totais
+- **1342** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 381
   - `rls_policy`: 295
-  - `index`: 222
+  - `index`: 223
   - `cron_job`: 150
   - `table`: 146
   - `trigger`: 78
@@ -3254,6 +3254,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20260718093248_drop_estimar_impacto_exclusao_outlier_orfa.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260718120000_pot_nid_receb_retencao.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `index` | `public.idx_pot_backfill_nid_receb` | `purchase_orders_tracking` |
 
 ## Próximos passos por status
 

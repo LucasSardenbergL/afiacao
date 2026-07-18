@@ -1634,3 +1634,62 @@ describe('guardrail money-path: omie-sync-sku-items agrega itens por (tracking, 
     ).toBe(mirrorBlockNamed(helper, 'sku-items-agregacao'));
   });
 });
+
+// ── Retenção do sinal do recebimento (nid_receb) ──
+// purchase_orders_tracking.raw_data é jsonb MULTI-WRITER: o sync de pedidos grava o payload
+// do PEDIDO por cima e apaga o nIdReceb que o sync de NFes acabou de resolver. A cada rodada
+// do cron o reparo é desfeito — o backfill nunca converge (contador de identificadas travado
+// por dias no fin_sync_log) e queima rate-limit da Omie re-resolvendo o que já estava pronto.
+// O sinal foi para uma COLUNA DEDICADA com UM escritor. Os três guardrails abaixo vigiam as
+// três pontas do circuito; se qualquer uma cair, o Sísifo volta em silêncio.
+const POT_PEDIDOS = 'supabase/functions/omie-sync-pedidos-compra/index.ts';
+const POT_NFES = 'supabase/functions/omie-sync-nfes-recebidas/index.ts';
+
+describe('guardrail money-path: retenção do nid_receb (coluna dedicada + 1 writer)', () => {
+  const pedidos = read(POT_PEDIDOS);
+  const nfes = read(POT_NFES);
+  const skuItems = read(SKU_ITEMS);
+
+  it('sentinela: leu os arquivos reais das três edges', () => {
+    expect(pedidos).toContain('PRESERVE_FIELDS');
+    expect(nfes).toContain('ConsultarRecebimento');
+    expect(skuItems).toContain('sku_leadtime_history');
+  });
+
+  it('pedidos-compra PRESERVA o sinal (não pode voltar a apagá-lo a cada rodada)', () => {
+    const bloco = pedidos.match(/const PRESERVE_FIELDS = new Set\(\[([\s\S]*?)\]\)/);
+    expect(bloco, 'PRESERVE_FIELDS sumiu do sync de pedidos').not.toBeNull();
+    expect(
+      bloco![1],
+      'REGRESSÃO: nid_receb saiu do PRESERVE_FIELDS — o sync de pedidos volta a apagar o sinal a cada rodada e o backfill volta ao Sísifo',
+    ).toContain('nid_receb');
+  });
+
+  it('nfes-recebidas decide o pendente pela COLUNA, no banco (não pelo jsonb, em memória)', () => {
+    // Ancorado no SELECT do backfill, não solto no arquivo: `.is("nid_receb", null)` também
+    // aparece no compare-and-set do UPDATE, e um regex solto passaria verde com o filtro do
+    // select removido — o Sísifo voltaria sem ninguém ver. (Pego pela falsificação F2.)
+    expect(
+      nfes,
+      'REGRESSÃO: o SELECT do backfill não filtra mais por nid_receb no banco — volta a redescobrir como pendente o que já resolveu, e o teto de 1.000 linhas do PostgREST volta a truncar em silêncio',
+    ).toMatch(/\.not\("nfe_chave_acesso",\s*"is",\s*null\)\s*\n\s*\.is\("nid_receb",\s*null\)/);
+  });
+
+  it('nfes-recebidas é o writer ÚNICO e grava com compare-and-set', () => {
+    expect(
+      nfes,
+      'REGRESSÃO: o writer não grava mais a coluna — a migration fica inerte e nada converge',
+    ).toMatch(/updateRow\.nid_receb/);
+    expect(
+      nfes,
+      'REGRESSÃO: sumiu a trava da chave no update — um run concorrente pode carimbar nesta linha o recebimento de OUTRA NFe',
+    ).toMatch(/\.eq\("nfe_chave_acesso",\s*linha\.nfe_chave_acesso\)/);
+  });
+
+  it('sku-items lê a COLUNA primeiro (jsonb só como fallback da transição)', () => {
+    expect(
+      skuItems,
+      'REGRESSÃO: o leitor voltou a depender só do jsonb — quando o backfill convergir ele para de regravar o raw_data e o leadtime morre em silêncio',
+    ).toMatch(/n\.nid_receb\s*!=\s*null/);
+  });
+});
