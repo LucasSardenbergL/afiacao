@@ -132,7 +132,7 @@ export async function coletarProdutosAlvo(
   }
 
   if (estourou) {
-    throw new Error(`ListarProdutos excedeu ${maxPaginas} páginas sem ver fim — abort SABOTADO`);
+    throw new Error(`ListarProdutos excedeu ${maxPaginas} páginas sem ver fim — abort anti-loop`);
   }
   return { produtos, encontrados, paginasProcessadas };
 }
