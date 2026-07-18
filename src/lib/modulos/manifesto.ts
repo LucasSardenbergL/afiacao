@@ -588,6 +588,7 @@ export const MODULOS: ModuloApp[] = [
       "src/components/auth/**",
       "src/components/help/**",
       "src/components/docs/**",
+      "src/components/execucoes/**",
       "src/components/impersonation/**",
       "src/components/push/**",
       "src/components/notificacoes/**",
