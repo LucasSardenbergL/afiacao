@@ -1011,11 +1011,28 @@ describe('guardrail money-path: omie-analytics-sync popula identity_state no led
     expect(marcacao, 'a marcação de ambiguous não está gateada em account==="vendas" → flapping entre contas').not.toBeNull();
   });
 
-  it('o ledger NUNCA recebe INSERT/upsert aqui — quem popula é o trigger da Fatia 0 (acumulador)', () => {
+  // [ATUALIZADO na Fatia 4] Este invariante dizia "o ledger NUNCA recebe INSERT/upsert aqui — quem
+  // popula é o trigger da Fatia 0". Isso valia enquanto o trigger existia. A Fatia 4 corta o writer do
+  // espelho, e a Fatia 5 dropa a tabela — o trigger `AFTER INSERT` cai junto. Se o bulk não passasse a
+  // popular o ledger direto, NENHUM cliente novo entraria na carteira depois do DROP (sem vendedor, sem
+  // comissão, em silêncio). Medido em 18/07: ledger = 6909 linhas, TODAS source='backfill' — zero
+  // 'trigger', a via de admissão já estava inerte.
+  // O que o invariante protege AGORA não é "não escreva", é "escreva sem destruir": o acumulador exige
+  // ON CONFLICT DO NOTHING, senão o upsert sobrescreve `first_seen_at` e RESSUSCITA quarantinado
+  // (ambiguous → verified = comissão sobre cliente de identidade desconhecida).
+  it('o ledger só recebe update/select/upsert — e TODO upsert é acumulador (ignoreDuplicates)', () => {
     const blocos = src.match(/from\(["']carteira_membership_ledger["']\)\s*\.\w+/g) ?? [];
     expect(blocos.length, 'sentinela: não achei acesso ao ledger no sync').toBeGreaterThan(0);
     for (const b of blocos) {
-      expect(b, `o sync está escrevendo no ledger com algo que não é update/select ("${b}") — o ledger é acumulador; inserir aqui fura o trigger da Fatia 0`).toMatch(/\.(update|select)$/);
+      expect(b, `acesso destrutivo ao ledger ("${b}") — delete/insert cru fura o acumulador`).toMatch(/\.(update|select|upsert)$/);
+    }
+    // CADA upsert (não "algum") precisa do ignoreDuplicates: um único sem ele já ressuscita quarantinado.
+    const upserts = src.match(/from\(["']carteira_membership_ledger["']\)[\s\S]{0,240}?\.upsert\([\s\S]{0,240}?\)/g) ?? [];
+    for (const u of upserts) {
+      expect(
+        u,
+        'upsert no ledger SEM ignoreDuplicates: sobrescreve first_seen_at e devolve um quarantinado a verified (comissão indevida)',
+      ).toMatch(/ignoreDuplicates:\s*true/);
     }
   });
 });
@@ -1534,8 +1551,11 @@ describe('guardrail money-path: omie-cliente lê a proof fresca account-correta 
     // OMIE_OBEN_APP_KEY faria o índice 1 virar Colacor e o filtro de conta mentir em silêncio.
     expect(src, 'sumiu o slug canônico do OmieAccountConfig — o filtro de conta volta a depender do índice')
       .toMatch(/account:\s*OmieAccountSlug/);
+    // Lookbehind `(?<!p_)`: a Fatia 4 introduziu `p_account: "oben"` nas chamadas da RPC, que contém
+    // `account: "oben"` como SUBSTRING — sem a âncora, os writers inflariam a contagem das declarações
+    // de credencial e o assert passaria a medir outra coisa.
     expect(
-      count(src, 'account: "colacor_sc"') + count(src, 'account: "oben"') + count(src, 'account: "colacor"'),
+      (src.match(/(?<!p_)account:\s*"(?:colacor_sc|oben|colacor)"/g) ?? []).length,
       'as 3 contas devem declarar seu slug canônico (domínio do CHECK chk_ocam_account)',
     ).toBe(3);
   });

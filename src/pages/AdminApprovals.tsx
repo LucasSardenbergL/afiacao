@@ -120,12 +120,13 @@ const AdminApprovals = () => {
         // Client exists in Omie — admite o membro na carteira pelas DUAS pontas (ledger + proof) via
         // RPC. `omie_codigo_cliente_integracao` foi DESCARTADO (resíduo §9 do design): 41 das 6909
         // linhas do espelho o tinham, todas de março, e nenhum leitor o consome.
-        const { error: rpcError } = await supabase.rpc('register_carteira_member', {
+        // as never: a RPC ainda não está nos tipos gerados do Supabase (regenerados pós-deploy).
+        const { error: rpcError } = await supabase.rpc('register_carteira_member' as never, {
           p_user_id: profileUserId,
           p_account: 'colacor_sc',
           p_omie_codigo_cliente: data.codigo_cliente,
           p_omie_codigo_vendedor: data.codigo_vendedor ?? null,
-        });
+        } as never);
 
         if (rpcError) {
           // 23505 = UNIQUE(omie_codigo_cliente, account): o código já é de OUTRO user nesta conta.

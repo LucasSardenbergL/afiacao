@@ -37,13 +37,16 @@ describe('Fatia 4: writers de vínculo do frontend saíram do espelho omie_clien
       src,
       'REGRESSÃO: o writer morto do signup voltou a inserir no espelho omie_clientes',
     ).not.toMatch(/from\('omie_clientes'\)/);
-    // O ponto que mais importa: o signup NÃO pode passar a chamar a RPC. Seria "migrar" um writer que a
+    // O ponto que mais importa: o signup NÃO pode passar a CHAMAR a RPC. Seria "migrar" um writer que a
     // RLS barra hoje para um caminho que precisaria de SECURITY DEFINER — abrindo escrita ao customer.
+    // Ancorado em `.rpc(` de propósito: um `not.toMatch(/register_carteira_member/)` cru casaria o
+    // comentário-tombstone acima, que MENCIONA a RPC para explicar por que ela não é usada aqui — o
+    // assert reprovaria a própria documentação da decisão que ele existe para proteger.
     expect(
       src,
       'FALHA ABERTA: o signup passou a chamar register_carteira_member. O writer era morto por RLS; ' +
         'dar-lhe um caminho que funcione deixa um customer anexar-se a um código Omie arbitrário.',
-    ).not.toMatch(/register_carteira_member/);
+    ).not.toMatch(/\.rpc\(\s*['"]register_carteira_member/);
   });
 
   it('AdminApprovals grava o vínculo pela RPC, na conta colacor_sc', () => {
