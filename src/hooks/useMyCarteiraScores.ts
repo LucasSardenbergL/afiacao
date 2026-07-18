@@ -28,7 +28,8 @@ export interface CarteiraScoreRow {
  * Expande pra cobertura ativa: farmer_id IN [eu, ...donos que eu cubro agora].
  *
  * 🔐 RLS de LEITURA (medida em prod 2026-07-18 — `fcs_select_carteira`):
- * `pode_ver_carteira_completa(uid) OR carteira_visivel_para(customer_user_id, uid)`
+ * `pode_ver_carteira_completa(uid) OR private.carteira_visivel_para(customer_user_id, uid)`
+ * (a 2ª migrou p/ o schema `private` no #1421 — `pode_ver_carteira_completa` segue em `public`)
  * — carteira-scoped, NÃO staff-wide. O SELECT não tem braço de autoria; quem tem é
  * INSERT/UPDATE/DELETE (`... OR farmer_id = uid`) — não confundir os dois.
  * Consequência: para GESTOR (`pode_ver_carteira_completa` = master, ou employee com

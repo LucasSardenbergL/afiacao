@@ -23,6 +23,21 @@ const ROLE_COLORS: Record<string, string> = {
   super_admin: 'bg-red-500/10 text-red-700 border-red-500/30',
 };
 
+/**
+ * 🔐 Papéis cuja ATRIBUIÇÃO está travada pela E1 do FU4 (spec 2026-07-18).
+ *
+ * Estes papéis acionam `pode_ver_carteira_completa` no banco, que gateia 64 policies em
+ * 34 tabelas (medido em prod): ESCRITA em `cliente_tier_preco` (tier de preço) e
+ * `venda_excecao_credito` (aprova crédito), LEITURA de `cmc_ledger` (custo médio).
+ * Conceder qualquer um deles hoje entrega preço + crédito + custo de uma vez, porque a
+ * matriz de capability por recurso×ação ainda não existe.
+ *
+ * A trava é de INTENÇÃO, não de segurança: a RLS de `commercial_roles` só deixa master
+ * escrever, então o único caminho real é este dropdown — mas quem tem o token de master
+ * pode chamar a API direto. O gate de banco vem na E2.
+ */
+const PAPEIS_GERENCIAIS_BLOQUEADOS: readonly CommercialRole[] = ['gerencial', 'estrategico', 'super_admin'];
+
 export default function GovernanceUsers() {
   const { user, isAdmin } = useAuth();
   const { isSuperAdmin } = useCommercialRole();
@@ -73,6 +88,15 @@ export default function GovernanceUsers() {
   // Mutation to set commercial role
   const setRoleMutation = useMutation({
     mutationFn: async ({ userId, role }: { userId: string; role: CommercialRole }) => {
+      // Trava da E1/FU4 (ver PAPEIS_GERENCIAIS_BLOQUEADOS): o `disabled` do SelectItem é só
+      // a UI — esta guarda é o que barra qualquer outro caller até a E2 existir.
+      if (PAPEIS_GERENCIAIS_BLOQUEADOS.includes(role)) {
+        throw new Error(
+          `Atribuir "${ROLE_LABELS[role] ?? role}" está bloqueado: este papel concede escrita em preço e crédito ` +
+          `(64 policies em 34 tabelas) enquanto a matriz de capability não existe. Ver FU4/E2.`,
+        );
+      }
+
       // Upsert commercial role
       const { error } = await supabase
         .from('commercial_roles')
@@ -172,9 +196,11 @@ export default function GovernanceUsers() {
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="operacional">Operacional</SelectItem>
-                          <SelectItem value="gerencial">Gerencial</SelectItem>
-                          <SelectItem value="estrategico">Estratégico</SelectItem>
-                          {isSuperAdmin && <SelectItem value="super_admin">Super Admin</SelectItem>}
+                          {/* Bloqueados pela E1 do FU4 — ver PAPEIS_GERENCIAIS_BLOQUEADOS acima.
+                              Desabilitados em vez de omitidos: sumir com eles leria como bug. */}
+                          <SelectItem value="gerencial" disabled>Gerencial — bloqueado</SelectItem>
+                          <SelectItem value="estrategico" disabled>Estratégico — bloqueado</SelectItem>
+                          {isSuperAdmin && <SelectItem value="super_admin" disabled>Super Admin — bloqueado</SelectItem>}
                         </SelectContent>
                       </Select>
                     </td>
