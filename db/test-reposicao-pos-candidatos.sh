@@ -181,7 +181,7 @@ INSERT INTO public.pedido_compra_sugerido
  (133,'OBEN','disparado','133', now()::date-50,'F','omie','N/A',NULL,NULL),
  -- Codex v4 P1-2: canal preenchido e o resto NULL -> 'sem_sinal_conhecido' MENTIA (o canal E um sinal)
  (134,'OBEN','disparado','134', now()::date-50,'F','portal_sayerlack',NULL,NULL,NULL),
- -- Codex v4 #3 mutante: sem nenhum seed neste status, trocar `status IN (...)` por `= 'disparado'` passava verde
+ -- Codex v4 #3 mutante: sem nenhum seed neste status, trocar o status IN (lista) por igualdade simples passava verde
  (135,'OBEN','aprovado_aguardando_disparo','135', now()::date-3,'F',NULL,NULL,NULL,NULL),
  -- Codex v4 #3: 19 digitos estoura o bigint e DERRUBA a RPC (o bug que EU criei ao consertar leading zero)
  (136,'OBEN','disparado','9223372036854775808', now()::date-50,'F','omie',NULL,NULL,NULL),
@@ -201,7 +201,7 @@ INSERT INTO public.pedido_compra_sugerido
  (149,'OBEN','disparado', U&'\1680' || '145' || U&'\1680', now()::date-50,'F','omie',NULL,NULL,NULL),
  (150,'OBEN','disparado','9223372036854775807', now()::date-50,'F','omie',NULL,NULL,NULL),
  -- Codex v7: PO 555 esta carimbado na COLACOR (run anterior) mas NAO na OBEN -> o pedido OBEN e candidato.
- -- Sem `ls.empresa = v_empresa` o join pegaria a linha da COLACOR e o candidato sumiria.
+ -- Sem o filtro de empresa no join do last_seen, ele pegaria a linha da COLACOR e o candidato sumiria.
  (151,'OBEN','disparado','555', now()::date-50,'F','omie',NULL,NULL,NULL),
  (160,'OBEN','disparado','160', now()::date-50,'F','omie',NULL,NULL,NULL),
  (161,'OBEN','disparado','161', now()::date-50,'F','omie',NULL,'su cesso',NULL),
