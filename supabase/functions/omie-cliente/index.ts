@@ -803,8 +803,21 @@ serve(async (req) => {
                 p_omie_codigo_cliente: cliente.codigo_cliente,
                 p_omie_codigo_vendedor: cliente.codigo_vendedor || null,
               });
+              // [HOTFIX Codex-B] FAIL-LOUD. Antes isto só logava e devolvia user_id como SUCESSO — o
+              // tratamento herdado de quando o destino era o espelho poluído, onde um erro era inócuo.
+              // Com a UNIQUE(codigo,account) fail-closed da proof, `23505` significa "este código Omie
+              // pertence a OUTRO user nesta conta". Devolver sucesso faz a UI seguir e anexar a
+              // ferramenta ao cliente ERRADO (useUnifiedOrder.handleStaffAddTool usa o user_id de volta).
               if (mappingError) {
                 console.error("[criar_perfil_local] Mapping error:", mappingError);
+                return new Response(
+                  JSON.stringify({
+                    error: mappingError.code === "23505"
+                      ? `O código Omie ${cliente.codigo_cliente} já está vinculado a outro usuário na conta oben — vínculo bloqueado por segurança.`
+                      : `Falha ao registrar o vínculo do cliente: ${mappingError.message}`,
+                  }),
+                  { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+                );
               }
               result = { user_id: matchedUserId };
               break;
@@ -855,8 +868,22 @@ serve(async (req) => {
           p_omie_codigo_vendedor: cliente.codigo_vendedor || null,  // Already extracted by frontend from recomendacoes
         });
 
+        // [HOTFIX Codex-B] FAIL-LOUD, mesmo motivo do ramo acima — e aqui é PIOR: o auth user e o
+        // profile já foram criados em transações anteriores, então devolver sucesso entregaria à UI um
+        // user_id recém-criado SEM vínculo, e a ferramenta seria anexada a um placeholder órfão enquanto
+        // o código real pertence a outro cliente. O placeholder criado antes da colisão fica para
+        // reconciliação (o erro nomeia o código, que é a chave para achá-lo).
         if (mappingError) {
-          console.error("[criar_perfil_local] Mapping error:", mappingError);
+          console.error("[criar_perfil_local] Mapping error (placeholder já criado:", newUserId, "):", mappingError);
+          return new Response(
+            JSON.stringify({
+              error: mappingError.code === "23505"
+                ? `O código Omie ${cliente.codigo_cliente} já está vinculado a outro usuário na conta oben — vínculo bloqueado por segurança.`
+                : `Falha ao registrar o vínculo do cliente: ${mappingError.message}`,
+              placeholder_user_id: newUserId,
+            }),
+            { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+          );
         }
 
         // Upsert address from Omie data

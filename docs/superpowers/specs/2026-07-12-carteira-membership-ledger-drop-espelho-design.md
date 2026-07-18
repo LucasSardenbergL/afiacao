@@ -215,6 +215,19 @@ O teste é **discriminante**, não prova por ausência: os três destinos avanç
 
 **Ainda não observado:** `source='sync'` (o bulk). Ele só insere quando o cron `sync-customers-vendas-daily` (`0 5 * * *`) encontrar cliente novo que a RPC não pegou. Vale reconfirmar após o próximo run que `omie_clientes.updated_at` segue travado em `2026-07-18 05:02:40`.
 
+## 11-bis. O `/codex` retroativo REFUTOU a Fatia 4 — 4 achados, 3 corrigidos no mesmo dia
+
+O challenge adversarial (gpt-5.6-sol xhigh) rodou **depois** do deploy, quando a cota voltou, e achou 4 defeitos reais. Todos verificados por leitura direta antes de aceitos. Dano consumado era **zero** (0 docs ambíguos, 0 colisões), mas três eram dívida money-path com gatilho plausível. Lição de método: **o PG17 provou a RPC ISOLADA e ela estava correta — o que faltava era o sistema em volta dela.** Auto-prova cobre o intervalo, não substitui revisão independente.
+
+| # | defeito | correção |
+|---|---|---|
+| **A** | `source='manual'` na proof dava **imunidade** ao delete de ambiguidade (que escopa `document` para preservar override humano). 393 linhas já gravadas ficavam fora do fail-closed — vínculo suspeito sobreviveria com vendedor possivelmente errado. **O aviso estava escrito em `db/omie_customer_account_map_fresco.sql`** ("se surgir 2º writer… promover `last_seen_sync_at`") e a Fatia 4 criou esse writer sem ler | `source='rpc'` (novo no CHECK) + `'rpc'` no filtro do delete + backfill das 393. O `ON CONFLICT` preserva `'manual'` de override humano |
+| **B** | `criar_perfil_local` devolvia `user_id` de **sucesso** mesmo com `23505` — a UI anexaria ferramenta ao cliente errado. Tratamento herdado de quando o destino era o espelho, onde o erro era inócuo | fail-loud nos 2 ramos (HTTP 409, mensagem nomeando o código) |
+| **C** | o bulk admitia membro novo pela lista **code-first**, que resolve por `userByCodigo` — o espelho poluído **sem conta**, que ainda vence o documento. Meu argumento ("cobre os 1633 aliases") confundiu cobertura de ESTOQUE (já garantida pelo backfill; o acumulador não encolhe) com correção de FLUXO | ledger passa a ser alimentado pela **document-first** (`accountMapByUser`) |
+| **D** | race entre marcação e reversão de `ambiguous` (2 chamadas PostgREST independentes, sem single-flight): um run antigo pode reverter evidência mais nova. **Pré-existente da Fatia 2**, não introduzido aqui | **não corrigido** — precisa de lease por conta com fencing token. Fatia própria |
+
+**Resíduo aceito conscientemente:** `updated_at`. A view `_fresco` define o campo como "última vez que o SYNC viu a linha", e a RPC também o escreve → renova o TTL de 7d sem o sync ter visto. Com `source='rpc'` a imunidade acaba e o dano money-path some; resta imprecisão de frescor. A correção completa (`last_seen_sync_at` atualizado só pelo sync) mexe na view e nos seus 2 consumidores — raio grande demais para o hotfix.
+
 ### Estado dos 3 bloqueadores da §4-bis (medido 18/07 pós-deploy)
 
 | bloqueador | estado | ação da Fatia 5 |

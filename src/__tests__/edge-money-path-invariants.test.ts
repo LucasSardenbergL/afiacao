@@ -457,10 +457,20 @@ describe('guardrail money-path: P1b doc-ambíguo-Omie (syncCustomers USA o helpe
       src,
       'REGRESSÃO: sumiu o DELETE cirúrgico — a linha antiga do last-write-wins viveria até o TTL (furo P1)',
     ).toMatch(/\.delete\(\)[\s\S]{0,220}\.in\("user_id", ambiguosList/);
+    // [Hotfix Fatia 4] O filtro era `.eq("source","document")`. O que ele protege — override HUMANO
+    // (`manual`) não é apagado pelo sync — permanece intacto; o que mudou é o outro lado: `rpc` PRECISA
+    // estar no alcance do delete. Enquanto a RPC gravava 'manual', ela produzia linhas imunes ao
+    // fail-closed de ambiguidade (vínculo suspeito sobrevivia com vendedor possivelmente errado).
+    // Os dois asserts abaixo são um par: um garante que 'rpc' entra, o outro que 'manual' fica de fora.
     expect(
       src,
-      'REGRESSÃO: o DELETE não preserva mais source=document — apagaria override humano manual (Codex item 3)',
-    ).toMatch(/\.delete\(\)[\s\S]{0,160}\.eq\("source", "document"\)/);
+      'REGRESSÃO: o DELETE deixou de alcançar as linhas da RPC (source=rpc) — writer automatizado volta ' +
+        'a ficar imune ao fail-closed de ambiguidade',
+    ).toMatch(/\.delete\(\)[\s\S]{0,200}\.in\("source", \["document", "rpc"\]\)/);
+    expect(
+      src,
+      'REGRESSÃO: o DELETE passou a alcançar source=manual — apagaria override humano (Codex item 3)',
+    ).not.toMatch(/\.delete\(\)[\s\S]{0,200}"manual"/);
   });
 
   it('PARIDADE: o bloco espelhado no edge é IDÊNTICO ao helper de src/ (pega reversão do Lovable)', () => {
@@ -1478,6 +1488,40 @@ describe('guardrail money-path: snapshot de não-vinculados lê a proof por cont
     ).toMatch(/carteira_membership_ledger"\)[\s\S]{0,160}ignoreDuplicates:\s*true/);
   });
 
+  // ── Hotfix do /codex retroativo (2026-07-18): 2 achados VERIFICADOS na Fatia 4 ──
+  it('achado A: o delete de ambiguidade ALCANÇA as linhas da RPC (só override humano é imune)', () => {
+    // A RPC gravava source='manual', e o delete do sync escopava só 'document' para preservar override
+    // HUMANO. Efeito: todo vínculo criado pela RPC ficava IMUNE ao fail-closed de ambiguidade — vendedor
+    // possivelmente errado sobrevivendo à detecção, com comissão em cima. 'rpc' TEM de estar no filtro.
+    expect(
+      src,
+      'REGRESSÃO: o delete de ambiguidade voltou a escopar só source=document — as linhas da RPC ' +
+        'ficam imunes ao fail-closed (vínculo suspeito sobrevive com vendedor possivelmente errado)',
+    ).toMatch(/\.in\("source",\s*\["document",\s*"rpc"\]\)/);
+    expect(
+      src,
+      'REGRESSÃO: o delete voltou a .eq("source","document") — perdeu as linhas da RPC',
+    ).not.toMatch(/\.delete\(\)[\s\S]{0,200}\.eq\("source",\s*"document"\)/);
+  });
+
+  it('achado C: a admissão nova no ledger vem da DOCUMENT-FIRST, não do espelho poluído', () => {
+    // `upsertByUser` é CODE-FIRST e resolve por `userByCodigo`, que vem do espelho legado SEM conta — a
+    // fonte que este épico existe para aposentar — e que VENCE o documento (`userByCodigo ?? userByDoc`).
+    // Caminho do erro: código reaproveitado faz o legado dizer "K → X" enquanto o documento prova
+    // "K → Y"; a code-first escolhe X (já no ledger, upsert vira no-op) e Y, o cliente novo e correto,
+    // NUNCA entra na membership. Os ~1633 aliases não justificam a code-first: já estão no ledger pelo
+    // backfill da Fatia 0, e o acumulador não encolhe.
+    expect(
+      src,
+      'REGRESSÃO: o ledger voltou a ser alimentado pela lista CODE-FIRST (upsertByUser) — admissão nova ' +
+        'passa a ser decidida pelo espelho poluído sem conta',
+    ).toMatch(/ledgerRows\s*=\s*Array\.from\(accountMapByUser\.values\(\)\)/);
+    expect(
+      src,
+      'REGRESSÃO: ledgerRows voltou a derivar de upsertByUser (code-first)',
+    ).not.toMatch(/ledgerRows\s*=\s*rows\.map/);
+  });
+
   it('PR-C: as 2 funções de clone não voltaram (re-adicioná-las rearma o rollback da B-lite)', () => {
     // mapaConsolidacao gravava status:'inactive' fixo com dry_run default false: uma invocação
     // rebaixaria os 1.633 aliases ATIVOS de uma vez — o rollback da consolidação, por acidente.
@@ -1749,9 +1793,29 @@ describe('guardrail money-path: omie-cliente não fabrica identidade (hardening 
       bloco,
       'REGRESSÃO: a escrita do vínculo voltou a ignorar o retorno — "importado" sem vínculo é recriado na próxima execução',
     ).toMatch(/const \{ error: mappingError \} = await adminClient\.rpc\("register_carteira_member"/);
+    // O `sync_all_clients` é best-effort POR LINHA: conta o erro e segue para o próximo cliente (≠ do
+    // criar_perfil_local, que aborta com 409 — lá o chamador é interativo e usaria o user_id de volta).
     expect(bloco, 'REGRESSÃO: falha no vínculo deixou de contar erro').toMatch(
       /if \(mappingError\)[\s\S]{0,240}accErrors\+\+;/,
     );
+  });
+
+  // ── Hotfix do /codex retroativo (achado B), 2026-07-18 ──
+  it('achado B: criar_perfil_local é FAIL-LOUD — 23505 não vira user_id de sucesso', () => {
+    const bloco = blocoCaseCliente(src, 'criar_perfil_local');
+    // O tratamento antigo (`if (mappingError) console.error(...)` e segue) era herdado de quando o
+    // destino era o espelho poluído, onde o erro era inócuo. Com a UNIQUE(codigo,account) fail-closed da
+    // proof, 23505 significa "este código é de OUTRO user": devolver user_id faz a UI seguir e anexar a
+    // ferramenta ao cliente ERRADO (useUnifiedOrder.handleStaffAddTool usa o user_id de volta).
+    expect(
+      (bloco.match(/if \(mappingError\)[\s\S]{0,700}?status:\s*409/g) ?? []).length,
+      'REGRESSÃO: algum dos 2 ramos do criar_perfil_local voltou a engolir o erro do vínculo e devolver ' +
+        'user_id como sucesso — a UI anexaria a ferramenta ao cliente ERRADO',
+    ).toBe(2);
+    expect(
+      bloco,
+      'REGRESSÃO: sumiu a mensagem que nomeia a colisão de código (23505) — o operador perde a causa',
+    ).toMatch(/mappingError\.code === "23505"/);
   });
 
   it('upsertAddressFromOmie devolve false quando a escrita falha (senão o synced mente)', () => {
