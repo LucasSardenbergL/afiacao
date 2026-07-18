@@ -908,6 +908,50 @@ describe('guardrail money-path: carteira-rebuild lê o vendedor da PROOF oben (P
     ).toBe(mirrorBlockNamed(rebuildHelper, 'carteira-load'));
   });
 
+  // ── CANÁRIA DE DEPLOY (?canary=1) — prova o que está SERVIDO (a paridade textual só cobre a FONTE) ──
+  describe('canária de deploy ?canary=1', () => {
+    const bloco = rebuild.match(/searchParams\.get\('canary'\) === '1'\)[\s\S]*?\n {2}\}/)?.[0] ?? '';
+
+    it('sentinela: o bloco da canária existe no edge', () => {
+      expect(bloco, 'sumiu a canária ?canary=1 — sem ela não há prova do DEPLOY, só da fonte').not.toBe('');
+    });
+
+    it('roda o helper REAL (computeCarteira + verificarCobertura), não uma reimplementação', () => {
+      expect(bloco, 'canária não chama computeCarteira — não provaria o helper deployado').toContain('computeCarteira(');
+      expect(bloco, 'canária não chama verificarCobertura').toContain('verificarCobertura(');
+    });
+
+    it('o `expected` casa a verdade-base provada em rebuild-helpers.test.ts (senão a canária mente verde)', () => {
+      expect(bloco).toMatch(/membroConflitadoPresente: true/);
+      expect(bloco).toMatch(/conflitadoSource: 'hunter_orphan'/);
+      expect(bloco).toMatch(/conflitadoEligible: false/);
+      expect(bloco).toMatch(/conflitadoCodigo: 222/);
+      expect(bloco).toMatch(/coberturaOk: true/);
+    });
+
+    it('a fixture tem o CONFLITO (código 222 → 2 vendedores) — é o que discrimina velho×novo', () => {
+      expect(bloco, 'fixture sem código repetido p/ 2 user_ids → canária não discrimina deploy velho').toMatch(
+        /omie_codigo_vendedor: 222, user_id: '[^']*a'[\s\S]{0,120}omie_codigo_vendedor: 222, user_id: '[^']*b'/,
+      );
+    });
+
+    it('NÃO escreve e NÃO toma o lease: roda ANTES do claim e retorna dentro do próprio bloco', () => {
+      const iCanary = rebuild.indexOf("searchParams.get('canary')");
+      const iClaim = rebuild.indexOf('claim_carteira_rebuild');
+      expect(iCanary, 'âncora: não achei a canária').toBeGreaterThan(-1);
+      expect(iClaim, 'âncora: não achei o claim do lease').toBeGreaterThan(-1);
+      expect(iCanary, 'canária DEPOIS do lease — uma checagem bloquearia um rebuild real').toBeLessThan(iClaim);
+      expect(bloco, 'canária faz escrita (upsert/insert/update/delete) — deve ser PURA').not.toMatch(/\.(upsert|insert|update|delete)\(/);
+      expect(bloco, 'canária não retorna dentro do bloco — cairia no fluxo de rebuild real').toContain('return new Response(');
+    });
+
+    it('é staff-gated: vem DEPOIS do authorizeCronOrStaff', () => {
+      const iAuth = rebuild.indexOf('authorizeCronOrStaff(req)');
+      expect(iAuth).toBeGreaterThan(-1);
+      expect(iAuth, 'canária ANTES do gate de auth — exposta a anônimo').toBeLessThan(rebuild.indexOf("searchParams.get('canary')"));
+    });
+  });
+
   // D5: computeCarteira (o CORE money-path) vivia duplicada no edge FORA de qualquer guarda de paridade —
   // dava p/ corrigir o helper testado e esquecer o edge real (achado Codex). Agora está no bloco carteira-compute.
   it('PARIDADE: computeCarteira é IDÊNTICA ao src/ (o core money-path — pega reversão do Lovable)', () => {
