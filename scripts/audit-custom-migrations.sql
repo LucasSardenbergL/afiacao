@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 392
+-- Total de custom migrations: 395
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -433,7 +433,10 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260718150000', 'fu7_helpers_rls_schema_privado', '20260718150000_fu7_helpers_rls_schema_privado.sql'),
   ('20260718160000', 'tactical_plans_eligible_fail_closed', '20260718160000_tactical_plans_eligible_fail_closed.sql'),
   ('20260718170000', 'fu7_conserta_callers_orfaos', '20260718170000_fu7_conserta_callers_orfaos.sql'),
-  ('20260718170000', 'tint_fase1c_expected_item_count', '20260718170000_tint_fase1c_expected_item_count.sql')
+  ('20260718170000', 'register_carteira_member', '20260718170000_register_carteira_member.sql'),
+  ('20260718170000', 'tint_fase1c_expected_item_count', '20260718170000_tint_fase1c_expected_item_count.sql'),
+  ('20260718180000', 'fu7b_pode_ver_carteira_completa_privado', '20260718180000_fu7b_pode_ver_carteira_completa_privado.sql'),
+  ('20260718213000', 'tint_formula_canonica', '20260718213000_tint_formula_canonica.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -1775,7 +1778,10 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('fu7_conserta_callers_orfaos', 'function', 'public', 'registrar_resultado_plano', ''),
   ('fu7_conserta_callers_orfaos', 'function', 'public', 'registrar_contato_rota', ''),
   ('fu7_conserta_callers_orfaos', 'function', 'public', 'protect_master_config', ''),
-  ('tint_fase1c_expected_item_count', 'function', 'public', 'tint_promote_sync_run', '')
+  ('register_carteira_member', 'function', 'public', 'register_carteira_member', ''),
+  ('tint_fase1c_expected_item_count', 'function', 'public', 'tint_promote_sync_run', ''),
+  ('fu7b_pode_ver_carteira_completa_privado', 'function', 'public', 'pode_ver_carteira_completa', ''),
+  ('tint_formula_canonica', 'view', 'public', 'v_tint_formula_canonica', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -3165,7 +3171,10 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('fu7_conserta_callers_orfaos', 'function', 'public', 'registrar_resultado_plano', ''),
   ('fu7_conserta_callers_orfaos', 'function', 'public', 'registrar_contato_rota', ''),
   ('fu7_conserta_callers_orfaos', 'function', 'public', 'protect_master_config', ''),
-  ('tint_fase1c_expected_item_count', 'function', 'public', 'tint_promote_sync_run', '')
+  ('register_carteira_member', 'function', 'public', 'register_carteira_member', ''),
+  ('tint_fase1c_expected_item_count', 'function', 'public', 'tint_promote_sync_run', ''),
+  ('fu7b_pode_ver_carteira_completa_privado', 'function', 'public', 'pode_ver_carteira_completa', ''),
+  ('tint_formula_canonica', 'view', 'public', 'v_tint_formula_canonica', '')
 )
 SELECT
   e.migration,

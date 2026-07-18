@@ -87,7 +87,10 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
     return match ? match[1] : null;
   }, [currentBaseInfo?.descricao]);
 
-  // Search formulas in current SKU
+  // Search formulas in current SKU — lê a CANÔNICA (v_tint_formula_canonica,
+  // Fase 2): 1 linha por (account, sku_id, cor_id), preferência SL, fallback
+  // SAYERLACK. Elimina a duplicata das 2 gerações no picker sem apagar nada.
+  // ORDER determinístico (antes: LIMIT 20 sem order — resultado instável).
   const { data: formulas, isLoading: loadingFormulas } = useQuery({
     queryKey: ['tint-formula-search', skuId, debouncedSearch],
     staleTime: 5 * 60 * 1000,
@@ -95,12 +98,13 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
     queryFn: async () => {
       if (!isSearchablePostgrestTerm(debouncedSearch)) return []; // só-wildcard → match-all (#1062); busca vazia
       const { data } = await supabase
-        .from('tint_formulas')
+        .from('v_tint_formula_canonica')
         .select('id, cor_id, nome_cor, preco_final_sayersystem')
         .eq('account', 'oben')
         .eq('sku_id', skuId!)
-        .is('desativada_em', null)
         .or(ilikeOr(['cor_id', 'nome_cor'], debouncedSearch))
+        .order('cor_id', { ascending: true })
+        .order('id', { ascending: true })
         .limit(20);
       return (data || []) as FormulaResult[];
     },
@@ -118,14 +122,15 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
     queryFn: async (): Promise<{ matches: AlternativePackaging[]; colorExists: boolean }> => {
       // só-wildcard → `.or()` match-all (#1062); busca vazia não acha cor nenhuma
       if (!isSearchablePostgrestTerm(debouncedSearch)) return { matches: [], colorExists: false };
-      // Search formulas across all SKUs
+      // Search formulas across all SKUs — canônica (a view já filtra ativas
+      // com sku e resolve a gêmea SL×SAYERLACK por chave)
       const { data: globalFormulas } = await supabase
-        .from('tint_formulas')
+        .from('v_tint_formula_canonica')
         .select('id, cor_id, nome_cor, sku_id, preco_final_sayersystem')
         .eq('account', 'oben')
-        .is('desativada_em', null)
         .or(ilikeOr(['cor_id', 'nome_cor'], debouncedSearch))
-        .not('sku_id', 'is', null)
+        .order('cor_id', { ascending: true })
+        .order('id', { ascending: true })
         .limit(50);
 
       // Achou fórmula = a cor EXISTE no catálogo (mesmo que nenhuma seja vendável).
@@ -179,6 +184,9 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
 
       const result: AlternativePackaging[] = [];
       for (const gf of globalFormulas) {
+        // Tipo gerado da VIEW é todo nullable; na tabela-base as colunas são NOT
+        // NULL e a view filtra sku — o guard só materializa isso pro strict.
+        if (gf.id == null || gf.sku_id == null || gf.cor_id == null || gf.nome_cor == null) continue;
         const sku = skus.find(s => s.id === gf.sku_id);
         if (!sku?.omie_product_id) continue;
         const prod = products.find(p => p.id === sku.omie_product_id);
@@ -186,7 +194,7 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
 
         result.push({
           formulaId: gf.id,
-          skuId: gf.sku_id!,
+          skuId: gf.sku_id,
           omieProductId: sku.omie_product_id,
           productDescricao: prod.descricao,
           productCodigo: prod.codigo,
@@ -254,15 +262,15 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
     queryFn: async (): Promise<AlternativePackaging[]> => {
       if (!selectedFormula?.cor_id || !skuId) return [];
 
-      // Get all formulas with the same cor_id but different sku_id
+      // Get all formulas with the same cor_id but different sku_id — canônica
+      // (1 por SKU; sem a gêmea SAYERLACK duplicando cada embalagem)
       const { data: altFormulas } = await supabase
-        .from('tint_formulas')
+        .from('v_tint_formula_canonica')
         .select('id, sku_id, preco_final_sayersystem')
         .eq('account', 'oben')
         .eq('cor_id', selectedFormula.cor_id)
-        .is('desativada_em', null)
         .neq('sku_id', skuId)
-        .not('sku_id', 'is', null);
+        .order('id', { ascending: true });
 
       if (!altFormulas || altFormulas.length === 0) return [];
 
@@ -292,6 +300,8 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
 
       const result: AlternativePackaging[] = [];
       for (const af of altFormulas) {
+        // Guard de narrowing: view gerada é nullable; base é NOT NULL (ver busca global)
+        if (af.id == null || af.sku_id == null) continue;
         const sku = skus.find(s => s.id === af.sku_id);
         if (!sku?.omie_product_id) continue;
         const prod = products.find(p => p.id === sku.omie_product_id);
@@ -299,7 +309,7 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
 
         result.push({
           formulaId: af.id,
-          skuId: af.sku_id!,
+          skuId: af.sku_id,
           omieProductId: sku.omie_product_id,
           productDescricao: prod.descricao,
           productCodigo: prod.codigo,
