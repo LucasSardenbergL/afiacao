@@ -2,6 +2,20 @@
 
 > O que NÃO acontece sozinho no merge. Lição durável carregada sob demanda. Runbook passo-a-passo completo: `docs/runbooks/lovable-supabase.md`. Banco/migration: `docs/agent/database.md`. Verificação: skill `lovable-deploy-verify`.
 
+## Domínio canônico — `https://steu.lovable.app`
+
+É **a** URL de produção: o que verificar depois de um Publish, o host do QA visual, e o destino de todo link que uma edge mande para o cliente. **`afiacao.lovable.app` está MORTO** — HTTP 404 `Project not found` (conferido 2026-07-18), assim como `preview--afiacao.lovable.app` e as variações por project-id. O nome do projeto no Lovable não é o nome do repo; não dá para adivinhar a URL a partir de "afiacao".
+
+**Edge que linka o app não hardcoda host** — lê a env, com o canônico só como fallback:
+
+```ts
+const APP_URL = Deno.env.get("APP_URL") ?? "https://steu.lovable.app";
+```
+
+Padrão em `gerar-pedidos-diario`/`disparar-pedidos-aprovados`. O guard `src/__tests__/edge-app-url.test.ts` quebra o CI se alguma edge voltar a citar host nu ou o domínio morto (#1413: o CTA "Agendar Afiação" do `monthly-report` apontava para o 404 — e só era renderizado para o cliente COM ferramenta atrasada, o de maior intenção).
+
+Como provar o que está **SERVIDO** nesse host (hash do index + grep nos chunks): skill `lovable-deploy-verify` — o método vive lá, não é duplicado aqui.
+
 ## Merge na `main` ≠ produção — 3 deploys MANUAIS e independentes
 
 1. **Migration** → colar o SQL no **SQL Editor do Lovable** → Run → validar com query de contagem. O Lovable **NÃO** aplica migration de nome custom sozinho (falha SILENCIOSA: a feature compila e quebra em runtime). Detalhe + ritual + skill `lovable-db-operator`: `docs/agent/database.md`.
