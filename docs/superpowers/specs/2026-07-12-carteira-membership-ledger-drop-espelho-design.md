@@ -192,6 +192,35 @@ Três premissas da §4 não sobreviveram à medição em produção. Registrado 
 
 **(b) Os 6 writers pontuais estavam inertes; o bulk era o único vivo.** Último `INSERT` no espelho: **25/05** (1 linha); antes, 10/04 (1 linha) — dois em quatro meses. As 5239 escritas diárias batem 1:1 com `count(account='oben')` na proof: são o bulk `analytics-sync`. **Consequência:** migrar só os 6 pontuais não faria a escrita cessar nem destravaria a Fatia 5 — o bulk **entrou no escopo da Fatia 4**. Ele agora alimenta o ledger em massa (não pela RPC: 5239 chamadas seria o N+1 proibido em enumeração pesada), pela lista **code-first**, que cobre os ~1633 aliases fiscais que a proof document-first nunca vê. Usar a document-first **encolheria a membership** — exatamente o que a opção D existe para impedir.
 
-**(c) ⚠️ A admissão de membro novo morreria no DROP — o design não cobria isto.** O ledger tem 6909 linhas, **todas `source='backfill'`**: zero `trigger`. A única via de entrada de membro novo era o trigger `AFTER INSERT` em `omie_clientes` (Fatia 0) — e nem o bulk o dispara, porque faz *upsert* (UPDATE, não INSERT). Quando a Fatia 5 dropar o espelho, **o trigger cai junto**: sem a RPC e sem o bulk escrevendo o ledger direto, nenhum cliente novo jamais entraria na carteira — sem vendedor, sem comissão, silenciosamente. **A Fatia 5 deve confirmar por psql-ro que `source IN ('rpc','sync')` aparece no ledger ANTES de dropar** — é a prova de que a via nova está viva.
+**(c) ⚠️ A admissão de membro novo morreria no DROP — o design não cobria isto.** O ledger tem 6909 linhas, **todas `source='backfill'`**: zero `trigger`. A única via de entrada de membro novo era o trigger `AFTER INSERT` em `omie_clientes` (Fatia 0) — e nem o bulk o dispara, porque faz *upsert* (UPDATE, não INSERT). Quando a Fatia 5 dropar o espelho, **o trigger cai junto**: sem a RPC e sem o bulk escrevendo o ledger direto, nenhum cliente novo jamais entraria na carteira — sem vendedor, sem comissão, silenciosamente. **A Fatia 5 deve confirmar por psql-ro que `source IN ('rpc','sync')` aparece no ledger ANTES de dropar** — é a prova de que a via nova está viva. → **GATE CUMPRIDO em 18/07 19:39** (§11): `source='rpc'` = 91 linhas.
 
-**(d) Correção de fato na baseline de invariantes.** O comentário de `edge-money-path-invariants.test.ts` afirmava que a leitura `analytics-sync:240` (`fetchOmieClienteUserMap`) era "par indivisível do writer e morre junto com ele na Fatia 4". **Não morreu:** `userByCodigo` também chaveia `tagsByUser` e a própria lista code-first que agora alimenta o ledger. O edge foi de 4 → **3** leituras de `omie_clientes` (`:240`, `:1801`, `:2022`), todas resíduo da Fatia 5, nenhuma escrita.
+**(d) Correção de fato na baseline de invariantes.** O comentário de `edge-money-path-invariants.test.ts` afirmava que a leitura `analytics-sync:240` (`fetchOmieClienteUserMap`) era "par indivisível do writer e morre junto com ele na Fatia 4". **Não morreu:** `userByCodigo` também chaveia `tagsByUser` e a própria lista code-first que agora alimenta o ledger. Trocá-la pela proof document-first ENCOLHERIA a membership (a code-first cobre os ~1633 aliases fiscais).
+
+**(e) O #1420 (PR-C) refutou o bloqueio que esta spec registrava.** A §4-bis dava as 2 funções de clone (`fetchAlvosSemProfile`/`fetchOmieCodigoPorUser`) como dependência dura do espelho, sob o argumento "só o espelho tem o par (clone→código)". **Era falso:** `customer_canonical_alias.alias_omie_codigo` tem o par e o ledger tem a data (paridade medida: 1.633, diferença simétrica 0). Elas foram **DELETADAS**, não migradas — eram invocáveis-bomba, não capacidade viva. Somando a deleção delas com o writer que a Fatia 4 removeu, o `omie-analytics-sync` foi de **4 → 1** leitura de `omie_clientes`: sobra só a `:240`, e **nenhuma escrita em edge nenhuma**.
+
+## 11. Confirmação em PRODUÇÃO da Fatia 4 (2026-07-18, pós-deploy)
+
+Deploy das 3 camadas verificado; a prova de comportamento (N3) veio de um `sync_all_clients` disparado à mão em `/admin/analytics-sync`, observado ao vivo por psql-ro. Em ~5 min o import trouxe **41 clientes novos**:
+
+| tabela | antes | depois | leitura |
+|---|---|---|---|
+| `omie_clientes` (espelho) | 6909 · `05:02:40` | 6909 · **`05:02:40`** | **não se moveu** — o writer morreu |
+| `omie_customer_account_map` | 15663 | 15704 (+41) | `source='manual'`, `oben`=73 · `colacor_sc`=20 |
+| `carteira_membership_ledger` | 6909 (só `backfill`) | 6950 (+41) | **`source='rpc'` = 91** |
+| `addresses` | 6104 | 6145 (+41) | lockstep — 1 endereço por cliente |
+
+O teste é **discriminante**, não prova por ausência: os três destinos avançaram em lockstep enquanto o espelho ficou parado. "Nada aconteceu" está descartado (41 clientes entraram) e "edge velha" também (o espelho teria avançado).
+
+**Detalhe que fecha o argumento:** a proof recebeu os slugs **canônicos** (`oben`/`colacor_sc`). Se o código estivesse passando o slug INTERNO do sync (`'vendas'`/`'servicos'`), o `CHECK chk_ocam_account` teria levantado `23514` e as linhas não existiriam — é o assert A6 do harness PG17 confirmado em produção.
+
+**Ainda não observado:** `source='sync'` (o bulk). Ele só insere quando o cron `sync-customers-vendas-daily` (`0 5 * * *`) encontrar cliente novo que a RPC não pegou. Vale reconfirmar após o próximo run que `omie_clientes.updated_at` segue travado em `2026-07-18 05:02:40`.
+
+### Estado dos 3 bloqueadores da §4-bis (medido 18/07 pós-deploy)
+
+| bloqueador | estado | ação da Fatia 5 |
+|---|---|---|
+| `omie_cliente_upsert_mapping` | **já DROPADA** (#1409) | nada — item cumprido |
+| `_data_health_compute` | ainda referencia `omie_clientes` | `CREATE OR REPLACE` → proof (pré-flight `pg_get_functiondef` da PROD: função QUENTE) |
+| `seed_targets_faltantes` | ainda referencia `omie_clientes` | `CREATE OR REPLACE` → ledger |
+
+⚠️ **A paridade mudou e a Fatia 5 precisa saber:** ledger = **7151** × espelho = **6909**, com `só-no-espelho = 0`. O ledger deixou de ser igual ao espelho e virou um **superset** — ganhou os membros que a RPC admitiu depois do deploy. Isso é o acumulador funcionando como projetado, **não** divergência. Consequência prática: migrar `seed_targets_faltantes` para o ledger **aumenta** o universo do seed (7151 > 6909). O critério de aceite da Fatia 5 é `só-no-espelho = 0` (nenhum membro perdido), **não** contagem igual — exigir igualdade reprovaria o comportamento correto.
