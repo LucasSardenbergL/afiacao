@@ -84,6 +84,7 @@ Tokens em `src/index.css` (paleta quase-neutra low-fatigue; `--status-*` dessatu
 - Atalhos: `useRegisterShortcuts` (dialog `?` auto-descobre); Cmd-K: `useRegisterCommands` — não listener `keydown` solto.
 - Toast: só `sonner`. Skeleton: `<PageSkeleton variant>` — não `<Loader2 spin>` de página inteira. Empty: `<EmptyState tone="operational">`.
 - Touch: `<Button size="touch">` (44px) / `balcao` (56px); `pointer:coarse` já dá ≥44px global.
+- Ação global (sincronizar/importar/recalcular/gerar): `useMutationComRegistro` + `<UltimaExecucao acao>` (`src/components/execucoes/`) — não `useMutation` cru; edge single-shot com cron registra server-side (`_shared/registro-execucao.ts`). **1 escritor por slug**; ação sobre UM registro: estado no próprio registro.
 - Heading hero: `font-display` (Newsreader). Analytics: `track()` com `<area>.<action>` — não `posthog` direto.
 
 ## Auth & roles
