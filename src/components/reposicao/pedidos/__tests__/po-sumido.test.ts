@@ -30,6 +30,18 @@ const base: PoCandidato = {
 };
 const c = (over: Partial<PoCandidato> = {}): PoCandidato => ({ ...base, ...over });
 
+/**
+ * O texto INSTRUI desfazer o pedido? Proíbe a instrução sem proibir a menção — "se o PO foi excluído" é
+ * observação legítima e precisa passar; "exclua o pedido" e "faça o cancelamento" não.
+ * Cobre verbo imperativo/infinitivo E o substantivo em construção de comando, que foi o último furo.
+ */
+const VERBOS = /\b(cancele|cancelem|cancelar|anule|anulem|anular|exclua|excluam|excluir|remova|removam|remover|delete|deletem|deletar|desfaça|desfaçam|desfazer|apague|apaguem|apagar)\b/i;
+const COMANDO_SUBSTANTIVO = /\b(faça|fazer|providencie|providenciar|solicite|solicitar|peça|pedir|marque|marcar|registre|registrar)\b[^.;]{0,40}\b(cancelamento|exclusão|remoção|anulação|cancelad[oa]|excluíd[oa]|removid[oa])\b/i;
+export function instruiDesfazer(txt: string): boolean {
+  const semAExcecao = txt.replace(/não cancele/gi, '');
+  return VERBOS.test(semAExcecao) || COMANDO_SUBSTANTIVO.test(semAExcecao);
+}
+
 // A LÓGICA se testa pelo discriminante (binário, robusto a reescrita de copy). Só o invariante
 // "nunca instruir cancelamento" se testa no texto — é lá que ele de fato importa.
 describe('classificarAcao — a decisão, sem depender da redação', () => {
@@ -68,33 +80,57 @@ describe('acaoSugerida — NUNCA sugere cancelar (o erro de R$3k)', () => {
   });
 
   it('INVARIANTE: nenhuma combinação de evidência manda desfazer o pedido', () => {
-    // Duas gerações de furo antes desta: (1) regex de âncora deixava passar "Faça o cancelamento" e
-    // "Não cancele agora; cancele depois"; (2) checar só "cancel" deixava passar os SINÔNIMOS — anule,
-    // exclua, remova, delete, desfaça mandam desfazer sem conter "cancel".
-    // Proibimos o IMPERATIVO (instrução), não a menção: "se o PO foi excluído" é observação legítima e
-    // precisa continuar passando; "exclua o pedido" não.
-    const IMPERATIVOS = /\b(cancele|cancelem|cancelar|anule|anular|exclua|excluir|remova|remover|delete|deletar|desfaça|desfazer|apague|apagar)\b/i;
+    // Três gerações de furo antes desta: (1) regex de âncora deixava passar "Faça o cancelamento";
+    // (2) checar só "cancel" deixava passar os SINÔNIMOS (anule/exclua/remova/delete/desfaça);
+    // (3) o léxico de verbos deixava passar o SUBSTANTIVO em construção imperativa — e eu tinha
+    // anotado esse furo como "aceito", que era racionalização: "faça o cancelamento" manda cancelar.
     for (const sinal of [true, false]) {
       for (const proto of ['2097501', null]) {
         for (const status of ['sem_registro_last_seen', 'visto_em_outro_run', 'identidade_nao_interpretavel']) {
           const txt = acaoSugerida(c({
             algum_sinal_de_canal: sinal, portal_protocolo: proto, visto_status: status,
           }));
-          const semAExcecao = txt.replace(/não cancele/gi, '');
-          expect(IMPERATIVOS.test(semAExcecao), `instruiu desfazer o pedido: "${txt}"`).toBe(false);
+          expect(instruiDesfazer(txt), `instruiu desfazer o pedido: "${txt}"`).toBe(false);
         }
       }
     }
   });
 
-  it('o guarda tem dente: uma copy que mandasse excluir SERIA pega', () => {
+  it('o guarda tem dente: uma copy que mandasse desfazer SERIA pega', () => {
     // Falsificação do próprio teste — sem isto, ampliar o léxico seria fé, não prova.
-    const IMPERATIVOS = /\b(cancele|cancelem|cancelar|anule|anular|exclua|excluir|remova|remover|delete|deletar|desfaça|desfazer|apague|apagar)\b/i;
-    expect(IMPERATIVOS.test('Exclua o pedido no Omie.')).toBe(true);
-    expect(IMPERATIVOS.test('Anule e refaça.')).toBe(true);
-    expect(IMPERATIVOS.test('Faça o cancelamento depois.'.replace(/não cancele/gi, ''))).toBe(false); // substantivo escapa: aceito
+    expect(instruiDesfazer('Exclua o pedido no Omie.')).toBe(true);
+    expect(instruiDesfazer('Anule e refaça.')).toBe(true);
+    // O substantivo em construção imperativa também é instrução. A 1ª versão deste teste deixava
+    // "Faça o cancelamento depois" passar e eu ANOTEI o furo como aceitável — era racionalização:
+    // essa frase manda cancelar tanto quanto "cancele".
+    expect(instruiDesfazer('Faça o cancelamento depois.')).toBe(true);
+    expect(instruiDesfazer('Providencie a exclusão do pedido.')).toBe(true);
+    expect(instruiDesfazer('Marque como cancelado.')).toBe(true);
     // e a MENÇÃO legítima continua passando (é o texto real de 'conferir_no_omie'):
-    expect(IMPERATIVOS.test('Confira no Omie se o PO foi excluído e decida com o histórico.')).toBe(false);
+    expect(instruiDesfazer('Confira no Omie se o PO foi excluído e decida com o histórico.')).toBe(false);
+    expect(instruiDesfazer('Se o pedido existe lá, recrie o PO no Omie — não cancele.')).toBe(false);
+  });
+
+  // A prova ESTRUTURAL, que nenhum furo lexical contorna: as 4 saídas são fixas e estão aqui inteiras.
+  // Qualquer mudança de copy quebra este teste e força revisão consciente — inclusive uma que o léxico
+  // não pegasse. O guarda lexical acima é rede complementar, não a garantia.
+  it('as QUATRO saídas são exatamente estas (mudou a copy? revise o invariante)', () => {
+    const saidas = {
+      identidade_ilegivel: acaoSugerida(c({ visto_status: 'identidade_nao_interpretavel' })),
+      confirmar_com_protocolo: acaoSugerida(c({ algum_sinal_de_canal: true, portal_protocolo: '2097501' })),
+      confirmar_sem_protocolo: acaoSugerida(c({ algum_sinal_de_canal: true })),
+      conferir_no_omie: acaoSugerida(c({ algum_sinal_de_canal: false })),
+    };
+    expect(saidas).toEqual({
+      identidade_ilegivel:
+        'O código do PO neste pedido não é legível — não foi possível comparar com o Omie. Corrija o cadastro antes de qualquer conclusão.',
+      confirmar_com_protocolo:
+        'Confirme com o fornecedor pelo protocolo 2097501. Se o pedido existe lá, recrie o PO no Omie — não cancele.',
+      confirmar_sem_protocolo:
+        'Há sinal de envio ao fornecedor. Confirme com ele antes de agir; se o pedido existe, recrie o PO no Omie.',
+      conferir_no_omie:
+        'Nenhum sinal de envio registrado aqui. Confira no Omie se o PO foi excluído e decida com o histórico do pedido.',
+    });
   });
 });
 

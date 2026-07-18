@@ -90,7 +90,10 @@ export function PoSumidoCard({
           {aberto ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
           <FileSearch className="w-4 h-4" />
           {TITULO} ({candidatos.length})
-          {comDanoAtivo > 0 && (
+          {/* "na janela de 7 dias" é afirmação sobre o estado ATUAL (o dano está acontecendo agora).
+              Com a apuração desatualizada isso não se sustenta — a janela pode ter passado ou o pedido
+              ter sido resolvido. */}
+          {comDanoAtivo > 0 && !falhaApuracao && (
             <Badge variant="outline" className="text-status-warning border-status-warning/40">
               {comDanoAtivo} na janela de 7 dias
             </Badge>
@@ -103,22 +106,37 @@ export function PoSumidoCard({
         </CardTitle>
         {/* A lista continua na tela, mas o usuário precisa saber que ela é a ÚLTIMA conhecida e não a
             atual — "desatualizado" é informação, "sumiu" seria perda, e nenhum dos dois pode virar
-            silêncio. */}
+            silêncio. O que NÃO pode continuar é a INSTRUÇÃO: manter "recrie o PO" sobre uma lista
+            velha faz o comprador recriar um PO que já pode ter sido recriado (o ciclo se resolve entre
+            uma apuração e a seguinte). Evidência histórica, sim; ação sobre estado velho, não. */}
         {falhaApuracao && (
           <p className="text-sm text-status-warning">
-            A última verificação falhou. A lista abaixo é a mais recente que conseguimos apurar e pode
-            estar desatualizada.
+            A última verificação falhou. O que está abaixo é o resultado da <strong>última apuração
+            bem-sucedida</strong> e pode já ter sido resolvido. <strong>Não aja por esta lista</strong>{' '}
+            — confira o pedido no Omie antes de qualquer coisa.
           </p>
         )}
         <p className="text-sm text-muted-foreground">
           {/* "não foi CONFIRMADO", não "não foi encontrado": para as linhas com identidade ilegível a
               RPC não chegou a comparar nada, e afirmar ausência aqui seria falso — no lugar mais lido
               do card, já que a ressalva por linha só aparece depois de expandir. Neutralizar só o
-              título teria sido meia-correção: trocar o rótulo sem mudar a afirmação. */}
-          O pedido está <strong>disparado</strong> aqui, mas o PO não foi confirmado na última varredura
-          do Omie. Dentro da janela de 7 dias isso infla o estoque e o item some do cockpit; fora dela, o
-          motor já voltou a sugerir o SKU. <strong>Não cancele sem conferir</strong> — o fornecedor pode
-          estar com o pedido (o portal é acionado antes do Omie).{' '}
+              título teria sido meia-correção: trocar o rótulo sem mudar a afirmação.
+              Em falha, os mesmos fatos vão para o PASSADO: no presente eles afirmam um estado atual que
+              não foi verificado. */}
+          {falhaApuracao ? (
+            <>
+              Na última apuração, estes pedidos estavam <strong>disparados</strong> aqui sem PO
+              confirmado no Omie.{' '}
+            </>
+          ) : (
+            <>
+              O pedido está <strong>disparado</strong> aqui, mas o PO não foi confirmado na última
+              varredura do Omie. Dentro da janela de 7 dias isso infla o estoque e o item some do
+              cockpit; fora dela, o motor já voltou a sugerir o SKU.{' '}
+              <strong>Não cancele sem conferir</strong> — o fornecedor pode estar com o pedido (o portal
+              é acionado antes do Omie).{' '}
+            </>
+          )}
           {ilegiveis > 0 && (
             <>
               Em {ilegiveis} {ilegiveis === 1 ? 'desse pedido' : 'desses pedidos'} o código do PO não é
@@ -149,7 +167,7 @@ export function PoSumidoCard({
                 <TableHead>Ciclo</TableHead>
                 <TableHead>Fornecedor / Canal</TableHead>
                 <TableHead>Evidência</TableHead>
-                <TableHead>O que fazer</TableHead>
+                <TableHead>{falhaApuracao ? 'Ação' : 'O que fazer'}</TableHead>
                 <TableHead className="text-right">Valor</TableHead>
               </TableRow>
             </TableHeader>
@@ -184,7 +202,18 @@ export function PoSumidoCard({
                       {c.omie_codigo_pedido ? `PO ${c.omie_codigo_pedido}` : 'PO não identificado'}
                     </div>
                   </TableCell>
-                  <TableCell className="text-xs max-w-[22rem]">{acaoSugerida(c)}</TableCell>
+                  {/* Com a apuração desatualizada a sugestão é SUPRIMIDA, não exibida com ressalva:
+                      "recrie o PO no Omie" sobre uma linha que já pode ter sido resolvida produz PO
+                      duplicado — o mesmo dano que este PR existe para evitar, só que pelo outro lado. */}
+                  <TableCell className="text-xs max-w-[22rem]">
+                    {falhaApuracao ? (
+                      <span className="text-muted-foreground">
+                        Confira este pedido no Omie — a apuração está desatualizada.
+                      </span>
+                    ) : (
+                      acaoSugerida(c)
+                    )}
+                  </TableCell>
                   <TableCell className="text-right tabular-nums font-medium">
                     {c.valor_total == null ? (
                       <span className="text-muted-foreground">—</span>

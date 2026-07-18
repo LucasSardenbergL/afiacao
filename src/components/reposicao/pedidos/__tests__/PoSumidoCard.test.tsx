@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { PoSumidoCard } from '../PoSumidoCard';
 import type { PoCandidato } from '../po-sumido';
 
@@ -95,5 +95,48 @@ describe('PoSumidoCard — os estados em que dá para mentir', () => {
     expect(screen.getByText('pode estar desatualizado')).toBeInTheDocument();
     expect(screen.getByText(/a última verificação falhou/i)).toBeInTheDocument();
     expect(screen.getByText(/a reconciliar no Omie/i)).toBeInTheDocument();
+  });
+
+  it('DESATUALIZADO não instrui recriar o PO — instrução sobre estado velho gera PO duplicado', () => {
+    // O caminho que isso fecha: apuração encontra o candidato → o PO é recriado → o poll seguinte
+    // falha → o card continua mandando "recrie o PO no Omie" → o comprador recria de novo.
+    // Manter a EVIDÊNCIA é útil; manter a AÇÃO é o mesmo dano que este PR combate, pelo outro lado.
+    const cand = c({ algum_sinal_de_canal: true, portal_protocolo: '2097501' });
+    const { container } = render(<PoSumidoCard candidatos={[cand]} falhaApuracao />);
+    // EXPANDIR é obrigatório: o card nasce recolhido e a coluna "O que fazer" só existe aberta — sem
+    // o clique este teste passaria por estar fechado, não por a instrução ter sido suprimida.
+    fireEvent.click(screen.getByText(/a reconciliar no Omie/i));
+    const texto = container.textContent ?? '';
+    expect(texto).toMatch(/2097501/); // a EVIDÊNCIA continua lá
+    expect(texto).not.toMatch(/recrie o PO/i); // a INSTRUÇÃO não
+    expect(texto).toMatch(/apuração está desatualizada/i);
+  });
+
+  it('o guarda acima tem dente: com apuração OK, expandido, a instrução APARECE', () => {
+    const cand = c({ algum_sinal_de_canal: true, portal_protocolo: '2097501' });
+    const { container } = render(<PoSumidoCard candidatos={[cand]} />);
+    fireEvent.click(screen.getByText(/a reconciliar no Omie/i));
+    expect(container.textContent ?? '').toMatch(/recrie o PO/i);
+  });
+
+  it('DESATUALIZADO põe os fatos no passado — sem afirmar estado atual', () => {
+    const { container } = render(<PoSumidoCard candidatos={[c({ na_janela_7d: true })]} falhaApuracao />);
+    const texto = container.textContent ?? '';
+    expect(texto).toMatch(/na última apuração/i);
+    // "está disparado ... infla o estoque" e o badge "na janela de 7 dias" afirmam o AGORA, e o agora
+    // não foi verificado.
+    expect(texto).not.toMatch(/isso infla o estoque/i);
+    expect(texto).not.toMatch(/na janela de 7 dias/i);
+  });
+
+  it('apuração OK volta a afirmar o presente e a instruir', () => {
+    // Espelho do teste acima: sem isto, suprimir tudo sempre também passaria.
+    const { container } = render(
+      <PoSumidoCard candidatos={[c({ na_janela_7d: true, algum_sinal_de_canal: true, portal_protocolo: '2097501' })]} />,
+    );
+    const texto = container.textContent ?? '';
+    expect(texto).toMatch(/isso infla o estoque/i);
+    expect(texto).toMatch(/na janela de 7 dias/i);
+    expect(texto).not.toMatch(/na última apuração/i);
   });
 });

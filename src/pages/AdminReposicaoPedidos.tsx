@@ -284,7 +284,7 @@ export default function AdminReposicaoPedidos() {
   // A RPC é a fonte: ela decide quem é candidato E carrega a evidência (protocolo/canal), com gate próprio.
   // `retry: false` de propósito: o gate nega com 42501 e repetir 3x só gera ruído — quem não pode ver não vê.
   // Distinguir NEGADO de FALHOU importa: falha vira aviso visível (ver PoSumidoCard), nunca ausência silenciosa.
-  const { data: posSumidos, error: erroPosSumidos, isPending: apurandoPosSumidos } = useQuery({
+  const { data: posSumidos, error: erroPosSumidos, isLoading: apurandoPosSumidos } = useQuery({
     // A chave inclui o USUÁRIO porque o app não limpa o queryClient no signOut: sem isso, A (autorizado)
     // popula o cache, B entra na mesma sessão de app e vê a carteira de A até a negativa do servidor
     // chegar — e, no sentido inverso, o `refetchInterval: false` de um 42501 grudaria na chave e
@@ -299,6 +299,13 @@ export default function AdminReposicaoPedidos() {
       // um valor não-finito passaria direto e viraria total NaN / ordenação embaralhada em silêncio.
       return normalizarCandidatos((data as unknown as PoCandidato[] | null) ?? []);
     },
+    // Sem principal, NÃO consulta: durante o boot do AuthContext `user` é undefined, e disparar aqui
+    // criaria uma entrada de cache sob a chave [...,undefined] — uma chamada a mais e, pior, um balde
+    // sem dono que poderia ser reapresentado no próximo boot antes de qualquer negativa chegar.
+    // Com `enabled` falso a query fica pending+idle para sempre, então quem alimenta o "apurando" é
+    // `isLoading` (pending E buscando), não `isPending` — senão o card diria "apurando…" eternamente
+    // para quem nem tem sessão.
+    enabled: Boolean(user?.id),
     retry: false,
     // Negado uma vez, negado sempre nesta sessão: sem isto o poll repetiria o 42501 a cada minuto,
     // por aba, para sempre. Falha de apuração continua repolando — essa a gente QUER que se recupere.
