@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **389** custom migrations totais
-- **1348** objetos esperados (criados por estas migrations)
+- **391** custom migrations totais
+- **1352** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 386
+  - `function`: 390
   - `rls_policy`: 295
   - `index`: 223
   - `cron_job`: 150
@@ -3277,6 +3277,10 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.tint_promote_sync_run` | — |
 
+### `20260718150000_fu7_helpers_rls_schema_privado.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
 ### `20260718160000_tactical_plans_eligible_fail_closed.sql`
 
 | Tipo | Objeto | Parent |
@@ -3285,6 +3289,15 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.registrar_resultado_plano` | — |
 | `function` | `public.tactical_plan_recusa_cliente_mascarado` | — |
 | `trigger` | `public.trg_tactical_plan_recusa_mascarado` | `farmer_tactical_plans` |
+
+### `20260718170000_fu7_conserta_callers_orfaos.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.criar_plano_tatico` | — |
+| `function` | `public.registrar_resultado_plano` | — |
+| `function` | `public.registrar_contato_rota` | — |
+| `function` | `public.protect_master_config` | — |
 
 ## Próximos passos por status
 
