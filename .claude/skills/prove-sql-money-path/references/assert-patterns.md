@@ -40,24 +40,45 @@ R=$(P -tA 2>&1 <<'SQL'
 SET test.uid='22222222-2222-2222-2222-222222222222';  -- employee, não master
 SET ROLE authenticated;
 DO $$
+DECLARE v_passou boolean := false;
 BEGIN
-  PERFORM public.aprovar_versao_boletim('FO20.6827.00', '{}'::jsonb);
-  RAISE EXCEPTION 'GATE_NAO_BARROU';            -- chegou aqui = não barrou = BUG
-EXCEPTION
-  WHEN insufficient_privilege OR raise_exception THEN  -- 42501 / P0001 = o erro ESPERADO
-    RAISE NOTICE 'GATE_OK';
-  WHEN OTHERS THEN
-    RAISE;                                       -- qualquer outro erro: RELANÇA (não engole)
+  BEGIN
+    PERFORM public.aprovar_versao_boletim('FO20.6827.00', '{}'::jsonb);
+    v_passou := true;                            -- chegou aqui = o gate DEIXOU passar = BUG
+  EXCEPTION
+    WHEN insufficient_privilege OR raise_exception THEN NULL;  -- 42501/P0001 = o erro ESPERADO
+    WHEN OTHERS THEN RAISE;                      -- qualquer outro erro: RELANÇA (não engole)
+  END;
+  -- decisão FORA do bloco EXCEPTION: a flag não colide com SQLSTATE nenhum
+  IF v_passou THEN RAISE NOTICE 'GATE_ABERTO_BUG'; ELSE RAISE NOTICE 'GATE_OK'; END IF;
 END $$;
 SQL
 )
-case "$R" in *GATE_OK*) ok "A3 gate nega employee" ;; *) bad "A3 gate — veio: $R" ;; esac
+case "$R" in
+  *GATE_OK*)         ok  "A3 gate nega employee" ;;
+  *GATE_ABERTO_BUG*) bad "A3 gate ABERTO — employee passou" ;;
+  *)                 bad "A3 gate — resultado inesperado: $R" ;;
+esac
 ```
 
 > ⚠️ **Sentinela anti-teatro:** a string que você procura (`GATE_OK`) NÃO pode ser o texto que o
 > código emite. Se o `RAISE EXCEPTION` do código diz `'forbidden: somente master'` e você grepa por
 > `'forbidden'`, um `RAISE` espúrio em qualquer ponto casaria. Use uma sentinela **sua** (`GATE_OK`),
 > emitida só no ramo `EXCEPTION` da condição certa.
+
+> ⚠️ **Colisão de SQLSTATE — a mesma armadilha num ângulo que a leitura NÃO mostra** (achado Codex
+> xhigh, #1417). Não sinalize "o gate não barrou" com `RAISE EXCEPTION 'GATE_NAO_BARROU'` **dentro do
+> bloco cujo handler captura `raise_exception`**: `RAISE EXCEPTION` genérico levanta **P0001**, que é
+> exatamente o SQLSTATE do `RAISE EXCEPTION 'forbidden…'` da RPC → o handler captura o **próprio
+> sentinel** e o assert fica **VERDE com o gate escancarado**. A sentinela textual está correta e
+> mesmo assim o teste mente — o conflito é de *código de erro*, invisível ao ler o texto.
+> Por isso o padrão acima usa **flag booleana + `IF` fora do `EXCEPTION`**: uma variável não colide
+> com SQLSTATE nenhum. (Se preferir exceção, dê ao sentinel uma SQLSTATE própria via
+> `RAISE EXCEPTION … USING ERRCODE='22000'` e **não** a capture.)
+>
+> **O tell estrutural:** todo assert negativo precisa de uma **falsificação apontada a ele**. O
+> harness do #1416 tinha sabotagem para os asserts de dinheiro e **nenhuma** para o do gate — e foi
+> exatamente lá que o teatro sobreviveu. Assert sem sabotagem correspondente é candidato a falso-verde.
 
 **SQLSTATEs comuns no repo** (use o nome da condição, é mais legível que o código):
 
