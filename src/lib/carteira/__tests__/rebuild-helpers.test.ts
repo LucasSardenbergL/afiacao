@@ -282,46 +282,100 @@ describe('avaliarGuardProof (fail-closed pré-compute: proof oben anômala → a
   });
 });
 
-describe('avaliarGuardResultado (guard vs BASELINE PERSISTIDO — Codex R3: fecha baseline=0 && atual>0)', () => {
+describe('avaliarGuardResultado — CRON vs baseline persistido (R3) + BOOTSTRAP trava de saída vs carteira atual (R4)', () => {
+  // CRON = não-autorizado. omieAtual/forcado são inertes no ramo cron (não são lidos), mas o tipo os exige.
+  const cron = (omieElegivelNovo: number, baselinePersistido: number) =>
+    avaliarGuardResultado({ omieElegivelNovo, baselinePersistido, autorizado: false, omieAtual: 0, forcado: false });
+
   it('0 omie ELEGÍVEL → aborta sempre (carteira 100% Hunter nunca é gravada)', () => {
-    const r = avaliarGuardResultado({ omieElegivelNovo: 0, baselinePersistido: 5000, autorizado: false });
+    const r = cron(0, 5000);
     expect(r.abortar).toBe(true);
     expect(r.motivo).toMatch(/hunter|elegiv/i);
   });
-  it('BOOTSTRAP (baseline persistido=0) SEM autorização → aborta INDEPENDENTE da carteira atual (#1 R3)', () => {
-    // o buraco fechado: persistência do baseline falhou (=0) mas a carteira atual tem N>0 → NÃO reabre catraca.
-    const r = avaliarGuardResultado({ omieElegivelNovo: 100, baselinePersistido: 0, autorizado: false });
+  it('CRON: bootstrap (baseline persistido=0) sem autorização → aborta INDEPENDENTE da carteira (#1 R3)', () => {
+    const r = cron(100, 0);
     expect(r.abortar).toBe(true);
     expect(r.motivo).toMatch(/bootstrap|autoriza/i);
   });
-  it('BOOTSTRAP autorizado (flag explícito) → grava e define o baseline pelo novo', () => {
-    const r = avaliarGuardResultado({ omieElegivelNovo: 4200, baselinePersistido: 0, autorizado: true });
-    expect(r.abortar).toBe(false);
-    expect(r.novoBaseline).toBe(4200);
-  });
-  it('catraca BLOQUEADA: compara com o baseline persistido (não a carteira atual) — 2399 < 80% de 4797 aborta', () => {
-    const r = avaliarGuardResultado({ omieElegivelNovo: 2399, baselinePersistido: 4797, autorizado: false });
+  it('CRON: catraca vs baseline persistido — 2399 < 80% de 4797 aborta (não a carteira atual)', () => {
+    const r = cron(2399, 4797);
     expect(r.abortar).toBe(true);
     expect(r.motivo).toMatch(/regress|baseline|80%/i);
   });
-  it('catraca 2º passo: o baseline persistido segue 4797 → 1200 também aborta (sem degradação em série)', () => {
-    expect(avaliarGuardResultado({ omieElegivelNovo: 1200, baselinePersistido: 4797, autorizado: false }).abortar).toBe(true);
+  it('CRON: baseline persistido segue 4797 → 1200 também aborta (sem degradação em série)', () => {
+    expect(cron(1200, 4797).abortar).toBe(true);
   });
-  it('regime normal saudável (novo ≥ 80% do baseline) → não aborta; baseline sobe (recorde)', () => {
-    const r = avaliarGuardResultado({ omieElegivelNovo: 5000, baselinePersistido: 4797, autorizado: false });
+  it('CRON: regime saudável (≥80% do baseline) → não aborta; baseline sobe (recorde)', () => {
+    const r = cron(5000, 4797);
     expect(r.abortar).toBe(false);
     expect(r.novoBaseline).toBe(5000);
   });
-  it('flutuação dentro de 20% → não aborta; baseline NÃO desce (max — evita catraca)', () => {
-    const r = avaliarGuardResultado({ omieElegivelNovo: 4600, baselinePersistido: 4797, autorizado: false });
+  it('CRON: flutuação dentro de 20% → não aborta; baseline NÃO desce (max — evita catraca)', () => {
+    const r = cron(4600, 4797);
     expect(r.abortar).toBe(false);
     expect(r.novoBaseline).toBe(4797);
   });
-  it('queda legítima grande → só passa com autorização explícita (reset do baseline)', () => {
-    expect(avaliarGuardResultado({ omieElegivelNovo: 3000, baselinePersistido: 4797, autorizado: false }).abortar).toBe(true);
-    const comAuth = avaliarGuardResultado({ omieElegivelNovo: 3000, baselinePersistido: 4797, autorizado: true });
-    expect(comAuth.abortar).toBe(false);
-    expect(comAuth.novoBaseline).toBe(3000);
+
+  // ── BOOTSTRAP (autorizado) — trava de SAÍDA vs a carteira ATUAL (Codex R4) ──
+  it('BOOTSTRAP primeira população (omieAtual=0) → grava; baseline = novo (não há saída a preservar)', () => {
+    const r = avaliarGuardResultado({ omieElegivelNovo: 4200, baselinePersistido: 0, autorizado: true, omieAtual: 0, forcado: false });
+    expect(r.abortar).toBe(false);
+    expect(r.novoBaseline).toBe(4200);
+  });
+  it('BOOTSTRAP saudável (não encolhe vs a carteira atual) → grava', () => {
+    const r = avaliarGuardResultado({ omieElegivelNovo: 2750, baselinePersistido: 0, autorizado: true, omieAtual: 2747, forcado: false });
+    expect(r.abortar).toBe(false);
+    expect(r.novoBaseline).toBe(2750);
+  });
+  it('BOOTSTRAP que ENCOLHERIA a carteira omie < 80% da atual → ABORTA sem force (cenário 1226: 1521 < 0,8×2747)', () => {
+    const r = avaliarGuardResultado({ omieElegivelNovo: 1521, baselinePersistido: 0, autorizado: true, omieAtual: 2747, forcado: false });
+    expect(r.abortar).toBe(true);
+    expect(r.motivo).toMatch(/encolheria|force|80%/i);
+  });
+  it('BOOTSTRAP corrupção/flaggeds (omieElegivelNovo=1) vs carteira atual cheia → ABORTA (o >0 sozinho não basta mais — furo Codex R4)', () => {
+    const r = avaliarGuardResultado({ omieElegivelNovo: 1, baselinePersistido: 0, autorizado: true, omieAtual: 2747, forcado: false });
+    expect(r.abortar).toBe(true);
+  });
+  it('BOOTSTRAP com &force=1 → grava mesmo encolhendo (reset legítimo: vendedor desligado); baseline = novo', () => {
+    const r = avaliarGuardResultado({ omieElegivelNovo: 1521, baselinePersistido: 4797, autorizado: true, omieAtual: 2747, forcado: true });
+    expect(r.abortar).toBe(false);
+    expect(r.novoBaseline).toBe(1521);
+  });
+  it('BOOTSTRAP com force NÃO fura o "0 omie elegível" (100% Hunter nunca grava, nem forçado)', () => {
+    const r = avaliarGuardResultado({ omieElegivelNovo: 0, baselinePersistido: 0, autorizado: true, omieAtual: 2747, forcado: true });
+    expect(r.abortar).toBe(true);
+  });
+  it('BOOTSTRAP fronteira: exatamente 80% da atual NÃO aborta; logo abaixo aborta', () => {
+    expect(avaliarGuardResultado({ omieElegivelNovo: 800, baselinePersistido: 0, autorizado: true, omieAtual: 1000, forcado: false }).abortar).toBe(false);
+    expect(avaliarGuardResultado({ omieElegivelNovo: 799, baselinePersistido: 0, autorizado: true, omieAtual: 1000, forcado: false }).abortar).toBe(true);
+  });
+  it('BOOTSTRAP não eroda o baseline (R4b): ref = max(atual, baseline) — atual 2198 < baseline 2747 → 1759 aborta', () => {
+    // sem o max, 1759 < 0,8×2198=1758,4 seria FALSE (passava e erodia o baseline p/ 1759). Com ref=max=2747: 1759 < 2197,6 → aborta.
+    const r = avaliarGuardResultado({ omieElegivelNovo: 1759, baselinePersistido: 2747, autorizado: true, omieAtual: 2198, forcado: false });
+    expect(r.abortar).toBe(true);
+  });
+  it('BOOTSTRAP primeira população TRUNCADA (omieAtual=0) mas com baseline histórico 2747 → 1 aborta (protegida pelo max)', () => {
+    const r = avaliarGuardResultado({ omieElegivelNovo: 1, baselinePersistido: 2747, autorizado: true, omieAtual: 0, forcado: false });
+    expect(r.abortar).toBe(true);
+  });
+  it('BOOTSTRAP &force=1 fura a ref-max (reset legítimo assume, mesmo vs baseline histórico); baseline = novo', () => {
+    const r = avaliarGuardResultado({ omieElegivelNovo: 1759, baselinePersistido: 2747, autorizado: true, omieAtual: 2198, forcado: true });
+    expect(r.abortar).toBe(false);
+    expect(r.novoBaseline).toBe(1759);
+  });
+  it('BOOTSTRAP sem force é MONOTÔNICO: novo 2198 ≥ 80% de 2747 passa MAS o baseline NÃO desce (Codex R4c)', () => {
+    // O furo: sem baseline monotônico, gravar 2198 baixava o baseline p/ 2198, e o próximo bootstrap desceria
+    // p/ 1759 (erosão em etapas de 20% sem force). Com o max no novoBaseline, força é o ÚNICO jeito de baixar.
+    const r = avaliarGuardResultado({ omieElegivelNovo: 2198, baselinePersistido: 2747, autorizado: true, omieAtual: 2747, forcado: false });
+    expect(r.abortar).toBe(false);       // 2198 ≥ 0,8×2747=2197,6 → passa
+    expect(r.novoBaseline).toBe(2747);   // monotônico: NÃO desce sem force
+  });
+  it('BOOTSTRAP com baseline DESATUALIZADO (0) e carteira real 2747 → persiste 2747, não 2198 (Codex R5)', () => {
+    // O furo R5: max(baseline=0, novo=2198) persistia 2198 e ESQUECIA os 2747 da carteira real; o run seguinte
+    // compararia com 2198 e deixaria cair p/ 1759 — erosão acumulada de 36% SEM force. O omieAtual no max mata.
+    const r = avaliarGuardResultado({ omieElegivelNovo: 2198, baselinePersistido: 0, autorizado: true, omieAtual: 2747, forcado: false });
+    expect(r.abortar).toBe(false);       // 2198 ≥ 0,8×max(2747,0)=2197,6 → passa
+    expect(r.novoBaseline).toBe(2747);   // persiste o MAIOR dos três (o atual), não o novo
   });
 });
 

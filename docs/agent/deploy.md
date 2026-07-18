@@ -41,16 +41,24 @@ Como provar o que está **SERVIDO** nesse host (hash do index + grep nos chunks)
 
 ## Canárias de deploy (a única prova do que está SERVIDO)
 
-Grep na `main` prova a **fonte**; a canária prova o **deploy**. Chame com `?canary=1` (staff-gated) e leia `ok`:
+Grep na `main` prova a **fonte**; a canária prova o **deploy**. Chame com `?canary=1` (staff-gated). Nas canárias **VERSIONADAS** (as que têm `contrato` na tabela abaixo) exija os **TRÊS** campos — nunca só o `ok`:
 
-| edge | rota | o que a fixture discrimina |
-|---|---|---|
-| `analyze-unified-order` | Governança → Auditoria (card "Canária de preço") | praticado 123 vence Omie 999 |
-| `omie-vendas-sync` | `identidade_probe` | identidade derivada por documento |
-| `omie-analytics-sync` | `doc_ambiguo_probe` | doc ambíguo não vira vínculo |
-| `carteira-rebuild` | `?canary=1` | conflito de mapeamento **permanece** com `eligible=false` (código velho: some) |
+```text
+canary === true   E   contrato === '<marcador da fatia>'   E   ok === true
+```
 
-⚠️ **Só é canária se a resposta tiver `"canary":true`.** Um deploy anterior à canária ignora o param e roda o **fluxo real** — no `carteira-rebuild` isso é um rebuild completo (lease + 6909 upserts; idempotente e guardado, mas é escrita). Resposta sem `canary:true` = a canária não rodou **e** o deploy é velho: isso já é o veredito.
+Nas canárias ainda **não-versionadas** (`contrato` = `—`) só há `canary` + `ok`, o que **não** protege contra deploy integralmente velho (ver ⚠️ abaixo) — versioná-las é dívida aberta.
+
+| edge | rota | `contrato` esperado | o que a fixture discrimina |
+|---|---|---|---|
+| `analyze-unified-order` | Governança → Auditoria (card "Canária de preço") | — | praticado 123 vence Omie 999 |
+| `omie-vendas-sync` | `identidade_probe` | — | identidade derivada por documento |
+| `omie-analytics-sync` | `doc_ambiguo_probe` | — | doc ambíguo não vira vínculo |
+| `carteira-rebuild` | `?canary=1` | `trava-saida-v1` | conflito permanece com `eligible=false` (velho: some) **+** trava de saída do bootstrap (velho: grava ~Hunter) |
+
+⚠️ **Só é canária se a resposta tiver `"canary":true` E o `contrato` esperado.** Duas falhas distintas:
+1. Deploy ANTERIOR à canária ignora o param e roda o **fluxo real** — no `carteira-rebuild` isso é um rebuild completo (lease + upserts; idempotente e guardado, mas é escrita). Resposta sem `canary:true` = canária não rodou **e** o deploy é velho: já é o veredito.
+2. Deploy **integralmente velho** (com a canária de uma fatia anterior) carrega o `expected` VELHO junto e compara velho×velho → responde `canary:true, ok:true` e **mente verde** (Codex 2026-07-20). Por isso o **`contrato` (version marker) é obrigatório na verificação**: `ok` sozinho não discrimina reversão de fatia. Faça **bump do marcador** a cada fatia que mude o contrato da canária — senão a próxima reversão volta a passar despercebida.
 
 ⚠️ **Canária que não discrimina é teatro verde.** Se a mudança for no-op nos dados de hoje (caso do #1397: 0 conflitos em prod), a resposta do fluxo REAL é byte-idêntica com código velho ou novo — não prova deploy nenhum. A fixture tem de exercitar **o comportamento que mudou**, e o teste tem de provar que sob o comportamento ANTIGO a canária ficaria vermelha (ver `rebuild-helpers.test.ts` → "a fixture DISCRIMINA"). Sem esse assert, a canária só prova que a função responde.
 

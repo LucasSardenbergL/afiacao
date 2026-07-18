@@ -237,12 +237,29 @@ function avaliarGuardProof(m: { proofCrua: number; proofFresca: number; comVende
   }
   return { abortar: false, motivo: null };
 }
-function avaliarGuardResultado(m: { omieElegivelNovo: number; baselinePersistido: number; autorizado: boolean }): { abortar: boolean; motivo: string | null; novoBaseline: number } {
+function avaliarGuardResultado(m: { omieElegivelNovo: number; baselinePersistido: number; autorizado: boolean; omieAtual: number; forcado: boolean }): { abortar: boolean; motivo: string | null; novoBaseline: number } {
   if (m.omieElegivelNovo === 0) {
     return { abortar: true, motivo: '0 assignments omie elegiveis (carteira 100% Hunter) — abortado p/ preservar', novoBaseline: m.baselinePersistido };
   }
   if (m.autorizado) {
-    return { abortar: false, motivo: null, novoBaseline: m.omieElegivelNovo };
+    // BOOTSTRAP mede a SAIDA (omieElegivelNovo POS consolidacao/conflitos/flaggeds), nao a fonte (Codex R4 P1.1-3):
+    // o >0 sozinho gravaria carteira ~Hunter se o vendedor_map dessincronizasse (perda de um vendedor grande),
+    // flaggeds/consolidacao em massa destruissem a saida, OU corrupcao deixasse so 1 codigo valido. Trava vs a
+    // REFERENCIA = max(carteira ATUAL omie elegivel, baseline persistido): o MAIOR sinal saudavel (Codex R4b P2:
+    // usar so a atual permitia erodir o baseline em etapas quando atual<baseline; com o max, &force=1 vira o UNICO
+    // jeito de baixar o baseline, e a primeira populacao TRUNCADA com baseline>0 fica protegida). Encolher < 80%
+    // da ref exige &force=1. A ref entra SO neste ramo autorizado -> NAO reabre a catraca do cron (so-baseline, R3).
+    // Primeira populacao SEM historico (ref=0): so o >0 protege (carteira nascendo; operador confere os contadores).
+    const ref = Math.max(m.omieAtual, m.baselinePersistido);
+    if (!m.forcado && ref > 0 && m.omieElegivelNovo < 0.8 * ref) {
+      return { abortar: true, motivo: `bootstrap encolheria omie elegivel p/ ${m.omieElegivelNovo} (< 80% de ${ref} = max[atual ${m.omieAtual}, baseline ${m.baselinePersistido}]) — investigue vendedor_map/proof ou &force=1 se a queda e legitima`, novoBaseline: m.baselinePersistido };
+    }
+    // Sem force o baseline persiste MONOTONICO sobre as TRES grandezas (atual, baseline, novo) — nunca desce.
+    // O omieAtual PRECISA entrar no max (Codex R5 P1): com baseline DESATUALIZADO (0) e carteira real 2747, um
+    // max(baseline, novo) persistiria 2198 e ESQUECERIA os 2747 — o run seguinte compararia com 2198 e deixaria
+    // cair p/ 1759 (erosao acumulada de 36% sem force). Incluindo o atual, o baseline vira 2747 e o 2º passo
+    // aborta. COM force o reset legitimo assume a queda e grava o novo valor (o UNICO jeito de baixar).
+    return { abortar: false, motivo: null, novoBaseline: m.forcado ? m.omieElegivelNovo : Math.max(m.omieAtual, m.baselinePersistido, m.omieElegivelNovo) };
   }
   if (m.baselinePersistido === 0) {
     return { abortar: true, motivo: 'bootstrap (baseline persistido=0) exige autorizacao explicita — cron nao faz bootstrap', novoBaseline: 0 };
@@ -301,6 +318,14 @@ Deno.serve(async (req) => {
     const out = computeCarteira(clientesFix, mapFix, HUNTER_FIX);
     const conflitado = out.assignments.find((a) => a.customer_user_id === membrosFix[1]) ?? null;
     const cobertura = verificarCobertura(membrosFix, out.assignments);
+    // Fixture da TRAVA DE SAÍDA do bootstrap (Codex R5 P2): sem isto a canária NÃO discrimina esta fatia —
+    // um deploy velho roda computeCarteira/verificarCobertura igual e passa verde. Em runtime o código velho
+    // ignora os campos extras (omieAtual/forcado) e cai no `return {novoBaseline: omieElegivelNovo}` — o que
+    // faz as 3 asserções abaixo divergirem. (a) bootstrap encolhendo < 80% da ref ABORTA sem force; (b) com
+    // &force=1 passa (reset legítimo); (c) o baseline herda o MAIOR dos três — fecha a erosão acumulada.
+    const gSemForce = avaliarGuardResultado({ omieElegivelNovo: 1521, baselinePersistido: 0, autorizado: true, omieAtual: 2747, forcado: false });
+    const gComForce = avaliarGuardResultado({ omieElegivelNovo: 1521, baselinePersistido: 0, autorizado: true, omieAtual: 2747, forcado: true });
+    const gBaseline = avaliarGuardResultado({ omieElegivelNovo: 2198, baselinePersistido: 0, autorizado: true, omieAtual: 2747, forcado: false });
     const resolved = {
       membroConflitadoPresente: conflitado !== null,
       conflitadoSource: conflitado?.source ?? null,
@@ -308,6 +333,9 @@ Deno.serve(async (req) => {
       conflitadoCodigo: conflitado?.omie_codigo_vendedor ?? null,
       conflictsRegistrados: out.conflicts.length,
       coberturaOk: cobertura.ok,
+      guardSemForceAborta: gSemForce.abortar,
+      guardComForcePassa: !gComForce.abortar,
+      guardBaselineHerdaAtual: gBaseline.novoBaseline,
     };
     const expected = {
       membroConflitadoPresente: true,
@@ -316,13 +344,20 @@ Deno.serve(async (req) => {
       conflitadoCodigo: 222,
       conflictsRegistrados: 1,
       coberturaOk: true,
+      guardSemForceAborta: true,
+      guardComForcePassa: true,
+      guardBaselineHerdaAtual: 2747,
     };
     const ok = (Object.keys(expected) as Array<keyof typeof expected>)
       .every((k) => resolved[k] === expected[k]);
     if (!ok) {
       console.error('[carteira-rebuild] CANÁRIA VERMELHA — deploy servido diverge do repo:', JSON.stringify({ resolved, expected }));
     }
-    return new Response(JSON.stringify({ canary: true, ok, resolved, expected }), {
+    // `contrato` é o VERSION MARKER (Codex R6 P2): sem ele, um deploy INTEGRALMENTE velho compara o `expected`
+    // velho com o `resolved` velho e responde ok:true — a canária mente verde e não discrimina nada. Ler só o
+    // `ok` é insuficiente: o verificador tem de exigir TAMBÉM `contrato === 'trava-saida-v1'`. Bump obrigatório
+    // a cada fatia que mude o contrato da canária (senão a próxima reversão volta a passar despercebida).
+    return new Response(JSON.stringify({ canary: true, contrato: 'trava-saida-v1', ok, resolved, expected }), {
       status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   }
@@ -330,8 +365,13 @@ Deno.serve(async (req) => {
   // Flag de bootstrap: ?bootstrap=1 autoriza gravar quando não há baseline saudável (ou resetá-lo numa queda
   // legítima grande). Gated em service_role/cron-secret — NÃO staff comum (Codex R3 #2: employee comprometido
   // não força bootstrap destrutivo). O cron ROTINEIRO chama sem o param → nunca faz bootstrap nem destrava a catraca.
-  const autorizado = new URL(req.url).searchParams.get('bootstrap') === '1'
-    && (auth.via === 'service_role' || auth.via === 'cron');
+  const params = new URL(req.url).searchParams;
+  const via = auth.via === 'service_role' || auth.via === 'cron';
+  const autorizado = params.get('bootstrap') === '1' && via;
+  // &force=1 (mesmo gate service_role/cron): assume uma QUEDA LEGÍTIMA grande no bootstrap (ex.: vendedor
+  // desligado) — pula a trava de saída vs max(carteira atual, baseline) e é o ÚNICO jeito de BAIXAR o baseline
+  // (Codex R4/R4b/R4c). Sem force, o bootstrap aborta se a carteira omie elegível fosse encolher < 80% da ref.
+  const forcado = params.get('force') === '1' && via;
 
   const supabase = createClient(
     Deno.env.get('SUPABASE_URL')!,
@@ -486,12 +526,23 @@ Deno.serve(async (req) => {
   }
 
   // Denominador do guard de frescor = proof oben CRUA (sem TTL), não o espelho misto (#4 Codex): isola a
-  // degradação por TTL/sync. A carteira ATUAL NÃO entra no guard (Codex R3 #1: o comparativo é SÓ vs o baseline
-  // persistido — senão baseline=0 && atual>0, após uma persistência falha, reabriria a catraca).
+  // degradação por TTL/sync. No CRON a carteira ATUAL fica FORA do guard (Codex R3 #1: o comparativo é SÓ vs o
+  // baseline persistido — senão baseline=0 && atual>0, após uma persistência falha, reabriria a catraca).
   const { count: proofCruaRaw, error: cruaErr } = await supabase
     .from('omie_customer_account_map').select('*', { count: 'exact', head: true }).eq('account', 'oben').not('user_id', 'is', null);
   if (cruaErr) { console.error('[carteira-rebuild] count proof crua error:', cruaErr.message); return await failLease(`proof crua: ${cruaErr.message}`); }
   const proofCrua = proofCruaRaw ?? 0;
+
+  // Carteira ATUAL (omie elegível) lida SÓ no BOOTSTRAP: a trava de saída (Codex R4) só a usa no ramo
+  // autorizado; no cron seria I/O inerte + um motivo fail-closed espúrio (R4b P2-6a). Não-bootstrap →
+  // omieAtual=0 e a ref da trava cai p/ o baseline persistido, coerente com o cron (que já é só-baseline).
+  let omieAtual = 0;
+  if (autorizado) {
+    const { count: omieAtualRaw, error: atualErr } = await supabase
+      .from('carteira_assignments').select('*', { count: 'exact', head: true }).eq('source', 'omie').eq('eligible', true);
+    if (atualErr) { console.error('[carteira-rebuild] count carteira atual error:', atualErr.message); return await failLease(`carteira atual: ${atualErr.message}`); }
+    omieAtual = omieAtualRaw ?? 0;
+  }
 
   // Guard PRÉ-compute fail-closed: proof oben anômala → aborta ANTES de qualquer upsert (senão a carteira
   // zeraria p/ Hunter silenciosamente). Análogo ao guard de vendedor_map vazio (:155).
@@ -558,8 +609,24 @@ Deno.serve(async (req) => {
   // PERSISTIDO é 0 sem ?bootstrap=1 — INDEPENDENTE da carteira atual (R3 #1); compara SÓ com o baseline persistido
   // (fator 0.8, monotônico → sem catraca). Nunca grava carteira integralmente órfã.
   const omieElegivelNovo = rows.filter((r) => r.source === 'omie' && r.eligible).length;
-  const guardPos = avaliarGuardResultado({ omieElegivelNovo, baselinePersistido, autorizado });
+  const guardPos = avaliarGuardResultado({ omieElegivelNovo, baselinePersistido, autorizado, omieAtual, forcado });
   if (guardPos.abortar) { console.error('[carteira-rebuild] guard resultado:', guardPos.motivo); return await failLease(`guard resultado: ${guardPos.motivo}`); }
+
+  // 2e. HIGH-WATER MARK persistido ANTES do upsert e FATAL se falhar (Codex R6 P1). A ordem é invertida de
+  // propósito: gravar a carteira primeiro e o baseline depois (não-fatal, como era) PERDIA o conhecimento do
+  // maior valor quando a persistência falhava — o run seguinte já lia a carteira DEGRADADA como omieAtual e
+  // deixava cair mais 20% sem force (erosão acumulada 2747→2198→1759, −36%). Persistir antes é seguro mesmo se
+  // o upsert falhar depois: o high-water é sobre o que JÁ foi observado (omieAtual) + o que vai ser gravado
+  // (novo), então um upsert falho deixa a carteira no estado ANTERIOR, que a referência já cobre — e o run
+  // seguinte compara com ela (fail-closed). Sem force o baseline nunca desce; com force, o reset é deliberado.
+  if (guardPos.novoBaseline !== baselinePersistido) {
+    const { error: bErr } = await supabase.from('company_config')
+      .upsert({ key: 'carteira_omie_baseline', value: String(guardPos.novoBaseline) }, { onConflict: 'key' });
+    if (bErr) {
+      console.error('[carteira-rebuild] persistir baseline FALHOU — abortando ANTES do upsert (sem high-water, o próximo run erodiria):', bErr.message);
+      return await failLease(`persistir baseline: ${bErr.message}`);
+    }
+  }
 
   // 3. Upsert idempotente.
 
@@ -590,6 +657,10 @@ Deno.serve(async (req) => {
         ok: false, error: chunkErr.message, runId,
         upserted_confirmed: upserted,                                  // só os chunks que retornaram sucesso
         current_chunk_commit: commitDesconhecido ? 'unknown' : 'no',
+        // O run falho JÁ moveu a referência (2e persiste o high-water ANTES do upsert). Reportar explícito,
+        // senão o operador não sabe que o baseline subiu num run que não completou (Codex R7, observabilidade).
+        baseline_persisted: guardPos.novoBaseline,
+        baseline_anterior: baselinePersistido,
         writes_committed: upserted > 0 || commitDesconhecido,          // honesto: transporte pode ter escrito
         partial: upserted > 0 || commitDesconhecido,
       };
@@ -605,13 +676,7 @@ Deno.serve(async (req) => {
 
   if (conflicts.length) console.warn('[carteira-rebuild] conflitos de mapeamento:', JSON.stringify(conflicts));
 
-  // Persiste o baseline saudável (sobe com recorde; reset só via ?bootstrap=1). Protege os próximos rebuilds
-  // do cron contra catraca. Falha aqui é NÃO-fatal (a carteira já foi gravada) e mantém o cron fail-closed.
-  if (guardPos.novoBaseline !== baselinePersistido) {
-    const { error: bErr } = await supabase.from('company_config')
-      .upsert({ key: 'carteira_omie_baseline', value: String(guardPos.novoBaseline) }, { onConflict: 'key' });
-    if (bErr) console.warn('[carteira-rebuild] falha ao persistir baseline (nao-fatal):', bErr.message);
-  }
+  // (o baseline saudável já foi persistido em 2e, ANTES do upsert e de forma FATAL — Codex R6 P1)
 
   // Finalize honesto do lease. 'ownership' e 'transport' são DISTINTOS (Codex #3):
   const finalize = await releaseLease('complete');
@@ -636,8 +701,8 @@ Deno.serve(async (req) => {
   }
 
   return new Response(JSON.stringify({
-    ok: true, upserted, orphanCount, omieElegivelNovo, comVendedor,
+    ok: true, upserted, orphanCount, omieElegivelNovo, comVendedor, omieAtual,
     proofFresca: proofOben.size, proofCrua, baselinePersistido, novoBaseline: guardPos.novoBaseline,
-    autorizado, via: auth.via, conflicts, hunterUserId, aliasesAtivos: aliasMap.size, runId,
+    autorizado, forcado, via: auth.via, conflicts, hunterUserId, aliasesAtivos: aliasMap.size, runId,
   }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 });
