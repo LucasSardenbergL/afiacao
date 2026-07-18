@@ -1,0 +1,166 @@
+-- ============================================================
+-- DROP da RPC ÓRFÃ estimar_impacto_exclusao_outlier(bigint)
+--
+-- CONTEXTO: resíduo do PR #1402 (exclusão de outlier RETIRADA, 2026-07-16). A ação prometia
+-- "one-off, remove da estatística" mas `observacoes_excluidas` NUNCA entrou na cadeia do motor
+-- de reposição — a exclusão não movia a compra. Esta RPC alimentava o card "Impacto se excluir"
+-- (σ atual → sem outlier), que saiu da tela junto com a ação.
+--
+-- POR QUE NÃO FOI DROPADA NA HORA: migration e Publish do Lovable são passos MANUAIS e
+-- INDEPENDENTES — um DROP aplicado antes do Publish quebraria o card ainda servido em produção.
+-- A função ficou com COMMENT de deprecada e "DROP pendente de faxina após o Publish confirmado".
+--
+-- A CONDIÇÃO FOI CUMPRIDA (verificado 2026-07-18, pelos BYTES do bundle servido em
+-- https://steu.lovable.app/assets/ — não pela main nem por relato):
+--   • chunk AdminReposicaoAlertas-DUwQaNyd.js CONTÉM "Marcar como revisado" e "4. Revisão"
+--     (estado pós-#1402) e NÃO contém "Impacto se excluir" / "remove da estatística" / "5. Decisão";
+--   • varredura dos 305 chunks referenciados (5,8 MB): ZERO ocorrências do nome da RPC.
+--
+-- ORFANDADE PROVADA (psql-ro na PROD + grep no repo, 2026-07-18) — com FALSIFICAÇÃO do método:
+--   • banco: pg_depend ZERO dependentes; zero rotinas (todo prokind) citando no prosrc; zero
+--     views/matviews, RLS policies, cron.job, defaults/generated, CHECK constraints e triggers;
+--   • assinatura ÚNICA — não há overload (o guard abaixo torna isso verificável no apply);
+--   • código vivo (src + supabase/functions, fora o types.ts gerado): ZERO invocações — os 2
+--     únicos hits são COMENTÁRIOS explicativos que sobrevivem ao DROP de propósito (explicam por
+--     que a média do gráfico passou a ser derivada do mesmo histórico que desenha os pontos);
+--   • invocação DINÂMICA (`.rpc(var)`): só 2 sítios, ambos de domínio FECHADO por literal
+--     (pcp-apontamento.ts → callRpc NÃO exportada, só 3 literais fn_pcp_*; melhoria-triagem →
+--     mapa RPC_POR_TOOL de 2 literais) — nenhum a alcança;
+--   • FALSIFICAÇÃO: o MESMO método rodado contra `resolver_outlier` (RPC viva da MESMA tela)
+--     ENCONTRA os chamadores — no repo (AdminReposicaoAlertas.tsx:212 e :241) E no bundle de
+--     produção. O método discrimina: "não achou" é significativo, não é o grep estando cego.
+--     ⚠️ pg_stat_statements NÃO existe nesta instância e pg_stat_user_functions não serve
+--     (track_functions='none') — nenhum dos dois foi usado como evidência.
+--
+-- POR QUE DROPAR EM VEZ DE "DEIXAR QUIETA": a função carrega 3 bugs (documentados no próprio
+-- COMMENT) que a tornam uma armadilha para quem a encontrar no catálogo e a supuser utilizável:
+--   (a) fórmula DIVERGE da do motor (z fixo 1,65 × z por classe; σ por-venda × σ diário; 180d × 90d);
+--   (b) COALESCE(sigma,0) FABRICA zero quando o desvio é desconhecido — viola "ausente != zero"
+--       do money-path (o número sairia plausível e errado, que é o pior modo de falha);
+--   (c) nenhum ramo para sku_inativado_omie/sku_reativado_omie — caía no ramo de leadtime e
+--       devolvia `error`, que a tela exibia como "Calculando…" para sempre.
+-- É superfície de LEITURA (SECURITY DEFINER, GRANT p/ authenticated), não de escrita: o DROP não
+-- toca dado algum. Nenhuma tabela é referenciada por este arquivo.
+--
+-- REVERSÍVEL: o corpo íntegro está no bloco de rollback ao fim (comentado), capturado verbatim de
+-- pg_get_functiondef na PROD em 2026-07-18.
+--
+-- Spec: docs/superpowers/specs/2026-07-16-reposicao-exclusao-outlier-escopo-design.md
+-- Lição: docs/agent/reposicao.md §Outras frentes (entrada de 2026-07-16)
+-- Migration que retirou o fluxo: 20260717020000_reposicao_exclusao_outlier_remover.sql
+-- ============================================================
+
+DROP FUNCTION IF EXISTS public.estimar_impacto_exclusao_outlier(bigint);
+
+-- Guard: falha ALTO se sobrou algum overload do mesmo nome (o DROP acima é por assinatura).
+-- Idempotente: re-colar este bloco após o DROP bem-sucedido conta 0 e passa.
+DO $$
+DECLARE v_sobrou int;
+BEGIN
+  SELECT count(*) INTO v_sobrou
+  FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+  WHERE n.nspname = 'public' AND p.proname = 'estimar_impacto_exclusao_outlier';
+
+  IF v_sobrou > 0 THEN
+    RAISE EXCEPTION 'estimar_impacto_exclusao_outlier ainda tem % overload(s) — DROP incompleto', v_sobrou;
+  END IF;
+END $$;
+
+-- ============================================================
+-- ROLLBACK (se precisar ressuscitar — corpo verbatim de pg_get_functiondef, prod 2026-07-18).
+-- ⚠️ Ressuscitar reintroduz os 3 bugs acima: não use como fonte de número sem corrigi-los.
+--
+-- CREATE OR REPLACE FUNCTION public.estimar_impacto_exclusao_outlier(p_evento_id bigint)
+--  RETURNS jsonb
+--  LANGUAGE plpgsql
+--  SECURITY DEFINER
+--  SET search_path TO 'public'
+-- AS $function$
+-- DECLARE
+--   v_evento RECORD;
+--   v_sigma_atual numeric;
+--   v_media_atual numeric;
+--   v_sigma_sem numeric;
+--   v_media_sem numeric;
+--   v_d numeric;
+--   v_lt numeric;
+--   v_z numeric := 1.65;
+--   v_em_atual numeric;
+--   v_em_sem numeric;
+--   v_dedup_key text;
+-- BEGIN
+--   IF auth.uid() IS NULL OR NOT (public.has_role(auth.uid(), 'employee'::app_role) OR public.has_role(auth.uid(), 'master'::app_role)) THEN
+--     RAISE EXCEPTION 'Acesso negado: requer perfil staff' USING ERRCODE = '42501';
+--   END IF;
+--   SELECT * INTO v_evento FROM eventos_outlier WHERE id = p_evento_id;
+--   IF NOT FOUND THEN
+--     RETURN jsonb_build_object('error', 'Evento não encontrado');
+--   END IF;
+--
+--   IF v_evento.tipo = 'venda_atipica' THEN
+--     SELECT AVG(quantidade), STDDEV_SAMP(quantidade) INTO v_media_atual, v_sigma_atual
+--     FROM venda_items_history
+--     WHERE empresa::text = v_evento.empresa AND sku_codigo_omie::text = v_evento.sku_codigo_omie
+--       AND data_emissao >= CURRENT_DATE - INTERVAL '180 days' AND quantidade > 0;
+--     SELECT AVG(quantidade), STDDEV_SAMP(quantidade) INTO v_media_sem, v_sigma_sem
+--     FROM venda_items_history
+--     WHERE empresa::text = v_evento.empresa AND sku_codigo_omie::text = v_evento.sku_codigo_omie
+--       AND data_emissao >= CURRENT_DATE - INTERVAL '180 days' AND quantidade > 0
+--       AND NOT (data_emissao::date = v_evento.data_evento AND nfe_chave_acesso::text = COALESCE(v_evento.detalhes->>'nfe', ''));
+--     SELECT demanda_media_diaria, lt_medio_dias_uteis INTO v_d, v_lt
+--     FROM sku_parametros WHERE empresa = v_evento.empresa AND sku_codigo_omie::text = v_evento.sku_codigo_omie LIMIT 1;
+--     v_d := COALESCE(v_d, v_media_atual);
+--     v_lt := COALESCE(v_lt, 10);
+--     v_em_atual := CEIL(v_z * COALESCE(v_sigma_atual, 0) * SQRT(v_lt));
+--     v_em_sem := CEIL(v_z * COALESCE(v_sigma_sem, 0) * SQRT(v_lt));
+--     RETURN jsonb_build_object(
+--       'tipo', 'venda_atipica',
+--       'sigma_atual', ROUND(COALESCE(v_sigma_atual, 0), 2),
+--       'sigma_sem', ROUND(COALESCE(v_sigma_sem, 0), 2),
+--       'media_atual', ROUND(COALESCE(v_media_atual, 0), 2),
+--       'media_sem', ROUND(COALESCE(v_media_sem, 0), 2),
+--       'em_atual', v_em_atual, 'em_sem', v_em_sem,
+--       'delta_em', v_em_sem - v_em_atual, 'd', v_d, 'lt', v_lt
+--     );
+--   ELSE
+--     -- A identidade da observação é o dedup_key. Evento antigo sem dedup_key (não
+--     -- alcançado pelo backfill da seção 4) não é estimável: devolver 0 de impacto seria
+--     -- fabricar "excluir não muda nada". A tela já degrada em `error` (ImpactoData.error).
+--     v_dedup_key := v_evento.detalhes->>'dedup_key';
+--     IF v_dedup_key IS NULL THEN
+--       RETURN jsonb_build_object(
+--         'tipo', 'lt_atipico',
+--         'error', 'Evento sem identidade de observação (dedup_key) — impacto não estimável'
+--       );
+--     END IF;
+--
+--     -- Fonte efetiva: 1 observação por NFe. Antes lia sku_leadtime_history cru — média e
+--     -- sigma saíam ponderados pela multiplicidade da NFe.
+--     SELECT AVG(lt_bruto_dias_uteis), STDDEV_SAMP(lt_bruto_dias_uteis) INTO v_media_atual, v_sigma_atual
+--     FROM v_sku_leadtime_efetivo
+--     WHERE empresa::text = v_evento.empresa AND sku_codigo_omie::text = v_evento.sku_codigo_omie
+--       AND lt_bruto_dias_uteis IS NOT NULL;
+--
+--     -- Era `NOT (data_pedido::date = v_evento.data_evento)`: `data_pedido` NUNCA existiu
+--     -- nesta tabela (é `t1_data_pedido`) ⇒ 42703 em runtime, sempre.
+--     SELECT AVG(lt_bruto_dias_uteis), STDDEV_SAMP(lt_bruto_dias_uteis) INTO v_media_sem, v_sigma_sem
+--     FROM v_sku_leadtime_efetivo
+--     WHERE empresa::text = v_evento.empresa AND sku_codigo_omie::text = v_evento.sku_codigo_omie
+--       AND lt_bruto_dias_uteis IS NOT NULL
+--       AND dedup_key <> v_dedup_key;
+--
+--     RETURN jsonb_build_object(
+--       'tipo', 'lt_atipico',
+--       'sigma_atual', ROUND(COALESCE(v_sigma_atual, 0), 2),
+--       'sigma_sem', ROUND(COALESCE(v_sigma_sem, 0), 2),
+--       'media_atual', ROUND(COALESCE(v_media_atual, 0), 2),
+--       'media_sem', ROUND(COALESCE(v_media_sem, 0), 2)
+--     );
+--   END IF;
+-- END;
+-- $function$
+--
+--
+-- REVOKE ALL ON FUNCTION public.estimar_impacto_exclusao_outlier(bigint) FROM PUBLIC, anon;
+-- GRANT EXECUTE ON FUNCTION public.estimar_impacto_exclusao_outlier(bigint) TO authenticated;
+-- ============================================================

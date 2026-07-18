@@ -908,6 +908,50 @@ describe('guardrail money-path: carteira-rebuild lê o vendedor da PROOF oben (P
     ).toBe(mirrorBlockNamed(rebuildHelper, 'carteira-load'));
   });
 
+  // ── CANÁRIA DE DEPLOY (?canary=1) — prova o que está SERVIDO (a paridade textual só cobre a FONTE) ──
+  describe('canária de deploy ?canary=1', () => {
+    const bloco = rebuild.match(/searchParams\.get\('canary'\) === '1'\)[\s\S]*?\n {2}\}/)?.[0] ?? '';
+
+    it('sentinela: o bloco da canária existe no edge', () => {
+      expect(bloco, 'sumiu a canária ?canary=1 — sem ela não há prova do DEPLOY, só da fonte').not.toBe('');
+    });
+
+    it('roda o helper REAL (computeCarteira + verificarCobertura), não uma reimplementação', () => {
+      expect(bloco, 'canária não chama computeCarteira — não provaria o helper deployado').toContain('computeCarteira(');
+      expect(bloco, 'canária não chama verificarCobertura').toContain('verificarCobertura(');
+    });
+
+    it('o `expected` casa a verdade-base provada em rebuild-helpers.test.ts (senão a canária mente verde)', () => {
+      expect(bloco).toMatch(/membroConflitadoPresente: true/);
+      expect(bloco).toMatch(/conflitadoSource: 'hunter_orphan'/);
+      expect(bloco).toMatch(/conflitadoEligible: false/);
+      expect(bloco).toMatch(/conflitadoCodigo: 222/);
+      expect(bloco).toMatch(/coberturaOk: true/);
+    });
+
+    it('a fixture tem o CONFLITO (código 222 → 2 vendedores) — é o que discrimina velho×novo', () => {
+      expect(bloco, 'fixture sem código repetido p/ 2 user_ids → canária não discrimina deploy velho').toMatch(
+        /omie_codigo_vendedor: 222, user_id: '[^']*a'[\s\S]{0,120}omie_codigo_vendedor: 222, user_id: '[^']*b'/,
+      );
+    });
+
+    it('NÃO escreve e NÃO toma o lease: roda ANTES do claim e retorna dentro do próprio bloco', () => {
+      const iCanary = rebuild.indexOf("searchParams.get('canary')");
+      const iClaim = rebuild.indexOf('claim_carteira_rebuild');
+      expect(iCanary, 'âncora: não achei a canária').toBeGreaterThan(-1);
+      expect(iClaim, 'âncora: não achei o claim do lease').toBeGreaterThan(-1);
+      expect(iCanary, 'canária DEPOIS do lease — uma checagem bloquearia um rebuild real').toBeLessThan(iClaim);
+      expect(bloco, 'canária faz escrita (upsert/insert/update/delete) — deve ser PURA').not.toMatch(/\.(upsert|insert|update|delete)\(/);
+      expect(bloco, 'canária não retorna dentro do bloco — cairia no fluxo de rebuild real').toContain('return new Response(');
+    });
+
+    it('é staff-gated: vem DEPOIS do authorizeCronOrStaff', () => {
+      const iAuth = rebuild.indexOf('authorizeCronOrStaff(req)');
+      expect(iAuth).toBeGreaterThan(-1);
+      expect(iAuth, 'canária ANTES do gate de auth — exposta a anônimo').toBeLessThan(rebuild.indexOf("searchParams.get('canary')"));
+    });
+  });
+
   // D5: computeCarteira (o CORE money-path) vivia duplicada no edge FORA de qualquer guarda de paridade —
   // dava p/ corrigir o helper testado e esquecer o edge real (achado Codex). Agora está no bloco carteira-compute.
   it('PARIDADE: computeCarteira é IDÊNTICA ao src/ (o core money-path — pega reversão do Lovable)', () => {
@@ -1531,5 +1575,121 @@ describe('guardrail money-path: omie-cliente lê a proof fresca account-correta 
       bloco,
       'REGRESSÃO: o pré-load dos mapeamentos engole o erro — vira "No client mappings found" (no-op mudo)',
     ).toMatch(/if \(pageErr\) throw new Error/);
+  });
+});
+
+// ── Fix da sobrescrita item-a-item no writer de leadtime (omie-sync-sku-items) — 2026-07-17 ──
+// O writer fazia 1 upsert por item de NFe com onConflict (tracking_id, sku_codigo_omie). SKU
+// repetido na NFe caindo no mesmo tracking → o 2º upsert SOBRESCREVIA o 1º em vez de somar
+// (valor_total virava o do ÚLTIMO item). Medido em prod (psql-ro 2026-07-17): PRD02377 gravou
+// R$139,90 de R$1.214,37; 10,9% das NFes recentes têm SKU repetido — e o volume subestimado
+// rebaixa o SKU no score_volume (peso 1.0) do ranking de negociação. Fix: helper puro
+// agregarItensRecebimento agrega por (tracking, sku) ANTES do upsert, espelhado MIRROR no edge.
+// A paridade textual aqui pega a reversão do deploy do Lovable (mesma armadilha do resto do arquivo).
+const SYNC_SKU_ITEMS = 'supabase/functions/omie-sync-sku-items/index.ts';
+const SKU_ITEMS_HELPER = 'src/lib/reposicao/sku-items-fila-helpers.ts';
+
+describe('guardrail money-path: omie-sync-sku-items agrega itens por (tracking, sku) antes do upsert', () => {
+  const src = read(SYNC_SKU_ITEMS);
+  const helper = read(SKU_ITEMS_HELPER);
+
+  it('sentinela: leu os arquivos reais (edge + helper)', () => {
+    expect(src).toContain('agregarItensRecebimento');
+    expect(helper).toContain('agregarItensRecebimento');
+  });
+
+  it('o helper puro existe e exporta agregarItensRecebimento', () => {
+    expect(helper).toMatch(/export function agregarItensRecebimento/);
+  });
+
+  it('o edge USA o helper: define o espelho E o chama (≥2 menções)', () => {
+    expect(src, 'edge não define mais o helper espelhado de agregação').toMatch(/function agregarItensRecebimento/);
+    expect(
+      src,
+      'REGRESSÃO: edge não chama mais agregarItensRecebimento — voltou ao upsert item-a-item (sobrescrita)?',
+    ).toMatch(/agregarItensRecebimento\(/);
+    expect(
+      count(src, 'agregarItensRecebimento'),
+      'helper deve ser DEFINIDO e CHAMADO (≥2 menções)',
+    ).toBeGreaterThanOrEqual(2);
+  });
+
+  it('WIRING: o upsert de sku_leadtime_history itera sobre os AGREGADOS, não sobre os itens crus', () => {
+    // O bug era upsertar dentro de `for (const item of itens)`. Anti-regressão: a agregação
+    // acontece, o upsert itera os agregados, e a passada 1 (itens crus) NÃO toca a tabela.
+    expect(src, 'sumiu a agregação dos itens resolvidos').toMatch(/agregarItensRecebimento\(resolvidos\)/);
+    expect(src, 'REGRESSÃO: o upsert não itera mais sobre os agregados').toMatch(/for \(const ag of agregados\)/);
+    const passada1 = src.match(/for \(const item of itens\)[\s\S]*?const agregados = agregarItensRecebimento\(resolvidos\)/)?.[0] ?? '';
+    expect(passada1, 'não achei a passada 1 (âncora quebrada)').not.toBe('');
+    expect(
+      passada1,
+      'REGRESSÃO: o upsert de sku_leadtime_history voltou para dentro do loop de itens crus — sobrescrita de novo',
+    ).not.toMatch(/from\("sku_leadtime_history"\)\s*\.upsert/);
+  });
+
+  it('PARIDADE: o bloco espelhado no edge é IDÊNTICO ao helper de src/ (pega reversão do Lovable)', () => {
+    expect(
+      mirrorBlockNamed(src, 'sku-items-agregacao'),
+      'edge divergiu do helper de src/ — o Lovable reescreveu a agregação no deploy?',
+    ).toBe(mirrorBlockNamed(helper, 'sku-items-agregacao'));
+  });
+});
+
+// ── Retenção do sinal do recebimento (nid_receb) ──
+// purchase_orders_tracking.raw_data é jsonb MULTI-WRITER: o sync de pedidos grava o payload
+// do PEDIDO por cima e apaga o nIdReceb que o sync de NFes acabou de resolver. A cada rodada
+// do cron o reparo é desfeito — o backfill nunca converge (contador de identificadas travado
+// por dias no fin_sync_log) e queima rate-limit da Omie re-resolvendo o que já estava pronto.
+// O sinal foi para uma COLUNA DEDICADA com UM escritor. Os três guardrails abaixo vigiam as
+// três pontas do circuito; se qualquer uma cair, o Sísifo volta em silêncio.
+const POT_PEDIDOS = 'supabase/functions/omie-sync-pedidos-compra/index.ts';
+const POT_NFES = 'supabase/functions/omie-sync-nfes-recebidas/index.ts';
+
+describe('guardrail money-path: retenção do nid_receb (coluna dedicada + 1 writer)', () => {
+  const pedidos = read(POT_PEDIDOS);
+  const nfes = read(POT_NFES);
+  const skuItems = read(SKU_ITEMS);
+
+  it('sentinela: leu os arquivos reais das três edges', () => {
+    expect(pedidos).toContain('PRESERVE_FIELDS');
+    expect(nfes).toContain('ConsultarRecebimento');
+    expect(skuItems).toContain('sku_leadtime_history');
+  });
+
+  it('pedidos-compra PRESERVA o sinal (não pode voltar a apagá-lo a cada rodada)', () => {
+    const bloco = pedidos.match(/const PRESERVE_FIELDS = new Set\(\[([\s\S]*?)\]\)/);
+    expect(bloco, 'PRESERVE_FIELDS sumiu do sync de pedidos').not.toBeNull();
+    expect(
+      bloco![1],
+      'REGRESSÃO: nid_receb saiu do PRESERVE_FIELDS — o sync de pedidos volta a apagar o sinal a cada rodada e o backfill volta ao Sísifo',
+    ).toContain('nid_receb');
+  });
+
+  it('nfes-recebidas decide o pendente pela COLUNA, no banco (não pelo jsonb, em memória)', () => {
+    // Ancorado no SELECT do backfill, não solto no arquivo: `.is("nid_receb", null)` também
+    // aparece no compare-and-set do UPDATE, e um regex solto passaria verde com o filtro do
+    // select removido — o Sísifo voltaria sem ninguém ver. (Pego pela falsificação F2.)
+    expect(
+      nfes,
+      'REGRESSÃO: o SELECT do backfill não filtra mais por nid_receb no banco — volta a redescobrir como pendente o que já resolveu, e o teto de 1.000 linhas do PostgREST volta a truncar em silêncio',
+    ).toMatch(/\.not\("nfe_chave_acesso",\s*"is",\s*null\)\s*\n\s*\.is\("nid_receb",\s*null\)/);
+  });
+
+  it('nfes-recebidas é o writer ÚNICO e grava com compare-and-set', () => {
+    expect(
+      nfes,
+      'REGRESSÃO: o writer não grava mais a coluna — a migration fica inerte e nada converge',
+    ).toMatch(/updateRow\.nid_receb/);
+    expect(
+      nfes,
+      'REGRESSÃO: sumiu a trava da chave no update — um run concorrente pode carimbar nesta linha o recebimento de OUTRA NFe',
+    ).toMatch(/\.eq\("nfe_chave_acesso",\s*linha\.nfe_chave_acesso\)/);
+  });
+
+  it('sku-items lê a COLUNA primeiro (jsonb só como fallback da transição)', () => {
+    expect(
+      skuItems,
+      'REGRESSÃO: o leitor voltou a depender só do jsonb — quando o backfill convergir ele para de regravar o raw_data e o leadtime morre em silêncio',
+    ).toMatch(/n\.nid_receb\s*!=\s*null/);
   });
 });

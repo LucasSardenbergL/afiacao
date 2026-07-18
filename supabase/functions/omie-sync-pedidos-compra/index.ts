@@ -505,6 +505,12 @@ const PRESERVE_FIELDS = new Set([
   "lt_bruto_dias_uteis",
   "lt_faturamento_dias_uteis",
   "lt_logistica_dias_uteis",
+  // Sinal do RECEBIMENTO, resolvido pelo omie-sync-nfes-recebidas (writer único).
+  // Estava só no raw_data — que este upsert sobrescreve com o payload do PEDIDO — e era
+  // apagado a cada rodada do cron, obrigando o backfill do sync irmão a re-resolvê-lo
+  // eternamente sem nunca convergir (contador de identificadas travado por dias no
+  // fin_sync_log). Sem esta linha, o Sísifo volta.
+  "nid_receb",
 ]);
 
 /**
