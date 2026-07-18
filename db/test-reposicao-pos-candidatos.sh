@@ -360,6 +360,27 @@ eq "P2 employee com commercial_role valido ENXERGA (mata o mutante master-only)"
 eq "P3 fornecedor_nome e retornado (mata b.fornecedor_nome -> NULL)" "$(campo 103 fornecedor_nome)" "SAYERLACK"
 eq "P4 canal_usado e retornado (mata b.canal_usado -> NULL)" "$(campo 103 canal_usado)" "portal_sayerlack"
 
+echo "── Bloco Q: ACL pelo ROLE real + projecoes sem assert (Codex v13) ──"
+# Ate aqui TODOS os testes rodavam como `postgres`, que ignora GRANT. Entao remover `authenticated` ou
+# `service_role` do GRANT passava verde — e o caller REAL tomaria permission denied.
+eq "Q1 SET ROLE authenticated + gerente ENXERGA (prova o GRANT a authenticated)" "$(Pq -c "SET test.uid='77777777-7777-7777-7777-777777777777'; SET ROLE authenticated; SELECT count(*) > 0 FROM public.reposicao_pos_candidatos('OBEN');" | tail -1)" "t"
+eq "Q2 SET ROLE service_role + uid NULL ENXERGA (prova o GRANT a service_role — o caminho do cron)" "$(Pq -c "SET ROLE service_role; SELECT count(*) > 0 FROM public.reposicao_pos_candidatos('OBEN');" | tail -1)" "t"
+# A migration tem de REVOGAR, nao so "nao conceder": concede a anon, REAPLICA, e exige negacao de novo.
+P -q -c "GRANT EXECUTE ON FUNCTION public.reposicao_pos_candidatos(text) TO anon;" >/dev/null
+P -q -f "$MIG" >/dev/null
+R=$(P -tA 2>&1 <<'SQL' || true
+SET ROLE anon;
+DO $$ BEGIN PERFORM * FROM public.reposicao_pos_candidatos('OBEN'); RAISE NOTICE 'ANON_VAZOU';
+EXCEPTION WHEN insufficient_privilege THEN RAISE NOTICE 'ANON_DENY_OK'; END $$;
+SQL
+)
+case "$R" in *ANON_DENY_OK*) ok "Q3 a migration REVOGA anon mesmo com GRANT previo (reaplicacao sobre funcao concedida)";; *) bad "Q3 o REVOKE nao revogou: $R";; esac
+# projecoes que nenhum assert lia (mutante -> NULL passava verde porque outra coluna recalculava)
+eq "Q4 tem_canal POSITIVO (M6 so provava o negativo; tem_canal->FALSE passava verde)" "$(campo 170 tem_canal)" "t"
+eq "Q5 marcador_run_id e retornado (nenhum assert lia; ->NULL::uuid passava)" "$(Pq -c "SELECT marcador_run_id::text FROM public.reposicao_pos_candidatos('OBEN') WHERE pedido_id=101;" | tail -1)" "$RID_ATUAL"
+eq "Q6 data_ciclo e retornada (na_janela_7d e calculada a parte, entao ->NULL passava)" "$(campo 101 data_ciclo)" "$(Pq -c "SELECT (now()::date-2)::text;" | tail -1)"
+eq "Q7 idade_dias e retornada (idem)" "$(campo 101 idade_dias)" "2"
+
 echo "── Bloco A: marcador FAIL-CLOSED ──"
 P -q -c "UPDATE public.reposicao_pedidos_compra_run SET volume_ok=false;" >/dev/null
 eq "A1 sem run VÁLIDO (todos truncados) → VAZIO (não classifica ninguém)" "$(Pq -c "SELECT count(*) FROM public.reposicao_pos_candidatos('OBEN');" | tail -1)" "0"
