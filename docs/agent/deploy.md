@@ -24,6 +24,21 @@
 - **Deploy de edge pode REVERTER um fix mergeado (money-path!)** — o Lovable reconcilia com a cópia VELHA dele e **commita a reversão na `main`** como `Changes`, desfazendo o PR (mordido 2026-06-26: o fallback do `analyze-unified-order` #1077 voltou a `override`, `main` silenciosamente revertida; re-aplicado #1080; noutro deploy o bot apagou o comentário-aviso mas manteve o gate). É **evento que MUDA código**, não deploy puro — não está pronto até `main` E comportamento conferidos. **Pós-deploy, 2 camadas:** (1) **source** — `git fetch origin main` + grep o invariante-alvo (ex.: `&& !priceMap[productId]`); sumiu = deploy FALHO; (2) **comportamento** — grep é necessário mas **NÃO suficiente** (o bot pode deployar da cópia interna SEM refletir na `main`) → canária com fixture (ex.: Omie=999 vs local=123 → espera 123). O aviso anti-reversão **não pode morar no código** (o bot remove comentários) — mora aqui.
 - **"Deploy verbatim" manual é frágil p/ edge money-path** (cópia-fonte mutável do Lovable pode vencer — Codex 2026-06-26). Mitigar: prompt "deploy from `main` at SHA `<sha>`; do NOT reconcile from your internal copy; abort+report if it differs"; idealmente CI que falha se o invariante some, ou deploy por SHA/Action.
 
+## Canárias de deploy (a única prova do que está SERVIDO)
+
+Grep na `main` prova a **fonte**; a canária prova o **deploy**. Chame com `?canary=1` (staff-gated) e leia `ok`:
+
+| edge | rota | o que a fixture discrimina |
+|---|---|---|
+| `analyze-unified-order` | Governança → Auditoria (card "Canária de preço") | praticado 123 vence Omie 999 |
+| `omie-vendas-sync` | `identidade_probe` | identidade derivada por documento |
+| `omie-analytics-sync` | `doc_ambiguo_probe` | doc ambíguo não vira vínculo |
+| `carteira-rebuild` | `?canary=1` | conflito de mapeamento **permanece** com `eligible=false` (código velho: some) |
+
+⚠️ **Só é canária se a resposta tiver `"canary":true`.** Um deploy anterior à canária ignora o param e roda o **fluxo real** — no `carteira-rebuild` isso é um rebuild completo (lease + 6909 upserts; idempotente e guardado, mas é escrita). Resposta sem `canary:true` = a canária não rodou **e** o deploy é velho: isso já é o veredito.
+
+⚠️ **Canária que não discrimina é teatro verde.** Se a mudança for no-op nos dados de hoje (caso do #1397: 0 conflitos em prod), a resposta do fluxo REAL é byte-idêntica com código velho ou novo — não prova deploy nenhum. A fixture tem de exercitar **o comportamento que mudou**, e o teste tem de provar que sob o comportamento ANTIGO a canária ficaria vermelha (ver `rebuild-helpers.test.ts` → "a fixture DISCRIMINA"). Sem esse assert, a canária só prova que a função responde.
+
 ## Quando o Lovable reverte um fix — detectar e restaurar
 
 O bot `gpt-engineer-app[bot]` commita direto na `main` SEM CI ("Changes"/"Deployed"/"Deployou edge") e às vezes reverte um PR (~16% dos commits; ≥4-5 reversões money-path recentes). Prevenção é inviável (o bot precisa de escrita direta) → o jogo é **detectar + restaurar rápido** (MTTR), não governança perfeita. Spec: `docs/superpowers/specs/2026-06-26-lovable-revert-mitigation-design.md`.

@@ -267,6 +267,66 @@ Deno.serve(async (req) => {
   const auth = await authorizeCronOrStaff(req);
   if (!auth.ok) return auth.response;
 
+  // ── CANÁRIA DE DEPLOY (?canary=1) — a ÚNICA prova do que está SERVIDO em produção ──────────────
+  // Por que existe (lacuna exposta no deploy do #1397): a paridade textual do CI cobre a FONTE (o repo),
+  // não o DEPLOY — o bot do Lovable pode servir a cópia interna VELHA sem refletir na `main`. E o #1397 é
+  // um no-op nos dados de hoje (0 conflitos de mapeamento), então a resposta do run REAL é byte-idêntica
+  // com o código velho ou o novo: não discrimina. Esta canária discrimina em 1 request, sem escrever nada.
+  //
+  // A fixture é o comportamento que o #1397 mudou: código Omie → 2 vendedores (conflito de mapeamento).
+  //   • código VELHO  → emitLegado NÃO emite → assignments VAZIO (o membro some → upsert-only deixaria
+  //                     o assignment antigo STALE: vendedor errado, elegível, cobrando comissão);
+  //   • código NOVO   → 1 row hunter_orphan + eligible=false, código preservado (quarentena: membro
+  //                     preservado, zero comissão, nada stale) E verificarCobertura devolve ok=true.
+  // Roda o helper REAL deployado (não uma reimplementação) — é isso que a torna prova de DEPLOY.
+  // ANTES do lease e de qualquer I/O: pura, não toma o lease (senão uma canária bloquearia um rebuild
+  // real, e vice-versa), não lê nem escreve tabela nenhuma. Staff-gated pelo authorizeCronOrStaff acima.
+  //
+  // ⚠️ LENDO O RESULTADO: só é canária se a resposta tiver `"canary":true`. Um deploy ANTERIOR a esta
+  // fatia não conhece o param, ignora o `?canary=1` e roda um REBUILD REAL (escrita: lease + 6909 upserts,
+  // idempotente e guardado, mas é o ciclo completo) devolvendo `{"ok":true,"upserted":...}`. Ou seja:
+  // resposta SEM `canary:true` = a canária NÃO rodou E o deploy é velho — que é, em si, o veredito.
+  if (new URL(req.url).searchParams.get('canary') === '1') {
+    const HUNTER_FIX = '00000000-0000-4000-8000-0000000000ff';
+    const membrosFix = ['00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000002'];
+    const clientesFix: OmieClienteRow[] = [
+      { customer_user_id: membrosFix[0], omie_codigo_vendedor: 111 }, // limpo → 1 vendedor
+      { customer_user_id: membrosFix[1], omie_codigo_vendedor: 222 }, // CONFLITO → 2 vendedores
+    ];
+    const mapFix: VendedorMapRow[] = [
+      { omie_codigo_vendedor: 111, user_id: '00000000-0000-4000-8000-00000000000a' },
+      { omie_codigo_vendedor: 222, user_id: '00000000-0000-4000-8000-00000000000a' },
+      { omie_codigo_vendedor: 222, user_id: '00000000-0000-4000-8000-00000000000b' },
+    ];
+    const out = computeCarteira(clientesFix, mapFix, HUNTER_FIX);
+    const conflitado = out.assignments.find((a) => a.customer_user_id === membrosFix[1]) ?? null;
+    const cobertura = verificarCobertura(membrosFix, out.assignments);
+    const resolved = {
+      membroConflitadoPresente: conflitado !== null,
+      conflitadoSource: conflitado?.source ?? null,
+      conflitadoEligible: conflitado?.eligible ?? null,
+      conflitadoCodigo: conflitado?.omie_codigo_vendedor ?? null,
+      conflictsRegistrados: out.conflicts.length,
+      coberturaOk: cobertura.ok,
+    };
+    const expected = {
+      membroConflitadoPresente: true,
+      conflitadoSource: 'hunter_orphan',
+      conflitadoEligible: false,
+      conflitadoCodigo: 222,
+      conflictsRegistrados: 1,
+      coberturaOk: true,
+    };
+    const ok = (Object.keys(expected) as Array<keyof typeof expected>)
+      .every((k) => resolved[k] === expected[k]);
+    if (!ok) {
+      console.error('[carteira-rebuild] CANÁRIA VERMELHA — deploy servido diverge do repo:', JSON.stringify({ resolved, expected }));
+    }
+    return new Response(JSON.stringify({ canary: true, ok, resolved, expected }), {
+      status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+
   // Flag de bootstrap: ?bootstrap=1 autoriza gravar quando não há baseline saudável (ou resetá-lo numa queda
   // legítima grande). Gated em service_role/cron-secret — NÃO staff comum (Codex R3 #2: employee comprometido
   // não força bootstrap destrutivo). O cron ROTINEIRO chama sem o param → nunca faz bootstrap nem destrava a catraca.
