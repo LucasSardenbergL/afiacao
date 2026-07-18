@@ -263,6 +263,18 @@ serve(async (req) => {
     const semContato: Record<MotivoSemEnvio, number> = { sem_email: 0, sem_canal_nenhum: 0 };
     let enviados = 0;
     let falhasEnvio = 0;
+    let naoEnviadosSemChave = 0;
+
+    // O envio foi PEDIDO mas o ambiente não tem a chave: o cliente com e-mail não é pulado
+    // por contato (`motivoSemEnvio` devolve null) e também nunca é tentado — sem este ramo ele
+    // não aparece em contador nenhum, e os totais fecham em zero como se estivesse tudo certo.
+    // É a mesma entrega-zero silenciosa de sempre, entrando por outra porta.
+    const envioArmado = sendEmail && !previewOnly;
+    if (envioArmado && !resendApiKey) {
+      console.error(
+        'monthly-report: envio pedido mas RESEND_API_KEY ausente — NENHUM e-mail sai desta execução',
+      );
+    }
 
     for (const report of reports) {
       // Classificado SEMPRE, inclusive em preview/`send_email:false` — "quantos clientes estão
@@ -277,7 +289,12 @@ serve(async (req) => {
         continue;
       }
 
-      if (sendEmail && !previewOnly && resendApiKey) {
+      if (envioArmado && !resendApiKey) {
+        naoEnviadosSemChave++;
+        continue;
+      }
+
+      if (envioArmado) {
         const html = generateEmailHtml(report);
 
         try {
@@ -335,6 +352,9 @@ serve(async (req) => {
       falhas_envio: falhasEnvio,
       pulados_sem_contato: puladosTotal,
       pulados_detalhe: semContato,
+      // Fecha a conta: sem este campo, os clientes alcançáveis que não chegaram a ser tentados
+      // (envio pedido, ambiente sem chave) sumiriam de todos os totais.
+      nao_enviados_sem_chave: naoEnviadosSemChave,
       reports: reportsWithWhatsApp,
     }), {
       status: 200,

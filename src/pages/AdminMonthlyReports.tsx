@@ -67,9 +67,36 @@ const AdminMonthlyReports = () => {
       setReports(data.reports || []);
       
       if (sendEmail) {
-        toast.success('E-mails enviados!', {
-          description: `Relatórios enviados para ${data.reports_count} cliente(s)`,
-        });
+        // `reports_count` conta relatórios MONTADOS, não entregues: anunciar "enviados para N"
+        // com ele afirmava entrega justamente quando ninguém tinha e-mail cadastrado.
+        const enviados = data.emails_enviados;
+
+        if (typeof enviados !== 'number') {
+          // Ausente ≠ zero. A edge é deployada à mão e pode estar atrás deste build; sem o
+          // contador não dá para afirmar entrega NEM falha — só o que de fato se sabe.
+          toast.success('Envio processado', {
+            description: `${data.reports_count} relatório(s) gerado(s)`,
+          });
+        } else {
+          const pulados = data.pulados_sem_contato ?? 0;
+          const falhas = data.falhas_envio ?? 0;
+          const semChave = data.nao_enviados_sem_chave ?? 0;
+          const ressalvas = [
+            pulados > 0 ? `${pulados} sem contato cadastrado` : null,
+            falhas > 0 ? `${falhas} falha(s) de envio` : null,
+            semChave > 0 ? `${semChave} sem tentativa (RESEND_API_KEY ausente)` : null,
+          ].filter(Boolean).join(' · ');
+
+          if (enviados === 0) {
+            toast.warning('Nenhum e-mail enviado', {
+              description: ressalvas || 'Nenhum relatório chegou a ser entregue',
+            });
+          } else {
+            toast.success(`${enviados} e-mail(s) enviado(s)`, {
+              description: ressalvas || `Todos os ${enviados} relatório(s) foram entregues`,
+            });
+          }
+        }
       }
     } catch (error) {
       console.error('Error:', error);
