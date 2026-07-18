@@ -11,6 +11,10 @@
 # founder. Se algum dia "não consegui consultar" voltar a sair 5, este teste
 # fica vermelho.
 #
+# O último caso cobre o GATILHO do mesmo incidente: a janela conta VIGÍLIA, não
+# relógio de parede. Ali o exit code não discrimina (5 nos dois mundos) — o
+# observável é quantas vezes o script chegou a consultar.
+#
 # Uso: bash scripts/test-pr-watch.sh   (exit 0 = tudo verde)
 set -u
 
@@ -18,7 +22,24 @@ here="$(cd "$(dirname "$0")" && pwd)"
 WATCH="$here/pr-watch.sh"
 
 stub="$(mktemp -d)"
-trap 'rm -rf "$stub"' EXIT
+tempo="$(mktemp -d)"
+trap 'rm -rf "$stub" "$tempo"' EXIT
+
+# Stubs de TEMPO — usados SÓ pelo teste de salto de relógio (entram no PATH
+# apenas naquele caso, pros demais seguirem exercitando date/sleep de verdade).
+# Relógio VIRTUAL num arquivo: `sleep N` não dorme, só adianta o relógio em
+# N + SLEEP_SALTO. Assim dá pra simular a máquina suspendendo — de forma
+# determinística e instantânea, sem esperar 40min de verdade.
+cat >"$tempo/date" <<'STUB'
+#!/bin/sh
+cat "$PR_WATCH_RELOGIO"
+STUB
+cat >"$tempo/sleep" <<'STUB'
+#!/bin/sh
+agora="$(cat "$PR_WATCH_RELOGIO")"
+echo $(( agora + $1 + ${SLEEP_SALTO:-0} )) > "$PR_WATCH_RELOGIO"
+STUB
+chmod +x "$tempo/date" "$tempo/sleep"
 
 # stub de gh:
 #   GH_STUB_EXIT=N   → falha SEMPRE com N (rede fora o tempo todo)
@@ -89,6 +110,34 @@ echo "── cartada final: a rede volta antes de desistir ──"
 # precisa vencer o timeout, senão o watcher mente sobre um PR que fechou.
 caso "falha 2×, a rede volta e acha MERGED → 0" 0 '{"state":"MERGED","mergeStateStatus":"CLEAN","statusCheckRollup":[],"title":"t","url":"u"}' 2 MERGEADO
 caso "falha 1×, a rede volta e o PR segue OPEN → 5" 5 '{"state":"OPEN","mergeStateStatus":"BLOCKED","statusCheckRollup":[{"name":"validate","conclusion":null}],"title":"t","url":"u"}' 1 'ainda OPEN'
+
+echo "── relógio saltando (máquina suspendendo) ──"
+# A janela quer dizer "N min VIGIANDO", não N min de relógio de parede. Se o
+# laptop dorme, `sleep` não avança mas o relógio salta — e o watcher queimava a
+# janela inteira tendo consultado 2× (foi o GATILHO do #1396).
+#
+# O exit code NÃO discrimina aqui (com ou sem o fix dá 5): o observável é
+# QUANTAS vezes ele realmente consultou. Janela de 5min com poll de 60s = ~6
+# consultas; sem o fix, o 1º sono de 40min encerra tudo na 2ª.
+echo 1000000000 > "$tempo/relogio"
+rm -f "$GH_STUB_CONTADOR"
+printf '%s' '{"state":"OPEN","mergeStateStatus":"BLOCKED","statusCheckRollup":[],"title":"t","url":"u"}' > "$stub/cenario.json"
+# Watchdog: com `sleep` stubado (instantâneo), errar a aritmética do salto —
+# creditar o elapsed inteiro em vez do EXCESSO — faria o deadline recuar tanto
+# quanto avança, e o teste TRAVARIA em vez de falhar. Aqui vira exit 143 = FAIL.
+PATH="$tempo:$PATH" PR_WATCH_RELOGIO="$tempo/relogio" SLEEP_SALTO=2400 \
+  GH_STUB_FILE="$stub/cenario.json" bash "$WATCH" 999 5 60 >"$tempo/saida" 2>/dev/null &
+alvo=$!
+( sleep 20 && kill "$alvo" 2>/dev/null ) >/dev/null 2>&1 &
+cao=$!
+wait "$alvo"; rc=$?
+kill "$cao" 2>/dev/null
+polls="$(cat "$GH_STUB_CONTADOR" 2>/dev/null || echo 0)"
+if [ "$rc" -eq 5 ] && [ "$polls" -ge 5 ]; then
+  echo "  ok    exit 5 após $polls polls | 40min de sono por poll não queimam a janela de 5min"
+else
+  echo "  FAIL  want exit 5 com ≥5 polls, got exit $rc com $polls poll(s) | a janela foi queimada pelo relógio, não pela vigília"; fail=1
+fi
 
 echo
 if [ "$fail" -eq 0 ]; then echo "PASS — todos os casos"; else echo "FALHOU"; fi
