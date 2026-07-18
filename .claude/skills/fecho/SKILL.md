@@ -22,6 +22,23 @@ Cada item abaixo tem um comando concreto; o resultado decide ✅/❌. Se QUALQUE
 estiver pendente, o veredito é "**ainda não** — falta X" com a lista numerada do que fica na
 mão do founder.
 
+**Pendência sem DESTINO não existe (pedido do founder, 2026-07-18).** Toda pendência que o
+fecho detectar — crítica, informativa ou "opcional" — recebe UM de três destinos ANTES do
+veredito, para nada ficar dependendo da memória dele:
+
+1. **Resolver AGORA na sessão** — quando é pequena, do escopo, e cabe sem alongar o fecho
+   (ex.: rodar uma validação que faltou, armar um watcher, disparar um Codex retroativo).
+2. **Abrir CHIP (`spawn_task`)** — para tudo que merece sessão própria: prompt AUTO-CONTIDO
+   (a sessão nova não vê esta conversa) + anunciar o **título exato** no chat. Vale também
+   para os "opcionais": se valem a pena, viram chip; o founder decide clicando, não lembrando.
+3. **Descartar COM o porquê** — dito explicitamente no veredito ("não vale porque X").
+   Exceção: pendência que depende de decisão/etapa futura (ex.: fase 5 que espera a 3) fica
+   registrada em doc/plano com o gatilho de quando virar chip — e isso é dito no veredito.
+
+O veredito final rotula cada pendência com seu destino: ✔ resolvida agora · 🔘 chip
+"<título exato>" · 🚫 descartada (porquê) · 📌 registrada em <doc> com gatilho. **"PODE
+excluir" só quando TODA pendência tem destino** — "fica na sua mão lembrar" não é destino.
+
 Crie estes todos (TodoWrite) e siga em ordem:
 
 1. **PRs da sessão** — mergeados de verdade?
@@ -125,10 +142,14 @@ node_modules dela.
 ✅ PRs: #A, #B mergeados (CI verde)
 ✅ Migrations: 2026…_x.sql aplicada (validação psql-ro ✅)
 ✅ Edges/Publish: n/a (sessão só de tooling)
-🔘 Chips abertos: "<título exato>" (faz X — clique quando quiser)
-⏳ Na sua mão: (1) … (2) …
+Pendências (TODAS com destino — nenhuma "na memória"):
+  ✔ <pendência resolvida agora, com a evidência>
+  🔘 chip "<título exato>" (faz X — clique quando quiser)
+  🚫 <pendência descartada> — porquê em 1 linha
+  📌 <pendência futura> — registrada em <doc/plano>, vira chip quando <gatilho>
 
 Veredito: PODE excluir a sessão. / AINDA NÃO — falta (1)…
 ```
 
-Nunca diga "pode excluir" com item ❌/⏳ crítico em aberto sem nomeá-lo na lista do founder.
+Nunca diga "pode excluir" com item ❌/⏳ crítico em aberto sem nomeá-lo na lista do founder —
+e nunca com pendência SEM um dos 4 destinos acima ("fica na sua mão lembrar" não é destino).

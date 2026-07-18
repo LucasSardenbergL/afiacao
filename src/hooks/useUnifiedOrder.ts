@@ -504,19 +504,17 @@ export function useUnifiedOrder() {
   // AI Customer handler
   const handleAICustomerSelect = useCallback(async (customer: AICustomerMatch) => {
     // P0-B (item 3): NÃO confiar no codigo_cliente da IA — analyze não emite mais código cross-conta, e
-    // mesmo que emitisse seria do espelho parcial (colacor rotulado como oben). Resolve sempre por
-    // (user_id, empresa_omie) ou documento; a identidade autoritativa é derivada no edge de qualquer forma.
+    // mesmo que emitisse seria do espelho parcial (colacor rotulado como oben). A identidade
+    // autoritativa é derivada no edge de qualquer forma.
+    //
+    // [P0-B-bis Fatia 5] O lookup por user_id no espelho `omie_clientes` foi REMOVIDO — e a remoção
+    // é NO-OP de comportamento, não uma degradação. Ele filtrava `empresa_omie='oben'`, mas a coluna
+    // é `DEFAULT 'colacor' NOT NULL` e nenhum writer jamais a setou: medido em prod (psql-ro,
+    // 2026-07-18) são 6909/6909 linhas 'colacor', logo o filtro casava ZERO e `codigoCliente` já
+    // saía sempre null daqui. Quem sempre resolveu de verdade é o fallback por documento na API
+    // oben, logo abaixo — que continua idêntico.
     let codigoCliente: number | null = null;
-    if (customer.user_id) {
-      // Money-path (P0-A): codigoCliente vira OmieCustomer.codigo_cliente (código da conta OBEN).
-      // Filtrar empresa_omie='oben' impede pegar o código de OUTRA conta do espelho e mandá-lo ao
-      // Omie oben (cliente errado). Sem oben no espelho → cai no fallback por documento (API oben).
-      const { data: omieMapping } = await supabase
-        .from('omie_clientes').select('omie_codigo_cliente')
-        .eq('user_id', customer.user_id).eq('empresa_omie', 'oben').maybeSingle();
-      if (omieMapping?.omie_codigo_cliente) codigoCliente = omieMapping.omie_codigo_cliente;
-    }
-    if (!codigoCliente && customer.cnpj_cpf) {
+    if (customer.cnpj_cpf) {
       try {
         const { data: omieResult } = await supabase.functions.invoke('omie-vendas-sync', {
           body: { action: 'buscar_cliente', document: customer.cnpj_cpf, account: 'oben' },
@@ -543,25 +541,30 @@ export function useUnifiedOrder() {
   }, [selectCustomer]);
 
   // Pré-seleção por user_id (deep-link "Novo pedido" do Customer 360).
-  // Busca identidade (profiles) + mapeamento Omie (omie_clientes) por user_id,
-  // monta o OmieCustomer e reusa o selectCustomer existente. Falha → silencioso
-  // (não pré-seleciona; o vendedor escolhe no passo Cliente).
-  // Money-path (P0-A): o código vira OmieCustomer.codigo_cliente, tratado como o código da conta
-  // OBEN pelo submitOrder. omie_clientes tem código por conta (UNIQUE user_id+empresa_omie); filtrar
-  // empresa_omie='oben' impede pegar o código de OUTRA conta (ex.: colacor) e mandá-lo ao Omie oben
-  // (cliente errado). Sem código oben → codigo_cliente=0 → o preflight bloqueia (fail-closed).
+  // Busca a identidade (profiles), monta o OmieCustomer e reusa o selectCustomer existente.
+  // Falha → silencioso (não pré-seleciona; o vendedor escolhe no passo Cliente).
+  //
+  // [P0-B-bis Fatia 5] O lookup do código no espelho `omie_clientes` foi REMOVIDO. Como no
+  // handleAICustomerSelect acima, ele era morto por construção — `.eq('empresa_omie','oben')` casa
+  // 0 de 6909 linhas (a coluna é `DEFAULT 'colacor'` e nenhum writer a seta), então `omie` já vinha
+  // SEMPRE null e `buildOmieCustomer` já produzia `codigo_cliente: 0`. Passar `null` explicitamente
+  // preserva esse comportamento EXATO: sem código oben → codigo_cliente=0 → o preflight do submit
+  // bloqueia (fail-closed), e o vendedor resolve o cliente no passo Cliente.
+  //
+  // ⚠️ FOLLOW-UP deliberadamente FORA do escopo desta fatia (medido, não esquecido): a proof
+  // `omie_customer_account_map` tem código oben para 5611 users e resolveria de verdade — via
+  // `omie_customer_account_map_fresco` + `.eq('account','oben')`, o mesmo padrão que o
+  // handleStaffAddTool já usa neste arquivo. Isso CONSERTARIA o deep-link, mas é mudança de
+  // comportamento no money-path do pedido (passa a mandar um código real ao Omie onde hoje manda 0),
+  // e a Fatia 5 aposenta o espelho — não redesenha a resolução de cliente. Precisão > recall: entra
+  // como PR próprio, com prova de que o código resolvido é o da conta certa.
   const selectCustomerByUserId = useCallback(async (userId: string) => {
     if (!userId) return;
     try {
-      const [{ data: profile }, { data: omie }] = await Promise.all([
-        supabase.from('profiles')
-          .select('razao_social, name, document')
-          .eq('user_id', userId).maybeSingle(),
-        supabase.from('omie_clientes')
-          .select('omie_codigo_cliente, omie_codigo_vendedor')
-          .eq('user_id', userId).eq('empresa_omie', 'oben').maybeSingle(),
-      ]);
-      const omieCustomer = buildOmieCustomer(userId, profile, omie);
+      const { data: profile } = await supabase.from('profiles')
+        .select('razao_social, name, document')
+        .eq('user_id', userId).maybeSingle();
+      const omieCustomer = buildOmieCustomer(userId, profile, null);
       if (omieCustomer) await selectCustomer(omieCustomer);
     } catch {
       // fallback silencioso: mantém o fluxo manual intacto
