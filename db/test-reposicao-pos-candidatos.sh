@@ -391,7 +391,10 @@ echo "── Bloco R: os 4 ultimos mutantes (Codex v14) ──"
 eq "R1 pedido SEM ITEM ALGUM -> valor_total NULL (mata COALESCE(sum,0), que FABRICA zero)" "$(Pq -c "SELECT COALESCE(valor_total::text,'NULL') FROM public.reposicao_pos_candidatos('OBEN') WHERE pedido_id=139;" | tail -1)" "NULL"
 eq "R2 status so com TAB/espaco -> tem_status_portal FALSE (mata a remocao do trim)" "$(campo 180 tem_status_portal)" "f"
 eq "R3 canal so com TAB/espaco -> tem_canal FALSE (M6 so usava string vazia)" "$(campo 181 tem_canal)" "f"
-eq "R4 canal/status so com whitespace nao acendem algum_sinal_de_canal" "$(campo 181 algum_sinal_de_canal)" "f"
+# algum_sinal_de_canal REPETE os 4 predicados — cada ramo precisa do seu proprio dente (Codex v15):
+eq "R4 ramo CANAL: whitespace-only nao acende algum_sinal" "$(campo 181 algum_sinal_de_canal)" "f"
+eq "R6 ramo STATUS: whitespace-only nao acende algum_sinal (ramo duplicado)" "$(campo 180 algum_sinal_de_canal)" "f"
+eq "R7 ramo PROTOCOLO: whitespace-only nao acende algum_sinal (ramo duplicado)" "$(campo 141 algum_sinal_de_canal)" "f"
 # ORDEM: o cand() reordena por pedido_id, entao trocar o ORDER BY da RPC passava verde. Aqui leio a ordem
 # REAL: o 900 (recente + maior valor) tem de vir PRIMEIRO, embora seja o MAIOR id.
 eq "R5 ORDEM da RPC = prioridade (recente+valioso primeiro), nao pedido_id" "$(Pq -c "SELECT pedido_id FROM public.reposicao_pos_candidatos('OBEN') LIMIT 1;" | tail -1)" "900"
