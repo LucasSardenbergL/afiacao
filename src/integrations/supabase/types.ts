@@ -17791,7 +17791,6 @@ export type Database = {
           is_sl: boolean | null
           nome_cor: string | null
           personalizada: boolean | null
-          preco_csv_legado: number | null
           preco_final_sayersystem: number | null
           receita_valida: boolean | null
           sku_id: string | null
