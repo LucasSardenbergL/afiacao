@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ╔══════════════════════════════════════════════════════════════════════════════╗
 # ║  PROVA PG17 — reposicao_pos_candidatos (detector de PO excluído, NÃO-MUTANTE)  ║
-# ║  Migration: supabase/migrations/20260719003000_reposicao_pos_candidatos.sql    ║
+# ║  Migration: supabase/migrations/20260719120000_reposicao_pos_candidatos.sql    ║
 # ║  Rode: bash db/test-reposicao-pos-candidatos.sh > /tmp/t.log 2>&1; echo $?     ║
 # ║        (NÃO pipe pra tail — engole o exit code)                                 ║
 # ║                                                                                ║
@@ -23,7 +23,7 @@ PORT="${PGPORT_TEST:-5477}"
 SLUG="reposicao-pos-candidatos"
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
 export LC_ALL=C LANG=C
-MIG="$REPO_ROOT/supabase/migrations/20260719003000_reposicao_pos_candidatos.sql"
+MIG="$REPO_ROOT/supabase/migrations/20260719120000_reposicao_pos_candidatos.sql"
 
 [ -x "$PGBIN/initdb" ] || { echo "postgresql@${PGVER} ausente: brew install postgresql@${PGVER}"; exit 1; }
 CELLAR="$(brew --prefix "postgresql@${PGVER}")"
@@ -184,7 +184,12 @@ INSERT INTO public.pedido_compra_sugerido
  (141,'OBEN','disparado','141', now()::date-50,'F',NULL,E'\t  ',NULL,NULL),
  (142,'OBEN','disparado','142', now()::date-50,'F','',NULL,NULL,NULL),
  (143,'OBEN','disparado','1000000000000000000', now()::date-50,'F','omie',NULL,NULL,NULL),
- (144,'OBEN','disparado',E'\t145\t', now()::date-50,'F','omie',NULL,NULL,NULL);                               -- 'insucesso' NAO e sucesso
+ (144,'OBEN','disparado',E'\t145\t', now()::date-50,'F','omie',NULL,NULL,NULL),
+ -- Codex v6: identidade ilegivel NAO pode virar "nunca visto"
+ (146,'OBEN','disparado',E'\t', now()::date-50,'F','omie',NULL,NULL,NULL),
+ (147,'OBEN','disparado','12 34', now()::date-50,'F','omie',NULL,NULL,NULL),
+ (148,'OBEN','disparado','00000000000000000000145', now()::date-50,'F','omie',NULL,NULL,NULL),
+ (149,'OBEN','disparado', U&'\1680' || '145' || U&'\1680', now()::date-50,'F','omie',NULL,NULL,NULL);                               -- 'insucesso' NAO e sucesso
 INSERT INTO public.pedido_compra_item (pedido_id,sku_codigo_omie,valor_linha) VALUES
  (101,'A',10.00),(102,'B',1808.59),(103,'C',1251.89),(104,'D',5.00),(105,'E',7.00);
 INSERT INTO public.purchase_orders_tracking (empresa,omie_codigo_pedido) VALUES ('OBEN',101);
@@ -204,10 +209,10 @@ case "$R" in
   *"operator does not exist"*|*"does not exist"*|*ERROR*) bad "E1 a RPC QUEBROU em runtime: $R";;
   *) ok "E1 a RPC EXECUTA com empresa TEXT × ENUM (comparação com cast explícito)";;
 esac
-eq "E2 aceita a empresa em caixa/espaço divergentes (upper+btrim)" "$(Pq -c "SELECT count(*) FROM public.reposicao_pos_candidatos('  oben ');" | tail -1)" "31"
+eq "E2 aceita a empresa em caixa/espaço divergentes (upper+btrim)" "$(Pq -c "SELECT count(*) FROM public.reposicao_pos_candidatos('  oben ');" | tail -1)" "33"
 
 echo "── Bloco B: quem é candidato ──"
-eq "B1 candidatos = todos os não-vistos no marcador" "$(cand)" "101,102,103,104,105,110,111,112,113,114,115,116,117,118,119,120,121,122,123,124,130,131,132,133,134,135,136,139,140,141,142"
+eq "B1 candidatos = todos os não-vistos no marcador" "$(cand)" "101,102,103,104,105,110,111,112,113,114,115,116,117,118,119,120,121,122,123,124,130,131,132,133,134,135,136,139,140,141,142,146,147"
 eq "B2 PO visto NO marcador NÃO é candidato (100 fora)" "$(Pq -c "SELECT count(*) FROM public.reposicao_pos_candidatos('OBEN') WHERE pedido_id=100;" | tail -1)" "0"
 eq "B3 visto em run ANTERIOR é candidato, marcado como tal" "$(campo 101 visto_status)" "visto_em_run_anterior"
 eq "B4 NUNCA carimbado é candidato, marcado como tal" "$(campo 102 visto_status)" "nunca_carimbado"
@@ -245,7 +250,14 @@ eq "C16 canal='' (string vazia) nao e sinal presente (Codex v5)" "$(campo 142 co
 
 echo "── Bloco J: identidade do PO (numerica, robusta) ──"
 eq "J2 aprovado_aguardando_disparo E candidato (mata o mutante status IN -> =)" "$(Pq -c "SELECT count(*) FROM public.reposicao_pos_candidatos('OBEN') WHERE pedido_id=135;" | tail -1)" "1"
-eq "J3 PO de 19 digitos NAO derruba a RPC (overflow do bigint)" "$(Pq -c "SELECT count(*) FROM public.reposicao_pos_candidatos('OBEN') WHERE pedido_id=136;" | tail -1)" "1"
+eq "J3 PO fora do range NAO derruba a RPC (overflow do bigint)" "$(Pq -c "SELECT count(*) FROM public.reposicao_pos_candidatos('OBEN') WHERE pedido_id=136;" | tail -1)" "1"
+# ⚠️ o assert ANTIGO parava aqui e FIXAVA o falso-positivo: identidade ilegivel virava 'nunca_carimbado',
+# afirmando ausencia que a RPC nao pode provar (Codex v6 P1). Agora exige o estado EXPLICITO.
+eq "J3b identidade ilegivel -> 'identidade_nao_interpretavel' (NAO 'nunca_carimbado')" "$(campo 136 visto_status)" "identidade_nao_interpretavel"
+eq "J7 PO so com TAB -> identidade nao interpretavel (nao afirma ausencia)" "$(campo 146 visto_status)" "identidade_nao_interpretavel"
+eq "J8 whitespace INTERNO invalida a identidade (senao '12 34' colidiria com 1234)" "$(campo 147 visto_status)" "identidade_nao_interpretavel"
+eq "J9 leading zeros LONGOS ('00..00145') casam o PO 145 -> NAO e candidato" "$(Pq -c "SELECT count(*) FROM public.reposicao_pos_candidatos('OBEN') WHERE pedido_id=148;" | tail -1)" "0"
+eq "J10 U+1680 nas bordas nao quebra a identidade" "$(Pq -c "SELECT count(*) FROM public.reposicao_pos_candidatos('OBEN') WHERE pedido_id=149;" | tail -1)" "0"
 eq "J4 PO com espacos ('  00138  ') casa o carimbado 138 -> NAO e candidato" "$(Pq -c "SELECT count(*) FROM public.reposicao_pos_candidatos('OBEN') WHERE pedido_id=137;" | tail -1)" "0"
 eq "J5 PO de 19 digitos VALIDO (1e18) casa o carimbado -> NAO e candidato (Codex v5)" "$(Pq -c "SELECT count(*) FROM public.reposicao_pos_candidatos('OBEN') WHERE pedido_id=143;" | tail -1)" "0"
 eq "J6 PO com TAB casa o carimbado (btrim nao remove TAB — Codex v5)" "$(Pq -c "SELECT count(*) FROM public.reposicao_pos_candidatos('OBEN') WHERE pedido_id=144;" | tail -1)" "0"
@@ -268,8 +280,8 @@ EXCEPTION WHEN insufficient_privilege THEN RAISE NOTICE 'DENY_OK'; END $$;
 SQL
 )
 case "$R" in *DENY_OK*) ok "D1 authenticated NÃO-staff é barrado (42501)";; *) bad "D1 — veio: $R";; esac
-eq "D2 staff (master) enxerga" "$(Pq -c "SET test.uid='33333333-3333-3333-3333-333333333333'; SELECT count(*) FROM public.reposicao_pos_candidatos('OBEN');" | tail -1)" "31"
-eq "D3 uid NULL (service_role / cron SQL-local) passa — auth.role() aqui MATARIA o cron" "$(Pq -c "SELECT count(*) FROM public.reposicao_pos_candidatos('OBEN');" | tail -1)" "31"
+eq "D2 staff (master) enxerga" "$(Pq -c "SET test.uid='33333333-3333-3333-3333-333333333333'; SELECT count(*) FROM public.reposicao_pos_candidatos('OBEN');" | tail -1)" "33"
+eq "D3 uid NULL (service_role / cron SQL-local) passa — auth.role() aqui MATARIA o cron" "$(Pq -c "SELECT count(*) FROM public.reposicao_pos_candidatos('OBEN');" | tail -1)" "33"
 
 # ══════════════════════════════════════════════════════════════════════════════
 echo "── FALSIFICAÇÃO ──"

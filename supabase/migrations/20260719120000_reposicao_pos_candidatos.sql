@@ -39,7 +39,26 @@ BEGIN;
 -- remove espaço ASCII, então E'\t' e NBSP passavam como valor preenchido — Codex v5).
 CREATE OR REPLACE FUNCTION public.reposicao__nz(p text)
 RETURNS text LANGUAGE sql IMMUTABLE PARALLEL SAFE AS
-$fn$ SELECT COALESCE(regexp_replace(p, '[[:space:]\u00a0\u2000-\u200b\u202f\u205f\u3000]+', '', 'g'), '') $fn$;
+$fn$ SELECT COALESCE(regexp_replace(p, '[[:space:]\u0085\u00a0\u1680\u2000-\u200b\u2028\u2029\u202f\u205f\u3000]+', '', 'g'), '') $fn$;
+
+-- IDENTIDADE do PO — função SEPARADA da nz(), porque os propósitos são INCOMPATÍVEIS (Codex v6):
+--   nz() responde "tem conteúdo?" → remover whitespace INTERNO é inofensivo;
+--   aqui responde "QUAL PO é este?" → remover interno seria COLISÃO ('12 34' e '1234' viram o mesmo PO).
+-- Portanto: trim só nas BORDAS; whitespace interno INVALIDA. Leading zeros são normalizados ('00145' = 145,
+-- inclusive com 20+ chars). Fora do range de bigint → NULL (o cast estouraria e DERRUBARIA a RPC).
+-- Retorna NULL para "não interpretável" — e a RPC distingue isso de "ausente", em vez de afirmar ausência.
+CREATE OR REPLACE FUNCTION public.reposicao__po_id(p text)
+RETURNS bigint LANGUAGE plpgsql IMMUTABLE PARALLEL SAFE AS $fn$
+DECLARE t text; b text := '[[:space:]\u0085\u00a0\u1680\u2000-\u200b\u2028\u2029\u202f\u205f\u3000]';
+BEGIN
+  IF p IS NULL THEN RETURN NULL; END IF;
+  t := regexp_replace(regexp_replace(p, '^' || b || '+', ''), b || '+$', '');
+  IF t !~ '^[0-9]+$' THEN RETURN NULL; END IF;   -- inclui whitespace interno e vazio
+  t := ltrim(t, '0');
+  IF t = '' THEN RETURN 0; END IF;
+  IF length(t) > 19 OR (length(t) = 19 AND t > '9223372036854775807') THEN RETURN NULL; END IF;
+  RETURN t::bigint;
+END $fn$;
 
 
 CREATE OR REPLACE FUNCTION public.reposicao_pos_candidatos(p_empresa text)
@@ -108,29 +127,13 @@ BEGIN
           -- {1,18} dígitos: 19+ estoura o bigint e o cast DERRUBA a RPC inteira ('numeric value out of
           -- range' — Codex v4). btrim ANTES da regex: o filtro já usava btrim, a regex não (' 00126 ' virava
           -- NULL e o PO "desaparecia"). Comparação NUMÉRICA: '00126' e 126 são o MESMO PO.
-          AND t.omie_codigo_pedido = (
-            -- nz() (não btrim) p/ tolerar TAB/NBSP; {1,18} evita o overflow que DERRUBA a RPC, e o ramo
-            -- de 19 dígitos aceita só o que cabe em bigint (1e18 é válido e era rejeitado — Codex v5).
-            CASE WHEN public.reposicao__nz(p.omie_pedido_compra_id) ~ '^[0-9]{1,18}$'
-                 THEN public.reposicao__nz(p.omie_pedido_compra_id)::bigint
-                 WHEN public.reposicao__nz(p.omie_pedido_compra_id) ~ '^[0-9]{19}$'
-                  AND public.reposicao__nz(p.omie_pedido_compra_id) <= '9223372036854775807'
-                 THEN public.reposicao__nz(p.omie_pedido_compra_id)::bigint END
-          )
+          AND t.omie_codigo_pedido = public.reposicao__po_id(p.omie_pedido_compra_id)
       ) AS po_no_espelho
     FROM public.pedido_compra_sugerido p
     CROSS JOIN marcador m
     LEFT JOIN public.reposicao_po_last_seen ls
            ON ls.empresa = v_empresa
-          AND ls.omie_codigo_pedido = (
-            -- nz() (não btrim) p/ tolerar TAB/NBSP; {1,18} evita o overflow que DERRUBA a RPC, e o ramo
-            -- de 19 dígitos aceita só o que cabe em bigint (1e18 é válido e era rejeitado — Codex v5).
-            CASE WHEN public.reposicao__nz(p.omie_pedido_compra_id) ~ '^[0-9]{1,18}$'
-                 THEN public.reposicao__nz(p.omie_pedido_compra_id)::bigint
-                 WHEN public.reposicao__nz(p.omie_pedido_compra_id) ~ '^[0-9]{19}$'
-                  AND public.reposicao__nz(p.omie_pedido_compra_id) <= '9223372036854775807'
-                 THEN public.reposicao__nz(p.omie_pedido_compra_id)::bigint END
-          )
+          AND ls.omie_codigo_pedido = public.reposicao__po_id(p.omie_pedido_compra_id)
     -- ⚠️ `pedido_compra_sugerido.empresa` é **text** ('OBEN'); as outras tabelas usam o ENUM empresa_reposicao.
     -- text = enum direto é erro de TIPO em runtime (PL/pgSQL late-bound: o CREATE passa, quebra ao EXECUTAR).
     WHERE upper(btrim(p.empresa)) = v_empresa::text
@@ -148,7 +151,13 @@ BEGIN
     -- DANO ATIVO = a CTE em_transito só soma disparados dos últimos 7d. Idade = PRIORIDADE, não verdade.
     (b.idade_dias <= 7) AS dano_ativo,
     b.valor_total,
-    CASE WHEN b.visto_run_id IS NULL THEN 'nunca_carimbado' ELSE 'visto_em_run_anterior' END AS visto_status,
+    -- ⚠️ identidade ILEGÍVEL não é "nunca visto": o LEFT JOIN não pôde nem comparar. Afirmar ausência aqui
+    -- era falha ABERTA (Codex v6 P1) — e o assert J3 chegava a FIXAR esse falso-positivo como esperado.
+    CASE
+      WHEN public.reposicao__po_id(b.omie_codigo_pedido) IS NULL THEN 'identidade_nao_interpretavel'
+      WHEN b.visto_run_id IS NULL                                THEN 'nunca_carimbado'
+      ELSE 'visto_em_run_anterior'
+    END AS visto_status,
     -- SINAL FRACO: o sync do tracking é upsert-only (nunca remove) → ausência do espelho NÃO prova exclusão.
     b.po_no_espelho,
     b.fornecedor_nome,
@@ -167,11 +176,10 @@ BEGIN
       -- limite à DIREITA também: sem ele 'sucessor' virava 'menciona sucesso' (Codex v5).
       WHEN lower(public.reposicao__nz(b.status_envio_portal)) ~ '(^|[^a-z])sucesso([^a-z]|$)' THEN 'status_menciona_sucesso'
       WHEN COALESCE(b.resposta_canal::text, '') ~* 'fornecedor.?notificad|notificado'  THEN 'resposta_menciona_notificacao'
-      -- "presente" = tem CONTEÚDO (canal='' ou protocolo='   ' NÃO são sinal). E o fallback avalia os
-      -- QUATRO campos, incluindo portal_protocolo — antes ele faltava e '   ' caía em 'sem_dado' (Codex v5).
+      -- "presente" = tem CONTEÚDO (canal='' NÃO é sinal). portal_protocolo não entra aqui: se tivesse
+      -- conteúdo já teria retornado 'protocolo_preenchido' acima — o ramo era redundante (Codex v6).
       WHEN public.reposicao__nz(b.canal_usado) <> ''
         OR public.reposicao__nz(b.status_envio_portal) <> ''
-        OR public.reposicao__nz(b.portal_protocolo) <> ''
         OR b.resposta_canal IS NOT NULL                                               THEN 'sinal_presente_nao_reconhecido'
       ELSE 'sem_dado_de_canal'
     END AS compromisso_fornecedor,
