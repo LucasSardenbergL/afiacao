@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 388
+-- Total de custom migrations: 389
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -429,7 +429,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260718093248', 'drop_estimar_impacto_exclusao_outlier_orfa', '20260718093248_drop_estimar_impacto_exclusao_outlier_orfa.sql'),
   ('20260718100000', 'filas_recalc_rls_master_only', '20260718100000_filas_recalc_rls_master_only.sql'),
   ('20260718120000', 'pot_nid_receb_retencao', '20260718120000_pot_nid_receb_retencao.sql'),
-  ('20260718140000', 'tint_promote_guard4_v3', '20260718140000_tint_promote_guard4_v3.sql')
+  ('20260718140000', 'tint_promote_guard4_v3', '20260718140000_tint_promote_guard4_v3.sql'),
+  ('20260718160000', 'tactical_plans_eligible_fail_closed', '20260718160000_tactical_plans_eligible_fail_closed.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -1762,7 +1763,11 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('carteira_visivel_para_filtra_eligible', 'function', 'public', 'carteira_visivel_para', ''),
   ('carteira_visivel_para_filtra_eligible', 'function', 'public', 'minha_carteira', ''),
   ('pot_nid_receb_retencao', 'index', 'public', 'idx_pot_backfill_nid_receb', 'purchase_orders_tracking'),
-  ('tint_promote_guard4_v3', 'function', 'public', 'tint_promote_sync_run', '')
+  ('tint_promote_guard4_v3', 'function', 'public', 'tint_promote_sync_run', ''),
+  ('tactical_plans_eligible_fail_closed', 'function', 'public', 'criar_plano_tatico', ''),
+  ('tactical_plans_eligible_fail_closed', 'function', 'public', 'registrar_resultado_plano', ''),
+  ('tactical_plans_eligible_fail_closed', 'function', 'public', 'tactical_plan_recusa_cliente_mascarado', ''),
+  ('tactical_plans_eligible_fail_closed', 'trigger', 'public', 'trg_tactical_plan_recusa_mascarado', 'farmer_tactical_plans')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -3143,7 +3148,11 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('carteira_visivel_para_filtra_eligible', 'function', 'public', 'carteira_visivel_para', ''),
   ('carteira_visivel_para_filtra_eligible', 'function', 'public', 'minha_carteira', ''),
   ('pot_nid_receb_retencao', 'index', 'public', 'idx_pot_backfill_nid_receb', 'purchase_orders_tracking'),
-  ('tint_promote_guard4_v3', 'function', 'public', 'tint_promote_sync_run', '')
+  ('tint_promote_guard4_v3', 'function', 'public', 'tint_promote_sync_run', ''),
+  ('tactical_plans_eligible_fail_closed', 'function', 'public', 'criar_plano_tatico', ''),
+  ('tactical_plans_eligible_fail_closed', 'function', 'public', 'registrar_resultado_plano', ''),
+  ('tactical_plans_eligible_fail_closed', 'function', 'public', 'tactical_plan_recusa_cliente_mascarado', ''),
+  ('tactical_plans_eligible_fail_closed', 'trigger', 'public', 'trg_tactical_plan_recusa_mascarado', 'farmer_tactical_plans')
 )
 SELECT
   e.migration,

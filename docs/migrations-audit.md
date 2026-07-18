@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **388** custom migrations totais
-- **1344** objetos esperados (criados por estas migrations)
+- **389** custom migrations totais
+- **1348** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 383
+  - `function`: 386
   - `rls_policy`: 295
   - `index`: 223
   - `cron_job`: 150
   - `table`: 146
-  - `trigger`: 78
+  - `trigger`: 79
   - `view`: 65
   - `enum_value`: 4
 
@@ -3276,6 +3276,15 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.tint_promote_sync_run` | — |
+
+### `20260718160000_tactical_plans_eligible_fail_closed.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.criar_plano_tatico` | — |
+| `function` | `public.registrar_resultado_plano` | — |
+| `function` | `public.tactical_plan_recusa_cliente_mascarado` | — |
+| `trigger` | `public.trg_tactical_plan_recusa_mascarado` | `farmer_tactical_plans` |
 
 ## Próximos passos por status
 

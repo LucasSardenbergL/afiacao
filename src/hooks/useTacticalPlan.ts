@@ -198,8 +198,9 @@ export const useTacticalPlan = () => {
   // Lente "Ver como" + COBERTURA (#980): as leituras de EXIBIÇÃO (lista de planos, plano ativo do
   // cliente) seguem a VISIBILIDADE de carteira do id efetivo — carteira própria + carteiras
   // cobertas (fetchOwnerScope/ownersAtivosDoAlvo). O id efetivo é o ALVO na lente, o próprio
-  // usuário fora. A RLS de farmer_tactical_plans é staff-vê-tudo (NÃO escopa por farmer_id), então
-  // o escopo de leitura é responsabilidade do app. A GERAÇÃO (checkEfficiency/generatePlan) e o
+  // usuário fora. A RLS de farmer_tactical_plans recorta por CLIENTE (tactical_plans_select_carteira:
+  // pode_ver_carteira_completa OR carteira_visivel_para, que filtra eligible) — eixo DIFERENTE do
+  // farmer_id, então o escopo por DONO segue sendo do app. A GERAÇÃO (checkEfficiency/generatePlan) e o
   // registro de resultado seguem user.id (write identity = master real) e são bloqueados na lente
   // pelo write-guard + botões disabled. A POSSE gravada (farmer_id) é o DONO da carteira do cliente
   // (score.farmer_id), nunca o executor. Fora da lente effectiveUserId === user.id.
@@ -267,8 +268,9 @@ export const useTacticalPlan = () => {
 
   // Visibilidade de carteira p/ LEITURA: dono efetivo + carteiras que ele cobre (cobertura ativa e
   // dentro da validade). Reproduz, com a sessão atual, o que carteira_visivel_para daria — preciso
-  // porque a RLS de farmer_tactical_plans é staff-vê-tudo (não escopa por farmer_id), então o
-  // escopo é do app. baseId = effectiveUserId (alvo na lente, próprio fora).
+  // porque a RLS de farmer_tactical_plans recorta por CLIENTE, não por farmer_id: ela barra cliente
+  // fora da carteira (e mascarado), mas não separa os planos POR DONO — este filtro é esse eixo.
+  // baseId = effectiveUserId (alvo na lente, próprio fora).
   const fetchOwnerScope = useCallback(async (baseId: string): Promise<string[]> => {
     const { data: cov, error } = (await supabase
       .from('carteira_coverage')
@@ -367,7 +369,7 @@ export const useTacticalPlan = () => {
       }
 
       // [GUARD money-path] POSSE do plano = DONO da carteira do cliente (score.farmer_id, Opção A),
-      // NUNCA o executor logado. A RLS de farmer_tactical_plans é staff-vê-tudo (não escopa por
+      // NUNCA o executor logado. A RLS de farmer_tactical_plans recorta por CLIENTE (não por
       // farmer_id), então o campo é o ÚNICO mecanismo de posse: gravar user.id poluiria a carteira
       // do gestor sob cobertura (#980) e sumiria da carteira do dono. O bundle (multi por
       // (customer,farmer)) e o cluster também escopam pelo dono. farmer_id null = corrupção →
