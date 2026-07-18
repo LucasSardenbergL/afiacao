@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **380** custom migrations totais
-- **1338** objetos esperados (criados por estas migrations)
+- **384** custom migrations totais
+- **1341** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 378
+  - `function`: 381
   - `rls_policy`: 295
   - `index`: 222
   - `cron_job`: 150
@@ -3210,6 +3210,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `view` | `public.v_sku_parametros_sugeridos` | — |
 
+### `20260717020000_reposicao_exclusao_outlier_remover.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.resolver_outlier` | — |
+
 ### `20260717120000_seg_customer_metrics_gate_staff.sql`
 
 | Tipo | Objeto | Parent |
@@ -3233,6 +3239,21 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public._data_health_compute` | — |
+
+### `20260717181500_carteira_visivel_para_filtra_eligible.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.carteira_visivel_para` | — |
+| `function` | `public.minha_carteira` | — |
+
+### `20260718091409_drop_omie_cliente_upsert_mapping_orfa.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260718093248_drop_estimar_impacto_exclusao_outlier_orfa.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ## Próximos passos por status
 

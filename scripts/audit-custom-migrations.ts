@@ -50,6 +50,9 @@ const OBSOLETE: Record<string, string> = {
   'cmc_ledger::cmc_ledger_select_staff': 'substituída → cmc_ledger_select_gestor (hardening staff→gestor)',
   'kb_specs_and_competitors::kb_product_specs_insert_staff': 'substituída → kb_product_specs_insert_master (hardening)',
   'data_health_check_sayerlack_mapeamento_gap::v_sayerlack_mapeamento_gap': 'view abandonada (zero uso no app/SQL)',
+  // Faxina de RPCs órfãs (2026-07-18) — orfandade provada via psql-ro + grep no repo antes do DROP.
+  'outliers_leadtime_stack_efetivo::estimar_impacto_exclusao_outlier': 'drop — 20260718093248_drop_estimar_impacto_exclusao_outlier_orfa',
+  'omie_identidade_por_conta::omie_cliente_upsert_mapping': 'drop — 20260718091409_drop_omie_cliente_upsert_mapping_orfa (PR #1409)',
 };
 
 interface MigrationAudit {
