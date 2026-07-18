@@ -129,6 +129,12 @@ MIG="$REPO_ROOT/supabase/migrations/20260718170000_register_carteira_member.sql"
 P -q -f "$MIG"
 echo "migration aplicada: $(basename "$MIG")"
 
+# HOTFIX do achado A do /codex retroativo: source='rpc' em vez de 'manual' (ver cabeçalho da migration).
+# Aplicada na sequência REAL de produção — a 170000 rodou primeiro e a 200000 a corrige.
+MIG_HOTFIX="$REPO_ROOT/supabase/migrations/20260718200000_register_carteira_member_source_rpc.sql"
+P -q -f "$MIG_HOTFIX"
+echo "hotfix aplicado: $(basename "$MIG_HOTFIX")"
+
 # ══════════════════════════════════════════════════════════════════════════════
 # ZONA 3 — SEED + GRANTs (espelha prod: authenticated TEM grant de tabela; quem
 #          barra o customer é a RLS, não a falta de privilégio)
@@ -139,7 +145,8 @@ INSERT INTO auth.users(id) VALUES
   ('22222222-2222-2222-2222-222222222222'),  -- staff (employee)
   ('33333333-3333-3333-3333-333333333333'),  -- membro NOVO
   ('44444444-4444-4444-4444-444444444444'),  -- membro JÁ quarantinado (ambiguous)
-  ('55555555-5555-5555-5555-555555555555')   -- dono legítimo de um código oben
+  ('55555555-5555-5555-5555-555555555555'),  -- dono legítimo de um código oben
+  ('66666666-6666-6666-6666-666666666666')   -- cenário do hotfix A (imunidade do source)
   ON CONFLICT DO NOTHING;
 
 INSERT INTO public.user_roles(user_id, role) VALUES
@@ -170,7 +177,7 @@ P -q -c "SELECT public.register_carteira_member('33333333-3333-3333-3333-3333333
 V=$(Pq -c "SELECT identity_state||'/'||source FROM public.carteira_membership_ledger WHERE user_id='33333333-3333-3333-3333-333333333333';")
 eq "A1a ledger recebe o membro (verified/rpc)" "$V" "verified/rpc"
 V=$(Pq -c "SELECT account||'/'||omie_codigo_cliente||'/'||omie_codigo_vendedor||'/'||source FROM public.omie_customer_account_map WHERE user_id='33333333-3333-3333-3333-333333333333';")
-eq "A1b proof recebe o vínculo account-correto (manual)" "$V" "colacor_sc/70123/4501/manual"
+eq "A1b proof recebe o vínculo account-correto (source=rpc)" "$V" "colacor_sc/70123/4501/rpc"
 
 # A2 — money-path: vendedor AUSENTE fica NULL, nunca fabricado como 0 (Number(null)===0 é o bug irmão).
 P -q -c "SELECT public.register_carteira_member('33333333-3333-3333-3333-333333333333','oben',80456,NULL);" >/dev/null
@@ -205,6 +212,32 @@ eq "A5c procedência original preservada" "$V" "backfill"
 # A11 — a RPC desacoplou do espelho: nenhuma escrita em omie_clientes após 5 chamadas.
 V=$(Pq -c "SELECT count(*) FROM public.omie_clientes;")
 eq "A11 a RPC NÃO escreve no espelho omie_clientes" "$V" "0"
+
+echo "── asserts: hotfix do /codex retroativo (achado A — imunidade indevida) ──"
+
+# A15 — O DEFEITO: a RPC gravava source='manual', e o delete de ambiguidade do sync escopa fontes
+# AUTOMATIZADAS para preservar override HUMANO. Resultado: todo vínculo criado pela RPC ficava IMUNE ao
+# fail-closed — vendedor possivelmente errado sobrevivendo à detecção, com comissão em cima.
+# Aqui simulamos o delete do sync exatamente como ele é (`.in("source", ["document","rpc"])`) e exigimos
+# que a linha da RPC seja alcançada.
+P -q -c "SELECT public.register_carteira_member('66666666-6666-6666-6666-666666666666','colacor',61234,9);" >/dev/null
+V=$(Pq -c "SELECT source FROM public.omie_customer_account_map WHERE user_id='66666666-6666-6666-6666-666666666666' AND account='colacor';")
+eq "A15a a RPC grava source='rpc', não 'manual'" "$V" "rpc"
+P -q -c "DELETE FROM public.omie_customer_account_map WHERE account='colacor' AND source IN ('document','rpc') AND user_id='66666666-6666-6666-6666-666666666666';" >/dev/null
+V=$(Pq -c "SELECT count(*) FROM public.omie_customer_account_map WHERE user_id='66666666-6666-6666-6666-666666666666' AND account='colacor';")
+eq "A15b o delete de ambiguidade ALCANÇA a linha da RPC (fail-closed restaurado)" "$V" "0"
+
+# A16 — a contrapartida: override HUMANO ('manual') continua IMUNE. Se a correção tivesse ido longe
+# demais (tratar tudo como automatizado), o sync passaria a apagar decisão humana.
+P -q -c "INSERT INTO public.omie_customer_account_map(user_id,account,omie_codigo_cliente,source) VALUES ('22222222-2222-2222-2222-222222222222','colacor',62222,'manual');" >/dev/null
+P -q -c "DELETE FROM public.omie_customer_account_map WHERE account='colacor' AND source IN ('document','rpc') AND user_id='22222222-2222-2222-2222-222222222222';" >/dev/null
+V=$(Pq -c "SELECT count(*) FROM public.omie_customer_account_map WHERE user_id='22222222-2222-2222-2222-222222222222' AND account='colacor';")
+eq "A16 override HUMANO (manual) segue imune ao delete" "$V" "1"
+
+# A17 — a RPC NÃO rebaixa um override humano a 'rpc' numa re-chamada (o CASE do ON CONFLICT).
+P -q -c "SELECT public.register_carteira_member('22222222-2222-2222-2222-222222222222','colacor',62222,77);" >/dev/null
+V=$(Pq -c "SELECT source FROM public.omie_customer_account_map WHERE user_id='22222222-2222-2222-2222-222222222222' AND account='colacor';")
+eq "A17 re-chamada da RPC preserva o 'manual' de um override humano" "$V" "manual"
 
 echo "── asserts: negativos (SQLSTATE esperada + re-raise) ──"
 
@@ -467,6 +500,31 @@ else
 fi
 P -q -c "DELETE FROM public.omie_customer_account_map WHERE account='vendas';" >/dev/null
 P -q -c "ALTER TABLE public.omie_customer_account_map ADD CONSTRAINT chk_ocam_account CHECK (account IN ('oben','colacor','colacor_sc'));"
+
+# ── F5 aponta para A15: restaura o defeito ORIGINAL (source='manual') e exige que a imunidade volte.
+# É a prova de que A15 pega o bug que esteve em produção — sem ela, A15 seria só um assert de rótulo.
+P -q <<'SQL'
+CREATE OR REPLACE FUNCTION public.register_carteira_member(
+  p_user_id uuid, p_account text, p_omie_codigo_cliente bigint, p_omie_codigo_vendedor bigint DEFAULT NULL
+) RETURNS void LANGUAGE plpgsql SECURITY INVOKER SET search_path = public AS $fn$
+BEGIN
+  INSERT INTO public.carteira_membership_ledger (user_id, identity_state, first_seen_at, source, updated_at)
+  VALUES (p_user_id, 'verified', now(), 'rpc', now()) ON CONFLICT (user_id) DO NOTHING;
+  INSERT INTO public.omie_customer_account_map (user_id, account, omie_codigo_cliente, omie_codigo_vendedor, source, updated_at)
+  VALUES (p_user_id, p_account, p_omie_codigo_cliente, p_omie_codigo_vendedor, 'manual', now())  -- DEFEITO ORIGINAL
+  ON CONFLICT (user_id, account) DO UPDATE SET omie_codigo_cliente = EXCLUDED.omie_codigo_cliente, source='manual', updated_at = now();
+END $fn$;
+SQL
+P -q -c "SELECT public.register_carteira_member('44444444-4444-4444-4444-444444444444','colacor',63333,5);" >/dev/null
+P -q -c "DELETE FROM public.omie_customer_account_map WHERE account='colacor' AND source IN ('document','rpc') AND user_id='44444444-4444-4444-4444-444444444444';" >/dev/null
+V=$(Pq -c "SELECT count(*) FROM public.omie_customer_account_map WHERE user_id='44444444-4444-4444-4444-444444444444' AND account='colacor';")
+if [ "$V" = "1" ]; then
+  ok "F5 com source='manual' a linha SOBREVIVE ao delete de ambiguidade (A15 tem dente — era o bug em prod)"
+else
+  bad "F5 restaurei o defeito e A15 não mudou → A15 não prova a imunidade"
+fi
+P -q -f "$MIG"; P -q -f "$MIG_HOTFIX"
+P -q -c "DELETE FROM public.omie_customer_account_map WHERE omie_codigo_cliente IN (63333,62222);" >/dev/null 2>&1 || true
 
 # ── veredito ──
 echo "──────────────────────────────"

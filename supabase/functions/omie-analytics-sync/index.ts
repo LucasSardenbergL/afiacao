@@ -461,8 +461,12 @@ async function syncCustomers(db: SupabaseClient, account: OmieAccount) {
     // P1b: DELETE cirúrgico do vínculo PRÉ-EXISTENTE dos users ambíguos NESTA conta, ANTES do upsert
     // (delete-first fail-closed: remove o código errado antes de gravar o bom — se o upsert falhar depois,
     // o errado já saiu; challenge Codex item 1/7). Escopado por (account, user_id) PROVADOS ambíguos, e SÓ
-    // source='document' (preserva override humano source='manual' — challenge Codex item 3). Não é
+    // fontes AUTOMATIZADAS (preserva override humano source='manual' — challenge Codex item 3). Não é
     // delete-em-massa: run parcial vê menos ocorrências → detecta menos → deleta menos (fail-safe).
+    // [HOTFIX Codex-A] 'rpc' entrou no filtro: a `register_carteira_member` é writer AUTOMATIZADO e suas
+    // linhas TÊM de continuar alcançáveis por este fail-closed. Enquanto ela gravava 'manual', todo
+    // vínculo que criava ficava imune à detecção de ambiguidade — vendedor possivelmente errado
+    // sobrevivendo à detecção, com comissão em cima. Só override HUMANO merece imunidade.
     if (usersAmbiguosOmie.size > 0) {
       const ambiguosList = Array.from(usersAmbiguosOmie);
       for (let i = 0; i < ambiguosList.length; i += 200) {
@@ -470,7 +474,7 @@ async function syncCustomers(db: SupabaseClient, account: OmieAccount) {
           .from("omie_customer_account_map")
           .delete()
           .eq("account", empresaMap)
-          .eq("source", "document")
+          .in("source", ["document", "rpc"])
           .in("user_id", ambiguosList.slice(i, i + 200));
         if (delErr) throw new Error(`delete ambíguos omie_customer_account_map: ${delErr.message}`);
       }
@@ -509,11 +513,20 @@ async function syncCustomers(db: SupabaseClient, account: OmieAccount) {
     // por linha seria o N+1 que o CLAUDE.md proíbe em enumeração pesada. A RPC serve os writers PONTUAIS;
     // o bulk escreve em massa, como já faz com a proof logo abaixo.
     //
-    // Por que a lista code-first (`upsertByUser`) e não a document-first (`accountMapByUser`): a
-    // code-first é MAIS ABRANGENTE — cobre os ~1633 aliases fiscais (users Omie sem `profiles.document`)
-    // que nunca entram na proof. Era exatamente esse conjunto que o espelho levava ao ledger pelo trigger
-    // `AFTER INSERT` da Fatia 0. Trocar pela document-first ENCOLHERIA a membership, e membership que
-    // encolhe é a falha que a opção D existe para impedir.
+    // [HOTFIX Codex-C] A lista é a DOCUMENT-FIRST (`accountMapByUser`), não a code-first. O raciocínio
+    // original — "a code-first cobre os ~1633 aliases fiscais que a proof nunca vê" — confundiu duas
+    // coisas: cobertura de ESTOQUE e correção de FLUXO.
+    //   · ESTOQUE: os 1633 aliases JÁ estão no ledger, copiados pelo backfill da Fatia 0. Como o ledger
+    //     é acumulador e NUNCA encolhe, deixar de reinseri-los diariamente não os remove. Não havia o que
+    //     "cobrir".
+    //   · FLUXO: para uma admissão NOVA, o que importa é acertar QUEM é o user. A code-first resolve por
+    //     `userByCodigo`, que vem do espelho legado SEM conta — a mesma fonte poluída que este épico
+    //     inteiro existe para aposentar — e ela VENCE o documento (`userByCodigo ?? userByDoc`, :402).
+    //     Caminho concreto do erro: código Omie reaproveitado/corrigido, legado diz "K → user X", o
+    //     documento atual prova "K → user Y"; a code-first escolhe X, que já está no ledger (upsert vira
+    //     no-op) e Y — o cliente novo e CORRETO — nunca entra na membership.
+    // A document-first é account-safe e não perde ninguém aqui: tanto este bulk quanto o `sync_all_clients`
+    // já descartam registro sem documento antes deste ponto.
     //
     // ON CONFLICT DO NOTHING (ignoreDuplicates) é o invariante do acumulador: preserva `first_seen_at`
     // (a data REAL do vínculo, consumida em :1761) e NUNCA rebaixa `identity_state` — um membro
@@ -522,11 +535,10 @@ async function syncCustomers(db: SupabaseClient, account: OmieAccount) {
     //
     // Só o run oben escreve, mesma regra do espelho e do `identity_state` acima (:484): a carteira lê a
     // proof `account='oben'` — é a conta que decide quem é membro.
-    const rows = Array.from(upsertByUser.values());
     let totalSynced = 0;
     if (account === "vendas") {
       const nowIsoLedger = new Date().toISOString();
-      const ledgerRows = rows.map((r) => ({
+      const ledgerRows = Array.from(accountMapByUser.values()).map((r) => ({
         user_id: r.user_id,
         identity_state: "verified",
         first_seen_at: nowIsoLedger,
