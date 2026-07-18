@@ -8,6 +8,10 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-cron-secret, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
 };
 
+// Host do app para os links do e-mail. Mesmo padrão das edges de reposição
+// (gerar-pedidos-diario / disparar-pedidos-aprovados) — nunca hardcodar o domínio.
+const APP_URL = Deno.env.get('APP_URL') ?? 'https://steu.lovable.app';
+
 interface ToolSummary {
   name: string;
   internal_code: string | null;
@@ -138,7 +142,7 @@ function generateEmailHtml(report: CustomerReport): string {
       <p style="font-size: 14px; color: #666; margin-bottom: 12px;">
         Você tem ferramentas que precisam de afiação!
       </p>
-      <a href="https://afiacao.lovable.app/new-order" 
+      <a href="${APP_URL}/new-order"
          style="display: inline-block; background: linear-gradient(135deg, #dc2626, #991b1b); color: #fff; 
                 padding: 14px 32px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 15px;">
         Agendar Afiação
