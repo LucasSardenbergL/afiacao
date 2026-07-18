@@ -36,6 +36,8 @@ import { CiclosAnteriores } from '@/components/reposicao/pedidos/CiclosAnteriore
 import { OverrideMinimoButton } from '@/components/reposicao/pedidos/OverrideMinimoButton';
 import { ehGateMinimoFaturamento, particionarAtencao } from '@/components/reposicao/pedidos/shared';
 import { AbaixoMinimoCard } from '@/components/reposicao/pedidos/AbaixoMinimoCard';
+import { PoSumidoCard } from '@/components/reposicao/pedidos/PoSumidoCard';
+import { ehAcessoNegado, ordenarCandidatos, type PoCandidato } from '@/components/reposicao/pedidos/po-sumido';
 import { useAuth } from '@/contexts/AuthContext';
 import { track } from '@/lib/analytics';
 
@@ -273,6 +275,25 @@ export default function AdminReposicaoPedidos() {
       if (error) throw error;
       return { linhas: data ?? [], total24h: count ?? 0 };
     },
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+  });
+
+  // [GATE PO-sumido] pedidos `disparado` cujo PO NÃO apareceu no último run VÁLIDO do sync do Omie — o PO foi
+  // excluído lá e aqui o pedido seguiu disparado (dentro de 7d isso infla o em_transito e some o item do cockpit).
+  // A RPC é a fonte: ela decide quem é candidato E carrega a evidência (protocolo/canal), com gate próprio.
+  // `retry: false` de propósito: o gate nega com 42501 e repetir 3x só gera ruído — quem não pode ver não vê.
+  // Distinguir NEGADO de FALHOU importa: falha vira aviso visível (ver PoSumidoCard), nunca ausência silenciosa.
+  const { data: posSumidos, error: erroPosSumidos } = useQuery({
+    queryKey: ['pedidos-ciclo', 'pos-candidatos', EMPRESA],
+    queryFn: async (): Promise<PoCandidato[]> => {
+      const { data, error } = await supabase.rpc('reposicao_pos_candidatos' as never, {
+        p_empresa: EMPRESA,
+      } as never);
+      if (error) throw error;
+      return (data as unknown as PoCandidato[] | null) ?? [];
+    },
+    retry: false,
     refetchInterval: 60_000,
     staleTime: 30_000,
   });
@@ -690,6 +711,11 @@ export default function AdminReposicaoPedidos() {
           </CardContent>
         </Card>
       )}
+
+      <PoSumidoCard
+        candidatos={ordenarCandidatos(posSumidos ?? [])}
+        falhaApuracao={erroPosSumidos != null && !ehAcessoNegado(erroPosSumidos)}
+      />
 
       <AbaixoMinimoCard
         pedidos={atencaoAbaixoMinimo}
