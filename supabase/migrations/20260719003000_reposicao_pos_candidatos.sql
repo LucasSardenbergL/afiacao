@@ -35,6 +35,13 @@
 -- ============================================================================
 BEGIN;
 
+-- Normaliza texto para decisão de "tem conteúdo?": remove TODO whitespace unicode (btrim() padrão só
+-- remove espaço ASCII, então E'\t' e NBSP passavam como valor preenchido — Codex v5).
+CREATE OR REPLACE FUNCTION public.reposicao__nz(p text)
+RETURNS text LANGUAGE sql IMMUTABLE PARALLEL SAFE AS
+$fn$ SELECT COALESCE(regexp_replace(p, '[[:space:]\u00a0\u2000-\u200b\u202f\u205f\u3000]+', '', 'g'), '') $fn$;
+
+
 CREATE OR REPLACE FUNCTION public.reposicao_pos_candidatos(p_empresa text)
 RETURNS TABLE (
   pedido_id              bigint,
@@ -102,8 +109,13 @@ BEGIN
           -- range' — Codex v4). btrim ANTES da regex: o filtro já usava btrim, a regex não (' 00126 ' virava
           -- NULL e o PO "desaparecia"). Comparação NUMÉRICA: '00126' e 126 são o MESMO PO.
           AND t.omie_codigo_pedido = (
-            CASE WHEN btrim(p.omie_pedido_compra_id) ~ '^[0-9]{1,18}$'
-                 THEN btrim(p.omie_pedido_compra_id)::bigint END
+            -- nz() (não btrim) p/ tolerar TAB/NBSP; {1,18} evita o overflow que DERRUBA a RPC, e o ramo
+            -- de 19 dígitos aceita só o que cabe em bigint (1e18 é válido e era rejeitado — Codex v5).
+            CASE WHEN public.reposicao__nz(p.omie_pedido_compra_id) ~ '^[0-9]{1,18}$'
+                 THEN public.reposicao__nz(p.omie_pedido_compra_id)::bigint
+                 WHEN public.reposicao__nz(p.omie_pedido_compra_id) ~ '^[0-9]{19}$'
+                  AND public.reposicao__nz(p.omie_pedido_compra_id) <= '9223372036854775807'
+                 THEN public.reposicao__nz(p.omie_pedido_compra_id)::bigint END
           )
       ) AS po_no_espelho
     FROM public.pedido_compra_sugerido p
@@ -111,8 +123,13 @@ BEGIN
     LEFT JOIN public.reposicao_po_last_seen ls
            ON ls.empresa = v_empresa
           AND ls.omie_codigo_pedido = (
-            CASE WHEN btrim(p.omie_pedido_compra_id) ~ '^[0-9]{1,18}$'
-                 THEN btrim(p.omie_pedido_compra_id)::bigint END
+            -- nz() (não btrim) p/ tolerar TAB/NBSP; {1,18} evita o overflow que DERRUBA a RPC, e o ramo
+            -- de 19 dígitos aceita só o que cabe em bigint (1e18 é válido e era rejeitado — Codex v5).
+            CASE WHEN public.reposicao__nz(p.omie_pedido_compra_id) ~ '^[0-9]{1,18}$'
+                 THEN public.reposicao__nz(p.omie_pedido_compra_id)::bigint
+                 WHEN public.reposicao__nz(p.omie_pedido_compra_id) ~ '^[0-9]{19}$'
+                  AND public.reposicao__nz(p.omie_pedido_compra_id) <= '9223372036854775807'
+                 THEN public.reposicao__nz(p.omie_pedido_compra_id)::bigint END
           )
     -- ⚠️ `pedido_compra_sugerido.empresa` é **text** ('OBEN'); as outras tabelas usam o ENUM empresa_reposicao.
     -- text = enum direto é erro de TIPO em runtime (PL/pgSQL late-bound: o CREATE passa, quebra ao EXECUTAR).
@@ -142,13 +159,19 @@ BEGIN
     -- protocolo — mas portal_protocolo='N/A' e {"erro":"protocolo ausente"} também casavam, produzindo
     -- EVIDÊNCIA FALSA (Codex v4 P1-1: o problema "chave não prova valor" migrou de rota falsa p/ rótulo falso).
     -- E 'sem_sinal_conhecido' mentia quando canal_usado estava preenchido: o canal É um sinal (P1-2).
+    -- ⚠️ btrim() padrão só remove ESPAÇO ASCII: E'\t' e NBSP passavam como "preenchido" (Codex v5).
+    -- nz() abaixo normaliza TODO whitespace unicode antes de decidir se o campo tem conteúdo.
     CASE
-      WHEN b.portal_protocolo IS NOT NULL AND btrim(b.portal_protocolo) <> ''         THEN 'protocolo_preenchido'
+      WHEN public.reposicao__nz(b.portal_protocolo) <> ''                             THEN 'protocolo_preenchido'
       WHEN COALESCE(b.resposta_canal::text, '') ~* 'protocolo'                         THEN 'resposta_menciona_protocolo'
-      WHEN lower(btrim(COALESCE(b.status_envio_portal, ''))) ~ '(^|[^a-z])sucesso'     THEN 'status_menciona_sucesso'
+      -- limite à DIREITA também: sem ele 'sucessor' virava 'menciona sucesso' (Codex v5).
+      WHEN lower(public.reposicao__nz(b.status_envio_portal)) ~ '(^|[^a-z])sucesso([^a-z]|$)' THEN 'status_menciona_sucesso'
       WHEN COALESCE(b.resposta_canal::text, '') ~* 'fornecedor.?notificad|notificado'  THEN 'resposta_menciona_notificacao'
-      WHEN b.canal_usado IS NOT NULL
-        OR b.status_envio_portal IS NOT NULL
+      -- "presente" = tem CONTEÚDO (canal='' ou protocolo='   ' NÃO são sinal). E o fallback avalia os
+      -- QUATRO campos, incluindo portal_protocolo — antes ele faltava e '   ' caía em 'sem_dado' (Codex v5).
+      WHEN public.reposicao__nz(b.canal_usado) <> ''
+        OR public.reposicao__nz(b.status_envio_portal) <> ''
+        OR public.reposicao__nz(b.portal_protocolo) <> ''
         OR b.resposta_canal IS NOT NULL                                               THEN 'sinal_presente_nao_reconhecido'
       ELSE 'sem_dado_de_canal'
     END AS compromisso_fornecedor,

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ╔══════════════════════════════════════════════════════════════════════════════╗
 # ║  PROVA PG17 — reposicao_pos_candidatos (detector de PO excluído, NÃO-MUTANTE)  ║
-# ║  Migration: supabase/migrations/20260718230000_reposicao_pos_candidatos.sql    ║
+# ║  Migration: supabase/migrations/20260719003000_reposicao_pos_candidatos.sql    ║
 # ║  Rode: bash db/test-reposicao-pos-candidatos.sh > /tmp/t.log 2>&1; echo $?     ║
 # ║        (NÃO pipe pra tail — engole o exit code)                                 ║
 # ║                                                                                ║
@@ -23,7 +23,7 @@ PORT="${PGPORT_TEST:-5477}"
 SLUG="reposicao-pos-candidatos"
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
 export LC_ALL=C LANG=C
-MIG="$REPO_ROOT/supabase/migrations/20260718230000_reposicao_pos_candidatos.sql"
+MIG="$REPO_ROOT/supabase/migrations/20260719003000_reposicao_pos_candidatos.sql"
 
 [ -x "$PGBIN/initdb" ] || { echo "postgresql@${PGVER} ausente: brew install postgresql@${PGVER}"; exit 1; }
 CELLAR="$(brew --prefix "postgresql@${PGVER}")"
@@ -130,7 +130,9 @@ INSERT INTO public.reposicao_po_last_seen (empresa,omie_codigo_pedido,run_id) VA
  ('OBEN', 100, '$RID_ATUAL'),
  ('OBEN', 101, '$RID_VELHO'),
  ('OBEN', 126, '$RID_ATUAL'),
- ('OBEN', 138, '$RID_ATUAL');  -- o 137 ('  00138  ') tem de casar por btrim+numerico  -- carimbado no marcador: o 125 ('00126') NAO pode ser candidato
+ ('OBEN', 138, '$RID_ATUAL'),
+ ('OBEN', 1000000000000000000, '$RID_ATUAL'),
+ ('OBEN', 145, '$RID_ATUAL');  -- o 137 ('  00138  ') tem de casar por btrim+numerico  -- carimbado no marcador: o 125 ('00126') NAO pode ser candidato
 INSERT INTO public.pedido_compra_sugerido
  (id,empresa,status,omie_pedido_compra_id,data_ciclo,fornecedor_nome,canal_usado,portal_protocolo,status_envio_portal,resposta_canal) VALUES
  (100,'OBEN','disparado','100', now()::date-2,'F','omie',NULL,NULL,NULL),                        -- visto: fora
@@ -176,7 +178,13 @@ INSERT INTO public.pedido_compra_sugerido
  (136,'OBEN','disparado','9223372036854775808', now()::date-50,'F','omie',NULL,NULL,NULL),
  (137,'OBEN','disparado','  00138  ', now()::date-50,'F','omie',NULL,NULL,NULL),
  -- unico caso legitimo de 'sem_dado_de_canal': NENHUM dos 4 campos preenchido
- (139,'OBEN','disparado','139', now()::date-50,'F',NULL,NULL,NULL,NULL);                               -- 'insucesso' NAO e sucesso
+ (139,'OBEN','disparado','139', now()::date-50,'F',NULL,NULL,NULL,NULL),
+ -- Codex v5: limites de regex e de btrim
+ (140,'OBEN','disparado','140', now()::date-50,'F','omie',NULL,'sucessor',NULL),
+ (141,'OBEN','disparado','141', now()::date-50,'F',NULL,E'\t  ',NULL,NULL),
+ (142,'OBEN','disparado','142', now()::date-50,'F','',NULL,NULL,NULL),
+ (143,'OBEN','disparado','1000000000000000000', now()::date-50,'F','omie',NULL,NULL,NULL),
+ (144,'OBEN','disparado',E'\t145\t', now()::date-50,'F','omie',NULL,NULL,NULL);                               -- 'insucesso' NAO e sucesso
 INSERT INTO public.pedido_compra_item (pedido_id,sku_codigo_omie,valor_linha) VALUES
  (101,'A',10.00),(102,'B',1808.59),(103,'C',1251.89),(104,'D',5.00),(105,'E',7.00);
 INSERT INTO public.purchase_orders_tracking (empresa,omie_codigo_pedido) VALUES ('OBEN',101);
@@ -196,10 +204,10 @@ case "$R" in
   *"operator does not exist"*|*"does not exist"*|*ERROR*) bad "E1 a RPC QUEBROU em runtime: $R";;
   *) ok "E1 a RPC EXECUTA com empresa TEXT × ENUM (comparação com cast explícito)";;
 esac
-eq "E2 aceita a empresa em caixa/espaço divergentes (upper+btrim)" "$(Pq -c "SELECT count(*) FROM public.reposicao_pos_candidatos('  oben ');" | tail -1)" "28"
+eq "E2 aceita a empresa em caixa/espaço divergentes (upper+btrim)" "$(Pq -c "SELECT count(*) FROM public.reposicao_pos_candidatos('  oben ');" | tail -1)" "31"
 
 echo "── Bloco B: quem é candidato ──"
-eq "B1 candidatos = todos os não-vistos no marcador" "$(cand)" "101,102,103,104,105,110,111,112,113,114,115,116,117,118,119,120,121,122,123,124,130,131,132,133,134,135,136,139"
+eq "B1 candidatos = todos os não-vistos no marcador" "$(cand)" "101,102,103,104,105,110,111,112,113,114,115,116,117,118,119,120,121,122,123,124,130,131,132,133,134,135,136,139,140,141,142"
 eq "B2 PO visto NO marcador NÃO é candidato (100 fora)" "$(Pq -c "SELECT count(*) FROM public.reposicao_pos_candidatos('OBEN') WHERE pedido_id=100;" | tail -1)" "0"
 eq "B3 visto em run ANTERIOR é candidato, marcado como tal" "$(campo 101 visto_status)" "visto_em_run_anterior"
 eq "B4 NUNCA carimbado é candidato, marcado como tal" "$(campo 102 visto_status)" "nunca_carimbado"
@@ -221,6 +229,27 @@ eq "C5 payload presente mas NAO reconhecido -> sinal_nao_reconhecido (nunca some
 eq "C6 status portal desconhecido -> sinal_nao_reconhecido (Codex v3 P1-2)" "$(campo 123 compromisso_fornecedor)" "sinal_presente_nao_reconhecido"
 eq "C7 chave conhecida com VALOR comprometedor nao vira ausencia (Codex v3 P1-1)" "$(campo 124 compromisso_fornecedor)" "sinal_presente_nao_reconhecido"
 
+echo "── Bloco C2: rotulos FACTUAIS — nao afirmar mais que o observado (Codex v4/v5) ──"
+# valor FALSE: o rotulo factual "a resposta MENCIONA notificacao" continua VERDADEIRO (a chave esta la) e
+# nao engana — diferente do antigo 'notificado', que afirmava o fato. E o que o Codex pediu: descrever o
+# observado. O consumidor (humano/PR3) le "menciona" e sabe que precisa olhar o valor.
+eq "C8 fornecedor_notificado=FALSE -> 'menciona' (factual, NAO afirma que notificou)" "$(campo 130 compromisso_fornecedor)" "resposta_menciona_notificacao"
+eq "C9 {erro: protocolo ausente} -> resposta MENCIONA protocolo (factual, nao afirma que ha)" "$(campo 131 compromisso_fornecedor)" "resposta_menciona_protocolo"
+eq "C10 'sem sucesso' NAO vira status_menciona_sucesso" "$(campo 132 compromisso_fornecedor)" "sinal_presente_nao_reconhecido"
+eq "C11 portal_protocolo='N/A' e preenchido (rotulo factual)" "$(campo 133 compromisso_fornecedor)" "protocolo_preenchido"
+eq "C12 canal preenchido e resto NULL -> sinal presente (nao 'sem dado')" "$(campo 134 compromisso_fornecedor)" "sinal_presente_nao_reconhecido"
+eq "C13 116 (protocolo so na resposta) tem a evidencia AFIRMADA (mutante do Codex v4)" "$(campo 116 compromisso_fornecedor)" "resposta_menciona_protocolo"
+eq "C14 'sucessor' NAO conta como sucesso (limite a DIREITA da regex — Codex v5)" "$(campo 140 compromisso_fornecedor)" "sinal_presente_nao_reconhecido"
+eq "C15 portal_protocolo so com espacos/TAB nao vira 'preenchido' (Codex v5)" "$(campo 141 compromisso_fornecedor)" "sem_dado_de_canal"
+eq "C16 canal='' (string vazia) nao e sinal presente (Codex v5)" "$(campo 142 compromisso_fornecedor)" "sem_dado_de_canal"
+
+echo "── Bloco J: identidade do PO (numerica, robusta) ──"
+eq "J2 aprovado_aguardando_disparo E candidato (mata o mutante status IN -> =)" "$(Pq -c "SELECT count(*) FROM public.reposicao_pos_candidatos('OBEN') WHERE pedido_id=135;" | tail -1)" "1"
+eq "J3 PO de 19 digitos NAO derruba a RPC (overflow do bigint)" "$(Pq -c "SELECT count(*) FROM public.reposicao_pos_candidatos('OBEN') WHERE pedido_id=136;" | tail -1)" "1"
+eq "J4 PO com espacos ('  00138  ') casa o carimbado 138 -> NAO e candidato" "$(Pq -c "SELECT count(*) FROM public.reposicao_pos_candidatos('OBEN') WHERE pedido_id=137;" | tail -1)" "0"
+eq "J5 PO de 19 digitos VALIDO (1e18) casa o carimbado -> NAO e candidato (Codex v5)" "$(Pq -c "SELECT count(*) FROM public.reposicao_pos_candidatos('OBEN') WHERE pedido_id=143;" | tail -1)" "0"
+eq "J6 PO com TAB casa o carimbado (btrim nao remove TAB — Codex v5)" "$(Pq -c "SELECT count(*) FROM public.reposicao_pos_candidatos('OBEN') WHERE pedido_id=144;" | tail -1)" "0"
+
 echo "── Bloco A: marcador FAIL-CLOSED ──"
 P -q -c "UPDATE public.reposicao_pedidos_compra_run SET volume_ok=false;" >/dev/null
 eq "A1 sem run VÁLIDO (todos truncados) → VAZIO (não classifica ninguém)" "$(Pq -c "SELECT count(*) FROM public.reposicao_pos_candidatos('OBEN');" | tail -1)" "0"
@@ -239,8 +268,8 @@ EXCEPTION WHEN insufficient_privilege THEN RAISE NOTICE 'DENY_OK'; END $$;
 SQL
 )
 case "$R" in *DENY_OK*) ok "D1 authenticated NÃO-staff é barrado (42501)";; *) bad "D1 — veio: $R";; esac
-eq "D2 staff (master) enxerga" "$(Pq -c "SET test.uid='33333333-3333-3333-3333-333333333333'; SELECT count(*) FROM public.reposicao_pos_candidatos('OBEN');" | tail -1)" "28"
-eq "D3 uid NULL (service_role / cron SQL-local) passa — auth.role() aqui MATARIA o cron" "$(Pq -c "SELECT count(*) FROM public.reposicao_pos_candidatos('OBEN');" | tail -1)" "28"
+eq "D2 staff (master) enxerga" "$(Pq -c "SET test.uid='33333333-3333-3333-3333-333333333333'; SELECT count(*) FROM public.reposicao_pos_candidatos('OBEN');" | tail -1)" "31"
+eq "D3 uid NULL (service_role / cron SQL-local) passa — auth.role() aqui MATARIA o cron" "$(Pq -c "SELECT count(*) FROM public.reposicao_pos_candidatos('OBEN');" | tail -1)" "31"
 
 # ══════════════════════════════════════════════════════════════════════════════
 echo "── FALSIFICAÇÃO ──"
