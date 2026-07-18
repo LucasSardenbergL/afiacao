@@ -94,25 +94,53 @@ export function planoDeAcao(c: PoCandidato): Operacao[] {
       return ['corrigir_cadastro'];
     case 'confirmar_com_protocolo':
     case 'confirmar_sem_protocolo':
-      return ['confirmar_fornecedor', 'confirmar_ausencia_de_qualquer_po', 'recriar_po'];
+      // Sem NENHUM identificador de busca (nem protocolo, nem fornecedor), o passo "confirme que não
+      // há outro PO ativo para esta compra" é inexequível — e mandar recriar sem poder executá-lo é
+      // pior que não sugerir nada: o comprador improvisa uma busca só por fornecedor (que não tem) ou
+      // pula a trava. Sem como verificar, o plano PARA na conferência manual.
+      return temComoBuscar(c)
+        ? ['confirmar_fornecedor', 'confirmar_ausencia_de_qualquer_po', 'recriar_po']
+        : ['conferir_no_omie'];
     case 'conferir_no_omie':
       return ['conferir_no_omie'];
   }
 }
 
-/** A frase de cada operação. Uma só fonte para plano e texto — ver `acaoSugerida`. */
+/** Há algum identificador com que procurar a compra no Omie? Sem isso, não há trava executável. */
+export function temComoBuscar(c: PoCandidato): boolean {
+  return Boolean(c.portal_protocolo?.trim() || c.fornecedor_nome?.trim());
+}
+
+/** Por onde procurar a compra no Omie — só o que a linha REALMENTE tem. */
+function chavesDeBusca(c: PoCandidato): string {
+  const partes: string[] = [];
+  if (c.portal_protocolo?.trim()) partes.push(`protocolo ${c.portal_protocolo.trim()}`);
+  if (c.fornecedor_nome?.trim()) partes.push(`fornecedor ${c.fornecedor_nome.trim()}`);
+  return partes.join(' e ');
+}
+
+/**
+ * A frase de cada operação. Uma só fonte para plano e texto — ver `acaoSugerida`.
+ *
+ * Cada passo que é uma TRAVA carrega sua condição de parada explícita. Sem ela, a instrução registra
+ * a consulta e não o resultado: "confirme com o fornecedor" seguido de "3) recrie o PO" manda recriar
+ * mesmo quando o fornecedor responde "não existe" ou "foi cancelado" — e são justamente os 2 casos
+ * reais de produção que têm protocolo.
+ */
 function textoDaOperacao(op: Operacao, c: PoCandidato): string {
   switch (op) {
     case 'corrigir_cadastro':
       return 'corrija o cadastro do PO neste pedido — sem ele não foi possível comparar com o Omie';
     case 'confirmar_fornecedor':
-      return c.portal_protocolo
-        ? `confirme com o fornecedor pelo protocolo ${c.portal_protocolo}`
-        : 'confirme com o fornecedor que o pedido existe';
+      return c.portal_protocolo?.trim()
+        ? `confirme com o fornecedor, pelo protocolo ${c.portal_protocolo.trim()}, que o pedido CONTINUA ativo. Se ele disser que não existe, foi cancelado ou já foi atendido, PARE — não recrie`
+        : 'confirme com o fornecedor que o pedido CONTINUA ativo. Se ele disser que não existe, foi cancelado ou já foi atendido, PARE — não recrie';
     case 'confirmar_ausencia_de_qualquer_po':
-      return 'confirme no Omie que NÃO existe nenhum pedido de compra ativo para esta compra — busque por fornecedor e protocolo, não pelo número antigo (alguém pode já ter recriado sob outro número)';
+      return `confirme no Omie que NÃO existe nenhum outro pedido de compra ativo para esta compra: busque por ${chavesDeBusca(c)} — não pelo número antigo, que alguém pode já ter substituído. Achou algum? PARE`;
     case 'recriar_po':
-      return 'recrie o PO';
+      // A corrida entre dois compradores NÃO é fechável aqui: este card não muta nada, a ação acontece
+      // no Omie. Sem claim/idempotência (escopo do PR3), o melhor honesto é avisar em vez de fingir.
+      return 'recrie o PO — e avise a equipe, porque outra pessoa pode estar olhando esta mesma lista agora';
     case 'conferir_no_omie':
       return 'confira no Omie se o PO foi excluído e decida com o histórico do pedido';
   }
@@ -124,16 +152,24 @@ function textoDaOperacao(op: Operacao, c: PoCandidato): string {
  * confirmação que a frase não mencionava: o plano viraria enfeite, e o comprador age pela FRASE.
  * Aqui divergir é impossível: cada passo do plano vira um passo do texto, na ordem.
  */
-export function acaoSugerida(c: PoCandidato): string {
+export function passosDaAcao(c: PoCandidato): string[] {
   const plano = planoDeAcao(c);
-  const passos = plano.map((op) => textoDaOperacao(op, c));
-  const corpo =
-    passos.length === 1
-      ? passos[0].charAt(0).toUpperCase() + passos[0].slice(1) + '.'
-      : passos.map((p, i) => `${i + 1}) ${p}`).join('. ') + '.';
+  const passos = plano.map((op) => {
+    const t = textoDaOperacao(op, c);
+    return t.charAt(0).toUpperCase() + t.slice(1) + '.';
+  });
   // O lembrete só faz sentido onde recriar é uma opção — é ali que a tentação de "resolver cancelando"
   // aparece, e onde cancelar custaria a recompra do que o fornecedor já tem.
-  return plano.includes('recriar_po') ? `${corpo} Não cancele o pedido.` : corpo;
+  return plano.includes('recriar_po') ? [...passos, 'Não cancele o pedido.'] : passos;
+}
+
+/**
+ * Os passos como texto corrido. Usado onde uma lista não cabe; o card renderiza `passosDaAcao` como
+ * <ol> porque três passos com travas e ressalvas num único nó de texto quebram onde couber, e quem
+ * escaneia acha "recrie o PO" antes de achar o "PARE" que o precede.
+ */
+export function acaoSugerida(c: PoCandidato): string {
+  return passosDaAcao(c).join(' ');
 }
 
 /**

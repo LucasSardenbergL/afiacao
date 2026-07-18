@@ -5,7 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { formatBRL } from './shared';
-import { acaoSugerida, contarIlegiveis, resumirValores, type PoCandidato } from './po-sumido';
+import { contarIlegiveis, passosDaAcao, resumirValores, type PoCandidato } from './po-sumido';
 
 // Seção NEUTRA (recolhida) da fila de atenção: pedidos `disparado` cujo PO NÃO apareceu no último run
 // VÁLIDO do omie-sync-pedidos-compra — ou seja, o PO sumiu do Omie mas o pedido segue disparado aqui.
@@ -211,13 +211,21 @@ export function PoSumidoCard({
                   {/* Com a apuração desatualizada a sugestão é SUPRIMIDA, não exibida com ressalva:
                       "recrie o PO no Omie" sobre uma linha que já pode ter sido resolvida produz PO
                       duplicado — o mesmo dano que este PR existe para evitar, só que pelo outro lado. */}
-                  <TableCell className="text-xs max-w-[22rem]">
+                  {/* <ol> em vez de um parágrafo único: os passos carregam TRAVAS ("PARE — não
+                      recrie", "não pelo número antigo") e, num nó de texto corrido de 22rem, a quebra
+                      cai onde couber — quem escaneia encontra "recrie o PO" antes da condição que o
+                      impede. Um item por passo mantém a trava colada ao passo a que pertence. */}
+                  <TableCell className="text-xs max-w-[24rem]">
                     {falhaApuracao ? (
                       <span className="text-muted-foreground">
                         Confira este pedido no Omie — a apuração está desatualizada.
                       </span>
                     ) : (
-                      acaoSugerida(c)
+                      <ol className="list-decimal pl-4 space-y-1">
+                        {passosDaAcao(c).map((passo) => (
+                          <li key={passo}>{passo}</li>
+                        ))}
+                      </ol>
                     )}
                   </TableCell>
                   <TableCell className="text-right tabular-nums font-medium">

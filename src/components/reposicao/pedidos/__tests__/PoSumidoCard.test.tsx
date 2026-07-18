@@ -97,6 +97,20 @@ describe('PoSumidoCard — os estados em que dá para mentir', () => {
     expect(screen.getByText(/a reconciliar no Omie/i)).toBeInTheDocument();
   });
 
+  it('os passos são uma LISTA de verdade (<ol><li>), não um blocão de texto', () => {
+    // textContent é idêntico com <ol> ou <span>, então o teste anterior passava verde mesmo trocando a
+    // lista por um parágrafo — e é a separação visual que mantém cada trava colada ao seu passo.
+    const { container } = render(
+      <PoSumidoCard candidatos={[c({ algum_sinal_de_canal: true, portal_protocolo: '2097501' })]} />,
+    );
+    fireEvent.click(screen.getByText(/a reconciliar no Omie/i));
+    const itens = container.querySelectorAll('ol li');
+    expect(itens.length, 'os passos precisam ser <li> separados').toBeGreaterThanOrEqual(3);
+    // e a trava do passo de recriar não pode estar num <li> diferente do "recrie"
+    const comRecriar = Array.from(itens).find((li) => /recrie o PO/i.test(li.textContent ?? ''));
+    expect(comRecriar).toBeDefined();
+  });
+
   it('DESATUALIZADO não instrui recriar o PO — instrução sobre estado velho gera PO duplicado', () => {
     // O caminho que isso fecha: apuração encontra o candidato → o PO é recriado → o poll seguinte
     // falha → o card continua mandando "recrie o PO no Omie" → o comprador recria de novo.
@@ -166,9 +180,12 @@ describe('PoSumidoCard — os estados em que dá para mentir', () => {
     );
     fireEvent.click(screen.getByText(/a reconciliar no Omie/i));
     const texto = container.textContent ?? '';
-    expect(texto).toMatch(/não existe nenhum pedido de compra ativo/i);
-    expect(texto).toMatch(/busque por fornecedor e protocolo/i);
+    expect(texto).toMatch(/não existe nenhum outro pedido de compra ativo/i);
+    expect(texto).toMatch(/protocolo 2097501/);
     expect(texto).toMatch(/não pelo número antigo/i);
     expect(texto).toMatch(/recrie o PO/i);
+    // e a TRAVA tem de estar visível junto: sem a condição de parada, "recrie" vira ordem incondicional
+    expect(texto).toMatch(/PARE/);
+    expect(texto).toMatch(/continua ativo/i);
   });
 });

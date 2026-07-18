@@ -7,8 +7,10 @@ import {
   normalizarCandidatos,
   ordenarCandidatos,
   OPERACOES,
+  passosDaAcao,
   planoDeAcao,
   precondicoesDe,
+  temComoBuscar,
   resumirValores,
   type PoCandidato,
 } from '../po-sumido';
@@ -120,7 +122,7 @@ describe('acaoSugerida — NUNCA sugere cancelar (o erro de R$3k)', () => {
     const MARCA: Record<string, RegExp> = {
       corrigir_cadastro: /corrija o cadastro/i,
       confirmar_fornecedor: /confirme com o fornecedor/i,
-      confirmar_ausencia_de_qualquer_po: /não existe nenhum pedido de compra ativo/i,
+      confirmar_ausencia_de_qualquer_po: /não existe nenhum outro pedido de compra ativo/i,
       recriar_po: /recrie o PO/i,
       conferir_no_omie: /confira no Omie se o PO foi excluído/i,
     };
@@ -140,10 +142,44 @@ describe('acaoSugerida — NUNCA sugere cancelar (o erro de R$3k)', () => {
     }
   });
 
-  it('a reconferência avisa para NÃO usar o número antigo', () => {
-    const txt = acaoSugerida(c({ algum_sinal_de_canal: true, portal_protocolo: '2097501' }));
-    expect(txt).toMatch(/busque por fornecedor e protocolo/i);
-    expect(txt).toMatch(/não pelo número antigo/i);
+  it('a reconferência usa as chaves que a linha REALMENTE tem, e avisa contra o número antigo', () => {
+    const comProto = acaoSugerida(c({ algum_sinal_de_canal: true, portal_protocolo: '2097501', fornecedor_nome: 'Sayerlack' }));
+    expect(comProto).toMatch(/protocolo 2097501/);
+    expect(comProto).toMatch(/fornecedor Sayerlack/);
+    expect(comProto).toMatch(/não pelo número antigo/i);
+    // sem protocolo, NÃO pode mandar buscar por protocolo — era instrução inexequível
+    const semProto = acaoSugerida(c({ algum_sinal_de_canal: true, portal_protocolo: null, fornecedor_nome: 'Sayerlack' }));
+    expect(semProto).toMatch(/fornecedor Sayerlack/);
+    expect(semProto).not.toMatch(/protocolo/i);
+  });
+
+  it('CADA trava carrega SUA condição de parada — não basta ter um PARE em algum lugar', () => {
+    // A 1ª versão procurava /PARE/ no texto inteiro: apagar a parada do passo do FORNECEDOR passava
+    // verde, porque o "Achou algum? PARE" da reconferência continuava lá. Agora cada passo é
+    // verificado no próprio passo.
+    for (const cand of [
+      c({ algum_sinal_de_canal: true, portal_protocolo: '2097501' }),
+      c({ algum_sinal_de_canal: true, portal_protocolo: null, fornecedor_nome: 'Sayerlack' }),
+    ]) {
+      const passos = passosDaAcao(cand);
+      const doFornecedor = passos.find((p) => /confirme com o fornecedor/i.test(p));
+      expect(doFornecedor, `passo do fornecedor sumiu: ${JSON.stringify(passos)}`).toBeDefined();
+      expect(doFornecedor).toMatch(/continua ativo/i);
+      expect(doFornecedor, 'passo do fornecedor sem condição de parada').toMatch(/PARE/);
+
+      const daReconferencia = passos.find((p) => /nenhum outro pedido de compra ativo/i.test(p));
+      expect(daReconferencia).toBeDefined();
+      expect(daReconferencia, 'reconferência sem condição de parada').toMatch(/PARE/);
+    }
+  });
+
+  it('SEM identificador para buscar, o plano NÃO chega a recriar', () => {
+    // fornecedor e protocolo nulos: a trava "confirme que não há outro PO" é inexequível, e mandar
+    // recriar sem poder executá-la é pior que não sugerir — o comprador pula a trava.
+    const cego = c({ algum_sinal_de_canal: true, portal_protocolo: null, fornecedor_nome: null });
+    expect(temComoBuscar(cego)).toBe(false);
+    expect(planoDeAcao(cego)).not.toContain('recriar_po');
+    expect(planoDeAcao(cego)).toEqual(['conferir_no_omie']);
   });
 });
 
