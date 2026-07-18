@@ -173,6 +173,29 @@ como especificado (o `trg_auto_commercial_super_admin` insere `super_admin` pelo
   `reverter_run_auto`) seguem no gate antigo. Como a E2 tirou do gerencial a LEITURA da telemetria de
   compras, sobrou a incoerência "não lê, mas escreve". Não é vazamento de custo/preço/crédito. Ao tratar:
   criar `private.cap_compras_escrever` — não reusar a de leitura (§4.2).
+- **FU4-F — custo é legível por `employee`, não só pelo papel (o furo maior, e é outro).** A E2 fechou o
+  que o **papel comercial** concede. Mas todo gestor é `app_role='employee'`, e o role concede custo por
+  superfícies fora de `commercial_role` (medido em prod 2026-07-18, achado da rodada 2 do Codex):
+
+  | superfície | gate medido | o que expõe |
+  |---|---|---|
+  | `inventory_position` | policy `employee OR master` | `cmc`, `preco_medio` |
+  | `cmc_snapshot` | policy `employee OR master` | `cmc` |
+  | `product_costs` | policy `employee` | `cost_price`, `cmc`, `cost_final`, `custo_producao` |
+  | `regua_preco_log` | `FOR ALL` `employee OR master` | `piso_mc`, `cmc_usado` |
+  | `get_regua_preco` · `_customer360` | `has_role(employee\|master)` | `cmc`, `piso_mc` |
+  | `get_tint_price` · `_prices` | `v_is_staff := employee OR master` | `custoBase`, `custoCorantes` |
+
+  Os 2 vendedores de hoje já leem custo por aí — antes e depois da E2. **Isto não é regressão desta
+  entrega nem foi prometido por ela**, mas invalida a leitura ingênua de "gerencial não vê custo".
+  Fechar muda o acesso de gente VIVA (ao contrário da E2, onde ninguém perde nada) e depende de uma
+  decisão de produto que ainda não foi tomada: **vendedor deve ver custo?** Enquanto não for, o ganho
+  da E2 é remover o acoplamento do papel — real, mas menor do que o nome sugere.
+
+  Canais DERIVADOS na mesma família (mascarar o campo bruto não fecha): `get_preco_cockpit` é um
+  **oráculo por bisseção** — o caller escolhe o preço e lê a faixa (`abaixo_do_custo`/`abaixo_do_piso`/
+  `abaixo_da_meta`), reconstruindo cmc/piso/meta; `get_defasagem_cliente` devolve `alta_custo_perc`
+  (variação percentual do custo) fora do gate. Ambos acessíveis a qualquer `employee`.
 
 ## 8. E2 — o que foi construído (2026-07-18, #1434)
 
@@ -196,10 +219,20 @@ propósito**: é a junta onde a matriz dobra — apertar a escrita depois custa 
 código mostra que a variável gateada é o que decide se `cmc`/`markup`/`piso`/`folga` saem preenchidos.
 **Lição: classifique gate lendo o corpo da função, não o comentário do manifesto.**
 
-**O que a revisão adversária (Codex `gpt-5.6-sol` xhigh, rodada 1) derrubou:** as 2 RPCs acima (bloqueador);
+**O que a revisão adversária derrubou (Codex `gpt-5.6-sol` xhigh, 2 rodadas).**
+
+Rodada 1 — 4 achados, veredito "não aplique ainda": as 2 RPCs de custo acima (bloqueador);
 `FOR ALL USING(ler) WITH CHECK(escrever)` em `selfservice_cliente_allowlist` (DELETE só consulta `USING` →
 latentemente inseguro); um assert do harness que era falso-verde por `SET LOCAL` fora de transação; e
 `useAuthzContract` não sendo fail-closed após sucesso→erro (react-query preserva o último `data` bom).
 
-**Prova:** `db/test-authz-capability-matrix.sh` — 50 asserts, PG17, `SET ROLE authenticated`, com guard que
-aborta se o SET ROLE não pegar, e falsificação em 6 pontos.
+Rodada 2 — confirmou 3 correções e reprovou a 4ª por 3 defeitos, todos corrigidos: o bloco que reescreve
+as RPCs **não era idempotente** (2ª aplicação abortava — inaceitável para migration colada à mão),
+resolvia por `proname` **sem assinatura** (overload futuro seria escolhido arbitrariamente), e o guard
+casava **string literal** em vez de regex tolerante (`public.gate ( … )` passaria batido). E trouxe o
+achado maior: **a leitura de custo não é fechada por esta entrega** — ver FU4-F no §7. A afirmação
+"gerencial perde leitura de custo", que estava no cabeçalho da migration e no PR, foi **corrigida** para
+"o PAPEL deixa de conceder" — a redação anterior era falsa, porque gestor é `employee`.
+
+**Prova:** `db/test-authz-capability-matrix.sh` — 52 asserts, PG17, `SET ROLE authenticated`, com guard que
+aborta se o SET ROLE não pegar, teste de idempotência (re-aplica a migration) e falsificação em 6 pontos.
