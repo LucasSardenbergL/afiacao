@@ -3,7 +3,9 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { RefreshCw, Calculator, GitBranch } from "lucide-react";
+import { UltimaExecucao } from "@/components/execucoes/UltimaExecucao";
 import { type RecConfigs } from "./useAnalyticsSync";
+import { ACOES_ANALYTICS_SYNC } from "./acoes";
 
 export function CostEngineCard({
   isRunning,
@@ -29,6 +31,7 @@ export function CostEngineCard({
             Recalcular Custos
           </Button>
         </div>
+        <UltimaExecucao acao={ACOES_ANALYTICS_SYNC.recalcularCustos} />
       </CardHeader>
       <CardContent>
         <p className="text-xs text-muted-foreground mb-3">
@@ -75,6 +78,7 @@ export function AssociationRulesCard({
             Recalcular Regras
           </Button>
         </div>
+        <UltimaExecucao acao={ACOES_ANALYTICS_SYNC.recalcularRegras} />
       </CardHeader>
       <CardContent>
         <p className="text-xs text-muted-foreground">

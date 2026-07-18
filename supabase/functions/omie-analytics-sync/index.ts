@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
+import { comRegistro, type DbRegistro } from "../_shared/registro-execucao.ts";
 import { fetchAll } from "../_shared/paginate.ts";
 import { montarUpsertsDeCusto } from "../_shared/cost-compute.ts";
 import { recomporCustoProducao } from "../_shared/recompor-custo-producao.ts";
@@ -1845,6 +1846,8 @@ serve(async (req) => {
     );
 
     const { action, account = "vendas", start_page, max_pages } = await req.json();
+    // Registro de execuções (acoes_execucoes): cast estrutural — o client untyped satisfaz o mínimo.
+    const dbRegistro = supabaseAdmin as unknown as DbRegistro;
     let result: unknown;
 
     switch (action) {
@@ -1935,23 +1938,45 @@ serve(async (req) => {
         });
       }
       case "compute_costs":
-        result = await computeCosts(supabaseAdmin);
+        result = await comRegistro(
+          dbRegistro, "analytics_sync.recalcular_custos", auth,
+          () => computeCosts(supabaseAdmin),
+          (r) => ({ updated: (r as { updated?: number }).updated ?? null }),
+        );
         break;
       case "compute_association_rules":
-        result = await computeAssociationRules(supabaseAdmin);
+        result = await comRegistro(
+          dbRegistro, "analytics_sync.recalcular_regras", auth,
+          () => computeAssociationRules(supabaseAdmin),
+          (r) => {
+            const a = r as { rules_generated?: number; total_transactions?: number };
+            return { rules_generated: a.rules_generated ?? null, total_transactions: a.total_transactions ?? null };
+          },
+        );
         break;
       case "sync_all": {
         // customers SAIU do sync_all: agora tem cron dedicado (sync-customers-vendas-daily) que chama
         // a action sync_customers em BACKGROUND. Rodar customers síncrono aqui dava WORKER_RESOURCE_LIMIT
         // e RE-prendia sync_state.customers em 'running' a cada passada — clobberava o estado curado.
         const acct = account as OmieAccount;
-        const products = await syncProducts(supabaseAdmin, acct);
-        // orders REMOVIDO do sync_all (2026-06-24): syncOrdersIncremental foi aposentado (no-op que
-        // poluía sales_price_history). A fonte de pedidos é a RPC criar_pedidos_com_itens (omie-vendas-sync).
-        const inventory = await syncInventory(supabaseAdmin, acct);
-        const costs = await computeCosts(supabaseAdmin);
-        const assocRules = await computeAssociationRules(supabaseAdmin);
-        result = { products, inventory, costs, assocRules };
+        result = await comRegistro(dbRegistro, "analytics_sync.sync_completo", auth, async () => {
+          const products = await syncProducts(supabaseAdmin, acct);
+          // orders REMOVIDO do sync_all (2026-06-24): syncOrdersIncremental foi aposentado (no-op que
+          // poluía sales_price_history). A fonte de pedidos é a RPC criar_pedidos_com_itens (omie-vendas-sync).
+          const inventory = await syncInventory(supabaseAdmin, acct);
+          // Motores registrados com os PRÓPRIOS slugs: o sync_all recalcula custos/regras DE VERDADE,
+          // e a caption dos cards precisa refletir isso (a verdade é por slug).
+          const costs = await comRegistro(
+            dbRegistro, "analytics_sync.recalcular_custos", auth,
+            () => computeCosts(supabaseAdmin),
+            (r) => ({ updated: (r as { updated?: number }).updated ?? null }),
+          );
+          const assocRules = await comRegistro(
+            dbRegistro, "analytics_sync.recalcular_regras", auth,
+            () => computeAssociationRules(supabaseAdmin),
+          );
+          return { products, inventory, costs, assocRules };
+        });
         break;
       }
       case "get_sync_state": {

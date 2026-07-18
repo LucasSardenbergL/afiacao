@@ -5,7 +5,9 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
+import { useMutationComRegistro } from "@/components/execucoes/useMutationComRegistro";
 import { OmieAccount, SyncState } from "./types";
+import { ACOES_ANALYTICS_SYNC } from "./acoes";
 
 export type RecConfigs = ReturnType<typeof useAnalyticsSync>["recConfigs"];
 
@@ -131,7 +133,9 @@ export function useAnalyticsSync() {
 
   const [clientSyncProgress, setClientSyncProgress] = useState<string | null>(null);
 
-  const bulkClientSyncMutation = useMutation({
+  const bulkClientSyncMutation = useMutationComRegistro({
+    acao: ACOES_ANALYTICS_SYNC.importarClientes,
+    detalhes: (d) => ({ importados: d.totalImported, ja_existiam: d.totalSkipped, erros: d.totalErrors }),
     mutationFn: async () => {
       let accountIndex = 0;
       let startPage = 1;
@@ -174,7 +178,9 @@ export function useAnalyticsSync() {
     },
   });
 
-  const addressSyncMutation = useMutation({
+  const addressSyncMutation = useMutationComRegistro({
+    acao: ACOES_ANALYTICS_SYNC.sincronizarEnderecos,
+    detalhes: (d) => ({ criados: d.synced, ignorados: d.skipped, erros: d.errors, pendentes: d.totalNeeding }),
     mutationFn: async () => {
       let totalSynced = 0;
       let totalSkipped = 0;
@@ -284,7 +290,9 @@ export function useAnalyticsSync() {
     return { grandTotalSynced, grandTotalItems, grandTotalSkipped };
   };
 
-  const bulkOrdersSyncMutation = useMutation({
+  const bulkOrdersSyncMutation = useMutationComRegistro({
+    acao: ACOES_ANALYTICS_SYNC.importarPedidosTodos,
+    detalhes: (d) => ({ pedidos: d.grandTotalSynced, itens: d.grandTotalItems, sem_cliente: d.grandTotalSkipped }),
     mutationFn: () => runOrdersSync(),
     onSuccess: (data) => {
       toast.success("Importação de pedidos concluída", {
@@ -299,7 +307,9 @@ export function useAnalyticsSync() {
     },
   });
 
-  const recentOrdersSyncMutation = useMutation({
+  const recentOrdersSyncMutation = useMutationComRegistro({
+    acao: ACOES_ANALYTICS_SYNC.importarPedidosRecentes,
+    detalhes: (d) => ({ pedidos: d.grandTotalSynced, itens: d.grandTotalItems }),
     mutationFn: () => {
       const now = new Date();
       const from = new Date(now);

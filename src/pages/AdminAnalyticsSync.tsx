@@ -7,6 +7,8 @@ import { SyncEntitiesGrid } from "@/components/analyticsSync/SyncEntitiesGrid";
 import { ImportClientesCard, ImportEnderecosCard, ImportPedidosCard } from "@/components/analyticsSync/ImportCards";
 import { CostEngineCard, AssociationRulesCard } from "@/components/analyticsSync/EngineCards";
 import { EngineConfigCard } from "@/components/analyticsSync/EngineConfigCard";
+import { ACOES_ANALYTICS_SYNC } from "@/components/analyticsSync/acoes";
+import { UltimaExecucao } from "@/components/execucoes/UltimaExecucao";
 import { CarteiraSaudePanel } from "@/components/carteira/CarteiraSaudePanel";
 
 export default function AdminAnalyticsSync() {
@@ -42,23 +44,26 @@ export default function AdminAnalyticsSync() {
             Pipeline de dados Omie → Banco interno → Motor de recomendação
           </p>
         </div>
-        <div className="flex items-center gap-3">
-          <Select value={selectedAccount} onValueChange={(v) => setSelectedAccount(v as OmieAccount)}>
-            <SelectTrigger className="w-40">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="vendas">Vendas (Oben)</SelectItem>
-              <SelectItem value="servicos">Serviços</SelectItem>
-            </SelectContent>
-          </Select>
-          <Button
-            onClick={() => syncMutation.mutate({ action: "sync_all", account: selectedAccount })}
-            disabled={isRunning}
-          >
-            {isRunning ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Play className="h-4 w-4 mr-2" />}
-            Sync Completo
-          </Button>
+        <div className="flex flex-col items-end gap-1">
+          <div className="flex items-center gap-3">
+            <Select value={selectedAccount} onValueChange={(v) => setSelectedAccount(v as OmieAccount)}>
+              <SelectTrigger className="w-40">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="vendas">Vendas (Oben)</SelectItem>
+                <SelectItem value="servicos">Serviços</SelectItem>
+              </SelectContent>
+            </Select>
+            <Button
+              onClick={() => syncMutation.mutate({ action: "sync_all", account: selectedAccount })}
+              disabled={isRunning}
+            >
+              {isRunning ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Play className="h-4 w-4 mr-2" />}
+              Sync Completo
+            </Button>
+          </div>
+          <UltimaExecucao acao={ACOES_ANALYTICS_SYNC.syncCompleto} />
         </div>
       </div>
 
