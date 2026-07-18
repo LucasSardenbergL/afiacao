@@ -47,6 +47,14 @@ export function instruiDesfazer(txt: string): boolean {
   return VERBOS.test(semAExcecao) || COMANDO_SUBSTANTIVO.test(semAExcecao);
 }
 
+/**
+ * O gatilho de cada trava, colado à consequência. Não é golden test de copy: o que se fixa aqui é a
+ * RELAÇÃO condição→PARE, que é onde mora o dano. Uma reescrita que preserve a relação passa; uma que
+ * inverta a condição (o caso perigoso, porque *parece* certo) falha.
+ */
+const GATILHO_FORNECEDOR = /não existe, foi cancelado ou já foi atendido,\s*PARE/i;
+const GATILHO_RECONFERENCIA = /(?<!não )achou algum\?\s*PARE/i;
+
 // A LÓGICA se testa pelo discriminante (binário, robusto a reescrita de copy). Só o invariante
 // "nunca instruir cancelamento" se testa no texto — é lá que ele de fato importa.
 describe('classificarAcao — a decisão, sem depender da redação', () => {
@@ -164,13 +172,39 @@ describe('acaoSugerida — NUNCA sugere cancelar (o erro de R$3k)', () => {
       const passos = passosDaAcao(cand);
       const doFornecedor = passos.find((p) => /confirme com o fornecedor/i.test(p));
       expect(doFornecedor, `passo do fornecedor sumiu: ${JSON.stringify(passos)}`).toBeDefined();
-      expect(doFornecedor).toMatch(/continua ativo/i);
-      expect(doFornecedor, 'passo do fornecedor sem condição de parada').toMatch(/PARE/);
+      expect(doFornecedor).toMatch(GATILHO_FORNECEDOR);
 
       const daReconferencia = passos.find((p) => /nenhum outro pedido de compra ativo/i.test(p));
       expect(daReconferencia).toBeDefined();
-      expect(daReconferencia, 'reconferência sem condição de parada').toMatch(/PARE/);
+      expect(daReconferencia).toMatch(GATILHO_RECONFERENCIA);
     }
+  });
+
+  it('o claim vem ANTES do ato irreversível — avisar depois não reduz corrida nenhuma', () => {
+    // A corrida entre dois compradores não se fecha aqui (sem backend não há exclusão mútua), mas a
+    // ORDEM muda o efeito: "recrie — e avise depois" não encurta janela alguma, porque o PO já existe.
+    // O claim social precisa preceder o salvamento.
+    const passo = passosDaAcao(c({ algum_sinal_de_canal: true, portal_protocolo: '2097501' }))
+      .find((p) => /recrie o PO/i.test(p));
+    expect(passo, 'passo de recriar sumiu').toBeDefined();
+    const posAviso = passo!.search(/avise a equipe/i);
+    const posRecriar = passo!.search(/recrie o PO/i);
+    expect(posAviso, 'o passo de recriar precisa conter o aviso').toBeGreaterThanOrEqual(0);
+    expect(posAviso, 'o aviso tem de vir ANTES de recriar, não depois').toBeLessThan(posRecriar);
+    expect(passo).toMatch(/antes de salvar/i);
+  });
+
+  it('o PARE está colado ao gatilho CERTO — uma condição invertida seria pega', () => {
+    // Verificar /continua ativo/ e /PARE/ soltos NÃO basta: "Se ele disser que CONTINUA ativo, PARE"
+    // tem as duas palavras e manda parar exatamente quando deveria recriar. O que importa é a
+    // ADJACÊNCIA gatilho→consequência, e é isso que as regexes acima exigem.
+    expect('Se ele disser que CONTINUA ativo, PARE — não recrie.').not.toMatch(GATILHO_FORNECEDOR);
+    expect('Não achou nenhum PO? PARE.').not.toMatch(GATILHO_RECONFERENCIA);
+    // e a forma correta casa:
+    expect('...que o pedido CONTINUA ativo. Se ele disser que não existe, foi cancelado ou já foi atendido, PARE — não recrie.')
+      .toMatch(GATILHO_FORNECEDOR);
+    expect('...busque por protocolo 1 — não pelo número antigo. Achou algum? PARE')
+      .toMatch(GATILHO_RECONFERENCIA);
   });
 
   it('SEM identificador para buscar, o plano NÃO chega a recriar', () => {

@@ -139,8 +139,11 @@ function textoDaOperacao(op: Operacao, c: PoCandidato): string {
       return `confirme no Omie que NÃO existe nenhum outro pedido de compra ativo para esta compra: busque por ${chavesDeBusca(c)} — não pelo número antigo, que alguém pode já ter substituído. Achou algum? PARE`;
     case 'recriar_po':
       // A corrida entre dois compradores NÃO é fechável aqui: este card não muta nada, a ação acontece
-      // no Omie. Sem claim/idempotência (escopo do PR3), o melhor honesto é avisar em vez de fingir.
-      return 'recrie o PO — e avise a equipe, porque outra pessoa pode estar olhando esta mesma lista agora';
+      // no Omie. Sem claim/idempotência (escopo do PR3) não há exclusão mútua — mas a ORDEM do aviso
+      // muda o efeito: avisar DEPOIS de recriar não reduz corrida alguma (o ato já é irreversível),
+      // avisar ANTES cria um claim social que ao menos encurta a janela. Por isso o aviso é passo
+      // anterior ao salvamento, não posfácio.
+      return 'avise a equipe que VOCÊ vai tratar este pedido e confirme que ninguém assumiu; reconfira no Omie imediatamente antes de salvar e só então recrie o PO';
     case 'conferir_no_omie':
       return 'confira no Omie se o PO foi excluído e decida com o histórico do pedido';
   }
