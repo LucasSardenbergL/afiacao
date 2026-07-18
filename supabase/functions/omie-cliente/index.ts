@@ -275,12 +275,19 @@ async function upsertAddressFromOmie(
     if (!cliente.endereco || !cliente.cidade) return false;
 
     // Check if user already has an Omie address
-    const { data: existing } = await adminClient
+    const { data: existing, error: lookupError } = await adminClient
       .from("addresses")
       .select("id")
       .eq("user_id", userId)
       .eq("is_from_omie", true)
       .maybeSingle();
+
+    // Erro de consulta ≠ "não tem endereço": seguir com `existing` undefined tentaria um INSERT
+    // por cima de uma linha que pode existir.
+    if (lookupError) {
+      console.error(`[upsertAddressFromOmie] Lookup failed for user ${userId}:`, lookupError);
+      return false;
+    }
 
     const addressData = {
       user_id: userId,
@@ -296,15 +303,106 @@ async function upsertAddressFromOmie(
       is_from_omie: true,
     };
 
+    // O supabase-js NÃO lança em falha de escrita: devolve { error }. Ignorá-lo fazia esta função
+    // retornar `true` sem ter gravado nada — e o `synced` do sync_addresses contava esse endereço
+    // como criado. Progresso fabricado: o relatório fechava "concluído" com o trabalho por fazer.
     if (existing) {
-      await adminClient.from("addresses").update(addressData).eq("id", existing.id);
+      const { error: updateError } = await adminClient
+        .from("addresses")
+        .update(addressData)
+        .eq("id", existing.id);
+      if (updateError) {
+        console.error(`[upsertAddressFromOmie] Update failed for user ${userId}:`, updateError);
+        return false;
+      }
     } else {
-      await adminClient.from("addresses").insert(addressData);
+      const { error: insertError } = await adminClient.from("addresses").insert(addressData);
+      if (insertError) {
+        console.error(`[upsertAddressFromOmie] Insert failed for user ${userId}:`, insertError);
+        return false;
+      }
     }
     return true;
   } catch (err) {
     console.error(`[upsertAddressFromOmie] Error for user ${userId}:`, err);
     return false;
+  }
+}
+
+/**
+ * Páginas de `profiles` com documento, por KEYSET em user_id.
+ *
+ * O PostgREST capa a resposta em 1.000 linhas SILENCIOSAMENTE — sem erro, sem sinal. Uma leitura
+ * crua de `profiles` (5.276 hoje) devolve 1.000 (19%), e os 4.276 restantes ficam indistinguíveis
+ * de "não existe": quem dedupa por documento cria um usuário Auth NOVO para cliente que já tem
+ * cadastro. É a morfologia dos 1.633 placeholders sem profile que já estão no banco.
+ *
+ * Keyset (`.gt("user_id", cursor)`) e não `.range()`: com offset, uma inserção concorrente desloca
+ * as páginas seguintes e pula linhas — e o sync_all_clients INSERE profiles enquanto varre.
+ */
+async function* paginarProfilesComDocumento(
+  adminClient: SupabaseClient,
+): AsyncGenerator<Array<{ user_id: string; document: string }>> {
+  const pageSize = 1000;
+  let cursor: string | null = null;
+
+  while (true) {
+    let query = adminClient
+      .from("profiles")
+      .select("user_id, document")
+      .not("document", "is", null)
+      .order("user_id")
+      .limit(pageSize);
+    if (cursor) query = query.gt("user_id", cursor);
+
+    const { data, error } = await query;
+    // Fail-closed: erro engolido vira página vazia, que vira "cliente não existe" → clone.
+    if (error) throw new Error(`Falha ao paginar profiles: ${error.message}`);
+    if (!data || data.length === 0) return;
+
+    const rows = data as Array<{ user_id: string; document: string | null }>;
+    yield rows.filter((r): r is { user_id: string; document: string } => !!r.document);
+
+    cursor = rows[rows.length - 1].user_id;
+    if (rows.length < pageSize) return;
+  }
+}
+
+/** Abaixo disto a proof fresca não serve como dedup: importar criaria duplicatas em massa. */
+const COBERTURA_MINIMA_PROOF = 0.5;
+
+/**
+ * Barra a importação em massa quando a proof fresca está degradada.
+ *
+ * `omie_customer_account_map_fresco` é a base filtrada por `updated_at >= now() - 7 dias`. Se o
+ * omie-analytics-sync ficar uma semana parado (já aconteceu neste repo), a view ESVAZIA — e uma
+ * consulta bem-sucedida com zero linhas não acusa erro nenhum. O dedup então enxerga "nenhum
+ * código mapeado" e o handler recria do zero milhares de clientes que já existem, cada um com
+ * user_id novo. Zero linhas não é "nada a fazer": é cegueira.
+ *
+ * A base entra aqui só como DENOMINADOR (count) — nunca como fonte de vínculo. Ler vínculo da
+ * base é o que reabre o stale infinito que o épico-drop existe para fechar.
+ */
+async function assertProofFrescaSaudavel(
+  adminClient: SupabaseClient,
+  account: string,
+  codigosFrescos: number,
+): Promise<void> {
+  const { count, error } = await adminClient
+    .from("omie_customer_account_map")
+    .select("*", { count: "exact", head: true })
+    .eq("account", account);
+
+  if (error) throw new Error(`Falha ao medir cobertura da proof (${account}): ${error.message}`);
+  if (!count) return; // conta sem histórico na base: não há baseline com que comparar
+
+  const cobertura = codigosFrescos / count;
+  if (cobertura < COBERTURA_MINIMA_PROOF) {
+    throw new Error(
+      `Proof fresca degradada em ${account}: ${codigosFrescos}/${count} códigos ` +
+        `(${(cobertura * 100).toFixed(1)}% < ${COBERTURA_MINIMA_PROOF * 100}%). ` +
+        `Rode o omie-analytics-sync antes — importar agora criaria clientes duplicados.`,
+    );
   }
 }
 
@@ -638,12 +736,19 @@ serve(async (req) => {
         // sobrescrita pelo writer da vez) e empresa_omie é 'colacor' em 100% das linhas — rótulo
         // mentiroso. Divergir da conta do chamador aqui anexaria a ferramenta ao cliente ERRADO.
         // Miss (ausente ou stale >7d) cai no fallback por documento abaixo — fail-closed.
-        const { data: existingMapping } = await adminClient
+        const { data: existingMapping, error: mappingLookupError } = await adminClient
           .from("omie_customer_account_map_fresco")
           .select("user_id")
           .eq("omie_codigo_cliente", cliente.codigo_cliente)
           .eq("account", "oben")
           .maybeSingle();
+
+        // Erro de consulta NÃO é miss. Tratar os dois igual seguiria para a criação de um usuário
+        // Auth novo por indisponibilidade momentânea do banco — clone permanente por falha
+        // transitória. Fail-closed: aborta e o chamador reporta (ele tem o próprio fallback).
+        if (mappingLookupError) {
+          throw new Error(`Falha ao consultar vínculo na proof fresca: ${mappingLookupError.message}`);
+        }
 
         // user_id da view é nulável (view sem NOT NULL) → null = miss, cai no fallback por documento.
         if (existingMapping?.user_id) {
@@ -655,23 +760,45 @@ serve(async (req) => {
         if (cliente.cnpj_cpf) {
           const docLimpo = cliente.cnpj_cpf.replace(/\D/g, "");
           if (docLimpo.length >= 11) {
-            const { data: existingProfiles } = await adminClient
+            // Caminho rápido: o documento é gravado já normalizado por este edge e pelo
+            // sync_all_clients, então o match direto resolve o caso comum sem varrer a tabela.
+            // `.order("created_at")` não é cosmético: documento duplicado EXISTE (é o rastro dos
+            // clones). Sem ordem, o PostgREST devolve uma linha arbitrária e o mesmo cliente podia
+            // cair ora no perfil real, ora no clone. O mais ANTIGO é o canônico — o clone veio depois.
+            const { data: docHit, error: docHitError } = await adminClient
               .from("profiles")
-              .select("user_id, document")
-              .not("document", "is", null);
+              .select("user_id")
+              .eq("document", docLimpo)
+              .order("created_at")
+              .limit(1);
+            if (docHitError) {
+              throw new Error(`Falha ao buscar perfil por documento: ${docHitError.message}`);
+            }
 
-            const matchedProfile = existingProfiles?.find(p => 
-              p.document?.replace(/\D/g, "") === docLimpo
-            );
+            let matchedUserId = (docHit?.[0] as { user_id: string } | undefined)?.user_id;
 
-            if (matchedProfile) {
+            // Legado formatado ("12.345.678/0001-90") só casa normalizando os dois lados — varredura
+            // PAGINADA. Antes era um SELECT cru da tabela inteira, capado em 1.000 linhas pelo
+            // PostgREST: perfil fora dessa janela lia como inexistente e o fluxo criava um usuário
+            // novo para quem já tinha cadastro.
+            if (!matchedUserId) {
+              for await (const pagina of paginarProfilesComDocumento(adminClient)) {
+                const hit = pagina.find((p) => p.document.replace(/\D/g, "") === docLimpo);
+                if (hit) {
+                  matchedUserId = hit.user_id;
+                  break;
+                }
+              }
+            }
+
+            if (matchedUserId) {
               // Profile exists — admite o membro na carteira (ledger + proof). P0-B-bis Fatia 4: era um
               // INSERT no espelho `omie_clientes`, que grava SEM conta (rótulo 'colacor' default, falso).
               // A conta aqui é 'oben' e não é chute: o único chamador deste case é o fluxo de vendas OBEN
               // (`useUnifiedOrder.handleStaffAddTool`), e a resolução logo acima usa `.eq("account","oben")`.
-              console.log(`[criar_perfil_local] Found existing profile by document ${docLimpo}, linking to user ${matchedProfile.user_id}`);
+              console.log(`[criar_perfil_local] Found existing profile by document ${docLimpo}, linking to user ${matchedUserId}`);
               const { error: mappingError } = await adminClient.rpc("register_carteira_member", {
-                p_user_id: matchedProfile.user_id,
+                p_user_id: matchedUserId,
                 p_account: "oben",
                 p_omie_codigo_cliente: cliente.codigo_cliente,
                 p_omie_codigo_vendedor: cliente.codigo_vendedor || null,
@@ -679,7 +806,7 @@ serve(async (req) => {
               if (mappingError) {
                 console.error("[criar_perfil_local] Mapping error:", mappingError);
               }
-              result = { user_id: matchedProfile.user_id };
+              result = { user_id: matchedUserId };
               break;
             }
           }
@@ -772,34 +899,41 @@ serve(async (req) => {
         // enxergava 1/7 dos códigos e o loop reprocessava o resto. A fresca dá os códigos DESTA
         // conta, paginados com .order estável.
         const existingCodes = new Set<number>();
-        let codeOffset = 0;
+        let codeCursor: number | null = null;
         const codePageSize = 1000;
         while (true) {
-          const { data: codePage, error: codeErr } = await adminClient
+          // Keyset, não `.range()`: a fresca é uma view DESLIZANTE (TTL de 7 dias). Com offset, uma
+          // linha que expira entre duas páginas desloca todas as seguintes e o dedup PULA códigos —
+          // e código pulado aqui vira cliente RECRIADO no laço de importação abaixo.
+          let codeQuery = adminClient
             .from("omie_customer_account_map_fresco")
             .select("omie_codigo_cliente")
             .eq("account", account.account)
             .order("omie_codigo_cliente")
-            .range(codeOffset, codeOffset + codePageSize - 1);
+            .limit(codePageSize);
+          if (codeCursor !== null) codeQuery = codeQuery.gt("omie_codigo_cliente", codeCursor);
+
+          const { data: codePage, error: codeErr } = await codeQuery;
           // Fail-closed: engolir o erro deixaria o Set vazio/parcial e o loop tentaria RECRIAR
           // milhares de clientes já existentes (Codex P2 do PR-2, mesma armadilha).
           if (codeErr) throw new Error(`Falha ao carregar códigos já mapeados (${account.account}): ${codeErr.message}`);
           if (!codePage || codePage.length === 0) break;
           for (const row of codePage) existingCodes.add(row.omie_codigo_cliente as number);
+          codeCursor = codePage[codePage.length - 1].omie_codigo_cliente as number;
           if (codePage.length < codePageSize) break;
-          codeOffset += codePageSize;
         }
 
-        // Pre-load all profiles with documents for dedup
-        const { data: allProfiles } = await adminClient
-          .from("profiles")
-          .select("user_id, document")
-          .not("document", "is", null);
+        // O `codeErr` acima só pega erro SQL. Uma consulta BEM-SUCEDIDA com zero linhas (view
+        // expirada porque o omie-analytics-sync parou) passa limpo e é o cenário mais destrutivo:
+        // dedup cego reimporta a conta inteira. Barra ANTES de qualquer criação de identidade.
+        await assertProofFrescaSaudavel(adminClient, account.account, existingCodes.size);
+
+        // Dedup por documento — paginado. Era um SELECT cru de `profiles` capado em 1.000 de 5.276
+        // (19%): para os outros 81%, `profileByDoc.get()` devolvia undefined e o laço abaixo criava
+        // um usuário Auth NOVO para cliente que já tinha cadastro. Esta é a fábrica dos clones.
         const profileByDoc = new Map<string, string>();
-        for (const p of allProfiles || []) {
-          if (p.document) {
-            profileByDoc.set(p.document.replace(/\D/g, ""), p.user_id);
-          }
+        for await (const pagina of paginarProfilesComDocumento(adminClient)) {
+          for (const p of pagina) profileByDoc.set(p.document.replace(/\D/g, ""), p.user_id);
         }
 
         console.log(`[sync_all_clients] Starting ${account.name} from page ${startPage}...`);
@@ -854,13 +988,21 @@ serve(async (req) => {
                   }
 
                   userId = authData.user.id;
-                  await adminClient.from("profiles").insert({
+                  // O supabase-js NÃO lança em falha de escrita: devolve { error }. Ignorá-lo
+                  // deixava o usuário Auth recém-criado SEM profile — órfão — e o laço seguia
+                  // contando "importado". Nenhum UNIQUE segura: o user_id acabou de nascer.
+                  const { error: profileError } = await adminClient.from("profiles").insert({
                     user_id: userId,
                     name: cliente.nome_fantasia || cliente.razao_social || "Cliente",
                     email: cliente.email || null,
                     phone: cliente.telefone1_numero || null,
                     document: cnpjCpf,
                   });
+                  if (profileError) {
+                    console.error(`[sync_all_clients] profile insert falhou (user ${userId}, código ${codigoCliente}):`, profileError);
+                    accErrors++;
+                    continue;
+                  }
                   profileByDoc.set(cnpjCpf, userId);
                 }
 
@@ -876,9 +1018,15 @@ serve(async (req) => {
                   p_omie_codigo_cliente: codigoCliente,
                   p_omie_codigo_vendedor: codigoVendedor,
                 });
-                // Fail-loud por cliente: o catch externo conta o erro e segue para o próximo (o import é
-                // best-effort por linha), mas o vínculo NÃO pode ser dado como feito em silêncio.
-                if (mappingError) throw new Error(`register_carteira_member(${codigoCliente}): ${mappingError.message}`);
+                // Sem o vínculo o cliente NÃO foi importado: fica invisível ao dedup da próxima
+                // execução e seria recriado. Conta erro em vez de sucesso silencioso. (#1425)
+                // Um 23505 aqui é o fail-closed da UNIQUE(codigo,account): o código já é de OUTRO user
+                // nesta conta — não roubamos o vínculo, contamos o erro e seguimos.
+                if (mappingError) {
+                  console.error(`[sync_all_clients] register_carteira_member falhou (user ${userId}, código ${codigoCliente}):`, mappingError);
+                  accErrors++;
+                  continue;
+                }
 
                 existingCodes.add(codigoCliente);
                 
@@ -953,22 +1101,43 @@ serve(async (req) => {
         // empresa_omie 'colacor' em 100% das linhas, rótulo mentiroso) — o loop abaixo então chutava
         // esse código indeterminado nas 3 contas até uma responder. A proof tem 1 linha por
         // (user, conta), então sabemos a conta CERTA de cada código.
-        let allMappings: Array<{ user_id: string; account: string; omie_codigo_cliente: number }> = [];
-        let fetchOffset = 0;
+        const allMappings: Array<{ user_id: string; account: string; omie_codigo_cliente: number }> = [];
+        const paresVistos = new Set<string>();
+        let userCursor: string | null = null;
         const fetchPageSize = 1000;
         while (true) {
-          const { data: page, error: pageErr } = await adminClient
+          // Keyset, não `.range()`: a fresca é uma view DESLIZANTE (TTL de 7 dias) e, com offset,
+          // uma linha que expira entre duas páginas desloca as seguintes e PULA users — que ficam
+          // sem endereço sem ninguém notar. `.gte` e não `.gt` para não perder as contas restantes
+          // do user partido na fronteira da página; o Set desduplica a sobra reprocessada.
+          let query = adminClient
             .from("omie_customer_account_map_fresco")
             .select("user_id, account, omie_codigo_cliente")
             .order("user_id")
             .order("account")
-            .range(fetchOffset, fetchOffset + fetchPageSize - 1);
+            .limit(fetchPageSize);
+          if (userCursor) query = query.gte("user_id", userCursor);
+
+          const { data: page, error: pageErr } = await query;
           // Fail-closed: engolir o erro daria "No client mappings found" — um NO-OP mudo que parece sucesso.
           if (pageErr) throw new Error(`Falha ao carregar mapeamentos da proof: ${pageErr.message}`);
           if (!page || page.length === 0) break;
-          allMappings = allMappings.concat(page as typeof allMappings);
-          if (page.length < fetchPageSize) break;
-          fetchOffset += fetchPageSize;
+
+          const rows = page as typeof allMappings;
+          let novos = 0;
+          for (const m of rows) {
+            const chave = `${m.user_id}|${m.account}`;
+            if (paresVistos.has(chave)) continue;
+            paresVistos.add(chave);
+            allMappings.push(m);
+            novos++;
+          }
+
+          const ultimoUser = rows[rows.length - 1].user_id;
+          // Guard de não-avanço: só ocorreria com um user ocupando a página inteira (>1.000 contas),
+          // mas sem ele um cursor parado é laço infinito.
+          if (rows.length < fetchPageSize || (novos === 0 && ultimoUser === userCursor)) break;
+          userCursor = ultimoUser;
         }
 
         // Agrupa por user: a proof tem até 1 linha por (user, conta) e o batch conta USERS (o espelho
@@ -982,6 +1151,18 @@ serve(async (req) => {
         const totalCount = codesByUser.size;
 
         if (totalCount === 0) {
+          // Proof fresca vazia NÃO é "nada a fazer": a fresca é a base filtrada por TTL de 7 dias,
+          // então zero linhas com a base cheia significa sync parado há uma semana. Responder
+          // 200/zeros pinta "concluído" na UI e esconde a base inteira por processar (fail-open).
+          const { count: baseCount } = await adminClient
+            .from("omie_customer_account_map")
+            .select("*", { count: "exact", head: true });
+          if (baseCount && baseCount > 0) {
+            throw new Error(
+              `Proof fresca vazia com ${baseCount} vínculos na base: o omie-analytics-sync está ` +
+                `parado (TTL de 7 dias). Rode-o antes de sincronizar endereços.`,
+            );
+          }
           result = { synced: 0, skipped: 0, errors: 0, hasMore: false, message: "No client mappings found" };
           break;
         }
@@ -990,13 +1171,26 @@ serve(async (req) => {
         const clientsNeedingAddress = [...codesByUser.keys()].filter((userId) => !usersWithAddress.has(userId));
         const totalNeeding = clientsNeedingAddress.length;
 
-        // Always take from the beginning since the list shrinks as addresses are created
-        const batch = clientsNeedingAddress.slice(0, batchSize);
-        console.log(`[sync_addresses] Processing batch size=${batch.length}, totalNeeding=${totalNeeding}`);
+        // A lista encolhe sozinha a cada endereço criado (quem sincroniza sai do filtro acima), então
+        // o offset só precisa saltar quem NÃO drena: user sem credencial da conta, sem endereço na
+        // Omie, ou com erro. Sem esse salto, `slice(0, batchSize)` devolve eternamente os mesmos 30
+        // "poison users" e o caller (useAnalyticsSync: `while (hasMore)`) nunca termina — Codex P1.
+        const batch = clientsNeedingAddress.slice(offset, offset + batchSize);
+        console.log(`[sync_addresses] Processing batch size=${batch.length}, offset=${offset}, totalNeeding=${totalNeeding}`);
 
         // Chave `string` de propósito: o account vem da proof (dado externo). Slug desconhecido ou
         // sem credencial nesta edge → .get() undefined → o guard abaixo pula (fail-closed).
         const accountBySlug = new Map<string, OmieAccountConfig>(accounts.map((a) => [a.account, a]));
+
+        // Prioridade EXPLÍCITA de qual conta dá o endereço de um user multi-conta: a ordem em que
+        // esta edge declara as contas (getOmieAccounts → colacor_sc, oben, colacor), a mesma que o
+        // account_index do sync_all_clients já usa. Antes a ordem saía do `.order("account")` da
+        // consulta — alfabética (colacor < colacor_sc < oben): collation virando regra de negócio,
+        // com o endereço default vindo de uma conta que ninguém escolheu (Codex).
+        // Chave `string` pelo mesmo motivo do accountBySlug: o account vem da proof (dado externo).
+        // Slug fora da lista → rank MAX_SAFE_INTEGER → tentado por último, nunca antes de uma conta
+        // conhecida (fail-closed).
+        const accountRank = new Map<string, number>(accounts.map((a, i) => [a.account, i]));
 
         for (const userId of batch) {
           try {
@@ -1006,7 +1200,13 @@ serve(async (req) => {
             // (a proof garante o par). Antes: o mesmo código indeterminado era chutado nas 3 contas
             // até uma responder — até 3x chamadas Omie e, sob colisão de código entre contas, o
             // endereço de OUTRO cliente. Mantém "tenta até achar endereço" entre as contas do user.
-            for (const entry of codesByUser.get(userId) ?? []) {
+            const entradasDoUser = [...(codesByUser.get(userId) ?? [])].sort(
+              (a, b) =>
+                (accountRank.get(a.account) ?? Number.MAX_SAFE_INTEGER) -
+                (accountRank.get(b.account) ?? Number.MAX_SAFE_INTEGER),
+            );
+
+            for (const entry of entradasDoUser) {
               const conta = accountBySlug.get(entry.account);
               // Conta sem credencial nesta edge → pula (fail-closed: não tenta o código em outra conta).
               if (!conta) continue;
@@ -1045,7 +1245,18 @@ serve(async (req) => {
           }
         }
 
-        const hasMore = totalNeeding > batch.length;
+        // Quem sincronizou sai da lista sozinho; quem foi pulado/errou continua nela e precisa ser
+        // SALTADO no próximo lote.
+        const naoDrenados = batch.length - totalSynced;
+        const nextOffset = offset + naoDrenados;
+
+        // Caller que pagina (passa `offset`) drena até o fim, inclusive a cauda de poison users.
+        // O caller legado recomeça do zero a cada chamada — então só continua se ALGO drenou aqui;
+        // senão o próximo lote seria idêntico a este, e o `while (hasMore)` dele giraria para sempre.
+        const chamadorPagina = body.offset !== undefined;
+        const hasMore = chamadorPagina
+          ? nextOffset < totalNeeding
+          : totalSynced > 0 && nextOffset < totalNeeding;
 
         result = {
           synced: totalSynced,
@@ -1055,6 +1266,9 @@ serve(async (req) => {
           totalClients: totalCount,
           processed: batch.length,
           hasMore,
+          next: { offset: nextOffset },
+          // Lote inteiro sem drenar: o que resta só é alcançável passando `offset`.
+          stalled: batch.length > 0 && totalSynced === 0,
         };
         break;
       }

@@ -211,9 +211,29 @@ construídos aqui:
   verificada e refutada: ver §3.1.)
 - **FU6 — `eligible DEFAULT true` é fail-open** p/ um writer futuro de identidade não-resolvida (estado
   inicial seguro = pending/false). (Codex §4.1.)
-- **FU7 — hardening repo-wide de SECURITY DEFINER:** `search_path` com `pg_temp` por último + mover helpers
-  sensíveis de RLS (`carteira_visivel_para` é oráculo "cliente X é do owner Y?") p/ schema não-exposto.
-  (Codex §3/§4.5.)
+- **FU7 — hardening repo-wide de SECURITY DEFINER: 🟡 PARCIAL (2026-07-18,** `20260718120000`, prova
+  `db/test-fu7-helpers-schema-privado.sh` 20 asserts + `db/test-secdef-searchpath-oraculo.sh` 21 asserts,
+  ambos com falsificação; Codex `gpt-5.6-sol` xhigh**).** Medido em prod: 198 SECDEF da app, 147 com
+  `search_path` inseguro (87 expostas a `authenticated`), 4 oráculos boolean+uuid — **mas o filtro
+  boolean+uuid era ESTREITO** (achado do Codex): ampliando, apareceram 3 sem gate nenhum —
+  `get_user_role(uuid)→app_role` e `get_commercial_role(uuid)→commercial_role` (**devolvem** o role, pior
+  que `has_role`, que só responde sim/não) e `wa_owner_efetivo(customer)→uuid`, que **entrega o UUID do
+  vendedor dono do cliente**.
+  - **Descoberta que definiu a técnica:** policy RLS que chama o helper **exige o `EXECUTE` do CALLER** →
+    `REVOKE` dá `42501` e **derruba a policy junto**. Logo: **sem policy → REVOKE**; **com policy → mover
+    de SCHEMA** (`ALTER FUNCTION … SET SCHEMA` preserva o OID; policies **e views** resolvem por OID e
+    sobrevivem; o PostgREST só publica RPC do schema exposto ⇒ o oráculo HTTP fecha e a RLS fica intacta).
+    Só o caller **late-bound** (corpo em string + `search_path=public`) quebra — conserto pelo `search_path`.
+  - **Feito:** `get_user_role` + `get_commercial_role` (REVOKE) · `carteira_visivel_para` (8 policies + view
+    `v_cliente_interacoes` + `melhoria_clientes_por_produto`) + `is_super_admin` (2 policies) → `private`.
+  - **Adiado por custo/risco:** `has_role` (**389** policies + 23 funções) e `pode_ver_carteira_completa`
+    (64 policies + 4 edges) — PR próprio, deploy serializado. **`wa_owner_efetivo`** tem caller vivo
+    ([IncomingCallModal.tsx:90](../../../src/components/call/IncomingCallModal.tsx)) → exige **gate**, não REVOKE.
+  - **`pg_temp`-last nas 87: NÃO acionado, por medição** (Codex concordou). O shadow funciona p/ relação mas
+    **nunca** p/ função/operador, e o vetor é **não-alcançável**: PostgREST não expõe DDL, zero funções fazem
+    SQL dinâmico, as 6 que criam temp usam `ON COMMIT DROP` + nome interno, e **ninguém tem `CREATE` em
+    `public`**. Regra adotada (`docs/agent/database.md`): função SECDEF nova sai com `pg_temp` por último ou
+    refs qualificadas. **Ponto cego assumido:** alcance transitivo (87 → 61 não-expostas) não medido.
 - **FU8 — comentário stale: ✅ FEITO (2026-07-18).** [useMyCarteiraScores.ts](../../../src/hooks/useMyCarteiraScores.ts)
   dizia "a RLS é ampla (qualquer staff lê tudo)" — **falso**. Reescrito contra `pg_policies` medida em prod:
   `fcs_select_carteira` = `pode_ver_carteira_completa OR carteira_visivel_para` (carteira-scoped, **sem** braço

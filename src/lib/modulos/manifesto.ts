@@ -304,7 +304,6 @@ export const MODULOS: ModuloApp[] = [
     rotaPrefixos: ["/admin"],
     gates: ["RequireStaff"],
     codigo: [
-      "src/lib/clientes-cadastro/**",
       "src/lib/clientes-nao-vinculados/**",
       "src/lib/customer-contact/**",
       "src/lib/customer-process/**",
@@ -694,6 +693,7 @@ export const MODULOS: ModuloApp[] = [
       "src/hooks/__tests__/useInfiniteScroll.test.ts",
       "src/hooks/__tests__/useDisplayAccess.test.tsx",
       "src/hooks/__tests__/useImpersonationTargets.test.tsx",
+      "src/hooks/__tests__/useCommercialRole.test.tsx",
       "src/hooks/__tests__/useMyCommercialRole.test.tsx",
       "src/hooks/__tests__/useUserDepartment.test.tsx",
     ],

@@ -23,6 +23,7 @@
 
 import { createClient } from 'npm:@supabase/supabase-js@^2';
 import { authorizeCron, corsHeaders } from '../_shared/auth.ts';
+import { fetchAll } from '../_shared/paginate.ts';
 
 // ── Gate de R$/h (espelha src/lib/tactical/pregeracao.ts) ────────────────────
 const PROFIT_PER_HOUR_THRESHOLD = 50;
@@ -56,8 +57,38 @@ Deno.serve(async (req) => {
     console.warn('[tactical-plans-batch] CRON_SECRET not set; downstream calls will be rejected');
   }
 
+  // 0. ALLOWLIST de clientes elegíveis (máscara `eligible` — #1398/#1416).
+  //    farmer_client_scores é lido via service_role (bypassa RLS) e NÃO tem coluna de
+  //    elegibilidade: sem este passo, o batch geraria plano tático de cliente mascarado
+  //    (fornecedor excluído / clone de identidade) — 1459 dos 6256 scores em 2026-07-18.
+  //    ALLOWLIST, não denylist: se esta leitura truncar, o efeito é gerar de MENOS
+  //    (fail-closed); uma denylist truncada deixaria mascarado PASSAR (fail-open).
+  //    A RPC criar_plano_tatico recusa mascarado de qualquer forma (fronteira fail-closed);
+  //    este filtro evita ~1459 chamadas de LLM inúteis e mantém honesto o contador de erros.
+  let elegiveis: Set<string>;
+  try {
+    const linhas = await fetchAll<{ customer_user_id: string }>(
+      (from, to) => supabase
+        .from('carteira_assignments')
+        .select('customer_user_id')
+        .eq('eligible', true)
+        .order('customer_user_id', { ascending: true }) // UNIQUE ⇒ estável entre páginas
+        .range(from, to),
+      'allowlist de clientes elegíveis',
+    );
+    elegiveis = new Set(linhas.map((l) => l.customer_user_id));
+  } catch (e) {
+    // Falhar ALTO: seguir com allowlist parcial geraria menos planos em silêncio, e
+    // seguir sem allowlist reabriria o furo. Nenhum dos dois é aceitável.
+    return new Response(
+      JSON.stringify({ ok: false, error: e instanceof Error ? e.message : String(e) }),
+      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+    );
+  }
+
   // 1. Pagina farmer_client_scores e agrupa por farmer_id.
   //    A carteira já está limpa de fornecedor pela Fase 1 (classificacao).
+  let mascaradosIgnorados = 0;
   const porFarmer = new Map<string, Array<{
     customer: string;
     priority: number;
@@ -70,7 +101,10 @@ Deno.serve(async (req) => {
     const { data, error } = await supabase
       .from('farmer_client_scores')
       .select('farmer_id, customer_user_id, priority_score, revenue_potential, avg_monthly_spend_180d, gross_margin_pct')
+      // chave TOTAL: só `farmer_id` empata em massa (1 farmer = milhares de linhas) e o
+      // .range() pula/duplica linhas entre páginas — cliente sumindo do batch em silêncio.
       .order('farmer_id', { ascending: true })
+      .order('customer_user_id', { ascending: true })
       .range(from, from + 999);
 
     if (error) {
@@ -90,6 +124,8 @@ Deno.serve(async (req) => {
     }>;
 
     for (const r of rows) {
+      // Máscara na INGESTÃO (não no corte): um mascarado nem chega a disputar vaga no TOP_N.
+      if (!elegiveis.has(r.customer_user_id)) { mascaradosIgnorados++; continue; }
       const arr = porFarmer.get(r.farmer_id) ?? [];
       arr.push({
         customer: r.customer_user_id,
@@ -160,6 +196,9 @@ Deno.serve(async (req) => {
       gerados,
       pulados,
       erros,
+      // transparência do que foi DESCARTADO pela máscara: um corte silencioso leria como
+      // "cobri todo mundo" sem ter coberto (money-path — no silent caps).
+      mascarados_ignorados: mascaradosIgnorados,
     }),
     { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
   );
