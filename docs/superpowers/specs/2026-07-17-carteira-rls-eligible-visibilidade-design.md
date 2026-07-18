@@ -200,8 +200,11 @@ construídos aqui:
 - **FU7 — hardening repo-wide de SECURITY DEFINER:** `search_path` com `pg_temp` por último + mover helpers
   sensíveis de RLS (`carteira_visivel_para` é oráculo "cliente X é do owner Y?") p/ schema não-exposto.
   (Codex §3/§4.5.)
-- **FU8 — comentário stale:** [useMyCarteiraScores.ts:31](../../../src/hooks/useMyCarteiraScores.ts)
-  diz "a RLS é ampla (qualquer staff lê tudo)" — **falso** (é carteira-scoped: `pode_ver_carteira_completa OR carteira_visivel_para`).
+- **FU8 — comentário stale: ✅ FEITO (2026-07-18).** [useMyCarteiraScores.ts](../../../src/hooks/useMyCarteiraScores.ts)
+  dizia "a RLS é ampla (qualquer staff lê tudo)" — **falso**. Reescrito contra `pg_policies` medida em prod:
+  `fcs_select_carteira` = `pode_ver_carteira_completa OR carteira_visivel_para` (carteira-scoped, **sem** braço
+  de autoria no SELECT — `farmer_id` só aparece em INSERT/UPDATE/DELETE). Nuance registrada no comentário:
+  p/ gestor o filtro segue display-only; p/ vendedor comum a RLS é a fronteira e recorta por CLIENTE.
 
 ## 9. Correção da invariante #3 da Fatia 2
 
