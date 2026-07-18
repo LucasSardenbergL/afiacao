@@ -18294,10 +18294,6 @@ export type Database = {
           status_envio_portal: string
         }[]
       }
-      estimar_impacto_exclusao_outlier: {
-        Args: { p_evento_id: number }
-        Returns: Json
-      }
       expandir_promocao_item:
         | { Args: { p_item_id: number }; Returns: Json }
         | {
