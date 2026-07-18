@@ -105,6 +105,10 @@ INSERT INTO public.user_roles(user_id, role) VALUES ('33333333-3333-3333-3333-33
 -- Codex v11: employee SEM linha em commercial_roles -> pode_ver_carteira_completa() retorna NULL (tri-state)
 INSERT INTO auth.users(id) VALUES ('66666666-6666-6666-6666-666666666666');
 INSERT INTO public.user_roles(user_id, role) VALUES ('66666666-6666-6666-6666-666666666666','employee');
+-- Codex v12: employee AUTORIZADO — sem ele, trocar o gate p/ master-only passava verde
+INSERT INTO auth.users(id) VALUES ('77777777-7777-7777-7777-777777777777');
+INSERT INTO public.user_roles(user_id, role) VALUES ('77777777-7777-7777-7777-777777777777','employee');
+INSERT INTO public.commercial_roles(user_id, commercial_role) VALUES ('77777777-7777-7777-7777-777777777777','gerencial');
 SQL
 
 # ── ZONA 2: migration REAL ──
@@ -340,6 +344,22 @@ case "$R" in *DENY_OK*) ok "O1 employee SEM commercial_role (role NULL) e BARRAD
 eq "O2 campo cru portal_protocolo e retornado (mata b.portal_protocolo -> NULL::text)" "$(campo 103 portal_protocolo)" "2097501"
 eq "O3 campo cru resposta_canal e retornado (mata b.resposta_canal -> NULL::jsonb)" "$(Pq -c "SELECT (resposta_canal->>'fornecedor_notificado') FROM public.reposicao_pos_candidatos('OBEN') WHERE pedido_id=103;" | tail -1)" "true"
 
+echo "── Bloco P: ACL e o positivo do gate (Codex v12) ──"
+# ⚠️ O gate deixa uid NULL passar (p/ o cron SQL-local), entao a UNICA barreira contra anon e o REVOKE.
+# Sem este teste, remover o REVOKE passava verde e o anonimo receberia fornecedor/protocolo/JSON cru.
+R=$(P -tA 2>&1 <<'SQL' || true
+SET ROLE anon;
+DO $$ BEGIN PERFORM * FROM public.reposicao_pos_candidatos('OBEN'); RAISE NOTICE 'ANON_VAZOU';
+EXCEPTION WHEN insufficient_privilege THEN RAISE NOTICE 'ANON_DENY_OK'; END $$;
+SQL
+)
+case "$R" in *ANON_DENY_OK*) ok "P1 anon NAO invoca a RPC (o REVOKE e a unica barreira, ja que uid NULL passa)";; *) bad "P1 ANON VAZOU: $R";; esac
+# POSITIVO do gate: so havia master como caso que passa, entao trocar p/ master-only passava verde.
+eq "P2 employee com commercial_role valido ENXERGA (mata o mutante master-only)" "$(Pq -c "SET test.uid='77777777-7777-7777-7777-777777777777'; SELECT count(*) > 0 FROM public.reposicao_pos_candidatos('OBEN');" | tail -1)" "t"
+# campos crus materiais sem assert: trocar por NULL::text passava verde
+eq "P3 fornecedor_nome e retornado (mata b.fornecedor_nome -> NULL)" "$(campo 103 fornecedor_nome)" "SAYERLACK"
+eq "P4 canal_usado e retornado (mata b.canal_usado -> NULL)" "$(campo 103 canal_usado)" "portal_sayerlack"
+
 echo "── Bloco A: marcador FAIL-CLOSED ──"
 P -q -c "UPDATE public.reposicao_pedidos_compra_run SET volume_ok=false;" >/dev/null
 eq "A1 sem run VÁLIDO (todos truncados) → VAZIO (não classifica ninguém)" "$(Pq -c "SELECT count(*) FROM public.reposicao_pos_candidatos('OBEN');" | tail -1)" "0"
@@ -417,6 +437,17 @@ EXCEPTION WHEN insufficient_privilege THEN RAISE NOTICE 'AINDA_BARRA'; END $$;
 SQL
 )
 case "$R" in *BYPASS_VAZOU*) ok "F9 com NOT(...) o employee-role-NULL ENTRA (bypass) — O1 tem dente";; *) bad "F9 nao vazou ($R)";; esac
+P -q -f "$MIG" >/dev/null
+
+# F10 — o dente do REVOKE: re-concedendo EXECUTE a anon, ele entra (o gate sozinho NAO barra uid NULL).
+P -q -c "GRANT EXECUTE ON FUNCTION public.reposicao_pos_candidatos(text) TO anon;" >/dev/null
+R=$(P -tA 2>&1 <<'SQL' || true
+SET ROLE anon;
+DO $$ BEGIN PERFORM * FROM public.reposicao_pos_candidatos('OBEN'); RAISE NOTICE 'ANON_VAZOU';
+EXCEPTION WHEN insufficient_privilege THEN RAISE NOTICE 'AINDA_BARRA'; END $$;
+SQL
+)
+case "$R" in *ANON_VAZOU*) ok "F10 com GRANT a anon o anonimo ENTRA — P1 tem dente (o REVOKE e essencial)";; *) bad "F10 nao vazou ($R)";; esac
 P -q -f "$MIG" >/dev/null
 
 echo "──────────────────────────────"
