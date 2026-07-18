@@ -71,15 +71,19 @@ RETURNS TABLE (
   omie_codigo_pedido     text,
   data_ciclo             date,
   idade_dias             integer,
-  dano_ativo             boolean,
+  na_janela_7d           boolean,
   valor_total            numeric,
   itens_sem_valor        integer,
   visto_status           text,
   po_no_espelho          boolean,
   fornecedor_nome        text,
   canal_usado            text,
-  -- EVIDÊNCIA encontrada (não decisão): qual sinal de compromisso com o fornecedor existe.
-  compromisso_fornecedor text,
+  -- FATOS binários, sem interpretação (ver o comentário no corpo). O consumidor lê os campos crus.
+  tem_protocolo          boolean,
+  tem_status_portal      boolean,
+  tem_resposta_canal     boolean,
+  tem_canal              boolean,
+  algum_sinal_de_canal   boolean,
   marcador_run_id        uuid,
   marcador_seq           bigint
 )
@@ -161,7 +165,9 @@ BEGIN
     b.data_ciclo,
     b.idade_dias,
     -- DANO ATIVO = a CTE em_transito só soma disparados dos últimos 7d. Idade = PRIORIDADE, não verdade.
-    (b.idade_dias BETWEEN 0 AND 7) AS dano_ativo,
+    -- NOME FACTUAL: a RPC apura a JANELA, nao o dano (um aprovado_aguardando_disparo de 3 dias sem canal
+    -- nenhum recebia dano_ativo=true so pela idade — Codex v9). Quem decide se ha dano e o consumidor.
+    (b.idade_dias BETWEEN 0 AND 7) AS na_janela_7d,
     b.valor_total,
     b.itens_sem_valor,
     -- ⚠️ identidade ILEGÍVEL não é "nunca visto": o LEFT JOIN não pôde nem comparar. Afirmar ausência aqui
@@ -175,31 +181,22 @@ BEGIN
     b.po_no_espelho,
     b.fornecedor_nome,
     b.canal_usado,
-    -- EVIDÊNCIA, não decisão. As regexes provam PRESENÇA de compromisso; a ausência delas NÃO prova
-    -- ausência de compromisso — por isso o rótulo final é 'sem_sinal_conhecido', não 'nenhum'.
-    -- Rótulos FACTUAIS: dizem o que foi OBSERVADO, não o que se conclui. 'protocolado' afirmava que HÁ
-    -- protocolo — mas portal_protocolo='N/A' e {"erro":"protocolo ausente"} também casavam, produzindo
-    -- EVIDÊNCIA FALSA (Codex v4 P1-1: o problema "chave não prova valor" migrou de rota falsa p/ rótulo falso).
-    -- E 'sem_sinal_conhecido' mentia quando canal_usado estava preenchido: o canal É um sinal (P1-2).
-    -- ⚠️ btrim() padrão só remove ESPAÇO ASCII: E'\t' e NBSP passavam como "preenchido" (Codex v5).
-    -- nz() abaixo normaliza TODO whitespace unicode antes de decidir se o campo tem conteúdo.
-    CASE
-      WHEN public.reposicao__trim(b.portal_protocolo) <> ''                             THEN 'protocolo_preenchido'
-      WHEN COALESCE(b.resposta_canal::text, '') ~* 'protocolo'                         THEN 'resposta_menciona_protocolo'
-      -- Limite à DIREITA (senão 'sucessor' casava — Codex v5) E guarda de NEGAÇÃO: 'sem sucesso',
-      -- 'insucesso', 'falha ... sucesso' mencionam a palavra mas são evidência do OPOSTO. Rotular isso como
-      -- 'menciona_sucesso' seria literalmente verdadeiro e ENGANOSO para quem consome a evidência.
-      WHEN lower(public.reposicao__trim(b.status_envio_portal)) ~ '(^|[^a-z])sucesso([^a-z]|$)'
-       AND lower(public.reposicao__trim(b.status_envio_portal)) !~ '(sem|n[ãa]o|in|falh|erro|fail)[^a-z]*sucesso'
-      THEN 'status_menciona_sucesso'
-      WHEN COALESCE(b.resposta_canal::text, '') ~* 'fornecedor.?notificad|notificado'  THEN 'resposta_menciona_notificacao'
-      -- "presente" = tem CONTEÚDO (canal='' NÃO é sinal). portal_protocolo não entra aqui: se tivesse
-      -- conteúdo já teria retornado 'protocolo_preenchido' acima — o ramo era redundante (Codex v6).
-      WHEN public.reposicao__trim(b.canal_usado) <> ''
-        OR public.reposicao__trim(b.status_envio_portal) <> ''
-        OR b.resposta_canal IS NOT NULL                                               THEN 'sinal_presente_nao_reconhecido'
-      ELSE 'sem_dado_de_canal'
-    END AS compromisso_fornecedor,
+    -- 🔑 SEM REGEX SEMÂNTICA (Codex v9). Quatro rodadas seguidas acharam um valor que enganava o rótulo:
+    -- 'su cesso' virava sucesso por coerção de whitespace; 'sem sucesso' casava a regex; e a guarda de
+    -- negação criou falso-NEGATIVO ('login: sucesso' — o `in` casa no fim de "log-IN") e falso-POSITIVO
+    -- ('não houve sucesso' — o [^a-z]* não atravessa "houve"). Interpretar texto LIVRE de terceiro por regex
+    -- não converge, e o rótulo não decide nada desde que a coluna `rota` morreu na v4.
+    -- Ficam só FATOS BINÁRIOS incontestáveis. O humano/PR3 lê os campos crus (portal_protocolo,
+    -- status_envio_portal, resposta_canal, canal_usado) e interpreta com o contexto que a RPC não tem.
+    (public.reposicao__trim(b.portal_protocolo) <> '')    AS tem_protocolo,
+    (public.reposicao__trim(b.status_envio_portal) <> '') AS tem_status_portal,
+    (b.resposta_canal IS NOT NULL)                        AS tem_resposta_canal,
+    (public.reposicao__trim(b.canal_usado) <> '')         AS tem_canal,
+    -- "há algum indício de que o fornecedor foi acionado?" — OR simples, sem inferência.
+    (public.reposicao__trim(b.portal_protocolo) <> ''
+      OR public.reposicao__trim(b.status_envio_portal) <> ''
+      OR b.resposta_canal IS NOT NULL
+      OR public.reposicao__trim(b.canal_usado) <> '')     AS algum_sinal_de_canal,
     b.marcador_run_id,
     b.marcador_seq
   FROM base b
