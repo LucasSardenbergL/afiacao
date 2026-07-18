@@ -59,8 +59,9 @@ export interface QueryPostgrest<T> extends PromiseLike<RespostaPostgrest<T>> {
 }
 
 export interface BancoPostgrest {
-  // deno-lint-ignore no-explicit-any
-  from(tabela: string): QueryPostgrest<any>;
+  // Genérico (e não `QueryPostgrest<unknown>`) para o call-site declarar a forma da linha
+  // que espera de cada tabela — é o que mantém `fetchAll<T>` tipado ponta a ponta.
+  from<T>(tabela: string): QueryPostgrest<T>;
 }
 
 interface LinhaFerramenta {
@@ -117,7 +118,7 @@ export async function montarRelatorios(
   // então percorrer a base de clientes para descobrir isso é trabalho jogado fora.
   // `fetchAll` + `.order('id')` porque o PostgREST capa em 1000 linhas SEM ERRO.
   const ferramentas = await fetchAll<LinhaFerramenta>((de, ate) => {
-    let q = db.from("user_tools").select("*, tool_categories(name)");
+    let q = db.from<LinhaFerramenta>("user_tools").select("*, tool_categories(name)");
     if (userIdAlvo) q = q.eq("user_id", userIdAlvo);
     return q.order("id", { ascending: true }).range(de, ate);
   }, "user_tools");
@@ -138,7 +139,7 @@ export async function montarRelatorios(
   const perfis = new Map<string, LinhaPerfil>();
   for (const lote of emLotes(idsDonos, LOTE_IDS)) {
     const linhas = await fetchAll<LinhaPerfil>((de, ate) =>
-      db.from("profiles").select("user_id, name, email, phone")
+      db.from<LinhaPerfil>("profiles").select("user_id, name, email, phone")
         .in("user_id", lote).order("user_id", { ascending: true }).range(de, ate), "profiles");
     for (const p of linhas) perfis.set(p.user_id, p);
   }
@@ -149,7 +150,7 @@ export async function montarRelatorios(
   const contagens = new Map<string, { afiacoes: number; anomalias: number }>();
   for (const lote of emLotes(ferramentas.map((f) => f.id), LOTE_IDS)) {
     const eventos = await fetchAll<LinhaEvento>((de, ate) =>
-      db.from("tool_events").select("user_tool_id, event_type")
+      db.from<LinhaEvento>("tool_events").select("user_tool_id, event_type")
         .in("user_tool_id", lote).order("id", { ascending: true }).range(de, ate), "tool_events");
     for (const ev of eventos) {
       const c = contagens.get(ev.user_tool_id) ?? { afiacoes: 0, anomalias: 0 };

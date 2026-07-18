@@ -22,14 +22,14 @@ function assert(cond: boolean, msg: string) {
   if (!cond) throw new Error(msg);
 }
 
-// deno-lint-ignore no-explicit-any
-type Linha = Record<string, any>;
+type Linha = Record<string, unknown>;
 
 // Banco de memória fiel aos dois comportamentos do PostgREST que importam aqui:
 //  (1) conta cada ida ao banco (round-trip), para o invariante de custo;
 //  (2) CAPA em 1000 linhas, em silêncio, quando o call-site não usa `.range()`
 //      (docs/agent/database.md; o mesmo footgun que `_shared/paginate.ts` previne).
-function bancoFake(tabelas: Record<string, Linha[]>) {
+// `erroDoBanco` faz toda consulta falhar — para provar que o erro PROPAGA em vez de virar zero.
+function bancoFake(tabelas: Record<string, Linha[]>, erroDoBanco?: string) {
   const idas: string[] = [];
 
   function query(tabela: string): QueryPostgrest<Linha> {
@@ -52,10 +52,13 @@ function bancoFake(tabelas: Record<string, Linha[]>) {
         return q;
       },
       order(coluna, opts) {
+        // Textual: as colunas de ordenação aqui são ids, e `unknown` não compara com `<`.
         const asc = opts?.ascending !== false;
-        linhas.sort((a, b) =>
-          a[coluna] < b[coluna] ? (asc ? -1 : 1) : a[coluna] > b[coluna] ? (asc ? 1 : -1) : 0
-        );
+        linhas.sort((a, b) => {
+          const x = String(a[coluna] ?? "");
+          const y = String(b[coluna] ?? "");
+          return x < y ? (asc ? -1 : 1) : x > y ? (asc ? 1 : -1) : 0;
+        });
         return q;
       },
       range(de, ate) {
@@ -67,7 +70,9 @@ function bancoFake(tabelas: Record<string, Linha[]>) {
         idas.push(tabela);
         // O cap silencioso: sem `.range()` explícito, a cauda além de 1000 some sem erro.
         const corpo = usouRange ? linhas : linhas.slice(0, 1000);
-        const resposta: RespostaPostgrest<Linha> = contarSemCorpo
+        const resposta: RespostaPostgrest<Linha> = erroDoBanco
+          ? { data: null, error: { message: erroDoBanco } }
+          : contarSemCorpo
           ? { data: null, count: corpo.length, error: null }
           : { data: corpo, error: null };
         return Promise.resolve(resposta).then(aoResolver);
@@ -77,7 +82,11 @@ function bancoFake(tabelas: Record<string, Linha[]>) {
   }
 
   return {
-    banco: { from: (tabela: string) => query(tabela) } as BancoPostgrest,
+    banco: {
+      // Duplo cast do TEST DOUBLE: `query` devolve sempre `QueryPostgrest<Linha>`, que não
+      // satisfaz sozinho o `from<T>` genérico da interface real.
+      from: <T>(tabela: string) => query(tabela) as unknown as QueryPostgrest<T>,
+    } as BancoPostgrest,
     idas: () => idas,
     idasA: (tabela: string) => idas.filter((t) => t === tabela).length,
   };
@@ -280,26 +289,15 @@ Deno.test("dono de ferramenta além da linha 1000 NÃO some (cap silencioso do P
 });
 
 Deno.test("erro do banco PROPAGA (fail-closed), não vira relatório vazio nem contagem zero", async () => {
-  const bancoQuebrado: BancoPostgrest = {
-    from: () => {
-      const q = {
-        select: () => q,
-        eq: () => q,
-        in: () => q,
-        order: () => q,
-        range: () => q,
-        // deno-lint-ignore no-explicit-any
-        then: (aoResolver: any) =>
-          Promise.resolve({ data: null, error: { message: "boom" } }).then(aoResolver),
-        // deno-lint-ignore no-explicit-any
-      } as any;
-      return q;
-    },
-  };
+  const f = bancoFake({
+    profiles: [perfil("u1")],
+    user_tools: [ferramenta("t1", "u1")],
+    tool_events: [],
+  }, "boom");
 
   let lancou = false;
   try {
-    await montarRelatorios(bancoQuebrado, { agora: AGORA });
+    await montarRelatorios(f.banco, { agora: AGORA });
   } catch (e) {
     lancou = true;
     assert(
