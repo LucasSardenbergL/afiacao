@@ -10,7 +10,7 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:edges": "deno test supabase/functions/",
+    "test:edges": "deno test --no-remote supabase/functions/",
     "typecheck": "tsc --noEmit -p tsconfig.app.json",
     "typecheck:edges": "deno check supabase/functions/sync-reprocess/index.ts supabase/functions/omie-analytics-sync/index.ts",
     "audit:migrations": "bun scripts/audit-custom-migrations.ts",
