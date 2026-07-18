@@ -14613,6 +14613,7 @@ export type Database = {
           cod_produto: string | null
           cor_id: string
           created_at: string
+          expected_item_count: number | null
           id: string
           id_base: string | null
           id_embalagem: string | null
@@ -14632,6 +14633,7 @@ export type Database = {
           cod_produto?: string | null
           cor_id: string
           created_at?: string
+          expected_item_count?: number | null
           id?: string
           id_base?: string | null
           id_embalagem?: string | null
@@ -14651,6 +14653,7 @@ export type Database = {
           cod_produto?: string | null
           cor_id?: string
           created_at?: string
+          expected_item_count?: number | null
           id?: string
           id_base?: string | null
           id_embalagem?: string | null
