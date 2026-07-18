@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 380
+-- Total de custom migrations: 382
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -419,7 +419,9 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260717120000', 'seg_customer_metrics_gate_staff', '20260717120000_seg_customer_metrics_gate_staff.sql'),
   ('20260717130000', 'seg_customer_metrics_acl_least_privilege', '20260717130000_seg_customer_metrics_acl_least_privilege.sql'),
   ('20260717154500', 'refresh_customer_metrics_automacao', '20260717154500_refresh_customer_metrics_automacao.sql'),
-  ('20260717163000', 'tint_promote_fail_closed_receita_parcial', '20260717163000_tint_promote_fail_closed_receita_parcial.sql')
+  ('20260717160000', 'data_health_customer_metrics_watchdog', '20260717160000_data_health_customer_metrics_watchdog.sql'),
+  ('20260717163000', 'tint_promote_fail_closed_receita_parcial', '20260717163000_tint_promote_fail_closed_receita_parcial.sql'),
+  ('20260717181500', 'carteira_visivel_para_filtra_eligible', '20260717181500_carteira_visivel_para_filtra_eligible.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -1748,7 +1750,10 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('refresh_customer_metrics_automacao', 'function', 'public', 'refresh_customer_metrics', ''),
   ('refresh_customer_metrics_automacao', 'function', 'public', 'request_customer_metrics_refresh', ''),
   ('refresh_customer_metrics_automacao', 'cron_job', 'cron', 'afiacao_customer_metrics_refresh_6h', ''),
-  ('tint_promote_fail_closed_receita_parcial', 'function', 'public', 'tint_promote_sync_run', '')
+  ('data_health_customer_metrics_watchdog', 'function', 'public', '_data_health_compute', ''),
+  ('tint_promote_fail_closed_receita_parcial', 'function', 'public', 'tint_promote_sync_run', ''),
+  ('carteira_visivel_para_filtra_eligible', 'function', 'public', 'carteira_visivel_para', ''),
+  ('carteira_visivel_para_filtra_eligible', 'function', 'public', 'minha_carteira', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -3125,7 +3130,10 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('refresh_customer_metrics_automacao', 'function', 'public', 'refresh_customer_metrics', ''),
   ('refresh_customer_metrics_automacao', 'function', 'public', 'request_customer_metrics_refresh', ''),
   ('refresh_customer_metrics_automacao', 'cron_job', 'cron', 'afiacao_customer_metrics_refresh_6h', ''),
-  ('tint_promote_fail_closed_receita_parcial', 'function', 'public', 'tint_promote_sync_run', '')
+  ('data_health_customer_metrics_watchdog', 'function', 'public', '_data_health_compute', ''),
+  ('tint_promote_fail_closed_receita_parcial', 'function', 'public', 'tint_promote_sync_run', ''),
+  ('carteira_visivel_para_filtra_eligible', 'function', 'public', 'carteira_visivel_para', ''),
+  ('carteira_visivel_para_filtra_eligible', 'function', 'public', 'minha_carteira', '')
 )
 SELECT
   e.migration,

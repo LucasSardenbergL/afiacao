@@ -1,6 +1,6 @@
 // src/lib/carteira/__tests__/rebuild-helpers.test.ts
 import { describe, it, expect } from 'vitest';
-import { computeCarteira, coerceCodigoVendedor, montarClientes, avaliarGuardProof, avaliarGuardResultado, parseBaselineSaudavel, extrairQuarantinados, aplicarMascaras } from '../rebuild-helpers';
+import { computeCarteira, coerceCodigoVendedor, montarClientes, avaliarGuardProof, avaliarGuardResultado, parseBaselineSaudavel, extrairQuarantinados, aplicarMascaras, verificarCobertura } from '../rebuild-helpers';
 
 const HUNTER = 'hunter-uid';
 
@@ -42,7 +42,10 @@ describe('computeCarteira (legado — aliasMap vazio)', () => {
     expect(r.orphanCount).toBe(1);
   });
 
-  it('código que mapeia p/ 2 vendedores distintos → conflito, sem assignment', () => {
+  it('código → 2 vendedores distintos → QUARANTINA (hunter_orphan + eligible=false), NÃO omite', () => {
+    // Antes: não emitia nada → upsert-only preservava o assignment ANTIGO (stale). Agora o membro é
+    // PRESERVADO com eligible=false: zero comissão, invisível, reconciliado. O caller real (edge) torna
+    // este ramo inalcançável filtrando o map por conta; o helper puro não pode CONFIAR nisso (D2).
     const r = computeCarteira(
       [{ customer_user_id: 'c4', omie_codigo_vendedor: 10 }],
       [
@@ -51,10 +54,29 @@ describe('computeCarteira (legado — aliasMap vazio)', () => {
       ],
       HUNTER,
     );
-    expect(r.assignments).toHaveLength(0);
+    expect(r.assignments).toEqual([
+      { customer_user_id: 'c4', owner_user_id: HUNTER, source: 'hunter_orphan', omie_codigo_vendedor: 10, eligible: false },
+    ]);
     expect(r.conflicts).toEqual([
       { customer_user_id: 'c4', omie_codigo_vendedor: 10, candidate_user_ids: ['regina', 'tati'] },
     ]);
+    // o membro NÃO some da saída — é essa a diferença entre "stale" e "preservado inelegível"
+    expect(r.assignments.map((a) => a.customer_user_id)).toContain('c4');
+  });
+
+  it('conflito de mapeamento SEM Hunter (null) → não emite (limitação real: sem owner NOT NULL não há row)', () => {
+    // owner_user_id é NOT NULL e o CHECK de source só aceita omie|hunter_orphan → sem Hunter o helper puro
+    // não consegue emitir a quarentena. Quem fecha esse buraco é o guard D3 no edge (aborta sem Hunter).
+    const r = computeCarteira(
+      [{ customer_user_id: 'c4', omie_codigo_vendedor: 10 }],
+      [
+        { omie_codigo_vendedor: 10, user_id: 'regina' },
+        { omie_codigo_vendedor: 10, user_id: 'tati' },
+      ],
+      null,
+    );
+    expect(r.assignments).toHaveLength(0);
+    expect(r.conflicts).toHaveLength(1);
   });
 
   it('sem Hunter (null) → órfão é contado mas não vira assignment', () => {
@@ -489,5 +511,60 @@ describe('quarantine (integração Fatia 2): doc ambíguo → membro vivo, invis
     const { assignments } = computeCarteira(clientes, [{ omie_codigo_vendedor: 10, user_id: 'regina' }], HUNTER);
     const ledger = [{ user_id: 'a', identity_state: 'verified' }, { user_id: 'b', identity_state: 'verified' }];
     expect(aplicarMascaras(assignments, new Set(), extrairQuarantinados(ledger))).toEqual(assignments);
+  });
+});
+
+describe('verificarCobertura (pós-condição estrutural — D4)', () => {
+  const rows = (ids: string[]) => ids.map((customer_user_id) => ({ customer_user_id }));
+
+  it('saída cobre EXATAMENTE os membros → ok', () => {
+    expect(verificarCobertura(['a', 'b', 'c'], rows(['a', 'b', 'c']))).toEqual({ ok: true, motivo: null });
+  });
+
+  it('ordem diferente também é ok (compara CONJUNTO, não sequência)', () => {
+    expect(verificarCobertura(['a', 'b', 'c'], rows(['c', 'a', 'b'])).ok).toBe(true);
+  });
+
+  it('membro do ledger SEM row → ok=false (é o stale: upsert-only deixaria o assignment antigo vivo)', () => {
+    const r = verificarCobertura(['a', 'b', 'c'], rows(['a', 'c']));
+    expect(r.ok).toBe(false);
+    expect(r.motivo).toMatch(/1 membro.*sem row/);
+    expect(r.motivo).toContain('b'); // aponta QUEM sumiu
+  });
+
+  it('row p/ NÃO-membro do ledger → ok=false', () => {
+    const r = verificarCobertura(['a', 'b'], rows(['a', 'b', 'x']));
+    expect(r.ok).toBe(false);
+    expect(r.motivo).toMatch(/nao-membro/);
+    expect(r.motivo).toContain('x');
+  });
+
+  it('customer_user_id duplicado na saída → ok=false', () => {
+    const r = verificarCobertura(['a', 'b'], rows(['a', 'b', 'b']));
+    expect(r.ok).toBe(false);
+    expect(r.motivo).toMatch(/duplicado/);
+  });
+
+  it('ledger vazio + saída vazia → ok (degenerado, mas coerente)', () => {
+    expect(verificarCobertura([], []).ok).toBe(true);
+  });
+});
+
+describe('composição computeCarteira + verificarCobertura (o erro catastrófico: membro sumir)', () => {
+  it('conflito de mapeamento: o membro conflitado PERMANECE na saída → cobertura ok', () => {
+    // Se o conflito voltasse a ser OMITIDO, este membro sumiria da saída e a cobertura acusaria — é
+    // exatamente o mecanismo do A′. O par computeCarteira+verificarCobertura prende essa regressão.
+    const membroIds = ['c-limpo', 'c-conflito'];
+    const clientes = membroIds.map((id) => ({ customer_user_id: id, omie_codigo_vendedor: id === 'c-limpo' ? 10 : 20 }));
+    const map = [
+      { omie_codigo_vendedor: 10, user_id: 'regina' },
+      { omie_codigo_vendedor: 20, user_id: 'regina' },
+      { omie_codigo_vendedor: 20, user_id: 'tati' }, // 20 → 2 vendedores = conflito
+    ];
+    const { assignments } = computeCarteira(clientes, map, HUNTER);
+    expect(verificarCobertura(membroIds, assignments)).toEqual({ ok: true, motivo: null });
+    const conflitado = assignments.find((a) => a.customer_user_id === 'c-conflito');
+    expect(conflitado).toBeDefined();
+    expect(conflitado!.eligible).toBe(false); // preservado, mas inelegível (zero comissão)
   });
 });

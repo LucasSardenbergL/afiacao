@@ -51,11 +51,15 @@ type Resolved =
  *   com o vendedor herdado (ou Hunter se órfão); os clones do grupo ficam `eligible=false` (escondidos).
  * - **Conflito** (≥2 vendedores distintos no grupo, OU código→2 vendedores no map): NÃO canonicaliza —
  *   processa CADA membro como legado (todos `eligible=true`, dono próprio). NUNCA esconde um membro sem
- *   unificar (evita "cliente some" / estado stale) + registra em `conflicts`. (Membro com conflito de
- *   MAPEAMENTO não é emitido — comportamento legado.)
+ *   unificar (evita "cliente some" / estado stale) + registra em `conflicts`. Membro com conflito de
+ *   MAPEAMENTO é QUARANTINADO (Hunter inerte + `eligible=false`), nunca omitido — omitir + upsert-only
+ *   deixaria o assignment antigo vivo (stale). O caller real torna esse ramo inalcançável filtrando o
+ *   `omie_vendedor_map` por conta (`UNIQUE(omie_account, omie_codigo_vendedor)` ⇒ código→vendedor é função
+ *   DENTRO da conta); o helper é puro e não pode CONFIAR nisso — daí a quarentena defensiva.
  *
  * `chainViolations` não-vazio (canônico que também é alias) → o caller deve abortar o rebuild.
  */
+// MIRROR-START carteira-compute — computeCarteira espelhado verbatim de src/lib/carteira/rebuild-helpers.ts (P0-B-bis)
 export function computeCarteira(
   clientes: OmieClienteRow[],
   vendedorMap: VendedorMapRow[],
@@ -109,10 +113,19 @@ export function computeCarteira(
     if (v.kind === 'omie') {
       assignments.push({ customer_user_id: c.customer_user_id, owner_user_id: v.user, source: 'omie', omie_codigo_vendedor: v.code, eligible });
     } else if (v.kind === 'orphan') {
-      if (eligible) orphanCount++; // conta só órfão VISÍVEL (clone escondido não infla a métrica)
+      // conta só órfão VISÍVEL (clone escondido não infla a métrica)
+      if (eligible) orphanCount++;
       if (hunterUserId) assignments.push({ customer_user_id: c.customer_user_id, owner_user_id: hunterUserId, source: 'hunter_orphan', omie_codigo_vendedor: c.omie_codigo_vendedor ?? null, eligible });
+    } else if (hunterUserId) {
+      // CONFLITO de mapeamento (código → 2+ vendedores): QUARANTINA em vez de omitir. Omitir + upsert-only
+      // (onConflict customer_user_id, sem DELETE) preservaria o assignment ANTIGO — vendedor errado, válido,
+      // cobrando comissão: o furo que refutou o A′. Mesmo padrão da Fatia 2 (membro preservado, eligible=false,
+      // zero comissão, reversível). Hunter é PLACEHOLDER inerte (owner_user_id é NOT NULL e o CHECK de source
+      // só aceita omie|hunter_orphan → zero DDL), NÃO um palpite de dono: eligible=false já nega o efeito.
+      // Preserva o código ambíguo p/ observabilidade (qual code causou). `eligible` do caller é ignorado de
+      // propósito — conflito nunca é elegível, nem no ramo do clone.
+      assignments.push({ customer_user_id: c.customer_user_id, owner_user_id: hunterUserId, source: 'hunter_orphan', omie_codigo_vendedor: v.code, eligible: false });
     }
-    // v.kind === 'conflict' → não emite (legado): código mapeado p/ 2 vendedores.
   };
 
   for (const canonicalId of canonicalIds) {
@@ -163,6 +176,7 @@ export function computeCarteira(
 
   return { assignments, conflicts, orphanCount, chainViolations };
 }
+// MIRROR-END
 
 // ── P0-B-bis: o carteira-rebuild lê a LISTA de membros do carteira_membership_ledger (Fatia 1, acumulador)
 // e o VENDEDOR da PROOF oben omie_customer_account_map_fresco(account='oben') — nem lista nem vendedor vêm
@@ -217,6 +231,40 @@ export function aplicarMascaras(
     ...a,
     eligible: a.eligible && !flaggeds.has(a.customer_user_id) && !quarantinados.has(a.customer_user_id),
   }));
+}
+export function verificarCobertura(
+  membroIds: string[],
+  rows: Array<{ customer_user_id: string }>,
+): { ok: boolean; motivo: string | null } {
+  // PÓS-CONDIÇÃO ESTRUTURAL (tripwire): a saída cobre EXATAMENTE o conjunto de membros do ledger.
+  // Por que existe: "membro não chegou na saída" é UMA classe de bug — o conflito de mapeamento, o Hunter
+  // ausente e qualquer omissão futura são instâncias dela — e o upsert-only (onConflict customer_user_id,
+  // sem DELETE) transforma toda omissão em assignment ANTIGO vivo (vendedor errado, elegível, cobrando
+  // comissão: o furo que refutou o A′). Os guards de cardinalidade NÃO pegam isto: contam linhas, e o
+  // membro omitido some silenciosamente sem mudar contagem nenhuma. Aqui provamos o CONJUNTO.
+  // Fail-closed: em anomalia o caller ABORTA sem escrever — nada novo entra, o run fica ruidoso, e o
+  // estado velho é preservado por decisão explícita em vez de por omissão silenciosa.
+  const esperados = new Set(membroIds);
+  const vistos = new Set<string>();
+  const duplicados = new Set<string>();
+  const extras = new Set<string>();
+  for (const r of rows) {
+    if (vistos.has(r.customer_user_id)) duplicados.add(r.customer_user_id);
+    vistos.add(r.customer_user_id);
+    if (!esperados.has(r.customer_user_id)) extras.add(r.customer_user_id);
+  }
+  const faltantes: string[] = [];
+  for (const id of esperados) if (!vistos.has(id)) faltantes.push(id);
+  if (faltantes.length > 0) {
+    return { ok: false, motivo: `cobertura: ${faltantes.length} membro(s) do ledger sem row (ex.: ${faltantes.slice(0, 3).join(', ')}) — upsert-only deixaria o assignment ANTIGO vivo (stale)` };
+  }
+  if (extras.size > 0) {
+    return { ok: false, motivo: `cobertura: ${extras.size} row(s) p/ nao-membro do ledger (ex.: ${[...extras].slice(0, 3).join(', ')})` };
+  }
+  if (duplicados.size > 0) {
+    return { ok: false, motivo: `cobertura: ${duplicados.size} customer_user_id duplicado(s) na saida (ex.: ${[...duplicados].slice(0, 3).join(', ')})` };
+  }
+  return { ok: true, motivo: null };
 }
 export function avaliarGuardProof(m: { proofCrua: number; proofFresca: number; comVendedor: number }): { abortar: boolean; motivo: string | null } {
   if (m.proofFresca === 0) {

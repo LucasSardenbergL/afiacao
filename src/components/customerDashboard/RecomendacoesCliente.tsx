@@ -7,7 +7,7 @@ import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Clock, CalendarClock, PiggyBank, ChevronRight } from 'lucide-react';
+import { Clock, CalendarClock, CalendarPlus, PiggyBank, ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/contexts/AuthContext';
 import { useDeliveredOrders12m } from '@/queries/useOrders';
@@ -89,6 +89,27 @@ function RecomendacaoCard({
         onClick={() => {
           track('recomendacoes.cta', { tipo: rec.tipo });
           navigate('/savings');
+        }}
+      />
+    );
+  }
+
+  if (rec.tipo === 'nunca_afiada') {
+    const n = rec.ferramentas.length;
+    return (
+      <CardBase
+        icon={<CalendarPlus className="w-5 h-5 text-status-info" />}
+        iconBg="bg-status-info-bg"
+        titulo={
+          n === 1
+            ? '1 ferramenta cadastrada, ainda sem afiação'
+            : `${n} ferramentas cadastradas, ainda sem afiação`
+        }
+        descricao={`${nomesResumidos(rec.ferramentas)} — agende a primeira afiação para começar a acompanhar o fio.`}
+        ctaLabel="Agendar afiação"
+        onClick={() => {
+          track('recomendacoes.cta', { tipo: rec.tipo });
+          navigate('/new-order');
         }}
       />
     );

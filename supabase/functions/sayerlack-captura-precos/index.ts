@@ -61,10 +61,13 @@ export default async ({ page, context }) => {
   const classificarLinhasRascunho = ${classificarLinhasRascunho.toString()};
 
   // === Budget management (deadline global, aborto limpo) ===
-  // Supabase edge tem wall-clock ~400s; Browserless Prototyping aceita mais.
-  // 340s interno + 20s de margem antes do ?timeout=360000 da URL. Sem reserva de
-  // submit: esta função não tem etapa de finalização — o que sobra é só o return.
-  const HARD_CEILING_MS = 340_000;
+  // Supabase edge tem wall-clock ~400s e a PERSISTÊNCIA pós-browser (uploads +
+  // inserts) leva ~10-20s: 300s interno + 330s na URL + 335s no abort do fetch
+  // deixam ≥60s de margem real. Run full 7b452dcb morreu órfão com 340s (a edge
+  // estourou o wall-clock DURANTE a persistência — running eterno, 0 gravado);
+  // full que não couber fecha PARCIAL limpo e a ordenação por última tentativa
+  // gira a cauda nos retries dos dias 11/12 (design do cron mensal).
+  const HARD_CEILING_MS = 300_000;
   const RETURN_GUARD_MS = 2_000;
   const ITEM_MIN_BUDGET_MS = 5_000;
   const deadline = t0 + HARD_CEILING_MS;
@@ -173,29 +176,39 @@ export default async ({ page, context }) => {
     };
   }, skuEsperado);
 
-  // Cancela a linha em edição (X vermelho). Spike-B 50e669c7: o portal pode
-  // auto-gravar a linha na seleção (Seq preenchido) e o X de linha gravada
-  // abre confirm() nativo — aceito pelo handler page.on('dialog') do runFlow.
+  // Remove a ÚLTIMA linha da grade. Spike-B 91de2708 (screenshot): o portal
+  // AUTO-GRAVA a linha na seleção do item (Seq preenchido) e em modo edição o
+  // ✖ vermelho só CANCELA A EDIÇÃO — a linha gravada FICA. A remoção real é a
+  // LIXEIRA (fa-trash), visível fora do modo edição (comprovado manualmente
+  // pelo founder: lixeira + confirm removeu e persistiu). Por isso 2 tiers:
+  //   tier 'remocao' — trash/excluir/delete: remove de fato (confirm aceito
+  //     pelo handler page.on('dialog') do runFlow);
+  //   tier 'edicao' — X/cancel: só sai do modo edição; o chamador re-tenta a
+  //     remoção em seguida (a lixeira aparece fora da edição).
   // ESCOPO ESTRITO (achado Codex P0): só #btnCancelarItem OU botões DENTRO da
-  // última linha (a em edição). NUNCA a tabela/tfoot inteira — um matcher amplo
-  // fora da linha poderia acertar um botão errado do formulário. Sem fa-trash
-  // (lixeira é de linha GRAVADA; a captura nunca grava).
-  const cancelarLinhaEdicao = () => page.evaluate(function() {
+  // última linha. NUNCA a tabela/tfoot inteira — um matcher amplo fora da
+  // linha poderia acertar um botão errado do formulário.
+  const removerUltimaLinha = () => page.evaluate(function() {
     function visivel(el) { return el && el.offsetParent !== null; }
-    var byId = document.querySelector('#btnCancelarItem');
-    if (visivel(byId)) { byId.click(); return { clicked: true, via: 'btnCancelarItem' }; }
+    function blob(b) {
+      return ((b.className || '') + ' ' + (b.getAttribute('title') || '') + ' ' + (b.getAttribute('aria-label') || '') + ' ' + (b.innerHTML || '')).toLowerCase();
+    }
     var table = document.querySelector('#datatable_itens');
     if (!table) return { clicked: false, motivo: 'sem_tabela' };
     var rows = table.querySelectorAll('tbody tr');
-    if (!rows.length) return { clicked: true, via: 'sem_linha' };
+    if (!rows.length) return { clicked: true, tier: 'sem_linha' };
     var cands = Array.from(rows[rows.length - 1].querySelectorAll('button, a')).filter(visivel);
-    var alvo = cands.find(function(b){
-      var blob = ((b.className || '') + ' ' + (b.getAttribute('title') || '') + ' ' + (b.getAttribute('aria-label') || '') + ' ' + (b.innerHTML || '')).toLowerCase();
-      return /cancel|fa-times|fa-ban|times-circle|btn-danger/.test(blob);
-    });
-    if (alvo) {
-      alvo.click();
-      return { clicked: true, via: 'linha_match', debug: (alvo.outerHTML || '').substring(0, 120) };
+    var remocao = cands.find(function(b){ return /fa-trash|trash|lixeira|excluir|delete|remover/.test(blob(b)); });
+    if (remocao) {
+      remocao.click();
+      return { clicked: true, tier: 'remocao', debug: (remocao.outerHTML || '').substring(0, 120) };
+    }
+    var byId = document.querySelector('#btnCancelarItem');
+    if (visivel(byId)) { byId.click(); return { clicked: true, tier: 'edicao', via: 'btnCancelarItem' }; }
+    var edicao = cands.find(function(b){ return /cancel|fa-times|fa-ban|times-circle|btn-danger/.test(blob(b)); });
+    if (edicao) {
+      edicao.click();
+      return { clicked: true, tier: 'edicao', debug: (edicao.outerHTML || '').substring(0, 120) };
     }
     return {
       clicked: false,
@@ -222,21 +235,30 @@ export default async ({ page, context }) => {
   });
 
   // Cancelamento é PROVA, não best-effort (Codex P0): sem comprovação (clique +
-  // 0 linhas), aborta o run inteiro — o Deno não persiste nada sem essa prova.
-  // Poll (não sleep fixo): a remoção pode ser AJAX/confirm assíncrono; sai no
-  // primeiro rows==0, aborta se não zerar dentro da janela (spike-B 50e669c7).
+  // contagem no alvo), aborta o run inteiro — o Deno não persiste nada sem essa
+  // prova. Até 3 fases de clique (spike-B 91de2708): a 1ª pode só SAIR do modo
+  // edição (tier 'edicao'); as seguintes acham a lixeira e removem de fato.
+  // Poll por fase (não sleep fixo): remoção é roundtrip AJAX no portal legado.
   const exigirCancelamento = async (i, contexto, rowsAlvo) => {
     const alvo = typeof rowsAlvo === 'number' ? rowsAlvo : 0;
-    const cancel = await cancelarLinhaEdicao().catch(function() { return { clicked: false, motivo: 'evaluate_erro' }; });
+    const fases = [];
     let rowsApos = -1;
-    for (let tent = 0; tent < 16; tent++) {
-      await sleep(300);
-      rowsApos = await contarRows().catch(function() { return -1; });
+    for (let fase = 0; fase < 3; fase++) {
+      const clique = await removerUltimaLinha().catch(function() { return { clicked: false, motivo: 'evaluate_erro' }; });
+      fases.push(clique);
+      const polls = clique && clique.tier === 'remocao' ? 34 : 8; // ~10s remoção; ~2.4s pós-saída-de-edição
+      for (let tent = 0; tent < polls; tent++) {
+        await sleep(300);
+        rowsApos = await contarRows().catch(function() { return -1; });
+        if (rowsApos === alvo) break;
+      }
       if (rowsApos === alvo) break;
+      if (!(clique && clique.clicked)) break; // nada clicável — re-tentar não muda
+      await sleep(500);
     }
-    trace.push({ step: 'item_' + i + '_cancel_' + contexto, cancel, rows_apos: rowsApos, rows_alvo: alvo, t: Date.now() - t0 });
-    if (!(cancel && cancel.clicked) || rowsApos !== alvo) {
-      const err = new Error('cancelamento não comprovado no item ' + i + ' (' + contexto + '): rows_apos=' + rowsApos + ' alvo=' + alvo);
+    trace.push({ step: 'item_' + i + '_cancel_' + contexto, fases, rows_apos: rowsApos, rows_alvo: alvo, t: Date.now() - t0 });
+    if (rowsApos !== alvo) {
+      const err = new Error('cancelamento não comprovado no item ' + i + ' (' + contexto + '): rows_apos=' + rowsApos + ' alvo=' + alvo + ' fases=' + fases.map(function(f){ return (f && f.tier) || 'sem_clique'; }).join('>'));
       err.code = 'CANCEL_NAO_COMPROVADO';
       throw err;
     }
@@ -886,9 +908,9 @@ Deno.serve(async (req) => {
     let httpErr: string | null = null;
     try {
       const ctrl = new AbortController();
-      const timeout = setTimeout(() => ctrl.abort(), 380_000);
+      const timeout = setTimeout(() => ctrl.abort(), 335_000);
       const resp = await fetch(
-        `https://chrome.browserless.io/function?token=${BROWSERLESS_TOKEN}&timeout=360000`,
+        `https://chrome.browserless.io/function?token=${BROWSERLESS_TOKEN}&timeout=330000`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -1027,6 +1049,16 @@ Deno.serve(async (req) => {
         erroFinal = `${erroFinal ? erroFinal + " | " : ""}insert de run-items falhou: ${itemErr.message}`;
         resumo = { ...resumo, status: "falha" };
       }
+    }
+
+    // Observabilidade de falha (spike-B 91de2708: ficamos cegos sem o trace —
+    // o screenshot mostra o estado final, não a SEQUÊNCIA): run falho carrega
+    // os últimos passos do trace do browser no próprio erro (truncado).
+    if (resumo.status === "falha" && Array.isArray(envelope.trace) && envelope.trace.length > 0) {
+      try {
+        const tail = JSON.stringify(envelope.trace.slice(-8)).slice(0, 1600);
+        erroFinal = `${erroFinal ?? "falha"} | trace_tail: ${tail}`;
+      } catch { /* trace não-serializável não pode derrubar o fechamento do run */ }
     }
 
     const evidencia = await uploadEvidencia(supabase, runId, bResp?.screenshot ?? null);
