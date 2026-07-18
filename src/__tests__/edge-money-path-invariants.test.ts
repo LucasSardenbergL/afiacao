@@ -1368,14 +1368,27 @@ describe('guardrail money-path: omie-sync-sku-items (fila de leadtime)', () => {
 // ausentes do espelho: colacor 5.148/5.148 (100%), colacor_sc 3.604/5.275 (68%), oben 0/5.238 (0%).
 // Rodar o snapshot de colacor/colacor_sc reportava clientes VINCULADOS como não-vinculados em massa;
 // só oben roda hoje, o que mascarava o furo. Agora o Set vem da fresca com .eq("account", empresa).
-// Os outros omie_clientes deste edge NÃO migram nesta PR e o motivo é estrutural, não esquecimento:
-//   • :238 fetchOmieClienteUserMap alimenta o upsertByUser CODE-FIRST → é a leitura de suporte do
-//     WRITER do espelho (:515), par indivisível: morre junto com ele na Fatia 4;
-//   • :1669 fetchAlvosSemProfile / :1890 fetchOmieCodigoPorUser operam sobre os CLONES (user sem
-//     profile). Medido: 1.633 alvos pelo espelho, 0 pela proof (clone não tem linha lá), 1.633 pelo
-//     ledger — mas o ledger não tem omie_codigo_cliente, e essas funções precisam do par
-//     (clone → código). Migrá-las p/ a proof zeraria syncBackfillCadastro e mapaConsolidacao em
-//     SILÊNCIO. Bloqueio de design escalado — o DROP (Fatia 5) depende de resolvê-lo.
+// O omie_clientes que sobra neste edge é o par indivisível do WRITER: :238 fetchOmieClienteUserMap
+// alimenta o upsertByUser CODE-FIRST do upsert (:515) → morrem juntos na Fatia 4.
+//
+// ── PR-C: as 2 funções de CLONE foram DELETADAS (não migradas) ────────────────────────────────
+// fetchAlvosSemProfile/fetchOmieCodigoPorUser (+ syncBackfillCadastro/mapaConsolidacao) liam o
+// espelho para achar clones (user sem profile). O bloqueio "só o espelho tem o par (clone→código)"
+// era FALSO: customer_canonical_alias.alias_omie_codigo tem o par e o ledger tem a data. Paridade
+// medida em prod (2026-07-18): `ledger ⋈ alias` = 1.633 = espelho, diferença simétrica 0 nos DOIS
+// sentidos, sobre a tripla (user_id, código, created_at/first_seen_at).
+// Não foram migradas porque as duas eram INVOCÁVEIS-BOMBA, não capacidade viva:
+//   • syncBackfillCadastro inseria 0 PERMANENTEMENTE (telemetria do único run, 12/06:
+//     alvos_total=1633 → doc_em_outro_profile=1633 → seriam_inseridos=0 — o gêmeo bloqueia por
+//     documento) e dar profile ao clone é PROIBIDO pela spec da consolidação (criaria 2 entradas
+//     para o mesmo cliente);
+//   • mapaConsolidacao gravava status:'inactive' FIXO com dry_run default FALSE → re-executá-la
+//     é, verbatim, o rollback da B-lite documentado no spec ("update customer_canonical_alias set
+//     status='inactive' + rodar o rebuild"): rebaixaria os 1.633 aliases active de uma vez.
+// Nenhuma tinha cron (0 de 82) nem chamador de UI; rodaram 1x cada, em jun/2026. Deletá-las
+// PRESERVA a canonicalização completa (follow-up legítimo de produto, database.md §clones): ela
+// consome customer_canonical_alias como ENTRADA, e o mapa era o único capaz de destruí-la.
+// A Fatia 2 (identity_state) não depende delas — lê a TABELA de aliases, não a função que a gerou.
 const OMIE_ANALYTICS = 'supabase/functions/omie-analytics-sync/index.ts';
 
 describe('guardrail money-path: snapshot de não-vinculados lê a proof por conta (Fatia 3-edges PR-B)', () => {
@@ -1411,13 +1424,30 @@ describe('guardrail money-path: snapshot de não-vinculados lê a proof por cont
     ).not.toMatch(/fetch omie_clientes codigos/);
   });
 
-  it('os omie_clientes restantes são o writer + as 2 funções de CLONE (bloqueadas), nunca mais', () => {
-    // Trava o escopo: 4 = :238 (leitura de suporte do writer) + :515 (upsert) + fetchAlvosSemProfile
-    // + fetchOmieCodigoPorUser. Se virar 5, alguém reabriu uma leitura do espelho neste edge.
+  it('o que resta de omie_clientes é SÓ o par do writer — nunca mais', () => {
+    // Trava o escopo: 2 = a leitura de suporte CODE-FIRST + o upsert. Era 4 antes da PR-C (as 2
+    // funções de clone). Se virar 3, alguém reabriu uma leitura do espelho neste edge.
     expect(
       count(src, '.from("omie_clientes")'),
       'omie_clientes mudou de contagem neste edge — leitura nova do espelho ou migração não registrada aqui',
-    ).toBe(4);
+    ).toBe(2);
+  });
+
+  it('PR-C: as 2 funções de clone não voltaram (re-adicioná-las rearma o rollback da B-lite)', () => {
+    // mapaConsolidacao gravava status:'inactive' fixo com dry_run default false: uma invocação
+    // rebaixaria os 1.633 aliases ATIVOS de uma vez — o rollback da consolidação, por acidente.
+    for (const simbolo of [
+      'fetchAlvosSemProfile',
+      'fetchOmieCodigoPorUser',
+      'syncBackfillCadastro',
+      'mapaConsolidacao',
+      'start_backfill_cadastro',
+    ]) {
+      expect(
+        src,
+        `REGRESSÃO: ${simbolo} voltou ao edge — reabre leitura do espelho e rearma o rollback da B-lite (ver PR-C)`,
+      ).not.toContain(simbolo);
+    }
   });
 });
 
