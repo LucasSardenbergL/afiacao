@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 395
+-- Total de custom migrations: 397
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -436,7 +436,9 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260718170000', 'register_carteira_member', '20260718170000_register_carteira_member.sql'),
   ('20260718170000', 'tint_fase1c_expected_item_count', '20260718170000_tint_fase1c_expected_item_count.sql'),
   ('20260718180000', 'fu7b_pode_ver_carteira_completa_privado', '20260718180000_fu7b_pode_ver_carteira_completa_privado.sql'),
-  ('20260718213000', 'tint_formula_canonica', '20260718213000_tint_formula_canonica.sql')
+  ('20260718213000', 'tint_formula_canonica', '20260718213000_tint_formula_canonica.sql'),
+  ('20260721190000', 'reposicao_pos_candidatos', '20260721190000_reposicao_pos_candidatos.sql'),
+  ('20260721190001', 'pausa_cron_relatorio_mensal_ferramentas', '20260721190001_pausa_cron_relatorio_mensal_ferramentas.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -1781,7 +1783,10 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('register_carteira_member', 'function', 'public', 'register_carteira_member', ''),
   ('tint_fase1c_expected_item_count', 'function', 'public', 'tint_promote_sync_run', ''),
   ('fu7b_pode_ver_carteira_completa_privado', 'function', 'public', 'pode_ver_carteira_completa', ''),
-  ('tint_formula_canonica', 'view', 'public', 'v_tint_formula_canonica', '')
+  ('tint_formula_canonica', 'view', 'public', 'v_tint_formula_canonica', ''),
+  ('reposicao_pos_candidatos', 'function', 'public', 'reposicao__trim', ''),
+  ('reposicao_pos_candidatos', 'function', 'public', 'reposicao__po_id', ''),
+  ('reposicao_pos_candidatos', 'function', 'public', 'reposicao_pos_candidatos', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -3174,7 +3179,10 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('register_carteira_member', 'function', 'public', 'register_carteira_member', ''),
   ('tint_fase1c_expected_item_count', 'function', 'public', 'tint_promote_sync_run', ''),
   ('fu7b_pode_ver_carteira_completa_privado', 'function', 'public', 'pode_ver_carteira_completa', ''),
-  ('tint_formula_canonica', 'view', 'public', 'v_tint_formula_canonica', '')
+  ('tint_formula_canonica', 'view', 'public', 'v_tint_formula_canonica', ''),
+  ('reposicao_pos_candidatos', 'function', 'public', 'reposicao__trim', ''),
+  ('reposicao_pos_candidatos', 'function', 'public', 'reposicao__po_id', ''),
+  ('reposicao_pos_candidatos', 'function', 'public', 'reposicao_pos_candidatos', '')
 )
 SELECT
   e.migration,
