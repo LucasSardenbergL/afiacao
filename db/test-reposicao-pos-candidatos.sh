@@ -217,9 +217,15 @@ INSERT INTO public.pedido_compra_sugerido
  (172,'OBEN','disparado','172', now()::date-50,'F',NULL,NULL,NULL,'{"a":1}'::jsonb),
  (173,'OBEN','disparado','173', now()::date-50,'F',NULL,'PROTO-1',NULL,NULL),
  (174,'OBEN','disparado','174', now()::date-50,'F',NULL,NULL,NULL,'null'::jsonb),
- (175,'OBEN','disparado','175', now()::date-50,'F','omie',NULL,NULL,NULL);
+ (175,'OBEN','disparado','175', now()::date-50,'F','omie',NULL,NULL,NULL),
+ -- Codex v14: whitespace-only nos campos de presenca (M3/M4/M6 so testavam vazio ou positivo)
+ (180,'OBEN','disparado','180', now()::date-50,'F',NULL,NULL,E'\t  ',NULL),
+ (181,'OBEN','disparado','181', now()::date-50,'F',E'\t  ',NULL,NULL,NULL),
+ -- Codex v14: id ALTO + recente + valor ALTO -> tem de vir PRIMEIRO na ordem real (com ORDER BY pedido_id
+ -- viria por ultimo). O cand() reordena, entao so um assert que le a ordem CRUA pega esse mutante.
+ (900,'OBEN','disparado','900', now()::date-1,'F','omie',NULL,NULL,NULL);
 -- multi-item TOTALMENTE valorado: mata o mutante sum() -> max() (Codex v9)
-INSERT INTO public.pedido_compra_item (pedido_id,sku_codigo_omie,valor_linha) VALUES (167,'P',10.00),(167,'Q',20.00),(175,'R',NULL),(175,'S',NULL);
+INSERT INTO public.pedido_compra_item (pedido_id,sku_codigo_omie,valor_linha) VALUES (167,'P',10.00),(167,'Q',20.00),(175,'R',NULL),(175,'S',NULL),(900,'Z',9999.00);
 -- empresa MINUSCULA armazenada: mata o mutante que remove upper() de p.empresa (Codex v9)
 INSERT INTO public.pedido_compra_sugerido (id,empresa,status,omie_pedido_compra_id,data_ciclo,fornecedor_nome,canal_usado)
 VALUES (168,'oben','disparado','168', now()::date-50,'F','omie');
@@ -250,10 +256,10 @@ case "$R" in
   *"operator does not exist"*|*"does not exist"*|*ERROR*) bad "E1 a RPC QUEBROU em runtime: $R";;
   *) ok "E1 a RPC EXECUTA com empresa TEXT × ENUM (comparação com cast explícito)";;
 esac
-eq "E2 aceita a empresa em caixa/espaço divergentes (upper+btrim)" "$(Pq -c "SELECT count(*) FROM public.reposicao_pos_candidatos('  oben ');" | tail -1)" "49"
+eq "E2 aceita a empresa em caixa/espaço divergentes (upper+btrim)" "$(Pq -c "SELECT count(*) FROM public.reposicao_pos_candidatos('  oben ');" | tail -1)" "52"
 
 echo "── Bloco B: quem é candidato ──"
-eq "B1 candidatos = todos os não-vistos no marcador" "$(cand)" "101,102,103,104,105,110,111,112,113,114,115,116,117,118,119,120,121,122,123,124,130,131,132,133,134,135,136,139,140,141,142,146,147,151,160,161,162,163,164,165,166,167,168,170,171,172,173,174,175"
+eq "B1 candidatos = todos os não-vistos no marcador" "$(cand)" "101,102,103,104,105,110,111,112,113,114,115,116,117,118,119,120,121,122,123,124,130,131,132,133,134,135,136,139,140,141,142,146,147,151,160,161,162,163,164,165,166,167,168,170,171,172,173,174,175,180,181,900"
 eq "B2 PO visto NO marcador NÃO é candidato (100 fora)" "$(Pq -c "SELECT count(*) FROM public.reposicao_pos_candidatos('OBEN') WHERE pedido_id=100;" | tail -1)" "0"
 eq "B3 visto em run ANTERIOR é candidato, marcado como tal" "$(campo 101 visto_status)" "visto_em_outro_run"
 eq "B4 NUNCA carimbado é candidato, marcado como tal" "$(campo 102 visto_status)" "sem_registro_last_seen"
@@ -381,6 +387,15 @@ eq "Q5 marcador_run_id e retornado (nenhum assert lia; ->NULL::uuid passava)" "$
 eq "Q6 data_ciclo e retornada (na_janela_7d e calculada a parte, entao ->NULL passava)" "$(campo 101 data_ciclo)" "$(Pq -c "SELECT (now()::date-2)::text;" | tail -1)"
 eq "Q7 idade_dias e retornada (idem)" "$(campo 101 idade_dias)" "2"
 
+echo "── Bloco R: os 4 ultimos mutantes (Codex v14) ──"
+eq "R1 pedido SEM ITEM ALGUM -> valor_total NULL (mata COALESCE(sum,0), que FABRICA zero)" "$(Pq -c "SELECT COALESCE(valor_total::text,'NULL') FROM public.reposicao_pos_candidatos('OBEN') WHERE pedido_id=139;" | tail -1)" "NULL"
+eq "R2 status so com TAB/espaco -> tem_status_portal FALSE (mata a remocao do trim)" "$(campo 180 tem_status_portal)" "f"
+eq "R3 canal so com TAB/espaco -> tem_canal FALSE (M6 so usava string vazia)" "$(campo 181 tem_canal)" "f"
+eq "R4 canal/status so com whitespace nao acendem algum_sinal_de_canal" "$(campo 181 algum_sinal_de_canal)" "f"
+# ORDEM: o cand() reordena por pedido_id, entao trocar o ORDER BY da RPC passava verde. Aqui leio a ordem
+# REAL: o 900 (recente + maior valor) tem de vir PRIMEIRO, embora seja o MAIOR id.
+eq "R5 ORDEM da RPC = prioridade (recente+valioso primeiro), nao pedido_id" "$(Pq -c "SELECT pedido_id FROM public.reposicao_pos_candidatos('OBEN') LIMIT 1;" | tail -1)" "900"
+
 echo "── Bloco A: marcador FAIL-CLOSED ──"
 P -q -c "UPDATE public.reposicao_pedidos_compra_run SET volume_ok=false;" >/dev/null
 eq "A1 sem run VÁLIDO (todos truncados) → VAZIO (não classifica ninguém)" "$(Pq -c "SELECT count(*) FROM public.reposicao_pos_candidatos('OBEN');" | tail -1)" "0"
@@ -399,8 +414,8 @@ EXCEPTION WHEN insufficient_privilege THEN RAISE NOTICE 'DENY_OK'; END $$;
 SQL
 )
 case "$R" in *DENY_OK*) ok "D1 authenticated NÃO-staff é barrado (42501)";; *) bad "D1 — veio: $R";; esac
-eq "D2 staff (master) enxerga" "$(Pq -c "SET test.uid='33333333-3333-3333-3333-333333333333'; SELECT count(*) FROM public.reposicao_pos_candidatos('OBEN');" | tail -1)" "49"
-eq "D3 uid NULL (service_role / cron SQL-local) passa — auth.role() aqui MATARIA o cron" "$(Pq -c "SELECT count(*) FROM public.reposicao_pos_candidatos('OBEN');" | tail -1)" "49"
+eq "D2 staff (master) enxerga" "$(Pq -c "SET test.uid='33333333-3333-3333-3333-333333333333'; SELECT count(*) FROM public.reposicao_pos_candidatos('OBEN');" | tail -1)" "52"
+eq "D3 uid NULL (service_role / cron SQL-local) passa — auth.role() aqui MATARIA o cron" "$(Pq -c "SELECT count(*) FROM public.reposicao_pos_candidatos('OBEN');" | tail -1)" "52"
 
 # ══════════════════════════════════════════════════════════════════════════════
 echo "── FALSIFICAÇÃO ──"
