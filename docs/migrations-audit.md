@@ -21,16 +21,16 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **392** custom migrations totais
-- **1353** objetos esperados (criados por estas migrations)
+- **397** custom migrations totais
+- **1359** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 391
+  - `function`: 396
   - `rls_policy`: 295
   - `index`: 223
   - `cron_job`: 150
   - `table`: 146
   - `trigger`: 79
-  - `view`: 65
+  - `view`: 66
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -3299,11 +3299,41 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.registrar_contato_rota` | — |
 | `function` | `public.protect_master_config` | — |
 
+### `20260718170000_register_carteira_member.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.register_carteira_member` | — |
+
 ### `20260718170000_tint_fase1c_expected_item_count.sql`
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.tint_promote_sync_run` | — |
+
+### `20260718180000_fu7b_pode_ver_carteira_completa_privado.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.pode_ver_carteira_completa` | — |
+
+### `20260718213000_tint_formula_canonica.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `view` | `public.v_tint_formula_canonica` | — |
+
+### `20260721190000_reposicao_pos_candidatos.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.reposicao__trim` | — |
+| `function` | `public.reposicao__po_id` | — |
+| `function` | `public.reposicao_pos_candidatos` | — |
+
+### `20260721190001_pausa_cron_relatorio_mensal_ferramentas.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ## Próximos passos por status
 
