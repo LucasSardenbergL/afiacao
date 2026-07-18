@@ -1,5 +1,18 @@
 # Setup do agente — diário de entregas
 
+## 2026-07-18 — `pr-watch.sh`: exit 6 separa "não consegui consultar" de "sem desfecho"
+
+**Falso negativo real (#1396, 2026-07-17):** o watcher saiu **5 (TIMEOUT)** num PR que tinha **MERGEADO** normalmente (auto-merge squash, `validate` verde em 5m16s). Causa: `exit 5` era emitido por DOIS caminhos — a consulta bem-sucedida sem desfecho *e* a consulta que falhou (ramo de erro do `gh pr view`) —, indistinguíveis pelo exit code. Um agente que confiasse no código reportaria "não mergeou" ao founder: exatamente o furo de rastreio que o script existe pra fechar ("PR órfão descoberto dias depois", C5 abaixo).
+
+**Pista que o log dava:** só **2 AVISOs** antes do TIMEOUT — com janela 45min/poll 60s, rede fora daria ~45. Não foi outage: a máquina dormiu e o relógio saltou o deadline, então o script desistiu após 2 tentativas reais, com a rede provavelmente já de volta.
+
+**Fix:**
+- **`exit 6` = NÃO consegui consultar** (estado DESCONHECIDO) vs **`exit 5` = consultei e o PR segue sem desfecho**. JSON ilegível/vazio também cai no 6 — antes caía no ramo de SUCESSO e imprimia estado vazio (`ainda /?`), afirmando ter consultado.
+- **Cartada final com backoff** (`5 15 45`s; env `PR_WATCH_BACKOFFS`, testes usam `0 0 0`) antes de declarar desconhecido — a falha é quase sempre transitória. Desfecho real encontrado aí **vence o timeout**: é o que teria salvado o #1396 (exit 0, não 5).
+- Regra no **CLAUDE.md §Merge**: num 6, confirmar com `gh pr view <nº>` ANTES do PushNotification.
+
+**Prova:** `scripts/test-pr-watch.sh` (11 casos, `gh` stubado, sem rede) — testes escritos ANTES do fix e vistos vermelhos; o harness ganhou stub com contador (`GH_STUB_FALHAS=N` falha as N primeiras chamadas e depois volta, reproduzindo o #1396) e asserção de SAÍDA, sem a qual um exit 5 "não consultei" se disfarça de 5 "consultei". **Falsificado:** desfazer o exit 6 derruba só os 2 casos de "não consegui consultar"; remover a cartada final derruba só os 2 de "a rede volta".
+
 ## 2026-07-06 — Anti-fricção do setup Claude Code (candidatos 1–9 do diagnóstico)
 
 Origem: [melhorias-code-2026-07.md](melhorias-code-2026-07.md) — diagnóstico sobre 240 sessões/880MB de transcrições (65% dos erros de ferramenta = classificador de permissões; ~450 mensagens "Retome"; claude-mem com 0 observações em 331 sessões).
