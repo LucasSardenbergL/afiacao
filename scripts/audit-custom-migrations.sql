@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 381
+-- Total de custom migrations: 385
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -14,7 +14,7 @@
 -- Read-only — não altera nada no banco.
 -- ========================================================================
 
--- 11 objeto(s) OBSOLETO(s) excluído(s) do inventário (criados por uma migration,
+-- 13 objeto(s) OBSOLETO(s) excluído(s) do inventário (criados por uma migration,
 -- removidos/renomeados por outra — NÃO são bug; ver OBSOLETE em scripts/audit-custom-migrations.ts):
 --   • rls_policy public.kb_product_specs_insert_staff (kb_specs_and_competitors) — substituída → kb_product_specs_insert_master (hardening)
 --   • trigger public.trg_audit (fin_a1_audit_lock_attach) — drop — 20260523210000_drop_audit_trigger_fin_config_cashflow
@@ -27,6 +27,8 @@
 --   • view public.v_sayerlack_mapeamento_gap (data_health_check_sayerlack_mapeamento_gap) — view abandonada (zero uso no app/SQL)
 --   • cron_job cron.sync-inventory-full-vendas-daily (cron_sync_inventory_full) — reorganizado → sync-inventory-vendas-30m / -servicos-1h / -colacor-vendas-1h
 --   • rls_policy public.cmc_ledger_select_staff (cmc_ledger) — substituída → cmc_ledger_select_gestor (hardening staff→gestor)
+--   • function public.omie_cliente_upsert_mapping (omie_identidade_por_conta) — drop — 20260718091409_drop_omie_cliente_upsert_mapping_orfa (PR #1409)
+--   • function public.estimar_impacto_exclusao_outlier (outliers_leadtime_stack_efetivo) — drop — 20260718093248_drop_estimar_impacto_exclusao_outlier_orfa
 
 -- =====================================================
 -- SECTION 1: Status reconciliado por migration
@@ -416,11 +418,15 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260717010000', 'preco_medio_leadtime_efetivo', '20260717010000_preco_medio_leadtime_efetivo.sql'),
   ('20260717015000', 'restaurar_security_invoker_views', '20260717015000_restaurar_security_invoker_views.sql'),
   ('20260717020000', 'precos_compra_leadtime_efetivo', '20260717020000_precos_compra_leadtime_efetivo.sql'),
+  ('20260717020000', 'reposicao_exclusao_outlier_remover', '20260717020000_reposicao_exclusao_outlier_remover.sql'),
   ('20260717120000', 'seg_customer_metrics_gate_staff', '20260717120000_seg_customer_metrics_gate_staff.sql'),
   ('20260717130000', 'seg_customer_metrics_acl_least_privilege', '20260717130000_seg_customer_metrics_acl_least_privilege.sql'),
   ('20260717154500', 'refresh_customer_metrics_automacao', '20260717154500_refresh_customer_metrics_automacao.sql'),
   ('20260717160000', 'data_health_customer_metrics_watchdog', '20260717160000_data_health_customer_metrics_watchdog.sql'),
-  ('20260718100000', 'filas_recalc_rls_master_only', '20260718100000_filas_recalc_rls_master_only.sql')
+  ('20260717181500', 'carteira_visivel_para_filtra_eligible', '20260717181500_carteira_visivel_para_filtra_eligible.sql'),
+  ('20260718091409', 'drop_omie_cliente_upsert_mapping_orfa', '20260718091409_drop_omie_cliente_upsert_mapping_orfa.sql'),
+  ('20260718093248', 'drop_estimar_impacto_exclusao_outlier_orfa', '20260718093248_drop_estimar_impacto_exclusao_outlier_orfa.sql'),
+  ('20260718120000', 'pot_nid_receb_retencao', '20260718120000_pot_nid_receb_retencao.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -1623,7 +1629,6 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('fin_dre_custo_tipo', 'rls_policy', 'public', 'fin_dre_custo_tipo_select_master', 'fin_dre_custo_tipo'),
   ('fin_dre_custo_tipo', 'rls_policy', 'public', 'fin_dre_custo_tipo_write_master', 'fin_dre_custo_tipo'),
   ('fin_dre_custo_tipo', 'rls_policy', 'public', 'fin_dre_custo_tipo_service_all', 'fin_dre_custo_tipo'),
-  ('omie_identidade_por_conta', 'function', 'public', 'omie_cliente_upsert_mapping', ''),
   ('fin_antecipacoes', 'function', 'public', 'fin_antecipacoes_set_autor', ''),
   ('fin_antecipacoes', 'table', 'public', 'fin_antecipacoes', ''),
   ('fin_antecipacoes', 'index', 'public', 'fin_antecipacoes_ref_uq', 'fin_antecipacoes'),
@@ -1741,15 +1746,18 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('reposicao_recompute_leadtime_derivado', 'function', 'public', 'recomputar_leadtime_derivado', ''),
   ('sla_compliance_le_leadtime_efetivo', 'view', 'public', 'v_sku_sla_compliance', ''),
   ('outliers_leadtime_stack_efetivo', 'function', 'public', 'detectar_outliers_empresa', ''),
-  ('outliers_leadtime_stack_efetivo', 'function', 'public', 'estimar_impacto_exclusao_outlier', ''),
   ('outliers_leadtime_stack_efetivo', 'function', 'public', 'resolver_outlier', ''),
   ('preco_medio_leadtime_efetivo', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
   ('precos_compra_leadtime_efetivo', 'view', 'public', 'v_sku_parametros_sugeridos', ''),
+  ('reposicao_exclusao_outlier_remover', 'function', 'public', 'resolver_outlier', ''),
   ('seg_customer_metrics_gate_staff', 'view', 'public', 'customer_metrics_mv', ''),
   ('refresh_customer_metrics_automacao', 'function', 'public', 'refresh_customer_metrics', ''),
   ('refresh_customer_metrics_automacao', 'function', 'public', 'request_customer_metrics_refresh', ''),
   ('refresh_customer_metrics_automacao', 'cron_job', 'cron', 'afiacao_customer_metrics_refresh_6h', ''),
-  ('data_health_customer_metrics_watchdog', 'function', 'public', '_data_health_compute', '')
+  ('data_health_customer_metrics_watchdog', 'function', 'public', '_data_health_compute', ''),
+  ('carteira_visivel_para_filtra_eligible', 'function', 'public', 'carteira_visivel_para', ''),
+  ('carteira_visivel_para_filtra_eligible', 'function', 'public', 'minha_carteira', ''),
+  ('pot_nid_receb_retencao', 'index', 'public', 'idx_pot_backfill_nid_receb', 'purchase_orders_tracking')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -3000,7 +3008,6 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('fin_dre_custo_tipo', 'rls_policy', 'public', 'fin_dre_custo_tipo_select_master', 'fin_dre_custo_tipo'),
   ('fin_dre_custo_tipo', 'rls_policy', 'public', 'fin_dre_custo_tipo_write_master', 'fin_dre_custo_tipo'),
   ('fin_dre_custo_tipo', 'rls_policy', 'public', 'fin_dre_custo_tipo_service_all', 'fin_dre_custo_tipo'),
-  ('omie_identidade_por_conta', 'function', 'public', 'omie_cliente_upsert_mapping', ''),
   ('fin_antecipacoes', 'function', 'public', 'fin_antecipacoes_set_autor', ''),
   ('fin_antecipacoes', 'table', 'public', 'fin_antecipacoes', ''),
   ('fin_antecipacoes', 'index', 'public', 'fin_antecipacoes_ref_uq', 'fin_antecipacoes'),
@@ -3118,15 +3125,18 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('reposicao_recompute_leadtime_derivado', 'function', 'public', 'recomputar_leadtime_derivado', ''),
   ('sla_compliance_le_leadtime_efetivo', 'view', 'public', 'v_sku_sla_compliance', ''),
   ('outliers_leadtime_stack_efetivo', 'function', 'public', 'detectar_outliers_empresa', ''),
-  ('outliers_leadtime_stack_efetivo', 'function', 'public', 'estimar_impacto_exclusao_outlier', ''),
   ('outliers_leadtime_stack_efetivo', 'function', 'public', 'resolver_outlier', ''),
   ('preco_medio_leadtime_efetivo', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
   ('precos_compra_leadtime_efetivo', 'view', 'public', 'v_sku_parametros_sugeridos', ''),
+  ('reposicao_exclusao_outlier_remover', 'function', 'public', 'resolver_outlier', ''),
   ('seg_customer_metrics_gate_staff', 'view', 'public', 'customer_metrics_mv', ''),
   ('refresh_customer_metrics_automacao', 'function', 'public', 'refresh_customer_metrics', ''),
   ('refresh_customer_metrics_automacao', 'function', 'public', 'request_customer_metrics_refresh', ''),
   ('refresh_customer_metrics_automacao', 'cron_job', 'cron', 'afiacao_customer_metrics_refresh_6h', ''),
-  ('data_health_customer_metrics_watchdog', 'function', 'public', '_data_health_compute', '')
+  ('data_health_customer_metrics_watchdog', 'function', 'public', '_data_health_compute', ''),
+  ('carteira_visivel_para_filtra_eligible', 'function', 'public', 'carteira_visivel_para', ''),
+  ('carteira_visivel_para_filtra_eligible', 'function', 'public', 'minha_carteira', ''),
+  ('pot_nid_receb_retencao', 'index', 'public', 'idx_pot_backfill_nid_receb', 'purchase_orders_tracking')
 )
 SELECT
   e.migration,
