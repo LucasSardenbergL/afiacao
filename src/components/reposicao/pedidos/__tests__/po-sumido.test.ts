@@ -6,7 +6,9 @@ import {
   ehAcessoNegado,
   normalizarCandidatos,
   ordenarCandidatos,
+  OPERACOES,
   planoDeAcao,
+  precondicoesDe,
   resumirValores,
   type PoCandidato,
 } from '../po-sumido';
@@ -71,7 +73,7 @@ describe('acaoSugerida — NUNCA sugere cancelar (o erro de R$3k)', () => {
     const txt = acaoSugerida(c({ algum_sinal_de_canal: true, portal_protocolo: '2097501' }));
     expect(txt).toContain('2097501');
     expect(txt).toMatch(/recrie o PO/i);
-    expect(txt).toMatch(/não cancele/i);
+    expect(txt).toMatch(/não cancele o pedido/i);
   });
 
   it('identidade ilegível diz que NÃO foi possível comparar, sem concluir nada sobre o PO', () => {
@@ -112,17 +114,36 @@ describe('acaoSugerida — NUNCA sugere cancelar (o erro de R$3k)', () => {
     expect(instruiDesfazer('Se o pedido existe lá, recrie o PO no Omie — não cancele.')).toBe(false);
   });
 
-  it('a copy REFLETE o plano: se o plano exige reconferir o Omie, o texto diz isso', () => {
-    // Amarra texto ↔ plano. Sem isto, o plano poderia exigir a reconferência e a frase omiti-la — que é
-    // justamente onde o dano mora (o comprador age pelo texto, não pelo tipo).
+  it('a copy é MONTADA do plano: todo passo aparece no texto, nenhum a mais', () => {
+    // Antes, plano e frase eram switches paralelos: o plano podia exigir uma confirmação que a frase
+    // não mencionava — plano vira enfeite e o comprador age pela frase. Agora o texto é derivado.
+    const MARCA: Record<string, RegExp> = {
+      corrigir_cadastro: /corrija o cadastro/i,
+      confirmar_fornecedor: /confirme com o fornecedor/i,
+      confirmar_ausencia_de_qualquer_po: /não existe nenhum pedido de compra ativo/i,
+      recriar_po: /recrie o PO/i,
+      conferir_no_omie: /confira no Omie se o PO foi excluído/i,
+    };
     for (const cand of [
       c({ algum_sinal_de_canal: true, portal_protocolo: '2097501' }),
       c({ algum_sinal_de_canal: true }),
+      c({ algum_sinal_de_canal: false }),
+      c({ visto_status: 'identidade_nao_interpretavel' }),
     ]) {
-      expect(planoDeAcao(cand)).toContain('confirmar_ausencia_atual_no_omie');
-      expect(acaoSugerida(cand)).toMatch(/continua ausente no Omie/i);
-      expect(acaoSugerida(cand)).toMatch(/só então recrie/i);
+      const plano = planoDeAcao(cand);
+      const txt = acaoSugerida(cand);
+      for (const op of plano) expect(txt, `passo ${op} sumiu de "${txt}"`).toMatch(MARCA[op]);
+      // e nenhuma operação FORA do plano aparece no texto
+      for (const [op, re] of Object.entries(MARCA)) {
+        if (!plano.includes(op as never)) expect(txt, `passo ${op} sobrou em "${txt}"`).not.toMatch(re);
+      }
     }
+  });
+
+  it('a reconferência avisa para NÃO usar o número antigo', () => {
+    const txt = acaoSugerida(c({ algum_sinal_de_canal: true, portal_protocolo: '2097501' }));
+    expect(txt).toMatch(/busque por fornecedor e protocolo/i);
+    expect(txt).toMatch(/não pelo número antigo/i);
   });
 });
 
@@ -137,29 +158,41 @@ describe('planoDeAcao — o invariante que não se contorna com sinônimo', () =
     c({ visto_status: 'visto_em_outro_run', algum_sinal_de_canal: true, portal_protocolo: '1' }),
   ];
 
-  it('recriar_po NUNCA aparece sem confirmar fornecedor E reconferir o Omie agora', () => {
-    // A precondição que fecha o PO duplicado: a evidência tem até ~1min de idade (staleTime 30s +
-    // poll 60s), e outro comprador pode ter recriado o PO nesse intervalo.
+  it('TODA precondição vem ANTES da operação que a exige — não só uma delas', () => {
+    // A 1ª versão deste teste só comparava a ordem de UMA precondição, então o plano
+    // ['confirmar_ausencia...', 'recriar_po', 'confirmar_fornecedor'] passaria: manda recriar e só
+    // depois confirmar com o fornecedor. Agora varre a tabela de precondições inteira.
     for (const cand of TODOS) {
       const plano = planoDeAcao(cand);
-      if (plano.includes('recriar_po')) {
-        expect(plano, JSON.stringify(cand)).toContain('confirmar_fornecedor');
-        expect(plano, JSON.stringify(cand)).toContain('confirmar_ausencia_atual_no_omie');
-        // e a reconferência vem ANTES de recriar
-        expect(plano.indexOf('confirmar_ausencia_atual_no_omie')).toBeLessThan(plano.indexOf('recriar_po'));
-      }
+      plano.forEach((op, i) => {
+        for (const pre of precondicoesDe(op)) {
+          const posPre = plano.indexOf(pre);
+          expect(posPre, `${op} sem a precondição ${pre} em ${JSON.stringify(plano)}`).toBeGreaterThanOrEqual(0);
+          expect(posPre, `${pre} depois de ${op} em ${JSON.stringify(plano)}`).toBeLessThan(i);
+        }
+      });
     }
   });
 
-  it('nenhum plano contém operação destrutiva — o tipo não a admite', () => {
-    const PERMITIDAS = new Set([
-      'corrigir_cadastro', 'confirmar_fornecedor', 'confirmar_ausencia_atual_no_omie',
-      'recriar_po', 'conferir_no_omie',
-    ]);
+  it('recriar_po exige confirmar fornecedor E ausência de QUALQUER PO ativo', () => {
+    // "o PO continua ausente" não bastava: a linha mostra o número ANTIGO, e se alguém já recriou a
+    // compra ela existe sob outro número — conferir o antigo confirma a ausência e leva ao 2º PO.
+    expect(precondicoesDe('recriar_po')).toEqual(
+      expect.arrayContaining(['confirmar_fornecedor', 'confirmar_ausencia_de_qualquer_po']),
+    );
+  });
+
+  it('nenhum plano contém operação destrutiva — e o universo NÃO tem uma sequer', () => {
+    // `OPERACOES` vem do Record<Operacao,…>, que o TS obriga a ser completo: uma lista escrita à mão
+    // aqui envelheceria em silêncio (foi o que aconteceu ao renomear uma operação).
+    const universo = new Set<string>(OPERACOES);
+    for (const op of OPERACOES) {
+      expect(op, `o universo admite operação destrutiva: ${op}`)
+        .not.toMatch(/cancel|exclu|remov|anul|delet|apag|desfaz/i);
+    }
     for (const cand of TODOS) {
       for (const op of planoDeAcao(cand)) {
-        expect(PERMITIDAS.has(op), `operação fora do universo fechado: ${op}`).toBe(true);
-        expect(op).not.toMatch(/cancel|exclu|remov|anul|delet|apag|desfaz/i);
+        expect(universo.has(op), `operação fora do universo fechado: ${op}`).toBe(true);
       }
     }
   });

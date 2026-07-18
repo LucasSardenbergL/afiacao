@@ -158,15 +158,17 @@ describe('PoSumidoCard — os estados em que dá para mentir', () => {
     expect(texto).not.toMatch(/estava na janela/i);
   });
 
-  it('apuração OK exige RECONFERIR o Omie antes de recriar (evidência tem ~1min de idade)', () => {
-    // Outro comprador pode ter recriado o PO entre a apuração e a leitura: mandar recriar sem
-    // reconferir produz PO duplicado mesmo com a apuração "boa".
+  it('apuração OK exige reconferir QUALQUER PO ativo — não o número antigo mostrado na linha', () => {
+    // O caminho que isso fecha: A recria a compra sob um PO NOVO; B olha esta tabela, que mostra o
+    // número ANTIGO, confirma que o antigo continua ausente (é verdade) e cria um segundo PO.
     const { container } = render(
       <PoSumidoCard candidatos={[c({ algum_sinal_de_canal: true, portal_protocolo: '2097501' })]} />,
     );
     fireEvent.click(screen.getByText(/a reconciliar no Omie/i));
     const texto = container.textContent ?? '';
-    expect(texto).toMatch(/continua ausente no Omie/i);
-    expect(texto).toMatch(/só então recrie/i);
+    expect(texto).toMatch(/não existe nenhum pedido de compra ativo/i);
+    expect(texto).toMatch(/busque por fornecedor e protocolo/i);
+    expect(texto).toMatch(/não pelo número antigo/i);
+    expect(texto).toMatch(/recrie o PO/i);
   });
 });

@@ -58,18 +58,35 @@ export function classificarAcao(c: PoCandidato): ClasseAcao {
 export type Operacao =
   | 'corrigir_cadastro'
   | 'confirmar_fornecedor'
-  | 'confirmar_ausencia_atual_no_omie'
+  | 'confirmar_ausencia_de_qualquer_po'
   | 'recriar_po'
   | 'conferir_no_omie';
 
+/** Precondições de cada operação: nenhuma delas pode ser executada sem as anteriores. */
+const PRECONDICOES: Record<Operacao, readonly Operacao[]> = {
+  corrigir_cadastro: [],
+  confirmar_fornecedor: [],
+  confirmar_ausencia_de_qualquer_po: [],
+  conferir_no_omie: [],
+  recriar_po: ['confirmar_fornecedor', 'confirmar_ausencia_de_qualquer_po'],
+};
+export const precondicoesDe = (op: Operacao): readonly Operacao[] => PRECONDICOES[op];
+
 /**
- * O plano de operações, em ordem. A precondição que importa: `recriar_po` NUNCA aparece sozinho —
- * exige `confirmar_fornecedor` E `confirmar_ausencia_atual_no_omie` antes.
+ * O universo fechado de operações, em runtime. Derivado do `Record<Operacao, …>` acima — que o TS
+ * obriga a ter TODAS as chaves — em vez de uma segunda lista escrita à mão: lista duplicada envelhece
+ * (renomear uma operação e esquecer a cópia foi exatamente o que quebrou o teste na primeira tentativa).
+ */
+export const OPERACOES = Object.keys(PRECONDICOES) as Operacao[];
+
+/**
+ * O plano de operações, em ordem. `recriar_po` NUNCA aparece sozinho — exige `confirmar_fornecedor` E
+ * `confirmar_ausencia_de_qualquer_po` ANTES (a tabela `PRECONDICOES` é a fonte, e o teste a verifica).
  *
- * Por que a 2ª precondição existe: a evidência tem idade. Mesmo com a apuração bem-sucedida, o dado
- * pode ter até um minuto (staleTime 30s + poll 60s) e outro comprador pode ter recriado o PO nesse
- * intervalo — mandar recriar sem reconferir o Omie AGORA produz PO duplicado. É o mesmo dano que este
- * PR combate, chegando pelo caminho feliz.
+ * Por que a 2ª precondição fala em QUALQUER PO, e não "o PO": a linha mostra o `omie_codigo_pedido`
+ * ANTIGO. Se outro comprador já recriou a compra, ela existe sob um número NOVO — conferir só o número
+ * antigo confirma "continua ausente" (verdade!) e leva a criar um segundo PO. A pergunta certa é sobre
+ * a COMPRA (fornecedor + protocolo), não sobre o identificador que sumiu.
  */
 export function planoDeAcao(c: PoCandidato): Operacao[] {
   switch (classificarAcao(c)) {
@@ -77,24 +94,46 @@ export function planoDeAcao(c: PoCandidato): Operacao[] {
       return ['corrigir_cadastro'];
     case 'confirmar_com_protocolo':
     case 'confirmar_sem_protocolo':
-      return ['confirmar_fornecedor', 'confirmar_ausencia_atual_no_omie', 'recriar_po'];
+      return ['confirmar_fornecedor', 'confirmar_ausencia_de_qualquer_po', 'recriar_po'];
     case 'conferir_no_omie':
       return ['conferir_no_omie'];
   }
 }
 
-/** O texto mostrado ao humano, derivado do plano. NUNCA instrui desfazer — ver o cabeçalho. */
-export function acaoSugerida(c: PoCandidato): string {
-  switch (classificarAcao(c)) {
-    case 'identidade_ilegivel':
-      return 'O código do PO neste pedido não é legível — não foi possível comparar com o Omie. Corrija o cadastro antes de qualquer conclusão.';
-    case 'confirmar_com_protocolo':
-      return `Confirme com o fornecedor pelo protocolo ${c.portal_protocolo} e confira se o PO continua ausente no Omie. Só então recrie o PO — não cancele.`;
-    case 'confirmar_sem_protocolo':
-      return 'Há sinal de envio ao fornecedor. Confirme com ele e confira se o PO continua ausente no Omie. Só então recrie o PO.';
+/** A frase de cada operação. Uma só fonte para plano e texto — ver `acaoSugerida`. */
+function textoDaOperacao(op: Operacao, c: PoCandidato): string {
+  switch (op) {
+    case 'corrigir_cadastro':
+      return 'corrija o cadastro do PO neste pedido — sem ele não foi possível comparar com o Omie';
+    case 'confirmar_fornecedor':
+      return c.portal_protocolo
+        ? `confirme com o fornecedor pelo protocolo ${c.portal_protocolo}`
+        : 'confirme com o fornecedor que o pedido existe';
+    case 'confirmar_ausencia_de_qualquer_po':
+      return 'confirme no Omie que NÃO existe nenhum pedido de compra ativo para esta compra — busque por fornecedor e protocolo, não pelo número antigo (alguém pode já ter recriado sob outro número)';
+    case 'recriar_po':
+      return 'recrie o PO';
     case 'conferir_no_omie':
-      return 'Nenhum sinal de envio registrado aqui. Confira no Omie se o PO foi excluído e decida com o histórico do pedido.';
+      return 'confira no Omie se o PO foi excluído e decida com o histórico do pedido';
   }
+}
+
+/**
+ * O texto mostrado ao humano, MONTADO a partir do plano — não um switch paralelo.
+ * A versão anterior derivava plano e frase por caminhos independentes, então o plano podia exigir uma
+ * confirmação que a frase não mencionava: o plano viraria enfeite, e o comprador age pela FRASE.
+ * Aqui divergir é impossível: cada passo do plano vira um passo do texto, na ordem.
+ */
+export function acaoSugerida(c: PoCandidato): string {
+  const plano = planoDeAcao(c);
+  const passos = plano.map((op) => textoDaOperacao(op, c));
+  const corpo =
+    passos.length === 1
+      ? passos[0].charAt(0).toUpperCase() + passos[0].slice(1) + '.'
+      : passos.map((p, i) => `${i + 1}) ${p}`).join('. ') + '.';
+  // O lembrete só faz sentido onde recriar é uma opção — é ali que a tentação de "resolver cancelando"
+  // aparece, e onde cancelar custaria a recompra do que o fornecedor já tem.
+  return plano.includes('recriar_po') ? `${corpo} Não cancele o pedido.` : corpo;
 }
 
 /**
