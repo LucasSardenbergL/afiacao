@@ -1460,21 +1460,79 @@ describe('guardrail money-path: snapshot de não-vinculados lê a proof por cont
     ).not.toMatch(/fetch omie_clientes codigos/);
   });
 
-  it('o que resta de omie_clientes é SÓ a leitura code-first — nunca mais', () => {
-    // Trava o escopo: 1 = a leitura de suporte CODE-FIRST (:240). Era 4 antes da PR-C (que deletou as 2
-    // funções de clone), 2 depois dela, e 1 agora que a Fatia 4 tirou o WRITER — o upsert do espelho
-    // virou upsert no LEDGER. Se virar 2, alguém reabriu uma leitura ou reintroduziu o writer.
+  it('omie_clientes ZERADO neste edge — a última leitura migrou p/ proof ∪ alias (Fatia 5)', () => {
+    // Trava o escopo: 4 antes da PR-C (que deletou as 2 funções de clone) → 2 depois dela → 1 quando a
+    // Fatia 4 tirou o WRITER → **0 agora**, que a Fatia 5 migrou a última leitura CODE-FIRST (:240).
+    // Zero é o teto definitivo: a tabela vai ser DROPADA, então qualquer reaparição não é só regressão
+    // de arquitetura — é `42P01` em runtime, atrás do cron de sync.
     expect(
       count(src, '.from("omie_clientes")'),
-      'omie_clientes mudou de contagem neste edge — leitura nova do espelho ou writer reintroduzido',
-    ).toBe(1);
-    // A leitura que sobra NÃO morreu com o writer, como a baseline supunha: userByCodigo também chaveia
-    // tagsByUser e a lista code-first que agora alimenta o ledger — e é a code-first que cobre os ~1633
-    // aliases fiscais que a proof document-first nunca vê. Resíduo estrutural da Fatia 5.
+      'REGRESSÃO: omie_clientes voltou ao omie-analytics-sync — a tabela foi DROPADA na Fatia 5, ' +
+        'qualquer leitura dela quebra o sync de clientes em runtime (42P01, silencioso atrás do cron)',
+    ).toBe(0);
+    // Contar 0 sozinho NÃO prova que a capacidade sobreviveu — apagar a função deixaria isto verde.
+    // ⚠️ Pós-hotfix Codex-C (#1444) este mapa NÃO alimenta mais o ledger nem a proof (ambos passaram à
+    // lista document-first `accountMapByUser`). Ele sobrevive para chavear as TAGS do cadastro Omie:
+    // resolver o user errado — ou não resolver — erra `excluir_da_carteira`, que decide se o cliente
+    // sai da carteira. Não reintroduza o argumento "senão a membership encolhe": ele morreu com o
+    // #1444 (os 1633 clones já estão no ledger desde o backfill, e o acumulador não encolhe).
     expect(
       src,
-      'REGRESSÃO: o espelho omie_clientes voltou a ser ESCRITO neste edge (a Fatia 4 o desacoplou)',
-    ).not.toMatch(/\.from\("omie_clientes"\)\s*\.(insert|upsert|update|delete)\(/);
+      'REGRESSÃO: sumiu a resolução código→user (userByCodigo) — sem ela as tags do cadastro Omie ' +
+        '(is_fornecedor / excluir_da_carteira) deixam de ser aplicadas',
+    ).toMatch(/async function fetchCodigoUserMap\(/);
+    for (const fonte of ['customer_canonical_alias', 'omie_customer_account_map']) {
+      expect(
+        src,
+        `REGRESSÃO: fetchCodigoUserMap parou de ler ${fonte}. A união resolve a conta INTEIRA: a ` +
+          'proof é document-first e não tem os ~1633 clones (sem profile); sem o alias eles ficariam ' +
+          'SEM tag no run `servicos`, em silêncio',
+      ).toMatch(new RegExp(`\\.from\\("${fonte}"\\)`));
+    }
+    // ── invariantes que o /codex xhigh obrigou (a 1ª versão do mapa era GLOBAL) ──
+    // O código Omie só é único DENTRO de uma conta: `UNIQUE(codigo, account)` NÃO o torna único
+    // globalmente. Um mapa global deixa o último `map.set` vencer em silêncio e pode resolver o
+    // código do run oben para o user de outra conta — que entra PERMANENTEMENTE no ledger
+    // (acumulador) e recebe as tags Omie de outro cliente.
+    expect(
+      src,
+      'REGRESSÃO: fetchCodigoUserMap voltou a ser GLOBAL (sem a conta do run) — código de OUTRA ' +
+        'conta pode resolver o user errado e admiti-lo no ledger, de forma irreversível',
+    ).toMatch(/async function fetchCodigoUserMap\(\s*db: SupabaseClient,\s*account: OmieAccount,?\s*\)/);
+    expect(
+      src,
+      'REGRESSÃO: a leitura da proof perdeu o filtro de conta (.eq("account", empresa))',
+    ).toMatch(/\.from\("omie_customer_account_map"\)[\s\S]{0,200}\.eq\("account", empresa\)/);
+    expect(
+      src,
+      'REGRESSÃO: a leitura de alias perdeu o filtro de conta (.eq("alias_conta", account))',
+    ).toMatch(/\.from\("customer_canonical_alias"\)[\s\S]{0,200}\.eq\("alias_conta", account\)/);
+    // Alias `inactive` não pode admitir membro novo: o ledger é acumulador, a admissão é irreversível.
+    expect(
+      src,
+      'REGRESSÃO: a leitura de alias perdeu o filtro de status — alias rebaixado a `inactive` ' +
+        'voltaria a ADMITIR membro novo no ledger, e admissão no acumulador não se desfaz',
+    ).toMatch(/\.from\("customer_canonical_alias"\)[\s\S]{0,260}\.eq\("status", "active"\)/);
+    // Colisão dentro da MESMA conta é corrupção — resolver "o último que chegou" anexaria o cliente
+    // ao vendedor errado. Fail-closed: aborta o run.
+    expect(
+      src,
+      'REGRESSÃO: sumiu o guard de colisão do mapa — dois users para o mesmo código na mesma conta ' +
+        'voltariam a ser resolvidos silenciosamente pelo último',
+    ).toMatch(/colisão de código na conta/);
+    // Paginação com `.range()` exige `.order` estável (§CLAUDE.md) — E com desempate: ordenar só
+    // pelo código deixa a ordem indefinida se o código repetir, e linha que some entre páginas vira
+    // membro a menos no ledger, em silêncio.
+    for (const [col, desempate] of [
+      ['alias_omie_codigo', 'alias_user_id'],
+      ['omie_codigo_cliente', 'user_id'],
+    ]) {
+      expect(
+        src,
+        `REGRESSÃO: a paginação de ${col} perdeu o .order estável com desempate por ${desempate} — ` +
+          'linha pode sumir entre páginas e virar membro a menos no ledger (falha silenciosa)',
+      ).toMatch(new RegExp(`\\.order\\("${col}"\\)\\s*\\.order\\("${desempate}"\\)`));
+    }
     // E a membership tem de continuar sendo alimentada: sem isto, nenhum cliente novo entra na carteira
     // depois que a Fatia 5 dropar o espelho e o trigger AFTER INSERT cair junto.
     expect(
