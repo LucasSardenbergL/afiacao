@@ -910,7 +910,7 @@ describe('guardrail money-path: carteira-rebuild lê o vendedor da PROOF oben (P
 
   // ── CANÁRIA DE DEPLOY (?canary=1) — prova o que está SERVIDO (a paridade textual só cobre a FONTE) ──
   describe('canária de deploy ?canary=1', () => {
-    const bloco = rebuild.match(/searchParams\.get\('canary'\) === '1'\)[\s\S]*?\n  \}/)?.[0] ?? '';
+    const bloco = rebuild.match(/searchParams\.get\('canary'\) === '1'\)[\s\S]*?\n {2}\}/)?.[0] ?? '';
 
     it('sentinela: o bloco da canária existe no edge', () => {
       expect(bloco, 'sumiu a canária ?canary=1 — sem ela não há prova do DEPLOY, só da fonte').not.toBe('');
