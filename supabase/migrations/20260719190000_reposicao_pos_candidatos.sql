@@ -39,7 +39,7 @@ BEGIN;
 -- remove espaço ASCII, então E'\t' e NBSP passavam como valor preenchido — Codex v5).
 CREATE OR REPLACE FUNCTION public.reposicao__nz(p text)
 RETURNS text LANGUAGE sql IMMUTABLE PARALLEL SAFE AS
-$fn$ SELECT COALESCE(regexp_replace(p, '[[:space:]\u0085\u00a0\u1680\u2000-\u200b\u2028\u2029\u202f\u205f\u3000]+', '', 'g'), '') $fn$;
+$fn$ SELECT COALESCE(regexp_replace(p, '[[:space:]\u0085\u00a0\u1680\u2000-\u200b\u2028\u2029\u202f\u205f\u3000\ufeff]+', '', 'g'), '') $fn$;
 
 -- IDENTIDADE do PO — função SEPARADA da nz(), porque os propósitos são INCOMPATÍVEIS (Codex v6):
 --   nz() responde "tem conteúdo?" → remover whitespace INTERNO é inofensivo;
@@ -49,7 +49,7 @@ $fn$ SELECT COALESCE(regexp_replace(p, '[[:space:]\u0085\u00a0\u1680\u2000-\u200
 -- Retorna NULL para "não interpretável" — e a RPC distingue isso de "ausente", em vez de afirmar ausência.
 CREATE OR REPLACE FUNCTION public.reposicao__po_id(p text)
 RETURNS bigint LANGUAGE plpgsql IMMUTABLE PARALLEL SAFE AS $fn$
-DECLARE t text; b text := '[[:space:]\u0085\u00a0\u1680\u2000-\u200b\u2028\u2029\u202f\u205f\u3000]';
+DECLARE t text; b text := '[[:space:]\u0085\u00a0\u1680\u2000-\u200b\u2028\u2029\u202f\u205f\u3000\ufeff]';
 BEGIN
   IF p IS NULL THEN RETURN NULL; END IF;
   t := regexp_replace(regexp_replace(p, '^' || b || '+', ''), b || '+$', '');
@@ -119,16 +119,16 @@ BEGIN
       m.seq AS marcador_seq,
       ls.run_id AS visto_run_id,
       (SELECT sum(i.valor_linha) FROM public.pedido_compra_item i WHERE i.pedido_id = p.id) AS valor_total,
-      EXISTS (
+      -- ⚠️ NULL (não FALSE) quando a identidade é ILEGÍVEL: `EXISTS(... = NULL)` retorna false, e a RPC
+      -- estaria AFIRMANDO ausência no espelho sem sequer conseguir identificar o PO (Codex v7).
+      -- "Não apurei" ≠ "não há" — a mesma distinção de visto_status='identidade_nao_interpretavel'.
+      CASE WHEN public.reposicao__po_id(p.omie_pedido_compra_id) IS NULL THEN NULL ELSE EXISTS (
         SELECT 1 FROM public.purchase_orders_tracking t
         WHERE t.empresa = v_empresa
-          -- compara NUMERICAMENTE (não texto): '00101' e '101' são o MESMO PO. Comparar `bigint::text`
-          -- com o texto cru faria o PO "desaparecer" do espelho por leading zero (Codex v3).
-          -- {1,18} dígitos: 19+ estoura o bigint e o cast DERRUBA a RPC inteira ('numeric value out of
-          -- range' — Codex v4). btrim ANTES da regex: o filtro já usava btrim, a regex não (' 00126 ' virava
-          -- NULL e o PO "desaparecia"). Comparação NUMÉRICA: '00126' e 126 são o MESMO PO.
+          -- identidade NUMÉRICA canônica (reposicao__po_id): '00101' e '101' são o MESMO PO; whitespace de
+          -- borda tolerado, interno invalida; fora do range de bigint → NULL em vez de derrubar a RPC.
           AND t.omie_codigo_pedido = public.reposicao__po_id(p.omie_pedido_compra_id)
-      ) AS po_no_espelho
+      ) END AS po_no_espelho
     FROM public.pedido_compra_sugerido p
     CROSS JOIN marcador m
     LEFT JOIN public.reposicao_po_last_seen ls
