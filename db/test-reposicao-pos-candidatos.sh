@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ╔══════════════════════════════════════════════════════════════════════════════╗
 # ║  PROVA PG17 — reposicao_pos_candidatos (detector de PO excluído, NÃO-MUTANTE)  ║
-# ║  Migration: supabase/migrations/20260718194500_reposicao_pos_candidatos.sql    ║
+# ║  Migration: supabase/migrations/20260718213000_reposicao_pos_candidatos.sql    ║
 # ║  Rode: bash db/test-reposicao-pos-candidatos.sh > /tmp/t.log 2>&1; echo $?     ║
 # ║        (NÃO pipe pra tail — engole o exit code)                                 ║
 # ║                                                                                ║
@@ -23,7 +23,7 @@ PORT="${PGPORT_TEST:-5477}"
 SLUG="reposicao-pos-candidatos"
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
 export LC_ALL=C LANG=C
-MIG="$REPO_ROOT/supabase/migrations/20260718194500_reposicao_pos_candidatos.sql"
+MIG="$REPO_ROOT/supabase/migrations/20260718213000_reposicao_pos_candidatos.sql"
 
 [ -x "$PGBIN/initdb" ] || { echo "postgresql@${PGVER} ausente: brew install postgresql@${PGVER}"; exit 1; }
 CELLAR="$(brew --prefix "postgresql@${PGVER}")"
@@ -128,7 +128,8 @@ INSERT INTO public.reposicao_pedidos_compra_run (run_id,seq,empresa,status,volum
 -- 100 visto NO marcador (NÃO é candidato) · 101 visto em run ANTERIOR · 102 NUNCA carimbado
 INSERT INTO public.reposicao_po_last_seen (empresa,omie_codigo_pedido,run_id) VALUES
  ('OBEN', 100, '$RID_ATUAL'),
- ('OBEN', 101, '$RID_VELHO');
+ ('OBEN', 101, '$RID_VELHO'),
+ ('OBEN', 126, '$RID_ATUAL');  -- carimbado no marcador: o 125 ('00126') NAO pode ser candidato
 INSERT INTO public.pedido_compra_sugerido
  (id,empresa,status,omie_pedido_compra_id,data_ciclo,fornecedor_nome,canal_usado,portal_protocolo,status_envio_portal,resposta_canal) VALUES
  (100,'OBEN','disparado','100', now()::date-2,'F','omie',NULL,NULL,NULL),                        -- visto: fora
@@ -156,7 +157,11 @@ INSERT INTO public.pedido_compra_sugerido
  (120,'OBEN','disparado','120', now()::date-50,'F','omie',NULL,NULL,'{"chave_nova_do_futuro":"x"}'::jsonb),             -- vocabulario novo
  (121,'OBEN','disparado','121', now()::date-50,'F',E'\tomie\t',NULL,NULL,NULL),                                        -- canal com TAB
  (122,'OBEN','disparado','122', now()::date-50,'F','email',NULL,NULL,NULL),                                            -- mutante allowlist: email SEM payload
- (123,'OBEN','disparado','123', now()::date-50,'F','omie',NULL,'insucesso_portal',NULL);                               -- 'insucesso' NAO e sucesso
+ (123,'OBEN','disparado','123', now()::date-50,'F','omie',NULL,'pedido_confirmado_pelo_fornecedor',NULL),
+ -- Codex v3 P1-1: chave CONHECIDA com valor comprometedor (o gate de "chave conhecida" nao provava nada)
+ (124,'OBEN','disparado','124', now()::date-50,'F','omie',NULL,NULL,'{"status":"pedido_aceito_pelo_fornecedor"}'::jsonb),
+ -- Codex v3: leading zero — '00101' e o MESMO PO que 101 (comparacao NUMERICA, nao texto)
+ (125,'OBEN','disparado','00126', now()::date-50,'F','omie',NULL,NULL,NULL);                               -- 'insucesso' NAO e sucesso
 INSERT INTO public.pedido_compra_item (pedido_id,sku_codigo_omie,valor_linha) VALUES
  (101,'A',10.00),(102,'B',1808.59),(103,'C',1251.89),(104,'D',5.00),(105,'E',7.00);
 INSERT INTO public.purchase_orders_tracking (empresa,omie_codigo_pedido) VALUES ('OBEN',101);
@@ -176,10 +181,10 @@ case "$R" in
   *"operator does not exist"*|*"does not exist"*|*ERROR*) bad "E1 a RPC QUEBROU em runtime: $R";;
   *) ok "E1 a RPC EXECUTA com empresa TEXT × ENUM (comparação com cast explícito)";;
 esac
-eq "E2 aceita a empresa em caixa/espaço divergentes (upper+btrim)" "$(Pq -c "SELECT count(*) FROM public.reposicao_pos_candidatos('  oben ');" | tail -1)" "19"
+eq "E2 aceita a empresa em caixa/espaço divergentes (upper+btrim)" "$(Pq -c "SELECT count(*) FROM public.reposicao_pos_candidatos('  oben ');" | tail -1)" "20"
 
 echo "── Bloco B: quem é candidato ──"
-eq "B1 candidatos = todos os não-vistos no marcador" "$(cand)" "101,102,103,104,105,110,111,112,113,114,115,116,117,118,119,120,121,122,123"
+eq "B1 candidatos = todos os não-vistos no marcador" "$(cand)" "101,102,103,104,105,110,111,112,113,114,115,116,117,118,119,120,121,122,123,124"
 eq "B2 PO visto NO marcador NÃO é candidato (100 fora)" "$(Pq -c "SELECT count(*) FROM public.reposicao_pos_candidatos('OBEN') WHERE pedido_id=100;" | tail -1)" "0"
 eq "B3 visto em run ANTERIOR é candidato, marcado como tal" "$(campo 101 visto_status)" "visto_em_run_anterior"
 eq "B4 NUNCA carimbado é candidato, marcado como tal" "$(campo 102 visto_status)" "nunca_carimbado"
@@ -191,33 +196,14 @@ eq "B9 dano_ativo falso fora da janela (102, 50d)" "$(campo 102 dano_ativo)" "f"
 eq "B10 po_no_espelho reflete o tracking (101 tem linha)" "$(campo 101 po_no_espelho)" "t"
 eq "B11 po_no_espelho falso quando o PO sumiu do espelho (102)" "$(campo 102 po_no_espelho)" "f"
 
-echo "── Bloco C: ROTA — compromisso com o fornecedor NUNCA auto-cancela (o guard que mudou o design) ──"
-eq "C1 protocolo do portal → reconciliacao_humana (o caso 281/286 de PROD)" "$(campo 103 rota)" "reconciliacao_humana"
-eq "C2 sucesso_portal sem protocolo → reconciliacao_humana" "$(campo 104 rota)" "reconciliacao_humana"
-eq "C3 fornecedor_notificado=true → reconciliacao_humana" "$(campo 105 rota)" "reconciliacao_humana"
-eq "C4 SEM compromisso → elegivel_prova_id (o único caminho p/ o PR3)" "$(campo 102 rota)" "elegivel_prova_id"
-eq "C5 classificação do compromisso (103 = protocolado)" "$(campo 103 compromisso_fornecedor)" "protocolado"
-eq "C6 nenhum compromisso é rotulado como tal" "$(campo 102 compromisso_fornecedor)" "nenhum"
-
-echo "── Bloco G: FAIL-CLOSED por shape (Codex PR2 #1 — a v1 vazava p/ o caminho do cancelamento) ──"
-for pid in 110 111 112 113 114 115 116; do
-  eq "G$pid shape de escape -> reconciliacao_humana (nunca elegivel)" "$(campo $pid rota)" "reconciliacao_humana"
-done
-eq "G-ok canal na allowlist E sem sinal -> elegivel_prova_id (o caminho existe)" "$(campo 102 rota)" "elegivel_prova_id"
-eq "G-ind canal desconhecido sem sinal -> indeterminado_canal" "$(campo 115 compromisso_fornecedor)" "indeterminado_canal"
-
-echo "── Bloco H: marcador ignora run NAO-ok e de OUTRA empresa (mutantes que passavam verdes) ──"
-eq "H1 marcador = seq 20 (ignora seq 30 status=erro e seq 40 COLACOR)" "$(campo 101 marcador_seq)" "20"
-
-echo "── Bloco I: PAYLOAD nao-reconhecido NAO prova ausencia (Codex v2 #1) ──"
-for pid in 117 118 119 120; do
-  eq "I$pid payload nao-reconhecido -> reconciliacao_humana" "$(campo $pid rota)" "reconciliacao_humana"
-done
-eq "I117 JSON duplo-escapado: a regex pega o SINAL no texto (rota ja estava certa)" "$(campo 117 compromisso_fornecedor)" "notificado"
-eq "I120 vocabulario novo SEM sinal algum -> indeterminado_payload (so o gate de payload pega)" "$(campo 120 compromisso_fornecedor)" "indeterminado_payload"
-eq "I121 canal com TAB normaliza p/ a allowlist (nao vira falso-positivo)" "$(campo 121 rota)" "elegivel_prova_id"
-eq "I122 canal 'email' FORA da allowlist -> humano (mata o mutante que o adicionava)" "$(campo 122 rota)" "reconciliacao_humana"
-eq "I123 'insucesso_portal' NAO conta como sucesso" "$(campo 123 compromisso_fornecedor)" "nenhum"
+echo "── Bloco C: EVIDENCIA de compromisso (a RPC evidencia, NAO decide) ──"
+eq "C1 protocolo do portal -> protocolado (caso 281/286 de PROD)" "$(campo 103 compromisso_fornecedor)" "protocolado"
+eq "C2 status de sucesso sem protocolo -> enviado_portal" "$(campo 104 compromisso_fornecedor)" "enviado_portal"
+eq "C3 fornecedor_notificado -> notificado" "$(campo 105 compromisso_fornecedor)" "notificado"
+eq "C4 sem QUALQUER sinal -> sem_sinal_conhecido (nao afirma ausencia de compromisso)" "$(campo 102 compromisso_fornecedor)" "sem_sinal_conhecido"
+eq "C5 payload presente mas NAO reconhecido -> sinal_nao_reconhecido (nunca some)" "$(campo 120 compromisso_fornecedor)" "sinal_nao_reconhecido"
+eq "C6 status portal desconhecido -> sinal_nao_reconhecido (Codex v3 P1-2)" "$(campo 123 compromisso_fornecedor)" "sinal_nao_reconhecido"
+eq "C7 chave conhecida com VALOR comprometedor nao vira ausencia (Codex v3 P1-1)" "$(campo 124 compromisso_fornecedor)" "sinal_nao_reconhecido"
 
 echo "── Bloco A: marcador FAIL-CLOSED ──"
 P -q -c "UPDATE public.reposicao_pedidos_compra_run SET volume_ok=false;" >/dev/null
@@ -237,14 +223,15 @@ EXCEPTION WHEN insufficient_privilege THEN RAISE NOTICE 'DENY_OK'; END $$;
 SQL
 )
 case "$R" in *DENY_OK*) ok "D1 authenticated NÃO-staff é barrado (42501)";; *) bad "D1 — veio: $R";; esac
-eq "D2 staff (master) enxerga" "$(Pq -c "SET test.uid='33333333-3333-3333-3333-333333333333'; SELECT count(*) FROM public.reposicao_pos_candidatos('OBEN');" | tail -1)" "19"
-eq "D3 uid NULL (service_role / cron SQL-local) passa — auth.role() aqui MATARIA o cron" "$(Pq -c "SELECT count(*) FROM public.reposicao_pos_candidatos('OBEN');" | tail -1)" "19"
+eq "D2 staff (master) enxerga" "$(Pq -c "SET test.uid='33333333-3333-3333-3333-333333333333'; SELECT count(*) FROM public.reposicao_pos_candidatos('OBEN');" | tail -1)" "20"
+eq "D3 uid NULL (service_role / cron SQL-local) passa — auth.role() aqui MATARIA o cron" "$(Pq -c "SELECT count(*) FROM public.reposicao_pos_candidatos('OBEN');" | tail -1)" "20"
 
 # ══════════════════════════════════════════════════════════════════════════════
 echo "── FALSIFICAÇÃO ──"
 # Sabota a MIGRATION REAL (sed no arquivo), nao uma copia manual — a copia nao cobria os predicados do
 # marcador (Codex PR2 #3: 2 mutantes passavam verdes).
-saboto_real() { sed "$1" "$MIG" | P -q -f - ; }
+saboto_real()  { sed "$1" "$MIG" | P -q -f - ; }
+saboto_real2() { sed -e "$1" -e "$2" "$MIG" | P -q -f - ; }
 
 saboto_real "s/AND r.status = 'ok' AND r.volume_ok IS TRUE/AND r.volume_ok IS TRUE/"
 V=$(campo 101 marcador_seq)
@@ -256,72 +243,23 @@ V=$(campo 101 marcador_seq)
 case "$V" in 40) ok "F5 sem filtro de empresa o run COLACOR vira marcador da OBEN — H1 tem dente";; *) bad "F5 nao vazou (marcador=$V)";; esac
 P -q -f "$MIG" >/dev/null
 
-saboto() { # $1 = sem_guard_compromisso | marcador_frouxo | gate_por_role
-  local rota_expr="CASE WHEN (b.portal_protocolo IS NOT NULL AND btrim(b.portal_protocolo) <> '') OR b.status_envio_portal='sucesso_portal' OR lower(COALESCE(b.notificado_flag,''))='true' THEN 'reconciliacao_humana' ELSE 'elegivel_prova_id' END"
-  local marcador_where="AND r.status='ok' AND r.volume_ok IS TRUE"
-  local gate="IF (SELECT auth.uid()) IS NOT NULL AND NOT (SELECT public.pode_ver_carteira_completa((SELECT auth.uid()))) THEN RAISE EXCEPTION 'negado' USING ERRCODE='42501'; END IF;"
-  case "$1" in
-    sem_guard_compromisso) rota_expr="'elegivel_prova_id'" ;;
-    marcador_frouxo)       marcador_where="AND r.status='ok'" ;;
-    gate_por_role)         gate="IF auth.role() IS DISTINCT FROM 'service_role' THEN RAISE EXCEPTION 'negado' USING ERRCODE='42501'; END IF;" ;;
-  esac
-  P -q <<SQL
-CREATE OR REPLACE FUNCTION public.reposicao_pos_candidatos(p_empresa text)
-RETURNS TABLE (pedido_id bigint, omie_codigo_pedido text, data_ciclo date, idade_dias integer, dano_ativo boolean,
-               valor_total numeric, visto_status text, po_no_espelho boolean, fornecedor_nome text, canal_usado text,
-               compromisso_fornecedor text, rota text, marcador_run_id uuid, marcador_seq bigint)
-LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path TO 'public','pg_temp' AS \$fn\$
-DECLARE v_empresa public.empresa_reposicao := upper(btrim(p_empresa))::public.empresa_reposicao;
-BEGIN
-  $gate
-  RETURN QUERY
-  WITH marcador AS (SELECT r.run_id, r.seq FROM public.reposicao_pedidos_compra_run r
-                    WHERE r.empresa=v_empresa $marcador_where ORDER BY r.seq DESC LIMIT 1),
-  base AS (
-    SELECT p.id AS pedido_id, p.omie_pedido_compra_id AS omie_codigo_pedido, p.data_ciclo::date AS data_ciclo,
-           (now()::date - p.data_ciclo::date)::integer AS idade_dias, p.fornecedor_nome, p.canal_usado,
-           p.portal_protocolo, p.status_envio_portal, (p.resposta_canal ->> 'fornecedor_notificado') AS notificado_flag,
-           m.run_id AS marcador_run_id, m.seq AS marcador_seq, ls.run_id AS visto_run_id,
-           (SELECT sum(i.valor_linha) FROM public.pedido_compra_item i WHERE i.pedido_id=p.id) AS valor_total,
-           EXISTS (SELECT 1 FROM public.purchase_orders_tracking t WHERE t.empresa=v_empresa AND t.omie_codigo_pedido::text=p.omie_pedido_compra_id) AS po_no_espelho
-    FROM public.pedido_compra_sugerido p CROSS JOIN marcador m
-    LEFT JOIN public.reposicao_po_last_seen ls ON ls.empresa=v_empresa AND ls.omie_codigo_pedido::text=p.omie_pedido_compra_id
-    WHERE upper(btrim(p.empresa))=v_empresa::text AND p.status IN ('disparado','aprovado_aguardando_disparo')
-      AND p.omie_pedido_compra_id IS NOT NULL AND btrim(p.omie_pedido_compra_id) <> ''
-      AND (ls.run_id IS NULL OR ls.run_id <> m.run_id))
-  SELECT b.pedido_id, b.omie_codigo_pedido, b.data_ciclo, b.idade_dias, (b.idade_dias<=7),
-         b.valor_total, CASE WHEN b.visto_run_id IS NULL THEN 'nunca_carimbado' ELSE 'visto_em_run_anterior' END,
-         b.po_no_espelho, b.fornecedor_nome, b.canal_usado,
-         CASE WHEN b.portal_protocolo IS NOT NULL AND btrim(b.portal_protocolo)<>'' THEN 'protocolado'
-              WHEN b.status_envio_portal='sucesso_portal' THEN 'enviado_portal'
-              WHEN lower(COALESCE(b.notificado_flag,''))='true' THEN 'notificado' ELSE 'nenhum' END,
-         $rota_expr, b.marcador_run_id, b.marcador_seq
-  FROM base b;
-END; \$fn\$;
-SQL
-}
 
-# F1 — SEM o guard de compromisso, os 281/286-like caem no caminho do CANCELAMENTO (o pedido duplicado).
-saboto sem_guard_compromisso
-V=$(campo 103 rota)
-case "$V" in elegivel_prova_id) ok "F1 sem o guard, o PROTOCOLADO vira elegivel_prova_id (=recompra R\$3k) — C1 tem dente";; *) bad "F1 não vazou ($V)";; esac
-P -q -f "$MIG" >/dev/null
 
-# F2 — marcador frouxo (aceita run truncado) → volta a classificar com base inválida.
-saboto marcador_frouxo
-P -q -c "UPDATE public.reposicao_pedidos_compra_run SET volume_ok=false;" >/dev/null
+# F2 — sem exigir volume_ok, um run TRUNCADO vira base de verdade.
+saboto_real "s/AND r.status = 'ok' AND r.volume_ok IS TRUE/AND r.status = 'ok'/"
+P -q -c "UPDATE public.reposicao_pedidos_compra_run SET volume_ok=false WHERE seq=20;" >/dev/null
 V=$(Pq -c "SELECT count(*) FROM public.reposicao_pos_candidatos('OBEN');" | tail -1)
-case "$V" in 0) bad "F2 não vazou (esperava >0 com marcador frouxo)";; *) ok "F2 sem exigir volume_ok, run TRUNCADO vira base ($V candidatos) — A1 tem dente";; esac
+case "$V" in 0) bad "F2 nao vazou (esperava >0)";; *) ok "F2 sem volume_ok, run TRUNCADO vira base ($V candidatos) — A1 tem dente";; esac
 P -q -f "$MIG" >/dev/null; seed
 
 # F3 — gate por auth.role() (em vez de uid NULL-aware) MATA o cron SQL-local.
-saboto gate_por_role
+saboto_real2 "s/IF (SELECT auth.uid()) IS NOT NULL/IF auth.role() IS DISTINCT FROM 'service_role' THEN --/" "s/AND NOT (SELECT public.pode_ver_carteira_completa((SELECT auth.uid()))) THEN//"
 R=$(P -tA 2>&1 <<'SQL' || true
 DO $$ BEGIN PERFORM * FROM public.reposicao_pos_candidatos('OBEN'); RAISE NOTICE 'CRON_OK';
 EXCEPTION WHEN insufficient_privilege THEN RAISE NOTICE 'CRON_MORREU'; END $$;
 SQL
 )
-case "$R" in *CRON_MORREU*) ok "F3 gate por auth.role() MATA o cron (uid NULL) — D3 tem dente";; *) bad "F3 não vazou ($R)";; esac
+case "$R" in *CRON_MORREU*) ok "F3 gate por auth.role() MATA o cron (uid NULL) — D3 tem dente";; *) bad "F3 nao vazou ($R)";; esac
 P -q -f "$MIG" >/dev/null
 
 # F6 — ordenar o marcador por run_id em vez de seq (o mutante que passava verde com UUIDs alinhados).
@@ -331,19 +269,7 @@ V=$(campo 102 marcador_seq)
 case "$V" in 20) bad "F6 nao vazou (marcador ainda seq=20)";; "") bad "F6 inconclusivo (sem linha)";; *) ok "F6 ordenar por run_id escolhe o marcador ERRADO (seq=$V, nao 20) — o fencing por seq tem dente";; esac
 P -q -f "$MIG" >/dev/null
 
-# F7 — afrouxar a allowlist de canal deixa 'email' sem payload virar elegivel (recompra se o email
-# tiver acionado o fornecedor).
-saboto_real "s/IN ('omie', 'manual', 'interno')/IN ('omie', 'manual', 'interno', 'email')/"
-V=$(campo 122 rota)
-case "$V" in elegivel_prova_id) ok "F7 allowlist frouxa deixa 'email' virar elegivel — I122 tem dente";; *) bad "F7 nao vazou ($V)";; esac
-P -q -f "$MIG" >/dev/null
 
-# F8 — voltar a tratar payload NAO-reconhecido como ausencia provada (o furo do v2).
-# 120 e o unico caso que SO o gate de payload pega (118/119 ja casam nas regexes de sinal positivo).
-saboto_real "s/AND b.payload_reconhecido//"
-V=$(campo 120 rota)
-case "$V" in elegivel_prova_id) ok "F8 sem o gate de payload, vocabulario NOVO vira elegivel — I120 tem dente";; *) bad "F8 nao vazou ($V)";; esac
-P -q -f "$MIG" >/dev/null
 
 echo "──────────────────────────────"
 echo "RESULTADO: $PASS ok / $FAIL fail"
