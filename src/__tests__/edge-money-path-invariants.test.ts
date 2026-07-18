@@ -1632,6 +1632,9 @@ describe('guardrail money-path: omie-sync-sku-items agrega itens por (tracking, 
       mirrorBlockNamed(src, 'sku-items-agregacao'),
       'edge divergiu do helper de src/ — o Lovable reescreveu a agregação no deploy?',
     ).toBe(mirrorBlockNamed(helper, 'sku-items-agregacao'));
+  });
+});
+
 // ── Retenção do sinal do recebimento (nid_receb) ──
 // purchase_orders_tracking.raw_data é jsonb MULTI-WRITER: o sync de pedidos grava o payload
 // do PEDIDO por cima e apaga o nIdReceb que o sync de NFes acabou de resolver. A cada rodada
@@ -1663,10 +1666,13 @@ describe('guardrail money-path: retenção do nid_receb (coluna dedicada + 1 wri
   });
 
   it('nfes-recebidas decide o pendente pela COLUNA, no banco (não pelo jsonb, em memória)', () => {
+    // Ancorado no SELECT do backfill, não solto no arquivo: `.is("nid_receb", null)` também
+    // aparece no compare-and-set do UPDATE, e um regex solto passaria verde com o filtro do
+    // select removido — o Sísifo voltaria sem ninguém ver. (Pego pela falsificação F2.)
     expect(
       nfes,
-      'REGRESSÃO: o backfill não filtra mais por nid_receb no banco — volta a redescobrir como pendente o que já resolveu, e o teto de 1.000 linhas do PostgREST volta a truncar em silêncio',
-    ).toMatch(/\.is\("nid_receb",\s*null\)/);
+      'REGRESSÃO: o SELECT do backfill não filtra mais por nid_receb no banco — volta a redescobrir como pendente o que já resolveu, e o teto de 1.000 linhas do PostgREST volta a truncar em silêncio',
+    ).toMatch(/\.not\("nfe_chave_acesso",\s*"is",\s*null\)\s*\n\s*\.is\("nid_receb",\s*null\)/);
   });
 
   it('nfes-recebidas é o writer ÚNICO e grava com compare-and-set', () => {
