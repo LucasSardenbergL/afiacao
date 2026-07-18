@@ -184,6 +184,7 @@ const mk = (over: Partial<ItemRecebimentoResolvido>): ItemRecebimentoResolvido =
   valor_unitario: 10,
   valor_total: 10,
   t1_data_pedido: '2026-03-16T00:00:00Z',
+  t1_de_pedido: false,
   t2_data_faturamento: '2026-03-16T00:00:00Z',
   t3_data_cte: null,
   t4_data_recebimento: '2026-03-20T00:00:00Z',
@@ -240,12 +241,38 @@ describe('agregarItensRecebimento — soma o SKU repetido na NFe (não sobrescre
     expect(out[0].quantidade_recebida).toBeNull();
   });
 
-  it('ausente ≠ zero: um qr null + um qr 5 → soma 5 (null é ausente, não somando 0)', () => {
+  // [Codex xhigh 2026-07-18, BLOQUEADOR] A versão anterior deste teste exigia "um qr null +
+  // um qr 5 → soma 5" e INSTITUCIONALIZAVA a fabricação: somar só as parcelas presentes faz
+  // o total representar um subconjunto, e o consumidor (AVG(vt/NULLIF(qr,0)) com filtro
+  // qr>0 AND vt>0) o aceita como se fosse a compra inteira. Campo aditivo money-path agora é
+  // COMPLETO-ou-NULL: qualquer parcela ausente anula o total daquele campo.
+  it('completo-ou-NULL: um qr null + um qr 5 → qr agregado NULL (não 5 — o total seria parcial)', () => {
     const out = agregarItensRecebimento([
       mk({ quantidade_recebida: null }),
       mk({ quantidade_recebida: 5 }),
     ]);
-    expect(out[0].quantidade_recebida).toBe(5);
+    expect(out[0].quantidade_recebida).toBeNull();
+  });
+
+  it('completo-ou-NULL mata a FABRICAÇÃO de preço por nulls cruzados (vt de um, qr de outro)', () => {
+    // item A: vt=100, qr=null → sozinho não passa o filtro do consumidor
+    // item B: vt=null, qr=10  → sozinho não passa
+    // Somar só o presente daria (vt=100, qr=10) → preço 10 que NENHUM item real teve.
+    const out = agregarItensRecebimento([
+      mk({ valor_total: 100, quantidade_recebida: null }),
+      mk({ valor_total: null, quantidade_recebida: 10 }),
+    ]);
+    expect(out[0].valor_total, 'vt parcial não pode virar total').toBeNull();
+    expect(out[0].quantidade_recebida, 'qr parcial não pode virar total').toBeNull();
+  });
+
+  it('completo-ou-NULL não pune o caso são: todas as parcelas presentes → soma normal', () => {
+    const out = agregarItensRecebimento([
+      mk({ valor_total: 100, quantidade_recebida: 2 }),
+      mk({ valor_total: 50, quantidade_recebida: 1 }),
+    ]);
+    expect(out[0].valor_total).toBeCloseTo(150, 6);
+    expect(out[0].quantidade_recebida).toBe(3);
   });
 
   it('item ÚNICO (sem repetição) passa idêntico, n_itens_agregados=1 — não altera o caso comum', () => {
@@ -271,5 +298,84 @@ describe('agregarItensRecebimento — soma o SKU repetido na NFe (não sobrescre
 
   it('lista vazia → []', () => {
     expect(agregarItensRecebimento([])).toEqual([]);
+  });
+});
+
+// ── Hardening pós-Codex xhigh (2026-07-18) ──
+describe('agregarItensRecebimento — ponderação fail-closed em quantidade inválida', () => {
+  it('qp NEGATIVO não pondera: vu=100/qp=-1 + vu=10/qp=2 daria -80 (preço negativo) → NULL', () => {
+    const out = agregarItensRecebimento([
+      mk({ valor_unitario: 100, quantidade_pedida: -1 }),
+      mk({ valor_unitario: 10, quantidade_pedida: 2 }),
+    ]);
+    expect(out[0].valor_unitario, 'peso inválido não pode produzir preço').toBeNull();
+  });
+
+  it('todas as qp ZERO → NULL (não cai em AVG simples fingindo ponderação)', () => {
+    const out = agregarItensRecebimento([
+      mk({ valor_unitario: 10, quantidade_pedida: 0 }),
+      mk({ valor_unitario: 20, quantidade_pedida: 0 }),
+    ]);
+    expect(out[0].valor_unitario).toBeNull();
+  });
+
+  it('mistura ponderável × não-ponderável (uma qp null) → NULL, não média do subconjunto', () => {
+    const out = agregarItensRecebimento([
+      mk({ valor_unitario: 10, quantidade_pedida: 2 }),
+      mk({ valor_unitario: 90, quantidade_pedida: null }),
+    ]);
+    expect(out[0].valor_unitario, 'média de subconjunto apresentada como do grupo é fabricação').toBeNull();
+  });
+
+  it('ponderação legítima segue funcionando (todas qp>0 e vu presentes)', () => {
+    const out = agregarItensRecebimento([
+      mk({ valor_unitario: 10, quantidade_pedida: 1 }),
+      mk({ valor_unitario: 20, quantidade_pedida: 3 }),
+    ]);
+    expect(out[0].valor_unitario).toBeCloseTo(17.5, 6);
+  });
+});
+
+describe('agregarItensRecebimento — proveniência do t1 (bucket misto é fail-closed)', () => {
+  // [Codex xhigh 2026-07-18, BLOQUEADOR] t1 = pedidoMatch?.t1_data_pedido ?? nfeRaw.t2, resolvido
+  // POR ITEM. Item que casa o PRÓPRIO nfeRaw (medido em prod: 40 itens / 12 trackings) convive no
+  // mesmo bucket com item de fallback → t1 divergente e `bucket[0]` escolheria pela ordem da
+  // resposta da Omie. lt_bruto é money-path (o #1365 foi todo sobre t1 mentiroso), então bucket
+  // misto NÃO escolhe: marca ambiguidade e o edge grava lt_* = NULL.
+  it('bucket com t1 DIVERGENTE marca t1_ambiguo (não escolhe pela ordem)', () => {
+    const out = agregarItensRecebimento([
+      mk({ t1_data_pedido: '2026-03-02T00:00:00Z', t1_de_pedido: true }),
+      mk({ t1_data_pedido: '2026-03-16T00:00:00Z', t1_de_pedido: false }),
+    ]);
+    expect(out[0].t1_ambiguo).toBe(true);
+  });
+
+  it('a ambiguidade NÃO depende da ordem de chegada dos itens (determinismo)', () => {
+    const a = mk({ t1_data_pedido: '2026-03-02T00:00:00Z', t1_de_pedido: true });
+    const b = mk({ t1_data_pedido: '2026-03-16T00:00:00Z', t1_de_pedido: false });
+    const ab = agregarItensRecebimento([a, b]);
+    const ba = agregarItensRecebimento([b, a]);
+    expect(ab[0].t1_ambiguo).toBe(true);
+    expect(ba[0].t1_ambiguo).toBe(true);
+    expect(ab[0].t1_data_pedido, 'o t1 emitido deve ser o mesmo nas 2 ordens').toBe(ba[0].t1_data_pedido);
+  });
+
+  it('t1 ambíguo emite o t1 DE PEDIDO (mais informativo p/ auditoria), nunca o da ordem', () => {
+    const a = mk({ t1_data_pedido: '2026-03-02T00:00:00Z', t1_de_pedido: true });
+    const b = mk({ t1_data_pedido: '2026-03-16T00:00:00Z', t1_de_pedido: false });
+    expect(agregarItensRecebimento([b, a])[0].t1_data_pedido).toBe('2026-03-02T00:00:00Z');
+  });
+
+  it('bucket HOMOGÊNEO (mesmo t1) não é ambíguo — não pune o caso comum', () => {
+    const out = agregarItensRecebimento([
+      mk({ t1_data_pedido: '2026-03-02T00:00:00Z', t1_de_pedido: true }),
+      mk({ t1_data_pedido: '2026-03-02T00:00:00Z', t1_de_pedido: true }),
+    ]);
+    expect(out[0].t1_ambiguo).toBe(false);
+    expect(out[0].t1_data_pedido).toBe('2026-03-02T00:00:00Z');
+  });
+
+  it('item único nunca é ambíguo', () => {
+    expect(agregarItensRecebimento([mk({ t1_de_pedido: false })])[0].t1_ambiguo).toBe(false);
   });
 });

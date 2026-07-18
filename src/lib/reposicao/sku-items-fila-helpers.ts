@@ -115,6 +115,11 @@ export interface ItemRecebimentoResolvido {
   valor_unitario: number | null;
   valor_total: number | null;
   t1_data_pedido: string;
+  /** Proveniência do t1: true = veio do PEDIDO casado (nNumPedCompra → tracking do pedido);
+   *  false = fallback para o t2 da própria NFe. Sem isto, dois itens do mesmo SKU com
+   *  proveniências distintas caem no mesmo bucket e o t1 emitido dependeria da ORDEM da
+   *  resposta da Omie. */
+  t1_de_pedido: boolean;
   t2_data_faturamento: string;
   t3_data_cte: string | null;
   t4_data_recebimento: string | null;
@@ -123,39 +128,46 @@ export interface ItemRecebimentoResolvido {
 export interface ItemRecebimentoAgregado extends ItemRecebimentoResolvido {
   /** Quantos itens crus da NFe foram fundidos neste (tracking, sku). 1 = caso comum. */
   n_itens_agregados: number;
+  /** true = o bucket mistura itens com t1 DIFERENTE (proveniências distintas). Não dá para
+   *  saber qual t1 vale, e leadtime derivado de t1 errado é exatamente o defeito que o #1365
+   *  matou → o chamador grava lt_* = NULL em vez de escolher. Medido em prod (psql-ro
+   *  2026-07-18): 40 itens / 12 trackings casam o PRÓPRIO tracking e podem produzir bucket
+   *  misto. [Codex xhigh, bloqueador] */
+  t1_ambiguo: boolean;
 }
 
-/** Soma tratando null como AUSENTE, não como 0 (money-path.md: ausente ≠ zero). Grupo
- *  inteiro null → devolve null, nunca 0 fabricado. */
-function somaOuNull(valores: readonly (number | null)[]): number | null {
+/** Soma COMPLETO-ou-NULL para campo aditivo money-path: qualquer parcela ausente anula o
+ *  total. Somar só o que existe faria o total representar um SUBCONJUNTO e o consumidor
+ *  (AVG(valor_total/NULLIF(quantidade_recebida,0)) com filtro qr>0 AND vt>0) o aceitaria
+ *  como se fosse a compra inteira — fabricando um preço que nenhum item real teve
+ *  (vt=100/qr=null + vt=null/qr=10 → par (100,10), preço 10). [Codex xhigh, bloqueador] */
+function somaCompletaOuNull(valores: readonly (number | null)[]): number | null {
+  if (valores.length === 0) return null;
   let soma = 0;
-  let temAlgum = false;
   for (const v of valores) {
-    if (v === null) continue;
+    if (v === null) return null;
     soma += v;
-    temAlgum = true;
   }
-  return temAlgum ? soma : null;
+  return soma;
 }
 
 /** valor_unitario agregado = média PONDERADA por quantidade_pedida (não AVG simples — o
- *  achado de 2ª ordem da função dropada #1373). Só os itens com (vu, qp) ambos presentes
- *  entram na ponderação; fallback à média simples dos vu presentes se nenhum qp servir;
- *  null se não há vu algum (ausente ≠ zero). */
+ *  achado de 2ª ordem da função dropada #1373), FAIL-CLOSED: só pondera se TODO item do
+ *  grupo tiver vu presente e qp > 0. Peso ausente, zero ou negativo → null, nunca um preço
+ *  derivado de peso inválido (vu=100/qp=-1 + vu=10/qp=2 daria -80) nem média de subconjunto
+ *  apresentada como média do grupo. [Codex xhigh] */
 function valorUnitarioPonderado(itens: readonly ItemRecebimentoResolvido[]): number | null {
+  if (itens.length === 0) return null;
   let numerador = 0;
   let pesoTotal = 0;
   for (const i of itens) {
-    if (i.valor_unitario === null || i.quantidade_pedida === null) continue;
+    if (i.valor_unitario === null) return null;
+    if (i.quantidade_pedida === null || !(i.quantidade_pedida > 0)) return null;
     numerador += i.valor_unitario * i.quantidade_pedida;
     pesoTotal += i.quantidade_pedida;
   }
-  if (pesoTotal > 0) return numerador / pesoTotal;
-  const vus = itens
-    .map((i) => i.valor_unitario)
-    .filter((v): v is number => v !== null);
-  if (vus.length === 0) return null;
-  return vus.reduce((a, b) => a + b, 0) / vus.length;
+  if (!(pesoTotal > 0)) return null;
+  return numerador / pesoTotal;
 }
 
 /** Agrega os itens de UMA NFe por (tracking_id, sku_codigo_omie): soma quantidade_pedida,
@@ -179,14 +191,18 @@ export function agregarItensRecebimento(
   }
   const out: ItemRecebimentoAgregado[] = [];
   for (const bucket of buckets.values()) {
-    const base = bucket[0];
+    // Base DETERMINÍSTICA: prefere o item cujo t1 veio de PEDIDO real (mais informativo para
+    // auditoria) em vez do 1º da resposta da Omie — assim o t1 emitido não depende da ordem.
+    const base = bucket.find((i) => i.t1_de_pedido) ?? bucket[0];
+    const t1Ambiguo = new Set(bucket.map((i) => i.t1_data_pedido)).size > 1;
     out.push({
       ...base,
-      quantidade_pedida: somaOuNull(bucket.map((i) => i.quantidade_pedida)),
-      quantidade_recebida: somaOuNull(bucket.map((i) => i.quantidade_recebida)),
+      quantidade_pedida: somaCompletaOuNull(bucket.map((i) => i.quantidade_pedida)),
+      quantidade_recebida: somaCompletaOuNull(bucket.map((i) => i.quantidade_recebida)),
       valor_unitario: valorUnitarioPonderado(bucket),
-      valor_total: somaOuNull(bucket.map((i) => i.valor_total)),
+      valor_total: somaCompletaOuNull(bucket.map((i) => i.valor_total)),
       n_itens_agregados: bucket.length,
+      t1_ambiguo: t1Ambiguo,
     });
   }
   return out;

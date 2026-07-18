@@ -117,6 +117,10 @@ interface EmpresaSummary {
   /** Itens crus fundidos por SKU repetido na mesma NFe (Σ n_itens_agregados − 1). >0 = o
    *  bug de sobrescrita item-a-item teria mordido aqui; agora são somados, não perdidos. */
   itens_fundidos_sku_repetido: number;
+  /** Grupos (tracking, sku) cujo t1 divergia entre os itens fundidos (proveniências
+   *  distintas: um casou o pedido, outro caiu no fallback). Nestes o lt_bruto/lt_faturamento
+   *  sai NULL de propósito — t1 ambíguo não vira leadtime. >0 merece olhar. */
+  grupos_t1_ambiguo: number;
   itens_com_pedido_mapeado: number;
   itens_sem_pedido: number;
   skus_distintos: number;
@@ -234,6 +238,11 @@ interface ItemRecebimentoResolvido {
   valor_unitario: number | null;
   valor_total: number | null;
   t1_data_pedido: string;
+  /** Proveniência do t1: true = veio do PEDIDO casado (nNumPedCompra → tracking do pedido);
+   *  false = fallback para o t2 da própria NFe. Sem isto, dois itens do mesmo SKU com
+   *  proveniências distintas caem no mesmo bucket e o t1 emitido dependeria da ORDEM da
+   *  resposta da Omie. */
+  t1_de_pedido: boolean;
   t2_data_faturamento: string;
   t3_data_cte: string | null;
   t4_data_recebimento: string | null;
@@ -242,39 +251,46 @@ interface ItemRecebimentoResolvido {
 interface ItemRecebimentoAgregado extends ItemRecebimentoResolvido {
   /** Quantos itens crus da NFe foram fundidos neste (tracking, sku). 1 = caso comum. */
   n_itens_agregados: number;
+  /** true = o bucket mistura itens com t1 DIFERENTE (proveniências distintas). Não dá para
+   *  saber qual t1 vale, e leadtime derivado de t1 errado é exatamente o defeito que o #1365
+   *  matou → o chamador grava lt_* = NULL em vez de escolher. Medido em prod (psql-ro
+   *  2026-07-18): 40 itens / 12 trackings casam o PRÓPRIO tracking e podem produzir bucket
+   *  misto. [Codex xhigh, bloqueador] */
+  t1_ambiguo: boolean;
 }
 
-/** Soma tratando null como AUSENTE, não como 0 (money-path.md: ausente ≠ zero). Grupo
- *  inteiro null → devolve null, nunca 0 fabricado. */
-function somaOuNull(valores: readonly (number | null)[]): number | null {
+/** Soma COMPLETO-ou-NULL para campo aditivo money-path: qualquer parcela ausente anula o
+ *  total. Somar só o que existe faria o total representar um SUBCONJUNTO e o consumidor
+ *  (AVG(valor_total/NULLIF(quantidade_recebida,0)) com filtro qr>0 AND vt>0) o aceitaria
+ *  como se fosse a compra inteira — fabricando um preço que nenhum item real teve
+ *  (vt=100/qr=null + vt=null/qr=10 → par (100,10), preço 10). [Codex xhigh, bloqueador] */
+function somaCompletaOuNull(valores: readonly (number | null)[]): number | null {
+  if (valores.length === 0) return null;
   let soma = 0;
-  let temAlgum = false;
   for (const v of valores) {
-    if (v === null) continue;
+    if (v === null) return null;
     soma += v;
-    temAlgum = true;
   }
-  return temAlgum ? soma : null;
+  return soma;
 }
 
 /** valor_unitario agregado = média PONDERADA por quantidade_pedida (não AVG simples — o
- *  achado de 2ª ordem da função dropada #1373). Só os itens com (vu, qp) ambos presentes
- *  entram na ponderação; fallback à média simples dos vu presentes se nenhum qp servir;
- *  null se não há vu algum (ausente ≠ zero). */
+ *  achado de 2ª ordem da função dropada #1373), FAIL-CLOSED: só pondera se TODO item do
+ *  grupo tiver vu presente e qp > 0. Peso ausente, zero ou negativo → null, nunca um preço
+ *  derivado de peso inválido (vu=100/qp=-1 + vu=10/qp=2 daria -80) nem média de subconjunto
+ *  apresentada como média do grupo. [Codex xhigh] */
 function valorUnitarioPonderado(itens: readonly ItemRecebimentoResolvido[]): number | null {
+  if (itens.length === 0) return null;
   let numerador = 0;
   let pesoTotal = 0;
   for (const i of itens) {
-    if (i.valor_unitario === null || i.quantidade_pedida === null) continue;
+    if (i.valor_unitario === null) return null;
+    if (i.quantidade_pedida === null || !(i.quantidade_pedida > 0)) return null;
     numerador += i.valor_unitario * i.quantidade_pedida;
     pesoTotal += i.quantidade_pedida;
   }
-  if (pesoTotal > 0) return numerador / pesoTotal;
-  const vus = itens
-    .map((i) => i.valor_unitario)
-    .filter((v): v is number => v !== null);
-  if (vus.length === 0) return null;
-  return vus.reduce((a, b) => a + b, 0) / vus.length;
+  if (!(pesoTotal > 0)) return null;
+  return numerador / pesoTotal;
 }
 
 /** Agrega os itens de UMA NFe por (tracking_id, sku_codigo_omie): soma quantidade_pedida,
@@ -298,14 +314,18 @@ function agregarItensRecebimento(
   }
   const out: ItemRecebimentoAgregado[] = [];
   for (const bucket of buckets.values()) {
-    const base = bucket[0];
+    // Base DETERMINÍSTICA: prefere o item cujo t1 veio de PEDIDO real (mais informativo para
+    // auditoria) em vez do 1º da resposta da Omie — assim o t1 emitido não depende da ordem.
+    const base = bucket.find((i) => i.t1_de_pedido) ?? bucket[0];
+    const t1Ambiguo = new Set(bucket.map((i) => i.t1_data_pedido)).size > 1;
     out.push({
       ...base,
-      quantidade_pedida: somaOuNull(bucket.map((i) => i.quantidade_pedida)),
-      quantidade_recebida: somaOuNull(bucket.map((i) => i.quantidade_recebida)),
+      quantidade_pedida: somaCompletaOuNull(bucket.map((i) => i.quantidade_pedida)),
+      quantidade_recebida: somaCompletaOuNull(bucket.map((i) => i.quantidade_recebida)),
       valor_unitario: valorUnitarioPonderado(bucket),
-      valor_total: somaOuNull(bucket.map((i) => i.valor_total)),
+      valor_total: somaCompletaOuNull(bucket.map((i) => i.valor_total)),
       n_itens_agregados: bucket.length,
+      t1_ambiguo: t1Ambiguo,
     });
   }
   return out;
@@ -735,6 +755,7 @@ Deno.serve(async (req) => {
       consultas_detalhadas: 0,
       itens_processados: 0,
       itens_fundidos_sku_repetido: 0,
+      grupos_t1_ambiguo: 0,
       itens_com_pedido_mapeado: 0,
       itens_sem_pedido: 0,
       skus_distintos: 0,
@@ -870,6 +891,10 @@ Deno.serve(async (req) => {
           valor_unitario: toNum(cab?.nPrecoUnit),
           valor_total: toNum(cab?.vTotalItem),
           t1_data_pedido: pedidoMatch?.t1_data_pedido ?? nfeRaw.t2_data_faturamento,
+          // Proveniência do t1 — sem ela, itens do MESMO sku com origens distintas (um casando
+          // o pedido, outro no fallback) caem no mesmo bucket e o t1 emitido dependeria da
+          // ordem da resposta da Omie. Em prod há 40 itens / 12 trackings capazes disso.
+          t1_de_pedido: pedidoMatch !== null,
           t2_data_faturamento: nfeRaw.t2_data_faturamento,
           t3_data_cte: nfeRaw.t3_data_cte,
           t4_data_recebimento: nfeRaw.t4_data_recebimento,
@@ -881,6 +906,12 @@ Deno.serve(async (req) => {
       const agregados = agregarItensRecebimento(resolvidos);
       summary.itens_fundidos_sku_repetido += resolvidos.length - agregados.length;
       for (const ag of agregados) {
+        // Bucket com t1 AMBÍGUO (itens do mesmo sku com proveniências/t1 distintos): não dá
+        // para saber qual t1 é a data de pedido, e leadtime derivado de t1 errado é o defeito
+        // que o #1365 matou (subestima e faz pedir tarde). Fail-closed: grava as datas mas
+        // NÃO emite lt_bruto/lt_faturamento. O lt_logistica (t2→t4) não depende do t1 e segue.
+        const t1Confiavel = !ag.t1_ambiguo;
+        if (ag.t1_ambiguo) summary.grupos_t1_ambiguo++;
         const upsertRow = {
           tracking_id: ag.tracking_id,
           empresa,
@@ -900,8 +931,15 @@ Deno.serve(async (req) => {
           t2_data_faturamento: ag.t2_data_faturamento,
           t3_data_cte: ag.t3_data_cte,
           t4_data_recebimento: ag.t4_data_recebimento,
-          lt_bruto_dias_uteis: diasUteisEntre(ag.t1_data_pedido, ag.t4_data_recebimento),
-          lt_faturamento_dias_uteis: diasUteisEntre(ag.t1_data_pedido, ag.t2_data_faturamento),
+          // t1 ambíguo ⇒ lt que DEPENDE do t1 não é emitido (degradação honesta: "não sei"
+          // vale mais que um leadtime derivado do t1 errado — o #1365 mostrou que o lt
+          // subestimado faz pedir TARDE). O lt_logistica (t2→t4) não usa t1 e segue válido.
+          lt_bruto_dias_uteis: t1Confiavel
+            ? diasUteisEntre(ag.t1_data_pedido, ag.t4_data_recebimento)
+            : null,
+          lt_faturamento_dias_uteis: t1Confiavel
+            ? diasUteisEntre(ag.t1_data_pedido, ag.t2_data_faturamento)
+            : null,
           lt_logistica_dias_uteis: diasUteisEntre(ag.t2_data_faturamento, ag.t4_data_recebimento),
           updated_at: new Date().toISOString(),
         };
