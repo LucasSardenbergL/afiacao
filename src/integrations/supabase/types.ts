@@ -18110,10 +18110,6 @@ export type Database = {
           zip_code: string
         }[]
       }
-      carteira_visivel_para: {
-        Args: { _customer_user_id: string; _uid: string }
-        Returns: boolean
-      }
       cep_geo_upsert: {
         Args: {
           p_cep: string
@@ -18758,7 +18754,6 @@ export type Database = {
         Args: { p_pedido_id: number }
         Returns: boolean
       }
-      is_super_admin: { Args: { _user_id: string }; Returns: boolean }
       kb_extraction_draft_claim: {
         Args: { p_claim_token: string; p_document_id: string }
         Returns: boolean
