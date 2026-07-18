@@ -5,11 +5,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Search, CheckCircle2, XCircle } from "lucide-react";
+import { Search, CheckCircle2 } from "lucide-react";
 
 export function AlertasFiltros({
   busca, setBusca, filtroTipo, setFiltroTipo, filtroSev, setFiltroSev, filtroStatus, setFiltroStatus,
-  setPage, selecionadosCount, onAceitarLote, onExcluirLote, onLimparSelecao,
+  setPage, selecionadosCount, onAceitarLote, onLimparSelecao,
 }: {
   busca: string;
   setBusca: (s: string) => void;
@@ -22,7 +22,6 @@ export function AlertasFiltros({
   setPage: (p: number) => void;
   selecionadosCount: number;
   onAceitarLote: () => void;
-  onExcluirLote: () => void;
   onLimparSelecao: () => void;
 }) {
   return (
@@ -87,10 +86,7 @@ export function AlertasFiltros({
           <div className="mt-4 flex gap-2 items-center bg-muted/50 p-3 rounded-md">
             <span className="text-sm font-medium">{selecionadosCount} selecionado(s)</span>
             <Button size="sm" variant="default" onClick={onAceitarLote}>
-              <CheckCircle2 className="h-4 w-4 mr-1" /> Aceitar selecionados
-            </Button>
-            <Button size="sm" variant="destructive" onClick={onExcluirLote}>
-              <XCircle className="h-4 w-4 mr-1" /> Excluir selecionados
+              <CheckCircle2 className="h-4 w-4 mr-1" /> Marcar como revisados
             </Button>
             <Button size="sm" variant="ghost" onClick={onLimparSelecao}>
               Limpar seleção

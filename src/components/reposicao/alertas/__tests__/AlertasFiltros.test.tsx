@@ -16,7 +16,6 @@ function baseProps(over: Partial<React.ComponentProps<typeof AlertasFiltros>> = 
     setPage: noop,
     selecionadosCount: 0,
     onAceitarLote: noop,
-    onExcluirLote: noop,
     onLimparSelecao: noop,
     ...over,
   };
@@ -41,15 +40,18 @@ describe("AlertasFiltros", () => {
 
   it("barra de lote aparece com count>0 e botões disparam callbacks", () => {
     const onAceitarLote = vi.fn();
-    const onExcluirLote = vi.fn();
     const onLimparSelecao = vi.fn();
-    render(<AlertasFiltros {...baseProps({ selecionadosCount: 3, onAceitarLote, onExcluirLote, onLimparSelecao })} />);
+    render(<AlertasFiltros {...baseProps({ selecionadosCount: 3, onAceitarLote, onLimparSelecao })} />);
     expect(screen.getByText("3 selecionado(s)")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: /Aceitar selecionados/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Marcar como revisados/ }));
     expect(onAceitarLote).toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: /Excluir selecionados/ }));
-    expect(onExcluirLote).toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: /Limpar seleção/ }));
     expect(onLimparSelecao).toHaveBeenCalled();
+  });
+
+  // Guarda de regressão: o excluir-em-lote foi RETIRADO (spec 2026-07-16).
+  it("não oferece excluir em lote", () => {
+    render(<AlertasFiltros {...baseProps({ selecionadosCount: 3 })} />);
+    expect(screen.queryByRole("button", { name: /Excluir selecionados/ })).toBeNull();
   });
 });
