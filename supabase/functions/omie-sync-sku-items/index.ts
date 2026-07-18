@@ -434,6 +434,9 @@ interface NFeRow {
   fornecedor_codigo_omie: number;
   fornecedor_nome: string | null;
   raw_data: NFeRawData | null;
+  /** Sinal do recebimento em coluna DEDICADA — sobrevive ao sync de pedidos, que
+   *  sobrescreve o raw_data. Fonte preferida; o jsonb fica só como fallback. */
+  nid_receb: number | null;
 }
 
 /** NFeRow com o nIdReceb já extraído do raw_data — a fila dedup-a por ele, e o
@@ -663,7 +666,7 @@ Deno.serve(async (req) => {
     let q = supabase
       .from("purchase_orders_tracking")
       .select(
-        "id, nfe_chave_acesso, t1_data_pedido, t2_data_faturamento, t3_data_cte, t4_data_recebimento, fornecedor_codigo_omie, fornecedor_nome, raw_data",
+        "id, nfe_chave_acesso, t1_data_pedido, t2_data_faturamento, t3_data_cte, t4_data_recebimento, fornecedor_codigo_omie, fornecedor_nome, raw_data, nid_receb",
       )
       .eq("empresa", empresa)
       .gte("t2_data_faturamento", cutoffIso)
@@ -722,9 +725,14 @@ Deno.serve(async (req) => {
     const filaOrdenada: NFeFilaRow[] = pendentes
       .map((n) => ({
         ...n,
-        nIdReceb: n.raw_data?.cabec?.nIdReceb != null
-          ? String(n.raw_data.cabec.nIdReceb)
-          : null,
+        // Dual-read: a coluna dedicada VENCE; o jsonb fica como fallback da transição.
+        // Quando o backfill do sync de NFes convergir, ele para de re-consultar a Omie e
+        // portanto para de regravar o raw_data — um leitor só-jsonb regrediria em silêncio.
+        nIdReceb: n.nid_receb != null
+          ? String(n.nid_receb)
+          : (n.raw_data?.cabec?.nIdReceb != null
+            ? String(n.raw_data.cabec.nIdReceb)
+            : null),
       }))
       .filter((n) => skuItemsElegivel(controleMap.get(n.id), agoraMs))
       .sort((a, b) =>
