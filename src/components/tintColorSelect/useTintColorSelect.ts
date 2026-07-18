@@ -97,15 +97,18 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
     enabled: !!skuId && debouncedSearch.length >= 2,
     queryFn: async () => {
       if (!isSearchablePostgrestTerm(debouncedSearch)) return []; // só-wildcard → match-all (#1062); busca vazia
-      const { data } = await supabase
+      // Erro (timeout/RLS/cache do PostgREST sem a view) LANÇA — senão vira
+      // lista vazia e a UI mente "cor não encontrada" (achado Codex no diff).
+      const { data, error } = await supabase
         .from('v_tint_formula_canonica')
-        .select('id, cor_id, nome_cor, preco_final_sayersystem')
+        .select('id, cor_id, nome_cor, preco_final_sayersystem, preco_csv_legado, is_sl')
         .eq('account', 'oben')
         .eq('sku_id', skuId!)
         .or(ilikeOr(['cor_id', 'nome_cor'], debouncedSearch))
         .order('cor_id', { ascending: true })
         .order('id', { ascending: true })
         .limit(20);
+      if (error) throw error;
       return (data || []) as FormulaResult[];
     },
   });
@@ -124,20 +127,28 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
       if (!isSearchablePostgrestTerm(debouncedSearch)) return { matches: [], colorExists: false };
       // Search formulas across all SKUs — canônica (a view já filtra ativas
       // com sku e resolve a gêmea SL×SAYERLACK por chave)
-      const { data: globalFormulas } = await supabase
+      const { data: globalRaw, error: globalErr } = await supabase
         .from('v_tint_formula_canonica')
-        .select('id, cor_id, nome_cor, sku_id, preco_final_sayersystem')
+        .select('id, cor_id, nome_cor, sku_id, preco_final_sayersystem, preco_csv_legado')
         .eq('account', 'oben')
         .or(ilikeOr(['cor_id', 'nome_cor'], debouncedSearch))
         .order('cor_id', { ascending: true })
         .order('id', { ascending: true })
         .limit(50);
+      if (globalErr) throw globalErr;
+      // Narrowing na fronteira: o tipo gerado da view é nullable; a base é NOT
+      // NULL e a view filtra sku — o filtro materializa o contrato ANTES de
+      // qualquer uso (o `.in(skuIds)` abaixo usava `!` pré-guard).
+      const globalFormulas = (globalRaw ?? []).filter(
+        (r): r is typeof r & { id: string; sku_id: string; cor_id: string; nome_cor: string } =>
+          r.id != null && r.sku_id != null && r.cor_id != null && r.nome_cor != null,
+      );
 
       // Achou fórmula = a cor EXISTE no catálogo (mesmo que nenhuma seja vendável).
-      if (!globalFormulas || globalFormulas.length === 0) return { matches: [], colorExists: false };
+      if (globalFormulas.length === 0) return { matches: [], colorExists: false };
 
       // Get SKU details
-      const skuIds = [...new Set(globalFormulas.map(f => f.sku_id!))];
+      const skuIds = [...new Set(globalFormulas.map(f => f.sku_id))];
       const { data: skus } = await supabase
         .from('tint_skus')
         .select('id, omie_product_id, produto_id, base_id')
@@ -184,9 +195,6 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
 
       const result: AlternativePackaging[] = [];
       for (const gf of globalFormulas) {
-        // Tipo gerado da VIEW é todo nullable; na tabela-base as colunas são NOT
-        // NULL e a view filtra sku — o guard só materializa isso pro strict.
-        if (gf.id == null || gf.sku_id == null || gf.cor_id == null || gf.nome_cor == null) continue;
         const sku = skus.find(s => s.id === gf.sku_id);
         if (!sku?.omie_product_id) continue;
         const prod = products.find(p => p.id === sku.omie_product_id);
@@ -198,7 +206,7 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
           omieProductId: sku.omie_product_id,
           productDescricao: prod.descricao,
           productCodigo: prod.codigo,
-          precoFinalCsv: gf.preco_final_sayersystem ? Math.ceil(gf.preco_final_sayersystem * 10) / 10 : gf.preco_final_sayersystem,
+          precoFinalCsv: gf.preco_csv_legado ? Math.ceil(gf.preco_csv_legado * 10) / 10 : gf.preco_csv_legado,
           product: prod as Product,
           sameAcabamento: false,
           corId: gf.cor_id,
@@ -264,13 +272,14 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
 
       // Get all formulas with the same cor_id but different sku_id — canônica
       // (1 por SKU; sem a gêmea SAYERLACK duplicando cada embalagem)
-      const { data: altFormulas } = await supabase
+      const { data: altFormulas, error: altErr } = await supabase
         .from('v_tint_formula_canonica')
-        .select('id, sku_id, preco_final_sayersystem')
+        .select('id, sku_id, preco_csv_legado')
         .eq('account', 'oben')
         .eq('cor_id', selectedFormula.cor_id)
         .neq('sku_id', skuId)
         .order('id', { ascending: true });
+      if (altErr) throw altErr;
 
       if (!altFormulas || altFormulas.length === 0) return [];
 
@@ -313,7 +322,7 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
           omieProductId: sku.omie_product_id,
           productDescricao: prod.descricao,
           productCodigo: prod.codigo,
-          precoFinalCsv: af.preco_final_sayersystem ? Math.ceil(af.preco_final_sayersystem * 10) / 10 : af.preco_final_sayersystem,
+          precoFinalCsv: af.preco_csv_legado ? Math.ceil(af.preco_csv_legado * 10) / 10 : af.preco_csv_legado,
           product: prod as Product,
           sameAcabamento: sku.produto_id === currentProdutoId && sku.base_id === currentBaseId,
         });
@@ -342,7 +351,10 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
   // Preço honesto da cor selecionada: motor get_tint_price (base + corantes, NULL quando
   // a base/corante falta) + CSV legado + último preço do cliente. Quando o motor não tem
   // preço, vira "sem preço" — nunca um número fabricado. Regras em src/lib/tint/select-price.ts.
-  const rawCsv = selectedFormula?.preco_final_sayersystem ?? null;
+  // Fase 2b: o CSV considerado é o da CHAVE (preco_csv_legado) — quando a canônica
+  // é a SL viva (CSV próprio NULL), vem o preço da VERSÃO ANTERIOR da tinta; a
+  // fonte "Tabela" volta ao seletor e a vendedora escolhe entre novo × anterior.
+  const rawCsv = selectedFormula?.preco_csv_legado ?? null;
   const custoCorantes = pricing?.custoCorantes || 0;
 
   const [priceSourceOverride, setPriceSourceOverride] = useState<TintPriceSource | null>(null);

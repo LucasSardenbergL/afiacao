@@ -88,10 +88,12 @@ export function SelectedFormulaCard({
   onConfirm,
 }: SelectedFormulaCardProps) {
   // Fontes de preço disponíveis (com valor), para a vendedora escolher manualmente.
+  // Fase 2b: quando a cor é a geração SL (receita viva), o CSV vem da VERSÃO
+  // ANTERIOR da tinta (gêmea antiga) — o rótulo deixa a escolha explícita.
   const fontes: { key: TintPriceSource; label: string; preco: number }[] = [];
   if (precoCliente != null) fontes.push({ key: 'cliente', label: 'Cliente', preco: precoCliente });
   if (precoCalc != null) fontes.push({ key: 'calculado', label: 'Calculado', preco: precoCalc });
-  if (precoCsv > 0) fontes.push({ key: 'tabela', label: 'Tabela', preco: precoCsv });
+  if (precoCsv > 0) fontes.push({ key: 'tabela', label: selectedFormula.is_sl ? 'Tabela (versão anterior)' : 'Tabela', preco: precoCsv });
 
   return (
     <Card className="border-primary/30">
