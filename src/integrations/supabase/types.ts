@@ -18984,6 +18984,15 @@ export type Database = {
           skus_ranqueados: number
         }[]
       }
+      register_carteira_member: {
+        Args: {
+          p_account: string
+          p_omie_codigo_cliente: number
+          p_omie_codigo_vendedor?: number
+          p_user_id: string
+        }
+        Returns: undefined
+      }
       registrar_aumento_via_vision: {
         Args: {
           p_categorias: Json
