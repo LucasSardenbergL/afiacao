@@ -2,7 +2,7 @@
 -- ============================================================================
 -- O PR1 (em prod desde 16/07) publica, a cada varredura COMPLETA e LIMPA, o marcador de run e o
 -- `reposicao_po_last_seen` de todo PO visto. Esta RPC responde: quais pedidos `disparado` têm um PO que
--- NÃO apareceu no último run válido? Ela CLASSIFICA e NÃO decide — não muta nada, não cancela nada.
+-- NÃO apareceu no último run válido? Ela CLASSIFICA e NÃO decide — não muta, não cancela.
 --
 -- ⚠️ A LIÇÃO QUE MUDOU O DESIGN (dado de prod, 16/07 + Codex): "PO sumiu do Omie" NÃO prova "a compra não
 -- existe". O `disparar-pedidos-aprovados` aciona o PORTAL DO FORNECEDOR **antes** de criar o PO no Omie —
@@ -10,7 +10,13 @@
 -- Os 2 únicos candidatos de hoje são exatamente isso: pedidos 281/286 (Sayerlack, protocolos 2097501/2097910,
 -- `fornecedor_notificado=true`, entrega prometida 10/06). Cancelá-los faria o motor RECOMPRAR ~R$3.060 que a
 -- Sayerlack já tem protocolado — o pedido duplicado que o princípio precisão>recall existe para evitar.
--- Por isso a coluna `rota`: com compromisso de fornecedor NUNCA há auto-cancelamento, vai para humano.
+--
+-- 🔑 O GUARD É FAIL-CLOSED POR CONSTRUÇÃO (Codex PR2 #1 — a v1 vazava por shape):
+-- `rota='elegivel_prova_id'` (o único caminho que segue para a mutação do PR3) exige PROVAR A AUSÊNCIA de
+-- compromisso: canal reconhecido como não-fornecedor E nenhuma marca de portal/notificação em NENHUM lugar
+-- da resposta. Qualquer coisa fora disso — shape novo, canal desconhecido, valor com espaço/caixa, flag
+-- aninhado ou dentro de array — cai em `reconciliacao_humana`. Enumerar os shapes perigosos não converge
+-- (a v1 tentou e o Codex achou 4 escapes em minutos); o default seguro mata a classe inteira.
 --
 -- Design: docs/superpowers/specs/2026-07-11-reposicao-reconciliacao-po-excluido-omie-design.md §5.5
 -- Prova PG17: db/test-reposicao-pos-candidatos.sh
@@ -70,9 +76,19 @@ BEGIN
       (now()::date - p.data_ciclo::date)::integer AS idade_dias,
       p.fornecedor_nome,
       p.canal_usado,
-      p.portal_protocolo,
-      p.status_envio_portal,
-      (p.resposta_canal ->> 'fornecedor_notificado') AS notificado_flag,
+      -- ── SINAIS DE COMPROMISSO, todos normalizados (Codex PR2 #1: ' sucesso_portal ' e ' true ' escapavam) ──
+      (p.portal_protocolo IS NOT NULL AND btrim(p.portal_protocolo) <> '') AS tem_protocolo,
+      (lower(btrim(COALESCE(p.status_envio_portal, ''))) LIKE '%sucesso%') AS portal_sucesso,
+      -- O flag pode vir top-level, ANINHADO ({"portal":{...}}), dentro de ARRAY, como string JSON escapada ou
+      -- com espaços. Buscar só a chave top-level deixava o compromisso ESCAPAR para o caminho do cancelamento.
+      -- Aqui a varredura é no TEXTO INTEIRO do jsonb: vale de onde vier.
+      (COALESCE(p.resposta_canal::text, '') ~* '"fornecedor_notificado"\s*:\s*\\?"?\s*true') AS notificado,
+      -- Qualquer marca de portal na resposta (protocolo/nº no portal) = fornecedor acionado, mesmo com as
+      -- colunas dedicadas vazias.
+      (COALESCE(p.resposta_canal::text, '') ~* '"[a-z_]*protocolo[a-z_]*"\s*:\s*\\?"?[0-9A-Za-z]') AS protocolo_na_resposta,
+      -- CANAL que comprovadamente NÃO aciona fornecedor. Allowlist ESTRITA: canal desconhecido/nulo NÃO prova
+      -- ausência de compromisso (o portal-first é o padrão da casa) → cai no lado seguro.
+      (lower(btrim(COALESCE(p.canal_usado, ''))) IN ('omie', 'manual', 'interno')) AS canal_sem_fornecedor,
       m.run_id AS marcador_run_id,
       m.seq AS marcador_seq,
       ls.run_id AS visto_run_id,
@@ -95,8 +111,8 @@ BEGIN
       AND p.omie_pedido_compra_id IS NOT NULL
       AND btrim(p.omie_pedido_compra_id) <> ''
       -- CANDIDATO = o PO não foi visto no marcador atual. Duas formas: carimbado por um run ANTERIOR, ou
-      -- NUNCA carimbado. "Nunca carimbado" entra de propósito (fail-closed) — mas veja `rota`: a decisão
-      -- final é da prova por ID (PR2b), não daqui.
+      -- NUNCA carimbado. "Nunca carimbado" entra de propósito (fail-closed) — veja `rota`: a decisão final
+      -- é da prova por ID (PR3), não daqui.
       AND (ls.run_id IS NULL OR ls.run_id <> m.run_id)
   )
   SELECT
@@ -114,22 +130,27 @@ BEGIN
     b.po_no_espelho,
     b.fornecedor_nome,
     b.canal_usado,
-    -- O GUARD QUE MUDOU O DESIGN: o portal do fornecedor é acionado ANTES do Omie. Protocolo/notificação =
-    -- compromisso REAL lá fora, que a exclusão do PO no Omie não desfaz.
     CASE
-      WHEN b.portal_protocolo IS NOT NULL AND btrim(b.portal_protocolo) <> '' THEN 'protocolado'
-      WHEN b.status_envio_portal = 'sucesso_portal' THEN 'enviado_portal'
-      WHEN lower(COALESCE(b.notificado_flag, '')) = 'true' THEN 'notificado'
-      ELSE 'nenhum'
+      WHEN b.tem_protocolo          THEN 'protocolado'
+      WHEN b.protocolo_na_resposta  THEN 'protocolado_na_resposta'
+      WHEN b.portal_sucesso         THEN 'enviado_portal'
+      WHEN b.notificado             THEN 'notificado'
+      WHEN b.canal_sem_fornecedor   THEN 'nenhum'
+      -- canal desconhecido e sem sinal: NÃO afirmamos ausência de compromisso.
+      ELSE 'indeterminado'
     END AS compromisso_fornecedor,
     CASE
-      WHEN (b.portal_protocolo IS NOT NULL AND btrim(b.portal_protocolo) <> '')
-        OR b.status_envio_portal = 'sucesso_portal'
-        OR lower(COALESCE(b.notificado_flag, '')) = 'true'
-      -- NUNCA auto-cancela: o fornecedor tem o pedido. O caminho provável é RECRIAR o PO no Omie (o sistema
-      -- precisa refletir a compra que existe), não cancelar e re-sugerir (= comprar de novo).
-      THEN 'reconciliacao_humana'
-      ELSE 'elegivel_prova_id'
+      -- ⛔ FAIL-CLOSED: só é elegível quem PROVA a ausência de compromisso — canal na allowlist E nenhum
+      -- sinal de portal/notificação. Todo o resto (inclusive shape desconhecido) vai para humano.
+      WHEN b.canal_sem_fornecedor
+       AND NOT b.tem_protocolo
+       AND NOT b.protocolo_na_resposta
+       AND NOT b.portal_sucesso
+       AND NOT b.notificado
+      THEN 'elegivel_prova_id'
+      -- NUNCA auto-cancela: o fornecedor pode estar com o pedido. O caminho provável é RECRIAR o PO no Omie
+      -- (o sistema precisa refletir a compra que existe), não cancelar e re-sugerir (= comprar de novo).
+      ELSE 'reconciliacao_humana'
     END AS rota,
     b.marcador_run_id,
     b.marcador_seq
@@ -139,7 +160,7 @@ END;
 $$;
 
 COMMENT ON FUNCTION public.reposicao_pos_candidatos(text) IS
-  'PR2 (NÃO-MUTANTE): pedidos disparado/aprovado cujo PO não apareceu no último run VÁLIDO do omie-sync-pedidos-compra. CLASSIFICA (idade, dano_ativo, compromisso_fornecedor) e NÃO decide. rota=reconciliacao_humana quando há protocolo/notificação no fornecedor — nesses casos NUNCA auto-cancelar (o portal é acionado ANTES do Omie: o fornecedor pode estar com o pedido mesmo sem PO no Omie). Sem marcador válido retorna VAZIO (fail-closed).';
+  'PR2 (NÃO-MUTANTE): pedidos disparado/aprovado cujo PO não apareceu no último run VÁLIDO do omie-sync-pedidos-compra. CLASSIFICA e NÃO decide. rota=elegivel_prova_id SÓ com prova de AUSÊNCIA de compromisso (canal na allowlist + nenhum sinal de portal/notificação em qualquer parte da resposta); todo o resto vai para reconciliacao_humana — o portal é acionado ANTES do Omie, então o fornecedor pode estar com o pedido mesmo sem PO no Omie. Sem marcador válido retorna VAZIO (fail-closed).';
 
 -- Leitura não-mutante: staff (gate interno) + service_role. anon nunca.
 REVOKE ALL ON FUNCTION public.reposicao_pos_candidatos(text) FROM PUBLIC, anon;

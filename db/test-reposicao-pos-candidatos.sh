@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ╔══════════════════════════════════════════════════════════════════════════════╗
 # ║  PROVA PG17 — reposicao_pos_candidatos (detector de PO excluído, NÃO-MUTANTE)  ║
-# ║  Migration: supabase/migrations/20260718120000_reposicao_pos_candidatos.sql    ║
+# ║  Migration: supabase/migrations/20260718163000_reposicao_pos_candidatos.sql    ║
 # ║  Rode: bash db/test-reposicao-pos-candidatos.sh > /tmp/t.log 2>&1; echo $?     ║
 # ║        (NÃO pipe pra tail — engole o exit code)                                 ║
 # ║                                                                                ║
@@ -23,7 +23,7 @@ PORT="${PGPORT_TEST:-5477}"
 SLUG="reposicao-pos-candidatos"
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
 export LC_ALL=C LANG=C
-MIG="$REPO_ROOT/supabase/migrations/20260718120000_reposicao_pos_candidatos.sql"
+MIG="$REPO_ROOT/supabase/migrations/20260718163000_reposicao_pos_candidatos.sql"
 
 [ -x "$PGBIN/initdb" ] || { echo "postgresql@${PGVER} ausente: brew install postgresql@${PGVER}"; exit 1; }
 CELLAR="$(brew --prefix "postgresql@${PGVER}")"
@@ -118,7 +118,11 @@ TRUNCATE public.reposicao_pedidos_compra_run, public.reposicao_po_last_seen,
          public.pedido_compra_sugerido, public.pedido_compra_item, public.purchase_orders_tracking;
 INSERT INTO public.reposicao_pedidos_compra_run (run_id,seq,empresa,status,volume_ok) VALUES
  ('$RID_VELHO', 10,'OBEN','ok',true),
- ('$RID_ATUAL', 20,'OBEN','ok',true);
+ ('$RID_ATUAL', 20,'OBEN','ok',true),
+ -- Codex PR2 #3 mutante 1: sem um run status<>'ok' de seq MAIOR, remover r.status='ok' passava VERDE.
+ ('44444444-4444-4444-4444-444444444444', 30,'OBEN','erro',true),
+ -- Codex PR2 #3 mutante 2: sem run de OUTRA empresa com seq MAIOR, remover r.empresa=v_empresa passava VERDE.
+ ('55555555-5555-5555-5555-555555555555', 40,'COLACOR','ok',true);
 -- 100 visto NO marcador (NÃO é candidato) · 101 visto em run ANTERIOR · 102 NUNCA carimbado
 INSERT INTO public.reposicao_po_last_seen (empresa,omie_codigo_pedido,run_id) VALUES
  ('OBEN', 100, '$RID_ATUAL'),
@@ -134,7 +138,15 @@ INSERT INTO public.pedido_compra_sugerido
  (106,'OBEN','concluido_recebido','106', now()::date-2,'F','omie',NULL,NULL,NULL),               -- status fora do alvo
  (107,'OBEN','disparado',NULL, now()::date-2,'F','omie',NULL,NULL,NULL),                         -- sem PO
  (108,'OBEN','disparado','', now()::date-2,'F','omie',NULL,NULL,NULL),                           -- PO vazio
- (109,'COLACOR','disparado','109', now()::date-2,'F','omie',NULL,NULL,NULL);                     -- outra empresa
+ (109,'COLACOR','disparado','109', now()::date-2,'F','omie',NULL,NULL,NULL),                    -- outra empresa
+ -- ▼ os shapes que ESCAPAVAM na v1 (Codex PR2 #1) — todos DEVEM ir p/ reconciliacao_humana
+ (110,'OBEN','disparado','110', now()::date-50,'F','portal_sayerlack',NULL,' sucesso_portal ',NULL),
+ (111,'OBEN','disparado','111', now()::date-50,'F','portal_sayerlack',NULL,'SUCESSO_PORTAL',NULL),
+ (112,'OBEN','disparado','112', now()::date-50,'F','omie',NULL,NULL,'{"portal":{"fornecedor_notificado":true}}'::jsonb),
+ (113,'OBEN','disparado','113', now()::date-50,'F','omie',NULL,NULL,'[{"fornecedor_notificado":true}]'::jsonb),
+ (114,'OBEN','disparado','114', now()::date-50,'F','omie',NULL,NULL,'{"fornecedor_notificado":" true "}'::jsonb),
+ (115,'OBEN','disparado','115', now()::date-50,'F','canal_novo_desconhecido',NULL,NULL,NULL),
+ (116,'OBEN','disparado','116', now()::date-50,'F',NULL,NULL,NULL,'{"portal_protocolo":"999123"}'::jsonb);
 INSERT INTO public.pedido_compra_item (pedido_id,sku_codigo_omie,valor_linha) VALUES
  (101,'A',10.00),(102,'B',1808.59),(103,'C',1251.89),(104,'D',5.00),(105,'E',7.00);
 INSERT INTO public.purchase_orders_tracking (empresa,omie_codigo_pedido) VALUES ('OBEN',101);
@@ -154,10 +166,10 @@ case "$R" in
   *"operator does not exist"*|*"does not exist"*|*ERROR*) bad "E1 a RPC QUEBROU em runtime: $R";;
   *) ok "E1 a RPC EXECUTA com empresa TEXT × ENUM (comparação com cast explícito)";;
 esac
-eq "E2 aceita a empresa em caixa/espaço divergentes (upper+btrim)" "$(Pq -c "SELECT count(*) FROM public.reposicao_pos_candidatos('  oben ');" | tail -1)" "5"
+eq "E2 aceita a empresa em caixa/espaço divergentes (upper+btrim)" "$(Pq -c "SELECT count(*) FROM public.reposicao_pos_candidatos('  oben ');" | tail -1)" "12"
 
 echo "── Bloco B: quem é candidato ──"
-eq "B1 candidatos = não-vistos no marcador (101,102 sem compromisso + 103,104,105 com)" "$(cand)" "101,102,103,104,105"
+eq "B1 candidatos = todos os não-vistos no marcador" "$(cand)" "101,102,103,104,105,110,111,112,113,114,115,116"
 eq "B2 PO visto NO marcador NÃO é candidato (100 fora)" "$(Pq -c "SELECT count(*) FROM public.reposicao_pos_candidatos('OBEN') WHERE pedido_id=100;" | tail -1)" "0"
 eq "B3 visto em run ANTERIOR é candidato, marcado como tal" "$(campo 101 visto_status)" "visto_em_run_anterior"
 eq "B4 NUNCA carimbado é candidato, marcado como tal" "$(campo 102 visto_status)" "nunca_carimbado"
@@ -177,6 +189,16 @@ eq "C4 SEM compromisso → elegivel_prova_id (o único caminho p/ o PR3)" "$(cam
 eq "C5 classificação do compromisso (103 = protocolado)" "$(campo 103 compromisso_fornecedor)" "protocolado"
 eq "C6 nenhum compromisso é rotulado como tal" "$(campo 102 compromisso_fornecedor)" "nenhum"
 
+echo "── Bloco G: FAIL-CLOSED por shape (Codex PR2 #1 — a v1 vazava p/ o caminho do cancelamento) ──"
+for pid in 110 111 112 113 114 115 116; do
+  eq "G$pid shape de escape -> reconciliacao_humana (nunca elegivel)" "$(campo $pid rota)" "reconciliacao_humana"
+done
+eq "G-ok canal na allowlist E sem sinal -> elegivel_prova_id (o caminho existe)" "$(campo 102 rota)" "elegivel_prova_id"
+eq "G-ind canal desconhecido sem sinal -> compromisso INDETERMINADO" "$(campo 115 compromisso_fornecedor)" "indeterminado"
+
+echo "── Bloco H: marcador ignora run NAO-ok e de OUTRA empresa (mutantes que passavam verdes) ──"
+eq "H1 marcador = seq 20 (ignora seq 30 status=erro e seq 40 COLACOR)" "$(campo 101 marcador_seq)" "20"
+
 echo "── Bloco A: marcador FAIL-CLOSED ──"
 P -q -c "UPDATE public.reposicao_pedidos_compra_run SET volume_ok=false;" >/dev/null
 eq "A1 sem run VÁLIDO (todos truncados) → VAZIO (não classifica ninguém)" "$(Pq -c "SELECT count(*) FROM public.reposicao_pos_candidatos('OBEN');" | tail -1)" "0"
@@ -195,11 +217,25 @@ EXCEPTION WHEN insufficient_privilege THEN RAISE NOTICE 'DENY_OK'; END $$;
 SQL
 )
 case "$R" in *DENY_OK*) ok "D1 authenticated NÃO-staff é barrado (42501)";; *) bad "D1 — veio: $R";; esac
-eq "D2 staff (master) enxerga" "$(Pq -c "SET test.uid='33333333-3333-3333-3333-333333333333'; SELECT count(*) FROM public.reposicao_pos_candidatos('OBEN');" | tail -1)" "5"
-eq "D3 uid NULL (service_role / cron SQL-local) passa — auth.role() aqui MATARIA o cron" "$(Pq -c "SELECT count(*) FROM public.reposicao_pos_candidatos('OBEN');" | tail -1)" "5"
+eq "D2 staff (master) enxerga" "$(Pq -c "SET test.uid='33333333-3333-3333-3333-333333333333'; SELECT count(*) FROM public.reposicao_pos_candidatos('OBEN');" | tail -1)" "12"
+eq "D3 uid NULL (service_role / cron SQL-local) passa — auth.role() aqui MATARIA o cron" "$(Pq -c "SELECT count(*) FROM public.reposicao_pos_candidatos('OBEN');" | tail -1)" "12"
 
 # ══════════════════════════════════════════════════════════════════════════════
 echo "── FALSIFICAÇÃO ──"
+# Sabota a MIGRATION REAL (sed no arquivo), nao uma copia manual — a copia nao cobria os predicados do
+# marcador (Codex PR2 #3: 2 mutantes passavam verdes).
+saboto_real() { sed "$1" "$MIG" | P -q -f - ; }
+
+saboto_real "s/AND r.status = 'ok' AND r.volume_ok IS TRUE/AND r.volume_ok IS TRUE/"
+V=$(campo 101 marcador_seq)
+case "$V" in 30) ok "F4 sem status='ok' o run com ERRO vira marcador — H1 tem dente";; *) bad "F4 nao vazou (marcador=$V)";; esac
+P -q -f "$MIG" >/dev/null
+
+saboto_real "s/WHERE r.empresa = v_empresa AND r.status/WHERE r.status/"
+V=$(campo 101 marcador_seq)
+case "$V" in 40) ok "F5 sem filtro de empresa o run COLACOR vira marcador da OBEN — H1 tem dente";; *) bad "F5 nao vazou (marcador=$V)";; esac
+P -q -f "$MIG" >/dev/null
+
 saboto() { # $1 = sem_guard_compromisso | marcador_frouxo | gate_por_role
   local rota_expr="CASE WHEN (b.portal_protocolo IS NOT NULL AND btrim(b.portal_protocolo) <> '') OR b.status_envio_portal='sucesso_portal' OR lower(COALESCE(b.notificado_flag,''))='true' THEN 'reconciliacao_humana' ELSE 'elegivel_prova_id' END"
   local marcador_where="AND r.status='ok' AND r.volume_ok IS TRUE"
