@@ -40,6 +40,31 @@ export interface RelatorioCliente {
   total_tools: number;
 }
 
+/**
+ * Por que um cliente COM ferramenta não recebe o relatório por e-mail.
+ *
+ * Existe para tornar o pulo CONTÁVEL. O envio é gateado por `report.email`, e um cliente sem
+ * e-mail simplesmente não recebia nada — sem log, sem contador, sem rastro. O cron
+ * `monthly-tool-report` (`0 9 1 * *`) entregou ZERO e-mails desde sempre e isso só apareceu
+ * quando alguém foi medir o banco à mão, em 2026-07-18 (#1436, que pausou o cron).
+ *
+ * Distingue dois casos porque a AÇÃO é diferente, e a diferença foi medida em prod:
+ *  · `sem_email`        → tem telefone; o `whatsapp_url` que a edge devolve é acionável pelo
+ *                         staff. Degradou de canal, mas o cliente é alcançável.
+ *  · `sem_canal_nenhum` → nem e-mail nem telefone; `whatsapp_url` sai `null` e o cliente é
+ *                         INVISÍVEL por qualquer via. Era o caso dos 2 únicos donos de
+ *                         ferramenta em prod. Um contador único não separaria "mudou de canal"
+ *                         de "não há canal", que é justamente a informação que faltava.
+ */
+export type MotivoSemEnvio = "sem_email" | "sem_canal_nenhum";
+
+export function motivoSemEnvio(
+  cliente: Pick<RelatorioCliente, "email" | "phone">,
+): MotivoSemEnvio | null {
+  if (cliente.email) return null;
+  return cliente.phone ? "sem_email" : "sem_canal_nenhum";
+}
+
 // ── Contrato mínimo do PostgREST que este núcleo usa ────────────────────────
 // Estrutural de propósito: o `SupabaseClient` real satisfaz sem adaptador, e o teste
 // satisfaz com um banco de memória que conta chamadas.

@@ -8,6 +8,7 @@
 import {
   type BancoPostgrest,
   montarRelatorios,
+  motivoSemEnvio,
   type QueryPostgrest,
   type RespostaPostgrest,
 } from "./relatorio-mensal.ts";
@@ -306,4 +307,32 @@ Deno.test("erro do banco PROPAGA (fail-closed), não vira relatório vazio nem c
     );
   }
   assertEquals(lancou, true, "erro de banco não pode ser engolido — relatório mudo é pior que 500");
+});
+
+// ── CONTATO: por que um cliente com ferramenta fica sem relatório ────────────
+// Estes existem porque o pulo por falta de contato era SILENCIOSO: o envio é gateado por
+// `report.email` e quem não tinha e-mail simplesmente não recebia nada, sem log nem contador.
+// O cron entregou zero e-mails desde sempre e só apareceu ao medir o banco à mão (#1436).
+
+Deno.test("quem tem e-mail não é pulado — independente de ter telefone", () => {
+  assertEquals(motivoSemEnvio({ email: "a@b.com", phone: "11999999999" }), null);
+  assertEquals(motivoSemEnvio({ email: "a@b.com", phone: null }), null);
+});
+
+Deno.test("sem e-mail MAS com telefone → sem_email (alcançável pelo whatsapp_url)", () => {
+  assertEquals(motivoSemEnvio({ email: null, phone: "11999999999" }), "sem_email");
+});
+
+Deno.test("sem e-mail e sem telefone → sem_canal_nenhum (invisível por qualquer via)", () => {
+  // O caso real dos 2 únicos donos de ferramenta em prod (2026-07-18): `whatsapp_url` sai
+  // `null`, então nem o fallback manual do staff existe.
+  assertEquals(motivoSemEnvio({ email: null, phone: null }), "sem_canal_nenhum");
+});
+
+Deno.test("string vazia conta como ausência de canal, não como canal válido", () => {
+  // `''` é falsy em JS, então o gate `&& report.email` do index.ts já o trataria como ausente.
+  // Se a classificação discordasse do gate, o contador mentiria justamente no caso em que o
+  // e-mail existe na coluna mas não serve para enviar.
+  assertEquals(motivoSemEnvio({ email: "", phone: "" }), "sem_canal_nenhum");
+  assertEquals(motivoSemEnvio({ email: "", phone: "11999999999" }), "sem_email");
 });
