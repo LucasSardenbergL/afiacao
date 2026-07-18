@@ -665,15 +665,17 @@ serve(async (req) => {
             );
 
             if (matchedProfile) {
-              // Profile exists — just create the omie_clientes mapping
+              // Profile exists — admite o membro na carteira (ledger + proof). P0-B-bis Fatia 4: era um
+              // INSERT no espelho `omie_clientes`, que grava SEM conta (rótulo 'colacor' default, falso).
+              // A conta aqui é 'oben' e não é chute: o único chamador deste case é o fluxo de vendas OBEN
+              // (`useUnifiedOrder.handleStaffAddTool`), e a resolução logo acima usa `.eq("account","oben")`.
               console.log(`[criar_perfil_local] Found existing profile by document ${docLimpo}, linking to user ${matchedProfile.user_id}`);
-              const { error: mappingError } = await adminClient
-                .from("omie_clientes")
-                .insert({
-                  user_id: matchedProfile.user_id,
-                  omie_codigo_cliente: cliente.codigo_cliente,
-                  omie_codigo_vendedor: cliente.codigo_vendedor || null,
-                });
+              const { error: mappingError } = await adminClient.rpc("register_carteira_member", {
+                p_user_id: matchedProfile.user_id,
+                p_account: "oben",
+                p_omie_codigo_cliente: cliente.codigo_cliente,
+                p_omie_codigo_vendedor: cliente.codigo_vendedor || null,
+              });
               if (mappingError) {
                 console.error("[criar_perfil_local] Mapping error:", mappingError);
               }
@@ -717,14 +719,14 @@ serve(async (req) => {
           // Don't throw - user was created, profile might have partial issues
         }
 
-        // Create omie_clientes mapping (including vendedor if available)
-        const { error: mappingError } = await adminClient
-          .from("omie_clientes")
-          .insert({
-            user_id: newUserId,
-            omie_codigo_cliente: cliente.codigo_cliente,
-            omie_codigo_vendedor: cliente.codigo_vendedor || null,  // Already extracted by frontend from recomendacoes
-          });
+        // Admite o placeholder recém-criado na carteira (ledger + proof). Mesma conta 'oben' do ramo
+        // acima — é o mesmo case, mesmo chamador (fluxo de vendas OBEN).
+        const { error: mappingError } = await adminClient.rpc("register_carteira_member", {
+          p_user_id: newUserId,
+          p_account: "oben",
+          p_omie_codigo_cliente: cliente.codigo_cliente,
+          p_omie_codigo_vendedor: cliente.codigo_vendedor || null,  // Already extracted by frontend from recomendacoes
+        });
 
         if (mappingError) {
           console.error("[criar_perfil_local] Mapping error:", mappingError);
@@ -863,12 +865,20 @@ serve(async (req) => {
                 }
 
                 const codigoVendedor = cliente.recomendacoes?.codigo_vendedor || cliente.codigo_vendedor || null;
-                await adminClient.from("omie_clientes").insert({
-                  user_id: userId,
-                  omie_codigo_cliente: codigoCliente,
-                  omie_codigo_vendedor: codigoVendedor,
-                  omie_codigo_cliente_integracao: cliente.codigo_cliente_integracao || null,
+                // P0-B-bis Fatia 4: era um INSERT no espelho. `account.account` é o slug canônico da
+                // conta DESTE run do import (o mesmo usado no dedup por `omie_customer_account_map_fresco`
+                // acima) — o espelho gravava sem conta e rotulava tudo 'colacor'.
+                // `omie_codigo_cliente_integracao` foi descartado com o espelho (resíduo §9: 41 linhas em
+                // 6909, todas de março, zero leitores).
+                const { error: mappingError } = await adminClient.rpc("register_carteira_member", {
+                  p_user_id: userId,
+                  p_account: account.account,
+                  p_omie_codigo_cliente: codigoCliente,
+                  p_omie_codigo_vendedor: codigoVendedor,
                 });
+                // Fail-loud por cliente: o catch externo conta o erro e segue para o próximo (o import é
+                // best-effort por linha), mas o vínculo NÃO pode ser dado como feito em silêncio.
+                if (mappingError) throw new Error(`register_carteira_member(${codigoCliente}): ${mappingError.message}`);
 
                 existingCodes.add(codigoCliente);
                 

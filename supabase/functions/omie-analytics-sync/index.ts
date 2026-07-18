@@ -501,21 +501,44 @@ async function syncCustomers(db: SupabaseClient, account: OmieAccount) {
       );
     }
 
-    // Bulk upsert em chunks (onConflict user_id = unique_user_omie). empresa_omie NÃO é setado
-    // (preserva o default 'colacor' do comportamento anterior).
-    // Fatia 4 (money-path, Codex): SÓ 'vendas'(oben) mantém o espelho legado omie_clientes. Este
-    // upsert é CODE-FIRST (userByCodigo do espelho poluído vence o documento) e sem empresa_omie —
-    // para contas não-oben ele SOBRESCREVERIA (last-wins, 1 linha/user) a linha de um cliente
-    // multi-conta com o código de OUTRA conta, corrompendo o espelho que readers legados ainda leem
-    // (sync_pedidos sem filtro de conta, carteira-rebuild/ai-ops-agent via vendedor, hooks de UI). As
-    // demais contas alimentam SÓ a proof-table document-first (account-correta) abaixo.
+    // [P0-B-bis Fatia 4] O espelho legado `omie_clientes` NÃO é mais escrito aqui — este era o ÚLTIMO
+    // writer vivo (5239 linhas/dia; os 6 writers pontuais somaram 2 INSERTs em 4 meses). No lugar, a
+    // MEMBERSHIP vai direto ao ledger.
+    //
+    // Por que direto, e não pela RPC `register_carteira_member`: são 5239 membros por run — chamar a RPC
+    // por linha seria o N+1 que o CLAUDE.md proíbe em enumeração pesada. A RPC serve os writers PONTUAIS;
+    // o bulk escreve em massa, como já faz com a proof logo abaixo.
+    //
+    // Por que a lista code-first (`upsertByUser`) e não a document-first (`accountMapByUser`): a
+    // code-first é MAIS ABRANGENTE — cobre os ~1633 aliases fiscais (users Omie sem `profiles.document`)
+    // que nunca entram na proof. Era exatamente esse conjunto que o espelho levava ao ledger pelo trigger
+    // `AFTER INSERT` da Fatia 0. Trocar pela document-first ENCOLHERIA a membership, e membership que
+    // encolhe é a falha que a opção D existe para impedir.
+    //
+    // ON CONFLICT DO NOTHING (ignoreDuplicates) é o invariante do acumulador: preserva `first_seen_at`
+    // (a data REAL do vínculo, consumida em :1761) e NUNCA rebaixa `identity_state` — um membro
+    // quarantinado pela Fatia 2 (`ambiguous`) não volta a `verified` no run seguinte, o que devolveria
+    // vendedor e comissão a um cliente cuja identidade não sabemos.
+    //
+    // Só o run oben escreve, mesma regra do espelho e do `identity_state` acima (:484): a carteira lê a
+    // proof `account='oben'` — é a conta que decide quem é membro.
     const rows = Array.from(upsertByUser.values());
     let totalSynced = 0;
     if (account === "vendas") {
-      for (let i = 0; i < rows.length; i += 500) {
-        const chunk = rows.slice(i, i + 500);
-        const { error: upErr } = await db.from("omie_clientes").upsert(chunk, { onConflict: "user_id" });
-        if (upErr) throw new Error(`upsert omie_clientes: ${upErr.message}`);
+      const nowIsoLedger = new Date().toISOString();
+      const ledgerRows = rows.map((r) => ({
+        user_id: r.user_id,
+        identity_state: "verified",
+        first_seen_at: nowIsoLedger,
+        source: "sync",
+        updated_at: nowIsoLedger,
+      }));
+      for (let i = 0; i < ledgerRows.length; i += 500) {
+        const chunk = ledgerRows.slice(i, i + 500);
+        const { error: upErr } = await db
+          .from("carteira_membership_ledger")
+          .upsert(chunk, { onConflict: "user_id", ignoreDuplicates: true });
+        if (upErr) throw new Error(`upsert carteira_membership_ledger: ${upErr.message}`);
         totalSynced += chunk.length;
       }
     }

@@ -126,16 +126,16 @@ const Auth = () => {
           await supabase.from('user_tools').insert(toolsToInsert);
         }
 
-        if (opts.omieCliente?.codigo_cliente) {
-          // P0-B follow-up: opts.omieCliente vem de `omie-cliente/buscar_por_documento`, que consulta
-          // a conta colacor_sc — cujo código o espelho rotula 'colacor'. Setar explícito evita depender
-          // do DEFAULT silencioso e, pós-constraint composta, impede uma linha de conta ambígua.
-          await supabase.from('omie_clientes').insert({
-            user_id: signUpData.user.id, omie_codigo_cliente: opts.omieCliente.codigo_cliente,
-            omie_codigo_cliente_integracao: `APP_${signUpData.user.id.substring(0, 8)}`,
-            empresa_omie: 'colacor',
-          });
-        }
+        // [P0-B-bis Fatia 4] TOMBSTONE — aqui havia um INSERT em `omie_clientes` com o código de
+        // `omie-cliente/buscar_por_documento`. Ele NUNCA gravou uma linha: a RLS de `omie_clientes`
+        // concede ALL só a staff (`has_role master|employee`) e quem roda este trecho é o cliente
+        // recém-criado; o `insert` não checava `error`, então falhava em silêncio desde março.
+        // Medido por psql-ro em 18/07: 0 de 6909 linhas têm a assinatura `APP_%` que só este writer
+        // produzia. Removido em vez de migrado para a RPC `register_carteira_member` — migrá-lo exigiria
+        // SECURITY DEFINER e ABRIRIA um caminho de escrita que a RLS hoje fecha, deixando um customer
+        // anexar-se a um código Omie arbitrário (falha ABERTA: muda autorização, não comportamento —
+        // o CI não veria). O vínculo real do signup vem do sync (document-first) e da aprovação em
+        // AdminApprovals, ambos account-corretos.
       }
 
       toast.success('Conta criada!', { description: 'Verifique seu e-mail para confirmar o cadastro' });
