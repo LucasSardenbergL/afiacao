@@ -9,6 +9,7 @@ import {
   type BancoPostgrest,
   montarRelatorios,
   motivoSemEnvio,
+  planejarEnvios,
   type QueryPostgrest,
   type RespostaPostgrest,
 } from "./relatorio-mensal.ts";
@@ -335,4 +336,72 @@ Deno.test("string vazia conta como ausência de canal, não como canal válido",
   // e-mail existe na coluna mas não serve para enviar.
   assertEquals(motivoSemEnvio({ email: "", phone: "" }), "sem_canal_nenhum");
   assertEquals(motivoSemEnvio({ email: "", phone: "11999999999" }), "sem_email");
+});
+
+// ── CONSERVAÇÃO: nenhum relatório pode evaporar ─────────────────────────────
+// Este bloco é a razão de `planejarEnvios` existir. Em #1438 a classificação de contato e o
+// gate real de envio eram expressões SEPARADAS, e divergiram: com a chave da Resend ausente,
+// um cliente com e-mail não era pulado por contato nem tentado — sumia de todos os totais e a
+// execução parecia bem-sucedida. Testar só a classificação (os testes acima) NÃO pega isso;
+// o que pega é exigir que a partição cubra a entrada inteira.
+
+function clientes(n: number, molde: (i: number) => { email: string | null; phone: string | null }) {
+  return Array.from({ length: n }, (_, i) => ({
+    user_id: `u${i}`,
+    name: `Cliente ${i}`,
+    ...molde(i),
+    tools: [],
+    overdue_count: 0,
+    due_soon_count: 0,
+    total_tools: 1,
+  }));
+}
+
+// Mistura os quatro casos de propósito: com contato, só telefone, sem canal, e de novo.
+const AMOSTRA = clientes(12, (i) => {
+  if (i % 4 === 0) return { email: `c${i}@x.com`, phone: "11999999999" };
+  if (i % 4 === 1) return { email: null, phone: "11999999999" };
+  if (i % 4 === 2) return { email: null, phone: null };
+  return { email: `c${i}@x.com`, phone: null };
+});
+
+for (
+  const cenario of [
+    { nome: "envio armado, com chave", envioArmado: true, temChaveResend: true },
+    { nome: "envio armado, SEM chave (o buraco do #1438)", envioArmado: true, temChaveResend: false },
+    { nome: "preview (envio desarmado), com chave", envioArmado: false, temChaveResend: true },
+    { nome: "preview, sem chave", envioArmado: false, temChaveResend: false },
+  ]
+) {
+  Deno.test(`conservação: nenhum relatório evapora — ${cenario.nome}`, () => {
+    const plano = planejarEnvios(AMOSTRA, cenario);
+    assertEquals(
+      plano.destinatarios.length + plano.pulados.length,
+      AMOSTRA.length,
+      `partição não cobre a entrada: ${plano.destinatarios.length} + ${plano.pulados.length} ≠ ${AMOSTRA.length}`,
+    );
+    // Cobrir por contagem não basta: o mesmo item duas vezes compensaria uma ausência.
+    const ids = [...plano.destinatarios, ...plano.pulados.map((p) => p.report)].map((r) => r.user_id);
+    assertEquals(new Set(ids).size, AMOSTRA.length, "algum relatório foi contado duas vezes");
+  });
+}
+
+Deno.test("conservação vale para a lista vazia", () => {
+  const plano = planejarEnvios([], { envioArmado: true, temChaveResend: true });
+  assertEquals(plano.destinatarios.length + plano.pulados.length, 0);
+});
+
+Deno.test("SEM chave da Resend: alcançável não vira destinatário — vira pulo CONTADO", () => {
+  // O caso exato que sumia. Cliente com e-mail, envio pedido, ambiente sem chave.
+  const so1 = clientes(1, () => ({ email: "a@b.com", phone: "11999999999" }));
+  const plano = planejarEnvios(so1, { envioArmado: true, temChaveResend: false });
+  assertEquals(plano.destinatarios.length, 0, "não pode tentar enviar sem chave");
+  assertEquals(plano.pulados.length, 1, "e não pode sumir: tem que aparecer como pulo");
+  assertEquals(plano.pulados[0].motivo, "sem_chave_resend");
+});
+
+Deno.test("falta de contato tem precedência sobre falta de chave (o cadastro é o fato mais forte)", () => {
+  const semCanal = clientes(1, () => ({ email: null, phone: null }));
+  const plano = planejarEnvios(semCanal, { envioArmado: true, temChaveResend: false });
+  assertEquals(plano.pulados[0].motivo, "sem_canal_nenhum");
 });
