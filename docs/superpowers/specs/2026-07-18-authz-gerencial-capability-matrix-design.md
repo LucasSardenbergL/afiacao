@@ -188,14 +188,53 @@ como especificado (o `trg_auto_commercial_super_admin` insere `super_admin` pelo
 
   Os 2 vendedores de hoje já leem custo por aí — antes e depois da E2. **Isto não é regressão desta
   entrega nem foi prometido por ela**, mas invalida a leitura ingênua de "gerencial não vê custo".
-  Fechar muda o acesso de gente VIVA (ao contrário da E2, onde ninguém perde nada) e depende de uma
-  decisão de produto que ainda não foi tomada: **vendedor deve ver custo?** Enquanto não for, o ganho
-  da E2 é remover o acoplamento do papel — real, mas menor do que o nome sugere.
 
   Canais DERIVADOS na mesma família (mascarar o campo bruto não fecha): `get_preco_cockpit` é um
   **oráculo por bisseção** — o caller escolhe o preço e lê a faixa (`abaixo_do_custo`/`abaixo_do_piso`/
   `abaixo_da_meta`), reconstruindo cmc/piso/meta; `get_defasagem_cliente` devolve `alta_custo_perc`
   (variação percentual do custo) fora do gate. Ambos acessíveis a qualquer `employee`.
+
+  ### FU4-F — decisão do dono (2026-07-19): **vendedor NÃO deve ver custo**
+
+  A decisão confirma o desenho da E2 (`cap_custo_ler` já exclui `farmer`) e define a entrega:
+  **fechar no BANCO, em 2 fases.** Impacto medido: 2 pessoas (2 `employee`/`farmer`; o resto é
+  2 `master` + 5.664 `customer`).
+
+  ⚠️ **Restrição ingênua QUEBRA o vendedor — medido, não suposto.** Três motores calculam com custo
+  no CLIENTE, lendo `product_costs` direto: `useCrossSellEngine` (`if (margin <= 0) continue` ⇒ sem
+  custo, **todas** as recomendações somem), `useFarmerScoring` (margem é eixo do score ⇒ a ordenação
+  da agenda muda) e `useBundleEngine`. Trocar o gate sem mover o cálculo apaga funcionalidade que o
+  vendedor usa.
+
+  **O padrão certo já existe no código, em 3 lugares** — separar o SINAL do NÚMERO:
+  `ReguaPrecoSinal` modo `readonly` (`pisoOculto` mostra "abaixo do piso" sem valor);
+  `get_defasagem_cliente` (absolutos NULL, mantém `alta_custo_perc` e "repassar p/ R$X");
+  `RecommendationCard` (bloco de custo gated por `isAdmin`). O vendedor precisa do semáforo e do
+  "repasse para R$X" — não do CMC.
+
+  **Fase 1 — exposições CRUAS saem do gate `employee`** (não mexe nos motores):
+  · `cmc_snapshot` → `cap_custo_ler` (só custo; fechar inteiro é seguro)
+  · `regua_preco_log` → `cap_custo_ler` na leitura (a UI só escreve, nunca lê)
+  · `get_regua_preco` / `_customer360` → mascarar `cmc`/`piso_mc` pelo padrão do `get_defasagem_cliente`
+  · `get_tint_price` / `_prices` → trocar `v_is_staff` por `cap_custo_ler` no gate de `custoBase`/`custoCorantes`
+  · frontend: **remover as colunas CMC e Preço Médio** da aba Estoque do `/admin/estoque/picking`
+    (decisão do dono: quem separa pedido precisa de saldo/lote/FEFO, não de custo) e aplicar
+    `pisoOculto` no carrinho, preservando a faixa verde/amarelo/vermelho
+  · `/admin/reposicao/baixo-giro`: `capital_parado` (= saldo × cmc) vira gated
+
+  🧭 **PONTO EM ABERTO da Fase 1 — `inventory_position`.** A tabela tem `saldo` **e** `cmc` juntos, e
+  o separador precisa do `saldo`. RLS filtra LINHA, não coluna, então não dá para esconder só o custo
+  por policy. `GRANT` por coluna também não serve: é por role do Postgres, e `authenticated` é todo
+  mundo — não distingue capability. As saídas plausíveis, a decidir na implementação: (a) view
+  operacional sem as colunas de custo + fechar a tabela, (b) RPC de saldo que não projeta custo, ou
+  (c) aceitar que o frontend só não seleciona as colunas — que é "não mostrar", não "não poder", e
+  contradiz a decisão de fechar no banco. **Não escolher isto por conveniência no meio da implementação.**
+
+  **Fase 2 — motores Farmer saem do cliente.** `useCrossSellEngine`, `useFarmerScoring` e
+  `useBundleEngine` migram para RPC `SECURITY DEFINER` que lê custo com privilégio e devolve só o
+  RESULTADO (margem, score, bundle). Só depois disso `product_costs` pode ir para `cap_custo_ler`
+  sem apagar feature. Enquanto a Fase 2 não existir, `product_costs` **fica como está** — e isso é
+  uma decisão consciente, não esquecimento.
 
 ## 8. E2 — o que foi construído (2026-07-18, #1434)
 
