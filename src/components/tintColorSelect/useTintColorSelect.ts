@@ -5,7 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { ilikeOr, isSearchablePostgrestTerm } from '@/lib/postgrest';
 import { useTintPricing, useTintPrices } from '@/hooks/useTintPricing';
-import { selectTintPrice, type TintPriceSource } from '@/lib/tint/select-price';
+import { selectTintPrice, type TintPriceSource, type AltPriceSource } from '@/lib/tint/select-price';
 import type { Product } from '@/hooks/useUnifiedOrder';
 import type { FormulaResult, AlternativePackaging } from './types';
 
@@ -30,6 +30,7 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
       setDebouncedSearch('');
       setSelectedFormula(null);
       setPriceSourceOverride(null);
+      setAltPriceSourceOverrides({});
     }
   }, [open]);
 
@@ -101,7 +102,7 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
       // lista vazia e a UI mente "cor não encontrada" (achado Codex no diff).
       const { data, error } = await supabase
         .from('v_tint_formula_canonica')
-        .select('id, cor_id, nome_cor, preco_final_sayersystem, preco_csv_legado, is_sl')
+        .select('id, cor_id, nome_cor, preco_final_sayersystem, preco_csv_legado')
         .eq('account', 'oben')
         .eq('sku_id', skuId!)
         .or(ilikeOr(['cor_id', 'nome_cor'], debouncedSearch))
@@ -359,10 +360,19 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
 
   const [priceSourceOverride, setPriceSourceOverride] = useState<TintPriceSource | null>(null);
 
+  // Override de fonte POR alternativa (Fase 2b-fix): a vendedora escolhe calculado × tabela
+  // também nas "outras embalagens" e na busca global — antes o selectAltPrice decidia sozinho.
+  // A validação (fonte sem valor → default; sem preço confiável → nada) mora em selectAltPrice.
+  const [altPriceSourceOverrides, setAltPriceSourceOverrides] = useState<Record<string, AltPriceSource>>({});
+  const setAltPriceSourceOverride = (formulaId: string, source: AltPriceSource) =>
+    setAltPriceSourceOverrides((prev) => ({ ...prev, [formulaId]: source }));
+
   // Trocar de cor reseta a escolha manual de fonte — senão um override antigo (ex.: "tabela")
-  // venceria o auto da nova cor e esconderia o aviso de recálculo dela.
+  // venceria o auto da nova cor e esconderia o aviso de recálculo dela. Os overrides das
+  // alternativas resetam junto (a lista de embalagens é da cor anterior).
   useEffect(() => {
     setPriceSourceOverride(null);
+    setAltPriceSourceOverrides({});
   }, [selectedFormula?.id]);
 
   // Enquanto a RPC de preço (ou o último preço do cliente) carrega, NÃO decidir o preço: o motor
@@ -416,6 +426,7 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
     setSearch(value);
     setSelectedFormula(null);
     setPriceSourceOverride(null);
+    setAltPriceSourceOverrides({});
   };
 
   return {
@@ -445,6 +456,8 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
     setSyncDiscount,
     priceSource,
     setPriceSourceOverride,
+    altPriceSourceOverrides,
+    setAltPriceSourceOverride,
     precoCsv,
     precoCalc,
     precoCliente,

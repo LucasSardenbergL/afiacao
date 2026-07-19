@@ -16,6 +16,8 @@ function setup(overrides: Partial<React.ComponentProps<typeof SelectedFormulaCar
     precoCliente: null,
     priceSource: 'tabela',
     setPriceSourceOverride: vi.fn(),
+    altPriceSourceOverrides: {},
+    setAltPriceSourceOverride: vi.fn(),
     precoFinal: 50,
     precoSemDesconto: 50,
     disponivel: true,
@@ -159,5 +161,44 @@ describe('SelectedFormulaCard', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: /Calculado/ }));
     expect(props.setPriceSourceOverride).toHaveBeenCalledWith('calculado');
+  });
+
+  it('rótulo da fonte CSV é neutro: "Tabela importada", nunca "versão anterior" (Fase 2b-fix)', () => {
+    setup({ lastPracticedPrice: { price: 40, date: '2026-05-01T00:00:00Z' }, precoCliente: 40, precoCsv: 50, priceSource: 'cliente' });
+    expect(screen.getByRole('button', { name: /Tabela importada/ })).toBeTruthy();
+    expect(screen.queryByText(/versão anterior/i)).toBeNull();
+  });
+
+  // --- Fase 2b-fix: escolha de fonte da vendedora nas alternativas ---
+
+  const altComAmbasFontes = () => {
+    const altProduct = { id: 'op2', valor_unitario: 152.1 } as unknown as Product;
+    const alternatives: AlternativePackaging[] = [
+      { formulaId: 'fa', skuId: 's2', omieProductId: 'op2', productDescricao: 'Base 3.6L', productCodigo: 'B36', precoFinalCsv: 13.7, product: altProduct, sameAcabamento: false },
+    ];
+    const altPriceMap = {
+      fa: { custoBase: 152.1, baseDisponivel: true, custoCorantes: 18.06, corantesCompletos: true, precoFinal: 170.16 },
+    };
+    return { altProduct, alternatives, altPriceMap };
+  };
+
+  it('alternativa com calc e CSV → oferece o seletor de fonte; clique registra o override da fórmula', () => {
+    const { alternatives, altPriceMap } = altComAmbasFontes();
+    const props = setup({ alternatives, altPriceMap });
+    fireEvent.click(screen.getByRole('button', { name: /Tabela importada/ }));
+    expect(props.setAltPriceSourceOverride).toHaveBeenCalledWith('fa', 'tabela');
+  });
+
+  it('alternativa com override "tabela" → confirma com o preço do CSV, não o calculado', () => {
+    const { altProduct, alternatives, altPriceMap } = altComAmbasFontes();
+    const props = setup({ alternatives, altPriceMap, altPriceSourceOverrides: { fa: 'tabela' } });
+    fireEvent.click(screen.getByText('Base 3.6L'));
+    expect(props.onConfirm).toHaveBeenCalledWith('fa', 'RAL5005', 'Azul Sinal', 13.7, 18.06, altProduct);
+  });
+
+  it('alternativa com só uma fonte (sem breakdown) → não oferece seletor', () => {
+    const { alternatives } = altComAmbasFontes();
+    setup({ alternatives }); // altPriceMap {} → fail-closed, nenhuma fonte
+    expect(screen.queryByRole('button', { name: /Tabela importada/ })).toBeNull();
   });
 });

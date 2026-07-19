@@ -186,4 +186,59 @@ describe('selectAltPrice — preço de embalagem alternativa (1b)', () => {
     expect(r.preco).toBe(150);
     expect(r.fonte).toBe('calculado');
   });
+
+  it('expõe precoCalc e precoTabela (arredondados) quando o motor confirmou preço', () => {
+    // A UI monta o mini-seletor de fonte só quando AMBOS existem.
+    const r = selectAltPrice(200, pricing({ precoFinal: 150.01 }));
+    expect(r.precoCalc).toBe(150.1); // ceil R$0,10
+    expect(r.precoTabela).toBe(200);
+  });
+
+  it('sem preço confiável → precoCalc e precoTabela nulos (a UI não oferece escolha do invendável)', () => {
+    const r = selectAltPrice(200, pricing({ baseDisponivel: false, custoBase: null, precoFinal: null }));
+    expect(r.precoCalc).toBeNull();
+    expect(r.precoTabela).toBeNull();
+  });
+});
+
+describe('selectAltPrice — override de fonte da vendedora (Fase 2b-fix, alternativas/busca global)', () => {
+  it('override "calculado" quando o default é tabela (calc < CSV): baixar pro cálculo novo é escolha ativa', () => {
+    const r = selectAltPrice(200, pricing({ precoFinal: 150 }), 'calculado');
+    expect(r.preco).toBe(150);
+    expect(r.fonte).toBe('calculado');
+    expect(r.recalculado).toBe(false);
+  });
+
+  it('override "tabela" quando o default é calc (calc > CSV): mostra o CSV sem o aviso de recálculo', () => {
+    const r = selectAltPrice(13.68, pricing({ custoBase: 152.1, custoCorantes: 18.06, precoFinal: 170.16 }), 'tabela');
+    expect(r.preco).toBe(13.7);
+    expect(r.fonte).toBe('tabela');
+    expect(r.recalculado).toBe(false); // o preço exibido não é o recalculado
+  });
+
+  it('override "calculado" coincidindo com o default preserva o aviso de recálculo', () => {
+    const r = selectAltPrice(13.68, pricing({ custoBase: 152.1, custoCorantes: 18.06, precoFinal: 170.16 }), 'calculado');
+    expect(r.preco).toBe(170.2);
+    expect(r.fonte).toBe('calculado');
+    expect(r.recalculado).toBe(true);
+  });
+
+  it('override de fonte SEM valor (tabela sem CSV) é ignorado → segue o default', () => {
+    const r = selectAltPrice(null, pricing({ precoFinal: 150 }), 'tabela');
+    expect(r.preco).toBe(150);
+    expect(r.fonte).toBe('calculado');
+  });
+
+  it('override NÃO fura o fail-closed: base ausente segue sem preço mesmo com override "tabela"', () => {
+    // Money-path: quando o motor honesto não confirma, nenhuma escolha manual vende pelo CSV.
+    const r = selectAltPrice(101.7, pricing({ baseDisponivel: false, custoBase: null, precoFinal: null }), 'tabela');
+    expect(r.preco).toBeNull();
+    expect(r.fonte).toBeNull();
+  });
+
+  it('override NÃO fura o fail-closed do loading: sem breakdown → sem preço', () => {
+    const r = selectAltPrice(200, null, 'tabela');
+    expect(r.preco).toBeNull();
+    expect(r.fonte).toBeNull();
+  });
 });

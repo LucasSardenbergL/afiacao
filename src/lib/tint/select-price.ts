@@ -118,31 +118,61 @@ export function selectTintPrice(input: {
   return semPreco('receita');
 }
 
+/** Fonte que a vendedora pode escolher numa alternativa — sem 'cliente' (não há
+ *  último preço do cliente por alternativa). */
+export type AltPriceSource = Extract<TintPriceSource, 'calculado' | 'tabela'>;
+
 /** Preço de exibição de uma EMBALAGEM ALTERNATIVA (outras embalagens / busca global).
  *  Não há "último preço do cliente" por alternativa — só calc honesto vs CSV. Devolve o
  *  custoCorantes DA PRÓPRIA fórmula (não o da cor selecionada), e null quando sem preço. */
 export interface AltPriceDisplay {
   /** Preço a cobrar; null = sem preço (a UI desabilita o item, nunca vende a R$ 0). */
   preco: number | null;
-  fonte: 'calculado' | 'tabela' | null;
+  fonte: AltPriceSource | null;
   /** O cálculo recalculou acima do importado (base não estava no CSV). */
   recalculado: boolean;
   custoCorantes: number;
+  /** Preços por fonte quando o motor confirmou preço confiável — a UI oferece a
+   *  escolha (Fase 2b-fix) só quando AMBOS existem. Sem preço confiável → ambos
+   *  null: não oferecer escolha do que não pode ser vendido. */
+  precoCalc: number | null;
+  precoTabela: number | null;
 }
+
+const ALT_SEM_PRECO = (custoCorantes: number): AltPriceDisplay =>
+  ({ preco: null, fonte: null, recalculado: false, custoCorantes, precoCalc: null, precoTabela: null });
 
 export function selectAltPrice(
   precoCsv: number | null,
   pricing: TintPriceBreakdownLite | null,
+  /** Escolha manual da vendedora (Fase 2b-fix). Só vale se a fonte escolhida tiver
+   *  valor (senão segue o default = regra do maior) e NUNCA fura o fail-closed. */
+  override?: AltPriceSource | null,
 ): AltPriceDisplay {
   // Fail-closed: sem o breakdown do motor (batch ainda carregando, erro, ou RPC não aplicada),
   // NÃO cair no CSV legado — a alternativa fica "sem preço" até o cálculo honesto chegar.
-  if (!pricing) return { preco: null, fonte: null, recalculado: false, custoCorantes: 0 };
+  if (!pricing) return ALT_SEM_PRECO(0);
   const sel = selectTintPrice({ lastPracticedPrice: null, precoCsv, pricing });
+  // gate esconde o custo p/ não-staff (null) → 0: telemetria efêmera do carrinho, não usada p/ preço.
+  const custoCorantes = pricing.custoCorantes ?? 0;
+
+  // Sem preço confiável (base/corante/receita) → nenhuma fonte é oferecida; o override não fura.
+  if (sel.precoSemDesconto == null) return ALT_SEM_PRECO(custoCorantes);
+
+  const precoCalc = pricing.precoFinal != null ? arredonda(pricing.precoFinal) : null;
+  const precoTabela = precoCsv != null && precoCsv > 0 ? arredonda(precoCsv) : null;
+  const porFonte: Record<AltPriceSource, number | null> = { calculado: precoCalc, tabela: precoTabela };
+
+  const fonteDefault: AltPriceSource | null =
+    sel.source === 'calculado' || sel.source === 'tabela' ? sel.source : null;
+  const fonte = override != null && porFonte[override] != null ? override : fonteDefault;
   return {
-    preco: sel.precoSemDesconto,
-    fonte: sel.source === 'cliente' ? null : sel.source, // alternativa nunca usa preço de cliente
-    recalculado: sel.recalculado,
-    // gate esconde o custo p/ não-staff (null) → 0: telemetria efêmera do carrinho, não usada p/ preço.
-    custoCorantes: pricing.custoCorantes ?? 0,
+    preco: fonte ? porFonte[fonte] : null,
+    fonte,
+    // Aviso de recálculo só quando a fonte EXIBIDA é o cálculo que subiu (espelha o card principal).
+    recalculado: fonte === 'calculado' && sel.recalculado,
+    custoCorantes,
+    precoCalc,
+    precoTabela,
   };
 }

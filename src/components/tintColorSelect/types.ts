@@ -17,11 +17,10 @@ export interface FormulaResult {
   cor_id: string;
   nome_cor: string;
   preco_final_sayersystem: number | null;
-  /** Fase 2b: CSV da chave (o preço da VERSÃO ANTERIOR da tinta quando a
-   *  canônica é a geração SL viva) — alimenta a fonte "Tabela" do seletor. */
+  /** Fase 2b: CSV da chave (max das linhas ativas — na prática hoje, o preço da
+   *  versão anterior da tinta quando a canônica é a geração SL viva) — alimenta
+   *  a fonte "Tabela importada" do seletor. */
   preco_csv_legado?: number | null;
-  /** true = geração SL (receita viva); false = SAYERLACK/personalizada. */
-  is_sl?: boolean | null;
 }
 
 export interface AlternativePackaging {

@@ -35,6 +35,8 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
     setSyncDiscount,
     priceSource,
     setPriceSourceOverride,
+    altPriceSourceOverrides,
+    setAltPriceSourceOverride,
     precoCsv,
     precoCalc,
     precoCliente,
@@ -90,6 +92,8 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
                 colorExists={globalColorExists}
                 precoMap={altPriceMap}
                 precoLoading={altPriceLoading}
+                altPriceSourceOverrides={altPriceSourceOverrides}
+                setAltPriceSourceOverride={setAltPriceSourceOverride}
                 onConfirm={onConfirm}
               />
             )}
@@ -103,6 +107,8 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
                 precoCsv={precoCsv}
                 priceSource={priceSource}
                 setPriceSourceOverride={setPriceSourceOverride}
+                altPriceSourceOverrides={altPriceSourceOverrides}
+                setAltPriceSourceOverride={setAltPriceSourceOverride}
                 precoCalc={precoCalc}
                 precoCliente={precoCliente}
                 precoFinal={precoFinal}
