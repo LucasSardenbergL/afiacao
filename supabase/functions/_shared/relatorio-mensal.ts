@@ -65,6 +65,68 @@ export function motivoSemEnvio(
   return cliente.phone ? "sem_email" : "sem_canal_nenhum";
 }
 
+/**
+ * Por que um relatório MONTADO não gera tentativa de envio. Estende `MotivoSemEnvio` (que é
+ * sobre o CADASTRO) com os dois motivos que são sobre a INVOCAÇÃO/AMBIENTE.
+ */
+export type MotivoPulo = MotivoSemEnvio | "sem_chave_resend" | "envio_desarmado";
+
+export interface PlanoEnvio {
+  /** Recebem tentativa de envio. */
+  destinatarios: RelatorioCliente[];
+  /** Não recebem, com o porquê. Puro: quem loga é o call-site. */
+  pulados: Array<{ report: RelatorioCliente; motivo: MotivoPulo }>;
+}
+
+/**
+ * Parte os relatórios montados em "vai tentar enviar" × "não vai, e por quê".
+ *
+ * ⚠️ ESTA É A ÚNICA CÓPIA DO GATE DE ENVIO — é isso que a função existe para garantir.
+ * Antes, a classificação (`motivoSemEnvio`) e o gate real (`if (... && resendApiKey)`) eram
+ * duas expressões separadas, e elas DIVERGIRAM: com a chave da Resend ausente, um cliente
+ * com e-mail não era pulado por contato (a classificação devolvia `null`) nem tentado (o
+ * gate barrava) — não aparecia em contador nenhum e os totais fechavam em zero como se
+ * estivesse tudo certo. A mesma entrega-zero silenciosa que a instrumentação foi criada
+ * para acabar, entrando por outra porta (#1438 → #1440).
+ *
+ * A INVARIANTE que fecha essa classe inteira de buraco: `destinatarios + pulados` cobre
+ * `reports` EXATAMENTE, sem sobra nem repetição — nenhum relatório evapora. Vale por
+ * construção (cada item faz exatamente um `push`) e está sob teste de conservação em
+ * `relatorio-mensal_test.ts`. Ao acrescentar uma condição de pulo, ela entra AQUI, com
+ * motivo próprio; um `continue` novo no call-site reabre o buraco sem o teste perceber.
+ */
+export function planejarEnvios(
+  reports: readonly RelatorioCliente[],
+  opts: { envioArmado: boolean; temChaveResend: boolean },
+): PlanoEnvio {
+  const destinatarios: RelatorioCliente[] = [];
+  const pulados: Array<{ report: RelatorioCliente; motivo: MotivoPulo }> = [];
+
+  for (const report of reports) {
+    // Contato é avaliado PRIMEIRO e SEMPRE, inclusive em preview: "quantos clientes estão
+    // inalcançáveis" é fato sobre o cadastro, não sobre o modo desta invocação.
+    const semContato = motivoSemEnvio(report);
+    if (semContato) {
+      pulados.push({ report, motivo: semContato });
+      continue;
+    }
+    // Alcançável, mas esta invocação não é de envio (preview / `send_email:false`).
+    if (!opts.envioArmado) {
+      pulados.push({ report, motivo: "envio_desarmado" });
+      continue;
+    }
+    // Alcançável e o envio foi PEDIDO, mas o ambiente não tem a chave: é falha de
+    // configuração, não do cadastro — e é o caso que sumia dos totais.
+    if (!opts.temChaveResend) {
+      pulados.push({ report, motivo: "sem_chave_resend" });
+      continue;
+    }
+    destinatarios.push(report);
+  }
+
+  return { destinatarios, pulados };
+}
+
 // ── Contrato mínimo do PostgREST que este núcleo usa ────────────────────────
 // Estrutural de propósito: o `SupabaseClient` real satisfaz sem adaptador, e o teste
 // satisfaz com um banco de memória que conta chamadas.

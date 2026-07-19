@@ -5,7 +5,7 @@ import {
   type BancoPostgrest,
   montarRelatorios,
   type MotivoSemEnvio,
-  motivoSemEnvio,
+  planejarEnvios,
   type RelatorioCliente,
 } from "../_shared/relatorio-mensal.ts";
 // Resend usado via fetch direto à REST API (https://api.resend.com/emails) para evitar dep npm
@@ -265,10 +265,6 @@ serve(async (req) => {
     let falhasEnvio = 0;
     let naoEnviadosSemChave = 0;
 
-    // O envio foi PEDIDO mas o ambiente não tem a chave: o cliente com e-mail não é pulado
-    // por contato (`motivoSemEnvio` devolve null) e também nunca é tentado — sem este ramo ele
-    // não aparece em contador nenhum, e os totais fecham em zero como se estivesse tudo certo.
-    // É a mesma entrega-zero silenciosa de sempre, entrando por outra porta.
     const envioArmado = sendEmail && !previewOnly;
     if (envioArmado && !resendApiKey) {
       console.error(
@@ -276,52 +272,56 @@ serve(async (req) => {
       );
     }
 
-    for (const report of reports) {
-      // Classificado SEMPRE, inclusive em preview/`send_email:false` — "quantos clientes estão
-      // inalcançáveis" é um fato sobre o cadastro, não sobre o modo desta invocação.
-      const motivo = motivoSemEnvio(report);
-      if (motivo) {
-        semContato[motivo]++;
-        console.warn(
-          `monthly-report: user_id ${report.user_id} PULADO (${motivo}) — ` +
-          `${report.total_tools} ferramenta(s), ${report.overdue_count} atrasada(s)`,
-        );
-        continue;
-      }
+    // Quem recebe × quem não recebe sai de UMA função pura, testada — inclusive pela
+    // invariante de conservação (nenhum relatório evapora). O gate de envio mora lá e só
+    // lá: replicá-lo aqui como um `continue` extra é exatamente como o caso da chave
+    // ausente escapou dos contadores em #1438.
+    const plano = planejarEnvios(reports, { envioArmado, temChaveResend: !!resendApiKey });
 
-      if (envioArmado && !resendApiKey) {
+    // Contadores derivados da partição, não recontados por outro caminho.
+    for (const { report, motivo } of plano.pulados) {
+      if (motivo === 'sem_chave_resend') {
         naoEnviadosSemChave++;
         continue;
       }
+      // `envio_desarmado` (preview / `send_email:false`) é o modo pedido, não anomalia:
+      // não polui os contadores nem o log.
+      if (motivo === 'envio_desarmado') continue;
 
-      if (envioArmado) {
-        const html = generateEmailHtml(report);
+      semContato[motivo]++;
+      console.warn(
+        `monthly-report: user_id ${report.user_id} PULADO (${motivo}) — ` +
+        `${report.total_tools} ferramenta(s), ${report.overdue_count} atrasada(s)`,
+      );
+    }
 
-        try {
-          const resp = await fetch("https://api.resend.com/emails", {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${resendApiKey}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              from: 'Colacor <noreply@colacor.com.br>',
-              to: [report.email],
-              subject: `🔧 Relatório Mensal de Ferramentas - ${report.overdue_count > 0 ? `${report.overdue_count} ferramenta(s) atrasada(s)` : 'Tudo em dia!'}`,
-              html,
-            }),
-          });
-          if (!resp.ok) {
-            falhasEnvio++;
-            console.error(`monthly-report: envio FALHOU p/ user_id ${report.user_id}: HTTP ${resp.status}`);
-          } else {
-            enviados++;
-            console.log(`monthly-report: enviado p/ user_id ${report.user_id}`);
-          }
-        } catch (emailErr) {
+    for (const report of plano.destinatarios) {
+      const html = generateEmailHtml(report);
+
+      try {
+        const resp = await fetch("https://api.resend.com/emails", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${resendApiKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            from: 'Colacor <noreply@colacor.com.br>',
+            to: [report.email],
+            subject: `🔧 Relatório Mensal de Ferramentas - ${report.overdue_count > 0 ? `${report.overdue_count} ferramenta(s) atrasada(s)` : 'Tudo em dia!'}`,
+            html,
+          }),
+        });
+        if (!resp.ok) {
           falhasEnvio++;
-          console.error(`monthly-report: envio FALHOU p/ user_id ${report.user_id}:`, emailErr);
+          console.error(`monthly-report: envio FALHOU p/ user_id ${report.user_id}: HTTP ${resp.status}`);
+        } else {
+          enviados++;
+          console.log(`monthly-report: enviado p/ user_id ${report.user_id}`);
         }
+      } catch (emailErr) {
+        falhasEnvio++;
+        console.error(`monthly-report: envio FALHOU p/ user_id ${report.user_id}:`, emailErr);
       }
     }
 
