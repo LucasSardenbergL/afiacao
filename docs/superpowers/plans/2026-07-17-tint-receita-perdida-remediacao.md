@@ -138,6 +138,8 @@ Frontend aposentado (#1314), mas `supabase/functions/tint-import/index.ts` mant�
 
 **Risco:** é o guard mais crítico (dinheiro real ao Omie). Codex xhigh no diff obrigatório.
 
+**DESFECHO (2026-07-19, PR #1460 mergeado):** implementada como RPC `tint_gate_revalida` (migration `20260722100001`) chamada pelo edge nas 2 actions, IMEDIATAMENTE antes da mutação Omie. O item carrega a fonte declarada (`tint_price_source`/`tint_discount_pct`/`tint_formula_id`) e o gate recomputa a MESMA fonte — a escolha da vendedora (2b) sobrevive; barra preço obsoleto/fórmula morta/payload adulterado. O "último preço" virou `tint_ultimo_preco_cliente` (opt-in, pedido real no Omie, não-cancelado, 180d, exclude anti-autovalidação) — a tabela de overrides explícitos ficou dispensada na v1 (parecer Codex: "cliente" aqui é reuso determinístico de preço histórico, não aprovação gerencial; se um dia houver fluxo de aprovação, aí sim tabela append-only). DOIS challenges Codex xhigh (design + diff, 12 P1 no total) — todos implementados ou calibrados com racional registrado no PR. Prova: `db/test-tint-gate-revalida.sh` (33 asserts, 9 falsificações — inclui a exigida: gate always-ok → vermelho). Invariantes vivos em `docs/agent/tintometrico.md` §Fronteira do SUBMIT. A EDIÇÃO mudou de contrato: aguarda o edge e só persiste no sucesso (o fire-and-forget morreu — o baseline persistido é insumo do gate). Follow-ups: drift local×Omie da edição (pré-existente), TOCTOU residual ~2s, carimbo server-side, cap de desconto.
+
 ---
 
 ## Fase 4 — TintPricing (simulador admin): usar a RPC, não motor paralelo
