@@ -11,7 +11,7 @@ import type { Product } from '@/hooks/useUnifiedOrder';
 import { fmt } from '@/hooks/useUnifiedOrder';
 import { selectAltPrice, type TintPriceSource, type AltPriceSource, type SemPrecoMotivo, type TintPriceBreakdownLite } from '@/lib/tint/select-price';
 import { AltPriceSourcePicker } from './AltPriceSourcePicker';
-import type { FormulaResult, AlternativePackaging } from './types';
+import type { FormulaResult, AlternativePackaging, TintPricingMeta } from './types';
 
 const LABEL_FONTE: Record<TintPriceSource, string> = {
   cliente: 'Preço cliente',
@@ -59,7 +59,7 @@ interface SelectedFormulaCardProps {
   altDiscounts: Record<string, number>;
   setAltDiscounts: React.Dispatch<React.SetStateAction<Record<string, number>>>;
   custoCorantes: number;
-  onConfirm: (formulaId: string, corId: string, nomeCor: string, precoFinal: number, custoCorantes: number, alternativeProduct?: Product) => void;
+  onConfirm: (formulaId: string, corId: string, nomeCor: string, precoFinal: number, custoCorantes: number, pricingMeta: TintPricingMeta, alternativeProduct?: Product) => void;
 }
 
 export function SelectedFormulaCard({
@@ -187,10 +187,10 @@ export function SelectedFormulaCard({
                 <Input
                   type="number"
                   min={0}
-                  max={100}
+                  max={99.99}
                   step={1}
                   value={discountPct || ''}
-                  onChange={(e) => setDiscountPct(Math.min(100, Math.max(0, Number(e.target.value) || 0)))}
+                  onChange={(e) => setDiscountPct(Math.min(99.99, Math.max(0, Number(e.target.value) || 0)))}
                   className="h-7 w-20 text-xs text-right"
                   placeholder="0"
                 />
@@ -221,6 +221,9 @@ export function SelectedFormulaCard({
                 selectedFormula.nome_cor,
                 precoFinal ?? 0,
                 custoCorantes,
+                // Fase 3: o item carrega a fonte escolhida + desconto — o gate
+                // do submit revalida exatamente ESTA decisão contra o estado atual.
+                { source: priceSource, discountPct, precoSemDesconto },
               )}
             >
               <Palette className="w-3.5 h-3.5 mr-1.5" />
@@ -279,6 +282,9 @@ export function SelectedFormulaCard({
                         selectedFormula.nome_cor,
                         altPrice,
                         altSel.custoCorantes,
+                        // Fase 3: fonte EFETIVA da alternativa (altSel já aplicou o
+                        // override 2b-fix) + desconto próprio da embalagem
+                        { source: altSel.fonte, discountPct: altDisc, precoSemDesconto: altSel.preco },
                         alt.product,
                       )}
                       className={`w-full flex items-center justify-between gap-2 p-2 ${altDisponivel ? 'hover:bg-primary/5' : 'opacity-60 cursor-not-allowed'}`}
@@ -322,10 +328,10 @@ export function SelectedFormulaCard({
                           <Input
                             type="number"
                             min={0}
-                            max={100}
+                            max={99.99}
                             step={1}
                             value={altDisc || ''}
-                            onChange={(e) => setAltDiscounts(prev => ({ ...prev, [alt.formulaId]: Math.min(100, Math.max(0, Number(e.target.value) || 0)) }))}
+                            onChange={(e) => setAltDiscounts(prev => ({ ...prev, [alt.formulaId]: Math.min(99.99, Math.max(0, Number(e.target.value) || 0)) }))}
                             className="h-6 w-16 text-[10px] text-right"
                             placeholder="0"
                           />

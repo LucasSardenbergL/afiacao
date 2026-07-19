@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 398
+-- Total de custom migrations: 403
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -438,9 +438,13 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260718180000', 'fu7b_pode_ver_carteira_completa_privado', '20260718180000_fu7b_pode_ver_carteira_completa_privado.sql'),
   ('20260718200000', 'register_carteira_member_source_rpc', '20260718200000_register_carteira_member_source_rpc.sql'),
   ('20260718213000', 'tint_formula_canonica', '20260718213000_tint_formula_canonica.sql'),
+  ('20260718220000', 'data_health_vendas_cadastros_proof', '20260718220000_data_health_vendas_cadastros_proof.sql'),
+  ('20260718220100', 'seed_targets_faltantes_ledger', '20260718220100_seed_targets_faltantes_ledger.sql'),
   ('20260718233000', 'tint_canonica_preco_csv_legado', '20260718233000_tint_canonica_preco_csv_legado.sql'),
   ('20260721190000', 'reposicao_pos_candidatos', '20260721190000_reposicao_pos_candidatos.sql'),
-  ('20260721190001', 'pausa_cron_relatorio_mensal_ferramentas', '20260721190001_pausa_cron_relatorio_mensal_ferramentas.sql')
+  ('20260721190001', 'pausa_cron_relatorio_mensal_ferramentas', '20260721190001_pausa_cron_relatorio_mensal_ferramentas.sql'),
+  ('20260722100000', 'acoes_execucoes_ultima_execucao', '20260722100000_acoes_execucoes_ultima_execucao.sql'),
+  ('20260722100001', 'tint_gate_revalida_submit', '20260722100001_tint_gate_revalida_submit.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -1787,10 +1791,16 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('fu7b_pode_ver_carteira_completa_privado', 'function', 'public', 'pode_ver_carteira_completa', ''),
   ('register_carteira_member_source_rpc', 'function', 'public', 'register_carteira_member', ''),
   ('tint_formula_canonica', 'view', 'public', 'v_tint_formula_canonica', ''),
+  ('data_health_vendas_cadastros_proof', 'function', 'public', '_data_health_compute', ''),
+  ('seed_targets_faltantes_ledger', 'function', 'public', 'seed_targets_faltantes', ''),
   ('tint_canonica_preco_csv_legado', 'view', 'public', 'v_tint_formula_canonica', ''),
   ('reposicao_pos_candidatos', 'function', 'public', 'reposicao__trim', ''),
   ('reposicao_pos_candidatos', 'function', 'public', 'reposicao__po_id', ''),
-  ('reposicao_pos_candidatos', 'function', 'public', 'reposicao_pos_candidatos', '')
+  ('reposicao_pos_candidatos', 'function', 'public', 'reposicao_pos_candidatos', ''),
+  ('acoes_execucoes_ultima_execucao', 'table', 'public', 'acoes_execucoes', ''),
+  ('acoes_execucoes_ultima_execucao', 'index', 'public', 'acoes_execucoes_acao_idx', 'acoes_execucoes'),
+  ('tint_gate_revalida_submit', 'function', 'public', 'tint_ultimo_preco_cliente', ''),
+  ('tint_gate_revalida_submit', 'function', 'public', 'tint_gate_revalida', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -3185,10 +3195,16 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('fu7b_pode_ver_carteira_completa_privado', 'function', 'public', 'pode_ver_carteira_completa', ''),
   ('register_carteira_member_source_rpc', 'function', 'public', 'register_carteira_member', ''),
   ('tint_formula_canonica', 'view', 'public', 'v_tint_formula_canonica', ''),
+  ('data_health_vendas_cadastros_proof', 'function', 'public', '_data_health_compute', ''),
+  ('seed_targets_faltantes_ledger', 'function', 'public', 'seed_targets_faltantes', ''),
   ('tint_canonica_preco_csv_legado', 'view', 'public', 'v_tint_formula_canonica', ''),
   ('reposicao_pos_candidatos', 'function', 'public', 'reposicao__trim', ''),
   ('reposicao_pos_candidatos', 'function', 'public', 'reposicao__po_id', ''),
-  ('reposicao_pos_candidatos', 'function', 'public', 'reposicao_pos_candidatos', '')
+  ('reposicao_pos_candidatos', 'function', 'public', 'reposicao_pos_candidatos', ''),
+  ('acoes_execucoes_ultima_execucao', 'table', 'public', 'acoes_execucoes', ''),
+  ('acoes_execucoes_ultima_execucao', 'index', 'public', 'acoes_execucoes_acao_idx', 'acoes_execucoes'),
+  ('tint_gate_revalida_submit', 'function', 'public', 'tint_ultimo_preco_cliente', ''),
+  ('tint_gate_revalida_submit', 'function', 'public', 'tint_gate_revalida', '')
 )
 SELECT
   e.migration,

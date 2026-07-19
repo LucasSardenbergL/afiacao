@@ -6,7 +6,7 @@ import type { Product } from '@/hooks/useUnifiedOrder';
 import { fmt } from '@/hooks/useUnifiedOrder';
 import { selectAltPrice, type AltPriceSource, type TintPriceBreakdownLite } from '@/lib/tint/select-price';
 import { AltPriceSourcePicker } from './AltPriceSourcePicker';
-import type { AlternativePackaging } from './types';
+import type { AlternativePackaging, TintPricingMeta } from './types';
 
 interface GlobalColorMatchesProps {
   product: Product;
@@ -20,7 +20,7 @@ interface GlobalColorMatchesProps {
   /** Override de fonte POR alternativa (Fase 2b-fix) — validado em selectAltPrice. */
   altPriceSourceOverrides: Record<string, AltPriceSource>;
   setAltPriceSourceOverride: (formulaId: string, source: AltPriceSource) => void;
-  onConfirm: (formulaId: string, corId: string, nomeCor: string, precoFinal: number, custoCorantes: number, alternativeProduct?: Product) => void;
+  onConfirm: (formulaId: string, corId: string, nomeCor: string, precoFinal: number, custoCorantes: number, pricingMeta: TintPricingMeta, alternativeProduct?: Product) => void;
 }
 
 export function GlobalColorMatches({ product, matches, colorExists, precoMap, precoLoading, altPriceSourceOverrides, setAltPriceSourceOverride, onConfirm }: GlobalColorMatchesProps) {
@@ -81,6 +81,9 @@ export function GlobalColorMatches({ product, matches, colorExists, precoMap, pr
                     alt.nomeCor || '',
                     altSel.preco as number,
                     altSel.custoCorantes,
+                    // Fase 3: o item carrega a fonte EFETIVA (altSel já aplicou o
+                    // override da vendedora — 2b-fix); busca global não tem desconto
+                    { source: altSel.fonte, discountPct: 0, precoSemDesconto: altSel.preco },
                     alt.product,
                   )}
                   className={`w-full flex items-center justify-between gap-2 p-2.5 ${altDisponivel ? 'hover:bg-primary/5' : 'opacity-60 cursor-not-allowed'}`}

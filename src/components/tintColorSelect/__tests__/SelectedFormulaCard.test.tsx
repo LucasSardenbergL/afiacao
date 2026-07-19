@@ -50,17 +50,20 @@ describe('SelectedFormulaCard', () => {
     expect(screen.getByText('Azul Sinal')).toBeTruthy();
   });
 
-  it('confirma com os dados da fórmula e preço final', () => {
-    const props = setup({ precoFinal: 50, custoCorantes: 5 });
+  it('confirma com os dados da fórmula, preço final e o meta de precificação (Fase 3)', () => {
+    const props = setup({ precoFinal: 50, custoCorantes: 5, priceSource: 'calculado', discountPct: 0, precoSemDesconto: 50 });
     fireEvent.click(screen.getByRole('button', { name: /Adicionar ao Pedido/ }));
-    expect(props.onConfirm).toHaveBeenCalledWith('f1', 'RAL5005', 'Azul Sinal', 50, 5);
+    expect(props.onConfirm).toHaveBeenCalledWith(
+      'f1', 'RAL5005', 'Azul Sinal', 50, 5,
+      { source: 'calculado', discountPct: 0, precoSemDesconto: 50 },
+    );
   });
 
-  it('clampa o desconto entre 0 e 100', () => {
+  it('clampa o desconto entre 0 e 99.99 (d=100 zeraria o preço — contrato do gate é d<100)', () => {
     const props = setup();
     const input = screen.getByPlaceholderText('0') as HTMLInputElement;
     fireEvent.change(input, { target: { value: '150' } });
-    expect(props.setDiscountPct).toHaveBeenCalledWith(100);
+    expect(props.setDiscountPct).toHaveBeenCalledWith(99.99);
   });
 
   it('mostra seletor de preço quando há último preço cliente e tabela; dispara override', () => {
@@ -83,7 +86,11 @@ describe('SelectedFormulaCard', () => {
     expect(screen.getByText('Mesma cor em outras embalagens')).toBeTruthy();
     fireEvent.click(screen.getByText('Base 3.6L'));
     // calc 200 ≈ CSV 200 → calculado; custoCorantes 120 DA própria alternativa
-    expect(props.onConfirm).toHaveBeenCalledWith('fa', 'RAL5005', 'Azul Sinal', 200, 120, altProduct);
+    expect(props.onConfirm).toHaveBeenCalledWith(
+      'fa', 'RAL5005', 'Azul Sinal', 200, 120,
+      { source: 'calculado', discountPct: 0, precoSemDesconto: 200 },
+      altProduct,
+    );
   });
 
   it('alternativa sem breakdown no mapa (batch não respondeu) → "sem preço", não confirma (fail-closed)', () => {
@@ -106,7 +113,11 @@ describe('SelectedFormulaCard', () => {
     };
     const props = setup({ alternatives, altPriceMap });
     fireEvent.click(screen.getByText('Base 3.6L'));
-    expect(props.onConfirm).toHaveBeenCalledWith('fa', 'RAL5005', 'Azul Sinal', 170.2, 18.06, altProduct);
+    expect(props.onConfirm).toHaveBeenCalledWith(
+      'fa', 'RAL5005', 'Azul Sinal', 170.2, 18.06,
+      { source: 'calculado', discountPct: 0, precoSemDesconto: 170.2 },
+      altProduct,
+    );
   });
 
   it('alternativa sem preço (base ausente no mapa): mostra "sem preço" e não confirma', () => {
@@ -193,7 +204,11 @@ describe('SelectedFormulaCard', () => {
     const { altProduct, alternatives, altPriceMap } = altComAmbasFontes();
     const props = setup({ alternatives, altPriceMap, altPriceSourceOverrides: { fa: 'tabela' } });
     fireEvent.click(screen.getByText('Base 3.6L'));
-    expect(props.onConfirm).toHaveBeenCalledWith('fa', 'RAL5005', 'Azul Sinal', 13.7, 18.06, altProduct);
+    expect(props.onConfirm).toHaveBeenCalledWith(
+      'fa', 'RAL5005', 'Azul Sinal', 13.7, 18.06, // Fase 3: fonte efetiva do override viaja no meta
+      { source: 'tabela', discountPct: 0, precoSemDesconto: 13.7 },
+      altProduct,
+    );
   });
 
   it('alternativa com só uma fonte (sem breakdown) → não oferece seletor', () => {

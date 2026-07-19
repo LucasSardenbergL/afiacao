@@ -26,15 +26,30 @@ describe('selectTintPrice — seleção honesta da fonte de preço (Passo 2, mon
     expect(r.motivoSemPreco).toBe('base');
   });
 
-  it('preço do cliente (negociado) vence quando existe e a base tem preço', () => {
+  it('Fase 3: o "último preço do cliente" NÃO vence mais por default — é opt-in no seletor', () => {
+    // Regra 2 removida (2026-07-19): a inferência silenciosa BAIXAVA o preço
+    // (contra a filosofia da 2b — baixar é escolha ATIVA). Com cliente 200,
+    // calc 190 e CSV 180, o default é o maior entre calc/CSV (regra 3), e o
+    // chip "Cliente" fica disponível no card para escolha explícita.
     const r = selectTintPrice({
       lastPracticedPrice: 200,
       precoCsv: 180,
       pricing: pricing({ precoFinal: 190 }),
     });
-    expect(r.source).toBe('cliente');
-    expect(r.precoSemDesconto).toBe(200);
-    expect(r.recalculado).toBe(false);
+    expect(r.source).toBe('calculado');
+    expect(r.precoSemDesconto).toBe(190);
+    expect(r.recalculado).toBe(true); // calc 190 > CSV 180 → Grupo B avisa, como sem cliente
+    expect(r.precoImportadoAnterior).toBe(180);
+  });
+
+  it('Fase 3: cliente MENOR que calc/CSV também não vence por default (não baixa silencioso)', () => {
+    const r = selectTintPrice({
+      lastPracticedPrice: 90,
+      precoCsv: 180,
+      pricing: pricing({ precoFinal: 190 }),
+    });
+    expect(r.source).toBe('calculado');
+    expect(r.precoSemDesconto).toBe(190);
   });
 
   it('Grupo B (calc > CSV): usa o calc e marca recalculado, guardando o importado anterior', () => {

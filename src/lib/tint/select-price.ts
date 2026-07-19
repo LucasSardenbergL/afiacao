@@ -16,7 +16,12 @@
 //     base/corante inativo ou zerado). Diferente de "carregando" (aí o consumidor segura a venda).
 //  1. Base ausente/zero num produto vendável → SEM PREÇO, mesmo havendo CSV/cliente
 //     (o CSV também subfatura aqui; ex.: PRD03657). Corrigir no Omie.
-//  2. Preço do cliente (último praticado) vence — é acordo comercial explícito.
+//  2. [REMOVIDA — Fase 3, 2026-07-19] O "último preço do cliente" NÃO vence mais
+//     por default: era inferência silenciosa que BAIXAVA o preço (contra a
+//     filosofia da 2b — baixar é escolha ATIVA). A fonte 'cliente' segue no
+//     seletor do card como OPT-IN explícito da vendedora, agora endurecida
+//     server-side (RPC tint_ultimo_preco_cliente: só pedido real no Omie,
+//     não-cancelado, janela 180d) e revalidada no submit (tint_gate_revalida).
 //  3. Calc e CSV ambos: usa o MAIOR. calc > CSV (Grupo B) → recalcula e avisa o
 //     balcão ("a base não estava no importado"); calc ≈ CSV → usa o calc sem aviso;
 //     calc < CSV → mantém o CSV (não baixa na transição).
@@ -72,6 +77,8 @@ const comPreco = (
 ): TintPriceSelection => ({ source, precoSemDesconto, recalculado, precoImportadoAnterior, motivoSemPreco: null });
 
 export function selectTintPrice(input: {
+  /** Mantido na assinatura para o card montar o chip "Cliente" (opt-in) — a
+   *  SELEÇÃO default não o usa mais (regra 2 removida na Fase 3). */
   lastPracticedPrice: number | null;
   /** CSV bruto (>0) ou null/0; arredondado internamente. */
   precoCsv: number | null;
@@ -83,7 +90,7 @@ export function selectTintPrice(input: {
    *  produto desativado. ≠ `pricing == null` por loading (nesse caso o consumidor segura a venda). */
   motorFalhou?: boolean;
 }): TintPriceSelection {
-  const { lastPracticedPrice, pricing } = input;
+  const { pricing } = input;
 
   // 0. Motor falhou (≠ carregando) → SEM PREÇO, mesmo havendo CSV/cliente. A RPC não confirmou o
   //    preço honesto; cair no importado aqui venderia justamente o que a RPC poderia estar barrando.
@@ -101,8 +108,7 @@ export function selectTintPrice(input: {
     return semPreco('receita');
   }
 
-  // 2. Preço do cliente (negociado) vence.
-  if (lastPracticedPrice != null && lastPracticedPrice > 0) return comPreco('cliente', lastPracticedPrice);
+  // 2. (removida — Fase 3) 'cliente' é opt-in no seletor do card, nunca default.
 
   // 3. Calc e CSV coexistem → o MAIOR; avisa quando o calc sobe (Grupo B).
   if (calc != null && csv != null) {
