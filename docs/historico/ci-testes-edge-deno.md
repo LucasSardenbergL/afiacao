@@ -76,7 +76,7 @@ mais — `src/` intocado, então typecheck/vitest/build seguiam verdes), para ve
 | `no-import-prefix` | 141 | imports `npm:`/`jsr:`/`https:` — padrão **obrigatório** de edge Supabase; puro ruído |
 | `no-unused-vars` | 19 | código morto |
 | **`no-unreachable`** | **16** | **código inalcançável — o único grupo que pode esconder bug real** |
-| `no-explicit-any` | 6 | dívida de tipo (no `src/` essa dívida já foi zerada) |
+| `no-explicit-any` | 6 | **já governados pelo ESLint** — ver nota abaixo |
 | `ban-ts-comment` | 6 | idem |
 | `no-var` / `no-inner-declarations` / `require-await` | 4/4/2 | estilo |
 
@@ -84,3 +84,13 @@ Ligar o lint hoje seria 198 vermelhos, dos quais 141 são o padrão que a plataf
 que treina a ignorar o sinal. O caminho é configurar `no-import-prefix` como exceção e então tratar
 o resto. **Os 16 `no-unreachable` merecem uma passada própria** — código depois de `return`/`throw`
 em edge costuma ser guard que alguém achou que estava rodando e não está.
+
+> ⚠️ **Nota (2026-07-18, PR #1432): não leia esta tabela como "as edges estão fora do lint".** O
+> `bun lint` (= `eslint .`) **cobre `supabase/functions/`** — de tudo que está lá, o `ignores` do
+> `eslint.config.js` exclui só `functions/mcp/**` (bundle auto-gerado, sem `any`) — e aplica
+> `tseslint.configs.recommended`, onde `no-explicit-any` é ERROR. Os 6
+> acima aparecem aqui justamente porque carregam `// eslint-disable-next-line @typescript-eslint/no-explicit-any`:
+> silenciam o ESLint e **não** o deno lint. A recíproca mordeu no #1432 — `// deno-lint-ignore
+> no-explicit-any` deixou o `deno lint` limpo e o CI vermelho com 4 erros. **Cada linter só enxerga o
+> seu próprio comentário de supressão**, então nenhum dos dois, sozinho, prova o outro. Regra prática
+> em `docs/agent/deploy.md` → "Edge — armadilhas".
