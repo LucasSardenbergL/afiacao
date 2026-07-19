@@ -19369,6 +19369,16 @@ export type Database = {
         Args: { p_account: string; p_id_corante: string }
         Returns: string
       }
+      tint_gate_revalida: {
+        Args: {
+          p_account: string
+          p_contexto: string
+          p_customer_user_id: string
+          p_items: Json
+          p_sales_order_id: string
+        }
+        Returns: Json
+      }
       tint_marcar_bases_mixmachine: { Args: never; Returns: number }
       tint_promote_sync_run: { Args: { p_sync_run_id: string }; Returns: Json }
       tint_recalc_preco_oficial: {
@@ -19384,6 +19394,15 @@ export type Database = {
       }
       tint_run_reconciliation: {
         Args: { p_sync_run_id: string }
+        Returns: Json
+      }
+      tint_ultimo_preco_cliente: {
+        Args: {
+          p_cor_id: string
+          p_customer_user_id: string
+          p_exclude_sales_order_id?: string
+          p_product_id: string
+        }
         Returns: Json
       }
       upsert_push_subscription: {
