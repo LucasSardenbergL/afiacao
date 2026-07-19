@@ -86,6 +86,42 @@ export type Database = {
         }
         Relationships: []
       }
+      acoes_execucoes: {
+        Row: {
+          acao: string
+          detalhes: Json | null
+          executado_por: string | null
+          executado_por_nome: string | null
+          finalizado_em: string | null
+          id: string
+          iniciado_em: string
+          origem: string
+          status: string
+        }
+        Insert: {
+          acao: string
+          detalhes?: Json | null
+          executado_por?: string | null
+          executado_por_nome?: string | null
+          finalizado_em?: string | null
+          id?: string
+          iniciado_em?: string
+          origem?: string
+          status?: string
+        }
+        Update: {
+          acao?: string
+          detalhes?: Json | null
+          executado_por?: string | null
+          executado_por_nome?: string | null
+          finalizado_em?: string | null
+          id?: string
+          iniciado_em?: string
+          origem?: string
+          status?: string
+        }
+        Relationships: []
+      }
       addresses: {
         Row: {
           city: string
