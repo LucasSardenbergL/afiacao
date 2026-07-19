@@ -52,6 +52,13 @@ export async function submitQuote(params: SubmitQuoteParams): Promise<SubmitQuot
           tint_cor_id: c.tint_cor_id,
           tint_nome_cor: c.tint_nome_cor,
           tint_formula_id: c.tint_formula_id,
+          // Fase 3: fonte/desconto viajam no orçamento — a CONVERSÃO repassa ao
+          // edge e o gate revalida a fonte declarada contra o estado do dia.
+          ...(c.tint_price_source ? {
+            tint_price_source: c.tint_price_source,
+            tint_discount_pct: c.tint_discount_pct ?? 0,
+            ...(c.tint_preco_sem_desconto != null ? { tint_preco_sem_desconto: c.tint_preco_sem_desconto } : {}),
+          } : {}),
         } : {}),
       }));
       const { error } = await supabase.from('sales_orders').insert({

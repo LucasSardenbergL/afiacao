@@ -65,7 +65,11 @@ describe('GlobalColorMatches', () => {
     const precoMap = { f1: { custoBase: 152.1, baseDisponivel: true, custoCorantes: 18.06, corantesCompletos: true, precoFinal: 170.16 } };
     render(<GlobalColorMatches product={product} altPriceSourceOverrides={{}} setAltPriceSourceOverride={() => {}} matches={[alt({ precoFinalCsv: 13.7 })]} precoMap={precoMap} onConfirm={onConfirm} />);
     fireEvent.click(screen.getByText('Base Branca 3.6L'));
-    expect(onConfirm).toHaveBeenCalledWith('f1', 'RAL9010', 'Branco', 170.2, 18.06, expect.objectContaining({ id: 'op1' }));
+    expect(onConfirm).toHaveBeenCalledWith(
+      'f1', 'RAL9010', 'Branco', 170.2, 18.06,
+      { source: 'calculado', discountPct: 0, precoSemDesconto: 170.2 },
+      expect.objectContaining({ id: 'op1' }),
+    );
   });
 
   it('sem CSV e sem cálculo → "sem preço", não confirma (não vende a valor_unitario nu)', () => {
@@ -99,7 +103,12 @@ describe('GlobalColorMatches', () => {
     const onConfirm = vi.fn();
     render(<GlobalColorMatches product={product} altPriceSourceOverrides={{ f1: 'tabela' }} setAltPriceSourceOverride={() => {}} matches={[alt({ precoFinalCsv: 13.7 })]} precoMap={precoMapAmbos} onConfirm={onConfirm} />);
     fireEvent.click(screen.getByText('Base Branca 3.6L'));
-    expect(onConfirm).toHaveBeenCalledWith('f1', 'RAL9010', 'Branco', 13.7, 18.06, expect.objectContaining({ id: 'op1' }));
+    // Fase 3: o meta carrega a fonte EFETIVA do override (tabela) — é isto que o gate revalida
+    expect(onConfirm).toHaveBeenCalledWith(
+      'f1', 'RAL9010', 'Branco', 13.7, 18.06,
+      { source: 'tabela', discountPct: 0, precoSemDesconto: 13.7 },
+      expect.objectContaining({ id: 'op1' }),
+    );
   });
 
   it('só uma fonte com valor (sem CSV) → não oferece seletor', () => {

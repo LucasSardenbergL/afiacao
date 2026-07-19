@@ -21,10 +21,25 @@ import { ensureSalesOrderRow } from './idempotency';
 import { validarVendabilidade, bloqueioVendabilidade } from './vendabilidade';
 import { findInvalidPricedProductItems, invalidPriceMessage } from './priceGuard';
 
-/** Resposta estruturada do gate de crédito do edge (trava Fase 2 — não cria o PV). */
+/** Resposta estruturada dos gates do edge (crédito Fase 2 / tint Fase 3 — não cria o PV). */
 interface GateCreditoPayload {
   blocked?: string;
   gate?: { vencido?: number | null; titulos?: number | null } | null;
+  /** Fase 3: bloqueios do gate tintométrico (preço obsoleto/fórmula morta). */
+  bloqueios?: Array<{ cor_id?: string; motivo?: string; detalhe?: string }>;
+}
+
+/** Mensagem acionável do bloqueio tintométrico (gate da fronteira, Fase 3). */
+function mensagemBloqueioTint(
+  conta: string,
+  bloqueios?: Array<{ cor_id?: string; motivo?: string; detalhe?: string }>,
+): string {
+  const cores = [...new Set((bloqueios ?? []).map(b => b.cor_id).filter(Boolean))].join(', ');
+  const detalhe = bloqueios?.[0]?.detalhe ? ` ${bloqueios[0].detalhe}.` : '';
+  return (
+    `Pedido ${conta} BLOQUEADO: o preço da tinta${cores ? ` (cor ${cores})` : ''} está desatualizado ou a fórmula mudou.${detalhe} ` +
+    `Reprecifique o item pela tela de tinta (remova e adicione de novo) e reenvie.`
+  );
 }
 
 export function mensagemBloqueioCredito(
@@ -159,6 +174,12 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
         tint_cor_id: c.tint_cor_id,
         tint_nome_cor: c.tint_nome_cor,
         tint_formula_id: c.tint_formula_id,
+        // Fase 3: fonte/desconto declarados — auditoria no jsonb + insumo do gate
+        ...(c.tint_price_source ? {
+          tint_price_source: c.tint_price_source,
+          tint_discount_pct: c.tint_discount_pct ?? 0,
+          ...(c.tint_preco_sem_desconto != null ? { tint_preco_sem_desconto: c.tint_preco_sem_desconto } : {}),
+        } : {}),
       } : {}),
     }));
 
@@ -218,7 +239,17 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
               quantidade: c.quantity,
               valor_unitario: c.unit_price,
               descricao: c.product.descricao,
-              ...(c.tint_cor_id ? { tint_cor_id: c.tint_cor_id, tint_nome_cor: c.tint_nome_cor } : {}),
+              ...(c.tint_cor_id ? {
+                tint_cor_id: c.tint_cor_id,
+                tint_nome_cor: c.tint_nome_cor,
+                // Fase 3: o gate da fronteira revalida a fonte declarada
+                ...(c.tint_formula_id ? { tint_formula_id: c.tint_formula_id } : {}),
+                ...(c.tint_price_source ? {
+                  tint_price_source: c.tint_price_source,
+                  tint_discount_pct: c.tint_discount_pct ?? 0,
+                  ...(c.tint_preco_sem_desconto != null ? { tint_preco_sem_desconto: c.tint_preco_sem_desconto } : {}),
+                } : {}),
+              } : {}),
             })),
             observacao: meta.notes,
             codigo_parcela: payment.parcelaOben,
@@ -240,6 +271,11 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
               vencido: typeof gatePayload.gate?.vencido === 'number' ? gatePayload.gate.vencido : null,
               titulos: typeof gatePayload.gate?.titulos === 'number' ? gatePayload.gate.titulos : null,
             });
+          } else if (gatePayload?.blocked === 'tint_preco') {
+            // Gate tint Fase 3: preço obsoleto/fórmula morta — o edge NÃO criou o PV.
+            // O pedido local fica salvo; reprecificar no balcão e reenviar.
+            results.push('PV Oben (bloqueado: preço tinta)');
+            errors.push({ step: 'bloqueio_tint_oben', message: mensagemBloqueioTint('Oben', gatePayload.bloqueios) });
           } else {
             results.push(`PV Oben ${omieResult?.omie_numero_pedido || ''}`);
           }
@@ -567,7 +603,8 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
     errors,
     allConfirmed: !errors.some(e =>
       e.step === 'sync_oben_omie' || e.step === 'sync_colacor_omie' || e.step === 'sync_os_omie' ||
-      e.step === 'bloqueio_credito_oben' || e.step === 'bloqueio_credito_colacor'),
+      e.step === 'bloqueio_credito_oben' || e.step === 'bloqueio_credito_colacor' ||
+      e.step === 'bloqueio_tint_oben'),
     bloqueiosCredito,
   };
 }

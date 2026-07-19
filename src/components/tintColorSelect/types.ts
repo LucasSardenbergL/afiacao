@@ -1,12 +1,25 @@
 // Tipos do diálogo de seleção de cor tintométrica.
 // Extraídos verbatim de src/components/TintColorSelectDialog.tsx (god-component split).
 import type { Product } from '@/hooks/useUnifiedOrder';
+import type { TintPriceSource } from '@/lib/tint/select-price';
+
+/** Fase 3: metadados de precificação que o item CARREGA até a fronteira —
+ *  a fonte escolhida pela vendedora + o desconto declarado + o preço-base.
+ *  O gate do submit (tint_gate_revalida) recomputa a fonte AGORA e confere. */
+export interface TintPricingMeta {
+  /** Fonte efetivamente usada no preço confirmado (null = indisponível). */
+  source: TintPriceSource | null;
+  /** Desconto % aplicado por cima do preço da fonte (0–100). */
+  discountPct: number;
+  /** Preço da fonte ANTES do desconto (o que o gate recomputa). */
+  precoSemDesconto: number | null;
+}
 
 export interface TintColorSelectDialogProps {
   product: Product;
   open: boolean;
   onClose: () => void;
-  onConfirm: (formulaId: string, corId: string, nomeCor: string, precoFinal: number, custoCorantes: number, alternativeProduct?: Product) => void;
+  onConfirm: (formulaId: string, corId: string, nomeCor: string, precoFinal: number, custoCorantes: number, pricingMeta: TintPricingMeta, alternativeProduct?: Product) => void;
   customerUserId?: string | null;
   /** Pré-preenche a busca de cor ao abrir (re-pedido via "Cores do cliente"). */
   initialSearch?: string | null;

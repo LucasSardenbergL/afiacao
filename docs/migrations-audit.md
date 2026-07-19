@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **398** custom migrations totais
-- **1360** objetos esperados (criados por estas migrations)
+- **403** custom migrations totais
+- **1367** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 397
+  - `function`: 401
   - `rls_policy`: 295
-  - `index`: 223
+  - `index`: 224
   - `cron_job`: 150
-  - `table`: 146
+  - `table`: 147
   - `trigger`: 79
   - `view`: 67
   - `enum_value`: 4
@@ -3329,6 +3329,18 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `view` | `public.v_tint_formula_canonica` | — |
 
+### `20260718220000_data_health_vendas_cadastros_proof.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
+
+### `20260718220100_seed_targets_faltantes_ledger.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.seed_targets_faltantes` | — |
+
 ### `20260718233000_tint_canonica_preco_csv_legado.sql`
 
 | Tipo | Objeto | Parent |
@@ -3346,6 +3358,20 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20260721190001_pausa_cron_relatorio_mensal_ferramentas.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260722100000_acoes_execucoes_ultima_execucao.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.acoes_execucoes` | — |
+| `index` | `public.acoes_execucoes_acao_idx` | `acoes_execucoes` |
+
+### `20260722100001_tint_gate_revalida_submit.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tint_ultimo_preco_cliente` | — |
+| `function` | `public.tint_gate_revalida` | — |
 
 ## Próximos passos por status
 
