@@ -103,3 +103,43 @@ export function eqText(column: string, value: string): string {
 export function orFilter(...clauses: string[]): string {
   return clauses.join(',');
 }
+
+/** Tamanho da página do PostgREST — é também a capa por request (CLAUDE.md §9b). */
+export const POSTGREST_PAGE_SIZE = 1000;
+
+/**
+ * Lê uma tabela INTEIRA respeitando a capa de 1.000 linhas por request do PostgREST.
+ *
+ * A capa é SILENCIOSA: a resposta vem truncada, sem erro e sem aviso. Quem carrega um
+ * catálogo inteiro para montar um Map (custo, produto, perfil) e não pagina fica com um
+ * mapa parcial — e a cauda vira "não encontrado", que no money-path é lido como "sem
+ * custo"/"produto inexistente". Já mordeu este repo em `product_costs` (ver o teste
+ * "O CORAÇÃO DO FIX" em costCompute) e os edges já paginam por isso
+ * (`algorithm-a-audit`, `fin-valor-cockpit`).
+ *
+ * `buscarPagina` DEVE aplicar um `.order()` estável junto do `.range(de, ate)`: sem
+ * ordenação definida o Postgres não garante a mesma sequência entre requests, e a
+ * paginação pode repetir ou pular linhas.
+ *
+ * ```ts
+ * const custos = await fetchAllPages<CostRow>((de, ate) =>
+ *   supabase.from('product_costs').select('product_id, cost_final')
+ *     .order('product_id', { ascending: true }).range(de, ate) as unknown as
+ *       PromiseLike<{ data: CostRow[] | null }>,
+ * );
+ * ```
+ */
+export async function fetchAllPages<T>(
+  buscarPagina: (de: number, ate: number) => PromiseLike<{ data: T[] | null }>,
+): Promise<T[]> {
+  const todas: T[] = [];
+  for (let pagina = 0; ; pagina++) {
+    const { data } = await buscarPagina(
+      pagina * POSTGREST_PAGE_SIZE,
+      (pagina + 1) * POSTGREST_PAGE_SIZE - 1,
+    );
+    const linhas = data ?? [];
+    todas.push(...linhas);
+    if (linhas.length < POSTGREST_PAGE_SIZE) return todas;
+  }
+}
