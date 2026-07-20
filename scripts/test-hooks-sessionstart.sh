@@ -94,8 +94,24 @@ fi
 
 # ── não consegui verificar → avisa ISSO, NUNCA "divergente" ───────────────────
 # origin/main ilegível (repo git sem o remote/branch main): uma das 4 causas
-# do exit 3. Mensagens de "não consegui verificar" evitam a palavra
-# "divergente" mesmo em negação — daqui o grep -qi "divergente" é confiável.
+# do exit 3. Duas condições, cada uma fechando um falso-verde medido:
+#   • "FALTA DE DADO" é literal ESCRITO PELO HOOK, só no ramo `*)` (o
+#     heavy-install.sh nunca emite essa string) — grep sem -i, caixa fixa.
+#     Sabotar o `case` trocando o ramo `1)` por `1|*)` faz rc=3 cair no ramo
+#     de "divergente" — mas a mensagem ainda contém "NÃO CONSEGUI VERIFICAR"
+#     (essa vem do $st, produzida pelo heavy-install.sh). Com grep -qi
+#     "não consegui verificar" (o teste antigo), sob LC_ALL=C o -i não dobra
+#     Ã↔ã (bytes multibyte UTF-8 tratados como opacos pelo casefold em C) e a
+#     asserção falha — correto — mas sob LC_ALL=pt_BR.UTF-8 o -i dobra e ela
+#     passa mesmo com o ramo errado (falso verde medido, dependente de
+#     locale). "FALTA DE DADO" é ASCII puro e exclusivo do ramo certo: não
+#     ambíguo em nenhum locale, e só aparece se o CÓDIGO tomou o ramo `*)`.
+#   • "git fetch origin" só chega em $ctx se o hook capturar STDERR (2>&1) —
+#     é a dica que o heavy-install.sh manda por lá quando a fonte é ilegível.
+#     Sabotar de volta para 2>/dev/null zera $st, mas a frase-catch-all do
+#     hook (com o default "${st:-sem detalhe...}") ainda contém "FALTA DE
+#     DADO" sozinha — só a exigência do fragmento exclusivo de stderr pega
+#     essa sabotagem.
 git init -q "$hv/semmain"
 mkdir -p "$hv/semmain/scripts"
 cp "$HI" "$hv/semmain/scripts/heavy-install.sh"; chmod +x "$hv/semmain/scripts/heavy-install.sh"
@@ -104,8 +120,9 @@ printf 'outro\n' > "$AFIACAO_HEAVY_DEST"
 out="$(cd "$hv/semmain" && bash "$HOOKS/vigia-worktree.sh" 2>/dev/null)"
 ctx="$(printf '%s' "$out" | jq -r '.hookSpecificOutput.additionalContext // ""' 2>/dev/null)"
 if printf '%s' "$out" | jq -e 'type == "object"' >/dev/null 2>&1 \
-   && printf '%s' "$ctx" | grep -qi "não consegui verificar" \
-   && ! printf '%s' "$ctx" | grep -qi "divergente"; then
+   && printf '%s' "$ctx" | grep -q "FALTA DE DADO" \
+   && printf '%s' "$ctx" | grep -q "git fetch origin" \
+   && ! printf '%s' "$ctx" | grep -q "DIVERGENTE"; then
   echo "  ok    não consegui verificar → avisa isso (nunca 'divergente')"
 else
   echo "  FAIL  origin/main ilegível deveria avisar 'não consegui verificar', nunca 'divergente': $out"; fail=1
