@@ -21,16 +21,16 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **406** custom migrations totais
-- **1445** objetos esperados (criados por estas migrations)
+- **409** custom migrations totais
+- **1447** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 411
-  - `rls_policy`: 362
+  - `rls_policy`: 363
   - `index`: 224
   - `cron_job`: 150
   - `table`: 147
   - `trigger`: 79
-  - `view`: 68
+  - `view`: 69
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -3434,6 +3434,10 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `private.cap_compras_escrever` | — |
 
+### `20260720120000_authz_cap_compras_ler_pos_candidatos_fu4g.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
 ### `20260721190000_reposicao_pos_candidatos.sql`
 
 | Tipo | Objeto | Parent |
@@ -3465,6 +3469,17 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `view` | `public.v_tint_formula_canonica` | — |
+
+### `20260722110000_quarentena_omie_clientes_espelho.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260723130000_authz_custo_fu4f_fase2_inventory.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `view` | `public.inventory_position_operacional` | — |
+| `rls_policy` | `public.staff_inventory_position_select` | `inventory_position` |
 
 ## Próximos passos por status
 

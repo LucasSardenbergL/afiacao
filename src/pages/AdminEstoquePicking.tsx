@@ -103,7 +103,10 @@ function KpiCards({ account }: { account: string }) {
     queryKey: ["pk-skus-criticos", account],
     queryFn: async () => {
       const { count } = await supabase
-        .from("inventory_position")
+        // Porta OPERACIONAL (FU4-F fase 2): conta SKUs zerados sem tocar custo. `head:true` não
+        // retorna linhas — mas a tabela crua exigiria cap_custo_ler e devolveria 0 ao separador,
+        // fabricando "nenhum SKU crítico" (o anti-padrão count-exact-vira-0-silencioso).
+        .from("inventory_position_operacional" as never)
         .select("*", { count: "exact", head: true })
         .eq("account", account)
         .lte("saldo", 0);
@@ -448,6 +451,18 @@ function PickingTab({ account }: { account: string }) {
 }
 
 /* ─── Estoque tab ─── */
+/**
+ * Linha da view `inventory_position_operacional` (FU4-F fase 2): saldo e identidade do SKU,
+ * SEM cmc/preco_medio — o custo exige `private.cap_custo_ler`, que o separador não tem.
+ * Tipo declarado à mão porque a view é nova e ainda não está em `types.ts` (mesmo padrão de
+ * `LinhaViewSugeridos` em negociacaoParalela); regenerar os tipos após o apply em prod.
+ */
+type LinhaEstoqueOperacional = {
+  omie_codigo_produto: number | null;
+  saldo: number | null;
+  synced_at: string | null;
+};
+
 function EstoqueTab({ account }: { account: string }) {
   const [search, setSearch] = useState("");
 
@@ -455,12 +470,16 @@ function EstoqueTab({ account }: { account: string }) {
     queryKey: ["pk-inventory", account],
     queryFn: async () => {
       const { data } = await supabase
-        .from("inventory_position")
-        .select("omie_codigo_produto, saldo, cmc, preco_medio, synced_at")
+        // Porta OPERACIONAL: saldo sem custo (FU4-F fase 2). A tabela inventory_position exige
+        // private.cap_custo_ler — o separador não tem, e não precisa: aqui se consulta SALDO.
+        // `as never`: a view é nova e ainda não está nos tipos gerados (padrão já usado em
+        // useNegociacaoParalela.ts); regenerar após o apply da migration em prod.
+        .from("inventory_position_operacional" as never)
+        .select("omie_codigo_produto, saldo, synced_at" as never)
         .eq("account", account)
         .order("saldo", { ascending: true })
         .limit(500);
-      return data ?? [];
+      return (data ?? []) as unknown as LinhaEstoqueOperacional[];
     },
   });
 
@@ -492,15 +511,13 @@ function EstoqueTab({ account }: { account: string }) {
               <TableRow>
                 <TableHead>Código Omie</TableHead>
                 <TableHead className="text-right">Saldo</TableHead>
-                <TableHead className="text-right">CMC</TableHead>
-                <TableHead className="text-right">Preço Médio</TableHead>
                 <TableHead>Sincronizado</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {filtered.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
+                  <TableCell colSpan={3} className="text-center text-muted-foreground py-8">
                     Nenhum SKU encontrado.
                   </TableCell>
                 </TableRow>
@@ -517,8 +534,6 @@ function EstoqueTab({ account }: { account: string }) {
                       <span>{Number(r.saldo).toFixed(2)}</span>
                     )}
                   </TableCell>
-                  <TableCell className="text-right text-xs">{fmtBRL(r.cmc)}</TableCell>
-                  <TableCell className="text-right text-xs">{fmtBRL(r.preco_medio)}</TableCell>
                   <TableCell className="text-xs">{fmtDate(r.synced_at)}</TableCell>
                 </TableRow>
               ))}
