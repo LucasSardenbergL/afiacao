@@ -22,15 +22,19 @@ export interface AuthzEntry {
 }
 
 export const AUTHZ_MANIFEST: Record<string, AuthzEntry> = {
+  // E2/FU4 (2026-07-18): estas duas leem CUSTO, e o gate único `pode_ver_carteira_completa`
+  // as concedia ao papel gerencial operacional junto com preço e crédito. Passaram a exigir
+  // `private.cap_custo_ler` — master + estrategico + super_admin. Mudança de POLÍTICA revisada
+  // conscientemente aqui, como manda o cabeçalho deste arquivo.
   'public.fin_estimar_estoque_omie': {
     sensitive: true,
-    requiredGate: { anyOf: [{ call: 'pode_ver_carteira_completa' }] },
-    motivo: 'capital imobilizado em estoque a custo (Σ saldo×cmc) — PR #1264 (gerencial+)',
+    requiredGate: { anyOf: [{ call: 'cap_custo_ler' }] },
+    motivo: 'capital imobilizado em estoque a custo (Σ saldo×cmc) — PR #1264; E2/FU4 estreitou p/ estrategico+',
   },
   'public.medir_abaixo_piso_tier': {
     sensitive: true,
-    requiredGate: { anyOf: [{ call: 'pode_ver_carteira_completa' }] },
-    motivo: 'folga negativa de margem vs piso de markup — cockpit financeiro (gerencial+)',
+    requiredGate: { anyOf: [{ call: 'cap_custo_ler' }] },
+    motivo: 'folga negativa de margem vs piso de markup — cockpit financeiro; E2/FU4 estreitou p/ estrategico+',
   },
   'public.get_preco_cockpit': {
     sensitive: true,

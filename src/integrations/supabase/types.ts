@@ -14,6 +14,39 @@ export type Database = {
   }
   public: {
     Tables: {
+      _quarantine_omie_clientes_20260722: {
+        Row: {
+          created_at: string
+          empresa_omie: string
+          id: string
+          omie_codigo_cliente: number
+          omie_codigo_cliente_integracao: string | null
+          omie_codigo_vendedor: number | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          empresa_omie?: string
+          id?: string
+          omie_codigo_cliente: number
+          omie_codigo_cliente_integracao?: string | null
+          omie_codigo_vendedor?: number | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          empresa_omie?: string
+          id?: string
+          omie_codigo_cliente?: number
+          omie_codigo_cliente_integracao?: string | null
+          omie_codigo_vendedor?: number | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       abc_xyz_classification: {
         Row: {
           classe_abc: Database["public"]["Enums"]["classe_abc"] | null
@@ -7656,39 +7689,6 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
-      }
-      omie_clientes: {
-        Row: {
-          created_at: string
-          empresa_omie: string
-          id: string
-          omie_codigo_cliente: number
-          omie_codigo_cliente_integracao: string | null
-          omie_codigo_vendedor: number | null
-          updated_at: string
-          user_id: string
-        }
-        Insert: {
-          created_at?: string
-          empresa_omie?: string
-          id?: string
-          omie_codigo_cliente: number
-          omie_codigo_cliente_integracao?: string | null
-          omie_codigo_vendedor?: number | null
-          updated_at?: string
-          user_id: string
-        }
-        Update: {
-          created_at?: string
-          empresa_omie?: string
-          id?: string
-          omie_codigo_cliente?: number
-          omie_codigo_cliente_integracao?: string | null
-          omie_codigo_vendedor?: number | null
-          updated_at?: string
-          user_id?: string
-        }
-        Relationships: []
       }
       omie_clientes_nao_vinculados: {
         Row: {
@@ -18153,6 +18153,7 @@ export type Database = {
         Args: { p_aprovar: boolean; p_motivo?: string; p_tarefa_id: string }
         Returns: undefined
       }
+      authz_contract_version: { Args: never; Returns: number }
       buscar_skus_candidatos: {
         Args: { p_termos: string[] }
         Returns: {
@@ -19369,6 +19370,16 @@ export type Database = {
         Args: { p_account: string; p_id_corante: string }
         Returns: string
       }
+      tint_gate_revalida: {
+        Args: {
+          p_account: string
+          p_contexto: string
+          p_customer_user_id: string
+          p_items: Json
+          p_sales_order_id: string
+        }
+        Returns: Json
+      }
       tint_marcar_bases_mixmachine: { Args: never; Returns: number }
       tint_promote_sync_run: { Args: { p_sync_run_id: string }; Returns: Json }
       tint_recalc_preco_oficial: {
@@ -19384,6 +19395,15 @@ export type Database = {
       }
       tint_run_reconciliation: {
         Args: { p_sync_run_id: string }
+        Returns: Json
+      }
+      tint_ultimo_preco_cliente: {
+        Args: {
+          p_cor_id: string
+          p_customer_user_id: string
+          p_exclude_sales_order_id?: string
+          p_product_id: string
+        }
         Returns: Json
       }
       upsert_push_subscription: {

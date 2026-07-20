@@ -9,8 +9,9 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import type { Product } from '@/hooks/useUnifiedOrder';
 import { fmt } from '@/hooks/useUnifiedOrder';
-import { selectAltPrice, type TintPriceSource, type SemPrecoMotivo, type TintPriceBreakdownLite } from '@/lib/tint/select-price';
-import type { FormulaResult, AlternativePackaging } from './types';
+import { selectAltPrice, type TintPriceSource, type AltPriceSource, type SemPrecoMotivo, type TintPriceBreakdownLite } from '@/lib/tint/select-price';
+import { AltPriceSourcePicker } from './AltPriceSourcePicker';
+import type { FormulaResult, AlternativePackaging, TintPricingMeta } from './types';
 
 const LABEL_FONTE: Record<TintPriceSource, string> = {
   cliente: 'Preço cliente',
@@ -35,6 +36,9 @@ interface SelectedFormulaCardProps {
   precoCliente: number | null;
   priceSource: TintPriceSource | null;
   setPriceSourceOverride: (s: TintPriceSource | null) => void;
+  /** Override de fonte POR alternativa (Fase 2b-fix) — validado em selectAltPrice. */
+  altPriceSourceOverrides: Record<string, AltPriceSource>;
+  setAltPriceSourceOverride: (formulaId: string, source: AltPriceSource) => void;
   precoFinal: number | null;
   precoSemDesconto: number | null;
   disponivel: boolean;
@@ -55,7 +59,7 @@ interface SelectedFormulaCardProps {
   altDiscounts: Record<string, number>;
   setAltDiscounts: React.Dispatch<React.SetStateAction<Record<string, number>>>;
   custoCorantes: number;
-  onConfirm: (formulaId: string, corId: string, nomeCor: string, precoFinal: number, custoCorantes: number, alternativeProduct?: Product) => void;
+  onConfirm: (formulaId: string, corId: string, nomeCor: string, precoFinal: number, custoCorantes: number, pricingMeta: TintPricingMeta, alternativeProduct?: Product) => void;
 }
 
 export function SelectedFormulaCard({
@@ -67,6 +71,8 @@ export function SelectedFormulaCard({
   precoCliente,
   priceSource,
   setPriceSourceOverride,
+  altPriceSourceOverrides,
+  setAltPriceSourceOverride,
   precoFinal,
   precoSemDesconto,
   disponivel,
@@ -88,12 +94,13 @@ export function SelectedFormulaCard({
   onConfirm,
 }: SelectedFormulaCardProps) {
   // Fontes de preço disponíveis (com valor), para a vendedora escolher manualmente.
-  // Fase 2b: quando a cor é a geração SL (receita viva), o CSV vem da VERSÃO
-  // ANTERIOR da tinta (gêmea antiga) — o rótulo deixa a escolha explícita.
+  // Rótulo NEUTRO de propósito (Fase 2b-fix): o CSV da chave é o max das linhas
+  // ativas — na prática hoje, a versão anterior da tinta quando a canônica é SL —
+  // mas a view não prova a proveniência por-linha, então o rótulo não a afirma.
   const fontes: { key: TintPriceSource; label: string; preco: number }[] = [];
   if (precoCliente != null) fontes.push({ key: 'cliente', label: 'Cliente', preco: precoCliente });
   if (precoCalc != null) fontes.push({ key: 'calculado', label: 'Calculado', preco: precoCalc });
-  if (precoCsv > 0) fontes.push({ key: 'tabela', label: selectedFormula.is_sl ? 'Tabela (versão anterior)' : 'Tabela', preco: precoCsv });
+  if (precoCsv > 0) fontes.push({ key: 'tabela', label: 'Tabela importada', preco: precoCsv });
 
   return (
     <Card className="border-primary/30">
@@ -180,10 +187,10 @@ export function SelectedFormulaCard({
                 <Input
                   type="number"
                   min={0}
-                  max={100}
+                  max={99.99}
                   step={1}
                   value={discountPct || ''}
-                  onChange={(e) => setDiscountPct(Math.min(100, Math.max(0, Number(e.target.value) || 0)))}
+                  onChange={(e) => setDiscountPct(Math.min(99.99, Math.max(0, Number(e.target.value) || 0)))}
                   className="h-7 w-20 text-xs text-right"
                   placeholder="0"
                 />
@@ -214,6 +221,9 @@ export function SelectedFormulaCard({
                 selectedFormula.nome_cor,
                 precoFinal ?? 0,
                 custoCorantes,
+                // Fase 3: o item carrega a fonte escolhida + desconto — o gate
+                // do submit revalida exatamente ESTA decisão contra o estado atual.
+                { source: priceSource, discountPct, precoSemDesconto },
               )}
             >
               <Palette className="w-3.5 h-3.5 mr-1.5" />
@@ -248,7 +258,8 @@ export function SelectedFormulaCard({
                 const prevAlt = idx > 0 ? alternatives[idx - 1] : null;
                 const showDivider = prevAlt && prevAlt.sameAcabamento && !alt.sameAcabamento;
                 // Preço honesto da alternativa (motor batch): calc vs CSV; custoCorantes DA própria fórmula.
-                const altSel = selectAltPrice(alt.precoFinalCsv, altPriceMap?.[alt.formulaId] ?? null);
+                // Fase 2b-fix: a escolha manual da vendedora (quando houver) entra como override validado.
+                const altSel = selectAltPrice(alt.precoFinalCsv, altPriceMap?.[alt.formulaId] ?? null, altPriceSourceOverrides[alt.formulaId] ?? null);
                 const altDisponivel = altSel.preco != null;
                 const altBasePrice = altSel.preco ?? 0;
                 const altDisc = syncDiscount ? discountPct : (altDiscounts[alt.formulaId] || 0);
@@ -271,6 +282,9 @@ export function SelectedFormulaCard({
                         selectedFormula.nome_cor,
                         altPrice,
                         altSel.custoCorantes,
+                        // Fase 3: fonte EFETIVA da alternativa (altSel já aplicou o
+                        // override 2b-fix) + desconto próprio da embalagem
+                        { source: altSel.fonte, discountPct: altDisc, precoSemDesconto: altSel.preco },
                         alt.product,
                       )}
                       className={`w-full flex items-center justify-between gap-2 p-2 ${altDisponivel ? 'hover:bg-primary/5' : 'opacity-60 cursor-not-allowed'}`}
@@ -303,18 +317,25 @@ export function SelectedFormulaCard({
                       </div>
                     </button>
                     {altDisponivel && (
-                      <div className="flex items-center gap-2 px-2 pb-2" onClick={(e) => e.stopPropagation()}>
-                        <label className="text-[10px] text-muted-foreground whitespace-nowrap">Desconto %</label>
-                        <Input
-                          type="number"
-                          min={0}
-                          max={100}
-                          step={1}
-                          value={altDisc || ''}
-                          onChange={(e) => setAltDiscounts(prev => ({ ...prev, [alt.formulaId]: Math.min(100, Math.max(0, Number(e.target.value) || 0)) }))}
-                          className="h-6 w-16 text-[10px] text-right"
-                          placeholder="0"
+                      <div className="space-y-1.5 px-2 pb-2" onClick={(e) => e.stopPropagation()}>
+                        <AltPriceSourcePicker
+                          formulaId={alt.formulaId}
+                          altSel={altSel}
+                          setOverride={setAltPriceSourceOverride}
                         />
+                        <div className="flex items-center gap-2">
+                          <label className="text-[10px] text-muted-foreground whitespace-nowrap">Desconto %</label>
+                          <Input
+                            type="number"
+                            min={0}
+                            max={99.99}
+                            step={1}
+                            value={altDisc || ''}
+                            onChange={(e) => setAltDiscounts(prev => ({ ...prev, [alt.formulaId]: Math.min(99.99, Math.max(0, Number(e.target.value) || 0)) }))}
+                            className="h-6 w-16 text-[10px] text-right"
+                            placeholder="0"
+                          />
+                        </div>
                       </div>
                     )}
                   </div>

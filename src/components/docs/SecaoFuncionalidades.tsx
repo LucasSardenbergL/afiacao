@@ -143,7 +143,7 @@ export function SecaoFuncionalidades() {
         name="2.20 Integração Omie ERP"
         desc="Sincronização bidirecional: clientes (omie-cliente), produtos (omie-sync), pedidos de serviço (omie-sync com Ordem de Serviço), pedidos de venda (omie-vendas-sync), posição de estoque (inventory_position). Sincronização analítica periódica (omie-analytics-sync). Tabela de mapeamento category_mappings entre categorias de pedido e tool_categories."
         audience="Sistema (automático), Admin (configura e monitora)"
-        deps="Edge Functions omie-sync, omie-cliente, omie-vendas-sync, omie-analytics-sync; tabelas omie_clientes, omie_ordens_servico, omie_products, omie_servicos, sync_state"
+        deps="Edge Functions omie-sync, omie-cliente, omie-vendas-sync, omie-analytics-sync; tabelas omie_customer_account_map, carteira_membership_ledger, customer_canonical_alias, omie_ordens_servico, omie_products, omie_servicos, sync_state"
       />
 
       <Module

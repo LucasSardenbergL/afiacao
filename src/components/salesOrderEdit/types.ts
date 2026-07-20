@@ -13,6 +13,12 @@ export interface OrderItem {
   tint_cor_id?: string;
   tint_nome_cor?: string;
   tint_formula_id?: string;
+  // Fase 3: metadados de precificação (fonte escolhida + desconto declarado).
+  // Editar o valor_unitario de um item tint MANUALMENTE os limpa (o item vira
+  // "legado" e o gate da fronteira valida pelo piso min(fontes atuais)).
+  tint_price_source?: string;
+  tint_discount_pct?: number;
+  tint_preco_sem_desconto?: number;
 }
 
 export interface OmiePayload {

@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { ilikeContainsPattern } from '@/lib/postgrest';
+import { useTintPrices } from '@/hooks/useTintPricing';
+import { precoSimulador } from '@/lib/tint/simulador-preco';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -24,37 +26,23 @@ interface TintSkuRow {
   omie_products?: { valor_unitario: number | null } | null;
 }
 
-interface TintCoranteRow {
-  id: string;
-  descricao: string | null;
-  omie_product_id: string | null;
-  volume_total_ml: number;
-}
-
-interface TintFormulaItemRow {
-  qtd_ml: number;
-  ordem: number;
-  tint_corantes: TintCoranteRow | null;
-}
-
-interface TintFormulaSkuRow {
-  id: string;
-  omie_product_id: string | null;
-  imposto_pct: number | null;
-  margem_pct: number | null;
-}
-
-interface TintFormulaRow {
+/** Linha da CANÔNICA (v_tint_formula_canonica) — a MESMA fórmula que o balcão serve. */
+interface SimFormulaRow {
   id: string;
   cor_id: string;
   nome_cor: string | null;
-  volume_final_ml: number | null;
-  preco_final_sayersystem: number | null;
-  tint_produtos?: { descricao: string | null } | null;
-  tint_bases?: { descricao: string | null } | null;
-  tint_embalagens?: { descricao: string | null; volume_ml: number | null } | null;
-  tint_skus?: TintFormulaSkuRow | null;
-  tint_formula_itens?: TintFormulaItemRow[] | null;
+  sku_id: string;
+  preco_csv_legado: number | null;
+  is_sl: boolean | null;
+  tem_receita: boolean | null;
+  personalizada: boolean | null;
+}
+
+interface SimReceitaItem {
+  formula_id: string;
+  qtd_ml: number;
+  ordem: number;
+  tint_corantes: { descricao: string | null } | null;
 }
 
 function useMappedSkus() {
@@ -78,56 +66,104 @@ function useMappedSkus() {
   });
 }
 
+// Busca na CANÔNICA: 1 fórmula por (sku, cor) — a linha que o balcão serve
+// (preferência SL, fallback SAYERLACK), ordem determinística. Antes: tabela
+// crua → as 2 gerações apareciam duplicadas, sem ordem estável.
 function useFormulaSearch(corId: string) {
   return useQuery({
-    queryKey: ['tint-formula-search', corId],
+    queryKey: ['tint-sim-formula-search', corId],
     enabled: corId.length >= 2,
-    queryFn: async () => {
+    queryFn: async (): Promise<SimFormulaRow[]> => {
       const pat = ilikeContainsPattern(corId);
       if (!pat) return [];
-      const { data } = await supabase
-        .from('tint_formulas')
-        .select(`
-          id, cor_id, nome_cor, volume_final_ml, preco_final_sayersystem,
-          tint_produtos!inner(descricao),
-          tint_bases!inner(descricao),
-          tint_embalagens!inner(descricao, volume_ml),
-          tint_skus(id, omie_product_id, imposto_pct, margem_pct),
-          tint_formula_itens(
-            qtd_ml, ordem,
-            tint_corantes!inner(id, descricao, omie_product_id, volume_total_ml)
-          )
-        `)
+      // Erro LANÇA — lista vazia mentiria "cor não encontrada" (lição do balcão).
+      const { data, error } = await supabase
+        .from('v_tint_formula_canonica')
+        .select('id, cor_id, nome_cor, sku_id, preco_csv_legado, is_sl, tem_receita, personalizada')
         .eq('account', ACCOUNT)
-        .is('desativada_em', null)
         .ilike('cor_id', pat)
+        .order('cor_id', { ascending: true })
+        .order('id', { ascending: true })
         .limit(20);
-      return data ?? [];
+      if (error) throw error;
+      // Tipo gerado da view é todo nullable; id/cor_id/sku_id são NOT NULL de
+      // fato (a view filtra sku) — narrowing na fronteira, como no balcão.
+      return (data ?? []).filter(
+        (r): r is typeof r & { id: string; cor_id: string; sku_id: string } =>
+          r.id != null && r.cor_id != null && r.sku_id != null,
+      );
     },
   });
 }
 
-function useOmieProductMap() {
+// Descrições de produto/embalagem dos SKUs das fórmulas achadas (só exibição).
+function useSkuDescricoes(skuIds: string[]) {
+  const ids = [...new Set(skuIds)].sort();
   return useQuery({
-    queryKey: ['omie-tint-products-all'],
+    queryKey: ['tint-sim-sku-desc', ids],
+    enabled: ids.length > 0,
     queryFn: async () => {
-      const { data } = await supabase
-        .from('omie_products')
-        .select('id, valor_unitario')
-        .eq('account', ACCOUNT)
-        .eq('is_tintometric', true);
-      return new Map((data ?? []).map(p => [p.id, p.valor_unitario]));
+      const { data, error } = await supabase
+        .from('tint_skus')
+        .select('id, tint_produtos!inner(descricao), tint_embalagens!inner(volume_ml)')
+        .in('id', ids);
+      if (error) throw error;
+      const rows = (data ?? []) as unknown as Array<{
+        id: string;
+        tint_produtos: { descricao: string | null } | null;
+        tint_embalagens: { volume_ml: number | null } | null;
+      }>;
+      return new Map(rows.map((s) => [s.id, {
+        produto: s.tint_produtos?.descricao ?? null,
+        volumeMl: s.tint_embalagens?.volume_ml ?? null,
+      }]));
+    },
+  });
+}
+
+// Receita (informativa) das fórmulas achadas — staff lê tint_formula_itens
+// direto (policy "Staff can manage"). Só a QTD; o custo vem da RPC, nunca daqui.
+function useReceitas(formulaIds: string[]) {
+  const ids = [...new Set(formulaIds)].sort();
+  return useQuery({
+    queryKey: ['tint-sim-receitas', ids],
+    enabled: ids.length > 0,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('tint_formula_itens')
+        .select('formula_id, qtd_ml, ordem, tint_corantes(descricao)')
+        .in('formula_id', ids)
+        .order('formula_id')
+        .order('ordem');
+      if (error) throw error;
+      const map = new Map<string, string[]>();
+      for (const it of (data ?? []) as unknown as SimReceitaItem[]) {
+        const rotulo = `${(it.tint_corantes?.descricao ?? '?').split(' - ')[0]} (${it.qtd_ml}ml)`;
+        const arr = map.get(it.formula_id) ?? [];
+        arr.push(rotulo);
+        map.set(it.formula_id, arr);
+      }
+      return map;
     },
   });
 }
 
 export default function TintPricing() {
   const { data: skus, isLoading } = useMappedSkus();
-  const { data: omieMap } = useOmieProductMap();
   const queryClient = useQueryClient();
   const [edits, setEdits] = useState<Record<string, { imposto_pct: number; margem_pct: number }>>({});
   const [corSearch, setCorSearch] = useState('');
-  const { data: searchResults } = useFormulaSearch(corSearch);
+  const { data: searchResults, isLoading: searchLoading, isError: searchError } = useFormulaSearch(corSearch);
+
+  const resultados = searchResults ?? [];
+  // Preço honesto: o MESMO motor batch do balcão (get_tint_prices) + a MESMA
+  // seleção (select-price). Nada de recalcular base×imposto×margem aqui — era
+  // o motor paralelo que fabricava número com receita vazia/parcial (Fase 4).
+  const formulaIds = resultados.map((f) => f.id);
+  const { data: priceMap, isLoading: pricesLoading } = useTintPrices(formulaIds);
+  const batchCarregando = formulaIds.length > 0 && pricesLoading;
+  const { data: skuDesc } = useSkuDescricoes(resultados.map((f) => f.sku_id));
+  const { data: receitas } = useReceitas(formulaIds);
 
   const saveMutation = useMutation({
     mutationFn: async (updates: Array<{ id: string; imposto_pct: number; margem_pct: number }>) => {
@@ -168,7 +204,13 @@ export default function TintPricing() {
       {/* Section 1: Tax & Margin */}
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
-          <CardTitle className="text-base">Imposto e Margem por SKU</CardTitle>
+          <div className="space-y-1">
+            <CardTitle className="text-base">Imposto e Margem por SKU</CardTitle>
+            <p className="text-xs text-muted-foreground max-w-2xl">
+              Referência interna: o preço do balcão vem da RPC honesta (custo base Omie + corantes)
+              e NÃO usa estes percentuais — o sync SayerSystem usa imposto/margem do próprio SayerSystem.
+            </p>
+          </div>
           <Button size="sm" onClick={handleSaveAll} disabled={Object.keys(edits).length === 0}>
             <Save className="w-4 h-4 mr-2" /> Salvar Todos
           </Button>
@@ -185,7 +227,7 @@ export default function TintPricing() {
                     <TableHead>Custo Base</TableHead>
                     <TableHead>Imposto %</TableHead>
                     <TableHead>Margem %</TableHead>
-                    <TableHead>Preço Venda</TableHead>
+                    <TableHead>Referência</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -224,10 +266,14 @@ export default function TintPricing() {
         </CardContent>
       </Card>
 
-      {/* Section 2: Formula Price Simulator */}
+      {/* Section 2: Formula Price Simulator — preço do BALCÃO (RPC + seleção), sem motor paralelo */}
       <Card>
-        <CardHeader>
+        <CardHeader className="space-y-1">
           <CardTitle className="text-base">Simulador de Preço por Fórmula</CardTitle>
+          <p className="text-xs text-muted-foreground">
+            Mostra o preço que o balcão cobraria — mesma fórmula canônica e mesmo motor de preço da
+            venda. Fórmula sem receita ou sem custo aparece como "sem preço", nunca um número fabricado.
+          </p>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="relative max-w-sm">
@@ -235,48 +281,70 @@ export default function TintPricing() {
             <Input placeholder="Buscar por código de cor..." value={corSearch} onChange={e => setCorSearch(e.target.value)} className="pl-9" />
           </div>
 
-          {searchResults && searchResults.length > 0 && (
-            <div className="space-y-4">
-              {(searchResults as unknown as TintFormulaRow[]).map((f) => {
-                const baseCusto = f.tint_skus?.omie_product_id && omieMap ? (omieMap.get(f.tint_skus.omie_product_id) ?? 0) : 0;
-                const impostoP = f.tint_skus?.imposto_pct ?? 0;
-                const margemP = f.tint_skus?.margem_pct ?? 0;
-                const precoBase = calcPrice(baseCusto, impostoP, margemP);
+          {searchError && (
+            <p className="text-sm text-status-error">Erro ao buscar fórmulas — tente novamente.</p>
+          )}
+          {corSearch.length >= 2 && !searchLoading && !searchError && resultados.length === 0 && (
+            <p className="text-sm text-muted-foreground">Nenhuma fórmula encontrada para "{corSearch}".</p>
+          )}
 
-                let custoCorantes = 0;
-                const itens = f.tint_formula_itens ?? [];
-                for (const item of itens) {
-                  const cor = item.tint_corantes;
-                  if (cor?.omie_product_id && omieMap) {
-                    const custoConc = omieMap.get(cor.omie_product_id) ?? 0;
-                    const custoMl = cor.volume_total_ml > 0 ? custoConc / cor.volume_total_ml : 0;
-                    custoCorantes += custoMl * item.qtd_ml;
-                  }
-                }
-                const precoFinal = precoBase + custoCorantes;
-                const precoCsv = f.preco_final_sayersystem ?? 0;
-                const divergence = precoCsv > 0 ? Math.abs(precoFinal - precoCsv) / precoCsv * 100 : 0;
+          {resultados.length > 0 && (
+            <div className="space-y-4">
+              {resultados.map((f) => {
+                const view = precoSimulador({
+                  precoCsv: f.preco_csv_legado,
+                  pricing: priceMap?.[f.id] ?? null,
+                  batchCarregando,
+                  temReceita: f.tem_receita,
+                });
+                const desc = skuDesc?.get(f.sku_id);
+                const corantesRotulo = receitas?.get(f.id);
 
                 return (
                   <div key={f.id} className="border rounded-md p-4 space-y-2">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-semibold text-sm">{f.cor_id}</span>
                       <span className="text-sm text-muted-foreground">{f.nome_cor}</span>
-                      <Badge variant="outline">{f.tint_produtos?.descricao}</Badge>
-                      <Badge variant="outline">{f.tint_embalagens?.volume_ml}ml</Badge>
+                      {desc?.produto && <Badge variant="outline">{desc.produto}</Badge>}
+                      {desc?.volumeMl != null && <Badge variant="outline">{desc.volumeMl}ml</Badge>}
+                      <Badge variant="outline">
+                        {f.personalizada ? 'personalizada' : f.is_sl ? 'receita viva (SL)' : 'versão anterior'}
+                      </Badge>
                     </div>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
-                      <div><span className="text-muted-foreground">Preço Base:</span> R$ {precoBase.toFixed(2)}</div>
-                      <div><span className="text-muted-foreground">Corantes:</span> R$ {custoCorantes.toFixed(2)}</div>
-                      <div className="font-medium"><span className="text-muted-foreground">Final Calc:</span> R$ {precoFinal.toFixed(2)}</div>
-                      <div className="flex items-center gap-1">
-                        <span className="text-muted-foreground">CSV:</span> R$ {precoCsv.toFixed(2)}
-                        {divergence > 5 && <AlertTriangle className="w-3.5 h-3.5 text-status-warning" />}
+
+                    {view.status === 'carregando' && <Skeleton className="h-5 w-64" />}
+
+                    {view.status === 'com-preco' && (
+                      <div className="flex items-center gap-3 flex-wrap text-sm">
+                        <span className="font-medium">Balcão cobra: R$ {view.preco!.toFixed(2)}</span>
+                        <Badge variant="secondary">
+                          {view.fonte === 'calculado' ? 'Calculado (receita viva)' : 'Tabela (versão anterior)'}
+                        </Badge>
+                        {view.precoCalc != null && view.fonte !== 'calculado' && (
+                          <span className="text-muted-foreground">Calculado: R$ {view.precoCalc.toFixed(2)}</span>
+                        )}
+                        {view.precoTabela != null && view.fonte !== 'tabela' && (
+                          <span className="text-muted-foreground">Tabela: R$ {view.precoTabela.toFixed(2)}</span>
+                        )}
+                        {view.recalculado && view.precoImportadoAnterior != null && (
+                          <span className="flex items-center gap-1 text-xs text-status-warning">
+                            <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                            recalculado acima do importado (antes R$ {view.precoImportadoAnterior.toFixed(2)})
+                          </span>
+                        )}
                       </div>
-                    </div>
-                    {itens.length > 0 && (
+                    )}
+
+                    {view.status === 'sem-preco' && (
+                      <div className="flex items-center gap-1.5 text-sm text-status-warning">
+                        <AlertTriangle className="w-4 h-4 shrink-0" />
+                        <span>Sem preço — {view.motivo}</span>
+                      </div>
+                    )}
+
+                    {corantesRotulo && corantesRotulo.length > 0 && (
                       <div className="text-xs text-muted-foreground">
-                        Corantes: {itens.map((it: TintFormulaItemRow) => `${it.tint_corantes?.descricao?.split(' - ')[0]} (${it.qtd_ml}ml)`).join(', ')}
+                        Corantes: {corantesRotulo.join(', ')}
                       </div>
                     )}
                   </div>

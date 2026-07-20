@@ -26,15 +26,30 @@ describe('selectTintPrice — seleção honesta da fonte de preço (Passo 2, mon
     expect(r.motivoSemPreco).toBe('base');
   });
 
-  it('preço do cliente (negociado) vence quando existe e a base tem preço', () => {
+  it('Fase 3: o "último preço do cliente" NÃO vence mais por default — é opt-in no seletor', () => {
+    // Regra 2 removida (2026-07-19): a inferência silenciosa BAIXAVA o preço
+    // (contra a filosofia da 2b — baixar é escolha ATIVA). Com cliente 200,
+    // calc 190 e CSV 180, o default é o maior entre calc/CSV (regra 3), e o
+    // chip "Cliente" fica disponível no card para escolha explícita.
     const r = selectTintPrice({
       lastPracticedPrice: 200,
       precoCsv: 180,
       pricing: pricing({ precoFinal: 190 }),
     });
-    expect(r.source).toBe('cliente');
-    expect(r.precoSemDesconto).toBe(200);
-    expect(r.recalculado).toBe(false);
+    expect(r.source).toBe('calculado');
+    expect(r.precoSemDesconto).toBe(190);
+    expect(r.recalculado).toBe(true); // calc 190 > CSV 180 → Grupo B avisa, como sem cliente
+    expect(r.precoImportadoAnterior).toBe(180);
+  });
+
+  it('Fase 3: cliente MENOR que calc/CSV também não vence por default (não baixa silencioso)', () => {
+    const r = selectTintPrice({
+      lastPracticedPrice: 90,
+      precoCsv: 180,
+      pricing: pricing({ precoFinal: 190 }),
+    });
+    expect(r.source).toBe('calculado');
+    expect(r.precoSemDesconto).toBe(190);
   });
 
   it('Grupo B (calc > CSV): usa o calc e marca recalculado, guardando o importado anterior', () => {
@@ -185,5 +200,60 @@ describe('selectAltPrice — preço de embalagem alternativa (1b)', () => {
     const r = selectAltPrice(null, pricing({ precoFinal: 150 }));
     expect(r.preco).toBe(150);
     expect(r.fonte).toBe('calculado');
+  });
+
+  it('expõe precoCalc e precoTabela (arredondados) quando o motor confirmou preço', () => {
+    // A UI monta o mini-seletor de fonte só quando AMBOS existem.
+    const r = selectAltPrice(200, pricing({ precoFinal: 150.01 }));
+    expect(r.precoCalc).toBe(150.1); // ceil R$0,10
+    expect(r.precoTabela).toBe(200);
+  });
+
+  it('sem preço confiável → precoCalc e precoTabela nulos (a UI não oferece escolha do invendável)', () => {
+    const r = selectAltPrice(200, pricing({ baseDisponivel: false, custoBase: null, precoFinal: null }));
+    expect(r.precoCalc).toBeNull();
+    expect(r.precoTabela).toBeNull();
+  });
+});
+
+describe('selectAltPrice — override de fonte da vendedora (Fase 2b-fix, alternativas/busca global)', () => {
+  it('override "calculado" quando o default é tabela (calc < CSV): baixar pro cálculo novo é escolha ativa', () => {
+    const r = selectAltPrice(200, pricing({ precoFinal: 150 }), 'calculado');
+    expect(r.preco).toBe(150);
+    expect(r.fonte).toBe('calculado');
+    expect(r.recalculado).toBe(false);
+  });
+
+  it('override "tabela" quando o default é calc (calc > CSV): mostra o CSV sem o aviso de recálculo', () => {
+    const r = selectAltPrice(13.68, pricing({ custoBase: 152.1, custoCorantes: 18.06, precoFinal: 170.16 }), 'tabela');
+    expect(r.preco).toBe(13.7);
+    expect(r.fonte).toBe('tabela');
+    expect(r.recalculado).toBe(false); // o preço exibido não é o recalculado
+  });
+
+  it('override "calculado" coincidindo com o default preserva o aviso de recálculo', () => {
+    const r = selectAltPrice(13.68, pricing({ custoBase: 152.1, custoCorantes: 18.06, precoFinal: 170.16 }), 'calculado');
+    expect(r.preco).toBe(170.2);
+    expect(r.fonte).toBe('calculado');
+    expect(r.recalculado).toBe(true);
+  });
+
+  it('override de fonte SEM valor (tabela sem CSV) é ignorado → segue o default', () => {
+    const r = selectAltPrice(null, pricing({ precoFinal: 150 }), 'tabela');
+    expect(r.preco).toBe(150);
+    expect(r.fonte).toBe('calculado');
+  });
+
+  it('override NÃO fura o fail-closed: base ausente segue sem preço mesmo com override "tabela"', () => {
+    // Money-path: quando o motor honesto não confirma, nenhuma escolha manual vende pelo CSV.
+    const r = selectAltPrice(101.7, pricing({ baseDisponivel: false, custoBase: null, precoFinal: null }), 'tabela');
+    expect(r.preco).toBeNull();
+    expect(r.fonte).toBeNull();
+  });
+
+  it('override NÃO fura o fail-closed do loading: sem breakdown → sem preço', () => {
+    const r = selectAltPrice(200, null, 'tabela');
+    expect(r.preco).toBeNull();
+    expect(r.fonte).toBeNull();
   });
 });

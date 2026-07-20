@@ -30,6 +30,12 @@ interface QuoteItem {
   descricao: string;
   tint_cor_id?: string;
   tint_nome_cor?: string;
+  // Fase 3: metadados de precificação persistidos no orçamento (podem estar
+  // ausentes em orçamento legado — o gate usa o piso min(fontes) nesse caso)
+  tint_formula_id?: string;
+  tint_price_source?: string;
+  tint_discount_pct?: number;
+  tint_preco_sem_desconto?: number;
 }
 
 const SalesQuotes = () => {
@@ -115,7 +121,17 @@ const SalesQuotes = () => {
         quantidade: i.quantidade,
         valor_unitario: i.valor_unitario,
         descricao: i.descricao,
-        ...(i.tint_cor_id ? { tint_cor_id: i.tint_cor_id, tint_nome_cor: i.tint_nome_cor } : {}),
+        ...(i.tint_cor_id ? {
+          tint_cor_id: i.tint_cor_id,
+          tint_nome_cor: i.tint_nome_cor,
+          // Fase 3: o gate da fronteira revalida a fonte declarada no orçamento
+          ...(i.tint_formula_id ? { tint_formula_id: i.tint_formula_id } : {}),
+          ...(i.tint_price_source ? {
+            tint_price_source: i.tint_price_source,
+            tint_discount_pct: i.tint_discount_pct ?? 0,
+            ...(i.tint_preco_sem_desconto != null ? { tint_preco_sem_desconto: i.tint_preco_sem_desconto } : {}),
+          } : {}),
+        } : {}),
       }));
 
       toast.info('Enviando pedido para o Omie...');
@@ -130,6 +146,20 @@ const SalesQuotes = () => {
       if ((omieData as { blocked?: string } | null)?.blocked === 'credito') {
         toast.warning('Conversão bloqueada por crédito', {
           description: 'Um gestor pode aprovar uma exceção para este pedido; depois é só reconverter.',
+        });
+        return;
+      }
+      if ((omieData as { blocked?: string } | null)?.blocked === 'tint_preco') {
+        // Gate tint Fase 3: o preço da tinta no orçamento ficou obsoleto (ou a
+        // fórmula mudou/morreu) desde que ele foi salvo. Orçamento intacto.
+        const bloqueios = (omieData as { bloqueios?: Array<{ cor_id?: string; detalhe?: string }> }).bloqueios;
+        const cores = [...new Set((bloqueios ?? []).map(b => b.cor_id).filter(Boolean))].join(', ');
+        setInvalidQuoteId(quote.id);
+        toast.error('Conversão bloqueada: preço de tinta desatualizado', {
+          description:
+            `${cores ? `Cor ${cores}: ` : ''}o preço/fórmula mudou desde que o orçamento foi salvo. ` +
+            'Refaça o item de tinta num pedido novo (o balcão recalcula) ou atualize o orçamento.',
+          duration: 12000,
         });
         return;
       }

@@ -48,3 +48,63 @@ describe('accumulateMarginFromItems', () => {
     expect(cost).toBe(10);
   });
 });
+
+// ── Forma REAL do jsonb de sales_orders.items em produção ───────────────────────────
+// Medido em 2026-07-20 (psql-ro), status confirmado/faturado/entregue: 46.396 itens, dos
+// quais 46.396 têm `omie_codigo_produto`/`valor_unitario`/`quantidade` (pt-BR) e ZERO têm
+// `product_id`/`unit_price`/`quantity` (inglês). Os fixtures em inglês acima descrevem um
+// contrato que o banco nunca produziu — por isso o helper ficava 100% verde enquanto a
+// margem do farmer era zero para todo cliente.
+describe('accumulateMarginFromItems — item pt-BR (a forma que produção realmente tem)', () => {
+  const omieToProductId = new Map<number, string>([[555, 'A']]);
+
+  it('resolve o SKU por omie_codigo_produto quando product_id está ausente', () => {
+    const { revenue, cost } = accumulateMarginFromItems(
+      [{ omie_codigo_produto: 555, quantidade: 2, valor_unitario: 30 }],
+      new Map([['A', 10]]),
+      omieToProductId,
+    );
+    expect(revenue).toBe(60);
+    expect(cost).toBe(20);
+  });
+
+  it('aceita omie_codigo_produto como string (jsonb) e quantidade/valor_unitario string', () => {
+    const { revenue, cost } = accumulateMarginFromItems(
+      [{ omie_codigo_produto: '555', quantidade: '3', valor_unitario: '10' }],
+      new Map([['A', 4]]),
+      omieToProductId,
+    );
+    expect(revenue).toBe(30);
+    expect(cost).toBe(12);
+  });
+
+  it('a receita do item pt-BR NÃO pode ser zero — era o bug: 30% do health score morto', () => {
+    const { revenue } = accumulateMarginFromItems(
+      [{ omie_codigo_produto: 555, quantidade: 4, valor_unitario: 25 }],
+      new Map([['A', 10]]),
+      omieToProductId,
+    );
+    expect(revenue).toBeGreaterThan(0);
+    expect(revenue).toBe(100);
+  });
+
+  it('SKU que o mapa omie→uuid não conhece é ignorado (não vira receita órfã)', () => {
+    const { revenue, cost } = accumulateMarginFromItems(
+      [{ omie_codigo_produto: 999, quantidade: 1, valor_unitario: 50 }],
+      new Map([['A', 10]]),
+      omieToProductId,
+    );
+    expect(revenue).toBe(0);
+    expect(cost).toBe(0);
+  });
+
+  it('product_id explícito continua tendo precedência sobre omie_codigo_produto', () => {
+    const { revenue, cost } = accumulateMarginFromItems(
+      [{ product_id: 'B', omie_codigo_produto: 555, quantidade: 1, valor_unitario: 10 }],
+      new Map([['B', 3]]),
+      omieToProductId,
+    );
+    expect(revenue).toBe(10);
+    expect(cost).toBe(3);
+  });
+});

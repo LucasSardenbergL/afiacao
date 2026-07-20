@@ -263,3 +263,16 @@ Ainda pendentes (decisão de produto ou sprint próprio):
 
 ---
 
+
+## "Changes" do Lovable reverteu o wiring da edge do #1445 (2026-07-19)
+
+4h depois do merge do #1445 (última execução em ações globais), um commit **"Changes" do sync
+bidirecional do Lovable** sobrescreveu `supabase/functions/omie-analytics-sync/index.ts` com o
+estado velho do workspace (−34/+9: removeu exatamente o import + os 4 `comRegistro`). Sintoma:
+3 deploys "verbatim da main" honestos deployaram código sem registro — cron 200 (`updated:2433`)
+e clique manual rodando, mas `acoes_execucoes` sempre 0 linhas. Diagnóstico que fechou: escada
+N3 negativa (tick do cron sem linha) + `git log -S "comRegistro"` mostrando add (bbd2c155) →
+remove (1a4272c7 "Changes"). Fix: restaurar o arquivo de bbd2c155 por PR (#1478) e redeployar.
+Lição (armadilha nova no CLAUDE.md): após merge que toca `supabase/functions/`, conferir
+`git log -S` do símbolo novo ANTES de pedir deploy — "verbatim da main" só vale se a main ainda
+for a sua.

@@ -5,7 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { ilikeOr, isSearchablePostgrestTerm } from '@/lib/postgrest';
 import { useTintPricing, useTintPrices } from '@/hooks/useTintPricing';
-import { selectTintPrice, type TintPriceSource } from '@/lib/tint/select-price';
+import { selectTintPrice, type TintPriceSource, type AltPriceSource } from '@/lib/tint/select-price';
 import type { Product } from '@/hooks/useUnifiedOrder';
 import type { FormulaResult, AlternativePackaging } from './types';
 
@@ -30,6 +30,14 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
       setDebouncedSearch('');
       setSelectedFormula(null);
       setPriceSourceOverride(null);
+      setAltPriceSourceOverrides({});
+      // Fase 3 (achado Codex P1): desconto NÃO sobrevive entre aberturas do
+      // diálogo — senão um 99% digitado numa cor reapareceria silencioso na
+      // próxima, e o gate o consideraria "coerente" (desconto declarado é
+      // escolha POR ITEM, não estado ambiente).
+      setDiscountPct(0);
+      setAltDiscounts({});
+      setSyncDiscount(false);
     }
   }, [open]);
 
@@ -101,7 +109,7 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
       // lista vazia e a UI mente "cor não encontrada" (achado Codex no diff).
       const { data, error } = await supabase
         .from('v_tint_formula_canonica')
-        .select('id, cor_id, nome_cor, preco_final_sayersystem, preco_csv_legado, is_sl')
+        .select('id, cor_id, nome_cor, preco_final_sayersystem, preco_csv_legado')
         .eq('account', 'oben')
         .eq('sku_id', skuId!)
         .or(ilikeOr(['cor_id', 'nome_cor'], debouncedSearch))
@@ -225,40 +233,33 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
   // Pricing breakdown for selected formula (motor honesto get_tint_price)
   const { data: pricing, isLoading: pricingLoading, isError: pricingError } = useTintPricing(selectedFormula?.id || null);
 
-  // Last practiced price for this color+base for the customer
+  // Último preço PRATICADO do cliente — Fase 3: a inferência crua (50 pedidos
+  // sem filtro de status) virou a RPC tint_ultimo_preco_cliente, ENDURECIDA
+  // server-side: só pedido real no Omie (omie_pedido_id), não-cancelado, janela
+  // de 180 dias. A MESMA função valida a fonte 'cliente' no gate do submit
+  // (tint_gate_revalida) — paridade estrutural picker×fronteira, zero espelho.
+  // (`as never`: RPC nova ainda fora do types.ts gerado pelo Lovable — padrão
+  // do repo, ver staff_get_sales_order_payload em useSalesOrderEdit.)
   const { data: lastPracticedPrice, isLoading: loadingLastPrice } = useQuery({
     queryKey: ['tint-last-price', customerUserId, product.id, selectedFormula?.cor_id],
     staleTime: 30 * 1000,
     enabled: !!customerUserId && !!selectedFormula?.cor_id && !!product.id,
     queryFn: async () => {
       if (!customerUserId || !selectedFormula?.cor_id || !product.id) return null;
-
-      const { data: orders } = await supabase
-        .from('sales_orders')
-        .select('items, created_at')
-        .eq('customer_user_id', customerUserId)
-        .eq('account', 'oben')
-        .order('created_at', { ascending: false })
-        .limit(50);
-
-      if (!orders) return null;
-
-      for (const order of orders) {
-        const items = order.items as Array<{ product_id?: string; tint_cor_id?: string; valor_unitario?: number }>;
-        if (!Array.isArray(items)) continue;
-        for (const item of items) {
-          if (
-            item.product_id === product.id &&
-            item.tint_cor_id === selectedFormula.cor_id
-          ) {
-            return {
-              price: item.valor_unitario as number,
-              date: order.created_at as string,
-            };
-          }
-        }
-      }
-      return null;
+      const { data, error } = await supabase.rpc(
+        'tint_ultimo_preco_cliente' as never,
+        {
+          p_customer_user_id: customerUserId,
+          p_product_id: product.id,
+          p_cor_id: selectedFormula.cor_id,
+        } as never,
+      );
+      // Erro (RPC ausente/permissão) → sem histórico, NUNCA preço fabricado;
+      // a fonte 'cliente' simplesmente não aparece no seletor.
+      if (error) return null;
+      const row = data as unknown as { price?: number; date?: string } | null;
+      if (!row || typeof row.price !== 'number' || row.price <= 0) return null;
+      return { price: row.price, date: row.date ?? '' };
     },
   });
 
@@ -359,16 +360,28 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
 
   const [priceSourceOverride, setPriceSourceOverride] = useState<TintPriceSource | null>(null);
 
+  // Override de fonte POR alternativa (Fase 2b-fix): a vendedora escolhe calculado × tabela
+  // também nas "outras embalagens" e na busca global — antes o selectAltPrice decidia sozinho.
+  // A validação (fonte sem valor → default; sem preço confiável → nada) mora em selectAltPrice.
+  const [altPriceSourceOverrides, setAltPriceSourceOverrides] = useState<Record<string, AltPriceSource>>({});
+  const setAltPriceSourceOverride = (formulaId: string, source: AltPriceSource) =>
+    setAltPriceSourceOverrides((prev) => ({ ...prev, [formulaId]: source }));
+
   // Trocar de cor reseta a escolha manual de fonte — senão um override antigo (ex.: "tabela")
-  // venceria o auto da nova cor e esconderia o aviso de recálculo dela.
+  // venceria o auto da nova cor e esconderia o aviso de recálculo dela. Os overrides das
+  // alternativas resetam junto (a lista de embalagens é da cor anterior).
   useEffect(() => {
     setPriceSourceOverride(null);
+    setAltPriceSourceOverrides({});
+    // Fase 3: o DESCONTO também reseta por cor (escolha por item, nunca herdada).
+    setDiscountPct(0);
   }, [selectedFormula?.id]);
 
-  // Enquanto a RPC de preço (ou o último preço do cliente) carrega, NÃO decidir o preço: o motor
-  // honesto ainda não respondeu e cair no CSV/cliente aqui venderia o preço legado (subfaturado)
-  // antes de saber. A UI mostra "calculando" e segura o "Adicionar".
-  const precoCarregando = !!selectedFormula && (pricingLoading || loadingLastPrice);
+  // Enquanto a RPC do MOTOR carrega, NÃO decidir o preço (a UI mostra
+  // "calculando" e segura o "Adicionar"). Fase 3: o último-preço do cliente
+  // NÃO trava mais o preço seguro — deixou de ser default (é chip opt-in);
+  // lentidão/falha da RPC de histórico não pode impedir calc/tabela (Codex P2).
+  const precoCarregando = !!selectedFormula && pricingLoading;
 
   // A RPC de preço pode FALHAR (erro/permissão/runtime) e o hook devolve pricing null igual a
   // "carregando". Sem distinguir, a seleção cairia no CSV legado/preço-cliente e venderia base/
@@ -416,6 +429,7 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
     setSearch(value);
     setSelectedFormula(null);
     setPriceSourceOverride(null);
+    setAltPriceSourceOverrides({});
   };
 
   return {
@@ -445,6 +459,8 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
     setSyncDiscount,
     priceSource,
     setPriceSourceOverride,
+    altPriceSourceOverrides,
+    setAltPriceSourceOverride,
     precoCsv,
     precoCalc,
     precoCliente,

@@ -1,5 +1,6 @@
 import { useAuth } from '@/contexts/AuthContext';
 import { useCommercialRole, CommercialRole } from '@/hooks/useCommercialRole';
+import { useAuthzContract } from '@/hooks/useAuthzContract';
 import { supabase } from '@/integrations/supabase/client';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -24,23 +25,24 @@ const ROLE_COLORS: Record<string, string> = {
 };
 
 /**
- * 🔐 Papéis cuja ATRIBUIÇÃO está travada pela E1 do FU4 (spec 2026-07-18).
+ * 🔐 Papéis que dependem da matriz de capability (E1 #1424 → E2/FU4, spec 2026-07-18).
  *
- * Estes papéis acionam `pode_ver_carteira_completa` no banco, que gateia 64 policies em
- * 34 tabelas (medido em prod): ESCRITA em `cliente_tier_preco` (tier de preço) e
- * `venda_excecao_credito` (aprova crédito), LEITURA de `cmc_ledger` (custo médio).
- * Conceder qualquer um deles hoje entrega preço + crédito + custo de uma vez, porque a
- * matriz de capability por recurso×ação ainda não existe.
+ * Enquanto o banco estava no contrato v1, estes papéis acionavam `pode_ver_carteira_completa` —
+ * um gate único sobre 64 policies em 34 tabelas: conceder qualquer um deles entregava ESCRITA em
+ * `cliente_tier_preco` (preço) e `venda_excecao_credito` (crédito) e LEITURA de `cmc_ledger`
+ * (custo) de uma vez. Por isso a E1 os desabilitou aqui.
  *
- * A trava é de INTENÇÃO, não de segurança: a RLS de `commercial_roles` só deixa master
- * escrever, então o único caminho real é este dropdown — mas quem tem o token de master
- * pode chamar a API direto. O gate de banco vem na E2.
+ * Com o contrato v2 aplicado, cada recurso tem capability própria: `gerencial` não carrega mais
+ * preço/crédito/custo/compras, e `estrategico` ganha custo mas não escrita de preço. A trava sai —
+ * mas SÓ quando o banco confirma a v2 (`useAuthzContract`), nunca por constante no código: no
+ * Lovable a migration é manual e falha em silêncio, e destravar sem ela reabriria o furo.
  */
-const PAPEIS_GERENCIAIS_BLOQUEADOS: readonly CommercialRole[] = ['gerencial', 'estrategico', 'super_admin'];
+const PAPEIS_DEPENDENTES_DA_MATRIZ: readonly CommercialRole[] = ['gerencial', 'estrategico', 'super_admin'];
 
 export default function GovernanceUsers() {
   const { user, isAdmin } = useAuth();
   const { isSuperAdmin } = useCommercialRole();
+  const { matrizAtiva, loading: loadingContrato } = useAuthzContract();
   const queryClient = useQueryClient();
 
   // Fetch all employees with profiles and commercial roles
@@ -88,12 +90,13 @@ export default function GovernanceUsers() {
   // Mutation to set commercial role
   const setRoleMutation = useMutation({
     mutationFn: async ({ userId, role }: { userId: string; role: CommercialRole }) => {
-      // Trava da E1/FU4 (ver PAPEIS_GERENCIAIS_BLOQUEADOS): o `disabled` do SelectItem é só
-      // a UI — esta guarda é o que barra qualquer outro caller até a E2 existir.
-      if (PAPEIS_GERENCIAIS_BLOQUEADOS.includes(role)) {
+      // Guarda da E2/FU4: o `disabled` do SelectItem é só a UI — isto barra qualquer outro
+      // caller enquanto o BANCO não confirmar a matriz de capability (contrato v2).
+      if (!matrizAtiva && PAPEIS_DEPENDENTES_DA_MATRIZ.includes(role)) {
         throw new Error(
-          `Atribuir "${ROLE_LABELS[role] ?? role}" está bloqueado: este papel concede escrita em preço e crédito ` +
-          `(64 policies em 34 tabelas) enquanto a matriz de capability não existe. Ver FU4/E2.`,
+          `Atribuir "${ROLE_LABELS[role] ?? role}" está bloqueado: o banco ainda está no contrato de ` +
+          `autorização v1, onde este papel concede escrita em preço e crédito e leitura de custo de uma vez ` +
+          `(64 policies em 34 tabelas). Aplique a migration da matriz de capability (E2/FU4) e recarregue.`,
         );
       }
 
@@ -196,11 +199,20 @@ export default function GovernanceUsers() {
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="operacional">Operacional</SelectItem>
-                          {/* Bloqueados pela E1 do FU4 — ver PAPEIS_GERENCIAIS_BLOQUEADOS acima.
-                              Desabilitados em vez de omitidos: sumir com eles leria como bug. */}
-                          <SelectItem value="gerencial" disabled>Gerencial — bloqueado</SelectItem>
-                          <SelectItem value="estrategico" disabled>Estratégico — bloqueado</SelectItem>
-                          {isSuperAdmin && <SelectItem value="super_admin" disabled>Super Admin — bloqueado</SelectItem>}
+                          {/* Habilitados só com o contrato v2 no banco (ver PAPEIS_DEPENDENTES_DA_MATRIZ).
+                              Desabilitados em vez de omitidos: sumir com eles leria como bug. O rótulo
+                              diz o que cada papel concede — promover sem saber foi o risco que originou o FU4. */}
+                          <SelectItem value="gerencial" disabled={!matrizAtiva || loadingContrato}>
+                            {matrizAtiva ? 'Gerencial — carteira' : 'Gerencial — requer matriz (v2)'}
+                          </SelectItem>
+                          <SelectItem value="estrategico" disabled={!matrizAtiva || loadingContrato}>
+                            {matrizAtiva ? 'Estratégico — carteira + custo' : 'Estratégico — requer matriz (v2)'}
+                          </SelectItem>
+                          {isSuperAdmin && (
+                            <SelectItem value="super_admin" disabled={!matrizAtiva || loadingContrato}>
+                              {matrizAtiva ? 'Super Admin — carteira + custo' : 'Super Admin — requer matriz (v2)'}
+                            </SelectItem>
+                          )}
                         </SelectContent>
                       </Select>
                     </td>
