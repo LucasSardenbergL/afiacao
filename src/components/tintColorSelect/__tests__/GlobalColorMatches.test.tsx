@@ -95,8 +95,13 @@ describe('GlobalColorMatches', () => {
   it('calc e CSV presentes → oferece o seletor de fonte; clique registra o override da fórmula', () => {
     const setOverride = vi.fn();
     render(<GlobalColorMatches product={product} altPriceSourceOverrides={{}} setAltPriceSourceOverride={setOverride} matches={[alt({ precoFinalCsv: 13.7 })]} precoMap={precoMapAmbos} onConfirm={() => {}} />);
-    fireEvent.click(screen.getByRole('button', { name: /Tabela importada/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Tabela/ }));
     expect(setOverride).toHaveBeenCalledWith('f1', 'tabela');
+  });
+
+  it('match SL → o picker rotula a fonte CSV como "Tabela (versão anterior)" (repasse do isSl)', () => {
+    render(<GlobalColorMatches product={product} altPriceSourceOverrides={{}} setAltPriceSourceOverride={() => {}} matches={[alt({ precoFinalCsv: 13.7, isSl: true })]} precoMap={precoMapAmbos} onConfirm={() => {}} />);
+    expect(screen.getByRole('button', { name: /Tabela \(versão anterior\)/ })).toBeTruthy();
   });
 
   it('override "tabela" aplicado → confirma com o preço do CSV, não o calculado', () => {
@@ -113,6 +118,6 @@ describe('GlobalColorMatches', () => {
 
   it('só uma fonte com valor (sem CSV) → não oferece seletor', () => {
     render(<GlobalColorMatches product={product} altPriceSourceOverrides={{}} setAltPriceSourceOverride={() => {}} matches={[alt({ precoFinalCsv: null })]} precoMap={precoMapAmbos} onConfirm={() => {}} />);
-    expect(screen.queryByRole('button', { name: /Tabela importada/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Tabela/ })).toBeNull();
   });
 });

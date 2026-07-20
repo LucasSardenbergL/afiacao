@@ -21,16 +21,16 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **409** custom migrations totais
-- **1446** objetos esperados (criados por estas migrations)
+- **411** custom migrations totais
+- **1449** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 412
-  - `rls_policy`: 362
+  - `rls_policy`: 364
   - `index`: 224
   - `cron_job`: 150
   - `table`: 147
   - `trigger`: 79
-  - `view`: 68
+  - `view`: 69
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -3479,6 +3479,19 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.tint_promote_sync_run` | — |
+
+### `20260723130000_authz_custo_fu4f_fase2_inventory.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `view` | `public.inventory_position_operacional` | — |
+| `rls_policy` | `public.staff_inventory_position_select` | `inventory_position` |
+
+### `20260723140000_authz_custo_fu4f_fase1.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `rls_policy` | `public.cmc_snapshot_select_staff` | `cmc_snapshot` |
 
 ## Próximos passos por status
 
