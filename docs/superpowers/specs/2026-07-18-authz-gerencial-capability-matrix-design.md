@@ -275,3 +275,65 @@ achado maior: **a leitura de custo não é fechada por esta entrega** — ver FU
 
 **Prova:** `db/test-authz-capability-matrix.sh` — 52 asserts, PG17, `SET ROLE authenticated`, com guard que
 aborta se o SET ROLE não pegar, teste de idempotência (re-aplica a migration) e falsificação em 6 pontos.
+
+## 9. FU4-F — o role `employee` também concede custo (em curso)
+
+A matriz da E2 fecha o que o **papel comercial** concede. O `COMMENT` de `private.cap_custo_ler` declara o resto:
+o **role `employee`** concede custo por 6 superfícies que não passam por `commercial_role`.
+
+**Decisão de produto (dono, 2026-07-20): o NÚMERO fecha, o SINAL fica.** A vendedora deixa de ver "CMC R$ 12,40"
+e continua vendo "abaixo do custo / abaixo do piso / saudável". Diferente da E2, isto **muda o acesso de gente
+viva** — os 2 employees em prod, ambos `farmer`, um deles com 28.065 pedidos criados.
+
+### 9.1 O achado que reenquadra o problema
+
+O enunciado era "6 superfícies com o gate errado". Medindo, o problema é outro: **três subsistemas baixam custo
+para o browser e calculam lá** — e é por isso que fechar o gate quebra a tela, não por causa do gate.
+
+| subsistema | onde calcula | efeito de fechar o gate |
+|---|---|---|
+| `get_preco_cockpit` | **servidor** (`v_pode_num`) | nenhum — já mascara os 7 campos numéricos |
+| régua de preço | cliente — `calcPisoMC(cmc, aliquota)` em `regua-preco-helpers.ts:26` | régua morre: o piso é derivado do cmc |
+| engines de recomendação | cliente — `margin = price - cost` em 3 hooks | 3 engines morrem |
+
+O cockpit é o **modelo**: calcula a faixa no servidor, devolve só o sinal. As fases 2 e 3 não são "mais
+superfícies" — são a **mesma refatoração** (mover cálculo de custo para o servidor) em dois subsistemas.
+
+Corolário para o inventário: `inventory_position` **mistura operacional (`saldo`) com custo (`cmc`,
+`preco_medio`)** na mesma tabela, e RLS filtra LINHA, não COLUNA — fechar tira o saldo junto. Column-level
+`GRANT` não salva: distingue roles do **Postgres**, e no Supabase todo logado é o mesmo `authenticated`.
+
+### 9.2 Limite honesto declarado
+
+Manter o sinal e tirar o número **não é barreira de segurança**: `get_preco_cockpit` segue sendo **oráculo por
+bisseção** (o caller escolhe o preço e lê a faixa; aceita 200 itens/chamada, então ~20 chamadas resolvem 200
+SKUs). É barreira de **conveniência**, escolhida conscientemente em troca da ferramenta de venda — mesmo tipo de
+limite que o §3 declarou para o E1. Contra adversário competente, a barreira real é contrato e offboarding.
+
+### 9.3 Fases
+
+- **Fase 1** (PR #1465): `cmc_snapshot` + `get_tint_price(s)`. As superfícies **sem** o problema arquitetural.
+- **Fase 2** (chip): cluster **régua de preço** — as 2 RPCs + `regua_preco_log` juntos. Mover `calcPisoMC` para o
+  servidor; trocar o writer do log por RPC `SECURITY DEFINER`. Régua está desligada em prod (0 linhas, flags
+  `false`), então dá para reescrever sem quebrar ninguém.
+- **Fase 3** (chip): `inventory_position` (view operacional) + `product_costs` (margem server-side nos 3 engines).
+
+### 9.4 O que o Codex derrubou na fase 1 (registro honesto)
+
+Veredito literal da rodada 1: *"eu não aplicaria esta migration como está"*. Quatro bloqueadores P1:
+
+1. **Idempotência afirmada, não testada** — o cabeçalho dizia "pode reaplicar" e a migration falhava na 2ª
+   aplicação. Uma linha de teste teria pego. O harness agora **aplica 2× e asserta**.
+2. **Capability de LEITURA usada como autorização de ESCRITA** — `WITH CHECK (cap_custo_ler OR salesperson_id=uid)`
+   deixava `estrategico` **forjar `salesperson_id` de outro**, violando o §4.2 deste mesmo spec. Resolvido
+   **removendo** o log da fase, não remendando o predicado.
+3. **Regexp não ancorado** — casava o predicado solto; em `NOT auth.uid() IS NOT NULL AND (...)` a troca
+   consumiria o `AND` e deixaria `NOT cap_custo_ler(...)`, semântica invertida. Agora são dois padrões ancorados
+   no contexto de atribuição, com pós-check no mesmo contexto.
+4. **Harness sem baseline** — comparava farmer×master **depois** da migration; ficaria verde se o preço mudasse
+   igualmente para ambos. O baseline pré-migration virou assert, e uma falsificação sabota exatamente isso.
+
+Lição transversal das 4: **as três primeiras eram verificáveis com o que já estava escrito nos docs do repo** — o
+§4.2 deste spec, e a seção "baselinar antes do apply" do `money-path.md`. Ler o doc não substitui aplicar a regra
+ao próprio diff. A 4ª é a família do "verde pelo motivo errado": no mesmo harness, um assert passou lendo
+`INSERT 0 1` (o status do psql) em vez do uuid, porque a asserção era "não-vazio".
