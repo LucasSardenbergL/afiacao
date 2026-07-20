@@ -78,14 +78,24 @@ Registro no `package.json`: `"heavy:install": "bash scripts/heavy-install.sh"`.
 Quarto bloco, no mesmo padrão best-effort dos três atuais (nunca bloqueia; falha
 interna vira silêncio). Injeta `additionalContext` quando:
 
-- **Instalado ≠ `origin/main`** → "o `heavy` em uso está desatualizado — `bun run heavy:install`".
+- **Instalado ≠ `origin/main` E não é o caso "em voo"** → "o `heavy` em uso está
+  desatualizado — `bun run heavy:install`" (estado **divergente**). Se o instalado bater
+  com o `scripts/heavy.sh` **desta worktree** (alguém rodou `--daqui` de propósito), é o
+  estado **em voo** e o hook fica em silêncio — ver limite 3 abaixo: essa proteção só
+  vale NA worktree que instalou.
 - **`heavy` ausente** → hoje o `heavy-guard.sh` fail-opens em silêncio nesse caso
   (linha 32), então uma máquina sem semáforo **não avisa ninguém**. Uma linha fecha isso.
+- **Não consegui verificar** (fonte ilegível/vazia, `mktemp` falhou, ou o próprio hook
+  estourou o teto de tempo — exit 3) → avisa **isso**, nunca "divergente": ausência de
+  dado não é o mesmo que comparação feita e diferente. Ver custo/teto abaixo.
 
 **O hook não reimplementa a comparação**: chama `bash scripts/heavy-install.sh --status`
 e lê o exit code. Uma definição só de "divergente", num lugar só — senão o dia em que a
-regra mudar, ela muda em metade dos lugares. Script ausente ou erro → silêncio (o hook
-já é assim).
+regra mudar, ela muda em metade dos lugares. Script ausente → silêncio (o hook já é
+assim). **Erro na comparação (exit 3) → AVISA, não silencia** — pós-review: a primeira
+versão deste parágrafo dizia "script ausente ou erro → silêncio", o oposto do código
+atual. Silenciar um erro esconderia justamente o cenário (swap alto/I-O sufocado) em que
+mais importa saber que a checagem não rodou.
 
 Custo: um `git show` + dois `shasum` de 13KB, offline — **tipicamente** ~ms, mas isso
 **não é garantido**: sob swap alto/I-O sufocado (justo o cenário que os avisos 2)/3)
@@ -95,7 +105,7 @@ inteiro. Por isso o hook aplica um teto de 3s (`timeout 3`) ao chamar o `--statu
 por isso o `--status` ganhou o exit 3 "não consegui verificar": o teto estourando não
 pode virar uma afirmação de "divergente" — é ausência de dado, não comparação feita.
 
-**Dois limites conhecidos e aceitos:**
+**Três limites conhecidos e aceitos:**
 
 1. Se o `origin/main` local estiver velho por falta de `fetch`, o check dá **falso
    negativo** — não pior que hoje. Sem rede no SessionStart (lento e frágil); o
@@ -106,6 +116,15 @@ pode virar uma afirmação de "divergente" — é ausência de dado, não compar
    worktrees novas nascem de `bun run wt` — mas quem quiser cobrir uma worktree antiga
    hoje precisa rebasear. Não vou tentar consertar isso: o alvo é a **próxima** mudança
    do `heavy.sh`, e até lá a rotatividade de worktrees já resolveu.
+3. **O estado "em voo" só protege a worktree que instalou.** Nas outras ~39, o
+   `--status` compara o binário global contra o `heavy.sh` DELAS (não o de quem rodou
+   `--daqui`) — dá **DIVERGENTE** ali, e o hook sugere `bun run heavy:install`, que está
+   no allowlist do `.claude/settings.json` e roda **sem prompt**. Se um agente numa
+   dessas outras worktrees seguir a sugestão, ele reinstala `origin/main` por cima da
+   mudança em voo, revertendo-a silenciosamente. A mitigação hoje é só **textual** — o
+   próprio `vigia-worktree.sh` (ramo "divergente" do `case`) anexa ao aviso "se outra
+   worktree instalou com `--daqui` de propósito, ignore" — não estrutural. Não há trava
+   automática contra isso nesta fase.
 
 ## 4. Testes — `scripts/test-heavy-install.sh`
 
