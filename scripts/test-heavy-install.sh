@@ -96,6 +96,47 @@ else
   bad "destino corrompido por fonte vazia"
 fi
 
+# ── 9 — origin/main ilegível (repo sem origin/main): falha e NÃO destrói o destino
+sha_antes="$(shasum -a 256 "$AFIACAO_HEAVY_DEST" | cut -d' ' -f1)"
+git init -q "$TD/semmain"
+mkdir -p "$TD/semmain/scripts"
+cp "$here/heavy-install.sh" "$TD/semmain/scripts/heavy-install.sh"
+if bash "$TD/semmain/scripts/heavy-install.sh" >/dev/null 2>&1; then
+  bad "origin/main ilegível instalou mesmo assim"
+else
+  ok "origin/main ilegível → exit != 0"
+fi
+if [ "$(shasum -a 256 "$AFIACAO_HEAVY_DEST" | cut -d' ' -f1)" = "$sha_antes" ]; then
+  ok "destino intacto após falha (origin/main ilegível)"
+else
+  bad "destino corrompido por origin/main ilegível"
+fi
+
+# ── 10 · 11 · 12 — --status: reporta sincronizado, divergente, e ausente
+# Voltar ao sincronizado com origin/main (o --daqui acima deixou divergente)
+bash "$INST" >/dev/null 2>&1
+if bash "$INST" --status >/dev/null 2>&1; then
+  ok "--status quando sincronizado sai 0"
+else
+  bad "--status quando sincronizado sai != 0"
+fi
+
+# --status divergente: mudar o arquivo instalado, depois verificar
+printf '#!/usr/bin/env bash\necho DIVERGENTE\n' > "$AFIACAO_HEAVY_DEST"
+if ! bash "$INST" --status >/dev/null 2>&1; then
+  ok "--status quando divergente sai != 0"
+else
+  bad "--status quando divergente sai 0"
+fi
+
+# --status quando ausente: remover o arquivo e verificar
+rm "$AFIACAO_HEAVY_DEST"
+if ! bash "$INST" --status >/dev/null 2>&1; then
+  ok "--status quando ausente sai != 0"
+else
+  bad "--status quando ausente sai 0"
+fi
+
 echo
 if [ "$fail" = 0 ]; then echo "test-heavy-install.sh: TUDO VERDE"; else echo "test-heavy-install.sh: FALHAS ACIMA"; fi
 exit "$fail"
