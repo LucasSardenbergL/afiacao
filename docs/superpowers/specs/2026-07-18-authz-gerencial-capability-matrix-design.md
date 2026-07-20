@@ -313,10 +313,45 @@ limite que o §3 declarou para o E1. Contra adversário competente, a barreira r
 ### 9.3 Fases
 
 - **Fase 1** (PR #1465): `cmc_snapshot` + `get_tint_price(s)`. As superfícies **sem** o problema arquitetural.
-- **Fase 2** (chip): cluster **régua de preço** — as 2 RPCs + `regua_preco_log` juntos. Mover `calcPisoMC` para o
-  servidor; trocar o writer do log por RPC `SECURITY DEFINER`. Régua está desligada em prod (0 linhas, flags
-  `false`), então dá para reescrever sem quebrar ninguém.
-- **Fase 3** (chip): `inventory_position` (view operacional) + `product_costs` (margem server-side nos 3 engines).
+- **Fase 2** (PR #1488, ENTREGUE): cluster **régua de preço** — ver §9.5.
+- **Fase 2b/H** (#1485, #1487): tabelas de compras que ficaram fora da matriz do #1434.
+- **Fase 3**: `inventory_position` **ENTREGUE** no #1473 (view operacional `inventory_position_operacional`);
+  falta `product_costs` (margem server-side nos 3 engines).
+
+### 9.5 Fase 2 — o que a implementação descobriu (#1488)
+
+Três coisas que o enunciado da fase não previa, todas medidas antes de escrever código:
+
+**1. `piso_mc` também é custo — a alíquota é uma CONSTANTE GLOBAL.** O enunciado supunha que remover
+`aliquota_venda` do payload impediria derivar o cmc a partir do piso. Não impede:
+`company_config['regua_preco_aliquota_venda_oben']` é **uma linha só** (0.078), não um valor por SKU — logo
+`cmc = piso_mc × 0,922`, e quem aprende 7,8% uma vez inverte todo piso para sempre. `piso_mc` e
+`piso_gap_pct` saíram gateados por `cap_custo_ler` junto com o `cmc`. Não foi mudança de escopo: é o que o
+§7 já mandava (`pisoOculto` "sem valor") e o que `ReguaPrecoSinal.tsx:31` já comentava.
+
+**2. Mascarar não bastava: a COMPARAÇÃO tinha de mudar de lado.** Se o cliente consegue avaliar
+`preço < piso` offline para um preço arbitrário, ele acha o piso por **busca binária** — não existe
+predicado avaliável no browser que esconda o próprio limiar. Por isso `p_preco_atual` virou argumento da
+RPC e a assinatura de 3 args foi **dropada** (viva, ela seguiria devolvendo `cmc`). Corolário de custo: o
+preço entrou na `queryKey` do carrinho, o que exigiu debounce — antes a decisão era local e grátis a cada
+tecla. No 360 saiu de graça: ele já resolvia `preco_atual` no servidor.
+
+**3. O custo do prazo (F2) tinha de vir junto, e o motivo é o pior tipo de bug.** `pisoComPrazo` também
+precisa do cmc. Deixá-lo no cliente faria o piso **degradar para à vista em silêncio** — piso menor, sinal
+disparando menos, vendedora fechando abaixo do piso real. Nenhum erro, nenhum log: só uma margem que some.
+
+**Anti-regressão, com o limite declarado.** O `authz:check` do CI **não enxerga mascaramento de campo** —
+`checkGate` só valida gate em forma de bloqueio (`IF NOT … RAISE`), e pôr `cap_custo_ler` no `requiredGate`
+da régua bloquearia a vendedora inteira. A proteção é o assert estrutural da própria migration + o harness
+(`db/test-authz-custo-fu4f-fase2-regua.sh`, 46 asserts / 8 falsificações). Mesma situação do
+`get_preco_cockpit`. Está escrito no `authz-manifest.ts` para quem vier depois.
+
+**A lição do #1472 se repetiu — e o harness a pegou.** A 1ª versão do assert procurava a substring
+`cap_custo_ler` no corpo do writer para provar que ele NÃO usa a capability de leitura. O **comentário** do
+writer ("NUNCA `cap_custo_ler`") satisfazia o assert: a migration fiscalizando a si mesma pelo texto que ela
+mesma escreve. Corrigido medindo código **sem comentários** (o mesmo `stripComments` do
+`scripts/lib/authz-contract.ts`). Generalização: *todo* assert sobre corpo de função deve rodar sobre a
+definição com comentários removidos, não sobre `pg_get_functiondef` cru.
 
 ### 9.4 O que o Codex derrubou na fase 1 (registro honesto)
 
