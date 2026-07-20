@@ -416,10 +416,20 @@ Em `.claude/settings.json`, no array `permissions.allow`, após a linha `"Bash(b
 ```json
       "Bash(bun run claude:size)",
       "Bash(bun run heavy:install)",
-      "Bash(scripts/heavy-install.sh:*)",
 ```
 
 Sem isto, cada sessão pede permissão para o remédio que o próprio hook acabou de sugerir.
+
+**Correção pós-review (commit `e34f98db`):** este Step originalmente também mandava
+acrescentar `"Bash(scripts/heavy-install.sh:*)"` — **removido de propósito**, não
+inclua. O wildcard libera **qualquer** invocação do script sem prompt, inclusive
+`--daqui`, que instala no binário GLOBAL o `heavy.sh` **desta worktree**
+(potencialmente não mergeado/provado pelo `test-heavy.sh`, que é macOS-only e o CI
+nunca roda). Isso contradiz a própria razão de ser do bloco 4 — um agente
+rodaria `bash scripts/heavy-install.sh --daqui` sem ninguém no circuito, e outra
+worktree acordaria com um `heavy` divergente sem saber por quê. Mantida só
+`"Bash(bun run heavy:install)"`, o único comando que o hook de fato sugere (e que
+sempre instala de `origin/main`, nunca da worktree local).
 
 - [ ] **Step 5: shellcheck + validar o JSON**
 
@@ -559,9 +569,11 @@ e do instalador é `origin/main`, nunca o arquivo local.
   `--status` só compara. Backup em `.heavy.bak`, idempotente, fail-closed.
 - Aviso no SessionStart (`vigia-worktree.sh`) quando o instalado diverge — **ou está
   ausente**, caso em que hoje o `heavy-guard` fail-opens em silêncio.
-- 8 asserções em `scripts/test-heavy-install.sh`, **cada uma falsificada**. As duas que
-  carregam peso: o inode do destino muda a cada instalação efetiva (trocar `mv` por `cp`
-  → vermelho) e o default vem de `origin/main` (inverter → vermelho).
+- 14 asserções em `scripts/test-heavy-install.sh`, **cada uma falsificada** (cresceu de 8
+  desde a primeira versão: ganhou testes próprios para as 3 saídas do `--status` e
+  separou "fonte vazia" de "`origin/main` ilegível" em asserções distintas). As duas que
+  carregam mais peso: o inode do destino muda a cada instalação efetiva (trocar `mv` por
+  `cp` → vermelho) e o default vem de `origin/main` (inverter → vermelho).
 
 ## O que NÃO entra, e por quê
 

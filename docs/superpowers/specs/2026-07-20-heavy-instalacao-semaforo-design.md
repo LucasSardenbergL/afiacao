@@ -64,7 +64,7 @@ pelas 11 asserções de concorrência. É o motivo de o hook **avisar e não aut
 |---|---|
 | Fonte padrão | `git show origin/main:scripts/heavy.sh` |
 | `--daqui` | instala o `scripts/heavy.sh` **da worktree atual** (para provar mudança em voo, antes de mergear) |
-| `--status` | só reporta instalado × `origin/main`, sem escrever (exit 0 sincronizado, exit 1 divergente) |
+| `--status` | só reporta instalado × `origin/main`, sem escrever — **contrato de 4 estados** (pós-review): exit 0 sincronizado; exit 0 **em voo** (instalado == `scripts/heavy.sh` da worktree local, ≠ `origin/main` — `--daqui` proposital); exit 1 divergente (comparação FEITA e deu diferente) ou ausente; exit 3 **não consegui verificar** (fonte ilegível/vazia, `mktemp` falhou, ou o chamador — o hook — estourou o teto de tempo). O exit 3 existe para não afirmar "divergente" a partir de ausência de dado — ver §3. |
 | Atomicidade | escreve em `~/.local/bin/.heavy.tmp.$$` — **mesmo filesystem** que o destino, senão `mv` degrada para copy+unlink e perde a atomicidade — `chmod +x`, depois `mv -f` |
 | Backup | `~/.local/bin/.heavy.bak` (conteúdo anterior) antes do `mv` |
 | Idempotência | já idêntico → **não toca no arquivo**, imprime e sai 0 |
@@ -87,7 +87,13 @@ e lê o exit code. Uma definição só de "divergente", num lugar só — senão
 regra mudar, ela muda em metade dos lugares. Script ausente ou erro → silêncio (o hook
 já é assim).
 
-Custo: um `git show` + dois `shasum` de 13KB, offline, ~ms.
+Custo: um `git show` + dois `shasum` de 13KB, offline — **tipicamente** ~ms, mas isso
+**não é garantido**: sob swap alto/I-O sufocado (justo o cenário que os avisos 2)/3)
+deste mesmo hook existem para reportar), o review pós-implementação mediu **>12s**
+nesse ramo — o que sozinho estoura o `timeout:10` do SessionStart e mata o hook
+inteiro. Por isso o hook aplica um teto de 3s (`timeout 3`) ao chamar o `--status`, e
+por isso o `--status` ganhou o exit 3 "não consegui verificar": o teto estourando não
+pode virar uma afirmação de "divergente" — é ausência de dado, não comparação feita.
 
 **Dois limites conhecidos e aceitos:**
 
@@ -117,6 +123,14 @@ Suíte nova, isolada por `HOME` temporário + repo git descartável.
 | 7 | destino fica executável (`-x`) | esquecer o `chmod` antes do `mv` |
 | 8 | fonte inválida (`origin/main` sem o arquivo) → exit ≠ 0 **e** destino intacto | fail-open que instalaria vazio |
 
+**Cresceu de 8 para 14 asserções** desde a escrita deste spec (tabela acima documenta
+as 8 originais — segue válida, não é reescrita). A linha 8 ("fonte inválida") virou 4
+asserções: "fonte vazia" (`--daqui` com `heavy.sh` vazio) e "`origin/main` ilegível"
+são causas DISTINTAS e cada uma ganhou sua própria checagem de exit≠0 **e** de destino
+intacto. As outras 3 novas cobrem o `--status` (sincronizado/divergente/ausente), que
+aqui não tinha teste automatizado nenhum — só era exercitado manualmente pelo hook
+(Task 2 Step 2 do plano). Lista atual e autoritativa: `scripts/test-heavy-install.sh`.
+
 **Falsificação obrigatória:** cada asserção é provada sabotando a correção e exigindo
 vermelho, antes de declarar verde (`money-path.md`; teste negativo sem falsificação é
 teatro). `shellcheck` exit 0 nos dois scripts novos — faz parte do health stack.
@@ -143,8 +157,12 @@ teatro). `shellcheck` exit 0 nos dois scripts novos — faz parte do health stac
 
 ## 7. Critério de pronto
 
-1. `bash scripts/test-heavy-install.sh` verde, com as 8 asserções falsificadas.
+1. `bash scripts/test-heavy-install.sh` verde, com as 14 asserções falsificadas (a
+   suíte cresceu de 8 para 14 depois da escrita deste spec — ver §4).
 2. `bash scripts/test-heavy.sh` **ainda** verde (11 asserções intactas).
 3. `shellcheck scripts/*.sh .claude/hooks/*.sh` exit 0.
-4. Hook exercitado nos 3 caminhos: sincronizado (silêncio), divergente (avisa), ausente (avisa).
+4. Hook exercitado nos 5 estados do contrato pós-review: sincronizado (silêncio), em
+   voo (silêncio), divergente (avisa), ausente (avisa), não consegui verificar (avisa
+   isso — nunca "divergente"). Os 3 primeiros eram o critério original; os 2 últimos
+   vieram do review (Conserto 2/3).
 5. `bun run heavy:install` idempotente na máquina real — 2ª execução não mexe no arquivo.
