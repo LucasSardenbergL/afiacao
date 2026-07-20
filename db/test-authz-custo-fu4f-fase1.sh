@@ -130,7 +130,8 @@ CREATE FUNCTION public.get_tint_prices(p_formulas uuid[]) RETURNS jsonb
   SELECT jsonb_build_object(
     'custoBase', CASE WHEN s.is_staff THEN 40.00 ELSE NULL END,
     'custoCorantes', CASE WHEN s.is_staff THEN 8.50 ELSE NULL END,
-    'precoFinal', round((40.00 + 8.50) * 1.8, 2))
+    'precoFinal', round((40.00 + 8.50) * 1.8, 2),
+    'itensCorantes', CASE WHEN s.is_staff THEN '[{"c":1}]'::jsonb ELSE '[]'::jsonb END)
   FROM staff s;
 $f$;
 SQL
@@ -159,7 +160,7 @@ echo "baseline pré-migration: precoFinal singular=$BASE_PF_SINGULAR batch=$BASE
 # ══════════════════════════════════════════════════════════════════════════════
 # ZONA 2 — APLICAR A MIGRATION REAL (Lei #1) + PROVAR IDEMPOTÊNCIA
 # ══════════════════════════════════════════════════════════════════════════════
-MIG="$REPO_ROOT/supabase/migrations/20260723130000_authz_custo_fu4f_fase1.sql"
+MIG="$REPO_ROOT/supabase/migrations/20260723140000_authz_custo_fu4f_fase1.sql"
 P -q -f "$MIG"
 echo "migration aplicada: $(basename "$MIG")"
 
@@ -196,6 +197,16 @@ eq "A13 estrategico vê custoBase (a capability concede)" \
    "$(as_user "$E" "SELECT (public.get_tint_price('$M'::uuid))->>'custoBase';")" "40.00"
 eq "A14 farmer NÃO vê custoBase (batch)" \
    "$(as_user "$F" "SELECT coalesce((public.get_tint_prices(ARRAY['$M'::uuid]))->>'custoBase','NULL');")" "NULL"
+# ⚠️ A15-A18: o batch antes só era testado em custoBase — uma sabotagem que vazasse custoCorantes
+# ou itensCorantes SÓ no batch passava o harness inteiro verde (achado P1 da rodada 2 do Codex).
+eq "A15 farmer NÃO vê custoCorantes (batch)" \
+   "$(as_user "$F" "SELECT coalesce((public.get_tint_prices(ARRAY['$M'::uuid]))->>'custoCorantes','NULL');")" "NULL"
+eq "A16 farmer NÃO vê itensCorantes (batch)" \
+   "$(as_user "$F" "SELECT (public.get_tint_prices(ARRAY['$M'::uuid]))->>'itensCorantes';")" "[]"
+eq "A17 master AINDA vê custoCorantes (batch — allow-side)" \
+   "$(as_user "$M" "SELECT (public.get_tint_prices(ARRAY['$M'::uuid]))->>'custoCorantes';")" "8.50"
+eq "A18 estrategico vê custoBase (batch — a capability concede)" \
+   "$(as_user "$E" "SELECT (public.get_tint_prices(ARRAY['$M'::uuid]))->>'custoBase';")" "40.00"
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ZONA 4 — FALSIFICAÇÃO (Lei #3)
@@ -245,8 +256,26 @@ BEGIN
   RETURN jsonb_build_object('custoBase', NULL, 'precoFinal', 72.00);  -- SABOTAGEM: preço derivou
 END $f$;
 SQL
+# guarda anti-colisão: se o baseline do stub virar 72.00, F3 diria "derrubou" com A5 verde
+[ "$BASE_PF_SINGULAR" != "72.00" ] || { echo "❌ F3 invalida: baseline colidiu com o valor sabotado"; exit 1; }
 fals "F3 precoFinal derivou p/ TODOS (vs A5 — o furo da versão sem baseline)" \
      "$(as_user "$F" "SELECT (public.get_tint_price('$M'::uuid))->>'precoFinal';")" "72.00"
+
+# F4 — vaza custoCorantes SÓ no batch (o furo que A14 sozinho não pegava).
+P -q <<'SQL'
+CREATE OR REPLACE FUNCTION public.get_tint_prices(p_formulas uuid[]) RETURNS jsonb
+  LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public' AS $f$
+  WITH staff AS MATERIALIZED (SELECT (SELECT private.cap_custo_ler(auth.uid())) AS is_staff)
+  SELECT jsonb_build_object(
+    'custoBase', CASE WHEN s.is_staff THEN 40.00 ELSE NULL END,
+    'custoCorantes', 8.50,                       -- SABOTAGEM: fora do gate
+    'itensCorantes', '[{"c":1}]'::jsonb,         -- SABOTAGEM: fora do gate
+    'precoFinal', round((40.00 + 8.50) * 1.8, 2))
+  FROM staff s;
+$f$;
+SQL
+fals "F4 batch vaza custoCorantes fora do gate (vs A15)" \
+     "$(as_user "$F" "SELECT (public.get_tint_prices(ARRAY['$M'::uuid]))->>'custoCorantes';")" "8.50"
 
 echo "  falsificação: $FALS_OK derrubaram / $FALS_BAD não reproduziram"
 [ "$FALS_BAD" = "0" ] || FAIL=$((FAIL+1))

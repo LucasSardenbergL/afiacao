@@ -125,7 +125,10 @@ DECLARE
     'auth\.uid\(\)\s+IS\s+NOT\s+NULL\s*AND\s*\(\s*(?:public\.)?has_role\s*\(\s*auth\.uid\(\)\s*,\s*''employee''::app_role\s*\)\s*OR\s*(?:public\.)?has_role\s*\(\s*auth\.uid\(\)\s*,\s*''master''::app_role\s*\)\s*\)';
   c_re_plpgsql text;
   c_re_sql     text;
-  c_novo_plpgsql constant text := 'v_is_staff\s*:=\s*private\.cap_custo_ler\s*\(\s*auth\.uid\(\)\s*\)';
+  -- ⚠️ o `\s*;` no fim NÃO é decorativo (achado P2 da rodada 2 do Codex): sem ele o padrão casa por
+  -- PREFIXO, e `v_is_staff := cap_custo_ler(...) OR (<predicado antigo>);` seria aceito como "já
+  -- migrada" continuando ABERTO — o RHS inteiro tem de ser a capability, nada mais.
+  c_novo_plpgsql constant text := 'v_is_staff\s*:=\s*private\.cap_custo_ler\s*\(\s*auth\.uid\(\)\s*\)\s*;';
   c_novo_sql     constant text := 'SELECT\s*\(?\s*private\.cap_custo_ler\s*\(\s*auth\.uid\(\)\s*\)\s*\)?\s+AS\s+is_staff';
 BEGIN
   c_re_plpgsql := 'v_is_staff\s*:=\s*' || c_pred || '\s*;';
@@ -141,8 +144,9 @@ BEGIN
 
     -- IDEMPOTENTE: já migrada ⇒ segue. Exige o gate NOVO no CONTEXTO certo — não basta a string
     -- aparecer em qualquer lugar (um comentário com o nome não conta como migrada).
-    IF (v_def ~ c_novo_plpgsql OR v_def ~ c_novo_sql)
-       AND v_def !~ c_re_plpgsql AND v_def !~ c_re_sql THEN
+    -- ausência GLOBAL do predicado antigo (c_pred), não só do ancorado: uma função com o gate novo
+    -- E o antigo em disjunção continuaria aberta e seria pulada (rodada 2 do Codex).
+    IF (v_def ~ c_novo_plpgsql OR v_def ~ c_novo_sql) AND v_def !~ c_pred THEN
       CONTINUE;
     END IF;
 
@@ -208,11 +212,23 @@ BEGIN
       USING ERRCODE='raise_exception';
   END IF;
 
-  -- A3: e ela gateia pela capability de custo (não `true`, não outro gate)
+  -- A3: ESTRUTURAL de verdade (a versão anterior era `qual ~ 'cap_custo_ler'`, que
+  -- `USING (cap_custo_ler(...) OR true)` passaria — achado P2 da rodada 2 do Codex).
+  -- Prova na MESMA linha de pg_policy: comando, permissividade, roles exatos e expressão sem disjunção.
   SELECT qual INTO v_qual FROM pg_policies
-   WHERE schemaname='public' AND tablename='cmc_snapshot' AND policyname='cmc_snapshot_select_staff';
-  IF v_qual IS NULL OR v_qual !~ 'cap_custo_ler' THEN
-    RAISE EXCEPTION 'FU4-F A3: policy de cmc_snapshot nao gateia por cap_custo_ler (qual=%)', COALESCE(v_qual,'NULL')
+   WHERE schemaname='public' AND tablename='cmc_snapshot' AND policyname='cmc_snapshot_select_staff'
+     AND cmd='SELECT' AND permissive='PERMISSIVE' AND roles::text = '{authenticated}';
+  IF v_qual IS NULL THEN
+    RAISE EXCEPTION 'FU4-F A3: policy ausente ou com cmd/permissividade/roles fora do esperado'
+      USING ERRCODE='raise_exception';
+  END IF;
+  IF v_qual !~ 'cap_custo_ler' THEN
+    RAISE EXCEPTION 'FU4-F A3: policy nao gateia por cap_custo_ler (qual=%)', v_qual
+      USING ERRCODE='raise_exception';
+  END IF;
+  -- sem `OR true`/`OR (...)`: a expressão tem de ser SÓ a capability
+  IF v_qual ~* '\mor\M' THEN
+    RAISE EXCEPTION 'FU4-F A3: expressao da policy contem disjuncao — gate ampliado (qual=%)', v_qual
       USING ERRCODE='raise_exception';
   END IF;
 
