@@ -3,7 +3,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import type { Tables } from '@/integrations/supabase/types';
 import { custoCanonico } from '@/lib/custo/custoCanonico';
-import { accumulateMarginFromItems } from '@/lib/scoring/margin';
+import { accumulateMarginFromItems, resolveProductIdsFromItems } from '@/lib/scoring/margin';
 
 type AlgorithmConfigRow = Pick<Tables<'farmer_algorithm_config'>, 'key' | 'value'>;
 type ProductCostRow = Pick<Tables<'product_costs'>, 'product_id' | 'cost_price' | 'cost_final'>;
@@ -17,10 +17,15 @@ type SalesOrderRow = Pick<
   'id' | 'customer_user_id' | 'items' | 'total' | 'created_at' | 'order_date_kpi' | 'status'
 >;
 
+// O jsonb real de sales_orders.items é pt-BR (omie_codigo_produto/quantidade/valor_unitario);
+// as chaves em inglês existiam no tipo mas nunca no dado — mantidas por compatibilidade.
 interface SalesOrderItem {
   product_id?: string;
+  omie_codigo_produto?: number | string;
   quantity?: number | string;
+  quantidade?: number | string;
   unit_price?: number | string;
+  valor_unitario?: number | string;
 }
 
 // ─── Types ───────────────────────────────────────────────────────────
@@ -95,6 +100,24 @@ function percentile(arr: number[], p: number): number {
   return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);
 }
 
+// PostgREST corta a resposta em 1.000 linhas — capa SILENCIOSA (sem erro, sem aviso).
+// product_costs tem 3.637 linhas e omie_products 3.108: sem paginar, a cauda do catálogo
+// some do costMap e do mapa omie→uuid, e cada SKU da cauda é lido como "sem custo".
+// Mesmo padrão do fetchAllPaginated dos edges (algorithm-a-audit, fin-valor-cockpit).
+// `.order` estável é obrigatório: sem ordenação definida a paginação pode repetir/pular linhas.
+async function fetchAllPages<T>(
+  buscarPagina: (de: number, ate: number) => PromiseLike<{ data: T[] | null }>,
+): Promise<T[]> {
+  const tamanho = 1000;
+  const todas: T[] = [];
+  for (let pagina = 0; ; pagina++) {
+    const { data } = await buscarPagina(pagina * tamanho, (pagina + 1) * tamanho - 1);
+    const linhas = data ?? [];
+    todas.push(...linhas);
+    if (linhas.length < tamanho) return todas;
+  }
+}
+
 // ─── Main Hook ───────────────────────────────────────────────────────
 export const useFarmerScoring = (farmerId?: string) => {
   // Lente "Ver como": id efetivo = ALVO na lente (lê/exibe a agenda dele), próprio usuário fora.
@@ -166,17 +189,36 @@ export const useFarmerScoring = (farmerId?: string) => {
         if (fPage.length < 1000) break;
       }
 
-      // 2. Load product costs for margin calculation
-      const { data: productCostsData } = await supabase
-        .from('product_costs')
-        .select('product_id, cost_final, cost_price');
-      const productCosts = (productCostsData ?? []) as ProductCostRow[];
+      // 2. Load product costs for margin calculation (paginado: 3.637 linhas > capa de 1.000)
+      const productCosts = await fetchAllPages<ProductCostRow>((de, ate) =>
+        supabase
+          .from('product_costs')
+          .select('product_id, cost_final, cost_price')
+          .order('product_id', { ascending: true })
+          .range(de, ate) as unknown as PromiseLike<{ data: ProductCostRow[] | null }>,
+      );
       const costMap = new Map<string, number>();
       // Custo canônico = cost_final (proxy-aware); cost_price agora é nullable (só custo real).
       // Number(null)===0 inflava a margem (ausente≠zero) — excluir SKU sem custo, não fabricar 0.
       productCosts.forEach((pc) => {
         const c = custoCanonico(pc);
         if (c != null) costMap.set(pc.product_id, c);
+      });
+
+      // 2b. Mapa omie_codigo_produto → UUID. Os itens de pedido em produção são pt-BR e trazem
+      // `omie_codigo_produto`, não `product_id` — sem este mapa, TODO item era descartado e os
+      // componentes de margem (G) e de mix (X) do health score ficavam zerados para todo cliente.
+      type ProdutoOmieRow = { id: string; omie_codigo_produto: number | string | null };
+      const produtos = await fetchAllPages<ProdutoOmieRow>((de, ate) =>
+        supabase
+          .from('omie_products')
+          .select('id, omie_codigo_produto')
+          .order('id', { ascending: true })
+          .range(de, ate) as unknown as PromiseLike<{ data: ProdutoOmieRow[] | null }>,
+      );
+      const omieToProductId = new Map<number, string>();
+      produtos.forEach((p) => {
+        if (p.omie_codigo_produto != null) omieToProductId.set(Number(p.omie_codigo_produto), p.id);
       });
 
       // 3. Load farmer calls for contact rates
@@ -241,12 +283,12 @@ export const useFarmerScoring = (farmerId?: string) => {
         const items: SalesOrderItem[] = Array.isArray(order.items)
           ? (order.items as unknown as SalesOrderItem[])
           : [];
-        for (const item of items) {
-          if (item.product_id) cd.categories.add(item.product_id);
+        for (const pid of resolveProductIdsFromItems(items, omieToProductId)) {
+          cd.categories.add(pid);
         }
         // Margem só sobre SKU com custo CONHECIDO (custo ausente não vira 0 — inflaria a
         // margem; ausente ≠ zero). Alinhado ao filtro do costMap acima (~linha 176).
-        const { revenue, cost } = accumulateMarginFromItems(items, costMap);
+        const { revenue, cost } = accumulateMarginFromItems(items, costMap, omieToProductId);
         cd.totalRevenue += revenue;
         cd.totalCost += cost;
       }
