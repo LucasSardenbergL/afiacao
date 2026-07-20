@@ -354,6 +354,15 @@ EOF
 
 **Interfaces:**
 - Consumes: `bash scripts/heavy-install.sh --status` da Task 1 — exit 0 = sincronizado, exit 1 = divergente ou ausente, stdout = a frase legível.
+
+  **Correção pós-review:** o contrato não ficou 2-valorado — cresceu para **4 estados**
+  durante a Task 1: exit 0 = sincronizado **OU** em voo (instalado == `scripts/heavy.sh`
+  da worktree local, ≠ `origin/main` — `--daqui` proposital, mensagem distingue os
+  dois); exit 1 = divergente (comparação FEITA e deu diferente) OU ausente; exit 3 =
+  **não consegui verificar** (fonte ilegível/vazia, `mktemp` falhou, ou o chamador — o
+  hook — estourou o teto de tempo). O Step 1 abaixo precisou de um terceiro ramo no
+  `case "$rc"` do hook (`0`/`1`/`*`) para não tratar o exit 3 como "divergente" — ver a
+  nota de correção logo após o bloco de código do Step 1.
 - Produces: nada consumido por tasks posteriores.
 
 - [ ] **Step 1: Acrescentar o bloco no hook**
@@ -374,6 +383,29 @@ if [ -x scripts/heavy-install.sh ]; then
   fi
 fi
 ```
+
+**Correção pós-review — este bloco tinha 2 defeitos reais, não repita:**
+
+1. **`2>/dev/null` descartava o stderr.** É lá que o `heavy-install.sh` manda o
+   remédio real quando a causa é "não consegui verificar" (ex.: `"→ 'git fetch
+   origin' resolve..."`) — com o stderr descartado, `$st` fica vazio nesse caminho e
+   o founder só via o fallback genérico `heavy divergente`, sem saber por quê. O
+   código atual usa `2>&1`.
+2. **`if ! st=...` (2 ramos) tratava o exit 3 igual ao exit 1.** "Não consegui
+   verificar" (fonte ilegível, `mktemp` falhou, ou o PRÓPRIO hook estourando o teto
+   de tempo) virava a mesma mensagem de "heavy divergente" — uma AFIRMAÇÃO de
+   divergência a partir de simples ausência de dado.
+
+O bloco real (como commitado nesta task) usa um teto de 3s no subprocess (`timeout
+3`, com fallback de caminho absoluto pro `timeout` do Homebrew, já que `timeout(1)`
+não é nativo do macOS) e um `case "$rc"` de 3 ramos sobre os 4 estados do
+`heavy-install.sh --status` corrigido na Task 1: `0` → silêncio (cobre sincronizado
+E em voo); `1` → avisa "divergente" ou "ausente" (mensagem = `$st`, capturado com
+`2>&1`); `*` → avisa "não consegui verificar" com uma frase própria do hook — nunca
+reaproveita a palavra "divergente" —, cobrindo o exit 3 e qualquer código
+inesperado (inclusive 124, o `timeout` matando por estourar os 3s). Texto exato em
+`.claude/hooks/vigia-worktree.sh` (bloco 4) — não duplicado aqui de novo para este
+plano não divergir do código a cada revisão futura.
 
 - [ ] **Step 2: Exercitar os três caminhos do hook**
 
@@ -396,6 +428,21 @@ AFIACAO_HEAVY_DEST=/tmp/heavy-nao-existe-teste bash .claude/hooks/vigia-worktree
 # esperado: NÃO instalado
 
 rm -f /tmp/heavy-fake-teste
+```
+
+**Correção pós-review:** o `--status` ganhou mais 2 estados depois deste Step ter
+sido escrito — "em voo" (instalado == `heavy.sh` da worktree local, ≠ `origin/main`;
+silêncio) e "não consegui verificar" (exit 3; avisa isso, nunca "divergente"). Os
+"três caminhos" viraram cinco. Cobrir os 2 novos manualmente aqui exigiria um sandbox
+git completo (bare upstream + worktree local com `heavy.sh` divergente do remote, e um
+segundo repo sem `origin/main` para forçar o exit 3) — impraticável como comando solto
+de terminal. Por isso a cobertura de verdade migrou para
+`scripts/test-hooks-sessionstart.sh` (seção "vigia-worktree.sh: bloco 4 (semáforo
+heavy)"), que monta esse sandbox e falsifica as 5 asserções. Rode-o em vez destes três
+comandos manuais:
+
+```bash
+bash scripts/test-hooks-sessionstart.sh; echo "exit=$?"
 ```
 
 - [ ] **Step 3: Confirmar que o hook nunca quebra a sessão**
