@@ -31,9 +31,19 @@ SELECT 'NENHUMA sobrou no gate staff (user_roles)',
 
 UNION ALL
 -- o nome antigo afirmava "Staff lê…", o que ficaria FALSO depois da troca.
-SELECT 'o nome mentiroso (Staff lê…) não existe mais',
+-- ⚠️ ESCOPADO ÀS 2 TABELAS. A 1ª versão varria `pg_policy` INTEIRO com
+-- `WHERE polname LIKE 'Staff lê%'` e devolvia `false` num banco CORRETO: existem ~20 policies
+-- com esse prefixo em tabelas sem relação nenhuma com esta migration (des_*, fornecedor_*,
+-- gmail_webhook_log, objects…). Falso negativo em validação pós-apply é pior que nenhuma
+-- validação — ensina quem aplica a ignorar o vermelho. Medido na aplicação real, 2026-07-20.
+SELECT 'o nome mentiroso (Staff lê…) não existe mais NAS 2 TABELAS',
        count(*) = 0
-  FROM pg_policy WHERE polname LIKE 'Staff lê%'
+  FROM pg_policy p
+  JOIN pg_class c ON c.oid = p.polrelid
+  JOIN pg_namespace n ON n.oid = c.relnamespace
+ WHERE n.nspname = 'public'
+   AND c.relname IN ('reposicao_alerta_pedido_minimo','reposicao_auto_aprovacao_log')
+   AND p.polname LIKE 'Staff lê%'
 
 UNION ALL
 SELECT 'RLS segue LIGADA nas 2 (policy sem RLS é decorativa)',

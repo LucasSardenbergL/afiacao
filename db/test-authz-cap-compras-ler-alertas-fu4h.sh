@@ -134,6 +134,17 @@ CREATE POLICY "Staff lê log de auto-aprovação" ON public.reposicao_auto_aprov
 GRANT SELECT, INSERT ON public.reposicao_alerta_pedido_minimo TO authenticated, anon, service_role;
 GRANT SELECT, INSERT ON public.reposicao_auto_aprovacao_log   TO authenticated, anon, service_role;
 
+-- ── uma tabela VIZINHA com policy 'Staff lê …', sem relação com esta migration ──
+-- Prod tem ~20 delas (des_*, fornecedor_*, gmail_webhook_log, objects…). O harness precisa de
+-- pelo menos UMA, senão um assert de escopo largo (`WHERE polname LIKE 'Staff lê%'` sobre o
+-- catálogo inteiro) passa aqui e falha em produção — foi exatamente o que aconteceu com o
+-- validador pós-apply na aplicação real (2026-07-20). Banco de teste mais LIMPO que produção
+-- não é neutro: ele esconde a classe de bug que depende de vizinhança.
+CREATE TABLE public.vizinha_irrelevante (id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, x text);
+ALTER TABLE public.vizinha_irrelevante ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Staff lê vizinha_irrelevante" ON public.vizinha_irrelevante
+  FOR SELECT TO authenticated USING (true);
+
 -- o WRITER real: SECDEF, service-role-only (authenticated NÃO executa). Bypassa RLS.
 CREATE OR REPLACE FUNCTION public.reposicao_alerta_pedido_minimo_tick()
  RETURNS integer LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public','pg_temp'
@@ -245,8 +256,18 @@ eq "K2 NENHUMA sobrou no gate staff (user_roles)" \
    "$(Pq -c "SELECT count(*) FROM pg_policy p JOIN pg_class c ON c.oid=p.polrelid JOIN pg_namespace n ON n.oid=c.relnamespace
              WHERE n.nspname='public' AND c.relname IN ('reposicao_alerta_pedido_minimo','reposicao_auto_aprovacao_log')
                AND p.polcmd='r' AND pg_get_expr(p.polqual,p.polrelid) ~ 'user_roles';")" "0"
-eq "K3 o nome MENTIROSO ('Staff lê...') não existe mais no catálogo" \
-   "$(Pq -c "SELECT count(*) FROM pg_policy WHERE polname LIKE 'Staff lê%';")" "0"
+# ⚠️ ESCOPADO ÀS 2 TABELAS — e o seed da ZONA 1 cria de propósito uma policy 'Staff lê …' numa
+# tabela VIZINHA, sem relação com a migration. A 1ª versão deste assert (e do validador
+# pós-apply) varria `pg_policy` inteiro e passava aqui SÓ porque o PG17 descartável é mais limpo
+# que prod: no banco real há ~20 policies com esse prefixo, e o validador deu FALSO NEGATIVO na
+# aplicação real. O stub mínimo escondeu o bug por ser mais limpo que produção — por isso a
+# vizinha agora existe no harness: sem ela, o filtro largo volta a passar despercebido.
+eq "K3 o nome MENTIROSO ('Staff lê...') sumiu DAS 2 TABELAS" \
+   "$(Pq -c "SELECT count(*) FROM pg_policy p JOIN pg_class c ON c.oid=p.polrelid JOIN pg_namespace n ON n.oid=c.relnamespace
+             WHERE n.nspname='public' AND c.relname IN ('reposicao_alerta_pedido_minimo','reposicao_auto_aprovacao_log')
+               AND p.polname LIKE 'Staff lê%';")" "0"
+eq "K3b ...e a policy 'Staff lê' da tabela VIZINHA continua intacta (o assert não é largo demais)" \
+   "$(Pq -c "SELECT count(*) FROM pg_policy WHERE polname LIKE 'Staff lê%';")" "1"
 eq "K4 RLS segue LIGADA nas 2 (policy sem RLS seria decorativa)" \
    "$(Pq -c "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
              WHERE n.nspname='public' AND c.relname IN ('reposicao_alerta_pedido_minimo','reposicao_auto_aprovacao_log')
