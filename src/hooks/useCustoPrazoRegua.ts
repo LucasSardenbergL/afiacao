@@ -1,9 +1,13 @@
 // src/hooks/useCustoPrazoRegua.ts
-// F2 — resolve o custo do prazo para a régua: taxa de custo de capital (RPC fin_regua_custo_capital)
-// + dias parseados da condição selecionada (RPC fin_regua_condicao_prazo + parser TS puro).
-// Ambas as RPCs são SECURITY DEFINER (RLS-safe; empresa_configuracao_custos e o catálogo de condições
-// são staff-only sem grant a authenticated) e NÃO estão nos tipos gerados → cast via unknown.
-// Degrada honesto para null em TODA ausência (config/condição ausente, código nulo, texto não parseável).
+// F2 — resolve o PRAZO da régua: dias parseados da condição selecionada (RPC fin_regua_condicao_prazo
+// + parser TS puro). A RPC é SECURITY DEFINER (RLS-safe; o catálogo de condições é staff-only sem
+// grant a authenticated) e NÃO está nos tipos gerados → cast via unknown.
+// Degrada honesto para null em TODA ausência (condição ausente, código nulo, texto não parseável).
+//
+// ⚠️ FU4-F fase 2: a TAXA de custo de capital saiu daqui. Ela só existia para alimentar
+// `pisoComPrazo` no cliente, e a fórmula do piso foi para o servidor (private.regua_piso_calc) —
+// `get_regua_preco` consulta `fin_regua_custo_capital` internamente. O cliente manda os DIAS e
+// recebe o piso pronto; um parâmetro financeiro a menos trafegando para o browser.
 import { useQuery } from '@tanstack/react-query';
 import { useMemo } from 'react';
 import { supabase } from '@/integrations/supabase/client';
@@ -20,23 +24,6 @@ type RpcClient = {
 
 export interface CustoPrazoRegua {
   prazoDias: number[] | null;
-  custoCapitalAnual: number | null;
-}
-
-/** Taxa de custo de capital (fração a.a.) da empresa, via RPC RLS-safe. Guarda de unidade no cliente. */
-function useCustoCapital(empresa: string | null) {
-  return useQuery({
-    queryKey: ['regua_custo_capital', empresa],
-    enabled: Boolean(empresa),
-    staleTime: STALE,
-    queryFn: async (): Promise<number | null> => {
-      const client = supabase as unknown as RpcClient;
-      const { data, error } = await client.rpc('fin_regua_custo_capital', { p_empresa: empresa });
-      if (error) throw new Error(error.message);
-      const r = typeof data === 'number' ? data : null;
-      return r != null && r > 0 && r < 1 ? r : null; // defesa: nunca aceita taxa ≥100% ou ≤0
-    },
-  });
 }
 
 /** descricao + num_parcelas da condição selecionada (RPC RLS-safe; RETURNS TABLE → array). */
@@ -62,17 +49,15 @@ function useCondicaoPrazo(empresa: string | null, codigo: string | null) {
 }
 
 /**
- * Resolve { prazoDias, custoCapitalAnual } para a régua incluir o custo do prazo.
+ * Resolve { prazoDias } para a régua incluir o custo do prazo (que o SERVIDOR calcula).
  * Trocar a condição selecionada (codigo) reconsulta → o piso recalcula (snapshot consistente).
  */
 export function useCustoPrazoRegua(empresa: string | null, codigo: string | null): CustoPrazoRegua {
-  const rate = useCustoCapital(empresa);
   const cond = useCondicaoPrazo(empresa, codigo);
   const descricao = cond.data?.descricao ?? null;
   const numParcelas = cond.data?.num_parcelas ?? null;
-  const custoCapitalAnual = rate.data ?? null;
   return useMemo<CustoPrazoRegua>(
-    () => ({ prazoDias: parsePrazoRecebimento(descricao, numParcelas), custoCapitalAnual }),
-    [descricao, numParcelas, custoCapitalAnual],
+    () => ({ prazoDias: parsePrazoRecebimento(descricao, numParcelas) }),
+    [descricao, numParcelas],
   );
 }

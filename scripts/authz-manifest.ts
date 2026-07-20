@@ -46,15 +46,36 @@ export const AUTHZ_MANIFEST: Record<string, AuthzEntry> = {
     requiredGate: { anyOf: [{ call: 'has_role', roles: ['employee', 'master'] }, { call: 'pode_ver_carteira_completa' }] },
     motivo: 'defasagem de preço por cliente vs custo',
   },
+  // FU4-F fase 2 (2026-07-20): as duas continuam com gate de ENTRADA `has_role(employee|master)`
+  // DE PROPÓSITO — a vendedora precisa do SINAL ("abaixo do piso"). O que mudou é interno: elas
+  // pararam de emitir `cmc`/`aliquota_venda` e passaram a mascarar `piso_mc`/`piso_gap_pct` atrás
+  // de `v_pode_num := private.cap_custo_ler(...)`, no padrão do get_preco_cockpit.
+  //
+  // ⚠️ LIMITE DESTE CHECK, declarado para quem vier depois: `requiredGate` só sabe verificar gate
+  // em FORMA DE BLOQUEIO (`IF NOT gate() THEN RAISE`). Mascaramento de CAMPO não é expressável
+  // aqui — pôr cap_custo_ler no requiredGate exigiria um RAISE e bloquearia a vendedora inteira,
+  // matando a régua. A anti-regressão do mascaramento é o assert estrutural A4 da migration
+  // 20260723150000 + db/test-authz-custo-fu4f-fase2-regua.sh (A10-A14). Mesma situação do
+  // get_preco_cockpit, cujo `v_pode_num` também não aparece aqui.
   'public.get_regua_preco': {
     sensitive: true,
     requiredGate: { anyOf: [{ call: 'has_role', roles: ['employee', 'master'] }] },
-    motivo: 'régua de preço/markup a partir do cmc',
+    motivo: 'régua de preço a partir do cmc; desde FU4-F/2 devolve SINAL (abaixo_piso) e mascara piso_mc por cap_custo_ler',
   },
   'public.get_regua_preco_customer360': {
     sensitive: true,
     requiredGate: { anyOf: [{ call: 'has_role', roles: ['employee', 'master'] }] },
-    motivo: 'régua de preço no customer 360',
+    motivo: 'régua de preço no customer 360 — repassa o pacote já mascarado da get_regua_preco',
+  },
+  // Writer do closed-loop da régua. Gate de ESCRITA próprio (`private.cap_regua_log_escrever`,
+  // employee|master) — NUNCA cap_custo_ler: o §4.2 do spec de 2026-07-18 proíbe reusar a função de
+  // leitura em escrita, e reusá-la deixaria estrategico/super_admin registrar em nome de outro
+  // vendedor (bloqueador P1 do Codex na fase 1). Toca inventory_position.cmc porque apura o custo
+  // do log NO SERVIDOR — o cliente não o recebe mais e não teria como informá-lo.
+  'public.registrar_exibicao_regua': {
+    sensitive: true,
+    requiredGate: { anyOf: [{ call: 'cap_regua_log_escrever' }] },
+    motivo: 'grava exibição da régua com piso_mc/cmc_usado apurados server-side; salesperson_id fixado em auth.uid()',
   },
   'public.get_ultimos_precos_cliente': {
     sensitive: true,

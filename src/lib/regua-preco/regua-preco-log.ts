@@ -5,67 +5,65 @@ export interface ExibicaoReguaPayload {
   account: string;
   customerUserId: string;
   productId: string;
-  salespersonId: string;
   quantity: number;
   precoAtual: number;
-  cmcUsado: number | null;
+  prazoDias: number[] | null;
   result: ReguaPrecoResult;
 }
 
-// A tabela regua_preco_log foi aplicada via SQL Editor do Lovable; os tipos gerados
-// (src/integrations/supabase/types.ts) ainda NÃO a conhecem (Lovable só regenera no
-// builder visual — NÃO editar à mão). Cast mínimo no padrão do repo (cf. usePrecoCockpit
-// `supabase.rpc as never`). Substituir por chamada tipada quando o Lovable regenerar.
-type LogValues = Record<string, unknown>;
-interface ReguaLogClient {
-  from(table: string): {
-    insert(values: LogValues): {
-      select(columns: string): { single(): Promise<{ data: { id: string } | null; error: unknown }> };
-    };
-    update(values: LogValues): { eq(column: string, value: string): Promise<{ error: unknown }> };
-  };
-}
-const logClient = supabase as never as ReguaLogClient;
+/**
+ * Writers do closed-loop — FU4-F fase 2: RPC `SECURITY DEFINER`, não mais `.insert()` direto.
+ *
+ * ⚠️ POR QUE A TROCA ERA OBRIGATÓRIA (e não só uma preferência de estilo): a fase fecha a LEITURA
+ * de `regua_preco_log` (as colunas piso_mc/cmc_usado/aliquota_usada são custo). Só trocar a policy
+ * quebraria o log EM SILÊNCIO — o `.insert().select('id')` de antes exigia policy de SELECT para o
+ * PostgREST devolver a linha; o Postgres passaria a ERRAR, e o `console.warn` abaixo engoliria o
+ * erro. O outcome pararia de ser registrado sem nenhum sintoma visível.
+ *
+ * As RPCs também fecham o forjamento: `salesperson_id` é fixado em `auth.uid()` DENTRO do banco
+ * (não é parâmetro), e as colunas de custo são apuradas lá — o cliente não as recebe mais, então
+ * não teria como informá-las de forma confiável.
+ *
+ * Não estão nos tipos gerados (o Lovable só regenera no builder visual — NÃO editar à mão),
+ * daí o cast mínimo no padrão do repo (cf. usePrecoCockpit `supabase.rpc as never`).
+ */
+type RpcClient = {
+  rpc: (fn: string, args: Record<string, unknown>) => Promise<{ data: unknown; error: unknown }>;
+};
+const rpcClient = supabase as unknown as RpcClient;
 
-/** INSERT 'pendente' da exibição qualificada. Falha de log NUNCA derruba o carrinho. */
+/** Registra a exibição qualificada ('pendente'). Falha de log NUNCA derruba o carrinho. */
 export async function registrarExibicaoRegua(p: ExibicaoReguaPayload): Promise<string | null> {
   const r = p.result;
-  const { data, error } = await logClient
-    .from('regua_preco_log')
-    .insert({
-      account: p.account,
-      customer_user_id: p.customerUserId,
-      product_id: p.productId,
-      salesperson_id: p.salespersonId,
-      quantity: p.quantity,
-      preco_atual: p.precoAtual,
-      sinal_exibido: r.sinal,
-      confianca: r.confianca,
-      preco_referencia: r.precoReferencia,
-      observed_gap_pct: r.observedGapPct,
-      suggested_gap_pct: r.suggestedGapPct,
-      piso_mc: r.pisoMC,
-      cap_limitou: r.capLimitou,
-      cmc_usado: p.cmcUsado,
-      cmc_confianca: r.reasonCodes.includes('cmc_proxy') ? 'proxy' : 'real',
-      reason_codes: r.reasonCodes,
-      outcome_status: 'pendente',
-      aplicou: false,
-    })
-    .select('id')
-    .single();
+  const { data, error } = await rpcClient.rpc('registrar_exibicao_regua', {
+    p_account: p.account,
+    p_customer_user_id: p.customerUserId,
+    p_product_id: p.productId,
+    p_quantity: p.quantity,
+    p_preco_atual: p.precoAtual,
+    p_sinal_exibido: r.sinal,
+    p_confianca: r.confianca,
+    p_preco_referencia: r.precoReferencia,
+    p_observed_gap_pct: r.observedGapPct,
+    p_suggested_gap_pct: r.suggestedGapPct,
+    p_cap_limitou: r.capLimitou,
+    p_reason_codes: r.reasonCodes,
+    // os dias vão junto p/ o servidor reproduzir EXATAMENTE o piso que gerou este sinal —
+    // sem eles, o log gravaria o piso à vista e a evidência divergiria do que a tela mostrou.
+    p_prazo_dias: p.prazoDias,
+  });
   if (error) {
     console.warn('[regua] log exibição falhou (ignorado):', error);
     return null;
   }
-  return data?.id ?? null;
+  return typeof data === 'string' ? data : null;
 }
 
-/** UPDATE → 'aplicado' quando o vendedor clica Aplicar. */
+/** Fecha o loop → 'aplicado'. O banco só aceita do PRÓPRIO vendedor que gerou o registro. */
 export async function registrarAplicacaoRegua(logId: string, precoFinal: number): Promise<void> {
-  const { error } = await logClient
-    .from('regua_preco_log')
-    .update({ preco_final: precoFinal, aplicou: true, outcome_status: 'aplicado', outcome_at: new Date().toISOString() })
-    .eq('id', logId);
+  const { error } = await rpcClient.rpc('registrar_aplicacao_regua', {
+    p_log_id: logId,
+    p_preco_final: precoFinal,
+  });
   if (error) console.warn('[regua] log aplicação falhou (ignorado):', error);
 }

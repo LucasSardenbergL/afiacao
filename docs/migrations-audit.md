@@ -21,11 +21,11 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **412** custom migrations totais
-- **1453** objetos esperados (criados por estas migrations)
+- **415** custom migrations totais
+- **1463** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 412
-  - `rls_policy`: 368
+  - `function`: 420
+  - `rls_policy`: 370
   - `index`: 224
   - `cron_job`: 150
   - `table`: 147
@@ -3438,6 +3438,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
+### `20260720160000_authz_cap_compras_ler_alertas_auto_aprovacao_fu4h.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `rls_policy` | `public.%I` | `public` |
+
 ### `20260721190000_reposicao_pos_candidatos.sql`
 
 | Tipo | Objeto | Parent |
@@ -3470,6 +3476,13 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `view` | `public.v_tint_formula_canonica` | — |
 
+### `20260722110000_ciclo_oportunidade_registra_execucao.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._registrar_ciclo_oportunidade` | — |
+| `function` | `public.ciclo_oportunidade_do_dia` | — |
+
 ### `20260722110000_quarentena_omie_clientes_espelho.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
@@ -3501,6 +3514,18 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `rls_policy` | `public.staff_pedido_compra_item_insert` | `pedido_compra_item` |
 | `rls_policy` | `public.staff_pedido_compra_item_update` | `pedido_compra_item` |
 | `rls_policy` | `public.staff_pedido_compra_item_delete` | `pedido_compra_item` |
+
+### `20260723150000_authz_custo_fu4f_fase2_regua.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.cap_regua_log_escrever` | — |
+| `function` | `private.regua_piso_calc` | — |
+| `function` | `public.get_regua_preco` | — |
+| `function` | `public.get_regua_preco_customer360` | — |
+| `function` | `public.registrar_exibicao_regua` | — |
+| `function` | `public.registrar_aplicacao_regua` | — |
+| `rls_policy` | `public.regua_preco_log_select_custo` | `regua_preco_log` |
 
 ## Próximos passos por status
 

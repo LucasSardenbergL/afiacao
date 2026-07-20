@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 412
+-- Total de custom migrations: 415
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -444,16 +444,19 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260718233000', 'tint_canonica_preco_csv_legado', '20260718233000_tint_canonica_preco_csv_legado.sql'),
   ('20260719120000', 'authz_cap_compras_escrever_fu4e', '20260719120000_authz_cap_compras_escrever_fu4e.sql'),
   ('20260720120000', 'authz_cap_compras_ler_pos_candidatos_fu4g', '20260720120000_authz_cap_compras_ler_pos_candidatos_fu4g.sql'),
+  ('20260720160000', 'authz_cap_compras_ler_alertas_auto_aprovacao_fu4h', '20260720160000_authz_cap_compras_ler_alertas_auto_aprovacao_fu4h.sql'),
   ('20260721190000', 'reposicao_pos_candidatos', '20260721190000_reposicao_pos_candidatos.sql'),
   ('20260721190001', 'pausa_cron_relatorio_mensal_ferramentas', '20260721190001_pausa_cron_relatorio_mensal_ferramentas.sql'),
   ('20260722100000', 'acoes_execucoes_ultima_execucao', '20260722100000_acoes_execucoes_ultima_execucao.sql'),
   ('20260722100001', 'tint_gate_revalida_submit', '20260722100001_tint_gate_revalida_submit.sql'),
   ('20260722100002', 'tint_canonica_csv_legado_semantico', '20260722100002_tint_canonica_csv_legado_semantico.sql'),
+  ('20260722110000', 'ciclo_oportunidade_registra_execucao', '20260722110000_ciclo_oportunidade_registra_execucao.sql'),
   ('20260722110000', 'quarentena_omie_clientes_espelho', '20260722110000_quarentena_omie_clientes_espelho.sql'),
   ('20260722113000', 'tint_fase1d_is_base_pura', '20260722113000_tint_fase1d_is_base_pura.sql'),
   ('20260723130000', 'authz_custo_fu4f_fase2_inventory', '20260723130000_authz_custo_fu4f_fase2_inventory.sql'),
   ('20260723140000', 'authz_custo_fu4f_fase1', '20260723140000_authz_custo_fu4f_fase1.sql'),
-  ('20260723140000', 'authz_pedido_compra_item_cap_compras', '20260723140000_authz_pedido_compra_item_cap_compras.sql')
+  ('20260723140000', 'authz_pedido_compra_item_cap_compras', '20260723140000_authz_pedido_compra_item_cap_compras.sql'),
+  ('20260723150000', 'authz_custo_fu4f_fase2_regua', '20260723150000_authz_custo_fu4f_fase2_regua.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -1880,6 +1883,7 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('seed_targets_faltantes_ledger', 'function', 'public', 'seed_targets_faltantes', ''),
   ('tint_canonica_preco_csv_legado', 'view', 'public', 'v_tint_formula_canonica', ''),
   ('authz_cap_compras_escrever_fu4e', 'function', 'private', 'cap_compras_escrever', ''),
+  ('authz_cap_compras_ler_alertas_auto_aprovacao_fu4h', 'rls_policy', 'public', '%I', 'public'),
   ('reposicao_pos_candidatos', 'function', 'public', 'reposicao__trim', ''),
   ('reposicao_pos_candidatos', 'function', 'public', 'reposicao__po_id', ''),
   ('reposicao_pos_candidatos', 'function', 'public', 'reposicao_pos_candidatos', ''),
@@ -1888,6 +1892,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('tint_gate_revalida_submit', 'function', 'public', 'tint_ultimo_preco_cliente', ''),
   ('tint_gate_revalida_submit', 'function', 'public', 'tint_gate_revalida', ''),
   ('tint_canonica_csv_legado_semantico', 'view', 'public', 'v_tint_formula_canonica', ''),
+  ('ciclo_oportunidade_registra_execucao', 'function', 'public', '_registrar_ciclo_oportunidade', ''),
+  ('ciclo_oportunidade_registra_execucao', 'function', 'public', 'ciclo_oportunidade_do_dia', ''),
   ('tint_fase1d_is_base_pura', 'function', 'public', 'tint_promote_sync_run', ''),
   ('authz_custo_fu4f_fase2_inventory', 'view', 'public', 'inventory_position_operacional', ''),
   ('authz_custo_fu4f_fase2_inventory', 'rls_policy', 'public', 'staff_inventory_position_select', 'inventory_position'),
@@ -1895,7 +1901,14 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('authz_pedido_compra_item_cap_compras', 'rls_policy', 'public', 'staff_pedido_compra_item_select', 'pedido_compra_item'),
   ('authz_pedido_compra_item_cap_compras', 'rls_policy', 'public', 'staff_pedido_compra_item_insert', 'pedido_compra_item'),
   ('authz_pedido_compra_item_cap_compras', 'rls_policy', 'public', 'staff_pedido_compra_item_update', 'pedido_compra_item'),
-  ('authz_pedido_compra_item_cap_compras', 'rls_policy', 'public', 'staff_pedido_compra_item_delete', 'pedido_compra_item')
+  ('authz_pedido_compra_item_cap_compras', 'rls_policy', 'public', 'staff_pedido_compra_item_delete', 'pedido_compra_item'),
+  ('authz_custo_fu4f_fase2_regua', 'function', 'private', 'cap_regua_log_escrever', ''),
+  ('authz_custo_fu4f_fase2_regua', 'function', 'private', 'regua_piso_calc', ''),
+  ('authz_custo_fu4f_fase2_regua', 'function', 'public', 'get_regua_preco', ''),
+  ('authz_custo_fu4f_fase2_regua', 'function', 'public', 'get_regua_preco_customer360', ''),
+  ('authz_custo_fu4f_fase2_regua', 'function', 'public', 'registrar_exibicao_regua', ''),
+  ('authz_custo_fu4f_fase2_regua', 'function', 'public', 'registrar_aplicacao_regua', ''),
+  ('authz_custo_fu4f_fase2_regua', 'rls_policy', 'public', 'regua_preco_log_select_custo', 'regua_preco_log')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -3370,6 +3383,7 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('seed_targets_faltantes_ledger', 'function', 'public', 'seed_targets_faltantes', ''),
   ('tint_canonica_preco_csv_legado', 'view', 'public', 'v_tint_formula_canonica', ''),
   ('authz_cap_compras_escrever_fu4e', 'function', 'private', 'cap_compras_escrever', ''),
+  ('authz_cap_compras_ler_alertas_auto_aprovacao_fu4h', 'rls_policy', 'public', '%I', 'public'),
   ('reposicao_pos_candidatos', 'function', 'public', 'reposicao__trim', ''),
   ('reposicao_pos_candidatos', 'function', 'public', 'reposicao__po_id', ''),
   ('reposicao_pos_candidatos', 'function', 'public', 'reposicao_pos_candidatos', ''),
@@ -3378,6 +3392,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('tint_gate_revalida_submit', 'function', 'public', 'tint_ultimo_preco_cliente', ''),
   ('tint_gate_revalida_submit', 'function', 'public', 'tint_gate_revalida', ''),
   ('tint_canonica_csv_legado_semantico', 'view', 'public', 'v_tint_formula_canonica', ''),
+  ('ciclo_oportunidade_registra_execucao', 'function', 'public', '_registrar_ciclo_oportunidade', ''),
+  ('ciclo_oportunidade_registra_execucao', 'function', 'public', 'ciclo_oportunidade_do_dia', ''),
   ('tint_fase1d_is_base_pura', 'function', 'public', 'tint_promote_sync_run', ''),
   ('authz_custo_fu4f_fase2_inventory', 'view', 'public', 'inventory_position_operacional', ''),
   ('authz_custo_fu4f_fase2_inventory', 'rls_policy', 'public', 'staff_inventory_position_select', 'inventory_position'),
@@ -3385,7 +3401,14 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('authz_pedido_compra_item_cap_compras', 'rls_policy', 'public', 'staff_pedido_compra_item_select', 'pedido_compra_item'),
   ('authz_pedido_compra_item_cap_compras', 'rls_policy', 'public', 'staff_pedido_compra_item_insert', 'pedido_compra_item'),
   ('authz_pedido_compra_item_cap_compras', 'rls_policy', 'public', 'staff_pedido_compra_item_update', 'pedido_compra_item'),
-  ('authz_pedido_compra_item_cap_compras', 'rls_policy', 'public', 'staff_pedido_compra_item_delete', 'pedido_compra_item')
+  ('authz_pedido_compra_item_cap_compras', 'rls_policy', 'public', 'staff_pedido_compra_item_delete', 'pedido_compra_item'),
+  ('authz_custo_fu4f_fase2_regua', 'function', 'private', 'cap_regua_log_escrever', ''),
+  ('authz_custo_fu4f_fase2_regua', 'function', 'private', 'regua_piso_calc', ''),
+  ('authz_custo_fu4f_fase2_regua', 'function', 'public', 'get_regua_preco', ''),
+  ('authz_custo_fu4f_fase2_regua', 'function', 'public', 'get_regua_preco_customer360', ''),
+  ('authz_custo_fu4f_fase2_regua', 'function', 'public', 'registrar_exibicao_regua', ''),
+  ('authz_custo_fu4f_fase2_regua', 'function', 'public', 'registrar_aplicacao_regua', ''),
+  ('authz_custo_fu4f_fase2_regua', 'rls_policy', 'public', 'regua_preco_log_select_custo', 'regua_preco_log')
 )
 SELECT
   e.migration,
