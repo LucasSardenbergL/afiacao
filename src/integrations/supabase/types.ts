@@ -7657,39 +7657,6 @@ export type Database = {
           },
         ]
       }
-      omie_clientes: {
-        Row: {
-          created_at: string
-          empresa_omie: string
-          id: string
-          omie_codigo_cliente: number
-          omie_codigo_cliente_integracao: string | null
-          omie_codigo_vendedor: number | null
-          updated_at: string
-          user_id: string
-        }
-        Insert: {
-          created_at?: string
-          empresa_omie?: string
-          id?: string
-          omie_codigo_cliente: number
-          omie_codigo_cliente_integracao?: string | null
-          omie_codigo_vendedor?: number | null
-          updated_at?: string
-          user_id: string
-        }
-        Update: {
-          created_at?: string
-          empresa_omie?: string
-          id?: string
-          omie_codigo_cliente?: number
-          omie_codigo_cliente_integracao?: string | null
-          omie_codigo_vendedor?: number | null
-          updated_at?: string
-          user_id?: string
-        }
-        Relationships: []
-      }
       omie_clientes_nao_vinculados: {
         Row: {
           cidade: string | null
