@@ -77,3 +77,14 @@ nova no CLAUDE.md §Design System (**1 escritor por slug**; ação per-registro 
 estado vive no próprio registro). Varredura dos demais botões do app (tintImport SyncCard,
 GestorExcecoes, AdminReposicaoPedidos, GerarCicloDialog, PrecoEmbalagemDialog) é o PR2.
 Spec: `docs/superpowers/specs/2026-07-18-ultima-execucao-acoes-design.md`.
+
+### PR3 — ciclo de oportunidade com escritor SQL (2026-07-20)
+
+O slug `reposicao.gerar_ciclo_oportunidade` ganhou o escritor DEFINITIVO: a própria função
+`ciclo_oportunidade_do_dia` (migration `20260722110000`), classificando origem por `auth.uid()`
+(NULL = cron das 11:05 → `automatica`; presente = clique staff → `manual` + nome). INSERT único
+no FIM da função — rollback do ciclo leva o registro junto (sem linha órfã "executando").
+Prova PG17 6/6 (`db/test-ciclo-registro.sh`): cron/manual/rollback/fail-open/invoker preservado
++ falsificação. O harness pegou um bug real de desenho: `auth.uid()` no DECLARE fura o
+EXCEPTION (lição nova em `docs/agent/database.md`). Caption na página de Oportunidades fora do
+condicional do botão (mostra o "automática" diário). Fecha o programa "última execução".
