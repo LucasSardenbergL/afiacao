@@ -992,7 +992,8 @@ echo "════════ FASE 1 — aplica cadeia de fixes de prod + migra
 for MG in 20260617130000_tint_promote_preserva_preco 20260617150000_tint_promote_reexpand_skus_novos \
           20260618130000_tint_promote_e4_so_com_custo 20260622130000_tint_promote_nome_cor_fallback \
           20260622210000_tint_promote_dedup_itens_corante 20260717163000_tint_promote_fail_closed_receita_parcial \
-          20260718140000_tint_promote_guard4_v3 20260718170000_tint_fase1c_expected_item_count; do
+          20260718140000_tint_promote_guard4_v3 20260718170000_tint_fase1c_expected_item_count \
+          20260722113000_tint_fase1d_is_base_pura; do
   echo "→ $MG.sql"
   P -v ON_ERROR_STOP=1 -q -f "$REPO_ROOT/supabase/migrations/$MG.sql" >/dev/null
 done
@@ -1000,10 +1001,15 @@ done
 P -tA -c "SELECT CASE WHEN pg_get_functiondef('public.tint_promote_sync_run(uuid)'::regprocedure) LIKE '%_fl_corrompida%' THEN 'OK' ELSE 'FALTA' END;" | grep -qx OK \
   || { echo "✗ FASE1: guard 4 (_fl_corrompida) não está no corpo aplicado"; exit 1; }
 # FASE 1c: o gate de integridade de transporte também precisa estar no corpo (C14-C23 rodam sobre a
-# v4 — os seeds legados não declaram expected_item_count, o que prova a NÃO-REGRESSÃO do caminho NULL).
+# cadeia consolidada — os seeds legados não declaram expected_item_count, o que prova a NÃO-REGRESSÃO
+# do caminho NULL).
 P -tA -c "SELECT CASE WHEN pg_get_functiondef('public.tint_promote_sync_run(uuid)'::regprocedure) LIKE '%_eu_incompleta%' THEN 'OK' ELSE 'FALTA' END;" | grep -qx OK \
   || { echo "✗ FASE1c: gate _eu_incompleta não está no corpo aplicado"; exit 1; }
-echo "  ✓ corpo consolidado + guard 4 + gate 1c aplicados (_fl_corrompida + _eu_incompleta)"
+# FASE 1d: gate de contradição + cap de limpeza no corpo (C14-C23 rodam sobre a v5; os seeds legados
+# nunca declaram is_base_pura → NÃO-REGRESSÃO do caminho não-declarado; C15 prova o endurecimento).
+P -tA -c "SELECT CASE WHEN pg_get_functiondef('public.tint_promote_sync_run(uuid)'::regprocedure) LIKE '%_eu_pura_contraditoria%' THEN 'OK' ELSE 'FALTA' END;" | grep -qx OK \
+  || { echo "✗ FASE1d: gate _eu_pura_contraditoria não está no corpo aplicado"; exit 1; }
+echo "  ✓ corpo consolidado + guard 4 + gate 1c + fase 1d aplicados (_fl_corrompida + _eu_incompleta + _eu_pura_contraditoria)"
 
 echo ""
 echo "════════ CENÁRIO 14 — receita CORROMPIDA preserva a anterior + loga erro (Guard 4) ════════"
@@ -1098,9 +1104,11 @@ END $$;
 SQL
 
 echo ""
-echo "════════ CENÁRIO 15 — base pura promove; fórmula nova toda-quebrada NÃO cria header (Guard 4) ════════"
+echo "════════ CENÁRIO 15 — vazio SEM declaração barra até em chave nova (1d); toda-quebrada NÃO cria header ════════"
 P -v ON_ERROR_STOP=1 -q <<'SQL'
--- C15a: COR15 base pura (SEM itens de corante) → promove normal (fórmula legitimamente sem corante).
+-- C15a (CONTRATO 1d — endurecido): COR15 sem itens e SEM is_base_pura → NÃO cria header (antes
+-- promovia "base pura"; com o conector velho filtrando inválidos, toda-quebrada nova chegava como
+-- vazio "íntegro" e virava fórmula vazia ativa — o mal das 28.609). Base pura DECLARADA é o C32.
 -- C15b: COR15Q toda-quebrada (único corante AX14 com qtd=0) → NÃO cria header vazio ativo.
 INSERT INTO tint_sync_runs (id, setting_id, account, store_code, sync_type, status)
 VALUES ('e1500000-0000-0000-0000-000000000001','aaaaaaaa-0000-0000-0000-000000000001','oben','L1','formulas','complete');
@@ -1113,21 +1121,21 @@ SELECT tint_promote_sync_run('e1500000-0000-0000-0000-000000000001');
 SQL
 P -v ON_ERROR_STOP=1 -q <<'SQL'
 DO $$
-DECLARE n15 int; n15q int; nerr15 int; nerr15q int; ni int;
+DECLARE n15 int; n15q int; nerr15 int; nerr15q int;
 BEGIN
-  -- C15a: base pura promoveu (header ativo, 0 itens de receita), sem erro corrompida.
-  SELECT count(*) INTO n15 FROM tint_formulas WHERE account='oben' AND cor_id='COR15' AND desativada_em IS NULL;
-  IF n15 <> 1 THEN RAISE EXCEPTION 'C15.1 FALHOU: COR15 base pura deveria promover 1 fórmula ativa, achei %', n15; END IF;
-  SELECT count(*) INTO ni FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id WHERE f.account='oben' AND f.cor_id='COR15';
-  IF ni <> 0 THEN RAISE EXCEPTION 'C15.1b FALHOU: COR15 base pura deveria ter 0 itens, achei %', ni; END IF;
+  -- C15a (1d): vazio SEM declaração NÃO cria header em chave nova + loga o motivo novo.
+  SELECT count(*) INTO n15 FROM tint_formulas WHERE account='oben' AND cor_id='COR15';
+  IF n15 <> 0 THEN RAISE EXCEPTION 'C15.1 FALHOU (1d): COR15 vazio sem declaração criou % header(s) — o C15a antigo voltou (fórmula vazia ativa)', n15; END IF;
+  SELECT count(*) INTO nerr15 FROM tint_sync_errors WHERE entity_id='COR15' AND error_message LIKE '%sem declaração de base pura%';
+  IF nerr15 < 1 THEN RAISE EXCEPTION 'C15.1b FALHOU (1d): COR15 barrado não logou o motivo "sem declaração de base pura"'; END IF;
   SELECT count(*) INTO nerr15 FROM tint_sync_errors WHERE entity_id='COR15' AND error_message LIKE '%corrompida%';
-  IF nerr15 <> 0 THEN RAISE EXCEPTION 'C15.1c FALHOU: COR15 base pura NÃO deveria logar corrompida (nerr=%)', nerr15; END IF;
+  IF nerr15 <> 0 THEN RAISE EXCEPTION 'C15.1c FALHOU: COR15 vazio NÃO é corrompida (nerr=%)', nerr15; END IF;
   -- C15b: toda-quebrada NÃO virou header (o mal das 28.609 fórmulas vazias ativas).
   SELECT count(*) INTO n15q FROM tint_formulas WHERE account='oben' AND cor_id='COR15Q';
   IF n15q <> 0 THEN RAISE EXCEPTION 'C15.2 FALHOU: COR15Q toda-quebrada criou % fórmula(s) (esperado 0 — não vira vazia ativa)', n15q; END IF;
   SELECT count(*) INTO nerr15q FROM tint_sync_errors WHERE entity_id='COR15Q' AND error_message LIKE '%corrompida%';
   IF nerr15q < 1 THEN RAISE EXCEPTION 'C15.3 FALHOU: COR15Q toda-quebrada não logou corrompida'; END IF;
-  RAISE NOTICE 'OK C15 — base pura COR15 promove (0 itens, sem erro); COR15Q toda-quebrada NÃO cria header + loga erro';
+  RAISE NOTICE 'OK C15 (1d) — vazio sem declaração barrado (0 headers + motivo novo); COR15Q toda-quebrada NÃO cria header + loga corrompida';
 END $$;
 SQL
 
@@ -1755,6 +1763,246 @@ SQL
 QRES=$(P -tA -c "SELECT (max(fi.qtd_ml) FILTER (WHERE c.id_corante_sayersystem='AX24') = 77) FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id JOIN tint_corantes c ON c.id=fi.corante_id WHERE f.account='oben' AND f.cor_id='COR24';")
 [ "$QRES" = "t" ] || { echo "✗ F1c FALHOU: v4 restaurada não barrou o run incompleto (AX24=77? $QRES — o run 88 devia ser barrado)"; exit 1; }
 echo "  ✓ restauração OK — run incompleto (88) barrado de novo: receita preservada (AX24=77)"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# FASE 1d — base pura EXPLÍCITA (is_base_pura) + endurecimento do vazio. Cenários C30-C33 + F1d.
+# O F1c acima restaurou a 1c/v4 — re-aplica a v5 ANTES destes cenários (a última a recriar vence).
+#   C30 — transição legítima pigmentada→pura (tríade declarada) LIMPA a receita, sem erro;
+#   C31 — sinal contraditório barra (declarada com itens; declarada com expected NULL);
+#   C32 — base pura DECLARADA em chave nova cria header vazio legítimo (o C15a virou isto);
+#   C33 — cap anti-limpeza-em-massa: >50 limpezas num run → NENHUMA executa; ≤cap executa.
+#   F1d — 3 falsificações: exceção com dente, fail-closed com dente, cap com dente.
+# ═══════════════════════════════════════════════════════════════════════════════
+MIG1D="$REPO_ROOT/supabase/migrations/20260722113000_tint_fase1d_is_base_pura.sql"
+echo ""
+echo "════════ FASE 1d — re-aplica a v5 (pós-F1c) ════════"
+P -v ON_ERROR_STOP=1 -q -f "$MIG1D" >/dev/null
+P -tA -c "SELECT CASE WHEN pg_get_functiondef('public.tint_promote_sync_run(uuid)'::regprocedure) LIKE '%_eu_pura_contraditoria%' THEN 'OK' ELSE 'FALTA' END;" | grep -qx OK \
+  || { echo "✗ FASE1d: v5 não aplicou (gate _eu_pura_contraditoria ausente)"; exit 1; }
+echo "  ✓ v5 aplicada"
+
+echo ""
+echo "════════ CENÁRIO 30 — 1d: transição legítima pigmentada→pura LIMPA a receita (tríade) ════════"
+# Baseline explícito: COR24 terminou o F1c com {AX24:77, VM24:77} (2 itens).
+NB30=$(P -tA -c "SELECT count(*) FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id WHERE f.account='oben' AND f.cor_id='COR24';")
+[ "$NB30" = "2" ] || { echo "✗ baseline C30: COR24 deveria ter 2 itens pós-F1c, achei $NB30"; exit 1; }
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+INSERT INTO tint_sync_runs (id, setting_id, account, store_code, sync_type, status)
+VALUES ('e1d30000-0000-0000-0000-000000000001','aaaaaaaa-0000-0000-0000-000000000001','oben','L1','formulas','complete');
+INSERT INTO tint_staging_formulas (id, sync_run_id, account, store_code, cor_id, nome_cor, cod_produto, id_base, id_embalagem, volume_final_ml, personalizada, expected_item_count, is_base_pura)
+VALUES ('f1d30000-0000-0000-0000-000000000001','e1d30000-0000-0000-0000-000000000001','oben','L1','COR24','Boa24','P24','B24','E24',900,false,0,true);
+SELECT tint_promote_sync_run('e1d30000-0000-0000-0000-000000000001');
+SQL
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+DO $$
+DECLARE n int; nerr int; v_limpas int; v_ativa int;
+BEGIN
+  SELECT count(*) INTO n FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id WHERE f.account='oben' AND f.cor_id='COR24';
+  IF n <> 0 THEN RAISE EXCEPTION 'C30.1 FALHOU: tríade declarada NÃO limpou a receita (COR24 com % itens, esperado 0)', n; END IF;
+  SELECT count(*) INTO v_ativa FROM tint_formulas WHERE account='oben' AND cor_id='COR24' AND desativada_em IS NULL;
+  IF v_ativa <> 1 THEN RAISE EXCEPTION 'C30.2 FALHOU: COR24 deveria seguir ativa como base pura (achei %)', v_ativa; END IF;
+  -- Filtra por entity_id: o promote processa o PAR inteiro e RE-LOGA honestamente os latest
+  -- ruins herdados de cenários anteriores (ex.: COR25 incompleta) — sinal por FÓRMULA, não do run.
+  SELECT count(*) INTO nerr FROM tint_sync_errors WHERE sync_run_id='e1d30000-0000-0000-0000-000000000001'
+    AND entity_type='formula_promote' AND entity_id='COR24';
+  IF nerr <> 0 THEN RAISE EXCEPTION 'C30.3 FALHOU: transição legítima logou % erro(s) p/ COR24 (esperado 0)', nerr; END IF;
+  SELECT (metadata->>'receitas_limpas')::int INTO v_limpas FROM tint_sync_runs WHERE id='e1d30000-0000-0000-0000-000000000001';
+  IF v_limpas IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'C30.4 FALHOU: metadata receitas_limpas=% (esperado 1)', v_limpas; END IF;
+  RAISE NOTICE 'OK C30 — tríade declarada limpou {77,77}→0 itens, header ativo, 0 erros, receitas_limpas=1';
+END $$;
+SQL
+
+echo ""
+echo "════════ CENÁRIO 31 — 1d: sinal contraditório barra (com itens; com expected NULL) ════════"
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+-- Recompõe COR24 com receita íntegra {AX24:9, VM24:4} pelo protocolo novo.
+INSERT INTO tint_sync_runs (id, setting_id, account, store_code, sync_type, status)
+VALUES ('e1d31000-0000-0000-0000-000000000001','aaaaaaaa-0000-0000-0000-000000000001','oben','L1','formulas','complete');
+INSERT INTO tint_staging_formulas (id, sync_run_id, account, store_code, cor_id, nome_cor, cod_produto, id_base, id_embalagem, volume_final_ml, personalizada, expected_item_count)
+VALUES ('f1d31000-0000-0000-0000-000000000001','e1d31000-0000-0000-0000-000000000001','oben','L1','COR24','Boa24','P24','B24','E24',900,false,2);
+INSERT INTO tint_staging_formula_itens (sync_run_id, staging_formula_id, id_corante, ordem, qtd_ml)
+VALUES ('e1d31000-0000-0000-0000-000000000001','f1d31000-0000-0000-0000-000000000001','AX24',1,9),
+       ('e1d31000-0000-0000-0000-000000000001','f1d31000-0000-0000-0000-000000000001','VM24',2,4);
+SELECT tint_promote_sync_run('e1d31000-0000-0000-0000-000000000001');
+-- C31a: declarada pura COM itens válidos (expected=2=COUNT → passa o 1c; contradição barra).
+INSERT INTO tint_sync_runs (id, setting_id, account, store_code, sync_type, status)
+VALUES ('e1d31000-0000-0000-0000-0000000000c0','aaaaaaaa-0000-0000-0000-000000000001','oben','L1','formulas','complete');
+INSERT INTO tint_staging_formulas (id, sync_run_id, account, store_code, cor_id, nome_cor, cod_produto, id_base, id_embalagem, volume_final_ml, personalizada, expected_item_count, is_base_pura)
+VALUES ('f1d31000-0000-0000-0000-0000000000c0','e1d31000-0000-0000-0000-0000000000c0','oben','L1','COR24','Boa24','P24','B24','E24',900,false,2,true);
+INSERT INTO tint_staging_formula_itens (sync_run_id, staging_formula_id, id_corante, ordem, qtd_ml)
+VALUES ('e1d31000-0000-0000-0000-0000000000c0','f1d31000-0000-0000-0000-0000000000c0','AX24',1,55),
+       ('e1d31000-0000-0000-0000-0000000000c0','f1d31000-0000-0000-0000-0000000000c0','VM24',2,55);
+SELECT tint_promote_sync_run('e1d31000-0000-0000-0000-0000000000c0');
+-- C31b: declarada pura com expected NULL e 0 itens (protocolo misto = artefato).
+INSERT INTO tint_sync_runs (id, setting_id, account, store_code, sync_type, status)
+VALUES ('e1d31000-0000-0000-0000-0000000000c1','aaaaaaaa-0000-0000-0000-000000000001','oben','L1','formulas','complete');
+INSERT INTO tint_staging_formulas (id, sync_run_id, account, store_code, cor_id, nome_cor, cod_produto, id_base, id_embalagem, volume_final_ml, personalizada, is_base_pura)
+VALUES ('f1d31000-0000-0000-0000-0000000000c1','e1d31000-0000-0000-0000-0000000000c1','oben','L1','COR24','Boa24','P24','B24','E24',900,false,true);
+SELECT tint_promote_sync_run('e1d31000-0000-0000-0000-0000000000c1');
+SQL
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+DO $$
+DECLARE n int; qax numeric; nerr int;
+BEGIN
+  SELECT count(*) INTO n FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id WHERE f.account='oben' AND f.cor_id='COR24';
+  IF n <> 2 THEN RAISE EXCEPTION 'C31.1 FALHOU: contraditórios mexeram na receita (COR24 com % itens, esperado 2 {9,4})', n; END IF;
+  SELECT max(fi.qtd_ml) FILTER (WHERE c.id_corante_sayersystem='AX24') INTO qax
+    FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id JOIN tint_corantes c ON c.id=fi.corante_id
+    WHERE f.account='oben' AND f.cor_id='COR24';
+  IF qax IS DISTINCT FROM 9 THEN RAISE EXCEPTION 'C31.2 FALHOU: item 55 do contraditório entrou (AX24=%, esperado 9)', qax; END IF;
+  SELECT count(*) INTO nerr FROM tint_sync_errors WHERE sync_run_id='e1d31000-0000-0000-0000-0000000000c0'
+    AND entity_id='COR24' AND error_message LIKE '%contraditório%';
+  IF nerr < 1 THEN RAISE EXCEPTION 'C31.3 FALHOU: declarada-com-itens não logou contraditório'; END IF;
+  SELECT count(*) INTO nerr FROM tint_sync_errors WHERE sync_run_id='e1d31000-0000-0000-0000-0000000000c1'
+    AND entity_id='COR24' AND error_message LIKE '%contraditório%';
+  IF nerr < 1 THEN RAISE EXCEPTION 'C31.4 FALHOU: declarada-com-expected-NULL não logou contraditório'; END IF;
+  RAISE NOTICE 'OK C31 — contraditórios barrados (com itens; expected NULL): receita {9,4} intacta + 2 logs';
+END $$;
+SQL
+
+echo ""
+echo "════════ CENÁRIO 32 — 1d: base pura DECLARADA em chave nova cria header vazio legítimo ════════"
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+INSERT INTO tint_sync_runs (id, setting_id, account, store_code, sync_type, status)
+VALUES ('e1d32000-0000-0000-0000-000000000001','aaaaaaaa-0000-0000-0000-000000000001','oben','L1','formulas','complete');
+INSERT INTO tint_staging_formulas (id, sync_run_id, account, store_code, cor_id, nome_cor, cod_produto, id_base, id_embalagem, volume_final_ml, personalizada, expected_item_count, is_base_pura)
+VALUES ('f1d32000-0000-0000-0000-000000000001','e1d32000-0000-0000-0000-000000000001','oben','L1','COR32','Pura32','P24','B24','E24',900,false,0,true);
+SELECT tint_promote_sync_run('e1d32000-0000-0000-0000-000000000001');
+SQL
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+DO $$
+DECLARE n int; ni int; nerr int; v_limpas int;
+BEGIN
+  SELECT count(*) INTO n FROM tint_formulas WHERE account='oben' AND cor_id='COR32' AND desativada_em IS NULL;
+  IF n <> 1 THEN RAISE EXCEPTION 'C32.1 FALHOU: base pura declarada em chave nova deveria criar 1 header ativo, achei %', n; END IF;
+  SELECT count(*) INTO ni FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id WHERE f.account='oben' AND f.cor_id='COR32';
+  IF ni <> 0 THEN RAISE EXCEPTION 'C32.2 FALHOU: COR32 deveria ter 0 itens, achei %', ni; END IF;
+  SELECT count(*) INTO nerr FROM tint_sync_errors WHERE sync_run_id='e1d32000-0000-0000-0000-000000000001'
+    AND entity_type='formula_promote' AND entity_id='COR32';
+  IF nerr <> 0 THEN RAISE EXCEPTION 'C32.3 FALHOU: declarada em chave nova logou % erro(s) p/ COR32', nerr; END IF;
+  -- Chave nova NÃO conta como limpeza (nada foi destruído).
+  SELECT (metadata->>'receitas_limpas')::int INTO v_limpas FROM tint_sync_runs WHERE id='e1d32000-0000-0000-0000-000000000001';
+  IF v_limpas IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'C32.4 FALHOU: chave nova contou como limpeza (receitas_limpas=%)', v_limpas; END IF;
+  RAISE NOTICE 'OK C32 — base pura declarada em chave nova: header ativo, 0 itens, 0 erros, receitas_limpas=0';
+END $$;
+SQL
+
+echo ""
+echo "════════ CENÁRIO 33 — 1d: cap anti-limpeza-em-massa (>50 barra tudo; ≤cap executa) ════════"
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+-- Semeia 52 fórmulas oficiais COM receita (clones da célula P24/B24/E24 da COR24).
+-- 52 e não 51: no F1d-2 a COR33_5 perde a declaração (latest sem is_base_pura) e as declaradas
+-- restantes têm de SEGUIR acima do cap (51 > 50) — senão a sabotagem limparia o lote inteiro.
+INSERT INTO tint_formulas (account, cor_id, nome_cor, produto_id, base_id, embalagem_id, subcolecao_id, sku_id, volume_final_ml, personalizada)
+SELECT 'oben', 'COR33_'||g, 'Cap '||g, f.produto_id, f.base_id, f.embalagem_id, f.subcolecao_id, f.sku_id, f.volume_final_ml, false
+FROM tint_formulas f, generate_series(1,52) g
+WHERE f.account='oben' AND f.cor_id='COR24';
+INSERT INTO tint_formula_itens (formula_id, corante_id, ordem, qtd_ml)
+SELECT f.id, c.id, 1, 5
+FROM tint_formulas f
+JOIN tint_corantes c ON c.account='oben' AND c.id_corante_sayersystem='AX24'
+WHERE f.account='oben' AND f.cor_id ~ '^COR33_';
+-- Run declarando as 52 como base pura (tríade) → 52 limpezas num run > cap 50.
+INSERT INTO tint_sync_runs (id, setting_id, account, store_code, sync_type, status)
+VALUES ('e1d33000-0000-0000-0000-000000000001','aaaaaaaa-0000-0000-0000-000000000001','oben','L1','formulas','complete');
+INSERT INTO tint_staging_formulas (sync_run_id, account, store_code, cor_id, nome_cor, cod_produto, id_base, id_embalagem, volume_final_ml, personalizada, expected_item_count, is_base_pura)
+SELECT 'e1d33000-0000-0000-0000-000000000001','oben','L1','COR33_'||g,'Cap '||g,'P24','B24','E24',900,false,0,true
+FROM generate_series(1,52) g;
+SELECT tint_promote_sync_run('e1d33000-0000-0000-0000-000000000001');
+SQL
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+DO $$
+DECLARE n int; nerr int; v_limpas int;
+BEGIN
+  SELECT count(*) INTO n FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id WHERE f.account='oben' AND f.cor_id ~ '^COR33_';
+  IF n <> 52 THEN RAISE EXCEPTION 'C33.1 FALHOU: cap furado — % receitas restantes (esperado 52 intactas)', n; END IF;
+  SELECT count(*) INTO nerr FROM tint_sync_errors WHERE sync_run_id='e1d33000-0000-0000-0000-000000000001'
+    AND error_message LIKE '%limpeza em massa%';
+  IF nerr <> 52 THEN RAISE EXCEPTION 'C33.2 FALHOU: esperava 52 logs de limpeza em massa, achei %', nerr; END IF;
+  SELECT (metadata->>'receitas_limpas')::int INTO v_limpas FROM tint_sync_runs WHERE id='e1d33000-0000-0000-0000-000000000001';
+  IF v_limpas IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'C33.3 FALHOU: receitas_limpas=% com cap estourado (esperado 0)', v_limpas; END IF;
+  RAISE NOTICE 'OK C33a — 52 limpezas num run: NENHUMA executou, 52 receitas intactas + 52 logs';
+END $$;
+SQL
+# NOTA (latest-per-key): não existe "run pequeno depois do run gigante" na MESMA célula — as 52
+# declarações do C33a seguem latest e qualquer promote do par re-vê as 51 → o cap continua barrando
+# (comportamento DESEJADO: o cap protege contra o ESTADO do staging, não contra o run). A limpeza
+# ≤cap executando está provada no C30 (1 limpeza, antes das 51 existirem).
+
+echo ""
+echo "── falsificação F1d-1 (a EXCEÇÃO declarada tem dente: sem ela, a limpeza legítima NÃO executa) ──"
+# Sabota o predicado da tríade no (c') → tríade nunca reconhecida → vazio declarado volta a barrar.
+sed 's/^      AND fl.expected_item_count = 0$/      AND false/' "$MIG1D" > /tmp/sab-tint-1d-excecao.sql
+grep -q '^      AND fl.expected_item_count = 0$' /tmp/sab-tint-1d-excecao.sql && { echo "✗ F1d-1: sed não neutralizou a tríade"; exit 1; }
+grep -q '^      AND false$' /tmp/sab-tint-1d-excecao.sql || { echo "✗ F1d-1: âncora da tríade não encontrada (a migration mudou?)"; exit 1; }
+P -v ON_ERROR_STOP=1 -q -f /tmp/sab-tint-1d-excecao.sql >/dev/null
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+INSERT INTO tint_sync_runs (id, setting_id, account, store_code, sync_type, status)
+VALUES ('e1df1000-0000-0000-0000-000000000001','aaaaaaaa-0000-0000-0000-000000000001','oben','L1','formulas','complete');
+INSERT INTO tint_staging_formulas (sync_run_id, account, store_code, cor_id, nome_cor, cod_produto, id_base, id_embalagem, volume_final_ml, personalizada, expected_item_count, is_base_pura)
+VALUES ('e1df1000-0000-0000-0000-000000000001','oben','L1','COR33_3','Cap 3','P24','B24','E24',900,false,0,true);
+SELECT tint_promote_sync_run('e1df1000-0000-0000-0000-000000000001');
+SQL
+NF1=$(P -tA -c "SELECT count(*) FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id WHERE f.account='oben' AND f.cor_id='COR33_3';")
+[ "$NF1" = "1" ] || { echo "✗ F1d-1 FALHOU: com a exceção sabotada a tríade AINDA limpou (COR33_3 com $NF1 itens, esperado 1 preservado) — C30 não depende da exceção"; exit 1; }
+echo "  ✓ exceção sabotada → tríade legítima barrada (receita preservada): C30 tem dente"
+
+echo "── falsificação F1d-2 (o fail-closed tem dente: exceção sempre-verdadeira limparia vazio SEM declaração) ──"
+perl -0pe 's/fl\.is_base_pura IS TRUE\n      AND fl\.expected_item_count = 0/true\n      AND true/' "$MIG1D" > /tmp/sab-tint-1d-failopen.sql
+python3 - <<'EOF'
+orig = open("/tmp/sab-tint-1d-failopen.sql").read()
+assert "true\n      AND true" in orig, "F1d-2: perl não sabotou a tríade"
+assert "fl.is_base_pura IS TRUE\n      AND fl.expected_item_count = 0" not in orig, "F1d-2: tríade original sobrou"
+EOF
+P -v ON_ERROR_STOP=1 -q -f /tmp/sab-tint-1d-failopen.sql >/dev/null
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+-- Vazio SEM declaração sobre COR33_5 (tem receita): sob a sabotagem, a "exceção" pega qualquer
+-- vazio bruto → LIMPA — exatamente a regressão que C26/C27 vigiam.
+INSERT INTO tint_sync_runs (id, setting_id, account, store_code, sync_type, status)
+VALUES ('e1df2000-0000-0000-0000-000000000001','aaaaaaaa-0000-0000-0000-000000000001','oben','L1','formulas','complete');
+INSERT INTO tint_staging_formulas (sync_run_id, account, store_code, cor_id, nome_cor, cod_produto, id_base, id_embalagem, volume_final_ml, personalizada, expected_item_count)
+VALUES ('e1df2000-0000-0000-0000-000000000001','oben','L1','COR33_5','Cap 5','P24','B24','E24',900,false,0);
+SELECT tint_promote_sync_run('e1df2000-0000-0000-0000-000000000001');
+SQL
+NF2=$(P -tA -c "SELECT count(*) FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id WHERE f.account='oben' AND f.cor_id='COR33_5';")
+[ "$NF2" = "0" ] || { echo "✗ F1d-2 FALHOU: exceção sempre-verdadeira NÃO limpou o vazio sem declaração (COR33_5 com $NF2 itens) — o fail-closed não depende da tríade"; exit 1; }
+echo "  ✓ exceção sempre-verdadeira → vazio SEM declaração LIMPOU (dano provado): o fail-closed da tríade tem dente"
+
+echo "── falsificação F1d-3 (o cap tem dente: cap gigante deixa a limpeza em massa passar) ──"
+sed 's/v_cap_limpezas   constant int := 50;/v_cap_limpezas   constant int := 100000;/' "$MIG1D" > /tmp/sab-tint-1d-cap.sql
+grep -q 'constant int := 100000;' /tmp/sab-tint-1d-cap.sql || { echo "✗ F1d-3: sed não trocou o cap"; exit 1; }
+P -v ON_ERROR_STOP=1 -q -f /tmp/sab-tint-1d-cap.sql >/dev/null
+# Baseline deste ponto: COR33_% com receita = 52 - 1 (F1d-2 limpou COR33_5; o cap segurou as 51
+# declaradas restantes) = 51.
+NB33=$(P -tA -c "SELECT count(*) FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id WHERE f.account='oben' AND f.cor_id ~ '^COR33_';")
+[ "$NB33" = "51" ] || { echo "✗ baseline F1d-3: esperava 51 receitas COR33 restantes, achei $NB33"; exit 1; }
+# Re-invoca o run das 51 tríades (latest segue no staging): com cap gigante, limpa TODAS.
+P -v ON_ERROR_STOP=1 -q -c "SELECT tint_promote_sync_run('e1d33000-0000-0000-0000-000000000001');" >/dev/null
+NF3=$(P -tA -c "SELECT count(*) FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id WHERE f.account='oben' AND f.cor_id ~ '^COR33_';")
+[ "$NF3" = "0" ] || { echo "✗ F1d-3 FALHOU: cap gigante NÃO limpou em massa (restam $NF3) — C33 não depende do cap"; exit 1; }
+echo "  ✓ cap gigante → 51 receitas limpas num run (dano provado): C33 tem dente"
+
+# RESTAURA a v5 real e prova que o cap volta a barrar: re-semeia as 51 receitas e roda um run NOVO
+# declarando as 52 (após F1d-2, o latest de COR33_5 ficou SEM declaração — re-declarar garante 52>cap).
+P -v ON_ERROR_STOP=1 -q -f "$MIG1D" >/dev/null
+P -tA -c "SELECT CASE WHEN pg_get_functiondef('public.tint_promote_sync_run(uuid)'::regprocedure) LIKE '%_eu_pura_contraditoria%' AND pg_get_functiondef('public.tint_promote_sync_run(uuid)'::regprocedure) LIKE '%:= 50;%' THEN 'OK' ELSE 'FALTA' END;" | grep -qx OK \
+  || { echo "✗ restauração F1d falhou (v5 real ausente)"; exit 1; }
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+INSERT INTO tint_formula_itens (formula_id, corante_id, ordem, qtd_ml)
+SELECT f.id, c.id, 1, 5
+FROM tint_formulas f
+JOIN tint_corantes c ON c.account='oben' AND c.id_corante_sayersystem='AX24'
+WHERE f.account='oben' AND f.cor_id ~ '^COR33_';
+INSERT INTO tint_sync_runs (id, setting_id, account, store_code, sync_type, status)
+VALUES ('e1d33000-0000-0000-0000-0000000000f9','aaaaaaaa-0000-0000-0000-000000000001','oben','L1','formulas','complete');
+INSERT INTO tint_staging_formulas (sync_run_id, account, store_code, cor_id, nome_cor, cod_produto, id_base, id_embalagem, volume_final_ml, personalizada, expected_item_count, is_base_pura)
+SELECT 'e1d33000-0000-0000-0000-0000000000f9','oben','L1','COR33_'||g,'Cap '||g,'P24','B24','E24',900,false,0,true
+FROM generate_series(1,52) g;
+SELECT tint_promote_sync_run('e1d33000-0000-0000-0000-0000000000f9');
+SQL
+NR=$(P -tA -c "SELECT count(*) FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id WHERE f.account='oben' AND f.cor_id ~ '^COR33_';")
+[ "$NR" = "52" ] || { echo "✗ restauração F1d: v5 real deveria barrar as 52 de novo (achei $NR)"; exit 1; }
+echo "  ✓ restauração OK — v5 real barra as 52 limpezas de novo (52 receitas intactas)"
 
 P -v ON_ERROR_STOP=1 -q <<'SQL'
 SELECT 'TODOS OS TESTES PG17 DA PROMOÇÃO PASSARAM ✓' AS resultado;

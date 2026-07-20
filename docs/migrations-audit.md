@@ -21,11 +21,11 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **403** custom migrations totais
-- **1367** objetos esperados (criados por estas migrations)
+- **406** custom migrations totais
+- **1445** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 401
-  - `rls_policy`: 295
+  - `function`: 412
+  - `rls_policy`: 362
   - `index`: 224
   - `cron_job`: 150
   - `table`: 147
@@ -3317,6 +3317,87 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.pode_ver_carteira_completa` | — |
 
+### `20260718190000_authz_capability_matrix_e2.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.cap_carteira_ler` | — |
+| `function` | `private.cap_carteira_escrever` | — |
+| `function` | `private.cap_custo_ler` | — |
+| `function` | `private.cap_preco_escrever` | — |
+| `function` | `private.cap_credito_escrever` | — |
+| `function` | `private.cap_compras_ler` | — |
+| `function` | `public.fin_estimar_estoque_omie` | — |
+| `function` | `public.medir_abaixo_piso_tier` | — |
+| `function` | `public.authz_contract_version` | — |
+| `rls_policy` | `public.cliente_tier_preco_insert_gestor` | `cliente_tier_preco` |
+| `rls_policy` | `public.cliente_tier_preco_update_gestor` | `cliente_tier_preco` |
+| `rls_policy` | `public.venda_excecao_insert_gestor` | `venda_excecao_credito` |
+| `rls_policy` | `public.cmc_ledger_select_gestor` | `cmc_ledger` |
+| `rls_policy` | `public.markup_policy_select_carteira` | `markup_policy` |
+| `rls_policy` | `public.cold_start_log_sel` | `reposicao_cold_start_log` |
+| `rls_policy` | `public.depara_auto_log_sel` | `reposicao_depara_auto_log` |
+| `rls_policy` | `public.estoque_nao_confirmado_log_sel` | `reposicao_estoque_nao_confirmado_log` |
+| `rls_policy` | `public.reposicao_motor_run_sel` | `reposicao_motor_run` |
+| `rls_policy` | `public.param_auto_log_sel` | `reposicao_param_auto_log` |
+| `rls_policy` | `public.param_auto_run_sel` | `reposicao_param_auto_run` |
+| `rls_policy` | `public.param_auto_pin_sel` | `reposicao_param_pin` |
+| `rls_policy` | `public.reposicao_pedidos_compra_run_sel` | `reposicao_pedidos_compra_run` |
+| `rls_policy` | `public.reposicao_po_last_seen_sel` | `reposicao_po_last_seen` |
+| `rls_policy` | `public.fcs_select_carteira` | `farmer_client_scores` |
+| `rls_policy` | `public.fcs_insert_own_or_gestor` | `farmer_client_scores` |
+| `rls_policy` | `public.fcs_update_own_or_gestor` | `farmer_client_scores` |
+| `rls_policy` | `public.fcs_delete_own_or_gestor` | `farmer_client_scores` |
+| `rls_policy` | `public.cvs_select_carteira` | `customer_visit_scores` |
+| `rls_policy` | `public.cvs_insert_own_or_gestor` | `customer_visit_scores` |
+| `rls_policy` | `public.cvs_update_own_or_gestor` | `customer_visit_scores` |
+| `rls_policy` | `public.cvs_delete_own_or_gestor` | `customer_visit_scores` |
+| `rls_policy` | `public.frec_select_carteira` | `farmer_recommendations` |
+| `rls_policy` | `public.frec_insert_own_or_gestor` | `farmer_recommendations` |
+| `rls_policy` | `public.frec_update_own_or_gestor` | `farmer_recommendations` |
+| `rls_policy` | `public.frec_delete_own_or_gestor` | `farmer_recommendations` |
+| `rls_policy` | `public.fcall_select_carteira` | `farmer_calls` |
+| `rls_policy` | `public.fcall_insert_own_or_gestor` | `farmer_calls` |
+| `rls_policy` | `public.fcall_update_own_or_gestor` | `farmer_calls` |
+| `rls_policy` | `public.fcall_delete_own_or_gestor` | `farmer_calls` |
+| `rls_policy` | `public.fbrec_select_carteira` | `farmer_bundle_recommendations` |
+| `rls_policy` | `public.fbrec_insert_own_or_gestor` | `farmer_bundle_recommendations` |
+| `rls_policy` | `public.fbrec_update_own_or_gestor` | `farmer_bundle_recommendations` |
+| `rls_policy` | `public.fbrec_delete_own_or_gestor` | `farmer_bundle_recommendations` |
+| `rls_policy` | `public.fcop_select_carteira` | `farmer_copilot_sessions` |
+| `rls_policy` | `public.fcop_insert_own_or_gestor` | `farmer_copilot_sessions` |
+| `rls_policy` | `public.fcop_update_own_or_gestor` | `farmer_copilot_sessions` |
+| `rls_policy` | `public.fcop_delete_own_or_gestor` | `farmer_copilot_sessions` |
+| `rls_policy` | `public.rvis_select_carteira` | `route_visits` |
+| `rls_policy` | `public.rvis_insert_own_or_gestor` | `route_visits` |
+| `rls_policy` | `public.rvis_update_own_or_gestor` | `route_visits` |
+| `rls_policy` | `public.rvis_delete_own_or_gestor` | `route_visits` |
+| `rls_policy` | `public.vag_select_own` | `visitas_agendadas` |
+| `rls_policy` | `public.vag_delete_gestor` | `visitas_agendadas` |
+| `rls_policy` | `public.tarefas_select` | `tarefas` |
+| `rls_policy` | `public.tarefas_insert` | `tarefas` |
+| `rls_policy` | `public.tarefas_update` | `tarefas` |
+| `rls_policy` | `public.tevt_select` | `tarefa_eventos` |
+| `rls_policy` | `public.tevt_insert` | `tarefa_eventos` |
+| `rls_policy` | `public.tcand_select` | `tarefa_satisfacao_candidatos` |
+| `rls_policy` | `public.tcand_update` | `tarefa_satisfacao_candidatos` |
+| `rls_policy` | `public.tt_select` | `tarefa_templates` |
+| `rls_policy` | `public.tt_insert` | `tarefa_templates` |
+| `rls_policy` | `public.tt_update` | `tarefa_templates` |
+| `rls_policy` | `public.tt_delete` | `tarefa_templates` |
+| `rls_policy` | `public.radar_empresas_select_gestor` | `radar_empresas` |
+| `rls_policy` | `public.radar_contatos_select_gestor` | `radar_contatos` |
+| `rls_policy` | `public.radar_municipios_select_gestor` | `radar_municipios` |
+| `rls_policy` | `public.radar_ingest_state_select_gestor` | `radar_ingest_state` |
+| `rls_policy` | `public.cca_select_gestor_master` | `customer_canonical_alias` |
+| `rls_policy` | `public.nv_select` | `omie_clientes_nao_vinculados` |
+| `rls_policy` | `public.nv_state_select` | `omie_nao_vinculados_state` |
+| `rls_policy` | `public.ss_allowlist_select` | `selfservice_cliente_allowlist` |
+| `rls_policy` | `public.ss_allowlist_insert` | `selfservice_cliente_allowlist` |
+| `rls_policy` | `public.ss_allowlist_update` | `selfservice_cliente_allowlist` |
+| `rls_policy` | `public.ss_allowlist_delete` | `selfservice_cliente_allowlist` |
+| `rls_policy` | `storage.tarefa_comprov_select_own_ou_gestor` | `objects` |
+
 ### `20260718200000_register_carteira_member_source_rpc.sql`
 
 | Tipo | Objeto | Parent |
@@ -3347,6 +3428,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `view` | `public.v_tint_formula_canonica` | — |
 
+### `20260719120000_authz_cap_compras_escrever_fu4e.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.cap_compras_escrever` | — |
+
 ### `20260721190000_reposicao_pos_candidatos.sql`
 
 | Tipo | Objeto | Parent |
@@ -3372,6 +3459,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.tint_ultimo_preco_cliente` | — |
 | `function` | `public.tint_gate_revalida` | — |
+
+### `20260722113000_tint_fase1d_is_base_pura.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tint_promote_sync_run` | — |
 
 ## Próximos passos por status
 

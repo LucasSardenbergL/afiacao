@@ -1111,12 +1111,17 @@ func syncFormulas(
 		// ou nenhum. A PK foi resolvida no mapeamento (formula_pk via candidatos id_formula|id|codigo).
 		_, pkResolved = rm.Resolved[entity]["formula_pk"]
 		if !pkResolved {
+			// FASE 1d: sem a PK, "itens" fica AUSENTE do payload (expected NULL no
+			// banco → ambíguo → barra fail-closed). Antes injetava itens=[] em TODAS
+			// as fórmulas — "confirmado vazio" mentiroso; um is_base_pura derivado
+			// disso teria limpado a receita do catálogo inteiro.
 			logger.Warnf("syncFormulas %s: shape=child mas a PK da fórmula (formula_pk) não resolveu — "+
-				"itens NÃO serão anexados; rode 'discovery' e ajuste os candidatos de formula_pk", entity)
-		}
-		childItems, err = ex.ExtractFormulaChildItems(ctx, rm.ChildHasOrdem)
-		if err != nil {
-			return fmt.Errorf("syncFormulas %s: ExtractFormulaChildItems: %w", entity, err)
+				"itens NÃO serão anexados (payload ambíguo, o banco barra); rode 'discovery' e ajuste os candidatos de formula_pk", entity)
+		} else {
+			childItems, err = ex.ExtractFormulaChildItems(ctx, rm.ChildHasOrdem)
+			if err != nil {
+				return fmt.Errorf("syncFormulas %s: ExtractFormulaChildItems: %w", entity, err)
+			}
 		}
 	}
 
@@ -1141,18 +1146,28 @@ func syncFormulas(
 			continue
 		}
 		// Para shape=child: injeta os itens, juntando pela PK da fórmula (F5).
-		if rm.FormulaShape == FormulaShapeChild {
+		// FASE 1d: só com a PK resolvida E não-vazia NESTA linha — senão "itens"
+		// fica AUSENTE (ambíguo → banco barra), nunca [] mentiroso. 0 linhas na
+		// filha com junção confiável = base pura DECLARADA pela fonte.
+		if rm.FormulaShape == FormulaShapeChild && pkResolved {
 			idFormula := toString(row["formula_pk"]) // chave de junção = PK da fórmula
-			if items, ok := childItems[idFormula]; ok {
-				m["itens"] = items
-			} else {
-				m["itens"] = []map[string]any{}
+			if idFormula != "" {
+				if items, ok := childItems[idFormula]; ok {
+					m["itens"] = items
+				} else {
+					m["itens"] = []map[string]any{}
+					m["is_base_pura"] = true
+				}
 			}
 		}
-		// Para shape=flat: os itens já estão em row["itens"] (aggregateFlatFormulaItems).
+		// Para shape=flat: os itens já estão em row["itens"] (aggregateFlatFormulaItems),
+		// e a declaração de base pura (todos os slots livres + flat cols completos) idem.
 		if _, hasItens := m["itens"]; !hasItens {
 			if itens, ok := row["itens"]; ok {
 				m["itens"] = itens
+			}
+			if b, ok := row["is_base_pura"].(bool); ok && b {
+				m["is_base_pura"] = true
 			}
 		}
 		// Traduz o id_corante cru de cada item para a identidade canônica (codigo).

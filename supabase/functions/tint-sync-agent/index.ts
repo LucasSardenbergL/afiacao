@@ -1,4 +1,13 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+// FASE 1d: builders PUROS payload→staging (testáveis com deno test --no-remote).
+// O contrato (expected_item_count, is_base_pura, id pré-gerado, preservação de
+// item inválido) vive em staging-rows.ts — NÃO reimplementar inline aqui.
+import {
+  montarStagingFormulaRow,
+  montarStagingItemRows,
+  type TintFormulaItem,
+  type TintFormulaPayload,
+} from "./staging-rows.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -35,26 +44,7 @@ interface TintPrecosBaseItem {
   [k: string]: unknown;
 }
 
-/** Item de fórmula (corante + ordem + qtd) */
-interface TintFormulaItem {
-  id_corante?: string;
-  ordem?: number;
-  qtd_ml?: number;
-}
-
-/** Fórmula bruta enviada pelo agente */
-interface TintFormulaPayload {
-  cor_id?: string;
-  nome_cor?: string;
-  cod_produto?: string;
-  id_base?: string;
-  id_embalagem?: string;
-  subcolecao?: string | null;
-  volume_final_ml?: number;
-  preco_final?: number;
-  personalizada?: boolean;
-  itens?: TintFormulaItem[];
-}
+// TintFormulaItem / TintFormulaPayload migraram para ./staging-rows.ts (Fase 1d).
 
 /** Preparação (mistura de tinta concreta) bruta enviada pelo agente */
 interface TintPreparacaoPayload {
@@ -443,35 +433,13 @@ Deno.serve(async (req) => {
         }
       }
 
-      // Bulk insert valid formulas. Fase 1c (Codex P2): o id do header é PRÉ-GERADO aqui — a
-      // associação header→itens deixa de depender da ORDEM do retorno de .insert().select("id")
-      // (IDs fora de ordem ligariam a receita de A ao header de B com COUNT=expected batendo nos dois).
-      const formulaRows: Record<string, unknown>[] = validFormulas.map((f) => ({
-        id: crypto.randomUUID(),
-        sync_run_id: runId,
-        account: agent.account,
-        store_code: agent.storeCode,
-        cor_id: f.cor_id,
-        nome_cor: f.nome_cor,
-        cod_produto: f.cod_produto,
-        id_base: f.id_base,
-        id_embalagem: f.id_embalagem,
-        subcolecao: f.subcolecao || null,
-        volume_final_ml: f.volume_final_ml,
-        preco_final: f.preco_final,
-        personalizada: f.personalizada || false,
-        raw_data: f,
-        staging_status: "pending",
-        // Fase 1c — protocolo de staging como UNIDADE: declara quantas linhas de item a edge
-        // RECEBEU e vai inserir p/ este header. A promoção (tint_promote_sync_run v4) só aceita a
-        // fórmula quando o COUNT bruto ingerido bate (fecha subconjunto por fronteira de chunk +
-        // corrida de ingestão×promoção). ⚠️ Codex P1: `itens` AUSENTE (regressão de serialização)
-        // NUNCA vira 0 — grava NULL (protocolo ambíguo → a promoção barra fail-closed); 0 declarado
-        // também NÃO autoriza limpeza de receita (o conector filtra inválidos antes do POST — sinal
-        // semântico de base pura é a Fase 1d). Simulação/sintéticos não declaram (NULL).
-        // ⚠️ Deploy: a migration 20260718170000 (cria a coluna) vai ANTES desta edge.
-        expected_item_count: Array.isArray(f.itens) ? f.itens.length : null,
-      }));
+      // Bulk insert valid formulas. Fase 1c (Codex P2): o id do header é PRÉ-GERADO no builder — a
+      // associação header→itens deixa de depender da ORDEM do retorno de .insert().select("id").
+      // Fase 1d: o contrato inteiro (expected_item_count nunca-0-por-ausência, is_base_pura só
+      // literal true, preservação de item inválido) vive em staging-rows.ts, com teste Deno.
+      // ⚠️ Deploy: a migration 20260722113000 (coluna is_base_pura) vai ANTES desta edge (PGRST204).
+      const formulaRows: Record<string, unknown>[] = validFormulas.map((f) =>
+        montarStagingFormulaRow(f, runId, agent.account, agent.storeCode));
 
       // Insert in chunks of 500, collecting returned IDs
       const FORMULA_CHUNK = 500;
@@ -505,20 +473,8 @@ Deno.serve(async (req) => {
       for (let fi = 0; fi < validFormulas.length; fi++) {
         const formulaId = insertedFormulaIds[fi];
         if (!formulaId) continue; // formula insert failed, skip items
-        const f = validFormulas[fi];
-        const itens: TintFormulaItem[] = f.itens || [];
-        for (const item of itens) {
-          allItemRows.push({
-            formulaId,
-            idx: fi,
-            row: {
-              sync_run_id: runId,
-              staging_formula_id: formulaId,
-              id_corante: item.id_corante || "",
-              ordem: item.ordem,
-              qtd_ml: item.qtd_ml,
-            },
-          });
+        for (const row of montarStagingItemRows(validFormulas[fi], formulaId, runId)) {
+          allItemRows.push({ formulaId, idx: fi, row });
         }
       }
 
