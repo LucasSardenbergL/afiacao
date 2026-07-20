@@ -1,19 +1,23 @@
 #!/usr/bin/env bash
 # ╔══════════════════════════════════════════════════════════════════════════════════════════╗
-# ║  PROVA PG17 — DROP do espelho `omie_clientes` (P0-B-bis Fatia 5B, FINAL)                  ║
-# ║  Migration: supabase/migrations/20260722110000_drop_omie_clientes_espelho.sql             ║
-# ║  Rode:  bash db/test-drop-omie-clientes.sh > /tmp/t.log 2>&1; echo $?                     ║
+# ║  PROVA PG17 — QUARENTENA do espelho `omie_clientes` (P0-B-bis Fatia 5B)                   ║
+# ║  Migration: supabase/migrations/20260722110000_quarentena_omie_clientes_espelho.sql       ║
+# ║  Rode:  bash db/test-quarentena-omie-clientes.sh > /tmp/t.log 2>&1; echo $?               ║
 # ║                                                                                            ║
-# ║  Um DROP é irreversível, então a prova cobre TRÊS eixos:                                   ║
-# ║    1. ATOMICIDADE — o bloco é BEGIN/COMMIT: se o DROP falhar, o arquivo morto NÃO fica     ║
-# ║       para trás (senão um re-run acumularia lixo e mascararia a falha).                     ║
-# ║    2. ARQUIVO MORTO FIEL E TRANCADO — 6909 linhas idênticas, RLS ligada, anon/authenticated ║
-# ║       SEM leitura (tabela nova no Supabase nasce ABERTA — database.md §7).                  ║
-# ║    3. SOBREVIVÊNCIA — as 2 funções que a Fatia 5A migrou executam DEPOIS do DROP.          ║
-# ║       `LANGUAGE sql` é late-bound: o DROP passa limpo e só o EXECUTE revela a quebra.      ║
+# ║  A 1ª versão DROPAVA; o /codex challenge xhigh recusou e a quarentena por RENAME entrou    ║
+# ║  no lugar. A prova cobre QUATRO eixos:                                                     ║
+# ║    1. RENAME PRESERVA — 6909 linhas e os 41 `_integracao` intactos (≠ cópia CTAS, que      ║
+# ║       perderia índices/constraints e teria janela de escrita concorrente).                  ║
+# ║    2. FECHA O POSTGREST — anon/authenticated sem SELECT. É isto que faz a quarentena        ║
+# ║       DETECTAR consumidor externo: ele passa a receber erro, com URL e horário no log.      ║
+# ║    3. SOBREVIVÊNCIA — as 2 funções da Fatia 5A executam sem a tabela no nome antigo.        ║
+# ║       `LANGUAGE sql` é late-bound: só o EXECUTE revela a quebra.                            ║
+# ║    4. ⭐ A VALIDAÇÃO REVERTE — o Codex apontou que, na 1ª versão, as validações rodavam     ║
+# ║       DEPOIS do COMMIT: detectavam a quebra mas não a desfaziam. Agora rodam ANTES, e o     ║
+# ║       F4 prova que uma função quebrada aborta a transação e a tabela VOLTA ao nome original.║
 # ║                                                                                            ║
-# ║  Falsificações (Lei #3): F1 restaura o corpo PRÉ-5A e exige 42P01 (prova que A5/A6 medem   ║
-# ║  algo real); F2 remove o REVOKE e exige que `anon` PASSE a ler (prova que A4 tem dente).   ║
+# ║  Falsificações (Lei #3): F1 corpo PRÉ-5A ⇒ 42P01; F2 sem REVOKE ⇒ `anon` lê; F3 lock        ║
+# ║  concorrente ⇒ NOWAIT falha em vez de esperar; F4 validação pré-commit ⇒ rollback real.    ║
 # ╚══════════════════════════════════════════════════════════════════════════════════════════╝
 set -euo pipefail
 
@@ -142,7 +146,21 @@ awk '/^CREATE OR REPLACE FUNCTION/{f=1} f{print} /^GRANT EXECUTE/{if(f) exit}' \
 } > "$TMPD/dhc_micro.sql"
 P -q -f "$TMPD/dhc_micro.sql"
 P -q -f "$TMPD/seed.sql"
-echo "funções da Fatia 5A aplicadas"
+
+# A migration valida `_data_health_compute()` com o contrato REAL de 24 checks (é o que existe em
+# prod). Aqui o bloco `vendas_cadastros` é o verdadeiro — extraído da migration da Fatia 5A pelo awk
+# acima — e os outros 23 são preenchimento: o que este harness prova é a SOBREVIVÊNCIA da função ao
+# rename e o rollback quando ela quebra, não os 23 checks alheios (esses têm prova própria em
+# db/test-data-health-vendas-cadastros-proof.sh, que roda a função inteira com as 17 relações).
+P -q <<'SQL'
+CREATE OR REPLACE FUNCTION public._data_health_compute()
+RETURNS TABLE(source text, status text, freshness_basis text) LANGUAGE sql STABLE AS $fn$
+  SELECT * FROM public._dhc_vendas_cadastros()
+  UNION ALL
+  SELECT 'check_'||g, 'ok', 'stub' FROM generate_series(1,23) g
+$fn$;
+SQL
+echo "funções da Fatia 5A aplicadas (+ _data_health_compute com o contrato de 24 checks)"
 
 # ══════════════════════════════════════════════════════════════════════════════════════════
 # ZONA 2 — baseline ANTES do DROP
@@ -156,43 +174,45 @@ eq  "A0b _dhc executa ANTES do DROP (1 linha)"  "$(Pq -c 'SELECT count(*) FROM p
 eq  "A0c seed executa ANTES do DROP (6909 do ledger, via trigger)" "$(Pq -c 'SELECT count(*) FROM public.seed_targets_faltantes();')" "6909"
 
 # ══════════════════════════════════════════════════════════════════════════════════════════
-# ZONA 3 — aplicar a migration REAL do DROP (Lei #1)
+# ZONA 3 — aplicar a migration REAL da quarentena (Lei #1)
 # ══════════════════════════════════════════════════════════════════════════════════════════
-MIG="$REPO_ROOT/supabase/migrations/20260722110000_drop_omie_clientes_espelho.sql"
-awk '/^BEGIN;$/{f=1} f{print} /^COMMIT;$/{if(f) exit}' "$MIG" > "$TMPD/drop.sql"
-P -q -f "$TMPD/drop.sql"
+MIG="$REPO_ROOT/supabase/migrations/20260722110000_quarentena_omie_clientes_espelho.sql"
+awk '/^BEGIN;$/{f=1} f{print} /^COMMIT;$/{if(f) exit}' "$MIG" > "$TMPD/quar.sql"
+P -q -f "$TMPD/quar.sql"
 echo "migration aplicada: $(basename "$MIG")"
 
 # ══════════════════════════════════════════════════════════════════════════════════════════
 # ZONA 4 — asserts
 # ══════════════════════════════════════════════════════════════════════════════════════════
 echo "── asserts ──"
-eq  "A1 a tabela SUMIU"                        "$(Pq -c "SELECT (to_regclass('public.omie_clientes') IS NULL)::text;")" "true"
-eq  "A2 ⭐ arquivo morto tem as 6909 linhas"    "$(Pq -c 'SELECT count(*) FROM public._archive_omie_clientes_20260722;')" "6909"
+eq  "A1 o nome antigo SUMIU"                    "$(Pq -c "SELECT (to_regclass('public.omie_clientes') IS NULL)::text;")" "true"
+eq  "A2 ⭐ a quarentena tem as 6909 linhas"      "$(Pq -c 'SELECT count(*) FROM public._quarantine_omie_clientes_20260722;')" "6909"
 eq  "A3 ⭐ os 41 _integracao (dado NÃO reconstruível) preservados" \
-    "$(Pq -c 'SELECT count(*) FROM public._archive_omie_clientes_20260722 WHERE omie_codigo_cliente_integracao IS NOT NULL;')" "41"
+    "$(Pq -c 'SELECT count(*) FROM public._quarantine_omie_clientes_20260722 WHERE omie_codigo_cliente_integracao IS NOT NULL;')" "41"
 
-# o arquivo nasceria ABERTO (default privilege replicado na ZONA 1) — o REVOKE é o que o fecha
-eq  "A4 ⭐ anon NÃO lê o arquivo"               "$(Pq -c "SELECT has_table_privilege('anon','public._archive_omie_clientes_20260722','SELECT')::text;")" "false"
-eq  "A4b authenticated NÃO lê o arquivo"        "$(Pq -c "SELECT has_table_privilege('authenticated','public._archive_omie_clientes_20260722','SELECT')::text;")" "false"
-eq  "A4c RLS ligada no arquivo"                 "$(Pq -c "SELECT relrowsecurity::text FROM pg_class WHERE relname='_archive_omie_clientes_20260722';")" "true"
+# É o REVOKE que transforma a quarentena em DETECTOR: sem acesso pelo PostgREST, um consumidor
+# externo passa a receber erro — com URL e horário no log — em vez de seguir lendo em silêncio.
+eq  "A4 ⭐ anon NÃO lê a quarentena"             "$(Pq -c "SELECT has_table_privilege('anon','public._quarantine_omie_clientes_20260722','SELECT')::text;")" "false"
+eq  "A4b authenticated NÃO lê a quarentena"      "$(Pq -c "SELECT has_table_privilege('authenticated','public._quarantine_omie_clientes_20260722','SELECT')::text;")" "false"
+eq  "A4c RLS segue ligada (o rename preserva)"   "$(Pq -c "SELECT relrowsecurity::text FROM pg_class WHERE relname='_quarantine_omie_clientes_20260722';")" "true"
 
-# ⭐ o par que autoriza o DROP: as funções da Fatia 5A executam SEM a tabela (late-bound)
-eq  "A5 ⭐ _data_health_compute (bloco real) executa SEM o espelho" \
-    "$(Pq -c "SELECT status FROM public._dhc_vendas_cadastros();")" "ok"
-# ⚠️ 6909, não 0: o ledger é ACUMULADOR e sobrevive ao DROP com seus membros intactos — que é
-# exatamente a propriedade que o épico inteiro existe para garantir. Se viesse 0 aqui, seria o
-# sintoma de que a membership foi perdida junto com a tabela.
-eq  "A6 ⭐ seed executa SEM o espelho e a membership do ledger SOBREVIVE" \
+# ⭐ as funções da Fatia 5A executam sem a tabela no nome antigo (late-bound)
+eq  "A5 ⭐ _data_health_compute (bloco real) executa"  "$(Pq -c "SELECT status FROM public._dhc_vendas_cadastros();")" "ok"
+# ⚠️ 6909, não 0: o ledger é ACUMULADOR e sobrevive intacto — a propriedade que o épico existe para
+# garantir. Se viesse 0, seria sintoma de membership perdida junto com o rename.
+eq  "A6 ⭐ seed executa e a membership do ledger SOBREVIVE" \
     "$(Pq -c 'SELECT count(*) FROM public.seed_targets_faltantes();')" "6909"
 
-# os objetos-satélite caíram junto — trigger órfão seria dívida silenciosa
-eq  "A7 os 2 triggers do alvo sumiram"          "$(Pq -c "SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal AND tgname IN ('trg_omie_clientes_to_ledger','update_omie_clientes_updated_at');")" "0"
-eq  "A8 os 2 índices sumiram"                   "$(Pq -c "SELECT count(*) FROM pg_indexes WHERE tablename='omie_clientes';")" "0"
-eq  "A9 as 2 policies sumiram"                  "$(Pq -c "SELECT count(*) FROM pg_policy pol JOIN pg_class c ON c.oid=pol.polrelid WHERE c.relname='omie_clientes';")" "0"
-# a função do trigger SOBREVIVE (é objeto próprio) — não pode virar erro, mas fica órfã
-eq  "A10 tg_omie_clientes_to_ledger fica órfã (esperado: existe, sem trigger)" \
-    "$(Pq -c "SELECT count(*) FROM pg_proc WHERE proname='tg_omie_clientes_to_ledger';")" "1"
+# ⭐ o RENAME preserva o que uma cópia CTAS perderia — é o motivo de ele ser melhor que DROP+arquivo
+# 4 = os 2 índices explícitos + os 2 implícitos das constraints (pkey e unique_user_omie).
+# `pg_indexes` lista ambos; uma cópia CTAS não traria nenhum deles.
+eq  "A7 ⭐ os 4 índices seguem na quarentena"    "$(Pq -c "SELECT count(*) FROM pg_indexes WHERE tablename='_quarantine_omie_clientes_20260722';")" "4"
+eq  "A8 ⭐ as 3 constraints seguem"              "$(Pq -c "SELECT count(*) FROM pg_constraint WHERE conrelid='public._quarantine_omie_clientes_20260722'::regclass;")" "3"
+eq  "A9 ⭐ as 2 policies seguem"                 "$(Pq -c "SELECT count(*) FROM pg_policy pol JOIN pg_class c ON c.oid=pol.polrelid WHERE c.relname='_quarantine_omie_clientes_20260722';")" "2"
+# o ROLLBACK desfaz o rename de teste; `grep -x` isola a saída do SELECT (o `tail -1` pegava a
+# linha do próprio ROLLBACK — o comando certo com a leitura errada).
+eq  "A10 ⭐ REVERSÍVEL: rename de volta restaura o nome original" \
+    "$(Pq -c "BEGIN; ALTER TABLE public._quarantine_omie_clientes_20260722 RENAME TO omie_clientes; SELECT (to_regclass('public.omie_clientes') IS NOT NULL)::text; ROLLBACK;" | grep -x 'true\|false' | head -1)" "true"
 
 # ══════════════════════════════════════════════════════════════════════════════════════════
 # ZONA 5 — FALSIFICAÇÃO (Lei #3)
@@ -229,36 +249,60 @@ case "$R" in
 esac
 P -q -f "$TMPD/seed.sql"
 
-# F2 ⭐: sem o REVOKE, o arquivo morto nasce LEGÍVEL por anon (default privilege do Supabase).
-#        Prova que A4 mede a proteção, e não um acidente do harness.
-P -q -c "CREATE TABLE public._archive_sem_revoke AS SELECT * FROM public._archive_omie_clientes_20260722 LIMIT 1;"
-SEM=$(Pq -c "SELECT has_table_privilege('anon','public._archive_sem_revoke','SELECT')::text;")
-if [ "$SEM" = "true" ]; then ok "F2 ⭐ sem REVOKE o arquivo nasce legível por anon → A4 tem dente"; else bad "F2 tabela nova nasceu fechada sozinha (=$SEM) → A4 é falso-verde"; fi
-P -q -c "DROP TABLE public._archive_sem_revoke;"
+# F2 ⭐: sem o REVOKE, a quarentena continua legível por anon (default privilege do Supabase, que a
+#        ZONA 1 replica). Prova que A4 mede a proteção, e não um acidente do harness.
+P -q -c "CREATE TABLE public._quar_sem_revoke AS SELECT * FROM public._quarantine_omie_clientes_20260722 LIMIT 1;"
+SEM=$(Pq -c "SELECT has_table_privilege('anon','public._quar_sem_revoke','SELECT')::text;")
+if [ "$SEM" = "true" ]; then ok "F2 ⭐ sem REVOKE a tabela nasce legível por anon → A4 tem dente"; else bad "F2 tabela nova nasceu fechada sozinha (=$SEM) → A4 é falso-verde"; fi
+P -q -c "DROP TABLE public._quar_sem_revoke;"
 
-# F3: ATOMICIDADE — com um dependente que impede o DROP, a transação inteira reverte e o arquivo
-#     morto NÃO fica para trás. (Sem CASCADE de propósito: falhar aqui é o resultado BOM.)
-P -q <<'SQL'
-CREATE TABLE public.omie_clientes (user_id uuid PRIMARY KEY);
-CREATE VIEW public.v_dependente_do_espelho AS SELECT user_id FROM public.omie_clientes;
-DROP TABLE IF EXISTS public._archive_atomic_test;
-SQL
+# F3 ⭐: o `LOCK ... NOWAIT` falha na hora se houver transação concorrente, em vez de esperar em
+#        silêncio atrás do lock. Numa migration colada no SQL Editor, esperar seria pior: o founder
+#        vê a query "rodando" sem saber que algo ainda usa a tabela.
+P -q -c "CREATE TABLE public._lock_probe (id int);"
+(P -q -c "BEGIN; LOCK TABLE public._lock_probe IN ACCESS EXCLUSIVE MODE; SELECT pg_sleep(4); COMMIT;" >/dev/null 2>&1) &
+BGPID=$!
+sleep 1
 set +e
-P -q > /dev/null 2>&1 <<'SQL'
-BEGIN;
-CREATE TABLE public._archive_atomic_test AS SELECT * FROM public.omie_clientes;
-DROP TABLE public.omie_clientes;
-COMMIT;
-SQL
+RL=$(P -tA -c "LOCK TABLE public._lock_probe IN ACCESS EXCLUSIVE MODE NOWAIT;" 2>&1)
 RC=$?
 set -e
-SOBROU=$(Pq -c "SELECT (to_regclass('public._archive_atomic_test') IS NOT NULL)::text;")
+wait $BGPID 2>/dev/null || true
+P -q -c "DROP TABLE IF EXISTS public._lock_probe;"
+case "$RL" in
+  *lock*|*Lock*|*LOCK*) if [ "$RC" != "0" ]; then ok "F3 ⭐ NOWAIT falha na hora sob lock concorrente (não espera em silêncio)"; else bad "F3 NOWAIT não falhou com lock ativo"; fi ;;
+  *) bad "F3 esperava erro de lock — veio rc=$RC: $RL" ;;
+esac
+
+# F4 ⭐⭐ O ACHADO DO CODEX: na 1ª versão as validações rodavam DEPOIS do COMMIT — detectavam a
+#        quebra mas NÃO a revertiam. Aqui: com uma função sabotada, a validação pré-commit levanta
+#        exceção, a transação inteira aborta e a tabela VOLTA ao nome original sozinha.
+#        Sem este assert, "validar antes do commit" seria só uma frase no comentário.
+P -q <<'SQL'
+SET check_function_bodies = off;
+CREATE OR REPLACE FUNCTION public.seed_targets_faltantes()
+RETURNS TABLE(user_id uuid) LANGUAGE sql STABLE SECURITY INVOKER SET search_path=public AS $f$
+  SELECT DISTINCT oc.user_id FROM public.tabela_que_nao_existe oc
+$f$;
+SQL
+# volta ao nome original p/ reexecutar a migration do zero
+P -q -c "ALTER TABLE public._quarantine_omie_clientes_20260722 RENAME TO omie_clientes;"
+P -q -c "GRANT SELECT ON public.omie_clientes TO anon, authenticated;"
+set +e
+P -q -f "$TMPD/quar.sql" > /dev/null 2>&1
+RCQ=$?
+set -e
 AINDA=$(Pq -c "SELECT (to_regclass('public.omie_clientes') IS NOT NULL)::text;")
-if [ "$RC" != "0" ] && [ "$SOBROU" = "false" ] && [ "$AINDA" = "true" ]; then
-  ok "F3 ⭐ dependente bloqueia o DROP e a transação reverte INTEIRA (sem arquivo órfão)"
+QUAR=$(Pq -c "SELECT (to_regclass('public._quarantine_omie_clientes_20260722') IS NULL)::text;")
+if [ "$RCQ" != "0" ] && [ "$AINDA" = "true" ] && [ "$QUAR" = "true" ]; then
+  ok "F4 ⭐⭐ função quebrada ⇒ validação pré-commit ABORTA e o rename REVERTE (tabela volta ao nome original)"
 else
-  bad "F3 atomicidade falhou — rc=$RC arquivo_sobrou=$SOBROU tabela_ainda_existe=$AINDA"
+  bad "F4 a transação não reverteu — rc=$RCQ nome_original_existe=$AINDA quarentena_ausente=$QUAR"
 fi
+# restaura o mundo bom e re-aplica a quarentena
+P -q -f "$TMPD/seed.sql"
+P -q -f "$TMPD/quar.sql"
+eq  "F5 pós-restauro: quarentena aplicada e íntegra" "$(Pq -c 'SELECT count(*) FROM public._quarantine_omie_clientes_20260722;')" "6909"
 
 echo "──────────────────────────────"
 echo "RESULTADO: $PASS ok / $FAIL fail"
