@@ -21,11 +21,11 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **411** custom migrations totais
-- **1449** objetos esperados (criados por estas migrations)
+- **412** custom migrations totais
+- **1453** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 412
-  - `rls_policy`: 364
+  - `rls_policy`: 368
   - `index`: 224
   - `cron_job`: 150
   - `table`: 147
@@ -3492,6 +3492,15 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `rls_policy` | `public.cmc_snapshot_select_staff` | `cmc_snapshot` |
+
+### `20260723140000_authz_pedido_compra_item_cap_compras.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `rls_policy` | `public.staff_pedido_compra_item_select` | `pedido_compra_item` |
+| `rls_policy` | `public.staff_pedido_compra_item_insert` | `pedido_compra_item` |
+| `rls_policy` | `public.staff_pedido_compra_item_update` | `pedido_compra_item` |
+| `rls_policy` | `public.staff_pedido_compra_item_delete` | `pedido_compra_item` |
 
 ## Próximos passos por status
 

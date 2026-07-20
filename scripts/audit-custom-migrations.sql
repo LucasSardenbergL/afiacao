@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 411
+-- Total de custom migrations: 412
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -452,7 +452,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260722110000', 'quarentena_omie_clientes_espelho', '20260722110000_quarentena_omie_clientes_espelho.sql'),
   ('20260722113000', 'tint_fase1d_is_base_pura', '20260722113000_tint_fase1d_is_base_pura.sql'),
   ('20260723130000', 'authz_custo_fu4f_fase2_inventory', '20260723130000_authz_custo_fu4f_fase2_inventory.sql'),
-  ('20260723140000', 'authz_custo_fu4f_fase1', '20260723140000_authz_custo_fu4f_fase1.sql')
+  ('20260723140000', 'authz_custo_fu4f_fase1', '20260723140000_authz_custo_fu4f_fase1.sql'),
+  ('20260723140000', 'authz_pedido_compra_item_cap_compras', '20260723140000_authz_pedido_compra_item_cap_compras.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -1890,7 +1891,11 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('tint_fase1d_is_base_pura', 'function', 'public', 'tint_promote_sync_run', ''),
   ('authz_custo_fu4f_fase2_inventory', 'view', 'public', 'inventory_position_operacional', ''),
   ('authz_custo_fu4f_fase2_inventory', 'rls_policy', 'public', 'staff_inventory_position_select', 'inventory_position'),
-  ('authz_custo_fu4f_fase1', 'rls_policy', 'public', 'cmc_snapshot_select_staff', 'cmc_snapshot')
+  ('authz_custo_fu4f_fase1', 'rls_policy', 'public', 'cmc_snapshot_select_staff', 'cmc_snapshot'),
+  ('authz_pedido_compra_item_cap_compras', 'rls_policy', 'public', 'staff_pedido_compra_item_select', 'pedido_compra_item'),
+  ('authz_pedido_compra_item_cap_compras', 'rls_policy', 'public', 'staff_pedido_compra_item_insert', 'pedido_compra_item'),
+  ('authz_pedido_compra_item_cap_compras', 'rls_policy', 'public', 'staff_pedido_compra_item_update', 'pedido_compra_item'),
+  ('authz_pedido_compra_item_cap_compras', 'rls_policy', 'public', 'staff_pedido_compra_item_delete', 'pedido_compra_item')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -3376,7 +3381,11 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('tint_fase1d_is_base_pura', 'function', 'public', 'tint_promote_sync_run', ''),
   ('authz_custo_fu4f_fase2_inventory', 'view', 'public', 'inventory_position_operacional', ''),
   ('authz_custo_fu4f_fase2_inventory', 'rls_policy', 'public', 'staff_inventory_position_select', 'inventory_position'),
-  ('authz_custo_fu4f_fase1', 'rls_policy', 'public', 'cmc_snapshot_select_staff', 'cmc_snapshot')
+  ('authz_custo_fu4f_fase1', 'rls_policy', 'public', 'cmc_snapshot_select_staff', 'cmc_snapshot'),
+  ('authz_pedido_compra_item_cap_compras', 'rls_policy', 'public', 'staff_pedido_compra_item_select', 'pedido_compra_item'),
+  ('authz_pedido_compra_item_cap_compras', 'rls_policy', 'public', 'staff_pedido_compra_item_insert', 'pedido_compra_item'),
+  ('authz_pedido_compra_item_cap_compras', 'rls_policy', 'public', 'staff_pedido_compra_item_update', 'pedido_compra_item'),
+  ('authz_pedido_compra_item_cap_compras', 'rls_policy', 'public', 'staff_pedido_compra_item_delete', 'pedido_compra_item')
 )
 SELECT
   e.migration,
