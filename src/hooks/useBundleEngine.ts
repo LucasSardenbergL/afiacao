@@ -4,6 +4,7 @@ import type { Json } from '@/integrations/supabase/types';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { toast } from 'sonner';
 import { custoCanonico } from '@/lib/custo/custoCanonico';
+import { fetchAllPages } from '@/lib/postgrest';
 
 // ─── Types ───────────────────────────────────────────────────────────
 export interface AssociationRule {
@@ -183,17 +184,37 @@ export const useBundleEngine = () => {
       let clientScores = await fetchAllScores(effectiveUserId);
       if (!clientScores.length && !isImpersonating) clientScores = await fetchAllScores();
 
-      const [
-        { data: products },
-        { data: productCosts },
-        { data: profiles },
-        { data: conversionData },
-      ] = await Promise.all([
-        supabase.from('omie_products').select('id, codigo, descricao, valor_unitario, metadata, ativo, omie_codigo_produto').eq('ativo', true) as unknown as Promise<{ data: ProductRow[] | null }>,
-        supabase.from('product_costs').select('product_id, cost_final, cost_price') as unknown as Promise<{ data: ProductCostRow[] | null }>,
-        supabase.from('profiles').select('user_id, name, customer_type, cnae') as unknown as Promise<{ data: ProfileRow[] | null }>,
+      // As três primeiras estouram a capa de 1.000 do PostgREST (3.108 SKUs ativos, 3.637
+      // linhas de custo, 5.668 perfis) e vinham truncadas em silêncio: o costMap lia a maior
+      // parte do catálogo como "sem custo" e o profileMap deixava a maioria dos clientes sem
+      // perfil — e sem perfil o cliente é pulado (`if (!profile) continue`), ou seja, nunca
+      // recebia bundle. farmer_category_conversion não pagina: a tabela está vazia hoje.
+      const [products, productCosts, profiles, conversionResult] = await Promise.all([
+        fetchAllPages<ProductRow>((de, ate) =>
+          supabase
+            .from('omie_products')
+            .select('id, codigo, descricao, valor_unitario, metadata, ativo, omie_codigo_produto')
+            .eq('ativo', true)
+            .order('id', { ascending: true })
+            .range(de, ate) as unknown as PromiseLike<{ data: ProductRow[] | null }>,
+        ),
+        fetchAllPages<ProductCostRow>((de, ate) =>
+          supabase
+            .from('product_costs')
+            .select('product_id, cost_final, cost_price')
+            .order('product_id', { ascending: true })
+            .range(de, ate) as unknown as PromiseLike<{ data: ProductCostRow[] | null }>,
+        ),
+        fetchAllPages<ProfileRow>((de, ate) =>
+          supabase
+            .from('profiles')
+            .select('user_id, name, customer_type, cnae')
+            .order('user_id', { ascending: true })
+            .range(de, ate) as unknown as PromiseLike<{ data: ProfileRow[] | null }>,
+        ),
         supabase.from('farmer_category_conversion').select('*') as unknown as Promise<{ data: ConversionRow[] | null }>,
       ]);
+      const conversionData = conversionResult.data;
 
       if (!clientScores?.length) { setCustomerBundles([]); return; }
 

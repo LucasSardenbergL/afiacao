@@ -9,6 +9,8 @@ import {
   eqInt,
   eqText,
   orFilter,
+  fetchAllPages,
+  POSTGREST_PAGE_SIZE,
 } from '../postgrest';
 
 // Os metacaracteres que o parser do .or() interpreta — nenhum pode sobreviver à sanitização.
@@ -307,5 +309,61 @@ describe('orFilter', () => {
 
   it('zero cláusulas → string vazia', () => {
     expect(orFilter()).toBe('');
+  });
+});
+
+describe('fetchAllPages — a capa de 1.000 do PostgREST é silenciosa', () => {
+  // Simula o PostgREST: devolve no máximo POSTGREST_PAGE_SIZE linhas por request,
+  // truncando sem erro — exatamente o comportamento que engana quem não pagina.
+  const tabelaFalsa = (total: number) => {
+    const linhas = Array.from({ length: total }, (_, i) => ({ id: i }));
+    const chamadas: [number, number][] = [];
+    const buscar = (de: number, ate: number) => {
+      chamadas.push([de, ate]);
+      const fatia = linhas.slice(de, Math.min(ate + 1, de + POSTGREST_PAGE_SIZE));
+      return Promise.resolve({ data: fatia });
+    };
+    return { buscar, chamadas };
+  };
+
+  it('tabela maior que a capa: devolve TUDO, não as primeiras 1.000', async () => {
+    const { buscar } = tabelaFalsa(3637); // product_costs real
+    const todas = await fetchAllPages(buscar);
+    expect(todas).toHaveLength(3637);
+    expect(todas.at(-1)).toEqual({ id: 3636 }); // a cauda chegou
+  });
+
+  it('pagina com janelas contíguas e para na primeira página parcial', async () => {
+    const { buscar, chamadas } = tabelaFalsa(2500);
+    await fetchAllPages(buscar);
+    expect(chamadas).toEqual([[0, 999], [1000, 1999], [2000, 2999]]);
+  });
+
+  it('múltiplo exato da capa: faz uma página extra vazia e para (sem loop infinito)', async () => {
+    const { buscar, chamadas } = tabelaFalsa(2000);
+    const todas = await fetchAllPages(buscar);
+    expect(todas).toHaveLength(2000);
+    expect(chamadas).toHaveLength(3);
+  });
+
+  it('tabela menor que a capa: uma única requisição', async () => {
+    const { buscar, chamadas } = tabelaFalsa(42);
+    expect(await fetchAllPages(buscar)).toHaveLength(42);
+    expect(chamadas).toHaveLength(1);
+  });
+
+  it('tabela vazia → lista vazia, sem estourar', async () => {
+    const { buscar } = tabelaFalsa(0);
+    expect(await fetchAllPages(buscar)).toEqual([]);
+  });
+
+  it('data null (erro/RLS) encerra em vez de repetir a página para sempre', async () => {
+    let n = 0;
+    const todas = await fetchAllPages<{ id: number }>(() => {
+      n++;
+      return Promise.resolve({ data: null });
+    });
+    expect(todas).toEqual([]);
+    expect(n).toBe(1);
   });
 });

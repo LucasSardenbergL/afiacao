@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { custoCanonico, margemUnitaria } from '@/lib/custo/custoCanonico';
+import { fetchAllPages } from '@/lib/postgrest';
 
 // ─── Types ───────────────────────────────────────────────────────────
 export interface Recommendation {
@@ -153,20 +154,30 @@ export const useCrossSellEngine = () => {
         return;
       }
 
-      // 2. Load all products with costs
-      const { data: products } = (await supabase
-        .from('omie_products')
-        .select('id, codigo, descricao, valor_unitario, metadata, ativo, omie_codigo_produto, estoque')
-        .eq('ativo', true)) as unknown as { data: ProductRow[] | null };
+      // 2. Load all products with costs. AMBAS paginadas: 3.108 SKUs ativos e 3.637 linhas de
+      // custo, contra a capa de 1.000 do PostgREST. Truncado, o costMap lia 72% do catálogo
+      // como "sem custo" e o productList nunca chegava a recomendar 2/3 dos SKUs.
+      const products = await fetchAllPages<ProductRow>((de, ate) =>
+        supabase
+          .from('omie_products')
+          .select('id, codigo, descricao, valor_unitario, metadata, ativo, omie_codigo_produto, estoque')
+          .eq('ativo', true)
+          .order('id', { ascending: true })
+          .range(de, ate) as unknown as PromiseLike<{ data: ProductRow[] | null }>,
+      );
 
-      const { data: productCosts } = (await supabase
-        .from('product_costs')
-        .select('product_id, cost_final, cost_price')) as unknown as { data: ProductCostRow[] | null };
+      const productCosts = await fetchAllPages<ProductCostRow>((de, ate) =>
+        supabase
+          .from('product_costs')
+          .select('product_id, cost_final, cost_price')
+          .order('product_id', { ascending: true })
+          .range(de, ate) as unknown as PromiseLike<{ data: ProductCostRow[] | null }>,
+      );
 
       const costMap = new Map<string, number>();
       // Custo canônico = cost_final (proxy-aware); cost_price agora é nullable (só custo real).
       // Number(null)===0 inflava a margem (ausente≠zero) — excluir SKU sem custo, não fabricar 0.
-      (productCosts || []).forEach((pc) => {
+      productCosts.forEach((pc) => {
         const c = custoCanonico(pc);
         if (c != null) costMap.set(pc.product_id, c);
       });

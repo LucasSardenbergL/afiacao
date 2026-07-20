@@ -3,6 +3,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import type { Tables } from '@/integrations/supabase/types';
 import { custoCanonico } from '@/lib/custo/custoCanonico';
+import { fetchAllPages } from '@/lib/postgrest';
 import { accumulateMarginFromItems, resolveProductIdsFromItems } from '@/lib/scoring/margin';
 
 type AlgorithmConfigRow = Pick<Tables<'farmer_algorithm_config'>, 'key' | 'value'>;
@@ -100,24 +101,6 @@ function percentile(arr: number[], p: number): number {
   return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);
 }
 
-// PostgREST corta a resposta em 1.000 linhas — capa SILENCIOSA (sem erro, sem aviso).
-// product_costs tem 3.637 linhas e omie_products 3.108: sem paginar, a cauda do catálogo
-// some do costMap e do mapa omie→uuid, e cada SKU da cauda é lido como "sem custo".
-// Mesmo padrão do fetchAllPaginated dos edges (algorithm-a-audit, fin-valor-cockpit).
-// `.order` estável é obrigatório: sem ordenação definida a paginação pode repetir/pular linhas.
-async function fetchAllPages<T>(
-  buscarPagina: (de: number, ate: number) => PromiseLike<{ data: T[] | null }>,
-): Promise<T[]> {
-  const tamanho = 1000;
-  const todas: T[] = [];
-  for (let pagina = 0; ; pagina++) {
-    const { data } = await buscarPagina(pagina * tamanho, (pagina + 1) * tamanho - 1);
-    const linhas = data ?? [];
-    todas.push(...linhas);
-    if (linhas.length < tamanho) return todas;
-  }
-}
-
 // ─── Main Hook ───────────────────────────────────────────────────────
 export const useFarmerScoring = (farmerId?: string) => {
   // Lente "Ver como": id efetivo = ALVO na lente (lê/exibe a agenda dele), próprio usuário fora.
@@ -153,12 +136,17 @@ export const useFarmerScoring = (farmerId?: string) => {
     setCalculating(true);
 
     try {
-      // 1. Load all customers with sales orders
-      const { data: salesOrdersData } = await supabase
-        .from('sales_orders')
-        .select('id, customer_user_id, items, total, created_at, order_date_kpi, status')
-        .in('status', ['confirmado', 'faturado', 'entregue']);
-      const salesOrders = (salesOrdersData ?? []) as SalesOrderRow[];
+      // 1. Load all customers with sales orders (paginado: 19.978 pedidos nos 3 status).
+      // Sem paginar, TODO o scoring — recência, frequência, spend, margem, mix — enxergava
+      // só as primeiras 1.000 linhas, ~5% do histórico. Cross-sell e bundle já paginavam.
+      const salesOrders = await fetchAllPages<SalesOrderRow>((de, ate) =>
+        supabase
+          .from('sales_orders')
+          .select('id, customer_user_id, items, total, created_at, order_date_kpi, status')
+          .in('status', ['confirmado', 'faturado', 'entregue'])
+          .order('id', { ascending: true })
+          .range(de, ate) as unknown as PromiseLike<{ data: SalesOrderRow[] | null }>,
+      );
 
       if (salesOrders.length === 0) {
         setClientScores([]);
