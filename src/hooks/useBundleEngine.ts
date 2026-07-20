@@ -4,6 +4,7 @@ import type { Json } from '@/integrations/supabase/types';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { toast } from 'sonner';
 import { custoCanonico } from '@/lib/custo/custoCanonico';
+import { fetchAllPages } from '@/lib/postgrest';
 
 // ─── Types ───────────────────────────────────────────────────────────
 export interface AssociationRule {
@@ -183,17 +184,37 @@ export const useBundleEngine = () => {
       let clientScores = await fetchAllScores(effectiveUserId);
       if (!clientScores.length && !isImpersonating) clientScores = await fetchAllScores();
 
-      const [
-        { data: products },
-        { data: productCosts },
-        { data: profiles },
-        { data: conversionData },
-      ] = await Promise.all([
-        supabase.from('omie_products').select('id, codigo, descricao, valor_unitario, metadata, ativo, omie_codigo_produto').eq('ativo', true) as unknown as Promise<{ data: ProductRow[] | null }>,
-        supabase.from('product_costs').select('product_id, cost_final, cost_price') as unknown as Promise<{ data: ProductCostRow[] | null }>,
-        supabase.from('profiles').select('user_id, name, customer_type, cnae') as unknown as Promise<{ data: ProfileRow[] | null }>,
+      // As três primeiras estouram a capa de 1.000 do PostgREST (3.108 SKUs ativos, 3.637
+      // linhas de custo, 5.668 perfis) e vinham truncadas em silêncio: o costMap lia a maior
+      // parte do catálogo como "sem custo" e o profileMap deixava a maioria dos clientes sem
+      // perfil — e sem perfil o cliente é pulado (`if (!profile) continue`), ou seja, nunca
+      // recebia bundle. farmer_category_conversion não pagina: a tabela está vazia hoje.
+      const [products, productCosts, profiles, conversionResult] = await Promise.all([
+        fetchAllPages<ProductRow>((de, ate) =>
+          supabase
+            .from('omie_products')
+            .select('id, codigo, descricao, valor_unitario, metadata, ativo, omie_codigo_produto')
+            .eq('ativo', true)
+            .order('id', { ascending: true })
+            .range(de, ate) as unknown as PromiseLike<{ data: ProductRow[] | null }>,
+        ),
+        fetchAllPages<ProductCostRow>((de, ate) =>
+          supabase
+            .from('product_costs')
+            .select('product_id, cost_final, cost_price')
+            .order('product_id', { ascending: true })
+            .range(de, ate) as unknown as PromiseLike<{ data: ProductCostRow[] | null }>,
+        ),
+        fetchAllPages<ProfileRow>((de, ate) =>
+          supabase
+            .from('profiles')
+            .select('user_id, name, customer_type, cnae')
+            .order('user_id', { ascending: true })
+            .range(de, ate) as unknown as PromiseLike<{ data: ProfileRow[] | null }>,
+        ),
         supabase.from('farmer_category_conversion').select('*') as unknown as Promise<{ data: ConversionRow[] | null }>,
       ]);
+      const conversionData = conversionResult.data;
 
       if (!clientScores?.length) { setCustomerBundles([]); return; }
 
@@ -420,7 +441,11 @@ export const useBundleEngine = () => {
           for (const pid of missingProducts) {
             const product = productMap.get(pid);
             if (!product) continue;
-            const cost = costMap.get(pid) || 0;
+            // Custo desconhecido → SKU fora do bundle (ausente≠zero). Com `|| 0` a margem virava
+            // o preço cheio, e como o único filtro é `margin <= 0` o produto sem custo nunca era
+            // excluído: o LIE do bundle passava a preferir justamente o que falta cadastrar.
+            const cost = costMap.get(pid);
+            if (cost == null) continue;
             const price = Number(product.valor_unitario || 0);
             const margin = price - cost;
             if (margin <= 0) continue;
@@ -436,7 +461,9 @@ export const useBundleEngine = () => {
                 if (purchased.has(relatedPid) || relatedPid === pid) continue;
                 const relatedProduct = productMap.get(relatedPid);
                 if (!relatedProduct) continue;
-                const relatedCost = costMap.get(relatedPid) || 0;
+                // Mesmo motivo do produto principal: sem custo o par sai do bundle.
+                const relatedCost = costMap.get(relatedPid);
+                if (relatedCost == null) continue;
                 const relatedPrice = Number(relatedProduct.valor_unitario || 0);
                 const relatedMargin = relatedPrice - relatedCost;
                 if (relatedMargin <= 0) continue;

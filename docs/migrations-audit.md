@@ -21,8 +21,8 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **406** custom migrations totais
-- **1445** objetos esperados (criados por estas migrations)
+- **409** custom migrations totais
+- **1446** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 412
   - `rls_policy`: 362
@@ -30,7 +30,7 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
   - `cron_job`: 150
   - `table`: 147
   - `trigger`: 79
-  - `view`: 67
+  - `view`: 68
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -3434,6 +3434,10 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `private.cap_compras_escrever` | — |
 
+### `20260720120000_authz_cap_compras_ler_pos_candidatos_fu4g.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
 ### `20260721190000_reposicao_pos_candidatos.sql`
 
 | Tipo | Objeto | Parent |
@@ -3459,6 +3463,16 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.tint_ultimo_preco_cliente` | — |
 | `function` | `public.tint_gate_revalida` | — |
+
+### `20260722100002_tint_canonica_csv_legado_semantico.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `view` | `public.v_tint_formula_canonica` | — |
+
+### `20260722110000_quarentena_omie_clientes_espelho.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ### `20260722113000_tint_fase1d_is_base_pura.sql`
 

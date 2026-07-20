@@ -18153,6 +18153,7 @@ export type Database = {
         Args: { p_aprovar: boolean; p_motivo?: string; p_tarefa_id: string }
         Returns: undefined
       }
+      authz_contract_version: { Args: never; Returns: number }
       buscar_skus_candidatos: {
         Args: { p_termos: string[] }
         Returns: {
