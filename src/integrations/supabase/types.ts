@@ -7657,6 +7657,39 @@ export type Database = {
           },
         ]
       }
+      omie_clientes: {
+        Row: {
+          created_at: string
+          empresa_omie: string
+          id: string
+          omie_codigo_cliente: number
+          omie_codigo_cliente_integracao: string | null
+          omie_codigo_vendedor: number | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          empresa_omie?: string
+          id?: string
+          omie_codigo_cliente: number
+          omie_codigo_cliente_integracao?: string | null
+          omie_codigo_vendedor?: number | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          empresa_omie?: string
+          id?: string
+          omie_codigo_cliente?: number
+          omie_codigo_cliente_integracao?: string | null
+          omie_codigo_vendedor?: number | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       omie_clientes_nao_vinculados: {
         Row: {
           cidade: string | null
@@ -18120,6 +18153,7 @@ export type Database = {
         Args: { p_aprovar: boolean; p_motivo?: string; p_tarefa_id: string }
         Returns: undefined
       }
+      authz_contract_version: { Args: never; Returns: number }
       buscar_skus_candidatos: {
         Args: { p_termos: string[] }
         Returns: {
