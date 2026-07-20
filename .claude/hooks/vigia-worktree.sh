@@ -45,9 +45,25 @@ fi
 # para todas as sessões um script não validado, sem ninguém no circuito.
 # A comparação NÃO é reimplementada aqui: quem define "divergente" é o
 # heavy-install.sh --status, num lugar só. Script ausente (worktree antiga) → silêncio.
+#
+# Teto de 3s no --status: é o único bloco deste hook que roda subprocess
+# não-trivial (heavy-install.sh chama `git show`). Sem teto, um `git show` lento
+# — justo o cenário de swap alto/I-O sufocado, quando os avisos 2)/3) MAIS
+# importam — pode consumir o timeout:10 do SessionStart (settings.json) inteiro;
+# como a saída só é emitida no fim do script, o hook inteiro morre e NENHUM
+# aviso sai, nem os de 2)/3) já prontos antes deste bloco. `timeout(1)` não é
+# nativo do macOS — nesta máquina só existe via Homebrew (/opt/homebrew/bin).
+# Sem ele: roda direto, sem proteção de teto (mesmo risco que já existia antes
+# deste bloco — não piora nada) — nunca pula nem quebra por causa disso.
 if [ -x scripts/heavy-install.sh ]; then
-  if ! st="$(bash scripts/heavy-install.sh --status 2>/dev/null)"; then
-    avisos="${avisos}${st:-heavy divergente} → rode 'bun run heavy:install' (o heavy em uso é CÓPIA de scripts/heavy.sh; merge na main não atualiza o semáforo). "
+  if command -v timeout >/dev/null 2>&1; then
+    if ! st="$(timeout 3 bash scripts/heavy-install.sh --status 2>/dev/null)"; then
+      avisos="${avisos}${st:-heavy divergente} → rode 'bun run heavy:install' (o heavy em uso é CÓPIA de scripts/heavy.sh; merge na main não atualiza o semáforo). "
+    fi
+  else
+    if ! st="$(bash scripts/heavy-install.sh --status 2>/dev/null)"; then
+      avisos="${avisos}${st:-heavy divergente} → rode 'bun run heavy:install' (o heavy em uso é CÓPIA de scripts/heavy.sh; merge na main não atualiza o semáforo). "
+    fi
   fi
 fi
 
