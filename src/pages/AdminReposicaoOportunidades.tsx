@@ -18,6 +18,12 @@ import { NegociacaoBanner } from "@/components/reposicao/oportunidades/Negociaca
 import { OportunidadesFiltros } from "@/components/reposicao/oportunidades/OportunidadesFiltros";
 import { OportunidadesTable } from "@/components/reposicao/oportunidades/OportunidadesTable";
 import { GerarCicloDialog } from "@/components/reposicao/oportunidades/GerarCicloDialog";
+import { UltimaExecucao } from "@/components/execucoes/UltimaExecucao";
+import { ULTIMA_EXECUCAO_QUERY_KEY } from "@/components/execucoes/tipos";
+
+// Escritor deste slug é a PRÓPRIA função SQL ciclo_oportunidade_do_dia (migration
+// 20260722110000): captura o clique manual E o cron das 11:05. O frontend só LÊ.
+const ACAO_GERAR_CICLO = "reposicao.gerar_ciclo_oportunidade";
 
 // Monta o InsumoSku consumido pelo helper de decisão net-R$ a partir da linha da view.
 function montarInsumo(o: Oportunidade): InsumoSku {
@@ -277,6 +283,8 @@ export default function AdminReposicaoOportunidades() {
       setConfirmCicloOpen(false);
       queryClient.invalidateQueries({ queryKey: ["oportunidades-hoje"] });
       queryClient.invalidateQueries({ queryKey: ["ciclo-hoje"] });
+      // O registro foi gravado pelo SQL — refresca a caption <UltimaExecucao>.
+      queryClient.invalidateQueries({ queryKey: [ULTIMA_EXECUCAO_QUERY_KEY] });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Erro ao gerar ciclo de oportunidade");
     } finally {
@@ -302,16 +310,20 @@ export default function AdminReposicaoOportunidades() {
               </p>
             </div>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            {cicloHoje > 0 && (
-              <Button size="sm" onClick={() => setConfirmCicloOpen(true)}>
-                <PlayCircle className="h-4 w-4" /> Gerar ciclo oportunidade
+          <div className="flex flex-col items-start sm:items-end gap-1">
+            <div className="flex flex-wrap items-center gap-2">
+              {cicloHoje > 0 && (
+                <Button size="sm" onClick={() => setConfirmCicloOpen(true)}>
+                  <PlayCircle className="h-4 w-4" /> Gerar ciclo oportunidade
+                </Button>
+              )}
+              <Button size="sm" variant="outline" onClick={handleAtualizar}>
+                <RefreshCw className={`h-4 w-4 ${isFetching ? "animate-spin" : ""}`} />
+                Atualizar posição
               </Button>
-            )}
-            <Button size="sm" variant="outline" onClick={handleAtualizar}>
-              <RefreshCw className={`h-4 w-4 ${isFetching ? "animate-spin" : ""}`} />
-              Atualizar posição
-            </Button>
+            </div>
+            {/* Fora do condicional: mostra também o "automática" diário do cron das 11:05. */}
+            <UltimaExecucao acao={ACAO_GERAR_CICLO} />
           </div>
         </header>
 
