@@ -44,7 +44,7 @@ done
 # esta função é o único lugar que decide isso, para não duplicar o `if` 4 vezes.
 falhar_fonte() {
   if [ "$modo" = "status" ]; then
-    echo "heavy-install --status: NÃO CONSEGUI VERIFICAR (ver mensagem acima) — não é 'divergente', resolva a causa e rode de novo." >&2
+    echo "heavy-install --status: NÃO CONSEGUI VERIFICAR — a comparação nem rodou (ver mensagem acima); resolva a causa e rode de novo." >&2
     exit 3
   fi
   exit 1
