@@ -25,6 +25,15 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib" // driver pgx para database/sql
 )
 
+// querier abstrai *sql.DB e *sql.Tx — a extração pai+filha das fórmulas child
+// roda na MESMA transação REPEATABLE READ (Fase 1d, Codex P1: com duas queries
+// em conexões separadas sob READ COMMITTED, um DELETE+COMMIT/reinsert na origem
+// entre elas produzia uma fotografia "0 linhas na filha" logicamente vazia →
+// is_base_pura falso → limpeza indevida de 1 fórmula, por baixo de qualquer cap).
+type querier interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}
+
 // Connect abre uma conexão com o PostgreSQL do SayerSystem.
 // Inclui client_encoding=UTF8 e timeout de 10s.
 // O caller é responsável por fechar db.Close().
@@ -79,7 +88,7 @@ func Connect(ctx context.Context, connStr string) (*sql.DB, error) {
 //   - err: erro de consulta
 func ExtractDelta(
 	ctx context.Context,
-	db *sql.DB,
+	db querier,
 	rm *ResolvedMapping,
 	entity string,
 	hwm time.Time,
@@ -165,7 +174,7 @@ func buildDeltaSelectCols(rm *ResolvedMapping, entity string) []colPair {
 // physical é o nome FÍSICO da tabela; entity (lógico) só aparece nas mensagens de erro.
 func extractFullScan(
 	ctx context.Context,
-	db *sql.DB,
+	db querier,
 	entity string,
 	physical string,
 	selectCols []colPair,
@@ -221,10 +230,31 @@ func scanRows(sqlRows *sql.Rows, selectCols []colPair, daLogicName string) ([]ma
 
 // aggregateFlatFormulaItems converte as colunas achatadas corante1..6 + qtd1ml..6ml
 // em um campo "itens" []map[string]any com {id_corante, ordem, qtd_ml}.
-// Slots com corante vazio ou qtd <= 0 são omitidos.
+//
+// FASE 1d (money-path) — o conector é TRANSPORTE FIEL, o banco é a fronteira:
+//   - corante PRESENTE (qualquer qtd): EMITE o item cru — qtd_ml = número parseado
+//     (mesmo <=0) ou nil quando não-parseável (ausente ≠ zero, NUNCA 0). Antes o
+//     slot inválido era OMITIDO aqui e o payload chegava "limpo" no banco →
+//     receita PARCIAL promovida sem nenhum guard ver (subfaturamento silencioso).
+//     Quem barra é o Guard 4 de tint_promote_sync_run, com log em tint_sync_errors.
+//   - órfão (corante vazio + dose legível ≠0): EMITE {id_corante:"", qtd_ml} —
+//     dose sem corante é corrupção (Guard 4b do banco).
+//   - slot LIVRE (corante vazio + qtd nil ou 0 legível): OMITIDO — é o estado
+//     normal de ~100% do catálogo flat (<6 slots usados); emitir viraria
+//     placeholder e barraria toda fórmula (C29).
+//   - corante vazio + qtd ILEGÍVEL: não emite (nada aproveitável sem corante),
+//     mas BLOQUEIA a declaração de base pura — o vazio fica ambíguo e o banco
+//     barra. Limite conhecido: se a fórmula tem OUTROS itens válidos, promove
+//     sem o lixo (comportamento igual ao de prod hoje; sem corante não há
+//     componente identificável a preservar).
+//   - is_base_pura=true SÓ quando TODOS os 6 slots são livres E os 12 flat cols
+//     resolveram no discovery (slot invisível pode conter corante real —
+//     fail-closed). É o sinal EXPLÍCITO da fonte que a Fase 1d exige para a
+//     transição legítima para base pura limpar receita no banco.
 func aggregateFlatFormulaItems(rows []map[string]any, flatCols map[string]string) []map[string]any {
+	colsCompletos := flatColsCompletos(flatCols)
 	for _, row := range rows {
-		var itens []map[string]any
+		itens := make([]map[string]any, 0, 6)
 		for i := 1; i <= 6; i++ {
 			coranteKey := fmt.Sprintf("corante%d", i)
 			qtdKey := fmt.Sprintf("qtd%dml", i)
@@ -254,27 +284,59 @@ func aggregateFlatFormulaItems(rows []map[string]any, flatCols map[string]string
 				delete(row, qtdReal)
 			}
 
-			// Pula slots com corante vazio ou nil.
-			if coranteVal == nil || fmt.Sprintf("%v", coranteVal) == "" {
-				continue
-			}
+			corantePresente := coranteVal != nil && fmt.Sprintf("%v", coranteVal) != ""
+			qtd, qtdOK := toFloat64OK(qtdVal)
 
-			// Converte qtd para float64; pula se ausente/não-parseável ou <= 0.
-			// (numeric do PG chega como string — toFloat64OK parseia; falha ≠ 0.)
-			qtd, ok := toFloat64OK(qtdVal)
-			if !ok || qtd <= 0 {
-				continue
+			switch {
+			case corantePresente:
+				item := map[string]any{
+					"id_corante": fmt.Sprintf("%v", coranteVal),
+					"ordem":      i,
+				}
+				if qtdOK {
+					item["qtd_ml"] = qtd
+				} else {
+					item["qtd_ml"] = nil
+				}
+				itens = append(itens, item)
+			case qtdOK && qtd != 0:
+				// Órfão: dose legível ≠0 sem corante — transporta p/ o Guard 4b barrar.
+				itens = append(itens, map[string]any{
+					"id_corante": "",
+					"ordem":      i,
+					"qtd_ml":     qtd,
+				})
+			case qtdVal != nil && !qtdOK:
+				// Ilegível sem corante: EMITE placeholder {"", nil} — no protocolo 1d o
+				// banco barra a fórmula inteira ([1d-E]: linha emitida que não é corante+
+				// dose válida é corrupção). Codex P1: "não consigo identificar o
+				// componente" não prova que ele não existe; ambiguidade bloqueia.
+				itens = append(itens, map[string]any{
+					"id_corante": "",
+					"ordem":      i,
+					"qtd_ml":     nil,
+				})
 			}
-
-			itens = append(itens, map[string]any{
-				"id_corante": fmt.Sprintf("%v", coranteVal),
-				"ordem":      i,
-				"qtd_ml":     qtd,
-			})
+			// default: slot livre (corante vazio + qtd nil/0) → omitido.
 		}
 		row["itens"] = itens
+		if len(itens) == 0 && colsCompletos {
+			row["is_base_pura"] = true
+		}
 	}
 	return rows
+}
+
+// flatColsCompletos: os 12 slots (corante1..6 + qtd1ml..6ml) resolveram no
+// discovery. Sem isso, um slot invisível ao SELECT pode conter corante real e
+// "todos os slots vazios" não prova base pura (fail-closed: nunca declarar).
+func flatColsCompletos(flatCols map[string]string) bool {
+	for i := 1; i <= 6; i++ {
+		if flatCols[fmt.Sprintf("corante%d", i)] == "" || flatCols[fmt.Sprintf("qtd%dml", i)] == "" {
+			return false
+		}
+	}
+	return true
 }
 
 // ExtractFormulaChildItems extrai os itens da tabela filha formula_item e os
@@ -285,9 +347,11 @@ func aggregateFlatFormulaItems(rows []map[string]any, flatCols map[string]string
 // false, NÃO seleciona "ordem" (evita erro de coluna ausente) e deriva a ordem
 // pela sequência de leitura por fórmula.
 //
-// qtd_ml é numeric na origem → pode chegar como string via pgx; usa toFloat64OK
-// (item com qtd não-parseável/<=0 é pulado, nunca vira 0).
-func ExtractFormulaChildItems(ctx context.Context, db *sql.DB, hasOrdem bool) (map[string][]map[string]any, error) {
+// FASE 1d (money-path): TODA linha da filha é emitida — inclusive qtd inválida
+// (o Guard 4 do banco decide e loga; antes o skip daqui fabricava payload
+// "íntegro" com receita parcial). Na filha não existe "slot livre": linha que
+// existe é DADO da fonte e o COUNT/expected têm de contá-la.
+func ExtractFormulaChildItems(ctx context.Context, db querier, hasOrdem bool) (map[string][]map[string]any, error) {
 	query := `SELECT id_formula::text, id_corante::text, qtd_ml FROM formula_item ORDER BY id_formula`
 	if hasOrdem {
 		query = `SELECT id_formula::text, id_corante::text, qtd_ml, ordem FROM formula_item ORDER BY id_formula, ordem`
@@ -313,22 +377,28 @@ func ExtractFormulaChildItems(ctx context.Context, db *sql.DB, hasOrdem bool) (m
 			if err := rows.Scan(&idFormula, &idCorante, &qtdRaw); err != nil {
 				return nil, err
 			}
-		}
-		qtdML, ok := toFloat64OK(qtdRaw)
-		if !ok || qtdML <= 0 {
-			continue // pula slots vazios/ausentes (qtd não-parseável NUNCA vira 0)
-		}
-		if !hasOrdem {
 			seq[idFormula]++
 			ordem = seq[idFormula]
 		}
-		out[idFormula] = append(out[idFormula], map[string]any{
-			"id_corante": idCorante,
-			"ordem":      ordem,
-			"qtd_ml":     qtdML,
-		})
+		out[idFormula] = append(out[idFormula], childItemRow(idCorante, qtdRaw, ordem))
 	}
 	return out, rows.Err()
+}
+
+// childItemRow monta o item de uma linha da tabela filha — transporte fiel:
+// qtd_ml = número parseado (mesmo <=0) ou nil quando ausente/não-parseável
+// (ausente ≠ zero; NUNCA fabricar 0 no caminho de receita). Função pura.
+func childItemRow(idCorante string, qtdRaw any, ordem int) map[string]any {
+	item := map[string]any{
+		"id_corante": idCorante,
+		"ordem":      ordem,
+	}
+	if qtd, ok := toFloat64OK(qtdRaw); ok {
+		item["qtd_ml"] = qtd
+	} else {
+		item["qtd_ml"] = nil
+	}
+	return item
 }
 
 // ──────────────────────────────────────────────────────────────

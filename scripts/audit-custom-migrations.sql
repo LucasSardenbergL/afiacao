@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 409
+-- Total de custom migrations: 411
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -450,7 +450,9 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260722100001', 'tint_gate_revalida_submit', '20260722100001_tint_gate_revalida_submit.sql'),
   ('20260722100002', 'tint_canonica_csv_legado_semantico', '20260722100002_tint_canonica_csv_legado_semantico.sql'),
   ('20260722110000', 'quarentena_omie_clientes_espelho', '20260722110000_quarentena_omie_clientes_espelho.sql'),
-  ('20260723130000', 'authz_custo_fu4f_fase2_inventory', '20260723130000_authz_custo_fu4f_fase2_inventory.sql')
+  ('20260722113000', 'tint_fase1d_is_base_pura', '20260722113000_tint_fase1d_is_base_pura.sql'),
+  ('20260723130000', 'authz_custo_fu4f_fase2_inventory', '20260723130000_authz_custo_fu4f_fase2_inventory.sql'),
+  ('20260723140000', 'authz_custo_fu4f_fase1', '20260723140000_authz_custo_fu4f_fase1.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -1885,8 +1887,10 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('tint_gate_revalida_submit', 'function', 'public', 'tint_ultimo_preco_cliente', ''),
   ('tint_gate_revalida_submit', 'function', 'public', 'tint_gate_revalida', ''),
   ('tint_canonica_csv_legado_semantico', 'view', 'public', 'v_tint_formula_canonica', ''),
+  ('tint_fase1d_is_base_pura', 'function', 'public', 'tint_promote_sync_run', ''),
   ('authz_custo_fu4f_fase2_inventory', 'view', 'public', 'inventory_position_operacional', ''),
-  ('authz_custo_fu4f_fase2_inventory', 'rls_policy', 'public', 'staff_inventory_position_select', 'inventory_position')
+  ('authz_custo_fu4f_fase2_inventory', 'rls_policy', 'public', 'staff_inventory_position_select', 'inventory_position'),
+  ('authz_custo_fu4f_fase1', 'rls_policy', 'public', 'cmc_snapshot_select_staff', 'cmc_snapshot')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -3369,8 +3373,10 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('tint_gate_revalida_submit', 'function', 'public', 'tint_ultimo_preco_cliente', ''),
   ('tint_gate_revalida_submit', 'function', 'public', 'tint_gate_revalida', ''),
   ('tint_canonica_csv_legado_semantico', 'view', 'public', 'v_tint_formula_canonica', ''),
+  ('tint_fase1d_is_base_pura', 'function', 'public', 'tint_promote_sync_run', ''),
   ('authz_custo_fu4f_fase2_inventory', 'view', 'public', 'inventory_position_operacional', ''),
-  ('authz_custo_fu4f_fase2_inventory', 'rls_policy', 'public', 'staff_inventory_position_select', 'inventory_position')
+  ('authz_custo_fu4f_fase2_inventory', 'rls_policy', 'public', 'staff_inventory_position_select', 'inventory_position'),
+  ('authz_custo_fu4f_fase1', 'rls_policy', 'public', 'cmc_snapshot_select_staff', 'cmc_snapshot')
 )
 SELECT
   e.migration,
