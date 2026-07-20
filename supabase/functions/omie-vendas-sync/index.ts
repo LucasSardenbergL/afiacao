@@ -134,6 +134,12 @@ interface OrderItemPayload {
   desconto?: number;
   tint_cor_id?: string;
   tint_nome_cor?: string;
+  // Fase 3 tint: metadados de precificação do picker — insumo do gate de
+  // revalidação (tint_gate_revalida) na fronteira. Ausentes = item legado.
+  tint_formula_id?: string;
+  tint_price_source?: string;
+  tint_discount_pct?: number;
+  tint_preco_sem_desconto?: number;
 }
 
 // (OrderBatchRow/OrderItemBatchRow/PriceHistoryBatchRow removidos: o sync agora monta o payload
@@ -149,6 +155,11 @@ interface EditItemInput {
   valor_unitario: number;
   tint_cor_id?: string;
   tint_nome_cor?: string;
+  // Fase 3 tint: metadados de precificação (ver OrderItemPayload)
+  tint_formula_id?: string;
+  tint_price_source?: string;
+  tint_discount_pct?: number;
+  tint_preco_sem_desconto?: number;
 }
 
 interface OpItemInput {
@@ -2028,6 +2039,89 @@ async function gateCredito(
   return { permitido: false, gate };
 }
 
+// ── Gate tintométrico Fase 3 — revalidação de preço na fronteira comum ──
+// TODA via de pedido (submit, conversão de orçamento, edição, retry) cruza
+// criar_pedido/alterar_pedido; o guard do preço tint mora AQUI, não na UI
+// (money-path §5). A RPC tint_gate_revalida (provada em db/test-tint-gate-
+// revalida.sh) revalida cada item COM tint_cor_id contra o estado ATUAL:
+// canônica viva + preço recomputado + fonte declarada pela vendedora.
+// ⚠️ FAIL-CLOSED na indisponibilidade — deliberadamente ≠ gateCredito (que é
+// fail-open com log durável): (a) o blast radius é só pedido COM item tint
+// (o caminho comum nem chama a RPC); (b) o risco real aqui é a migration
+// custom NÃO aplicada no Lovable (falha silenciosa clássica) — fail-open
+// criaria um gate fantasma invisível; fail-closed grita na primeira venda.
+interface GateTintResultado {
+  ok: boolean;
+  bloqueios: Array<Record<string, unknown>>;
+  warnings?: Array<Record<string, unknown>>;
+}
+
+async function gateTintPreco(
+  supabase: SupabaseClient,
+  account: Account,
+  customerUserId: string | null,
+  salesOrderId: string,
+  contexto: "criacao" | "edicao",
+  items: Array<{ tint_cor_id?: string; omie_codigo_produto?: number | string }>,
+): Promise<{ permitido: true } | { permitido: false; bloqueios: Array<Record<string, unknown>> }> {
+  if (items.length === 0) return { permitido: true };
+
+  // Classificação em BATCH antes da RPC (Codex P1 do diff): a RPC só roda
+  // quando há marcador tint, produto classificado como BASE tintométrica ou
+  // código ilegível (que a RPC bloqueia como payload_invalido). Assim uma
+  // migration ausente/RPC indisponível NÃO derruba venda comum — o blast
+  // radius do fail-closed fica restrito a pedido com cara de tint. A
+  // classificação lê omie_products (tabela pré-existente — funciona mesmo
+  // sem a migration da Fase 3).
+  const temMarcador = items.some((i) => typeof i.tint_cor_id === "string" && i.tint_cor_id.length > 0);
+  const codigos = [...new Set(items.map((i) => Number(i.omie_codigo_produto)).filter((n) => Number.isFinite(n) && n > 0))];
+  const temCodigoIlegivel = items.some((i) => !Number.isFinite(Number(i.omie_codigo_produto)) || Number(i.omie_codigo_produto) <= 0);
+  let temBaseTint = false;
+  if (!temMarcador && !temCodigoIlegivel && codigos.length > 0) {
+    const { data: prods, error: clsErr } = await supabase
+      .from("omie_products")
+      .select("omie_codigo_produto, is_tintometric, tint_type")
+      .eq("account", account)
+      .in("omie_codigo_produto", codigos);
+    if (clsErr) {
+      // classificação indisponível = não sei se há base tint ⇒ fail-closed
+      // (mesma infra da RPC; se isto falhou, nada do pedido funcionaria)
+      throw new Error(`Classificação tintométrica indisponível (${clsErr.message}) — pedido não enviado (fail-closed).`);
+    }
+    temBaseTint = (prods ?? []).some(
+      (p) => (p as { is_tintometric?: boolean; tint_type?: string | null }).is_tintometric === true &&
+        (p as { tint_type?: string | null }).tint_type === "base",
+    );
+  }
+  if (!temMarcador && !temBaseTint && !temCodigoIlegivel) return { permitido: true };
+
+  const { data, error } = await supabase.rpc("tint_gate_revalida", {
+    p_account: account,
+    p_customer_user_id: customerUserId,
+    p_sales_order_id: salesOrderId,
+    p_contexto: contexto,
+    p_items: items,
+  });
+  if (error) {
+    throw new Error(
+      `Gate tintométrico indisponível (${error.message}) — pedido com item de tinta NÃO enviado (fail-closed). ` +
+        `Confira se a migration 20260722100001_tint_gate_revalida_submit foi aplicada.`,
+    );
+  }
+  const r = data as GateTintResultado | null;
+  if (!r || typeof r.ok !== "boolean") {
+    throw new Error("Gate tintométrico devolveu resposta inválida — pedido NÃO enviado (fail-closed).");
+  }
+  if (!r.ok) {
+    console.warn(`[gate-tint][${account}] pedido bloqueado:`, JSON.stringify(r.bloqueios));
+    return { permitido: false, bloqueios: r.bloqueios };
+  }
+  if (r.warnings && r.warnings.length > 0) {
+    console.log(`[gate-tint][${account}] warnings:`, JSON.stringify(r.warnings));
+  }
+  return { permitido: true };
+}
+
 // Só as actions de SYNC logam (não as interativas de PV). Com action LIKE 'sync_%'
 // + companies=[account], a varredura de órfãs (>30min) e o sinal sync_error do
 // watchdog (#330) passam a cobrir vendas SEM mudar o watchdog. BEST-EFFORT: uma
@@ -2412,6 +2506,22 @@ serve(async (req) => {
           result = { success: false, blocked: "credito", gate: credito.gate };
           break;
         }
+        // Gate tintométrico Fase 3: revalida preço/fórmula dos itens tint contra
+        // o estado ATUAL, IMEDIATAMENTE antes da mutação Omie (janela TOCTOU
+        // mínima — veredito Codex). Bloqueio = 200 estruturado, pedido local
+        // intacto p/ retry após reprecificar no balcão.
+        const gateTint = await gateTintPreco(
+          supabaseAdmin,
+          account,
+          soRow?.customer_user_id ?? null,
+          sales_order_id,
+          "criacao",
+          items as Array<{ tint_cor_id?: string }>,
+        );
+        if (!gateTint.permitido) {
+          result = { success: false, blocked: "tint_preco", bloqueios: gateTint.bloqueios };
+          break;
+        }
         const pedido = await criarPedidoVenda(
           supabaseAdmin,
           sales_order_id,
@@ -2487,6 +2597,24 @@ serve(async (req) => {
         // revalidar — é onde um produto desativado depois da criação do PV passaria batido.
         await assertOmieItemsAtivos(supabaseAdmin, editItems, editAccount);
 
+        // Gate tintométrico Fase 3: a edição re-envia TODOS os itens ao Omie.
+        // Revalida ANTES do delete+add destrutivo, contra o BASELINE persistido
+        // (o front só persiste APÓS o sucesso — o baseline é o estado pré-
+        // edição): item tint IDÊNTICO passa com warning (já está no Omie);
+        // novo/alterado revalida; base-sem-cor só passa intocada (inbound).
+        const gateTintEdit = await gateTintPreco(
+          supabaseAdmin,
+          editAccount,
+          (existingOrder as { customer_user_id?: string | null }).customer_user_id ?? null,
+          editSoId,
+          "edicao",
+          editItems as Array<{ tint_cor_id?: string }>,
+        );
+        if (!gateTintEdit.permitido) {
+          result = { success: false, blocked: "tint_preco", contexto: "edicao", bloqueios: gateTintEdit.bloqueios };
+          break;
+        }
+
         // Build updated items payload for local DB
         const editItemsTyped: EditItemInput[] = editItems;
         const updatedItemsPayload = editItemsTyped.map((item) => ({
@@ -2498,7 +2626,19 @@ serve(async (req) => {
           quantidade: item.quantidade,
           valor_unitario: item.valor_unitario,
           valor_total: item.quantidade * item.valor_unitario,
-          ...(item.tint_cor_id ? { tint_cor_id: item.tint_cor_id, tint_nome_cor: item.tint_nome_cor } : {}),
+          ...(item.tint_cor_id
+            ? {
+                tint_cor_id: item.tint_cor_id,
+                tint_nome_cor: item.tint_nome_cor,
+                // Fase 3: preservar auditoria de precificação no jsonb local
+                ...(item.tint_formula_id ? { tint_formula_id: item.tint_formula_id } : {}),
+                ...(item.tint_price_source ? { tint_price_source: item.tint_price_source } : {}),
+                ...(typeof item.tint_discount_pct === "number" ? { tint_discount_pct: item.tint_discount_pct } : {}),
+                ...(typeof item.tint_preco_sem_desconto === "number"
+                  ? { tint_preco_sem_desconto: item.tint_preco_sem_desconto }
+                  : {}),
+              }
+            : {}),
         }));
         const updatedSubtotal = updatedItemsPayload.reduce((s: number, i) => s + i.valor_total, 0);
 
@@ -2807,8 +2947,12 @@ serve(async (req) => {
           validated_items: finalOmieItems.length,
         };
 
-        // Update local DB
-        await supabaseAdmin
+        // Write-back local CHECADO (Codex P1 do diff): o front agora depende
+        // EXCLUSIVAMENTE deste update (não persiste antes do gate — o baseline
+        // é sagrado). Erro/0-linhas aqui com o Omie JÁ mutado = estado
+        // divergente → devolver ERRO explícito (nunca success), para o caller
+        // avisar e ninguém re-salvar por cima sem recarregar.
+        const { data: editWb, error: editWbErr } = await supabaseAdmin
           .from("sales_orders")
           .update({
             items: updatedItemsPayload,
@@ -2819,7 +2963,15 @@ serve(async (req) => {
             omie_response: editResult,
             updated_at: new Date().toISOString(),
           })
-          .eq("id", editSoId);
+          .eq("id", editSoId)
+          .select("id");
+        if (editWbErr || !editWb || editWb.length !== 1) {
+          throw new Error(
+            `Omie ATUALIZADO (${editItems.length} itens) mas o registro local falhou ` +
+              `(${editWbErr?.message ?? `${editWb?.length ?? 0} linhas`}) — NÃO re-salve sem recarregar o pedido; ` +
+              `o Omie está com a versão nova e o app com a antiga.`,
+          );
+        }
 
         result = { success: true, omie_response: editResult };
         break;

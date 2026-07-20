@@ -552,8 +552,8 @@ const UnifiedOrder = () => {
           onClose={() => { h.setTintPendingProduct(null); setTintInitialSearch(null); }}
           customerUserId={h.customerUserId}
           initialSearch={tintInitialSearch}
-          onConfirm={(formulaId, corId, nomeCor, precoFinal, custoCorantes, alternativeProduct) => {
-            h.addTintProductToCart(alternativeProduct || h.tintPendingProduct!, formulaId, corId, nomeCor, precoFinal, custoCorantes);
+          onConfirm={(formulaId, corId, nomeCor, precoFinal, custoCorantes, pricingMeta, alternativeProduct) => {
+            h.addTintProductToCart(alternativeProduct || h.tintPendingProduct!, formulaId, corId, nomeCor, precoFinal, custoCorantes, pricingMeta);
             setTintInitialSearch(null);
           }}
         />

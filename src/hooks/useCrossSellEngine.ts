@@ -1,7 +1,8 @@
 import { useState, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
-import { custoCanonico } from '@/lib/custo/custoCanonico';
+import { custoCanonico, margemUnitaria } from '@/lib/custo/custoCanonico';
+import { fetchAllPages } from '@/lib/postgrest';
 
 // ─── Types ───────────────────────────────────────────────────────────
 export interface Recommendation {
@@ -153,20 +154,30 @@ export const useCrossSellEngine = () => {
         return;
       }
 
-      // 2. Load all products with costs
-      const { data: products } = (await supabase
-        .from('omie_products')
-        .select('id, codigo, descricao, valor_unitario, metadata, ativo, omie_codigo_produto, estoque')
-        .eq('ativo', true)) as unknown as { data: ProductRow[] | null };
+      // 2. Load all products with costs. AMBAS paginadas: 3.108 SKUs ativos e 3.637 linhas de
+      // custo, contra a capa de 1.000 do PostgREST. Truncado, o costMap lia 72% do catálogo
+      // como "sem custo" e o productList nunca chegava a recomendar 2/3 dos SKUs.
+      const products = await fetchAllPages<ProductRow>((de, ate) =>
+        supabase
+          .from('omie_products')
+          .select('id, codigo, descricao, valor_unitario, metadata, ativo, omie_codigo_produto, estoque')
+          .eq('ativo', true)
+          .order('id', { ascending: true })
+          .range(de, ate) as unknown as PromiseLike<{ data: ProductRow[] | null }>,
+      );
 
-      const { data: productCosts } = (await supabase
-        .from('product_costs')
-        .select('product_id, cost_final, cost_price')) as unknown as { data: ProductCostRow[] | null };
+      const productCosts = await fetchAllPages<ProductCostRow>((de, ate) =>
+        supabase
+          .from('product_costs')
+          .select('product_id, cost_final, cost_price')
+          .order('product_id', { ascending: true })
+          .range(de, ate) as unknown as PromiseLike<{ data: ProductCostRow[] | null }>,
+      );
 
       const costMap = new Map<string, number>();
       // Custo canônico = cost_final (proxy-aware); cost_price agora é nullable (só custo real).
       // Number(null)===0 inflava a margem (ausente≠zero) — excluir SKU sem custo, não fabricar 0.
-      (productCosts || []).forEach((pc) => {
+      productCosts.forEach((pc) => {
         const c = custoCanonico(pc);
         if (c != null) costMap.set(pc.product_id, c);
       });
@@ -260,7 +271,8 @@ export const useCrossSellEngine = () => {
       });
 
       // 7. Build per-customer purchase history
-      const customerProducts = new Map<string, Map<string, { qty: number; price: number; cost: number }>>();
+      // cost: number | null — null = custo DESCONHECIDO (SKU fora do costMap), nunca 0.
+      const customerProducts = new Map<string, Map<string, { qty: number; price: number; cost: number | null }>>();
       const allProductPurchases = new Map<string, number>(); // product_id -> total customers who bought
 
       for (const order of salesOrders || []) {
@@ -277,10 +289,12 @@ export const useCrossSellEngine = () => {
           }
           if (!productId) continue;
 
-          const existing = cp.get(productId) || { qty: 0, price: 0, cost: 0 };
+          const existing = cp.get(productId) || { qty: 0, price: 0, cost: null as number | null };
           existing.qty += Number(item.quantity || item.quantidade || 1);
           existing.price = Number(item.unit_price || item.valor_unitario || 0);
-          existing.cost = costMap.get(productId) || 0;
+          // Custo ausente fica null (ausente≠zero) — com `|| 0` a margem do item virava o preço
+          // cheio e distorcia a comparação de rentabilidade do up-sell logo abaixo.
+          existing.cost = costMap.get(productId) ?? null;
           cp.set(productId, existing);
 
           // Track which products are popular
@@ -329,10 +343,12 @@ export const useCrossSellEngine = () => {
         for (const product of productList) {
           if (purchasedIds.has(product.id)) continue;
 
-          const cost = costMap.get(product.id) || 0;
           const price = Number(product.valor_unitario || 0);
-          const margin = price - cost;
-          if (margin <= 0) continue; // Skip negative margin products
+          // Sem custo conhecido a margem é INDEFINIDA, não cheia: o SKU sai do ranking. Com
+          // `|| 0` ele ganhava margem 100% e, como o único filtro é `margin <= 0`, era o único
+          // que jamais era excluído — o LIE passava a preferir o produto sem custo cadastrado.
+          const margin = margemUnitaria(price, costMap.get(product.id));
+          if (margin == null || margin <= 0) continue; // custo desconhecido, ou margem não-positiva
 
           // Cluster adherence: how many similar customers bought this
           const buyerCount = allProductPurchases.get(product.id) || 0;
@@ -382,8 +398,10 @@ export const useCrossSellEngine = () => {
 
         // ─── UP-SELL: Find premium alternatives for current low-margin products ───
         for (const [purchasedId, purchaseData] of customerPurchased.entries()) {
-          const currentMargin = purchaseData.price - purchaseData.cost;
-          if (currentMargin <= 0 || purchaseData.price <= 0) continue;
+          // Custo do item comprado desconhecido → não dá para afirmar que a margem atual é ruim;
+          // o produto sai do up-sell em vez de ser tratado como margem cheia.
+          const currentMargin = margemUnitaria(purchaseData.price, purchaseData.cost);
+          if (currentMargin == null || currentMargin <= 0 || purchaseData.price <= 0) continue;
           const currentMarginPct = currentMargin / purchaseData.price;
           if (currentMarginPct > 0.35) continue; // Already good margin, skip
 
@@ -392,9 +410,11 @@ export const useCrossSellEngine = () => {
             if (product.id === purchasedId) continue;
             if (purchasedIds.has(product.id)) continue;
 
-            const premiumCost = costMap.get(product.id) || 0;
             const premiumPrice = Number(product.valor_unitario || 0);
-            const premiumMargin = premiumPrice - premiumCost;
+            const premiumMargin = margemUnitaria(premiumPrice, costMap.get(product.id));
+            // Sem custo não há como PROVAR que a alternativa é mais rentável — fora do up-sell
+            // (com `|| 0` ela aparentava a maior margem possível e vencia a comparação abaixo).
+            if (premiumMargin == null) continue;
 
             // Must be genuinely premium: higher price AND higher margin
             if (premiumPrice <= purchaseData.price * 1.1) continue;

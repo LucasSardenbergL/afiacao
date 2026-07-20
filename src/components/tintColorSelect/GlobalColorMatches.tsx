@@ -4,8 +4,9 @@ import { AlertTriangle, Package } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import type { Product } from '@/hooks/useUnifiedOrder';
 import { fmt } from '@/hooks/useUnifiedOrder';
-import { selectAltPrice, type TintPriceBreakdownLite } from '@/lib/tint/select-price';
-import type { AlternativePackaging } from './types';
+import { selectAltPrice, type AltPriceSource, type TintPriceBreakdownLite } from '@/lib/tint/select-price';
+import { AltPriceSourcePicker } from './AltPriceSourcePicker';
+import type { AlternativePackaging, TintPricingMeta } from './types';
 
 interface GlobalColorMatchesProps {
   product: Product;
@@ -16,10 +17,13 @@ interface GlobalColorMatchesProps {
   precoMap?: Record<string, TintPriceBreakdownLite>;
   /** Batch de preços ainda carregando (mostra "calculando", não "sem preço"). */
   precoLoading?: boolean;
-  onConfirm: (formulaId: string, corId: string, nomeCor: string, precoFinal: number, custoCorantes: number, alternativeProduct?: Product) => void;
+  /** Override de fonte POR alternativa (Fase 2b-fix) — validado em selectAltPrice. */
+  altPriceSourceOverrides: Record<string, AltPriceSource>;
+  setAltPriceSourceOverride: (formulaId: string, source: AltPriceSource) => void;
+  onConfirm: (formulaId: string, corId: string, nomeCor: string, precoFinal: number, custoCorantes: number, pricingMeta: TintPricingMeta, alternativeProduct?: Product) => void;
 }
 
-export function GlobalColorMatches({ product, matches, colorExists, precoMap, precoLoading, onConfirm }: GlobalColorMatchesProps) {
+export function GlobalColorMatches({ product, matches, colorExists, precoMap, precoLoading, altPriceSourceOverrides, setAltPriceSourceOverride, onConfirm }: GlobalColorMatchesProps) {
   if (matches.length === 0) {
     // Degradação honesta: distingue "existe mas não é vendável nesta base" de
     // "não existe". O sinal money-path nunca afirma ausência quando a cor está
@@ -64,7 +68,8 @@ export function GlobalColorMatches({ product, matches, colorExists, precoMap, pr
         <div className="max-h-60 overflow-y-auto space-y-1.5">
           {matches.map((alt) => {
             // Preço honesto da base alternativa (motor batch): calc vs CSV; null = sem preço.
-            const altSel = selectAltPrice(alt.precoFinalCsv, precoMap?.[alt.formulaId] ?? null);
+            // Fase 2b-fix: a escolha manual da vendedora (quando houver) entra como override validado.
+            const altSel = selectAltPrice(alt.precoFinalCsv, precoMap?.[alt.formulaId] ?? null, altPriceSourceOverrides[alt.formulaId] ?? null);
             const altDisponivel = altSel.preco != null;
             return (
               <div key={alt.formulaId} className="rounded-md border border-border hover:border-primary/50 transition-all text-xs">
@@ -76,6 +81,9 @@ export function GlobalColorMatches({ product, matches, colorExists, precoMap, pr
                     alt.nomeCor || '',
                     altSel.preco as number,
                     altSel.custoCorantes,
+                    // Fase 3: o item carrega a fonte EFETIVA (altSel já aplicou o
+                    // override da vendedora — 2b-fix); busca global não tem desconto
+                    { source: altSel.fonte, discountPct: 0, precoSemDesconto: altSel.preco },
                     alt.product,
                   )}
                   className={`w-full flex items-center justify-between gap-2 p-2.5 ${altDisponivel ? 'hover:bg-primary/5' : 'opacity-60 cursor-not-allowed'}`}
@@ -111,6 +119,12 @@ export function GlobalColorMatches({ product, matches, colorExists, precoMap, pr
                     )}
                   </div>
                 </button>
+                <AltPriceSourcePicker
+                  formulaId={alt.formulaId}
+                  altSel={altSel}
+                  setOverride={setAltPriceSourceOverride}
+                  className="px-2.5 pb-2"
+                />
               </div>
             );
           })}

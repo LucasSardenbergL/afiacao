@@ -99,6 +99,13 @@ export interface ProductCartItem {
   tint_nome_cor?: string;
   tint_custo_corantes?: number;
   tint_formula_id?: string;
+  // Fase 3: metadados de precificação do picker — a fonte que a vendedora
+  // escolheu + o desconto declarado + o preço-base. Viajam no jsonb e no
+  // payload do edge; o gate do submit (tint_gate_revalida) recomputa a fonte
+  // AGORA e confere. Ausentes = item legado (o gate usa o piso min(fontes)).
+  tint_price_source?: string;
+  tint_discount_pct?: number;
+  tint_preco_sem_desconto?: number;
 }
 
 export interface UserTool {

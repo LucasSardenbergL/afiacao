@@ -4,7 +4,9 @@
 > ("gestor deve respeitar a máscara `eligible`?") e cresceu ao medir o alcance real do gate.
 > Estado **medido em PROD via psql-ro em 2026-07-18**. Revisão adversária **Codex `gpt-5.6-sol` xhigh**,
 > 2 rodadas — o parecer derrubou a proposta inicial e corrigiu 6 afirmações.
-> **E1 entregue (só código, zero migration). E2 especificada, não construída.**
+> **E1 entregue ([#1424](https://github.com/LucasSardenbergL/afiacao/pull/1424), só código).
+> E2 entregue ([#1434](https://github.com/LucasSardenbergL/afiacao/pull/1434)) — ver §8 para o que
+> mudou entre o especificado aqui e o construído.**
 
 ## 1. A descoberta que redefine o problema
 
@@ -158,13 +160,123 @@ como especificado (o `trg_auto_commercial_super_admin` insere `super_admin` pelo
 
 ## 7. Follow-ups
 
-- **FU4-A:** matriz de capability por recurso × ação para os 34 recursos — é a E2 inteira, merece sessão própria.
+- ~~**FU4-A:** matriz de capability por recurso × ação~~ — **ENTREGUE** no #1434 (§8).
 - **FU4-B:** agregação server-side dos KPIs estratégicos (§4.3), independente da máscara.
-- **FU4-C:** o TS `CommercialRole` tem 4 valores; o enum do Postgres tem 7 (falta `farmer`, `hunter`, `closer`,
-  `master`). `useCommercialRole` classifica `master` como nenhum dos 4 — hoje inerte porque o master passa por
+- **FU4-C:** o TS `CommercialRole` tem 4 valores; o enum do Postgres tem **8** (`operacional, gerencial,
+  estrategico, super_admin, farmer, hunter, closer, master` — medido 2026-07-18; o "7" acima estava errado).
+  `useCommercialRole` classifica `master` como nenhum dos 4 — hoje inerte porque o master passa por
   `isAdmin`, mas é divergência de contrato.
+- **FU4-D:** `ineligibility_reason` (enum+coluna+backfill com `legacy_unknown`) + RPC de quarentena read-only.
+  Cortados da E2 por decisão do dono: a matriz não depende deles (a coorte filtra por `eligible`, que já
+  existe), e mantê-los engordaria o bloco aplicado à mão misturando autorização com qualidade de dado.
+- **FU4-E:** 3 RPCs de ESCRITA em compras (`despinar_parametro`, `reverter_parametro_auto`,
+  `reverter_run_auto`) seguem no gate antigo. Como a E2 tirou do gerencial a LEITURA da telemetria de
+  compras, sobrou a incoerência "não lê, mas escreve". Não é vazamento de custo/preço/crédito. Ao tratar:
+  criar `private.cap_compras_escrever` — não reusar a de leitura (§4.2).
+- **FU4-F — custo é legível por `employee`, não só pelo papel (o furo maior, e é outro).** A E2 fechou o
+  que o **papel comercial** concede. Mas todo gestor é `app_role='employee'`, e o role concede custo por
+  superfícies fora de `commercial_role` (medido em prod 2026-07-18, achado da rodada 2 do Codex):
 
-## 8. FU4-F — o role `employee` também concede custo (em curso)
+  | superfície | gate medido | o que expõe |
+  |---|---|---|
+  | `inventory_position` | policy `employee OR master` | `cmc`, `preco_medio` |
+  | `cmc_snapshot` | policy `employee OR master` | `cmc` |
+  | `product_costs` | policy `employee` | `cost_price`, `cmc`, `cost_final`, `custo_producao` |
+  | `regua_preco_log` | `FOR ALL` `employee OR master` | `piso_mc`, `cmc_usado` |
+  | `get_regua_preco` · `_customer360` | `has_role(employee\|master)` | `cmc`, `piso_mc` |
+  | `get_tint_price` · `_prices` | `v_is_staff := employee OR master` | `custoBase`, `custoCorantes` |
+
+  Os 2 vendedores de hoje já leem custo por aí — antes e depois da E2. **Isto não é regressão desta
+  entrega nem foi prometido por ela**, mas invalida a leitura ingênua de "gerencial não vê custo".
+
+  Canais DERIVADOS na mesma família (mascarar o campo bruto não fecha): `get_preco_cockpit` é um
+  **oráculo por bisseção** — o caller escolhe o preço e lê a faixa (`abaixo_do_custo`/`abaixo_do_piso`/
+  `abaixo_da_meta`), reconstruindo cmc/piso/meta; `get_defasagem_cliente` devolve `alta_custo_perc`
+  (variação percentual do custo) fora do gate. Ambos acessíveis a qualquer `employee`.
+
+  ### FU4-F — decisão do dono (2026-07-19): **vendedor NÃO deve ver custo**
+
+  A decisão confirma o desenho da E2 (`cap_custo_ler` já exclui `farmer`) e define a entrega:
+  **fechar no BANCO, em 2 fases.** Impacto medido: 2 pessoas (2 `employee`/`farmer`; o resto é
+  2 `master` + 5.664 `customer`).
+
+  ⚠️ **Restrição ingênua QUEBRA o vendedor — medido, não suposto.** Três motores calculam com custo
+  no CLIENTE, lendo `product_costs` direto: `useCrossSellEngine` (`if (margin <= 0) continue` ⇒ sem
+  custo, **todas** as recomendações somem), `useFarmerScoring` (margem é eixo do score ⇒ a ordenação
+  da agenda muda) e `useBundleEngine`. Trocar o gate sem mover o cálculo apaga funcionalidade que o
+  vendedor usa.
+
+  **O padrão certo já existe no código, em 3 lugares** — separar o SINAL do NÚMERO:
+  `ReguaPrecoSinal` modo `readonly` (`pisoOculto` mostra "abaixo do piso" sem valor);
+  `get_defasagem_cliente` (absolutos NULL, mantém `alta_custo_perc` e "repassar p/ R$X");
+  `RecommendationCard` (bloco de custo gated por `isAdmin`). O vendedor precisa do semáforo e do
+  "repasse para R$X" — não do CMC.
+
+  **Fase 1 — exposições CRUAS saem do gate `employee`** (não mexe nos motores):
+  · `cmc_snapshot` → `cap_custo_ler` (só custo; fechar inteiro é seguro)
+  · `regua_preco_log` → `cap_custo_ler` na leitura (a UI só escreve, nunca lê)
+  · `get_regua_preco` / `_customer360` → mascarar `cmc`/`piso_mc` pelo padrão do `get_defasagem_cliente`
+  · `get_tint_price` / `_prices` → trocar `v_is_staff` por `cap_custo_ler` no gate de `custoBase`/`custoCorantes`
+  · frontend: **remover as colunas CMC e Preço Médio** da aba Estoque do `/admin/estoque/picking`
+    (decisão do dono: quem separa pedido precisa de saldo/lote/FEFO, não de custo) e aplicar
+    `pisoOculto` no carrinho, preservando a faixa verde/amarelo/vermelho
+  · `/admin/reposicao/baixo-giro`: `capital_parado` (= saldo × cmc) vira gated
+
+  🧭 **PONTO EM ABERTO da Fase 1 — `inventory_position`.** A tabela tem `saldo` **e** `cmc` juntos, e
+  o separador precisa do `saldo`. RLS filtra LINHA, não coluna, então não dá para esconder só o custo
+  por policy. `GRANT` por coluna também não serve: é por role do Postgres, e `authenticated` é todo
+  mundo — não distingue capability. As saídas plausíveis, a decidir na implementação: (a) view
+  operacional sem as colunas de custo + fechar a tabela, (b) RPC de saldo que não projeta custo, ou
+  (c) aceitar que o frontend só não seleciona as colunas — que é "não mostrar", não "não poder", e
+  contradiz a decisão de fechar no banco. **Não escolher isto por conveniência no meio da implementação.**
+
+  **Fase 2 — motores Farmer saem do cliente.** `useCrossSellEngine`, `useFarmerScoring` e
+  `useBundleEngine` migram para RPC `SECURITY DEFINER` que lê custo com privilégio e devolve só o
+  RESULTADO (margem, score, bundle). Só depois disso `product_costs` pode ir para `cap_custo_ler`
+  sem apagar feature. Enquanto a Fase 2 não existir, `product_costs` **fica como está** — e isso é
+  uma decisão consciente, não esquecimento.
+
+## 8. E2 — o que foi construído (2026-07-18, #1434)
+
+Divergências conscientes entre o especificado acima e o entregue:
+
+| §4.1 | especificado | entregue | porquê |
+|---|---|---|---|
+| passos 3-4 | `ineligibility_reason` + backfill | **cortado** → FU4-D | a matriz não depende; reduz o bloco aplicado à mão |
+| passo 7 | RPC de quarentena | **cortado** → FU4-D | observabilidade, não autorização |
+| passo 8 | RPC de KPIs estratégicos | **cortado** → FU4-B | §4.3 já dizia que é bug independente |
+| passo 1 | "gate de versão fail-closed (já entregue como E1)" | **construído de verdade** | a E1 era uma constante literal; virou consulta a `authz_contract_version()`. Sem isso, um Publish sem a migration reabriria o furo em silêncio |
+
+**A matriz.** 6 capabilities em `private`: `cap_preco_escrever` e `cap_credito_escrever` (master),
+`cap_custo_ler` (master+estrategico+super_admin), `cap_compras_ler` (master), `cap_carteira_ler` e
+`cap_carteira_escrever` (mantêm a concessão do gate antigo). As duas de carteira coincidem hoje **de
+propósito**: é a junta onde a matriz dobra — apertar a escrita depois custa 1 função, não 28 policies.
+
+**Alcance real medido — maior que as 64 policies.** Além delas, 4 RPCs `SECURITY DEFINER` liberavam custo:
+`fin_estimar_estoque_omie`, `medir_abaixo_piso_tier`, `get_preco_cockpit`, `get_defasagem_cliente`. As duas
+últimas quase escaparam: o comentário no `authz-manifest.ts` as descreve como "afina o detalhe", mas o
+código mostra que a variável gateada é o que decide se `cmc`/`markup`/`piso`/`folga` saem preenchidos.
+**Lição: classifique gate lendo o corpo da função, não o comentário do manifesto.**
+
+**O que a revisão adversária derrubou (Codex `gpt-5.6-sol` xhigh, 2 rodadas).**
+
+Rodada 1 — 4 achados, veredito "não aplique ainda": as 2 RPCs de custo acima (bloqueador);
+`FOR ALL USING(ler) WITH CHECK(escrever)` em `selfservice_cliente_allowlist` (DELETE só consulta `USING` →
+latentemente inseguro); um assert do harness que era falso-verde por `SET LOCAL` fora de transação; e
+`useAuthzContract` não sendo fail-closed após sucesso→erro (react-query preserva o último `data` bom).
+
+Rodada 2 — confirmou 3 correções e reprovou a 4ª por 3 defeitos, todos corrigidos: o bloco que reescreve
+as RPCs **não era idempotente** (2ª aplicação abortava — inaceitável para migration colada à mão),
+resolvia por `proname` **sem assinatura** (overload futuro seria escolhido arbitrariamente), e o guard
+casava **string literal** em vez de regex tolerante (`public.gate ( … )` passaria batido). E trouxe o
+achado maior: **a leitura de custo não é fechada por esta entrega** — ver FU4-F no §7. A afirmação
+"gerencial perde leitura de custo", que estava no cabeçalho da migration e no PR, foi **corrigida** para
+"o PAPEL deixa de conceder" — a redação anterior era falsa, porque gestor é `employee`.
+
+**Prova:** `db/test-authz-capability-matrix.sh` — 52 asserts, PG17, `SET ROLE authenticated`, com guard que
+aborta se o SET ROLE não pegar, teste de idempotência (re-aplica a migration) e falsificação em 6 pontos.
+
+## 9. FU4-F — o role `employee` também concede custo (em curso)
 
 A matriz da E2 fecha o que o **papel comercial** concede. O `COMMENT` de `private.cap_custo_ler` declara o resto:
 o **role `employee`** concede custo por 6 superfícies que não passam por `commercial_role`.
@@ -173,7 +285,7 @@ o **role `employee`** concede custo por 6 superfícies que não passam por `comm
 e continua vendo "abaixo do custo / abaixo do piso / saudável". Diferente da E2, isto **muda o acesso de gente
 viva** — os 2 employees em prod, ambos `farmer`, um deles com 28.065 pedidos criados.
 
-### 8.1 O achado que reenquadra o problema
+### 9.1 O achado que reenquadra o problema
 
 O enunciado era "6 superfícies com o gate errado". Medindo, o problema é outro: **três subsistemas baixam custo
 para o browser e calculam lá** — e é por isso que fechar o gate quebra a tela, não por causa do gate.
@@ -191,14 +303,14 @@ Corolário para o inventário: `inventory_position` **mistura operacional (`sald
 `preco_medio`)** na mesma tabela, e RLS filtra LINHA, não COLUNA — fechar tira o saldo junto. Column-level
 `GRANT` não salva: distingue roles do **Postgres**, e no Supabase todo logado é o mesmo `authenticated`.
 
-### 8.2 Limite honesto declarado
+### 9.2 Limite honesto declarado
 
 Manter o sinal e tirar o número **não é barreira de segurança**: `get_preco_cockpit` segue sendo **oráculo por
 bisseção** (o caller escolhe o preço e lê a faixa; aceita 200 itens/chamada, então ~20 chamadas resolvem 200
 SKUs). É barreira de **conveniência**, escolhida conscientemente em troca da ferramenta de venda — mesmo tipo de
 limite que o §3 declarou para o E1. Contra adversário competente, a barreira real é contrato e offboarding.
 
-### 8.3 Fases
+### 9.3 Fases
 
 - **Fase 1** (PR #1465): `cmc_snapshot` + `get_tint_price(s)`. As superfícies **sem** o problema arquitetural.
 - **Fase 2** (chip): cluster **régua de preço** — as 2 RPCs + `regua_preco_log` juntos. Mover `calcPisoMC` para o
@@ -206,7 +318,7 @@ limite que o §3 declarou para o E1. Contra adversário competente, a barreira r
   `false`), então dá para reescrever sem quebrar ninguém.
 - **Fase 3** (chip): `inventory_position` (view operacional) + `product_costs` (margem server-side nos 3 engines).
 
-### 8.4 O que o Codex derrubou na fase 1 (registro honesto)
+### 9.4 O que o Codex derrubou na fase 1 (registro honesto)
 
 Veredito literal da rodada 1: *"eu não aplicaria esta migration como está"*. Quatro bloqueadores P1:
 
