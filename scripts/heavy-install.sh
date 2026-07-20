@@ -22,6 +22,9 @@
 #             mktemp falhou, ou o CHAMADOR (o hook) estourou o teto de tempo. A
 #             mensagem diz o que fazer; NUNCA é o mesmo que "divergente" (ausência
 #             de dado ≠ afirmação de divergência).
+#   "Instalado mas fora do PATH" entra como NOTA na mensagem dos exit 0, sem exit
+#   code próprio — o PATH lido é o DESTE processo, e no hook isso é o PATH do app
+#   (nag permanente e falso). Ver o bloco comentado no --status.
 set -euo pipefail
 
 DEST="${AFIACAO_HEAVY_DEST:-$HOME/.local/bin/heavy}"
@@ -114,12 +117,36 @@ sha_dest=""
 if [ -f "$DEST" ]; then sha_dest="$(sha_de "$DEST")"; fi
 
 # ── --status: só reporta, contrato de 4 estados (ver header) ─────────────────
+# "Instalado mas FORA do PATH" é NOTA na mensagem, não um 5º estado de saída — e
+# a assimetria é deliberada. Quem lê o $PATH aqui é ESTE processo, e ele muda com
+# o chamador: à MÃO no terminal é o PATH do perfil de shell (a leitura CERTA — é
+# lá que o founder digita `heavy`); pelo vigia-worktree.sh é o PATH do processo
+# do app, que não vem do perfil e pode divergir — o próprio hook documenta essa
+# divergência medida para /opt/homebrew/bin no fallback do `timeout`.
+# (Medido nesta máquina em 2026-07-20: o PATH do app TEM ~/.local/bin, 12
+# entradas — hoje a nota não dispararia por aqui. O risco não é o hoje: é uma
+# máquina/versão do app onde não tenha, e aí um exit code novo faria o hook
+# avisar em TODA sessão sobre um problema inexistente no shell onde o `heavy` de
+# fato roda — nag permanente, que treina todo mundo a ignorar o bloco 4,
+# inclusive o aviso de divergência que ele existe pra dar. E quebraria as
+# asserções de silêncio do test-hooks-sessionstart.sh, que são o CONTRATO desse
+# silêncio.) Por isso a nota só aparece nos estados que o hook descarta (exit 0):
+# quem a lê é humano, com o PATH certo na mão. No DIVERGENTE/ausente o remédio já
+# é reinstalar, e o caminho de instalação termina avisando do PATH sozinho.
+# O heavy-guard.sh NÃO depende disto: quando o nome nu não resolve, ele reescreve
+# com o caminho absoluto — o comando pesado roda com PATH ou sem.
+nota_path=""
+case ":$PATH:" in
+  *":$(dirname "$DEST"):"*) : ;;
+  *) nota_path=" · ⚠️ $(dirname "$DEST") fora do PATH deste processo: 'heavy' digitado à mão sai 127 (o hook heavy-guard usa o caminho absoluto e não é afetado)" ;;
+esac
+
 if [ "$modo" = "status" ]; then
   if [ -z "$sha_dest" ]; then
     echo "heavy NÃO instalado ($DEST ausente) — fonte $desc"
     exit 1
   elif [ "$sha_fonte" = "$sha_dest" ]; then
-    echo "heavy sincronizado com $desc (${sha_fonte:0:12})"
+    echo "heavy sincronizado com $desc (${sha_fonte:0:12})${nota_path}"
     exit 0
   else
     # "Em voo": o instalado pode bater com O ARQUIVO DESTA WORKTREE (alguém
@@ -131,7 +158,7 @@ if [ "$modo" = "status" ]; then
     if [ "$fonte" = "main" ] && [ -s "$here/heavy.sh" ]; then
       sha_local="$(sha_de "$here/heavy.sh")"
       if [ "$sha_local" = "$sha_dest" ]; then
-        echo "heavy EM VOO — instalado (${sha_dest:0:12}) == scripts/heavy.sh desta worktree, ≠ $desc (${sha_fonte:0:12}). Parece --daqui proposital nesta worktree; se não foi você, confira quem instalou."
+        echo "heavy EM VOO — instalado (${sha_dest:0:12}) == scripts/heavy.sh desta worktree, ≠ $desc (${sha_fonte:0:12}). Parece --daqui proposital nesta worktree; se não foi você, confira quem instalou.${nota_path}"
         exit 0
       fi
     fi

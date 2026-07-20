@@ -59,6 +59,55 @@ expect_quiet() {
   else echo "  FAIL  want quiet | $1 → $out"; fail=1; fi
 }
 
+# ── instalado mas FORA do PATH ────────────────────────────────────────────────
+# O PATH deste hook vem do processo do app, não do perfil de shell — `heavy`
+# pode existir em ~/.local/bin e mesmo assim não resolver aqui. A asserção que
+# importa não é textual ("saiu o caminho absoluto?") e sim EXECUTÁVEL: o comando
+# reescrito tem de RODAR sob o mesmo PATH restrito. Reescrever com o nome nu
+# nesse estado devolve 127 (command not found) — o comando pesado simplesmente
+# não roda, e o erro não aponta pra causa.
+sem_path_home="$(mktemp -d)"
+mkdir -p "$sem_path_home/.local/bin"
+# stub que ACUSA ter rodado: sem isto, "exit 0" não distingue heavy-executado de
+# heavy-inexistente-mas-comando-trivial.
+printf '#!/bin/sh\necho HEAVY-RODOU\nexit 0\n' >"$sem_path_home/.local/bin/heavy"
+chmod +x "$sem_path_home/.local/bin/heavy"
+# PATH sem ~/.local/bin e sem `heavy` algum, mas com o jq de que o hook precisa
+sem_path_PATH="/usr/bin:/bin:/usr/sbin:/sbin:$(dirname "$(command -v jq)")"
+trap 'rm -rf "$stubbin" "$sem_path_home"' EXIT
+
+expect_invocavel_sem_path() {
+  local cmd="$1" out novo saida rc
+  out="$(jq -n --arg c "$cmd" '{tool_name:"Bash",tool_input:{command:$c}}' \
+    | env HOME="$sem_path_home" PATH="$sem_path_PATH" bash "$HOOK" 2>/dev/null)"
+  novo="$(printf '%s' "$out" | jq -r '.hookSpecificOutput.updatedInput.command // empty' 2>/dev/null)"
+  if [ -z "$novo" ]; then
+    echo "  FAIL  fora do PATH: não reescreveu | $cmd"; fail=1; return
+  fi
+  # roda o comando REESCRITO no mesmo PATH restrito — só o `heavy` precisa
+  # resolver, então o resto do comando é trocado por um no-op (`true`).
+  saida="$(env HOME="$sem_path_home" PATH="$sem_path_PATH" \
+    bash -c "${novo/bun run test/true}" 2>&1)"; rc=$?
+  if [ "$rc" -eq 127 ]; then
+    echo "  FAIL  fora do PATH: reescrita saiu 127 (heavy não resolve) | $cmd → $novo"; fail=1
+  elif [ "$rc" -ne 0 ] || ! printf '%s' "$saida" | grep -q HEAVY-RODOU; then
+    echo "  FAIL  fora do PATH: heavy não executou (rc=$rc) | $cmd → $novo"; fail=1
+  else
+    echo "  ok    invocável fora do PATH | $cmd → $novo"
+  fi
+}
+
+# heavy AUSENTE de verdade (nem no PATH, nem em ~/.local/bin) → fail-open
+expect_quiet_sem_heavy() {
+  local out vazio
+  vazio="$(mktemp -d)"
+  out="$(jq -n --arg c "$1" '{tool_name:"Bash",tool_input:{command:$c}}' \
+    | env HOME="$vazio" PATH="$sem_path_PATH" bash "$HOOK" 2>/dev/null)"
+  rm -rf "$vazio"
+  if [ -z "$out" ]; then echo "  ok    fail-open sem heavy | $1"
+  else echo "  FAIL  want fail-open sem heavy | $1 → $out"; fail=1; fi
+}
+
 echo "── pesados sem heavy → reescrita (allow + updatedInput) ──"
 expect_rewrite 'bun run test'                          'heavy bun run test'
 expect_rewrite 'bun run test src/lib/foo.test.ts'      'heavy bun run test src/lib/foo.test.ts'
@@ -83,6 +132,20 @@ expect_quiet 'bun run lint'
 expect_quiet 'bun dev'
 expect_quiet 'git status'
 expect_quiet 'bun run claude:size'
+
+echo "── instalado mas FORA do PATH → reescrita tem de ser INVOCÁVEL ──"
+expect_invocavel_sem_path 'bun run test'
+# composto usa /tmp (que EXISTE): estas asserções EXECUTAM o comando reescrito,
+# e um `cd` para diretório inexistente curto-circuitaria o && antes do heavy —
+# o teste falharia por rc=1 do cd, mascarando o que ele quer provar.
+expect_invocavel_sem_path 'cd /tmp && bun run test'
+
+echo "── heavy realmente ausente → fail-open (não força o que não existe) ──"
+expect_quiet_sem_heavy 'bun run test'
+
+echo "── já com heavy por CAMINHO → não interfere (sem prefixo duplo) ──"
+expect_quiet "$HOME/.local/bin/heavy bun run test"
+expect_quiet './heavy bun run test'
 
 echo "── leitura/menção (não é execução pesada) → não interfere ──"
 expect_quiet 'cat vitest.config.ts'
