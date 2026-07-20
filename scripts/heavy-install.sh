@@ -62,12 +62,30 @@ limpar() {
 }
 trap limpar EXIT
 # `timeout(1)` (ex.: o teto de 3s que o hook SessionStart aplica no --status)
-# mata com SIGTERM. Sem handler, o processo morre pela disposição PADRÃO do
-# sinal — que NÃO roda o trap EXIT acima — e vaza o mktemp deste bloco em
-# $TMPDIR a cada sessão que estourar o teto. O `exit` abaixo RE-DISPARA o trap
-# EXIT (é assim que o bash encadeia: trap de sinal chamando `exit` executa o
-# trap EXIT em seguida), então a limpeza acontece do mesmo jeito.
-trap 'exit 143' TERM
+# mata com SIGTERM. Havia aqui um `trap 'exit 143' TERM` com a premissa de que,
+# sem handler, o processo morreria pela disposição PADRÃO do sinal sem rodar o
+# trap EXIT acima, vazando o mktemp. MEDIDO (2026-07-20, scratchpad descartável)
+# e FALSO nos dois eixos:
+#   1) Sob o `timeout` do GNU coreutils (o que o hook usa): 0 tmp vazado COM o
+#      trap e 0 tmp vazado SEM o trap. O coreutils cria um novo grupo de
+#      processos pro comando e manda o SIGTERM pro GRUPO inteiro — o bash
+#      recebe o sinal direto, não fica esperando nenhum subprocess bloqueado
+#      morrer primeiro. E o bash RODA o trap EXIT mesmo sem handler custom
+#      para o sinal fatal: `bash -c 'trap "echo OK" EXIT; sleep 6'` seguido de
+#      `kill -TERM` no PID imprime OK, rc=143. Não existe a tal disposição
+#      "padrão" que pule o trap EXIT — a premissa do parágrafo antigo era
+#      falsa mesmo sem o `timeout` de grupo entrar em cena.
+#   2) Pior: um `trap TERM` aqui fica em TENSÃO com o teto de 3s. Se o SIGTERM
+#      chegar só a ESTE processo — não ao grupo — enquanto um subprocess
+#      daqui (`git show`) está bloqueado em primeiro plano (`timeout
+#      --foreground`, um `timeout` sem setpgid, ou um `kill` direto ao PID
+#      cobrem esse caso), o bash represa o trap até o subprocess terminar.
+#      Medido: ~9,5s até morrer COM o trap (quase o tempo total do subprocess
+#      bloqueante do teste) contra ~9ms SEM ele. Um trap aqui é exatamente o
+#      tipo de coisa que desativaria o teto que este script existe para
+#      respeitar quando chamado pelo hook.
+# Por isso: SEM trap TERM. O trap EXIT sozinho já limpa em todo caminho
+# medido, e tirar o TERM fecha a tensão do item 2 sem reabrir o item 1.
 
 # ── materializa a fonte ───────────────────────────────────────────────────────
 if [ "$fonte" = "daqui" ]; then
