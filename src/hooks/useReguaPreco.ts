@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { useQuery, keepPreviousData } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { avaliarReguaPreco } from '@/lib/regua-preco/regua-preco-helpers';
@@ -27,10 +27,16 @@ const callRpc = (args: RpcArgs) =>
  *
  * ⚠️ FU4-F fase 2 — o PREÇO entrou na queryKey. Antes a decisão rodava no cliente a cada tecla,
  * de graça; agora ela é do servidor, porque um predicado `preço < piso` avaliável no browser
- * revela o piso por busca binária. O custo disso é refetch ao mudar o preço, contido por:
- *   · DEBOUNCE (400ms) — digitar não vira uma rajada de RPCs;
- *   · keepPreviousData — o sinal anterior fica na tela enquanto o novo chega (sem piscar);
- *   · dedupe por (produto, qty, preço) — linhas iguais continuam sendo 1 chamada só.
+ * revela o piso por busca binária. O custo disso é refetch ao mudar o preço, contido por
+ * DEBOUNCE (400ms) e por dedupe em (produto, qty, preço).
+ *
+ * ⚠️ SEM `keepPreviousData`, e isso é DELIBERADO (achado P1 do Codex na 1ª revisão): o `Map` é
+ * chaveado por produto+qty+preço, que NÃO inclui cliente nem prazo. Servir o dado da query
+ * anterior enquanto a nova carrega faria a chave casar entre contextos diferentes — o veredito do
+ * cliente A aparecendo no cliente B, e o piso À VISTA escondendo o vermelho depois de trocar a
+ * condição para 90 dias. Preferimos o sinal SUMIR por ~400ms a mostrar o sinal do contexto errado
+ * (precisão > recall). Quem depende disso é o vermelho de margem.
+ *
  * queryKey inclui o user.id REAL (anti-leak entre usuários no mesmo browser).
  */
 export function useReguaPreco(
@@ -53,7 +59,6 @@ export function useReguaPreco(
     queryKey: ['regua-preco', user?.id ?? 'anon', customerUserId, debouncedSig],
     enabled: enabled && !!customerUserId && fetchItens.length > 0,
     staleTime: 60_000,
-    placeholderData: keepPreviousData,
     queryFn: async (): Promise<Map<string, FetchDataRegua>> => {
       // a query só dispara quando a assinatura DEBOUNCED muda; nesse instante `fetchItens` já
       // reflete o último preço digitado, então closure e chave estão coerentes.
@@ -79,6 +84,10 @@ export function useReguaPreco(
 
   const reguaByKey = useMemo(() => {
     const out = new Map<string, ReguaPrecoResult>();
+    // fail-closed: se a flag/role desligar (ou sumir o cliente), o React Query MANTÉM o cache de
+    // query.data — então gateamos AQUI também, para o sinal sumir na hora. O 360 já fazia isso
+    // (useReguaPreco360.ts:52); o carrinho não, e a inconsistência foi apontada na revisão.
+    if (!enabled || !customerUserId) return out;
     const fetchMap = query.data;
     if (!fetchMap) return out;
     for (const it of itens) {
@@ -89,7 +98,7 @@ export function useReguaPreco(
       out.set(it.chave, avaliarReguaPreco(montarInputRegua(fd, it.precoAtual, { prazoDias })));
     }
     return out;
-  }, [itens, query.data, prazoDias]);
+  }, [itens, query.data, prazoDias, enabled, customerUserId]);
 
   return { reguaByKey, isLoading: query.isLoading };
 }

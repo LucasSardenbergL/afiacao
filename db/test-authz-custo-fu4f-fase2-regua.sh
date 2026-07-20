@@ -66,6 +66,8 @@ CLI='55555555-5555-5555-5555-555555555555' # cliente alvo da régua
 OUT='66666666-6666-6666-6666-666666666666' # outro cliente (comparáveis)
 PRD='77777777-7777-7777-7777-777777777777' # produto COM cmc
 SEM='88888888-8888-8888-8888-888888888888' # produto SEM cmc
+NAN='99999999-9999-9999-9999-999999999999' # produto com cmc = NaN   (numeric aceita!)
+INF='aaaaaaaa-1111-1111-1111-111111111111' # produto com cmc = Infinity
 
 as_user() { Pq -c "SET test.uid='$1'; SET ROLE authenticated; $2" | tail -1; }
 
@@ -135,9 +137,12 @@ CREATE POLICY regua_preco_log_staff_all ON public.regua_preco_log
   USING  (public.has_role(auth.uid(), 'employee') OR public.has_role(auth.uid(), 'master'))
   WITH CHECK (public.has_role(auth.uid(), 'employee') OR public.has_role(auth.uid(), 'master'));
 
--- ACL da prod (relacl medido): authenticated tem arwdDxtm. A negação TEM de vir da RLS, não de
--- grant faltando — senão o assert negativo passaria pelo motivo errado.
-GRANT SELECT, INSERT, UPDATE, DELETE ON public.regua_preco_log TO authenticated, anon;
+-- ACL da prod (relacl medido): authenticated=arwdDxtm. Reproduzida INTEIRA — a versão anterior
+-- prometia arwdDxtm no comentário e concedia só `arwd`, então o TRUNCATE (o D) nunca era exercido
+-- e o harness ficava verde sobre um privilégio que a migration não revogava (falso-verde apontado
+-- pelo Codex). A negação tem de vir da RLS/REVOKE, nunca de grant que faltou no stub.
+GRANT SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER, MAINTAIN
+  ON public.regua_preco_log TO authenticated, anon;
 GRANT SELECT ON public.inventory_position, public.company_config, public.user_roles,
                 public.commercial_roles, public.order_items, public.sales_orders TO authenticated, anon;
 SQL
@@ -330,8 +335,10 @@ eq "A11 farmer: piso_gap_pct mascarado (é invertível para o piso)" \
    "$(as_user "$F" "SELECT coalesce((public.get_regua_preco('$CLI','$PRD',10,12.00,NULL))->>'piso_gap_pct','NULL');")" "NULL"
 eq "A12 master: piso_mc = 13.4490 (allow-side — cmc/(1-0,078))" \
    "$(as_user "$M" "SELECT (public.get_regua_preco('$CLI','$PRD',10,12.00,NULL))->>'piso_mc';")" "13.4490"
-eq "A13 master: piso_gap_pct = 0.120750" \
-   "$(as_user "$M" "SELECT (public.get_regua_preco('$CLI','$PRD',10,12.00,NULL))->>'piso_gap_pct';")" "0.120750"
+# 13.449023861…/12.00 − 1 = 0.120752 — o MESMO valor que o cálculo independente em node deu.
+# (Antes da correção de arredondamento dava 0.120750, porque o gap saía do piso já truncado.)
+eq "A13 master: piso_gap_pct = 0.120752 (do piso íntegro, não do arredondado)" \
+   "$(as_user "$M" "SELECT (public.get_regua_preco('$CLI','$PRD',10,12.00,NULL))->>'piso_gap_pct';")" "0.120752"
 eq "A14 estrategico: piso_mc = 13.4490 (a capability concede)" \
    "$(as_user "$E" "SELECT (public.get_regua_preco('$CLI','$PRD',10,12.00,NULL))->>'piso_mc';")" "13.4490"
 
@@ -366,7 +373,10 @@ NLOG=$(Pq -c "SELECT count(*) FROM public.regua_preco_log;" | tail -1)
 eq "A24 farmer NÃO lê o log (lia $BASE_LOG antes)" "$(as_user "$F" 'SELECT count(*) FROM public.regua_preco_log;')" "0"
 eq "A25 master LÊ o log"                            "$(as_user "$M" 'SELECT count(*) FROM public.regua_preco_log;')" "$NLOG"
 eq "A26 estrategico LÊ o log"                       "$(as_user "$E" 'SELECT count(*) FROM public.regua_preco_log;')" "$NLOG"
-eq "A27 anon NÃO lê o log"                          "$(Pq -c "SET ROLE anon; SELECT count(*) FROM public.regua_preco_log;" | tail -1)" "0"
+# anon já não passa nem do GRANT (o REVOKE tirou tudo), então a negação é de PRIVILÉGIO, não de
+# RLS — mais forte que o "0 linhas" de antes. Medir "0" aqui daria falso-verde por erro engolido.
+eq "A27 anon NÃO lê o log (negado no privilégio, antes da RLS)" \
+   "$(Pq -c "SELECT has_table_privilege('anon','public.regua_preco_log','SELECT');" | tail -1)" "f"
 
 echo "── writer por RPC: salesperson_id fixado, custo apurado no servidor ──"
 LOGID=$(as_user "$F" "SELECT public.registrar_exibicao_regua('oben','$CLI','$PRD',10,12.00,'piso','alta',NULL,NULL,NULL,false,ARRAY['x']::text[],NULL);")
@@ -401,6 +411,38 @@ eq "A40 360 mascara piso_mc p/ farmer" \
    "$(as_user "$F" "SELECT coalesce((public.get_regua_preco_customer360('$CLI',ARRAY[9001]::bigint[])->0)->>'piso_mc','NULL');")" "NULL"
 eq "A41 360 dá piso_mc ao master" \
    "$(as_user "$M" "SELECT (public.get_regua_preco_customer360('$CLI',ARRAY[9001]::bigint[])->0)->>'piso_mc';")" "13.4490"
+
+echo "── finitude: numeric aceita NaN/Infinity e as comparações MENTEM ──"
+# `'NaN'::numeric > 0` é TRUE e `12 < 'NaN'` é TRUE (NaN ordena como o maior). Sem guard, um cmc
+# NaN marcaria TODO preço como abaixo do piso — a régua gritando vermelho no catálogo inteiro.
+P -q -c "INSERT INTO public.inventory_position(product_id,account,cmc,saldo)
+         VALUES ('$NAN','oben','NaN'::numeric,10), ('$INF','oben','Infinity'::numeric,10);"
+eq "A42 cmc NaN → piso_disponivel=false" \
+   "$(as_user "$M" "SELECT (public.get_regua_preco('$CLI','$NAN',10,12.00,NULL))->>'piso_disponivel';")" "false"
+eq "A43 cmc NaN → abaixo_piso=false (não marca todo preço como abaixo)" \
+   "$(as_user "$F" "SELECT (public.get_regua_preco('$CLI','$NAN',10,12.00,NULL))->>'abaixo_piso';")" "false"
+eq "A44 cmc Infinity → piso_disponivel=false" \
+   "$(as_user "$M" "SELECT (public.get_regua_preco('$CLI','$INF',10,12.00,NULL))->>'piso_disponivel';")" "false"
+eq "A45 preço NaN não vira sinal" \
+   "$(as_user "$F" "SELECT (public.get_regua_preco('$CLI','$PRD',10,'NaN'::numeric,NULL))->>'abaixo_piso';")" "false"
+eq "A46 mais de 12 parcelas degrada p/ à vista (array vem do CLIENTE, sem passar pelo parser)" \
+   "$(as_user "$M" "SELECT (public.get_regua_preco('$CLI','$PRD',10,12.00,(SELECT array_agg(30::numeric) FROM generate_series(1,13))))->>'prazo_aplicado';")" "false"
+
+echo "── arredondamento não move a fronteira da decisão ──"
+# piso íntegro = 12.40/0.922 = 13.449023861…; a 4 casas seria 13.4490. Um preço ENTRE os dois
+# separa os dois mundos: é abaixo do piso real, e "saudável" se a comparação usar o arredondado.
+eq "A47 preço 13.44901 (entre o piso íntegro e o arredondado) é ABAIXO" \
+   "$(as_user "$F" "SELECT (public.get_regua_preco('$CLI','$PRD',10,13.44901,NULL))->>'abaixo_piso';")" "true"
+eq "A48 ... e o piso EXIBIDO segue arredondado a 4 casas" \
+   "$(as_user "$M" "SELECT (public.get_regua_preco('$CLI','$PRD',10,13.44901,NULL))->>'piso_mc';")" "13.4490"
+
+echo "── privilégios de tabela: TRUNCATE não passa por RLS ──"
+eq "A49 authenticated NÃO tem TRUNCATE no log" \
+   "$(Pq -c "SELECT has_table_privilege('authenticated','public.regua_preco_log','TRUNCATE');" | tail -1)" "f"
+eq "A50 authenticated NÃO tem DELETE no log" \
+   "$(Pq -c "SELECT has_table_privilege('authenticated','public.regua_preco_log','DELETE');" | tail -1)" "f"
+eq "A51 authenticated MANTÉM o SELECT (senão a policy de leitura fica inerte)" \
+   "$(Pq -c "SELECT has_table_privilege('authenticated','public.regua_preco_log','SELECT');" | tail -1)" "t"
 
 # ── negativos: SQLSTATE esperada + re-raise do resto (Lei #2) ──
 echo "── negativos (SQLSTATE exata, WHEN OTHERS RE-LANÇA) ──"
@@ -475,6 +517,21 @@ EXCEPTION
 END $$;
 SQL
 
+neg "N5 farmer NÃO consegue TRUNCATE o log (REVOKE, não RLS) → 42501" "$F" <<'SQL'
+SET test.uid = :'uid';
+SET test.cli = :'cli';
+SET test.prd = :'prd';
+SET ROLE authenticated;
+DO $$
+BEGIN
+  TRUNCATE public.regua_preco_log;
+  RAISE EXCEPTION 'ASSERT_FALHOU_truncate_passou';
+EXCEPTION
+  WHEN insufficient_privilege THEN NULL;
+  WHEN OTHERS THEN RAISE;
+END $$;
+SQL
+
 # ══════════════════════════════════════════════════════════════════════════════
 # ZONA 4 — FALSIFICAÇÃO
 # Cada sabotagem exige o VALOR EXATO que ela produz. "Diferente do baseline" não serve: um erro
@@ -516,7 +573,9 @@ BEGIN
   SELECT COALESCE((SELECT cc.value::numeric FROM public.company_config cc
                     WHERE cc.key='regua_preco_aliquota_venda_oben'),0.15) INTO v_aliq;
   SELECT piso INTO v_piso FROM private.regua_piso_calc(v_cmc, v_aliq, NULL, NULL);
-  RETURN jsonb_build_object('abaixo_piso', p_preco_atual < v_piso, 'piso_mc', v_piso);  -- SABOTAGEM: sem gate
+  -- SABOTAGEM: emite piso_mc SEM o gate v_pode_num. Tudo o mais idêntico à real (inclusive o
+  -- round de apresentação), para o vermelho vir do GATE ausente e não de outra diferença.
+  RETURN jsonb_build_object('abaixo_piso', p_preco_atual < v_piso, 'piso_mc', round(v_piso, 4));
 END $f$;
 SQL
 fals "F2 piso_mc sem o gate v_pode_num (vs A10)" \
@@ -537,10 +596,14 @@ P -q -c "DROP POLICY regua_preco_log_select_custo ON public.regua_preco_log;
            USING ((SELECT private.cap_custo_ler((SELECT auth.uid()))));"
 
 # F4 — o REVOKE do helper é esquecido: o farmer chama private.regua_piso_calc direto e lê 13.4490.
-P -q -c "GRANT EXECUTE ON FUNCTION private.regua_piso_calc(numeric,numeric,numeric[],numeric) TO authenticated;"
+# concede os DOIS: regua_piso_calc chama regua_num_finito, e esquecer o segundo faria a
+# sabotagem falhar por permissão no helper interno — vermelho pelo motivo errado.
+P -q -c "GRANT EXECUTE ON FUNCTION private.regua_piso_calc(numeric,numeric,numeric[],numeric) TO authenticated;
+         GRANT EXECUTE ON FUNCTION private.regua_num_finito(numeric) TO authenticated;"
 fals "F4 REVOKE do helper esquecido (vs N4)" \
-     "$(as_user "$F" "SELECT piso FROM private.regua_piso_calc(12.40, 0.078, NULL, NULL);")" "13.4490"
-P -q -c "REVOKE ALL ON FUNCTION private.regua_piso_calc(numeric,numeric,numeric[],numeric) FROM PUBLIC, anon, authenticated;"
+     "$(as_user "$F" "SELECT round(piso,4) FROM private.regua_piso_calc(12.40, 0.078, NULL, NULL);")" "13.4490"
+P -q -c "REVOKE ALL ON FUNCTION private.regua_piso_calc(numeric,numeric,numeric[],numeric) FROM PUBLIC, anon, authenticated;
+         REVOKE ALL ON FUNCTION private.regua_num_finito(numeric) FROM PUBLIC, anon, authenticated;"
 
 # F5 — o writer volta a ACEITAR salesperson_id: o farmer grava em nome do estratégico.
 P -q <<'SQL'
@@ -603,15 +666,24 @@ BEGIN
   RETURN v_n = 1;
 END $f$;
 SQL
-fals "F7 outcome sem filtro de dono (vs A36/A37)" \
-     "$(as_user "$E" "SELECT public.registrar_aplicacao_regua('$LOGID', 99.00);")" "t"
+as_user "$E" "SELECT public.registrar_aplicacao_regua('$LOGID', 99.00);" > /dev/null
+# não basta o retorno `true`: o que importa é o dado ter sido SOBRESCRITO (A37 mede o valor).
+fals "F7 outcome sem filtro de dono — preco_final alheio sobrescrito (vs A37)" \
+     "$(Pq -c "SELECT preco_final FROM public.regua_preco_log WHERE id='$LOGID';" | tail -1)" "99.00"
 P -q -f "$MIG" >/dev/null
 
 echo "  falsificação: $FALS_OK derrubaram / $FALS_BAD não reproduziram"
 [ "$FALS_BAD" = "0" ] || FAIL=$((FAIL+1))
 
 # ── veredito ──
+# ⚠️ Contagem EXATA, não só FAIL=0 (achado P3 do Codex): sem isto, apagar um assert ou uma
+# sabotagem mantém o harness verde — o teste degradaria em silêncio, que é o modo de falha que
+# este arquivo inteiro existe para impedir. Mudou o número de asserts? Atualize AQUI, conscientemente.
+PASS_ESPERADO=57
+FALS_ESPERADO=8
 echo "──────────────────────────────"
-echo "RESULTADO: $PASS ok / $FAIL fail"
+echo "RESULTADO: $PASS ok / $FAIL fail · falsificações: $FALS_OK"
+[ "$PASS" = "$PASS_ESPERADO" ] || { echo "❌ COBERTURA MUDOU: $PASS asserts, esperado $PASS_ESPERADO"; FAIL=$((FAIL+1)); }
+[ "$FALS_OK" = "$FALS_ESPERADO" ] || { echo "❌ FALSIFICAÇÕES: $FALS_OK derrubaram, esperado $FALS_ESPERADO"; FAIL=$((FAIL+1)); }
 [ "$FAIL" = "0" ] || { echo "❌ HARNESS VERMELHO"; exit 1; }
-echo "✅ HARNESS VERDE"
+echo "✅ HARNESS VERDE ($PASS asserts, $FALS_OK falsificações)"

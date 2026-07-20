@@ -77,6 +77,15 @@ export const AUTHZ_MANIFEST: Record<string, AuthzEntry> = {
     requiredGate: { anyOf: [{ call: 'cap_regua_log_escrever' }] },
     motivo: 'grava exibição da régua com piso_mc/cmc_usado apurados server-side; salesperson_id fixado em auth.uid()',
   },
+  // Fecha o loop do log. Não toca custo (por isso a Parte B do check não a exigia), mas é SECDEF
+  // que ESCREVE no log de custo — classificar torna o par writer/updater visível na auditoria em
+  // vez de deixar metade dele fora do inventário. Gate de escrita + predicado de ownership
+  // (`salesperson_id = auth.uid()` no UPDATE), para staff não fechar o outcome alheio.
+  'public.registrar_aplicacao_regua': {
+    sensitive: true,
+    requiredGate: { anyOf: [{ call: 'cap_regua_log_escrever' }] },
+    motivo: 'fecha o outcome da régua; só o vendedor DONO do registro (UPDATE filtra por auth.uid())',
+  },
   'public.get_ultimos_precos_cliente': {
     sensitive: true,
     requiredGate: { anyOf: [{ call: 'has_role', roles: ['employee', 'master'] }] },

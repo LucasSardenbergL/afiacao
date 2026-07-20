@@ -160,6 +160,26 @@ GRANT EXECUTE ON FUNCTION private.cap_regua_log_escrever(uuid) TO authenticated;
 --    barreira: `authenticated` tem USAGE no schema (nspacl medido 2026-07-20) e o schema não tem
 --    default ACL, então função nova nasce executável por PUBLIC.
 -- ────────────────────────────────────────────────────────────────────────────────────────────
+-- ⚠️ `numeric` do Postgres ACEITA 'NaN' e '±Infinity', e as comparações mentem: `'NaN' > 0` é
+-- TRUE e `12.00 < 'NaN'` é TRUE (NaN ordena como o MAIOR valor). Sem este guard, um cmc NaN em
+-- inventory_position faria `piso_disponivel=true` e marcaria QUALQUER preço como abaixo do piso —
+-- a régua gritando vermelho no catálogo inteiro. O TS que saiu daqui usava `Number.isFinite`;
+-- a tradução para plpgsql tinha PERDIDO o guard (achado P1 do Codex, verificado no PG17).
+-- Nota: `NaN = NaN` é TRUE em numeric (≠ IEEE), então o truque `v <> v` NÃO detecta NaN — daí a
+-- comparação explícita com 'NaN'.
+CREATE OR REPLACE FUNCTION private.regua_num_finito(v numeric)
+RETURNS boolean
+LANGUAGE sql
+IMMUTABLE
+AS $$
+  SELECT v IS NOT NULL
+     AND v <> 'NaN'::numeric
+     AND v > '-Infinity'::numeric
+     AND v < 'Infinity'::numeric;
+$$;
+
+REVOKE ALL ON FUNCTION private.regua_num_finito(numeric) FROM PUBLIC, anon, authenticated;
+
 CREATE OR REPLACE FUNCTION private.regua_piso_calc(
   p_cmc      numeric,
   p_aliquota numeric,
@@ -175,29 +195,36 @@ DECLARE
   v_s          numeric;
   v_piso_prazo numeric;
   c_dia_max    constant numeric := 180;    -- p95 real OBEN = 60d; acima de 180 degrada
+  c_max_parc   constant int     := 12;     -- espelha MAX_PARCELAS do parser TS
   c_eps        constant numeric := 1e-6;   -- gate de denominador (impede piso explosivo/negativo)
 BEGIN
   piso := NULL;
   prazo_aplicado := false;
 
-  -- ausente ≠ zero: sem cmc ou com alíquota fora de [0,1) não há piso — NULL, nunca um número.
-  IF p_cmc IS NULL OR p_cmc <= 0 THEN RETURN; END IF;
-  IF p_aliquota IS NULL OR NOT (p_aliquota >= 0 AND p_aliquota < 1) THEN RETURN; END IF;
+  -- ausente ≠ zero: sem cmc finito ou com alíquota fora de [0,1) não há piso — NULL, nunca número.
+  IF NOT private.regua_num_finito(p_cmc) OR p_cmc <= 0 THEN RETURN; END IF;
+  IF NOT private.regua_num_finito(p_aliquota) OR NOT (p_aliquota >= 0 AND p_aliquota < 1) THEN RETURN; END IF;
 
-  piso := round(p_cmc / (1 - p_aliquota), 4);
+  -- ⚠️ SEM round() aqui: o piso ÍNTEGRO é o que decide `abaixo_piso`. Arredondar antes de comparar
+  -- move a fronteira (cmc 12,40 / alíq 0,078 → piso 13,449023861…; a 4 casas, 13,44901 deixaria de
+  -- ser "abaixo" e passaria a "saudável"). O arredondamento é de APRESENTAÇÃO e mora no payload/log.
+  piso := p_cmc / (1 - p_aliquota);
 
   -- A partir daqui é o AJUSTE de prazo. Qualquer falha → mantém o piso à vista já calculado.
   IF p_dias IS NULL OR array_length(p_dias, 1) IS NULL THEN RETURN; END IF;
-  IF p_taxa IS NULL OR NOT (p_taxa > 0 AND p_taxa < 1) THEN RETURN; END IF;
-  IF EXISTS (SELECT 1 FROM unnest(p_dias) d WHERE d IS NULL OR d < 0 OR d > c_dia_max) THEN RETURN; END IF;
+  -- o array vem do CLIENTE direto (antes passava por parsePrazoRecebimento, que capa em 12).
+  IF array_length(p_dias, 1) > c_max_parc THEN RETURN; END IF;
+  IF NOT private.regua_num_finito(p_taxa) OR NOT (p_taxa > 0 AND p_taxa < 1) THEN RETURN; END IF;
+  IF EXISTS (SELECT 1 FROM unnest(p_dias) d
+              WHERE NOT private.regua_num_finito(d) OR d < 0 OR d > c_dia_max) THEN RETURN; END IF;
 
   SELECT avg(power(1 + p_taxa, -d / 365.0)) INTO v_s FROM unnest(p_dias) d;
-  IF v_s IS NULL OR NOT (v_s - p_aliquota > c_eps) THEN RETURN; END IF;
+  IF NOT private.regua_num_finito(v_s) OR NOT (v_s - p_aliquota > c_eps) THEN RETURN; END IF;
 
   v_piso_prazo := p_cmc / (v_s - p_aliquota);
-  IF v_piso_prazo IS NULL OR v_piso_prazo <= 0 THEN RETURN; END IF;
+  IF NOT private.regua_num_finito(v_piso_prazo) OR v_piso_prazo <= 0 THEN RETURN; END IF;
 
-  piso := round(v_piso_prazo, 4);
+  piso := v_piso_prazo;
   prazo_aplicado := true;
 END;
 $$;
@@ -264,7 +291,7 @@ BEGIN
   -- CMC: account 'oben' preferido, fallback 'vendas' (espelhos)
   SELECT ip.cmc INTO v_cmc FROM public.inventory_position ip
    WHERE ip.product_id = p_product AND ip.account IN ('oben', 'vendas')
-     AND ip.cmc IS NOT NULL AND ip.cmc > 0
+     AND private.regua_num_finito(ip.cmc) AND ip.cmc > 0
    ORDER BY (ip.account = 'oben') DESC LIMIT 1;
 
   SELECT COALESCE(
@@ -282,7 +309,8 @@ BEGIN
 
   -- A COMPARAÇÃO acontece AQUI. É o ponto inteiro desta migration: no cliente, ela viraria busca
   -- binária pelo piso. Sem preço ou sem piso → false (não fabrica sinal).
-  v_abaixo := (p_preco_atual IS NOT NULL AND v_piso IS NOT NULL AND p_preco_atual < v_piso);
+  v_abaixo := (private.regua_num_finito(p_preco_atual) AND p_preco_atual > 0
+               AND v_piso IS NOT NULL AND p_preco_atual < v_piso);
 
   SELECT array_agg(oi.unit_price ORDER BY so.order_date_kpi DESC) INTO v_precos_cli
     FROM public.order_items oi JOIN public.sales_orders so ON so.id = oi.sales_order_id
@@ -307,8 +335,10 @@ BEGIN
     'cmc_confiavel',   v_cmc IS NOT NULL,
     'prazo_aplicado',  COALESCE(v_prazo_ok, false),
     -- NÚMERO (só cap_custo_ler). piso_gap_pct é invertível para o piso → mesmo gate.
-    'piso_mc',         CASE WHEN v_pode_num THEN to_jsonb(v_piso) ELSE 'null'::jsonb END,
-    'piso_gap_pct',    CASE WHEN v_pode_num AND v_piso IS NOT NULL AND p_preco_atual > 0
+    -- round() SÓ aqui (apresentação). A decisão acima usou o piso íntegro.
+    'piso_mc',         CASE WHEN v_pode_num THEN to_jsonb(round(v_piso, 4)) ELSE 'null'::jsonb END,
+    'piso_gap_pct',    CASE WHEN v_pode_num AND v_piso IS NOT NULL
+                             AND private.regua_num_finito(p_preco_atual) AND p_preco_atual > 0
                             THEN to_jsonb(round(v_piso / p_preco_atual - 1, 6)) ELSE 'null'::jsonb END,
     -- MERCADO (preço de venda, não custo — aberto de propósito)
     'precos_cliente',  COALESCE(to_jsonb(v_precos_cli), '[]'::jsonb),
@@ -482,7 +512,7 @@ BEGIN
   -- custo apurado NO SERVIDOR (o cliente não o recebe mais, então não pode informá-lo)
   SELECT ip.cmc INTO v_cmc FROM public.inventory_position ip
    WHERE ip.product_id = p_product_id AND ip.account IN ('oben', 'vendas')
-     AND ip.cmc IS NOT NULL AND ip.cmc > 0
+     AND private.regua_num_finito(ip.cmc) AND ip.cmc > 0
    ORDER BY (ip.account = 'oben') DESC LIMIT 1;
 
   SELECT COALESCE(
@@ -503,7 +533,7 @@ BEGIN
   ) VALUES (
     p_account, p_customer_user_id, p_product_id, v_uid, p_quantity, p_preco_atual,
     p_sinal_exibido, p_confianca, p_preco_referencia, p_observed_gap_pct, p_suggested_gap_pct,
-    v_piso, COALESCE(p_cap_limitou, false), v_cmc,
+    round(v_piso, 4), COALESCE(p_cap_limitou, false), v_cmc,
     CASE WHEN v_cmc IS NOT NULL THEN 'real' ELSE 'proxy' END, v_aliquota,
     COALESCE(p_reason_codes, ARRAY[]::text[]),
     'pendente', false
@@ -564,6 +594,16 @@ GRANT EXECUTE ON FUNCTION public.registrar_aplicacao_regua(uuid, numeric) TO aut
 --    estava no enunciado da fase e é a pior das três: com piso_mc na mesma linha, ela dá o cmc
 --    EXATO por divisão, sem precisar nem saber a alíquota global.
 -- ────────────────────────────────────────────────────────────────────────────────────────────
+-- ⚠️ RLS NÃO cobre TRUNCATE. O relacl medido em prod é `authenticated=arwdDxtm`, e o D é TRUNCATE
+-- (x=REFERENCES, t=TRIGGER, m=MAINTAIN). Trocar policy não mexe em GRANT: sem este REVOKE, uma
+-- sessão SQL como `authenticated` apagaria o log INTEIRO com a policy de leitura intacta, e a
+-- afirmação "nenhum caminho direto para a tabela" seria falsa. O PostgREST não expõe TRUNCATE,
+-- então não é explorável hoje pelas 2 vendedoras — é a primitiva que sobra para o dia em que for.
+-- Devolve-se SÓ o SELECT: a ESCRITA é privilégio das RPCs SECURITY DEFINER, que rodam como owner.
+-- `service_role` fica intacto de propósito (cron/edge).                    (achado P2 do Codex)
+REVOKE ALL ON public.regua_preco_log FROM PUBLIC, anon, authenticated;
+GRANT SELECT ON public.regua_preco_log TO authenticated;
+
 DROP POLICY IF EXISTS regua_preco_log_staff_all ON public.regua_preco_log;
 DROP POLICY IF EXISTS regua_preco_log_select_custo ON public.regua_preco_log;
 CREATE POLICY regua_preco_log_select_custo ON public.regua_preco_log
@@ -677,6 +717,29 @@ BEGIN
        'private.regua_piso_calc(numeric,numeric,numeric[],numeric)', 'EXECUTE') THEN
     RAISE EXCEPTION 'FU4-F2 A9: authenticated executa private.regua_piso_calc — REVOKE nao pegou'
       USING ERRCODE='raise_exception';
+  END IF;
+
+  -- A11: authenticated tem SÓ SELECT na tabela — nada de TRUNCATE/DELETE por fora da RLS.
+  IF has_table_privilege('authenticated', 'public.regua_preco_log', 'TRUNCATE')
+     OR has_table_privilege('authenticated', 'public.regua_preco_log', 'INSERT')
+     OR has_table_privilege('authenticated', 'public.regua_preco_log', 'UPDATE')
+     OR has_table_privilege('authenticated', 'public.regua_preco_log', 'DELETE') THEN
+    RAISE EXCEPTION 'FU4-F2 A11: authenticated ainda tem privilegio de escrita/TRUNCATE no log'
+      USING ERRCODE='raise_exception';
+  END IF;
+  IF NOT has_table_privilege('authenticated', 'public.regua_preco_log', 'SELECT') THEN
+    RAISE EXCEPTION 'FU4-F2 A11: authenticated perdeu o SELECT — a policy de leitura ficaria inerte'
+      USING ERRCODE='raise_exception';
+  END IF;
+
+  -- A12: o guard de finitude existe e MORDE. numeric aceita NaN/Infinity e `12 < NaN` é TRUE —
+  -- sem isto, um cmc NaN marcaria todo preço como abaixo do piso.
+  IF (SELECT piso FROM private.regua_piso_calc('NaN'::numeric, 0.078, NULL, NULL)) IS NOT NULL THEN
+    RAISE EXCEPTION 'FU4-F2 A12: cmc NaN produziu piso — guard de finitude ausente'
+      USING ERRCODE='raise_exception';
+  END IF;
+  IF (SELECT piso FROM private.regua_piso_calc('Infinity'::numeric, 0.078, NULL, NULL)) IS NOT NULL THEN
+    RAISE EXCEPTION 'FU4-F2 A12: cmc Infinity produziu piso' USING ERRCODE='raise_exception';
   END IF;
 
   -- A10: a capability de escrita existe e é DISTINTA da de leitura (§4.2 em forma de assert)

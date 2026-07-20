@@ -346,6 +346,51 @@ da régua bloquearia a vendedora inteira. A proteção é o assert estrutural da
 (`db/test-authz-custo-fu4f-fase2-regua.sh`, 46 asserts / 8 falsificações). Mesma situação do
 `get_preco_cockpit`. Está escrito no `authz-manifest.ts` para quem vier depois.
 
+### 9.6 O que o Codex derrubou na fase 2 (registro honesto)
+
+Veredito literal da rodada 1 (`gpt-5.6-sol` xhigh): *"não aplicaria como está"* — 3 P1, 6 P2, 1 P3.
+Corrigidos nesta entrega:
+
+1. **P1 — guard de finitude perdido na tradução TS→plpgsql.** `numeric` do Postgres **aceita** `NaN` e
+   `±Infinity`, e as comparações mentem: `'NaN' > 0` é TRUE e `12.00 < 'NaN'` é TRUE (NaN ordena como o
+   maior valor). Um `cmc` NaN passava pelo filtro `cmc > 0`, produzia `piso_disponivel=true` e marcava
+   **todo preço** como abaixo do piso. O TS que saiu daqui usava `Number.isFinite`; a tradução perdeu isso.
+   Verificado no PG17 antes de aceitar o achado. Corrigido com `private.regua_num_finito` — e note que
+   `NaN = NaN` é **TRUE** em `numeric` (≠ IEEE), então o truque `v <> v` não detecta NaN.
+2. **P1 — `keepPreviousData` casando veredito entre contextos.** O `Map` do hook é chaveado por
+   produto+qty+preço, que **não inclui cliente nem prazo**. Servir o dado da query anterior enquanto a
+   nova carrega fazia a chave casar entre contextos: veredito do cliente A aparecendo no B, e piso à
+   vista escondendo o vermelho depois de trocar a condição para 90 dias. Removido — o sinal some por
+   ~400ms em vez de mentir (precisão > recall). O comentário do hook vendia isso como *benefício*.
+3. **P2 — arredondamento movia a fronteira da decisão.** O SQL arredondava o piso a 4 casas **antes** de
+   comparar; o TS comparava íntegro. Com cmc 12,40 e alíquota 0,078 o piso real é 13,449023861…: o preço
+   13,44901 era "abaixo" no TS e virava "saudável" no SQL. Agora a decisão usa o piso íntegro e o
+   arredondamento é só de apresentação (payload/log). Assert A47 mede exatamente essa faixa.
+4. **P2 — `TRUNCATE` não passa por RLS.** `authenticated=arwdDxtm` inclui `TRUNCATE`/`REFERENCES`/
+   `TRIGGER`/`MAINTAIN`; trocar policy não mexe em `GRANT`. A afirmação "nenhum caminho direto para a
+   tabela" era falsa. Agora `REVOKE ALL` + `GRANT SELECT`. **E o harness era falso-verde**: o comentário
+   dizia reproduzir `arwdDxtm` e o `GRANT` concedia só `arwd`, então o privilégio nunca era exercido —
+   a lição "stub espelhe a PROD, não o design" mordendo de novo.
+5. **P3 — contagem do harness não era fail-closed.** `FAIL=0` deixava passar a remoção de um assert ou de
+   uma sabotagem. Agora exige `PASS` e `FALS_OK` exatos: mudar cobertura obriga a atualizar o número
+   conscientemente. E a F7 passou a conferir o **valor persistido**, não só o retorno `true`.
+
+**Rejeitado com argumento** (registrado porque discordância também é evidência): P1 — "a precondição deve
+fazer fingerprint do corpo de `private.cap_custo_ler`". Se alguém ampliar a capability, vazam **todos** os
+consumidores (`cmc_snapshot`, tint, `inventory_position`), não só a régua; guardar isso numa migration
+consumidora é arbitrário e a faz abortar em mudança legítima futura. O lugar do guard é o teste da própria
+capability (`db/test-authz-capability-matrix.sh`). Rebaixado a P3.
+
+**Concordância, não achado:** P2 — "a comparação server-side continua sendo oráculo por bisseção". Verdade,
+e já declarado no §9.2, no cabeçalho da migration e no PR. O que o parecer corrige é a *redação* da defesa:
+como barreira de confidencialidade a afirmação é falsa; ela é barreira de conveniência.
+
+**Follow-ups abertos:** conteúdo do log ainda é forjável pelo próprio vendedor (`account`, sinal, confiança,
+`reason_codes` vêm do cliente) — o fim certo é um `evaluation_id` opaco devolvido pela avaliação e relido
+pelo writer; falha de RPC ainda vira "sem sinal" em silêncio (comportamento **pré-existente**, não regressão
+desta entrega); e `checkGate` não valida os literais de `GateClause.roles`, então uma recriação com
+`has_role(uid,'customer')` passaria — fraqueza do tooling, escopo próprio.
+
 **A lição do #1472 se repetiu — e o harness a pegou.** A 1ª versão do assert procurava a substring
 `cap_custo_ler` no corpo do writer para provar que ele NÃO usa a capability de leitura. O **comentário** do
 writer ("NUNCA `cap_custo_ler`") satisfazia o assert: a migration fiscalizando a si mesma pelo texto que ela
