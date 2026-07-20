@@ -6,6 +6,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
 import { useMutationComRegistro } from "@/components/execucoes/useMutationComRegistro";
+import { ULTIMA_EXECUCAO_QUERY_KEY } from "@/components/execucoes/tipos";
 import { OmieAccount, SyncState } from "./types";
 import { ACOES_ANALYTICS_SYNC } from "./acoes";
 
@@ -76,6 +77,8 @@ export function useAnalyticsSync() {
     onError: (error) => {
       toast.error("Erro no sync", { description: String(error) });
     },
+    // Quem grava é a EDGE (sync_completo + motores por dentro do sync_all) — aqui só re-lê a caption.
+    onSettled: () => queryClient.invalidateQueries({ queryKey: [ULTIMA_EXECUCAO_QUERY_KEY] }),
   });
 
   const computeCostsMutation = useMutation({
@@ -94,6 +97,8 @@ export function useAnalyticsSync() {
     onError: (error) => {
       toast.error("Erro ao calcular custos", { description: String(error) });
     },
+    // Quem grava é a EDGE (analytics_sync.recalcular_custos) — aqui só re-lê a caption na hora.
+    onSettled: () => queryClient.invalidateQueries({ queryKey: [ULTIMA_EXECUCAO_QUERY_KEY] }),
   });
 
   const assocRulesMutation = useMutation({
@@ -112,6 +117,8 @@ export function useAnalyticsSync() {
     onError: (error) => {
       toast.error("Erro ao gerar regras", { description: String(error) });
     },
+    // Quem grava é a EDGE (analytics_sync.recalcular_regras) — aqui só re-lê a caption na hora.
+    onSettled: () => queryClient.invalidateQueries({ queryKey: [ULTIMA_EXECUCAO_QUERY_KEY] }),
   });
 
   const updateConfigMutation = useMutation({
