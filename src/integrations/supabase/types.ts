@@ -14660,6 +14660,7 @@ export type Database = {
           id: string
           id_base: string | null
           id_embalagem: string | null
+          is_base_pura: boolean | null
           matched_id: string | null
           nome_cor: string | null
           personalizada: boolean | null
@@ -14680,6 +14681,7 @@ export type Database = {
           id?: string
           id_base?: string | null
           id_embalagem?: string | null
+          is_base_pura?: boolean | null
           matched_id?: string | null
           nome_cor?: string | null
           personalizada?: boolean | null
@@ -14700,6 +14702,7 @@ export type Database = {
           id?: string
           id_base?: string | null
           id_embalagem?: string | null
+          is_base_pura?: boolean | null
           matched_id?: string | null
           nome_cor?: string | null
           personalizada?: boolean | null
@@ -16293,6 +16296,41 @@ export type Database = {
           saidas_realizadas: number | null
         }
         Relationships: []
+      }
+      inventory_position_operacional: {
+        Row: {
+          account: string | null
+          id: string | null
+          omie_codigo_produto: number | null
+          product_id: string | null
+          saldo: number | null
+          synced_at: string | null
+        }
+        Insert: {
+          account?: string | null
+          id?: string | null
+          omie_codigo_produto?: number | null
+          product_id?: string | null
+          saldo?: number | null
+          synced_at?: string | null
+        }
+        Update: {
+          account?: string | null
+          id?: string | null
+          omie_codigo_produto?: number | null
+          product_id?: string | null
+          saldo?: number | null
+          synced_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "inventory_position_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "omie_products"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       omie_customer_account_map_fresco: {
         Row: {
