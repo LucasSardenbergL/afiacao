@@ -25,7 +25,9 @@ export function rotuloUltimaExecucao(execucao: AcaoExecucao | null, agora: Date)
   }
 
   const quando = relativo(execucao.finalizado_em ?? execucao.iniciado_em);
-  const quem = execucao.origem === "automatica" ? "automática" : execucao.executado_por_nome;
+  // Só o primeiro nome — caption compacta (nome completo continua no banco).
+  const primeiroNome = execucao.executado_por_nome?.trim().split(/\s+/)[0] ?? null;
+  const quem = execucao.origem === "automatica" ? "automática" : primeiroNome;
   const marca = execucao.status === "sucesso" ? "✓" : "falhou";
   const partes = [quando, ...(quem ? [quem] : []), marca];
   return {

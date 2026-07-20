@@ -67,6 +67,11 @@ describe("rotuloUltimaExecucao", () => {
     expect(r.texto).toBe("Última execução: há cerca de 2 horas · ✓");
   });
 
+  it("nome composto → só o primeiro nome (caption compacta)", () => {
+    const r = rotuloUltimaExecucao(execucao({ executado_por_nome: "Lucas Sardenberg" }), AGORA);
+    expect(r.texto).toBe("Última execução: há cerca de 2 horas · Lucas · ✓");
+  });
+
   it("sucesso sem finalizado_em (legado) → cai no iniciado_em", () => {
     const r = rotuloUltimaExecucao(
       execucao({ finalizado_em: null, iniciado_em: "2026-07-18T13:05:00-03:00" }),
