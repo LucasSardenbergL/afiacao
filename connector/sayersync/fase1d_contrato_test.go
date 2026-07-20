@@ -131,10 +131,11 @@ func TestAggregateFlat1d_IsBasePura_TodosSlotsLivres(t *testing.T) {
 	}
 }
 
-func TestAggregateFlat1d_IsBasePura_BloqueadaPorQtdIlegivelSemCorante(t *testing.T) {
-	// Slot com corante vazio e qtd ILEGÍVEL não é "livre" — é suspeito. Não emite
-	// item (nada aproveitável sem corante), mas BLOQUEIA a declaração de base pura:
-	// o vazio fica ambíguo e o banco barra (fail-closed).
+func TestAggregateFlat1d_QtdIlegivelSemCorante_EmitePlaceholderEBloqueiaPura(t *testing.T) {
+	// Slot com corante vazio e qtd ILEGÍVEL não é "livre" — é ambíguo. CONTRATO
+	// pós-Codex (P1 2026-07-20): EMITE placeholder {"", nil} — no protocolo 1d o
+	// banco barra a fórmula inteira ([1d-E]); "não consigo identificar o
+	// componente" não prova que ele não existe. E nunca declara base pura.
 	rows := []map[string]any{makeFormulaRow(map[int][2]any{
 		3: {nil, "###"},
 	})}
@@ -142,8 +143,12 @@ func TestAggregateFlat1d_IsBasePura_BloqueadaPorQtdIlegivelSemCorante(t *testing
 	if _, tem := out["is_base_pura"]; tem {
 		t.Fatal("qtd ilegível em slot sem corante NÃO pode deixar declarar base pura")
 	}
-	if itens, ok := out["itens"].([]map[string]any); ok && len(itens) != 0 {
-		t.Fatalf("slot suspeito não vira item, got %+v", itens)
+	itens, ok := out["itens"].([]map[string]any)
+	if !ok || len(itens) != 1 {
+		t.Fatalf("slot ambíguo deveria emitir 1 placeholder, got %T %+v", out["itens"], out["itens"])
+	}
+	if itens[0]["id_corante"] != "" || itens[0]["qtd_ml"] != nil || itens[0]["ordem"] != 3 {
+		t.Errorf("placeholder mal-formado: %+v", itens[0])
 	}
 }
 

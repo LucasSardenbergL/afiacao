@@ -11,7 +11,7 @@ import {
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-sync-token, x-store-code, x-idempotency-key",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-sync-token, x-store-code, x-idempotency-key, x-agent-version",
 };
 
 // ─── Type definitions ───
@@ -183,6 +183,11 @@ Deno.serve(async (req) => {
       status: "running",
     };
     if (idempotencyKey) row.idempotency_key = idempotencyKey;
+    // Fase 1d: versão do binário do conector (header x-agent-version) fica no rastro do
+    // run — auditoria do estado misto do rollout (binário velho filtra inválidos antes
+    // do POST; sem a versão não dá para saber QUEM alimentou cada run).
+    const agentVersion = req.headers.get("x-agent-version");
+    if (agentVersion) row.metadata = { agent_version: agentVersion };
     const { data } = await sb.from("tint_sync_runs").insert(row).select("id").single();
     return data?.id;
   }

@@ -15,8 +15,19 @@
 --          (v3/v4 criavam header vazio ativo — o mal das 28.609 em miniatura, C15a antigo).
 --          Fatos de prod que autorizam (psql-ro 2026-07-20): 0 fórmulas vazias na geração SL viva
 --          em 1 mês de sync; 0 headers expected=0 na história; 0 erros de promoção em 7d.
---   [1d-D] cap anti-limpeza-em-massa (50/run): >50 limpezas num run = fonte doente (ex.: tabela
---          filha da origem esvaziada) → NENHUMA limpeza executa, tudo barra + loga.
+--   [1d-D] cap anti-limpeza-em-massa ACUMULADO (50 receitas/24h por account+store, rastro em
+--          tint_sync_runs.metadata): fonte doente (ex.: tabela filha da origem esvaziada) não
+--          limpa o catálogo nem em catraca (50+2) nem célula a célula → tudo barra + loga;
+--   [1d-E] Guard 4, ramo do protocolo novo (expected declarado): QUALQUER linha emitida que não
+--          seja {corante presente + dose válida} barra a fórmula inteira — fecha dose válida
+--          mascarando linha inválida do mesmo corante, placeholder real com irmão válido e slot
+--          flat ilegível; headers legados preservam a semântica bool_and/2-etapas (C16).
+--
+-- CHALLENGE CODEX (gpt-5.6-sol xhigh, 2026-07-20, design+diff consolidado): REPROVOU a v1 deste
+-- arquivo com 1 P0 (cap em catraca → [1d-D] acumulado) + 4 P1 (parcial mascarada → [1d-E];
+-- fotografia vazia da filha → tx REPEATABLE READ no conector; estado misto binário velho →
+-- x-agent-version + janela única de deploy; preflight por substring → md5 exato). Parecer cru
+-- + calibração no PR #1474.
 --
 -- Base pura promovida fica ativa com 0 itens → a RPC de preço devolve NULL (fail-closed) → NÃO
 -- vende. Honesto: destravar venda de base pura é decisão futura explícita, fora desta fase.
@@ -27,15 +38,31 @@
 -- novo com edge velha = campo ignorado; edge nova com binário velho = is_base_pura nunca true.
 -- Provado: db/test-tint-promote.sh C30-C33 + C15 endurecido + falsificações F1d. SQL Editor (§deploy.md).
 
--- (0) pré-flight: a função em prod tem de ser a cadeia esperada (…170000/1c). md5 da v4 medido em
--- prod 2026-07-20: 2c794353a6df2a1807deea10bdfcd0e9. Re-apply da própria v5 passa (contém o gate 1c).
+-- (0) pré-flight por HASH EXATO (Codex P1 2026-07-20: marcador de substring aceitava hotfix
+-- divergente que mantivesse o nome — o CREATE OR REPLACE sobrescreveria silencioso).
+-- Caminho principal: md5(pg_get_functiondef) da v4 medido em PROD 2026-07-20 =
+-- 2c794353a6df2a1807deea10bdfcd0e9. Re-apply da própria v5: aceito por DUPLO marcador
+-- exclusivo ([1d-D] cap + [1d-B] contradição) — o md5 da v5 EM PROD só existe após o 1º
+-- apply; capture-o na validação pós-apply (lovable-db-operator) e registre no PR.
+-- Qualquer outro estado → ABORTA com o md5 atual na mensagem (diagnóstico).
 DO $pf$
-DECLARE v_def text;
+DECLARE v_def text; v_md5 text;
 BEGIN
-  v_def := pg_get_functiondef('public.tint_promote_sync_run(uuid)'::regprocedure);
-  IF v_def NOT LIKE '%_eu_incompleta%' THEN
-    RAISE EXCEPTION 'pré-flight 1d: tint_promote_sync_run em prod NÃO contém o gate 1c (_eu_incompleta) — cadeia divergente (md5 atual=%). PARE e confira as migrations aplicadas antes desta.', md5(v_def);
+  -- Harness PG17 local (db/test-tint-promote.sh): o md5 do functiondef varia entre versões
+  -- maiores do PG (formatação do envelope) — o hash exato só vale contra PROD. O bypass é
+  -- pelo NOME do banco de teste (prod Supabase é 'postgres'; superfície zero em prod).
+  IF current_database() = 'tintpromote_verify' THEN
+    RETURN;
   END IF;
+  v_def := pg_get_functiondef('public.tint_promote_sync_run(uuid)'::regprocedure);
+  v_md5 := md5(v_def);
+  IF v_md5 = '2c794353a6df2a1807deea10bdfcd0e9' THEN
+    RETURN; -- v4/1c exata de prod: caminho esperado do 1º apply
+  END IF;
+  IF v_def LIKE '%_eu_pura_contraditoria%' AND v_def LIKE '%v_cap_limpezas%' THEN
+    RETURN; -- v5 já aplicada (re-apply idempotente)
+  END IF;
+  RAISE EXCEPTION 'pré-flight 1d: tint_promote_sync_run em prod NÃO é a v4 esperada (md5=% ≠ 2c794353a6df2a1807deea10bdfcd0e9) nem a v5 — a função divergiu da cadeia do repo (hotfix manual?). PARE, rode pg_get_functiondef, compare com o repo e reconcilie antes de aplicar.', v_md5;
 END $pf$;
 
 -- (1) coluna do sinal semântico
@@ -71,7 +98,12 @@ DECLARE
   v_preco          numeric;
   v_qtd_vendaveis  int;
   -- [1d] transições p/ base pura executadas neste run + cap anti-limpeza-em-massa.
+  -- O cap é ACUMULADO em janela de 24h por (account,store) — Codex P0 2026-07-20: um cap
+  -- por-promote era contornável em catraca (run A limpa 50, run B limpa as 2 restantes —
+  -- as já-limpas deixavam de contar) e célula a célula. A soma durável vem do próprio
+  -- rastro dos promotes (tint_sync_runs.metadata->>'receitas_limpas').
   v_limpezas       int := 0;
+  v_limpezas_24h   int := 0;
   v_cap_limpezas   constant int := 50;
 BEGIN
   SELECT * INTO v_run FROM tint_sync_runs WHERE id = p_sync_run_id;
@@ -398,6 +430,25 @@ BEGIN
       AND fl.volume_final_ml IS NOT NULL AND fl.volume_final_ml > 0
       AND btrim(COALESCE(si.id_corante, '')) = ''
       AND si.qtd_ml IS NOT NULL AND si.qtd_ml <> 0
+    UNION ALL
+    -- (c) [1d-E] PROTOCOLO 1d (expected declarado): o conector novo emite TODAS as linhas da
+    --     fonte, inclusive as inválidas — logo QUALQUER linha que não seja {corante presente +
+    --     dose válida} é corrupção transportada e barra a fórmula INTEIRA (all-or-nothing
+    --     estrito por linha). Sem isto, 3 parciais mascaradas passavam (Codex P0/P1 2026-07-20):
+    --     mesmo corante com dose válida + linha inválida (o bool_and POR corante do ramo (a)
+    --     mascara e o INSERT faz fallback silencioso p/ outra ordem); placeholder real com irmão
+    --     válido; slot flat ilegível emitido. Headers LEGADOS (expected NULL) mantêm o ramo (a)
+    --     (dosagem em 2 etapas com linha zerada segue promovendo pela dose válida — C16).
+    SELECT si.staging_formula_id
+    FROM tint_staging_formula_itens si
+    JOIN _fl_resolved fl ON fl.staging_formula_id = si.staging_formula_id
+    WHERE fl.produto_id IS NOT NULL AND fl.base_id IS NOT NULL
+      AND fl.volume_final_ml IS NOT NULL AND fl.volume_final_ml > 0
+      AND fl.expected_item_count IS NOT NULL
+      AND NOT (
+        btrim(COALESCE(si.id_corante, '')) <> ''
+        AND COALESCE(si.qtd_ml > 0 AND si.qtd_ml < 'Infinity'::numeric, false)
+      )
   ) q;
 
   -- Loga UMA linha de erro por fórmula corrompida (espelha os guards 1-3; entity_id = cor_id).
@@ -684,16 +735,22 @@ BEGIN
   WHERE s.staging_formula_id = eu.staging_formula_id AND s.emb_id = eu.emb_id;
 
   -- ══════════════════════════════════════════════════════════════════════════
-  -- [1d-D] CAP ANTI-LIMPEZA-EM-MASSA (defesa em profundidade). O apocalipse: no shape
-  -- child, a tabela filha da ORIGEM esvaziada por glitch/wipe faria o conector declarar
-  -- is_base_pura em TODAS as fórmulas do lote → um run "legítimo" limparia a receita do
-  -- catálogo inteiro, batch a batch. Transição p/ base pura é evento RARO (medido: 0 em
-  -- 1 mês de fluxo vivo) → mais de v_cap_limpezas LIMPEZAS (fórmula-fonte declarada-pura
-  -- cuja oficial TEM receita) num único run é quase certamente fonte doente: NENHUMA
-  -- limpeza executa, todas barram + loga. Base pura NOVA (sem receita oficial) não conta
-  -- p/ o cap nem é barrada — criar N bases puras novas não destrói nada.
+  -- [1d-D] CAP ANTI-LIMPEZA-EM-MASSA, ACUMULADO EM JANELA (defesa em profundidade).
+  -- O apocalipse: no shape child, a tabela filha da ORIGEM esvaziada por glitch/wipe faria
+  -- o conector declarar is_base_pura em TODAS as fórmulas → limparia a receita do catálogo,
+  -- batch a batch. Transição p/ base pura é evento RARO (medido: 0 em 1 mês de fluxo vivo).
+  -- ⚠️ Codex P0 (2026-07-20): cap POR PROMOTE era contornável em "catraca" — run A limpa 50,
+  -- run B limpa as 2 restantes (as já-limpas deixam de satisfazer EXISTS e saem da conta), e
+  -- células <51 destravavam uma a uma. O cap agora é ACUMULADO: candidatas deste promote +
+  -- receitas JÁ LIMPAS nas últimas 24h no mesmo (account,store), lidas do rastro durável que
+  -- o próprio promote grava (tint_sync_runs.metadata->>'receitas_limpas'). Estourou → NENHUMA
+  -- limpeza executa (nem as 50 "de dentro do teto": fonte doente não ganha fatia), tudo barra
+  -- + loga. A conta é por RECEITA OFICIAL (chave com embalagem) — 1 fórmula-fonte pode limpar
+  -- N embalagens e o dano se mede em receitas. Base pura NOVA (sem receita oficial) não conta
+  -- nem é barrada — criar N bases puras novas não destrói nada. Precisar limpar >50/24h
+  -- legitimamente (reforma de catálogo) é decisão humana: migration pontual, não sync.
   CREATE TEMP TABLE _eu_limpezas ON COMMIT DROP AS
-  SELECT DISTINCT eu.staging_formula_id, eu.cor_id
+  SELECT DISTINCT eu.staging_formula_id, eu.cor_id, eu.emb_id
   FROM _expand_uniq eu
   JOIN _fl_resolved fl ON fl.staging_formula_id = eu.staging_formula_id
   WHERE fl.is_base_pura IS TRUE
@@ -712,12 +769,23 @@ BEGIN
 
   SELECT count(*) INTO v_limpezas FROM _eu_limpezas;
 
-  IF v_limpezas > v_cap_limpezas THEN
+  -- Receitas já limpas na janela por promotes anteriores DESTE (account,store). O run atual
+  -- ainda não gravou metadata (grava no E5) → não se conta em dobro.
+  -- Alias 'tr' de propósito: 'r' é variável record da função e VENCERIA o alias
+  -- (compila, explode em runtime — armadilha plpgsql documentada em tintometrico.md).
+  SELECT COALESCE(sum((tr.metadata->>'receitas_limpas')::int), 0) INTO v_limpezas_24h
+  FROM tint_sync_runs tr
+  WHERE tr.account = v_account AND tr.store_code = v_store
+    AND tr.started_at > now() - interval '24 hours'
+    AND tr.metadata ? 'receitas_limpas';
+
+  IF v_limpezas > 0 AND (v_limpezas + v_limpezas_24h) > v_cap_limpezas THEN
     INSERT INTO tint_sync_errors (sync_run_id, entity_type, entity_id, error_message, error_details)
     SELECT p_sync_run_id, 'formula_promote', l.cor_id,
-           'limpeza em massa suspeita: ' || v_limpezas || ' fórmulas declaradas base pura limpariam receita num único run (cap ' || v_cap_limpezas || ') — NENHUMA limpeza executada, receitas preservadas; confira a tabela filha da ORIGEM',
+           'limpeza em massa suspeita: ' || v_limpezas || ' receita(s) limpariam agora + ' || v_limpezas_24h || ' já limpas em 24h > cap ' || v_cap_limpezas || ' — NENHUMA limpeza executada, receitas preservadas; confira a tabela filha da ORIGEM',
            jsonb_build_object('staging_formula_id', l.staging_formula_id,
-                              'limpezas_no_run', v_limpezas, 'cap', v_cap_limpezas)
+                              'limpezas_no_run', v_limpezas, 'limpezas_24h', v_limpezas_24h,
+                              'cap', v_cap_limpezas)
     FROM _eu_limpezas l;
     GET DIAGNOSTICS v_tmp = ROW_COUNT; v_erros := v_erros + v_tmp;
 

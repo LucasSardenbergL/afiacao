@@ -25,6 +25,15 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib" // driver pgx para database/sql
 )
 
+// querier abstrai *sql.DB e *sql.Tx — a extração pai+filha das fórmulas child
+// roda na MESMA transação REPEATABLE READ (Fase 1d, Codex P1: com duas queries
+// em conexões separadas sob READ COMMITTED, um DELETE+COMMIT/reinsert na origem
+// entre elas produzia uma fotografia "0 linhas na filha" logicamente vazia →
+// is_base_pura falso → limpeza indevida de 1 fórmula, por baixo de qualquer cap).
+type querier interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}
+
 // Connect abre uma conexão com o PostgreSQL do SayerSystem.
 // Inclui client_encoding=UTF8 e timeout de 10s.
 // O caller é responsável por fechar db.Close().
@@ -79,7 +88,7 @@ func Connect(ctx context.Context, connStr string) (*sql.DB, error) {
 //   - err: erro de consulta
 func ExtractDelta(
 	ctx context.Context,
-	db *sql.DB,
+	db querier,
 	rm *ResolvedMapping,
 	entity string,
 	hwm time.Time,
@@ -165,7 +174,7 @@ func buildDeltaSelectCols(rm *ResolvedMapping, entity string) []colPair {
 // physical é o nome FÍSICO da tabela; entity (lógico) só aparece nas mensagens de erro.
 func extractFullScan(
 	ctx context.Context,
-	db *sql.DB,
+	db querier,
 	entity string,
 	physical string,
 	selectCols []colPair,
@@ -246,7 +255,6 @@ func aggregateFlatFormulaItems(rows []map[string]any, flatCols map[string]string
 	colsCompletos := flatColsCompletos(flatCols)
 	for _, row := range rows {
 		itens := make([]map[string]any, 0, 6)
-		suspeito := false
 		for i := 1; i <= 6; i++ {
 			coranteKey := fmt.Sprintf("corante%d", i)
 			qtdKey := fmt.Sprintf("qtd%dml", i)
@@ -299,13 +307,20 @@ func aggregateFlatFormulaItems(rows []map[string]any, flatCols map[string]string
 					"qtd_ml":     qtd,
 				})
 			case qtdVal != nil && !qtdOK:
-				// Ilegível sem corante: não vira item, mas o vazio deixa de ser confiável.
-				suspeito = true
+				// Ilegível sem corante: EMITE placeholder {"", nil} — no protocolo 1d o
+				// banco barra a fórmula inteira ([1d-E]: linha emitida que não é corante+
+				// dose válida é corrupção). Codex P1: "não consigo identificar o
+				// componente" não prova que ele não existe; ambiguidade bloqueia.
+				itens = append(itens, map[string]any{
+					"id_corante": "",
+					"ordem":      i,
+					"qtd_ml":     nil,
+				})
 			}
 			// default: slot livre (corante vazio + qtd nil/0) → omitido.
 		}
 		row["itens"] = itens
-		if len(itens) == 0 && !suspeito && colsCompletos {
+		if len(itens) == 0 && colsCompletos {
 			row["is_base_pura"] = true
 		}
 	}
@@ -336,7 +351,7 @@ func flatColsCompletos(flatCols map[string]string) bool {
 // (o Guard 4 do banco decide e loga; antes o skip daqui fabricava payload
 // "íntegro" com receita parcial). Na filha não existe "slot livre": linha que
 // existe é DADO da fonte e o COUNT/expected têm de contá-la.
-func ExtractFormulaChildItems(ctx context.Context, db *sql.DB, hasOrdem bool) (map[string][]map[string]any, error) {
+func ExtractFormulaChildItems(ctx context.Context, db querier, hasOrdem bool) (map[string][]map[string]any, error) {
 	query := `SELECT id_formula::text, id_corante::text, qtd_ml FROM formula_item ORDER BY id_formula`
 	if hasOrdem {
 		query = `SELECT id_formula::text, id_corante::text, qtd_ml, ordem FROM formula_item ORDER BY id_formula, ordem`
