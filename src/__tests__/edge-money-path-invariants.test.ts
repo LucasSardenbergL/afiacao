@@ -841,7 +841,9 @@ describe('guardrail money-path: carteira-rebuild lê o vendedor da PROOF oben (P
       'cobertura não aborta o run — membro sem row entraria como assignment antigo STALE',
     ).toMatch(/if\s*\(!cobertura\.ok\)[\s\S]{0,160}failLease\(/);
     const iCobertura = rebuild.indexOf('verificarCobertura(membroIds, rows)');
-    const iUpsert = rebuild.indexOf(".from('carteira_assignments')");
+    // ancora no UPSERT (não em qualquer acesso à tabela): a trava de saída do bootstrap também lê
+    // carteira_assignments (count omie elegível) ANTES daqui, e um indexOf genérico casaria com ela.
+    const iUpsert = rebuild.indexOf(".from('carteira_assignments').upsert(");
     expect(iCobertura, 'âncora: não achei a chamada de verificarCobertura').toBeGreaterThan(-1);
     expect(iUpsert, 'âncora: não achei o upsert de carteira_assignments').toBeGreaterThan(-1);
     expect(iCobertura, 'a cobertura é verificada DEPOIS do upsert — inútil: o stale já foi gravado').toBeLessThan(iUpsert);
@@ -897,6 +899,58 @@ describe('guardrail money-path: carteira-rebuild lê o vendedor da PROOF oben (P
     expect(rebuild, 'guard pós não filtra por eligible — conta inelegíveis (#3)').toMatch(/r\.source === 'omie' && r\.eligible/);
     expect(rebuild, 'sumiu a leitura de count (proof crua + carteira atual)').toContain("count: 'exact'");
   });
+  it('hardening: BOOTSTRAP trava a SAÍDA vs a carteira atual — presente, alimentada e com escape (Codex R4)', () => {
+    // O furo R4: o >0 sozinho gravava carteira ~Hunter no bootstrap (perda de vendedor grande / flaggeds em massa
+    // / corrupção de 1 código). Agora o guard recebe omieAtual (count omie elegível da carteira) + forcado; o ramo
+    // bootstrap aborta se a carteira omie elegível encolher < 80% da atual, salvo &force=1.
+    expect(
+      rebuild,
+      'REGRESSÃO: o guard pós não recebe mais omieAtual+forcado — bootstrap voltaria a gravar só com >0 (furo R4)',
+    ).toMatch(/avaliarGuardResultado\(\{[\s\S]{0,160}omieAtual,\s*forcado\s*\}\)/);
+    expect(
+      rebuild,
+      'REGRESSÃO: sumiu a leitura da carteira atual (count omie elegível) — denominador da trava fica vazio',
+    ).toMatch(/from\('carteira_assignments'\)[\s\S]{0,120}\.eq\('source', 'omie'\)[\s\S]{0,60}\.eq\('eligible', true\)/);
+    expect(
+      rebuild,
+      'REGRESSÃO: a leitura da carteira atual não é mais condicional a autorizado — I/O inerte + fail-closed espúrio no cron (Codex R4b P2-6a)',
+    ).toMatch(/if \(autorizado\) \{[\s\S]{0,240}from\('carteira_assignments'\)/);
+    expect(
+      rebuild,
+      'REGRESSÃO: o flag &force=1 não é lido/gated — reset legítimo perderia o escape (ou staff comum forçaria)',
+    ).toMatch(/forcado = params\.get\('force'\) === '1' && via/);
+    // o guard de cobertura da FONTE foi REMOVIDO (media a coisa errada — Codex R4 rejeitou): não pode reaparecer.
+    expect(rebuild, 'avaliarGuardCobertura voltou ao edge — mede a fonte, não a saída (Codex R4)').not.toContain('avaliarGuardCobertura');
+    expect(rebuildHelper, 'avaliarGuardCobertura voltou ao helper de src/').not.toContain('avaliarGuardCobertura');
+  });
+  it('HIGH-WATER: o baseline é persistido ANTES do upsert e de forma FATAL (Codex R6 P1 — erosão por persistência falha)', () => {
+    // A ordem antiga (carteira → baseline não-fatal) perdia o high-water quando a gravação falhava: o run
+    // seguinte lia a carteira DEGRADADA como omieAtual e deixava cair mais 20% sem force (2747→2198→1759).
+    const iBaseline = rebuild.indexOf("key: 'carteira_omie_baseline'");
+    const iUpsert = rebuild.indexOf(".from('carteira_assignments').upsert(");
+    expect(iBaseline, 'âncora: não achei a persistência do baseline').toBeGreaterThan(-1);
+    expect(iUpsert, 'âncora: não achei o upsert da carteira').toBeGreaterThan(-1);
+    expect(iBaseline, 'REGRESSÃO: o baseline voltou a ser persistido DEPOIS do upsert — erosão por falha de persistência reabre').toBeLessThan(iUpsert);
+    expect(
+      rebuild,
+      'REGRESSÃO: a falha ao persistir o baseline voltou a ser não-fatal (console.warn) — sem high-water, o próximo run eroderia',
+    ).not.toMatch(/falha ao persistir baseline \(nao-fatal\)/);
+    expect(
+      rebuild,
+      'a falha de persistência do baseline não aborta via failLease',
+    ).toMatch(/persistir baseline: \$\{bErr\.message\}/);
+    // Guardrail (Codex R8 P3): com o high-water gravado ANTES do upsert, um run que falha JÁ moveu a
+    // referência — a resposta de erro precisa dizer isso, senão o operador não sabe que o baseline subiu.
+    expect(
+      rebuild,
+      'a resposta de erro do upsert parcial não reporta baseline_persisted — run falho move a referência em silêncio',
+    ).toMatch(/baseline_persisted: guardPos\.novoBaseline/);
+    expect(
+      rebuild,
+      'a resposta de erro não reporta baseline_anterior — sem o par, não dá p/ ver que a referência mudou',
+    ).toMatch(/baseline_anterior: baselinePersistido/);
+  });
+
   it('guard comparativo vem ANTES do upsert da carteira (não movido p/ depois — P2 Codex)', () => {
     const iGuard = rebuild.indexOf('avaliarGuardResultado({');
     const iUpsert = rebuild.indexOf("from('carteira_assignments').upsert(");
@@ -906,14 +960,24 @@ describe('guardrail money-path: carteira-rebuild lê o vendedor da PROOF oben (P
   });
   it('baseline persistido + bootstrap flag presentes E USADOS (Codex R2-R3)', () => {
     expect(rebuild, 'sumiu a leitura do baseline persistido').toContain("'carteira_omie_baseline'");
-    expect(rebuild, 'guard não recebe baselinePersistido + autorizado').toMatch(/avaliarGuardResultado\(\{[\s\S]{0,120}baselinePersistido,\s*autorizado\s*\}/);
-    expect(rebuild, 'flag de bootstrap não vem do query param').toMatch(/searchParams\.get\('bootstrap'\)/);
+    expect(rebuild, 'guard não recebe baselinePersistido + autorizado').toMatch(/avaliarGuardResultado\(\{[\s\S]{0,140}baselinePersistido,\s*autorizado,\s*omieAtual/);
+    expect(rebuild, 'params não vem do query string da request').toMatch(/params = new URL\(req\.url\)\.searchParams/);
+    expect(rebuild, 'flag de bootstrap não é lida do query param').toMatch(/params\.get\('bootstrap'\) === '1'/);
     expect(rebuild, 'baseline não é PERSISTIDO após o upsert (catraca volta)').toMatch(/upsert\(\{\s*key: 'carteira_omie_baseline'/);
     // R3 #2: a flag é gated em service_role/cron (não staff comum — employee comprometido não força bootstrap)
     expect(rebuild, 'flag de bootstrap não é gated por auth.via').toMatch(/auth\.via === 'service_role'/);
     // R3 P2: o baseline lido é VALIDADO (corrompido → aborta, não vira valor inseguro)
     expect(rebuild, 'baseline lido não é validado (parseBaselineSaudavel)').toContain('parseBaselineSaudavel(');
     expect(rebuild, 'baseline corrompido não aborta').toMatch(/baselinePersistido === null/);
+  });
+
+  it('hardening: owner account-safe — omie_vendedor_map filtrado por omie_account=oben', () => {
+    // omie_vendedor_map É por-conta (o MESMO vendedor tem código distinto em oben/colacor/colacor_sc).
+    // Como o código do cliente vem da proof oben, o mapa código→owner tem de ser oben também.
+    expect(
+      rebuild,
+      'REGRESSÃO: o mapa código→owner voltou a ler TODAS as contas — código colidente mapearia owner não-oben',
+    ).toMatch(/from\(['"]omie_vendedor_map['"]\)[\s\S]{0,120}\.eq\(['"]omie_account['"],\s*['"]oben['"]\)/);
   });
 
   it('PARIDADE: as funções de load espelhadas são IDÊNTICAS ao src/ (pega reversão do Lovable)', () => {
@@ -931,9 +995,15 @@ describe('guardrail money-path: carteira-rebuild lê o vendedor da PROOF oben (P
       expect(bloco, 'sumiu a canária ?canary=1 — sem ela não há prova do DEPLOY, só da fonte').not.toBe('');
     });
 
-    it('roda o helper REAL (computeCarteira + verificarCobertura), não uma reimplementação', () => {
+    it('roda o helper REAL (computeCarteira + verificarCobertura + avaliarGuardResultado), não uma reimplementação', () => {
       expect(bloco, 'canária não chama computeCarteira — não provaria o helper deployado').toContain('computeCarteira(');
       expect(bloco, 'canária não chama verificarCobertura').toContain('verificarCobertura(');
+      // Codex R5 P2: sem exercitar o guard, um deploy VELHO (sem omieAtual/forcado) roda computeCarteira e
+      // verificarCobertura igual → canária verde apesar da trava de saída ter sumido no deploy.
+      expect(
+        bloco,
+        'canária não exercita avaliarGuardResultado — não discrimina um deploy sem a trava de saída do bootstrap',
+      ).toContain('avaliarGuardResultado(');
     });
 
     it('o `expected` casa a verdade-base provada em rebuild-helpers.test.ts (senão a canária mente verde)', () => {
@@ -942,6 +1012,29 @@ describe('guardrail money-path: carteira-rebuild lê o vendedor da PROOF oben (P
       expect(bloco).toMatch(/conflitadoEligible: false/);
       expect(bloco).toMatch(/conflitadoCodigo: 222/);
       expect(bloco).toMatch(/coberturaOk: true/);
+      // trava de saída do bootstrap: aborta sem force, passa com force, e o baseline herda o MAIOR dos três.
+      expect(bloco, 'expected não cobre o abort sem force').toMatch(/guardSemForceAborta: true/);
+      expect(bloco, 'expected não cobre o escape com &force=1').toMatch(/guardComForcePassa: true/);
+      expect(bloco, 'expected não cobre o baseline herdando o atual (erosão acumulada)').toMatch(/guardBaselineHerdaAtual: 2747/);
+    });
+
+    it('a canária expõe o VERSION MARKER `contrato` E o guia manda o verificador exigir esse VALOR (Codex R6/R7 P2)', () => {
+      expect(
+        bloco,
+        'sumiu o marcador `contrato` — um deploy integralmente velho responderia ok:true e a canária não discriminaria',
+      ).toMatch(/contrato: 'trava-saida-v1'/);
+      // O marcador só fecha o furo se o CONSUMIDOR exigir o valor. Sem isto, o produtor emite e o
+      // procedimento documentado segue aceitando `ok` sozinho — foi exatamente o que o Codex R7 bloqueou.
+      // Matchers ANCORADOS (Codex R8 P3): um `toContain` solto aceitaria o valor em qualquer trecho do doc.
+      const deployDoc = read('docs/agent/deploy.md');
+      expect(
+        deployDoc,
+        'o guia não instrui a exigir o PREDICADO COMPLETO (canary === true E contrato === ... E ok === true)',
+      ).toMatch(/canary === true\s+E\s+contrato === '<marcador da fatia>'\s+E\s+ok === true/);
+      expect(
+        deployDoc,
+        'a LINHA da tabela do carteira-rebuild não fixa o contrato trava-saida-v1 — o verificador não sabe o valor esperado',
+      ).toMatch(/\|\s*`carteira-rebuild`\s*\|[^|]*\|\s*`trava-saida-v1`\s*\|/);
     });
 
     it('a fixture tem o CONFLITO (código 222 → 2 vendedores) — é o que discrimina velho×novo', () => {
