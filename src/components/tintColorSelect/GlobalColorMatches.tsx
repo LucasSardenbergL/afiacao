@@ -122,6 +122,7 @@ export function GlobalColorMatches({ product, matches, colorExists, precoMap, pr
                 <AltPriceSourcePicker
                   formulaId={alt.formulaId}
                   altSel={altSel}
+                  isSl={alt.isSl}
                   setOverride={setAltPriceSourceOverride}
                   className="px-2.5 pb-2"
                 />

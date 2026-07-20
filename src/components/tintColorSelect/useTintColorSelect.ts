@@ -109,7 +109,7 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
       // lista vazia e a UI mente "cor não encontrada" (achado Codex no diff).
       const { data, error } = await supabase
         .from('v_tint_formula_canonica')
-        .select('id, cor_id, nome_cor, preco_final_sayersystem, preco_csv_legado')
+        .select('id, cor_id, nome_cor, preco_final_sayersystem, preco_csv_legado, is_sl')
         .eq('account', 'oben')
         .eq('sku_id', skuId!)
         .or(ilikeOr(['cor_id', 'nome_cor'], debouncedSearch))
@@ -137,7 +137,7 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
       // com sku e resolve a gêmea SL×SAYERLACK por chave)
       const { data: globalRaw, error: globalErr } = await supabase
         .from('v_tint_formula_canonica')
-        .select('id, cor_id, nome_cor, sku_id, preco_final_sayersystem, preco_csv_legado')
+        .select('id, cor_id, nome_cor, sku_id, preco_final_sayersystem, preco_csv_legado, is_sl')
         .eq('account', 'oben')
         .or(ilikeOr(['cor_id', 'nome_cor'], debouncedSearch))
         .order('cor_id', { ascending: true })
@@ -219,6 +219,7 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
           sameAcabamento: false,
           corId: gf.cor_id,
           nomeCor: gf.nome_cor,
+          isSl: gf.is_sl,
         });
       }
 
@@ -275,7 +276,7 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
       // (1 por SKU; sem a gêmea SAYERLACK duplicando cada embalagem)
       const { data: altFormulas, error: altErr } = await supabase
         .from('v_tint_formula_canonica')
-        .select('id, sku_id, preco_csv_legado')
+        .select('id, sku_id, preco_csv_legado, is_sl')
         .eq('account', 'oben')
         .eq('cor_id', selectedFormula.cor_id)
         .neq('sku_id', skuId)
@@ -326,6 +327,7 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
           precoFinalCsv: af.preco_csv_legado ? Math.ceil(af.preco_csv_legado * 10) / 10 : af.preco_csv_legado,
           product: prod as Product,
           sameAcabamento: sku.produto_id === currentProdutoId && sku.base_id === currentBaseId,
+          isSl: af.is_sl,
         });
       }
 
@@ -352,9 +354,9 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
   // Preço honesto da cor selecionada: motor get_tint_price (base + corantes, NULL quando
   // a base/corante falta) + CSV legado + último preço do cliente. Quando o motor não tem
   // preço, vira "sem preço" — nunca um número fabricado. Regras em src/lib/tint/select-price.ts.
-  // Fase 2b: o CSV considerado é o da CHAVE (preco_csv_legado) — quando a canônica
-  // é a SL viva (CSV próprio NULL), vem o preço da VERSÃO ANTERIOR da tinta; a
-  // fonte "Tabela" volta ao seletor e a vendedora escolhe entre novo × anterior.
+  // Fase 2b: o CSV considerado é o da CHAVE (preco_csv_legado) — desde a migration
+  // 20260722100002 a view GARANTE que, na canônica SL, ele vem só de linhas não-SL
+  // (a VERSÃO ANTERIOR da tinta); a vendedora escolhe entre novo × anterior.
   const rawCsv = selectedFormula?.preco_csv_legado ?? null;
   const custoCorantes = pricing?.custoCorantes || 0;
 
