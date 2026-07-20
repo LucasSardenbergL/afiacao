@@ -38,6 +38,19 @@ if [ "$n_sessoes" -gt 6 ]; then
   avisos="${avisos}${n_sessoes} sessões Claude vivas → a alavanca real de RAM é FECHAR sessões (wt:status lista as ociosas). "
 fi
 
+# --- 4) semáforo `heavy` desatualizado ou ausente -----------------------------
+# ~/.local/bin/heavy é CÓPIA de scripts/heavy.sh: mergear na main NÃO atualiza o
+# semáforo em uso (#1459 ficou inerte). Só AVISA — não instala: o CI é ubuntu e
+# nunca prova o heavy (test-heavy.sh é macOS-only), então auto-instalar propagaria
+# para todas as sessões um script não validado, sem ninguém no circuito.
+# A comparação NÃO é reimplementada aqui: quem define "divergente" é o
+# heavy-install.sh --status, num lugar só. Script ausente (worktree antiga) → silêncio.
+if [ -x scripts/heavy-install.sh ]; then
+  if ! st="$(bash scripts/heavy-install.sh --status 2>/dev/null)"; then
+    avisos="${avisos}${st:-heavy divergente} → rode 'bun run heavy:install' (o heavy em uso é CÓPIA de scripts/heavy.sh; merge na main não atualiza o semáforo). "
+  fi
+fi
+
 # --- saída --------------------------------------------------------------------
 if [ -n "$avisos" ] && command -v jq >/dev/null 2>&1; then
   jq -n --arg c "Vigia do worktree: $avisos" \
