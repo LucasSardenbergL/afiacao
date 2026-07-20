@@ -30,10 +30,13 @@ export interface FormulaResult {
   cor_id: string;
   nome_cor: string;
   preco_final_sayersystem: number | null;
-  /** Fase 2b: CSV da chave (max das linhas ativas — na prática hoje, o preço da
-   *  versão anterior da tinta quando a canônica é a geração SL viva) — alimenta
-   *  a fonte "Tabela importada" do seletor. */
+  /** Fase 2b: CSV da chave — desde a migration 20260722100002 a view GARANTE
+   *  que, quando a canônica é SL, o max lê só linhas não-SL (a versão anterior
+   *  da tinta). Alimenta a fonte "Tabela" do seletor. */
   preco_csv_legado?: number | null;
+  /** Canônica é a geração SL viva — decide o rótulo condicional da fonte CSV
+   *  ("Tabela (versão anterior)"). Ausente/false → rótulo genérico "Tabela". */
+  is_sl?: boolean | null;
 }
 
 export interface AlternativePackaging {
@@ -47,4 +50,6 @@ export interface AlternativePackaging {
   sameAcabamento: boolean;
   corId?: string;
   nomeCor?: string;
+  /** Canônica da alternativa é SL — rótulo condicional do picker de fonte. */
+  isSl?: boolean | null;
 }
