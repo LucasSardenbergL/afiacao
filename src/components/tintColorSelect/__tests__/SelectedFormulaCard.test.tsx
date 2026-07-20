@@ -174,9 +174,17 @@ describe('SelectedFormulaCard', () => {
     expect(props.setPriceSourceOverride).toHaveBeenCalledWith('calculado');
   });
 
-  it('rótulo da fonte CSV é neutro: "Tabela importada", nunca "versão anterior" (Fase 2b-fix)', () => {
+  it('rótulo condicional da fonte CSV: canônica SL → "Tabela (versão anterior)" (proveniência garantida pela view desde a 20260722100002)', () => {
+    setup({
+      selectedFormula: { ...selectedFormula, is_sl: true },
+      lastPracticedPrice: { price: 40, date: '2026-05-01T00:00:00Z' }, precoCliente: 40, precoCsv: 50, priceSource: 'cliente',
+    });
+    expect(screen.getByRole('button', { name: /Tabela \(versão anterior\)/ })).toBeTruthy();
+  });
+
+  it('rótulo da fonte CSV sem is_sl (ausente/false) → "Tabela" genérico, nunca afirma "versão anterior" sem prova', () => {
     setup({ lastPracticedPrice: { price: 40, date: '2026-05-01T00:00:00Z' }, precoCliente: 40, precoCsv: 50, priceSource: 'cliente' });
-    expect(screen.getByRole('button', { name: /Tabela importada/ })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Tabela/ })).toBeTruthy();
     expect(screen.queryByText(/versão anterior/i)).toBeNull();
   });
 
@@ -196,8 +204,14 @@ describe('SelectedFormulaCard', () => {
   it('alternativa com calc e CSV → oferece o seletor de fonte; clique registra o override da fórmula', () => {
     const { alternatives, altPriceMap } = altComAmbasFontes();
     const props = setup({ alternatives, altPriceMap });
-    fireEvent.click(screen.getByRole('button', { name: /Tabela importada/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Tabela/ }));
     expect(props.setAltPriceSourceOverride).toHaveBeenCalledWith('fa', 'tabela');
+  });
+
+  it('alternativa SL → o picker rotula a fonte CSV como "Tabela (versão anterior)"', () => {
+    const { alternatives, altPriceMap } = altComAmbasFontes();
+    setup({ alternatives: [{ ...alternatives[0], isSl: true }], altPriceMap });
+    expect(screen.getByRole('button', { name: /Tabela \(versão anterior\)/ })).toBeTruthy();
   });
 
   it('alternativa com override "tabela" → confirma com o preço do CSV, não o calculado', () => {
@@ -214,6 +228,6 @@ describe('SelectedFormulaCard', () => {
   it('alternativa com só uma fonte (sem breakdown) → não oferece seletor', () => {
     const { alternatives } = altComAmbasFontes();
     setup({ alternatives }); // altPriceMap {} → fail-closed, nenhuma fonte
-    expect(screen.queryByRole('button', { name: /Tabela importada/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Tabela/ })).toBeNull();
   });
 });

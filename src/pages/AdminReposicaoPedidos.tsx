@@ -22,6 +22,8 @@ import {
 import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, Clock, CloudDownload, Eye, Loader2, Zap } from 'lucide-react';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { toast } from 'sonner';
+import { useMutationComRegistro } from '@/components/execucoes/useMutationComRegistro';
+import { UltimaExecucao } from '@/components/execucoes/UltimaExecucao';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { PedidoSugerido } from '@/components/reposicao/pedidos/types';
@@ -357,7 +359,18 @@ export default function AdminReposicaoPedidos() {
   // lista / recalcular) num só, a pedido do founder — a lista tem refetchInterval 30s (atualiza
   // sozinha). Se uma sync falhar, NÃO recalcula (regenerar com saldo/status velho = pedido errado,
   // money-path); o resumoSyncRecalc reporta e o usuário reexecuta. Idempotente. ~1–2 min.
-  const syncRecalcMutation = useMutation({
+  // Escritor do slug: frontend (orquestração client-side de 2 edges + RPC). Os crons diários
+  // rodam as EDGES isoladas (outra ação); o composto "sincronizar E recalcular" só existe aqui.
+  // status='sucesso' registra que a EXECUÇÃO completou; o resultado real (sync parcial/recalc)
+  // vai em detalhes — o tom pro usuário continua no toast (resumoSyncRecalc), sem mudança.
+  const syncRecalcMutation = useMutationComRegistro({
+    acao: 'reposicao.sincronizar_recalcular',
+    detalhes: ({ estoqueOk, statusOk, recalc }) => ({
+      estoque_ok: estoqueOk,
+      status_ok: statusOk,
+      recalculou: recalc?.ok ?? false,
+      pedidos: recalc?.pedidos ?? 0,
+    }),
     mutationFn: async () => {
       const [estoque, status] = await Promise.allSettled([
         supabase.functions.invoke('omie-sync-estoque', { body: { empresa: EMPRESA } }),
@@ -555,6 +568,7 @@ export default function AdminReposicaoPedidos() {
               </AlertDialogFooter>
             </AlertDialogContent>
           </AlertDialog>
+          <UltimaExecucao acao="reposicao.sincronizar_recalcular" />
         </div>
       </div>
 

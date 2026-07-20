@@ -21,16 +21,16 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **406** custom migrations totais
-- **1445** objetos esperados (criados por estas migrations)
+- **412** custom migrations totais
+- **1453** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 411
-  - `rls_policy`: 362
+  - `function`: 412
+  - `rls_policy`: 368
   - `index`: 224
   - `cron_job`: 150
   - `table`: 147
   - `trigger`: 79
-  - `view`: 68
+  - `view`: 69
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -3434,6 +3434,10 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `private.cap_compras_escrever` | — |
 
+### `20260720120000_authz_cap_compras_ler_pos_candidatos_fu4g.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
 ### `20260721190000_reposicao_pos_candidatos.sql`
 
 | Tipo | Objeto | Parent |
@@ -3465,6 +3469,38 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `view` | `public.v_tint_formula_canonica` | — |
+
+### `20260722110000_quarentena_omie_clientes_espelho.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260722113000_tint_fase1d_is_base_pura.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tint_promote_sync_run` | — |
+
+### `20260723130000_authz_custo_fu4f_fase2_inventory.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `view` | `public.inventory_position_operacional` | — |
+| `rls_policy` | `public.staff_inventory_position_select` | `inventory_position` |
+
+### `20260723140000_authz_custo_fu4f_fase1.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `rls_policy` | `public.cmc_snapshot_select_staff` | `cmc_snapshot` |
+
+### `20260723140000_authz_pedido_compra_item_cap_compras.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `rls_policy` | `public.staff_pedido_compra_item_select` | `pedido_compra_item` |
+| `rls_policy` | `public.staff_pedido_compra_item_insert` | `pedido_compra_item` |
+| `rls_policy` | `public.staff_pedido_compra_item_update` | `pedido_compra_item` |
+| `rls_policy` | `public.staff_pedido_compra_item_delete` | `pedido_compra_item` |
 
 ## Próximos passos por status
 

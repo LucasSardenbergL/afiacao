@@ -190,6 +190,11 @@ func (c *Client) singlePost(ctx context.Context, path string, data []byte, idemp
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-sync-token", c.token)
 	req.Header.Set("x-store-code", c.storeCode)
+	// Fase 1d: a versão do binário viaja em TODO POST — a edge grava no metadata do
+	// run. Observabilidade do ESTADO MISTO (Codex P1): binário velho ainda FILTRA
+	// itens inválidos antes do POST (o banco não vê o que não chega); saber qual
+	// versão alimentou cada run é o que permite auditar a janela de rollout.
+	req.Header.Set("x-agent-version", Version)
 	if idempotencyKey != "" {
 		req.Header.Set("x-idempotency-key", idempotencyKey)
 	}

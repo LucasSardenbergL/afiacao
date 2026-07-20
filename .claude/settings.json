@@ -30,6 +30,7 @@
       "Bash(bun install:*)",
       "Bash(bun run wt:*)",
       "Bash(bun run claude:size)",
+      "Bash(bun run heavy:install)",
       "Bash(bun run audit:migrations)",
       "Bash(git status:*)",
       "Bash(git log:*)",
