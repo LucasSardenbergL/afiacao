@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 406
+-- Total de custom migrations: 409
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -443,11 +443,14 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260718220100', 'seed_targets_faltantes_ledger', '20260718220100_seed_targets_faltantes_ledger.sql'),
   ('20260718233000', 'tint_canonica_preco_csv_legado', '20260718233000_tint_canonica_preco_csv_legado.sql'),
   ('20260719120000', 'authz_cap_compras_escrever_fu4e', '20260719120000_authz_cap_compras_escrever_fu4e.sql'),
+  ('20260720120000', 'authz_cap_compras_ler_pos_candidatos_fu4g', '20260720120000_authz_cap_compras_ler_pos_candidatos_fu4g.sql'),
   ('20260721190000', 'reposicao_pos_candidatos', '20260721190000_reposicao_pos_candidatos.sql'),
   ('20260721190001', 'pausa_cron_relatorio_mensal_ferramentas', '20260721190001_pausa_cron_relatorio_mensal_ferramentas.sql'),
   ('20260722100000', 'acoes_execucoes_ultima_execucao', '20260722100000_acoes_execucoes_ultima_execucao.sql'),
   ('20260722100001', 'tint_gate_revalida_submit', '20260722100001_tint_gate_revalida_submit.sql'),
-  ('20260722100002', 'tint_canonica_csv_legado_semantico', '20260722100002_tint_canonica_csv_legado_semantico.sql')
+  ('20260722100002', 'tint_canonica_csv_legado_semantico', '20260722100002_tint_canonica_csv_legado_semantico.sql'),
+  ('20260722110000', 'quarentena_omie_clientes_espelho', '20260722110000_quarentena_omie_clientes_espelho.sql'),
+  ('20260724120000', 'authz_sales_orders_split_escrita_fu4', '20260724120000_authz_sales_orders_split_escrita_fu4.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -1881,7 +1884,17 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('acoes_execucoes_ultima_execucao', 'index', 'public', 'acoes_execucoes_acao_idx', 'acoes_execucoes'),
   ('tint_gate_revalida_submit', 'function', 'public', 'tint_ultimo_preco_cliente', ''),
   ('tint_gate_revalida_submit', 'function', 'public', 'tint_gate_revalida', ''),
-  ('tint_canonica_csv_legado_semantico', 'view', 'public', 'v_tint_formula_canonica', '')
+  ('tint_canonica_csv_legado_semantico', 'view', 'public', 'v_tint_formula_canonica', ''),
+  ('authz_sales_orders_split_escrita_fu4', 'function', 'private', 'cap_pedido_escrever', ''),
+  ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'sales_orders_select_staff', 'sales_orders'),
+  ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'sales_orders_select_customer', 'sales_orders'),
+  ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'sales_orders_insert_staff', 'sales_orders'),
+  ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'sales_orders_update_staff', 'sales_orders'),
+  ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'sales_orders_delete_staff', 'sales_orders'),
+  ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'order_items_select_staff', 'order_items'),
+  ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'order_items_select_customer', 'order_items'),
+  ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'sales_price_history_select_staff', 'sales_price_history'),
+  ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'sales_price_history_select_customer', 'sales_price_history')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -3363,7 +3376,17 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('acoes_execucoes_ultima_execucao', 'index', 'public', 'acoes_execucoes_acao_idx', 'acoes_execucoes'),
   ('tint_gate_revalida_submit', 'function', 'public', 'tint_ultimo_preco_cliente', ''),
   ('tint_gate_revalida_submit', 'function', 'public', 'tint_gate_revalida', ''),
-  ('tint_canonica_csv_legado_semantico', 'view', 'public', 'v_tint_formula_canonica', '')
+  ('tint_canonica_csv_legado_semantico', 'view', 'public', 'v_tint_formula_canonica', ''),
+  ('authz_sales_orders_split_escrita_fu4', 'function', 'private', 'cap_pedido_escrever', ''),
+  ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'sales_orders_select_staff', 'sales_orders'),
+  ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'sales_orders_select_customer', 'sales_orders'),
+  ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'sales_orders_insert_staff', 'sales_orders'),
+  ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'sales_orders_update_staff', 'sales_orders'),
+  ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'sales_orders_delete_staff', 'sales_orders'),
+  ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'order_items_select_staff', 'order_items'),
+  ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'order_items_select_customer', 'order_items'),
+  ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'sales_price_history_select_staff', 'sales_price_history'),
+  ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'sales_price_history_select_customer', 'sales_price_history')
 )
 SELECT
   e.migration,
