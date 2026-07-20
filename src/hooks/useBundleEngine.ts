@@ -420,7 +420,11 @@ export const useBundleEngine = () => {
           for (const pid of missingProducts) {
             const product = productMap.get(pid);
             if (!product) continue;
-            const cost = costMap.get(pid) || 0;
+            // Custo desconhecido → SKU fora do bundle (ausente≠zero). Com `|| 0` a margem virava
+            // o preço cheio, e como o único filtro é `margin <= 0` o produto sem custo nunca era
+            // excluído: o LIE do bundle passava a preferir justamente o que falta cadastrar.
+            const cost = costMap.get(pid);
+            if (cost == null) continue;
             const price = Number(product.valor_unitario || 0);
             const margin = price - cost;
             if (margin <= 0) continue;
@@ -436,7 +440,9 @@ export const useBundleEngine = () => {
                 if (purchased.has(relatedPid) || relatedPid === pid) continue;
                 const relatedProduct = productMap.get(relatedPid);
                 if (!relatedProduct) continue;
-                const relatedCost = costMap.get(relatedPid) || 0;
+                // Mesmo motivo do produto principal: sem custo o par sai do bundle.
+                const relatedCost = costMap.get(relatedPid);
+                if (relatedCost == null) continue;
                 const relatedPrice = Number(relatedProduct.valor_unitario || 0);
                 const relatedMargin = relatedPrice - relatedCost;
                 if (relatedMargin <= 0) continue;
