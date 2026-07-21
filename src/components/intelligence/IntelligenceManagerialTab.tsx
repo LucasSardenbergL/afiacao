@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Users, AlertTriangle, Layers } from 'lucide-react';
+import { mediaMargensConhecidas } from '@/lib/scoring/margin';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer } from 'recharts';
 import { KpiCard } from './KpiCard';
 
@@ -67,7 +68,11 @@ function IntelligenceManagerialTabImpl() {
   const farmerMetrics = Object.entries(farmerGroups).map(([farmerId, clients]) => {
     const avgHealth = clients.reduce((a, c) => a + Number(c.health_score || 0), 0) / clients.length;
     const atRisk = clients.filter(c => (c.health_class === 'critico' || c.health_class === 'atencao') && c.sales_history_status !== 'sem_historico').length;
-    const avgMargin = clients.reduce((a, c) => a + Number(c.gross_margin_pct || 0), 0) / clients.length;
+    // Só quem TEM margem entra — numerador e denominador. Com `|| 0` cada cliente sem margem
+    // medida entrava como 0 e puxava a média do farmer para baixo; desde o cálculo server-side
+    // isso valeria para a maioria da base, e o gestor compararia farmers por um número que mede
+    // cobertura de custo, não desempenho. `null` → a coluna mostra "—".
+    const avgMargin = mediaMargensConhecidas(clients.map(c => c.gross_margin_pct));
     const avgCategories = clients.reduce((a, c) => a + Number(c.category_count || 0), 0) / clients.length;
     const adoption = recoAdoption[farmerId];
     const adoptionPct = adoption && adoption.total > 0 ? (adoption.accepted / adoption.total * 100) : 0;
@@ -120,7 +125,11 @@ function IntelligenceManagerialTabImpl() {
                       <Badge variant={fm.avgHealth > 60 ? 'default' : 'destructive'} className="text-2xs">{fm.avgHealth.toFixed(0)}</Badge>
                     </td>
                     <td className="text-center py-2">{fm.atRisk}</td>
-                    <td className="text-center py-2">{fm.avgMargin.toFixed(1)}%</td>
+                    <td className="text-center py-2">
+                      {fm.avgMargin == null
+                        ? <span className="text-muted-foreground" title="Nenhum cliente deste farmer tem margem apurada">—</span>
+                        : `${fm.avgMargin.toFixed(1)}%`}
+                    </td>
                     <td className="text-center py-2">{fm.avgCategories.toFixed(1)}</td>
                     <td className="text-center py-2">
                       <span className={fm.avgCategories < globalAvgCategories ? 'text-destructive' : 'text-status-success'}>

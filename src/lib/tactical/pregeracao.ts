@@ -2,6 +2,8 @@
  *  Oráculo puro — a edge tactical-plans-batch (Deno) replica esta lógica via
  *  supabase/functions/_shared/tactical-margem.ts (front e edge não compartilham módulo;
  *  este helper é a fonte da verdade testada). */
+import { margemConhecida } from '@/lib/scoring/margin';
+
 export const PROFIT_PER_HOUR_THRESHOLD = 50; // R$/h — espelha useTacticalPlan.ts:198
 const AVG_CALL_MINUTES = 15;
 
@@ -14,12 +16,8 @@ export interface ScoreParaSelecao {
   marginPct: number | null;
 }
 
-/** Margem utilizável, ou null se desconhecida/não-finita (money-path: ausente ≠ zero). */
-function margemConhecida(raw: number | null | undefined): number | null {
-  if (raw == null) return null;
-  const n = Number(raw);
-  return Number.isFinite(n) ? n : null;
-}
+// margemConhecida vem de @/lib/scoring/margin (era uma cópia privada aqui). A cópia que RESTA é a
+// de supabase/functions/_shared/tactical-margem.ts, e essa é inevitável: Deno não importa de src/.
 
 /** R$/h estimado por ligação. Espelha useTacticalPlan.checkEfficiency (linhas 313-318).
  *  Margem desconhecida → `null` ("não sei"), NUNCA 0 (que significaria "cliente não-lucrativo"). */
