@@ -44,7 +44,14 @@ const SCORE_ROW = {
   category_count: 4, days_since_last_purchase: 10, expansion_score: 30, revenue_potential: 5000,
 };
 
-function result(q: Q): { data: unknown; error: null } {
+/**
+ * Simula falha de transporte na 2ª página (timeout, 500, RLS). O PostgREST devolve
+ * `{ data: null, error }` — e `fetchAllPages` só desestrutura `data`, então sem guard no
+ * caller isso é indistinguível de "a tabela acabou".
+ */
+let falhaNaSegundaPagina = false;
+
+function result(q: Q): { data: unknown; error: unknown } {
   const hasCustomerEq = q.eq.some(([c]) => c === 'customer_user_id');
   const hasFarmerEq = q.eq.some(([c]) => c === 'farmer_id');
   if (q.table === 'farmer_client_scores' && hasCustomerEq && q.single) return { data: SCORE_ROW, error: null };
@@ -53,7 +60,11 @@ function result(q: Q): { data: unknown; error: null } {
     // exatamente o comportamento da versão quebrada (lê só o primeiro lote e para).
     const de = q.ranges.at(-1)?.[0] ?? 0;
     if (de === 0) return { data: PRIMEIRA_PAGINA, error: null };
-    if (de === PAGINA) return { data: SEGUNDA_PAGINA, error: null };
+    if (de === PAGINA) {
+      return falhaNaSegundaPagina
+        ? { data: null, error: { message: 'canceling statement due to statement timeout', code: '57014' } }
+        : { data: SEGUNDA_PAGINA, error: null };
+    }
     return { data: [], error: null };
   }
   if (q.table === 'profiles' && q.single) return { data: { name: 'Cliente X' }, error: null };
@@ -96,7 +107,7 @@ vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 
 import { useTacticalPlan } from '../useTacticalPlan';
 
-beforeEach(() => { queries = []; rpcCalls = []; vi.clearAllMocks(); });
+beforeEach(() => { queries = []; rpcCalls = []; falhaNaSegundaPagina = false; vi.clearAllMocks(); });
 
 const peersQueries = () => queries.filter((q) => q.table === 'farmer_client_scores' && q.eq.some(([c]) => c === 'farmer_id') && !q.single);
 const clusterPersistido = () => {
@@ -130,6 +141,20 @@ describe('generatePlan — cluster de pares pagina além da capa de 1.000 do Pos
     await act(async () => { await r.current.generatePlan(CUSTOMER); });
 
     for (const q of peersQueries()) expect(q.orders.length).toBeGreaterThan(0);
+  });
+
+  it('página que FALHA aborta o plano — cluster parcial não vira régua', async () => {
+    falhaNaSegundaPagina = true;
+    const { result: r } = renderHook(() => useTacticalPlan());
+    await act(async () => { await r.current.generatePlan(CUSTOMER); });
+
+    // Sem o `throw` no caller, `fetchAllPages` engole o erro: `data: null` vira `[]`,
+    // `0 < 1.000` encerra o loop como "fim da tabela", e as 1.000 linhas já acumuladas
+    // (margem 10) viram o cluster — numericamente idênticas às de uma carteira que de fato
+    // só tem 1.000 pares. O plano seria gravado com uma régua inventada por um timeout, e
+    // 10 vs 36,67 atravessa até o objetivo estratégico (o mesmo discriminador do 1º teste).
+    expect(rpcCalls.find((x) => x.fn === 'criar_plano_tatico')).toBeUndefined();
+    expect(invokeMock).not.toHaveBeenCalled();
   });
 
   it('mantém o escopo do dono e a exclusão do próprio cliente em TODAS as páginas', async () => {

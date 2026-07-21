@@ -7,8 +7,9 @@ import type { PlanType } from '@/hooks/useTacticalPlan';
 import { fmt } from './config';
 
 interface EfficiencyAlertDialogProps {
-  /** `profitPerHour: null` = margem do cliente desconhecida ⇒ o R$/h não é estimável. */
-  alert: { customerId: string; profitPerHour: number | null; planType: PlanType } | null;
+  /** `profitPerHour: null` ⇒ R$/h não estimável; `motivo` diz se foi ausência de dado do
+   *  cliente (`sem_margem`) ou falha da nossa consulta (`indisponivel`). */
+  alert: { customerId: string; profitPerHour: number | null; motivo?: 'sem_margem' | 'indisponivel'; planType: PlanType } | null;
   onClose: () => void;
   onConfirm: () => void;
 }
@@ -24,9 +25,17 @@ export function EfficiencyAlertDialog({ alert, onClose, onConfirm }: EfficiencyA
           </DialogTitle>
         </DialogHeader>
         <div className="space-y-3">
-          {/* Margem desconhecida NÃO é "R$ 0,00/h": dizer que o potencial é baixo quando não
-              medimos a margem acusa o cliente de um problema que é de dado nosso. */}
-          {alert?.profitPerHour == null ? (
+          {/* Três estados distintos. Margem desconhecida NÃO é "R$ 0,00/h" — dizer que o
+              potencial é baixo quando não medimos acusa o cliente de um problema de dado.
+              E falha de CONSULTA não é ausência de margem: afirmar "sem custo cadastrado"
+              após um timeout alegaria um fato sobre o cliente a partir de um erro nosso. */}
+          {alert?.motivo === 'indisponivel' ? (
+            <p className="text-xs text-muted-foreground">
+              Não foi possível <strong className="text-foreground">consultar os dados</strong> deste
+              cliente agora, então o lucro por hora não pôde ser estimado. Isto não diz nada sobre o
+              potencial dele — tente de novo em instantes.
+            </p>
+          ) : alert?.profitPerHour == null ? (
             <p className="text-xs text-muted-foreground">
               Não foi possível estimar o lucro por hora deste cliente: a{' '}
               <strong className="text-foreground">margem bruta é desconhecida</strong> (nenhum item

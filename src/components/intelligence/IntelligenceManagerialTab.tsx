@@ -10,11 +10,20 @@ import { formatarMargemPct } from '@/lib/margem';
 import { mediaMargem } from '@/lib/scoring/margem-leitura';
 import { KpiCard } from './KpiCard';
 
+/**
+ * A tela lê uma AMOSTRA, não a carteira: `farmer_client_scores` tem 6.632 linhas em prod e
+ * esta query pega as 500 de maior `priority_score`. Nomeado porque a tabela por vendedor
+ * precisa declarar o recorte — comparar vendedores sobre fatias enviesadas sem dizer que
+ * são fatias é o mesmo defeito que o `|| 0` tinha: um número que finge alcance.
+ * Paginar de verdade (todos os KPIs desta tela) é follow-up próprio.
+ */
+const LIMITE_AMOSTRA = 500;
+
 function IntelligenceManagerialTabImpl() {
   const { data: allScores, isLoading } = useQuery({
     queryKey: ['intel-all-scores'],
     queryFn: async () => {
-      const { data, error } = await supabase.from('farmer_client_scores').select('*').order('priority_score', { ascending: false }).limit(500);
+      const { data, error } = await supabase.from('farmer_client_scores').select('*').order('priority_score', { ascending: false }).limit(LIMITE_AMOSTRA);
       if (error) throw error;
       return data || [];
     },
@@ -98,7 +107,14 @@ function IntelligenceManagerialTabImpl() {
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-sm font-semibold">Comparativo por Vendedor</CardTitle>
-          <CardDescription className="text-xs">Saúde, risco, margem, mix e adoção de recomendações</CardDescription>
+          {/* A tabela inteira é calculada sobre a AMOSTRA de maior prioridade, não sobre a
+              carteira: um vendedor cujos clientes ficam fora do top N não aparece aqui, e as
+              médias dos que aparecem são das fatias lidas. Declarar isso é o que separa
+              "recorte" de "número errado" — o gestor compara vendedores nesta tela. */}
+          <CardDescription className="text-xs">
+            Saúde, risco, margem, mix e adoção de recomendações — sobre os {LIMITE_AMOSTRA} clientes
+            de maior prioridade, não a carteira inteira
+          </CardDescription>
         </CardHeader>
         <CardContent>
           <div className="overflow-x-auto">

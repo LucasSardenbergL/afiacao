@@ -56,6 +56,25 @@ export interface MediaMargem {
  * clients.length` soma os ausentes como 0 E os conta no denominador — subestimando a
  * média duas vezes.
  */
+/**
+ * Legenda de cobertura do KPI de margem — a frase que impede o número de fingir alcance.
+ *
+ * `amostra: true` quando a fonte foi truncada por um `.limit()`: aí `total` é o tamanho do
+ * QUE FOI LIDO, não o da carteira, e tratá-lo como carteira faz o KPI afirmar uma cobertura
+ * que não tem. O caso traiçoeiro é `conhecidas === total`: sem a marca de amostra o
+ * subtítulo simplesmente some, e a tela passa a parecer completa justamente na hora em que
+ * está mais enviesada (as 500 de maior prioridade são as que mais têm custo cadastrado).
+ */
+export function legendaCobertura(m: MediaMargem, opts?: { amostra?: boolean }): string | undefined {
+  const parcial = m.conhecidas < m.total;
+  if (opts?.amostra) {
+    return parcial
+      ? `${m.conhecidas} com custo, de uma amostra de ${m.total} clientes`
+      : `amostra de ${m.total} clientes, não a carteira inteira`;
+  }
+  return parcial ? `${m.conhecidas} de ${m.total} com custo conhecido` : undefined;
+}
+
 export function mediaMargem(vs: readonly unknown[]): MediaMargem {
   let soma = 0;
   let conhecidas = 0;

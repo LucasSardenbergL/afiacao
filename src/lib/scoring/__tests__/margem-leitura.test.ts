@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { tomMargem, mediaMargem } from '../margem-leitura';
+import { tomMargem, mediaMargem, legendaCobertura } from '../margem-leitura';
 
 describe('tomMargem — thresholds em escala 0–100', () => {
   it('classifica pela escala 0–100, não por fração', () => {
@@ -68,5 +68,34 @@ describe('mediaMargem — só sobre conhecidas, com cobertura exposta', () => {
     const r = mediaMargem([-50, 50]);
     expect(r.media).toBe(0);
     expect(r.conhecidas).toBe(2);
+  });
+});
+
+describe('legendaCobertura — o KPI não pode fingir alcance que não tem', () => {
+  it('fonte completa e cobertura parcial: diz de quantos fala', () => {
+    expect(legendaCobertura(mediaMargem([50, 60, null]))).toBe('2 de 3 com custo conhecido');
+  });
+
+  it('fonte completa e cobertura total: nada a declarar', () => {
+    expect(legendaCobertura(mediaMargem([50, 60]))).toBeUndefined();
+  });
+
+  it('AMOSTRA com cobertura total ainda declara o recorte — o caso que mais engana', () => {
+    // Este é o assert que carrega o achado: com `.limit(500)`, `conhecidas === total` é o
+    // estado NORMAL (as de maior prioridade são justamente as que têm custo cadastrado).
+    // Tratando a amostra como carteira, a legenda sumiria — e a tela pareceria completa
+    // exatamente quando está mais enviesada. Sem `amostra: true` isto seria `undefined`.
+    expect(legendaCobertura(mediaMargem([50, 60]), { amostra: true }))
+      .toBe('amostra de 2 clientes, não a carteira inteira');
+  });
+
+  it('amostra com cobertura parcial: separa "lidos" de "com custo"', () => {
+    expect(legendaCobertura(mediaMargem([50, 60, null]), { amostra: true }))
+      .toBe('2 com custo, de uma amostra de 3 clientes');
+  });
+
+  it('amostra sem nenhuma margem conhecida ainda declara o recorte', () => {
+    expect(legendaCobertura(mediaMargem([null, null]), { amostra: true }))
+      .toBe('0 com custo, de uma amostra de 2 clientes');
   });
 });

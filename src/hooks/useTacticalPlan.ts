@@ -25,7 +25,8 @@ export interface TacticalPlan {
   healthScore: number;
   churnRisk: number;
   mixGap: number;
-  currentMarginPct: number;
+  /** Escala 0–100; `null` = margem desconhecida no momento em que o plano foi gerado. */
+  currentMarginPct: number | null;
   clusterAvgMarginPct: number | null;
   expansionPotential: number;
 
@@ -171,13 +172,20 @@ interface DiagnosticData {
 
 export interface EfficiencyCheck {
   /**
-   * `null` = INDECIDÍVEL: a margem do cliente é desconhecida, então não dá para estimar
-   * R$/h. Distinto de `0`, que é o veredito "esta ligação não paga". Fabricar 0 a partir
-   * da ausência faria a tela acusar o cliente de um problema que é de dado.
+   * `null` = INDECIDÍVEL: não dá para estimar R$/h. Distinto de `0`, que é o veredito
+   * "esta ligação não paga". Fabricar 0 a partir da ausência faria a tela acusar o
+   * cliente de um problema que é de dado. Ver `motivo` para saber POR QUE é null.
    */
   estimatedProfitPerHour: number | null;
   threshold: number;
   isAboveThreshold: boolean;
+  /**
+   * Por que o R$/h não é estimável. `sem_margem` = o cliente não tem nenhum item com
+   * custo cadastrado (fato sobre o dado). `indisponivel` = a consulta falhou (timeout,
+   * RLS, 500) e não sabemos nada — afirmar "sem custo cadastrado" aqui seria alegar um
+   * fato sobre o cliente a partir de uma falha nossa.
+   */
+  motivo?: 'sem_margem' | 'indisponivel';
 }
 
 const objectiveLabels: Record<string, string> = {
@@ -240,7 +248,9 @@ export const useTacticalPlan = () => {
       healthScore: Number(d.health_score || 0),
       churnRisk: Number(d.churn_risk || 0),
       mixGap: Number(d.mix_gap || 0),
-      currentMarginPct: Number(d.current_margin_pct || 0),
+      // `|| 0` aqui refabricava o null na LEITURA: o plano gravava margem desconhecida
+      // corretamente e o reload a transformava de volta em "0,0% de margem" no PlanCard.
+      currentMarginPct: lerMargemPct(d.current_margin_pct),
       clusterAvgMarginPct: d.cluster_avg_margin_pct == null ? null : Number(d.cluster_avg_margin_pct),
       expansionPotential: Number(d.expansion_potential || 0),
       strategicObjective: d.strategic_objective,
@@ -333,26 +343,35 @@ export const useTacticalPlan = () => {
 
   // Check efficiency before generating
   const checkEfficiency = useCallback(async (customerId: string): Promise<EfficiencyCheck> => {
-    if (!user?.id) return { estimatedProfitPerHour: null, threshold: PROFIT_PER_HOUR_THRESHOLD, isAboveThreshold: false };
+    if (!user?.id) return { estimatedProfitPerHour: null, threshold: PROFIT_PER_HOUR_THRESHOLD, isAboveThreshold: false, motivo: 'indisponivel' };
 
-    const { data: score } = (await supabase
+    const { data: score, error: erroScore } = (await supabase
       .from('farmer_client_scores')
       .select('revenue_potential, avg_monthly_spend_180d, gross_margin_pct')
       // Opção A: 1 linha por cliente (customer_user_id único). NÃO filtrar por farmer_id —
       // quebrava sob a lente / cliente de outro dono → "sem score" falso; RLS gateia a visibilidade.
       .eq('customer_user_id', customerId)
-      .single()) as unknown as { data: Pick<ClientScoreFull, 'revenue_potential' | 'avg_monthly_spend_180d' | 'gross_margin_pct'> | null };
+      .single()) as unknown as {
+        data: Pick<ClientScoreFull, 'revenue_potential' | 'avg_monthly_spend_180d' | 'gross_margin_pct'> | null;
+        error: unknown };
 
-    const revPotential = Number(score?.revenue_potential || 0);
-    const avgSpend = Number(score?.avg_monthly_spend_180d || 0);
-    const marginPct = lerMargemPct(score?.gross_margin_pct);
+    // FALHA DE CONSULTA ≠ AUSÊNCIA DE MARGEM. Sem este ramo, um timeout/RLS/500 cairia no
+    // mesmo `null` do cliente sem custo, e a tela afirmaria "nenhum item comprado tem custo
+    // cadastrado" — um fato sobre o CLIENTE deduzido de uma falha NOSSA.
+    if (erroScore || !score) {
+      return { estimatedProfitPerHour: null, threshold: PROFIT_PER_HOUR_THRESHOLD, isAboveThreshold: false, motivo: 'indisponivel' };
+    }
+
+    const revPotential = Number(score.revenue_potential || 0);
+    const avgSpend = Number(score.avg_monthly_spend_180d || 0);
+    const marginPct = lerMargemPct(score.gross_margin_pct);
 
     // Margem desconhecida ⇒ gate INDECIDÍVEL, não reprovado. `|| 0` daria R$ 0,00/h e a tela
     // diria "esta ligação não paga" sobre um cliente que apenas não tem custo cadastrado.
     // Fail-closed em isAboveThreshold (pede confirmação), honesto no número (null).
     // Espelha o `margemConhecida()` da edge tactical-plans-batch.
     if (marginPct === null) {
-      return { estimatedProfitPerHour: null, threshold: PROFIT_PER_HOUR_THRESHOLD, isAboveThreshold: false };
+      return { estimatedProfitPerHour: null, threshold: PROFIT_PER_HOUR_THRESHOLD, isAboveThreshold: false, motivo: 'sem_margem' };
     }
 
     const estimatedMarginPerCall = (revPotential > 0 ? revPotential : avgSpend) * (marginPct / 100) * 0.1;
@@ -427,6 +446,16 @@ export const useTacticalPlan = () => {
         // contra ~26% da carteira, em ordem indefinida (sem `.order()`, o Postgres não garante
         // a mesma sequência entre requests). Mesma correção que a edge tactical-plans-batch
         // recebeu; aqui é o caminho do browser.
+        // O `error` é convertido em THROW aqui de propósito. `fetchAllPages` só desestrutura
+        // `data`: uma página que falha vira `data: null` → lista vazia → `linhas.length < 1000`
+        // → "fim da tabela". O acumulado das páginas anteriores viraria um cluster PARCIAL
+        // indistinguível de um completo — e a régua do peer benchmark é o que decide entre
+        // `upsell_premium` e `consolidacao_margem`, vai para o prompt da IA e fica gravada no
+        // plano. Falhar alto é a única leitura honesta: pausa o plano em vez de calibrar a
+        // conversa da vendedora contra uma média inventada por um timeout.
+        // O contrato do helper tem o mesmo furo para os outros 11 callers money-path (três
+        // deles carregam `product_costs`, onde página perdida vira "SKU sem custo") — corrigir
+        // o helper é follow-up próprio, com revisão isolada.
         const peers = await fetchAllPages<Pick<ClientScoreFull, 'gross_margin_pct'>>((de, ate) =>
           supabase
             .from('farmer_client_scores')
@@ -434,7 +463,11 @@ export const useTacticalPlan = () => {
             .eq('farmer_id', ownerId)
             .neq('customer_user_id', customerId)
             .order('customer_user_id', { ascending: true })
-            .range(de, ate) as unknown as PromiseLike<{ data: Pick<ClientScoreFull, 'gross_margin_pct'>[] | null }>,
+            .range(de, ate)
+            .then(({ data, error }) => {
+              if (error) throw error;
+              return { data: data as unknown as Pick<ClientScoreFull, 'gross_margin_pct'>[] | null };
+            }),
         );
         const peerMargins = peers
           .map((r) => lerMargemPct(r.gross_margin_pct))

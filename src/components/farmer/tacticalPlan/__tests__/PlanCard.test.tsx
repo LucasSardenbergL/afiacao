@@ -86,4 +86,26 @@ describe("PlanCard", () => {
     expect(screen.queryByText("Registrar Resultado")).toBeNull();
     expect(screen.getByText("Resultado registrado")).toBeTruthy();
   });
+
+  // A margem gravada no plano é nullable desde que o servidor passou a distinguir "sem custo
+  // cadastrado" de "margem zero". O card é o último ponto do caminho: se ele coagir, todo o
+  // trabalho de propagar o null (RPC → coluna → parsePlan) morre no `.toFixed()` final.
+  describe("margem atual — ausência não pode virar 0,0%", () => {
+    it("margem desconhecida exibe travessão, não 0,0%", () => {
+      setup({ expanded: true, plan: makePlan({ currentMarginPct: null }) });
+      expect(screen.getByText("—")).toBeTruthy();
+      expect(screen.queryByText("0.0%")).toBeNull();
+      expect(screen.queryByText("0%")).toBeNull();
+    });
+
+    it("margem ZERO medida continua sendo 0% — é veredito, não ausência", () => {
+      setup({ expanded: true, plan: makePlan({ currentMarginPct: 0 }) });
+      expect(screen.getByText("0%")).toBeTruthy();
+    });
+
+    it("margem conhecida é exibida na escala 0–100 que o servidor grava", () => {
+      setup({ expanded: true, plan: makePlan({ currentMarginPct: 53.47 }) });
+      expect(screen.getByText("53,5%")).toBeTruthy();
+    });
+  });
 });

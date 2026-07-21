@@ -10,7 +10,15 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatarMargemPct } from '@/lib/margem';
-import { mediaMargem } from '@/lib/scoring/margem-leitura';
+import { mediaMargem, legendaCobertura } from '@/lib/scoring/margem-leitura';
+
+/**
+ * A tela lê uma AMOSTRA, não a carteira: `farmer_client_scores` tem 6.632 linhas em prod.
+ * Nomeado porque o KPI de margem precisa declarar isso ao gestor — um número de carteira
+ * calculado sobre 500 linhas sem dizer que são 500 é cobertura fabricada.
+ * Paginar de verdade (todos os KPIs desta tela, não só margem) é follow-up próprio.
+ */
+const LIMITE_AMOSTRA = 500;
 import { KpiCard } from './KpiCard';
 
 export function IntelligenceStrategicTab() {
@@ -26,7 +34,7 @@ export function IntelligenceStrategicTab() {
   const { data: allScores } = useQuery({
     queryKey: ['intel-strategic-scores'],
     queryFn: async () => {
-      const { data, error } = await supabase.from('farmer_client_scores').select('*').limit(500);
+      const { data, error } = await supabase.from('farmer_client_scores').select('*').limit(LIMITE_AMOSTRA);
       if (error) throw error;
       return data || [];
     },
@@ -159,11 +167,7 @@ export function IntelligenceStrategicTab() {
           title="Margem Bruta Média"
           value={formatarMargemPct(margemCarteira.media)}
           icon={Percent}
-          subtitle={
-            margemCarteira.conhecidas < margemCarteira.total
-              ? `${margemCarteira.conhecidas} de ${margemCarteira.total} com custo conhecido`
-              : undefined
-          }
+          subtitle={legendaCobertura(margemCarteira, { amostra: true })}
         />
       </div>
 
