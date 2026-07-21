@@ -144,13 +144,28 @@ BEGIN
     SELECT
       e.ord                                             AS seq,
       NULLIF(e.value->>'chave', '')                     AS i_chave,
-      COALESCE(e.value->>'grupo', '')                   AS i_grupo,
+      -- MESMA armadilha do peso: `grupo::uuid` com lixo levanta 22P02 e derruba a chamada.
+      -- Formato invalido vira NULL e o item cai fora no gate de carteira (fail-closed).
+      CASE WHEN e.value->>'grupo' ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+           THEN (e.value->>'grupo')::uuid END           AS i_grupo,
       COALESCE(NULLIF(e.value->>'tipo',''),'cross_sell') AS i_tipo,
-      -- peso/fator: default 1. Nao-finito vira 1 (nunca NULL silencioso, nunca NaN propagando)
-      CASE WHEN private.regua_num_finito((e.value->>'peso')::numeric)
-           THEN (e.value->>'peso')::numeric ELSE 1 END  AS i_peso,
-      CASE WHEN private.regua_num_finito((e.value->>'fator')::numeric)
-           THEN (e.value->>'fator')::numeric ELSE 1 END AS i_fator,
+      -- peso/fator: default 1. Nao-finito vira 1 (nunca NULL silencioso, nunca NaN propagando).
+      --
+      -- ⚠️ O `jsonb_typeof = 'number'` e OBRIGATORIO e vem PRIMEIRO, num CASE ANINHADO. Testado
+      -- no PG17: `CASE WHEN regua_num_finito((v->>'peso')::numeric) ...` com peso="abc" NAO
+      -- degrada — levanta `invalid input syntax for type numeric` (22P02) e derruba a chamada
+      -- INTEIRA. O CASE nao protege o cast que aparece na PROPRIA condicao, e `AND` nao garante
+      -- short-circuit em SQL (a ordem de avaliacao de AND nao e especificada). CASE aninhado
+      -- garante: o Postgres nao avalia o branch nao escolhido.
+      -- Sem isto, `{"peso":"abc"}` e um DoS de uma linha contra uma RPC SECURITY DEFINER.
+      CASE WHEN jsonb_typeof(e.value->'peso') = 'number' THEN
+             CASE WHEN private.regua_num_finito((e.value->>'peso')::numeric)
+                  THEN (e.value->>'peso')::numeric ELSE 1 END
+           ELSE 1 END                                   AS i_peso,
+      CASE WHEN jsonb_typeof(e.value->'fator') = 'number' THEN
+             CASE WHEN private.regua_num_finito((e.value->>'fator')::numeric)
+                  THEN (e.value->>'fator')::numeric ELSE 1 END
+           ELSE 1 END                                   AS i_fator,
       e.value->'produtos'                               AS i_produtos
     FROM jsonb_array_elements(p_itens) WITH ORDINALITY AS e(value, ord)
     WHERE jsonb_typeof(e.value) = 'object'
@@ -161,10 +176,10 @@ BEGIN
   item_autorizado AS (
     SELECT i.*
     FROM item i
-    WHERE i.i_grupo <> ''
+    WHERE i.i_grupo IS NOT NULL
       AND (
         (SELECT private.cap_carteira_ler(v_uid))
-        OR private.carteira_visivel_para(i.i_grupo::uuid, v_uid)
+        OR private.carteira_visivel_para(i.i_grupo, v_uid)
       )
   ),
   -- explode os produtos preservando a POSICAO: no up_sell a posicao decide o sinal
@@ -173,7 +188,10 @@ BEGIN
     SELECT
       ia.seq,
       p.ord AS pos,
-      (p.value #>> '{}')::uuid AS product_id,
+      -- idem: product_id malformado vira NULL, o LEFT JOIN nao casa, a margem fica NULL e o
+      -- item inteiro sai inelegivel. Fail-closed sem levantar erro.
+      CASE WHEN p.value #>> '{}' ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+           THEN (p.value #>> '{}')::uuid END AS product_id,
       CASE WHEN ia.i_tipo = 'up_sell' AND p.ord = 2 THEN -1 ELSE 1 END AS coef
     FROM item_autorizado ia
     CROSS JOIN LATERAL jsonb_array_elements(

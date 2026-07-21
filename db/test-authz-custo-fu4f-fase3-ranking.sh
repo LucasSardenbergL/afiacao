@@ -299,6 +299,23 @@ eq "A15 gate de carteira: farmer NAO ranqueia cliente de outro" \
    "$(as_user "$F" "SELECT count(*) FROM public.get_ranking_margem('$ITENS_OUTRO'::jsonb);")" "0"
 eq "A15b master (cap_carteira_ler) ranqueia qualquer cliente" \
    "$(as_user "$M" "SELECT count(*) FROM public.get_ranking_margem('$ITENS_OUTRO'::jsonb);")" "1"
+# ─── ENTRADA MALFORMADA DEGRADA, NAO EXPLODE ───────────────────────────────────────────────
+# Medido no PG17: `CASE WHEN f((v->>'peso')::numeric) ...` com peso="abc" NAO cai no ELSE —
+# levanta 22P02 e derruba a chamada inteira. Um `{"peso":"abc"}` seria DoS de uma linha contra
+# uma RPC SECURITY DEFINER. Os 3 casts (peso, fator, grupo, produtos) tem de ser guardados.
+LIXO_PESO="[{\"chave\":\"lx1\",\"grupo\":\"$C1\",\"tipo\":\"cross_sell\",\"produtos\":[\"aaaaaaaa-0000-0000-0000-000000000001\"],\"peso\":\"abc\",\"fator\":1}]"
+eq "A15j peso nao-numerico degrada p/ 1 (nao levanta 22P02)" \
+   "$(as_user "$M" "SELECT COALESCE(mij::text,'ERRO') FROM public.get_ranking_margem('$LIXO_PESO'::jsonb);")" "80"
+LIXO_FATOR="[{\"chave\":\"lx2\",\"grupo\":\"$C1\",\"tipo\":\"cross_sell\",\"produtos\":[\"aaaaaaaa-0000-0000-0000-000000000001\"],\"peso\":2,\"fator\":\"xyz\"}]"
+eq "A15k fator nao-numerico degrada p/ 1" \
+   "$(as_user "$M" "SELECT COALESCE(lie::text,'ERRO') FROM public.get_ranking_margem('$LIXO_FATOR'::jsonb);")" "160"
+LIXO_GRUPO="[{\"chave\":\"lx3\",\"grupo\":\"nao-e-uuid\",\"tipo\":\"cross_sell\",\"produtos\":[\"aaaaaaaa-0000-0000-0000-000000000001\"],\"peso\":1,\"fator\":1}]"
+eq "A15l grupo malformado: 0 linhas (nao levanta 22P02)" \
+   "$(as_user "$F" "SELECT count(*) FROM public.get_ranking_margem('$LIXO_GRUPO'::jsonb);")" "0"
+LIXO_PROD="[{\"chave\":\"lx4\",\"grupo\":\"$C1\",\"tipo\":\"cross_sell\",\"produtos\":[\"nao-e-uuid\"],\"peso\":1,\"fator\":1}]"
+eq "A15m product_id malformado: inelegivel, sem erro" \
+   "$(as_user "$F" "SELECT elegivel FROM public.get_ranking_margem('$LIXO_PROD'::jsonb);")" "f"
+
 # ─── ANTI-INVERSAO POR COMBINACAO LINEAR ───────────────────────────────────────────────────
 # O ATAQUE, montado de verdade: repetindo o produto A em up_sell (coef -1 so na posicao 2) o
 # caller obtem `k*margem_A - margem_B` e, testando o sinal para k crescente, cerca a razao
@@ -499,7 +516,7 @@ echo
 echo "=== TOTAL: ${PASS} asserts de baseline, ${FALS} falsificacoes, ${FAIL} falhas ==="
 # fail-closed na COBERTURA (licao P3 do #1488): mudar o numero de asserts ou de falsificacoes
 # obriga a atualizar estes literais conscientemente, senao remover um assert passa despercebido.
-ESPERADO_PASS=45
+ESPERADO_PASS=49
 ESPERADO_FALS=10
 if [ "$PASS" -ne "$ESPERADO_PASS" ]; then
   echo "COBERTURA MUDOU: esperava $ESPERADO_PASS asserts, contei $PASS -- atualize o literal conscientemente"
