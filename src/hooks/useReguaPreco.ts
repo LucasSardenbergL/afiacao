@@ -51,17 +51,24 @@ export function useReguaPreco(
   const prazoSig = prazoDias ? prazoDias.join('/') : '';
 
   // debounce sobre a ASSINATURA (não sobre o array): rajada de digitação colapsa numa chamada.
+  //
+  // ⚠️ SÓ o preço é debounced; `prazoSig` entra CRU na queryKey (achado P2 da rodada 2 do Codex).
+  // Debouncar o prazo junto abria uma janela de 400ms em que a condição já mudou, a queryKey ainda
+  // não, e o `Map` antigo — que não contém prazo na chave — seguia casando: trocar para 90 dias
+  // deixava o vermelho ESCONDIDO durante o intervalo, com o piso à vista. Prazo é escolha discreta
+  // num dropdown, não digitação, então não há rajada a colapsar: debouncá-lo só criava o buraco.
   const fetchItens = useMemo(() => dedupeFetchItens(itens), [itens]);
   const keysSig = fetchItens.map(chaveFetch).join(',');
-  const debouncedSig = useDebouncedValue(`${keysSig}|${prazoSig}`, 400);
+  const debouncedKeysSig = useDebouncedValue(keysSig, 400);
+  const querySig = `${debouncedKeysSig}|${prazoSig}`;
 
   const query = useQuery({
-    queryKey: ['regua-preco', user?.id ?? 'anon', customerUserId, debouncedSig],
+    queryKey: ['regua-preco', user?.id ?? 'anon', customerUserId, querySig],
     enabled: enabled && !!customerUserId && fetchItens.length > 0,
     staleTime: 60_000,
     queryFn: async (): Promise<Map<string, FetchDataRegua>> => {
-      // a query só dispara quando a assinatura DEBOUNCED muda; nesse instante `fetchItens` já
-      // reflete o último preço digitado, então closure e chave estão coerentes.
+      // a query dispara quando a assinatura debounced (preço) OU o prazo cru mudam; nos dois casos
+      // `fetchItens` já reflete o estado atual, então closure e chave ficam coerentes.
       const alvo = fetchItens;
       const settled = await Promise.allSettled(
         alvo.map((f) =>

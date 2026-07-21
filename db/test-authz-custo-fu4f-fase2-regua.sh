@@ -333,14 +333,14 @@ eq "A10 farmer: piso_mc mascarado" \
    "$(as_user "$F" "SELECT coalesce((public.get_regua_preco('$CLI','$PRD',10,12.00,NULL))->>'piso_mc','NULL');")" "NULL"
 eq "A11 farmer: piso_gap_pct mascarado (é invertível para o piso)" \
    "$(as_user "$F" "SELECT coalesce((public.get_regua_preco('$CLI','$PRD',10,12.00,NULL))->>'piso_gap_pct','NULL');")" "NULL"
-eq "A12 master: piso_mc = 13.4490 (allow-side — cmc/(1-0,078))" \
-   "$(as_user "$M" "SELECT (public.get_regua_preco('$CLI','$PRD',10,12.00,NULL))->>'piso_mc';")" "13.4490"
+eq "A12 master: piso_mc = 13.4491 (piso APLICÁVEL: cmc/(1-0,078) arredondado p/ cima)" \
+   "$(as_user "$M" "SELECT (public.get_regua_preco('$CLI','$PRD',10,12.00,NULL))->>'piso_mc';")" "13.4491"
 # 13.449023861…/12.00 − 1 = 0.120752 — o MESMO valor que o cálculo independente em node deu.
 # (Antes da correção de arredondamento dava 0.120750, porque o gap saía do piso já truncado.)
-eq "A13 master: piso_gap_pct = 0.120752 (do piso íntegro, não do arredondado)" \
-   "$(as_user "$M" "SELECT (public.get_regua_preco('$CLI','$PRD',10,12.00,NULL))->>'piso_gap_pct';")" "0.120752"
-eq "A14 estrategico: piso_mc = 13.4490 (a capability concede)" \
-   "$(as_user "$E" "SELECT (public.get_regua_preco('$CLI','$PRD',10,12.00,NULL))->>'piso_mc';")" "13.4490"
+eq "A13 master: piso_gap_pct = 0.120758 (do piso APLICÁVEL — gap×preço reconstrói o que o botão aplica)" \
+   "$(as_user "$M" "SELECT (public.get_regua_preco('$CLI','$PRD',10,12.00,NULL))->>'piso_gap_pct';")" "0.120758"
+eq "A14 estrategico: piso_mc = 13.4491 (a capability concede)" \
+   "$(as_user "$E" "SELECT (public.get_regua_preco('$CLI','$PRD',10,12.00,NULL))->>'piso_mc';")" "13.4491"
 
 echo "── ausente ≠ zero ──"
 eq "A15 produto SEM cmc: piso_disponivel=false" \
@@ -351,8 +351,8 @@ eq "A17 produto SEM cmc: piso_mc NULL mesmo p/ master (não vira 0)" \
    "$(as_user "$M" "SELECT coalesce((public.get_regua_preco('$CLI','$SEM',10,12.00,NULL))->>'piso_mc','NULL');")" "NULL"
 
 echo "── custo do PRAZO (F2) veio junto — o furo silencioso ──"
-eq "A18 master: piso com prazo [0,30,60] = 13.6684 (> à vista 13.4490)" \
-   "$(as_user "$M" "SELECT (public.get_regua_preco('$CLI','$PRD',10,12.00,ARRAY[0,30,60]::numeric[]))->>'piso_mc';")" "13.6684"
+eq "A18 master: piso com prazo [0,30,60] = 13.6685 (> à vista 13.4491)" \
+   "$(as_user "$M" "SELECT (public.get_regua_preco('$CLI','$PRD',10,12.00,ARRAY[0,30,60]::numeric[]))->>'piso_mc';")" "13.6685"
 eq "A19 prazo_aplicado=true" \
    "$(as_user "$M" "SELECT (public.get_regua_preco('$CLI','$PRD',10,12.00,ARRAY[0,30,60]::numeric[]))->>'prazo_aplicado';")" "true"
 # ⚠️ O assert mais importante do prazo: 13.50 está ACIMA do piso à vista (13.4490) e ABAIXO do piso
@@ -363,7 +363,7 @@ eq "A20 farmer: preço 13.50 é ABAIXO do piso porque o prazo entra" \
 eq "A21 farmer: o MESMO 13.50 é acima do piso À VISTA (prova que A20 não é trivial)" \
    "$(as_user "$F" "SELECT (public.get_regua_preco('$CLI','$PRD',10,13.50,NULL))->>'abaixo_piso';")" "false"
 eq "A22 prazo com dia > 180 degrada para À VISTA (não NULL, não fabricado)" \
-   "$(as_user "$M" "SELECT (public.get_regua_preco('$CLI','$PRD',10,12.00,ARRAY[0,400]::numeric[]))->>'piso_mc';")" "13.4490"
+   "$(as_user "$M" "SELECT (public.get_regua_preco('$CLI','$PRD',10,12.00,ARRAY[0,400]::numeric[]))->>'piso_mc';")" "13.4491"
 eq "A23 ... e sinaliza prazo_aplicado=false" \
    "$(as_user "$M" "SELECT (public.get_regua_preco('$CLI','$PRD',10,12.00,ARRAY[0,400]::numeric[]))->>'prazo_aplicado';")" "false"
 
@@ -384,7 +384,7 @@ eq "A28 RPC devolve um uuid (log gravado)" "$(Pq -c "SELECT ('$LOGID' ~ '^[0-9a-
 eq "A29 salesperson_id FIXADO em auth.uid() do farmer" \
    "$(Pq -c "SELECT salesperson_id FROM public.regua_preco_log WHERE id='$LOGID';" | tail -1)" "$F"
 eq "A30 piso_mc gravado pelo SERVIDOR (cliente não o tem mais)" \
-   "$(Pq -c "SELECT piso_mc FROM public.regua_preco_log WHERE id='$LOGID';" | tail -1)" "13.4490"
+   "$(Pq -c "SELECT piso_mc FROM public.regua_preco_log WHERE id='$LOGID';" | tail -1)" "13.4491"
 eq "A31 cmc_usado gravado pelo SERVIDOR" \
    "$(Pq -c "SELECT cmc_usado FROM public.regua_preco_log WHERE id='$LOGID';" | tail -1)" "12.40"
 eq "A32 aliquota_usada gravada pelo SERVIDOR" \
@@ -409,8 +409,8 @@ eq "A39 360 NÃO devolve cmc" \
    "$(as_user "$F" "SELECT (public.get_regua_preco_customer360('$CLI',ARRAY[9001]::bigint[])->0) ? 'cmc';")" "f"
 eq "A40 360 mascara piso_mc p/ farmer" \
    "$(as_user "$F" "SELECT coalesce((public.get_regua_preco_customer360('$CLI',ARRAY[9001]::bigint[])->0)->>'piso_mc','NULL');")" "NULL"
-eq "A41 360 dá piso_mc ao master" \
-   "$(as_user "$M" "SELECT (public.get_regua_preco_customer360('$CLI',ARRAY[9001]::bigint[])->0)->>'piso_mc';")" "13.4490"
+eq "A41 360 dá piso_mc ao master (aplicável)" \
+   "$(as_user "$M" "SELECT (public.get_regua_preco_customer360('$CLI',ARRAY[9001]::bigint[])->0)->>'piso_mc';")" "13.4491"
 
 echo "── finitude: numeric aceita NaN/Infinity e as comparações MENTEM ──"
 # `'NaN'::numeric > 0` é TRUE e `12 < 'NaN'` é TRUE (NaN ordena como o maior). Sem guard, um cmc
@@ -433,8 +433,25 @@ echo "── arredondamento não move a fronteira da decisão ──"
 # separa os dois mundos: é abaixo do piso real, e "saudável" se a comparação usar o arredondado.
 eq "A47 preço 13.44901 (entre o piso íntegro e o arredondado) é ABAIXO" \
    "$(as_user "$F" "SELECT (public.get_regua_preco('$CLI','$PRD',10,13.44901,NULL))->>'abaixo_piso';")" "true"
-eq "A48 ... e o piso EXIBIDO segue arredondado a 4 casas" \
-   "$(as_user "$M" "SELECT (public.get_regua_preco('$CLI','$PRD',10,13.44901,NULL))->>'piso_mc';")" "13.4490"
+eq "A48 ... e o piso EXIBIDO fica em 4 casas, sem vazar escala de 16 dígitos" \
+   "$(as_user "$M" "SELECT (public.get_regua_preco('$CLI','$PRD',10,13.44901,NULL))->>'piso_mc';")" "13.4491"
+
+echo "── round-trip: o piso EXPOSTO, se aplicado, limpa o piso ──"
+# Regressão da correção de arredondamento: com round(), o valor devolvido (13.4490) continuava
+# ABAIXO do piso íntegro (13.449023861…), então "Aplicar piso" mantinha o vermelho — laço infinito
+# para quem tem o botão. Com ceil na mesma escala, aplicar o valor devolvido SEMPRE limpa.
+PISO_EXIB=$(as_user "$M" "SELECT (public.get_regua_preco('$CLI','$PRD',10,12.00,NULL))->>'piso_mc';")
+eq "A52 piso exposto é arredondado p/ CIMA (aplicável), não p/ o mais próximo" "$PISO_EXIB" "13.4491"
+eq "A53 aplicar o piso exposto → abaixo_piso=false (round-trip fecha)" \
+   "$(as_user "$M" "SELECT (public.get_regua_preco('$CLI','$PRD',10,$PISO_EXIB,NULL))->>'abaixo_piso';")" "false"
+eq "A54 ... e um tico abaixo dele ainda é vermelho (o assert não é trivial)" \
+   "$(as_user "$M" "SELECT (public.get_regua_preco('$CLI','$PRD',10,13.4490,NULL))->>'abaixo_piso';")" "true"
+
+echo "── array multidimensional não fura o cap de parcelas ──"
+# array_length(a,1) só vê a 1ª dimensão: um 2x7 devolve 2, passa num cap de 12, e o unnest
+# processa 14 assim mesmo. Medido no PG17; por isso o guard é ndims + cardinality.
+eq "A55 array 2x7 (14 parcelas disfarçadas de 2) degrada p/ à vista" \
+   "$(as_user "$M" "SELECT (public.get_regua_preco('$CLI','$PRD',10,12.00,ARRAY[[0,10,20,30,40,50,60],[70,80,90,100,110,120,130]]::numeric[]))->>'prazo_aplicado';")" "false"
 
 echo "── privilégios de tabela: TRUNCATE não passa por RLS ──"
 eq "A49 authenticated NÃO tem TRUNCATE no log" \
@@ -483,7 +500,11 @@ EXCEPTION
 END $$;
 SQL
 
-neg "N3 farmer INSERT DIRETO no log → 42501 (RLS, com grant presente)" "$F" <<'SQL'
+# ⚠️ A migration REVOGOU o INSERT, então sem este GRANT temporário a negação viria do PRIVILÉGIO
+# e o N3 passaria mesmo se uma policy permissiva de INSERT reaparecesse — falso-verde apontado na
+# rodada 2. Concede o INSERT só para provar que a RLS (ausência de policy) é que barra, e revoga.
+P -q -c "GRANT INSERT ON public.regua_preco_log TO authenticated;"
+neg "N3 farmer INSERT DIRETO no log → 42501 (RLS barra, COM o privilégio concedido)" "$F" <<'SQL'
 -- :'var' NÃO é interpolado dentro de dollar-quote, então os uuids viajam por GUC.
 SET test.uid = :'uid';
 SET test.cli = :'cli';
@@ -499,6 +520,8 @@ EXCEPTION
   WHEN OTHERS THEN RAISE;
 END $$;
 SQL
+
+P -q -c "REVOKE INSERT ON public.regua_preco_log FROM authenticated;"
 
 neg "N4 authenticated NÃO executa private.regua_piso_calc → 42501" "$F" <<'SQL'
 -- :'var' NÃO é interpolado dentro de dollar-quote, então os uuids viajam por GUC.
@@ -528,6 +551,22 @@ BEGIN
   RAISE EXCEPTION 'ASSERT_FALHOU_truncate_passou';
 EXCEPTION
   WHEN insufficient_privilege THEN NULL;
+  WHEN OTHERS THEN RAISE;
+END $$;
+SQL
+
+neg "N6 writer REJEITA preco_atual NaN (fronteira de confiança) → 22023" "$F" <<'SQL'
+SET test.uid = :'uid';
+SET test.cli = :'cli';
+SET test.prd = :'prd';
+SET ROLE authenticated;
+DO $$
+BEGIN
+  PERFORM public.registrar_exibicao_regua('oben', current_setting('test.cli')::uuid,
+          current_setting('test.prd')::uuid, 10, 'NaN'::numeric, 'piso', 'alta');
+  RAISE EXCEPTION 'ASSERT_FALHOU_nan_persistido';
+EXCEPTION
+  WHEN invalid_parameter_value THEN NULL;
   WHEN OTHERS THEN RAISE;
 END $$;
 SQL
@@ -575,11 +614,12 @@ BEGIN
   SELECT piso INTO v_piso FROM private.regua_piso_calc(v_cmc, v_aliq, NULL, NULL);
   -- SABOTAGEM: emite piso_mc SEM o gate v_pode_num. Tudo o mais idêntico à real (inclusive o
   -- round de apresentação), para o vermelho vir do GATE ausente e não de outra diferença.
-  RETURN jsonb_build_object('abaixo_piso', p_preco_atual < v_piso, 'piso_mc', round(v_piso, 4));
+  RETURN jsonb_build_object('abaixo_piso', p_preco_atual < v_piso,
+                            'piso_mc', round(ceil(v_piso * 10000) / 10000, 4));
 END $f$;
 SQL
 fals "F2 piso_mc sem o gate v_pode_num (vs A10)" \
-     "$(as_user "$F" "SELECT (public.get_regua_preco('$CLI','$PRD',10,12.00,NULL))->>'piso_mc';")" "13.4490"
+     "$(as_user "$F" "SELECT (public.get_regua_preco('$CLI','$PRD',10,12.00,NULL))->>'piso_mc';")" "13.4491"
 P -q -f "$MIG" >/dev/null   # restaura a versão verdadeira
 
 # F3 — policy do log volta a incluir `employee`: o farmer relê EXATAMENTE 1 linha.
@@ -679,7 +719,7 @@ echo "  falsificação: $FALS_OK derrubaram / $FALS_BAD não reproduziram"
 # ⚠️ Contagem EXATA, não só FAIL=0 (achado P3 do Codex): sem isto, apagar um assert ou uma
 # sabotagem mantém o harness verde — o teste degradaria em silêncio, que é o modo de falha que
 # este arquivo inteiro existe para impedir. Mudou o número de asserts? Atualize AQUI, conscientemente.
-PASS_ESPERADO=57
+PASS_ESPERADO=62
 FALS_ESPERADO=8
 echo "──────────────────────────────"
 echo "RESULTADO: $PASS ok / $FAIL fail · falsificações: $FALS_OK"

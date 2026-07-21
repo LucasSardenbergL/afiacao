@@ -22,9 +22,9 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 ## Resumo
 
 - **415** custom migrations totais
-- **1463** objetos esperados (criados por estas migrations)
+- **1464** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 420
+  - `function`: 421
   - `rls_policy`: 370
   - `index`: 224
   - `cron_job`: 150
@@ -3520,6 +3520,7 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `private.cap_regua_log_escrever` | — |
+| `function` | `private.regua_num_finito` | — |
 | `function` | `private.regua_piso_calc` | — |
 | `function` | `public.get_regua_preco` | — |
 | `function` | `public.get_regua_preco_customer360` | — |

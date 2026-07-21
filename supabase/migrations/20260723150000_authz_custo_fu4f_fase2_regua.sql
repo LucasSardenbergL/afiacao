@@ -213,7 +213,10 @@ BEGIN
   -- A partir daqui é o AJUSTE de prazo. Qualquer falha → mantém o piso à vista já calculado.
   IF p_dias IS NULL OR array_length(p_dias, 1) IS NULL THEN RETURN; END IF;
   -- o array vem do CLIENTE direto (antes passava por parsePrazoRecebimento, que capa em 12).
-  IF array_length(p_dias, 1) > c_max_parc THEN RETURN; END IF;
+  -- ⚠️ `array_length(a,1)` só mede a PRIMEIRA dimensão: um 2×7 devolve 2, passa no cap, e o
+  -- `unnest` processa 14 parcelas assim mesmo. Medido no PG17. Por isso ndims + cardinality.
+  IF array_ndims(p_dias) <> 1 THEN RETURN; END IF;
+  IF cardinality(p_dias) > c_max_parc THEN RETURN; END IF;
   IF NOT private.regua_num_finito(p_taxa) OR NOT (p_taxa > 0 AND p_taxa < 1) THEN RETURN; END IF;
   IF EXISTS (SELECT 1 FROM unnest(p_dias) d
               WHERE NOT private.regua_num_finito(d) OR d < 0 OR d > c_dia_max) THEN RETURN; END IF;
@@ -271,14 +274,16 @@ DECLARE
   v_cmc          numeric;
   v_aliquota     numeric;
   v_taxa         numeric;
-  v_piso         numeric;
+  v_piso         numeric;   -- ÍNTEGRO: é o que decide `abaixo_piso`
+  v_piso_exib    numeric;   -- APLICÁVEL: o mesmo piso arredondado p/ CIMA (ver abaixo)
   v_prazo_ok     boolean;
   v_abaixo       boolean;
   v_pode_num     boolean;
   v_precos_cli   numeric[];
   v_comparaveis  jsonb;
-  v_qty_lo       numeric := COALESCE(p_qty, 0) * 0.5;
-  v_qty_hi       numeric := COALESCE(p_qty, 0) * 2;
+  -- p_qty não persiste, mas define a banda de comparáveis: não-finito faria BETWEEN sem sentido.
+  v_qty_lo       numeric := CASE WHEN private.regua_num_finito(p_qty) THEN p_qty ELSE 0 END * 0.5;
+  v_qty_hi       numeric := CASE WHEN private.regua_num_finito(p_qty) THEN p_qty ELSE 0 END * 2;
 BEGIN
   -- gate de ENTRADA: somente staff (inalterado — a vendedora precisa do sinal)
   IF NOT (public.has_role((SELECT auth.uid()), 'employee') OR public.has_role((SELECT auth.uid()), 'master')) THEN
@@ -306,6 +311,15 @@ BEGIN
 
   SELECT piso, prazo_aplicado INTO v_piso, v_prazo_ok
     FROM private.regua_piso_calc(v_cmc, v_aliquota, p_prazo_dias, v_taxa);
+
+  -- ⚠️ CEIL, não ROUND (regressão introduzida pela correção de arredondamento da rodada 1 e pega
+  -- na rodada 2). O número exposto vira `precoReferencia` e o botão "Aplicar piso" o joga no
+  -- carrinho. Com round(), 13.449023861… vira 13.4490 — que continua ABAIXO do piso íntegro, então
+  -- aplicar a sugestão mantém o vermelho e a vendedora fica num laço. Arredondar para CIMA na
+  -- mesma escala garante que o valor devolvido, se aplicado, LIMPA o piso. Verificado no PG17.
+  -- o round(,4) externo NÃO muda o valor (já está em 4 casas): normaliza a ESCALA, que a
+  -- divisão infla para 16+ e vazaria como "13.4491000000000000" no jsonb.
+  v_piso_exib := CASE WHEN v_piso IS NOT NULL THEN round(ceil(v_piso * 10000) / 10000, 4) END;
 
   -- A COMPARAÇÃO acontece AQUI. É o ponto inteiro desta migration: no cliente, ela viraria busca
   -- binária pelo piso. Sem preço ou sem piso → false (não fabrica sinal).
@@ -335,11 +349,12 @@ BEGIN
     'cmc_confiavel',   v_cmc IS NOT NULL,
     'prazo_aplicado',  COALESCE(v_prazo_ok, false),
     -- NÚMERO (só cap_custo_ler). piso_gap_pct é invertível para o piso → mesmo gate.
-    -- round() SÓ aqui (apresentação). A decisão acima usou o piso íntegro.
-    'piso_mc',         CASE WHEN v_pode_num THEN to_jsonb(round(v_piso, 4)) ELSE 'null'::jsonb END,
-    'piso_gap_pct',    CASE WHEN v_pode_num AND v_piso IS NOT NULL
+    -- o piso APLICÁVEL (ceil) é o que sai; a decisão acima usou o íntegro. O gap sai do mesmo
+    -- valor exposto, senão gap×preço reconstruiria um número que o botão não aplica.
+    'piso_mc',         CASE WHEN v_pode_num THEN to_jsonb(v_piso_exib) ELSE 'null'::jsonb END,
+    'piso_gap_pct',    CASE WHEN v_pode_num AND v_piso_exib IS NOT NULL
                              AND private.regua_num_finito(p_preco_atual) AND p_preco_atual > 0
-                            THEN to_jsonb(round(v_piso / p_preco_atual - 1, 6)) ELSE 'null'::jsonb END,
+                            THEN to_jsonb(round(v_piso_exib / p_preco_atual - 1, 6)) ELSE 'null'::jsonb END,
     -- MERCADO (preço de venda, não custo — aberto de propósito)
     'precos_cliente',  COALESCE(to_jsonb(v_precos_cli), '[]'::jsonb),
     'comparaveis',     COALESCE(v_comparaveis, '[]'::jsonb)
@@ -509,6 +524,17 @@ BEGIN
     RAISE EXCEPTION 'registrar_exibicao_regua: campos obrigatorios ausentes' USING ERRCODE = '22004';
   END IF;
 
+  -- fronteira de CONFIANÇA: estes numeric vêm do cliente e `numeric` aceita NaN/±Infinity. Uma
+  -- linha com NaN contamina média, ordenação e o closed-loop inteiro depois. Obrigatório inválido
+  -- REJEITA (a linha toda seria lixo); opcional inválido vira NULL — ausente ≠ número inventado.
+  IF NOT private.regua_num_finito(p_preco_atual) OR p_preco_atual <= 0 THEN
+    RAISE EXCEPTION 'registrar_exibicao_regua: preco_atual nao finito ou <= 0'
+      USING ERRCODE = '22023';
+  END IF;
+  IF p_quantity IS NOT NULL AND NOT private.regua_num_finito(p_quantity) THEN
+    RAISE EXCEPTION 'registrar_exibicao_regua: quantity nao finita' USING ERRCODE = '22023';
+  END IF;
+
   -- custo apurado NO SERVIDOR (o cliente não o recebe mais, então não pode informá-lo)
   SELECT ip.cmc INTO v_cmc FROM public.inventory_position ip
    WHERE ip.product_id = p_product_id AND ip.account IN ('oben', 'vendas')
@@ -532,8 +558,13 @@ BEGIN
     outcome_status, aplicou
   ) VALUES (
     p_account, p_customer_user_id, p_product_id, v_uid, p_quantity, p_preco_atual,
-    p_sinal_exibido, p_confianca, p_preco_referencia, p_observed_gap_pct, p_suggested_gap_pct,
-    round(v_piso, 4), COALESCE(p_cap_limitou, false), v_cmc,
+    p_sinal_exibido, p_confianca,
+    -- opcionais: não-finito degrada para NULL em vez de persistir NaN
+    CASE WHEN private.regua_num_finito(p_preco_referencia)  THEN p_preco_referencia  END,
+    CASE WHEN private.regua_num_finito(p_observed_gap_pct)  THEN p_observed_gap_pct  END,
+    CASE WHEN private.regua_num_finito(p_suggested_gap_pct) THEN p_suggested_gap_pct END,
+    CASE WHEN v_piso IS NOT NULL THEN round(ceil(v_piso * 10000) / 10000, 4) END,
+    COALESCE(p_cap_limitou, false), v_cmc,
     CASE WHEN v_cmc IS NOT NULL THEN 'real' ELSE 'proxy' END, v_aliquota,
     COALESCE(p_reason_codes, ARRAY[]::text[]),
     'pendente', false
@@ -562,6 +593,12 @@ DECLARE
 BEGIN
   IF NOT private.cap_regua_log_escrever(v_uid) THEN
     RAISE EXCEPTION 'forbidden: registrar_aplicacao_regua exige staff' USING ERRCODE = '42501';
+  END IF;
+
+  -- é o VALOR do desfecho: NaN aqui envenena qualquer análise de aceite depois.
+  IF NOT private.regua_num_finito(p_preco_final) OR p_preco_final <= 0 THEN
+    RAISE EXCEPTION 'registrar_aplicacao_regua: preco_final nao finito ou <= 0'
+      USING ERRCODE = '22023';
   END IF;
 
   -- só o DONO do registro fecha o próprio loop. Sem isto, staff qualquer sobrescreveria o outcome
