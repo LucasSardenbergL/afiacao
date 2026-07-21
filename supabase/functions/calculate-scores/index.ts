@@ -52,13 +52,16 @@ interface FarmerClientScoreSeed {
   days_since_last_purchase: number;
   avg_monthly_spend_180d: number;
   category_count: number;
-  gross_margin_pct: number;
+  // null = margem AINDA NÃO MEDIDA (cliente recém-semeado). Tem de ser enviado EXPLICITAMENTE: a
+  // coluna é nullable mas tem DEFAULT 0, então OMITIR o campo faz o Postgres fabricar 0 — o mesmo
+  // zero que criava o loop fechado. m_score idem (é o score derivado desta margem).
+  gross_margin_pct: number | null;
   avg_repurchase_interval: number;
   expansion_score: number;
   recover_score: number;
   revenue_potential: number;
   rf_score: number;
-  m_score: number;
+  m_score: number | null;
   g_score: number;
   s_score: number;
   x_score: number;
@@ -137,6 +140,52 @@ function margemConhecida(pct: number | null | undefined): number | null {
   if (pct == null) return null;
   const n = Number(pct);
   return Number.isFinite(n) ? n : null;
+}
+
+// RPC set-returning SEM paginação é truncada em 1.000 linhas pelo PostgREST — SILENCIOSAMENTE, sem
+// erro (docs/agent/money-path.md §35, incidente #1466→#1471). Com 1.214 clientes com pedido isto
+// não era hipótese: medido em prod 2026-07-20, EXATAMENTE 1.000 clientes recebiam refresh de vendas
+// e os outros 214 ficavam com days=999/gasto=0/categorias=0 — 50 deles tinham comprado nos últimos
+// 90 dias (12 na última semana) e apareciam como 'critico' para a vendedora.
+//
+// `.order()` aqui e não ORDER BY dentro da função: PostgREST monta `SELECT * FROM fn() ORDER BY ...
+// LIMIT/OFFSET`, então a ordem tem de estar NA QUERY dele para o fatiamento ser coerente entre
+// páginas. A chave é o GROUP BY das duas RPCs (única por linha) → ordem TOTAL, sem empate a
+// desempatar. Sem isso, páginas podem repetir e omitir linhas mesmo somando o total certo.
+//
+// O parâmetro é tipado ESTRUTURALMENTE (só o que o helper usa), não como
+// `ReturnType<typeof createClient>`: sem argumentos de tipo, o `createClient` resolve os DEFAULTS
+// dos genéricos (`<unknown, …, never>`), enquanto a chamada real infere `<any, 'public', 'public'>`
+// — e `'public'` não é atribuível a `never`, então passar o cliente instanciado dá TS2345. O mesmo
+// mismatch está documentado em omie-sync-status-produtos/index.ts, que o contorna capturando o tipo
+// de uma factory. Aqui o contrato mínimo basta e ainda desacopla o helper da versão do supabase-js.
+type RpcPaginavelClient = {
+  rpc(fn: string): {
+    order(coluna: string, opts: { ascending: boolean }): {
+      range(de: number, ate: number): PromiseLike<{ data: unknown; error: { message: string } | null }>;
+    };
+  };
+};
+
+async function carregarRpcPaginada<T>(
+  supabase: RpcPaginavelClient,
+  fn: 'get_customer_sales_summary' | 'get_customer_margin_summary',
+): Promise<T[]> {
+  const linhas: T[] = [];
+  const sz = 1000;
+  for (let pg = 0; ; pg++) {
+    const { data, error } = await supabase
+      .rpc(fn)
+      .order('customer_user_id', { ascending: true })
+      .range(pg * sz, (pg + 1) * sz - 1);
+    if (error) throw new Error(`${fn} pág.${pg}: ${error.message}`);
+    const lote = (data ?? []) as unknown as T[];
+    linhas.push(...lote);
+    if (lote.length < sz) return linhas;
+    // Guard de sanidade: o universo é "clientes com pedido" (~1,2k). 100 páginas = 100k linhas já é
+    // sintoma de loop/cartesiano, não de crescimento — falhar alto é melhor que estourar a memória.
+    if (pg >= 99) throw new Error(`${fn}: mais de ${100 * sz} linhas — abortado por segurança`);
+  }
 }
 
 // Recência-viva: espelho inline de src/lib/scoring/salesBase.ts (vitest 8/8; Deno não importa de
@@ -235,6 +284,18 @@ Deno.serve(async (req) => {
       engagement: (config['hs_weight_engagement'] ?? 10) / 100,
     };
 
+    // O health score passou a DIVIDIR pela soma dos pesos (renormalização quando a margem é
+    // desconhecida — ver o bloco do compute). Com soma 1,0 isso é identidade; com soma diferente,
+    // reescala o score de todo mundo. Logar em vez de silenciar: config torta tem de aparecer.
+    const somaPesosHs = hs_w.recency + hs_w.frequency + hs_w.margin
+                      + hs_w.diversity + hs_w.crosssell + hs_w.engagement;
+    if (Math.abs(somaPesosHs - 1) > 0.001) {
+      console.warn(
+        `[calculate-scores] pesos do health score somam ${(somaPesosHs * 100).toFixed(1)}, não 100 — ` +
+        `os scores serão normalizados por essa soma. Confira farmer_algorithm_config.hs_weight_*.`,
+      );
+    }
+
     // Priority Score weights
     const ps_w = {
       margin_potential: (config['ps_weight_margin_potential'] ?? 35) / 100,
@@ -279,19 +340,16 @@ Deno.serve(async (req) => {
     let salesRefreshFatal: Error | null = null;
     const salesMap = new Map<string, CustomerSalesSummaryRow>();
     try {
-      const { data, error } = await supabase.rpc('get_customer_sales_summary');
-      if (error) {
-        salesRefreshFatal = new Error(`get_customer_sales_summary retornou erro — recência congelada este run: ${error.message}`);
-        console.error('[calculate-scores]', salesRefreshFatal.message);
-      } else {
-        for (const s of (data ?? []) as unknown as CustomerSalesSummaryRow[]) salesMap.set(s.customer_user_id, s);
-      }
+      // carregarRpcPaginada LANÇA em erro de página (não devolve {error}), por isso o try/catch
+      // único abaixo cobre os dois modos de falha — o de RPC e o de rede.
+      const linhas = await carregarRpcPaginada<CustomerSalesSummaryRow>(supabase, 'get_customer_sales_summary');
+      for (const s of linhas) salesMap.set(s.customer_user_id, s);
     } catch (e) {
       // supabase-js normalmente RETORNA {error}, mas rejeição de fetch/rede LANÇA — capturar aqui
       // também (senão o try/catch EXTERNO daria 500 ANTES do compute, quebrando o contrato
       // "RPC falha → degrada pra congelado, compute roda" — achado Codex).
       salesRefreshFatal = e instanceof Error ? e : new Error(String(e));
-      console.error('[calculate-scores] get_customer_sales_summary lançou — recência congelada este run:', salesRefreshFatal.message);
+      console.error('[calculate-scores] get_customer_sales_summary falhou — recência congelada este run:', salesRefreshFatal.message);
     }
 
     // === MARGEM-VIVA (PR 3-zero): a margem do health score, calculada no SERVIDOR ===
@@ -305,18 +363,13 @@ Deno.serve(async (req) => {
     let marginRefreshFatal: Error | null = null;
     const marginMap = new Map<string, CustomerMarginSummaryRow>();
     try {
-      const { data, error } = await supabase.rpc('get_customer_margin_summary');
-      if (error) {
-        marginRefreshFatal = new Error(`get_customer_margin_summary retornou erro — margem congelada este run: ${error.message}`);
-        console.error('[calculate-scores]', marginRefreshFatal.message);
-      } else {
-        for (const m of (data ?? []) as unknown as CustomerMarginSummaryRow[]) marginMap.set(m.customer_user_id, m);
-      }
+      const linhas = await carregarRpcPaginada<CustomerMarginSummaryRow>(supabase, 'get_customer_margin_summary');
+      for (const m of linhas) marginMap.set(m.customer_user_id, m);
     } catch (e) {
       // supabase-js RETORNA {error} no caso normal, mas rejeição de fetch/rede LANÇA — mesmo motivo
       // do catch da RPC de vendas: sem isto o try/catch externo daria 500 ANTES do compute.
       marginRefreshFatal = e instanceof Error ? e : new Error(String(e));
-      console.error('[calculate-scores] get_customer_margin_summary lançou — margem congelada este run:', marginRefreshFatal.message);
+      console.error('[calculate-scores] get_customer_margin_summary falhou — margem congelada este run:', marginRefreshFatal.message);
     }
 
     // === AUTO-SEED v2 (F1 — reset-path robusto): completa clientes FALTANTES ===
@@ -401,13 +454,16 @@ Deno.serve(async (req) => {
               days_since_last_purchase: base.days_since_last_purchase,
               avg_monthly_spend_180d: base.avg_monthly_spend_180d,
               category_count: base.category_count,
-              gross_margin_pct: 0,
+              // NULL, não 0: cliente recém-semeado não tem margem MEDIDA. O 0 daqui era metade do
+              // loop fechado (a outra metade era a edge ler a coluna que ela mesma escreve) e
+              // sobrevivia a qualquer run em que a RPC de margem falhasse.
+              gross_margin_pct: null,
               avg_repurchase_interval: 0,
               expansion_score: 0,
               recover_score: 0,
               revenue_potential: 0,
               rf_score: 0,
-              m_score: 0,
+              m_score: null,
               g_score: 0,
               s_score: 0,
               x_score: 0,
@@ -481,6 +537,7 @@ Deno.serve(async (req) => {
     if (!clients || clients.length === 0) {
       if (seedFatal) throw seedFatal;
       if (salesRefreshFatal) throw salesRefreshFatal;
+      if (marginRefreshFatal) throw marginRefreshFatal;
       if (seedErrors.length > 0) {
         throw new Error(`seed falhou em ${seedErrors.length} cliente(s) numa fcs vazia: ${seedErrors.slice(0, 3).join(' | ')}`);
       }
@@ -557,8 +614,17 @@ Deno.serve(async (req) => {
       const engagementScore = Number(client.s_score || 0);
 
       // Renormalização: sem margem conhecida, o peso dela é redistribuído entre os componentes que
-      // existem, em vez de contribuir 0. Os hs_w somam 1,0 (cada um é config/100), então com margem
-      // conhecida pesoTotal=1 e a divisão é identidade — o score de quem TEM margem não muda.
+      // existem, em vez de contribuir 0 (contribuir 0 seria afirmar "pior cliente neste eixo" para
+      // quem só não foi medido).
+      //
+      // Com os pesos DEFAULT a divisão é identidade para quem TEM margem — 25+20+20+15+10+10 = 100,
+      // logo pesoTotal = 1,0. Mas isso é propriedade dos defaults, não garantia: farmer_algorithm_config
+      // é editável e hoje não tem NENHUMA linha hs_weight% (medido 2026-07-21 — os seis valores vêm
+      // dos defaults do código). Se alguém configurar pesos que não somem 100, a divisão deixa de ser
+      // identidade e passa a normalizar o score de TODOS os clientes, inclusive os com margem
+      // conhecida. Isso é o comportamento correto (um score 0-100 deve usar 100% do peso disponível;
+      // pesos somando 90 faziam o teto ser 90), mas é uma mudança silenciosa demais para acontecer
+      // sem rastro — daí o aviso abaixo, emitido uma única vez por run.
       const pesoMargem = marginScore == null ? 0 : hs_w.margin;
       const pesoTotal = hs_w.recency + hs_w.frequency + pesoMargem
                       + hs_w.diversity + hs_w.crosssell + hs_w.engagement;
@@ -691,6 +757,10 @@ Deno.serve(async (req) => {
     // 3 campos foram reescritos com o valor antigo (no-op). Surface 500 (idempotente: o próximo run
     // com a RPC OK refresca a recência). Antes do history.
     if (salesRefreshFatal) throw salesRefreshFatal;
+    // MARGEM-VIVA: mesma regra. Sem isto o run devolvia 200 com a margem inteira congelada — e como
+    // o valor congelado hoje é 0 em 100% das linhas, um 200 mentiria dizendo "margem calculada"
+    // sobre exatamente o estado que este PR existe para eliminar (achado Codex P1.3).
+    if (marginRefreshFatal) throw marginRefreshFatal;
     if (seedErrors.length > 0) {
       throw new Error(`seed falhou em ${seedErrors.length} cliente(s): ${seedErrors.slice(0, 3).join(' | ')}${seedErrors.length > 3 ? ` (+${seedErrors.length - 3})` : ''}`);
     }

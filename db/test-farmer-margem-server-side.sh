@@ -78,15 +78,17 @@ CREATE TABLE public.product_costs (
   cost_price numeric,
   cost_final numeric
 );
--- farmer_client_scores: alvo de apply_score_updates. Nulabilidade espelha a PROD (medido
--- 2026-07-20: m_score/g_score/gross_margin_pct/health_score todos is_nullable=YES).
+-- farmer_client_scores: alvo de apply_score_updates. Nulabilidade E DEFAULTS espelham a PROD
+-- (medido 2026-07-20/21: m_score/g_score/gross_margin_pct/health_score todos is_nullable=YES,
+-- todos com column_default = 0). O DEFAULT 0 tem de estar aqui ou o assert do DROP DEFAULT passa
+-- trivialmente — o stub precisa reproduzir a PROD, não o desenho que se quer provar.
 CREATE TABLE public.farmer_client_scores (
   id uuid PRIMARY KEY,
   customer_user_id uuid NOT NULL,
   farmer_id uuid NOT NULL,
-  health_score numeric, health_class text, churn_risk numeric, priority_score numeric,
-  rf_score numeric, m_score numeric, g_score numeric,
-  gross_margin_pct numeric,
+  health_score numeric DEFAULT 0, health_class text, churn_risk numeric, priority_score numeric,
+  rf_score numeric DEFAULT 0, m_score numeric DEFAULT 0, g_score numeric DEFAULT 0,
+  gross_margin_pct numeric DEFAULT 0,
   days_since_last_purchase integer, avg_monthly_spend_180d numeric, category_count integer,
   sales_history_status text, calculated_at timestamptz, updated_at timestamptz
 );
@@ -98,6 +100,11 @@ SQL
 MIG="$REPO_ROOT/supabase/migrations/20260723150000_farmer_margem_server_side.sql"
 P -q -f "$MIG"
 echo "migration aplicada: $(basename "$MIG")"
+# 160000 = correções de review (DROP DEFAULT + sentinela de presença de chave). Aplicada NA ORDEM,
+# como o founder vai colar no SQL Editor: o teste prova a sequência real, não uma delas isolada.
+MIG2="$REPO_ROOT/supabase/migrations/20260723160000_farmer_margem_correcoes_review.sql"
+P -q -f "$MIG2"
+echo "migration aplicada: $(basename "$MIG2")"
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ZONA 3 — SEED: cenários com margem EXATA, conferível à mão
@@ -256,9 +263,43 @@ SQL
 )
 if echo "$GUARD" | grep -q 'GUARD_OK_23514'; then ok "AP3 guard barra health_score ausente (23514)"; else bad "AP3 guard NAO barrou — veio: $GUARD"; fi
 
+echo "── asserts: chave AUSENTE ≠ chave null (sentinela de presença) ──"
+# O ponto do P1.4: jsonb_to_recordset colapsa os dois casos. A distinção é o que impede um typo na
+# edge ('m_scor') de NULLar a coluna inteira, E o que mantém a edge ANTIGA (sem a chave) segura
+# durante a janela entre os dois deploys manuais do Lovable.
+# Estado de partida: id=1 está com 56.00/56 (do AP1).
+# AP4: payload SEM as chaves m_score e gross_margin_pct → tem de PRESERVAR, não zerar nem NULLar.
+N4=$(APPLY '[{"id":"0d000000-0000-0000-0000-000000000001","health_score":51,"health_class":"estavel","churn_risk":49,"priority_score":11,"rf_score":11,"g_score":11,"days_since_last_purchase":11,"avg_monthly_spend_180d":101,"category_count":2,"calculated_at":"2026-07-20T00:00:00Z","updated_at":"2026-07-20T00:00:00Z"}]')
+eq "AP4 apply aceitou payload sem as chaves" "$N4" "1"
+eq "AP4 gross_margin_pct PRESERVADO (56.00)" "$(GMP 1)" "56.00"
+eq "AP4 m_score PRESERVADO (56)"             "$(MSC 1)" "56"
+HS4=$(Pq -c "SELECT health_score::text FROM public.farmer_client_scores WHERE id='0d000000-0000-0000-0000-000000000001';")
+eq "AP4 o resto do payload FOI aplicado"     "$HS4" "51"
+
+# AP5: mesma linha, agora COM a chave e valor null → tem de SOBRESCREVER para NULL.
+# Contraste direto com AP4: mesmo id, mesma coluna, diferença é só a chave existir no jsonb.
+N5=$(APPLY '[{"id":"0d000000-0000-0000-0000-000000000001","health_score":52,"health_class":"estavel","churn_risk":48,"priority_score":12,"rf_score":12,"m_score":null,"g_score":12,"gross_margin_pct":null,"days_since_last_purchase":12,"avg_monthly_spend_180d":102,"category_count":2,"calculated_at":"2026-07-20T00:00:00Z","updated_at":"2026-07-20T00:00:00Z"}]')
+eq "AP5 apply aceitou chave com null"        "$N5" "1"
+eq "AP5 gross_margin_pct virou NULL"         "$(GMP 1)" "NULL"
+eq "AP5 m_score virou NULL"                  "$(MSC 1)" "NULL"
+
+echo "── asserts: DEFAULT 0 removido (INSERT que OMITE nao fabrica 0) ──"
+# O trigger reconcile_score_owner_from_carteira insere só (customer_user_id, farmer_id): com o
+# DEFAULT 0 vivo, toda troca de carteira afirmava margem 0% para cliente nunca medido.
+P -q -c "INSERT INTO public.farmer_client_scores (id, customer_user_id, farmer_id) VALUES ('0d000000-0000-0000-0000-000000000009','0c000000-0000-0000-0000-000000000009','0e000000-0000-0000-0000-00000000000f');"
+eq "D1 gross_margin_pct omitido → NULL"      "$(GMP 9)" "NULL"
+eq "D2 m_score omitido → NULL"               "$(MSC 9)" "NULL"
+# E o contraste: uma coluna FORA do escopo deste PR segue com o default (não mexemos onde não devia).
+HS9=$(Pq -c "SELECT COALESCE(health_score::text,'NULL') FROM public.farmer_client_scores WHERE id='0d000000-0000-0000-0000-000000000009';")
+eq "D3 health_score mantem DEFAULT 0"        "$HS9" "0"
+
 echo "── assert: idempotencia (aplicar 2x) ──"
+# As DUAS, na mesma ordem — inclui reaplicar o ALTER TABLE ... DROP DEFAULT (que é idempotente por
+# natureza, mas isso tem de ser PROVADO, não presumido: o founder pode colar o bloco duas vezes).
 P -q -f "$MIG"
+P -q -f "$MIG2"
 eq "I1 margem intacta apos 2o apply"       "$(M 1)" "56.00"
+eq "I3 DROP DEFAULT idempotente"           "$(Pq -c "SELECT COALESCE(column_default,'NULL') FROM information_schema.columns WHERE table_name='farmer_client_scores' AND column_name='gross_margin_pct';")" "NULL"
 SVC2=$(Pq -c "SET ROLE service_role; SELECT count(*) FROM public.get_customer_margin_summary();" | tail -1)
 eq "I2 grant intacto apos 2o apply"        "$SVC2" "7"
 AUTHN2=$(P -tA 2>&1 <<'SQL' || true
@@ -381,9 +422,46 @@ SQL
 APPLY '[{"id":"0d000000-0000-0000-0000-000000000002","health_score":40,"health_class":"atencao","churn_risk":60,"priority_score":5,"rf_score":8,"m_score":null,"g_score":9,"gross_margin_pct":null,"days_since_last_purchase":20,"avg_monthly_spend_180d":50,"category_count":1,"calculated_at":"2026-07-20T00:00:00Z","updated_at":"2026-07-20T00:00:00Z"}]' >/dev/null
 ne "F4 AP2 fica vermelho (42 sobreviveria ao NULL)" "$(GMP 2)" "NULL"
 
-echo "── restauro final: migration verdadeira + reconferencia ──"
+echo "── falsificacao F5: sentinela removida (chave ausente volta a NULLar a coluna) ──"
+# Sabota trocando a sentinela pelo jsonb_to_recordset cru — exatamente a versão da 150000, que é o
+# que existiria se a correção do P1.4 não tivesse sido feita. Se AP4 (payload SEM as chaves) ainda
+# preservar 56.00 depois disso, o assert AP4 não tem dente e não prova nada.
+P -q -c "UPDATE public.farmer_client_scores SET gross_margin_pct=56.00, m_score=56 WHERE id='0d000000-0000-0000-0000-000000000001';"
+P -q <<'SQL'
+CREATE OR REPLACE FUNCTION public.apply_score_updates(p_updates jsonb)
+RETURNS integer LANGUAGE plpgsql SET search_path TO 'public' AS $f$
+DECLARE v_count int;
+BEGIN
+  UPDATE public.farmer_client_scores f SET
+    health_score = u.health_score, health_class = u.health_class, churn_risk = u.churn_risk,
+    priority_score = u.priority_score, rf_score = u.rf_score,
+    m_score = u.m_score,                      -- ← SABOTAGEM: sem sentinela de presença
+    g_score = u.g_score,
+    gross_margin_pct = u.gross_margin_pct,    -- ← SABOTAGEM: idem
+    days_since_last_purchase = u.days_since_last_purchase,
+    avg_monthly_spend_180d = u.avg_monthly_spend_180d, category_count = u.category_count,
+    calculated_at = u.calculated_at, updated_at = u.updated_at
+  FROM jsonb_to_recordset(p_updates) AS u(
+    id uuid, health_score numeric, health_class text, churn_risk numeric, priority_score numeric,
+    rf_score numeric, m_score numeric, g_score numeric, gross_margin_pct numeric,
+    days_since_last_purchase integer, avg_monthly_spend_180d numeric, category_count integer,
+    calculated_at timestamptz, updated_at timestamptz)
+  WHERE f.id = u.id;
+  GET DIAGNOSTICS v_count = ROW_COUNT; RETURN v_count;
+END $f$;
+SQL
+APPLY '[{"id":"0d000000-0000-0000-0000-000000000001","health_score":51,"health_class":"estavel","churn_risk":49,"priority_score":11,"rf_score":11,"g_score":11,"days_since_last_purchase":11,"avg_monthly_spend_180d":101,"category_count":2,"calculated_at":"2026-07-20T00:00:00Z","updated_at":"2026-07-20T00:00:00Z"}]' >/dev/null
+ne "F5 AP4 fica vermelho (56.00 seria NULLado)" "$(GMP 1)" "56.00"
+ne "F5 m_score idem"                            "$(MSC 1)" "56"
+
+echo "── restauro final: migrations verdadeiras + reconferencia ──"
 P -q -f "$MIG"
+P -q -f "$MIG2"
 P -q -c "REVOKE ALL ON FUNCTION public.get_customer_margin_summary() FROM authenticated;"
+# R6: com a sentinela de volta, o MESMO payload sem as chaves volta a PRESERVAR (fecha o ciclo do F5).
+P -q -c "UPDATE public.farmer_client_scores SET gross_margin_pct=56.00, m_score=56 WHERE id='0d000000-0000-0000-0000-000000000001';"
+APPLY '[{"id":"0d000000-0000-0000-0000-000000000001","health_score":51,"health_class":"estavel","churn_risk":49,"priority_score":11,"rf_score":11,"g_score":11,"days_since_last_purchase":11,"avg_monthly_spend_180d":101,"category_count":2,"calculated_at":"2026-07-20T00:00:00Z","updated_at":"2026-07-20T00:00:00Z"}]' >/dev/null
+eq "R6 sentinela restaurada (preserva de novo)" "$(GMP 1)" "56.00"
 eq "R1 margem restaurada"                  "$(M 1)" "56.00"
 eq "R2 mistura restaurada"                 "$(M 2)" "40.00"
 eq "R3 NULL restaurado"                    "$(M 3)" "NULL"

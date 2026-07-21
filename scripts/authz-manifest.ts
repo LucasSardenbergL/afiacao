@@ -87,6 +87,12 @@ export const ACKNOWLEDGED_SENSITIVE = new Set<string>([
   'public.aplicar_snapshot_pendente', // aplica snapshot de reposição (cron/service_role)
   'public.cmc_ledger_capture', // captura no ledger de cmc (trigger/service_role)
   'public.reposicao_cold_start_parametros', // parâmetros cold-start da reposição (interno)
+  // 2026-07-21 (#1495): margem bruta por cliente p/ o health score do farmer. Lê product_costs, mas
+  // a própria migration a fecha por PRIVILÉGIO — REVOKE ALL de PUBLIC/anon/authenticated + GRANT
+  // EXECUTE só a service_role (a edge calculate-scores, via cron). Só a margem AGREGADA por cliente
+  // atravessa; o custo unitário não sai do banco. Mesmo perfil da irmã get_customer_sales_summary
+  // (confirmado psql-ro: auth_exec=f, anon_exec=f, svc_exec=t). Reconfirmar após o apply em prod.
+  'public.get_customer_margin_summary',
 ]);
 
 /** chave de lookup a partir de schema+name (case-insensitive, sem assinatura) */
