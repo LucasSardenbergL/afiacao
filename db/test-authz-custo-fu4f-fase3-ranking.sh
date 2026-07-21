@@ -66,7 +66,6 @@ eq()  { if [ "$2" = "$3" ]; then ok "$1 (=$2)"; else bad "$1 -- esperado [$3], v
 M='11111111-1111-1111-1111-111111111111'   # master
 F='22222222-2222-2222-2222-222222222222'   # farmer      (employee + commercial_role=farmer)
 E='33333333-3333-3333-3333-333333333333'   # estrategico (employee + commercial_role=estrategico)
-C1='44444444-4444-4444-4444-444444444444'  # cliente NA carteira do farmer F
 CU='66666666-6666-6666-6666-666666666666'  # customer (nao-staff): prova o gate de identidade
 
 # guard: se o SET ROLE nao pegar, TODA a zona de RLS roda como superuser (bypassa) e fica
@@ -203,7 +202,7 @@ echo
 echo "=== ZONA 2: baseline PRE-migration (o detector ve o mundo vivo?) ==="
 eq "B1 farmer LE product_costs hoje (policy antiga)"  "$(as_user "$F" "SELECT count(*) FROM public.product_costs;")" "6"
 eq "B2 master LE product_costs hoje"                  "$(as_user "$M" "SELECT count(*) FROM public.product_costs;")" "6"
-eq "B3 get_ranking_margem NAO existe antes"           "$(Pq -c "SELECT COALESCE(to_regprocedure('public.get_ranking_margem(jsonb)')::text,'AUSENTE');")" "AUSENTE"
+eq "B3 get_skus_margem_positiva NAO existe antes"     "$(Pq -c "SELECT CASE WHEN to_regprocedure('public.get_skus_margem_positiva()') IS NULL THEN 'AUSENTE' ELSE 'EXISTE' END;")" "AUSENTE"
 eq "B4 as 2 policies antigas existem"                 "$(Pq -c "SELECT count(*) FROM pg_policies WHERE schemaname='public' AND tablename='product_costs';")" "2"
 eq "B5 authenticated TEM TRUNCATE antes (o D do arwdDxtm)" "$(Pq -c "SELECT has_table_privilege('authenticated','public.product_costs','TRUNCATE');")" "t"
 eq "B6 anon TEM SELECT antes"                         "$(Pq -c "SELECT has_table_privilege('anon','public.product_costs','SELECT');")" "t"
@@ -218,16 +217,6 @@ echo "  aplicada"
 P -q -f "$MIG_RPC" >/dev/null   # idempotencia: 2a aplicacao nao pode abortar
 echo "  reaplicada (idempotente)"
 
-# payload reusado: cross_sell de P1 e P2 no grupo C1 (carteira do farmer F)
-ITENS_CROSS=$(cat <<JSON
-[{"chave":"c-p1","grupo":"$C1","tipo":"cross_sell","produtos":["aaaaaaaa-0000-0000-0000-000000000001"],"peso":2,"fator":0.5},
- {"chave":"c-p2","grupo":"$C1","tipo":"cross_sell","produtos":["aaaaaaaa-0000-0000-0000-000000000002"],"peso":2,"fator":0.5}]
-JSON
-)
-Q_ORDEM="SELECT string_agg(chave||':'||COALESCE(ordem::text,'-'), ',' ORDER BY chave) FROM public.get_ranking_margem('$ITENS_CROSS'::jsonb);"
-Q_MIJ="SELECT string_agg(chave||':'||COALESCE(mij::text,'NULL'), ',' ORDER BY chave) FROM public.get_ranking_margem('$ITENS_CROSS'::jsonb);"
-
-echo
 echo "=== ZONA 4: a RPC (sem parametro — a superficie de ataque e o conjunto vazio) ==="
 eq "A1 get_skus_margem_positiva existe" \
    "$(Pq -c "SELECT CASE WHEN to_regprocedure('public.get_skus_margem_positiva()') IS NULL THEN 'AUSENTE' ELSE 'EXISTE' END;")" \
