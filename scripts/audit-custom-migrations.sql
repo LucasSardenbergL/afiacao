@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 415
+-- Total de custom migrations: 416
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -456,7 +456,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260723130000', 'authz_custo_fu4f_fase2_inventory', '20260723130000_authz_custo_fu4f_fase2_inventory.sql'),
   ('20260723140000', 'authz_custo_fu4f_fase1', '20260723140000_authz_custo_fu4f_fase1.sql'),
   ('20260723140000', 'authz_pedido_compra_item_cap_compras', '20260723140000_authz_pedido_compra_item_cap_compras.sql'),
-  ('20260723150000', 'authz_custo_fu4f_fase2_regua', '20260723150000_authz_custo_fu4f_fase2_regua.sql')
+  ('20260723150000', 'authz_custo_fu4f_fase2_regua', '20260723150000_authz_custo_fu4f_fase2_regua.sql'),
+  ('20260724120000', 'authz_sales_orders_split_escrita_fu4', '20260724120000_authz_sales_orders_split_escrita_fu4.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -1909,7 +1910,17 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('authz_custo_fu4f_fase2_regua', 'function', 'public', 'get_regua_preco_customer360', ''),
   ('authz_custo_fu4f_fase2_regua', 'function', 'public', 'registrar_exibicao_regua', ''),
   ('authz_custo_fu4f_fase2_regua', 'function', 'public', 'registrar_aplicacao_regua', ''),
-  ('authz_custo_fu4f_fase2_regua', 'rls_policy', 'public', 'regua_preco_log_select_custo', 'regua_preco_log')
+  ('authz_custo_fu4f_fase2_regua', 'rls_policy', 'public', 'regua_preco_log_select_custo', 'regua_preco_log'),
+  ('authz_sales_orders_split_escrita_fu4', 'function', 'private', 'cap_pedido_escrever', ''),
+  ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'sales_orders_select_staff', 'sales_orders'),
+  ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'sales_orders_select_customer', 'sales_orders'),
+  ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'sales_orders_insert_staff', 'sales_orders'),
+  ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'sales_orders_update_staff', 'sales_orders'),
+  ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'sales_orders_delete_staff', 'sales_orders'),
+  ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'order_items_select_staff', 'order_items'),
+  ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'order_items_select_customer', 'order_items'),
+  ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'sales_price_history_select_staff', 'sales_price_history'),
+  ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'sales_price_history_select_customer', 'sales_price_history')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -3410,7 +3421,17 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('authz_custo_fu4f_fase2_regua', 'function', 'public', 'get_regua_preco_customer360', ''),
   ('authz_custo_fu4f_fase2_regua', 'function', 'public', 'registrar_exibicao_regua', ''),
   ('authz_custo_fu4f_fase2_regua', 'function', 'public', 'registrar_aplicacao_regua', ''),
-  ('authz_custo_fu4f_fase2_regua', 'rls_policy', 'public', 'regua_preco_log_select_custo', 'regua_preco_log')
+  ('authz_custo_fu4f_fase2_regua', 'rls_policy', 'public', 'regua_preco_log_select_custo', 'regua_preco_log'),
+  ('authz_sales_orders_split_escrita_fu4', 'function', 'private', 'cap_pedido_escrever', ''),
+  ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'sales_orders_select_staff', 'sales_orders'),
+  ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'sales_orders_select_customer', 'sales_orders'),
+  ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'sales_orders_insert_staff', 'sales_orders'),
+  ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'sales_orders_update_staff', 'sales_orders'),
+  ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'sales_orders_delete_staff', 'sales_orders'),
+  ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'order_items_select_staff', 'order_items'),
+  ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'order_items_select_customer', 'order_items'),
+  ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'sales_price_history_select_staff', 'sales_price_history'),
+  ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'sales_price_history_select_customer', 'sales_price_history')
 )
 SELECT
   e.migration,
