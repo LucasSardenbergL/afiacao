@@ -7,13 +7,29 @@
 // Invoca scoring-recalc-client internamente via fetch.
 // Auth cron via header x-cron-secret (CRON_SECRET env var).
 //
-// Setup pg_cron (manual depois do merge):
+// pg_cron: `scoring-recalc-batch-nightly` JÁ ESTÁ ATIVO em produção (`'0 6 * * *'`, conferido em
+// `cron.job` 2026-07-21). O bloco abaixo é o comando REAL que está rodando — serve para DR ou para
+// recriar (`cron.schedule` faz upsert por nome → idempotente), NÃO é um setup pendente:
 //   SELECT cron.schedule('scoring-recalc-batch-nightly', '0 6 * * *',
 //     $$ SELECT net.http_post(
-//       url := 'https://<PROJECT_REF>.supabase.co/functions/v1/scoring-recalc-batch',
-//       headers := jsonb_build_object('x-cron-secret', current_setting('app.cron_shared_key', true))
+//       url := 'https://fzvklzpomgnyikkfkzai.supabase.co/functions/v1/scoring-recalc-batch',
+//       headers := jsonb_build_object('Content-Type', 'application/json',
+//         'x-cron-secret', (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'CRON_SECRET' LIMIT 1)),
+//       timeout_milliseconds := 55000
 //     ); $$
 //   );
+//
+// Este bloco documentava `current_setting('app.cron_shared_key', true)` — GUC que não existe no
+// projeto. O `true` (missing_ok) devolve NULL calado, o header sai nulo e a edge responde 401, com
+// `cron.job_run_details` marcando `succeeded` mesmo assim (só registra o ENQUEUE do net.http_post;
+// a verdade HTTP está em `net._http_response`). Quem criou o cron não seguiu o comentário — ele
+// descrevia um setup que nunca existiu. Nenhum dos crons vivos usa a GUC.
+//
+// `timeout_milliseconds` também faltava, e é obrigatório: o default do pg_net é 5s e mataria o
+// batch em silêncio. 55000 é o valor em prod; o teto padrão da casa é 150000 (docs/agent/sync.md)
+// — alinhar os dois é follow-up, não deste PR.
+//
+// Schedule é UTC (`cron.timezone` vazio, #1510): '0 6' = 03:00 BRT, como diz o cabeçalho acima.
 
 import { createClient } from 'npm:@supabase/supabase-js@^2';
 import { authorizeCronOrStaff, corsHeaders } from '../_shared/auth.ts';

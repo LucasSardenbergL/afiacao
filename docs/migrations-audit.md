@@ -21,13 +21,13 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **418** custom migrations totais
-- **1475** objetos esperados (criados por estas migrations)
+- **423** custom migrations totais
+- **1487** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 422
-  - `rls_policy`: 379
+  - `function`: 426
+  - `rls_policy`: 380
   - `index`: 224
-  - `cron_job`: 150
+  - `cron_job`: 157
   - `table`: 147
   - `trigger`: 79
   - `view`: 70
@@ -952,6 +952,7 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `cron_job` | `cron.afiacao_ciclo_oportunidade_diario` | — |
+| `cron_job` | `cron.afiacao_customer_metrics_refresh_6h` | — |
 | `cron_job` | `cron.afiacao_dispatch_notificacoes_30min` | — |
 | `cron_job` | `cron.afiacao_estados_eventos_diarios` | — |
 | `cron_job` | `cron.afiacao_limpeza_sugestoes_mensal` | — |
@@ -985,8 +986,9 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `cron_job` | `cron.fin-sync-watchdog` | — |
 | `cron_job` | `cron.gerar-pedidos-diario-oben` | — |
 | `cron_job` | `cron.gerar-pedidos-intraday-oben` | — |
-| `cron_job` | `cron.monthly-tool-report` | — |
 | `cron_job` | `cron.nao-vinculados-refresh-diario` | — |
+| `cron_job` | `cron.omie-nfe-recebimento-import-1h` | — |
+| `cron_job` | `cron.omie-nfe-reconcile-1h` | — |
 | `cron_job` | `cron.omie-sync-estoque-diario` | — |
 | `cron_job` | `cron.omie-sync-estoque-intraday-oben` | — |
 | `cron_job` | `cron.omie-sync-metadados-daily` | — |
@@ -1000,14 +1002,18 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `cron_job` | `cron.reposicao-classificar-sayerlack-grupo` | — |
 | `cron_job` | `cron.reposicao-cold-start-parametros` | — |
 | `cron_job` | `cron.reposicao-depara-sayerlack-auto-diario` | — |
+| `cron_job` | `cron.reposicao-embalagem-cadastro-wp-daily` | — |
 | `cron_job` | `cron.reposicao-param-auto-resumo` | — |
 | `cron_job` | `cron.reposicao-param-limbo-watchdog` | — |
 | `cron_job` | `cron.reposicao-preencher-parametros-faltantes` | — |
 | `cron_job` | `cron.reposicao-refresh-descricao-diario` | — |
+| `cron_job` | `cron.sayerlack-captura-precos-mensal` | — |
 | `cron_job` | `cron.sayerlack-portal-watchdog` | — |
 | `cron_job` | `cron.sayerlack-retry-orfaos` | — |
 | `cron_job` | `cron.scoring-recalc-batch-nightly` | — |
 | `cron_job` | `cron.sync-colacor-vendas-products` | — |
+| `cron_job` | `cron.sync-customers-colacor-vendas-daily` | — |
+| `cron_job` | `cron.sync-customers-servicos-daily` | — |
 | `cron_job` | `cron.sync-customers-vendas-daily` | — |
 | `cron_job` | `cron.sync-inventory-colacor-vendas-1h` | — |
 | `cron_job` | `cron.sync-inventory-servicos-1h` | — |
@@ -3547,11 +3553,42 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `rls_policy` | `public.sales_price_history_select_staff` | `sales_price_history` |
 | `rls_policy` | `public.sales_price_history_select_customer` | `sales_price_history` |
 
+### `20260724130000_authz_custo_fu4f_fase3_recommend.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.pode_ler_custo` | — |
+| `rls_policy` | `public.recommendation_log_select_custo` | `recommendation_log` |
+
 ### `20260724130000_tint_canonica_csv_legado_allowlist.sql`
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `view` | `public.v_tint_formula_canonica` | — |
+
+### `20260726120000_tint_promote_error_details_completo.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tint_promote_sync_run` | — |
+
+### `20260726120001_cron_tactical_plans_batch_nightly.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `cron_job` | `cron.tactical-plans-batch-nightly` | — |
+
+### `20260726130000_vendas_sync_semear_janela.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.vendas_sync_semear_janela` | — |
+
+### `20260726140000_vendas_sync_semear_janela_v2.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.vendas_sync_semear_janela` | — |
 
 ## Próximos passos por status
 

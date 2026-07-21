@@ -18,19 +18,20 @@
 #   C10 paridade do espelho: receita_valida ∧ base_disponivel ⟺ precoFinal da
 #       RPC get_tint_prices REAL (aplicada do snapshot) não-nulo
 #   C11 RLS/invoker: staff vê; customer/sem-role 0 linhas; anon 42501; service_role vê
-#   F1  falsificação: rank invertido → C1 cai (vermelho CERTO, e só ele)
-#   F2  falsificação: espelho de corantes frouxo (>=0) → C6 cai (1º RAISE; C10 cobriria se C6 não existisse)
-#   F3  falsificação: sem o anti-join → C8 cai (2 linhas por chave)
-#   F4  falsificação: tie-break invertido → C12 cai (empate resolve pro uuid errado)
+#   F1  falsificação: rank invertido → derruba {C1,C7,C14}
+#   F2  falsificação: espelho de corantes frouxo (>=0) → derruba {C6,C10}
+#   F3  falsificação: sem o anti-join → derruba {C8,C2,C6,C6b,C6c,C6d,C12,C15,C19}
+#   F4  falsificação: tie-break invertido → derruba {C12}
 #   C13 (2b) preco_csv_legado: SL canônica expõe o CSV da gêmea antiga; fallback
 #       expõe o próprio; chave sem CSV → NULL (a fonte "Tabela" da vendedora)
-#   F5  falsificação: preco_csv_legado lendo só a própria linha → C13 cai
+#   F5  falsificação: preco_csv_legado lendo só a própria linha → derruba
+#       {C13,C14,C15,C16,C17,C18,C19,C20} (toda a família do CSV)
 #   C14 (fix semântico) FUTURE-PROOF: SL canônica com CSV PRÓPRIO populado →
 #       o max IGNORA o próprio e segue devolvendo o da gêmea não-SL
 #   C15 (fix semântico) ramo não-SL intacto: canônica não-SL segue com o max
 #       de TODAS as ativas (inclusive uma SL com CSV — comportamento da 2b)
-#   F6  falsificação: expressão da 2b de volta (max sem filtro não-SL) → C14 cai
-#   F7  falsificação: allowlist INCONDICIONAL (sem o guard is_sl) → C15 cai
+#   F6  falsificação: expressão da 2b de volta → derruba {C14,C16,C17,C19,C20}
+#   F7  falsificação: allowlist INCONDICIONAL (sem o guard is_sl) → derruba {C15}
 #   C16 (allowlist) 2ª linha SL com CSV na MESMA chave fica fora do max — TODA
 #       SL fica fora, não só a própria. Mata o mutante `g2.id <> f.id` (achado 2
 #       do challenge retroativo Codex 2026-07-20: passava C13/C14/C15 e F6/F7)
@@ -38,10 +39,31 @@
 #       em chave de canônica SL fica FORA do max (a blocklist antiga a incluía)
 #   C18 linha DESATIVADA com CSV alto na chave fica fora do max (antes nenhum
 #       seed exercitava o `desativada_em IS NULL` do max com CSV que mudasse o valor)
-#   F8  falsificação: mutante `NOT rf.is_sl OR g2.id <> f.id` → C16 cai (e só ele)
-#   F9  falsificação: blocklist não-SL de volta (20260722100002 verbatim) → C17 cai
-#   F10 falsificação: max sem `g2.desativada_em IS NULL` → C18 cai
+#   F8  falsificação: mutante `NOT rf.is_sl OR g2.id <> f.id` → derruba
+#       {C16,C17,C19,C20}
+#   F9  falsificação: blocklist não-SL de volta (20260722100002 verbatim) →
+#       derruba {C17,C19,C20}
+#   F10 falsificação: max sem `g2.desativada_em IS NULL` → derruba {C18}
+#   ── challenge retroativo Codex xhigh 2026-07-21 sobre o #1505 ──
+#   C19 GUARD DE CONTA: fórmula de 'colacor' apontando para a subcoleção '1' de
+#       'oben' NÃO alimenta o max (a FK não inclui account; quem barra é o
+#       `s2.account = g2.account`). Harness era monoconta — nada o exercia.
+#   C20 EXCLUSIVIDADE DO LITERAL '1': subcoleções '2'/'10'/rótulo-NULL na chave
+#       ficam fora. Com só 'SL' e '1' semeados, 4 mutantes eram indistinguíveis
+#       da allowlist real (`<> 'SL'`, `IN ('1','2')`, `LIKE '1%'`, `COALESCE`).
+#   F11 falsificação: allowlist sem `s2.account = g2.account` → derruba {C19}
+#   F12 falsificação: `<> 'SL'` no lugar de `= '1'` → derruba {C20}
+#   F13 falsificação: `IN ('1','2')` → derruba {C20}
 #   R   restauração: re-aplica a migration REAL → tudo verde de novo
+#
+# ⚠️ CONTRATO DAS FALSIFICAÇÕES: cada uma declara o CONJUNTO EXATO de asserts que
+# derruba (nomes + contagem), conferido por `confere_falsificacao`. Até
+# 2026-07-21 cada F afirmava "vermelho certo, E SÓ ELE" — inverificável, porque
+# o bloco abortava no 1º RAISE e o `case` só via o primeiro nome. Ao instrumentar
+# (acumular em vez de abortar), a medição mostrou que 7 das 10 derrubavam MAIS de
+# um assert: a alegação era falsa e ninguém podia saber. Se um conjunto mudar, ou
+# a sabotagem passou a atingir além do alvo, ou um assert perdeu o dente — as
+# duas coisas exigem olhar, não ajustar o número.
 # Base estrutural: db/test-tint-promote.sh + db/test-tint-formulas-rls-initplan.sh.
 # Pré-req: brew install postgresql@17 pgvector.
 set -uo pipefail
@@ -82,6 +104,41 @@ ok()  { PASS=$((PASS+1)); echo "  ✅ $1"; }
 bad() { FAIL=$((FAIL+1)); echo "  ❌ $1"; }
 eq()  { if [ "$2" = "$3" ]; then ok "$1 (=$2)"; else bad "$1 — esperado [$3], veio [$2]"; fi; }
 
+# Confere uma falsificação: a sabotagem tem de derrubar EXATAMENTE os asserts
+# nomeados — nem menos (assert sem dente), nem mais (sabotagem que mexe em mais
+# de uma coisa e não isola o que prova). Antes do challenge Codex xhigh
+# (2026-07-21, achado (e)) cada falsificação afirmava "vermelho CERTO, e só ele"
+# e isso era ESTRUTURALMENTE inverificável: o bloco abortava no 1º RAISE, então
+# o `case` só enxergava o PRIMEIRO nome e a contagem nunca era olhada.
+# uso: confere_falsificacao <rotulo> <out> <n_esperado> <Cx> [Cy …] -- <descricao>
+confere_falsificacao() {
+  local rot="$1" out="$2" n_esp="$3"; shift 3
+  local desc="" n_real faltando="" c; local -a nomes=()
+  while [ $# -gt 0 ]; do
+    if [ "$1" = "--" ]; then shift; desc="$*"; break; fi
+    nomes+=("$1"); shift
+  done
+  case "$out" in
+    *TODOS_OK*) bad "$rot NAO pegou: asserts VERDES sob a sabotagem (sem dente) — $desc"; return ;;
+  esac
+  n_real="$(printf '%s' "$out" | sed -n 's/.*FALHAS\[\([0-9]\{1,\}\)\].*/\1/p' | head -1)"
+  if [ -z "$n_real" ]; then
+    bad "$rot quebrou FORA do contrato de asserts (sem FALHAS[n] — erro SQL?): $(printf '%s' "$out" | tr '\n' ' ' | cut -c1-180)"; return
+  fi
+  for c in "${nomes[@]}"; do
+    case "$out" in *"$c FALHOU"*) ;; *) faltando="$faltando $c" ;; esac
+  done
+  if [ -n "$faltando" ]; then
+    bad "$rot nao derrubou o(s) assert(s) alvo:$faltando (veio FALHAS[$n_real]) — $desc"; return
+  fi
+  local caidos
+  caidos="$(printf '%s' "$out" | tr '|' '\n' | sed -n 's/.*\(C[0-9]\{1,2\}[a-z]*\) FALHOU.*/\1/p' | tr '\n' ' ')"
+  if [ "$n_real" != "$n_esp" ]; then
+    bad "$rot derrubou $n_real assert(s) [$caidos], esperado $n_esp [${nomes[*]}] — o CONJUNTO mudou: ou a sabotagem atinge alem do alvo, ou um assert perdeu o dente"; return
+  fi
+  ok "$rot pegou a sabotagem: FALHAS[$n_real] = [$caidos] — $desc"
+}
+
 RR="$(mktemp "${TMPDIR:-/tmp}/snap-tintcanonica.XXXXXX")"
 sed -E 's/^(CREATE SCHEMA public;)/-- \1/' "$REPO_ROOT/supabase/schema-snapshot.sql" \
   | grep -vE '^\\(un)?restrict ' > "$RR"
@@ -98,6 +155,14 @@ P --single-transaction -q -f "$RR" >/dev/null || { echo "FALHA no setup: snapsho
 rm -f "$RR"
 
 echo "→ migrations 20260718213000 + 20260718233000 + 20260722100002 + 20260724130000 na ordem de prod (cadeia de REPLACEs)…"
+# ⚠️ O snapshot AGORA traz a view pronta (13 colunas) — desde o re-dump do #1509
+# (2026-07-21). Antes disso o snapshot era de junho, anterior à view, e a cadeia
+# aplicava no vazio. Sem este DROP, a Fase 2 (12 colunas) morre em "cannot drop
+# columns from view" e o harness inteiro para ANTES do primeiro assert — foi o
+# estado da main entre o #1509 e 2026-07-21 (db/test-*.sh não roda no CI, então
+# nada acusou). O objetivo é provar a CADEIA a partir do zero, não o snapshot.
+P -q -c "DROP VIEW IF EXISTS public.v_tint_formula_canonica;" >/dev/null \
+  || { echo "FALHA: não removeu a view do snapshot antes da cadeia"; exit 1; }
 P -q -f "$MIGRATION" >/dev/null  || { echo "FALHA: migration Fase 2 não aplicou"; exit 1; }
 P -q -f "$MIGRATION2" >/dev/null || { echo "FALHA: migration Fase 2b não aplicou"; exit 1; }
 P -q -f "$MIGRATION3" >/dev/null || { echo "FALHA: migration fix semântico não aplicou"; exit 1; }
@@ -132,7 +197,22 @@ INSERT INTO public.user_roles(user_id, role) VALUES
 
 INSERT INTO public.tint_subcolecoes (id, account, id_subcolecao_sayersystem, descricao) VALUES
   ('5c000000-0000-0000-0000-000000000001','oben','SL','SL'),
-  ('0d000000-0000-0000-0000-000000000001','oben','1','SAYERLACK');
+  ('0d000000-0000-0000-0000-000000000001','oben','1','SAYERLACK'),
+  -- Subcoleções FUTURAS + rótulo NULL (challenge Codex xhigh 2026-07-21 sobre o
+  -- #1505, achado (a)-2): com só 'SL' e '1' no seed, "allowlist da '1'" era
+  -- indistinguível de `<> 'SL'`, `IN ('1','2')`, `LIKE '1%'` e
+  -- `COALESCE(id_subcolecao_sayersystem,'1')='1'` — 4 mutantes passavam TUDO.
+  -- '10' existe para matar o LIKE; o rótulo NULL para matar o COALESCE
+  -- (id_subcolecao_sayersystem é NULLABLE em prod).
+  ('02000000-0000-0000-0000-000000000002','oben','2','FUTURA 2'),
+  ('10000000-0000-0000-0000-000000000010','oben','10','FUTURA 10'),
+  ('0e000000-0000-0000-0000-00000000000e','oben',NULL,'SEM CODIGO'),
+  -- 2ª CONTA (achado (a)-1): a FK de tint_formulas.subcolecao_id referencia
+  -- tint_subcolecoes(id) SEM account, então nada no banco impede uma fórmula de
+  -- 'colacor' apontar para a subcoleção de 'oben'. O guard `s2.account =
+  -- g2.account` da allowlist é quem barra — e nenhum seed o exercia.
+  ('c1000000-0000-0000-0000-00000000005a','colacor','SL','COLACOR SL'),
+  ('c1000000-0000-0000-0000-000000000001','colacor','1','COLACOR SAYERLACK');
 
 INSERT INTO public.omie_products (id, omie_codigo_produto, codigo, descricao, valor_unitario, ativo, account) VALUES
   ('0b000000-0000-0000-0000-00000000ba5e', 900001,'BASE-OK','Base OK',      100, true , 'oben'),
@@ -149,17 +229,21 @@ INSERT INTO public.tint_corantes (id, account, id_corante_sayersystem, descricao
   ('c0000000-0000-0000-0000-000000000005','oben','WPV0','Volume zero',    0, '0c000000-0000-0000-0000-0000000c0c01');
 
 INSERT INTO public.tint_produtos  (id, account, cod_produto, descricao) VALUES
-  ('a0000000-0000-0000-0000-000000000001','oben','P1','Produto 1');
+  ('a0000000-0000-0000-0000-000000000001','oben','P1','Produto 1'),
+  ('c1100000-0000-0000-0000-000000000001','colacor','P1','Produto 1 COLACOR');
 INSERT INTO public.tint_bases     (id, account, id_base_sayersystem, descricao) VALUES
-  ('a0000000-0000-0000-0000-000000000002','oben','B1','Base 1');
+  ('a0000000-0000-0000-0000-000000000002','oben','B1','Base 1'),
+  ('c1100000-0000-0000-0000-000000000002','colacor','B1','Base 1 COLACOR');
 -- 3 embalagens: a UNIQUE de tint_skus é (account, produto, base, embalagem) —
 -- cada SKU do seed precisa da sua.
 INSERT INTO public.tint_embalagens(id, account, id_embalagem_sayersystem, descricao, volume_ml) VALUES
   ('a0000000-0000-0000-0000-0000000000e1','oben','E900A','Galao 900A',900),
   ('a0000000-0000-0000-0000-0000000000e2','oben','E900B','Galao 900B',900),
-  ('a0000000-0000-0000-0000-0000000000e3','oben','E900C','Galao 900C',900);
+  ('a0000000-0000-0000-0000-0000000000e3','oben','E900C','Galao 900C',900),
+  ('c1100000-0000-0000-0000-0000000000e1','colacor','E900A','Galao 900A COLACOR',900);
 
 INSERT INTO public.tint_skus (id, account, produto_id, base_id, embalagem_id, omie_product_id) VALUES
+  ('c1500000-0000-0000-0000-00000000000a','colacor','c1100000-0000-0000-0000-000000000001','c1100000-0000-0000-0000-000000000002','c1100000-0000-0000-0000-0000000000e1',NULL),
   ('50000000-0000-0000-0000-00000000000a','oben','a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000002','a0000000-0000-0000-0000-0000000000e1','0b000000-0000-0000-0000-00000000ba5e'),
   ('50000000-0000-0000-0000-00000000000b','oben','a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000002','a0000000-0000-0000-0000-0000000000e2',NULL),
   ('50000000-0000-0000-0000-00000000000c','oben','a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000002','a0000000-0000-0000-0000-0000000000e3','0b000000-0000-0000-0000-00000000ba5f');
@@ -237,7 +321,27 @@ INSERT INTO public.tint_formulas (id, account, cor_id, nome_cor, produto_id, bas
   -- mudava o valor esperado)
   ('f0190000-0000-0000-0000-00000000005a','oben','K19','DESATCSV','a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000002','a0000000-0000-0000-0000-0000000000e1','5c000000-0000-0000-0000-000000000001','50000000-0000-0000-0000-00000000000a',NULL),
   ('f0190000-0000-0000-0000-000000000019','oben','K19','DESATCSV','a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000002','a0000000-0000-0000-0000-0000000000e1','0d000000-0000-0000-0000-000000000001','50000000-0000-0000-0000-00000000000a',300),
-  ('f0190000-0000-0000-0000-00000000001a','oben','K19','DESATCSV','a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000002','a0000000-0000-0000-0000-0000000000e2','0d000000-0000-0000-0000-000000000001','50000000-0000-0000-0000-00000000000a',900);
+  ('f0190000-0000-0000-0000-00000000001a','oben','K19','DESATCSV','a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000002','a0000000-0000-0000-0000-0000000000e2','0d000000-0000-0000-0000-000000000001','50000000-0000-0000-0000-00000000000a',900),
+  -- K20 MULTIACCOUNT @conta 'colacor' (challenge Codex 2026-07-21, achado (a)-1):
+  -- SL canônica de colacor × '1' de COLACOR com CSV 320 × linha de colacor que
+  -- aponta para a subcoleção '1' de OBEN com CSV 850. Esperado 320 — o 850 só
+  -- entra se o guard `s2.account = g2.account` sumir. A FK não impede a
+  -- referência cross-account (REFERENCES tint_subcolecoes(id), sem account).
+  ('f0200000-0000-0000-0000-00000000005a','colacor','K20','MULTIACCOUNT','c1100000-0000-0000-0000-000000000001','c1100000-0000-0000-0000-000000000002','c1100000-0000-0000-0000-0000000000e1','c1000000-0000-0000-0000-00000000005a','c1500000-0000-0000-0000-00000000000a',NULL),
+  ('f0200000-0000-0000-0000-000000000019','colacor','K20','MULTIACCOUNT','c1100000-0000-0000-0000-000000000001','c1100000-0000-0000-0000-000000000002','c1100000-0000-0000-0000-0000000000e1','c1000000-0000-0000-0000-000000000001','c1500000-0000-0000-0000-00000000000a',320),
+  ('f0200000-0000-0000-0000-0000000000ac','colacor','K20','MULTIACCOUNT','c1100000-0000-0000-0000-000000000001','c1100000-0000-0000-0000-000000000002','c1100000-0000-0000-0000-0000000000e1','0d000000-0000-0000-0000-000000000001','c1500000-0000-0000-0000-00000000000a',850),
+  -- K21 FUTURAS @SKU_OK (challenge Codex 2026-07-21, achado (a)-2): SL canônica
+  -- × '1' CSV 330 × '2' CSV 860 × '10' CSV 870 × rótulo NULL CSV 880.
+  -- Esperado 330. Mata de uma vez os 4 mutantes que passavam C1-C18/F1-F10:
+  --   `<> 'SL'`            → deixaria entrar 2/10/NULL → 880
+  --   `IN ('1','2')`       → deixaria entrar a '2'     → 860
+  --   `LIKE '1%'`          → deixaria entrar a '10'    → 870
+  --   `COALESCE(…,'1')='1'`→ deixaria entrar o NULL    → 880
+  ('f0210000-0000-0000-0000-00000000005a','oben','K21','FUTURAS','a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000002','a0000000-0000-0000-0000-0000000000e1','5c000000-0000-0000-0000-000000000001','50000000-0000-0000-0000-00000000000a',NULL),
+  ('f0210000-0000-0000-0000-000000000019','oben','K21','FUTURAS','a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000002','a0000000-0000-0000-0000-0000000000e1','0d000000-0000-0000-0000-000000000001','50000000-0000-0000-0000-00000000000a',330),
+  ('f0210000-0000-0000-0000-000000000002','oben','K21','FUTURAS','a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000002','a0000000-0000-0000-0000-0000000000e1','02000000-0000-0000-0000-000000000002','50000000-0000-0000-0000-00000000000a',860),
+  ('f0210000-0000-0000-0000-000000000010','oben','K21','FUTURAS','a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000002','a0000000-0000-0000-0000-0000000000e1','10000000-0000-0000-0000-000000000010','50000000-0000-0000-0000-00000000000a',870),
+  ('f0210000-0000-0000-0000-00000000000e','oben','K21','FUTURAS','a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000002','a0000000-0000-0000-0000-0000000000e1','0e000000-0000-0000-0000-00000000000e','50000000-0000-0000-0000-00000000000a',880);
 UPDATE public.tint_formulas SET desativada_em = now()
  WHERE id IN ('fb000000-0000-0000-0000-00000000005a','f0190000-0000-0000-0000-00000000001a');
 
@@ -270,7 +374,13 @@ INSERT INTO public.tint_formula_itens (formula_id, corante_id, ordem, qtd_ml) VA
   ('f0160000-0000-0000-0000-000000000019','c0000000-0000-0000-0000-000000000001',1,10),
   ('f0170000-0000-0000-0000-00000000005a','c0000000-0000-0000-0000-000000000001',1,10),
   ('f0180000-0000-0000-0000-00000000005a','c0000000-0000-0000-0000-000000000001',1,10),
-  ('f0190000-0000-0000-0000-00000000005a','c0000000-0000-0000-0000-000000000001',1,10);
+  ('f0190000-0000-0000-0000-00000000005a','c0000000-0000-0000-0000-000000000001',1,10),
+  -- K20/K21: só a SL canônica precisa de receita válida (rank 0). O corante é o
+  -- 'oben' OK — o espelho de corantes não filtra por account (junta por
+  -- corante_id → omie), então serve à fórmula de colacor sem alterar o que K20
+  -- prova (o guard de account da SUBCOLEÇÃO, não do corante).
+  ('f0200000-0000-0000-0000-00000000005a','c0000000-0000-0000-0000-000000000001',1,10),
+  ('f0210000-0000-0000-0000-00000000005a','c0000000-0000-0000-0000-000000000001',1,10);
 
 -- O dump do snapshot NÃO traz os GRANTs de tabela; em prod o Supabase concede a
 -- authenticated/anon (RLS filtra). security_invoker exige privilégio do CALLER
@@ -287,15 +397,25 @@ SQL
 # ══════════════════════════════════════════════════════════════════════════════
 run_asserts() {
   P -tA 2>&1 <<'SQL'
+-- ⚠️ ACUMULA as falhas em vez de abortar no PRIMEIRO RAISE (challenge Codex
+-- xhigh 2026-07-21 sobre o #1505, achado (e)): com um único RAISE por bloco, o
+-- `case` de cada falsificação só enxergava o nome do PRIMEIRO assert que caiu —
+-- então "vermelho CERTO, e só ele" era ESTRUTURALMENTE inverificável, e virava
+-- FALSO assim que uma sabotagem quebrasse 2 asserts (F8 quebra C16 e C20 com os
+-- seeds novos). Agora o bloco varre TUDO e termina com
+-- `FALHAS[n]: C.. | C..`, então a falsificação confere CONTAGEM e NOMES.
 DO $$
-DECLARE r record; n int; nf int; ni int; a text; b text;
+DECLARE r record; n int; nf int; ni int; a text; b text; falhas text[] := '{}';
+        c10_ok boolean := true; c10b_ok boolean := true;
 BEGIN
   -- C0 pré-condição do SEED: sem isto, view vazia deixa os asserts por-cor
   -- passarem em NULL (teatro — foi exatamente o modo de falha do run 1).
+  -- Segue ABORTANDO na hora (≠ demais asserts): seed errado torna todo o
+  -- resto ruído, não sinal.
   SELECT count(*) INTO nf FROM public.tint_formulas;
   SELECT count(*) INTO ni FROM public.tint_formula_itens;
-  IF nf <> 37 OR ni <> 28 THEN
-    RAISE EXCEPTION 'C0 FALHOU: seed incompleto (formulas=% esperado 37, itens=% esperado 28)', nf, ni; END IF;
+  IF nf <> 45 OR ni <> 30 THEN
+    RAISE EXCEPTION 'C0 FALHOU: seed incompleto (formulas=% esperado 45, itens=% esperado 30)', nf, ni; END IF;
 
   -- C8 não-desaparecimento GLOBAL primeiro (cardinalidade pega duplicata E omissão
   -- antes de qualquer SELECT por-cor devolver linha a mais/menos)
@@ -304,109 +424,109 @@ BEGIN
     WHERE desativada_em IS NULL AND sku_id IS NOT NULL
     EXCEPT
     SELECT account, sku_id, cor_id FROM public.v_tint_formula_canonica) x;
-  IF n <> 0 THEN RAISE EXCEPTION 'C8 FALHOU: % chaves ativas AUSENTES da view', n; END IF;
+  IF n <> 0 THEN falhas := falhas || format('C8 FALHOU: %s chaves ativas AUSENTES da view', n); END IF;
   SELECT count(*) INTO n FROM (
     SELECT account, sku_id, cor_id FROM public.v_tint_formula_canonica
     EXCEPT
     SELECT account, sku_id, cor_id FROM public.tint_formulas
     WHERE desativada_em IS NULL AND sku_id IS NOT NULL) x;
-  IF n <> 0 THEN RAISE EXCEPTION 'C8 FALHOU: % chaves na view SEM lastro na tabela', n; END IF;
+  IF n <> 0 THEN falhas := falhas || format('C8 FALHOU: %s chaves na view SEM lastro na tabela', n); END IF;
   SELECT count(*) INTO n FROM (
     SELECT account, sku_id, cor_id FROM public.v_tint_formula_canonica
     GROUP BY 1,2,3 HAVING count(*) <> 1) x;
-  IF n <> 0 THEN RAISE EXCEPTION 'C8 FALHOU: % chaves com != 1 linha na view (duplicata)', n; END IF;
+  IF n <> 0 THEN falhas := falhas || format('C8 FALHOU: %s chaves com != 1 linha na view (duplicata)', n); END IF;
 
   -- C1 preferência: canônica de K1 = a SL (IS DISTINCT FROM: linha ausente = vermelho)
   SELECT id::text, is_sl, receita_valida INTO r FROM public.v_tint_formula_canonica WHERE cor_id='K1';
   IF r.id IS DISTINCT FROM 'f1000000-0000-0000-0000-00000000005a' OR r.is_sl IS DISTINCT FROM true OR r.receita_valida IS DISTINCT FROM true
-    THEN RAISE EXCEPTION 'C1 FALHOU: canonica de K1 = % (is_sl=%, valida=%) — esperado a SL valida', r.id, r.is_sl, r.receita_valida; END IF;
+    THEN falhas := falhas || format('C1 FALHOU: canonica de K1 = %s (is_sl=%s, valida=%s) — esperado a SL valida', r.id, r.is_sl, r.receita_valida); END IF;
 
   -- C2 fallback: SL sem receita → SAYERLACK vence
   SELECT id::text, is_sl INTO r FROM public.v_tint_formula_canonica WHERE cor_id='K2';
   IF r.id IS DISTINCT FROM 'f2000000-0000-0000-0000-000000000019' OR r.is_sl IS DISTINCT FROM false
-    THEN RAISE EXCEPTION 'C2 FALHOU: canonica de K2 = % (esperado a SAYERLACK — SL sem receita)', r.id; END IF;
+    THEN falhas := falhas || format('C2 FALHOU: canonica de K2 = %s (esperado a SAYERLACK — SL sem receita)', r.id); END IF;
 
   -- C3 as "12": só-SAYERLACK em SKU órfão segue servida, válida POR FÓRMULA
   SELECT id::text, is_sl, receita_valida INTO r FROM public.v_tint_formula_canonica WHERE cor_id='K3';
   IF r.id IS DISTINCT FROM 'f3000000-0000-0000-0000-000000000019' OR r.is_sl IS DISTINCT FROM false OR r.receita_valida IS DISTINCT FROM true
-    THEN RAISE EXCEPTION 'C3 FALHOU: K3 (ACR-MAX-like) = % is_sl=% valida=%', r.id, r.is_sl, r.receita_valida; END IF;
+    THEN falhas := falhas || format('C3 FALHOU: K3 (ACR-MAX-like) = %s is_sl=%s valida=%s', r.id, r.is_sl, r.receita_valida); END IF;
 
   -- C4 personalizada aparece
   SELECT id::text, receita_valida INTO r FROM public.v_tint_formula_canonica WHERE cor_id='K4';
   IF r.id IS DISTINCT FROM 'f4000000-0000-0000-0000-0000000000e0' OR r.receita_valida IS DISTINCT FROM true
-    THEN RAISE EXCEPTION 'C4 FALHOU: personalizada K4 = % valida=%', r.id, r.receita_valida; END IF;
+    THEN falhas := falhas || format('C4 FALHOU: personalizada K4 = %s valida=%s', r.id, r.receita_valida); END IF;
 
   -- C5 ambas inválidas → SL (viva) vence
   SELECT id::text, is_sl, receita_valida INTO r FROM public.v_tint_formula_canonica WHERE cor_id='K5';
   IF r.id IS DISTINCT FROM 'f5000000-0000-0000-0000-00000000005a' OR r.is_sl IS DISTINCT FROM true OR r.receita_valida IS DISTINCT FROM false
-    THEN RAISE EXCEPTION 'C5 FALHOU: K5 (ambas sem receita) = % is_sl=% valida=%', r.id, r.is_sl, r.receita_valida; END IF;
+    THEN falhas := falhas || format('C5 FALHOU: K5 (ambas sem receita) = %s is_sl=%s valida=%s', r.id, r.is_sl, r.receita_valida); END IF;
 
   -- C6 corante quebrado (valor 0) invalida a SL → SAYERLACK vence
   SELECT id::text, is_sl INTO r FROM public.v_tint_formula_canonica WHERE cor_id='K6';
   IF r.id IS DISTINCT FROM 'f6000000-0000-0000-0000-000000000019' OR r.is_sl IS DISTINCT FROM false
-    THEN RAISE EXCEPTION 'C6 FALHOU: K6 (SL c/ corante zero) = % — esperado a SAYERLACK', r.id; END IF;
+    THEN falhas := falhas || format('C6 FALHOU: K6 (SL c/ corante zero) = %s — esperado a SAYERLACK', r.id); END IF;
   -- C6b corante órfão de omie idem
   SELECT id::text, is_sl INTO r FROM public.v_tint_formula_canonica WHERE cor_id='K8';
   IF r.id IS DISTINCT FROM 'f8000000-0000-0000-0000-000000000019' OR r.is_sl IS DISTINCT FROM false
-    THEN RAISE EXCEPTION 'C6b FALHOU: K8 (SL c/ corante sem omie) = % — esperado a SAYERLACK', r.id; END IF;
+    THEN falhas := falhas || format('C6b FALHOU: K8 (SL c/ corante sem omie) = %s — esperado a SAYERLACK', r.id); END IF;
   -- C6c corante com omie INATIVO invalida (a condição op.ativo do espelho tem dente)
   SELECT id::text, is_sl INTO r FROM public.v_tint_formula_canonica WHERE cor_id='K13';
   IF r.id IS DISTINCT FROM 'f0130000-0000-0000-0000-000000000019' OR r.is_sl IS DISTINCT FROM false
-    THEN RAISE EXCEPTION 'C6c FALHOU: K13 (SL c/ corante de omie inativo) = % — esperado a SAYERLACK', r.id; END IF;
+    THEN falhas := falhas || format('C6c FALHOU: K13 (SL c/ corante de omie inativo) = %s — esperado a SAYERLACK', r.id); END IF;
   -- C6d corante com volume_total_ml=0 invalida (a condição volume>0 tem dente)
   SELECT id::text, is_sl INTO r FROM public.v_tint_formula_canonica WHERE cor_id='K14';
   IF r.id IS DISTINCT FROM 'f0140000-0000-0000-0000-000000000019' OR r.is_sl IS DISTINCT FROM false
-    THEN RAISE EXCEPTION 'C6d FALHOU: K14 (SL c/ corante volume 0) = % — esperado a SAYERLACK', r.id; END IF;
+    THEN falhas := falhas || format('C6d FALHOU: K14 (SL c/ corante volume 0) = %s — esperado a SAYERLACK', r.id); END IF;
 
   -- C7 base indisponível não muda a preferência (validade é por-fórmula)
   SELECT id::text, is_sl, receita_valida INTO r FROM public.v_tint_formula_canonica WHERE cor_id='K7';
   IF r.id IS DISTINCT FROM 'f7000000-0000-0000-0000-00000000005a' OR r.is_sl IS DISTINCT FROM true OR r.receita_valida IS DISTINCT FROM true
-    THEN RAISE EXCEPTION 'C7 FALHOU: K7 (sku inativo) = % is_sl=% — SL valida devia vencer mesmo sem base', r.id, r.is_sl; END IF;
+    THEN falhas := falhas || format('C7 FALHOU: K7 (sku inativo) = %s is_sl=%s — SL valida devia vencer mesmo sem base', r.id, r.is_sl); END IF;
 
   -- C7b desativada fora do jogo: K11 canônica = SAYERLACK (a SL está desativada)
   SELECT id::text, is_sl INTO r FROM public.v_tint_formula_canonica WHERE cor_id='K11';
   IF r.id IS DISTINCT FROM 'fb000000-0000-0000-0000-000000000019' OR r.is_sl IS DISTINCT FROM false
-    THEN RAISE EXCEPTION 'C7b FALHOU: K11 (SL desativada) = % — esperado a SAYERLACK ativa', r.id; END IF;
+    THEN falhas := falhas || format('C7b FALHOU: K11 (SL desativada) = %s — esperado a SAYERLACK ativa', r.id); END IF;
 
   -- C12 empate de rank (personalizada×SAYERLACK, ambas válidas): menor uuid vence,
   -- independente da ordem de inserção (a SAYERLACK fd… foi inserida primeiro).
   SELECT id::text INTO r FROM public.v_tint_formula_canonica WHERE cor_id='K12';
   IF r.id IS DISTINCT FROM 'fc000000-0000-0000-0000-0000000000e0'
-    THEN RAISE EXCEPTION 'C12 FALHOU: K12 (empate rank 1) = % — esperado o menor uuid (fc…)', r.id; END IF;
+    THEN falhas := falhas || format('C12 FALHOU: K12 (empate rank 1) = %s — esperado o menor uuid (fc…)', r.id); END IF;
 
   -- C13 (2b) preco_csv_legado — a fonte "Tabela (versão anterior)" da vendedora:
   -- SL canônica → CSV da gêmea antiga; fallback → o próprio; sem CSV na chave → NULL;
   -- SL desativada não participa mas a SAYERLACK ativa mantém o seu.
   SELECT preco_csv_legado::text INTO r FROM public.v_tint_formula_canonica WHERE cor_id='K1';
   IF r.preco_csv_legado IS DISTINCT FROM '150' THEN
-    RAISE EXCEPTION 'C13 FALHOU: K1 (SL canônica) preco_csv_legado=% — esperado 150 (CSV da gêmea)', r.preco_csv_legado; END IF;
+    falhas := falhas || format('C13 FALHOU: K1 (SL canônica) preco_csv_legado=%s — esperado 150 (CSV da gêmea)', r.preco_csv_legado); END IF;
   SELECT preco_csv_legado::text INTO r FROM public.v_tint_formula_canonica WHERE cor_id='K2';
   IF r.preco_csv_legado IS DISTINCT FROM '160' THEN
-    RAISE EXCEPTION 'C13 FALHOU: K2 (fallback SAYERLACK) preco_csv_legado=% — esperado 160 (próprio)', r.preco_csv_legado; END IF;
+    falhas := falhas || format('C13 FALHOU: K2 (fallback SAYERLACK) preco_csv_legado=%s — esperado 160 (próprio)', r.preco_csv_legado); END IF;
   SELECT preco_csv_legado::text INTO r FROM public.v_tint_formula_canonica WHERE cor_id='K9';
   IF r.preco_csv_legado IS NOT NULL THEN
-    RAISE EXCEPTION 'C13 FALHOU: K9 (só SL, sem CSV na chave) preco_csv_legado=% — esperado NULL', r.preco_csv_legado; END IF;
+    falhas := falhas || format('C13 FALHOU: K9 (só SL, sem CSV na chave) preco_csv_legado=%s — esperado NULL', r.preco_csv_legado); END IF;
   SELECT preco_csv_legado::text INTO r FROM public.v_tint_formula_canonica WHERE cor_id='K11';
   IF r.preco_csv_legado IS DISTINCT FROM '220' THEN
-    RAISE EXCEPTION 'C13 FALHOU: K11 preco_csv_legado=% — esperado 220', r.preco_csv_legado; END IF;
+    falhas := falhas || format('C13 FALHOU: K11 preco_csv_legado=%s — esperado 220', r.preco_csv_legado); END IF;
 
   -- C14 (fix semântico) FUTURE-PROOF: K15 = SL canônica COM CSV PRÓPRIO (999).
   -- O max IGNORA o próprio (e qualquer SL) e devolve o da gêmea SAYERLACK (260).
   -- É o cenário que a 2b crua erraria (max incluiria o 999 da própria SL).
   SELECT id::text, is_sl, preco_csv_legado::text INTO r FROM public.v_tint_formula_canonica WHERE cor_id='K15';
   IF r.id IS DISTINCT FROM 'f0150000-0000-0000-0000-00000000005a' OR r.is_sl IS DISTINCT FROM true THEN
-    RAISE EXCEPTION 'C14 FALHOU (pre-condicao): canonica de K15 = % (is_sl=%) — esperado a SL valida', r.id, r.is_sl; END IF;
-  IF r.preco_csv_legado IS DISTINCT FROM '260' THEN
-    RAISE EXCEPTION 'C14 FALHOU: K15 (SL canonica com CSV proprio 999) preco_csv_legado=% — esperado 260 (da gemea nao-SL; o proprio NUNCA entra)', r.preco_csv_legado; END IF;
+    falhas := falhas || format('C14 FALHOU (pre-condicao): canonica de K15 = %s (is_sl=%s) — esperado a SL valida', r.id, r.is_sl);
+  ELSIF r.preco_csv_legado IS DISTINCT FROM '260' THEN
+    falhas := falhas || format('C14 FALHOU: K15 (SL canonica com CSV proprio 999) preco_csv_legado=%s — esperado 260 (da gemea nao-SL; o proprio NUNCA entra)', r.preco_csv_legado); END IF;
 
   -- C15 (fix semântico) ramo NÃO-SL intacto: K16 = canônica SAYERLACK; o max
   -- segue o comportamento da 2b (todas as ativas, INCLUSIVE a SL com CSV 400).
   -- Pega implementação over-eager que excluísse SL sempre (daria 270).
   SELECT id::text, is_sl, preco_csv_legado::text INTO r FROM public.v_tint_formula_canonica WHERE cor_id='K16';
   IF r.id IS DISTINCT FROM 'f0160000-0000-0000-0000-000000000019' OR r.is_sl IS DISTINCT FROM false THEN
-    RAISE EXCEPTION 'C15 FALHOU (pre-condicao): canonica de K16 = % (is_sl=%) — esperado a SAYERLACK', r.id, r.is_sl; END IF;
-  IF r.preco_csv_legado IS DISTINCT FROM '400' THEN
-    RAISE EXCEPTION 'C15 FALHOU: K16 (canonica nao-SL) preco_csv_legado=% — esperado 400 (max inclui a SL; ramo nao-SL intacto)', r.preco_csv_legado; END IF;
+    falhas := falhas || format('C15 FALHOU (pre-condicao): canonica de K16 = %s (is_sl=%s) — esperado a SAYERLACK', r.id, r.is_sl);
+  ELSIF r.preco_csv_legado IS DISTINCT FROM '400' THEN
+    falhas := falhas || format('C15 FALHOU: K16 (canonica nao-SL) preco_csv_legado=%s — esperado 400 (max inclui a SL; ramo nao-SL intacto)', r.preco_csv_legado); END IF;
 
   -- C16 (allowlist) 2ª SL com CSV na MESMA chave: K17 = SL canônica; o max
   -- ignora QUALQUER linha SL — não só a própria → 280 da geração '1', nunca o
@@ -414,9 +534,9 @@ BEGIN
   -- passava C13/C14/C15 e F6/F7 por construção sobre os seeds K1-K16).
   SELECT id::text, is_sl, preco_csv_legado::text INTO r FROM public.v_tint_formula_canonica WHERE cor_id='K17';
   IF r.id IS DISTINCT FROM 'f0170000-0000-0000-0000-00000000005a' OR r.is_sl IS DISTINCT FROM true THEN
-    RAISE EXCEPTION 'C16 FALHOU (pre-condicao): canonica de K17 = % (is_sl=%) — esperado a SL valida', r.id, r.is_sl; END IF;
-  IF r.preco_csv_legado IS DISTINCT FROM '280' THEN
-    RAISE EXCEPTION 'C16 FALHOU: K17 (2a linha SL com CSV 800 na chave) preco_csv_legado=% — esperado 280 (TODA SL fora do max, nao so a propria)', r.preco_csv_legado; END IF;
+    falhas := falhas || format('C16 FALHOU (pre-condicao): canonica de K17 = %s (is_sl=%s) — esperado a SL valida', r.id, r.is_sl);
+  ELSIF r.preco_csv_legado IS DISTINCT FROM '280' THEN
+    falhas := falhas || format('C16 FALHOU: K17 (2a linha SL com CSV 800 na chave) preco_csv_legado=%s — esperado 280 (TODA SL fora do max, nao so a propria)', r.preco_csv_legado); END IF;
 
   -- C17 (allowlist — FIXA a decisão do founder 2026-07-21) personalizada com
   -- CSV em chave de canônica SL: K18 → 290 da geração '1'; o 500 da
@@ -424,22 +544,46 @@ BEGIN
   -- É o assert que separa allowlist da blocklist antiga (que devolveria 500).
   SELECT id::text, is_sl, preco_csv_legado::text INTO r FROM public.v_tint_formula_canonica WHERE cor_id='K18';
   IF r.id IS DISTINCT FROM 'f0180000-0000-0000-0000-00000000005a' OR r.is_sl IS DISTINCT FROM true THEN
-    RAISE EXCEPTION 'C17 FALHOU (pre-condicao): canonica de K18 = % (is_sl=%) — esperado a SL valida', r.id, r.is_sl; END IF;
-  IF r.preco_csv_legado IS DISTINCT FROM '290' THEN
-    RAISE EXCEPTION 'C17 FALHOU: K18 (personalizada com CSV 500 na chave) preco_csv_legado=% — esperado 290 (allowlist: personalizada fora do max)', r.preco_csv_legado; END IF;
+    falhas := falhas || format('C17 FALHOU (pre-condicao): canonica de K18 = %s (is_sl=%s) — esperado a SL valida', r.id, r.is_sl);
+  ELSIF r.preco_csv_legado IS DISTINCT FROM '290' THEN
+    falhas := falhas || format('C17 FALHOU: K18 (personalizada com CSV 500 na chave) preco_csv_legado=%s — esperado 290 (allowlist: personalizada fora do max)', r.preco_csv_legado); END IF;
 
   -- C18 linha DESATIVADA com CSV alto fora do max: K19 → 300 da '1' ativa; o
   -- 900 da '1' desativada nao entra (o filtro desativada_em do max tem dente).
   SELECT id::text, is_sl, preco_csv_legado::text INTO r FROM public.v_tint_formula_canonica WHERE cor_id='K19';
   IF r.id IS DISTINCT FROM 'f0190000-0000-0000-0000-00000000005a' OR r.is_sl IS DISTINCT FROM true THEN
-    RAISE EXCEPTION 'C18 FALHOU (pre-condicao): canonica de K19 = % (is_sl=%) — esperado a SL valida', r.id, r.is_sl; END IF;
-  IF r.preco_csv_legado IS DISTINCT FROM '300' THEN
-    RAISE EXCEPTION 'C18 FALHOU: K19 (linha desativada com CSV 900 na chave) preco_csv_legado=% — esperado 300 (desativada fora do max)', r.preco_csv_legado; END IF;
+    falhas := falhas || format('C18 FALHOU (pre-condicao): canonica de K19 = %s (is_sl=%s) — esperado a SL valida', r.id, r.is_sl);
+  ELSIF r.preco_csv_legado IS DISTINCT FROM '300' THEN
+    falhas := falhas || format('C18 FALHOU: K19 (linha desativada com CSV 900 na chave) preco_csv_legado=%s — esperado 300 (desativada fora do max)', r.preco_csv_legado); END IF;
+
+  -- C19 (challenge Codex 2026-07-21, achado (a)-1) GUARD CROSS-ACCOUNT: K20 é
+  -- da conta 'colacor'; na mesma chave há a '1' de COLACOR (CSV 320) e uma
+  -- linha de colacor que aponta para a subcoleção '1' de OBEN (CSV 850).
+  -- Esperado 320 — o 850 entra se `s2.account = g2.account` sumir do EXISTS.
+  -- Nenhum seed K1-K19 exercia esse predicado (harness monoconta).
+  SELECT id::text, is_sl, preco_csv_legado::text INTO r
+    FROM public.v_tint_formula_canonica WHERE account='colacor' AND cor_id='K20';
+  IF r.id IS DISTINCT FROM 'f0200000-0000-0000-0000-00000000005a' OR r.is_sl IS DISTINCT FROM true THEN
+    falhas := falhas || format('C19 FALHOU (pre-condicao): canonica de K20 = %s (is_sl=%s) — esperado a SL valida de colacor', r.id, r.is_sl);
+  ELSIF r.preco_csv_legado IS DISTINCT FROM '320' THEN
+    falhas := falhas || format('C19 FALHOU: K20 (subcolecao 1 de OUTRA conta com CSV 850) preco_csv_legado=%s — esperado 320 (guard s2.account=g2.account)', r.preco_csv_legado); END IF;
+
+  -- C20 (challenge Codex 2026-07-21, achado (a)-2) EXCLUSIVIDADE DO LITERAL '1':
+  -- K21 tem, na mesma chave, a '1' (330), a '2' (860), a '10' (870) e uma
+  -- subcolecao de rotulo NULL (880). Esperado 330. Mata `<> 'SL'` (880),
+  -- `IN ('1','2')` (860), `LIKE '1%'` (870) e `COALESCE(...,'1')='1'` (880) —
+  -- os 4 passavam C1-C18 e F1-F10 porque o seed só tinha 'SL' e '1'.
+  SELECT id::text, is_sl, preco_csv_legado::text INTO r
+    FROM public.v_tint_formula_canonica WHERE cor_id='K21';
+  IF r.id IS DISTINCT FROM 'f0210000-0000-0000-0000-00000000005a' OR r.is_sl IS DISTINCT FROM true THEN
+    falhas := falhas || format('C20 FALHOU (pre-condicao): canonica de K21 = %s (is_sl=%s) — esperado a SL valida', r.id, r.is_sl);
+  ELSIF r.preco_csv_legado IS DISTINCT FROM '330' THEN
+    falhas := falhas || format('C20 FALHOU: K21 (subcolecoes 2/10/rotulo-NULL com CSV alto) preco_csv_legado=%s — esperado 330 (SO a geracao 1 alimenta o rotulo)', r.preco_csv_legado); END IF;
 
   -- C9 determinismo: duas leituras idênticas (ids ordenados)
   SELECT string_agg(id::text, ',' ORDER BY id) INTO a FROM public.v_tint_formula_canonica;
   SELECT string_agg(id::text, ',' ORDER BY id) INTO b FROM public.v_tint_formula_canonica;
-  IF a IS DISTINCT FROM b THEN RAISE EXCEPTION 'C9 FALHOU: leituras divergem'; END IF;
+  IF a IS DISTINCT FROM b THEN falhas := falhas || 'C9 FALHOU: leituras divergem'; END IF;
 
   -- C10 paridade do espelho: p/ cada canônica, receita_valida ∧ base_disponivel
   --     ⟺ precoFinal da RPC REAL (get_tint_prices) não-nulo
@@ -453,18 +597,28 @@ BEGIN
            round(((public.get_tint_prices(ARRAY[v.id]) -> v.id::text ->> 'precoFinal'))::numeric, 6) AS rpc_batch_valor
     FROM public.v_tint_formula_canonica v
   LOOP
-    IF (r.receita_valida AND r.base_ok) IS DISTINCT FROM r.rpc_tem_preco THEN
-      RAISE EXCEPTION 'C10 FALHOU: paridade quebrou em % (%): valida=% base=% rpc=%',
-        r.cor_id, r.id, r.receita_valida, r.base_ok, r.rpc_tem_preco;
+    -- só a PRIMEIRA ocorrência entra no array (o loop varre todas as canônicas;
+    -- N linhas quebradas são UMA falha de C10, senão a contagem vira ruído)
+    IF c10_ok AND (r.receita_valida AND r.base_ok) IS DISTINCT FROM r.rpc_tem_preco THEN
+      c10_ok := false;
+      falhas := falhas || format('C10 FALHOU: paridade quebrou em %s (%s): valida=%s base=%s rpc=%s',
+        r.cor_id, r.id, r.receita_valida, r.base_ok, r.rpc_tem_preco);
     END IF;
-    IF r.rpc_single_tem_preco IS DISTINCT FROM r.rpc_tem_preco
-       OR r.rpc_single_valor IS DISTINCT FROM r.rpc_batch_valor THEN
-      RAISE EXCEPTION 'C10b FALHOU: singular×batch divergem em % (%): single=% batch=%',
-        r.cor_id, r.id, r.rpc_single_valor, r.rpc_batch_valor;
+    IF c10b_ok AND (r.rpc_single_tem_preco IS DISTINCT FROM r.rpc_tem_preco
+       OR r.rpc_single_valor IS DISTINCT FROM r.rpc_batch_valor) THEN
+      c10b_ok := false;
+      falhas := falhas || format('C10b FALHOU: singular×batch divergem em %s (%s): single=%s batch=%s',
+        r.cor_id, r.id, r.rpc_single_valor, r.rpc_batch_valor);
     END IF;
   END LOOP;
 
-  RAISE NOTICE 'TODOS_OK';
+  -- Desfecho: TODOS_OK, ou a lista COMPLETA com a contagem. É o que torna
+  -- verificável a alegação "vermelho certo, e só ele" de cada falsificação.
+  IF array_length(falhas, 1) IS NULL THEN
+    RAISE NOTICE 'TODOS_OK';
+  ELSE
+    RAISE EXCEPTION 'FALHAS[%]: %', array_length(falhas, 1), array_to_string(falhas, ' | ');
+  END IF;
 END $$;
 SQL
 }
@@ -473,7 +627,7 @@ echo ""
 echo "════════ BASELINE (migration real) ════════"
 OUT="$(run_asserts)"
 case "$OUT" in
-  *TODOS_OK*) ok "C1–C18 baseline verde (preferência, fallback, 12, personalizada, csv legado allowlist, determinismo, paridade RPC)" ;;
+  *TODOS_OK*) ok "C1–C20 baseline verde (preferência, fallback, 12, personalizada, csv legado allowlist, guard de conta, exclusividade da '1', determinismo, paridade RPC)" ;;
   *) bad "baseline NÃO passou: $(printf '%s' "$OUT" | tr '\n' ' ' | cut -c1-300)" ;;
 esac
 
@@ -483,7 +637,7 @@ echo "════════ C11 — RLS/security_invoker (staff vê · custom
 vcnt() { Pq -c "$1 SELECT count(*) FROM public.v_tint_formula_canonica;" 2>&1 | tail -1; }
 is_num() { case "$1" in ''|*[!0-9]*) return 1;; *) return 0;; esac; }
 N_STAFF=$(vcnt "SET test.uid='11111111-1111-1111-1111-111111111111'; SET ROLE authenticated;")
-if is_num "$N_STAFF" && [ "$N_STAFF" -eq 19 ]; then ok "C11a staff (master) vê a view ($N_STAFF chaves)"; else bad "C11a staff: esperado 19, veio [$N_STAFF]"; fi
+if is_num "$N_STAFF" && [ "$N_STAFF" -eq 21 ]; then ok "C11a staff (master) vê a view ($N_STAFF chaves)"; else bad "C11a staff: esperado 21, veio [$N_STAFF]"; fi
 N_CUST=$(vcnt "SET test.uid='33333333-3333-3333-3333-333333333333'; SET ROLE authenticated;")
 eq "C11b customer autenticado NÃO vê (RLS herdada)" "$N_CUST" "0"
 N_NOROLE=$(vcnt "SET test.uid='44444444-4444-4444-4444-444444444444'; SET ROLE authenticated;")
@@ -496,7 +650,7 @@ esac
 ANON_PRIV=$(Pq -c "SELECT has_table_privilege('anon','public.v_tint_formula_canonica','SELECT');" | tail -1)
 eq "C11d2 anon SEM privilégio direto na VIEW (has_table_privilege=f)" "$ANON_PRIV" "f"
 N_SRV=$(vcnt "SET ROLE service_role;")
-if is_num "$N_SRV" && [ "$N_SRV" -eq 19 ]; then ok "C11e service_role vê ($N_SRV chaves)"; else bad "C11e service_role: esperado 19, veio [$N_SRV]"; fi
+if is_num "$N_SRV" && [ "$N_SRV" -eq 21 ]; then ok "C11e service_role vê ($N_SRV chaves)"; else bad "C11e service_role: esperado 21, veio [$N_SRV]"; fi
 Pq -c "RESET ROLE;" >/dev/null
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -510,7 +664,17 @@ P -q <<'SQL' >/dev/null
 DROP VIEW IF EXISTS public.v_tint_formula_canonica;
 CREATE VIEW public.v_tint_formula_canonica WITH (security_invoker = on) AS
 SELECT f.id, f.account, f.sku_id, f.cor_id, f.nome_cor, f.preco_final_sayersystem,
-       f.subcolecao_id, f.personalizada, f.updated_at, rf.is_sl, rf.tem_receita, rf.receita_valida
+       f.subcolecao_id, f.personalizada, f.updated_at, rf.is_sl, rf.tem_receita, rf.receita_valida,
+       -- 13ª coluna FIEL à migration real: esta falsificação ataca o RANK, não o
+       -- CSV. Sem ela a view sabotada tinha 12 colunas e os asserts C13-C20
+       -- morriam em "column does not exist" — sabotagem que muda DUAS coisas
+       -- (rank + shape) não isola o que prova.
+       (SELECT max(g2.preco_final_sayersystem) FROM public.tint_formulas g2
+         WHERE g2.account=f.account AND g2.sku_id=f.sku_id AND g2.cor_id=f.cor_id
+           AND g2.desativada_em IS NULL
+           AND (NOT rf.is_sl OR EXISTS (SELECT 1 FROM public.tint_subcolecoes s2
+                WHERE s2.id=g2.subcolecao_id AND s2.account=g2.account
+                  AND s2.id_subcolecao_sayersystem='1'))) AS preco_csv_legado
 FROM public.tint_formulas f
 CROSS JOIN LATERAL (
   SELECT v.is_sl, v.tem_receita, (v.tem_receita AND v.corantes_ok) AS receita_valida,
@@ -550,10 +714,9 @@ WHERE f.desativada_em IS NULL AND f.sku_id IS NOT NULL
 SQL
 OUT="$(run_asserts)"
 case "$OUT" in
-  *"C1 FALHOU"*) ok "F1 pegou a sabotagem: C1 caiu (SAYERLACK venceu a SL válida)" ;;
-  *TODOS_OK*)    bad "F1 NÃO pegou: asserts verdes com rank invertido (teste sem dente)" ;;
-  *)             bad "F1 caiu no assert ERRADO: $(printf '%s' "$OUT" | tr '\n' ' ' | cut -c1-200)" ;;
+  *) : ;;
 esac
+confere_falsificacao "F1" "$OUT" 3 "C1" "C7" "C14" -- "rank invertido: SAYERLACK venceu a SL valida (C7/C14 caem junto: trocar a canonica troca o is_sl, logo o ramo do CSV)"
 
 echo ""
 echo "════════ F2 — sabotagem: espelho de corantes frouxo (>=0 aceita corante zero) ════════"
@@ -562,7 +725,17 @@ P -q <<'SQL' >/dev/null
 DROP VIEW IF EXISTS public.v_tint_formula_canonica;
 CREATE VIEW public.v_tint_formula_canonica WITH (security_invoker = on) AS
 SELECT f.id, f.account, f.sku_id, f.cor_id, f.nome_cor, f.preco_final_sayersystem,
-       f.subcolecao_id, f.personalizada, f.updated_at, rf.is_sl, rf.tem_receita, rf.receita_valida
+       f.subcolecao_id, f.personalizada, f.updated_at, rf.is_sl, rf.tem_receita, rf.receita_valida,
+       -- 13ª coluna FIEL à migration real: esta falsificação ataca o RANK, não o
+       -- CSV. Sem ela a view sabotada tinha 12 colunas e os asserts C13-C20
+       -- morriam em "column does not exist" — sabotagem que muda DUAS coisas
+       -- (rank + shape) não isola o que prova.
+       (SELECT max(g2.preco_final_sayersystem) FROM public.tint_formulas g2
+         WHERE g2.account=f.account AND g2.sku_id=f.sku_id AND g2.cor_id=f.cor_id
+           AND g2.desativada_em IS NULL
+           AND (NOT rf.is_sl OR EXISTS (SELECT 1 FROM public.tint_subcolecoes s2
+                WHERE s2.id=g2.subcolecao_id AND s2.account=g2.account
+                  AND s2.id_subcolecao_sayersystem='1'))) AS preco_csv_legado
 FROM public.tint_formulas f
 CROSS JOIN LATERAL (
   SELECT v.is_sl, v.tem_receita, (v.tem_receita AND v.corantes_ok) AS receita_valida,
@@ -602,10 +775,9 @@ WHERE f.desativada_em IS NULL AND f.sku_id IS NOT NULL
 SQL
 OUT="$(run_asserts)"
 case "$OUT" in
-  *"C6 FALHOU"*) ok "F2 pegou a sabotagem: C6 caiu (SL com corante-zero virou 'válida' e venceu)" ;;
-  *TODOS_OK*)    bad "F2 NÃO pegou: asserts verdes com espelho frouxo (paridade sem dente)" ;;
-  *)             bad "F2 caiu no assert errado (esperado C6): $(printf '%s' "$OUT" | tr '\n' ' ' | cut -c1-200)" ;;
+  *) : ;;
 esac
+confere_falsificacao "F2" "$OUT" 2 "C6" "C10" -- "espelho frouxo: SL com corante-zero virou valida e venceu (C10 cai junto: a paridade com a RPC real e o oraculo independente)"
 
 echo ""
 echo "════════ F3 — sabotagem: sem o anti-join (duplicata volta) ════════"
@@ -621,16 +793,26 @@ SELECT f.id, f.account, f.sku_id, f.cor_id, f.nome_cor, f.preco_final_sayersyste
         AND NOT EXISTS (SELECT 1 FROM public.tint_formula_itens fi
           LEFT JOIN public.tint_corantes c ON c.id=fi.corante_id
           LEFT JOIN public.omie_products op ON op.id=c.omie_product_id
-          WHERE fi.formula_id=f.id AND NOT (COALESCE(op.valor_unitario,0)>0 AND COALESCE(op.ativo,false) AND c.volume_total_ml IS NOT NULL AND c.volume_total_ml>0))) AS receita_valida
+          WHERE fi.formula_id=f.id AND NOT (COALESCE(op.valor_unitario,0)>0 AND COALESCE(op.ativo,false) AND c.volume_total_ml IS NOT NULL AND c.volume_total_ml>0))) AS receita_valida,
+       -- 13ª coluna fiel (esta falsificação ataca o ANTI-JOIN, não o CSV); aqui
+       -- o is_sl é recalculado inline porque esta view não tem o LATERAL rf.
+       (SELECT max(g2.preco_final_sayersystem) FROM public.tint_formulas g2
+         WHERE g2.account=f.account AND g2.sku_id=f.sku_id AND g2.cor_id=f.cor_id
+           AND g2.desativada_em IS NULL
+           AND (NOT EXISTS (SELECT 1 FROM public.tint_subcolecoes s3
+                            WHERE s3.id=f.subcolecao_id AND s3.account=f.account
+                              AND s3.id_subcolecao_sayersystem='SL')
+                OR EXISTS (SELECT 1 FROM public.tint_subcolecoes s2
+                           WHERE s2.id=g2.subcolecao_id AND s2.account=g2.account
+                             AND s2.id_subcolecao_sayersystem='1'))) AS preco_csv_legado
 FROM public.tint_formulas f
 WHERE f.desativada_em IS NULL AND f.sku_id IS NOT NULL;  -- SABOTADO: sem NOT EXISTS
 SQL
 OUT="$(run_asserts)"
 case "$OUT" in
-  *"C8 FALHOU"*) ok "F3 pegou a sabotagem: C8 caiu (duplicata voltou)" ;;
-  *TODOS_OK*) bad "F3 NÃO pegou: asserts verdes sem o anti-join (não-desaparecimento sem dente)" ;;
-  *)          bad "F3 caiu em assert inesperado: $(printf '%s' "$OUT" | tr '\n' ' ' | cut -c1-200)" ;;
+  *) : ;;
 esac
+confere_falsificacao "F3" "$OUT" 9 "C8" "C2" "C6" "C6b" "C6c" "C6d" "C12" "C15" "C19" -- "sem o anti-join: duplicata voltou (16 chaves com >1 linha; os asserts por-cor passam a ler linha arbitraria)"
 
 echo ""
 echo "════════ F4 — sabotagem: tie-break invertido (maior uuid vence) ════════"
@@ -640,7 +822,17 @@ P -q <<'SQL' >/dev/null
 DROP VIEW IF EXISTS public.v_tint_formula_canonica;
 CREATE VIEW public.v_tint_formula_canonica WITH (security_invoker = on) AS
 SELECT f.id, f.account, f.sku_id, f.cor_id, f.nome_cor, f.preco_final_sayersystem,
-       f.subcolecao_id, f.personalizada, f.updated_at, rf.is_sl, rf.tem_receita, rf.receita_valida
+       f.subcolecao_id, f.personalizada, f.updated_at, rf.is_sl, rf.tem_receita, rf.receita_valida,
+       -- 13ª coluna FIEL à migration real: esta falsificação ataca o RANK, não o
+       -- CSV. Sem ela a view sabotada tinha 12 colunas e os asserts C13-C20
+       -- morriam em "column does not exist" — sabotagem que muda DUAS coisas
+       -- (rank + shape) não isola o que prova.
+       (SELECT max(g2.preco_final_sayersystem) FROM public.tint_formulas g2
+         WHERE g2.account=f.account AND g2.sku_id=f.sku_id AND g2.cor_id=f.cor_id
+           AND g2.desativada_em IS NULL
+           AND (NOT rf.is_sl OR EXISTS (SELECT 1 FROM public.tint_subcolecoes s2
+                WHERE s2.id=g2.subcolecao_id AND s2.account=g2.account
+                  AND s2.id_subcolecao_sayersystem='1'))) AS preco_csv_legado
 FROM public.tint_formulas f
 CROSS JOIN LATERAL (
   SELECT v.is_sl, v.tem_receita, (v.tem_receita AND v.corantes_ok) AS receita_valida,
@@ -680,10 +872,9 @@ WHERE f.desativada_em IS NULL AND f.sku_id IS NOT NULL
 SQL
 OUT="$(run_asserts)"
 case "$OUT" in
-  *"C12 FALHOU"*) ok "F4 pegou a sabotagem: C12 caiu (tie-break invertido — maior uuid venceu)" ;;
-  *TODOS_OK*)     bad "F4 NÃO pegou: asserts verdes com tie-break invertido (C12 sem dente)" ;;
-  *)              bad "F4 caiu no assert errado (esperado C12): $(printf '%s' "$OUT" | tr '\n' ' ' | cut -c1-200)" ;;
+  *) : ;;
 esac
+confere_falsificacao "F4" "$OUT" 1 "C12" -- "tie-break invertido: maior uuid venceu"
 
 echo ""
 echo "════════ F5 — sabotagem: preco_csv_legado só da própria linha (perde a gêmea) ════════"
@@ -735,10 +926,9 @@ WHERE f.desativada_em IS NULL AND f.sku_id IS NOT NULL
 SQL
 OUT="$(run_asserts)"
 case "$OUT" in
-  *"C13 FALHOU"*) ok "F5 pegou a sabotagem: C13 caiu (CSV legado perdeu a gêmea antiga)" ;;
-  *TODOS_OK*)     bad "F5 NÃO pegou: asserts verdes sem o CSV da gêmea (C13 sem dente)" ;;
-  *)              bad "F5 caiu no assert errado (esperado C13): $(printf '%s' "$OUT" | tr '\n' ' ' | cut -c1-200)" ;;
+  *) : ;;
 esac
+confere_falsificacao "F5" "$OUT" 8 "C13" "C14" "C15" "C16" "C17" "C18" "C19" "C20" -- "csv legado so da propria linha: perdeu a gemea antiga (derruba TODA a familia do CSV, como esperado)"
 
 echo ""
 echo "════════ F6 — sabotagem: expressão da 2b de volta (max SEM o filtro não-SL) ════════"
@@ -793,10 +983,9 @@ WHERE f.desativada_em IS NULL AND f.sku_id IS NOT NULL
 SQL
 OUT="$(run_asserts)"
 case "$OUT" in
-  *"C14 FALHOU: K15"*) ok "F6 pegou a sabotagem: C14 caiu (max voltou a incluir o CSV próprio da SL)" ;;
-  *TODOS_OK*)          bad "F6 NÃO pegou: asserts verdes com a expressão da 2b (C14 sem dente)" ;;
-  *)                   bad "F6 caiu no assert errado (esperado C14/K15): $(printf '%s' "$OUT" | tr '\n' ' ' | cut -c1-200)" ;;
+  *) : ;;
 esac
+confere_falsificacao "F6" "$OUT" 5 "C14" "C16" "C17" "C19" "C20" -- "expressao da 2b crua: max voltou a incluir o CSV proprio da SL"
 
 echo ""
 echo "════════ F7 — sabotagem: allowlist INCONDICIONAL (sem o guard is_sl) ════════"
@@ -854,10 +1043,9 @@ WHERE f.desativada_em IS NULL AND f.sku_id IS NOT NULL
 SQL
 OUT="$(run_asserts)"
 case "$OUT" in
-  *"C15 FALHOU: K16"*) ok "F7 pegou a sabotagem: C15 caiu (ramo não-SL perdeu a SL do max)" ;;
-  *TODOS_OK*)          bad "F7 NÃO pegou: asserts verdes com allowlist incondicional (C15 sem dente)" ;;
-  *)                   bad "F7 caiu no assert errado (esperado C15/K16): $(printf '%s' "$OUT" | tr '\n' ' ' | cut -c1-200)" ;;
+  *) : ;;
 esac
+confere_falsificacao "F7" "$OUT" 1 "C15" -- "allowlist INCONDICIONAL: ramo nao-SL perdeu a SL do max"
 
 echo ""
 echo "════════ F8 — sabotagem: mutante 'g2.id <> f.id' (exclui só a PRÓPRIA linha) ════════"
@@ -914,10 +1102,9 @@ WHERE f.desativada_em IS NULL AND f.sku_id IS NOT NULL
 SQL
 OUT="$(run_asserts)"
 case "$OUT" in
-  *"C16 FALHOU: K17"*) ok "F8 pegou a sabotagem: C16 caiu (mutante id<>f.id deixou a 2ª SL entrar no max)" ;;
-  *TODOS_OK*)          bad "F8 NÃO pegou: asserts verdes com o mutante id<>f.id (C16 sem dente — o furo do achado 2 segue aberto)" ;;
-  *)                   bad "F8 caiu no assert errado (esperado C16/K17): $(printf '%s' "$OUT" | tr '\n' ' ' | cut -c1-200)" ;;
+  *) : ;;
 esac
+confere_falsificacao "F8" "$OUT" 4 "C16" "C17" "C19" "C20" -- "mutante id<>f.id: a 2a SL entrou no max (C19/C20 novos tambem tem dente contra ele)"
 
 echo ""
 echo "════════ F9 — sabotagem: blocklist não-SL de volta (20260722100002 verbatim) ════════"
@@ -977,10 +1164,9 @@ WHERE f.desativada_em IS NULL AND f.sku_id IS NOT NULL
 SQL
 OUT="$(run_asserts)"
 case "$OUT" in
-  *"C17 FALHOU: K18"*) ok "F9 pegou a sabotagem: C17 caiu (blocklist deixou a personalizada entrar no max)" ;;
-  *TODOS_OK*)          bad "F9 NÃO pegou: asserts verdes com a blocklist de volta (C17 sem dente — a decisão do founder não está fixada)" ;;
-  *)                   bad "F9 caiu no assert errado (esperado C17/K18): $(printf '%s' "$OUT" | tr '\n' ' ' | cut -c1-200)" ;;
+  *) : ;;
 esac
+confere_falsificacao "F9" "$OUT" 3 "C17" "C19" "C20" -- "blocklist de volta (20260722100002 verbatim): a personalizada entrou no max"
 
 echo ""
 echo "════════ F10 — sabotagem: max sem o filtro de desativada ════════"
@@ -1038,17 +1224,60 @@ WHERE f.desativada_em IS NULL AND f.sku_id IS NOT NULL
 SQL
 OUT="$(run_asserts)"
 case "$OUT" in
-  *"C18 FALHOU: K19"*) ok "F10 pegou a sabotagem: C18 caiu (desativada com CSV 900 entrou no max)" ;;
-  *TODOS_OK*)          bad "F10 NÃO pegou: asserts verdes sem o filtro de desativada (C18 sem dente)" ;;
-  *)                   bad "F10 caiu no assert errado (esperado C18/K19): $(printf '%s' "$OUT" | tr '\n' ' ' | cut -c1-200)" ;;
+  *) : ;;
 esac
+confere_falsificacao "F10" "$OUT" 1 "C18" -- "max sem o filtro desativada_em: a desativada com CSV 900 entrou"
+
+# ══════════════════════════════════════════════════════════════════════════════
+# F11-F13 (challenge Codex xhigh 2026-07-21) — mutantes que sobreviviam a TUDO.
+# Geradas por MUTAÇÃO da migration real (sed sobre $MIGRATION4), não por cópia:
+# assim a view sabotada difere da verdadeira em EXATAMENTE um ponto — que é a
+# definição de mutante. Copiar 60 linhas à mão foi o que deixou F1-F4 mudarem
+# rank E shape ao mesmo tempo.
+# ══════════════════════════════════════════════════════════════════════════════
+sabota_migration() { # <expressao sed>
+  restore_view
+  P -q -c "DROP VIEW IF EXISTS public.v_tint_formula_canonica;" >/dev/null || return 1
+  sed "$1" "$MIGRATION4" | P -q -f - >/dev/null || return 1
+}
+
+echo ""
+echo "════════ F11 — sabotagem: allowlist SEM o guard de conta (s2.account) ════════"
+# O predicado vira `s2.id = g2.subcolecao_id AND …='1'` — cardinalidade idêntica
+# (s2.id é PK), então NADA muda numa base de conta única. É exatamente por isso
+# que nenhum seed K1-K19 o matava. Com K20, a fórmula de 'colacor' passa a
+# enxergar a subcoleção '1' de 'oben' e herda o CSV 850 alheio.
+sabota_migration 's/AND s2\.account = g2\.account//' || bad "F11 não aplicou a sabotagem"
+OUT="$(run_asserts)"
+confere_falsificacao "F11" "$OUT" 1 "C19" -- "sem s2.account=g2.account: CSV de subcolecao de OUTRA conta entrou no max"
+
+echo ""
+echo '════════ F12 — sabotagem: <> SL no lugar da allowlist da 1 ════════'
+# A "blocklist com EXISTS": mantém personalizada e 2ª SL fora (C16/C17 seguem
+# verdes!), mas deixa entrar QUALQUER geração futura. É o mutante que mais se
+# parece com a decisão de produto sem ser ela — e o que o achado 1 do challenge
+# anterior queria fechar. Derruba SÓ C20: K20 (a chave cross-account) segue
+# verde porque esta sabotagem PRESERVA o `s2.account = g2.account`, e esse guard
+# sozinho já barra a subcoleção alheia. Os dois guards são INDEPENDENTES — cada
+# um tem sua falsificação (F11 para o de conta, F12/F13 para o do literal).
+sabota_migration "s/AND s2\.id_subcolecao_sayersystem = '1'/AND s2.id_subcolecao_sayersystem <> 'SL'/" || bad "F12 não aplicou a sabotagem"
+OUT="$(run_asserts)"
+confere_falsificacao "F12" "$OUT" 1 "C20" -- "<> 'SL' no lugar de = '1': subcolecao FUTURA alimentou o rotulo"
+
+echo ""
+echo "════════ F13 — sabotagem: allowlist frouxa IN ('1','2') ════════"
+# Isola C20: o guard de conta segue de pé (C19 verde), só a exclusividade do
+# literal cai. Prova que C20 tem dente PRÓPRIO, não só carona no F12.
+sabota_migration "s/AND s2\.id_subcolecao_sayersystem = '1'/AND s2.id_subcolecao_sayersystem IN ('1','2')/" || bad "F13 não aplicou a sabotagem"
+OUT="$(run_asserts)"
+confere_falsificacao "F13" "$OUT" 1 "C20" -- "IN ('1','2'): a geracao '2' entrou no max"
 
 echo ""
 echo "════════ R — restauração: migrations reais de volta ⇒ tudo verde ════════"
 restore_view
 OUT="$(run_asserts)"
 case "$OUT" in
-  *TODOS_OK*) ok "R restauração: C1–C18 verdes com a migration real re-aplicada" ;;
+  *TODOS_OK*) ok "R restauração: C1–C20 verdes com a migration real re-aplicada" ;;
   *) bad "R restauração falhou: $(printf '%s' "$OUT" | tr '\n' ' ' | cut -c1-300)" ;;
 esac
 

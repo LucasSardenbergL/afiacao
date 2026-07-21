@@ -18,7 +18,7 @@ import {
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { cn } from '@/lib/utils';
-import { decodeHtmlEntities } from '@/lib/format';
+import { decodeHtmlEntities, formatMargemPct } from '@/lib/format';
 import { formatBrPhone, whatsappLink } from '@/lib/phone';
 import { CallButton } from '@/components/call/CallButton';
 import { RecommendationsPanel } from '@/components/RecommendationsPanel';
@@ -191,7 +191,9 @@ export function Customer360View({
             </CardHeader>
             <CardContent>
               <div className="grid grid-cols-3 md:grid-cols-5 gap-3">
-                <ScoreItem label="Margem" value={`${(score.gross_margin_pct * 100).toFixed(1)}%`} />
+                {/* Sem `* 100`: a coluna já é percentual. Com a margem calculada no servidor,
+                    53,47 viraria "5347.0%" — e `null` virava "0.0%", afirmando margem nula. */}
+                <ScoreItem label="Margem" value={formatMargemPct(score.gross_margin_pct)} />
                 <ScoreItem label="Expansão" value={score.expansion_score.toFixed(1)} />
                 <ScoreItem label="Prioridade" value={score.priority_score.toFixed(1)} />
                 <ScoreItem label="Dias s/ compra" value={String(score.days_since_last_purchase)} danger={score.days_since_last_purchase > 60} />

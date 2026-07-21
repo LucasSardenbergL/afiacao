@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { selectObjective, clampRecencyCapDays } from '@/lib/scoring/objective';
+import { margemConhecida } from '@/lib/scoring/margin';
 import { ownersAtivosDoAlvo } from '@/lib/carteira/escopo-clientes';
 import { useAuth } from '@/contexts/AuthContext';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
@@ -168,9 +169,11 @@ interface DiagnosticData {
 }
 
 export interface EfficiencyCheck {
-  estimatedProfitPerHour: number;
+  /** `null` = margem do cliente não apurada → R$/h indecidível (não é zero). */
+  estimatedProfitPerHour: number | null;
   threshold: number;
-  isAboveThreshold: boolean;
+  /** `null` = indecidível. Não afirma que passou NEM que reprovou no gate. */
+  isAboveThreshold: boolean | null;
 }
 
 const objectiveLabels: Record<string, string> = {
@@ -184,9 +187,14 @@ const objectiveLabels: Record<string, string> = {
 
 export const getObjectiveLabel = (obj: string) => objectiveLabels[obj] || obj;
 
-const classifyProfile = (healthScore: number, avgSpend: number, marginPct: number, categoryCount: number): string => {
-  if (avgSpend < 500 && marginPct < 20) return 'sensivel_preco';
-  if (marginPct > 35 && categoryCount <= 3) return 'orientado_qualidade';
+// Espelho de classifyProfile em supabase/functions/_shared/tactical-margem.ts (e de
+// classifyCustomerProfile em useBundleArguments.ts). ⚠️ Os dois primeiros ramos exigem margem
+// CONHECIDA: `null < 20` é `true` em JS, então sem o guard todo cliente de gasto baixo e margem
+// não apurada sairia como "sensível a preço" — e esse rótulo entra no prompt da IA.
+const classifyProfile = (healthScore: number, avgSpend: number, marginPct: number | null, categoryCount: number): string => {
+  const m = margemConhecida(marginPct);
+  if (m != null && avgSpend < 500 && m < 20) return 'sensivel_preco';
+  if (m != null && m > 35 && categoryCount <= 3) return 'orientado_qualidade';
   if (avgSpend > 2000 && categoryCount >= 4 && healthScore > 60) return 'orientado_produtividade';
   return 'misto';
 };
@@ -323,7 +331,8 @@ export const useTacticalPlan = () => {
 
   // Check efficiency before generating
   const checkEfficiency = useCallback(async (customerId: string): Promise<EfficiencyCheck> => {
-    if (!user?.id) return { estimatedProfitPerHour: 0, threshold: PROFIT_PER_HOUR_THRESHOLD, isAboveThreshold: false };
+    // Sem sessão também é "não avaliei", não "reprovou" — mesmo tri-estado do resto.
+    if (!user?.id) return { estimatedProfitPerHour: null, threshold: PROFIT_PER_HOUR_THRESHOLD, isAboveThreshold: null };
 
     const { data: score } = (await supabase
       .from('farmer_client_scores')
@@ -335,15 +344,22 @@ export const useTacticalPlan = () => {
 
     const revPotential = Number(score?.revenue_potential || 0);
     const avgSpend = Number(score?.avg_monthly_spend_180d || 0);
-    const marginPct = Number(score?.gross_margin_pct || 0);
-    const estimatedMarginPerCall = (revPotential > 0 ? revPotential : avgSpend) * (marginPct / 100) * 0.1;
+    // Margem desconhecida → R$/h INDECIDÍVEL, não zero. Com `|| 0` o gate reprovava o cliente por
+    // omissão, e "não sei" ficava indistinguível de "não vale a ligação" na tela da vendedora.
+    // Espelha profitPerHora de supabase/functions/_shared/tactical-margem.ts.
+    const marginPct = margemConhecida(score?.gross_margin_pct);
     const avgCallMinutes = 15;
-    const estimatedProfitPerHour = estimatedMarginPerCall / (avgCallMinutes / 60);
+    const estimatedProfitPerHour = marginPct == null
+      ? null
+      : ((revPotential > 0 ? revPotential : avgSpend) * (marginPct / 100) * 0.1) / (avgCallMinutes / 60);
 
     return {
       estimatedProfitPerHour,
       threshold: PROFIT_PER_HOUR_THRESHOLD,
-      isAboveThreshold: estimatedProfitPerHour >= PROFIT_PER_HOUR_THRESHOLD,
+      // null → não afirma que passou NEM que reprovou; quem exibe decide como mostrar "sem dado".
+      isAboveThreshold: estimatedProfitPerHour == null
+        ? null
+        : estimatedProfitPerHour >= PROFIT_PER_HOUR_THRESHOLD,
     };
   }, [user]);
 
@@ -387,7 +403,7 @@ export const useTacticalPlan = () => {
       const healthScore = Number(score.health_score || 0);
       const churnRisk = Number(score.churn_risk || 0);
       const avgSpend = Number(score.avg_monthly_spend_180d || 0);
-      const marginPct = Number(score.gross_margin_pct || 0);
+      const marginPct = margemConhecida(score.gross_margin_pct);
       const categoryCount = Number(score.category_count || 0);
       const daysSince = Number(score.days_since_last_purchase || 0);
       const expansionPotential = Number(score.expansion_score || 0);
