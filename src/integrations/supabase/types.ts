@@ -18813,7 +18813,13 @@ export type Database = {
       get_preco_cockpit: { Args: { p_itens: Json }; Returns: Json }
       get_public_tool_history: { Args: { p_tool_id: string }; Returns: Json }
       get_regua_preco: {
-        Args: { p_customer: string; p_product: string; p_qty: number }
+        Args: {
+          p_customer: string
+          p_prazo_dias?: number[]
+          p_preco_atual: number
+          p_product: string
+          p_qty: number
+        }
         Returns: Json
       }
       get_regua_preco_customer360: {
@@ -19119,6 +19125,10 @@ export type Database = {
         }
         Returns: undefined
       }
+      registrar_aplicacao_regua: {
+        Args: { p_log_id: string; p_preco_final: number }
+        Returns: boolean
+      }
       registrar_aumento_via_vision: {
         Args: {
           p_categorias: Json
@@ -19151,6 +19161,24 @@ export type Database = {
           p_valor?: number
         }
         Returns: Json
+      }
+      registrar_exibicao_regua: {
+        Args: {
+          p_account: string
+          p_cap_limitou?: boolean
+          p_confianca: string
+          p_customer_user_id: string
+          p_observed_gap_pct?: number
+          p_prazo_dias?: number[]
+          p_preco_atual: number
+          p_preco_referencia?: number
+          p_product_id: string
+          p_quantity: number
+          p_reason_codes?: string[]
+          p_sinal_exibido: string
+          p_suggested_gap_pct?: number
+        }
+        Returns: string
       }
       registrar_polling_resultado: {
         Args: {
