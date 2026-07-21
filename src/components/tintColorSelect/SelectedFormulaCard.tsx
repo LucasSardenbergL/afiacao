@@ -94,13 +94,14 @@ export function SelectedFormulaCard({
   onConfirm,
 }: SelectedFormulaCardProps) {
   // Fontes de preço disponíveis (com valor), para a vendedora escolher manualmente.
-  // Rótulo NEUTRO de propósito (Fase 2b-fix): o CSV da chave é o max das linhas
-  // ativas — na prática hoje, a versão anterior da tinta quando a canônica é SL —
-  // mas a view não prova a proveniência por-linha, então o rótulo não a afirma.
+  // Rótulo CONDICIONAL restaurado (decisão do founder 2026-07-20): a migration
+  // 20260722100002 garante na VIEW que, quando a canônica é SL, o CSV vem só de
+  // linhas não-SL — "versão anterior" voltou a ser proveniência provada. is_sl
+  // ausente/false → rótulo genérico "Tabela" (nunca afirma sem prova).
   const fontes: { key: TintPriceSource; label: string; preco: number }[] = [];
   if (precoCliente != null) fontes.push({ key: 'cliente', label: 'Cliente', preco: precoCliente });
   if (precoCalc != null) fontes.push({ key: 'calculado', label: 'Calculado', preco: precoCalc });
-  if (precoCsv > 0) fontes.push({ key: 'tabela', label: 'Tabela importada', preco: precoCsv });
+  if (precoCsv > 0) fontes.push({ key: 'tabela', label: selectedFormula.is_sl ? 'Tabela (versão anterior)' : 'Tabela', preco: precoCsv });
 
   return (
     <Card className="border-primary/30">
@@ -321,6 +322,7 @@ export function SelectedFormulaCard({
                         <AltPriceSourcePicker
                           formulaId={alt.formulaId}
                           altSel={altSel}
+                          isSl={alt.isSl}
                           setOverride={setAltPriceSourceOverride}
                         />
                         <div className="flex items-center gap-2">

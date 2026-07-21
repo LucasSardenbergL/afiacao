@@ -188,10 +188,13 @@ export function computeCarteira(
 //   • montarClientes: merge LISTA×VENDEDOR preservando a ordem do espelho (clone ausente da proof → null).
 //   • avaliarGuardProof (PRÉ-compute): aborta se proof oben fresca vazia / < 50% da proof CRUA (denominador
 //     é a própria proof, não o espelho misto — corrige o falso-positivo #4) / 0 vendedores não-null.
-//   • avaliarGuardResultado (PÓS-compute): aborta se 0 omie ELEGÍVEL (#3); BLOQUEIA o bootstrap quando o
-//     BASELINE PERSISTIDO é 0 sem flag — INDEPENDENTE da carteira atual (Codex R3: se a persistência falha,
-//     o baseline segue 0 → o cron fica fail-closed); compara SÓ com o baseline persistido (fator 0.8, monotônico
-//     → sem catraca). Retorna o novoBaseline a gravar.
+//   • avaliarGuardResultado (PÓS-compute): aborta se 0 omie ELEGÍVEL. CRON (não-autorizado): compara
+//     omieElegivelNovo SÓ com o BASELINE PERSISTIDO (fator 0.8, monotônico → sem catraca; a carteira atual fica
+//     FORA — Codex R3: se a persistência do baseline falha (0), o cron fica fail-closed). BOOTSTRAP (autorizado):
+//     mede a SAÍDA vs max(carteira ATUAL omie elegível, baseline persistido) — encolher < 80% exige &force=1
+//     (R4b: o max impede erodir o baseline em etapas quando atual<baseline). Fecha o furo Codex R4 (o >0 sozinho
+//     gravava ~Hunter na perda de vendedor grande / flaggeds-consolidação em massa / corrupção de 1 código). A
+//     carteira atual entra SÓ no ramo autorizado → não reabre a catraca do cron. Retorna o novoBaseline.
 //   • parseBaselineSaudavel: valida o baseline lido do company_config (decimal canônico ≤ 2^53); inválido → null
 //     (o edge ABORTA em vez de virar valor inseguro — "4797lixo"→null, "1e9"→null, gigante→null).
 // MIRROR-START carteira-load — espelhado verbatim em supabase/functions/carteira-rebuild/index.ts
@@ -278,12 +281,29 @@ export function avaliarGuardProof(m: { proofCrua: number; proofFresca: number; c
   }
   return { abortar: false, motivo: null };
 }
-export function avaliarGuardResultado(m: { omieElegivelNovo: number; baselinePersistido: number; autorizado: boolean }): { abortar: boolean; motivo: string | null; novoBaseline: number } {
+export function avaliarGuardResultado(m: { omieElegivelNovo: number; baselinePersistido: number; autorizado: boolean; omieAtual: number; forcado: boolean }): { abortar: boolean; motivo: string | null; novoBaseline: number } {
   if (m.omieElegivelNovo === 0) {
     return { abortar: true, motivo: '0 assignments omie elegiveis (carteira 100% Hunter) — abortado p/ preservar', novoBaseline: m.baselinePersistido };
   }
   if (m.autorizado) {
-    return { abortar: false, motivo: null, novoBaseline: m.omieElegivelNovo };
+    // BOOTSTRAP mede a SAIDA (omieElegivelNovo POS consolidacao/conflitos/flaggeds), nao a fonte (Codex R4 P1.1-3):
+    // o >0 sozinho gravaria carteira ~Hunter se o vendedor_map dessincronizasse (perda de um vendedor grande),
+    // flaggeds/consolidacao em massa destruissem a saida, OU corrupcao deixasse so 1 codigo valido. Trava vs a
+    // REFERENCIA = max(carteira ATUAL omie elegivel, baseline persistido): o MAIOR sinal saudavel (Codex R4b P2:
+    // usar so a atual permitia erodir o baseline em etapas quando atual<baseline; com o max, &force=1 vira o UNICO
+    // jeito de baixar o baseline, e a primeira populacao TRUNCADA com baseline>0 fica protegida). Encolher < 80%
+    // da ref exige &force=1. A ref entra SO neste ramo autorizado -> NAO reabre a catraca do cron (so-baseline, R3).
+    // Primeira populacao SEM historico (ref=0): so o >0 protege (carteira nascendo; operador confere os contadores).
+    const ref = Math.max(m.omieAtual, m.baselinePersistido);
+    if (!m.forcado && ref > 0 && m.omieElegivelNovo < 0.8 * ref) {
+      return { abortar: true, motivo: `bootstrap encolheria omie elegivel p/ ${m.omieElegivelNovo} (< 80% de ${ref} = max[atual ${m.omieAtual}, baseline ${m.baselinePersistido}]) — investigue vendedor_map/proof ou &force=1 se a queda e legitima`, novoBaseline: m.baselinePersistido };
+    }
+    // Sem force o baseline persiste MONOTONICO sobre as TRES grandezas (atual, baseline, novo) — nunca desce.
+    // O omieAtual PRECISA entrar no max (Codex R5 P1): com baseline DESATUALIZADO (0) e carteira real 2747, um
+    // max(baseline, novo) persistiria 2198 e ESQUECERIA os 2747 — o run seguinte compararia com 2198 e deixaria
+    // cair p/ 1759 (erosao acumulada de 36% sem force). Incluindo o atual, o baseline vira 2747 e o 2º passo
+    // aborta. COM force o reset legitimo assume a queda e grava o novo valor (o UNICO jeito de baixar).
+    return { abortar: false, motivo: null, novoBaseline: m.forcado ? m.omieElegivelNovo : Math.max(m.omieAtual, m.baselinePersistido, m.omieElegivelNovo) };
   }
   if (m.baselinePersistido === 0) {
     return { abortar: true, motivo: 'bootstrap (baseline persistido=0) exige autorizacao explicita — cron nao faz bootstrap', novoBaseline: 0 };

@@ -10,7 +10,7 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:edges": "deno test --no-remote supabase/functions/",
+    "test:edges": "deno test --no-remote --allow-read=supabase/functions supabase/functions/",
     "typecheck": "tsc --noEmit -p tsconfig.app.json",
     "typecheck:edges": "deno check supabase/functions/sync-reprocess/index.ts supabase/functions/omie-analytics-sync/index.ts",
     "audit:migrations": "bun scripts/audit-custom-migrations.ts",
@@ -26,7 +26,8 @@
     "wt:map": "bash scripts/wt-map.sh",
     "wt:label": "bash scripts/wt-map.sh label",
     "wt:preflight": "bun scripts/wt-preflight-migration.ts",
-    "claude:size": "bash scripts/check-claude-md-budget.sh"
+    "claude:size": "bash scripts/check-claude-md-budget.sh",
+    "heavy:install": "bash scripts/heavy-install.sh"
   },
   "dependencies": {
     "@elevenlabs/react": "^0.14.0",

@@ -21,16 +21,16 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **409** custom migrations totais
-- **1455** objetos esperados (criados por estas migrations)
+- **412** custom migrations totais
+- **1453** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 412
-  - `rls_policy`: 371
+  - `rls_policy`: 368
   - `index`: 224
   - `cron_job`: 150
   - `table`: 147
   - `trigger`: 79
-  - `view`: 68
+  - `view`: 69
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -3474,20 +3474,33 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
-### `20260724120000_authz_sales_orders_split_escrita_fu4.sql`
+### `20260722113000_tint_fase1d_is_base_pura.sql`
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
-| `function` | `private.cap_pedido_escrever` | — |
-| `rls_policy` | `public.sales_orders_select_staff` | `sales_orders` |
-| `rls_policy` | `public.sales_orders_select_customer` | `sales_orders` |
-| `rls_policy` | `public.sales_orders_insert_staff` | `sales_orders` |
-| `rls_policy` | `public.sales_orders_update_staff` | `sales_orders` |
-| `rls_policy` | `public.sales_orders_delete_staff` | `sales_orders` |
-| `rls_policy` | `public.order_items_select_staff` | `order_items` |
-| `rls_policy` | `public.order_items_select_customer` | `order_items` |
-| `rls_policy` | `public.sales_price_history_select_staff` | `sales_price_history` |
-| `rls_policy` | `public.sales_price_history_select_customer` | `sales_price_history` |
+| `function` | `public.tint_promote_sync_run` | — |
+
+### `20260723130000_authz_custo_fu4f_fase2_inventory.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `view` | `public.inventory_position_operacional` | — |
+| `rls_policy` | `public.staff_inventory_position_select` | `inventory_position` |
+
+### `20260723140000_authz_custo_fu4f_fase1.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `rls_policy` | `public.cmc_snapshot_select_staff` | `cmc_snapshot` |
+
+### `20260723140000_authz_pedido_compra_item_cap_compras.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `rls_policy` | `public.staff_pedido_compra_item_select` | `pedido_compra_item` |
+| `rls_policy` | `public.staff_pedido_compra_item_insert` | `pedido_compra_item` |
+| `rls_policy` | `public.staff_pedido_compra_item_update` | `pedido_compra_item` |
+| `rls_policy` | `public.staff_pedido_compra_item_delete` | `pedido_compra_item` |
 
 ## Próximos passos por status
 

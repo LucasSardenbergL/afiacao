@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 409
+-- Total de custom migrations: 412
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -450,7 +450,10 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260722100001', 'tint_gate_revalida_submit', '20260722100001_tint_gate_revalida_submit.sql'),
   ('20260722100002', 'tint_canonica_csv_legado_semantico', '20260722100002_tint_canonica_csv_legado_semantico.sql'),
   ('20260722110000', 'quarentena_omie_clientes_espelho', '20260722110000_quarentena_omie_clientes_espelho.sql'),
-  ('20260724120000', 'authz_sales_orders_split_escrita_fu4', '20260724120000_authz_sales_orders_split_escrita_fu4.sql')
+  ('20260722113000', 'tint_fase1d_is_base_pura', '20260722113000_tint_fase1d_is_base_pura.sql'),
+  ('20260723130000', 'authz_custo_fu4f_fase2_inventory', '20260723130000_authz_custo_fu4f_fase2_inventory.sql'),
+  ('20260723140000', 'authz_custo_fu4f_fase1', '20260723140000_authz_custo_fu4f_fase1.sql'),
+  ('20260723140000', 'authz_pedido_compra_item_cap_compras', '20260723140000_authz_pedido_compra_item_cap_compras.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -1885,16 +1888,14 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('tint_gate_revalida_submit', 'function', 'public', 'tint_ultimo_preco_cliente', ''),
   ('tint_gate_revalida_submit', 'function', 'public', 'tint_gate_revalida', ''),
   ('tint_canonica_csv_legado_semantico', 'view', 'public', 'v_tint_formula_canonica', ''),
-  ('authz_sales_orders_split_escrita_fu4', 'function', 'private', 'cap_pedido_escrever', ''),
-  ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'sales_orders_select_staff', 'sales_orders'),
-  ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'sales_orders_select_customer', 'sales_orders'),
-  ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'sales_orders_insert_staff', 'sales_orders'),
-  ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'sales_orders_update_staff', 'sales_orders'),
-  ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'sales_orders_delete_staff', 'sales_orders'),
-  ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'order_items_select_staff', 'order_items'),
-  ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'order_items_select_customer', 'order_items'),
-  ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'sales_price_history_select_staff', 'sales_price_history'),
-  ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'sales_price_history_select_customer', 'sales_price_history')
+  ('tint_fase1d_is_base_pura', 'function', 'public', 'tint_promote_sync_run', ''),
+  ('authz_custo_fu4f_fase2_inventory', 'view', 'public', 'inventory_position_operacional', ''),
+  ('authz_custo_fu4f_fase2_inventory', 'rls_policy', 'public', 'staff_inventory_position_select', 'inventory_position'),
+  ('authz_custo_fu4f_fase1', 'rls_policy', 'public', 'cmc_snapshot_select_staff', 'cmc_snapshot'),
+  ('authz_pedido_compra_item_cap_compras', 'rls_policy', 'public', 'staff_pedido_compra_item_select', 'pedido_compra_item'),
+  ('authz_pedido_compra_item_cap_compras', 'rls_policy', 'public', 'staff_pedido_compra_item_insert', 'pedido_compra_item'),
+  ('authz_pedido_compra_item_cap_compras', 'rls_policy', 'public', 'staff_pedido_compra_item_update', 'pedido_compra_item'),
+  ('authz_pedido_compra_item_cap_compras', 'rls_policy', 'public', 'staff_pedido_compra_item_delete', 'pedido_compra_item')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -3377,16 +3378,14 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('tint_gate_revalida_submit', 'function', 'public', 'tint_ultimo_preco_cliente', ''),
   ('tint_gate_revalida_submit', 'function', 'public', 'tint_gate_revalida', ''),
   ('tint_canonica_csv_legado_semantico', 'view', 'public', 'v_tint_formula_canonica', ''),
-  ('authz_sales_orders_split_escrita_fu4', 'function', 'private', 'cap_pedido_escrever', ''),
-  ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'sales_orders_select_staff', 'sales_orders'),
-  ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'sales_orders_select_customer', 'sales_orders'),
-  ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'sales_orders_insert_staff', 'sales_orders'),
-  ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'sales_orders_update_staff', 'sales_orders'),
-  ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'sales_orders_delete_staff', 'sales_orders'),
-  ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'order_items_select_staff', 'order_items'),
-  ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'order_items_select_customer', 'order_items'),
-  ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'sales_price_history_select_staff', 'sales_price_history'),
-  ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'sales_price_history_select_customer', 'sales_price_history')
+  ('tint_fase1d_is_base_pura', 'function', 'public', 'tint_promote_sync_run', ''),
+  ('authz_custo_fu4f_fase2_inventory', 'view', 'public', 'inventory_position_operacional', ''),
+  ('authz_custo_fu4f_fase2_inventory', 'rls_policy', 'public', 'staff_inventory_position_select', 'inventory_position'),
+  ('authz_custo_fu4f_fase1', 'rls_policy', 'public', 'cmc_snapshot_select_staff', 'cmc_snapshot'),
+  ('authz_pedido_compra_item_cap_compras', 'rls_policy', 'public', 'staff_pedido_compra_item_select', 'pedido_compra_item'),
+  ('authz_pedido_compra_item_cap_compras', 'rls_policy', 'public', 'staff_pedido_compra_item_insert', 'pedido_compra_item'),
+  ('authz_pedido_compra_item_cap_compras', 'rls_policy', 'public', 'staff_pedido_compra_item_update', 'pedido_compra_item'),
+  ('authz_pedido_compra_item_cap_compras', 'rls_policy', 'public', 'staff_pedido_compra_item_delete', 'pedido_compra_item')
 )
 SELECT
   e.migration,

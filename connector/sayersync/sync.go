@@ -54,10 +54,13 @@ type Extractor interface {
 	// Ver doc do tipo Lookups.
 	LoadLookups(ctx context.Context) (*Lookups, error)
 
-	// ExtractFormulaChildItems retorna os itens da tabela filha formula_item,
-	// agregados por id_formula (= PK da fórmula no pai). hasOrdem indica se a
-	// coluna "ordem" existe na origem. Só usado no shape child.
-	ExtractFormulaChildItems(ctx context.Context, hasOrdem bool) (map[string][]map[string]any, error)
+	// ExtractFormulasComItens extrai as fórmulas (pai) E os itens da tabela filha
+	// formula_item na MESMA transação REPEATABLE READ — fotografia consistente
+	// (Fase 1d, Codex P1: pai e filha em queries/conexões separadas sob READ
+	// COMMITTED permitiam observar "0 linhas na filha" durante um delete+reinsert
+	// da origem → is_base_pura falso → limpeza indevida). hasOrdem indica se a
+	// coluna "ordem" existe na filha. Só usado no shape child.
+	ExtractFormulasComItens(ctx context.Context, entity string, hwm time.Time, hasOrdem bool) (rows []map[string]any, childItems map[string][]map[string]any, maxDA time.Time, err error)
 
 	// OriginNow retorna o now() do PostgreSQL de origem (para comparações de data).
 	OriginNow(ctx context.Context) (time.Time, error)
@@ -431,8 +434,28 @@ func (p *pgExtractor) loadCorPerson(ctx context.Context, lk *Lookups) error {
 	return rows.Err()
 }
 
-func (p *pgExtractor) ExtractFormulaChildItems(ctx context.Context, hasOrdem bool) (map[string][]map[string]any, error) {
-	return ExtractFormulaChildItems(ctx, p.db, hasOrdem)
+// ExtractFormulasComItens: pai (ExtractDelta) e filha (ExtractFormulaChildItems)
+// na MESMA transação REPEATABLE READ, read-only — snapshot único do PG de origem.
+// Sem isto, um DELETE+COMMIT na filha entre as duas leituras (reinserção logo em
+// seguida) produzia uma fórmula "sem itens" que NUNCA existiu de forma estável na
+// origem — e a Fase 1d transformaria essa fotografia em is_base_pura=true.
+func (p *pgExtractor) ExtractFormulasComItens(ctx context.Context, entity string, hwm time.Time, hasOrdem bool) ([]map[string]any, map[string][]map[string]any, time.Time, error) {
+	tx, err := p.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+	if err != nil {
+		return nil, nil, time.Time{}, fmt.Errorf("ExtractFormulasComItens %s: begin tx: %w", entity, err)
+	}
+	// Read-only: rollback é o encerramento natural (não há nada a commitar).
+	defer tx.Rollback() //nolint:errcheck
+
+	rows, maxDA, err := ExtractDelta(ctx, tx, p.rm, entity, hwm)
+	if err != nil {
+		return nil, nil, time.Time{}, err
+	}
+	childItems, err := ExtractFormulaChildItems(ctx, tx, hasOrdem)
+	if err != nil {
+		return nil, nil, time.Time{}, fmt.Errorf("ExtractFormulasComItens %s: %w", entity, err)
+	}
+	return rows, childItems, maxDA, nil
 }
 
 func (p *pgExtractor) OriginNow(ctx context.Context) (time.Time, error) {
@@ -1088,9 +1111,38 @@ func syncFormulas(
 	// hash-filter/poda são bypassados — senão um delete+recreate de conteúdo idêntico
 	// seria pulado e ficaria ausente no servidor (Codex review 4ª passada).
 	applyHashFilter := hwm.IsZero()
-	rows, maxDA, err := ex.Extract(ctx, entity, hwm)
-	if err != nil {
-		return fmt.Errorf("syncFormulas %s: extract: %w", entity, err)
+
+	// Para shape=child com PK resolvida: pai e filha saem da MESMA tx REPEATABLE
+	// READ (fotografia consistente — sem ela, is_base_pura podia nascer de um
+	// vazio transitório entre duas leituras; Codex P1 da Fase 1d). Sem a PK, os
+	// itens nem são extraídos: "itens" fica AUSENTE do payload (expected NULL →
+	// ambíguo → o banco barra fail-closed) — antes injetava itens=[] em TODAS as
+	// fórmulas, um "confirmado vazio" mentiroso.
+	var rows []map[string]any
+	var childItems map[string][]map[string]any
+	var maxDA time.Time
+	var err error
+	pkResolved := false
+	if rm.FormulaShape == FormulaShapeChild {
+		// F5: a junção é pela PK da fórmula (= formula_item.id_formula), NÃO pelo id_padraocor.
+		// id_padraocor é a COR (1 cor → N fórmulas), então juntar por ele traria itens errados
+		// ou nenhum. A PK foi resolvida no mapeamento (formula_pk via candidatos id_formula|id|codigo).
+		_, pkResolved = rm.Resolved[entity]["formula_pk"]
+	}
+	if rm.FormulaShape == FormulaShapeChild && pkResolved {
+		rows, childItems, maxDA, err = ex.ExtractFormulasComItens(ctx, entity, hwm, rm.ChildHasOrdem)
+		if err != nil {
+			return fmt.Errorf("syncFormulas %s: ExtractFormulasComItens: %w", entity, err)
+		}
+	} else {
+		if rm.FormulaShape == FormulaShapeChild {
+			logger.Warnf("syncFormulas %s: shape=child mas a PK da fórmula (formula_pk) não resolveu — "+
+				"itens NÃO serão anexados (payload ambíguo, o banco barra); rode 'discovery' e ajuste os candidatos de formula_pk", entity)
+		}
+		rows, maxDA, err = ex.Extract(ctx, entity, hwm)
+		if err != nil {
+			return fmt.Errorf("syncFormulas %s: extract: %w", entity, err)
+		}
 	}
 	if len(rows) == 0 {
 		// Full-scan que voltou VAZIO (entidade esvaziou na origem) ainda precisa
@@ -1100,24 +1152,6 @@ func syncFormulas(
 			pruneFormulaHashes(hc, map[string]struct{}{}, personalizada)
 		}
 		return nil
-	}
-
-	// Para shape=child: enriquece com itens da tabela filha.
-	var childItems map[string][]map[string]any
-	pkResolved := false
-	if rm.FormulaShape == FormulaShapeChild {
-		// F5: a junção é pela PK da fórmula (= formula_item.id_formula), NÃO pelo id_padraocor.
-		// id_padraocor é a COR (1 cor → N fórmulas), então juntar por ele traria itens errados
-		// ou nenhum. A PK foi resolvida no mapeamento (formula_pk via candidatos id_formula|id|codigo).
-		_, pkResolved = rm.Resolved[entity]["formula_pk"]
-		if !pkResolved {
-			logger.Warnf("syncFormulas %s: shape=child mas a PK da fórmula (formula_pk) não resolveu — "+
-				"itens NÃO serão anexados; rode 'discovery' e ajuste os candidatos de formula_pk", entity)
-		}
-		childItems, err = ex.ExtractFormulaChildItems(ctx, rm.ChildHasOrdem)
-		if err != nil {
-			return fmt.Errorf("syncFormulas %s: ExtractFormulaChildItems: %w", entity, err)
-		}
 	}
 
 	// Mapeia cada linha para o payload do servidor, computa o hash de CONTEÚDO e
@@ -1141,18 +1175,28 @@ func syncFormulas(
 			continue
 		}
 		// Para shape=child: injeta os itens, juntando pela PK da fórmula (F5).
-		if rm.FormulaShape == FormulaShapeChild {
+		// FASE 1d: só com a PK resolvida E não-vazia NESTA linha — senão "itens"
+		// fica AUSENTE (ambíguo → banco barra), nunca [] mentiroso. 0 linhas na
+		// filha com junção confiável = base pura DECLARADA pela fonte.
+		if rm.FormulaShape == FormulaShapeChild && pkResolved {
 			idFormula := toString(row["formula_pk"]) // chave de junção = PK da fórmula
-			if items, ok := childItems[idFormula]; ok {
-				m["itens"] = items
-			} else {
-				m["itens"] = []map[string]any{}
+			if idFormula != "" {
+				if items, ok := childItems[idFormula]; ok {
+					m["itens"] = items
+				} else {
+					m["itens"] = []map[string]any{}
+					m["is_base_pura"] = true
+				}
 			}
 		}
-		// Para shape=flat: os itens já estão em row["itens"] (aggregateFlatFormulaItems).
+		// Para shape=flat: os itens já estão em row["itens"] (aggregateFlatFormulaItems),
+		// e a declaração de base pura (todos os slots livres + flat cols completos) idem.
 		if _, hasItens := m["itens"]; !hasItens {
 			if itens, ok := row["itens"]; ok {
 				m["itens"] = itens
+			}
+			if b, ok := row["is_base_pura"].(bool); ok && b {
+				m["is_base_pura"] = true
 			}
 		}
 		// Traduz o id_corante cru de cada item para a identidade canônica (codigo).

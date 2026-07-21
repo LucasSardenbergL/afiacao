@@ -93,14 +93,16 @@ func TestAggregateFlatFormulaItems_SkipsNilCorante(t *testing.T) {
 	}
 }
 
-func TestAggregateFlatFormulaItems_SkipsZeroQtd(t *testing.T) {
-	// Slot 1: qtd=0 → pular. Slot 5: qtd=-1 → pular. Restam 2,3,4,6 = 4 itens.
+func TestAggregateFlatFormulaItems_PreservaQtdInvalidaComCorante(t *testing.T) {
+	// CONTRATO 1d (mudança deliberada): slot com corante PRESENTE e qtd<=0 deixa de
+	// ser omitido — é PRESERVADO cru para o Guard 4 do banco barrar a fórmula e
+	// logar (antes: omitir aqui fabricava payload "íntegro" com receita parcial).
 	slots := map[int][2]any{
-		1: {"C01", float64(0)},    // deve pular (qtd=0)
+		1: {"C01", float64(0)},    // inválido → PRESERVADO
 		2: {"C02", float64(5)},    // ok
 		3: {"C03", float64(10)},   // ok
 		4: {"C04", float64(0.5)},  // ok
-		5: {"C05", float64(-1)},   // deve pular (qtd negativa)
+		5: {"C05", float64(-1)},   // inválido → PRESERVADO
 		6: {"C06", float64(0.01)}, // ok
 	}
 	rows := []map[string]any{makeFormulaRow(slots)}
@@ -110,8 +112,8 @@ func TestAggregateFlatFormulaItems_SkipsZeroQtd(t *testing.T) {
 	if !ok {
 		t.Fatalf("itens deve ser []map[string]any")
 	}
-	if len(itens) != 4 {
-		t.Errorf("esperava 4 itens (qtd<=0 omitidos), got %d", len(itens))
+	if len(itens) != 6 {
+		t.Errorf("esperava 6 itens (inválidos PRESERVADOS p/ o banco decidir), got %d", len(itens))
 	}
 }
 
@@ -140,21 +142,21 @@ func TestAggregateFlatFormulaItems_RemovesRawColumns(t *testing.T) {
 }
 
 func TestAggregateFlatFormulaItems_AllEmpty(t *testing.T) {
-	// Todos os slots vazios → itens deve ser nil ou slice vazio, não crashar.
+	// CONTRATO 1d: todos os slots livres = base pura DECLARADA pela fonte —
+	// itens=[] EXPLÍCITO (não nil → json [] e não null) + is_base_pura=true.
 	slots := map[int][2]any{} // nenhum slot preenchido
 	rows := []map[string]any{makeFormulaRow(slots)}
 	result := aggregateFlatFormulaItems(rows, testFlatCols())
 
-	// A chave "itens" deve existir (pode ser nil slice).
-	itensRaw, exists := result[0]["itens"]
-	if !exists {
-		t.Error("chave 'itens' não foi criada na linha")
+	itens, ok := result[0]["itens"].([]map[string]any)
+	if !ok || itens == nil {
+		t.Fatalf("base pura declara itens=[] explícito, got %T %v", result[0]["itens"], result[0]["itens"])
 	}
-	if itensRaw != nil {
-		itens, ok := itensRaw.([]map[string]any)
-		if ok && len(itens) != 0 {
-			t.Errorf("esperava 0 itens, got %d", len(itens))
-		}
+	if len(itens) != 0 {
+		t.Errorf("esperava 0 itens, got %d", len(itens))
+	}
+	if result[0]["is_base_pura"] != true {
+		t.Errorf("todos os slots livres deveria declarar is_base_pura=true, got %v", result[0]["is_base_pura"])
 	}
 }
 
@@ -365,7 +367,8 @@ func TestAggregateFlatFormulaItems_NumericAsString(t *testing.T) {
 	// Slot 2: qtd como []byte → deve virar 3.
 	row["corante2"] = "C02"
 	row["qtd2ml"] = []byte("3")
-	// Slot 3: qtd string não-numérica → deve ser DROPADO (não virar 0).
+	// Slot 3: qtd string não-numérica → CONTRATO 1d: preservado com qtd_ml=nil
+	// (a essência segue: NUNCA virar 0; quem barra a fórmula é o Guard 4 do banco).
 	row["corante3"] = "C03"
 	row["qtd3ml"] = "abc"
 
@@ -374,14 +377,17 @@ func TestAggregateFlatFormulaItems_NumericAsString(t *testing.T) {
 	if !ok {
 		t.Fatalf("itens deve ser []map[string]any, got %T", result[0]["itens"])
 	}
-	if len(itens) != 2 {
-		t.Fatalf("esperava 2 itens (slot 3 dropado por qtd não-numérica), got %d: %+v", len(itens), itens)
+	if len(itens) != 3 {
+		t.Fatalf("esperava 3 itens (slot 3 preservado com qtd nil), got %d: %+v", len(itens), itens)
 	}
 	if itens[0]["qtd_ml"] != 12.5 {
 		t.Errorf("slot 1 qtd_ml: esperava 12.5, got %v", itens[0]["qtd_ml"])
 	}
 	if itens[1]["qtd_ml"] != 3.0 {
 		t.Errorf("slot 2 qtd_ml: esperava 3.0, got %v", itens[1]["qtd_ml"])
+	}
+	if itens[2]["qtd_ml"] != nil {
+		t.Errorf("slot 3 qtd_ml ilegível: esperava nil (nunca 0), got %v", itens[2]["qtd_ml"])
 	}
 }
 
