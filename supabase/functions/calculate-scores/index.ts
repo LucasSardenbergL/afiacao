@@ -80,8 +80,13 @@ interface ScoreUpdate {
   churn_risk: number;
   priority_score: number;
   rf_score: number;
-  m_score: number;
+  // m_score (componente de MARGEM) é nulável desde o PR 3-zero: null = margem desconhecida, e
+  // apply_score_updates o tirou do guard de obrigatórias justamente por isso. NÃO trocar por 0.
+  m_score: number | null;
   g_score: number;
+  // MARGEM-VIVA: idem — null é "não medido", e a RPC grava direto (sem COALESCE) para que o
+  // desconhecido sobrescreva um valor velho que já não se sustenta.
+  gross_margin_pct: number | null;
   // RECÊNCIA-VIVA: o compute agora REESCREVE a base de vendas (antes só lia → congelava no seed).
   days_since_last_purchase: number;
   avg_monthly_spend_180d: number;
@@ -98,7 +103,7 @@ interface HealthHistoryRecord {
   health_score: number;
   health_class: string;
   rf_score: number;
-  m_score: number;
+  m_score: number | null;   // null = margem desconhecida neste run (PR 3-zero); nunca 0 por default
   g_score: number;
   x_score: number;
   s_score: number;
@@ -113,6 +118,25 @@ interface PriorityLogRecord {
   churn_risk_component: number;
   repurchase_component: number;
   goal_proximity_component: number;
+}
+
+// Margem-viva (PR 3-zero): contraparte de CustomerSalesSummaryRow para get_customer_margin_summary.
+// `gross_margin_pct` NULL = custo DESCONHECIDO (nenhum item do cliente tem linha em product_costs
+// com custo > 0), NÃO margem zero.
+interface CustomerMarginSummaryRow {
+  customer_user_id: string;
+  itens_com_custo: number;
+  itens_sem_custo: number;
+  gross_margin_pct: number | null;
+}
+
+// Margem conhecida? Só número finito conta. null/undefined/NaN → desconhecida, e quem chama TEM de
+// excluir o componente do score em vez de tratar como 0 — margem 0 é veredito ("cliente ruim"),
+// desconhecida é ausência de dado. Espelha custoValido() de src/lib/custo/custoCanonico.ts.
+function margemConhecida(pct: number | null | undefined): number | null {
+  if (pct == null) return null;
+  const n = Number(pct);
+  return Number.isFinite(n) ? n : null;
 }
 
 // Recência-viva: espelho inline de src/lib/scoring/salesBase.ts (vitest 8/8; Deno não importa de
@@ -268,6 +292,31 @@ Deno.serve(async (req) => {
       // "RPC falha → degrada pra congelado, compute roda" — achado Codex).
       salesRefreshFatal = e instanceof Error ? e : new Error(String(e));
       console.error('[calculate-scores] get_customer_sales_summary lançou — recência congelada este run:', salesRefreshFatal.message);
+    }
+
+    // === MARGEM-VIVA (PR 3-zero): a margem do health score, calculada no SERVIDOR ===
+    // ANTES desta chamada a margem NUNCA era computada: esta função lia client.gross_margin_pct da
+    // PRÓPRIA farmer_client_scores que ela escreve (loop fechado sobre o 0 do seed) — medido em prod
+    // 2026-07-20: 1.214 de 1.214 clientes COM pedido tinham gross_margin_pct = 0, nenhum não-zero.
+    // A RPC é SECURITY DEFINER com EXECUTE só p/ service_role: o custo é lido aqui, no servidor, e
+    // só a margem AGREGADA por cliente atravessa — o custo unitário nunca sai do banco.
+    // Mesma degradação da recência-viva: RPC falha → SEM overlay → margem fica no valor anterior
+    // (stale-mas-não-pior), nunca zerada por acidente.
+    let marginRefreshFatal: Error | null = null;
+    const marginMap = new Map<string, CustomerMarginSummaryRow>();
+    try {
+      const { data, error } = await supabase.rpc('get_customer_margin_summary');
+      if (error) {
+        marginRefreshFatal = new Error(`get_customer_margin_summary retornou erro — margem congelada este run: ${error.message}`);
+        console.error('[calculate-scores]', marginRefreshFatal.message);
+      } else {
+        for (const m of (data ?? []) as unknown as CustomerMarginSummaryRow[]) marginMap.set(m.customer_user_id, m);
+      }
+    } catch (e) {
+      // supabase-js RETORNA {error} no caso normal, mas rejeição de fetch/rede LANÇA — mesmo motivo
+      // do catch da RPC de vendas: sem isto o try/catch externo daria 500 ANTES do compute.
+      marginRefreshFatal = e instanceof Error ? e : new Error(String(e));
+      console.error('[calculate-scores] get_customer_margin_summary lançou — margem congelada este run:', marginRefreshFatal.message);
     }
 
     // === AUTO-SEED v2 (F1 — reset-path robusto): completa clientes FALTANTES ===
@@ -458,10 +507,21 @@ Deno.serve(async (req) => {
       }
     }
 
+    // Overlay da MARGEM — separado do de vendas de propósito: são duas RPCs independentes e uma pode
+    // falhar sem a outra; acoplá-las congelaria a margem por causa de um erro de recência (e vice-versa).
+    // Cliente ausente do marginMap (sem pedido, ou só com item sem custo) → NULL, jamais 0.
+    if (!marginRefreshFatal) {
+      for (const c of clients) {
+        c.gross_margin_pct = margemConhecida(marginMap.get(c.customer_user_id)?.gross_margin_pct);
+      }
+    }
+
     // Compute normalization ranges (recência NÃO usa min-max — cap configurável via computeRecencyScore)
     const maxInterval = Math.max(...clients.map(c => Number(c.avg_repurchase_interval || 0)), 1);
     const maxSpend = Math.max(...clients.map(c => Number(c.avg_monthly_spend_180d || 0)), 1);
-    const maxMarginPct = Math.max(...clients.map(c => Number(c.gross_margin_pct || 0)), 1);
+    // Só margens CONHECIDAS entram no max: `|| 0` faria o desconhecido participar da normalização
+    // como se fosse margem zero, deprimindo o teto e inflando o score relativo de todo mundo.
+    const maxMarginPct = Math.max(...clients.map(c => margemConhecida(c.gross_margin_pct) ?? 0), 1);
     const maxCategories = Math.max(...clients.map(c => Number(c.category_count || 0)), 1);
     const maxRevPotential = Math.max(...clients.map(c => Number(c.revenue_potential || 0)), 1);
 
@@ -480,10 +540,15 @@ Deno.serve(async (req) => {
         ? Math.max(0, 100 - (Number(client.avg_repurchase_interval || maxInterval) / maxInterval) * 100)
         : 50;
       
-      const marginScore = maxMarginPct > 0
-        ? Math.min(100, (Number(client.gross_margin_pct || 0) / maxMarginPct) * 100)
-        : 0;
-      
+      // Margem DESCONHECIDA → null, e o componente sai do score (renormalização abaixo). Com o
+      // `|| 0` anterior, "não medi" virava veredito "margem zero" = pior cliente possível naquele
+      // eixo — fabricação de número no money-path. Margem negativa é dado real: pontua 0 (piso),
+      // não negativo, senão um único cliente no prejuízo arrastaria o health para baixo do zero.
+      const margemPct = margemConhecida(client.gross_margin_pct);
+      const marginScore = margemPct == null
+        ? null
+        : Math.max(0, Math.min(100, (margemPct / maxMarginPct) * 100));
+
       const diversityScore = maxCategories > 0
         ? Math.min(100, (Number(client.category_count || 0) / maxCategories) * 100)
         : 0;
@@ -491,14 +556,20 @@ Deno.serve(async (req) => {
       const crossSellScore = Number(client.x_score || 0);
       const engagementScore = Number(client.s_score || 0);
 
-      const healthScore = Math.round(
+      // Renormalização: sem margem conhecida, o peso dela é redistribuído entre os componentes que
+      // existem, em vez de contribuir 0. Os hs_w somam 1,0 (cada um é config/100), então com margem
+      // conhecida pesoTotal=1 e a divisão é identidade — o score de quem TEM margem não muda.
+      const pesoMargem = marginScore == null ? 0 : hs_w.margin;
+      const pesoTotal = hs_w.recency + hs_w.frequency + pesoMargem
+                      + hs_w.diversity + hs_w.crosssell + hs_w.engagement;
+      const somaPonderada =
         recencyScore * hs_w.recency +
         freqScore * hs_w.frequency +
-        marginScore * hs_w.margin +
+        (marginScore ?? 0) * pesoMargem +
         diversityScore * hs_w.diversity +
         crossSellScore * hs_w.crosssell +
-        engagementScore * hs_w.engagement
-      );
+        engagementScore * hs_w.engagement;
+      const healthScore = Math.round(pesoTotal > 0 ? somaPonderada / pesoTotal : 0);
 
       let healthClass = 'critico';
       if (healthScore >= 75) healthClass = 'saudavel';
@@ -542,8 +613,13 @@ Deno.serve(async (req) => {
         churn_risk: churnRisk,
         priority_score: priorityScore,
         rf_score: Math.round(recencyScore),
-        m_score: Math.round(marginScore),
+        // Math.round(null) é 0 — o arredondamento fabricaria justamente o número que este PR
+        // remove. O null tem de atravessar até a coluna.
+        m_score: marginScore == null ? null : Math.round(marginScore),
         g_score: Math.round(diversityScore),
+        // MARGEM-VIVA: persiste a margem calculada no servidor (pós-overlay). Sem esta linha o
+        // cálculo novo morreria em memória e a coluna seguiria no 0 do seed.
+        gross_margin_pct: margemPct,
         // RECÊNCIA-VIVA: persiste a base de vendas FRESCA (pós-overlay) — antes congelava no seed.
         days_since_last_purchase: client.days_since_last_purchase ?? 999,
         avg_monthly_spend_180d: client.avg_monthly_spend_180d ?? 0,
@@ -560,7 +636,7 @@ Deno.serve(async (req) => {
         health_score: healthScore,
         health_class: healthClass,
         rf_score: Math.round(recencyScore),
-        m_score: Math.round(marginScore),
+        m_score: marginScore == null ? null : Math.round(marginScore),  // idem: null ≠ 0
         g_score: Math.round(diversityScore),
         x_score: Math.round(crossSellScore),
         s_score: Math.round(engagementScore),
