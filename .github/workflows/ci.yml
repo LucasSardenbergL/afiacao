@@ -23,6 +23,11 @@
 # - test:edges (deno test --no-remote): blocking — os 119 testes das edge functions. Rodavam em
 #   lugar NENHUM até 2026-07-18: existiam no repo, com script pronto no package.json, e o CI nunca
 #   os chamou. Detalhe (inclusive por que NÃO existe um gate de pin do deno) no próprio step.
+# - edges:typecheck (deno check): blocking — type-check dos 93 `index.ts` de edge. O `test:edges`
+#   acima NÃO cobre isso: `deno test` só type-checa o grafo que os testes alcançam, e nenhum
+#   `index.ts` é importado por teste algum. Até 2026-07-21 erro de tipo em edge passava VERDE em
+#   todos os gates e só quebrava em RUNTIME na produção (#1498). Único step do job que precisa de
+#   REDE; o porquê disso ser inevitável aqui está no próprio step.
 # - build (vite build): blocking — pega Tailwind quebrado + import errors + PWA setup
 # - lint (eslint): blocking em ERRORS — a dívida de `no-explicit-any` foi zerada
 #   (era ~1300 errors, hoje 0; ver CLAUDE.md §10/§13), então o lint virou gate
@@ -111,6 +116,38 @@ jobs:
 
       - name: Tests (edge functions — Deno, offline)
         run: bun run test:edges
+
+      # Type-check das EDGE FUNCTIONS — blocking. Buraco que ficou aberto mesmo depois do
+      # `test:edges` acima: `deno test` só type-checa o grafo que os TESTES alcançam, e por desenho
+      # os testes cobrem lógica PURA extraída (justamente para caber no `--no-remote`), então
+      # NENHUM `index.ts` de edge entra no grafo. Somado a `typecheck` (só src/) e `lint` (não
+      # type-checa Deno), erro de tipo numa edge ficava VERDE em TODOS os gates e só quebrava em
+      # RUNTIME na produção, depois do deploy manual pelo chat do Lovable. Detectado no PR #1498:
+      # `classifyProfile` usado sem estar no import passou por 5.527 testes vitest, 181 testes deno,
+      # typecheck e lint — só apareceu num `deno check` manual.
+      #
+      # ⚠️ Este step PRECISA de rede, ao contrário do `test:edges` — não dá para espelhar o
+      # `--no-remote` aqui: as edges importam `npm:`/`https://` de verdade e o check resolve o grafo
+      # todo (2.245 downloads, ~48s cold / ~2,5s warm). Mitigação do que dá: dos 3 hosts,
+      # `registry.npmjs.org` (2.087 requests) JÁ está no caminho de entrega via `bun install`; os
+      # novos são `esm.sh` (135) e `deno.land` (23), ambos de import legado — 34 edges em
+      # `deno.land/std/http/server.ts` (o `Deno.serve` nativo substitui) e 18 em
+      # `esm.sh/@supabase/supabase-js` (tem equivalente `npm:`). Migrar as duas famílias zera os
+      # hosts novos: é o follow-up 2 do spec.
+      #
+      # Sem `actions/cache` de propósito: o DENO_DIR fica em 681 MB (677 de tarballs npm) e
+      # economizaria ~30s dos 48s consumindo ~7% do budget de 10 GB do repo, mais drift de chave —
+      # e não há `deno.lock` versionado (está no .gitignore) para chavear. Roda DEPOIS de
+      # typecheck+vitest+test:edges pelo mesmo motivo que o `test:edges`: PR quebrado no comum falha
+      # antes de pagar a rede.
+      #
+      # O gate é de PRECISÃO, não de recall: falha só nas 6 classes de "símbolo/módulo não resolve"
+      # (a do #1498), que hoje estão em ZERO nas 93 edges — por isso não precisa de allowlist. As
+      # outras 141 (dívida de tipos gerados do Supabase) são reportadas sem falhar. O porquê da
+      # escolha, os números e os follow-ups estão no cabeçalho do script e no spec:
+      # docs/superpowers/specs/2026-07-21-edges-typecheck-gate-design.md
+      - name: Type check (edge functions — Deno)
+        run: bun run edges:typecheck
 
       - name: Build
         run: bun run build
