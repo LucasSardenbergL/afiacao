@@ -17,14 +17,40 @@
 // Antes, `Number(null ?? 0)` fabricava R$ 0/h — indistinguível de um cliente de margem
 // genuinamente ruim, e reprovado em silêncio.
 //
-// Setup pg_cron (manual depois do merge):
-//   SELECT cron.schedule('tactical-plans-batch-nightly', '0 5 * * *',
+// Setup pg_cron (manual depois do merge) — padrão copiado do `daily-calculate-scores` EM PRODUÇÃO:
+//   SELECT cron.schedule('tactical-plans-batch-nightly', '0 8 * * *',
 //     $$ SELECT net.http_post(
-//       url := 'https://<PROJECT_REF>.supabase.co/functions/v1/tactical-plans-batch',
-//       headers := jsonb_build_object('x-cron-secret', current_setting('app.cron_shared_key', true)),
-//       timeout_milliseconds := 55000
+//       url := 'https://fzvklzpomgnyikkfkzai.supabase.co/functions/v1/tactical-plans-batch',
+//       headers := jsonb_build_object('Content-Type','application/json',
+//         'x-cron-secret', (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name='CRON_SECRET' LIMIT 1)),
+//       body := '{"triggered_by":"cron"}'::jsonb,
+//       timeout_milliseconds := 150000
 //     ); $$
 //   );
+//
+// O secret vem do VAULT, não de `current_setting('app.cron_shared_key', true)`: essa GUC não
+// existe no projeto, o `true` (missing_ok) devolve NULL em silêncio, e o header sai nulo →
+// `authorizeCron` responde 401. E `cron.job_run_details` marca `succeeded` mesmo assim, porque
+// só registra o ENQUEUE do net.http_post — a verdade HTTP está em `net._http_response`.
+// Falha silenciosa clássica (docs/agent/sync.md). Nenhum dos crons vivos usa a GUC.
+//
+// `timeout_milliseconds` explícito é obrigatório: o default do pg_net é 5s e mataria o batch no
+// meio, em silêncio. 150000 é o teto padrão da casa (docs/agent/sync.md).
+//
+// ⚠️ SCHEDULE É UTC, não BRT — `cron.timezone` está vazio no banco (#1510). `'0 8 * * *'` dispara
+// às 05:00 BRT. Ao mexer, converta explícito: BRT = UTC−3.
+//
+// 08:00 UTC é o primeiro slot DEPOIS de todas as dependências do batch — não mexer sem refazer
+// esta conta (o `'0 5 * * *'` que este bloco sugeria antes é 02:00 BRT, ANTES de todas elas: leria
+// a margem e a carteira do dia anterior):
+//   06:00 UTC `daily-calculate-scores`           → grava os scores que o gate de R$/h consome
+//   06:00 UTC `scoring-recalc-batch-nightly`     → recalcula priority_score
+//   07:00 UTC `visit-score-recalc-batch-nightly` → recalcula o score de visita
+//   07:30 UTC `carteira-rebuild-nightly`         → reconstrói `carteira_assignments`, a allowlist
+//                                                  de elegíveis lida no passo 0 abaixo
+//
+// Depois de criar: versione o cron numa migration — cron que vive só no banco some sem rastro
+// (docs/agent/sync.md; o de vendas ficou 8 dias morto por isso).
 
 import { createClient } from 'npm:@supabase/supabase-js@^2';
 import { authorizeCron, corsHeaders } from '../_shared/auth.ts';
