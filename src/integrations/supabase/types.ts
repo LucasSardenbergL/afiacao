@@ -18756,6 +18756,17 @@ export type Database = {
         Args: { _user_id: string }
         Returns: Database["public"]["Enums"]["commercial_role"]
       }
+      get_customer_margin_summary: {
+        Args: never
+        Returns: {
+          custo_conhecido: number
+          customer_user_id: string
+          gross_margin_pct: number
+          itens_com_custo: number
+          itens_sem_custo: number
+          receita_com_custo: number
+        }[]
+      }
       get_customer_metrics: {
         Args: never
         Returns: {
@@ -19525,6 +19536,10 @@ export type Database = {
           p_last_error_kind: string
         }
         Returns: undefined
+      }
+      vendas_sync_semear_janela: {
+        Args: { p_accounts?: string[]; p_date_from: string; p_date_to: string }
+        Returns: Json
       }
       wa_is_stop_keyword: { Args: { p_body: string }; Returns: boolean }
       wa_owner_efetivo: { Args: { p_customer: string }; Returns: string }
