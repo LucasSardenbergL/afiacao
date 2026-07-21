@@ -21,8 +21,8 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **416** custom migrations totais
-- **1474** objetos esperados (criados por estas migrations)
+- **418** custom migrations totais
+- **1475** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 422
   - `rls_policy`: 379
@@ -30,7 +30,7 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
   - `cron_job`: 150
   - `table`: 147
   - `trigger`: 79
-  - `view`: 69
+  - `view`: 70
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -3528,6 +3528,10 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.registrar_aplicacao_regua` | — |
 | `rls_policy` | `public.regua_preco_log_select_custo` | `regua_preco_log` |
 
+### `20260723160000_authz_fu4e_is_not_true_escritas.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
 ### `20260724120000_authz_sales_orders_split_escrita_fu4.sql`
 
 | Tipo | Objeto | Parent |
@@ -3542,6 +3546,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `rls_policy` | `public.order_items_select_customer` | `order_items` |
 | `rls_policy` | `public.sales_price_history_select_staff` | `sales_price_history` |
 | `rls_policy` | `public.sales_price_history_select_customer` | `sales_price_history` |
+
+### `20260724130000_tint_canonica_csv_legado_allowlist.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `view` | `public.v_tint_formula_canonica` | — |
 
 ## Próximos passos por status
 
