@@ -10,6 +10,21 @@
 
 **Spec:** [`docs/superpowers/specs/2026-07-20-fechamento-custo-farmer-scoring-design.md`](../specs/2026-07-20-fechamento-custo-farmer-scoring-design.md)
 
+## ⛔ DEPENDÊNCIA — ler antes de começar (revisão de 2026-07-21)
+
+Este plano **não calcula mais a margem**. Ele consome `private.margem_cliente_agregada()`, entregue no **PR #1519** (branch `feat/margem-cliente-helper-compartilhado`).
+
+**Por quê:** a sessão paralela do PR #1495 construiu, ao mesmo tempo, o cálculo server-side da margem (`get_customer_margin_summary()`, para popular `farmer_client_scores.gross_margin_pct`). Medidas lado a lado sobre a prod, as duas lógicas divergem em **346 de 1.215 clientes (28,5%) na FAIXA**, com delta máximo de 112,57 p.p. Duas autoridades money-path discordando no sinal que o vendedor vê. Decisão do dono (2026-07-21): **um helper compartilhado, e o FU4-F fase 3 entra depois** do #1495 absorvê-lo.
+
+**Consequências para este plano:**
+
+1. A Task 2 vira uma função **fina** — classifica em faixa e aplica os dois gates. O JOIN, o custo canônico e o filtro de status vivem no helper.
+2. O helper **preserva o filtro de status do hook** (`'confirmado','faturado','entregue'` — dois inexistentes, 33% dos pedidos invisíveis). É deliberado: corrigir muda o score de todo cliente e é o chip **"Corrigir filtro de status do scoring do farmer"**, PR próprio com baseline. ⇒ a paridade da Task 4 continua válida.
+3. O helper resolve custo por `omie_codigo_produto → product_id`, **o mesmo caminho do hook** (`src/lib/scoring/margin.ts:23-24` + `costMap` por `product_id`). A paridade fica mais forte, não mais fraca.
+4. Cliente **sem custo conhecido agora VEM na resposta** com `margem_pct = NULL` (antes o INNER JOIN o descartava). O fallback `?? neutro` do hook segue necessário só para cliente **sem pedido nenhum**.
+
+**Ordem de merge:** #1519 → #1495 → este PR. Não comece a Task 2 antes do #1519 estar mergeado ou, no mínimo, com a migration do helper aplicada em prod.
+
 ## Global Constraints
 
 - **Idioma:** código, rotas e commits em **pt-BR**.
@@ -246,62 +261,27 @@ BEGIN
     FROM public.farmer_algorithm_config c
    WHERE c.key IN ('margem_faixa_piso_pct', 'margem_faixa_meta_pct');
 
+  -- O CÁLCULO não mora aqui — mora em private.margem_cliente_agregada() (PR #1519), que é
+  -- também a fonte do #1495. Esta função só CLASSIFICA e aplica os dois gates. Duplicar o
+  -- cálculo foi exatamente o que produziu 28,5% de divergência entre as duas frentes.
   RETURN QUERY
-  WITH custo AS (
-    -- Custo canônico espelhando src/lib/custo/custoCanonico.ts:
-    --   cost_final preferido, fallback cost_price; 0/negativo/NaN NUNCA viram custo.
-    -- Chave = omie_codigo_produto (100% preenchido) e NÃO order_items.product_id,
-    -- que é NULL em 1.835 de 68.459 itens (2,7%) — o atalho descartaria esses itens.
-    SELECT op.omie_codigo_produto AS cod,
-           COALESCE(NULLIF(pc.cost_final, 'NaN'), NULLIF(pc.cost_price, 'NaN')) AS c
-      FROM public.omie_products op
-      JOIN public.product_costs pc ON pc.product_id = op.id
-     WHERE COALESCE(NULLIF(pc.cost_final, 'NaN'), NULLIF(pc.cost_price, 'NaN')) > 0
-  ),
-  agg AS (
-    -- INNER JOIN em `custo`: SKU sem custo conhecido é EXCLUÍDO de receita E custo
-    -- (ausente ≠ zero — incluir a receita sem o custo inflaria a margem).
-    -- `discount` NÃO é subtraído: o jsonb que o hook lê não o traz, e a paridade manda.
-    SELECT so.customer_user_id AS cid,
-           sum(oi.quantity::numeric * oi.unit_price::numeric) AS receita,
-           sum(oi.quantity::numeric * cu.c)                   AS custo
-      FROM public.sales_orders so
-      JOIN public.order_items  oi ON oi.sales_order_id = so.id
-      JOIN custo               cu ON cu.cod = oi.omie_codigo_produto
-     WHERE so.status IN ('confirmado', 'faturado', 'entregue')
-       AND so.customer_user_id IS NOT NULL
-       -- NOT EXISTS, não NOT IN: NOT IN é NULL-blind e zeraria o resultado inteiro.
-       AND NOT EXISTS (
-             SELECT 1
-               FROM public.cliente_classificacao cc
-              WHERE cc.user_id = so.customer_user_id
-                AND cc.excluir_da_carteira IS TRUE)
-     GROUP BY 1
-  ),
-  calc AS (
-    SELECT a.cid,
-           CASE WHEN a.receita > 0
-                THEN (a.receita - a.custo) / a.receita * 100
-           END AS pct
-      FROM agg a
-  )
-  SELECT k.cid,
-         CASE WHEN k.pct IS NULL  THEN 'neutro'
-              WHEN k.pct < 0      THEN 'vermelho'
-              WHEN k.pct < v_piso THEN 'amarelo'
-              ELSE                     'verde'   END,
-         CASE WHEN k.pct IS NULL  THEN 'sem_custo'
-              WHEN k.pct < 0      THEN 'abaixo_do_custo'
-              WHEN k.pct < v_piso THEN 'abaixo_do_piso'
-              WHEN k.pct < v_meta THEN 'abaixo_da_meta'
-              ELSE                     'saudavel' END,
+  SELECT m.customer_user_id,
+         CASE WHEN m.margem_pct IS NULL  THEN 'neutro'
+              WHEN m.margem_pct < 0      THEN 'vermelho'
+              WHEN m.margem_pct < v_piso THEN 'amarelo'
+              ELSE                            'verde'   END,
+         CASE WHEN m.margem_pct IS NULL  THEN 'sem_custo'
+              WHEN m.margem_pct < 0      THEN 'abaixo_do_custo'
+              WHEN m.margem_pct < v_piso THEN 'abaixo_do_piso'
+              WHEN m.margem_pct < v_meta THEN 'abaixo_da_meta'
+              ELSE                            'saudavel' END,
          -- Gate de PROJEÇÃO: o cálculo usa o valor real, a SAÍDA esconde.
          -- A chave fica presente com NULL para o front tolerar.
-         CASE WHEN v_pode_num THEN round(k.pct, 1) END
-    FROM calc k
+         CASE WHEN v_pode_num THEN m.margem_pct END
+    FROM private.margem_cliente_agregada() m
    -- Escopo espelhando a RLS de farmer_client_scores (policy fcs_select_carteira).
    WHERE COALESCE((SELECT private.cap_carteira_ler(v_uid)), false)
-      OR COALESCE(private.carteira_visivel_para(k.cid, v_uid), false);
+      OR COALESCE(private.carteira_visivel_para(m.customer_user_id, v_uid), false);
 END;
 $fn$;
 
@@ -537,11 +517,15 @@ Troque o `WHERE` final por `WHERE true`. Rode.
 
 Esperado: `exit=1` com vermelhos em **`A2`** (A passa a ver o cliente de B) e **`D2`**. **Reverta.**
 
-- [ ] **Step 5: Falsificação 3 — o caminho do JOIN**
+- [ ] **Step 5: Falsificação 3 — o limiar da faixa**
 
-Troque `JOIN custo cu ON cu.cod = oi.omie_codigo_produto` por `JOIN custo cu ON cu.cod = oi.product_id::text::bigint`. Rode.
+A falsificação do **caminho do JOIN** mudou de casa: agora ela vive no harness do helper (`db/test-margem-cliente-helper-compartilhado.sh`, F1), porque o JOIN mudou de casa junto. Aqui a sabotagem certa é o limiar.
 
-Esperado: `exit=1` — o seed não preenche `product_id`, então tudo vira zero linhas e A1/B1/C1 caem. Prova que o harness mede o caminho certo. **Reverta.**
+Troque `WHEN m.margem_pct < v_piso THEN 'amarelo'` por `WHEN m.margem_pct < 0 THEN 'amarelo'`. Rode.
+
+Esperado: `exit=1` com **`C1`** vermelho (margem 5% deixa de cair em amarelo e vira verde). Prova que a faixa lê o limiar de config, e não uma constante embutida. **Reverta.**
+
+⚠️ O harness desta task precisa **stubar** `private.margem_cliente_agregada()` — a função real vem do PR #1519 e não está no repo desta branch. O stub deve devolver `(customer_user_id, margem_pct)` controlável por seed, e o comentário tem de dizer que a fidelidade do CÁLCULO é provada lá, não aqui. Stubar o helper aqui é legítimo (esta função não o implementa); stubar o **gate** não seria.
 
 - [ ] **Step 6: Confirmar verde após reverter as três sabotagens**
 
