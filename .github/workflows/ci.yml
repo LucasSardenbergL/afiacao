@@ -46,6 +46,39 @@ on:
     branches: [main]
   push:
     branches: [main]
+  # Validação PERIÓDICA da main — tapa a única janela que `pull_request`+`push` não cobrem.
+  #
+  # O buraco: merge de PR NÃO dispara o CI na main. Medido em 2026-07-21 (`gh run list --limit 60`):
+  # TODO run com `event=push` é commit DIRETO do bot do Lovable; nenhum merge de PR (#1503/#1505/
+  # #1506/#1507) gerou run de push. Causa: o auto-merge.yml usa `secrets.GITHUB_TOKEN`, e pela
+  # proteção anti-loop do GitHub eventos disparados por esse token não acionam workflows. Ou seja, o
+  # `push:` acima só pega a via do Lovable.
+  #
+  # Por que isso importa: dois PRs verdes ISOLADAMENTE podem quebrar a main JUNTOS (semantic
+  # conflict) e ninguém saber. Ex. concreto com o `edges:typecheck`: PR A remove um export de
+  # `supabase/functions/_shared/`, PR B adiciona um import dele — cada um passa, juntos dão TS2305.
+  # Com ~30 worktrees paralelas e ~8 PRs mergeados por sessão, não é hipotético. Pior: o sintoma
+  # aparece no lugar errado — o PRÓXIMO PR falha por algo que o autor não causou.
+  #
+  # Por que `schedule` e não PAT/merge-queue: evento `schedule` roda SEMPRE no default branch, então
+  # `github.ref` já é `refs/heads/main` e os dois steps de alerta lá embaixo
+  # (`if: failure() && github.ref == 'refs/heads/main'` / `success() && ...`) passam a cobrir esta
+  # via SEM alteração — abrem e fecham a Issue `ci-main-red` sozinhos. Trocar o token do auto-merge
+  # por um PAT/App faria o push disparar o CI, mas custa gerenciar credencial e um run de ~5min por
+  # merge; merge queue resolve melhor (valida a combinação ANTES da main) mas muda o fluxo do repo
+  # inteiro. Diário é o piso útil: pega o conflito no dia seguinte por ~150 min/mês de Actions.
+  #
+  # Horário: 09:17 UTC ≈ 06:17 BRT — o founder começa o dia com o sinal, e o minuto quebrado evita a
+  # fila de crons "redondos" do GitHub (que atrasa muito em :00). ⚠️ O GitHub DESABILITA cron após
+  # 60 dias sem atividade no repo; se o repo hibernar, reativar na aba Actions.
+  schedule:
+    - cron: '17 9 * * *'
+  # Botão "validar a main agora" (aba Actions → CI → Run workflow), sem esperar as 09:17. Serve para
+  # (a) confirmar a main na hora depois de uma leva de merges, e (b) VERIFICAR este próprio desenho:
+  # como `workflow_dispatch` na main também dá `github.ref == 'refs/heads/main'`, ele exercita os
+  # mesmos dois steps de alerta que o `schedule` vai exercitar — sem isso, a primeira prova de que a
+  # Issue abre/fecha só viria no primeiro cron.
+  workflow_dispatch:
 
 jobs:
   validate:
@@ -250,6 +283,12 @@ jobs:
   mutation-check:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # FORA do `schedule` de propósito. O run diário existe para provar que a main passa nos gates
+    # BLOQUEANTES; este job é informativo, não-required, e pode ficar INVÁLIDO por refactor legítimo
+    # (ver o comentário acima). Rodando diário ele falharia sem abrir Issue nenhuma — os dois steps
+    # de alerta vivem no job `validate` —, virando exatamente o sinal vermelho que ninguém lê. Além
+    # de somar ~2m41s por dia sem leitor. Nos eventos de PR/push segue rodando igual.
+    if: github.event_name != 'schedule'
     steps:
       - uses: actions/checkout@v5
 
