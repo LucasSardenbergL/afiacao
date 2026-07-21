@@ -15,7 +15,8 @@ const wrapper = ({ children }: { children: React.ReactNode }) => {
   return <QueryClientProvider client={qc}>{children}</QueryClientProvider>;
 };
 
-const FETCH_PISO = { cmc: 98, cmc_confiavel: true, aliquota_venda: 0.078, piso_mc: 106.29,
+const FETCH_PISO = { abaixo_piso: true, piso_disponivel: true, cmc_confiavel: true,
+  prazo_aplicado: false, piso_mc: 106.29, piso_gap_pct: 0.0027,
   precos_cliente: [], comparaveis: [] };
 
 describe('useReguaPreco', () => {
@@ -38,6 +39,35 @@ describe('useReguaPreco', () => {
     ];
     renderHook(() => useReguaPreco(itens, 'cust-1', true), { wrapper });
     await waitFor(() => expect(rpcMock).toHaveBeenCalledTimes(1));
+  });
+
+  // FU4-F fase 2: o preço passou a ser ARGUMENTO da RPC (a comparação preço<piso é do servidor).
+  it('manda p_preco_atual e p_prazo_dias para a RPC', async () => {
+    rpcMock.mockResolvedValue({ data: FETCH_PISO, error: null });
+    const itens: ReguaCartItem[] = [{ chave: 'k1', productId: 'p1', qty: 2, precoAtual: 100 }];
+    renderHook(() => useReguaPreco(itens, 'cust-1', true, { prazoDias: [0, 30] }), { wrapper });
+    await waitFor(() => expect(rpcMock).toHaveBeenCalledTimes(1));
+    expect(rpcMock).toHaveBeenCalledWith('get_regua_preco', {
+      p_customer: 'cust-1', p_product: 'p1', p_qty: 2,
+      p_preco_atual: 100, p_prazo_dias: [0, 30],
+    });
+  });
+
+  // Sem debounce, cada tecla no campo de preço viraria uma RPC — 4 edições = 4 chamadas por item.
+  // A 1ª carga NÃO é atrasada de propósito (useDebouncedValue inicializa com o valor), então o
+  // esperado é: 1 chamada inicial + 1 pela rajada inteira = 2, nunca 5.
+  it('rajada de mudanças de preço colapsa (debounce) e converge no último preço', async () => {
+    rpcMock.mockResolvedValue({ data: FETCH_PISO, error: null });
+    const { rerender } = renderHook(
+      ({ preco }: { preco: number }) =>
+        useReguaPreco([{ chave: 'k1', productId: 'p1', qty: 2, precoAtual: preco }], 'cust-1', true),
+      { wrapper, initialProps: { preco: 100 } },
+    );
+    for (const preco of [101, 102, 103, 104]) rerender({ preco });
+    await waitFor(() =>
+      expect(rpcMock).toHaveBeenLastCalledWith('get_regua_preco', expect.objectContaining({ p_preco_atual: 104 })),
+    );
+    expect(rpcMock.mock.calls.length).toBeLessThanOrEqual(2); // 5 edições, ≤2 chamadas
   });
 
   it('flag off ou sem cliente → não chama RPC', async () => {

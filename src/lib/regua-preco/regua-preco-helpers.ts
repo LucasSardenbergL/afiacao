@@ -5,10 +5,6 @@ import {
   ReguaPrecoResult,
   DISCLAIMERS_FIXOS,
 } from './types';
-import { pisoComPrazo } from './prazo-helpers';
-
-/** Fração → "17,75%" (pt-BR) para os recibos. */
-const fmtPctReais = (frac: number) => `${(frac * 100).toFixed(2).replace('.', ',')}%`;
 
 /** Percentil R-7 (interpolação linear) — casa com percentile_cont. Filtra não-finitos; null se vazio ou p∉[0,1]. */
 export function percentil(xs: number[], p: number): number | null {
@@ -20,13 +16,6 @@ export function percentil(xs: number[], p: number): number | null {
   const lo = Math.floor(idx);
   const hi = Math.ceil(idx);
   return lo === hi ? s[lo] : s[lo] + (idx - lo) * (s[hi] - s[lo]);
-}
-
-/** Preço mínimo p/ margem de contribuição >= 0: imposto incide sobre o preço. */
-export function calcPisoMC(cmc: number | null, aliquotaVenda: number): number | null {
-  if (cmc == null || !Number.isFinite(cmc) || cmc <= 0) return null;
-  if (!(aliquotaVenda >= 0 && aliquotaVenda < 1)) return null;
-  return cmc / (1 - aliquotaVenda);
 }
 
 /** Referência do próprio cliente: mediana nearest-rank (valor REALMENTE pago) dos preços recentes (já 180d pela RPC). */
@@ -74,7 +63,7 @@ const capDe = (c: Confianca, caps: { alta: number; media: number }) =>
   c === 'alta' ? caps.alta : c === 'media' ? caps.media : 0;
 
 export function avaliarReguaPreco(input: ReguaPrecoInput): ReguaPrecoResult {
-  const { precoAtual, cmc, cmcConfiavel, aliquotaVenda, precosCliente, comparaveis, caps, prazoDias, custoCapitalAnual } = input;
+  const { precoAtual, piso: veredito, precosCliente, comparaveis, caps, prazoDias } = input;
   const disclaimers = [...DISCLAIMERS_FIXOS];
   const recibos: string[] = [];
   const reasonCodes: string[] = [];
@@ -99,43 +88,41 @@ export function avaliarReguaPreco(input: ReguaPrecoInput): ReguaPrecoResult {
     return out({});
   }
 
-  // Piso à vista; ajustado ao custo do prazo (F2) quando há condição a prazo + taxa + cmc CONFIÁVEL.
-  // O piso é PISO: o early-return `abaixoPiso` (abaixo) vem ANTES de qualquer cap → o cap nunca
-  // mascara o piso (Codex P1-D5). Ajuste só sobre cmc confiável (proxy compõe incerteza — degrada).
-  let pisoMC = calcPisoMC(cmc, aliquotaVenda);
-  let prazoAplicado = false;
-  if (
-    pisoMC != null &&
-    cmc != null &&
-    cmcConfiavel &&
-    prazoDias != null &&
-    prazoDias.length > 0 &&
-    custoCapitalAnual != null
-  ) {
-    const adj = pisoComPrazo(cmc, aliquotaVenda, prazoDias, custoCapitalAnual);
-    if (adj != null) {
-      pisoMC = adj.piso;
-      prazoAplicado = true;
-      recibos.push(
-        `Piso inclui o custo do prazo: ${prazoDias.join('/')} dias (${fmtPctReais(custoCapitalAnual)} a.a.).`,
-      );
-      reasonCodes.push('piso_ajustado_prazo');
-    }
-  }
-  if (!prazoAplicado) disclaimers.push('Prazo de recebimento não considerado.');
+  // O piso vem DECIDIDO do servidor (FU4-F fase 2). `pisoMC` é null quando o servidor mascarou o
+  // número (sem cap_custo_ler) OU quando não havia custo — `veredito.disponivel` separa os dois.
+  // O piso é PISO: o early-return `abaixoPiso` vem ANTES de qualquer cap → o cap nunca mascara
+  // o piso (Codex P1-D5).
+  const pisoMC = veredito.piso;
+  const abaixoPiso = veredito.abaixoPiso;
 
-  const abaixoPiso = pisoMC != null && precoAtual < pisoMC;
+  if (veredito.prazoAplicado) {
+    recibos.push(
+      prazoDias != null && prazoDias.length > 0
+        ? `Piso inclui o custo do prazo: ${prazoDias.join('/')} dias.`
+        : 'Piso inclui o custo do prazo concedido.',
+    );
+    reasonCodes.push('piso_ajustado_prazo');
+  } else {
+    disclaimers.push('Prazo de recebimento não considerado.');
+  }
 
   if (abaixoPiso) {
-    if (!cmcConfiavel) {
+    if (!veredito.cmcConfiavel) {
       reasonCodes.push('cmc_proxy');
       recibos.push('Possível MC negativa por custo ESTIMADO (proxy). Confira o custo real.');
       return out({ sinal: 'piso', confianca: 'baixa', pisoMC, abaixoPiso });
     }
+    // Sem o número (vendedora): o SINAL fica, o valor não. Nada de precoReferencia — é o piso,
+    // e devolvê-lo pela porta dos fundos (botão "Aplicar piso · R$ X") reexporia o custo.
+    if (pisoMC == null) {
+      reasonCodes.push('piso_oculto');
+      recibos.push('Preço abaixo do piso comercial — revise antes de fechar.');
+      return out({ sinal: 'piso', confianca: 'alta', pisoMC: null, abaixoPiso });
+    }
     recibos.push(
-      `Custo+imposto ≈ piso R$ ${pisoMC!.toFixed(2)}; seu preço R$ ${precoAtual.toFixed(2)} (MC negativa).`,
+      `Custo+imposto ≈ piso R$ ${pisoMC.toFixed(2)}; seu preço R$ ${precoAtual.toFixed(2)} (MC negativa).`,
     );
-    const gap = pisoMC! / precoAtual - 1;
+    const gap = pisoMC / precoAtual - 1;
     return out({
       sinal: 'piso',
       confianca: 'alta',
