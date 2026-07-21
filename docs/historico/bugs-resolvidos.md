@@ -282,3 +282,29 @@ remove (1a4272c7 "Changes"). Fix: restaurar o arquivo de bbd2c155 por PR (#1478)
 Lição (armadilha nova no CLAUDE.md): após merge que toca `supabase/functions/`, conferir
 `git log -S` do símbolo novo ANTES de pedir deploy — "verbatim da main" só vale se a main ainda
 for a sua.
+
+## Importar Pedidos vira semeadura server-side — a aba pode fechar (2026-07-21, [PR #1518](https://github.com/LucasSardenbergL/afiacao/pull/1518), migration `20260726130000` ⚠️ apply manual)
+
+Follow-up do incidente 2026-07-20/21 (pós #1500/#1502): o "Importar Recentes (180d)" de
+/admin/analytics-sync era um loop client-side de 40–60 min (~26–35 invocações da edge por
+conta) — o Chrome matou o JS ~12 min após o clique em 3 tentativas (aba em background/Memory
+Saver), deixando órfãos `executando` em `acoes_execucoes`; a importação só fechou semeando
+`vendas_sync_cursor` na mão. **Fix:** RPC `vendas_sync_semear_janela` (SECDEF, gate staff
+fail-closed espelhado de `request_customer_metrics_refresh`, validação 22023, `INSERT … ON
+CONFLICT DO NOTHING` — nunca toca janela existente) + hook trocando o loop por semeadura
+(mutação ~1s, registro fecha na hora → sem novos órfãos) + polling de leitura do cursor
+(estado por conta, "pode fechar a aba", botões travados com janela aberta) + copy honesta
+(o "~2 min" era mentira histórica). "Importar Todos" idem: 1 janela `2020-01-01→hoje` por
+conta (min real: colacor 2020-04-08, oben 2023-09-25; período vazio não custa páginas no
+Omie). Edge e cron INTOCADOS — o motor (lease/heartbeat/retomada, jobid 140) já existia
+desde `20260617133633`; faltava o caminho de escrita gateado pro staff armar a janela.
+**Prova:** `db/test-vendas_sync_semear_janela.sh` PG17 30/30 (caminho real `SET ROLE
+authenticated`+GUC; anon barrado na fronteira com sentinela do Postgres que meu código não
+emite; integração com o comando REAL do cron; F1 gate/F2 clobber/F3 grant — dentes
+confirmados) e — lição #1490/#1501 aplicada — o validador pós-apply
+(`db/valida-vendas-sync-semear-janela.sql`, lê catálogo, nunca invoca, comenta-strip)
+EXECUTADO contra banco bom (✅) e sabotado ×3 (❌). vitest 5546/5546, typecheck/lint/
+shellcheck 0, authz:check ok, wt:preflight 🟢. **LIÇÃO:** trabalho >10 min que depende de
+aba viva de browser é bug de arquitetura, não de timeout — se o motor server-side já existe
+(cursor+cron), o botão deve SEMEAR e a UI LER; o clique que "executa" vira o clique que
+"arma", e o registro de execução acompanha a semântica (cobre a semeadura, não o run).
