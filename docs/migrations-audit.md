@@ -21,11 +21,11 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **418** custom migrations totais
-- **1475** objetos esperados (criados por estas migrations)
+- **420** custom migrations totais
+- **1478** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 422
-  - `rls_policy`: 379
+  - `function`: 424
+  - `rls_policy`: 380
   - `index`: 224
   - `cron_job`: 150
   - `table`: 147
@@ -3547,11 +3547,24 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `rls_policy` | `public.sales_price_history_select_staff` | `sales_price_history` |
 | `rls_policy` | `public.sales_price_history_select_customer` | `sales_price_history` |
 
+### `20260724130000_authz_custo_fu4f_fase3_recommend.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.pode_ler_custo` | — |
+| `rls_policy` | `public.recommendation_log_select_custo` | `recommendation_log` |
+
 ### `20260724130000_tint_canonica_csv_legado_allowlist.sql`
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `view` | `public.v_tint_formula_canonica` | — |
+
+### `20260726120000_tint_promote_error_details_completo.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tint_promote_sync_run` | — |
 
 ## Próximos passos por status
 
