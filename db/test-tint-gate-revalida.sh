@@ -43,14 +43,43 @@
 #   F6  sabotagem: ultimo_preco vira SECURITY DEFINER → G17 cai
 #   F7  sabotagem: sem o exclude anti-autovalidação → G24 cai
 #   F8  sabotagem: item sem cor ignorado sem classificar → G20 cai
+#   ── separação RÓTULO × PISO (20260726160000, follow-up do Codex no #1523) ──
+#   O gate lia UMA coluna (preco_csv_legado) para dois propósitos opostos: o
+#   RÓTULO da fonte 'tabela' (precisão de proveniência) e o PISO das fontes
+#   'manual'/legado (conservadorismo). Dar precisão ao rótulo ENCOLHIA o max e
+#   com ele o piso — ampliando a aceitação de preço baixo na fronteira do submit.
+#   G32 K30 (rótulo 60 × piso 90 × calc 102.5): manual 75 fica acima do rótulo e
+#       abaixo do piso ⇒ preco_obsoleto com esperado_minimo=90; manual 95 passa;
+#       e a fonte 'tabela' a 60 SEGUE passando (o piso não governa a escolha da
+#       vendedora — isso é o que separa as duas colunas)
+#   G33 K31 (sem geração '1'): rótulo NULL ⇒ piso NULL ⇒ v_floor = v_calc
+#       (102.5). Manual 80 bloqueia. Se o piso viesse 70, o NULL-preserving caiu
+#       e o gate AFROUXOU — em prod são 31.062 chaves (6,3% das com SL ativa)
+#   F10 sabotagem: v_floor volta a usar v_tab (reverte a separação) → G32 cai
+#   F11 sabotagem: piso sem o NULL-preserving (o spec ingênuo) → G33 cai
 #   R   restauração: migration real de volta ⇒ tudo verde
+#
+# ⚠️ 2026-07-21: este arquivo estava QUEBRADO na main — morria em "cannot drop
+# columns from view" ANTES do primeiro assert, desde o re-dump do snapshot no
+# #1509 (que passou a trazer a view pronta). A canônica levou o conserto no
+# #1523; aqui passou batido, e como db/test-*.sh não roda no CI nada acusou:
+# a prova do gate do submit ficou morta e silenciosa. Corrigido com o mesmo
+# DROP VIEW antes da cadeia. A cadeia da VIEW também passou a ser aplicada
+# INTEIRA (faltavam o fix semântico e a allowlist) — o gate lê a view, então
+# testá-lo contra uma versão antiga dela provava menos do que dizia.
 # Base estrutural: db/test-tint-canonica.sh. Pré-req: brew install postgresql@17 pgvector.
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MIG_F2="$REPO_ROOT/supabase/migrations/20260718213000_tint_formula_canonica.sql"
 MIG_F2B="$REPO_ROOT/supabase/migrations/20260718233000_tint_canonica_preco_csv_legado.sql"
+# A cadeia da VIEW tem de vir INTEIRA: o gate lê v_tint_formula_canonica, e
+# desde a 20260726160000 lê a 14ª coluna (preco_piso_legado). plpgsql é
+# late-bound — sem a coluna, o gate CRIA normalmente e só explode ao EXECUTAR.
+MIG_F2C="$REPO_ROOT/supabase/migrations/20260722100002_tint_canonica_csv_legado_semantico.sql"
+MIG_F2D="$REPO_ROOT/supabase/migrations/20260724130000_tint_canonica_csv_legado_allowlist.sql"
 MIGRATION="$REPO_ROOT/supabase/migrations/20260722100001_tint_gate_revalida_submit.sql"
+MIG_PISO="$REPO_ROOT/supabase/migrations/20260726160000_tint_canonica_piso_legado.sql"
 PGVER=17
 PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"
 PORT=5449
@@ -58,7 +87,7 @@ DATA="$(mktemp -d /tmp/pgtest-tintgate.XXXXXX)/data"
 export LC_ALL=C LANG=C
 
 [ -x "$PGBIN/initdb" ] || { echo "postgresql@${PGVER} ausente: brew install postgresql@${PGVER} pgvector"; exit 1; }
-for f in "$MIG_F2" "$MIG_F2B" "$MIGRATION"; do
+for f in "$MIG_F2" "$MIG_F2B" "$MIG_F2C" "$MIG_F2D" "$MIGRATION" "$MIG_PISO"; do
   [ -f "$f" ] || { echo "migration ausente: $f"; exit 1; }
 done
 
@@ -101,13 +130,28 @@ rm -f "$RR"
 # falsificação F5 dá falso-verde (lição database.md — mordida em prod).
 P -q -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO anon, authenticated, service_role;"
 
-echo "→ migrations Fase 2 + 2b + Fase 3 na ordem de prod…"
+echo "→ migrations Fase 2 + 2b + semântico + allowlist + Fase 3 + piso na ordem de prod…"
+# ⚠️ O snapshot JÁ TRAZ a view pronta desde o re-dump do #1509 (2026-07-21).
+# Sem este DROP, a Fase 2 (12 colunas) morre em "cannot drop columns from view"
+# e o harness inteiro para ANTES do primeiro assert — que é EXATAMENTE o estado
+# em que este arquivo estava na main até 2026-07-21: quebrado e silencioso,
+# porque db/test-*.sh não roda no CI. A canônica levou esse mesmo conserto no
+# #1523; aqui ele passou batido. O objetivo é provar a CADEIA desde o zero, não
+# o snapshot.
+P -q -c "DROP VIEW IF EXISTS public.v_tint_formula_canonica;" >/dev/null \
+  || { echo "FALHA: não removeu a view do snapshot antes da cadeia"; exit 1; }
 P -q -f "$MIG_F2"  >/dev/null || { echo "FALHA: migration Fase 2 não aplicou"; exit 1; }
 P -q -f "$MIG_F2B" >/dev/null || { echo "FALHA: migration Fase 2b não aplicou"; exit 1; }
+P -q -f "$MIG_F2C" >/dev/null || { echo "FALHA: migration fix semântico não aplicou"; exit 1; }
+P -q -f "$MIG_F2D" >/dev/null || { echo "FALHA: migration allowlist não aplicou"; exit 1; }
 P -q -f "$MIGRATION" >/dev/null || { echo "FALHA: migration Fase 3 (gate) não aplicou"; exit 1; }
+P -q -f "$MIG_PISO" >/dev/null || { echo "FALHA: migration piso legado não aplicou"; exit 1; }
 
+# A migration do piso recria a VIEW (14 colunas) E o gate — restaurar as duas na
+# ordem de prod, senão o gate volta lendo uma view que não tem mais a coluna.
 restore_gate() {
   P -q -f "$MIGRATION" >/dev/null || { echo "FALHA: restore_gate não re-aplicou a migration"; exit 1; }
+  P -q -f "$MIG_PISO"  >/dev/null || { echo "FALHA: restore_gate não re-aplicou o piso"; exit 1; }
 }
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -167,13 +211,45 @@ INSERT INTO public.tint_formulas (id, account, cor_id, nome_cor, produto_id, bas
   ('f1000000-0000-0000-0000-00000000005a','oben','K1','AZUL','a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000002','a0000000-0000-0000-0000-0000000000e1','5c000000-0000-0000-0000-000000000001','50000000-0000-0000-0000-00000000000a',NULL),
   ('f1000000-0000-0000-0000-000000000019','oben','K1','AZUL','a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000002','a0000000-0000-0000-0000-0000000000e1','0d000000-0000-0000-0000-000000000001','50000000-0000-0000-0000-00000000000a',150),
   ('f9000000-0000-0000-0000-00000000005a','oben','K9','BRANCO','a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000002','a0000000-0000-0000-0000-0000000000e1','5c000000-0000-0000-0000-000000000001','50000000-0000-0000-0000-00000000000a',NULL),
-  ('f0160000-0000-0000-0000-000000000019','oben','K16','TESTEMOTOR','a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000002','a0000000-0000-0000-0000-0000000000e1','0d000000-0000-0000-0000-000000000001','50000000-0000-0000-0000-00000000000a',300);
+  ('f0160000-0000-0000-0000-000000000019','oben','K16','TESTEMOTOR','a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000002','a0000000-0000-0000-0000-0000000000e1','0d000000-0000-0000-0000-000000000001','50000000-0000-0000-0000-00000000000a',300),
+  -- K30 PISOCODEX (separação rótulo×piso — o cenário do challenge Codex):
+  --   SL canônica válida × geração '1' CSV 60 × personalizada CSV 90.
+  --   RÓTULO (preco_csv_legado, allowlist) = 60 · PISO (preco_piso_legado) = 90.
+  --   calc = 102.5 ⇒ v_floor ANTES = LEAST(102.5,60) = 60; AGORA = 90.
+  --   Um manual de 75 fica ACIMA do rótulo e ABAIXO do piso: era aceito, agora não.
+  ('f0300000-0000-0000-0000-00000000005a','oben','K30','PISOCODEX','a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000002','a0000000-0000-0000-0000-0000000000e1','5c000000-0000-0000-0000-000000000001','50000000-0000-0000-0000-00000000000a',NULL),
+  ('f0300000-0000-0000-0000-000000000019','oben','K30','PISOCODEX','a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000002','a0000000-0000-0000-0000-0000000000e1','0d000000-0000-0000-0000-000000000001','50000000-0000-0000-0000-00000000000a',60),
+  ('f0300000-0000-0000-0000-0000000000e0','oben','K30','PISOCODEX','a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000002','a0000000-0000-0000-0000-0000000000e1',NULL,'50000000-0000-0000-0000-00000000000a',90),
+  -- K31 PISONULL (o NULL-preserving na fronteira do submit):
+  --   SL canônica válida × personalizada CSV 70 × SEM geração '1' na chave.
+  --   RÓTULO = NULL ⇒ PISO = NULL ⇒ v_floor = v_calc = 102.5 (o mais alto).
+  --   O spec ingênuo ("max de todas") daria piso 70 e deixaria passar um manual
+  --   de 80 — afrouxando. Em prod essa é a população de 31.062 chaves.
+  ('f0310000-0000-0000-0000-00000000005a','oben','K31','PISONULL','a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000002','a0000000-0000-0000-0000-0000000000e1','5c000000-0000-0000-0000-000000000001','50000000-0000-0000-0000-00000000000a',NULL),
+  ('f0310000-0000-0000-0000-0000000000e0','oben','K31','PISONULL','a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000002','a0000000-0000-0000-0000-0000000000e1',NULL,'50000000-0000-0000-0000-00000000000a',70),
+  -- K32 PISOZERO (achado P1 do challenge Codex xhigh 2026-07-21 — o furo que os
+  -- invariantes da VIEW não pegavam): SL canônica × geração '1' com CSV ZERO ×
+  -- personalizada CSV 90.
+  --   rótulo (preco_csv_legado) = 0  → NÃO é NULL, então I1 e I2 passam!
+  --   piso  (preco_piso_legado) = 90 → também não é NULL.
+  -- Mas no GATE o guard `> 0` reprova o rótulo: v_tab = NULL. Se v_piso fosse
+  -- montado sozinho, viraria 90 e o piso efetivo CAIRIA de 102.5 para 90 —
+  -- um manual de 95 passaria a ser aceito onde hoje bloqueia. Por isso a
+  -- elegibilidade de v_piso é ACOPLADA a v_tab.
+  ('f0320000-0000-0000-0000-00000000005a','oben','K32','PISOZERO','a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000002','a0000000-0000-0000-0000-0000000000e1','5c000000-0000-0000-0000-000000000001','50000000-0000-0000-0000-00000000000a',NULL),
+  ('f0320000-0000-0000-0000-000000000019','oben','K32','PISOZERO','a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000002','a0000000-0000-0000-0000-0000000000e1','0d000000-0000-0000-0000-000000000001','50000000-0000-0000-0000-00000000000a',0),
+  ('f0320000-0000-0000-0000-0000000000e0','oben','K32','PISOZERO','a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000002','a0000000-0000-0000-0000-0000000000e1',NULL,'50000000-0000-0000-0000-00000000000a',90);
 
 INSERT INTO public.tint_formula_itens (formula_id, corante_id, ordem, qtd_ml) VALUES
   ('f1000000-0000-0000-0000-00000000005a','c0000000-0000-0000-0000-000000000001',1,10),
   ('f1000000-0000-0000-0000-000000000019','c0000000-0000-0000-0000-000000000001',1,10),
   ('f9000000-0000-0000-0000-00000000005a','c0000000-0000-0000-0000-000000000001',1,10),
-  ('f0160000-0000-0000-0000-000000000019','c0000000-0000-0000-0000-000000000002',1, 5);
+  ('f0160000-0000-0000-0000-000000000019','c0000000-0000-0000-0000-000000000002',1, 5),
+  -- K30/K31: só a SL leva receita válida (rank 0) — a geração '1' e a
+  -- personalizada ficam rank 3, então a canônica é a SL e a allowlist dispara.
+  ('f0300000-0000-0000-0000-00000000005a','c0000000-0000-0000-0000-000000000001',1,10),
+  ('f0310000-0000-0000-0000-00000000005a','c0000000-0000-0000-0000-000000000001',1,10),
+  ('f0320000-0000-0000-0000-00000000005a','c0000000-0000-0000-0000-000000000001',1,10);
 
 INSERT INTO public.sales_orders (id, customer_user_id, created_by, account, status, omie_pedido_id, created_at, subtotal, total, items) VALUES
   ('a5000000-0000-0000-0000-00000000000a','33333333-3333-3333-3333-333333333333','11111111-1111-1111-1111-111111111111','oben','faturado', 111, now() - interval '10 days', 95, 95,
@@ -207,7 +283,10 @@ gq() { Pq -c "$1" | tail -1; }
 
 echo ""
 echo "════════ G0 — pré-condição do seed ════════"
-eq "G0a fórmulas semeadas" "$(gq 'SELECT count(*) FROM public.tint_formulas;')" "4"
+# 12 desde os seeds K30/K31/K32 (separação rótulo×piso, 2026-07-21): +3 de K30
+# (SL + geração '1' + personalizada), +2 de K31 (SL + personalizada) e +3 de K32
+# (SL + geração '1' com CSV ZERO + personalizada — o achado P1 do Codex).
+eq "G0a fórmulas semeadas" "$(gq 'SELECT count(*) FROM public.tint_formulas;')" "12"
 eq "G0b pedidos semeados"  "$(gq 'SELECT count(*) FROM public.sales_orders;')" "9"
 eq "G0c canônica de K1 é a SL" "$(gq "SELECT id::text FROM public.v_tint_formula_canonica WHERE cor_id='K1';")" "f1000000-0000-0000-0000-00000000005a"
 eq "G0d calc de K1 (ceil10 via float8) = 102.5" "$(gq "SELECT (ceil(((public.get_tint_price('f1000000-0000-0000-0000-00000000005a'))->>'precoFinal')::float8 * 10) / 10)::text;")" "102.5"
@@ -435,6 +514,71 @@ BEGIN
   b := r->'bloqueios'->0;
   IF (r->>'ok')::boolean IS DISTINCT FROM false OR b->>'motivo' IS DISTINCT FROM 'payload_invalido' THEN
     RAISE EXCEPTION 'G30b FALHOU: fórmula de OUTRA cor (K9 num item K1) deveria bloquear: %', r; END IF;
+
+  -- ══════════════════════════════════════════════════════════════════════════
+  -- G32/G33 — SEPARAÇÃO RÓTULO × PISO (migration 20260726160000).
+  -- Até aqui o gate lia UMA coluna para dois propósitos opostos. Estes asserts
+  -- exercitam a divergência na fronteira REAL do submit, não só na view.
+  -- ══════════════════════════════════════════════════════════════════════════
+
+  -- G32 o CASO DO CODEX: K30 tem rótulo 60 (allowlist) e piso 90 (conservador).
+  -- Um manual de 75 está ACIMA do rótulo e ABAIXO do piso — com a coluna única
+  -- ele PASSAVA, e dar precisão de proveniência ao rótulo tinha AMPLIADO a
+  -- aceitação de preço baixo.
+  r := public.tint_gate_revalida('oben', cliente, so_empty, 'criacao',
+    '[{"omie_codigo_produto":900001,"tint_cor_id":"K30","valor_unitario":75,"tint_price_source":"manual"}]');
+  b := r->'bloqueios'->0;
+  IF (r->>'ok')::boolean IS DISTINCT FROM false OR b->>'motivo' IS DISTINCT FROM 'preco_obsoleto' THEN
+    RAISE EXCEPTION 'G32a FALHOU: manual 75 (acima do rotulo 60, ABAIXO do piso 90) deveria dar preco_obsoleto: %', r; END IF;
+  IF (b->>'esperado_minimo')::float8 IS DISTINCT FROM 90::float8 THEN
+    RAISE EXCEPTION 'G32b FALHOU: o piso reportado deveria ser 90 (conservador, inclui a personalizada), veio % — se veio 60, o gate ainda le o ROTULO', b->>'esperado_minimo'; END IF;
+  -- e o que é legítimo segue passando (a mudança não pode virar fricção cega)
+  r := public.tint_gate_revalida('oben', cliente, so_empty, 'criacao',
+    '[{"omie_codigo_produto":900001,"tint_cor_id":"K30","valor_unitario":95,"tint_price_source":"manual"}]');
+  IF (r->>'ok')::boolean IS DISTINCT FROM true THEN
+    RAISE EXCEPTION 'G32c FALHOU: manual 95 >= piso 90 deveria passar: %', r; END IF;
+  -- a fonte 'tabela' segue validando contra o RÓTULO (60) — a escolha da
+  -- vendedora é sobre PROVENIÊNCIA; validá-la contra o piso barraria o legítimo
+  r := public.tint_gate_revalida('oben', cliente, so_empty, 'criacao',
+    '[{"omie_codigo_produto":900001,"tint_cor_id":"K30","tint_formula_id":"f0300000-0000-0000-0000-00000000005a","valor_unitario":60,"tint_price_source":"tabela"}]');
+  IF (r->>'ok')::boolean IS DISTINCT FROM true THEN
+    RAISE EXCEPTION 'G32d FALHOU: fonte "tabela" a 60 (o rotulo) deveria passar — o piso conservador NAO governa a escolha da vendedora: %', r; END IF;
+
+  -- G33 NULL-PRESERVING na fronteira: K31 não tem geração '1', logo rótulo=NULL
+  -- ⇒ piso=NULL ⇒ v_floor = v_calc (102.5), o piso MAIS ALTO possível.
+  r := public.tint_gate_revalida('oben', cliente, so_empty, 'criacao',
+    '[{"omie_codigo_produto":900001,"tint_cor_id":"K31","valor_unitario":80,"tint_price_source":"manual"}]');
+  b := r->'bloqueios'->0;
+  IF (r->>'ok')::boolean IS DISTINCT FROM false OR b->>'motivo' IS DISTINCT FROM 'preco_obsoleto' THEN
+    RAISE EXCEPTION 'G33a FALHOU: sem geracao 1 provada o piso e o CALCULADO — manual 80 deveria bloquear: %', r; END IF;
+  IF (b->>'esperado_minimo')::float8 IS DISTINCT FROM 102.5::float8 THEN
+    RAISE EXCEPTION 'G33b FALHOU: piso deveria ser 102.5 (v_calc), veio % — se veio 70, o NULL-preserving caiu e o gate AFROUXOU em 31.062 chaves de prod', b->>'esperado_minimo'; END IF;
+
+  -- G34 (achado P1 do challenge Codex xhigh 2026-07-21) — O FURO QUE OS
+  -- INVARIANTES DA VIEW NÃO PEGAVAM. K32: rótulo = 0 (não é NULL!) e piso = 90.
+  -- I1 passa (nenhum NULL) e I2 passa (90 >= 0) — os dois invariantes provados
+  -- ficam VERDES. Mas o guard `> 0` do gate reprova o rótulo (v_tab = NULL), e
+  -- se v_piso fosse montado sozinho ele viraria 90: o piso efetivo cairia de
+  -- 102.5 para 90 e o manual 95 seria ACEITO. Este assert exige o contrário.
+  r := public.tint_gate_revalida('oben', cliente, so_empty, 'criacao',
+    '[{"omie_codigo_produto":900001,"tint_cor_id":"K32","valor_unitario":95,"tint_price_source":"manual"}]');
+  b := r->'bloqueios'->0;
+  IF (r->>'ok')::boolean IS DISTINCT FROM false OR b->>'motivo' IS DISTINCT FROM 'preco_obsoleto' THEN
+    RAISE EXCEPTION 'G34a FALHOU: com rotulo=0 (reprovado pelo guard >0) o piso e o CALCULADO — manual 95 deveria bloquear: %', r; END IF;
+  IF (b->>'esperado_minimo')::float8 IS DISTINCT FROM 102.5::float8 THEN
+    RAISE EXCEPTION 'G34b FALHOU: piso deveria ser 102.5 (v_calc), veio % — se veio 90, a elegibilidade de v_piso NAO esta acoplada a v_tab e o gate AFROUXOU por um caminho que I1/I2 nao veem', b->>'esperado_minimo'; END IF;
+
+  -- G35 (Codex, achado 6a) AMBOS os ramos leem o piso. A falsificação F10
+  -- substitui as DUAS ocorrências de uma vez, então uma regressão em SÓ UM ramo
+  -- (o legado voltar a v_tab, por exemplo) passaria verde. Este assert
+  -- estrutural discrimina — é o que dá dente contra a mutação de um ramo só.
+  IF (SELECT (length(pg_get_functiondef(p.oid))
+              - length(replace(pg_get_functiondef(p.oid), 'COALESCE(v_piso, v_calc)', '')))
+             / length('COALESCE(v_piso, v_calc)')
+        FROM pg_proc p JOIN pg_namespace nsp ON nsp.oid = p.pronamespace
+       WHERE nsp.nspname = 'public' AND p.proname = 'tint_gate_revalida') <> 2 THEN
+    RAISE EXCEPTION 'G35 FALHOU: v_floor nao usa o piso nos 2 ramos (manual + legado) — um deles regrediu para v_tab';
+  END IF;
 
   RAISE NOTICE 'CENTRAL_OK';
 END $$;
@@ -695,6 +839,94 @@ if [ "$OUT" = "true" ]; then
 else
   bad "F9 NÃO provou o dente: gate sabotado ainda bloqueou fonte sem formula_id (veio ok=$OUT)"
 fi
+restore_gate
+
+echo ""
+echo "════════ F10 — sabotagem: o PISO volta a ler o RÓTULO (reverte a separação) ════════"
+# A regressão EXATA que esta migration existe para impedir: as duas linhas do
+# v_floor voltam a usar v_tab (preco_csv_legado, allowlist) em vez de v_piso.
+# É o estado da main antes de 2026-07-21 — e o que o challenge do Codex apontou:
+# encolher o max para dar precisão de proveniência ao rótulo AFROUXAVA o piso.
+# Se G32/G33 seguissem verdes aqui, eles não teriam dente nenhum.
+TMP_SAB="$(mktemp "${TMPDIR:-/tmp}/sab-f10.XXXXXX.sql")"
+sed 's/COALESCE(v_piso, v_calc)/COALESCE(v_tab, v_calc)/' "$MIG_PISO" > "$TMP_SAB"
+P -q -f "$TMP_SAB" >/dev/null
+rm -f "$TMP_SAB"
+OUT="$(run_central)"
+case "$OUT" in
+  *"G32 FALHOU"*|*"G32a FALHOU"*|*"G32b FALHOU"*)
+    ok "F10 pegou a sabotagem: com o piso lendo o rótulo, o manual 75 (abaixo do piso 90) voltou a passar" ;;
+  *CENTRAL_OK*)
+    bad "F10 NÃO pegou: bloco central VERDE com o piso revertido ao rótulo — G32/G33 estão sem dente" ;;
+  *) bad "F10 caiu de forma inesperada: $(printf '%s' "$OUT" | tr '\n' ' ' | cut -c1-200)" ;;
+esac
+restore_gate
+
+echo ""
+echo "════════ F11 — DEFESA EM PROFUNDIDADE: view sabotada, gate segue correto ════════"
+# ⚠️ Esta NÃO é uma falsificação — é o oposto, e a distinção importa.
+# Escrita primeiro como falsificação ("sem o NULL-preserving da view, G33 cai"),
+# ela FALHOU em pegar depois da correção P1 do Codex — e a razão é boa: ao
+# acoplar a elegibilidade de v_piso a v_tab, o GATE passou a se defender sozinho.
+# Com a CASE da view sabotada (piso = max de todas, incondicional), K31 ganha
+# piso 70; mas v_tab é NULL ali, logo v_piso continua NULL e o piso efetivo
+# segue sendo v_calc. O comportamento do gate NÃO muda.
+# Repintar isso de verde chamando de falsificação seria mover a trave. A
+# falsificação do spec ingênuo continua existindo e VERMELHA, no harness certo:
+# db/test-tint-canonica.sh, F14 → derruba {C26,C28}. Aqui a afirmação é outra,
+# e verdadeira: as duas camadas são independentes, e uma cobre a queda da outra.
+TMP_SAB="$(mktemp "${TMPDIR:-/tmp}/sab-f11.XXXXXX.sql")"
+sed 's/))) IS NULL/))) IS NULL AND false/' "$MIG_PISO" > "$TMP_SAB"
+P -q -f "$TMP_SAB" >/dev/null
+rm -f "$TMP_SAB"
+OUT="$(run_central)"
+case "$OUT" in
+  *CENTRAL_OK*)
+    ok "F11 defesa em profundidade: com o NULL-preserving da view QUEBRADO, o gate segue correto (o acoplamento v_piso→v_tab sustenta sozinho)" ;;
+  *) bad "F11 o gate NÃO se sustentou sozinho com a view sabotada — a segunda camada não existe: $(printf '%s' "$OUT" | tr '\n' ' ' | cut -c1-220)" ;;
+esac
+restore_gate
+
+echo ""
+echo "════════ F12 — sabotagem: v_piso SEM o acoplamento a v_tab (achado P1 do Codex) ════════"
+# Remove só o `v_tab IS NOT NULL AND` da elegibilidade do piso. É a versão que
+# eu tinha escrito ANTES do challenge: os invariantes I1/I2 da view continuam
+# VERDES (K32 tem csv=0, que não é NULL), mas o guard `> 0` do gate derruba
+# v_tab e deixa v_piso=90 de pé — o piso efetivo cai de 102.5 para 90 e o
+# manual 95 passa. Falha ABERTA por um caminho que os invariantes não enxergam.
+TMP_SAB="$(mktemp "${TMPDIR:-/tmp}/sab-f12.XXXXXX.sql")"
+sed 's/CASE WHEN v_tab IS NOT NULL AND v_can_piso IS NOT NULL/CASE WHEN v_can_piso IS NOT NULL/' "$MIG_PISO" > "$TMP_SAB"
+P -q -f "$TMP_SAB" >/dev/null
+rm -f "$TMP_SAB"
+OUT="$(run_central)"
+case "$OUT" in
+  *"G34 FALHOU"*|*"G34a FALHOU"*|*"G34b FALHOU"*)
+    ok "F12 pegou a sabotagem: com csv=0 o piso caiu de 102.5 para 90 e o manual 95 passou" ;;
+  *CENTRAL_OK*)
+    bad "F12 NÃO pegou: bloco central VERDE sem o acoplamento — G34 está sem dente" ;;
+  *) bad "F12 caiu de forma inesperada: $(printf '%s' "$OUT" | tr '\n' ' ' | cut -c1-200)" ;;
+esac
+restore_gate
+
+echo ""
+echo "════════ F13 — sabotagem: SÓ o ramo LEGADO volta a v_tab (mutação de um ramo) ════════"
+# A F10 troca as DUAS ocorrências de uma vez, então não discrimina os ramos.
+# Aqui o sed encontra o comentário do ramo legado e substitui só a linha
+# SEGUINTE (`n;s///`) — o ramo 'manual' fica intacto. Sem o G35 estrutural,
+# esta sabotagem passaria VERDE (nenhum assert comportamental cobre o legado
+# com piso divergente hoje).
+TMP_SAB="$(mktemp "${TMPDIR:-/tmp}/sab-f13.XXXXXX.sql")"
+sed '/mesmo piso conservador da fonte/{n;s/COALESCE(v_piso, v_calc)/COALESCE(v_tab, v_calc)/;}' "$MIG_PISO" > "$TMP_SAB"
+P -q -f "$TMP_SAB" >/dev/null
+rm -f "$TMP_SAB"
+OUT="$(run_central)"
+case "$OUT" in
+  *"G35 FALHOU"*)
+    ok "F13 pegou a sabotagem: o ramo legado regrediu sozinho e o assert estrutural discriminou" ;;
+  *CENTRAL_OK*)
+    bad "F13 NÃO pegou: mutar SÓ o ramo legado ficou verde — G35 está sem dente" ;;
+  *) bad "F13 caiu de forma inesperada: $(printf '%s' "$OUT" | tr '\n' ' ' | cut -c1-200)" ;;
+esac
 restore_gate
 
 echo ""

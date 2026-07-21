@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Teste PG17 da FÓRMULA CANÔNICA tintométrica (Fase 2 + 2b + fix semântico +
-# allowlist — v_tint_formula_canonica). Aplica schema-snapshot + as migrations
-# 20260718213000_tint_formula_canonica.sql, 20260718233000_tint_canonica_preco_
-# csv_legado.sql, 20260722100002_tint_canonica_csv_legado_semantico.sql E
-# 20260724130000_tint_canonica_csv_legado_allowlist.sql NA
+# allowlist + piso legado — v_tint_formula_canonica). Aplica schema-snapshot +
+# as migrations 20260718213000_tint_formula_canonica.sql, 20260718233000_tint_
+# canonica_preco_csv_legado.sql, 20260722100002_tint_canonica_csv_legado_
+# semantico.sql, 20260724130000_tint_canonica_csv_legado_allowlist.sql E
+# 20260726160000_tint_canonica_piso_legado.sql NA
 # ORDEM (prova a cadeia de REPLACEs que prod executa),
 # semeia gêmeas SL×SAYERLACK controladas e prova (com falsificação):
 #   C1  preferência: SL válida vence SAYERLACK válida na mesma chave
@@ -54,6 +55,42 @@
 #   F11 falsificação: allowlist sem `s2.account = g2.account` → derruba {C19}
 #   F12 falsificação: `<> 'SL'` no lugar de `= '1'` → derruba {C20}
 #   F13 falsificação: `IN ('1','2')` → derruba {C20}
+#   ── separação RÓTULO × PISO (follow-up do challenge Codex no #1523) ──
+#   A 14ª coluna `preco_piso_legado` existe porque a 13ª servia dois donos com
+#   necessidades OPOSTAS: o RÓTULO do balcão quer PRECISÃO DE PROVENIÊNCIA (só
+#   a geração '1'), o PISO do gate de submit quer CONSERVADORISMO (toda linha
+#   ativa). Encolher o max para dar precisão ao rótulo REDUZIA o piso do gate.
+#   ⚠️ E o spec óbvio ("max de todas as ativas") está ERRADO: como o gate faz
+#   LEAST(v_calc, COALESCE(v_tab, v_calc)), v_tab NULL dá o piso MAIS ALTO, e
+#   trocar NULL por um número AFROUXA. Daí o NULL-preserving. Medido em prod
+#   (2026-07-21): 6,3% das chaves com SL ativa (31.062 de 495.057) não têm
+#   geração '1' — é a população que o spec ingênuo afrouxaria.
+#   C21 K18 o CASO DO CODEX: rótulo=290 (allowlist) mas piso=500 (a
+#       personalizada entra no piso e não no rótulo) — a divergência que motiva
+#       a coluna
+#   C22 K17 2ª linha SL entra no piso (800) e segue fora do rótulo (280)
+#   C23 K19 DESATIVADA fica fora dos DOIS (300/300) — o piso herda o filtro
+#   C24 K21 subcoleções futuras entram no piso (880), fora do rótulo (330)
+#   C25 K20 linha cross-account entra no piso (850) — o piso não filtra
+#       subcoleção, então o guard de conta do rótulo não se aplica aqui
+#   C26 K22 NULL-PRESERVING (o coração): sem geração '1' provada na chave,
+#       csv=NULL ⇒ piso=NULL. Devolver 700 aqui derruba o piso do gate de
+#       v_calc para 700 — AFROUXA. É o assert que separa o spec certo do óbvio
+#   C27 K16 ramo não-SL: piso ≡ csv (a allowlist nem dispara)
+#   C28 INVARIANTE I1 global: (csv IS NULL) ⟺ (piso IS NULL) — guarda de DRIFT
+#       entre as 2 cópias da subquery do csv na migration
+#   C29 INVARIANTE I2 global: piso >= csv (max de um SUPERconjunto)
+#   C30 SHAPE: as 13 colunas na ordem exata + a 14ª só ACRESCENTADA no fim
+#   C31 security_invoker=on sobreviveu ao REPLACE (armadilha #1375)
+#   F14 falsificação: spec INGÊNUO (sem o NULL-preserving) → derruba {C26,C28}
+#   F15 falsificação: piso com a allowlist (vira cópia do rótulo) → derruba
+#       {C21,C22,C24,C25}
+#   F16 falsificação: piso sem `desativada_em` → derruba {C23}
+#   ⚠️ C21-C31 vivem em `run_asserts_piso`, SEPARADO de `run_asserts`: as 10
+#   views sabotadas de F1-F10 são recriadas à mão com 13 colunas, e fazer
+#   `run_asserts` ler a 14ª mataria todas em "column does not exist" —
+#   sabotagem que muda o alvo E o shape não isola o que prova. Em F14-F16 o
+#   inverso é VERIFICADO: C1-C20 têm de seguir verdes (`piso_isolado`).
 #   R   restauração: re-aplica a migration REAL → tudo verde de novo
 #
 # ⚠️ CONTRATO DAS FALSIFICAÇÕES: cada uma declara o CONJUNTO EXATO de asserts que
@@ -73,6 +110,7 @@ MIGRATION="$REPO_ROOT/supabase/migrations/20260718213000_tint_formula_canonica.s
 MIGRATION2="$REPO_ROOT/supabase/migrations/20260718233000_tint_canonica_preco_csv_legado.sql"
 MIGRATION3="$REPO_ROOT/supabase/migrations/20260722100002_tint_canonica_csv_legado_semantico.sql"
 MIGRATION4="$REPO_ROOT/supabase/migrations/20260724130000_tint_canonica_csv_legado_allowlist.sql"
+MIGRATION5="$REPO_ROOT/supabase/migrations/20260726160000_tint_canonica_piso_legado.sql"
 PGVER=17
 PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"
 PORT=5447
@@ -84,6 +122,7 @@ export LC_ALL=C LANG=C
 [ -f "$MIGRATION2" ] || { echo "migration ausente: $MIGRATION2"; exit 1; }
 [ -f "$MIGRATION3" ] || { echo "migration ausente: $MIGRATION3"; exit 1; }
 [ -f "$MIGRATION4" ] || { echo "migration ausente: $MIGRATION4"; exit 1; }
+[ -f "$MIGRATION5" ] || { echo "migration ausente: $MIGRATION5"; exit 1; }
 
 CELLAR="$(brew --prefix postgresql@${PGVER})"
 cp -Rn "$CELLAR"/share/postgresql/. "/opt/homebrew/share/postgresql@${PGVER}/" 2>/dev/null || true
@@ -154,7 +193,7 @@ P -q -f "$REPO_ROOT/supabase/schema-extensions-prelude.sql" || { echo "FALHA no 
 P --single-transaction -q -f "$RR" >/dev/null || { echo "FALHA no setup: snapshot"; exit 1; }
 rm -f "$RR"
 
-echo "→ migrations 20260718213000 + 20260718233000 + 20260722100002 + 20260724130000 na ordem de prod (cadeia de REPLACEs)…"
+echo "→ migrations 20260718213000 + 20260718233000 + 20260722100002 + 20260724130000 + 20260726160000 na ordem de prod (cadeia de REPLACEs)…"
 # ⚠️ O snapshot AGORA traz a view pronta (13 colunas) — desde o re-dump do #1509
 # (2026-07-21). Antes disso o snapshot era de junho, anterior à view, e a cadeia
 # aplicava no vazio. Sem este DROP, a Fase 2 (12 colunas) morre em "cannot drop
@@ -167,15 +206,17 @@ P -q -f "$MIGRATION" >/dev/null  || { echo "FALHA: migration Fase 2 não aplicou
 P -q -f "$MIGRATION2" >/dev/null || { echo "FALHA: migration Fase 2b não aplicou"; exit 1; }
 P -q -f "$MIGRATION3" >/dev/null || { echo "FALHA: migration fix semântico não aplicou"; exit 1; }
 P -q -f "$MIGRATION4" >/dev/null || { echo "FALHA: migration allowlist não aplicou"; exit 1; }
+P -q -f "$MIGRATION5" >/dev/null || { echo "FALHA: migration piso legado não aplicou"; exit 1; }
 
-# Restaura a view REAL (4 migrations na ordem). DROP antes: as views sabotadas
+# Restaura a view REAL (5 migrations na ordem). DROP antes: as views sabotadas
 # das falsificações têm shape divergente e REPLACE não remove/reordena coluna.
 restore_view() {
   if ! P -q -c "DROP VIEW IF EXISTS public.v_tint_formula_canonica;" >/dev/null \
      || ! P -q -f "$MIGRATION" >/dev/null \
      || ! P -q -f "$MIGRATION2" >/dev/null \
      || ! P -q -f "$MIGRATION3" >/dev/null \
-     || ! P -q -f "$MIGRATION4" >/dev/null; then
+     || ! P -q -f "$MIGRATION4" >/dev/null \
+     || ! P -q -f "$MIGRATION5" >/dev/null; then
     echo "FALHA: restore_view não re-aplicou as migrations"; exit 1
   fi
 }
@@ -341,7 +382,18 @@ INSERT INTO public.tint_formulas (id, account, cor_id, nome_cor, produto_id, bas
   ('f0210000-0000-0000-0000-000000000019','oben','K21','FUTURAS','a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000002','a0000000-0000-0000-0000-0000000000e1','0d000000-0000-0000-0000-000000000001','50000000-0000-0000-0000-00000000000a',330),
   ('f0210000-0000-0000-0000-000000000002','oben','K21','FUTURAS','a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000002','a0000000-0000-0000-0000-0000000000e1','02000000-0000-0000-0000-000000000002','50000000-0000-0000-0000-00000000000a',860),
   ('f0210000-0000-0000-0000-000000000010','oben','K21','FUTURAS','a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000002','a0000000-0000-0000-0000-0000000000e1','10000000-0000-0000-0000-000000000010','50000000-0000-0000-0000-00000000000a',870),
-  ('f0210000-0000-0000-0000-00000000000e','oben','K21','FUTURAS','a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000002','a0000000-0000-0000-0000-0000000000e1','0e000000-0000-0000-0000-00000000000e','50000000-0000-0000-0000-00000000000a',880);
+  ('f0210000-0000-0000-0000-00000000000e','oben','K21','FUTURAS','a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000002','a0000000-0000-0000-0000-0000000000e1','0e000000-0000-0000-0000-00000000000e','50000000-0000-0000-0000-00000000000a',880),
+  -- K22 SEMGEN1 @SKU_OK (correção do spec do piso — medição psql-ro 2026-07-21):
+  -- SL canônica válida × personalizada com CSV 700 × NENHUMA linha da geração
+  -- '1' na chave. preco_csv_legado = NULL (a allowlist não acha a '1') ⇒
+  -- preco_piso_legado TAMBÉM NULL (NULL-preserving).
+  -- É o seed que separa o spec CERTO do spec INGÊNUO: "max de TODAS as ativas"
+  -- devolveria 700 aqui, e como o gate faz LEAST(v_calc, COALESCE(v_tab,
+  -- v_calc)), trocar NULL por 700 DERRUBA o piso de v_calc para 700 — afrouxa
+  -- em vez de apertar. Em prod isso é a população de 31.062 chaves (6,3% das
+  -- 495.057 com SL ativa) que não têm geração '1' ativa.
+  ('f0220000-0000-0000-0000-00000000005a','oben','K22','SEMGEN1','a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000002','a0000000-0000-0000-0000-0000000000e1','5c000000-0000-0000-0000-000000000001','50000000-0000-0000-0000-00000000000a',NULL),
+  ('f0220000-0000-0000-0000-0000000000e0','oben','K22','SEMGEN1','a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000002','a0000000-0000-0000-0000-0000000000e2',NULL,'50000000-0000-0000-0000-00000000000a',700);
 UPDATE public.tint_formulas SET desativada_em = now()
  WHERE id IN ('fb000000-0000-0000-0000-00000000005a','f0190000-0000-0000-0000-00000000001a');
 
@@ -380,7 +432,10 @@ INSERT INTO public.tint_formula_itens (formula_id, corante_id, ordem, qtd_ml) VA
   -- corante_id → omie), então serve à fórmula de colacor sem alterar o que K20
   -- prova (o guard de account da SUBCOLEÇÃO, não do corante).
   ('f0200000-0000-0000-0000-00000000005a','c0000000-0000-0000-0000-000000000001',1,10),
-  ('f0210000-0000-0000-0000-00000000005a','c0000000-0000-0000-0000-000000000001',1,10);
+  ('f0210000-0000-0000-0000-00000000005a','c0000000-0000-0000-0000-000000000001',1,10),
+  -- K22: só a SL canônica tem receita válida (rank 0) — a personalizada fica
+  -- rank 3, então a canônica é a SL e o ramo da allowlist dispara.
+  ('f0220000-0000-0000-0000-00000000005a','c0000000-0000-0000-0000-000000000001',1,10);
 
 -- O dump do snapshot NÃO traz os GRANTs de tabela; em prod o Supabase concede a
 -- authenticated/anon (RLS filtra). security_invoker exige privilégio do CALLER
@@ -412,10 +467,12 @@ BEGIN
   -- passarem em NULL (teatro — foi exatamente o modo de falha do run 1).
   -- Segue ABORTANDO na hora (≠ demais asserts): seed errado torna todo o
   -- resto ruído, não sinal.
+  -- 47/31 desde o seed K22 (piso NULL-preserving, 2026-07-21): +2 fórmulas
+  -- (SL canônica + personalizada com CSV, sem geração '1' na chave) e +1 item.
   SELECT count(*) INTO nf FROM public.tint_formulas;
   SELECT count(*) INTO ni FROM public.tint_formula_itens;
-  IF nf <> 45 OR ni <> 30 THEN
-    RAISE EXCEPTION 'C0 FALHOU: seed incompleto (formulas=% esperado 45, itens=% esperado 30)', nf, ni; END IF;
+  IF nf <> 47 OR ni <> 31 THEN
+    RAISE EXCEPTION 'C0 FALHOU: seed incompleto (formulas=% esperado 47, itens=% esperado 31)', nf, ni; END IF;
 
   -- C8 não-desaparecimento GLOBAL primeiro (cardinalidade pega duplicata E omissão
   -- antes de qualquer SELECT por-cor devolver linha a mais/menos)
@@ -623,12 +680,157 @@ END $$;
 SQL
 }
 
+# ══════════════════════════════════════════════════════════════════════════════
+# ASSERTS DO PISO (C21-C31) — bloco SEPARADO de propósito.
+#
+# Por que separado: as 10 views sabotadas de F1-F10 são recriadas À MÃO com 13
+# colunas. Se `run_asserts` passasse a ler `preco_piso_legado`, TODAS elas
+# morreriam em "column does not exist" — sabotagem que muda DUAS coisas (o alvo
+# + o shape) não isola o que prova (é a lição já registrada no comentário da F1).
+# Mantendo os asserts do piso aqui, F1-F13 seguem provando o RÓTULO/rank contra
+# a cadeia de 4 migrations, sem tocar nada, e o piso ganha as falsificações
+# próprias (F14-F16, por mutação sed da MIGRATION5).
+# O baseline continua cobrindo o risco real: C1-C20 rodam contra a view FINAL
+# (5 migrations), então um erro da MIGRATION5 na coluna 13 aparece lá.
+# ══════════════════════════════════════════════════════════════════════════════
+run_asserts_piso() {
+  P -tA 2>&1 <<'SQL'
+DO $$
+DECLARE
+  r record;
+  falhas text[] := '{}';
+  n int;
+  v_cols text;
+  b boolean;
+BEGIN
+  -- ── C21 O CASO DO CODEX (a razão de a coluna existir) ──────────────────────
+  -- K18: canônica SL, personalizada com CSV 500 e geração '1' com CSV 290.
+  -- O RÓTULO fica em 290 (allowlist = proveniência provada); o PISO sobe para
+  -- 500 (conservador = toda linha ativa). Com uma coluna só, dar precisão ao
+  -- rótulo derrubava o piso de 500 para 290 e liberava preço manual mais baixo.
+  SELECT c.is_sl, c.preco_csv_legado::text AS csv, c.preco_piso_legado::text AS piso
+    INTO r FROM public.v_tint_formula_canonica c WHERE c.cor_id='K18';
+  IF r.is_sl IS DISTINCT FROM true THEN
+    falhas := falhas || format('C21 FALHOU (pre-condicao): canonica de K18 nao e SL (is_sl=%s)', r.is_sl);
+  ELSIF r.csv IS DISTINCT FROM '290' OR r.piso IS DISTINCT FROM '500' THEN
+    falhas := falhas || format('C21 FALHOU: K18 csv=%s piso=%s — esperado csv=290 (rotulo/allowlist) e piso=500 (conservador: a personalizada entra no piso, nao no rotulo)', r.csv, r.piso);
+  END IF;
+
+  -- ── C22 2ª linha SL entra no PISO (mas segue fora do rótulo) ───────────────
+  SELECT c.preco_csv_legado::text AS csv, c.preco_piso_legado::text AS piso
+    INTO r FROM public.v_tint_formula_canonica c WHERE c.cor_id='K17';
+  IF r.csv IS DISTINCT FROM '280' OR r.piso IS DISTINCT FROM '800' THEN
+    falhas := falhas || format('C22 FALHOU: K17 csv=%s piso=%s — esperado csv=280 e piso=800 (a 2a SL alimenta o piso)', r.csv, r.piso);
+  END IF;
+
+  -- ── C23 DESATIVADA fica fora dos DOIS (o piso herda o filtro) ──────────────
+  -- Sem o `desativada_em IS NULL` no ramo do piso, o CSV 900 da linha morta
+  -- entraria e o piso viraria 900 — dado de fórmula desativada não é evidência.
+  SELECT c.preco_csv_legado::text AS csv, c.preco_piso_legado::text AS piso
+    INTO r FROM public.v_tint_formula_canonica c WHERE c.cor_id='K19';
+  IF r.csv IS DISTINCT FROM '300' OR r.piso IS DISTINCT FROM '300' THEN
+    falhas := falhas || format('C23 FALHOU: K19 csv=%s piso=%s — esperado 300/300 (a desativada com CSV 900 fica fora do piso tambem)', r.csv, r.piso);
+  END IF;
+
+  -- ── C24 subcoleções FUTURAS entram no piso (e seguem fora do rótulo) ───────
+  SELECT c.preco_csv_legado::text AS csv, c.preco_piso_legado::text AS piso
+    INTO r FROM public.v_tint_formula_canonica c WHERE c.cor_id='K21';
+  IF r.csv IS DISTINCT FROM '330' OR r.piso IS DISTINCT FROM '880' THEN
+    falhas := falhas || format('C24 FALHOU: K21 csv=%s piso=%s — esperado csv=330 (so a geracao 1) e piso=880 (2/10/rotulo-NULL entram no piso)', r.csv, r.piso);
+  END IF;
+
+  -- ── C25 linha cross-account entra no PISO (conservador) ────────────────────
+  -- O guard `s2.account = g2.account` protege o RÓTULO (C19). O piso não junta
+  -- subcoleção nenhuma: é linha ATIVA da chave (account, sku, cor), logo o 850
+  -- entra. Direção segura — piso mais alto.
+  SELECT c.preco_csv_legado::text AS csv, c.preco_piso_legado::text AS piso
+    INTO r FROM public.v_tint_formula_canonica c WHERE c.account='colacor' AND c.cor_id='K20';
+  IF r.csv IS DISTINCT FROM '320' OR r.piso IS DISTINCT FROM '850' THEN
+    falhas := falhas || format('C25 FALHOU: K20 csv=%s piso=%s — esperado csv=320 (guard de conta no rotulo) e piso=850 (o piso nao filtra subcolecao)', r.csv, r.piso);
+  END IF;
+
+  -- ── C26 NULL-PRESERVING (o coração da correção do spec) ────────────────────
+  -- K22: canônica SL, personalizada com CSV 700, NENHUMA geração '1' na chave.
+  -- csv = NULL ⇒ piso TEM de ser NULL. Se virasse 700, o gate trocaria
+  -- v_floor = v_calc por v_floor = 700 e AFROUXARIA — em prod são 31.062 chaves.
+  SELECT c.is_sl, c.preco_csv_legado::text AS csv, c.preco_piso_legado::text AS piso
+    INTO r FROM public.v_tint_formula_canonica c WHERE c.cor_id='K22';
+  IF r.is_sl IS DISTINCT FROM true THEN
+    falhas := falhas || format('C26 FALHOU (pre-condicao): canonica de K22 nao e SL (is_sl=%s)', r.is_sl);
+  ELSIF r.csv IS NOT NULL OR r.piso IS NOT NULL THEN
+    falhas := falhas || format('C26 FALHOU: K22 csv=%s piso=%s — esperado NULL/NULL (sem geracao 1 provada o piso NAO desce; devolver 700 aqui AFROUXA o gate)', COALESCE(r.csv,'NULL'), COALESCE(r.piso,'NULL'));
+  END IF;
+
+  -- ── C27 ramo NÃO-SL: piso ≡ csv (a allowlist nem dispara) ──────────────────
+  SELECT c.is_sl, c.preco_csv_legado::text AS csv, c.preco_piso_legado::text AS piso
+    INTO r FROM public.v_tint_formula_canonica c WHERE c.cor_id='K16';
+  IF r.is_sl IS DISTINCT FROM false THEN
+    falhas := falhas || format('C27 FALHOU (pre-condicao): canonica de K16 deveria ser nao-SL (is_sl=%s)', r.is_sl);
+  ELSIF r.csv IS DISTINCT FROM '400' OR r.piso IS DISTINCT FROM '400' THEN
+    falhas := falhas || format('C27 FALHOU: K16 csv=%s piso=%s — esperado 400/400 (canonica nao-SL: os dois ja sao o max de todas)', r.csv, r.piso);
+  END IF;
+
+  -- ── C28 INVARIANTE I1, GLOBAL: (csv IS NULL) ⟺ (piso IS NULL) ─────────────
+  -- Guarda de DRIFT: a subquery do csv aparece 2× na migration (coluna 13 e o
+  -- teste de NULL da 14ª). Se as cópias divergirem, I1 quebra aqui na hora.
+  SELECT count(*) INTO n FROM public.v_tint_formula_canonica
+   WHERE (preco_csv_legado IS NULL) <> (preco_piso_legado IS NULL);
+  IF n <> 0 THEN
+    falhas := falhas || format('C28 FALHOU: %s linha(s) violam I1 (csv IS NULL) <=> (piso IS NULL) — as 2 copias da subquery do csv driftaram', n);
+  END IF;
+
+  -- ── C29 INVARIANTE I2, GLOBAL: piso >= csv ────────────────────────────────
+  -- O piso é o max de um SUPERconjunto do max do rótulo. Se alguma linha tiver
+  -- piso < csv, o piso deixou de ser conservador e a mudança pode afrouxar.
+  SELECT count(*) INTO n FROM public.v_tint_formula_canonica
+   WHERE preco_csv_legado IS NOT NULL AND preco_piso_legado IS NOT NULL
+     AND preco_piso_legado < preco_csv_legado;
+  IF n <> 0 THEN
+    falhas := falhas || format('C29 FALHOU: %s linha(s) com piso < csv — o piso tem de ser o max de um SUPERconjunto (senao o gate afrouxa)', n);
+  END IF;
+
+  -- ── C30 SHAPE: a 14ª só ACRESCENTA; as 13 anteriores na ordem EXATA ───────
+  -- Regra do repo para REPLACE de view (CLAUDE.md): preservar a ordem e só
+  -- acrescentar no fim. Um consumidor posicional quebra silenciosamente se não.
+  SELECT string_agg(a.attname, ',' ORDER BY a.attnum) INTO v_cols
+    FROM pg_attribute a
+   WHERE a.attrelid = 'public.v_tint_formula_canonica'::regclass
+     AND a.attnum > 0 AND NOT a.attisdropped;
+  IF v_cols IS DISTINCT FROM 'id,account,sku_id,cor_id,nome_cor,preco_final_sayersystem,subcolecao_id,personalizada,updated_at,is_sl,tem_receita,receita_valida,preco_csv_legado,preco_piso_legado' THEN
+    falhas := falhas || format('C30 FALHOU: ordem/nomes das colunas mudou — veio [%s]', v_cols);
+  END IF;
+
+  -- ── C31 security_invoker=on sobreviveu ao REPLACE (armadilha #1375) ───────
+  -- Omitir o WITH no replace RESETA a opção: a view passa a ler como OWNER e
+  -- bypassa RLS. Falha ABERTA, muda autorização e não comportamento — nenhum
+  -- assert de VALOR pegaria.
+  SELECT EXISTS (SELECT 1 FROM pg_class c
+                  WHERE c.oid = 'public.v_tint_formula_canonica'::regclass
+                    AND c.reloptions @> ARRAY['security_invoker=on']) INTO b;
+  IF NOT b THEN
+    falhas := falhas || 'C31 FALHOU: a view perdeu security_invoker=on — passa a ler como OWNER e bypassa a RLS (armadilha #1375)';
+  END IF;
+
+  IF array_length(falhas, 1) IS NULL THEN
+    RAISE NOTICE 'TODOS_OK';
+  ELSE
+    RAISE EXCEPTION 'FALHAS[%]: %', array_length(falhas, 1), array_to_string(falhas, ' | ');
+  END IF;
+END $$;
+SQL
+}
+
 echo ""
 echo "════════ BASELINE (migration real) ════════"
 OUT="$(run_asserts)"
 case "$OUT" in
   *TODOS_OK*) ok "C1–C20 baseline verde (preferência, fallback, 12, personalizada, csv legado allowlist, guard de conta, exclusividade da '1', determinismo, paridade RPC)" ;;
   *) bad "baseline NÃO passou: $(printf '%s' "$OUT" | tr '\n' ' ' | cut -c1-300)" ;;
+esac
+OUT_PISO="$(run_asserts_piso)"
+case "$OUT_PISO" in
+  *TODOS_OK*) ok "C21–C31 baseline verde (piso conservador, NULL-preserving, invariantes I1/I2, shape das 14 colunas, security_invoker)" ;;
+  *) bad "baseline do PISO NÃO passou: $(printf '%s' "$OUT_PISO" | tr '\n' ' ' | cut -c1-300)" ;;
 esac
 
 echo ""
@@ -637,7 +839,7 @@ echo "════════ C11 — RLS/security_invoker (staff vê · custom
 vcnt() { Pq -c "$1 SELECT count(*) FROM public.v_tint_formula_canonica;" 2>&1 | tail -1; }
 is_num() { case "$1" in ''|*[!0-9]*) return 1;; *) return 0;; esac; }
 N_STAFF=$(vcnt "SET test.uid='11111111-1111-1111-1111-111111111111'; SET ROLE authenticated;")
-if is_num "$N_STAFF" && [ "$N_STAFF" -eq 21 ]; then ok "C11a staff (master) vê a view ($N_STAFF chaves)"; else bad "C11a staff: esperado 21, veio [$N_STAFF]"; fi
+if is_num "$N_STAFF" && [ "$N_STAFF" -eq 22 ]; then ok "C11a staff (master) vê a view ($N_STAFF chaves)"; else bad "C11a staff: esperado 22, veio [$N_STAFF]"; fi
 N_CUST=$(vcnt "SET test.uid='33333333-3333-3333-3333-333333333333'; SET ROLE authenticated;")
 eq "C11b customer autenticado NÃO vê (RLS herdada)" "$N_CUST" "0"
 N_NOROLE=$(vcnt "SET test.uid='44444444-4444-4444-4444-444444444444'; SET ROLE authenticated;")
@@ -650,7 +852,7 @@ esac
 ANON_PRIV=$(Pq -c "SELECT has_table_privilege('anon','public.v_tint_formula_canonica','SELECT');" | tail -1)
 eq "C11d2 anon SEM privilégio direto na VIEW (has_table_privilege=f)" "$ANON_PRIV" "f"
 N_SRV=$(vcnt "SET ROLE service_role;")
-if is_num "$N_SRV" && [ "$N_SRV" -eq 21 ]; then ok "C11e service_role vê ($N_SRV chaves)"; else bad "C11e service_role: esperado 21, veio [$N_SRV]"; fi
+if is_num "$N_SRV" && [ "$N_SRV" -eq 22 ]; then ok "C11e service_role vê ($N_SRV chaves)"; else bad "C11e service_role: esperado 22, veio [$N_SRV]"; fi
 Pq -c "RESET ROLE;" >/dev/null
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1272,6 +1474,61 @@ sabota_migration "s/AND s2\.id_subcolecao_sayersystem = '1'/AND s2.id_subcolecao
 OUT="$(run_asserts)"
 confere_falsificacao "F13" "$OUT" 1 "C20" -- "IN ('1','2'): a geracao '2' entrou no max"
 
+# ══════════════════════════════════════════════════════════════════════════════
+# F14-F16 — falsificações do PISO (coluna 14), por MUTAÇÃO sed da MIGRATION5.
+# Cada uma ataca UMA propriedade do piso e é conferida contra `run_asserts_piso`.
+# Em cada uma, `run_asserts` (C1-C20) TEM de seguir verde: o piso é coluna nova
+# e a sabotagem não pode vazar para o rótulo/rank. Isso é VERIFICADO, não
+# assumido — é o que prova que a sabotagem isola o que diz isolar.
+# ══════════════════════════════════════════════════════════════════════════════
+sabota_migration5() { # <expressao sed>
+  # A MIGRATION5 é REPLACE puro e as mutações abaixo preservam as 14 colunas na
+  # mesma ordem — então dá para re-aplicar por cima sem DROP.
+  restore_view
+  sed "$1" "$MIGRATION5" | P -q -f - >/dev/null || return 1
+}
+
+# Confere que a sabotagem do piso NÃO vazou para os asserts do rótulo/rank.
+piso_isolado() { # <rotulo>
+  local o; o="$(run_asserts)"
+  case "$o" in
+    *TODOS_OK*) ok "$1 isolada: C1–C20 (rótulo/rank) seguem verdes sob a sabotagem do piso" ;;
+    *) bad "$1 VAZOU para C1–C20: $(printf '%s' "$o" | tr '\n' ' ' | cut -c1-220)" ;;
+  esac
+}
+
+echo ""
+echo "════════ F14 — sabotagem: o SPEC INGÊNUO (piso sem o NULL-preserving) ════════"
+# `AND false` no WHEN da CASE ⇒ o ramo ELSE sempre vale ⇒ piso = max de TODAS as
+# ativas INCONDICIONALMENTE. É exatamente o spec que o follow-up pedia ao pé da
+# letra, e que a medição em prod mostrou estar errado: onde não há geração '1'
+# provada (K22 / 31.062 chaves reais), o piso deixa de ser v_calc e vira o CSV
+# de qualquer linha ativa — AFROUXANDO o gate em vez de apertá-lo.
+sabota_migration5 's/))) IS NULL/))) IS NULL AND false/' || bad "F14 não aplicou a sabotagem"
+OUT_PISO="$(run_asserts_piso)"
+confere_falsificacao "F14" "$OUT_PISO" 2 "C26" "C28" -- "spec ingenuo: sem geracao 1 provada o piso virou 700 (afrouxa) e quebrou o invariante I1"
+piso_isolado "F14"
+
+echo ""
+echo "════════ F15 — sabotagem: piso com a ALLOWLIST (piso ≡ rótulo) ════════"
+# O piso passa a filtrar pela geração '1' igual ao rótulo — ou seja, a coluna
+# nova vira uma cópia da 13ª e a separação some. É o estado ANTERIOR a esta
+# migration: o cenário do Codex volta a ficar desprotegido.
+sabota_migration5 "s/AND g3\.desativada_em IS NULL)/AND g3.desativada_em IS NULL AND (NOT rf.is_sl OR EXISTS (SELECT 1 FROM public.tint_subcolecoes s3 WHERE s3.id = g3.subcolecao_id AND s3.account = g3.account AND s3.id_subcolecao_sayersystem = '1')))/" || bad "F15 não aplicou a sabotagem"
+OUT_PISO="$(run_asserts_piso)"
+confere_falsificacao "F15" "$OUT_PISO" 4 "C21" "C22" "C24" "C25" -- "piso com allowlist: virou copia do rotulo e o caso do Codex (K18) ficou desprotegido"
+piso_isolado "F15"
+
+echo ""
+echo "════════ F16 — sabotagem: piso sem o filtro desativada_em ════════"
+# Fórmula DESATIVADA voltaria a ser evidência de preço: o CSV 900 da linha morta
+# de K19 entraria no piso. Direção "conservadora" na aparência, errada no mérito
+# — piso alto demais barra venda legítima, e o dado nem é vivo.
+sabota_migration5 's/AND g3\.desativada_em IS NULL)/)/' || bad "F16 não aplicou a sabotagem"
+OUT_PISO="$(run_asserts_piso)"
+confere_falsificacao "F16" "$OUT_PISO" 1 "C23" -- "piso sem desativada_em: o CSV 900 da formula morta virou piso"
+piso_isolado "F16"
+
 echo ""
 echo "════════ R — restauração: migrations reais de volta ⇒ tudo verde ════════"
 restore_view
@@ -1279,6 +1536,11 @@ OUT="$(run_asserts)"
 case "$OUT" in
   *TODOS_OK*) ok "R restauração: C1–C20 verdes com a migration real re-aplicada" ;;
   *) bad "R restauração falhou: $(printf '%s' "$OUT" | tr '\n' ' ' | cut -c1-300)" ;;
+esac
+OUT_PISO="$(run_asserts_piso)"
+case "$OUT_PISO" in
+  *TODOS_OK*) ok "R restauração: C21–C31 (piso) verdes com a migration real re-aplicada" ;;
+  *) bad "R restauração do PISO falhou: $(printf '%s' "$OUT_PISO" | tr '\n' ' ' | cut -c1-300)" ;;
 esac
 
 echo ""
