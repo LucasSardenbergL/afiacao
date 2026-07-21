@@ -5,6 +5,7 @@ import type { Tables } from '@/integrations/supabase/types';
 import { custoCanonico } from '@/lib/custo/custoCanonico';
 import { fetchAllPages } from '@/lib/postgrest';
 import { accumulateMarginFromItems, resolveProductIdsFromItems } from '@/lib/scoring/margin';
+import { calcularHealthScore } from '@/lib/scoring/healthScore';
 
 type AlgorithmConfigRow = Pick<Tables<'farmer_algorithm_config'>, 'key' | 'value'>;
 type ProductCostRow = Pick<Tables<'product_costs'>, 'product_id' | 'cost_price' | 'cost_final'>;
@@ -45,7 +46,9 @@ export interface ClientScore {
   customer_name: string;
   customer_phone: string | null;
   // Health
-  rf: number; m: number; g: number; x: number; s: number;
+  rf: number; m: number; x: number; s: number;
+  /** Componente de margem 0-1, ou null quando nenhum item do cliente tem custo conhecido. */
+  g: number | null;
   healthScore: number;
   healthClass: 'saudavel' | 'estavel' | 'atencao' | 'critico';
   // Priority
@@ -56,7 +59,8 @@ export interface ClientScore {
   daysSinceLastPurchase: number;
   avgRepurchaseInterval: number;
   avgMonthlySpend180d: number;
-  grossMarginPct: number;
+  /** PERCENTUAL 0-100, ou null quando nenhum item do cliente tem custo conhecido. */
+  grossMarginPct: number | null;
   categoryCount: number;
   answerRate60d: number;
   whatsappReplyRate60d: number;
@@ -347,8 +351,12 @@ export const useFarmerScoring = (farmerId?: string) => {
         const m = clamp(Math.log(1 + avgMonthly) / Math.log(1 + p95MonthlySpend), 0, 1);
 
         // G = clamp((GrossMarginClient - P10Margin) / (P90Margin - P10Margin), 0, 1)
-        const clientMargin = cd.totalRevenue > 0 ? (cd.totalRevenue - cd.totalCost) / cd.totalRevenue : 0;
-        const g = clamp((clientMargin - p10Margin) / marginRange, 0, 1);
+        // Receita 0 = NENHUM item do cliente tem custo conhecido (accumulateMarginFromItems
+        // já exclui SKU sem custo) → margem DESCONHECIDA, não zero. O `: 0` anterior era
+        // incoerente com a própria régua: a linha ~308 exclui esses clientes de `allMargins`
+        // ao montar os percentis, ou seja, o código já reconhecia que receita 0 não é margem 0.
+        const clientMargin = cd.totalRevenue > 0 ? (cd.totalRevenue - cd.totalCost) / cd.totalRevenue : null;
+        const g = clientMargin == null ? null : clamp((clientMargin - p10Margin) / marginRange, 0, 1);
 
         // X = clamp(CatCount / CatTarget, 0, 1)
         const x = clamp(cd.categories.size / config.cat_target, 0, 1);
@@ -358,13 +366,16 @@ export const useFarmerScoring = (farmerId?: string) => {
         const whatsappRate = cd.whatsappCalls60d > 0 ? cd.whatsappReplied60d / cd.whatsappCalls60d : 0;
         const s = 0.7 * answerRate + 0.3 * whatsappRate;
 
-        // Health = 100 * (0.35*RF + 0.20*M + 0.15*G + 0.15*X + 0.15*S)
-        const healthScore = 100 * (
-          config.health_w_rf * rf +
-          config.health_w_m * m +
-          config.health_w_g * g +
-          config.health_w_x * x +
-          config.health_w_s * s
+        // Health = média ponderada das dimensões CONHECIDAS (0.35*RF + 0.20*M + 0.15*G +
+        // 0.15*X + 0.15*S). Margem desconhecida sai da conta e seu peso é redistribuído —
+        // entrar como 0 custaria até 15 pontos ao cliente por ausência de dado. Oráculo
+        // testado em src/lib/scoring/healthScore.ts; espelha o #1495 no calculate-scores.
+        const healthScore = calcularHealthScore(
+          { rf, m, g, x, s },
+          {
+            rf: config.health_w_rf, m: config.health_w_m, g: config.health_w_g,
+            x: config.health_w_x, s: config.health_w_s,
+          },
         );
 
         // ChurnRisk = 100 * (1 - exp(-k1 * max((D/max(I,1)) - 1, 0)))
@@ -407,7 +418,8 @@ export const useFarmerScoring = (farmerId?: string) => {
           daysSinceLastPurchase: D,
           avgRepurchaseInterval: Math.round(I * 10) / 10,
           avgMonthlySpend180d: Math.round(avgMonthly * 100) / 100,
-          grossMarginPct: Math.round(clientMargin * 1000) / 10,
+          // null preservado até a UI: Math.round(null) é 0 e fabricaria "0,0% de margem".
+          grossMarginPct: clientMargin == null ? null : Math.round(clientMargin * 1000) / 10,
           categoryCount: cd.categories.size,
           answerRate60d: Math.round(answerRate * 1000) / 10,
           whatsappReplyRate60d: Math.round(whatsappRate * 1000) / 10,

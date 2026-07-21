@@ -11,8 +11,9 @@ import { AgendarVisitaDialog } from '@/components/visitas/AgendarVisitaDialog';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { whatsappLink } from '@/lib/phone';
+import { faixaMargem, formatarMargemPct } from '@/lib/margem';
 import {
-  formatPctMaybe, formatDateOrDash, initials, healthTone, churnTone, formatDocument,
+  formatDateOrDash, initials, healthTone, churnTone, formatDocument,
 } from './format';
 import type { Customer, CustomerScore } from './viewTypes';
 
@@ -134,19 +135,24 @@ export function CustomerHero({
                   {churn.label}
                 </span>
               )}
-              {s?.gross_margin_pct != null && (
+              {/* Faixa em PERCENTUAL 0-100. Os thresholds eram `>= 0.3` / `>= 0.15` (fração)
+                  contra uma coluna 0-100: com a margem real do #1495, qualquer cliente acima
+                  de 0,3% cairia no verde — inclusive margem de 5%. Enquanto a coluna era 0 em
+                  6.632/6.632 linhas todo mundo caía no vermelho e o erro não aparecia.
+                  `desconhecida` não renderiza: sem margem medida não há veredito a dar. */}
+              {faixaMargem(s?.gross_margin_pct) !== 'desconhecida' && (
                 <span
                   className={cn(
                     'inline-flex items-center gap-1.5 px-2 py-1 rounded-md border',
-                    s.gross_margin_pct >= 0.3
+                    faixaMargem(s?.gross_margin_pct) === 'alta'
                       ? 'bg-status-success-bg text-status-success-bold border-status-success/20'
-                      : s.gross_margin_pct >= 0.15
+                      : faixaMargem(s?.gross_margin_pct) === 'media'
                         ? 'bg-status-warning-bg text-status-warning-bold border-status-warning/20'
                         : 'bg-status-error-bg text-status-error-bold border-status-error/20',
                   )}
                 >
                   <Activity className="w-3 h-3" />
-                  {formatPctMaybe(s.gross_margin_pct)} margem
+                  {formatarMargemPct(s?.gross_margin_pct)} margem
                 </span>
               )}
             </div>

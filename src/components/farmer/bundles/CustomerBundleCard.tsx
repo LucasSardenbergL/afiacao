@@ -4,7 +4,8 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { ChevronDown, ChevronUp, Layers, Zap } from 'lucide-react';
 import type { BundleRecommendation, CustomerBundles } from '@/hooks/useBundleEngine';
-import { classifyCustomerProfile, profileLabels, type CustomerProfile, type BundleArgument } from '@/hooks/useBundleArguments';
+import { profileLabels, type CustomerProfile, type BundleArgument } from '@/hooks/useBundleArguments';
+import { classificarPerfilCliente } from '@/lib/scoring/perfilCliente';
 import type { useDiagnosticQuestions } from '@/hooks/useDiagnosticQuestions';
 import { fmt } from './format';
 import type { CustomerCtx } from './types';
@@ -26,7 +27,10 @@ export const CustomerBundleCard = ({ data, expanded, onToggle, bundleArgs, argGe
   const individualLIE = data.bestIndividual?.lie || 0;
   const bundleWins = bestBundleLIE > individualLIE;
 
-  const profile = classifyCustomerProfile(data.healthScore, data.avgMonthlySpend || 0, data.grossMarginPct || 0, data.categoryCount || 0);
+  // `data.grossMarginPct || 0` era o SEGUNDO ponto de coação da cadeia (o primeiro é
+  // useBundleEngine): convertia o null antes do guard, então blindar só o classificador
+  // não mudaria nada. A margem chega crua e quem decide não decidir é o classificador.
+  const profile = classificarPerfilCliente(data.healthScore, data.avgMonthlySpend || 0, data.grossMarginPct, data.categoryCount || 0);
   const profileInfo = profileLabels[profile];
 
   const customerCtx = {

@@ -26,7 +26,7 @@ export function useFarmerTacticalPlan() {
   const [expandedPlan, setExpandedPlan] = useState<string | null>(null);
   const [copiedText, setCopiedText] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
-  const [efficiencyAlert, setEfficiencyAlert] = useState<{ customerId: string; profitPerHour: number; planType: PlanType } | null>(null);
+  const [efficiencyAlert, setEfficiencyAlert] = useState<{ customerId: string; profitPerHour: number | null; planType: PlanType } | null>(null);
 
   useEffect(() => {
     if (user?.id && isStaff) {
@@ -69,6 +69,8 @@ export function useFarmerTacticalPlan() {
     const check = await checkEfficiency(customerId);
     if (!check.isAboveThreshold) {
       setEfficiencyAlert({ customerId, profitPerHour: check.estimatedProfitPerHour, planType });
+      // ⚠️ profitPerHour null = margem desconhecida, NÃO R$0/h — o diálogo tem de dizer
+      // "não foi possível estimar", não afirmar que o cliente não compensa.
       return;
     }
     generatePlan(customerId, planType);

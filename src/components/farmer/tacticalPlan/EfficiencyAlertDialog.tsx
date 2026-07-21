@@ -7,27 +7,41 @@ import type { PlanType } from '@/hooks/useTacticalPlan';
 import { fmt } from './config';
 
 interface EfficiencyAlertDialogProps {
-  alert: { customerId: string; profitPerHour: number; planType: PlanType } | null;
+  /** `profitPerHour` null = margem desconhecida (gate indecidível), NÃO R$0/h. */
+  alert: { customerId: string; profitPerHour: number | null; planType: PlanType } | null;
   onClose: () => void;
   onConfirm: () => void;
 }
 
 export function EfficiencyAlertDialog({ alert, onClose, onConfirm }: EfficiencyAlertDialogProps) {
+  // Dois motivos distintos caem neste diálogo, e confundi-los mente sobre o cliente:
+  // gate REPROVADO (R$/h medido e baixo) vs. gate INDECIDÍVEL (margem nunca apurada).
+  // Com `|| 0` o segundo virava "Potencial Baixo: R$ 0,00/h" — um veredito comercial
+  // fabricado a partir de ausência de custo (money-path: ausente ≠ zero).
+  const semMargem = alert != null && alert.profitPerHour == null;
   return (
     <Dialog open={!!alert} onOpenChange={onClose}>
       <DialogContent className="max-w-xs">
         <DialogHeader>
           <DialogTitle className="text-sm flex items-center gap-2">
             <AlertCircle className="w-4 h-4 text-status-warning" />
-            Potencial Baixo
+            {semMargem ? 'Sem margem apurada' : 'Potencial Baixo'}
           </DialogTitle>
         </DialogHeader>
         <div className="space-y-3">
-          <p className="text-xs text-muted-foreground">
-            O lucro estimado por hora para este cliente é de{' '}
-            <strong className="text-foreground">{fmt(alert?.profitPerHour || 0)}/h</strong>,
-            abaixo do limiar recomendado de <strong className="text-foreground">{fmt(50)}/h</strong>.
-          </p>
+          {semMargem ? (
+            <p className="text-xs text-muted-foreground">
+              Não foi possível estimar o lucro por hora deste cliente: os itens comprados
+              não têm custo conhecido. Isso <strong className="text-foreground">não</strong>{' '}
+              significa potencial baixo — significa que não há dado para julgar.
+            </p>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              O lucro estimado por hora para este cliente é de{' '}
+              <strong className="text-foreground">{fmt(alert?.profitPerHour ?? 0)}/h</strong>,
+              abaixo do limiar recomendado de <strong className="text-foreground">{fmt(50)}/h</strong>.
+            </p>
+          )}
           <p className="text-xs text-muted-foreground">Deseja continuar mesmo assim?</p>
           <div className="flex gap-2">
             <Button variant="outline" size="sm" className="flex-1 text-xs" onClick={onClose}>

@@ -1,6 +1,10 @@
 import { useState, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { selectObjective, clampRecencyCapDays } from '@/lib/scoring/objective';
+import { margemConhecida, mediaMargemConhecida } from '@/lib/margem';
+import { classificarPerfilCliente } from '@/lib/scoring/perfilCliente';
+import { profitPerHora } from '@/lib/tactical/pregeracao';
+import { fetchAllPages } from '@/lib/postgrest';
 import { ownersAtivosDoAlvo } from '@/lib/carteira/escopo-clientes';
 import { useAuth } from '@/contexts/AuthContext';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
@@ -23,7 +27,8 @@ export interface TacticalPlan {
   healthScore: number;
   churnRisk: number;
   mixGap: number;
-  currentMarginPct: number;
+  /** PERCENTUAL 0-100, ou null quando a margem era desconhecida na geração do plano. */
+  currentMarginPct: number | null;
   clusterAvgMarginPct: number | null;
   expansionPotential: number;
 
@@ -53,7 +58,8 @@ export interface TacticalPlan {
   operationalRisks: string[];
 
   // Efficiency
-  estimatedProfitPerHour: number;
+  /** R$/h estimado, ou null quando a margem é desconhecida (gate não decidível). */
+  estimatedProfitPerHour: number | null;
 
   // Tracking
   status: string;
@@ -168,7 +174,8 @@ interface DiagnosticData {
 }
 
 export interface EfficiencyCheck {
-  estimatedProfitPerHour: number;
+  /** R$/h estimado, ou null quando a margem do cliente é desconhecida — "não sei", não R$0/h. */
+  estimatedProfitPerHour: number | null;
   threshold: number;
   isAboveThreshold: boolean;
 }
@@ -184,12 +191,9 @@ const objectiveLabels: Record<string, string> = {
 
 export const getObjectiveLabel = (obj: string) => objectiveLabels[obj] || obj;
 
-const classifyProfile = (healthScore: number, avgSpend: number, marginPct: number, categoryCount: number): string => {
-  if (avgSpend < 500 && marginPct < 20) return 'sensivel_preco';
-  if (marginPct > 35 && categoryCount <= 3) return 'orientado_qualidade';
-  if (avgSpend > 2000 && categoryCount >= 4 && healthScore > 60) return 'orientado_produtividade';
-  return 'misto';
-};
+// classifyProfile migrou para @/lib/scoring/perfilCliente (classificarPerfilCliente), que
+// unifica esta cópia com a de useBundleArguments e guarda os ramos de margem contra null —
+// `null < 20` é true em JS e rotularia como "sensível a preço" quem só não teve custo apurado.
 
 const PROFIT_PER_HOUR_THRESHOLD = 50; // R$/h configurable threshold
 
@@ -230,7 +234,9 @@ export const useTacticalPlan = () => {
       healthScore: Number(d.health_score || 0),
       churnRisk: Number(d.churn_risk || 0),
       mixGap: Number(d.mix_gap || 0),
-      currentMarginPct: Number(d.current_margin_pct || 0),
+      // O plano persistido grava a margem do cliente no momento da geração; pós-#1495 ela
+      // pode ser null e `Number(null || 0)` a exibiria como "0%" — margem nula CONHECIDA.
+      currentMarginPct: margemConhecida(d.current_margin_pct),
       clusterAvgMarginPct: d.cluster_avg_margin_pct == null ? null : Number(d.cluster_avg_margin_pct),
       expansionPotential: Number(d.expansion_potential || 0),
       strategicObjective: d.strategic_objective,
@@ -323,7 +329,8 @@ export const useTacticalPlan = () => {
 
   // Check efficiency before generating
   const checkEfficiency = useCallback(async (customerId: string): Promise<EfficiencyCheck> => {
-    if (!user?.id) return { estimatedProfitPerHour: 0, threshold: PROFIT_PER_HOUR_THRESHOLD, isAboveThreshold: false };
+    // Sem sessão não há o que estimar: `null` = "não sei", não R$0/h.
+    if (!user?.id) return { estimatedProfitPerHour: null, threshold: PROFIT_PER_HOUR_THRESHOLD, isAboveThreshold: false };
 
     const { data: score } = (await supabase
       .from('farmer_client_scores')
@@ -333,17 +340,20 @@ export const useTacticalPlan = () => {
       .eq('customer_user_id', customerId)
       .single()) as unknown as { data: Pick<ClientScoreFull, 'revenue_potential' | 'avg_monthly_spend_180d' | 'gross_margin_pct'> | null };
 
-    const revPotential = Number(score?.revenue_potential || 0);
-    const avgSpend = Number(score?.avg_monthly_spend_180d || 0);
-    const marginPct = Number(score?.gross_margin_pct || 0);
-    const estimatedMarginPerCall = (revPotential > 0 ? revPotential : avgSpend) * (marginPct / 100) * 0.1;
-    const avgCallMinutes = 15;
-    const estimatedProfitPerHour = estimatedMarginPerCall / (avgCallMinutes / 60);
+    // Delega ao oráculo testado (src/lib/tactical/pregeracao.ts) em vez de repetir a fórmula:
+    // ele já devolve `null` quando a margem é desconhecida. Sem margem o gate de R$/h NÃO é
+    // decidível — `|| 0` dava R$0/h, indistinguível de "cliente comprovadamente ruim", e o
+    // alerta dizia à vendedora que não valia a ligação com base em dado que ninguém mediu.
+    const estimatedProfitPerHour = profitPerHora({
+      revenuePotential: Number(score?.revenue_potential || 0),
+      avgSpend: Number(score?.avg_monthly_spend_180d || 0),
+      marginPct: margemConhecida(score?.gross_margin_pct),
+    });
 
     return {
       estimatedProfitPerHour,
       threshold: PROFIT_PER_HOUR_THRESHOLD,
-      isAboveThreshold: estimatedProfitPerHour >= PROFIT_PER_HOUR_THRESHOLD,
+      isAboveThreshold: estimatedProfitPerHour != null && estimatedProfitPerHour >= PROFIT_PER_HOUR_THRESHOLD,
     };
   }, [user]);
 
@@ -387,7 +397,10 @@ export const useTacticalPlan = () => {
       const healthScore = Number(score.health_score || 0);
       const churnRisk = Number(score.churn_risk || 0);
       const avgSpend = Number(score.avg_monthly_spend_180d || 0);
-      const marginPct = Number(score.gross_margin_pct || 0);
+      // `|| 0` afirmaria "margem zero" (cliente não-lucrativo) sobre quem não teve custo
+      // apurado. O null atravessa até classificarPerfilCliente e selectObjective, que sabem
+      // não decidir sem margem.
+      const marginPct = margemConhecida(score.gross_margin_pct);
       const categoryCount = Number(score.category_count || 0);
       const daysSince = Number(score.days_since_last_purchase || 0);
       const expansionPotential = Number(score.expansion_score || 0);
@@ -401,20 +414,25 @@ export const useTacticalPlan = () => {
       // carteira do coberto (carteira_visivel_para via carteira_coverage). Exclui o próprio cliente
       // (peer benchmark) e exige ≥1 par com margem finita; sem par → null (selectObjective trata;
       // nada de 25).
+      // [GUARD money-path] PAGINADO. A consulta era single-shot e o PostgREST capa em 1.000
+      // linhas em SILÊNCIO — medido em prod (2026-07-21) os três farmers têm 3.858, 1.528 e
+      // 1.246 clientes, ou seja TODOS truncavam. O cluster é a RÉGUA contra a qual a margem do
+      // cliente é julgada (`margem < cluster * 0.8` → consolidacao_margem): calculá-lo sobre
+      // 26% dos pares produz um veredito plausível e errado. Hoje é inerte (a coluna é 0 em
+      // 6.632/6.632), o #1495 ativa. Ordem por `customer_user_id` (UNIQUE) — sem ordem estável
+      // a paginação pula e repete linha.
       let clusterMargin: number | null = null;
       {
-        const { data: peers } = (await supabase
-          .from('farmer_client_scores')
-          .select('gross_margin_pct')
-          .eq('farmer_id', ownerId)
-          .neq('customer_user_id', customerId)) as unknown as { data: Pick<ClientScoreFull, 'gross_margin_pct'>[] | null };
-        const peerMargins = (peers ?? [])
-          .filter((r) => r.gross_margin_pct != null)
-          .map((r) => Number(r.gross_margin_pct))
-          .filter((m) => Number.isFinite(m));
-        if (peerMargins.length >= 1) {
-          clusterMargin = peerMargins.reduce((s, m) => s + m, 0) / peerMargins.length;
-        }
+        const peers = await fetchAllPages<Pick<ClientScoreFull, 'gross_margin_pct'>>((de, ate) =>
+          supabase
+            .from('farmer_client_scores')
+            .select('gross_margin_pct')
+            .eq('farmer_id', ownerId)
+            .neq('customer_user_id', customerId)
+            .order('customer_user_id', { ascending: true })
+            .range(de, ate) as unknown as PromiseLike<{ data: Pick<ClientScoreFull, 'gross_margin_pct'>[] | null }>,
+        );
+        clusterMargin = mediaMargemConhecida(peers.map((r) => r.gross_margin_pct)).media;
       }
 
       // Bundle pendente do cliente sob a carteira do DONO (ownerId), não do viewer. A tabela é
@@ -431,7 +449,7 @@ export const useTacticalPlan = () => {
         .limit(2)) as unknown as { data: BundleRow[] | null };
 
       const mixGap = Math.max(0, 8 - categoryCount);
-      const customerProfile = classifyProfile(healthScore, avgSpend, marginPct, categoryCount);
+      const customerProfile = classificarPerfilCliente(healthScore, avgSpend, marginPct, categoryCount);
       const recencyCapDays = clampRecencyCapDays(recencyCapRow?.value);
       const strategicObjective = selectObjective(churnRisk, mixGap, marginPct, clusterMargin, daysSince, recencyCapDays, salesHistoryStatus);
 

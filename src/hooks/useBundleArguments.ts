@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
+import type { PerfilCliente } from '@/lib/scoring/perfilCliente';
 
 export interface BundleArgument {
   diagnostico: string;
@@ -13,22 +14,11 @@ export interface BundleArgument {
   versao_tecnica: string;
 }
 
-export type CustomerProfile = 'sensivel_preco' | 'orientado_qualidade' | 'orientado_produtividade' | 'misto';
-
-export const classifyCustomerProfile = (
-  healthScore: number,
-  avgMonthlySpend: number,
-  grossMarginPct: number,
-  categoryCount: number
-): CustomerProfile => {
-  // Price-sensitive: low spend, low margin tolerance
-  if (avgMonthlySpend < 500 && grossMarginPct < 20) return 'sensivel_preco';
-  // Quality-oriented: high margin, fewer categories (focused buyer)
-  if (grossMarginPct > 35 && categoryCount <= 3) return 'orientado_qualidade';
-  // Productivity-oriented: high spend, many categories, high health
-  if (avgMonthlySpend > 2000 && categoryCount >= 4 && healthScore > 60) return 'orientado_produtividade';
-  return 'misto';
-};
+// O classificador migrou para @/lib/scoring/perfilCliente (classificarPerfilCliente): esta
+// cópia e a de useTacticalPlan eram a MESMA regra escrita duas vezes, e ambas comparavam a
+// margem sem guard — `null < 20` é true em JS, então quem só não teve custo apurado saía
+// rotulado "sensível a preço". Blindar uma só deixaria a outra fabricando o rótulo.
+export type CustomerProfile = PerfilCliente;
 
 export const profileLabels: Record<CustomerProfile, { label: string; emoji: string; color: string }> = {
   sensivel_preco: { label: 'Sensível a Preço', emoji: '💰', color: 'text-amber-700' },

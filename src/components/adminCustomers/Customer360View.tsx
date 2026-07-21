@@ -33,6 +33,7 @@ import { MetricCard, ScoreItem } from './cards';
 import { RequiresPoToggle } from './RequiresPoToggle';
 import { AgendarVisitaDialog } from '@/components/visitas/AgendarVisitaDialog';
 import type { Customer, ClientScore, ToolCategory, UserTool, SalesOrder } from './types';
+import { formatarMargemPct } from '@/lib/margem';
 
 export function Customer360View({
   customer,
@@ -191,7 +192,10 @@ export function Customer360View({
             </CardHeader>
             <CardContent>
               <div className="grid grid-cols-3 md:grid-cols-5 gap-3">
-                <ScoreItem label="Margem" value={`${(score.gross_margin_pct * 100).toFixed(1)}%`} />
+                {/* `* 100` assumia fração 0-1, mas a coluna guarda PERCENTUAL 0-100 — com a
+                    margem real do #1495, 56% virava "5600.0%". Enquanto a coluna era 0 em
+                    6.632/6.632 linhas o erro exibia "0.0%" e passava por dado legítimo. */}
+                <ScoreItem label="Margem" value={formatarMargemPct(score.gross_margin_pct)} />
                 <ScoreItem label="Expansão" value={score.expansion_score.toFixed(1)} />
                 <ScoreItem label="Prioridade" value={score.priority_score.toFixed(1)} />
                 <ScoreItem label="Dias s/ compra" value={String(score.days_since_last_purchase)} danger={score.days_since_last_purchase > 60} />

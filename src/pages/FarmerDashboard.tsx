@@ -18,6 +18,7 @@ import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { CallButton } from '@/components/call/CallButton';
 import { SlaVencidoCard } from '@/components/farmer/SlaVencidoCard';
+import { formatarMargemPct } from '@/lib/margem';
 
 // ─── Helpers ─────────────────────────────────────────────────────────
 const healthColors: Record<string, { bg: string; text: string; border: string }> = {
@@ -410,12 +411,19 @@ const ClientDetail = ({ client, onBack }: { client: ClientScore; onBack: () => v
               { label: 'X', value: client.x },
               { label: 'S', value: client.s },
             ].map(({ label, value }) => (
+              // G (margem) é null quando nenhum item do cliente tem custo conhecido. Barra
+              // vazia + "—" em vez de "0%": zero aqui é a PIOR nota do componente, e exibi-la
+              // por ausência de custo acusa o cliente de algo que ninguém mediu.
               <div key={label} className="text-center">
                 <div className="w-full bg-muted rounded-full h-1.5 mb-1">
-                  <div className="bg-primary h-1.5 rounded-full" style={{ width: `${value * 100}%` }} />
+                  {value != null && (
+                    <div className="bg-primary h-1.5 rounded-full" style={{ width: `${value * 100}%` }} />
+                  )}
                 </div>
                 <p className="text-[9px] text-muted-foreground">{label}</p>
-                <p className="text-[10px] font-semibold">{(value * 100).toFixed(0)}%</p>
+                <p className="text-[10px] font-semibold">
+                  {value == null ? '—' : `${(value * 100).toFixed(0)}%`}
+                </p>
               </div>
             ))}
           </div>
@@ -439,7 +447,7 @@ const ClientDetail = ({ client, onBack }: { client: ClientScore; onBack: () => v
           <MetricRow label="Dias sem compra" value={String(client.daysSinceLastPurchase)} />
           <MetricRow label="Intervalo médio recompra" value={`${client.avgRepurchaseInterval.toFixed(0)} dias`} />
           <MetricRow label="Gasto mensal (180d)" value={fmt(client.avgMonthlySpend180d)} />
-          <MetricRow label="Margem bruta" value={`${client.grossMarginPct.toFixed(1)}%`} />
+          <MetricRow label="Margem bruta" value={formatarMargemPct(client.grossMarginPct)} />
           <MetricRow label="Categorias compradas" value={String(client.categoryCount)} />
           <MetricRow label="Taxa resposta (60d)" value={`${client.answerRate60d.toFixed(1)}%`} />
           <MetricRow label="WhatsApp reply (60d)" value={`${client.whatsappReplyRate60d.toFixed(1)}%`} />

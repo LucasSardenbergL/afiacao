@@ -6,16 +6,39 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Users, AlertTriangle, Layers } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer } from 'recharts';
+import { mediaMargemConhecida, legendaCobertura, formatarMargemPct } from '@/lib/margem';
+import { fetchAllPages } from '@/lib/postgrest';
+
 import { KpiCard } from './KpiCard';
+
+interface ScoreLinha {
+  customer_user_id: string;
+  farmer_id: string;
+  health_score: number | null;
+  health_class: string | null;
+  /** PERCENTUAL 0-100, ou null quando desconhecida. Ver @/lib/margem. */
+  gross_margin_pct: number | null;
+  category_count: number | null;
+  sales_history_status: string | null;
+}
+
 
 function IntelligenceManagerialTabImpl() {
   const { data: allScores, isLoading } = useQuery({
     queryKey: ['intel-all-scores'],
-    queryFn: async () => {
-      const { data, error } = await supabase.from('farmer_client_scores').select('*').order('priority_score', { ascending: false }).limit(500);
-      if (error) throw error;
-      return data || [];
-    },
+    // Base COMPLETA, paginada. Era `.limit(500)` sobre `priority_score` desc — 500 de 6.632, e
+    // logo os de MAIOR prioridade: uma amostra enviesada apresentada como comparativo entre
+    // vendedores. Não dava pra declarar a cobertura da margem em cima disso sem mentir sobre
+    // o denominador. Ordem por `customer_user_id` (UNIQUE) porque paginação sem ordem estável
+    // pula e repete linha entre páginas.
+    queryFn: () =>
+      fetchAllPages<ScoreLinha>((de, ate) =>
+        supabase
+          .from('farmer_client_scores')
+          .select('customer_user_id, farmer_id, health_score, health_class, gross_margin_pct, category_count, sales_history_status')
+          .order('customer_user_id', { ascending: true })
+          .range(de, ate) as unknown as PromiseLike<{ data: ScoreLinha[] | null }>,
+      ),
   });
 
   const { data: allPerformance } = useQuery({
@@ -67,11 +90,14 @@ function IntelligenceManagerialTabImpl() {
   const farmerMetrics = Object.entries(farmerGroups).map(([farmerId, clients]) => {
     const avgHealth = clients.reduce((a, c) => a + Number(c.health_score || 0), 0) / clients.length;
     const atRisk = clients.filter(c => (c.health_class === 'critico' || c.health_class === 'atencao') && c.sales_history_status !== 'sem_historico').length;
-    const avgMargin = clients.reduce((a, c) => a + Number(c.gross_margin_pct || 0), 0) / clients.length;
+    // Só margens CONHECIDAS. Com `|| 0`, o vendedor cuja carteira ainda não tem custo
+    // apurado apareceria com margem pior do que o colega medido — comparação entre
+    // vendedores fabricada a partir de ausência de dado (money-path §2).
+    const margem = mediaMargemConhecida(clients.map((c) => c.gross_margin_pct));
     const avgCategories = clients.reduce((a, c) => a + Number(c.category_count || 0), 0) / clients.length;
     const adoption = recoAdoption[farmerId];
     const adoptionPct = adoption && adoption.total > 0 ? (adoption.accepted / adoption.total * 100) : 0;
-    return { farmerId, clientCount: clients.length, avgHealth, atRisk, avgMargin, avgCategories, adoptionPct };
+    return { farmerId, clientCount: clients.length, avgHealth, atRisk, margem, avgCategories, adoptionPct };
   });
 
   const globalAvgCategories = allScores?.length
@@ -120,7 +146,9 @@ function IntelligenceManagerialTabImpl() {
                       <Badge variant={fm.avgHealth > 60 ? 'default' : 'destructive'} className="text-2xs">{fm.avgHealth.toFixed(0)}</Badge>
                     </td>
                     <td className="text-center py-2">{fm.atRisk}</td>
-                    <td className="text-center py-2">{fm.avgMargin.toFixed(1)}%</td>
+                    <td className="text-center py-2" title={legendaCobertura(fm.margem.comMargem, fm.margem.total)}>
+                      {formatarMargemPct(fm.margem.media)}
+                    </td>
                     <td className="text-center py-2">{fm.avgCategories.toFixed(1)}</td>
                     <td className="text-center py-2">
                       <span className={fm.avgCategories < globalAvgCategories ? 'text-destructive' : 'text-status-success'}>

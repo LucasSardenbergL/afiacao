@@ -37,7 +37,7 @@ const score: ClientScore = {
   avg_monthly_spend_180d: 1000,
   days_since_last_purchase: 10,
   category_count: 3,
-  gross_margin_pct: 0.3,
+  gross_margin_pct: 30,
   sales_history_status: 'ativo',
 };
 

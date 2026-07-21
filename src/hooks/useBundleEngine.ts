@@ -5,6 +5,7 @@ import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { toast } from 'sonner';
 import { custoCanonico } from '@/lib/custo/custoCanonico';
 import { fetchAllPages } from '@/lib/postgrest';
+import { margemConhecida } from '@/lib/margem';
 
 // ─── Types ───────────────────────────────────────────────────────────
 export interface AssociationRule {
@@ -47,7 +48,8 @@ export interface CustomerBundles {
   bundles: BundleRecommendation[];
   bestIndividual: IndividualComparison | null;
   avgMonthlySpend: number;
-  grossMarginPct: number;
+  /** PERCENTUAL 0-100, ou null quando desconhecida. Ver @/lib/margem. */
+  grossMarginPct: number | null;
   categoryCount: number;
   daysSinceLastPurchase: number;
   cnae: string;
@@ -528,7 +530,9 @@ export const useBundleEngine = () => {
             bundles: topBundles,
             bestIndividual,
             avgMonthlySpend: Number(score.avg_monthly_spend_180d || 0),
-            grossMarginPct: Number(score.gross_margin_pct || 0),
+            // `|| 0` matava o null ANTES do guard de classificarPerfilCliente, tornando a
+            // blindagem do classificador inerte — a coação a montante é que decide.
+            grossMarginPct: margemConhecida(score.gross_margin_pct),
             categoryCount: Number(score.category_count || 0),
             daysSinceLastPurchase: Number(score.days_since_last_purchase || 0),
             cnae: profile.cnae || '',

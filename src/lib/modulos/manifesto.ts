@@ -609,6 +609,7 @@ export const MODULOS: ModuloApp[] = [
       "src/components/VoiceServiceInput.tsx",
       "src/lib/impersonation/**",
       "src/lib/mcp/**",
+      "src/lib/margem/**",
       "src/lib/nav/**",
       "src/lib/omie/**",
       "src/lib/posthog-error/**",

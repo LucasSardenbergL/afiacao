@@ -85,4 +85,17 @@ describe('selectObjective — cluster AUSENTE (null) degrada honesto (money-path
   it('cluster presente baixo ainda dispara consolidacao quando margem < cluster*0.8', () => {
     expect(selectObjective(0, 0, 10, 25, 0, cap)).toBe('consolidacao_margem'); // 10 < 20
   });
+
+  it('margem do CLIENTE null NÃO dispara consolidacao_margem (null < 24 é true em JS)', () => {
+    // Simétrico ao cluster ausente, e a via que o #1495 abre: pós-produtor, ~84% dos clientes
+    // ficam sem margem. Sem o guard, `null < cluster*0.8` coage null a 0 e TODO cliente sem
+    // custo apurado receberia o objetivo "consolidar margem" — uma tese sobre a margem dele
+    // afirmada justamente por não conhecê-la.
+    expect(selectObjective(50, 2, null, 30, 10, cap)).toBe('upsell_premium');
+    expect(selectObjective(0, 0, null, 25, 0, cap)).toBe('upsell_premium');
+  });
+
+  it('margem 0 CONHECIDA continua disparando consolidacao (0 é veredito, não ausência)', () => {
+    expect(selectObjective(0, 0, 0, 25, 0, cap)).toBe('consolidacao_margem'); // 0 < 20
+  });
 });

@@ -9,6 +9,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { getObjectiveLabel, type TacticalPlan } from '@/hooks/useTacticalPlan';
 import { fmt, objectiveColors, profileLabels } from './config';
+import { formatarMargemPct } from '@/lib/margem';
 import { Section, MetricRow, CopyButton } from './PlanSection';
 import { RecordResultDialog } from './RecordResultDialog';
 import type { RecordResultPayload } from './types';
@@ -63,7 +64,9 @@ export const PlanCard = ({
         </div>
 
         {/* Efficiency indicator */}
-        {plan.estimatedProfitPerHour > 0 && (
+        {/* null = margem desconhecida → o R$/h não é estimável. Some o indicador em vez de
+            mostrar R$0/h, que se leria como "cliente não compensa" (money-path: ausente ≠ zero). */}
+        {plan.estimatedProfitPerHour != null && plan.estimatedProfitPerHour > 0 && (
           <div className={`mt-1.5 flex items-center gap-1 text-[9px] ${
             plan.estimatedProfitPerHour >= 50 ? 'text-status-success' : 'text-status-warning'
           }`}>
@@ -77,7 +80,7 @@ export const PlanCard = ({
           <div className="mt-3 space-y-3">
             {/* Diagnosis */}
             <Section title="Diagnóstico Resumido" icon={Heart}>
-              <MetricRow label="Margem atual" value={`${plan.currentMarginPct.toFixed(1)}%`} />
+              <MetricRow label="Margem atual" value={formatarMargemPct(plan.currentMarginPct)} />
               <MetricRow label="Média cluster" value={plan.clusterAvgMarginPct == null ? '—' : `${plan.clusterAvgMarginPct.toFixed(1)}%`} />
               <MetricRow label="Potencial expansão" value={`${plan.expansionPotential.toFixed(0)}%`} />
               <MetricRow label="Perfil" value={profileLabels[plan.customerProfile] || plan.customerProfile} />

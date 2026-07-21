@@ -23,10 +23,13 @@
  * e LER o teto do config (não hardcode), pra a fronteira ACOMPANHAR o modelo se o operador
  * retunar T. Ver docs/historico/bugs-resolvidos.md.
  */
+import { margemConhecida } from '@/lib/margem';
+
 export function selectObjective(
   churnRisk: number,
   mixGap: number,
-  marginPct: number,
+  /** PERCENTUAL 0-100, ou null quando a margem do cliente é desconhecida. */
+  marginPct: number | null,
   clusterMargin: number | null,
   daysSince: number,
   recencyCapDays: number,
@@ -41,7 +44,12 @@ export function selectObjective(
   // consolidacao a esmo. (O espelho no edge generate-tactical-plan sempre passa número —
   // benchmarka pela carteira-dono no batch — então a divergência só aparece no caminho client,
   // onde o cluster pode faltar.)
-  if (clusterMargin != null && Number.isFinite(clusterMargin) && marginPct < clusterMargin * 0.8) return 'consolidacao_margem';
+  // Margem do CLIENTE ausente também não decide: `null < cluster*0.8` coage null a 0 e seria
+  // true, afirmando "margem baixa vs. pares" sobre quem não teve a margem apurada. Pós-#1495
+  // isso valeria para ~84% da base. `0` conhecido segue disparando — é veredito, não ausência.
+  const margem = margemConhecida(marginPct);
+  const cluster = margemConhecida(clusterMargin);
+  if (cluster != null && margem != null && margem < cluster * 0.8) return 'consolidacao_margem';
   return 'upsell_premium';
 }
 

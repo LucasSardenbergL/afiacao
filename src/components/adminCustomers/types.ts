@@ -40,7 +40,11 @@ export interface ClientScore {
   avg_monthly_spend_180d: number;
   days_since_last_purchase: number;
   category_count: number;
-  gross_margin_pct: number;
+  /** PERCENTUAL 0-100 (56 = 56%), ou `null` quando a margem é desconhecida — cliente sem
+   *  pedido, ou com itens sem custo conhecido (~84% da base pós-#1495). `0` é o veredito
+   *  "não-lucrativo", NUNCA "não sei": use `margemConhecida`/`faixaMargem` de
+   *  `@/lib/margem` em vez de `?? 0`. */
+  gross_margin_pct: number | null;
   avg_repurchase_interval?: number | null;
   sales_history_status: string | null;
 }
