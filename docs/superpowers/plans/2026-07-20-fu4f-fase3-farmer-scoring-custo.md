@@ -40,7 +40,7 @@
 
 | arquivo | responsabilidade |
 |---|---|
-| `supabase/migrations/20260720210000_authz_custo_fu4f_fase3_farmer_faixa.sql` | RPC + seeds de config + ACL |
+| `supabase/migrations/20260724130000_authz_custo_fu4f_fase3_farmer_faixa.sql` | RPC + seeds de config + ACL |
 | `db/test-authz-custo-fu4f-fase3.sql` | validação pós-apply (catálogo, roda em `psql-ro`) |
 | `db/test-authz-custo-fu4f-fase3.sh` | harness PG17: prova + falsificação |
 | `db/test-fu4f-fase3-paridade-margem.sh` | paridade TS×SQL (a faixa tem de bater) |
@@ -173,18 +173,27 @@ git commit -m "feat(scoring): helper puro de faixa de margem (vocabulário do co
 ### Task 2: Migration — a RPC gateada
 
 **Files:**
-- Create: `supabase/migrations/20260720210000_authz_custo_fu4f_fase3_farmer_faixa.sql`
+- Create: `supabase/migrations/20260724130000_authz_custo_fu4f_fase3_farmer_faixa.sql`
 
 **Interfaces:**
 - Consumes: `private.cap_custo_ler(_uid uuid) → boolean`, `private.cap_carteira_ler(_uid uuid) → boolean`, `private.carteira_visivel_para(_customer_user_id uuid, _uid uuid) → boolean` (todas SECDEF, medidas em prod)
 - Produces: `public.get_carteira_margem_faixa()` → `TABLE(customer_user_id uuid, faixa text, motivo text, margem_pct numeric)`
 
-⚠️ **Antes de escrever:** confirme que nenhuma migration com timestamp ≥ `20260720210000` entrou na `main` (`git fetch && ls supabase/migrations/ | tail -5`). As duas sessões paralelas podem ter criado uma.
+⚠️ **O timestamp NÃO é a data de hoje — e isso é deliberado.** Os timestamps de migration deste repo estão **à frente do calendário**: em 2026-07-20 a maior na `main` era `20260724120000`. Um timestamp "de hoje" (`20260720…`) ordenaria **antes** das já aplicadas, violando a regra de que a sua ordena depois da última. Por isso `20260724130000`.
+
+**Antes de escrever, re-confirme o máximo** (as duas sessões paralelas podem ter criado uma nova):
+
+```bash
+git fetch -q origin
+git ls-tree --name-only origin/main supabase/migrations/ | command grep -oE '2026[0-9]{10}' | sort | tail -1
+```
+
+Se o retorno for ≥ `20260724130000`, escolha um timestamp maior e ajuste **todas** as referências neste plano (nome do arquivo, `git add`, os dois `psql -f` do harness da Task 3, e o corpo do PR).
 
 - [ ] **Step 1: Escrever a migration**
 
 ```sql
--- supabase/migrations/20260720210000_authz_custo_fu4f_fase3_farmer_faixa.sql
+-- supabase/migrations/20260724130000_authz_custo_fu4f_fase3_farmer_faixa.sql
 --
 -- FU4-F fase 3 — o scoring do farmer para de baixar o catálogo de custo.
 --
@@ -323,7 +332,7 @@ cd /Users/lucassardenberg/Projetos/afiacao/.claude/worktrees/youthful-wright-ca4
 - [ ] **Step 3: Commit (sem aplicar — a prova vem na Task 3)**
 
 ```bash
-git add supabase/migrations/20260720210000_authz_custo_fu4f_fase3_farmer_faixa.sql
+git add supabase/migrations/20260724130000_authz_custo_fu4f_fase3_farmer_faixa.sql
 git commit -m "feat(authz): RPC get_carteira_margem_faixa — faixa por cliente, custo fechado"
 ```
 
@@ -380,7 +389,7 @@ CREATE TABLE public.cliente_classificacao (user_id uuid PRIMARY KEY, excluir_da_
 SQL
 
 # ── aplica a migration REAL (não uma cópia) ──────────────────────────────────
-P -q -f "$REPO_ROOT/supabase/migrations/20260720210000_authz_custo_fu4f_fase3_farmer_faixa.sql"
+P -q -f "$REPO_ROOT/supabase/migrations/20260724130000_authz_custo_fu4f_fase3_farmer_faixa.sql"
 
 # ── semeia ───────────────────────────────────────────────────────────────────
 P -q <<'SQL'
@@ -493,7 +502,7 @@ eq "E3 PUBLIC não executa" "f" \
   "$(Pq -c "SELECT has_function_privilege('public','public.get_carteira_margem_faixa()','EXECUTE');")"
 
 echo "── F. idempotência ──"
-P -q -f "$REPO_ROOT/supabase/migrations/20260720210000_authz_custo_fu4f_fase3_farmer_faixa.sql"
+P -q -f "$REPO_ROOT/supabase/migrations/20260724130000_authz_custo_fu4f_fase3_farmer_faixa.sql"
 eq "F1 re-aplicar a migration não muda o resultado" "verde" \
   "$(como aaaaaaaa-0000-0000-0000-000000000001 false false \
      "SELECT faixa FROM public.get_carteira_margem_faixa() WHERE customer_user_id='11111111-1111-1111-1111-111111111111';")"
@@ -930,7 +939,7 @@ inteira e não se inverte para custo unitário — o estreitamento é forte, mas
 
 ## ⚠️ Migration manual
 
-`20260720210000_authz_custo_fu4f_fase3_farmer_faixa.sql` — nome custom **não** auto-aplica.
+`20260724130000_authz_custo_fu4f_fase3_farmer_faixa.sql` — nome custom **não** auto-aplica.
 Colar no SQL Editor do Lovable → Run. Validar com `db/test-authz-custo-fu4f-fase3.sql`.
 Ordem: **migration → Publish do frontend** (o front novo depende da RPC).
 
