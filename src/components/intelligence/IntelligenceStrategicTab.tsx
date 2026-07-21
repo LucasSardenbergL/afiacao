@@ -9,8 +9,18 @@ import {
   BarChart3, PieChart, ShieldCheck, RefreshCw
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { mediaMargensConhecidas } from '@/lib/scoring/margin';
+import { mediaMargensConhecidas, coberturaMargem, legendaCobertura } from '@/lib/scoring/margin';
+import { fetchAllPages } from '@/lib/postgrest';
 import { KpiCard } from './KpiCard';
+
+interface ScoreLinha {
+  customer_user_id: string;
+  /** PERCENTUAL (0–100, negativo válido). `null` = não apurada. Ver @/lib/scoring/margin. */
+  gross_margin_pct: number | null;
+  avg_monthly_spend_180d: number | null;
+  avg_repurchase_interval: number | null;
+  revenue_potential: number | null;
+}
 
 export function IntelligenceStrategicTab() {
   const { data: marginAudit, isLoading } = useQuery({
@@ -24,11 +34,17 @@ export function IntelligenceStrategicTab() {
 
   const { data: allScores } = useQuery({
     queryKey: ['intel-strategic-scores'],
-    queryFn: async () => {
-      const { data, error } = await supabase.from('farmer_client_scores').select('*').limit(500);
-      if (error) throw error;
-      return data || [];
-    },
+    // Base COMPLETA, paginada. Era `.limit(500)` de 6.632 e SEM `.order()` — o Postgres não
+    // garante ordem sem ORDER BY, então as 500 eram um recorte não determinístico: dois
+    // carregamentos podiam produzir KPIs diferentes da mesma base, sem nada na tela indicando.
+    queryFn: () =>
+      fetchAllPages<ScoreLinha>((de, ate) =>
+        supabase
+          .from('farmer_client_scores')
+          .select('customer_user_id, gross_margin_pct, avg_monthly_spend_180d, avg_repurchase_interval, revenue_potential')
+          .order('customer_user_id', { ascending: true })
+          .range(de, ate) as unknown as PromiseLike<{ data: ScoreLinha[] | null }>,
+      ),
   });
 
   const { data: salesOrders } = useQuery({
@@ -109,6 +125,7 @@ export function IntelligenceStrategicTab() {
   // margem apurada entrava como 0 — e como esse é o caso da maioria da base desde o cálculo
   // server-side, o KPI estratégico viraria uma medida de cobertura de custo disfarçada de margem.
   const avgGrossMargin = mediaMargensConhecidas((allScores ?? []).map(c => c.gross_margin_pct));
+  const coberturaGrossMargin = coberturaMargem((allScores ?? []).map(c => c.gross_margin_pct));
 
   const [runningAlgoA, setRunningAlgoA] = useState(false);
   const runAlgoA = async () => {
@@ -155,7 +172,12 @@ export function IntelligenceStrategicTab() {
         <KpiCard title="LTV Projetado (3a)" value={`R$ ${ltvEstimate.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}`} icon={BarChart3} subtitle="Estimativa média" />
         <KpiCard title="CAC Estimado" value={`R$ ${cacEstimate.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}`} icon={DollarSign} subtitle="Custo aquisição cliente" />
         <KpiCard title="Concentração Top 20%" value={`${concentrationPct.toFixed(1)}%`} icon={PieChart} subtitle="da receita total" />
-        <KpiCard title="Margem Bruta Média" value={avgGrossMargin == null ? '—' : `${avgGrossMargin.toFixed(1)}%`} icon={Percent} />
+        <KpiCard
+          title="Margem Bruta Média"
+          value={avgGrossMargin == null ? '—' : `${avgGrossMargin.toFixed(1)}%`}
+          icon={Percent}
+          subtitle={legendaCobertura(coberturaGrossMargin)}
+        />
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">

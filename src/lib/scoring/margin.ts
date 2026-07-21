@@ -30,6 +30,40 @@ export function margemConhecida(raw: unknown): number | null {
  * baixo — pior que um erro visível, porque não parece errado. Aqui numerador e denominador
  * saem da MESMA lista filtrada.
  */
+export interface CoberturaMargem {
+  /** Quantos clientes têm margem CONHECIDA (0 conta; ausente e não-finito não). */
+  comMargem: number;
+  /** Tamanho da lista avaliada. */
+  total: number;
+}
+
+/**
+ * Cobertura da amostra por trás de uma média de margem.
+ *
+ * Companheira obrigatória de `mediaMargensConhecidas`: ela devolve a conta certa, mas um
+ * número sozinho não diz sobre QUANTOS clientes foi feito. Com ~84% da base sem margem
+ * apurada (pós-#1495), a mesma "margem média" pode descrever a carteira inteira ou um sexto
+ * dela, e a tela precisa dizer qual (money-path: no silent caps).
+ */
+export function coberturaMargem(valores: Iterable<unknown>): CoberturaMargem {
+  let comMargem = 0;
+  let total = 0;
+  for (const v of valores) {
+    total++;
+    if (margemConhecida(v) != null) comMargem++;
+  }
+  return { comMargem, total };
+}
+
+/** Legenda pronta para acompanhar o KPI. Sem isso, quem lê assume "todos os clientes". */
+export function legendaCobertura({ comMargem, total }: CoberturaMargem): string {
+  if (total === 0) return 'sem clientes';
+  if (comMargem === 0) return 'nenhum cliente c/ margem conhecida';
+  const cobertos = comMargem.toLocaleString('pt-BR');
+  if (comMargem === total) return `${cobertos} clientes c/ margem`;
+  return `parcial — ${cobertos} de ${total.toLocaleString('pt-BR')} clientes c/ margem`;
+}
+
 export function mediaMargensConhecidas(valores: Iterable<unknown>): number | null {
   const conhecidas: number[] = [];
   for (const v of valores) {
