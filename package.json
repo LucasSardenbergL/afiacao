@@ -12,7 +12,7 @@
     "test": "vitest run",
     "test:edges": "deno test --no-remote --allow-read=supabase/functions supabase/functions/",
     "typecheck": "tsc --noEmit -p tsconfig.app.json",
-    "typecheck:edges": "deno check supabase/functions/sync-reprocess/index.ts supabase/functions/omie-analytics-sync/index.ts",
+    "edges:typecheck": "bun scripts/edges-typecheck-gate.ts",
     "audit:migrations": "bun scripts/audit-custom-migrations.ts",
     "authz:check": "bun scripts/authz-gate-check.ts",
     "bunpin:check": "bun scripts/bun-pin-gate-check.ts",

@@ -94,3 +94,70 @@ em edge costuma ser guard que alguém achou que estava rodando e não está.
 > no-explicit-any` deixou o `deno lint` limpo e o CI vermelho com 4 erros. **Cada linter só enxerga o
 > seu próprio comentário de supressão**, então nenhum dos dois, sozinho, prova o outro. Regra prática
 > em `docs/agent/deploy.md` → "Edge — armadilhas".
+
+---
+
+# Sequela (2026-07-21): o `test:edges` rodava — e mesmo assim nenhuma edge era type-checada
+
+Plugar os testes no CI **não** fechou o buraco de tipos. `deno test` só type-checa o grafo que os
+testes **alcançam**, e por desenho os 15 arquivos de teste cobrem **lógica pura extraída** —
+justamente para caber no `--no-remote`. Nenhum `index.ts` de edge é importado por teste algum, então
+nenhum entrava no grafo. Com `typecheck` cobrindo só `src/` e o ESLint não type-checando Deno, **erro
+de tipo em edge ficava verde nos quatro gates** e só quebrava em runtime na produção, depois do
+deploy manual pelo Lovable.
+
+Detectado no PR #1498: `classifyProfile` usado sem estar no import em `generate-tactical-plan`
+sobreviveu a 5.527 testes vitest, 181 testes deno, typecheck e lint. Só apareceu num `deno check`
+manual. Fechado pelo step `edges:typecheck` (`scripts/edges-typecheck-gate.ts`).
+
+**A tensão com o `--no-remote` é real e não teve como evitar.** `deno check` precisa resolver o grafo
+de verdade — 2.245 downloads, ~48s cold / ~2,5s warm. O que dá para dizer com número: dos 3 hosts,
+`registry.npmjs.org` (2.087 requests) **já** está no caminho de entrega via `bun install`; os novos
+são `esm.sh` (135) e `deno.land` (23), ambos vindos de import legado. Migrar as duas famílias
+(follow-up) zera os hosts novos.
+
+**Diff-only foi medido e descartado:** checar *uma* edge custa 14–16s e ~2.000 requests — quase o
+mesmo que checar as 93. Quase toda edge importa `@supabase/supabase-js`, que sozinho arrasta ~2.000
+`.d.ts`; as outras 92 custam ~245 requests marginais. O diff economizaria tempo e **zero** do SPOF.
+
+## Quatro armadilhas medidas (deno 2.9.2)
+
+- **`deno check` cru não roda neste repo.** O `package.json` da raiz põe o Deno em modo node_modules
+  e ele **aborta na resolução**, antes de type-checar. Exige `--node-modules-dir=none` — que por
+  sinal é mais fiel ao Edge Runtime do Supabase. O `--no-remote` do `test:edges` corta antes e por
+  isso nunca esbarrou nisso.
+- **Com 1 erro só, o Deno OMITE a linha `Found N errors.`** Usá-la como marcador de "rodou" deixa o
+  gate cego exatamente no caso de 1 erro — a forma típica de símbolo faltando no import. O marcador
+  confiável é `error: Type checking failed.`
+- **Com o cache de check quente, a saída é vazia e exit 0.** "Saída vazia" é o caso de **sucesso**
+  normal, não anomalia — a decisão tem que pender do exit code, nunca do volume de saída.
+- **Glob de edge expandido pelo shell diverge entre shells:** zsh aborta com "no matches found",
+  bash passa o glob literal. Um glob que não casa nada viraria verde silencioso — a mesma família do
+  "glob de teste que não casa nada" logo acima. O gate enumera em TypeScript e trata 0 edges como
+  **falha**.
+
+## Por que o gate é de precisão, não de recall
+
+Medido na main de 2026-07-21: **141 erros de tipo em 25 das 93 edges** (68 limpas). Quase todos são
+ruído dos tipos gerados do Supabase — `does not exist on type 'never'`, `@ts-expect-error` obsoleto,
+e 17 `SupabaseClient not assignable` causados por `@supabase/supabase-js` aparecer em **6 versões
+distintas** nas edges. Código que roda.
+
+Já a classe que **quebra em runtime** — símbolo/módulo/membro que não resolve (`TS2304` `TS2552`
+`TS2307` `TS2305` `TS2724` `TS2503`) — está em **zero nas 93**. Gatear só nela dá um gate verde hoje
+**sem allowlist nenhuma**, cobrindo inclusive as 25 sujas e as de money-path.
+
+A alternativa (check completo + denylist das 25) excluiria justamente `fin-cashflow-engine`,
+`enviar-pedido-portal-sayerlack`, `omie-financeiro` e `recommend` — **o gate protegendo onde o risco
+é menor** — além de criar um arquivo-lista que vira ímã de conflito entre as worktrees paralelas.
+Apertar para check completo é o destino natural, depois que a dívida encolher.
+
+## Follow-ups (medidos)
+
+1. Consolidar `@supabase/supabase-js` numa versão só (hoje 6) — corta download e resolve 17 dos 141.
+2. Migrar `deno.land/std/http/server.ts` → `Deno.serve` (34 edges) e `esm.sh/@supabase/supabase-js` →
+   `npm:` (18 edges). Deixa `registry.npmjs.org` como host único.
+3. Zerar as 25 edges sujas e apertar o gate para check completo.
+4. Versionar `deno.lock` (hoje no `.gitignore`) — reprodutibilidade + chave de cache estável.
+
+Spec: `docs/superpowers/specs/2026-07-21-edges-typecheck-gate-design.md`
