@@ -2169,6 +2169,35 @@ echo ""
 echo "→ migration 20260726120000_tint_promote_error_details_completo.sql (v6 — diagnóstico honesto)…"
 P -v ON_ERROR_STOP=1 -q -f "$MIGLOG" >/dev/null
 
+# O VALIDADOR pós-apply (o que o founder cola no SQL Editor) é CÓDIGO, e nasce sem prova de que
+# morde — #1490/#1501: um validador frouxo ensina a ignorar o vermelho. Aqui ele é EXECUTADO contra
+# o banco bom (tem de aprovar) e, na Flog-1, contra o sabotado (tem de reprovar). Lê a definição com
+# os COMENTÁRIOS REMOVIDOS (#1472/#1488: pg_get_functiondef devolve o corpo comentado, e a própria
+# migration escreve o texto que o fiscal leria de volta).
+VALIDADOR() {
+  P -tA -c "
+WITH d AS (
+  SELECT regexp_replace(
+           pg_get_functiondef(to_regprocedure('public.tint_promote_sync_run(uuid)')),
+           '--[^\n]*', '', 'g') AS code
+)
+SELECT CASE
+  WHEN to_regprocedure('public.tint_promote_sync_run(uuid)') IS NULL
+    THEN '❌ FALTANDO — a funcao tint_promote_sync_run nao existe'
+  WHEN (SELECT code FROM d) LIKE '%CREATE TEMP TABLE _fl_culpa%'
+   AND (SELECT code FROM d) LIKE '%SELECT DISTINCT staging_formula_id FROM _fl_culpa%'
+   AND (SELECT code FROM d) LIKE '%cul.motivos IS NOT NULL%'
+   AND (SELECT code FROM d) NOT LIKE '%btrim(si.id_corante)%'
+    THEN '✅ v6 aplicada — _fl_culpa alimenta a decisao, itens marcados, filtro do orfao AUSENTE'
+  ELSE '❌ v6 NAO aplicada por inteiro (funcao existe, mas falta marcador da v6 ou o filtro voltou)'
+END AS status;"
+}
+VOUT="$(VALIDADOR)"
+case "$VOUT" in
+  *"filtro do orfao AUSENTE"*) echo "  ✓ validador pós-apply APROVA a v6 real (banco bom)" ;;
+  *) echo "✗ validador pós-apply REPROVOU a v6 real — o que o founder vai colar está quebrado: $VOUT"; exit 1 ;;
+esac
+
 echo ""
 echo "════════ CENÁRIO 38 — NB.9142 de PROD: o órfão ESCONDIDO aparece marcado ════════"
 P -v ON_ERROR_STOP=1 -q <<'SQL'
@@ -2347,6 +2376,13 @@ P -v ON_ERROR_STOP=1 -q -c "SELECT tint_promote_sync_run('e1d38000-0000-0000-000
 NI=$(P -tA -c "SELECT jsonb_array_length(error_details->'itens') FROM tint_sync_errors WHERE sync_run_id='e1d38000-0000-0000-0000-000000000001' AND entity_id='COR38';")
 [ "$NI" = "2" ] || { echo "✗ Flog-1 FALHOU: com o filtro de volta o log deveria esconder o órfão (2 itens), veio $NI — C38.1 não tem dente"; exit 1; }
 echo "  ✓ filtro restaurado → órfão some do log (2 itens): C38.1 tem dente"
+# zona morta do validador: aqui a função EXISTE e tem _fl_culpa, mas o filtro voltou — é o estado
+# "v6 pela metade" (apply parcial / hotfix). O validador tem de REPROVAR, senão é carimbo.
+VOUT="$(VALIDADOR)"
+case "$VOUT" in
+  *"NAO aplicada"*) echo "  ✓ validador REPROVA a v6 sabotada (banco ruim): não é carimbo" ;;
+  *) echo "✗ Flog-1 FALHOU: o validador APROVOU um banco com o filtro de volta — ele não morde: $VOUT"; exit 1 ;;
+esac
 rm -f "$SAB1"
 
 echo "── falsificação Flog-2 (o C38.2 tem dente: sem a marcação, ninguém é apontado) ──"
