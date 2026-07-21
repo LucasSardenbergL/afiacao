@@ -15,12 +15,13 @@ Ancora em `private.cap_custo_ler` / `private.cap_compras_ler`, criadas pelo
 | `cmc_snapshot` | ✅ fechada | [#1465](https://github.com/LucasSardenbergL/afiacao/pull/1465) |
 | `get_tint_price` / `get_tint_prices` | ✅ gate em `cap_custo_ler` | #1465 |
 | `pedido_compra_item` (4 policies) | ✅ fechada em `cap_compras_ler` | [#1485](https://github.com/LucasSardenbergL/afiacao/pull/1485) |
-| `regua_preco_log` | ⚠️ ABERTA **por decisão** — mesmo subsistema da régua | — |
+| `get_regua_preco` / `_customer360` | ✅ decide no SERVIDOR, mascara o número | [#1488](https://github.com/LucasSardenbergL/afiacao/pull/1488) |
+| `regua_preco_log` | ✅ fechada | #1488 |
+| edge `recommend` | ✅ para de devolver custo ao browser | [#1503](https://github.com/LucasSardenbergL/afiacao/pull/1503) |
 | `product_costs` | ⚠️ ABERTA — espelho do CMC, fase 3 | #1495/#1498 (margem no servidor) |
-| `get_regua_preco` / `_customer360` | ⚠️ devolve `cmc` cru | sem dono |
 
-**O custo NÃO está fechado.** O programa reduziu superfície: tirou o número das telas e fechou as
-portas diretas. Quem quiser reconstruir ainda consegue (espelho + oráculo, abaixo).
+**O custo NÃO está fechado enquanto `product_costs` seguir aberta** — é um espelho alcançável por JOIN
+(lição 1). O resto do programa fechou.
 
 ## População real (o que dimensiona tudo)
 
@@ -125,6 +126,14 @@ correta.
 origin/main:<arquivo>`), nunca o diff lido horas antes. O nome do arquivo também muda: eu procurei
 `20260723120000_..._fase1.sql` e o mergeado era `20260723140000_..._fase1.sql`.
 
+⚠️ **A primeira versão DESTE doc caiu na própria lição.** Ele foi escrito afirmando que a régua estava
+aberta e "sem dono" — quando o [#1488](https://github.com/LucasSardenbergL/afiacao/pull/1488) já a tinha
+fechado horas antes, e o `regua_preco_log` junto. Com ~30 worktrees paralelas, **o estado do domínio
+muda durante a própria sessão**: o que era verdade quando você mediu pode ter deixado de ser quando você
+escreve. ⇒ Antes de registrar "X está pendente", **remeça X** (`psql-ro` + `git log origin/main`), não
+confie na medição do início da sessão. Vale em dobro para doc de histórico, que é lido como verdade
+meses depois.
+
 ### 9. Colisão de timestamp entre sessões paralelas
 
 A fase 1 e a 2b mergearam com **`20260723140000` idêntico** — o aviso clássico de migrations paralelas.
@@ -147,19 +156,33 @@ limite de 200 itens permite atacar 200 SKUs em paralelo. Foi **conscientemente a
 oráculo custaria o sinal, que é a ferramenta de venda. Barreira de conveniência, não de segurança;
 contra alguém competente e mal-intencionado a barreira real é contrato e offboarding.
 
-## Por que a régua não fecha como o resto
+## A régua: por que exigiu mudar a ASSINATURA (e como foi resolvida)
 
-| | recebe o preço? | quem calcula o sinal | mascarar `cmc` mata o sinal? |
+O #1465 previu que bastaria replicar o `v_pode_num` do cockpit. **Não bastava** — os dois subsistemas
+têm arquiteturas diferentes:
+
+| | recebia o preço? | quem calculava o sinal | mascarar `cmc` mata o sinal? |
 |---|---|---|---|
 | `get_preco_cockpit(jsonb)` | ✅ | **servidor** (manda `faixa` pronta) | ❌ não |
 | `get_regua_preco(customer, product, qty)` | ❌ | **cliente** (`calcPisoMC`) | ✅ **sim** |
 
 `calcPisoMC(null, …)` devolve `null` corretamente (sem fabricar zero — `regua-preco-helpers.ts:27`), mas
-então `abaixoPiso = false` e o sinal `'piso'` **nunca dispara**. Replicar o `v_pode_num` do cockpit —
-como o #1465 previu — mataria o SINAL junto com o NÚMERO, contrariando "o número fecha, o sinal fica".
+então `abaixoPiso = false` e o sinal `'piso'` **nunca dispararia**: mascarar o `cmc` mataria o SINAL
+junto com o NÚMERO, contrariando "o número fecha, o sinal fica".
 
-⇒ Preservar o sinal exige mudar a **assinatura** da RPC (receber o preço) e o contrato com o motor do
-cliente. PR próprio, ainda sem dono.
+**Resolvido no #1488** movendo a decisão para o servidor — a assinatura virou
+`get_regua_preco(uuid, uuid, numeric, numeric, numeric[])` (ganhou o preço atual). Em prod:
+
+- gate de **entrada** staff inalterado (a vendedora precisa do sinal)
+- `v_pode_num := private.cap_custo_ler((SELECT auth.uid()))`
+- **`abaixo_piso` vai SEM gate** — o sinal é calculado no servidor e entregue a todo staff
+- `piso_mc` e `piso_gap_pct` mascarados; o comentário registra *"piso_gap_pct é invertível para o piso →
+  mesmo gate"* — a derivação foi considerada
+- *"Sem preço ou sem piso → false (não fabrica sinal)"*
+
+`get_regua_preco_customer360` **delega** para ela (passando o preço) e herda o mascaramento — não
+precisou de mudança própria. ⚠️ Por isso um grep de `cap_custo_ler` no corpo do wrapper dá **falso
+negativo**: a proteção vem da delegação (variante da lição 10).
 
 ## Provas executáveis
 
