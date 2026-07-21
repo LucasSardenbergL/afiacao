@@ -18996,6 +18996,7 @@ export type Database = {
         }[]
       }
       pedidos_programados_watchdog_claims: { Args: never; Returns: number }
+      pode_ler_custo: { Args: never; Returns: boolean }
       pode_ver_carteira_completa: { Args: { _uid: string }; Returns: boolean }
       preencher_parametros_faltantes_skus: {
         Args: { p_empresa: string }
@@ -19524,10 +19525,6 @@ export type Database = {
           p_last_error_kind: string
         }
         Returns: undefined
-      }
-      vendas_sync_semear_janela: {
-        Args: { p_accounts?: string[]; p_date_from: string; p_date_to: string }
-        Returns: Json
       }
       wa_is_stop_keyword: { Args: { p_body: string }; Returns: boolean }
       wa_owner_efetivo: { Args: { p_customer: string }; Returns: string }
