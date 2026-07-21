@@ -2357,6 +2357,57 @@ END $$;
 SQL
 
 echo ""
+echo "════════ CENÁRIO 41 — o ramo (c) [1d-E] exercido SOB A v6 (achado do Codex xhigh) ════════"
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+-- ⚠️ POR QUE ESTE CENÁRIO EXISTE (lição de harness, não de código):
+-- este arquivo aplica as migrations EM CASCATA e roda os cenários de cada fase logo após a SUA
+-- migration. Consequência não-óbvia: C35/C36/C37 — os testes do [1d-E] — rodam contra a v5 e
+-- NUNCA tocam a v6, que é a versão que vai a produção. Medido: sabotar `AND fl.expected_item_count
+-- IS NOT NULL` (o ramo (c)) na v5 deixa C35.1 VERMELHO, mas sabotar o MESMO ramo na v6 deixa o
+-- harness INTEIRO VERDE (47/47). Ou seja: uma transcrição v5→v6 que quebrasse o [1d-E] passaria
+-- no CI e iria a produção — parcial mascarada de volta (o P1 que o Codex fechou em 2026-07-20).
+-- VERSÃO COBERTA ≠ VERSÃO ENTREGUE: toda migration que recria a função INTEIRA precisa re-exercer
+-- os invariantes críticos, senão herda cobertura ILUSÓRIA das fases anteriores.
+-- Assinatura (gêmea do C35, cor própria): mesmo corante em 2 ordens, uma VÁLIDA e uma inválida,
+-- sob protocolo declarado. Só o ramo (c) pega: o (a) faz bool_and POR corante e AX24 TEM dose
+-- válida → não dispara; não há órfão → (b) não dispara.
+INSERT INTO tint_sync_runs (id, setting_id, account, store_code, sync_type, status)
+VALUES ('e1d41000-0000-0000-0000-000000000001','aaaaaaaa-0000-0000-0000-000000000001','oben','L1','formulas','complete');
+INSERT INTO tint_staging_formulas (id, sync_run_id, account, store_code, cor_id, nome_cor, cod_produto, id_base, id_embalagem, volume_final_ml, personalizada)
+VALUES ('f1d41000-0000-0000-0000-000000000001','e1d41000-0000-0000-0000-000000000001','oben','L1','COR41','Boa41','P24','B24','E24',900,false);
+INSERT INTO tint_staging_formula_itens (sync_run_id, staging_formula_id, id_corante, ordem, qtd_ml)
+VALUES ('e1d41000-0000-0000-0000-000000000001','f1d41000-0000-0000-0000-000000000001','AX24',1,9);
+SELECT tint_promote_sync_run('e1d41000-0000-0000-0000-000000000001');
+-- agora o run corrompido SOB PROTOCOLO NOVO (expected declarado)
+INSERT INTO tint_sync_runs (id, setting_id, account, store_code, sync_type, status)
+VALUES ('e1d41000-0000-0000-0000-0000000000c0','aaaaaaaa-0000-0000-0000-000000000001','oben','L1','formulas','complete');
+INSERT INTO tint_staging_formulas (id, sync_run_id, account, store_code, cor_id, nome_cor, cod_produto, id_base, id_embalagem, volume_final_ml, personalizada, expected_item_count)
+VALUES ('f1d41000-0000-0000-0000-0000000000c0','e1d41000-0000-0000-0000-0000000000c0','oben','L1','COR41','Boa41','P24','B24','E24',900,false,2);
+INSERT INTO tint_staging_formula_itens (sync_run_id, staging_formula_id, id_corante, ordem, qtd_ml)
+VALUES ('e1d41000-0000-0000-0000-0000000000c0','f1d41000-0000-0000-0000-0000000000c0','AX24',1,5),
+       ('e1d41000-0000-0000-0000-0000000000c0','f1d41000-0000-0000-0000-0000000000c0','AX24',2,0);
+SELECT tint_promote_sync_run('e1d41000-0000-0000-0000-0000000000c0');
+SQL
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+DO $$
+DECLARE n int; q numeric; n_marc int;
+BEGIN
+  SELECT count(*), max(fi.qtd_ml) INTO n, q FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id
+    WHERE f.account='oben' AND f.cor_id='COR41';
+  IF n <> 1 OR q IS DISTINCT FROM 9 THEN
+    RAISE EXCEPTION 'C41.1 FALHOU ([1d-E] NAO protege sob a v6): receita virou % item(ns) qtd=% (esperado 1 item qtd=9 preservado)', n, q; END IF;
+  -- e o log da v6 aponta a linha inválida do protocolo (o motivo exclusivo deste ramo)
+  SELECT count(*) INTO n_marc
+    FROM tint_sync_errors e, jsonb_array_elements(e.error_details->'itens') it
+    WHERE e.sync_run_id='e1d41000-0000-0000-0000-0000000000c0' AND e.entity_id='COR41'
+      AND (it->>'viola')::boolean IS TRUE
+      AND it->'motivos' @> '"linha_invalida_protocolo_1d"'::jsonb;
+  IF n_marc < 1 THEN RAISE EXCEPTION 'C41.2 FALHOU: nenhuma linha marcada com linha_invalida_protocolo_1d'; END IF;
+  RAISE NOTICE 'OK C41 — [1d-E] protege SOB A v6: {AX24 ord1=5, ord2=0} barra, receita {9} intacta, linha marcada';
+END $$;
+SQL
+
+echo ""
 echo "── falsificação Flog-1 (o C38.1 tem dente: com o filtro de volta, o órfão some do log) ──"
 # ⚠️ arquivo de sabotagem via mktemp: /tmp com nome genérico é COMPARTILHADO entre as ~40 worktrees
 # (lição money-path.md "o LOG mente") — nome fixo aqui colidiria com outra sessão rodando o mesmo teste.
@@ -2430,6 +2481,20 @@ NE=$(P -tA -c "SELECT count(*) FROM tint_sync_errors WHERE sync_run_id='e1d38000
 [ "$NE" -ge 1 ] || { echo "✗ Flog-4 FALHOU: com item_ids vazio a COR38 deixou de logar corrompida"; exit 1; }
 echo "  ✓ item_ids vazio → COR38 SEGUE barrada e logada (log degrada, decisão não): direção de falha correta"
 rm -f "$SAB4"
+
+echo "── falsificação Flog-5 (o C41 tem dente: sem o ramo (c) na v6, a parcial mascarada promove) ──"
+# O furo que o Codex xhigh achou: sabotar este ramo na v6 deixava o harness INTEIRO verde (47/47),
+# porque C35/C36/C37 exercitam o [1d-E] só contra a v5. Com o C41, a sabotagem tem de doer.
+SAB5="$(mktemp "${TMPDIR:-/tmp}/sab-tint-log5.XXXXXX")"
+sed 's/^      AND fl.expected_item_count IS NOT NULL$/      AND false/' "$MIGLOG" > "$SAB5"
+grep -q '^      AND false$' "$SAB5" || { echo "✗ Flog-5: sed não neutralizou o ramo (c) (a migration mudou?)"; exit 1; }
+grep -q '^      AND fl.expected_item_count IS NOT NULL$' "$SAB5" && { echo "✗ Flog-5: âncora do ramo (c) sobrou"; exit 1; }
+P -v ON_ERROR_STOP=1 -q -f "$SAB5" >/dev/null
+P -v ON_ERROR_STOP=1 -q -c "SELECT tint_promote_sync_run('e1d41000-0000-0000-0000-0000000000c0');" >/dev/null
+R41=$(P -tA -c "SELECT count(*) || '/' || COALESCE(max(fi.qtd_ml)::text,'-') FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id WHERE f.account='oben' AND f.cor_id='COR41';")
+[ "$R41" != "1/9.000" ] || { echo "✗ Flog-5 FALHOU: sem o ramo (c) a receita de COR41 continuou {1 item, 9} — o C41 não tem dente"; exit 1; }
+echo "  ✓ ramo (c) sabotado → a parcial mascarada promoveu (receita virou $R41, era 1/9.000): C41 tem dente"
+rm -f "$SAB5"
 
 # RESTAURA a v6 real e prova que o diagnóstico honesto voltou (o órfão reaparece marcado).
 P -v ON_ERROR_STOP=1 -q -f "$MIGLOG" >/dev/null
