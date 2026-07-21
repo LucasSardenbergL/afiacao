@@ -42,6 +42,20 @@
 -- frequência, spend, mix) continuam lendo `sales_orders` com a allowlist local — o chip "Corrigir
 -- filtro de status do scoring do farmer" segue aberto para elas. Este PR fecha o eixo da MARGEM.
 --
+-- ── LIMITAÇÃO CONHECIDA E MEDIDA: pedido Omie duplicado em dois status ───────────────────────
+-- A denylist herda um defeito de DADO que a allowlist mascarava: existem **24 pares
+-- (account, omie_pedido_id)** gravados como DUAS linhas de `sales_orders` com status diferentes
+-- (tipicamente `faturado` + `enviado`), mesmo cliente e mesma conta. A allowlist via só
+-- `faturado` e pegava uma; a denylist enxerga as duas e conta os itens em dobro.
+-- Medido em 2026-07-21 (deduplicando por `(account, omie_pedido_id)`, ficando com o status mais
+-- avançado): **3 clientes** mudam de margem, delta máximo **0,61 pp**, e **ZERO** mudam de faixa.
+-- ⇒ NÃO deduplicado aqui, de propósito. A causa é um bug de SYNC (duas linhas para um pedido) que
+-- afeta igualmente receita, frequência e spend; corrigir só dentro da margem mascararia o
+-- problema upstream e acrescentaria uma window function ao caminho quente por 0,61 pp em 3 de
+-- 1.224 clientes. Follow-up: investigar o writer que duplica no `omie-vendas-sync`.
+-- Se algum dia esses 24 virarem centenas, o efeito deixa de ser imaterial — remeça antes de
+-- assumir que continua.
+--
 -- ⚠️ MIGRATION MANUAL: nome custom não auto-aplica no Lovable. Colar no SQL Editor → Run.
 -- Ordem: esta migration DEPOIS de `20260723150000` e `20260726150000` (recria objetos das duas).
 

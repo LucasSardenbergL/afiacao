@@ -82,9 +82,17 @@ CREATE TABLE public.product_costs (
 -- Acrescentadas na RECONCILIAÇÃO (2026-07-21): get_customer_margin_summary passou a ser projeção
 -- de private.margem_cliente_agregada(), que junta custo por `omie_codigo_produto` em vez de
 -- `product_id` (product_id é NULO em 2,67% dos itens da prod, escondendo R$ 247.482,10 de custo
--- conhecido). O mapeamento abaixo é 1:1 com os product_id já semeados, então TODOS os valores
--- esperados deste harness permanecem idênticos — é essa invariância que prova que a delegação
--- preservou a intenção dos asserts originais.
+-- conhecido). O mapeamento abaixo é 1:1 com os product_id já semeados, então todos os valores
+-- esperados deste harness permanecem idênticos.
+--
+-- ⚠️ O QUE ESSA INVARIÂNCIA PROVA — E O QUE NÃO PROVA (auto-challenge, Caminho B):
+-- Com o mapeamento 1:1, os dois caminhos de JOIN são EQUIVALENTES para este seed. Logo este
+-- harness é, por construção, INSENSÍVEL à mudança de JOIN — ele não pode detectá-la, e seria
+-- tautológico citá-lo como prova de que o JOIN novo está certo.
+-- O que ele prova: a delegação não QUEBROU nenhum dos cenários originais (margem exata, mistura,
+-- negativa, precedência, fallback, NULL, ACL, idempotência) — que é exatamente o seu papel aqui.
+-- Quem prova o JOIN é o assert H1 de db/test-margem-cliente-helper-compartilhado.sh, cujo seed
+-- tem um item com product_id NULO e código resolvível: o único caso em que os caminhos DIVERGEM.
 CREATE TABLE public.omie_products (
   id uuid PRIMARY KEY,
   omie_codigo_produto bigint UNIQUE
