@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 418
+-- Total de custom migrations: 420
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -459,7 +459,9 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260723150000', 'authz_custo_fu4f_fase2_regua', '20260723150000_authz_custo_fu4f_fase2_regua.sql'),
   ('20260723160000', 'authz_fu4e_is_not_true_escritas', '20260723160000_authz_fu4e_is_not_true_escritas.sql'),
   ('20260724120000', 'authz_sales_orders_split_escrita_fu4', '20260724120000_authz_sales_orders_split_escrita_fu4.sql'),
-  ('20260724130000', 'tint_canonica_csv_legado_allowlist', '20260724130000_tint_canonica_csv_legado_allowlist.sql')
+  ('20260724130000', 'authz_custo_fu4f_fase3_recommend', '20260724130000_authz_custo_fu4f_fase3_recommend.sql'),
+  ('20260724130000', 'tint_canonica_csv_legado_allowlist', '20260724130000_tint_canonica_csv_legado_allowlist.sql'),
+  ('20260726120000', 'tint_promote_error_details_completo', '20260726120000_tint_promote_error_details_completo.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -1923,7 +1925,10 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'order_items_select_customer', 'order_items'),
   ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'sales_price_history_select_staff', 'sales_price_history'),
   ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'sales_price_history_select_customer', 'sales_price_history'),
-  ('tint_canonica_csv_legado_allowlist', 'view', 'public', 'v_tint_formula_canonica', '')
+  ('authz_custo_fu4f_fase3_recommend', 'function', 'public', 'pode_ler_custo', ''),
+  ('authz_custo_fu4f_fase3_recommend', 'rls_policy', 'public', 'recommendation_log_select_custo', 'recommendation_log'),
+  ('tint_canonica_csv_legado_allowlist', 'view', 'public', 'v_tint_formula_canonica', ''),
+  ('tint_promote_error_details_completo', 'function', 'public', 'tint_promote_sync_run', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -3435,7 +3440,10 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'order_items_select_customer', 'order_items'),
   ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'sales_price_history_select_staff', 'sales_price_history'),
   ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'sales_price_history_select_customer', 'sales_price_history'),
-  ('tint_canonica_csv_legado_allowlist', 'view', 'public', 'v_tint_formula_canonica', '')
+  ('authz_custo_fu4f_fase3_recommend', 'function', 'public', 'pode_ler_custo', ''),
+  ('authz_custo_fu4f_fase3_recommend', 'rls_policy', 'public', 'recommendation_log_select_custo', 'recommendation_log'),
+  ('tint_canonica_csv_legado_allowlist', 'view', 'public', 'v_tint_formula_canonica', ''),
+  ('tint_promote_error_details_completo', 'function', 'public', 'tint_promote_sync_run', '')
 )
 SELECT
   e.migration,

@@ -2154,6 +2154,255 @@ NR=$(P -tA -c "SELECT count(*) FROM tint_formula_itens fi JOIN tint_formulas f O
 [ "$NR" = "52" ] || { echo "✗ restauração F1d: v5 real deveria barrar as 52 de novo (achei $NR)"; exit 1; }
 echo "  ✓ restauração OK — v5 real barra as 52 limpezas de novo (52 receitas intactas)"
 
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+# v6 (20260726120000) — DIAGNÓSTICO HONESTO do Guard 4. O log parava de servir ao diagnóstico:
+# escondia o culpado (filtro de id_corante no error_details.itens — justamente a classe de linha
+# que o ramo (b) existe para pegar) e afirmava sempre o ramo (a) na mensagem. Em prod (2026-07-21,
+# 1º ciclo do conector 0.2.0) isso fez a NB.9142 parecer FALSO POSITIVO do guard.
+#   C38 — reprodução da NB.9142: órfão invisível → aparece MARCADO; mensagem cita o ramo certo.
+#   C39 — reprodução da FO10.6554: culpado visível → passa a vir MARCADO; válidos verbatim.
+#   C40 — não-regressão da DECISÃO sob a v6 (o que promovia promove; o que barrava barra).
+#   Flog-1..3 — falsificações (o assert tem dente).
+#   Flog-4 — fault injection: payload de log corrompido NÃO solta a promoção (direção de falha).
+MIGLOG="$REPO_ROOT/supabase/migrations/20260726120000_tint_promote_error_details_completo.sql"
+echo ""
+echo "→ migration 20260726120000_tint_promote_error_details_completo.sql (v6 — diagnóstico honesto)…"
+P -v ON_ERROR_STOP=1 -q -f "$MIGLOG" >/dev/null
+
+echo ""
+echo "════════ CENÁRIO 38 — NB.9142 de PROD: o órfão ESCONDIDO aparece marcado ════════"
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+-- Assinatura EXATA de prod (303U - BS / NB.9142, 2026-07-21): 3 doses válidas + 1 item com
+-- id_corante VAZIO e dose 2,4645. Sob a v5 o log exibia só as 3 válidas → lido de fora, um guard
+-- barrando fórmula sadia. Dois ramos disparam aqui: (b) órfão e (c) [1d-E] protocolo declarado.
+INSERT INTO tint_sync_runs (id, setting_id, account, store_code, sync_type, status)
+VALUES ('e1d38000-0000-0000-0000-000000000001','aaaaaaaa-0000-0000-0000-000000000001','oben','L1','formulas','complete');
+INSERT INTO tint_staging_formulas (id, sync_run_id, account, store_code, cor_id, nome_cor, cod_produto, id_base, id_embalagem, volume_final_ml, personalizada, expected_item_count)
+VALUES ('f1d38000-0000-0000-0000-000000000001','e1d38000-0000-0000-0000-000000000001','oben','L1','COR38','NB9142','P24','B24','E24',900,false,3);
+INSERT INTO tint_staging_formula_itens (sync_run_id, staging_formula_id, id_corante, ordem, qtd_ml)
+VALUES ('e1d38000-0000-0000-0000-000000000001','f1d38000-0000-0000-0000-000000000001','AX24',1,12.7074),
+       ('e1d38000-0000-0000-0000-000000000001','f1d38000-0000-0000-0000-000000000001','VM24',2,3.9277),
+       ('e1d38000-0000-0000-0000-000000000001','f1d38000-0000-0000-0000-000000000001','',3,2.4645);
+SELECT tint_promote_sync_run('e1d38000-0000-0000-0000-000000000001');
+SQL
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+DO $$
+DECLARE n_itens int; n_orfao int; n_validos int; msg text; q_orfao text;
+BEGIN
+  SELECT jsonb_array_length(error_details->'itens'), error_message INTO n_itens, msg
+    FROM tint_sync_errors WHERE sync_run_id='e1d38000-0000-0000-0000-000000000001' AND entity_id='COR38';
+  -- (1) O CULPADO APARECE. Sob a v5 este número era 2 (o órfão sumia): é o assert que mata o bug.
+  IF n_itens IS DISTINCT FROM 3 THEN
+    RAISE EXCEPTION 'C38.1 FALHOU: error_details.itens tem % item(ns), esperado 3 (o órfão continua ESCONDIDO)', n_itens; END IF;
+  -- (2) e vem MARCADO, com o motivo do ramo que realmente disparou.
+  SELECT count(*), max(it->>'qtd_ml') INTO n_orfao, q_orfao
+    FROM tint_sync_errors e, jsonb_array_elements(e.error_details->'itens') it
+    WHERE e.sync_run_id='e1d38000-0000-0000-0000-000000000001' AND e.entity_id='COR38'
+      AND btrim(COALESCE(it->>'id_corante','')) = ''
+      AND (it->>'viola')::boolean IS TRUE
+      AND it->'motivos' @> '"dose_sem_corante"'::jsonb;
+  IF n_orfao <> 1 THEN RAISE EXCEPTION 'C38.2 FALHOU: o órfão não está marcado viola+dose_sem_corante (achei %)', n_orfao; END IF;
+  IF q_orfao IS DISTINCT FROM '2.4645' THEN RAISE EXCEPTION 'C38.3 FALHOU: dose do órfão no log = % (esperado 2.4645)', q_orfao; END IF;
+  -- (3) os itens VÁLIDOS seguem verbatim e NÃO são acusados (precisão: marcar todo mundo é tão
+  --     inútil quanto marcar ninguém — o diagnóstico tem de apontar o culpado).
+  SELECT count(*) INTO n_validos
+    FROM tint_sync_errors e, jsonb_array_elements(e.error_details->'itens') it
+    WHERE e.sync_run_id='e1d38000-0000-0000-0000-000000000001' AND e.entity_id='COR38'
+      AND it->>'id_corante' IN ('AX24','VM24')
+      AND (it->>'viola')::boolean IS FALSE
+      AND it->'motivos' = 'null'::jsonb;
+  IF n_validos <> 2 THEN RAISE EXCEPTION 'C38.4 FALHOU: os 2 itens válidos deveriam vir viola=false/motivos=null (achei %)', n_validos; END IF;
+  -- (4) a MENSAGEM para de acusar o inocente. Sentinelas ASCII puras e exclusivas de cada ramo
+  --     (sem acento: nada de casar por dobra de encoding), uma positiva e uma negativa.
+  IF msg NOT LIKE '%sem corante identificado%' THEN
+    RAISE EXCEPTION 'C38.5 FALHOU: a mensagem nao cita o ramo que disparou (orfao). msg=%', msg; END IF;
+  IF msg LIKE '%corante presente sem dose%' THEN
+    RAISE EXCEPTION 'C38.6 FALHOU: a mensagem AINDA acusa o ramo (a), que nao disparou aqui. msg=%', msg; END IF;
+  IF msg NOT LIKE '%corrompida%' THEN
+    RAISE EXCEPTION 'C38.7 FALHOU: prefixo receita corrompida perdido (quebra a UI e os asserts). msg=%', msg; END IF;
+  RAISE NOTICE 'OK C38 — NB.9142: 3 itens no log, orfao(2.4645) MARCADO, 2 validos intactos, mensagem cita (b) e nao (a)';
+END $$;
+SQL
+
+echo ""
+echo "════════ CENÁRIO 39 — FO10.6554 de PROD: culpado VISÍVEL passa a vir MARCADO ════════"
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+-- Segunda assinatura de prod (CAFELATTE ARAUCO ZAMBALD / FO10.6554): todos os corantes PRESENTES,
+-- um deles com dose 0 → ramo (a). Aqui o culpado já era visível no log da v5, mas indistinguível
+-- dos demais: o diagnosticador tinha de aplicar o predicado do guard de cabeça, item a item.
+INSERT INTO tint_sync_runs (id, setting_id, account, store_code, sync_type, status)
+VALUES ('e1d39000-0000-0000-0000-000000000001','aaaaaaaa-0000-0000-0000-000000000001','oben','L1','formulas','complete');
+INSERT INTO tint_staging_formulas (id, sync_run_id, account, store_code, cor_id, nome_cor, cod_produto, id_base, id_embalagem, volume_final_ml, personalizada, expected_item_count)
+VALUES ('f1d39000-0000-0000-0000-000000000001','e1d39000-0000-0000-0000-000000000001','oben','L1','COR39','Cafelatte','P24','B24','E24',900,false,2);
+INSERT INTO tint_staging_formula_itens (sync_run_id, staging_formula_id, id_corante, ordem, qtd_ml)
+VALUES ('e1d39000-0000-0000-0000-000000000001','f1d39000-0000-0000-0000-000000000001','AX24',1,20.794),
+       ('e1d39000-0000-0000-0000-000000000001','f1d39000-0000-0000-0000-000000000001','VM24',2,0);
+SELECT tint_promote_sync_run('e1d39000-0000-0000-0000-000000000001');
+SQL
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+DO $$
+DECLARE n_itens int; n_culp int; n_ok int; msg text;
+BEGIN
+  SELECT jsonb_array_length(error_details->'itens'), error_message INTO n_itens, msg
+    FROM tint_sync_errors WHERE sync_run_id='e1d39000-0000-0000-0000-000000000001' AND entity_id='COR39';
+  IF n_itens IS DISTINCT FROM 2 THEN RAISE EXCEPTION 'C39.1 FALHOU: itens no log = % (esperado 2)', n_itens; END IF;
+  SELECT count(*) INTO n_culp
+    FROM tint_sync_errors e, jsonb_array_elements(e.error_details->'itens') it
+    WHERE e.sync_run_id='e1d39000-0000-0000-0000-000000000001' AND e.entity_id='COR39'
+      AND it->>'id_corante'='VM24' AND (it->>'viola')::boolean IS TRUE
+      AND it->'motivos' @> '"corante_sem_dose_valida"'::jsonb;
+  IF n_culp <> 1 THEN RAISE EXCEPTION 'C39.2 FALHOU: VM24 (dose 0) nao esta marcado como culpado (achei %)', n_culp; END IF;
+  SELECT count(*) INTO n_ok
+    FROM tint_sync_errors e, jsonb_array_elements(e.error_details->'itens') it
+    WHERE e.sync_run_id='e1d39000-0000-0000-0000-000000000001' AND e.entity_id='COR39'
+      AND it->>'id_corante'='AX24' AND (it->>'viola')::boolean IS FALSE AND (it->>'qtd_ml')='20.794';
+  IF n_ok <> 1 THEN RAISE EXCEPTION 'C39.3 FALHOU: AX24 (20.794) deveria vir viola=false e verbatim (achei %)', n_ok; END IF;
+  IF msg NOT LIKE '%corante presente sem dose%' THEN
+    RAISE EXCEPTION 'C39.4 FALHOU: aqui o ramo (a) DISPAROU e a mensagem tem de dize-lo. msg=%', msg; END IF;
+  RAISE NOTICE 'OK C39 — FO10.6554: VM24(0) marcado corante_sem_dose_valida, AX24(20.794) intacto, mensagem cita (a)';
+END $$;
+SQL
+
+echo ""
+echo "════════ CENÁRIO 40 — não-regressão: a v6 não move NENHUMA fórmula de lado ════════"
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+-- A v6 só mexe no LOG, mas mexeu na construção da temp table que ALIMENTA a decisão — então o
+-- que precisa de prova é que o conjunto barrado/promovido não mudou. 4 assinaturas decisivas do
+-- Guard 4 re-exercidas sob a v6: as 2 que devem PROMOVER e as 2 que devem BARRAR.
+-- (i) dosagem em 2 etapas em header LEGADO (expected NULL) → PROMOVE (C16: bool_and por corante).
+INSERT INTO tint_sync_runs (id, setting_id, account, store_code, sync_type, status)
+VALUES ('e1d40000-0000-0000-0000-000000000001','aaaaaaaa-0000-0000-0000-000000000001','oben','L1','formulas','complete');
+INSERT INTO tint_staging_formulas (id, sync_run_id, account, store_code, cor_id, nome_cor, cod_produto, id_base, id_embalagem, volume_final_ml, personalizada)
+VALUES ('f1d40000-0000-0000-0000-000000000001','e1d40000-0000-0000-0000-000000000001','oben','L1','COR40A','Duas etapas','P24','B24','E24',900,false);
+INSERT INTO tint_staging_formula_itens (sync_run_id, staging_formula_id, id_corante, ordem, qtd_ml)
+VALUES ('e1d40000-0000-0000-0000-000000000001','f1d40000-0000-0000-0000-000000000001','AX24',1,6),
+       ('e1d40000-0000-0000-0000-000000000001','f1d40000-0000-0000-0000-000000000001','AX24',2,4);
+-- (ii) fórmula sadia trivial → PROMOVE.
+INSERT INTO tint_staging_formulas (id, sync_run_id, account, store_code, cor_id, nome_cor, cod_produto, id_base, id_embalagem, volume_final_ml, personalizada, expected_item_count)
+VALUES ('f1d40000-0000-0000-0000-000000000002','e1d40000-0000-0000-0000-000000000001','oben','L1','COR40B','Sadia','P24','B24','E24',900,false,1);
+INSERT INTO tint_staging_formula_itens (sync_run_id, staging_formula_id, id_corante, ordem, qtd_ml)
+VALUES ('e1d40000-0000-0000-0000-000000000001','f1d40000-0000-0000-0000-000000000002','AX24',1,8);
+-- (iii) dose NaN → BARRA (C18: em numeric, NaN > 0 é TRUE; só `< Infinity` o derruba).
+INSERT INTO tint_staging_formulas (id, sync_run_id, account, store_code, cor_id, nome_cor, cod_produto, id_base, id_embalagem, volume_final_ml, personalizada)
+VALUES ('f1d40000-0000-0000-0000-000000000003','e1d40000-0000-0000-0000-000000000001','oben','L1','COR40C','NaN','P24','B24','E24',900,false);
+INSERT INTO tint_staging_formula_itens (sync_run_id, staging_formula_id, id_corante, ordem, qtd_ml)
+VALUES ('e1d40000-0000-0000-0000-000000000001','f1d40000-0000-0000-0000-000000000003','AX24',1,'NaN'::numeric);
+-- (iv) órfão em header LEGADO (expected NULL) → BARRA pelo ramo (b) sozinho, sem o (c).
+INSERT INTO tint_staging_formulas (id, sync_run_id, account, store_code, cor_id, nome_cor, cod_produto, id_base, id_embalagem, volume_final_ml, personalizada)
+VALUES ('f1d40000-0000-0000-0000-000000000004','e1d40000-0000-0000-0000-000000000001','oben','L1','COR40D','Orfao legado','P24','B24','E24',900,false);
+INSERT INTO tint_staging_formula_itens (sync_run_id, staging_formula_id, id_corante, ordem, qtd_ml)
+VALUES ('e1d40000-0000-0000-0000-000000000001','f1d40000-0000-0000-0000-000000000004','AX24',1,9),
+       ('e1d40000-0000-0000-0000-000000000001','f1d40000-0000-0000-0000-000000000004','',2,3);
+SELECT tint_promote_sync_run('e1d40000-0000-0000-0000-000000000001');
+SQL
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+DO $$
+DECLARE qa numeric; nb int; nc int; nd int; n_msg int;
+BEGIN
+  -- (i) 2 etapas legado promoveu. ⚠️ O dedup NÃO soma: DISTINCT ON (formula,corante) ORDER BY
+  --     ordem DESC = MAIOR ORDEM VENCE (20260622210000), espelhando o import CSV oficial — por
+  --     isso {ord1=6, ord2=4} promove AX24=4, e não 10. Somar seria MUDAR DOSAGEM (money-path).
+  SELECT max(fi.qtd_ml) INTO qa FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id
+    JOIN tint_corantes c ON c.id=fi.corante_id
+    WHERE f.account='oben' AND f.cor_id='COR40A' AND c.id_corante_sayersystem='AX24';
+  IF qa IS DISTINCT FROM 4 THEN RAISE EXCEPTION 'C40.1 FALHOU (REGRESSAO): 2-etapas legado deveria promover pela MAIOR ordem (AX24=%, esperado 4)', qa; END IF;
+  -- (ii) sadia promoveu.
+  SELECT count(*) INTO nb FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id
+    WHERE f.account='oben' AND f.cor_id='COR40B';
+  IF nb < 1 THEN RAISE EXCEPTION 'C40.2 FALHOU (REGRESSAO): formula sadia nao promoveu sob a v6'; END IF;
+  -- (iii) NaN barrou: nenhuma receita criada.
+  SELECT count(*) INTO nc FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id
+    WHERE f.account='oben' AND f.cor_id='COR40C';
+  IF nc <> 0 THEN RAISE EXCEPTION 'C40.3 FALHOU (REGRESSAO): dose NaN promoveu sob a v6 (% itens)', nc; END IF;
+  -- (iv) órfão legado barrou.
+  SELECT count(*) INTO nd FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id
+    WHERE f.account='oben' AND f.cor_id='COR40D';
+  IF nd <> 0 THEN RAISE EXCEPTION 'C40.4 FALHOU (REGRESSAO): orfao legado promoveu sob a v6 (% itens)', nd; END IF;
+  -- e as 2 barradas logaram (o log continua existindo para ambas).
+  SELECT count(DISTINCT entity_id) INTO n_msg FROM tint_sync_errors
+    WHERE sync_run_id='e1d40000-0000-0000-0000-000000000001' AND entity_id IN ('COR40C','COR40D')
+      AND error_message LIKE '%corrompida%';
+  IF n_msg <> 2 THEN RAISE EXCEPTION 'C40.5 FALHOU: as 2 barradas deveriam logar corrompida (achei %)', n_msg; END IF;
+  RAISE NOTICE 'OK C40 — decisao intacta sob a v6: 2-etapas(AX24=4, maior ordem) e sadia PROMOVEM; NaN e orfao BARRAM e logam';
+END $$;
+SQL
+
+echo ""
+echo "── falsificação Flog-1 (o C38.1 tem dente: com o filtro de volta, o órfão some do log) ──"
+# ⚠️ arquivo de sabotagem via mktemp: /tmp com nome genérico é COMPARTILHADO entre as ~40 worktrees
+# (lição money-path.md "o LOG mente") — nome fixo aqui colidiria com outra sessão rodando o mesmo teste.
+# ⚠️ tint_sync_errors é APPEND-ONLY e o guard RE-LOGA a cada run (por desenho: enquanto o staging
+# latest seguir corrompido, o erro reaparece). Então toda falsificação aqui LIMPA as linhas da
+# COR38 antes de re-invocar o promote — senão a contagem soma o log correto (do C38) com o log
+# sabotado e a falsificação passa a medir o histórico em vez da sabotagem. Mordeu na 1ª rodada:
+# o Flog-2 acusou "1 culpado" que era a linha do C38, não a da sabotagem.
+RESET38() { P -q -c "DELETE FROM tint_sync_errors WHERE sync_run_id='e1d38000-0000-0000-0000-000000000001' AND entity_id='COR38';" >/dev/null; }
+
+SAB1="$(mktemp "${TMPDIR:-/tmp}/sab-tint-log1.XXXXXX")"
+sed "s/^             WHERE si.staging_formula_id = fl.staging_formula_id$/             WHERE si.staging_formula_id = fl.staging_formula_id AND btrim(si.id_corante) <> ''/" "$MIGLOG" > "$SAB1"
+grep -q "AND btrim(si.id_corante) <> ''" "$SAB1" || { echo "✗ Flog-1: sed não restaurou o filtro (a migration mudou?)"; exit 1; }
+P -v ON_ERROR_STOP=1 -q -f "$SAB1" >/dev/null
+RESET38
+P -v ON_ERROR_STOP=1 -q -c "SELECT tint_promote_sync_run('e1d38000-0000-0000-0000-000000000001');" >/dev/null
+NI=$(P -tA -c "SELECT jsonb_array_length(error_details->'itens') FROM tint_sync_errors WHERE sync_run_id='e1d38000-0000-0000-0000-000000000001' AND entity_id='COR38';")
+[ "$NI" = "2" ] || { echo "✗ Flog-1 FALHOU: com o filtro de volta o log deveria esconder o órfão (2 itens), veio $NI — C38.1 não tem dente"; exit 1; }
+echo "  ✓ filtro restaurado → órfão some do log (2 itens): C38.1 tem dente"
+rm -f "$SAB1"
+
+echo "── falsificação Flog-2 (o C38.2 tem dente: sem a marcação, ninguém é apontado) ──"
+SAB2="$(mktemp "${TMPDIR:-/tmp}/sab-tint-log2.XXXXXX")"
+sed "s/'viola',      (cul.motivos IS NOT NULL),/'viola',      false,/" "$MIGLOG" > "$SAB2"
+grep -q "'viola',      false," "$SAB2" || { echo "✗ Flog-2: sed não neutralizou a marcação"; exit 1; }
+P -v ON_ERROR_STOP=1 -q -f "$SAB2" >/dev/null
+RESET38
+P -v ON_ERROR_STOP=1 -q -c "SELECT tint_promote_sync_run('e1d38000-0000-0000-0000-000000000001');" >/dev/null
+NM=$(P -tA -c "SELECT count(*) FROM tint_sync_errors e, jsonb_array_elements(e.error_details->'itens') it WHERE e.sync_run_id='e1d38000-0000-0000-0000-000000000001' AND e.entity_id='COR38' AND (it->>'viola')::boolean IS TRUE;")
+[ "$NM" = "0" ] || { echo "✗ Flog-2 FALHOU: marcação sabotada ainda apontou $NM culpado(s) — C38.2 não tem dente"; exit 1; }
+echo "  ✓ marcação sabotada → 0 itens apontados: C38.2 tem dente"
+rm -f "$SAB2"
+
+echo "── falsificação Flog-3 (o C38.6 tem dente: mensagem volta a acusar o ramo (a)) ──"
+SAB3="$(mktemp "${TMPDIR:-/tmp}/sab-tint-log3.XXXXXX")"
+sed "s/THEN 'dose sem corante identificado (item órfão)'/THEN 'corante presente sem dose válida (qtd_ml <= 0\/nula\/não-finita)'/" "$MIGLOG" > "$SAB3"
+grep -q "WHEN 'dose_sem_corante'            THEN 'corante presente sem dose" "$SAB3" || { echo "✗ Flog-3: sed não trocou o texto do motivo"; exit 1; }
+P -v ON_ERROR_STOP=1 -q -f "$SAB3" >/dev/null
+RESET38
+P -v ON_ERROR_STOP=1 -q -c "SELECT tint_promote_sync_run('e1d38000-0000-0000-0000-000000000001');" >/dev/null
+MSG=$(P -tA -c "SELECT error_message FROM tint_sync_errors WHERE sync_run_id='e1d38000-0000-0000-0000-000000000001' AND entity_id='COR38';")
+case "$MSG" in
+  *"corante presente sem dose"*) echo "  ✓ mensagem sabotada volta a acusar o ramo (a): C38.6 tem dente" ;;
+  *) echo "✗ Flog-3 FALHOU: mensagem sabotada não passou a acusar o ramo (a) — C38.6 não tem dente. msg=$MSG"; exit 1 ;;
+esac
+rm -f "$SAB3"
+
+echo "── Flog-4 (DIREÇÃO DE FALHA: payload de log corrompido NÃO solta a promoção) ──"
+# Não é falsificação clássica (não espera vermelho no assert): é fault injection sobre a decisão.
+# Esvazia os item_ids — se a DECISÃO dependesse de unnest(item_ids), a fórmula escaparia do guard
+# e PROMOVERIA corrompida (fail-OPEN, subfaturamento silencioso). Tem de seguir barrada, com o log
+# degradado (ninguém marcado). O log depende da decisão; a decisão jamais depende do log.
+SAB4="$(mktemp "${TMPDIR:-/tmp}/sab-tint-log4.XXXXXX")"
+sed -e "s/           array_agg(si.id) AS item_ids/           ARRAY[]::uuid[] AS item_ids/" \
+    -e "s/           ARRAY\[si.id\]/           ARRAY[]::uuid[]/" "$MIGLOG" > "$SAB4"
+grep -q "ARRAY\[\]::uuid\[\] AS item_ids" "$SAB4" || { echo "✗ Flog-4: sed não esvaziou o item_ids do ramo (a)"; exit 1; }
+grep -q "ARRAY\[si.id\]" "$SAB4" && { echo "✗ Flog-4: sobrou ARRAY[si.id] (ramos b/c não sabotados)"; exit 1; }
+P -v ON_ERROR_STOP=1 -q -f "$SAB4" >/dev/null
+RESET38
+P -v ON_ERROR_STOP=1 -q -c "SELECT tint_promote_sync_run('e1d38000-0000-0000-0000-000000000001');" >/dev/null
+NP=$(P -tA -c "SELECT count(*) FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id WHERE f.account='oben' AND f.cor_id='COR38';")
+[ "$NP" = "0" ] || { echo "✗ Flog-4 FALHOU (FAIL-OPEN): com item_ids vazio a COR38 corrompida PROMOVEU ($NP itens) — a decisão está acoplada ao payload do log"; exit 1; }
+NE=$(P -tA -c "SELECT count(*) FROM tint_sync_errors WHERE sync_run_id='e1d38000-0000-0000-0000-000000000001' AND entity_id='COR38' AND error_message LIKE '%corrompida%';")
+[ "$NE" -ge 1 ] || { echo "✗ Flog-4 FALHOU: com item_ids vazio a COR38 deixou de logar corrompida"; exit 1; }
+echo "  ✓ item_ids vazio → COR38 SEGUE barrada e logada (log degrada, decisão não): direção de falha correta"
+rm -f "$SAB4"
+
+# RESTAURA a v6 real e prova que o diagnóstico honesto voltou (o órfão reaparece marcado).
+P -v ON_ERROR_STOP=1 -q -f "$MIGLOG" >/dev/null
+RESET38
+P -v ON_ERROR_STOP=1 -q -c "SELECT tint_promote_sync_run('e1d38000-0000-0000-0000-000000000001');" >/dev/null
+NR6=$(P -tA -c "SELECT count(*) FROM tint_sync_errors e, jsonb_array_elements(e.error_details->'itens') it WHERE e.sync_run_id='e1d38000-0000-0000-0000-000000000001' AND e.entity_id='COR38' AND btrim(COALESCE(it->>'id_corante','')) = '' AND (it->>'viola')::boolean IS TRUE;")
+[ "$NR6" -ge 1 ] || { echo "✗ restauração Flog: a v6 real deveria voltar a marcar o órfão (achei $NR6)"; exit 1; }
+echo "  ✓ restauração OK — v6 real volta a expor e marcar o órfão"
+
 P -v ON_ERROR_STOP=1 -q <<'SQL'
 SELECT 'TODOS OS TESTES PG17 DA PROMOÇÃO PASSARAM ✓' AS resultado;
 SQL
