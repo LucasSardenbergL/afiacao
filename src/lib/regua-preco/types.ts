@@ -1,17 +1,29 @@
 export type Confianca = 'alta' | 'media' | 'baixa' | 'oculto';
 export type TipoSinal = 'piso' | 'auto_ref' | 'benchmark' | 'nenhum';
 
+/**
+ * Veredito do piso, decidido no SERVIDOR (`get_regua_preco`). FU4-F fase 2.
+ *
+ * O cliente NÃO calcula mais o piso: sem isto, quem consegue avaliar `preço < piso` offline acha
+ * o piso por busca binária, e mascarar o número seria teatro. `piso`/`gapPct` só vêm preenchidos
+ * para quem tem `private.cap_custo_ler` — para a vendedora eles chegam `null` e o sinal continua.
+ */
+export interface PisoVeredito {
+  abaixoPiso: boolean; // A DECISÃO — vale para todo mundo, com ou sem o número
+  disponivel: boolean; // o servidor conseguiu calcular o piso (distingue "acima" de "sem custo")
+  piso: number | null; // null = mascarado (sem capability) OU indisponível — ver `disponivel`
+  gapPct: number | null; // piso/preço−1; mesmo gate (é invertível para o piso)
+  cmcConfiavel: boolean; // false = custo estimado → aviso sem botão
+  prazoAplicado: boolean; // o piso já inclui o custo do prazo (F2), calculado no servidor
+}
+
 export interface ReguaPrecoInput {
   precoAtual: number; // unit_price líquido no carrinho
-  cmc: number | null; // custo médio contábil; null se sem cobertura
-  cmcConfiavel: boolean; // false = proxy → aviso sem botão
-  aliquotaVenda: number; // (icms+pis+cofins)/receita, 0..1
+  piso: PisoVeredito; // veio pronto do servidor — substituiu cmc + aliquotaVenda + custoCapitalAnual
   precosCliente: number[]; // preços recentes (180d) que ESTE cliente pagou neste SKU
   comparaveis: { preco: number; clienteId: string }[]; // vendas comparáveis (EXCLUI cliente atual)
   caps: { alta: number; media: number }; // cap de aumento por confiança, ex {alta:0.10, media:0.05}
-  // F2 — custo do prazo (opcionais; ausentes = comportamento à vista, 100% retrocompatível):
-  prazoDias?: number[] | null; // dias de vencimento de cada parcela, parseado da condição selecionada
-  custoCapitalAnual?: number | null; // taxa de custo de capital do prazo (fração a.a.), ausente → degrada
+  prazoDias?: number[] | null; // só para a CÓPIA do recibo ("0/30/60 dias"); prazo não é custo
 }
 
 export interface ReguaPrecoResult {

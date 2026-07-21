@@ -1,6 +1,6 @@
 # Snapshot de schema — `schema-snapshot.sql`
 
-> Gerado em **2026-06-24** (anterior: 2026-06-19) a partir do banco de produção (Supabase do Lovable, projeto `fzvklzpomgnyikkfkzai`, PostgreSQL 17.6) via `pg_dump --schema-only --schema=public --schema=private --no-owner --no-privileges`. ✅ Inclui os schemas `public` **e** `private` (36.129 linhas); **replay-validado em 2026-06-24** (ver §"Status do replay"). Esta geração incorpora a fronteira de escrita de plano tático (#1037/#1043/#1046): policy ALL antiga fora, `tactical_plans_select_staff` + RPCs v2 hardened dentro.
+> Gerado em **2026-07-21** (anterior: 2026-06-27) a partir do banco de produção (Supabase do Lovable, projeto `fzvklzpomgnyikkfkzai`, PostgreSQL 17.6) via `pg_dump --schema-only --schema=public --schema=private --no-owner --no-privileges`. ✅ Inclui os schemas `public` **e** `private` (45.022 linhas); **replay-validado em 2026-07-21** (ver §"Status do replay"). Esta geração incorpora a **matriz de autorização E2/FU4** — as 14 funções de `private` (`cap_compras_ler`/`cap_custo_ler`/`cap_carteira_*`/…) e as 79 policies que as chamam, ausentes das gerações anteriores (ver o drift 06-27→07-21 no `schema-snapshot.manifest.md`).
 
 ## O que é
 
@@ -44,11 +44,32 @@ Um `supabase db reset` a partir das migrations **quebra** (ex: `20260510235956` 
 - O dump tem **`CREATE SCHEMA public;`** sem `IF NOT EXISTS` (linha ~27). Num projeto novo o schema `public` já existe → o statement falha. **Remova essa linha** (caminho preferido); só tolere o erro se rodar **sem** `ON_ERROR_STOP` (com `ON_ERROR_STOP` o restore aborta aí).
 - O dump é do **pg_dump 17** e usa os meta-comandos `\restrict` / `\unrestrict` (primeira/última linha), reconhecidos pelo `psql`. O SQL Editor do Lovable pode não reconhecê-los — remova-os se restaurar por lá.
 - O prelude deixa **`pg_cron` comentado** de propósito (habilitá-lo pode abortar o restore sob `ON_ERROR_STOP`). Habilite-o antes pelo dashboard do Supabase se quiser as views `v_cron_jobs_status` / `v_cron_jobs_falhas`; senão elas falham no replay e devem ser puladas.
-- **Schema `private` (desde 2026-05-27, migration `20260527160000`)** — **incluído no dump** desde 2026-06-19 (`--schema=private`): o matview `private.mv_sku_ranking_negociacao_paralela` (referenciado por 3 objetos do `public`) é dumpado junto, então restaura normalmente. ⚠️ Só ao restaurar um snapshot **public-only antigo** (até a 1ª geração de 2026-06-19): crie `private` antes (rode `20260527160000`), senão o restore aborta com `schema "private" does not exist`.
+- **Schema `private` (desde 2026-05-27, migration `20260527160000`)** — **incluído no dump** desde 2026-06-19 (`--schema=private`): 3 matviews + **14 funções**, dumpados junto, então restaura normalmente. ⚠️ **`private` deixou de ser só cache: desde o E2/FU4 ele hospeda a matriz de autorização** (`cap_compras_ler`/`cap_custo_ler`/`cap_carteira_*`/…), chamada por 79 policies do `public`. Restaurar sem ele não dá erro de sintaxe — dá **policy quebrada ou gate ausente**. Nunca dropar `--schema=private` das flags. ⚠️ Ao restaurar um snapshot **public-only antigo** (até a 1ª geração de 2026-06-19): crie `private` antes (rode `20260527160000`), senão o restore aborta com `schema "private" does not exist`.
 
-> **Status: replay VALIDADO em 2026-06-24** (geração +`private`, 36.129 linhas; re-validado pós-fronteira de plano tático #1037/#1043/#1046). `db/verify-snapshot-replay.sh` roda prelude + stubs (`db/stubs-supabase.sql`) + snapshot num Postgres 17 descartável (transação única, `ON_ERROR_STOP`) → restore **limpo**, contagens públicas (274/55/3/218/95/14/579) e **enforcement RLS amostrado OK** (own-scope / staff-gate / anon-deny filtram em runtime). _(A 1ª geração de 2026-06-19, public-only, falhava com `schema "private" does not exist`; resolvido incluindo `--schema=private`.)_ **Limitação:** prova ordem/dependência/sintaxe + RLS amostrada do `public`; **não** o runtime Supabase real completo (RLS/`auth`) — o "Gold" pede projeto Supabase vazio ou docker (ver `schema-rebuild-runbook.md` §Verificação).
+> **Status: replay VALIDADO em 2026-07-21** (45.022 linhas; geração que incorpora a matriz E2/FU4). `db/verify-snapshot-replay.sh` roda prelude + stubs (`db/stubs-supabase.sql`) + snapshot num Postgres 17 descartável (transação única, `ON_ERROR_STOP`) → **`exit 0`**, restore **limpo**, contagens públicas (323/77/2/303/125/14/678) e **enforcement RLS amostrado OK** (own=1 / staff=2 / anon=0). _(A 1ª geração de 2026-06-19, public-only, falhava com `schema "private" does not exist`; resolvido incluindo `--schema=private`.)_ **Limitação:** prova ordem/dependência/sintaxe + RLS amostrada do `public`; **não** o runtime Supabase real completo (RLS/`auth`) — o "Gold" pede projeto Supabase vazio ou docker (ver `schema-rebuild-runbook.md` §Verificação). ⚠️ **O script imprime as contagens mas NÃO as asserta** (o "esperado" no `echo` é texto fixo, hoje defasado); a única asserção com `exit 1` é a de enforcement RLS. Comparar contagem é trabalho de quem lê.
 
 ## Como re-gerar
+
+### Caminho preferido — `pg_dump` local via `psql-ro` (read-only; foi assim em 06-27 e 07-21)
+
+O dump é **leitura pura**, então sai pela credencial read-only, sem depender do chat. Exige `postgresql@17` do brew (já é pré-requisito do replay):
+
+```bash
+env PGPASSFILE="$HOME/.config/afiacao/claude_ro.pgpass" \
+  /opt/homebrew/opt/postgresql@17/bin/pg_dump \
+  --schema-only --schema=public --schema=private --no-owner --no-privileges \
+  -f supabase/schema-snapshot.sql \
+  "host=aws-1-eu-west-1.pooler.supabase.com port=5432 dbname=postgres user=claude_ro.fzvklzpomgnyikkfkzai sslmode=require"
+```
+
+Leva ~10 min (o pooler é remoto; ele fica quieto boa parte do tempo — não é travamento). Depois, **os dois checks que valem**:
+
+1. **Paridade com o catálogo** — contar `CREATE TABLE|VIEW|FUNCTION|POLICY` no arquivo e comparar com `pg_class`/`pg_proc`/`pg_policies` via `psql-ro`. Tem de dar 0 faltando **e** 0 sobrando.
+2. **Replay** — `bash db/verify-snapshot-replay.sh` e exigir **`exit 0`** (`> log 2>&1; echo $?` — `| tail` engole o exit code).
+
+⚠️ Um `pg_dump` que termina íntegro fecha com `\unrestrict` na última linha; sem isso, o dump foi truncado.
+
+### Alternativa — chat do Lovable
 
 Cole no **chat do Lovable** (não no SQL Editor):
 

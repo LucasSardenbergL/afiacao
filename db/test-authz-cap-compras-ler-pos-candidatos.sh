@@ -84,17 +84,36 @@ CREATE OR REPLACE FUNCTION public.has_role(_user_id uuid, _role public.app_role)
  RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public'
 AS $f$ SELECT EXISTS (SELECT 1 FROM public.user_roles WHERE user_id = _user_id AND role = _role) $f$;
 
--- ⚠️ TRI-STATE, verbatim de prod: para um `employee` SEM linha em commercial_roles o EXISTS dá
--- false, mas `has_role(master)` dá false e o OR devolve false... já para quem NÃO é employee nem
--- master o resultado é false. O NULL aparece quando has_role devolve NULL. Mantido como em prod:
--- é justamente o tri-state que motivou o `IS NOT TRUE` no corpo da RPC.
+-- get_commercial_role: cópia verbatim de prod (pg_get_functiondef). É a FONTE do tri-state —
+-- sem linha em commercial_roles a subquery escalar devolve NULL, não false.
+CREATE OR REPLACE FUNCTION public.get_commercial_role(_user_id uuid)
+ RETURNS public.commercial_role LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public'
+AS $f$
+  SELECT commercial_role
+  FROM public.commercial_roles
+  WHERE user_id = _user_id
+  LIMIT 1
+$f$;
+
+-- ⚠️ TRI-STATE — `get_commercial_role(...) IN (...)`, VERBATIM de prod, e NÃO um `EXISTS(...)`.
+-- Para um `employee` SEM linha em commercial_roles:
+--   ·  com get_commercial_role:  false OR (true AND (NULL IN (...)))  =  false OR NULL  =  NULL
+--   ·  com EXISTS (o que estava aqui): false OR (true AND false)      =  false
+-- Aqui o veredito FINAL não muda — o `IS NOT TRUE` do corpo trata NULL e false igualmente, e é
+-- por isso que esta RPC de LEITURA nunca teve o bypass que as 3 de ESCRITA tinham. O que o EXISTS
+-- escondia era outra coisa: a NECESSIDADE do `IS NOT TRUE`. Com stub bi-state, trocá-lo por
+-- `NOT(...)` seguia verde; com o tri-state real, a falsificação F3 fica VERMELHA. O assert que não
+-- distingue os dois mundos não estava provando a defesa, só acompanhando-a.
 CREATE OR REPLACE FUNCTION public.pode_ver_carteira_completa(_uid uuid)
  RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public'
 AS $f$
   SELECT public.has_role(_uid,'master'::public.app_role)
       OR (public.has_role(_uid,'employee'::public.app_role)
-          AND EXISTS (SELECT 1 FROM public.commercial_roles cr WHERE cr.user_id=_uid
-                       AND cr.commercial_role IN ('gerencial','estrategico','super_admin')));
+          AND public.get_commercial_role(_uid) IN (
+            'gerencial'::public.commercial_role,
+            'estrategico'::public.commercial_role,
+            'super_admin'::public.commercial_role
+          ));
 $f$;
 GRANT EXECUTE ON FUNCTION public.pode_ver_carteira_completa(uuid) TO authenticated, service_role;
 
@@ -295,6 +314,16 @@ GUARD=$(as_user "$MASTER" "SELECT current_user;")
 [ "$GUARD" = "authenticated" ] || { echo "❌ HARNESS INVÁLIDO: SET ROLE não pegou (current_user=$GUARD)"; exit 1; }
 echo "  guard: asserts rodam como '$GUARD' (não superuser) ✅"
 
+# ── sanidade do STUB: ele reproduz mesmo o tri-state de prod? ──
+# Uma regressão do stub para `EXISTS(...)` (bi-state) deixaria a falsificação F3 impossível de
+# ficar vermelha — foi o defeito deste arquivo até 2026-07-20.
+eq "T1 gate ANTIGO é TRI-STATE: employee sem commercial_role ⇒ NULL (não false)" \
+   "$(Pq -c "SELECT public.pode_ver_carteira_completa('$EMPL_SEM_CR') IS NULL;")" "t"
+eq "T1b ...e devolve false (não NULL) p/ papel comercial comum" \
+   "$(Pq -c "SELECT public.pode_ver_carteira_completa('$FARMER') IS FALSE;")" "t"
+eq "T2 capability NOVA é BI-STATE p/ o mesmo uid (COALESCE ⇒ false, nunca NULL)" \
+   "$(Pq -c "SELECT private.cap_compras_ler('$EMPL_SEM_CR') IS FALSE;")" "t"
+
 # nega classificando pela SQLSTATE 42501 — nunca pelo texto da mensagem (anti-teatro de ILIKE).
 call_rpc() { # $1=uid ('' = cron/uid NULL)
   local out setuid=""
@@ -395,6 +424,57 @@ CREATE OR REPLACE FUNCTION private.cap_compras_ler(_uid uuid) RETURNS boolean
 AS $f$ SELECT COALESCE(_uid IS NOT NULL AND public.has_role(_uid,'master'::public.app_role), false) $f$;
 SQL
 eq "F1r restaurado: gerencial volta a ser negado" "$(call_rpc "$GERENCIAL")" "DENIED"
+
+# ── F3 — O `IS NOT TRUE` É NECESSÁRIO? (a falsificação que o stub bi-state tornava impossível) ──
+# Volta o corpo ao gate ANTIGO **e** troca `IS NOT TRUE` por `NOT (...)`. Com o gate antigo sendo
+# TRI-STATE, o employee sem commercial_role produz `NOT NULL` = NULL ⇒ o IF não entra ⇒ a SECDEF
+# ENTREGA TUDO. É o bypass que o `IS NOT TRUE` existe para fechar.
+# Enquanto o stub era `EXISTS(...)` (bi-state) esta sabotagem NÃO conseguia vazar — o assert que
+# fiscaliza o `IS NOT TRUE` acompanhava a defesa sem nunca prová-la.
+# ⚠️ A sabotagem tem GUARD próprio: se o regex não casar, `EXECUTE` recriaria a função IDÊNTICA e
+# o "não vazou" seria falso verde — exatamente o teatro que esta zona existe para matar.
+P -q <<'SQL'
+DO $$
+DECLARE v_def text; v_sab text;
+BEGIN
+  v_def := pg_get_functiondef('public.reposicao_pos_candidatos(text)'::regprocedure);
+  v_sab := regexp_replace(v_def,
+    'AND \(SELECT private\.cap_compras_ler\(\(SELECT auth\.uid\(\)\)\)\)\s+IS NOT TRUE THEN',
+    'AND NOT (SELECT public.pode_ver_carteira_completa((SELECT auth.uid()))) THEN');
+  IF v_sab = v_def THEN
+    RAISE EXCEPTION 'F3 INVÁLIDA: a sabotagem não casou — o teste seria vacuoso';
+  END IF;
+  EXECUTE v_sab;
+END $$;
+SQL
+if [ "$(call_rpc "$EMPL_SEM_CR")" = "OK" ]; then
+  ok "F3 gate antigo + NOT(...) VAZA p/ employee sem commercial_role → o IS NOT TRUE tem função"
+else
+  bad "F3 sabotei o IS NOT TRUE e nada vazou — o stub NÃO é tri-state (regressão para EXISTS?), o K4 é cego"
+fi
+eq "F3e ...e o vazamento entrega o conteúdo sensível (efeito, não só ausência de erro)" \
+   "$(as_user "$EMPL_SEM_CR" "SELECT portal_protocolo FROM public.reposicao_pos_candidatos('OBEN') WHERE portal_protocolo IS NOT NULL;")" "PROTO-9"
+# contraste: o farmer (papel comercial comum ⇒ false, não NULL) segue negado no MESMO corpo
+# sabotado. Prova que o vazamento vem do NULL, e não de o gate antigo liberar geral.
+eq "F3c ...mas o farmer segue negado no mesmo corpo (o furo é o NULL, não o gate inteiro)" \
+   "$(call_rpc "$FARMER")" "DENIED"
+
+# restaura o corpo verdadeiro (gate novo + IS NOT TRUE) e exige que o furo feche
+P -q -f "$MIG" >/dev/null 2>&1 || true
+P -q <<'SQL'
+DO $$
+DECLARE v_def text; v_ok text;
+BEGIN
+  v_def := pg_get_functiondef('public.reposicao_pos_candidatos(text)'::regprocedure);
+  v_ok := regexp_replace(v_def,
+    'AND NOT \(SELECT public\.pode_ver_carteira_completa\(\(SELECT auth\.uid\(\)\)\)\) THEN',
+    'AND (SELECT private.cap_compras_ler((SELECT auth.uid()))) IS NOT TRUE THEN');
+  IF v_ok <> v_def THEN EXECUTE v_ok; END IF;
+END $$;
+SQL
+eq "F3r restaurado: employee sem commercial_role volta a ser negado" "$(call_rpc "$EMPL_SEM_CR")" "DENIED"
+eq "F3rk ...e o IS NOT TRUE está de volta na CHAMADA" \
+   "$(Pq -c "SELECT pg_get_functiondef('public.reposicao_pos_candidatos(text)'::regprocedure) ~ 'cap_compras_ler\(\(SELECT auth\.uid\(\)\)\)\)\s+IS NOT TRUE';")" "t"
 
 # F2 — a precondição de dependência tem dente? Sem cap_compras_ler, a migration DEVE abortar.
 # (é a diferença de desenho em relação ao FU4-E, que era autônomo de propósito)

@@ -12,15 +12,18 @@ const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', curren
 interface AltPriceSourcePickerProps {
   formulaId: string;
   altSel: AltPriceDisplay;
+  /** Canônica da alternativa é SL → rótulo "Tabela (versão anterior)" (a view
+   *  garante a proveniência desde a 20260722100002); ausente/false → "Tabela". */
+  isSl?: boolean | null;
   setOverride: (formulaId: string, source: AltPriceSource) => void;
   className?: string;
 }
 
-export function AltPriceSourcePicker({ formulaId, altSel, setOverride, className }: AltPriceSourcePickerProps) {
+export function AltPriceSourcePicker({ formulaId, altSel, isSl, setOverride, className }: AltPriceSourcePickerProps) {
   if (altSel.precoCalc == null || altSel.precoTabela == null) return null;
   const fontes: { key: AltPriceSource; label: string; preco: number }[] = [
     { key: 'calculado', label: 'Calculado', preco: altSel.precoCalc },
-    { key: 'tabela', label: 'Tabela importada', preco: altSel.precoTabela },
+    { key: 'tabela', label: isSl ? 'Tabela (versão anterior)' : 'Tabela', preco: altSel.precoTabela },
   ];
   return (
     <div className={`flex flex-wrap items-center gap-1.5 ${className ?? ''}`}>

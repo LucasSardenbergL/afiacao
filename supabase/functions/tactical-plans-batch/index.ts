@@ -5,12 +5,17 @@
 // a pré-geração do plano tático chamando generate-tactical-plan no modo
 // self-contained. Idempotência fica na edge alvo (skipped: 'ja_gerado_hoje').
 //
-// Gate de R$/h: espelha src/lib/tactical/pregeracao.ts (oráculo testado por vitest).
+// Gate de R$/h: _shared/tactical-margem.ts (espelho testado de src/lib/tactical/pregeracao.ts).
 //   profitPerHora = ((rev > 0 ? rev : avg) * (margin / 100) * 0.1) / (15 / 60)
 //   Threshold: R$ 50/h.
 //
 // Semântica top-N: filtra o gate ANTES de cortar no TOP_25 — pega os 25 de
 // maior priority DENTRE os que passam (não os 25 de maior priority e filtra depois).
+//
+// Margem AUSENTE não é margem zero (money-path princípio 2): sem margem o gate de R$/h
+// não é decidível, então o cliente sai do ranking e é CONTADO em `sem_margem_indecidivel`.
+// Antes, `Number(null ?? 0)` fabricava R$ 0/h — indistinguível de um cliente de margem
+// genuinamente ruim, e reprovado em silêncio.
 //
 // Setup pg_cron (manual depois do merge):
 //   SELECT cron.schedule('tactical-plans-batch-nightly', '0 5 * * *',
@@ -24,15 +29,11 @@
 import { createClient } from 'npm:@supabase/supabase-js@^2';
 import { authorizeCron, corsHeaders } from '../_shared/auth.ts';
 import { fetchAll } from '../_shared/paginate.ts';
-
-// ── Gate de R$/h (espelha src/lib/tactical/pregeracao.ts) ────────────────────
-const PROFIT_PER_HOUR_THRESHOLD = 50;
-
-function profitPerHora(rev: number, avg: number, marginPct: number): number {
-  const baseRev = rev > 0 ? rev : avg;
-  // 10% do GMV como proxy de margem operacional; visita ~15 min → 4 visitas/h.
-  return (baseRev * (marginPct / 100) * 0.1) / (15 / 60);
-}
+import {
+  type LinhaSelecao,
+  margemConhecida,
+  selecionarParaPregeracao,
+} from '../_shared/tactical-margem.ts';
 
 const TOP_N = 25;
 const CONCURRENCY = 5; // cada chamada faz 1 LLM (~3-5s); 5 em paralelo ~5s/chunk
@@ -89,13 +90,7 @@ Deno.serve(async (req) => {
   // 1. Pagina farmer_client_scores e agrupa por farmer_id.
   //    A carteira já está limpa de fornecedor pela Fase 1 (classificacao).
   let mascaradosIgnorados = 0;
-  const porFarmer = new Map<string, Array<{
-    customer: string;
-    priority: number;
-    rev: number;
-    avg: number;
-    m: number;
-  }>>();
+  const porFarmer = new Map<string, LinhaSelecao[]>();
 
   for (let from = 0; ; from += 1000) {
     const { data, error } = await supabase
@@ -132,7 +127,8 @@ Deno.serve(async (req) => {
         priority: Number(r.priority_score ?? 0),
         rev: Number(r.revenue_potential ?? 0),
         avg: Number(r.avg_monthly_spend_180d ?? 0),
-        m: Number(r.gross_margin_pct ?? 0),
+        // ausente ≠ zero: `null` mantém "não sei" distinguível de "margem 0".
+        marginPct: margemConhecida(r.gross_margin_pct),
       });
       porFarmer.set(r.farmer_id, arr);
     }
@@ -143,16 +139,12 @@ Deno.serve(async (req) => {
   // 2. Por farmer: ordena por priority desc, filtra gate R$/h, corta em TOP_N.
   //    Semântica: pega os 25 de maior priority DENTRE os que passam no gate.
   const alvos: Array<{ farmer: string; customer: string }> = [];
+  let semMargemIndecidivel = 0;
 
   for (const [farmer, scores] of porFarmer) {
-    scores.sort((a, b) => b.priority - a.priority);
-    let n = 0;
-    for (const s of scores) {
-      if (n >= TOP_N) break;
-      if (profitPerHora(s.rev, s.avg, s.m) < PROFIT_PER_HOUR_THRESHOLD) continue;
-      alvos.push({ farmer, customer: s.customer });
-      n++;
-    }
+    const { selecionados, semMargem } = selecionarParaPregeracao(scores, TOP_N);
+    semMargemIndecidivel += semMargem.length;
+    for (const s of selecionados) alvos.push({ farmer, customer: s.customer });
   }
 
   // 3. Fan-out concorrente em chunks de 5. Idempotência é na edge alvo.
@@ -199,6 +191,10 @@ Deno.serve(async (req) => {
       // transparência do que foi DESCARTADO pela máscara: um corte silencioso leria como
       // "cobri todo mundo" sem ter coberto (money-path — no silent caps).
       mascarados_ignorados: mascaradosIgnorados,
+      // clientes que saíram do ranking por FALTA DE MARGEM (gate indecidível), não por
+      // reprovação no gate. Enquanto nenhum writer calcular gross_margin_pct, este número
+      // tende ao total da carteira — e é o sinal de que o batch está cego, não ocioso.
+      sem_margem_indecidivel: semMargemIndecidivel,
     }),
     { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
   );

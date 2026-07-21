@@ -313,10 +313,114 @@ limite que o §3 declarou para o E1. Contra adversário competente, a barreira r
 ### 9.3 Fases
 
 - **Fase 1** (PR #1465): `cmc_snapshot` + `get_tint_price(s)`. As superfícies **sem** o problema arquitetural.
-- **Fase 2** (chip): cluster **régua de preço** — as 2 RPCs + `regua_preco_log` juntos. Mover `calcPisoMC` para o
-  servidor; trocar o writer do log por RPC `SECURITY DEFINER`. Régua está desligada em prod (0 linhas, flags
-  `false`), então dá para reescrever sem quebrar ninguém.
-- **Fase 3** (chip): `inventory_position` (view operacional) + `product_costs` (margem server-side nos 3 engines).
+- **Fase 2** (PR #1488, ENTREGUE): cluster **régua de preço** — ver §9.5.
+- **Fase 2b/H** (#1485, #1487): tabelas de compras que ficaram fora da matriz do #1434.
+- **Fase 3**: `inventory_position` **ENTREGUE** no #1473 (view operacional `inventory_position_operacional`);
+  falta `product_costs` (margem server-side nos 3 engines).
+
+### 9.5 Fase 2 — o que a implementação descobriu (#1488)
+
+Três coisas que o enunciado da fase não previa, todas medidas antes de escrever código:
+
+**1. `piso_mc` também é custo — a alíquota é uma CONSTANTE GLOBAL.** O enunciado supunha que remover
+`aliquota_venda` do payload impediria derivar o cmc a partir do piso. Não impede:
+`company_config['regua_preco_aliquota_venda_oben']` é **uma linha só** (0.078), não um valor por SKU — logo
+`cmc = piso_mc × 0,922`, e quem aprende 7,8% uma vez inverte todo piso para sempre. `piso_mc` e
+`piso_gap_pct` saíram gateados por `cap_custo_ler` junto com o `cmc`. Não foi mudança de escopo: é o que o
+§7 já mandava (`pisoOculto` "sem valor") e o que `ReguaPrecoSinal.tsx:31` já comentava.
+
+**2. Mascarar não bastava: a COMPARAÇÃO tinha de mudar de lado.** Se o cliente consegue avaliar
+`preço < piso` offline para um preço arbitrário, ele acha o piso por **busca binária** — não existe
+predicado avaliável no browser que esconda o próprio limiar. Por isso `p_preco_atual` virou argumento da
+RPC e a assinatura de 3 args foi **dropada** (viva, ela seguiria devolvendo `cmc`). Corolário de custo: o
+preço entrou na `queryKey` do carrinho, o que exigiu debounce — antes a decisão era local e grátis a cada
+tecla. No 360 saiu de graça: ele já resolvia `preco_atual` no servidor.
+
+**3. O custo do prazo (F2) tinha de vir junto, e o motivo é o pior tipo de bug.** `pisoComPrazo` também
+precisa do cmc. Deixá-lo no cliente faria o piso **degradar para à vista em silêncio** — piso menor, sinal
+disparando menos, vendedora fechando abaixo do piso real. Nenhum erro, nenhum log: só uma margem que some.
+
+**Anti-regressão, com o limite declarado.** O `authz:check` do CI **não enxerga mascaramento de campo** —
+`checkGate` só valida gate em forma de bloqueio (`IF NOT … RAISE`), e pôr `cap_custo_ler` no `requiredGate`
+da régua bloquearia a vendedora inteira. A proteção é o assert estrutural da própria migration + o harness
+(`db/test-authz-custo-fu4f-fase2-regua.sh`, 46 asserts / 8 falsificações). Mesma situação do
+`get_preco_cockpit`. Está escrito no `authz-manifest.ts` para quem vier depois.
+
+### 9.6 O que o Codex derrubou na fase 2 (registro honesto)
+
+Veredito literal da rodada 1 (`gpt-5.6-sol` xhigh): *"não aplicaria como está"* — 3 P1, 6 P2, 1 P3.
+Corrigidos nesta entrega:
+
+1. **P1 — guard de finitude perdido na tradução TS→plpgsql.** `numeric` do Postgres **aceita** `NaN` e
+   `±Infinity`, e as comparações mentem: `'NaN' > 0` é TRUE e `12.00 < 'NaN'` é TRUE (NaN ordena como o
+   maior valor). Um `cmc` NaN passava pelo filtro `cmc > 0`, produzia `piso_disponivel=true` e marcava
+   **todo preço** como abaixo do piso. O TS que saiu daqui usava `Number.isFinite`; a tradução perdeu isso.
+   Verificado no PG17 antes de aceitar o achado. Corrigido com `private.regua_num_finito` — e note que
+   `NaN = NaN` é **TRUE** em `numeric` (≠ IEEE), então o truque `v <> v` não detecta NaN.
+2. **P1 — `keepPreviousData` casando veredito entre contextos.** O `Map` do hook é chaveado por
+   produto+qty+preço, que **não inclui cliente nem prazo**. Servir o dado da query anterior enquanto a
+   nova carrega fazia a chave casar entre contextos: veredito do cliente A aparecendo no B, e piso à
+   vista escondendo o vermelho depois de trocar a condição para 90 dias. Removido — o sinal some por
+   ~400ms em vez de mentir (precisão > recall). O comentário do hook vendia isso como *benefício*.
+3. **P2 — arredondamento movia a fronteira da decisão.** O SQL arredondava o piso a 4 casas **antes** de
+   comparar; o TS comparava íntegro. Com cmc 12,40 e alíquota 0,078 o piso real é 13,449023861…: o preço
+   13,44901 era "abaixo" no TS e virava "saudável" no SQL. Agora a decisão usa o piso íntegro e o
+   arredondamento é só de apresentação (payload/log). Assert A47 mede exatamente essa faixa.
+4. **P2 — `TRUNCATE` não passa por RLS.** `authenticated=arwdDxtm` inclui `TRUNCATE`/`REFERENCES`/
+   `TRIGGER`/`MAINTAIN`; trocar policy não mexe em `GRANT`. A afirmação "nenhum caminho direto para a
+   tabela" era falsa. Agora `REVOKE ALL` + `GRANT SELECT`. **E o harness era falso-verde**: o comentário
+   dizia reproduzir `arwdDxtm` e o `GRANT` concedia só `arwd`, então o privilégio nunca era exercido —
+   a lição "stub espelhe a PROD, não o design" mordendo de novo.
+5. **P3 — contagem do harness não era fail-closed.** `FAIL=0` deixava passar a remoção de um assert ou de
+   uma sabotagem. Agora exige `PASS` e `FALS_OK` exatos: mudar cobertura obriga a atualizar o número
+   conscientemente. E a F7 passou a conferir o **valor persistido**, não só o retorno `true`.
+
+**Rodada 2 — sobre AS CORREÇÕES da rodada 1.** Veredito de novo *"não aplicaria como está"*: 1 P1, 3 P2,
+2 P3, todos aceitos. Vale por si só como argumento de que correção de money-path merece revisão própria —
+foi o mesmo padrão do #1465, onde a rodada 2 achou 3 defeitos na correção da rodada 1.
+
+1. **P1 — a correção do arredondamento criou o bug seguinte: "Aplicar piso" aplicava um preço AINDA
+   ABAIXO do piso.** Com a decisão usando o piso íntegro (13,449023861…) e o payload saindo em
+   `round(,4)` = 13,4490 — que é **menor** —, clicar o botão jogava 13,4490 no carrinho e o refetch
+   continuava vermelho. Laço infinito para quem tem o botão. O número EXPOSTO tem de ser **aplicável**:
+   `ceil` na mesma escala, nunca `round`. Regra generalizável: **quando um número devolvido vira ação do
+   usuário, o arredondamento tem de ser na direção que satisfaz a invariante**, não a mais próxima.
+2. **P2 — remover `keepPreviousData` não fechou o buraco do prazo.** O `debouncedSig` segurava a condição
+   por 400ms enquanto o `Map` (sem prazo na chave) seguia casando: trocar para 90 dias mantinha o vermelho
+   escondido no intervalo. Agora só o **preço** é debounced; prazo entra cru (dropdown não tem rajada).
+3. **P2 — a finitude não chegou às RPCs de ESCRITA.** O guard foi aplicado na leitura e esquecido no
+   writer, onde o `numeric` do cliente **persiste**. Obrigatório inválido rejeita; opcional degrada a NULL.
+4. **P2 — o cap de 12 parcelas era furável por array multidimensional.** `array_length(a,1)` mede só a 1ª
+   dimensão: um `2×7` devolve 2, passa no cap, e o `unnest` processa 14. Use `array_ndims` + `cardinality`.
+5. **P3 — um assert virou falso-verde por causa do próprio endurecimento.** O `N3` provava "RLS barra o
+   INSERT direto **com o grant presente**"; o `REVOKE` da correção anterior tirou o grant, então ele passou
+   a negar por privilégio e passaria mesmo se uma policy permissiva de INSERT reaparecesse. **Regra: ao
+   endurecer um gate, releia todo assert que dependia do gate antigo — o provável é que tenha virado
+   tautologia.** Segunda ocorrência da mesma assinatura nesta entrega (a 1ª foi o `A27` do `anon`).
+6. **P3 — o audit não listava o helper novo**, criado depois da última regeneração.
+
+**Rejeitado com argumento** (registrado porque discordância também é evidência): P1 — "a precondição deve
+fazer fingerprint do corpo de `private.cap_custo_ler`". Se alguém ampliar a capability, vazam **todos** os
+consumidores (`cmc_snapshot`, tint, `inventory_position`), não só a régua; guardar isso numa migration
+consumidora é arbitrário e a faz abortar em mudança legítima futura. O lugar do guard é o teste da própria
+capability (`db/test-authz-capability-matrix.sh`). Rebaixado a P3.
+
+**Concordância, não achado:** P2 — "a comparação server-side continua sendo oráculo por bisseção". Verdade,
+e já declarado no §9.2, no cabeçalho da migration e no PR. O que o parecer corrige é a *redação* da defesa:
+como barreira de confidencialidade a afirmação é falsa; ela é barreira de conveniência.
+
+**Follow-ups abertos:** conteúdo do log ainda é forjável pelo próprio vendedor (`account`, sinal, confiança,
+`reason_codes` vêm do cliente) — o fim certo é um `evaluation_id` opaco devolvido pela avaliação e relido
+pelo writer; falha de RPC ainda vira "sem sinal" em silêncio (comportamento **pré-existente**, não regressão
+desta entrega); e `checkGate` não valida os literais de `GateClause.roles`, então uma recriação com
+`has_role(uid,'customer')` passaria — fraqueza do tooling, escopo próprio.
+
+**A lição do #1472 se repetiu — e o harness a pegou.** A 1ª versão do assert procurava a substring
+`cap_custo_ler` no corpo do writer para provar que ele NÃO usa a capability de leitura. O **comentário** do
+writer ("NUNCA `cap_custo_ler`") satisfazia o assert: a migration fiscalizando a si mesma pelo texto que ela
+mesma escreve. Corrigido medindo código **sem comentários** (o mesmo `stripComments` do
+`scripts/lib/authz-contract.ts`). Generalização: *todo* assert sobre corpo de função deve rodar sobre a
+definição com comentários removidos, não sobre `pg_get_functiondef` cru.
 
 ### 9.4 O que o Codex derrubou na fase 1 (registro honesto)
 

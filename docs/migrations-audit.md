@@ -21,16 +21,16 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **406** custom migrations totais
-- **1445** objetos esperados (criados por estas migrations)
+- **418** custom migrations totais
+- **1475** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 411
-  - `rls_policy`: 362
+  - `function`: 422
+  - `rls_policy`: 379
   - `index`: 224
   - `cron_job`: 150
   - `table`: 147
   - `trigger`: 79
-  - `view`: 68
+  - `view`: 70
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -3434,6 +3434,16 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `private.cap_compras_escrever` | — |
 
+### `20260720120000_authz_cap_compras_ler_pos_candidatos_fu4g.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260720160000_authz_cap_compras_ler_alertas_auto_aprovacao_fu4h.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `rls_policy` | `public.%I` | `public` |
+
 ### `20260721190000_reposicao_pos_candidatos.sql`
 
 | Tipo | Objeto | Parent |
@@ -3461,6 +3471,83 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.tint_gate_revalida` | — |
 
 ### `20260722100002_tint_canonica_csv_legado_semantico.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `view` | `public.v_tint_formula_canonica` | — |
+
+### `20260722110000_ciclo_oportunidade_registra_execucao.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._registrar_ciclo_oportunidade` | — |
+| `function` | `public.ciclo_oportunidade_do_dia` | — |
+
+### `20260722110000_quarentena_omie_clientes_espelho.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260722113000_tint_fase1d_is_base_pura.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tint_promote_sync_run` | — |
+
+### `20260723130000_authz_custo_fu4f_fase2_inventory.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `view` | `public.inventory_position_operacional` | — |
+| `rls_policy` | `public.staff_inventory_position_select` | `inventory_position` |
+
+### `20260723140000_authz_custo_fu4f_fase1.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `rls_policy` | `public.cmc_snapshot_select_staff` | `cmc_snapshot` |
+
+### `20260723140000_authz_pedido_compra_item_cap_compras.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `rls_policy` | `public.staff_pedido_compra_item_select` | `pedido_compra_item` |
+| `rls_policy` | `public.staff_pedido_compra_item_insert` | `pedido_compra_item` |
+| `rls_policy` | `public.staff_pedido_compra_item_update` | `pedido_compra_item` |
+| `rls_policy` | `public.staff_pedido_compra_item_delete` | `pedido_compra_item` |
+
+### `20260723150000_authz_custo_fu4f_fase2_regua.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.cap_regua_log_escrever` | — |
+| `function` | `private.regua_num_finito` | — |
+| `function` | `private.regua_piso_calc` | — |
+| `function` | `public.get_regua_preco` | — |
+| `function` | `public.get_regua_preco_customer360` | — |
+| `function` | `public.registrar_exibicao_regua` | — |
+| `function` | `public.registrar_aplicacao_regua` | — |
+| `rls_policy` | `public.regua_preco_log_select_custo` | `regua_preco_log` |
+
+### `20260723160000_authz_fu4e_is_not_true_escritas.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260724120000_authz_sales_orders_split_escrita_fu4.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.cap_pedido_escrever` | — |
+| `rls_policy` | `public.sales_orders_select_staff` | `sales_orders` |
+| `rls_policy` | `public.sales_orders_select_customer` | `sales_orders` |
+| `rls_policy` | `public.sales_orders_insert_staff` | `sales_orders` |
+| `rls_policy` | `public.sales_orders_update_staff` | `sales_orders` |
+| `rls_policy` | `public.sales_orders_delete_staff` | `sales_orders` |
+| `rls_policy` | `public.order_items_select_staff` | `order_items` |
+| `rls_policy` | `public.order_items_select_customer` | `order_items` |
+| `rls_policy` | `public.sales_price_history_select_staff` | `sales_price_history` |
+| `rls_policy` | `public.sales_price_history_select_customer` | `sales_price_history` |
+
+### `20260724130000_tint_canonica_csv_legado_allowlist.sql`
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |

@@ -72,6 +72,17 @@ func formulaContentHash(m map[string]any) string {
 	// campo (inclusive `ordem`) é conteúdo e entra no hash.
 	writeItens(&b, m["itens"])
 
+	// FASE 1d — is_base_pura: append CONDICIONAL (só quando true). Payload sem o
+	// campo preserva o stream pré-1d byte a byte → os ~485k hashes cacheados de
+	// fórmulas normais seguem válidos (sem re-envio em massa no rollout); só as
+	// bases puras mudam de hash e re-enviam 1× (é o que leva a declaração ao
+	// staging). Injetividade: nenhum item consegue forjar este sufixo — todo part
+	// de item começa com o length-prefix de `ordem` (dígito), e \x01 não é dígito
+	// (teste anti-colisão em fase1d_contrato_test.go).
+	if b2, ok := m["is_base_pura"].(bool); ok && b2 {
+		writeLP(&b, present+"true")
+	}
+
 	sum := sha256.Sum256([]byte(b.String()))
 	return hex.EncodeToString(sum[:16])
 }

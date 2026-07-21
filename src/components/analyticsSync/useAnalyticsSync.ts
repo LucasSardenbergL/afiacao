@@ -6,6 +6,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
 import { useMutationComRegistro } from "@/components/execucoes/useMutationComRegistro";
+import { ULTIMA_EXECUCAO_QUERY_KEY } from "@/components/execucoes/tipos";
 import { OmieAccount, SyncState } from "./types";
 import { ACOES_ANALYTICS_SYNC } from "./acoes";
 
@@ -76,6 +77,8 @@ export function useAnalyticsSync() {
     onError: (error) => {
       toast.error("Erro no sync", { description: String(error) });
     },
+    // Quem grava é a EDGE (sync_completo + motores por dentro do sync_all) — aqui só re-lê a caption.
+    onSettled: () => queryClient.invalidateQueries({ queryKey: [ULTIMA_EXECUCAO_QUERY_KEY] }),
   });
 
   const computeCostsMutation = useMutation({
@@ -94,6 +97,8 @@ export function useAnalyticsSync() {
     onError: (error) => {
       toast.error("Erro ao calcular custos", { description: String(error) });
     },
+    // Quem grava é a EDGE (analytics_sync.recalcular_custos) — aqui só re-lê a caption na hora.
+    onSettled: () => queryClient.invalidateQueries({ queryKey: [ULTIMA_EXECUCAO_QUERY_KEY] }),
   });
 
   const assocRulesMutation = useMutation({
@@ -112,6 +117,8 @@ export function useAnalyticsSync() {
     onError: (error) => {
       toast.error("Erro ao gerar regras", { description: String(error) });
     },
+    // Quem grava é a EDGE (analytics_sync.recalcular_regras) — aqui só re-lê a caption na hora.
+    onSettled: () => queryClient.invalidateQueries({ queryKey: [ULTIMA_EXECUCAO_QUERY_KEY] }),
   });
 
   const updateConfigMutation = useMutation({
@@ -256,7 +263,12 @@ export function useAnalyticsSync() {
             action: "sync_pedidos",
             account: acc.account,
             start_page: startPage,
-            max_pages: 10,
+            // 2 págs/invocação ≈ 75–110s diurno (medido no cron: 35–50s/pág) — cabe no
+            // request timeout (~150s) da edge. Com 10, janela de 180d (~70 págs oben)
+            // estourava o limite na 1ª invocação e o loop abortava (incidente 20/07/2026:
+            // não-2xx no browser + órfã running fechada pelo watchdog). O loop já retoma
+            // via nextPage, então só muda o tamanho do lote, não a cobertura.
+            max_pages: 2,
             ...(dateFrom && { date_from: dateFrom }),
             ...(dateTo && { date_to: dateTo }),
           },

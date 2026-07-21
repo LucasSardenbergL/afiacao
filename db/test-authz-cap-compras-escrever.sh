@@ -60,6 +60,7 @@ eq()  { if [ "$2" = "$3" ]; then ok "$1 (=$2)"; else bad "$1 — esperado [$3], 
 MASTER="10000000-0000-0000-0000-000000000001"
 GERENCIAL="20000000-0000-0000-0000-000000000002"
 FARMER="40000000-0000-0000-0000-000000000004"
+EMPL_SEM_CR="50000000-0000-0000-0000-000000000005"   # employee SEM linha em commercial_roles (o TRI-STATE)
 
 # ═══════════════════════════════════════════════════════════════════════════════════
 # ZONA 1 — PRÉ-REQUISITOS (stubs espelhando PROD, medido 2026-07-19)
@@ -88,16 +89,39 @@ CREATE OR REPLACE FUNCTION public.has_role(_user_id uuid, _role public.app_role)
  RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public'
 AS $f$ SELECT EXISTS (SELECT 1 FROM public.user_roles WHERE user_id = _user_id AND role = _role) $f$;
 
+-- get_commercial_role: cópia verbatim de prod (pg_get_functiondef). É a fonte do TRI-STATE —
+-- sem linha em commercial_roles, a subquery escalar devolve NULL (não false).
+CREATE OR REPLACE FUNCTION public.get_commercial_role(_user_id uuid)
+ RETURNS public.commercial_role LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public'
+AS $f$
+  SELECT commercial_role
+  FROM public.commercial_roles
+  WHERE user_id = _user_id
+  LIMIT 1
+$f$;
+
 -- O gate ANTIGO precisa existir: é o que a migration procura e troca.
 -- Em PROD ele vive nas DUAS formas (impl em private pelo #1427 + wrapper em public); as 3 RPCs
 -- alvo chamam a de `public`, então é essa que o stub precisa ter para o regex casar.
+--
+-- ⚠️ TRI-STATE — `get_commercial_role(...) IN (...)`, VERBATIM de prod, e NÃO um `EXISTS(...)`.
+-- A distinção é a razão de ser deste harness. Para um `employee` SEM linha em commercial_roles:
+--   ·  com get_commercial_role:  false OR (true AND (NULL IN (...)))  =  false OR NULL  =  NULL
+--   ·  com EXISTS (o que estava aqui): false OR (true AND false)      =  false
+-- As 3 RPCs alvo gateiam com `IF NOT gate(...)`, e `NOT NULL` = NULL ⇒ o IF NÃO ENTRA e a
+-- SECURITY DEFINER ESCREVE. Esse era o bypass real que o FU4-E fechou. Com o EXISTS o stub
+-- devolvia `false`, o `NOT false` negava, e o harness ficava CEGO para o bypass que existe
+-- justamente para provar. Trocar de volta reabre o ponto cego (a falsificação F5 exige vermelho).
 CREATE OR REPLACE FUNCTION public.pode_ver_carteira_completa(_uid uuid)
  RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public'
 AS $f$
   SELECT public.has_role(_uid,'master'::public.app_role)
       OR (public.has_role(_uid,'employee'::public.app_role)
-          AND EXISTS (SELECT 1 FROM public.commercial_roles cr WHERE cr.user_id=_uid
-                       AND cr.commercial_role IN ('gerencial','estrategico','super_admin')));
+          AND public.get_commercial_role(_uid) IN (
+            'gerencial'::public.commercial_role,
+            'estrategico'::public.commercial_role,
+            'super_admin'::public.commercial_role
+          ));
 $f$;
 GRANT EXECUTE ON FUNCTION public.pode_ver_carteira_completa(uuid) TO authenticated, service_role;
 
@@ -264,11 +288,25 @@ eq "P0b as 3 RPCs seguem com o gate novo após re-aplicar" \
 echo "── ZONA 3: seeds ──"
 P -q <<SQL
 INSERT INTO public.user_roles(user_id,role) VALUES
-  ('$MASTER','master'), ('$GERENCIAL','employee'), ('$FARMER','employee');
+  ('$MASTER','master'), ('$GERENCIAL','employee'), ('$FARMER','employee'), ('$EMPL_SEM_CR','employee');
 INSERT INTO public.commercial_roles(user_id,commercial_role) VALUES
   ('$GERENCIAL','gerencial'), ('$FARMER','farmer');
+-- EMPL_SEM_CR fica SEM linha de propósito: é o que faz o gate ANTIGO devolver NULL.
 SQL
 echo "  seeds inseridos"
+
+# ── sanidade do STUB: ele reproduz mesmo o tri-state de prod? ──
+# Sem isto, uma regressão silenciosa do stub para `EXISTS(...)` (bi-state) deixaria o harness
+# verde e CEGO — foi exatamente o defeito que este arquivo teve até 2026-07-20.
+eq "T1 gate ANTIGO é TRI-STATE: employee sem commercial_role ⇒ NULL (não false)" \
+   "$(Pq -c "SELECT public.pode_ver_carteira_completa('$EMPL_SEM_CR') IS NULL;")" "t"
+eq "T1b ...e o mesmo gate devolve false (não NULL) p/ quem tem papel comercial comum" \
+   "$(Pq -c "SELECT public.pode_ver_carteira_completa('$FARMER') IS FALSE;")" "t"
+eq "T1c ...e true para gerencial (o tri-state não quebrou o caminho positivo)" \
+   "$(Pq -c "SELECT public.pode_ver_carteira_completa('$GERENCIAL') IS TRUE;")" "t"
+# a capability NOVA nunca devolve NULL — é o que torna `IF NOT cap(...)` seguro nas 3 RPCs.
+eq "T2 capability NOVA é BI-STATE p/ o mesmo uid (COALESCE ⇒ false, nunca NULL)" \
+   "$(Pq -c "SELECT private.cap_compras_escrever('$EMPL_SEM_CR') IS FALSE;")" "t"
 
 # helper: roda SQL como `authenticated` com um uid.
 # ⚠️ `SET` e NÃO `SET LOCAL`: cada invocação do psql é sessão nova em autocommit, onde SET LOCAL
@@ -364,6 +402,20 @@ eq "N3 gerencial NÃO reverte run inteiro" \
 echo "── ZONA 4b: farmer (papel comercial comum) também negado ──"
 eq "N4 farmer NÃO despina"        "$(call_rpc "$FARMER" "public.despinar_parametro('oben','9002')")" "DENIED"
 eq "N5 farmer NÃO reverte run"    "$(call_rpc "$FARMER" "public.reverter_run_auto('$RUN_ID')")"      "DENIED"
+
+echo "── ZONA 4b2: o BYPASS TRI-STATE que o FU4-E fechou (employee sem commercial_role) ──"
+# No gate ANTIGO este uid produzia NULL, `NOT NULL` = NULL, o IF não entrava e a escrita PASSAVA.
+# Sob o gate NOVO (COALESCE ⇒ false) ele é negado. A falsificação F5 prova que este par de asserts
+# tem dente: com o corpo antigo restaurado, o mesmo uid volta a ESCREVER.
+seed_cenario
+eq "N7 employee sem commercial_role NÃO despina (tri-state fechado)" \
+   "$(call_rpc "$EMPL_SEM_CR" "public.despinar_parametro('oben','9002')")" "DENIED"
+eq "N7e ...e o pin CONTINUA lá (efeito no dado)" \
+   "$(Pq -c "SELECT count(*) FROM public.reposicao_param_pin WHERE empresa='oben' AND sku_codigo_omie='9002';")" "1"
+eq "N8 employee sem commercial_role NÃO reverte run" \
+   "$(call_rpc "$EMPL_SEM_CR" "public.reverter_run_auto('$RUN_ID')")" "DENIED"
+eq "N8e ...e o log segue NÃO revertido" \
+   "$(Pq -c "SELECT count(*) FROM public.reposicao_param_auto_log WHERE id='$LOG_ID' AND revertido_em IS NULL;")" "1"
 
 echo "── ZONA 4c: anônimo (uid NULO) negado — fail-closed ──"
 eq "N6 uid NULO não despina" \
@@ -495,6 +547,53 @@ if P -q -f "$MIG" >/dev/null 2>&1; then
 else
   ok "F4 guard aborta com 2 ocorrências do gate antigo → não reescreve corpo divergente"
 fi
+
+# ── F5 — O BYPASS TRI-STATE, DEMONSTRADO (a falsificação que dá dente ao N7) ──────────────────
+# Restaura o corpo PRÉ-#1462 (gate ANTIGO + `IF NOT`, verbatim) e exige que o employee sem
+# commercial_role VOLTE A ESCREVER. Se este bloco não conseguir reabrir o bypass, então o stub
+# do gate antigo não é tri-state e o N7 estava passando por acidente — que foi exatamente o
+# defeito deste harness até 2026-07-20 (stub com `EXISTS(...)`, bi-state).
+# ⚠️ Esta é a única falsificação do arquivo que testa o STUB, não a migration: ela prova que o
+# mundo que o harness simula é o mundo que existe em produção.
+P -q <<'SQL'
+CREATE OR REPLACE FUNCTION public.despinar_parametro(p_empresa text, p_sku text)
+ RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public', 'pg_temp'
+AS $function$
+BEGIN
+  IF NOT public.pode_ver_carteira_completa(auth.uid()) THEN RAISE EXCEPTION 'sem permissão'; END IF;
+  DELETE FROM public.reposicao_param_pin WHERE empresa=p_empresa AND sku_codigo_omie=p_sku;
+  RETURN FOUND;
+END;
+$function$;
+SQL
+seed_cenario
+if [ "$(call_rpc "$EMPL_SEM_CR" "public.despinar_parametro('oben','9002')")" = "OK" ]; then
+  ok "F5 gate ANTIGO reabre o bypass p/ employee sem commercial_role → N7 tem dente"
+else
+  bad "F5 restaurei o gate ANTIGO e o employee sem commercial_role seguiu NEGADO — o stub NÃO é tri-state (regressão para EXISTS?), N7 é cego"
+fi
+eq "F5e ...e o bypass ESCREVEU de fato: o pin sumiu (efeito, não só ausência de exceção)" \
+   "$(Pq -c "SELECT count(*) FROM public.reposicao_param_pin WHERE empresa='oben' AND sku_codigo_omie='9002';")" "0"
+# contraste: no MESMO corpo antigo, o farmer (papel comercial comum ⇒ false, não NULL) segue negado.
+# Prova que o vazamento vem do NULL e não de o gate antigo liberar geral.
+eq "F5c ...mas o farmer segue negado no gate antigo (o furo é o NULL, não o gate inteiro)" \
+   "$(call_rpc "$FARMER" "public.despinar_parametro('oben','9002')")" "DENIED"
+
+# restaura o gate NOVO e exige que o bypass feche de novo
+P -q <<'SQL'
+CREATE OR REPLACE FUNCTION public.despinar_parametro(p_empresa text, p_sku text)
+ RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public', 'pg_temp'
+AS $function$
+BEGIN
+  IF NOT private.cap_compras_escrever(auth.uid()) THEN RAISE EXCEPTION 'sem permissão'; END IF;
+  DELETE FROM public.reposicao_param_pin WHERE empresa=p_empresa AND sku_codigo_omie=p_sku;
+  RETURN FOUND;
+END;
+$function$;
+SQL
+seed_cenario
+eq "F5r restaurado: employee sem commercial_role volta a ser negado" \
+   "$(call_rpc "$EMPL_SEM_CR" "public.despinar_parametro('oben','9002')")" "DENIED"
 
 echo ""
 echo "═══════════════════════════════════════════════════════"

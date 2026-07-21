@@ -41,16 +41,24 @@ Como provar o que está **SERVIDO** nesse host (hash do index + grep nos chunks)
 
 ## Canárias de deploy (a única prova do que está SERVIDO)
 
-Grep na `main` prova a **fonte**; a canária prova o **deploy**. Chame com `?canary=1` (staff-gated) e leia `ok`:
+Grep na `main` prova a **fonte**; a canária prova o **deploy**. Chame com `?canary=1` (staff-gated). Nas canárias **VERSIONADAS** (as que têm `contrato` na tabela abaixo) exija os **TRÊS** campos — nunca só o `ok`:
 
-| edge | rota | o que a fixture discrimina |
-|---|---|---|
-| `analyze-unified-order` | Governança → Auditoria (card "Canária de preço") | praticado 123 vence Omie 999 |
-| `omie-vendas-sync` | `identidade_probe` | identidade derivada por documento |
-| `omie-analytics-sync` | `doc_ambiguo_probe` | doc ambíguo não vira vínculo |
-| `carteira-rebuild` | `?canary=1` | conflito de mapeamento **permanece** com `eligible=false` (código velho: some) |
+```text
+canary === true   E   contrato === '<marcador da fatia>'   E   ok === true
+```
 
-⚠️ **Só é canária se a resposta tiver `"canary":true`.** Um deploy anterior à canária ignora o param e roda o **fluxo real** — no `carteira-rebuild` isso é um rebuild completo (lease + 6909 upserts; idempotente e guardado, mas é escrita). Resposta sem `canary:true` = a canária não rodou **e** o deploy é velho: isso já é o veredito.
+Nas canárias ainda **não-versionadas** (`contrato` = `—`) só há `canary` + `ok`, o que **não** protege contra deploy integralmente velho (ver ⚠️ abaixo) — versioná-las é dívida aberta.
+
+| edge | rota | `contrato` esperado | o que a fixture discrimina |
+|---|---|---|---|
+| `analyze-unified-order` | Governança → Auditoria (card "Canária de preço") | — | praticado 123 vence Omie 999 |
+| `omie-vendas-sync` | `identidade_probe` | — | identidade derivada por documento |
+| `omie-analytics-sync` | `doc_ambiguo_probe` | — | doc ambíguo não vira vínculo |
+| `carteira-rebuild` | `?canary=1` | `trava-saida-v1` | conflito permanece com `eligible=false` (velho: some) **+** trava de saída do bootstrap (velho: grava ~Hunter) |
+
+⚠️ **Só é canária se a resposta tiver `"canary":true` E o `contrato` esperado.** Duas falhas distintas:
+1. Deploy ANTERIOR à canária ignora o param e roda o **fluxo real** — no `carteira-rebuild` isso é um rebuild completo (lease + upserts; idempotente e guardado, mas é escrita). Resposta sem `canary:true` = canária não rodou **e** o deploy é velho: já é o veredito.
+2. Deploy **integralmente velho** (com a canária de uma fatia anterior) carrega o `expected` VELHO junto e compara velho×velho → responde `canary:true, ok:true` e **mente verde** (Codex 2026-07-20). Por isso o **`contrato` (version marker) é obrigatório na verificação**: `ok` sozinho não discrimina reversão de fatia. Faça **bump do marcador** a cada fatia que mude o contrato da canária — senão a próxima reversão volta a passar despercebida.
 
 ⚠️ **Canária que não discrimina é teatro verde.** Se a mudança for no-op nos dados de hoje (caso do #1397: 0 conflitos em prod), a resposta do fluxo REAL é byte-idêntica com código velho ou novo — não prova deploy nenhum. A fixture tem de exercitar **o comportamento que mudou**, e o teste tem de provar que sob o comportamento ANTIGO a canária ficaria vermelha (ver `rebuild-helpers.test.ts` → "a fixture DISCRIMINA"). Sem esse assert, a canária só prova que a função responde.
 
@@ -66,6 +74,8 @@ O bot `gpt-engineer-app[bot]` commita direto na `main` SEM CI ("Changes"/"Deploy
 ## Verificação de deploy
 
 - A skill **`lovable-deploy-verify`** confere se o bundle servido bate com o esperado (bytes/comportamento). Use após Publish/deploy — não confiar cegamente no "deployed" do Lovable. A varredura por bytes é **paralela** (`xargs -P`, halt-on-hit) — o bundle passou de 300 chunks e o modo 1-a-1 estourava o timeout.
+- ⚠️ **Grep de verificação anda PAREADO com um controle positivo, no MESMO comando — senão o vazio se lê como resposta (2026-07-20).** Verificação por bytes conclui por **ausência** ("a string não está lá"), e ausência é o resultado que qualquer erro de alvo produz: arquivo errado, download que não aconteceu, path inválido. Some ao grep da assinatura o grep de uma string que **comprovadamente existe** no alvo (ex.: `order_date_kpi` para o chunk do farmer); controle vazio = você mediu o lugar errado, e o resultado da assinatura **não vale nada** — não é "não encontrei", é "não procurei". Mordido 3× seguidas verificando o Publish de #1466/#1468/#1471: (a) grep no entry `index-*.js`, que **não contém** o código lazy-loaded — as ~119 páginas e vários hooks têm chunk próprio (`useFarmerScoring-*.js`, `useCrossSellEngine-*.js`), então o entry tem ~232KB de 5,6MB; (b) grep nos chunks `Farmer*.js` das páginas, quando o hook mora em chunk separado; (c) `xargs` abortando com `command line cannot be assembled, too long` → **0 arquivos baixados** e os dois greps seguintes lendo um diretório vazio, com cara de "não achei". Nas três o controle denunciou na hora. **Corolário:** valide a assinatura contra o código PRÉ-fix (`git show <sha>~1:<arquivo> | grep -c '<assinatura>'` tem de dar **0**, e `<sha>` dar ≥1) — sem isso você prova que uma string existe, não que a MUDANÇA entrou. **E prefira a skill à varredura ad-hoc:** ela já resolve paralelismo e lista de chunks; refazer com `curl` na mão é como se cai nos três buracos acima.
+- **Fix que é uma AUSÊNCIA não se prova por bytes.** Remover um `|| 0`, um fallback ou um default não deixa assinatura: no bundle minificado o nome da variável sumiu, e `x.get(a)||0` legítimo (contador, onde 0 é a resposta certa) é indistinguível do que você tirou. Ou você grepa o **par positivo** que entrou junto (no #1471, o `.order("product_id"` da paginação, que só existe pós-fix), ou aceita que a prova é **comportamental** — e vai para a tela.
 - **QA visual pós-Publish** (renderização/comportamento na tela, refactor visual sem texto novo): os bytes não bastam e o `/browse` headless **não monta** a SPA. O padrão é **Claude-in-Chrome na sessão logada do founder** (ele abre o app 1×; o agente confere as telas) — detalhado no Passo 4b da skill `lovable-deploy-verify`.
 - O acesso **read-only** ao banco (`psql-ro`, ver `docs/agent/database.md`) confirma migration aplicada sem depender do founder.
 
