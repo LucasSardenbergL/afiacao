@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **421** custom migrations totais
-- **1479** objetos esperados (criados por estas migrations)
+- **422** custom migrations totais
+- **1480** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 425
+  - `function`: 426
   - `rls_policy`: 380
   - `index`: 224
   - `cron_job`: 150
@@ -3567,6 +3567,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.tint_promote_sync_run` | — |
 
 ### `20260726130000_vendas_sync_semear_janela.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.vendas_sync_semear_janela` | — |
+
+### `20260726140000_vendas_sync_semear_janela_v2.sql`
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |

@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 421
+-- Total de custom migrations: 422
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -462,7 +462,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260724130000', 'authz_custo_fu4f_fase3_recommend', '20260724130000_authz_custo_fu4f_fase3_recommend.sql'),
   ('20260724130000', 'tint_canonica_csv_legado_allowlist', '20260724130000_tint_canonica_csv_legado_allowlist.sql'),
   ('20260726120000', 'tint_promote_error_details_completo', '20260726120000_tint_promote_error_details_completo.sql'),
-  ('20260726130000', 'vendas_sync_semear_janela', '20260726130000_vendas_sync_semear_janela.sql')
+  ('20260726130000', 'vendas_sync_semear_janela', '20260726130000_vendas_sync_semear_janela.sql'),
+  ('20260726140000', 'vendas_sync_semear_janela_v2', '20260726140000_vendas_sync_semear_janela_v2.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -1930,7 +1931,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('authz_custo_fu4f_fase3_recommend', 'rls_policy', 'public', 'recommendation_log_select_custo', 'recommendation_log'),
   ('tint_canonica_csv_legado_allowlist', 'view', 'public', 'v_tint_formula_canonica', ''),
   ('tint_promote_error_details_completo', 'function', 'public', 'tint_promote_sync_run', ''),
-  ('vendas_sync_semear_janela', 'function', 'public', 'vendas_sync_semear_janela', '')
+  ('vendas_sync_semear_janela', 'function', 'public', 'vendas_sync_semear_janela', ''),
+  ('vendas_sync_semear_janela_v2', 'function', 'public', 'vendas_sync_semear_janela', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -3446,7 +3448,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('authz_custo_fu4f_fase3_recommend', 'rls_policy', 'public', 'recommendation_log_select_custo', 'recommendation_log'),
   ('tint_canonica_csv_legado_allowlist', 'view', 'public', 'v_tint_formula_canonica', ''),
   ('tint_promote_error_details_completo', 'function', 'public', 'tint_promote_sync_run', ''),
-  ('vendas_sync_semear_janela', 'function', 'public', 'vendas_sync_semear_janela', '')
+  ('vendas_sync_semear_janela', 'function', 'public', 'vendas_sync_semear_janela', ''),
+  ('vendas_sync_semear_janela_v2', 'function', 'public', 'vendas_sync_semear_janela', '')
 )
 SELECT
   e.migration,

@@ -2,7 +2,7 @@
 // Extraídos verbatim de src/pages/AdminAnalyticsSync.tsx (god-component split).
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { RefreshCw, Loader2, Sparkles, ShoppingCart, Users, MapPin, CheckCircle2, Clock } from "lucide-react";
+import { RefreshCw, Loader2, Sparkles, ShoppingCart, Users, MapPin, CheckCircle2, Clock, AlertTriangle } from "lucide-react";
 import { UltimaExecucao } from "@/components/execucoes/UltimaExecucao";
 import { ACOES_ANALYTICS_SYNC } from "./acoes";
 import type { StatusJanelaConta } from "./janelas";
@@ -105,6 +105,7 @@ export function ImportEnderecosCard({
 const JANELA_ICON = {
   rodando: <Loader2 className="h-3 w-3 animate-spin text-primary" />,
   aguardando: <Clock className="h-3 w-3 text-muted-foreground" />,
+  falhando: <AlertTriangle className="h-3 w-3 text-status-warning" />,
   concluida: <CheckCircle2 className="h-3 w-3 text-status-success" />,
 } as const;
 
@@ -165,7 +166,7 @@ export function ImportPedidosCard({
           <br />
           <strong>Importar Recentes:</strong> últimos 180 dias (~40–60 min no servidor).
           <br />
-          <strong>Importar Todos:</strong> histórico completo desde 2020 (algumas horas no servidor).
+          <strong>Importar Todos:</strong> histórico completo desde 2015 (algumas horas no servidor).
         </p>
         {janelas.length > 0 && (
           <div className="mt-3 space-y-1.5">

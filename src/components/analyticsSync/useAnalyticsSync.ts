@@ -251,21 +251,21 @@ export function useAnalyticsSync() {
 
   // Importação de pedidos = SEMEADURA server-side (refactor do incidente 2026-07-20/21):
   // o loop client-side de 40-60 min morria quando o Chrome suspendia a aba (Memory Saver),
-  // deixando órfãos 'executando'. Agora o clique só ARMA a janela no vendas_sync_cursor
-  // (RPC staff-gated, ON CONFLICT DO NOTHING — provada em db/test-vendas_sync_semear_janela.sh)
+  // deixando órfãos 'executando'. Agora o clique ARMA as DUAS contas numa ÚNICA chamada
+  // ATÔMICA (RPC staff-gated, ON CONFLICT DO NOTHING, advisory lock por conta — provada em
+  // db/test-vendas_sync_semear_janela.sh; uma chamada = sem janela parcial se a aba morrer)
   // e o cron vendas-sync-continuacao-6min + edge omie-vendas-sync importam no servidor
   // (lease + heartbeat por página + retomada). A aba pode fechar; o progresso é LEITURA.
   const semearJanelaNasContas = async (janela: JanelaImportacao) => {
-    const resultado = {} as Record<ContaPedidos, DesfechoSemeadura>;
-    for (const account of CONTAS_PEDIDOS) {
-      const { data, error } = await supabase.rpc("vendas_sync_semear_janela", {
-        p_account: account,
-        p_date_from: janela.de,
-        p_date_to: janela.ate,
-      });
-      if (error) throw new Error(`${account}: ${error.message}`);
-      const r = data as { semeada?: boolean; completed_at?: string | null } | null;
-      resultado[account] = r?.semeada ? "semeada" : r?.completed_at ? "ja_concluida" : "ja_pendente";
+    const { data, error } = await supabase.rpc("vendas_sync_semear_janela", {
+      p_date_from: janela.de,
+      p_date_to: janela.ate,
+    });
+    if (error) throw new Error(error.message);
+    const r = data as { contas?: Array<{ account?: string; desfecho?: string }> } | null;
+    const resultado = {} as Record<ContaPedidos, DesfechoSemeadura | undefined>;
+    for (const conta of CONTAS_PEDIDOS) {
+      resultado[conta] = r?.contas?.find((c) => c.account === conta)?.desfecho as DesfechoSemeadura | undefined;
     }
     return { janela, resultado };
   };
@@ -290,7 +290,7 @@ export function useAnalyticsSync() {
   const janelasImportacao = statusJanelas(janelasRelevantes(janelasCursor ?? []));
   const importacaoEmAndamento = haJanelaAberta(janelasCursor ?? []);
 
-  const descricaoSemeadura = (resultado: Record<ContaPedidos, DesfechoSemeadura>) =>
+  const descricaoSemeadura = (resultado: Record<ContaPedidos, DesfechoSemeadura | undefined>) =>
     `oben: ${rotuloSemeadura(resultado.oben)} · colacor: ${rotuloSemeadura(resultado.colacor)}. ` +
     `Roda no servidor — pode fechar a aba e acompanhar aqui.`;
 
@@ -303,11 +303,12 @@ export function useAnalyticsSync() {
         description: descricaoSemeadura(d.resultado),
         duration: 10000,
       });
-      queryClient.invalidateQueries({ queryKey: [JANELAS_CURSOR_QUERY_KEY] });
     },
     onError: (error) => {
       toast.error("Erro ao armar a importação de pedidos", { description: String(error) });
     },
+    // onSettled (não onSuccess): erro também re-lê o cursor — o estado REAL vem do banco.
+    onSettled: () => queryClient.invalidateQueries({ queryKey: [JANELAS_CURSOR_QUERY_KEY] }),
   });
 
   const recentOrdersSyncMutation = useMutationComRegistro({
@@ -319,11 +320,11 @@ export function useAnalyticsSync() {
         description: descricaoSemeadura(d.resultado),
         duration: 10000,
       });
-      queryClient.invalidateQueries({ queryKey: [JANELAS_CURSOR_QUERY_KEY] });
     },
     onError: (error) => {
       toast.error("Erro ao armar a importação recente", { description: String(error) });
     },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: [JANELAS_CURSOR_QUERY_KEY] }),
   });
 
   const getStateFor = (entity: string, account: string) =>

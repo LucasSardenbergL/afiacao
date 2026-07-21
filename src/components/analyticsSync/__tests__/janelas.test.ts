@@ -17,6 +17,7 @@ const linha = (extra: Partial<JanelaCursorRow>): JanelaCursorRow => ({
   date_to: "2026-07-21",
   next_page: null,
   completed_at: null,
+  last_error_kind: null,
   running_since: null,
   heartbeat_at: null,
   updated_at: "2026-07-21T12:00:00Z",
@@ -84,6 +85,24 @@ describe("statusJanelas", () => {
     expect(s.estado).toBe("concluida");
     expect(s.janela).toBe("22/01/2026 → 21/07/2026");
   });
+
+  it("janela aberta com last_error_kind expõe a falha (não finge 'aguardando')", () => {
+    const [s] = statusJanelas(
+      [linha({ last_error_kind: "http", next_page: 9, heartbeat_at: "2026-07-21T11:00:00Z" })],
+      agora,
+    );
+    expect(s.estado).toBe("falhando");
+    expect(s.descricao).toContain("falhou (http)");
+    expect(s.descricao).toContain("página 9");
+  });
+
+  it("lease vivo tem precedência sobre falha anterior (está re-tentando agora)", () => {
+    const [s] = statusJanelas(
+      [linha({ last_error_kind: "rate_limit", running_since: "2026-07-21T11:58:00Z", heartbeat_at: "2026-07-21T11:59:30Z", next_page: 9 })],
+      agora,
+    );
+    expect(s.estado).toBe("rodando");
+  });
 });
 
 describe("janelasRelevantes + haJanelaAberta", () => {
@@ -108,6 +127,7 @@ describe("rotuloSemeadura", () => {
     expect(rotuloSemeadura("semeada")).toBe("armada");
     expect(rotuloSemeadura("ja_pendente")).toBe("já estava armada");
     expect(rotuloSemeadura("ja_concluida")).toBe("já concluída nesta janela");
+    expect(rotuloSemeadura("ja_pendente_outra")).toBe("outra importação em andamento");
     expect(rotuloSemeadura(undefined)).toBe("—");
   });
 });

@@ -7,8 +7,14 @@
 export const CONTAS_PEDIDOS = ["oben", "colacor"] as const;
 export type ContaPedidos = (typeof CONTAS_PEDIDOS)[number];
 
-/** Época do "Importar Todos" — cobre o histórico real (min em prod: colacor 2020-04-08, oben 2023-09-25). */
-export const EPOCA_IMPORTAR_TODOS = "2020-01-01";
+/**
+ * Época do "Importar Todos" = o próprio piso da RPC (p_date_from >= 2015-01-01).
+ * O min de sales_orders (colacor 2020-04-08, oben 2023-09-25) não prova o min do OMIE
+ * (a tabela nasceu de backfills — prova circular, apontado pelo Codex); 2015 dá margem
+ * e período vazio não custa páginas (o filtro de data só inclui). Pedido anterior a
+ * 2015 no Omie exigiria mudar o piso da RPC junto.
+ */
+export const EPOCA_IMPORTAR_TODOS = "2015-01-01";
 
 /** Data LOCAL como YYYY-MM-DD. Não usar toISOString(): à noite no BRT ela vira o dia UTC seguinte. */
 export function isoDataLocal(d: Date): string {
@@ -40,6 +46,7 @@ export interface JanelaCursorRow {
   date_to: string;
   next_page: number | null;
   completed_at: string | null;
+  last_error_kind: string | null;
   running_since: string | null;
   heartbeat_at: string | null;
   updated_at: string;
@@ -48,7 +55,7 @@ export interface JanelaCursorRow {
 export interface StatusJanelaConta {
   account: string;
   janela: string;
-  estado: "rodando" | "aguardando" | "concluida";
+  estado: "rodando" | "aguardando" | "falhando" | "concluida";
   descricao: string;
 }
 
@@ -76,6 +83,16 @@ export function statusJanelas(rows: JanelaCursorRow[], agora: Date = new Date())
     if (r.running_since && heartbeatVivo) {
       return { account: r.account, janela, estado: "rodando" as const, descricao: `importando — página ${pagina}` };
     }
+    // Honestidade sobre falha persistente (achado Codex): last_error_kind aberto não é
+    // "aguardando" normal — o motor re-tenta a cada 6 min, mas o usuário precisa VER a falha.
+    if (r.last_error_kind) {
+      return {
+        account: r.account,
+        janela,
+        estado: "falhando" as const,
+        descricao: `página ${pagina} — última tentativa falhou (${r.last_error_kind}); o motor re-tenta a cada 6 min`,
+      };
+    }
     return {
       account: r.account,
       janela,
@@ -97,7 +114,7 @@ export function haJanelaAberta(rows: JanelaCursorRow[]): boolean {
 }
 
 /** Desfecho por conta da RPC de semeadura (ver semearJanelaNasContas no useAnalyticsSync). */
-export type DesfechoSemeadura = "semeada" | "ja_pendente" | "ja_concluida";
+export type DesfechoSemeadura = "semeada" | "ja_pendente" | "ja_concluida" | "ja_pendente_outra";
 
 export function rotuloSemeadura(desfecho: DesfechoSemeadura | undefined): string {
   switch (desfecho) {
@@ -107,6 +124,8 @@ export function rotuloSemeadura(desfecho: DesfechoSemeadura | undefined): string
       return "já estava armada";
     case "ja_concluida":
       return "já concluída nesta janela";
+    case "ja_pendente_outra":
+      return "outra importação em andamento";
     default:
       return "—";
   }
