@@ -26,7 +26,8 @@ export default function AdminAnalyticsSync() {
     recentOrdersSyncMutation,
     clientSyncProgress,
     addressSyncProgress,
-    ordersSyncProgress,
+    janelasImportacao,
+    importacaoEmAndamento,
     editingConfig,
     setEditingConfig,
     getStateFor,
@@ -99,7 +100,8 @@ export default function AdminAnalyticsSync() {
         isRunning={isRunning}
         recentPending={recentOrdersSyncMutation.isPending}
         bulkPending={bulkOrdersSyncMutation.isPending}
-        progress={ordersSyncProgress}
+        importandoEmAndamento={importacaoEmAndamento}
+        janelas={janelasImportacao}
         onImportRecent={() => recentOrdersSyncMutation.mutate()}
         onImportAll={() => bulkOrdersSyncMutation.mutate()}
       />

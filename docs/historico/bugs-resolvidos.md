@@ -282,3 +282,45 @@ remove (1a4272c7 "Changes"). Fix: restaurar o arquivo de bbd2c155 por PR (#1478)
 Lição (armadilha nova no CLAUDE.md): após merge que toca `supabase/functions/`, conferir
 `git log -S` do símbolo novo ANTES de pedir deploy — "verbatim da main" só vale se a main ainda
 for a sua.
+
+## Importar Pedidos vira semeadura server-side — a aba pode fechar (2026-07-21, [PR #1518](https://github.com/LucasSardenbergL/afiacao/pull/1518), migration `20260726140000` (v2) ⚠️ apply manual — a `20260726130000` (v1 por conta) foi superseded ANTES de qualquer apply e não deve ser colada)
+
+Follow-up do incidente 2026-07-20/21 (pós #1500/#1502): o "Importar Recentes (180d)" de
+/admin/analytics-sync era um loop client-side de 40–60 min (~26–35 invocações da edge por
+conta) — o Chrome matou o JS ~12 min após o clique em 3 tentativas (aba em background/Memory
+Saver), deixando órfãos `executando` em `acoes_execucoes`; a importação só fechou semeando
+`vendas_sync_cursor` na mão. **Fix (v2, endurecida pelo challenge Codex xhigh):** RPC
+`vendas_sync_semear_janela(p_date_from, p_date_to, p_accounts default {oben,colacor})` —
+SECDEF, gate staff fail-closed espelhado de `request_customer_metrics_refresh`, validação
+22023, **UMA chamada arma as DUAS contas na MESMA transação** (P1 do Codex: duas RPCs
+sequenciais deixavam janela parcial se a aba morresse entre elas — e com o botão travado
+pela janela aberta, a 2ª conta ficava inalcançável por 40+ min), `pg_advisory_xact_lock`
+por conta em ordem determinística (2 abas não intercalam), recusa honesta
+`ja_pendente_outra` quando a conta já tem OUTRA janela aberta (o cron trabalha a mais
+antiga primeiro — semear por cima só enfileira atrás), e `INSERT … ON CONFLICT DO NOTHING`
+— nunca toca janela existente. Hook troca o loop por semeadura (mutação ~1s, registro
+fecha na hora → sem novos órfãos) + polling de leitura do cursor com estado **falhando**
+quando `last_error_kind` está aberto (achado Codex: não fingir "aguardando" em falha
+persistente) + "pode fechar a aba" + copy honesta (o "~2 min" era mentira histórica).
+"Importar Todos": 1 janela `2015-01-01→hoje` por conta — 2015 é o próprio piso da RPC; o
+min de `sales_orders` (colacor 2020-04-08, oben 2023-09-25) não prova o min do OMIE (prova
+circular, achado Codex) e período vazio não custa páginas. Edge e cron INTOCADOS — o motor
+(lease/heartbeat/retomada, jobid 140) já existia desde `20260617133633`; faltava o caminho
+de escrita gateado. **Prova:** `db/test-vendas_sync_semear_janela.sh` PG17 **36/36**
+(caminho real `SET ROLE authenticated`+GUC; anon barrado na fronteira com sentinela do
+Postgres que meu código não emite; **atomicidade real** — conta inválida no par faz
+rollback do insert já feito; integração com o comando REAL do cron; falsificações F1
+gate/F2 clobber/F3 grant/F4 lock/F5 engolir-exceção, todas com dente) e — lição
+#1490/#1501 — o validador pós-apply (`db/valida-vendas-sync-semear-janela.sql`, lê
+catálogo, nunca invoca, comment-strip, checa a v1 dropada) EXECUTADO contra banco bom (✅)
+e sabotado ×4 (❌). vitest full verde, typecheck/lint/shellcheck 0, authz:check ok,
+wt:preflight 🟢. Do challenge ficaram 2 follow-ups de FUNDAÇÃO (fora deste PR; chips):
+lease sem fencing/owner token (worker vencido pode corromper o lease do sucessor) e
+`completed_at` fechando janela com `failed[]`>0 / falha permanente sem estado terminal.
+**LIÇÃO:** (a) trabalho >10 min que depende de aba viva de browser é bug de arquitetura,
+não de timeout — se o motor server-side já existe (cursor+cron), o botão deve SEMEAR e a
+UI LER; o clique que "executa" vira o clique que "arma" e o registro acompanha a
+semântica; (b) semeadura multi-conta tem de ser UMA transação — parcial + botão travado =
+conta presa; (c) migration committada é imutável MESMO nunca aplicada (hook bloqueia) —
+correção de desenho pré-apply vira migration v2 com DROP da assinatura antiga, e a v1
+morta fica documentada como "não colar".
