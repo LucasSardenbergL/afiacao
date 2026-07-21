@@ -9,6 +9,8 @@ import {
   BarChart3, PieChart, ShieldCheck, RefreshCw
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { formatarMargemPct } from '@/lib/margem';
+import { mediaMargem } from '@/lib/scoring/margem-leitura';
 import { KpiCard } from './KpiCard';
 
 export function IntelligenceStrategicTab() {
@@ -104,9 +106,9 @@ export function IntelligenceStrategicTab() {
   const estimatedMarket = Math.max(uniqueCustomers * 3, 100);
   const marketSharePct = (uniqueCustomers / estimatedMarket * 100);
 
-  const avgGrossMargin = allScores?.length
-    ? allScores.reduce((a, c) => a + Number(c.gross_margin_pct || 0), 0) / allScores.length
-    : 0;
+  // Só sobre margens CONHECIDAS, com a cobertura exposta no subtítulo do KPI: `|| 0` somava
+  // os clientes sem custo conhecido como zero e puxava a margem média da carteira para baixo.
+  const margemCarteira = mediaMargem((allScores ?? []).map((c) => c.gross_margin_pct));
 
   const [runningAlgoA, setRunningAlgoA] = useState(false);
   const runAlgoA = async () => {
@@ -153,7 +155,16 @@ export function IntelligenceStrategicTab() {
         <KpiCard title="LTV Projetado (3a)" value={`R$ ${ltvEstimate.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}`} icon={BarChart3} subtitle="Estimativa média" />
         <KpiCard title="CAC Estimado" value={`R$ ${cacEstimate.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}`} icon={DollarSign} subtitle="Custo aquisição cliente" />
         <KpiCard title="Concentração Top 20%" value={`${concentrationPct.toFixed(1)}%`} icon={PieChart} subtitle="da receita total" />
-        <KpiCard title="Margem Bruta Média" value={`${avgGrossMargin.toFixed(1)}%`} icon={Percent} />
+        <KpiCard
+          title="Margem Bruta Média"
+          value={formatarMargemPct(margemCarteira.media)}
+          icon={Percent}
+          subtitle={
+            margemCarteira.conhecidas < margemCarteira.total
+              ? `${margemCarteira.conhecidas} de ${margemCarteira.total} com custo conhecido`
+              : undefined
+          }
+        />
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">

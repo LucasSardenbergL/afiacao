@@ -277,6 +277,7 @@ export const MODULOS: ModuloApp[] = [
     ],
     testes: [
       "src/hooks/__tests__/cluster-margin-cobertura.test.tsx",
+      "src/hooks/__tests__/useBundleArguments.test.ts",
       "src/hooks/__tests__/farmer-performance-cobertura-guard.test.tsx",
       "src/hooks/__tests__/lens-atividade-vendedor.test.tsx",
       "src/hooks/__tests__/lens-engines-ia.test.tsx",
@@ -624,6 +625,7 @@ export const MODULOS: ModuloApp[] = [
       "src/lib/leading-trailing-throttle.ts",
       "src/lib/logger.ts",
       "src/lib/logger-migration.md",
+      "src/lib/margem.ts",
       "src/lib/offline-handlers.ts",
       "src/lib/offline-queue.ts",
       "src/lib/phone.ts",

@@ -1,6 +1,8 @@
 import { useState, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { selectObjective, clampRecencyCapDays } from '@/lib/scoring/objective';
+import { lerMargemPct } from '@/lib/margem';
+import { fetchAllPages } from '@/lib/postgrest';
 import { ownersAtivosDoAlvo } from '@/lib/carteira/escopo-clientes';
 import { useAuth } from '@/contexts/AuthContext';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
@@ -168,7 +170,12 @@ interface DiagnosticData {
 }
 
 export interface EfficiencyCheck {
-  estimatedProfitPerHour: number;
+  /**
+   * `null` = INDECIDÍVEL: a margem do cliente é desconhecida, então não dá para estimar
+   * R$/h. Distinto de `0`, que é o veredito "esta ligação não paga". Fabricar 0 a partir
+   * da ausência faria a tela acusar o cliente de um problema que é de dado.
+   */
+  estimatedProfitPerHour: number | null;
   threshold: number;
   isAboveThreshold: boolean;
 }
@@ -184,9 +191,12 @@ const objectiveLabels: Record<string, string> = {
 
 export const getObjectiveLabel = (obj: string) => objectiveLabels[obj] || obj;
 
-const classifyProfile = (healthScore: number, avgSpend: number, marginPct: number, categoryCount: number): string => {
-  if (avgSpend < 500 && marginPct < 20) return 'sensivel_preco';
-  if (marginPct > 35 && categoryCount <= 3) return 'orientado_qualidade';
+const classifyProfile = (healthScore: number, avgSpend: number, marginPct: number | null, categoryCount: number): string => {
+  // GUARD money-path: `null < 20` é TRUE em JS (coerção), então sem este guard todo cliente
+  // sem margem conhecida sairia rotulado 'sensivel_preco' — rótulo que entra no prompt da IA
+  // e molda a abordagem que a vendedora leva para a rua.
+  if (marginPct != null && avgSpend < 500 && marginPct < 20) return 'sensivel_preco';
+  if (marginPct != null && marginPct > 35 && categoryCount <= 3) return 'orientado_qualidade';
   if (avgSpend > 2000 && categoryCount >= 4 && healthScore > 60) return 'orientado_produtividade';
   return 'misto';
 };
@@ -323,7 +333,7 @@ export const useTacticalPlan = () => {
 
   // Check efficiency before generating
   const checkEfficiency = useCallback(async (customerId: string): Promise<EfficiencyCheck> => {
-    if (!user?.id) return { estimatedProfitPerHour: 0, threshold: PROFIT_PER_HOUR_THRESHOLD, isAboveThreshold: false };
+    if (!user?.id) return { estimatedProfitPerHour: null, threshold: PROFIT_PER_HOUR_THRESHOLD, isAboveThreshold: false };
 
     const { data: score } = (await supabase
       .from('farmer_client_scores')
@@ -335,7 +345,16 @@ export const useTacticalPlan = () => {
 
     const revPotential = Number(score?.revenue_potential || 0);
     const avgSpend = Number(score?.avg_monthly_spend_180d || 0);
-    const marginPct = Number(score?.gross_margin_pct || 0);
+    const marginPct = lerMargemPct(score?.gross_margin_pct);
+
+    // Margem desconhecida ⇒ gate INDECIDÍVEL, não reprovado. `|| 0` daria R$ 0,00/h e a tela
+    // diria "esta ligação não paga" sobre um cliente que apenas não tem custo cadastrado.
+    // Fail-closed em isAboveThreshold (pede confirmação), honesto no número (null).
+    // Espelha o `margemConhecida()` da edge tactical-plans-batch.
+    if (marginPct === null) {
+      return { estimatedProfitPerHour: null, threshold: PROFIT_PER_HOUR_THRESHOLD, isAboveThreshold: false };
+    }
+
     const estimatedMarginPerCall = (revPotential > 0 ? revPotential : avgSpend) * (marginPct / 100) * 0.1;
     const avgCallMinutes = 15;
     const estimatedProfitPerHour = estimatedMarginPerCall / (avgCallMinutes / 60);
@@ -387,7 +406,7 @@ export const useTacticalPlan = () => {
       const healthScore = Number(score.health_score || 0);
       const churnRisk = Number(score.churn_risk || 0);
       const avgSpend = Number(score.avg_monthly_spend_180d || 0);
-      const marginPct = Number(score.gross_margin_pct || 0);
+      const marginPct = lerMargemPct(score.gross_margin_pct);
       const categoryCount = Number(score.category_count || 0);
       const daysSince = Number(score.days_since_last_purchase || 0);
       const expansionPotential = Number(score.expansion_score || 0);
@@ -403,15 +422,23 @@ export const useTacticalPlan = () => {
       // nada de 25).
       let clusterMargin: number | null = null;
       {
-        const { data: peers } = (await supabase
-          .from('farmer_client_scores')
-          .select('gross_margin_pct')
-          .eq('farmer_id', ownerId)
-          .neq('customer_user_id', customerId)) as unknown as { data: Pick<ClientScoreFull, 'gross_margin_pct'>[] | null };
-        const peerMargins = (peers ?? [])
-          .filter((r) => r.gross_margin_pct != null)
-          .map((r) => Number(r.gross_margin_pct))
-          .filter((m) => Number.isFinite(m));
+        // PAGINADO: o PostgREST capa em 1.000 linhas SILENCIOSAMENTE. Os farmers em prod têm
+        // até 3.858 clientes, então a query sem `.range()` benchmarkava a margem do cliente
+        // contra ~26% da carteira, em ordem indefinida (sem `.order()`, o Postgres não garante
+        // a mesma sequência entre requests). Mesma correção que a edge tactical-plans-batch
+        // recebeu; aqui é o caminho do browser.
+        const peers = await fetchAllPages<Pick<ClientScoreFull, 'gross_margin_pct'>>((de, ate) =>
+          supabase
+            .from('farmer_client_scores')
+            .select('customer_user_id, gross_margin_pct')
+            .eq('farmer_id', ownerId)
+            .neq('customer_user_id', customerId)
+            .order('customer_user_id', { ascending: true })
+            .range(de, ate) as unknown as PromiseLike<{ data: Pick<ClientScoreFull, 'gross_margin_pct'>[] | null }>,
+        );
+        const peerMargins = peers
+          .map((r) => lerMargemPct(r.gross_margin_pct))
+          .filter((m): m is number => m !== null);
         if (peerMargins.length >= 1) {
           clusterMargin = peerMargins.reduce((s, m) => s + m, 0) / peerMargins.length;
         }

@@ -6,6 +6,8 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Users, AlertTriangle, Layers } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer } from 'recharts';
+import { formatarMargemPct } from '@/lib/margem';
+import { mediaMargem } from '@/lib/scoring/margem-leitura';
 import { KpiCard } from './KpiCard';
 
 function IntelligenceManagerialTabImpl() {
@@ -67,11 +69,13 @@ function IntelligenceManagerialTabImpl() {
   const farmerMetrics = Object.entries(farmerGroups).map(([farmerId, clients]) => {
     const avgHealth = clients.reduce((a, c) => a + Number(c.health_score || 0), 0) / clients.length;
     const atRisk = clients.filter(c => (c.health_class === 'critico' || c.health_class === 'atencao') && c.sales_history_status !== 'sem_historico').length;
-    const avgMargin = clients.reduce((a, c) => a + Number(c.gross_margin_pct || 0), 0) / clients.length;
+    // Só sobre margens CONHECIDAS: `|| 0` somava os ausentes como zero E os contava no
+    // denominador, subestimando a margem do vendedor duas vezes.
+    const margem = mediaMargem(clients.map((c) => c.gross_margin_pct));
     const avgCategories = clients.reduce((a, c) => a + Number(c.category_count || 0), 0) / clients.length;
     const adoption = recoAdoption[farmerId];
     const adoptionPct = adoption && adoption.total > 0 ? (adoption.accepted / adoption.total * 100) : 0;
-    return { farmerId, clientCount: clients.length, avgHealth, atRisk, avgMargin, avgCategories, adoptionPct };
+    return { farmerId, clientCount: clients.length, avgHealth, atRisk, margem, avgCategories, adoptionPct };
   });
 
   const globalAvgCategories = allScores?.length
@@ -120,7 +124,14 @@ function IntelligenceManagerialTabImpl() {
                       <Badge variant={fm.avgHealth > 60 ? 'default' : 'destructive'} className="text-2xs">{fm.avgHealth.toFixed(0)}</Badge>
                     </td>
                     <td className="text-center py-2">{fm.atRisk}</td>
-                    <td className="text-center py-2">{fm.avgMargin.toFixed(1)}%</td>
+                    <td className="text-center py-2">
+                      {formatarMargemPct(fm.margem.media)}
+                      {fm.margem.conhecidas < fm.margem.total && (
+                        <span className="text-muted-foreground ml-1">
+                          ({fm.margem.conhecidas}/{fm.margem.total})
+                        </span>
+                      )}
+                    </td>
                     <td className="text-center py-2">{fm.avgCategories.toFixed(1)}</td>
                     <td className="text-center py-2">
                       <span className={fm.avgCategories < globalAvgCategories ? 'text-destructive' : 'text-status-success'}>

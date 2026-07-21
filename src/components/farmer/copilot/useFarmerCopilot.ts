@@ -8,6 +8,7 @@ import { useMyActiveCoverage } from '@/hooks/useCoverage';
 import { useCopilotEngine, type CopilotContext } from '@/hooks/useCopilotEngine';
 import { useTacticalPlan, type TacticalPlan } from '@/hooks/useTacticalPlan';
 import { supabase } from '@/integrations/supabase/client';
+import { lerMargemPct } from '@/lib/margem';
 import { toast } from 'sonner';
 import { Minus } from 'lucide-react';
 import { directionConfig, suggestionTypeIcons, fallbackSuggestionIcon } from './config';
@@ -108,7 +109,9 @@ export function useFarmerCopilot() {
         customerType: profile?.customer_type,
         healthScore: score?.health_score,
         avgMonthlySpend: score?.avg_monthly_spend_180d,
-        grossMarginPct: score?.gross_margin_pct,
+        // Escala 0–100, `null` quando desconhecida. Vai cru para o prompt da IA: um 0
+        // fabricado aqui viraria "cliente sem margem" na recomendação que a vendedora recebe.
+        grossMarginPct: lerMargemPct(score?.gross_margin_pct),
         categoryCount: score?.category_count,
         daysSinceLastPurchase: score?.days_since_last_purchase,
         churnRisk: score?.churn_risk,

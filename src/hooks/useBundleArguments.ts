@@ -18,13 +18,16 @@ export type CustomerProfile = 'sensivel_preco' | 'orientado_qualidade' | 'orient
 export const classifyCustomerProfile = (
   healthScore: number,
   avgMonthlySpend: number,
-  grossMarginPct: number,
+  /** `null` = margem desconhecida: não rotula por margem (ver guard abaixo). */
+  grossMarginPct: number | null,
   categoryCount: number
 ): CustomerProfile => {
+  // GUARD money-path: `null < 20` é TRUE em JS (coerção). Sem estes `!= null`, todo cliente
+  // sem margem conhecida sairia 'sensivel_preco' — e o rótulo molda o argumento de venda.
   // Price-sensitive: low spend, low margin tolerance
-  if (avgMonthlySpend < 500 && grossMarginPct < 20) return 'sensivel_preco';
+  if (grossMarginPct != null && avgMonthlySpend < 500 && grossMarginPct < 20) return 'sensivel_preco';
   // Quality-oriented: high margin, fewer categories (focused buyer)
-  if (grossMarginPct > 35 && categoryCount <= 3) return 'orientado_qualidade';
+  if (grossMarginPct != null && grossMarginPct > 35 && categoryCount <= 3) return 'orientado_qualidade';
   // Productivity-oriented: high spend, many categories, high health
   if (avgMonthlySpend > 2000 && categoryCount >= 4 && healthScore > 60) return 'orientado_produtividade';
   return 'misto';

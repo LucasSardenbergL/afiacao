@@ -26,7 +26,7 @@ export function useFarmerTacticalPlan() {
   const [expandedPlan, setExpandedPlan] = useState<string | null>(null);
   const [copiedText, setCopiedText] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
-  const [efficiencyAlert, setEfficiencyAlert] = useState<{ customerId: string; profitPerHour: number; planType: PlanType } | null>(null);
+  const [efficiencyAlert, setEfficiencyAlert] = useState<{ customerId: string; profitPerHour: number | null; planType: PlanType } | null>(null);
 
   useEffect(() => {
     if (user?.id && isStaff) {

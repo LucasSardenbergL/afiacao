@@ -26,7 +26,8 @@
 export function selectObjective(
   churnRisk: number,
   mixGap: number,
-  marginPct: number,
+  /** `null` = margem desconhecida. Não dispara `consolidacao_margem` (ver regra 4). */
+  marginPct: number | null,
   clusterMargin: number | null,
   daysSince: number,
   recencyCapDays: number,
@@ -41,7 +42,10 @@ export function selectObjective(
   // consolidacao a esmo. (O espelho no edge generate-tactical-plan sempre passa número —
   // benchmarka pela carteira-dono no batch — então a divergência só aparece no caminho client,
   // onde o cluster pode faltar.)
-  if (clusterMargin != null && Number.isFinite(clusterMargin) && marginPct < clusterMargin * 0.8) return 'consolidacao_margem';
+  // A margem DO CLIENTE também precisa ser conhecida: `null < X` é true por coerção, o que
+  // mandaria todo cliente sem custo cadastrado para 'consolidacao_margem' — o objetivo que
+  // instrui a vendedora a defender preço num cliente sobre o qual não medimos margem alguma.
+  if (marginPct != null && clusterMargin != null && Number.isFinite(clusterMargin) && marginPct < clusterMargin * 0.8) return 'consolidacao_margem';
   return 'upsell_premium';
 }
 

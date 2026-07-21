@@ -26,7 +26,9 @@ export const CustomerBundleCard = ({ data, expanded, onToggle, bundleArgs, argGe
   const individualLIE = data.bestIndividual?.lie || 0;
   const bundleWins = bestBundleLIE > individualLIE;
 
-  const profile = classifyCustomerProfile(data.healthScore, data.avgMonthlySpend || 0, data.grossMarginPct || 0, data.categoryCount || 0);
+  // `grossMarginPct` sem `|| 0`: margem desconhecida tem de chegar como null no classify,
+  // senão o cliente sem custo cadastrado vira 'sensivel_preco' por coerção.
+  const profile = classifyCustomerProfile(data.healthScore, data.avgMonthlySpend || 0, data.grossMarginPct, data.categoryCount || 0);
   const profileInfo = profileLabels[profile];
 
   const customerCtx = {
