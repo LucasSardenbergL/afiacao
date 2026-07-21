@@ -18098,6 +18098,10 @@ export type Database = {
         }
         Returns: undefined
       }
+      _registrar_ciclo_oportunidade: {
+        Args: { p_detalhes: Json; p_inicio: string }
+        Returns: undefined
+      }
       _tint_cobertura_bases_lista_email: {
         Args: { p_limit?: number }
         Returns: string
