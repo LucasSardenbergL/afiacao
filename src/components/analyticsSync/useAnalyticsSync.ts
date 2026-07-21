@@ -263,7 +263,12 @@ export function useAnalyticsSync() {
             action: "sync_pedidos",
             account: acc.account,
             start_page: startPage,
-            max_pages: 10,
+            // 2 págs/invocação ≈ 75–110s diurno (medido no cron: 35–50s/pág) — cabe no
+            // request timeout (~150s) da edge. Com 10, janela de 180d (~70 págs oben)
+            // estourava o limite na 1ª invocação e o loop abortava (incidente 20/07/2026:
+            // não-2xx no browser + órfã running fechada pelo watchdog). O loop já retoma
+            // via nextPage, então só muda o tamanho do lote, não a cobertura.
+            max_pages: 2,
             ...(dateFrom && { date_from: dateFrom }),
             ...(dateTo && { date_to: dateTo }),
           },
