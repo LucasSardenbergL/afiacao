@@ -72,12 +72,6 @@ interface SalesOrderRow {
   created_at: string;
 }
 
-interface ConversionRow {
-  category_id: string;
-  conversion_rate: number | string | null;
-  complexity_factor: number | string | null;
-}
-
 interface AssocRuleRow {
   antecedent_product_ids: string[] | null;
   consequent_product_ids: string[] | null;
@@ -93,18 +87,25 @@ interface ProfileRow {
   cnae: string | null;
 }
 
-interface RecommendationStatsRow {
-  status: string;
-  actual_margin: number | string | null;
-  time_spent_seconds: number | null;
-}
-
-interface RecommendationUpdate {
-  status: 'aceito';
-  accepted_at: string;
-  actual_margin?: number;
-  time_spent_seconds?: number;
-}
+// ─── Premissas do LIE (NÃO são aprendidas) ───────────────────────────
+// Constantes ARBITRADAS, não medições. Até 2026-07-21 o hook lia
+// `farmer_category_conversion` e caía nestes mesmos valores quando não achava a
+// linha — o que sugeria um "aprendizado histórico por categoria" que nunca
+// existiu: a tabela tem 0 linhas desde que nasceu (fev/2026, `n_tup_ins = 0`),
+// porque o único writer ficava atrás de `markAsAccepted`, que nenhuma UI jamais
+// chamou. As 3.659 linhas de `farmer_recommendations` seguem 100% `pendente`,
+// sem um único desfecho registrado. Ler a tabela vazia era teatro: quem decidia
+// era sempre o default.
+//
+// Como são idênticas para TODO produto, funcionam como fator de ESCALA do LIE: o
+// RANKING não depende delas (0,15·X vs 0,15·Y ordena igual a X vs Y). O que elas
+// contaminam é o VALOR ABSOLUTO em R$ exibido na tela — que por isso é rotulado
+// como estimativa não calibrada. Para virarem dado de verdade é preciso o loop de
+// feedback inteiro (UI de desfecho + margem realizada + tempo gasto):
+// ver docs/historico/farmer-aprendizado-conversao.md.
+const TAXA_CONVERSAO_CROSS_SELL = 0.15;
+const TAXA_CONVERSAO_UP_SELL = 0.10;
+const FATOR_COMPLEXIDADE = 1.0;
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
@@ -214,14 +215,7 @@ export const useCrossSellEngine = () => {
         return;
       }
 
-      // 4. Load category conversion rates (learning data)
-      const { data: conversionData } = (await supabase
-        .from('farmer_category_conversion')
-        .select('*')) as unknown as { data: ConversionRow[] | null };
-      const conversionMap = new Map<string, ConversionRow>();
-      (conversionData || []).forEach((c) => conversionMap.set(c.category_id, c));
-
-      // 4b. Load association rules for personalized recommendations
+      // 4. Load association rules for personalized recommendations
       const { data: assocRules } = (await supabase
         .from('farmer_association_rules')
         .select('antecedent_product_ids, consequent_product_ids, confidence, lift, support')
@@ -361,21 +355,16 @@ export const useCrossSellEngine = () => {
           if (clusterAdherence < 0.03 && assocBoost === 0) continue;
 
           // Historical conversion rate for this product
-          const conv = conversionMap.get(product.id);
-          const historicalRate = conv ? Number(conv.conversion_rate) : 0.15; // default 15%
-
-          // P_ij = HistoricalRate × (HealthScore/100) × Engagement × (ClusterAdherence + AssocBoost)
+          // P_ij = TaxaArbitrada × (HealthScore/100) × Engagement × (ClusterAdherence + AssocBoost)
           const relevance = clamp(clusterAdherence * 0.4 + assocBoost * 0.6, 0.01, 1.0);
-          const pij = historicalRate * (healthScore / 100) * engagementFactor * relevance;
+          const pij = TAXA_CONVERSAO_CROSS_SELL * (healthScore / 100) * engagementFactor * relevance;
 
           // M_ij = Margin × EstimatedClusterVolume
           const clusterVolume = Math.max(1, Math.round(buyerCount / totalCustomers * 12)); // monthly estimate
           const mij = margin * clusterVolume;
 
-          // Complexity factor from learning data
-          const complexityFactor = conv ? Number(conv.complexity_factor) : 1.0;
-
-          // LIE_ij = P_ij × M_ij × ComplexityFactor
+          // LIE_ij = P_ij × M_ij × FatorComplexidade (constante — ver bloco de premissas)
+          const complexityFactor = FATOR_COMPLEXIDADE;
           const lie = pij * mij * complexityFactor;
 
           if (lie > 0) {
@@ -420,16 +409,13 @@ export const useCrossSellEngine = () => {
             if (premiumPrice <= purchaseData.price * 1.1) continue;
             if (premiumMargin <= currentMargin * 1.2) continue;
 
-            const conv = conversionMap.get(product.id);
-            const historicalRate = conv ? Number(conv.conversion_rate) : 0.10;
-
             // P_ij for up-sell
-            const pij = historicalRate * (healthScore / 100) * engagementFactor * 0.8; // 0.8 = up-sell is harder
+            const pij = TAXA_CONVERSAO_UP_SELL * (healthScore / 100) * engagementFactor * 0.8; // 0.8 = up-sell is harder
 
             // M_ij = (PremiumMargin - CurrentMargin) × CurrentVolume
             const mij = (premiumMargin - currentMargin) * purchaseData.qty;
 
-            const complexityFactor = conv ? Number(conv.complexity_factor) : 1.0;
+            const complexityFactor = FATOR_COMPLEXIDADE;
             const lie = pij * mij * complexityFactor;
 
             if (lie > 0) {
@@ -512,86 +498,18 @@ export const useCrossSellEngine = () => {
   }, [effectiveUserId, isImpersonating]);
 
   // ─── Actions ─────────────────────────────────────────────────────────
-  const markAsOffered = useCallback(async (recId: string) => {
-    await supabase.from('farmer_recommendations')
-      .update({ status: 'ofertado', offered_at: new Date().toISOString() })
-      .eq('id', recId);
-  }, []);
-
-  const markAsAccepted = useCallback(async (recId: string, actualMargin?: number, timeSpent?: number) => {
-    const update: RecommendationUpdate = {
-      status: 'aceito',
-      accepted_at: new Date().toISOString(),
-    };
-    if (actualMargin !== undefined) update.actual_margin = actualMargin;
-    if (timeSpent !== undefined) update.time_spent_seconds = timeSpent;
-
-    await supabase.from('farmer_recommendations').update(update).eq('id', recId);
-
-    // Update category conversion rates (learning)
-    if (actualMargin !== undefined) {
-      const { data: rec } = (await supabase.from('farmer_recommendations')
-        .select('product_id').eq('id', recId).single()) as unknown as { data: { product_id: string } | null };
-      if (rec) {
-        await updateConversionStats(rec.product_id);
-      }
-    }
-  }, []);
-
-  const markAsRejected = useCallback(async (recId: string) => {
-    await supabase.from('farmer_recommendations')
-      .update({ status: 'rejeitado', rejected_at: new Date().toISOString() })
-      .eq('id', recId);
-  }, []);
-
-  // Recalculate conversion stats from historical data
-  const updateConversionStats = async (productId: string) => {
-    const { data: recs } = (await supabase.from('farmer_recommendations')
-      .select('status, actual_margin, time_spent_seconds')
-      .eq('product_id', productId)
-      .in('status', ['aceito', 'rejeitado', 'ofertado'])) as unknown as { data: RecommendationStatsRow[] | null };
-
-    if (!recs?.length) return;
-
-    const offered = recs.filter((r) => ['aceito', 'rejeitado', 'ofertado'].includes(r.status)).length;
-    const accepted = recs.filter((r) => r.status === 'aceito').length;
-    const rate = offered > 0 ? accepted / offered : 0;
-
-    const acceptedRecs = recs.filter((r) => r.status === 'aceito' && r.actual_margin != null);
-    const avgMargin = acceptedRecs.length > 0
-      ? acceptedRecs.reduce((s, r) => s + Number(r.actual_margin), 0) / acceptedRecs.length
-      : 0;
-
-    const withTime = acceptedRecs.filter((r): r is RecommendationStatsRow & { time_spent_seconds: number } => r.time_spent_seconds != null);
-    const avgTime = withTime.length > 0
-      ? Math.round(withTime.reduce((s, r) => s + r.time_spent_seconds, 0) / withTime.length)
-      : 0;
-
-    const profitPerHour = avgTime > 0 ? (avgMargin / (avgTime / 3600)) : 0;
-
-    // Complexity factor: higher profit/hour = lower complexity (easier to sell)
-    const complexity = profitPerHour > 0 ? clamp(1.0 / (1 + Math.log(1 + profitPerHour / 100)), 0.5, 1.5) : 1.0;
-
-    await supabase.from('farmer_category_conversion').upsert({
-      category_id: productId,
-      total_offers: offered,
-      total_accepts: accepted,
-      conversion_rate: Math.round(rate * 1000) / 1000,
-      avg_margin_generated: Math.round(avgMargin * 100) / 100,
-      avg_time_spent_seconds: avgTime,
-      profit_per_hour: Math.round(profitPerHour * 100) / 100,
-      complexity_factor: Math.round(complexity * 1000) / 1000,
-      updated_at: new Date().toISOString(),
-    });
-  };
+  // `markAsOffered` / `markAsAccepted` / `markAsRejected` e o `updateConversionStats`
+  // que gravava `farmer_category_conversion` foram removidos em 2026-07-21: nenhum
+  // componente os importava (só `calculateRecommendations` era consumido), então o
+  // desfecho de uma recomendação nunca chegou a ser registrado — daí as 3.659 linhas
+  // 100% `pendente`. Construir o loop de feedback é decisão de produto e exige mais
+  // que estes métodos (UI de desfecho, margem realizada, `onConflict` correto no
+  // upsert). Desenho preservado em docs/historico/farmer-aprendizado-conversao.md.
 
   return {
     recommendations,
     loading,
     calculating,
     calculateRecommendations,
-    markAsOffered,
-    markAsAccepted,
-    markAsRejected,
   };
 };
