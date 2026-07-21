@@ -184,6 +184,7 @@ BEGIN
   termo_valorado AS (
     SELECT
       t.seq,
+      t.product_id,
       t.coef,
       CASE
         WHEN private.regua_num_finito(pr.valor_unitario) AND pr.valor_unitario > 0
@@ -199,6 +200,7 @@ BEGIN
   termo_margem AS (
     SELECT
       tv.seq,
+      tv.product_id,   -- propagado: a guarda de forma conta DISTINCT product_id
       tv.coef,
       CASE WHEN tv.preco IS NULL OR tv.custo IS NULL THEN NULL
            ELSE tv.preco - tv.custo END AS margem
@@ -209,29 +211,56 @@ BEGIN
       ia.seq,
       ia.i_chave,
       ia.i_grupo,
+      ia.i_tipo,
       ia.i_peso,
       ia.i_fator,
       count(tm.seq)                                    AS n_termos,
+      count(DISTINCT tm.product_id)                    AS n_distintos,
       count(*) FILTER (WHERE tm.margem IS NULL)        AS n_desconhecidos,
       sum(tm.coef * tm.margem)                         AS margem_somada
     FROM item_autorizado ia
     LEFT JOIN termo_margem tm ON tm.seq = ia.seq
-    GROUP BY ia.seq, ia.i_chave, ia.i_grupo, ia.i_peso, ia.i_fator
+    GROUP BY ia.seq, ia.i_chave, ia.i_grupo, ia.i_tipo, ia.i_peso, ia.i_fator
+  ),
+  -- FORMA DO ITEM — esta guarda e o que impede a inversao por combinacao linear.
+  --
+  -- `margem_negativa` responde `SUM(coef * margem) < 0`. Se o caller pudesse REPETIR um produto,
+  -- montaria `[A,B,A,A,...]` em up_sell (coef -1 so na posicao 2) e obteria `k*margem_A - margem_B`
+  -- para qualquer k, testando o sinal ate cercar a RAZAO margem_A/margem_B com precisao 1/k. Uma
+  -- unica ancora de custo conhecido — e os farmers de hoje TEM ancoras, leram a tabela ate agora —
+  -- converte a razao no custo de todo SKU. Bisseccao pela porta dos fundos, sem escolher preco.
+  --
+  -- Por isso: sem repeticao (n_distintos = n_termos), poucos termos, e up_sell com exatamente 2.
+  -- Item malformado sai INELEGIVEL e sem sinal — nao levanta erro, para o caller nao aprender a
+  -- forma da guarda pelo tipo do erro.
+  --
+  -- CTE proprio (e nao a condicao repetida em cada coluna) de proposito: repetida, uma copia
+  -- alterada e as outras esquecidas divergem em silencio.
+  formado AS (
+    SELECT
+      a.*,
+      (
+        a.n_termos > 0
+        AND a.n_termos <= 8
+        AND a.n_distintos = a.n_termos
+        AND (a.i_tipo <> 'up_sell' OR a.n_termos = 2)
+      ) AS forma_ok
+    FROM agregado a
   ),
   calculado AS (
     SELECT
-      a.seq,
-      a.i_chave,
-      a.i_grupo,
+      f.seq,
+      f.i_chave,
+      f.i_grupo,
       -- custo desconhecido em QUALQUER termo contamina o item inteiro: sem custo nao ha
       -- afirmacao possivel sobre a margem do conjunto (degradacao honesta)
-      (a.n_termos > 0 AND a.n_desconhecidos = 0) AS custo_completo,
-      CASE WHEN a.n_termos > 0 AND a.n_desconhecidos = 0
-           THEN a.margem_somada * a.i_peso END AS v_mij,
-      CASE WHEN a.n_termos > 0 AND a.n_desconhecidos = 0
-           THEN a.margem_somada * a.i_peso * a.i_fator END AS v_lie,
-      a.margem_somada
-    FROM agregado a
+      (f.forma_ok AND f.n_desconhecidos = 0) AS custo_completo,
+      CASE WHEN f.forma_ok AND f.n_desconhecidos = 0
+           THEN f.margem_somada * f.i_peso END AS v_mij,
+      CASE WHEN f.forma_ok AND f.n_desconhecidos = 0
+           THEN f.margem_somada * f.i_peso * f.i_fator END AS v_lie,
+      f.margem_somada
+    FROM formado f
   ),
   final AS (
     SELECT

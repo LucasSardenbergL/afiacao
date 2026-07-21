@@ -243,8 +243,17 @@ eq "A6 estrategico RECEBE mij (cap_custo_ler inclui estrategico)" "$(as_user "$E
 # INVARIANTE CENTRAL: esconder o numero NAO pode mudar a decisao. Se a ordem divergisse entre
 # quem ve e quem nao ve o custo, a vendedora receberia um ranking pior que o do master —
 # fechar custo teria custado qualidade de recomendacao, nao so visibilidade.
-eq "A7 a ORDEM e IDENTICA para farmer e master" \
-   "$(as_user "$F" "$Q_ORDEM")" "$(as_user "$M" "$Q_ORDEM")"
+# ⚠️ eq() sozinho aqui e FALSO-VERDE: se a RPC quebrar, farmer e master vem AMBOS vazios e
+# "identico" passa. Aconteceu de verdade nesta sessao (a RPC referenciava uma coluna inexistente,
+# o CREATE passou — plpgsql e late-bound — e este assert foi o UNICO verde no meio de 20 vermelhos).
+# Por isso: comparar E exigir o valor conhecido. Assert de igualdade precisa de ancora, nao so de
+# simetria — e a mesma familia do "controle positivo" dos asserts de negacao.
+A7_F="$(as_user "$F" "$Q_ORDEM")"; A7_M="$(as_user "$M" "$Q_ORDEM")"
+if [ "$A7_F" = "$A7_M" ] && [ "$A7_F" = "c-p1:1,c-p2:2" ]; then
+  ok "A7 a ORDEM e IDENTICA para farmer e master (=$A7_F)"
+else
+  bad "A7 ordem farmer[$A7_F] x master[$A7_M] -- ambas tem de ser 'c-p1:1,c-p2:2' (vazio dos dois lados nao e sucesso)"
+fi
 
 # ausente != zero: P4 sem custo NAO vira margem cheia (era o bug do #1466)
 ITENS_SEMCUSTO="[{\"chave\":\"c-p4\",\"grupo\":\"$C1\",\"tipo\":\"cross_sell\",\"produtos\":[\"aaaaaaaa-0000-0000-0000-000000000004\"],\"peso\":1,\"fator\":1}]"
@@ -290,6 +299,28 @@ eq "A15 gate de carteira: farmer NAO ranqueia cliente de outro" \
    "$(as_user "$F" "SELECT count(*) FROM public.get_ranking_margem('$ITENS_OUTRO'::jsonb);")" "0"
 eq "A15b master (cap_carteira_ler) ranqueia qualquer cliente" \
    "$(as_user "$M" "SELECT count(*) FROM public.get_ranking_margem('$ITENS_OUTRO'::jsonb);")" "1"
+# ─── ANTI-INVERSAO POR COMBINACAO LINEAR ───────────────────────────────────────────────────
+# O ATAQUE, montado de verdade: repetindo o produto A em up_sell (coef -1 so na posicao 2) o
+# caller obtem `k*margem_A - margem_B` e, testando o sinal para k crescente, cerca a razao
+# margem_A/margem_B. Com UMA ancora de custo conhecido isso da o custo de todo SKU.
+# P1 margem 80, P2 margem 30 => 80k - 30 muda de sinal entre k=0 e k=1; com repeticao livre o
+# atacante veria a virada. A guarda tem de recusar o item ANTES de responder.
+ATAQUE_REPET="[{\"chave\":\"atk\",\"grupo\":\"$C1\",\"tipo\":\"up_sell\",\"produtos\":[\"aaaaaaaa-0000-0000-0000-000000000001\",\"aaaaaaaa-0000-0000-0000-000000000002\",\"aaaaaaaa-0000-0000-0000-000000000001\",\"aaaaaaaa-0000-0000-0000-000000000001\"],\"peso\":1,\"fator\":1}]"
+eq "A15e ATAQUE de repeticao: item sai INELEGIVEL" \
+   "$(as_user "$F" "SELECT elegivel FROM public.get_ranking_margem('$ATAQUE_REPET'::jsonb);")" "f"
+eq "A15f ATAQUE de repeticao: SEM sinal de margem (o oraculo cala)" \
+   "$(as_user "$F" "SELECT COALESCE(margem_negativa::text,'NULL') FROM public.get_ranking_margem('$ATAQUE_REPET'::jsonb);")" "NULL"
+eq "A15g ATAQUE de repeticao: nem o master recebe mij (a guarda e de FORMA, nao de capability)" \
+   "$(as_user "$M" "SELECT COALESCE(mij::text,'NULL') FROM public.get_ranking_margem('$ATAQUE_REPET'::jsonb);")" "NULL"
+# up_sell so faz sentido com 2 termos; 3 seria outra forma de montar combinacao
+ATAQUE_UP3="[{\"chave\":\"u3\",\"grupo\":\"$C1\",\"tipo\":\"up_sell\",\"produtos\":[\"aaaaaaaa-0000-0000-0000-000000000001\",\"aaaaaaaa-0000-0000-0000-000000000002\",\"aaaaaaaa-0000-0000-0000-000000000003\"],\"peso\":1,\"fator\":1}]"
+eq "A15h up_sell com 3 termos: recusado" \
+   "$(as_user "$F" "SELECT COALESCE(margem_negativa::text,'NULL') FROM public.get_ranking_margem('$ATAQUE_UP3'::jsonb);")" "NULL"
+# bundle grande: cap de 8 termos
+ATAQUE_9="[{\"chave\":\"b9\",\"grupo\":\"$C1\",\"tipo\":\"bundle\",\"produtos\":[\"aaaaaaaa-0000-0000-0000-000000000001\",\"aaaaaaaa-0000-0000-0000-000000000002\",\"aaaaaaaa-0000-0000-0000-000000000003\",\"aaaaaaaa-0000-0000-0000-000000000004\",\"aaaaaaaa-0000-0000-0000-000000000005\",\"aaaaaaaa-0000-0000-0000-000000000001\",\"aaaaaaaa-0000-0000-0000-000000000002\",\"aaaaaaaa-0000-0000-0000-000000000003\",\"aaaaaaaa-0000-0000-0000-000000000004\"],\"peso\":1,\"fator\":1}]"
+eq "A15i bundle com 9 termos: recusado (cap de 8)" \
+   "$(as_user "$F" "SELECT COALESCE(margem_negativa::text,'NULL') FROM public.get_ranking_margem('$ATAQUE_9'::jsonb);")" "NULL"
+
 # CAP DE TAMANHO. Negativo por SQLSTATE esperada + re-raise: `WHEN OTHERS THEN 'OK'` engoliria
 # ate um erro de digitacao do proprio teste. 5001 itens tem de dar 54000 (program_limit_exceeded).
 CAP_SQL="DO \$t\$ BEGIN PERFORM * FROM public.get_ranking_margem((SELECT jsonb_agg(jsonb_build_object('chave','k'||i,'grupo','$C1','tipo','cross_sell','produtos',jsonb_build_array('aaaaaaaa-0000-0000-0000-000000000001'),'peso',1,'fator',1)) FROM generate_series(1,5001) i)); RAISE EXCEPTION 'NAO_BARROU'; EXCEPTION WHEN program_limit_exceeded THEN RAISE NOTICE 'esperado'; WHEN OTHERS THEN RAISE; END \$t\$;"
@@ -436,12 +467,40 @@ falsifica "S9 cap de itens removido: A15c tem de cair" \
   'as_user "$F" "SELECT count(*) FROM public.get_ranking_margem((SELECT jsonb_agg(jsonb_build_object('"'"'chave'"'"','"'"'k'"'"')) FROM generate_series(1,5001) i));"' "1"
 P -q -f "$MIG_RPC" >/dev/null
 
+# S10: a guarda de forma removida -> A15e cai e o ORACULO DE INVERSAO reabre. Sabota exatamente
+#      o predicado (n_distintos = n_termos + up_sell com 2), nao um efeito correlato.
+#
+# ⚠️ Aplicada por ARQUIVO (-f), nao por -c com o SQL colapsado em uma linha: `tr '\n' ' '` faz os
+#    comentarios `--` comentarem o resto do arquivo, e a sabotagem "aplica" com exit 0 sem mudar
+#    NADA — o assert segue verde e a falsificacao vira teatro. Mordido nesta sessao; e a irma do
+#    `psql -c` que descarta o heredoc em silencio (money-path.md).
+echo "  --- S10: guarda de repeticao removida ---"
+SAB10="$(dirname "$DATA")/sab10.sql"
+sed -e 's/AND a\.n_distintos = a\.n_termos//' \
+    -e "s/AND (a\.i_tipo <> 'up_sell' OR a\.n_termos = 2)//" "$MIG_RPC" > "$SAB10"
+# a sabotagem tem de MUDAR o arquivo -- senao o sed nao casou e S10 mede a funcao original
+if cmp -s "$MIG_RPC" "$SAB10"; then
+  echo "  FAIL [S10] o sed nao alterou nada -- a sabotagem nao foi aplicada"
+  FAIL=$((FAIL+1))
+else
+  P -q -f "$SAB10" >/dev/null 2>&1
+  S10_GOT="$(as_user "$F" "SELECT elegivel FROM public.get_ranking_margem('$ATAQUE_REPET'::jsonb);")"
+  if [ "$S10_GOT" = "t" ]; then
+    echo "  OK   [S10] o assert FICOU VERMELHO (veio [t]: sem a guarda o ataque de repeticao PASSA)"
+    FALS=$((FALS+1))
+  else
+    echo "  FAIL [S10] o assert NAO reagiu -- veio [$S10_GOT], esperava [t]"
+    FAIL=$((FAIL+1))
+  fi
+fi
+P -q -f "$MIG_RPC" >/dev/null
+
 echo
 echo "=== TOTAL: ${PASS} asserts de baseline, ${FALS} falsificacoes, ${FAIL} falhas ==="
 # fail-closed na COBERTURA (licao P3 do #1488): mudar o numero de asserts ou de falsificacoes
 # obriga a atualizar estes literais conscientemente, senao remover um assert passa despercebido.
-ESPERADO_PASS=40
-ESPERADO_FALS=9
+ESPERADO_PASS=45
+ESPERADO_FALS=10
 if [ "$PASS" -ne "$ESPERADO_PASS" ]; then
   echo "COBERTURA MUDOU: esperava $ESPERADO_PASS asserts, contei $PASS -- atualize o literal conscientemente"
   FAIL=$((FAIL+1))
