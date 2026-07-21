@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 423
+-- Total de custom migrations: 427
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -457,14 +457,18 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260723140000', 'authz_custo_fu4f_fase1', '20260723140000_authz_custo_fu4f_fase1.sql'),
   ('20260723140000', 'authz_pedido_compra_item_cap_compras', '20260723140000_authz_pedido_compra_item_cap_compras.sql'),
   ('20260723150000', 'authz_custo_fu4f_fase2_regua', '20260723150000_authz_custo_fu4f_fase2_regua.sql'),
+  ('20260723150000', 'farmer_margem_server_side', '20260723150000_farmer_margem_server_side.sql'),
   ('20260723160000', 'authz_fu4e_is_not_true_escritas', '20260723160000_authz_fu4e_is_not_true_escritas.sql'),
+  ('20260723160000', 'farmer_margem_correcoes_review', '20260723160000_farmer_margem_correcoes_review.sql'),
   ('20260724120000', 'authz_sales_orders_split_escrita_fu4', '20260724120000_authz_sales_orders_split_escrita_fu4.sql'),
   ('20260724130000', 'authz_custo_fu4f_fase3_recommend', '20260724130000_authz_custo_fu4f_fase3_recommend.sql'),
   ('20260724130000', 'tint_canonica_csv_legado_allowlist', '20260724130000_tint_canonica_csv_legado_allowlist.sql'),
   ('20260726120000', 'tint_promote_error_details_completo', '20260726120000_tint_promote_error_details_completo.sql'),
   ('20260726120001', 'cron_tactical_plans_batch_nightly', '20260726120001_cron_tactical_plans_batch_nightly.sql'),
   ('20260726130000', 'vendas_sync_semear_janela', '20260726130000_vendas_sync_semear_janela.sql'),
-  ('20260726140000', 'vendas_sync_semear_janela_v2', '20260726140000_vendas_sync_semear_janela_v2.sql')
+  ('20260726140000', 'vendas_sync_semear_janela_v2', '20260726140000_vendas_sync_semear_janela_v2.sql'),
+  ('20260726150000', 'margem_cliente_helper_compartilhado', '20260726150000_margem_cliente_helper_compartilhado.sql'),
+  ('20260726160000', 'tint_canonica_piso_legado', '20260726160000_tint_canonica_piso_legado.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -1924,6 +1928,9 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('authz_custo_fu4f_fase2_regua', 'function', 'public', 'registrar_exibicao_regua', ''),
   ('authz_custo_fu4f_fase2_regua', 'function', 'public', 'registrar_aplicacao_regua', ''),
   ('authz_custo_fu4f_fase2_regua', 'rls_policy', 'public', 'regua_preco_log_select_custo', 'regua_preco_log'),
+  ('farmer_margem_server_side', 'function', 'public', 'get_customer_margin_summary', ''),
+  ('farmer_margem_server_side', 'function', 'public', 'apply_score_updates', ''),
+  ('farmer_margem_correcoes_review', 'function', 'public', 'apply_score_updates', ''),
   ('authz_sales_orders_split_escrita_fu4', 'function', 'private', 'cap_pedido_escrever', ''),
   ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'sales_orders_select_staff', 'sales_orders'),
   ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'sales_orders_select_customer', 'sales_orders'),
@@ -1940,7 +1947,10 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('tint_promote_error_details_completo', 'function', 'public', 'tint_promote_sync_run', ''),
   ('cron_tactical_plans_batch_nightly', 'cron_job', 'cron', 'tactical-plans-batch-nightly', ''),
   ('vendas_sync_semear_janela', 'function', 'public', 'vendas_sync_semear_janela', ''),
-  ('vendas_sync_semear_janela_v2', 'function', 'public', 'vendas_sync_semear_janela', '')
+  ('vendas_sync_semear_janela_v2', 'function', 'public', 'vendas_sync_semear_janela', ''),
+  ('margem_cliente_helper_compartilhado', 'function', 'private', 'margem_cliente_agregada', ''),
+  ('tint_canonica_piso_legado', 'function', 'public', 'tint_gate_revalida', ''),
+  ('tint_canonica_piso_legado', 'view', 'public', 'v_tint_formula_canonica', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -3448,6 +3458,9 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('authz_custo_fu4f_fase2_regua', 'function', 'public', 'registrar_exibicao_regua', ''),
   ('authz_custo_fu4f_fase2_regua', 'function', 'public', 'registrar_aplicacao_regua', ''),
   ('authz_custo_fu4f_fase2_regua', 'rls_policy', 'public', 'regua_preco_log_select_custo', 'regua_preco_log'),
+  ('farmer_margem_server_side', 'function', 'public', 'get_customer_margin_summary', ''),
+  ('farmer_margem_server_side', 'function', 'public', 'apply_score_updates', ''),
+  ('farmer_margem_correcoes_review', 'function', 'public', 'apply_score_updates', ''),
   ('authz_sales_orders_split_escrita_fu4', 'function', 'private', 'cap_pedido_escrever', ''),
   ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'sales_orders_select_staff', 'sales_orders'),
   ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'sales_orders_select_customer', 'sales_orders'),
@@ -3464,7 +3477,10 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('tint_promote_error_details_completo', 'function', 'public', 'tint_promote_sync_run', ''),
   ('cron_tactical_plans_batch_nightly', 'cron_job', 'cron', 'tactical-plans-batch-nightly', ''),
   ('vendas_sync_semear_janela', 'function', 'public', 'vendas_sync_semear_janela', ''),
-  ('vendas_sync_semear_janela_v2', 'function', 'public', 'vendas_sync_semear_janela', '')
+  ('vendas_sync_semear_janela_v2', 'function', 'public', 'vendas_sync_semear_janela', ''),
+  ('margem_cliente_helper_compartilhado', 'function', 'private', 'margem_cliente_agregada', ''),
+  ('tint_canonica_piso_legado', 'function', 'public', 'tint_gate_revalida', ''),
+  ('tint_canonica_piso_legado', 'view', 'public', 'v_tint_formula_canonica', '')
 )
 SELECT
   e.migration,
