@@ -35,9 +35,9 @@ BEGIN
   END IF;
 
   -- consumidor 1 e 2: useCrossSellEngine + useBundleEngine (PR-B, migration 20260725120000)
-  IF to_regprocedure('public.get_ranking_margem(jsonb)') IS NULL THEN
+  IF to_regprocedure('public.get_skus_margem_positiva()') IS NULL THEN
     RAISE EXCEPTION
-      'precondicao FALHOU: public.get_ranking_margem(jsonb) ausente. Aplique 20260725120000 ANTES — sem ela, fechar product_costs deixa cross-sell e bundles com lista VAZIA (os engines excluem SKU sem custo).';
+      'precondicao FALHOU: public.get_skus_margem_positiva() ausente. Aplique 20260725120000 ANTES — sem ela, fechar product_costs deixa cross-sell e bundles com lista VAZIA (os engines excluem SKU sem custo).';
   END IF;
 
   -- consumidor 3: useFarmerScoring (frente irmã — spec 2026-07-20-fechamento-custo-farmer-scoring-design.md).
