@@ -81,7 +81,7 @@ const FarmerRecommendations = () => {
         <Card><CardContent className="p-3 text-center">
           <DollarSign className="w-4 h-4 mx-auto mb-1 text-primary" />
           <p className="text-lg font-bold text-primary">{fmt(totalLIE)}</p>
-          <p className="text-[10px] text-muted-foreground">EIP Total</p>
+          <p className="text-[10px] text-muted-foreground">EIP Total (estimativa)</p>
         </CardContent></Card>
         <Card><CardContent className="p-3 text-center">
           <ShoppingCart className="w-4 h-4 mx-auto mb-1 text-status-info" />
@@ -94,6 +94,16 @@ const FarmerRecommendations = () => {
           <p className="text-[10px] text-muted-foreground">Up-sell</p>
         </CardContent></Card>
       </div>
+
+      {/* O EIP usa taxa de conversão ARBITRADA (15% cross-sell / 10% up-sell), não medida:
+          o desfecho das recomendações nunca foi registrado, então não há histórico para
+          calibrar. Como a taxa é a mesma para todo produto, a ORDEM do ranking é confiável
+          — o valor em R$ não é previsão de receita. Ver docs/historico/farmer-aprendizado-conversao.md */}
+      <p className="text-[10px] text-muted-foreground leading-relaxed">
+        O EIP usa taxa de conversão fixa, ainda não calibrada com histórico real. Use-o para{' '}
+        <strong className="font-medium">priorizar</strong> — a ordem é confiável; o valor em R$ é
+        estimativa, não previsão de receita.
+      </p>
 
       {/* Search + Filters */}
       <div className="flex items-center gap-2">
