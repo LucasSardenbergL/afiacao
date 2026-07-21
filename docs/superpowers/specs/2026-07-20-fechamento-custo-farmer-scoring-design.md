@@ -130,11 +130,31 @@ caso contrário             → verde     / saudavel
 a população mudasse sem ele fazer nada. O limiar fixo é estável (a faixa só muda se o comportamento
 do cliente mudar) e explicável para a vendedora.
 
-⚠️ **PENDENTE — os dois valores-semente não estão medidos.** A query de calibragem
-(distribuição real de margem por cliente: p10/p25/mediana/p90 + contagem de margem negativa) não
-completou nesta sessão por indisponibilidade das ferramentas de execução. **Rodar antes de fixar os
-números na migration** — semear limiar por intuição no money-path é fabricar número. A query está
-montada e usa `order_items.product_id → product_costs.product_id` com `NULLIF(...,'NaN')`.
+**Valores-semente propostos: `piso = 30`, `meta = 50`.** Medidos em prod (2026-07-20), não
+escolhidos por intuição — distribuição real da margem por cliente sobre **746 clientes** com margem
+calculável:
+
+| p10 | p25 | mediana | p75 | p90 | margem negativa |
+|---|---|---|---|---|---|
+| 24,8% | 37,7% | 52,9% | 65,4% | 73,5% | 7 clientes |
+
+Com piso 30 / meta 50, a carteira se distribui assim:
+
+| faixa | clientes | % |
+|---|---|---|
+| `vermelho` (margem < 0) | 7 | 1% |
+| `amarelo` (0–30%) | 107 | 14% |
+| `verde` / `abaixo_da_meta` (30–50%) | 229 | 31% |
+| `verde` / `saudavel` (≥50%) | 403 | 54% |
+
+~15% da carteira pedindo atenção é uma proporção acionável (nem alarme constante, nem tudo verde).
+Como são linhas de `farmer_algorithm_config`, mudar os limiares é um `UPDATE`, não um deploy.
+
+**Cobertura da faixa** (medida): dos 6.632 registros de `farmer_client_scores`, apenas **854 clientes
+têm pedido** nos 3 status — o resto são linhas sem compra (inclui os ~1.459 clones/aliases fiscais
+documentados em `database.md` §5). Desses 854, **746 recebem faixa real (87%)** e **108 caem em
+`neutro`**. A lacuna 6.632→854 não é falha de cobertura; é a tabela de scores conter clientes que
+nunca compraram.
 
 ### 3.2 Mudança no hook
 
@@ -177,13 +197,18 @@ A RPC recalcula server-side o que o hook calcula client-side. Divergência aqui 
 (o próprio `get_preco_cockpit` testa `<> 'NaN'::numeric`) — o SQL precisa excluí-lo, senão a paridade
 quebra exatamente onde ninguém olha.
 
-⚠️ **Dois caminhos de JOIN, e o atalho é uma armadilha de paridade.** `order_items` tem
-`product_id` **direto** (colunas reais: `id, sales_order_id, customer_user_id, product_id,
+⚠️ **O atalho do JOIN está DESCARTADO por medição — a RPC segue o caminho do hook.** `order_items`
+tem `product_id` **direto** (colunas reais: `id, sales_order_id, customer_user_id, product_id,
 omie_codigo_produto, quantity, unit_price, discount, created_at, hash_payload`), então o SQL
-*poderia* ir direto a `product_costs.product_id`. Mas o hook chega lá por
-`omie_codigo_produto → omie_products.id`. Os dois caminhos **só** coincidem se `order_items.product_id`
-for sempre não-nulo e sempre igual ao mapeamento — não medido. **Medir antes de escolher**; se
-divergirem, a RPC segue o caminho do hook (paridade manda), não o atalho.
+*poderia* ir direto a `product_costs.product_id`. Medido em prod: dos **68.459** itens, **1.835 têm
+`product_id` NULL** (2,7%) e **zero** têm `omie_codigo_produto` NULL. O hook chega ao custo por
+`omie_codigo_produto → omie_products.id`, que cobre **100%** dos itens; o atalho **descartaria 1.835
+itens em silêncio**, mudando a margem dos clientes afetados.
+
+⇒ **A RPC usa `omie_codigo_produto → omie_products.id → product_costs.product_id`.** Não é
+preferência estilística: é a diferença entre paridade e uma divergência de 2,7% que nenhum teste de
+"a RPC funciona" pegaria. Custou uma rodada de calibragem — a primeira medição desta spec usou o
+atalho e perdeu 2 clientes inteiros além de distorcer percentis.
 
 ⚠️ **Duplicação de JOIN — medida, não suposta.** O `database.md` avisa que
 *"`omie_products.account` é convenção EMPRESA; JOIN account-blind em RPC money-path duplica
