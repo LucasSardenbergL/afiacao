@@ -4,6 +4,7 @@ import type { Json } from '@/integrations/supabase/types';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { toast } from 'sonner';
 import { custoCanonico } from '@/lib/custo/custoCanonico';
+import { margemConhecida } from '@/lib/scoring/margin';
 import { fetchAllPages } from '@/lib/postgrest';
 
 // ─── Types ───────────────────────────────────────────────────────────
@@ -47,7 +48,9 @@ export interface CustomerBundles {
   bundles: BundleRecommendation[];
   bestIndividual: IndividualComparison | null;
   avgMonthlySpend: number;
-  grossMarginPct: number;
+  /** `null` = margem não apurada. NÃO trocar por 0: 0 classifica o cliente como "sensível a
+   *  preço" via `classifyCustomerProfile`, um veredito que a ausência de dado não sustenta. */
+  grossMarginPct: number | null;
   categoryCount: number;
   daysSinceLastPurchase: number;
   cnae: string;
@@ -528,7 +531,7 @@ export const useBundleEngine = () => {
             bundles: topBundles,
             bestIndividual,
             avgMonthlySpend: Number(score.avg_monthly_spend_180d || 0),
-            grossMarginPct: Number(score.gross_margin_pct || 0),
+            grossMarginPct: margemConhecida(score.gross_margin_pct),
             categoryCount: Number(score.category_count || 0),
             daysSinceLastPurchase: Number(score.days_since_last_purchase || 0),
             cnae: profile.cnae || '',

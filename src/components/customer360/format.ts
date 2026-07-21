@@ -8,15 +8,23 @@ export function formatBRL(v: number | null | undefined): string {
   return BRL.format(v);
 }
 
+/**
+ * Percentual a partir de valor cuja unidade é AMBÍGUA (fração 0–1 ou percentual 0–100), decidida
+ * pela heurística `v > 1`. Usado onde a origem é fração — ex.: `MinhasVisitasResultadoCard`.
+ *
+ * ⚠️ NÃO use para margem: veja `formatMargemPct` em `@/lib/format`. A heurística erra em dois casos que a margem
+ * produz de verdade — margem menor que 1% (0,5 vira "50%") e margem NEGATIVA (−143,22, o mínimo
+ * medido em prod, não passa no `> 1` e vira "−14322%").
+ */
 export function formatPctMaybe(v: number | null | undefined): string {
   if (v === null || v === undefined || Number.isNaN(v)) return '—';
-  // Schema: gross_margin_pct vem como número (ex: 0.32 ou 32 — normalizamos)
   const pct = v > 1 ? v : v * 100;
   // Zero sem decimal ("0%" em vez de "0.0%"); outros valores com 1 decimal só se houver fração.
   if (pct === 0) return '0%';
   const rounded = Math.round(pct);
   return Math.abs(pct - rounded) < 0.05 ? `${rounded}%` : `${pct.toFixed(1)}%`;
 }
+
 
 /**
  * Profiles tem campo `email` text livre. Sincronização do Omie costuma concatenar

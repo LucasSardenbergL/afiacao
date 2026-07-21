@@ -10,9 +10,10 @@ import { CallButton } from '@/components/call/CallButton';
 import { AgendarVisitaDialog } from '@/components/visitas/AgendarVisitaDialog';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
+import { formatMargemPct } from '@/lib/format';
 import { whatsappLink } from '@/lib/phone';
 import {
-  formatPctMaybe, formatDateOrDash, initials, healthTone, churnTone, formatDocument,
+  formatDateOrDash, initials, healthTone, churnTone, formatDocument,
 } from './format';
 import type { Customer, CustomerScore } from './viewTypes';
 
@@ -138,15 +139,19 @@ export function CustomerHero({
                 <span
                   className={cn(
                     'inline-flex items-center gap-1.5 px-2 py-1 rounded-md border',
-                    s.gross_margin_pct >= 0.3
+                    // Limiares em PERCENTUAL (30 / 15), não em fração (0.3 / 0.15): a coluna é
+                    // percentual, como useTacticalPlan e useBundleArguments já assumem. Com 0.3 a
+                    // faixa nunca discriminava — qualquer margem real (ex.: 53,47) passa de 0.3 e
+                    // tudo ficava verde. Enquanto a coluna era 0 em toda a base isso não aparecia.
+                    s.gross_margin_pct >= 30
                       ? 'bg-status-success-bg text-status-success-bold border-status-success/20'
-                      : s.gross_margin_pct >= 0.15
+                      : s.gross_margin_pct >= 15
                         ? 'bg-status-warning-bg text-status-warning-bold border-status-warning/20'
                         : 'bg-status-error-bg text-status-error-bold border-status-error/20',
                   )}
                 >
                   <Activity className="w-3 h-3" />
-                  {formatPctMaybe(s.gross_margin_pct)} margem
+                  {formatMargemPct(s.gross_margin_pct)} margem
                 </span>
               )}
             </div>

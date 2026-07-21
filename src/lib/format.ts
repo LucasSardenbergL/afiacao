@@ -50,3 +50,23 @@ export function decodeHtmlEntities(text: string | null | undefined): string {
   el.innerHTML = text;
   return el.value;
 }
+
+/**
+ * Margem bruta em PERCENTUAL (0–100, negativos válidos), sem adivinhar unidade.
+ *
+ * `farmer_client_scores.gross_margin_pct` é percentual — é a convenção de `useTacticalPlan`
+ * (`marginPct / 100`), `useBundleArguments` (compara com 20 e 35), das abas de Intelligence e da
+ * própria `get_customer_margin_summary` (`round(… * 100, 2)`). Enquanto a coluna valia 0 em 100%
+ * das linhas, nenhuma divergência de unidade aparecia; com a margem calculada no servidor, aparece.
+ *
+ * ⚠️ NÃO use `formatPctMaybe` (de components/customer360/format) para margem: a heurística
+ * `v > 1 ? v : v * 100` de lá erra em dois casos que a margem produz de verdade — margem abaixo de
+ * 1% (0,5 vira "50%") e margem NEGATIVA (−143,22, o mínimo medido em prod, vira "−14322%").
+ *
+ * `null` → "—" (não medida), nunca "0%", que afirmaria margem nula apurada.
+ */
+export function formatMargemPct(v: number | null | undefined): string {
+  if (v === null || v === undefined || Number.isNaN(v)) return '—';
+  const rounded = Math.round(v);
+  return Math.abs(v - rounded) < 0.05 ? `${rounded}%` : `${v.toFixed(1)}%`;
+}

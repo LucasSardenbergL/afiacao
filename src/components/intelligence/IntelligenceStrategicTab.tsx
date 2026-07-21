@@ -9,6 +9,7 @@ import {
   BarChart3, PieChart, ShieldCheck, RefreshCw
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { mediaMargensConhecidas } from '@/lib/scoring/margin';
 import { KpiCard } from './KpiCard';
 
 export function IntelligenceStrategicTab() {
@@ -104,9 +105,10 @@ export function IntelligenceStrategicTab() {
   const estimatedMarket = Math.max(uniqueCustomers * 3, 100);
   const marketSharePct = (uniqueCustomers / estimatedMarket * 100);
 
-  const avgGrossMargin = allScores?.length
-    ? allScores.reduce((a, c) => a + Number(c.gross_margin_pct || 0), 0) / allScores.length
-    : 0;
+  // Só as margens conhecidas entram na média (numerador E denominador). Com `|| 0`, cliente sem
+  // margem apurada entrava como 0 — e como esse é o caso da maioria da base desde o cálculo
+  // server-side, o KPI estratégico viraria uma medida de cobertura de custo disfarçada de margem.
+  const avgGrossMargin = mediaMargensConhecidas((allScores ?? []).map(c => c.gross_margin_pct));
 
   const [runningAlgoA, setRunningAlgoA] = useState(false);
   const runAlgoA = async () => {
@@ -153,7 +155,7 @@ export function IntelligenceStrategicTab() {
         <KpiCard title="LTV Projetado (3a)" value={`R$ ${ltvEstimate.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}`} icon={BarChart3} subtitle="Estimativa média" />
         <KpiCard title="CAC Estimado" value={`R$ ${cacEstimate.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}`} icon={DollarSign} subtitle="Custo aquisição cliente" />
         <KpiCard title="Concentração Top 20%" value={`${concentrationPct.toFixed(1)}%`} icon={PieChart} subtitle="da receita total" />
-        <KpiCard title="Margem Bruta Média" value={`${avgGrossMargin.toFixed(1)}%`} icon={Percent} />
+        <KpiCard title="Margem Bruta Média" value={avgGrossMargin == null ? '—' : `${avgGrossMargin.toFixed(1)}%`} icon={Percent} />
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">

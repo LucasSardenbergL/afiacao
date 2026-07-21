@@ -1,3 +1,45 @@
+/**
+ * Margem utilizável, ou `null` se desconhecida.
+ *
+ * `farmer_client_scores.gross_margin_pct` era `0` LITERAL em 6.632/6.632 linhas (com
+ * `column_default = 0`), então `?? 0` e `|| 0` nunca disparavam e o problema ficava invisível.
+ * Com a margem calculada no servidor (#1495), **5.579 de 6.632 linhas (84,1%) passam a ser
+ * `NULL`** — e aí cada `|| 0` vira uma afirmação de negócio sobre a maioria da base.
+ *
+ * ⚠️ `0` é CONHECIDO (margem nula apurada, um veredito: "cliente não-lucrativo"). Só
+ * null/undefined/NaN/Infinity são ausência. Confundir os dois é o erro que este helper existe
+ * para impedir.
+ *
+ * ⚠️ Em comparação relacional o guard é obrigatório: `null < 20` é `true` em JS (null coage a
+ * 0), então `if (margem < 20)` sem checar null classifica como "margem baixa" justamente quem
+ * não foi medido.
+ *
+ * Espelhado em `supabase/functions/_shared/tactical-margem.ts` (Deno não importa de `src/`).
+ */
+export function margemConhecida(raw: unknown): number | null {
+  if (raw == null) return null;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Média das margens conhecidas, ou `null` se nenhuma for conhecida.
+ *
+ * Existe como função própria porque a forma errada é sedutora: filtrar o numerador e esquecer
+ * o denominador (`soma(conhecidas) / total`) devolve um número plausível e sistematicamente
+ * baixo — pior que um erro visível, porque não parece errado. Aqui numerador e denominador
+ * saem da MESMA lista filtrada.
+ */
+export function mediaMargensConhecidas(valores: Iterable<unknown>): number | null {
+  const conhecidas: number[] = [];
+  for (const v of valores) {
+    const m = margemConhecida(v);
+    if (m != null) conhecidas.push(m);
+  }
+  if (conhecidas.length === 0) return null;
+  return conhecidas.reduce((s, m) => s + m, 0) / conhecidas.length;
+}
+
 interface MarginItem {
   product_id?: string;
   omie_codigo_produto?: number | string;
