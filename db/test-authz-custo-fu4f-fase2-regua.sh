@@ -287,7 +287,14 @@ BASE_ALIQ=$(as_user "$F" "SELECT (public.get_regua_preco('$CLI','$PRD',10))->>'a
 P -q -c "INSERT INTO public.regua_preco_log(account,customer_user_id,product_id,salesperson_id,preco_atual,sinal_exibido,confianca,piso_mc,cmc_usado)
          VALUES ('oben','$CLI','$PRD','$F',12.00,'piso','alta',13.4490,12.40);"
 BASE_LOG=$(as_user "$F" "SELECT count(*) FROM public.regua_preco_log;")
-echo "baseline pré-migration: farmer vê cmc=$BASE_CMC piso_mc=$BASE_PISO aliquota=$BASE_ALIQ · lê log=$BASE_LOG linha(s)"
+# ⚠️ O DETECTOR do A1 precisa enxergar a função VIVA agora — senão ele "detecta" a morte dela
+# depois por estar quebrado, não por ela ter morrido. Foi exatamente o que aconteceu: a versão
+# anterior comparava a lista de argumentos do catálogo com uma string SEM os nomes dos parâmetros,
+# nunca casava, e o A1 passava mesmo com a função de 3 args viva.
+BASE_DETECTOR=$(Pq -c "SELECT coalesce(to_regprocedure('public.get_regua_preco(uuid,uuid,numeric)')::text,'MORTA');" | tail -1)
+[ "$BASE_DETECTOR" = "get_regua_preco(uuid,uuid,numeric)" ] || {
+  echo "❌ baseline inválido: o detector do A1 não enxerga a função de 3 args VIVA (veio [$BASE_DETECTOR]) — o assert seria falso-verde"; exit 1; }
+echo "baseline pré-migration: farmer vê cmc=$BASE_CMC piso_mc=$BASE_PISO aliquota=$BASE_ALIQ · lê log=$BASE_LOG linha(s) · detector A1 vê [$BASE_DETECTOR]"
 [ "$BASE_CMC" = "12.40" ] || { echo "❌ baseline inválido: farmer devia ver cmc=12.40 ANTES (veio [$BASE_CMC])"; exit 1; }
 [ "$BASE_PISO" = "13.4490" ] || { echo "❌ baseline inválido: piso_mc esperado 13.4490 (veio [$BASE_PISO])"; exit 1; }
 [ "$BASE_LOG" = "1" ] || { echo "❌ baseline inválido: farmer devia LER o log ANTES (veio [$BASE_LOG])"; exit 1; }
@@ -306,7 +313,7 @@ if P -q -f "$MIG" >/dev/null 2>&1; then ok "A0 idempotente — 2ª aplicação p
 # ══════════════════════════════════════════════════════════════════════════════
 echo "── estrutura: a assinatura velha morreu ──"
 eq "A1 get_regua_preco(uuid,uuid,numeric) NÃO existe mais" \
-   "$(Pq -c "SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname='get_regua_preco' AND pg_get_function_identity_arguments(p.oid)='uuid, uuid, numeric';")" "0"
+   "$(Pq -c "SELECT coalesce(to_regprocedure('public.get_regua_preco(uuid,uuid,numeric)')::text,'MORTA');" | tail -1)" "MORTA"
 eq "A2 existe EXATAMENTE 1 get_regua_preco (sem overload)" \
    "$(Pq -c "SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname='get_regua_preco';")" "1"
 
@@ -597,6 +604,37 @@ fals "F1 assinatura de 3 args ressuscitada (vs A1/A3)" \
      "$(as_user "$F" "SELECT (public.get_regua_preco('$CLI','$PRD',10))->>'cmc';")" "12.40"
 P -q -c "DROP FUNCTION public.get_regua_preco(uuid,uuid,numeric);"
 
+# F8 — o A1 quebrado passava com a função VIVA. Esta sabotagem ressuscita a de 3 args e exige que
+#      o PREDICADO do A1 a enxergue. É a falsificação que faltava: F1 media o vazamento por outro
+#      caminho (->>'cmc'), então o detector nunca era exercido contra o mundo que ele deve detectar.
+P -q <<'SQL'
+CREATE FUNCTION public.get_regua_preco(p_customer uuid, p_product uuid, p_qty numeric)
+RETURNS jsonb LANGUAGE sql SECURITY DEFINER SET search_path TO 'public' AS $f$ SELECT '{}'::jsonb $f$;
+SQL
+fals "F8 detector do A1 enxerga a de 3 args ressuscitada (vs A1)" \
+     "$(Pq -c "SELECT coalesce(to_regprocedure('public.get_regua_preco(uuid,uuid,numeric)')::text,'MORTA');" | tail -1)" \
+     "get_regua_preco(uuid,uuid,numeric)"
+P -q -c "DROP FUNCTION public.get_regua_preco(uuid,uuid,numeric);"
+
+# F9 — a prova FINAL do A1: aplica a migration com o DROP REMOVIDO, com a função de 3 args viva.
+#      O A1 tem de ABORTAR a transação inteira. F8 provou que o predicado enxerga; este prova que
+#      o assert MORDE. Sem ele, "o predicado funciona" e "o assert protege" seriam duas crenças
+#      diferentes — e foi justamente a segunda que estava falsa antes.
+MIG_SABOTADA="$(mktemp /tmp/mig-sem-drop.XXXXXX.sql)"
+grep -v "^DROP FUNCTION IF EXISTS public.get_regua_preco(uuid, uuid, numeric);$" "$MIG" > "$MIG_SABOTADA"
+P -q <<'SQL'
+CREATE FUNCTION public.get_regua_preco(p_customer uuid, p_product uuid, p_qty numeric)
+RETURNS jsonb LANGUAGE sql SECURITY DEFINER SET search_path TO 'public' AS $f$ SELECT '{}'::jsonb $f$;
+SQL
+if P -q -f "$MIG_SABOTADA" >/dev/null 2>&1; then
+  fals "F9 migration SEM o DROP aplica assim mesmo (A1 não morde)" "aplicou" "ABORTOU"
+else
+  fals "F9 migration SEM o DROP é ABORTADA pelo A1" "ABORTOU" "ABORTOU"
+fi
+rm -f "$MIG_SABOTADA"
+P -q -c "DROP FUNCTION IF EXISTS public.get_regua_preco(uuid,uuid,numeric);"
+P -q -f "$MIG" >/dev/null   # restaura o estado verdadeiro
+
 # F2 — piso_mc emitido SEM o gate v_pode_num: o farmer volta a ver EXATAMENTE 13.4490.
 P -q <<'SQL'
 CREATE OR REPLACE FUNCTION public.get_regua_preco(
@@ -720,7 +758,7 @@ echo "  falsificação: $FALS_OK derrubaram / $FALS_BAD não reproduziram"
 # sabotagem mantém o harness verde — o teste degradaria em silêncio, que é o modo de falha que
 # este arquivo inteiro existe para impedir. Mudou o número de asserts? Atualize AQUI, conscientemente.
 PASS_ESPERADO=62
-FALS_ESPERADO=8
+FALS_ESPERADO=10
 echo "──────────────────────────────"
 echo "RESULTADO: $PASS ok / $FAIL fail · falsificações: $FALS_OK"
 [ "$PASS" = "$PASS_ESPERADO" ] || { echo "❌ COBERTURA MUDOU: $PASS asserts, esperado $PASS_ESPERADO"; FAIL=$((FAIL+1)); }

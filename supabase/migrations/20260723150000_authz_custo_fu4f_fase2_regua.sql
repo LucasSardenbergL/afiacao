@@ -98,10 +98,12 @@ BEGIN
   -- que foi medida (fetcher que devolve 'cmc'). Se alguém a reescreveu no meio tempo, o
   -- CREATE OR REPLACE abaixo apagaria o trabalho dele em silêncio — aborta e obriga a reconciliar.
   -- Na 2ª aplicação a de 3 args não existe mais e este bloco é pulado (idempotência).
-  SELECT pg_get_functiondef(p.oid) INTO v_def
-    FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-   WHERE n.nspname='public' AND p.proname='get_regua_preco'
-     AND pg_get_function_identity_arguments(p.oid) = 'uuid, uuid, numeric';
+  -- ⚠️ `to_regprocedure`, e NÃO comparar a lista de argumentos com uma string sem nomes: a lista
+  -- que o catálogo devolve INCLUI os nomes dos parâmetros ("p_customer uuid, p_product uuid,
+  -- p_qty numeric"), então a comparação anterior nunca casava e este pré-check pulava em SILÊNCIO.
+  -- Medido no PG17 e confirmado contra a PROD. `to_regprocedure` devolve NULL quando ausente
+  -- (não levanta erro), que é exatamente o que um teste de existência precisa.
+  SELECT pg_get_functiondef(to_regprocedure('public.get_regua_preco(uuid,uuid,numeric)')) INTO v_def;
   IF v_def IS NOT NULL AND v_def !~ '''cmc''\s*,\s*v_cmc' THEN
     RAISE EXCEPTION 'FU4-F2: get_regua_preco(uuid,uuid,numeric) divergente do medido em 2026-07-20 — reconcilie antes de reescrever'
       USING ERRCODE = 'raise_exception';
@@ -660,11 +662,14 @@ DECLARE v_n int; v_qual text; v_def text; v_code text;
 BEGIN
   -- A1: a de 3 args MORREU. É o assert mais importante do bloco: viva, ela devolve `cmc` e nada
   -- mais nesta migration importa.
-  IF EXISTS (
-    SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
-     WHERE n.nspname='public' AND p.proname='get_regua_preco'
-       AND pg_get_function_identity_arguments(p.oid) = 'uuid, uuid, numeric'
-  ) THEN
+  -- ⚠️ Este assert JÁ FOI FALSO-VERDE: comparava a lista de argumentos do catálogo com a string
+  -- 'uuid, uuid, numeric', e essa lista inclui os NOMES dos parâmetros — a comparação nunca casava,
+  -- o EXISTS era sempre falso, e o assert NUNCA disparava, mesmo com a função de 3 args viva.
+  -- Descoberto rodando a query de validação contra a PROD e recebendo uma resposta que contradizia
+  -- um fato conhecido (a migration não tinha sido aplicada, e a query dizia que sim). O A2 abaixo
+  -- cobria o efeito por acaso (contagem exata), mas assert quebrado é PIOR que assert ausente:
+  -- ele afirma cobertura. O harness agora falsifica ESTE assert (F8).
+  IF to_regprocedure('public.get_regua_preco(uuid,uuid,numeric)') IS NOT NULL THEN
     RAISE EXCEPTION 'FU4-F2 A1: get_regua_preco(uuid,uuid,numeric) ainda existe — continua devolvendo cmc'
       USING ERRCODE='raise_exception';
   END IF;

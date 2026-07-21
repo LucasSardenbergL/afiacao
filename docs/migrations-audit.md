@@ -21,11 +21,11 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **415** custom migrations totais
-- **1464** objetos esperados (criados por estas migrations)
+- **416** custom migrations totais
+- **1474** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 421
-  - `rls_policy`: 370
+  - `function`: 422
+  - `rls_policy`: 379
   - `index`: 224
   - `cron_job`: 150
   - `table`: 147
@@ -3527,6 +3527,21 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.registrar_exibicao_regua` | — |
 | `function` | `public.registrar_aplicacao_regua` | — |
 | `rls_policy` | `public.regua_preco_log_select_custo` | `regua_preco_log` |
+
+### `20260724120000_authz_sales_orders_split_escrita_fu4.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.cap_pedido_escrever` | — |
+| `rls_policy` | `public.sales_orders_select_staff` | `sales_orders` |
+| `rls_policy` | `public.sales_orders_select_customer` | `sales_orders` |
+| `rls_policy` | `public.sales_orders_insert_staff` | `sales_orders` |
+| `rls_policy` | `public.sales_orders_update_staff` | `sales_orders` |
+| `rls_policy` | `public.sales_orders_delete_staff` | `sales_orders` |
+| `rls_policy` | `public.order_items_select_staff` | `order_items` |
+| `rls_policy` | `public.order_items_select_customer` | `order_items` |
+| `rls_policy` | `public.sales_price_history_select_staff` | `sales_price_history` |
+| `rls_policy` | `public.sales_price_history_select_customer` | `sales_price_history` |
 
 ## Próximos passos por status
 
