@@ -19525,6 +19525,10 @@ export type Database = {
         }
         Returns: undefined
       }
+      vendas_sync_semear_janela: {
+        Args: { p_account: string; p_date_from: string; p_date_to: string }
+        Returns: Json
+      }
       wa_is_stop_keyword: { Args: { p_body: string }; Returns: boolean }
       wa_owner_efetivo: { Args: { p_customer: string }; Returns: string }
       whatsapp_minutos_uteis: {

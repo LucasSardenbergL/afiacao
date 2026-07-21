@@ -9,6 +9,21 @@ import { useMutationComRegistro } from "@/components/execucoes/useMutationComReg
 import { ULTIMA_EXECUCAO_QUERY_KEY } from "@/components/execucoes/tipos";
 import { OmieAccount, SyncState } from "./types";
 import { ACOES_ANALYTICS_SYNC } from "./acoes";
+import {
+  CONTAS_PEDIDOS,
+  haJanelaAberta,
+  janelaRecentes,
+  janelaTodos,
+  janelasRelevantes,
+  rotuloSemeadura,
+  statusJanelas,
+  type ContaPedidos,
+  type DesfechoSemeadura,
+  type JanelaCursorRow,
+  type JanelaImportacao,
+} from "./janelas";
+
+const JANELAS_CURSOR_QUERY_KEY = "vendas-sync-cursor-janelas";
 
 export type RecConfigs = ReturnType<typeof useAnalyticsSync>["recConfigs"];
 
@@ -233,111 +248,81 @@ export function useAnalyticsSync() {
 
   const [editingConfig, setEditingConfig] = useState<Record<string, string>>({});
   const [addressSyncProgress, setAddressSyncProgress] = useState<string | null>(null);
-  const [ordersSyncProgress, setOrdersSyncProgress] = useState<string | null>(null);
 
-  // Helper to format date as DD/MM/YYYY
-  const formatOmieDate = (date: Date) => {
-    const dd = String(date.getDate()).padStart(2, '0');
-    const mm = String(date.getMonth() + 1).padStart(2, '0');
-    const yyyy = date.getFullYear();
-    return `${dd}/${mm}/${yyyy}`;
-  };
-
-  const runOrdersSync = async (dateFrom?: string, dateTo?: string) => {
-    const accounts: Array<{ name: string; account: string }> = [
-      { name: "Oben", account: "oben" },
-      { name: "Colacor", account: "colacor" },
-    ];
-    let grandTotalSynced = 0;
-    let grandTotalItems = 0;
-    let grandTotalSkipped = 0;
-
-    for (const acc of accounts) {
-      let startPage = 1;
-      let complete = false;
-
-      while (!complete) {
-        setOrdersSyncProgress(`${acc.name}: página ${startPage}...`);
-        const { data, error } = await supabase.functions.invoke("omie-vendas-sync", {
-          body: {
-            action: "sync_pedidos",
-            account: acc.account,
-            start_page: startPage,
-            // 2 págs/invocação ≈ 75–110s diurno (medido no cron: 35–50s/pág) — cabe no
-            // request timeout (~150s) da edge. Com 10, janela de 180d (~70 págs oben)
-            // estourava o limite na 1ª invocação e o loop abortava (incidente 20/07/2026:
-            // não-2xx no browser + órfã running fechada pelo watchdog). O loop já retoma
-            // via nextPage, então só muda o tamanho do lote, não a cobertura.
-            max_pages: 2,
-            ...(dateFrom && { date_from: dateFrom }),
-            ...(dateTo && { date_to: dateTo }),
-          },
-        });
-        if (error) throw new Error(`${acc.name}: ${error.message}`);
-
-        grandTotalSynced += data?.totalSynced || 0;
-        grandTotalItems += data?.totalItems || 0;
-        grandTotalSkipped += data?.skippedNoClient || 0;
-
-        const lastPage = data?.lastPage || startPage;
-        const totalPages = data?.totalPaginas || 1;
-        setOrdersSyncProgress(`${acc.name}: pág ${lastPage}/${totalPages} — ${grandTotalSynced} pedidos importados`);
-
-        if (data?.complete || !data?.nextPage) {
-          complete = true;
-        } else {
-          startPage = data.nextPage;
-        }
-      }
+  // Importação de pedidos = SEMEADURA server-side (refactor do incidente 2026-07-20/21):
+  // o loop client-side de 40-60 min morria quando o Chrome suspendia a aba (Memory Saver),
+  // deixando órfãos 'executando'. Agora o clique só ARMA a janela no vendas_sync_cursor
+  // (RPC staff-gated, ON CONFLICT DO NOTHING — provada em db/test-vendas_sync_semear_janela.sh)
+  // e o cron vendas-sync-continuacao-6min + edge omie-vendas-sync importam no servidor
+  // (lease + heartbeat por página + retomada). A aba pode fechar; o progresso é LEITURA.
+  const semearJanelaNasContas = async (janela: JanelaImportacao) => {
+    const resultado = {} as Record<ContaPedidos, DesfechoSemeadura>;
+    for (const account of CONTAS_PEDIDOS) {
+      const { data, error } = await supabase.rpc("vendas_sync_semear_janela", {
+        p_account: account,
+        p_date_from: janela.de,
+        p_date_to: janela.ate,
+      });
+      if (error) throw new Error(`${account}: ${error.message}`);
+      const r = data as { semeada?: boolean; completed_at?: string | null } | null;
+      resultado[account] = r?.semeada ? "semeada" : r?.completed_at ? "ja_concluida" : "ja_pendente";
     }
-
-    // Refresh materialized view after import. Via o WRAPPER staff request_customer_metrics_refresh:
-    // o primitive refresh_customer_metrics passou a ser service-only (cron/edge). supabase-js NÃO
-    // lança → checar o erro (antes era engolido). O cron a cada 6h cobre o frescor de base.
-    setOrdersSyncProgress("Atualizando métricas de clientes...");
-    const { error: refreshError } = await supabase.rpc("request_customer_metrics_refresh");
-    if (refreshError) throw new Error(`Falha ao atualizar métricas de clientes: ${refreshError.message}`);
-
-    setOrdersSyncProgress(null);
-    return { grandTotalSynced, grandTotalItems, grandTotalSkipped };
+    return { janela, resultado };
   };
+
+  // Progresso da importação em segundo plano: polling do cursor enquanto houver janela aberta.
+  // A MV customer_metrics NÃO é atualizada aqui (a aba pode nem existir no fim) — o cron de
+  // refresh a cada 6h cobre, como já cobre as importações dos crons de 2h.
+  const { data: janelasCursor } = useQuery({
+    queryKey: [JANELAS_CURSOR_QUERY_KEY],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("vendas_sync_cursor")
+        .select("*")
+        .order("updated_at", { ascending: false })
+        .limit(12);
+      if (error) throw error;
+      return data as JanelaCursorRow[];
+    },
+    refetchInterval: (query) => (haJanelaAberta(query.state.data ?? []) ? 8000 : false),
+  });
+
+  const janelasImportacao = statusJanelas(janelasRelevantes(janelasCursor ?? []));
+  const importacaoEmAndamento = haJanelaAberta(janelasCursor ?? []);
+
+  const descricaoSemeadura = (resultado: Record<ContaPedidos, DesfechoSemeadura>) =>
+    `oben: ${rotuloSemeadura(resultado.oben)} · colacor: ${rotuloSemeadura(resultado.colacor)}. ` +
+    `Roda no servidor — pode fechar a aba e acompanhar aqui.`;
 
   const bulkOrdersSyncMutation = useMutationComRegistro({
     acao: ACOES_ANALYTICS_SYNC.importarPedidosTodos,
-    detalhes: (d) => ({ pedidos: d.grandTotalSynced, itens: d.grandTotalItems, sem_cliente: d.grandTotalSkipped }),
-    mutationFn: () => runOrdersSync(),
-    onSuccess: (data) => {
-      toast.success("Importação de pedidos concluída", {
-        description: `${data.grandTotalSynced} pedidos, ${data.grandTotalItems} itens, ${data.grandTotalSkipped} sem cliente`,
+    detalhes: (d) => ({ modo: "semeadura_cursor", janela_de: d.janela.de, janela_ate: d.janela.ate, ...d.resultado }),
+    mutationFn: () => semearJanelaNasContas(janelaTodos()),
+    onSuccess: (d) => {
+      toast.success("Histórico completo armado no servidor", {
+        description: descricaoSemeadura(d.resultado),
         duration: 10000,
       });
-      queryClient.invalidateQueries({ queryKey: ["sync-state"] });
+      queryClient.invalidateQueries({ queryKey: [JANELAS_CURSOR_QUERY_KEY] });
     },
     onError: (error) => {
-      setOrdersSyncProgress(null);
-      toast.error("Erro na importação de pedidos", { description: String(error) });
+      toast.error("Erro ao armar a importação de pedidos", { description: String(error) });
     },
   });
 
   const recentOrdersSyncMutation = useMutationComRegistro({
     acao: ACOES_ANALYTICS_SYNC.importarPedidosRecentes,
-    detalhes: (d) => ({ pedidos: d.grandTotalSynced, itens: d.grandTotalItems }),
-    mutationFn: () => {
-      const now = new Date();
-      const from = new Date(now);
-      from.setDate(from.getDate() - 180);
-      return runOrdersSync(formatOmieDate(from), formatOmieDate(now));
-    },
-    onSuccess: (data) => {
-      toast.success("Importação recente concluída", {
-        description: `${data.grandTotalSynced} pedidos, ${data.grandTotalItems} itens`,
+    detalhes: (d) => ({ modo: "semeadura_cursor", janela_de: d.janela.de, janela_ate: d.janela.ate, ...d.resultado }),
+    mutationFn: () => semearJanelaNasContas(janelaRecentes()),
+    onSuccess: (d) => {
+      toast.success("Janela de 180 dias armada no servidor", {
+        description: descricaoSemeadura(d.resultado),
         duration: 10000,
       });
-      queryClient.invalidateQueries({ queryKey: ["sync-state"] });
+      queryClient.invalidateQueries({ queryKey: [JANELAS_CURSOR_QUERY_KEY] });
     },
     onError: (error) => {
-      setOrdersSyncProgress(null);
-      toast.error("Erro na importação recente", { description: String(error) });
+      toast.error("Erro ao armar a importação recente", { description: String(error) });
     },
   });
 
@@ -375,7 +360,8 @@ export function useAnalyticsSync() {
     recentOrdersSyncMutation,
     clientSyncProgress,
     addressSyncProgress,
-    ordersSyncProgress,
+    janelasImportacao,
+    importacaoEmAndamento,
     editingConfig,
     setEditingConfig,
     getStateFor,

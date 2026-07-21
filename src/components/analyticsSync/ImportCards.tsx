@@ -2,9 +2,10 @@
 // Extraídos verbatim de src/pages/AdminAnalyticsSync.tsx (god-component split).
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { RefreshCw, Loader2, Sparkles, ShoppingCart, Users, MapPin } from "lucide-react";
+import { RefreshCw, Loader2, Sparkles, ShoppingCart, Users, MapPin, CheckCircle2, Clock } from "lucide-react";
 import { UltimaExecucao } from "@/components/execucoes/UltimaExecucao";
 import { ACOES_ANALYTICS_SYNC } from "./acoes";
+import type { StatusJanelaConta } from "./janelas";
 
 export function ImportClientesCard({
   isRunning,
@@ -101,21 +102,31 @@ export function ImportEnderecosCard({
   );
 }
 
+const JANELA_ICON = {
+  rodando: <Loader2 className="h-3 w-3 animate-spin text-primary" />,
+  aguardando: <Clock className="h-3 w-3 text-muted-foreground" />,
+  concluida: <CheckCircle2 className="h-3 w-3 text-status-success" />,
+} as const;
+
 export function ImportPedidosCard({
   isRunning,
   recentPending,
   bulkPending,
-  progress,
+  importandoEmAndamento,
+  janelas,
   onImportRecent,
   onImportAll,
 }: {
   isRunning: boolean;
   recentPending: boolean;
   bulkPending: boolean;
-  progress: string | null;
+  /** Há janela aberta no vendas_sync_cursor — o servidor ainda está importando. */
+  importandoEmAndamento: boolean;
+  janelas: StatusJanelaConta[];
   onImportRecent: () => void;
   onImportAll: () => void;
 }) {
+  const desabilitado = isRunning || importandoEmAndamento;
   return (
     <Card>
       <CardHeader>
@@ -125,7 +136,7 @@ export function ImportPedidosCard({
             <CardTitle className="text-base">Importar Pedidos (Oben + Colacor)</CardTitle>
           </div>
           <div className="flex gap-2">
-            <Button variant="default" size="sm" disabled={isRunning} onClick={onImportRecent}>
+            <Button variant="default" size="sm" disabled={desabilitado} onClick={onImportRecent}>
               {recentPending ? (
                 <Loader2 className="h-3 w-3 mr-2 animate-spin" />
               ) : (
@@ -133,7 +144,7 @@ export function ImportPedidosCard({
               )}
               Importar Recentes (180d)
             </Button>
-            <Button variant="outline" size="sm" disabled={isRunning} onClick={onImportAll}>
+            <Button variant="outline" size="sm" disabled={desabilitado} onClick={onImportAll}>
               {bulkPending ? (
                 <Loader2 className="h-3 w-3 mr-2 animate-spin" />
               ) : (
@@ -149,14 +160,29 @@ export function ImportPedidosCard({
       </CardHeader>
       <CardContent>
         <p className="text-xs text-muted-foreground">
-          <strong>Importar Recentes:</strong> busca apenas pedidos dos últimos 180 dias (rápido, ~2 min).
+          O clique <strong>arma a janela</strong> no servidor (cursor + cron a cada 6 min) e a importação roda em
+          segundo plano — <strong>pode fechar a aba</strong> e acompanhar o progresso aqui.
           <br />
-          <strong>Importar Todos:</strong> varre todo o histórico (~425 páginas, pode levar 30+ min).
+          <strong>Importar Recentes:</strong> últimos 180 dias (~40–60 min no servidor).
+          <br />
+          <strong>Importar Todos:</strong> histórico completo desde 2020 (algumas horas no servidor).
         </p>
-        {progress && (
-          <div className="mt-3 flex items-center gap-2 text-xs text-primary font-medium">
-            <Loader2 className="h-3 w-3 animate-spin" />
-            {progress}
+        {janelas.length > 0 && (
+          <div className="mt-3 space-y-1.5">
+            {importandoEmAndamento && (
+              <div className="flex items-center gap-2 text-xs text-primary font-medium">
+                <Loader2 className="h-3 w-3 animate-spin" />
+                Importando no servidor — pode fechar esta aba.
+              </div>
+            )}
+            {janelas.map((j) => (
+              <div key={`${j.account}-${j.janela}`} className="flex items-center gap-2 text-xs text-muted-foreground">
+                {JANELA_ICON[j.estado]}
+                <span className="font-medium text-foreground">{j.account}</span>
+                <span>{j.janela}</span>
+                <span>— {j.descricao}</span>
+              </div>
+            ))}
           </div>
         )}
       </CardContent>
