@@ -1,7 +1,8 @@
 import { useState, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { selectObjective, clampRecencyCapDays } from '@/lib/scoring/objective';
-import { margemConhecida } from '@/lib/scoring/margin';
+import { margemConhecida, mediaMargensConhecidas } from '@/lib/scoring/margin';
+import { fetchAllPages } from '@/lib/postgrest';
 import { ownersAtivosDoAlvo } from '@/lib/carteira/escopo-clientes';
 import { useAuth } from '@/contexts/AuthContext';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
@@ -24,7 +25,8 @@ export interface TacticalPlan {
   healthScore: number;
   churnRisk: number;
   mixGap: number;
-  currentMarginPct: number;
+  /** PERCENTUAL (0–100), ou null quando a margem era desconhecida na geração do plano. */
+  currentMarginPct: number | null;
   clusterAvgMarginPct: number | null;
   expansionPotential: number;
 
@@ -238,7 +240,9 @@ export const useTacticalPlan = () => {
       healthScore: Number(d.health_score || 0),
       churnRisk: Number(d.churn_risk || 0),
       mixGap: Number(d.mix_gap || 0),
-      currentMarginPct: Number(d.current_margin_pct || 0),
+      // O plano persistido grava a margem do cliente no INSTANTE da geração; pós-#1495 ela
+      // pode ser null, e `Number(null || 0)` a exibiria como "0,0%" — margem nula apurada.
+      currentMarginPct: margemConhecida(d.current_margin_pct),
       clusterAvgMarginPct: d.cluster_avg_margin_pct == null ? null : Number(d.cluster_avg_margin_pct),
       expansionPotential: Number(d.expansion_potential || 0),
       strategicObjective: d.strategic_objective,
@@ -417,20 +421,26 @@ export const useTacticalPlan = () => {
       // carteira do coberto (carteira_visivel_para via carteira_coverage). Exclui o próprio cliente
       // (peer benchmark) e exige ≥1 par com margem finita; sem par → null (selectObjective trata;
       // nada de 25).
+      // [GUARD money-path] PAGINADO. A consulta era single-shot e o PostgREST capa em 1.000
+      // linhas em SILÊNCIO. Medido em prod (psql-ro, 2026-07-21): os três farmers têm 3.858,
+      // 1.528 e 1.246 clientes — TODOS truncavam, o maior deles enxergando 26% dos pares.
+      // Isso importa mais aqui do que numa lista qualquer: o cluster é a RÉGUA contra a qual a
+      // margem do cliente é julgada (`margem < cluster * 0.8` → consolidacao_margem), então a
+      // truncagem não some um cliente da tela — ela move a régua e troca o VEREDITO, de forma
+      // plausível e silenciosa. Ordem por `customer_user_id` (UNIQUE): sem ordem estável a
+      // paginação pula e repete linha entre páginas.
       let clusterMargin: number | null = null;
       {
-        const { data: peers } = (await supabase
-          .from('farmer_client_scores')
-          .select('gross_margin_pct')
-          .eq('farmer_id', ownerId)
-          .neq('customer_user_id', customerId)) as unknown as { data: Pick<ClientScoreFull, 'gross_margin_pct'>[] | null };
-        const peerMargins = (peers ?? [])
-          .filter((r) => r.gross_margin_pct != null)
-          .map((r) => Number(r.gross_margin_pct))
-          .filter((m) => Number.isFinite(m));
-        if (peerMargins.length >= 1) {
-          clusterMargin = peerMargins.reduce((s, m) => s + m, 0) / peerMargins.length;
-        }
+        const peers = await fetchAllPages<Pick<ClientScoreFull, 'gross_margin_pct'>>((de, ate) =>
+          supabase
+            .from('farmer_client_scores')
+            .select('gross_margin_pct')
+            .eq('farmer_id', ownerId)
+            .neq('customer_user_id', customerId)
+            .order('customer_user_id', { ascending: true })
+            .range(de, ate) as unknown as PromiseLike<{ data: Pick<ClientScoreFull, 'gross_margin_pct'>[] | null }>,
+        );
+        clusterMargin = mediaMargensConhecidas(peers.map((r) => r.gross_margin_pct));
       }
 
       // Bundle pendente do cliente sob a carteira do DONO (ownerId), não do viewer. A tabela é
