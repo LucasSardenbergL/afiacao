@@ -80,7 +80,7 @@ CREATE POLICY product_costs_select_custo ON public.product_costs
 ALTER TABLE public.product_costs ENABLE ROW LEVEL SECURITY;
 
 COMMENT ON POLICY product_costs_select_custo ON public.product_costs IS
-  'FU4-F fase 3: leitura de custo exige private.cap_custo_ler (master + estrategico + super_admin). Substituiu "Staff can manage/view product costs" (master OR employee) — as duas, porque policies permissivas combinam com OR. Consumidores migraram para get_ranking_margem / get_carteira_margem_faixa.';
+  'FU4-F fase 3: leitura de custo exige private.cap_custo_ler (master + estrategico + super_admin). Substituiu "Staff can manage/view product costs" (master OR employee) — as duas, porque policies permissivas combinam com OR. Consumidores migraram para get_skus_margem_positiva / get_carteira_margem_faixa.';
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 3. ASSERTS DE APLICACAO — rodam DENTRO da transacao; qualquer um falha, tudo volta.

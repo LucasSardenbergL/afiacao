@@ -252,6 +252,16 @@ eq "A10 sem auth.uid(): zero linhas (fail-closed)" \
    "$(Pq -c "SET test.uid=''; SET ROLE authenticated; SELECT count(*) FROM public.get_skus_margem_positiva();" | tail -1)" "0"
 eq "A11 customer (nao-staff): zero linhas" \
    "$(as_user "$CU" "SELECT count(*) FROM public.get_skus_margem_positiva();")" "0"
+# TOMBSTONE: a RPC vetada nao pode sobreviver. O harness nasce sem ela, entao o assert so tem
+# valor com a montagem abaixo — crio a funcao ANTES e exijo que a migration a remova. Sem isso
+# seria o "detector que nunca dispara" do #1488.
+P -q -c "CREATE FUNCTION public.get_ranking_margem(p_itens jsonb) RETURNS boolean LANGUAGE sql STABLE AS \$f\$ SELECT true \$f\$;" >/dev/null 2>&1
+eq "A11b montagem: a RPC vetada existe ANTES (o detector ve o mundo vivo)" \
+   "$(Pq -c "SELECT CASE WHEN to_regprocedure('public.get_ranking_margem(jsonb)') IS NULL THEN 'AUSENTE' ELSE 'EXISTE' END;")" "EXISTE"
+P -q -f "$MIG_RPC" >/dev/null
+eq "A11c a migration DROPA a RPC vetada (tombstone)" \
+   "$(Pq -c "SELECT CASE WHEN to_regprocedure('public.get_ranking_margem(jsonb)') IS NULL THEN 'AUSENTE' ELSE 'EXISTE' END;")" "AUSENTE"
+
 eq "A12 anon NAO executa a RPC" \
    "$(Pq -c "SELECT has_function_privilege('anon', to_regprocedure('public.get_skus_margem_positiva()'), 'EXECUTE');")" "f"
 eq "A12b authenticated EXECUTA (controle positivo do REVOKE)" \
@@ -281,6 +291,8 @@ eq "A19c authenticated MANTEM SELECT (senao a policy vira tautologia)" \
 eq "A20 anon perdeu tudo"                        "$(Pq -c "SELECT (has_table_privilege('anon','public.product_costs','SELECT') OR has_table_privilege('anon','public.product_costs','TRUNCATE'));")" "f"
 eq "A20b service_role MANTEM INSERT (o sync de custo nao pode quebrar)" \
    "$(Pq -c "SELECT has_table_privilege('service_role','public.product_costs','INSERT');")" "t"
+eq "A20c authenticated perdeu REFERENCES/TRIGGER/MAINTAIN (o x/t/m do arwdDxtm)" \
+   "$(Pq -c "SELECT (has_table_privilege('authenticated','public.product_costs','REFERENCES') OR has_table_privilege('authenticated','public.product_costs','TRIGGER') OR has_table_privilege('authenticated','public.product_costs','MAINTAIN'));")" "f"
 eq "A21 sobrou exatamente 1 policy"              "$(Pq -c "SELECT count(*) FROM pg_policies WHERE schemaname='public' AND tablename='product_costs';")" "1"
 
 # ─── O ASSERT QUE JUSTIFICA A ENTREGA ───────────────────────────────────────────
@@ -392,7 +404,7 @@ echo
 echo "=== TOTAL: ${PASS} asserts de baseline, ${FALS} falsificacoes, ${FAIL} falhas ==="
 # fail-closed na COBERTURA (licao P3 do #1488): mudar o numero de asserts ou de falsificacoes
 # obriga a atualizar estes literais conscientemente, senao remover um assert passa despercebido.
-ESPERADO_PASS=30
+ESPERADO_PASS=33
 ESPERADO_FALS=9
 if [ "$PASS" -ne "$ESPERADO_PASS" ]; then
   echo "COBERTURA MUDOU: esperava $ESPERADO_PASS asserts, contei $PASS -- atualize o literal conscientemente"

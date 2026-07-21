@@ -48,6 +48,15 @@ END
 $pre$;
 
 -- ─────────────────────────────────────────────────────────────────────────────
+-- TOMBSTONE da RPC vetada. Se algum ambiente aplicou a 1a versao deste arquivo, o oraculo
+-- continua EXECUTAVEL com os privilegios antigos — reescrever o arquivo nao desfaz um apply.
+-- Achado da rodada 2 do Codex; o harness nasce sem a funcao, entao nunca detectaria a
+-- sobrevivencia dela. Em prod ela nunca foi aplicada (to_regprocedure = NULL, medido
+-- 2026-07-21), mas o DROP e o que torna isso verdade em TODO ambiente.
+-- ─────────────────────────────────────────────────────────────────────────────
+DROP FUNCTION IF EXISTS public.get_ranking_margem(jsonb);
+
+-- ─────────────────────────────────────────────────────────────────────────────
 -- Custo canonico — espelha src/lib/custo/custoCanonico.ts VERBATIM.
 --   canonico = cost_final, fallback cost_price; finito E > 0; senao NULL.
 -- ausente != zero: NULL faz o SKU sair da lista, nunca virar margem cheia (#1466).
@@ -102,8 +111,11 @@ BEGIN
 
   -- staff-only: quem nao e employee nem master nao tem por que saber o que e vendavel.
   -- (customers sao 5.664 dos 5.669 usuarios — deixa-los fora e o grosso da superficie.)
-  IF NOT (public.has_role(v_uid, 'employee'::public.app_role)
-          OR public.has_role(v_uid, 'master'::public.app_role)) THEN
+  -- COALESCE explicito: se has_role algum dia devolver NULL, `NOT NULL` e NULL e o IF nao
+  -- dispara — o gate falharia ABERTO. Sugestao da rodada 2 do Codex.
+  IF NOT COALESCE(
+       public.has_role(v_uid, 'employee'::public.app_role)
+       OR public.has_role(v_uid, 'master'::public.app_role), false) THEN
     RETURN;
   END IF;
 
