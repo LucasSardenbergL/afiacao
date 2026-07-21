@@ -290,6 +290,17 @@ eq "A15 gate de carteira: farmer NAO ranqueia cliente de outro" \
    "$(as_user "$F" "SELECT count(*) FROM public.get_ranking_margem('$ITENS_OUTRO'::jsonb);")" "0"
 eq "A15b master (cap_carteira_ler) ranqueia qualquer cliente" \
    "$(as_user "$M" "SELECT count(*) FROM public.get_ranking_margem('$ITENS_OUTRO'::jsonb);")" "1"
+# CAP DE TAMANHO. Negativo por SQLSTATE esperada + re-raise: `WHEN OTHERS THEN 'OK'` engoliria
+# ate um erro de digitacao do proprio teste. 5001 itens tem de dar 54000 (program_limit_exceeded).
+CAP_SQL="DO \$t\$ BEGIN PERFORM * FROM public.get_ranking_margem((SELECT jsonb_agg(jsonb_build_object('chave','k'||i,'grupo','$C1','tipo','cross_sell','produtos',jsonb_build_array('aaaaaaaa-0000-0000-0000-000000000001'),'peso',1,'fator',1)) FROM generate_series(1,5001) i)); RAISE EXCEPTION 'NAO_BARROU'; EXCEPTION WHEN program_limit_exceeded THEN RAISE NOTICE 'esperado'; WHEN OTHERS THEN RAISE; END \$t\$;"
+if as_user "$F" "$CAP_SQL" >/dev/null 2>&1; then
+  ok "A15c cap de 5000 itens barra com program_limit_exceeded"
+else
+  bad "A15c cap de 5000 itens NAO barrou (ou barrou com a SQLSTATE errada)"
+fi
+eq "A15d abaixo do teto processa normalmente" \
+   "$(as_user "$F" "SELECT count(*) FROM public.get_ranking_margem((SELECT jsonb_agg(jsonb_build_object('chave','k'||i,'grupo','$C1','tipo','cross_sell','produtos',jsonb_build_array('aaaaaaaa-0000-0000-0000-000000000001'),'peso',1,'fator',1)) FROM generate_series(1,10) i));")" "10"
+
 eq "A16 anon NAO executa a RPC" \
    "$(Pq -c "SELECT has_function_privilege('anon', to_regprocedure('public.get_ranking_margem(jsonb)'), 'EXECUTE');")" "f"
 eq "A16b authenticated EXECUTA (controle positivo do REVOKE)" \
@@ -418,12 +429,19 @@ falsifica "S8 gate de carteira removido: A15 tem de cair" \
   'as_user "$F" "SELECT count(*) FROM public.get_ranking_margem('"'"'$ITENS_OUTRO'"'"'::jsonb);"' "1"
 P -q -c "CREATE OR REPLACE FUNCTION private.carteira_visivel_para(_customer_user_id uuid, _uid uuid) RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public' AS \$f\$ SELECT EXISTS (SELECT 1 FROM public.carteira_assignments ca WHERE ca.customer_user_id=_customer_user_id AND ca.farmer_id=_uid) \$f\$;" >/dev/null
 
+# S9: o cap removido -> A15c tem de cair. Sem cap a RPC vira amplificador de DoS com privilegio
+#     (SECURITY DEFINER lendo product_costs por termo).
+falsifica "S9 cap de itens removido: A15c tem de cair" \
+  "CREATE OR REPLACE FUNCTION public.get_ranking_margem(p_itens jsonb) RETURNS TABLE(chave text, ordem integer, elegivel boolean, margem_negativa boolean, mij numeric, lie numeric) LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path TO 'public', pg_temp AS \$f\$ BEGIN RETURN QUERY SELECT 'x'::text, 1, true, false, 1::numeric, 1::numeric FROM jsonb_array_elements(p_itens) LIMIT 1; END \$f\$;" \
+  'as_user "$F" "SELECT count(*) FROM public.get_ranking_margem((SELECT jsonb_agg(jsonb_build_object('"'"'chave'"'"','"'"'k'"'"')) FROM generate_series(1,5001) i));"' "1"
+P -q -f "$MIG_RPC" >/dev/null
+
 echo
 echo "=== TOTAL: ${PASS} asserts de baseline, ${FALS} falsificacoes, ${FAIL} falhas ==="
 # fail-closed na COBERTURA (licao P3 do #1488): mudar o numero de asserts ou de falsificacoes
 # obriga a atualizar estes literais conscientemente, senao remover um assert passa despercebido.
-ESPERADO_PASS=38
-ESPERADO_FALS=8
+ESPERADO_PASS=40
+ESPERADO_FALS=9
 if [ "$PASS" -ne "$ESPERADO_PASS" ]; then
   echo "COBERTURA MUDOU: esperava $ESPERADO_PASS asserts, contei $PASS -- atualize o literal conscientemente"
   FAIL=$((FAIL+1))

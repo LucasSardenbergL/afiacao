@@ -110,6 +110,12 @@ AS $fn$
 DECLARE
   v_uid        uuid    := (SELECT auth.uid());
   v_pode_custo boolean;
+  v_n          integer;
+  -- teto de itens por chamada. Os engines LOTEIAM por cliente (a RPC ja particiona por `grupo`,
+  -- entao varios clientes cabem numa chamada). Sem teto, um caller manda 10^6 itens e o
+  -- SECURITY DEFINER vira amplificador de DoS com privilegio — a RPC le product_costs inteira
+  -- por termo. O cap e do CONTRATO, nao uma otimizacao.
+  c_max_itens  constant integer := 5000;
 BEGIN
   -- fail-closed: sem identidade, nada sai
   IF v_uid IS NULL THEN
@@ -119,6 +125,16 @@ BEGIN
   -- entrada malformada nao levanta erro (o caller nao deve aprender nada pelo tipo do erro)
   IF p_itens IS NULL OR jsonb_typeof(p_itens) <> 'array' THEN
     RETURN;
+  END IF;
+
+  -- jsonb_array_length e a medida CERTA aqui (o array e 1-D por contrato). O analogo do
+  -- array_length(a,1) que o #1488 mostrou ser furavel por array multidimensional nao se aplica
+  -- a jsonb, mas o cap tem de existir e ser FAIL-CLOSED: excedeu, nao processa NADA (em vez de
+  -- truncar em silencio, que devolveria um ranking parcial com cara de completo).
+  v_n := jsonb_array_length(p_itens);
+  IF v_n > c_max_itens THEN
+    RAISE EXCEPTION 'get_ranking_margem: % itens excede o teto de % por chamada — loteie', v_n, c_max_itens
+      USING ERRCODE = 'program_limit_exceeded';
   END IF;
 
   v_pode_custo := COALESCE(private.cap_custo_ler(v_uid), false);
