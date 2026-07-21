@@ -375,6 +375,30 @@ Corrigidos nesta entrega:
    uma sabotagem. Agora exige `PASS` e `FALS_OK` exatos: mudar cobertura obriga a atualizar o número
    conscientemente. E a F7 passou a conferir o **valor persistido**, não só o retorno `true`.
 
+**Rodada 2 — sobre AS CORREÇÕES da rodada 1.** Veredito de novo *"não aplicaria como está"*: 1 P1, 3 P2,
+2 P3, todos aceitos. Vale por si só como argumento de que correção de money-path merece revisão própria —
+foi o mesmo padrão do #1465, onde a rodada 2 achou 3 defeitos na correção da rodada 1.
+
+1. **P1 — a correção do arredondamento criou o bug seguinte: "Aplicar piso" aplicava um preço AINDA
+   ABAIXO do piso.** Com a decisão usando o piso íntegro (13,449023861…) e o payload saindo em
+   `round(,4)` = 13,4490 — que é **menor** —, clicar o botão jogava 13,4490 no carrinho e o refetch
+   continuava vermelho. Laço infinito para quem tem o botão. O número EXPOSTO tem de ser **aplicável**:
+   `ceil` na mesma escala, nunca `round`. Regra generalizável: **quando um número devolvido vira ação do
+   usuário, o arredondamento tem de ser na direção que satisfaz a invariante**, não a mais próxima.
+2. **P2 — remover `keepPreviousData` não fechou o buraco do prazo.** O `debouncedSig` segurava a condição
+   por 400ms enquanto o `Map` (sem prazo na chave) seguia casando: trocar para 90 dias mantinha o vermelho
+   escondido no intervalo. Agora só o **preço** é debounced; prazo entra cru (dropdown não tem rajada).
+3. **P2 — a finitude não chegou às RPCs de ESCRITA.** O guard foi aplicado na leitura e esquecido no
+   writer, onde o `numeric` do cliente **persiste**. Obrigatório inválido rejeita; opcional degrada a NULL.
+4. **P2 — o cap de 12 parcelas era furável por array multidimensional.** `array_length(a,1)` mede só a 1ª
+   dimensão: um `2×7` devolve 2, passa no cap, e o `unnest` processa 14. Use `array_ndims` + `cardinality`.
+5. **P3 — um assert virou falso-verde por causa do próprio endurecimento.** O `N3` provava "RLS barra o
+   INSERT direto **com o grant presente**"; o `REVOKE` da correção anterior tirou o grant, então ele passou
+   a negar por privilégio e passaria mesmo se uma policy permissiva de INSERT reaparecesse. **Regra: ao
+   endurecer um gate, releia todo assert que dependia do gate antigo — o provável é que tenha virado
+   tautologia.** Segunda ocorrência da mesma assinatura nesta entrega (a 1ª foi o `A27` do `anon`).
+6. **P3 — o audit não listava o helper novo**, criado depois da última regeneração.
+
 **Rejeitado com argumento** (registrado porque discordância também é evidência): P1 — "a precondição deve
 fazer fingerprint do corpo de `private.cap_custo_ler`". Se alguém ampliar a capability, vazam **todos** os
 consumidores (`cmc_snapshot`, tint, `inventory_position`), não só a régua; guardar isso numa migration
