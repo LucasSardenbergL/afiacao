@@ -17867,6 +17867,7 @@ export type Database = {
           personalizada: boolean | null
           preco_csv_legado: number | null
           preco_final_sayersystem: number | null
+          preco_piso_legado: number | null
           receita_valida: boolean | null
           sku_id: string | null
           subcolecao_id: string | null
