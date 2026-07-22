@@ -211,7 +211,7 @@ git commit -m "feat(authz): migration fecha escrita em omie_products — preço 
 
 **Interfaces:**
 - Consumes: `supabase/migrations/20260727120000_authz_preco_fecha_omie_products.sql` (Task 1), `db/stubs-supabase.sql`.
-- Produces: as funções bash `as_user`, `escreve`, `escreve_service`, `eq`, `ok`, `bad`, e as variáveis `$M` (master), `$F` (farmer), `$CU` (customer) que as Tasks 3 e 4 usam.
+- Produces: as funções bash `guard_role`, `le`, `escreve`, `escreve_service`, `eq`, `ok`, `bad`, e as variáveis `$M` (master), `$F` (farmer), `$CU` (customer) que as Tasks 3 e 4 usam.
 
 Este é o passo onde o teste pode mentir de forma mais cara: um stub **menos permissivo que a prod inventa segurança que não existe**. Os `GRANT` abaixo reproduzem o `relacl` real (`arwdDxtm` para anon E authenticated).
 
@@ -289,12 +289,11 @@ F='22222222-2222-2222-2222-222222222222'   # farmer   (employee + commercial_rol
 CU='66666666-6666-6666-6666-666666666666'  # customer (nao-staff)
 
 # guard: se o SET ROLE nao pegar, TODA a zona de RLS roda como superuser (bypassa) e fica
-# falso-verde. Aborta em vez de "passar".
-as_user() {
+# falso-verde. Aborta em vez de "passar". Chamado por `le` e `escreve` antes de cada medicao.
+guard_role() { # $1=uid
   local got
   got="$(Pq -c "SET test.uid='$1'; SET ROLE authenticated; SELECT current_user;" | tail -1)"
   [ "$got" = "authenticated" ] || { echo "ABORT: SET ROLE nao pegou (current_user=$got)"; exit 9; }
-  Pq -c "SET test.uid='$1'; SET ROLE authenticated; $2" | tail -1
 }
 
 # Tenta escrever valor_unitario do SKU P1 como <uid>. Devolve TRES estados mutuamente
@@ -305,6 +304,7 @@ as_user() {
 # O CTE forca linha de resultado mesmo quando o UPDATE afeta 0 (senao viria vazio).
 escreve() { # $1=uid  $2=valor
   local out
+  guard_role "$1"
   out="$("$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 -q -tA \
         -c "SET test.uid='$1'; SET ROLE authenticated;
             WITH u AS (UPDATE public.omie_products SET valor_unitario=$2 WHERE codigo='P1' RETURNING 1)
@@ -321,9 +321,8 @@ escreve() { # $1=uid  $2=valor
 #   <n>    = leu n linhas (grant presente E policy permitiu)
 #   DENIED = o PRIVILEGIO negou (42501) — util na S3, onde o REVOKE de SELECT e a sabotagem
 le() { # $1=uid
-  local got out
-  got="$(Pq -c "SET test.uid='$1'; SET ROLE authenticated; SELECT current_user;" | tail -1)"
-  [ "$got" = "authenticated" ] || { echo "ABORT: SET ROLE nao pegou (current_user=$got)"; exit 9; }
+  local out
+  guard_role "$1"
   out="$("$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 -q -tA \
         -c "SET test.uid='$1'; SET ROLE authenticated;
             SELECT count(*)::text FROM public.omie_products;" 2>&1)" || true
@@ -461,7 +460,7 @@ git commit -m "test(authz): harness PG17 — stubs de prod + baseline provando q
 - Modify: `db/test-authz-preco-omie-products.sh` (anexar Zonas 3 e 4)
 
 **Interfaces:**
-- Consumes: `escreve`, `escreve_service`, `as_user`, `eq`, `$M`, `$F`, `$CU`, `$MIG` (Task 2).
+- Consumes: `le`, `escreve`, `escreve_service`, `eq`, `$M`, `$F`, `$CU`, `$MIG` (Task 2).
 - Produces: a variável `BASE_PASS` (contagem de asserts verdes) que a Task 4 usa para confirmar que o baseline estava verde antes de falsificar.
 
 - [ ] **Step 1: Anexar Zona 3 (aplica a migration, com prova de idempotência)**
@@ -542,7 +541,7 @@ git commit -m "test(authz): prova o fechamento — farmer e master DENIED, leitu
 - Modify: `db/test-authz-preco-omie-products.sh` (anexar Zona 5)
 
 **Interfaces:**
-- Consumes: `BASE_PASS`, `escreve`, `escreve_service`, `as_user`, `$MIG`, `$M`, `$F` (Tasks 2–3).
+- Consumes: `BASE_PASS`, `le`, `escreve`, `escreve_service`, `$MIG`, `$M`, `$F` (Tasks 2–3).
 - Produces: nada (última zona do harness).
 
 Assert que sobrevive à sabotagem não tem dente. Cada sabotagem exige o vermelho **do assert que ela mira**, com o valor conferido — `exit != 0` não distingue "pegou o bug" de "o comando quebrou".
@@ -876,7 +875,7 @@ Sem gaps.
 
 **Placeholder scan:** nenhum `TBD`/`TODO`/"similar à Task N". Todo passo de código traz o código completo.
 
-**Type consistency:** `omie_products_select_staff` é o nome da policy em Task 1 (criação), Task 3 (A2/A2b), Task 4 (S2/S5) e Task 5 (c1–c3). `escreve`/`escreve_service`/`as_user` definidas na Task 2 e usadas com a mesma assinatura nas Tasks 3–4. Estados `OK`/`RLS0`/`DENIED` consistentes. `$MIG` aponta para o mesmo caminho em todas as tasks.
+**Type consistency:** `omie_products_select_staff` é o nome da policy em Task 1 (criação), Task 3 (A2/A2b), Task 4 (S2/S5) e Task 5 (c1–c3). `guard_role`/`le`/`escreve`/`escreve_service` definidas na Task 2 e usadas com a mesma assinatura nas Tasks 3–4. Estados `OK`/`RLS0`/`DENIED` consistentes. `$MIG` aponta para o mesmo caminho em todas as tasks.
 
 **Desvios do spec, deliberados:**
 - §5.1 previa 8 baselines; viraram **10** (acrescentei `B3 customer não escreve`, que prova que o gate de identidade já funcionava antes, e `B8 anon TEM UPDATE`, que dimensiona o que o REVOKE fecha).
