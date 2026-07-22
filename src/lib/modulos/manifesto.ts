@@ -133,6 +133,7 @@ export const MODULOS: ModuloApp[] = [
       "src/hooks/__tests__/useUtiContas.test.ts",
       "src/hooks/__tests__/ponto-equilibrio-folha-ambigua.test.ts",
       "src/services/__tests__/getCapitalDeGiro.test.ts",
+      "src/services/__tests__/getFluxoCaixa.test.ts",
       "src/services/__tests__/getResumoFinanceiro.test.ts",
       "src/services/__tests__/getTopInadimplentes.test.ts",
       "src/services/__tests__/somarSaldoAberto.test.ts",
