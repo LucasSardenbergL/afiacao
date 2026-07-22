@@ -288,7 +288,7 @@ falsifica "S2 policy antiga + grant de volta: A9 tem de cair" \
   'escreve "$F" 444' "OK"
 P -q -c "DROP POLICY \"Staff can manage products\" ON public.omie_products; REVOKE UPDATE ON public.omie_products FROM authenticated;" >/dev/null
 
-# S3: o GRANT SELECT de volta OMITIDO -> A6 (anti-tautologia) E A11 (farmer ainda le) tem de cair.
+# S3: o GRANT SELECT de volta OMITIDO -> A11 (farmer ainda le) tem de cair.
 #     Sem o grant, a negacao viria do privilegio e a policy nunca seria exercida.
 falsifica "S3 sem GRANT SELECT: A11 (farmer le) tem de cair" \
   "REVOKE SELECT ON public.omie_products FROM authenticated;" \
@@ -307,12 +307,16 @@ P -q -c "GRANT UPDATE ON public.omie_products TO service_role;" >/dev/null
 #     migration -- senao o DROP+CREATE a deixaria viva e o gate nao fecharia.
 echo "  --- S5: policy inesperada tem de ABORTAR a migration ---"
 P -q -c "CREATE POLICY \"policy de outra sessao\" ON public.omie_products FOR ALL TO authenticated USING (true);" >/dev/null
-if P -q -f "$MIG" >/dev/null 2>&1; then
+S5_OUT="$(P -q -f "$MIG" 2>&1)" && S5_RC=0 || S5_RC=$?
+if [ "$S5_RC" -eq 0 ]; then
   echo "  FAIL [S5] a migration APLICOU com policy desconhecida presente -- a precondicao nao dispara"
   FAIL=$((FAIL+1))
-else
-  echo "  OK   [S5] a migration ABORTOU (a precondicao tem dente)"
+elif printf '%s' "$S5_OUT" | command grep -q 'precondicao FALHOU'; then
+  echo "  OK   [S5] a migration ABORTOU PELA PRECONDICAO (tem dente)"
   FALS=$((FALS+1))
+else
+  echo "  FAIL [S5] a migration abortou, mas NAO pela precondicao -- saida: $S5_OUT"
+  FAIL=$((FAIL+1))
 fi
 P -q -c "DROP POLICY \"policy de outra sessao\" ON public.omie_products;" >/dev/null
 P -q -f "$MIG" >/dev/null
