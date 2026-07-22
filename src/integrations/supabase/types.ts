@@ -18830,6 +18830,12 @@ export type Database = {
           isSetofReturn: true
         }
       }
+      get_skus_margem_positiva: {
+        Args: never
+        Returns: {
+          product_id: string
+        }[]
+      }
       get_tint_price: { Args: { p_formula_id: string }; Returns: Json }
       get_tint_prices: { Args: { p_formula_ids: string[] }; Returns: Json }
       get_ultimos_precos_cliente: {

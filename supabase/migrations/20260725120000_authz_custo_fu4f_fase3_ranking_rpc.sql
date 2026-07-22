@@ -125,12 +125,26 @@ BEGIN
 
   -- staff-only: quem nao e employee nem master nao tem por que saber o que e vendavel.
   -- (customers sao 5.664 dos 5.669 usuarios — deixa-los fora e o grosso da superficie.)
+  --
+  -- RAISE, nao `RETURN` vazio: gate que devolve conjunto vazio em silencio e indistinguivel de
+  -- "nao ha dados" — nao entra em log, nao alerta ninguem, e o `authz:check` do CI o classifica
+  -- (com razao) como gate DECORATIVO, exigindo a forma de bloqueio. Note a assimetria
+  -- deliberada com o `v_uid IS NULL` acima: SEM identidade e o caso do service_role/anon
+  -- (chamador ligado no client errado) e sai vazio; COM identidade e sem papel e tentativa
+  -- indevida, e essa grita.
+  --
   -- COALESCE explicito: se has_role algum dia devolver NULL, `NOT NULL` e NULL e o IF nao
   -- dispara — o gate falharia ABERTO. Sugestao da rodada 2 do Codex.
-  IF NOT COALESCE(
-       public.has_role(v_uid, 'employee'::public.app_role)
-       OR public.has_role(v_uid, 'master'::public.app_role), false) THEN
-    RETURN;
+  -- A forma e `IF NOT ( … ) THEN RAISE` com o parentese IMEDIATAMENTE apos o NOT: e a unica que o
+  -- `authz:check` reconhece como bloqueio (`NOT COALESCE(...)` nao casa — o parser procura
+  -- `\bnot\s*\(`). Nao e capricho do linter: a forma canonica e o que torna o gate auditavel em
+  -- massa, e um gate que so o autor sabe ler nao e verificavel pelo CI.
+  IF NOT (
+       COALESCE(public.has_role(v_uid, 'employee'::public.app_role), false)
+       OR COALESCE(public.has_role(v_uid, 'master'::public.app_role), false)
+     ) THEN
+    RAISE EXCEPTION 'get_skus_margem_positiva: acesso restrito a staff'
+      USING ERRCODE = 'insufficient_privilege';
   END IF;
 
   RETURN QUERY

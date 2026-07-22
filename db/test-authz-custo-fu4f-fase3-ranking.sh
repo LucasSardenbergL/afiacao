@@ -250,8 +250,15 @@ eq "A9 SKU inativo fica de fora" \
 # FAIL-CLOSED e gate de identidade
 eq "A10 sem auth.uid(): zero linhas (fail-closed)" \
    "$(Pq -c "SET test.uid=''; SET ROLE authenticated; SELECT count(*) FROM public.get_skus_margem_positiva();" | tail -1)" "0"
-eq "A11 customer (nao-staff): zero linhas" \
-   "$(as_user "$CU" "SELECT count(*) FROM public.get_skus_margem_positiva();")" "0"
+# A11 e NEGATIVO: captura a SQLSTATE ESPERADA e re-lanca o resto. `WHEN OTHERS THEN 'OK'` seria
+# teatro — engoliria ate um erro de digitacao do proprio teste. O gate virou RAISE (e nao RETURN
+# vazio) porque conjunto vazio em silencio nao se distingue de "nao ha dados".
+A11_SQL="DO \$t\$ BEGIN PERFORM * FROM public.get_skus_margem_positiva(); RAISE EXCEPTION 'NAO_BARROU'; EXCEPTION WHEN insufficient_privilege THEN RAISE NOTICE 'esperado'; WHEN OTHERS THEN RAISE; END \$t\$;"
+if as_user "$CU" "$A11_SQL" >/dev/null 2>&1; then
+  ok "A11 customer (nao-staff) barrado com insufficient_privilege"
+else
+  bad "A11 customer NAO foi barrado (ou barrou com a SQLSTATE errada)"
+fi
 # TOMBSTONE: a RPC vetada nao pode sobreviver. O harness nasce sem ela, entao o assert so tem
 # valor com a montagem abaixo — crio a funcao ANTES e exijo que a migration a remova. Sem isso
 # seria o "detector que nunca dispara" do #1488.
