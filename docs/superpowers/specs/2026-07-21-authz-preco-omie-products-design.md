@@ -36,7 +36,23 @@ a COLUNA, não o parâmetro**.
 prospectivo** — este trabalho *desbloqueia* o #1520, não estanca um vazamento em curso. **(a) e o
 TRUNCATE são atuais.**
 
-### 1.2 "Já aconteceu?" — irrespondível, e isso é o achado
+### 1.2 Nenhuma prova COMPORTAMENTAL é possível em produção
+
+Terceira limitação, medida: `SET ROLE authenticated` sob `psql-ro` devolve
+`ERROR: permission denied to set role "authenticated"` — a role `claude_ro` é membro de
+`pg_read_all_data`, não de `authenticated`. E a validação pós-apply lê catálogo de propósito
+(#1462: invocar falharia por falta de `EXECUTE`, e o sucesso da migration se apresentaria como
+falha dela).
+
+⇒ O coração da entrega — *farmer negado, leitura preservada* — é provado **só no PG17 local**. Em
+produção confere-se o **catálogo** e infere-se o comportamento. A inferência é sólida (o catálogo
+determina o comportamento), mas é inferência, e o corpo do PR tem de dizer isso.
+
+O que fecha a lacuna é um smoke test do founder: **depois do apply, uma tela com preço tem de
+continuar populada**. Catálogo vazio significa que a policy de leitura não ficou como desenhada; a
+reversão é `GRANT` mais a policy antiga.
+
+### 1.3 "Já aconteceu?" — irrespondível, e isso é o achado
 
 Não há trilha. Nenhuma das 40 tabelas `%log%`/`%audit%` cobre `omie_products`, e os 3 triggers da
 tabela são `tr_sincronizar_ativo_omie`, `trg_preserve_tipo_produto` e `update_omie_products_updated_at`
@@ -198,13 +214,21 @@ Sem isto, "detectou o fechamento" e "o assert está quebrado" são indistinguív
 | # | Baseline (deve passar **antes**) |
 |---|---|
 | B1 | farmer dá `UPDATE` em `valor_unitario` **com sucesso** — o buraco existe |
-| B2 | farmer dá `INSERT` com sucesso |
-| B3 | farmer dá `DELETE` com sucesso |
-| B4 | `authenticated` tem `TRUNCATE` |
-| B5 | `anon` tem grants |
-| B6 | farmer **lê** (leitura a preservar) |
-| B7 | master lê |
-| B8 | `service_role` escreve |
+| B2 | master escreve |
+| B3 | customer **não** escreve — o gate de identidade já funcionava antes desta entrega |
+| B4 | farmer **lê** (leitura a preservar) |
+| B5 | master lê |
+| B6 | `authenticated` tem `TRUNCATE` (o `D` do `arwdDxtm`) |
+| B7 | `anon` tem `SELECT` |
+| B8 | `anon` tem `UPDATE` — dimensiona o que o REVOKE fecha |
+| B9 | existe exatamente 1 policy (a `FOR ALL`) |
+| B10 | **controle positivo**: `service_role` escreve |
+
+⚠️ **O baseline comportamental cobre só `UPDATE`.** Uma versão anterior deste spec previa baselines
+de `INSERT` e `DELETE` do farmer; o harness implementado não os tem. O fecho de `INSERT`/`DELETE` é
+provado **catalograficamente** (A4b/A4c via `has_table_privilege`), o que é suficiente porque o
+`REVOKE ALL` age por privilégio e atinge o role inteiro — mas o corpo do PR **não pode afirmar** que
+o baseline provou comportamentalmente o INSERT/DELETE do farmer.
 
 ### 5.2 Depois da migration
 
@@ -232,13 +256,19 @@ contagem** dos vermelhos: têm de ser os que aquela sabotagem mira, e só eles. 
 
 | # | Sabotagem | Vermelho exigido |
 |---|---|---|
-| F1 | não revogar `TRUNCATE` | A3 |
-| F2 | **não dropar a policy antiga** | A1, A2 **e A9** — permissivas combinam com `OR`, então o fecho comportamental também tem de cair |
-| F3 | omitir o `GRANT SELECT` de volta | A6 **e A11** — o gate viraria tautologia e a leitura quebraria |
-| F4 | revogar de `service_role` também | A7 **e o controle positivo §5.3** |
+| S1 | não revogar `TRUNCATE` | A3 |
+| S2 | **não dropar a policy antiga** (+ repor o grant de UPDATE) | A9 — permissivas combinam com `OR`, então o fecho comportamental tem de cair |
+| S3 | omitir o `GRANT SELECT` de volta | A11 — a leitura quebra (a negação passa a vir do privilégio) |
+| S4 | revogar de `service_role` também | A14, o controle positivo §5.3 |
+| S5 | **policy intrusa** simulando sessão paralela | a migration inteira tem de **abortar**, e a saída tem de conter a mensagem da precondição |
 
-F2 é a mais importante: é a única que prova que o fecho é **comportamental** e não apenas
+S2 é a mais importante: é a única que prova que o fecho é **comportamental** e não apenas
 catalográfico.
+
+S5 não existia na primeira versão deste spec — a precondição estava desenhada em §4 mas sem
+sabotagem própria, o que a deixaria como código não-provado num arquivo money-path. Ela não usa o
+helper `falsifica`: captura a saída da migration e exige a string `precondicao FALHOU`, porque só o
+exit code não distingue "abortou pela precondição" de "abortou por qualquer outro motivo".
 
 ## 6. Fora de escopo (declarado)
 

@@ -831,7 +831,7 @@ Draft segura o auto-merge. O corpo deve conter, além do desenho:
 - **A migration é MANUAL** — o founder aplica no SQL Editor do Lovable. Merge na `main` ≠ produção.
 - O bloco SQL pronto para colar.
 - A query de validação pós-apply.
-- **As duas notas de honestidade do spec §1.1 e §1.2**: (a) `get_skus_margem_positiva` não existe em prod, então o oráculo de custo é **prospectivo** — isto desbloqueia o #1520, não estanca vazamento em curso; (b) "já aconteceu?" é **irrespondível** — não há trilha, e `updated_at` guarda só o último toque.
+- **As TRÊS notas de honestidade do spec §1.1, §1.2 e §1.3**: (a) `get_skus_margem_positiva` não existe em prod, então o oráculo de custo é **prospectivo** — isto desbloqueia o #1520, não estanca vazamento em curso; (b) nenhuma prova **comportamental** é possível em produção (`SET ROLE authenticated` é negado sob `psql-ro`), então o fecho é provado no PG17 e conferido por catálogo em prod — o smoke test do founder é a tela de preço continuar populada; (c) "já aconteceu?" é **irrespondível** — não há trilha, e `updated_at` guarda só o último toque.
 - O parecer cru do Codex + a calibração rotulada como minha.
 - Que não há `Publish` de frontend (nenhuma mudança em `src/`).
 
@@ -856,7 +856,8 @@ Comando com `cd <path do worktree>` antes, e o checklist de aplicação manual.
 |---|---|
 | §1 o problema (policy + TRUNCATE) | Task 1 (cabeçalho da migration documenta o estado medido) |
 | §1.1 correção de escopo (oráculo prospectivo) | Task 9 Step 2 (corpo do PR) |
-| §1.2 "já aconteceu?" irrespondível | Task 9 Step 2 (corpo do PR) |
+| §1.2 nenhuma prova comportamental em prod | Task 9 Step 2 (corpo do PR) |
+| §1.3 "já aconteceu?" irrespondível | Task 9 Step 2 (corpo do PR) |
 | §2 investigação (writers, UI, funções SQL) | Task 1 (cabeçalho), Task 2 (stubs espelhando prod) |
 | §2.1 as 13 views / `selfservice_catalogo` | chip separado (fora deste plano, por desenho) |
 | §3.1 por que não gatear só a coluna | Task 1 (cabeçalho da migration) |
