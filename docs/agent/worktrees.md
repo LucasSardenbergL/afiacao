@@ -38,7 +38,7 @@ juntas. Cronologia medida (PRs de margem, mesmo dia):
 ```
 #1495  criado 00:30 → merge 17:58   produtor (draft por 17h)
 #1519  criado 17:01 → merge 21:40   helper SQL
-#1524  criado 17:39 → aberto        leitura fechada no frontend
+#1524  criado 17:39 → merge 22:32   leitura fechada no frontend (resolvido, ver abaixo)
 #1525  criado 17:41 → merge 17:47   consumidores  ← viveu 6 minutos
 #1526  criado 17:47 → FECHADO       duplicata do #1525, 26 arquivos jogados fora
 ```
@@ -71,6 +71,25 @@ ponto foi o produtor represado. Nada na memória (claude-mem) registra decisão 
 uma sessão só não colide consigo mesma. Ela nasceu de dor medida (sessão-épico com 14 compacts:
 regressão de idioma, releituras, estado perdido). Trocar split por compact reduz colisão e traz a
 degradação de volta; a saída barata é a re-checagem acima, que ataca a colisão sem desfazer a regra.
+
+**Se for RESOLVER em vez de refazer** (#1524, mergeado 22:32 — o founder pediu para resolver o PR
+já aberto): `git merge origin/main` e **a `main` vence por padrão** (`git checkout --theirs` em
+todos os conflitos). Ela passou pelo CI e está em produção; sobrescrevê-la reverte trabalho
+mergeado — mesma classe de falha do sync bidirecional do Lovable (`deploy.md`). Preserve só
+**adição genuína não coberta**: dos 4 achados do Codex no #1524 sobraram 2, ausentes da `main`
+justamente porque as sessões irmãs não rodaram segunda opinião — o diferencial de uma sessão lenta
+tende a ser o que o rigor extra produziu, não o núcleo. Módulo duplicado **apaga-se**, não se
+reconcilia (`lib/margem.ts` contra o `lib/format.ts` que já existia; as duas sessões chegaram a
+criar `legendaCobertura`, mesmo nome, em arquivos diferentes). Spec que descreve plano já executado
+por outras mãos sai junto — documento afirmando trabalho não realizado engana quem ler depois.
+Resultado: 15 arquivos conflitantes → 9, e o PR passou a valer pelo que só ele tinha.
+
+⚠️ **`MERGE_HEAD` em worktree NÃO fica em `.git/MERGE_HEAD`** — ali `.git` é *arquivo*, não
+diretório. `test -f .git/MERGE_HEAD` dá falso-negativo e faz um merge íntegro parecer perdido
+(custou uma tentativa de refazer do zero); use `$(git rev-parse --git-dir)/MERGE_HEAD`. E **não
+rode `git stash` com merge em curso** — mexe no estado do merge; para salvar, copie os arquivos
+para fora da árvore. O guard de `git reset --hard` pagou-se aqui: barrou o reset que teria
+destruído o merge por causa desse diagnóstico errado.
 
 ## Higiene de RAM/Node (M2 8GB satura; **swap em uso = RAM cheia**)
 
