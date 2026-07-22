@@ -21,7 +21,10 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PGVER=17
 PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"
-PORT="${PGPORT_TEST:-5471}"
+# 5472, NÃO 5471: o harness do #1495 (db/test-farmer-margem-server-side.sh) já ocupa a 5471, e
+# esta sessão roda os dois em sequência — mesma porta = colisão quando um servidor sobrevive ao
+# outro. Com ~40 worktrees paralelas, porta de harness é recurso compartilhado.
+PORT="${PGPORT_TEST:-5472}"
 SLUG="margemhelper"
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
 export LC_ALL=C LANG=C
@@ -90,8 +93,11 @@ CREATE TABLE public.cliente_classificacao (
   excluir_da_carteira boolean);
 SQL
 
-# ── aplica a migration REAL (não uma cópia) ──────────────────────────────────
+# ── aplica as migrations REAIS, na ordem (não cópias) ────────────────────────
+# A 2ª reconcilia o universo de status (allowlist → denylist) e faz
+# get_customer_margin_summary virar projeção deste helper.
 P -q -f "$REPO_ROOT/supabase/migrations/20260726150000_margem_cliente_helper_compartilhado.sql"
+P -q -f "$REPO_ROOT/supabase/migrations/20260726160000_margem_reconciliacao_universo_unico.sql"
 
 # ── seed ─────────────────────────────────────────────────────────────────────
 P -q <<'SQL'
@@ -120,8 +126,11 @@ INSERT INTO public.sales_orders (id, status, deleted_at) VALUES
   ('50000000-0000-0000-0000-00000000000c', 'faturado',  NULL),
   ('50000000-0000-0000-0000-00000000000d', 'faturado',  NULL),
   ('50000000-0000-0000-0000-00000000000e', 'faturado',  NULL),
-  ('50000000-0000-0000-0000-00000000000f', 'importado', NULL),   -- fora do allowlist vivo
-  ('50000000-0000-0000-0000-000000000010', 'cancelado', NULL),   -- 2º negativo de status
+  ('50000000-0000-0000-0000-00000000000f', 'importado', NULL),   -- venda real: ENTRA na denylist
+  ('50000000-0000-0000-0000-000000000015', 'separacao', NULL),   -- em trânsito: ENTRA
+  ('50000000-0000-0000-0000-000000000017', 'enviado',   NULL),   -- em trânsito: ENTRA
+  ('50000000-0000-0000-0000-000000000010', 'cancelado', NULL),   -- não é venda: SAI
+  ('50000000-0000-0000-0000-000000000018', 'orcamento', NULL),   -- 2º negativo: SAI
   ('50000000-0000-0000-0000-000000000011', 'faturado',  NULL),
   ('50000000-0000-0000-0000-000000000012', 'faturado',  NULL),
   ('50000000-0000-0000-0000-000000000013', 'faturado',  NULL),
@@ -142,10 +151,14 @@ INSERT INTO public.order_items (sales_order_id, customer_user_id, omie_codigo_pr
   ('50000000-0000-0000-0000-00000000000d','dd111111-0000-0000-0000-000000000004', 1004, 'dd000000-0000-0000-0000-000000000004', 1, 100),
   -- E: excluído da carteira → some
   ('50000000-0000-0000-0000-00000000000e','ee000000-0000-0000-0000-000000000005', 1001, 'dd000000-0000-0000-0000-000000000001', 1, 100),
-  -- F: status 'importado' → some
+  -- F: status 'importado' → ENTRA (venda real). Mesmo SKU/preço dos demais → margem 40%.
   ('50000000-0000-0000-0000-00000000000f','ff000000-0000-0000-0000-000000000006', 1001, 'dd000000-0000-0000-0000-000000000001', 1, 100),
-  -- F2: status 'cancelado' → some (2º negativo: barra `status <> 'importado'`)
+  -- SEP/ENV: em trânsito, mas vendidos → ENTRAM
+  ('50000000-0000-0000-0000-000000000015','5e000000-0000-0000-0000-000000000015', 1001, 'dd000000-0000-0000-0000-000000000001', 1, 100),
+  ('50000000-0000-0000-0000-000000000017','6e000000-0000-0000-0000-000000000017', 1001, 'dd000000-0000-0000-0000-000000000001', 1, 100),
+  -- F2: 'cancelado' → SAI. ORC: 'orcamento' → SAI (2º negativo: barra `status <> 'cancelado'`)
   ('50000000-0000-0000-0000-000000000010','f2000000-0000-0000-0000-000000000016', 1001, 'dd000000-0000-0000-0000-000000000001', 1, 100),
+  ('50000000-0000-0000-0000-000000000018','7e000000-0000-0000-0000-000000000018', 1001, 'dd000000-0000-0000-0000-000000000001', 1, 100),
   -- I: fallback cost_price (cost_final NULL) → 60%
   ('50000000-0000-0000-0000-000000000011','1a000000-0000-0000-0000-000000000011', 1005, 'dd000000-0000-0000-0000-000000000005', 1, 100),
   -- SD: pedido soft-deleted → some
@@ -198,14 +211,23 @@ eq "J3 multi-item: contadores e somas batem" \
                FROM private.margem_cliente_agregada() WHERE customer_user_id='9a000000-0000-0000-0000-000000000012';")" \
    "2|1|350|180"
 
-echo "-- K. universo --"
+echo "-- K. universo (DENYLIST desde a reconciliação) --"
 eq "K1 cliente excluído da carteira some" \
    "$(Pq -c "SELECT count(*) FROM private.margem_cliente_agregada() WHERE customer_user_id='ee000000-0000-0000-0000-000000000005';")" "0"
-eq "K2 status 'importado' some" \
-   "$(Pq -c "SELECT count(*) FROM private.margem_cliente_agregada() WHERE customer_user_id='ff000000-0000-0000-0000-000000000006';")" "0"
-eq "K3 status 'cancelado' some (2o negativo — barra 'status <> importado')" \
+# ⚠️ INVERTIDO na reconciliação. A allowlist anterior (`IN ('confirmado','faturado','entregue')`)
+# resolvia para SÓ `faturado` e descartava R$ 6.985.425,66 de vendas reais — 311 clientes (25,6%)
+# perdiam a margem e caíam em `neutro`. `importado` É venda: entra.
+eq "K2 status 'importado' ENTRA (é venda real, R\$ 2,75M)" \
+   "$(m ff000000-0000-0000-0000-000000000006)" "40.00"
+eq "K3 status 'separacao' ENTRA (em trânsito, mas vendido)" \
+   "$(m 5e000000-0000-0000-0000-000000000015)" "40.00"
+eq "K4 status 'enviado' ENTRA" \
+   "$(m 6e000000-0000-0000-0000-000000000017)" "40.00"
+eq "K5 status 'cancelado' SOME (a denylist barra)" \
    "$(Pq -c "SELECT count(*) FROM private.margem_cliente_agregada() WHERE customer_user_id='f2000000-0000-0000-0000-000000000016';")" "0"
-eq "K4 pedido soft-deleted some" \
+eq "K6 status 'orcamento' SOME (2o negativo — barra 'status <> cancelado')" \
+   "$(Pq -c "SELECT count(*) FROM private.margem_cliente_agregada() WHERE customer_user_id='7e000000-0000-0000-0000-000000000018';")" "0"
+eq "K7 pedido soft-deleted some" \
    "$(Pq -c "SELECT count(*) FROM private.margem_cliente_agregada() WHERE customer_user_id='5d000000-0000-0000-0000-000000000014';")" "0"
 
 echo "-- L. ACL (o helper não é alcançável do browser) --"
@@ -232,9 +254,41 @@ eq "N3 é STABLE (não VOLATILE)" \
 
 echo "-- O. idempotência --"
 P -q -f "$REPO_ROOT/supabase/migrations/20260726150000_margem_cliente_helper_compartilhado.sql"
+P -q -f "$REPO_ROOT/supabase/migrations/20260726160000_margem_reconciliacao_universo_unico.sql"
 eq "O1 re-aplicar não muda o resultado"                "$(m aa000000-0000-0000-0000-000000000001)" "40.00"
 eq "O2 re-aplicar preserva o REVOKE de authenticated" \
    "$(Pq -c "SELECT has_function_privilege('authenticated','private.margem_cliente_agregada()','EXECUTE');")" "f"
+eq "O3 após re-aplicar as duas EM ORDEM, o universo segue AMPLO" \
+   "$(m ff000000-0000-0000-0000-000000000006)" "40.00"
+
+# ⚠️ O RISCO DE ORDEM, exercitado de verdade — não só afirmado num comentário.
+# O3 acima prova que a sequência COMPLETA converge; ele NÃO prova nada sobre recolar só a antiga.
+# Os dois abaixo separam as coisas: O4 demonstra que o perigo é REAL (a 150000 sozinha reverte o
+# universo, sem erro nenhum), e O5 que a 160000 reconverge. É documentação EXECUTÁVEL do hazard —
+# um comentário dizendo "cuidado com a ordem" não falha quando alguém erra a ordem.
+P -q -f "$REPO_ROOT/supabase/migrations/20260726150000_margem_cliente_helper_compartilhado.sql"
+eq "O4 recolar SÓ a antiga REVERTE o universo (o hazard é real)" \
+   "$(Pq -c "SELECT count(*) FROM private.margem_cliente_agregada() WHERE customer_user_id='ff000000-0000-0000-0000-000000000006';")" "0"
+P -q -f "$REPO_ROOT/supabase/migrations/20260726160000_margem_reconciliacao_universo_unico.sql"
+eq "O5 re-aplicar a 160000 reconverge para o universo amplo" \
+   "$(m ff000000-0000-0000-0000-000000000006)" "40.00"
+
+echo "-- P. get_customer_margin_summary virou PROJEÇÃO do helper --"
+# Os nomes de coluna são preservados (a edge calculate-scores depende deles), mas o número passa
+# a vir do helper — mesma linha, mesmo valor, nos dois objetos.
+eq "P1 a projeção devolve o MESMO valor que o helper" \
+   "$(Pq -c "SELECT gross_margin_pct FROM public.get_customer_margin_summary() WHERE customer_user_id='aa000000-0000-0000-0000-000000000001';")" \
+   "$(m aa000000-0000-0000-0000-000000000001)"
+eq "P2 a projeção herda o universo amplo (importado entra)" \
+   "$(Pq -c "SELECT gross_margin_pct FROM public.get_customer_margin_summary() WHERE customer_user_id='ff000000-0000-0000-0000-000000000006';")" "40.00"
+eq "P3 a projeção herda o JOIN por código (product_id NULO resolve)" \
+   "$(Pq -c "SELECT gross_margin_pct FROM public.get_customer_margin_summary() WHERE customer_user_id='aa000000-0000-0000-0000-000000000001';")" "40.00"
+eq "P4 a projeção NÃO tem cálculo próprio (corpo só lê o helper)" \
+   "$(Pq -c "SELECT pg_get_functiondef(p.oid) ~ 'margem_cliente_agregada' AND pg_get_functiondef(p.oid) !~ 'product_costs'
+               FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+              WHERE n.nspname='public' AND p.proname='get_customer_margin_summary';")" "t"
+eq "P5 a projeção segue fechada a authenticated" \
+   "$(Pq -c "SELECT has_function_privilege('authenticated','public.get_customer_margin_summary()','EXECUTE');")" "f"
 
 echo "========================================"
 echo "  $PASS verde(s), $FAIL vermelho(s)"

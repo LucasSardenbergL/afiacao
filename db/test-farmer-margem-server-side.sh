@@ -70,6 +70,7 @@ CREATE TABLE public.order_items (
   sales_order_id uuid NOT NULL REFERENCES public.sales_orders(id),
   customer_user_id uuid,
   product_id uuid,
+  omie_codigo_produto bigint,   -- reconciliação: é por aqui que o custo passa a ser encontrado
   unit_price numeric,
   quantity numeric
 );
@@ -77,6 +78,28 @@ CREATE TABLE public.product_costs (
   product_id uuid PRIMARY KEY,
   cost_price numeric,
   cost_final numeric
+);
+-- Acrescentadas na RECONCILIAÇÃO (2026-07-21): get_customer_margin_summary passou a ser projeção
+-- de private.margem_cliente_agregada(), que junta custo por `omie_codigo_produto` em vez de
+-- `product_id` (product_id é NULO em 2,67% dos itens da prod, escondendo R$ 247.482,10 de custo
+-- conhecido). O mapeamento abaixo é 1:1 com os product_id já semeados, então todos os valores
+-- esperados deste harness permanecem idênticos.
+--
+-- ⚠️ O QUE ESSA INVARIÂNCIA PROVA — E O QUE NÃO PROVA (auto-challenge, Caminho B):
+-- Com o mapeamento 1:1, os dois caminhos de JOIN são EQUIVALENTES para este seed. Logo este
+-- harness é, por construção, INSENSÍVEL à mudança de JOIN — ele não pode detectá-la, e seria
+-- tautológico citá-lo como prova de que o JOIN novo está certo.
+-- O que ele prova: a delegação não QUEBROU nenhum dos cenários originais (margem exata, mistura,
+-- negativa, precedência, fallback, NULL, ACL, idempotência) — que é exatamente o seu papel aqui.
+-- Quem prova o JOIN é o assert H1 de db/test-margem-cliente-helper-compartilhado.sh, cujo seed
+-- tem um item com product_id NULO e código resolvível: o único caso em que os caminhos DIVERGEM.
+CREATE TABLE public.omie_products (
+  id uuid PRIMARY KEY,
+  omie_codigo_produto bigint UNIQUE
+);
+CREATE TABLE public.cliente_classificacao (
+  user_id uuid PRIMARY KEY,
+  excluir_da_carteira boolean
 );
 -- farmer_client_scores: alvo de apply_score_updates. Nulabilidade E DEFAULTS espelham a PROD
 -- (medido 2026-07-20/21: m_score/g_score/gross_margin_pct/health_score todos is_nullable=YES,
@@ -105,6 +128,14 @@ echo "migration aplicada: $(basename "$MIG")"
 MIG2="$REPO_ROOT/supabase/migrations/20260723160000_farmer_margem_correcoes_review.sql"
 P -q -f "$MIG2"
 echo "migration aplicada: $(basename "$MIG2")"
+# 150000/160000 (helper + reconciliação): get_customer_margin_summary deixa de ter cálculo próprio
+# e vira PROJEÇÃO de private.margem_cliente_agregada(). Aplicadas na ordem em que o founder vai
+# colar. ⚠️ Toda restauração de falsificação abaixo tem de reaplicar as TRÊS — restaurar só a $MIG
+# ressuscita o cálculo antigo e os asserts seguintes passariam a medir o objeto errado.
+MIG3="$REPO_ROOT/supabase/migrations/20260726150000_margem_cliente_helper_compartilhado.sql"
+MIG4="$REPO_ROOT/supabase/migrations/20260726160000_margem_reconciliacao_universo_unico.sql"
+P -q -f "$MIG3"; P -q -f "$MIG4"
+echo "migration aplicada: $(basename "$MIG3") + $(basename "$MIG4")"
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ZONA 3 — SEED: cenários com margem EXATA, conferível à mão
@@ -156,6 +187,23 @@ INSERT INTO public.order_items(sales_order_id, customer_user_id, product_id, uni
   ('0a000000-0000-0000-0000-000000000002','0c000000-0000-0000-0000-000000000008','0b000000-0000-0000-0000-000000000001',100,1),
   -- C9 pedido com deleted_at → cliente some
   ('0a000000-0000-0000-0000-000000000003','0c000000-0000-0000-0000-000000000009','0b000000-0000-0000-0000-000000000001',100,1);
+
+-- RECONCILIAÇÃO: mapeia cada product_id semeado para um código Omie 1:1 e propaga aos itens.
+-- Feito por UPDATE derivado (e não reescrevendo as 11 linhas acima) de propósito: os dados do
+-- seed original ficam INTOCADOS, então qualquer mudança nos valores esperados seria da lógica
+-- nova, nunca de um seed reescrito à mão.
+INSERT INTO public.omie_products(id, omie_codigo_produto)
+SELECT product_id, (9000 + row_number() OVER (ORDER BY product_id))::bigint
+  FROM public.product_costs;
+-- O SKU sem custo (0bff…ff) também ganha código: ele TEM código e NÃO tem custo — que é
+-- exatamente o caso que o assert da mistura (P2) e o do "sem custo algum" (N1) exercitam.
+INSERT INTO public.omie_products(id, omie_codigo_produto)
+VALUES ('0bff0000-0000-0000-0000-0000000000ff', 9999);
+
+UPDATE public.order_items oi
+   SET omie_codigo_produto = op.omie_codigo_produto
+  FROM public.omie_products op
+ WHERE op.id = oi.product_id;
 SQL
 
 M() { Pq -c "SELECT COALESCE(gross_margin_pct::text,'NULL') FROM public.get_customer_margin_summary() WHERE customer_user_id='0c000000-0000-0000-0000-00000000000$1';"; }
@@ -296,8 +344,7 @@ eq "D3 health_score mantem DEFAULT 0"        "$HS9" "0"
 echo "── assert: idempotencia (aplicar 2x) ──"
 # As DUAS, na mesma ordem — inclui reaplicar o ALTER TABLE ... DROP DEFAULT (que é idempotente por
 # natureza, mas isso tem de ser PROVADO, não presumido: o founder pode colar o bloco duas vezes).
-P -q -f "$MIG"
-P -q -f "$MIG2"
+P -q -f "$MIG"; P -q -f "$MIG2"; P -q -f "$MIG3"; P -q -f "$MIG4"
 eq "I1 margem intacta apos 2o apply"       "$(M 1)" "56.00"
 eq "I3 DROP DEFAULT idempotente"           "$(Pq -c "SELECT COALESCE(column_default,'NULL') FROM information_schema.columns WHERE table_name='farmer_client_scores' AND column_name='gross_margin_pct';")" "NULL"
 SVC2=$(Pq -c "SET ROLE service_role; SELECT count(*) FROM public.get_customer_margin_summary();" | tail -1)
@@ -379,7 +426,7 @@ SQL
 ne "F2 P2 fica vermelho (40.00 viraria 80.00)" "$(M 2)" "40.00"
 
 echo "── falsificacao F3: GRANT p/ authenticated (o REVOKE perde o dente) ──"
-P -q -f "$MIG"                                                  # restaura a versão verdadeira
+P -q -f "$MIG"; P -q -f "$MIG2"; P -q -f "$MIG3"; P -q -f "$MIG4"                                                  # restaura a versão verdadeira
 P -q -c "GRANT EXECUTE ON FUNCTION public.get_customer_margin_summary() TO authenticated;"
 AUTHF=$(P -tA 2>&1 <<'SQL' || true
 SET ROLE authenticated;
@@ -455,8 +502,7 @@ ne "F5 AP4 fica vermelho (56.00 seria NULLado)" "$(GMP 1)" "56.00"
 ne "F5 m_score idem"                            "$(MSC 1)" "56"
 
 echo "── restauro final: migrations verdadeiras + reconferencia ──"
-P -q -f "$MIG"
-P -q -f "$MIG2"
+P -q -f "$MIG"; P -q -f "$MIG2"; P -q -f "$MIG3"; P -q -f "$MIG4"
 P -q -c "REVOKE ALL ON FUNCTION public.get_customer_margin_summary() FROM authenticated;"
 # R6: com a sentinela de volta, o MESMO payload sem as chaves volta a PRESERVAR (fecha o ciclo do F5).
 P -q -c "UPDATE public.farmer_client_scores SET gross_margin_pct=56.00, m_score=56 WHERE id='0d000000-0000-0000-0000-000000000001';"
