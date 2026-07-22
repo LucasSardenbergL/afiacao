@@ -26,8 +26,8 @@ export const CustomerBundleCard = ({ data, expanded, onToggle, bundleArgs, argGe
   const individualLIE = data.bestIndividual?.lie || 0;
   const bundleWins = bestBundleLIE > individualLIE;
 
-  // `grossMarginPct` sem `|| 0`: margem desconhecida tem de chegar como null no classify,
-  // senão o cliente sem custo cadastrado vira 'sensivel_preco' por coerção.
+  // grossMarginPct passa SEM `|| 0`: o guard dentro de classifyCustomerProfile só funciona se o
+  // null chegar até lá. Coagir aqui tornaria a correção inerte (a armadilha do #1508).
   const profile = classifyCustomerProfile(data.healthScore, data.avgMonthlySpend || 0, data.grossMarginPct, data.categoryCount || 0);
   const profileInfo = profileLabels[profile];
 

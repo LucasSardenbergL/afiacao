@@ -8,12 +8,12 @@ import { useMyActiveCoverage } from '@/hooks/useCoverage';
 import { useCopilotEngine, type CopilotContext } from '@/hooks/useCopilotEngine';
 import { useTacticalPlan, type TacticalPlan } from '@/hooks/useTacticalPlan';
 import { supabase } from '@/integrations/supabase/client';
-import { lerMargemPct } from '@/lib/margem';
 import { toast } from 'sonner';
 import { Minus } from 'lucide-react';
 import { directionConfig, suggestionTypeIcons, fallbackSuggestionIcon } from './config';
 import type { InputMode } from './types';
 import type { MotorVozScribeProps } from './MotorVozScribe';
+import { margemConhecida } from '@/lib/scoring/margin';
 
 export function useFarmerCopilot() {
   const navigate = useNavigate();
@@ -109,9 +109,12 @@ export function useFarmerCopilot() {
         customerType: profile?.customer_type,
         healthScore: score?.health_score,
         avgMonthlySpend: score?.avg_monthly_spend_180d,
-        // Escala 0–100, `null` quando desconhecida. Vai cru para o prompt da IA: um 0
-        // fabricado aqui viraria "cliente sem margem" na recomendação que a vendedora recebe.
-        grossMarginPct: lerMargemPct(score?.gross_margin_pct),
+        // Vai para o prompt da IA. `margemConhecida` garante null EXPLÍCITO (em vez de
+        // undefined, que some do JSON, ou de uma string numérica): o modelo precisa
+        // distinguir "margem 0%" de "margem não apurada" para não sugerir desconto nem
+        // discurso de rentabilidade em cima de um número que ninguém mediu.
+        // Unidade: PERCENTUAL 0-100.
+        grossMarginPct: margemConhecida(score?.gross_margin_pct),
         categoryCount: score?.category_count,
         daysSinceLastPurchase: score?.days_since_last_purchase,
         churnRisk: score?.churn_risk,

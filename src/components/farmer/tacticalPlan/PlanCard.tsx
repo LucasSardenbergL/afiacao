@@ -8,11 +8,11 @@ import {
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { getObjectiveLabel, type TacticalPlan } from '@/hooks/useTacticalPlan';
-import { formatarMargemPct } from '@/lib/margem';
 import { fmt, objectiveColors, profileLabels } from './config';
 import { Section, MetricRow, CopyButton } from './PlanSection';
 import { RecordResultDialog } from './RecordResultDialog';
 import type { RecordResultPayload } from './types';
+import { formatMargemPct } from '@/lib/format';
 
 export const PlanCard = ({
   plan, expanded, onToggle, onCopy, copiedText, onRecordResult,
@@ -78,7 +78,7 @@ export const PlanCard = ({
           <div className="mt-3 space-y-3">
             {/* Diagnosis */}
             <Section title="Diagnóstico Resumido" icon={Heart}>
-              <MetricRow label="Margem atual" value={formatarMargemPct(plan.currentMarginPct)} />
+              <MetricRow label="Margem atual" value={formatMargemPct(plan.currentMarginPct)} />
               <MetricRow label="Média cluster" value={plan.clusterAvgMarginPct == null ? '—' : `${plan.clusterAvgMarginPct.toFixed(1)}%`} />
               <MetricRow label="Potencial expansão" value={`${plan.expansionPotential.toFixed(0)}%`} />
               <MetricRow label="Perfil" value={profileLabels[plan.customerProfile] || plan.customerProfile} />

@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 416
+-- Total de custom migrations: 423
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -457,7 +457,14 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260723140000', 'authz_custo_fu4f_fase1', '20260723140000_authz_custo_fu4f_fase1.sql'),
   ('20260723140000', 'authz_pedido_compra_item_cap_compras', '20260723140000_authz_pedido_compra_item_cap_compras.sql'),
   ('20260723150000', 'authz_custo_fu4f_fase2_regua', '20260723150000_authz_custo_fu4f_fase2_regua.sql'),
-  ('20260724120000', 'authz_sales_orders_split_escrita_fu4', '20260724120000_authz_sales_orders_split_escrita_fu4.sql')
+  ('20260723160000', 'authz_fu4e_is_not_true_escritas', '20260723160000_authz_fu4e_is_not_true_escritas.sql'),
+  ('20260724120000', 'authz_sales_orders_split_escrita_fu4', '20260724120000_authz_sales_orders_split_escrita_fu4.sql'),
+  ('20260724130000', 'authz_custo_fu4f_fase3_recommend', '20260724130000_authz_custo_fu4f_fase3_recommend.sql'),
+  ('20260724130000', 'tint_canonica_csv_legado_allowlist', '20260724130000_tint_canonica_csv_legado_allowlist.sql'),
+  ('20260726120000', 'tint_promote_error_details_completo', '20260726120000_tint_promote_error_details_completo.sql'),
+  ('20260726120001', 'cron_tactical_plans_batch_nightly', '20260726120001_cron_tactical_plans_batch_nightly.sql'),
+  ('20260726130000', 'vendas_sync_semear_janela', '20260726130000_vendas_sync_semear_janela.sql'),
+  ('20260726140000', 'vendas_sync_semear_janela_v2', '20260726140000_vendas_sync_semear_janela_v2.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -906,6 +913,7 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('data_health_watchdog', 'function', 'public', 'fin_sync_heartbeat', ''),
   ('data_health_watchdog', 'cron_job', 'cron', 'data-health-watchdog', ''),
   ('cron_baseline', 'cron_job', 'cron', 'afiacao_ciclo_oportunidade_diario', ''),
+  ('cron_baseline', 'cron_job', 'cron', 'afiacao_customer_metrics_refresh_6h', ''),
   ('cron_baseline', 'cron_job', 'cron', 'afiacao_dispatch_notificacoes_30min', ''),
   ('cron_baseline', 'cron_job', 'cron', 'afiacao_estados_eventos_diarios', ''),
   ('cron_baseline', 'cron_job', 'cron', 'afiacao_limpeza_sugestoes_mensal', ''),
@@ -939,8 +947,9 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('cron_baseline', 'cron_job', 'cron', 'fin-sync-watchdog', ''),
   ('cron_baseline', 'cron_job', 'cron', 'gerar-pedidos-diario-oben', ''),
   ('cron_baseline', 'cron_job', 'cron', 'gerar-pedidos-intraday-oben', ''),
-  ('cron_baseline', 'cron_job', 'cron', 'monthly-tool-report', ''),
   ('cron_baseline', 'cron_job', 'cron', 'nao-vinculados-refresh-diario', ''),
+  ('cron_baseline', 'cron_job', 'cron', 'omie-nfe-recebimento-import-1h', ''),
+  ('cron_baseline', 'cron_job', 'cron', 'omie-nfe-reconcile-1h', ''),
   ('cron_baseline', 'cron_job', 'cron', 'omie-sync-estoque-diario', ''),
   ('cron_baseline', 'cron_job', 'cron', 'omie-sync-estoque-intraday-oben', ''),
   ('cron_baseline', 'cron_job', 'cron', 'omie-sync-metadados-daily', ''),
@@ -954,14 +963,18 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('cron_baseline', 'cron_job', 'cron', 'reposicao-classificar-sayerlack-grupo', ''),
   ('cron_baseline', 'cron_job', 'cron', 'reposicao-cold-start-parametros', ''),
   ('cron_baseline', 'cron_job', 'cron', 'reposicao-depara-sayerlack-auto-diario', ''),
+  ('cron_baseline', 'cron_job', 'cron', 'reposicao-embalagem-cadastro-wp-daily', ''),
   ('cron_baseline', 'cron_job', 'cron', 'reposicao-param-auto-resumo', ''),
   ('cron_baseline', 'cron_job', 'cron', 'reposicao-param-limbo-watchdog', ''),
   ('cron_baseline', 'cron_job', 'cron', 'reposicao-preencher-parametros-faltantes', ''),
   ('cron_baseline', 'cron_job', 'cron', 'reposicao-refresh-descricao-diario', ''),
+  ('cron_baseline', 'cron_job', 'cron', 'sayerlack-captura-precos-mensal', ''),
   ('cron_baseline', 'cron_job', 'cron', 'sayerlack-portal-watchdog', ''),
   ('cron_baseline', 'cron_job', 'cron', 'sayerlack-retry-orfaos', ''),
   ('cron_baseline', 'cron_job', 'cron', 'scoring-recalc-batch-nightly', ''),
   ('cron_baseline', 'cron_job', 'cron', 'sync-colacor-vendas-products', ''),
+  ('cron_baseline', 'cron_job', 'cron', 'sync-customers-colacor-vendas-daily', ''),
+  ('cron_baseline', 'cron_job', 'cron', 'sync-customers-servicos-daily', ''),
   ('cron_baseline', 'cron_job', 'cron', 'sync-customers-vendas-daily', ''),
   ('cron_baseline', 'cron_job', 'cron', 'sync-inventory-colacor-vendas-1h', ''),
   ('cron_baseline', 'cron_job', 'cron', 'sync-inventory-servicos-1h', ''),
@@ -1920,7 +1933,14 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'order_items_select_staff', 'order_items'),
   ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'order_items_select_customer', 'order_items'),
   ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'sales_price_history_select_staff', 'sales_price_history'),
-  ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'sales_price_history_select_customer', 'sales_price_history')
+  ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'sales_price_history_select_customer', 'sales_price_history'),
+  ('authz_custo_fu4f_fase3_recommend', 'function', 'public', 'pode_ler_custo', ''),
+  ('authz_custo_fu4f_fase3_recommend', 'rls_policy', 'public', 'recommendation_log_select_custo', 'recommendation_log'),
+  ('tint_canonica_csv_legado_allowlist', 'view', 'public', 'v_tint_formula_canonica', ''),
+  ('tint_promote_error_details_completo', 'function', 'public', 'tint_promote_sync_run', ''),
+  ('cron_tactical_plans_batch_nightly', 'cron_job', 'cron', 'tactical-plans-batch-nightly', ''),
+  ('vendas_sync_semear_janela', 'function', 'public', 'vendas_sync_semear_janela', ''),
+  ('vendas_sync_semear_janela_v2', 'function', 'public', 'vendas_sync_semear_janela', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -2417,6 +2437,7 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('data_health_watchdog', 'function', 'public', 'fin_sync_heartbeat', ''),
   ('data_health_watchdog', 'cron_job', 'cron', 'data-health-watchdog', ''),
   ('cron_baseline', 'cron_job', 'cron', 'afiacao_ciclo_oportunidade_diario', ''),
+  ('cron_baseline', 'cron_job', 'cron', 'afiacao_customer_metrics_refresh_6h', ''),
   ('cron_baseline', 'cron_job', 'cron', 'afiacao_dispatch_notificacoes_30min', ''),
   ('cron_baseline', 'cron_job', 'cron', 'afiacao_estados_eventos_diarios', ''),
   ('cron_baseline', 'cron_job', 'cron', 'afiacao_limpeza_sugestoes_mensal', ''),
@@ -2450,8 +2471,9 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('cron_baseline', 'cron_job', 'cron', 'fin-sync-watchdog', ''),
   ('cron_baseline', 'cron_job', 'cron', 'gerar-pedidos-diario-oben', ''),
   ('cron_baseline', 'cron_job', 'cron', 'gerar-pedidos-intraday-oben', ''),
-  ('cron_baseline', 'cron_job', 'cron', 'monthly-tool-report', ''),
   ('cron_baseline', 'cron_job', 'cron', 'nao-vinculados-refresh-diario', ''),
+  ('cron_baseline', 'cron_job', 'cron', 'omie-nfe-recebimento-import-1h', ''),
+  ('cron_baseline', 'cron_job', 'cron', 'omie-nfe-reconcile-1h', ''),
   ('cron_baseline', 'cron_job', 'cron', 'omie-sync-estoque-diario', ''),
   ('cron_baseline', 'cron_job', 'cron', 'omie-sync-estoque-intraday-oben', ''),
   ('cron_baseline', 'cron_job', 'cron', 'omie-sync-metadados-daily', ''),
@@ -2465,14 +2487,18 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('cron_baseline', 'cron_job', 'cron', 'reposicao-classificar-sayerlack-grupo', ''),
   ('cron_baseline', 'cron_job', 'cron', 'reposicao-cold-start-parametros', ''),
   ('cron_baseline', 'cron_job', 'cron', 'reposicao-depara-sayerlack-auto-diario', ''),
+  ('cron_baseline', 'cron_job', 'cron', 'reposicao-embalagem-cadastro-wp-daily', ''),
   ('cron_baseline', 'cron_job', 'cron', 'reposicao-param-auto-resumo', ''),
   ('cron_baseline', 'cron_job', 'cron', 'reposicao-param-limbo-watchdog', ''),
   ('cron_baseline', 'cron_job', 'cron', 'reposicao-preencher-parametros-faltantes', ''),
   ('cron_baseline', 'cron_job', 'cron', 'reposicao-refresh-descricao-diario', ''),
+  ('cron_baseline', 'cron_job', 'cron', 'sayerlack-captura-precos-mensal', ''),
   ('cron_baseline', 'cron_job', 'cron', 'sayerlack-portal-watchdog', ''),
   ('cron_baseline', 'cron_job', 'cron', 'sayerlack-retry-orfaos', ''),
   ('cron_baseline', 'cron_job', 'cron', 'scoring-recalc-batch-nightly', ''),
   ('cron_baseline', 'cron_job', 'cron', 'sync-colacor-vendas-products', ''),
+  ('cron_baseline', 'cron_job', 'cron', 'sync-customers-colacor-vendas-daily', ''),
+  ('cron_baseline', 'cron_job', 'cron', 'sync-customers-servicos-daily', ''),
   ('cron_baseline', 'cron_job', 'cron', 'sync-customers-vendas-daily', ''),
   ('cron_baseline', 'cron_job', 'cron', 'sync-inventory-colacor-vendas-1h', ''),
   ('cron_baseline', 'cron_job', 'cron', 'sync-inventory-servicos-1h', ''),
@@ -3431,7 +3457,14 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'order_items_select_staff', 'order_items'),
   ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'order_items_select_customer', 'order_items'),
   ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'sales_price_history_select_staff', 'sales_price_history'),
-  ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'sales_price_history_select_customer', 'sales_price_history')
+  ('authz_sales_orders_split_escrita_fu4', 'rls_policy', 'public', 'sales_price_history_select_customer', 'sales_price_history'),
+  ('authz_custo_fu4f_fase3_recommend', 'function', 'public', 'pode_ler_custo', ''),
+  ('authz_custo_fu4f_fase3_recommend', 'rls_policy', 'public', 'recommendation_log_select_custo', 'recommendation_log'),
+  ('tint_canonica_csv_legado_allowlist', 'view', 'public', 'v_tint_formula_canonica', ''),
+  ('tint_promote_error_details_completo', 'function', 'public', 'tint_promote_sync_run', ''),
+  ('cron_tactical_plans_batch_nightly', 'cron_job', 'cron', 'tactical-plans-batch-nightly', ''),
+  ('vendas_sync_semear_janela', 'function', 'public', 'vendas_sync_semear_janela', ''),
+  ('vendas_sync_semear_janela_v2', 'function', 'public', 'vendas_sync_semear_janela', '')
 )
 SELECT
   e.migration,

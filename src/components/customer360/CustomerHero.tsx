@@ -10,26 +10,12 @@ import { CallButton } from '@/components/call/CallButton';
 import { AgendarVisitaDialog } from '@/components/visitas/AgendarVisitaDialog';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
+import { formatMargemPct } from '@/lib/format';
 import { whatsappLink } from '@/lib/phone';
-import { formatarMargemPct, lerMargemPct } from '@/lib/margem';
-import { tomMargem, type TomMargem } from '@/lib/scoring/margem-leitura';
 import {
   formatDateOrDash, initials, healthTone, churnTone, formatDocument,
 } from './format';
 import type { Customer, CustomerScore } from './viewTypes';
-
-/**
- * Pintura do badge de margem. A POLÍTICA de corte vive em `tomMargem` (negócio);
- * aqui só o mapeamento tom → classe. Antes, cor e texto liam a coluna por caminhos
- * diferentes — a cor comparava o valor cru contra 0.3/0.15 (escala de fração) enquanto
- * o texto normalizava, então o mesmo badge podia dizer "53%" pintado como se fosse 0,53.
- */
-const TOM_MARGEM_CLASSES: Record<TomMargem, string> = {
-  success: 'bg-status-success-bg text-status-success-bold border-status-success/20',
-  warning: 'bg-status-warning-bg text-status-warning-bold border-status-warning/20',
-  error: 'bg-status-error-bg text-status-error-bold border-status-error/20',
-  neutral: 'text-muted-foreground border-border',
-};
 
 export function CustomerHero({
   customer, score: s, isPj, onBack,
@@ -149,15 +135,23 @@ export function CustomerHero({
                   {churn.label}
                 </span>
               )}
-              {lerMargemPct(s?.gross_margin_pct) !== null && (
+              {s?.gross_margin_pct != null && (
                 <span
                   className={cn(
                     'inline-flex items-center gap-1.5 px-2 py-1 rounded-md border',
-                    TOM_MARGEM_CLASSES[tomMargem(s?.gross_margin_pct)],
+                    // Limiares em PERCENTUAL (30 / 15), não em fração (0.3 / 0.15): a coluna é
+                    // percentual, como useTacticalPlan e useBundleArguments já assumem. Com 0.3 a
+                    // faixa nunca discriminava — qualquer margem real (ex.: 53,47) passa de 0.3 e
+                    // tudo ficava verde. Enquanto a coluna era 0 em toda a base isso não aparecia.
+                    s.gross_margin_pct >= 30
+                      ? 'bg-status-success-bg text-status-success-bold border-status-success/20'
+                      : s.gross_margin_pct >= 15
+                        ? 'bg-status-warning-bg text-status-warning-bold border-status-warning/20'
+                        : 'bg-status-error-bg text-status-error-bold border-status-error/20',
                   )}
                 >
                   <Activity className="w-3 h-3" />
-                  {formatarMargemPct(s?.gross_margin_pct)} margem
+                  {formatMargemPct(s.gross_margin_pct)} margem
                 </span>
               )}
             </div>

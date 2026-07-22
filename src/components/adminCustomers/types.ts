@@ -40,7 +40,7 @@ export interface ClientScore {
   avg_monthly_spend_180d: number;
   days_since_last_purchase: number;
   category_count: number;
-  /** Escala 0–100. `null` = margem desconhecida (cliente sem custo conhecido) — ver `@/lib/margem`. */
+  /** PERCENTUAL (0–100, negativo válido). `null` = não apurada — jamais tratar como 0. */
   gross_margin_pct: number | null;
   avg_repurchase_interval?: number | null;
   sales_history_status: string | null;

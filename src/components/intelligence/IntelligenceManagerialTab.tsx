@@ -5,28 +5,38 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Users, AlertTriangle, Layers } from 'lucide-react';
+import { mediaMargensConhecidas, coberturaMargem, legendaCobertura } from '@/lib/scoring/margin';
+import { fetchAllPages } from '@/lib/postgrest';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer } from 'recharts';
-import { formatarMargemPct } from '@/lib/margem';
-import { mediaMargem } from '@/lib/scoring/margem-leitura';
 import { KpiCard } from './KpiCard';
 
-/**
- * A tela lê uma AMOSTRA, não a carteira: `farmer_client_scores` tem 6.632 linhas em prod e
- * esta query pega as 500 de maior `priority_score`. Nomeado porque a tabela por vendedor
- * precisa declarar o recorte — comparar vendedores sobre fatias enviesadas sem dizer que
- * são fatias é o mesmo defeito que o `|| 0` tinha: um número que finge alcance.
- * Paginar de verdade (todos os KPIs desta tela) é follow-up próprio.
- */
-const LIMITE_AMOSTRA = 500;
+interface ScoreLinha {
+  customer_user_id: string;
+  farmer_id: string;
+  health_score: number | null;
+  health_class: string | null;
+  /** PERCENTUAL (0–100, negativo válido). `null` = não apurada. Ver @/lib/scoring/margin. */
+  gross_margin_pct: number | null;
+  category_count: number | null;
+  sales_history_status: string | null;
+}
 
 function IntelligenceManagerialTabImpl() {
   const { data: allScores, isLoading } = useQuery({
     queryKey: ['intel-all-scores'],
-    queryFn: async () => {
-      const { data, error } = await supabase.from('farmer_client_scores').select('*').order('priority_score', { ascending: false }).limit(LIMITE_AMOSTRA);
-      if (error) throw error;
-      return data || [];
-    },
+    // Base COMPLETA, paginada. Era `.limit(500)` de 6.632 ordenado por `priority_score` desc —
+    // ou seja, os 500 de MAIOR prioridade, uma amostra enviesada apresentada como comparativo
+    // ENTRE VENDEDORES. Não dá para declarar a cobertura da margem em cima disso sem mentir
+    // sobre o denominador. Ordem por `customer_user_id` (UNIQUE): paginação sem ordem estável
+    // pula e repete linha entre páginas.
+    queryFn: () =>
+      fetchAllPages<ScoreLinha>((de, ate) =>
+        supabase
+          .from('farmer_client_scores')
+          .select('customer_user_id, farmer_id, health_score, health_class, gross_margin_pct, category_count, sales_history_status')
+          .order('customer_user_id', { ascending: true })
+          .range(de, ate) as unknown as PromiseLike<{ data: ScoreLinha[] | null }>,
+      ),
   });
 
   const { data: allPerformance } = useQuery({
@@ -78,13 +88,16 @@ function IntelligenceManagerialTabImpl() {
   const farmerMetrics = Object.entries(farmerGroups).map(([farmerId, clients]) => {
     const avgHealth = clients.reduce((a, c) => a + Number(c.health_score || 0), 0) / clients.length;
     const atRisk = clients.filter(c => (c.health_class === 'critico' || c.health_class === 'atencao') && c.sales_history_status !== 'sem_historico').length;
-    // Só sobre margens CONHECIDAS: `|| 0` somava os ausentes como zero E os contava no
-    // denominador, subestimando a margem do vendedor duas vezes.
-    const margem = mediaMargem(clients.map((c) => c.gross_margin_pct));
+    // Só quem TEM margem entra — numerador e denominador. Com `|| 0` cada cliente sem margem
+    // medida entrava como 0 e puxava a média do farmer para baixo; desde o cálculo server-side
+    // isso valeria para a maioria da base, e o gestor compararia farmers por um número que mede
+    // cobertura de custo, não desempenho. `null` → a coluna mostra "—".
+    const avgMargin = mediaMargensConhecidas(clients.map(c => c.gross_margin_pct));
+    const cobertura = coberturaMargem(clients.map(c => c.gross_margin_pct));
     const avgCategories = clients.reduce((a, c) => a + Number(c.category_count || 0), 0) / clients.length;
     const adoption = recoAdoption[farmerId];
     const adoptionPct = adoption && adoption.total > 0 ? (adoption.accepted / adoption.total * 100) : 0;
-    return { farmerId, clientCount: clients.length, avgHealth, atRisk, margem, avgCategories, adoptionPct };
+    return { farmerId, clientCount: clients.length, avgHealth, atRisk, avgMargin, cobertura, avgCategories, adoptionPct };
   });
 
   const globalAvgCategories = allScores?.length
@@ -107,14 +120,7 @@ function IntelligenceManagerialTabImpl() {
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-sm font-semibold">Comparativo por Vendedor</CardTitle>
-          {/* A tabela inteira é calculada sobre a AMOSTRA de maior prioridade, não sobre a
-              carteira: um vendedor cujos clientes ficam fora do top N não aparece aqui, e as
-              médias dos que aparecem são das fatias lidas. Declarar isso é o que separa
-              "recorte" de "número errado" — o gestor compara vendedores nesta tela. */}
-          <CardDescription className="text-xs">
-            Saúde, risco, margem, mix e adoção de recomendações — sobre os {LIMITE_AMOSTRA} clientes
-            de maior prioridade, não a carteira inteira
-          </CardDescription>
+          <CardDescription className="text-xs">Saúde, risco, margem, mix e adoção de recomendações</CardDescription>
         </CardHeader>
         <CardContent>
           <div className="overflow-x-auto">
@@ -140,13 +146,13 @@ function IntelligenceManagerialTabImpl() {
                       <Badge variant={fm.avgHealth > 60 ? 'default' : 'destructive'} className="text-2xs">{fm.avgHealth.toFixed(0)}</Badge>
                     </td>
                     <td className="text-center py-2">{fm.atRisk}</td>
-                    <td className="text-center py-2">
-                      {formatarMargemPct(fm.margem.media)}
-                      {fm.margem.conhecidas < fm.margem.total && (
-                        <span className="text-muted-foreground ml-1">
-                          ({fm.margem.conhecidas}/{fm.margem.total})
-                        </span>
-                      )}
+                    {/* title carrega a COBERTURA: sem ela, a coluna compara vendedores como se
+                        as médias falassem da carteira inteira de cada um — e elas falam de
+                        fatias diferentes, porque a apuração de custo não é uniforme. */}
+                    <td className="text-center py-2" title={legendaCobertura(fm.cobertura)}>
+                      {fm.avgMargin == null
+                        ? <span className="text-muted-foreground">—</span>
+                        : `${fm.avgMargin.toFixed(1)}%`}
                     </td>
                     <td className="text-center py-2">{fm.avgCategories.toFixed(1)}</td>
                     <td className="text-center py-2">

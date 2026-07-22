@@ -1,3 +1,5 @@
+import { margemConhecida } from '@/lib/scoring/margin';
+
 /**
  * Objetivo estratégico do plano tático do farmer — rótulo categórico que entra no
  * prompt da IA (`generate-tactical-plan`) e molda o plano de abordagem.
@@ -26,7 +28,7 @@
 export function selectObjective(
   churnRisk: number,
   mixGap: number,
-  /** `null` = margem desconhecida. Não dispara `consolidacao_margem` (ver regra 4). */
+  /** `null` = margem do cliente não apurada → consolidacao_margem fica INDECIDÍVEL (ver abaixo). */
   marginPct: number | null,
   clusterMargin: number | null,
   daysSince: number,
@@ -42,10 +44,11 @@ export function selectObjective(
   // consolidacao a esmo. (O espelho no edge generate-tactical-plan sempre passa número —
   // benchmarka pela carteira-dono no batch — então a divergência só aparece no caminho client,
   // onde o cluster pode faltar.)
-  // A margem DO CLIENTE também precisa ser conhecida: `null < X` é true por coerção, o que
-  // mandaria todo cliente sem custo cadastrado para 'consolidacao_margem' — o objetivo que
-  // instrui a vendedora a defender preço num cliente sobre o qual não medimos margem alguma.
-  if (marginPct != null && clusterMargin != null && Number.isFinite(clusterMargin) && marginPct < clusterMargin * 0.8) return 'consolidacao_margem';
+  // A margem do CLIENTE também precisa ser conhecida — simétrico ao cluster. Não se afirma
+  // "margem baixa vs. pares" sem saber a margem, e `null < X` é `true` em JS (null coage a 0),
+  // então sem este guard todo cliente sem margem apurada cairia em consolidacao_margem.
+  const m = margemConhecida(marginPct);
+  if (m != null && clusterMargin != null && Number.isFinite(clusterMargin) && m < clusterMargin * 0.8) return 'consolidacao_margem';
   return 'upsell_premium';
 }
 

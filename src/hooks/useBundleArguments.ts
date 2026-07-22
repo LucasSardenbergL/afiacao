@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
+import { margemConhecida } from '@/lib/scoring/margin';
 
 export interface BundleArgument {
   diagnostico: string;
@@ -15,19 +16,27 @@ export interface BundleArgument {
 
 export type CustomerProfile = 'sensivel_preco' | 'orientado_qualidade' | 'orientado_produtividade' | 'misto';
 
+/**
+ * Perfil comercial do cliente. Espelho de `classifyProfile` em
+ * `supabase/functions/_shared/tactical-margem.ts` — mudou aqui, mude lá.
+ *
+ * ⚠️ `grossMarginPct` aceita `null` ("não medida") e os dois primeiros ramos SÓ disparam com
+ * margem conhecida. Sem esse guard o JS fabrica o diagnóstico: `null < 20` é `true` (null coage
+ * a 0), então todo cliente de gasto baixo e margem desconhecida seria rotulado "sensível a
+ * preço" — e o rótulo muda a abordagem que a vendedora leva para a rua. Não é hipótese: desde o
+ * cálculo server-side da margem, 84% das linhas ficam com margem nula.
+ */
 export const classifyCustomerProfile = (
   healthScore: number,
   avgMonthlySpend: number,
-  /** `null` = margem desconhecida: não rotula por margem (ver guard abaixo). */
   grossMarginPct: number | null,
   categoryCount: number
 ): CustomerProfile => {
-  // GUARD money-path: `null < 20` é TRUE em JS (coerção). Sem estes `!= null`, todo cliente
-  // sem margem conhecida sairia 'sensivel_preco' — e o rótulo molda o argumento de venda.
+  const margem = margemConhecida(grossMarginPct);
   // Price-sensitive: low spend, low margin tolerance
-  if (grossMarginPct != null && avgMonthlySpend < 500 && grossMarginPct < 20) return 'sensivel_preco';
+  if (margem != null && avgMonthlySpend < 500 && margem < 20) return 'sensivel_preco';
   // Quality-oriented: high margin, fewer categories (focused buyer)
-  if (grossMarginPct != null && grossMarginPct > 35 && categoryCount <= 3) return 'orientado_qualidade';
+  if (margem != null && margem > 35 && categoryCount <= 3) return 'orientado_qualidade';
   // Productivity-oriented: high spend, many categories, high health
   if (avgMonthlySpend > 2000 && categoryCount >= 4 && healthScore > 60) return 'orientado_produtividade';
   return 'misto';

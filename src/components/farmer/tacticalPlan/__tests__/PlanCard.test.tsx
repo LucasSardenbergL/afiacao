@@ -104,8 +104,10 @@ describe("PlanCard", () => {
     });
 
     it("margem conhecida é exibida na escala 0–100 que o servidor grava", () => {
+      // 53,47 é a média real medida em prod. O assert mira a ESCALA: se alguém voltar a tratar
+      // a coluna como fração (o bug histórico), sairia "5347.0%".
       setup({ expanded: true, plan: makePlan({ currentMarginPct: 53.47 }) });
-      expect(screen.getByText("53,5%")).toBeTruthy();
+      expect(screen.getByText("53.5%")).toBeTruthy();
     });
   });
 });

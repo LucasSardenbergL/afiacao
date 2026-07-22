@@ -627,7 +627,6 @@ export const MODULOS: ModuloApp[] = [
       "src/lib/leading-trailing-throttle.ts",
       "src/lib/logger.ts",
       "src/lib/logger-migration.md",
-      "src/lib/margem.ts",
       "src/lib/offline-handlers.ts",
       "src/lib/offline-queue.ts",
       "src/lib/phone.ts",
