@@ -142,7 +142,7 @@ func ExtractDelta(
 	// Para a shape flat das FÓRMULAS (formula E formulaperson), agrega os itens de
 	// corante em []map[string]any usando os flat cols da TABELA correspondente.
 	if (entity == "formula" || entity == "formulaperson") && rm.FormulaShape == FormulaShapeFlat {
-		rows = aggregateFlatFormulaItems(rows, rm.FlatColsByTable[entity])
+		rows = aggregateFlatFormulaItems(rows, rm.FlatColsByTable[entity], entity == "formulaperson")
 	}
 
 	return rows, maxDA, nil
@@ -228,6 +228,17 @@ func scanRows(sqlRows *sql.Rows, selectCols []colPair, daLogicName string) ([]ma
 	return out, maxDA, sqlRows.Err()
 }
 
+// sentinelaSlotLivre é o id_corante que a fonte SayerSystem grava, em fórmulas
+// PERSONALIZADAS, para marcar slot LIVRE (sempre com dose exatamente 0). O corante
+// '0' não existe no cadastro (ids reais 1..5, 8..16) — medido em prod 2026-07-21:
+// 100% das personalizadas materializam assim, 0% das padrão (confundidor de produto
+// descartado: FO10.6554 aparece nos dois lados com comportamento oposto). É a MESMA
+// semântica "slot livre" do catálogo padrão, em outra grafia: {vazio, nil/0} lá,
+// {'0', 0} aqui. A comparação usa a MESMA stringificação do emissor — a regra é "o
+// item que este código emitiria como id_corante='0'". ID que stringifica diferente
+// (" 0 ", []byte) NÃO casa → segue emitido → Guard 4 barra. Fail-closed por construção.
+const sentinelaSlotLivre = "0"
+
 // aggregateFlatFormulaItems converte as colunas achatadas corante1..6 + qtd1ml..6ml
 // em um campo "itens" []map[string]any com {id_corante, ordem, qtd_ml}.
 //
@@ -251,10 +262,14 @@ func scanRows(sqlRows *sql.Rows, selectCols []colPair, daLogicName string) ([]ma
 //     resolveram no discovery (slot invisível pode conter corante real —
 //     fail-closed). É o sinal EXPLÍCITO da fonte que a Fase 1d exige para a
 //     transição legítima para base pura limpar receita no banco.
-func aggregateFlatFormulaItems(rows []map[string]any, flatCols map[string]string) []map[string]any {
+//   - slot livre na grafia das PERSONALIZADAS (`sentinelaSlotLivre` + dose 0):
+//     OMITIDO como qualquer slot livre, MAS veta a declaração de base pura — ver
+//     a const abaixo e o comentário do veto no fim da função.
+func aggregateFlatFormulaItems(rows []map[string]any, flatCols map[string]string, personalizada bool) []map[string]any {
 	colsCompletos := flatColsCompletos(flatCols)
 	for _, row := range rows {
 		itens := make([]map[string]any, 0, 6)
+		sentinelaVista := false
 		for i := 1; i <= 6; i++ {
 			coranteKey := fmt.Sprintf("corante%d", i)
 			qtdKey := fmt.Sprintf("qtd%dml", i)
@@ -286,6 +301,16 @@ func aggregateFlatFormulaItems(rows []map[string]any, flatCols map[string]string
 
 			corantePresente := coranteVal != nil && fmt.Sprintf("%v", coranteVal) != ""
 			qtd, qtdOK := toFloat64OK(qtdVal)
+
+			// SENTINELA DE SLOT LIVRE das fórmulas PERSONALIZADAS (ver doc acima).
+			// Escopada a `personalizada` de propósito: é onde a evidência vale (100%
+			// vs 0%). Em fórmula padrão um '0' é anomalia NOVA e segue emitida p/ o
+			// Guard 4 barrar e denunciar.
+			if personalizada && corantePresente && qtdOK && qtd == 0 &&
+				fmt.Sprintf("%v", coranteVal) == sentinelaSlotLivre {
+				sentinelaVista = true
+				continue
+			}
 
 			switch {
 			case corantePresente:
@@ -320,7 +345,12 @@ func aggregateFlatFormulaItems(rows []map[string]any, flatCols map[string]string
 			// default: slot livre (corante vazio + qtd nil/0) → omitido.
 		}
 		row["itens"] = itens
-		if len(itens) == 0 && colsCompletos {
+		// A sentinela VETA a declaração de base pura (P1 do challenge Codex xhigh):
+		// omitir 6 sentinelas deixaria itens vazio → is_base_pura=true → a TRÍADE da
+		// Fase 1d AUTORIZA o banco a LIMPAR a receita (cap 50/24h). Uma fotografia
+		// transitória de cor personalizada em cadastro viraria destruição de receita.
+		// Omissão nunca vira afirmação positiva: só o vazio GENUÍNO da fonte prova.
+		if len(itens) == 0 && colsCompletos && !sentinelaVista {
 			row["is_base_pura"] = true
 		}
 	}
@@ -464,9 +494,9 @@ func toFloat64OK(v any) (float64, bool) {
 	}
 	switch n := v.(type) {
 	case float64:
-		return n, true
+		return finitoOK(n)
 	case float32:
-		return float64(n), true
+		return finitoOK(float64(n))
 	case int64:
 		return float64(n), true
 	case int32:
@@ -486,9 +516,21 @@ func toFloat64OK(v any) (float64, bool) {
 		if err != nil || !f8.Valid {
 			return 0, false
 		}
-		return f8.Float64, true
+		return finitoOK(f8.Float64)
 	}
 	return 0, false
+}
+
+// finitoOK aplica a MESMA promessa de finitude que parseFloatStr já fazia para
+// string/[]byte: NaN/Inf não são dose válida. Sem isto, float64/float32/numeric
+// nativos passavam direto (achado P2 do challenge Codex xhigh, 2026-07-21) e um
+// NaN chegava ao json.Marshal do lote — que REJEITA O LOTE INTEIRO (api.go), não
+// a fórmula. Falha de ciclo do balcão, não rejeição por-fórmula.
+func finitoOK(f float64) (float64, bool) {
+	if math.IsNaN(f) || math.IsInf(f, 0) {
+		return 0, false
+	}
+	return f, true
 }
 
 // parseFloatStr converte uma string numérica (formato Postgres: ponto decimal,

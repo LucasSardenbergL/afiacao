@@ -2,6 +2,7 @@
 // PUROS + HOFs testáveis aqui; a glue Supabase é anexada na 2ª metade (Task 2).
 // Spec: docs/superpowers/specs/2026-06-11-clientes-escopo-carteira-design.md
 import { supabase } from '@/integrations/supabase/client';
+import { margemConhecida } from '@/lib/scoring/margin';
 import type { Customer, ClientScore } from '@/components/adminCustomers/types';
 
 export interface DisplayFlags {
@@ -184,7 +185,9 @@ export async function fetchScoresPorCustomer(ids: string[]): Promise<Map<string,
       avg_monthly_spend_180d: s.avg_monthly_spend_180d ?? 0,
       days_since_last_purchase: s.days_since_last_purchase ?? 0,
       category_count: s.category_count ?? 0,
-      gross_margin_pct: s.gross_margin_pct ?? 0,
+      // Sem `?? 0`: margem ausente tem de chegar como null ao consumidor. Coagir aqui tornaria
+      // inertes os guards de quem lê este mapa (a armadilha da "correção só no consumidor").
+      gross_margin_pct: margemConhecida(s.gross_margin_pct),
       sales_history_status: s.sales_history_status ?? null,
     });
   }

@@ -29,6 +29,68 @@ Duas worktrees podem criar migrations que recriam o **mesmo objeto** SQL (funç�
 
 Limite conhecido (fase 1): não pega a *race fria* (duas sessões, nenhum arquivo escrito ainda), nem `ALTER TABLE`/`DROP+CREATE`. Testes: `scripts/test-migration-objects.ts` · `scripts/test-preflight-migration.sh` · `scripts/test-migration-collision-guard.sh`.
 
+## Colisão de CÓDIGO multi-sessão: re-conferir ANTES do `gh pr create` (2026-07-21)
+
+Irmã da colisão de migration acima, sem ferramenta equivalente — e o custo aqui não é sobrescrita
+silenciosa, é **retrabalho** e o risco de duas correções divergentes do mesmo invariante entrarem
+juntas. Cronologia medida (PRs de margem, mesmo dia):
+
+```
+#1495  criado 00:30 → merge 17:58   produtor (draft por 17h)
+#1519  criado 17:01 → merge 21:40   helper SQL
+#1524  criado 17:39 → merge 22:32   leitura fechada no frontend (resolvido, ver abaixo)
+#1525  criado 17:41 → merge 17:47   consumidores  ← viveu 6 minutos
+#1526  criado 17:47 → FECHADO       duplicata do #1525, 26 arquivos jogados fora
+```
+
+Quatro PRs sobre a mesma coluna em **46 minutos**. O #1526 foi aberto no minuto exato em que o
+#1525 mergeou; a sessão dele conferiu `gh pr list` às 12:50 (viu só o #1495 em draft) e trabalhou
+5h sem reconferir. Refazer o delta sobre a `main` — em vez de resolver 13 conflitos — derrubou o
+diff de 26 arquivos para 8 (#1533).
+
+**Três causas, em ordem de peso:**
+
+1. **PR represado em draft é ÍMÃ.** O #1495 passou 17h anunciando "espero o consumidor ser
+   blindado". Qualquer sessão que o lesse chegava ao mesmo conjunto de arquivos. Não precisou de
+   chip: a sessão do #1526 veio de tarefa dirigida. ⇒ produtor em draft deve nomear no corpo quem
+   está tocando o consumidor, ou não ficar represado.
+2. **Assimetria de duração.** A janela de colisão é o tempo da sessão LONGA. Trabalho rigoroso
+   (medir prod, Codex, TDD, falsificação) leva horas; um PR simples com auto-merge fecha em 6
+   minutos. Quanto mais cuidadosa a sessão, mais exposta a ser atropelada.
+3. **A checagem do início vence.** `gh pr list` no minuto 0 de uma sessão de 5h é uma foto velha.
+
+**Regra:** re-conferir `gh pr list` **imediatamente antes do `gh pr create`**, filtrando pelo
+domínio (`gh pr list --search "margem"`). Custa segundos; teria pego o #1525 seis minutos antes.
+
+⚠️ **A hipótese "são os chips" foi investigada e NÃO se sustenta** — registrado para não virar
+folclore. Chips criam sessões, mas não escolhem o alvo; o que concentrou quatro sessões no mesmo
+ponto foi o produtor represado. Nada na memória (claude-mem) registra decisão sobre chips×compact.
+
+**Tensão real, não regressão de prática:** a regra do `CLAUDE.md` "2º compact → split com
+`/handoff-sessao` (1 entrega = 1 sessão)" otimiza qualidade de contexto e paga com coordenação —
+uma sessão só não colide consigo mesma. Ela nasceu de dor medida (sessão-épico com 14 compacts:
+regressão de idioma, releituras, estado perdido). Trocar split por compact reduz colisão e traz a
+degradação de volta; a saída barata é a re-checagem acima, que ataca a colisão sem desfazer a regra.
+
+**Se for RESOLVER em vez de refazer** (#1524, mergeado 22:32 — o founder pediu para resolver o PR
+já aberto): `git merge origin/main` e **a `main` vence por padrão** (`git checkout --theirs` em
+todos os conflitos). Ela passou pelo CI e está em produção; sobrescrevê-la reverte trabalho
+mergeado — mesma classe de falha do sync bidirecional do Lovable (`deploy.md`). Preserve só
+**adição genuína não coberta**: dos 4 achados do Codex no #1524 sobraram 2, ausentes da `main`
+justamente porque as sessões irmãs não rodaram segunda opinião — o diferencial de uma sessão lenta
+tende a ser o que o rigor extra produziu, não o núcleo. Módulo duplicado **apaga-se**, não se
+reconcilia (`lib/margem.ts` contra o `lib/format.ts` que já existia; as duas sessões chegaram a
+criar `legendaCobertura`, mesmo nome, em arquivos diferentes). Spec que descreve plano já executado
+por outras mãos sai junto — documento afirmando trabalho não realizado engana quem ler depois.
+Resultado: 15 arquivos conflitantes → 9, e o PR passou a valer pelo que só ele tinha.
+
+⚠️ **`MERGE_HEAD` em worktree NÃO fica em `.git/MERGE_HEAD`** — ali `.git` é *arquivo*, não
+diretório. `test -f .git/MERGE_HEAD` dá falso-negativo e faz um merge íntegro parecer perdido
+(custou uma tentativa de refazer do zero); use `$(git rev-parse --git-dir)/MERGE_HEAD`. E **não
+rode `git stash` com merge em curso** — mexe no estado do merge; para salvar, copie os arquivos
+para fora da árvore. O guard de `git reset --hard` pagou-se aqui: barrou o reset que teria
+destruído o merge por causa desse diagnóstico errado.
+
 ## Higiene de RAM/Node (M2 8GB satura; **swap em uso = RAM cheia**)
 
 | Comando | O quê (todos DRY-RUN por padrão; `--yes` executa) |

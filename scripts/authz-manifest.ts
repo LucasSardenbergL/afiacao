@@ -136,6 +136,29 @@ export const ACKNOWLEDGED_SENSITIVE = new Set<string>([
   'public.aplicar_snapshot_pendente', // aplica snapshot de reposição (cron/service_role)
   'public.cmc_ledger_capture', // captura no ledger de cmc (trigger/service_role)
   'public.reposicao_cold_start_parametros', // parâmetros cold-start da reposição (interno)
+  // 2026-07-21 (#1495): margem bruta por cliente p/ o health score do farmer. Lê product_costs, mas
+  // a própria migration a fecha por PRIVILÉGIO — REVOKE ALL de PUBLIC/anon/authenticated + GRANT
+  // EXECUTE só a service_role (a edge calculate-scores, via cron). Só a margem AGREGADA por cliente
+  // atravessa; o custo unitário não sai do banco. Mesmo perfil da irmã get_customer_sales_summary
+  // (confirmado psql-ro: auth_exec=f, anon_exec=f, svc_exec=t). Reconfirmar após o apply em prod.
+  'public.get_customer_margin_summary',
+
+  // 2026-07-21 — helper COMPARTILHADO de margem por cliente (PR #1519). Fecha por PRIVILÉGIO,
+  // não por gate no corpo, e é por isso que entra aqui e não no AUTHZ_MANIFEST:
+  //   · o REVOKE é o que fecha: de PUBLIC + anon + authenticated (função nova nasce com
+  //     proacl NULL = EXECUTE implícito a PUBLIC, e o default privilege do Supabase concede às
+  //     roles nomeadas — revogar dos dois jeitos), GRANT só a service_role;
+  //   · `private` fecha a rota HTTP (o PostgREST só publica os schemas configurados), mas
+  //     ⚠️ NÃO é barreira de EXECUTE: medido em prod, `private` concede USAGE a authenticated E
+  //     anon (`nspacl = {…,authenticated=U/postgres,anon=U/postgres,…}`). Quem depender do schema
+  //     como se fosse trava está enganado — é o REVOKE, e só ele;
+  //   · os consumidores é que carregam o gate: `get_carteira_margem_faixa` (FU4-F fase 3) aplica
+  //     cap_custo_ler na PROJEÇÃO do número e cap_carteira_ler/carteira_visivel_para no ESCOPO;
+  //     `get_customer_margin_summary` (#1495, acima) passa a DERIVAR deste helper em vez de ter
+  //     cálculo próprio — as duas discordavam em 28,5% dos clientes na faixa.
+  // Provado em db/test-margem-cliente-helper-compartilhado.sh (L1-L5): anon/authenticated/PUBLIC
+  // com has_function_privilege=f, service_role=t, e a função residindo em `private`.
+  'private.margem_cliente_agregada',
 ]);
 
 /** chave de lookup a partir de schema+name (case-insensitive, sem assinatura) */

@@ -315,13 +315,20 @@ describe('orFilter', () => {
 describe('fetchAllPages — a capa de 1.000 do PostgREST é silenciosa', () => {
   // Simula o PostgREST: devolve no máximo POSTGREST_PAGE_SIZE linhas por request,
   // truncando sem erro — exatamente o comportamento que engana quem não pagina.
-  const tabelaFalsa = (total: number) => {
+  // `falharNaPagina` injeta a resposta de FALHA real do PostgREST (`{ data: null, error }`)
+  // numa página específica: é assim que timeout (57014), RLS e 500 chegam ao helper.
+  const ERRO_TIMEOUT = { code: '57014', message: 'canceling statement due to statement timeout' };
+  const tabelaFalsa = (total: number, falharNaPagina?: number) => {
     const linhas = Array.from({ length: total }, (_, i) => ({ id: i }));
     const chamadas: [number, number][] = [];
     const buscar = (de: number, ate: number) => {
+      // Índice derivado da JANELA pedida, não de `chamadas.length`: um contador cumulativo
+      // deixaria de injetar a falha se o mesmo fake fosse reusado numa segunda chamada.
+      const pagina = de / POSTGREST_PAGE_SIZE;
       chamadas.push([de, ate]);
+      if (pagina === falharNaPagina) return Promise.resolve({ data: null, error: ERRO_TIMEOUT });
       const fatia = linhas.slice(de, Math.min(ate + 1, de + POSTGREST_PAGE_SIZE));
-      return Promise.resolve({ data: fatia });
+      return Promise.resolve({ data: fatia, error: null });
     };
     return { buscar, chamadas };
   };
@@ -352,18 +359,57 @@ describe('fetchAllPages — a capa de 1.000 do PostgREST é silenciosa', () => {
     expect(chamadas).toHaveLength(1);
   });
 
+  // ─── Fim LEGÍTIMO da tabela: `data: []` SEM erro. Encerra normalmente. ───────────────
+  // Mantido separado dos casos de falha de propósito: é a única leitura em que "veio vazio"
+  // significa mesmo "acabou". Confundir os dois foi o bug que este bloco fecha.
+
   it('tabela vazia → lista vazia, sem estourar', async () => {
-    const { buscar } = tabelaFalsa(0);
+    const { buscar, chamadas } = tabelaFalsa(0);
     expect(await fetchAllPages(buscar)).toEqual([]);
+    expect(chamadas).toHaveLength(1);
   });
 
-  it('data null (erro/RLS) encerra em vez de repetir a página para sempre', async () => {
-    let n = 0;
-    const todas = await fetchAllPages<{ id: number }>(() => {
-      n++;
-      return Promise.resolve({ data: null });
-    });
-    expect(todas).toEqual([]);
-    expect(n).toBe(1);
+  // ─── Falha de página: REJEITA. Página perdida ≠ fim da tabela. ───────────────────────
+  // O helper existe pra evitar leitura parcial silenciosa (a capa de 1.000). Encerrar o loop
+  // numa página que FALHOU reintroduzia o mesmo defeito por outra via: o acumulado parcial
+  // voltava como se a tabela tivesse acabado, e o contrato nem expunha `error` pro caller
+  // detectar. Paginar cura a capa, não a falha no meio.
+
+  // As asserções abaixo casam a JANELA + `falhou` — string ASCII EXCLUSIVA do ramo de erro.
+  // Casar só "página N" não teria dente: sabotando o guard de `error`, a execução cai no ramo
+  // seguinte (`data null`), cuja mensagem também contém "página N" — o teste passaria verde
+  // com o bug de volta. Cada asserção tem que distinguir QUAL ramo disparou.
+  it('erro na PRIMEIRA página → REJEITA (não devolve [] como se a tabela estivesse vazia)', async () => {
+    const { buscar } = tabelaFalsa(3637, 0);
+    await expect(fetchAllPages(buscar)).rejects.toThrow(/\(0-999\) falhou/);
+  });
+
+  it('O CORAÇÃO DO FIX: erro numa página do MEIO → REJEITA, nunca devolve o acumulado parcial', async () => {
+    // Farmer de 3.858 clientes perdendo a 3ª página: o comportamento antigo devolvia 2.000
+    // linhas — numericamente indistinguível de uma carteira que de fato tem 2.000. Nos três
+    // callers de `product_costs` a mesma perda vira "SKU sem custo", que INFLA margem.
+    const { buscar, chamadas } = tabelaFalsa(3858, 2);
+    await expect(fetchAllPages(buscar)).rejects.toThrow(/\(2000-2999\) falhou/);
+    expect(chamadas).toHaveLength(3); // parou NA página que falhou; não seguiu adiante
+  });
+
+  it('a rejeição carrega a janela e preserva o erro original (diagnóstico do incidente)', async () => {
+    // Sem a janela e a causa, o incidente chega como "deu erro" e não dá pra saber QUAL
+    // fatia da tabela sumiu nem se foi timeout, RLS ou 500.
+    const { buscar } = tabelaFalsa(3858, 2);
+    const erro = await fetchAllPages(buscar).catch((e: unknown) => e);
+    expect(erro).toBeInstanceOf(Error); // se RESOLVEU, cai aqui mostrando o parcial devolvido
+    expect((erro as Error).message).toMatch(/\(2000-2999\) falhou/); // a janela que sumiu
+    expect((erro as Error & { cause?: unknown }).cause).toEqual(ERRO_TIMEOUT); // timeout? RLS? 500?
+  });
+
+  it('data null SEM erro → REJEITA (resposta malformada não é "fim da tabela")', async () => {
+    // O ÚNICO sinal legítimo de fim é `data: []`. Aceitar `data: null` como EOF deixaria o
+    // mesmo buraco aberto pra qualquer lambda que engula o erro no caminho até aqui.
+    // Casa a mensagem do RAMO (não um throw qualquer): sem o guard, `push(...null)` lançaria
+    // TypeError e um `rejects.toThrow()` pelado passaria verde pelo motivo errado.
+    await expect(
+      fetchAllPages<{ id: number }>(() => Promise.resolve({ data: null, error: null })),
+    ).rejects.toThrow(/data null sem error/);
   });
 });

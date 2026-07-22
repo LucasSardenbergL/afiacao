@@ -5,34 +5,66 @@
 // a pré-geração do plano tático chamando generate-tactical-plan no modo
 // self-contained. Idempotência fica na edge alvo (skipped: 'ja_gerado_hoje').
 //
-// Gate de R$/h: espelha src/lib/tactical/pregeracao.ts (oráculo testado por vitest).
+// Gate de R$/h: _shared/tactical-margem.ts (espelho testado de src/lib/tactical/pregeracao.ts).
 //   profitPerHora = ((rev > 0 ? rev : avg) * (margin / 100) * 0.1) / (15 / 60)
 //   Threshold: R$ 50/h.
 //
 // Semântica top-N: filtra o gate ANTES de cortar no TOP_25 — pega os 25 de
 // maior priority DENTRE os que passam (não os 25 de maior priority e filtra depois).
 //
-// Setup pg_cron (manual depois do merge):
-//   SELECT cron.schedule('tactical-plans-batch-nightly', '0 5 * * *',
+// Margem AUSENTE não é margem zero (money-path princípio 2): sem margem o gate de R$/h
+// não é decidível, então o cliente sai do ranking e é CONTADO em `sem_margem_indecidivel`.
+// Antes, `Number(null ?? 0)` fabricava R$ 0/h — indistinguível de um cliente de margem
+// genuinamente ruim, e reprovado em silêncio.
+//
+// Setup pg_cron (manual depois do merge) — padrão copiado do `daily-calculate-scores` EM PRODUÇÃO:
+//   SELECT cron.schedule('tactical-plans-batch-nightly', '0 8 * * *',
 //     $$ SELECT net.http_post(
-//       url := 'https://<PROJECT_REF>.supabase.co/functions/v1/tactical-plans-batch',
-//       headers := jsonb_build_object('x-cron-secret', current_setting('app.cron_shared_key', true)),
-//       timeout_milliseconds := 55000
+//       url := 'https://fzvklzpomgnyikkfkzai.supabase.co/functions/v1/tactical-plans-batch',
+//       headers := jsonb_build_object('Content-Type','application/json',
+//         'x-cron-secret', (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name='CRON_SECRET' LIMIT 1)),
+//       body := '{"triggered_by":"cron"}'::jsonb,
+//       timeout_milliseconds := 150000
 //     ); $$
 //   );
+//
+// O secret vem do VAULT, não de `current_setting('app.cron_shared_key', true)`: essa GUC não
+// existe no projeto, o `true` (missing_ok) devolve NULL em silêncio, e o header sai nulo →
+// `authorizeCron` responde 401. E `cron.job_run_details` marca `succeeded` mesmo assim, porque
+// só registra o ENQUEUE do net.http_post — a verdade HTTP está em `net._http_response`.
+// Falha silenciosa clássica (docs/agent/sync.md). Nenhum dos crons vivos usa a GUC.
+//
+// `timeout_milliseconds` explícito é obrigatório: o default do pg_net é 5s e mataria o batch no
+// meio, em silêncio. 150000 é o teto padrão da casa (docs/agent/sync.md).
+//
+// ⚠️ SCHEDULE É UTC, não BRT — `cron.timezone` está vazio no banco (#1510). `'0 8 * * *'` dispara
+// às 05:00 BRT. Ao mexer, converta explícito: BRT = UTC−3.
+//
+// 08:00 UTC é o primeiro slot DEPOIS de todas as dependências do batch — não mexer sem refazer
+// esta conta (o `'0 5 * * *'` que este bloco sugeria antes é 02:00 BRT, ANTES de todas elas: leria
+// a margem e a carteira do dia anterior):
+//   06:00 UTC `daily-calculate-scores`           → grava os scores que o gate de R$/h consome
+//   06:00 UTC `scoring-recalc-batch-nightly`     → recalcula priority_score
+//   07:00 UTC `visit-score-recalc-batch-nightly` → recalcula o score de visita
+//   07:30 UTC `carteira-rebuild-nightly`         → reconstrói `carteira_assignments`, a allowlist
+//                                                  de elegíveis lida no passo 0 abaixo
+//
+// Depois de criar: versione o cron numa migration — cron que vive só no banco some sem rastro
+// (docs/agent/sync.md; o de vendas ficou 8 dias morto por isso).
 
 import { createClient } from 'npm:@supabase/supabase-js@^2';
 import { authorizeCron, corsHeaders } from '../_shared/auth.ts';
 import { fetchAll } from '../_shared/paginate.ts';
-
-// ── Gate de R$/h (espelha src/lib/tactical/pregeracao.ts) ────────────────────
-const PROFIT_PER_HOUR_THRESHOLD = 50;
-
-function profitPerHora(rev: number, avg: number, marginPct: number): number {
-  const baseRev = rev > 0 ? rev : avg;
-  // 10% do GMV como proxy de margem operacional; visita ~15 min → 4 visitas/h.
-  return (baseRev * (marginPct / 100) * 0.1) / (15 / 60);
-}
+import {
+  type LinhaSelecao,
+  margemConhecida,
+  selecionarParaPregeracao,
+} from '../_shared/tactical-margem.ts';
+import {
+  agregar,
+  type Classificacao,
+  classificarAlvo,
+} from '../_shared/tactical-batch-resultado.ts';
 
 const TOP_N = 25;
 const CONCURRENCY = 5; // cada chamada faz 1 LLM (~3-5s); 5 em paralelo ~5s/chunk
@@ -89,13 +121,7 @@ Deno.serve(async (req) => {
   // 1. Pagina farmer_client_scores e agrupa por farmer_id.
   //    A carteira já está limpa de fornecedor pela Fase 1 (classificacao).
   let mascaradosIgnorados = 0;
-  const porFarmer = new Map<string, Array<{
-    customer: string;
-    priority: number;
-    rev: number;
-    avg: number;
-    m: number;
-  }>>();
+  const porFarmer = new Map<string, LinhaSelecao[]>();
 
   for (let from = 0; ; from += 1000) {
     const { data, error } = await supabase
@@ -132,7 +158,8 @@ Deno.serve(async (req) => {
         priority: Number(r.priority_score ?? 0),
         rev: Number(r.revenue_potential ?? 0),
         avg: Number(r.avg_monthly_spend_180d ?? 0),
-        m: Number(r.gross_margin_pct ?? 0),
+        // ausente ≠ zero: `null` mantém "não sei" distinguível de "margem 0".
+        marginPct: margemConhecida(r.gross_margin_pct),
       });
       porFarmer.set(r.farmer_id, arr);
     }
@@ -143,27 +170,24 @@ Deno.serve(async (req) => {
   // 2. Por farmer: ordena por priority desc, filtra gate R$/h, corta em TOP_N.
   //    Semântica: pega os 25 de maior priority DENTRE os que passam no gate.
   const alvos: Array<{ farmer: string; customer: string }> = [];
+  let semMargemIndecidivel = 0;
 
   for (const [farmer, scores] of porFarmer) {
-    scores.sort((a, b) => b.priority - a.priority);
-    let n = 0;
-    for (const s of scores) {
-      if (n >= TOP_N) break;
-      if (profitPerHora(s.rev, s.avg, s.m) < PROFIT_PER_HOUR_THRESHOLD) continue;
-      alvos.push({ farmer, customer: s.customer });
-      n++;
-    }
+    const { selecionados, semMargem } = selecionarParaPregeracao(scores, TOP_N);
+    semMargemIndecidivel += semMargem.length;
+    for (const s of selecionados) alvos.push({ farmer, customer: s.customer });
   }
 
   // 3. Fan-out concorrente em chunks de 5. Idempotência é na edge alvo.
-  let gerados = 0;
-  let pulados = 0;
-  let erros = 0;
+  //    A classificação/agregação vive em _shared/tactical-batch-resultado.ts (testada):
+  //    aqui só coletamos. Antes, três contadores soltos com `else erros++` perdiam o
+  //    MOTIVO — ver o incidente no cabeçalho daquele módulo.
+  const classificacoes: Classificacao[] = [];
 
   for (let i = 0; i < alvos.length; i += CONCURRENCY) {
     const chunk = alvos.slice(i, i + CONCURRENCY);
-    await Promise.all(
-      chunk.map(async (a) => {
+    classificacoes.push(...await Promise.all(
+      chunk.map(async (a): Promise<Classificacao> => {
         try {
           const r = await fetch(selfUrl, {
             method: 'POST',
@@ -178,27 +202,33 @@ Deno.serve(async (req) => {
             }),
           });
           const j = await r.json().catch(() => ({})) as Record<string, unknown>;
-          if (j.generated) gerados++;
-          else if (j.skipped) pulados++;
-          else erros++;
+          return classificarAlvo(r.status, j);
         } catch {
-          erros++;
+          // fetch nem chegou a responder (rede/timeout). Reusa a MESMA função testada
+          // com status 0 em vez de um ramo de erro solto e não coberto aqui.
+          return classificarAlvo(0, {});
         }
       }),
-    );
+    ));
   }
+
+  const resumo = agregar(classificacoes);
 
   return new Response(
     JSON.stringify({
-      ok: true,
+      // `ok` vem do AGREGADO: falso se qualquer alvo falhou. Antes era `true` fixo —
+      // em 2026-07-21 devolveu ok:true com 28 de 58 alvos quebrados e uma vendedora
+      // inteira sem plano, e o cron marcou `succeeded`.
+      ...resumo,
       farmers: porFarmer.size,
       alvos: alvos.length,
-      gerados,
-      pulados,
-      erros,
       // transparência do que foi DESCARTADO pela máscara: um corte silencioso leria como
       // "cobri todo mundo" sem ter coberto (money-path — no silent caps).
       mascarados_ignorados: mascaradosIgnorados,
+      // clientes que saíram do ranking por FALTA DE MARGEM (gate indecidível), não por
+      // reprovação no gate. Enquanto nenhum writer calcular gross_margin_pct, este número
+      // tende ao total da carteira — e é o sinal de que o batch está cego, não ocioso.
+      sem_margem_indecidivel: semMargemIndecidivel,
     }),
     { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
   );

@@ -98,6 +98,16 @@ const FarmerRecommendations = () => {
         </CardContent></Card>
       </div>
 
+      {/* A ressalva do #1514 continua valendo, e ficou MAIS forte: a taxa de conversão é
+          ARBITRADA (15% cross-sell / 10% up-sell), não medida — o desfecho das recomendações
+          nunca foi registrado. Só mudou o que se exibe: não há mais valor em R$ a ressalvar,
+          porque o custo saiu do browser e o ranking passou a ser de AFINIDADE.
+          Ver docs/historico/farmer-aprendizado-conversao.md */}
+      <p className="text-[10px] text-muted-foreground leading-relaxed">
+        A ordem usa taxa de conversão fixa, ainda não calibrada com histórico real. Use-a para{' '}
+        <strong className="font-medium">priorizar</strong> a fila — não como previsão de fechamento.
+      </p>
+
       {/* Search + Filters */}
       <div className="flex items-center gap-2">
         <div className="relative flex-1">

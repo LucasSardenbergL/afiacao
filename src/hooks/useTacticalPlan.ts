@@ -1,6 +1,8 @@
 import { useState, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { selectObjective, clampRecencyCapDays } from '@/lib/scoring/objective';
+import { margemConhecida, mediaMargensConhecidas } from '@/lib/scoring/margin';
+import { fetchAllPages } from '@/lib/postgrest';
 import { ownersAtivosDoAlvo } from '@/lib/carteira/escopo-clientes';
 import { useAuth } from '@/contexts/AuthContext';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
@@ -23,7 +25,8 @@ export interface TacticalPlan {
   healthScore: number;
   churnRisk: number;
   mixGap: number;
-  currentMarginPct: number;
+  /** PERCENTUAL (0–100), ou null quando a margem era desconhecida na geração do plano. */
+  currentMarginPct: number | null;
   clusterAvgMarginPct: number | null;
   expansionPotential: number;
 
@@ -168,9 +171,18 @@ interface DiagnosticData {
 }
 
 export interface EfficiencyCheck {
-  estimatedProfitPerHour: number;
+  /** `null` = R$/h indecidível (não é zero). Ver `motivo` para saber POR QUE. */
+  estimatedProfitPerHour: number | null;
   threshold: number;
-  isAboveThreshold: boolean;
+  /** `null` = indecidível. Não afirma que passou NEM que reprovou no gate. */
+  isAboveThreshold: boolean | null;
+  /**
+   * Por que o R$/h é indecidível. `sem_margem` = o cliente não tem margem apurada — fato
+   * sobre o dado dele. `indisponivel` = a consulta falhou (timeout, RLS, 500) e não sabemos
+   * nada — afirmar "margem não apurada" aqui alegaria um fato sobre o cliente a partir de
+   * uma falha nossa. Ausente quando o R$/h foi calculado.
+   */
+  motivo?: 'sem_margem' | 'indisponivel';
 }
 
 const objectiveLabels: Record<string, string> = {
@@ -184,9 +196,14 @@ const objectiveLabels: Record<string, string> = {
 
 export const getObjectiveLabel = (obj: string) => objectiveLabels[obj] || obj;
 
-const classifyProfile = (healthScore: number, avgSpend: number, marginPct: number, categoryCount: number): string => {
-  if (avgSpend < 500 && marginPct < 20) return 'sensivel_preco';
-  if (marginPct > 35 && categoryCount <= 3) return 'orientado_qualidade';
+// Espelho de classifyProfile em supabase/functions/_shared/tactical-margem.ts (e de
+// classifyCustomerProfile em useBundleArguments.ts). ⚠️ Os dois primeiros ramos exigem margem
+// CONHECIDA: `null < 20` é `true` em JS, então sem o guard todo cliente de gasto baixo e margem
+// não apurada sairia como "sensível a preço" — e esse rótulo entra no prompt da IA.
+const classifyProfile = (healthScore: number, avgSpend: number, marginPct: number | null, categoryCount: number): string => {
+  const m = margemConhecida(marginPct);
+  if (m != null && avgSpend < 500 && m < 20) return 'sensivel_preco';
+  if (m != null && m > 35 && categoryCount <= 3) return 'orientado_qualidade';
   if (avgSpend > 2000 && categoryCount >= 4 && healthScore > 60) return 'orientado_produtividade';
   return 'misto';
 };
@@ -230,7 +247,9 @@ export const useTacticalPlan = () => {
       healthScore: Number(d.health_score || 0),
       churnRisk: Number(d.churn_risk || 0),
       mixGap: Number(d.mix_gap || 0),
-      currentMarginPct: Number(d.current_margin_pct || 0),
+      // O plano persistido grava a margem do cliente no INSTANTE da geração; pós-#1495 ela
+      // pode ser null, e `Number(null || 0)` a exibiria como "0,0%" — margem nula apurada.
+      currentMarginPct: margemConhecida(d.current_margin_pct),
       clusterAvgMarginPct: d.cluster_avg_margin_pct == null ? null : Number(d.cluster_avg_margin_pct),
       expansionPotential: Number(d.expansion_potential || 0),
       strategicObjective: d.strategic_objective,
@@ -323,27 +342,47 @@ export const useTacticalPlan = () => {
 
   // Check efficiency before generating
   const checkEfficiency = useCallback(async (customerId: string): Promise<EfficiencyCheck> => {
-    if (!user?.id) return { estimatedProfitPerHour: 0, threshold: PROFIT_PER_HOUR_THRESHOLD, isAboveThreshold: false };
+    // Sem sessão também é "não avaliei", não "reprovou" — mesmo tri-estado do resto.
+    if (!user?.id) return { estimatedProfitPerHour: null, threshold: PROFIT_PER_HOUR_THRESHOLD, isAboveThreshold: null, motivo: 'indisponivel' };
 
-    const { data: score } = (await supabase
+    const { data: score, error: erroScore } = (await supabase
       .from('farmer_client_scores')
       .select('revenue_potential, avg_monthly_spend_180d, gross_margin_pct')
       // Opção A: 1 linha por cliente (customer_user_id único). NÃO filtrar por farmer_id —
       // quebrava sob a lente / cliente de outro dono → "sem score" falso; RLS gateia a visibilidade.
       .eq('customer_user_id', customerId)
-      .single()) as unknown as { data: Pick<ClientScoreFull, 'revenue_potential' | 'avg_monthly_spend_180d' | 'gross_margin_pct'> | null };
+      .single()) as unknown as {
+        data: Pick<ClientScoreFull, 'revenue_potential' | 'avg_monthly_spend_180d' | 'gross_margin_pct'> | null;
+        error: unknown };
 
-    const revPotential = Number(score?.revenue_potential || 0);
-    const avgSpend = Number(score?.avg_monthly_spend_180d || 0);
-    const marginPct = Number(score?.gross_margin_pct || 0);
-    const estimatedMarginPerCall = (revPotential > 0 ? revPotential : avgSpend) * (marginPct / 100) * 0.1;
+    // FALHA DE CONSULTA ≠ MARGEM NÃO APURADA. O `error` era descartado, então timeout/RLS/500
+    // caíam no mesmo indecidível do cliente sem margem — e o diálogo então AFIRMA a causa
+    // errada à vendedora, que pode acionar o financeiro por um cadastro de custo que existe.
+    // Os dois estados são indistinguíveis pelos campos numéricos; só `motivo` os separa.
+    if (erroScore || !score) {
+      return { estimatedProfitPerHour: null, threshold: PROFIT_PER_HOUR_THRESHOLD, isAboveThreshold: null, motivo: 'indisponivel' };
+    }
+
+    const revPotential = Number(score.revenue_potential || 0);
+    const avgSpend = Number(score.avg_monthly_spend_180d || 0);
+    // Margem desconhecida → R$/h INDECIDÍVEL, não zero. Com `|| 0` o gate reprovava o cliente por
+    // omissão, e "não sei" ficava indistinguível de "não vale a ligação" na tela da vendedora.
+    // Espelha profitPerHora de supabase/functions/_shared/tactical-margem.ts.
+    const marginPct = margemConhecida(score.gross_margin_pct);
     const avgCallMinutes = 15;
-    const estimatedProfitPerHour = estimatedMarginPerCall / (avgCallMinutes / 60);
+    const estimatedProfitPerHour = marginPct == null
+      ? null
+      : ((revPotential > 0 ? revPotential : avgSpend) * (marginPct / 100) * 0.1) / (avgCallMinutes / 60);
 
     return {
       estimatedProfitPerHour,
       threshold: PROFIT_PER_HOUR_THRESHOLD,
-      isAboveThreshold: estimatedProfitPerHour >= PROFIT_PER_HOUR_THRESHOLD,
+      // null → não afirma que passou NEM que reprovou; quem exibe decide como mostrar "sem dado".
+      isAboveThreshold: estimatedProfitPerHour == null
+        ? null
+        : estimatedProfitPerHour >= PROFIT_PER_HOUR_THRESHOLD,
+      // Chegou aqui ⇒ a consulta funcionou. Indecidível agora só pode ser ausência de margem.
+      ...(estimatedProfitPerHour == null ? { motivo: 'sem_margem' as const } : {}),
     };
   }, [user]);
 
@@ -387,7 +426,7 @@ export const useTacticalPlan = () => {
       const healthScore = Number(score.health_score || 0);
       const churnRisk = Number(score.churn_risk || 0);
       const avgSpend = Number(score.avg_monthly_spend_180d || 0);
-      const marginPct = Number(score.gross_margin_pct || 0);
+      const marginPct = margemConhecida(score.gross_margin_pct);
       const categoryCount = Number(score.category_count || 0);
       const daysSince = Number(score.days_since_last_purchase || 0);
       const expansionPotential = Number(score.expansion_score || 0);
@@ -401,20 +440,35 @@ export const useTacticalPlan = () => {
       // carteira do coberto (carteira_visivel_para via carteira_coverage). Exclui o próprio cliente
       // (peer benchmark) e exige ≥1 par com margem finita; sem par → null (selectObjective trata;
       // nada de 25).
+      // [GUARD money-path] PAGINADO. A consulta era single-shot e o PostgREST capa em 1.000
+      // linhas em SILÊNCIO. Medido em prod (psql-ro, 2026-07-21): os três farmers têm 3.858,
+      // 1.528 e 1.246 clientes — TODOS truncavam, o maior deles enxergando 26% dos pares.
+      // Isso importa mais aqui do que numa lista qualquer: o cluster é a RÉGUA contra a qual a
+      // margem do cliente é julgada (`margem < cluster * 0.8` → consolidacao_margem), então a
+      // truncagem não some um cliente da tela — ela move a régua e troca o VEREDITO, de forma
+      // plausível e silenciosa. Ordem por `customer_user_id` (UNIQUE): sem ordem estável a
+      // paginação pula e repete linha entre páginas.
       let clusterMargin: number | null = null;
       {
-        const { data: peers } = (await supabase
-          .from('farmer_client_scores')
-          .select('gross_margin_pct')
-          .eq('farmer_id', ownerId)
-          .neq('customer_user_id', customerId)) as unknown as { data: Pick<ClientScoreFull, 'gross_margin_pct'>[] | null };
-        const peerMargins = (peers ?? [])
-          .filter((r) => r.gross_margin_pct != null)
-          .map((r) => Number(r.gross_margin_pct))
-          .filter((m) => Number.isFinite(m));
-        if (peerMargins.length >= 1) {
-          clusterMargin = peerMargins.reduce((s, m) => s + m, 0) / peerMargins.length;
-        }
+        // Falha de página REJEITA — garantido pelo contrato de `fetchAllPages`, não por guard
+        // local (o guard que vivia aqui virou redundante quando o helper passou a exigir
+        // `error` e falhar alto; duas camadas fazendo a mesma coisa só escondem qual vale).
+        // Importa especialmente aqui: a régua decide entre `upsell_premium` e
+        // `consolidacao_margem`, entra no prompt da IA e fica gravada no plano — um cluster
+        // calculado sobre páginas faltantes troca o VEREDITO de forma plausível e silenciosa.
+        const peers = await fetchAllPages<Pick<ClientScoreFull, 'gross_margin_pct'>>((de, ate) =>
+          supabase
+            .from('farmer_client_scores')
+            .select('gross_margin_pct')
+            .eq('farmer_id', ownerId)
+            .neq('customer_user_id', customerId)
+            .order('customer_user_id', { ascending: true })
+            .range(de, ate) as unknown as PromiseLike<{
+            data: Pick<ClientScoreFull, 'gross_margin_pct'>[] | null;
+            error: unknown;
+          }>,
+        );
+        clusterMargin = mediaMargensConhecidas(peers.map((r) => r.gross_margin_pct));
       }
 
       // Bundle pendente do cliente sob a carteira do DONO (ownerId), não do viewer. A tabela é

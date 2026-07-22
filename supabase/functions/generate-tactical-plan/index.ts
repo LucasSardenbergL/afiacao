@@ -1,6 +1,9 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
+import { fetchAll } from "../_shared/paginate.ts";
+import { calcularClusterMargin, classifyProfile, margemConhecida, selectObjective } from "../_shared/tactical-margem.ts";
+import { inicioDiaOperacional } from "../_shared/dia-operacional.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -74,8 +77,11 @@ serve(async (req) => {
       const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, { auth: { persistSession: false } });
       const { customerId, farmerId } = body;
 
-      // Idempotência: pula se já há plano 'gerado' criado hoje (>= 00:00 UTC).
-      const hojeIso = new Date(new Date().toISOString().slice(0, 10) + 'T00:00:00Z').toISOString();
+      // Idempotência: pula se já há plano 'gerado' no DIA OPERACIONAL (BRT), não no dia UTC.
+      // Era `>= 00:00 UTC` e errava nos DOIS sentidos (incidente 2026-07-21/22, 30 duplicatas):
+      // run às 22:48 BRT não via o das 19:03 do mesmo dia; e o cron das 05:00 BRT do dia
+      // seguinte via o da véspera e pulava o dia inteiro. Ver _shared/dia-operacional.ts.
+      const hojeIso = inicioDiaOperacional(new Date());
       const { data: existente } = await admin.from('farmer_tactical_plans')
         .select('id').eq('farmer_id', farmerId).eq('customer_user_id', customerId)
         .eq('status', 'gerado').gte('created_at', hojeIso).limit(1);
@@ -83,14 +89,35 @@ serve(async (req) => {
         return new Response(JSON.stringify({ id: existente[0].id, skipped: 'ja_gerado_hoje' }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       }
 
-      const [{ data: score }, { data: profile }, { data: bundles }, { data: allScores }, { data: objEvents }, { data: recencyCapRow }] = await Promise.all([
+      // Pares da carteira do dono para o cluster de margem. TRÊS correções vs. a versão
+      // anterior (`select('gross_margin_pct').eq('farmer_id', farmerId)`), espelhando
+      // useTacticalPlan.ts:404-418:
+      //  1. PAGINA (fetchAll): sem .range() o PostgREST capa em 1.000 SILENCIOSO e os 3
+      //     farmers em prod têm até 3.858 clientes — a régua saía de uma amostra arbitrária
+      //     de ~26% da carteira, sem sequer um .order() que a tornasse estável (#1471).
+      //  2. EXCLUI o próprio cliente (peer benchmark): comparar a margem do cliente com um
+      //     cluster que o contém puxa a régua na direção do próprio valor.
+      //  3. Falha de leitura → [] → cluster null (degradação honesta: o plano sai sem a
+      //     régua de margem, em vez de sair com uma régua truncada).
+      const peersClusterPromise = fetchAll<{ gross_margin_pct: number | null }>(
+        (from, to) => admin
+          .from('farmer_client_scores')
+          .select('gross_margin_pct')
+          .eq('farmer_id', farmerId)
+          .neq('customer_user_id', customerId)
+          .order('customer_user_id', { ascending: true }) // UNIQUE ⇒ estável entre páginas
+          .range(from, to),
+        'pares da carteira p/ cluster de margem',
+      ).catch(() => [] as Array<{ gross_margin_pct: number | null }>);
+
+      const [{ data: score }, { data: profile }, { data: bundles }, peersCluster, { data: objEvents }, { data: recencyCapRow }] = await Promise.all([
         // Opção A: 1 linha por cliente (customer_user_id único). NÃO filtrar por farmer_id —
         // score stale pós-reatribuição (dono ≠ farmerId) virava "sem_score" falso e PULAVA o
         // plano do cliente reatribuído. Espelha useTacticalPlan.checkEfficiency (admin = service role).
         admin.from('farmer_client_scores').select('*').eq('customer_user_id', customerId).maybeSingle(),
         admin.from('profiles').select('name, customer_type, cnae').eq('user_id', customerId).maybeSingle(),
         admin.from('farmer_bundle_recommendations').select('*').eq('customer_user_id', customerId).eq('farmer_id', farmerId).eq('status', 'pendente').order('lie_bundle', { ascending: false }).limit(2),
-        admin.from('farmer_client_scores').select('gross_margin_pct').eq('farmer_id', farmerId),
+        peersClusterPromise, // paginada acima; entra no mesmo Promise.all p/ não serializar
         admin.from('farmer_copilot_events').select('event_data').eq('event_type', 'suggestion').limit(20),
         // Teto de recência (hs_recency_cap_days): a fronteira reativacao/recuperacao ACOMPANHA o teto
         // do modelo, não o 90 hardcode. Ausente → clampRecencyCapDays default 180. limit(1) p/ maybeSingle
@@ -103,24 +130,32 @@ serve(async (req) => {
 
       const num = (v: unknown) => Number(v ?? 0);
       const healthScore = num(score.health_score), churnRisk = num(score.churn_risk), avgSpend = num(score.avg_monthly_spend_180d);
-      const marginPct = num(score.gross_margin_pct), categoryCount = num(score.category_count), daysSince = num(score.days_since_last_purchase);
+      const categoryCount = num(score.category_count), daysSince = num(score.days_since_last_purchase);
+      // money-path "ausente ≠ zero": margem desconhecida fica `null` e é EXCLUÍDA dos
+      // cálculos — nunca 0 (que afirmaria "cliente sem margem") nem a média fabricada.
+      const marginPct = margemConhecida(score.gross_margin_pct);
       const salesHistoryStatus = (score.sales_history_status ?? null) as string | null;
-      const clusterMargin = allScores?.length ? allScores.reduce((s: number, r: { gross_margin_pct: unknown }) => s + num(r.gross_margin_pct), 0) / allScores.length : 25;
+      // Sem par com margem conhecida → null. Era `: 25` — um número inventado que virava
+      // a régua de `marginPct < cluster * 0.8` e empurrava consolidacao_margem a esmo,
+      // plausível o bastante para não levantar suspeita. Mesma correção que o front já
+      // aplicou em objective.ts; o edge era o lado que faltava.
+      const clusterMargin = calcularClusterMargin(peersCluster);
       const mixGap = Math.max(0, 8 - categoryCount);
 
-      // classifyProfile/selectObjective — espelham useTacticalPlan.ts (classifyProfile + selectObjective, validado).
-      const customerProfile = avgSpend < 500 && marginPct < 20 ? 'sensivel_preco'
-        : marginPct > 35 && categoryCount <= 3 ? 'orientado_qualidade'
-        : avgSpend > 2000 && categoryCount >= 4 && healthScore > 60 ? 'orientado_produtividade' : 'misto';
+      // classifyProfile/selectObjective — _shared/tactical-margem.ts, espelho TESTADO de
+      // useTacticalPlan.ts + objective.ts (antes eram encadeamentos inline não-testados).
       // Fronteira reativacao/recuperacao = daysSince >= teto de recência (ponto onde o sinal de
       // recência satura em 0), NÃO o 90 mágico — espelha selectObjective (objective.ts) pós-#982.
-      // Aqui clusterMargin é SEMPRE número (fallback 25 acima), então a regra de margem dispensa o
-      // guard null que o front tem. recencyCapDays vem do config (acompanha o retuning do operador).
+      // recencyCapDays vem do config (acompanha o retuning do operador).
       // sem_historico → ativacao PRECEDE tudo (#1026): sem venda válida, nada p/ recuperar/reativar.
+      // Margem (do cliente ou do cluster) ausente → a regra de consolidacao_margem NÃO dispara:
+      // o guard null que o front já tinha e que este lado não tinha, porque o fallback 25
+      // garantia um número — fabricado.
+      const customerProfile = classifyProfile(healthScore, avgSpend, marginPct, categoryCount);
       const recencyCapDays = clampRecencyCapDays(recencyCapRow?.value);
-      const strategicObjective = salesHistoryStatus === 'sem_historico' ? 'ativacao'
-        : daysSince >= recencyCapDays ? 'reativacao' : churnRisk > 60 ? 'recuperacao'
-        : mixGap > 3 ? 'expansao_mix' : marginPct < clusterMargin * 0.8 ? 'consolidacao_margem' : 'upsell_premium';
+      const strategicObjective = selectObjective(
+        churnRisk, mixGap, marginPct, clusterMargin, daysSince, recencyCapDays, salesHistoryStatus,
+      );
 
       topBundleRow = bundles?.[0] ?? null;
       secondBundleRow = bundles?.[1] ?? null;
@@ -167,7 +202,12 @@ Retorne um JSON com:
    - "economic_response": Resposta econômica
    - "probability": 0-100
 
-IMPORTANTE: Retorne APENAS o JSON, sem markdown. Personalize com dados reais.`;
+IMPORTANTE: Retorne APENAS o JSON, sem markdown. Personalize com dados reais.
+
+DADO AUSENTE: campo com valor null (ex.: "grossMarginPct": null, "clusterAvgMargin": null) significa
+NÃO MEDIDO — não é zero nem valor baixo. NUNCA estime, preencha ou infira um número para ele, e não
+construa argumento sobre margem a partir dele. Se a margem for necessária ao ponto, diga explicitamente
+que o dado não está disponível.`;
 
     const strategicPrompt = `Você é um estrategista comercial sênior especializado em afiação de ferramentas industriais.
 
@@ -208,7 +248,13 @@ Retorne um JSON com:
 
 10. "operational_risks": Array de strings com riscos operacionais
 
-IMPORTANTE: Retorne APENAS o JSON, sem markdown. Use dados reais do cliente.`;
+IMPORTANTE: Retorne APENAS o JSON, sem markdown. Use dados reais do cliente.
+
+DADO AUSENTE: campo com valor null (ex.: "grossMarginPct": null, "clusterAvgMargin": null) significa
+NÃO MEDIDO — não é zero nem valor baixo. NUNCA estime, preencha ou infira um número para ele. Se a
+margem atual do cliente for null, retorne "expected_result" com null nos três cenários e diga em
+"approach_strategy" que a margem não está medida — projetar margem a partir de dado ausente entrega
+à vendedora um número que parece medido e não é.`;
 
     const systemPrompt = mode === 'estrategico' ? strategicPrompt : essentialPrompt;
 
@@ -295,7 +341,10 @@ ${JSON.stringify(historicalObjections || [], null, 2)}`;
     // race em vez de gravar dono stale (precisão>recall). farmer_id/customer/status são do servidor.
     if (selfContained) {
       const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, { auth: { persistSession: false } });
-      const d = (body as { _derived: Record<string, number | string> })._derived;
+      // marginPct/clusterMargin podem ser null (margem desconhecida). As colunas
+      // current_margin_pct/cluster_avg_margin_pct são nullable — o plano grava "não sei"
+      // em vez de um número, e a UI mostra "—" em vez de uma margem inventada.
+      const d = (body as { _derived: Record<string, number | string | null> })._derived;
       const { data: newId, error: rpcErr } = await admin.rpc('criar_plano_tatico', {
         _customer_user_id: body.customerId,
         _expected_owner: body.farmerId,

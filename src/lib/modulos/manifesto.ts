@@ -279,6 +279,9 @@ export const MODULOS: ModuloApp[] = [
     testes: [
       "src/hooks/__tests__/bundle-custo-fora-do-browser.test.tsx",
       "src/hooks/__tests__/cluster-margin-cobertura.test.tsx",
+      "src/hooks/__tests__/cluster-margin-paginacao.test.tsx",
+      "src/hooks/__tests__/efficiency-margem-indisponivel.test.tsx",
+      "src/hooks/__tests__/useBundleArguments.test.ts",
       "src/hooks/__tests__/farmer-performance-cobertura-guard.test.tsx",
       "src/hooks/__tests__/lens-atividade-vendedor.test.tsx",
       "src/hooks/__tests__/lens-engines-ia.test.tsx",
