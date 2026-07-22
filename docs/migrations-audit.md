@@ -21,16 +21,16 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **427** custom migrations totais
-- **1493** objetos esperados (criados por estas migrations)
+- **429** custom migrations totais
+- **1496** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 431
+  - `function`: 433
   - `rls_policy`: 380
   - `index`: 224
   - `cron_job`: 157
   - `table`: 147
   - `trigger`: 79
-  - `view`: 71
+  - `view`: 72
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -3609,11 +3609,24 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `private.margem_cliente_agregada` | — |
 
+### `20260726160000_margem_reconciliacao_universo_unico.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.margem_cliente_agregada` | — |
+| `function` | `public.get_customer_margin_summary` | — |
+
 ### `20260726160000_tint_canonica_piso_legado.sql`
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.tint_gate_revalida` | — |
+| `view` | `public.v_tint_formula_canonica` | — |
+
+### `20260727120000_tint_fase5_desativa_geracao_legada.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
 | `view` | `public.v_tint_formula_canonica` | — |
 
 ## Próximos passos por status

@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 427
+-- Total de custom migrations: 429
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -468,7 +468,9 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260726130000', 'vendas_sync_semear_janela', '20260726130000_vendas_sync_semear_janela.sql'),
   ('20260726140000', 'vendas_sync_semear_janela_v2', '20260726140000_vendas_sync_semear_janela_v2.sql'),
   ('20260726150000', 'margem_cliente_helper_compartilhado', '20260726150000_margem_cliente_helper_compartilhado.sql'),
-  ('20260726160000', 'tint_canonica_piso_legado', '20260726160000_tint_canonica_piso_legado.sql')
+  ('20260726160000', 'margem_reconciliacao_universo_unico', '20260726160000_margem_reconciliacao_universo_unico.sql'),
+  ('20260726160000', 'tint_canonica_piso_legado', '20260726160000_tint_canonica_piso_legado.sql'),
+  ('20260727120000', 'tint_fase5_desativa_geracao_legada', '20260727120000_tint_fase5_desativa_geracao_legada.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -1949,8 +1951,11 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('vendas_sync_semear_janela', 'function', 'public', 'vendas_sync_semear_janela', ''),
   ('vendas_sync_semear_janela_v2', 'function', 'public', 'vendas_sync_semear_janela', ''),
   ('margem_cliente_helper_compartilhado', 'function', 'private', 'margem_cliente_agregada', ''),
+  ('margem_reconciliacao_universo_unico', 'function', 'private', 'margem_cliente_agregada', ''),
+  ('margem_reconciliacao_universo_unico', 'function', 'public', 'get_customer_margin_summary', ''),
   ('tint_canonica_piso_legado', 'function', 'public', 'tint_gate_revalida', ''),
-  ('tint_canonica_piso_legado', 'view', 'public', 'v_tint_formula_canonica', '')
+  ('tint_canonica_piso_legado', 'view', 'public', 'v_tint_formula_canonica', ''),
+  ('tint_fase5_desativa_geracao_legada', 'view', 'public', 'v_tint_formula_canonica', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -3479,8 +3484,11 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('vendas_sync_semear_janela', 'function', 'public', 'vendas_sync_semear_janela', ''),
   ('vendas_sync_semear_janela_v2', 'function', 'public', 'vendas_sync_semear_janela', ''),
   ('margem_cliente_helper_compartilhado', 'function', 'private', 'margem_cliente_agregada', ''),
+  ('margem_reconciliacao_universo_unico', 'function', 'private', 'margem_cliente_agregada', ''),
+  ('margem_reconciliacao_universo_unico', 'function', 'public', 'get_customer_margin_summary', ''),
   ('tint_canonica_piso_legado', 'function', 'public', 'tint_gate_revalida', ''),
-  ('tint_canonica_piso_legado', 'view', 'public', 'v_tint_formula_canonica', '')
+  ('tint_canonica_piso_legado', 'view', 'public', 'v_tint_formula_canonica', ''),
+  ('tint_fase5_desativa_geracao_legada', 'view', 'public', 'v_tint_formula_canonica', '')
 )
 SELECT
   e.migration,
