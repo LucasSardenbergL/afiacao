@@ -13,7 +13,7 @@
 - **Idioma:** pt-BR em código, comentários, commits e PR.
 - **Migration é imutável depois de committada** (hook `migration-immutability-guard.sh`). Correção vira arquivo novo em `db/`.
 - **Nunca `SET LOCAL`** em harness psql — em autocommit vira `WARNING` e roda como superuser, que bypassa RLS (#1434). Sempre `SET ROLE` + guard de `current_user`.
-- **Migration aplicada com `-f`, nunca `-c` com heredoc** — o psql descarta o stdin em silêncio e a falsificação passa a medir o objeto original (#, Fatia 5B).
+- **Migration aplicada com `-f`, nunca `-c` com heredoc** — o psql descarta o stdin em silêncio e a falsificação passa a medir o objeto original (2026-07-19, Fatia 5B).
 - **Assert nunca ancora em string vazia** — estados têm de ser mutuamente distinguíveis (#1380).
 - **`cmd | tail` engole o exit code** → `> log 2>&1; echo $?`.
 - **Comandos pesados prefixados com `heavy`** (semáforo de RAM da M2 8GB).
