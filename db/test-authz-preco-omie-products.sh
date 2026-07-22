@@ -169,7 +169,7 @@ CREATE TABLE public.omie_products (
 ALTER TABLE public.omie_products ENABLE ROW LEVEL SECURITY;
 
 -- relacl REAL da prod: arwdDxtm p/ anon E authenticated (o D e TRUNCATE, que ignora RLS)
-GRANT SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER ON public.omie_products TO anon, authenticated, service_role;
+GRANT SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN ON public.omie_products TO anon, authenticated, service_role;
 
 -- a policy VERBATIM de pg_policies (2026-07-21): FOR ALL, {authenticated}, com wrap de InitPlan
 CREATE POLICY "Staff can manage products" ON public.omie_products
