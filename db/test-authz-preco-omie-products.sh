@@ -231,8 +231,17 @@ eq "A3 authenticated SEM TRUNCATE"  "$(Pq -c "SELECT has_table_privilege('authen
 eq "A4a authenticated SEM UPDATE"   "$(Pq -c "SELECT has_table_privilege('authenticated','public.omie_products','UPDATE');")" "f"
 eq "A4b authenticated SEM INSERT"   "$(Pq -c "SELECT has_table_privilege('authenticated','public.omie_products','INSERT');")" "f"
 eq "A4c authenticated SEM DELETE"   "$(Pq -c "SELECT has_table_privilege('authenticated','public.omie_products','DELETE');")" "f"
+# REVOKE ALL tira 8 privilegios; A3/A4a-c so cobriam 4. O stub da ZONA 1 concede os 8
+# (GRANT SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN — arwdDxtm real de
+# prod), entao aqui da pra provar que o REVOKE ALL tirou TODOS, nao so os 4 mais obvios.
+eq "A4d authenticated SEM REFERENCES" "$(Pq -c "SELECT has_table_privilege('authenticated','public.omie_products','REFERENCES');")" "f"
+eq "A4e authenticated SEM TRIGGER"    "$(Pq -c "SELECT has_table_privilege('authenticated','public.omie_products','TRIGGER');")" "f"
+eq "A4f authenticated SEM MAINTAIN"   "$(Pq -c "SELECT has_table_privilege('authenticated','public.omie_products','MAINTAIN');")" "f"
 eq "A5a anon SEM SELECT"            "$(Pq -c "SELECT has_table_privilege('anon','public.omie_products','SELECT');")" "f"
 eq "A5b anon SEM TRUNCATE"          "$(Pq -c "SELECT has_table_privilege('anon','public.omie_products','TRUNCATE');")" "f"
+eq "A5c anon SEM INSERT"            "$(Pq -c "SELECT has_table_privilege('anon','public.omie_products','INSERT');")" "f"
+eq "A5d anon SEM UPDATE"            "$(Pq -c "SELECT has_table_privilege('anon','public.omie_products','UPDATE');")" "f"
+eq "A5e anon SEM DELETE"            "$(Pq -c "SELECT has_table_privilege('anon','public.omie_products','DELETE');")" "f"
 eq "A6 authenticated MANTEM SELECT (anti-tautologia)" "$(Pq -c "SELECT has_table_privilege('authenticated','public.omie_products','SELECT');")" "t"
 eq "A7a service_role MANTEM UPDATE" "$(Pq -c "SELECT has_table_privilege('service_role','public.omie_products','UPDATE');")" "t"
 eq "A7b service_role MANTEM INSERT" "$(Pq -c "SELECT has_table_privilege('service_role','public.omie_products','INSERT');")" "t"
@@ -321,11 +330,102 @@ fi
 P -q -c "DROP POLICY \"policy de outra sessao\" ON public.omie_products;" >/dev/null
 P -q -f "$MIG" >/dev/null
 
+# ══════════════════════════════════════════════════════════════════════════════
+# ZONA 6 — O VALIDADOR (db/valida-authz-preco-omie-products.sql) TAMBEM E PROVADO
+# Doutrina do #1490/#1501 (docs/agent/money-path.md): "o harness EXECUTA o validador contra
+# banco bom (100% verde) e sabotado (tem de reprovar) — sem essa zona ele e carimbo." Ate
+# aqui o harness so provava a MIGRATION; o validador (o script que roda pos-apply, so LE
+# catalogo, e o founder cola no SQL Editor) nao tinha prova nenhuma de que morde.
+# ══════════════════════════════════════════════════════════════════════════════
+echo
+echo "=== ZONA 6: o validador (db/valida-authz-preco-omie-products.sql) ==="
+VALIDA="$REPO_ROOT/db/valida-authz-preco-omie-products.sql"
+[ -f "$VALIDA" ] || { echo "validador ausente: $VALIDA"; exit 1; }
+
+valida_linha() { Pq -f "$VALIDA"; }                  # a UNICA linha de resultados, campos com |
+campo() { valida_linha | cut -d'|' -f"$1"; }         # $1 = indice 1-based (c1=1, c2=2, ...)
+
+# quantos checks o arquivo declara AGORA (cada um termina em "AS cNN_...") — deriva em vez de
+# hardcodar, pra nao descolar se algum dia mudar a contagem.
+N_CHECKS="$(command grep -c -E 'AS c[0-9]+_' "$VALIDA")"
+[ "$N_CHECKS" -gt 0 ] || { echo "N_CHECKS=0 -- grep nao achou check nenhum em $VALIDA"; exit 1; }
+ESPERADO_BOM=""
+for ((_i = 0; _i < N_CHECKS; _i++)); do ESPERADO_BOM="${ESPERADO_BOM}t|"; done
+ESPERADO_BOM="${ESPERADO_BOM%|}"
+echo "  ($N_CHECKS checks declarados no validador)"
+
+eq "Z1 validador contra banco BOM: todos os $N_CHECKS em t" "$(valida_linha)" "$ESPERADO_BOM"
+
+# restaura a policy CANONICA por DDL direto (nao reaplicando a migration) — necessario pra
+# V2/V3: a sabotagem usa NOME diferente, e a PRECONDICAO da migration so tolera 'Staff can
+# manage products' e 'omie_products_select_staff' — reaplicar com um nome desconhecido
+# presente TEM de abortar (comportamento certo, provado na S5); nao pode ser o caminho de
+# restauracao aqui.
+restaura_policy_canonica() {
+  P -q -c "
+    DROP POLICY IF EXISTS omie_products_select_staff   ON public.omie_products;
+    DROP POLICY IF EXISTS omie_products_select_staff_x ON public.omie_products;
+    CREATE POLICY omie_products_select_staff ON public.omie_products
+      FOR SELECT TO authenticated
+      USING ((SELECT (public.has_role((SELECT auth.uid()), 'master'::public.app_role)
+                   OR public.has_role((SELECT auth.uid()), 'employee'::public.app_role))));
+  " >/dev/null
+}
+
+# V2/V3: nao ha UM campo especifico pra apontar (a sabotagem pode derrubar mais de um) -- a
+# exigencia e "pelo menos 1 campo veio f". Se NENHUM vier, e FURO REAL do validador: conta
+# como FAIL (nunca como falsificacao bem-sucedida) e imprime a linha inteira pra nao esconder.
+falsifica_algum() { # $1=nome  $2=sql da sabotagem
+  local linha
+  P -q -c "$2" >/dev/null 2>&1 || { echo "  FAIL [$1] a sabotagem nem aplicou"; FAIL=$((FAIL+1)); return; }
+  linha="$(valida_linha)"
+  case "$linha" in
+    *f*) echo "  OK   [$1] pelo menos 1 check reprovou (linha: $linha)"; FALS=$((FALS+1)) ;;
+    *)   echo "  FAIL [$1] FURO REAL: nenhum check reprovou -- o validador NAO detecta este mundo falso-verde (linha: $linha)"; FAIL=$((FAIL+1)) ;;
+  esac
+}
+
+echo "  --- V1: qual adulterado (OR true na policy) -- c4 tem de cair ---"
+falsifica "V1 qual adulterado (OR true): c4 tem de cair" \
+  "DROP POLICY omie_products_select_staff ON public.omie_products;
+   CREATE POLICY omie_products_select_staff ON public.omie_products
+     FOR SELECT TO authenticated
+     USING ((SELECT (public.has_role((SELECT auth.uid()), 'master'::public.app_role)
+                  OR public.has_role((SELECT auth.uid()), 'employee'::public.app_role))) OR true);" \
+  'campo 4' "f"
+P -q -f "$MIG" >/dev/null
+eq "V1b validador volta a 100% (reaplicando a migration real)" "$(valida_linha)" "$ESPERADO_BOM"
+
+echo "  --- V2: policy correta, NOME diferente (omie_products_select_staff_x) ---"
+falsifica_algum "V2 nome diferente" \
+  "DROP POLICY omie_products_select_staff ON public.omie_products;
+   CREATE POLICY omie_products_select_staff_x ON public.omie_products
+     FOR SELECT TO authenticated
+     USING ((SELECT (public.has_role((SELECT auth.uid()), 'master'::public.app_role)
+                  OR public.has_role((SELECT auth.uid()), 'employee'::public.app_role))));"
+restaura_policy_canonica
+eq "V2b validador volta a 100% (policy canonica recriada)" "$(valida_linha)" "$ESPERADO_BOM"
+
+echo "  --- V3: policy correta, TO service_role em vez de TO authenticated ---"
+falsifica_algum "V3 TO service_role" \
+  "DROP POLICY omie_products_select_staff ON public.omie_products;
+   CREATE POLICY omie_products_select_staff ON public.omie_products
+     FOR SELECT TO service_role
+     USING ((SELECT (public.has_role((SELECT auth.uid()), 'master'::public.app_role)
+                  OR public.has_role((SELECT auth.uid()), 'employee'::public.app_role))));"
+restaura_policy_canonica
+eq "V3b validador volta a 100% (policy canonica recriada)" "$(valida_linha)" "$ESPERADO_BOM"
+
+# fecha a zona no estado que a migration REAL produz (nao o recriado a mao) -- simetrico ao
+# fechamento da zona 5.
+P -q -f "$MIG" >/dev/null
+eq "V-fim validador 100% com o estado pos-migration real" "$(valida_linha)" "$ESPERADO_BOM"
+
 echo
 echo "════════════════════════════════════════════════════════════"
 echo "  asserts verdes : ${BASE_PASS}"
-echo "  falsificacoes  : ${FALS}/5"
+echo "  falsificacoes  : ${FALS}/8  (zona 5: S1-S5 / zona 6 validador: V1-V3)"
 echo "  FAIL           : ${FAIL}"
 echo "════════════════════════════════════════════════════════════"
-[ "$FAIL" -eq 0 ] && [ "$FALS" -eq 5 ] || exit 1
+[ "$FAIL" -eq 0 ] && [ "$FALS" -eq 8 ] || exit 1
 echo "TUDO VERDE"
