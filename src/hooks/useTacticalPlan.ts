@@ -171,11 +171,18 @@ interface DiagnosticData {
 }
 
 export interface EfficiencyCheck {
-  /** `null` = margem do cliente não apurada → R$/h indecidível (não é zero). */
+  /** `null` = R$/h indecidível (não é zero). Ver `motivo` para saber POR QUE. */
   estimatedProfitPerHour: number | null;
   threshold: number;
   /** `null` = indecidível. Não afirma que passou NEM que reprovou no gate. */
   isAboveThreshold: boolean | null;
+  /**
+   * Por que o R$/h é indecidível. `sem_margem` = o cliente não tem margem apurada — fato
+   * sobre o dado dele. `indisponivel` = a consulta falhou (timeout, RLS, 500) e não sabemos
+   * nada — afirmar "margem não apurada" aqui alegaria um fato sobre o cliente a partir de
+   * uma falha nossa. Ausente quando o R$/h foi calculado.
+   */
+  motivo?: 'sem_margem' | 'indisponivel';
 }
 
 const objectiveLabels: Record<string, string> = {
@@ -336,22 +343,32 @@ export const useTacticalPlan = () => {
   // Check efficiency before generating
   const checkEfficiency = useCallback(async (customerId: string): Promise<EfficiencyCheck> => {
     // Sem sessão também é "não avaliei", não "reprovou" — mesmo tri-estado do resto.
-    if (!user?.id) return { estimatedProfitPerHour: null, threshold: PROFIT_PER_HOUR_THRESHOLD, isAboveThreshold: null };
+    if (!user?.id) return { estimatedProfitPerHour: null, threshold: PROFIT_PER_HOUR_THRESHOLD, isAboveThreshold: null, motivo: 'indisponivel' };
 
-    const { data: score } = (await supabase
+    const { data: score, error: erroScore } = (await supabase
       .from('farmer_client_scores')
       .select('revenue_potential, avg_monthly_spend_180d, gross_margin_pct')
       // Opção A: 1 linha por cliente (customer_user_id único). NÃO filtrar por farmer_id —
       // quebrava sob a lente / cliente de outro dono → "sem score" falso; RLS gateia a visibilidade.
       .eq('customer_user_id', customerId)
-      .single()) as unknown as { data: Pick<ClientScoreFull, 'revenue_potential' | 'avg_monthly_spend_180d' | 'gross_margin_pct'> | null };
+      .single()) as unknown as {
+        data: Pick<ClientScoreFull, 'revenue_potential' | 'avg_monthly_spend_180d' | 'gross_margin_pct'> | null;
+        error: unknown };
 
-    const revPotential = Number(score?.revenue_potential || 0);
-    const avgSpend = Number(score?.avg_monthly_spend_180d || 0);
+    // FALHA DE CONSULTA ≠ MARGEM NÃO APURADA. O `error` era descartado, então timeout/RLS/500
+    // caíam no mesmo indecidível do cliente sem margem — e o diálogo então AFIRMA a causa
+    // errada à vendedora, que pode acionar o financeiro por um cadastro de custo que existe.
+    // Os dois estados são indistinguíveis pelos campos numéricos; só `motivo` os separa.
+    if (erroScore || !score) {
+      return { estimatedProfitPerHour: null, threshold: PROFIT_PER_HOUR_THRESHOLD, isAboveThreshold: null, motivo: 'indisponivel' };
+    }
+
+    const revPotential = Number(score.revenue_potential || 0);
+    const avgSpend = Number(score.avg_monthly_spend_180d || 0);
     // Margem desconhecida → R$/h INDECIDÍVEL, não zero. Com `|| 0` o gate reprovava o cliente por
     // omissão, e "não sei" ficava indistinguível de "não vale a ligação" na tela da vendedora.
     // Espelha profitPerHora de supabase/functions/_shared/tactical-margem.ts.
-    const marginPct = margemConhecida(score?.gross_margin_pct);
+    const marginPct = margemConhecida(score.gross_margin_pct);
     const avgCallMinutes = 15;
     const estimatedProfitPerHour = marginPct == null
       ? null
@@ -364,6 +381,8 @@ export const useTacticalPlan = () => {
       isAboveThreshold: estimatedProfitPerHour == null
         ? null
         : estimatedProfitPerHour >= PROFIT_PER_HOUR_THRESHOLD,
+      // Chegou aqui ⇒ a consulta funcionou. Indecidível agora só pode ser ausência de margem.
+      ...(estimatedProfitPerHour == null ? { motivo: 'sem_margem' as const } : {}),
     };
   }, [user]);
 
@@ -431,6 +450,19 @@ export const useTacticalPlan = () => {
       // paginação pula e repete linha entre páginas.
       let clusterMargin: number | null = null;
       {
+        // O `error` vira THROW aqui de propósito. `fetchAllPages` só desestrutura `data`: uma
+        // página que falha devolve `data: null`, que vira `[]`, que satisfaz
+        // `linhas.length < POSTGREST_PAGE_SIZE` e ENCERRA o loop como se a tabela tivesse
+        // acabado. O acumulado das páginas anteriores viraria a régua — numericamente
+        // indistinguível de uma carteira que de fato tem aquele tamanho.
+        // Paginar (que este caller já faz) resolve o cap dos 1.000, não a falha no meio: o
+        // farmer de 3.858 clientes que perde a 3ª página é julgado contra 2.000 pares.
+        // A régua decide entre `upsell_premium` e `consolidacao_margem`, entra no prompt da
+        // IA e fica gravada no plano — falhar alto é a única leitura honesta.
+        // O contrato do helper tem o mesmo furo para os outros 11 callers money-path (três
+        // carregam `product_costs`, onde página perdida vira "SKU sem custo" e INFLA margem);
+        // corrigi-lo mexe em 12 caminhos e reverte um teste que canoniza `data:null` como EOF
+        // (`postgrest.test.ts:360`) ⇒ follow-up com revisão isolada.
         const peers = await fetchAllPages<Pick<ClientScoreFull, 'gross_margin_pct'>>((de, ate) =>
           supabase
             .from('farmer_client_scores')
@@ -438,7 +470,11 @@ export const useTacticalPlan = () => {
             .eq('farmer_id', ownerId)
             .neq('customer_user_id', customerId)
             .order('customer_user_id', { ascending: true })
-            .range(de, ate) as unknown as PromiseLike<{ data: Pick<ClientScoreFull, 'gross_margin_pct'>[] | null }>,
+            .range(de, ate)
+            .then(({ data, error }) => {
+              if (error) throw error;
+              return { data: data as unknown as Pick<ClientScoreFull, 'gross_margin_pct'>[] | null };
+            }),
         );
         clusterMargin = mediaMargensConhecidas(peers.map((r) => r.gross_margin_pct));
       }

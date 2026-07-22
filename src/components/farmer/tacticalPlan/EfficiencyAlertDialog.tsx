@@ -7,17 +7,23 @@ import type { PlanType } from '@/hooks/useTacticalPlan';
 import { fmt } from './config';
 
 interface EfficiencyAlertDialogProps {
-  /** `profitPerHour: null` = margem não apurada → o R$/h é INDECIDÍVEL, não baixo. */
-  alert: { customerId: string; profitPerHour: number | null; planType: PlanType } | null;
+  /**
+   * `profitPerHour: null` = R$/h INDECIDÍVEL, não baixo. `motivo` diz qual dos dois: margem
+   * não apurada (fato sobre o cliente) ou consulta que falhou (fato sobre nós).
+   */
+  alert: { customerId: string; profitPerHour: number | null; motivo?: 'sem_margem' | 'indisponivel'; planType: PlanType } | null;
   onClose: () => void;
   onConfirm: () => void;
 }
 
 export function EfficiencyAlertDialog({ alert, onClose, onConfirm }: EfficiencyAlertDialogProps) {
-  // Dois motivos distintos para o alerta e a vendedora precisa saber qual é: "este cliente rende
-  // pouco" é um veredito acionável; "não consegui calcular" é ausência de dado. Antes o `|| 0`
-  // exibia "R$ 0,00/h abaixo do limiar" nos dois casos — uma afirmação falsa no segundo.
+  // TRÊS motivos distintos, e a vendedora precisa saber qual é. "Este cliente rende pouco" é um
+  // veredito acionável; "a margem não foi apurada" é ausência de dado do cliente; "a consulta
+  // falhou" é problema nosso. Os dois últimos produzem o MESMO `profitPerHour: null`, então
+  // tratá-los junto faz a tela afirmar a causa errada — e mandar a vendedora atrás de um
+  // cadastro de custo que talvez já exista.
   const indecidivel = alert != null && alert.profitPerHour == null;
+  const falhaConsulta = indecidivel && alert.motivo === 'indisponivel';
   return (
     <Dialog open={!!alert} onOpenChange={onClose}>
       <DialogContent className="max-w-xs">
@@ -28,7 +34,13 @@ export function EfficiencyAlertDialog({ alert, onClose, onConfirm }: EfficiencyA
           </DialogTitle>
         </DialogHeader>
         <div className="space-y-3">
-          {indecidivel ? (
+          {falhaConsulta ? (
+            <p className="text-xs text-muted-foreground">
+              Não foi possível <strong className="text-foreground">consultar os dados</strong> deste
+              cliente agora, então o lucro por hora não pôde ser estimado. Isso não diz nada sobre o
+              potencial dele nem sobre o cadastro de custo — tente de novo em instantes.
+            </p>
+          ) : indecidivel ? (
             <p className="text-xs text-muted-foreground">
               Não foi possível estimar o lucro por hora deste cliente: a{' '}
               <strong className="text-foreground">margem ainda não foi apurada</strong> (nenhum item

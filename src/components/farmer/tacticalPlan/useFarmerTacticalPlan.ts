@@ -26,7 +26,7 @@ export function useFarmerTacticalPlan() {
   const [expandedPlan, setExpandedPlan] = useState<string | null>(null);
   const [copiedText, setCopiedText] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
-  const [efficiencyAlert, setEfficiencyAlert] = useState<{ customerId: string; profitPerHour: number | null; planType: PlanType } | null>(null);
+  const [efficiencyAlert, setEfficiencyAlert] = useState<{ customerId: string; profitPerHour: number | null; motivo?: 'sem_margem' | 'indisponivel'; planType: PlanType } | null>(null);
 
   useEffect(() => {
     if (user?.id && isStaff) {
@@ -70,7 +70,7 @@ export function useFarmerTacticalPlan() {
     // `isAboveThreshold` é tri-estado: false (reprovou) e null (indecidível) ambos abrem o dialog,
     // que distingue os dois na mensagem. Só `true` gera direto.
     if (check.isAboveThreshold !== true) {
-      setEfficiencyAlert({ customerId, profitPerHour: check.estimatedProfitPerHour, planType });
+      setEfficiencyAlert({ customerId, profitPerHour: check.estimatedProfitPerHour, motivo: check.motivo, planType });
       return;
     }
     generatePlan(customerId, planType);
