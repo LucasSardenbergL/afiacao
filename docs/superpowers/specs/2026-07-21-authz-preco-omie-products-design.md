@@ -92,26 +92,53 @@ mexa em preço" estava incompleta de um jeito que importa.
 tem um botão que chama `omie-vendas-sync` com `action: 'sync_products'`, cujo caminho faz `upsert`
 em `valor_unitario` com `service_role`. O mesmo vale para `omie-analytics-sync` e `tint-omie-sync`.
 
-⇒ Um `employee` **não** consegue escolher um preço; **consegue** disparar uma reescrita autoritativa
-do catálogo a partir do Omie. A formulação honesta, que vai no corpo do PR:
+⇒ Um `employee` **não** consegue escolher um preço; **consegue** disparar uma reescrita do catálogo
+a partir do Omie.
 
-> Esta entrega fecha a escrita **arbitrária** de preço por `employee` — DML direto e `TRUNCATE`.
-> **Não** fecha o refresh **autoritativo** disparado por `employee`, onde o valor vem do ERP.
+A primeira formulação que escrevi — *"o valor vem do ERP"* — foi **rejeitada na rodada 2 do Codex por
+prometer demais**: quando o Omie devolve preço ausente ou falsy, o próprio sync **sintetiza `0`**
+(ver o `|| 0` abaixo). O valor nem sempre vem do ERP; às vezes vem do fallback local. A formulação
+que vai no corpo do PR, corrigida:
+
+> Esta entrega remove do papel `authenticated` — usado por employees e masters — os privilégios
+> diretos de `INSERT`, `UPDATE`, `DELETE` e `TRUNCATE` sobre `omie_products`. Um employee deixa de
+> poder **escolher e persistir arbitrariamente** um `valor_unitario` pela API direta da tabela.
+>
+> A entrega **não** impede o employee de acionar os três fluxos autorizados de sincronização que
+> escrevem como `service_role`. Nessas rotas o preço não é fornecido pelo employee: é derivado da
+> resposta do Omie pelo código do sync — **incluindo o fallback local para zero**.
+
+Para a vendedora, em uma frase: *"você continua consultando produtos e usando Sincronizar/Atualizar
+estoque; o que deixa de ser possível é criar, alterar, excluir ou esvaziar o catálogo direto pela API
+do banco."*
 
 **As duas consequências do enunciado seguem fechadas**, porque ambas dependem de *escolher* o número:
-o oráculo de custo precisa mover o limiar em busca binária (impossível se o valor vem do Omie), e
-"vender abaixo do custo" precisa fixar o preço.
+o oráculo de custo precisa mover o limiar em busca binária, e "vender abaixo do custo" precisa fixar
+o preço. Nenhuma das duas é alcançável pela rota do sync.
 
 **Decisão do founder (2026-07-22): exceção aceita e declarada, não fechada.** Fechar as actions de
 catálogo exigiria alterar 3 edges com deploy manual pelo chat do Lovable e quebraria o botão de
 sincronização que as duas vendedoras usam. O ganho seria marginal: o vetor não permite escolher preço.
 
-⚠️ **Observação adjacente, não corrigida aqui (outro escopo):** os três syncs gravam
-`valor_unitario: prod.valor_unitario || 0` (`omie-vendas-sync:350`, `omie-analytics-sync:945`,
-`tint-omie-sync:160`). Uma resposta incompleta do Omie **zera o preço** — a armadilha canônica
-"ausente ≠ zero" do money-path. Há **1.942 de 7.966 SKUs com `valor_unitario = 0`** em produção.
-Não afirmo causalidade: ninguém mediu a origem desses zeros, e a maioria pode ser legítima
-(item sem preço de tabela). Registro o mecanismo, não um diagnóstico.
+⚠️ **Observação adjacente, não corrigida aqui (outro escopo).** **Cinco** writers de catálogo
+normalizam `valor_unitario` ausente ou falsy para `0` antes do upsert — a armadilha canônica
+"ausente ≠ zero" do money-path:
+
+| Writer | Linha | Acionável por |
+|---|---|---|
+| `omie-vendas-sync` | :350 | **employee** (`authorizeCronOrStaff`) |
+| `omie-analytics-sync` | :945 | **employee** |
+| `tint-omie-sync` | :160 | **employee** |
+| `omie-sync-metadados` | :104 | cron-only (`authorizeCron`) |
+| `sync-reprocess/products-lote.ts` | :189 | cron-only |
+
+Meu inventário inicial listava **três**; os dois cron-only vieram da rodada 2 do Codex e foram
+verificados por mim (`authorizeCron`, não `authorizeCronOrStaff`).
+
+Uma resposta do Omie sem preço tem, portanto, **capacidade** de fazer o código persistir zero. Em
+produção há **1.942 de 7.966 SKUs com `valor_unitario = 0`**. Esta entrega **não mediu** quantos
+desses zeros são legítimos (item sem preço de tabela é normal) nem se algum foi produzido por esse
+fallback. Registra-se o **mecanismo e a prevalência, sem atribuir causalidade**.
 
 ### 2.1 Efeito colateral verificado: as 13 views que dependem da tabela
 
