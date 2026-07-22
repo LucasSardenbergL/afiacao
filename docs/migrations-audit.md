@@ -21,16 +21,16 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **423** custom migrations totais
-- **1487** objetos esperados (criados por estas migrations)
+- **427** custom migrations totais
+- **1493** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 426
+  - `function`: 431
   - `rls_policy`: 380
   - `index`: 224
   - `cron_job`: 157
   - `table`: 147
   - `trigger`: 79
-  - `view`: 70
+  - `view`: 71
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -3534,9 +3534,22 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.registrar_aplicacao_regua` | — |
 | `rls_policy` | `public.regua_preco_log_select_custo` | `regua_preco_log` |
 
+### `20260723150000_farmer_margem_server_side.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.get_customer_margin_summary` | — |
+| `function` | `public.apply_score_updates` | — |
+
 ### `20260723160000_authz_fu4e_is_not_true_escritas.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260723160000_farmer_margem_correcoes_review.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.apply_score_updates` | — |
 
 ### `20260724120000_authz_sales_orders_split_escrita_fu4.sql`
 
@@ -3589,6 +3602,19 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.vendas_sync_semear_janela` | — |
+
+### `20260726150000_margem_cliente_helper_compartilhado.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.margem_cliente_agregada` | — |
+
+### `20260726160000_tint_canonica_piso_legado.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tint_gate_revalida` | — |
+| `view` | `public.v_tint_formula_canonica` | — |
 
 ## Próximos passos por status
 
