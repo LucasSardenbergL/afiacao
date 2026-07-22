@@ -3,8 +3,6 @@
 #                              sabotagem: a expansao TEM de ser adiada, entao aspas simples e o
 #                              desenho, nao um descuido.
 # shellcheck disable=SC2329  # `cleanup` e invocada indiretamente, pelo `trap` (o shellcheck nao ve).
-# shellcheck disable=SC2034  # BASE_PASS e o contrato de saida desta task para a Task 4: a zona de
-#                              falsificacao que vai le-la ainda nao foi anexada a este arquivo.
 # ╔══════════════════════════════════════════════════════════════════════════════════════╗
 # ║  Fecha a ESCRITA em omie_products — prova PG17 de 20260727120000                      ║
 # ║   bash db/test-authz-preco-omie-products.sh > log 2>&1; echo "exit=$?"                ║
@@ -256,3 +254,74 @@ echo
 echo "=== BASELINE: ${PASS} OK / ${FAIL} FAIL ==="
 [ "$FAIL" -eq 0 ] || { echo "BASELINE VERMELHO -- nao faz sentido falsificar"; exit 1; }
 BASE_PASS=$PASS
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ZONA 5 — FALSIFICACAO
+# ══════════════════════════════════════════════════════════════════════════════
+echo
+echo "=== ZONA 5: falsificacao ==="
+FALS=0
+falsifica() { # $1=nome  $2=sql da sabotagem  $3=assert  $4=esperado_sabotado
+  local got
+  P -q -c "$2" >/dev/null 2>&1 || { echo "  FAIL [$1] a sabotagem nem aplicou"; FAIL=$((FAIL+1)); return; }
+  got="$(eval "$3")"
+  if [ "$got" = "$4" ]; then echo "  OK   [$1] o assert FICOU VERMELHO (veio [$got])"; FALS=$((FALS+1))
+  else echo "  FAIL [$1] o assert NAO reagiu -- veio [$got], esperava a sabotagem produzir [$4]"; FAIL=$((FAIL+1)); fi
+}
+
+# S1: o REVOKE de TRUNCATE desfeito -> A3 tem de cair. Prova que o assert mede GRANT, nao
+#     policy: trocar policy NUNCA revogaria TRUNCATE, que ignora RLS.
+falsifica "S1 GRANT TRUNCATE de volta: A3 tem de cair" \
+  "GRANT TRUNCATE ON public.omie_products TO authenticated;" \
+  'Pq -c "SELECT has_table_privilege('"'"'authenticated'"'"','"'"'public.omie_products'"'"','"'"'TRUNCATE'"'"');"' "t"
+P -q -c "REVOKE TRUNCATE ON public.omie_products FROM authenticated;" >/dev/null
+
+# S2: A MAIS IMPORTANTE. A policy antiga de volta + o grant de UPDATE de volta -> A9 (farmer
+#     nao escreve) tem de cair. Permissivas combinam com OR: se o DROP falhasse, o gate NAO
+#     fecharia. Esta e a unica sabotagem que prova que o fecho e COMPORTAMENTAL, nao cosmetico
+#     no pg_policies.
+falsifica "S2 policy antiga + grant de volta: A9 tem de cair" \
+  "GRANT UPDATE ON public.omie_products TO authenticated;
+   CREATE POLICY \"Staff can manage products\" ON public.omie_products FOR ALL TO authenticated
+     USING ((SELECT (has_role((SELECT auth.uid()),'master'::app_role) OR has_role((SELECT auth.uid()),'employee'::app_role))))
+     WITH CHECK ((SELECT (has_role((SELECT auth.uid()),'master'::app_role) OR has_role((SELECT auth.uid()),'employee'::app_role))));" \
+  'escreve "$F" 444' "OK"
+P -q -c "DROP POLICY \"Staff can manage products\" ON public.omie_products; REVOKE UPDATE ON public.omie_products FROM authenticated;" >/dev/null
+
+# S3: o GRANT SELECT de volta OMITIDO -> A6 (anti-tautologia) E A11 (farmer ainda le) tem de cair.
+#     Sem o grant, a negacao viria do privilegio e a policy nunca seria exercida.
+falsifica "S3 sem GRANT SELECT: A11 (farmer le) tem de cair" \
+  "REVOKE SELECT ON public.omie_products FROM authenticated;" \
+  'le "$F"' "DENIED"
+P -q -c "GRANT SELECT ON public.omie_products TO authenticated;" >/dev/null
+eq "S3b leitura restaurada apos a sabotagem" "$(le "$F")" "3"
+
+# S4: CONTROLE POSITIVO sabotado. Se service_role perder o grant, A14 tem de gritar -- senao
+#     "ninguem escreve nada" passaria como sucesso e o harness estaria medindo ambiente morto.
+falsifica "S4 service_role sem UPDATE: A14 tem de cair" \
+  "REVOKE UPDATE ON public.omie_products FROM service_role;" \
+  'escreve_service 555' "DENIED"
+P -q -c "GRANT UPDATE ON public.omie_products TO service_role;" >/dev/null
+
+# S5: a PRECONDICAO. Uma policy desconhecida (simulando sessao paralela) tem de ABORTAR a
+#     migration -- senao o DROP+CREATE a deixaria viva e o gate nao fecharia.
+echo "  --- S5: policy inesperada tem de ABORTAR a migration ---"
+P -q -c "CREATE POLICY \"policy de outra sessao\" ON public.omie_products FOR ALL TO authenticated USING (true);" >/dev/null
+if P -q -f "$MIG" >/dev/null 2>&1; then
+  echo "  FAIL [S5] a migration APLICOU com policy desconhecida presente -- a precondicao nao dispara"
+  FAIL=$((FAIL+1))
+else
+  echo "  OK   [S5] a migration ABORTOU (a precondicao tem dente)"
+  FALS=$((FALS+1))
+fi
+P -q -c "DROP POLICY \"policy de outra sessao\" ON public.omie_products;" >/dev/null
+P -q -f "$MIG" >/dev/null
+
+echo
+echo "════════════════════════════════════════════════════════════"
+echo "  asserts verdes : ${BASE_PASS}"
+echo "  falsificacoes  : ${FALS}/5"
+echo "  FAIL           : ${FAIL}"
+echo "════════════════════════════════════════════════════════════"
+[ "$FAIL" -eq 0 ] && [ "$FALS" -eq 5 ] || exit 1
+echo "TUDO VERDE"
