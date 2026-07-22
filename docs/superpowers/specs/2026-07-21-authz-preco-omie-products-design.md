@@ -72,7 +72,8 @@ Medido, não suposto. **Não existe motivo vivo.**
 
 | Pergunta | Resposta medida | Como |
 |---|---|---|
-| Há UI de edição de produto/preço? | **Não.** Todos os hits de `valor_unitario` em `src/` são leitura. O único `onUpdate(...,'valor_unitario',...)` é `OrderItemCard.tsx:69`, que edita o **item do pedido** (`sales_order_items`), tabela diferente. | grep `src/**` |
+| Há UI de edição **direta** de preço? | **Não.** Todos os hits de `valor_unitario` em `src/` são leitura. O único `onUpdate(...,'valor_unitario',...)` é `OrderItemCard.tsx:69`, que edita o **item do pedido** (`sales_order_items`), tabela diferente. | grep `src/**` |
+| Há UI que **cause** reescrita de preço? | **Sim** — achado da rodada 1 do Codex, verificado. Ver §2.2. | `_shared/auth.ts:75`, `SalesProducts.tsx:76` |
 | Quem escreve em `omie_products`? | **6 edges, todas com `SUPABASE_SERVICE_ROLE_KEY`**: `omie-vendas-sync`, `omie-analytics-sync`, `sync-reprocess`, `tint-omie-sync`, `omie-sync-metadados`, `omie-sync-status-produtos`. | grep `supabase/functions/**` |
 | O client ANON do `omie-vendas-sync` escreve? | **Não.** Serve só a `auth.getUser()` para resolver `userId`. O `syncProducts` recebe `supabaseAdmin` (index.ts:2283). | leitura do caller |
 | Há função SQL que escreve? | **Uma**: `tint_marcar_bases_mixmachine`, `SECURITY DEFINER` (bypassa RLS de qualquer forma), e toca só `is_tintometric`/`tint_type`/`updated_at`. Não toca `valor_unitario`. | `pg_proc.prosrc ~* 'update.*omie_products'` |
@@ -80,6 +81,37 @@ Medido, não suposto. **Não existe motivo vivo.**
 
 ⇒ **Zero writers legítimos rodando como `authenticated`.** Fechar a escrita não quebra nada —
 mesmo desfecho que `product_costs` no #1520, e pela mesma evidência (writers são service_role).
+
+### 2.2 A fronteira exata: escrita ARBITRÁRIA fecha, refresh AUTORITATIVO não
+
+Achado da rodada 1 do Codex (`gpt-5.6-sol`, xhigh), **verificado por mim**. A frase "não há UI que
+mexa em preço" estava incompleta de um jeito que importa.
+
+`authorizeCronOrStaff` — o gate compartilhado das edges — aceita `employee`
+(`_shared/auth.ts:75`: `const allowed = new Set(["employee","master"])`). E `SalesProducts.tsx:76`
+tem um botão que chama `omie-vendas-sync` com `action: 'sync_products'`, cujo caminho faz `upsert`
+em `valor_unitario` com `service_role`. O mesmo vale para `omie-analytics-sync` e `tint-omie-sync`.
+
+⇒ Um `employee` **não** consegue escolher um preço; **consegue** disparar uma reescrita autoritativa
+do catálogo a partir do Omie. A formulação honesta, que vai no corpo do PR:
+
+> Esta entrega fecha a escrita **arbitrária** de preço por `employee` — DML direto e `TRUNCATE`.
+> **Não** fecha o refresh **autoritativo** disparado por `employee`, onde o valor vem do ERP.
+
+**As duas consequências do enunciado seguem fechadas**, porque ambas dependem de *escolher* o número:
+o oráculo de custo precisa mover o limiar em busca binária (impossível se o valor vem do Omie), e
+"vender abaixo do custo" precisa fixar o preço.
+
+**Decisão do founder (2026-07-22): exceção aceita e declarada, não fechada.** Fechar as actions de
+catálogo exigiria alterar 3 edges com deploy manual pelo chat do Lovable e quebraria o botão de
+sincronização que as duas vendedoras usam. O ganho seria marginal: o vetor não permite escolher preço.
+
+⚠️ **Observação adjacente, não corrigida aqui (outro escopo):** os três syncs gravam
+`valor_unitario: prod.valor_unitario || 0` (`omie-vendas-sync:350`, `omie-analytics-sync:945`,
+`tint-omie-sync:160`). Uma resposta incompleta do Omie **zera o preço** — a armadilha canônica
+"ausente ≠ zero" do money-path. Há **1.942 de 7.966 SKUs com `valor_unitario = 0`** em produção.
+Não afirmo causalidade: ninguém mediu a origem desses zeros, e a maioria pode ser legítima
+(item sem preço de tabela). Registro o mecanismo, não um diagnóstico.
 
 ### 2.1 Efeito colateral verificado: as 13 views que dependem da tabela
 
@@ -151,7 +183,7 @@ isso exigiu migrar 3 consumidores antes.
 
 ## 4. A migration
 
-`supabase/migrations/20260727120000_authz_preco_fecha_omie_products.sql`
+`supabase/migrations/20260727140000_authz_preco_fecha_omie_products.sql`
 (o maior timestamp em qualquer branch remota é `20260726160000`; ordena depois).
 
 Estrutura, espelhando `20260725130000_authz_custo_fu4f_fase3_fecha_product_costs.sql`:

@@ -25,7 +25,7 @@
 ### Task 1: A migration
 
 **Files:**
-- Create: `supabase/migrations/20260727120000_authz_preco_fecha_omie_products.sql`
+- Create: `supabase/migrations/20260727140000_authz_preco_fecha_omie_products.sql`
 
 **Interfaces:**
 - Consumes: nada (primeira tarefa).
@@ -33,7 +33,7 @@
 
 - [ ] **Step 1: Escrever a migration**
 
-Criar `supabase/migrations/20260727120000_authz_preco_fecha_omie_products.sql`:
+Criar `supabase/migrations/20260727140000_authz_preco_fecha_omie_products.sql`:
 
 ```sql
 -- Fecha a ESCRITA em public.omie_products — o preço de tabela sai do alcance do `employee`.
@@ -191,14 +191,14 @@ COMMIT;
 
 Run:
 ```bash
-cd /Users/lucassardenberg/Projetos/afiacao/.claude/worktrees/kind-hawking-5ccae9 && /opt/homebrew/opt/postgresql@17/bin/psql --version && test -f supabase/migrations/20260727120000_authz_preco_fecha_omie_products.sql && echo "ARQUIVO OK"
+cd /Users/lucassardenberg/Projetos/afiacao/.claude/worktrees/kind-hawking-5ccae9 && /opt/homebrew/opt/postgresql@17/bin/psql --version && test -f supabase/migrations/20260727140000_authz_preco_fecha_omie_products.sql && echo "ARQUIVO OK"
 ```
 Expected: versão do psql 17.x seguida de `ARQUIVO OK`.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add supabase/migrations/20260727120000_authz_preco_fecha_omie_products.sql
+git add supabase/migrations/20260727140000_authz_preco_fecha_omie_products.sql
 git commit -m "feat(authz): migration fecha escrita em omie_products — preço de tabela master-only [money-path]"
 ```
 
@@ -210,7 +210,7 @@ git commit -m "feat(authz): migration fecha escrita em omie_products — preço 
 - Create: `db/test-authz-preco-omie-products.sh`
 
 **Interfaces:**
-- Consumes: `supabase/migrations/20260727120000_authz_preco_fecha_omie_products.sql` (Task 1), `db/stubs-supabase.sql`.
+- Consumes: `supabase/migrations/20260727140000_authz_preco_fecha_omie_products.sql` (Task 1), `db/stubs-supabase.sql`.
 - Produces: as funções bash `guard_role`, `le`, `escreve`, `escreve_service`, `eq`, `ok`, `bad`, e as variáveis `$M` (master), `$F` (farmer), `$CU` (customer) que as Tasks 3 e 4 usam.
 
 Este é o passo onde o teste pode mentir de forma mais cara: um stub **menos permissivo que a prod inventa segurança que não existe**. Os `GRANT` abaixo reproduzem o `relacl` real (`arwdDxtm` para anon E authenticated).
@@ -252,7 +252,7 @@ PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"
 PORT="${PGPORT_TEST:-5471}"
 SLUG="precoomie"
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
-MIG="$REPO_ROOT/supabase/migrations/20260727120000_authz_preco_fecha_omie_products.sql"
+MIG="$REPO_ROOT/supabase/migrations/20260727140000_authz_preco_fecha_omie_products.sql"
 export LC_ALL=C LANG=C
 
 [ -x "$PGBIN/initdb" ] || { echo "postgresql@${PGVER} ausente: brew install postgresql@${PGVER}"; exit 1; }
@@ -662,7 +662,7 @@ git commit -m "test(authz): falsificação 5/5 — cada sabotagem exige o vermel
 Criar `db/valida-authz-preco-omie-products.sql`:
 
 ```sql
--- Validacao pos-apply de 20260727120000_authz_preco_fecha_omie_products.sql
+-- Validacao pos-apply de 20260727140000_authz_preco_fecha_omie_products.sql
 -- Cola no SQL Editor do Lovable, ou roda via ~/.config/afiacao/psql-ro -f db/valida-authz-preco-omie-products.sql
 -- LE CATALOGO, nunca invoca funcao (#1462) -> mesmo resultado de qualquer role.
 -- Todos os checks tem de vir `t`. Qualquer `f` = a migration nao aplicou como desenhada.

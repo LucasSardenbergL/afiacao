@@ -30,7 +30,7 @@ PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"
 PORT="${PGPORT_TEST:-5471}"
 SLUG="precoomie"
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
-MIG="$REPO_ROOT/supabase/migrations/20260727120000_authz_preco_fecha_omie_products.sql"
+MIG="$REPO_ROOT/supabase/migrations/20260727140000_authz_preco_fecha_omie_products.sql"
 export LC_ALL=C LANG=C
 
 [ -x "$PGBIN/initdb" ] || { echo "postgresql@${PGVER} ausente: brew install postgresql@${PGVER}"; exit 1; }

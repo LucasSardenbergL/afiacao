@@ -1,4 +1,4 @@
--- Validacao pos-apply de 20260727120000_authz_preco_fecha_omie_products.sql
+-- Validacao pos-apply de 20260727140000_authz_preco_fecha_omie_products.sql
 -- Cola no SQL Editor do Lovable, ou roda via ~/.config/afiacao/psql-ro -f db/valida-authz-preco-omie-products.sql
 -- LE CATALOGO, nunca invoca funcao (#1462) -> mesmo resultado de qualquer role.
 -- Todos os checks tem de vir `t`. Qualquer `f` = a migration nao aplicou como desenhada.
