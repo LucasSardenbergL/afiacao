@@ -467,6 +467,7 @@ export const useTacticalPlan = () => {
             data: Pick<ClientScoreFull, 'gross_margin_pct'>[] | null;
             error: unknown;
           }>,
+          'farmer_client_scores/cluster-margem',
         );
         clusterMargin = mediaMargensConhecidas(peers.map((r) => r.gross_margin_pct));
       }

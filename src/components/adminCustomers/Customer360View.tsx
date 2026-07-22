@@ -129,11 +129,14 @@ export function Customer360View({
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <MetricCard icon={DollarSign} label="Gasto mensal" value={fmt(score.avg_monthly_spend_180d)} />
           <MetricCard icon={Activity} label="Score saúde" value={score.health_score.toFixed(0)} />
+          {/* churn_risk é PERCENTUAL 0–100, não fração: prod (2026-07-21) tem 6.632/6.632 linhas
+              acima de 1 (mín. 33, máx. 100, média 96). O `* 100` que estava aqui exibia "9600%",
+              e o limiar `> 0.5` deixava o realce de perigo permanentemente ligado. */}
           <MetricCard
             icon={AlertTriangle}
             label="Risco churn"
-            value={`${(score.churn_risk * 100).toFixed(0)}%`}
-            danger={score.churn_risk > 0.5}
+            value={`${score.churn_risk.toFixed(0)}%`}
+            danger={score.churn_risk > 50}
           />
           <MetricCard icon={Package} label="Categorias" value={String(score.category_count)} />
         </div>

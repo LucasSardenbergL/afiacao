@@ -9,16 +9,26 @@ export function formatBRL(v: number | null | undefined): string {
 }
 
 /**
- * Percentual a partir de valor cuja unidade é AMBÍGUA (fração 0–1 ou percentual 0–100), decidida
- * pela heurística `v > 1`. Usado onde a origem é fração — ex.: `MinhasVisitasResultadoCard`.
+ * Percentual a partir de FRAÇÃO (0–1 nominal, SEM teto — 2 é "200%"). Multiplica por 100 sempre.
  *
- * ⚠️ NÃO use para margem: veja `formatMargemPct` em `@/lib/format`. A heurística erra em dois casos que a margem
- * produz de verdade — margem menor que 1% (0,5 vira "50%") e margem NEGATIVA (−143,22, o mínimo
- * medido em prod, não passa no `> 1` e vira "−14322%").
+ * O contrato está no nome porque a unidade não está no tipo: `number` serve tanto a 0,56 quanto a
+ * 56, e só o call-site sabe qual. Substituiu `formatPctMaybe`, que adivinhava pela heurística
+ * `v > 1 ? v : v * 100` — inferência, não contrato, que errava sempre que o valor legítimo caía do
+ * outro lado da fronteira.
+ *
+ * O caso que a heurística quebrava: `variacaoPct` (`@/lib/dashboard/team-kpis`) é
+ * (atual−anterior)/anterior e não tem teto, então toda variação acima de +100% caía no ramo "já é
+ * percentual" e saía com DUAS ordens de grandeza a menos. Medido em prod (2026-07-21) sobre
+ * `sales_orders`, reproduzindo a janela MTD do consumidor: 39 de 971 combinações
+ * mês × dia-do-mês × empresa dos últimos 12 meses excedem 1 — concentradas nos primeiros dias do
+ * mês, quando a base ainda é pequena. Pior caso real: colacor em 01/07/2026 cresceu 11.553% e o
+ * tile exibia "115.5%".
+ *
+ * ⚠️ Para valor JÁ percentual (0–100), use `formatMargemPct` em `@/lib/format`.
  */
-export function formatPctMaybe(v: number | null | undefined): string {
+export function formatarFracaoPct(v: number | null | undefined): string {
   if (v === null || v === undefined || Number.isNaN(v)) return '—';
-  const pct = v > 1 ? v : v * 100;
+  const pct = v * 100;
   // Zero sem decimal ("0%" em vez de "0.0%"); outros valores com 1 decimal só se houver fração.
   if (pct === 0) return '0%';
   const rounded = Math.round(pct);
@@ -124,12 +134,28 @@ export function healthTone(healthClass: string | null, salesHistoryStatus?: stri
   }
 }
 
+/**
+ * Tom + rótulo do risco de churn. `risk` é PERCENTUAL 0–100 — não fração.
+ *
+ * É o que a coluna produz: `farmer_client_scores.churn_risk` medido em prod (2026-07-21) tem
+ * 6.632/6.632 linhas acima de 1 (mín. 33, máx. 100, média 96,03), zero nulos e zero zeros.
+ *
+ * Não adivinha unidade. A heurística anterior (`risk > 1 ? risk : risk * 100`) acertava só porque
+ * o mínimo em prod é 33: um risco de 1% cairia no ramo da fração e viraria "100% risco churn" em
+ * VERMELHO — o menor risco possível exibido como o maior, com o tom de alarme junto. Como nenhuma
+ * linha está hoje na faixa 0–1, isto é DEFESA (o produtor pode passar a emitir a faixa baixa sem
+ * avisar o consumidor), não correção de sintoma observado.
+ *
+ * `NaN` → "—", junto com null/undefined: antes vazava "NaN% risco churn" para a tela.
+ */
 export function churnTone(risk: number | null): { label: string; className: string } {
-  if (risk === null || risk === undefined) return { label: '—', className: 'text-muted-foreground' };
-  const pct = risk > 1 ? risk : risk * 100;
-  if (pct >= 70) return { label: `${pct.toFixed(0)}% risco churn`, className: 'text-status-error-bold' };
-  if (pct >= 40) return { label: `${pct.toFixed(0)}% risco churn`, className: 'text-status-warning-bold' };
-  return { label: `${pct.toFixed(0)}% risco churn`, className: 'text-status-success-bold' };
+  if (risk === null || risk === undefined || Number.isNaN(risk)) {
+    return { label: '—', className: 'text-muted-foreground' };
+  }
+  const label = `${risk.toFixed(0)}% risco churn`;
+  if (risk >= 70) return { label, className: 'text-status-error-bold' };
+  if (risk >= 40) return { label, className: 'text-status-warning-bold' };
+  return { label, className: 'text-status-success-bold' };
 }
 
 export function formatDocument(doc: string): string {

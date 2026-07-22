@@ -12,7 +12,7 @@ import { useKpisVisita } from '@/hooks/useKpisVisita';
 import { useVisitasAgendadas } from '@/hooks/useVisitasAgendadas';
 import { diasDesde } from '@/lib/visitas/recencia';
 import { hojeISO } from '@/lib/visitas/today';
-import { formatBRL, formatPctMaybe } from '@/components/customer360/format';
+import { formatBRL, formatarFracaoPct } from '@/components/customer360/format';
 
 function Tile({ icon: Icon, label, value, sub }: { icon: LucideIcon; label: string; value: string; sub?: string }) {
   return (
@@ -44,7 +44,7 @@ export function VisitasKpiTiles() {
   const lista = proximas.data ?? [];
   const prox = rotuloProxima(lista[0]?.scheduled_date, hojeISO());
 
-  const conversao = carregando || !kpis ? dash : formatPctMaybe(kpis.taxaConversao);
+  const conversao = carregando || !kpis ? dash : formatarFracaoPct(kpis.taxaConversao);
   const conversaoSub = kpis && kpis.semResultado > 0
     ? `fechados ÷ c/ resultado · ${kpis.semResultado} sem resultado`
     : 'fechados ÷ c/ resultado';

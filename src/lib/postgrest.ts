@@ -1,3 +1,5 @@
+import { captureException } from '@/lib/analytics';
+
 /**
  * Helpers pra montar predicados do `.or()` do PostgREST (supabase-js) SEM abrir
  * brecha de injeção.
@@ -131,16 +133,23 @@ export const POSTGREST_PAGE_SIZE = 1000;
  * é OBRIGATÓRIO no contrato: sem ele o caller não tem como detectar (era o furo original).
  * Fim legítimo da tabela é `data: []` sem erro — só isso encerra o loop.
  *
+ * `fonte` rotula a origem na telemetria (ex.: `'product_costs/bundle'`). Opcional para não
+ * quebrar caller existente, mas SEMPRE preencha: sem ela a agregação depende do stack trace,
+ * que muda com o bundler. Ela é o que separa "product_costs falha às terças" de "algo falhou".
+ *
  * ```ts
- * const custos = await fetchAllPages<CostRow>((de, ate) =>
- *   supabase.from('product_costs').select('product_id, cost_final')
- *     .order('product_id', { ascending: true }).range(de, ate) as unknown as
- *       PromiseLike<{ data: CostRow[] | null; error: unknown }>,
+ * const custos = await fetchAllPages<CostRow>(
+ *   (de, ate) =>
+ *     supabase.from('product_costs').select('product_id, cost_final')
+ *       .order('product_id', { ascending: true }).range(de, ate) as unknown as
+ *         PromiseLike<{ data: CostRow[] | null; error: unknown }>,
+ *   'product_costs/exemplo',
  * );
  * ```
  */
 export async function fetchAllPages<T>(
   buscarPagina: (de: number, ate: number) => PromiseLike<{ data: T[] | null; error: unknown }>,
+  fonte = 'nao-informada',
 ): Promise<T[]> {
   const todas: T[] = [];
   for (let pagina = 0; ; pagina++) {
@@ -150,8 +159,12 @@ export async function fetchAllPages<T>(
     // Falhar alto é a única leitura honesta: o caller escolhe o fallback, mas não pode ser
     // enganado por um total plausível. `data: null` sem `error` é resposta malformada — o
     // único sinal legítimo de fim é `data: []`.
-    if (error != null) throw comCausa(`fetchAllPages: página ${pagina} (${de}-${ate}) falhou`, error);
+    if (error != null) {
+      relatarPaginaPerdida(fonte, pagina, todas.length, error);
+      throw comCausa(`fetchAllPages: página ${pagina} (${de}-${ate}) falhou`, error);
+    }
     if (data == null) {
+      relatarPaginaPerdida(fonte, pagina, todas.length, null);
       throw comCausa(`fetchAllPages: página ${pagina} (${de}-${ate}) devolveu data null sem error`, error);
     }
     todas.push(...data);
@@ -168,4 +181,33 @@ function comCausa(mensagem: string, causa: unknown): Error {
   const erro = new Error(mensagem) as Error & { cause?: unknown };
   erro.cause = causa;
   return erro;
+}
+
+/**
+ * Reporta a página perdida ANTES de lançar. Lançar conserta a mentira do número; sem
+ * instrumentar, a falha continua invisível para MEDIÇÃO — e não dá para saber se acontece uma
+ * vez por mês ou toda tarde, nem se um caller sofre mais que os outros. Antes do contrato de
+ * rejeição isso era impossível por construção: a falha virava lista vazia e ninguém sabia.
+ *
+ * Só METADADO. As linhas lidas nunca entram no contexto: `linhas_perdidas` é uma CONTAGEM, e
+ * o `code`/`message` do PostgREST são de transporte (`57014`, `42501`, "permission denied for
+ * table X") — sem payload, sem PII. O caller que quiser tratar o erro ainda recebe a exceção.
+ *
+ * ⚠️ AO LER A MÉTRICA: um evento por TENTATIVA, não por incidente. Os callers em react-query
+ * herdam `retry: 2` (App.tsx), então uma única falha do ponto de vista do usuário emite até
+ * 3 eventos. Para "quantas vezes alguém viu a tela quebrar", divida — ou agregue por sessão.
+ * Contar tentativas é o que se pode afirmar aqui dentro: o helper não sabe se está numa
+ * retentativa (nem deveria — inferir isso seria estado escondido no lugar errado).
+ */
+function relatarPaginaPerdida(fonte: string, pagina: number, acumuladas: number, causa: unknown): void {
+  const pg = causa as { message?: unknown; code?: unknown } | null;
+  const message = typeof pg?.message === 'string' ? pg.message : null;
+  const code = typeof pg?.code === 'string' ? pg.code : null;
+  captureException(new Error(`fetchAllPages(${fonte}): página ${pagina} perdida`), {
+    fonte,
+    pagina,
+    linhas_perdidas: acumuladas,
+    codigo: code,
+    mensagem: message ?? (causa == null ? 'data=null sem error' : null),
+  });
 }

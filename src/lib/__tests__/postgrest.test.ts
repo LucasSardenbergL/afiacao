@@ -1,4 +1,10 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+const captureExceptionMock = vi.fn();
+vi.mock('@/lib/analytics', () => ({
+  captureException: (...a: unknown[]) => captureExceptionMock(...a),
+}));
+
 import {
   sanitizeForPostgrestOr,
   sanitizeIlikeTerm,
@@ -309,6 +315,71 @@ describe('orFilter', () => {
 
   it('zero cláusulas → string vazia', () => {
     expect(orFilter()).toBe('');
+  });
+});
+
+/**
+ * Instrumentação — a página perdida para de sumir das MÉTRICAS.
+ *
+ * Rejeitar conserta a mentira do número: o caller não recebe mais um total plausível e falso.
+ * Mas a falha continuava invisível para MEDIÇÃO — sem telemetria não dá para saber se acontece
+ * uma vez por mês ou toda tarde, nem se um caller sofre mais que os outros. Antes do contrato
+ * de rejeição isso era impossível por construção (a falha virava lista vazia); depois dele, a
+ * exceção sobe e o caller pode tratá-la sem que ninguém saiba que aconteceu.
+ */
+describe('fetchAllPages — instrumentação da página perdida', () => {
+  const ERRO_RLS = { code: '42501', message: 'permission denied for table product_costs' };
+
+  const falhaNaTerceira = (de: number) =>
+    de >= 2 * POSTGREST_PAGE_SIZE
+      ? Promise.resolve({ data: null, error: ERRO_RLS })
+      : Promise.resolve({
+          data: Array.from({ length: POSTGREST_PAGE_SIZE }, (_, i) => ({ id: de + i })),
+          error: null,
+        });
+
+  beforeEach(() => captureExceptionMock.mockClear());
+
+  it('reporta fonte, índice da página, linhas perdidas e o código do PostgREST', async () => {
+    await expect(
+      fetchAllPages<{ id: number }>(falhaNaTerceira, 'product_costs/bundle'),
+    ).rejects.toThrow();
+
+    expect(captureExceptionMock).toHaveBeenCalledTimes(1);
+    const [, ctx] = captureExceptionMock.mock.calls[0] as [unknown, Record<string, unknown>];
+    expect(ctx.fonte).toBe('product_costs/bundle');
+    expect(ctx.pagina).toBe(2); // 0-based, igual à mensagem do throw
+    expect(ctx.linhas_perdidas).toBe(2 * POSTGREST_PAGE_SIZE);
+    expect(ctx.codigo).toBe('42501');
+    expect(ctx.mensagem).toBe('permission denied for table product_costs');
+  });
+
+  it('NÃO envia as linhas lidas — metadado só, sem payload nem PII', async () => {
+    await expect(fetchAllPages<{ id: number }>(falhaNaTerceira, 'product_costs/bundle')).rejects.toThrow();
+
+    const [, ctx] = captureExceptionMock.mock.calls[0] as [unknown, Record<string, unknown>];
+    // `linhas_perdidas` é uma CONTAGEM; as linhas em si nunca entram no contexto.
+    expect(JSON.stringify(ctx)).not.toMatch(/"id"/);
+    for (const v of Object.values(ctx)) expect(Array.isArray(v)).toBe(false);
+  });
+
+  it('data:null sem error também reporta (rotulado, não confundido com timeout)', async () => {
+    await expect(
+      fetchAllPages<{ id: number }>(() => Promise.resolve({ data: null, error: null }), 'x/y'),
+    ).rejects.toThrow();
+
+    const [, ctx] = captureExceptionMock.mock.calls[0] as [unknown, Record<string, unknown>];
+    expect(ctx.codigo).toBeNull();
+    expect(ctx.mensagem).toBe('data=null sem error');
+  });
+
+  it('leitura completa não instrumenta nada (sem ruído na telemetria)', async () => {
+    const linhas = Array.from({ length: 2500 }, (_, i) => ({ id: i }));
+    await fetchAllPages<{ id: number }>(
+      (de, ate) => Promise.resolve({ data: linhas.slice(de, ate + 1), error: null }),
+      'x/y',
+    );
+    expect(captureExceptionMock).not.toHaveBeenCalled();
   });
 });
 

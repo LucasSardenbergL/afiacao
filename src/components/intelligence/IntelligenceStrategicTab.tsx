@@ -32,7 +32,7 @@ export function IntelligenceStrategicTab() {
     },
   });
 
-  const { data: allScores } = useQuery({
+  const { data: allScores, isError: scoresErro } = useQuery({
     queryKey: ['intel-strategic-scores'],
     // Base COMPLETA, paginada. Era `.limit(500)` de 6.632 e SEM `.order()` — o Postgres não
     // garante ordem sem ORDER BY, então as 500 eram um recorte não determinístico: dois
@@ -44,6 +44,7 @@ export function IntelligenceStrategicTab() {
           .select('customer_user_id, gross_margin_pct, avg_monthly_spend_180d, avg_repurchase_interval, revenue_potential')
           .order('customer_user_id', { ascending: true })
           .range(de, ate) as unknown as PromiseLike<{ data: ScoreLinha[] | null; error: unknown }>,
+        'farmer_client_scores/intel-estrategico',
       ),
   });
 
@@ -145,8 +146,30 @@ export function IntelligenceStrategicTab() {
     return <div className="grid grid-cols-2 gap-3">{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-24" />)}</div>;
   }
 
+  // ⚠️ O `isLoading` acima é da query de `margin_audit_log` — OUTRA query. Os KPIs derivados de
+  // `allScores` (LTV, CAC, Concentração, Market Share, Margem Bruta) não olhavam o próprio
+  // estado de erro, então a tela renderizava INTEIRA como se estivesse tudo certo, com esses
+  // números em zero produzidos por uma falha de transporte. O #1545 fazer `fetchAllPages`
+  // lançar não bastou: a exceção vira `allScores === undefined` e os `|| 0` fabricam de novo.
+  // Nunca zero: "—" e o motivo. `retry` é global (App.tsx: 2 + backoff); aqui só o estado final.
+  const scoresIndisponivel = scoresErro && !allScores;
+  const scoresDesatualizados = scoresErro && !!allScores;
+  const ou = (v: string) => (scoresIndisponivel ? '—' : v);
+
   return (
     <div className="space-y-4">
+      {scoresIndisponivel && (
+        <div role="alert" className="rounded-lg border border-status-error/30 bg-status-error/5 p-3 text-xs text-status-error">
+          Indicadores de carteira indisponíveis — a base de scores não pôde ser lida. LTV, CAC,
+          Concentração, Market Share e Margem Bruta ficam em “—”; nenhum deles foi estimado.
+        </div>
+      )}
+      {scoresDesatualizados && (
+        <div role="alert" className="rounded-lg border border-status-warning/30 bg-status-warning/5 p-3 text-xs text-status-warning">
+          Exibindo a última leitura bem-sucedida da base de scores — a atualização mais recente
+          falhou. Os indicadores de carteira podem estar desatualizados.
+        </div>
+      )}
       {/* Algoritmo A – Margin Gap */}
       <div className="rounded-lg border border-status-warning/30 bg-status-warning/5 p-3">
         <div className="flex items-center justify-between mb-3">
@@ -169,21 +192,21 @@ export function IntelligenceStrategicTab() {
 
       {/* Strategic KPIs */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <KpiCard title="LTV Projetado (3a)" value={`R$ ${ltvEstimate.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}`} icon={BarChart3} subtitle="Estimativa média" />
-        <KpiCard title="CAC Estimado" value={`R$ ${cacEstimate.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}`} icon={DollarSign} subtitle="Custo aquisição cliente" />
-        <KpiCard title="Concentração Top 20%" value={`${concentrationPct.toFixed(1)}%`} icon={PieChart} subtitle="da receita total" />
+        <KpiCard title="LTV Projetado (3a)" value={ou(`R$ ${ltvEstimate.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}`)} icon={BarChart3} subtitle="Estimativa média" />
+        <KpiCard title="CAC Estimado" value={ou(`R$ ${cacEstimate.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}`)} icon={DollarSign} subtitle="Custo aquisição cliente" />
+        <KpiCard title="Concentração Top 20%" value={ou(`${concentrationPct.toFixed(1)}%`)} icon={PieChart} subtitle="da receita total" />
         <KpiCard
           title="Margem Bruta Média"
-          value={avgGrossMargin == null ? '—' : `${avgGrossMargin.toFixed(1)}%`}
+          value={scoresIndisponivel || avgGrossMargin == null ? '—' : `${avgGrossMargin.toFixed(1)}%`}
           icon={Percent}
-          subtitle={legendaCobertura(coberturaGrossMargin)}
+          subtitle={scoresIndisponivel ? 'base indisponível' : legendaCobertura(coberturaGrossMargin)}
         />
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <KpiCard title="Elasticidade de Preço" value={`${priceElasticity.toFixed(1)}%`} icon={TrendingUp} subtitle="Δ qty c/ desconto" />
         <KpiCard title="Sensibilidade a Desconto" value={`${discountSensitivity.toFixed(1)}%`} icon={Percent} subtitle={`${ordersWithDiscount} de ${salesOrders?.length || 0} pedidos`} />
-        <KpiCard title="Market Share Est." value={`${marketSharePct.toFixed(1)}%`} icon={Target} subtitle={`${uniqueCustomers} de ~${estimatedMarket} clientes`} />
+        <KpiCard title="Market Share Est." value={ou(`${marketSharePct.toFixed(1)}%`)} icon={Target} subtitle={scoresIndisponivel ? 'base indisponível' : `${uniqueCustomers} de ~${estimatedMarket} clientes`} />
         <KpiCard title="Margem Global" value={`R$ ${totalMarginReal.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}`} icon={DollarSign} subtitle={`parcial — ${auditComCusto}/${auditTotal} c/ custo`} />
       </div>
 

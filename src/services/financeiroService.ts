@@ -360,25 +360,31 @@ export async function getFluxoCaixa(
   dataInicio: string,
   dataFim: string
 ): Promise<FluxoCaixaDiario[]> {
-  // Buscar CR e CP para projetar fluxo
-  let crQuery = supabase
-    .from("fin_contas_receber")
-    .select("data_vencimento, data_recebimento, valor_documento, valor_recebido, status_titulo")
-    .gte("data_vencimento", dataInicio)
-    .lte("data_vencimento", dataFim);
-
-  let cpQuery = supabase
-    .from("fin_contas_pagar")
-    .select("data_vencimento, data_pagamento, valor_documento, valor_pago, status_titulo")
-    .gte("data_vencimento", dataInicio)
-    .lte("data_vencimento", dataFim);
-
-  if (company !== 'all') {
-    crQuery = crQuery.eq("company", company);
-    cpQuery = cpQuery.eq("company", company);
-  }
-
-  const [{ data: crData }, { data: cpData }] = await Promise.all([crQuery, cpQuery]);
+  // Previsto: títulos a vencer na janela. Paginado + erro LANÇA. Sem `.range()` o
+  // PostgREST capa em 1000 silenciosamente — prod 2026-07-21: 4.094 títulos de CR
+  // na janela desta tela (oben sozinha 2.897), então ~76% das entradas previstas
+  // sumiam na visão "todas". E o `error` descartado fazia falha de consulta virar
+  // "nada a vencer": uma projeção menor não se anuncia como incompleta.
+  const [crData, cpData] = await Promise.all([
+    buscarTodasPaginas(`CR do fluxo de caixa (${company})`, (from, to) => {
+      let q = supabase
+        .from("fin_contas_receber")
+        .select("data_vencimento, data_recebimento, valor_documento, valor_recebido, status_titulo")
+        .gte("data_vencimento", dataInicio)
+        .lte("data_vencimento", dataFim);
+      if (company !== 'all') q = q.eq("company", company);
+      return q.order("id").range(from, to);
+    }),
+    buscarTodasPaginas(`CP do fluxo de caixa (${company})`, (from, to) => {
+      let q = supabase
+        .from("fin_contas_pagar")
+        .select("data_vencimento, data_pagamento, valor_documento, valor_pago, status_titulo")
+        .gte("data_vencimento", dataInicio)
+        .lte("data_vencimento", dataFim);
+      if (company !== 'all') q = q.eq("company", company);
+      return q.order("id").range(from, to);
+    }),
+  ]);
 
   // Agrupar por dia
   const fluxoMap = new Map<string, FluxoCaixaDiario>();
@@ -398,7 +404,7 @@ export async function getFluxoCaixa(
     return fluxoMap.get(d)!;
   };
 
-  for (const cr of crData || []) {
+  for (const cr of crData) {
     if (cr.data_vencimento) {
       const day = ensureDay(cr.data_vencimento);
       if (cr.status_titulo && ['A VENCER', 'ATRASADO', 'VENCE HOJE'].includes(cr.status_titulo)) {
@@ -407,7 +413,7 @@ export async function getFluxoCaixa(
     }
   }
 
-  for (const cp of cpData || []) {
+  for (const cp of cpData) {
     if (cp.data_vencimento) {
       const day = ensureDay(cp.data_vencimento);
       if (cp.status_titulo && ['A VENCER', 'ATRASADO', 'VENCE HOJE'].includes(cp.status_titulo)) {
@@ -418,24 +424,26 @@ export async function getFluxoCaixa(
 
   // Realizado: caixa que de fato entrou/saiu por dia (fin_movimentacoes).
   // A baixa-do-título (data_recebimento/data_pagamento) está sempre NULL — o
-  // Omie não manda no endpoint LIST. Paginação manual: PostgREST capa em 1000
-  // linhas e a janela pode passar disso.
-  const movimentos: Array<{ data_movimento: string; tipo: string | null; valor: number; omie_codigo_lancamento: number | null }> = [];
-  const PAGE = 1000;
-  for (let from = 0; ; from += PAGE) {
-    let movQuery = supabase
-      .from('fin_movimentacoes')
-      .select('data_movimento, tipo, valor, omie_codigo_lancamento')
-      .gte('data_movimento', dataInicio)
-      .lte('data_movimento', dataFim)
-      .order('data_movimento', { ascending: true })
-      .range(from, from + PAGE - 1);
-    if (company !== 'all') movQuery = movQuery.eq('company', company);
-    const { data: page } = await movQuery;
-    if (!page || page.length === 0) break;
-    movimentos.push(...page);
-    if (page.length < PAGE) break;
-  }
+  // Omie não manda no endpoint LIST.
+  // Paginado + erro LANÇA: a janela passa de 1000 (prod 2026-07-21: 14.104 linhas
+  // = 15 páginas na visão "todas") e uma página perdida encerrando o laço
+  // subnotificava o caixa — exibido como número firme, sem sinal de incompletude.
+  // Ordem TOTAL (data_movimento, id): `data_movimento` sozinho NÃO desempata —
+  // 100,0% das linhas da janela dividem o dia com outra (maior dia = 305, média
+  // ~90), então toda fronteira de página cai dentro de um empate e o offset pula
+  // e duplica linhas, sem erro nenhum. O `id` (PK) fecha a ordem.
+  const movimentos = await buscarTodasPaginas(
+    `movimentações do fluxo de caixa (${company})`,
+    (from, to) => {
+      let q = supabase
+        .from('fin_movimentacoes')
+        .select('data_movimento, tipo, valor, omie_codigo_lancamento')
+        .gte('data_movimento', dataInicio)
+        .lte('data_movimento', dataFim);
+      if (company !== 'all') q = q.eq('company', company);
+      return q.order('data_movimento', { ascending: true }).order('id').range(from, to);
+    },
+  );
 
   const realizadoPorDia = agregarRealizadoPorDia(movimentos);
   for (const [dia, r] of realizadoPorDia) {

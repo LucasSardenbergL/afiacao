@@ -76,10 +76,11 @@ export const RecommendationCard = React.memo(function RecommendationCard({
             O EIP saiu junto: é margem × probabilidade, e com a probabilidade exibida ao lado ele
             devolveria a margem por divisão.
 
-            ⚠️ Isto é a TELA, não o fechamento. A resposta da edge `recommend` ainda traz
-            `margin` e `_admin.cost_final`, então o número continua visível no DevTools —
-            `custo = price − margin`. Fechar a edge é entrega própria (chip
-            "Fechar vazamento de custo na edge recommend"). */}
+            Isto é DEFESA EM PROFUNDIDADE, não a barreira principal: o PR-A (#1503) já fechou na
+            FONTE — `projetarCandidato(c, podeCusto)` monta a resposta por lista branca e, sem
+            `cap_custo_ler`, devolve `margin: null` e `eip: null` sem `_admin`. Quem não pode ver
+            já recebe null aqui (e cai no "—"). O ramo "Negativa" só alcança quem TEM a
+            capability; para esse, o número exato continua no breakdown de admin abaixo. */}
         <div className="grid grid-cols-2 gap-2">
           <div className="text-center">
             <p className="text-[10px] text-muted-foreground">Prob. conversão</p>
