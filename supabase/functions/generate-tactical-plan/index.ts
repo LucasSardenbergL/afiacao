@@ -3,6 +3,7 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { fetchAll } from "../_shared/paginate.ts";
 import { calcularClusterMargin, classifyProfile, margemConhecida, selectObjective } from "../_shared/tactical-margem.ts";
+import { inicioDiaOperacional } from "../_shared/dia-operacional.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -76,8 +77,11 @@ serve(async (req) => {
       const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, { auth: { persistSession: false } });
       const { customerId, farmerId } = body;
 
-      // Idempotência: pula se já há plano 'gerado' criado hoje (>= 00:00 UTC).
-      const hojeIso = new Date(new Date().toISOString().slice(0, 10) + 'T00:00:00Z').toISOString();
+      // Idempotência: pula se já há plano 'gerado' no DIA OPERACIONAL (BRT), não no dia UTC.
+      // Era `>= 00:00 UTC` e errava nos DOIS sentidos (incidente 2026-07-21/22, 30 duplicatas):
+      // run às 22:48 BRT não via o das 19:03 do mesmo dia; e o cron das 05:00 BRT do dia
+      // seguinte via o da véspera e pulava o dia inteiro. Ver _shared/dia-operacional.ts.
+      const hojeIso = inicioDiaOperacional(new Date());
       const { data: existente } = await admin.from('farmer_tactical_plans')
         .select('id').eq('farmer_id', farmerId).eq('customer_user_id', customerId)
         .eq('status', 'gerado').gte('created_at', hojeIso).limit(1);
