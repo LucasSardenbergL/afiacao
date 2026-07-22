@@ -524,7 +524,7 @@ Run:
 ```bash
 cd /Users/lucassardenberg/Projetos/afiacao/.claude/worktrees/kind-hawking-5ccae9 && heavy bash db/test-authz-preco-omie-products.sh > /private/tmp/claude-501/-Users-lucassardenberg-Projetos-afiacao--claude-worktrees-kind-hawking-5ccae9/fb50c7c7-5aab-4a9e-b948-c92b22361be9/scratchpad/t3.log 2>&1; echo "exit=$?"; cat /private/tmp/claude-501/-Users-lucassardenberg-Projetos-afiacao--claude-worktrees-kind-hawking-5ccae9/fb50c7c7-5aab-4a9e-b948-c92b22361be9/scratchpad/t3.log
 ```
-Expected: `exit=0`, `BASELINE: 27 OK / 0 FAIL` (10 do B + 17 do A). Conferir explicitamente que **A9 e A10 vieram `DENIED`** (não `RLS0` — `RLS0` significaria que o grant sobreviveu e só a policy barrou, que é um fechamento mais fraco do que o desenhado).
+Expected: `exit=0`, `BASELINE: 30 OK / 0 FAIL` (10 do B + 20 do A). Conferir explicitamente que **A9 e A10 vieram `DENIED`** (não `RLS0` — `RLS0` significaria que o grant sobreviveu e só a policy barrou, que é um fechamento mais fraco do que o desenhado).
 
 - [ ] **Step 4: Commit**
 
