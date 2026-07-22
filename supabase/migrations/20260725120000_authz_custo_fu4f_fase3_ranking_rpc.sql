@@ -21,11 +21,25 @@
 --     escolhido, nao ha regua — e de quebra nao ha cast de jsonb para guardar, nao ha cap de
 --     tamanho para furar, nao ha DoS por payload. A superficie de ataque e o conjunto vazio.
 --
--- RESIDUO DECLARADO (precisao>recall exige nomear): o caller aprende 1 bit por SKU —
--- "margem > 0" — com limiar FIXO em zero. E 1 desigualdade por SKU, nao busca binaria: sem
--- limiar ajustavel nao ha como estreitar. E o mesmo residuo que o §3.4.2 do spec irmao ja
--- aceitou conscientemente para o `explanation_key` do PR-A, e o preco de manter a feature
--- "nao recomende o que da prejuizo" funcionando.
+-- RESIDUO DECLARADO (precisao>recall exige nomear). A 1a redacao deste bloco dizia "1 bit por
+-- SKU, sem estreitamento possivel". Era OTIMISTA e a rodada 2 do Codex corrigiu — fica a versao
+-- honesta:
+--
+--   O caller aprende 1 bit por SKU ("margem > 0") POR SNAPSHOT, e o bit e ACUMULAVEL no tempo.
+--   Com custo estavel C e o preco variando entre observacoes:
+--       max(precos com resposta negativa)  <=  C  <  min(precos com resposta positiva)
+--   Semanas de observacao estreitam C mesmo sem ninguem escrever nada.
+--
+-- ⚠️ E PIOR QUE ISSO HOJE, e nao e esta migration que resolve: `omie_products` tem policy
+-- "Staff can manage products" FOR ALL com WITH CHECK (master OR employee) — medido em prod
+-- 2026-07-21. Ou seja, o employee PODE dar UPDATE em `valor_unitario`, que e o limiar da
+-- comparacao acima. Quem escolhe o limiar faz busca binaria entre chamadas, e nenhuma versao
+-- desta RPC fecha isso: o limiar e a COLUNA, nao o parametro.
+--
+-- ⇒ Enquanto a escrita de `omie_products` nao for fechada para employee, o objetivo "a
+-- vendedora nao deriva custo" NAO e alcancado por esta entrega sozinha. Isso esta no corpo do
+-- PR e tem follow-up proprio — e o motivo pelo qual a barreira aqui e de CONVENIENCIA, como o
+-- §9.2 do spec ja declarava para o cockpit, e nao de confidencialidade.
 --
 -- POR QUE NAO DESLIGAR AS TELAS (a alternativa que o Codex recomendou): a premissa dele era
 -- "features sem demanda observada". Medido: os 3 consertos dos engines (#1466 custo ausente
@@ -132,7 +146,7 @@ END
 $fn$;
 
 COMMENT ON FUNCTION public.get_skus_margem_positiva() IS
-  'FU4-F fase 3: devolve os SKUs vendaveis (margem canonica > 0) para os engines de recomendacao filtrarem candidatos SEM ler custo. SEM PARAMETRO de proposito — a versao anterior aceitava multiplicadores do caller e devolvia ordem, o que o Codex mostrou ser regua graduada (2 chamadas recuperavam o catalogo). Residuo declarado: 1 bit por SKU com limiar FIXO em zero, sem estreitamento possivel.';
+  'FU4-F fase 3: devolve os SKUs vendaveis (margem canonica > 0) para os engines de recomendacao filtrarem candidatos SEM ler custo. SEM PARAMETRO de proposito — a versao anterior aceitava multiplicadores do caller e devolvia ordem, o que o Codex mostrou ser regua graduada (2 chamadas recuperavam o catalogo). Residuo declarado: 1 bit por SKU POR SNAPSHOT, acumulavel no tempo (max(precos negativos) <= C < min(precos positivos)). E o employee pode escrever omie_products.valor_unitario, que e o limiar — enquanto isso nao fechar, a barreira e de conveniencia, nao de confidencialidade.';
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Privilegios. REVOKE de PUBLIC nao tira anon/authenticated: o Supabase concede por NOME.
