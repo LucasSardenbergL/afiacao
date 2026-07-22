@@ -43,7 +43,7 @@ export function IntelligenceStrategicTab() {
           .from('farmer_client_scores')
           .select('customer_user_id, gross_margin_pct, avg_monthly_spend_180d, avg_repurchase_interval, revenue_potential')
           .order('customer_user_id', { ascending: true })
-          .range(de, ate) as unknown as PromiseLike<{ data: ScoreLinha[] | null }>,
+          .range(de, ate) as unknown as PromiseLike<{ data: ScoreLinha[] | null; error: unknown }>,
       ),
   });
 

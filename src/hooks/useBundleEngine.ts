@@ -186,21 +186,21 @@ export const useBundleEngine = () => {
             .select('id, codigo, descricao, valor_unitario, metadata, ativo, omie_codigo_produto')
             .eq('ativo', true)
             .order('id', { ascending: true })
-            .range(de, ate) as unknown as PromiseLike<{ data: ProductRow[] | null }>,
+            .range(de, ate) as unknown as PromiseLike<{ data: ProductRow[] | null; error: unknown }>,
         ),
         fetchAllPages<ProductCostRow>((de, ate) =>
           supabase
             .from('product_costs')
             .select('product_id, cost_final, cost_price')
             .order('product_id', { ascending: true })
-            .range(de, ate) as unknown as PromiseLike<{ data: ProductCostRow[] | null }>,
+            .range(de, ate) as unknown as PromiseLike<{ data: ProductCostRow[] | null; error: unknown }>,
         ),
         fetchAllPages<ProfileRow>((de, ate) =>
           supabase
             .from('profiles')
             .select('user_id, name, customer_type, cnae')
             .order('user_id', { ascending: true })
-            .range(de, ate) as unknown as PromiseLike<{ data: ProfileRow[] | null }>,
+            .range(de, ate) as unknown as PromiseLike<{ data: ProfileRow[] | null; error: unknown }>,
         ),
       ]);
 
