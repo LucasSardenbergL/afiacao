@@ -153,20 +153,23 @@ export const useBundleEngine = () => {
 
     try {
       // 1. Load data with fallback for super_admin
-      const fetchAllScores = async (filterFarmerId?: string): Promise<ClientScoreRow[]> => {
-        const all: ClientScoreRow[] = [];
-        let page = 0;
-        const sz = 1000;
-        let hasMore = true;
-        while (hasMore) {
-          let q = supabase.from('farmer_client_scores').select('*').range(page * sz, (page + 1) * sz - 1);
-          if (filterFarmerId) q = q.eq('farmer_id', filterFarmerId);
-          const { data } = (await q) as unknown as { data: ClientScoreRow[] | null };
-          if (!data || data.length === 0) hasMore = false;
-          else { all.push(...data); if (data.length < sz) hasMore = false; page++; }
-        }
-        return all;
-      };
+      // Loop MANUAL com o mesmo defeito que o #1545 tirou do `fetchAllPages` — por não CHAMAR
+      // o helper, ficou de fora daquele grep: descartava o `error`, tratava `data: null` como
+      // fim da tabela e não pedia `.order()` (ordem indefinida entre páginas pula e repete
+      // linha). `customer_user_id` é UNIQUE na tabela.
+      //
+      // E a página perdida trocava o ESCOPO: o caller abaixo lê lista vazia como "não tem
+      // carteira, deve ser super_admin" e recarrega SEM filtro de farmer_id.
+      const fetchAllScores = (filterFarmerId?: string): Promise<ClientScoreRow[]> =>
+        fetchAllPages<ClientScoreRow>(
+          (de, ate) => {
+            let q = supabase.from('farmer_client_scores').select('*');
+            if (filterFarmerId) q = q.eq('farmer_id', filterFarmerId);
+            return q.order('customer_user_id', { ascending: true }).range(de, ate) as unknown as
+              PromiseLike<{ data: ClientScoreRow[] | null; error: unknown }>;
+          },
+          'farmer_client_scores/bundle',
+        );
 
       // Try farmer-specific first, fallback to all (super_admin). Na lente NÃO cai no
       // fallback "todos os scores" — escopa estritamente ao alvo (degradação honesta:
@@ -187,6 +190,7 @@ export const useBundleEngine = () => {
             .eq('ativo', true)
             .order('id', { ascending: true })
             .range(de, ate) as unknown as PromiseLike<{ data: ProductRow[] | null; error: unknown }>,
+          'omie_products/bundle',
         ),
         fetchAllPages<ProductCostRow>((de, ate) =>
           supabase
@@ -194,6 +198,7 @@ export const useBundleEngine = () => {
             .select('product_id, cost_final, cost_price')
             .order('product_id', { ascending: true })
             .range(de, ate) as unknown as PromiseLike<{ data: ProductCostRow[] | null; error: unknown }>,
+          'product_costs/bundle',
         ),
         fetchAllPages<ProfileRow>((de, ate) =>
           supabase
@@ -201,29 +206,26 @@ export const useBundleEngine = () => {
             .select('user_id, name, customer_type, cnae')
             .order('user_id', { ascending: true })
             .range(de, ate) as unknown as PromiseLike<{ data: ProfileRow[] | null; error: unknown }>,
+          'profiles/bundle',
         ),
       ]);
 
       if (!clientScores?.length) { setCustomerBundles([]); return; }
 
       // Load ALL sales orders (avoid huge .in() URL)
-      const fetchAllSalesOrders = async (): Promise<SalesOrderRow[]> => {
-        const all: SalesOrderRow[] = [];
-        let page = 0;
-        const sz = 1000;
-        let hasMore = true;
-        while (hasMore) {
-          const { data } = (await supabase
+      // Mesmo defeito do loop manual acima — aqui a perda é do HISTÓRICO que alimenta as regras
+      // de associação do bundle. `.order('id')` (PK) é a ordem estável; a coluna não precisa
+      // estar no `select`.
+      const salesOrders = await fetchAllPages<SalesOrderRow>(
+        (de, ate) =>
+          supabase
             .from('sales_orders')
             .select('customer_user_id, items, total, created_at')
             .in('status', ['confirmado', 'faturado', 'entregue'])
-            .range(page * sz, (page + 1) * sz - 1)) as unknown as { data: SalesOrderRow[] | null };
-          if (!data || data.length === 0) hasMore = false;
-          else { all.push(...data); if (data.length < sz) hasMore = false; page++; }
-        }
-        return all;
-      };
-      const salesOrders = await fetchAllSalesOrders();
+            .order('id', { ascending: true })
+            .range(de, ate) as unknown as PromiseLike<{ data: SalesOrderRow[] | null; error: unknown }>,
+        'sales_orders/bundle',
+      );
 
       // Build maps
       const costMap = new Map<string, number>();

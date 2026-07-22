@@ -126,21 +126,25 @@ export const useCrossSellEngine = () => {
     setLoading(true);
 
     try {
-      // 1. Load client scores with pagination
-      const fetchAllScores = async (filterFarmerId?: string): Promise<ClientScoreRow[]> => {
-        const all: ClientScoreRow[] = [];
-        let page = 0;
-        const sz = 1000;
-        let hasMore = true;
-        while (hasMore) {
-          let q = supabase.from('farmer_client_scores').select('*').range(page * sz, (page + 1) * sz - 1);
-          if (filterFarmerId) q = q.eq('farmer_id', filterFarmerId);
-          const { data } = (await q) as unknown as { data: ClientScoreRow[] | null };
-          if (!data || data.length === 0) hasMore = false;
-          else { all.push(...data); if (data.length < sz) hasMore = false; page++; }
-        }
-        return all;
-      };
+      // 1. Load client scores with pagination. Era um loop MANUAL com o mesmo defeito que o
+      // #1545 tirou do `fetchAllPages` — mas por não CHAMAR o helper, ficou de fora daquele
+      // grep: descartava o `error` (`const { data } = await q`), tratava `data: null` como fim
+      // da tabela e não pedia `.order()`, então a ordem entre páginas era indefinida (o
+      // Postgres pode repetir e pular linha). `customer_user_id` é UNIQUE na tabela.
+      //
+      // Aqui a página perdida era pior que um total truncado: o caller abaixo interpreta lista
+      // vazia como "este farmer não tem carteira, deve ser super_admin" e RECARREGA SEM FILTRO
+      // de farmer_id — uma falha de transporte trocava o escopo do cálculo.
+      const fetchAllScores = (filterFarmerId?: string): Promise<ClientScoreRow[]> =>
+        fetchAllPages<ClientScoreRow>(
+          (de, ate) => {
+            let q = supabase.from('farmer_client_scores').select('*');
+            if (filterFarmerId) q = q.eq('farmer_id', filterFarmerId);
+            return q.order('customer_user_id', { ascending: true }).range(de, ate) as unknown as
+              PromiseLike<{ data: ClientScoreRow[] | null; error: unknown }>;
+          },
+          'farmer_client_scores/cross-sell',
+        );
 
       // Try farmer-specific first, fallback to all (for super_admin). Na lente NÃO cai
       // no fallback de "todos os scores" — escopa estritamente ao alvo (degradação
@@ -165,6 +169,7 @@ export const useCrossSellEngine = () => {
           .eq('ativo', true)
           .order('id', { ascending: true })
           .range(de, ate) as unknown as PromiseLike<{ data: ProductRow[] | null; error: unknown }>,
+        'omie_products/cross-sell',
       );
 
       const productCosts = await fetchAllPages<ProductCostRow>((de, ate) =>
@@ -173,6 +178,7 @@ export const useCrossSellEngine = () => {
           .select('product_id, cost_final, cost_price')
           .order('product_id', { ascending: true })
           .range(de, ate) as unknown as PromiseLike<{ data: ProductCostRow[] | null; error: unknown }>,
+        'product_costs/cross-sell',
       );
 
       const costMap = new Map<string, number>();
@@ -184,23 +190,20 @@ export const useCrossSellEngine = () => {
       });
 
       // 3. Load ALL sales history (avoid huge .in() URL with 3598 IDs)
-      const fetchAllSalesOrders = async (): Promise<SalesOrderRow[]> => {
-        const all: SalesOrderRow[] = [];
-        let page = 0;
-        const sz = 1000;
-        let hasMore = true;
-        while (hasMore) {
-          const { data } = (await supabase
+      // Mesmo defeito do loop manual acima — e aqui a perda é do HISTÓRICO que alimenta as
+      // regras de associação: menos pedidos = menos coocorrência = recomendação mais pobre,
+      // sem nada na tela indicando que o universo encolheu. `.order('id')` (PK) é a ordem
+      // estável; a coluna não precisa estar no `select`.
+      const salesOrders = await fetchAllPages<SalesOrderRow>(
+        (de, ate) =>
+          supabase
             .from('sales_orders')
             .select('customer_user_id, items, total, created_at')
             .in('status', ['confirmado', 'faturado', 'entregue'])
-            .range(page * sz, (page + 1) * sz - 1)) as unknown as { data: SalesOrderRow[] | null };
-          if (!data || data.length === 0) hasMore = false;
-          else { all.push(...data); if (data.length < sz) hasMore = false; page++; }
-        }
-        return all;
-      };
-      const salesOrders = await fetchAllSalesOrders();
+            .order('id', { ascending: true })
+            .range(de, ate) as unknown as PromiseLike<{ data: SalesOrderRow[] | null; error: unknown }>,
+        'sales_orders/cross-sell',
+      );
 
       // Build set of customer IDs that have orders
       const customerIdsWithOrders = new Set<string>();

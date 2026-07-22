@@ -150,6 +150,7 @@ export const useFarmerScoring = (farmerId?: string) => {
           .in('status', ['confirmado', 'faturado', 'entregue'])
           .order('id', { ascending: true })
           .range(de, ate) as unknown as PromiseLike<{ data: SalesOrderRow[] | null; error: unknown }>,
+        'sales_orders/scoring',
       );
 
       if (salesOrders.length === 0) {
@@ -188,6 +189,7 @@ export const useFarmerScoring = (farmerId?: string) => {
           .select('product_id, cost_final, cost_price')
           .order('product_id', { ascending: true })
           .range(de, ate) as unknown as PromiseLike<{ data: ProductCostRow[] | null; error: unknown }>,
+        'product_costs/scoring',
       );
       const costMap = new Map<string, number>();
       // Custo canônico = cost_final (proxy-aware); cost_price agora é nullable (só custo real).
@@ -207,6 +209,7 @@ export const useFarmerScoring = (farmerId?: string) => {
           .select('id, omie_codigo_produto')
           .order('id', { ascending: true })
           .range(de, ate) as unknown as PromiseLike<{ data: ProdutoOmieRow[] | null; error: unknown }>,
+        'omie_products/scoring',
       );
       const omieToProductId = new Map<number, string>();
       produtos.forEach((p) => {

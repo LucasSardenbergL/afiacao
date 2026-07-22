@@ -22,7 +22,7 @@ interface ScoreLinha {
 }
 
 function IntelligenceManagerialTabImpl() {
-  const { data: allScores, isLoading } = useQuery({
+  const { data: allScores, isLoading, isError } = useQuery({
     queryKey: ['intel-all-scores'],
     // Base COMPLETA, paginada. Era `.limit(500)` de 6.632 ordenado por `priority_score` desc —
     // ou seja, os 500 de MAIOR prioridade, uma amostra enviesada apresentada como comparativo
@@ -36,6 +36,7 @@ function IntelligenceManagerialTabImpl() {
           .select('customer_user_id, farmer_id, health_score, health_class, gross_margin_pct, category_count, sales_history_status')
           .order('customer_user_id', { ascending: true })
           .range(de, ate) as unknown as PromiseLike<{ data: ScoreLinha[] | null; error: unknown }>,
+        'farmer_client_scores/intel-gerencial',
       ),
   });
 
@@ -108,13 +109,38 @@ function IntelligenceManagerialTabImpl() {
     return <div className="grid grid-cols-1 gap-3">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-24" />)}</div>;
   }
 
+  // Desde o #1545 o `fetchAllPages` LANÇA quando uma página falha, em vez de devolver o
+  // prefixo parcial. Isso conserta a mentira do NÚMERO — e torna ESTE caminho alcançável:
+  // a exceção vira `allScores === undefined`, e cada `|| 0` abaixo afirma "0 clientes",
+  // "0 em risco". Uma falha de transporte apresentada como fato sobre a base, que é a mesma
+  // troca de "não consegui ler" por "não existe" que o helper acabou de eliminar uma camada
+  // antes. Nunca zero: "—" e o motivo.
+  // Com dado em cache o react-query preserva `data` através do erro — aí mostramos os números
+  // com aviso de desatualização, em vez de descartar o último estado bom. `retry` já é global
+  // (App.tsx: 2 tentativas + backoff), então aqui só resta o estado FINAL.
+  const scoresIndisponivel = isError && !allScores;
+  const scoresDesatualizados = isError && !!allScores;
+  const ou = (v: string) => (scoresIndisponivel ? '—' : v);
+
   return (
     <div className="space-y-4">
+      {scoresIndisponivel && (
+        <div role="alert" className="rounded-lg border border-status-error/30 bg-status-error/5 p-3 text-xs text-status-error">
+          Comparativo indisponível — a base de clientes não pôde ser lida. Os indicadores ficam
+          em “—” até a próxima tentativa; nenhum número abaixo foi estimado.
+        </div>
+      )}
+      {scoresDesatualizados && (
+        <div role="alert" className="rounded-lg border border-status-warning/30 bg-status-warning/5 p-3 text-xs text-status-warning">
+          Exibindo a última leitura bem-sucedida — a atualização mais recente falhou. Os números
+          podem estar desatualizados.
+        </div>
+      )}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <KpiCard title="Vendedores Ativos" value={String(farmerMetrics.length)} icon={Users} />
-        <KpiCard title="Total Clientes" value={String(allScores?.length || 0)} icon={Users} />
-        <KpiCard title="Clientes em Risco" value={String(allScores?.filter(c => (c.health_class === 'critico' || c.health_class === 'atencao') && c.sales_history_status !== 'sem_historico').length || 0)} icon={AlertTriangle} trend="down" />
-        <KpiCard title="Mix Médio" value={globalAvgCategories.toFixed(1)} icon={Layers} subtitle="categorias/cliente" />
+        <KpiCard title="Vendedores Ativos" value={ou(String(farmerMetrics.length))} icon={Users} />
+        <KpiCard title="Total Clientes" value={ou(String(allScores?.length ?? 0))} icon={Users} />
+        <KpiCard title="Clientes em Risco" value={ou(String(allScores?.filter(c => (c.health_class === 'critico' || c.health_class === 'atencao') && c.sales_history_status !== 'sem_historico').length ?? 0))} icon={AlertTriangle} trend="down" />
+        <KpiCard title="Mix Médio" value={ou(globalAvgCategories.toFixed(1))} icon={Layers} subtitle="categorias/cliente" />
       </div>
 
       <Card>
@@ -164,7 +190,11 @@ function IntelligenceManagerialTabImpl() {
                   </tr>
                 ))}
                 {farmerMetrics.length === 0 && (
-                  <tr><td colSpan={8} className="text-center py-6 text-muted-foreground">Sem dados</td></tr>
+                  <tr><td colSpan={8} className="text-center py-6 text-muted-foreground">
+                    {/* "Sem dados" sob falha afirmaria que não há vendedor na base — a mesma
+                        troca de "não consegui ler" por "não existe" que o helper eliminou. */}
+                    {scoresIndisponivel ? 'Não foi possível carregar o comparativo' : 'Sem dados'}
+                  </td></tr>
                 )}
               </tbody>
             </table>
