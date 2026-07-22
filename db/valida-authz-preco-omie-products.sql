@@ -13,18 +13,36 @@ SELECT
   (SELECT cmd FROM pg_policies
      WHERE schemaname='public' AND tablename='omie_products') = 'SELECT'               AS c3_e_select,
 
-  -- o gate de LEITURA continua o de antes (master OR employee) — escopado ao alvo, nao varredura
-  (SELECT qual ILIKE '%master%' AND qual ILIKE '%employee%'
-     FROM pg_policies WHERE schemaname='public' AND tablename='omie_products')         AS c4_gate_leitura_intacto,
+  -- o gate de LEITURA e ESTRUTURALMENTE o mesmo (master OR employee) — compara o `qual`
+  -- normalizado com o CANONICO pos-apply (medido aplicando a migration real num PG17
+  -- descartavel, 2026-07-22). Substring (ILIKE) passaria com "master OR employee OR true" —
+  -- mesma classe do #1501 (regex frouxo prova substring, nao estrutura). Padrao do repo
+  -- (docs/agent/money-path.md #1490/#1501): comparar com o canonico normalizado, nao somar
+  -- regex frouxos. regexp_replace SEMPRE antes do btrim — btrim sozinho nao remove `\n`, so
+  -- espaco/tab nas bordas, e a comparacao nunca casaria. Remove tambem o prefixo `public.`:
+  -- o deparse do Postgres qualifica ou nao o schema conforme o search_path da sessao que LE
+  -- pg_policies (nao o da sessao que criou a policy) — omitir a normalizacao daria `f` num
+  -- banco CORRETO se o search_path de leitura divergir do de escrita (o incidente #1490: pior
+  -- que nao validar, ensina a ignorar o vermelho).
+  (SELECT btrim(regexp_replace(replace(qual, 'public.', ''), '\s+', ' ', 'g'))
+     FROM pg_policies WHERE schemaname='public' AND tablename='omie_products')
+    = '( SELECT (has_role(( SELECT auth.uid() AS uid), ''master''::app_role) OR has_role(( SELECT auth.uid() AS uid), ''employee''::app_role)))'
+                                                                                         AS c4_gate_leitura_intacto,
 
   -- grants: escrita fechada p/ authenticated, anon zerado, SELECT preservado, service_role vivo
   NOT has_table_privilege('authenticated','public.omie_products','TRUNCATE')           AS c5_sem_truncate,
   NOT has_table_privilege('authenticated','public.omie_products','UPDATE')             AS c6_sem_update,
   NOT has_table_privilege('authenticated','public.omie_products','INSERT')             AS c7_sem_insert,
   NOT has_table_privilege('authenticated','public.omie_products','DELETE')             AS c8_sem_delete,
-  NOT has_table_privilege('anon','public.omie_products','SELECT')                      AS c9_anon_zerado,
+  -- anon zerado inclui TRUNCATE: nao passa por RLS (e o privilegio mais perigoso da lista —
+  -- o assert A5 da migration testa os dois, este check tinha metade da cobertura)
+  (NOT has_table_privilege('anon','public.omie_products','SELECT')
+   AND NOT has_table_privilege('anon','public.omie_products','TRUNCATE'))              AS c9_anon_zerado,
   has_table_privilege('authenticated','public.omie_products','SELECT')                 AS c10_select_preservado,
-  has_table_privilege('service_role','public.omie_products','UPDATE')                  AS c11_sync_vivo,
+  -- sync vivo inclui INSERT: o assert A7 da migration testa INSERT e UPDATE — se o sync
+  -- perder INSERT, as 6 edges do Omie quebram mesmo com UPDATE intacto
+  (has_table_privilege('service_role','public.omie_products','UPDATE')
+   AND has_table_privilege('service_role','public.omie_products','INSERT'))            AS c11_sync_vivo,
 
   -- RLS ligada
   (SELECT relrowsecurity FROM pg_class WHERE oid='public.omie_products'::regclass)     AS c12_rls_on;
