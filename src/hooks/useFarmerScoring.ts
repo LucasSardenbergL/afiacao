@@ -2,13 +2,12 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import type { Tables } from '@/integrations/supabase/types';
-import { custoCanonico } from '@/lib/custo/custoCanonico';
 import { fetchAllPages } from '@/lib/postgrest';
-import { accumulateMarginFromItems, resolveProductIdsFromItems } from '@/lib/scoring/margin';
+import { resolveProductIdsFromItems } from '@/lib/scoring/margin';
 import { calcularHealthScore } from '@/lib/scoring/healthScore';
+import type { FaixaMargem } from '@/lib/scoring/faixaMargem';
 
 type AlgorithmConfigRow = Pick<Tables<'farmer_algorithm_config'>, 'key' | 'value'>;
-type ProductCostRow = Pick<Tables<'product_costs'>, 'product_id' | 'cost_price' | 'cost_final'>;
 type FarmerCallRow = Pick<
   Tables<'farmer_calls'>,
   'customer_user_id' | 'call_result' | 'is_whatsapp' | 'whatsapp_replied' | 'created_at'
@@ -59,8 +58,10 @@ export interface ClientScore {
   daysSinceLastPurchase: number;
   avgRepurchaseInterval: number;
   avgMonthlySpend180d: number;
-  /** PERCENTUAL (0–100, negativo válido). `null` = não apurada. */
+  /** PERCENTUAL (0–100, negativo válido). `null` = não apurada OU sem `cap_custo_ler`. */
   grossMarginPct: number | null;
+  /** O SINAL, sempre presente — substitui o número para quem não pode ver custo. */
+  margemFaixa: FaixaMargem;
   categoryCount: number;
   answerRate60d: number;
   whatsappReplyRate60d: number;
@@ -181,21 +182,38 @@ export const useFarmerScoring = (farmerId?: string) => {
         if (fPage.length < 1000) break;
       }
 
-      // 2. Load product costs for margin calculation (paginado: 3.637 linhas > capa de 1.000)
-      const productCosts = await fetchAllPages<ProductCostRow>((de, ate) =>
-        supabase
-          .from('product_costs')
-          .select('product_id, cost_final, cost_price')
-          .order('product_id', { ascending: true })
-          .range(de, ate) as unknown as PromiseLike<{ data: ProductCostRow[] | null }>,
-      );
-      const costMap = new Map<string, number>();
-      // Custo canônico = cost_final (proxy-aware); cost_price agora é nullable (só custo real).
-      // Number(null)===0 inflava a margem (ausente≠zero) — excluir SKU sem custo, não fabricar 0.
-      productCosts.forEach((pc) => {
-        const c = custoCanonico(pc);
-        if (c != null) costMap.set(pc.product_id, c);
-      });
+      // 2. Faixa de margem + componente G, vindos do SERVIDOR (FU4-F fase 3).
+      //
+      // Antes, este bloco baixava `product_costs` INTEIRA para o browser — 3.637 linhas de
+      // cost_final/cost_price, paginadas de propósito para furar a capa de 1.000 do PostgREST —
+      // e a margem por cliente era calculada aqui em memória. Era a maior via browser→custo
+      // aberta do app. Agora a RPC lê o custo no servidor e devolve só o SINAL.
+      //
+      // `g` vem PRONTO do servidor, com a mesma régua de percentis (p10/p90 sobre a POPULAÇÃO)
+      // que este arquivo usava. Não é preciosismo: derivar `g` da faixa (verde/amarelo/vermelho
+      // → 1/0,5/0) mudaria o health score de 68% dos clientes com margem — 5,73 pontos em média,
+      // 14,42 no pior caso (medido em prod, 2026-07-22). O score fica idêntico.
+      //
+      // `margem_pct` só vem preenchido para quem tem `cap_custo_ler`; para os demais é null e a
+      // UI mostra "—" (formatMargemPct). O gate é de PROJEÇÃO, no corpo da RPC.
+      const { data: faixasData, error: faixasErr } = await supabase.rpc('get_carteira_margem_faixa');
+      // FAIL-CLOSED (money-path): sem a faixa, ABORTA. Seguir com o mapa vazio pontuaria toda a
+      // carteira como "sem margem conhecida" — um veredito inventado que o vendedor leria como
+      // dado. Ausente ≠ zero vale também para a falha de transporte.
+      if (faixasErr) {
+        console.error('[useFarmerScoring] get_carteira_margem_faixa falhou:', faixasErr.message);
+        setCalculating(false);
+        setLoading(false);
+        return;
+      }
+      const margemPorCliente = new Map<string, { faixa: FaixaMargem; g: number | null; pct: number | null }>();
+      for (const linha of faixasData ?? []) {
+        margemPorCliente.set(linha.customer_user_id, {
+          faixa: linha.faixa as FaixaMargem,
+          g: linha.g == null ? null : Number(linha.g),
+          pct: linha.margem_pct == null ? null : Number(linha.margem_pct),
+        });
+      }
 
       // 2b. Mapa omie_codigo_produto → UUID. Os itens de pedido em produção são pt-BR e trazem
       // `omie_codigo_produto`, não `product_id` — sem este mapa, TODO item era descartado e os
@@ -239,8 +257,6 @@ export const useFarmerScoring = (farmerId?: string) => {
         orderDates: number[];
         totalSpend: number;
         spend180d: number;
-        totalRevenue: number;
-        totalCost: number;
         categories: Set<string>;
         calls60d: number;
         contactSuccess60d: number;
@@ -257,7 +273,7 @@ export const useFarmerScoring = (farmerId?: string) => {
         if (!customerMap.has(cid)) {
           customerMap.set(cid, {
             orderDates: [], totalSpend: 0, spend180d: 0,
-            totalRevenue: 0, totalCost: 0, categories: new Set(),
+            categories: new Set(),
             calls60d: 0, contactSuccess60d: 0,
             whatsappCalls60d: 0, whatsappReplied60d: 0,
             lastContactDate: 0,
@@ -278,11 +294,9 @@ export const useFarmerScoring = (farmerId?: string) => {
         for (const pid of resolveProductIdsFromItems(items, omieToProductId)) {
           cd.categories.add(pid);
         }
-        // Margem só sobre SKU com custo CONHECIDO (custo ausente não vira 0 — inflaria a
-        // margem; ausente ≠ zero). Alinhado ao filtro do costMap acima (~linha 176).
-        const { revenue, cost } = accumulateMarginFromItems(items, costMap, omieToProductId);
-        cd.totalRevenue += revenue;
-        cd.totalCost += cost;
+        // A margem NÃO é mais acumulada aqui — vem pronta da RPC (fase 3). O laço acima
+        // continua porque `categories` alimenta o componente X (diversidade de mix), que não
+        // depende de custo.
       }
 
       // Aggregate call data
@@ -305,20 +319,15 @@ export const useFarmerScoring = (farmerId?: string) => {
 
       // 6. Compute population-level stats for normalization
       const allMonthlySpends: number[] = [];
-      const allMargins: number[] = [];
 
       customerMap.forEach(cd => {
         const months = Math.max(1, 6); // 180d
         allMonthlySpends.push(cd.spend180d / months);
-        if (cd.totalRevenue > 0) {
-          allMargins.push((cd.totalRevenue - cd.totalCost) / cd.totalRevenue);
-        }
       });
 
       const p95MonthlySpend = percentile(allMonthlySpends, 95) || 1;
-      const p10Margin = percentile(allMargins, 10);
-      const p90Margin = percentile(allMargins, 90);
-      const marginRange = Math.max(p90Margin - p10Margin, 0.01);
+      // A régua de percentis da MARGEM (p10/p90) mudou-se para o servidor junto com o custo —
+      // `get_carteira_margem_faixa` a calcula sobre a população inteira e devolve `g` pronto.
 
       // 7. Calculate scores per client
       const scores: ClientScore[] = [];
@@ -350,14 +359,11 @@ export const useFarmerScoring = (farmerId?: string) => {
         const avgMonthly = cd.spend180d / 6;
         const m = clamp(Math.log(1 + avgMonthly) / Math.log(1 + p95MonthlySpend), 0, 1);
 
-        // G = clamp((GrossMarginClient - P10Margin) / (P90Margin - P10Margin), 0, 1)
-        // Receita 0 = NENHUM item deste cliente tem custo conhecido (accumulateMarginFromItems
-        // já descarta SKU sem custo) → margem DESCONHECIDA, não zero. O `: 0` anterior era
-        // incoerente com a régua construída logo acima: o laço que monta `allMargins` (~l.308)
-        // exclui justamente os clientes de receita 0 do cálculo dos percentis. O código já
-        // sabia que receita 0 não é margem 0 — só não aplicava isso ao próprio cliente.
-        const clientMargin = cd.totalRevenue > 0 ? (cd.totalRevenue - cd.totalCost) / cd.totalRevenue : null;
-        const g = clientMargin == null ? null : clamp((clientMargin - p10Margin) / marginRange, 0, 1);
+        // G e margem vêm do servidor (fase 3). `neutro`/sem linha ⇒ g e pct null: o
+        // calcularHealthScore RENORMALIZA os pesos, então margem desconhecida não penaliza.
+        // Cliente ausente do mapa = fora do escopo da RPC ou sem custo apurável — mesmo efeito.
+        const mf = margemPorCliente.get(cid);
+        const g = mf?.g ?? null;
 
         // X = clamp(CatCount / CatTarget, 0, 1)
         const x = clamp(cd.categories.size / config.cat_target, 0, 1);
@@ -421,7 +427,9 @@ export const useFarmerScoring = (farmerId?: string) => {
           avgRepurchaseInterval: Math.round(I * 10) / 10,
           avgMonthlySpend180d: Math.round(avgMonthly * 100) / 100,
           // null preservado até a UI: Math.round(null) é 0 e reintroduziria "0,0% de margem".
-          grossMarginPct: clientMargin == null ? null : Math.round(clientMargin * 1000) / 10,
+          // Sem cap_custo_ler a RPC devolve null aqui de propósito — o número fecha, o sinal fica.
+          grossMarginPct: mf?.pct ?? null,
+          margemFaixa: mf?.faixa ?? 'neutro',
           categoryCount: cd.categories.size,
           answerRate60d: Math.round(answerRate * 1000) / 10,
           whatsappReplyRate60d: Math.round(whatsappRate * 1000) / 10,

@@ -141,7 +141,6 @@ export const FRONTEIRAS_BASELINE: Aresta[] = [
   { de: "src/hooks/useCustomerProcess.ts", para: "src/hooks/useReindexRag.ts", deModulo: "admin-crm", paraModulo: "knowledge-base", kind: "runtime" },
   { de: "src/hooks/useDefasagemCliente.ts", para: "src/hooks/usePrecoCockpit.ts", deModulo: "farmer-inteligencia", paraModulo: "vendas", kind: "runtime" },
   { de: "src/hooks/useDefasagemCliente.ts", para: "src/lib/preco/defasagem.ts", deModulo: "farmer-inteligencia", paraModulo: "vendas", kind: "type" },
-  { de: "src/hooks/useFarmerScoring.ts", para: "src/lib/custo/custoCanonico.ts", deModulo: "farmer-inteligencia", paraModulo: "reposicao", kind: "runtime" },
   { de: "src/hooks/useFilaAcoes.ts", para: "src/hooks/useTarefas.ts", deModulo: "farmer-inteligencia", paraModulo: "tarefas", kind: "runtime" },
   { de: "src/hooks/useFilaAcoes.ts", para: "src/hooks/useWhatsappPendentes.ts", deModulo: "farmer-inteligencia", paraModulo: "telefonia-whatsapp-rota", kind: "runtime" },
   { de: "src/hooks/useFilaAcoes.ts", para: "src/queries/useRouteContactList.ts", deModulo: "farmer-inteligencia", paraModulo: "telefonia-whatsapp-rota", kind: "runtime" },

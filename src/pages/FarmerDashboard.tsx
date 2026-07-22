@@ -18,6 +18,7 @@ import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { CallButton } from '@/components/call/CallButton';
 import { SlaVencidoCard } from '@/components/farmer/SlaVencidoCard';
+import { FAIXA_LABEL } from '@/lib/scoring/faixaMargem';
 import { formatMargemPct } from '@/lib/format';
 
 // ─── Helpers ─────────────────────────────────────────────────────────
@@ -447,7 +448,17 @@ const ClientDetail = ({ client, onBack }: { client: ClientScore; onBack: () => v
           <MetricRow label="Dias sem compra" value={String(client.daysSinceLastPurchase)} />
           <MetricRow label="Intervalo médio recompra" value={`${client.avgRepurchaseInterval.toFixed(0)} dias`} />
           <MetricRow label="Gasto mensal (180d)" value={fmt(client.avgMonthlySpend180d)} />
-          <MetricRow label="Margem bruta" value={formatMargemPct(client.grossMarginPct)} />
+          {/* Quem tem cap_custo_ler vê o número; os demais veem a FAIXA — o sinal fica, o número
+              fecha (FU4-F fase 3). `—` puro só sobraria para quem não pode ver custo, e escondia
+              informação que o vendedor pode e deve ter. */}
+          <MetricRow
+            label="Margem bruta"
+            value={
+              client.grossMarginPct != null
+                ? formatMargemPct(client.grossMarginPct)
+                : FAIXA_LABEL[client.margemFaixa]
+            }
+          />
           <MetricRow label="Categorias compradas" value={String(client.categoryCount)} />
           <MetricRow label="Taxa resposta (60d)" value={`${client.answerRate60d.toFixed(1)}%`} />
           <MetricRow label="WhatsApp reply (60d)" value={`${client.whatsappReplyRate60d.toFixed(1)}%`} />
