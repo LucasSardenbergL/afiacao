@@ -123,8 +123,10 @@ describe('formatMargemPct', () => {
   });
 
   it('formata margem negativa corretamente', () => {
-    // O mínimo real medido em prod. O contraste com formatPctMaybe (que erra aqui, e é por isso
-    // que margem tem formatador próprio) está fixado em components/customer360/__tests__/format.test.ts.
+    // O mínimo real medido em prod. Este caso é a razão de margem ter formatador próprio: o
+    // formatador que adivinhava a unidade (`formatPctMaybe`) exibia "−14322%" aqui. Ele não
+    // existe mais — virou o par explícito formatMargemPct (percentual) / formatarFracaoPct
+    // (fração), cujo contraste está em components/customer360/__tests__/format.test.ts.
     expect(formatMargemPct(-143.22)).toBe('-143.2%');
   });
 });
