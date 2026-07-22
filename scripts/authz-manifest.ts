@@ -140,6 +140,21 @@ export const ACKNOWLEDGED_SENSITIVE = new Set<string>([
   // Provado em db/test-margem-cliente-helper-compartilhado.sh (L1-L5): anon/authenticated/PUBLIC
   // com has_function_privilege=f, service_role=t, e a função residindo em `private`.
   'private.margem_cliente_agregada',
+
+  // 2026-07-22 — FU4-F fase 3. TERCEIRA CATEGORIA (gate de FILTRO/PROJEÇÃO; ver cabeçalho).
+  // ⚠️ O parser não a flagou sozinha: o corpo não cita `product_costs`/`cost_price`, porque ela
+  // deriva de `private.margem_cliente_agregada()`. É um PONTO CEGO do detector — função
+  // cost-derived VIA HELPER passa despercebida —, então está aqui por registro manual, não por
+  // varredura. Ela É sensível (margem por cliente ⇒ custo agregado) e É executável por
+  // `authenticated` (o vendedor no browser). O gate é duplo e nenhum dos dois é RAISE:
+  //   · ESCOPO (quais linhas): `WHERE v_cap_todo OR carteira_visivel_para(cid, uid)` — espelha a
+  //     policy `fcs_select_carteira` de farmer_client_scores; sem carteira ⇒ zero linhas;
+  //   · PROJEÇÃO (qual campo): `CASE WHEN v_pode_num THEN b.pct END` — sem `cap_custo_ler` o
+  //     NÚMERO vem NULL, mas a FAIXA e o `g` saem sempre ("o número fecha, o sinal fica").
+  // Ambos provados em db/test-fu4f-fase3-carteira-margem-faixa.sh: E1-E5 (escopo), F1-F5
+  // (projeção), com as falsificações K4 (remove o WHERE → E1/E2/E3 vermelhos) e K2 (remove o
+  // CASE → F2 vermelho). Fail-closed sem `auth.uid()` provado em E5.
+  'public.get_carteira_margem_faixa',
 ]);
 
 /** chave de lookup a partir de schema+name (case-insensitive, sem assinatura) */

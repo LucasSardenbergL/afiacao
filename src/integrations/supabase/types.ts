@@ -18751,6 +18751,16 @@ export type Database = {
           valor_total_ciclo: number
         }[]
       }
+      get_carteira_margem_faixa: {
+        Args: never
+        Returns: {
+          customer_user_id: string
+          faixa: string
+          g: number | null
+          margem_pct: number | null
+          motivo: string
+        }[]
+      }
       get_carteira_saude: { Args: never; Returns: Json }
       get_commercial_role: {
         Args: { _user_id: string }
