@@ -60,6 +60,11 @@ import {
   margemConhecida,
   selecionarParaPregeracao,
 } from '../_shared/tactical-margem.ts';
+import {
+  agregar,
+  type Classificacao,
+  classificarAlvo,
+} from '../_shared/tactical-batch-resultado.ts';
 
 const TOP_N = 25;
 const CONCURRENCY = 5; // cada chamada faz 1 LLM (~3-5s); 5 em paralelo ~5s/chunk
@@ -174,14 +179,15 @@ Deno.serve(async (req) => {
   }
 
   // 3. Fan-out concorrente em chunks de 5. Idempotência é na edge alvo.
-  let gerados = 0;
-  let pulados = 0;
-  let erros = 0;
+  //    A classificação/agregação vive em _shared/tactical-batch-resultado.ts (testada):
+  //    aqui só coletamos. Antes, três contadores soltos com `else erros++` perdiam o
+  //    MOTIVO — ver o incidente no cabeçalho daquele módulo.
+  const classificacoes: Classificacao[] = [];
 
   for (let i = 0; i < alvos.length; i += CONCURRENCY) {
     const chunk = alvos.slice(i, i + CONCURRENCY);
-    await Promise.all(
-      chunk.map(async (a) => {
+    classificacoes.push(...await Promise.all(
+      chunk.map(async (a): Promise<Classificacao> => {
         try {
           const r = await fetch(selfUrl, {
             method: 'POST',
@@ -196,24 +202,26 @@ Deno.serve(async (req) => {
             }),
           });
           const j = await r.json().catch(() => ({})) as Record<string, unknown>;
-          if (j.generated) gerados++;
-          else if (j.skipped) pulados++;
-          else erros++;
+          return classificarAlvo(r.status, j);
         } catch {
-          erros++;
+          // fetch nem chegou a responder (rede/timeout). Reusa a MESMA função testada
+          // com status 0 em vez de um ramo de erro solto e não coberto aqui.
+          return classificarAlvo(0, {});
         }
       }),
-    );
+    ));
   }
+
+  const resumo = agregar(classificacoes);
 
   return new Response(
     JSON.stringify({
-      ok: true,
+      // `ok` vem do AGREGADO: falso se qualquer alvo falhou. Antes era `true` fixo —
+      // em 2026-07-21 devolveu ok:true com 28 de 58 alvos quebrados e uma vendedora
+      // inteira sem plano, e o cron marcou `succeeded`.
+      ...resumo,
       farmers: porFarmer.size,
       alvos: alvos.length,
-      gerados,
-      pulados,
-      erros,
       // transparência do que foi DESCARTADO pela máscara: um corte silencioso leria como
       // "cobri todo mundo" sem ter coberto (money-path — no silent caps).
       mascarados_ignorados: mascaradosIgnorados,
