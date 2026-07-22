@@ -40,7 +40,7 @@ func TestAggregateFlat1d_PreservaCorantePresenteQtdZero(t *testing.T) {
 		1: {"AX", float64(10)},
 		2: {"VM", float64(0)},
 	})}
-	itens := aggregateFlatFormulaItems(rows, testFlatCols())[0]["itens"].([]map[string]any)
+	itens := aggregateFlatFormulaItems(rows, testFlatCols(), false)[0]["itens"].([]map[string]any)
 	if len(itens) != 2 {
 		t.Fatalf("esperava 2 itens (inválido PRESERVADO), got %d", len(itens))
 	}
@@ -56,7 +56,7 @@ func TestAggregateFlat1d_PreservaQtdNegativa(t *testing.T) {
 	rows := []map[string]any{makeFormulaRow(map[int][2]any{
 		1: {"C01", float64(-1)},
 	})}
-	itens := aggregateFlatFormulaItems(rows, testFlatCols())[0]["itens"].([]map[string]any)
+	itens := aggregateFlatFormulaItems(rows, testFlatCols(), false)[0]["itens"].([]map[string]any)
 	if len(itens) != 1 || itens[0]["qtd_ml"] != float64(-1) {
 		t.Fatalf("qtd negativa deveria ser preservada crua, got %+v", itens)
 	}
@@ -67,7 +67,7 @@ func TestAggregateFlat1d_PreservaCorantePresenteQtdNil(t *testing.T) {
 		1: {"AX", float64(10)},
 		2: {"VM", nil},
 	})}
-	itens := aggregateFlatFormulaItems(rows, testFlatCols())[0]["itens"].([]map[string]any)
+	itens := aggregateFlatFormulaItems(rows, testFlatCols(), false)[0]["itens"].([]map[string]any)
 	if len(itens) != 2 {
 		t.Fatalf("esperava 2 itens (corante presente + qtd nil preservado), got %d", len(itens))
 	}
@@ -81,7 +81,7 @@ func TestAggregateFlat1d_PreservaCorantePresenteQtdIlegivel(t *testing.T) {
 	rows := []map[string]any{makeFormulaRow(map[int][2]any{
 		1: {"AX", "lixo##"},
 	})}
-	itens := aggregateFlatFormulaItems(rows, testFlatCols())[0]["itens"].([]map[string]any)
+	itens := aggregateFlatFormulaItems(rows, testFlatCols(), false)[0]["itens"].([]map[string]any)
 	if len(itens) != 1 || itens[0]["qtd_ml"] != nil {
 		t.Fatalf("qtd ilegível deveria preservar item com qtd_ml=nil, got %+v", itens)
 	}
@@ -92,7 +92,7 @@ func TestAggregateFlat1d_PreservaOrfaoDoseSemCorante(t *testing.T) {
 	rows := []map[string]any{makeFormulaRow(map[int][2]any{
 		2: {nil, float64(7)},
 	})}
-	itens := aggregateFlatFormulaItems(rows, testFlatCols())[0]["itens"].([]map[string]any)
+	itens := aggregateFlatFormulaItems(rows, testFlatCols(), false)[0]["itens"].([]map[string]any)
 	if len(itens) != 1 {
 		t.Fatalf("órfão (corante vazio + dose 7) deveria ser emitido, got %d itens", len(itens))
 	}
@@ -113,7 +113,7 @@ func TestAggregateFlat1d_SlotLivreSegueOmitido(t *testing.T) {
 		3: {"", float64(0)},
 		4: {nil, "0"},
 	})}
-	itens := aggregateFlatFormulaItems(rows, testFlatCols())[0]["itens"].([]map[string]any)
+	itens := aggregateFlatFormulaItems(rows, testFlatCols(), false)[0]["itens"].([]map[string]any)
 	if len(itens) != 1 {
 		t.Fatalf("slots livres deveriam seguir omitidos, got %d itens: %+v", len(itens), itens)
 	}
@@ -121,7 +121,7 @@ func TestAggregateFlat1d_SlotLivreSegueOmitido(t *testing.T) {
 
 func TestAggregateFlat1d_IsBasePura_TodosSlotsLivres(t *testing.T) {
 	rows := []map[string]any{makeFormulaRow(map[int][2]any{})}
-	out := aggregateFlatFormulaItems(rows, testFlatCols())[0]
+	out := aggregateFlatFormulaItems(rows, testFlatCols(), false)[0]
 	if out["is_base_pura"] != true {
 		t.Fatalf("todos os slots livres deveria declarar is_base_pura=true, got %v", out["is_base_pura"])
 	}
@@ -139,7 +139,7 @@ func TestAggregateFlat1d_QtdIlegivelSemCorante_EmitePlaceholderEBloqueiaPura(t *
 	rows := []map[string]any{makeFormulaRow(map[int][2]any{
 		3: {nil, "###"},
 	})}
-	out := aggregateFlatFormulaItems(rows, testFlatCols())[0]
+	out := aggregateFlatFormulaItems(rows, testFlatCols(), false)[0]
 	if _, tem := out["is_base_pura"]; tem {
 		t.Fatal("qtd ilegível em slot sem corante NÃO pode deixar declarar base pura")
 	}
@@ -158,7 +158,7 @@ func TestAggregateFlat1d_IsBasePura_ExigeFlatColsCompletos(t *testing.T) {
 	cols := testFlatCols()
 	delete(cols, "qtd6ml") // par do slot 6 incompleto
 	rows := []map[string]any{makeFormulaRow(map[int][2]any{})}
-	out := aggregateFlatFormulaItems(rows, cols)[0]
+	out := aggregateFlatFormulaItems(rows, cols, false)[0]
 	if _, tem := out["is_base_pura"]; tem {
 		t.Fatal("flat cols incompletos NÃO podem declarar base pura")
 	}
@@ -231,7 +231,7 @@ func TestSyncFormulas1d_Contrato_FlatPreservaInvalidoNoPayload(t *testing.T) {
 	rowsAgg := aggregateFlatFormulaItems([]map[string]any{makeFormulaRow(map[int][2]any{
 		1: {"AX", float64(10)},
 		2: {"VM", float64(0)}, // o inválido canônico
-	})}, testFlatCols())
+	})}, testFlatCols(), false)
 	ex := newFakeExtractor()
 	ex.rows["formula"] = rowsAgg
 
@@ -268,7 +268,7 @@ func TestSyncFormulas1d_Contrato_FlatBasePuraDeclarada(t *testing.T) {
 	rm := newFakeMapping([]string{"formula"}, FormulaShapeFlat)
 	ex := newFakeExtractor()
 	ex.rows["formula"] = aggregateFlatFormulaItems(
-		[]map[string]any{makeFormulaRow(map[int][2]any{})}, testFlatCols())
+		[]map[string]any{makeFormulaRow(map[int][2]any{})}, testFlatCols(), false)
 
 	st := &State{HWM: map[string]string{}}
 	if err := syncFormulas(context.Background(), ex, NewClient(ts.URL, "tok", "L1"), st, map[string]int{}, rm, false, newLookups(), newHashCache()); err != nil {
@@ -431,7 +431,7 @@ func TestSyncFormulas1d_PigmentadaNormalNaoMudaDeHash(t *testing.T) {
 		1: {"C01", float64(10)},
 		2: {"C02", float64(20)},
 	})}
-	out := aggregateFlatFormulaItems(rows, testFlatCols())[0]
+	out := aggregateFlatFormulaItems(rows, testFlatCols(), false)[0]
 	itens := out["itens"].([]map[string]any)
 	if len(itens) != 2 {
 		t.Fatalf("fórmula normal: 2 itens, got %d", len(itens))

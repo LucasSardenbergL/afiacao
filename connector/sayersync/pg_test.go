@@ -52,7 +52,7 @@ func TestAggregateFlatFormulaItems_6Slots(t *testing.T) {
 		slots[i] = [2]any{fmt.Sprintf("C%02d", i), float64(i) * 1.5}
 	}
 	rows := []map[string]any{makeFormulaRow(slots)}
-	result := aggregateFlatFormulaItems(rows, testFlatCols())
+	result := aggregateFlatFormulaItems(rows, testFlatCols(), false)
 
 	itens, ok := result[0]["itens"].([]map[string]any)
 	if !ok {
@@ -82,7 +82,7 @@ func TestAggregateFlatFormulaItems_SkipsNilCorante(t *testing.T) {
 		5: {"C05", float64(30)},
 	}
 	rows := []map[string]any{makeFormulaRow(slots)}
-	result := aggregateFlatFormulaItems(rows, testFlatCols())
+	result := aggregateFlatFormulaItems(rows, testFlatCols(), false)
 
 	itens, ok := result[0]["itens"].([]map[string]any)
 	if !ok {
@@ -106,7 +106,7 @@ func TestAggregateFlatFormulaItems_PreservaQtdInvalidaComCorante(t *testing.T) {
 		6: {"C06", float64(0.01)}, // ok
 	}
 	rows := []map[string]any{makeFormulaRow(slots)}
-	result := aggregateFlatFormulaItems(rows, testFlatCols())
+	result := aggregateFlatFormulaItems(rows, testFlatCols(), false)
 
 	itens, ok := result[0]["itens"].([]map[string]any)
 	if !ok {
@@ -124,7 +124,7 @@ func TestAggregateFlatFormulaItems_RemovesRawColumns(t *testing.T) {
 		2: {"C02", float64(20)},
 	}
 	rows := []map[string]any{makeFormulaRow(slots)}
-	result := aggregateFlatFormulaItems(rows, testFlatCols())
+	result := aggregateFlatFormulaItems(rows, testFlatCols(), false)
 
 	for i := 1; i <= 6; i++ {
 		if _, exists := result[0][fmt.Sprintf("corante%d", i)]; exists {
@@ -146,7 +146,7 @@ func TestAggregateFlatFormulaItems_AllEmpty(t *testing.T) {
 	// itens=[] EXPLÍCITO (não nil → json [] e não null) + is_base_pura=true.
 	slots := map[int][2]any{} // nenhum slot preenchido
 	rows := []map[string]any{makeFormulaRow(slots)}
-	result := aggregateFlatFormulaItems(rows, testFlatCols())
+	result := aggregateFlatFormulaItems(rows, testFlatCols(), false)
 
 	itens, ok := result[0]["itens"].([]map[string]any)
 	if !ok || itens == nil {
@@ -172,7 +172,7 @@ func TestAggregateFlatFormulaItems_MultipleRows(t *testing.T) {
 			1: {"C10", float64(5)},
 		}),
 	}
-	result := aggregateFlatFormulaItems(rows, flatCols)
+	result := aggregateFlatFormulaItems(rows, flatCols, false)
 
 	itens0 := result[0]["itens"].([]map[string]any)
 	itens1 := result[1]["itens"].([]map[string]any)
@@ -372,7 +372,7 @@ func TestAggregateFlatFormulaItems_NumericAsString(t *testing.T) {
 	row["corante3"] = "C03"
 	row["qtd3ml"] = "abc"
 
-	result := aggregateFlatFormulaItems([]map[string]any{row}, testFlatCols())
+	result := aggregateFlatFormulaItems([]map[string]any{row}, testFlatCols(), false)
 	itens, ok := result[0]["itens"].([]map[string]any)
 	if !ok {
 		t.Fatalf("itens deve ser []map[string]any, got %T", result[0]["itens"])
