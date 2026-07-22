@@ -8,7 +8,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import {
   Loader2, RefreshCw, ShoppingCart, ArrowUpRight,
-  DollarSign, Target, Search, ChevronDown, ChevronUp, Filter,
+  Users, Target, Search, ChevronDown, ChevronUp, Filter,
   Plus,
 } from 'lucide-react';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
@@ -16,7 +16,8 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 
-const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+// `fmt` (moeda) saiu junto com o EIP/LIE: esta página não exibe mais nenhum valor monetário
+// derivado de custo — a priorização é por afinidade, e afinidade não é dinheiro.
 
 const StockBadge = ({ estoque }: { estoque: number | null }) => {
   if (estoque === null || estoque === undefined) return null;
@@ -46,8 +47,10 @@ const FarmerRecommendations = () => {
   }
   if (!isStaff) { navigate('/', { replace: true }); return null; }
 
-  const totalLIE = recommendations.reduce((s, cr) =>
-    s + [...cr.crossSell, ...cr.upSell].reduce((s2, r) => s2 + r.lie, 0), 0);
+  // "EIP Total" (soma dos LIE em R$) saiu: sem custo no browser não existe lucro esperado, e
+  // formatar o score de afinidade como BRL seria fabricar número. O KPI vira o nº de clientes
+  // com oferta na fila — que é o que a vendedora realmente aciona.
+  const totalClientes = recommendations.length;
   const totalCrossSell = recommendations.reduce((s, cr) => s + cr.crossSell.length, 0);
   const totalUpSell = recommendations.reduce((s, cr) => s + cr.upSell.length, 0);
 
@@ -68,7 +71,7 @@ const FarmerRecommendations = () => {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-semibold">Recomendações</h1>
-          <p className="text-sm text-muted-foreground">Cross-sell e up-sell priorizados por EIP</p>
+          <p className="text-sm text-muted-foreground">Cross-sell e up-sell priorizados por afinidade com o cliente</p>
         </div>
         <Button variant="outline" size="sm" onClick={calculateRecommendations} disabled={calculating} className="gap-1.5">
           {calculating ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
@@ -79,9 +82,9 @@ const FarmerRecommendations = () => {
       {/* Summary KPIs */}
       <div className="grid grid-cols-3 gap-3">
         <Card><CardContent className="p-3 text-center">
-          <DollarSign className="w-4 h-4 mx-auto mb-1 text-primary" />
-          <p className="text-lg font-bold text-primary">{fmt(totalLIE)}</p>
-          <p className="text-[10px] text-muted-foreground">EIP Total</p>
+          <Users className="w-4 h-4 mx-auto mb-1 text-primary" />
+          <p className="text-lg font-bold text-primary">{totalClientes}</p>
+          <p className="text-[10px] text-muted-foreground">Clientes com oferta</p>
         </CardContent></Card>
         <Card><CardContent className="p-3 text-center">
           <ShoppingCart className="w-4 h-4 mx-auto mb-1 text-status-info" />
@@ -125,7 +128,8 @@ const FarmerRecommendations = () => {
         </CardContent></Card>
       ) : (
         filtered.map(cr => {
-          const clientLIE = [...cr.crossSell, ...cr.upSell].reduce((s, r) => s + r.lie, 0);
+          // Melhor probabilidade da carteira do cliente (%), não soma de LIE em R$.
+          const melhorProb = Math.max(0, ...[...cr.crossSell, ...cr.upSell].map((r) => r.pij));
           const isExpanded = expandedClient === cr.customerId;
 
           return (
@@ -160,8 +164,8 @@ const FarmerRecommendations = () => {
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
                     <div className="text-right">
-                      <p className="text-sm font-bold text-primary">{fmt(clientLIE)}</p>
-                      <p className="text-[10px] text-muted-foreground">EIP potencial</p>
+                      <p className="text-sm font-bold text-primary">{melhorProb.toFixed(1)}%</p>
+                      <p className="text-[10px] text-muted-foreground">melhor conversão</p>
                     </div>
                     {isExpanded ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
                   </div>
@@ -189,11 +193,17 @@ const FarmerRecommendations = () => {
                                     <p className="text-sm font-medium truncate">{rec.productName}</p>
                                     <StockBadge estoque={rec.estoque} />
                                   </div>
-                                  <p className="text-[10px] text-muted-foreground">Prob: {rec.pij}% · Margem: {fmt(rec.mij)}</p>
+                                  {/* A linha "Margem: R$ X" saiu daqui. Decisão do dono
+                                      (2026-07-20): a vendedora vê apenas que a margem está
+                                      NEGATIVA — sem reais, sem percentual (percentual inverte
+                                      igual: custo = preço × (1 − margem%)). E neste motor nem
+                                      esse caso aparece: só entra SKU que a RPC listou como
+                                      vendável (margem canônica > 0). */}
+                                  <p className="text-[10px] text-muted-foreground">{rec.clusterVolume}× /mês no cluster</p>
                                 </div>
                                 <div className="text-right shrink-0">
-                                  <p className="text-sm font-bold text-primary">{fmt(rec.lie)}</p>
-                                  <p className="text-[10px] text-muted-foreground">EIP</p>
+                                  <p className="text-sm font-bold text-primary">{rec.pij}%</p>
+                                  <p className="text-[10px] text-muted-foreground">conversão</p>
                                 </div>
                               </div>
                               <Button
@@ -238,13 +248,16 @@ const FarmerRecommendations = () => {
                                     <p className="text-sm font-medium truncate">{rec.productName}</p>
                                     <StockBadge estoque={rec.estoque} />
                                   </div>
+                                  {/* "Linha superior", não "mais rentável": sem custo no browser
+                                      o motor não compara margem entre dois SKUs — só sabe que o
+                                      alternativo é vendável e tem preço materialmente maior. */}
                                   <p className="text-[10px] text-muted-foreground">
-                                    De: {rec.currentProductName} · Prob: {rec.pij}%
+                                    Linha superior a: {rec.currentProductName}
                                   </p>
                                 </div>
                                 <div className="text-right shrink-0">
-                                  <p className="text-sm font-bold text-primary">{fmt(rec.lie)}</p>
-                                  <p className="text-[10px] text-muted-foreground">EIP</p>
+                                  <p className="text-sm font-bold text-primary">{rec.pij}%</p>
+                                  <p className="text-[10px] text-muted-foreground">conversão</p>
                                 </div>
                               </div>
                               <Button

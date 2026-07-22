@@ -82,11 +82,14 @@ export const OverviewTab = memo(({ summary, metrics, scoringCalc, recalculate, n
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Zap className="w-4 h-4 text-status-warning" />
-              <span className="text-xs font-semibold">Recomendações LIE</span>
+              <span className="text-xs font-semibold">Recomendações</span>
             </div>
             <div className="flex items-center gap-1">
+              {/* Contagem, não moeda: o total antigo somava os LIE em R$, e sem custo no browser
+                  não existe lucro esperado. Formatar o score de afinidade como BRL seria fabricar
+                  número — e a soma nem é comensurável entre cross-sell e up-sell. */}
               <span className="text-xs font-bold text-status-success">
-                {recommendations.reduce((s, r) => s + [...r.crossSell, ...r.upSell].reduce((s2, rec) => s2 + rec.lie, 0), 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                {recommendations.reduce((s, r) => s + r.crossSell.length + r.upSell.length, 0)}
               </span>
               <ChevronRight className="w-3 h-3 text-muted-foreground" />
             </div>

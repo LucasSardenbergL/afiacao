@@ -6,7 +6,6 @@ import { ChevronDown, ChevronUp, Layers, Zap } from 'lucide-react';
 import type { BundleRecommendation, CustomerBundles } from '@/hooks/useBundleEngine';
 import { classifyCustomerProfile, profileLabels, type CustomerProfile, type BundleArgument } from '@/hooks/useBundleArguments';
 import type { useDiagnosticQuestions } from '@/hooks/useDiagnosticQuestions';
-import { fmt } from './format';
 import type { CustomerCtx } from './types';
 import { BundleCardFull } from './BundleCardFull';
 
@@ -21,10 +20,9 @@ interface CustomerBundleCardProps {
 }
 
 export const CustomerBundleCard = ({ data, expanded, onToggle, bundleArgs, argGenerating, onGenerateArgument, diagHook }: CustomerBundleCardProps) => {
-  const totalBundleLIE = data.bundles.reduce((s, b) => s + b.lieBundle, 0);
-  const bestBundleLIE = data.bundles[0]?.lieBundle || 0;
-  const individualLIE = data.bestIndividual?.lie || 0;
-  const bundleWins = bestBundleLIE > individualLIE;
+  // A probabilidade do MELHOR bundle (`pBundle`, em %) substitui o antigo "LIE em R$": sem custo
+  // no browser não existe lucro esperado, e somar scores premiava quem tem mais bundles.
+  const melhorProbabilidade = data.bundles[0]?.pBundle ?? 0;
 
   const profile = classifyCustomerProfile(data.healthScore, data.avgMonthlySpend || 0, data.grossMarginPct || 0, data.categoryCount || 0);
   const profileInfo = profileLabels[profile];
@@ -52,7 +50,7 @@ export const CustomerBundleCard = ({ data, expanded, onToggle, bundleArgs, argGe
             </div>
             <div className="flex items-center gap-2 mt-0.5">
               <span className="text-[10px] text-muted-foreground">{data.bundles.length} bundles</span>
-              <span className="text-[10px] font-semibold text-status-success">LIE {fmt(totalBundleLIE)}</span>
+              <span className="text-[10px] font-semibold text-status-success">{melhorProbabilidade.toFixed(1)}% de conversão</span>
               <Badge variant="outline" className={`text-[7px] ${profileInfo.color}`}>{profileInfo.label}</Badge>
             </div>
           </div>
@@ -61,21 +59,24 @@ export const CustomerBundleCard = ({ data, expanded, onToggle, bundleArgs, argGe
 
         {expanded && (
           <div className="mt-3 space-y-3">
-            {/* Comparison */}
+            {/* Duas rotas de oferta — SEM declarar vencedor.
+                O card antes coroava 🏆 quem tivesse o maior LIE em R$. Isso não sobrevive a duas
+                coisas: (1) sem custo no browser não há lucro esperado para comparar; (2) mesmo os
+                scores de afinidade não são comensuráveis entre si — `pBundle` multiplica por
+                `lift/2` e não é limitado a 1, enquanto o score individual é uma probabilidade.
+                Eleger vencedor entre as duas escalas era um número inventado. */}
             <div className="bg-muted/50 rounded-lg p-2">
-              <p className="text-[9px] font-semibold mb-1">📊 Comparação Inteligente</p>
+              <p className="text-[9px] font-semibold mb-1">📊 Rotas de oferta</p>
               <div className="grid grid-cols-2 gap-2">
-                <div className={`rounded p-1.5 text-center ${bundleWins ? 'bg-status-success-bg ring-1 ring-emerald-300' : 'bg-muted'}`}>
+                <div className="rounded p-1.5 text-center bg-muted">
                   <Layers className="w-3 h-3 mx-auto mb-0.5 text-status-success" />
-                  <p className="text-[9px] text-muted-foreground">Melhor Bundle</p>
-                  <p className="text-xs font-bold">{fmt(bestBundleLIE)}</p>
-                  {bundleWins && <Badge className="text-[7px] bg-status-success mt-0.5">🏆 Vencedor</Badge>}
+                  <p className="text-[9px] text-muted-foreground">Melhor bundle</p>
+                  <p className="text-xs font-bold">{melhorProbabilidade.toFixed(1)}%</p>
                 </div>
-                <div className={`rounded p-1.5 text-center ${!bundleWins ? 'bg-status-info-bg ring-1 ring-blue-300' : 'bg-muted'}`}>
+                <div className="rounded p-1.5 text-center bg-muted">
                   <Zap className="w-3 h-3 mx-auto mb-0.5 text-status-info" />
-                  <p className="text-[9px] text-muted-foreground">Melhor Individual</p>
-                  <p className="text-xs font-bold">{fmt(individualLIE)}</p>
-                  {!bundleWins && data.bestIndividual && <Badge className="text-[7px] bg-status-info mt-0.5">🏆 Vencedor</Badge>}
+                  <p className="text-[9px] text-muted-foreground">Melhor individual</p>
+                  <p className="text-xs font-bold">{data.bestIndividual?.productName ?? '—'}</p>
                 </div>
               </div>
             </div>

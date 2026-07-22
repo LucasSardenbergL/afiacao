@@ -186,6 +186,7 @@ export const MODULOS: ModuloApp[] = [
     ],
     testes: [
       "src/__tests__/edge-money-path-invariants.test.ts",
+      "src/hooks/__tests__/cross-sell-custo-fora-do-browser.test.tsx",
       "src/hooks/__tests__/useAlertaCreditoCliente.test.ts",
       "src/hooks/__tests__/usePedidosProgramados.cancelamento.test.tsx",
       "src/hooks/__tests__/usePricingEngine.test.ts",
@@ -276,6 +277,7 @@ export const MODULOS: ModuloApp[] = [
       "src/hooks/useDashboardLayout.ts",
     ],
     testes: [
+      "src/hooks/__tests__/bundle-custo-fora-do-browser.test.tsx",
       "src/hooks/__tests__/cluster-margin-cobertura.test.tsx",
       "src/hooks/__tests__/farmer-performance-cobertura-guard.test.tsx",
       "src/hooks/__tests__/lens-atividade-vendedor.test.tsx",

@@ -41,9 +41,10 @@ export const useDiagnosticQuestions = () => {
 
   const generateQuestions = useCallback(async (
     bundleKey: string,
+    // Sem `margin`/`lieBundle` — mesma razão de useBundleArguments: a edge os imprimia em R$ no
+    // prompt da LLM, e o texto gerado vai para a tela da vendedora.
     bundle: {
-      products: { id: string; name: string; price: number; margin: number }[];
-      lieBundle: number;
+      products: { id: string; name: string; price: number }[];
       confidence: number;
     },
     customer: {
