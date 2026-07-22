@@ -3,7 +3,7 @@ import { Card } from '@/components/ui/card';
 import { useMinhasVisitasResultado } from '@/hooks/useMinhasVisitasResultado';
 import { agruparVisitasPorResultado } from '@/lib/visitas/conversao';
 import { visitResultLabel } from '@/lib/visitas/visit-result';
-import { formatBRL, formatPctMaybe } from '@/components/customer360/format';
+import { formatBRL, formatarFracaoPct } from '@/components/customer360/format';
 
 const JANELA_DIAS = 90;
 
@@ -62,7 +62,7 @@ export function MinhasVisitasResultadoCard() {
               <div className="flex items-center justify-between text-xs">
                 <span className={`font-medium ${toneText[r.tone]}`}>{r.emoji} {r.label}</span>
                 <span className="text-muted-foreground">
-                  {b.count} ({formatPctMaybe(b.pct)})
+                  {b.count} ({formatarFracaoPct(b.pct)})
                   {b.revenue > 0 && <span className="text-status-success"> · {formatBRL(b.revenue)}</span>}
                 </span>
               </div>

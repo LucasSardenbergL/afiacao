@@ -59,9 +59,12 @@ export function decodeHtmlEntities(text: string | null | undefined): string {
  * própria `get_customer_margin_summary` (`round(… * 100, 2)`). Enquanto a coluna valia 0 em 100%
  * das linhas, nenhuma divergência de unidade aparecia; com a margem calculada no servidor, aparece.
  *
- * ⚠️ NÃO use `formatPctMaybe` (de components/customer360/format) para margem: a heurística
- * `v > 1 ? v : v * 100` de lá erra em dois casos que a margem produz de verdade — margem abaixo de
- * 1% (0,5 vira "50%") e margem NEGATIVA (−143,22, o mínimo medido em prod, vira "−14322%").
+ * ⚠️ Esta função é a metade PERCENTUAL de um par. A outra é `formatarFracaoPct` (em
+ * components/customer360/format), que recebe FRAÇÃO 0–1 e multiplica por 100. Escolha pela
+ * unidade da origem — as duas juntas substituíram um único formatador que adivinhava
+ * (`formatPctMaybe`, com `v > 1 ? v : v * 100`) e por isso errava nos extremos de ambos os lados:
+ * margem abaixo de 1% virava "50%", margem negativa virava "−14322%", e fração acima de 1 saía
+ * com duas ordens de grandeza a menos.
  *
  * `null` → "—" (não medida), nunca "0%", que afirmaria margem nula apurada.
  */

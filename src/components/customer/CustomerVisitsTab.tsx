@@ -1,7 +1,7 @@
 import { Loader2 } from 'lucide-react';
 import { useCustomerVisits } from '@/hooks/useCustomerVisits';
 import { visitResultLabel, resumoVisitas } from '@/lib/visitas/visit-result';
-import { formatBRL, formatPctMaybe } from '@/components/customer360/format';
+import { formatBRL, formatarFracaoPct } from '@/components/customer360/format';
 
 const toneClass: Record<string, string> = {
   success: 'text-status-success',
@@ -36,7 +36,7 @@ export function CustomerVisitsTab({ customerId }: { customerId: string }) {
     <div className="space-y-3">
       <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground border-b pb-2">
         <span><strong className="text-foreground">{resumo.total}</strong> visita{resumo.total > 1 ? 's' : ''}</span>
-        <span>Conversão: <strong className="text-foreground">{formatPctMaybe(resumo.taxaConversao)}</strong></span>
+        <span>Conversão: <strong className="text-foreground">{formatarFracaoPct(resumo.taxaConversao)}</strong></span>
         <span>Receita: <strong className="text-foreground">{formatBRL(resumo.receitaTotal)}</strong></span>
       </div>
 

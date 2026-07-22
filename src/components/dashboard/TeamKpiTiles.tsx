@@ -10,7 +10,7 @@ import { Card } from '@/components/ui/card';
 import { Users, Briefcase, CalendarRange, type LucideIcon } from 'lucide-react';
 import { useTeamKpis } from '@/hooks/useTeamKpis';
 import { useCompany } from '@/contexts/CompanyContext';
-import { formatBRL, formatPctMaybe } from '@/components/customer360/format';
+import { formatBRL, formatarFracaoPct } from '@/components/customer360/format';
 
 function Tile({ icon: Icon, label, value, sub }: { icon: LucideIcon; label: string; value: string; sub?: ReactNode }) {
   return (
@@ -27,7 +27,7 @@ function Tile({ icon: Icon, label, value, sub }: { icon: LucideIcon; label: stri
 function trendMoM(v: number | null | undefined): ReactNode {
   if (v == null) return null;
   if (v === 0) return <div>= vs mês passado</div>;
-  const pct = formatPctMaybe(Math.abs(v));
+  const pct = formatarFracaoPct(Math.abs(v));
   const seta = v > 0 ? '▲' : '▼';
   const cor = v > 0 ? 'text-status-success' : 'text-status-error';
   return <div className={`${cor} font-medium`}>{seta} {pct} vs mês passado</div>;
