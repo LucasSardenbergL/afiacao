@@ -3,6 +3,8 @@
 #                              sabotagem: a expansao TEM de ser adiada, entao aspas simples e o
 #                              desenho, nao um descuido.
 # shellcheck disable=SC2329  # `cleanup` e invocada indiretamente, pelo `trap` (o shellcheck nao ve).
+# shellcheck disable=SC2034  # BASE_PASS e o contrato de saida desta task para a Task 4: a zona de
+#                              falsificacao que vai le-la ainda nao foi anexada a este arquivo.
 # ╔══════════════════════════════════════════════════════════════════════════════════════╗
 # ║  Fecha a ESCRITA em omie_products — prova PG17 de 20260727120000                      ║
 # ║   bash db/test-authz-preco-omie-products.sh > log 2>&1; echo "exit=$?"                ║
@@ -207,3 +209,50 @@ eq "B7 anon TEM SELECT antes"                          "$(Pq -c "SELECT has_tabl
 eq "B8 anon TEM UPDATE antes"                          "$(Pq -c "SELECT has_table_privilege('anon','public.omie_products','UPDATE');")" "t"
 eq "B9 existe 1 policy (a FOR ALL)"                    "$(Pq -c "SELECT count(*) FROM pg_policies WHERE schemaname='public' AND tablename='omie_products';")" "1"
 eq "B10 CONTROLE POSITIVO: service_role escreve"       "$(escreve_service 100)" "OK"
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ZONA 3 — APLICA A MIGRATION REAL (-f, nunca -c com heredoc)
+# ══════════════════════════════════════════════════════════════════════════════
+echo
+echo "=== ZONA 3: aplica 20260727120000 ==="
+P -q -f "$MIG" >/dev/null
+echo "  aplicada"
+P -q -f "$MIG" >/dev/null   # idempotencia: a 2a aplicacao nao pode abortar
+echo "  reaplicada (idempotente)"
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ZONA 4 — O FECHAMENTO
+# ══════════════════════════════════════════════════════════════════════════════
+echo
+echo "=== ZONA 4: pos-migration ==="
+# — catalogo —
+eq "A1 policy antiga morreu"        "$(Pq -c "SELECT count(*) FROM pg_policies WHERE schemaname='public' AND tablename='omie_products' AND policyname='Staff can manage products';")" "0"
+eq "A2 exatamente 1 policy"         "$(Pq -c "SELECT count(*) FROM pg_policies WHERE schemaname='public' AND tablename='omie_products';")" "1"
+eq "A2b e ela e FOR SELECT"         "$(Pq -c "SELECT cmd FROM pg_policies WHERE schemaname='public' AND tablename='omie_products';")" "SELECT"
+eq "A3 authenticated SEM TRUNCATE"  "$(Pq -c "SELECT has_table_privilege('authenticated','public.omie_products','TRUNCATE');")" "f"
+eq "A4a authenticated SEM UPDATE"   "$(Pq -c "SELECT has_table_privilege('authenticated','public.omie_products','UPDATE');")" "f"
+eq "A4b authenticated SEM INSERT"   "$(Pq -c "SELECT has_table_privilege('authenticated','public.omie_products','INSERT');")" "f"
+eq "A4c authenticated SEM DELETE"   "$(Pq -c "SELECT has_table_privilege('authenticated','public.omie_products','DELETE');")" "f"
+eq "A5a anon SEM SELECT"            "$(Pq -c "SELECT has_table_privilege('anon','public.omie_products','SELECT');")" "f"
+eq "A5b anon SEM TRUNCATE"          "$(Pq -c "SELECT has_table_privilege('anon','public.omie_products','TRUNCATE');")" "f"
+eq "A6 authenticated MANTEM SELECT (anti-tautologia)" "$(Pq -c "SELECT has_table_privilege('authenticated','public.omie_products','SELECT');")" "t"
+eq "A7a service_role MANTEM UPDATE" "$(Pq -c "SELECT has_table_privilege('service_role','public.omie_products','UPDATE');")" "t"
+eq "A7b service_role MANTEM INSERT" "$(Pq -c "SELECT has_table_privilege('service_role','public.omie_products','INSERT');")" "t"
+eq "A8 RLS habilitada"              "$(Pq -c "SELECT relrowsecurity FROM pg_class WHERE oid='public.omie_products'::regclass;")" "t"
+
+# — comportamento: e aqui que o fechamento se prova, nao no catalogo —
+echo "  --- comportamento ---"
+eq "A9 farmer NAO escreve mais (O FECHO)"  "$(escreve "$F" 111)"  "DENIED"
+eq "A10 master TAMBEM nao escreve (opcao (i) do spec, distingue da (ii))" "$(escreve "$M" 222)" "DENIED"
+eq "A11 farmer AINDA LE (leitura preservada)" "$(le "$F")"  "3"
+eq "A12 master AINDA LE"                      "$(le "$M")"  "3"
+eq "A13 customer segue sem ler"               "$(le "$CU")" "0"
+
+# — CONTROLE POSITIVO: sem isto, A9/A10 passariam num mundo onde NADA funciona —
+eq "A14 CONTROLE POSITIVO: service_role escreve a MESMA linha" "$(escreve_service 333)" "OK"
+eq "A14b e o valor mudou de verdade"  "$(Pq -c "SELECT valor_unitario::int FROM public.omie_products WHERE codigo='P1';")" "333"
+
+echo
+echo "=== BASELINE: ${PASS} OK / ${FAIL} FAIL ==="
+[ "$FAIL" -eq 0 ] || { echo "BASELINE VERMELHO -- nao faz sentido falsificar"; exit 1; }
+BASE_PASS=$PASS
