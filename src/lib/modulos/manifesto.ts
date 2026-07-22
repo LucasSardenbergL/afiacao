@@ -193,6 +193,7 @@ export const MODULOS: ModuloApp[] = [
       "src/hooks/__tests__/useReguaPreco.test.tsx",
       "src/hooks/__tests__/useReguaPreco360.test.tsx",
       "src/hooks/__tests__/useUnifiedOrder.accountGuard.test.ts",
+      "src/hooks/__tests__/cross-sell-escopo-sob-falha.test.tsx",
       "src/hooks/__tests__/leitoresObenProof.fatia3.test.ts",
       "src/pages/__tests__/SalesQuotes.accountGuard.test.tsx",
       "src/pages/__tests__/SalesQuotes.priceGuard.test.tsx",
@@ -277,6 +278,8 @@ export const MODULOS: ModuloApp[] = [
       "src/hooks/useDashboardLayout.ts",
     ],
     testes: [
+      "src/components/intelligence/__tests__/tabs-erro-honesto.test.tsx",
+      "src/hooks/__tests__/bundle-escopo-sob-falha.test.tsx",
       "src/hooks/__tests__/cluster-margin-cobertura.test.tsx",
       "src/hooks/__tests__/cluster-margin-paginacao.test.tsx",
       "src/hooks/__tests__/efficiency-margem-indisponivel.test.tsx",
