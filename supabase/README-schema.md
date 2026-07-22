@@ -50,24 +50,23 @@ Um `supabase db reset` a partir das migrations **quebra** (ex: `20260510235956` 
 
 ## Como re-gerar
 
-### Caminho preferido — `pg_dump` local via `psql-ro` (read-only; foi assim em 06-27 e 07-21)
-
-O dump é **leitura pura**, então sai pela credencial read-only, sem depender do chat. Exige `postgresql@17` do brew (já é pré-requisito do replay):
+### Caminho preferido — um comando
 
 ```bash
-env PGPASSFILE="$HOME/.config/afiacao/claude_ro.pgpass" \
-  /opt/homebrew/opt/postgresql@17/bin/pg_dump \
-  --schema-only --schema=public --schema=private --no-owner --no-privileges \
-  -f supabase/schema-snapshot.sql \
-  "host=aws-1-eu-west-1.pooler.supabase.com port=5432 dbname=postgres user=claude_ro.fzvklzpomgnyikkfkzai sslmode=require"
+bash db/refresh-snapshot.sh
 ```
 
-Leva ~10 min (o pooler é remoto; ele fica quieto boa parte do tempo — não é travamento). Depois, **os dois checks que valem**:
+O dump é **leitura pura** (`pg_dump --schema-only`), então sai pela credencial read-only (`claude_ro`) sem depender do chat do Lovable nem de escrita no banco. Leva ~12 min (o pooler é remoto e fica quieto boa parte do tempo — **não é travamento**). Pré-requisitos: `brew install postgresql@17 pgvector` + `~/.config/afiacao/claude_ro.pgpass`.
 
-1. **Paridade com o catálogo** — contar `CREATE TABLE|VIEW|FUNCTION|POLICY` no arquivo e comparar com `pg_class`/`pg_proc`/`pg_policies` via `psql-ro`. Tem de dar 0 faltando **e** 0 sobrando.
-2. **Replay** — `bash db/verify-snapshot-replay.sh` e exigir **`exit 0`** (`> log 2>&1; echo $?` — `| tail` engole o exit code).
+O script **só substitui `schema-snapshot.sql` depois de 3 provas passarem**, então dump ruim nunca entra:
 
-⚠️ Um `pg_dump` que termina íntegro fecha com `\unrestrict` na última linha; sem isso, o dump foi truncado.
+1. **Integridade** — dump não-vazio, >30k linhas, e terminando em `\unrestrict` (sem isso foi **truncado** — e um dump truncado restaura "com sucesso" até onde parou, que é o modo de falha perigoso).
+2. **Paridade objeto-a-objeto** contra o catálogo de prod (`pg_class`/`pg_proc`/`pg_policies`): tem de dar **0 faltando e 0 sobrando**. É o que pega o dump que restaura limpo mas está incompleto — ex.: perder `--schema=private` faria a matriz de authz sumir **sem nenhum erro de sintaxe**.
+3. **Replay** — `db/verify-snapshot-replay.sh` num PG17 descartável, rodado contra uma raiz temporária (o arquivo do repo ainda não foi tocado).
+
+`--dry-run` roda tudo menos instalar. Ao fim, o script imprime as contagens prontas para o manifest — mas **não edita o manifest**: ele é narrativa datada, e o valor está em alguém escrever o *porquê* do drift.
+
+⚠️ **Sempre revise o diff antes de commitar** (`git diff --stat supabase/schema-snapshot.sql`): objeto REMOVIDO em prod some do dump, e o diff do git é a revisão do drift.
 
 ### Alternativa — chat do Lovable
 
