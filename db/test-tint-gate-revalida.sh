@@ -238,7 +238,16 @@ INSERT INTO public.tint_formulas (id, account, cor_id, nome_cor, produto_id, bas
   -- elegibilidade de v_piso é ACOPLADA a v_tab.
   ('f0320000-0000-0000-0000-00000000005a','oben','K32','PISOZERO','a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000002','a0000000-0000-0000-0000-0000000000e1','5c000000-0000-0000-0000-000000000001','50000000-0000-0000-0000-00000000000a',NULL),
   ('f0320000-0000-0000-0000-000000000019','oben','K32','PISOZERO','a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000002','a0000000-0000-0000-0000-0000000000e1','0d000000-0000-0000-0000-000000000001','50000000-0000-0000-0000-00000000000a',0),
-  ('f0320000-0000-0000-0000-0000000000e0','oben','K32','PISOZERO','a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000002','a0000000-0000-0000-0000-0000000000e1',NULL,'50000000-0000-0000-0000-00000000000a',90);
+  ('f0320000-0000-0000-0000-0000000000e0','oben','K32','PISOZERO','a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000002','a0000000-0000-0000-0000-0000000000e1',NULL,'50000000-0000-0000-0000-00000000000a',90),
+  -- K33 PISOCEIL (Codex, achado 4): piso com CENTAVO, não inteiro. Todos os
+  -- outros seeds usam inteiros, então o ceil10 do piso nunca era exercitado —
+  -- um piso que ignorasse o arredondamento passaria verde em tudo.
+  --   rótulo = 60 → v_tab = 60 · piso bruto = 90.01 → v_piso = ceil(900.1)/10 = 90.1
+  -- O piso EFETIVO é 90.1, não 90.01: arredondar um piso para CIMA é a direção
+  -- conservadora, e a diferença de R$0,09 é exatamente o que o assert fixa.
+  ('f0330000-0000-0000-0000-00000000005a','oben','K33','PISOCEIL','a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000002','a0000000-0000-0000-0000-0000000000e1','5c000000-0000-0000-0000-000000000001','50000000-0000-0000-0000-00000000000a',NULL),
+  ('f0330000-0000-0000-0000-000000000019','oben','K33','PISOCEIL','a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000002','a0000000-0000-0000-0000-0000000000e1','0d000000-0000-0000-0000-000000000001','50000000-0000-0000-0000-00000000000a',60),
+  ('f0330000-0000-0000-0000-0000000000e0','oben','K33','PISOCEIL','a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000002','a0000000-0000-0000-0000-0000000000e1',NULL,'50000000-0000-0000-0000-00000000000a',90.01);
 
 INSERT INTO public.tint_formula_itens (formula_id, corante_id, ordem, qtd_ml) VALUES
   ('f1000000-0000-0000-0000-00000000005a','c0000000-0000-0000-0000-000000000001',1,10),
@@ -249,7 +258,8 @@ INSERT INTO public.tint_formula_itens (formula_id, corante_id, ordem, qtd_ml) VA
   -- personalizada ficam rank 3, então a canônica é a SL e a allowlist dispara.
   ('f0300000-0000-0000-0000-00000000005a','c0000000-0000-0000-0000-000000000001',1,10),
   ('f0310000-0000-0000-0000-00000000005a','c0000000-0000-0000-0000-000000000001',1,10),
-  ('f0320000-0000-0000-0000-00000000005a','c0000000-0000-0000-0000-000000000001',1,10);
+  ('f0320000-0000-0000-0000-00000000005a','c0000000-0000-0000-0000-000000000001',1,10),
+  ('f0330000-0000-0000-0000-00000000005a','c0000000-0000-0000-0000-000000000001',1,10);
 
 INSERT INTO public.sales_orders (id, customer_user_id, created_by, account, status, omie_pedido_id, created_at, subtotal, total, items) VALUES
   ('a5000000-0000-0000-0000-00000000000a','33333333-3333-3333-3333-333333333333','11111111-1111-1111-1111-111111111111','oben','faturado', 111, now() - interval '10 days', 95, 95,
@@ -283,10 +293,11 @@ gq() { Pq -c "$1" | tail -1; }
 
 echo ""
 echo "════════ G0 — pré-condição do seed ════════"
-# 12 desde os seeds K30/K31/K32 (separação rótulo×piso, 2026-07-21): +3 de K30
-# (SL + geração '1' + personalizada), +2 de K31 (SL + personalizada) e +3 de K32
-# (SL + geração '1' com CSV ZERO + personalizada — o achado P1 do Codex).
-eq "G0a fórmulas semeadas" "$(gq 'SELECT count(*) FROM public.tint_formulas;')" "12"
+# 15 desde os seeds K30-K33 (separação rótulo×piso, 2026-07-21): +3 de K30
+# (SL + geração '1' + personalizada), +2 de K31 (SL + personalizada), +3 de K32
+# (SL + geração '1' com CSV ZERO + personalizada — achado P1 do Codex) e +3 de
+# K33 (piso com centavo, exercita o ceil10 — achado 4 do Codex).
+eq "G0a fórmulas semeadas" "$(gq 'SELECT count(*) FROM public.tint_formulas;')" "15"
 eq "G0b pedidos semeados"  "$(gq 'SELECT count(*) FROM public.sales_orders;')" "9"
 eq "G0c canônica de K1 é a SL" "$(gq "SELECT id::text FROM public.v_tint_formula_canonica WHERE cor_id='K1';")" "f1000000-0000-0000-0000-00000000005a"
 eq "G0d calc de K1 (ceil10 via float8) = 102.5" "$(gq "SELECT (ceil(((public.get_tint_price('f1000000-0000-0000-0000-00000000005a'))->>'precoFinal')::float8 * 10) / 10)::text;")" "102.5"
@@ -579,6 +590,23 @@ BEGIN
        WHERE nsp.nspname = 'public' AND p.proname = 'tint_gate_revalida') <> 2 THEN
     RAISE EXCEPTION 'G35 FALHOU: v_floor nao usa o piso nos 2 ramos (manual + legado) — um deles regrediu para v_tab';
   END IF;
+
+  -- G36 (Codex, achado 4) ceil10 SOBRE O PISO, com centavo. K33 tem piso bruto
+  -- 90.01; o piso EFETIVO é ceil(90.01*10)/10 = 90.1. Todos os outros seeds usam
+  -- inteiros, então este é o único que distingue "aplicou o ceil10 no piso" de
+  -- "usou o valor bruto" — sem ele, um piso sem arredondamento passava verde.
+  r := public.tint_gate_revalida('oben', cliente, so_empty, 'criacao',
+    '[{"omie_codigo_produto":900001,"tint_cor_id":"K33","valor_unitario":90.05,"tint_price_source":"manual"}]');
+  b := r->'bloqueios'->0;
+  IF (r->>'ok')::boolean IS DISTINCT FROM false OR b->>'motivo' IS DISTINCT FROM 'preco_obsoleto' THEN
+    RAISE EXCEPTION 'G36a FALHOU: manual 90.05 < piso 90.1 (ceil10 de 90.01) deveria bloquear: %', r; END IF;
+  IF (b->>'esperado_minimo')::float8 IS DISTINCT FROM 90.1::float8 THEN
+    RAISE EXCEPTION 'G36b FALHOU: piso deveria ser 90.1 (ceil10), veio % — se veio 90.01, o arredondamento NAO foi aplicado no caminho do piso', b->>'esperado_minimo'; END IF;
+  -- e exatamente no piso passa (a tolerância de centavo não vira fricção)
+  r := public.tint_gate_revalida('oben', cliente, so_empty, 'criacao',
+    '[{"omie_codigo_produto":900001,"tint_cor_id":"K33","valor_unitario":90.1,"tint_price_source":"manual"}]');
+  IF (r->>'ok')::boolean IS DISTINCT FROM true THEN
+    RAISE EXCEPTION 'G36c FALHOU: manual 90.1 (exatamente o piso) deveria passar: %', r; END IF;
 
   RAISE NOTICE 'CENTRAL_OK';
 END $$;
@@ -926,6 +954,25 @@ case "$OUT" in
   *CENTRAL_OK*)
     bad "F13 NÃO pegou: mutar SÓ o ramo legado ficou verde — G35 está sem dente" ;;
   *) bad "F13 caiu de forma inesperada: $(printf '%s' "$OUT" | tr '\n' ' ' | cut -c1-200)" ;;
+esac
+restore_gate
+
+echo ""
+echo "════════ F14 — sabotagem: piso SEM o ceil10 (usa o valor bruto) ════════"
+# O contador de ✅ é do nível bash e o G36 vive DENTRO do run_central — então o
+# número não prova que ele rodou. Esta sabotagem prova. Só K33 (piso 90.01)
+# distingue: para pisos inteiros ceil10(x)=x e nada muda.
+TMP_SAB="$(mktemp "${TMPDIR:-/tmp}/sab-f14.XXXXXX.sql")"
+sed 's|ceil((v_can_piso)::float8 \* 10) / 10|(v_can_piso)::float8|' "$MIG_PISO" > "$TMP_SAB"
+P -q -f "$TMP_SAB" >/dev/null
+rm -f "$TMP_SAB"
+OUT="$(run_central)"
+case "$OUT" in
+  *"G36 FALHOU"*|*"G36a FALHOU"*|*"G36b FALHOU"*)
+    ok "F14 pegou a sabotagem: sem o ceil10 o piso ficou 90.01 e o manual 90.05 passou" ;;
+  *CENTRAL_OK*)
+    bad "F14 NÃO pegou: bloco central VERDE sem o ceil10 do piso — G36 está sem dente (ou nem roda)" ;;
+  *) bad "F14 caiu de forma inesperada: $(printf '%s' "$OUT" | tr '\n' ' ' | cut -c1-200)" ;;
 esac
 restore_gate
 
