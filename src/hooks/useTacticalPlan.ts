@@ -450,19 +450,12 @@ export const useTacticalPlan = () => {
       // paginação pula e repete linha entre páginas.
       let clusterMargin: number | null = null;
       {
-        // O `error` vira THROW aqui de propósito. `fetchAllPages` só desestrutura `data`: uma
-        // página que falha devolve `data: null`, que vira `[]`, que satisfaz
-        // `linhas.length < POSTGREST_PAGE_SIZE` e ENCERRA o loop como se a tabela tivesse
-        // acabado. O acumulado das páginas anteriores viraria a régua — numericamente
-        // indistinguível de uma carteira que de fato tem aquele tamanho.
-        // Paginar (que este caller já faz) resolve o cap dos 1.000, não a falha no meio: o
-        // farmer de 3.858 clientes que perde a 3ª página é julgado contra 2.000 pares.
-        // A régua decide entre `upsell_premium` e `consolidacao_margem`, entra no prompt da
-        // IA e fica gravada no plano — falhar alto é a única leitura honesta.
-        // O contrato do helper tem o mesmo furo para os outros 11 callers money-path (três
-        // carregam `product_costs`, onde página perdida vira "SKU sem custo" e INFLA margem);
-        // corrigi-lo mexe em 12 caminhos e reverte um teste que canoniza `data:null` como EOF
-        // (`postgrest.test.ts:360`) ⇒ follow-up com revisão isolada.
+        // Falha de página REJEITA — garantido pelo contrato de `fetchAllPages`, não por guard
+        // local (o guard que vivia aqui virou redundante quando o helper passou a exigir
+        // `error` e falhar alto; duas camadas fazendo a mesma coisa só escondem qual vale).
+        // Importa especialmente aqui: a régua decide entre `upsell_premium` e
+        // `consolidacao_margem`, entra no prompt da IA e fica gravada no plano — um cluster
+        // calculado sobre páginas faltantes troca o VEREDITO de forma plausível e silenciosa.
         const peers = await fetchAllPages<Pick<ClientScoreFull, 'gross_margin_pct'>>((de, ate) =>
           supabase
             .from('farmer_client_scores')
@@ -470,11 +463,10 @@ export const useTacticalPlan = () => {
             .eq('farmer_id', ownerId)
             .neq('customer_user_id', customerId)
             .order('customer_user_id', { ascending: true })
-            .range(de, ate)
-            .then(({ data, error }) => {
-              if (error) throw error;
-              return { data: data as unknown as Pick<ClientScoreFull, 'gross_margin_pct'>[] | null };
-            }),
+            .range(de, ate) as unknown as PromiseLike<{
+            data: Pick<ClientScoreFull, 'gross_margin_pct'>[] | null;
+            error: unknown;
+          }>,
         );
         clusterMargin = mediaMargensConhecidas(peers.map((r) => r.gross_margin_pct));
       }

@@ -121,25 +121,51 @@ export const POSTGREST_PAGE_SIZE = 1000;
  * ordenação definida o Postgres não garante a mesma sequência entre requests, e a
  * paginação pode repetir ou pular linhas.
  *
+ * FALHA DE PÁGINA REJEITA — página perdida ≠ fim da tabela. Paginar cura a capa de 1.000,
+ * NÃO a falha no meio: uma página que falha (timeout 57014, RLS, 500) devolve
+ * `{ data: null, error }`, e tratar isso como "acabou" devolveria o acumulado parcial como
+ * se fosse a tabela inteira — o MESMO defeito de leitura parcial silenciosa que este helper
+ * existe pra evitar, reintroduzido por outra via. Um farmer de 3.858 clientes que perde a 3ª
+ * página fica com 2.000, indistinguível de uma carteira que de fato tem 2.000; nos callers de
+ * `product_costs` a página perdida vira "SKU sem custo", que INFLA margem. Por isso o `error`
+ * é OBRIGATÓRIO no contrato: sem ele o caller não tem como detectar (era o furo original).
+ * Fim legítimo da tabela é `data: []` sem erro — só isso encerra o loop.
+ *
  * ```ts
  * const custos = await fetchAllPages<CostRow>((de, ate) =>
  *   supabase.from('product_costs').select('product_id, cost_final')
  *     .order('product_id', { ascending: true }).range(de, ate) as unknown as
- *       PromiseLike<{ data: CostRow[] | null }>,
+ *       PromiseLike<{ data: CostRow[] | null; error: unknown }>,
  * );
  * ```
  */
 export async function fetchAllPages<T>(
-  buscarPagina: (de: number, ate: number) => PromiseLike<{ data: T[] | null }>,
+  buscarPagina: (de: number, ate: number) => PromiseLike<{ data: T[] | null; error: unknown }>,
 ): Promise<T[]> {
   const todas: T[] = [];
   for (let pagina = 0; ; pagina++) {
-    const { data } = await buscarPagina(
-      pagina * POSTGREST_PAGE_SIZE,
-      (pagina + 1) * POSTGREST_PAGE_SIZE - 1,
-    );
-    const linhas = data ?? [];
-    todas.push(...linhas);
-    if (linhas.length < POSTGREST_PAGE_SIZE) return todas;
+    const de = pagina * POSTGREST_PAGE_SIZE;
+    const ate = (pagina + 1) * POSTGREST_PAGE_SIZE - 1;
+    const { data, error } = await buscarPagina(de, ate);
+    // Falhar alto é a única leitura honesta: o caller escolhe o fallback, mas não pode ser
+    // enganado por um total plausível. `data: null` sem `error` é resposta malformada — o
+    // único sinal legítimo de fim é `data: []`.
+    if (error != null) throw comCausa(`fetchAllPages: página ${pagina} (${de}-${ate}) falhou`, error);
+    if (data == null) {
+      throw comCausa(`fetchAllPages: página ${pagina} (${de}-${ate}) devolveu data null sem error`, error);
+    }
+    todas.push(...data);
+    if (data.length < POSTGREST_PAGE_SIZE) return todas;
   }
+}
+
+/**
+ * `new Error(msg, { cause })` é ES2022 e o projeto compila com `lib: ES2020` — atribuir a
+ * propriedade preserva a causa (o erro original do PostgREST: code/message) sem mexer no
+ * target global. Sem ela o incidente chega como "deu erro", sem dizer QUAL fatia sumiu.
+ */
+function comCausa(mensagem: string, causa: unknown): Error {
+  const erro = new Error(mensagem) as Error & { cause?: unknown };
+  erro.cause = causa;
+  return erro;
 }

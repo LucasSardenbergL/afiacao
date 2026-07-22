@@ -35,7 +35,7 @@ function IntelligenceManagerialTabImpl() {
           .from('farmer_client_scores')
           .select('customer_user_id, farmer_id, health_score, health_class, gross_margin_pct, category_count, sales_history_status')
           .order('customer_user_id', { ascending: true })
-          .range(de, ate) as unknown as PromiseLike<{ data: ScoreLinha[] | null }>,
+          .range(de, ate) as unknown as PromiseLike<{ data: ScoreLinha[] | null; error: unknown }>,
       ),
   });
 

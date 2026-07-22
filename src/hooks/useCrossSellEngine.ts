@@ -164,7 +164,7 @@ export const useCrossSellEngine = () => {
           .select('id, codigo, descricao, valor_unitario, metadata, ativo, omie_codigo_produto, estoque')
           .eq('ativo', true)
           .order('id', { ascending: true })
-          .range(de, ate) as unknown as PromiseLike<{ data: ProductRow[] | null }>,
+          .range(de, ate) as unknown as PromiseLike<{ data: ProductRow[] | null; error: unknown }>,
       );
 
       const productCosts = await fetchAllPages<ProductCostRow>((de, ate) =>
@@ -172,7 +172,7 @@ export const useCrossSellEngine = () => {
           .from('product_costs')
           .select('product_id, cost_final, cost_price')
           .order('product_id', { ascending: true })
-          .range(de, ate) as unknown as PromiseLike<{ data: ProductCostRow[] | null }>,
+          .range(de, ate) as unknown as PromiseLike<{ data: ProductCostRow[] | null; error: unknown }>,
       );
 
       const costMap = new Map<string, number>();
