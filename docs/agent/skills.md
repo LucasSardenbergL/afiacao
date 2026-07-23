@@ -31,6 +31,7 @@
 | QA da app rodando | `/qa` (report+fix) / `/qa-only` (report) — gstack | |
 | Navegar/testar no browser | **`/browse`** (gstack) | não `mcp__Claude_in_Chrome__*` |
 | TDD ao escrever | `test-driven-development` (superpowers) | |
+| Corrigiu bug que é INSTÂNCIA de padrão repetível ("Nº laço", fix quase idêntico a anterior, série no git log) | **`matar-classe`** (proprietária) — passo 0 do PR de bugfix (instância ou classe?); assinatura grepável → varredura do repo INTEIRO → erradicação → gate estrutural falsificado → registro | nasce do catálogo de retrabalho 2026-07 (paginação: ~20 PRs da MESMA classe). Fix pontual pode sair 1º; varredura+gate na MESMA sessão ou chip com dono |
 | Fechar sessão ("posso excluir?") | **`/fecho`** (proprietária) — PRs×CI, migrations×psql-ro, edges/Publish, chips, wt:status | veredito por EVIDÊNCIA, não memória |
 | Continuar em sessão nova / split no 2º compact | **`/handoff-sessao`** (proprietária) — briefing determinístico, 1 entrega = 1 sessão | não usar `/context-restore` (pode pegar save de OUTRA sessão) |
 | Ingerir CSV de base pública BR (RAIS/CNO/Receita/CNPJ) com DuckDB | receituário **`docs/agent/csv-governo-br.md`** | encoding CP1252/latin-1 + `delim=';'` + `quote=''` + `parallel=false` + `all_varchar` |
