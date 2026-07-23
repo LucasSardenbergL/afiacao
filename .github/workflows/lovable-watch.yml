@@ -23,7 +23,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          fetch-depth: 2 # precisa de HEAD^ p/ o diff do commit
+          fetch-depth: 300 # HEAD^ p/ o diff + histórico p/ o scan de reversão (merges de 48h)
 
       - name: Detecta commit-direto tocando path sensível
         id: scan
@@ -51,6 +51,65 @@ jobs:
             printf '%s\n' "$hit"
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
+
+      # O scan genérico acima diz "tocou path sensível"; este responde a pergunta cara:
+      # o commit direto REMOVEU linha que um merge de PR das últimas 48h ADICIONOU?
+      # Lógica testável fora do CI: scripts/lovable-revert-scan.sh (+ test-lovable-revert-scan.sh).
+      - name: Detecta reversão de merge recente (prova por linhas)
+        id: revert
+        if: steps.scan.outputs.sensivel == 'true'
+        run: |
+          set -euo pipefail
+          out="$(bash scripts/lovable-revert-scan.sh HEAD)"
+          if [ -n "$out" ]; then
+            echo "reversao=true" >> "$GITHUB_OUTPUT"
+            {
+              echo "relatorio<<EOF"
+              printf '%s\n' "$out"
+              echo "EOF"
+            } >> "$GITHUB_OUTPUT"
+          else
+            echo "reversao=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Alerta escalado → Issue de REVERSÃO provada
+        if: steps.revert.outputs.reversao == 'true'
+        uses: actions/github-script@v7
+        env:
+          RELATORIO: ${{ steps.revert.outputs.relatorio }}
+        with:
+          script: |
+            const owner = context.repo.owner, repo = context.repo.repo;
+            const sha = context.sha.slice(0, 8);
+            const head = context.payload.head_commit || {};
+            const msg = (head.message || '').split('\n')[0];
+            const commitUrl = `${context.serverUrl}/${owner}/${repo}/commit/${context.sha}`;
+            const relatorio = (process.env.RELATORIO || '').trim();
+            const label = 'lovable-reverted-merge';
+            try {
+              await github.rest.issues.createLabel({ owner, repo, name: label, color: 'd73a4a', description: 'Commit direto REMOVEU linhas que um merge recente adicionou (reversão provada por linha)' });
+            } catch (e) { /* label já existe */ }
+            const body = [
+              '🔴 **Provável REVERSÃO do Lovable: o commit direto removeu linhas que um merge RECENTE tinha adicionado.**',
+              '',
+              `- Commit do bot: [\`${sha}\`](${commitUrl}) — ${msg}`,
+              '- Prova (linha a linha, por arquivo × PR revertido):',
+              '```',
+              relatorio,
+              '```',
+              '',
+              '**Restauração rápida** (docs/agent/deploy.md — nunca direto na main):',
+              '```',
+              'git checkout <sha-do-merge-listado-acima> -- <arquivo>',
+              '# abrir PR (auto-merge no verde); depois re-deployar a edge se aplicável',
+              '```',
+            ].join('\n');
+            const open = await github.rest.issues.listForRepo({ owner, repo, state: 'open', labels: label, per_page: 1 });
+            if (open.data.length > 0) {
+              await github.rest.issues.createComment({ owner, repo, issue_number: open.data[0].number, body });
+            } else {
+              await github.rest.issues.create({ owner, repo, title: '🔴 Reversão provada: commit direto desfez merge recente', body, labels: [label] });
+            }
 
       - name: Alerta → GitHub Issue
         if: steps.scan.outputs.sensivel == 'true'
