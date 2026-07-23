@@ -242,6 +242,11 @@ eq "A5b anon SEM TRUNCATE"          "$(Pq -c "SELECT has_table_privilege('anon',
 eq "A5c anon SEM INSERT"            "$(Pq -c "SELECT has_table_privilege('anon','public.omie_products','INSERT');")" "f"
 eq "A5d anon SEM UPDATE"            "$(Pq -c "SELECT has_table_privilege('anon','public.omie_products','UPDATE');")" "f"
 eq "A5e anon SEM DELETE"            "$(Pq -c "SELECT has_table_privilege('anon','public.omie_products','DELETE');")" "f"
+# o stub da ZONA 1 concede os 8 privilegios (arwdDxtm real de prod) tambem a anon — A5a-A5e so
+# cobriam 5; fecha os 3 que faltavam pra provar que o REVOKE ALL tirou TODOS de anon tambem
+eq "A5f anon SEM REFERENCES"        "$(Pq -c "SELECT has_table_privilege('anon','public.omie_products','REFERENCES');")" "f"
+eq "A5g anon SEM TRIGGER"           "$(Pq -c "SELECT has_table_privilege('anon','public.omie_products','TRIGGER');")" "f"
+eq "A5h anon SEM MAINTAIN"          "$(Pq -c "SELECT has_table_privilege('anon','public.omie_products','MAINTAIN');")" "f"
 eq "A6 authenticated MANTEM SELECT (anti-tautologia)" "$(Pq -c "SELECT has_table_privilege('authenticated','public.omie_products','SELECT');")" "t"
 eq "A7a service_role MANTEM UPDATE" "$(Pq -c "SELECT has_table_privilege('service_role','public.omie_products','UPDATE');")" "t"
 eq "A7b service_role MANTEM INSERT" "$(Pq -c "SELECT has_table_privilege('service_role','public.omie_products','INSERT');")" "t"
@@ -372,19 +377,6 @@ restaura_policy_canonica() {
   " >/dev/null
 }
 
-# V2/V3: nao ha UM campo especifico pra apontar (a sabotagem pode derrubar mais de um) -- a
-# exigencia e "pelo menos 1 campo veio f". Se NENHUM vier, e FURO REAL do validador: conta
-# como FAIL (nunca como falsificacao bem-sucedida) e imprime a linha inteira pra nao esconder.
-falsifica_algum() { # $1=nome  $2=sql da sabotagem
-  local linha
-  P -q -c "$2" >/dev/null 2>&1 || { echo "  FAIL [$1] a sabotagem nem aplicou"; FAIL=$((FAIL+1)); return; }
-  linha="$(valida_linha)"
-  case "$linha" in
-    *f*) echo "  OK   [$1] pelo menos 1 check reprovou (linha: $linha)"; FALS=$((FALS+1)) ;;
-    *)   echo "  FAIL [$1] FURO REAL: nenhum check reprovou -- o validador NAO detecta este mundo falso-verde (linha: $linha)"; FAIL=$((FAIL+1)) ;;
-  esac
-}
-
 echo "  --- V1: qual adulterado (OR true na policy) -- c4 tem de cair ---"
 falsifica "V1 qual adulterado (OR true): c4 tem de cair" \
   "DROP POLICY omie_products_select_staff ON public.omie_products;
@@ -396,23 +388,25 @@ falsifica "V1 qual adulterado (OR true): c4 tem de cair" \
 P -q -f "$MIG" >/dev/null
 eq "V1b validador volta a 100% (reaplicando a migration real)" "$(valida_linha)" "$ESPERADO_BOM"
 
-echo "  --- V2: policy correta, NOME diferente (omie_products_select_staff_x) ---"
-falsifica_algum "V2 nome diferente" \
+echo "  --- V2: policy correta, NOME diferente (omie_products_select_staff_x) -- c13 tem de cair ---"
+falsifica "V2 nome diferente: c13 tem de cair" \
   "DROP POLICY omie_products_select_staff ON public.omie_products;
    CREATE POLICY omie_products_select_staff_x ON public.omie_products
      FOR SELECT TO authenticated
      USING ((SELECT (public.has_role((SELECT auth.uid()), 'master'::public.app_role)
-                  OR public.has_role((SELECT auth.uid()), 'employee'::public.app_role))));"
+                  OR public.has_role((SELECT auth.uid()), 'employee'::public.app_role))));" \
+  'campo 13' "f"
 restaura_policy_canonica
 eq "V2b validador volta a 100% (policy canonica recriada)" "$(valida_linha)" "$ESPERADO_BOM"
 
-echo "  --- V3: policy correta, TO service_role em vez de TO authenticated ---"
-falsifica_algum "V3 TO service_role" \
+echo "  --- V3: policy correta, TO service_role em vez de TO authenticated -- c14 tem de cair ---"
+falsifica "V3 TO service_role: c14 tem de cair" \
   "DROP POLICY omie_products_select_staff ON public.omie_products;
    CREATE POLICY omie_products_select_staff ON public.omie_products
      FOR SELECT TO service_role
      USING ((SELECT (public.has_role((SELECT auth.uid()), 'master'::public.app_role)
-                  OR public.has_role((SELECT auth.uid()), 'employee'::public.app_role))));"
+                  OR public.has_role((SELECT auth.uid()), 'employee'::public.app_role))));" \
+  'campo 14' "f"
 restaura_policy_canonica
 eq "V3b validador volta a 100% (policy canonica recriada)" "$(valida_linha)" "$ESPERADO_BOM"
 

@@ -77,4 +77,13 @@ SELECT
   -- anon so tinha SELECT/TRUNCATE checados (c9) — INSERT/UPDATE/DELETE ficavam sem prova
   NOT has_table_privilege('anon','public.omie_products','INSERT')                      AS c20_anon_sem_insert,
   NOT has_table_privilege('anon','public.omie_products','UPDATE')                      AS c21_anon_sem_update,
-  NOT has_table_privilege('anon','public.omie_products','DELETE')                      AS c22_anon_sem_delete;
+  NOT has_table_privilege('anon','public.omie_products','DELETE')                      AS c22_anon_sem_delete,
+
+  -- REFERENCES/TRIGGER/MAINTAIN completam os 8 privilegios do REVOKE ALL tambem p/ anon — c9
+  -- so cobria SELECT/TRUNCATE (c17-c19 fecharam os 8 so pra authenticated). Sem estes 3,
+  -- GRANT TRIGGER ON omie_products TO anon passava com os 22 checks antigos inteiros verdes
+  -- (achado do Codex, revisao adversarial rodada 2, 2026-07-22): contradiz o proprio
+  -- c9_anon_zerado e deixa o REVOKE ALL provado so pela metade.
+  NOT has_table_privilege('anon','public.omie_products','REFERENCES')                  AS c23_anon_sem_references,
+  NOT has_table_privilege('anon','public.omie_products','TRIGGER')                     AS c24_anon_sem_trigger,
+  NOT has_table_privilege('anon','public.omie_products','MAINTAIN')                    AS c25_anon_sem_maintain;
