@@ -29,23 +29,21 @@ export interface ErroRpc {
  * Os dois códigos: `42883` = undefined_function do Postgres; `PGRST202` = o PostgREST não achou a
  * função no schema cache (o que o supabase-js devolve quando a RPC não existe ou o cache está velho).
  */
-export function leaseIndisponivel(erro: ErroRpc | null | undefined, nomeFuncao?: string): boolean {
+export function leaseIndisponivel(erro: ErroRpc | null | undefined): boolean {
   if (erro == null) return false;
   const codigo = typeof erro.code === 'string' ? erro.code : '';
-  // Com código, o diagnóstico é inequívoco: 42883 é undefined_function do Postgres e PGRST202 é
-  // "função não encontrada" do PostgREST. Não precisam da mensagem.
-  if (codigo === '42883' || codigo === 'PGRST202') return true;
-
-  const msg = typeof erro.message === 'string' ? erro.message : '';
-  if (msg === '') return false;
-
-  // Ramo SEM código — o frouxo, e o único que precisa de aperto. `does not exist` aparece em erros
-  // de OUTROS objetos: "relation \"sync_state\" does not exist" é um problema GRAVE e diferente
-  // (a tabela do lease sumiu), e lê-lo como "migration ainda não aplicada" faria a edge seguir
-  // fail-open sobre um banco quebrado. Por isso, quando o caller informa `nomeFuncao`, a mensagem
-  // tem de citar A FUNÇÃO — não basta a frase genérica.
-  // NÃO casar 'schema cache' solto: o PostgREST usa a expressão em erros de coluna/relação também.
-  const frase = /(does not exist|could not find the function)/i.test(msg);
-  if (!frase) return false;
-  return nomeFuncao ? msg.includes(nomeFuncao) : true;
+  // SÓ código, ZERO heurística de mensagem. `42883` é `undefined_function` do Postgres e `PGRST202`
+  // é "função não encontrada" do PostgREST — juntos cobrem os casos canônicos de RPC ausente, e
+  // ambos são inequívocos.
+  //
+  // Por que NÃO casar a mensagem (challenge /codex, convergindo com o auto-challenge): `does not
+  // exist` aparece em erros de OUTROS objetos — `42P01 relation "sync_state" does not exist`,
+  // `42703 column ... does not exist`. Qualquer um deles casaria a frase e faria a edge seguir
+  // fail-open sobre um banco quebrado, reintroduzindo exatamente a corrupção que o lease fecha.
+  // Um primeiro aperto (exigir que a mensagem citasse a própria função) reduzia o falso positivo
+  // mas mantinha a heurística; o Codex foi além e recomendou eliminá-la, e ele está certo: num
+  // predicado que decide entre "proteger" e "não proteger", heurística de texto é o lado errado da
+  // troca. Erro sem `code` reconhecível → false → o caller LANÇA. Fail-closed é o default correto:
+  // não rodar é recuperável (o próximo cron converge), rodar sem exclusão não é.
+  return codigo === '42883' || codigo === 'PGRST202';
 }

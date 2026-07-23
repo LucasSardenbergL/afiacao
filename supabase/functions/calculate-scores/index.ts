@@ -333,10 +333,9 @@ Deno.serve(async (req) => {
       // comportamento de hoje (nada piora), e o aviso vai no log E na resposta — fail-open
       // DECLARADO, nunca silencioso. Qualquer OUTRO erro é fail-closed: o lease existe e está
       // quebrado, e aí não dá para confiar na exclusão.
-      // O 2º argumento aperta o ramo sem código: exige que a mensagem cite ESTA função. Sem ele,
-      // `relation "sync_state" does not exist` — a tabela do lease sumida, problema grave e outro —
-      // seria lido como "migration ainda não aplicada" e a edge seguiria fail-open sobre banco quebrado.
-      if (!leaseIndisponivel(claimErr, 'claim_calculate_scores')) {
+      // leaseIndisponivel olha SÓ o código do erro (42883/PGRST202) — zero heurística de mensagem.
+      // Erro de rede, timeout, permissão, tabela ausente: tudo cai aqui e LANÇA (fail-closed).
+      if (!leaseIndisponivel(claimErr)) {
         throw new Error(`claim_calculate_scores falhou: ${claimErr.message}`);
       }
       leaseAviso = 'lease indisponivel (migration 20260728120001 ainda nao aplicada) — run SEM exclusao mutua';
