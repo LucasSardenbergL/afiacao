@@ -1,5 +1,6 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
+import { leaseIndisponivel } from "../_shared/lease.ts";
 
 const ALLOWED_ORIGIN = Deno.env.get("ALLOWED_ORIGIN") || "*";
 
@@ -292,15 +293,65 @@ Deno.serve(async (req) => {
   const auth = await authorizeCronOrStaff(req);
   if (!auth.ok) return auth.response;
 
+  // ── Service client for privileged operations ──
+  // FORA do try: o finally precisa dele p/ liberar o lease mesmo quando o corpo lança.
+  const supabase = createClient(
+    Deno.env.get('SUPABASE_URL')!,
+    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+  );
+
+  // ═══ LEASE (anti-sobreposição) ═══════════════════════════════════════════════════════════════
+  // O payload de apply_score_updates é montado a partir do SNAPSHOT lido no INÍCIO do run e enviado
+  // no FIM. Sem exclusão mútua, dois runs sobrepostos causam last-writer-wins: um run com
+  // marginRefreshFatal (overlay pulado) carrega o snapshot VELHO e, terminando DEPOIS de um run
+  // saudável, RESTAURA margem/cobertura/recência velhas. Vale p/ gross_margin_pct, m_score,
+  // itens_com_custo/sem_custo, days_since_last_purchase, avg_monthly_spend_180d, category_count e
+  // health_score/churn_risk derivados. Achado do challenge /codex 2026-07-22.
+  //
+  // ⚠️ O caso ruim é AUTO-AGRAVANTE: a falha típica da RPC de margem é TIMEOUT, e o run que dá
+  // timeout é o MAIS LENTO — "o degradado termina depois do saudável" é o desfecho ESPERADO.
+  //
+  // Vias concorrentes reais (medidas em prod 2026-07-23): cron diário 06:00, retry após o corte de
+  // 150s do net.http_post (a edge SEGUE VIVA depois dele), e o botão manual de staff em
+  // IntelligenceDashboard — que já disparou 2 runs em 17min (2026-07-21).
+  //
+  // pg_advisory_lock NÃO serve: o pool do PostgREST não dá afinidade de conexão (o lock vaza/solta
+  // em conexão reciclada) e o lease precisa atravessar N chamadas HTTP. Lease row-based é o padrão
+  // do repo (migration 20260713160000, carteira-rebuild).
+  const runId = crypto.randomUUID();
+  let leaseAdquirido = false;
+  let leaseStatusFinal: 'complete' | 'error' = 'error';
+  let leaseAviso: string | null = null;
+
   try {
+    const { data: claimed, error: claimErr } = await supabase.rpc('claim_calculate_scores', { p_run_id: runId });
+    if (claimErr) {
+      // ORDEM DE DEPLOY (Lovable publica edge e migration SEPARADAMENTE, em qualquer ordem): se a
+      // edge nova subir ANTES da migration, a função não existe (42883/PGRST202). Tratar isso como
+      // fatal transformaria a janela entre as duas publicações em CRON QUEBRADO — a armadilha que a
+      // migration 20260723160000 documenta. Nesse caso ÚNICO seguimos SEM lease: é exatamente o
+      // comportamento de hoje (nada piora), e o aviso vai no log E na resposta — fail-open
+      // DECLARADO, nunca silencioso. Qualquer OUTRO erro é fail-closed: o lease existe e está
+      // quebrado, e aí não dá para confiar na exclusão.
+      if (!leaseIndisponivel(claimErr)) throw new Error(`claim_calculate_scores falhou: ${claimErr.message}`);
+      leaseAviso = 'lease indisponivel (migration 20260728120001 ainda nao aplicada) — run SEM exclusao mutua';
+      console.warn(`[calculate-scores] ${leaseAviso}`);
+    } else if (claimed !== true) {
+      // Já há run em andamento. PULA — idempotente: o próximo cron converge. NÃO é falha (200), mas
+      // a resposta diz explicitamente que nada foi recalculado, p/ o chamador (e o botão manual da
+      // staff) não ler "sucesso" como "recalculou".
+      console.warn(`[calculate-scores] lease ocupado — outro run em andamento; pulando (run_id=${runId}).`);
+      return new Response(JSON.stringify({
+        skipped: true,
+        reason: 'lease_ocupado',
+        message: 'Recálculo já em andamento — este disparo foi ignorado. Os scores não foram alterados.',
+      }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    } else {
+      leaseAdquirido = true;
+    }
+
     // ANTI-DRIFT (carteira-Omie Opção A): farmer_id do score = carteira_assignments.owner_user_id.
     // NUNCA seedar/atribuir score por atividade (farmer_calls/route_visits).
-
-    // ── Service client for privileged operations ──
-    const supabase = createClient(
-      Deno.env.get('SUPABASE_URL')!,
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-    );
 
     // Load configurable weights
     const { data: configRows } = await supabase
@@ -354,9 +405,15 @@ Deno.serve(async (req) => {
       const sz = 1000;
       let more = true;
       while (more) {
+        // `.order('id')` NÃO é decorativo: sem ORDER BY explícito o Postgres não garante ordem entre
+        // páginas, então o fatiamento por .range() pode REPETIR uma linha e OMITIR outra — e a
+        // omitida sai do recompute inteiro (fica com o score do dia anterior, sem nenhum sinal). É a
+        // mesma exigência que o comentário de carregarRpcPaginada já documenta para as RPCs e que
+        // ficou de fora aqui. `id` é a PK: ordem TOTAL, sem empate a desempatar. (Achado /codex.)
         const { data: batch, error: bErr } = await supabase
           .from('farmer_client_scores')
           .select('*')
+          .order('id', { ascending: true })
           .range(pg * sz, (pg + 1) * sz - 1);
         if (bErr) throw bErr;
         if (!batch || batch.length === 0) { more = false; }
@@ -551,6 +608,7 @@ Deno.serve(async (req) => {
               const { data: batch2, error: rErr2 } = await supabase
                 .from('farmer_client_scores')
                 .select('*')
+                .order('id', { ascending: true })   // idem ao select inicial: ordem estável entre páginas
                 .range(pg2 * sz2, (pg2 + 1) * sz2 - 1);
               if (rErr2) throw rErr2;
               if (!batch2 || batch2.length === 0) { more2 = false; }
@@ -580,9 +638,11 @@ Deno.serve(async (req) => {
       if (seedErrors.length > 0) {
         throw new Error(`seed falhou em ${seedErrors.length} cliente(s) numa fcs vazia: ${seedErrors.slice(0, 3).join(' | ')}`);
       }
+      leaseStatusFinal = 'complete';   // saída legítima: nada a computar, não é erro
       return new Response(JSON.stringify({
         message: 'Sem clientes para pontuar (rode o sync de clientes).',
         seeded: 0,
+        lease: leaseAviso,
       }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
@@ -846,9 +906,11 @@ Deno.serve(async (req) => {
       if (pErr) console.warn(`[calculate-scores] priority_score_log insert warn @${i}: ${pErr.message}`);
     }
 
+    leaseStatusFinal = 'complete';
     return new Response(JSON.stringify({
       message: `Scores calculated for ${updates.length} clients`,
       weights: { health: hs_w, priority: ps_w },
+      lease: leaseAviso,
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
@@ -859,5 +921,28 @@ Deno.serve(async (req) => {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
+  } finally {
+    // Libera o lease em TODA saída — inclusive os `throw` deliberados de seedFatal/salesRefreshFatal/
+    // marginRefreshFatal, que acontecem DEPOIS do apply e caem no catch acima. O `finally` roda antes
+    // de a resposta ser enviada, então nenhum return novo pode esquecer de liberar (o padrão do
+    // carteira-rebuild, que libera em cada ponto de saída, já exigiu 2 correções por caminho perdido).
+    // Não liberar aqui prenderia o lease até o TTL de 15min, pulando o próximo run.
+    if (leaseAdquirido) {
+      try {
+        const { data: liberado, error: relErr } = await supabase.rpc(
+          'finalizar_calculate_scores', { p_run_id: runId, p_status: leaseStatusFinal },
+        );
+        if (relErr) {
+          // Transporte falhou: a ESCRITA já aconteceu (ou não, se o erro veio antes) — o que ficou
+          // incerto é só o selo do lease. Ele auto-expira em 15min (fail-closed, sem force-release).
+          console.error(`[calculate-scores] finalize do lease falhou (auto-expira em 15min): ${relErr.message}`);
+        } else if (liberado !== true) {
+          // Perdi o lease sem ter liberado = fencing quebrado ou lease adulterado. NÃO reescreve nada.
+          console.error(`[calculate-scores] finalize SEM ownership (run_id=${runId}) — fencing quebrado ou lease adulterado.`);
+        }
+      } catch (e) {
+        console.error('[calculate-scores] finalize do lease lançou:', e instanceof Error ? e.message : String(e));
+      }
+    }
   }
 });
