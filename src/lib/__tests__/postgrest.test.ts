@@ -451,27 +451,27 @@ describe('fetchAllPages — a capa de 1.000 do PostgREST é silenciosa', () => {
 
   it('tabela maior que a capa: devolve TUDO, não as primeiras 1.000', async () => {
     const { buscar } = tabelaFalsa(3637); // product_costs real
-    const todas = await fetchAllPages(buscar);
+    const todas = await fetchAllPages(buscar, 'teste/capa');
     expect(todas).toHaveLength(3637);
     expect(todas.at(-1)).toEqual({ id: 3636 }); // a cauda chegou
   });
 
   it('pagina com janelas contíguas e para na primeira página parcial', async () => {
     const { buscar, chamadas } = tabelaFalsa(2500);
-    await fetchAllPages(buscar);
+    await fetchAllPages(buscar, 'teste/capa');
     expect(chamadas).toEqual([[0, 999], [1000, 1999], [2000, 2999]]);
   });
 
   it('múltiplo exato da capa: faz uma página extra vazia e para (sem loop infinito)', async () => {
     const { buscar, chamadas } = tabelaFalsa(2000);
-    const todas = await fetchAllPages(buscar);
+    const todas = await fetchAllPages(buscar, 'teste/capa');
     expect(todas).toHaveLength(2000);
     expect(chamadas).toHaveLength(3);
   });
 
   it('tabela menor que a capa: uma única requisição', async () => {
     const { buscar, chamadas } = tabelaFalsa(42);
-    expect(await fetchAllPages(buscar)).toHaveLength(42);
+    expect(await fetchAllPages(buscar, 'teste/capa')).toHaveLength(42);
     expect(chamadas).toHaveLength(1);
   });
 
@@ -481,7 +481,7 @@ describe('fetchAllPages — a capa de 1.000 do PostgREST é silenciosa', () => {
 
   it('tabela vazia → lista vazia, sem estourar', async () => {
     const { buscar, chamadas } = tabelaFalsa(0);
-    expect(await fetchAllPages(buscar)).toEqual([]);
+    expect(await fetchAllPages(buscar, 'teste/capa')).toEqual([]);
     expect(chamadas).toHaveLength(1);
   });
 
@@ -497,7 +497,7 @@ describe('fetchAllPages — a capa de 1.000 do PostgREST é silenciosa', () => {
   // com o bug de volta. Cada asserção tem que distinguir QUAL ramo disparou.
   it('erro na PRIMEIRA página → REJEITA (não devolve [] como se a tabela estivesse vazia)', async () => {
     const { buscar } = tabelaFalsa(3637, 0);
-    await expect(fetchAllPages(buscar)).rejects.toThrow(/\(0-999\) falhou/);
+    await expect(fetchAllPages(buscar, 'teste/capa')).rejects.toThrow(/\(0-999\) falhou/);
   });
 
   it('O CORAÇÃO DO FIX: erro numa página do MEIO → REJEITA, nunca devolve o acumulado parcial', async () => {
@@ -505,7 +505,7 @@ describe('fetchAllPages — a capa de 1.000 do PostgREST é silenciosa', () => {
     // linhas — numericamente indistinguível de uma carteira que de fato tem 2.000. Nos três
     // callers de `product_costs` a mesma perda vira "SKU sem custo", que INFLA margem.
     const { buscar, chamadas } = tabelaFalsa(3858, 2);
-    await expect(fetchAllPages(buscar)).rejects.toThrow(/\(2000-2999\) falhou/);
+    await expect(fetchAllPages(buscar, 'teste/capa')).rejects.toThrow(/\(2000-2999\) falhou/);
     expect(chamadas).toHaveLength(3); // parou NA página que falhou; não seguiu adiante
   });
 
@@ -513,7 +513,7 @@ describe('fetchAllPages — a capa de 1.000 do PostgREST é silenciosa', () => {
     // Sem a janela e a causa, o incidente chega como "deu erro" e não dá pra saber QUAL
     // fatia da tabela sumiu nem se foi timeout, RLS ou 500.
     const { buscar } = tabelaFalsa(3858, 2);
-    const erro = await fetchAllPages(buscar).catch((e: unknown) => e);
+    const erro = await fetchAllPages(buscar, 'teste/capa').catch((e: unknown) => e);
     expect(erro).toBeInstanceOf(Error); // se RESOLVEU, cai aqui mostrando o parcial devolvido
     expect((erro as Error).message).toMatch(/\(2000-2999\) falhou/); // a janela que sumiu
     expect((erro as Error & { cause?: unknown }).cause).toEqual(ERRO_TIMEOUT); // timeout? RLS? 500?
@@ -525,7 +525,7 @@ describe('fetchAllPages — a capa de 1.000 do PostgREST é silenciosa', () => {
     // Casa a mensagem do RAMO (não um throw qualquer): sem o guard, `push(...null)` lançaria
     // TypeError e um `rejects.toThrow()` pelado passaria verde pelo motivo errado.
     await expect(
-      fetchAllPages<{ id: number }>(() => Promise.resolve({ data: null, error: null })),
+      fetchAllPages<{ id: number }>(() => Promise.resolve({ data: null, error: null }), 'teste/capa'),
     ).rejects.toThrow(/data null sem error/);
   });
 });

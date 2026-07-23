@@ -59,7 +59,7 @@ export function useFarmerTacticalPlan() {
         .in('farmer_id', ownerIds)
         .order('priority_score', { ascending: false })
         .order('customer_user_id', { ascending: true })
-        .range(de, ate));
+        .range(de, ate), 'farmer_client_scores/plano-tatico');
     if (!scores.length) return;
 
     // [GUARD] LOTES. `.in()` com N ids vira query string: 3.858 UUIDs = ~143 KB de URL, contra um
