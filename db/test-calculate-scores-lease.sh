@@ -41,7 +41,9 @@
 #       que lança marginRefreshFatal DEPOIS do apply); A RETENTA após a liberação e converge.
 #   R5  guard anti-regressão: run único saudável escreve normalmente (serializar ≠ "não escreve").
 #   R6  IDEMPOTÊNCIA do claim: re-claim com o MESMO run_id → true (retry após resposta HTTP perdida
-#       não deixa o lease preso até o TTL); claim de run DIFERENTE segue barrado.
+#       não deixa o lease preso até o TTL); claim de run DIFERENTE segue barrado. E o cenário
+#       adversarial da cláusula (R6d-f): depois do TTL, OUTRO run assume e o ANTIGO que volta NÃO
+#       rouba o lease — a cláusula reconhece o dono CORRENTE, não qualquer id que já foi dono.
 #
 # ── FALSIFICAÇÃO ──
 #   F0  prova que a sabotagem do claim APLICOU (senão "não casou nada" se lê como "assert sem dente")
@@ -453,6 +455,16 @@ eq "R6 1o claim do run"                    "$(Pq -c "SELECT public.claim_calcula
 eq "R6b RE-claim do MESMO run_id -> true (retry idempotente)" "$(Pq -c "SELECT public.claim_calculate_scores('retry-1');")" "t"
 eq "R6c claim de run DIFERENTE segue barrado" "$(Pq -c "SELECT public.claim_calculate_scores('outro-run');")" "f"
 
+# R6d — o cenario adversarial da clausula de re-claim: o run ANTIGO nao pode ROUBAR o lease de quem
+# assumiu depois do TTL. Se o `OR metadata->>'run_id' = p_run_id` reconhecesse qualquer id que JA
+# tenha sido dono (e nao o dono CORRENTE), um zumbi ressuscitaria e voltariamos a ter dois writers.
+CLEAR
+Pq -c "SELECT public.claim_calculate_scores('zumbi');" >/dev/null
+P -q -c "UPDATE public.sync_state SET last_sync_at = now() - interval '16 minutes' WHERE entity_type='calculate_scores';" >/dev/null
+eq "R6d apos o TTL, OUTRO run assume"            "$(Pq -c "SELECT public.claim_calculate_scores('sucessor');")" "t"
+eq "R6e o run ANTIGO volta e NAO rouba o lease"  "$(Pq -c "SELECT public.claim_calculate_scores('zumbi');")" "f"
+eq "R6f dono corrente segue sendo o sucessor"    "$(Pq -c "SELECT metadata->>'run_id' FROM public.sync_state WHERE entity_type='calculate_scores';")" "sucessor"
+
 # ════════════════════════════════════════════════════════════════════════════════════════════════
 # ZONA 5 — FALSIFICAÇÃO (Lei #3): sabotar e EXIGIR vermelho
 # ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -552,7 +564,7 @@ P -q -f "$MIG_LEASE" >/dev/null
 # ════════════════════════════════════════════════════════════════════════════════════════════════
 echo "------------------------------------------------------------"
 TOTAL=$((PASS+FAIL))
-TOTAL_ESPERADO=51
+TOTAL_ESPERADO=54
 echo "RESULTADO: $PASS ok / $FAIL fail (total $TOTAL)"
 # TELL anti-"vermelho invalido": total diferente do esperado = o harness nao rodou o que devia
 # (sabotagem que nao aplicou, heredoc engolido, assert que nem executou) — exit 2, distinto do 1.
