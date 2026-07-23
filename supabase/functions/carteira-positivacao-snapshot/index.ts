@@ -15,6 +15,11 @@
 
 import { createClient } from 'npm:@supabase/supabase-js@^2';
 import { authorizeCronOrStaff, corsHeaders } from '../_shared/auth.ts';
+import {
+  carregarCarteiraComElegibilidade,
+  carregarPedidosDoMes,
+} from '../_shared/mapas-paginados.ts';
+import type { BancoPostgrest } from '../_shared/paginate.ts';
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
@@ -38,34 +43,34 @@ Deno.serve(async (req) => {
   const mesIso = `${inicio.getFullYear()}-${String(inicio.getMonth() + 1).padStart(2, '0')}-01`;
   const fimIso = `${fim.getFullYear()}-${String(fim.getMonth() + 1).padStart(2, '0')}-01`;
 
-  // Carteira (dono+elegibilidade de AGORA — melhor aproximação retroativa disponível).
-  const assignments: Array<{ customer_user_id: string; owner_user_id: string; eligible: boolean }> = [];
-  for (let p = 0; ; p++) {
-    const { data } = await supabase.from('carteira_assignments')
-      .select('customer_user_id, owner_user_id, eligible')
-      .range(p * 1000, p * 1000 + 999);
-    const rows = (data ?? []) as typeof assignments;
-    assignments.push(...rows);
-    if (rows.length < 1000) break;
+  // Leituras COMPLETAS e fail-closed (`_shared/mapas-paginados.ts`). Antes os dois laços eram
+  // escritos aqui e descartavam `error`: página que falhava virava "acabou". Num snapshot
+  // CONGELADO e idempotente por (mes, customer_user_id) esse parcial é o pior caso do repo —
+  // o cliente que comprou é gravado com `had_order_in_month:false` e `revenue_month:0`, ou seja
+  // "não consegui ler" carimbado como "não comprou", num mês fechado que ninguém recalcula
+  // (docs/agent/money-path.md §2 e §6). Melhor não gravar mês nenhum do que gravar um mês falso.
+  const db = supabase as unknown as BancoPostgrest;
+  let assignments: Awaited<ReturnType<typeof carregarCarteiraComElegibilidade>>;
+  let pedidosDoMes: Awaited<ReturnType<typeof carregarPedidosDoMes>>;
+  try {
+    assignments = await carregarCarteiraComElegibilidade(db);
+    pedidosDoMes = await carregarPedidosDoMes(db, mesIso, fimIso);
+  } catch (e) {
+    const motivo = e instanceof Error ? e.message : String(e);
+    console.error('[carteira-positivacao-snapshot] leitura falhou, snapshot NÃO gravado:', motivo);
+    return new Response(
+      JSON.stringify({ mes: mesIso, error: `leitura falhou, snapshot não gravado: ${motivo}` }),
+      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+    );
   }
 
   // Pedidos válidos do mês por cliente (receita + 1ª data). order_date_kpi é não-nulo (backfill).
   const byCustomer = new Map<string, { receita: number; primeira: string | null }>();
-  for (let p = 0; ; p++) {
-    const { data } = await supabase.from('sales_orders')
-      .select('customer_user_id, total, order_date_kpi')
-      .not('status', 'in', '(cancelado,rascunho,pendente)')
-      .gte('order_date_kpi', mesIso)
-      .lt('order_date_kpi', fimIso)
-      .range(p * 1000, p * 1000 + 999);
-    const rows = (data ?? []) as Array<{ customer_user_id: string; total: number | null; order_date_kpi: string }>;
-    for (const o of rows) {
-      const cur = byCustomer.get(o.customer_user_id) ?? { receita: 0, primeira: null };
-      cur.receita += Number(o.total ?? 0);
-      if (!cur.primeira || o.order_date_kpi < cur.primeira) cur.primeira = o.order_date_kpi;
-      byCustomer.set(o.customer_user_id, cur);
-    }
-    if (rows.length < 1000) break;
+  for (const o of pedidosDoMes) {
+    const cur = byCustomer.get(o.customer_user_id) ?? { receita: 0, primeira: null };
+    cur.receita += Number(o.total ?? 0);
+    if (!cur.primeira || o.order_date_kpi < cur.primeira) cur.primeira = o.order_date_kpi;
+    byCustomer.set(o.customer_user_id, cur);
   }
 
   const rows = assignments.map((a) => {
