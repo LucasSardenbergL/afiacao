@@ -23,16 +23,20 @@ interface ScoreLinha {
 }
 
 export function IntelligenceStrategicTab() {
-  const { data: marginAudit, isLoading } = useQuery({
+  const { data: marginAudit, isLoading: auditCarregando, isError: auditErro } = useQuery({
     queryKey: ['intel-margin-audit'],
+    // A falha era convertida em `[]` EXPLICITAMENTE (`console.error` + `return []`), e os quatro
+    // KPIs monetários abaixo somam sobre esse array: uma leitura que falhou virava "Margem Real
+    // R$ 0 · Gap R$ 0 · 0/0 clientes c/ custo". Zero de vazamento de preço é a leitura mais
+    // tranquilizadora possível — e era fabricada por uma falha de transporte nossa.
     queryFn: async () => {
       const { data, error } = await supabase.from('margin_audit_log').select('*').order('calculated_at', { ascending: false }).limit(100);
-      if (error) { console.error(error); return []; }
-      return data || [];
+      if (error) throw error;
+      return data ?? [];
     },
   });
 
-  const { data: allScores, isError: scoresErro } = useQuery({
+  const { data: allScores, isError: scoresErro, isLoading: scoresCarregando } = useQuery({
     queryKey: ['intel-strategic-scores'],
     // Base COMPLETA, paginada. Era `.limit(500)` de 6.632 e SEM `.order()` — o Postgres não
     // garante ordem sem ORDER BY, então as 500 eram um recorte não determinístico: dois
@@ -147,19 +151,34 @@ export function IntelligenceStrategicTab() {
     }
   };
 
-  if (isLoading) {
+  // O gate espera TODA fonte que a tela apresenta como número. Antes ele olhava só
+  // `margin_audit_log`: bastava a AUDITORIA resolver — com os scores ainda em voo — para a tela
+  // renderizar inteira, e LTV/CAC/Market Share saíam em zero. Um zero de "ainda não chegou" é
+  // indistinguível, na tela, de um zero medido. E "—" não serve nesta janela: "—" é o estado
+  // FINAL de indisponibilidade, e carregar não é indisponível — o honesto é seguir carregando.
+  if (auditCarregando || scoresCarregando) {
     return <div className="grid grid-cols-2 gap-3">{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-24" />)}</div>;
   }
 
-  // ⚠️ O `isLoading` acima é da query de `margin_audit_log` — OUTRA query. Os KPIs derivados de
-  // `allScores` (LTV, CAC, Concentração, Market Share, Margem Bruta) não olhavam o próprio
-  // estado de erro, então a tela renderizava INTEIRA como se estivesse tudo certo, com esses
-  // números em zero produzidos por uma falha de transporte. O #1545 fazer `fetchAllPages`
-  // lançar não bastou: a exceção vira `allScores === undefined` e os `|| 0` fabricam de novo.
-  // Nunca zero: "—" e o motivo. `retry` é global (App.tsx: 2 + backoff); aqui só o estado final.
+  // Os KPIs derivados de `allScores` (LTV, CAC, Concentração, Market Share, Margem Bruta) não
+  // olhavam o próprio estado de erro, então a tela renderizava INTEIRA como se estivesse tudo
+  // certo, com esses números em zero produzidos por uma falha de transporte. O #1545 fazer
+  // `fetchAllPages` lançar não bastou: a exceção vira `allScores === undefined` e os `|| 0`
+  // fabricam de novo. Nunca zero: "—" e o motivo. `retry` é global (App.tsx: 2 + backoff);
+  // aqui só o estado final.
   const scoresIndisponivel = scoresErro && !allScores;
   const scoresDesatualizados = scoresErro && !!allScores;
   const ou = (v: string) => (scoresIndisponivel ? '—' : v);
+
+  // Mesmo par para a auditoria de margem — as duas queries falham de forma independente, e a
+  // tela precisa dizer QUAL bloco não pôde ser lido (os KPIs de carteira e os de margem vêm de
+  // fontes distintas). Com cache: último dado bom + aviso de stale; sem cache: "—" e o motivo.
+  const auditoriaIndisponivel = auditErro && !marginAudit;
+  const auditoriaDesatualizada = auditErro && !!marginAudit;
+  const ouAudit = (v: string) => (auditoriaIndisponivel ? '—' : v);
+  const legendaAudit = auditoriaIndisponivel
+    ? 'auditoria indisponível'
+    : `parcial — ${auditComCusto}/${auditTotal} clientes c/ custo`;
 
   return (
     <div className="space-y-4">
@@ -175,6 +194,18 @@ export function IntelligenceStrategicTab() {
           falhou. Os indicadores de carteira podem estar desatualizados.
         </div>
       )}
+      {auditoriaIndisponivel && (
+        <div role="alert" className="rounded-lg border border-status-error/30 bg-status-error/5 p-3 text-xs text-status-error">
+          Auditoria de margem indisponível — o log do Algoritmo A não pôde ser lido. Margem Real,
+          Potencial, Gap e Margem Global ficam em “—”; nenhum valor foi somado.
+        </div>
+      )}
+      {auditoriaDesatualizada && (
+        <div role="alert" className="rounded-lg border border-status-warning/30 bg-status-warning/5 p-3 text-xs text-status-warning">
+          Exibindo a última leitura bem-sucedida da auditoria de margem — a atualização mais
+          recente falhou. Os valores do Algoritmo A podem estar desatualizados.
+        </div>
+      )}
       {/* Algoritmo A – Margin Gap */}
       <div className="rounded-lg border border-status-warning/30 bg-status-warning/5 p-3">
         <div className="flex items-center justify-between mb-3">
@@ -188,10 +219,12 @@ export function IntelligenceStrategicTab() {
           </Button>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <KpiCard title="Margem Real" value={`R$ ${totalMarginReal.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}`} icon={DollarSign} subtitle={`parcial — ${auditComCusto}/${auditTotal} clientes c/ custo`} />
-          <KpiCard title="Margem Potencial" value={`R$ ${totalMarginPotential.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}`} icon={TrendingUp} subtitle={`parcial — ${auditComCusto}/${auditTotal} clientes c/ custo`} />
-          <KpiCard title="Gap de Margem" value={`R$ ${totalGap.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}`} icon={TrendingDown} subtitle="vazamento de preço (todas as linhas)" />
-          <KpiCard title="Registros" value={String(marginAudit?.length || 0)} icon={Eye} />
+          <KpiCard title="Margem Real" value={ouAudit(`R$ ${totalMarginReal.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}`)} icon={DollarSign} subtitle={legendaAudit} />
+          <KpiCard title="Margem Potencial" value={ouAudit(`R$ ${totalMarginPotential.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}`)} icon={TrendingUp} subtitle={legendaAudit} />
+          <KpiCard title="Gap de Margem" value={ouAudit(`R$ ${totalGap.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}`)} icon={TrendingDown} subtitle={auditoriaIndisponivel ? 'auditoria indisponível' : 'vazamento de preço (todas as linhas)'} />
+          {/* "Registros: 0" afirmaria que a auditoria rodou e não achou nada — a mesma troca de
+              "não consegui ler" por "não existe" que os KPIs monetários ao lado fazem em R$. */}
+          <KpiCard title="Registros" value={ouAudit(String(marginAudit?.length ?? 0))} icon={Eye} />
         </div>
       </div>
 
@@ -212,7 +245,7 @@ export function IntelligenceStrategicTab() {
         <KpiCard title="Elasticidade de Preço" value={`${priceElasticity.toFixed(1)}%`} icon={TrendingUp} subtitle="Δ qty c/ desconto" />
         <KpiCard title="Sensibilidade a Desconto" value={`${discountSensitivity.toFixed(1)}%`} icon={Percent} subtitle={`${ordersWithDiscount} de ${salesOrders?.length || 0} pedidos`} />
         <KpiCard title="Market Share Est." value={ou(`${marketSharePct.toFixed(1)}%`)} icon={Target} subtitle={scoresIndisponivel ? 'base indisponível' : `${uniqueCustomers} de ~${estimatedMarket} clientes`} />
-        <KpiCard title="Margem Global" value={`R$ ${totalMarginReal.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}`} icon={DollarSign} subtitle={`parcial — ${auditComCusto}/${auditTotal} c/ custo`} />
+        <KpiCard title="Margem Global" value={ouAudit(`R$ ${totalMarginReal.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}`)} icon={DollarSign} subtitle={auditoriaIndisponivel ? 'auditoria indisponível' : `parcial — ${auditComCusto}/${auditTotal} c/ custo`} />
       </div>
 
       {/* Margin Audit Table */}
