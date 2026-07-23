@@ -62,6 +62,23 @@ diff de 26 arquivos para 8 (#1533).
 **Regra:** re-conferir `gh pr list` **imediatamente antes do `gh pr create`**, filtrando pelo
 domínio (`gh pr list --search "margem"`). Custa segundos; teria pego o #1525 seis minutos antes.
 
+⚠️ **Checar colisão de ARQUIVO: `git diff` de TRÊS pontos, não de dois (2026-07-22).** A checagem
+por PR acima tem uma irmã por diff — "a `main` mexeu num arquivo que EU também mexo?" — e o comando
+óbvio **mente depois que você commita**. `git diff --name-only HEAD..origin/main` (DOIS pontos)
+compara as duas árvores, então lista o que a `main` ganhou **mais o inverso dos seus próprios
+commits**: antes de commitar, `HEAD` É a base e ele acerta por acidente; depois de commitar, ele
+acusa os SEUS arquivos como se a `main` os tivesse tocado — falso positivo (me deu um "colisão!"
+fantasma no #1551, um doc-only que a `main` nem havia tocado). Use **TRÊS pontos**, que ancora na
+merge-base: `git diff --name-only HEAD...origin/main` lista só o que a `main` ganhou desde que você
+divergiu (idêntico a `$(git merge-base HEAD origin/main)..origin/main`). Colisão REAL = a interseção
+disso com os SEUS arquivos (`git diff --name-only origin/main...HEAD`, três pontos, HEAD por último).
+Provado num repo descartável nos dois sentidos: o três-pontos remove o falso positivo **e** mantém o
+verdadeiro (arquivo tocado pelos dois lados continua aparecendo — não vira falso-negativo). Regra de
+bolso: **`A...B` para "o que um lado ganhou desde a base"; `A..B` de dois pontos quase nunca é o que
+você quer aqui.** (As skills `fecho`/`lovable-deploy-verify` já usam `origin/main...HEAD` de três
+pontos para classificar o PRÓPRIO diff — correto pelo mesmo motivo; o furo era só a checagem de
+colisão feita à mão.)
+
 ⚠️ **A hipótese "são os chips" foi investigada e NÃO se sustenta** — registrado para não virar
 folclore. Chips criam sessões, mas não escolhem o alvo; o que concentrou quatro sessões no mesmo
 ponto foi o produtor represado. Nada na memória (claude-mem) registra decisão sobre chips×compact.
