@@ -320,8 +320,40 @@ Deno.serve(async (req) => {
   // do repo (migration 20260713160000, carteira-rebuild).
   const runId = crypto.randomUUID();
   let leaseAdquirido = false;
+  let leaseLiberado = false;
   let leaseStatusFinal: 'complete' | 'error' = 'error';
   let leaseAviso: string | null = null;
+
+  // Libera o lease e DISTINGUE os três desfechos (achado /codex, P1):
+  //   'ok'        → finalizado com ownership;
+  //   'ownership' → perdi o lease sem ter liberado. Outro run assumiu enquanto eu escrevia ⇒ a
+  //                 integridade do que gravei é DESCONHECIDA. Não pode virar 200: seria afirmar
+  //                 sucesso sobre um estado que ninguém verificou.
+  //   'transport' → não consegui falar com o banco. A escrita em si pode estar boa; o que ficou
+  //                 incerto é o selo do lease, que auto-expira em 15min (fail-closed, sem
+  //                 force-release).
+  // Nunca lança: um erro daqui não pode sobrescrever a resposta original do run.
+  const liberarLease = async (status: 'complete' | 'error'): Promise<'ok' | 'ownership' | 'transport'> => {
+    if (!leaseAdquirido || leaseLiberado) return 'ok';
+    try {
+      const { data: liberado, error: relErr } = await supabase.rpc(
+        'finalizar_calculate_scores', { p_run_id: runId, p_status: status },
+      );
+      if (relErr) {
+        console.error(`[calculate-scores] finalize do lease falhou (auto-expira em 15min): ${relErr.message}`);
+        return 'transport';
+      }
+      if (liberado !== true) {
+        console.error(`[calculate-scores] finalize SEM ownership (run_id=${runId}) — fencing quebrado ou lease adulterado.`);
+        return 'ownership';
+      }
+      leaseLiberado = true;
+      return 'ok';
+    } catch (e) {
+      console.error('[calculate-scores] finalize do lease lançou:', e instanceof Error ? e.message : String(e));
+      return 'transport';
+    }
+  };
 
   try {
     const { data: claimed, error: claimErr } = await supabase.rpc('claim_calculate_scores', { p_run_id: runId });
@@ -357,10 +389,23 @@ Deno.serve(async (req) => {
     // ANTI-DRIFT (carteira-Omie Opção A): farmer_id do score = carteira_assignments.owner_user_id.
     // NUNCA seedar/atribuir score por atividade (farmer_calls/route_visits).
 
-    // Load configurable weights
-    const { data: configRows } = await supabase
+    // Load configurable weights.
+    // FAIL-CLOSED no ERRO de leitura (achado /codex, P1): antes o `error` era descartado, e uma
+    // falha de transporte/RLS/timeout fazia `configRows` vir undefined → o código caía nos defaults
+    // abaixo e recalculava as ~6.6k linhas com pesos DIFERENTES dos configurados, devolvendo 200.
+    // Blast radius = a base inteira, silenciosamente.
+    // ⚠️ A distinção que importa: ERRO de leitura ≠ AUSÊNCIA de linhas. Zero linhas é o estado real
+    // e legítimo da prod hoje (nenhum hs_weight% cadastrado, medido 2026-07-23) e segue usando os
+    // defaults; só a FALHA lança.
+    const { data: configRows, error: configErr } = await supabase
       .from('farmer_algorithm_config')
       .select('key, value');
+    if (configErr) {
+      throw new Error(
+        `farmer_algorithm_config falhou: ${configErr.message} — abortado ANTES de recomputar, ` +
+        `senao a base inteira seria repontuada com os pesos default em vez dos configurados.`,
+      );
+    }
 
     const config: Record<string, number> = {};
     configRows?.forEach(r => { config[r.key] = Number(r.value); });
@@ -642,7 +687,11 @@ Deno.serve(async (req) => {
       if (seedErrors.length > 0) {
         throw new Error(`seed falhou em ${seedErrors.length} cliente(s) numa fcs vazia: ${seedErrors.slice(0, 3).join(' | ')}`);
       }
-      leaseStatusFinal = 'complete';   // saída legítima: nada a computar, não é erro
+      // Saída legítima: nada a computar, não é erro. Libera ANTES de responder para que uma perda
+      // de ownership vire 500 em vez de 200 (o `finally` não consegue trocar a resposta já montada).
+      leaseStatusFinal = 'complete';
+      const relVazio = await liberarLease('complete');
+      if (relVazio === 'ownership') return respostaOwnershipPerdida();
       return new Response(JSON.stringify({
         message: 'Sem clientes para pontuar (rode o sync de clientes).',
         seeded: 0,
@@ -910,11 +959,18 @@ Deno.serve(async (req) => {
       if (pErr) console.warn(`[calculate-scores] priority_score_log insert warn @${i}: ${pErr.message}`);
     }
 
+    // Libera ANTES de responder: se o ownership foi perdido, outro run assumiu enquanto este
+    // escrevia, e o resultado do que gravamos é DESCONHECIDO — tem de ser 500, não 200.
     leaseStatusFinal = 'complete';
+    const rel = await liberarLease('complete');
+    if (rel === 'ownership') return respostaOwnershipPerdida();
     return new Response(JSON.stringify({
       message: `Scores calculated for ${updates.length} clients`,
       weights: { health: hs_w, priority: ps_w },
       lease: leaseAviso,
+      // 'transport': a escrita está boa, só o selo do lease ficou incerto (auto-expira em 15min).
+      // Não é erro do recompute, mas o chamador merece saber que o estado do lease é desconhecido.
+      lease_finalize: rel === 'transport' ? 'incerto (auto-expira em 15min)' : 'ok',
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
@@ -926,27 +982,23 @@ Deno.serve(async (req) => {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   } finally {
-    // Libera o lease em TODA saída — inclusive os `throw` deliberados de seedFatal/salesRefreshFatal/
-    // marginRefreshFatal, que acontecem DEPOIS do apply e caem no catch acima. O `finally` roda antes
-    // de a resposta ser enviada, então nenhum return novo pode esquecer de liberar (o padrão do
-    // carteira-rebuild, que libera em cada ponto de saída, já exigiu 2 correções por caminho perdido).
-    // Não liberar aqui prenderia o lease até o TTL de 15min, pulando o próximo run.
-    if (leaseAdquirido) {
-      try {
-        const { data: liberado, error: relErr } = await supabase.rpc(
-          'finalizar_calculate_scores', { p_run_id: runId, p_status: leaseStatusFinal },
-        );
-        if (relErr) {
-          // Transporte falhou: a ESCRITA já aconteceu (ou não, se o erro veio antes) — o que ficou
-          // incerto é só o selo do lease. Ele auto-expira em 15min (fail-closed, sem force-release).
-          console.error(`[calculate-scores] finalize do lease falhou (auto-expira em 15min): ${relErr.message}`);
-        } else if (liberado !== true) {
-          // Perdi o lease sem ter liberado = fencing quebrado ou lease adulterado. NÃO reescreve nada.
-          console.error(`[calculate-scores] finalize SEM ownership (run_id=${runId}) — fencing quebrado ou lease adulterado.`);
-        }
-      } catch (e) {
-        console.error('[calculate-scores] finalize do lease lançou:', e instanceof Error ? e.message : String(e));
-      }
-    }
+    // BACKSTOP. Os caminhos de sucesso já liberaram ANTES de responder (só assim uma perda de
+    // ownership vira 500 em vez de 200 — o `finally` não consegue trocar a resposta já montada).
+    // Aqui sobram: o catch (500), os `throw` deliberados de seedFatal/salesRefreshFatal/
+    // marginRefreshFatal — que ocorrem DEPOIS do apply — e qualquer return futuro que esqueça de
+    // liberar. `liberarLease` é idempotente pela flag, então a dupla chamada é inócua.
+    // Não liberar prenderia o lease até o TTL de 15min, pulando o próximo run.
+    await liberarLease(leaseStatusFinal);
   }
 });
+
+// Ownership perdido = outro run assumiu o lease enquanto este escrevia. O que gravamos pode ter
+// competido com ele, então a integridade é DESCONHECIDA — e desconhecido não é sucesso. 500 para
+// que apareça em net._http_response e no Sentinela em vez de passar como recompute normal.
+function respostaOwnershipPerdida(): Response {
+  return new Response(JSON.stringify({
+    error: 'lease perdido durante o run (fencing quebrado ou lease adulterado) — ' +
+           'os scores podem ter sido escritos concorrentemente. Integridade DESCONHECIDA: ' +
+           'confira farmer_client_scores.calculated_at antes de confiar no resultado.',
+  }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+}

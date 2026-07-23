@@ -20,7 +20,11 @@
 #       real aqui: o cron corta em 150s e a edge segue viva)
 #   L9  VALIDAÇÃO: status ∉ {complete,error} → 22023; run_id vazio → 22004
 #   L10 REVOKE: anon E authenticated NÃO executam; service_role executa
-#   L11 RLS: employee NÃO adultera a linha 'calculate_scores' (policy RESTRICTIVE); toca outras entity_type
+#   L11 RLS: employee NÃO adultera (UPDATE), NÃO cria (INSERT) e NÃO apaga (DELETE) a linha
+#       'calculate_scores' — as TRÊS policies RESTRICTIVE exercitadas, não só a de UPDATE (achado
+#       /codex: as outras duas podiam quebrar com o harness inteiro verde). Vetor real: sem a de
+#       DELETE o staff apaga o lease e o próximo claim reivindica livre; sem a de INSERT, cria a
+#       chave num status que libera o claim. E segue tocando OUTRAS entity_type (policy cirúrgica).
 #   L12 CONCORRÊNCIA REAL: 8 claims simultâneos → 0 workers falham, EXATAMENTE 1 't' e 7 'f'
 #
 # ── ZONA CORRIDA (o efeito no DADO — pedido explicitamente no challenge /codex) ──
@@ -38,7 +42,11 @@
 #       PULADO — eventos de B = só 'skipped', sem snapshot e sem apply. Valor final NOVO.
 #   R4  COM LEASE, o DEGRADADO ganha (o caso que mais importa): B segura o lease, A é PULADO, B relê
 #       o corrente e o regrava (NO-OP DE VERDADE — nada restaurado) e finaliza 'error' (como a edge,
-#       que lança marginRefreshFatal DEPOIS do apply); A RETENTA após a liberação e converge.
+#       que lança marginRefreshFatal DEPOIS do apply). R4d exige a trilha 'snapshot,apply' de B:
+#       sem ela o assert ficaria verde também se B não tivesse escrito NADA, provando "não rodou"
+#       em vez de "regravou o que leu". ⚠️ R4g modela o PRÓXIMO CICLO DO CRON, **não** um retry —
+#       não existe retry no sistema (nem o cron nem o botão re-disparam ao receber 200-skipped),
+#       então em produção a convergência pode levar até 24h. Ver a limitação declarada no PR.
 #   R5  guard anti-regressão: run único saudável escreve normalmente (serializar ≠ "não escreve").
 #   R6  IDEMPOTÊNCIA do claim: re-claim com o MESMO run_id → true (retry após resposta HTTP perdida
 #       não deixa o lease preso até o TTL); claim de run DIFERENTE segue barrado. E o cenário
@@ -55,10 +63,17 @@
 #   F5  claim SEM o WHERE → o run que devia ser PULADO chega ao snapshot/apply (R3c tem dente).
 #       Sem ela, "o dado ficou certo" e "o perdedor foi barrado" seriam crenças separadas e só a
 #       primeira teria falsificação.
+#   F6  policy de DELETE dropada → employee APAGA a linha do lease (L11e tem dente)
+#   F7  policy de INSERT dropada → employee CRIA a chave do lease (L11d tem dente)
 #
-# ⚠️ O que este harness NÃO prova: que a EDGE chama o claim antes de ler o snapshot (é TS, não SQL).
-#    Isso é coberto por supabase/functions/calculate-scores/ordem-lease_test.ts, com falsificação
-#    própria. Sem aquele guard, mover o select para antes do claim deixaria TUDO aqui verde.
+# ⚠️ O que este harness NÃO prova (limites declarados, calibrados no challenge /codex):
+#    • que a EDGE chama o claim antes de ler o snapshot — é TS, não SQL. Coberto por
+#      calculate-scores/ordem-lease_test.ts, com falsificação própria (incluindo as duas burlas que
+#      o Codex construiu: aspas duplas e ordem não-total). Sem aquele guard, mover o select para
+#      antes do claim deixaria TUDO aqui verde.
+#    • o `leaseStatusFinal` da edge: aqui o status de finalização é passado pelo HARNESS, então uma
+#      regressão que finalize 'complete' num run degradado não é vista por este arquivo.
+#    • o transporte do claim, o `finally` e o predicado `leaseIndisponivel` (TS — ver _shared/lease_test.ts).
 #
 # ⚠️ TELL de vermelho inválido: o total de asserts é FIXADO em TOTAL_ESPERADO e conferido no fim —
 #    "não rodou nada" e "rodou e falhou" têm de ser distinguíveis (§ money-path.md).
@@ -280,6 +295,35 @@ END $$;
 SQL
 ); case "$R" in *RLS_PERMITIU_OUTRA*) ok "L11c employee toca OUTRAS entity_type (policy cirurgica)" ;; *) bad "L11c -- veio: $R" ;; esac
 
+# ⚠️ As policies de INSERT e DELETE tambem precisam ser EXERCITADAS: so a de UPDATE era testada, e as
+# outras duas podiam quebrar mantendo o harness inteiro verde (achado do challenge /codex). O vetor e
+# real: sem a de DELETE, o staff APAGA a linha do lease e o proximo claim reivindica livremente
+# (INSERT no ramo sem conflito); sem a de INSERT, ele CRIA a chave num status que libera o claim.
+CLEAR
+R=$(P -tA -v emp="$EMP" <<'SQL' 2>&1
+SELECT set_config('test.uid', :'emp', false); SET ROLE authenticated;
+DO $$ BEGIN
+  INSERT INTO public.sync_state(entity_type, account, status) VALUES ('calculate_scores','global','idle');
+  RAISE NOTICE 'INSERT_PASSOU';
+EXCEPTION
+  WHEN insufficient_privilege THEN RAISE NOTICE 'INSERT_BLOQUEADO_RLS';
+  WHEN OTHERS THEN RAISE;
+END $$;
+SQL
+); case "$R" in *INSERT_BLOQUEADO_RLS*) ok "L11d employee NAO cria a chave do lease (policy de INSERT)" ;; *) bad "L11d -- veio: $R" ;; esac
+
+Pq -c "SELECT public.claim_calculate_scores('rls-del');" >/dev/null
+R=$(P -tA -v emp="$EMP" <<'SQL' 2>&1
+SELECT set_config('test.uid', :'emp', false); SET ROLE authenticated;
+DO $$ DECLARE n int; BEGIN
+  DELETE FROM public.sync_state WHERE entity_type='calculate_scores';
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n>0 THEN RAISE NOTICE 'DELETE_FUROU_%', n; ELSE RAISE NOTICE 'DELETE_BLOQUEADO_RLS'; END IF;
+END $$;
+SQL
+); case "$R" in *DELETE_BLOQUEADO_RLS*) ok "L11e employee NAO apaga a linha do lease (policy de DELETE)" ;; *) bad "L11e -- veio: $R" ;; esac
+eq "L11f o lease sobreviveu ao DELETE do employee" "$(STATUS)" "syncing"
+
 # L12: concorrência real
 echo "-- zona lease: concorrencia real --"
 CLEAR
@@ -435,12 +479,19 @@ SEED; CLEAR; LIMPA_EV
 eq "R4 B (degradado) ganha o lease e segura"   "$(Pq -c "SELECT public.teste_run('B2-run','$CLI'::uuid,true,53,3,37,false);")" "error"
 eq "R4b A (saudavel) chega DURANTE e e PULADO" "$(Pq -c "SELECT public.teste_run('A2-run','$CLI'::uuid,false,53,3,37,true);")" "skipped"
 eq "R4c A nao chegou ao snapshot nem ao apply" "$(EVENTOS A2-run)" "skipped"
-eq "R4d o degradado sozinho e NO-OP: regrava o que leu, nada restaurado" "$(LINHA)" "99/99/77/88"
+# ⚠️ Exigir a trilha de B2 e o que impede o falso-verde: sem ela, R4d ficaria VERDE tambem se o
+# degradado nao tivesse escrito NADA — e ai o assert nao estaria provando "regravou o que leu"
+# (no-op real), e sim "nao rodou". Achado do challenge /codex.
+eq "R4d B chegou ao snapshot E ao apply (o no-op e de quem ESCREVEU)" "$(EVENTOS B2-run)" "snapshot,apply"
+eq "R4e o degradado sozinho e NO-OP: regrava o que leu, nada restaurado" "$(LINHA)" "99/99/77/88"
 # B finaliza com 'error' (o run degradado SEMPRE termina em erro na edge) e libera o lease.
-eq "R4e B finaliza como 'error'" "$(Pq -c "SELECT public.finalizar_calculate_scores('B2-run','error');")" "t"
-# O saudavel RETENTA depois da liberacao: agora ganha, rele e converge.
-eq "R4f A retenta apos a liberacao e ganha" "$(Pq -c "SELECT public.teste_run('A3-run','$CLI'::uuid,false,53,3,37,true);")" "complete"
-eq "R4g convergiu para o valor novo"        "$(LINHA)" "53/53/3/37"
+eq "R4f B finaliza como 'error'" "$(Pq -c "SELECT public.finalizar_calculate_scores('B2-run','error');")" "t"
+# ⚠️ HONESTIDADE SOBRE O QUE ISTO MODELA (calibracao do /codex): A3-run e o PROXIMO RUN DO CRON,
+# nao um retry automatico — NAO existe retry no sistema. Nem o cron nem o botao manual re-disparam
+# ao receber 200-skipped, entao em producao a convergencia pode levar ate o proximo ciclo diario.
+# O assert prova que o estado CONVERGE quando um run saudavel volta, nao que ele volta rapido.
+eq "R4g o proximo run saudavel (ciclo seguinte) ganha o lease" "$(Pq -c "SELECT public.teste_run('A3-run','$CLI'::uuid,false,53,3,37,true);")" "complete"
+eq "R4h e converge para o valor novo"                          "$(LINHA)" "53/53/3/37"
 
 # ── R5: guard anti-regressao — serializar nao pode virar "nao escreve" ─────────────────────────
 SEED; CLEAR; LIMPA_EV
@@ -561,10 +612,38 @@ SQL
 ); case "$R" in *SABOTAGEM_FUROU*) ok "F3 sem a policy o employee adultera o lease (L11 tem dente)" ;; *) bad "F3 L11 fraco -- veio: $R" ;; esac
 P -q -f "$MIG_LEASE" >/dev/null
 
+# F6/F7: as policies de DELETE e INSERT tambem precisam de falsificacao — sem elas, L11d/L11e
+# poderiam estar passando por outro motivo (ex.: falta de GRANT) em vez de pela policy.
+P -q -c "DROP POLICY calculate_scores_lease_no_delete ON public.sync_state;" >/dev/null
+CLEAR; Pq -c "SELECT public.claim_calculate_scores('f6');" >/dev/null
+R=$(P -tA -v emp="$EMP" <<'SQL' 2>&1
+SELECT set_config('test.uid', :'emp', false); SET ROLE authenticated;
+DO $$ DECLARE n int; BEGIN
+  DELETE FROM public.sync_state WHERE entity_type='calculate_scores';
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n>0 THEN RAISE NOTICE 'SABOTAGEM_APAGOU_%', n; ELSE RAISE NOTICE 'AINDA_BLOQUEIA'; END IF;
+END $$;
+SQL
+); case "$R" in *SABOTAGEM_APAGOU*) ok "F6 sem a policy o employee APAGA o lease (L11e tem dente)" ;; *) bad "F6 L11e fraco -- veio: $R" ;; esac
+P -q -f "$MIG_LEASE" >/dev/null
+
+P -q -c "DROP POLICY calculate_scores_lease_no_insert ON public.sync_state;" >/dev/null
+CLEAR
+R=$(P -tA -v emp="$EMP" <<'SQL' 2>&1
+SELECT set_config('test.uid', :'emp', false); SET ROLE authenticated;
+DO $$ BEGIN
+  INSERT INTO public.sync_state(entity_type, account, status) VALUES ('calculate_scores','global','idle');
+  RAISE NOTICE 'SABOTAGEM_INSERIU';
+EXCEPTION WHEN OTHERS THEN RAISE NOTICE 'AINDA_BLOQUEIA_%', SQLSTATE;
+END $$;
+SQL
+); case "$R" in *SABOTAGEM_INSERIU*) ok "F7 sem a policy o employee CRIA a chave do lease (L11d tem dente)" ;; *) bad "F7 L11d fraco -- veio: $R" ;; esac
+P -q -f "$MIG_LEASE" >/dev/null
+
 # ════════════════════════════════════════════════════════════════════════════════════════════════
 echo "------------------------------------------------------------"
 TOTAL=$((PASS+FAIL))
-TOTAL_ESPERADO=54
+TOTAL_ESPERADO=60
 echo "RESULTADO: $PASS ok / $FAIL fail (total $TOTAL)"
 # TELL anti-"vermelho invalido": total diferente do esperado = o harness nao rodou o que devia
 # (sabotagem que nao aplicou, heredoc engolido, assert que nem executou) — exit 2, distinto do 1.

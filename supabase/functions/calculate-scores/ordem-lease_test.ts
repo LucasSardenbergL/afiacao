@@ -44,10 +44,34 @@ function idxOuFalha(codigo: string, agulha: string, rotulo: string): number {
   return i;
 }
 
+/**
+ * PRIMEIRA leitura de farmer_client_scores, aceitando aspas simples OU duplas.
+ *
+ * O challenge /codex BUROU a versao anterior deste guard: ela procurava a string literal
+ * `from('farmer_client_scores')`, entao uma leitura escrita com aspas DUPLAS —
+ * `from("farmer_client_scores")` — inserida antes do claim nao casava, o indexOf achava a leitura
+ * legitima de DEPOIS do claim, e o teste passava VERDE com a corrida reaberta. Deno/TS aceitam as
+ * duas formas e o lint do repo nao normaliza aspas em edges.
+ *
+ * Limite honesto que permanece: leitura por variavel de tabela (`from(T)`), por helper importado ou
+ * quebrada em varias linhas continua invisivel aqui. Fechar isso exigiria analise de AST ou um mock
+ * do cliente registrando a ordem das chamadas — declarado no PR como limitacao.
+ */
+function idxPrimeiraLeituraScores(codigo: string): number {
+  const m = codigo.match(/from\(\s*['"]farmer_client_scores['"]\s*\)/);
+  if (!m || m.index === undefined) {
+    throw new Error(
+      "nao encontrei nenhuma leitura de farmer_client_scores no codigo da edge. " +
+      "Se a forma mudou, ATUALIZE este guard — nao o remova.",
+    );
+  }
+  return m.index;
+}
+
 Deno.test("o claim do lease precede a leitura do snapshot de farmer_client_scores", () => {
   const codigo = semComentarios(Deno.readTextFileSync(FONTE));
   const claim = idxOuFalha(codigo, "claim_calculate_scores", "a chamada do claim");
-  const snapshot = idxOuFalha(codigo, "from('farmer_client_scores')", "a leitura do snapshot");
+  const snapshot = idxPrimeiraLeituraScores(codigo);   // aspas simples OU duplas (furo achado pelo /codex)
   if (claim >= snapshot) {
     throw new Error(
       `ORDEM QUEBRADA: o snapshot (indice ${snapshot}) e lido ANTES do claim (indice ${claim}). ` +
@@ -76,9 +100,14 @@ Deno.test("o lease e liberado (finalizar_calculate_scores presente)", () => {
 // Sem `.order()` o fatiamento por .range() pode repetir uma linha e OMITIR outra — e a omitida sai do
 // recompute sem nenhum sinal. Os DOIS selects paginados de farmer_client_scores (o inicial e o
 // re-fetch pos-seed) precisam da ordem estavel.
-Deno.test("todo select paginado de farmer_client_scores tem .order() estavel", () => {
+// Sem `.order()` o fatiamento por .range() pode repetir uma linha e OMITIR outra — e a omitida sai
+// do recompute sem nenhum sinal. Mas nao basta exigir QUALQUER .order(): o /codex mostrou que
+// `.order('updated_at')` passaria no guard antigo, e updated_at NAO e ordem total (varias linhas
+// compartilham o mesmo timestamp — o proprio writer carimba o lote inteiro no mesmo instante), entao
+// o empate reintroduz exatamente a instabilidade entre paginas. Exigimos a PK.
+Deno.test("todo select paginado de farmer_client_scores ordena pela PK (ordem TOTAL)", () => {
   const codigo = semComentarios(Deno.readTextFileSync(FONTE));
-  const selects = [...codigo.matchAll(/from\('farmer_client_scores'\)\s*\.select\('\*'\)([\s\S]{0,200}?)\.range\(/g)];
+  const selects = [...codigo.matchAll(/from\(\s*['"]farmer_client_scores['"]\s*\)\s*\.select\(\s*['"]\*['"]\s*\)([\s\S]{0,200}?)\.range\(/g)];
   if (selects.length < 2) {
     throw new Error(
       `esperava >= 2 selects paginados de farmer_client_scores, achei ${selects.length}. ` +
@@ -86,8 +115,11 @@ Deno.test("todo select paginado de farmer_client_scores tem .order() estavel", (
     );
   }
   selects.forEach((m, i) => {
-    if (!m[1].includes(".order(")) {
-      throw new Error(`select paginado #${i + 1} nao tem .order() entre o .select('*') e o .range() — ordem indefinida entre paginas.`);
+    if (!/\.order\(\s*['"]id['"]/.test(m[1])) {
+      throw new Error(
+        `select paginado #${i + 1} nao ordena por 'id' entre o .select('*') e o .range(). ` +
+        `Ordem nao-total (ex.: updated_at) empata e volta a permitir pagina que repete/omite linha.`,
+      );
     }
   });
 });
