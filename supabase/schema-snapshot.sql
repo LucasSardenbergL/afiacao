@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict DpEQHkmreOLMHXg00OcAxKURWf2HZXdMZShBWI8AAvyNt4N5uyZtYLWv9JFRqjM
+\restrict i8MF1XYXbImkgKe6f8PipnLWLTP4UHGHO5dhoBsEWSXM0jmwpq5cEj8AZwoo8F1
 
 -- Dumped from database version 17.6
 -- Dumped by pg_dump version 17.10 (Homebrew)
@@ -479,6 +479,84 @@ CREATE FUNCTION private.is_super_admin(_user_id uuid) RETURNS boolean
       AND commercial_role = 'super_admin'
   )
 $$;
+
+
+--
+-- Name: margem_cliente_agregada(); Type: FUNCTION; Schema: private; Owner: -
+--
+
+CREATE FUNCTION private.margem_cliente_agregada() RETURNS TABLE(customer_user_id uuid, itens_computaveis bigint, itens_ignorados bigint, receita_computada numeric, custo_computado numeric, margem_pct numeric)
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'pg_temp'
+    AS $$
+  WITH custo AS (
+    -- `> 0 AND < 'Infinity'` é o teste de FINITUDE POSITIVA em numeric e cobre os três lixos de
+    -- uma vez: 0/negativo reprovam no `> 0`; Infinity reprova no `< 'Infinity'`; e NaN reprova
+    -- também, porque o Postgres ordena NaN como MAIOR que qualquer numeric, inclusive Infinity.
+    SELECT op.omie_codigo_produto AS cod,
+           COALESCE(
+             CASE WHEN pc.cost_final > 0 AND pc.cost_final < 'Infinity'::numeric THEN pc.cost_final END,
+             CASE WHEN pc.cost_price > 0 AND pc.cost_price < 'Infinity'::numeric THEN pc.cost_price END
+           ) AS custo_unit
+      FROM public.omie_products op
+      JOIN public.product_costs pc ON pc.product_id = op.id
+     WHERE op.omie_codigo_produto IS NOT NULL
+  ),
+  itens AS (
+    SELECT oi.customer_user_id      AS cid,
+           oi.quantity::numeric     AS qtd,
+           oi.unit_price::numeric   AS preco_unit,
+           cu.custo_unit
+      FROM public.order_items oi
+      JOIN public.sales_orders so ON so.id = oi.sales_order_id
+      -- EIXO 1: JOIN set-based por código. `product_costs.product_id` é UNIQUE e
+      -- `omie_products.omie_codigo_produto` é único (7.962/7.962) ⇒ não duplica linha.
+      LEFT JOIN custo cu          ON cu.cod = oi.omie_codigo_produto
+     -- EIXO 2: DENYLIST. Só o que não é venda sai; todo status de venda real entra, inclusive os
+     -- em trânsito (`separacao`, `enviado`) e os importados do Omie.
+     WHERE so.status NOT IN ('cancelado', 'rascunho', 'pendente', 'orcamento')
+       AND so.deleted_at IS NULL
+       AND oi.customer_user_id IS NOT NULL
+       -- NOT EXISTS, não NOT IN: NOT IN é NULL-blind e zeraria o resultado inteiro.
+       AND NOT EXISTS (
+             SELECT 1 FROM public.cliente_classificacao cc
+              WHERE cc.user_id = oi.customer_user_id
+                AND cc.excluir_da_carteira IS TRUE)
+  ),
+  norm AS (
+    -- EIXO 3: um item só conta com as TRÊS pernas utilizáveis. `COALESCE(unit_price,0)` fabricava
+    -- margem: item com custo conhecido e preço ausente entrava com receita 0 e custo real.
+    SELECT i.cid, i.qtd, i.preco_unit, i.custo_unit,
+           ( i.qtd        IS NOT NULL AND i.qtd        >  0 AND i.qtd        < 'Infinity'::numeric
+         AND i.preco_unit IS NOT NULL AND i.preco_unit >= 0 AND i.preco_unit < 'Infinity'::numeric
+         AND i.custo_unit IS NOT NULL ) AS computavel
+      FROM itens i
+  )
+  SELECT
+    n.cid,
+    count(*) FILTER (WHERE n.computavel),
+    count(*) FILTER (WHERE NOT n.computavel),
+    COALESCE(sum(n.preco_unit * n.qtd)  FILTER (WHERE n.computavel), 0),
+    COALESCE(sum(n.custo_unit  * n.qtd) FILTER (WHERE n.computavel), 0),
+    CASE
+      WHEN COALESCE(sum(n.preco_unit * n.qtd) FILTER (WHERE n.computavel), 0) > 0
+      THEN round(
+             ( sum(n.preco_unit * n.qtd)  FILTER (WHERE n.computavel)
+             - sum(n.custo_unit  * n.qtd) FILTER (WHERE n.computavel) )
+             / sum(n.preco_unit * n.qtd)  FILTER (WHERE n.computavel) * 100
+           , 2)
+      ELSE NULL
+    END
+  FROM norm n
+  GROUP BY n.cid;
+$$;
+
+
+--
+-- Name: FUNCTION margem_cliente_agregada(); Type: COMMENT; Schema: private; Owner: -
+--
+
+COMMENT ON FUNCTION private.margem_cliente_agregada() IS 'Fonte UNICA da margem bruta por cliente (order_items x omie_products x product_costs). Universo por DENYLIST de status (inclui separacao/enviado/importado: sao vendas reais, R$ 6.985.425,66 que a allowlist anterior descartava). JOIN por omie_codigo_produto — product_id e nulo em 2,67% dos itens. ausente<>zero nas TRES pernas: sem item computavel devolve NULL, nunca 0. Fechada por REVOKE; o schema private fecha a rota do PostgREST mas NAO o EXECUTE (authenticated tem USAGE nele).';
 
 
 --
@@ -2016,8 +2094,9 @@ DECLARE
   v_total int;
   v_valid int;
 BEGIN
-  -- GUARD DE CONTRATO (full-update only): as 13 chaves CORE são obrigatórias em TODA linha.
-  -- sales_history_status NÃO entra aqui (é opcional/COALESCE) → edge antigo segue válido.
+  -- GUARD DE CONTRATO (full-update only): as 12 chaves CORE são obrigatórias em TODA linha.
+  -- Aqui jsonb_to_recordset basta: ausente e null são AMBOS inválidos, então colapsá-los é correto.
+  -- sales_history_status, gross_margin_pct e m_score NÃO entram (nuláveis por semântica).
   v_total := jsonb_array_length(p_updates);
 
   SELECT count(*) INTO v_valid
@@ -2028,7 +2107,6 @@ BEGIN
     churn_risk               numeric,
     priority_score           numeric,
     rf_score                 numeric,
-    m_score                  numeric,
     g_score                  numeric,
     days_since_last_purchase integer,
     avg_monthly_spend_180d   numeric,
@@ -2042,7 +2120,6 @@ BEGIN
     AND churn_risk               IS NOT NULL
     AND priority_score           IS NOT NULL
     AND rf_score                 IS NOT NULL
-    AND m_score                  IS NOT NULL
     AND g_score                  IS NOT NULL
     AND days_since_last_purchase IS NOT NULL
     AND avg_monthly_spend_180d   IS NOT NULL
@@ -2052,7 +2129,7 @@ BEGIN
 
   IF v_valid <> v_total THEN
     RAISE EXCEPTION
-      'apply_score_updates: contrato full-update violado — % de % elemento(s) com campo obrigatorio nulo/ausente (as 13 chaves sao obrigatorias; jsonb_to_recordset nao faz COALESCE)',
+      'apply_score_updates: contrato full-update violado — % de % elemento(s) com campo obrigatorio nulo/ausente (as 12 chaves CORE sao obrigatorias; jsonb_to_recordset nao faz COALESCE)',
       (v_total - v_valid), v_total
       USING ERRCODE = 'check_violation';
   END IF;
@@ -2064,30 +2141,37 @@ BEGIN
     churn_risk               = u.churn_risk,
     priority_score           = u.priority_score,
     rf_score                 = u.rf_score,
-    m_score                  = u.m_score,
+    m_score                  = CASE WHEN u.tem_m_score          THEN u.m_score          ELSE f.m_score          END,
     g_score                  = u.g_score,
+    gross_margin_pct         = CASE WHEN u.tem_gross_margin_pct THEN u.gross_margin_pct ELSE f.gross_margin_pct END,
     days_since_last_purchase = u.days_since_last_purchase,
     avg_monthly_spend_180d   = u.avg_monthly_spend_180d,
     category_count           = u.category_count,
     sales_history_status     = COALESCE(u.sales_history_status, f.sales_history_status),
     calculated_at            = u.calculated_at,
     updated_at               = u.updated_at
-  FROM jsonb_to_recordset(p_updates) AS u(
-    id                       uuid,
-    health_score             numeric,
-    health_class             text,
-    churn_risk               numeric,
-    priority_score           numeric,
-    rf_score                 numeric,
-    m_score                  numeric,
-    g_score                  numeric,
-    days_since_last_purchase integer,
-    avg_monthly_spend_180d   numeric,
-    category_count           integer,
-    sales_history_status     text,
-    calculated_at            timestamptz,
-    updated_at               timestamptz
-  )
+  FROM (
+    SELECT
+      (e.elem->>'id')::uuid                          AS id,
+      (e.elem->>'health_score')::numeric             AS health_score,
+      (e.elem->>'health_class')                      AS health_class,
+      (e.elem->>'churn_risk')::numeric               AS churn_risk,
+      (e.elem->>'priority_score')::numeric           AS priority_score,
+      (e.elem->>'rf_score')::numeric                 AS rf_score,
+      (e.elem->>'m_score')::numeric                  AS m_score,
+      (e.elem->>'g_score')::numeric                  AS g_score,
+      (e.elem->>'gross_margin_pct')::numeric         AS gross_margin_pct,
+      (e.elem->>'days_since_last_purchase')::integer AS days_since_last_purchase,
+      (e.elem->>'avg_monthly_spend_180d')::numeric   AS avg_monthly_spend_180d,
+      (e.elem->>'category_count')::integer           AS category_count,
+      (e.elem->>'sales_history_status')              AS sales_history_status,
+      (e.elem->>'calculated_at')::timestamptz        AS calculated_at,
+      (e.elem->>'updated_at')::timestamptz           AS updated_at,
+      -- jsonb_exists(), e não o operador ?, para não depender de como o parser trata ? em plpgsql.
+      jsonb_exists(e.elem, 'm_score')                AS tem_m_score,
+      jsonb_exists(e.elem, 'gross_margin_pct')       AS tem_gross_margin_pct
+    FROM jsonb_array_elements(p_updates) AS e(elem)
+  ) u
   WHERE f.id = u.id;
   GET DIAGNOSTICS v_count = ROW_COUNT;
   RETURN v_count;
@@ -8056,6 +8140,31 @@ $$;
 
 
 --
+-- Name: get_customer_margin_summary(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.get_customer_margin_summary() RETURNS TABLE(customer_user_id uuid, itens_com_custo bigint, itens_sem_custo bigint, receita_com_custo numeric, custo_conhecido numeric, gross_margin_pct numeric)
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'pg_temp'
+    AS $$
+  SELECT m.customer_user_id,
+         m.itens_computaveis,
+         m.itens_ignorados,
+         m.receita_computada,
+         m.custo_computado,
+         m.margem_pct
+    FROM private.margem_cliente_agregada() m;
+$$;
+
+
+--
+-- Name: FUNCTION get_customer_margin_summary(); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.get_customer_margin_summary() IS 'Margem bruta por cliente para o componente de margem do health score. Desde a reconciliacao (2026-07-21) e uma PROJECAO de private.margem_cliente_agregada() — nao tem calculo proprio. Nomes de coluna preservados para a edge calculate-scores. ausente<>zero: cliente sem item computavel devolve NULL, nunca 0. SECURITY DEFINER + EXECUTE so para service_role.';
+
+
+--
 -- Name: get_customer_metrics(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -10388,6 +10497,25 @@ BEGIN
   RETURN n;
 END;
 $$;
+
+
+--
+-- Name: pode_ler_custo(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.pode_ler_custo() RETURNS boolean
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+  SELECT COALESCE(private.cap_custo_ler((SELECT auth.uid())), false);
+$$;
+
+
+--
+-- Name: FUNCTION pode_ler_custo(); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.pode_ler_custo() IS 'FU4-F/3: espelha private.cap_custo_ler para o CALLER (sem parâmetro — não é oráculo de capability de terceiros). Consumida pela edge `recommend` com o JWT do usuário. Com service_role auth.uid() é NULL e o retorno é false (fail-closed).';
 
 
 --
@@ -14927,10 +15055,12 @@ DECLARE
   v_n_skus    int;
   v_can_id    uuid;
   v_can_csv   numeric;
+  v_can_piso  numeric;            -- 14ª coluna: piso conservador (NULL-preserving)
   v_price     jsonb;
   v_calc_raw  float8;
   v_calc      float8;
   v_tab       float8;
+  v_piso      float8;             -- ceil10 do v_can_piso (espelha v_tab)
   v_vu        float8;
   v_fonte     text;
   v_desc      float8;
@@ -14940,7 +15070,7 @@ DECLARE
   v_motivo    text;
   v_legado_ok boolean;
 
-  -- espelhos JS (float8 de ponta a ponta — ver cabeçalho):
+  -- espelhos JS (float8 de ponta a ponta — ver cabeçalho da 20260722100001):
   --   ceil10(v) ≡ Math.ceil(v*10)/10 · round2(v) ≡ floor(v*100+0.5)/100
 BEGIN
   IF p_contexto NOT IN ('criacao', 'edicao') THEN
@@ -15128,10 +15258,11 @@ BEGIN
       CONTINUE;
     END IF;
 
-    v_can_id := NULL; v_can_csv := NULL;
+    v_can_id := NULL; v_can_csv := NULL; v_can_piso := NULL;
     IF v_n_skus > 1 THEN
       -- só a fórmula declarada (do picker) desambigua a célula
-      SELECT c.id, c.preco_csv_legado INTO v_can_id, v_can_csv
+      SELECT c.id, c.preco_csv_legado, c.preco_piso_legado
+        INTO v_can_id, v_can_csv, v_can_piso
       FROM public.tint_skus s
       JOIN public.v_tint_formula_canonica c
         ON c.account = p_account AND c.sku_id = s.id AND c.cor_id = v_cor
@@ -15145,7 +15276,8 @@ BEGIN
         CONTINUE;
       END IF;
     ELSE
-      SELECT c.id, c.preco_csv_legado INTO v_can_id, v_can_csv
+      SELECT c.id, c.preco_csv_legado, c.preco_piso_legado
+        INTO v_can_id, v_can_csv, v_can_piso
       FROM public.tint_skus s
       JOIN public.v_tint_formula_canonica c
         ON c.account = p_account AND c.sku_id = s.id AND c.cor_id = v_cor
@@ -15178,8 +15310,25 @@ BEGIN
     END IF;
 
     v_calc := ceil(v_calc_raw * 10) / 10;                       -- ceil10 (≡ JS)
+    -- RÓTULO (fonte 'tabela'): allowlist, proveniência provada.
     v_tab  := CASE WHEN v_can_csv IS NOT NULL AND v_can_csv > 0
                    THEN ceil((v_can_csv)::float8 * 10) / 10 ELSE NULL END;
+    -- PISO (fontes 'manual' e legado): conservador.
+    -- ⚠️ ELEGIBILIDADE ACOPLADA a v_tab (achado P1 do challenge Codex xhigh,
+    -- 2026-07-21). O NULL-preserving da view garante os invariantes sobre os
+    -- valores CRUS — mas o guard `> 0` aqui cria uma SEGUNDA forma de "ausente"
+    -- que a view não conhece, e por ela a monotonicidade vazava:
+    --   csv = 0 (≠ NULL) e piso = 90, calc = 102.5
+    --   ⇒ I1 passa (nenhum é NULL) e I2 passa (90 >= 0) — os dois invariantes
+    --     provados ficam VERDES — mas v_tab vira NULL e v_piso vira 90, então
+    --     o piso EFETIVO cai de 102.5 para 90 e um manual de 95 passa a ser
+    --     aceito onde hoje bloqueia. Afrouxamento pela porta dos fundos.
+    -- Gatear v_piso em v_tab restaura a monotonicidade no nível EFETIVO:
+    --   v_tab IS NULL ⇒ v_piso IS NULL   ·   ambos presentes ⇒ v_piso >= v_tab
+    --   ⇒ v_floor novo >= v_floor de hoje SEMPRE. Sem isto a alegação é falsa.
+    -- (Classe medida em prod 2026-07-21: 0 chaves — latente, como o resto.)
+    v_piso := CASE WHEN v_tab IS NOT NULL AND v_can_piso IS NOT NULL AND v_can_piso > 0
+                   THEN ceil((v_can_piso)::float8 * 10) / 10 ELSE NULL END;
 
     -- desconto declarado (0 ≤ d < 100; ausente = 0). d=100 é incompatível com
     -- o guard global preço>0 do edge — contrato alinhado (Codex).
@@ -15204,6 +15353,9 @@ BEGIN
       v_esperado := floor(v_calc * (1 - v_desc/100) * 100 + 0.5) / 100;
 
     ELSIF v_fonte = 'tabela' THEN
+      -- ⚠️ a fonte 'tabela' valida contra o RÓTULO (v_tab), NÃO contra o piso:
+      -- a escolha da vendedora é sobre PROVENIÊNCIA ("versão anterior"), e
+      -- validar contra o piso conservador barraria a escolha legítima.
       IF v_tab IS NULL THEN
         v_bloqueios := v_bloqueios || jsonb_build_object(
           'index', v_idx, 'cor_id', v_cor, 'motivo', 'fonte_tabela_indisponivel',
@@ -15229,7 +15381,9 @@ BEGIN
       -- fontes legítimas bloqueia. Nada abaixo do que 'tabela'/'calculado'
       -- sem desconto já permitiriam (Codex P1 do diff: sem esta fonte, todo
       -- aumento manual legítimo caía em metadados_ausentes).
-      v_floor := LEAST(v_calc, COALESCE(v_tab, v_calc));
+      -- ⚠️ v_piso (conservador), NÃO v_tab (allowlist): encolher o conjunto do
+      -- max para dar precisão AO RÓTULO não pode afrouxar o PISO.
+      v_floor := LEAST(v_calc, COALESCE(v_piso, v_calc));
       IF v_vu < v_floor - 0.005 THEN
         v_bloqueios := v_bloqueios || jsonb_build_object(
           'index', v_idx, 'cor_id', v_cor, 'motivo', 'preco_obsoleto',
@@ -15255,7 +15409,8 @@ BEGIN
           'detalhe', 'item tint sem fonte de preço declarada e sem lastro legado no pedido — reprecifique no balcão de tinta');
         CONTINUE;
       END IF;
-      v_floor := LEAST(v_calc, COALESCE(v_tab, v_calc));
+      -- mesmo piso conservador da fonte 'manual' (ver nota acima)
+      v_floor := LEAST(v_calc, COALESCE(v_piso, v_calc));
       IF v_vu < v_floor - 0.005 THEN
         v_bloqueios := v_bloqueios || jsonb_build_object(
           'index', v_idx, 'cor_id', v_cor, 'motivo', 'preco_obsoleto',
@@ -15308,7 +15463,7 @@ $_$;
 -- Name: FUNCTION tint_gate_revalida(p_account text, p_customer_user_id uuid, p_sales_order_id uuid, p_contexto text, p_items jsonb); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.tint_gate_revalida(p_account text, p_customer_user_id uuid, p_sales_order_id uuid, p_contexto text, p_items jsonb) IS 'Fase 3 tint: gate da fronteira omie-vendas-sync (criar_pedido/alterar_pedido). Revalida item tint contra o estado ATUAL (canônica viva + preço recomputado + fonte declarada, aritmética float8 ≡ JS). Baseline persistido decide proveniência (legado=piso) e intocabilidade (edição). Fontes: calculado/tabela/cliente (exigem tint_formula_id coerente) · manual (piso) · ausente (legado com lastro). Base tint sem cor: bloqueia na criação; na edição só intocada (inbound). Multi-SKU sem fórmula que desambigue: bloqueia. service_role-only. Bloqueio ⇒ {ok:false,bloqueios:[…]} — o edge NÃO toca o Omie.';
+COMMENT ON FUNCTION public.tint_gate_revalida(p_account text, p_customer_user_id uuid, p_sales_order_id uuid, p_contexto text, p_items jsonb) IS 'Fase 3 tint: gate da fronteira omie-vendas-sync (criar_pedido/alterar_pedido). Revalida item tint contra o estado ATUAL (canônica viva + preço recomputado + fonte declarada, aritmética float8 ≡ JS). Baseline persistido decide proveniência (legado=piso) e intocabilidade (edição). Fontes: calculado/tabela/cliente (exigem tint_formula_id coerente) · manual (piso) · ausente (legado com lastro). Base tint sem cor: bloqueia na criação; na edição só intocada (inbound). Multi-SKU sem fórmula que desambigue: bloqueia. service_role-only. Bloqueio ⇒ {ok:false,bloqueios:[…]} — o edge NÃO toca o Omie. 2026-07-21: o PISO ("manual"/legado) passou a ler preco_piso_legado (max CONSERVADOR de todas as ativas da chave); a fonte "tabela" segue lendo preco_csv_legado (RÓTULO, allowlist). Separar os dois impede que dar precisão de proveniência ao rótulo afrouxe o piso do submit.';
 
 
 --
@@ -15681,12 +15836,24 @@ BEGIN
   -- Em `numeric` o NaN ordena ACIMA de tudo: `NaN <= 0` é FALSO e `NaN > 0` é VERDADEIRO — o critério
   -- ingênuo dava NaN como dose VÁLIDA no guard E no INSERT, e NaN entrava na receita contaminando preço.
   -- `< 'Infinity'` derruba NaN e +Inf; `> 0` derruba -Inf/zero/negativo; o COALESCE derruba NULL.
-  CREATE TEMP TABLE _fl_corrompida ON COMMIT DROP AS
-  SELECT DISTINCT staging_formula_id FROM (
+  -- [DIAG-A] A CULPA vira dado de PRIMEIRA CLASSE. Os 3 ramos abaixo têm predicado VERBATIM da v5 —
+  -- só a PROJEÇÃO cresceu (motivo + ids das linhas culpadas), então o conjunto de staging_formula_id
+  -- que eles produzem é idêntico e NENHUMA fórmula muda de lado. O log passa a ser SUBPRODUTO da
+  -- decisão em vez de uma reconstrução dela (que seria um espelho livre para divergir em silêncio).
+  -- ⚠️ item_ids é PAYLOAD PURO: a decisão (_fl_corrompida, logo abaixo) é o DISTINCT das LINHAS de
+  -- _fl_culpa e NUNCA passa por unnest(item_ids) — se passasse, um array vazio/NULL faria a fórmula
+  -- sumir do guard e PROMOVER corrompida (fail-OPEN, subfaturamento silencioso). Direção de falha:
+  -- bug no payload degrada o LOG; jamais solta a promoção. Provado por Flog-4.
+  CREATE TEMP TABLE _fl_culpa ON COMMIT DROP AS
+  SELECT * FROM (
     -- (a) corante PRESENTE cujo conjunto de linhas não tem NENHUMA dose válida → o INSERT filtraria esse
     --     corante → receita PARCIAL (subfaturamento silencioso) ou ZERO. bool_and POR (formula,corante)
     --     preserva a dosagem em 2 etapas legítima (mesmo corante em 2 ordens, ambas válidas).
-    SELECT si.staging_formula_id
+    --     Culpadas são TODAS as linhas daquele corante (nenhuma tem dose válida — a violação é do
+    --     CONJUNTO, não de uma linha): array_agg dentro do próprio grupo.
+    SELECT si.staging_formula_id,
+           'corante_sem_dose_valida'::text AS motivo,
+           array_agg(si.id) AS item_ids
     FROM tint_staging_formula_itens si
     JOIN _fl_resolved fl ON fl.staging_formula_id = si.staging_formula_id
     WHERE fl.produto_id IS NOT NULL AND fl.base_id IS NOT NULL
@@ -15701,7 +15868,12 @@ BEGIN
     --     cairia FORA dos dois ramos (o ramo (a) exige corante presente; um ramo (b) que exigisse dose
     --     positiva-finita não pegaria o não-finito) e a fórmula promoveria PARCIAL. Só NULL/0 é placeholder
     --     legítimo de slot vazio; qualquer outra quantidade sem corante é corrupção. (`NaN <> 0` é TRUE.)
-    SELECT si.staging_formula_id
+    --     ⚠️ É EXATAMENTE esta classe de linha que o error_details da v5 escondia (o filtro de
+    --     id_corante no subselect de itens): o ramo que pega o órfão era o único cujo culpado
+    --     jamais aparecia no log. NB.9142, 2026-07-21.
+    SELECT si.staging_formula_id,
+           'dose_sem_corante'::text,
+           ARRAY[si.id]
     FROM tint_staging_formula_itens si
     JOIN _fl_resolved fl ON fl.staging_formula_id = si.staging_formula_id
     WHERE fl.produto_id IS NOT NULL AND fl.base_id IS NOT NULL
@@ -15717,7 +15889,9 @@ BEGIN
     --     mascara e o INSERT faz fallback silencioso p/ outra ordem); placeholder real com irmão
     --     válido; slot flat ilegível emitido. Headers LEGADOS (expected NULL) mantêm o ramo (a)
     --     (dosagem em 2 etapas com linha zerada segue promovendo pela dose válida — C16).
-    SELECT si.staging_formula_id
+    SELECT si.staging_formula_id,
+           'linha_invalida_protocolo_1d'::text,
+           ARRAY[si.id]
     FROM tint_staging_formula_itens si
     JOIN _fl_resolved fl ON fl.staging_formula_id = si.staging_formula_id
     WHERE fl.produto_id IS NOT NULL AND fl.base_id IS NOT NULL
@@ -15729,17 +15903,59 @@ BEGIN
       )
   ) q;
 
+  -- DECISÃO: o DISTINCT das LINHAS de _fl_culpa — NUNCA do unnest(item_ids) (ver [DIAG-A]).
+  -- Conjunto idêntico ao da v5: mesmos 3 ramos, mesmos predicados, mesma cardinalidade de grupos.
+  CREATE TEMP TABLE _fl_corrompida ON COMMIT DROP AS
+  SELECT DISTINCT staging_formula_id FROM _fl_culpa;
+
   -- Loga UMA linha de erro por fórmula corrompida (espelha os guards 1-3; entity_id = cor_id).
+  -- [DIAG-C] mensagem derivada dos motivos que REALMENTE dispararam. A v5 afirmava sempre o ramo (a);
+  --   na NB.9142 dispararam (b)+(c) e a mensagem acusava o único ramo que NÃO disparou. O prefixo
+  --   'receita corrompida: ' é preservado — asserts do harness e a UI casam por LIKE '%corrompida%'.
+  --   ⚠️ O COALESCE não é decorativo: em SQL `'texto' || NULL` é NULL, então uma fórmula sem linha
+  --   em _fl_culpa (impossível hoje — _fl_corrompida deriva dela) zeraria a mensagem INTEIRA e o
+  --   LIKE '%corrompida%' deixaria de casar. Fail-closed do diagnóstico.
+  -- [DIAG-B] itens: TODOS (sem o filtro de id_corante que escondia o órfão), cada um marcado com
+  --   `viola` + `motivos`. Os itens VÁLIDOS preservam id_corante/ordem/qtd_ml verbatim (compat).
+  --   `ordem` é NULLABLE e agora órfãos entram → ORDER BY ... NULLS LAST, si.id (determinístico).
   INSERT INTO tint_sync_errors (sync_run_id, entity_type, entity_id, error_message, error_details)
   SELECT p_sync_run_id, 'formula_promote', fl.cor_id,
-         'receita corrompida: corante presente sem dose válida (qtd_ml <= 0/nula) — fórmula NÃO promovida, receita anterior preservada',
+         'receita corrompida: ' || COALESCE((
+           SELECT string_agg(m.txt, ' + ' ORDER BY m.txt)
+           FROM (
+             SELECT DISTINCT CASE c2.motivo
+                      WHEN 'corante_sem_dose_valida'     THEN 'corante presente sem dose válida (qtd_ml <= 0/nula/não-finita)'
+                      WHEN 'dose_sem_corante'            THEN 'dose sem corante identificado (item órfão)'
+                      WHEN 'linha_invalida_protocolo_1d' THEN 'linha inválida sob protocolo declarado (1d-E)'
+                      ELSE c2.motivo
+                    END AS txt
+             FROM _fl_culpa c2
+             WHERE c2.staging_formula_id = fl.staging_formula_id
+           ) m
+         ), 'motivo não determinado') || ' — fórmula NÃO promovida, receita anterior preservada',
          jsonb_build_object(
            'cod_produto', fl.cod_produto, 'id_base', fl.id_base,
+           'motivos', (
+             SELECT to_jsonb(array_agg(DISTINCT c2.motivo ORDER BY c2.motivo))
+             FROM _fl_culpa c2
+             WHERE c2.staging_formula_id = fl.staging_formula_id
+           ),
            'itens', (
-             SELECT jsonb_agg(jsonb_build_object('id_corante', si.id_corante, 'ordem', si.ordem, 'qtd_ml', si.qtd_ml) ORDER BY si.ordem)
+             SELECT jsonb_agg(jsonb_build_object(
+                      'id_corante', si.id_corante,
+                      'ordem',      si.ordem,
+                      'qtd_ml',     si.qtd_ml,
+                      'viola',      (cul.motivos IS NOT NULL),
+                      'motivos',    to_jsonb(cul.motivos)
+                    ) ORDER BY si.ordem NULLS LAST, si.id)
              FROM tint_staging_formula_itens si
+             LEFT JOIN LATERAL (
+               SELECT array_agg(DISTINCT c2.motivo ORDER BY c2.motivo) AS motivos
+               FROM _fl_culpa c2
+               WHERE c2.staging_formula_id = si.staging_formula_id
+                 AND si.id = ANY(c2.item_ids)
+             ) cul ON true
              WHERE si.staging_formula_id = fl.staging_formula_id
-               AND si.id_corante IS NOT NULL AND btrim(si.id_corante) <> ''
            ))
   FROM _fl_resolved fl
   JOIN _fl_corrompida c ON c.staging_formula_id = fl.staging_formula_id;
@@ -17040,6 +17256,114 @@ CREATE FUNCTION public.vendas_sync_release(p_account text, p_date_from date, p_d
          heartbeat_at = now(), updated_at = now()
    WHERE account = p_account AND date_from = p_date_from AND date_to = p_date_to;
 $$;
+
+
+--
+-- Name: vendas_sync_semear_janela(date, date, text[]); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.vendas_sync_semear_janela(p_date_from date, p_date_to date, p_accounts text[] DEFAULT ARRAY['oben'::text, 'colacor'::text]) RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO ''
+    AS $$
+DECLARE
+  v_uid         uuid := auth.uid();
+  v_account     text;
+  v_contas      jsonb := '[]'::jsonb;
+  v_desfecho    text;
+  v_next        integer;
+  v_done        timestamptz;
+  v_aberta_from date;
+  v_aberta_to   date;
+BEGIN
+  -- Gate staff/master na fronteira (fail-closed: uid nulo NUNCA passa) —
+  -- mesmo gate de public.request_customer_metrics_refresh.
+  IF v_uid IS NULL
+     OR NOT (COALESCE(public.has_role(v_uid, 'employee'::public.app_role), false)
+          OR COALESCE(public.has_role(v_uid, 'master'::public.app_role),   false)) THEN
+    RAISE EXCEPTION 'Acesso negado: requer perfil staff' USING ERRCODE = '42501';
+  END IF;
+
+  -- Validação de janela (money-path: melhor recusar do que semear lixo).
+  IF p_accounts IS NULL OR array_length(p_accounts, 1) IS NULL THEN
+    RAISE EXCEPTION 'p_accounts vazio' USING ERRCODE = '22023';
+  END IF;
+  IF p_date_from IS NULL OR p_date_to IS NULL OR p_date_from > p_date_to THEN
+    RAISE EXCEPTION 'janela invalida: date_from (%) deve ser <= date_to (%)', p_date_from, p_date_to
+      USING ERRCODE = '22023';
+  END IF;
+  IF p_date_to > current_date THEN
+    RAISE EXCEPTION 'janela invalida: date_to (%) no futuro', p_date_to
+      USING ERRCODE = '22023';
+  END IF;
+  IF p_date_from < DATE '2015-01-01' THEN
+    RAISE EXCEPTION 'janela invalida: date_from (%) anterior a 2015-01-01', p_date_from
+      USING ERRCODE = '22023';
+  END IF;
+
+  -- Contas em ordem determinística → advisory locks sempre na mesma ordem (anti-deadlock).
+  FOR v_account IN SELECT DISTINCT a FROM unnest(p_accounts) AS a ORDER BY a
+  LOOP
+    IF v_account IS NULL OR v_account NOT IN ('oben', 'colacor') THEN
+      RAISE EXCEPTION 'conta invalida: % (esperado oben|colacor)', COALESCE(v_account, 'NULL')
+        USING ERRCODE = '22023';
+    END IF;
+
+    -- Serializa semeadores concorrentes da MESMA conta (xact-lock: solta sozinho no fim/abort).
+    PERFORM pg_advisory_xact_lock(hashtext('vendas_sync_semear_' || v_account));
+
+    SELECT c.date_from, c.date_to
+      INTO v_aberta_from, v_aberta_to
+      FROM public.vendas_sync_cursor c
+     WHERE c.account = v_account
+       AND c.completed_at IS NULL
+       AND NOT (c.date_from = p_date_from AND c.date_to = p_date_to)
+     ORDER BY c.date_from
+     LIMIT 1;
+
+    IF FOUND THEN
+      v_desfecho := 'ja_pendente_outra';
+      v_next := NULL;
+      v_done := NULL;
+    ELSE
+      INSERT INTO public.vendas_sync_cursor (account, date_from, date_to)
+      VALUES (v_account, p_date_from, p_date_to)
+      ON CONFLICT (account, date_from, date_to) DO NOTHING;
+      IF FOUND THEN
+        v_desfecho := 'semeada';
+      END IF;
+      SELECT c.next_page, c.completed_at
+        INTO v_next, v_done
+        FROM public.vendas_sync_cursor c
+       WHERE c.account = v_account AND c.date_from = p_date_from AND c.date_to = p_date_to;
+      IF v_desfecho IS NULL THEN
+        v_desfecho := CASE WHEN v_done IS NOT NULL THEN 'ja_concluida' ELSE 'ja_pendente' END;
+      END IF;
+    END IF;
+
+    v_contas := v_contas || jsonb_build_object(
+      'account',           v_account,
+      'desfecho',          v_desfecho,
+      'next_page',         v_next,
+      'completed_at',      v_done,
+      'janela_aberta_de',  v_aberta_from,
+      'janela_aberta_ate', v_aberta_to
+    );
+
+    v_desfecho := NULL; v_next := NULL; v_done := NULL;
+    v_aberta_from := NULL; v_aberta_to := NULL;
+  END LOOP;
+
+  RETURN jsonb_build_object('date_from', p_date_from, 'date_to', p_date_to, 'contas', v_contas);
+END;
+$$;
+
+
+--
+-- Name: FUNCTION vendas_sync_semear_janela(p_date_from date, p_date_to date, p_accounts text[]); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.vendas_sync_semear_janela(p_date_from date, p_date_to date, p_accounts text[]) IS 'Arma janelas de backfill de pedidos no vendas_sync_cursor (staff/master; fail-closed), TODAS as contas na mesma transação (atômico) com advisory lock por conta. ON CONFLICT DO NOTHING: nunca toca janela existente; conta com OUTRA janela aberta recebe ja_pendente_outra. O cron vendas-sync-continuacao-6min pega a pendente mais antiga por conta e o edge omie-vendas-sync importa com lease+heartbeat.';
 
 
 --
@@ -20372,25 +20696,25 @@ CREATE TABLE public.farmer_client_scores (
     customer_user_id uuid NOT NULL,
     farmer_id uuid NOT NULL,
     rf_score numeric DEFAULT 0,
-    m_score numeric DEFAULT 0,
+    m_score numeric,
     g_score numeric DEFAULT 0,
-    x_score numeric DEFAULT 0,
-    s_score numeric DEFAULT 0,
+    x_score numeric,
+    s_score numeric,
     health_score numeric DEFAULT 0,
     health_class text DEFAULT 'critico'::text,
     churn_risk numeric DEFAULT 0,
-    recover_score numeric DEFAULT 0,
-    expansion_score numeric DEFAULT 0,
-    eff_score numeric DEFAULT 0,
+    recover_score numeric,
+    expansion_score numeric,
+    eff_score numeric,
     priority_score numeric DEFAULT 0,
     days_since_last_purchase integer DEFAULT 0,
     avg_repurchase_interval numeric DEFAULT 0,
     avg_monthly_spend_180d numeric DEFAULT 0,
-    gross_margin_pct numeric DEFAULT 0,
+    gross_margin_pct numeric,
     category_count integer DEFAULT 0,
     answer_rate_60d numeric DEFAULT 0,
     whatsapp_reply_rate_60d numeric DEFAULT 0,
-    revenue_potential numeric DEFAULT 0,
+    revenue_potential numeric,
     calculated_at timestamp with time zone DEFAULT now(),
     created_at timestamp with time zone DEFAULT now(),
     updated_at timestamp with time zone DEFAULT now(),
@@ -20399,6 +20723,20 @@ CREATE TABLE public.farmer_client_scores (
     sales_history_status text,
     CONSTRAINT farmer_client_scores_sales_history_status_check CHECK (((sales_history_status IS NULL) OR (sales_history_status = ANY (ARRAY['sem_historico'::text, 'stale'::text, 'ativo'::text]))))
 );
+
+
+--
+-- Name: COLUMN farmer_client_scores.m_score; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.farmer_client_scores.m_score IS 'Componente de margem do health score (0-100), derivado de gross_margin_pct. NULL quando a margem e desconhecida — nesse caso o peso do componente e redistribuido entre os demais em vez de contribuir 0. Sem DEFAULT de proposito.';
+
+
+--
+-- Name: COLUMN farmer_client_scores.gross_margin_pct; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.farmer_client_scores.gross_margin_pct IS 'Margem bruta % do cliente, calculada no SERVIDOR por get_customer_margin_summary. NULL = nao medida (nenhum item com custo conhecido, ou RPC de margem falhou no run). ausente<>zero: 0 aqui significa "margem zero apurada", nunca "nao sei". Sem DEFAULT de proposito.';
 
 
 --
@@ -26012,9 +26350,18 @@ CREATE TABLE public.tint_formulas (
     importacao_id uuid,
     created_at timestamp with time zone DEFAULT now(),
     updated_at timestamp with time zone DEFAULT now(),
-    desativada_em timestamp with time zone
+    desativada_em timestamp with time zone,
+    desativada_motivo text,
+    CONSTRAINT tint_formulas_motivo_exige_desativacao CHECK (((desativada_em IS NOT NULL) OR (desativada_motivo IS NULL)))
 )
 WITH (autovacuum_vacuum_scale_factor='0.05', autovacuum_analyze_scale_factor='0.05', autovacuum_vacuum_insert_scale_factor='0.05');
+
+
+--
+-- Name: COLUMN tint_formulas.desativada_motivo; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.tint_formulas.desativada_motivo IS 'Proveniência da desativação. NULL = ativa, ou desativada por outro mecanismo (hoje o tint_apply_keys_snapshot, quando a chave sai da FONTE). ''fase5_geracao_legada'' = desativada pela Fase 5 por ter gêmea SL válida — é o ÚNICO valor que a v_tint_formula_canonica aceita para deixar o CSV legado sobreviver à desativação. Carimbo NOVO exige revisão money-path: ampliar o conjunto ressuscita preço de linha que a fonte aposentou.';
 
 
 --
@@ -28680,12 +29027,12 @@ CREATE VIEW public.v_tint_formula_canonica WITH (security_invoker='on') AS
     rf.is_sl,
     rf.tem_receita,
     rf.receita_valida,
-    ( SELECT max(g2.preco_final_sayersystem) AS max
-           FROM public.tint_formulas g2
-          WHERE ((g2.account = f.account) AND (g2.sku_id = f.sku_id) AND (g2.cor_id = f.cor_id) AND (g2.desativada_em IS NULL) AND ((NOT rf.is_sl) OR (NOT (EXISTS ( SELECT 1
-                   FROM public.tint_subcolecoes s2
-                  WHERE ((s2.id = g2.subcolecao_id) AND (s2.account = g2.account) AND (s2.id_subcolecao_sayersystem = 'SL'::text)))))))) AS preco_csv_legado
-   FROM (public.tint_formulas f
+    lg.csv_legado AS preco_csv_legado,
+        CASE
+            WHEN (lg.csv_legado IS NULL) THEN NULL::numeric
+            ELSE GREATEST(lg.csv_legado, COALESCE(lg.max_ativo, lg.csv_legado))
+        END AS preco_piso_legado
+   FROM ((public.tint_formulas f
      CROSS JOIN LATERAL ( SELECT v.is_sl,
             v.tem_receita,
             (v.tem_receita AND v.corantes_ok) AS receita_valida,
@@ -28706,6 +29053,14 @@ CREATE VIEW public.v_tint_formula_canonica WITH (security_invoker='on') AS
                              LEFT JOIN public.tint_corantes c ON ((c.id = fi.corante_id)))
                              LEFT JOIN public.omie_products op ON ((op.id = c.omie_product_id)))
                           WHERE ((fi.formula_id = f.id) AND (NOT ((COALESCE(op.valor_unitario, (0)::numeric) > (0)::numeric) AND COALESCE(op.ativo, false) AND (c.volume_total_ml IS NOT NULL) AND (c.volume_total_ml > (0)::numeric))))))) AS corantes_ok) v) rf)
+     CROSS JOIN LATERAL ( SELECT ( SELECT max(g2.preco_final_sayersystem) AS max
+                   FROM public.tint_formulas g2
+                  WHERE ((g2.account = f.account) AND (g2.sku_id = f.sku_id) AND (g2.cor_id = f.cor_id) AND ((g2.desativada_em IS NULL) OR (g2.desativada_motivo = 'fase5_geracao_legada'::text)) AND ((NOT rf.is_sl) OR (EXISTS ( SELECT 1
+                           FROM public.tint_subcolecoes s2
+                          WHERE ((s2.id = g2.subcolecao_id) AND (s2.account = g2.account) AND (s2.id_subcolecao_sayersystem = '1'::text))))))) AS csv_legado,
+            ( SELECT max(g3.preco_final_sayersystem) AS max
+                   FROM public.tint_formulas g3
+                  WHERE ((g3.account = f.account) AND (g3.sku_id = f.sku_id) AND (g3.cor_id = f.cor_id) AND (g3.desativada_em IS NULL))) AS max_ativo) lg)
   WHERE ((f.desativada_em IS NULL) AND (f.sku_id IS NOT NULL) AND (NOT (EXISTS ( SELECT 1
            FROM (public.tint_formulas g
              CROSS JOIN LATERAL ( SELECT
@@ -28733,7 +29088,7 @@ CREATE VIEW public.v_tint_formula_canonica WITH (security_invoker='on') AS
 -- Name: VIEW v_tint_formula_canonica; Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON VIEW public.v_tint_formula_canonica IS 'Fase 2 tintométrico: 1 fórmula canônica por (account, sku_id, cor_id) — preferência SL válida, fallback SAYERLACK/personalizada; não desativa nada. receita_valida espelha corantes_completos da RPC get_tint_prices (validade POR FÓRMULA; base_disponivel fica fora — gêmeas compartilham o SKU). Fase 2b (semântica fixada 2026-07-20): preco_csv_legado = max CSV das linhas ativas da chave; quando a canônica é SL, só linhas NÃO-SL contam — o CSV próprio da SL nunca entra (a fonte "Tabela" é sempre a versão anterior). security_invoker=on: repetir o WITH em todo replace (#1375).';
+COMMENT ON VIEW public.v_tint_formula_canonica IS 'Fase 2 tintométrico: 1 fórmula canônica por (account, sku_id, cor_id) — preferência SL válida, fallback SAYERLACK/personalizada; não desativa nada. receita_valida espelha corantes_completos da RPC get_tint_prices (validade POR FÓRMULA; base_disponivel fica fora — gêmeas compartilham o SKU). preco_csv_legado = RÓTULO "Tabela (versão anterior)" (allowlist da geração ''1'' quando a canônica é SL — precisão de PROVENIÊNCIA). preco_piso_legado = PISO do gate de submit (CONSERVADORISMO) = GREATEST(csv, COALESCE(max das ATIVAS, csv)) — I1 ((csv NULL) ⟺ (piso NULL)) e I2 (piso >= csv) por CONSTRUÇÃO, não por convenção textual. FASE 5 (2026-07-27): o CSV aceita também a linha DESATIVADA carimbada desativada_motivo=''fase5_geracao_legada'' — sobrevive à desativação da geração ''1'' (decisão do founder, opção B); linha desativada por OUTRO motivo (fonte retirou a chave) segue FORA, senão o rótulo afirmaria proveniência de dado aposentado e o piso cairia junto. O max do PISO lê só ATIVAS. O filtro de CANDIDATA a canônica NÃO foi relaxado. security_invoker=on: repetir o WITH em todo replace (#1375).';
 
 
 --
@@ -38876,24 +39231,10 @@ CREATE POLICY "Staff can manage product costs" ON public.product_costs USING ((p
 
 
 --
--- Name: omie_products Staff can manage products; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "Staff can manage products" ON public.omie_products TO authenticated USING (( SELECT (public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'employee'::public.app_role)))) WITH CHECK (( SELECT (public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'employee'::public.app_role))));
-
-
---
 -- Name: recommendation_config Staff can manage rec config; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Staff can manage rec config" ON public.recommendation_config USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
-
-
---
--- Name: recommendation_log Staff can manage recommendation log; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "Staff can manage recommendation log" ON public.recommendation_log USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
 
 
 --
@@ -42404,6 +42745,20 @@ CREATE POLICY omie_product_spec_links_select_staff ON public.omie_product_spec_l
 ALTER TABLE public.omie_products ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: omie_products omie_products_select_staff; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY omie_products_select_staff ON public.omie_products FOR SELECT TO authenticated USING (( SELECT (public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'employee'::public.app_role))));
+
+
+--
+-- Name: POLICY omie_products_select_staff ON omie_products; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON POLICY omie_products_select_staff ON public.omie_products IS 'Leitura do catalogo por staff (master OR employee) — gate IDENTICO ao da policy "Staff can manage products" que substituiu. A diferenca e a ESCRITA: aquela era FOR ALL e deixava qualquer employee reescrever valor_unitario (o preco de tabela) e dar TRUNCATE. Escrita agora e exclusiva de service_role (as 6 edges de sync); nao ha policy de escrita.';
+
+
+--
 -- Name: omie_servicos; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
@@ -42989,6 +43344,13 @@ ALTER TABLE public.recommendation_config ENABLE ROW LEVEL SECURITY;
 --
 
 ALTER TABLE public.recommendation_log ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: recommendation_log recommendation_log_select_custo; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY recommendation_log_select_custo ON public.recommendation_log FOR SELECT TO authenticated USING (( SELECT private.cap_custo_ler(( SELECT auth.uid() AS uid)) AS cap_custo_ler));
+
 
 --
 -- Name: recurring_schedules; Type: ROW SECURITY; Schema: public; Owner: -
@@ -45018,5 +45380,5 @@ CREATE POLICY wts_staff_read ON public.whatsapp_template_sends FOR SELECT TO aut
 -- PostgreSQL database dump complete
 --
 
-\unrestrict DpEQHkmreOLMHXg00OcAxKURWf2HZXdMZShBWI8AAvyNt4N5uyZtYLWv9JFRqjM
+\unrestrict i8MF1XYXbImkgKe6f8PipnLWLTP4UHGHO5dhoBsEWSXM0jmwpq5cEj8AZwoo8F1
 
