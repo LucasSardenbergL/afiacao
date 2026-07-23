@@ -46,10 +46,18 @@ FROM checagens ORDER BY ord;
 SELECT
   count(*)                                          AS clientes,
   count(itens_com_custo)                            AS com_cobertura_computada,
+  count(*) FILTER (WHERE itens_com_custo IS NULL)   AS sem_cobertura_ainda_null,
   count(*) FILTER (WHERE itens_com_custo = 0)       AS zero_itens_computaveis,
   count(*) FILTER (WHERE itens_com_custo > 0)       AS com_ao_menos_1_item,
   count(gross_margin_pct)                           AS com_margem_conhecida,
-  -- coerência: margem conhecida DEVE implicar cobertura > 0. Qualquer linha aqui é bug.
-  count(*) FILTER (WHERE gross_margin_pct IS NOT NULL AND COALESCE(itens_com_custo,0) = 0)
-                                                    AS INCOERENTES_margem_sem_item
+  -- Canário de coerência: margem apurada DEVE ter item que a sustente.
+  -- ⚠️ O `itens_com_custo IS NOT NULL` é OBRIGATÓRIO aqui. A 1ª versão desta query usava
+  -- COALESCE(itens_com_custo,0)=0, que COLAPSA "não computado" (NULL) com "computado e deu zero" —
+  -- o mesmo ausente≠zero que esta migration existe para SEPARAR. Resultado: antes do 1º run da edge,
+  -- com a coluna toda NULL, o canário acusou a base inteira de incoerente (falso alarme medido em
+  -- 2026-07-23 na PROD: 1.069 falsos positivos, quando os incoerentes reais eram 0).
+  -- Lição: um canário que aplica COALESCE numa coluna cujo NULL é SIGNIFICATIVO mede outra coisa.
+  count(*) FILTER (WHERE gross_margin_pct IS NOT NULL
+                     AND itens_com_custo IS NOT NULL
+                     AND itens_com_custo = 0)       AS incoerentes_margem_sem_item
 FROM public.farmer_client_scores;
