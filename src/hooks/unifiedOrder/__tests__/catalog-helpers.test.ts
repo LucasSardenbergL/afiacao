@@ -60,13 +60,21 @@ describe('paginateAll', () => {
     await expect(paginateAll(fetchPage, 1000)).rejects.toThrow('falha de rede');
   });
 
-  it('guard de maxPages evita loop infinito se a página nunca encolher', async () => {
+  it('atingir maxPages LANÇA (não devolve parcial) e ainda para — o guard anti-loop continua', async () => {
     const fetchPage = vi.fn(async () => Array.from({ length: 1000 }, (_, i) => mk({ id: `x-${i}` })));
 
-    const all = await paginateAll(fetchPage, 1000, 3);
-
+    // Lançar é a única leitura honesta: ao esgotar o teto com a página CHEIA, o
+    // helper não sabe se acabou ou se há cauda — devolver o acumulado afirmaria
+    // completude que ele não tem (era o furo: 3000 indistinguível do catálogo inteiro).
+    await expect(paginateAll(fetchPage, 1000, 3)).rejects.toThrow(/maxPages/);
+    // E o loop infinito segue evitado: parou nas 3 páginas, não iterou pra sempre.
     expect(fetchPage).toHaveBeenCalledTimes(3);
-    expect(all).toHaveLength(3000);
+  });
+
+  it('a mensagem do teto carrega o diagnóstico (teto e linhas lidas) pra triagem', async () => {
+    const fetchPage = async () => Array.from({ length: 10 }, (_, i) => mk({ id: `y-${i}` }));
+
+    await expect(paginateAll(fetchPage, 10, 2)).rejects.toThrow(/2 páginas.*20 linhas/);
   });
 });
 
