@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 429
+-- Total de custom migrations: 430
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -470,7 +470,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260726150000', 'margem_cliente_helper_compartilhado', '20260726150000_margem_cliente_helper_compartilhado.sql'),
   ('20260726160000', 'margem_reconciliacao_universo_unico', '20260726160000_margem_reconciliacao_universo_unico.sql'),
   ('20260726160000', 'tint_canonica_piso_legado', '20260726160000_tint_canonica_piso_legado.sql'),
-  ('20260727120000', 'tint_fase5_desativa_geracao_legada', '20260727120000_tint_fase5_desativa_geracao_legada.sql')
+  ('20260727120000', 'tint_fase5_desativa_geracao_legada', '20260727120000_tint_fase5_desativa_geracao_legada.sql'),
+  ('20260728120000', 'farmer_persiste_cobertura_custo', '20260728120000_farmer_persiste_cobertura_custo.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -1955,7 +1956,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('margem_reconciliacao_universo_unico', 'function', 'public', 'get_customer_margin_summary', ''),
   ('tint_canonica_piso_legado', 'function', 'public', 'tint_gate_revalida', ''),
   ('tint_canonica_piso_legado', 'view', 'public', 'v_tint_formula_canonica', ''),
-  ('tint_fase5_desativa_geracao_legada', 'view', 'public', 'v_tint_formula_canonica', '')
+  ('tint_fase5_desativa_geracao_legada', 'view', 'public', 'v_tint_formula_canonica', ''),
+  ('farmer_persiste_cobertura_custo', 'function', 'public', 'apply_score_updates', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -3488,7 +3490,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('margem_reconciliacao_universo_unico', 'function', 'public', 'get_customer_margin_summary', ''),
   ('tint_canonica_piso_legado', 'function', 'public', 'tint_gate_revalida', ''),
   ('tint_canonica_piso_legado', 'view', 'public', 'v_tint_formula_canonica', ''),
-  ('tint_fase5_desativa_geracao_legada', 'view', 'public', 'v_tint_formula_canonica', '')
+  ('tint_fase5_desativa_geracao_legada', 'view', 'public', 'v_tint_formula_canonica', ''),
+  ('farmer_persiste_cobertura_custo', 'function', 'public', 'apply_score_updates', '')
 )
 SELECT
   e.migration,

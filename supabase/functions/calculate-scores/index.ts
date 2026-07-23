@@ -21,6 +21,9 @@ interface FarmerClientScoreRow {
   avg_monthly_spend_180d: number | null;
   category_count: number | null;
   gross_margin_pct: number | null;
+  // COBERTURA DE CUSTO: lidas do banco (select *) p/ preservar no caso marginRefreshFatal (overlay pulado).
+  itens_com_custo: number | null;
+  itens_sem_custo: number | null;
   avg_repurchase_interval: number | null;
   expansion_score: number | null;
   recover_score: number | null;
@@ -93,6 +96,11 @@ interface ScoreUpdate {
   // MARGEM-VIVA: idem — null é "não medido", e a RPC grava direto (sem COALESCE) para que o
   // desconhecido sobrescreva um valor velho que já não se sustenta.
   gross_margin_pct: number | null;
+  // COBERTURA DE CUSTO (aditivo): itens com/sem custo por cliente, hoje calculados por
+  // get_customer_margin_summary e descartados. Nuláveis (jsonb_exists na RPC, como gross_margin_pct):
+  // null = não computado (cliente ausente do marginMap), jamais 0. Chave presente → sobrescreve.
+  itens_com_custo: number | null;
+  itens_sem_custo: number | null;
   // RECÊNCIA-VIVA: o compute agora REESCREVE a base de vendas (antes só lia → congelava no seed).
   days_since_last_purchase: number;
   avg_monthly_spend_180d: number;
@@ -143,6 +151,26 @@ function margemConhecida(pct: number | null | undefined): number | null {
   if (pct == null) return null;
   const n = Number(pct);
   return Number.isFinite(n) ? n : null;
+}
+
+// Cobertura de custo por cliente — espelho inline de src/lib/scoring/margin.ts:coberturaCustoCliente
+// (vitest; Deno não importa de src/). ausente≠zero: cliente fora do marginMap → {null,null}, jamais
+// {0,0} (0 = "tem itens, nenhum com custo"). Paridade: mudou aqui → mude lá.
+// contagemFinita é FAIL-CLOSED de propósito: `Number('')`, `Number(false)` e `Number([])` são 0 e
+// fabricariam "medi e deu zero"; fração/negativo/>2^53 violam o contrato de count(*) e o `3.5`
+// chegaria ao `::bigint` da RPC derrubando o batch inteiro (22P02).
+function contagemFinita(raw: unknown): number | null {
+  if (raw == null) return null;
+  if (typeof raw !== 'number' && typeof raw !== 'string') return null;
+  if (typeof raw === 'string' && raw.trim() === '') return null;
+  const n = Number(raw);
+  return Number.isSafeInteger(n) && n >= 0 ? n : null;
+}
+function coberturaCustoCliente(
+  row: { itens_com_custo?: unknown; itens_sem_custo?: unknown } | null | undefined,
+): { itensComCusto: number | null; itensSemCusto: number | null } {
+  if (row == null) return { itensComCusto: null, itensSemCusto: null };
+  return { itensComCusto: contagemFinita(row.itens_com_custo), itensSemCusto: contagemFinita(row.itens_sem_custo) };
 }
 
 // RPC set-returning SEM paginação é truncada em 1.000 linhas pelo PostgREST — SILENCIOSAMENTE, sem
@@ -575,7 +603,13 @@ Deno.serve(async (req) => {
     // Cliente ausente do marginMap (sem pedido, ou só com item sem custo) → NULL, jamais 0.
     if (!marginRefreshFatal) {
       for (const c of clients) {
-        c.gross_margin_pct = margemConhecida(marginMap.get(c.customer_user_id)?.gross_margin_pct);
+        const m = marginMap.get(c.customer_user_id);
+        c.gross_margin_pct = margemConhecida(m?.gross_margin_pct);
+        // COBERTURA DE CUSTO: a confiança por trás da margem ("53% sobre 3 de 40 itens"). Mesma
+        // regra do valor acima — cliente AUSENTE do marginMap (sem item elegível) → NULL, jamais 0.
+        const cob = coberturaCustoCliente(m);
+        c.itens_com_custo = cob.itensComCusto;
+        c.itens_sem_custo = cob.itensSemCusto;
       }
     }
 
@@ -692,6 +726,22 @@ Deno.serve(async (req) => {
         // MARGEM-VIVA: persiste a margem calculada no servidor (pós-overlay). Sem esta linha o
         // cálculo novo morreria em memória e a coluna seguiria no 0 do seed.
         gross_margin_pct: margemPct,
+        // COBERTURA DE CUSTO: persiste as contagens sobrepostas (pós-overlay) — sem isto a RPC de
+        // margem seguiria calculando e o writer jogando fora. Três caminhos, todos honestos:
+        //   cliente no marginMap        → a contagem medida (0 inclusive: "tem itens, nenhum com custo")
+        //   cliente FORA do marginMap   → null (sem item elegível) — a RPC grava NULL, jamais 0
+        //   marginRefreshFatal          → overlay pulado → valor LIDO DO BANCO → o UPDATE regrava o
+        //                                 mesmo valor. Nunca zera por RPC ausente.
+        // ⚠️ Esse último caso só é no-op se NÃO houver run concorrente: o payload carrega o snapshot
+        // lido no INÍCIO do run, então um run com a RPC de margem falha que termine DEPOIS de um run
+        // saudável restaura o valor velho (last-writer-wins). NÃO é próprio desta coluna — hoje vale
+        // igual para gross_margin_pct, m_score e a base de vendas, que usam o mesmo padrão; fechar
+        // isso exige serializar os runs (lock/lease) e é escopo próprio. Achado do challenge /codex.
+        // Na ordem de deploy INVERTIDA (edge nova publicada antes da migration) a coluna não existe,
+        // o select('*') não a traz e isto vale `undefined` → JSON.stringify OMITE a chave → a RPC cai
+        // no ramo "chave ausente = preserva". Por isso as duas publicações são seguras em qualquer ordem.
+        itens_com_custo: client.itens_com_custo,
+        itens_sem_custo: client.itens_sem_custo,
         // RECÊNCIA-VIVA: persiste a base de vendas FRESCA (pós-overlay) — antes congelava no seed.
         days_since_last_purchase: client.days_since_last_purchase ?? 999,
         avg_monthly_spend_180d: client.avg_monthly_spend_180d ?? 0,

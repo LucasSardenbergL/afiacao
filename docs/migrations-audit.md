@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **429** custom migrations totais
-- **1496** objetos esperados (criados por estas migrations)
+- **430** custom migrations totais
+- **1497** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 433
+  - `function`: 434
   - `rls_policy`: 380
   - `index`: 224
   - `cron_job`: 157
@@ -3628,6 +3628,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `view` | `public.v_tint_formula_canonica` | — |
+
+### `20260728120000_farmer_persiste_cobertura_custo.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.apply_score_updates` | — |
 
 ## Próximos passos por status
 
