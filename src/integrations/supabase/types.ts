@@ -13903,6 +13903,7 @@ export type Database = {
           created_at: string | null
           data_geracao: string | null
           desativada_em: string | null
+          desativada_motivo: string | null
           embalagem_id: string
           id: string
           id_seq: number | null
@@ -13923,6 +13924,7 @@ export type Database = {
           created_at?: string | null
           data_geracao?: string | null
           desativada_em?: string | null
+          desativada_motivo?: string | null
           embalagem_id: string
           id?: string
           id_seq?: number | null
@@ -13943,6 +13945,7 @@ export type Database = {
           created_at?: string | null
           data_geracao?: string | null
           desativada_em?: string | null
+          desativada_motivo?: string | null
           embalagem_id?: string
           id?: string
           id_seq?: number | null
