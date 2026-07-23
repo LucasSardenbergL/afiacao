@@ -70,19 +70,29 @@ export const RecommendationCard = React.memo(function RecommendationCard({
           <p className="text-xs text-muted-foreground leading-relaxed">{item.explanation_text}</p>
         </div>
 
-        {/* Metrics Row */}
-        <div className="grid grid-cols-3 gap-2">
+        {/* Metrics Row — sem margem em R$ e sem EIP.
+            Decisão do dono (2026-07-20): a vendedora vê APENAS que a margem está negativa; sem
+            reais e sem percentual, porque o percentual inverte igual (custo = preço × (1 − m%)).
+            O EIP saiu junto: é margem × probabilidade, e com a probabilidade exibida ao lado ele
+            devolveria a margem por divisão.
+
+            Isto é DEFESA EM PROFUNDIDADE, não a barreira principal: o PR-A (#1503) já fechou na
+            FONTE — `projetarCandidato(c, podeCusto)` monta a resposta por lista branca e, sem
+            `cap_custo_ler`, devolve `margin: null` e `eip: null` sem `_admin`. Quem não pode ver
+            já recebe null aqui (e cai no "—"). O ramo "Negativa" só alcança quem TEM a
+            capability; para esse, o número exato continua no breakdown de admin abaixo. */}
+        <div className="grid grid-cols-2 gap-2">
           <div className="text-center">
             <p className="text-[10px] text-muted-foreground">Prob. conversão</p>
             <p className="text-sm font-semibold">{fmtPct(item.probability)}</p>
           </div>
           <div className="text-center">
             <p className="text-[10px] text-muted-foreground">Margem</p>
-            <p className="text-sm font-semibold">{fmt(item.margin)}</p>
-          </div>
-          <div className="text-center">
-            <p className="text-[10px] text-muted-foreground">EIP</p>
-            <p className="text-sm font-semibold text-primary">{fmt(item.eip)}</p>
+            {item.margin != null && item.margin < 0 ? (
+              <p className="text-sm font-semibold text-status-error">Negativa</p>
+            ) : (
+              <p className="text-sm font-semibold text-muted-foreground">—</p>
+            )}
           </div>
         </div>
 

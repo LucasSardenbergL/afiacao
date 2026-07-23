@@ -55,9 +55,12 @@ export const useBundleArguments = () => {
 
   const generateArgument = useCallback(async (
     bundleKey: string,
+    // Sem `margin` por produto e sem `lieBundle`: a edge imprimia os dois em R$ dentro do prompt
+    // da LLM, e o texto gerado é LIDO pela vendedora. Instruir o modelo a "não citar margem" é
+    // prompt, não gate — o jeito de não vazar é não mandar. Além disso, mandar custo para o
+    // provedor externo da LLM é exposição por si só.
     bundle: {
-      products: { id: string; name: string; price: number; margin: number }[];
-      lieBundle: number;
+      products: { id: string; name: string; price: number }[];
       confidence: number;
       lift: number;
     },
