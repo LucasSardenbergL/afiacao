@@ -376,22 +376,45 @@ export const useBundleEngine = () => {
       discoveredRules.sort((a, b) => b.lift - a.lift);
       setRules(discoveredRules.slice(0, 50)); // Keep top 50
 
-      // Persist top rules — PULADO na lente "Ver como" (a tabela é GLOBAL: o delete
-      // apaga as regras de toda a base; o master inspeciona os bundles do alvo sem
+      // Persist top rules — PULADO na lente "Ver como" (a tabela é GLOBAL: a troca
+      // substitui as regras de toda a base; o master inspeciona os bundles do alvo sem
       // recalcular regras/recomendações da carteira dele).
+      //
+      // Vai por RPC porque `delete()` + `insert()` são DUAS chamadas PostgREST, logo duas
+      // transações: falha entre elas deixava a tabela VAZIA — e ela alimenta o MixGap
+      // (`get_meu_mixgap`), o canal Melhorias (`melhoria_produtos_relacionados`), a edge
+      // `recommend` (assoc_score) e o `useCrossSellEngine`. A RPC faz DELETE+INSERT numa
+      // transação só: INSERT falho devolve as regras antigas. Provada em db/test-farmer-
+      // association-rules-atomica.sh (26 asserts + 4 falsificações).
+      let desfechoRegras: 'gravadas' | 'lente' | 'sem_regras' | 'falhou' = 'lente';
       if (!isImpersonating) {
-        await supabase.from('farmer_association_rules').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-        if (discoveredRules.length > 0) {
-          const rulesToInsert = discoveredRules.slice(0, 50).map(r => ({
-            antecedent_product_ids: r.antecedent,
-            consequent_product_ids: r.consequent,
-            support: Math.round(r.support * 10000) / 10000,
-            confidence: Math.round(r.confidence * 10000) / 10000,
-            lift: Math.round(r.lift * 100) / 100,
-            rule_type: r.type,
-            sample_size: totalBaskets,
-          }));
-          await supabase.from('farmer_association_rules').insert(rulesToInsert);
+        const regrasParaGravar = discoveredRules.slice(0, 50).map(r => ({
+          antecedent_product_ids: r.antecedent,
+          consequent_product_ids: r.consequent,
+          support: Math.round(r.support * 10000) / 10000,
+          confidence: Math.round(r.confidence * 10000) / 10000,
+          lift: Math.round(r.lift * 100) / 100,
+          rule_type: r.type,
+          sample_size: totalBaskets,
+        }));
+
+        if (regrasParaGravar.length === 0) {
+          // Zero regra descoberta quase sempre é dado faltando a montante, não "a base não
+          // tem padrão" — e apagar por isso derruba quatro features. Preserva o que está lá.
+          // (A RPC recusaria o lote vazio de qualquer jeito; não chamamos só pra tomar erro.)
+          desfechoRegras = 'sem_regras';
+        } else {
+          const { error: erroRegras } = await supabase.rpc('farmer_association_rules_substituir', {
+            p_regras: regrasParaGravar as unknown as Json,
+          });
+          // Sem `throw`: os bundles abaixo saem das regras em MEMÓRIA e continuam válidos.
+          // Mas o toast final não pode dizer que deu tudo certo.
+          if (erroRegras) {
+            console.error('Falha ao substituir farmer_association_rules:', erroRegras);
+            desfechoRegras = 'falhou';
+          } else {
+            desfechoRegras = 'gravadas';
+          }
         }
       }
 
@@ -574,7 +597,20 @@ export const useBundleEngine = () => {
         }
       }
 
-      toast.success(`${discoveredRules.length} regras e ${allCustomerBundles.reduce((s, c) => s + c.bundles.length, 0)} bundles gerados`);
+      // O toast reflete o que REALMENTE aconteceu. Antes ele era `success` incondicional —
+      // com a persistência falhando calada, o operador via "regras gravadas" e ia embora.
+      const totalBundles = allCustomerBundles.reduce((s, c) => s + c.bundles.length, 0);
+      if (desfechoRegras === 'falhou') {
+        toast.warning(
+          `${totalBundles} bundles gerados, mas as regras NÃO foram salvas — as anteriores seguem valendo`,
+        );
+      } else if (desfechoRegras === 'sem_regras') {
+        toast.warning(
+          `Nenhuma regra atingiu os pisos — as regras anteriores foram preservadas (${totalBundles} bundles)`,
+        );
+      } else {
+        toast.success(`${discoveredRules.length} regras e ${totalBundles} bundles gerados`);
+      }
     } catch (error) {
       console.error('Error calculating bundles:', error);
       toast.error('Erro ao calcular bundles');

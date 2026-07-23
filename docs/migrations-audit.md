@@ -21,11 +21,11 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **430** custom migrations totais
-- **1497** objetos esperados (criados por estas migrations)
+- **433** custom migrations totais
+- **1499** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 434
-  - `rls_policy`: 380
+  - `function`: 435
+  - `rls_policy`: 381
   - `index`: 224
   - `cron_job`: 157
   - `table`: 147
@@ -3629,11 +3629,27 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `view` | `public.v_tint_formula_canonica` | — |
 
+### `20260727130000_farmer_scores_colunas_orfas_null.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260727140000_authz_preco_fecha_omie_products.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `rls_policy` | `public.omie_products_select_staff` | `omie_products` |
+
 ### `20260728120000_farmer_persiste_cobertura_custo.sql`
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.apply_score_updates` | — |
+
+### `20260729120000_farmer_association_rules_substituicao_atomica.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.farmer_association_rules_substituir` | — |
 
 ## Próximos passos por status
 
