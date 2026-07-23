@@ -61,3 +61,28 @@ Deno.test("'schema cache' de COLUNA desconhecida NAO e lease ausente -> fail-clo
 Deno.test("code nao-string nao coage para true", () => {
   assertEquals(leaseIndisponivel({ code: 42883 as unknown as string, message: "boom" }), false);
 });
+
+// ── APERTO do ramo SEM code (auto-challenge): 'does not exist' tambem aparece em erros de OUTROS
+// objetos. Se a TABELA do lease sumisse, ler isso como "migration ainda nao aplicada" faria a edge
+// seguir fail-open sobre um banco quebrado — falso positivo que troca um problema grave por um
+// aviso benigno. Com o nome da funcao informado, a mensagem tem de citar A FUNCAO.
+
+Deno.test("SEM code: 'relation sync_state does not exist' NAO e lease ausente quando o nome e exigido", () => {
+  const erro = { message: 'relation "sync_state" does not exist' };
+  assertEquals(leaseIndisponivel(erro, "claim_calculate_scores"), false);
+});
+
+Deno.test("SEM code: a mensagem que cita A FUNCAO segue reconhecida", () => {
+  const erro = { message: 'function public.claim_calculate_scores(text) does not exist' };
+  assertEquals(leaseIndisponivel(erro, "claim_calculate_scores"), true);
+});
+
+Deno.test("SEM code e sem nome exigido, mantem o comportamento permissivo (retrocompat do helper)", () => {
+  assertEquals(leaseIndisponivel({ message: 'relation "sync_state" does not exist' }), true);
+});
+
+// O aperto vale SO para o ramo sem code: um 42883 legitimo continua reconhecido mesmo que a
+// mensagem nao cite a funcao (o codigo do Postgres ja e prova suficiente).
+Deno.test("COM code 42883, o nome exigido nao estreita demais", () => {
+  assertEquals(leaseIndisponivel({ code: "42883", message: "algo generico" }, "claim_calculate_scores"), true);
+});

@@ -29,14 +29,23 @@ export interface ErroRpc {
  * Os dois códigos: `42883` = undefined_function do Postgres; `PGRST202` = o PostgREST não achou a
  * função no schema cache (o que o supabase-js devolve quando a RPC não existe ou o cache está velho).
  */
-export function leaseIndisponivel(erro: ErroRpc | null | undefined): boolean {
+export function leaseIndisponivel(erro: ErroRpc | null | undefined, nomeFuncao?: string): boolean {
   if (erro == null) return false;
   const codigo = typeof erro.code === 'string' ? erro.code : '';
+  // Com código, o diagnóstico é inequívoco: 42883 é undefined_function do Postgres e PGRST202 é
+  // "função não encontrada" do PostgREST. Não precisam da mensagem.
   if (codigo === '42883' || codigo === 'PGRST202') return true;
+
   const msg = typeof erro.message === 'string' ? erro.message : '';
   if (msg === '') return false;
-  // Âncoras ASCII e exclusivas do modo "não existe". NÃO casar 'schema cache' solto: o PostgREST usa
-  // essa expressão em erros de coluna/relação também, e casá-la faria um erro de contrato virar
-  // fail-open. Aqui só entra a frase completa do PGRST202.
-  return /(does not exist|could not find the function|not find the function .* in the schema cache)/i.test(msg);
+
+  // Ramo SEM código — o frouxo, e o único que precisa de aperto. `does not exist` aparece em erros
+  // de OUTROS objetos: "relation \"sync_state\" does not exist" é um problema GRAVE e diferente
+  // (a tabela do lease sumiu), e lê-lo como "migration ainda não aplicada" faria a edge seguir
+  // fail-open sobre um banco quebrado. Por isso, quando o caller informa `nomeFuncao`, a mensagem
+  // tem de citar A FUNÇÃO — não basta a frase genérica.
+  // NÃO casar 'schema cache' solto: o PostgREST usa a expressão em erros de coluna/relação também.
+  const frase = /(does not exist|could not find the function)/i.test(msg);
+  if (!frase) return false;
+  return nomeFuncao ? msg.includes(nomeFuncao) : true;
 }
