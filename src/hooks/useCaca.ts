@@ -59,7 +59,10 @@ async function paginarView<T>(view: string, sel: string, ordem2: string): Promis
       .order(ordem2, { ascending: true })
       .range(from, from + PAGE - 1)) as PgRes;
     if (res.error) throw new Error(res.error.message);
-    const rows = (res.data ?? []) as T[];
+    // data null SEM error = malformada, não fim (classe #1338→#1564): tratá-la como fim
+    // truncava a fila de caça (~10k candidatos) em silêncio.
+    if (res.data == null) throw new Error(`${view}: data null sem error — malformada, não é fim`);
+    const rows = res.data as T[];
     out.push(...rows);
     if (rows.length < PAGE) break;
   }

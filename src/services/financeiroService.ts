@@ -882,7 +882,11 @@ export async function somarSaldoPorStatus(
       .order('id')
       .range(from, from + PAGE - 1);
     if (error) throw new Error(`Falha ao somar saldo (${tabela}/${company}): ${error.message}`);
-    const rows = (data ?? []) as Array<{ saldo: number | null }>;
+    // data null SEM error = malformada, não fim (classe #1338→#1564, mesmo contrato do
+    // buscarTodasPaginas acima): tratá-la como fim devolvia SOMA PARCIAL como total a
+    // receber/pagar — alimenta DSO, KPIs de /financeiro/gestao e o resumo.
+    if (data == null) throw new Error(`Falha ao somar saldo (${tabela}/${company}): data=null sem error`);
+    const rows = data as Array<{ saldo: number | null }>;
     for (const r of rows) total += r.saldo ?? 0;
     if (rows.length < PAGE) break;
     from += PAGE;

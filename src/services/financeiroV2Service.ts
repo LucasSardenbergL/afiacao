@@ -580,9 +580,17 @@ export async function getCategoriasCompetenciaRaw(
       .eq('company', company)
       .eq('ano', ano)
       .in('mes', meses)
+      // Ordem TOTAL no recorte (grão da view = origem×mes×categoria; conferido via psql-ro:
+      // é view sem índice — sem order, offset entre páginas pula/duplica linha).
+      .order('categoria_codigo', { ascending: true })
+      .order('mes', { ascending: true })
+      .order('origem', { ascending: true })
       .range(from, from + PAGE - 1);
     if (error) throw error;
-    const rows = data ?? [];
+    // data null SEM error = malformada, não fim (classe #1338→#1564): tratá-la como fim
+    // entregava o drill de variância por categoria PARCIAL.
+    if (data == null) throw new Error('fin_dre_competencia_base: data null sem error — malformada, não é fim');
+    const rows = data;
     for (const r of rows) {
       out.push({
         categoria_codigo: r.categoria_codigo,
@@ -636,7 +644,10 @@ export async function getTitulosEntidadeRaw(
         .order('id', { ascending: true })
         .range(offset, offset + limit - 1);
       if (error) throw error;
-      const rows = (data ?? []) as unknown as Array<Record<string, unknown>>;
+      // data null SEM error = malformada, não página vazia (classe #1338→#1564): devolvê-la
+      // ao coletarTitulosEntidade encerraria o lote como fim SEM ligar o flag `truncado`.
+      if (data == null) throw new Error(`${tabela}: data null sem error — malformada, não é fim`);
+      const rows = data as unknown as Array<Record<string, unknown>>;
       return rows.map((row) => ({
         entidade_id: (row.cnpj_cpf as string | null) ?? null,
         entidade_nome: (row[nomeCol] as string | null) ?? null,

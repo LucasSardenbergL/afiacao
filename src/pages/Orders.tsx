@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { supabase } from '@/integrations/supabase/client';
 import { useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
 
 type FilterTab = 'pending' | 'active' | 'completed' | 'all';
 
@@ -82,6 +83,10 @@ const Orders = () => {
     if (!error && data) {
       setAllOrders(prev => append ? [...prev, ...data as OrderRow[]] : data as OrderRow[]);
       setHasMore(data.length === PAGE_SIZE);
+    } else {
+      // Falha (error OU data:null malformada) não pode virar "Nenhum pedido ainda" nem
+      // load-more no-op MUDO (classe #1338→#1564): avisa e preserva o que já está na tela.
+      toast.error('Não foi possível carregar seus pedidos — tente novamente.');
     }
     setLoading(false);
     setLoadingMore(false);

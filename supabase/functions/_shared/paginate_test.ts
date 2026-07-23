@@ -69,3 +69,40 @@ Deno.test("erro: lança com o label prefixado", async () => {
   }
   assertEquals(threw, true);
 });
+
+Deno.test("data null SEM error: LANÇA — resposta malformada não é fim da tabela", async () => {
+  // O `?? []` convertia `{data:null, error:null}` em página vazia → EOF falso → o acumulado
+  // PARCIAL voltava como se fosse a tabela inteira. Mesmo contrato do fetchAllPages
+  // (src/lib/postgrest.ts) e do buscarTodasPaginas pós-#1564: só `data: []` encerra.
+  let threw = false;
+  try {
+    await fetchAll(
+      (_f, _t) => Promise.resolve({ data: null, error: null }),
+      "minha_tabela",
+    );
+  } catch (e) {
+    threw = true;
+    assertEquals(
+      (e as Error).message.includes("data null sem error"),
+      true,
+      `mensagem inesperada: ${(e as Error).message}`,
+    );
+  }
+  assertEquals(threw, true, "fetchAll resolveu com data:null sem error — deveria lançar");
+});
+
+Deno.test("data null SEM error no MEIO: lança e NÃO devolve o acumulado parcial", async () => {
+  // Página 0 cheia + página 1 malformada: o bug antigo devolveria as 1000 primeiras como
+  // se fossem a tabela inteira — numericamente indistinguível de uma tabela de 1000.
+  const p0 = Array.from({ length: 1000 }, (_, i) => ({ id: i }));
+  let threw = false;
+  try {
+    await fetchAll<{ id: number }>(
+      (from, _to) => Promise.resolve(from === 0 ? { data: p0, error: null } : { data: null, error: null }),
+      "t_parcial",
+    );
+  } catch {
+    threw = true;
+  }
+  assertEquals(threw, true, "fetchAll devolveu parcial em vez de lançar na página malformada");
+});
