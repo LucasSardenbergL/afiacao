@@ -2482,6 +2482,8 @@ export type Database = {
           health_class: string | null
           health_score: number | null
           id: string
+          itens_com_custo: number | null
+          itens_sem_custo: number | null
           last_signal_recalc_at: string | null
           m_score: number | null
           priority_score: number | null
@@ -2513,6 +2515,8 @@ export type Database = {
           health_class?: string | null
           health_score?: number | null
           id?: string
+          itens_com_custo?: number | null
+          itens_sem_custo?: number | null
           last_signal_recalc_at?: string | null
           m_score?: number | null
           priority_score?: number | null
@@ -2544,6 +2548,8 @@ export type Database = {
           health_class?: string | null
           health_score?: number | null
           id?: string
+          itens_com_custo?: number | null
+          itens_sem_custo?: number | null
           last_signal_recalc_at?: string | null
           m_score?: number | null
           priority_score?: number | null
