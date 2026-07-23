@@ -31,8 +31,15 @@ const state: {
   db: Record<string, Row[]>;
   /** Falha na N-ésima requisição desta tabela (1-indexed). */
   falharNaRequisicao: Record<string, number | undefined>;
+  /**
+   * Resposta MALFORMADA (`{data:null, error:null}`) na N-ésima requisição (1-indexed).
+   * Não é o mesmo que `falharNaRequisicao`: ali o PostgREST se anuncia (timeout/RLS/500),
+   * aqui ele volta sem linhas E sem erro — o caso que `data ?? []` convertia em "fim da
+   * tabela", encerrando o laço com o acumulado parcial.
+   */
+  dataNullNaRequisicao: Record<string, number | undefined>;
   requisicoes: Record<string, number>;
-} = { db: {}, falharNaRequisicao: {}, requisicoes: {} };
+} = { db: {}, falharNaRequisicao: {}, dataNullNaRequisicao: {}, requisicoes: {} };
 
 /**
  * Ordena como o Postgres: estável pelas chaves de ORDER BY e, dentro de um grupo
@@ -97,6 +104,9 @@ function makeBuilder(tabela: string) {
         const error = { message: `falha simulada na requisição ${n} de ${tabela}` };
         return Promise.resolve({ data: null, error }).then(resolve, reject);
       }
+      if (state.dataNullNaRequisicao[tabela] === n) {
+        return Promise.resolve({ data: null, error: null }).then(resolve, reject);
+      }
       const casadas = (state.db[tabela] ?? []).filter((r) => filtros.every((f) => f(r)));
       const ordenadas = ordenarComoPostgres(casadas, ordem, n);
       // PostgREST real: a capa de 1.000 vale SEMPRE — sem range capa em 1.000, e
@@ -148,6 +158,7 @@ describe('getFluxoCaixa — caixa REALIZADO (fin_movimentacoes)', () => {
   beforeEach(() => {
     state.db = { fin_movimentacoes: [], fin_contas_receber: [], fin_contas_pagar: [] };
     state.falharNaRequisicao = {};
+    state.dataNullNaRequisicao = {};
     state.requisicoes = {};
   });
 
@@ -160,6 +171,35 @@ describe('getFluxoCaixa — caixa REALIZADO (fin_movimentacoes)', () => {
     state.falharNaRequisicao.fin_movimentacoes = 2;
 
     await expect(getFluxoCaixa('oben', INICIO, FIM)).rejects.toBeInstanceOf(Error);
+  });
+
+  it('data:null SEM error numa página LANÇA — resposta malformada não é fim da tabela', async () => {
+    // O mesmo defeito do caso acima por uma via que o `if (error)` não cobre: a resposta
+    // volta sem linhas E sem erro, e o `data ?? []` a convertia em página vazia ⇒
+    // `0 < 1000` ⇒ laço encerrado ⇒ ~40% do caixa devolvido como se fosse o caixa inteiro.
+    // Nada distingue esse total de uma empresa que de fato movimentou menos.
+    state.db.fin_movimentacoes = Array.from({ length: 2500 }, (_, i) =>
+      mov(i, `2026-03-${String((i % 28) + 1).padStart(2, '0')}`, 10),
+    );
+    state.dataNullNaRequisicao.fin_movimentacoes = 2;
+
+    // Ancorado em `data=null sem error`, trecho EXCLUSIVO deste ramo: os dois guards
+    // compartilham o prefixo `Falha ao carregar <contexto>`, então casar o prefixo
+    // passaria verde com este ramo sabotado (lição do #1524, money-path §6).
+    await expect(getFluxoCaixa('oben', INICIO, FIM)).rejects.toThrow(/data=null sem error/);
+  });
+
+  it('múltiplo exato da capa: página vazia (data:[]) é fim LEGÍTIMO, não malformação', async () => {
+    // Contraparte do teste acima — o guard de `null` não pode engolir o EOF de verdade.
+    // Com 2.000 linhas a 3ª requisição volta `data: []`; confundir `[]` com `null` faria
+    // toda leitura de tamanho múltiplo de 1.000 lançar, quebrando a tela no caso são.
+    state.db.fin_movimentacoes = Array.from({ length: 2000 }, (_, i) =>
+      mov(i, `2026-${String(Math.floor(i / 200) + 1).padStart(2, '0')}-${String((i % 25) + 1).padStart(2, '0')}`, 10),
+    );
+
+    const fluxo = await getFluxoCaixa('oben', INICIO, FIM);
+
+    expect(somaRealizadoEntradas(fluxo)).toBe(20000);
   });
 
   it('ordem total: empate em data_movimento não pode pular nem duplicar entre páginas', async () => {
@@ -193,6 +233,7 @@ describe('getFluxoCaixa — caixa PREVISTO (fin_contas_receber / fin_contas_paga
   beforeEach(() => {
     state.db = { fin_movimentacoes: [], fin_contas_receber: [], fin_contas_pagar: [] };
     state.falharNaRequisicao = {};
+    state.dataNullNaRequisicao = {};
     state.requisicoes = {};
   });
 
@@ -210,6 +251,13 @@ describe('getFluxoCaixa — caixa PREVISTO (fin_contas_receber / fin_contas_paga
     state.falharNaRequisicao.fin_contas_pagar = 1;
 
     await expect(getFluxoCaixa('oben', INICIO, FIM)).rejects.toBeInstanceOf(Error);
+  });
+
+  it('data:null SEM error no CR LANÇA — a projeção não encerra numa página malformada', async () => {
+    state.db.fin_contas_receber = [titulo(0, '2026-03-01', 10)];
+    state.dataNullNaRequisicao.fin_contas_receber = 1;
+
+    await expect(getFluxoCaixa('oben', INICIO, FIM)).rejects.toThrow(/data=null sem error/);
   });
 
   it('CR acima da capa de 1.000 não sai truncado (prod: 4.094 títulos na janela)', async () => {
