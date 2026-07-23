@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
+import { fetchAll } from "../_shared/paginate.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -1106,21 +1107,23 @@ serve(async (req) => {
         let totalSkipped = 0;
         let totalErrors = 0;
 
-        // Get ALL user_ids that already have addresses (paginate to bypass 1000 row limit)
-        let allAddressUserIds: string[] = [];
-        let addrOffset = 0;
-        while (true) {
-          const { data: addrPage } = await adminClient
-            .from("addresses")
-            .select("user_id")
-            .range(addrOffset, addrOffset + 999);
-          if (!addrPage || addrPage.length === 0) break;
-          const addrRows = addrPage as unknown as Array<{ user_id: string }>;
-          allAddressUserIds = allAddressUserIds.concat(addrRows.map((a) => a.user_id));
-          if (addrPage.length < 1000) break;
-          addrOffset += 1000;
-        }
-        const usersWithAddress = new Set(allAddressUserIds);
+        // Get ALL user_ids that already have addresses, paginado via fetchAll.
+        // fetchAll LANÇA em página com erro (money-path §6): o laço manual anterior
+        // desestruturava só `data`, então um timeout 57014/RLS/500 virava `data:null` →
+        // break → EOF falso, e o Set saía PARCIAL — os users cujo endereço não foi lido
+        // caíam no filtro `!usersWithAddress.has` abaixo e eram reprocessados/reescritos
+        // à toa no Omie. `.order("id")` (PK uuid única) dá sequência estável entre
+        // páginas — sem ela o `.range()` pode pular/duplicar linhas (§7).
+        const addressRows = await fetchAll<{ user_id: string }>(
+          (from, to) =>
+            adminClient
+              .from("addresses")
+              .select("user_id")
+              .order("id", { ascending: true })
+              .range(from, to),
+          "sync_addresses: user_ids com endereço",
+        );
+        const usersWithAddress = new Set(addressRows.map((a) => a.user_id));
 
         // Mapeamentos (user, conta, código) pela proof fresca account-correta, paginado com .order
         // estável. Antes vinha de .select("user_id, omie_codigo_cliente") do espelho omie_clientes,
