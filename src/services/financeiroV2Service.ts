@@ -580,9 +580,12 @@ export async function getCategoriasCompetenciaRaw(
       .eq('company', company)
       .eq('ano', ano)
       .in('mes', meses)
-      // Ordem TOTAL no recorte (grão da view = origem×mes×categoria; conferido via psql-ro:
-      // é view sem índice — sem order, offset entre páginas pula/duplica linha).
+      // Ordem TOTAL no recorte. O grão da view inclui categoria_descricao (o GROUP BY da
+      // migration 20260328200600 agrupa por ela TAMBÉM — achado Codex xhigh): duas
+      // descrições do mesmo código/mês/origem empatariam e trocariam de posição entre
+      // requests. Sem ordem total, offset entre páginas pula/duplica linha.
       .order('categoria_codigo', { ascending: true })
+      .order('categoria_descricao', { ascending: true })
       .order('mes', { ascending: true })
       .order('origem', { ascending: true })
       .range(from, from + PAGE - 1);

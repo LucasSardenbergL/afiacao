@@ -180,9 +180,12 @@ export function useAnalyticsSync() {
           setClientSyncProgress(`${data.account}: +${data.imported} importados (pág ${data.lastPage}/${data.totalPages})`);
         }
 
+        // Fim-sentinela da edge: accountIndex além da última conta devolve {done:true}
+        // SEM hasMore (omie-cliente:909) — é fim LEGÍTIMO, não malformação (Codex xhigh).
+        if (data?.done === true) break;
         // Resposta malformada (sem `hasMore` booleano) NÃO é fim (classe #1338→#1564):
         // colapsá-la com fim dava toast "Importação concluída" sobre um sync PARCIAL.
-        // Fim legítimo é exclusivamente `hasMore === false` vindo da edge.
+        // Fim legítimo é exclusivamente `hasMore === false` / `done` vindos da edge.
         if (data == null || typeof data.hasMore !== 'boolean') {
           throw new Error('sync_all_clients: resposta sem hasMore booleano — malformada, não é fim');
         }
