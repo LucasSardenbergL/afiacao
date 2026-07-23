@@ -21,11 +21,11 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **433** custom migrations totais
-- **1499** objetos esperados (criados por estas migrations)
+- **434** custom migrations totais
+- **1504** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 435
-  - `rls_policy`: 381
+  - `function`: 437
+  - `rls_policy`: 384
   - `index`: 224
   - `cron_job`: 157
   - `table`: 147
@@ -3644,6 +3644,16 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.apply_score_updates` | — |
+
+### `20260728120001_calculate_scores_lease.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.claim_calculate_scores` | — |
+| `function` | `public.finalizar_calculate_scores` | — |
+| `rls_policy` | `public.calculate_scores_lease_no_insert` | `sync_state` |
+| `rls_policy` | `public.calculate_scores_lease_no_update` | `sync_state` |
+| `rls_policy` | `public.calculate_scores_lease_no_delete` | `sync_state` |
 
 ### `20260729120000_farmer_association_rules_substituicao_atomica.sql`
 
