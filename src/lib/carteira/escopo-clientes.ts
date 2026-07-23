@@ -135,7 +135,10 @@ export async function fetchCarteiraClientes(opts: {
       }
       const { data, error } = await q.order('customer_user_id').range(from, to);
       if (error) throw error;
-      return data ?? [];
+      // data null SEM error = malformada, não página vazia (classe #1338→#1564): devolvê-la
+      // ao paginarTudo encerraria o laço com a carteira PARCIAL.
+      if (data == null) throw new Error('carteira_assignments: data null sem error — malformada, não é fim');
+      return data;
     },
   );
 

@@ -61,9 +61,26 @@ describe('coletarPaginado', () => {
     await expect(coletarPaginado(buscar)).resolves.toEqual([]);
   });
 
-  it('trata data null como página vazia, não como erro', async () => {
+  it('LANÇA em data null sem error — resposta malformada não é fim da fonte', async () => {
+    // REVERSÃO do assert que canonizava o bug (money-path §6: "teste pode CANONIZAR o
+    // defeito"): o `?? []` convertia `{data:null, error:null}` em página vazia → EOF falso.
+    // Fim legítimo é `data: []` (coberto pelo teste da fonte sem linha, acima). Mesmo
+    // contrato do fetchAllPages (@/lib/postgrest) e do buscarTodasPaginas pós-#1564.
     const buscar: BuscarPagina<{ i: number }> = async () => ({ data: null, error: null });
-    await expect(coletarPaginado(buscar)).resolves.toEqual([]);
+    await expect(coletarPaginado(buscar, { rotulo: 'rpc_malformada' }))
+      .rejects.toThrow('rpc_malformada pág.0: data null sem error');
+  });
+
+  it('data null sem error no MEIO lança e não devolve o acumulado parcial', async () => {
+    // Página 0 cheia + página 1 malformada: o bug antigo devolveria as 1000 primeiras como
+    // se fossem a fonte inteira — indistinguível de uma fonte que de fato tem 1000.
+    const buscar: BuscarPagina<{ i: number }> = async (de) =>
+      de === 0
+        ? { data: Array.from({ length: 1000 }, (_, i) => ({ i })), error: null }
+        : { data: null, error: null };
+
+    await expect(coletarPaginado(buscar, { tamanhoPagina: 1000, rotulo: 'rpc_meio' }))
+      .rejects.toThrow('rpc_meio pág.1: data null sem error');
   });
 
   it('LANÇA quando uma página falha — nunca devolve resultado parcial como se fosse completo', async () => {

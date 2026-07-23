@@ -54,7 +54,13 @@ export async function fetchAll<T>(
   for (;;) {
     const { data, error } = await build(from, from + PAGE - 1);
     if (error) throw new Error(`${label}: ${error.message}`);
-    const rows = data ?? [];
+    // `data == null` sem `error` é resposta MALFORMADA do PostgREST — não é fim da tabela.
+    // O `?? []` de antes a convertia em página vazia → EOF falso → o acumulado PARCIAL
+    // voltava como se fosse a tabela inteira (o defeito que fetchAllPages de
+    // src/lib/postgrest.ts e buscarTodasPaginas pós-#1564 já rejeitam). Fim LEGÍTIMO é
+    // `data: []` — array vazio, que segue adiante e encerra por `length < PAGE`.
+    if (data == null) throw new Error(`${label}: data null sem error — resposta malformada, não é fim da tabela`);
+    const rows = data;
     out.push(...rows);
     if (rows.length < PAGE) break;
     from += PAGE;

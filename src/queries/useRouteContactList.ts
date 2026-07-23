@@ -88,7 +88,11 @@ async function paginarLog(build: (from: number) => PromiseLike<PgRes>, sink: Con
   for (let from = 0; ; from += PAGE) {
     const res = await build(from);
     if (res.error) throw new Error(res.error.message);
-    const got = (res.data ?? []) as ContactLogRow[];
+    // data null SEM error = malformada, não fim (classe #1338→#1564): tratá-la como fim
+    // encerrava o log parcial SEM ligar o fail-open do chamador (que só dispara no throw)
+    // — a cadência saía calculada de histórico incompleto.
+    if (res.data == null) throw new Error('route_contact_log: data null sem error — malformada, não é fim');
+    const got = res.data as ContactLogRow[];
     sink.push(...got);
     if (got.length < PAGE) break;
   }
@@ -159,7 +163,10 @@ async function fetchVisitScoresByCityNorm(cityNorms: string[], farmerId: string 
 
   const first = await baseSelect(true).range(0, PAGE - 1);
   if (first.error) throw first.error;
-  const out: VisitScoreRow[] = [...((first.data ?? []) as VisitScoreRow[])];
+  // data null SEM error = malformada (classe #1338→#1564): o `?? []` sumia com até 1.000
+  // candidatos por página e ninguém conferia out.length × total.
+  if (first.data == null) throw new Error('customer_visit_scores: data null sem error — malformada, não é fim');
+  const out: VisitScoreRow[] = [...(first.data as VisitScoreRow[])];
   const total = first.count ?? out.length;
   if (total > PAGE) {
     const ranges: Array<[number, number]> = [];
@@ -167,7 +174,8 @@ async function fetchVisitScoresByCityNorm(cityNorms: string[], farmerId: string 
     const pages = await Promise.all(ranges.map(([f, t]) => baseSelect(false).range(f, t)));
     for (const p of pages) {
       if (p.error) throw p.error;
-      out.push(...((p.data ?? []) as VisitScoreRow[]));
+      if (p.data == null) throw new Error('customer_visit_scores: data null sem error — malformada, não é fim');
+      out.push(...(p.data as VisitScoreRow[]));
     }
   }
   return out;

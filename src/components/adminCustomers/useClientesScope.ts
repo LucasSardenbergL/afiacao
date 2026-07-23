@@ -61,7 +61,10 @@ export function useClientesScope(): ClientesScope {
         .order('name')
         .range(start, start + PAGE_SIZE - 1);
       if (error) throw error;
-      return (data || []) as Customer[];
+      // data null SEM error = malformada, não página vazia (classe #1338→#1564): o `|| []`
+      // encerraria o infinite scroll como se a base tivesse acabado.
+      if (data == null) throw new Error('profiles (base completa): data null sem error — malformada, não é fim');
+      return data as Customer[];
     },
     getNextPageParam: (lastPage, allPages) =>
       lastPage.length === PAGE_SIZE ? allPages.length : undefined,

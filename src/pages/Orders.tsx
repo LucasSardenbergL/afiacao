@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { supabase } from '@/integrations/supabase/client';
 import { useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
 
 type FilterTab = 'pending' | 'active' | 'completed' | 'all';
 
@@ -66,6 +67,7 @@ const Orders = () => {
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [search, setSearch] = useState('');
+  const [loadError, setLoadError] = useState(false);
 
   // Initial fetch
   const fetchOrders = useCallback(async (offset = 0, append = false) => {
@@ -82,6 +84,13 @@ const Orders = () => {
     if (!error && data) {
       setAllOrders(prev => append ? [...prev, ...data as OrderRow[]] : data as OrderRow[]);
       setHasMore(data.length === PAGE_SIZE);
+      setLoadError(false);
+    } else {
+      // Falha (error OU data:null malformada) não pode virar "Nenhum pedido ainda" nem
+      // load-more no-op MUDO (classe #1338→#1564): toast + estado de erro — o render usa
+      // o estado para NÃO exibir o empty-state falso junto do aviso (achado Codex).
+      toast.error('Não foi possível carregar seus pedidos — tente novamente.');
+      setLoadError(true);
     }
     setLoading(false);
     setLoadingMore(false);
@@ -238,6 +247,17 @@ const Orders = () => {
                 </Button>
               )}
             </>
+          ) : loadError && allOrders.length === 0 ? (
+            // Falha SEM nenhum dado carregado: dizer "não consegui ler" — nunca "não existe"
+            // (money-path §7; o empty-state aqui seria fabricação de vazio).
+            <div className="text-center py-12">
+              <div className="w-16 h-16 bg-status-error-bg rounded-full flex items-center justify-center mx-auto mb-4">
+                <AlertCircle className="w-8 h-8 text-status-error" />
+              </div>
+              <p className="font-semibold text-foreground mb-1">Não foi possível carregar seus pedidos</p>
+              <p className="text-sm text-muted-foreground mb-4">Verifique sua conexão e tente novamente.</p>
+              <Button variant="outline" onClick={() => fetchOrders(0)}>Tentar novamente</Button>
+            </div>
           ) : (
             <div className="text-center py-12">
               <div className="w-16 h-16 bg-muted rounded-full flex items-center justify-center mx-auto mb-4">

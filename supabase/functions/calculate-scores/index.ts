@@ -210,7 +210,12 @@ async function carregarRpcPaginada<T>(
       .order('customer_user_id', { ascending: true })
       .range(pg * sz, (pg + 1) * sz - 1);
     if (error) throw new Error(`${fn} pág.${pg}: ${error.message}`);
-    const lote = (data ?? []) as unknown as T[];
+    // `data == null` sem `error` é resposta MALFORMADA — não é fim da fonte. O `?? []` de
+    // antes a convertia em página vazia → EOF falso → o acumulado PARCIAL voltava como se
+    // fosse a fonte inteira. Espelha o fix do coletarPaginado (src/lib/scoring/rpcPaginada.ts);
+    // fim LEGÍTIMO é `data: []`, que encerra por `length < sz` logo abaixo.
+    if (data == null) throw new Error(`${fn} pág.${pg}: data null sem error — resposta malformada, não é fim da fonte`);
+    const lote = data as unknown as T[];
     linhas.push(...lote);
     if (lote.length < sz) return linhas;
     // Guard de sanidade: o universo é "clientes com pedido" (~1,2k). 100 páginas = 100k linhas já é
