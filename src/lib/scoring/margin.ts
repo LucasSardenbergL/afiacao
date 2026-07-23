@@ -64,6 +64,53 @@ export function legendaCobertura({ comMargem, total }: CoberturaMargem): string 
   return `parcial — ${cobertos} de ${total.toLocaleString('pt-BR')} clientes c/ margem`;
 }
 
+/**
+ * Cobertura de custo POR CLIENTE — quantos itens de pedido dele têm custo conhecido, e quantos não.
+ * É a CONFIANÇA por trás do `gross_margin_pct` do cliente: "53% sobre 3 de 40 itens" e "53% sobre
+ * 40 de 40" são vereditos opostos. A RPC `get_customer_margin_summary` já retorna as duas contagens
+ * (`itens_com_custo`/`itens_sem_custo`), mas o writer `calculate-scores` as descartava.
+ *
+ * ⚠️ ausente≠zero: cliente FORA do resultado da RPC (sem item de pedido elegível — 97% dos sem-margem,
+ * ver docs/historico/farmer-margem-cobertura-custo.md) → `{ null, null }`, NUNCA `{ 0, 0 }`. O 0 é o
+ * veredito "tem itens, nenhum com custo" (categoria D do doc), que é dado; "não computado" é ausência.
+ * `Number(...)` não-finito degrada para null — jamais fabrica contagem.
+ *
+ * Espelhado inline em `supabase/functions/calculate-scores/index.ts` (Deno não importa de `src/`).
+ */
+export interface CoberturaCustoCliente {
+  /** Itens com custo conhecido (base do gross_margin_pct). null = cobertura não computada. */
+  itensComCusto: number | null;
+  /** Itens sem custo conhecido (excluídos do gross_margin_pct). null = cobertura não computada. */
+  itensSemCusto: number | null;
+}
+
+export function coberturaCustoCliente(
+  row: { itens_com_custo?: unknown; itens_sem_custo?: unknown } | null | undefined,
+): CoberturaCustoCliente {
+  if (row == null) return { itensComCusto: null, itensSemCusto: null };
+  return {
+    itensComCusto: contagemFinita(row.itens_com_custo),
+    itensSemCusto: contagemFinita(row.itens_sem_custo),
+  };
+}
+
+/**
+ * Contagem utilizável (inteiro ≥ 0) ou null. bigint via PostgREST pode vir string → `Number`.
+ *
+ * Fail-closed de propósito, e NÃO `Number.isFinite` puro: `Number('')`, `Number('  ')`,
+ * `Number(false)` e `Number([])` são todos **0** — lixo viraria o veredito "medi e deu zero",
+ * exatamente a fabricação que este módulo existe para impedir. Fração/negativo/acima de 2^53 são
+ * violação do contrato de `count(*)` → null, e assim nunca alcançam o `::bigint` da RPC (onde um
+ * `3.5` derrubaria o batch inteiro com 22P02). [endurecido após challenge adversarial /codex]
+ */
+function contagemFinita(raw: unknown): number | null {
+  if (raw == null) return null;
+  if (typeof raw !== 'number' && typeof raw !== 'string') return null;
+  if (typeof raw === 'string' && raw.trim() === '') return null;
+  const n = Number(raw);
+  return Number.isSafeInteger(n) && n >= 0 ? n : null;
+}
+
 export function mediaMargensConhecidas(valores: Iterable<unknown>): number | null {
   const conhecidas: number[] = [];
   for (const v of valores) {
