@@ -3,12 +3,26 @@ import type { Product } from './types';
 /**
  * Pagina uma fonte até esgotá-la, contornando o cap default do PostgREST (1000
  * linhas por request). `fetchPage(from, to)` recebe o range INCLUSIVO de cada
- * página (compatível com `.range()` do supabase-js). Para quando uma página vem
- * com menos que `pageSize` (= última página) ou ao atingir `maxPages` (guard
- * defensivo contra loop infinito caso a fonte nunca encolha).
+ * página (compatível com `.range()` do supabase-js). O ÚNICO fim bem-sucedido é
+ * uma página com menos que `pageSize` linhas (= última página).
  *
  * Erro em qualquer página PROPAGA (rejeita) — o chamador NÃO deve publicar um
  * catálogo parcial por cima de um bom (senão o cap volta disfarçado de "sumiu").
+ *
+ * ATINGIR `maxPages` TAMBÉM LANÇA. O guard existe contra loop infinito (fonte que
+ * nunca encolhe), mas devolver o acumulado ao bater no teto trocava o loop infinito
+ * por uma MENTIRA silenciosa: o caller recebia N páginas CHEIAS sem nenhum jeito de
+ * distinguir "acabou" de "bati no teto" — o mesmo defeito de leitura parcial
+ * silenciosa que este helper existe pra evitar, reintroduzido pela porta dos fundos.
+ * Lançar mata os dois: sem loop infinito e sem completude fabricada. Mesmo contrato
+ * de `fetchAllPages` (@/lib/postgrest) e `fetchAll` (_shared/paginate.ts).
+ *
+ * Falso positivo assumido: uma fonte com EXATAMENTE `maxPages × pageSize` linhas
+ * (última página cheia) lança apesar de completa — no instante em que o teto acaba
+ * com página cheia o helper não tem informação pra separar os dois casos, e
+ * fail-closed é a leitura honesta. Bateu no teto de verdade? SUBA o `maxPages`
+ * (default 100 × 1000 = 100k linhas, ~28× o catálogo atual de ~3,6k produtos) — não
+ * volte a devolver parcial.
  */
 export async function paginateAll<T>(
   fetchPage: (from: number, to: number) => Promise<T[]>,
@@ -20,10 +34,12 @@ export async function paginateAll<T>(
   for (let page = 0; page < maxPages; page++) {
     const rows = await fetchPage(from, from + pageSize - 1);
     all.push(...rows);
-    if (rows.length < pageSize) break;
+    if (rows.length < pageSize) return all;
     from += pageSize;
   }
-  return all;
+  throw new Error(
+    `paginateAll: teto de maxPages atingido (${maxPages} páginas × ${pageSize} = ${all.length} linhas lidas) sem a fonte esgotar — leitura possivelmente parcial`,
+  );
 }
 
 export interface RankContext {
