@@ -20,12 +20,22 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 type Resposta = { data: unknown; error: unknown };
 let falharScores = false;
+let scoresRevenueAusente = false;
 
 const ERRO_PG = { message: 'canceling statement due to statement timeout', code: '57014' };
 
+// Leitura OK, mas revenue_potential ausente (a coluna órfã real de prod: sem produtor server-side).
+// A Concentração não tem potencial pra concentrar → "—" (potencial não medido), nunca 0,0%.
+const SCORES_SEM_REVENUE = [
+  { customer_user_id: 'c1', gross_margin_pct: null, avg_monthly_spend_180d: 1000, avg_repurchase_interval: 5, revenue_potential: null },
+  { customer_user_id: 'c2', gross_margin_pct: null, avg_monthly_spend_180d: 2000, avg_repurchase_interval: 8, revenue_potential: null },
+];
+
 function resposta(table: string): Resposta {
   if (table === 'farmer_client_scores') {
-    return falharScores ? { data: null, error: ERRO_PG } : { data: [], error: null };
+    if (falharScores) return { data: null, error: ERRO_PG };
+    if (scoresRevenueAusente) return { data: SCORES_SEM_REVENUE, error: null };
+    return { data: [], error: null };
   }
   return { data: [], error: null };
 }
@@ -58,7 +68,7 @@ const renderWithClient = (ui: ReactElement) => {
   return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
 };
 
-beforeEach(() => { falharScores = true; vi.clearAllMocks(); });
+beforeEach(() => { falharScores = true; scoresRevenueAusente = false; vi.clearAllMocks(); });
 
 describe('IntelligenceManagerialTab — falha de carga não vira "0 clientes"', () => {
   it('anuncia indisponibilidade em vez de renderizar os KPIs zerados', async () => {
@@ -109,5 +119,29 @@ describe('IntelligenceStrategicTab — falha de carga não vira LTV/CAC/Concentr
       const card = el!.closest('div')?.parentElement;
       expect(card?.textContent, `KPI "${titulo}" exibiu zero fabricado`).toMatch(/—/);
     }
+  });
+});
+
+/**
+ * Guard money-path — coluna ÓRFÃ (leitura OK, dado inexistente) ≠ erro de transporte.
+ *
+ * revenue_potential não tem produtor server-side: em prod é 0/null para toda a base. A leitura
+ * SUCEDE (nenhum alerta de indisponibilidade), mas o KPI de Concentração calcularia 0/0. Exibir
+ * "0,0%" afirmaria "carteira nada concentrada" — um número fabricado de um dado que não existe.
+ * Contrato: nesse caso o KPI diz "—" com o motivo "potencial não medido" (distinto de "base
+ * indisponível", que é o caso de erro acima).
+ */
+describe('IntelligenceStrategicTab — Concentração sob revenue_potential órfão', () => {
+  beforeEach(() => { falharScores = false; scoresRevenueAusente = true; });
+
+  it('mostra "—" (potencial não medido), não 0,0%, quando a leitura foi OK mas o potencial é ausente', async () => {
+    renderWithClient(<IntelligenceStrategicTab />);
+
+    const el = await screen.findByText('Concentração Top 20%');
+    const card = el.closest('div')?.parentElement;
+    // "—" com o motivo do órfão — e SEM alerta de "indisponível" (a base foi lida com sucesso).
+    expect(card?.textContent, 'Concentração exibiu 0,0% fabricado').toMatch(/—/);
+    expect(card?.textContent, 'faltou o motivo "potencial não medido"').toMatch(/não medido/);
+    expect(screen.queryByRole('alert'), 'não devia anunciar indisponibilidade: a leitura sucedeu').toBeNull();
   });
 });

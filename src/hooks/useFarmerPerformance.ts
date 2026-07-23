@@ -298,7 +298,9 @@ export const useFarmerPerformance = () => {
       const ipfLtvEvolution = Math.round(Math.min(100, (avgSpend / 2000) * 100));
 
       // 5. Churn reduction: % of clients with low churn risk (<30%)
-      const lowChurnClients = clientArr.filter((c) => Number(c.churn_risk || 100) < 30).length;
+      // `?? 100` (não `|| 100`): churn ausente conta como pior caso (não é "baixo churn"), mas
+      // churn REAL = 0 (cliente perfeitamente saudável) tem de contar — `|| 100` o tratava como 100.
+      const lowChurnClients = clientArr.filter((c) => Number(c.churn_risk ?? 100) < 30).length;
       const ipfChurnReduction = clientArr.length > 0
         ? Math.round((lowChurnClients / clientArr.length) * 100)
         : 0;

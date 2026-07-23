@@ -106,6 +106,11 @@ export function IntelligenceStrategicTab() {
   const top20Revenue = sortedByRevenue.slice(0, top20Count).reduce((a, c) => a + Number(c.revenue_potential || 0), 0);
   const totalRevenue = sortedByRevenue.reduce((a, c) => a + Number(c.revenue_potential || 0), 0);
   const concentrationPct = totalRevenue > 0 ? (top20Revenue / totalRevenue * 100) : 0;
+  // revenue_potential não tem produtor server-side (coluna órfã, 0/null para toda a base). Sem
+  // potencial medido a concentração é 0/0 — mostrar "0,0%" fabricaria "carteira nada concentrada".
+  // "—", como a Margem Bruta faz quando avgGrossMargin é null. (≠ scoresIndisponivel, que é erro
+  // de leitura; aqui a leitura foi OK e o dado é que não existe.)
+  const concentracaoIndisponivel = totalRevenue === 0;
 
   const discountedItems = orderItems?.filter(i => Number(i.discount || 0) > 0) || [];
   const avgDiscountQty = discountedItems.length > 0
@@ -194,7 +199,7 @@ export function IntelligenceStrategicTab() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <KpiCard title="LTV Projetado (3a)" value={ou(`R$ ${ltvEstimate.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}`)} icon={BarChart3} subtitle="Estimativa média" />
         <KpiCard title="CAC Estimado" value={ou(`R$ ${cacEstimate.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}`)} icon={DollarSign} subtitle="Custo aquisição cliente" />
-        <KpiCard title="Concentração Top 20%" value={ou(`${concentrationPct.toFixed(1)}%`)} icon={PieChart} subtitle="da receita total" />
+        <KpiCard title="Concentração Top 20%" value={scoresIndisponivel || concentracaoIndisponivel ? '—' : `${concentrationPct.toFixed(1)}%`} icon={PieChart} subtitle={scoresIndisponivel ? 'base indisponível' : concentracaoIndisponivel ? 'potencial não medido' : 'da receita total'} />
         <KpiCard
           title="Margem Bruta Média"
           value={scoresIndisponivel || avgGrossMargin == null ? '—' : `${avgGrossMargin.toFixed(1)}%`}
