@@ -217,11 +217,20 @@ function categoriaDoErro(code: string | null, causa: unknown): string {
  * tabela é desconhecido, então NÃO é "linhas perdidas"). Sem payload, sem texto livre. O
  * caller que quiser diagnosticar a mensagem ainda a tem via `error.cause` na exceção.
  *
- * ⚠️ AO LER A MÉTRICA: um evento por TENTATIVA, não por incidente. Os callers em react-query
- * herdam `retry: 2` (App.tsx), então uma única falha do ponto de vista do usuário emite até
- * 3 eventos. Para "quantas vezes alguém viu a tela quebrar", divida — ou agregue por sessão.
+ * ⚠️ AO LER A MÉTRICA: um evento por TENTATIVA, não por incidente — e quantas tentativas cabem
+ * num incidente DEPENDE DO CALLER. Dentro do `queryFn` de um `useQuery` a chamada herda o
+ * `retry: 2` global (App.tsx), então uma falha única do ponto de vista do usuário emite até 3
+ * eventos: é o caso das abas de Intelligence (`IntelligenceManagerialTab`/`StrategicTab`).
+ * Numa chamada imperativa FORA do react-query não há retentativa nenhuma e 1 evento = 1
+ * incidente: é o caso de `useCrossSellEngine`, `useBundleEngine`, `useFarmerScoring`,
+ * `useTacticalPlan` e `useFarmerTacticalPlan` — hoje a MAIORIA dos sítios de chamada.
+ * Dividir a contagem por 3 uniformemente subestima a frequência real justamente nesses
+ * caminhos money-path (product_costs, farmer_client_scores, sales_orders). Confira o caller
+ * antes de aplicar qualquer divisor — ou agregue por sessão, que independe disso.
  * Contar tentativas é o que se pode afirmar aqui dentro: o helper não sabe se está numa
  * retentativa (nem deveria — inferir isso seria estado escondido no lugar errado).
+ * (A generalização anterior, "os callers em react-query herdam `retry: 2`", era falsa para a
+ * maioria deles. Achado do challenge gpt-5.6-sol sobre o #1550, comentado no #1560 tarde demais.)
  */
 function relatarPaginaPerdida(fonte: string, pagina: number, lidasAntes: number, causa: unknown): void {
   const pg = causa as { code?: unknown } | null;
