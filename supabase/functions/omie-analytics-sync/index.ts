@@ -1808,12 +1808,20 @@ async function computeAssociationRules(db: SupabaseClient) {
   rules.sort((a, b) => (b.lift * b.confidence) - (a.lift * a.confidence));
   const topRules = rules.slice(0, maxRules);
 
-  // Clear old rules and insert new ones
-  await db.from("farmer_association_rules").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+  // Troca ATÔMICA do lote. Antes: `delete()` de tudo seguido de um INSERT POR REGRA —
+  // qualquer falha no meio deixava a tabela vazia ou PELA METADE, e o `error` só decrementava
+  // um contador que ninguém lia (o retorno dizia "N regras geradas" e seguia em frente).
+  // A tabela é global e alimenta MixGap, canal Melhorias, a edge `recommend` e o cross-sell.
+  // A RPC faz DELETE+INSERT numa transação: falhou, as regras antigas continuam de pé.
+  if (topRules.length === 0) {
+    // Zero regra é sintoma de dado faltando a montante, não motivo pra apagar o que vale.
+    // (A RPC recusaria com TR001; não chamamos só pra tomar o erro.)
+    console.warn(`[AssocRules] 0 regras de ${totalTx} transações — regras vigentes preservadas`);
+    return { rules_generated: 0, total_transactions: totalTx, frequent_items: frequentItems.size, preservadas: true };
+  }
 
-  let inserted = 0;
-  for (const rule of topRules) {
-    const { error } = await db.from("farmer_association_rules").insert({
+  const { data: inserted, error: erroSubstituir } = await db.rpc("farmer_association_rules_substituir", {
+    p_regras: topRules.map((rule) => ({
       antecedent_product_ids: rule.antecedent,
       consequent_product_ids: rule.consequent,
       support: rule.support,
@@ -1821,8 +1829,14 @@ async function computeAssociationRules(db: SupabaseClient) {
       lift: rule.lift,
       rule_type: "association",
       sample_size: totalTx,
-    });
-    if (!error) inserted++;
+    })),
+  });
+
+  // `throw`, não log: quem chama (`compute_association_rules` / `sync_all`) precisa ver o
+  // erro. Engolir aqui era o que fazia a falha virar "sucesso com 0 regras".
+  if (erroSubstituir) {
+    console.error(`[AssocRules] falha ao substituir as regras:`, erroSubstituir);
+    throw new Error(`farmer_association_rules_substituir: ${erroSubstituir.message}`);
   }
 
   console.log(`[AssocRules] Generated ${inserted} rules from ${totalTx} transactions`);
