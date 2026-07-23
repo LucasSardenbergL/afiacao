@@ -21,6 +21,21 @@ interface ScoreLinha {
   sales_history_status: string | null;
 }
 
+interface RecoLinha {
+  farmer_id: string;
+  status: string | null;
+}
+
+/**
+ * Único rótulo de aceitação que `farmer_recommendations.status` permite — o CHECK da tabela é
+ * ('pendente','ofertado','aceito','rejeitado','expirado'). O código comparava com `'aceita'`,
+ * valor que o banco REJEITA: o predicado nunca casava e a taxa era estruturalmente 0%, medisse
+ * o que medisse. Hoje as 3.659 linhas de prod são 100% `pendente` (nenhum writer registra
+ * desfecho desde que `markAsAccepted` saiu), então a correção é DEFESA DO FUTURO — mas é
+ * exatamente no dia em que o loop de feedback existir que a coluna passaria a mentir em silêncio.
+ */
+const STATUS_ACEITO = 'aceito';
+
 function IntelligenceManagerialTabImpl() {
   const { data: allScores, isLoading, isError } = useQuery({
     queryKey: ['intel-all-scores'],
@@ -63,13 +78,21 @@ function IntelligenceManagerialTabImpl() {
     return acc;
   }, {} as Record<string, string>);
 
-  const { data: recommendations } = useQuery({
+  const { data: recommendations, isError: recoErro } = useQuery({
     queryKey: ['intel-reco-adoption'],
-    queryFn: async () => {
-      const { data, error } = await supabase.from('farmer_recommendations').select('farmer_id, status').limit(500);
-      if (error) throw error;
-      return data || [];
-    },
+    // Base COMPLETA, paginada. Era `.limit(500)` de 3.659 linhas e SEM `.order()`: sem ORDER BY
+    // o Postgres não garante ordem, então a fatia de 13,7% mudava entre carregamentos — dois
+    // pedidos idênticos podiam render taxas de adoção diferentes, sem nada na tela indicando
+    // que o denominador era amostral. `id` é a PK: ordem estável para paginar.
+    queryFn: () =>
+      fetchAllPages<RecoLinha>((de, ate) =>
+        supabase
+          .from('farmer_recommendations')
+          .select('farmer_id, status')
+          .order('id', { ascending: true })
+          .range(de, ate) as unknown as PromiseLike<{ data: RecoLinha[] | null; error: unknown }>,
+        'farmer_recommendations/intel-adocao',
+      ),
   });
 
   const farmerGroups = allScores?.reduce((acc, score) => {
@@ -82,9 +105,15 @@ function IntelligenceManagerialTabImpl() {
   const recoAdoption = recommendations?.reduce((acc, r) => {
     if (!acc[r.farmer_id]) acc[r.farmer_id] = { total: 0, accepted: 0 };
     acc[r.farmer_id].total++;
-    if (r.status === 'aceita') acc[r.farmer_id].accepted++;
+    if (r.status === STATUS_ACEITO) acc[r.farmer_id].accepted++;
     return acc;
   }, {} as Record<string, { total: number; accepted: number }>) || {};
+
+  // A falha desta query virava `recommendations === undefined` → adoção 0% para TODO vendedor.
+  // Num comparativo ENTRE vendedores, "não seguiu nenhuma recomendação" é uma acusação — e era
+  // fabricada por uma falha de transporte nossa.
+  const adocaoIndisponivel = recoErro && !recommendations;
+  const adocaoDesatualizada = recoErro && !!recommendations;
 
   const farmerMetrics = Object.entries(farmerGroups).map(([farmerId, clients]) => {
     const avgHealth = clients.reduce((a, c) => a + Number(c.health_score || 0), 0) / clients.length;
@@ -97,7 +126,20 @@ function IntelligenceManagerialTabImpl() {
     const cobertura = coberturaMargem(clients.map(c => c.gross_margin_pct));
     const avgCategories = clients.reduce((a, c) => a + Number(c.category_count || 0), 0) / clients.length;
     const adoption = recoAdoption[farmerId];
-    const adoptionPct = adoption && adoption.total > 0 ? (adoption.accepted / adoption.total * 100) : 0;
+    // `null` = taxa NÃO APURÁVEL → a coluna mostra "—". `!adoption` cobre as duas origens de
+    // ausência, ambas "ausente ≠ zero":
+    // (a) a leitura falhou — `recommendations` vira `undefined`, `recoAdoption` sai vazio e
+    //     TODO vendedor cai aqui; 0% afirmaria que ninguém seguiu sugestão alguma;
+    // (b) o vendedor não tem recomendação — sem denominador não existe taxa, e "0%" o puniria
+    //     no comparativo por um dado que não existe.
+    // Nada de `|| adoption.total === 0` nem de `adocaoIndisponivel ||` aqui: o primeiro é
+    // INALCANÇÁVEL (o objeto só nasce no `acc[...] = {total:0}` imediatamente seguido do
+    // `total++`, então existir implica `total >= 1`) e o segundo é uma segunda camada para o
+    // caso (a). Guard que não pode disparar não protege — só faz a falsificação passar verde e
+    // dar a impressão de cobertura que não existe (foi o que a sabotagem S4 revelou).
+    const adoptionPct = !adoption
+      ? null
+      : (adoption.accepted / adoption.total) * 100;
     return { farmerId, clientCount: clients.length, avgHealth, atRisk, avgMargin, cobertura, avgCategories, adoptionPct };
   });
 
@@ -134,6 +176,18 @@ function IntelligenceManagerialTabImpl() {
         <div role="alert" className="rounded-lg border border-status-warning/30 bg-status-warning/5 p-3 text-xs text-status-warning">
           Exibindo a última leitura bem-sucedida — a atualização mais recente falhou. Os números
           podem estar desatualizados.
+        </div>
+      )}
+      {adocaoIndisponivel && (
+        <div role="alert" className="rounded-lg border border-status-error/30 bg-status-error/5 p-3 text-xs text-status-error">
+          Adoção de recomendações indisponível — a base de recomendações não pôde ser lida. A
+          coluna fica em “—”; 0% seria afirmar que os vendedores não seguiram nenhuma sugestão.
+        </div>
+      )}
+      {adocaoDesatualizada && (
+        <div role="alert" className="rounded-lg border border-status-warning/30 bg-status-warning/5 p-3 text-xs text-status-warning">
+          Exibindo a última leitura bem-sucedida da adoção de recomendações — a atualização mais
+          recente falhou. A coluna “Adoção Reco” pode estar desatualizada.
         </div>
       )}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -186,7 +240,11 @@ function IntelligenceManagerialTabImpl() {
                         {(fm.avgCategories - globalAvgCategories).toFixed(1)}
                       </span>
                     </td>
-                    <td className="text-center py-2">{fm.adoptionPct.toFixed(0)}%</td>
+                    <td className="text-center py-2">
+                      {fm.adoptionPct == null
+                        ? <span className="text-muted-foreground">—</span>
+                        : `${fm.adoptionPct.toFixed(0)}%`}
+                    </td>
                   </tr>
                 ))}
                 {farmerMetrics.length === 0 && (

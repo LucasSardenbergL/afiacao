@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { custoCanonico, margemUnitaria } from '@/lib/custo/custoCanonico';
@@ -119,11 +119,32 @@ export const useCrossSellEngine = () => {
   const [recommendations, setRecommendations] = useState<CustomerRecommendations[]>([]);
   const [loading, setLoading] = useState(false);
   const [calculating, setCalculating] = useState(false);
+  // A falha era ENGOLIDA: o `catch` só fazia `console.error` e o estado voltava a "pronto", com
+  // `recommendations` mantendo o resultado do ÚLTIMO cálculo bem-sucedido. A tela ficava
+  // idêntica a um recálculo que deu certo — o vendedor clicava "Recalcular", via a lista se
+  // acomodar, e seguia decidindo sobre números velhos. Sem isto no contrato, nenhum consumidor
+  // *podia* ser honesto: a correção do money-path só termina na tela.
+  const [erro, setErro] = useState<Error | null>(null);
+  const [desatualizado, setDesatualizado] = useState(false);
+  // Espelha `recommendations` para o `catch` ler o valor ATUAL. Ler o state aqui devolveria o
+  // do render em que o callback foi criado (`recommendations` não está nas deps do useCallback).
+  const recomendacoesRef = useRef<CustomerRecommendations[]>([]);
+
+  const aplicarRecomendacoes = useCallback((recs: CustomerRecommendations[]) => {
+    recomendacoesRef.current = recs;
+    setRecommendations(recs);
+  }, []);
 
   const calculateRecommendations = useCallback(async () => {
     if (!effectiveUserId) return;
     setCalculating(true);
     setLoading(true);
+    setErro(null);
+    setDesatualizado(false);
+    // Discrimina "a falha veio ANTES de produzir resultado" (a tela segue com o cálculo
+    // anterior = desatualizada) de "veio DEPOIS" (falha ao persistir: os números na tela são
+    // desta execução, e chamá-los de desatualizados mentiria na direção oposta).
+    let resultadoDestaExecucao = false;
 
     try {
       // 1. Load client scores with pagination. Era um loop MANUAL com o mesmo defeito que o
@@ -155,7 +176,8 @@ export const useCrossSellEngine = () => {
       }
 
       if (!clientScores?.length) {
-        setRecommendations([]);
+        aplicarRecomendacoes([]);
+        resultadoDestaExecucao = true;
         return;
       }
 
@@ -214,7 +236,8 @@ export const useCrossSellEngine = () => {
       const customerIds = activeClientScores.map((c) => c.customer_user_id);
 
       if (!customerIds.length) {
-        setRecommendations([]);
+        aplicarRecomendacoes([]);
+        resultadoDestaExecucao = true;
         return;
       }
 
@@ -468,7 +491,8 @@ export const useCrossSellEngine = () => {
         return totalB - totalA;
       });
 
-      setRecommendations(allRecs);
+      aplicarRecomendacoes(allRecs);
+      resultadoDestaExecucao = true;
 
       // Persist recommendations (batch upsert único — antes era N×M serial)
       const recRows = allRecs.flatMap((cr) =>
@@ -494,11 +518,16 @@ export const useCrossSellEngine = () => {
       }
     } catch (error) {
       console.error('Error calculating recommendations:', error);
+      setErro(error instanceof Error ? error : new Error(String(error)));
+      // Só é "desatualizado" se a tela está exibindo o resultado de uma execução ANTERIOR.
+      // Sem nada na mão o estado é indisponível — textos diferentes, e prometer um dado que
+      // não existe seria trocar uma mentira por outra.
+      setDesatualizado(!resultadoDestaExecucao && recomendacoesRef.current.length > 0);
     } finally {
       setCalculating(false);
       setLoading(false);
     }
-  }, [effectiveUserId, isImpersonating]);
+  }, [effectiveUserId, isImpersonating, aplicarRecomendacoes]);
 
   // ─── Actions ─────────────────────────────────────────────────────────
   // `markAsOffered` / `markAsAccepted` / `markAsRejected` e o `updateConversionStats`
@@ -514,5 +543,9 @@ export const useCrossSellEngine = () => {
     loading,
     calculating,
     calculateRecommendations,
+    /** Falha da ÚLTIMA execução (`null` = correu bem). O consumidor decide o que exibir. */
+    erro,
+    /** `true` = o que está em `recommendations` veio de uma execução ANTERIOR à que falhou. */
+    desatualizado,
   };
 };
