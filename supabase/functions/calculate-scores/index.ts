@@ -57,15 +57,18 @@ interface FarmerClientScoreSeed {
   // zero que criava o loop fechado. m_score idem (é o score derivado desta margem).
   gross_margin_pct: number | null;
   avg_repurchase_interval: number;
-  expansion_score: number;
-  recover_score: number;
-  revenue_potential: number;
+  // As 6 colunas SEM produtor (nenhum writer as calcula; só este seed as tocava, com 0). null =
+  // "não medido", nunca 0 — mesma razão do gross_margin_pct acima. O DEFAULT 0 foi removido na
+  // migration 20260727130000; enviar null EXPLÍCITO independe da ordem de deploy migration×edge.
+  expansion_score: number | null;
+  recover_score: number | null;
+  revenue_potential: number | null;
   rf_score: number;
   m_score: number | null;
   g_score: number;
-  s_score: number;
-  x_score: number;
-  eff_score: number;
+  s_score: number | null;
+  x_score: number | null;
+  eff_score: number | null;
   sales_history_status: 'sem_historico' | 'stale' | 'ativo';
 }
 
@@ -459,15 +462,18 @@ Deno.serve(async (req) => {
               // sobrevivia a qualquer run em que a RPC de margem falhasse.
               gross_margin_pct: null,
               avg_repurchase_interval: 0,
-              expansion_score: 0,
-              recover_score: 0,
-              revenue_potential: 0,
+              // As 6 colunas SEM produtor → null ("não medido"), nunca 0. O 0 aqui era a arma
+              // carregada: um valor de decisão fabricado numa coluna que ninguém calcula (missão de
+              // recuperação/expansão, componentes de health/priority). Ver migration 20260727130000.
+              expansion_score: null,
+              recover_score: null,
+              revenue_potential: null,
               rf_score: 0,
               m_score: null,
               g_score: 0,
-              s_score: 0,
-              x_score: 0,
-              eff_score: 0,
+              s_score: null,
+              x_score: null,
+              eff_score: null,
               sales_history_status: deriveSalesHistoryStatus(salesMap.get(client.user_id), salesActiveDays),
             });
           }
