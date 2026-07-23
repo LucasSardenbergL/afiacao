@@ -18438,6 +18438,10 @@ export type Database = {
             Args: { p_item_id: number; p_threshold_similaridade?: number }
             Returns: Json
           }
+      farmer_association_rules_substituir: {
+        Args: { p_regras: Json }
+        Returns: number
+      }
       fin_analise_cp_dimensoes_rpc: {
         Args: { p_ano?: number; p_company?: string; p_mes?: number }
         Returns: {
