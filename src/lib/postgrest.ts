@@ -133,9 +133,11 @@ export const POSTGREST_PAGE_SIZE = 1000;
  * é OBRIGATÓRIO no contrato: sem ele o caller não tem como detectar (era o furo original).
  * Fim legítimo da tabela é `data: []` sem erro — só isso encerra o loop.
  *
- * `fonte` rotula a origem na telemetria (ex.: `'product_costs/bundle'`). Opcional para não
- * quebrar caller existente, mas SEMPRE preencha: sem ela a agregação depende do stack trace,
- * que muda com o bundler. Ela é o que separa "product_costs falha às terças" de "algo falhou".
+ * `fonte` rotula a origem na telemetria (ex.: `'product_costs/bundle'`) e é OBRIGATÓRIA: o
+ * propósito dela é agregação ESTÁVEL, e o compilador é quem garante isso. A alternativa —
+ * cair no stack trace — é instável (a exceção nasce dentro de `relatarPaginaPerdida`; stack
+ * assíncrono, minificação e source-maps mudam entre builds, e o agrupamento junto). Um default
+ * silencioso deixaria justo a lacuna no mecanismo criado para observabilidade. (Codex, #1550.)
  *
  * ```ts
  * const custos = await fetchAllPages<CostRow>(
@@ -149,7 +151,7 @@ export const POSTGREST_PAGE_SIZE = 1000;
  */
 export async function fetchAllPages<T>(
   buscarPagina: (de: number, ate: number) => PromiseLike<{ data: T[] | null; error: unknown }>,
-  fonte = 'nao-informada',
+  fonte: string,
 ): Promise<T[]> {
   const todas: T[] = [];
   for (let pagina = 0; ; pagina++) {
@@ -184,14 +186,36 @@ function comCausa(mensagem: string, causa: unknown): Error {
 }
 
 /**
+ * Categoriza o erro pelo SQLSTATE (allowlist), NUNCA pelo texto livre. O `code` do PostgREST
+ * é seguro — é de transporte, valor fechado do Postgres. A `message`, não: o PostgREST
+ * encaminha o MESSAGE do Postgres, e função/view/RLS avaliada num SELECT pode lançar mensagem
+ * com valor de linha (`RAISE EXCEPTION` interpolando ID/CPF; erro de cast reproduzindo o valor
+ * inválido). Como o helper é GENÉRICO, categorizar por código dá o sinal de observabilidade
+ * — "está falhando por timeout? por RLS?" — sem arriscar PII na telemetria. (Achado do Codex
+ * gpt-5.6-sol na revisão do #1550: a garantia "message é metadado sem PII" era falsa.)
+ */
+function categoriaDoErro(code: string | null, causa: unknown): string {
+  if (causa === null) return 'data_null_sem_error';
+  if (code === null) return 'desconhecido';
+  if (code === '57014') return 'timeout';
+  if (code === '42501') return 'rls_ou_permissao';
+  if (code === 'P0001') return 'excecao_customizada'; // RAISE do plpgsql — o de maior risco de PII
+  if (code.startsWith('08')) return 'conexao';
+  if (code.startsWith('53')) return 'recursos'; // out of memory, too many connections
+  return 'desconhecido';
+}
+
+/**
  * Reporta a página perdida ANTES de lançar. Lançar conserta a mentira do número; sem
  * instrumentar, a falha continua invisível para MEDIÇÃO — e não dá para saber se acontece uma
  * vez por mês ou toda tarde, nem se um caller sofre mais que os outros. Antes do contrato de
  * rejeição isso era impossível por construção: a falha virava lista vazia e ninguém sabia.
  *
- * Só METADADO. As linhas lidas nunca entram no contexto: `linhas_perdidas` é uma CONTAGEM, e
- * o `code`/`message` do PostgREST são de transporte (`57014`, `42501`, "permission denied for
- * table X") — sem payload, sem PII. O caller que quiser tratar o erro ainda recebe a exceção.
+ * Só METADADO SEGURO — nunca a `message` crua (pode carregar PII interpolada; ver
+ * `categoriaDoErro`). Sai o `code` (transporte, valor fechado), a `categoria` normalizada, e
+ * `linhas_lidas_antes_da_falha` (uma CONTAGEM — quantas vieram antes de estourar; o total da
+ * tabela é desconhecido, então NÃO é "linhas perdidas"). Sem payload, sem texto livre. O
+ * caller que quiser diagnosticar a mensagem ainda a tem via `error.cause` na exceção.
  *
  * ⚠️ AO LER A MÉTRICA: um evento por TENTATIVA, não por incidente. Os callers em react-query
  * herdam `retry: 2` (App.tsx), então uma única falha do ponto de vista do usuário emite até
@@ -199,15 +223,14 @@ function comCausa(mensagem: string, causa: unknown): Error {
  * Contar tentativas é o que se pode afirmar aqui dentro: o helper não sabe se está numa
  * retentativa (nem deveria — inferir isso seria estado escondido no lugar errado).
  */
-function relatarPaginaPerdida(fonte: string, pagina: number, acumuladas: number, causa: unknown): void {
-  const pg = causa as { message?: unknown; code?: unknown } | null;
-  const message = typeof pg?.message === 'string' ? pg.message : null;
+function relatarPaginaPerdida(fonte: string, pagina: number, lidasAntes: number, causa: unknown): void {
+  const pg = causa as { code?: unknown } | null;
   const code = typeof pg?.code === 'string' ? pg.code : null;
   captureException(new Error(`fetchAllPages(${fonte}): página ${pagina} perdida`), {
     fonte,
     pagina,
-    linhas_perdidas: acumuladas,
+    linhas_lidas_antes_da_falha: lidasAntes,
     codigo: code,
-    mensagem: message ?? (causa == null ? 'data=null sem error' : null),
+    categoria: categoriaDoErro(code, causa),
   });
 }

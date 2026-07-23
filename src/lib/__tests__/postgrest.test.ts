@@ -340,7 +340,7 @@ describe('fetchAllPages — instrumentação da página perdida', () => {
 
   beforeEach(() => captureExceptionMock.mockClear());
 
-  it('reporta fonte, índice da página, linhas perdidas e o código do PostgREST', async () => {
+  it('reporta fonte, índice da página, linhas lidas antes da falha e o código do PostgREST', async () => {
     await expect(
       fetchAllPages<{ id: number }>(falhaNaTerceira, 'product_costs/bundle'),
     ).rejects.toThrow();
@@ -349,28 +349,73 @@ describe('fetchAllPages — instrumentação da página perdida', () => {
     const [, ctx] = captureExceptionMock.mock.calls[0] as [unknown, Record<string, unknown>];
     expect(ctx.fonte).toBe('product_costs/bundle');
     expect(ctx.pagina).toBe(2); // 0-based, igual à mensagem do throw
-    expect(ctx.linhas_perdidas).toBe(2 * POSTGREST_PAGE_SIZE);
+    // Renomeado (Codex): é a contagem de linhas LIDAS antes da falha, não das perdidas
+    // (o total da tabela era desconhecido). O nome antigo afirmava um número que não temos.
+    expect(ctx.linhas_lidas_antes_da_falha).toBe(2 * POSTGREST_PAGE_SIZE);
     expect(ctx.codigo).toBe('42501');
-    expect(ctx.mensagem).toBe('permission denied for table product_costs');
   });
 
-  it('NÃO envia as linhas lidas — metadado só, sem payload nem PII', async () => {
+  // O CORAÇÃO DO FIX (Codex, achado a): `error.message` do PostgREST encaminha o MESSAGE do
+  // Postgres, e função/view/RLS num SELECT pode lançar mensagem com valor de linha (RAISE
+  // interpolando ID, erro de cast reproduzindo o valor). O helper é GENÉRICO — a garantia
+  // "message é metadado sem PII" era falsa. A telemetria manda só código + categoria por
+  // allowlist; a mensagem crua NUNCA sai.
+  it('NUNCA envia a mensagem crua do PostgREST (pode conter PII interpolada)', async () => {
+    const comPII = {
+      code: 'P0001',
+      message: 'cliente 123.456.789-00 (João da Silva, joao@exemplo.com) sem permissão',
+    };
+    await expect(
+      fetchAllPages<{ id: number }>(() => Promise.resolve({ data: null, error: comPII }), 'x/y'),
+    ).rejects.toThrow();
+
+    const [errArg, ctx] = captureExceptionMock.mock.calls[0] as [unknown, Record<string, unknown>];
+    const tudo = JSON.stringify(ctx) + String((errArg as Error)?.message ?? '');
+    // Nenhum fragmento da mensagem crua pode aparecer — nem no contexto, nem no Error.
+    expect(tudo).not.toMatch(/123\.456\.789/);
+    expect(tudo).not.toMatch(/João da Silva/);
+    expect(tudo).not.toMatch(/joao@exemplo/);
+    // O que DEVE sair: o código (seguro, é de transporte) e a categoria normalizada.
+    expect(ctx.codigo).toBe('P0001');
+    expect(ctx).not.toHaveProperty('mensagem');
+  });
+
+  it('categoriza o erro por código, sem depender do texto livre', async () => {
+    const casos: Array<[string | undefined, string]> = [
+      ['57014', 'timeout'],       // canceling statement due to statement timeout
+      ['42501', 'rls_ou_permissao'],
+      ['P0001', 'excecao_customizada'],
+      [undefined, 'desconhecido'],
+    ];
+    for (const [code, categoriaEsperada] of casos) {
+      captureExceptionMock.mockClear();
+      await expect(
+        fetchAllPages<{ id: number }>(
+          () => Promise.resolve({ data: null, error: code ? { code, message: 'x' } : { message: 'x' } }),
+          'x/y',
+        ),
+      ).rejects.toThrow();
+      const [, ctx] = captureExceptionMock.mock.calls[0] as [unknown, Record<string, unknown>];
+      expect(ctx.categoria, `code=${code}`).toBe(categoriaEsperada);
+    }
+  });
+
+  it('NÃO envia as linhas lidas — metadado só, sem payload', async () => {
     await expect(fetchAllPages<{ id: number }>(falhaNaTerceira, 'product_costs/bundle')).rejects.toThrow();
 
     const [, ctx] = captureExceptionMock.mock.calls[0] as [unknown, Record<string, unknown>];
-    // `linhas_perdidas` é uma CONTAGEM; as linhas em si nunca entram no contexto.
     expect(JSON.stringify(ctx)).not.toMatch(/"id"/);
     for (const v of Object.values(ctx)) expect(Array.isArray(v)).toBe(false);
   });
 
-  it('data:null sem error também reporta (rotulado, não confundido com timeout)', async () => {
+  it('data:null sem error é categorizado à parte (não confundido com timeout)', async () => {
     await expect(
       fetchAllPages<{ id: number }>(() => Promise.resolve({ data: null, error: null }), 'x/y'),
     ).rejects.toThrow();
 
     const [, ctx] = captureExceptionMock.mock.calls[0] as [unknown, Record<string, unknown>];
     expect(ctx.codigo).toBeNull();
-    expect(ctx.mensagem).toBe('data=null sem error');
+    expect(ctx.categoria).toBe('data_null_sem_error');
   });
 
   it('leitura completa não instrumenta nada (sem ruído na telemetria)', async () => {
