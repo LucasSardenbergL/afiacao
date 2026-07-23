@@ -3,6 +3,7 @@
 // Spec: docs/superpowers/specs/2026-06-11-clientes-escopo-carteira-design.md
 import { supabase } from '@/integrations/supabase/client';
 import { margemConhecida } from '@/lib/scoring/margin';
+import { churnConhecido } from '@/lib/scoring/churn';
 import type { Customer, ClientScore } from '@/components/adminCustomers/types';
 
 export interface DisplayFlags {
@@ -179,7 +180,10 @@ export async function fetchScoresPorCustomer(ids: string[]): Promise<Map<string,
       customer_user_id: s.customer_user_id,
       health_score: s.health_score ?? 0,
       health_class: s.health_class ?? 'critico',
-      churn_risk: s.churn_risk ?? 0,
+      // Sem `?? 0`: risco ausente chega como null ao consumidor (mesma razão do gross_margin_pct
+      // abaixo). Coagir para 0 afirmaria "sem risco de churn" — o melhor resultado — sobre quem
+      // não foi medido. churn_risk é 0–100 e 0 é conhecido.
+      churn_risk: churnConhecido(s.churn_risk),
       expansion_score: s.expansion_score ?? 0,
       priority_score: s.priority_score ?? 0,
       avg_monthly_spend_180d: s.avg_monthly_spend_180d ?? 0,
