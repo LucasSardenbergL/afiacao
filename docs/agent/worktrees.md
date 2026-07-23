@@ -62,6 +62,22 @@ diff de 26 arquivos para 8 (#1533).
 **Regra:** re-conferir `gh pr list` **imediatamente antes do `gh pr create`**, filtrando pelo
 domínio (`gh pr list --search "margem"`). Custa segundos; teria pego o #1525 seis minutos antes.
 
+⚠️ **Trabalho derivado de achado COMPARTILHADO colide por DESENHO, não por azar (2026-07-23).**
+Parecer do Codex, item de post-mortem, bug descrito em doc: a fonte é lida por VÁRIAS sessões, que
+convergem para o mesmo item — a colisão deixa de ser acidente e passa a ser o resultado esperado.
+Aí a checagem `origin/main` + `gh pr list` tem de vir **ANTES de implementar**, não só antes do
+`gh pr create` — e varrendo por **TÍTULO/BRANCH do tema** (`gh pr list --state all --search "<termo>
+in:title"`), **não** por arquivo: o PR concorrente pode consertar o mesmo achado sem tocar nenhum dos
+arquivos que você planeja tocar. Caso medido: uma sessão rodou `/codex` retroativo sobre o #1550,
+recebeu o achado [P1] de PII em `error.message` do PostgREST e implementou o conserto inteiro
+(função de redação + testes + gates completos verdes, 5681 testes); só a re-checagem obrigatória
+pré-commit revelou o **#1560** (`claude/telemetria-postgrest-pii-hardening`), de outra sessão, no
+MESMO achado — e com desenho melhor: **allowlist** (`code` + `categoria`) contra a denylist que eu
+havia escrito, que provei vazar PII interpolada sem delimitador (`cliente 123.456.789-00 (João da
+Silva, joao@exemplo.com) sem permissão` passava inteiro — sem aspas e abaixo do teto de caracteres).
+Implementação descartada por inteiro. **A re-checagem pré-`gh pr create` evita o PR duplicado; só a
+pré-implementação evita a hora perdida.**
+
 ⚠️ **Checar colisão de ARQUIVO: `git diff` de TRÊS pontos, não de dois (2026-07-22).** A checagem
 por PR acima tem uma irmã por diff — "a `main` mexeu num arquivo que EU também mexo?" — e o comando
 óbvio **mente depois que você commita**. `git diff --name-only HEAD..origin/main` (DOIS pontos)
