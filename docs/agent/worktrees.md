@@ -31,7 +31,7 @@ Limite conhecido (fase 1): não pega a *race fria* (duas sessões, nenhum arquiv
 
 ## Colisão de CÓDIGO multi-sessão: re-conferir ANTES do `gh pr create` (2026-07-21)
 
-Irmã da colisão de migration acima, sem ferramenta equivalente — e o custo aqui não é sobrescrita
+Irmã da colisão de migration acima — e o custo aqui não é sobrescrita
 silenciosa, é **retrabalho** e o risco de duas correções divergentes do mesmo invariante entrarem
 juntas. Cronologia medida (PRs de margem, mesmo dia):
 
@@ -77,6 +77,15 @@ havia escrito, que provei vazar PII interpolada sem delimitador (`cliente 123.45
 Silva, joao@exemplo.com) sem permissão` passava inteiro — sem aspas e abaixo do teto de caracteres).
 Implementação descartada por inteiro. **A re-checagem pré-`gh pr create` evita o PR duplicado; só a
 pré-implementação evita a hora perdida.**
+
+**Rede automática (2026-07-23):** hook `.claude/hooks/pr-collision-guard.sh` (PreToolUse Bash)
+re-executa a conferência POR ARQUIVO na hora do `gh pr create` — fetch fresco + interseção de TRÊS
+pontos com a `origin/main` + `gh pr list --json files` dos PRs abertos de outras branches — e
+**AVISA** via `additionalContext` (nunca nega; fail-open granular: gh fora → checa só a main).
+Testes: `scripts/test-pr-collision-guard.sh` (stub git+gh + falsificação por sabotagem do veredito).
+Limites: cobre a re-checagem por ARQUIVO no create; a varredura por TEMA/título e a checagem
+**pré-implementação** (bloco acima) seguem manuais — e a race fria (duas sessões, nenhum PR aberto)
+continua fora do alcance.
 
 ⚠️ **Checar colisão de ARQUIVO: `git diff` de TRÊS pontos, não de dois (2026-07-22).** A checagem
 por PR acima tem uma irmã por diff — "a `main` mexeu num arquivo que EU também mexo?" — e o comando
