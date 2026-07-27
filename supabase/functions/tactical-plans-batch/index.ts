@@ -118,38 +118,33 @@ Deno.serve(async (req) => {
     );
   }
 
-  // 1. Pagina farmer_client_scores e agrupa por farmer_id.
-  //    A carteira já está limpa de fornecedor pela Fase 1 (classificacao).
+  // 1. Pagina farmer_client_scores (fetchAll: LANÇA em error E em data:null sem error — o
+  //    `?? []` de antes lia resposta malformada como fim e o batch seguia com seleção PARCIAL)
+  //    e agrupa por farmer_id. A carteira já está limpa de fornecedor pela Fase 1 (classificacao).
   let mascaradosIgnorados = 0;
   const porFarmer = new Map<string, LinhaSelecao[]>();
 
-  for (let from = 0; ; from += 1000) {
-    const { data, error } = await supabase
-      .from('farmer_client_scores')
-      .select('farmer_id, customer_user_id, priority_score, revenue_potential, avg_monthly_spend_180d, gross_margin_pct')
-      // chave TOTAL: só `farmer_id` empata em massa (1 farmer = milhares de linhas) e o
-      // .range() pula/duplica linhas entre páginas — cliente sumindo do batch em silêncio.
-      .order('farmer_id', { ascending: true })
-      .order('customer_user_id', { ascending: true })
-      .range(from, from + 999);
-
-    if (error) {
-      return new Response(
-        JSON.stringify({ ok: false, error: error.message }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
-      );
-    }
-
-    const rows = (data ?? []) as Array<{
+  try {
+    const linhas = await fetchAll<{
       farmer_id: string;
       customer_user_id: string;
       priority_score: number | null;
       revenue_potential: number | null;
       avg_monthly_spend_180d: number | null;
       gross_margin_pct: number | null;
-    }>;
+    }>(
+      (from, to) => supabase
+        .from('farmer_client_scores')
+        .select('farmer_id, customer_user_id, priority_score, revenue_potential, avg_monthly_spend_180d, gross_margin_pct')
+        // chave TOTAL: só `farmer_id` empata em massa (1 farmer = milhares de linhas) e o
+        // .range() pula/duplica linhas entre páginas — cliente sumindo do batch em silêncio.
+        .order('farmer_id', { ascending: true })
+        .order('customer_user_id', { ascending: true })
+        .range(from, to),
+      'farmer_client_scores (seleção do batch)',
+    );
 
-    for (const r of rows) {
+    for (const r of linhas) {
       // Máscara na INGESTÃO (não no corte): um mascarado nem chega a disputar vaga no TOP_N.
       if (!elegiveis.has(r.customer_user_id)) { mascaradosIgnorados++; continue; }
       const arr = porFarmer.get(r.farmer_id) ?? [];
@@ -163,8 +158,13 @@ Deno.serve(async (req) => {
       });
       porFarmer.set(r.farmer_id, arr);
     }
-
-    if (rows.length < 1000) break;
+  } catch (e) {
+    // Mesma política do passo 0 (falhar ALTO): seguir com seleção parcial geraria menos
+    // planos em silêncio.
+    return new Response(
+      JSON.stringify({ ok: false, error: e instanceof Error ? e.message : String(e) }),
+      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+    );
   }
 
   // 2. Por farmer: ordena por priority desc, filtra gate R$/h, corta em TOP_N.

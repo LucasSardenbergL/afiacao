@@ -143,10 +143,8 @@ function contarG3(fonte: string): number {
 // a lista só encolhe, e encolhe registrado (achado Codex: baseline por arquivo
 // aceitaria um laço NOVO nascer em arquivo já listado).
 const G3_DIVIDA: ReadonlyMap<string, number> = new Map([
-  ['supabase/functions/ai-ops-agent/index.ts', 1],
-  ['supabase/functions/algorithm-a-audit/index.ts', 1],
-  ['supabase/functions/calculate-scores/index.ts', 2],
-  ['supabase/functions/carteira-rebuild/index.ts', 4],
+  // Quitados (erradicação scoring/carteira/batch, continuação do #1581): ai-ops-agent,
+  // algorithm-a-audit, calculate-scores, carteira-rebuild — convertidos a fetchAll/throw/failLease.
   ['supabase/functions/omie-analytics-sync/index.ts', 5],
   ['supabase/functions/omie-financeiro/index.ts', 1],
 ]);
@@ -339,6 +337,52 @@ describe('gate estrutural: paginação artesanal que trata falha como fim (class
       arquivo: 'src/hooks/unifiedOrder/catalog-helpers.ts',
       presente: /throw new Error\(\s*`paginateAll: teto de maxPages atingido/,
       motivo: 'paginateAll voltaria a RETORNAR o parcial ao esgotar o teto (#1562, money-path §8)',
+    },
+    // ── Continuação #1581 (edges scoring/carteira/batch) — laços LOCAIS remanescentes.
+    // Achado Codex P2 do PR: sem pin, reverter um guard `data == null` destes laços passaria
+    // verde em G1/G3/VIGIADAS_ORDER (a forma `if (!data) break` não tem regra automatizada —
+    // ver o comentário F2 acima). Âncora em trecho ASCII, caixa fixa, exclusivo do ramo (#1483).
+    {
+      arquivo: 'supabase/functions/carteira-rebuild/index.ts',
+      presente: /if \(data == null\) \{ console\.error\('\[carteira-rebuild\] load aliases: data null sem error'\); return await failLease\('aliases: data null sem error/,
+      motivo: 'aliases: data:null sem error voltaria a encerrar o laco com aliasMap PARCIAL (clone re-exposto)',
+    },
+    {
+      arquivo: 'supabase/functions/carteira-rebuild/index.ts',
+      presente: /if \(data == null\) \{ console\.error\('\[carteira-rebuild\] load ledger: data null sem error'\); return await failLease\('ledger: data null sem error/,
+      motivo: 'ledger: membroIds truncado engana ate a pos-condicao D4 (ela compara contra o conjunto truncado)',
+    },
+    {
+      arquivo: 'supabase/functions/carteira-rebuild/index.ts',
+      presente: /if \(data == null\) \{ console\.error\('\[carteira-rebuild\] load proof oben: data null sem error'\); return await failLease\('proof oben: data null sem error/,
+      motivo: 'proof oben: truncada rebaixaria membro a orfao/Hunter em massa',
+    },
+    {
+      arquivo: 'supabase/functions/carteira-rebuild/index.ts',
+      presente: /if \(data == null\) \{ console\.error\('\[carteira-rebuild\] load flaggeds: data null sem error'\); return await failLease\('flaggeds: data null sem error/,
+      motivo: 'flaggeds: truncado re-elegeria fornecedor excluido da carteira',
+    },
+    {
+      arquivo: 'supabase/functions/sinais-batch/index.ts',
+      presente: /if \(data == null\) \{\s*\n\s*return new Response\(JSON\.stringify\(\{ ok: false, error: `farmer_calls /,
+      motivo: 'sinais-batch: data:null sem error voltaria a fechar a varredura PARCIAL como completa',
+    },
+    {
+      arquivo: 'supabase/functions/ai-ops-agent/index.ts',
+      presente: /if \(aPage == null\) throw new Error\(`carteira_assignments /,
+      motivo: 'keyset do ownerMap: data:null sem error truncaria o mapa e as decisoes sairiam com farmer_id null',
+    },
+    // Ordem COMPOSTA (chave total) pinada onde UMA coluna não é única (achado Codex P2:
+    // VIGIADAS_ORDER só exige ALGUM .order — remover o desempate passaria verde).
+    {
+      arquivo: 'supabase/functions/sinais-batch/index.ts',
+      presente: /\.order\('started_at', \{ ascending: false \}\)\s*\n\s*\.order\('id', \{ ascending: true \}\)/,
+      motivo: 'sem o desempate por id, started_at empatado pula/duplica linhas entre paginas',
+    },
+    {
+      arquivo: 'supabase/functions/tactical-plans-batch/index.ts',
+      presente: /\.order\('farmer_id', \{ ascending: true \}\)\s*\n\s*\.order\('customer_user_id', \{ ascending: true \}\)/,
+      motivo: 'sem customer_user_id no desempate, farmer_id empata em massa e o batch perde cliente em silencio',
     },
   ];
 

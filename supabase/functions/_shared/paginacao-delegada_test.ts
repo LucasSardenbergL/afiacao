@@ -82,6 +82,12 @@ Deno.test("edges convertidas não paginam à mão (sem .range() no call-site)", 
 //   calculate-scores     ownerMap             → dono do score na agenda do vendedor
 //   fin-funding          títulos antecipáveis · algorithm-a-audit  helper genérico
 //   ai-ops-agent         métricas por cliente
+//
+// As 3 últimas (carteira-rebuild, sinais-batch, tactical-plans-batch) entraram na erradicação
+// scoring/carteira/batch — a fatia irmã, que fechou a metade "falha vira fim" NESTES MESMOS
+// arquivos. As duas metades da classe foram corrigidas por PRs paralelos: esta lista é a UNIÃO
+// das duas listas, não a de um lado (money-path.md §9 — conflito entre dois fixes da mesma
+// classe se resolve por união; escolher um lado reverte a metade do outro em silêncio).
 const VIGIADAS_ORDER = [
   "omie-cliente",
   "omie-analytics-sync",
@@ -89,6 +95,9 @@ const VIGIADAS_ORDER = [
   "fin-funding",
   "algorithm-a-audit",
   "ai-ops-agent",
+  "carteira-rebuild",
+  "sinais-batch",
+  "tactical-plans-batch",
 ];
 
 // `.rpc(...)` é a ÚNICA alternativa aceita ao `.order()` no call-site: numa função SQL a cláusula
@@ -96,7 +105,8 @@ const VIGIADAS_ORDER = [
 // MUDA de lugar —, então quem adicionar uma RPC paginada aqui tem de conferir o ORDER BY dela.
 // Conferido em prod para a única de hoje (`seed_targets_faltantes`, LANGUAGE sql): `ORDER BY
 // l.user_id`. Aceitar a palavra do comentário do call-site não bastaria — foi verificado no
-// `pg_get_functiondef` via psql-ro.
+// `pg_get_functiondef` via psql-ro. (O call-site em calculate-scores encadeia `.order('user_id')`
+// explícito por cima, então satisfaz os dois critérios — cinto e suspensório.)
 const ORDENACAO_ACEITA = [".order(", ".rpc("];
 
 Deno.test("edges com fetchAll direto: todo .range( tem .order( na mesma expressão", async () => {
