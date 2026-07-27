@@ -29,6 +29,7 @@
 | Perf React | `vercel-react-best-practices` | |
 | Refatorar god-component | `vercel-composition-patterns` | |
 | UI/acessibilidade WCAG | `vercel-web-design-guidelines` | |
+| Superfície NOVA fora do app (landing, protótipo, artefato visual, peça de marketing) | `frontend-design` (oficial) — direção estética autoral: tipografia/paleta/motion/layout próprios | ⚠️ **NÃO** usar em tela do app: a skill manda escolher fonte e paleta próprias, layout assimétrico e "grid-breaking" — e o DS v3 é FIXO (tokens `src/index.css`, Geist/Newsreader, radius 6px, `--status-*`, densidade alta). Dentro do app → `vercel-web-design-guidelines` + `docs/visual-direction/` |
 | Optimistic UI / React Query | `tanstack-query` | receitas `onMutate`/rollback |
 | RBAC / personas→roles | `access-control-rbac` | |
 | QA da app rodando | `/qa` (report+fix) / `/qa-only` (report) — gstack | |
