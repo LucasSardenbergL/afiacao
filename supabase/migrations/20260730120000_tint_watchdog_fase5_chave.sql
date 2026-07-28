@@ -76,6 +76,10 @@ BEGIN;
 -- cópias divergiriam. Encapsula o ciclo completo: abre / agrava+re-emite / dismissa.
 -- `_n` no contexto é a grandeza comparável entre ciclos (é o que define "piorou").
 -- ───────────────────────────────────────────────────────────────────────────
+-- A assinatura de 7 args existiu na v1 deste arquivo (nunca aplicada em prod). Sem o
+-- DROP, adicionar p_fator criaria um OVERLOAD e a chamada de 7 args ficaria ambígua.
+DROP FUNCTION IF EXISTS public._tint_watchdog_fase5_transicao(text,text,bigint,text,text,text,jsonb);
+
 CREATE OR REPLACE FUNCTION public._tint_watchdog_fase5_transicao(
   p_company  text,
   p_tipo     text,
@@ -83,7 +87,8 @@ CREATE OR REPLACE FUNCTION public._tint_watchdog_fase5_transicao(
   p_sev      text,     -- 'info' | 'aviso' | 'critico'  (CHECK de fin_alertas)
   p_titulo   text,
   p_msg      text,
-  p_ctx      jsonb
+  p_ctx      jsonb,
+  p_fator    numeric DEFAULT 1.0   -- histerese do E-MAIL: 1.0 = toda piora; 2.0 = só ao dobrar
 )
 RETURNS void
 LANGUAGE plpgsql
@@ -98,6 +103,9 @@ DECLARE
   v_sev_forn text := CASE p_sev WHEN 'critico' THEN 'urgente'
                                 WHEN 'aviso'   THEN 'atencao'
                                 ELSE 'info' END;
+  v_upd int;
+  v_ant_email bigint;
+  v_emitir boolean;
 BEGIN
   IF p_n <= 0 THEN
     UPDATE fin_alertas SET dismissed_at = now()
@@ -107,7 +115,7 @@ BEGIN
 
   INSERT INTO fin_alertas (company, tipo, severidade, mensagem, contexto)
   VALUES (p_company, p_tipo, p_sev, p_msg,
-          p_ctx || jsonb_build_object('_n', p_n, 'avaliado_em', now()))
+          p_ctx || jsonb_build_object('_n', p_n, 'avaliado_em', now(), '_n_email', p_n))
   ON CONFLICT (company, tipo) WHERE dismissed_at IS NULL DO NOTHING;
 
   IF FOUND THEN
@@ -119,26 +127,50 @@ BEGIN
   -- Alerta já aberto. Com ON CONFLICT DO NOTHING puro, uma PIORA durante um
   -- incidente aberto ficaria MUDA (Codex [P1]). Se o conjunto cresceu, atualiza o
   -- alerta e re-enfileira o e-mail.
-  SELECT COALESCE((contexto->>'_n')::bigint, 0) INTO v_ant
+  -- Duas âncoras DIFERENTES, e confundi-las quebra a histerese (pego pelo assert
+  -- B16c): `_n` é o valor do último CICLO e avança sempre, então comparar com ele
+  -- faria o gatilho fugir junto — S2 subindo 15/ciclo nunca alcançaria o dobro e o
+  -- e-mail NUNCA mais sairia, nem se explodisse de 300 para 100.000. A âncora certa
+  -- é `_n_email`: o valor de quando o último e-mail saiu. Assim a re-emissão é
+  -- logarítmica (300 → 600 → 1200 …): silenciosa no crescimento vegetativo, mas
+  -- garantida a cada duplicação.
+  SELECT COALESCE((contexto->>'_n')::bigint, 0),
+         COALESCE((contexto->>'_n_email')::bigint, COALESCE((contexto->>'_n')::bigint, 0))
+    INTO v_ant, v_ant_email
     FROM fin_alertas
    WHERE company = p_company AND tipo = p_tipo AND dismissed_at IS NULL;
 
+  -- Re-emissão com HISTERESE (Codex [P1] no diff): re-emitir a CADA incremento faz
+  -- de um sinal que cresce sozinho um spam diário — S2 ganha ~15 chaves por ciclo
+  -- (~60/dia), o que daria ~4 e-mails/dia até alguém limpar. p_fator exige piora
+  -- MATERIAL: 1.0 = qualquer piora (S1/S3, raros e graves), 2.0 = só ao dobrar (S2).
+  -- O alerta em fin_alertas é sempre atualizado; o que a histerese controla é o E-MAIL.
   IF p_n > COALESCE(v_ant, 0) THEN
+    -- UPDATE ... RETURNING numa passada só: um dismiss CONCORRENTE entre o SELECT e o
+    -- UPDATE faria o UPDATE não achar linha e, com o INSERT incondicional, sairia um
+    -- e-mail "AGRAVOU" fantasma, sem alerta aberto por trás (Codex [P2]).
+    v_emitir := p_n >= GREATEST(v_ant_email * p_fator, v_ant_email + 1);
+
     UPDATE fin_alertas
        SET severidade = p_sev,
            mensagem   = p_msg,
            contexto   = p_ctx || jsonb_build_object('_n', p_n, 'avaliado_em', now(),
-                                                    'agravou_de', v_ant)
-     WHERE company = p_company AND tipo = p_tipo AND dismissed_at IS NULL;
+                                                    'agravou_de', v_ant,
+                                                    -- só avança quando o e-mail de fato sai
+                                                    '_n_email', CASE WHEN v_emitir THEN p_n ELSE v_ant_email END)
+     WHERE company = p_company AND tipo = p_tipo AND dismissed_at IS NULL
+    RETURNING 1 INTO v_upd;
 
-    INSERT INTO fornecedor_alerta (empresa, tipo, severidade, titulo, mensagem, status)
-    VALUES (p_company, 'outro', v_sev_forn, 'AGRAVOU: ' || p_titulo,
-            p_msg || E'\n\n(agravamento: eram ' || v_ant || ')', 'pendente_notificacao');
+    IF v_upd IS NOT NULL AND v_emitir THEN
+      INSERT INTO fornecedor_alerta (empresa, tipo, severidade, titulo, mensagem, status)
+      VALUES (p_company, 'outro', v_sev_forn, 'AGRAVOU: ' || p_titulo,
+              p_msg || E'\n\n(agravamento: eram ' || v_ant || ')', 'pendente_notificacao');
+    END IF;
   END IF;
 END;
 $function$;
 
-COMMENT ON FUNCTION public._tint_watchdog_fase5_transicao(text,text,bigint,text,text,text,jsonb) IS
+COMMENT ON FUNCTION public._tint_watchdog_fase5_transicao(text,text,bigint,text,text,text,jsonb,numeric) IS
   'Privada da Camada B (Fase 5b#2 PR 2): ciclo de vida de um alerta fin_alertas + '
   'e-mail via fornecedor_alerta. n=0 dismissa; n>0 abre, ou RE-EMITE se piorou em '
   'relação ao contexto->>_n do alerta aberto (ON CONFLICT DO NOTHING sozinho '
@@ -181,9 +213,14 @@ BEGIN
   -- ── VARREDURA ÚNICA (ver "A FORMA DA QUERY" no cabeçalho) ───────────────
   -- Uma passada só produz os 3 sinais: materializar a view duas vezes dobraria o
   -- custo, e duas varreduras em instantes diferentes poderiam se contradizer.
+  -- count(DISTINCT ...) no universo, não count(*): o count(*) conta LINHAS pós-JOIN,
+  -- e a unicidade da view por chave é propriedade dela, não invariante imposta aqui
+  -- (Codex [P1]). Medido hoje: 0 chaves com >1 linha na view — então é hardening, não
+  -- correção de bug. Se um dia duplicar, o universo inflaria e uma queda real poderia
+  -- ser mascarada por duplicidade.
   SELECT count(*) FILTER (WHERE k.tem_ativa AND v.account IS NULL),
          count(*) FILTER (WHERE NOT k.tem_ativa),
-         count(*)
+         count(DISTINCT (k.account, k.sku_id, k.cor_id))
     INTO v_s1, v_s2, v_universo
   FROM (
     -- as chaves carimbadas pela Fase 5, com "ainda existe na fonte?" por agregação
@@ -224,8 +261,21 @@ BEGIN
    WHERE company = v_conta AND tipo = 'tint_fase5_universo_encolheu'
      AND dismissed_at IS NOT NULL;
 
+  -- Re-ancorar por dismiss é o aceite do patamar novo — mas dismiss é um clique de UI,
+  -- não uma autorização auditada (Codex [P1]). Dois venenos ficam barrados aqui:
+  --   (a) dismiss com universo ZERO gravaria universo_max=0, e S1/S2/S3 ficariam
+  --       verdes por VACUIDADE para sempre;
+  --   (b) dismiss durante um COLAPSO transitório (>=50%) canonizaria o valor
+  --       degradado como referência.
+  -- Nesses casos o alerta é dispensado (o founder não fica com alerta imortal), mas a
+  -- ÂNCORA NÃO desce: se o colapso for real e deliberado, o rebaseline é decisão
+  -- explícita — uma migration, não um clique.
   IF v_dismiss IS NOT NULL AND v_dismiss > v_ancora THEN
-    v_max := v_universo; v_ancora := now();
+    IF v_universo > 0 AND (v_max = 0 OR (v_max - v_universo)::numeric / v_max < 0.5) THEN
+      v_max := v_universo; v_ancora := now();
+    ELSE
+      v_ancora := v_dismiss;   -- consome o dismiss sem rebaixar o patamar
+    END IF;
   END IF;
 
   IF v_universo > v_max THEN                    -- high-water-mark sobe sozinho
@@ -238,7 +288,12 @@ BEGIN
   -- Limiar de 1%: este sinal é sobre o universo COLAPSAR (o vigia de vacuidade),
   -- não sobre erosão de unidades. O universo é estático por desenho — nada o
   -- escreve — então tolerar <1% custa recall irrelevante e compra silêncio.
-  IF v_max > 0 AND v_queda >= 0.01 THEN
+  -- 1% de 463.995 são ~4.640 chaves: o limiar percentual sozinho deixaria milhares
+  -- perderem o carimbo em silêncio, e chave sem carimbo sai do universo E de S1/S2 —
+  -- perda de cobertura permanente, não "recall irrelevante" (Codex [P1]). Daí o OU
+  -- com um piso ABSOLUTO: o universo é estático por desenho, então qualquer queda de
+  -- 100+ chaves já é anômala.
+  IF v_max > 0 AND (v_queda >= 0.01 OR (v_max - v_universo) >= 100) THEN
     v_msg := 'Tintometrico/Fase 5: o universo carimbado ENCOLHEU de ' || v_max ||
              ' para ' || v_universo || ' chaves (' ||
              round(v_queda * 100, 1) || '%). O watchdog por chave mede sobre esse ' ||
@@ -288,7 +343,12 @@ BEGIN
       CASE WHEN v_s2 >= 10000 THEN 'critico'
            WHEN v_s2 >= 100   THEN 'aviso' ELSE 'info' END,
       '[Tintometrico] fonte retirou chaves com carimbo da Fase 5', v_msg,
-      jsonb_build_object('chaves', v_s2, 'universo', v_universo));
+      jsonb_build_object('chaves', v_s2, 'universo', v_universo),
+      -- HISTERESE 2.0 (Codex [P1]): S2 cresce ~60 chaves/dia por DESENHO da fonte.
+      -- Com re-emissão a cada incremento seriam ~4 e-mails/dia — o alerta viraria
+      -- ruído e treinaria o founder a ignorar a família inteira. Só um SALTO (dobro)
+      -- volta a e-mailar; o alerta em fin_alertas segue sempre atualizado.
+      2.0);
   ELSE
     PERFORM public._tint_watchdog_fase5_transicao(
       v_conta, 'tint_fase5_fonte_retirada', 0, 'info', '', '', '{}'::jsonb);
@@ -301,13 +361,16 @@ BEGIN
   -- => alerta tint_watchdog_fase5_parado. Sem ele, "sem alerta" seria
   -- indistinguível de "nunca rodou" — que é o modo de falha do vigia silencioso.
   INSERT INTO sync_state (entity_type, account, last_sync_at, status, error_message, metadata)
-  VALUES ('tint_watchdog_fase5', v_conta, now(), 'complete', NULL,
+  -- clock_timestamp(), não now(): now() é o início da TRANSAÇÃO, e esta varredura
+  -- leva ~53s. Registrar o início faria uma execução longa parecer mais velha do que
+  -- é para o dead-man do PR 1 (Codex [P2]).
+  VALUES ('tint_watchdog_fase5', v_conta, clock_timestamp(), 'complete', NULL,
           jsonb_build_object('chaves_sem_preco', v_s1, 'fonte_retirada', v_s2,
                              'universo', v_universo, 'universo_max', v_max,
                              'ancora_em', v_ancora,
                              'duracao_s', round(EXTRACT(epoch FROM clock_timestamp() - v_t0)::numeric, 1)))
   ON CONFLICT (entity_type, account) DO UPDATE
-    SET last_sync_at  = now(),
+    SET last_sync_at  = clock_timestamp(),
         status        = 'complete',
         error_message = NULL,
         updated_at    = now(),
@@ -336,7 +399,7 @@ COMMENT ON FUNCTION public.tint_watchdog_fase5_check() IS
 -- ───────────────────────────────────────────────────────────────────────────
 REVOKE EXECUTE ON FUNCTION public.tint_watchdog_fase5_check()
   FROM PUBLIC, anon, authenticated;
-REVOKE EXECUTE ON FUNCTION public._tint_watchdog_fase5_transicao(text,text,bigint,text,text,text,jsonb)
+REVOKE EXECUTE ON FUNCTION public._tint_watchdog_fase5_transicao(text,text,bigint,text,text,text,jsonb,numeric)
   FROM PUBLIC, anon, authenticated;
 REVOKE EXECUTE ON FUNCTION public.tint_watchdog_corante_check()
   FROM PUBLIC, anon, authenticated;
@@ -347,6 +410,28 @@ REVOKE EXECUTE ON FUNCTION public.tint_watchdog_corante_check()
 -- primária confiável - docs/agent/sync.md).
 -- 6h, não diária: o Codex reprovou 24h de cegueira ([P0]). cron.schedule faz
 -- upsert por nome => idempotente. O nome bate com o texto do alerta do PR 1.
+-- ⚠️ SEMEADURA DO MARCADOR — fecha o [P0] do challenge Codex sobre este diff.
+-- O marcador só era gravado no FIM da função. O dead-man cruzado do PR 1 (em prod
+-- desde 23/07) só alarma quando a linha EXISTE e está velha:
+--     SELECT now() - ss.last_sync_at INTO v_b_atraso ... IF v_b_atraso IS NOT NULL
+-- Logo, se TODA execução falhasse antes do INSERT (erro na view, timeout, metadata
+-- corrompida), o marcador nunca nasceria, o dead-man ficaria inerte e a camada
+-- inteira seria VERDE PARA SEMPRE — exatamente o modo de falha que ela existe para
+-- eliminar. Semear resolve sem tocar o PR 1: se nenhum ciclo concluir, em 13h o
+-- alerta tint_watchdog_fase5_parado dispara sozinho.
+--
+-- E semear a BASELINE junto fecha o [P1] irmão: com universo_max ausente, a PRIMEIRA
+-- execução ancoraria oportunisticamente QUALQUER universo que encontrasse — se o
+-- carimbo colapsasse entre o apply e o 1º ciclo, o patamar destruído viraria a
+-- referência e S3 nunca alarmaria. 463.995 é medição de prod (psql-ro, 2026-07-28),
+-- não chute. ON CONFLICT DO NOTHING: re-aplicar a migration NÃO rebaixa um marcador
+-- já vivo (nem sobrescreve um universo_max legítimo maior).
+INSERT INTO sync_state (entity_type, account, last_sync_at, status, error_message, metadata)
+VALUES ('tint_watchdog_fase5', 'oben', now(), 'pending', NULL,
+        jsonb_build_object('universo_max', 463995, 'ancora_em', now(),
+                           'semeado_pela_migration', true))
+ON CONFLICT (entity_type, account) DO NOTHING;
+
 SELECT cron.schedule(
   'tint-watchdog-fase5-6h',
   '0 */6 * * *',
@@ -367,13 +452,21 @@ COMMIT;
 --                           'tint_watchdog_corante_check')
 --         AND (array_to_string(p.proacl,' ') ~ '(^| )(anon|authenticated)='
 --              OR array_to_string(p.proacl,' ') ~ '(^| )=X');
---   3) primeira execução (~53s) + marcador (esperado 2026-07-23: 0 / 0 / 463995):
+--   3) primeira execução (~53s) + marcador (esperado 2026-07-28: S1=0 / S2=300 / 463995):
 --      SELECT public.tint_watchdog_fase5_check();
 --      SELECT status, last_sync_at, metadata FROM public.sync_state
 --       WHERE entity_type='tint_watchdog_fase5' AND account='oben';
---   4) nasce VERDE, e o dead-man cruzado do PR 1 para de ser inerte:
---      SELECT count(*) FROM public.fin_alertas
+--   4) ⚠️ NAO nasce tudo em zero, e isso é CORRETO. Medido em prod 2026-07-28:
+--      S2=300 (a fonte retirou 300 chaves em 5 dias; era 0 em 23/07) => a 1a execução
+--      ABRE tint_fase5_fonte_retirada com severidade 'aviso' e manda 1 e-mail.
+--      Isso é sinal honesto de HIGIENE do carimbo (follow-up 5b#1), NAO venda perdida:
+--      S1, que mede venda perdida de verdade, nasce em 0.
+--      SELECT tipo, severidade, contexto->>'_n' AS n FROM public.fin_alertas
 --       WHERE tipo IN ('tint_fase5_chave_sem_preco','tint_fase5_fonte_retirada',
 --                      'tint_fase5_universo_encolheu','tint_watchdog_fase5_parado')
---         AND dismissed_at IS NULL;   -- esperado 0
+--         AND dismissed_at IS NULL;
+--      -- esperado: exatamente 1 linha (tint_fase5_fonte_retirada / aviso / 300)
+--   5) o dead-man cruzado do PR 1 deixa de ser inerte (o marcador agora existe):
+--      SELECT entity_type, status, last_sync_at FROM public.sync_state
+--       WHERE entity_type='tint_watchdog_fase5';   -- 'pending' até o 1o ciclo concluir
 -- ───────────────────────────────────────────────────────────────────────────

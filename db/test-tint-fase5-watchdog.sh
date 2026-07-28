@@ -36,7 +36,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PGVER=17
 PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"
-PORT="${PGPORT_TEST:-5459}"
+PORT="${PGPORT_TEST:-5461}"
 SLUG="tintf5wd"
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
 export LC_ALL=C LANG=C
@@ -342,6 +342,68 @@ roda_suite() {
   sleep 2
   roda
   eq "B14 lock tomado -> nao avanca o marcador" "$(marcador)" "AUSENTE"
+
+  # ══ asserts dos FIXES do challenge Codex sobre este diff (2026-07-28) ══
+
+  # B15 [P0] A MIGRATION SEMEIA o marcador. Sem isto, uma camada que falhe SEMPRE
+  # nunca cria a linha, o dead-man do PR 1 (que exige `v_b_atraso IS NOT NULL`)
+  # fica inerte, e o vigia inteiro e VERDE PARA SEMPRE. Re-aplicar a migration
+  # sobre um marcador vivo NAO pode rebaixa-lo (ON CONFLICT DO NOTHING).
+  reset_estado
+  P -q -f "$MIG" >/dev/null 2>&1          # re-aplica a migration com o estado limpo
+  eq "B15a migration semeia o marcador (bootstrap)" "$(marcador)" "pending"
+  eq "B15b semeia a BASELINE do universo (nao ancora oportunista)" \
+     "$(Pq -c "SELECT metadata->>'universo_max' FROM public.sync_state WHERE entity_type='tint_watchdog_fase5';")" "463995"
+  # re-apply idempotente: um marcador ja 'complete' nao volta para 'pending'
+  P -q -c "UPDATE public.sync_state SET status='complete' WHERE entity_type='tint_watchdog_fase5';"
+  P -q -f "$MIG" >/dev/null 2>&1
+  eq "B15c re-apply NAO rebaixa marcador vivo" "$(marcador)" "complete"
+
+  # B16 [P1] HISTERESE do e-mail. S2 cresce ~60 chaves/dia por DESENHO da fonte; com
+  # re-emissao a cada incremento seriam ~4 e-mails/dia ate alguem limpar, e a familia
+  # inteira de alertas viraria ruido. Testado direto no HELPER, com valores
+  # controlados: escalonar S2 pela via dos seeds exigiria 3 chaves independentes que
+  # o harness nao tem, e mediria a varredura em vez da regra sob teste.
+  reset_estado
+  trans() { P -q -c "SELECT public._tint_watchdog_fase5_transicao('oben','tint_fase5_fonte_retirada',$1::bigint,'aviso','[Tintometrico] fonte retirou X','msg','{}'::jsonb,$2);"; }
+  trans 10 2.0                             # abre + 1o e-mail
+  local m0; m0="$(emails 'fonte retirou')"
+  trans 15 2.0                             # +50%: abaixo do dobro => MUDO
+  eq "B16a incremento pequeno NAO re-emite (anti-spam)" "$(( $(emails 'fonte retirou') - m0 ))" "0"
+  eq "B16b mas o alerta segue ATUALIZADO" \
+     "$(Pq -c "SELECT contexto->>'_n' FROM public.fin_alertas WHERE tipo='tint_fase5_fonte_retirada' AND dismissed_at IS NULL;")" "15"
+  trans 20 2.0                             # dobro do ULTIMO E-MAIL (10) => RE-EMITE
+  eq "B16c salto (dobro do ultimo e-mail) re-emite" "$(( $(emails 'fonte retirou') - m0 ))" "1"
+  # e o crescimento vegetativo DEPOIS do 2o e-mail volta a ser mudo, com a ancora
+  # agora em 20 (nao em 15): e isto que impede o gatilho de fugir junto com o valor.
+  local m2; m2="$(emails 'fonte retirou')"
+  trans 25 2.0
+  trans 30 2.0
+  eq "B16e apos re-emitir, crescimento gradual volta a ser mudo" "$(( $(emails 'fonte retirou') - m2 ))" "0"
+  trans 40 2.0                             # dobro de 20 => RE-EMITE de novo
+  eq "B16f a re-emissao e LOGARITMICA (10->20->40)" "$(( $(emails 'fonte retirou') - m2 ))" "1"
+  # e o fator 1.0 (S1/S3, raros e graves) segue re-emitindo a QUALQUER piora
+  reset_estado
+  P -q -c "SELECT public._tint_watchdog_fase5_transicao('oben','tint_fase5_chave_sem_preco',10::bigint,'aviso','[Tintometrico] chaves da Fase 5 sem preco','msg','{}'::jsonb,1.0);"
+  local n0; n0="$(emails 'chaves da Fase 5 sem preco')"
+  P -q -c "SELECT public._tint_watchdog_fase5_transicao('oben','tint_fase5_chave_sem_preco',11::bigint,'aviso','[Tintometrico] chaves da Fase 5 sem preco','msg','{}'::jsonb,1.0);"
+  eq "B16d fator 1.0 re-emite a qualquer piora (S1 nao herda a histerese)" \
+     "$(( $(emails 'chaves da Fase 5 sem preco') - n0 ))" "1"
+
+  # B17 [P1] DISMISS ENVENENADO: dispensar S3 com universo ZERO gravaria
+  # universo_max=0 e deixaria S1/S2/S3 verdes por VACUIDADE para sempre. O alerta
+  # e dispensado (nada de alerta imortal), mas a ANCORA nao desce.
+  reset_estado
+  roda                                     # ancora no universo cheio
+  local umax0; umax0="$(Pq -c "SELECT metadata->>'universo_max' FROM public.sync_state WHERE entity_type='tint_watchdog_fase5';")"
+  P -q -c "UPDATE public.tint_formulas SET desativada_motivo=NULL WHERE desativada_motivo='fase5_geracao_legada';"
+  roda                                     # universo = 0 -> S3 alarma
+  P -q -c "UPDATE public.fin_alertas SET dismissed_at=now() WHERE tipo='tint_fase5_universo_encolheu' AND dismissed_at IS NULL;"
+  roda                                     # dismiss com universo ZERO
+  eq "B17 dismiss em universo ZERO nao rebaixa a ancora" \
+     "$(Pq -c "SELECT metadata->>'universo_max' FROM public.sync_state WHERE entity_type='tint_watchdog_fase5';")" "$umax0"
+  # restaura o carimbo: a suite inteira re-roda em cada falsificacao
+  P -q -c "UPDATE public.tint_formulas SET desativada_motivo='fase5_geracao_legada' WHERE desativada_em IS NOT NULL AND desativada_motivo IS NULL AND id IN (SELECT id FROM public.tint_formulas WHERE desativada_em IS NOT NULL);"
   wait "$lockpid" 2>/dev/null || true
 }
 
@@ -438,7 +500,7 @@ sabota_e_mede "F2" \
 # F3 — mata o vigia de cardinalidade: o universo pode sumir sem ninguém saber
 #      (o "verde por vacuidade" que o Codex apontou).
 sabota_e_mede "F3" \
-  "IF v_max > 0 AND v_queda >= 0.01 THEN" \
+  "IF v_max > 0 AND (v_queda >= 0.01 OR (v_max - v_universo) >= 100) THEN" \
   "IF false THEN" \
   B10 B12
 
@@ -446,8 +508,8 @@ sabota_e_mede "F3" \
 #      prod continuaria inerte, e "sem alerta" seguiria indistinguível de "morto".
 #      Derruba também B13a/B13b, que leem o metadata DESSE marcador.
 sabota_e_mede "F4" \
-  "VALUES ('tint_watchdog_fase5', v_conta, now(), 'complete', NULL," \
-  "VALUES ('tint_watchdog_NOME_ERRADO', v_conta, now(), 'complete', NULL," \
+  "VALUES ('tint_watchdog_fase5', v_conta, clock_timestamp(), 'complete', NULL," \
+  "VALUES ('tint_watchdog_NOME_ERRADO', v_conta, clock_timestamp(), 'complete', NULL," \
   B2 B10 B12 B13a B13b
 # ^ B10/B12 entram por CASCATA: o high-water-mark (universo_max/ancora_em) e LIDO do
 #   MESMO marcador sync_state que a sabotagem renomeia. Sem marcador, v_max=0, a
