@@ -136,9 +136,15 @@ Deno.serve(async (req) => {
       (from, to) => supabase
         .from('farmer_client_scores')
         .select('farmer_id, customer_user_id, priority_score, revenue_potential, avg_monthly_spend_180d, gross_margin_pct')
-        // chave TOTAL: só `farmer_id` empata em massa (1 farmer = milhares de linhas) e o
-        // .range() pula/duplica linhas entre páginas — cliente sumindo do batch em silêncio.
-        .order('farmer_id', { ascending: true })
+        // Chave de ordenação = `customer_user_id` SOZINHO: UNIQUE (ordem total) e IMUTÁVEL.
+        // Não basta ser total — tem de ser ESTÁVEL sob escrita concorrente. Ordenar por
+        // (farmer_id, customer_user_id) é total, mas `farmer_id` MUDA no meio da paginação: o
+        // trigger trg_carteira_reconcile_score_owner (confirmado em prod) faz
+        // `SET farmer_id = EXCLUDED.farmer_id` a cada mudança de dono, e o carteira-rebuild roda
+        // 07:30 UTC — 30min antes deste batch. Uma linha que troca de farmer entre dois offsets
+        // MUDA DE POSIÇÃO: some (fica sem plano naquela noite) ou duplica (disputa o TOP_N duas
+        // vezes). O agrupamento por farmer é em MEMÓRIA (porFarmer), então a ordem por farmer_id
+        // nunca foi necessária. (Achado do challenge /codex.)
         .order('customer_user_id', { ascending: true })
         .range(from, to),
       'farmer_client_scores (seleção do batch)',

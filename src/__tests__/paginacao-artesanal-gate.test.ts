@@ -381,8 +381,8 @@ describe('gate estrutural: paginação artesanal que trata falha como fim (class
     },
     {
       arquivo: 'supabase/functions/tactical-plans-batch/index.ts',
-      presente: /\.order\('farmer_id', \{ ascending: true \}\)\s*\n\s*\.order\('customer_user_id', \{ ascending: true \}\)/,
-      motivo: 'sem customer_user_id no desempate, farmer_id empata em massa e o batch perde cliente em silencio',
+      presente: /\.order\('customer_user_id', \{ ascending: true \}\)\s*\n\s*\.range\(from, to\)/,
+      motivo: 'a chave do batch tem de ser customer_user_id (UNIQUE e IMUTAVEL) imediatamente antes do range',
     },
   ];
 
@@ -410,23 +410,76 @@ describe('gate estrutural: paginação artesanal que trata falha como fim (class
     }
   });
 
-  it('G2 anti-sabotagem: o ramo `data == null` dos helpers não pode engolir (break/return/continue) antes do throw', () => {
-    // Achado Codex: `if (data == null) break;` ANTES do `if (data == null) throw ...`
-    // satisfaria os pins de presença com o throw morto. Barra o padrão nos arquivos
-    // pinados: qualquer `if (data == null)` seguido de break/return/continue reprova.
+  it('G2 anti-sabotagem: TODO ramo `x == null` dos arquivos pinados ABORTA (nunca break/continue)', () => {
+    // Achado Codex (2×). Primeira rodada: `if (data == null) break;` ANTES do
+    // `if (data == null) throw ...` satisfaria o pin de PRESENÇA com o throw morto.
+    // Segunda rodada (challenge deste PR): a versão anterior deste teste cobria só 5 arquivos e
+    // só a variável literal `data` — deixava de fora carteira-rebuild, sinais-batch e o keyset do
+    // ai-ops-agent (que usa `aPage`), justamente os 6 pins novos. Um `break` inserido lá passava
+    // verde em G1, G3, VIGIADAS_ORDER e no pin de presença.
+    //
+    // A regra NÃO pode ser "nenhum return": os guards CORRETOS de carteira-rebuild e sinais-batch
+    // abortam com `return await failLease(...)` / `return new Response(...)`. O invariante real é
+    // que o ramo ABORTE — throw, failLease ou Response de erro. `break`/`continue` (e `return` nu)
+    // continuam a leitura como se a página malformada fosse fim.
     const pinados = [
       'supabase/functions/_shared/paginate.ts',
       'src/lib/scoring/rpcPaginada.ts',
       'supabase/functions/calculate-scores/index.ts',
       'src/services/financeiroService.ts',
       'src/lib/postgrest.ts',
+      'supabase/functions/carteira-rebuild/index.ts',
+      'supabase/functions/sinais-batch/index.ts',
+      'supabase/functions/ai-ops-agent/index.ts',
     ];
+    // Nomes de página realmente usados nestes laços (não um `\w+` solto, que casaria
+    // comparações de domínio como `if (cod == null)` e daria falso-VERMELHO).
+    const VARS = /if\s*\(\s*(data|aPage|sPage|page|batch|batch2|rows|linhas)\s*==\s*null\s*\)/g;
+    // O predicado é de ORDEM, não de presença — e isto NÃO é sofisticação gratuita: a primeira
+    // versão perguntava "existe break na janela?" e ficou vermelha no baseline em paginate.ts e
+    // financeiroService.ts, porque a janela alcançava o `break` LEGÍTIMO do fim-de-página
+    // (`if (rows.length < PAGE) break`) que vem 3 linhas abaixo do guard. Assert que mede além do
+    // ramo é falso-VERMELHO (irmão do que mede prosa — §"O ALVO mente"). O que importa é o que
+    // vem PRIMEIRO depois do `if (x == null)`: se for abortar, o guard está vivo; se for
+    // break/continue, o aborto pinado logo abaixo é código morto.
+    const ABORTO = /\bthrow\b|failLease\s*\(|new Response\s*\(/;
+    const ENGOLE = /\b(break|continue)\b/;
+    const ofensas: string[] = [];
     for (const arquivo of pinados) {
       const fonte = semComentarios(readFileSync(resolve(RAIZ, arquivo), 'utf8'));
-      expect(
-        /if\s*\(\s*data\s*==\s*null\s*\)\s*\{?\s*(break|return|continue)\b/.test(fonte),
-        `${arquivo}: ramo data==null engolindo (break/return/continue) — o throw pinado viraria código morto`,
-      ).toBe(false);
+      for (const m of fonte.matchAll(VARS)) {
+        const ramo = fonte.slice(m.index!, m.index! + 240);
+        const iAborto = ramo.search(ABORTO);
+        const iEngole = ramo.search(ENGOLE);
+        if (iAborto < 0) {
+          ofensas.push(`${arquivo}: \`${m[0]}\` não aborta (sem throw/failLease/Response)`);
+        } else if (iEngole >= 0 && iEngole < iAborto) {
+          ofensas.push(`${arquivo}: \`${m[0]}\` ENGOLE (break/continue ANTES do aborto)`);
+        }
+      }
     }
+    expect(
+      ofensas,
+      `ramo de página malformada que NÃO aborta — o throw/failLease pinado vira código morto e ` +
+        `data:null volta a ser lido como fim da lista: ${ofensas.join(' | ')}`,
+    ).toEqual([]);
+  });
+
+  it('G2: a chave de paginação do tactical-plans-batch não volta a ser o `farmer_id` (MUTÁVEL)', () => {
+    // Achado do challenge /codex, confirmado em prod: o trigger trg_carteira_reconcile_score_owner
+    // faz `SET farmer_id = EXCLUDED.farmer_id` em farmer_client_scores a cada mudança de dono, e o
+    // carteira-rebuild roda 07:30 UTC — 30min ANTES deste batch. Ordenar por (farmer_id, ...) é
+    // ordem TOTAL mas não ESTÁVEL: a linha que troca de farmer entre dois offsets muda de posição
+    // e some (cliente sem plano) ou duplica (disputa o TOP_N 2×). Um pin de presença de
+    // `.order('customer_user_id')` não barra alguém REACRESCENTAR o farmer_id antes dele — por
+    // isso este é um pin de AUSÊNCIA. Total ≠ estável: a chave tem de ser IMUTÁVEL.
+    const fonte = semComentarios(
+      readFileSync(resolve(RAIZ, 'supabase/functions/tactical-plans-batch/index.ts'), 'utf8'),
+    );
+    expect(
+      /\.order\(\s*['"]farmer_id['"]/.test(fonte),
+      'voltou o .order(farmer_id): coluna MUTÁVEL na chave de paginação — o trigger de carteira ' +
+        'move a linha entre páginas e o cliente some ou duplica no TOP_N',
+    ).toBe(false);
   });
 });
