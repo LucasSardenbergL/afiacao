@@ -51,13 +51,26 @@
 - Consumes: nada.
 - Produces: `potencialConhecido(raw: unknown): number | null`
 
-- [ ] **Step 1: Anotar o baseline verde e o TOTAL de testes**
+- [ ] **Step 1: Anotar o baseline verde e o TOTAL de testes — COM A ÁRVORE PROVADA LIMPA**
 
-Run:
+⚠️ **Este passo tem de rodar ANTES de criar qualquer arquivo, e a limpeza tem de ser PROVADA no
+instante da execução.** `heavy` é uma **fila**, não um prefixo síncrono: entre "eu mandei" e "ele
+rodou" pode haver dezenas de minutos com outras worktrees na frente, e um baseline que executa
+depois da sua edição mede o código NOVO com cara de baseline (`money-path.md` — "o relógio mente").
+Mordido nesta própria execução: os arquivos foram criados enquanto o comando esperava vaga.
+
 ```bash
-heavy bun run test > /tmp/claude-501/-Users-lucassardenberg-Projetos-afiacao--claude-worktrees-adoring-ptolemy-0f65df/9a90e6fd-bcd1-4fd7-b5e4-4070fb380c5d/scratchpad/baseline.log 2>&1; echo "exit=$?"
+git status --porcelain   # tem de estar VAZIO — é isto que torna o número um baseline
+heavy bun run test > .superpowers/sdd/baseline.log 2>&1; echo "exit=$?"
 ```
-Expected: `exit=0`. Anotar a linha `Tests  N passed (N)` — esse **N** é o denominador que valida toda falsificação depois. Sem ele, "não rodou nada" e "passou" são indistinguíveis.
+
+Expected: `exit=0` e a linha `Tests  N passed (N)`. Esse **N** é o denominador que valida toda
+falsificação depois. Só aceite quando a linha de conclusão E o exit code existirem — log sem
+conclusão é ausência de dado, não sucesso.
+
+Se a árvore já estiver suja quando você chegar aqui: `git stash -u`, medir, `git stash pop`.
+Se a fila não liberar em tempo razoável, **pare e reporte BLOCKED** — baseline fabricado é pior
+que baseline nenhum.
 
 - [ ] **Step 2: Escrever o teste que falha**
 
