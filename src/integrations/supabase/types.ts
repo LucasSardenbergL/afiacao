@@ -18273,6 +18273,7 @@ export type Database = {
           skus_incluidos: number
         }[]
       }
+      claim_calculate_scores: { Args: { p_run_id: string }; Returns: boolean }
       claim_carteira_rebuild: { Args: { p_run_id: string }; Returns: boolean }
       claim_estoque_full_sync: {
         Args: { p_account: string; p_at: string; p_run_id: number }
@@ -18571,6 +18572,10 @@ export type Database = {
       fin_sync_watchdog_check: { Args: never; Returns: undefined }
       fin_user_can_access: {
         Args: { check_company?: string }
+        Returns: boolean
+      }
+      finalizar_calculate_scores: {
+        Args: { p_run_id: string; p_status: string }
         Returns: boolean
       }
       finalizar_carteira_rebuild: {
@@ -19502,6 +19507,7 @@ export type Database = {
         }
         Returns: Json
       }
+      tint_watchdog_corante_check: { Args: never; Returns: undefined }
       upsert_push_subscription: {
         Args: {
           p_endpoint: string

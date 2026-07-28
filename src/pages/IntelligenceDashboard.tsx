@@ -27,8 +27,16 @@ export default function IntelligenceDashboard() {
   const runScoreCalc = async () => {
     setRunningScores(true);
     try {
-      const { error } = await supabase.functions.invoke('calculate-scores');
+      const { data, error } = await supabase.functions.invoke('calculate-scores');
       if (error) throw error;
+      // O recompute é serializado por lease (migration 20260728120001): se já há um run em andamento
+      // — o cron das 06:00, um retry, ou outra pessoa que clicou — este disparo é PULADO e nada foi
+      // recalculado. Responde 200, então sem este ramo o toast diria "recalculado com sucesso" sobre
+      // um run que não escreveu nada. Honestidade > conveniência: o clique não fez o que ele diz.
+      if ((data as { skipped?: boolean } | null)?.skipped) {
+        toast.info('Recálculo já em andamento — este disparo foi ignorado. Os scores não mudaram.');
+        return;
+      }
       toast.success('Scores recalculados com sucesso');
     } catch (e) {
       toast.error('Erro: ' + (e instanceof Error ? e.message : String(e)));

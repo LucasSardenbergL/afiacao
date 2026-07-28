@@ -825,18 +825,25 @@ async function fetchAllOmieClienteCodigos(db: SupabaseClient, empresa: Empresa):
 
 // Lê TODOS os documentos de profiles (normalizados em memória — defensivo contra formatados).
 async function fetchAllProfileDocs(db: SupabaseClient): Promise<Set<string>> {
-  // O laço à mão tinha as DUAS metades da classe (money-path §7/§9): `data ?? []` fazia
-  // data:null SEM error virar EOF falso (Set parcial → cliente COM profile classificado
-  // "unlinked"), e SEM `.order` o `.range` paginava sobre ordem indefinida — documento que
-  // some entre páginas fura o dedup por documento e vira a fábrica de clones que este arquivo
-  // documenta. user_id é a PK: sequência única e estável entre páginas.
+  // Este laço tinha as DUAS metades da classe, e cada PR fechou uma:
+  //   · o #1589 pôs o `.order("id")` que faltava (metade §7 — sem ordem estável o `.range()`
+  //     pagina sobre sequência indefinida e um documento some entre páginas);
+  //   · aqui a leitura passa a DELEGAR a `fetchAll`, que fecha a metade §9 — o `data ?? []`
+  //     convertia resposta malformada (data:null SEM error) em página vazia → EOF falso → Set
+  //     PARCIAL.
+  // As duas importam pelo mesmo caminho: documento ausente do Set faz o dedup a jusante criar
+  // usuário Auth NOVO para cliente que JÁ existe — a fábrica de clones do #1425.
+  //
+  // `id` (e não `user_id`) mantém a coluna que o #1589 conferiu em prod: é a PRIMARY KEY
+  // (`profiles_pkey`). `user_id` também seria estável (UNIQUE NOT NULL, 5.668/5.668 distintos
+  // — conferido via psql-ro), mas divergir da coluna já auditada não compra nada.
   const rows = await fetchAll<{ document: string | null }>(
     (from, to) =>
       db
         .from("profiles")
         .select("document")
         .not("document", "is", null)
-        .order("user_id", { ascending: true })
+        .order("id", { ascending: true })
         .range(from, to),
     "fetch profiles docs",
   );

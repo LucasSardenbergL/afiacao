@@ -247,6 +247,10 @@ serve(async (req) => {
       const { data: page, error: pageError } = await supabase
         .from("customer_metrics_mv")
         .select("*")
+        // Ordem estável pelo índice ÚNICO da matview (`idx_customer_metrics_mv_uid`, conferido em
+        // prod): sem ela as páginas podem pular/duplicar clientes e a lista de métricas fica
+        // silenciosamente incompleta (money-path.md §7).
+        .order("customer_user_id", { ascending: true })
         .range(offset, offset + PAGE_SIZE - 1);
       if (pageError) throw new Error(`Failed to get metrics page ${offset}: ${pageError.message}`);
       if (page && page.length > 0) {
