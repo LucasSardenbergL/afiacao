@@ -51,26 +51,30 @@
 - Consumes: nada.
 - Produces: `potencialConhecido(raw: unknown): number | null`
 
-- [ ] **Step 1: Anotar o baseline verde e o TOTAL de testes — COM A ÁRVORE PROVADA LIMPA**
-
-⚠️ **Este passo tem de rodar ANTES de criar qualquer arquivo, e a limpeza tem de ser PROVADA no
-instante da execução.** `heavy` é uma **fila**, não um prefixo síncrono: entre "eu mandei" e "ele
-rodou" pode haver dezenas de minutos com outras worktrees na frente, e um baseline que executa
-depois da sua edição mede o código NOVO com cara de baseline (`money-path.md` — "o relógio mente").
-Mordido nesta própria execução: os arquivos foram criados enquanto o comando esperava vaga.
+- [ ] **Step 1: Rodar só o teste do módulo (o baseline da suíte inteira NÃO é pré-requisito aqui)**
 
 ```bash
-git status --porcelain   # tem de estar VAZIO — é isto que torna o número um baseline
-heavy bun run test > .superpowers/sdd/baseline.log 2>&1; echo "exit=$?"
+heavy bun run test -- src/lib/scoring/__tests__/potencial.test.ts > .superpowers/sdd/t1.log 2>&1; echo "exit=$?"
 ```
 
-Expected: `exit=0` e a linha `Tests  N passed (N)`. Esse **N** é o denominador que valida toda
-falsificação depois. Só aceite quando a linha de conclusão E o exit code existirem — log sem
-conclusão é ausência de dado, não sucesso.
-
-Se a árvore já estiver suja quando você chegar aqui: `git stash -u`, medir, `git stash pop`.
-Se a fila não liberar em tempo razoável, **pare e reporte BLOCKED** — baseline fabricado é pior
-que baseline nenhum.
+> **Decisão de método, tomada durante a execução (2026-07-28).** A versão anterior deste passo
+> exigia um baseline da suíte INTEIRA antes de qualquer arquivo. Isso custou duas rodadas travadas
+> na fila do `heavy` (7 de profundidade, cada job uma suíte completa) e **não era load-bearing**:
+>
+> - O denominador existe para distinguir "passou" de "**não rodou nada**" numa **falsificação**.
+>   A única falsificação deste plano está na **Task 8** e roda **um arquivo só**, com total
+>   conhecido (8) — ela não consulta o total da suíte.
+> - As comparações `≥ baseline + N` que apareciam nas Tasks 5 e 9 eram cinto-e-suspensório: um
+>   piso frouxo não prova coleta, e o gate da Task 8 já carrega denominador próprio
+>   (`ALVOS.length > 1000`), que é o que de fato pega glob/coleta quebrada.
+>
+> A disciplina **não** foi removida, foi movida para onde morde (Task 8). Isto está registrado
+> como afrouxamento consciente, não como esquecimento.
+>
+> ⚠️ **A lição que fica, e vale para todo baseline futuro:** `heavy` é uma **FILA**, não um prefixo
+> síncrono. Baseline só é baseline se a árvore estiver **provada limpa no instante da EXECUÇÃO**
+> (`git status --porcelain` vazio ali, não quando você digitou) — senão ele mede o código novo com
+> cara de "antes" (`money-path.md`: "o relógio mente"). Mordido nesta própria execução.
 
 - [ ] **Step 2: Escrever o teste que falha**
 
