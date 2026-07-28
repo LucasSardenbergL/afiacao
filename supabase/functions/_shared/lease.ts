@@ -52,33 +52,65 @@ export function leaseIndisponivel(erro: ErroRpc | null | undefined): boolean {
 export type DecisaoClaim =
   | 'adquirido'          // o lease é meu; siga o run
   | 'seguir_sem_lease'   // a função não existe (janela de deploy) — fail-open DECLARADO
-  | 'esperar_e_retentar' // lease ocupado por outro run, ou transporte incerto, e ainda há tentativa
-  | 'pular'              // lease segue ocupado depois de esgotar as tentativas → 200 skipped
-  | 'lancar';            // erro real → fail-closed
+  | 'esperar_e_retentar' // transporte INCERTO e ainda há tentativa
+  | 'pular'              // lease ocupado por outro run → 200 skipped
+  | 'lancar';            // erro permanente, resposta inválida, ou tentativas esgotadas → fail-closed
+
+/**
+ * O erro pode ter OUTRO resultado numa nova tentativa?
+ *
+ * Sem esta classificação, um erro PERMANENTE (permissão, argumento, sintaxe) é retentado 3× — um
+ * retry storm que só atrasa o inevitável e queima wall-clock do edge. Achado do challenge /codex:
+ * *"Nem todo erro deve ser retentado. Só transporte incerto/transiente deve retentar; erro
+ * permanente deve lançar imediatamente."*
+ *
+ * FAIL-CLOSED NA DÚVIDA — mas note que aqui "fail-closed" é NÃO retentar: a lista é de INCLUSÃO, e
+ * código desconhecido cai em `false` (lança na hora). O único caso sem código é a rejeição de
+ * fetch/rede, que é exatamente o transporte perdido que motivou o retry.
+ */
+export function erroTransitorio(erro: ErroRpc | null | undefined): boolean {
+  if (erro == null) return false;
+  const c = typeof erro.code === 'string' ? erro.code : '';
+  // Sem código = rejeição de fetch/rede. É O caso do transporte perdido: o banco pode ter commitado
+  // e só a resposta se perdeu — e é justamente por ser AMBÍGUO que retentar com o mesmo run_id vale.
+  if (c === '') return true;
+  // Classe 08 = connection_exception (08000/08003/08006/08P01): conexão caiu, pode voltar.
+  if (c.startsWith('08')) return true;
+  if (c === '57014') return true;             // query_canceled (statement timeout)
+  if (c === '40001' || c === '40P01') return true; // serialization_failure / deadlock_detected
+  if (c === '53300') return true;             // too_many_connections
+  // Permanentes — 42501 (permissão), 22004/22023 (argumento), 42601 (sintaxe), 42P01 (relação
+  // ausente): retentar dá exatamente o mesmo erro.
+  return false;
+}
 
 /**
  * Decide o próximo passo após uma tentativa de claim. PURA: o caller executa a espera e o efeito.
  *
- * Fecha DOIS furos apontados pelo challenge /codex no #1578, que têm causas opostas e a mesma cura:
- *
- * 1. **Transporte perdido.** Se o banco COMMITA o claim mas a resposta HTTP se perde, o caller vê um
- *    erro, `leaseAdquirido` fica false e o `finally` não libera — o lease fica PRESO até o TTL de
- *    15min. A cláusula de re-claim da migration existe justamente para isso, mas ninguém a usava:
- *    "a suposta idempotência está desconectada", já que cada invocação gera um UUID novo e havia uma
- *    única tentativa. Retentar com o MESMO run_id conecta as duas pontas — se o commit passou, o
- *    re-claim reconhece o dono e devolve true; se não passou, é um claim normal.
- *
- * 2. **Perda de frescor.** Com uma única tentativa, o run que encontra o lease ocupado é PULADO e
- *    não volta: o próximo disparo real é o cron do dia seguinte. Trocamos corrupção por até 24h de
- *    dado velho — melhor que o bug, mas ainda uma regressão. Como um run dura ~17s (medido em prod),
- *    esperar poucos segundos e retentar quase sempre pega o lease logo depois que o outro fecha.
+ * ESCOPO: fecha **um** dos dois furos que o challenge /codex apontou no #1578 — o **transporte
+ * perdido**. Se o banco COMMITA o claim mas a resposta HTTP se perde, o caller vê erro,
+ * `leaseAdquirido` fica false, o `finally` não libera, e o lease fica PRESO até o TTL de 15min. A
+ * cláusula de re-claim da migration existe para isso, mas ninguém a usava — *"a suposta idempotência
+ * está desconectada"*, já que cada invocação gera um UUID novo e havia uma ÚNICA tentativa.
+ * Retentar com o MESMO run_id conecta as pontas.
  *
  * ⚠️ O erro de transporte é AMBÍGUO por natureza — não dá para saber se o banco commitou. Retentar
- * com o mesmo run_id é seguro justamente por isso: nas DUAS hipóteses o resultado é correto, e é o
- * que torna esta decisão diferente de "engolir erro".
+ * com o mesmo run_id é seguro *justamente* por isso: nas DUAS hipóteses o desfecho é correto. É o
+ * que separa esta decisão de "engolir erro".
  *
- * ⚠️ `leaseIndisponivel` é checado ANTES de qualquer retry: insistir numa função que não existe só
- * queima o wall-clock da edge para chegar ao mesmo lugar.
+ * ⚠️ O run_id TEM de ser um token aleatório por INVOCAÇÃO (`crypto.randomUUID()`), nunca um id
+ * lógico do job nem valor vindo do caller. Se dois processos compartilhassem um run_id, ambos
+ * passariam pelo `OR run_id = p_run_id` e se julgariam donos do lease — dois writers, que é o bug
+ * que o lease existe para fechar. Invariante levantada pelo /codex; o caller a cumpre.
+ *
+ * ❌ O QUE ESTA FUNÇÃO **NÃO** FAZ (e por quê): não retenta por **lease ocupado**. A primeira versão
+ * deste retry esperava e retentava para fechar a perda de frescor, e o /codex mostrou que a
+ * calibragem não fechava nada: as tentativas caíam em t=0/5/15s e o run mediu **~29s** em prod
+ * (28/07: cron às 06:00:00, finalize do lease às 06:00:29) — a última tentativa acontecia com o
+ * lease ainda ocupado. Cobrir de verdade exigiria esperar >30s, o que come a margem de wall-clock
+ * do edge (150s Free) para um cenário que exige dois disparos dentro de ~30s. Esperar sem fechar é
+ * pior que não esperar: paga latência, cria retry storm e ainda mente sobre o furo. O frescor
+ * segue como limitação DECLARADA, com a cura certa proposta à parte (um segundo disparo do cron).
  */
 export function decidirClaim(
   resultado: { claimed?: boolean | null; erro?: ErroRpc | null },
@@ -87,31 +119,33 @@ export function decidirClaim(
 ): DecisaoClaim {
   const { claimed, erro } = resultado;
 
+  // `erro` antes de `claimed` de propósito: com erro presente, o `claimed` não é confiável.
   if (erro != null) {
     if (leaseIndisponivel(erro)) return 'seguir_sem_lease';
-    // Erro real. Uma retentativa cobre o transporte perdido (caso 1); esgotada, é fail-closed.
+    // Erro PERMANENTE (permissão, argumento, sintaxe) não muda de resultado: lança na hora em vez
+    // de gastar 3 tentativas para chegar ao mesmo erro.
+    if (!erroTransitorio(erro)) return 'lancar';
     return tentativa < maxTentativas ? 'esperar_e_retentar' : 'lancar';
   }
 
   if (claimed === true) return 'adquirido';
 
-  // claimed false/null/ausente = lease ocupado por outro run (caso 2).
-  return tentativa < maxTentativas ? 'esperar_e_retentar' : 'pular';
+  // `false` é resposta VÁLIDA: outro run tem o lease. Pula — idempotente, o próximo cron converge.
+  if (claimed === false) return 'pular';
+
+  // null/undefined NÃO é "ocupado": é resposta INVÁLIDA de uma RPC que deveria devolver boolean.
+  // Tratá-la como ocupado devolveria 200 "já em andamento" sobre um estado desconhecido — a mesma
+  // troca de "não consegui ler" por "não existe" que o money-path proíbe (achado /codex).
+  return 'lancar';
 }
 
 /**
- * Espera antes da próxima tentativa, em ms. Backoff linear curto.
+ * Espera antes da próxima tentativa, em ms.
  *
- * Calibrado pelo que foi MEDIDO em produção, não por hábito: um run dura ~17s (cron às 06:00:00, o
- * history começa 06:00:13 e leva ~4s). Com 3 tentativas o total de espera é 5+10 = 15s, que cobre a
- * maior parte de um run em andamento sem ameaçar o teto de wall-clock do edge (150s Free / 400s
- * pago) — sobra folga de sobra para o recompute inteiro depois de adquirir o lease.
- *
- * Deliberadamente NÃO cobre o run inteiro: insistir até o fim transformaria dois disparos
- * simultâneos em dois recomputes em série toda vez. Esperar um pouco e desistir mantém o
- * 200-skipped como desfecho normal do caso comum (cron + clique acidental no mesmo instante),
- * e usa o retry para o caso que importa — o run saudável que perdeu para um degradado.
+ * Curta de propósito: o retry cobre APENAS transporte incerto (ver `decidirClaim`), então basta
+ * absorver uma oscilação de rede — não há run alheio para esperar. Com 2 tentativas, a espera total
+ * é de 2s, o que não move a agulha do wall-clock do edge nem cria janela para herd.
  */
 export function esperaClaimMs(tentativa: number): number {
-  return tentativa * 5000;
+  return tentativa * 2000;
 }

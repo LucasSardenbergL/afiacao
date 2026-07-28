@@ -359,18 +359,21 @@ Deno.serve(async (req) => {
   };
 
   try {
-    // Claim COM RETRY. `decidirClaim` (puro, testado em _shared/lease_test.ts) decide o passo; aqui
-    // só executamos o efeito. As 3 tentativas cobrem dois modos de falha de causas opostas:
-    //   • transporte perdido — o banco commitou o claim mas a resposta se perdeu. Retentar com o
-    //     MESMO runId conecta a cláusula idempotente da migration, que sem isto nunca era exercida:
-    //     o re-claim reconhece o dono e devolve true, em vez de deixar o lease preso 15min;
-    //   • lease ocupado — um run dura ~17s, então esperar poucos segundos costuma pegar o lease logo
-    //     depois que o outro fecha. Fecha a perda de frescor (antes, o run pulado só voltava no cron
-    //     seguinte, até 24h depois).
+    // Claim COM RETRY DE TRANSPORTE. `decidirClaim` (puro, testado em _shared/lease_test.ts) decide
+    // o passo; aqui só executamos o efeito.
+    //
+    // O retry cobre UM caso: o banco commitou o claim e a resposta HTTP se perdeu. Retentar com o
+    // MESMO runId aciona a cláusula idempotente da migration — que sem isto nunca era exercida — e
+    // evita que o lease fique preso 15min por uma oscilação de rede.
+    //
+    // NÃO cobre lease ocupado: ali a decisão é 'pular' na primeira resposta. Ver o bloco em
+    // `decidirClaim` — esperar exigiria >30s (o run mediu ~29s em prod) e comeria a margem do
+    // wall-clock sem fechar o furo de frescor, que segue declarado.
+    //
     // ORDEM DE DEPLOY: se a edge nova subir ANTES da migration, a função não existe (42883/PGRST202)
     // e `decidirClaim` devolve 'seguir_sem_lease' SEM gastar retry — fail-open DECLARADO no log e na
-    // resposta, nunca silencioso. Qualquer OUTRO erro é fail-closed depois de esgotar as tentativas.
-    const MAX_TENTATIVAS_CLAIM = 3;
+    // resposta, nunca silencioso. Erro PERMANENTE lança na hora; só o transitório retenta.
+    const MAX_TENTATIVAS_CLAIM = 2;
     let pular = false;
     for (let tentativa = 1; tentativa <= MAX_TENTATIVAS_CLAIM; tentativa++) {
       const { data: claimed, error: claimErr } = await supabase.rpc('claim_calculate_scores', { p_run_id: runId });
@@ -390,20 +393,21 @@ Deno.serve(async (req) => {
 
       if (decisao === 'pular') { pular = true; break; }
 
-      // 'esperar_e_retentar' — mesmo runId de propósito (é o que a cláusula idempotente reconhece).
+      // 'esperar_e_retentar' — só transporte incerto chega aqui, e com o MESMO runId de propósito
+      // (é o que a cláusula idempotente da migration reconhece).
       const espera = esperaClaimMs(tentativa);
       console.warn(
-        `[calculate-scores] claim ${tentativa}/${MAX_TENTATIVAS_CLAIM} sem lease` +
-        `${claimErr ? ` (erro: ${claimErr.message})` : ' (ocupado por outro run)'} — nova tentativa em ${espera}ms.`,
+        `[calculate-scores] claim ${tentativa}/${MAX_TENTATIVAS_CLAIM} com transporte incerto ` +
+        `(${claimErr?.message}) — nova tentativa em ${espera}ms com o MESMO run_id.`,
       );
       await new Promise((r) => setTimeout(r, espera));
     }
 
     if (pular) {
-      // Lease seguiu ocupado depois das tentativas. PULA — idempotente: o próximo cron converge. NÃO
-      // é falha (200), mas a resposta diz explicitamente que nada foi recalculado, p/ o chamador (e o
-      // botão manual da staff) não ler "sucesso" como "recalculou".
-      console.warn(`[calculate-scores] lease ocupado apos ${MAX_TENTATIVAS_CLAIM} tentativas; pulando (run_id=${runId}).`);
+      // Outro run tem o lease. PULA — idempotente: o próximo cron converge. NÃO é falha (200), mas a
+      // resposta diz explicitamente que nada foi recalculado, p/ o chamador (e o botão manual da
+      // staff) não ler "sucesso" como "recalculou".
+      console.warn(`[calculate-scores] lease ocupado por outro run; pulando (run_id=${runId}).`);
       return new Response(JSON.stringify({
         skipped: true,
         reason: 'lease_ocupado',

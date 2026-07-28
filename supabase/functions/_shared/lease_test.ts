@@ -6,7 +6,7 @@
 // correto em todo o resto). Um FALSO POSITIVO silencia um lease quebrado e reabre a corrida
 // last-writer-wins sem ninguém saber — por isso os negativos abaixo pesam mais que os positivos, e
 // por isso o predicado olha SÓ o código do erro, sem nenhuma heurística de mensagem.
-import { decidirClaim, esperaClaimMs, leaseIndisponivel } from "./lease.ts";
+import { decidirClaim, erroTransitorio, esperaClaimMs, leaseIndisponivel } from "./lease.ts";
 
 function assertEquals(a: unknown, b: unknown, msg?: string) {
   if (JSON.stringify(a) !== JSON.stringify(b)) {
@@ -84,66 +84,102 @@ Deno.test("code nao-string nao coage para true", () => {
 });
 
 // ══════════════════════════════════════════════════════════════════════════════════════════════
-// decidirClaim — o retry que fecha os dois furos do challenge /codex
+// erroTransitorio — sem esta classificacao, erro PERMANENTE vira retry storm (achado /codex)
 // ══════════════════════════════════════════════════════════════════════════════════════════════
 
-Deno.test("claim bem-sucedido -> adquirido (sem gastar tentativa)", () => {
-  assertEquals(decidirClaim({ claimed: true }, 1, 3), "adquirido");
-  assertEquals(decidirClaim({ claimed: true }, 3, 3), "adquirido");
+Deno.test("sem code = rejeicao de fetch/rede -> transitorio (e O caso do transporte perdido)", () => {
+  assertEquals(erroTransitorio({ message: "network error" }), true);
+  assertEquals(erroTransitorio({}), true);
 });
 
-// FURO 2 (perda de frescor): lease ocupado nao pode desistir na 1a — o run dura ~17s.
-Deno.test("lease ocupado -> retenta enquanto houver tentativa", () => {
-  assertEquals(decidirClaim({ claimed: false }, 1, 3), "esperar_e_retentar");
-  assertEquals(decidirClaim({ claimed: false }, 2, 3), "esperar_e_retentar");
+Deno.test("classe 08 (connection_exception) -> transitorio", () => {
+  assertEquals(erroTransitorio({ code: "08006", message: "connection failure" }), true);
+  assertEquals(erroTransitorio({ code: "08003" }), true);
+  assertEquals(erroTransitorio({ code: "08P01" }), true);
 });
 
-Deno.test("lease ocupado na ULTIMA tentativa -> pular (200 skipped, nao erro)", () => {
-  assertEquals(decidirClaim({ claimed: false }, 3, 3), "pular");
+Deno.test("timeout, deadlock, serializacao e conexoes esgotadas -> transitorios", () => {
+  assertEquals(erroTransitorio({ code: "57014" }), true);  // query_canceled
+  assertEquals(erroTransitorio({ code: "40P01" }), true);  // deadlock_detected
+  assertEquals(erroTransitorio({ code: "40001" }), true);  // serialization_failure
+  assertEquals(erroTransitorio({ code: "53300" }), true);  // too_many_connections
 });
 
-Deno.test("claimed null/ausente conta como ocupado (nunca como adquirido)", () => {
-  assertEquals(decidirClaim({ claimed: null }, 3, 3), "pular");
-  assertEquals(decidirClaim({}, 3, 3), "pular");
-  // O ramo perigoso seria tratar ausencia como sucesso: rodaria SEM lease achando que o tem.
-  assertEquals(decidirClaim({ claimed: null }, 1, 3), "esperar_e_retentar");
+// Os PERMANENTES: retentar da exatamente o mesmo erro, so queimando wall-clock.
+Deno.test("permissao, argumento, sintaxe e relacao ausente -> PERMANENTES (nao retenta)", () => {
+  assertEquals(erroTransitorio({ code: "42501", message: "permission denied" }), false);
+  assertEquals(erroTransitorio({ code: "22004", message: "p_run_id vazio" }), false);
+  assertEquals(erroTransitorio({ code: "22023" }), false);
+  assertEquals(erroTransitorio({ code: "42601" }), false);
+  assertEquals(erroTransitorio({ code: "42P01", message: 'relation "sync_state" does not exist' }), false);
 });
 
-// FURO 1 (transporte perdido): erro real ganha UMA retentativa com o MESMO run_id — se o banco
-// commitou e so a resposta se perdeu, o re-claim reconhece o dono; senao e um claim normal.
-Deno.test("erro real -> retenta (cobre o transporte perdido) e depois LANCA", () => {
+Deno.test("erroTransitorio: null/undefined -> false", () => {
+  assertEquals(erroTransitorio(null), false);
+  assertEquals(erroTransitorio(undefined), false);
+});
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════
+// decidirClaim — retry SO de transporte incerto
+// ══════════════════════════════════════════════════════════════════════════════════════════════
+
+Deno.test("claim bem-sucedido -> adquirido", () => {
+  assertEquals(decidirClaim({ claimed: true }, 1, 2), "adquirido");
+  assertEquals(decidirClaim({ claimed: true }, 2, 2), "adquirido");
+});
+
+// Lease ocupado NAO retenta: a versao anterior esperava para fechar a perda de frescor, e a
+// calibragem nao fechava nada (tentativas em t=0/5/15s contra um run de ~29s medido em prod).
+// Esperar sem fechar e pior que nao esperar — paga latencia e ainda mente sobre o furo.
+Deno.test("lease ocupado (claimed=false) -> pular JA na 1a resposta", () => {
+  assertEquals(decidirClaim({ claimed: false }, 1, 2), "pular");
+  assertEquals(decidirClaim({ claimed: false }, 2, 2), "pular");
+});
+
+// null/undefined NAO e "ocupado": e resposta INVALIDA de uma RPC que devolve boolean. Trata-la como
+// ocupado devolveria 200 "ja em andamento" sobre estado desconhecido — a troca de "nao consegui
+// ler" por "nao existe" que o money-path proibe.
+Deno.test("claimed null/ausente -> LANCA (resposta invalida nao vira 200 skipped)", () => {
+  assertEquals(decidirClaim({ claimed: null }, 1, 2), "lancar");
+  assertEquals(decidirClaim({}, 1, 2), "lancar");
+  assertEquals(decidirClaim({ claimed: undefined }, 2, 2), "lancar");
+});
+
+// TRANSPORTE PERDIDO: retenta com o MESMO run_id — se o banco commitou e so a resposta se perdeu,
+// o re-claim reconhece o dono; senao e um claim normal. Esgotado, fail-closed.
+Deno.test("transporte incerto -> retenta e depois LANCA", () => {
   const erro = { code: "08006", message: "connection failure" };
-  assertEquals(decidirClaim({ erro }, 1, 3), "esperar_e_retentar");
-  assertEquals(decidirClaim({ erro }, 3, 3), "lancar");
+  assertEquals(decidirClaim({ erro }, 1, 2), "esperar_e_retentar");
+  assertEquals(decidirClaim({ erro }, 2, 2), "lancar");
 });
 
-Deno.test("timeout tambem retenta e depois lanca (fail-closed preservado)", () => {
-  const erro = { code: "57014", message: "statement timeout" };
-  assertEquals(decidirClaim({ erro }, 2, 3), "esperar_e_retentar");
-  assertEquals(decidirClaim({ erro }, 3, 3), "lancar");
+Deno.test("erro de rede sem code tambem retenta (e o caso canonico)", () => {
+  assertEquals(decidirClaim({ erro: { message: "fetch failed" } }, 1, 2), "esperar_e_retentar");
 });
 
-// A funcao ausente e decidida ANTES de qualquer retry: insistir numa RPC que nao existe so queima
-// o wall-clock da edge para chegar ao mesmo lugar.
+// Erro PERMANENTE lanca na 1a: retry storm so atrasa o inevitavel.
+Deno.test("erro permanente -> LANCA na 1a tentativa (sem retry storm)", () => {
+  assertEquals(decidirClaim({ erro: { code: "42501", message: "permission denied" } }, 1, 2), "lancar");
+  assertEquals(decidirClaim({ erro: { code: "22004" } }, 1, 2), "lancar");
+});
+
+// A funcao ausente e decidida ANTES de qualquer retry.
 Deno.test("funcao ausente -> seguir_sem_lease JA na 1a tentativa (nao gasta retry)", () => {
-  assertEquals(decidirClaim({ erro: { code: "42883" } }, 1, 3), "seguir_sem_lease");
-  assertEquals(decidirClaim({ erro: { code: "PGRST202" } }, 1, 3), "seguir_sem_lease");
+  assertEquals(decidirClaim({ erro: { code: "42883" } }, 1, 2), "seguir_sem_lease");
+  assertEquals(decidirClaim({ erro: { code: "PGRST202" } }, 1, 2), "seguir_sem_lease");
 });
 
-// Com maxTentativas=1 o comportamento tem de ser o ANTERIOR ao retry (regressao segura).
-Deno.test("maxTentativas=1 reproduz o comportamento sem retry", () => {
-  assertEquals(decidirClaim({ claimed: false }, 1, 1), "pular");
-  assertEquals(decidirClaim({ erro: { code: "57014" } }, 1, 1), "lancar");
+// `erro` e avaliado ANTES de `claimed`: com erro presente, o claimed nao e confiavel.
+Deno.test("erro tem precedencia sobre claimed", () => {
+  assertEquals(decidirClaim({ claimed: true, erro: { code: "42501" } }, 1, 2), "lancar");
+  assertEquals(decidirClaim({ claimed: true, erro: { code: "42883" } }, 1, 2), "seguir_sem_lease");
 });
 
-// A espera precisa CRESCER e ser finita — espera 0 viraria busy-loop contra o banco, e uma espera
-// que nao cresce desperdica as tentativas todas na mesma janela.
-Deno.test("esperaClaimMs cresce e cabe no wall-clock do edge", () => {
-  assertEquals(esperaClaimMs(1), 5000);
-  assertEquals(esperaClaimMs(2), 10000);
-  // Total das esperas com 3 tentativas = 15s: cobre boa parte de um run (~17s) e deixa folga larga
-  // contra o teto de 150s (Free) do edge, com o recompute inteiro ainda por fazer depois.
-  const total = esperaClaimMs(1) + esperaClaimMs(2);
-  if (total >= 30000) throw new Error(`espera total ${total}ms alta demais para o wall-clock do edge`);
+// Espera curta de proposito: cobre oscilacao de rede, nao run alheio. Nao pode ser 0 (busy-loop).
+Deno.test("esperaClaimMs e curta, positiva e cresce", () => {
+  assertEquals(esperaClaimMs(1), 2000);
   if (esperaClaimMs(1) <= 0) throw new Error("espera zero viraria busy-loop contra o banco");
+  if (esperaClaimMs(2) <= esperaClaimMs(1)) throw new Error("a espera precisa crescer");
+  // Com 2 tentativas a espera total e 2s — nao move a agulha do wall-clock do edge (150s Free).
+  if (esperaClaimMs(1) > 5000) throw new Error("espera longa demais para cobrir so transporte");
 });
