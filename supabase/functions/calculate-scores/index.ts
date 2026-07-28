@@ -1,6 +1,8 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
-import { leaseIndisponivel } from "../_shared/lease.ts";
+// `leaseIndisponivel` saiu do import: deixou de ser chamado aqui e passou a ser consultado DENTRO
+// de `decidirClaim`, que decide o passo inteiro do claim. Mantê-lo importado viraria símbolo órfão.
+import { decidirClaim, esperaClaimMs } from "../_shared/lease.ts";
 import { fetchAll } from "../_shared/paginate.ts";
 
 const ALLOWED_ORIGIN = Deno.env.get("ALLOWED_ORIGIN") || "*";
@@ -357,34 +359,56 @@ Deno.serve(async (req) => {
   };
 
   try {
-    const { data: claimed, error: claimErr } = await supabase.rpc('claim_calculate_scores', { p_run_id: runId });
-    if (claimErr) {
-      // ORDEM DE DEPLOY (Lovable publica edge e migration SEPARADAMENTE, em qualquer ordem): se a
-      // edge nova subir ANTES da migration, a função não existe (42883/PGRST202). Tratar isso como
-      // fatal transformaria a janela entre as duas publicações em CRON QUEBRADO — a armadilha que a
-      // migration 20260723160000 documenta. Nesse caso ÚNICO seguimos SEM lease: é exatamente o
-      // comportamento de hoje (nada piora), e o aviso vai no log E na resposta — fail-open
-      // DECLARADO, nunca silencioso. Qualquer OUTRO erro é fail-closed: o lease existe e está
-      // quebrado, e aí não dá para confiar na exclusão.
-      // leaseIndisponivel olha SÓ o código do erro (42883/PGRST202) — zero heurística de mensagem.
-      // Erro de rede, timeout, permissão, tabela ausente: tudo cai aqui e LANÇA (fail-closed).
-      if (!leaseIndisponivel(claimErr)) {
-        throw new Error(`claim_calculate_scores falhou: ${claimErr.message}`);
+    // Claim COM RETRY. `decidirClaim` (puro, testado em _shared/lease_test.ts) decide o passo; aqui
+    // só executamos o efeito. As 3 tentativas cobrem dois modos de falha de causas opostas:
+    //   • transporte perdido — o banco commitou o claim mas a resposta se perdeu. Retentar com o
+    //     MESMO runId conecta a cláusula idempotente da migration, que sem isto nunca era exercida:
+    //     o re-claim reconhece o dono e devolve true, em vez de deixar o lease preso 15min;
+    //   • lease ocupado — um run dura ~17s, então esperar poucos segundos costuma pegar o lease logo
+    //     depois que o outro fecha. Fecha a perda de frescor (antes, o run pulado só voltava no cron
+    //     seguinte, até 24h depois).
+    // ORDEM DE DEPLOY: se a edge nova subir ANTES da migration, a função não existe (42883/PGRST202)
+    // e `decidirClaim` devolve 'seguir_sem_lease' SEM gastar retry — fail-open DECLARADO no log e na
+    // resposta, nunca silencioso. Qualquer OUTRO erro é fail-closed depois de esgotar as tentativas.
+    const MAX_TENTATIVAS_CLAIM = 3;
+    let pular = false;
+    for (let tentativa = 1; tentativa <= MAX_TENTATIVAS_CLAIM; tentativa++) {
+      const { data: claimed, error: claimErr } = await supabase.rpc('claim_calculate_scores', { p_run_id: runId });
+      const decisao = decidirClaim({ claimed, erro: claimErr }, tentativa, MAX_TENTATIVAS_CLAIM);
+
+      if (decisao === 'adquirido') { leaseAdquirido = true; break; }
+
+      if (decisao === 'seguir_sem_lease') {
+        leaseAviso = 'lease indisponivel (migration 20260728120001 ainda nao aplicada) — run SEM exclusao mutua';
+        console.warn(`[calculate-scores] ${leaseAviso}`);
+        break;
       }
-      leaseAviso = 'lease indisponivel (migration 20260728120001 ainda nao aplicada) — run SEM exclusao mutua';
-      console.warn(`[calculate-scores] ${leaseAviso}`);
-    } else if (claimed !== true) {
-      // Já há run em andamento. PULA — idempotente: o próximo cron converge. NÃO é falha (200), mas
-      // a resposta diz explicitamente que nada foi recalculado, p/ o chamador (e o botão manual da
-      // staff) não ler "sucesso" como "recalculou".
-      console.warn(`[calculate-scores] lease ocupado — outro run em andamento; pulando (run_id=${runId}).`);
+
+      if (decisao === 'lancar') {
+        throw new Error(`claim_calculate_scores falhou apos ${tentativa} tentativa(s): ${claimErr?.message}`);
+      }
+
+      if (decisao === 'pular') { pular = true; break; }
+
+      // 'esperar_e_retentar' — mesmo runId de propósito (é o que a cláusula idempotente reconhece).
+      const espera = esperaClaimMs(tentativa);
+      console.warn(
+        `[calculate-scores] claim ${tentativa}/${MAX_TENTATIVAS_CLAIM} sem lease` +
+        `${claimErr ? ` (erro: ${claimErr.message})` : ' (ocupado por outro run)'} — nova tentativa em ${espera}ms.`,
+      );
+      await new Promise((r) => setTimeout(r, espera));
+    }
+
+    if (pular) {
+      // Lease seguiu ocupado depois das tentativas. PULA — idempotente: o próximo cron converge. NÃO
+      // é falha (200), mas a resposta diz explicitamente que nada foi recalculado, p/ o chamador (e o
+      // botão manual da staff) não ler "sucesso" como "recalculou".
+      console.warn(`[calculate-scores] lease ocupado apos ${MAX_TENTATIVAS_CLAIM} tentativas; pulando (run_id=${runId}).`);
       return new Response(JSON.stringify({
         skipped: true,
         reason: 'lease_ocupado',
         message: 'Recálculo já em andamento — este disparo foi ignorado. Os scores não foram alterados.',
       }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
-    } else {
-      leaseAdquirido = true;
     }
 
     // ANTI-DRIFT (carteira-Omie Opção A): farmer_id do score = carteira_assignments.owner_user_id.
