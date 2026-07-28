@@ -541,6 +541,10 @@ serve(async (req: Request) => {
           .eq("status_titulo", "ABERTO")
           .gt("saldo", 0)
           .gt("data_vencimento", hojeISO)
+          // Ordem estável pela PK (conferida em prod): sem ela o `.range()` pula/duplica títulos
+          // entre páginas e o total antecipável sai errado — o `fetchAll` lança no erro, mas não
+          // protege de ordem indefinida (money-path.md §7).
+          .order("id", { ascending: true })
           .range(from, to),
       "fin_contas_receber",
     );

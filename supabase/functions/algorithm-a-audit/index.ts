@@ -133,8 +133,19 @@ async function fetchAllPaginated<T>(
   let page = 0;
   let hasMore = true;
   while (hasMore) {
-    let query = supabase.from(table).select(selectCols).range(page * pageSize, (page + 1) * pageSize - 1) as SupabaseQuery;
+    // A ordem de encadeamento importa: os `filters` entram ANTES do `.order('id')` para que a
+    // ordenação que o CALL-SITE pediu (ex.: `unit_price` desc, em allSalesPrices) continue sendo a
+    // primária e o `id` sirva só de DESEMPATE. Invertido, o `id` viraria a chave primária de
+    // ordenação e mudaria o resultado daquele caller.
+    // O desempate pela PK é o que estabiliza a paginação: sem ele o `.range()` pode pular/duplicar
+    // linhas entre páginas (money-path.md §7) — o `throw` no erro, que já existia, não cobre isso.
+    // Todas as tabelas passadas a este helper têm PK `id` (conferido em prod: farmer_client_scores,
+    // product_costs, order_items, sales_orders).
+    let query = supabase.from(table).select(selectCols) as SupabaseQuery;
     if (filters) query = filters(query);
+    query = query
+      .order('id', { ascending: true })
+      .range(page * pageSize, (page + 1) * pageSize - 1) as SupabaseQuery;
     const { data, error } = await query;
     if (error) throw error;
     const rows = (data ?? []) as unknown as T[];
