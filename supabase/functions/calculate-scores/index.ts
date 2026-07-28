@@ -1,6 +1,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { leaseIndisponivel } from "../_shared/lease.ts";
+import { fetchAll } from "../_shared/paginate.ts";
 
 const ALLOWED_ORIGIN = Deno.env.get("ALLOWED_ORIGIN") || "*";
 
@@ -447,32 +448,22 @@ Deno.serve(async (req) => {
     // sales_history_status: limiar (dias) ativo vs stale — config próprio, desacoplado do cap de recência.
     const salesActiveDays = config['sales_active_threshold_days'] ?? 180;
 
-    // Get all client scores with pagination
-    let clients: FarmerClientScoreRow[] = [];
-    {
-      let pg = 0;
-      const sz = 1000;
-      let more = true;
-      while (more) {
-        // `.order('id')` NÃO é decorativo: sem ORDER BY explícito o Postgres não garante ordem entre
-        // páginas, então o fatiamento por .range() pode REPETIR uma linha e OMITIR outra — e a
-        // omitida sai do recompute inteiro (fica com o score do dia anterior, sem nenhum sinal). É a
-        // mesma exigência que o comentário de carregarRpcPaginada já documenta para as RPCs e que
-        // ficou de fora aqui. `id` é a PK: ordem TOTAL, sem empate a desempatar. (Achado /codex.)
-        const { data: batch, error: bErr } = await supabase
-          .from('farmer_client_scores')
-          .select('*')
-          .order('id', { ascending: true })
-          .range(pg * sz, (pg + 1) * sz - 1);
-        if (bErr) throw bErr;
-        if (!batch || batch.length === 0) { more = false; }
-        else {
-          clients.push(...(batch as unknown as FarmerClientScoreRow[]));
-          if (batch.length < sz) more = false;
-          pg++;
-        }
-      }
-    }
+    // Snapshot inicial dos scores. As DUAS metades da classe de paginação artesanal:
+    //  - fetchAll LANÇA em error E em `data == null` sem error. O `!batch → fim` de antes lia
+    //    página com falha como fim da lista e o compute rodava sobre snapshot PARCIAL — cliente
+    //    fora do recompute é indistinguível de cliente que não existe.
+    //  - `.order('id')` NÃO é decorativo: sem ORDER BY explícito o Postgres não garante ordem
+    //    entre páginas, então o fatiamento por .range() pode REPETIR uma linha e OMITIR outra — e
+    //    a omitida sai do recompute inteiro (fica com o score do dia anterior, sem nenhum sinal).
+    //    `id` é a PK: ordem TOTAL, sem empate a desempatar. (Achado /codex do #1578.)
+    let clients: FarmerClientScoreRow[] = await fetchAll<FarmerClientScoreRow>(
+      (from, to) => supabase
+        .from('farmer_client_scores')
+        .select('*')
+        .order('id', { ascending: true })
+        .range(from, to),
+      'farmer_client_scores (snapshot inicial)',
+    );
 
     // === RECÊNCIA-VIVA: snapshot de vendas (RPC) carregado TODO run ===
     // É a FONTE do refresh de recência/gasto/diversidade de TODA linha (antes só rodava no seed).
@@ -535,18 +526,17 @@ Deno.serve(async (req) => {
       // réplica) fazia `missing = missingRaw` e RESSUSCITAVA os fornecedores excluídos no seed
       // (FAIL-OPEN, exposto pelo smoke 2026-06-20: semeou os 509 flagged). A RPC lê as 3 tabelas no
       // MESMO snapshot e só retorna quem é SEGURO semear (fail-closed por construção). FAIL-CLOSED:
-      // erro → lança (não semeia às cegas; idempotente, o próximo run converge). Paginada com .range
-      // (ORDER BY user_id estável na RPC — §5 do CLAUDE.md). Espelha src/lib/scoring/seedTargets.ts.
-      const missing: Array<{ user_id: string }> = [];
-      for (let sp = 0; ; sp++) {
-        const { data: sPage, error: sErr } = await supabase
+      // erro OU data:null sem error → fetchAll LANÇA (não semeia às cegas; o `?? []` de antes lia
+      // resposta malformada como fim e semearia com lista PARCIAL; idempotente, o próximo run
+      // converge). .order(user_id) explícito no transporte, além do ORDER BY estável da RPC
+      // (§5 do CLAUDE.md). Espelha src/lib/scoring/seedTargets.ts.
+      const missing = await fetchAll<{ user_id: string }>(
+        (from, to) => supabase
           .rpc('seed_targets_faltantes')
-          .range(sp * 1000, sp * 1000 + 999);
-        if (sErr) throw new Error(`seed_targets_faltantes falhou — não dá p/ semear sem a lista atômica de elegíveis: ${sErr.message}`);
-        const sRows = (sPage ?? []) as Array<{ user_id: string }>;
-        for (const r of sRows) missing.push(r);
-        if (sRows.length < 1000) break;
-      }
+          .order('user_id', { ascending: true })
+          .range(from, to),
+        'seed_targets_faltantes (sem a lista atômica não dá p/ semear)',
+      );
 
       if (missing.length === 0) {
         console.log(`[calculate-scores] 0 faltantes a semear (${clients.length} em fcs). Pula seed.`);
@@ -566,24 +556,25 @@ Deno.serve(async (req) => {
           const defaultFarmerId = employees?.[0]?.user_id || '414a9727-ad1d-4998-914e-9c6ccf26cf50';
 
           // Opção A (carteira-Omie): dono do score = dono da carteira. FAIL-CLOSED: erro de
-          // leitura → lança (ownerMap truncado semearia farmer_id errado = dono errado na
-          // agenda — achado Codex #3). ANTI-DRIFT: score nunca deriva de atividade.
-          const ownerMap = new Map<string, string>();
-          for (let cp = 0; ; cp++) {
-            const { data: aPage, error: aErr } = await supabase
+          // leitura OU data:null sem error → fetchAll LANÇA (ownerMap truncado semearia
+          // farmer_id errado = dono errado na agenda — achado Codex #3; o `?? []` de antes lia
+          // resposta malformada como fim). .order em customer_user_id (UNIQUE) estabiliza o
+          // .range. ANTI-DRIFT: score nunca deriva de atividade.
+          const assignmentRows = await fetchAll<{ customer_user_id: string; owner_user_id: string }>(
+            (from, to) => supabase
               .from('carteira_assignments')
               .select('customer_user_id, owner_user_id')
               // O fail-closed acima cobre o ERRO; a ordem estável pela PK (conferida em prod) cobre
               // a outra metade: sem ela uma linha pulada entre páginas deixa o cliente FORA do
               // ownerMap, e o `?? farmer_id` a jusante atribui o score a quem ligou/visitou em vez
               // do DONO — exatamente o "dono errado na agenda" que o comentário acima cita (§7).
+              // `id` é a chave que o #1589 fixou; mantida (PK, total e imutável).
               .order('id', { ascending: true })
-              .range(cp * 1000, cp * 1000 + 999);
-            if (aErr) throw new Error(`carteira_assignments falhou ao semear: ${aErr.message}`);
-            const aRows = (aPage ?? []) as Array<{ customer_user_id: string; owner_user_id: string }>;
-            for (const r of aRows) ownerMap.set(r.customer_user_id, r.owner_user_id);
-            if (aRows.length < 1000) break;
-          }
+              .range(from, to),
+            'carteira_assignments (ownerMap do seed)',
+          );
+          const ownerMap = new Map<string, string>();
+          for (const r of assignmentRows) ownerMap.set(r.customer_user_id, r.owner_user_id);
 
           // Registros de seed só dos FALTANTES, da base de vendas (salesMap do TOPO) via
           // deriveSalesBase — mesma degradação honesta do compute (vitest 8/8). Aqui já é garantido
@@ -651,29 +642,19 @@ Deno.serve(async (req) => {
           }
           console.log(`[calculate-scores] Seeded ${seeded}/${missing.length} client scores`);
 
-          // Re-fetch p/ incluir os recém-semeados no compute. Em LOCAL: se a leitura falhar
-          // (throw → catch do seed), clients mantém o snapshot original (não clobbera o compute).
-          const refetched: FarmerClientScoreRow[] = [];
-          {
-            let pg2 = 0;
-            const sz2 = 1000;
-            let more2 = true;
-            while (more2) {
-              const { data: batch2, error: rErr2 } = await supabase
-                .from('farmer_client_scores')
-                .select('*')
-                .order('id', { ascending: true })   // idem ao select inicial: ordem estável entre páginas
-                .range(pg2 * sz2, (pg2 + 1) * sz2 - 1);
-              if (rErr2) throw rErr2;
-              if (!batch2 || batch2.length === 0) { more2 = false; }
-              else {
-                refetched.push(...(batch2 as unknown as FarmerClientScoreRow[]));
-                if (batch2.length < sz2) more2 = false;
-                pg2++;
-              }
-            }
-          }
-          clients = refetched;
+          // Re-fetch p/ incluir os recém-semeados no compute. fetchAll LANÇA em error E em
+          // data:null sem error (o `!batch2 → fim` de antes lia página com falha como fim e o
+          // compute seguiria com snapshot PARCIAL); `.order('id')` idem ao select inicial —
+          // ordem estável entre páginas. Em LOCAL: se a leitura falhar (throw → catch do seed),
+          // clients mantém o snapshot original (não clobbera o compute).
+          clients = await fetchAll<FarmerClientScoreRow>(
+            (from, to) => supabase
+              .from('farmer_client_scores')
+              .select('*')
+              .order('id', { ascending: true })
+              .range(from, to),
+            'farmer_client_scores (re-fetch pós-seed)',
+          );
         }
       }
     } catch (e) {
