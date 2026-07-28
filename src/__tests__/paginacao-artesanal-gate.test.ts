@@ -145,12 +145,15 @@ function contarG3(fonte: string): number {
 const G3_DIVIDA: ReadonlyMap<string, number> = new Map([
   // Quitados (erradicação scoring/carteira/batch, #1596): ai-ops-agent, algorithm-a-audit,
   // calculate-scores, carteira-rebuild — convertidos a fetchAll/throw/failLease.
-  // Quitado (erradicação das 3 edges de sync Omie, este PR): omie-analytics-sync (5→0) — os
+  // Quitado (erradicação das 3 edges de sync Omie, #1597): omie-analytics-sync (5→0) — os
   // 5 laços viraram chamadas a `fetchAll` (_shared/paginate.ts), que lança em erro E em
-  // data:null. Os dois PRs nasceram do mesmo chip-mãe (#1581) e conflitaram AQUI por editar
-  // linhas vizinhas; a resolução é UNIÃO — as duas listas de quitação são disjuntas e ambas
-  // valem (money-path §9: conflito entre dois fixes da mesma classe não se resolve por lado).
-  ['supabase/functions/omie-financeiro/index.ts', 1],
+  // data:null.
+  // Quitado (erradicação das EDGES FINANCEIRAS, este PR): omie-financeiro (1→0) — o laço do
+  // carregarBaixaMapDRE (baixaMap parcial no DRE-caixa) delegado ao mesmo `fetchAll`.
+  // Os três PRs nasceram do mesmo chip-mãe (#1581) e conflitaram AQUI por editar linhas
+  // vizinhas; a resolução é UNIÃO — as listas de quitação são disjuntas e todas valem
+  // (money-path §9: conflito entre dois fixes da mesma classe não se resolve por lado).
+  // A dívida G3 chegou a ZERO: a próxima entrada aqui é reintrodução, não herança.
 ]);
 
 // F2 residual SEM regra automatizada (decisão registrada, respondendo ao challenge do
@@ -222,11 +225,11 @@ const G4_DIVIDA: ReadonlyMap<string, number> = new Map([
   ['supabase/functions/omie-sync-vendas-items/index.ts', 1],
   ['supabase/functions/sync-reprocess/index.ts', 1],
   ['supabase/functions/tint-omie-sync/index.ts', 1],
-  // DÍVIDA NOVA — não é regressão: são 5 sites que SEMPRE existiram e que a regex antiga
-  // não enxergava por causa do cast (`(result.total_de_paginas as number) || 1`). O
-  // endurecimento acima os tornou visíveis; a correção é do chip de erradicação do
-  // financeiro, não deste. Baselinar > afrouxar o detector recém-consertado.
-  ['supabase/functions/omie-financeiro/index.ts', 5],
+  // QUITADA (chip das EDGES FINANCEIRAS, este PR): a dívida de 5 que o #1597 baselinou ao
+  // consertar o detector eram os 5 `(… as number) || 1` do omie-financeiro — agora
+  // `proximoTotalPaginas` (piso monotônico) + `avaliarPagina`/sonda. Ciclo completo da
+  // erradicação em dois PRs: um conserta o DETECTOR e baselina o que ele revela, o outro
+  // corrige o revelado e tira a entrada. A lista só encolhe, e encolheu registrado.
 ]);
 
 describe('gate estrutural: paginação artesanal que trata falha como fim (classe #1338→#1564)', () => {
