@@ -14,7 +14,24 @@ import {
   proximoTotalPaginas,
   validarTotalPaginas,
   desfechoVarreduraReversa,
+  fingerprintPagina,
 } from "../_shared/omie-paginacao.ts";
+
+// Extrai a LISTA de uma resposta do Omie exigindo que ela seja um ARRAY DE VERDADE.
+// O `(result.x as T[] | undefined) || []` histórico é o mesmo furo do `data ?? []` do
+// PostgREST (money-path §6/§9), só que na resposta do ERP: campo ausente/null num 200
+// virava "página vazia" e, portanto, FIM — completando a lista com a cauda faltando
+// (achado do challenge Codex). Só `[]` de verdade é fim; qualquer outra coisa é resposta
+// malformada e LANÇA. Aceita aliases porque o Omie varia o nome do campo por endpoint.
+function listaOmie<T>(result: OmieGenericResponse, campos: string[], rotulo: string): T[] {
+  for (const campo of campos) {
+    const valor = result[campo];
+    if (Array.isArray(valor)) return valor as T[];
+  }
+  throw new Error(
+    `${rotulo}: resposta sem array em nenhum de {${campos.join(", ")}} — malformada, não é lista vazia`,
+  );
+}
 
 // Teto anti-runaway das listagens financeiras. CP/CR da colacor são as maiores (~292
 // págs de 100 no CR); 2.000 dá >6× de folga e ainda barra um total lixo/gigante ANTES
@@ -551,7 +568,7 @@ async function syncCategorias(
     // Piso MONOTÔNICO (nunca `|| 1` por resposta): uma intermediária sem o campo
     // encolheria o teto e o laço terminaria com o cadastro PARCIAL como se completo.
     totalPaginas = proximoTotalPaginas(totalPaginas, result.total_de_paginas as number | undefined, MAX_PAGINAS_FIN);
-    const categorias = (result.categoria_cadastro as OmieCategoria[] | undefined) || [];
+    const categorias = listaOmie<OmieCategoria>(result, ["categoria_cadastro"], `[Fin][${company}] Categorias p${pagina}`);
 
     // Página vazia ANTES do fim declarado = fault transiente disfarçado, não fim.
     const veredicto = avaliarPagina(categorias.length, pagina, totalPaginas);
@@ -608,9 +625,11 @@ async function syncContasCorrentes(
 
     // Piso monotônico + guard de página vazia (ver syncCategorias).
     totalPaginas = proximoTotalPaginas(totalPaginas, result.nTotPaginas as number | undefined, MAX_PAGINAS_FIN);
-    const contas = (result.ListarContasCorrentes as OmieContaCorrente[] | undefined)
-      || (result.conta_corrente_lista as OmieContaCorrente[] | undefined)
-      || [];
+    const contas = listaOmie<OmieContaCorrente>(
+      result,
+      ["ListarContasCorrentes", "conta_corrente_lista"],
+      `[Fin][${company}] Contas correntes p${pagina}`,
+    );
 
     const veredictoCC = avaliarPagina(contas.length, pagina, totalPaginas);
     if (veredictoCC === "anomalia") {
@@ -707,17 +726,25 @@ async function syncContasPagar(
       "ListarContasPagar",
       { pagina, registros_por_pagina: PAGE_SIZE }
     );
-    if (!result) break;
+    // `break` mudo era falha SEM sinal: o retorno saía normal (complete:false — não mentia
+    // completude, mas também não gerava fin_sync_log='error' nem acordava o watchdog, e o
+    // cursor era gravado como se a pausa fosse planejada). Estouro de BUDGET é pausa
+    // legítima e resumível; retries esgotados por outro motivo é FALHA e lança (Codex).
+    if (!result) {
+      if (isTimeBudgetExhausted()) break;
+      throw new Error(`[Fin][${company}] CP p${pagina}: Omie sem resposta após retries (fora do estouro de budget) — falha, não fim da lista`);
+    }
 
     // Piso MONOTÔNICO do total declarado. Ele NÃO decide completude (o Omie sub-reporta
     // em listas grandes — ver a nota do syncContasReceber; a paginação segue data-driven
     // até a página vazia), mas serve de PISO para separar "fim real" de "página vazia no
     // meio" — que antes virava reachedEnd/complete e ZERAVA o cursor com a cauda faltando.
     totalPaginas = proximoTotalPaginas(totalPaginas, result.total_de_paginas as number | undefined, MAX_PAGINAS_FIN);
-    const titulos: OmieContaPagar[] =
-      (result.conta_pagar_cadastro as OmieContaPagar[] | undefined)
-      || (result.titulosEncontrados as OmieContaPagar[] | undefined)
-      || [];
+    const titulos = listaOmie<OmieContaPagar>(
+      result,
+      ["conta_pagar_cadastro", "titulosEncontrados"],
+      `[Fin][${company}] CP p${pagina}`,
+    );
     const veredictoCP = avaliarPagina(titulos.length, pagina, totalPaginas);
     if (veredictoCP === "anomalia") {
       // LANÇA: não grava cursor (writeCursor só roda no retorno normal) → o ciclo
@@ -725,19 +752,16 @@ async function syncContasPagar(
       throw new Error(`[Fin][${company}] CP p${pagina}: página vazia antes do piso declarado (${totalPaginas}) — anomalia Omie, não fim da lista`);
     }
     if (veredictoCP === "fim") { reachedEnd = true; break; } // página vazia no/além do piso = fim real
-    const fp = `${(titulos[0] as { codigo_lancamento_omie?: number })?.codigo_lancamento_omie ?? ""}:${titulos.length}`;
-    // Página REPETIDA: o guard existe porque o Omie pode sinalizar fim repetindo a última
-    // página em vez de devolver vazia. Só que "parar" era `reachedEnd = true` → complete →
-    // cursor ZERADO: repetição no MEIO da lista truncava CP em silêncio. Mesmo discriminador
-    // do vazio (o piso declarado): antes do piso = anomalia (LANÇA, cursor preservado);
-    // no piso ou além = o sinal de fim conhecido, mantido como estava.
+    const fp = fingerprintPagina(titulos.map((t) => (t as { codigo_lancamento_omie?: number }).codigo_lancamento_omie));
+    // Página REPETIDA: SEMPRE anomalia, nunca fim. A 1ª versão deste fix usava o piso
+    // declarado como discriminador ("no piso ou além = fim") — o challenge do Codex
+    // derrubou: o piso é SUB-reportado, então "no/após o piso" não significa "no fim"
+    // (piso 80 numa lista de 292: repetição na p100 completava e descartava 101–292).
+    // O fingerprint agora é hash de TODOS os códigos (o antigo, `1ºcódigo:count`,
+    // colidia em ":100" quando o 1º título não tinha código — e com always-throw uma
+    // colisão travaria o sync).
     if (fp === lastFingerprint) {
-      if (pagina < totalPaginas) {
-        throw new Error(`[Fin][${company}] CP p${pagina}: página repetida ANTES do piso declarado (${totalPaginas}) — anomalia Omie, não fim da lista`);
-      }
-      console.error(`[Fin][${company}] CP p${pagina}: página repetida no/após o piso (${totalPaginas}) — tratando como fim`);
-      reachedEnd = true;
-      break;
+      throw new Error(`[Fin][${company}] CP p${pagina}: página repetida (Omie não avançou; piso declarado ${totalPaginas}) — anomalia, não fim da lista`);
     }
     lastFingerprint = fp;
 
@@ -862,15 +886,20 @@ async function syncContasReceber(
       "ListarContasReceber",
       { pagina, registros_por_pagina: PAGE_SIZE }
     );
-    if (!result) break;
+    // Ver CP: budget estourado = pausa resumível; retries esgotados = falha que LANÇA.
+    if (!result) {
+      if (isTimeBudgetExhausted()) break;
+      throw new Error(`[Fin][${company}] CR p${pagina}: Omie sem resposta após retries (fora do estouro de budget) — falha, não fim da lista`);
+    }
 
     // Piso MONOTÔNICO (mesma regra do CP): o total sub-reportado segue NÃO decidindo
     // completude — só separa "fim real" de "vazia no meio" (fault/rate-limit).
     totalPaginas = proximoTotalPaginas(totalPaginas, result.total_de_paginas as number | undefined, MAX_PAGINAS_FIN);
-    const titulos: OmieContaReceber[] =
-      (result.conta_receber_cadastro as OmieContaReceber[] | undefined)
-      || (result.titulosEncontrados as OmieContaReceber[] | undefined)
-      || [];
+    const titulos = listaOmie<OmieContaReceber>(
+      result,
+      ["conta_receber_cadastro", "titulosEncontrados"],
+      `[Fin][${company}] CR p${pagina}`,
+    );
     const veredictoCR = avaliarPagina(titulos.length, pagina, totalPaginas);
     if (veredictoCR === "anomalia") {
       // LANÇA (cursor preservado): completar aqui era o defeito mais caro do arquivo —
@@ -881,16 +910,12 @@ async function syncContasReceber(
     // Guard anti-loop: se o Omie repetir a mesma página (em vez de vazia além do fim),
     // pararíamos só no maxPages e o cursor resumiria pra sempre. Fingerprint = 1º código
     // + count; página repetida = fim (anômalo, logado).
-    const fp = `${(titulos[0] as { codigo_lancamento_omie?: number })?.codigo_lancamento_omie ?? ""}:${titulos.length}`;
-    // Mesmo tratamento do CP (ver comentário lá): repetição antes do piso = anomalia que
-    // truncaria a carteira de recebíveis carimbando 'complete'; no piso ou além = fim.
+    const fp = fingerprintPagina(titulos.map((t) => (t as { codigo_lancamento_omie?: number }).codigo_lancamento_omie));
+    // Mesmo tratamento do CP (ver comentário lá): repetição SEMPRE lança — o piso
+    // sub-reportado não autoriza EOF, e aqui o truncamento silencioso seria da carteira
+    // de recebíveis (DSO, aging, projeção).
     if (fp === lastFingerprint) {
-      if (pagina < totalPaginas) {
-        throw new Error(`[Fin][${company}] CR p${pagina}: página repetida ANTES do piso declarado (${totalPaginas}) — anomalia Omie, não fim da lista`);
-      }
-      console.error(`[Fin][${company}] CR p${pagina}: página repetida no/após o piso (${totalPaginas}) — tratando como fim`);
-      reachedEnd = true;
-      break;
+      throw new Error(`[Fin][${company}] CR p${pagina}: página repetida (Omie não avançou; piso declarado ${totalPaginas}) — anomalia, não fim da lista`);
     }
     lastFingerprint = fp;
 
@@ -1089,11 +1114,12 @@ async function syncMovimentacoes(
   totalPaginas = validarTotalPaginas(firstPage.nTotPaginas as number | undefined, MAX_PAGINAS_FIN);
   // Start from the last page (most recent data) and go backwards.
   // Se startPage veio do cursor (resume), retoma de lá.
-  const retomada = startPage !== undefined;
   pagina = startPage ?? totalPaginas;
-  // Ponto de partida REAL desta invocação: se o piso crescer durante a varredura, o
-  // nTotPaginas do firstPage estava sub-reportado e as páginas acima daqui — as MAIS
-  // RECENTES — nunca entraram no laço. desfechoVarreduraReversa decide o desfecho.
+  // Ponto de partida REAL desta invocação. O nTotPaginas do firstPage pode estar
+  // SUB-reportado, e aí as páginas acima daqui — as MAIS RECENTES — nunca entrariam no
+  // laço. Quem decide isso no fim é a SONDA (ver desfechoVarreduraReversa), não o número
+  // declarado: com sub-reporte constante nada cresce e a run "completaria" com a cauda
+  // inteira invisível (challenge Codex).
   const inicioVarredura = pagina;
 
   while (pagina >= 1 && pagesProcessed < maxPages && !isTimeBudgetExhausted()) {
@@ -1103,12 +1129,16 @@ async function syncMovimentacoes(
       "ListarMovimentos",
       { nPagina: pagina, nRegPorPagina: 100 }
     );
-    if (!result) break;
+    // Ver CP/CR: budget estourado = pausa resumível; retries esgotados = falha que LANÇA.
+    if (!result) {
+      if (isTimeBudgetExhausted()) break;
+      throw new Error(`[Fin][${company}] Mov p${pagina}: Omie sem resposta após retries (fora do estouro de budget) — falha, não fim da varredura`);
+    }
 
     // Piso monotônico: declaração nova só MANTÉM ou CRESCE (nunca encolhe o retrato).
     totalPaginas = proximoTotalPaginas(totalPaginas, result.nTotPaginas as number | undefined, MAX_PAGINAS_FIN);
 
-    const movs: OmieMovimento[] = (result.movimentos as OmieMovimento[] | undefined) || [];
+    const movs = listaOmie<OmieMovimento>(result, ["movimentos"], `[Fin][${company}] Mov p${pagina}`);
     // Página CRUA vazia DENTRO do intervalo declarado = fault transiente/rate-limit
     // disfarçado (o Omie devolve 200 com lista vazia). Distinta da página vazia por
     // FILTRO de janela (uniqueRows=0 abaixo), que é legítima e alimenta o early-exit.
@@ -1150,6 +1180,15 @@ async function syncMovimentacoes(
         };
       })
       .filter((r): r is MovimentoRow => r !== null);
+
+    // P2 do challenge Codex: `uniqueRows.length === 0` NÃO prova "fora da janela". Uma
+    // página crua CHEIA cujas linhas caiam todas no `return null` do map (nenhuma data
+    // resolvível — mudança de schema do Omie, payload degradado) produzia streak de
+    // "vazia legítima", avançava o cursor e podia completar sem gravar movimento algum.
+    // Página com movimentos mas ZERO linhas aproveitáveis é malformada, não vazia.
+    if (movs.length > 0 && rows.length === 0) {
+      throw new Error(`[Fin][${company}] Mov p${pagina}: ${movs.length} movimentos e NENHUM com data resolvível — payload malformado, não página fora da janela`);
+    }
 
     const filteredRows = rows.filter((row) => {
       if (dataInicioIso && row.data_movimento < dataInicioIso) return false;
@@ -1194,15 +1233,33 @@ async function syncMovimentacoes(
   // `complete = pagina < 1` bastava quando o ponto de partida era confiável. Não é: o
   // firstPage sub-reportado fazia a varredura NASCER abaixo do topo, e descer até 1
   // carimbava 'complete' com as páginas mais recentes nunca visitadas.
+  //
+  // SONDA (1 chamada, só quando a descida terminou): a única prova de topo é PERGUNTAR a
+  // página acima dele — inferir pelo número declarado falha quando o sub-reporte é
+  // constante (nada cresce e o buraco fica invisível para sempre). Sonda vazia = topo
+  // provado; sonda com dado = sub-reporte, e o cursor passa a apontá-la; sonda que FALHA
+  // cai no mesmo ramo do "tem dado" de propósito (ausência de sinal não é aprovação).
+  const paginaSonda = Math.max(inicioVarredura, totalPaginas) + 1;
+  let topoVerificadoVazio = false;
+  if (pagina < 1 && !isTimeBudgetExhausted()) {
+    const sonda = await callOmie(company, "financas/mf/", "ListarMovimentos", { nPagina: paginaSonda, nRegPorPagina: 100 });
+    if (sonda) {
+      topoVerificadoVazio = listaOmie<OmieMovimento>(sonda, ["movimentos"], `[Fin][${company}] Mov sonda p${paginaSonda}`).length === 0;
+      if (!topoVerificadoVazio) {
+        console.log(`[Fin][${company}] Mov: sonda p${paginaSonda} TEM dado — topo declarado (${totalPaginas}) estava sub-reportado; cursor vai para a sonda`);
+      }
+    } else {
+      console.error(`[Fin][${company}] Mov: sonda p${paginaSonda} sem resposta — topo NÃO confirmado, não completando`);
+    }
+  }
+
   const desfecho = desfechoVarreduraReversa({
     paginaFinal: pagina,
     inicioVarredura,
     tetoDeclarado: totalPaginas,
-    retomada,
+    topoVerificadoVazio,
+    paginaSonda,
   });
-  if (!desfecho.complete && pagina < 1) {
-    console.log(`[Fin][${company}] Mov: piso cresceu ${inicioVarredura}→${totalPaginas} durante a varredura (firstPage sub-reportado) — retomando do topo novo`);
-  }
 
   return {
     totalSynced,

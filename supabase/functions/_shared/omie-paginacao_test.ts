@@ -8,6 +8,7 @@
 import {
   avaliarPagina,
   desfechoVarreduraReversa,
+  fingerprintPagina,
   MAX_PAGINAS_POS_ESTOQUE,
   proximoTotalPaginas,
   validarTotalPaginas,
@@ -114,38 +115,79 @@ Deno.test("página vazia ALÉM do declarado → fim (semântica segura p/ loop f
 // páginas mais recentes fora da varredura — e o `complete: pagina < 1` antigo carimbava o
 // buraco como completo e zerava o cursor (chip das edges financeiras, 2026-07-23).
 
-Deno.test("varredura reversa — desceu até 1 sem crescimento do teto → complete", () => {
+// ⚠️ A 1ª versão deste helper usava `retomada` para decidir se o crescimento do piso
+// significava sub-reporte ou dado novo. O challenge do Codex (xhigh) derrubou a heurística
+// com dois cenários: (a) se TODAS as respostas declararem 80 num universo de 300, o piso
+// nunca cresce e a run completa com 81–300 nunca visitadas — para sempre; (b) sub-reporte
+// EM ETAPAS (10→50→300) completa na retomada e descarta a cauda. Nenhuma inferência sobre o
+// número DECLARADO resolve: o único fato que prova topo é PERGUNTAR a página acima dele.
+// Daí `topoVerificadoVazio` — a sonda vive no caller (é I/O), a decisão fica aqui e testável.
+
+Deno.test("varredura reversa — desceu até 1 E a sonda confirmou o topo vazio → complete", () => {
   assertEquals(
-    desfechoVarreduraReversa({ paginaFinal: 0, inicioVarredura: 80, tetoDeclarado: 80, retomada: false }),
+    desfechoVarreduraReversa({ paginaFinal: 0, inicioVarredura: 80, tetoDeclarado: 80, topoVerificadoVazio: true, paginaSonda: 81 }),
     { complete: true, nextPage: null },
   );
 });
 
-Deno.test("varredura reversa — teto cresceu no meio (sub-reporte do firstPage) → NÃO completa; cursor no teto novo", () => {
+Deno.test("varredura reversa — desceu até 1 mas a sonda ACHOU dado acima do topo (sub-reporte) → NÃO completa; cursor na sonda", () => {
   assertEquals(
-    desfechoVarreduraReversa({ paginaFinal: 0, inicioVarredura: 10, tetoDeclarado: 50, retomada: false }),
-    { complete: false, nextPage: 50 },
+    desfechoVarreduraReversa({ paginaFinal: 0, inicioVarredura: 80, tetoDeclarado: 80, topoVerificadoVazio: false, paginaSonda: 81 }),
+    { complete: false, nextPage: 81 },
   );
 });
 
-Deno.test("varredura reversa — interrompida no meio (budget/maxPages/streak) → cursor na página atual, nunca complete", () => {
+Deno.test("varredura reversa — sub-reporte CONSTANTE (nada cresce durante a run) também não completa: quem decide é a sonda, não a declaração", () => {
+  // O caso que a heurística antiga dava como completo: 300 páginas reais, todas as
+  // respostas declarando 80. Sem a sonda, 81–300 ficariam fora para sempre.
   assertEquals(
-    desfechoVarreduraReversa({ paginaFinal: 37, inicioVarredura: 80, tetoDeclarado: 80, retomada: false }),
-    { complete: false, nextPage: 37 },
+    desfechoVarreduraReversa({ paginaFinal: 0, inicioVarredura: 80, tetoDeclarado: 80, topoVerificadoVazio: false, paginaSonda: 81 }),
+    { complete: false, nextPage: 81 },
   );
-  // Mesmo interrompida COM teto crescido, o cursor fica na página atual (o resume desce
-  // primeiro; o crescimento não some — a run seguinte parte de firstPage fresco).
+});
+
+Deno.test("varredura reversa — interrompida no meio (budget/maxPages/streak) → cursor na página atual, nunca complete, sonda irrelevante", () => {
   assertEquals(
-    desfechoVarreduraReversa({ paginaFinal: 37, inicioVarredura: 80, tetoDeclarado: 120, retomada: false }),
+    desfechoVarreduraReversa({ paginaFinal: 37, inicioVarredura: 80, tetoDeclarado: 80, topoVerificadoVazio: true, paginaSonda: 81 }),
     { complete: false, nextPage: 37 },
   );
 });
 
-Deno.test("varredura reversa — RETOMADA: teto acima do ponto de resume é dado NOVO (chegou movimento desde o início do ciclo), não sub-reporte → completa ao descer", () => {
+Deno.test("varredura reversa — sonda que FALHOU (não sabemos o topo) nunca completa: ausência de sinal não é aprovação", () => {
   assertEquals(
-    desfechoVarreduraReversa({ paginaFinal: 0, inicioVarredura: 5, tetoDeclarado: 300, retomada: true }),
-    { complete: true, nextPage: null },
+    desfechoVarreduraReversa({ paginaFinal: 0, inicioVarredura: 10, tetoDeclarado: 50, topoVerificadoVazio: false, paginaSonda: 51 }),
+    { complete: false, nextPage: 51 },
   );
+});
+
+// ════════ fingerprintPagina — detectar página REPETIDA sem colidir ════════
+// O fingerprint antigo era `${primeiroCodigo}:${count}` e colidia (achado Codex): duas
+// páginas CHEIAS cujo 1º título não tenha `codigo_lancamento_omie` produzem ambas ":100".
+// Com repetição passando a LANÇAR, colisão viraria sync travado — o fingerprint precisa
+// distinguir páginas diferentes de verdade.
+
+Deno.test("fingerprintPagina — páginas com códigos diferentes têm fingerprints diferentes", () => {
+  const a = fingerprintPagina([101, 102, 103]);
+  const b = fingerprintPagina([201, 202, 203]);
+  assertEquals(a === b, false);
+});
+
+Deno.test("fingerprintPagina — a MESMA página dá o mesmo fingerprint (determinístico)", () => {
+  assertEquals(fingerprintPagina([101, 102, 103]), fingerprintPagina([101, 102, 103]));
+});
+
+Deno.test("fingerprintPagina — duas páginas cheias SEM código no 1º item não colidem (o furo do fingerprint antigo)", () => {
+  const p1 = fingerprintPagina([null, 102, 103]);
+  const p2 = fingerprintPagina([null, 902, 903]);
+  assertEquals(p1 === p2, false);
+});
+
+Deno.test("fingerprintPagina — ordem importa (mesma lista reordenada é outra página)", () => {
+  assertEquals(fingerprintPagina([1, 2, 3]) === fingerprintPagina([3, 2, 1]), false);
+});
+
+Deno.test("fingerprintPagina — páginas de tamanhos diferentes não colidem", () => {
+  assertEquals(fingerprintPagina([1, 2]) === fingerprintPagina([1, 2, 3]), false);
 });
 
 // ════════ teto compartilhado ════════
