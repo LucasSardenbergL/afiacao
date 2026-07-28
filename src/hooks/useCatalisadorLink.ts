@@ -42,7 +42,7 @@ interface ProdutoRow {
 // 1. useCatalisadorLinksMap — mapa global p/ o selo da venda assistida
 // ─────────────────────────────────────────────────────────────────────────────
 export function useCatalisadorLinksMap() {
-  const { data, isLoading } = useQuery<MapRow[]>({
+  const { data, isLoading, isError } = useQuery<MapRow[]>({
     queryKey: ['kb-catalisador-map'],
     staleTime: 5 * 60_000,
     queryFn: async (): Promise<MapRow[]> => {
@@ -83,7 +83,10 @@ export function useCatalisadorLinksMap() {
     return m;
   }, [data]);
 
-  return { byKey, isLoading };
+  // Sob falha o mapa vazio continua sendo o fallback correto (nunca inventar vínculo —
+  // o selo degrada a "sob consulta"), mas a degradação tem de ser DECLARADA: sem isError
+  // a UI não distingue "sem casamento confirmado" de "não consegui ler os casamentos".
+  return { byKey, isLoading, isError };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

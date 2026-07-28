@@ -17,7 +17,7 @@ export function useAdminCustomers() {
   const { user, isStaff, loading: authLoading } = useAuth();
 
   const {
-    customers, scores, total, isCarteira, loading,
+    customers, scores, total, isCarteira, loading, isError, refetch,
     hasNextPage, isFetchingNextPage, fetchNextPage, effectiveUserId,
   } = useClientesScope();
 
@@ -125,6 +125,9 @@ export function useAdminCustomers() {
     authLoading,
     isStaff,
     loading,
+    // Erro/retry da LISTA (vem do scope) — a tela distingue "falhou" de "vazia".
+    isError,
+    refetch,
     customers,
     scores,
     categories,
