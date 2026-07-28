@@ -726,7 +726,19 @@ async function syncContasPagar(
     }
     if (veredictoCP === "fim") { reachedEnd = true; break; } // página vazia no/além do piso = fim real
     const fp = `${(titulos[0] as { codigo_lancamento_omie?: number })?.codigo_lancamento_omie ?? ""}:${titulos.length}`;
-    if (fp === lastFingerprint) { console.error(`[Fin][${company}] CP p${pagina}: página repetida (anomalia Omie) — parando`); reachedEnd = true; break; }
+    // Página REPETIDA: o guard existe porque o Omie pode sinalizar fim repetindo a última
+    // página em vez de devolver vazia. Só que "parar" era `reachedEnd = true` → complete →
+    // cursor ZERADO: repetição no MEIO da lista truncava CP em silêncio. Mesmo discriminador
+    // do vazio (o piso declarado): antes do piso = anomalia (LANÇA, cursor preservado);
+    // no piso ou além = o sinal de fim conhecido, mantido como estava.
+    if (fp === lastFingerprint) {
+      if (pagina < totalPaginas) {
+        throw new Error(`[Fin][${company}] CP p${pagina}: página repetida ANTES do piso declarado (${totalPaginas}) — anomalia Omie, não fim da lista`);
+      }
+      console.error(`[Fin][${company}] CP p${pagina}: página repetida no/após o piso (${totalPaginas}) — tratando como fim`);
+      reachedEnd = true;
+      break;
+    }
     lastFingerprint = fp;
 
     const rows = titulos.map((t) => {
@@ -870,7 +882,16 @@ async function syncContasReceber(
     // pararíamos só no maxPages e o cursor resumiria pra sempre. Fingerprint = 1º código
     // + count; página repetida = fim (anômalo, logado).
     const fp = `${(titulos[0] as { codigo_lancamento_omie?: number })?.codigo_lancamento_omie ?? ""}:${titulos.length}`;
-    if (fp === lastFingerprint) { console.error(`[Fin][${company}] CR p${pagina}: página repetida (anomalia Omie) — parando`); reachedEnd = true; break; }
+    // Mesmo tratamento do CP (ver comentário lá): repetição antes do piso = anomalia que
+    // truncaria a carteira de recebíveis carimbando 'complete'; no piso ou além = fim.
+    if (fp === lastFingerprint) {
+      if (pagina < totalPaginas) {
+        throw new Error(`[Fin][${company}] CR p${pagina}: página repetida ANTES do piso declarado (${totalPaginas}) — anomalia Omie, não fim da lista`);
+      }
+      console.error(`[Fin][${company}] CR p${pagina}: página repetida no/após o piso (${totalPaginas}) — tratando como fim`);
+      reachedEnd = true;
+      break;
+    }
     lastFingerprint = fp;
 
     const rows = titulos.map((t) => {
