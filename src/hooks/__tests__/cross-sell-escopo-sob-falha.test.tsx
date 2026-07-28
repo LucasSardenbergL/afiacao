@@ -90,7 +90,33 @@ function chain(table: string): unknown {
   return c;
 }
 
-vi.mock('@/integrations/supabase/client', () => ({ supabase: { from: (t: string) => chain(t) } }));
+/**
+ * O engine não baixa mais o catálogo de custo: pergunta à RPC quais SKUs são VENDÁVEIS
+ * (margem canônica > 0) e filtra os candidatos por ela. Derivado de PRODUTOS/CUSTOS em vez
+ * de uma lista literal para as duas fontes não poderem divergir — se alguém mudar um custo
+ * do seed e esquecer daqui, o cenário continua coerente.
+ *
+ * Declaração de função (não `const`): `vi.mock` é içado para o topo do módulo, então um
+ * `const` referenciado no factory estouraria "Cannot access before initialization".
+ */
+function vendaveisDoSeed(): { product_id: string }[] {
+  return CUSTOS.filter((c) => {
+    const p = PRODUTOS.find((x) => x.id === c.product_id);
+    return p != null && c.cost_final != null && p.valor_unitario > c.cost_final;
+  }).map((c) => ({ product_id: c.product_id }));
+}
+
+vi.mock('@/integrations/supabase/client', () => ({
+  supabase: {
+    from: (t: string) => chain(t),
+    rpc: (nome: string) =>
+      Promise.resolve(
+        nome === 'get_skus_margem_positiva'
+          ? { data: vendaveisDoSeed(), error: null }
+          : { data: null, error: null },
+      ),
+  },
+}));
 vi.mock('@/contexts/ImpersonationContext', () => ({
   useImpersonation: () => ({ isImpersonating: false, effectiveUserId: FARMER }),
 }));
