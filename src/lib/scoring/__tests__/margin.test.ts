@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { accumulateMarginFromItems } from '../margin';
+import { accumulateMarginFromItems, coberturaCustoCliente } from '../margin';
 
 describe('accumulateMarginFromItems', () => {
   it('soma receita e custo dos itens com custo conhecido', () => {
@@ -106,5 +106,54 @@ describe('accumulateMarginFromItems — item pt-BR (a forma que produção realm
     );
     expect(revenue).toBe(10);
     expect(cost).toBe(3);
+  });
+});
+
+describe('coberturaCustoCliente — ausente≠zero (a distinção que a persistência protege)', () => {
+  it('cliente FORA do marginMap (undefined/null) → {null, null}, jamais {0, 0}', () => {
+    expect(coberturaCustoCliente(undefined)).toEqual({ itensComCusto: null, itensSemCusto: null });
+    expect(coberturaCustoCliente(null)).toEqual({ itensComCusto: null, itensSemCusto: null });
+  });
+
+  it('linha da RPC com contagens → transporta os números', () => {
+    expect(coberturaCustoCliente({ itens_com_custo: 3, itens_sem_custo: 37 }))
+      .toEqual({ itensComCusto: 3, itensSemCusto: 37 });
+  });
+
+  it('itens_com_custo=0 é PRESERVADO como 0 (tem itens, nenhum com custo — não é "não computado")', () => {
+    const cob = coberturaCustoCliente({ itens_com_custo: 0, itens_sem_custo: 40 });
+    expect(cob.itensComCusto).toBe(0);
+    expect(cob.itensComCusto).not.toBeNull();
+    expect(cob.itensSemCusto).toBe(40);
+  });
+
+  it('bigint via PostgREST pode vir string → Number', () => {
+    expect(coberturaCustoCliente({ itens_com_custo: '5', itens_sem_custo: '9' }))
+      .toEqual({ itensComCusto: 5, itensSemCusto: 9 });
+  });
+
+  it('valor não-finito (NaN/Infinity/campo ausente) degrada para null, não fabrica contagem', () => {
+    expect(coberturaCustoCliente({ itens_com_custo: NaN, itens_sem_custo: Infinity }))
+      .toEqual({ itensComCusto: null, itensSemCusto: null });
+    expect(coberturaCustoCliente({ itens_com_custo: 7 }))
+      .toEqual({ itensComCusto: 7, itensSemCusto: null });
+  });
+
+  // Regressões do challenge adversarial /codex (2026-07-22): com `Number.isFinite` puro, TODOS os
+  // valores abaixo viravam 0 — isto é, lixo produzia o veredito "medi e deu zero" na coluna que
+  // existe justamente para distinguir medido-zero de não-medido.
+  it('fail-closed: lixo coercível a 0 NÃO vira contagem zero', () => {
+    for (const lixo of ['', '   ', false, true, [], {}]) {
+      expect(coberturaCustoCliente({ itens_com_custo: lixo, itens_sem_custo: lixo }))
+        .toEqual({ itensComCusto: null, itensSemCusto: null });
+    }
+  });
+
+  it('fail-closed: fração/negativo/acima de 2^53 violam o contrato de count(*) → null', () => {
+    // 3.5 também derrubaria o batch inteiro no `::bigint` da RPC (22P02) se chegasse ao SQL.
+    expect(coberturaCustoCliente({ itens_com_custo: 3.5, itens_sem_custo: -1 }))
+      .toEqual({ itensComCusto: null, itensSemCusto: null });
+    expect(coberturaCustoCliente({ itens_com_custo: Number.MAX_SAFE_INTEGER + 1, itens_sem_custo: 2 }))
+      .toEqual({ itensComCusto: null, itensSemCusto: 2 });
   });
 });

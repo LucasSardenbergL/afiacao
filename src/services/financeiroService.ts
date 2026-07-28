@@ -210,7 +210,13 @@ async function buscarTodasPaginas<T>(
   for (let from = 0; ; from += PAGE) {
     const { data, error } = await fetchPage(from, from + PAGE - 1);
     if (error) throw new Error(`Falha ao carregar ${contexto}: ${error.message}`);
-    const rows = data ?? [];
+    // `data == null` sem `error` é resposta MALFORMADA do PostgREST — não é fim da tabela.
+    // O `?? []` de antes a convertia em página vazia → `0 < PAGE` → laço encerrado → o
+    // acumulado PARCIAL voltava como se fosse a tabela inteira (o defeito que o
+    // fetchAllPages de src/lib/postgrest.ts já rejeita; este helper prometia o mesmo no
+    // JSDoc e não cumpria). Fim LEGÍTIMO é `data: []` — array vazio, que segue adiante.
+    if (data == null) throw new Error(`Falha ao carregar ${contexto}: data=null sem error`);
+    const rows = data;
     out.push(...rows);
     if (rows.length < PAGE) break;
   }
@@ -876,7 +882,11 @@ export async function somarSaldoPorStatus(
       .order('id')
       .range(from, from + PAGE - 1);
     if (error) throw new Error(`Falha ao somar saldo (${tabela}/${company}): ${error.message}`);
-    const rows = (data ?? []) as Array<{ saldo: number | null }>;
+    // data null SEM error = malformada, não fim (classe #1338→#1564, mesmo contrato do
+    // buscarTodasPaginas acima): tratá-la como fim devolvia SOMA PARCIAL como total a
+    // receber/pagar — alimenta DSO, KPIs de /financeiro/gestao e o resumo.
+    if (data == null) throw new Error(`Falha ao somar saldo (${tabela}/${company}): data=null sem error`);
+    const rows = data as Array<{ saldo: number | null }>;
     for (const r of rows) total += r.saldo ?? 0;
     if (rows.length < PAGE) break;
     from += PAGE;

@@ -14,7 +14,7 @@
 // clientes não têm ferramenta alguma: a página `/admin/monthly-reports` ficava em spinner
 // indefinido e o cron mensal (`0 9 1 * *`, timeout 150s) corria risco de nunca entregar.
 // Medido em prod 2026-07-18. Inverter a direção é o que torna o custo O(ferramentas).
-import { fetchAll } from "./paginate.ts";
+import { fetchAll, type BancoPostgrest } from "./paginate.ts";
 
 export interface ResumoFerramenta {
   name: string;
@@ -128,28 +128,9 @@ export function planejarEnvios(
 }
 
 // ── Contrato mínimo do PostgREST que este núcleo usa ────────────────────────
-// Estrutural de propósito: o `SupabaseClient` real satisfaz sem adaptador, e o teste
-// satisfaz com um banco de memória que conta chamadas.
-
-export interface RespostaPostgrest<T> {
-  data: T[] | null;
-  count?: number | null;
-  error: { message: string } | null;
-}
-
-export interface QueryPostgrest<T> extends PromiseLike<RespostaPostgrest<T>> {
-  select(colunas: string, opts?: { count?: "exact"; head?: boolean }): QueryPostgrest<T>;
-  eq(coluna: string, valor: unknown): QueryPostgrest<T>;
-  in(coluna: string, valores: readonly unknown[]): QueryPostgrest<T>;
-  order(coluna: string, opts?: { ascending?: boolean }): QueryPostgrest<T>;
-  range(de: number, ate: number): QueryPostgrest<T>;
-}
-
-export interface BancoPostgrest {
-  // Genérico (e não `QueryPostgrest<unknown>`) para o call-site declarar a forma da linha
-  // que espera de cada tabela — é o que mantém `fetchAll<T>` tipado ponta a ponta.
-  from<T>(tabela: string): QueryPostgrest<T>;
-}
+// Subiu para `paginate.ts` (é contrato de paginação, não do relatório) e é re-exportado
+// daqui para não quebrar quem já importa destes nomes.
+export type { BancoPostgrest, QueryPostgrest, RespostaPostgrest } from "./paginate.ts";
 
 interface LinhaFerramenta {
   id: string;

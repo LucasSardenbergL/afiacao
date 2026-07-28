@@ -115,7 +115,10 @@ async function fetchTitulosVencidosPar(par: ParCliente, corte: string): Promise<
       .order('id', { ascending: true })
       .range(from, from + PAGE - 1);
     if (error) throw new Error(error.message);
-    const rows = (data ?? []) as TituloVencidoRow[];
+    // data null SEM error = resposta malformada, não fim: o `?? []` de antes encerrava o
+    // laço e o vencido 60+ saía SUBESTIMADO como soma firme (classe #1338→#1564).
+    if (data == null) throw new Error('fin_contas_receber: data null sem error — malformada, não é fim');
+    const rows = data as TituloVencidoRow[];
     out.push(...rows);
     if (rows.length < PAGE) break;
   }

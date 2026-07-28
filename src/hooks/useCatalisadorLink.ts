@@ -61,7 +61,10 @@ export function useCatalisadorLinksMap() {
           error: { message: string } | null;
         };
         if (error) throw new Error(error.message);
-        const batch = rows ?? [];
+        // data null SEM error = malformada, não fim (classe #1338→#1564): tratá-la como
+        // fim sumia com vínculos e o selo degradava a "sob consulta" sem aviso.
+        if (rows == null) throw new Error('kb_catalisador_links: data null sem error — malformada, não é fim');
+        const batch = rows;
         all.push(...batch);
         if (batch.length < PAGE) break;
       }

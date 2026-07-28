@@ -31,7 +31,7 @@ Limite conhecido (fase 1): não pega a *race fria* (duas sessões, nenhum arquiv
 
 ## Colisão de CÓDIGO multi-sessão: re-conferir ANTES do `gh pr create` (2026-07-21)
 
-Irmã da colisão de migration acima, sem ferramenta equivalente — e o custo aqui não é sobrescrita
+Irmã da colisão de migration acima — e o custo aqui não é sobrescrita
 silenciosa, é **retrabalho** e o risco de duas correções divergentes do mesmo invariante entrarem
 juntas. Cronologia medida (PRs de margem, mesmo dia):
 
@@ -61,6 +61,48 @@ diff de 26 arquivos para 8 (#1533).
 
 **Regra:** re-conferir `gh pr list` **imediatamente antes do `gh pr create`**, filtrando pelo
 domínio (`gh pr list --search "margem"`). Custa segundos; teria pego o #1525 seis minutos antes.
+
+⚠️ **Trabalho derivado de achado COMPARTILHADO colide por DESENHO, não por azar (2026-07-23).**
+Parecer do Codex, item de post-mortem, bug descrito em doc: a fonte é lida por VÁRIAS sessões, que
+convergem para o mesmo item — a colisão deixa de ser acidente e passa a ser o resultado esperado.
+Aí a checagem `origin/main` + `gh pr list` tem de vir **ANTES de implementar**, não só antes do
+`gh pr create` — e varrendo por **TÍTULO/BRANCH do tema** (`gh pr list --state all --search "<termo>
+in:title"`), **não** por arquivo: o PR concorrente pode consertar o mesmo achado sem tocar nenhum dos
+arquivos que você planeja tocar. Caso medido: uma sessão rodou `/codex` retroativo sobre o #1550,
+recebeu o achado [P1] de PII em `error.message` do PostgREST e implementou o conserto inteiro
+(função de redação + testes + gates completos verdes, 5681 testes); só a re-checagem obrigatória
+pré-commit revelou o **#1560** (`claude/telemetria-postgrest-pii-hardening`), de outra sessão, no
+MESMO achado — e com desenho melhor: **allowlist** (`code` + `categoria`) contra a denylist que eu
+havia escrito, que provei vazar PII interpolada sem delimitador (`cliente 123.456.789-00 (João da
+Silva, joao@exemplo.com) sem permissão` passava inteiro — sem aspas e abaixo do teto de caracteres).
+Implementação descartada por inteiro. **A re-checagem pré-`gh pr create` evita o PR duplicado; só a
+pré-implementação evita a hora perdida.**
+
+**Rede automática (2026-07-23):** hook `.claude/hooks/pr-collision-guard.sh` (PreToolUse Bash)
+re-executa a conferência POR ARQUIVO na hora do `gh pr create` — fetch fresco + interseção de TRÊS
+pontos com a `origin/main` + `gh pr list --json files` dos PRs abertos de outras branches — e
+**AVISA** via `additionalContext` (nunca nega; fail-open granular: gh fora → checa só a main).
+Testes: `scripts/test-pr-collision-guard.sh` (stub git+gh + falsificação por sabotagem do veredito).
+Limites: cobre a re-checagem por ARQUIVO no create; a varredura por TEMA/título e a checagem
+**pré-implementação** (bloco acima) seguem manuais — e a race fria (duas sessões, nenhum PR aberto)
+continua fora do alcance.
+
+⚠️ **Checar colisão de ARQUIVO: `git diff` de TRÊS pontos, não de dois (2026-07-22).** A checagem
+por PR acima tem uma irmã por diff — "a `main` mexeu num arquivo que EU também mexo?" — e o comando
+óbvio **mente depois que você commita**. `git diff --name-only HEAD..origin/main` (DOIS pontos)
+compara as duas árvores, então lista o que a `main` ganhou **mais o inverso dos seus próprios
+commits**: antes de commitar, `HEAD` É a base e ele acerta por acidente; depois de commitar, ele
+acusa os SEUS arquivos como se a `main` os tivesse tocado — falso positivo (me deu um "colisão!"
+fantasma no #1551, um doc-only que a `main` nem havia tocado). Use **TRÊS pontos**, que ancora na
+merge-base: `git diff --name-only HEAD...origin/main` lista só o que a `main` ganhou desde que você
+divergiu (idêntico a `$(git merge-base HEAD origin/main)..origin/main`). Colisão REAL = a interseção
+disso com os SEUS arquivos (`git diff --name-only origin/main...HEAD`, três pontos, HEAD por último).
+Provado num repo descartável nos dois sentidos: o três-pontos remove o falso positivo **e** mantém o
+verdadeiro (arquivo tocado pelos dois lados continua aparecendo — não vira falso-negativo). Regra de
+bolso: **`A...B` para "o que um lado ganhou desde a base"; `A..B` de dois pontos quase nunca é o que
+você quer aqui.** (As skills `fecho`/`lovable-deploy-verify` já usam `origin/main...HEAD` de três
+pontos para classificar o PRÓPRIO diff — correto pelo mesmo motivo; o furo era só a checagem de
+colisão feita à mão.)
 
 ⚠️ **A hipótese "são os chips" foi investigada e NÃO se sustenta** — registrado para não virar
 folclore. Chips criam sessões, mas não escolhem o alvo; o que concentrou quatro sessões no mesmo

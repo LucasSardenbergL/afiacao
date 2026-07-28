@@ -2,6 +2,8 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { omieDateToIso, classifyOmieTransient, classifyPedidosPage, gerarJanelasMensais } from "./pagination.ts";
+import { carregarProductMap } from "../_shared/mapas-paginados.ts";
+import type { BancoPostgrest } from "../_shared/paginate.ts";
 
 type OmieGenericResponse = Record<string, unknown> & { faultstring?: string; codigo_status?: number | string; descricao_status?: string };
 
@@ -962,22 +964,10 @@ async function syncPedidos(
   console.log(`[sync_pedidos][${account}] Client cache from omie_customer_account_map_fresco: ${clientCache.size}`);
 
   // ── Pre-load product mapping ──
-  const productMap = new Map<number, string>();
-  let pPage = 0;
-  hasMore = true;
-  while (hasMore) {
-    const { data: batch } = await supabase
-      .from('omie_products')
-      .select('id, omie_codigo_produto')
-      .eq('account', account)
-      .range(pPage * pgSize, (pPage + 1) * pgSize - 1);
-    if (!batch || batch.length === 0) { hasMore = false; }
-    else {
-      for (const p of batch) productMap.set(p.omie_codigo_produto, p.id);
-      if (batch.length < pgSize) hasMore = false;
-      pPage++;
-    }
-  }
+  // Leitura COMPLETA e fail-closed (`_shared/mapas-paginados.ts`): o laço aqui descartava `error`,
+  // então página que falhava virava "acabou" e todo produto da cauda resolvia `product_id: null`
+  // no item do pedido — null GRAVADO, perda de vínculo persistida (docs/agent/money-path.md §6).
+  const productMap = await carregarProductMap(supabase as unknown as BancoPostgrest, account);
   console.log(`[sync_pedidos][${account}] Product map: ${productMap.size}`);
 
   // System user for created_by
@@ -1331,18 +1321,11 @@ async function repararOrfaosItens(
     return { reparados, itens, divergencias, falhas, semDados, jaCompletos, total: 0, divergenciaAmostra };
   }
 
-  // Pre-load product map (codigo_produto -> product_id)
-  const productMap = new Map<number, string>();
-  {
-    let page = 0; const sz = 1000; let more = true;
-    while (more) {
-      const { data: batch } = await supabase
-        .from('omie_products').select('id, omie_codigo_produto')
-        .eq('account', account).range(page * sz, (page + 1) * sz - 1);
-      if (!batch || batch.length === 0) { more = false; }
-      else { for (const p of batch) productMap.set(p.omie_codigo_produto, p.id); if (batch.length < sz) more = false; page++; }
-    }
-  }
+  // Pre-load product map (codigo_produto -> product_id). Leitura COMPLETA e fail-closed
+  // (`_shared/mapas-paginados.ts`): o laço aqui descartava `error`, então página que falhava
+  // virava "acabou" e o item do pedido órfão era reparado com `product_id: null` — reparo que
+  // GRAVA a perda de vínculo em vez de corrigi-la (docs/agent/money-path.md §6).
+  const productMap = await carregarProductMap(supabase as unknown as BancoPostgrest, account);
 
   // Busca os pais por hash_payload determinístico (omie_<account>_<pid>), NÃO por omie_pedido_id:
   // (account, omie_pedido_id) é duplicado por design (push×pull, ver onda1_fase0) → buscar por id

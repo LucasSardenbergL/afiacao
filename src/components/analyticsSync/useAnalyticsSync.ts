@@ -180,7 +180,16 @@ export function useAnalyticsSync() {
           setClientSyncProgress(`${data.account}: +${data.imported} importados (pág ${data.lastPage}/${data.totalPages})`);
         }
 
-        if (!data?.hasMore) break;
+        // Fim-sentinela da edge: accountIndex além da última conta devolve {done:true}
+        // SEM hasMore (omie-cliente:909) — é fim LEGÍTIMO, não malformação (Codex xhigh).
+        if (data?.done === true) break;
+        // Resposta malformada (sem `hasMore` booleano) NÃO é fim (classe #1338→#1564):
+        // colapsá-la com fim dava toast "Importação concluída" sobre um sync PARCIAL.
+        // Fim legítimo é exclusivamente `hasMore === false` / `done` vindos da edge.
+        if (data == null || typeof data.hasMore !== 'boolean') {
+          throw new Error('sync_all_clients: resposta sem hasMore booleano — malformada, não é fim');
+        }
+        if (!data.hasMore) break;
         accountIndex = data.next.account_index;
         startPage = data.next.start_page;
       }
@@ -219,11 +228,16 @@ export function useAnalyticsSync() {
         });
         if (error) throw error;
 
-        totalSynced += data?.synced || 0;
-        totalSkipped += data?.skipped || 0;
-        totalErrors += data?.errors || 0;
-        totalNeeding = data?.totalNeeding || 0;
-        hasMore = data?.hasMore || false;
+        // Resposta malformada (sem `hasMore` booleano) NÃO é fim (classe #1338→#1564): o
+        // `|| false` de antes encerrava com toast de sucesso e endereços ainda pendentes.
+        if (data == null || typeof data.hasMore !== 'boolean') {
+          throw new Error('sync_addresses: resposta sem hasMore booleano — malformada, não é fim');
+        }
+        totalSynced += data.synced || 0;
+        totalSkipped += data.skipped || 0;
+        totalErrors += data.errors || 0;
+        totalNeeding = data.totalNeeding || 0;
+        hasMore = data.hasMore;
 
         // Safety: if batch produced 0 synced AND 0 skipped AND 0 errors, stop to avoid infinite loop
         if ((data?.synced || 0) === 0 && (data?.skipped || 0) === 0 && (data?.errors || 0) === 0) {

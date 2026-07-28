@@ -31,7 +31,7 @@ const score: ClientScore = {
   customer_user_id: "c1",
   health_score: 80,
   health_class: "saudavel",
-  churn_risk: 0.1,
+  churn_risk: 20, // escala 0–100 (= 100 - health_score), NÃO fração 0–1
   expansion_score: 5,
   priority_score: 5.2,
   avg_monthly_spend_180d: 1000,

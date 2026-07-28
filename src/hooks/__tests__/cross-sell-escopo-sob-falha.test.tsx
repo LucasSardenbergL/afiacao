@@ -32,8 +32,49 @@ const FARMER = 'farmer-real';
 type Q = { table: string; eq: Array<[string, unknown]> };
 let queries: Q[] = [];
 let falharScores = false;
+/** Semeia o caminho FELIZ inteiro — só assim dá para provar o estado "resultado anterior". */
+let semeado = false;
 
 const ERRO_TIMEOUT = { code: '57014', message: 'canceling statement due to statement timeout' };
+
+// Seed mínimo que produz UMA recomendação de cross-sell (p2, puxado pela regra de associação
+// p1→p2). p1 foi comprado e tem margem 40% — acima do corte de up-sell (0,35), então o cenário
+// exercita só o ramo de cross-sell, que é o que interessa aqui.
+const SCORES = [{
+  customer_user_id: 'c1', farmer_id: FARMER,
+  health_score: 80, answer_rate_60d: 50, whatsapp_reply_rate_60d: 50,
+}];
+const PRODUTOS = [
+  { id: 'p1', codigo: 'P1', descricao: 'Produto Um', valor_unitario: 100, metadata: null, ativo: true, omie_codigo_produto: 1, estoque: 10 },
+  { id: 'p2', codigo: 'P2', descricao: 'Produto Dois', valor_unitario: 200, metadata: null, ativo: true, omie_codigo_produto: 2, estoque: 5 },
+];
+const CUSTOS = [
+  { product_id: 'p1', cost_final: 60, cost_price: null },
+  { product_id: 'p2', cost_final: 100, cost_price: null },
+];
+const PEDIDOS = [{
+  customer_user_id: 'c1', total: 200, created_at: '2026-07-01T00:00:00Z',
+  items: [{ product_id: 'p1', quantity: 2, unit_price: 100 }],
+}];
+const REGRAS = [{
+  antecedent_product_ids: ['p1'], consequent_product_ids: ['p2'],
+  confidence: 0.5, lift: 2, support: 0.1,
+}];
+const PERFIS = [{ user_id: 'c1', name: 'Cliente Um', customer_type: 'pj', cnae: null }];
+
+function resposta(table: string): unknown {
+  if (table === 'farmer_client_scores') {
+    if (falharScores) return { data: null, error: ERRO_TIMEOUT };
+    return { data: semeado ? SCORES : [], error: null, count: 0 };
+  }
+  if (!semeado) return { data: [], error: null, count: 0 };
+  if (table === 'omie_products') return { data: PRODUTOS, error: null };
+  if (table === 'product_costs') return { data: CUSTOS, error: null };
+  if (table === 'sales_orders') return { data: PEDIDOS, error: null };
+  if (table === 'farmer_association_rules') return { data: REGRAS, error: null };
+  if (table === 'profiles') return { data: PERFIS, error: null };
+  return { data: [], error: null, count: 0 };
+}
 
 function chain(table: string): unknown {
   const q: Q = { table, eq: [] };
@@ -45,12 +86,7 @@ function chain(table: string): unknown {
     'upsert', 'insert', 'update', 'delete',
   ]) c[m] = () => c;
   c.eq = (col: string, val: unknown) => { q.eq.push([col, val]); return c; };
-  c.then = (resolve: (v: unknown) => void) => {
-    if (q.table === 'farmer_client_scores' && falharScores) {
-      return resolve({ data: null, error: ERRO_TIMEOUT });
-    }
-    return resolve({ data: [], error: null, count: 0 });
-  };
+  c.then = (resolve: (v: unknown) => void) => resolve(resposta(q.table));
   return c;
 }
 
@@ -64,7 +100,7 @@ vi.mock('@/lib/analytics', () => ({ captureException: vi.fn(), track: vi.fn() })
 
 import { useCrossSellEngine } from '../useCrossSellEngine';
 
-beforeEach(() => { queries = []; falharScores = true; vi.clearAllMocks(); });
+beforeEach(() => { queries = []; falharScores = true; semeado = false; vi.clearAllMocks(); });
 
 /** Queries a farmer_client_scores que NÃO filtram por farmer_id = leitura da base inteira. */
 const scoresSemFiltroDeFarmer = () =>
@@ -87,5 +123,79 @@ describe('useCrossSellEngine — página que falha não vira "sem carteira, deve
       (q) => q.table === 'farmer_client_scores' && q.eq.some(([c, v]) => c === 'farmer_id' && v === FARMER),
     );
     expect(comFiltro.length).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * Guard money-path — a falha era ENGOLIDA no `catch`: só `console.error`, nada no contrato.
+ *
+ * Residual do #1545/#1550. O `fetchAllPages` passou a lançar, mas o engine captura a exceção e
+ * segue: `recommendations` mantém o resultado do ÚLTIMO cálculo bem-sucedido, `loading` e
+ * `calculating` voltam a false, e a tela fica idêntica a um recálculo que deu certo. O vendedor
+ * clica "Recalcular", vê a lista se acomodar, e continua olhando números velhos achando que são
+ * novos — enquanto o motivo (uma página perdida) só existe no console do navegador.
+ *
+ * Contrato: o hook EXPÕE a falha (`erro`) e diz se o que está na mão veio de uma execução
+ * ANTERIOR (`desatualizado`). Sem isso a tela não tem como ser honesta — e a correção do
+ * money-path só termina na tela.
+ */
+describe('useCrossSellEngine — a falha do cálculo aparece no contrato do hook', () => {
+  it('DETECTOR: o caminho feliz produz recomendação (senão os asserts abaixo medem o vazio)', async () => {
+    falharScores = false;
+    semeado = true;
+    const { result } = renderHook(() => useCrossSellEngine());
+    await act(async () => { await result.current.calculateRecommendations(); });
+
+    expect(result.current.recommendations.length, 'o seed parou de gerar recomendação').toBe(1);
+    expect(result.current.recommendations[0].crossSell.length).toBeGreaterThan(0);
+  });
+
+  it('expõe o erro quando a leitura falha, em vez de só escrever no console', async () => {
+    const { result } = renderHook(() => useCrossSellEngine());
+    await act(async () => { await result.current.calculateRecommendations(); });
+
+    expect(result.current.erro, 'a falha não chegou ao contrato do hook').toBeTruthy();
+    expect(result.current.calculating, 'ficou preso em "calculando"').toBe(false);
+  });
+
+  it('marca DESATUALIZADO quando mantém o resultado de um cálculo anterior', async () => {
+    falharScores = false;
+    semeado = true;
+    const { result } = renderHook(() => useCrossSellEngine());
+    await act(async () => { await result.current.calculateRecommendations(); });
+    expect(result.current.recommendations).toHaveLength(1);
+
+    // Recálculo que perde uma página: o resultado ANTERIOR continua na tela.
+    falharScores = true;
+    await act(async () => { await result.current.calculateRecommendations(); });
+
+    expect(result.current.recommendations, 'o último dado bom foi descartado').toHaveLength(1);
+    expect(result.current.erro, 'a falha não chegou ao contrato').toBeTruthy();
+    expect(result.current.desatualizado, 'não sinalizou que a lista é de um cálculo anterior').toBe(true);
+  });
+
+  it('sem resultado anterior a falha NÃO é "desatualizado" — é indisponível', async () => {
+    // Discriminador: "velho" e "inexistente" pedem textos diferentes na tela. Marcar
+    // desatualizado sem nada na mão faria a tela prometer um dado que não existe.
+    const { result } = renderHook(() => useCrossSellEngine());
+    await act(async () => { await result.current.calculateRecommendations(); });
+
+    expect(result.current.recommendations).toHaveLength(0);
+    expect(result.current.erro).toBeTruthy();
+    expect(result.current.desatualizado).toBe(false);
+  });
+
+  it('o recálculo bem-sucedido limpa erro e desatualizado', async () => {
+    const { result } = renderHook(() => useCrossSellEngine());
+    await act(async () => { await result.current.calculateRecommendations(); });
+    expect(result.current.erro).toBeTruthy();
+
+    falharScores = false;
+    semeado = true;
+    await act(async () => { await result.current.calculateRecommendations(); });
+
+    expect(result.current.erro, 'o erro anterior ficou grudado após o sucesso').toBeNull();
+    expect(result.current.desatualizado).toBe(false);
+    expect(result.current.recommendations).toHaveLength(1);
   });
 });

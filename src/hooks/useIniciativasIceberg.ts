@@ -125,7 +125,10 @@ async function fetchIniciativas(): Promise<IniciativaIceberg[]> {
       .order('id', { ascending: true })
       .range(from, from + PAGE - 1);
     if (error) throw new Error(error.message);
-    const rows = (data ?? []) as IniciativaIceberg[];
+    // data null SEM error = malformada, não fim (classe #1338→#1564): tratá-la como fim
+    // somava os KPIs R$/mês do iceberg sobre um PREFIXO da tabela.
+    if (data == null) throw new Error('gov_iniciativas: data null sem error — malformada, não é fim');
+    const rows = data as IniciativaIceberg[];
     out.push(...rows);
     if (rows.length < PAGE) break;
   }

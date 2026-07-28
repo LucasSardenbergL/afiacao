@@ -117,3 +117,36 @@ export function selectObjective(
   if (m != null && c != null && m < c * 0.8) return 'consolidacao_margem';
   return 'upsell_premium';
 }
+
+export interface CanariaResultado {
+  nome: string;
+  got: unknown;
+  expected: unknown;
+  ok: boolean;
+}
+
+/** CANÁRIA COMPORTAMENTAL do #1498 — prova de DEPLOY, não de fonte.
+ *
+ *  Roda as decisões deste módulo sobre fixtures fixos e confere contra o esperado. Cada caso é
+ *  uma das fabricações que o #1498 removeu, e o `expected` difere do que o código ANTIGO daria —
+ *  um fixture que os dois códigos resolvem igual não prova deploy. A edge `generate-tactical-plan`
+ *  expõe isto via `{ canary: true }` (staff/cron-gated). Por que ela é necessária: o dado de prod
+ *  NÃO discrimina os dois códigos (o gate de R$/h filtra estruturalmente quem não tem margem, o
+ *  único caso onde eles divergem), então só um probe do COMPORTAMENTO deployado responde "está no
+ *  ar?". Ver o comentário na edge para o histórico completo. */
+export function avaliarCanariaMargem(): { ok: boolean; resultados: CanariaResultado[] } {
+  const casos: Array<Omit<CanariaResultado, 'ok'>> = [
+    // `?? 0`: margem ausente virava R$ 0/h e o cliente sumia do ranking como se fosse ruim.
+    { nome: 'margem_ausente_nao_vira_zero', got: margemConhecida(null), expected: null },
+    // Margem 0 é veredito REAL ("cliente não-lucrativo") e tem de sobreviver ao guard.
+    { nome: 'zero_e_conhecido', got: margemConhecida(0), expected: 0 },
+    // `: 25` mágico: sem par com margem, o cluster virava régua inventada.
+    { nome: 'cluster_sem_pares_e_null', got: calcularClusterMargin([]), expected: null },
+    // `null < 20` é true em JS: sem guard, gasto baixo + margem ausente = "sensivel_preco".
+    { nome: 'perfil_nao_fabrica_sensivel_preco', got: classifyProfile(50, 400, null, 5), expected: 'misto' },
+    // A régua de consolidação não decide sem os dois lados conhecidos.
+    { nome: 'objetivo_sem_margem_nao_consolida', got: selectObjective(10, 1, null, 50, 5, 180), expected: 'upsell_premium' },
+  ];
+  const resultados = casos.map((c) => ({ ...c, ok: c.got === c.expected }));
+  return { ok: resultados.every((r) => r.ok), resultados };
+}

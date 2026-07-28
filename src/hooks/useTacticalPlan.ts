@@ -245,7 +245,7 @@ export const useTacticalPlan = () => {
       customerName: profileMap.get(d.customer_user_id) || 'Cliente',
       planType: d.plan_type || 'essencial',
       healthScore: Number(d.health_score || 0),
-      churnRisk: Number(d.churn_risk || 0),
+      churnRisk: Number(d.churn_risk ?? 0), // ?? (não ||): churn=0 é valor real (cliente saudável), não ausência
       mixGap: Number(d.mix_gap || 0),
       // O plano persistido grava a margem do cliente no INSTANTE da geração; pós-#1495 ela
       // pode ser null, e `Number(null || 0)` a exibiria como "0,0%" — margem nula apurada.
@@ -424,7 +424,7 @@ export const useTacticalPlan = () => {
       }
 
       const healthScore = Number(score.health_score || 0);
-      const churnRisk = Number(score.churn_risk || 0);
+      const churnRisk = Number(score.churn_risk ?? 0); // ?? (não ||): churn=0 é valor real, não ausência
       const avgSpend = Number(score.avg_monthly_spend_180d || 0);
       const marginPct = margemConhecida(score.gross_margin_pct);
       const categoryCount = Number(score.category_count || 0);

@@ -17,6 +17,8 @@ import {
   proximoTotalPaginas,
 } from "../_shared/omie-paginacao.ts";
 import { acumularPosicoesDaPagina, type PosicaoEstoque } from "../_shared/pos-estoque.ts";
+import { carregarProductMap } from "../_shared/mapas-paginados.ts";
+import type { BancoPostgrest } from "../_shared/paginate.ts";
 import {
   chunked,
   particionarCustos,
@@ -193,21 +195,11 @@ async function reprocessOrders(
 
   try {
     // Preload codigo_produto -> product_id (1x por run; evita N+1 por item, igual ao repararOrfaos).
-    const productMap = new Map<number, string>();
-    {
-      let page = 0; const sz = 1000; let more = true;
-      while (more) {
-        const { data: batch } = await db
-          .from("omie_products").select("id, omie_codigo_produto")
-          .eq("account", account).range(page * sz, (page + 1) * sz - 1);
-        if (!batch || batch.length === 0) { more = false; }
-        else {
-          for (const p of batch) productMap.set(Number(p.omie_codigo_produto), p.id as string);
-          if (batch.length < sz) more = false;
-          page++;
-        }
-      }
-    }
+    // Leitura COMPLETA e fail-closed (`_shared/mapas-paginados.ts`): o laço aqui descartava `error`,
+    // então página que falhava virava "acabou" e todo produto da cauda resolvia `product_id: null`
+    // no item — null GRAVADO, perda de vínculo persistida. A exceção sobe pro catch da run, que já
+    // registra em `error_message` do log de reprocess (docs/agent/money-path.md §6).
+    const productMap = await carregarProductMap(db as unknown as BancoPostgrest, account);
 
     let pagina = 1;
     let totalPaginas = 1;

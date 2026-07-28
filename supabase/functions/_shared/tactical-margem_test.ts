@@ -6,6 +6,7 @@
 //   src/lib/scoring/objective.ts          (selectObjective)
 //   src/hooks/useTacticalPlan.ts:404-418  (cluster = média dos PARES com margem conhecida)
 import {
+  avaliarCanariaMargem,
   calcularClusterMargin,
   classifyProfile,
   margemConhecida,
@@ -182,4 +183,37 @@ Deno.test("profile: margem AUSENTE não vira 'orientado_qualidade'", () => {
 Deno.test("profile: margem ausente ainda permite o ramo que NÃO usa margem", () => {
   // orientado_produtividade não depende de margem — segue decidível.
   assertEquals(classifyProfile(70, 3000, null, 5), "orientado_produtividade");
+});
+
+// ── Canária comportamental (#1498): a prova de DEPLOY que a edge expõe via {canary:true} ─────
+Deno.test("canária: todos os casos passam sobre o helper CORRETO (baseline verde)", () => {
+  const { ok, resultados } = avaliarCanariaMargem();
+  assertEquals(ok, true);
+  assertEquals(resultados.length, 5);
+  assertEquals(resultados.every((r) => r.ok), true);
+});
+
+Deno.test("canária: cada caso mira uma fabricação distinta do #1498", () => {
+  // Os nomes são o contrato lido pelo verificador pós-deploy — se um sumir, a cobertura mudou.
+  const nomes = avaliarCanariaMargem().resultados.map((r) => r.nome).sort();
+  assertEquals(nomes, [
+    "cluster_sem_pares_e_null",
+    "margem_ausente_nao_vira_zero",
+    "objetivo_sem_margem_nao_consolida",
+    "perfil_nao_fabrica_sensivel_preco",
+    "zero_e_conhecido",
+  ]);
+});
+
+Deno.test("canária: o `expected` de cada caso DIFERE do que o código antigo daria", () => {
+  // Uma canária cujo esperado casa com o código velho não prova deploy nenhum. Estes são
+  // exatamente os valores que o #1498 mudou — o que o código ANTIGO produziria está ao lado.
+  const r = avaliarCanariaMargem().resultados;
+  const by = (n: string) => r.find((x) => x.nome === n)!;
+  assertEquals(by("margem_ausente_nao_vira_zero").expected, null);        // antigo: 0
+  assertEquals(by("cluster_sem_pares_e_null").expected, null);            // antigo: 25
+  assertEquals(by("perfil_nao_fabrica_sensivel_preco").expected, "misto"); // antigo: "sensivel_preco"
+  assertEquals(by("objetivo_sem_margem_nao_consolida").expected, "upsell_premium"); // antigo: consolidacao_margem (se cluster contava)
+  // zero_e_conhecido guarda o outro lado: margem 0 REAL não pode ser confundida com ausência.
+  assertEquals(by("zero_e_conhecido").got, 0);
 });

@@ -2482,6 +2482,8 @@ export type Database = {
           health_class: string | null
           health_score: number | null
           id: string
+          itens_com_custo: number | null
+          itens_sem_custo: number | null
           last_signal_recalc_at: string | null
           m_score: number | null
           priority_score: number | null
@@ -2513,6 +2515,8 @@ export type Database = {
           health_class?: string | null
           health_score?: number | null
           id?: string
+          itens_com_custo?: number | null
+          itens_sem_custo?: number | null
           last_signal_recalc_at?: string | null
           m_score?: number | null
           priority_score?: number | null
@@ -2544,6 +2548,8 @@ export type Database = {
           health_class?: string | null
           health_score?: number | null
           id?: string
+          itens_com_custo?: number | null
+          itens_sem_custo?: number | null
           last_signal_recalc_at?: string | null
           m_score?: number | null
           priority_score?: number | null
@@ -13903,6 +13909,7 @@ export type Database = {
           created_at: string | null
           data_geracao: string | null
           desativada_em: string | null
+          desativada_motivo: string | null
           embalagem_id: string
           id: string
           id_seq: number | null
@@ -13923,6 +13930,7 @@ export type Database = {
           created_at?: string | null
           data_geracao?: string | null
           desativada_em?: string | null
+          desativada_motivo?: string | null
           embalagem_id: string
           id?: string
           id_seq?: number | null
@@ -13943,6 +13951,7 @@ export type Database = {
           created_at?: string | null
           data_geracao?: string | null
           desativada_em?: string | null
+          desativada_motivo?: string | null
           embalagem_id?: string
           id?: string
           id_seq?: number | null
@@ -17867,6 +17876,7 @@ export type Database = {
           personalizada: boolean | null
           preco_csv_legado: number | null
           preco_final_sayersystem: number | null
+          preco_piso_legado: number | null
           receita_valida: boolean | null
           sku_id: string | null
           subcolecao_id: string | null
@@ -18263,6 +18273,7 @@ export type Database = {
           skus_incluidos: number
         }[]
       }
+      claim_calculate_scores: { Args: { p_run_id: string }; Returns: boolean }
       claim_carteira_rebuild: { Args: { p_run_id: string }; Returns: boolean }
       claim_estoque_full_sync: {
         Args: { p_account: string; p_at: string; p_run_id: number }
@@ -18557,6 +18568,10 @@ export type Database = {
       fin_sync_watchdog_check: { Args: never; Returns: undefined }
       fin_user_can_access: {
         Args: { check_company?: string }
+        Returns: boolean
+      }
+      finalizar_calculate_scores: {
+        Args: { p_run_id: string; p_status: string }
         Returns: boolean
       }
       finalizar_carteira_rebuild: {
@@ -19494,6 +19509,7 @@ export type Database = {
         }
         Returns: Json
       }
+      tint_watchdog_corante_check: { Args: never; Returns: undefined }
       upsert_push_subscription: {
         Args: {
           p_endpoint: string

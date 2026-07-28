@@ -162,25 +162,21 @@ export const useFarmerScoring = (farmerId?: string) => {
       }
 
       // Fornecedores fora da carteira: clientes marcados p/ exclusão saem do universo ANTES do cálculo.
-      const flaggeds = new Set<string>();
-      for (let fp = 0; ; fp++) {
-        const { data: fPage, error: fErr } = await supabase
+      // FAIL-CLOSED via fetchAllPages (classe #1338→#1564): o laço manual anterior tratava
+      // `data:null` sem error como fim (conjunto PARCIAL de excluídos = fornecedor voltando ao
+      // fan-out com score) e paginava offset SEM `.order()` estável (pula/duplica linha entre
+      // páginas). O throw do helper cai no catch abaixo — aborta o recálculo/upsert e mantém o
+      // último estado bom, o mesmo fail-closed do Codex P1, agora para erro E malformada.
+      const flaggedRows = await fetchAllPages<{ user_id: string }>((de, ate) =>
+        supabase
           .from('cliente_classificacao')
           .select('user_id')
           .eq('excluir_da_carteira', true)
-          .range(fp * 1000, fp * 1000 + 999);
-        // FAIL-CLOSED (Codex P1): money-path. Se a leitura dos fornecedores excluídos falhar,
-        // aborta o recálculo/upsert (não grava score de fornecedor); mantém o último estado bom.
-        if (fErr) {
-          console.warn('[useFarmerScoring] erro ao ler fornecedores excluídos, abortando:', fErr.message);
-          setCalculating(false);
-          setLoading(false);
-          return;
-        }
-        if (!fPage || fPage.length === 0) break;
-        for (const r of fPage) flaggeds.add(r.user_id);
-        if (fPage.length < 1000) break;
-      }
+          .order('user_id', { ascending: true })
+          .range(de, ate) as unknown as PromiseLike<{ data: { user_id: string }[] | null; error: unknown }>,
+        'cliente_classificacao/scoring',
+      );
+      const flaggeds = new Set<string>(flaggedRows.map((r) => r.user_id));
 
       // 2. Load product costs for margin calculation (paginado: 3.637 linhas > capa de 1.000)
       const productCosts = await fetchAllPages<ProductCostRow>((de, ate) =>

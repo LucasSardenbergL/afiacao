@@ -2,7 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { fetchAll } from "../_shared/paginate.ts";
-import { calcularClusterMargin, classifyProfile, margemConhecida, selectObjective } from "../_shared/tactical-margem.ts";
+import { avaliarCanariaMargem, calcularClusterMargin, classifyProfile, margemConhecida, selectObjective } from "../_shared/tactical-margem.ts";
 import { inicioDiaOperacional } from "../_shared/dia-operacional.ts";
 
 const corsHeaders = {
@@ -33,6 +33,32 @@ serve(async (req) => {
 
   try {
     const body = await req.json();
+
+    // CANÁRIA COMPORTAMENTAL do helper de margem (#1498) — NÃO escreve, NÃO chama LLM, NÃO toca o
+    // DB. Roda as decisões PURAS de `_shared/tactical-margem.ts` DEPLOYADAS (não as da `main`)
+    // sobre fixtures fixos e compara com o esperado.
+    //
+    // POR QUE ELA EXISTE: em 2026-07-22 gastamos uma sessão inteira tentando provar que o #1498
+    // estava no ar e NÃO conseguimos. O dado de produção não discrimina os dois códigos: o gate de
+    // R$/h ≥ 50 filtra estruturalmente quem não tem margem (velho: NULL→`?? 0`→R$0/h→reprovado;
+    // novo: indecidível→excluído), então o batch produz o MESMO conjunto nos dois. O cron das 08:00
+    // gerou 2 planos de 3.858 clientes, todos limpos — consistente com a correção estar no ar E com
+    // ela não estar. Sem probe, a única via era o founder gerar um plano à mão para um cliente sem
+    // margem. Isto substitui esse clique.
+    //
+    // Prova duas coisas que o commit de deploy NÃO prova: (1) esta action RESPONDE ⇒ o helper subiu
+    // no MESMO build (senão o body cai no fluxo normal e falta `customerContext`); (2) a lógica
+    // certa está no ar — margem ausente degrada em vez de fabricar. NÃO prova que o real-path usa o
+    // helper (isso é o guard textual + paridade), prova que a DECISÃO deployada está correta. Os
+    // fixtures vivem no helper (`avaliarCanariaMargem`), testados em tactical-margem_test.ts.
+    if (body.canary === true) {
+      const { ok, resultados } = avaliarCanariaMargem();
+      return new Response(JSON.stringify({ canary: true, ok, resultados }), {
+        status: ok ? 200 : 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
     // Modo self-contained (cron): body traz { customerId, farmerId } e a edge monta o
     // contexto + grava o plano. Modo front (legado): body traz customerContext já montado
     // e o front é quem grava (useTacticalPlan.generatePlan).

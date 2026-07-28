@@ -53,6 +53,19 @@ function bancoFake(tabelas: Record<string, Linha[]>, erroDoBanco?: string) {
         linhas = linhas.filter((l) => alvo.has(l[coluna]));
         return q;
       },
+      // Este núcleo não usa gte/lt/not. LANÇAM em vez de devolver `q` sem filtrar: um
+      // filtro que o double ignora em silêncio faria o teste medir mais linhas do que a
+      // query devolveria de verdade — falso-verde. Se o núcleo passar a usá-los, o teste
+      // quebra alto e pede a implementação aqui.
+      gte(coluna) {
+        throw new Error(`double: .gte(${coluna}) não implementado neste núcleo`);
+      },
+      lt(coluna) {
+        throw new Error(`double: .lt(${coluna}) não implementado neste núcleo`);
+      },
+      not(coluna) {
+        throw new Error(`double: .not(${coluna}) não implementado neste núcleo`);
+      },
       order(coluna, opts) {
         // Textual: as colunas de ordenação aqui são ids, e `unknown` não compara com `<`.
         const asc = opts?.ascending !== false;

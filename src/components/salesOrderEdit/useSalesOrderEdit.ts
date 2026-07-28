@@ -117,7 +117,10 @@ export function useSalesOrderEdit() {
             .order('id')
             .range(from, to);
           if (error) throw error;
-          return (data ?? []) as unknown as OmieProduct[];
+          // data null SEM error = malformada, não página vazia: devolvê-la ao paginateAll
+          // encerraria o catálogo de edição PARCIAL em silêncio (classe #1338→#1564).
+          if (data == null) throw new Error('omie_products (edição): data null sem error — malformada, não é fim');
+          return data as unknown as OmieProduct[];
         }),
       ]);
 

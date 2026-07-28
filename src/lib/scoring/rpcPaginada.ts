@@ -56,7 +56,14 @@ export async function coletarPaginado<T>(
     const { data, error } = await buscar(pagina * tamanhoPagina, (pagina + 1) * tamanhoPagina - 1);
     if (error) throw new Error(`${rotulo} pág.${pagina}: ${error.message}`);
 
-    const lote = data ?? [];
+    // `data == null` sem `error` é resposta MALFORMADA do PostgREST — não é fim da fonte.
+    // O `?? []` de antes a convertia em página vazia → EOF falso → o acumulado PARCIAL
+    // voltava como se fosse a fonte inteira (o defeito que fetchAllPages de @/lib/postgrest
+    // e buscarTodasPaginas pós-#1564 já rejeitam). Fim LEGÍTIMO é `data: []`.
+    if (data == null) {
+      throw new Error(`${rotulo} pág.${pagina}: data null sem error — resposta malformada, não é fim da fonte`);
+    }
+    const lote = data;
     linhas.push(...lote);
 
     // Página incompleta = acabou. Página cheia é ambígua (pode ser a última exata), então pedimos
