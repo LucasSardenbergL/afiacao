@@ -832,6 +832,11 @@ async function fetchAllProfileDocs(db: SupabaseClient): Promise<Set<string>> {
       .from("profiles")
       .select("document")
       .not("document", "is", null)
+      // `.order("id")` (PK, conferida em prod) é o que torna a paginação ESTÁVEL: sem ela o
+      // Postgres não garante a mesma sequência entre páginas e o Set sai furado — e um documento
+      // que falta aqui faz o dedup a jusante criar usuário Auth NOVO para cliente que JÁ existe
+      // (a fábrica de clones do #1425). O erro já era tratado; faltava a outra metade (§7).
+      .order("id", { ascending: true })
       .range(from, from + pageSize - 1);
     if (error) throw new Error(`fetch profiles docs: ${error.message}`);
     const rows = (data ?? []) as { document: string | null }[];

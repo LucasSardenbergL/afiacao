@@ -73,7 +73,31 @@ Deno.test("edges convertidas não paginam à mão (sem .range() no call-site)", 
 //
 // Predicado literal de novo (substring `.order(` na expressão encadeada, 6 linhas de janela)
 // — nada de regex esperta sobre texto, pela lição recorrente do §"O ALVO mente".
-const VIGIADAS_ORDER = ["omie-cliente"];
+//
+// As 5 edges abaixo do `omie-cliente` entraram na varredura de 2026-07-23, que mediu a classe
+// contra a main JÁ com o #1581 (que fechou a metade "descarta error"/"?? []" em 24 sites, e o
+// gate `src/__tests__/paginacao-artesanal-gate.test.ts` — que NÃO cobre a metade do `.order()`).
+// Os laços destas 5 tratavam o erro e mesmo assim paginavam sem ordem estável:
+//   omie-analytics-sync  fetchAllProfileDocs  → Set do dedup por documento (a fábrica de clones)
+//   calculate-scores     ownerMap             → dono do score na agenda do vendedor
+//   fin-funding          títulos antecipáveis · algorithm-a-audit  helper genérico
+//   ai-ops-agent         métricas por cliente
+const VIGIADAS_ORDER = [
+  "omie-cliente",
+  "omie-analytics-sync",
+  "calculate-scores",
+  "fin-funding",
+  "algorithm-a-audit",
+  "ai-ops-agent",
+];
+
+// `.rpc(...)` é a ÚNICA alternativa aceita ao `.order()` no call-site: numa função SQL a cláusula
+// ORDER BY mora no CORPO, e encadear `.order()` por fora seria redundante. A obrigação não some —
+// MUDA de lugar —, então quem adicionar uma RPC paginada aqui tem de conferir o ORDER BY dela.
+// Conferido em prod para a única de hoje (`seed_targets_faltantes`, LANGUAGE sql): `ORDER BY
+// l.user_id`. Aceitar a palavra do comentário do call-site não bastaria — foi verificado no
+// `pg_get_functiondef` via psql-ro.
+const ORDENACAO_ACEITA = [".order(", ".rpc("];
 
 Deno.test("edges com fetchAll direto: todo .range( tem .order( na mesma expressão", async () => {
   const ofensas: string[] = [];
@@ -88,7 +112,7 @@ Deno.test("edges com fetchAll direto: todo .range( tem .order( na mesma express�
         .slice(Math.max(0, i - 6), i + 1)
         .map(semComentario)
         .join("\n");
-      if (!janela.includes(".order(")) {
+      if (!ORDENACAO_ACEITA.some((forma) => janela.includes(forma))) {
         ofensas.push(`${edge}/index.ts:${i + 1}: ${linha.trim()}`);
       }
     });

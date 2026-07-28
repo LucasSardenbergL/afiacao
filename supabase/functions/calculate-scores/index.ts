@@ -573,6 +573,11 @@ Deno.serve(async (req) => {
             const { data: aPage, error: aErr } = await supabase
               .from('carteira_assignments')
               .select('customer_user_id, owner_user_id')
+              // O fail-closed acima cobre o ERRO; a ordem estável pela PK (conferida em prod) cobre
+              // a outra metade: sem ela uma linha pulada entre páginas deixa o cliente FORA do
+              // ownerMap, e o `?? farmer_id` a jusante atribui o score a quem ligou/visitou em vez
+              // do DONO — exatamente o "dono errado na agenda" que o comentário acima cita (§7).
+              .order('id', { ascending: true })
               .range(cp * 1000, cp * 1000 + 999);
             if (aErr) throw new Error(`carteira_assignments falhou ao semear: ${aErr.message}`);
             const aRows = (aPage ?? []) as Array<{ customer_user_id: string; owner_user_id: string }>;
