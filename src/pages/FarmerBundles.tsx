@@ -9,7 +9,6 @@ import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { useFarmerBundles } from '@/components/farmer/bundles/useFarmerBundles';
 import { CustomerBundleCard } from '@/components/farmer/bundles/CustomerBundleCard';
 import { RuleCard } from '@/components/farmer/bundles/RuleCard';
-import { fmt } from '@/components/farmer/bundles/format';
 
 const FarmerBundles = () => {
   const {
@@ -24,7 +23,6 @@ const FarmerBundles = () => {
     diagHook,
     expandedCustomer,
     toggleCustomer,
-    totalLIE,
     totalBundles,
   } = useFarmerBundles();
 
@@ -54,7 +52,8 @@ const FarmerBundles = () => {
         <div className="grid grid-cols-3 gap-2">
           <Card><CardContent className="p-2.5 text-center"><p className="text-lg font-bold">{rules.length}</p><p className="text-[9px] text-muted-foreground">Regras</p></CardContent></Card>
           <Card><CardContent className="p-2.5 text-center"><p className="text-lg font-bold">{totalBundles}</p><p className="text-[9px] text-muted-foreground">Bundles</p></CardContent></Card>
-          <Card><CardContent className="p-2.5 text-center"><p className="text-lg font-bold text-status-success">{fmt(totalLIE)}</p><p className="text-[9px] text-muted-foreground">LIE Total</p></CardContent></Card>
+          {/* "LIE Total" (soma em R$) saiu: sem custo no browser não há lucro esperado a somar. */}
+          <Card><CardContent className="p-2.5 text-center"><p className="text-lg font-bold text-status-success">{customerBundles.length}</p><p className="text-[9px] text-muted-foreground">Clientes</p></CardContent></Card>
         </div>
 
         <Tabs defaultValue="bundles" className="w-full">

@@ -3,7 +3,6 @@ import { supabase } from '@/integrations/supabase/client';
 import type { Json } from '@/integrations/supabase/types';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { toast } from 'sonner';
-import { custoCanonico } from '@/lib/custo/custoCanonico';
 import { margemConhecida } from '@/lib/scoring/margin';
 import { fetchAllPages } from '@/lib/postgrest';
 
@@ -23,13 +22,23 @@ export interface BundleRecommendation {
   id?: string;
   customerId: string;
   customerName: string;
-  products: { id: string; name: string; price: number; cost: number; margin: number }[];
+  /** Sem `cost`/`margin`: o custo não chega mais ao browser, e `price` é público (o cliente o vê). */
+  products: { id: string; name: string; price: number }[];
   support: number;
   confidence: number;
   lift: number;
   pBundle: number;
-  mBundle: number;
-  lieBundle: number;
+  /**
+   * Score de AFINIDADE do bundle — adimensional, NÃO é dinheiro. Ver `Recommendation.affinityScore`
+   * em useCrossSellEngine para o racional completo (custo fora do browser → não existe mais
+   * "lucro esperado"; `complexityFactor` fica fora do score porque a fórmula é invertida e a
+   * tabela que o alimenta é escrivível por employee).
+   *
+   * ⚠️ Nunca formatar como R$. E NÃO comparar com `Recommendation.affinityScore` do motor
+   * individual: `pBundle` multiplica por `lift/2` e não é limitado a 1, então as duas escalas
+   * não são comensuráveis (apontado pelo Codex na rodada 3).
+   */
+  affinityBundle: number;
   complexityFactor: number;
   status: string;
 }
@@ -78,12 +87,6 @@ interface ProductRow {
   metadata: unknown;
   ativo: boolean | null;
   omie_codigo_produto: number | string | null;
-}
-
-interface ProductCostRow {
-  product_id: string;
-  cost_final: number | string | null;
-  cost_price: number | string | null;
 }
 
 interface ProfileRow {
@@ -177,12 +180,12 @@ export const useBundleEngine = () => {
       let clientScores = await fetchAllScores(effectiveUserId);
       if (!clientScores.length && !isImpersonating) clientScores = await fetchAllScores();
 
-      // As três estouram a capa de 1.000 do PostgREST (3.108 SKUs ativos, 3.637
-      // linhas de custo, 5.668 perfis) e vinham truncadas em silêncio: o costMap lia a maior
-      // parte do catálogo como "sem custo" e o profileMap deixava a maioria dos clientes sem
+      // As duas paginadas estouram a capa de 1.000 do PostgREST (3.108 SKUs ativos, 5.668
+      // perfis) e vinham truncadas em silêncio: o profileMap deixava a maioria dos clientes sem
       // perfil — e sem perfil o cliente é pulado (`if (!profile) continue`), ou seja, nunca
-      // recebia bundle.
-      const [products, productCosts, profiles] = await Promise.all([
+      // recebia bundle. A terceira leitura era `product_costs`, que saiu: o custo não chega mais
+      // ao browser (a RPC abaixo responde só "este SKU é vendável?").
+      const [products, profiles, vendaveisResult] = await Promise.all([
         fetchAllPages<ProductRow>((de, ate) =>
           supabase
             .from('omie_products')
@@ -192,14 +195,6 @@ export const useBundleEngine = () => {
             .range(de, ate) as unknown as PromiseLike<{ data: ProductRow[] | null; error: unknown }>,
           'omie_products/bundle',
         ),
-        fetchAllPages<ProductCostRow>((de, ate) =>
-          supabase
-            .from('product_costs')
-            .select('product_id, cost_final, cost_price')
-            .order('product_id', { ascending: true })
-            .range(de, ate) as unknown as PromiseLike<{ data: ProductCostRow[] | null; error: unknown }>,
-          'product_costs/bundle',
-        ),
         fetchAllPages<ProfileRow>((de, ate) =>
           supabase
             .from('profiles')
@@ -208,7 +203,18 @@ export const useBundleEngine = () => {
             .range(de, ate) as unknown as PromiseLike<{ data: ProfileRow[] | null; error: unknown }>,
           'profiles/bundle',
         ),
+        // Quais SKUs são VENDÁVEIS (margem canônica > 0) — o browser não vê mais custo.
+        supabase.rpc('get_skus_margem_positiva') as unknown as Promise<{ data: { product_id: string }[] | null; error: unknown }>,
       ]);
+
+      // FAIL-CLOSED: falha na RPC → NENHUM bundle. Degradar para "monta bundle com tudo" poria
+      // produto de PREJUÍZO na oferta combinada, que é o pior desfecho possível aqui.
+      if (vendaveisResult.error || !vendaveisResult.data) {
+        console.error('get_skus_margem_positiva falhou — sem bundles (fail-closed):', vendaveisResult.error);
+        setCustomerBundles([]);
+        return;
+      }
+      const vendaveis = new Set(vendaveisResult.data.map((r) => r.product_id));
 
       if (!clientScores?.length) { setCustomerBundles([]); return; }
 
@@ -228,13 +234,6 @@ export const useBundleEngine = () => {
       );
 
       // Build maps
-      const costMap = new Map<string, number>();
-      // Custo canônico = cost_final (proxy-aware); cost_price agora é nullable (só custo real).
-      // Number(null)===0 inflava a margem (ausente≠zero) — excluir SKU sem custo, não fabricar 0.
-      (productCosts || []).forEach((pc) => {
-        const c = custoCanonico(pc);
-        if (c != null) costMap.set(pc.product_id, c);
-      });
       const productMap = new Map<string, ProductRow>();
       (products || []).forEach((p) => productMap.set(p.id, p));
       const omieToProductId = new Map<number, string>();
@@ -452,14 +451,10 @@ export const useBundleEngine = () => {
           for (const pid of missingProducts) {
             const product = productMap.get(pid);
             if (!product) continue;
-            // Custo desconhecido → SKU fora do bundle (ausente≠zero). Com `|| 0` a margem virava
-            // o preço cheio, e como o único filtro é `margin <= 0` o produto sem custo nunca era
-            // excluído: o LIE do bundle passava a preferir justamente o que falta cadastrar.
-            const cost = costMap.get(pid);
-            if (cost == null) continue;
+            // O custo decide EXCLUSÃO, nunca ORDEM: só entra SKU que a RPC listou como vendável
+            // (margem canônica > 0). Sem custo conhecido não entra — ausente≠zero (#1466).
+            if (!vendaveis.has(pid)) continue;
             const price = Number(product.valor_unitario || 0);
-            const margin = price - cost;
-            if (margin <= 0) continue;
 
             // Try to build bundles of 2-3 by combining with other high-lift rules
             const relatedRules = applicableRules.filter(r2 =>
@@ -472,12 +467,9 @@ export const useBundleEngine = () => {
                 if (purchased.has(relatedPid) || relatedPid === pid) continue;
                 const relatedProduct = productMap.get(relatedPid);
                 if (!relatedProduct) continue;
-                // Mesmo motivo do produto principal: sem custo o par sai do bundle.
-                const relatedCost = costMap.get(relatedPid);
-                if (relatedCost == null) continue;
+                // Mesmo motivo do produto principal: só o vendável entra no par.
+                if (!vendaveis.has(relatedPid)) continue;
                 const relatedPrice = Number(relatedProduct.valor_unitario || 0);
-                const relatedMargin = relatedPrice - relatedCost;
-                if (relatedMargin <= 0) continue;
 
                 const comboKey = [pid, relatedPid].sort().join('|');
                 if (usedCombos.has(comboKey)) continue;
@@ -489,27 +481,27 @@ export const useBundleEngine = () => {
                 const avgSupport = (rule.support + related.support) / 2;
 
                 const pBundle = avgConfidence * (avgLift / 2) * (healthScore / 100) * engagementFactor;
-                const mBundle = margin + relatedMargin;
 
                 // Constante (ver bloco de premissas): a média dos dois fatores é ela mesma.
+                // Persistida como dado, mas NÃO multiplica o score — sendo 1.0 e igual para todo
+                // par, multiplicar por ela não muda ORDEM nenhuma. Ver `affinityBundle`.
                 const complexityFactor = FATOR_COMPLEXIDADE;
 
-                const lieBundle = pBundle * mBundle * complexityFactor;
+                const affinityBundle = pBundle;
 
-                if (lieBundle > 0) {
+                if (affinityBundle > 0) {
                   bundles.push({
                     customerId: cid,
                     customerName: profile.name ?? '',
                     products: [
-                      { id: pid, name: product.descricao, price, cost, margin },
-                      { id: relatedPid, name: relatedProduct.descricao, price: relatedPrice, cost: relatedCost, margin: relatedMargin },
+                      { id: pid, name: product.descricao, price },
+                      { id: relatedPid, name: relatedProduct.descricao, price: relatedPrice },
                     ],
                     support: avgSupport,
                     confidence: avgConfidence,
                     lift: avgLift,
                     pBundle: Math.round(pBundle * 1000) / 10,
-                    mBundle: Math.round(mBundle * 100) / 100,
-                    lieBundle: Math.round(lieBundle * 100) / 100,
+                    affinityBundle: Math.round(affinityBundle * 10000) / 10000,
                     complexityFactor,
                     status: 'pendente',
                   });
@@ -519,8 +511,8 @@ export const useBundleEngine = () => {
           }
         }
 
-        // Sort by LIE, take top 2
-        bundles.sort((a, b) => b.lieBundle - a.lieBundle);
+        // Ordena por AFINIDADE, top 2
+        bundles.sort((a, b) => b.affinityBundle - a.affinityBundle);
         const topBundles = bundles.slice(0, 2);
 
         // Best individual product (from cross-sell engine data)
@@ -566,12 +558,13 @@ export const useBundleEngine = () => {
         }
       }
 
-      // Sort by total bundle LIE
-      allCustomerBundles.sort((a, b) => {
-        const totalA = a.bundles.reduce((s, b) => s + b.lieBundle, 0);
-        const totalB = b.bundles.reduce((s, b) => s + b.lieBundle, 0);
-        return totalB - totalA;
-      });
+      // Ordena clientes pela MELHOR afinidade de bundle (não pela soma — somar scores premia
+      // quem tem mais bundles na lista, não quem tem a melhor oferta).
+      allCustomerBundles.sort(
+        (a, b) =>
+          Math.max(0, ...b.bundles.map((x) => x.affinityBundle)) -
+          Math.max(0, ...a.bundles.map((x) => x.affinityBundle)),
+      );
 
       setCustomerBundles(allCustomerBundles);
 
@@ -583,13 +576,19 @@ export const useBundleEngine = () => {
             await supabase.from('farmer_bundle_recommendations').insert({
               farmer_id: effectiveUserId,
               customer_user_id: bundle.customerId,
+              // Sem `cost`/`margin` por SKU — o jsonb guardava o custo LITERAL (12/12 linhas em
+              // prod). Só id/name/price, e `price` é público.
               bundle_products: bundle.products as unknown as Json,
               support: bundle.support,
               confidence: bundle.confidence,
               lift: bundle.lift,
               p_bundle: bundle.pBundle,
-              m_bundle: bundle.mBundle,
-              lie_bundle: bundle.lieBundle,
+              // m_bundle era a SOMA das margens; e mesmo apagando-o, `lie_bundle` monetário
+              // invertia sozinho: m_bundle ≈ lie_bundle / ((p_bundle/100) × complexity_factor).
+              // Por isso os dois mudam juntos — `lie_bundle` passa a guardar o score de afinidade
+              // (mantido populado porque OfertaCruaCard/useTacticalPlan ordenam por ele).
+              m_bundle: null,
+              lie_bundle: bundle.affinityBundle,
               complexity_factor: bundle.complexityFactor,
               status: 'pendente',
             });

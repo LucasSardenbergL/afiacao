@@ -12,7 +12,8 @@ export function useFarmerBundles() {
   const diagHook = useDiagnosticQuestions();
   const [expandedCustomer, setExpandedCustomer] = useState<string | null>(null);
 
-  const totalLIE = customerBundles.reduce((s, c) => s + c.bundles.reduce((s2, b) => s2 + b.lieBundle, 0), 0);
+  // `totalLIE` saiu: era a soma dos LIE em R$ dos bundles, e sem custo no browser não existe
+  // lucro esperado para somar. A contagem (`totalBundles`) segue sendo o total honesto.
   const totalBundles = customerBundles.reduce((s, c) => s + c.bundles.length, 0);
 
   const toggleCustomer = (customerId: string) =>
@@ -30,7 +31,6 @@ export function useFarmerBundles() {
     diagHook,
     expandedCustomer,
     toggleCustomer,
-    totalLIE,
     totalBundles,
   };
 }
