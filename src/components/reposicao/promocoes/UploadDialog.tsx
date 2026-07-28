@@ -106,7 +106,7 @@ export function UploadDialog({
                         </TooltipTrigger>
                         <TooltipContent>
                           {it.confianca !== null && it.confianca !== undefined
-                            ? `Confiança Gemini: ${Math.round(it.confianca * 100)}%`
+                            ? `Confiança da extração: ${Math.round(it.confianca * 100)}%`
                             : "Confiança não informada"}
                         </TooltipContent>
                       </Tooltip>
