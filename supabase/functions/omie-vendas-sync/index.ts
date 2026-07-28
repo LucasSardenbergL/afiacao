@@ -323,11 +323,21 @@ async function syncProducts(supabase: SupabaseClient, startPage = 1, maxPages = 
         apenas_importado_api: "N",
         filtrar_apenas_omiepdv: "N",
       },
-      account
+      account,
+      // throwOnTransient (achado Codex C, P1): sem ele o `null` é AMBÍGUO — "fim real" e
+      // "rate-limit esgotado" chegavam iguais aqui, e o `break` num resume (startPage=13,
+      // totalPaginas ainda 1) caía em `complete = pagina > totalPaginas` = 13>1 = TRUE →
+      // nextPage=null → cursor APAGADO com a cauda stale, e a UI dizendo sucesso. Com o
+      // throw, `null` significa SÓ fim real e o transitório vira erro visível (o caller
+      // retoma do mesmo start_page; o upsert por página é idempotente).
+      { throwOnTransient: true },
     );
 
     if (!result) {
-      console.log(`[Omie Vendas][${account}] Products sync interrupted by rate limit at page ${pagina}`);
+      // null agora é EOF do contrato Omie ("Não existem registros para a página") — fim REAL,
+      // não interrupção. Marcar fimReal fecha o cursor honestamente.
+      console.log(`[Omie Vendas][${account}] Products: fim real (sem registros) na página ${pagina}`);
+      fimReal = true;
       break;
     }
 
@@ -424,11 +434,16 @@ async function syncEstoque(supabase: SupabaseClient, startPage = 1, maxPages = 3
         nRegPorPagina: 100,
         dDataPosicao: new Date().toLocaleDateString("pt-BR"),
       },
-      account
+      account,
+      // throwOnTransient: mesmo achado C do syncProducts — `null` ambíguo num resume fechava
+      // `complete=true/nextPage=null` com o estoque parcial e a UI reportando sucesso.
+      { throwOnTransient: true },
     );
 
     if (!result) {
-      console.log(`[Omie Vendas][${account}] Estoque sync interrupted by rate limit at page ${pagina}`);
+      // null = EOF do contrato Omie (fim REAL), não mais rate-limit disfarçado.
+      console.log(`[Omie Vendas][${account}] Estoque: fim real (sem registros) na página ${pagina}`);
+      fimReal = true;
       break;
     }
 
@@ -722,6 +737,9 @@ async function listarFormasPagamento(account: Account = "oben") {
     { codigo: "A04", descricao: "28/56/84 DDL" },
   ];
 
+  // Motivo da degradação, propagado no retorno (ver o bloco de fallback no fim da função).
+  let motivoFallback: string | null = null;
+
   try {
     const allParcelas: OmieParcela[] = [];
     let pagina = 1;
@@ -759,21 +777,34 @@ async function listarFormasPagamento(account: Account = "oben") {
     } while (pagina <= totalPaginas);
 
     if (allParcelas.length > 0) {
-      return allParcelas
+      const formas = allParcelas
         .filter((f) => f.cInativo !== "S")
         .map((f) => ({
           codigo: f.cCodigo || f.nCodigo?.toString() || '',
           descricao: f.cDescricao || f.cDescParcela || '',
         }))
         .filter((f) => f.codigo && f.descricao);
+      return { formas, source: "omie" as const, degraded: false, motivo: null as string | null };
     }
   } catch (error) {
+    motivoFallback = error instanceof Error ? error.message : String(error);
     console.error(`[Omie Vendas][${account}] Erro ao buscar parcelas:`, error);
   }
 
-  // Fallback: return common payment conditions
-  console.log(`[Omie Vendas][${account}] Usando formas de pagamento padrão (fallback)`);
-  return defaultFormas;
+  // Fallback: condições comuns hardcoded. DECLARADO no retorno (achado Codex D): o caller
+  // recebia `{success:true, formas}` idêntico ao caminho bom e não tinha COMO distinguir
+  // "estas são as condições do Omie" de "o Omie não respondeu, aqui vão 8 genéricas" — o
+  // vendedor não vê a condição customizada do cliente e escolhe outra, que o Omie rejeita
+  // na hora de gravar o pedido. Trocar perda silenciosa por fallback silencioso não é
+  // degradação honesta (money-path §6: a falha tem de estar no CONTRATO).
+  // ⚠️ DEFESA DO FUTURO, declarada como tal: os 3 consumidores (useUnifiedOrder,
+  // useSalesOrderEdit, SalesPrintDashboard) hoje leem só `formas` e ignoram estes campos —
+  // exibir o aviso na tela é o follow-up. Sem eles, porém, nem dá para MEDIR a frequência.
+  console.warn(
+    `[Omie Vendas][${account}] Usando formas de pagamento padrão (FALLBACK degradado)` +
+      (motivoFallback ? ` — motivo: ${motivoFallback}` : " — Omie devolveu lista vazia"),
+  );
+  return { formas: defaultFormas, source: "fallback" as const, degraded: true, motivo: motivoFallback };
 }
 
 // Buscar última forma de pagamento e ranking de parcelas do cliente
@@ -2346,8 +2377,14 @@ serve(async (req) => {
         while ((bfPagina <= bfTotalPaginas || bfPages === 0) && bfPages < bfMaxPages) {
           const bfParams: Record<string, unknown> = { pagina: bfPagina, registros_por_pagina: 50, filtrar_apenas_inclusao: "N" };
           if (bfNumeroPedido) { bfParams.numero_pedido_de = bfNumeroPedido; bfParams.numero_pedido_ate = bfNumeroPedido; }
-          const bfRes = (await callOmieVendasApi("produtos/pedido/", "ListarPedidos", bfParams, account)) as OmieListarPedidosResponse | null;
-          if (!bfRes) break; // rate limit → retoma na próxima invocação
+          // throwOnTransient (achado Codex C, P1): `null` era AMBÍGUO — rate-limit esgotado e fim
+          // real chegavam iguais. Num resume (start_page=7 com bfTotalPaginas ainda 1), o break
+          // por rate-limit caía em `next_page = bfPagina <= bfTotalPaginas ? … : null` = null e
+          // APAGAVA o cursor: o backfill se declarava terminado com a cauda por processar.
+          const bfRes = (await callOmieVendasApi(
+            "produtos/pedido/", "ListarPedidos", bfParams, account, { throwOnTransient: true },
+          )) as OmieListarPedidosResponse | null;
+          if (!bfRes) { bfFimReal = true; break; } // null = fim real ("Não existem registros")
           // Piso MONOTÔNICO + teto fail-fast (money-path §9): era `|| 1` POR RESPOSTA — uma
           // intermediária sem o campo encerrava o cursor prematuro (next_page=null com cauda viva).
           bfTotalPaginas = proximoTotalPaginas(bfTotalPaginas, bfRes.total_de_paginas, MAX_PAGINAS_PEDIDOS);
@@ -2584,8 +2621,17 @@ serve(async (req) => {
       }
 
       case "listar_formas_pagamento": {
-        const formas = await listarFormasPagamento(account);
-        result = { success: true, formas };
+        // `formas` continua no mesmo lugar (os 3 consumidores atuais não quebram); `source`/
+        // `degraded`/`motivo` são ADITIVOS e existem para que a lista de fallback deixe de ser
+        // indistinguível da real — achado Codex D deste PR.
+        const parcelas = await listarFormasPagamento(account);
+        result = {
+          success: true,
+          formas: parcelas.formas,
+          source: parcelas.source,
+          degraded: parcelas.degraded,
+          motivo: parcelas.motivo,
+        };
         break;
       }
 

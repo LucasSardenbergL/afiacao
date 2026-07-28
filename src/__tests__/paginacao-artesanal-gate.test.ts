@@ -171,14 +171,23 @@ const G3_DIVIDA: ReadonlyMap<string, number> = new Map([
 // anti-runaway) + proximoTotalPaginas (piso monotônico) + avaliarPagina (página vazia
 // antes do fim declarado = anomalia, nunca "fim").
 //
-// ⚠️ O `[^;\n]{0,40}?` (era `\s*`) foi ENDURECIDO na continuação do #1581: a forma dominante
-// nas edges de venda/financeiro é `(result.total_de_paginas as number) || 1` — o CAST entre o
-// campo e o operador fazia a regex `\s*` NÃO casar, e o gate media 0 num arquivo com 5 sites
-// vivos (omie-financeiro). Detector que não enxerga a forma real do repo é falso-VERDE: era a
-// mesma família do "O DETECTOR mente" (money-path §"assert de existência"). Medido no
-// endurecimento: +5 em omie-financeiro e +1 em omie-vendas-sync, zero falso positivo no repo.
-// Non-greedy e sem `;`/newline para não atravessar statement.
-const G4 = /(nTotPaginas|total_de_paginas)[^;\n]{0,40}?(\|\||\?\?)\s*1\b/;
+// ⚠️ O `[^;]{0,60}?` (era `\s*`) foi ENDURECIDO em DOIS passos na continuação do #1581:
+//  (1) `\s*` → aceitar o que houver entre o campo e o operador: a forma dominante nas edges de
+//      venda/financeiro é `(result.total_de_paginas as number) || 1`, e o CAST fazia a regex
+//      NÃO casar — o gate media 0 num arquivo com 5 sites vivos (omie-financeiro). Detector que
+//      não enxerga a forma real do repo é falso-VERDE, a família do "O DETECTOR mente".
+//      Medido: +5 em omie-financeiro, +1 em omie-vendas-sync, zero falso positivo.
+//  (2) permitir NEWLINE (achado Codex deste PR): `(… as number)\n  || 1` é o que o formatador
+//      automático produz quando a linha passa do limite, e a versão anterior (`[^;\n]`) deixava
+//      passar. Medido no repo inteiro: ZERO diferença de contagem — não gera falso positivo aqui.
+// O `;` continua excluído: é ele que impede o padrão de atravessar para o statement vizinho.
+//
+// LIMITAÇÃO CONHECIDA (registrada, não é descuido — a solução completa exigiria AST/dataflow):
+//  · falso POSITIVO possível em objeto literal — `{ pages: result.total_de_paginas, n: x || 1 }`
+//    casa sem ser fallback de total (não existe no repo hoje; se aparecer, vai para a allowlist);
+//  · falso NEGATIVO via ALIAS — `const t = result.total_de_paginas; … t || 1` escapa, porque o
+//    nome do campo não está na mesma expressão.
+const G4 = /(nTotPaginas|total_de_paginas)[^;]{0,60}?(\|\||\?\?)\s*1\b/;
 
 // Allowlist PERMANENTE por contagem (usos legítimos da forma — não são dívida). O helper
 // _shared/omie-paginacao.ts NÃO precisa de entrada: seu `Number(nTot ?? 1)` usa o
@@ -312,12 +321,16 @@ describe('gate estrutural: paginação artesanal que trata falha como fim (class
     const comCastBang = `    totalPaginas = (result!.total_de_paginas as number) || 1;`;
     const comCastNTot = `    totalPaginas = (result.nTotPaginas as number) || 1;`;
     const coalesce = `      const total = result.total_de_paginas ?? 1;`;
+    // Quebra de linha antes do `||` — o que o formatador automático produz numa linha longa.
+    // Achado Codex deste PR: a 1ª versão do endurecimento excluía `\n` e deixava passar.
+    const multilinha = `    totalPaginas = (result.total_de_paginas as number)\n      || 1;`;
     for (const [rotulo, amostra] of [
       ['sem cast (forma-mãe)', semCast],
       ['com cast `as number`', comCast],
       ['com cast e non-null `!`', comCastBang],
       ['com cast, campo nTotPaginas', comCastNTot],
       ['coalesce `?? 1`', coalesce],
+      ['cast + quebra de linha antes do `||`', multilinha],
     ] as const) {
       expect(G4.test(amostra), `G4 deixou de casar o controle: ${rotulo}`).toBe(true);
     }

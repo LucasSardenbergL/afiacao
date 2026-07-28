@@ -917,12 +917,22 @@ serve(async (req) => {
 
         const account = accounts[accountIndex];
         let page = startPage;
-        // Piso da run: começa na página pedida (garante a entrada no laço) e daí só CRESCE
-        // (proximoTotalPaginas) — o total declarado POR RESPOSTA não pode encolher o teto.
-        let totalPages = startPage;
+        // Piso da INVOCAÇÃO — e o cursor o TRANSPORTA (achado Codex B, P1). Sem transportar,
+        // "piso da run" era falso: a invocação seguinte reiniciava o teto em startPage e uma
+        // resposta retomada COM clientes mas SEM `total_de_paginas` fechava a conta na hora
+        // (page=5 > totalPages=4 → hasMore=false → pula para a próxima conta com as páginas
+        // 5..140 por sincronizar). O `?? startPage` mantém compatibilidade com caller antigo.
+        const pisoInformado = Number(body.total_paginas) || 0;
+        let totalPages = Math.max(startPage, pisoInformado);
         // true SÓ quando avaliarPagina declara fim REAL (página vazia NA/apos a última declarada)
         // — distingue "conta esgotada" de "lote esgotado" no hasMore abaixo.
         let fimReal = false;
+        // Defesa que NÃO depende do caller repassar o piso (o front antigo só devolve
+        // account_index/start_page): página CHEIA é evidência de que há mais adiante, mesmo com
+        // o total ausente. Fechar a conta com a última página cheia é a mesma fabricação de
+        // completude do §8 — só que no eixo do cursor.
+        const REGISTROS_POR_PAGINA = 50;
+        let ultimaPaginaCheia = false;
         let accImported = 0;
         let accSkipped = 0;
         let accErrors = 0;
@@ -1014,6 +1024,9 @@ serve(async (req) => {
               // nunca completa retrato parcial.
               throw new Error(`página ${page}/${totalPages} do ListarClientes veio vazia antes do fim declarado`);
             }
+            // Página CHEIA = evidência de continuação (ver a nota do `ultimaPaginaCheia`): é o que
+            // segura o cursor quando o total vem ausente numa retomada e o caller é o antigo.
+            ultimaPaginaCheia = clientes.length >= REGISTROS_POR_PAGINA;
             if (veredicto === "fim") {
               fimReal = true;
               break;
@@ -1111,7 +1124,11 @@ serve(async (req) => {
           }
         }
 
-        const hasMore = !fimReal && page <= totalPages;
+        // `ultimaPaginaCheia` entra no OU (achado Codex B): só `page <= totalPages` fecharia a
+        // conta sempre que o total viesse ausente na retomada — e "não sei o total" nunca pode
+        // significar "acabou" numa classe cujo defeito é exatamente esse (money-path §9).
+        // Só `fimReal` (página vazia no fim declarado ou EOF do Omie) encerra a conta.
+        const hasMore = !fimReal && (page <= totalPages || ultimaPaginaCheia);
         const nextAccountIndex = hasMore ? accountIndex : accountIndex + 1;
         const nextPage = hasMore ? page : 1;
 
@@ -1123,7 +1140,14 @@ serve(async (req) => {
           totalPages,
           lastPage: page - 1,
           hasMore: hasMore || nextAccountIndex < accounts.length,
-          next: { account_index: nextAccountIndex, start_page: nextPage },
+          // total_paginas viaja no cursor: é o que impede o piso de morrer entre invocações.
+          // Ao trocar de conta ele zera (o total é POR conta — carregá-lo adiante faria a conta
+          // seguinte herdar um teto que não é dela).
+          next: {
+            account_index: nextAccountIndex,
+            start_page: nextPage,
+            total_paginas: hasMore ? totalPages : 0,
+          },
         };
         break;
       }

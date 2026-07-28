@@ -164,11 +164,22 @@ export function useAnalyticsSync() {
       let totalImported = 0;
       let totalSkipped = 0;
       let totalErrors = 0;
+      // Piso de páginas da conta em curso, devolvido pela edge e REPASSADO na próxima chamada.
+      // Sem transportá-lo, o teto reiniciava em `start_page` a cada invocação e uma resposta
+      // retomada COM clientes mas SEM `total_de_paginas` encerrava a conta na hora, deixando a
+      // cauda por importar (achado Codex do PR da classe de paginação; a edge tem defesa
+      // própria pela página cheia, mas ela é o cinto — este é o suspensório).
+      let totalPaginas = 0;
 
       while (true) {
         setClientSyncProgress(`Conta ${accountIndex + 1}/3 — página ${startPage}...`);
         const { data, error } = await supabase.functions.invoke("omie-cliente", {
-          body: { action: "sync_all_clients", account_index: accountIndex, start_page: startPage },
+          body: {
+            action: "sync_all_clients",
+            account_index: accountIndex,
+            start_page: startPage,
+            total_paginas: totalPaginas,
+          },
         });
         if (error) throw error;
 
@@ -192,6 +203,10 @@ export function useAnalyticsSync() {
         if (!data.hasMore) break;
         accountIndex = data.next.account_index;
         startPage = data.next.start_page;
+        // A edge zera `total_paginas` ao trocar de conta (o total é por conta); `?? 0` cobre
+        // uma edge ainda não deployada, que não devolve o campo — aí vale a defesa da página
+        // cheia do lado de lá.
+        totalPaginas = data.next.total_paginas ?? 0;
       }
 
       setClientSyncProgress(null);
