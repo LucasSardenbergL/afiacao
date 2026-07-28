@@ -1,5 +1,25 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
+// Paginação canônica do PostgREST — lança em error E em `data:null` sem error (resposta
+// malformada ≠ fim da tabela). Substitui o laço à mão do carregarBaixaMapDRE, cujo
+// `data ?? []` produzia baixaMap PARCIAL → double-count/perda no DRE-caixa.
+import { fetchAll } from "../_shared/paginate.ts";
+// Guards do total declarado pelo Omie (PISO, não verdade — docs/agent/sync.md):
+// proximoTotalPaginas mantém o piso monotônico entre respostas (uma intermediária sem o
+// campo NÃO encolhe o teto), avaliarPagina separa "fim real" de "página vazia antes do
+// fim declarado" (fault transiente/rate-limit disfarçado) e validarTotalPaginas faz o
+// fail-fast anti-runaway na declaração. money-path §9 / gate G4.
+import {
+  avaliarPagina,
+  proximoTotalPaginas,
+  validarTotalPaginas,
+  desfechoVarreduraReversa,
+} from "../_shared/omie-paginacao.ts";
+
+// Teto anti-runaway das listagens financeiras. CP/CR da colacor são as maiores (~292
+// págs de 100 no CR); 2.000 dá >6× de folga e ainda barra um total lixo/gigante ANTES
+// de girar a edge por minutos contra o Omie.
+const MAX_PAGINAS_FIN = 2000;
 
 // ═══════════════ VALIDAÇÃO DE PERÍODO DO DRE (anti-injeção) ═══════════════
 // ⚠️ ESPELHO VERBATIM de src/lib/financeiro/dre-period.ts (testado em vitest).
@@ -526,10 +546,19 @@ async function syncCategorias(
       "ListarCategorias",
       { pagina, registros_por_pagina: 500 }
     );
-    if (!result) break;
+    if (!result) throw new Error(`[Fin][${company}] Categorias p${pagina}: Omie sem resposta após retries — não é fim da lista`);
 
-    totalPaginas = (result.total_de_paginas as number) || 1;
+    // Piso MONOTÔNICO (nunca `|| 1` por resposta): uma intermediária sem o campo
+    // encolheria o teto e o laço terminaria com o cadastro PARCIAL como se completo.
+    totalPaginas = proximoTotalPaginas(totalPaginas, result.total_de_paginas as number | undefined, MAX_PAGINAS_FIN);
     const categorias = (result.categoria_cadastro as OmieCategoria[] | undefined) || [];
+
+    // Página vazia ANTES do fim declarado = fault transiente disfarçado, não fim.
+    const veredicto = avaliarPagina(categorias.length, pagina, totalPaginas);
+    if (veredicto === "anomalia") {
+      throw new Error(`[Fin][${company}] Categorias p${pagina}/${totalPaginas}: página vazia antes do fim declarado (anomalia Omie) — abortando sem completar parcial`);
+    }
+    if (veredicto === "fim") break;
 
     const rows = categorias.map((c) => ({
       company,
@@ -547,8 +576,10 @@ async function syncCategorias(
       const { error } = await db
         .from("fin_categorias")
         .upsert(rows, { onConflict: "company,omie_codigo" });
-      if (error) console.error(`[Fin][${company}] Erro categorias:`, error.message);
-      else totalSynced += rows.length;
+      // LANÇA: engolir o erro deixava a página fora do espelho e o sync terminava
+      // 'complete' — categoria faltando reclassifica linha do DRE em silêncio.
+      if (error) throw new Error(`[Fin][${company}] Erro categorias p${pagina}: ${error.message}`);
+      totalSynced += rows.length;
     }
 
     console.log(`[Fin][${company}] Categorias p${pagina}/${totalPaginas}`);
@@ -573,12 +604,19 @@ async function syncContasCorrentes(
       "ListarContasCorrentes",
       { pagina, registros_por_pagina: 50 }
     );
-    if (!result) break;
+    if (!result) throw new Error(`[Fin][${company}] Contas correntes p${pagina}: Omie sem resposta após retries — não é fim da lista`);
 
-    totalPaginas = (result.nTotPaginas as number) || 1;
+    // Piso monotônico + guard de página vazia (ver syncCategorias).
+    totalPaginas = proximoTotalPaginas(totalPaginas, result.nTotPaginas as number | undefined, MAX_PAGINAS_FIN);
     const contas = (result.ListarContasCorrentes as OmieContaCorrente[] | undefined)
       || (result.conta_corrente_lista as OmieContaCorrente[] | undefined)
       || [];
+
+    const veredictoCC = avaliarPagina(contas.length, pagina, totalPaginas);
+    if (veredictoCC === "anomalia") {
+      throw new Error(`[Fin][${company}] Contas correntes p${pagina}/${totalPaginas}: página vazia antes do fim declarado (anomalia Omie) — abortando sem completar parcial`);
+    }
+    if (veredictoCC === "fim") break;
 
     // Saldo atual vem de financas/extrato/ (ListarExtrato), NÃO de geral/contacorrente/.
     // dPeriodoInicial/Final são obrigatórios (DD/MM/AAAA); pra saldo "hoje" usamos a data atual nos dois.
@@ -632,9 +670,10 @@ async function syncContasCorrentes(
       const { error } = await db
         .from("fin_contas_correntes")
         .upsert(row, { onConflict: "company,omie_ncodcc" });
-      if (error)
-        console.error(`[Fin][${company}] Erro CC ${c.nCodCC}:`, error.message);
-      else totalSynced++;
+      // LANÇA: conta corrente que não grava deixa saldo stale alimentando caixa/NCG/
+      // dias de cobertura — com o sync carimbando 'complete'.
+      if (error) throw new Error(`[Fin][${company}] Erro CC ${c.nCodCC}: ${error.message}`);
+      totalSynced++;
     }
 
     pagina++;
@@ -670,12 +709,22 @@ async function syncContasPagar(
     );
     if (!result) break;
 
-    totalPaginas = (result.total_de_paginas as number) || 1; // só p/ log/sanity
+    // Piso MONOTÔNICO do total declarado. Ele NÃO decide completude (o Omie sub-reporta
+    // em listas grandes — ver a nota do syncContasReceber; a paginação segue data-driven
+    // até a página vazia), mas serve de PISO para separar "fim real" de "página vazia no
+    // meio" — que antes virava reachedEnd/complete e ZERAVA o cursor com a cauda faltando.
+    totalPaginas = proximoTotalPaginas(totalPaginas, result.total_de_paginas as number | undefined, MAX_PAGINAS_FIN);
     const titulos: OmieContaPagar[] =
       (result.conta_pagar_cadastro as OmieContaPagar[] | undefined)
       || (result.titulosEncontrados as OmieContaPagar[] | undefined)
       || [];
-    if (titulos.length === 0) { reachedEnd = true; break; } // página vazia = fim real
+    const veredictoCP = avaliarPagina(titulos.length, pagina, totalPaginas);
+    if (veredictoCP === "anomalia") {
+      // LANÇA: não grava cursor (writeCursor só roda no retorno normal) → o ciclo
+      // seguinte retoma nesta página em vez de carimbar completo um retrato furado.
+      throw new Error(`[Fin][${company}] CP p${pagina}: página vazia antes do piso declarado (${totalPaginas}) — anomalia Omie, não fim da lista`);
+    }
+    if (veredictoCP === "fim") { reachedEnd = true; break; } // página vazia no/além do piso = fim real
     const fp = `${(titulos[0] as { codigo_lancamento_omie?: number })?.codigo_lancamento_omie ?? ""}:${titulos.length}`;
     if (fp === lastFingerprint) { console.error(`[Fin][${company}] CP p${pagina}: página repetida (anomalia Omie) — parando`); reachedEnd = true; break; }
     lastFingerprint = fp;
@@ -751,12 +800,10 @@ async function syncContasPagar(
       const { error } = await db
         .from("fin_contas_pagar")
         .upsert(validRows, { onConflict: "company,omie_codigo_lancamento" });
-      if (error)
-        console.error(
-          `[Fin][${company}] Erro CP p${pagina}:`,
-          error.message
-        );
-      else totalSynced += validRows.length;
+      // LANÇA: a página não gravada sumia do espelho enquanto o cursor AVANÇAVA por
+      // cima dela — buraco permanente de CP em DPO/NCG/projeção, com 'complete'.
+      if (error) throw new Error(`[Fin][${company}] Erro CP p${pagina}: ${error.message}`);
+      totalSynced += validRows.length;
     }
 
     console.log(`[Fin][${company}] CP p${pagina}/${totalPaginas} (+${validRows.length})`);
@@ -805,12 +852,20 @@ async function syncContasReceber(
     );
     if (!result) break;
 
-    totalPaginas = (result.total_de_paginas as number) || 1; // só p/ log/sanity
+    // Piso MONOTÔNICO (mesma regra do CP): o total sub-reportado segue NÃO decidindo
+    // completude — só separa "fim real" de "vazia no meio" (fault/rate-limit).
+    totalPaginas = proximoTotalPaginas(totalPaginas, result.total_de_paginas as number | undefined, MAX_PAGINAS_FIN);
     const titulos: OmieContaReceber[] =
       (result.conta_receber_cadastro as OmieContaReceber[] | undefined)
       || (result.titulosEncontrados as OmieContaReceber[] | undefined)
       || [];
-    if (titulos.length === 0) { reachedEnd = true; break; } // página vazia = fim real
+    const veredictoCR = avaliarPagina(titulos.length, pagina, totalPaginas);
+    if (veredictoCR === "anomalia") {
+      // LANÇA (cursor preservado): completar aqui era o defeito mais caro do arquivo —
+      // CR alimenta DSO/PMR, aging, NCG e a projeção de 13 semanas.
+      throw new Error(`[Fin][${company}] CR p${pagina}: página vazia antes do piso declarado (${totalPaginas}) — anomalia Omie, não fim da lista`);
+    }
+    if (veredictoCR === "fim") { reachedEnd = true; break; } // página vazia no/além do piso = fim real
     // Guard anti-loop: se o Omie repetir a mesma página (em vez de vazia além do fim),
     // pararíamos só no maxPages e o cursor resumiria pra sempre. Fingerprint = 1º código
     // + count; página repetida = fim (anômalo, logado).
@@ -877,12 +932,10 @@ async function syncContasReceber(
       const { error } = await db
         .from("fin_contas_receber")
         .upsert(validRows, { onConflict: "company,omie_codigo_lancamento" });
-      if (error)
-        console.error(
-          `[Fin][${company}] Erro CR p${pagina}:`,
-          error.message
-        );
-      else totalSynced += validRows.length;
+      // LANÇA (ver CP): recebível não gravado + cursor avançando = buraco permanente
+      // em DSO/aging/projeção de caixa.
+      if (error) throw new Error(`[Fin][${company}] Erro CR p${pagina}: ${error.message}`);
+      totalSynced += validRows.length;
     }
 
     console.log(`[Fin][${company}] CR p${pagina}/${totalPaginas} (+${validRows.length})`);
@@ -1004,13 +1057,23 @@ async function syncMovimentacoes(
   );
 
   if (!firstPage) {
-    return { totalSynced: 0, complete: true, nextPage: null, timedOut: false };
+    // complete:true aqui era a classe em miniatura: falha de transporte lida como "nada
+    // a sincronizar" → cursor zerado e o ciclo seguinte partindo do começo como se a run
+    // tivesse coberto tudo. Sem retrato = sem completude.
+    return { totalSynced: 0, complete: false, nextPage: startPage ?? null, timedOut: isTimeBudgetExhausted() };
   }
 
-  totalPaginas = (firstPage.nTotPaginas as number) || 1;
+  // Fail-fast anti-runaway na DECLARAÇÃO (nTotPaginas lixo/gigante não pode girar a edge
+  // por minutos antes de um guard de contagem disparar).
+  totalPaginas = validarTotalPaginas(firstPage.nTotPaginas as number | undefined, MAX_PAGINAS_FIN);
   // Start from the last page (most recent data) and go backwards.
   // Se startPage veio do cursor (resume), retoma de lá.
+  const retomada = startPage !== undefined;
   pagina = startPage ?? totalPaginas;
+  // Ponto de partida REAL desta invocação: se o piso crescer durante a varredura, o
+  // nTotPaginas do firstPage estava sub-reportado e as páginas acima daqui — as MAIS
+  // RECENTES — nunca entraram no laço. desfechoVarreduraReversa decide o desfecho.
+  const inicioVarredura = pagina;
 
   while (pagina >= 1 && pagesProcessed < maxPages && !isTimeBudgetExhausted()) {
     const result = await callOmie(
@@ -1021,7 +1084,16 @@ async function syncMovimentacoes(
     );
     if (!result) break;
 
+    // Piso monotônico: declaração nova só MANTÉM ou CRESCE (nunca encolhe o retrato).
+    totalPaginas = proximoTotalPaginas(totalPaginas, result.nTotPaginas as number | undefined, MAX_PAGINAS_FIN);
+
     const movs: OmieMovimento[] = (result.movimentos as OmieMovimento[] | undefined) || [];
+    // Página CRUA vazia DENTRO do intervalo declarado = fault transiente/rate-limit
+    // disfarçado (o Omie devolve 200 com lista vazia). Distinta da página vazia por
+    // FILTRO de janela (uniqueRows=0 abaixo), que é legítima e alimenta o early-exit.
+    if (movs.length === 0 && avaliarPagina(0, pagina, totalPaginas) === "anomalia") {
+      throw new Error(`[Fin][${company}] Mov p${pagina}/${totalPaginas}: página vazia dentro do intervalo declarado (anomalia Omie) — abortando sem completar parcial`);
+    }
 
     const rows = movs
       .map((mov): MovimentoRow | null => {
@@ -1072,11 +1144,10 @@ async function syncMovimentacoes(
       const { error } = await db
         .from("fin_movimentacoes")
         .upsert(uniqueRows, { onConflict: "company,omie_ncodmov" });
-      if (error) {
-        console.error(`[Fin][${company}] Erro mov p${pagina}:`, error.message);
-      } else {
-        totalSynced += uniqueRows.length;
-      }
+      // LANÇA (ver CP/CR): movimento não gravado é baixa que some do v_titulo_baixas →
+      // DRE-caixa e curvas de aging calibradas por um retrato furado.
+      if (error) throw new Error(`[Fin][${company}] Erro mov p${pagina}: ${error.message}`);
+      totalSynced += uniqueRows.length;
       consecutiveEmptyPages = 0;
     } else {
       consecutiveEmptyPages++;
@@ -1099,10 +1170,23 @@ async function syncMovimentacoes(
   const timedOut = isTimeBudgetExhausted();
   if (timedOut) console.log(`[Fin][${company}] Mov stopped: time budget exhausted`);
 
+  // `complete = pagina < 1` bastava quando o ponto de partida era confiável. Não é: o
+  // firstPage sub-reportado fazia a varredura NASCER abaixo do topo, e descer até 1
+  // carimbava 'complete' com as páginas mais recentes nunca visitadas.
+  const desfecho = desfechoVarreduraReversa({
+    paginaFinal: pagina,
+    inicioVarredura,
+    tetoDeclarado: totalPaginas,
+    retomada,
+  });
+  if (!desfecho.complete && pagina < 1) {
+    console.log(`[Fin][${company}] Mov: piso cresceu ${inicioVarredura}→${totalPaginas} durante a varredura (firstPage sub-reportado) — retomando do topo novo`);
+  }
+
   return {
     totalSynced,
-    complete: pagina < 1,
-    nextPage: pagina < 1 ? null : pagina,
+    complete: desfecho.complete,
+    nextPage: desfecho.nextPage,
     timedOut,
   };
 }
@@ -1234,22 +1318,21 @@ function dedupePorCodigo<T extends { omie_codigo_lancamento?: number | null }>(r
 // baixaMap parcial reintroduziria double-count/perda no DRE-caixa (codex). NUNCA degradar
 // silenciosamente pra vencimento aqui.
 async function carregarBaixaMapDRE(db: SupabaseClient, company: string, tipo: "CR" | "CP"): Promise<Map<number, string>> {
+  // Delegado ao fetchAll canônico: o laço à mão daqui coalescia `data ?? []`, então uma
+  // resposta malformada (data:null SEM error) encerrava a paginação e devolvia baixaMap
+  // PARCIAL — exatamente o double-count/perda que o comentário acima diz evitar.
+  const rows = await fetchAll<{ omie_codigo_lancamento: number | null; data_baixa_final: string | null }>(
+    (from, to) =>
+      db.from("v_titulo_baixas")
+        .select("omie_codigo_lancamento, data_baixa_final")
+        .eq("company", company).eq("tipo", tipo)
+        .order("omie_codigo_lancamento", { ascending: true })
+        .range(from, to),
+    `v_titulo_baixas ${tipo}/${company}`,
+  );
   const map = new Map<number, string>();
-  const PAGE = 1000;
-  let from = 0;
-  for (;;) {
-    const { data, error } = await db.from("v_titulo_baixas")
-      .select("omie_codigo_lancamento, data_baixa_final")
-      .eq("company", company).eq("tipo", tipo)
-      .order("omie_codigo_lancamento", { ascending: true })
-      .range(from, from + PAGE - 1);
-    if (error) throw error;
-    const rows = (data ?? []) as Array<{ omie_codigo_lancamento: number | null; data_baixa_final: string | null }>;
-    for (const r of rows) {
-      if (r.omie_codigo_lancamento != null && r.data_baixa_final) map.set(Number(r.omie_codigo_lancamento), r.data_baixa_final);
-    }
-    if (rows.length < PAGE) break;
-    from += PAGE;
+  for (const r of rows) {
+    if (r.omie_codigo_lancamento != null && r.data_baixa_final) map.set(Number(r.omie_codigo_lancamento), r.data_baixa_final);
   }
   return map;
 }
@@ -1265,7 +1348,10 @@ async function fetchTitulosPorCodigos(
     const { data, error } = await db.from(table)
       .select(select).eq("company", company).in("status_titulo", statuses).in("omie_codigo_lancamento", chunk);
     if (error) throw error;
-    out.push(...((data ?? []) as unknown as Array<Record<string, unknown>>));
+    // Mesma família: `data:null` SEM error é resposta malformada, não chunk vazio — o
+    // `?? []` daqui somia com títulos do mês inteiro no DRE sem nenhum sinal.
+    if (data == null) throw new Error(`${table}: data null sem error no chunk ${i}-${i + chunk.length} (resposta malformada, não é lista vazia)`);
+    out.push(...(data as unknown as Array<Record<string, unknown>>));
   }
   return out;
 }
@@ -1532,14 +1618,18 @@ async function calcularDRE(
         .eq("company", company).neq("status_titulo", "CANCELADO")
         .gte("data_emissao", inicioMes).lt("data_emissao", fimMes);
       if (error) throw error; // não silenciar falha de DB como DRE vazia
-      return data ?? [];
+      // Metade que faltava do MESMO guard: `data:null` SEM error é resposta malformada,
+      // e o `?? []` a convertia em "mês sem receita" — DRE zerado com cara de fato.
+      if (data == null) throw new Error(`CR competência ${mes}/${ano}: data null sem error (resposta malformada, não é mês vazio)`);
+      return data;
     }
     const { data, error } = await db.from("fin_contas_receber").select(SEL_CR)
       .eq("company", company).in("status_titulo", ST_CR)
       .or(`and(data_recebimento.gte.${inicioMes},data_recebimento.lt.${fimMes}),and(data_recebimento.is.null,data_vencimento.gte.${inicioMes},data_vencimento.lt.${fimMes})`);
     if (error) throw error; // não silenciar falha de DB como DRE vazia
+    if (data == null) throw new Error(`CR caixa ${mes}/${ano}: data null sem error (resposta malformada, não é mês vazio)`);
     const porBaixa = await fetchTitulosPorCodigos(db, "fin_contas_receber", SEL_CR, company, ST_CR, codigosNoMes(baixaMapCR));
-    return dedupePorCodigo([...(data ?? []) as Array<Record<string, unknown>>, ...porBaixa]);
+    return dedupePorCodigo([...data as Array<Record<string, unknown>>, ...porBaixa]);
   }
   async function buscarCP() {
     if (regime === "competencia") {
@@ -1548,14 +1638,16 @@ async function calcularDRE(
         .eq("company", company).neq("status_titulo", "CANCELADO")
         .gte("data_emissao", inicioMes).lt("data_emissao", fimMes);
       if (error) throw error; // não silenciar falha de DB como DRE vazia
-      return data ?? [];
+      if (data == null) throw new Error(`CP competência ${mes}/${ano}: data null sem error (resposta malformada, não é mês vazio)`);
+      return data;
     }
     const { data, error } = await db.from("fin_contas_pagar").select(SEL_CP)
       .eq("company", company).in("status_titulo", ST_CP)
       .or(`and(data_pagamento.gte.${inicioMes},data_pagamento.lt.${fimMes}),and(data_pagamento.is.null,data_vencimento.gte.${inicioMes},data_vencimento.lt.${fimMes})`);
     if (error) throw error; // não silenciar falha de DB como DRE vazia
+    if (data == null) throw new Error(`CP caixa ${mes}/${ano}: data null sem error (resposta malformada, não é mês vazio)`);
     const porBaixa = await fetchTitulosPorCodigos(db, "fin_contas_pagar", SEL_CP, company, ST_CP, codigosNoMes(baixaMapCP));
-    return dedupePorCodigo([...(data ?? []) as Array<Record<string, unknown>>, ...porBaixa]);
+    return dedupePorCodigo([...data as Array<Record<string, unknown>>, ...porBaixa]);
   }
   const receitas = await buscarCR();
   const despesas = await buscarCP();
@@ -1717,7 +1809,10 @@ async function calcularDRE(
   const { error } = await db
     .from("fin_dre_snapshots")
     .upsert(snapshot, { onConflict: "company,ano,mes,regime" });
-  if (error) console.error(`[Fin][${company}] Erro DRE (${regime}):`, error.message);
+  // LANÇA: engolir aqui devolvia o snapshot RECÉM-CALCULADO na resposta enquanto a
+  // tabela ficava com o do mês passado — a tela mostrava sucesso e, ao recarregar,
+  // o DRE velho. Falhar alto deixa o erro visível em fin_sync_log/watchdog.
+  if (error) throw new Error(`[Fin][${company}] Erro ao persistir DRE ${mes}/${ano} (${regime}): ${error.message}`);
 
   return snapshot;
 }

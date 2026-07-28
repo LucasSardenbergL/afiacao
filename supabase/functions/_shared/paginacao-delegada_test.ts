@@ -83,11 +83,18 @@ Deno.test("edges convertidas não paginam à mão (sem .range() no call-site)", 
 //   fin-funding          títulos antecipáveis · algorithm-a-audit  helper genérico
 //   ai-ops-agent         métricas por cliente
 //
-// As 3 últimas (carteira-rebuild, sinais-batch, tactical-plans-batch) entraram na erradicação
+// carteira-rebuild, sinais-batch e tactical-plans-batch entraram na erradicação
 // scoring/carteira/batch — a fatia irmã, que fechou a metade "falha vira fim" NESTES MESMOS
 // arquivos. As duas metades da classe foram corrigidas por PRs paralelos: esta lista é a UNIÃO
 // das duas listas, não a de um lado (money-path.md §9 — conflito entre dois fixes da mesma
 // classe se resolve por união; escolher um lado reverte a metade do outro em silêncio).
+//
+// fin-cashflow-engine, fin-valor-cockpit e omie-financeiro entraram pelo chip das EDGES
+// FINANCEIRAS (CR/CP → DSO/DRE/NCG/projeção/cockpit): os dois primeiros tinham CÓPIAS locais
+// do fetchAll com `data ?? []` (EOF falso em resposta malformada) e passaram a chamar o
+// canônico; omie-financeiro delegou o laço do carregarBaixaMapDRE. Todas chamam fetchAll
+// DIRETO → aqui o invariante é o `.order()`. (fin-funding já estava na lista pelo #1589 —
+// mesma edge, metades diferentes da classe; é o encontro de dois chips no mesmo arquivo.)
 const VIGIADAS_ORDER = [
   "omie-cliente",
   "omie-analytics-sync",
@@ -98,6 +105,9 @@ const VIGIADAS_ORDER = [
   "carteira-rebuild",
   "sinais-batch",
   "tactical-plans-batch",
+  "fin-cashflow-engine",
+  "fin-valor-cockpit",
+  "omie-financeiro",
 ];
 
 // `.rpc(...)` é a ÚNICA alternativa aceita ao `.order()` no call-site: numa função SQL a cláusula

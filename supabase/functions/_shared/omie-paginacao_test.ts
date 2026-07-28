@@ -7,6 +7,7 @@
 // abaixo vieram verbatim (#1341/#1353).
 import {
   avaliarPagina,
+  desfechoVarreduraReversa,
   MAX_PAGINAS_POS_ESTOQUE,
   proximoTotalPaginas,
   validarTotalPaginas,
@@ -105,6 +106,46 @@ Deno.test("catálogo vazio (1/1 vazia) → fim", () => {
 
 Deno.test("página vazia ALÉM do declarado → fim (semântica segura p/ loop futuro)", () => {
   assertEquals(avaliarPagina(0, 6, 5), "fim");
+});
+
+// ════════ desfechoVarreduraReversa — varredura reversa não completa com teto crescido ════════
+// ListarMovimentos (omie-financeiro) varre da ÚLTIMA página declarada (dado mais recente)
+// até a 1. O nTotPaginas do firstPage decide o ponto de PARTIDA: sub-reporte ali deixa as
+// páginas mais recentes fora da varredura — e o `complete: pagina < 1` antigo carimbava o
+// buraco como completo e zerava o cursor (chip das edges financeiras, 2026-07-23).
+
+Deno.test("varredura reversa — desceu até 1 sem crescimento do teto → complete", () => {
+  assertEquals(
+    desfechoVarreduraReversa({ paginaFinal: 0, inicioVarredura: 80, tetoDeclarado: 80, retomada: false }),
+    { complete: true, nextPage: null },
+  );
+});
+
+Deno.test("varredura reversa — teto cresceu no meio (sub-reporte do firstPage) → NÃO completa; cursor no teto novo", () => {
+  assertEquals(
+    desfechoVarreduraReversa({ paginaFinal: 0, inicioVarredura: 10, tetoDeclarado: 50, retomada: false }),
+    { complete: false, nextPage: 50 },
+  );
+});
+
+Deno.test("varredura reversa — interrompida no meio (budget/maxPages/streak) → cursor na página atual, nunca complete", () => {
+  assertEquals(
+    desfechoVarreduraReversa({ paginaFinal: 37, inicioVarredura: 80, tetoDeclarado: 80, retomada: false }),
+    { complete: false, nextPage: 37 },
+  );
+  // Mesmo interrompida COM teto crescido, o cursor fica na página atual (o resume desce
+  // primeiro; o crescimento não some — a run seguinte parte de firstPage fresco).
+  assertEquals(
+    desfechoVarreduraReversa({ paginaFinal: 37, inicioVarredura: 80, tetoDeclarado: 120, retomada: false }),
+    { complete: false, nextPage: 37 },
+  );
+});
+
+Deno.test("varredura reversa — RETOMADA: teto acima do ponto de resume é dado NOVO (chegou movimento desde o início do ciclo), não sub-reporte → completa ao descer", () => {
+  assertEquals(
+    desfechoVarreduraReversa({ paginaFinal: 0, inicioVarredura: 5, tetoDeclarado: 300, retomada: true }),
+    { complete: true, nextPage: null },
+  );
 });
 
 // ════════ teto compartilhado ════════

@@ -1,5 +1,13 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
+// Anti-truncamento do PostgREST (cap default de 1000 linhas): a colacor tem ~11k CP e
+// ~29k CR não-cancelados; um .select() simples carregaria só as 1000 primeiras (quase
+// tudo PAGO/RECEBIDO antigo) e PERDERIA a maioria dos títulos em aberto → NCG/projeção
+// subcontados. A cópia LOCAL deste helper coalescia `data ?? []` (2026-07-23): resposta
+// malformada (data:null SEM error) virava página vazia → EOF falso → o acumulado PARCIAL
+// passava por tabela inteira. O canônico lança nos DOIS casos (money-path §6/§9).
+// Todo call-site DEVE encadear `.order()` numa coluna estável (gate paginacao-delegada).
+import { fetchAll } from "../_shared/paginate.ts";
 
 // =============================================================
 // Helper de autorização inlineado (de _shared/auth.ts)
@@ -100,27 +108,6 @@ function classifyTituloStatus(status: string | null | undefined): TituloStatusCl
   return 'unknown';
 }
 
-// Anti-truncamento do PostgREST (cap default de 1000 linhas): a colacor tem ~11k CP
-// e ~29k CR não-cancelados; um .select() simples carregaria só as 1000 primeiras
-// (quase tudo PAGO/RECEBIDO antigo) e PERDERIA a maioria dos títulos em aberto →
-// NCG/projeção subcontados. Pagina via .range() com .order('id') estável (sem order,
-// páginas podem repetir/pular linhas). Lança no primeiro erro (não engole truncado).
-async function fetchAllRows<T>(
-  build: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message?: string } | null }>,
-): Promise<T[]> {
-  const PAGE = 1000;
-  const all: T[] = [];
-  let from = 0;
-  for (;;) {
-    const { data, error } = await build(from, from + PAGE - 1);
-    if (error) throw new Error(`fetchAllRows: ${error.message ?? 'erro de query'}`);
-    const batch = data ?? [];
-    all.push(...batch);
-    if (batch.length < PAGE) break;
-    from += PAGE;
-  }
-  return all;
-}
 type Cenario = 'realista' | 'otimista' | 'pessimista';
 
 type Input = {
@@ -332,28 +319,28 @@ async function carregarDados(
   supabase: ReturnType<typeof createClient>,
   company: Company,
 ): Promise<DadosBase> {
-  // CR/CP paginados (anti-truncamento, ver fetchAllRows); o resto cabe em <1000 e vai
-  // em Promise.all. Tudo em paralelo.
+  // CR/CP paginados (anti-truncamento, ver o import de fetchAll); o resto cabe em <1000
+  // e vai em Promise.all. Tudo em paralelo.
   const [crsData, cpsData, baixaCrData, [ccRes, recRes, evRes, configRes, estoqueRes, dreRes, folhaCatRes, prazosRes]] = await Promise.all([
-    fetchAllRows<Record<string, unknown>>((from, to) =>
+    fetchAll<Record<string, unknown>>((from, to) =>
       // @ts-expect-error - fin_contas_receber may not be in generated supabase types yet
       supabase.from('fin_contas_receber').select('id, saldo, valor_documento, valor_recebido, data_emissao, data_vencimento, data_recebimento, status_titulo, omie_codigo_cliente, omie_codigo_lancamento, nome_cliente, categoria_codigo')
         .eq('company', company).neq('status_titulo', 'CANCELADO').order('id', { ascending: true }).range(from, to)
-    ),
-    fetchAllRows<Record<string, unknown>>((from, to) =>
+    , 'fin_contas_receber'),
+    fetchAll<Record<string, unknown>>((from, to) =>
       // @ts-expect-error - fin_contas_pagar may not be in generated supabase types yet
       supabase.from('fin_contas_pagar').select('id, saldo, valor_documento, valor_pago, data_emissao, data_vencimento, data_pagamento, status_titulo, categoria_codigo')
         .eq('company', company).neq('status_titulo', 'CANCELADO').order('id', { ascending: true }).range(from, to)
-    ),
+    , 'fin_contas_pagar'),
     // Fase 3: baixa REAL derivada (v_titulo_baixas, tipo CR) p/ calibrar o TIMING do
     // aging. Paginado (oben CR ~11k linhas > cap 1000 do PostgREST — sem isso a
     // cobertura cairia falsa). order estável; usado SÓ na calibração, PMR/PMP/dias_
     // cobertura do engine ficam intactos (sem regressão, sem novo viés do colacor).
-    fetchAllRows<Record<string, unknown>>((from, to) =>
+    fetchAll<Record<string, unknown>>((from, to) =>
       // @ts-expect-error - v_titulo_baixas (view nova) não está nos types gerados
       supabase.from('v_titulo_baixas').select('omie_codigo_lancamento, data_baixa_final')
         .eq('company', company).eq('tipo', 'CR').order('omie_codigo_lancamento', { ascending: true }).range(from, to)
-    ),
+    , 'v_titulo_baixas'),
     Promise.all([
       // @ts-expect-error - fin_contas_correntes may not be in generated supabase types yet
       supabase.from('fin_contas_correntes').select('saldo_atual')

@@ -63,6 +63,31 @@ export function proximoTotalPaginas(
   return Math.max(atual, validarTotalPaginas(declarado, maxPaginas));
 }
 
+// Desfecho de uma varredura REVERSA (última página declarada → 1), o formato do
+// ListarMovimentos no omie-financeiro. Aqui o total declarado não é só teto: decide o
+// PONTO DE PARTIDA, então sub-reporte no arranque deixa de fora exatamente o dado MAIS
+// RECENTE — e o `complete = pagina < 1` histórico carimbava esse buraco como completo e
+// zerava o cursor (a cauda nunca mais era buscada). Regra:
+//   - desceu até 0 e o piso cresceu ALÉM do ponto de partida numa run FRESCA → o começo
+//     estava sub-reportado: NÃO completa, e o cursor aponta o piso novo (re-visitar é
+//     barato — upsert idempotente — e é o único jeito de alcançar o que ficou acima);
+//   - em RETOMADA, piso acima do resume é dado NOVO chegando durante o ciclo (esperado,
+//     não sub-reporte): completa, e o próximo ciclo parte de um firstPage fresco;
+//   - parou no meio (budget/maxPages/streak de vazias) → cursor na página atual, jamais
+//     complete (fim-por-exaustão ≠ fim-da-fonte, money-path §8).
+export function desfechoVarreduraReversa(input: {
+  paginaFinal: number;      // valor do cursor ao sair do laço (0 = desceu tudo)
+  inicioVarredura: number;  // página em que a varredura COMEÇOU nesta invocação
+  tetoDeclarado: number;    // maior total já declarado na run (piso monotônico)
+  retomada: boolean;        // true = inicioVarredura veio do cursor, não do firstPage
+}): { complete: boolean; nextPage: number | null } {
+  if (input.paginaFinal >= 1) return { complete: false, nextPage: input.paginaFinal };
+  if (!input.retomada && input.tetoDeclarado > input.inicioVarredura) {
+    return { complete: false, nextPage: input.tetoDeclarado };
+  }
+  return { complete: true, nextPage: null };
+}
+
 export type VeredictoPagina = "processar" | "fim" | "anomalia";
 
 // nTotPaginas do Omie é PISO, não verdade (docs/agent/sync.md): página vazia ANTES do fim

@@ -6,6 +6,12 @@
 // Spec: 2026-05-25-financeiro-funding-divida (sub-PR A: decisão de antecipação).
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
+// Paginação robusta (anti-truncamento do cap de 1000 do PostgREST). Era uma CÓPIA local
+// do helper do fin-valor-cockpit, com o mesmo furo: `data ?? []` transformava resposta
+// malformada (data:null SEM error) em página vazia → EOF falso → o parcial passava por
+// carteira inteira de títulos antecipáveis, subdimensionando o gap de funding e a
+// concentração por sacado. O canônico lança nos dois casos (money-path §6/§9).
+import { fetchAll } from "../_shared/paginate.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -273,26 +279,7 @@ function montarPlanoCobertura(input: {
 
 // ===================== Utilitários =====================
 
-// Paginação robusta: evita truncamento silencioso do PostgREST (default ~1000 linhas).
-// Verbatim do padrão de fin-valor-cockpit/index.ts.
 type DbClient = ReturnType<typeof createClient>;
-
-async function fetchAll<T>(
-  db: DbClient,
-  build: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>,
-  label: string,
-): Promise<T[]> {
-  const page = 1000; let from = 0; const out: T[] = [];
-  for (;;) {
-    const { data, error } = await build(from, from + page - 1);
-    if (error) throw new Error(`${label}: ${error.message}`);
-    const rows = data ?? [];
-    out.push(...rows);
-    if (rows.length < page) break;
-    from += page;
-  }
-  return out;
-}
 
 // Invoke de outra edge function via service_role (verbatim de fin-next-best-action/index.ts).
 async function invoke<T>(fn: string, body: unknown): Promise<T | null> {
@@ -532,7 +519,6 @@ serve(async (req: Request) => {
   let titulos: TituloRow[] = [];
   try {
     titulos = await fetchAll<TituloRow>(
-      db,
       (from, to) =>
         db
           .from("fin_contas_receber")
