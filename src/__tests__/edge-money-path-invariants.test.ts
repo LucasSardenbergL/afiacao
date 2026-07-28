@@ -7,6 +7,13 @@ const CWD = resolve(__dirname, '../..');
 const read = (rel: string) => readFileSync(resolve(CWD, rel), 'utf8');
 const count = (hay: string, needle: string) => hay.split(needle).length - 1;
 
+// Remove comentários antes de um assert NEGATIVO sobre a fonte. Obrigatório, não higiene: a prosa
+// que EXPLICA por que algo é proibido cita o proibido, então `not.toContain` sobre o texto cru
+// reprova código íntegro (§"O ALVO mente"/#1472/#1488 do money-path.md). O `(?<!:)` preserva
+// `https://` — sem ele um `://` viraria início de comentário e cortaria o resto da linha.
+const semComentarios = (s: string) =>
+  s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(?<!:)\/\/.*$/gm, '');
+
 // ── Guard de invariante money-path dos EDGES (Deno, fora do typecheck/vitest do src) ──
 // Por que TEXTUAL: edge function roda no Lovable Cloud; o deploy via chat pode REVERTER um
 // fix mergeado e COMMITAR a reversão na `main` como "Changes" (mordido 2026-06-26: o fallback
@@ -145,7 +152,27 @@ describe('guardrail money-path: algorithm-a-audit (margem)', () => {
   });
 
   it('bestPriceMap lê order_items (não a sph poluída)', () => {
-    expect(src).toContain("'order_items', 'product_id, unit_price, sales_order_id'");
+    // A âncora mudou de FORMA (não de intenção) na erradicação da paginação artesanal
+    // (continuação do #1581): o helper LOCAL `fetchAllPaginated(supabase, 'order_items', '...')`
+    // — que fazia `?? []` e paginava sem `.order()` — foi trocado pelo `fetchAll` de
+    // `_shared/paginate.ts`, então a assinatura posicional que este assert casava deixou de
+    // existir. O invariante money-path é o MESMO e segue valendo: a fonte do bestPriceMap é
+    // `order_items` (preço PRATICADO), nunca `sales_price_history` (poluída pelo writer legado,
+    // com duplicatas divergentes que inflavam o MAX). Ancorado em `.from(...)` + `.select(...)`,
+    // que é a forma atual, MAIS a negativa explícita da fonte proibida — a negativa é a metade
+    // que de fato protege, e ela não existia antes.
+    expect(src).toContain("from('order_items')");
+    expect(src).toContain("select('product_id, unit_price, sales_order_id')");
+    // A negativa roda sobre o CÓDIGO, não sobre o arquivo cru: o comentário logo acima do
+    // bestPriceMap explica "de order_items PRATICADOS — NÃO sales_price_history (poluída…)", e
+    // medir o texto cru fazia esta asserção reprovar código ÍNTEGRO (falso-VERMELHO pego na
+    // 1ª execução). É o §"O ALVO mente"/#1488 do money-path.md: assert sobre fonte roda com
+    // comentários removidos — num assert NEGATIVO o comentário vira falso-vermelho, e num
+    // positivo, falso-verde (o silencioso).
+    expect(
+      semComentarios(src),
+      'a sph poluída voltou como fonte do bestPriceMap — duplicatas divergentes inflam o MAX e destroem margin_potential',
+    ).not.toContain('sales_price_history');
   });
 });
 
