@@ -143,17 +143,23 @@ function contarG3(fonte: string): number {
 // a lista só encolhe, e encolhe registrado (achado Codex: baseline por arquivo
 // aceitaria um laço NOVO nascer em arquivo já listado).
 const G3_DIVIDA: ReadonlyMap<string, number> = new Map([
-  // Quitados (erradicação scoring/carteira/batch, continuação do #1581): ai-ops-agent,
-  // algorithm-a-audit, calculate-scores, carteira-rebuild — convertidos a fetchAll/throw/failLease.
-  ['supabase/functions/omie-analytics-sync/index.ts', 5],
+  // Quitados (erradicação scoring/carteira/batch, #1596): ai-ops-agent, algorithm-a-audit,
+  // calculate-scores, carteira-rebuild — convertidos a fetchAll/throw/failLease.
+  // Quitado (erradicação das 3 edges de sync Omie, este PR): omie-analytics-sync (5→0) — os
+  // 5 laços viraram chamadas a `fetchAll` (_shared/paginate.ts), que lança em erro E em
+  // data:null. Os dois PRs nasceram do mesmo chip-mãe (#1581) e conflitaram AQUI por editar
+  // linhas vizinhas; a resolução é UNIÃO — as duas listas de quitação são disjuntas e ambas
+  // valem (money-path §9: conflito entre dois fixes da mesma classe não se resolve por lado).
   ['supabase/functions/omie-financeiro/index.ts', 1],
 ]);
 
 // F2 residual SEM regra automatizada (decisão registrada, respondendo ao challenge do
 // Codex): a forma `if (!x || x.length === 0) break`/`hasMore=false` colapsando
-// data:null com fim sobrevive em 3 laços keyset (omie-cliente ~:948 e ~:1154,
-// omie-vendas-sync ~:955) e no omie-malha-sync ~:145 — TODOS já com dono e linha nos
-// chips de erradicação. A regex genérica do padrão casa ~13 usos LEGÍTIMOS de
+// data:null com fim sobrevive hoje só no omie-malha-sync ~:145 — os 3 laços keyset das
+// edges de sync Omie (omie-cliente :362/:948/:1154 e omie-vendas-sync :955) foram
+// convertidos na continuação do #1581 para `if (x == null) throw` + `if (x.length === 0)`,
+// que separa resposta MALFORMADA de fim legítimo sem perder o cursor keyset (design
+// legítimo: keyset ≠ offset, não vira fetchAll). A regex genérica do padrão casa ~13 usos LEGÍTIMOS de
 // "lista vazia → nada a fazer" fora de laço de paginação (medido 2026-07-23) e uma
 // versão posicional fina o bastante seria frágil; a morte da forma vem da CONVERSÃO
 // para helpers (que os chips executam), e G1/G3/G4 barram as formas grepáveis.
@@ -165,7 +171,24 @@ const G3_DIVIDA: ReadonlyMap<string, number> = new Map([
 // supabase/functions/_shared/omie-paginacao.ts: validarTotalPaginas (fail-fast
 // anti-runaway) + proximoTotalPaginas (piso monotônico) + avaliarPagina (página vazia
 // antes do fim declarado = anomalia, nunca "fim").
-const G4 = /(nTotPaginas|total_de_paginas)\s*(\|\||\?\?)\s*1\b/;
+//
+// ⚠️ O `[^;]{0,60}?` (era `\s*`) foi ENDURECIDO em DOIS passos na continuação do #1581:
+//  (1) `\s*` → aceitar o que houver entre o campo e o operador: a forma dominante nas edges de
+//      venda/financeiro é `(result.total_de_paginas as number) || 1`, e o CAST fazia a regex
+//      NÃO casar — o gate media 0 num arquivo com 5 sites vivos (omie-financeiro). Detector que
+//      não enxerga a forma real do repo é falso-VERDE, a família do "O DETECTOR mente".
+//      Medido: +5 em omie-financeiro, +1 em omie-vendas-sync, zero falso positivo.
+//  (2) permitir NEWLINE (achado Codex deste PR): `(… as number)\n  || 1` é o que o formatador
+//      automático produz quando a linha passa do limite, e a versão anterior (`[^;\n]`) deixava
+//      passar. Medido no repo inteiro: ZERO diferença de contagem — não gera falso positivo aqui.
+// O `;` continua excluído: é ele que impede o padrão de atravessar para o statement vizinho.
+//
+// LIMITAÇÃO CONHECIDA (registrada, não é descuido — a solução completa exigiria AST/dataflow):
+//  · falso POSITIVO possível em objeto literal — `{ pages: result.total_de_paginas, n: x || 1 }`
+//    casa sem ser fallback de total (não existe no repo hoje; se aparecer, vai para a allowlist);
+//  · falso NEGATIVO via ALIAS — `const t = result.total_de_paginas; … t || 1` escapa, porque o
+//    nome do campo não está na mesma expressão.
+const G4 = /(nTotPaginas|total_de_paginas)[^;]{0,60}?(\|\||\?\?)\s*1\b/;
 
 // Allowlist PERMANENTE por contagem (usos legítimos da forma — não são dívida). O helper
 // _shared/omie-paginacao.ts NÃO precisa de entrada: seu `Number(nTot ?? 1)` usa o
@@ -177,21 +200,33 @@ const G4_ALLOW: ReadonlyMap<string, number> = new Map([
   // O `?? 1` monta o total DECLARADO cru que alimenta o guard local (paginacao.ts do
   // próprio edge: piso monotônico + vazia≤piso lança + teto lança — auditado 2026-07-23).
   ['supabase/functions/omie-sync-status-produtos/index.ts', 1],
+  // syncPedidos (~:1159) — `só p/ log/ETA, NÃO decide completude`, auditado na continuação
+  // do #1581: a autoridade de fim é `classifyPedidosPage` (pagination.ts: fim REAL = null/
+  // vazia-que-não-contradiz; vazia que CONTRADIZ = anomalia → pausa) e `complete = reachedEnd`.
+  // O valor só alcança um console.log e o campo informativo do retorno. Revelado pelo
+  // endurecimento da regex acima (o cast o escondia).
+  ['supabase/functions/omie-vendas-sync/index.ts', 1],
 ]);
 
 // DÍVIDA G4 (baseline por CONTAGEM, 2026-07-23 — mesma regra da G3_DIVIDA):
 const G4_DIVIDA: ReadonlyMap<string, number> = new Map([
   ['supabase/functions/cmc-snapshot-backfill/index.ts', 1],
   ['supabase/functions/cmc-snapshot-smoke/index.ts', 1],
-  ['supabase/functions/omie-analytics-sync/index.ts', 3],
-  ['supabase/functions/omie-cliente/index.ts', 1],
+  // omie-analytics-sync (3→0), omie-cliente (1→0) e omie-vendas-sync (1→0, o `|| 1` do
+  // backfill_tint_cor) QUITADOS na continuação do #1581 — os totais passaram a
+  // proximoTotalPaginas + avaliarPagina. O que resta do vendas-sync é a entrada de
+  // G4_ALLOW acima (log/ETA), não dívida.
   ['supabase/functions/omie-sync-ctes-recebidos/index.ts', 1],
   ['supabase/functions/omie-sync-estoque/index.ts', 2],
   ['supabase/functions/omie-sync-metadados/index.ts', 1],
   ['supabase/functions/omie-sync-vendas-items/index.ts', 1],
-  ['supabase/functions/omie-vendas-sync/index.ts', 1],
   ['supabase/functions/sync-reprocess/index.ts', 1],
   ['supabase/functions/tint-omie-sync/index.ts', 1],
+  // DÍVIDA NOVA — não é regressão: são 5 sites que SEMPRE existiram e que a regex antiga
+  // não enxergava por causa do cast (`(result.total_de_paginas as number) || 1`). O
+  // endurecimento acima os tornou visíveis; a correção é do chip de erradicação do
+  // financeiro, não deste. Baselinar > afrouxar o detector recém-consertado.
+  ['supabase/functions/omie-financeiro/index.ts', 5],
 ]);
 
 describe('gate estrutural: paginação artesanal que trata falha como fim (classe #1338→#1564)', () => {
@@ -275,6 +310,39 @@ describe('gate estrutural: paginação artesanal que trata falha como fim (class
       quitacoes,
       `dívida/allowlist G4 quitada (total ou parcial) — ATUALIZE a baseline para ela só encolher: ${quitacoes.join(', ')}`,
     ).toEqual([]);
+  });
+
+  it('G4 (controle de calibração): as DUAS formas do total cru são detectadas — inclusive com cast', () => {
+    // Sem este controle o G4 é falso-VERDE por construção: a regex `\s*` original media 0 em
+    // omie-financeiro (5 sites vivos) e em omie-vendas-sync porque o cast fica ENTRE o campo e
+    // o `||`. "Detectou a morte" e "está quebrado" têm de ser distinguíveis (money-path §"O
+    // DETECTOR mente"): estes asserts fixam o detector contra as formas REAIS do repo.
+    const semCast = `      totalPaginas = result.total_de_paginas || 1;`;
+    const comCast = `    totalPaginas = (result.total_de_paginas as number) || 1;`;
+    const comCastBang = `    totalPaginas = (result!.total_de_paginas as number) || 1;`;
+    const comCastNTot = `    totalPaginas = (result.nTotPaginas as number) || 1;`;
+    const coalesce = `      const total = result.total_de_paginas ?? 1;`;
+    // Quebra de linha antes do `||` — o que o formatador automático produz numa linha longa.
+    // Achado Codex deste PR: a 1ª versão do endurecimento excluía `\n` e deixava passar.
+    const multilinha = `    totalPaginas = (result.total_de_paginas as number)\n      || 1;`;
+    for (const [rotulo, amostra] of [
+      ['sem cast (forma-mãe)', semCast],
+      ['com cast `as number`', comCast],
+      ['com cast e non-null `!`', comCastBang],
+      ['com cast, campo nTotPaginas', comCastNTot],
+      ['coalesce `?? 1`', coalesce],
+      ['cast + quebra de linha antes do `||`', multilinha],
+    ] as const) {
+      expect(G4.test(amostra), `G4 deixou de casar o controle: ${rotulo}`).toBe(true);
+    }
+    // E o pós-fix (piso monotônico + teto fail-fast) NÃO casa — senão o gate ficaria vermelho
+    // sobre o código CORRETO e a saída seria afrouxar a regra (falso-VERMELHO, §#1483).
+    const posFix = `      totalPaginas = proximoTotalPaginas(totalPaginas, result.total_de_paginas, MAX_PAGINAS_LISTAGEM);`;
+    expect(G4.test(posFix), 'G4 casa o pós-fix — falso positivo de calibração').toBe(false);
+    // Guard do endurecimento: o `[^;\n]` não pode atravessar statement e casar um `|| 1` de
+    // OUTRA instrução (isso transformaria vizinhança inocente em ofensa).
+    const doisStatements = `    const t = result.total_de_paginas; const fator = escala || 1;`;
+    expect(G4.test(doisStatements), 'G4 atravessou `;` — o padrão pega statement vizinho').toBe(false);
   });
 
   it('G3 (controle de calibração): laço com `?? []` de página é detectado; callback de helper não', () => {

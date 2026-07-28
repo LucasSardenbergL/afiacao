@@ -16,6 +16,25 @@
 // cExibeTodos:"S" ≈ 43 páginas do catálogo ~4.3k; só-com-saldo: oben ~8 págs, colacor ~14).
 export const MAX_PAGINAS_POS_ESTOQUE = 500;
 
+// Régua das listagens de CADASTRO (ListarClientes/ListarProdutos/ListarParcelas,
+// total_de_paginas). O teto existe para pegar `total_de_paginas` LIXO (ex.: 100000), não para
+// dimensionar a base: 2.000 páginas são 100k registros @50/pág e 200k @100/pág, contra ~6,9k
+// cadastros hoje (~14× de folga) — e um lixo de 10^5 continua reprovando fail-fast.
+//
+// ⚠️ Foi 500 na 1ª versão deste PR e o Codex (xhigh) classificou como "limite de capacidade
+// disfarçado de guard": @50/pág davam 25k, só 3,6× a base. E o custo de errar é ASSIMÉTRICO —
+// validarTotalPaginas LANÇA acima do teto, o erro é capturado como falha de página, o cursor
+// NÃO avança e as contas seguintes nunca são visitadas: um teto baixo demais não degrada, ele
+// PRENDE o sync para sempre. Como o trabalho por invocação já é limitado pelo `maxPages` de
+// cada caller (3/10/12 páginas), um teto mais alto não gira a edge por mais tempo — só adia a
+// bomba de crescimento. Na dúvida entre "guard aperta" e "guard prende", folgue o guard.
+export const MAX_PAGINAS_LISTAGEM = 2000;
+
+// ListarPedidos (@50/pág) enumera o HISTÓRICO completo de anos no backfill — o acervo real
+// passa folgado de 500 páginas, então o teto das listagens de cadastro reprovaria total
+// LEGÍTIMO. 5.000 págs ≈ 250k pedidos (>10× o acervo); lixo 10^5+ ainda falha fail-fast.
+export const MAX_PAGINAS_PEDIDOS = 5000;
+
 // Valida o nTotPaginas DECLARADO na resposta — fail-FAST (Codex P1): um nTotPaginas lixo
 // gigante (ex.: 100000) não pode ser descoberto só na página maxPaginas+1, depois de ~90s de
 // chamadas Omie — isso reproduziria o próprio 546. Lixo não-inteiro/0/negativo degrada para 1
