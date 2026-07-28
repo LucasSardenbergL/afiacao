@@ -4,6 +4,7 @@ import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { omieDateToIso, classifyOmieTransient, classifyPedidosPage, gerarJanelasMensais } from "./pagination.ts";
 import { carregarProductMap } from "../_shared/mapas-paginados.ts";
 import type { BancoPostgrest } from "../_shared/paginate.ts";
+import { avaliarPagina, MAX_PAGINAS_LISTAGEM, MAX_PAGINAS_PEDIDOS, MAX_PAGINAS_POS_ESTOQUE, proximoTotalPaginas } from "../_shared/omie-paginacao.ts";
 
 type OmieGenericResponse = Record<string, unknown> & { faultstring?: string; codigo_status?: number | string; descricao_status?: string };
 
@@ -303,6 +304,9 @@ function getOmieItemIntegrationCode(index: number): number {
 async function syncProducts(supabase: SupabaseClient, startPage = 1, maxPages = 12, account: Account = "oben") {
   let pagina = startPage;
   let totalPaginas = 1;
+  // Fim REAL declarado por avaliarPagina (página vazia NA/apos a última declarada) — distingue
+  // "catálogo esgotado" de "lote esgotado" no `complete` abaixo.
+  let fimReal = false;
   let totalSynced = 0;
   let pagesProcessed = 0;
 
@@ -327,8 +331,21 @@ async function syncProducts(supabase: SupabaseClient, startPage = 1, maxPages = 
       break;
     }
 
-    totalPaginas = (result.total_de_paginas as number) || 1;
+    // Piso MONOTÔNICO + teto fail-fast + anomalia (_shared/omie-paginacao.ts; money-path §9):
+    // era `|| 1` POR RESPOSTA — uma intermediária sem o campo encolhia o teto e o cursor
+    // devolvia complete=true/nextPage=null com o catálogo parcial.
+    totalPaginas = proximoTotalPaginas(totalPaginas, result.total_de_paginas as number | undefined, MAX_PAGINAS_LISTAGEM);
     const produtos: OmieProdutoCadastro[] = (result.produto_servico_cadastro as OmieProdutoCadastro[] | undefined) || [];
+    const veredicto = avaliarPagina(produtos.length, pagina, totalPaginas);
+    if (veredicto === "anomalia") {
+      // Vazia ANTES do fim declarado = fault disfarçado → aborta fail-closed; o caller re-invoca
+      // do start_page e o upsert por página é idempotente.
+      throw new Error(`página ${pagina}/${totalPaginas} do ListarProdutos veio vazia antes do fim declarado — abortando (retrato parcial)`);
+    }
+    if (veredicto === "fim") {
+      fimReal = true;
+      break;
+    }
 
     const EXCLUDED_FAMILIES = ['imobilizado', 'uso e consumo', 'matérias primas para conversão de cintas', 'jumbos de lixa para discos', 'material para tingimix'];
 
@@ -384,7 +401,7 @@ async function syncProducts(supabase: SupabaseClient, startPage = 1, maxPages = 
     pagesProcessed++;
   }
 
-  const complete = pagina > totalPaginas;
+  const complete = fimReal || pagina > totalPaginas;
   return { totalSynced, totalPaginas, lastPage: pagina - 1, nextPage: complete ? null : pagina, complete };
 }
 
@@ -392,6 +409,8 @@ async function syncProducts(supabase: SupabaseClient, startPage = 1, maxPages = 
 async function syncEstoque(supabase: SupabaseClient, startPage = 1, maxPages = 3, account: Account = "oben") {
   let pagina = startPage;
   let totalPaginas = 1;
+  // mesma distinção do syncProducts: fim REAL (avaliarPagina) ≠ lote esgotado.
+  let fimReal = false;
   let totalUpdated = 0;
   let pagesProcessed = 0;
 
@@ -413,8 +432,20 @@ async function syncEstoque(supabase: SupabaseClient, startPage = 1, maxPages = 3
       break;
     }
 
-    totalPaginas = (result.nTotPaginas as number) || 1;
+    // Piso MONOTÔNICO + teto fail-fast + anomalia (money-path §9): era `|| 1` POR RESPOSTA —
+    // intermediária sem o campo encolhia o teto e o cursor fechava complete com estoque parcial.
+    totalPaginas = proximoTotalPaginas(totalPaginas, result.nTotPaginas as number | undefined, MAX_PAGINAS_POS_ESTOQUE);
     const produtos: OmiePosEstoque[] = Array.isArray(result.produtos) ? (result.produtos as OmiePosEstoque[]) : [];
+    const veredictoEstoque = avaliarPagina(produtos.length, pagina, totalPaginas);
+    if (veredictoEstoque === "anomalia") {
+      // Vazia ANTES do fim declarado = fault disfarçado → aborta; o caller re-invoca do
+      // start_page (UPDATE por id é idempotente).
+      throw new Error(`página ${pagina}/${totalPaginas} do ListarPosEstoque veio vazia antes do fim declarado — abortando (retrato parcial)`);
+    }
+    if (veredictoEstoque === "fim") {
+      fimReal = true;
+      break;
+    }
     const updatedAt = new Date().toISOString();
 
     const productCodes = produtos
@@ -485,7 +516,7 @@ async function syncEstoque(supabase: SupabaseClient, startPage = 1, maxPages = 3
     pagesProcessed++;
   }
 
-  const complete = pagina > totalPaginas;
+  const complete = fimReal || pagina > totalPaginas;
   return { totalUpdated, totalPaginas, lastPage: pagina - 1, nextPage: complete ? null : pagina, complete };
 }
 
@@ -697,19 +728,31 @@ async function listarFormasPagamento(account: Account = "oben") {
     let totalPaginas = 1;
 
     do {
+      // throwOnTransient: rate-limit/transitório ESGOTADO vira throw (→ fallback padrão do catch,
+      // degradação declarada e visível) em vez de null — que aqui era lido como fim e devolvia a
+      // lista PARCIAL como completa (classe money-path §9): parcela ausente = condição de
+      // pagamento do cliente indisponível na criação do pedido. null passa a significar SÓ fim real
+      // ("Não existem registros").
       const result = await callOmieVendasApi(
         "geral/parcelas/",
         "ListarParcelas",
         { pagina, registros_por_pagina: 500 },
-        account
+        account,
+        { throwOnTransient: true },
       );
+      if (!result) break;
 
       const parcelas: OmieParcela[] =
-        (result?.cadastros as OmieParcela[] | undefined)
-        || (result?.parcela_cadastro as OmieParcela[] | undefined)
-        || (result?.lista_parcelas as OmieParcela[] | undefined)
+        (result.cadastros as OmieParcela[] | undefined)
+        || (result.parcela_cadastro as OmieParcela[] | undefined)
+        || (result.lista_parcelas as OmieParcela[] | undefined)
         || [];
-      totalPaginas = (result?.total_de_paginas as number) || 1;
+      // Piso monotônico + teto fail-fast: era `|| 1` POR RESPOSTA (intermediária sem o campo
+      // encolhia o teto). Vazia ANTES do fim declarado = anomalia → throw → fallback padrão.
+      totalPaginas = proximoTotalPaginas(totalPaginas, result.total_de_paginas as number | undefined, MAX_PAGINAS_LISTAGEM);
+      if (avaliarPagina(parcelas.length, pagina, totalPaginas) === "anomalia") {
+        throw new Error(`página ${pagina}/${totalPaginas} do ListarParcelas veio vazia antes do fim declarado`);
+      }
       console.log(`[Omie Vendas][${account}] ListarParcelas página ${pagina}/${totalPaginas} retornou ${parcelas.length} parcelas.`);
       allParcelas.push(...parcelas);
       pagina++;
@@ -952,7 +995,10 @@ async function syncPedidos(
       .order('omie_codigo_cliente')
       .limit(pgSize);
     if (cacheErr) throw new Error(`pre-load client cache (${account}): ${cacheErr.message}`);
-    if (!batch || batch.length === 0) { hasMore = false; }
+    // data:null SEM error = resposta malformada (≠ fim): lida como fim, o cache sai PARCIAL →
+    // milhares de miss no fallback → rate-limit no Omie → skip/atribuição arbitrária (§9).
+    if (batch == null) throw new Error(`pre-load client cache (${account}): data null sem error — resposta malformada, não é fim`);
+    if (batch.length === 0) { hasMore = false; }
     else {
       for (const oc of batch) {
         clientCache.set(oc.omie_codigo_cliente, oc.user_id);
@@ -2290,6 +2336,8 @@ serve(async (req) => {
         let bfPagina = Number(params.start_page) || 1;
         const bfMaxPages = Number(params.max_pages) || 5;
         let bfTotalPaginas = 1;
+        // fim REAL (avaliarPagina) ≠ lote esgotado — decide o next_page abaixo.
+        let bfFimReal = false;
         let bfPages = 0;
         let bfPedidosComCor = 0;
         let bfPedidosAtualizados = 0;
@@ -2300,8 +2348,20 @@ serve(async (req) => {
           if (bfNumeroPedido) { bfParams.numero_pedido_de = bfNumeroPedido; bfParams.numero_pedido_ate = bfNumeroPedido; }
           const bfRes = (await callOmieVendasApi("produtos/pedido/", "ListarPedidos", bfParams, account)) as OmieListarPedidosResponse | null;
           if (!bfRes) break; // rate limit → retoma na próxima invocação
-          bfTotalPaginas = bfRes.total_de_paginas || 1;
+          // Piso MONOTÔNICO + teto fail-fast (money-path §9): era `|| 1` POR RESPOSTA — uma
+          // intermediária sem o campo encerrava o cursor prematuro (next_page=null com cauda viva).
+          bfTotalPaginas = proximoTotalPaginas(bfTotalPaginas, bfRes.total_de_paginas, MAX_PAGINAS_PEDIDOS);
           const bfPedidos = bfRes.pedido_venda_produto || [];
+          const bfVeredicto = avaliarPagina(bfPedidos.length, bfPagina, bfTotalPaginas);
+          if (bfVeredicto === "anomalia") {
+            // vazia ANTES do fim declarado = fault disfarçado → aborta; o caller retoma do
+            // start_page desta invocação (o UPDATE só toca registros sem cor — idempotente).
+            throw new Error(`página ${bfPagina}/${bfTotalPaginas} do ListarPedidos (backfill) veio vazia antes do fim declarado`);
+          }
+          if (bfVeredicto === "fim") {
+            bfFimReal = true;
+            break;
+          }
 
           for (const bfPedido of bfPedidos) {
             const bfCab = bfPedido.cabecalho || {};
@@ -2359,7 +2419,7 @@ serve(async (req) => {
           account,
           pedidos_com_cor: bfPedidosComCor,
           pedidos_atualizados: bfPedidosAtualizados,
-          next_page: bfPagina <= bfTotalPaginas ? bfPagina : null,
+          next_page: !bfFimReal && bfPagina <= bfTotalPaginas ? bfPagina : null,
           ...(bfDryRun ? { amostra: bfAmostra } : {}),
         };
         break;
@@ -3244,6 +3304,8 @@ serve(async (req) => {
         // Fetch last 5 pages of orders for this client from Omie
         const productHistory: Record<string, string> = {}; // omie_codigo_produto -> last date
         try {
+          // Piso do total ao longo das ≤5 páginas — ver o comentário no uso abaixo.
+          let histTotal = 1;
           for (let page = 1; page <= 5; page++) {
             const pedidos = await callOmieVendasApi(
               "produtos/pedido/",
@@ -3256,7 +3318,8 @@ serve(async (req) => {
               },
               account
             );
-            const lista = ((pedidos as { pedido_venda_produto?: OmiePedidoVendaProduto[] } | null)?.pedido_venda_produto) || [];
+            if (!pedidos) break; // null = fim real ("Não existem registros") ou transiente esgotado — para sem fabricar total
+            const lista = ((pedidos as { pedido_venda_produto?: OmiePedidoVendaProduto[] }).pedido_venda_produto) || [];
             for (const pedido of lista) {
               const dataPedido = pedido?.cabecalho?.data_previsao || pedido?.infoCadastro?.dInc || '';
               const itens = pedido?.det || [];
@@ -3267,8 +3330,11 @@ serve(async (req) => {
                 }
               }
             }
-            const totalPages = ((pedidos as { total_de_paginas?: number } | null)?.total_de_paginas) || 1;
-            if (page >= totalPages) break;
+            // Piso monotônico (money-path §9): o `|| 1` POR RESPOSTA truncava o histórico na 1ª
+            // resposta sem o campo (efeito só de recall — menos itens preferidos —, mas é a mesma
+            // forma da classe; o teto de 5 páginas segue no `for`).
+            histTotal = proximoTotalPaginas(histTotal, (pedidos as { total_de_paginas?: number }).total_de_paginas, MAX_PAGINAS_PEDIDOS);
+            if (page >= histTotal) break;
           }
         } catch (e) {
           console.log("[Omie Vendas] Erro ao buscar histórico de pedidos:", e);

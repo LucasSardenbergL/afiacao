@@ -16,6 +16,17 @@
 // cExibeTodos:"S" ≈ 43 páginas do catálogo ~4.3k; só-com-saldo: oben ~8 págs, colacor ~14).
 export const MAX_PAGINAS_POS_ESTOQUE = 500;
 
+// Mesma régua para as listagens de CADASTRO (ListarClientes/ListarProdutos/ListarParcelas,
+// total_de_paginas): 500 páginas ≈ 25k registros @50/pág — >3× o maior uso atual (clientes
+// oben ~140 págs @50; produtos/clientes @100 ficam em ~40-70 págs). Lixo gigante (10^5) falha
+// fail-fast em validarTotalPaginas em vez de prender o cursor retomável para sempre.
+export const MAX_PAGINAS_LISTAGEM = 500;
+
+// ListarPedidos (@50/pág) enumera o HISTÓRICO completo de anos no backfill — o acervo real
+// passa folgado de 500 páginas, então o teto das listagens de cadastro reprovaria total
+// LEGÍTIMO. 5.000 págs ≈ 250k pedidos (>10× o acervo); lixo 10^5+ ainda falha fail-fast.
+export const MAX_PAGINAS_PEDIDOS = 5000;
+
 // Valida o nTotPaginas DECLARADO na resposta — fail-FAST (Codex P1): um nTotPaginas lixo
 // gigante (ex.: 100000) não pode ser descoberto só na página maxPaginas+1, depois de ~90s de
 // chamadas Omie — isso reproduziria o próprio 546. Lixo não-inteiro/0/negativo degrada para 1

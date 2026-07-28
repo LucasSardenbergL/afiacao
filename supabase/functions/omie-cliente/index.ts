@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { fetchAll } from "../_shared/paginate.ts";
+import { avaliarPagina, MAX_PAGINAS_LISTAGEM, proximoTotalPaginas } from "../_shared/omie-paginacao.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -359,7 +360,10 @@ async function* paginarProfilesComDocumento(
     const { data, error } = await query;
     // Fail-closed: erro engolido vira página vazia, que vira "cliente não existe" → clone.
     if (error) throw new Error(`Falha ao paginar profiles: ${error.message}`);
-    if (!data || data.length === 0) return;
+    // data:null SEM error é resposta MALFORMADA (≠ fim da tabela): lê-la como fim deixaria o
+    // dedup parcial pelo MESMO caminho — furo do contrato de fetchAll (money-path §6/§9).
+    if (data == null) throw new Error("Falha ao paginar profiles: data null sem error — resposta malformada, não é fim");
+    if (data.length === 0) return;
 
     const rows = data as Array<{ user_id: string; document: string | null }>;
     yield rows.filter((r): r is { user_id: string; document: string } => !!r.document);
@@ -913,7 +917,12 @@ serve(async (req) => {
 
         const account = accounts[accountIndex];
         let page = startPage;
+        // Piso da run: começa na página pedida (garante a entrada no laço) e daí só CRESCE
+        // (proximoTotalPaginas) — o total declarado POR RESPOSTA não pode encolher o teto.
         let totalPages = startPage;
+        // true SÓ quando avaliarPagina declara fim REAL (página vazia NA/apos a última declarada)
+        // — distingue "conta esgotada" de "lote esgotado" no hasMore abaixo.
+        let fimReal = false;
         let accImported = 0;
         let accSkipped = 0;
         let accErrors = 0;
@@ -945,7 +954,10 @@ serve(async (req) => {
           // Fail-closed: engolir o erro deixaria o Set vazio/parcial e o loop tentaria RECRIAR
           // milhares de clientes já existentes (Codex P2 do PR-2, mesma armadilha).
           if (codeErr) throw new Error(`Falha ao carregar códigos já mapeados (${account.account}): ${codeErr.message}`);
-          if (!codePage || codePage.length === 0) break;
+          // data:null SEM error = resposta malformada (≠ fim): virar "fim" deixaria o Set parcial
+          // com o MESMO efeito do erro engolido acima (dedup cego recria clientes) — money-path §9.
+          if (codePage == null) throw new Error(`Falha ao carregar códigos já mapeados (${account.account}): data null sem error — resposta malformada, não é fim`);
+          if (codePage.length === 0) break;
           for (const row of codePage) existingCodes.add(row.omie_codigo_cliente as number);
           codeCursor = codePage[codePage.length - 1].omie_codigo_cliente as number;
           if (codePage.length < codePageSize) break;
@@ -977,12 +989,35 @@ serve(async (req) => {
             );
 
             if (listResult.faultstring) {
+              // "Não existem registros para a página" NÃO é falha: é o fim REAL da conta no
+              // contrato Omie (mesmo tratamento do callOmieVendasApi do omie-vendas-sync). Sem
+              // isto, um start_page além do fim (conta que encolheu entre lotes) caía no break
+              // de erro com hasMore=true PARA SEMPRE — e a conta presa TRAVA a iteração: as
+              // contas seguintes nunca sincronizavam por este caminho.
+              if (String(listResult.faultstring).includes("Não existem registros para a página")) {
+                fimReal = true;
+                break;
+              }
               console.error(`[sync_all_clients] ${account.name} page ${page} error: ${listResult.faultstring}`);
               break;
             }
 
-            totalPages = listResult.total_de_paginas || 1;
+            // Era `total_de_paginas || 1` POR RESPOSTA: uma intermediária SEM o campo encolhia o
+            // teto para 1 → hasMore=false → a conta era dada como CONCLUÍDA com o import parcial
+            // (classe money-path §9). Piso monotônico + teto fail-fast de _shared/omie-paginacao.ts.
+            totalPages = proximoTotalPaginas(totalPages, listResult.total_de_paginas, MAX_PAGINAS_LISTAGEM);
             const clientes = listResult.clientes_cadastro || [];
+            const veredicto = avaliarPagina(clientes.length, page, totalPages);
+            if (veredicto === "anomalia") {
+              // Página vazia ANTES do fim declarado = fault transiente disfarçado. O catch abaixo
+              // vira break SEM avançar page → hasMore=true → o próximo lote retenta ESTA página;
+              // nunca completa retrato parcial.
+              throw new Error(`página ${page}/${totalPages} do ListarClientes veio vazia antes do fim declarado`);
+            }
+            if (veredicto === "fim") {
+              fimReal = true;
+              break;
+            }
 
             for (const cliente of clientes) {
               const codigoCliente = cliente.codigo_cliente_omie || cliente.codigo_cliente;
@@ -1076,7 +1111,7 @@ serve(async (req) => {
           }
         }
 
-        const hasMore = page <= totalPages;
+        const hasMore = !fimReal && page <= totalPages;
         const nextAccountIndex = hasMore ? accountIndex : accountIndex + 1;
         const nextPage = hasMore ? page : 1;
 
@@ -1151,7 +1186,10 @@ serve(async (req) => {
           const { data: page, error: pageErr } = await query;
           // Fail-closed: engolir o erro daria "No client mappings found" — um NO-OP mudo que parece sucesso.
           if (pageErr) throw new Error(`Falha ao carregar mapeamentos da proof: ${pageErr.message}`);
-          if (!page || page.length === 0) break;
+          // data:null SEM error = resposta malformada (≠ fim): lida como fim, o mapa sai parcial e
+          // users com endereço por sincronizar somem do lote em silêncio (money-path §9).
+          if (page == null) throw new Error("Falha ao carregar mapeamentos da proof: data null sem error — resposta malformada, não é fim");
+          if (page.length === 0) break;
 
           const rows = page as typeof allMappings;
           let novos = 0;

@@ -73,7 +73,13 @@ Deno.test("edges convertidas não paginam à mão (sem .range() no call-site)", 
 //
 // Predicado literal de novo (substring `.order(` na expressão encadeada, 6 linhas de janela)
 // — nada de regex esperta sobre texto, pela lição recorrente do §"O ALVO mente".
-const VIGIADAS_ORDER = ["omie-cliente"];
+// omie-analytics-sync entrou na continuação do #1581: as 5 leituras artesanais viraram
+// `fetchAll` DIRETO, então o predicado certo para ele é este (o `.range(from, to)` dentro do
+// callback é legítimo) e não o "zero .range(" das VIGIADAS. Um deles — `fetchAllProfileDocs` —
+// era exatamente a metade SEM `.order()` desta classe: o Set de dedup por documento paginava
+// sobre ordem indefinida, e documento que some entre páginas é a fábrica de clones que o
+// próprio arquivo documenta. Agora ordena por `user_id` (PK) e este gate impede a recaída.
+const VIGIADAS_ORDER = ["omie-cliente", "omie-analytics-sync"];
 
 Deno.test("edges com fetchAll direto: todo .range( tem .order( na mesma expressão", async () => {
   const ofensas: string[] = [];
