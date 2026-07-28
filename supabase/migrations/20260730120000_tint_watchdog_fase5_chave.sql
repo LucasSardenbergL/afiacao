@@ -106,6 +106,7 @@ DECLARE
   v_upd int;
   v_ant_email bigint;
   v_emitir boolean;
+  v_sev_ant text;
 BEGIN
   IF p_n <= 0 THEN
     UPDATE fin_alertas SET dismissed_at = now()
@@ -135,37 +136,53 @@ BEGIN
   -- logarítmica (300 → 600 → 1200 …): silenciosa no crescimento vegetativo, mas
   -- garantida a cada duplicação.
   SELECT COALESCE((contexto->>'_n')::bigint, 0),
-         COALESCE((contexto->>'_n_email')::bigint, COALESCE((contexto->>'_n')::bigint, 0))
-    INTO v_ant, v_ant_email
+         COALESCE((contexto->>'_n_email')::bigint, COALESCE((contexto->>'_n')::bigint, 0)),
+         severidade
+    INTO v_ant, v_ant_email, v_sev_ant
     FROM fin_alertas
    WHERE company = p_company AND tipo = p_tipo AND dismissed_at IS NULL;
 
-  -- Re-emissão com HISTERESE (Codex [P1] no diff): re-emitir a CADA incremento faz
-  -- de um sinal que cresce sozinho um spam diário — S2 ganha ~15 chaves por ciclo
-  -- (~60/dia), o que daria ~4 e-mails/dia até alguém limpar. p_fator exige piora
-  -- MATERIAL: 1.0 = qualquer piora (S1/S3, raros e graves), 2.0 = só ao dobrar (S2).
-  -- O alerta em fin_alertas é sempre atualizado; o que a histerese controla é o E-MAIL.
-  IF p_n > COALESCE(v_ant, 0) THEN
-    -- UPDATE ... RETURNING numa passada só: um dismiss CONCORRENTE entre o SELECT e o
-    -- UPDATE faria o UPDATE não achar linha e, com o INSERT incondicional, sairia um
-    -- e-mail "AGRAVOU" fantasma, sem alerta aberto por trás (Codex [P2]).
-    v_emitir := p_n >= GREATEST(v_ant_email * p_fator, v_ant_email + 1);
+  -- ⚠️ O UPDATE é INCONDICIONAL (2ª rodada do challenge Codex, [P1]). A versão
+  -- anterior o embrulhava num `IF p_n > v_ant`, então uma MELHORA parcial não
+  -- atualizava nada: com S2 caindo de 1.200 para 300, o alerta seguia mostrando
+  -- 1.200 e a severidade do pico, e S2 podia voltar a 1.199 em silêncio total.
+  -- Estado no banco reflete SEMPRE o ciclo atual; o que a histerese governa é só
+  -- o E-MAIL.
+  --
+  -- Duas âncoras DIFERENTES, e confundi-las quebra a histerese (pego pelo assert
+  -- B16c): `_n` é o valor do ciclo atual; `_n_email` é o valor de quando o último
+  -- e-mail saiu. Comparar com `_n` faria o gatilho fugir junto com o valor e o
+  -- e-mail nunca mais sairia. Com `_n_email`, a re-emissão é logarítmica.
+  --
+  -- REARME NA RECUPERAÇÃO ([P1] da 2ª rodada): se o sinal MELHORA materialmente
+  -- (cai a metade ou menos do valor emailado), a âncora desce junto — senão, depois
+  -- de um pico de 1.200, um novo patamar de 1.199 ficaria mudo para sempre.
+  v_ant_email := CASE WHEN p_n <= v_ant_email / 2 THEN p_n ELSE v_ant_email END;
 
-    UPDATE fin_alertas
-       SET severidade = p_sev,
-           mensagem   = p_msg,
-           contexto   = p_ctx || jsonb_build_object('_n', p_n, 'avaliado_em', now(),
-                                                    'agravou_de', v_ant,
-                                                    -- só avança quando o e-mail de fato sai
-                                                    '_n_email', CASE WHEN v_emitir THEN p_n ELSE v_ant_email END)
-     WHERE company = p_company AND tipo = p_tipo AND dismissed_at IS NULL
-    RETURNING 1 INTO v_upd;
+  -- Emite se DOBROU desde o último e-mail, OU se a SEVERIDADE SUBIU ([P1] da 2ª
+  -- rodada): 9.600 'aviso' → 10.000 'critico' mudava o alerta para crítico sem
+  -- avisar ninguém, e o próximo e-mail só sairia em 19.200.
+  v_emitir := p_n >= GREATEST(v_ant_email * p_fator, v_ant_email + 1)
+              OR (CASE p_sev      WHEN 'critico' THEN 3 WHEN 'aviso' THEN 2 ELSE 1 END
+                > CASE v_sev_ant WHEN 'critico' THEN 3 WHEN 'aviso' THEN 2 ELSE 1 END);
 
-    IF v_upd IS NOT NULL AND v_emitir THEN
-      INSERT INTO fornecedor_alerta (empresa, tipo, severidade, titulo, mensagem, status)
-      VALUES (p_company, 'outro', v_sev_forn, 'AGRAVOU: ' || p_titulo,
-              p_msg || E'\n\n(agravamento: eram ' || v_ant || ')', 'pendente_notificacao');
-    END IF;
+  -- UPDATE ... RETURNING numa passada só: um dismiss CONCORRENTE entre o SELECT e o
+  -- UPDATE faria o UPDATE não achar linha e, com o INSERT incondicional, sairia um
+  -- e-mail "AGRAVOU" fantasma, sem alerta aberto por trás (Codex [P2]).
+  UPDATE fin_alertas
+     SET severidade = p_sev,
+         mensagem   = p_msg,
+         contexto   = p_ctx || jsonb_build_object('_n', p_n, 'avaliado_em', now(),
+                                                  'agravou_de', v_ant,
+                                                  -- só avança quando o e-mail de fato sai
+                                                  '_n_email', CASE WHEN v_emitir THEN p_n ELSE v_ant_email END)
+   WHERE company = p_company AND tipo = p_tipo AND dismissed_at IS NULL
+  RETURNING 1 INTO v_upd;
+
+  IF v_upd IS NOT NULL AND v_emitir AND p_n > v_ant THEN
+    INSERT INTO fornecedor_alerta (empresa, tipo, severidade, titulo, mensagem, status)
+    VALUES (p_company, 'outro', v_sev_forn, 'AGRAVOU: ' || p_titulo,
+            p_msg || E'\n\n(agravamento: eram ' || v_ant || ')', 'pendente_notificacao');
   END IF;
 END;
 $function$;
@@ -271,7 +288,12 @@ BEGIN
   -- ÂNCORA NÃO desce: se o colapso for real e deliberado, o rebaseline é decisão
   -- explícita — uma migration, não um clique.
   IF v_dismiss IS NOT NULL AND v_dismiss > v_ancora THEN
-    IF v_universo > 0 AND (v_max = 0 OR (v_max - v_universo)::numeric / v_max < 0.5) THEN
+    -- Teto ABSOLUTO, não percentual (2ª rodada do Codex, [P1]): 50% de 463.995 são
+    -- ~232 mil chaves — um único clique de dismiss canonizaria a perda de metade da
+    -- cobertura. Uma limpeza legítima do 5b#1 mexe em centenas (hoje S2=300), então
+    -- 1.000 cobre o caso real com folga e barra o catastrófico. Acima disso o
+    -- rebaseline é escrita deliberada no SQL Editor — o gate humano do repo.
+    IF v_universo > 0 AND (v_max - v_universo) <= 1000 THEN
       v_max := v_universo; v_ancora := now();
     ELSE
       v_ancora := v_dismiss;   -- consome o dismiss sem rebaixar o patamar
@@ -288,18 +310,32 @@ BEGIN
   -- Limiar de 1%: este sinal é sobre o universo COLAPSAR (o vigia de vacuidade),
   -- não sobre erosão de unidades. O universo é estático por desenho — nada o
   -- escreve — então tolerar <1% custa recall irrelevante e compra silêncio.
-  -- 1% de 463.995 são ~4.640 chaves: o limiar percentual sozinho deixaria milhares
-  -- perderem o carimbo em silêncio, e chave sem carimbo sai do universo E de S1/S2 —
-  -- perda de cobertura permanente, não "recall irrelevante" (Codex [P1]). Daí o OU
-  -- com um piso ABSOLUTO: o universo é estático por desenho, então qualquer queda de
-  -- 100+ chaves já é anômala.
-  IF v_max > 0 AND (v_queda >= 0.01 OR (v_max - v_universo) >= 100) THEN
+  -- QUALQUER queda alarma (2ª rodada do Codex, [P1]): o piso de 100 que eu tinha
+  -- posto ainda deixava 99 chaves saírem da cobertura em SILÊNCIO PERMANENTE — elas
+  -- somem do universo E de S1/S2, e nada mais as vigia. Como o universo é ESTÁTICO
+  -- por desenho (nenhum writer o toca; só uma limpeza deliberada do 5b#1 o muda),
+  -- o limiar coerente com a premissa é 1, não um percentual: qualquer queda é
+  -- anômala por construção. Trocar 4.639 silenciosas por 99 silenciosas seria
+  -- reduzir o dano em vez de fechar o furo.
+  IF v_max > 0 AND v_universo < v_max THEN
     v_msg := 'Tintometrico/Fase 5: o universo carimbado ENCOLHEU de ' || v_max ||
              ' para ' || v_universo || ' chaves (' ||
              round(v_queda * 100, 1) || '%). O watchdog por chave mede sobre esse ' ||
              'universo: se ele sumir, S1/S2 vao a zero por VACUIDADE e a rede fica ' ||
-             'cega sem nunca ficar vermelha. Se a limpeza foi deliberada (5b#1), ' ||
-             'dispense este alerta que o patamar novo vira a referencia.';
+             'cega sem nunca ficar vermelha. ' ||
+             -- A mensagem TEM de dizer a verdade sobre o que o dismiss faz (2a rodada
+             -- do Codex, [P1]): acima do teto ele NAO re-ancora, e o alerta reabre no
+             -- ciclo seguinte. Prometer "dispense e pronto" treinaria o founder a
+             -- clicar num botao que nao resolve.
+             CASE WHEN (v_max - v_universo) <= 1000
+                  THEN 'Se a limpeza foi deliberada (5b#1), dispense este alerta que ' ||
+                       'o patamar novo vira a referencia.'
+                  ELSE 'Queda ACIMA do teto de re-ancoragem (1.000 chaves): dispensar ' ||
+                       'NAO muda o patamar e o alerta reabre no proximo ciclo. Restaure ' ||
+                       'o universo, ou faca o rebaseline explicito no SQL Editor: ' ||
+                       'UPDATE sync_state SET metadata = metadata || jsonb_build_object(' ||
+                       '''universo_max'', ' || v_universo || ', ''ancora_em'', now()) ' ||
+                       'WHERE entity_type=''tint_watchdog_fase5'';' END;
     PERFORM public._tint_watchdog_fase5_transicao(
       v_conta, 'tint_fase5_universo_encolheu', v_max - v_universo,
       CASE WHEN v_universo = 0 OR v_queda >= 0.5 THEN 'critico' ELSE 'aviso' END,
@@ -430,7 +466,14 @@ INSERT INTO sync_state (entity_type, account, last_sync_at, status, error_messag
 VALUES ('tint_watchdog_fase5', 'oben', now(), 'pending', NULL,
         jsonb_build_object('universo_max', 463995, 'ancora_em', now(),
                            'semeado_pela_migration', true))
-ON CONFLICT (entity_type, account) DO NOTHING;
+-- No conflito, NAO tocar last_sync_at/status (um marcador vivo nao volta a 'pending'),
+-- mas GARANTIR a baseline: uma linha pre-existente sem universo_max — ou com um valor
+-- MENOR, ja envenenado — faria a 1a execucao canonizar o universo degradado (Codex
+-- [P2] da 2a rodada). GREATEST nunca REBAIXA um patamar legitimo maior.
+ON CONFLICT (entity_type, account) DO UPDATE
+  SET metadata = sync_state.metadata || jsonb_build_object(
+        'universo_max', GREATEST(COALESCE((sync_state.metadata->>'universo_max')::bigint, 0), 463995),
+        'ancora_em', COALESCE(sync_state.metadata->>'ancora_em', now()::text));
 
 SELECT cron.schedule(
   'tint-watchdog-fase5-6h',

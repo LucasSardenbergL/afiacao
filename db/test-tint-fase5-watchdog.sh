@@ -342,6 +342,12 @@ roda_suite() {
   sleep 2
   roda
   eq "B14 lock tomado -> nao avanca o marcador" "$(marcador)" "AUSENTE"
+  # ⚠️ ESPERAR a sessão do lock morrer. Sem isto ela segue segurando o advisory lock
+  # por ~4s, e QUALQUER cenário seguinte que chame `roda` sai cedo (a função retorna
+  # sem gravar marcador) — o assert seguinte mede o watchdog CALADO por contenção e
+  # se lê como "o código não alarma". Custou uma rodada de diagnóstico: o B20 falhava
+  # com a migration correta, porque nasceu depois deste bloco.
+  wait "$lockpid" 2>/dev/null || true
 
   # ══ asserts dos FIXES do challenge Codex sobre este diff (2026-07-28) ══
 
@@ -389,6 +395,42 @@ roda_suite() {
   P -q -c "SELECT public._tint_watchdog_fase5_transicao('oben','tint_fase5_chave_sem_preco',11::bigint,'aviso','[Tintometrico] chaves da Fase 5 sem preco','msg','{}'::jsonb,1.0);"
   eq "B16d fator 1.0 re-emite a qualquer piora (S1 nao herda a histerese)" \
      "$(( $(emails 'chaves da Fase 5 sem preco') - n0 ))" "1"
+
+  # ══ asserts da 2a rodada do challenge Codex (os fixes acima) ══
+
+  # B18 [P1] RECUPERAÇÃO PARCIAL não pode congelar a máquina de estado. Antes, o
+  # UPDATE vivia dentro de `IF p_n > v_ant`: caindo de 1200 para 300 nada era
+  # atualizado, o alerta seguia exibindo 1200, e voltar a 1199 ficava MUDO.
+  reset_estado
+  trans 1200 2.0                                   # pico + e-mail
+  local p0; p0="$(emails 'fonte retirou')"
+  trans 300 2.0                                    # melhora parcial
+  eq "B18a melhora ATUALIZA o alerta (nao congela no pico)" \
+     "$(Pq -c "SELECT contexto->>'_n' FROM public.fin_alertas WHERE tipo='tint_fase5_fonte_retirada' AND dismissed_at IS NULL;")" "300"
+  eq "B18b melhora nao manda e-mail" "$(( $(emails 'fonte retirou') - p0 ))" "0"
+  trans 600 2.0                                    # dobro do patamar REARMADO (300)
+  eq "B18c apos recuperar, a ancora REARMA (600 volta a e-mailar)" \
+     "$(( $(emails 'fonte retirou') - p0 ))" "1"
+
+  # B19 [P1] ESCALADA DE SEVERIDADE fura a histerese: 9999 'aviso' -> 10000 'critico'
+  # mudava o alerta para crítico sem avisar ninguém (o próximo e-mail sairia só em
+  # ~20k). Testado pelo helper, que é onde a regra vive.
+  reset_estado
+  P -q -c "SELECT public._tint_watchdog_fase5_transicao('oben','tint_fase5_fonte_retirada',9999::bigint,'aviso','[Tintometrico] fonte retirou X','msg','{}'::jsonb,2.0);"
+  local s0; s0="$(emails 'fonte retirou')"
+  P -q -c "SELECT public._tint_watchdog_fase5_transicao('oben','tint_fase5_fonte_retirada',10000::bigint,'critico','[Tintometrico] fonte retirou X','msg','{}'::jsonb,2.0);"
+  eq "B19 escalada de severidade fura a histerese" "$(( $(emails 'fonte retirou') - s0 ))" "1"
+
+  # B20 [P1] QUALQUER queda do universo alarma. O piso de 100 que eu tinha posto
+  # deixava 99 chaves saírem da cobertura em silêncio permanente.
+  reset_estado
+  roda
+  # a CHAVE inteira, não uma linha: o universo conta (account,sku_id,cor_id) DISTINTOS,
+  # então descarimbar 1 linha de uma chave que tenha outra carimbada não a remove.
+  P -q -c "UPDATE public.tint_formulas SET desativada_motivo='limpo_manualmente' WHERE (account, sku_id, cor_id) = (SELECT account, sku_id, cor_id FROM public.tint_formulas WHERE desativada_motivo='fase5_geracao_legada' ORDER BY sku_id, cor_id LIMIT 1);"
+  roda
+  eq "B20 perda de UMA chave do universo ja alarma (piso 1, nao 100)" "$(ativos tint_fase5_universo_encolheu)" "1"
+  restaura_universo
 
   # B17 [P1] DISMISS ENVENENADO: dispensar S3 com universo ZERO gravaria
   # universo_max=0 e deixaria S1/S2/S3 verdes por VACUIDADE para sempre. O alerta
@@ -500,7 +542,7 @@ sabota_e_mede "F2" \
 # F3 — mata o vigia de cardinalidade: o universo pode sumir sem ninguém saber
 #      (o "verde por vacuidade" que o Codex apontou).
 sabota_e_mede "F3" \
-  "IF v_max > 0 AND (v_queda >= 0.01 OR (v_max - v_universo) >= 100) THEN" \
+  "IF v_max > 0 AND v_universo < v_max THEN" \
   "IF false THEN" \
   B10 B12
 
