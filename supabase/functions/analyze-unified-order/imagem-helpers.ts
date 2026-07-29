@@ -98,10 +98,23 @@ export function detectarMediaTypeImagem(base64: string): MediaTypeImagem | null 
   return null;
 }
 
+/** Alfabeto base64 padrão + padding só no fim. */
+const BASE64_BEM_FORMADO = /^[A-Za-z0-9+/]+={0,2}$/;
+
 /** Monta o content block de UMA imagem, com o media type real detectado. */
 export function montarBlocoImagem(base64: string): ResultadoImagem {
   const limpo = limparBase64(base64);
   if (!limpo) return { ok: false, erro: "imagem vazia" };
+
+  // A detecção só lê o cabeçalho; sem esta checagem, arquivo truncado ou
+  // corrompido DEPOIS dos magic bytes passaria e só viraria 400 na API, com a
+  // análise já perdida. Valida o formato inteiro sem decodificar 28 MB.
+  if (limpo.length % 4 !== 0 || !BASE64_BEM_FORMADO.test(limpo)) {
+    return {
+      ok: false,
+      erro: "arquivo corrompido ou incompleto (base64 malformado). Reenvie a foto.",
+    };
+  }
 
   const mediaType = detectarMediaTypeImagem(limpo);
   if (!mediaType) {
@@ -138,10 +151,16 @@ export interface ImagensPreparadas {
  * ao vendedor, porque análise feita sobre um subconjunto das fotos não pode
  * chegar com cara de análise completa.
  */
-export function prepararImagens(brutas: readonly string[]): ImagensPreparadas {
+export function prepararImagens(
+  brutas: readonly string[],
+  orcamentoJaUsadoBytes = 0,
+): ImagensPreparadas {
   const blocos: BlocoImagem[] = [];
   const rejeitadas: ImagemRejeitada[] = [];
-  let acumulado = 0;
+  // O teto de 32 MB vale para o CORPO INTEIRO do request — o system prompt
+  // carrega o catálogo e conta junto. Começar do zero aqui superestimaria a
+  // folga e o request estouraria com 413.
+  let acumulado = Math.max(0, orcamentoJaUsadoBytes);
 
   for (let i = 0; i < brutas.length; i++) {
     const r = montarBlocoImagem(brutas[i]);

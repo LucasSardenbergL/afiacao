@@ -7,6 +7,7 @@ import {
   type ImagemRejeitada,
   prepararImagens,
 } from "./imagem-helpers.ts";
+import { extrairToolUseUnico, sanitizarListaIA } from "./saida-ia.ts";
 
 // Strip diacritics/accents for fuzzy comparison
 function stripAccents(str: string): string {
@@ -715,7 +716,10 @@ Responda SEMPRE usando a função identify_order_items.`;
     if (allImages.length > 0) {
       // Media type vem dos MAGIC BYTES. O gateway antigo sniffava o conteúdo e
       // engolia o rótulo fixo `image/jpeg`; a Anthropic valida o declarado.
-      const preparadas = prepararImagens(allImages);
+      // O system prompt (catálogo + candidatos) entra no MESMO corpo de request,
+      // então desconta do orçamento antes de acomodar as fotos.
+      const bytesSystem = new TextEncoder().encode(systemPrompt).byteLength;
+      const preparadas = prepararImagens(allImages, bytesSystem);
       imagensRejeitadas = preparadas.rejeitadas;
 
       // Nenhuma foto legível e nenhum texto: não há o que analisar. Responder
@@ -822,11 +826,13 @@ Responda SEMPRE usando a função identify_order_items.`;
       resposta = await anthropic.messages.create({
         model: MODELO,
         max_tokens: MAX_TOKENS,
-        // O catálogo domina o prompt e repete entre chamadas do mesmo vendedor —
-        // marcar o system como cacheável é o que segura o custo desta edge.
-        system: [
-          { type: "text", text: systemPrompt, cache_control: { type: "ephemeral" } },
-        ],
+        // SEM cache_control de propósito: o prompt começa pelo catálogo,
+        // candidatos e histórico — tudo variável por request. Como o cache é por
+        // PREFIXO, cada chamada seria um miss pagando 1,25× de escrita e nunca
+        // colhendo o 0,1× de leitura. Para cachear de verdade seria preciso
+        // inverter o prompt (regras fixas primeiro, catálogo depois) — mudança
+        // de comportamento que não cabe numa troca de provedor.
+        system: systemPrompt,
         tools: [
           {
             name: "identify_order_items",
@@ -838,22 +844,42 @@ Responda SEMPRE usando a função identify_order_items.`;
             },
           },
         ],
-        tool_choice: { type: "tool", name: "identify_order_items" },
+        // `type:"tool"` sozinho NÃO desliga chamada paralela: o modelo poderia
+        // emitir um bloco por grupo de itens e o consumo pegaria só o primeiro,
+        // entregando pedido PARCIAL com cara de completo.
+        tool_choice: {
+          type: "tool",
+          name: "identify_order_items",
+          disable_parallel_tool_use: true,
+        },
         messages: [{ role: "user", content: conteudoUsuario }],
       });
     } catch (e: unknown) {
       const status = (e as { status?: number })?.status;
-      if (status === 429) {
-        return new Response(JSON.stringify({ error: "Limite de requisições excedido. Tente novamente." }), {
-          status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      const detalhe = e instanceof Error ? e.message : String(e);
+      console.error("[analyze-unified-order] erro na API da Anthropic:", status, detalhe);
+
+      // O 402 NÃO desapareceu com o gateway: a Anthropic devolve billing_error.
+      // Sem tratá-lo, a mesma falha que motivou esta migração voltaria como 500
+      // genérico e ninguém saberia que o problema é saldo.
+      const porStatus: Record<number, { http: number; msg: string }> = {
+        400: { http: 400, msg: "A IA recusou o conteúdo enviado. Tente outra foto ou descreva o pedido por texto." },
+        402: { http: 402, msg: "Créditos da IA esgotados — avise a equipe. Monte o pedido manualmente por enquanto." },
+        401: { http: 500, msg: "IA mal configurada — avise a equipe." },
+        403: { http: 500, msg: "IA mal configurada — avise a equipe." },
+        404: { http: 500, msg: "IA mal configurada — avise a equipe." },
+        413: { http: 413, msg: "Envio grande demais. Mande menos fotos por vez." },
+        429: { http: 429, msg: "Limite de requisições excedido. Tente novamente." },
+        500: { http: 503, msg: "IA sobrecarregada no momento. Tente de novo em instantes." },
+        503: { http: 503, msg: "IA sobrecarregada no momento. Tente de novo em instantes." },
+        529: { http: 503, msg: "IA sobrecarregada no momento. Tente de novo em instantes." },
+      };
+      const mapeado = status ? porStatus[status] : undefined;
+      if (mapeado) {
+        return new Response(JSON.stringify({ error: mapeado.msg, imagens_rejeitadas: imagensRejeitadas }), {
+          status: mapeado.http, headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
-      if (status === 529 || status === 503) {
-        return new Response(JSON.stringify({ error: "IA sobrecarregada no momento. Tente de novo em instantes." }), {
-          status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-      console.error("[analyze-unified-order] erro na API da Anthropic:", status, e instanceof Error ? e.message : e);
       throw new Error("Erro ao processar com IA");
     }
 
@@ -867,21 +893,46 @@ Responda SEMPRE usando a função identify_order_items.`;
       }), { status: 422, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
-    const blocoTool = resposta.content.find((b) => b.type === "tool_use");
+    const extraido = extrairToolUseUnico(resposta.content);
 
-    if (!blocoTool) {
+    if (!extraido.ok) {
+      if (extraido.motivo === "multiplo") {
+        // Análise partida em vários blocos: não dá para provar que veio inteira,
+        // e consumir só o primeiro entregaria pedido parcial como se completo.
+        console.error(
+          `[analyze-unified-order] ${extraido.quantidade} blocos tool_use (esperado 1)`,
+        );
+        return new Response(JSON.stringify({
+          products: [], services: [], suggestions: [], customer: null,
+          imagens_rejeitadas: imagensRejeitadas,
+          error:
+            "A IA devolveu a análise em partes e não dá para garantir que veio inteira. Tente de novo ou divida o pedido.",
+        }), { status: 422, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      const avisoSemTool = avisoImagensRejeitadas(imagensRejeitadas);
+      const baseSemTool =
+        "Não consegui identificar itens. Seja mais específico ou selecione manualmente.";
       return new Response(JSON.stringify({
         products: [], services: [], suggestions: [], customer: null,
         imagens_rejeitadas: imagensRejeitadas,
-        message: "Não consegui identificar itens. Seja mais específico ou selecione manualmente.",
+        message: avisoSemTool ? `${baseSemTool} ⚠️ ${avisoSemTool}` : baseSemTool,
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
-    // `input` já vem como objeto validado contra o input_schema — sem JSON.parse.
-    // Tipo permissivo de propósito: o consumo abaixo (resgate por fuzzy match,
-    // casamento de cliente) é o mesmo de quando isto era `any` vindo do parse.
+    // Forced tool-use garante que a ferramenta foi USADA — não que os tipos do
+    // input_schema foram respeitados (isso só com `strict:true`). Esta é a
+    // fronteira onde preço-string e quantidade-string param, antes de chegarem
+    // ao carrinho: `"12.50" > 0` é true por coerção e explodiria no checkout;
+    // `1 + "2"` viraria a quantidade "12".
+    const bruto = extraido.input;
     // deno-lint-ignore no-explicit-any
-    const result = blocoTool.input as any;
+    const result: any = bruto && typeof bruto === "object" && !Array.isArray(bruto)
+      ? { ...bruto }
+      : {};
+    result.products = sanitizarListaIA(result.products);
+    result.services = sanitizarListaIA(result.services);
+    result.suggestions = sanitizarListaIA(result.suggestions);
 
     // Validate product IDs - rescue invalid ones by fuzzy matching
     const validProductIds = new Set(prodList.map((p) => p.id));

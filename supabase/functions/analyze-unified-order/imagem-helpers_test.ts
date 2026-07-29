@@ -34,6 +34,16 @@ function b64(bytes: number[]): string {
 
 const CORPO = Array.from({ length: 40 }, (_, i) => i % 256);
 
+/**
+ * JPEG grande e BEM FORMADO: cabeçalho de 3 bytes (4 chars, sem padding no
+ * meio) + enchimento em múltiplo de 4, senão a validação de formato o rejeita
+ * antes de o teto de tamanho ser exercitado.
+ */
+function jpegGrande(fracaoDoLimite: number): string {
+  const alvo = Math.ceil((LIMITE_TOTAL_BASE64_BYTES * fracaoDoLimite) / 4) * 4;
+  return b64([0xff, 0xd8, 0xff]) + "A".repeat(alvo);
+}
+
 const JPEG = b64([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, ...CORPO]);
 const PNG = b64([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, ...CORPO]);
 const GIF87 = b64([0x47, 0x49, 0x46, 0x38, 0x37, 0x61, ...CORPO]);
@@ -125,6 +135,30 @@ Deno.test("montarBlocoImagem: HEIC dá erro ACIONÁVEL (é o caso do iPhone)", (
   assert(r.erro.includes("JPEG"), "erro deveria dizer o que fazer");
 });
 
+Deno.test("montarBlocoImagem: cabeçalho válido + corpo corrompido é REJEITADO", () => {
+  // A detecção só lê os magic bytes; sem checar o formato inteiro, arquivo
+  // truncado passaria e só viraria 400 na API, com a análise já perdida.
+  const corrompido = JPEG.slice(0, 12) + "!!!$$$@@@";
+  const r = montarBlocoImagem(corrompido);
+  assert(!r.ok, "base64 malformado deveria ser rejeitado");
+  if (r.ok) return;
+  assert(r.erro.includes("corrompido"), "erro deveria dizer que o arquivo está corrompido");
+});
+
+Deno.test("montarBlocoImagem: comprimento fora do múltiplo de 4 é rejeitado", () => {
+  assert(!montarBlocoImagem(JPEG + "A").ok, "truncado deveria ser rejeitado");
+});
+
+Deno.test("prepararImagens: orçamento já consumido reduz o que cabe", () => {
+  // O system prompt (catálogo) entra no MESMO request; ignorá-lo superestima a
+  // folga e o request estoura com 413.
+  const grande = jpegGrande(0.6);
+  assertEquals(prepararImagens([grande]).blocos.length, 1, "sozinha, cabe");
+  const comOrcamento = prepararImagens([grande], Math.ceil(LIMITE_TOTAL_BASE64_BYTES * 0.6));
+  assertEquals(comOrcamento.blocos.length, 0, "com o system ocupando 60%, não cabe mais");
+  assertEquals(comOrcamento.rejeitadas.length, 1);
+});
+
 Deno.test("montarBlocoImagem: o data-URI é removido dos dados enviados", () => {
   const r = montarBlocoImagem(`data:image/png;base64,${PNG}`);
   assert(r.ok, "deveria aceitar");
@@ -149,10 +183,7 @@ Deno.test("prepararImagens: mistura de formatos — bons passam, ruins viram rej
 Deno.test("prepararImagens: teto de request corta o excedente em vez de estourar a API", () => {
   // O frontend deixa 5 fotos de 5 MB; 25 MB de binário viram ~33 MB em base64,
   // acima do limite de 32 MB da Anthropic.
-  // 3 bytes = 4 chars base64 SEM padding: um "=" no meio da string quebraria o
-  // atob do cabeçalho e a imagem seria rejeitada por formato, não pelo teto.
-  const grande = b64([0xff, 0xd8, 0xff]) +
-    "A".repeat(Math.ceil(LIMITE_TOTAL_BASE64_BYTES * 0.6));
+  const grande = jpegGrande(0.6);
   const { blocos, rejeitadas } = prepararImagens([grande, grande, grande]);
   assertEquals(blocos.length, 1, "só a primeira cabe");
   assertEquals(rejeitadas.length, 2);
