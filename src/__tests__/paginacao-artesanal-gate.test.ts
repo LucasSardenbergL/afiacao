@@ -246,6 +246,108 @@ const G4_DIVIDA: ReadonlyMap<string, number> = new Map([
   ['supabase/functions/omie-sync-nfes-recebidas/index.ts', 1],
 ]);
 
+// ── G5: piso monotônico aplicado SEM o veredito de página ────────────────────────────
+// O G4 barra o total CRU e é cego para a metade seguinte do contrato: trocar `|| 1` por
+// `proximoTotalPaginas` e parar aí conserta o TETO e deixa vivo o outro furo — página vazia
+// ANTES do fim declarado continua sendo lida como fim. Quem separa os dois é o `avaliarPagina`.
+// É a lição do §9 nesta classe: gate de FORMA ("usou o helper") não protege a ESCOLHA (usar as
+// DUAS metades) — quando a escolha é a defesa, pine a escolha.
+//
+// Detecção POSICIONAL, não por saldo de contagens no arquivo (a 1ª versão era por saldo e o
+// challenge Codex derrubou com dois furos concretos): (a) um `avaliarPagina` INÚTIL noutro laço
+// empatava a conta enquanto o laço money-path seguia tratando vazio como fim; (b) a allowlist
+// por contagem aceitava SUBSTITUIÇÃO invisível da dívida — corrigir o site listado e criar
+// outro órfão no mesmo arquivo mantinha o excedente igual, sem disparar nada.
+// Aqui cada `proximoTotalPaginas(` exige o veredito na SUA janela, truncada no PRÓXIMO piso,
+// para a defesa de um laço nunca satisfazer o piso de outro.
+//
+// ⚠️ A janela é FOLGADA de propósito. A 1ª versão usou 400 (medido: maior distância real 301) e
+// ficou falso-VERMELHA sobre o omie-cliente ~:1165 no mesmo dia, porque o #1614 inseriu ali um
+// guard `if (!Array.isArray(clientes)) throw` ENTRE o piso e o veredito e a distância virou 446.
+// O código estava certo; apertado estava o detector — e a saída natural de um falso-vermelho é
+// afrouxar a REGRA, que é o estrago (§#1483). Quem separa laços aqui é o truncamento no próximo
+// piso, não o tamanho da janela: então 800 (~1,8× o máximo medido) dá espaço para os guards que
+// PRs futuros vão inserir no meio, sem custo de precisão.
+const JANELA_G5 = 800;
+
+function orfaosG5(fonte: string): string[] {
+  const orfaos: string[] = [];
+  let i = -1;
+  while ((i = fonte.indexOf('proximoTotalPaginas(', i + 1)) !== -1) {
+    // Pula a DEFINIÇÃO do helper (`export function proximoTotalPaginas(`), que não é uso.
+    if (/function\s+$/.test(fonte.slice(Math.max(0, i - 30), i))) continue;
+    const proximoPiso = fonte.indexOf('proximoTotalPaginas(', i + 1);
+    const fim = proximoPiso === -1 ? i + JANELA_G5 : Math.min(i + JANELA_G5, proximoPiso);
+    if (fonte.slice(i, fim).includes('avaliarPagina(')) continue;
+    // Identidade do site = 1º argumento (a variável do piso). Estável e específica — é o que
+    // impede a substituição invisível: trocar de site muda o nome e reprova.
+    const arg = /proximoTotalPaginas\(\s*([A-Za-z_$][\w$]*)/.exec(fonte.slice(i))?.[1] ?? '?';
+    orfaos.push(arg);
+  }
+  return orfaos;
+}
+
+// Allowlist do G5 — por VARIÁVEL do piso órfão, nunca por contagem (ver acima).
+const G5_ALLOW_VARS: ReadonlyMap<string, readonly string[]> = new Map([
+  // `histTotal` = histórico de itens preferidos (`customer_preferred_items`): decisão REGISTRADA
+  // no próprio call-site — ali a página perdida custa recall (menos item sugerido), não
+  // completude money-path, e o teto de 5 páginas do `for` já limita a varredura. Medido ANTES de
+  // escrever este assert, para ele não nascer falso-VERMELHO sobre decisão que um PR já tomou.
+  ['supabase/functions/omie-vendas-sync/index.ts', ['histTotal']],
+]);
+
+const G5_ALLOW: ReadonlyMap<string, number> = new Map(
+  [...G5_ALLOW_VARS].map(([arquivo, vars]) => [arquivo, vars.length]),
+);
+
+// ── G6: resposta HTTP do Omie consumida sem olhar o STATUS ───────────────────────────
+// Achado do challenge /codex sobre o PR que fechou o G4, e é a mesma classe uma camada ACIMA:
+// `const r = await res.json(); if (r.faultstring) throw` deixa passar um 429/5xx cujo corpo
+// PARSEIA sem `faultstring` — o `{}` de proxy/gateway. O objeto chega ao laço sem total e sem
+// lista, o piso degrada para 1 e `avaliarPagina(0, 1, 1)` responde "fim".
+//
+// Por que G1-G5 não pegam: eles vigiam o LAÇO, e aqui a falha já foi convertida em "resposta
+// boa" pelo wrapper, antes de o laço ver qualquer coisa. Um sync com os guards de paginação
+// todos corretos ainda completa retrato parcial se o wrapper aprovar um 500.
+//
+// Regra: `await fetch(` cuja chamada menciona Omie precisa de `.ok`/`.status` antes do consumo.
+//
+// LIMITAÇÃO CONHECIDA (registrada, não é descuido — a versão completa exigiria dataflow): o
+// detector aceita QUALQUER menção a `.status`, então um tratamento PARCIAL (só 425/429, a forma
+// que o omie-sync-vendas-items tinha) o satisfaz enquanto o 500 continua passando. Está fixado
+// no controle de calibração abaixo, para a limitação ser um fato medido e não uma surpresa —
+// e é por isso que ela não substitui a leitura do wrapper ao mexer nele.
+const JANELA_G6 = 1200;
+
+function fetchsOmieSemStatus(fonte: string): number {
+  let i = -1;
+  let n = 0;
+  while ((i = fonte.indexOf('await fetch(', i + 1)) !== -1) {
+    if (!/omie/i.test(fonte.slice(i, i + 260))) continue; // só o Omie; Supabase/LLM têm outro contrato
+    if (!/\.ok\b|\.status\s*(===|!==|>=|<|==)/.test(fonte.slice(i, i + JANELA_G6))) n++;
+  }
+  return n;
+}
+
+// DÍVIDA G6 (baselinada 2026-07-29, por CONTAGEM — mesma regra das outras): 7 sites REVELADOS
+// pelo detector novo, em edges que o PR que o criou não toca. Auditar cada um exige ler o
+// consumo real da resposta (nem todo fetch aqui é de paginação), e baselinar > afrouxar o
+// detector: o zero honesto de hoje vale mais que o zero cosmético de ontem (§9). Chip aberto.
+// Os 6 wrappers do PR que criou este gate (cmc-snapshot-backfill, cmc-snapshot-smoke,
+// omie-sync-metadados, sync-reprocess, tint-omie-sync, omie-sync-vendas-items) NÃO estão aqui:
+// foram corrigidos, e é isso que a ausência deles significa.
+const G6_DIVIDA: ReadonlyMap<string, number> = new Map([
+  ['supabase/functions/analyze-unified-order/index.ts', 1],
+  ['supabase/functions/omie-analytics-sync/index.ts', 1],
+  // omie-cliente (1→0) QUITADO pelo #1614 (que mergeou entre a baseline e este PR): o wrapper
+  // passou a classificar a falha do Omie antes de consumir o corpo. Primeira quitação registrada
+  // deste gate, e ela veio de outro PR — o gate pegou sozinho, no rebase.
+  ['supabase/functions/omie-sync/index.ts', 1],
+  ['supabase/functions/omie-sync-nfes-recebidas/index.ts', 1],
+  ['supabase/functions/omie-vendas-sync/index.ts', 1],
+  ['supabase/functions/verify-employee/index.ts', 1],
+]);
+
 describe('gate estrutural: paginação artesanal que trata falha como fim (classe #1338→#1564)', () => {
   it('sentinela: o walker anda de verdade (glob quebrado = verde eterno, ausência de sinal ≠ aprovação)', () => {
     const fontes = DIRS.flatMap((d) => listarFontes(d));
@@ -327,6 +429,125 @@ describe('gate estrutural: paginação artesanal que trata falha como fim (class
       quitacoes,
       `dívida/allowlist G4 quitada (total ou parcial) — ATUALIZE a baseline para ela só encolher: ${quitacoes.join(', ')}`,
     ).toEqual([]);
+  });
+
+  it('G5: nenhum piso monotônico sem o `avaliarPagina` do mesmo laço, além da allowlist', () => {
+    const { reintroducoes, quitacoes } = desvios(
+      contarPorArquivo((f) => orfaosG5(f).length),
+      G5_ALLOW,
+    );
+    expect(
+      reintroducoes,
+      `METADE do contrato aplicada (F5 — \`proximoTotalPaginas\` sem \`avaliarPagina\`): o teto ficou ` +
+        `monotônico, mas página vazia ANTES do fim declarado continua sendo lida como fim da lista. ` +
+        `Acrescente o veredito (anomalia → aborta fail-closed; fim → break). ` +
+        `Arquivos (baseline→medido): ${reintroducoes.join(', ')}`,
+    ).toEqual([]);
+    expect(
+      quitacoes,
+      `excedente G5 abaixo da allowlist — atualize/remova a entrada para ela não mascarar um site ` +
+        `futuro sem veredito: ${quitacoes.join(', ')}`,
+    ).toEqual([]);
+
+    // A contagem bater NÃO basta: sem checar a IDENTIDADE, corrigir o site allowlisted e criar
+    // outro órfão no mesmo arquivo passaria verde (achado do challenge Codex).
+    const trocas: string[] = [];
+    for (const [arquivo, permitidas] of G5_ALLOW_VARS) {
+      const medidas = orfaosG5(semComentarios(readFileSync(resolve(RAIZ, arquivo), 'utf8')));
+      const inesperadas = medidas.filter((v) => !permitidas.includes(v));
+      if (inesperadas.length > 0) trocas.push(`${arquivo}: ${inesperadas.join(', ')}`);
+    }
+    expect(
+      trocas,
+      `SUBSTITUIÇÃO da dívida G5 — o excedente bate, mas o piso órfão é OUTRO site (a allowlist ` +
+        `passaria a proteger código que ninguém auditou): ${trocas.join(' | ')}`,
+    ).toEqual([]);
+  });
+
+  it('G5 (controle de calibração): meio-contrato é detectado; contrato inteiro não', () => {
+    const meioContrato = `
+      totalPaginas = proximoTotalPaginas(totalPaginas, result.total_de_paginas, MAX_PAGINAS_LISTAGEM);
+      const produtos = result.produto_servico_cadastro || [];
+      if (produtos.length === 0) break;`;
+    expect(orfaosG5(meioContrato), 'G5 deixou de casar o meio-contrato').toEqual(['totalPaginas']);
+    const contratoInteiro = `
+      totalPaginas = proximoTotalPaginas(totalPaginas, result.total_de_paginas, MAX_PAGINAS_LISTAGEM);
+      const produtos = result.produto_servico_cadastro || [];
+      const veredicto = avaliarPagina(produtos.length, pagina, totalPaginas);
+      if (veredicto === "anomalia") throw new Error('parcial');
+      if (veredicto === "fim") break;`;
+    expect(orfaosG5(contratoInteiro), 'G5 casa o contrato inteiro — falso positivo').toEqual([]);
+
+    // O caso que derrubou a 1ª versão (por saldo): laço A sem veredito, laço B com um
+    // `avaliarPagina` que não pertence a ele. Por saldo dava 0; posicionalmente A fica órfão.
+    const doisLacos = `
+      totalA = proximoTotalPaginas(totalA, r1.total_de_paginas, MAX_PAGINAS_LISTAGEM);
+      const l1 = r1.lista || [];
+      if (l1.length === 0) break;
+      totalB = proximoTotalPaginas(totalB, r2.total_de_paginas, MAX_PAGINAS_LISTAGEM);
+      const l2 = r2.lista || [];
+      const v2 = avaliarPagina(l2.length, pagina, totalB);
+      if (v2 === "fim") break;`;
+    expect(
+      orfaosG5(doisLacos),
+      'G5 deixou o veredito do laço B satisfazer o piso do laço A (o furo da versão por saldo)',
+    ).toEqual(['totalA']);
+
+    expect(
+      orfaosG5('export function proximoTotalPaginas(atual: number, declarado: number) { return 1; }'),
+      'G5 contou a DEFINIÇÃO do helper como site órfão',
+    ).toEqual([]);
+  });
+
+  it('G6: nenhuma resposta do Omie consumida sem checar o status HTTP, além da dívida', () => {
+    const { reintroducoes, quitacoes } = desvios(contarPorArquivo(fetchsOmieSemStatus), G6_DIVIDA);
+    expect(
+      reintroducoes,
+      `REINTRODUÇÃO da classe uma camada ACIMA do laço (F6 — resposta do Omie usada sem olhar o ` +
+        `status): um 429/5xx cujo corpo parseia sem \`faultstring\` vira objeto vazio, e o laço lê ` +
+        `isso como fim da lista com TODOS os guards de paginação corretos. Cheque \`res.ok\` antes ` +
+        `do \`.json()\`. Arquivos (baseline→medido): ${reintroducoes.join(', ')}`,
+    ).toEqual([]);
+    expect(
+      quitacoes,
+      `dívida G6 quitada (total ou parcial) — ATUALIZE a baseline para ela só encolher: ${quitacoes.join(', ')}`,
+    ).toEqual([]);
+  });
+
+  it('G6 (controle de calibração): o wrapper sem status é detectado; com status, não', () => {
+    // Sem este controle o G6 seria falso-VERDE por construção — a armadilha que o #1597 pagou
+    // no G4 e que o §9 registra: detector que não conhece a forma real do repo mente em silêncio.
+    const semStatus = `
+      const res = await fetch(\`\${OMIE_API_URL}/\${endpoint}\`, { method: "POST", body });
+      const result = await res.json();
+      if (result.faultstring) throw new Error("Omie");
+      return result;`;
+    expect(fetchsOmieSemStatus(semStatus), 'G6 deixou de casar o wrapper sem checagem').toBe(1);
+
+    const comStatus = `
+      const res = await fetch(\`\${OMIE_API_URL}/\${endpoint}\`, { method: "POST", body });
+      if (!res.ok) throw new Error(\`Omie HTTP \${res.status}\`);
+      const result = await res.json();
+      return result;`;
+    expect(fetchsOmieSemStatus(comStatus), 'G6 casa o wrapper corrigido — falso positivo').toBe(0);
+
+    // A forma do omie-sync-vendas-items: trata 425/429 e segue. Sem o `!res.ok`, o 500 passa.
+    const soAlgunsStatus = `
+      const res = await fetch(OMIE_NF_URL, { method: "POST", body });
+      if (res.status === 425) return { ok: false };
+      if (res.status === 429) { await sleep(1); continue; }
+      const data = JSON.parse(await res.text());
+      return { ok: true, data };`;
+    expect(
+      fetchsOmieSemStatus(soAlgunsStatus),
+      'G6 é frouxo demais: aceitar QUALQUER menção a .status deixa passar o tratamento parcial',
+    ).toBe(0); // limitação conhecida e registrada — ver o comentário do G6.
+
+    // Fetch que NÃO é do Omie não entra no gate (contrato diferente).
+    const outroServico = `
+      const res = await fetch(\`\${SUPA_URL}/rest/v1/tabela\`, { headers });
+      const linhas = await res.json();`;
+    expect(fetchsOmieSemStatus(outroServico), 'G6 alcançou fetch que não é do Omie').toBe(0);
   });
 
   it('G4 (controle de calibração): as DUAS formas do total cru são detectadas — inclusive com cast', () => {
