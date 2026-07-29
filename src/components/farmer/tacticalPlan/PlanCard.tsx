@@ -89,7 +89,10 @@ export const PlanCard = ({
               <Section title="Projeção de LTV" icon={BarChart3}>
                 <MetricRow label="Faturamento atual/ano" value={fmt(plan.ltvProjection.current_annual)} />
                 <MetricRow label="Projetado/ano" value={fmt(plan.ltvProjection.projected_annual)} />
-                <MetricRow label="Crescimento" value={`+${plan.ltvProjection.growth_pct}%`} />
+                <MetricRow
+                  label="Crescimento"
+                  value={plan.ltvProjection.growth_pct == null ? '—' : `+${plan.ltvProjection.growth_pct}%`}
+                />
               </Section>
             )}
 
@@ -178,7 +181,11 @@ export const PlanCard = ({
                   <div key={i} className="p-2 rounded bg-muted/30 space-y-1">
                     <div className="flex items-center justify-between">
                       <p className="text-xs font-medium text-status-error">⚠ {obj.objection}</p>
-                      <Badge variant="outline" className="text-[8px]">{obj.probability}%</Badge>
+                      {/* probability é OMITIDA quando a IA não soube estimar — exibir
+                          "0%" ou "undefined%" afirmaria algo que ela não disse. */}
+                      {obj.probability != null && (
+                        <Badge variant="outline" className="text-[8px]">{obj.probability}%</Badge>
+                      )}
                     </div>
                     <div className="space-y-0.5">
                       <div className="flex items-start gap-1">

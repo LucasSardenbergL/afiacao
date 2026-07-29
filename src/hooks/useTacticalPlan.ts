@@ -48,11 +48,16 @@ export interface TacticalPlan {
   diagnosticQuestions: { question: string; purpose: string; expected_insight: string }[];
   implicationQuestion: string;
   offerTransition: string;
-  probableObjections: { objection: string; technical_response: string; economic_response: string; probability: number }[];
+  // `probability` é OPCIONAL: a edge omite o campo quando a IA não soube estimar.
+  // Tipá-la como `number` obrigatório fazia o TS garantir um número que o dado não tem.
+  probableObjections: { objection: string; technical_response: string; economic_response: string; probability?: number | null }[];
 
   // Strategic-only fields
-  ltvProjection: { current_annual: number; projected_annual: number; growth_pct: number } | null;
-  expectedResult: { best_case_margin: number; likely_margin: number; worst_case_margin: number } | null;
+  // Campos NULLABLE por dado: margem/LTV não medidos chegam como null (money-path —
+  // ausente ≠ zero). O objeto pode vir PARCIALMENTE medido, então o guard `&& (...)`
+  // do PlanCard não basta: cada campo é null-checado na renderização.
+  ltvProjection: { current_annual: number | null; projected_annual: number | null; growth_pct: number | null } | null;
+  expectedResult: { best_case_margin: number | null; likely_margin: number | null; worst_case_margin: number | null } | null;
   operationalRisks: string[];
 
   // Efficiency
