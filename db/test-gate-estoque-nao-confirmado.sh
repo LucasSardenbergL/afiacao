@@ -40,7 +40,7 @@ echo "═══ setup PG17 :$PORT ═══"
 P -q <<'SQL'
 CREATE TABLE public.sku_parametros (empresa text, sku_codigo_omie bigint, sku_descricao text, fornecedor_nome text,
   ponto_pedido numeric, estoque_maximo numeric, minimo_forcado_manual numeric,
-  habilitado_reposicao_automatica boolean, tipo_reposicao text, demanda_media_diaria numeric);
+  habilitado_reposicao_automatica boolean, tipo_reposicao text, demanda_media_diaria numeric, classe_abc character(1), classe_forcada text);
 CREATE TABLE public.sku_estoque_atual (empresa text, sku_codigo_omie text, estoque_fisico numeric, estoque_pendente_entrada numeric, fonte_sync text);
 CREATE TABLE public.sku_embalagem_equivalencia (empresa text, grupo_id uuid, sku_codigo_omie text, fator_para_base numeric, ativo boolean);
 CREATE TABLE public.sku_preco_fornecedor_capturado (empresa text, sku_codigo_omie text, preco numeric, status text, capturado_em timestamptz);
@@ -66,12 +66,18 @@ CREATE TABLE public.pedido_compra_sugerido (id bigserial PRIMARY KEY, empresa te
 CREATE TABLE public.pedido_compra_item (id bigserial PRIMARY KEY, pedido_id bigint REFERENCES pedido_compra_sugerido(id) ON DELETE CASCADE,
   sku_codigo_omie text, sku_descricao text, estoque_atual numeric, ponto_pedido numeric, estoque_maximo numeric,
   qtde_sugerida numeric, qtde_final numeric, preco_unitario numeric, valor_linha numeric, primeira_compra boolean,
-  estoque_fisico numeric, estoque_a_caminho numeric);
+  estoque_fisico numeric, estoque_a_caminho numeric, qtde_sem_teto numeric, teto_cobertura_aplicado boolean NOT NULL DEFAULT false);
 CREATE TABLE public.reposicao_estoque_nao_confirmado_log (id uuid DEFAULT gen_random_uuid(), run_id uuid, criado_em timestamptz DEFAULT now(),
   empresa text, sku_codigo_omie text, sku_descricao text, grupo_codigo text, motivo text, estoque_efetivo numeric, ponto_pedido numeric, fonte_sync text);
+-- [TETO cobertura 2026-07-29] stub minimo — o CTE log_teto_ins e DML e executa SEMPRE (mesmo sem linha capada);
+-- sem config de teto (company_config vazio p/ as chaves) o cap fica NULL e os asserts destes harnesses ficam intactos.
+CREATE TABLE public.reposicao_teto_cobertura_log (id uuid DEFAULT gen_random_uuid(), run_id uuid, criado_em timestamptz DEFAULT now(),
+  empresa text, sku_codigo_omie text, sku_descricao text, grupo_codigo text, classe_abc text, teto_dias numeric,
+  demanda_diaria numeric, estoque_efetivo numeric, ponto_pedido numeric, estoque_maximo numeric,
+  cap_teto_ancora numeric, qtde_sem_teto numeric, qtde_final numeric, motivo text);
 -- [FILA] marcador de run: a RPC carimba TODO run (limpo ou não) → a tela ancora no ÚLTIMO recálculo.
 CREATE TABLE public.reposicao_motor_run (id uuid DEFAULT gen_random_uuid(), run_id uuid, empresa text, data_ciclo date,
-  pedidos_gerados int, skus_incluidos int, suprimidos_n int, criado_em timestamptz DEFAULT now());
+  pedidos_gerados int, skus_incluidos int, suprimidos_n int, capados_n int DEFAULT 0, criado_em timestamptz DEFAULT now());
 SQL
 
 # ── ZONA 2: aplicar a função REAL (fixture viva = galão+gate) ──
