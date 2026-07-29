@@ -74,7 +74,13 @@ function semComentarios(s: string): string {
 // ` as number)`) — controle de calibração com as formas REAIS, não só a canônica.
 // O `(?<!\?)` exclui `objeto?.data`, que é encadeamento opcional sobre um valor já lido
 // (ex.: `origemEmail?.data`), não o `.data` de uma resposta PostgREST.
-const G5 = /(?<!\?)\.data\s*(?:(?:\?\?|\|\|)\s*(?:\[\]|\{\}|0\b|null\b)|as\s[^;]{0,90}?(?:\|\s*null|\?\?))/;
+// `[^;\n]` e não `[^;]`: o ramo do cast NÃO pode atravessar linha. Com `[^;]`, o match de
+// `header.data as unknown as PedidoProgramado,` — que não tem coalescência nenhuma e NÃO é a
+// classe — se estica por duas linhas até o `??` seguinte e ENGOLE o `envios.data ?? []` de
+// baixo, que é a classe. Um falso match acidental escondendo um legítimo (medido em
+// usePedidosProgramados na triagem de src/). Contagem das edges: idêntica antes e depois, em
+// todos os 7 arquivos da baseline — o refino não reescreve a dívida, só para de mentir.
+const G5 = /(?<!\?)\.data\s*(?:(?:\?\?|\|\|)\s*(?:\[\]|\{\}|0\b|null\b)|as\s[^;\n]{0,90}?(?:\|\s*null|\?\?))/;
 
 // Baseline por CONTAGEM (não por caminho): um 2º site nascendo num arquivo já listado
 // REPROVA. Contagem menor também reprova, pedindo a atualização — a lista só encolhe, e
@@ -136,6 +142,108 @@ function desvios(
   }
   return { reintroducoes, quitacoes };
 }
+
+// ── G6: a MESMA classe em `src/` — a ORIGEM é que discrimina ─────────────────────────
+//
+// O cabeçalho acima explicava por que `src/` tinha ficado de fora: lá a mesma forma textual
+// é DOMINADA por objetos do react-query, que expõem `error` num campo à parte e por isso são
+// legítimos (`rateioQ.data ?? null` num `useMemo` não descarta erro nenhum). Baselinar `src/`
+// por contagem deixaria ~69 sites de código CORRETO vermelhos — o defeito que ensina a
+// ignorar o vermelho. A triagem de 2026-07-28 resolveu isso: o que discrimina não é a forma,
+// é a ORIGEM do identificador antes do `.data`.
+//
+// Por isso aqui a regra é SEMÂNTICA, não uma lista de arquivos:
+//   origem PostgREST (awaited)  +  `.error` NUNCA mencionado no arquivo  ⇒  REPROVA
+//   origem react-query (hook)                                           ⇒  ignorado
+// Assim código novo em react-query nunca fica vermelho, e uma leitura crua nova
+// (`const x = await supabase.from(…)` + `x.data ?? []` sem consultar `x.error`) fica vermelha
+// NA HORA — sem precisar de baseline nova.
+//
+// Medição de 2026-07-28 sobre `src/`: 130 ocorrências / 57 arquivos ⇒ 69 `hook` (ignorados),
+// 31 origem-PostgREST com `.error` consultado (legítimos) e 30 AFETADOS, erradicados nas
+// Fases 1-4 (#1604, #1605, #1606, #1607).
+const DIRS_SRC = ['src'];
+
+const IDENT = /^[A-Za-z_$][\w$]*$/;
+const escId = (s: string) => s.replace(/\$/g, '\\$');
+
+// O argumento de tipo é OPCIONAL no padrão: sem o `(?:<…>)?` o `useQuery<ActiveOverride|null>(`
+// de usePeriodOverride/useUnifiedOrder/FinanceiroValor não casava e o hook caía em
+// "indefinido" — a mesma armadilha do G4 (o padrão que não atravessa a forma REAL do repo).
+const declHook = (id: string) =>
+  new RegExp(
+    `\\bconst\\s+${id}\\s*=\\s*use[A-Z]\\w*\\s*(?:<[^>(]{0,160}>)?\\s*\\(` +
+      `|\\bconst\\s*\\{[^}]{0,200}\\b${id}\\b[^}]{0,200}\\}\\s*=\\s*use[A-Z]\\w*\\s*(?:<[^>(]{0,160}>)?\\s*\\(`,
+  );
+
+type Origem = 'hook' | 'postgrest' | 'indefinido';
+
+function origemDe(fonte: string, ident: string): Origem {
+  if (!IDENT.test(ident)) return 'indefinido';
+  const id = escId(ident);
+  if (declHook(id).test(fonte)) return 'hook';
+  if (new RegExp(`\\bconst\\s+${id}\\s*=\\s*await\\b`).test(fonte)) return 'postgrest';
+  // `const [a, X, b] = await Promise.all([…])` — a forma mais comum da classe neste repo.
+  for (const m of fonte.matchAll(/\bconst\s*\[([^\]]*)\]\s*=\s*await\b/g)) {
+    if (m[1].split(',').some((p) => p.trim().replace(/\s*[:=][\s\S]*$/, '') === ident)) {
+      return 'postgrest';
+    }
+  }
+  // `let X = supabase.from(…)` montado antes e awaited dentro de um Promise.all (useTeamKpis).
+  if (new RegExp(`\\b(?:let|const)\\s+${id}\\s*=\\s*\\w+[\\s\\S]{0,60}?\\.from\\s*\\(`).test(fonte)) {
+    return 'postgrest';
+  }
+  return 'indefinido';
+}
+
+// Basta a MENÇÃO de `X.error` no arquivo: o gate cobra que alguém tenha OLHADO o erro, não a
+// forma do tratamento — lançar, degradar com motivo ou tolerar são decisões do consumidor
+// (money-path §7: "consertar o helper não conserta a tela").
+const erroConsultado = (fonte: string, ident: string) =>
+  IDENT.test(ident) && new RegExp(`\\b${escId(ident)}\\.error\\b`).test(fonte);
+
+/** Sites de `src/` com origem PostgREST cujo `error` ninguém consultou. */
+function sitesCrusEmSrc(): Map<string, number> {
+  const mapa = new Map<string, number>();
+  const g = new RegExp(G5.source, 'g');
+  for (const dir of DIRS_SRC) {
+    for (const arquivo of listarFontes(dir)) {
+      const fonte = semComentarios(readFileSync(resolve(RAIZ, arquivo), 'utf8'));
+      let n = 0;
+      for (const m of fonte.matchAll(g)) {
+        const antes = fonte.slice(0, m.index);
+        const ident = (antes.match(/([A-Za-z_$][\w$]*)\s*$/) ?? [])[1] ?? '?';
+        // `(await supabase.from(…)).data` — sem variável, o `error` é inalcançável por
+        // construção. Conta como cru (foi assim que os 2 sites de usePedidosProgramados
+        // escaparam de qualquer checagem até o #1605).
+        const inline = ident === '?' && antes.trimEnd().endsWith(')') && /await[\s\S]{0,400}$/.test(antes);
+        if (inline) { n++; continue; }
+        if (origemDe(fonte, ident) === 'postgrest' && !erroConsultado(fonte, ident)) n++;
+      }
+      if (n > 0) mapa.set(arquivo, n);
+    }
+  }
+  return mapa;
+}
+
+// Dívida TRIADA de `src/` — cada entrada com o veredito de por que continua aqui. Não é
+// "ainda não olhei": é "olhei e decidi". A lista só encolhe, e encolhe registrada.
+const SRC_BASELINE: ReadonlyMap<string, number> = new Map([
+  // TOLERADO com justificativa NO CÓDIGO: o selo "inativo no Omie" é informativo e o próprio
+  // arquivo documenta a degradação ("falha da query degrada em silêncio (sem selo) — a
+  // barreira money-path é a trava do disparo", que vive em disparo-gate-helpers). Decisão do
+  // autor, com barreira real noutro lugar.
+  ['src/components/reposicao/pedidos/useDetalhesModal.ts', 2],
+]);
+
+// Fora da baseline por DESENHO, não por esquecimento — a origem não resolve para PostgREST e
+// o G6 nem os conta (documentado aqui para a próxima varredura não os "redescobrir"):
+//   `useCustomerSelection` (`localPriceResult`) e `reposicao/pedidos/shared.ts` (`settled.value`)
+//     vêm de `Promise.allSettled`, que não expõe `.error` — o erro JÁ é tratado por outra via
+//     (`failedIdxs` / `status === 'rejected'`).
+//   `useAnalyticsSync` (`query.state.data`) e `FinanceiroValor` (`q.data`, com `q` vindo de um
+//     array de objetos) são react-query lidos por caminho que a resolução textual não segue.
+//   `useProductCatalog` e `useUtiContas` já consultam o `error` na linha de cima.
 
 describe('gate estrutural: leitura single-shot que trata falha como zero (irmã da classe #1338→#1598)', () => {
   it('sentinela: o walker anda de verdade (glob quebrado = verde eterno; ausência de sinal ≠ aprovação)', () => {
@@ -214,5 +322,91 @@ describe('gate estrutural: leitura single-shot que trata falha como zero (irmã 
     // Nenhum `.data` cru sobrou no arquivo-âncora: o pin acima garante QUAIS fontes estão
     // cobertas, este garante que não nasceu uma 9ª leitura fora do contrato.
     expect(fonte.match(/(?<!\?)\.data\s*(?:\?\?|\|\|)/g) ?? []).toEqual([]);
+  });
+
+  // ── G6 — `src/` ────────────────────────────────────────────────────────────────────
+  it('G6 sentinela: o walker anda em src/ também (glob quebrado = verde eterno)', () => {
+    const fontes = DIRS_SRC.flatMap((d) => listarFontes(d));
+    expect(fontes.length).toBeGreaterThan(500);
+    expect(fontes).toContain('src/hooks/useTeamKpis.ts');
+  });
+
+  it('G6: nenhuma leitura PostgREST em src/ descarta o `error` além da dívida triada', () => {
+    const { reintroducoes, quitacoes } = desvios(sitesCrusEmSrc(), SRC_BASELINE);
+    expect(
+      reintroducoes,
+      'Leitura nova em src/ descartando `error`: `const x = await supabase.from(...)` seguido ' +
+        'de `x.data ?? []` sem NINGUÉM consultar `x.error` — "falhou" fica indistinguível de ' +
+        '"vazio". Consulte o erro (throw dentro do queryFn, ou degrade para null COM motivo). ' +
+        'Objeto de react-query não cai aqui: ele expõe `error` à parte.',
+    ).toEqual([]);
+    expect(
+      quitacoes,
+      'Site quitado (ou arquivo movido): atualize SRC_BASELINE — a lista só encolhe, e encolhe registrada.',
+    ).toEqual([]);
+  });
+
+  it('G6 (controle de calibração): discrimina PostgREST de react-query nas formas REAIS', () => {
+    // AFETADOS reais, verbatim do pré-fix das Fases 1-4: origem awaited, `error` nunca olhado.
+    const afetados = [
+      `const [toolsRes, qualityRes] = await Promise.all([\n  supabase.from('user_tools').select('id'),\n]);\nconst tools = toolsRes.data || [];`,
+      `const [salesRes, callsRes] = await Promise.all([qSales, supabase.from('farmer_calls').select('x')]);\nconst a = (callsRes.data ?? []).map((r) => r.farmer_id);`,
+      `const cmResp = await supabase.from('v_sku_parametros_sugeridos').select('x');\n((cmResp.data ?? []) as unknown as ParamRow[]).forEach(() => {});`,
+    ];
+    for (const src of afetados) {
+      const ident = (src.match(/([A-Za-z_$][\w$]*)\.data/) ?? [])[1] ?? '?';
+      expect(origemDe(src, ident), `${ident} deveria ser postgrest`).toBe('postgrest');
+      expect(erroConsultado(src, ident), `${ident} não consulta .error`).toBe(false);
+    }
+
+    // FALSOS POSITIVOS reais (usePontoEquilibrio/useUnifiedOrder): react-query, `error` à
+    // parte. Se algum destes virar 'postgrest', o gate começa a reprovar código correto — é
+    // exatamente o cenário que manteve src/ fora do gate até aqui.
+    const legitimos = [
+      `const rateioQ = useCustoRateio(company, 'folha');\nconst row = rateioQ.data ?? null;`,
+      `const snaps = useSnapshotsTTM(company);\nreturn { meses: snaps.data ?? [] };`,
+      `const cats = useQuery({ queryKey: ['x'] });\nconst descPorCod = cats.data ?? {};`,
+      // Com argumento de TIPO — a forma que fazia o padrão ingênuo falhar.
+      `const obenFormasQuery = useQuery<FormaPagamento[]>({ queryKey: ['f'] });\nconst f = obenFormasQuery.data || [];`,
+    ];
+    for (const src of legitimos) {
+      const ident = (src.match(/([A-Za-z_$][\w$]*)\.data/g) ?? []).slice(-1)[0]?.replace('.data', '') ?? '?';
+      expect(origemDe(src, ident), `${ident} deveria ser hook (react-query)`).toBe('hook');
+    }
+
+    // E o pós-fix de uma leitura PostgREST: o `error` foi consultado → sai do escopo do G6
+    // mesmo mantendo o `?? []` (o fallback continua válido para ausência LEGÍTIMA).
+    const posFix = `const cmResp = await supabase.from('v').select('x');\nif (cmResp.error) throw cmResp.error;\nconst m = cmResp.data ?? [];`;
+    expect(origemDe(posFix, 'cmResp')).toBe('postgrest');
+    expect(erroConsultado(posFix, 'cmResp')).toBe(true);
+  });
+
+  it('G6 (falsificação): reintroduzir a classe num arquivo real REPROVA', () => {
+    // Sem esta prova o gate é decoração: um walker quebrado, um padrão que não casa a forma
+    // real ou uma origem mal resolvida dariam verde eterno. Aqui o defeito é injetado no
+    // TEXTO de um arquivo que o gate realmente varre, e o veredito tem de virar.
+    const arquivoReal = resolve(RAIZ, 'src/hooks/useTeamKpis.ts');
+    const fonte = semComentarios(readFileSync(arquivoReal, 'utf8'));
+    const sabotado = `${fonte}\nasync function _sabotagem() {\n  const novoRes = await supabase.from('sales_orders').select('id');\n  return novoRes.data ?? [];\n}\n`;
+
+    const g = new RegExp(G5.source, 'g');
+    const crus = [...sabotado.matchAll(g)].filter((m) => {
+      const antes = sabotado.slice(0, m.index);
+      const ident = (antes.match(/([A-Za-z_$][\w$]*)\s*$/) ?? [])[1] ?? '?';
+      return origemDe(sabotado, ident) === 'postgrest' && !erroConsultado(sabotado, ident);
+    });
+    expect(crus.length, 'a leitura crua injetada TEM de ser detectada').toBeGreaterThan(0);
+
+    // E o contrapositivo: a MESMA leitura, com o `error` consultado, não acusa.
+    const corrigido = sabotado.replace(
+      `return novoRes.data ?? [];`,
+      `if (novoRes.error) throw novoRes.error;\n  return novoRes.data ?? [];`,
+    );
+    const crusDepois = [...corrigido.matchAll(new RegExp(G5.source, 'g'))].filter((m) => {
+      const antes = corrigido.slice(0, m.index);
+      const ident = (antes.match(/([A-Za-z_$][\w$]*)\s*$/) ?? [])[1] ?? '?';
+      return origemDe(corrigido, ident) === 'postgrest' && !erroConsultado(corrigido, ident);
+    });
+    expect(crusDepois.length, 'consultar o `error` tem de zerar o achado').toBe(0);
   });
 });
