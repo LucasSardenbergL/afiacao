@@ -73,7 +73,51 @@ Deno.test("edges convertidas não paginam à mão (sem .range() no call-site)", 
 //
 // Predicado literal de novo (substring `.order(` na expressão encadeada, 6 linhas de janela)
 // — nada de regex esperta sobre texto, pela lição recorrente do §"O ALVO mente".
-const VIGIADAS_ORDER = ["omie-cliente"];
+//
+// As 5 edges abaixo do `omie-cliente` entraram na varredura de 2026-07-23, que mediu a classe
+// contra a main JÁ com o #1581 (que fechou a metade "descarta error"/"?? []" em 24 sites, e o
+// gate `src/__tests__/paginacao-artesanal-gate.test.ts` — que NÃO cobre a metade do `.order()`).
+// Os laços destas 5 tratavam o erro e mesmo assim paginavam sem ordem estável:
+//   omie-analytics-sync  fetchAllProfileDocs  → Set do dedup por documento (a fábrica de clones)
+//   calculate-scores     ownerMap             → dono do score na agenda do vendedor
+//   fin-funding          títulos antecipáveis · algorithm-a-audit  helper genérico
+//   ai-ops-agent         métricas por cliente
+//
+// carteira-rebuild, sinais-batch e tactical-plans-batch entraram na erradicação
+// scoring/carteira/batch — a fatia irmã, que fechou a metade "falha vira fim" NESTES MESMOS
+// arquivos. As duas metades da classe foram corrigidas por PRs paralelos: esta lista é a UNIÃO
+// das duas listas, não a de um lado (money-path.md §9 — conflito entre dois fixes da mesma
+// classe se resolve por união; escolher um lado reverte a metade do outro em silêncio).
+//
+// fin-cashflow-engine, fin-valor-cockpit e omie-financeiro entraram pelo chip das EDGES
+// FINANCEIRAS (CR/CP → DSO/DRE/NCG/projeção/cockpit): os dois primeiros tinham CÓPIAS locais
+// do fetchAll com `data ?? []` (EOF falso em resposta malformada) e passaram a chamar o
+// canônico; omie-financeiro delegou o laço do carregarBaixaMapDRE. Todas chamam fetchAll
+// DIRETO → aqui o invariante é o `.order()`. (fin-funding já estava na lista pelo #1589 —
+// mesma edge, metades diferentes da classe; é o encontro de dois chips no mesmo arquivo.)
+const VIGIADAS_ORDER = [
+  "omie-cliente",
+  "omie-analytics-sync",
+  "calculate-scores",
+  "fin-funding",
+  "algorithm-a-audit",
+  "ai-ops-agent",
+  "carteira-rebuild",
+  "sinais-batch",
+  "tactical-plans-batch",
+  "fin-cashflow-engine",
+  "fin-valor-cockpit",
+  "omie-financeiro",
+];
+
+// `.rpc(...)` é a ÚNICA alternativa aceita ao `.order()` no call-site: numa função SQL a cláusula
+// ORDER BY mora no CORPO, e encadear `.order()` por fora seria redundante. A obrigação não some —
+// MUDA de lugar —, então quem adicionar uma RPC paginada aqui tem de conferir o ORDER BY dela.
+// Conferido em prod para a única de hoje (`seed_targets_faltantes`, LANGUAGE sql): `ORDER BY
+// l.user_id`. Aceitar a palavra do comentário do call-site não bastaria — foi verificado no
+// `pg_get_functiondef` via psql-ro. (O call-site em calculate-scores encadeia `.order('user_id')`
+// explícito por cima, então satisfaz os dois critérios — cinto e suspensório.)
+const ORDENACAO_ACEITA = [".order(", ".rpc("];
 
 Deno.test("edges com fetchAll direto: todo .range( tem .order( na mesma expressão", async () => {
   const ofensas: string[] = [];
@@ -88,7 +132,7 @@ Deno.test("edges com fetchAll direto: todo .range( tem .order( na mesma express�
         .slice(Math.max(0, i - 6), i + 1)
         .map(semComentario)
         .join("\n");
-      if (!janela.includes(".order(")) {
+      if (!ORDENACAO_ACEITA.some((forma) => janela.includes(forma))) {
         ofensas.push(`${edge}/index.ts:${i + 1}: ${linha.trim()}`);
       }
     });

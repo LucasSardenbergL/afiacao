@@ -3,6 +3,12 @@
 // Helpers espelhados VERBATIM de src/lib/financeiro/valor-cockpit-helpers.ts.
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
+// Paginação robusta (anti-truncamento do cap de 1000 do PostgREST). Era um helper LOCAL
+// (definido dentro do handler) com `data ?? []`: resposta malformada (data:null SEM
+// error) virava página vazia → EOF falso, e os 9 call-sites herdavam — produtos/itens/
+// pedidos/custos/estoque/CR parciais viram margem e EVP inflados no cockpit, sem sinal
+// nenhum na tela. O canônico lança nos dois casos (money-path §6/§9).
+import { fetchAll } from "../_shared/paginate.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -341,23 +347,6 @@ serve(async (req: Request) => {
   const auth = await authorizeGestorOuMaster(req);
   if (!auth.ok) return auth.response;
   const db = createClient(SUPABASE_URL, SERVICE_ROLE);
-
-  // Paginação robusta: evita o truncamento silencioso do default ~1000 do PostgREST e propaga erro.
-  async function fetchAll<T>(
-    build: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>,
-    label: string,
-  ): Promise<T[]> {
-    const page = 1000; let from = 0; const out: T[] = [];
-    for (;;) {
-      const { data, error } = await build(from, from + page - 1);
-      if (error) throw new Error(`${label}: ${error.message}`);
-      const rows = data ?? [];
-      out.push(...rows);
-      if (rows.length < page) break;
-      from += page;
-    }
-    return out;
-  }
 
   const now = new Date();
   const ttm_fim = now.toISOString().slice(0, 10);

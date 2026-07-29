@@ -1,4 +1,4 @@
-// Modal de upload/extração de anúncio de aumento (PDF/imagem → Gemini Vision).
+// Modal de upload/extração de anúncio de aumento (PDF/imagem → extração por IA).
 // Extraído verbatim de src/pages/AdminReposicaoAumentos.tsx (god-component split).
 import { Loader2, FileText } from "lucide-react";
 import { Button } from "@/components/ui/button";

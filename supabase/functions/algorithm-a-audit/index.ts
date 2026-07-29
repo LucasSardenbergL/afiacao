@@ -1,5 +1,6 @@
-import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
+import { createClient } from 'npm:@supabase/supabase-js@2';
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
+import { fetchAll } from "../_shared/paginate.ts";
 
 // ======== COST CONTRACT (espelho VERBATIM de src/lib/custos/cost-source.ts — manter idêntico) ========
 type CostRow = { cost_price: number | null; cost_final: number | null; cost_source: string | null; cost_confidence: number | null };
@@ -120,33 +121,16 @@ interface AuditRecord {
   top_gap_products: { product_id: string; gap: number }[];
 }
 
-type SupabaseQuery = ReturnType<ReturnType<SupabaseClient['from']>['select']>;
-
-async function fetchAllPaginated<T>(
-  supabase: SupabaseClient,
-  table: string,
-  selectCols: string,
-  filters?: (q: SupabaseQuery) => SupabaseQuery,
-): Promise<T[]> {
-  const all: T[] = [];
-  const pageSize = 1000;
-  let page = 0;
-  let hasMore = true;
-  while (hasMore) {
-    let query = supabase.from(table).select(selectCols).range(page * pageSize, (page + 1) * pageSize - 1) as SupabaseQuery;
-    if (filters) query = filters(query);
-    const { data, error } = await query;
-    if (error) throw error;
-    const rows = (data ?? []) as unknown as T[];
-    if (rows.length === 0) { hasMore = false; }
-    else {
-      all.push(...rows);
-      if (rows.length < pageSize) hasMore = false;
-      page++;
-    }
-  }
-  return all;
-}
+// Paginação: `fetchAll` de _shared/paginate.ts. O helper LOCAL que vivia aqui
+// (`fetchAllPaginated`) foi removido — ele lia `data ?? []`, então resposta malformada
+// (`data:null` SEM `error`) virava página vazia → EOF falso → o audit de margem rodava sobre
+// leitura PARCIAL. `fetchAll` LANÇA nos dois casos (error e data:null).
+//
+// As DUAS metades da classe foram corrigidas em paralelo neste mesmo arquivo: o #1589 fechou a
+// metade "sem `.order()`" DENTRO do helper local (com `id` de desempate após os filtros do
+// call-site); esta entrega fecha a metade "falha vira fim" removendo o helper. A ordenação que o
+// #1589 fixou está PRESERVADA call-site a call-site — inclusive o `unit_price desc` primário do
+// bestPriceMap, que ele fez questão de manter como chave primária (ver o call-site).
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -164,8 +148,14 @@ Deno.serve(async (req) => {
 
     // Get all clients with scores (paginated)
     console.log('[algorithm-a-audit] Fetching all clients...');
-    const clients = await fetchAllPaginated<ClientScoreRow>(supabase, 'farmer_client_scores',
-      'customer_user_id, farmer_id, avg_monthly_spend_180d, gross_margin_pct, category_count');
+    const clients = await fetchAll<ClientScoreRow>(
+      (from, to) => supabase
+        .from('farmer_client_scores')
+        .select('customer_user_id, farmer_id, avg_monthly_spend_180d, gross_margin_pct, category_count')
+        .order('customer_user_id', { ascending: true })
+        .range(from, to),
+      'farmer_client_scores (clientes do audit)',
+    );
 
     if (!clients || clients.length === 0) {
       return new Response(JSON.stringify({ message: 'No clients to process' }), {
@@ -175,16 +165,29 @@ Deno.serve(async (req) => {
     console.log(`[algorithm-a-audit] Found ${clients.length} clients`);
 
     // Get product costs (paginated)
-    const productCosts = await fetchAllPaginated<ProductCostRow>(supabase, 'product_costs', 'product_id, cost_price, cost_final, cost_source, cost_confidence, family_category');
+    const productCosts = await fetchAll<ProductCostRow>(
+      (from, to) => supabase
+        .from('product_costs')
+        .select('product_id, cost_price, cost_final, cost_source, cost_confidence, family_category')
+        .order('product_id', { ascending: true })
+        .range(from, to),
+      'product_costs (custos do audit)',
+    );
     console.log(`[algorithm-a-audit] Found ${productCosts.length} product costs`);
 
     // Get order items for each client (last 365 days) - paginated
     const periodStartDate = new Date();
     periodStartDate.setDate(periodStartDate.getDate() - 365);
 
-    const recentOrders = await fetchAllPaginated<OrderItemRow>(supabase, 'order_items',
-      'customer_user_id, product_id, quantity, unit_price, discount, sales_order_id',
-      (q) => q.gte('created_at', periodStartDate.toISOString()) as SupabaseQuery);
+    const recentOrders = await fetchAll<OrderItemRow>(
+      (from, to) => supabase
+        .from('order_items')
+        .select('customer_user_id, product_id, quantity, unit_price, discount, sales_order_id')
+        .gte('created_at', periodStartDate.toISOString())
+        .order('id', { ascending: true })
+        .range(from, to),
+      'order_items 365d (linhas do audit)',
+    );
     console.log(`[algorithm-a-audit] Found ${recentOrders.length} order items (365d)`);
 
     // Best price por produto, de order_items PRATICADOS (verdade) — NÃO sales_price_history (poluída
@@ -197,19 +200,47 @@ Deno.serve(async (req) => {
     // Só ~16 pedidos excluídos no total → Set client-side é trivial (evita .or()/embedded frágil; o
     // .not()/COALESCE de status é NULL-blind no PostgREST — filtrar em memória trata NULL como praticado).
     const [deletedOrders, naoPraticados] = await Promise.all([
-      fetchAllPaginated<{ id: string }>(supabase, 'sales_orders', 'id',
-        (q) => q.not('deleted_at', 'is', null) as SupabaseQuery),
-      fetchAllPaginated<{ id: string }>(supabase, 'sales_orders', 'id',
-        (q) => q.in('status', ['cancelado', 'orcamento']) as SupabaseQuery),
+      fetchAll<{ id: string }>(
+        (from, to) => supabase
+          .from('sales_orders')
+          .select('id')
+          .not('deleted_at', 'is', null)
+          .order('id', { ascending: true })
+          .range(from, to),
+        'sales_orders deletados (exclusão do audit)',
+      ),
+      fetchAll<{ id: string }>(
+        (from, to) => supabase
+          .from('sales_orders')
+          .select('id')
+          .in('status', ['cancelado', 'orcamento'])
+          .order('id', { ascending: true })
+          .range(from, to),
+        'sales_orders não-praticados (exclusão do audit)',
+      ),
     ]);
     const excludedOrderIds = new Set<string>([
       ...deletedOrders.map((o) => o.id),
       ...naoPraticados.map((o) => o.id),
     ]);
 
-    const allSalesPrices = await fetchAllPaginated<SalesPriceRow & { sales_order_id: string }>(
-      supabase, 'order_items', 'product_id, unit_price, sales_order_id',
-      (q) => q.gt('unit_price', 0).order('unit_price', { ascending: false }) as SupabaseQuery);
+    const allSalesPrices = await fetchAll<SalesPriceRow & { sales_order_id: string }>(
+      (from, to) => supabase
+        .from('order_items')
+        .select('product_id, unit_price, sales_order_id')
+        .gt('unit_price', 0)
+        // Ordem COMPOSTA, preservando o que o #1589 fixou: `unit_price` desc continua a chave
+        // PRIMÁRIA (era a ordenação que este call-site pedia) e `id` (PK) entra como DESEMPATE —
+        // que é o que de fato estabiliza a paginação, já que `unit_price` empata aos milhares e
+        // sozinho faria o `.range()` pular/duplicar linhas. O bestPriceMap abaixo toma o MAX
+        // independentemente da ordem de chegada, então a primária não altera o resultado; ela
+        // fica porque reverter a intenção de um PR mergeado sem necessidade é como se perde
+        // metade de um fix (money-path.md §9).
+        .order('unit_price', { ascending: false })
+        .order('id', { ascending: true })
+        .range(from, to),
+      'order_items preços praticados (bestPrice do audit)',
+    );
     console.log(`[algorithm-a-audit] Found ${allSalesPrices.length} order_items price records (${excludedOrderIds.size} pedidos excluídos: cancelado/orcamento/deletado)`);
 
     // Build best price map (highest PRACTICED price per product = potential)

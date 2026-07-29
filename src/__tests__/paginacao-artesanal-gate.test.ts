@@ -143,23 +143,30 @@ function contarG3(fonte: string): number {
 // a lista só encolhe, e encolhe registrado (achado Codex: baseline por arquivo
 // aceitaria um laço NOVO nascer em arquivo já listado).
 const G3_DIVIDA: ReadonlyMap<string, number> = new Map([
-  ['supabase/functions/ai-ops-agent/index.ts', 1],
-  ['supabase/functions/algorithm-a-audit/index.ts', 1],
-  ['supabase/functions/calculate-scores/index.ts', 2],
-  ['supabase/functions/carteira-rebuild/index.ts', 4],
-  ['supabase/functions/omie-analytics-sync/index.ts', 5],
-  ['supabase/functions/omie-financeiro/index.ts', 1],
+  // Quitados (erradicação scoring/carteira/batch, #1596): ai-ops-agent, algorithm-a-audit,
+  // calculate-scores, carteira-rebuild — convertidos a fetchAll/throw/failLease.
+  // Quitado (erradicação das 3 edges de sync Omie, #1597): omie-analytics-sync (5→0) — os
+  // 5 laços viraram chamadas a `fetchAll` (_shared/paginate.ts), que lança em erro E em
+  // data:null.
+  // Quitado (erradicação das EDGES FINANCEIRAS, este PR): omie-financeiro (1→0) — o laço do
+  // carregarBaixaMapDRE (baixaMap parcial no DRE-caixa) delegado ao mesmo `fetchAll`.
+  // Os três PRs nasceram do mesmo chip-mãe (#1581) e conflitaram AQUI por editar linhas
+  // vizinhas; a resolução é UNIÃO — as listas de quitação são disjuntas e todas valem
+  // (money-path §9: conflito entre dois fixes da mesma classe não se resolve por lado).
+  // A dívida G3 chegou a ZERO: a próxima entrada aqui é reintrodução, não herança.
 ]);
 
 // F2 residual SEM regra automatizada (decisão registrada, respondendo ao challenge do
 // Codex): a forma `if (!x || x.length === 0) break`/`hasMore=false` colapsando
-// data:null com fim sobrevive em 3 laços keyset (omie-cliente ~:948 e ~:1154,
-// omie-vendas-sync ~:955) — com dono e linha no chip de erradicação de VENDAS/CLIENTES.
-// (O 4º site, omie-malha-sync ~:145, foi quitado no chip ESTOQUE/NF-e/TINT/CMC:
-// `lista === null` agora LANÇA e o teto esgotado LANÇA.) A regex genérica do padrão
-// casa ~13 usos LEGÍTIMOS de "lista vazia → nada a fazer" fora de laço de paginação
+// data:null com fim CHEGOU A ZERO na continuação do #1581, em dois chips que fecharam
+// juntos: os 3 laços keyset das edges de sync Omie (omie-cliente :362/:948/:1154 e
+// omie-vendas-sync :955) viraram `if (x == null) throw` + `if (x.length === 0)`, que
+// separa resposta MALFORMADA de fim legítimo sem perder o cursor keyset (design legítimo:
+// keyset ≠ offset, não vira fetchAll); e o 4º site, omie-malha-sync ~:145, caiu no chip
+// ESTOQUE/NF-e/TINT/CMC (`lista === null` LANÇA, teto esgotado LANÇA). A regex genérica do
+// padrão casa ~13 usos LEGÍTIMOS de "lista vazia → nada a fazer" fora de laço de paginação
 // (medido 2026-07-23) e uma versão posicional fina o bastante seria frágil; a morte da
-// forma vem da CONVERSÃO para helpers (que os chips executam), e G1/G3/G4 barram as
+// forma veio da CONVERSÃO para helpers (que os chips executaram), e G1/G3/G4 barram as
 // formas grepáveis.
 
 // ── G4: total de páginas do Omie confiado CRU (`|| 1` / `?? 1` por resposta) ──────────
@@ -169,12 +176,31 @@ const G3_DIVIDA: ReadonlyMap<string, number> = new Map([
 // supabase/functions/_shared/omie-paginacao.ts: validarTotalPaginas (fail-fast
 // anti-runaway) + proximoTotalPaginas (piso monotônico) + avaliarPagina (página vazia
 // antes do fim declarado = anomalia, nunca "fim").
-// `nTotalPaginas` (com o "al") é o MESMO campo noutro método do Omie — PesquisarPedCompra e
-// ListarRecebimentos usam essa grafia. A regex original só casava `nTotPaginas`, e o walker
-// deste gate confirmou 1 site vivo escapando por ela (omie-sync-nfes-recebidas, baselinado
-// abaixo): variante de NOME não é variante de DEFEITO. Ampliada no challenge Codex do PR de
-// erradicação ESTOQUE/NF-e/TINT/CMC.
-const G4 = /(nTot(?:al)?Paginas|total_de_paginas)\s*(\|\||\?\?)\s*1\b/;
+//
+// ⚠️ O `[^;]{0,60}?` (era `\s*`) foi ENDURECIDO em DOIS passos na continuação do #1581:
+//  (1) `\s*` → aceitar o que houver entre o campo e o operador: a forma dominante nas edges de
+//      venda/financeiro é `(result.total_de_paginas as number) || 1`, e o CAST fazia a regex
+//      NÃO casar — o gate media 0 num arquivo com 5 sites vivos (omie-financeiro). Detector que
+//      não enxerga a forma real do repo é falso-VERDE, a família do "O DETECTOR mente".
+//      Medido: +5 em omie-financeiro, +1 em omie-vendas-sync, zero falso positivo.
+//  (2) permitir NEWLINE (achado Codex deste PR): `(… as number)\n  || 1` é o que o formatador
+//      automático produz quando a linha passa do limite, e a versão anterior (`[^;\n]`) deixava
+//      passar. Medido no repo inteiro: ZERO diferença de contagem — não gera falso positivo aqui.
+// O `;` continua excluído: é ele que impede o padrão de atravessar para o statement vizinho.
+//
+// LIMITAÇÃO CONHECIDA (registrada, não é descuido — a solução completa exigiria AST/dataflow):
+//  · falso POSITIVO possível em objeto literal — `{ pages: result.total_de_paginas, n: x || 1 }`
+//    casa sem ser fallback de total (não existe no repo hoje; se aparecer, vai para a allowlist);
+//  · falso NEGATIVO via ALIAS — `const t = result.total_de_paginas; … t || 1` escapa, porque o
+//    nome do campo não está na mesma expressão.
+//
+// ⚠️ TERCEIRO endurecimento (chip ESTOQUE/NF-e/TINT/CMC): `nTot(?:al)?Paginas` — `nTotalPaginas`
+// (com o "al") é o MESMO campo com outra grafia, a que PesquisarPedCompra e ListarRecebimentos
+// usam. Variante de NOME não é variante de DEFEITO, e o walker confirmou 1 site vivo escapando
+// por ela (omie-sync-nfes-recebidas, baselinado abaixo). Os três endurecimentos são ortogonais
+// e se somam: cast (1), newline (2) e grafia (3) — cada um revelou site real que os outros não
+// viam, o que é o argumento contra tratar detector como "pronto".
+const G4 = /(nTot(?:al)?Paginas|total_de_paginas)[^;]{0,60}?(\|\||\?\?)\s*1\b/;
 
 // Allowlist PERMANENTE por contagem (usos legítimos da forma — não são dívida). O helper
 // _shared/omie-paginacao.ts NÃO precisa de entrada: seu `Number(nTot ?? 1)` usa o
@@ -186,6 +212,12 @@ const G4_ALLOW: ReadonlyMap<string, number> = new Map([
   // O `?? 1` monta o total DECLARADO cru que alimenta o guard local (paginacao.ts do
   // próprio edge: piso monotônico + vazia≤piso lança + teto lança — auditado 2026-07-23).
   ['supabase/functions/omie-sync-status-produtos/index.ts', 1],
+  // syncPedidos (~:1159) — `só p/ log/ETA, NÃO decide completude`, auditado na continuação
+  // do #1581: a autoridade de fim é `classifyPedidosPage` (pagination.ts: fim REAL = null/
+  // vazia-que-não-contradiz; vazia que CONTRADIZ = anomalia → pausa) e `complete = reachedEnd`.
+  // O valor só alcança um console.log e o campo informativo do retorno. Revelado pelo
+  // endurecimento da regex acima (o cast o escondia).
+  ['supabase/functions/omie-vendas-sync/index.ts', 1],
 ]);
 
 // DÍVIDA G4 (baseline por CONTAGEM, 2026-07-23 — mesma regra da G3_DIVIDA). Quitação
@@ -194,13 +226,24 @@ const G4_ALLOW: ReadonlyMap<string, number> = new Map([
 // omie-sync-vendas-items, sync-reprocess e tint-omie-sync convertidos aos guards de
 // _shared/omie-paginacao.ts. Restam os do chip VENDAS/CLIENTES:
 const G4_DIVIDA: ReadonlyMap<string, number> = new Map([
-  ['supabase/functions/omie-analytics-sync/index.ts', 3],
-  ['supabase/functions/omie-cliente/index.ts', 1],
-  // Revelado pela ampliação da regex para `nTotalPaginas` (grafia do ListarRecebimentos) —
-  // site PREEXISTENTE que escapava do gate, não regressão deste PR. Entra baselinado para
-  // morrer com o chip de NF-e/vendas restante, em vez de sumir do radar de novo.
+  // omie-analytics-sync (3→0), omie-cliente (1→0) e omie-vendas-sync (1→0, o `|| 1` do
+  // backfill_tint_cor) QUITADOS no chip das 3 edges de sync Omie — os totais passaram a
+  // proximoTotalPaginas + avaliarPagina. O que resta do vendas-sync é a entrada de
+  // G4_ALLOW acima (log/ETA), não dívida.
+  // omie-financeiro (5→0) QUITADO no chip das EDGES FINANCEIRAS: a dívida de 5 que o #1597
+  // baselinou ao consertar o detector eram os `(… as number) || 1`. Ciclo completo da
+  // erradicação em dois PRs — um conserta o DETECTOR e baselina o que ele revela, o outro
+  // corrige o revelado e tira a entrada.
+  // QUITADOS no chip ESTOQUE/NF-e/TINT/CMC (8 entradas): cmc-snapshot-backfill,
+  // cmc-snapshot-smoke, omie-sync-ctes-recebidos, omie-sync-estoque (2), omie-sync-metadados,
+  // omie-sync-vendas-items, sync-reprocess e tint-omie-sync — todos aos guards de
+  // _shared/omie-paginacao.ts.
+  //
+  // ÚNICO remanescente, e ele é do MESMO ciclo detector→revelado: o terceiro endurecimento
+  // da regex (grafia `nTotalPaginas`) revelou este site PREEXISTENTE, que escapava do gate
+  // desde sempre. Baselinado para morrer com o chip de NF-e/vendas restante em vez de sumir
+  // do radar — a lista só encolhe, e encolhe registrado.
   ['supabase/functions/omie-sync-nfes-recebidas/index.ts', 1],
-  ['supabase/functions/omie-vendas-sync/index.ts', 1],
 ]);
 
 describe('gate estrutural: paginação artesanal que trata falha como fim (classe #1338→#1564)', () => {
@@ -286,6 +329,39 @@ describe('gate estrutural: paginação artesanal que trata falha como fim (class
     ).toEqual([]);
   });
 
+  it('G4 (controle de calibração): as DUAS formas do total cru são detectadas — inclusive com cast', () => {
+    // Sem este controle o G4 é falso-VERDE por construção: a regex `\s*` original media 0 em
+    // omie-financeiro (5 sites vivos) e em omie-vendas-sync porque o cast fica ENTRE o campo e
+    // o `||`. "Detectou a morte" e "está quebrado" têm de ser distinguíveis (money-path §"O
+    // DETECTOR mente"): estes asserts fixam o detector contra as formas REAIS do repo.
+    const semCast = `      totalPaginas = result.total_de_paginas || 1;`;
+    const comCast = `    totalPaginas = (result.total_de_paginas as number) || 1;`;
+    const comCastBang = `    totalPaginas = (result!.total_de_paginas as number) || 1;`;
+    const comCastNTot = `    totalPaginas = (result.nTotPaginas as number) || 1;`;
+    const coalesce = `      const total = result.total_de_paginas ?? 1;`;
+    // Quebra de linha antes do `||` — o que o formatador automático produz numa linha longa.
+    // Achado Codex deste PR: a 1ª versão do endurecimento excluía `\n` e deixava passar.
+    const multilinha = `    totalPaginas = (result.total_de_paginas as number)\n      || 1;`;
+    for (const [rotulo, amostra] of [
+      ['sem cast (forma-mãe)', semCast],
+      ['com cast `as number`', comCast],
+      ['com cast e non-null `!`', comCastBang],
+      ['com cast, campo nTotPaginas', comCastNTot],
+      ['coalesce `?? 1`', coalesce],
+      ['cast + quebra de linha antes do `||`', multilinha],
+    ] as const) {
+      expect(G4.test(amostra), `G4 deixou de casar o controle: ${rotulo}`).toBe(true);
+    }
+    // E o pós-fix (piso monotônico + teto fail-fast) NÃO casa — senão o gate ficaria vermelho
+    // sobre o código CORRETO e a saída seria afrouxar a regra (falso-VERMELHO, §#1483).
+    const posFix = `      totalPaginas = proximoTotalPaginas(totalPaginas, result.total_de_paginas, MAX_PAGINAS_LISTAGEM);`;
+    expect(G4.test(posFix), 'G4 casa o pós-fix — falso positivo de calibração').toBe(false);
+    // Guard do endurecimento: o `[^;\n]` não pode atravessar statement e casar um `|| 1` de
+    // OUTRA instrução (isso transformaria vizinhança inocente em ofensa).
+    const doisStatements = `    const t = result.total_de_paginas; const fator = escala || 1;`;
+    expect(G4.test(doisStatements), 'G4 atravessou `;` — o padrão pega statement vizinho').toBe(false);
+  });
+
   it('G3 (controle de calibração): laço com `?? []` de página é detectado; callback de helper não', () => {
     // Forma REAL do somarSaldoPorStatus pré-fix (2026-07-23) — laço + range + coalesce:
     const lacoAfetado = `
@@ -347,6 +423,52 @@ describe('gate estrutural: paginação artesanal que trata falha como fim (class
       presente: /throw new Error\(\s*`paginateAll: teto de maxPages atingido/,
       motivo: 'paginateAll voltaria a RETORNAR o parcial ao esgotar o teto (#1562, money-path §8)',
     },
+    // ── Continuação #1581 (edges scoring/carteira/batch) — laços LOCAIS remanescentes.
+    // Achado Codex P2 do PR: sem pin, reverter um guard `data == null` destes laços passaria
+    // verde em G1/G3/VIGIADAS_ORDER (a forma `if (!data) break` não tem regra automatizada —
+    // ver o comentário F2 acima). Âncora em trecho ASCII, caixa fixa, exclusivo do ramo (#1483).
+    {
+      arquivo: 'supabase/functions/carteira-rebuild/index.ts',
+      presente: /if \(data == null\) \{ console\.error\('\[carteira-rebuild\] load aliases: data null sem error'\); return await failLease\('aliases: data null sem error/,
+      motivo: 'aliases: data:null sem error voltaria a encerrar o laco com aliasMap PARCIAL (clone re-exposto)',
+    },
+    {
+      arquivo: 'supabase/functions/carteira-rebuild/index.ts',
+      presente: /if \(data == null\) \{ console\.error\('\[carteira-rebuild\] load ledger: data null sem error'\); return await failLease\('ledger: data null sem error/,
+      motivo: 'ledger: membroIds truncado engana ate a pos-condicao D4 (ela compara contra o conjunto truncado)',
+    },
+    {
+      arquivo: 'supabase/functions/carteira-rebuild/index.ts',
+      presente: /if \(data == null\) \{ console\.error\('\[carteira-rebuild\] load proof oben: data null sem error'\); return await failLease\('proof oben: data null sem error/,
+      motivo: 'proof oben: truncada rebaixaria membro a orfao/Hunter em massa',
+    },
+    {
+      arquivo: 'supabase/functions/carteira-rebuild/index.ts',
+      presente: /if \(data == null\) \{ console\.error\('\[carteira-rebuild\] load flaggeds: data null sem error'\); return await failLease\('flaggeds: data null sem error/,
+      motivo: 'flaggeds: truncado re-elegeria fornecedor excluido da carteira',
+    },
+    {
+      arquivo: 'supabase/functions/sinais-batch/index.ts',
+      presente: /if \(data == null\) \{\s*\n\s*return new Response\(JSON\.stringify\(\{ ok: false, error: `farmer_calls /,
+      motivo: 'sinais-batch: data:null sem error voltaria a fechar a varredura PARCIAL como completa',
+    },
+    {
+      arquivo: 'supabase/functions/ai-ops-agent/index.ts',
+      presente: /if \(aPage == null\) throw new Error\(`carteira_assignments /,
+      motivo: 'keyset do ownerMap: data:null sem error truncaria o mapa e as decisoes sairiam com farmer_id null',
+    },
+    // Ordem COMPOSTA (chave total) pinada onde UMA coluna não é única (achado Codex P2:
+    // VIGIADAS_ORDER só exige ALGUM .order — remover o desempate passaria verde).
+    {
+      arquivo: 'supabase/functions/sinais-batch/index.ts',
+      presente: /\.order\('started_at', \{ ascending: false \}\)\s*\n\s*\.order\('id', \{ ascending: true \}\)/,
+      motivo: 'sem o desempate por id, started_at empatado pula/duplica linhas entre paginas',
+    },
+    {
+      arquivo: 'supabase/functions/tactical-plans-batch/index.ts',
+      presente: /\.order\('customer_user_id', \{ ascending: true \}\)\s*\n\s*\.range\(from, to\)/,
+      motivo: 'a chave do batch tem de ser customer_user_id (UNIQUE e IMUTAVEL) imediatamente antes do range',
+    },
   ];
 
   for (const pin of pins) {
@@ -373,23 +495,76 @@ describe('gate estrutural: paginação artesanal que trata falha como fim (class
     }
   });
 
-  it('G2 anti-sabotagem: o ramo `data == null` dos helpers não pode engolir (break/return/continue) antes do throw', () => {
-    // Achado Codex: `if (data == null) break;` ANTES do `if (data == null) throw ...`
-    // satisfaria os pins de presença com o throw morto. Barra o padrão nos arquivos
-    // pinados: qualquer `if (data == null)` seguido de break/return/continue reprova.
+  it('G2 anti-sabotagem: TODO ramo `x == null` dos arquivos pinados ABORTA (nunca break/continue)', () => {
+    // Achado Codex (2×). Primeira rodada: `if (data == null) break;` ANTES do
+    // `if (data == null) throw ...` satisfaria o pin de PRESENÇA com o throw morto.
+    // Segunda rodada (challenge deste PR): a versão anterior deste teste cobria só 5 arquivos e
+    // só a variável literal `data` — deixava de fora carteira-rebuild, sinais-batch e o keyset do
+    // ai-ops-agent (que usa `aPage`), justamente os 6 pins novos. Um `break` inserido lá passava
+    // verde em G1, G3, VIGIADAS_ORDER e no pin de presença.
+    //
+    // A regra NÃO pode ser "nenhum return": os guards CORRETOS de carteira-rebuild e sinais-batch
+    // abortam com `return await failLease(...)` / `return new Response(...)`. O invariante real é
+    // que o ramo ABORTE — throw, failLease ou Response de erro. `break`/`continue` (e `return` nu)
+    // continuam a leitura como se a página malformada fosse fim.
     const pinados = [
       'supabase/functions/_shared/paginate.ts',
       'src/lib/scoring/rpcPaginada.ts',
       'supabase/functions/calculate-scores/index.ts',
       'src/services/financeiroService.ts',
       'src/lib/postgrest.ts',
+      'supabase/functions/carteira-rebuild/index.ts',
+      'supabase/functions/sinais-batch/index.ts',
+      'supabase/functions/ai-ops-agent/index.ts',
     ];
+    // Nomes de página realmente usados nestes laços (não um `\w+` solto, que casaria
+    // comparações de domínio como `if (cod == null)` e daria falso-VERMELHO).
+    const VARS = /if\s*\(\s*(data|aPage|sPage|page|batch|batch2|rows|linhas)\s*==\s*null\s*\)/g;
+    // O predicado é de ORDEM, não de presença — e isto NÃO é sofisticação gratuita: a primeira
+    // versão perguntava "existe break na janela?" e ficou vermelha no baseline em paginate.ts e
+    // financeiroService.ts, porque a janela alcançava o `break` LEGÍTIMO do fim-de-página
+    // (`if (rows.length < PAGE) break`) que vem 3 linhas abaixo do guard. Assert que mede além do
+    // ramo é falso-VERMELHO (irmão do que mede prosa — §"O ALVO mente"). O que importa é o que
+    // vem PRIMEIRO depois do `if (x == null)`: se for abortar, o guard está vivo; se for
+    // break/continue, o aborto pinado logo abaixo é código morto.
+    const ABORTO = /\bthrow\b|failLease\s*\(|new Response\s*\(/;
+    const ENGOLE = /\b(break|continue)\b/;
+    const ofensas: string[] = [];
     for (const arquivo of pinados) {
       const fonte = semComentarios(readFileSync(resolve(RAIZ, arquivo), 'utf8'));
-      expect(
-        /if\s*\(\s*data\s*==\s*null\s*\)\s*\{?\s*(break|return|continue)\b/.test(fonte),
-        `${arquivo}: ramo data==null engolindo (break/return/continue) — o throw pinado viraria código morto`,
-      ).toBe(false);
+      for (const m of fonte.matchAll(VARS)) {
+        const ramo = fonte.slice(m.index!, m.index! + 240);
+        const iAborto = ramo.search(ABORTO);
+        const iEngole = ramo.search(ENGOLE);
+        if (iAborto < 0) {
+          ofensas.push(`${arquivo}: \`${m[0]}\` não aborta (sem throw/failLease/Response)`);
+        } else if (iEngole >= 0 && iEngole < iAborto) {
+          ofensas.push(`${arquivo}: \`${m[0]}\` ENGOLE (break/continue ANTES do aborto)`);
+        }
+      }
     }
+    expect(
+      ofensas,
+      `ramo de página malformada que NÃO aborta — o throw/failLease pinado vira código morto e ` +
+        `data:null volta a ser lido como fim da lista: ${ofensas.join(' | ')}`,
+    ).toEqual([]);
+  });
+
+  it('G2: a chave de paginação do tactical-plans-batch não volta a ser o `farmer_id` (MUTÁVEL)', () => {
+    // Achado do challenge /codex, confirmado em prod: o trigger trg_carteira_reconcile_score_owner
+    // faz `SET farmer_id = EXCLUDED.farmer_id` em farmer_client_scores a cada mudança de dono, e o
+    // carteira-rebuild roda 07:30 UTC — 30min ANTES deste batch. Ordenar por (farmer_id, ...) é
+    // ordem TOTAL mas não ESTÁVEL: a linha que troca de farmer entre dois offsets muda de posição
+    // e some (cliente sem plano) ou duplica (disputa o TOP_N 2×). Um pin de presença de
+    // `.order('customer_user_id')` não barra alguém REACRESCENTAR o farmer_id antes dele — por
+    // isso este é um pin de AUSÊNCIA. Total ≠ estável: a chave tem de ser IMUTÁVEL.
+    const fonte = semComentarios(
+      readFileSync(resolve(RAIZ, 'supabase/functions/tactical-plans-batch/index.ts'), 'utf8'),
+    );
+    expect(
+      /\.order\(\s*['"]farmer_id['"]/.test(fonte),
+      'voltou o .order(farmer_id): coluna MUTÁVEL na chave de paginação — o trigger de carteira ' +
+        'move a linha entre páginas e o cliente some ou duplica no TOP_N',
+    ).toBe(false);
   });
 });

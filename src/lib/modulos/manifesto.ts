@@ -280,6 +280,7 @@ export const MODULOS: ModuloApp[] = [
     testes: [
       "src/components/intelligence/__tests__/tabs-erro-honesto.test.tsx",
       "src/hooks/__tests__/bundle-escopo-sob-falha.test.tsx",
+      "src/hooks/__tests__/bundle-recomendacoes-erro-silencioso.test.tsx",
       "src/hooks/__tests__/bundle-regras-substituicao-atomica.test.tsx",
       "src/hooks/__tests__/cluster-margin-cobertura.test.tsx",
       "src/hooks/__tests__/cluster-margin-paginacao.test.tsx",
@@ -689,6 +690,7 @@ export const MODULOS: ModuloApp[] = [
       "src/__tests__/auth.test.ts",
       "src/__tests__/edge-app-url.test.ts",
       "src/__tests__/index-html.test.ts",
+      "src/__tests__/leitura-single-shot-gate.test.ts",
       "src/__tests__/paginacao-artesanal-gate.test.ts",
       "src/lib/escape-html.test.ts",
       "src/lib/__tests__/**",

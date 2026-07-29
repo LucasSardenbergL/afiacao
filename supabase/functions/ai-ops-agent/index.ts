@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { fetchAll } from "../_shared/paginate.ts";
 
 const ALLOWED_ORIGIN = Deno.env.get("ALLOWED_ORIGIN") || "*";
 
@@ -238,25 +239,22 @@ serve(async (req) => {
       throw new Error(`[ai-ops-agent] refresh_customer_metrics falhou: ${refreshError.message}`);
     }
 
-    // 2. Get all customer metrics with pagination (bypass 1000-row limit)
-    let allMetrics: CustomerMetric[] = [];
+    // 2. Get all customer metrics with pagination (bypass 1000-row limit). fetchAll LANÇA em
+    //    error E em data:null sem error — o if/else de antes colapsava resposta malformada com
+    //    fim da lista e o agente decidia sobre métricas PARCIAIS. .order em customer_user_id
+    //    (UNIQUE INDEX na MV privada) estabiliza o .range entre páginas.
     const PAGE_SIZE = 1000;
-    let offset = 0;
-    let hasMore = true;
-    while (hasMore) {
-      const { data: page, error: pageError } = await supabase
+    const allMetrics = await fetchAll<CustomerMetric>(
+      (from, to) => supabase
         .from("customer_metrics_mv")
         .select("*")
-        .range(offset, offset + PAGE_SIZE - 1);
-      if (pageError) throw new Error(`Failed to get metrics page ${offset}: ${pageError.message}`);
-      if (page && page.length > 0) {
-        allMetrics = allMetrics.concat((page ?? []) as unknown as CustomerMetric[]);
-        offset += PAGE_SIZE;
-        hasMore = page.length === PAGE_SIZE;
-      } else {
-        hasMore = false;
-      }
-    }
+        // Ordem estável pelo índice ÚNICO da matview (`idx_customer_metrics_mv_uid`, conferido em
+        // prod): sem ela as páginas podem pular/duplicar clientes e a lista de métricas fica
+        // silenciosamente incompleta (money-path.md §7). É a chave que o #1589 fixou — mantida.
+        .order("customer_user_id", { ascending: true })
+        .range(from, to),
+      "customer_metrics_mv (métricas de clientes)",
+    );
 
     console.log(`[ai-ops-agent] Total customers fetched: ${allMetrics.length}`);
 
@@ -281,7 +279,11 @@ serve(async (req) => {
         .order("customer_user_id", { ascending: true })
         .limit(PAGE_SIZE);
       if (aError) throw new Error(`Failed to get carteira page after ${lastCustomerId}: ${aError.message}`);
-      const rows = (aPage ?? []) as unknown as AssignmentRow[];
+      // data:null sem error = resposta malformada, não fim — o `?? []` de antes truncaria o
+      // ownerMap e o farmer_id das decisões sairia null em massa. Fim legítimo do keyset:
+      // página vazia/curta.
+      if (aPage == null) throw new Error(`carteira_assignments após ${lastCustomerId}: data null sem error — resposta malformada, não é fim`);
+      const rows = aPage as unknown as AssignmentRow[];
       assignmentsRaw.push(...rows);
       if (rows.length < PAGE_SIZE) break;
       lastCustomerId = rows[rows.length - 1].customer_user_id;
