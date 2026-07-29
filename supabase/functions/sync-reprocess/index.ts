@@ -35,6 +35,9 @@ import {
 
 const OMIE_API_URL = "https://app.omie.com.br/api/v1";
 
+// Teto anti-runaway do ListarPedidos (reprocessOrders): 500 × 100 = 50k pedidos numa janela >> real.
+const MAX_PAGINAS_PEDIDOS = 500;
+
 type Account = "oben" | "colacor";
 
 // ── Omie response shapes ──
@@ -213,8 +216,15 @@ async function reprocessOrders(
         filtrar_por_data_ate: formatOmieDate(windowEnd),
       })) as unknown as OmieListarPedidosResponse;
 
-      totalPaginas = result.total_de_paginas || 1;
+      // Mesmos guards dos irmãos products/inventory abaixo (piso monotônico + teto fail-fast):
+      // o `|| 1` por resposta encolhia o teto e o reconcile completava retrato PARCIAL.
+      totalPaginas = proximoTotalPaginas(totalPaginas, result.total_de_paginas, MAX_PAGINAS_PEDIDOS);
       const pedidos = result.pedido_venda_produto || [];
+      const veredicto = avaliarPagina(pedidos.length, pagina, totalPaginas);
+      if (veredicto === "anomalia") {
+        throw new Error(`página ${pagina}/${totalPaginas} do ListarPedidos veio vazia antes do fim declarado — abortando (retrato parcial)`);
+      }
+      if (veredicto === "fim") break;
 
       for (const pedido of pedidos) {
         const cab = pedido.cabecalho || {};

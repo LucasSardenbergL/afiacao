@@ -10,6 +10,7 @@ import {
   MAX_PAGINAS_POS_ESTOQUE,
   proximoTotalPaginas,
   validarTotalPaginas,
+  varreduraTruncada,
 } from "./omie-paginacao.ts";
 
 function assertEquals(a: unknown, b: unknown, msg?: string) {
@@ -105,6 +106,37 @@ Deno.test("catálogo vazio (1/1 vazia) → fim", () => {
 
 Deno.test("página vazia ALÉM do declarado → fim (semântica segura p/ loop futuro)", () => {
   assertEquals(avaliarPagina(0, 6, 5), "fim");
+});
+
+// ════════ varreduraTruncada — o que o total-como-teto deixa passar (challenge Codex) ════════
+// Os guards acima só disparam quando uma página vem VAZIA antes do fim declarado. Se o Omie
+// sub-reporta o total (declara 37 quando o real é 43), o laço termina em 37 páginas CHEIAS,
+// sem anomalia nenhuma — e "acabou" fica indistinguível de "truncou". A contagem declarada de
+// registros é o segundo sinal que os separa (money-path §8).
+
+Deno.test("varreduraTruncada — lidos MENOS que o declarado é truncamento (total sub-reportado)", () => {
+  assertEquals(varreduraTruncada(3700, 4283), true);
+});
+
+Deno.test("varreduraTruncada — lidos == declarado NÃO é truncamento (fim legítimo)", () => {
+  assertEquals(varreduraTruncada(4283, 4283), false);
+});
+
+Deno.test("varreduraTruncada — lidos ACIMA do declarado não é truncamento (declarado é piso)", () => {
+  // O total declarado sub-reportar é o defeito conhecido: ler MAIS que ele é o caso são.
+  assertEquals(varreduraTruncada(4300, 4283), false);
+});
+
+Deno.test("varreduraTruncada — sem o segundo sinal (ausente/0/lixo) NÃO afirma truncamento", () => {
+  // Precisão > recall: sem contagem declarada não há como provar truncamento, e afirmar
+  // aqui fabricaria o alerta (suspenderia inativação legítima para sempre).
+  assertEquals(varreduraTruncada(0, undefined), false);
+  assertEquals(varreduraTruncada(0, 0), false);
+  assertEquals(varreduraTruncada(10, Number.NaN), false);
+});
+
+Deno.test("varreduraTruncada — catálogo real vazio (0 lidos, 0 declarados) não é truncamento", () => {
+  assertEquals(varreduraTruncada(0, 0), false);
 });
 
 // ════════ teto compartilhado ════════

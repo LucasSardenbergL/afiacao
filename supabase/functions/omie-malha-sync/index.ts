@@ -4,6 +4,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
+import { avaliarPagina, proximoTotalPaginas } from "../_shared/omie-paginacao.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -71,6 +72,19 @@ async function omieCall(call: string, params: Record<string, unknown>): Promise<
     }
   }
   throw lastErr ?? new Error(`Omie ${call}: falha após ${MAX} tentativas`);
+}
+
+// Total DECLARADO da resposta, quando presente (nome varia por versão da API, como extractLista).
+// Alimenta o piso monotônico do guard de página-vazia-antes-do-fim; ausente ⇒ undefined (o piso
+// fica em 1 e página vazia segue valendo como fim, o desenho histórico deste edge).
+function extractTotalPaginas(resp: Record<string, unknown>): number | undefined {
+  for (const k of ["nTotPaginas", "total_de_paginas", "nTotalPaginas"]) {
+    const v = resp[k];
+    // Aceita número OU string numérica (o helper canônico faz Number(nTot) — paridade).
+    const n = typeof v === "number" ? v : (typeof v === "string" && v.trim() !== "" ? Number(v) : NaN);
+    if (Number.isFinite(n)) return n;
+  }
+  return undefined;
 }
 
 // A lista de estruturas pode vir sob nomes diferentes conforme a versão da API — candidatos conhecidos.
@@ -142,11 +156,27 @@ serve(async (req) => {
     let sampleErr: unknown = null;
     const syncedAt = new Date().toISOString();
 
+    let fimVisto = false;
+    // Piso monotônico do total declarado (quando a resposta o traz). LIMITAÇÃO CONHECIDA do
+    // resume (desde_pagina>1): o piso da run abortada não é persistido — se o total só veio
+    // nas páginas já puladas, o guard de anomalia recomeça sem ele (o de página-curta idem).
+    // Resume é o seguro raro, não o caminho normal; o próximo sync completo re-protege.
+    let totalDeclarado = 1;
     for (let pagina = desdePagina; pagina <= MAX_PAGINAS; pagina++) {
       const resp = await omieCall("ListarEstruturas", { nPagina: pagina, nRegPorPagina: REG_POR_PAGINA });
-      if (resp === null) break;                  // Omie sinalizou FIM via faultstring (não é erro)
+      if (resp === null) { fimVisto = true; break; } // Omie sinalizou FIM via faultstring (não é erro)
+      totalDeclarado = proximoTotalPaginas(totalDeclarado, extractTotalPaginas(resp), MAX_PAGINAS);
       const lista = extractLista(resp);
-      if (!lista || lista.length === 0) break;   // página vazia — nunca confiar em total_de_paginas
+      // Malformada ≠ fim: 200 sem NENHUMA lista reconhecível era colapsado com "página vazia"
+      // e fechava o run "ok" com malha TRUNCADA (o pior modo de falha da F1A).
+      if (lista === null) {
+        throw new Error(`ListarEstruturas p.${pagina}: resposta sem lista reconhecível (shape inesperado) — malformada ≠ fim`);
+      }
+      const veredicto = avaliarPagina(lista.length, pagina, totalDeclarado);
+      if (veredicto === "anomalia") {
+        throw new Error(`página ${pagina}/${totalDeclarado} do ListarEstruturas veio vazia antes do fim declarado — abortando (retrato parcial)`);
+      }
+      if (veredicto === "fim") { fimVisto = true; break; }
       paginas++;
 
       // dedupe DENTRO da página: upsert com PK repetida no MESMO statement quebra
@@ -164,7 +194,22 @@ serve(async (req) => {
         if (error) throw new Error(`upsert staging p.${pagina}: ${error.message}`);
         registros += rows.length;
       }
-      if (lista.length < REG_POR_PAGINA) break; // página incompleta = última
+      if (lista.length < REG_POR_PAGINA) {
+        // Página curta SÓ é fim quando não há piso declarado à frente (achado Codex do
+        // challenge deste PR: curta em 39/40 fecharia 1.925/2.000 como "ok" e a limpeza de
+        // órfãos, dentro dos 90% de plausibilidade, apagaria os registros das páginas perdidas).
+        if (pagina < totalDeclarado) {
+          throw new Error(`página ${pagina}/${totalDeclarado} do ListarEstruturas veio CURTA (${lista.length}/${REG_POR_PAGINA}) antes do fim declarado — abortando (retrato parcial)`);
+        }
+        fimVisto = true;
+        break;
+      }
+    }
+    // Teto esgotado sem ver o fim ≠ fim da fonte (money-path §8): fechar "ok" parcial aqui
+    // deixaria a malha truncada passar por completa (e habilitaria a limpeza de órfãos em cima
+    // de um retrato parcial). Retomável via body.desde_pagina.
+    if (!fimVisto) {
+      throw new Error(`ListarEstruturas esgotou ${MAX_PAGINAS} páginas sem ver o fim — abort anti-truncamento`);
     }
 
     // Limpeza de órfãos (painel Codex P1: estrutura removida no Omie ficaria eterna no staging)

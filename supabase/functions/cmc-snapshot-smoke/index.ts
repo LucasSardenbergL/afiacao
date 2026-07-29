@@ -22,6 +22,7 @@
 //   (datas aceitam ISO YYYY-MM-DD ou DD/MM/YYYY; o Omie recebe DD/MM/YYYY)
 // ─────────────────────────────────────────────────────────────────────────────
 import { authorizeCronOrStaff, corsHeaders } from "../_shared/auth.ts";
+import { avaliarPagina, MAX_PAGINAS_POS_ESTOQUE, proximoTotalPaginas } from "../_shared/omie-paginacao.ts";
 
 const OMIE_API_URL = "https://app.omie.com.br/api/v1";
 
@@ -122,8 +123,18 @@ async function cmcPorData(
       nRegPorPagina: 100,
       dDataPosicao,
     });
-    totalPaginas = result.nTotPaginas || 1;
-    for (const prod of result.produtos || []) {
+    // Piso monotônico + anti-runaway (_shared/omie-paginacao.ts). O teto de AMOSTRA continua
+    // maxPaginas de propósito (diagnóstico) e é REPORTADO em paginasLidas/totalPaginas — o
+    // caller distingue amostra de catálogo; página vazia antes do fim declarado LANÇA (uma
+    // página perdida numa das datas distorceria o cruzamento e o veredito do gate).
+    totalPaginas = proximoTotalPaginas(totalPaginas, result.nTotPaginas, MAX_PAGINAS_POS_ESTOQUE);
+    const produtos = result.produtos || [];
+    const veredicto = avaliarPagina(produtos.length, pagina, totalPaginas);
+    if (veredicto === "anomalia") {
+      throw new Error(`página ${pagina}/${totalPaginas} do ListarPosEstoque (${dDataPosicao}) veio vazia antes do fim declarado — amostra corrompida, abortando`);
+    }
+    if (veredicto === "fim") break;
+    for (const prod of produtos) {
       const cod = prod.nCodProd;
       if (!cod) continue;
       if (cod === codAlvo) alvoVisto = true;

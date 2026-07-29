@@ -54,3 +54,22 @@ export function avaliarPagina(nItens: number, pagina: number, totalPaginas: numb
   if (nItens > 0) return "processar";
   return pagina < totalPaginas ? "anomalia" : "fim";
 }
+
+// O que os guards acima NÃO cobrem: `nTotPaginas` é PISO (o Omie SUB-REPORTA em listas
+// grandes — docs/agent/sync.md), e um laço `while (pagina <= totalPaginas)` para no total
+// DECLARADO. Se ele veio curto, a cauda nunca é pedida e o laço termina sem nenhuma
+// anomalia — "acabou" e "truncou" ficam indistinguíveis (money-path §8). O segundo sinal
+// que os separa é a CONTAGEM de registros que a própria resposta declara (nTotRegistros /
+// total_de_registros): lidos < declarados ⇒ retrato truncado.
+//
+// Por que devolver um booleano em vez de lançar: o caller decide o que fazer com um retrato
+// parcial, e a decisão é por EFEITO. Gravar o que leu costuma ser certo (o físico lido está
+// fresco); tomar decisão NEGATIVA sobre o que faltou — inativar SKU, apagar órfão, carimbar
+// "não comprou" — é sempre errado, porque o ausente é "não li", não "não existe".
+// Declarado ausente/0 devolve false: sem o segundo sinal não há como afirmar truncamento
+// (e afirmar sem sinal seria fabricar o próprio alerta).
+export function varreduraTruncada(registrosLidos: number, totalDeclarado: number | undefined): boolean {
+  const declarado = Number(totalDeclarado ?? 0);
+  if (!Number.isFinite(declarado) || declarado <= 0) return false;
+  return registrosLidos < declarado;
+}

@@ -1,5 +1,10 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
+import { avaliarPagina, proximoTotalPaginas } from "../_shared/omie-paginacao.ts";
+
+// Teto anti-runaway do total DECLARADO pelo Omie (o teto de LEITURA por rodada continua
+// maxPages=3, deliberado: cron horário com MAX_DETAIL_CALLS=1 — amostra retomável, não truncagem).
+const MAX_PAGINAS_RECEBIMENTOS = 500;
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -209,6 +214,7 @@ Deno.serve(async (req) => {
       const allRecebimentos: OmieRecebimentoListItem[] = [];
       let page = 1;
       const maxPages = 3;
+      let totalPages = 1; // piso monotônico do total declarado (guards de _shared/omie-paginacao.ts)
       let hasMore = true;
 
       while (hasMore && page <= maxPages) {
@@ -224,14 +230,22 @@ Deno.serve(async (req) => {
               dtEmissaoDe: dtDe,
             },
           )) as unknown as OmieListarRecebimentosResponse;
+          totalPages = proximoTotalPaginas(totalPages, pageResult.nTotalPaginas, MAX_PAGINAS_RECEBIMENTOS);
           const recs = pageResult.recebimentos ?? [];
+          const veredicto = avaliarPagina(recs.length, page, totalPages);
+          if (veredicto === "anomalia") {
+            throw new Error(`página ${page}/${totalPages} veio vazia antes do fim declarado — acumulado parcial`);
+          }
+          if (veredicto === "fim") break;
           allRecebimentos.push(...recs);
-          const totalPages = pageResult.nTotalPaginas ?? 1;
           console.log(`[sync] Página ${page}/${totalPages}, ${recs.length} registros`);
           hasMore = page < totalPages;
           page++;
         } catch (pgErr) {
           const msg = pgErr instanceof Error ? pgErr.message : String(pgErr);
+          // REGISTRA em errors[] (surfaça no response) — o console.warn sozinho deixava o
+          // acumulado parcial seguir adiante com success:true e ninguém sabia da página perdida.
+          errors.push(`${cred.warehouseCode} ListarRecebimentos página ${page}: ${msg}`);
           console.warn(`[sync] Erro na página ${page}: ${msg}`);
           break;
         }
@@ -278,6 +292,9 @@ Deno.serve(async (req) => {
           )) as unknown as OmieConsultarRecebimentoResponse;
         } catch (detErr) {
           const msg = detErr instanceof Error ? detErr.message : String(detErr);
+          // REGISTRA: com MAX_DETAIL_CALLS=1, a MESMA NF falhando toda hora starva a fila
+          // inteira atrás dela com success:true — errors[] é o único sinal visível disso.
+          errors.push(`${cred.warehouseCode} ConsultarRecebimento ${nIdReceb}: ${msg}`);
           console.warn(`[sync] Erro ao consultar recebimento ${nIdReceb}: ${msg}`);
           continue;
         }
@@ -398,8 +415,11 @@ Deno.serve(async (req) => {
 
   console.log(`[sync] Concluído: ${totalImported} importadas, ${totalSkipped} já existentes, ${errors.length} erros`);
 
+  // success reflete o que ACONTECEU, não o fato de a função ter chegado ao fim: com página
+  // perdida ou detalhe que falhou, "sucesso" esconderia NF-e faltando no painel de conferência.
+  // (O HTTP segue 200: o run é retomável pelo cron horário, não é erro de infra.)
   return jsonResponse({
-    success: true,
+    success: errors.length === 0,
     imported: totalImported,
     skipped: totalSkipped,
     errors: errors.length > 0 ? errors : undefined,

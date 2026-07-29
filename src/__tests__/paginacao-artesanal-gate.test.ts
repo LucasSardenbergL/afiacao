@@ -154,11 +154,13 @@ const G3_DIVIDA: ReadonlyMap<string, number> = new Map([
 // F2 residual SEM regra automatizada (decisão registrada, respondendo ao challenge do
 // Codex): a forma `if (!x || x.length === 0) break`/`hasMore=false` colapsando
 // data:null com fim sobrevive em 3 laços keyset (omie-cliente ~:948 e ~:1154,
-// omie-vendas-sync ~:955) e no omie-malha-sync ~:145 — TODOS já com dono e linha nos
-// chips de erradicação. A regex genérica do padrão casa ~13 usos LEGÍTIMOS de
-// "lista vazia → nada a fazer" fora de laço de paginação (medido 2026-07-23) e uma
-// versão posicional fina o bastante seria frágil; a morte da forma vem da CONVERSÃO
-// para helpers (que os chips executam), e G1/G3/G4 barram as formas grepáveis.
+// omie-vendas-sync ~:955) — com dono e linha no chip de erradicação de VENDAS/CLIENTES.
+// (O 4º site, omie-malha-sync ~:145, foi quitado no chip ESTOQUE/NF-e/TINT/CMC:
+// `lista === null` agora LANÇA e o teto esgotado LANÇA.) A regex genérica do padrão
+// casa ~13 usos LEGÍTIMOS de "lista vazia → nada a fazer" fora de laço de paginação
+// (medido 2026-07-23) e uma versão posicional fina o bastante seria frágil; a morte da
+// forma vem da CONVERSÃO para helpers (que os chips executam), e G1/G3/G4 barram as
+// formas grepáveis.
 
 // ── G4: total de páginas do Omie confiado CRU (`|| 1` / `?? 1` por resposta) ──────────
 // nTotPaginas/total_de_paginas é PISO, não verdade (docs/agent/sync.md): resposta
@@ -167,7 +169,12 @@ const G3_DIVIDA: ReadonlyMap<string, number> = new Map([
 // supabase/functions/_shared/omie-paginacao.ts: validarTotalPaginas (fail-fast
 // anti-runaway) + proximoTotalPaginas (piso monotônico) + avaliarPagina (página vazia
 // antes do fim declarado = anomalia, nunca "fim").
-const G4 = /(nTotPaginas|total_de_paginas)\s*(\|\||\?\?)\s*1\b/;
+// `nTotalPaginas` (com o "al") é o MESMO campo noutro método do Omie — PesquisarPedCompra e
+// ListarRecebimentos usam essa grafia. A regex original só casava `nTotPaginas`, e o walker
+// deste gate confirmou 1 site vivo escapando por ela (omie-sync-nfes-recebidas, baselinado
+// abaixo): variante de NOME não é variante de DEFEITO. Ampliada no challenge Codex do PR de
+// erradicação ESTOQUE/NF-e/TINT/CMC.
+const G4 = /(nTot(?:al)?Paginas|total_de_paginas)\s*(\|\||\?\?)\s*1\b/;
 
 // Allowlist PERMANENTE por contagem (usos legítimos da forma — não são dívida). O helper
 // _shared/omie-paginacao.ts NÃO precisa de entrada: seu `Number(nTot ?? 1)` usa o
@@ -181,19 +188,19 @@ const G4_ALLOW: ReadonlyMap<string, number> = new Map([
   ['supabase/functions/omie-sync-status-produtos/index.ts', 1],
 ]);
 
-// DÍVIDA G4 (baseline por CONTAGEM, 2026-07-23 — mesma regra da G3_DIVIDA):
+// DÍVIDA G4 (baseline por CONTAGEM, 2026-07-23 — mesma regra da G3_DIVIDA). Quitação
+// ESTOQUE/NF-e/TINT/CMC (continuação do #1581): cmc-snapshot-backfill, cmc-snapshot-smoke,
+// omie-sync-ctes-recebidos, omie-sync-estoque (2), omie-sync-metadados,
+// omie-sync-vendas-items, sync-reprocess e tint-omie-sync convertidos aos guards de
+// _shared/omie-paginacao.ts. Restam os do chip VENDAS/CLIENTES:
 const G4_DIVIDA: ReadonlyMap<string, number> = new Map([
-  ['supabase/functions/cmc-snapshot-backfill/index.ts', 1],
-  ['supabase/functions/cmc-snapshot-smoke/index.ts', 1],
   ['supabase/functions/omie-analytics-sync/index.ts', 3],
   ['supabase/functions/omie-cliente/index.ts', 1],
-  ['supabase/functions/omie-sync-ctes-recebidos/index.ts', 1],
-  ['supabase/functions/omie-sync-estoque/index.ts', 2],
-  ['supabase/functions/omie-sync-metadados/index.ts', 1],
-  ['supabase/functions/omie-sync-vendas-items/index.ts', 1],
+  // Revelado pela ampliação da regex para `nTotalPaginas` (grafia do ListarRecebimentos) —
+  // site PREEXISTENTE que escapava do gate, não regressão deste PR. Entra baselinado para
+  // morrer com o chip de NF-e/vendas restante, em vez de sumir do radar de novo.
+  ['supabase/functions/omie-sync-nfes-recebidas/index.ts', 1],
   ['supabase/functions/omie-vendas-sync/index.ts', 1],
-  ['supabase/functions/sync-reprocess/index.ts', 1],
-  ['supabase/functions/tint-omie-sync/index.ts', 1],
 ]);
 
 describe('gate estrutural: paginação artesanal que trata falha como fim (classe #1338→#1564)', () => {
