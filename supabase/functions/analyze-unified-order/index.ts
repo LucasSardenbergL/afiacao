@@ -1,5 +1,12 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
+import Anthropic from "npm:@anthropic-ai/sdk@^0.93.0";
+import {
+  avisoImagensRejeitadas,
+  type BlocoImagem,
+  type ImagemRejeitada,
+  prepararImagens,
+} from "./imagem-helpers.ts";
 
 // Strip diacritics/accents for fuzzy comparison
 function stripAccents(str: string): string {
@@ -110,10 +117,12 @@ interface AISuggestion {
   servico_descricao?: string;
 }
 
-interface AIChatMessage {
-  role: "system" | "user" | "assistant";
-  content: string | Array<{ type: string; text?: string; image_url?: { url: string } }>;
-}
+/** Content block da Anthropic: texto ou imagem base64 com media type real. */
+type BlocoConteudo = { type: "text"; text: string } | BlocoImagem;
+
+/** Modelo e teto de saída — ver convenção de LLM em edge no CLAUDE.md. */
+const MODELO = "claude-sonnet-4-6";
+const MAX_TOKENS = 8000;
 
 interface ToolPropertySchema {
   type: string | string[];
@@ -224,8 +233,8 @@ serve(async (req) => {
       });
     }
 
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY is not configured");
+    const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY");
+    if (!ANTHROPIC_API_KEY) throw new Error("ANTHROPIC_API_KEY is not configured");
 
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
@@ -698,20 +707,34 @@ REGRAS DE IDENTIFICAÇÃO DE CLIENTE (CRÍTICAS):
 ` : ""}
 Responda SEMPRE usando a função identify_order_items.`;
 
-    const messages: AIChatMessage[] = [
-      { role: "system", content: systemPrompt },
-    ];
+    // O system prompt (que carrega o catálogo inteiro) vai no parâmetro `system`
+    // da Anthropic, não como mensagem — é isso que habilita o prompt caching.
+    const conteudoUsuario: BlocoConteudo[] = [];
+    let imagensRejeitadas: ImagemRejeitada[] = [];
 
     if (allImages.length > 0) {
-      const content: Array<{ type: string; text?: string; image_url?: { url: string } }> = [
-        { type: "text", text: text || "Identifique os produtos, ferramentas e cliente nestas imagens e sugira os itens para o pedido:" },
-      ];
-      for (const img of allImages) {
-        content.push({ type: "image_url", image_url: { url: `data:image/jpeg;base64,${img}` } });
+      // Media type vem dos MAGIC BYTES. O gateway antigo sniffava o conteúdo e
+      // engolia o rótulo fixo `image/jpeg`; a Anthropic valida o declarado.
+      const preparadas = prepararImagens(allImages);
+      imagensRejeitadas = preparadas.rejeitadas;
+
+      // Nenhuma foto legível e nenhum texto: não há o que analisar. Responder
+      // "não identifiquei itens" aqui esconderia o motivo real do vendedor.
+      if (preparadas.blocos.length === 0 && !text) {
+        return new Response(JSON.stringify({
+          products: [], services: [], suggestions: [], customer: null,
+          imagens_rejeitadas: imagensRejeitadas,
+          error: avisoImagensRejeitadas(imagensRejeitadas),
+        }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
-      messages.push({ role: "user", content });
+
+      conteudoUsuario.push({
+        type: "text",
+        text: text || "Identifique os produtos, ferramentas e cliente nestas imagens e sugira os itens para o pedido:",
+      });
+      conteudoUsuario.push(...preparadas.blocos);
     } else {
-      messages.push({ role: "user", content: text });
+      conteudoUsuario.push({ type: "text", text });
     }
 
     // Build tool schema
@@ -792,60 +815,73 @@ Responda SEMPRE usando a função identify_order_items.`;
       requiredFields.push("customer");
     }
 
-    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${LOVABLE_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: allImages.length > 0 ? "google/gemini-2.5-flash" : "google/gemini-3-flash-preview",
-        messages,
+    const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
+
+    let resposta;
+    try {
+      resposta = await anthropic.messages.create({
+        model: MODELO,
+        max_tokens: MAX_TOKENS,
+        // O catálogo domina o prompt e repete entre chamadas do mesmo vendedor —
+        // marcar o system como cacheável é o que segura o custo desta edge.
+        system: [
+          { type: "text", text: systemPrompt, cache_control: { type: "ephemeral" } },
+        ],
         tools: [
           {
-            type: "function",
-            function: {
-              name: "identify_order_items",
-              description: "Retorna produtos, serviços e cliente identificados no pedido",
-              parameters: {
-                type: "object",
-                properties: toolProperties,
-                required: requiredFields,
-              },
+            name: "identify_order_items",
+            description: "Retorna produtos, serviços e cliente identificados no pedido",
+            input_schema: {
+              type: "object" as const,
+              properties: toolProperties,
+              required: requiredFields,
             },
           },
         ],
-        tool_choice: { type: "function", function: { name: "identify_order_items" } },
-      }),
-    });
-
-    if (!response.ok) {
-      if (response.status === 429) {
+        tool_choice: { type: "tool", name: "identify_order_items" },
+        messages: [{ role: "user", content: conteudoUsuario }],
+      });
+    } catch (e: unknown) {
+      const status = (e as { status?: number })?.status;
+      if (status === 429) {
         return new Response(JSON.stringify({ error: "Limite de requisições excedido. Tente novamente." }), {
           status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
-      if (response.status === 402) {
-        return new Response(JSON.stringify({ error: "Créditos insuficientes." }), {
-          status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      if (status === 529 || status === 503) {
+        return new Response(JSON.stringify({ error: "IA sobrecarregada no momento. Tente de novo em instantes." }), {
+          status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
-      const errorText = await response.text();
-      console.error("AI gateway error:", response.status, errorText);
+      console.error("[analyze-unified-order] erro na API da Anthropic:", status, e instanceof Error ? e.message : e);
       throw new Error("Erro ao processar com IA");
     }
 
-    const aiResponse = await response.json();
-    const toolCall = aiResponse.choices?.[0]?.message?.tool_calls?.[0];
-
-    if (!toolCall) {
+    // §8 money-path: teto que trunca fabrica completude. Uma lista cortada no
+    // meio chega ao vendedor com cara de lista inteira e vira pedido incompleto.
+    if (resposta.stop_reason === "max_tokens") {
+      console.error(`[analyze-unified-order] resposta truncada em ${MAX_TOKENS} tokens`);
       return new Response(JSON.stringify({
         products: [], services: [], suggestions: [], customer: null,
+        error: "Pedido grande demais para analisar de uma vez — a resposta foi cortada. Divida em duas partes e envie de novo.",
+      }), { status: 422, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    const blocoTool = resposta.content.find((b) => b.type === "tool_use");
+
+    if (!blocoTool) {
+      return new Response(JSON.stringify({
+        products: [], services: [], suggestions: [], customer: null,
+        imagens_rejeitadas: imagensRejeitadas,
         message: "Não consegui identificar itens. Seja mais específico ou selecione manualmente.",
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
-    const result = JSON.parse(toolCall.function.arguments);
+    // `input` já vem como objeto validado contra o input_schema — sem JSON.parse.
+    // Tipo permissivo de propósito: o consumo abaixo (resgate por fuzzy match,
+    // casamento de cliente) é o mesmo de quando isto era `any` vindo do parse.
+    // deno-lint-ignore no-explicit-any
+    const result = blocoTool.input as any;
 
     // Validate product IDs - rescue invalid ones by fuzzy matching
     const validProductIds = new Set(prodList.map((p) => p.id));
@@ -1401,12 +1437,19 @@ Responda SEMPRE usando a função identify_order_items.`;
         }
       : null;
 
+    // Foto que ficou de fora entra na MENSAGEM, não só num campo: análise de 3
+    // de 5 fotos não pode chegar com cara de análise completa.
+    const avisoFotos = avisoImagensRejeitadas(imagensRejeitadas);
+    const mensagemBase = result.message ||
+      `Identificado ${validProducts.length} produto(s) e ${validServices.length} serviço(s).`;
+
     return new Response(JSON.stringify({
       products: validProducts,
       services: validServices,
       suggestions: validSuggestions,
       customer: safeCustomer,
-      message: result.message || `Identificado ${validProducts.length} produto(s) e ${validServices.length} serviço(s).`,
+      imagens_rejeitadas: imagensRejeitadas,
+      message: avisoFotos ? `${mensagemBase} ⚠️ ${avisoFotos}` : mensagemBase,
     }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
   } catch (error) {
