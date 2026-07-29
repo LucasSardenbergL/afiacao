@@ -2195,6 +2195,17 @@ const LEASE_ACTIONS = new Set([
   "sync_all", "sync_contas_pagar", "sync_contas_receber", "sync_movimentacoes",
 ]);
 
+// Canárias de deploy: dry-run puro (helpers sobre fixtures; sem Omie, sem DB) → NÃO podem abrir
+// linha em fin_sync_log. Não é higiene, é money-path: DOIS consumidores de frescor leem essa
+// tabela SEM filtrar `action` (conferido via psql-ro 2026-07-29) — `_data_health_compute` pega o
+// último log com `completed_at IS NOT NULL` para o cartão `omie_sync_financeiro`, e
+// `fin_calcular_confiabilidade` faz `MAX(completed_at) WHERE status='complete' AND company =
+// ANY(companies)`. Como a probe roda sem `company` no body, `resolveCompanies` devolve as TRÊS:
+// uma probe logada carimbaria "sync financeiro recente" nas 3 empresas sem ter sincronizado nada —
+// exatamente a fabricação de frescor que o `skipped_busy` (completed_at NULL) existe para evitar.
+// Com logId="" o `completeSync` também vira no-op (`if (!logId) return`).
+const PROBE_ACTIONS = new Set(["paginacao_probe"]);
+
 // Roda o sync de UMA company sob o lease, com sua PRÓPRIA linha de fin_sync_log
 // (companies=[co]). ⚠️ POR QUÊ por-company e não 1 linha por invocação: numa chamada
 // multi-company (ex.: syncAll das 3), uma company pulada herdaria o 'complete' de
@@ -2278,7 +2289,11 @@ serve(async (req) => {
     // invocação (que teria companies[] compartilhado e mentiria frescor da company
     // pulada — achado Codex). logId="" p/ elas; o catch abaixo respeita isso.
     const usaLogPorCompany = LEASE_ACTIONS.has(action);
-    logId = usaLogPorCompany ? "" : await logSync(supabase, action, targetCompanies, auth.userId || "unknown");
+    // Canária (PROBE_ACTIONS) também sai com logId="" — não sincroniza nada, e logar fabricaria
+    // frescor nos consumidores que não filtram action (ver PROBE_ACTIONS).
+    logId = usaLogPorCompany || PROBE_ACTIONS.has(action)
+      ? ""
+      : await logSync(supabase, action, targetCompanies, auth.userId || "unknown");
 
     let result: Record<string, unknown> = {};
 
@@ -2474,6 +2489,160 @@ serve(async (req) => {
         break;
       }
 
+      case "paginacao_probe": {
+        // CANÁRIA COMPORTAMENTAL dos guards de paginação do #1598 — NÃO escreve, NÃO chama o Omie,
+        // NÃO toca o DB. Roda os helpers PUROS **deployados** sobre fixtures fixos e compara com o
+        // esperado. Molde: `doc_ambiguo_probe` (omie-analytics-sync) / `identidade_probe`
+        // (omie-vendas-sync). Gated pelo `validateCaller` como toda action; fora do `logSync`
+        // (ver PROBE_ACTIONS — probe que loga fabrica frescor de sync financeiro).
+        //
+        // POR QUE EXISTE: neste setup não há prova de VERSÃO de edge. O Supabase é da org do
+        // Lovable e o founder não tem conta com acesso ao ref — a Management API (N2) é
+        // estruturalmente indisponível (docs/agent/deploy.md, #1590). Depois de deployar o #1598
+        // só deu para provar N1 (existência) + rastro do commit do bot + inferência estatística
+        // fraca (47 chamadas Omie na run pós-deploy do colacor_sc contra baseline de 45 travada em
+        // 13 runs/7 dias — compatível com a sonda nova, mas a contagem de páginas do Omie também
+        // pode ter subido). Prova DUAS coisas que o commit de deploy não prova: (1) esta action
+        // RESPONDE → o bundle no ar é o desta árvore (binário velho devolve "Ação desconhecida" e
+        // a lista `acoes_disponiveis` do default nem cita `paginacao_probe`); (2) a tabela-verdade
+        // deployada está CERTA. Não prova que o real-path USA os helpers — isso é o gate estrutural
+        // `src/__tests__/paginacao-artesanal-gate.test.ts` (G4/G5) sobre a fonte na main.
+        //
+        // ⚠️ `contrato` é o version marker exigido por docs/agent/deploy.md §Canárias: sem ele um
+        // deploy INTEGRALMENTE velho (com a canária de uma fatia anterior) compara velho×velho e
+        // responde ok:true mentindo. Bump a cada fatia que mude o contrato desta canária.
+        // Igualdade estrutural ESTÁVEL (mesma mecânica do identidade_probe/doc_ambiguo_probe).
+        const stableId = (o: unknown): string =>
+          JSON.stringify(o, (_k, v) =>
+            v && typeof v === "object" && !Array.isArray(v)
+              ? Object.fromEntries(Object.entries(v as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b)))
+              : v);
+        const casosProbe: Array<{ caso: string; resolved: unknown; expected: unknown; ok: boolean }> = [];
+        const registrar = (caso: string, resolved: unknown, expected: unknown) =>
+          casosProbe.push({ caso, resolved, expected, ok: stableId(resolved) === stableId(expected) });
+
+        // ── (1+2) CONTRATO DE PÁGINA: o piso monotônico ALIMENTANDO o veredito ──────────────────
+        // Os dois helpers são deliberadamente exercitados JUNTOS, não em tabelas separadas: é o
+        // acoplamento que discrimina. Um piso que encolhe (o `|| 1` histórico do #1353) só é
+        // visível pelo veredito que ele produz — com teto encolhido, "página vazia ANTES do fim
+        // declarado" (anomalia, aborta fail-closed) vira "fim" e o retrato PARCIAL é carimbado
+        // como completo. Cada caso abaixo devolve as duas metades + o fail-fast anti-runaway.
+        const contratoPagina = (atual: number, declarado: number | undefined, itens: number, pagina: number) => {
+          try {
+            const teto = proximoTotalPaginas(atual, declarado, MAX_PAGINAS_FIN);
+            return { lancou: false, teto, veredito: avaliarPagina(itens, pagina, teto) };
+          } catch {
+            // Teto anti-runaway rejeita a DECLARAÇÃO (fail-fast, antes de girar a edge contra o Omie).
+            return { lancou: true, teto: null, veredito: null };
+          }
+        };
+        const fixturesPagina: Array<{
+          caso: string; atual: number; declarado: number | undefined; itens: number; pagina: number;
+          expected: { lancou: boolean; teto: number | null; veredito: string | null };
+        }> = [
+          // itens > 0 → processar (o caminho normal)
+          { caso: "pagina_com_itens_processar", atual: 1, declarado: 5, itens: 10, pagina: 1, expected: { lancou: false, teto: 5, veredito: "processar" } },
+          // vazia ANTES do piso → anomalia: fault transiente/rate-limit do Omie disfarçado de 200
+          // com lista vazia. Completar aqui deixaria a cauda stale com 'complete' mentindo.
+          { caso: "pagina_vazia_ANTES_do_piso_anomalia", atual: 1, declarado: 5, itens: 0, pagina: 3, expected: { lancou: false, teto: 5, veredito: "anomalia" } },
+          // vazia NO piso → fim normal (nada a processar, inofensivo)
+          { caso: "pagina_vazia_NO_piso_fim", atual: 1, declarado: 5, itens: 0, pagina: 5, expected: { lancou: false, teto: 5, veredito: "fim" } },
+          // vazia ALÉM do piso → fim (semântica segura; o total declarado é PISO, não verdade)
+          { caso: "pagina_vazia_ALEM_do_piso_fim", atual: 1, declarado: 5, itens: 0, pagina: 6, expected: { lancou: false, teto: 5, veredito: "fim" } },
+          // declaração MAIOR cresce o teto — sem o crescimento, avaliarPagina(0,7,5) daria "fim"
+          { caso: "piso_cresce_com_declaracao_maior", atual: 5, declarado: 9, itens: 0, pagina: 7, expected: { lancou: false, teto: 9, veredito: "anomalia" } },
+          // ⭐ o defeito #1353 EXATO: resposta intermediária SEM o campo degradava o teto p/ 1 e a
+          // run completava parcial. Com o piso, teto=5 e a p3 vazia é anomalia; sem ele seria "fim".
+          { caso: "piso_NAO_encolhe_sem_declaracao", atual: 5, declarado: undefined, itens: 0, pagina: 3, expected: { lancou: false, teto: 5, veredito: "anomalia" } },
+          { caso: "piso_NAO_encolhe_com_declaracao_zero", atual: 5, declarado: 0, itens: 0, pagina: 3, expected: { lancou: false, teto: 5, veredito: "anomalia" } },
+          // declaração MENOR também não encolhe (teto 3 daria "fim" na p4 — o retrato pararia curto)
+          { caso: "piso_NAO_encolhe_com_declaracao_menor", atual: 5, declarado: 3, itens: 0, pagina: 4, expected: { lancou: false, teto: 5, veredito: "anomalia" } },
+          // teto anti-runaway do PRÓPRIO omie-financeiro (MAX_PAGINAS_FIN): declaração lixo LANÇA
+          // fail-fast, em vez de ser descoberta na página 2001 depois de minutos contra o Omie.
+          { caso: "teto_anti_runaway_LANCA", atual: 5, declarado: 100000, itens: 0, pagina: 3, expected: { lancou: true, teto: null, veredito: null } },
+        ];
+        for (const f of fixturesPagina) {
+          registrar(f.caso, contratoPagina(f.atual, f.declarado, f.itens, f.pagina), f.expected);
+        }
+
+        // ── (3) DESFECHO DA VARREDURA REVERSA (ListarMovimentos vai do topo declarado até a p1) ──
+        // O `complete = pagina < 1` histórico carimbava como completo um retrato que nasceu abaixo
+        // do topo (sub-reporte do Omie) e zerava o cursor — a cauda MAIS RECENTE nunca mais era
+        // buscada. Quem prova o topo é a SONDA (I/O no caller), não o número declarado.
+        registrar(
+          "reversa_desceu_tudo_e_sonda_VAZIA_completa",
+          desfechoVarreduraReversa({ paginaFinal: 0, inicioVarredura: 80, tetoDeclarado: 80, topoVerificadoVazio: true, paginaSonda: 81 }),
+          { complete: true, nextPage: null },
+        );
+        registrar(
+          "reversa_sonda_COM_dado_nao_completa_cursor_na_sonda",
+          desfechoVarreduraReversa({ paginaFinal: 0, inicioVarredura: 80, tetoDeclarado: 80, topoVerificadoVazio: false, paginaSonda: 81 }),
+          { complete: false, nextPage: 81 },
+        );
+        // Parou no meio (budget/maxPages/streak) NUNCA completa, mesmo com a sonda vazia:
+        // fim-por-exaustão ≠ fim-da-fonte (money-path §8). Este caso é o que reprova um helper
+        // que completasse só olhando `topoVerificadoVazio`.
+        registrar(
+          "reversa_parou_no_meio_cursor_na_pagina_atual",
+          desfechoVarreduraReversa({ paginaFinal: 37, inicioVarredura: 80, tetoDeclarado: 80, topoVerificadoVazio: true, paginaSonda: 81 }),
+          { complete: false, nextPage: 37 },
+        );
+
+        // ── (4) FINGERPRINT DE PÁGINA — provar que NÃO colide ────────────────────────────────────
+        // O fingerprint antigo era `${primeiroCodigo}:${count}` e COLIDIA: duas páginas CHEIAS e
+        // DIFERENTES cujo 1º título não tem código produzem ambas ":100". Com repetição passando a
+        // LANÇAR, colisão vira sync travado. Aqui o `expected` é a RELAÇÃO (colide/igual), não o
+        // hash: o valor do FNV não é contrato — a não-colisão é.
+        registrar(
+          "fingerprint_NAO_colide_com_1o_codigo_ausente",
+          { colide: fingerprintPagina([null, 102, 103]) === fingerprintPagina([null, 902, 903]) },
+          { colide: false },
+        );
+        registrar(
+          "fingerprint_deterministico_mesma_pagina",
+          { igual: fingerprintPagina([101, 102, 103]) === fingerprintPagina([101, 102, 103]) },
+          { igual: true },
+        );
+        registrar(
+          "fingerprint_ordem_importa",
+          { colide: fingerprintPagina([1, 2, 3]) === fingerprintPagina([3, 2, 1]) },
+          { colide: false },
+        );
+        registrar(
+          "fingerprint_tamanhos_diferentes_nao_colidem",
+          { colide: fingerprintPagina([1, 2]) === fingerprintPagina([1, 2, 3]) },
+          { colide: false },
+        );
+
+        // ── (5) listaOmie — o helper LOCAL desta edge ────────────────────────────────────────────
+        // `(result.x as T[]) || []` num 200 com campo ausente/null virava "página vazia" = FIM, com
+        // a cauda faltando. Só `[]` de verdade é fim; qualquer outra coisa LANÇA. Como ele lança, o
+        // caso negativo captura a exceção e AFIRMA que ela veio (deixar vazar seria não testar).
+        const rodarLista = (resposta: OmieGenericResponse, campos: string[]) => {
+          try {
+            return { lancou: false, itens: listaOmie<unknown>(resposta, campos, "[Fin][probe] listaOmie").length };
+          } catch {
+            return { lancou: true, itens: null };
+          }
+        };
+        registrar("lista_array_de_verdade_passa", rodarLista({ movimentos: [{ a: 1 }, { a: 2 }] }, ["movimentos"]), { lancou: false, itens: 2 });
+        // `[]` legítimo é o fim honesto — sem este caso, um helper sempre-lança passaria.
+        registrar("lista_vazia_de_verdade_e_fim_legitimo", rodarLista({ movimentos: [] }, ["movimentos"]), { lancou: false, itens: 0 });
+        // Sem estes dois, um helper que volte ao `|| []` passaria: é o furo que o #1598 fechou.
+        registrar("lista_campo_AUSENTE_lanca", rodarLista({ nTotPaginas: 3 }, ["movimentos"]), { lancou: true, itens: null });
+        registrar("lista_campo_NULL_lanca", rodarLista({ movimentos: null }, ["movimentos"]), { lancou: true, itens: null });
+        // Alias: o Omie varia o nome do campo por endpoint; o 2º alias tem de ser alcançado.
+        registrar("lista_alias_2o_campo_encontrado", rodarLista({ conta_corrente_cadastro: [{ a: 1 }] }, ["ListarContasCorrentes", "conta_corrente_cadastro"]), { lancou: false, itens: 1 });
+
+        result = {
+          canary: true,
+          contrato: "paginacao-guards-v1",
+          ok: casosProbe.every((c) => c.ok), // true = a tabela-verdade deployada bate em TODOS os fixtures
+          casos: casosProbe,
+        };
+        break;
+      }
+
       default:
         await completeSync(supabase, logId, null, `Ação desconhecida: ${action}`, startTime);
         syncFinalized = true;
@@ -2483,7 +2652,7 @@ serve(async (req) => {
             acoes_disponiveis: [
               "sync_all", "sync_categorias", "sync_contas_correntes",
               "sync_contas_pagar", "sync_contas_receber", "sync_movimentacoes",
-              "calcular_dre", "calcular_dre_year", "debug_raw",
+              "calcular_dre", "calcular_dre_year", "debug_raw", "paginacao_probe",
             ],
           }),
           { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
