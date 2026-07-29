@@ -112,8 +112,30 @@ async function callOmie(endpoint: string, call: string, params: Record<string, u
     throw new Error(`Resposta inválida da API Omie: ${text.substring(0, 300)}`);
   }
 
+  // `faultstring` ANTES do status (ordem canônica do #1614 — docs/agent/sync.md): o EOF do
+  // contrato Omie chega às vezes acompanhado de 5xx, e classificá-lo como falha de transporte
+  // apagaria a mensagem específica que o call-site usa para decidir.
   if (typeof data.faultstring === "string") {
     throw new Error(`Omie: ${data.faultstring}`);
+  }
+
+  // Sem faultstring, só um 2xx é resposta. `fetch` NÃO lança em HTTP não-2xx: um 429/5xx cujo
+  // corpo parseia limpo (o `{}` de proxy/gateway) voltava daqui como resposta BOA, e cada
+  // consumidor lia o campo ausente como fato do Omie — nota sem itens, sem pedido casado, sem
+  // fornecedor. Site revelado ao trocar a janela fixa do gate G6 pelo escopo LÉXICO da função: o
+  // `.ok` que satisfazia o detector era o `!__auth.ok` do gate de AUTORIZAÇÃO do handler, 30
+  // linhas abaixo e em outra função — um objeto sem relação nenhuma com esta resposta HTTP. O
+  // zero medido aqui não era "auditado", era o detector lendo o guard errado (§"O DETECTOR mente").
+  if (!res.ok) {
+    throw new Error(`Omie: HTTP ${res.status} em ${call}`);
+  }
+
+  // `faultcode` sem `faultstring` fecha a ordem canônica do #1614. Aqui o efeito é o pior da
+  // família: os retornos de `AlterarRecebimento`/`AlterarEtapaRecebimento`/`ConcluirRecebimento`
+  // são IGNORADOS pelos call-sites, então um `200 {"faultcode":"5113"}` fazia a edge responder
+  // `success:true` sem nenhuma das mutações ter acontecido no ERP (achado Codex xhigh).
+  if (typeof data.faultcode === "string" || typeof data.faultcode === "number") {
+    throw new Error(`Omie: faultcode ${String(data.faultcode)} em ${call}`);
   }
 
   return data;

@@ -321,12 +321,18 @@ export async function deleteOrderFromOmie(orderId: string): Promise<{ success: b
   }
 }
 
-export async function checkOsExistsInOmie(orderId: string): Promise<{ exists: boolean }> {
+export async function checkOsExistsInOmie(
+  orderId: string,
+): Promise<{ exists: boolean; indeterminado?: boolean; motivo?: string }> {
   try {
     const { data, error } = await supabase.functions.invoke("omie-sync", {
       body: { action: "check_os_exists", orderId },
     });
-    if (error) return { exists: true }; // Assume exists on error
+    // `indeterminado` acompanha o `exists` em vez de substituí-lo: quem consome faz
+    // `if (!exists) → apaga o pedido`, então qualquer falsy novo viraria deleção por falha de
+    // rede. O tipo precisa carregar a flag, senão o edge reporta "não consegui verificar" e a
+    // informação morre aqui — a correção do wrapper só termina quando chega à tela (money-path §7).
+    if (error) return { exists: true, indeterminado: true, motivo: error.message };
     return data;
   } catch (error) {
     logger.warn('Failed to check OS exists in Omie (assuming exists)', {
@@ -335,6 +341,10 @@ export async function checkOsExistsInOmie(orderId: string): Promise<{ exists: bo
       orderId,
       error,
     });
-    return { exists: true };
+    return {
+      exists: true,
+      indeterminado: true,
+      motivo: error instanceof Error ? error.message : 'falha ao consultar o Omie',
+    };
   }
 }

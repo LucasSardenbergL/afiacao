@@ -1385,6 +1385,17 @@ Responda SEMPRE usando a função identify_order_items.`;
                     }],
                   }),
                 });
+                // `fetch` NÃO lança em HTTP não-2xx: um 429/5xx cujo corpo parseia limpo devolvia
+                // `pedido_venda_produto` ausente → `|| []` → zero preços, indistinguível de "este
+                // cliente nunca comprou". Aqui o efeito é RECALL, não fabricação de número (o
+                // histórico do Omie só PREENCHE GAP — `mergeCustomerPrices` faz order_items vencer,
+                // e `isValidUnitPrice` barra valor inválido), então o desfecho continua sendo o
+                // best-effort que este caminho sempre foi: o catch abaixo devolve `{}`. O que muda
+                // é o motivo deixar de ser invisível — "0 preços" e "o Omie respondeu 503" tinham
+                // exatamente o mesmo log, e só o segundo explica um orçamento sem preço praticado.
+                if (!omieRes.ok) {
+                  throw new Error(`Omie HTTP ${omieRes.status} em ListarPedidos (preços do cliente)`);
+                }
                 const data = await omieRes.json();
                 const precos: Record<number, number> = {};
                 const pedidos = data.pedido_venda_produto || [];

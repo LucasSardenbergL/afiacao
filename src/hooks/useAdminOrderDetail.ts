@@ -162,7 +162,16 @@ export function useAdminOrderDetail(id: string | undefined) {
       if (profileData) setProfile(profileData);
 
       const osCheck = await checkOsExistsInOmie(data.id);
-      if (!osCheck.exists) {
+      // `indeterminado` vem ANTES do teste de existência de propósito. A edge devolve
+      // `exists: true` quando não consegue verificar — fail-safe correto, porque este ramo APAGA
+      // o pedido —, mas sem o aviso a tela ficaria idêntica à de uma verificação bem-sucedida:
+      // "não consegui falar com o Omie" com cara de "OS confirmada" (money-path §2, e o achado
+      // do challenge Codex de que o campo novo era diagnóstico morto no consumidor).
+      if (osCheck.indeterminado) {
+        toast.warning('Não foi possível verificar a OS no Omie', {
+          description: 'O pedido foi mantido. Se ela tiver sido excluída no Omie, a limpeza acontece no próximo ciclo.',
+        });
+      } else if (!osCheck.exists) {
         toast.error('Pedido excluído no Omie', {
           description: 'Esta OS foi excluída no Omie. O pedido será removido.',
         });
