@@ -120,11 +120,22 @@ export interface Argumentacao {
   versao_tecnica: string;
 }
 
-/** Campos que vão para o cliente ou embasam a conversa — vazio invalida a saída. */
+/**
+ * TODOS os campos são essenciais: a tela mostra as cinco linhas de argumentação
+ * e as três abas (phone/whatsapp/técnica) incondicionalmente, com botão de
+ * copiar. Campo vazio vira linha em branco que a vendedora copia e manda ao
+ * cliente. Como a geração é retriável e não há como recuperar um campo perdido,
+ * é tudo ou nada de verdade.
+ */
 export const CAMPOS_ESSENCIAIS = [
   "diagnostico",
+  "insight_tecnico",
+  "beneficio_operacional",
+  "beneficio_economico",
+  "objecao_antecipada",
   "versao_phone",
   "versao_whatsapp",
+  "versao_tecnica",
 ] as const;
 
 export function normalizarArgumentacao(bruto: unknown): Argumentacao | null {

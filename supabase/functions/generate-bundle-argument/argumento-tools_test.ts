@@ -131,10 +131,16 @@ Deno.test("normalizarArgumentacao: cada campo essencial ausente invalida", () =>
   }
 });
 
-Deno.test("normalizarArgumentacao: campo NÃO essencial vazio não derruba a saída", () => {
-  const r = normalizarArgumentacao({ ...ARG_COMPLETO, insight_tecnico: "" });
-  assert(r !== null, "não deveria invalidar por campo secundário");
-  assertEquals(r!.insight_tecnico, "");
+Deno.test("normalizarArgumentacao: TODOS os 8 campos são exigidos", () => {
+  // A tela mostra as 5 linhas e as 3 abas incondicionalmente, com botão de
+  // copiar: campo vazio vira texto em branco que a vendedora manda ao cliente.
+  for (const campo of Object.keys(ARG_COMPLETO)) {
+    assertEquals(
+      normalizarArgumentacao({ ...ARG_COMPLETO, [campo]: "" }),
+      null,
+      `${campo} vazio deveria invalidar`,
+    );
+  }
 });
 
 Deno.test("normalizarArgumentacao: não-objeto vira null", () => {

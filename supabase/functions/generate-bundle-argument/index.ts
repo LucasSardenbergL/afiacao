@@ -119,6 +119,9 @@ Histórico de compras recentes: ${customer.recentProducts?.join(', ') || 'Sem da
         resposta = await anthropic.messages.create({
           model: MODELO_PADRAO,
           max_tokens: 2000,
+          // Explícito: omitir usaria o default 1 da API. Material comercial pede
+          // baixa variabilidade — e o Gemini anterior não tinha o mesmo default.
+          temperature: 0.4,
           system: systemPrompt,
           tools: [TOOL_PERGUNTAS],
           tool_choice: { type: "tool", name: TOOL_PERGUNTAS.name, disable_parallel_tool_use: true },
@@ -211,6 +214,9 @@ Histórico de compras recentes do cliente: ${customer.recentProducts?.join(', ')
       resposta = await anthropic.messages.create({
         model: MODELO_PADRAO,
         max_tokens: 2000,
+        // Explícito: omitir usaria o default 1 da API. Material comercial pede
+        // baixa variabilidade — e o Gemini anterior não tinha o mesmo default.
+        temperature: 0.4,
         system: systemPrompt,
         tools: [TOOL_ARGUMENTO],
         tool_choice: { type: "tool", name: TOOL_ARGUMENTO.name, disable_parallel_tool_use: true },

@@ -7,9 +7,13 @@
 import {
   CAMPOS_LTV,
   CAMPOS_RESULTADO,
+  normalizarObjecoes,
+  normalizarPerguntas,
   normalizarPlano,
   normalizarProjecao,
+  normalizarRiscos,
   numeroOuNulo,
+  objetivoFinal,
   OBJETIVOS_ESTRATEGICOS,
   planoTemConteudo,
   TOOL_PLANO_ESSENCIAL,
@@ -97,12 +101,27 @@ Deno.test("normalizarProjecao: projeção toda ilegível vira null, não objeto 
   assertEquals(r, null, "sem nenhum campo medido é 'não sei' inteiro");
 });
 
-Deno.test("normalizarProjecao: campo medido preserva, campo ausente fica null", () => {
-  const r = normalizarProjecao(
-    { current_annual: 120000, projected_annual: null, growth_pct: "15" },
-    CAMPOS_LTV,
+Deno.test("normalizarProjecao: projeção PARCIAL é invalidada inteira (all-or-null)", () => {
+  // Não é preciosismo: a UI faz `plan.ltvProjection && …` (checa o OBJETO) e
+  // depois `fmt(v) = v.toLocaleString(...)` em cada membro. Um membro null
+  // chega em fmt(null) e DERRUBA a tela do plano.
+  assertEquals(
+    normalizarProjecao({ current_annual: 120000, projected_annual: null, growth_pct: 15 }, CAMPOS_LTV),
+    null,
+    "1 de 3 ausente invalida",
   );
-  assertEquals(r, { current_annual: 120000, projected_annual: null, growth_pct: 15 });
+  assertEquals(
+    normalizarProjecao({ current_annual: 120000 }, CAMPOS_LTV),
+    null,
+    "campos faltando invalidam",
+  );
+});
+
+Deno.test("normalizarProjecao: projeção COMPLETA passa, coagindo string numérica", () => {
+  assertEquals(
+    normalizarProjecao({ current_annual: 120000, projected_annual: "138000", growth_pct: 15 }, CAMPOS_LTV),
+    { current_annual: 120000, projected_annual: 138000, growth_pct: 15 },
+  );
 });
 
 Deno.test("normalizarProjecao: não-objeto degrada para null", () => {
@@ -160,13 +179,114 @@ Deno.test("planoTemConteudo: plano vazio NÃO é gravável", () => {
   );
 });
 
-Deno.test("planoTemConteudo: basta abordagem OU perguntas para valer", () => {
-  assert(
+Deno.test("planoTemConteudo: exige abordagem E perguntas — uma só não basta", () => {
+  assertEquals(
     planoTemConteudo(normalizarPlano({ approach_strategy: "Focar em mix." })),
-    "abordagem sozinha vale",
+    false,
+    "abordagem sem perguntas não é plano",
+  );
+  assertEquals(
+    planoTemConteudo(normalizarPlano({ diagnostic_questions: [{ question: "q" }] })),
+    false,
+    "perguntas sem abordagem não é plano",
   );
   assert(
-    planoTemConteudo(normalizarPlano({ diagnostic_questions: [{ question: "q" }] })),
-    "perguntas sozinhas valem",
+    planoTemConteudo(
+      normalizarPlano({
+        approach_strategy: "Focar em mix.",
+        diagnostic_questions: [{ question: "q" }],
+      }),
+    ),
+    "os dois juntos valem",
   );
+});
+
+Deno.test("planoTemConteudo: modo estratégico exige também B, implicação e transição", () => {
+  // A tela do estratégico TEM essas seções; gravar sem elas abre um plano
+  // "completo" com metade dos blocos vazios.
+  const base = {
+    approach_strategy: "A",
+    diagnostic_questions: [{ question: "q" }],
+  };
+  assertEquals(planoTemConteudo(normalizarPlano(base), "estrategico"), false);
+  assert(
+    planoTemConteudo(
+      normalizarPlano({
+        ...base,
+        approach_strategy_b: "B",
+        implication_question: "impacto?",
+        offer_transition: "transição",
+      }),
+      "estrategico",
+    ),
+    "com todos os campos do estratégico vale",
+  );
+  assert(planoTemConteudo(normalizarPlano(base), "essencial"), "essencial não exige os extras");
+});
+
+// ─────────────────── itens internos das listas (crash de UI) ───────────────────
+
+Deno.test("normalizarPerguntas: objeto VAZIO no array não vira pergunta", () => {
+  // `diagnostic_questions: [{}]` passava no guard antigo (length 1) e virava
+  // item em branco na tela.
+  assertEquals(normalizarPerguntas([{}, { purpose: "p" }]), []);
+});
+
+Deno.test("normalizarPerguntas: pergunta válida preserva os 3 campos", () => {
+  const r = normalizarPerguntas([{ question: "Como está o ritmo?", purpose: "p", expected_insight: "e" }]);
+  assertEquals(r.length, 1);
+  assertEquals(r[0], { question: "Como está o ritmo?", purpose: "p", expected_insight: "e" });
+});
+
+Deno.test("normalizarObjecoes: sem enunciado é descartada; probabilidade fora de 0-100 vira null", () => {
+  const r = normalizarObjecoes([
+    {},
+    { objection: "Preço alto", probability: 250 },
+    { objection: "Prazo", probability: 70 },
+  ]);
+  assertEquals(r.length, 2);
+  assertEquals(r[0].probability, null, "250 não é probabilidade");
+  assertEquals(r[1].probability, 70);
+});
+
+Deno.test("normalizarRiscos: objeto no array é descartado — derrubaria o React", () => {
+  // A UI faz <span>{risk}</span>; um objeto ali lança
+  // "Objects are not valid as a React child" e quebra a página inteira.
+  assertEquals(normalizarRiscos(["Risco real", {}, "", { a: 1 }, "  ", "Outro"]), [
+    "Risco real",
+    "Outro",
+  ]);
+});
+
+Deno.test("normalizarRiscos: entrada não-array degrada para vazio", () => {
+  for (const v of [null, undefined, "texto", 42]) {
+    assertEquals(normalizarRiscos(v), [], `entrada ${JSON.stringify(v)}`);
+  }
+});
+
+// ─────────────────────────────── objetivoFinal ───────────────────────────────
+
+Deno.test("objetivoFinal: servidor VENCE quando derivou ativacao (sem_historico é fato)", () => {
+  // Cliente sem venda válida registrada. "recuperacao" passa no enum mas
+  // pressupõe uma relação que nunca existiu.
+  const r = objetivoFinal("recuperacao", "ativacao");
+  assertEquals(r.objetivo, "ativacao");
+  assertEquals(r.sobrescrito, true, "a divergência tem de ser sinalizada");
+});
+
+Deno.test("objetivoFinal: nos demais objetivos a leitura da IA prevalece", () => {
+  // São faixas de churn/mix/recência — heurísticas, onde a IA pode ter contexto.
+  const r = objetivoFinal("upsell_premium", "expansao_mix");
+  assertEquals(r.objetivo, "upsell_premium");
+  assertEquals(r.sobrescrito, false);
+});
+
+Deno.test("objetivoFinal: IA nula cai no derivado sem marcar sobrescrita", () => {
+  assertEquals(objetivoFinal(null, "ativacao"), { objetivo: "ativacao", sobrescrito: false });
+  assertEquals(objetivoFinal(null, "expansao_mix"), { objetivo: "expansao_mix", sobrescrito: false });
+  assertEquals(objetivoFinal(null, null), { objetivo: null, sobrescrito: false });
+});
+
+Deno.test("objetivoFinal: IA concordando com ativacao não conta como sobrescrita", () => {
+  assertEquals(objetivoFinal("ativacao", "ativacao"), { objetivo: "ativacao", sobrescrito: false });
 });

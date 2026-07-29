@@ -9,7 +9,7 @@ import {
   statusDoErro,
   traduzirErroAnthropic,
 } from "../_shared/anthropic.ts";
-import { normalizarPlano, planoTemConteudo, toolDoModo } from "./plano-tools.ts";
+import { normalizarPlano, objetivoFinal, planoTemConteudo, toolDoModo } from "./plano-tools.ts";
 import { fetchAll } from "../_shared/paginate.ts";
 import { avaliarCanariaMargem, calcularClusterMargin, classifyProfile, margemConhecida, selectObjective } from "../_shared/tactical-margem.ts";
 import { inicioDiaOperacional } from "../_shared/dia-operacional.ts";
@@ -354,7 +354,7 @@ ${JSON.stringify(historicalObjections || [], null, 2)}`;
     }
 
     const plan = normalizarPlano(bruto);
-    if (!planoTemConteudo(plan)) {
+    if (!planoTemConteudo(plan, mode)) {
       console.error('[generate-tactical-plan] plano sem conteúdo acionável');
       return new Response(
         JSON.stringify({ error: 'A IA devolveu um plano vazio. Tente novamente.' }),
@@ -376,6 +376,20 @@ ${JSON.stringify(historicalObjections || [], null, 2)}`;
       // current_margin_pct/cluster_avg_margin_pct são nullable — o plano grava "não sei"
       // em vez de um número, e a UI mostra "—" em vez de uma margem inventada.
       const d = (body as { _derived: Record<string, number | string | null> })._derived;
+
+      // "sem_historico → ativacao" é fato medido, não heurística: se a IA
+      // devolveu outro objetivo (passa no enum, contradiz o fato), o servidor
+      // vence — plano de recuperação pressupõe relação que nunca existiu.
+      const { objetivo: objetivoDoPlano, sobrescrito } = objetivoFinal(
+        plan.strategic_objective,
+        typeof d.strategicObjective === 'string' ? d.strategicObjective : null,
+      );
+      if (sobrescrito) {
+        console.warn(
+          `[generate-tactical-plan] objetivo da IA "${plan.strategic_objective}" descartado: cliente ${body.customerId} é sem_historico (servidor: ativacao)`,
+        );
+      }
+
       const { data: newId, error: rpcErr } = await admin.rpc('criar_plano_tatico', {
         _customer_user_id: body.customerId,
         _expected_owner: body.farmerId,
@@ -383,7 +397,7 @@ ${JSON.stringify(historicalObjections || [], null, 2)}`;
           bundle_recommendation_id: (topBundleRow as { id?: string } | null)?.id ?? null,
           health_score: d.healthScore, churn_risk: d.churnRisk, mix_gap: d.mixGap,
           current_margin_pct: d.marginPct, cluster_avg_margin_pct: d.clusterMargin, expansion_potential: d.expansionPotential,
-          strategic_objective: plan.strategic_objective || d.strategicObjective, customer_profile: d.customerProfile, plan_type: mode,
+          strategic_objective: objetivoDoPlano, customer_profile: d.customerProfile, plan_type: mode,
           top_bundle: (topBundleRow ? topBundleRow.bundle_products : {}),
           second_bundle: (secondBundleRow ? (secondBundleRow as { bundle_products: unknown }).bundle_products : {}),
           bundle_lie: Number((topBundleRow as { lie_bundle?: unknown } | null)?.lie_bundle ?? 0),

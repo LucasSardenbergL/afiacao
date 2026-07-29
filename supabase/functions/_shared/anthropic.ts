@@ -23,20 +23,27 @@ export interface RespostaErro {
  */
 export function traduzirErroAnthropic(status: number | undefined): RespostaErro | null {
   switch (status) {
+    // 400 é REQUISIÇÃO INVÁLIDA — schema/parâmetro incompatível, quase sempre
+    // defeito nosso. Recusa do modelo por conteúdo NÃO chega como 400: vem numa
+    // resposta 200 com `stop_reason: "refusal"`. Chamar isto de "a IA recusou"
+    // mandaria a vendedora tentar outra foto quando o bug é do código.
     case 400:
-      return { http: 400, mensagem: "A IA recusou o conteúdo enviado." };
+      return { http: 500, mensagem: "Falha na requisição à IA — avise a equipe." };
     case 401:
     case 403:
     case 404:
       return { http: 500, mensagem: "IA mal configurada — avise a equipe." };
     case 402:
       return { http: 402, mensagem: "Créditos da IA esgotados — avise a equipe." };
+    case 409:
+      return { http: 409, mensagem: "Conflito momentâneo na IA. Tente novamente." };
     case 413:
       return { http: 413, mensagem: "Envio grande demais para a IA." };
     case 429:
       return { http: 429, mensagem: "Limite de requisições excedido. Tente novamente em alguns segundos." };
     case 500:
     case 503:
+    case 504:
     case 529:
       return { http: 503, mensagem: "IA sobrecarregada no momento. Tente de novo em instantes." };
     default:

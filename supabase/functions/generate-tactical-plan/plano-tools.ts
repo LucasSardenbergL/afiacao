@@ -152,8 +152,13 @@ export interface ProjecaoNormalizada {
 
 /**
  * Normaliza um objeto de projeção (ltv_projection / expected_result).
- * Devolve `null` quando o objeto inteiro está ausente, e mantém `null` campo a
- * campo — a UI mostra "—" em vez de um número que ninguém mediu.
+ *
+ * ALL-OR-NULL: basta UM membro ilegível para o objeto inteiro virar `null`.
+ * Não é preciosismo — a UI renderiza `fmt(v) = v.toLocaleString(...)` depois de
+ * checar só se o OBJETO existe (`plan.ltvProjection && …`), então um membro
+ * `null` chega em `fmt(null)` e derruba a tela do plano. Projeção pela metade
+ * também não é projeção: melhor não mostrar do que mostrar 1 de 3 números como
+ * se fosse o quadro completo.
  */
 export function normalizarProjecao(
   bruto: unknown,
@@ -162,14 +167,12 @@ export function normalizarProjecao(
   if (!bruto || typeof bruto !== "object" || Array.isArray(bruto)) return null;
   const origem = bruto as Record<string, unknown>;
   const out: ProjecaoNormalizada = {};
-  let algumMedido = false;
   for (const campo of campos) {
     const n = numeroOuNulo(origem[campo]);
+    if (n === null) return null;
     out[campo] = n;
-    if (n !== null) algumMedido = true;
   }
-  // Nenhum campo medido: é "não sei" inteiro, não uma projeção de zeros.
-  return algumMedido ? out : null;
+  return out;
 }
 
 export const CAMPOS_LTV = ["current_annual", "projected_annual", "growth_pct"] as const;
@@ -183,21 +186,83 @@ export interface PlanoNormalizado {
   strategic_objective: string | null;
   approach_strategy: string;
   approach_strategy_b: string;
-  diagnostic_questions: unknown[];
+  diagnostic_questions: PerguntaDiagnostica[];
   implication_question: string;
   offer_transition: string;
-  probable_objections: unknown[];
+  probable_objections: ObjecaoNormalizada[];
   ltv_projection: ProjecaoNormalizada | null;
   expected_result: ProjecaoNormalizada | null;
-  operational_risks: unknown[];
+  operational_risks: string[];
 }
 
 function texto(valor: unknown): string {
   return typeof valor === "string" ? valor.trim() : "";
 }
 
-function lista(valor: unknown): unknown[] {
-  return Array.isArray(valor) ? valor : [];
+export interface PerguntaDiagnostica {
+  question: string;
+  purpose: string;
+  expected_insight: string;
+}
+
+/** Pergunta sem enunciado apareceria como item em branco na tela da vendedora. */
+export function normalizarPerguntas(bruto: unknown): PerguntaDiagnostica[] {
+  if (!Array.isArray(bruto)) return [];
+  const out: PerguntaDiagnostica[] = [];
+  for (const cru of bruto) {
+    if (!cru || typeof cru !== "object" || Array.isArray(cru)) continue;
+    const o = cru as Record<string, unknown>;
+    const question = texto(o.question);
+    if (!question) continue;
+    out.push({
+      question,
+      purpose: texto(o.purpose),
+      expected_insight: texto(o.expected_insight),
+    });
+  }
+  return out;
+}
+
+export interface ObjecaoNormalizada {
+  objection: string;
+  technical_response: string;
+  economic_response: string;
+  probability: number | null;
+}
+
+/** Objeção sem enunciado não é objeção; probabilidade ilegível vira null, não 0. */
+export function normalizarObjecoes(bruto: unknown): ObjecaoNormalizada[] {
+  if (!Array.isArray(bruto)) return [];
+  const out: ObjecaoNormalizada[] = [];
+  for (const cru of bruto) {
+    if (!cru || typeof cru !== "object" || Array.isArray(cru)) continue;
+    const o = cru as Record<string, unknown>;
+    const objection = texto(o.objection);
+    if (!objection) continue;
+    const p = numeroOuNulo(o.probability);
+    out.push({
+      objection,
+      technical_response: texto(o.technical_response),
+      economic_response: texto(o.economic_response),
+      probability: p !== null && p >= 0 && p <= 100 ? p : null,
+    });
+  }
+  return out;
+}
+
+/**
+ * Riscos são renderizados como `<span>{risk}</span>`. Um objeto aí dentro
+ * derruba o React inteiro ("Objects are not valid as a React child"), então só
+ * string não-vazia passa.
+ */
+export function normalizarRiscos(bruto: unknown): string[] {
+  if (!Array.isArray(bruto)) return [];
+  const out: string[] = [];
+  for (const cru of bruto) {
+    const t = texto(cru);
+    if (t) out.push(t);
+  }
+  return out;
 }
 
 /**
@@ -215,20 +280,55 @@ export function normalizarPlano(bruto: Record<string, unknown>): PlanoNormalizad
     strategic_objective: objetivoValido ? objetivo : null,
     approach_strategy: texto(bruto.approach_strategy),
     approach_strategy_b: texto(bruto.approach_strategy_b),
-    diagnostic_questions: lista(bruto.diagnostic_questions),
+    diagnostic_questions: normalizarPerguntas(bruto.diagnostic_questions),
     implication_question: texto(bruto.implication_question),
     offer_transition: texto(bruto.offer_transition),
-    probable_objections: lista(bruto.probable_objections),
+    probable_objections: normalizarObjecoes(bruto.probable_objections),
     ltv_projection: normalizarProjecao(bruto.ltv_projection, CAMPOS_LTV),
     expected_result: normalizarProjecao(bruto.expected_result, CAMPOS_RESULTADO),
-    operational_risks: lista(bruto.operational_risks),
+    operational_risks: normalizarRiscos(bruto.operational_risks),
   };
 }
 
 /**
- * Um plano sem NENHUM conteúdo acionável não vale ser gravado: entregaria à
- * vendedora uma tela preenchida sem orientação real.
+ * Reconcilia o objetivo da IA com o derivado no servidor.
+ *
+ * `sem_historico → ativacao` é a PRIMEIRA regra de `selectObjective` e vem de um
+ * fato binário verificável: não existe venda válida registrada. Se a IA devolve
+ * "recuperacao" ali, ela passa no enum mas contradiz o fato — e um plano de
+ * recuperação pressupõe uma relação que nunca existiu. Nesse caso o servidor
+ * vence. Nos demais objetivos (faixas de churn/mix/recência, heurísticas), a
+ * leitura da IA continua valendo.
  */
-export function planoTemConteudo(plano: PlanoNormalizado): boolean {
-  return plano.approach_strategy.length > 0 || plano.diagnostic_questions.length > 0;
+export function objetivoFinal(
+  daIA: string | null,
+  doServidor: string | null | undefined,
+): { objetivo: string | null; sobrescrito: boolean } {
+  if (doServidor === "ativacao" && daIA !== null && daIA !== "ativacao") {
+    return { objetivo: "ativacao", sobrescrito: true };
+  }
+  return { objetivo: daIA ?? doServidor ?? null, sobrescrito: false };
+}
+
+/**
+ * Um plano sem conteúdo acionável não vale ser gravado: entregaria à vendedora
+ * uma tela preenchida sem orientação real.
+ *
+ * O modo estratégico é mais exigente porque a tela dele TEM as seções de
+ * abordagem B, implicação e transição — gravar sem elas abre um plano
+ * "completo" com metade dos blocos vazios.
+ */
+export function planoTemConteudo(
+  plano: PlanoNormalizado,
+  mode = "essencial",
+): boolean {
+  const base = plano.approach_strategy.length > 0 &&
+    plano.diagnostic_questions.length > 0;
+  if (!base) return false;
+  if (mode !== "estrategico") return true;
+  return (
+    plano.approach_strategy_b.length > 0 &&
+    plano.implication_question.length > 0 &&
+    plano.offer_transition.length > 0
+  );
 }
