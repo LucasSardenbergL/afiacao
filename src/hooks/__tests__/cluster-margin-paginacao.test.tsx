@@ -90,7 +90,11 @@ function chain(table: string): unknown {
 }
 
 let rpcCalls: Array<{ fn: string; args: Record<string, unknown> }> = [];
-const invokeMock = vi.fn().mockResolvedValue({ data: { strategic_objective: 'upsell_premium' }, error: null });
+// O hook usa invokeFunction (não supabase.functions.invoke cru), para que o
+// motivo REAL da edge — créditos esgotados, geração truncada — chegue ao
+// usuário em vez do genérico "non-2xx". O helper devolve o corpo direto.
+const invokeMock = vi.fn().mockResolvedValue({ strategic_objective: 'upsell_premium' });
+vi.mock('@/lib/invoke-function', () => ({ invokeFunction: (...a: unknown[]) => invokeMock(...a) }));
 vi.mock('@/integrations/supabase/client', () => ({
   supabase: {
     from: (t: string) => chain(t),
