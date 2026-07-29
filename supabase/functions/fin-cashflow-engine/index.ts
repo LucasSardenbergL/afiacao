@@ -12,7 +12,7 @@ import { fetchAll } from "../_shared/paginate.ts";
 // descartavam `error`, e o consumidor coalescia com `?? []`/`?? 0` — falha de transporte
 // (RLS, timeout 57014, 500) virava saldo/CMV/estoque = 0, e a projeção de 13 semanas saía
 // calculada sobre caixa zero sem NENHUM sinal na tela (money-path §2 "ausente ≠ zero").
-import { exigirLeitura, tolerarColunaAusente, tolerarLeitura } from "../_shared/leitura-critica.ts";
+import { exigirLeitura, exigirLinhas, tolerarColunaAusente, tolerarLeitura } from "../_shared/leitura-critica.ts";
 // E o terceiro lado da mesma moeda, no eixo da PERSISTÊNCIA: o supabase-js resolve normal
 // com `error` preenchido, então um `await ....insert()` cujo retorno é ignorado devolve
 // HTTP 200 sem ter gravado. Medido em prod: 8 de 9 snapshots em 2026-07-28. O par com o
@@ -426,7 +426,12 @@ async function carregarDados(
 
   // Saldo em conta: é o saldo INICIAL de todas as semanas e a base de dias_cobertura e
   // saldo_tesouraria. Zero fabricado aqui dispara alerta de caixa negativo falso.
-  const saldo_cc = ((exigirLeitura(ccRes, 'fin_contas_correntes') ?? []) as Array<{ saldo_atual?: number | null }>)
+  // `exigirLinhas` (não `exigirLeitura`): aqui a lista VAZIA também é fabricação — o
+  // `reduce` devolve 0 tanto para "nenhuma conta cadastrada" quanto para "as contas somam
+  // zero", e os dois disparam o mesmo alerta. Só linha existente prova saldo. Medido em
+  // prod (2026-07-28): as 3 empresas têm conta ativa (colacor 14, colacor_sc 9, oben 14),
+  // então nenhuma operação legítima depende do ramo vazio.
+  const saldo_cc = (exigirLinhas(ccRes, 'fin_contas_correntes') as Array<{ saldo_atual?: number | null }>)
     .reduce((s: number, c) => s + Number(c.saldo_atual ?? 0), 0);
 
   // Estoque: entra no ACO da NCG e no PME. Sem LINHA continua 0 (estado legítimo e já
