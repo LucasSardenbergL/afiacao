@@ -24,6 +24,14 @@ import { maskDocument } from '@/lib/format';
 import { buildOmieCustomer } from '@/lib/unified-order/build-omie-customer';
 import { computeCheckoutFingerprint, decideCheckoutEnvelope, type CheckoutEnvelope } from '@/services/orderSubmission/checkout-envelope';
 import { resolveBridgeMetadata } from '@/services/orderSubmission/origem';
+import {
+  lerRespostaFormas,
+  condicoesDoClienteIndisponiveis,
+  condicoesBloqueantesDoCarrinho,
+  mensagemCondicoesIndisponiveis,
+  type EstadoFormasPagamento,
+  type EstadoFormasUI,
+} from '@/services/orderSubmission/formasDegradacao';
 
 const CHECKOUT_ENV_KEY = 'unified_order_checkout_env';
 function loadCheckoutEnv(): CheckoutEnvelope | null {
@@ -58,7 +66,6 @@ import type {
   ServiceCartItem,
   CartItem,
   OmieCustomer,
-  FormaPagamento,
   CompanyProfile,
   ToolCategory,
   UserTool,
@@ -140,21 +147,24 @@ export function useUnifiedOrder() {
     },
   });
 
-  // Payment (forms list & method) — react-query por conta, 10min stale, só staff
-  const formasQueryFn = (account: ProductAccount) => async (): Promise<FormaPagamento[]> => {
+  // Payment (forms list & method) — react-query por conta, 10min stale, só staff.
+  // A query carrega o ENVELOPE inteiro (formas + degradação declarada pelo edge #1597), não
+  // só `formas`: ler só a lista devolve 8 condições genéricas indistinguíveis das reais do
+  // cliente (money-path §7 — a correção do edge só termina na tela).
+  const formasQueryFn = (account: ProductAccount) => async (): Promise<EstadoFormasPagamento> => {
     const { data, error } = await supabase.functions.invoke('omie-vendas-sync', {
       body: { action: 'listar_formas_pagamento', account },
     });
     if (error) throw error;
-    return (data?.formas || []) as FormaPagamento[];
+    return lerRespostaFormas(data);
   };
-  const obenFormasQuery = useQuery<FormaPagamento[]>({
+  const obenFormasQuery = useQuery<EstadoFormasPagamento>({
     queryKey: ['formas-pagamento', 'oben'],
     enabled: isStaff,
     staleTime: 10 * 60 * 1000,
     queryFn: formasQueryFn('oben'),
   });
-  const colacorFormasQuery = useQuery<FormaPagamento[]>({
+  const colacorFormasQuery = useQuery<EstadoFormasPagamento>({
     queryKey: ['formas-pagamento', 'colacor'],
     enabled: isStaff,
     staleTime: 10 * 60 * 1000,
@@ -162,9 +172,14 @@ export function useUnifiedOrder() {
   });
   // useMemo estabiliza a referência: `|| []` criava um array novo a cada render,
   // invalidando os useMemo/useCallback que dependem destes (sortedFormas*, submit).
-  const formasPagamentoOben = useMemo(() => obenFormasQuery.data || [], [obenFormasQuery.data]);
-  const formasPagamentoColacor = useMemo(() => colacorFormasQuery.data || [], [colacorFormasQuery.data]);
+  const formasPagamentoOben = useMemo(() => obenFormasQuery.data?.formas || [], [obenFormasQuery.data]);
+  const formasPagamentoColacor = useMemo(() => colacorFormasQuery.data?.formas || [], [colacorFormasQuery.data]);
   const loadingFormas = obenFormasQuery.isLoading || colacorFormasQuery.isLoading;
+  // Recarrega as DUAS contas: o vendedor não sabe (nem precisa saber) qual delas degradou.
+  const recarregarFormas = useCallback(() => {
+    void obenFormasQuery.refetch();
+    void colacorFormasQuery.refetch();
+  }, [obenFormasQuery, colacorFormasQuery]);
 
   const [ordemCompra, setOrdemCompra] = useState<string>('');
   const [afiacaoPaymentMethod, setAfiacaoPaymentMethod] = useState<string>('a_vista');
@@ -390,6 +405,37 @@ export function useUnifiedOrder() {
       return 0;
     });
   }, [formasPagamentoColacor, customerParcelaRankingColacor]);
+
+  // Estado da degradação por conta, já cruzado com o histórico REAL do cliente no Omie
+  // (`customerParcelaRanking*` + a parcela pré-selecionada, ambos da action
+  // `buscar_ultima_parcela` — fonte INDEPENDENTE desta query, logo não degradam juntas).
+  // `condicoesAusentes` não-vazio é a prova positiva de que a lista genérica não serve
+  // para ESTE cliente; é o que autoriza o bloqueio do envio (precisão > recall).
+  const estadoFormasOben = useMemo<EstadoFormasUI>(() => {
+    const estado = obenFormasQuery.data ?? { formas: [], degradado: false, motivo: null };
+    return {
+      degradado: estado.degradado,
+      motivo: estado.motivo,
+      erro: obenFormasQuery.isError,
+      condicoesAusentes: condicoesDoClienteIndisponiveis(
+        estado,
+        [selectedParcelaOben, ...customerParcelaRankingOben],
+      ),
+    };
+  }, [obenFormasQuery.data, obenFormasQuery.isError, selectedParcelaOben, customerParcelaRankingOben]);
+
+  const estadoFormasColacor = useMemo<EstadoFormasUI>(() => {
+    const estado = colacorFormasQuery.data ?? { formas: [], degradado: false, motivo: null };
+    return {
+      degradado: estado.degradado,
+      motivo: estado.motivo,
+      erro: colacorFormasQuery.isError,
+      condicoesAusentes: condicoesDoClienteIndisponiveis(
+        estado,
+        [selectedParcelaColacor, ...customerParcelaRankingColacor],
+      ),
+    };
+  }, [colacorFormasQuery.data, colacorFormasQuery.isError, selectedParcelaColacor, customerParcelaRankingColacor]);
 
   const isCustomerMode = !authLoading && !isStaff;
   const currentStep = isCustomerMode
@@ -739,6 +785,20 @@ export function useUnifiedOrder() {
       toast.info('Aguarde — ainda carregando os dados do cliente.');
       return;
     }
+    // Guard money-path da condição de pagamento: a listagem do Omie degradou para as 8
+    // genéricas E este cliente usa condição que não está entre elas (prova pelo histórico
+    // real de pedidos). Enviar gravaria um prazo diferente do combinado — DSO errado, ou
+    // rejeição do Omie. Fail-closed no CAMINHO DE ENVIO, não só no `disabled` do botão.
+    // Saída do vendedor: "Tentar de novo" (refetch) ou salvar como orçamento, que não
+    // grava codigo_parcela.
+    const bloqueioFormas = condicoesBloqueantesDoCarrinho([
+      { temItens: obenProductItems.length > 0, estado: estadoFormasOben },
+      { temItens: colacorProductItems.length > 0, estado: estadoFormasColacor },
+    ]);
+    if (bloqueioFormas.length > 0) {
+      toast.error(mensagemCondicoesIndisponiveis(bloqueioFormas));
+      return;
+    }
     if (submittingRef.current) return; // re-entrância: ver comentário na declaração
     submittingRef.current = true;
     setSubmitting(true);
@@ -883,6 +943,7 @@ export function useUnifiedOrder() {
     companyProfiles, defaultProductionAssigneeId,
     getServicePrice, clearCart, isCustomerMode,
     waitForAccountEnsure, loadingCustomer, searchParams,
+    estadoFormasOben, estadoFormasColacor,
   ]);
 
   // clearCustomer defined earlier (wraps useCustomerSelection.clearCustomer + clears cart/ordemCompra/userTools)
@@ -913,6 +974,7 @@ export function useUnifiedOrder() {
     selectedParcelaOben, setSelectedParcelaOben,
     selectedParcelaColacor, setSelectedParcelaColacor,
     loadingFormas, customerParcelaRankingOben, customerParcelaRankingColacor,
+    estadoFormasOben, estadoFormasColacor, recarregarFormas,
     afiacaoPaymentMethod, setAfiacaoPaymentMethod,
     volumesOben, volumesColacor,
     ordemCompra, setOrdemCompra,

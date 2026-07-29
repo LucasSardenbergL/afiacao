@@ -463,6 +463,9 @@ const UnifiedOrder = () => {
             condicaoPrazoOben={h.selectedParcelaOben}
           />
 
+          {/* estadoFormas + onRecarregarFormas: customer mode não escolhe condição de
+              pagamento (a query nem roda — enabled=isStaff), então espelham o mesmo corte
+              das formas ordenadas abaixo; `undefined` cai no default "sem degradação". */}
           {h.cart.length > 0 && h.selectedCustomer && (
             <CartSummaryBar
               cart={h.cart} obenProductItems={h.obenProductItems} colacorProductItems={h.colacorProductItems}
@@ -474,6 +477,9 @@ const UnifiedOrder = () => {
               selectedParcelaColacor={h.selectedParcelaColacor} setSelectedParcelaColacor={h.setSelectedParcelaColacor}
               loadingFormas={h.loadingFormas} customerParcelaRankingOben={h.customerParcelaRankingOben}
               customerParcelaRankingColacor={h.customerParcelaRankingColacor}
+              estadoFormasOben={isCustomerMode ? undefined : h.estadoFormasOben}
+              estadoFormasColacor={isCustomerMode ? undefined : h.estadoFormasColacor}
+              onRecarregarFormas={isCustomerMode ? undefined : h.recarregarFormas}
               notes={h.notes} setNotes={h.setNotes}
                volumesOben={h.volumesOben}
                volumesColacor={h.volumesColacor}

@@ -44,8 +44,16 @@ export interface SalesOrder {
   created_at: string;
 }
 
+/**
+ * Resposta da action `listar_formas_pagamento`. `source`/`degraded`/`motivo` são ADITIVOS
+ * (edge #1597) e opcionais: edge antiga — ou ainda não deployada — devolve só `formas`, e a
+ * leitura em `@/services/orderSubmission/formasDegradacao` trata a ausência como NÃO-degradado.
+ */
 export interface FormasPagamentoResponse {
   formas?: Array<{ codigo: string; descricao: string }>;
+  source?: string | null;
+  degraded?: boolean | null;
+  motivo?: string | null;
 }
 
 export interface OmieProduct {
