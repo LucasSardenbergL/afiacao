@@ -3,7 +3,28 @@ import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuthzContract } from '@/hooks/useAuthzContract';
 
-export type CommercialRole = 'operacional' | 'gerencial' | 'estrategico' | 'super_admin';
+/**
+ * Espelha o enum `commercial_role` do banco — os OITO valores, não quatro.
+ *
+ * Estava incompleto (só operacional/gerencial/estrategico/super_admin) enquanto o enum em prod tem
+ * também farmer/hunter/closer/master, e o `as CommercialRole` do fetch abaixo ESCONDIA a
+ * divergência: o cast afirmava um dos quatro para um valor que em runtime podia ser 'master'.
+ *
+ * Não era teórico — é a distribuição REAL de prod (medida 2026-07-29): farmer=2, master=1, e
+ * `super_admin` com ZERO linhas. Ou seja, os três únicos usuários com papel comercial tinham um
+ * valor que o tipo negava existir, e todo predicado deste arquivo lia `false` para eles.
+ *
+ * `useMyCommercialRole.ts` já listava os oito; os dois tipos agora concordam entre si e com o banco.
+ */
+export type CommercialRole =
+  | 'operacional'
+  | 'gerencial'
+  | 'estrategico'
+  | 'super_admin'
+  | 'farmer'
+  | 'hunter'
+  | 'closer'
+  | 'master';
 
 /**
  * 🔐 Contrato de autorização gerencial (E1 #1424 → E2/FU4 — spec de 2026-07-18).
