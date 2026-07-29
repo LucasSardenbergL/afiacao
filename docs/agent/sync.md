@@ -6,6 +6,31 @@
 
 `cron.job_run_details` reporta `succeeded` **mesmo quando a edge respondeu 401/503 ou nem bootou** — ele só registra que o `net.http_post` foi **enfileirado**. A verdade HTTP está em **`net._http_response`** (`status_code`/`content`/`error_msg`/`timed_out`), cruzada com `fin_sync_log` (iniciou/completou/órfã) e o **efeito no dado**. `status_code IS NULL` é mudo — sempre trazer `error_msg`/`timed_out` junto. ⚠️ **Isto vale p/ cron `net.http_post`** (status = só enqueue); **cron SQL-local** (`SELECT funcao()` direto) roda no Postgres → `status='failed'` + `return_message` carregam o **erro plpgsql REAL** — foi o que entregou o `42501` do ranking-refresh (#1117). Para SQL-local o `job_run_details` é a fonte primária, **não** enganosa.
 
+### ⚠️ `net._http_response` NÃO tem a URL — e o JOIN com a fila devolve VAZIO SEMPRE (2026-07-29)
+
+A query intuitiva para "esta edge foi chamada?" é juntar a resposta com a requisição pela URL. **As duas metades disso são falsas**, e o resultado é um detector que retorna vazio para QUALQUER edge — indistinguível de "não foi chamada":
+
+1. **`net._http_response` não tem coluna `url`.** Suas colunas são só `id, status_code, content_type, headers, content, timed_out, error_msg, created`.
+2. **`net.http_request_queue` é uma FILA** — o pg_net a esvazia ao processar (medido: `resposta=142 | fila=0`). Qualquer `JOIN ... ON q.id = r.id` elimina 100% das linhas, sempre.
+
+```sql
+-- ❌ MENTE: devolve 0 linhas com o cron rodando perfeitamente
+SELECT ... FROM net._http_response r JOIN net.http_request_queue q ON q.id = r.id WHERE q.url ~ '<edge>';
+```
+
+Mordido diagnosticando o deploy das 6 edges de scoring/carteira: a query voltou vazia e eu quase concluí "as edges não rodaram" — sobre um detector que nunca poderia achar nada. O tell foi aritmético: `count(*)` na tabela sozinha dava 142, e a mesma janela com JOIN dava 0. **É o §"O DETECTOR mente" (money-path.md): o baseline que eu tinha rodado validava a query SEM join, e eu creditei o verde à query COM join** — "detectou a ausência" e "está quebrado" produzem a mesma saída.
+
+**Como correlacionar resposta → edge sem a URL** (método que funcionou):
+
+1. **Assinatura do `content`.** Cada edge tem um shape de resposta próprio (`{"modo":"watchdog",…}`, `{"totalSynced":N,"falhasChunk":N}`, `{"processados":N}`). Ancorar em campo EXCLUSIVO — assinatura frouxa dá falso positivo (`extraidos|pulados` casou o JSON aninhado do sync OBEN, não o `sinais-batch`).
+2. **Cadência.** `cron.job` dá o schedule; um `*/5` desenha uma série regular no `created`. **Buraco na série = a execução que falhou**, e o não-200 no mesmo instante é dela.
+3. **Eliminação por transporte.** Só cron com `functions/v1/` no `command` produz linha aqui; SQL-local não. Reduz o campo antes de adivinhar:
+   ```sql
+   SELECT jobname, coalesce(substring(command from 'functions/v1/([a-z0-9-]+)'), 'SQL-LOCAL') FROM cron.job;
+   ```
+
+Foi assim que o 502 das 00:00 saiu de "um dos 11 crons daquele minuto" para o `sayerlack-portal-watchdog`: dos 11, só 3 usavam `net.http_post`, e a série `*/5` do watchdog tinha um buraco exatamente em 00:00 (23:55 → **[502 às 00:00:04]** → 00:06:37, atrasada). Transitório de gateway, recuperado sozinho no ciclo seguinte — mas `job_run_details` marcou os 11 como `succeeded`, inclusive o que falhou.
+
 ## Padrão de cron (canônico)
 
 - Auth: header `x-cron-secret` = `(SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name='CRON_SECRET' LIMIT 1)`. O secret já está no Vault.
