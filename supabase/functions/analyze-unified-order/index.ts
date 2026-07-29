@@ -926,7 +926,7 @@ Responda SEMPRE usando a função identify_order_items.`;
     // ao carrinho: `"12.50" > 0` é true por coerção e explodiria no checkout;
     // `1 + "2"` viraria a quantidade "12".
     const bruto = extraido.input;
-    // deno-lint-ignore no-explicit-any
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- saída de LLM consumida de forma dinâmica em ~20 pontos a jusante (resgate por fuzzy match, casamento de cliente); os campos money-path já foram travados por sanitizarListaIA acima
     const result: any = bruto && typeof bruto === "object" && !Array.isArray(bruto)
       ? { ...bruto }
       : {};
