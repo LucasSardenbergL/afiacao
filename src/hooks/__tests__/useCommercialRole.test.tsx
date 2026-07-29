@@ -131,6 +131,44 @@ describe('useCommercialRole — contrato v2 (matriz aplicada): capability conced
     expect(result.current.canViewStrategic).toBe(false);
   });
 
+  // ── Os papéis que EXISTEM em produção ────────────────────────────────────────────────────────
+  // Distribuição real medida por psql-ro em 2026-07-29: farmer=2, master=1, super_admin=ZERO. Os
+  // testes acima cobrem só os quatro valores que o TIPO conhecia — nenhum deles atribuído a ninguém.
+  // O tipo negava 'master'/'farmer', e o `as CommercialRole` do fetch escondia a divergência, então
+  // esta suíte inteira provava um mundo que não existe. Estes dois fixam o mundo real.
+  it('master (o papel do dono do sistema) atravessa o cast e chega intacto', async () => {
+    maybeSingleMock.mockResolvedValue({ data: { commercial_role: 'master' }, error: null });
+    const { result } = renderHook(() => useCommercialRole(), { wrapper });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    expect(result.current.commercialRole).toBe('master');
+    expect(result.current.isSuperAdmin).toBe(false); // 'master' ≠ 'super_admin' — papéis distintos
+  });
+
+  it('farmer idem (2 usuários em prod)', async () => {
+    maybeSingleMock.mockResolvedValue({ data: { commercial_role: 'farmer' }, error: null });
+    const { result } = renderHook(() => useCommercialRole(), { wrapper });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    expect(result.current.commercialRole).toBe('farmer');
+    expect(result.current.isSuperAdmin).toBe(false);
+  });
+
+  // ⚠️ DOCUMENTA UM ACHADO, NÃO O CORRIGE. Nenhum dos papéis realmente atribuídos concede as
+  // capabilities: os predicados comparam contra operacional/gerencial/estrategico/super_admin, e
+  // ninguém tem nenhum deles. Na prática canViewManagerial/Strategic são false para 100% da base.
+  // Não é regressão desta mudança — é o estado que ela tornou VISÍVEL, e mexer nisso é decisão de
+  // autorização com superfície própria (governa também 5 telas de Governança). O assert existe para
+  // que uma correção futura falhe aqui de propósito, em vez de mudar autorização em silêncio.
+  it('ACHADO: nenhum papel real de prod concede capability (master inclusive)', async () => {
+    maybeSingleMock.mockResolvedValue({ data: { commercial_role: 'master' }, error: null });
+    const { result } = renderHook(() => useCommercialRole(), { wrapper });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    expect(result.current.canViewManagerial).toBe(false);
+    expect(result.current.canViewStrategic).toBe(false);
+  });
+
   it('erro na consulta do PAPEL → fail-closed mesmo com o contrato em v2', async () => {
     maybeSingleMock.mockResolvedValue({ data: null, error: { message: 'boom' } });
     const { result } = renderHook(() => useCommercialRole(), { wrapper });
