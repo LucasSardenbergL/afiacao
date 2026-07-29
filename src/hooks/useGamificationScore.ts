@@ -64,14 +64,17 @@ export function useGamificationScore(userId?: string) {
       // score deflacionado ia para o banco como se fosse medição real — o mesmo padrão do
       // cron que gravava caixa zero na âncora desta classe (#1600). Lançar cai no `catch`
       // abaixo: `data` fica null, a tela não mostra score, e NADA é gravado.
-      for (const [nome, res] of [
-        ['user_tools', toolsRes], ['sending_quality_logs', qualityRes],
-        ['training_completions', trainingRes], ['referrals', referralsRes], ['orders', ordersRes],
-      ] as const) {
-        // Sem `new Error(msg, { cause })`: é ES2022 e o projeto compila com lib ES2020
-        // (mesma razão do `comCausa` em lib/postgrest.ts). O código do erro basta aqui.
-        if (res.error) throw new Error(`gamification: leitura de ${nome} falhou (${res.error.code ?? 'sem código'}) — score não calculado`);
-      }
+      //
+      // Checagem NOMINAL (uma linha por resposta) e não um laço sobre um array de pares: o
+      // gate desta classe resolve a origem do identificador e procura `<ident>.error` no
+      // arquivo. Dentro de um laço o acesso vira `res.error`, e o gate — corretamente — não
+      // reconhece `toolsRes.error` como consultado. Um fix que o gate não enxerga é um fix
+      // que alguém pode remover sem nada ficar vermelho. Verboso de propósito.
+      if (toolsRes.error) throw new Error(`gamification: leitura de user_tools falhou (${toolsRes.error.code ?? 'sem código'}) — score não calculado`);
+      if (qualityRes.error) throw new Error(`gamification: leitura de sending_quality_logs falhou (${qualityRes.error.code ?? 'sem código'}) — score não calculado`);
+      if (trainingRes.error) throw new Error(`gamification: leitura de training_completions falhou (${trainingRes.error.code ?? 'sem código'}) — score não calculado`);
+      if (referralsRes.error) throw new Error(`gamification: leitura de referrals falhou (${referralsRes.error.code ?? 'sem código'}) — score não calculado`);
+      if (ordersRes.error) throw new Error(`gamification: leitura de orders falhou (${ordersRes.error.code ?? 'sem código'}) — score não calculado`);
       const tools = toolsRes.data || [];
       const qualityLogs = qualityRes.data || [];
       const trainings = trainingRes.data || [];
