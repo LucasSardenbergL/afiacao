@@ -21,13 +21,13 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **434** custom migrations totais
-- **1504** objetos esperados (criados por estas migrations)
+- **437** custom migrations totais
+- **1510** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 437
+  - `function`: 440
   - `rls_policy`: 384
   - `index`: 224
-  - `cron_job`: 157
+  - `cron_job`: 160
   - `table`: 147
   - `trigger`: 79
   - `view`: 72
@@ -3639,6 +3639,13 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `rls_policy` | `public.omie_products_select_staff` | `omie_products` |
 
+### `20260727150000_tint_watchdog_corante_impagavel.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tint_watchdog_corante_check` | — |
+| `cron_job` | `cron.tint-watchdog-corante-5min` | — |
+
 ### `20260728120000_farmer_persiste_cobertura_custo.sql`
 
 | Tipo | Objeto | Parent |
@@ -3660,6 +3667,20 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.farmer_association_rules_substituir` | — |
+
+### `20260730120000_tint_watchdog_fase5_chave.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._tint_watchdog_fase5_transicao` | — |
+| `function` | `public.tint_watchdog_fase5_check` | — |
+| `cron_job` | `cron.tint-watchdog-fase5-6h` | — |
+
+### `20260730120001_calculate_scores_reforco_0625.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `cron_job` | `cron.calculate-scores-reforco-0625` | — |
 
 ## Próximos passos por status
 

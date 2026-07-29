@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 434
+-- Total de custom migrations: 437
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -473,9 +473,12 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260727120000', 'tint_fase5_desativa_geracao_legada', '20260727120000_tint_fase5_desativa_geracao_legada.sql'),
   ('20260727130000', 'farmer_scores_colunas_orfas_null', '20260727130000_farmer_scores_colunas_orfas_null.sql'),
   ('20260727140000', 'authz_preco_fecha_omie_products', '20260727140000_authz_preco_fecha_omie_products.sql'),
+  ('20260727150000', 'tint_watchdog_corante_impagavel', '20260727150000_tint_watchdog_corante_impagavel.sql'),
   ('20260728120000', 'farmer_persiste_cobertura_custo', '20260728120000_farmer_persiste_cobertura_custo.sql'),
   ('20260728120001', 'calculate_scores_lease', '20260728120001_calculate_scores_lease.sql'),
-  ('20260729120000', 'farmer_association_rules_substituicao_atomica', '20260729120000_farmer_association_rules_substituicao_atomica.sql')
+  ('20260729120000', 'farmer_association_rules_substituicao_atomica', '20260729120000_farmer_association_rules_substituicao_atomica.sql'),
+  ('20260730120000', 'tint_watchdog_fase5_chave', '20260730120000_tint_watchdog_fase5_chave.sql'),
+  ('20260730120001', 'calculate_scores_reforco_0625', '20260730120001_calculate_scores_reforco_0625.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -1962,13 +1965,19 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('tint_canonica_piso_legado', 'view', 'public', 'v_tint_formula_canonica', ''),
   ('tint_fase5_desativa_geracao_legada', 'view', 'public', 'v_tint_formula_canonica', ''),
   ('authz_preco_fecha_omie_products', 'rls_policy', 'public', 'omie_products_select_staff', 'omie_products'),
+  ('tint_watchdog_corante_impagavel', 'function', 'public', 'tint_watchdog_corante_check', ''),
+  ('tint_watchdog_corante_impagavel', 'cron_job', 'cron', 'tint-watchdog-corante-5min', ''),
   ('farmer_persiste_cobertura_custo', 'function', 'public', 'apply_score_updates', ''),
   ('calculate_scores_lease', 'function', 'public', 'claim_calculate_scores', ''),
   ('calculate_scores_lease', 'function', 'public', 'finalizar_calculate_scores', ''),
   ('calculate_scores_lease', 'rls_policy', 'public', 'calculate_scores_lease_no_insert', 'sync_state'),
   ('calculate_scores_lease', 'rls_policy', 'public', 'calculate_scores_lease_no_update', 'sync_state'),
   ('calculate_scores_lease', 'rls_policy', 'public', 'calculate_scores_lease_no_delete', 'sync_state'),
-  ('farmer_association_rules_substituicao_atomica', 'function', 'public', 'farmer_association_rules_substituir', '')
+  ('farmer_association_rules_substituicao_atomica', 'function', 'public', 'farmer_association_rules_substituir', ''),
+  ('tint_watchdog_fase5_chave', 'function', 'public', '_tint_watchdog_fase5_transicao', ''),
+  ('tint_watchdog_fase5_chave', 'function', 'public', 'tint_watchdog_fase5_check', ''),
+  ('tint_watchdog_fase5_chave', 'cron_job', 'cron', 'tint-watchdog-fase5-6h', ''),
+  ('calculate_scores_reforco_0625', 'cron_job', 'cron', 'calculate-scores-reforco-0625', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -3503,13 +3512,19 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('tint_canonica_piso_legado', 'view', 'public', 'v_tint_formula_canonica', ''),
   ('tint_fase5_desativa_geracao_legada', 'view', 'public', 'v_tint_formula_canonica', ''),
   ('authz_preco_fecha_omie_products', 'rls_policy', 'public', 'omie_products_select_staff', 'omie_products'),
+  ('tint_watchdog_corante_impagavel', 'function', 'public', 'tint_watchdog_corante_check', ''),
+  ('tint_watchdog_corante_impagavel', 'cron_job', 'cron', 'tint-watchdog-corante-5min', ''),
   ('farmer_persiste_cobertura_custo', 'function', 'public', 'apply_score_updates', ''),
   ('calculate_scores_lease', 'function', 'public', 'claim_calculate_scores', ''),
   ('calculate_scores_lease', 'function', 'public', 'finalizar_calculate_scores', ''),
   ('calculate_scores_lease', 'rls_policy', 'public', 'calculate_scores_lease_no_insert', 'sync_state'),
   ('calculate_scores_lease', 'rls_policy', 'public', 'calculate_scores_lease_no_update', 'sync_state'),
   ('calculate_scores_lease', 'rls_policy', 'public', 'calculate_scores_lease_no_delete', 'sync_state'),
-  ('farmer_association_rules_substituicao_atomica', 'function', 'public', 'farmer_association_rules_substituir', '')
+  ('farmer_association_rules_substituicao_atomica', 'function', 'public', 'farmer_association_rules_substituir', ''),
+  ('tint_watchdog_fase5_chave', 'function', 'public', '_tint_watchdog_fase5_transicao', ''),
+  ('tint_watchdog_fase5_chave', 'function', 'public', 'tint_watchdog_fase5_check', ''),
+  ('tint_watchdog_fase5_chave', 'cron_job', 'cron', 'tint-watchdog-fase5-6h', ''),
+  ('calculate_scores_reforco_0625', 'cron_job', 'cron', 'calculate-scores-reforco-0625', '')
 )
 SELECT
   e.migration,
