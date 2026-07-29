@@ -49,6 +49,14 @@ export function useAdminLoyalty() {
         supabase.from('loyalty_redemptions').select('*').order('created_at', { ascending: false }),
       ]);
 
+      // Sem esta checagem a falha entrava nos `setState` abaixo como lista VAZIA: o painel
+      // do admin mostrava "nenhum cliente com pontos" e "nenhum resgate" — indistinguível de
+      // um programa de fidelidade sem movimento —, e um `profiles` vazio ainda renomeava todo
+      // mundo para "Desconhecido". Lançar cai no `catch` que já existe e preserva o último
+      // estado bom, em vez de sobrescrevê-lo com o vazio de uma leitura que falhou.
+      if (pointsRes.error) throw pointsRes.error;
+      if (profilesRes.error) throw profilesRes.error;
+      if (redemptionsRes.error) throw redemptionsRes.error;
       const points = (pointsRes.data || []) as PointRecord[];
       const profiles = profilesRes.data || [];
       const redData = (redemptionsRes.data || []) as RedemptionRecord[];
