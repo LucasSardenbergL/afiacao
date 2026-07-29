@@ -40,8 +40,23 @@ export function TeamKpiTiles() {
 
   const receita = (v: number | undefined): string =>
     isError ? '—' : isLoading || v === undefined ? '…' : formatBRL(v);
-  const ativos = isError || isLoading || !data ? (isError ? '—' : '…') : String(data.ativosHoje);
-  const ativosSub = isError ? 'indisponível' : data ? `ativos hoje · 7d: ${data.ativos7d}` : 'ativos hoje';
+  // `ativosHoje === null` = a leitura de atividade falhou (a receita, que lança, seguiu viva).
+  // Mostrar "—" em vez de "0": zero aqui seria lido como "o time parou".
+  const ativos =
+    isError || isLoading || !data
+      ? isError
+        ? '—'
+        : '…'
+      : data.ativosHoje === null
+        ? '—'
+        : String(data.ativosHoje);
+  const ativosSub = isError
+    ? 'indisponível'
+    : data
+      ? data.ativosHoje === null
+        ? 'atividade indisponível'
+        : `ativos hoje · 7d: ${data.ativos7d}`
+      : 'ativos hoje';
   const escopoSub = `pedidos Omie · ${escopo}`;
   const mesSub: ReactNode = isError ? (
     'indisponível'

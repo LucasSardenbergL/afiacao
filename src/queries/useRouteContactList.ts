@@ -224,6 +224,13 @@ export function useRouteContactList(workdayIso: string) {
           .select('win_back_reserva_pct, cold_start_piso_dia, capacidade_ligacoes_dia, cadencia_min_dias')
           .eq('id', true).maybeSingle(),
       ]);
+      // Agenda vazia é um estado LEGÍTIMO ("hoje não tem rota") — e é exatamente por isso
+      // que a falha não pode se disfarçar dela: sem esta checagem, um erro de RLS/timeout
+      // fazia `resolvePrepForWorkday` devolver zero cidade e a vendedora abria a fila de
+      // ligações VAZIA, indistinguível de um dia sem rota programada.
+      if (schedRes.error) throw schedRes.error;
+      if (ovrRes.error) throw ovrRes.error;
+      if (cfgRes.error) throw cfgRes.error;
       const sched = (schedRes.data ?? []) as RouteScheduleRow[];
       const ovr = (ovrRes.data ?? []) as RouteOverrideRow[];
       const cfgRow = (cfgRes.data ?? null) as RouteConfigRow | null;
