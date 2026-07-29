@@ -124,6 +124,11 @@ export function useSalesOrderEdit() {
         }),
       ]);
 
+      // `functions.invoke` NÃO lança: devolve `{ data: null, error }`. Sem esta linha a falha
+      // escapava do `catch` abaixo, `setFormas` nunca era chamado e o editor abria com a
+      // lista de formas de pagamento VAZIA — indistinguível de "esta conta não tem forma
+      // cadastrada". Lançar leva ao toast "Erro ao carregar pedido", que é a verdade.
+      if (formasRes.error) throw formasRes.error;
       const formasData = formasRes.data as FormasPagamentoResponse | null;
       if (formasData?.formas) setFormas(formasData.formas);
       setCatalogProducts(products);
