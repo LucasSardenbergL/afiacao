@@ -13,6 +13,17 @@ import { fetchAll } from "../_shared/paginate.ts";
 // (RLS, timeout 57014, 500) virava saldo/CMV/estoque = 0, e a projeção de 13 semanas saía
 // calculada sobre caixa zero sem NENHUM sinal na tela (money-path §2 "ausente ≠ zero").
 import { exigirLeitura, tolerarColunaAusente, tolerarLeitura } from "../_shared/leitura-critica.ts";
+// E o terceiro lado da mesma moeda, no eixo da PERSISTÊNCIA: o supabase-js resolve normal
+// com `error` preenchido, então um `await ....insert()` cujo retorno é ignorado devolve
+// HTTP 200 sem ter gravado. Medido em prod: 8 de 9 snapshots em 2026-07-28. O par com o
+// contrato de leitura acima é o que fecha a engine — ler certo e não gravar é tão
+// silencioso quanto gravar lixo; nenhum dos dois basta sozinho.
+import { escritaCritica } from "../_shared/escrita-critica.ts";
+// Observabilidade da execução (acoes_execucoes): sem ela, uma falha diária isolada é
+// INVISÍVEL — o consumidor "latest wins" serve o snapshot de ontem e o fin-valor-engine
+// só considera stale após 45 dias. Medido: em 2026-07-28 faltou 1 dos 9 combos e o rastro
+// HTTP (net._http_response) já havia sido purgado quando fui investigar.
+import { comRegistro, type DbRegistro } from "../_shared/registro-execucao.ts";
 
 // =============================================================
 // Helper de autorização inlineado (de _shared/auth.ts)
@@ -146,7 +157,30 @@ serve(async (req: Request) => {
   const supabase = createClient(SUPABASE_URL, SERVICE_ROLE);
 
   try {
-    const result = await calcular(supabase, payload.company, cenario, horizon, save);
+    // Só a execução que PERSISTE entra no registro: é a do cron diário (9/dia) e a única
+    // cuja ausência importa. Consulta ad-hoc (save=false) não polui a série.
+    // O registro é FAIL-OPEN por desenho (registro-execucao.ts) — observabilidade nunca
+    // derruba a ação real —, e isso não cega a medição: quando ele não abre, o combo
+    // simplesmente NÃO aparece, e a cobertura se mede contra o esperado (3 empresas × 3
+    // cenários), não contra o que o próprio registro julgou ter acontecido. Ausência é o
+    // sinal. O que o registro acrescenta ao snapshot é a distinção diagnóstica entre
+    // "nem começou" (linha ausente), "começou e morreu" (linha aberta sem finalizado_em)
+    // e "falhou" (status erro) — precisamente o que faltou para diagnosticar 2026-07-28.
+    const executar = () => calcular(supabase, payload.company, cenario, horizon, save);
+    const result = save
+      ? await comRegistro(
+        supabase as unknown as DbRegistro,
+        'fin_cashflow.snapshot_diario',
+        auth,
+        executar,
+        (r) => ({
+          company: payload.company,
+          cenario,
+          horizon,
+          alertas: r.alertas.length,
+        }),
+      )
+      : await executar();
     return jsonResponse(result, 200);
   } catch (err) {
     return jsonResponse({ error: String((err as Error).message ?? err) }, 500);
@@ -1257,6 +1291,40 @@ async function calcular(
     ar_impaired,
   };
 
+  // ⚠️ ORDEM DELIBERADA: o SNAPSHOT grava ANTES dos alertas (invertido em 2026-07-28).
+  // Não há transação cobrindo os dois — cada escrita é sua própria transação —, então a
+  // ordem decide qual estado sobra quando a execução morre no meio. Com alertas primeiro,
+  // uma falha no snapshot deixava alerta já DISMISSADO e snapshot AUSENTE, e o consumidor
+  // "latest wins" (getProjecaoSnapshotsCockpit: order(snapshot_at desc).limit(1)) serve
+  // silenciosamente o de ONTEM — estado que não se auto-corrige.
+  //
+  // ⚠️ Isto NÃO é atomicidade, e o residual não é benigno (challenge Codex xhigh): se a
+  // execução morre no meio do bloco de alertas, uma condição NOVA posicionada depois da
+  // falha fica ausente (falso negativo — inclusive caixa_negativo) e uma condição
+  // RESOLVIDA continua ativa, porque o dismiss em massa roda no fim. A convergência no
+  // ciclo seguinte pressupõe que haja um ciclo seguinte bem-sucedido e que 24h de atraso
+  // seja tolerável — premissa que vale para alerta stale, não para alerta ausente. O que
+  // esta ordem garante é só isto: o artefato AUTORITATIVO não é sacrificado pelo acessório.
+  // Fechar de verdade exige reconciliar os alertas numa única transação (RPC pequena, sem
+  // o payload do snapshot) — follow-up registrado, fora do escopo desta entrega.
+  if (save) {
+    await escritaCritica(
+      'fin_projecao_snapshots.insert',
+      // @ts-expect-error - fin_projecao_snapshots not in generated supabase types yet (A1 table)
+      supabase.from('fin_projecao_snapshots').insert({
+        company,
+        cenario,
+        horizon_weeks: horizon,
+        dados: semanas as unknown as Record<string, unknown>,
+        ncg: ncg.valor,
+        liquidez_operacional_liquida: indicadores.liquidez_operacional_liquida,
+        saldo_tesouraria: indicadores.saldo_tesouraria,
+        dias_cobertura: indicadores.dias_cobertura,
+        premissas: premissasSnapshot as unknown as Record<string, unknown>,
+      }),
+    );
+  }
+
   // Persistência de alertas (codex): SÓ no cenário canônico 'realista' do snapshot
   // autoritativo (save). Antes a engine só INSERIA → alerta resolvido ficava preso
   // pra sempre (ex.: o ncg_deficit=0 do bug histórico de status). Agora:
@@ -1276,44 +1344,55 @@ async function calcular(
     const nowIso = new Date().toISOString();
 
     for (const a of alertas) {
-      const { data: existente } = await supabase.from('fin_alertas')
+      const { data: existente, error: erroBusca } = await supabase.from('fin_alertas')
         .select('id').eq('company', company).eq('tipo', a.tipo).is('dismissed_at', null).maybeSingle();
-      if (existente) {
-        // @ts-expect-error - fin_alertas not in supabase types yet
-        await supabase.from('fin_alertas').update({
-          severidade: a.severidade, mensagem: a.mensagem,
-          valor: a.valor, threshold: a.threshold, contexto: a.contexto,
-        }).eq('id', (existente as { id: string }).id);
-      } else {
-        // @ts-expect-error - fin_alertas not in supabase types yet
-        await supabase.from('fin_alertas').insert({
-          company, tipo: a.tipo, severidade: a.severidade, mensagem: a.mensagem,
-          valor: a.valor, threshold: a.threshold, contexto: a.contexto,
+      // Esta LEITURA decide entre UPDATE e INSERT, então falhar calada não é leitura
+      // degradada: `existente` vira null e o fluxo cai no ramo INSERT. NÃO nasce alerta
+      // duplicado — `fin_alertas_unique_ativo` UNIQUE (company, tipo) WHERE dismissed_at
+      // IS NULL existe em prod (conferido 2026-07-28) e recusa com 23505. O efeito real é
+      // pior de perceber: o insert é rejeitado, o UPDATE que deveria ter acontecido não
+      // acontece, e o alerta ativo fica com valor/mensagem STALE indefinidamente — dado
+      // velho apresentado como fresco. Ausente ≠ "não consegui ler".
+      if (erroBusca) {
+        console.error('[fin-cashflow] fin_alertas.select FALHOU', {
+          code: erroBusca.code ?? null,
+          message: erroBusca.message ?? null,
+          tipo: a.tipo,
         });
+        throw new Error(
+          `leitura crítica falhou: fin_alertas.select (SQLSTATE ${erroBusca.code ?? 'desconhecido'})`,
+        );
+      }
+      if (existente) {
+        await escritaCritica(
+          'fin_alertas.update',
+          // @ts-expect-error - fin_alertas not in supabase types yet
+          supabase.from('fin_alertas').update({
+            severidade: a.severidade, mensagem: a.mensagem,
+            valor: a.valor, threshold: a.threshold, contexto: a.contexto,
+          }).eq('id', (existente as { id: string }).id),
+        );
+      } else {
+        await escritaCritica(
+          'fin_alertas.insert',
+          // @ts-expect-error - fin_alertas not in supabase types yet
+          supabase.from('fin_alertas').insert({
+            company, tipo: a.tipo, severidade: a.severidade, mensagem: a.mensagem,
+            valor: a.valor, threshold: a.threshold, contexto: a.contexto,
+          }),
+        );
       }
     }
 
     const tiposParaDismiss = TIPOS_AVALIADOS.filter((t) => !tiposAtivos.has(t));
     if (tiposParaDismiss.length > 0) {
-      // @ts-expect-error - fin_alertas not in supabase types yet
-      await supabase.from('fin_alertas').update({ dismissed_at: nowIso })
-        .eq('company', company).in('tipo', tiposParaDismiss).is('dismissed_at', null);
+      await escritaCritica(
+        'fin_alertas.dismiss',
+        // @ts-expect-error - fin_alertas not in supabase types yet
+        supabase.from('fin_alertas').update({ dismissed_at: nowIso })
+          .eq('company', company).in('tipo', tiposParaDismiss).is('dismissed_at', null),
+      );
     }
-  }
-
-  if (save) {
-    // @ts-expect-error - fin_projecao_snapshots not in generated supabase types yet (A1 table)
-    await supabase.from('fin_projecao_snapshots').insert({
-      company,
-      cenario,
-      horizon_weeks: horizon,
-      dados: semanas as unknown as Record<string, unknown>,
-      ncg: ncg.valor,
-      liquidez_operacional_liquida: indicadores.liquidez_operacional_liquida,
-      saldo_tesouraria: indicadores.saldo_tesouraria,
-      dias_cobertura: indicadores.dias_cobertura,
-      premissas: premissasSnapshot as unknown as Record<string, unknown>,
-    });
   }
 
   return {
