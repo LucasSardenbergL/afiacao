@@ -113,6 +113,34 @@ export function fingerprintPagina(codigos: ReadonlyArray<number | null | undefin
   return `${codigos.length}:${hash.toString(36)}`;
 }
 
+// Desfecho do cursor de UMA conta num varredor multi-conta (`sync_all_clients` do omie-cliente:
+// o caller reinvoca a edge com {account_index, start_page, total_paginas} até acabarem as contas).
+// Estava inline no call-site e sem teste nenhum — apesar de ser onde moram os dois defeitos já
+// pagos: o piso que morria entre invocações (#1597) e o `break` de erro que devolvia o cursor
+// PARADO na mesma conta/página, prendendo o sync inteiro na primeira conta quebrada.
+//
+// As três entradas booleanas NÃO são intercambiáveis, e é isso que o helper existe para fixar:
+//   - `fimReal`         = a conta ACABOU (EOF do contrato Omie / página vazia no fim declarado).
+//   - `contaAbandonada` = a conta foi INTERROMPIDA por falha. O cursor também avança — mas o
+//     caller é obrigado a propagar o motivo, senão vira "concluída" mentirosa (money-path §8:
+//     truncar é legítimo, truncar em SILÊNCIO não é).
+//   - `ultimaPaginaCheia` = evidência de continuação que não depende do caller repassar o piso:
+//     página cheia significa que há mais adiante mesmo com `total_de_paginas` ausente. Sem ela,
+//     "não sei o total" viraria "acabou" — a fabricação de completude do §9.
+export function desfechoContaListagem(input: {
+  fimReal: boolean;
+  contaAbandonada: boolean;
+  paginaCursor: number;   // próxima página a processar (o laço já parou nela)
+  tetoPaginas: number;    // piso monotônico do total declarado
+  ultimaPaginaCheia: boolean;
+}): { hasMore: boolean; proximaPagina: number; avancarConta: boolean } {
+  const hasMore = !input.fimReal && !input.contaAbandonada &&
+    (input.paginaCursor <= input.tetoPaginas || input.ultimaPaginaCheia);
+  // Ao trocar de conta o cursor volta para a página 1: o teto é POR conta, e herdá-lo faria a
+  // conta seguinte começar com um total que não é dela.
+  return { hasMore, proximaPagina: hasMore ? input.paginaCursor : 1, avancarConta: !hasMore };
+}
+
 export type VeredictoPagina = "processar" | "fim" | "anomalia";
 
 // nTotPaginas do Omie é PISO, não verdade (docs/agent/sync.md): página vazia ANTES do fim

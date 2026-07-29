@@ -7,6 +7,7 @@
 // abaixo vieram verbatim (#1341/#1353).
 import {
   avaliarPagina,
+  desfechoContaListagem,
   desfechoVarreduraReversa,
   fingerprintPagina,
   MAX_PAGINAS_POS_ESTOQUE,
@@ -220,6 +221,80 @@ Deno.test("fingerprintPagina — ordem importa (mesma lista reordenada é outra 
 
 Deno.test("fingerprintPagina — páginas de tamanhos diferentes não colidem", () => {
   assertEquals(fingerprintPagina([1, 2]) === fingerprintPagina([1, 2, 3]), false);
+});
+
+// ════════ desfechoContaListagem — cursor de UMA conta no varredor multi-conta ════════
+// O `sync_all_clients` (omie-cliente) percorre 3 contas Omie, N páginas cada, e o caller
+// reinvoca a edge com o cursor devolvido. Aqui moram os dois defeitos já pagos e o novo:
+//   (a) o piso do total morria entre invocações e a conta fechava com a cauda por importar (#1597);
+//   (b) o `break` de erro devolvia o cursor PARADO na mesma conta/página → laço quente e as
+//       contas seguintes reféns da primeira quebrada (este PR);
+//   (c) "não sei o total" nunca pode significar "acabou" — daí `ultimaPaginaCheia`.
+
+Deno.test("conta em curso — ainda há página dentro do teto → segue na MESMA conta", () => {
+  assertEquals(
+    desfechoContaListagem({ fimReal: false, contaAbandonada: false, paginaCursor: 4, tetoPaginas: 140, ultimaPaginaCheia: true }),
+    { hasMore: true, proximaPagina: 4, avancarConta: false },
+  );
+});
+
+Deno.test("fim REAL (EOF do Omie) → avança de conta e o cursor volta para a página 1", () => {
+  assertEquals(
+    desfechoContaListagem({ fimReal: true, contaAbandonada: false, paginaCursor: 12, tetoPaginas: 140, ultimaPaginaCheia: true }),
+    { hasMore: false, proximaPagina: 1, avancarConta: true },
+  );
+});
+
+// A defesa do #1597 que NÃO depende do caller repassar o piso: numa retomada em que a resposta
+// vem COM clientes mas SEM total_de_paginas, o teto é só a página inicial — e sem esta cláusula
+// `page > teto` fecharia a conta na hora, com as páginas seguintes por sincronizar para sempre.
+Deno.test("teto estourado mas ÚLTIMA PÁGINA CHEIA → continua (página cheia é evidência de continuação)", () => {
+  assertEquals(
+    desfechoContaListagem({ fimReal: false, contaAbandonada: false, paginaCursor: 5, tetoPaginas: 4, ultimaPaginaCheia: true }),
+    { hasMore: true, proximaPagina: 5, avancarConta: false },
+  );
+});
+
+Deno.test("teto estourado e última página INCOMPLETA → conta encerrada (nada indica continuação)", () => {
+  assertEquals(
+    desfechoContaListagem({ fimReal: false, contaAbandonada: false, paginaCursor: 5, tetoPaginas: 4, ultimaPaginaCheia: false }),
+    { hasMore: false, proximaPagina: 1, avancarConta: true },
+  );
+});
+
+// ⚠️ O bug deste PR: falha permanente saía do laço SEM avançar página e SEM fimReal. Com
+// `contaAbandonada` a conta é interrompida e o cursor ANDA — o caller reinvoca a PRÓXIMA conta
+// em vez de a mesma página para sempre. O motivo viaja no resultado (é o call-site que garante).
+Deno.test("conta ABANDONADA por falha → cursor avança de conta mesmo com página cheia e teto sobrando", () => {
+  assertEquals(
+    desfechoContaListagem({ fimReal: false, contaAbandonada: true, paginaCursor: 2, tetoPaginas: 140, ultimaPaginaCheia: true }),
+    { hasMore: false, proximaPagina: 1, avancarConta: true },
+  );
+});
+
+// Antes do fix este era o estado exato do laço quente: nada avançou (cursor na mesma página,
+// teto ≥ página) e nenhum fim foi declarado. Sem `contaAbandonada` o desfecho é — corretamente —
+// "continua na mesma conta"; é justamente por isso que o call-site NÃO pode sair do laço em
+// falha sem marcar a conta como abandonada.
+Deno.test("REGRESSÃO — cursor parado sem fim e sem abandono repete a MESMA conta/página (o laço quente)", () => {
+  assertEquals(
+    desfechoContaListagem({ fimReal: false, contaAbandonada: false, paginaCursor: 1, tetoPaginas: 1, ultimaPaginaCheia: false }),
+    { hasMore: true, proximaPagina: 1, avancarConta: false },
+  );
+});
+
+Deno.test("INVARIANTE — abandono e fim NUNCA devolvem hasMore (senão a conta quebrada prende o sync)", () => {
+  for (const fimReal of [true, false]) {
+    for (const ultimaPaginaCheia of [true, false]) {
+      for (const [paginaCursor, tetoPaginas] of [[1, 1], [3, 140], [200, 4]]) {
+        const abandonada = desfechoContaListagem({ fimReal, contaAbandonada: true, paginaCursor, tetoPaginas, ultimaPaginaCheia });
+        if (abandonada.hasMore) throw new Error(`conta abandonada devolveu hasMore (${paginaCursor}/${tetoPaginas})`);
+        if (!abandonada.avancarConta) throw new Error(`conta abandonada não avançou o cursor (${paginaCursor}/${tetoPaginas})`);
+        const fim = desfechoContaListagem({ fimReal: true, contaAbandonada: false, paginaCursor, tetoPaginas, ultimaPaginaCheia });
+        if (fim.hasMore) throw new Error(`fim real devolveu hasMore (${paginaCursor}/${tetoPaginas})`);
+      }
+    }
+  }
 });
 
 // ════════ teto compartilhado ════════
