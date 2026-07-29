@@ -63,6 +63,32 @@ async function callOmieApi(
   });
 
   const result = await response.json();
+
+  // `faultstring` ANTES do status (ordem canônica do #1614 — docs/agent/sync.md): este wrapper
+  // NÃO lança em fault, de propósito — quem separa a ausência legítima ("Nenhum registro" /
+  // "não encontrado" ⇒ CPF não cadastrado) do erro real é o call-site, pelo TEXTO. Como o EOF
+  // do contrato Omie chega às vezes acompanhado de 5xx, checar o status primeiro converteria
+  // "não é cliente" em exceção.
+  if (result.faultstring) return result;
+
+  // Sem faultstring, só um 2xx é resposta. `fetch` NÃO lança em HTTP não-2xx: um 429/5xx cujo
+  // corpo parseia sem fault chegava ao call-site sem `clientes_cadastro`, e o
+  // `if (!clientes || clientes.length === 0)` respondia `isEmployee: false` — o Omie fora do ar
+  // virava o FATO "este CPF não é funcionário", indistinguível de uma consulta bem-sucedida.
+  // A mensagem não casa os marcadores de ausência do catch, então a falha SOBE em vez de virar
+  // veredito (money-path §2 — degradação honesta: ausente ≠ inexistente).
+  if (!response.ok) {
+    throw new Error(`Erro Omie: HTTP ${response.status} em ${call}`);
+  }
+
+  // `faultcode` sem `faultstring` fecha a ordem canônica do #1614: um `200 {"faultcode":"5113"}`
+  // chegava ao call-site sem `clientes_cadastro` e virava `isEmployee:false` — erro sinalizado
+  // pelo Omie lido como veredito sobre a pessoa (achado Codex xhigh). A mensagem não casa os
+  // marcadores de ausência do catch, então sobe em vez de virar "não é funcionário".
+  if (result.faultcode) {
+    throw new Error(`Erro Omie: faultcode ${result.faultcode} em ${call}`);
+  }
+
   return result;
 }
 

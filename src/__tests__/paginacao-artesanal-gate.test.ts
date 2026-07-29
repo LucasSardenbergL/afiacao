@@ -313,21 +313,59 @@ const G5_ALLOW: ReadonlyMap<string, number> = new Map(
 // Regra: `await fetch(` cuja chamada menciona Omie precisa de `.ok`/`.status` antes do consumo.
 //
 // LIMITAÇÃO CONHECIDA (registrada, não é descuido — a versão completa exigiria dataflow): o
-// detector aceita QUALQUER menção a `.status`, então um tratamento PARCIAL (só 425/429, a forma
-// que o omie-sync-vendas-items tinha) o satisfaz enquanto o 500 continua passando. Está fixado
-// no controle de calibração abaixo, para a limitação ser um fato medido e não uma surpresa —
-// e é por isso que ela não substitui a leitura do wrapper ao mexer nele.
-const JANELA_G6 = 1200;
+// detector aceita qualquer COMPARAÇÃO de `.status`, então um tratamento PARCIAL (só 425/429, a
+// forma que o omie-sync-vendas-items tinha) o satisfaz enquanto o 500 continua passando. Está
+// fixado no controle de calibração abaixo, para a limitação ser um fato medido e não uma surpresa
+// — e é por isso que ela não substitui a leitura do wrapper ao mexer nele.
+//
+// ⚠️ A janela era uma DISTÂNCIA FIXA (1200 chars) e errava nos DOIS sentidos — medido ao quitar a
+// dívida, com os dois erros no mesmo arquivo-conjunto:
+//  · falso VERMELHO: `omie-vendas-sync` tem o `if (!response.ok) throw` na ordem canônica, ~1.400
+//    chars abaixo do fetch (o retry/backoff da faultstring vive entre os dois). Ficava baselinado
+//    como dívida um wrapper CORRETO — e dívida falsa ensina a ignorar a lista.
+//  · falso VERDE, o caro: em `process-nfe` a janela alcançava o `if (!__auth.ok)` do gate de
+//    AUTORIZAÇÃO do handler, 30 linhas abaixo e em OUTRA função. Um `.ok` de objeto sem relação
+//    nenhuma com a resposta HTTP satisfazia o detector, e o wrapper (sem guard nenhum) media zero.
+//    Não era "arquivo auditado": era o detector lendo o guard errado (§"O DETECTOR mente").
+// Alargar a distância piora o segundo: a 4000 o `verify-employee` também ficava verde, pelo mesmo
+// mecanismo. O que separa os dois casos não é TAMANHO, é ESCOPO — o guard de uma resposta tem de
+// estar na função que fez o fetch. Daí a janela ser léxica: até o `}` que fecha a função (coluna
+// 0), truncada no próximo `await fetch(` (para o guard de um site nunca cobrir o do vizinho) e num
+// teto duro. Medido no repo inteiro: revela `process-nfe`, quita `omie-vendas-sync`, e não mexe em
+// mais nada.
+const TETO_G6 = 4000;
+
+function janelaG6(fonte: string, i: number): string {
+  let fim = i + TETO_G6;
+  const proximoFetch = fonte.indexOf('await fetch(', i + 1);
+  if (proximoFetch !== -1) fim = Math.min(fim, proximoFetch);
+  const fechaFuncao = /\n\}/.exec(fonte.slice(i)); // `}` na coluna 0 = fim da função top-level
+  if (fechaFuncao) fim = Math.min(fim, i + fechaFuncao.index);
+  return fonte.slice(i, fim);
+}
 
 function fetchsOmieSemStatus(fonte: string): number {
   let i = -1;
   let n = 0;
   while ((i = fonte.indexOf('await fetch(', i + 1)) !== -1) {
     if (!/omie/i.test(fonte.slice(i, i + 260))) continue; // só o Omie; Supabase/LLM têm outro contrato
-    if (!/\.ok\b|\.status\s*(===|!==|>=|<|==)/.test(fonte.slice(i, i + JANELA_G6))) n++;
+    if (!/\.ok\b|\.status\s*(===|!==|>=|<|==)/.test(janelaG6(fonte, i))) n++;
   }
   return n;
 }
+
+// Allowlist G6 (por CONTAGEM) — tratamento CORRETO numa forma que a regex não casa. Não é dívida:
+// cada entrada foi lida linha a linha, e a entrada existe porque afrouxar a regex para acomodá-la
+// deixaria passar o furo real.
+const G6_ALLOW: ReadonlyMap<string, number> = new Map([
+  // `classifyOmieResponse(res.status, fs)` — o status vai como ARGUMENTO a um classificador puro
+  // (omie-sync-nfes-recebidas/retry.ts, coberto por `retry_test.ts`), então não há operador de
+  // comparação para a regex casar. O tratamento é o mais completo do repo e na ordem canônica:
+  // faultstring → 429 retry → >=500 retry → >=400 permanent → ok. Aceitar `.status` sem operador
+  // resolveria esta entrada e cobriria de verde todo `throw new Error(\`HTTP ${res.status}\`)`
+  // decorativo, que é exatamente a forma que não decide nada.
+  ['supabase/functions/omie-sync-nfes-recebidas/index.ts', 1],
+]);
 
 // DÍVIDA G6 (baselinada 2026-07-29, por CONTAGEM — mesma regra das outras): 7 sites REVELADOS
 // pelo detector novo, em edges que o PR que o criou não toca. Auditar cada um exige ler o
@@ -336,17 +374,29 @@ function fetchsOmieSemStatus(fonte: string): number {
 // Os 6 wrappers do PR que criou este gate (cmc-snapshot-backfill, cmc-snapshot-smoke,
 // omie-sync-metadados, sync-reprocess, tint-omie-sync, omie-sync-vendas-items) NÃO estão aqui:
 // foram corrigidos, e é isso que a ausência deles significa.
-const G6_DIVIDA: ReadonlyMap<string, number> = new Map([
-  ['supabase/functions/analyze-unified-order/index.ts', 1],
-  ['supabase/functions/omie-analytics-sync/index.ts', 1],
-  // omie-cliente (1→0) QUITADO pelo #1614 (que mergeou entre a baseline e este PR): o wrapper
-  // passou a classificar a falha do Omie antes de consumir o corpo. Primeira quitação registrada
-  // deste gate, e ela veio de outro PR — o gate pegou sozinho, no rebase.
-  ['supabase/functions/omie-sync/index.ts', 1],
-  ['supabase/functions/omie-sync-nfes-recebidas/index.ts', 1],
-  ['supabase/functions/omie-vendas-sync/index.ts', 1],
-  ['supabase/functions/verify-employee/index.ts', 1],
-]);
+//
+// ── DÍVIDA QUITADA (chip de erradicação G6). A lista chegou a ZERO: a próxima entrada aqui é
+// reintrodução, não herança. Auditoria site a site — e a leitura do consumo REAL era o trabalho,
+// porque dos 7 baselinados só 4 eram furo:
+//  · omie-cliente (1→0) — pelo #1614, que mergeou entre a baseline e o PR que criou o gate.
+//  · omie-sync (1→0) — FURO, e o mais caro. `IncluirOS` gravava a OS como "enviado" com
+//    `omie_codigo_os` undefined, e `ListarClientes` via lista vazia (porta do cadastro duplicado).
+//    O guard de status sozinho seria PIOR que o bug: `sync_deleted_orders` apagava o pedido de 6
+//    tabelas em QUALQUER exceção, então o 5xx que antes voltava `{}` (e por acidente não deletava)
+//    passaria a apagar a carteira inteira num incidente do Omie. Wrapper e consumidor foram
+//    juntos: deleção agora exige prova POSITIVA de ausência (money-path §7).
+//  · verify-employee (1→0) — FURO: 5xx virava o veredito "este CPF não é funcionário".
+//  · omie-analytics-sync (1→0) — FURO: 5xx chegava aos laços sem total e sem lista. O transitório
+//    reusa o backoff que já existia; só o esgotamento lança.
+//  · analyze-unified-order (1→0) — FURO leve: o preço do Omie só preenche gap, então o efeito é
+//    recall, não número fabricado. Corrigido para o motivo parar de ser invisível.
+//  · omie-sync-nfes-recebidas (1→0) — NÃO era furo: tratamento completo via `classifyOmieResponse`.
+//    Foi para a G6_ALLOW acima, com justificativa.
+//  · omie-vendas-sync (1→0) — NÃO era furo: `if (!response.ok) throw` na ordem canônica, longe
+//    demais para a janela FIXA enxergar. Quitou sozinho quando a janela virou léxica.
+// E o detector consertado revelou um site novo (process-nfe), corrigido aqui em vez de baselinado:
+// o ciclo do §9 — um PR conserta o detector e baselina o revelado, o outro corrige e esvazia.
+const G6_DIVIDA: ReadonlyMap<string, number> = new Map([]);
 
 describe('gate estrutural: paginação artesanal que trata falha como fim (classe #1338→#1564)', () => {
   it('sentinela: o walker anda de verdade (glob quebrado = verde eterno, ausência de sinal ≠ aprovação)', () => {
@@ -500,7 +550,8 @@ describe('gate estrutural: paginação artesanal que trata falha como fim (class
   });
 
   it('G6: nenhuma resposta do Omie consumida sem checar o status HTTP, além da dívida', () => {
-    const { reintroducoes, quitacoes } = desvios(contarPorArquivo(fetchsOmieSemStatus), G6_DIVIDA);
+    const base = new Map([...G6_ALLOW, ...G6_DIVIDA]);
+    const { reintroducoes, quitacoes } = desvios(contarPorArquivo(fetchsOmieSemStatus), base);
     expect(
       reintroducoes,
       `REINTRODUÇÃO da classe uma camada ACIMA do laço (F6 — resposta do Omie usada sem olhar o ` +
@@ -548,6 +599,109 @@ describe('gate estrutural: paginação artesanal que trata falha como fim (class
       const res = await fetch(\`\${SUPA_URL}/rest/v1/tabela\`, { headers });
       const linhas = await res.json();`;
     expect(fetchsOmieSemStatus(outroServico), 'G6 alcançou fetch que não é do Omie').toBe(0);
+
+    // ── Os dois erros que a JANELA FIXA cometia, fixados como controle ──────────────────────
+    // (a) Falso VERDE: `.ok` de OUTRA função depois do `}` não pode valer como guard. Forma REAL
+    // do process-nfe pré-fix — o `!__auth.ok` é o gate de autorização do handler, não a resposta.
+    // Se este assert cair, o gate voltou a aceitar o guard errado e todo verde dele é suspeito.
+    const guardDeOutraFuncao = `
+      const res = await fetch(\`\${OMIE_BASE}\${endpoint}\`, { method: "POST", body });
+      const text = await res.text();
+      const data = JSON.parse(text);
+      if (typeof data.faultstring === "string") throw new Error(\`Omie: \${data.faultstring}\`);
+      return data;
+}
+
+serve(async (req) => {
+  const __auth = await authorizeCronOrStaff(req);
+  if (!__auth.ok) return __auth.response;`;
+    expect(
+      fetchsOmieSemStatus(guardDeOutraFuncao),
+      'G6 aceitou o `.ok` de OUTRA função como guard da resposta (o falso-verde do process-nfe)',
+    ).toBe(1);
+
+    // (b) Falso VERMELHO: guard CORRETO longe do fetch, mas dentro da MESMA função — a forma REAL
+    // do omie-vendas-sync (transcrita do arquivo), onde o retry inteiro da faultstring vive entre
+    // o fetch e o `!response.ok`. Baselinar isso como dívida é registrar débito sobre código
+    // correto, e lista falsa ensina a ignorar a lista.
+    //
+    // ⚠️ O COMPRIMENTO deste fixture é a asserção. A 1ª versão tinha 701 chars entre o fetch e o
+    // guard, contra 1.942 do arquivo real — e por isso ficou VERDE quando a falsificação reduziu
+    // o teto para 1200, exatamente a regressão que ele deveria pegar (o gate acusou o arquivo real
+    // e o controle não sentiu nada). Fixture mais curto que o código que ele representa é um
+    // detector que não conhece a forma real do repo — a armadilha do §9 aplicada ao próprio
+    // controle. O assert de distância abaixo prende isso: encurtar o fixture reprova.
+    const guardLongeMesmaFuncao = `
+      const response = await fetch(\`\${OMIE_API_URL}/\${endpoint}\`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+
+      const result = (await response.json()) as OmieGenericResponse;
+
+      if (result.faultstring) {
+        const fs = String(result.faultstring);
+        const isRateLimit = fs.includes("Já existe uma requisição desse método")
+          || fs.includes("Consumo redundante")
+          || fs.includes("REDUNDANT")
+          || fs.includes("consumo redundante");
+        const isTransient = fs.includes("SOAP-ERROR")
+          || fs.includes("Broken response")
+          || fs.includes("Application Server")
+          || fs.includes("timeout")
+          || fs.includes("Timeout");
+        if (isRateLimit || isTransient) {
+          if (attempt < maxRetries) {
+            const waitMatch = fs.match(/Aguarde (\\d+) segundos/);
+            const requestedDelay = waitMatch ? parseInt(waitMatch[1]) : (attempt + 1) * 5;
+            const delay = Math.min(requestedDelay + 2, 15) * 1000;
+            console.log(\`[Omie Vendas][\${account}] Rate limit, waiting \${delay/1000}s (attempt \${attempt + 1}/\${maxRetries})\`);
+            await new Promise(r => setTimeout(r, delay));
+            continue;
+          }
+          if (opts?.throwOnTransient) {
+            throw new Error(\`OMIE_TRANSIENT (\${account}): rate limit persistiu após \${maxRetries} tentativas — não dá pra afirmar ausência\`);
+          }
+          console.log(\`[Omie Vendas][\${account}] Transient error persists after \${maxRetries} retries, returning null\`);
+          return null;
+        }
+        if (fs.includes("Não existem registros para a página")) {
+          console.log(\`[Omie Vendas][\${account}] Nenhum registro encontrado, retornando null\`);
+          return null;
+        }
+        throw new Error(\`Erro Omie Vendas (\${account}): \${fs}\`);
+      }
+
+      if (!response.ok) {
+        const httpMessage = result?.descricao_status || \`HTTP \${response.status}\`;
+        throw new Error(\`Erro Omie Vendas (\${account}): \${httpMessage}\`);
+      }
+      return result;`;
+    const distanciaFixture = guardLongeMesmaFuncao.indexOf('!response.ok')
+      - guardLongeMesmaFuncao.indexOf('await fetch(');
+    expect(
+      distanciaFixture,
+      'fixture encurtou abaixo da distância REAL do omie-vendas-sync (1.942 chars) — ele deixaria ' +
+        'de sentir uma regressão do teto, que é a única coisa que este controle mede',
+    ).toBeGreaterThan(1900);
+    expect(
+      fetchsOmieSemStatus(guardLongeMesmaFuncao),
+      'G6 ficou falso-VERMELHO sobre guard correto na mesma função (o caso omie-vendas-sync)',
+    ).toBe(0);
+
+    // (c) O guard de um fetch não cobre o do vizinho: a janela trunca no próximo `await fetch(`.
+    // Sem isso, alargar a janela faria um wrapper correto absolver o wrapper de baixo.
+    const doisFetchs = `
+      const a = await fetch(\`\${OMIE_API_URL}/x\`, { method: "POST" });
+      const da = await a.json();
+      const b = await fetch(\`\${OMIE_API_URL}/y\`, { method: "POST" });
+      if (!b.ok) throw new Error("Omie HTTP");
+      const db = await b.json();`;
+    expect(
+      fetchsOmieSemStatus(doisFetchs),
+      'G6 deixou o guard do 2º fetch cobrir o 1º (janela não truncou no fetch vizinho)',
+    ).toBe(1);
   });
 
   it('G4 (controle de calibração): as DUAS formas do total cru são detectadas — inclusive com cast', () => {

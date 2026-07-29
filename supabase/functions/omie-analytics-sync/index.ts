@@ -182,7 +182,26 @@ async function callOmie(account: OmieAccount, endpoint: string, call: string, pa
         body: JSON.stringify(body),
       });
       const result = (await res.json()) as OmieApiResponseBase;
+      // `faultstring` ANTES do status. ⚠️ Aqui a ordem NÃO preserva EOF nenhum — este wrapper
+      // lança em TODA faultstring, inclusive na de fim de página, e isso é comportamento
+      // preexistente que este PR não muda (achado Codex xhigh, contra a 1ª redação deste
+      // comentário, que prometia preservar o fim real). O que a ordem preserva é a MENSAGEM: é
+      // ela que o catch abaixo classifica para decidir entre retentar e falhar, e um `HTTP 503`
+      // genérico apagaria a faultstring específica que torna o motivo acionável.
       if (result.faultstring) throw new Error(`Omie (${account}): ${result.faultstring}`);
+      // Sem faultstring, só um 2xx é resposta. `fetch` NÃO lança em HTTP não-2xx: um 429/5xx cujo
+      // corpo parseia sem fault (o `{}` de proxy/gateway) voltava como resposta boa e chegava aos
+      // laços de enumeração sem `total_de_paginas` e sem lista — o piso degrada para 1 e a página
+      // vazia vira fim da fonte, com todos os guards de paginação corretos e nenhum consultado.
+      // Emitido como `HTTP <n>` para reusar o backoff do catch em vez de virar falha diária —
+      // mas o classificador local casa dígito CRU e só conhece 429/500/502/503/504: um 501/520
+      // aborta na 1ª tentativa (dívida preexistente do classificador, não deste guard; o helper
+      // canônico `_shared/omie-falha.ts` é quem já ancora o marcador na forma `http <n>`).
+      if (!res.ok) throw new Error(`Omie (${account}): HTTP ${res.status}`);
+      // `faultcode` sem `faultstring` fecha a ordem canônica: um `200 {"faultcode":"5113"}` chegava
+      // aos laços como página boa e vazia, e o sync publicava `status:"complete"` sobre um retrato
+      // parcial — a fabricação de completude que o G6 existe para barrar, uma casa adiante.
+      if (result.faultcode) throw new Error(`Omie (${account}): faultcode ${result.faultcode}`);
       return result;
     } catch (e) {
       lastErr = e instanceof Error ? e : new Error(String(e));

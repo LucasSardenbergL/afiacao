@@ -57,6 +57,21 @@ Deno.test("classifyOmieResponse: 4xx (não-429) → permanent, nunca mascarado p
 
 Deno.test("classifyOmieResponse: 2xx limpo → ok", () => {
   assertEquals(classifyOmieResponse(200, undefined), { kind: "ok" });
+  assertEquals(classifyOmieResponse(201, undefined), { kind: "ok" });
+  assertEquals(classifyOmieResponse(299, undefined), { kind: "ok" });
+});
+
+// FALSIFICAÇÃO 3: `ok` é 2xx, não "o resto". A versão anterior terminava num `return {kind:"ok"}`
+// cru depois de testar 429/5xx/4xx, então 1xx e 3xx caíam em `ok` — e um corpo `{}` de redirect
+// aprovado como resposta boa degrada o total para 1, a lista para `[]`, e a conta fecha `complete`
+// com zero erros (achado Codex xhigh). Enumerar só as faixas de ERRO deixa a faixa não enumerada
+// virar sucesso por omissão: o default de um classificador de resposta tem de ser o lado caro.
+Deno.test("classifyOmieResponse: fora de 2xx nunca é `ok` — 3xx/1xx são permanent", () => {
+  assertEquals(classifyOmieResponse(300, undefined), { kind: "permanent" });
+  assertEquals(classifyOmieResponse(302, undefined), { kind: "permanent" });
+  assertEquals(classifyOmieResponse(399, undefined), { kind: "permanent" });
+  assertEquals(classifyOmieResponse(100, undefined), { kind: "permanent" });
+  assertEquals(classifyOmieResponse(0, undefined), { kind: "permanent" });
 });
 
 // Precedência: faultstring transitório vence o status HTTP (Omie manda 200 + fault).
