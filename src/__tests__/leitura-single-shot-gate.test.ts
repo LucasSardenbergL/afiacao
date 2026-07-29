@@ -302,8 +302,10 @@ describe('gate estrutural: leitura single-shot que trata falha como zero (irmã 
     // Pin por FONTE nomeada (não por contagem): o gate genérico não protege QUAL leitura
     // ficou coberta — trocar uma por outra manteria a contagem em 1. Money-path: "gate de
     // forma não protege a ESCOLHA; quando a chave é a defesa, pine a chave".
+    // `fin_contas_correntes` usa exigirLINHAS (não exigirLeitura): lá a lista vazia também
+    // é fabricação — o reduce devolve 0 tanto para "nenhuma conta cadastrada" quanto para
+    // "as contas somam zero". Pinado à parte, logo abaixo.
     for (const tabela of [
-      'fin_contas_correntes',
       'fin_eventos_recorrentes',
       'fin_eventos_eventuais',
       'fin_estoque_valor',
@@ -315,6 +317,12 @@ describe('gate estrutural: leitura single-shot que trata falha como zero (irmã 
         `${tabela} deixou de passar por exigirLeitura — a falha volta a virar zero`,
       ).toBe(true);
     }
+    // O saldo em conta exige LINHA, não só ausência de erro — trocar de volta para
+    // exigirLeitura devolveria o caixa-zero-por-lista-vazia sem nenhum outro sinal.
+    expect(
+      /exigirLinhas\(ccRes, 'fin_contas_correntes'\)/.test(fonte),
+      'fin_contas_correntes voltou a aceitar lista vazia como saldo 0',
+    ).toBe(true);
     // A que degrada em vez de lançar continua degradando COM motivo.
     expect(/tolerarLeitura\([A-Za-z]+Res, 'v_capital_giro_prazos'\)/.test(fonte)).toBe(true);
     // E a coluna opcional continua tolerando SÓ coluna ausente (não qualquer erro).

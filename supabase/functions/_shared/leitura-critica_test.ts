@@ -2,6 +2,7 @@
 import {
   codigoDoErro,
   exigirLeitura,
+  exigirLinhas,
   FalhaLeituraCritica,
   tolerarColunaAusente,
   tolerarLeitura,
@@ -99,6 +100,57 @@ Deno.test("tolerarLeitura: o motivo também é domínio fechado", () => {
   const vazamento = "row (uuid-do-cliente, 4321.55) violates check";
   const r = tolerarLeitura({ data: null, error: { code: "23514", message: vazamento } }, "v_capital_giro_prazos");
   if (r.motivo?.includes("4321.55")) throw new Error(`PII vazou no motivo: ${r.motivo}`);
+});
+
+// ── Lista vazia não é fato: nenhuma linha ≠ soma zero ────────────────────────────────
+
+Deno.test("exigirLinhas: lista VAZIA lança (nenhuma conta ≠ caixa zero)", () => {
+  const e = assertLanca(
+    () => exigirLinhas({ data: [], error: null }, "fin_contas_correntes"),
+    "lista vazia",
+  );
+  assertEq(e.codigo, "SEM_LINHAS");
+  assertEq(e.fonte, "fin_contas_correntes");
+});
+
+Deno.test("exigirLinhas: data null sem erro também lança", () => {
+  const e = assertLanca(
+    () => exigirLinhas({ data: null, error: null }, "fin_contas_correntes"),
+    "data null",
+  );
+  assertEq(e.codigo, "SEM_LINHAS");
+});
+
+Deno.test("exigirLinhas: ZERO REAL atravessa — linhas existem e somam zero", () => {
+  // O caso que NÃO pode mudar de comportamento: conta cadastrada com saldo 0 é um FATO,
+  // e continua valendo 0. Sem este assert, "lança quando vazio" poderia virar "lança
+  // quando o total é zero", que é outra coisa e quebraria empresa com caixa zerado real.
+  const linhas = [{ saldo_atual: 0 }, { saldo_atual: 0 }];
+  assertEq(exigirLinhas({ data: linhas, error: null }, "fin_contas_correntes"), linhas);
+});
+
+Deno.test("exigirLinhas: saldo NEGATIVO atravessa (colacor/colacor_sc em prod)", () => {
+  const linhas = [{ saldo_atual: -411609.09 }];
+  assertEq(exigirLinhas({ data: linhas, error: null }, "fin_contas_correntes"), linhas);
+});
+
+Deno.test("exigirLinhas: erro de transporte continua lançando com o código do erro", () => {
+  const e = assertLanca(
+    () => exigirLinhas({ data: null, error: { code: "57014" } }, "fin_contas_correntes"),
+    "timeout",
+  );
+  // Não pode virar SEM_LINHAS: a causa é outra e o diagnóstico mudaria.
+  assertEq(e.codigo, "57014");
+});
+
+Deno.test("a mensagem de SEM_LINHAS não diz 'falhou' (não houve falha, a leitura voltou vazia)", () => {
+  const e = assertLanca(() => exigirLinhas({ data: [], error: null }, "fin_contas_correntes"), "msg");
+  if (e.message.includes("falhou")) {
+    throw new Error(`mensagem manda caçar um erro que não houve: ${e.message}`);
+  }
+  if (!e.message.includes("DESCONHECIDO")) {
+    throw new Error(`mensagem não diz que o valor é desconhecido: ${e.message}`);
+  }
 });
 
 // ── Coluna opcional: tolera "não existe", NÃO tolera "o banco piscou" ────────────────

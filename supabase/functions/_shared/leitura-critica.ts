@@ -55,7 +55,13 @@ export class FalhaLeituraCritica extends Error {
   constructor(fonte: string, erro: ErroPostgrest | null | undefined) {
     const codigo = codigoDoErro(erro);
     // Mensagem = domínio fechado. Vai ao cliente pelo catch do serve().
-    super(`Leitura de ${fonte} falhou (código ${codigo}) — dado indisponível, não zero.`);
+    // `SEM_LINHAS` não é falha de transporte (a leitura funcionou e voltou vazia), então
+    // ganha texto próprio — dizer "falhou" mandaria o leitor caçar um erro que não houve.
+    super(
+      codigo === 'SEM_LINHAS'
+        ? `${fonte} não tem nenhuma linha para esta empresa — valor DESCONHECIDO, não zero. Verifique o cadastro.`
+        : `Leitura de ${fonte} falhou (código ${codigo}) — dado indisponível, não zero.`,
+    );
     this.name = 'FalhaLeituraCritica';
     this.fonte = fonte;
     this.codigo = codigo;
@@ -73,6 +79,29 @@ export class FalhaLeituraCritica extends Error {
 export function exigirLeitura<T>(res: RespostaLeitura<T>, fonte: string): T | null {
   if (res.error) throw new FalhaLeituraCritica(fonte, res.error);
   return res.data;
+}
+
+/**
+ * Fonte cuja LISTA VAZIA não é um fato — é ausência de cadastro, e portanto o valor
+ * agregado é DESCONHECIDO, não zero.
+ *
+ * Quarta variante, e a mais sutil: `exigirLeitura` separa "falhou" de "não tem linha",
+ * mas para uma soma o "não tem linha" ainda vira `0` no `reduce`. Só linhas EXISTENTES
+ * somando zero provam saldo zero; nenhuma linha prova apenas que ninguém cadastrou.
+ * Para `fin_contas_correntes` os dois desfechos são numericamente idênticos (`saldo_cc = 0`)
+ * e disparam o mesmo alerta de caixa negativo — exatamente o falso positivo que o contrato
+ * desta família existe para eliminar.
+ *
+ * Use SÓ onde a lista vazia é implausível como estado de negócio. Não serve para eventos
+ * recorrentes/eventuais (empresa sem evento cadastrado é normal), nem para DRE ou estoque
+ * (ausência de balancete é estado legítimo e já avisado na UI).
+ */
+export function exigirLinhas<T>(res: RespostaLeitura<T>, fonte: string): T {
+  const dados = exigirLeitura(res, fonte);
+  if (dados == null || (Array.isArray(dados) && dados.length === 0)) {
+    throw new FalhaLeituraCritica(fonte, { code: 'SEM_LINHAS' });
+  }
+  return dados;
 }
 
 /**
