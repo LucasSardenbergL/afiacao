@@ -8,6 +8,11 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 // passava por tabela inteira. O canônico lança nos DOIS casos (money-path §6/§9).
 // Todo call-site DEVE encadear `.order()` numa coluna estável (gate paginacao-delegada).
 import { fetchAll } from "../_shared/paginate.ts";
+// Irmã single-shot do mesmo defeito: as leituras NÃO paginadas do Promise.all abaixo
+// descartavam `error`, e o consumidor coalescia com `?? []`/`?? 0` — falha de transporte
+// (RLS, timeout 57014, 500) virava saldo/CMV/estoque = 0, e a projeção de 13 semanas saía
+// calculada sobre caixa zero sem NENHUM sinal na tela (money-path §2 "ausente ≠ zero").
+import { exigirLeitura, tolerarColunaAusente, tolerarLeitura } from "../_shared/leitura-critica.ts";
 
 // =============================================================
 // Helper de autorização inlineado (de _shared/auth.ts)
@@ -313,6 +318,11 @@ type DadosBase = {
   // Fonte ÚNICA do prazo (mesma do card client-side getCapitalDeGiro) → consistência.
   prazos: { pmr: number | null; pmp: number | null; pmr_cobertura: number | null; pmp_cobertura: number | null } | null;
   config: Config;
+  // Canal de degradação HONESTA: motivos das leituras que falharam mas NÃO derrubam o
+  // cálculo (hoje só `prazos`, que já virava null e mostrava "—" sem dizer por quê).
+  // Leitura cujo valor não pode virar zero LANÇA e nunca chega aqui. Domínio fechado
+  // (fonte + código), nunca texto livre do servidor — a resposta vai ao cliente.
+  motivos_confianca: string[];
 };
 
 async function carregarDados(
@@ -372,20 +382,36 @@ async function carregarDados(
     ]),
   ]);
 
-  const saldo_cc = ((ccRes.data ?? []) as Array<{ saldo_atual?: number | null }>)
+  // ── Contrato das leituras single-shot: erro ≠ ausente ≠ zero ─────────────────────────
+  // `exigirLeitura` LANÇA no erro de transporte e devolve `data` intacto quando não há
+  // erro — então o `?? []`/`?? 0` de cada linha continua valendo, mas agora só para o
+  // caso legítimo (sem linha), nunca para "não consegui ler". A decisão de LANÇAR (em vez
+  // de degradar) é por consumidor: saldo, eventos, estoque e CMV entram em somas que
+  // viram o saldo inicial das 13 semanas e o NCG — não há "—" possível, o número sairia
+  // errado e persistido (o cron grava snapshot + alertas). Ver money-path §7.
+
+  // Saldo em conta: é o saldo INICIAL de todas as semanas e a base de dias_cobertura e
+  // saldo_tesouraria. Zero fabricado aqui dispara alerta de caixa negativo falso.
+  const saldo_cc = ((exigirLeitura(ccRes, 'fin_contas_correntes') ?? []) as Array<{ saldo_atual?: number | null }>)
     .reduce((s: number, c) => s + Number(c.saldo_atual ?? 0), 0);
 
-  const estoque_valor = Number((estoqueRes.data as { valor?: number } | null)?.valor ?? 0);
-  const estoque_data_ref = (estoqueRes.data as { data_ref?: string } | null)?.data_ref ?? null;
+  // Estoque: entra no ACO da NCG e no PME. Sem LINHA continua 0 (estado legítimo e já
+  // avisado na UI — "Estoque não informado"); o que deixa de virar 0 é a falha de leitura.
+  const estoqueRow = exigirLeitura(estoqueRes, 'fin_estoque_valor') as { valor?: number; data_ref?: string } | null;
+  const estoque_valor = Number(estoqueRow?.valor ?? 0);
+  const estoque_data_ref = estoqueRow?.data_ref ?? null;
 
   // CMV TTM: soma dos últimos 12 meses de DRE competência
   const _hojeTtm = new Date();
   const _cutoffMesIdx = (_hojeTtm.getFullYear() * 12 + (_hojeTtm.getMonth() + 1)) - 12;
-  const cmv_ttm = ((dreRes.data ?? []) as Array<{ cmv?: number; ano: number; mes: number }>)
+  const cmv_ttm = ((exigirLeitura(dreRes, 'fin_dre_snapshots') ?? []) as Array<{ cmv?: number; ano: number; mes: number }>)
     .filter((d) => (d.ano * 12 + d.mes) > _cutoffMesIdx)
     .reduce((s, d) => s + Number(d.cmv ?? 0), 0);
 
-  if (!configRes.data) {
+  // Config: já lançava, mas a mensagem afirmava "aplique o seed" mesmo quando a causa era
+  // RLS/timeout — diagnóstico errado colado num erro real. Agora o erro fala por si.
+  const configRow = exigirLeitura(configRes, 'fin_config_cashflow');
+  if (!configRow) {
     throw new Error(`Config ausente pra ${company}. Aplique seed em fin_config_cashflow.`);
   }
 
@@ -443,14 +469,28 @@ async function carregarDados(
 
   // Onda 2: folha categorias (coluna opcional). Leitura defensiva — se a coluna não
   // existe, folhaCatRes.data é null e cai em []; o guard de folha fica inerte.
-  const folha_categorias_codigos =
-    ((folhaCatRes.data as { folha_categorias_codigos?: string[] } | null)?.folha_categorias_codigos) ?? [];
-  const config: Config = { ...(configRes.data as unknown as Config), folha_categorias_codigos };
+  // ⚠️ Coluna OPCIONAL (Onda 2): quando não existe, o PostgREST devolve erro — não uma
+  // resposta vazia —, então "migration não aplicada" não pode derrubar a engine e o guard
+  // de folha fica inerte de propósito. Mas tolerar QUALQUER erro era amplo demais: um
+  // timeout ou um 42501 desligaria o guard de dupla contagem da folha sem ninguém saber,
+  // e "feature não migrada" ficaria indistinguível de "o banco piscou". `tolerarColunaAusente`
+  // engole só os códigos de coluna/relação inexistente e lança no resto.
+  const folhaCatRow = tolerarColunaAusente(folhaCatRes, 'fin_config_cashflow.folha_categorias_codigos') as
+    { folha_categorias_codigos?: string[] } | null;
+  const folha_categorias_codigos = folhaCatRow?.folha_categorias_codigos ?? [];
+  const config: Config = { ...(configRow as unknown as Config), folha_categorias_codigos };
 
-  // Fase 3 (B): PMR/PMP + cobertura da baixa derivada. Degrada p/ null (+ log) se a
-  // view não tiver linha pra empresa → calcularIndicadores mostra "—" honesto.
-  const prazos = (prazosRes.data as DadosBase['prazos']) ?? null;
-  if (!prazos) {
+  // Fase 3 (B): PMR/PMP + cobertura da baixa derivada. Degrada p/ null se a view não tiver
+  // linha pra empresa → calcularIndicadores mostra "—" honesto. Esta leitura TOLERA o erro
+  // (o "—" já é honesto), mas o motivo deixa de mentir: antes um erro de leitura era
+  // logado como "sem linha", e a tela mostrava "—" indistinguível de empresa sem dado.
+  const motivos_confianca: string[] = [];
+  const prazosLeitura = tolerarLeitura(prazosRes, 'v_capital_giro_prazos');
+  const prazos = (prazosLeitura.dados as DadosBase['prazos']) ?? null;
+  if (prazosLeitura.motivo) {
+    motivos_confianca.push(`${prazosLeitura.motivo} PMR/PMP/CCC ficam indisponíveis.`);
+    console.error(`[Cashflow][${company}] ${prazosLeitura.motivo}`);
+  } else if (!prazos) {
     console.warn(`[Cashflow][${company}] v_capital_giro_prazos sem linha → PMR/PMP/CCC = null`);
   }
 
@@ -479,11 +519,15 @@ async function carregarDados(
     estoque_valor,
     estoque_data_ref,
     cmv_ttm,
-    eventos_rec: (recRes.data ?? []) as unknown as EventoRecorrente[],
-    eventos_ev: (evRes.data ?? []) as unknown as EventoEventual[],
+    // Eventos: a falha aqui é a MAIS perigosa da função, porque erra para o lado otimista
+    // — sem os recorrentes some a folha (de `folha_30d` e das saídas de todas as semanas)
+    // e o caixa projetado sobe. Um "0 despesas" fabricado se parece com um mês bom.
+    eventos_rec: (exigirLeitura(recRes, 'fin_eventos_recorrentes') ?? []) as unknown as EventoRecorrente[],
+    eventos_ev: (exigirLeitura(evRes, 'fin_eventos_eventuais') ?? []) as unknown as EventoEventual[],
     curvas_aging,
     prazos,
     config,
+    motivos_confianca,
   };
 }
 
@@ -1282,6 +1326,10 @@ async function calcular(
     apos_horizonte,
     ar_impaired,
     curvas_aging: dados.curvas_aging,
+    // Degradação honesta: leitura que falhou mas não derruba o cálculo entra aqui com o
+    // motivo (fonte + código). Vazio = nenhuma degradação. O que NÃO pode virar zero
+    // lança e não chega a este ponto — a resposta 200 nunca carrega número fabricado.
+    confianca_dados: { motivos: dados.motivos_confianca },
     metadados: {
       cenario,
       horizon,

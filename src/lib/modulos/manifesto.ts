@@ -690,6 +690,7 @@ export const MODULOS: ModuloApp[] = [
       "src/__tests__/auth.test.ts",
       "src/__tests__/edge-app-url.test.ts",
       "src/__tests__/index-html.test.ts",
+      "src/__tests__/leitura-single-shot-gate.test.ts",
       "src/__tests__/paginacao-artesanal-gate.test.ts",
       "src/lib/escape-html.test.ts",
       "src/lib/__tests__/**",

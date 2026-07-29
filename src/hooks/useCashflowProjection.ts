@@ -48,6 +48,12 @@ export type CashflowResult = {
   };
   alertas: Array<{ tipo: string; severidade: string; mensagem: string; valor: number | null; threshold: number | null; contexto: Record<string, unknown> }>;
   premissas_aplicadas: Record<string, unknown>;
+  // Degradação honesta das leituras da engine: motivos das fontes que falharam mas não
+  // derrubam o cálculo (hoje `v_capital_giro_prazos` → PMR/PMP/CCC ficam "—"). Vazio ou
+  // ausente = nenhuma degradação. Fonte que não pode virar zero faz a engine responder
+  // 500 — cai no `error` do react-query, não aqui. Opcional: snapshots/edges antigas
+  // respondem sem o campo.
+  confianca_dados?: { motivos: string[] };
   // Onda 2: ponte de horizonte + curvas de aging calibradas (timing + confiança)
   apos_horizonte?: number;
   ar_impaired?: number;
