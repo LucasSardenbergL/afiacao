@@ -8817,9 +8817,11 @@ export type Database = {
           promocao_item_id: number | null
           qtde_final: number | null
           qtde_sem_promocao: number | null
+          qtde_sem_teto: number | null
           qtde_sugerida: number
           sku_codigo_omie: string
           sku_descricao: string | null
+          teto_cobertura_aplicado: boolean
           valor_linha: number | null
         }
         Insert: {
@@ -8841,9 +8843,11 @@ export type Database = {
           promocao_item_id?: number | null
           qtde_final?: number | null
           qtde_sem_promocao?: number | null
+          qtde_sem_teto?: number | null
           qtde_sugerida: number
           sku_codigo_omie: string
           sku_descricao?: string | null
+          teto_cobertura_aplicado?: boolean
           valor_linha?: number | null
         }
         Update: {
@@ -8865,9 +8869,11 @@ export type Database = {
           promocao_item_id?: number | null
           qtde_final?: number | null
           qtde_sem_promocao?: number | null
+          qtde_sem_teto?: number | null
           qtde_sugerida?: number
           sku_codigo_omie?: string
           sku_descricao?: string | null
+          teto_cobertura_aplicado?: boolean
           valor_linha?: number | null
         }
         Relationships: [
@@ -11277,6 +11283,7 @@ export type Database = {
       }
       reposicao_motor_run: {
         Row: {
+          capados_n: number
           criado_em: string
           data_ciclo: string
           empresa: string
@@ -11287,6 +11294,7 @@ export type Database = {
           suprimidos_n: number
         }
         Insert: {
+          capados_n?: number
           criado_em?: string
           data_ciclo: string
           empresa: string
@@ -11297,6 +11305,7 @@ export type Database = {
           suprimidos_n?: number
         }
         Update: {
+          capados_n?: number
           criado_em?: string
           data_ciclo?: string
           empresa?: string
@@ -11574,6 +11583,66 @@ export type Database = {
           run_id?: string
           visto_em?: string
           visto_seq?: number
+        }
+        Relationships: []
+      }
+      reposicao_teto_cobertura_log: {
+        Row: {
+          cap_teto_ancora: number | null
+          classe_abc: string | null
+          criado_em: string
+          demanda_diaria: number | null
+          empresa: string
+          estoque_efetivo: number | null
+          estoque_maximo: number | null
+          grupo_codigo: string | null
+          id: string
+          motivo: string
+          ponto_pedido: number | null
+          qtde_final: number | null
+          qtde_sem_teto: number | null
+          run_id: string
+          sku_codigo_omie: string
+          sku_descricao: string | null
+          teto_dias: number | null
+        }
+        Insert: {
+          cap_teto_ancora?: number | null
+          classe_abc?: string | null
+          criado_em?: string
+          demanda_diaria?: number | null
+          empresa: string
+          estoque_efetivo?: number | null
+          estoque_maximo?: number | null
+          grupo_codigo?: string | null
+          id?: string
+          motivo: string
+          ponto_pedido?: number | null
+          qtde_final?: number | null
+          qtde_sem_teto?: number | null
+          run_id: string
+          sku_codigo_omie: string
+          sku_descricao?: string | null
+          teto_dias?: number | null
+        }
+        Update: {
+          cap_teto_ancora?: number | null
+          classe_abc?: string | null
+          criado_em?: string
+          demanda_diaria?: number | null
+          empresa?: string
+          estoque_efetivo?: number | null
+          estoque_maximo?: number | null
+          grupo_codigo?: string | null
+          id?: string
+          motivo?: string
+          ponto_pedido?: number | null
+          qtde_final?: number | null
+          qtde_sem_teto?: number | null
+          run_id?: string
+          sku_codigo_omie?: string
+          sku_descricao?: string | null
+          teto_dias?: number | null
         }
         Relationships: []
       }
