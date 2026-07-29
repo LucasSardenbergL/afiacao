@@ -10,6 +10,7 @@
 
 import { createClient } from 'npm:@supabase/supabase-js@^2';
 import { authorizeCronOrStaff, corsHeaders } from '../_shared/auth.ts';
+import { exigirLeitura, FalhaLeituraCritica } from '../_shared/leitura-critica.ts';
 
 // =====================================================
 // --- Inline helpers ---
@@ -216,10 +217,38 @@ async function recalcOne(
   );
 
   const scores = (scoresRes.data ?? {}) as Record<string, unknown>;
-  const lastVisitAt = (visitsRes.data ?? [])[0]?.check_in_at ?? null;
-  const salesOrdersCount = (ordersRes.data ?? []).length;
-  const address = (addressRes.data ?? {}) as Record<string, unknown>;
-  const profile = (profileRes.data ?? {}) as Record<string, unknown>;
+
+  // FAIL-CLOSED (mesma regra do flagRes acima) nas 4 leituras que alimentam o SCORE, que
+  // até aqui descartavam `error`. O `?? []`/`?? {}` cru colapsava "a leitura FALHOU" em
+  // "o cliente não teve atividade", e o estrago não é um score ausente e visível — é um
+  // score BAIXO e plausível: sem route_visits o cliente vira "nunca visitado", sem
+  // sales_orders vira "não compra", e o profile perdido zera `is_prospect`, o que TROCA a
+  // missão primária. Um timeout de transporte rebaixava o cliente na agenda do vendedor,
+  // com 200 na resposta e o resultado PERSISTIDO no upsert lá embaixo. Melhor não
+  // recalcular do que recalcular errado em silêncio (docs/agent/money-path.md §2/§6/§7):
+  // o score anterior fica de pé, o motivo é gravado na fila (o drain marca `processed_at`
+  // mesmo em erro, anti poison-pill) e o cliente é re-enfileirado no próximo batch — o
+  // mesmo desfecho que o flagRes acima já dá.
+  // `exigirLeitura` lança só no `error`: `data` null/[] sem erro segue sendo ausência
+  // LEGÍTIMA, e o fallback abaixo continua valendo. A mensagem vai em domínio fechado
+  // (fonte + código), sem o `error.message` cru do Postgres que o retorno devolve ao
+  // cliente — o mesmo cuidado de PII que o helper documenta.
+  let visitas: Array<{ check_in_at?: string | null }>;
+  let pedidos: unknown[];
+  let address: Record<string, unknown>;
+  let profile: Record<string, unknown>;
+  try {
+    visitas = (exigirLeitura(visitsRes, 'route_visits') ?? []) as Array<{ check_in_at?: string | null }>;
+    pedidos = (exigirLeitura(ordersRes, 'sales_orders') ?? []) as unknown[];
+    address = (exigirLeitura(addressRes, 'addresses') ?? {}) as Record<string, unknown>;
+    profile = (exigirLeitura(profileRes, 'profiles') ?? {}) as Record<string, unknown>;
+  } catch (e) {
+    if (e instanceof FalhaLeituraCritica) return { ok: false, error: e.message };
+    throw e;
+  }
+
+  const lastVisitAt = visitas[0]?.check_in_at ?? null;
+  const salesOrdersCount = pedidos.length;
 
   const inputs: CustomerScoreInputs = {
     customer_user_id,
