@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
+import { invokeFunction } from '@/lib/invoke-function';
 import { selectObjective, clampRecencyCapDays } from '@/lib/scoring/objective';
 import { margemConhecida, mediaMargensConhecidas } from '@/lib/scoring/margin';
 import { fetchAllPages } from '@/lib/postgrest';
@@ -530,8 +531,12 @@ export const useTacticalPlan = () => {
         };
       }
 
-      const { data: aiPlan, error: aiError } = await supabase.functions.invoke<AiPlanResponse>('generate-tactical-plan', {
-        body: {
+      // invokeFunction (e não supabase.functions.invoke cru) porque o erro do
+      // supabase é sempre o genérico "non-2xx status code": o motivo REAL da
+      // edge — créditos esgotados, geração truncada — vem no corpo e só o
+      // helper o extrai. Com o invoke cru, o estouro de orçamento que motivou
+      // a migração continuaria invisível para quem usa.
+      const aiPlan = await invokeFunction<AiPlanResponse>('generate-tactical-plan', {
           customerContext: {
             name: profile?.name,
             cnae: profile?.cnae,
@@ -553,10 +558,7 @@ export const useTacticalPlan = () => {
           diagnosticData,
           historicalObjections,
           planType,
-        },
       });
-
-      if (aiError) throw aiError;
 
       // Escrita via RPC-fronteira (#1037 + split de RLS): a posse (farmer_id) é re-resolvida
       // server-side de carteira_assignments e a RLS pós-split NEGA insert direto do client.
