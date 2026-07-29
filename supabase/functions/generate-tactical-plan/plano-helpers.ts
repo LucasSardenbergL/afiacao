@@ -241,11 +241,23 @@ export function montarPlano(
   const cru = (bruto ?? {}) as Record<string, unknown>;
   const avisos: string[] = [];
 
+  // O objetivo do SERVIDOR é autoritativo, não um fallback. `selectObjective` decide por
+  // regra determinística sobre os scores e é o mesmo valor que alimenta o badge e o
+  // scoring — deixar a IA sobrescrevê-lo criava divergência silenciosa entre a tela e a
+  // regra (ex.: `sales_history_status='sem_historico'` obriga "ativacao", e o modelo
+  // devolvendo "recuperacao" era aceito). A IA responde o campo porque isso a faz
+  // raciocinar sobre a abordagem, mas quem grava é o servidor.
   const objetivoIa = objetivoValido(cru.strategic_objective);
-  const objetivoFallback = objetivoValido(objetivoServidor) ?? "expansao_mix";
-  if (!objetivoIa) {
+  const objetivoDoServidor = objetivoValido(objetivoServidor);
+  const objetivoFinal = objetivoDoServidor ?? objetivoIa ?? "expansao_mix";
+  if (objetivoDoServidor && objetivoIa && objetivoIa !== objetivoDoServidor) {
     avisos.push(
-      `strategic_objective ausente/inválido (${JSON.stringify(cru.strategic_objective)}) — usando o objetivo calculado pelo servidor: ${objetivoFallback}`,
+      `strategic_objective da IA (${objetivoIa}) diverge da regra do servidor (${objetivoDoServidor}) — prevalece o servidor`,
+    );
+  }
+  if (!objetivoDoServidor) {
+    avisos.push(
+      `objetivo do servidor ausente/inválido (${JSON.stringify(objetivoServidor)}) — caindo para o da IA: ${objetivoFinal}`,
     );
   }
 
@@ -261,13 +273,21 @@ export function montarPlano(
 
   const approach = textoValido(cru.approach_strategy);
 
-  // Gate de suficiência: sem abordagem E sem nenhuma pergunta, não há plano — há um
-  // formulário vazio. Gravar isso como 'gerado' é o que o fallback antigo fazia.
-  if (!approach && perguntas.length === 0) {
+  // Gate de suficiência: o plano precisa de abordagem E de pelo menos uma pergunta.
+  // Um "OU" aqui deixava passar exatamente o que este PR existe para matar —
+  // {approach_strategy: "Seja consultiva", diagnostic_questions: []} vira status
+  // 'gerado' e a vendedora abre a ligação com duas palavras e nenhum diagnóstico,
+  // indistinguível do fallback fabricado antigo. Ambos são `required` no input_schema,
+  // então exigir os dois não estreita o caminho feliz: só barra a resposta degenerada.
+  if (!approach || perguntas.length === 0) {
+    const faltando = [
+      !approach ? "abordagem" : null,
+      perguntas.length === 0 ? "perguntas diagnósticas" : null,
+    ].filter(Boolean).join(" e ");
     return {
       ok: false,
       motivo: "plano_vazio",
-      detalhe: "a IA não devolveu abordagem nem nenhuma pergunta diagnóstica legível",
+      detalhe: `a IA não devolveu ${faltando} — plano insuficiente, não gravado`,
     };
   }
 
@@ -277,7 +297,7 @@ export function montarPlano(
     ok: true,
     avisos,
     plano: {
-      strategic_objective: objetivoIa ?? objetivoFallback,
+      strategic_objective: objetivoFinal,
       approach_strategy: approach,
       approach_strategy_b: estrategico ? textoValido(cru.approach_strategy_b) : null,
       diagnostic_questions: perguntas,
@@ -464,6 +484,32 @@ export function extrairToolUseUnico(content: unknown): ExtracaoToolUse {
     quantidade: usos.length,
     texto,
   };
+}
+
+/**
+ * Distingue o SKIP LEGÍTIMO da RPC `criar_plano_tatico` (ela recusou por ESTADO da
+ * carteira) do ERRO REAL de infra (timeout, cast, constraint, indisponibilidade).
+ *
+ * POR QUE IMPORTA: o batch conta `skipped` como "pulado" e calcula `ok: erros === 0`
+ * (_shared/tactical-batch-resultado.ts). Tratar todo `rpcErr` como skip devolve
+ * `ok:true` num lote em que nenhum plano foi gravado — a MESMA classe do incidente de
+ * 2026-07-21 que aquele módulo documenta (ok:true com 28 de 58 alvos quebrados).
+ *
+ * Os padrões vêm das mensagens que a RPC levanta em PRODUÇÃO (conferidas via
+ * pg_get_functiondef). Casados por prefixo ASCII de propósito: 'reatribuída' e
+ * 'mascarado' carregam acento, e comparar o trecho antes do acento evita depender de
+ * normalização unicode entre o Postgres e o runtime.
+ */
+export const PADROES_SKIP_RPC = [
+  "sem dono de carteira",
+  "foi reatribu", // "... foi reatribuída durante a geração" (race de posse)
+  "mascarado na carteira", // eligible=false — não materializa plano
+] as const;
+
+export function ehSkipLegitimoDaRpc(mensagem: unknown): boolean {
+  if (typeof mensagem !== "string") return false;
+  const m = mensagem.toLowerCase();
+  return PADROES_SKIP_RPC.some((p) => m.includes(p));
 }
 
 /**

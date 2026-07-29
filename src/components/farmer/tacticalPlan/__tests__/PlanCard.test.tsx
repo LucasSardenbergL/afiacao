@@ -110,4 +110,52 @@ describe("PlanCard", () => {
       expect(screen.getByText("53.5%")).toBeTruthy();
     });
   });
+
+  // LTV/cenários são blocos PARCIALMENTE mensuráveis: a edge grava número no campo que a
+  // IA apurou e null no que ela não apurou. Os guards do card (`plan.ltvProjection && …`)
+  // só testam o OBJETO — com um campo null lá dentro, o `fmt()` antigo executava
+  // `null.toLocaleString()` e o ErrorBoundary global trocava o app inteiro por "Algo deu
+  // errado". Achado do /codex no PR da migração para a Anthropic.
+  describe("blocos parcialmente medidos não derrubam a tela", () => {
+    it("LTV com campos não medidos renderiza travessão em vez de quebrar", () => {
+      setup({
+        expanded: true,
+        plan: makePlan({
+          planType: "estrategico",
+          ltvProjection: { current_annual: 120000, projected_annual: null, growth_pct: null },
+        }),
+      });
+      expect(screen.getByText("Projeção de LTV")).toBeTruthy();
+      expect(screen.getByText("R$ 120.000,00")).toBeTruthy();
+      expect(screen.getAllByText("—").length).toBeGreaterThan(0);
+    });
+
+    it("cenários de margem não medidos renderizam travessão", () => {
+      setup({
+        expanded: true,
+        plan: makePlan({
+          planType: "estrategico",
+          expectedResult: { best_case_margin: null, likely_margin: 22, worst_case_margin: null },
+        }),
+      });
+      expect(screen.getByText("R$ 22,00")).toBeTruthy();
+      expect(screen.getAllByText("—").length).toBeGreaterThan(0);
+    });
+
+    it("objeção sem probabilidade estimada não exibe badge de 0%", () => {
+      // A edge OMITE `probability` quando a IA não soube estimar. Exibir "0%" afirmaria
+      // que o cliente não vai levantar a objeção — algo que ninguém mediu.
+      setup({
+        expanded: true,
+        plan: makePlan({
+          probableObjections: [
+            { objection: "Preço alto", technical_response: "t", economic_response: "e" },
+          ],
+        }),
+      });
+      expect(screen.getByText("⚠ Preço alto")).toBeTruthy();
+      expect(screen.queryByText("0%")).toBeNull();
+      expect(screen.queryByText("undefined%")).toBeNull();
+    });
+  });
 });

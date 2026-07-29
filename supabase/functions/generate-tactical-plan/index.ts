@@ -16,6 +16,7 @@ import { fetchAll } from "../_shared/paginate.ts";
 import { avaliarCanariaMargem, calcularClusterMargin, classifyProfile, margemConhecida, selectObjective } from "../_shared/tactical-margem.ts";
 import { inicioDiaOperacional } from "../_shared/dia-operacional.ts";
 import {
+  ehSkipLegitimoDaRpc,
   extrairToolUseUnico,
   MAX_TOKENS,
   MODELO,
@@ -380,10 +381,18 @@ ${JSON.stringify(historicalObjections || [], null, 2)}`;
         },
       });
       if (rpcErr) {
-        // Race de reatribuição / cliente sem dono → pula este alvo (idempotente; o próximo ciclo
-        // re-lista farmer_client_scores já reconciliado e gera sob o dono certo). Não derruba o batch.
         console.error('criar_plano_tatico falhou', body.customerId, rpcErr.message);
-        return new Response(JSON.stringify({ skipped: 'rpc_error', detail: rpcErr.message }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        // Race de reatribuição / cliente sem dono / cliente mascarado → SKIP legítimo: o
+        // próximo ciclo re-lista farmer_client_scores já reconciliado e gera sob o dono
+        // certo. Não derruba o batch.
+        if (ehSkipLegitimoDaRpc(rpcErr.message)) {
+          return new Response(JSON.stringify({ skipped: 'rpc_race', detail: rpcErr.message }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        }
+        // Qualquer OUTRA falha (timeout, cast, constraint, indisponibilidade) é ERRO. Antes
+        // tudo virava `skipped:'rpc_error'`, e o batch conta skip como "pulado" com
+        // `ok: erros === 0` — um lote sem NENHUM plano gravado reportava ok:true, a mesma
+        // classe do incidente de 2026-07-21 (money-path: falha silenciosa).
+        return new Response(JSON.stringify({ error: 'Falha ao gravar o plano', detail: rpcErr.message }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       }
       return new Response(JSON.stringify({ id: newId, generated: true }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }

@@ -7,6 +7,7 @@
 //      genérico gravado com status 'gerado';
 //   2. `Number(null) === 0`: margem/probabilidade não medida virando 0.
 import {
+  ehSkipLegitimoDaRpc,
   extrairToolUseUnico,
   montarPlano,
   normalizarCenarios,
@@ -210,46 +211,73 @@ Deno.test("montarPlano: so lixo tambem FALHA", () => {
   assertEquals(r.ok, false);
 });
 
-Deno.test("montarPlano: abordagem sem perguntas ainda e plano valido", () => {
-  const r = montarPlano({ approach_strategy: "Abrir pelo custo por peça afiada." }, "essencial", "ativacao");
-  assertEquals(r.ok, true);
+/** Mínimo que passa o gate de suficiência — abordagem E ao menos uma pergunta. */
+const SUFICIENTE = {
+  approach_strategy: "Abrir pelo custo por peça afiada.",
+  diagnostic_questions: [{ question: "Qual o volume mensal?", purpose: "p", expected_insight: "e" }],
+};
+
+Deno.test("montarPlano: abordagem SEM perguntas nao e plano suficiente", () => {
+  // "Seja consultiva" + zero diagnóstico é o fallback fabricado com outro texto.
+  const r = montarPlano({ approach_strategy: "Seja consultiva" }, "essencial", "ativacao");
+  assertEquals(r.ok, false);
+  if (r.ok) return;
+  assert(r.detalhe.includes("perguntas"), `detalhe deveria citar o que faltou: ${r.detalhe}`);
 });
 
-Deno.test("montarPlano: perguntas sem abordagem ainda e plano valido", () => {
+Deno.test("montarPlano: perguntas SEM abordagem nao e plano suficiente", () => {
   const r = montarPlano(
     { diagnostic_questions: [{ question: "Qual o volume mensal?" }] },
     "essencial",
     "ativacao",
   );
-  assertEquals(r.ok, true);
+  assertEquals(r.ok, false);
+  if (r.ok) return;
+  assert(r.detalhe.includes("abordagem"), `detalhe deveria citar o que faltou: ${r.detalhe}`);
 });
 
-Deno.test("montarPlano: objetivo invalido cai no do SERVIDOR e avisa", () => {
+Deno.test("montarPlano: abordagem + pergunta passa o gate", () => {
+  assertEquals(montarPlano(SUFICIENTE, "essencial", "ativacao").ok, true);
+});
+
+Deno.test("montarPlano: objetivo do SERVIDOR prevalece sobre o da IA", () => {
+  // `selectObjective` é regra determinística e alimenta badge/scoring. Deixar a IA
+  // sobrescrever criava divergência silenciosa entre a tela e a regra.
   const r = montarPlano(
-    { strategic_objective: "vender mais", approach_strategy: "abordagem" },
+    { ...SUFICIENTE, strategic_objective: "recuperacao" },
     "essencial",
-    "consolidacao_margem",
+    "ativacao",
   );
   if (!r.ok) throw new Error("deveria ter montado");
-  assertEquals(r.plano.strategic_objective, "consolidacao_margem");
-  assert(r.avisos.length > 0, "deveria ter avisado sobre o objetivo inválido");
+  assertEquals(r.plano.strategic_objective, "ativacao");
+  assert(r.avisos.some((a) => a.includes("diverge")), "deveria avisar a divergência");
 });
 
-Deno.test("montarPlano: objetivo da IA prevalece quando valido", () => {
+Deno.test("montarPlano: sem divergencia nao ha aviso", () => {
   const r = montarPlano(
-    { strategic_objective: "upsell_premium", approach_strategy: "abordagem" },
+    { ...SUFICIENTE, strategic_objective: "ativacao" },
     "essencial",
-    "expansao_mix",
+    "ativacao",
+  );
+  if (!r.ok) throw new Error("deveria ter montado");
+  assertEquals(r.avisos, []);
+});
+
+Deno.test("montarPlano: objetivo do servidor invalido cai no da IA e avisa", () => {
+  const r = montarPlano(
+    { ...SUFICIENTE, strategic_objective: "upsell_premium" },
+    "essencial",
+    "lixo_que_nao_e_enum",
   );
   if (!r.ok) throw new Error("deveria ter montado");
   assertEquals(r.plano.strategic_objective, "upsell_premium");
-  assertEquals(r.avisos, []);
+  assert(r.avisos.length > 0, "deveria ter avisado");
 });
 
 Deno.test("montarPlano: margem nao medida chega ao plano como null, nunca 0", () => {
   const r = montarPlano(
     {
-      approach_strategy: "abordagem",
+      ...SUFICIENTE,
       expected_result: { best_case_margin: null, likely_margin: null, worst_case_margin: null },
       ltv_projection: { current_annual: null, projected_annual: null, growth_pct: null },
     },
@@ -264,7 +292,7 @@ Deno.test("montarPlano: margem nao medida chega ao plano como null, nunca 0", ()
 Deno.test("montarPlano: modo essencial nao carrega campos do estrategico", () => {
   const r = montarPlano(
     {
-      approach_strategy: "abordagem",
+      ...SUFICIENTE,
       approach_strategy_b: "plano B",
       ltv_projection: { current_annual: 1000 },
       expected_result: { likely_margin: 20 },
@@ -283,8 +311,8 @@ Deno.test("montarPlano: modo essencial nao carrega campos do estrategico", () =>
 Deno.test("montarPlano: modo estrategico preserva os campos completos", () => {
   const r = montarPlano(
     {
+      ...SUFICIENTE,
       strategic_objective: "expansao_mix",
-      approach_strategy: "abordagem",
       approach_strategy_b: "plano B",
       implication_question: "quanto custa a parada?",
       offer_transition: "com base nisso...",
@@ -355,6 +383,35 @@ Deno.test("statusDeErroIa: 402 continua sendo 402 (a falha que motivou a migraca
 Deno.test("statusDeErroIa: status desconhecido ou ausente devolve null", () => {
   assertEquals(statusDeErroIa(418), null);
   assertEquals(statusDeErroIa(undefined), null);
+});
+
+// ---------------------------------------------------------------------------
+// skip legítimo × erro real da RPC
+// ---------------------------------------------------------------------------
+
+Deno.test("ehSkipLegitimoDaRpc: race de reatribuicao e skip", () => {
+  // Mensagens reais da RPC em produção (conferidas com pg_get_functiondef).
+  assert(
+    ehSkipLegitimoDaRpc(
+      "Carteira do cliente 123 foi reatribuída durante a geração (dono atual diverge do esperado)",
+    ),
+    "race de posse deveria ser skip",
+  );
+  assert(ehSkipLegitimoDaRpc("Cliente 123 sem dono de carteira"), "sem dono deveria ser skip");
+  assert(
+    ehSkipLegitimoDaRpc("Cliente 123 está mascarado na carteira (eligible) — plano tático não é materializado"),
+    "mascarado deveria ser skip",
+  );
+});
+
+Deno.test("ehSkipLegitimoDaRpc: falha de INFRA NAO e skip", () => {
+  // Este é o ponto: tratar tudo como skip devolvia ok:true num lote sem nenhum plano.
+  assert(!ehSkipLegitimoDaRpc("canceling statement due to statement timeout"), "timeout é erro");
+  assert(!ehSkipLegitimoDaRpc('invalid input syntax for type numeric: ""'), "cast é erro");
+  assert(!ehSkipLegitimoDaRpc("could not serialize access due to concurrent update"), "serialização é erro");
+  assert(!ehSkipLegitimoDaRpc("Não autenticado"), "auth é erro");
+  assert(!ehSkipLegitimoDaRpc(""), "vazio é erro");
+  assert(!ehSkipLegitimoDaRpc(undefined), "ausente é erro");
 });
 
 // ---------------------------------------------------------------------------
