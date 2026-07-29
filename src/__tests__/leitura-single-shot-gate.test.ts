@@ -86,11 +86,13 @@ const G5 = /(?<!\?)\.data\s*(?:(?:\?\?|\|\|)\s*(?:\[\]|\{\}|0\b|null\b)|as\s[^;\
 // REPROVA. Contagem menor também reprova, pedindo a atualização — a lista só encolhe, e
 // encolhe registrada. Varredura de 2026-07-28, com veredito individual de cada site:
 //
-//  visit-score-recalc-client (6) — L215 classCfgRes e L218 scoresRes JÁ-CORRETOS (o
-//      arquivo checa .error dos dois e degrada de propósito, fail-safe do shadow-mode);
-//      L219 visitsRes, L220 ordersRes, L221 addressRes, L222 profileRes AFETADOS
-//      (nenhum checa .error → "nunca visitou"/"0 pedidos" fabricados no scoring).
-//  visit-score-recalc-batch (2)  — L107 callsRes, L114 visitsRes AFETADOS.
+//  visit-score-recalc-client (2) — era 6: L215 classCfgRes e L218 scoresRes seguem
+//      JÁ-CORRETOS (o arquivo checa .error dos dois e degrada de propósito, fail-safe do
+//      shadow-mode) e são os 2 que ficam. Os 4 AFETADOS (visitsRes, ordersRes, addressRes,
+//      profileRes) passaram a exigirLeitura sob try/catch que devolve {ok:false} — o
+//      contrato de recalcOne, que não pode lançar por cliente dentro do drain.
+//  visit-score-recalc-batch (0)  — era 2: callsRes e visitsRes viraram exigirLeitura com
+//      500 no catch, igual ao try/catch da carteira logo acima. Arquivo QUITADO.
 //  omie-financeiro (2)           — L1744 cfgRes TOLERADO (coluna opcional dre_tributario:
 //      quando não existe o PostgREST devolve ERRO, e checá-lo derrubaria a engine);
 //      L1747 histRes JÁ-CORRETO (`if (histRes.error) throw` na linha acima).
@@ -103,13 +105,15 @@ const G5 = /(?<!\?)\.data\s*(?:(?:\?\?|\|\|)\s*(?:\[\]|\{\}|0\b|null\b)|as\s[^;\
 //      tolerarLeitura e o folhaCatRes virou tolerarColunaAusente (que tolera SÓ os códigos
 //      de coluna inexistente e lança em timeout/RLS). Arquivo QUITADO, fora da baseline.
 //
-// ⇒ 6 AFETADOS, todos no domínio scoring/farmer, com chip de erradicação próprio.
+// ⇒ 0 AFETADOS. Os 6 do domínio scoring/farmer foram erradicados na entrega seguinte à
+// âncora; o que resta na baseline abaixo são os 5 sites JÁ-CORRETOS/TOLERADOS/falso
+// positivo, que a contagem textual enxerga mas o veredito acima absolve. A lista está no
+// piso: só encolhe se um deles for reescrito, e o gate reprova qualquer crescimento.
 const G5_BASELINE: ReadonlyMap<string, number> = new Map([
   ['supabase/functions/carteira-rebuild/index.ts', 1],
   ['supabase/functions/omie-financeiro/index.ts', 2],
   ['supabase/functions/omie-sync-vendas-items/index.ts', 1],
-  ['supabase/functions/visit-score-recalc-batch/index.ts', 2],
-  ['supabase/functions/visit-score-recalc-client/index.ts', 6],
+  ['supabase/functions/visit-score-recalc-client/index.ts', 2],
   ['supabase/functions/whatsapp-send-template/index.ts', 1],
 ]);
 
