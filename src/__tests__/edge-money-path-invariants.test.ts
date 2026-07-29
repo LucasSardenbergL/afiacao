@@ -2350,3 +2350,89 @@ describe('guardrail money-path: erro Omie permanente não prende o sync_all_clie
     ).toMatch(/contas_sem_credencial/);
   });
 });
+
+// ── Canária comportamental dos guards de paginação do omie-financeiro (#1598 → paginacao_probe) ──
+// Assimetria de verificação deste setup: o Supabase é da org do Lovable e o founder não tem conta
+// com acesso ao ref, então a Management API (N2 — prova de VERSÃO da edge) é estruturalmente
+// indisponível (docs/agent/deploy.md #1590). Pós-deploy do #1598 só deu para provar N1 (existência)
+// + rastro do commit do bot; a canária é a ÚNICA prova do COMPORTAMENTO deployado. Os asserts
+// abaixo cobrem a FONTE na main (pegam remoção/rename pelo bot do Lovable); a probe HTTP cobre o
+// DEPLOY; o gate G4/G5 de paginacao-artesanal-gate cobre o REAL-PATH. Nenhum substitui os outros.
+
+const FIN_PAGINACAO = 'supabase/functions/omie-financeiro/index.ts';
+
+describe('guardrail money-path: canária paginacao_probe (omie-financeiro)', () => {
+  const src = read(FIN_PAGINACAO);
+  // Bloco INTEIRO da action, até o próximo case/default.
+  const PROBE_RE = /case "paginacao_probe":[\s\S]*?\n {6}(?=case |default:)/;
+
+  it('sentinela: leu o arquivo real da edge financeira', () => {
+    expect(src).toContain('ListarMovimentos');
+    expect(src).toContain('desfechoVarreduraReversa');
+  });
+
+  it('CANÁRIA de deploy: paginacao_probe existe, é versionada (contrato) e expõe {canary, ok, casos}', () => {
+    expect(
+      src,
+      'canária paginacao_probe ausente/renomeada — sem prova do COMPORTAMENTO deployado (sobra N1 + rastro do commit, mais fraco)',
+    ).toContain('case "paginacao_probe":');
+    const m = src.match(PROBE_RE);
+    expect(m, 'bloco da action paginacao_probe não encontrado').toBeTruthy();
+    const bloco = m![0];
+    expect(bloco, 'a probe perdeu o `canary: true` exigido por docs/agent/deploy.md').toMatch(/canary:\s*true/);
+    // Version marker: sem ele, um deploy INTEGRALMENTE velho compara velho×velho e mente ok:true.
+    expect(bloco, 'a probe perdeu o `contrato` (version marker) — deploy velho voltaria a mentir verde').toMatch(/contrato:\s*"paginacao-guards-v1"/);
+    expect(bloco, 'a probe perdeu o contrato {caso, resolved, expected, ok}').toMatch(/caso[\s\S]{0,120}resolved[\s\S]{0,120}expected[\s\S]{0,120}ok:/);
+    expect(bloco, 'o `ok` agregado deixou de exigir TODOS os casos').toMatch(/casosProbe\.every\(/);
+    // A action tem de ser anunciada no default — é o que discrimina binário velho de action com typo.
+    expect(src, '`paginacao_probe` sumiu de acoes_disponiveis: o default deixaria de discriminar bundle velho').toMatch(/acoes_disponiveis:[\s\S]{0,320}"paginacao_probe"/);
+  });
+
+  it('CANÁRIA read-only: paginacao_probe é dry-run puro (sem Omie, sem DB) e NÃO abre linha em fin_sync_log', () => {
+    const m = src.match(PROBE_RE);
+    expect(m, 'bloco da action paginacao_probe não encontrado').toBeTruthy();
+    const bloco = semComentarios(m![0]);
+    expect(bloco, 'a probe NÃO pode chamar o Omie — deixaria de ser dry-run determinístico').not.toMatch(/callOmie\(/);
+    expect(bloco, 'a probe NÃO pode tocar o DB (.insert/.update/.delete/.upsert/.rpc)').not.toMatch(/\.(insert|update|delete|upsert|rpc)\(/);
+    expect(bloco, 'a probe NÃO pode usar o client supabase').not.toMatch(/\bsupabase\b/);
+    // ⚠️ O invariante que não é óbvio: `logSync` roda ANTES do switch, e DOIS consumidores de frescor
+    // leem fin_sync_log sem filtrar action (`_data_health_compute` do cartão omie_sync_financeiro e
+    // `fin_calcular_confiabilidade`, conferidos via psql-ro). Uma probe logada carimbaria "sync
+    // financeiro recente" nas 3 empresas sem sincronizar nada — canária que envenena o dado que ela
+    // deveria proteger. Sem PROBE_ACTIONS no cálculo do logId, isso volta em silêncio.
+    const semCom = semComentarios(src);
+    expect(semCom, 'sumiu PROBE_ACTIONS — a canária voltaria a abrir linha em fin_sync_log').toMatch(/PROBE_ACTIONS\s*=\s*new Set\(\[[^\]]*"paginacao_probe"/);
+    expect(
+      semCom,
+      'REGRESSÃO: o logId da probe não é mais "" — fin_sync_log ganharia um "complete" que fabrica frescor em _data_health_compute/fin_calcular_confiabilidade',
+    ).toMatch(/usaLogPorCompany \|\| PROBE_ACTIONS\.has\(action\)[\s\S]{0,80}\?\s*""/);
+  });
+
+  it('CANÁRIA cobre os 5 helpers e os casos que se falsificam MUTUAMENTE', () => {
+    const m = src.match(PROBE_RE);
+    expect(m, 'bloco da action paginacao_probe não encontrado').toBeTruthy();
+    const bloco = m![0];
+    // Um helper sempre-X tem de reprovar algum caso. Os pares abaixo são o que garante isso.
+    for (const helper of ['proximoTotalPaginas(', 'avaliarPagina(', 'desfechoVarreduraReversa(', 'fingerprintPagina(', 'listaOmie<']) {
+      expect(bloco, `a probe deixou de exercitar ${helper} — o helper deployado ficaria sem prova`).toContain(helper);
+    }
+    for (const caso of [
+      // veredito de página: sem o par processar/anomalia/fim, um helper constante passaria
+      'pagina_com_itens_processar', 'pagina_vazia_ANTES_do_piso_anomalia', 'pagina_vazia_NO_piso_fim', 'pagina_vazia_ALEM_do_piso_fim',
+      // piso monotônico: crescer + os três "não encolhe" (ausente/0/menor) + o fail-fast do teto
+      'piso_cresce_com_declaracao_maior', 'piso_NAO_encolhe_sem_declaracao', 'piso_NAO_encolhe_com_declaracao_zero',
+      'piso_NAO_encolhe_com_declaracao_menor', 'teto_anti_runaway_LANCA',
+      // varredura reversa: completa só com sonda vazia E descida inteira
+      'reversa_desceu_tudo_e_sonda_VAZIA_completa', 'reversa_sonda_COM_dado_nao_completa_cursor_na_sonda', 'reversa_parou_no_meio_cursor_na_pagina_atual',
+      // fingerprint: o furo do `1ºcódigo:count` + determinismo (senão um hash aleatório passaria)
+      'fingerprint_NAO_colide_com_1o_codigo_ausente', 'fingerprint_deterministico_mesma_pagina',
+      // listaOmie: os dois lados — `[]` de verdade passa, ausente/null LANÇA
+      'lista_array_de_verdade_passa', 'lista_vazia_de_verdade_e_fim_legitimo', 'lista_campo_AUSENTE_lanca', 'lista_campo_NULL_lanca',
+    ]) {
+      expect(bloco, `a probe perdeu o caso ${caso} — a enumeração deixa de falsificar mutuamente`).toContain(caso);
+    }
+    // O caso negativo do listaOmie só vale se a exceção for CAPTURADA e AFIRMADA (deixar vazar
+    // derrubaria a probe inteira em 500 e o founder leria "edge quebrada", não "guard ausente").
+    expect(bloco, 'a probe deixou de capturar/afirmar o LANÇA do listaOmie').toMatch(/catch[\s\S]{0,120}lancou:\s*true/);
+  });
+});

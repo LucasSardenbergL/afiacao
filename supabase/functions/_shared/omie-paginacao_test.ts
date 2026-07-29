@@ -302,3 +302,64 @@ Deno.test("INVARIANTE — abandono e fim NUNCA devolvem hasMore (senão a conta 
 Deno.test("MAX_PAGINAS_POS_ESTOQUE preservado (500 — folga >10× sobre o maior uso atual)", () => {
   assertEquals(MAX_PAGINAS_POS_ESTOQUE, 500);
 });
+
+// ════════ CONTROLE DE CALIBRAÇÃO da canária `paginacao_probe` (omie-financeiro) ════════
+// "Canária que não discrimina é teatro verde" (docs/agent/deploy.md): a fixture tem de exercitar o
+// comportamento que MUDOU, e é preciso PROVAR que sob a implementação ANTIGA ela ficaria vermelha.
+// Sem estes asserts, a probe só provaria que a edge responde.
+//
+// Cada bloco abaixo reimplementa a forma PRÉ-#1598 e roda o MESMO input do fixture homônimo da
+// probe, exigindo que o resultado DIVIRJA do `expected` que ela carrega. Os nomes dos casos são os
+// da probe de propósito — renomear lá sem atualizar aqui é ruído que se vê no diff.
+// ⚠️ O que isto prova é a DISCRIMINAÇÃO da fixture (a escolha dos inputs). Que o helper deployado
+// está certo é a probe em si; que o real-path usa os helpers é o gate G4/G5
+// (src/__tests__/paginacao-artesanal-gate.test.ts). Três provas distintas, nenhuma substitui outra.
+
+// A forma PRÉ-#1353: o teto era recalculado POR RESPOSTA, sem memória do maior já declarado.
+const tetoPorResposta = (declarado: number | undefined) => declarado || 1;
+
+Deno.test("calibração: `piso_NAO_encolhe_sem_declaracao` fica VERMELHO sob o `|| 1` histórico", () => {
+  // Resposta intermediária sem o campo degradava o teto para 1. A canária espera
+  // {teto:5, veredito:"anomalia"}; a forma antiga produz teto 1 e "fim" — exatamente o carimbo de
+  // completude sobre retrato parcial que o #1353 pagou.
+  assertEquals(tetoPorResposta(undefined), 1);
+  assertEquals(avaliarPagina(0, 3, tetoPorResposta(undefined)), "fim");
+  assertEquals(avaliarPagina(0, 3, proximoTotalPaginas(5, undefined, 500)), "anomalia");
+});
+
+Deno.test("calibração: `piso_NAO_encolhe_com_declaracao_menor` fica VERMELHO sob o total por-resposta", () => {
+  // Declaração MENOR vencia a anterior: teto 3, e a p4 vazia passava por "fim" (retrato curto).
+  assertEquals(tetoPorResposta(3), 3);
+  assertEquals(avaliarPagina(0, 4, tetoPorResposta(3)), "fim");
+  assertEquals(avaliarPagina(0, 4, proximoTotalPaginas(5, 3, 500)), "anomalia");
+});
+
+Deno.test("calibração: `reversa_sonda_COM_dado_...` fica VERMELHO sob o `complete = pagina < 1`", () => {
+  const paginaFinal = 0;
+  // Forma antiga: descer até 1 bastava para completar (e zerar o cursor) — com o topo sub-reportado,
+  // as páginas MAIS RECENTES nunca voltavam a ser pedidas.
+  const antigo = { complete: paginaFinal < 1, nextPage: paginaFinal < 1 ? null : paginaFinal };
+  assertEquals(antigo, { complete: true, nextPage: null });
+  assertEquals(
+    desfechoVarreduraReversa({ paginaFinal, inicioVarredura: 80, tetoDeclarado: 80, topoVerificadoVazio: false, paginaSonda: 81 }),
+    { complete: false, nextPage: 81 },
+  );
+});
+
+Deno.test("calibração: `fingerprint_NAO_colide_com_1o_codigo_ausente` fica VERMELHO sob `1ºcódigo:count`", () => {
+  // Forma antiga: duas páginas CHEIAS e DIFERENTES cujo 1º título não tem código davam a MESMA
+  // string. A canária espera {colide:false}; a forma antiga responde {colide:true}.
+  const antigo = (codigos: ReadonlyArray<number | null>) => `${codigos[0] ?? ""}:${codigos.length}`;
+  assertEquals(antigo([null, 102, 103]) === antigo([null, 902, 903]), true);
+  assertEquals(fingerprintPagina([null, 102, 103]) === fingerprintPagina([null, 902, 903]), false);
+});
+
+Deno.test("calibração: `lista_campo_AUSENTE_lanca` fica VERMELHO sob o `|| []` histórico", () => {
+  // `listaOmie` é helper LOCAL do omie-financeiro (não importável aqui: o index.ts tem import
+  // remoto e o test:edges roda --no-remote). O que se prova aqui é a fixture: sob a forma antiga
+  // ela produz {lancou:false, itens:0} contra o {lancou:true, itens:null} que a canária espera —
+  // ou seja, um retorno sem o array viraria "página vazia" = FIM, com a cauda faltando.
+  const resposta: Record<string, unknown> = { nTotPaginas: 3 };
+  const antigo = (resposta["movimentos"] as unknown[] | undefined) || [];
+  assertEquals({ lancou: false, itens: antigo.length }, { lancou: false, itens: 0 });
+});
