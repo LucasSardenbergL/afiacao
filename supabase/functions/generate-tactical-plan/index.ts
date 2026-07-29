@@ -1,6 +1,15 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
+import Anthropic from "npm:@anthropic-ai/sdk@^0.93.0";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
+import {
+  extrairToolUseUnico,
+  MODELO_PADRAO,
+  objetoDaTool,
+  statusDoErro,
+  traduzirErroAnthropic,
+} from "../_shared/anthropic.ts";
+import { normalizarPlano, planoTemConteudo, toolDoModo } from "./plano-tools.ts";
 import { fetchAll } from "../_shared/paginate.ts";
 import { avaliarCanariaMargem, calcularClusterMargin, classifyProfile, margemConhecida, selectObjective } from "../_shared/tactical-margem.ts";
 import { inicioDiaOperacional } from "../_shared/dia-operacional.ts";
@@ -199,8 +208,8 @@ serve(async (req) => {
       (body as Record<string, unknown>)._derived = { healthScore, churnRisk, mixGap, marginPct, clusterMargin, expansionPotential: num(score.expansion_score), customerProfile, strategicObjective };
     }
 
-    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
-    if (!LOVABLE_API_KEY) {
+    const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY');
+    if (!ANTHROPIC_API_KEY) {
       return new Response(
         JSON.stringify({ error: 'AI não configurada' }),
         { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -296,69 +305,65 @@ ${JSON.stringify(diagnosticData || {}, null, 2)}
 Objeções históricas do cluster:
 ${JSON.stringify(historicalObjections || [], null, 2)}`;
 
-    const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'google/gemini-3-flash-preview',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt },
-        ],
+    const tool = toolDoModo(mode);
+    let resposta;
+    try {
+      resposta = await new Anthropic({ apiKey: ANTHROPIC_API_KEY }).messages.create({
+        model: MODELO_PADRAO,
+        max_tokens: 4000,
         temperature: 0.4,
-      }),
-    });
-
-    if (!response.ok) {
-      const errText = await response.text();
-      console.error('AI error:', response.status, errText);
-      
-      if (response.status === 429) {
-        return new Response(
-          JSON.stringify({ error: 'Limite de requisições excedido. Tente novamente em alguns segundos.' }),
-          { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-      if (response.status === 402) {
-        return new Response(
-          JSON.stringify({ error: 'Créditos de IA esgotados.' }),
-          { status: 402, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-      
+        system: systemPrompt,
+        tools: [tool],
+        // Sem `disable_parallel_tool_use` o modelo poderia devolver o plano em
+        // vários blocos e o consumo pegaria só um pedaço.
+        tool_choice: { type: 'tool', name: tool.name, disable_parallel_tool_use: true },
+        messages: [{ role: 'user', content: userPrompt }],
+      });
+    } catch (e: unknown) {
+      const status = statusDoErro(e);
+      console.error('[generate-tactical-plan] erro na API da Anthropic:', status, e instanceof Error ? e.message : e);
+      const mapeado = traduzirErroAnthropic(status);
       return new Response(
-        JSON.stringify({ error: 'Erro na geração do plano tático' }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        JSON.stringify({ error: mapeado?.mensagem ?? 'Erro na geração do plano tático' }),
+        { status: mapeado?.http ?? 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    const aiResult = await response.json();
-    const content = aiResult.choices?.[0]?.message?.content || '';
+    // Truncou = plano cortado no meio. Gravar metade dele entregaria à vendedora
+    // uma tela preenchida sem as objeções/perguntas que faltaram.
+    if (resposta.stop_reason === 'max_tokens') {
+      console.error('[generate-tactical-plan] resposta truncada');
+      return new Response(
+        JSON.stringify({ error: 'Plano truncado na geração. Tente novamente.' }),
+        { status: 422, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
 
-    let plan;
-    try {
-      const cleanContent = content.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-      plan = JSON.parse(cleanContent);
-    } catch {
-      plan = {
-        strategic_objective: 'expansao_mix',
-        approach_strategy: 'Abordagem consultiva padrão.',
-        diagnostic_questions: [
-          { question: 'Como está o ritmo de produção atualmente?', purpose: 'Entender contexto', expected_insight: 'Volume de trabalho' },
-          { question: 'Quais ferramentas mais utilizam no dia a dia?', purpose: 'Mapear mix', expected_insight: 'Oportunidades de cross-sell' },
-          { question: 'Têm tido algum problema com durabilidade das afiações?', purpose: 'Identificar dores', expected_insight: 'Qualidade percebida' },
-        ],
-        implication_question: 'Quanto isso impacta na produtividade mensal da equipe?',
-        offer_transition: 'Com base no que você me contou, temos uma solução que pode ajudar...',
-        probable_objections: [],
-      };
+    // ANTES: pedia JSON no texto, fazia JSON.parse e, no catch, montava um plano
+    // GENÉRICO que era gravado como se fosse gerado para este cliente. Agora não
+    // existe plano inventado: sem tool_use válido, a edge falha explícito.
+    const extraido = extrairToolUseUnico(resposta.content);
+    const bruto = extraido.ok ? objetoDaTool(extraido.input) : null;
+    if (!bruto) {
+      const motivo = extraido.ok ? 'input_invalido' : extraido.motivo;
+      console.error('[generate-tactical-plan] sem plano utilizável:', motivo);
+      return new Response(
+        JSON.stringify({ error: 'A IA não devolveu um plano utilizável. Tente novamente.' }),
+        { status: 422, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    const plan = normalizarPlano(bruto);
+    if (!planoTemConteudo(plan)) {
+      console.error('[generate-tactical-plan] plano sem conteúdo acionável');
+      return new Response(
+        JSON.stringify({ error: 'A IA devolveu um plano vazio. Tente novamente.' }),
+        { status: 422, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
     }
 
     // Add plan_type to response
-    plan.plan_type = mode;
+    const planComTipo = { ...plan, plan_type: mode };
 
     // Modo self-contained (cron): grava o plano via RPC-fronteira criar_plano_tatico.
     // A posse (farmer_id) é re-resolvida server-side de carteira_assignments — não confiamos
@@ -402,7 +407,7 @@ ${JSON.stringify(historicalObjections || [], null, 2)}`;
     }
 
     return new Response(
-      JSON.stringify(plan),
+      JSON.stringify(planComTipo),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   } catch (error) {
