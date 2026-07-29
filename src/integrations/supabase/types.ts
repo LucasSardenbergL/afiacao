@@ -18117,6 +18117,19 @@ export type Database = {
         Returns: string
       }
       _tint_preflight: { Args: never; Returns: Json }
+      _tint_watchdog_fase5_transicao: {
+        Args: {
+          p_company: string
+          p_ctx: Json
+          p_fator?: number
+          p_msg: string
+          p_n: number
+          p_sev: string
+          p_tipo: string
+          p_titulo: string
+        }
+        Returns: undefined
+      }
       _vendas_familia_ausente_lista_email: {
         Args: { p_limit?: number }
         Returns: string
@@ -19508,6 +19521,7 @@ export type Database = {
         Returns: Json
       }
       tint_watchdog_corante_check: { Args: never; Returns: undefined }
+      tint_watchdog_fase5_check: { Args: never; Returns: undefined }
       upsert_push_subscription: {
         Args: {
           p_endpoint: string
