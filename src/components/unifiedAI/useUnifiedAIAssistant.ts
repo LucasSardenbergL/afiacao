@@ -245,9 +245,22 @@ export function useUnifiedAIAssistant({
     } catch (e: unknown) {
       console.error('[UnifiedOrder AI] Falha ao analisar pedido:', e);
       setAiFallbackActive(true);
-      setAiMessage('A análise inteligente está indisponível no momento. Você pode continuar montando o pedido manualmente.');
-      toast.success('Análise indisponível', {
-        description: 'Continue montando o pedido manualmente. Você pode tentar novamente depois.',
+      // A edge devolve motivo ACIONÁVEL no corpo (foto HEIC que precisa virar
+      // JPEG, resposta truncada, créditos esgotados) e o invokeFunction o
+      // propaga na mensagem do erro. Trocar isso pelo texto genérico escondia
+      // do vendedor por que a foto dele não entrou na análise.
+      const motivoDoServidor =
+        e instanceof Error && e.name === 'EdgeFunctionError' &&
+        !/non-2xx status code/i.test(e.message)
+          ? e.message
+          : null;
+      setAiMessage(
+        motivoDoServidor ??
+        'A análise inteligente está indisponível no momento. Você pode continuar montando o pedido manualmente.',
+      );
+      toast.success(motivoDoServidor ? 'Análise não concluída' : 'Análise indisponível', {
+        description:
+          motivoDoServidor ?? 'Continue montando o pedido manualmente. Você pode tentar novamente depois.',
       });
     } finally {
       setIsAnalyzing(false);
