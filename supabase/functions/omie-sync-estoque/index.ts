@@ -8,6 +8,12 @@
 
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff, corsHeaders as sharedCors } from "../_shared/auth.ts";
+import {
+  avaliarPagina,
+  MAX_PAGINAS_POS_ESTOQUE,
+  proximoTotalPaginas,
+  varreduraTruncada as detectarVarreduraTruncada,
+} from "../_shared/omie-paginacao.ts";
 
 const corsHeaders = {
   ...sharedCors,
@@ -103,8 +109,12 @@ async function callOmie<T>(
         throw new Error(`HTTP ${res.status}: ${body.slice(0, 300)}`);
       }
       const json = (await res.json()) as T & { faultcode?: string; faultstring?: string };
-      if (json.faultcode) {
-        throw new Error(`Omie fault ${json.faultcode}: ${json.faultstring}`);
+      // faultstring SEM faultcode também é fault (achado Codex do challenge deste PR): passar
+      // adiante virava "página 1/1 vazia" → inativação em massa no físico / zeros no pendente.
+      // Os loops deste edge nunca pedem além do total declarado, então fault de fim-de-paginação
+      // não chega aqui — fault é sempre erro. Transiente re-tenta pelo retry externo.
+      if (json.faultcode || json.faultstring) {
+        throw new Error(`Omie fault ${json.faultcode ?? "(sem faultcode)"}: ${json.faultstring}`);
       }
       return json;
     } catch (err) {
@@ -241,8 +251,11 @@ async function callOmiePedidos(
       }),
     });
     const text = await res.text();
-    let json: OmiePedResponse;
-    try { json = JSON.parse(text) as OmiePedResponse; } catch { json = {} as OmiePedResponse; }
+    // 200 com corpo não-JSON re-LANÇA (abaixo): o `catch { json = {} }` antigo colapsava a
+    // resposta malformada com `pedidos_pesquisa ?? []` → "fim" → pendente PARCIAL gravado
+    // como confiável (a mesma troca de "não consegui ler" por "não existe" da classe #1581).
+    let json: OmiePedResponse | null;
+    try { json = JSON.parse(text) as OmiePedResponse; } catch { json = null; }
     if (res.status === 429 || (json?.faultstring && /rate limit/i.test(json.faultstring))) {
       console.warn(`[omie-sync-estoque] PesquisarPedCompra 429 (tentativa ${attempt}/${MAX_RETRIES}), aguardando 5s`);
       await new Promise((r) => setTimeout(r, 5000));
@@ -254,6 +267,9 @@ async function callOmiePedidos(
     // tratar como fim via FIM_SEM_REGISTROS (conservadora — só o "fim" casa; erro real do Omie ainda lança abaixo).
     if (!res.ok && json?.faultstring && FIM_SEM_REGISTROS.test(json.faultstring)) return json;
     if (!res.ok) throw new Error(`PesquisarPedCompra HTTP ${res.status}: ${text.slice(0, 300)}`);
+    if (json === null) {
+      throw new Error(`PesquisarPedCompra HTTP ${res.status} com corpo não-JSON (malformada ≠ fim): ${text.slice(0, 200)}`);
+    }
     return json;
   }
   throw new Error("PesquisarPedCompra: rate limit excedido");
@@ -482,24 +498,37 @@ async function gravarMarcadorSentinela(
   }
 }
 
+// Teto anti-runaway do ListarSaldoPendente: 200 × 500/pág = 100k linhas de saldo >> realidade COLACOR.
+const MAX_PAGINAS_SALDO_PENDENTE = 200;
+
 async function computePendenteViaSaldoPendente(
   appKey: string, appSecret: string, habilitadoMap: Map<string, string | null>,
 ): Promise<Map<string, number>> {
   const pendente = new Map<string, number>();
   let pPag = 1, pTot = 1;
-  do {
+  while (pPag <= pTot) {
     const resp = await callOmie<OmieSaldoPendenteResponse>(
       appKey, appSecret, "ListarSaldoPendente",
       { pagina: pPag, registros_por_pagina: PAGE_SIZE, tipo: "ENTRADA" },
     );
-    pTot = resp.total_de_paginas ?? 1;
-    for (const item of resp.saldo_pendente_lista ?? []) {
+    // Piso monotônico + teto fail-fast (_shared/omie-paginacao.ts): o `?? 1` por resposta
+    // encolhia o teto e um pendente PARCIAL era gravado com pendenteConfiavel=true.
+    pTot = proximoTotalPaginas(pTot, resp.total_de_paginas, MAX_PAGINAS_SALDO_PENDENTE);
+    const lista = resp.saldo_pendente_lista ?? [];
+    const veredicto = avaliarPagina(lista.length, pPag, pTot);
+    if (veredicto === "anomalia") {
+      // Página vazia ANTES do fim declarado = fault disfarçado; o caller COLACOR converte o
+      // throw em pendente NÃO-confiável → coluna PRESERVADA (nunca o parcial, nunca zeros).
+      throw new Error(`página ${pPag}/${pTot} do ListarSaldoPendente veio vazia antes do fim declarado — abortando (retrato parcial)`);
+    }
+    if (veredicto === "fim") break;
+    for (const item of lista) {
       const codigo = String(item.id_prod ?? "").trim();
       if (!codigo || !habilitadoMap.has(codigo)) continue;
       pendente.set(codigo, (pendente.get(codigo) ?? 0) + Number(item.qtde_entrada ?? 0));
     }
     pPag++;
-  } while (pPag <= pTot);
+  }
   console.log(`[omie-sync-estoque] ListarSaldoPendente: ${pendente.size} SKUs com entrada pendente.`);
   return pendente;
 }
@@ -597,15 +626,25 @@ Deno.serve(async (req) => {
     let page = 1;
     let totalPaginas = 1;
     let totalRegistros = 0;
+    let registrosLidos = 0;
 
-    do {
+    while (page <= totalPaginas) {
       const resp = await callOmie<OmiePosEstoqueResponse>(
         appKey, appSecret, "ListarPosEstoque",
         { nPagina: page, nRegPorPagina: PAGE_SIZE, dDataPosicao: dataPosicao, cExibeTodos: "S" },
       );
-      totalPaginas = resp.nTotPaginas ?? 1;
+      // Piso monotônico + teto fail-fast (_shared/omie-paginacao.ts): o `?? 1` por resposta
+      // encolhia o teto e a varredura PARCIAL completava — SKU habilitado da cauda perdida
+      // virava ativo_no_omie=false + evento sku_inativado FALSO (money-path da reposição).
+      totalPaginas = proximoTotalPaginas(totalPaginas, resp.nTotPaginas, MAX_PAGINAS_POS_ESTOQUE);
       totalRegistros = resp.nTotRegistros ?? totalRegistros;
       const lista = resp.produtos ?? [];
+      const veredicto = avaliarPagina(lista.length, page, totalPaginas);
+      if (veredicto === "anomalia") {
+        throw new Error(`página ${page}/${totalPaginas} do ListarPosEstoque veio vazia antes do fim declarado — abortando (retrato parcial)`);
+      }
+      if (veredicto === "fim") break;
+      registrosLidos += lista.length;
       for (const item of lista) {
         const codigo = String(item.nCodProd ?? "").trim();
         if (!codigo) continue;
@@ -621,7 +660,7 @@ Deno.serve(async (req) => {
         `[omie-sync-estoque] ListarPosEstoque pág ${page}/${totalPaginas} — ${lista.length} itens, ${encontrados.size}/${totalEsperado} casados.`,
       );
       page++;
-    } while (page <= totalPaginas);
+    }
 
     console.log(
       `[omie-sync-estoque] varredura concluída: ${totalRegistros} no Omie, ${encontrados.size}/${totalEsperado} habilitados encontrados.`,
@@ -646,7 +685,12 @@ Deno.serve(async (req) => {
         pendenteEntrada = await computePendenteViaSaldoPendente(appKey, appSecret, habilitadoMap);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        console.warn(`[omie-sync-estoque] COLACOR ListarSaldoPendente falhou (não-fatal): ${msg}`);
+        // Não-fatal ≠ zerar: sem confiável=false, o Map vazio do catch virava
+        // estoque_pendente_entrada=0 em TODO SKU COLACOR (fabricação). false OMITE a coluna
+        // no upsert → o último valor bom é PRESERVADO (mesmo mecanismo do ramo OBEN).
+        pendenteConfiavel = false;
+        pendenteProblemas = [msg];
+        console.warn(`[omie-sync-estoque] COLACOR ListarSaldoPendente falhou (não-fatal, pendente PRESERVADO): ${msg}`);
       }
     }
     // [Codex P1 round3] pendente OBEN não confiável → PRESERVADO (físico segue fresco, evita double-buy/ruptura por
@@ -703,10 +747,35 @@ Deno.serve(async (req) => {
       }
     }
 
+    // Falha TOTAL ≠ sucesso parcial (espelho do guard dos irmãos em sync-reprocess): se NENHUM
+    // upsert escreveu, a infra PostgREST está degradada — 'error' honesto via catch (o marcador
+    // 'complete' lá embaixo mentiria frescor pro Sentinela com nada escrito).
+    if (upsertRows.length > 0 && sincronizados === 0) {
+      throw new Error(`todos os ${upsertRows.length} upserts de sku_estoque_atual falharam — nada escrito`);
+    }
+
     // 5) SKUs habilitados que não apareceram → marca inativo + alerta
+    //
+    // ⚠️ SÓ com a varredura PROVADAMENTE completa. `nTotPaginas` é PISO, não teto (o Omie
+    // SUB-REPORTA em listas grandes — docs/agent/sync.md), e o laço acima para no total
+    // declarado: se ele veio curto, a cauda nunca é pedida e "não apareceu" significa
+    // "não li", não "sumiu do Omie". Inativar aí é a fabricação mais cara deste edge —
+    // ativo_no_omie=false + evento sku_inativado FALSO tiram o SKU da reposição (achado P0
+    // do challenge Codex deste PR). O segundo sinal que DISTINGUE os dois casos é o
+    // nTotRegistros que a própria resposta traz (money-path §8: truncar só é legítimo
+    // quando o caller consegue distinguir): lidos < declarados ⇒ retrato truncado ⇒ NÃO
+    // inativa. O físico já gravado segue fresco; o próximo ciclo re-tenta.
+    const varreduraTruncada = detectarVarreduraTruncada(registrosLidos, totalRegistros);
     const naoEncontrados: string[] = [];
-    for (const codigo of habilitadoMap.keys()) {
-      if (!encontrados.has(codigo)) naoEncontrados.push(codigo);
+    if (!varreduraTruncada) {
+      for (const codigo of habilitadoMap.keys()) {
+        if (!encontrados.has(codigo)) naoEncontrados.push(codigo);
+      }
+    } else {
+      console.error(
+        `[omie-sync-estoque] ⚠️ varredura TRUNCADA (${registrosLidos}/${totalRegistros} registros em ${totalPaginas} pág. declaradas) — ` +
+        `inativação de SKU SUSPENSA nesta rodada (não confundir "não li" com "sumiu do Omie").`,
+      );
     }
 
     let alertasNovos = 0;
@@ -813,6 +882,8 @@ Deno.serve(async (req) => {
       pendente_problemas: pendenteProblemas.length,
       paginas_omie: totalPaginas,
       total_produtos_omie: totalRegistros,
+      registros_lidos: registrosLidos,
+      varredura_truncada: varreduraTruncada,
       lista_nao_encontrados: naoEncontrados,
       lista_erros: errosUpsert,
     };
@@ -824,12 +895,25 @@ Deno.serve(async (req) => {
     // (stale/broken) = o alerta de "a-caminho congelado". COLACOR não tem esteira de reposição (o check é
     // OBEN-only); o full dela fica gravado por uniformidade, o pendente não (ListarSaldoPendente é
     // best-effort não-fatal lá — um 'complete' incondicional seria sinal fabricado).
-    await gravarMarcadorSentinela(supabase, MARKER_FULL, empresa, "complete", {
-      trigger: "run",
-      sincronizados,
-      nao_encontrados: naoEncontrados.length,
-      duracao_ms: duracaoMs,
-    });
+    // Truncada ainda avança o last_sync_at (o físico LIDO foi gravado e está fresco), mas NUNCA
+    // como 'complete' limpo: o error_message é o que o watchdog/health enxerga (mesmo contrato do
+    // reprocessOrders — reconcile parcial não derruba a run, e também não mente completude).
+    await gravarMarcadorSentinela(
+      supabase,
+      MARKER_FULL,
+      empresa,
+      "complete",
+      {
+        trigger: "run",
+        sincronizados,
+        nao_encontrados: naoEncontrados.length,
+        duracao_ms: duracaoMs,
+        ...(varreduraTruncada ? { varredura_truncada: true, registros_lidos: registrosLidos, total_registros: totalRegistros } : {}),
+      },
+      varreduraTruncada
+        ? `varredura truncada (${registrosLidos}/${totalRegistros} registros) — inativação de SKU suspensa`
+        : null,
+    );
     if (empresa === "OBEN" && pendenteConfiavel) {
       await gravarMarcadorSentinela(supabase, MARKER_PENDENTE_PO, empresa, "complete", {
         trigger: "run",

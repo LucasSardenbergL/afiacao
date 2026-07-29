@@ -55,6 +55,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff, corsHeaders } from "../_shared/auth.ts";
+import { avaliarPagina, proximoTotalPaginas } from "../_shared/omie-paginacao.ts";
 
 const OMIE_API_URL = "https://app.omie.com.br/api/v1";
 
@@ -146,8 +147,11 @@ function brParaIso(ddmmyyyy: string): string {
 }
 
 // Pagina ListarPosEstoque numa data e devolve mapa nCodProd -> nCMC (só CMC > 0).
-// Para até a página vazia OU até maxPaginas (guard anti-loop; não confiar só em
-// nTotPaginas — armadilha do projeto com a paginação do Omie).
+// Guards de _shared/omie-paginacao.ts: o `|| 1` por resposta encolhia o teto e o teto
+// esgotado RETORNAVA o parcial — que era GRAVADO em cmc_snapshot como se fosse o catálogo
+// da data. Agora: piso monotônico, página vazia antes do fim declarado LANÇA, e declarado
+// acima de maxPaginas LANÇA fail-fast (suba body.maxPaginas se o catálogo crescer — nunca
+// gravar parcial).
 async function cmcPorData(
   account: OmieAccount,
   dDataPosicao: string,
@@ -156,27 +160,32 @@ async function cmcPorData(
   const mapa = new Map<number, number>();
   let pagina = 1;
   let totalPaginas = 1;
+  let paginasLidas = 0;
 
-  while (pagina <= maxPaginas) {
+  while (pagina <= totalPaginas) {
     const result = await callOmie(account, "estoque/consulta/", "ListarPosEstoque", {
       nPagina: pagina,
       nRegPorPagina: 100,
       cExibeTodos: "S", // catálogo inteiro (inclui saldo 0) — queremos o CMC, não só itens com saldo.
       dDataPosicao,
     });
-    totalPaginas = result.nTotPaginas || 1;
+    totalPaginas = proximoTotalPaginas(totalPaginas, result.nTotPaginas, maxPaginas);
     const produtos = result.produtos || [];
-    if (produtos.length === 0) break; // página vazia → fim (guard além do nTotPaginas)
+    const veredicto = avaliarPagina(produtos.length, pagina, totalPaginas);
+    if (veredicto === "anomalia") {
+      throw new Error(`página ${pagina}/${totalPaginas} do ListarPosEstoque (${dDataPosicao}) veio vazia antes do fim declarado — abortando (parcial NÃO gravado)`);
+    }
+    if (veredicto === "fim") break;
+    paginasLidas++;
     for (const prod of produtos) {
       const cod = Number(prod.nCodProd);
       if (!Number.isSafeInteger(cod) || cod <= 0) continue;
       // "Ausente ≠ zero": só guardamos CMC presente e > 0.
       if (typeof prod.nCMC === "number" && prod.nCMC > 0) mapa.set(cod, prod.nCMC);
     }
-    if (pagina >= totalPaginas) break;
     pagina++;
   }
-  return { mapa, paginasLidas: Math.min(pagina, maxPaginas), totalPaginas };
+  return { mapa, paginasLidas, totalPaginas };
 }
 
 // Upsert em lote no cmc_snapshot (idempotente: on conflict do update do cmc/synced_at).
