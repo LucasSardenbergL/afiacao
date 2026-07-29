@@ -78,7 +78,11 @@ export function useAprovadoresCredito(enabled: boolean) {
           .select('user_id')
           .in('commercial_role', ['gerencial', 'estrategico', 'super_admin']),
       ]);
+      // Os DOIS erros importam: `comerciais` ficava de fora, e a falha dela virava "não há
+      // gerencial/estratégico/super_admin" — a exceção de crédito sairia para uma lista de
+      // aprovadores incompleta, sem ninguém perceber que a leitura falhou.
       if (masters.error) throw new Error(masters.error.message);
+      if (comerciais.error) throw new Error(comerciais.error.message);
       const ids = [
         ...new Set([
           ...(masters.data ?? []).map((r) => r.user_id),

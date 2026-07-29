@@ -205,17 +205,28 @@ export function useBuscaProdutoMapeamento(termo: string, codForn: string | null)
     staleTime: 60_000,
     queryFn: async () => {
       const sel = 'id, omie_codigo_produto, codigo, descricao, unidade, account, ativo';
-      const sugestoes = codForn
-        ? ((await supabase.from('omie_products').select(sel).eq('codigo', codForn).limit(4)).data ?? [])
-        : [];
-      const busca = termoUtil
-        ? ((await supabase
-            .from('omie_products')
-            .select(sel)
-            .or(ilikeOr(['codigo', 'descricao'], termo))
-            .order('descricao', { ascending: true })
-            .limit(20)).data ?? [])
-        : [];
+      // O `await` INLINE tornava o `error` inalcançável por construção (ninguém guardava a
+      // resposta): uma falha de RLS/timeout saía como "nenhum produto encontrado" na tela de
+      // mapeamento, e o operador amarraria o item do cliente ao SKU errado — ou criaria um
+      // mapeamento novo para um produto que já existe. Guardar a resposta e lançar deixa o
+      // react-query mostrar o erro em vez de uma lista vazia convincente.
+      let sugestoes: unknown[] = [];
+      if (codForn) {
+        const resp = await supabase.from('omie_products').select(sel).eq('codigo', codForn).limit(4);
+        if (resp.error) throw resp.error;
+        sugestoes = resp.data ?? [];
+      }
+      let busca: unknown[] = [];
+      if (termoUtil) {
+        const resp = await supabase
+          .from('omie_products')
+          .select(sel)
+          .or(ilikeOr(['codigo', 'descricao'], termo))
+          .order('descricao', { ascending: true })
+          .limit(20);
+        if (resp.error) throw resp.error;
+        busca = resp.data ?? [];
+      }
       return {
         sugestoes: sugestoes as unknown as ProdutoMapeado[],
         busca: busca as unknown as ProdutoMapeado[],
