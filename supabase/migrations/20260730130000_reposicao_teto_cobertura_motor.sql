@@ -1,58 +1,88 @@
--- Migration: embalagem econômica DENTRO do motor de pedidos (QT↔GL) + consolidação de estoque de grupo
--- ⚠️ APLICADA MANUALMENTE no SQL Editor do Lovable em 2026-06-26 (NÃO vai em supabase/migrations/ — CLAUDE.md §5;
---     é CREATE OR REPLACE de função existente). Este arquivo é a FONTE versionada + fixture da regressão db/test-embalagem-motor.sh.
--- Spec: docs/superpowers/specs/2026-06-26-reposicao-embalagem-no-motor-spec.md
--- Money-path. Recria gerar_pedidos_sugeridos_ciclo (pré-flight pg_get_functiondef feito; base = prod 26/06).
+-- Migration: TETO DE COBERTURA pós-compra no motor de reposição (B/C) — cap só-reduz no lote do ciclo normal.
+-- Spec: docs/superpowers/specs/2026-07-29-reposicao-teto-cobertura-motor-spec.md (pós-challenge Codex xhigh).
+-- Money-path. ⚠️ NÃO auto-aplica (nome custom) — colar no SQL Editor do Lovable. Provada em PG17:
+-- db/test-teto-cobertura-motor.sh (falsificada). Fonte viva do corpo: db/embalagem-motor-rpc.sql
+-- (guard de paridade src/lib/reposicao/__tests__/embalagem-motor-paridade.test.ts — por isso o CREATE OR REPLACE
+-- da função é o ÚLTIMO statement deste arquivo, byte-idêntico à fixture do CREATE até EOF).
 --
--- DUAS mudanças cirúrgicas, tudo o mais PRESERVADO:
---   1) CONSOLIDA o estoque no nível do grupo de equivalência (Σ membros: GREATEST(inv,sea) físico + pendente + trânsito).
---      O gatilho passa a olhar o estoque do GRUPO → para de comprar quando há galão parado.
---   2) ESCOLHE a embalagem mais barata por unidade-base (galão), ESTRITO: só troca o quartinho pelo galão
---      quando AMBOS têm preço-app fresco (≤ N dias) + portal-map + catálogo OK, e o galão é estritamente mais barato/base.
---      Senão mantém o quartinho. Custo da linha do galão = preço-app (R$/embalagem), nunca 0.
---
--- Unidade (cravada em prod): qtde_final = nº de EMBALAGENS do SKU; preco_unitario = R$/embalagem; o disparo
--- consome ceil(qtde_final) direto (fator_conversao=1). Quartinho NÃO é tocado (mantém cmc cru).
--- ⚠️ Case: equivalencia/preço_capturado = lower(empresa); parametros/estoque/fornecedor_externo = empresa (upper).
---
--- Revisão pós-Codex (xhigh) — 6 correções vs. o 1º rascunho:
---   P0-a GREATEST(inventory_position.saldo, sku_estoque_atual): galão parado vive em fontes DIFERENTES por SKU.
---   P0-b em_transito do galão × fator_para_base (2 galões em voo = 8 unidades-base, não 2) → anti double-buy.
---   P1-c âncora NÃO pode ser membro fator>1 (galão) de um grupo → impede 2 linhas do mesmo GL.
---   P1-d anti-duplicidade de oportunidade cobre a âncora E o SKU escolhido (galão).
---   P1-e minimo_forcado_manual respeitado também na troca p/ galão (piso aplicado ANTES de dividir pelo fator).
---   P1-f filtros de catálogo (ativo/tipo 04/família/status omie) aplicados ao MEMBRO escolhido, não só à âncora.
--- Granularidade (P2 Codex, aceito): nº_galões = ceil(necessidade / fator) na escala "unidades-âncora" — NUNCA
---   compra menos que o legado QT (herda o descasamento litros↔embalagem pré-existente, fora de escopo).
---
--- ➕ 2026-06-27 — GATE de estoque-NÃO-CONFIRMADO (money-path; spec 2026-06-27-reposicao-gate-estoque-nao-confirmado).
---   Bug provado: cold-start semeia sku_estoque_atual de omie_products.estoque (82% zerado na OBEN), fonte_sync=
---   'cold_start_seed'. Se o motor roda na janela cold-start→ListarPosEstoque, lê o seed=0 e compra por cima de
---   estoque existente. FIX (Codex consult 019f0968 + ausente≠zero): estoque cuja ÚNICA fonte é cold_start_seed (sem
---   inventory_position) é DESCONHECIDO → o motor SUPRIME a sugestão (nível LINHA e GRUPO) + LOGA em
---   reposicao_estoque_nao_confirmado_log. Zero CONFIRMADO (ListarPosEstoque/0) segue comprando — auto-liberante.
---   ⚠️ Esta fixture é SÓ a função; a tabela de log + RLS vivem na migration formal (e nos harnesses de teste).
---   Migration: supabase/migrations/20260627180000_reposicao_gate_estoque_nao_confirmado.sql (corpo da função idêntico).
---
--- ➕ 2026-07-08 — MARCADOR DE RUN (reposicao_motor_run) — a fila da tela ancora no ÚLTIMO recálculo, NÃO no último
---   recálculo QUE TEVE supressão. Bug: run limpo não grava no log de suprimidos → a mensagem "N fora da compra"
---   grudava por até 24h após o sync já ter confirmado o estoque (Codex 2026-07-08 → Opção 2: fonte-de-verdade, não
---   render). A RPC carimba TODO run (limpo ou não) ao fim; a tela lê o último marker (some quando suprimidos_n=0).
---   Tabela reposicao_motor_run + RLS na migration *_reposicao_motor_run_marker.sql (mesmo padrão do log; corpo idêntico).
---
--- ➕ 2026-07-29 — TETO DE COBERTURA pós-compra (B/C) — spec 2026-07-29-reposicao-teto-cobertura-motor-spec.md.
---   Medido em prod: B/C com R$90k acima do alvo; ~R$25k/tri de compras criando cobertura >90d(B)/60d(C); dente de
---   serra 1↔2 nos CZ. CAP só-reduz no lote do ciclo NORMAL: qtde_final ≤ max(floor(teto·d − estoque_efetivo),
---   piso_de_serviço ceil(pp − estoque_efetivo)) — o cap corta o "encher até o máximo" ACIMA do ponto de pedido,
---   nunca a proteção (pp/ss intactos; a recalibração global de jun/2026 segue enterrada). Pós-Codex xhigh:
---   grupos de embalagem FICAM FORA do cap (estoque consolidado QT+GL ÷ demanda só da âncora = subcompra) · config
---   POR EMPRESA (reposicao_teto_cobertura_<empresa>_{ativa,dias_b,dias_c}; flag nasce false, parse regex-blindado
---   fail-off) · classe efetiva = classe_forcada→classe_abc · minimo_forcado_manual vence o teto · linha capada a
---   ZERO sai do pedido (filtro qtde_final>0 centralizado em skus_inseriveis p/ os DOIS INSERTs) e LOGA em
---   reposicao_teto_cobertura_log · rastro no item (qtde_sem_teto, teto_cobertura_aplicado — forward_buying pode
---   sobrescrever qtde_final DEPOIS: exceção documentada à invariante) · capados_n no marker do run.
---   Tabela do log + colunas novas + config na migration *_reposicao_teto_cobertura_motor.sql (corpo idêntico).
+-- O que muda:
+--   1. Tabela reposicao_teto_cobertura_log (rastro de linha capada — capado_zero sai do pedido; sem log seria
+--      subcompra silenciosa). RLS: SELECT e INSERT via private.cap_compras_ler (mesmo predicado do INSERT de
+--      pedido_compra_item — quem completa a RPC já o tem; WITH CHECK true permitiria falsificar o audit, Codex P1).
+--   2. pedido_compra_item ganha qtde_sem_teto + teto_cobertura_aplicado (rastro por item; forward_buying pode
+--      elevar qtde_final DEPOIS do cap — exceção documentada à invariante do teto).
+--   3. reposicao_motor_run ganha capados_n (a tela ancora no último run).
+--   4. Config POR EMPRESA em company_config: reposicao_teto_cobertura_oben_{ativa,dias_b,dias_c}.
+--      A flag nasce 'false' (fase dormente): ligar é decisão do founder (UPDATE ... value='true').
+--   5. gerar_pedidos_sugeridos_ciclo: cap = GREATEST(floor(teto·d − estoque_efetivo), ceil(pp − estoque_efetivo))
+--      em unidades-âncora, só p/ classe efetiva B/C sem grupo de embalagem, sem minimo_forcado, com demanda > 0.
+--      O piso de SERVIÇO preserva o ponto de pedido (nunca cria ruptura abaixo do pp); o cap corta apenas o
+--      "encher até o máximo" acima do pp. Rollback: UPDATE da flag p/ 'false' (função fica, cap desliga).
 
+-- ── 1) Tabela de log ─────────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS public.reposicao_teto_cobertura_log (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  run_id uuid NOT NULL,
+  criado_em timestamptz NOT NULL DEFAULT now(),
+  empresa text NOT NULL,
+  sku_codigo_omie text NOT NULL,
+  sku_descricao text,
+  grupo_codigo text,
+  classe_abc text,
+  teto_dias numeric,
+  demanda_diaria numeric,
+  estoque_efetivo numeric,
+  ponto_pedido numeric,
+  estoque_maximo numeric,
+  cap_teto_ancora numeric,
+  qtde_sem_teto numeric,
+  qtde_final numeric,
+  motivo text NOT NULL CHECK (motivo IN ('capado_zero', 'capado_parcial'))
+);
+COMMENT ON TABLE public.reposicao_teto_cobertura_log IS
+  'Linhas do ciclo normal reduzidas pelo teto de cobertura (unidades-âncora). capado_zero = saiu do pedido.';
+CREATE INDEX IF NOT EXISTS idx_teto_cobertura_log_run ON public.reposicao_teto_cobertura_log (run_id);
+CREATE INDEX IF NOT EXISTS idx_teto_cobertura_log_emp_data ON public.reposicao_teto_cobertura_log (empresa, criado_em DESC);
+
+ALTER TABLE public.reposicao_teto_cobertura_log ENABLE ROW LEVEL SECURITY;
+-- REVOKE por NOME (FROM PUBLIC não tira anon/authenticated — grant explícito do Supabase, database.md).
+REVOKE ALL ON public.reposicao_teto_cobertura_log FROM PUBLIC;
+REVOKE ALL ON public.reposicao_teto_cobertura_log FROM anon;
+REVOKE ALL ON public.reposicao_teto_cobertura_log FROM authenticated;
+GRANT SELECT, INSERT ON public.reposicao_teto_cobertura_log TO authenticated;
+GRANT ALL ON public.reposicao_teto_cobertura_log TO service_role;
+
+DROP POLICY IF EXISTS teto_cobertura_log_sel ON public.reposicao_teto_cobertura_log;
+CREATE POLICY teto_cobertura_log_sel ON public.reposicao_teto_cobertura_log
+  FOR SELECT TO authenticated
+  USING ((SELECT private.cap_compras_ler((SELECT auth.uid()))));
+DROP POLICY IF EXISTS teto_cobertura_log_ins ON public.reposicao_teto_cobertura_log;
+CREATE POLICY teto_cobertura_log_ins ON public.reposicao_teto_cobertura_log
+  FOR INSERT TO authenticated
+  WITH CHECK ((SELECT private.cap_compras_ler((SELECT auth.uid()))));
+
+-- ── 2) Rastro por item + marker do run ───────────────────────────────────────────────────────
+ALTER TABLE public.pedido_compra_item
+  ADD COLUMN IF NOT EXISTS qtde_sem_teto numeric,
+  ADD COLUMN IF NOT EXISTS teto_cobertura_aplicado boolean NOT NULL DEFAULT false;
+COMMENT ON COLUMN public.pedido_compra_item.qtde_sem_teto IS
+  'O que o min-max compraria SEM o teto de cobertura (mesma unidade de qtde_final). NULL = pedido pré-teto.';
+COMMENT ON COLUMN public.pedido_compra_item.teto_cobertura_aplicado IS
+  'true = qtde_final foi reduzida pelo teto no momento da geração (forward_buying pode elevar depois).';
+
+ALTER TABLE public.reposicao_motor_run
+  ADD COLUMN IF NOT EXISTS capados_n integer NOT NULL DEFAULT 0;
+COMMENT ON COLUMN public.reposicao_motor_run.capados_n IS
+  'Linhas reduzidas/retiradas pelo teto de cobertura neste run (reposicao_teto_cobertura_log).';
+
+-- ── 3) Config por empresa (flag dormente — ligar é decisão do founder) ───────────────────────
+INSERT INTO public.company_config (key, value) VALUES
+  ('reposicao_teto_cobertura_oben_ativa', 'false'),
+  ('reposicao_teto_cobertura_oben_dias_b', '90'),
+  ('reposicao_teto_cobertura_oben_dias_c', '60')
+ON CONFLICT (key) DO NOTHING;
+
+-- ── 4) A função (ÚLTIMO statement — byte-idêntico a db/embalagem-motor-rpc.sql do CREATE ao EOF) ──
 CREATE OR REPLACE FUNCTION public.gerar_pedidos_sugeridos_ciclo(p_empresa text DEFAULT 'OBEN'::text, p_data_ciclo date DEFAULT CURRENT_DATE)
  RETURNS TABLE(pedidos_gerados integer, skus_incluidos integer, valor_total_ciclo numeric, bloqueados integer)
  LANGUAGE plpgsql
