@@ -277,9 +277,16 @@ export const useCrossSellEngine = () => {
           supabase
             .from('profiles')
             .select('user_id, name, customer_type, cnae')
-            .in('user_id', batch) as unknown as Promise<{ data: ProfileRow[] | null }>,
+            // O cast declarava só `{ data }` e APAGAVA o `error` do tipo — o compilador
+            // deixava de cobrar a checagem, e um lote que falhasse virava "estes clientes
+            // não têm perfil" no cross-sell (segmento/CNAE ausentes = recomendação errada).
+            .in('user_id', batch) as unknown as Promise<{ data: ProfileRow[] | null; error: { message?: string } | null }>,
         ),
       );
+      const loteComFalha = batchResults.findIndex((r) => r.error);
+      if (loteComFalha >= 0) {
+        throw new Error(`cross-sell: lote ${loteComFalha + 1}/${batchResults.length} de profiles falhou — perfis incompletos, recomendação não calculada`);
+      }
       const allProfiles: ProfileRow[] = batchResults.flatMap((r) => r.data || []);
       const profileMap = new Map<string, ProfileRow>();
       allProfiles.forEach((p) => profileMap.set(p.user_id, p));

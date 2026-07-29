@@ -58,6 +58,20 @@ export function useGamificationScore(userId?: string) {
         supabase.from('orders').select('status, created_at').eq('user_id', targetUserId),
       ]);
 
+      // As CINCO leituras são insumo de um score que é PERSISTIDO logo abaixo
+      // (`upsert` em `gamification_scores`) e alimenta o ranking. Sem esta checagem, uma
+      // falha de RLS/timeout virava "0 ferramentas / 0 treinamentos / 0 indicações" e o
+      // score deflacionado ia para o banco como se fosse medição real — o mesmo padrão do
+      // cron que gravava caixa zero na âncora desta classe (#1600). Lançar cai no `catch`
+      // abaixo: `data` fica null, a tela não mostra score, e NADA é gravado.
+      for (const [nome, res] of [
+        ['user_tools', toolsRes], ['sending_quality_logs', qualityRes],
+        ['training_completions', trainingRes], ['referrals', referralsRes], ['orders', ordersRes],
+      ] as const) {
+        // Sem `new Error(msg, { cause })`: é ES2022 e o projeto compila com lib ES2020
+        // (mesma razão do `comCausa` em lib/postgrest.ts). O código do erro basta aqui.
+        if (res.error) throw new Error(`gamification: leitura de ${nome} falhou (${res.error.code ?? 'sem código'}) — score não calculado`);
+      }
       const tools = toolsRes.data || [];
       const qualityLogs = qualityRes.data || [];
       const trainings = trainingRes.data || [];
