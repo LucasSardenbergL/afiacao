@@ -70,11 +70,15 @@ export function useDetalhesModal({ pedido, open, onOpenChange, onApproved }: Use
 
       // Buscar estoque_minimo de sku_parametros (JOIN manual)
       const skuCodigos = baseItens.map((it) => Number(it.sku_codigo_omie)).filter((n) => !isNaN(n));
-      const { data: params } = await supabase
+      // O `error` NÃO pode ficar de fora da desestruturação: sem ele a falha vira `params`
+      // null → `minMap` vazio → `estoque_minimo: 0` (linha abaixo) exibido como se o SKU
+      // não tivesse mínimo cadastrado. Zero fabricado no dado que baliza reposição.
+      const { data: params, error: paramsErr } = await supabase
         .from('sku_parametros')
         .select('sku_codigo_omie, estoque_minimo')
         .eq('empresa', pedido.empresa)
         .in('sku_codigo_omie', skuCodigos);
+      if (paramsErr) throw paramsErr;
       const minMap = new Map<string, number>();
       (params ?? []).forEach((p) => {
         minMap.set(String(p.sku_codigo_omie), Number(p.estoque_minimo ?? 0));
