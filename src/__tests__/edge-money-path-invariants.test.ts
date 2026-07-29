@@ -2174,3 +2174,179 @@ describe('guardrail money-path: retenção do nid_receb (coluna dedicada + 1 wri
     ).toMatch(/n\.nid_receb\s*!=\s*null/);
   });
 });
+
+// ── Falha do Omie no varredor de contas: PERMANENTE pula a conta, e nunca em silêncio ──────
+// O `sync_all_clients` tratava só o EOF do contrato Omie ("Não existem registros para a
+// página"). Todo OUTRO faultstring caía num `break` cru, que sai do laço SEM avançar `page` e
+// SEM marcar fim real: o cursor voltava apontando para a MESMA conta e a MESMA página, o
+// caller (useAnalyticsSync, `while (true)`) reinvocava na hora — laço quente contra o Omie —
+// e as contas SEGUINTES do array nunca sincronizavam. Uma credencial revogada numa conta
+// derrubava o sync das três. Nada disso tinha teste: o cálculo do cursor era inline.
+//
+// Os invariantes abaixo são TEXTUAIS pelo mesmo motivo dos demais deste arquivo: o deploy de
+// edge no Lovable pode reverter um fix mergeado e commitar a reversão como "Changes". O
+// COMPORTAMENTO das duas decisões (classificar/decidir e cursor da conta) é testado de
+// verdade nos helpers puros, sob Deno: _shared/omie-falha_test.ts e _shared/omie-paginacao_test.ts.
+describe('guardrail money-path: erro Omie permanente não prende o sync_all_clients', () => {
+  const src = read(OMIE_CLIENTE);
+  const caller = read('src/components/analyticsSync/useAnalyticsSync.ts');
+  // Sempre sobre o código SEM comentários: a prosa que EXPLICA o bug cita `break` e
+  // `const hasMore = !fimReal`, e mediria a si mesma (§"O ALVO mente").
+  const bloco = semComentarios(blocoCaseCliente(src, 'sync_all_clients'));
+
+  it('sentinela: os helpers puros da decisão estão importados (detector vivo)', () => {
+    expect(
+      src,
+      'REVERSÃO Lovable? sumiu o import de _shared/omie-falha.ts — a classificação de falha voltou a não existir',
+    ).toMatch(/from "\.\.\/_shared\/omie-falha\.ts"/);
+    expect(
+      src,
+      'REVERSÃO Lovable? sumiu o import de desfechoContaListagem — o cursor da conta voltou a ser inline',
+    ).toMatch(/desfechoContaListagem/);
+  });
+
+  it('os DOIS caminhos de saída do laço classificam a falha e decidem — nenhum `break` cru', () => {
+    // Faultstring do Omie e exceção (transporte esgotado, anomalia de página vazia, teto
+    // anti-runaway do total declarado) são as duas portas para o mesmo laço quente. Cada uma
+    // tem de passar por decidirDesfechoFalha: 2, nem 1 nem 0.
+    expect(
+      count(bloco, 'decidirDesfechoFalha({'),
+      'REGRESSÃO: um dos caminhos de falha do sync_all_clients voltou a sair do laço sem decidir — ' +
+        'cursor parado na mesma conta/página = laço quente + contas seguintes reféns',
+    ).toBe(2);
+    expect(
+      bloco,
+      'REGRESSÃO: o faultstring deixou de ser classificado (o EOF do Omie virou comparação de string solta?)',
+    ).toMatch(/classificarFaultstring\(listResult\.faultstring\)/);
+    // `classificarExcecao`, NÃO `classificarFaultstring`: exceção nunca é o EOF do Omie, e
+    // `fim_de_pagina` é a única classe cujo desfecho não termina (nem retenta nem abandona) —
+    // encaminhá-la do catch faria o laço girar sem sair e sem avançar a página.
+    expect(
+      bloco,
+      'REGRESSÃO: a exceção da página deixou de ser classificada — erro de transporte volta a prender o cursor',
+    ).toMatch(/const classe = classificarExcecao\(pageError\)/);
+    expect(
+      bloco,
+      'REGRESSÃO: o catch voltou a classificar a exceção como resposta do Omie — uma mensagem que cite o EOF vira desfecho que não termina',
+    ).not.toMatch(/classificarFaultstring\(motivo\)/);
+    // Só o EOF do contrato Omie encerra a conta. Se `fim_de_pagina` deixar de ser o gate do
+    // `fimReal`, uma falha qualquer voltaria a poder ser lida como fim (completude fabricada).
+    expect(
+      bloco,
+      'REGRESSÃO: `fimReal` não é mais exclusivo do EOF do contrato Omie',
+    ).toMatch(/classe === "fim_de_pagina"[\s\S]{0,80}fimReal = true/);
+  });
+
+  // Achado Codex P1, o mais grave da revisão: `fetch` NÃO lança em HTTP não-2xx. Um
+  // `{"error":"Service unavailable"}` de um 503 chegava ao laço sem `faultstring`, virava
+  // `clientes_cadastro || []`, e `avaliarPagina(0,1,1)` devolvia "fim" — a conta era encerrada
+  // como CONCLUÍDA, com errors:0 e nenhuma falha, sem passar pelo mecanismo de abandono.
+  it('resposta HTTP não-2xx ou fora do contrato vira FALHA, nunca fim de conta', () => {
+    const wrapper = semComentarios(src);
+    expect(
+      wrapper,
+      'REGRESSÃO: o wrapper voltou a ignorar o status HTTP — um 503 com JSON encerra a conta como concluída',
+    ).toMatch(/if \(!response\.ok\)[\s\S]{0,160}throw new Error\(/);
+    expect(
+      wrapper,
+      'REGRESSÃO: faultcode sem faultstring deixou de ser erro — erro sinalizado que o parse não vê',
+    ).toMatch(/resultado\?\.faultcode[\s\S]{0,200}throw new Error\(/);
+    // `clientes_cadastro || []` é o outro meio do mesmo defeito: transforma QUALQUER corpo
+    // inesperado em "página vazia", e página vazia no fim declarado é fim de conta.
+    expect(
+      bloco,
+      'REGRESSÃO: voltou o `clientes_cadastro || []` — corpo fora do contrato vira página vazia = fim de conta',
+    ).not.toMatch(/clientes_cadastro \|\| \[\]/);
+    expect(
+      bloco,
+      'REGRESSÃO: sumiu a exigência de array no shape da resposta — ausência do array não prova catálogo vazio',
+    ).toMatch(/if \(!Array\.isArray\(clientes\)\)[\s\S]{0,200}throw new Error\(/);
+  });
+
+  it('o retry é opt-in e todo fetch tem deadline (senão sync_addresses estoura os 150s)', () => {
+    const wrapper = semComentarios(src);
+    // Retry ligado para todo caller multiplicava a latência do sync_addresses (30
+    // ConsultarCliente por lote × sleeps) além do orçamento da edge — achado Codex P1.
+    expect(
+      wrapper,
+      'REGRESSÃO: o retry voltou a ser global — os callers de N chamadas por invocação estouram o tempo da edge',
+    ).toMatch(/const TENTATIVAS_PADRAO = 1/);
+    expect(
+      wrapper,
+      'REGRESSÃO: o laço de páginas deixou de pedir retry explícito (ou o pedido virou global)',
+    ).toMatch(/\{ tentativas: 3 \}/);
+    // Fetch sem deadline pendura a invocação e o contador de tentativas nunca avança: o laço
+    // deixa de terminar por inanição, não por decisão.
+    expect(
+      wrapper,
+      'REGRESSÃO: sumiu o deadline do fetch — um request pendurado impede o laço de terminar',
+    ).toMatch(/signal: AbortSignal\.timeout\(/);
+  });
+
+  it('o motivo que sai da edge é redigido: a faultstring de credencial ECOA a app_key', () => {
+    // O motivo é persistido em acoes_execucoes.detalhes e exibido num toast. "Chave de acesso
+    // não cadastrada para o aplicativo [1503123456]" contém a app_key (achado Codex P2, provado
+    // com a fixture do próprio teste) — publicá-la nesses sinks é vazamento, não diagnóstico.
+    expect(
+      count(bloco, 'redigirSegredo('),
+      'REGRESSÃO: algum dos 2 motivos voltou a sair cru — a app_key ecoada pelo Omie vaza para a tabela e para a tela',
+    ).toBe(2);
+  });
+
+  it('o cursor da conta passa pelo helper puro e recebe `contaAbandonada`', () => {
+    expect(
+      bloco,
+      'REGRESSÃO: o hasMore da conta voltou a ser calculado inline — sem teste e sem o ramo de abandono',
+    ).not.toMatch(/const hasMore = !fimReal/);
+    expect(
+      bloco,
+      'REGRESSÃO: desfechoContaListagem perdeu o contaAbandonada — a conta interrompida volta a repetir para sempre',
+    ).toMatch(/desfechoContaListagem\(\{[\s\S]{0,200}contaAbandonada,/);
+  });
+
+  it('abandonar a conta NUNCA é silencioso: a falha viaja no resultado e conta como erro', () => {
+    // O par que impede a troca de um laço quente por uma mentira de sucesso (money-path §8):
+    // o campo rico `falha` para quem o lê, e o `errors` para o número que a tela já mostra.
+    expect(
+      bloco,
+      'REGRESSÃO: o resultado do sync_all_clients não carrega mais a falha — a conta pulada some do relatório',
+    ).toMatch(/falha: falhaConta/);
+    expect(
+      bloco,
+      'REGRESSÃO: conta abandonada deixou de contar erro — um caller antigo leria "0 erros" sobre import parcial',
+    ).toMatch(/if \(contaAbandonada\) accErrors\+\+/);
+  });
+
+  it('o caller acumula a falha ANTES de sair do laço e a tela não diz "concluída"', () => {
+    const corpo = semComentarios(caller);
+    expect(
+      corpo,
+      'REGRESSÃO: o caller parou de acumular as contas interrompidas — a edge pula a conta e ninguém fica sabendo',
+    ).toMatch(/data\?\.falha\?\.conta_abandonada === true/);
+    // A leitura tem de acontecer antes do `if (data?.done === true) break;`: a ÚLTIMA conta
+    // abandonada é justamente o caso em que a falha é a única coisa a reportar.
+    const posFalha = corpo.indexOf('data?.falha?.conta_abandonada');
+    const posBreakDone = corpo.indexOf('if (data?.done === true) break;');
+    expect(posFalha, 'sentinela: sumiu a leitura da falha no caller').toBeGreaterThan(-1);
+    expect(posBreakDone, 'sentinela: sumiu o fim-sentinela `done` do caller').toBeGreaterThan(-1);
+    expect(
+      posFalha,
+      'REGRESSÃO: o caller lê a falha DEPOIS de sair do laço — a falha da última conta se perde',
+    ).toBeLessThan(posBreakDone);
+    // Import parcial tem de LANÇAR, não resolver: `useMutationComRegistro` fecha o registro como
+    // 'sucesso' sempre que a Promise resolve, e aí o card <UltimaExecucao> mostra ✓ depois que o
+    // toast some — estado durável mentindo sobre uma conta que ficou fora (achado Codex P1).
+    expect(
+      corpo,
+      'REGRESSÃO: import com conta interrompida voltou a RESOLVER — acoes_execucoes grava sucesso e o card mostra ✓ sobre import parcial',
+    ).toMatch(/if \(falhas\.length > 0\)[\s\S]{0,400}throw new Error\(/);
+    expect(
+      corpo,
+      'REGRESSÃO: sumiu o guard de progresso do cursor — edge revertida volta a girar na mesma conta/página',
+    ).toMatch(/cursorAtual === cursorAnterior[\s\S]{0,200}throw new Error\(/);
+    expect(
+      corpo,
+      'REGRESSÃO: conta sem credencial voltou a sumir do relatório — o import sai "concluído" com um terço da base fora',
+    ).toMatch(/contas_sem_credencial/);
+  });
+});

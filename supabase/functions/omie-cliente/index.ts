@@ -1,7 +1,20 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { fetchAll } from "../_shared/paginate.ts";
-import { avaliarPagina, MAX_PAGINAS_LISTAGEM, proximoTotalPaginas } from "../_shared/omie-paginacao.ts";
+import {
+  avaliarPagina,
+  desfechoContaListagem,
+  MAX_PAGINAS_LISTAGEM,
+  proximoTotalPaginas,
+} from "../_shared/omie-paginacao.ts";
+import {
+  atrasoRetentativaMs,
+  type ClasseFalhaOmie,
+  classificarExcecao,
+  classificarFaultstring,
+  decidirDesfechoFalha,
+  redigirSegredo,
+} from "../_shared/omie-falha.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -89,12 +102,25 @@ interface OmieListResponse {
   faultcode?: string;
 }
 
+const esperar = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+// Tentativas da MESMA chamada. Default 1 = comportamento histórico, de propósito: retry ligado
+// para TODO caller multiplica a latência dos caminhos que fazem N chamadas por invocação — o
+// `sync_addresses` faz até 30 `ConsultarCliente` por lote, e 30 × 2 sleeps de até 5s passa
+// sozinho dos ~150s de orçamento da edge (achado Codex P1). Quem tem teto de trabalho PRÓPRIO
+// pede mais explicitamente: o laço de páginas do `sync_all_clients` usa 3.
+const TENTATIVAS_PADRAO = 1;
+// Nenhum fetch pode ficar pendurado: sem deadline o contador de tentativas nunca avança, e um
+// laço que depende dele para terminar não termina (achado Codex F — o laço quente por inanição).
+const TIMEOUT_REQUEST_MS = 30_000;
+
 async function callOmieApiWithCredentials(
   endpoint: string,
   call: string,
   params: Record<string, unknown>,
   appKey: string,
-  appSecret: string
+  appSecret: string,
+  opts?: { tentativas?: number },
 ): Promise<OmieListResponse> {
   const body = {
     call,
@@ -103,13 +129,59 @@ async function callOmieApiWithCredentials(
     param: [params],
   };
 
-  const response = await fetch(`${OMIE_API_URL}/${endpoint}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  const maxTentativas = Math.max(1, opts?.tentativas ?? TENTATIVAS_PADRAO);
+  // Só falha TRANSITÓRIA é retentada. Erro PERMANENTE — credencial revogada, app_key inválida —
+  // devolve o mesmo texto em toda tentativa: insistir só queima chamada Omie e orçamento de
+  // tempo. A assinatura NÃO muda: esgotadas as tentativas, o caller recebe a resposta COM a
+  // `faultstring` e decide o desfecho.
+  for (let tentativa = 1; tentativa <= maxTentativas; tentativa++) {
+    try {
+      const response = await fetch(`${OMIE_API_URL}/${endpoint}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(TIMEOUT_REQUEST_MS),
+      });
 
-  return await response.json();
+      const resultado = (await response.json()) as OmieListResponse;
+
+      // `faultstring` PRIMEIRO, inclusive quando vem acompanhada de status de erro: o EOF do
+      // contrato Omie chega às vezes com HTTP 5xx, e tratá-lo como falha de transporte
+      // transformaria fim REAL de conta em conta abandonada.
+      if (resultado?.faultstring) {
+        if (classificarFaultstring(resultado.faultstring) !== "transitorio" || tentativa === maxTentativas) {
+          return resultado;
+        }
+        console.warn(
+          `[omie-cliente] ${call} transitório (tentativa ${tentativa}/${maxTentativas}): ${redigirSegredo(String(resultado.faultstring))}`,
+        );
+        await esperar(atrasoRetentativaMs(tentativa, resultado.faultstring));
+        continue;
+      }
+
+      // Sem faultstring, só um 2xx com corpo dentro do contrato é resposta. `fetch` NÃO lança em
+      // HTTP não-2xx (achado Codex P1): um `{"error":"Service unavailable"}` de um HTTP 503
+      // chegava aqui limpo, virava `clientes_cadastro || []` no laço, e `avaliarPagina(0,1,1)`
+      // devolvia "fim" — a conta era encerrada como CONCLUÍDA, com `errors:0` e nenhuma falha,
+      // sem sequer passar pelo mecanismo de abandono. Completude fabricada pela porta dos fundos.
+      if (!response.ok) {
+        throw new Error(`Erro HTTP ${response.status} do Omie (${call})`);
+      }
+      // `faultcode` sem `faultstring` é a mesma família: erro sinalizado que o parse não enxerga.
+      if (resultado?.faultcode) {
+        throw new Error(`Erro do Omie (${call}): faultcode ${redigirSegredo(String(resultado.faultcode))}`);
+      }
+      return resultado;
+    } catch (erroDaChamada) {
+      // Transporte (fetch/json/timeout) e os throws de contrato acima. Re-LANÇA ao esgotar:
+      // devolver objeto vazio faria o caller ler "sem faultstring e sem clientes" = página vazia
+      // = fim de conta — a ambiguidade que apaga cursor (money-path §9).
+      const vale = classificarExcecao(erroDaChamada) === "transitorio";
+      if (!vale || tentativa === maxTentativas) throw erroDaChamada;
+      await esperar(atrasoRetentativaMs(tentativa));
+    }
+  }
+  throw new Error(`Omie não respondeu a ${call} após ${maxTentativas} tentativas`);
 }
 
 async function callOmieApi(
@@ -141,28 +213,44 @@ interface OmieAccountConfig {
   appSecret: string;
 }
 
+// As 3 contas do grupo, em ordem FIXA — fonte ÚNICA do slug, do rótulo e das env vars.
+//
+// `getOmieAccounts` deriva desta lista e só devolve as contas com os dois secrets presentes: uma
+// conta sem credencial simplesmente SUMIA, e o varredor percorria as restantes respondendo
+// sucesso completo — o import relatava "concluído" com um terço da base fora (achado Codex P1).
+// Esta lista é o denominador contra o qual a ausência vira falha REPORTADA.
+//
+// Derivar (em vez de manter uma segunda lista ao lado do construtor) é o que impede as duas
+// divergirem em silêncio: uma conta acrescentada só aqui nunca seria lida; só lá nunca seria
+// cobrada. O gate `edge-money-path-invariants` conta 3 declarações literais de slug e foi
+// exatamente ele que pegou a duplicação na primeira versão deste bloco.
+const CONTAS_ESPERADAS: ReadonlyArray<
+  { account: OmieAccountSlug; name: string; envKey: string; envSecret: string }
+> = [
+  { account: "colacor_sc", name: "Colacor SC (Afiação)", envKey: "OMIE_COLACOR_SC_APP_KEY", envSecret: "OMIE_COLACOR_SC_APP_SECRET" },
+  { account: "oben", name: "Oben", envKey: "OMIE_OBEN_APP_KEY", envSecret: "OMIE_OBEN_APP_SECRET" },
+  { account: "colacor", name: "Colacor", envKey: "OMIE_COLACOR_APP_KEY", envSecret: "OMIE_COLACOR_APP_SECRET" },
+];
+
 function getOmieAccounts(): OmieAccountConfig[] {
   const accounts: OmieAccountConfig[] = [];
-
-  const colacorScKey = Deno.env.get("OMIE_COLACOR_SC_APP_KEY");
-  const colacorScSecret = Deno.env.get("OMIE_COLACOR_SC_APP_SECRET");
-  if (colacorScKey && colacorScSecret) {
-    accounts.push({ name: "Colacor SC (Afiação)", account: "colacor_sc", appKey: colacorScKey, appSecret: colacorScSecret });
+  for (const conta of CONTAS_ESPERADAS) {
+    const appKey = Deno.env.get(conta.envKey);
+    const appSecret = Deno.env.get(conta.envSecret);
+    if (appKey && appSecret) {
+      accounts.push({ name: conta.name, account: conta.account, appKey, appSecret });
+    }
   }
-
-  const obenKey = Deno.env.get("OMIE_OBEN_APP_KEY");
-  const obenSecret = Deno.env.get("OMIE_OBEN_APP_SECRET");
-  if (obenKey && obenSecret) {
-    accounts.push({ name: "Oben", account: "oben", appKey: obenKey, appSecret: obenSecret });
-  }
-
-  const colacorKey = Deno.env.get("OMIE_COLACOR_APP_KEY");
-  const colacorSecret = Deno.env.get("OMIE_COLACOR_APP_SECRET");
-  if (colacorKey && colacorSecret) {
-    accounts.push({ name: "Colacor", account: "colacor", appKey: colacorKey, appSecret: colacorSecret });
-  }
-
   return accounts;
+}
+
+// Contas do grupo cuja credencial não está configurada nesta edge. Falha PERMANENTE de
+// configuração: nenhuma retentativa resolve, e nenhuma delas pode passar por silêncio.
+function getContasSemCredencial(): Array<{ account: OmieAccountSlug; name: string }> {
+  const presentes = new Set(getOmieAccounts().map((c) => c.account));
+  return CONTAS_ESPERADAS
+    .filter((c) => !presentes.has(c.account))
+    .map((c) => ({ account: c.account, name: c.name }));
 }
 
 async function buscarNomeVendedor(
@@ -911,7 +999,14 @@ serve(async (req) => {
         const maxPages = 3; // Process max 3 pages per call (~150 clients) to stay within timeout
 
         if (accountIndex >= accounts.length) {
-          result = { done: true, message: "All accounts processed" };
+          // Fim da varredura. As contas SEM credencial nunca entraram no laço — sem este campo
+          // elas somem do relatório e o import sai "concluído" com um terço da base fora
+          // (achado Codex P1). O caller as converte em falhas permanentes de configuração.
+          result = {
+            done: true,
+            message: "All accounts processed",
+            contas_sem_credencial: getContasSemCredencial(),
+          };
           break;
         }
 
@@ -937,6 +1032,27 @@ serve(async (req) => {
         let accSkipped = 0;
         let accErrors = 0;
         let pagesProcessed = 0;
+
+        // Teto de tentativas da MESMA página, DENTRO desta invocação. Mora aqui — e não no cursor
+        // — de propósito: um contador transportado degradaria para "sem teto" com qualquer caller
+        // que não o repasse, e "sem teto" é exatamente o laço quente que este fix fecha. A defesa
+        // não pode depender de quem chama.
+        const MAX_TENTATIVAS_PAGINA = 2;
+        let tentativasNaPagina = 0;
+        // Falha que INTERROMPEU esta conta. Nunca fica só no console: viaja no resultado, o caller
+        // acumula e a UI nomeia a conta. Abandonar em silêncio trocaria o laço quente por uma
+        // "importação concluída" mentirosa — pior que travar (money-path §8: truncar é legítimo,
+        // truncar em SILÊNCIO não é).
+        let falhaConta:
+          | {
+            conta: string;
+            account: OmieAccountSlug;
+            pagina: number;
+            classe: ClasseFalhaOmie;
+            motivo: string;
+            conta_abandonada: boolean;
+          }
+          | null = null;
 
         // Códigos JÁ mapeados NESTA conta, pela proof fresca account-correta. Antes vinha de
         // .select("omie_codigo_cliente") do espelho omie_clientes: (a) SEM filtro de conta — e o
@@ -995,28 +1111,69 @@ serve(async (req) => {
               "ListarClientes",
               { pagina: page, registros_por_pagina: 50 },
               account.appKey,
-              account.appSecret
+              account.appSecret,
+              // Retry ligado só aqui: este laço tem teto de trabalho próprio (maxPages) e teto de
+              // tentativas por página, então o pior caso é finito. Os callers interativos ficam
+              // no default de 1 para não multiplicar latência (ver TENTATIVAS_PADRAO).
+              { tentativas: 3 },
             );
 
             if (listResult.faultstring) {
+              const classe = classificarFaultstring(listResult.faultstring);
               // "Não existem registros para a página" NÃO é falha: é o fim REAL da conta no
               // contrato Omie (mesmo tratamento do callOmieVendasApi do omie-vendas-sync). Sem
               // isto, um start_page além do fim (conta que encolheu entre lotes) caía no break
               // de erro com hasMore=true PARA SEMPRE — e a conta presa TRAVA a iteração: as
               // contas seguintes nunca sincronizavam por este caminho.
-              if (String(listResult.faultstring).includes("Não existem registros para a página")) {
+              if (classe === "fim_de_pagina") {
                 fimReal = true;
                 break;
               }
-              console.error(`[sync_all_clients] ${account.name} page ${page} error: ${listResult.faultstring}`);
-              break;
+              console.error(
+                `[sync_all_clients] ${account.name} page ${page} error (${classe}): ${listResult.faultstring}`,
+              );
+              // Todo OUTRO erro caía num `break` cru — que sai sem avançar `page` e sem marcar
+              // fim: o cursor voltava apontando para a MESMA conta e a MESMA página, o caller
+              // reinvocava na hora (laço quente contra o Omie) e as contas seguintes ficavam
+              // reféns. Erro PERMANENTE nunca sai desse estado por retentativa. Agora a classe
+              // decide: permanente abandona a conta na hora, transitório/indeterminado retenta
+              // até o teto e só então abandona — sempre COM o motivo no resultado.
+              tentativasNaPagina++;
+              const desfecho = decidirDesfechoFalha({
+                classe,
+                tentativasNaPagina,
+                maxTentativas: MAX_TENTATIVAS_PAGINA,
+              });
+              falhaConta = {
+                conta: account.name,
+                account: account.account,
+                pagina: page,
+                classe,
+                // redigirSegredo: a faultstring de credencial do Omie ECOA a app_key, e este campo é
+                // persistido em acoes_execucoes.detalhes e exibido num toast (achado Codex P2).
+                motivo: redigirSegredo(String(listResult.faultstring)).slice(0, 240),
+                conta_abandonada: desfecho.abandonarConta,
+              };
+              if (desfecho.abandonarConta) break;
+              await esperar(atrasoRetentativaMs(tentativasNaPagina, listResult.faultstring));
+              continue;
             }
 
             // Era `total_de_paginas || 1` POR RESPOSTA: uma intermediária SEM o campo encolhia o
             // teto para 1 → hasMore=false → a conta era dada como CONCLUÍDA com o import parcial
             // (classe money-path §9). Piso monotônico + teto fail-fast de _shared/omie-paginacao.ts.
             totalPages = proximoTotalPaginas(totalPages, listResult.total_de_paginas, MAX_PAGINAS_LISTAGEM);
-            const clientes = listResult.clientes_cadastro || [];
+            // Segunda metade do achado Codex P1: `clientes_cadastro || []` transformava QUALQUER
+            // corpo fora do contrato em "página vazia" — e página vazia no fim declarado é FIM
+            // DE CONTA. Uma resposta 200 com shape inesperado encerraria a conta como concluída.
+            // Ausência do array não prova catálogo vazio: catálogo vazio o Omie sinaliza com a
+            // faultstring de EOF, tratada acima. Sem o array, isto é falha — e falha se classifica.
+            const clientes = listResult.clientes_cadastro ?? listResult.clientes_cadastro_resumido;
+            if (!Array.isArray(clientes)) {
+              throw new Error(
+                `resposta do ListarClientes fora do contrato na página ${page} (sem clientes_cadastro) — não é página vazia`,
+              );
+            }
             const veredicto = avaliarPagina(clientes.length, page, totalPages);
             if (veredicto === "anomalia") {
               // Página vazia ANTES do fim declarado = fault transiente disfarçado. O catch abaixo
@@ -1118,19 +1275,64 @@ serve(async (req) => {
             console.log(`[sync_all_clients] ${account.name} page ${page}/${totalPages}: +${clientes.length} clientes`);
             page++;
             pagesProcessed++;
+            // O teto é POR página: uma página que passou zera o contador da seguinte. E limpa a
+            // falha ANTERIOR: `falha` no resultado significa "o que interrompeu esta conta", e um
+            // soluço já superado pela retentativa não interrompeu nada — deixá-lo ali faria o
+            // relatório apontar uma conta que sincronizou inteira. O registro do soluço fica no
+            // log da edge, que é onde ele importa.
+            tentativasNaPagina = 0;
+            falhaConta = null;
           } catch (pageError) {
+            const motivo = pageError instanceof Error ? pageError.message : String(pageError);
             console.error(`[sync_all_clients] ${account.name} page ${page} failed:`, pageError);
-            break;
+            // Mesma política das faultstrings, agora sobre a mensagem da exceção: erro de
+            // transporte já esgotado no callOmie, anomalia de página vazia antes do fim declarado
+            // e teto anti-runaway do total declarado passam por aqui. Nenhum deles pode virar
+            // cursor parado indefinidamente — era o segundo caminho para o mesmo laço quente.
+            //
+            // ⚠️ `classificarExcecao` (e não `classificarFaultstring`) porque uma EXCEÇÃO nunca é
+            // o EOF do contrato Omie — o fim de conta chega como `faultstring` numa resposta
+            // normal, tratada no ramo acima. Se o texto de um erro citasse a mensagem de fim por
+            // acaso, `fim_de_pagina` daria o único desfecho que NÃO termina (nem retenta nem
+            // abandona): o catch não sairia nem avançaria a página e o laço giraria para sempre.
+            const classe = classificarExcecao(pageError);
+            tentativasNaPagina++;
+            const desfecho = decidirDesfechoFalha({
+              classe,
+              tentativasNaPagina,
+              maxTentativas: MAX_TENTATIVAS_PAGINA,
+            });
+            falhaConta = {
+              conta: account.name,
+              account: account.account,
+              pagina: page,
+              classe,
+              motivo: redigirSegredo(motivo).slice(0, 240),
+              conta_abandonada: desfecho.abandonarConta,
+            };
+            if (desfecho.abandonarConta) break;
+            await esperar(atrasoRetentativaMs(tentativasNaPagina, motivo));
           }
         }
 
-        // `ultimaPaginaCheia` entra no OU (achado Codex B): só `page <= totalPages` fecharia a
-        // conta sempre que o total viesse ausente na retomada — e "não sei o total" nunca pode
-        // significar "acabou" numa classe cujo defeito é exatamente esse (money-path §9).
-        // Só `fimReal` (página vazia no fim declarado ou EOF do Omie) encerra a conta.
-        const hasMore = !fimReal && (page <= totalPages || ultimaPaginaCheia);
-        const nextAccountIndex = hasMore ? accountIndex : accountIndex + 1;
-        const nextPage = hasMore ? page : 1;
+        // Desfecho do cursor DESTA conta — lógica pura e testada em _shared/omie-paginacao.ts
+        // (`ultimaPaginaCheia` no OU é o achado Codex B do #1597: só `page <= totalPages`
+        // fecharia a conta sempre que o total viesse ausente na retomada, e "não sei o total"
+        // nunca pode significar "acabou"). Fim REAL e conta ABANDONADA avançam o cursor pelo
+        // mesmo caminho, mas não são a mesma coisa: a abandonada leva o motivo junto, abaixo.
+        const contaAbandonada = falhaConta !== null && falhaConta.conta_abandonada;
+        const cursor = desfechoContaListagem({
+          fimReal,
+          contaAbandonada,
+          paginaCursor: page,
+          tetoPaginas: totalPages,
+          ultimaPaginaCheia,
+        });
+        const nextAccountIndex = cursor.avancarConta ? accountIndex + 1 : accountIndex;
+        // Cinto e suspensório do relatório: `falha` é o campo rico (classe/página/motivo), mas um
+        // caller que ainda não o conheça leria `errors: 0` e diria "concluído sem erro" sobre uma
+        // conta interrompida. Contar a página perdida em `errors` faz o número já exibido mudar.
+        if (contaAbandonada) accErrors++;
 
         result = {
           account: account.name,
@@ -1139,14 +1341,21 @@ serve(async (req) => {
           errors: accErrors,
           totalPages,
           lastPage: page - 1,
-          hasMore: hasMore || nextAccountIndex < accounts.length,
+          hasMore: cursor.hasMore || nextAccountIndex < accounts.length,
+          // Falha que interrompeu a conta (null = conta percorrida até o fim). `conta_abandonada`
+          // distingue a que só adiou a página (retentativa em curso) da que desistiu da conta.
+          falha: falhaConta,
+          // Viaja em TODA resposta, não só no sentinela `done`: o caller encerra o laço no
+          // `hasMore:false` da última conta e nunca chega a invocar o ramo `done`, então pôr isto
+          // só lá seria o mesmo que não reportar. O caller deduplica por slug.
+          contas_sem_credencial: getContasSemCredencial(),
           // total_paginas viaja no cursor: é o que impede o piso de morrer entre invocações.
           // Ao trocar de conta ele zera (o total é POR conta — carregá-lo adiante faria a conta
           // seguinte herdar um teto que não é dela).
           next: {
             account_index: nextAccountIndex,
-            start_page: nextPage,
-            total_paginas: hasMore ? totalPages : 0,
+            start_page: cursor.proximaPagina,
+            total_paginas: cursor.hasMore ? totalPages : 0,
           },
         };
         break;

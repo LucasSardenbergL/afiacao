@@ -157,6 +157,9 @@ export function useAnalyticsSync() {
 
   const bulkClientSyncMutation = useMutationComRegistro({
     acao: ACOES_ANALYTICS_SYNC.importarClientes,
+    // Só há `detalhes` de sucesso quando as 3 contas foram percorridas: import parcial lança, e
+    // aí quem grava é o ramo de erro do useMutationComRegistro (status 'erro' + a mensagem que
+    // nomeia as contas interrompidas).
     detalhes: (d) => ({ importados: d.totalImported, ja_existiam: d.totalSkipped, erros: d.totalErrors }),
     mutationFn: async () => {
       let accountIndex = 0;
@@ -164,6 +167,19 @@ export function useAnalyticsSync() {
       let totalImported = 0;
       let totalSkipped = 0;
       let totalErrors = 0;
+      // Contas que a edge INTERROMPEU (credencial revogada, erro que persistiu além do teto de
+      // retentativas). A edge pula a conta para que as demais sincronizem — o que só é honesto
+      // se a falha chegar aqui e à tela: pular em silêncio viraria "importação concluída" sobre
+      // um import parcial (money-path §8). Acumulamos e o toast final nomeia as contas.
+      const falhas: Array<{ conta: string; account: string; pagina: number; classe: string; motivo: string }> = [];
+      // Guard de PROGRESSO, independente da edge: se duas invocações seguidas devolverem o mesmo
+      // (account_index, start_page), o cursor não andou — e reinvocar é o laço quente original.
+      // A edge tem defesa própria, mas uma edge revertida pelo deploy do Lovable, antiga ou
+      // malformada voltaria a produzir exatamente esse cursor; aqui o laço morre de qualquer jeito.
+      let cursorAnterior = '';
+      // Contas do grupo sem credencial configurada na edge: não entram no laço, então sem isto
+      // sumiriam do relatório e o import sairia "concluído" com um terço da base fora.
+      const semCredencial = new Map<string, string>();
       // Piso de páginas da conta em curso, devolvido pela edge e REPASSADO na próxima chamada.
       // Sem transportá-lo, o teto reiniciava em `start_page` a cada invocação e uma resposta
       // retomada COM clientes mas SEM `total_de_paginas` encerrava a conta na hora, deixando a
@@ -187,6 +203,22 @@ export function useAnalyticsSync() {
         totalSkipped += data?.skipped || 0;
         totalErrors += data?.errors || 0;
 
+        // ANTES de qualquer `break`: a última resposta do laço também pode trazer a conta que
+        // falhou (a última conta abandonada zera o hasMore), e ler a falha depois do break a
+        // perderia justamente no caso em que ela é a única coisa a reportar.
+        for (const c of (data?.contas_sem_credencial ?? []) as Array<{ account?: string; name?: string }>) {
+          if (c?.account) semCredencial.set(String(c.account), String(c.name ?? c.account));
+        }
+        if (data?.falha?.conta_abandonada === true) {
+          falhas.push({
+            conta: String(data.falha.conta ?? data.falha.account ?? 'conta desconhecida'),
+            account: String(data.falha.account ?? ''),
+            pagina: Number(data.falha.pagina) || 0,
+            classe: String(data.falha.classe ?? 'indeterminada'),
+            motivo: String(data.falha.motivo ?? '').slice(0, 240),
+          });
+        }
+
         if (data?.account) {
           setClientSyncProgress(`${data.account}: +${data.imported} importados (pág ${data.lastPage}/${data.totalPages})`);
         }
@@ -207,11 +239,53 @@ export function useAnalyticsSync() {
         // uma edge ainda não deployada, que não devolve o campo — aí vale a defesa da página
         // cheia do lado de lá.
         totalPaginas = data.next.total_paginas ?? 0;
+
+        // Cursor que NÃO andou = reinvocar a mesma conta/página = o laço quente original. A edge
+        // tem defesa própria, mas ela vive no código deployado; este guard não depende dele.
+        const cursorAtual = `${accountIndex}:${startPage}`;
+        if (cursorAtual === cursorAnterior) {
+          throw new Error(
+            `sync_all_clients: cursor parado em conta ${accountIndex} página ${startPage} — a edge não avançou (versão antiga/revertida?)`,
+          );
+        }
+        cursorAnterior = cursorAtual;
       }
 
       setClientSyncProgress(null);
+
+      // Conta sem credencial nunca entra no laço: entra aqui, como falha permanente de
+      // configuração, para não sumir do relatório.
+      for (const [account, nome] of semCredencial) {
+        falhas.push({
+          conta: nome,
+          account,
+          pagina: 0,
+          classe: 'permanente',
+          motivo: 'credencial Omie não configurada nesta edge — a conta inteira ficou fora do import',
+        });
+      }
+
+      // ⚠️ Import parcial LANÇA. `useMutationComRegistro` fecha o registro como 'sucesso' sempre
+      // que a Promise resolve — então resolver com `falhas` deixaria `acoes_execucoes` gravado
+      // como sucesso, e depois de um reload o card <UltimaExecucao> mostraria ✓ sobre um import
+      // que deixou uma conta inteira para trás (achado Codex P1). O toast de 30s desapareceria e
+      // só o ✓ ficaria. Um import que não percorreu tudo não é sucesso: o estado durável tem de
+      // dizer isso. Os números vão na mensagem, que o registro persiste em `detalhes.erro`.
+      if (falhas.length > 0) {
+        const resumo = falhas
+          .map((f) => `${f.conta} (pág ${f.pagina}, ${f.classe}: ${f.motivo})`)
+          .join(' · ');
+        throw new Error(
+          `Importação PARCIAL — ${falhas.length} conta(s) não sincronizaram. ` +
+            `${totalImported} importados, ${totalSkipped} já existiam, ${totalErrors} erros. Interrompidas: ${resumo}`,
+        );
+      }
+
       return { totalImported, totalSkipped, totalErrors };
     },
+    // `onSuccess` só roda quando TODAS as contas foram percorridas: import parcial lança acima,
+    // de propósito, para que o registro durável em acoes_execucoes fique 'erro' e o card não
+    // mostre ✓ sobre uma conta que ficou de fora.
     onSuccess: (data) => {
       toast.success("Importação de clientes concluída", {
         description: `${data.totalImported} importados, ${data.totalSkipped} já existiam, ${data.totalErrors} erros`,
@@ -220,7 +294,11 @@ export function useAnalyticsSync() {
     },
     onError: (error) => {
       setClientSyncProgress(null);
-      toast.error("Erro na importação de clientes", { description: String(error) });
+      // A mensagem do parcial já nomeia as contas interrompidas, as páginas e as classes.
+      toast.error("Importação de clientes não concluída", {
+        description: String(error).replace(/^Error:\s*/, ''),
+        duration: 30000,
+      });
     },
   });
 
