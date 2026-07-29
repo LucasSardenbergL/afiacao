@@ -70,6 +70,24 @@ async function callOmieApi(
       body: JSON.stringify(body),
     });
 
+    // O Omie sinaliza rate-limit por `faultstring` com HTTP 200 — mas um 429/5xx HTTP real não
+    // passava por NENHUM ramo: o corpo parseava sem `faultstring`, `produto_servico_cadastro`
+    // vinha vazio, e o laço lia isso como fim da fonte. O `completo:true` do retorno é justificado
+    // por "todo caminho parcial LANÇA", e este caminho não lançava. Transitório reusa o mesmo
+    // backoff do rate-limit; esgotado LANÇA (nunca vira EOF).
+    if (!response.ok) {
+      const corpo = (await response.text()).slice(0, 300);
+      if ((response.status === 429 || response.status >= 500) && attempt < maxRetries) {
+        const delay = Math.min((attempt + 1) * 5 + 2, 15) * 1000;
+        console.log(
+          `[tint-omie-sync] HTTP ${response.status}, retry em ${delay / 1000}s (attempt ${attempt + 1}/${maxRetries})`,
+        );
+        await new Promise((r) => setTimeout(r, delay));
+        continue;
+      }
+      throw new Error(`Erro Omie: HTTP ${response.status} — ${corpo}`);
+    }
+
     const result = (await response.json()) as unknown as OmieListarProdutosResponse;
 
     if (result.faultstring) {

@@ -74,6 +74,13 @@ async function callOmie(
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
+      // HTTP não-2xx LANÇA antes de o corpo virar payload (cai no catch abaixo, que retenta e
+      // no fim propaga). Sem isto, um 429/5xx cujo corpo parseia SEM `faultstring` virava amostra
+      // vazia e o smoke emitia seu veredito — "PROVADO" ou "SUSPEITO: não construir o backfill" —
+      // com HTTP 200, sobre um universo que era erro de infraestrutura.
+      if (!res.ok) {
+        throw new Error(`Omie (${account}) HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`);
+      }
       const result = (await res.json()) as OmieListarPosEstoqueResponse;
       if (result.faultstring) throw new Error(`Omie (${account}): ${result.faultstring}`);
       return result;

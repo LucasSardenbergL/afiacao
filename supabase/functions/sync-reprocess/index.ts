@@ -113,6 +113,14 @@ async function callOmie(account: Account, endpoint: string, call: string, params
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
+  // HTTP não-2xx LANÇA antes de o corpo virar payload. Sem isto, um 429/5xx cujo corpo parseia
+  // SEM `faultstring` (o `{}` de proxy/gateway) devolvia um objeto sem total e sem lista — e os
+  // três laços deste arquivo leem isso como página vazia no fim declarado, isto é, EOF. Os guards
+  // de _shared/omie-paginacao.ts não alcançam o que o wrapper já entregou como resposta boa:
+  // a classe entra uma camada ACIMA da que eles fecham.
+  if (!res.ok) {
+    throw new Error(`Omie (${account}) HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`);
+  }
   const result = await res.json();
   if (result.faultstring) throw new Error(`Omie (${account}): ${result.faultstring}`);
   return result;

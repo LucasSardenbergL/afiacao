@@ -53,6 +53,14 @@ async function callOmie(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
+  // HTTP não-2xx LANÇA antes de o corpo virar payload. Sem isto, um 429/5xx cujo corpo parseia
+  // SEM `faultstring` (o `{}` de proxy/gateway) devolvia objeto sem total_de_paginas e sem
+  // produtos — que o laço lê como página vazia no fim declarado (EOF) e o `sync_state
+  // status:'complete'` carimba o catálogo PARCIAL como retrato bom. Os guards de paginação
+  // não alcançam o que o wrapper já entregou como resposta boa.
+  if (!res.ok) {
+    throw new Error(`Omie (${account}) HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`);
+  }
   const result = await res.json();
   if (result.faultstring) throw new Error(`Omie (${account}): ${result.faultstring}`);
   return result;

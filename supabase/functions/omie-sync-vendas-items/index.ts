@@ -228,6 +228,13 @@ async function omieCall(
         return { ok: false, status: res.status, error: fs || "Omie fault" };
       }
 
+      // Só 425 e 429 tinham ramo próprio: qualquer OUTRO status não-2xx (500/502/503) cujo corpo
+      // parseasse SEM `faultstring` chegava aqui como `ok:true` com `data` vazio — e o laço, que
+      // agora LANÇA em `!result.ok`, não via falha nenhuma: lista e total ausentes viravam fim da
+      // fonte pelo `avaliarPagina`. O guard de paginação não alcança o que o wrapper já aprovou.
+      if (!res.ok) {
+        return { ok: false, status: res.status, error: `HTTP ${res.status}: ${text.slice(0, 200)}` };
+      }
       return { ok: true, status: res.status, data };
     } catch (err) {
       console.error(`omieCall network error attempt ${attempt + 1}:`, err);
