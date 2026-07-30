@@ -17,6 +17,7 @@ import {
   normalizarRiscos,
   numeroNoIntervalo,
   numeroValido,
+  objetivoFinal,
   objetivoValido,
   statusDeErroIa,
   textoValido,
@@ -443,4 +444,42 @@ Deno.test("tool: margem e probabilidade aceitam null no schema", () => {
   for (const campo of ["best_case_margin", "likely_margin", "worst_case_margin"]) {
     assertEquals(cenarios[campo].type, ["number", "null"], `${campo} precisa aceitar null`);
   }
+});
+
+// ─────────────────────────────── objetivoFinal ───────────────────────────────
+// O enum barra objetivo INVENTADO; estes testes cobrem o objetivo VÁLIDO e ERRADO,
+// que é o que faz estrago — passa em `objetivoValido` e venceria o fato medido.
+
+Deno.test("objetivoFinal: com sem_historico, o SERVIDOR vence a IA", () => {
+  // `sem_historico → ativacao` é fato binário (não há venda válida no resumo).
+  // "recuperacao" pressupõe uma relação que nunca existiu.
+  const r = objetivoFinal("recuperacao", "ativacao");
+  assertEquals(r.objetivo, "ativacao");
+  assertEquals(r.sobrescrito, true, "a divergência precisa ser sinalizada p/ log");
+});
+
+Deno.test("objetivoFinal: qualquer objetivo != ativacao é descartado sob sem_historico", () => {
+  for (const daIa of ["reativacao", "expansao_mix", "upsell_premium", "consolidacao_margem"]) {
+    const r = objetivoFinal(daIa as never, "ativacao");
+    assertEquals(r.objetivo, "ativacao", `IA disse ${daIa}`);
+    assertEquals(r.sobrescrito, true, `IA disse ${daIa}`);
+  }
+});
+
+Deno.test("objetivoFinal: nos demais derivados a leitura da IA prevalece", () => {
+  // Ali o derivado sai de FAIXAS (churn/mix/recência) — o corte numérico é
+  // grosseiro e a IA pode ter contexto melhor.
+  const r = objetivoFinal("upsell_premium", "expansao_mix");
+  assertEquals(r.objetivo, "upsell_premium");
+  assertEquals(r.sobrescrito, false);
+});
+
+Deno.test("objetivoFinal: IA nula cai no derivado, sem marcar sobrescrita", () => {
+  assertEquals(objetivoFinal(null, "ativacao"), { objetivo: "ativacao", sobrescrito: false });
+  assertEquals(objetivoFinal(null, "recuperacao"), { objetivo: "recuperacao", sobrescrito: false });
+  assertEquals(objetivoFinal(null, null), { objetivo: null, sobrescrito: false });
+});
+
+Deno.test("objetivoFinal: IA concordando com ativacao não é sobrescrita", () => {
+  assertEquals(objetivoFinal("ativacao", "ativacao"), { objetivo: "ativacao", sobrescrito: false });
 });

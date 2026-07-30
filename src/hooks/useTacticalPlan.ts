@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { invokeFunction } from '@/lib/invoke-function';
-import { selectObjective, clampRecencyCapDays } from '@/lib/scoring/objective';
+import { selectObjective, clampRecencyCapDays, objetivoFinal } from '@/lib/scoring/objective';
 import { margemConhecida, mediaMargensConhecidas, valorMedido } from '@/lib/scoring/margin';
 import { fetchAllPages } from '@/lib/postgrest';
 import { ownersAtivosDoAlvo } from '@/lib/carteira/escopo-clientes';
@@ -587,6 +587,20 @@ export const useTacticalPlan = () => {
       // _expected_owner=ownerId faz a RPC ABORTAR se a carteira foi reatribuída durante a
       // geração da IA (race) em vez de gravar o dono stale; farmer_id/customer_user_id/status
       // são autoritativos do servidor (o client não controla mais a posse).
+      // O enum barra objetivo inventado, não o objetivo VÁLIDO e errado: com
+      // `sem_historico` o derivado é `ativacao` por fato binário (não há venda),
+      // e um "recuperacao" da IA venceria — plano de recuperação para cliente
+      // que nunca comprou. Mesma reconciliação do edge (helper espelhado).
+      const { objetivo: objetivoDoPlano, sobrescrito } = objetivoFinal(
+        aiPlan?.strategic_objective,
+        strategicObjective,
+      );
+      if (sobrescrito) {
+        console.warn(
+          `[useTacticalPlan] objetivo "${aiPlan?.strategic_objective}" da IA descartado: cliente ${customerId} é sem_historico (derivado: ativacao)`,
+        );
+      }
+
       const { error: rpcError } = await supabase.rpc('criar_plano_tatico' as never, {
         _customer_user_id: customerId,
         _expected_owner: ownerId,
@@ -598,7 +612,7 @@ export const useTacticalPlan = () => {
           current_margin_pct: marginPct,
           cluster_avg_margin_pct: clusterMargin,
           expansion_potential: expansionPotential,
-          strategic_objective: aiPlan?.strategic_objective || strategicObjective,
+          strategic_objective: objetivoDoPlano,
           customer_profile: customerProfile,
           plan_type: planType,
           top_bundle: topBundle ? topBundle.bundle_products : {},

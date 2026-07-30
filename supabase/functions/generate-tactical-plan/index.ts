@@ -23,6 +23,8 @@ import {
   type Modo,
   montarPlano,
   numeroValido,
+  objetivoFinal,
+  objetivoValido,
   statusDeErroIa,
   systemDoModo,
   toolDoModo,
@@ -380,6 +382,21 @@ ${JSON.stringify(historicalObjections || [], null, 2)}`;
       // de um potencial inventado. Gravar o 0 fabricado seria pior que exibi-lo: ele PERSISTE e
       // vira histórico com cara de medição.
       const d = (body as { _derived: Record<string, number | string | null> })._derived;
+
+      // O enum barra objetivo inventado, não o objetivo VÁLIDO e errado. Com
+      // `sem_historico` o servidor derivou `ativacao` de um fato binário (não há
+      // venda válida); um "recuperacao" vindo do modelo passaria no enum e
+      // venceria, gravando plano de recuperação para quem nunca comprou.
+      const { objetivo: objetivoDoPlano, sobrescrito } = objetivoFinal(
+        objetivoValido(plan.strategic_objective),
+        typeof d.strategicObjective === 'string' ? d.strategicObjective : null,
+      );
+      if (sobrescrito) {
+        console.warn(
+          `[generate-tactical-plan] objetivo "${plan.strategic_objective}" do modelo descartado: cliente ${body.customerId} é sem_historico (servidor: ativacao)`,
+        );
+      }
+
       const { data: newId, error: rpcErr } = await admin.rpc('criar_plano_tatico', {
         _customer_user_id: body.customerId,
         _expected_owner: body.farmerId,
@@ -387,7 +404,7 @@ ${JSON.stringify(historicalObjections || [], null, 2)}`;
           bundle_recommendation_id: (topBundleRow as { id?: string } | null)?.id ?? null,
           health_score: d.healthScore, churn_risk: d.churnRisk, mix_gap: d.mixGap,
           current_margin_pct: d.marginPct, cluster_avg_margin_pct: d.clusterMargin, expansion_potential: d.expansionPotential,
-          strategic_objective: plan.strategic_objective || d.strategicObjective, customer_profile: d.customerProfile, plan_type: mode,
+          strategic_objective: objetivoDoPlano, customer_profile: d.customerProfile, plan_type: mode,
           top_bundle: (topBundleRow ? topBundleRow.bundle_products : {}),
           second_bundle: (secondBundleRow ? (secondBundleRow as { bundle_products: unknown }).bundle_products : {}),
           bundle_lie: Number((topBundleRow as { lie_bundle?: unknown } | null)?.lie_bundle ?? 0),

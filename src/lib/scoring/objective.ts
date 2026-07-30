@@ -74,3 +74,30 @@ export function clampRecencyCapDays(raw: unknown): number {
   if (!Number.isFinite(n)) return DEFAULT_RECENCY_CAP_DAYS;
   return Math.min(MAX_RECENCY_CAP_DAYS, Math.max(MIN_RECENCY_CAP_DAYS, Math.round(n)));
 }
+
+/**
+ * Reconcilia o objetivo vindo da IA com o derivado aqui, por regra medida.
+ *
+ * Espelho VERBATIM de `objetivoFinal` em
+ * `supabase/functions/generate-tactical-plan/plano-helpers.ts` (Deno não importa
+ * de src/) — mudou aqui, mude lá.
+ *
+ * O enum barra objetivo inventado, mas não o objetivo VÁLIDO e errado. Com
+ * `sem_historico`, `selectObjective` devolve `ativacao` a partir de um fato
+ * binário: não existe venda válida no resumo. Um "recuperacao" vindo da IA passa
+ * no enum e, com `aiPlan?.strategic_objective || derivado`, VENCE o fato — a
+ * vendedora recebe plano de recuperação para cliente que nunca comprou.
+ *
+ * Nos demais objetivos o derivado sai de FAIXAS (churn, mix, recência), onde a
+ * leitura da IA pode ser melhor que o corte numérico, e ela prevalece.
+ */
+export function objetivoFinal(
+  daIA: string | null | undefined,
+  doServidor: string | null | undefined,
+): { objetivo: string | null; sobrescrito: boolean } {
+  const ia = typeof daIA === 'string' && daIA.trim() ? daIA.trim().toLowerCase() : null;
+  if (doServidor === 'ativacao' && ia !== null && ia !== 'ativacao') {
+    return { objetivo: 'ativacao', sobrescrito: true };
+  }
+  return { objetivo: ia ?? doServidor ?? null, sobrescrito: false };
+}

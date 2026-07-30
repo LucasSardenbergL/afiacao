@@ -120,6 +120,34 @@ export function objetivoValido(v: unknown): Objetivo | null {
 }
 
 /**
+ * Reconcilia o objetivo do modelo com o derivado no servidor.
+ *
+ * O enum barra texto inventado, mas NÃO barra o valor válido e errado — e é esse
+ * que faz estrago. `sem_historico → ativacao` é a primeira regra de
+ * `selectObjective` (#1026) e vem de um fato binário: não existe venda válida no
+ * resumo. Se o modelo devolve "recuperacao" ali, passa por `objetivoValido` e,
+ * com `plan.strategic_objective || derivado`, VENCE o fato — a vendedora recebe
+ * um plano de recuperação para um cliente que nunca comprou, com abordagem que
+ * pressupõe uma relação que nunca existiu. O prompt já pede `ativacao` nesse
+ * caso, mas instrução no prompt não é garantia estrutural.
+ *
+ * Nos demais objetivos o derivado sai de FAIXAS (churn, mix, recência) — ali a
+ * leitura do modelo pode ser melhor que o corte numérico, e ela prevalece.
+ *
+ * `sobrescrito` existe para o caller logar: divergência silenciosa vira ruído
+ * invisível, e é justamente o sinal de que o prompt não está sendo obedecido.
+ */
+export function objetivoFinal(
+  doModelo: Objetivo | null,
+  doServidor: string | null | undefined,
+): { objetivo: string | null; sobrescrito: boolean } {
+  if (doServidor === "ativacao" && doModelo !== null && doModelo !== "ativacao") {
+    return { objetivo: "ativacao", sobrescrito: true };
+  }
+  return { objetivo: doModelo ?? doServidor ?? null, sobrescrito: false };
+}
+
+/**
  * Perguntas diagnósticas. Uma pergunta sem `question` não é pergunta — é descartada.
  * `purpose`/`expected_insight` ausentes viram "" (são acessórios na UI, não afirmam dado).
  */
