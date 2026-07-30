@@ -111,6 +111,34 @@ describe("PlanCard", () => {
     });
   });
 
+  // Mesmo raciocínio da margem, no campo irmão que ficou para trás. `expansion_score` não tem
+  // writer: é NULL em 6.633/6.633 linhas de farmer_client_scores (psql-ro, 2026-07-29), então
+  // "0%" aqui não seria um caso de borda — era o que a vendedora via para TODO cliente, lido
+  // como "não há espaço para crescer nesta conta".
+  describe("potencial de expansão — ausência não pode virar 0%", () => {
+    // O prefixo ASCII é âncora de falsificação: o harness casa "[POT-CARD]" com `grep -F`, e o
+    // nome acentuado não serve para isso (o `grep` deste shell é shim para ugrep, que dobra
+    // acento em todo locale — money-path.md manda ancorar em trecho ASCII, caixa fixa). A
+    // primeira rodada da falsificação reportou "vermelho no lugar errado" só por causa disso.
+    it("[POT-CARD] potencial não medido exibe travessão, não 0%", () => {
+      setup({ expanded: true, plan: makePlan({ expansionPotential: null }) });
+      expect(screen.getAllByText("—").length).toBeGreaterThan(0);
+      expect(screen.queryByText("0%")).toBeNull();
+    });
+
+    it("potencial ZERO medido continua sendo 0% — é veredito, não ausência", () => {
+      // O par que impede a correção de virar "esconde tudo": no dia em que um produtor
+      // apurar potencial nulo, esse fato tem de chegar à tela.
+      setup({ expanded: true, plan: makePlan({ expansionPotential: 0 }) });
+      expect(screen.getByText("0%")).toBeTruthy();
+    });
+
+    it("potencial medido é exibido como percentual", () => {
+      setup({ expanded: true, plan: makePlan({ expansionPotential: 60 }) });
+      expect(screen.getByText("60%")).toBeTruthy();
+    });
+  });
+
   // LTV/cenários são blocos PARCIALMENTE mensuráveis: a edge grava número no campo que a
   // IA apurou e null no que ela não apurou. Os guards do card (`plan.ltvProjection && …`)
   // só testam o OBJETO — com um campo null lá dentro, o `fmt()` antigo executava

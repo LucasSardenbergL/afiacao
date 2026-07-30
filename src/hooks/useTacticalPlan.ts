@@ -2,7 +2,7 @@ import { useState, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { invokeFunction } from '@/lib/invoke-function';
 import { selectObjective, clampRecencyCapDays } from '@/lib/scoring/objective';
-import { margemConhecida, mediaMargensConhecidas } from '@/lib/scoring/margin';
+import { margemConhecida, mediaMargensConhecidas, valorMedido } from '@/lib/scoring/margin';
 import { fetchAllPages } from '@/lib/postgrest';
 import { ownersAtivosDoAlvo } from '@/lib/carteira/escopo-clientes';
 import { useAuth } from '@/contexts/AuthContext';
@@ -29,7 +29,9 @@ export interface TacticalPlan {
   /** PERCENTUAL (0–100), ou null quando a margem era desconhecida na geração do plano. */
   currentMarginPct: number | null;
   clusterAvgMarginPct: number | null;
-  expansionPotential: number;
+  /** PERCENTUAL, ou null quando o potencial não foi medido — hoje, 100% da base
+   *  (farmer_client_scores.expansion_score é NULL em 6.633/6.633; nenhum writer o calcula). */
+  expansionPotential: number | null;
 
   // Strategy
   strategicObjective: string;
@@ -257,7 +259,11 @@ export const useTacticalPlan = () => {
       // pode ser null, e `Number(null || 0)` a exibiria como "0,0%" — margem nula apurada.
       currentMarginPct: margemConhecida(d.current_margin_pct),
       clusterAvgMarginPct: d.cluster_avg_margin_pct == null ? null : Number(d.cluster_avg_margin_pct),
-      expansionPotential: Number(d.expansion_potential || 0),
+      // Mesma razão do currentMarginPct logo acima, e o irmão que ficou para trás: o plano
+      // persistido pode ter gravado null (potencial não medido na geração), e
+      // `Number(null || 0)` o exibiria como "0%" — um veredito de "cliente sem espaço para
+      // crescer" que ninguém apurou. A coluna expansion_potential é nullable em prod.
+      expansionPotential: valorMedido(d.expansion_potential),
       strategicObjective: d.strategic_objective,
       customerProfile: d.customer_profile,
       approachStrategy: d.approach_strategy || '',
@@ -369,16 +375,24 @@ export const useTacticalPlan = () => {
       return { estimatedProfitPerHour: null, threshold: PROFIT_PER_HOUR_THRESHOLD, isAboveThreshold: null, motivo: 'indisponivel' };
     }
 
-    const revPotential = Number(score.revenue_potential || 0);
+    // Tri-estado explícito: revenue_potential é NULL em 6.633/6.633 linhas (nenhum writer o
+    // calcula). O `|| 0` anterior transformava "não medido" em `0` e só não fabricava número
+    // por ACIDENTE — o `> 0 ?` logo abaixo o mandava para o avgSpend. Acidente não é guard: no
+    // dia em que um produtor gravar potencial 0 APURADO, o código o trataria como ausência.
+    const revPotential = valorMedido(score.revenue_potential);
     const avgSpend = Number(score.avg_monthly_spend_180d || 0);
     // Margem desconhecida → R$/h INDECIDÍVEL, não zero. Com `|| 0` o gate reprovava o cliente por
     // omissão, e "não sei" ficava indistinguível de "não vale a ligação" na tela da vendedora.
     // Espelha profitPerHora de supabase/functions/_shared/tactical-margem.ts.
     const marginPct = margemConhecida(score.gross_margin_pct);
     const avgCallMinutes = 15;
+    // Base do cálculo: o potencial quando MEDIDO e positivo; senão o gasto médio observado.
+    // Potencial ausente e potencial 0 caem ambos no avgSpend — comportamento PRESERVADO desta
+    // entrega (só o `|| 0` saiu), agora por decisão declarada em vez de coincidência aritmética.
+    const baseReceita = revPotential != null && revPotential > 0 ? revPotential : avgSpend;
     const estimatedProfitPerHour = marginPct == null
       ? null
-      : ((revPotential > 0 ? revPotential : avgSpend) * (marginPct / 100) * 0.1) / (avgCallMinutes / 60);
+      : (baseReceita * (marginPct / 100) * 0.1) / (avgCallMinutes / 60);
 
     return {
       estimatedProfitPerHour,
@@ -435,8 +449,16 @@ export const useTacticalPlan = () => {
       const marginPct = margemConhecida(score.gross_margin_pct);
       const categoryCount = Number(score.category_count || 0);
       const daysSince = Number(score.days_since_last_purchase || 0);
-      const expansionPotential = Number(score.expansion_score || 0);
-      const revenuePotential = Number(score.revenue_potential || 0);
+      // [money-path "ausente ≠ zero"] Espelha a edge generate-tactical-plan: estas duas colunas
+      // foram nuladas de propósito (20260727130000_farmer_scores_colunas_orfas_null) porque
+      // nenhum writer as calcula — 6.633/6.633 NULL em prod, `column_default` removido. Com
+      // `|| 0` os dois campos chegavam ao prompt como `0` para TODA a base, e o system prompt
+      // instrui a IA a ler número como MEDIDO: "revenuePotential: 0" afirma "cliente sem
+      // potencial" e muda a abordagem que a vendedora leva para a rua. Nenhum dos dois entra
+      // em comparação relacional daqui para baixo (só no prompt e no payload, ambos nullable),
+      // então o tri-estado não reabre a armadilha do `null < x`.
+      const expansionPotential = valorMedido(score.expansion_score);
+      const revenuePotential = valorMedido(score.revenue_potential);
       const salesHistoryStatus = score.sales_history_status ?? null;
 
       // [GUARD money-path] Cluster = média de margem dos PARES da carteira do DONO (ownerId), não
