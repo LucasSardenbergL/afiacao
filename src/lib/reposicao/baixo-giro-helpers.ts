@@ -54,6 +54,45 @@ export function diasSemVender(ultimaVendaISO: string | null, hojeISO: string): n
   return Math.floor(ms / 86_400_000);
 }
 
+/**
+ * Giro morto = sem venda há >= 270 dias, na fonte ALL-TIME (v_sku_ultima_venda).
+ * 270 e não 365: o histórico de vendas OBEN começa em 2025-10-21 (~9 meses) — "1 ano sem vender"
+ * seria inafirmável hoje. Subir para 365 quando o histórico tiver lastro.
+ */
+export const LIMIAR_GIRO_MORTO_DIAS = 270;
+
+/**
+ * SKU em cold start (parâmetro semeado / aguardando 2ª ordem) NUNCA é giro morto — SKU novo sem
+ * venda é novo, não morto (marcar mataria a primeira compra). "Sem NENHUMA venda registrada"
+ * (fora de cold start) conta como morto: o histórico inteiro (~9 meses) sem giro.
+ */
+export function ehGiroMorto(args: {
+  diasSemVender: number | null;
+  vendasRegistradas: number;
+  emColdStart: boolean;
+}): boolean {
+  if (args.emColdStart) return false;
+  if (args.vendasRegistradas <= 0) return true;
+  return args.diasSemVender != null && args.diasSemVender >= LIMIAR_GIRO_MORTO_DIAS;
+}
+
+/** Capital parado dos mortos (cmc ausente não fabrica R$0 — conta separada, como somarCapitalParado). */
+export function somarCapitalMorto(
+  itens: Array<{ giroMorto: boolean; saldo: number | null; cmc: number | null }>,
+): { totalRs: number; comEstoqueN: number; semCustoN: number; mortosN: number } {
+  let totalRs = 0, comEstoqueN = 0, semCustoN = 0, mortosN = 0;
+  for (const it of itens) {
+    if (!it.giroMorto) continue;
+    mortosN++;
+    const saldo = it.saldo ?? 0;
+    if (saldo <= 0) continue;
+    comEstoqueN++;
+    if (it.cmc != null && it.cmc > 0) totalRs += saldo * it.cmc;
+    else semCustoN++;
+  }
+  return { totalRs, comEstoqueN, semCustoN, mortosN };
+}
+
 export function previewManterLote(
   itens: Array<{ ppAtual: number | null; maxAtual: number | null; posicao: number; custo: number | null }>,
   ppNovo: number,

@@ -22,11 +22,16 @@ export interface RowBaixoGiro {
   estoque_maximo: number | null;
   habilitado_reposicao_automatica: boolean | null;
   tipo_reposicao: string | null;
+  /** Fonte ALL-TIME (v_sku_ultima_venda): 0 = nenhuma venda em todo o histórico (~out/2025+). */
+  vendas_registradas: number;
+  /** Sem venda há >= LIMIAR_GIRO_MORTO_DIAS (ou nunca), fora de cold start. */
+  giro_morto: boolean;
 }
 
 export interface FiltrosBaixoGiro {
   situacao: SituacaoTipo | "todos";
   estoque: "todos" | "com_estoque" | "sem_estoque";
+  giro: "todos" | "morto";
   busca: string;
 }
 

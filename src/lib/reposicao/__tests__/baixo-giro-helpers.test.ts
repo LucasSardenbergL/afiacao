@@ -4,6 +4,9 @@ import {
   classificarSituacao,
   diasSemVender,
   previewManterLote,
+  LIMIAR_GIRO_MORTO_DIAS,
+  ehGiroMorto,
+  somarCapitalMorto,
 } from "../baixo-giro-helpers";
 
 describe("somarCapitalParado", () => {
@@ -68,5 +71,36 @@ describe("previewManterLote", () => {
     expect(r.qtdeTotal).toBe(5);         // 2+1+0+2
     expect(r.valorTotalRs).toBe(25);     // 20+5+0
     expect(r.semCustoN).toBe(1);         // o item com custo null que compraria
+  });
+});
+
+// ── P3: giro morto (fonte all-time) ─────────────────────────────────────────────
+
+describe("ehGiroMorto", () => {
+  it("cold start NUNCA é morto (SKU novo sem venda é novo — marcaria mataria a 1ª compra)", () => {
+    expect(ehGiroMorto({ diasSemVender: null, vendasRegistradas: 0, emColdStart: true })).toBe(false);
+    expect(ehGiroMorto({ diasSemVender: 400, vendasRegistradas: 3, emColdStart: true })).toBe(false);
+  });
+  it("sem NENHUMA venda registrada (fora de cold start) é morto", () => {
+    expect(ehGiroMorto({ diasSemVender: null, vendasRegistradas: 0, emColdStart: false })).toBe(true);
+  });
+  it("limiar: >= 270d morto, abaixo não", () => {
+    expect(ehGiroMorto({ diasSemVender: LIMIAR_GIRO_MORTO_DIAS, vendasRegistradas: 5, emColdStart: false })).toBe(true);
+    expect(ehGiroMorto({ diasSemVender: LIMIAR_GIRO_MORTO_DIAS - 1, vendasRegistradas: 5, emColdStart: false })).toBe(false);
+  });
+  it("dias null com venda registrada NÃO é morto (dado incompleto não fabrica veredito)", () => {
+    expect(ehGiroMorto({ diasSemVender: null, vendasRegistradas: 2, emColdStart: false })).toBe(false);
+  });
+});
+
+describe("somarCapitalMorto", () => {
+  it("soma só mortos com estoque e cmc; sem custo conta separado; nunca fabrica R$0", () => {
+    const r = somarCapitalMorto([
+      { giroMorto: true, saldo: 10, cmc: 5 },     // 50
+      { giroMorto: true, saldo: 3, cmc: null },   // sem custo
+      { giroMorto: true, saldo: 0, cmc: 9 },      // sem estoque
+      { giroMorto: false, saldo: 100, cmc: 100 }, // vivo — fora
+    ]);
+    expect(r).toEqual({ totalRs: 50, comEstoqueN: 2, semCustoN: 1, mortosN: 3 });
   });
 });

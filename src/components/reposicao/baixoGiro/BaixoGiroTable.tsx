@@ -130,7 +130,9 @@ export function BaixoGiroTable({
                   </TableCell>
                   <TableCell className="text-right tnum">{capitalCell}</TableCell>
                   <TableCell className="text-right tnum">{fmt(row.saldo, 0)}</TableCell>
-                  <TableCell className="text-right tnum">{row.dias_sem_vender ?? "—"}</TableCell>
+                  <TableCell className={`text-right tnum ${row.giro_morto ? "text-status-error font-medium" : ""}`}>
+                    {row.dias_sem_vender ?? (row.vendas_registradas <= 0 ? "sem venda no histórico" : "—")}
+                  </TableCell>
                   <TableCell className="text-right tnum">
                     {fmt(row.demanda_media_diaria, 3)}/dia
                   </TableCell>

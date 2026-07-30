@@ -53,18 +53,20 @@ function exportarCsvExcesso(rows: RowExcesso[]) {
 }
 
 export default function AdminReposicaoBaixoGiro() {
-  const { rows, kpis, isLoading, manterEmEstoque, descontinuar } = useBaixoGiro();
+  const { rows, kpis, isLoading, manterEmEstoque, descontinuar, descontinuarLote } = useBaixoGiro();
   const excesso = useExcessoEstoque();
-  const [filtros, setFiltros] = useState<FiltrosBaixoGiro>({ situacao: "todos", estoque: "todos", busca: "" });
+  const [filtros, setFiltros] = useState<FiltrosBaixoGiro>({ situacao: "todos", estoque: "todos", giro: "todos", busca: "" });
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [dialogAlvos, setDialogAlvos] = useState<RowBaixoGiro[] | null>(null);
   const [descontinuarAlvo, setDescontinuarAlvo] = useState<AlvoDescontinuar | null>(null);
+  const [loteAlvos, setLoteAlvos] = useState<RowBaixoGiro[] | null>(null);
 
   const filtered = useMemo(() => {
     return rows.filter((r) => {
       if (filtros.situacao !== "todos" && r.situacao_tipo !== filtros.situacao) return false;
       if (filtros.estoque === "com_estoque" && !(r.saldo && r.saldo > 0)) return false;
       if (filtros.estoque === "sem_estoque" && r.saldo && r.saldo > 0) return false;
+      if (filtros.giro === "morto" && !r.giro_morto) return false;
       const s = filtros.busca.trim().toLowerCase();
       if (s) {
         const byCode = /^\d+$/.test(s) ? String(r.sku_codigo_omie).includes(s) : false;
@@ -95,13 +97,23 @@ export default function AdminReposicaoBaixoGiro() {
           <BaixoGiroKpis {...kpis} />
           <BaixoGiroFiltros filtros={filtros} onChange={setFiltros} />
           {selected.size > 0 && (
-            <Button
-              onClick={() =>
-                setDialogAlvos(filtered.filter((r) => selected.has(r.sku_codigo_omie)))
-              }
-            >
-              Manter em estoque — {selected.size} selecionado(s)
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                onClick={() =>
+                  setDialogAlvos(filtered.filter((r) => selected.has(r.sku_codigo_omie)))
+                }
+              >
+                Manter em estoque — {selected.size} selecionado(s)
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() =>
+                  setLoteAlvos(filtered.filter((r) => selected.has(r.sku_codigo_omie)))
+                }
+              >
+                Descontinuar — {selected.size} selecionado(s)
+              </Button>
+            </div>
           )}
           <BaixoGiroTable
             rows={filtered}
@@ -199,6 +211,45 @@ export default function AdminReposicaoBaixoGiro() {
               }}
             >
               Descontinuar
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <AlertDialog open={!!loteAlvos} onOpenChange={(v) => { if (!v) setLoteAlvos(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Descontinuar {loteAlvos?.length ?? 0} SKU(s)?</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div>
+                <div className="max-h-48 overflow-y-auto rounded-md border p-2 text-xs">
+                  {(loteAlvos ?? []).map((r) => (
+                    <div key={r.sku_codigo_omie} className="flex justify-between gap-2 py-0.5">
+                      <span className="truncate">{r.sku_descricao ?? r.sku_codigo_omie}</span>
+                      <span className="shrink-0 text-muted-foreground">
+                        {r.dias_sem_vender != null ? `${r.dias_sem_vender}d s/ venda` : r.vendas_registradas <= 0 ? "sem venda no histórico" : "—"}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                <p className="mt-2">
+                  Os itens saem dos próximos ciclos de reposição automática. Reativação individual pela tela de Revisão.
+                </p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                const codes = (loteAlvos ?? []).map((r) => r.sku_codigo_omie);
+                if (codes.length > 0) {
+                  descontinuarLote.mutate(codes, { onSuccess: () => setSelected(new Set()) });
+                  track("reposicao.giro_morto_descontinuar_lote", { skus: codes.length });
+                }
+                setLoteAlvos(null);
+              }}
+            >
+              Descontinuar {loteAlvos?.length ?? 0} SKU(s)
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
