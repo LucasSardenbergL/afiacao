@@ -22,6 +22,7 @@ import {
   MODELO,
   type Modo,
   montarPlano,
+  numeroValido,
   statusDeErroIa,
   systemDoModo,
   toolDoModo,
@@ -196,9 +197,27 @@ serve(async (req) => {
         return new Response(JSON.stringify({ skipped: 'sem_score' }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       }
 
+      // `num` só sobrevive nos campos cuja ausência NÃO chega aqui: health_score, churn_risk,
+      // avg_monthly_spend_180d, category_count e days_since_last_purchase têm 0 nulos em prod
+      // (medido via psql-ro em 2026-07-29, 6.633 linhas) e alimentam decisão DETERMINÍSTICA —
+      // classifyProfile/selectObjective/mixGap. Nulá-los seria pior que inerte: `null < 500` é
+      // `true` em JS, então "não medido" viraria o rótulo `sensivel_preco` e `8 - null` daria
+      // mixGap 8 (money-path.md §2, corolário JS). Só se troca `?? 0` por null onde a ausência
+      // REALMENTE chega — e onde o consumidor sabe tratá-la.
       const num = (v: unknown) => Number(v ?? 0);
       const healthScore = num(score.health_score), churnRisk = num(score.churn_risk), avgSpend = num(score.avg_monthly_spend_180d);
       const categoryCount = num(score.category_count), daysSince = num(score.days_since_last_purchase);
+      // [money-path "ausente ≠ zero"] expansion_score e revenue_potential são as DUAS colunas
+      // que a 20260727130000_farmer_scores_colunas_orfas_null nulou de propósito (nenhum writer
+      // as calcula) — e a migration está APLICADA: 6.633/6.633 NULL, `column_default` removido
+      // (psql-ro, 2026-07-29). Com `num()` elas chegavam ao prompt como `0` para 100% da base, e
+      // o system prompt manda a IA ler número como MEDIDO — "revenuePotential: 0" afirma
+      // "cliente sem potencial" sobre um cliente que ninguém mediu, e é a partir disso que a
+      // vendedora decide a abordagem. `numeroValido` devolve o null honesto que a instrução
+      // DADO AUSENTE (plano-helpers.ts) já sabe interpretar. Nenhum dos dois entra em
+      // comparação relacional aqui — só no prompt e no payload (colunas nullable).
+      const expansionPotential = numeroValido(score.expansion_score);
+      const revenuePotential = numeroValido(score.revenue_potential);
       // money-path "ausente ≠ zero": margem desconhecida fica `null` e é EXCLUÍDA dos
       // cálculos — nunca 0 (que afirmaria "cliente sem margem") nem a média fabricada.
       const marginPct = margemConhecida(score.gross_margin_pct);
@@ -231,14 +250,14 @@ serve(async (req) => {
         .map((e: { event_data: { intent?: unknown } | null }) => (e.event_data as { intent?: unknown } | null)?.intent)
         .filter((i: unknown): i is string => typeof i === 'string' && i.startsWith('objecao')).slice(0, 5);
 
-      customerContext = { name: profile?.name, cnae: profile?.cnae, customerType: profile?.customer_type, profile: customerProfile, healthScore, churnRisk, avgMonthlySpend: avgSpend, grossMarginPct: marginPct, categoryCount, daysSinceLastPurchase: daysSince, mixGap, clusterAvgMargin: clusterMargin, expansionPotential: num(score.expansion_score), revenuePotential: num(score.revenue_potential), salesHistoryStatus };
+      customerContext = { name: profile?.name, cnae: profile?.cnae, customerType: profile?.customer_type, profile: customerProfile, healthScore, churnRisk, avgMonthlySpend: avgSpend, grossMarginPct: marginPct, categoryCount, daysSinceLastPurchase: daysSince, mixGap, clusterAvgMargin: clusterMargin, expansionPotential, revenuePotential, salesHistoryStatus };
       bundleContext = topBundleRow ? { products: topBundleRow.bundle_products, lie: topBundleRow.lie_bundle, probability: topBundleRow.p_bundle, margin: topBundleRow.m_bundle } : null;
       diagnosticData = { strategicObjective };
       // Paridade com o front: no modo estratégico, inclui o 2º bundle p/ comparação.
       if (mode === 'estrategico' && secondBundleRow) {
         (diagnosticData as Record<string, unknown>).secondBundle = { products: secondBundleRow.bundle_products, lie: secondBundleRow.lie_bundle, probability: secondBundleRow.p_bundle, margin: secondBundleRow.m_bundle };
       }
-      (body as Record<string, unknown>)._derived = { healthScore, churnRisk, mixGap, marginPct, clusterMargin, expansionPotential: num(score.expansion_score), customerProfile, strategicObjective };
+      (body as Record<string, unknown>)._derived = { healthScore, churnRisk, mixGap, marginPct, clusterMargin, expansionPotential, customerProfile, strategicObjective };
     }
 
     const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY');
@@ -355,9 +374,11 @@ ${JSON.stringify(historicalObjections || [], null, 2)}`;
     // race em vez de gravar dono stale (precisão>recall). farmer_id/customer/status são do servidor.
     if (selfContained) {
       const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, { auth: { persistSession: false } });
-      // marginPct/clusterMargin podem ser null (margem desconhecida). As colunas
-      // current_margin_pct/cluster_avg_margin_pct são nullable — o plano grava "não sei"
-      // em vez de um número, e a UI mostra "—" em vez de uma margem inventada.
+      // marginPct/clusterMargin/expansionPotential podem ser null (dado não medido). As colunas
+      // current_margin_pct/cluster_avg_margin_pct/expansion_potential são nullable (conferido em
+      // prod via psql-ro) — o plano grava "não sei" em vez de um número, e a UI mostra "—" em vez
+      // de um potencial inventado. Gravar o 0 fabricado seria pior que exibi-lo: ele PERSISTE e
+      // vira histórico com cara de medição.
       const d = (body as { _derived: Record<string, number | string | null> })._derived;
       const { data: newId, error: rpcErr } = await admin.rpc('criar_plano_tatico', {
         _customer_user_id: body.customerId,

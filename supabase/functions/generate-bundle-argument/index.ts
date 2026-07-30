@@ -13,6 +13,7 @@ import {
   TOOL_ARGUMENTO,
   TOOL_PERGUNTAS,
 } from "./argumento-tools.ts";
+import { blocoCliente, REGRA_DADO_AUSENTE } from "./argumento-helpers.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -68,6 +69,8 @@ REGRAS:
 - Baseadas em dados reais do cliente
 - Linguagem técnica mas acessível
 
+${REGRA_DADO_AUSENTE}
+
 Retorne EXATAMENTE um JSON (sem markdown, sem code blocks):
 {
   "questions": [
@@ -98,21 +101,13 @@ Retorne EXATAMENTE um JSON (sem markdown, sem code blocks):
   ]
 }`;
 
-      const userPrompt = `Cliente: ${customer.name}
-Segmento/CNAE: ${customer.cnae || 'Não informado'}
-Tipo: ${customer.customerType || 'Não informado'}
-Health Score: ${customer.healthScore}/100
-Dias desde última compra: ${customer.daysSinceLastPurchase || 'N/A'}
-Gasto médio mensal: R$ ${customer.avgMonthlySpend || 0}
-Categorias compradas: ${customer.categoryCount || 0}
+      const userPrompt = `${blocoCliente(customer)}
 
 Bundle sugerido (${bundle.products.length} produtos):
 ${bundle.products.map((p: { name: string; price: number; margin: number }, i: number) => `${i + 1}. ${p.name} - Preço: R$ ${p.price.toFixed(2)} | Margem: R$ ${p.margin.toFixed(2)}`).join('\n')}
 
 LIE do Bundle: R$ ${bundle.lieBundle.toFixed(2)}
-Confidence: ${(bundle.confidence * 100).toFixed(1)}%
-
-Histórico de compras recentes: ${customer.recentProducts?.join(', ') || 'Sem dados'}`;
+Confidence: ${(bundle.confidence * 100).toFixed(1)}%`;
 
       let resposta;
       try {
@@ -180,6 +175,8 @@ PERFIL DO CLIENTE: ${customerProfile}
 - Se "orientado_produtividade": foque em velocidade, uptime, menos paradas
 - Se "misto": balance todos os argumentos
 
+${REGRA_DADO_AUSENTE}
+
 Retorne EXATAMENTE um JSON com esta estrutura (sem markdown, sem code blocks):
 {
   "diagnostico": "Diagnóstico implícito baseado no histórico (1-2 frases)",
@@ -192,22 +189,14 @@ Retorne EXATAMENTE um JSON com esta estrutura (sem markdown, sem code blocks):
   "versao_tecnica": "Versão técnica detalhada (parágrafo completo)"
 }`;
 
-    const userPrompt = `Cliente: ${customer.name}
-Segmento/CNAE: ${customer.cnae || 'Não informado'}
-Tipo: ${customer.customerType || 'Não informado'}
-Health Score: ${customer.healthScore}/100
-Dias desde última compra: ${customer.daysSinceLastPurchase || 'N/A'}
-Gasto médio mensal: R$ ${customer.avgMonthlySpend || 0}
-Categorias compradas: ${customer.categoryCount || 0}
+    const userPrompt = `${blocoCliente(customer)}
 
 Bundle sugerido (${bundle.products.length} produtos):
 ${bundle.products.map((p: { name: string; price: number; margin: number }, i: number) => `${i + 1}. ${p.name} - Preço: R$ ${p.price.toFixed(2)} | Margem: R$ ${p.margin.toFixed(2)}`).join('\n')}
 
 LIE do Bundle: R$ ${bundle.lieBundle.toFixed(2)}
 Confidence: ${(bundle.confidence * 100).toFixed(1)}%
-Lift: ${bundle.lift.toFixed(2)}
-
-Histórico de compras recentes do cliente: ${customer.recentProducts?.join(', ') || 'Sem dados'}`;
+Lift: ${bundle.lift.toFixed(2)}`;
 
     let resposta;
     try {

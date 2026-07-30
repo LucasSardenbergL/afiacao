@@ -80,7 +80,10 @@ export const PlanCard = ({
             <Section title="Diagnóstico Resumido" icon={Heart}>
               <MetricRow label="Margem atual" value={formatMargemPct(plan.currentMarginPct)} />
               <MetricRow label="Média cluster" value={plan.clusterAvgMarginPct == null ? '—' : `${plan.clusterAvgMarginPct.toFixed(1)}%`} />
-              <MetricRow label="Potencial expansão" value={`${plan.expansionPotential.toFixed(0)}%`} />
+              {/* "—" e não "0%": expansion_score não tem writer (NULL em 6.633/6.633 linhas), e
+                  "0%" leria como veredito de que o cliente não tem espaço para crescer. Mesmo
+                  tratamento do clusterAvgMarginPct logo acima. */}
+              <MetricRow label="Potencial expansão" value={plan.expansionPotential == null ? '—' : `${plan.expansionPotential.toFixed(0)}%`} />
               <MetricRow label="Perfil" value={profileLabels[plan.customerProfile] || plan.customerProfile} />
             </Section>
 

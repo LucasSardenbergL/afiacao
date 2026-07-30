@@ -315,12 +315,20 @@ export function montarPlano(
 // Contrato com o modelo
 // ---------------------------------------------------------------------------
 
+// Os exemplos citam os QUATRO campos que hoje chegam null de verdade — os dois de margem
+// (#1495) e os dois de potencial, nulados pela 20260727130000_farmer_scores_colunas_orfas_null
+// porque nenhum writer os calcula (6.633/6.633 NULL em prod, medido 2026-07-29). Manter a lista
+// alinhada com o que o contexto REALMENTE traz importa: exemplo que não corresponde ao dado
+// ensina o modelo a esperar outra coisa.
 const REGRA_DADO_AUSENTE =
-  `DADO AUSENTE: campo com valor null no contexto (ex.: "grossMarginPct": null, "clusterAvgMargin": null)
-significa NÃO MEDIDO — não é zero nem valor baixo. NUNCA estime, preencha ou infira um número para ele,
-e não construa argumento sobre margem a partir dele. Se um campo numérico da sua resposta dependeria de
-um dado não medido, responda null nele em vez de um número plausível. Um número inventado que chega à
-vendedora como medido é pior do que a ausência do campo.`;
+  `DADO AUSENTE: campo com valor null no contexto (ex.: "grossMarginPct": null, "clusterAvgMargin": null,
+"revenuePotential": null, "expansionPotential": null) significa NÃO MEDIDO — não é zero nem valor baixo.
+NUNCA estime, preencha ou infira um número para ele, e não construa argumento sobre margem, potencial de
+receita ou expansão a partir dele. Em especial: "revenuePotential": null NÃO significa cliente sem
+potencial, e "expansionPotential": null NÃO significa cliente sem espaço para crescer — significa que
+ninguém mediu. Se um campo numérico da sua resposta dependeria de um dado não medido, responda null nele
+em vez de um número plausível. Um número inventado que chega à vendedora como medido é pior do que a
+ausência do campo.`;
 
 const REGRA_SEM_HISTORICO =
   `Se "salesHistoryStatus" for "sem_historico" (SEM venda válida registrada — pode nunca ter comprado OU
