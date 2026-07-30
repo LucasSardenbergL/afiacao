@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 437
+-- Total de custom migrations: 441
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -478,7 +478,11 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260728120001', 'calculate_scores_lease', '20260728120001_calculate_scores_lease.sql'),
   ('20260729120000', 'farmer_association_rules_substituicao_atomica', '20260729120000_farmer_association_rules_substituicao_atomica.sql'),
   ('20260730120000', 'tint_watchdog_fase5_chave', '20260730120000_tint_watchdog_fase5_chave.sql'),
-  ('20260730120001', 'calculate_scores_reforco_0625', '20260730120001_calculate_scores_reforco_0625.sql')
+  ('20260730120001', 'calculate_scores_reforco_0625', '20260730120001_calculate_scores_reforco_0625.sql'),
+  ('20260730130000', 'reposicao_teto_cobertura_motor', '20260730130000_reposicao_teto_cobertura_motor.sql'),
+  ('20260731120000', 'farmer_assoc_rules_delete_qualificado', '20260731120000_farmer_assoc_rules_delete_qualificado.sql'),
+  ('20260731120000', 'v_sku_ultima_venda', '20260731120000_v_sku_ultima_venda.sql'),
+  ('20260801120000', 'drop_calcular_gatilhos_reposicao', '20260801120000_drop_calcular_gatilhos_reposicao.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -1977,7 +1981,14 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('tint_watchdog_fase5_chave', 'function', 'public', '_tint_watchdog_fase5_transicao', ''),
   ('tint_watchdog_fase5_chave', 'function', 'public', 'tint_watchdog_fase5_check', ''),
   ('tint_watchdog_fase5_chave', 'cron_job', 'cron', 'tint-watchdog-fase5-6h', ''),
-  ('calculate_scores_reforco_0625', 'cron_job', 'cron', 'calculate-scores-reforco-0625', '')
+  ('calculate_scores_reforco_0625', 'cron_job', 'cron', 'calculate-scores-reforco-0625', ''),
+  ('reposicao_teto_cobertura_motor', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
+  ('reposicao_teto_cobertura_motor', 'table', 'public', 'reposicao_teto_cobertura_log', ''),
+  ('reposicao_teto_cobertura_motor', 'index', 'public', 'idx_teto_cobertura_log_run', 'reposicao_teto_cobertura_log'),
+  ('reposicao_teto_cobertura_motor', 'index', 'public', 'idx_teto_cobertura_log_emp_data', 'reposicao_teto_cobertura_log'),
+  ('reposicao_teto_cobertura_motor', 'rls_policy', 'public', 'teto_cobertura_log_sel', 'reposicao_teto_cobertura_log'),
+  ('reposicao_teto_cobertura_motor', 'rls_policy', 'public', 'teto_cobertura_log_ins', 'reposicao_teto_cobertura_log'),
+  ('v_sku_ultima_venda', 'view', 'public', 'v_sku_ultima_venda', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -3524,7 +3535,14 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('tint_watchdog_fase5_chave', 'function', 'public', '_tint_watchdog_fase5_transicao', ''),
   ('tint_watchdog_fase5_chave', 'function', 'public', 'tint_watchdog_fase5_check', ''),
   ('tint_watchdog_fase5_chave', 'cron_job', 'cron', 'tint-watchdog-fase5-6h', ''),
-  ('calculate_scores_reforco_0625', 'cron_job', 'cron', 'calculate-scores-reforco-0625', '')
+  ('calculate_scores_reforco_0625', 'cron_job', 'cron', 'calculate-scores-reforco-0625', ''),
+  ('reposicao_teto_cobertura_motor', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
+  ('reposicao_teto_cobertura_motor', 'table', 'public', 'reposicao_teto_cobertura_log', ''),
+  ('reposicao_teto_cobertura_motor', 'index', 'public', 'idx_teto_cobertura_log_run', 'reposicao_teto_cobertura_log'),
+  ('reposicao_teto_cobertura_motor', 'index', 'public', 'idx_teto_cobertura_log_emp_data', 'reposicao_teto_cobertura_log'),
+  ('reposicao_teto_cobertura_motor', 'rls_policy', 'public', 'teto_cobertura_log_sel', 'reposicao_teto_cobertura_log'),
+  ('reposicao_teto_cobertura_motor', 'rls_policy', 'public', 'teto_cobertura_log_ins', 'reposicao_teto_cobertura_log'),
+  ('v_sku_ultima_venda', 'view', 'public', 'v_sku_ultima_venda', '')
 )
 SELECT
   e.migration,

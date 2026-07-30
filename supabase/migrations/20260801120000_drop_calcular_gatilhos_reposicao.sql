@@ -1,0 +1,23 @@
+-- Migration: DROP da função ÓRFÃ calcular_gatilhos_reposicao (P5 — higiene do motor de compra).
+-- ⚠️ NÃO auto-aplica (nome custom) — colar no SQL Editor do Lovable.
+--
+-- Por quê (checklist money-path de função órfã — "o que acontece se alguém chamar?"):
+--   - É um MOTOR PARALELO DIVERGENTE do real: z hardcoded A=2.33/B=1.65/C=1.28 (o motor usa a
+--     config 1.65/1.28/0.84), pp = ceil(d·LT + z·σd·√LT) (ignora σ do lead time), cobertura
+--     hardcoded 15/30/45d, estoque_max sem EOQ — fórmulas INCOMPATÍVEIS com
+--     v_sku_parametros_sugeridos/atualizar_parametros_numericos_skus.
+--   - É SECURITY DEFINER e ESCREVE direto em sku_parametros: uma única invocação sobrescreveria
+--     os parâmetros do motor real com números de outra fórmula — arma carregada.
+--   - Orfandade PROVADA (2026-07-30, com falsificação do método): zero chamadores em src/ (só
+--     types.ts gerado), zero em supabase/functions/ e scripts/, ZERO em cron.job — e o grep de
+--     CONTROLE encontra a função viva gerar_pedidos_sugeridos_ciclo em 3 sítios (o detector
+--     enxerga; "zero resultados" não é grep cego). Detector-vivo do lado SQL: a assinatura
+--     resolvida em prod ANTES do drop = calcular_gatilhos_reposicao(text,bigint).
+--   - Criada por migrations UUID auto-geradas (2026-05-13/15) — fora do audit de migrations
+--     custom (sem entrada OBSOLETE necessária).
+--
+-- Validação pós-apply (deve voltar 1 linha 'ok'):
+--   SELECT CASE WHEN to_regprocedure('public.calcular_gatilhos_reposicao(text,bigint)') IS NULL
+--               THEN 'ok' ELSE 'AINDA EXISTE' END;
+
+DROP FUNCTION IF EXISTS public.calcular_gatilhos_reposicao(text, bigint);

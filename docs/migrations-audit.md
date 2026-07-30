@@ -21,16 +21,16 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **437** custom migrations totais
-- **1510** objetos esperados (criados por estas migrations)
+- **441** custom migrations totais
+- **1517** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 440
-  - `rls_policy`: 384
-  - `index`: 224
+  - `function`: 441
+  - `rls_policy`: 386
+  - `index`: 226
   - `cron_job`: 160
-  - `table`: 147
+  - `table`: 148
   - `trigger`: 79
-  - `view`: 72
+  - `view`: 73
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -3681,6 +3681,31 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `cron_job` | `cron.calculate-scores-reforco-0625` | — |
+
+### `20260730130000_reposicao_teto_cobertura_motor.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.gerar_pedidos_sugeridos_ciclo` | — |
+| `table` | `public.reposicao_teto_cobertura_log` | — |
+| `index` | `public.idx_teto_cobertura_log_run` | `reposicao_teto_cobertura_log` |
+| `index` | `public.idx_teto_cobertura_log_emp_data` | `reposicao_teto_cobertura_log` |
+| `rls_policy` | `public.teto_cobertura_log_sel` | `reposicao_teto_cobertura_log` |
+| `rls_policy` | `public.teto_cobertura_log_ins` | `reposicao_teto_cobertura_log` |
+
+### `20260731120000_farmer_assoc_rules_delete_qualificado.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260731120000_v_sku_ultima_venda.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `view` | `public.v_sku_ultima_venda` | — |
+
+### `20260801120000_drop_calcular_gatilhos_reposicao.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ## Próximos passos por status
 
