@@ -31,6 +31,7 @@ import { EMPRESA, edgeSyncOk, formatBRL, frescorEstoque, interpretarRespostaDisp
 import { CycleIndicator } from '@/components/reposicao/pedidos/CycleIndicator';
 import { PedidoRow } from '@/components/reposicao/pedidos/PedidoRow';
 import { StatusComMotivo, PortalBadge } from '@/components/reposicao/pedidos/badges';
+import { CaixaCompraCard } from '@/components/reposicao/pedidos/CaixaCompraCard';
 import { DetalhesModal } from '@/components/reposicao/pedidos/DetalhesModal';
 import { CancelarModal } from '@/components/reposicao/pedidos/CancelarModal';
 import { PortalDrawer } from '@/components/reposicao/pedidos/PortalDrawer';
@@ -653,6 +654,8 @@ export default function AdminReposicaoPedidos() {
           </AlertDescription>
         </Alert>
       )}
+
+      <CaixaCompraCard pedidos={pedidos ?? []} />
 
       {mostrarAtencao && atencaoCount > 0 && (
         <Card className="border-status-warning/40">
