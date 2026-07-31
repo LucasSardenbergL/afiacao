@@ -141,6 +141,12 @@ Deno.test("classificarFaultstring — 5xx genérico NÃO afrouxa a âncora: díg
   // 4xx que NÃO é 429 não é retentável — só o rate-limit é.
   assertEquals(classificarFaultstring("Omie (vendas): HTTP 400"), "indeterminada");
   assertEquals(classificarFaultstring("Omie (vendas): HTTP 404"), "indeterminada");
+  // A âncora tem de ser a PALAVRA: `http` como sufixo de outra não ancora nada (fronteira `\b`).
+  assertEquals(classificarFaultstring("prefixhttp 520 em campo ecoado"), "indeterminada");
+  // …e o código não pode ser o PREFIXO de um identificador longo (fronteira `(?!\d)`) — este é o
+  // dígito-solto do #1614 tentando voltar por dentro da própria âncora.
+  assertEquals(classificarFaultstring("status 503123456 dentro do identificador"), "indeterminada");
+  assertEquals(classificarFaultstring("http 5031234 é um id, não um código"), "indeterminada");
 });
 
 // "Falha temporária ao validar credenciais" casava `credencia` e virava permanente — abandonava

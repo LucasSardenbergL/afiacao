@@ -8,7 +8,12 @@ import { recomporCustoProducao } from "../_shared/recompor-custo-producao.ts";
 import { buildProductIdMap, montarCatalogoPorCod } from "../_shared/product-idmap.ts";
 import { avaliarPagina, MAX_PAGINAS_LISTAGEM, MAX_PAGINAS_POS_ESTOQUE, proximoTotalPaginas } from "../_shared/omie-paginacao.ts";
 import { acumularPosicoesDaPagina, type PosicaoEstoque } from "../_shared/pos-estoque.ts";
-import { atrasoRetentativaMs, classificarFaultstring, redigirSegredo } from "../_shared/omie-falha.ts";
+import {
+  decidirRetentativaOmie,
+  MAX_TENTATIVAS_OMIE,
+  mensagemCorpoNaoJson,
+  mensagemFalhaOmie,
+} from "./politica-retry.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -182,17 +187,12 @@ async function callOmie(account: OmieAccount, endpoint: string, call: string, pa
   // (money-path §"O MARCADOR mente", #1614); (b) a enumeração à mão de 5xx deixava 501/505/520 —
   // gateway/CDN — abortar sem backoff nenhum (#1623).
   //
-  // ⚠️ Só `transitorio` retenta. `indeterminada` falha RÁPIDO aqui, e essa é uma divergência
-  // DELIBERADA da política de `decidirDesfechoFalha` (onde indeterminada retenta) — a unidade de
-  // trabalho é outra. Lá o retry é por PÁGINA e desistir custa uma conta inteira; aqui o
-  // `ConsultarEstrutura` roda por PRODUTO dentro de um laço de ~1.3k alvos em lotes de 8, com o
-  // caller degradando honesto (`custo_producao_status='erro_api'`). Medido em prod 2026-07-31:
-  // 825 produtos falham por ciclo. Retentar indeterminada custaria 825/8 × 5,6s ≈ 578s de sleep
-  // contra um orçamento de ~150s do worker — trocaria uma falha reportada e parcial pelo
-  // WORKER_RESOURCE_LIMIT que o lote paralelo do `syncCustoProducao` existe para evitar, com o
-  // sync_state preso em 'running'. Quem mudar isto tem de refazer essa conta com o número de
-  // falhas do ciclo; o gate em politica-retry_test.ts pina a política.
-  const maxAttempts = 4;
+  // ⚠️ A POLÍTICA (o que retenta, quanto dorme, o que é redigido) vive em `./politica-retry.ts`,
+  // que é puro e importável pelo teste — este arquivo não é (traz `deno.land` e `npm:`, e a suíte
+  // roda com `--no-remote`). A 1ª versão desta entrega deixava a política aqui e a "provava" com
+  // gates que liam o fonte atrás de tokens; o challenge do Codex passou pelos três com mutações
+  // triviais. Decisão de money-path não se prova por token: mora onde o teste a EXECUTA.
+  const maxAttempts = MAX_TENTATIVAS_OMIE;
   let lastErr: Error | null = null;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
@@ -201,22 +201,28 @@ async function callOmie(account: OmieAccount, endpoint: string, call: string, pa
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      const result = (await res.json()) as OmieApiResponseBase;
+      // ⚠️ O parse vem ANTES do guard de status (a faultstring é mais acionável que o código), e
+      // é por isso que ele precisa do próprio catch: um 5xx de gateway com corpo de TEXTO estoura
+      // aqui e nunca chega ao `!res.ok`. A mensagem do parser ecoa o corpo ("Unexpected token
+      // 'E', \"ERROR 503\" is not valid JSON") — o classificador antigo via o `503` solto ali e
+      // retentava; sem este ramo, a forma ancorada não veria nada e o 503 de gateway falharia na
+      // 1ª tentativa. Regressão de transporte achada pelo challenge do Codex.
+      let result: OmieApiResponseBase;
+      try {
+        result = (await res.json()) as OmieApiResponseBase;
+      } catch (erroJson) {
+        throw new Error(mensagemCorpoNaoJson(account, res.status, erroJson));
+      }
       // `faultstring` ANTES do status. ⚠️ Aqui a ordem NÃO preserva EOF nenhum — este wrapper
       // lança em TODA faultstring, inclusive na de fim de página, e isso é comportamento
       // preexistente que este PR não muda (achado Codex xhigh, contra a 1ª redação deste
       // comentário, que prometia preservar o fim real). O que a ordem preserva é a MENSAGEM: é
       // ela que o catch abaixo classifica para decidir entre retentar e falhar, e um `HTTP 503`
       // genérico apagaria a faultstring específica que torna o motivo acionável.
-      // ⚠️ `redigirSegredo` porque esta faultstring ECOA a credencial: a mensagem mais comum da
-      // família é `"Chave de acesso não cadastrada para o aplicativo [<app_key>]"`, e daqui o
-      // texto vai CRU para três sinks — `sync_state.error_message` (PERSISTIDO, nos catch de
-      // syncCustomers/syncProducts/syncInventory/syncCustoProducao), o `console.error` do laço de
-      // `ConsultarEstrutura`, e o corpo da resposta 500 do handler. Redigir no THROW cobre os
-      // três de uma vez. O que se mascara é dígito LONGO (app_key) e hex longo
-      // (app_secret); número de página e código HTTP sobrevivem — são o que torna o motivo
-      // acionável (money-path §"O MARCADOR mente", corolário de privacidade).
-      if (result.faultstring) throw new Error(`Omie (${account}): ${redigirSegredo(String(result.faultstring))}`);
+      // `mensagemFalhaOmie` REDIGE o texto do Omie: esta faultstring ECOA a credencial, e daqui
+      // ela ia crua para três sinks (o `sync_state.error_message` persistido, o console e o corpo
+      // da resposta 500). O porquê e o que se preserva estão em `politica-retry.ts`.
+      if (result.faultstring) throw new Error(mensagemFalhaOmie(account, String(result.faultstring)));
       // Sem faultstring, só um 2xx é resposta. `fetch` NÃO lança em HTTP não-2xx: um 429/5xx cujo
       // corpo parseia sem fault (o `{}` de proxy/gateway) voltava como resposta boa e chegava aos
       // laços de enumeração sem `total_de_paginas` e sem lista — o piso degrada para 1 e a página
@@ -224,27 +230,18 @@ async function callOmie(account: OmieAccount, endpoint: string, call: string, pa
       // Emitido como `HTTP <n>` — a forma ANCORADA que `classificarFaultstring` reconhece, para
       // reusar o backoff do catch em vez de virar falha diária. Todo 5xx (não só 500/502/503/504)
       // e o 429 casam o padrão; a âncora é o que impede o dígito de casar dentro de um id ecoado.
-      if (!res.ok) throw new Error(`Omie (${account}): HTTP ${res.status}`);
+      if (!res.ok) throw new Error(mensagemFalhaOmie(account, `HTTP ${res.status}`, "runtime"));
       // `faultcode` sem `faultstring` fecha a ordem canônica: um `200 {"faultcode":"5113"}` chegava
       // aos laços como página boa e vazia, e o sync publicava `status:"complete"` sobre um retrato
       // parcial — a fabricação de completude que o G6 existe para barrar, uma casa adiante.
-      if (result.faultcode) throw new Error(`Omie (${account}): faultcode ${redigirSegredo(String(result.faultcode))}`);
+      if (result.faultcode) throw new Error(mensagemFalhaOmie(account, `faultcode ${result.faultcode}`));
       return result;
     } catch (e) {
       const erro = e instanceof Error ? e : new Error(String(e));
       lastErr = erro;
-      // `classificarFaultstring` (e não `classificarExcecao`) porque o texto que chega aqui é, no
-      // caminho dominante, a própria faultstring do Omie que o throw acima embrulhou — e o EOF do
-      // contrato ("Não existem registros para a página") tem de continuar visível como
-      // `fim_de_pagina`. A distinção não muda o desfecho (só `transitorio` retenta, e o EOF nunca
-      // é transitório): muda o que a classe DIZ, e classe que mente é o começo do próximo bug.
-      const classe = classificarFaultstring(erro.message);
-      if (classe === "transitorio" && attempt < maxAttempts) {
-        // Mesma curva de antes (0,8s / 1,6s / 3,2s) e, de quebra, honra o "Aguarde N segundos"
-        // que o Omie manda no rate-limit, com teto de 5s. Dormir o que o servidor pediu é o
-        // oposto de martelar 0,8s enquanto ele pede espera.
-        const espera = atrasoRetentativaMs(attempt, erro.message);
-        await new Promise((r) => setTimeout(r, espera));
+      const decisao = decidirRetentativaOmie(erro.message, attempt, maxAttempts);
+      if (decisao.retentar) {
+        await new Promise((r) => setTimeout(r, decisao.atrasoMs));
         continue;
       }
       throw erro;

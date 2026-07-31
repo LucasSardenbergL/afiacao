@@ -99,7 +99,19 @@ const MARCADORES_TRANSITORIOS = [
 // SEM backoff: falha de servidor tratada como permanente (achado do challenge Codex do #1623).
 // O padrão cobre TODO 5xx e o 429 do rate-limit — e só esses: 4xx que não seja 429 não é
 // retentável (400/404 são o pedido errado, e repetir o pedido errado devolve o mesmo erro).
-const PADROES_TRANSITORIOS = [/(?:http|status):?\s+(?:429|5\d\d)/];
+//
+// As três fronteiras são todas do challenge Codex, e cada uma fecha um jeito de a âncora não
+// ancorar nada:
+//   `\b` à esquerda    — sem ele, `"prefixhttp 520 em campo ecoado"` casava: a âncora tem de ser
+//                        a PALAVRA `http`/`status`, não um sufixo dela;
+//   `(?!\d)` à direita — sem ele, `"status 503123456"` casava o prefixo de um IDENTIFICADOR, que
+//                        é exatamente o dígito-solto do #1614 voltando pela porta da âncora. De
+//                        quebra é o que torna a classe ESTÁVEL sob `redigirSegredo`: sem ele, o
+//                        mesmo texto classificava `transitorio` antes de redigir e
+//                        `indeterminada` depois (a máscara come o dígito longo);
+//   `(?:\s+code)?`     — `"Request failed with status code 503"` é a forma que cliente HTTP de
+//                        terceiro emite, e ela não casava nenhuma das duas âncoras.
+const PADROES_TRANSITORIOS = [/\b(?:http|status)(?:\s+code)?:?\s+(?:429|5\d\d)(?!\d)/];
 
 // Credencial/autorização/validação de acesso: a próxima chamada devolve exatamente o mesmo
 // erro. "Chave de acesso não cadastrada para o aplicativo" é o clássico do Omie quando a
