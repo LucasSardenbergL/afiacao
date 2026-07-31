@@ -106,7 +106,12 @@ async function callOmieApi(
   };
 
   console.log(`[Omie API] Chamando ${endpoint} - ${call}`);
-  console.log(`[Omie API] Payload:`, JSON.stringify(body, null, 2));
+  // ⚠️ NUNCA logar `body`: ele carrega `app_key`/`app_secret` INTEIROS, e o log da edge fica
+  // RETIDO e visível no painel do Supabase/Lovable — a cada invocação. Publicar credencial em
+  // log não é diagnóstico, é vazamento (mesmo corolário de privacidade que obrigou o
+  // `redigirSegredo` na faultstring logo abaixo: money-path §"O MARCADOR mente"). O que torna a
+  // chamada diagnosticável é o `param`, e ele não tem credencial — é o que se loga.
+  console.log(`[Omie API] Param:`, JSON.stringify(body.param, null, 2));
 
   const response = await fetch(`${OMIE_API_URL}/${endpoint}`, {
     method: "POST",
