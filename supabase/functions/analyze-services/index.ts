@@ -8,6 +8,7 @@ import {
   statusDoErro,
   traduzirErroAnthropic,
 } from "../_shared/anthropic.ts";
+import { consumirCota, headersDeCota } from "../_shared/ia-cota.ts";
 import { normalizarItens, TOOL_SERVICOS } from "./servico-tools.ts";
 
 const corsHeaders = {
@@ -83,10 +84,26 @@ serve(async (req) => {
       throw new Error("ANTHROPIC_API_KEY is not configured");
     }
 
-    // Buscar serviços disponíveis do banco
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
+    // COTA — depois da validação (requisição malformada não queima cota) e antes
+    // da Anthropic. Também poupa a consulta de serviços quando a cota já estourou.
+    // O gate acima só exige JWT válido: sem isto, um cliente repetindo pedidos
+    // com 100 ferramentas esgota o orçamento da ORGANIZAÇÃO — os limites da
+    // Anthropic não são por usuário da aplicação.
+    const cota = await consumirCota(supabase, user.id, "analyze-services", "análises de pedido");
+    if (!cota.permitido) {
+      return new Response(
+        JSON.stringify({ error: cota.mensagem }),
+        {
+          status: cota.http,
+          headers: { ...corsHeaders, ...headersDeCota(cota), "Content-Type": "application/json" },
+        },
+      );
+    }
+
+    // Buscar serviços disponíveis do banco
     const { data: servicos, error: dbError } = await supabase
       .from("omie_servicos")
       .select("omie_codigo_servico, descricao")

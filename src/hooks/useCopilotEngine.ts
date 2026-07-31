@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef } from 'react';
 import { supabase } from '@/integrations/supabase/client';
-import { invokeFunction } from '@/lib/invoke-function';
+import { EdgeFunctionError, invokeFunction } from '@/lib/invoke-function';
 import { useAuth } from '@/contexts/AuthContext';
 
 // ─── Types ───────────────────────────────────────────────────────────
@@ -57,12 +57,18 @@ interface CopilotState {
   isAnalyzing: boolean;
   /** A leitura exibida ficou para trás (a última tentativa falhou). */
   analiseObsoleta: boolean;
+  /** Cota de IA estourada: a mensagem da edge, exibida como tal. Enquanto
+   *  preenchida, os ticks NÃO disparam — retentar de 8 em 8s contra um limite
+   *  que não vai ceder só gasta requisição e mantém a vendedora no escuro. */
+  avisoCota: string | null;
   suggestionsShown: number;
   suggestionsUsed: number;
 }
 
 const ANALYSIS_INTERVAL_MS = 8000; // Analyze every 8 seconds of new speech
 const MIN_TRANSCRIPT_LENGTH = 20;
+/** Sem `Retry-After` utilizável, espera um valor conservador antes de reabrir. */
+const ESPERA_COTA_PADRAO_MS = 5 * 60 * 1000;
 
 export const useCopilotEngine = () => {
   const { user } = useAuth();
@@ -74,12 +80,15 @@ export const useCopilotEngine = () => {
     analysisHistory: [],
     isAnalyzing: false,
     analiseObsoleta: false,
+    avisoCota: null,
     suggestionsShown: 0,
     suggestionsUsed: 0,
   });
 
   const analysisTimerRef = useRef<NodeJS.Timeout | null>(null);
   const lastAnalyzedRef = useRef<string>('');
+  /** Epoch em ms até quando a cota está estourada. 0 = liberado. */
+  const cotaBloqueadaAteRef = useRef<number>(0);
   // Descarta resposta fora de ordem: com tick de 8s, uma análise lenta pode
   // terminar DEPOIS de uma mais nova e sobrescrever a tela com leitura velha —
   // "risco" atual viraria "neutro" obsoleto.
@@ -116,6 +125,11 @@ export const useCopilotEngine = () => {
       customerContext: params.customerContext,
     };
 
+    // A cota é por janela de TEMPO, não por sessão: abrir uma ligação nova não
+    // devolve chamadas. Por isso o aviso só é limpo se a janela já virou —
+    // apagá-lo aqui deixaria a vendedora numa ligação com o copiloto mudo e sem
+    // explicação, que é o estado que este PR existe para eliminar.
+    const cotaAindaBloqueada = cotaBloqueadaAteRef.current > Date.now();
     setState(prev => ({
       ...prev,
       isActive: true,
@@ -124,6 +138,7 @@ export const useCopilotEngine = () => {
       currentAnalysis: null,
       analysisHistory: [],
       analiseObsoleta: false,
+      avisoCota: cotaAindaBloqueada ? prev.avisoCota : null,
       suggestionsShown: 0,
       suggestionsUsed: 0,
     }));
@@ -212,6 +227,17 @@ export const useCopilotEngine = () => {
         return prev;
       }
 
+      // Cota estourada: não dispara até a janela virar. Sem esta guarda o tick
+      // de 8s vira um martelo contra um limite que não cede — e o `catch`
+      // adiante solta `lastAnalyzedRef` de propósito, o que aqui realimentaria
+      // o loop a cada tick. O aviso na tela só sai quando uma análise VOLTA a
+      // funcionar (abaixo), não no relógio: some porque funcionou, não porque
+      // o tempo passou.
+      if (cotaBloqueadaAteRef.current > Date.now()) {
+        return prev;
+      }
+      cotaBloqueadaAteRef.current = 0;
+
       lastAnalyzedRef.current = fullText;
 
       // Fire async analysis
@@ -263,6 +289,8 @@ export const useCopilotEngine = () => {
             analysisHistory: [...s.analysisHistory, analysis],
             isAnalyzing: false,
             analiseObsoleta: false,
+            // Voltou a funcionar: é este o sinal que apaga o aviso de cota.
+            avisoCota: null,
             suggestionsShown: s.suggestionsShown + 1,
           }));
 
@@ -284,6 +312,27 @@ export const useCopilotEngine = () => {
           }
         } catch (err) {
           console.error('Analysis error:', err);
+
+          // 429 = a COTA de IA desta usuária acabou. É diferente em espécie de
+          // uma falha transitória: retentar não resolve, só gasta requisição —
+          // e antes disto o erro morria no console, com o painel seguindo em
+          // "AO VIVO" e ninguém sabendo por que as sugestões pararam.
+          const cotaEstourada = err instanceof EdgeFunctionError && err.status === 429;
+          if (cotaEstourada) {
+            const esperaMs = err.retryAfterSeconds
+              ? err.retryAfterSeconds * 1000
+              : ESPERA_COTA_PADRAO_MS;
+            cotaBloqueadaAteRef.current = Date.now() + esperaMs;
+            setState(s => ({
+              ...s,
+              isAnalyzing: false,
+              analiseObsoleta: s.currentAnalysis !== null,
+              // A mensagem da edge já explica qual limite e quando volta.
+              avisoCota: err.message,
+            }));
+            return;
+          }
+
           // Solta o texto para o próximo tick TENTAR DE NOVO. Sem isto o
           // copiloto morre calado: `lastAnalyzedRef` já foi marcado antes da
           // chamada, então uma falha (422, rede) faria todos os ticks seguintes

@@ -142,10 +142,20 @@ const FarmerCopilot = () => {
               </div>
             )}
 
+            {/* Cota de IA estourada. Precede o aviso de "desatualizada" porque
+                diz a causa REAL e a ação certa: aqui NÃO adianta esperar o
+                próximo tick — os disparos estão suspensos até a janela virar. */}
+            {copilot.avisoCota && (
+              <div className="flex items-start gap-1.5 justify-center py-1">
+                <AlertCircle className="w-3 h-3 text-status-warning shrink-0 mt-px" />
+                <span className="text-[10px] text-status-warning">{copilot.avisoCota}</span>
+              </div>
+            )}
+
             {/* A última leitura falhou e a tela ainda mostra a anterior. Sem este
                 aviso o painel segue em "AO VIVO" com uma direção que já passou —
                 e a vendedora age sobre ela achando que é o agora. */}
-            {!copilot.isAnalyzing && copilot.analiseObsoleta && (
+            {!copilot.isAnalyzing && copilot.analiseObsoleta && !copilot.avisoCota && (
               <div className="flex items-center gap-1.5 justify-center py-1">
                 <AlertCircle className="w-3 h-3 text-status-warning shrink-0" />
                 <span className="text-[10px] text-status-warning">
