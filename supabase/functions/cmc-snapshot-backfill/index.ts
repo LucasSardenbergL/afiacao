@@ -55,6 +55,12 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff, corsHeaders } from "../_shared/auth.ts";
+import {
+  decidirRetentativaCmcSnapshot,
+  MAX_TENTATIVAS_CMC_SNAPSHOT,
+  mensagemFaultstringOmie,
+  mensagemHttpOmie,
+} from "../_shared/cmc-snapshot-retry.ts";
 import { avaliarPagina, proximoTotalPaginas } from "../_shared/omie-paginacao.ts";
 
 const OMIE_API_URL = "https://app.omie.com.br/api/v1";
@@ -86,10 +92,15 @@ function getCredentials(account: OmieAccount) {
   return { key: Deno.env.get("OMIE_COLACOR_SC_APP_KEY"), secret: Deno.env.get("OMIE_COLACOR_SC_APP_SECRET") };
 }
 
-// Chamada Omie com retry curto p/ flakiness transitória (mesma família de erros
-// que o analytics-sync trata) — INCLUI o lock de concorrência do Omie ("Já existe
-// uma requisição desse método sendo executada"). Por isso TODAS as chamadas deste
-// edge são serializadas (await sequencial), nunca Promise.all.
+// Chamada Omie com retry curto p/ flakiness transitória — INCLUI o lock de concorrência do Omie
+// ("Já existe uma requisição desse método sendo executada"). Por isso TODAS as chamadas deste edge
+// são serializadas (await sequencial), nunca Promise.all.
+//
+// A classificação da falha e a redação da credencial ecoada vivem em `_shared/cmc-snapshot-retry.ts`
+// (lógica pura, testada) — este arquivo é só o transporte. O bloco ad-hoc que morava aqui tinha dois
+// defeitos: casava código HTTP por DÍGITO CRU (`includes("503")`, que casa dentro da app_key ecoada
+// pela faultstring de credencial) e comparava marcadores ACENTUADOS contra texto só `.toLowerCase()`
+// — o próprio lock acima deixava de ser reconhecido quando o Omie o emitia sem acento.
 async function callOmie(
   account: OmieAccount,
   endpoint: string,
@@ -100,9 +111,8 @@ async function callOmie(
   if (!creds.key || !creds.secret) throw new Error(`Credenciais Omie (${account}) não configuradas`);
   const body = { call, app_key: creds.key, app_secret: creds.secret, param: [params] };
 
-  const maxAttempts = 5;
   let lastErr: Error | null = null;
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+  for (let attempt = 1; attempt <= MAX_TENTATIVAS_CMC_SNAPSHOT; attempt++) {
     try {
       const res = await fetch(`${OMIE_API_URL}/${endpoint}`, {
         method: "POST",
@@ -115,28 +125,19 @@ async function callOmie(
       // produtos, que o laço lê como página vazia no fim declarado (EOF) — e o snapshot de CMC
       // é GRAVADO truncado. Os guards de paginação não alcançam o que o wrapper já aprovou.
       if (!res.ok) {
-        throw new Error(`Omie (${account}) HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`);
+        throw new Error(mensagemHttpOmie(account, res.status, await res.text()));
       }
       const result = (await res.json()) as OmieListarPosEstoqueResponse;
-      if (result.faultstring) throw new Error(`Omie (${account}): ${result.faultstring}`);
+      if (result.faultstring) throw new Error(mensagemFaultstringOmie(account, result.faultstring));
       return result;
     } catch (e) {
       lastErr = e instanceof Error ? e : new Error(String(e));
-      const msg = lastErr.message.toLowerCase();
-      const transient = msg.includes("broken response") || msg.includes("soap-error") ||
-        msg.includes("timeout") || msg.includes("timed out") || msg.includes("network") ||
-        msg.includes("connection") || msg.includes("fetch failed") ||
-        msg.includes("502") || msg.includes("503") || msg.includes("504") || msg.includes("500") ||
-        msg.includes("já existe uma requisição") || msg.includes("sendo executada") ||
-        msg.includes("tente novamente");
-      if (transient && attempt < maxAttempts) {
-        await new Promise((r) => setTimeout(r, 1000 * Math.pow(2, attempt - 1)));
-        continue;
-      }
-      throw lastErr;
+      const decisao = decidirRetentativaCmcSnapshot(lastErr.message, attempt);
+      if (!decisao.retentar) throw lastErr;
+      await new Promise((r) => setTimeout(r, decisao.atrasoMs));
     }
   }
-  throw lastErr ?? new Error(`Omie (${account}): falha após ${maxAttempts} tentativas`);
+  throw lastErr ?? new Error(`Omie (${account}): falha após ${MAX_TENTATIVAS_CMC_SNAPSHOT} tentativas`);
 }
 
 // Aceita ISO (YYYY-MM-DD) ou pt-BR (DD/MM/YYYY) e devolve o que o Omie espera (DD/MM/YYYY).
