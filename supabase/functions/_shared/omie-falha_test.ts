@@ -113,6 +113,42 @@ Deno.test("classificarFaultstring — código HTTP ANCORADO na forma do wrapper 
   assertEquals(classificarFaultstring("Erro HTTP 429 do Omie (ListarClientes)"), "transitorio");
 });
 
+// A 1ª lista ancorada enumerava 500/502/503/504 À MÃO, então um 5xx FORA da enumeração
+// (501/505/520 — as formas que gateway e CDN emitem) caía em `indeterminada` e, no wrapper do
+// omie-analytics-sync, abortava na 1ª tentativa SEM backoff: falha de servidor tratada como
+// permanente (achado do challenge Codex do #1623). A enumeração à mão é a mesma classe de erro
+// do dígito solto — só que pelo avesso: lá o marcador casava demais, aqui casa de menos.
+Deno.test("classificarFaultstring — 5xx FORA da enumeração à mão (501/505/520) também é transitório", () => {
+  for (const codigo of [500, 501, 502, 503, 504, 505, 520, 521, 522, 598]) {
+    assertEquals(
+      classificarFaultstring(`Omie (vendas): HTTP ${codigo}`),
+      "transitorio",
+      `HTTP ${codigo} tinha de ser transitório (5xx é falha de servidor, sempre)`,
+    );
+  }
+});
+
+// O alargamento acima NÃO pode reabrir a porta que o #1614 fechou: a âncora (`http `/`status `)
+// é o que separa "código HTTP" de "dígito dentro de um identificador ecoado". Sem este negativo,
+// trocar a enumeração por um padrão genérico de 5xx é indistinguível de voltar ao dígito cru.
+Deno.test("classificarFaultstring — 5xx genérico NÃO afrouxa a âncora: dígito solto segue não casando", () => {
+  // app_key contendo 520/501: a família de mensagem que MAIS aparece precisa seguir permanente.
+  assertEquals(classificarFaultstring("Chave de acesso não cadastrada para o aplicativo [1520123456]"), "permanente");
+  assertEquals(classificarFaultstring("app_key [5019384756] inválida"), "permanente");
+  // Sem âncora e sem marcador nenhum: indeterminada, não transitório fabricado.
+  assertEquals(classificarFaultstring("Produto 520 sem estrutura cadastrada"), "indeterminada");
+  assertEquals(classificarFaultstring("idProduto=1503498712 nao possui malha"), "indeterminada");
+  // 4xx que NÃO é 429 não é retentável — só o rate-limit é.
+  assertEquals(classificarFaultstring("Omie (vendas): HTTP 400"), "indeterminada");
+  assertEquals(classificarFaultstring("Omie (vendas): HTTP 404"), "indeterminada");
+  // A âncora tem de ser a PALAVRA: `http` como sufixo de outra não ancora nada (fronteira `\b`).
+  assertEquals(classificarFaultstring("prefixhttp 520 em campo ecoado"), "indeterminada");
+  // …e o código não pode ser o PREFIXO de um identificador longo (fronteira `(?!\d)`) — este é o
+  // dígito-solto do #1614 tentando voltar por dentro da própria âncora.
+  assertEquals(classificarFaultstring("status 503123456 dentro do identificador"), "indeterminada");
+  assertEquals(classificarFaultstring("http 5031234 é um id, não um código"), "indeterminada");
+});
+
 // "Falha temporária ao validar credenciais" casava `credencia` e virava permanente — abandonava
 // a conta por um erro que passa sozinho. `temporari` entra antes, no lado que retenta.
 Deno.test("classificarFaultstring — falha TEMPORÁRIA que cita credencial é transitória, não permanente", () => {

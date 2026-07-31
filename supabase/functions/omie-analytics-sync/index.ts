@@ -8,6 +8,12 @@ import { recomporCustoProducao } from "../_shared/recompor-custo-producao.ts";
 import { buildProductIdMap, montarCatalogoPorCod } from "../_shared/product-idmap.ts";
 import { avaliarPagina, MAX_PAGINAS_LISTAGEM, MAX_PAGINAS_POS_ESTOQUE, proximoTotalPaginas } from "../_shared/omie-paginacao.ts";
 import { acumularPosicoesDaPagina, type PosicaoEstoque } from "../_shared/pos-estoque.ts";
+import {
+  decidirRetentativaOmie,
+  MAX_TENTATIVAS_OMIE,
+  mensagemCorpoNaoJson,
+  mensagemFalhaOmie,
+} from "./politica-retry.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -171,8 +177,22 @@ async function callOmie(account: OmieAccount, endpoint: string, call: string, pa
   // Retry com backoff p/ erros TRANSITÓRIOS do Omie/rede (ex.: "SOAP-ERROR: Broken response from
   // Application Server" — flakiness intermitente do servidor do Omie que matava a enumeração de ~105
   // páginas). ListarClientes/ListarProdutos são leitura idempotente → seguro re-tentar. Erro PERMANENTE
-  // (credencial/validação) falha rápido (não casa os marcadores transitórios). Backoff: 0.8s, 1.6s, 3.2s.
-  const maxAttempts = 4;
+  // (credencial/validação) falha rápido. Backoff: 0.8s, 1.6s, 3.2s (`atrasoRetentativaMs`).
+  //
+  // ⚠️ A classificação é do helper canônico `_shared/omie-falha.ts`, NÃO ad-hoc aqui. A versão
+  // anterior casava os códigos HTTP CRUS (`msg.includes("503")`) e tinha os dois defeitos que o
+  // helper já fechou: (a) o dígito casa DENTRO do identificador que a própria mensagem ecoa — a
+  // app_key de `"Chave de acesso não cadastrada para o aplicativo [1503123456]"` e o idProduto do
+  // `ConsultarEstrutura` contêm 503, então o erro PERMANENTE mais comum comprava as 4 tentativas
+  // (money-path §"O MARCADOR mente", #1614); (b) a enumeração à mão de 5xx deixava 501/505/520 —
+  // gateway/CDN — abortar sem backoff nenhum (#1623).
+  //
+  // ⚠️ A POLÍTICA (o que retenta, quanto dorme, o que é redigido) vive em `./politica-retry.ts`,
+  // que é puro e importável pelo teste — este arquivo não é (traz `deno.land` e `npm:`, e a suíte
+  // roda com `--no-remote`). A 1ª versão desta entrega deixava a política aqui e a "provava" com
+  // gates que liam o fonte atrás de tokens; o challenge do Codex passou pelos três com mutações
+  // triviais. Decisão de money-path não se prova por token: mora onde o teste a EXECUTA.
+  const maxAttempts = MAX_TENTATIVAS_OMIE;
   let lastErr: Error | null = null;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
@@ -181,41 +201,50 @@ async function callOmie(account: OmieAccount, endpoint: string, call: string, pa
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      const result = (await res.json()) as OmieApiResponseBase;
+      // ⚠️ O parse vem ANTES do guard de status (a faultstring é mais acionável que o código), e
+      // é por isso que ele precisa do próprio catch: um 5xx de gateway com corpo de TEXTO estoura
+      // aqui e nunca chega ao `!res.ok`. A mensagem do parser ecoa o corpo ("Unexpected token
+      // 'E', \"ERROR 503\" is not valid JSON") — o classificador antigo via o `503` solto ali e
+      // retentava; sem este ramo, a forma ancorada não veria nada e o 503 de gateway falharia na
+      // 1ª tentativa. Regressão de transporte achada pelo challenge do Codex.
+      let result: OmieApiResponseBase;
+      try {
+        result = (await res.json()) as OmieApiResponseBase;
+      } catch (erroJson) {
+        throw new Error(mensagemCorpoNaoJson(account, res.status, erroJson));
+      }
       // `faultstring` ANTES do status. ⚠️ Aqui a ordem NÃO preserva EOF nenhum — este wrapper
       // lança em TODA faultstring, inclusive na de fim de página, e isso é comportamento
       // preexistente que este PR não muda (achado Codex xhigh, contra a 1ª redação deste
       // comentário, que prometia preservar o fim real). O que a ordem preserva é a MENSAGEM: é
       // ela que o catch abaixo classifica para decidir entre retentar e falhar, e um `HTTP 503`
       // genérico apagaria a faultstring específica que torna o motivo acionável.
-      if (result.faultstring) throw new Error(`Omie (${account}): ${result.faultstring}`);
+      // `mensagemFalhaOmie` REDIGE o texto do Omie: esta faultstring ECOA a credencial, e daqui
+      // ela ia crua para três sinks (o `sync_state.error_message` persistido, o console e o corpo
+      // da resposta 500). O porquê e o que se preserva estão em `politica-retry.ts`.
+      if (result.faultstring) throw new Error(mensagemFalhaOmie(account, String(result.faultstring)));
       // Sem faultstring, só um 2xx é resposta. `fetch` NÃO lança em HTTP não-2xx: um 429/5xx cujo
       // corpo parseia sem fault (o `{}` de proxy/gateway) voltava como resposta boa e chegava aos
       // laços de enumeração sem `total_de_paginas` e sem lista — o piso degrada para 1 e a página
       // vazia vira fim da fonte, com todos os guards de paginação corretos e nenhum consultado.
-      // Emitido como `HTTP <n>` para reusar o backoff do catch em vez de virar falha diária —
-      // mas o classificador local casa dígito CRU e só conhece 429/500/502/503/504: um 501/520
-      // aborta na 1ª tentativa (dívida preexistente do classificador, não deste guard; o helper
-      // canônico `_shared/omie-falha.ts` é quem já ancora o marcador na forma `http <n>`).
-      if (!res.ok) throw new Error(`Omie (${account}): HTTP ${res.status}`);
+      // Emitido como `HTTP <n>` — a forma ANCORADA que `classificarFaultstring` reconhece, para
+      // reusar o backoff do catch em vez de virar falha diária. Todo 5xx (não só 500/502/503/504)
+      // e o 429 casam o padrão; a âncora é o que impede o dígito de casar dentro de um id ecoado.
+      if (!res.ok) throw new Error(mensagemFalhaOmie(account, `HTTP ${res.status}`, "runtime"));
       // `faultcode` sem `faultstring` fecha a ordem canônica: um `200 {"faultcode":"5113"}` chegava
       // aos laços como página boa e vazia, e o sync publicava `status:"complete"` sobre um retrato
       // parcial — a fabricação de completude que o G6 existe para barrar, uma casa adiante.
-      if (result.faultcode) throw new Error(`Omie (${account}): faultcode ${result.faultcode}`);
+      if (result.faultcode) throw new Error(mensagemFalhaOmie(account, `faultcode ${result.faultcode}`));
       return result;
     } catch (e) {
-      lastErr = e instanceof Error ? e : new Error(String(e));
-      const msg = lastErr.message.toLowerCase();
-      const transient = msg.includes("broken response") || msg.includes("soap-error") ||
-        msg.includes("timeout") || msg.includes("timed out") || msg.includes("network") ||
-        msg.includes("connection") || msg.includes("fetch failed") ||
-        msg.includes("502") || msg.includes("503") || msg.includes("504") || msg.includes("500") ||
-        msg.includes("429") || msg.includes("too many") || msg.includes("rate limit");
-      if (transient && attempt < maxAttempts) {
-        await new Promise((r) => setTimeout(r, 800 * Math.pow(2, attempt - 1)));
+      const erro = e instanceof Error ? e : new Error(String(e));
+      lastErr = erro;
+      const decisao = decidirRetentativaOmie(erro.message, attempt, maxAttempts);
+      if (decisao.retentar) {
+        await new Promise((r) => setTimeout(r, decisao.atrasoMs));
         continue;
       }
-      throw lastErr;
+      throw erro;
     }
   }
   throw lastErr ?? new Error(`Omie (${account}): falha após ${maxAttempts} tentativas`);
