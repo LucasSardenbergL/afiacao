@@ -25,10 +25,12 @@ function makePlan(overrides: Partial<TacticalPlan> = {}): TacticalPlan {
     approachStrategyB: "",
     topBundle: {},
     secondBundle: {},
-    bundleLie: 0,
-    bundleProbability: 0,
-    bundleIncrementalMargin: 0,
-    bestIndividualLie: 0,
+    // Tri-estado (money-path — ausente ≠ zero). `null` = não havia bundle prioritário na
+    // geração do plano: o estado de 339/339 planos em prod (psql-ro, 2026-07-31).
+    bundleLie: null,
+    bundleProbability: null,
+    bundleIncrementalMargin: null,
+    bestIndividualLie: null,
     diagnosticQuestions: [],
     implicationQuestion: "",
     offerTransition: "",
@@ -36,11 +38,25 @@ function makePlan(overrides: Partial<TacticalPlan> = {}): TacticalPlan {
     ltvProjection: null,
     expectedResult: null,
     operationalRisks: [],
-    estimatedProfitPerHour: 0,
+    estimatedProfitPerHour: null,
     status: "ativo",
     generatedAt: new Date().toISOString(),
     ...overrides,
   };
+}
+
+/**
+ * Valor renderizado na MetricRow de um rótulo. Buscar `getByText("—")` solto no card
+ * ficou ambíguo quando os números do bundle viraram tri-estado (a caixinha "LIE" do topo
+ * também passa a mostrar "—"): a asserção casava por acaso e deixaria de discriminar QUAL
+ * campo degradou. `<span>{label}</span><span>{value}</span>` — o valor é o irmão seguinte.
+ */
+function valorDaMetrica(label: string): string | null {
+  const el = screen.getByText(label);
+  const txt = el.nextElementSibling?.textContent;
+  // `toLocaleString('pt-BR', { style: 'currency' })` separa "R$" do número com NBSP
+  // (U+00A0) — comparar `textContent` cru falharia com duas strings visualmente iguais.
+  return txt == null ? null : txt.replace(/\s+/g, ' ').trim();
 }
 
 function setup(overrides: Partial<React.ComponentProps<typeof PlanCard>> = {}) {
@@ -93,7 +109,7 @@ describe("PlanCard", () => {
   describe("margem atual — ausência não pode virar 0,0%", () => {
     it("margem desconhecida exibe travessão, não 0,0%", () => {
       setup({ expanded: true, plan: makePlan({ currentMarginPct: null }) });
-      expect(screen.getByText("—")).toBeTruthy();
+      expect(valorDaMetrica("Margem atual")).toBe("—");
       expect(screen.queryByText("0.0%")).toBeNull();
       expect(screen.queryByText("0%")).toBeNull();
     });
@@ -184,6 +200,61 @@ describe("PlanCard", () => {
       expect(screen.getByText("⚠ Preço alto")).toBeTruthy();
       expect(screen.queryByText("0%")).toBeNull();
       expect(screen.queryByText("undefined%")).toBeNull();
+    });
+
+    it("sem bundle: a métrica LIE do topo mostra travessão, não R$ 0,00", () => {
+      // O card SEMPRE exibe a caixinha "LIE" — e para 339/339 planos em prod ela dizia
+      // "R$ 0,00". "Não há bundle" ≠ "o bundle não vale nada".
+      setup({ plan: makePlan({ bundleLie: null }) });
+      expect(screen.getByText("LIE")).toBeTruthy();
+      expect(screen.getAllByText("—").length).toBeGreaterThan(0);
+      expect(screen.queryByText("R$ 0,00")).toBeNull();
+    });
+
+    it("sem LIE não afirma lucro estimado por hora", () => {
+      // `estimatedProfitPerHour` deriva do LIE: sem LIE é INDECIDÍVEL, não "R$ 0,00/h".
+      setup({ plan: makePlan({ bundleLie: null, estimatedProfitPerHour: null }) });
+      expect(screen.queryByText(/Lucro estimado/)).toBeNull();
+    });
+
+    it("seção do bundle some quando não há LIE medido", () => {
+      setup({ expanded: true, plan: makePlan({ bundleLie: null }) });
+      expect(screen.queryByText("Bundle Prioritário")).toBeNull();
+    });
+
+    it("bundle com LIE medido mas probabilidade/margem ausentes renderiza travessão", () => {
+      // p_bundle/m_bundle são nullable na origem — "0,0%" de chance de fechar é veredito
+      // sobre o bundle que ninguém calculou.
+      setup({
+        expanded: true,
+        plan: makePlan({
+          bundleLie: 1250.5,
+          bundleProbability: null,
+          bundleIncrementalMargin: null,
+          bestIndividualLie: null,
+        }),
+      });
+      expect(screen.getByText("Bundle Prioritário")).toBeTruthy();
+      expect(valorDaMetrica("LIE Bundle")).toBe("R$ 1.250,50");
+      expect(valorDaMetrica("Probabilidade")).toBe("—");
+      expect(valorDaMetrica("Margem incremental")).toBe("—");
+      expect(screen.queryByText("0,0%")).toBeNull();
+      expect(screen.queryByText("Melhor individual")).toBeNull();
+    });
+
+    it("bundle inteiramente medido continua exibindo os números", () => {
+      setup({
+        expanded: true,
+        plan: makePlan({
+          bundleLie: 800,
+          bundleProbability: 62.5,
+          bundleIncrementalMargin: 310,
+          bestIndividualLie: 120,
+        }),
+      });
+      expect(valorDaMetrica("Probabilidade")).toBe("62.5%");
+      expect(valorDaMetrica("Margem incremental")).toBe("R$ 310,00");
+      expect(valorDaMetrica("Melhor individual")).toBe("R$ 120,00");
     });
   });
 });

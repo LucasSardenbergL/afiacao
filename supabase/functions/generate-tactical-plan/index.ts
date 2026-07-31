@@ -16,12 +16,14 @@ import { fetchAll } from "../_shared/paginate.ts";
 import { avaliarCanariaMargem, calcularClusterMargin, classifyProfile, margemConhecida, selectObjective } from "../_shared/tactical-margem.ts";
 import { inicioDiaOperacional } from "../_shared/dia-operacional.ts";
 import {
+  ehJaGeradoHojeDaRpc,
   ehSkipLegitimoDaRpc,
   extrairToolUseUnico,
   MAX_TOKENS,
   MODELO,
   type Modo,
   montarPlano,
+  numerosDoBundle,
   numeroValido,
   objetivoFinal,
   objetivoValido,
@@ -407,10 +409,13 @@ ${JSON.stringify(historicalObjections || [], null, 2)}`;
           strategic_objective: objetivoDoPlano, customer_profile: d.customerProfile, plan_type: mode,
           top_bundle: (topBundleRow ? topBundleRow.bundle_products : {}),
           second_bundle: (secondBundleRow ? (secondBundleRow as { bundle_products: unknown }).bundle_products : {}),
-          bundle_lie: Number((topBundleRow as { lie_bundle?: unknown } | null)?.lie_bundle ?? 0),
-          bundle_probability: Number((topBundleRow as { p_bundle?: unknown } | null)?.p_bundle ?? 0),
-          bundle_incremental_margin: Number((topBundleRow as { m_bundle?: unknown } | null)?.m_bundle ?? 0),
-          best_individual_lie: 0,
+          // [money-path "ausente ≠ zero"] Era `Number(topBundleRow?.x ?? 0)` nos três + um
+          // `best_individual_lie: 0` hardcoded. Sem bundle (o caso de 339/339 planos em prod,
+          // medido 2026-07-31) a vendedora recebia "LIE R$ 0,00" e "Probabilidade 0,0%" como
+          // MEDIÇÃO — a afirmação "não vale a pena vender este bundle", que ninguém fez. As
+          // quatro colunas são nullable e a RPC insere o valor EXPLÍCITO (o `DEFAULT 0` da
+          // tabela não intercepta), então o null chega ao banco de verdade. Ver numerosDoBundle.
+          ...numerosDoBundle(topBundleRow),
           diagnostic_questions: plan.diagnostic_questions ?? [], implication_question: plan.implication_question ?? '',
           offer_transition: plan.offer_transition ?? '', probable_objections: plan.probable_objections ?? [],
           approach_strategy: plan.approach_strategy ?? '', approach_strategy_b: plan.approach_strategy_b ?? '',
@@ -420,6 +425,17 @@ ${JSON.stringify(historicalObjections || [], null, 2)}`;
       });
       if (rpcErr) {
         console.error('criar_plano_tatico falhou', body.customerId, rpcErr.message);
+        // A TRAVA DE IDEMPOTÊNCIA PEGOU. O `ja_gerado_hoje` do começo do handler é um
+        // check-then-insert: dois batches simultâneos consultam antes de qualquer insert,
+        // ambos pagam a chamada à Anthropic e ambos inserem (o `FOR UPDATE` da RPC trava a
+        // carteira, mas ela não repetia o teste de existência e não havia índice único).
+        // Agora a RPC recusa DEPOIS do lock — a duplicata deixa de existir, e o custo da IA
+        // já gasto vira um skip honesto em vez de um http_500 que o lote contaria como erro.
+        // Motivo PRÓPRIO (não `rpc_race`): o relatório precisa distinguir "a trava funcionou"
+        // de "a carteira mudou no meio da geração".
+        if (ehJaGeradoHojeDaRpc(rpcErr.message)) {
+          return new Response(JSON.stringify({ skipped: 'ja_gerado_hoje', detail: rpcErr.message }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        }
         // Race de reatribuição / cliente sem dono / cliente mascarado → SKIP legítimo: o
         // próximo ciclo re-lista farmer_client_scores já reconciliado e gera sob o dono
         // certo. Não derruba o batch.

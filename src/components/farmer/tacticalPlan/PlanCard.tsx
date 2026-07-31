@@ -64,7 +64,10 @@ export const PlanCard = ({
         </div>
 
         {/* Efficiency indicator */}
-        {plan.estimatedProfitPerHour > 0 && (
+        {/* `!= null` explícito: o R$/h é tri-estado (indecidível quando não há LIE). Sem o
+            guard, `null > 0` seria `false` por coerção — o mesmo resultado por acidente, e
+            o próximo `null < x` que alguém escrever aqui seria `true` (money-path §2). */}
+        {plan.estimatedProfitPerHour != null && plan.estimatedProfitPerHour > 0 && (
           <div className={`mt-1.5 flex items-center gap-1 text-[9px] ${
             plan.estimatedProfitPerHour >= 50 ? 'text-status-success' : 'text-status-warning'
           }`}>
@@ -125,12 +128,20 @@ export const PlanCard = ({
             )}
 
             {/* Bundle */}
-            {plan.bundleLie > 0 && (
+            {/* Sem LIE medido não se afirma que há bundle prioritário (precisão > recall):
+                `null` esconde a seção, como o 0 já escondia. O que muda é o resto — os
+                campos DENTRO dela deixam de exibir zero fabricado. */}
+            {plan.bundleLie != null && plan.bundleLie > 0 && (
               <Section title="Bundle Prioritário" icon={Package}>
                 <MetricRow label="LIE Bundle" value={fmt(plan.bundleLie)} />
-                <MetricRow label="Probabilidade" value={`${plan.bundleProbability.toFixed(1)}%`} />
+                {/* "—" e não "0,0%": p_bundle é nullable na origem, e "0,0% de chance de
+                    fechar" é um veredito sobre o bundle que ninguém calculou. */}
+                <MetricRow
+                  label="Probabilidade"
+                  value={plan.bundleProbability == null ? '—' : `${plan.bundleProbability.toFixed(1)}%`}
+                />
                 <MetricRow label="Margem incremental" value={fmt(plan.bundleIncrementalMargin)} />
-                {plan.bestIndividualLie > 0 && (
+                {plan.bestIndividualLie != null && plan.bestIndividualLie > 0 && (
                   <MetricRow label="Melhor individual" value={fmt(plan.bestIndividualLie)} />
                 )}
               </Section>
