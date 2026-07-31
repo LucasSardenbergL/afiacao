@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **441** custom migrations totais
-- **1517** objetos esperados (criados por estas migrations)
+- **442** custom migrations totais
+- **1518** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 441
+  - `function`: 442
   - `rls_policy`: 386
   - `index`: 226
   - `cron_job`: 160
@@ -3706,6 +3706,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20260801120000_drop_calcular_gatilhos_reposicao.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260802120000_reposicao_erro_terminal_nao_e_estoque_a_caminho.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.gerar_pedidos_sugeridos_ciclo` | — |
 
 ## Próximos passos por status
 

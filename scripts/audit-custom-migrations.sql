@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 441
+-- Total de custom migrations: 442
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -482,7 +482,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260730130000', 'reposicao_teto_cobertura_motor', '20260730130000_reposicao_teto_cobertura_motor.sql'),
   ('20260731120000', 'farmer_assoc_rules_delete_qualificado', '20260731120000_farmer_assoc_rules_delete_qualificado.sql'),
   ('20260731120000', 'v_sku_ultima_venda', '20260731120000_v_sku_ultima_venda.sql'),
-  ('20260801120000', 'drop_calcular_gatilhos_reposicao', '20260801120000_drop_calcular_gatilhos_reposicao.sql')
+  ('20260801120000', 'drop_calcular_gatilhos_reposicao', '20260801120000_drop_calcular_gatilhos_reposicao.sql'),
+  ('20260802120000', 'reposicao_erro_terminal_nao_e_estoque_a_caminho', '20260802120000_reposicao_erro_terminal_nao_e_estoque_a_caminho.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -1988,7 +1989,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('reposicao_teto_cobertura_motor', 'index', 'public', 'idx_teto_cobertura_log_emp_data', 'reposicao_teto_cobertura_log'),
   ('reposicao_teto_cobertura_motor', 'rls_policy', 'public', 'teto_cobertura_log_sel', 'reposicao_teto_cobertura_log'),
   ('reposicao_teto_cobertura_motor', 'rls_policy', 'public', 'teto_cobertura_log_ins', 'reposicao_teto_cobertura_log'),
-  ('v_sku_ultima_venda', 'view', 'public', 'v_sku_ultima_venda', '')
+  ('v_sku_ultima_venda', 'view', 'public', 'v_sku_ultima_venda', ''),
+  ('reposicao_erro_terminal_nao_e_estoque_a_caminho', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -3542,7 +3544,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('reposicao_teto_cobertura_motor', 'index', 'public', 'idx_teto_cobertura_log_emp_data', 'reposicao_teto_cobertura_log'),
   ('reposicao_teto_cobertura_motor', 'rls_policy', 'public', 'teto_cobertura_log_sel', 'reposicao_teto_cobertura_log'),
   ('reposicao_teto_cobertura_motor', 'rls_policy', 'public', 'teto_cobertura_log_ins', 'reposicao_teto_cobertura_log'),
-  ('v_sku_ultima_venda', 'view', 'public', 'v_sku_ultima_venda', '')
+  ('v_sku_ultima_venda', 'view', 'public', 'v_sku_ultima_venda', ''),
+  ('reposicao_erro_terminal_nao_e_estoque_a_caminho', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', '')
 )
 SELECT
   e.migration,
