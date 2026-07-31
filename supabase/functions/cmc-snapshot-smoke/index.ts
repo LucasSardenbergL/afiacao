@@ -22,6 +22,12 @@
 //   (datas aceitam ISO YYYY-MM-DD ou DD/MM/YYYY; o Omie recebe DD/MM/YYYY)
 // ─────────────────────────────────────────────────────────────────────────────
 import { authorizeCronOrStaff, corsHeaders } from "../_shared/auth.ts";
+import {
+  decidirRetentativaCmcSnapshot,
+  MAX_TENTATIVAS_CMC_SNAPSHOT,
+  mensagemFaultstringOmie,
+  mensagemHttpOmie,
+} from "../_shared/cmc-snapshot-retry.ts";
 import { avaliarPagina, MAX_PAGINAS_POS_ESTOQUE, proximoTotalPaginas } from "../_shared/omie-paginacao.ts";
 
 const OMIE_API_URL = "https://app.omie.com.br/api/v1";
@@ -53,8 +59,11 @@ function getCredentials(account: OmieAccount) {
   return { key: Deno.env.get("OMIE_COLACOR_SC_APP_KEY"), secret: Deno.env.get("OMIE_COLACOR_SC_APP_SECRET") };
 }
 
-// Chamada Omie com retry curto p/ flakiness transitória (mesma família de erros
-// que o analytics-sync trata: "broken response"/SOAP/timeout/5xx).
+// Chamada Omie com retry curto p/ flakiness transitória. A classificação da falha e a redação da
+// credencial ecoada vivem em `_shared/cmc-snapshot-retry.ts` (lógica pura, testada) — este arquivo é
+// só o transporte. O bloco ad-hoc que morava aqui casava código HTTP por DÍGITO CRU
+// (`includes("503")`), e o dígito casa dentro da app_key que a própria faultstring ecoa: o erro de
+// credencial mais comum do Omie era lido como transitório e queimava as 4 retentativas.
 async function callOmie(
   account: OmieAccount,
   endpoint: string,
@@ -65,9 +74,8 @@ async function callOmie(
   if (!creds.key || !creds.secret) throw new Error(`Credenciais Omie (${account}) não configuradas`);
   const body = { call, app_key: creds.key, app_secret: creds.secret, param: [params] };
 
-  const maxAttempts = 5;
   let lastErr: Error | null = null;
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+  for (let attempt = 1; attempt <= MAX_TENTATIVAS_CMC_SNAPSHOT; attempt++) {
     try {
       const res = await fetch(`${OMIE_API_URL}/${endpoint}`, {
         method: "POST",
@@ -79,29 +87,19 @@ async function callOmie(
       // vazia e o smoke emitia seu veredito — "PROVADO" ou "SUSPEITO: não construir o backfill" —
       // com HTTP 200, sobre um universo que era erro de infraestrutura.
       if (!res.ok) {
-        throw new Error(`Omie (${account}) HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`);
+        throw new Error(mensagemHttpOmie(account, res.status, await res.text()));
       }
       const result = (await res.json()) as OmieListarPosEstoqueResponse;
-      if (result.faultstring) throw new Error(`Omie (${account}): ${result.faultstring}`);
+      if (result.faultstring) throw new Error(mensagemFaultstringOmie(account, result.faultstring));
       return result;
     } catch (e) {
       lastErr = e instanceof Error ? e : new Error(String(e));
-      const msg = lastErr.message.toLowerCase();
-      const transient = msg.includes("broken response") || msg.includes("soap-error") ||
-        msg.includes("timeout") || msg.includes("timed out") || msg.includes("network") ||
-        msg.includes("connection") || msg.includes("fetch failed") ||
-        msg.includes("502") || msg.includes("503") || msg.includes("504") || msg.includes("500") ||
-        // Lock de concorrência do Omie: recusa 2 chamadas simultâneas do mesmo método.
-        msg.includes("já existe uma requisição") || msg.includes("sendo executada") ||
-        msg.includes("tente novamente");
-      if (transient && attempt < maxAttempts) {
-        await new Promise((r) => setTimeout(r, 1000 * Math.pow(2, attempt - 1)));
-        continue;
-      }
-      throw lastErr;
+      const decisao = decidirRetentativaCmcSnapshot(lastErr.message, attempt);
+      if (!decisao.retentar) throw lastErr;
+      await new Promise((r) => setTimeout(r, decisao.atrasoMs));
     }
   }
-  throw lastErr ?? new Error(`Omie (${account}): falha após ${maxAttempts} tentativas`);
+  throw lastErr ?? new Error(`Omie (${account}): falha após ${MAX_TENTATIVAS_CMC_SNAPSHOT} tentativas`);
 }
 
 // Aceita ISO (YYYY-MM-DD) ou pt-BR (DD/MM/YYYY) e devolve o que o Omie espera (DD/MM/YYYY).
