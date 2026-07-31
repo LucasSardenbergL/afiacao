@@ -15793,6 +15793,45 @@ export type Database = {
         }
         Relationships: []
       }
+      venda_perdida_log: {
+        Row: {
+          cliente_nome: string | null
+          criado_em: string
+          criado_por: string | null
+          empresa: string
+          id: string
+          motivo: string
+          observacao: string | null
+          quantidade: number
+          sku_codigo_omie: string
+          sku_descricao: string | null
+        }
+        Insert: {
+          cliente_nome?: string | null
+          criado_em?: string
+          criado_por?: string | null
+          empresa?: string
+          id?: string
+          motivo?: string
+          observacao?: string | null
+          quantidade: number
+          sku_codigo_omie: string
+          sku_descricao?: string | null
+        }
+        Update: {
+          cliente_nome?: string | null
+          criado_em?: string
+          criado_por?: string | null
+          empresa?: string
+          id?: string
+          motivo?: string
+          observacao?: string | null
+          quantidade?: number
+          sku_codigo_omie?: string
+          sku_descricao?: string | null
+        }
+        Relationships: []
+      }
       vendas_sync_cursor: {
         Row: {
           account: string
@@ -17485,6 +17524,17 @@ export type Database = {
         }
         Relationships: []
       }
+      v_sku_classe_sb: {
+        Row: {
+          adi: number | null
+          cv2: number | null
+          empresa: string | null
+          n_dias_venda: number | null
+          quadrante: string | null
+          sku_codigo_omie: number | null
+        }
+        Relationships: []
+      }
       v_sku_classificacao_abc_xyz: {
         Row: {
           classe_abc_proposta: string | null
@@ -17817,6 +17867,15 @@ export type Database = {
           status_sla: string | null
           tendencia: string | null
           ultimo_recebimento: string | null
+        }
+        Relationships: []
+      }
+      v_sku_ultima_venda: {
+        Row: {
+          empresa: string | null
+          sku_codigo_omie: number | null
+          ultima_venda_data: string | null
+          vendas_registradas: number | null
         }
         Relationships: []
       }
@@ -18296,10 +18355,6 @@ export type Database = {
           descricao: string
           omie_codigo_produto: number
         }[]
-      }
-      calcular_gatilhos_reposicao: {
-        Args: { p_empresa?: string; p_only_sku?: number }
-        Returns: Record<string, unknown>
       }
       cancelar_pedido_sugerido: {
         Args: {
