@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef } from 'react';
 import { supabase } from '@/integrations/supabase/client';
+import { invokeFunction } from '@/lib/invoke-function';
 import { useAuth } from '@/contexts/AuthContext';
 
 // ─── Types ───────────────────────────────────────────────────────────
@@ -206,27 +207,39 @@ export const useCopilotEngine = () => {
       (async () => {
         setState(s => ({ ...s, isAnalyzing: true }));
         try {
-          const { data, error } = await supabase.functions.invoke('copilot-analyze', {
-            body: {
-              transcript: fullText.slice(-2000), // Last 2000 chars
-              customerContext: prev.session?.customerContext,
-              currentPhase: prev.currentAnalysis?.phase,
-              currentIntent: prev.currentAnalysis?.intent,
-              bundleContext: prev.session?.bundleContext,
-            },
+          // invokeFunction (e não o invoke cru) para o motivo REAL da edge —
+          // créditos esgotados, análise não utilizável — chegar até aqui em vez
+          // do genérico "non-2xx status code".
+          const payload = await invokeFunction<CopilotAnalyzeResponse>('copilot-analyze', {
+            transcript: fullText.slice(-2000), // Last 2000 chars
+            customerContext: prev.session?.customerContext,
+            currentPhase: prev.currentAnalysis?.phase,
+            currentIntent: prev.currentAnalysis?.intent,
+            bundleContext: prev.session?.bundleContext,
           });
 
-          if (error || !data) throw error || new Error('No data');
+          // Sem default fabricado. Os `|| 'indiferenca'` / `|| 'neutro'` /
+          // `|| 0` daqui não eram cosméticos: o resultado é GRAVADO em
+          // farmer_copilot_events, então "indiferença" e confiança 0 viravam
+          // histórico com cara de medição — sobre uma conversa que a IA não
+          // conseguiu ler. A edge agora responde 422 quando não tem leitura;
+          // se ainda assim vier incompleta, não exibimos nada.
+          if (
+            !payload?.intent || !payload.phase || !payload.direction ||
+            !payload.suggestion || !payload.suggestion_type ||
+            typeof payload.confidence !== 'number'
+          ) {
+            throw new Error('Análise incompleta');
+          }
 
-          const payload = data as CopilotAnalyzeResponse;
           const analysis: CopilotAnalysis = {
-            intent: payload.intent || 'indiferenca',
-            phase: payload.phase || 'abertura',
-            direction: payload.direction || 'neutro',
+            intent: payload.intent,
+            phase: payload.phase,
+            direction: payload.direction,
             directionReasons: payload.direction_reasons || [],
-            suggestion: payload.suggestion || '',
-            suggestionType: payload.suggestion_type || 'pergunta_diagnostica',
-            confidence: payload.confidence || 0,
+            suggestion: payload.suggestion,
+            suggestionType: payload.suggestion_type,
+            confidence: payload.confidence,
           };
 
           setState(s => ({

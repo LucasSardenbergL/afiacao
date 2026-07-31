@@ -1,5 +1,14 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
+import Anthropic from "npm:@anthropic-ai/sdk@^0.93.0";
+import {
+  extrairToolUseUnico,
+  MODELO_PADRAO,
+  statusDoErro,
+  traduzirErroAnthropic,
+} from "../_shared/anthropic.ts";
+import { montarBlocoImagem } from "../_shared/imagem.ts";
+import { naoIdentificada, normalizarFerramenta, TOOL_FERRAMENTA } from "./ferramenta-tools.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -37,8 +46,8 @@ serve(async (req) => {
       });
     }
 
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY is not configured");
+    const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY");
+    if (!ANTHROPIC_API_KEY) throw new Error("ANTHROPIC_API_KEY is not configured");
 
     const { imageBase64, categories } = await req.json();
 
@@ -71,7 +80,7 @@ serve(async (req) => {
 
     const systemPrompt = `Você é um especialista em identificação de ferramentas de corte industriais (serras, facas, lâminas, brocas, fresas, etc.) usadas em marcenarias, serralharias e indústrias.
 
-Analise a imagem enviada e identifique a ferramenta. Retorne um JSON com:
+Analise a imagem enviada e identifique a ferramenta, preenchendo:
 - "identified": true/false (se conseguiu identificar)
 - "category_name": nome da categoria mais provável (deve corresponder a uma das categorias cadastradas abaixo)
 - "confidence": "alta", "media" ou "baixa"
@@ -86,67 +95,69 @@ IMPORTANTE:
 - Seja preciso na identificação.
 - Se não conseguir identificar com certeza, indique confidence "baixa".
 - O category_name DEVE corresponder exatamente a uma das categorias listadas acima quando possível.
-- Responda APENAS com o JSON, sem markdown ou explicações.`;
+- Responda SEMPRE usando a função identificar_ferramenta.`;
 
-    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${LOVABLE_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
-        messages: [
-          { role: "system", content: systemPrompt },
-          {
-            role: "user",
-            content: [
-              { type: "text", text: "Identifique esta ferramenta na imagem:" },
-              {
-                type: "image_url",
-                image_url: { url: `data:image/jpeg;base64,${imageBase64}` },
-              },
-            ],
-          },
-        ],
-      }),
-    });
-
-    if (!response.ok) {
-      if (response.status === 429) {
-        return new Response(JSON.stringify({ error: "Muitas requisições. Tente novamente em alguns segundos." }), {
-          status: 429,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-      if (response.status === 402) {
-        return new Response(JSON.stringify({ error: "Créditos insuficientes para análise de imagem." }), {
-          status: 402,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-      const errorText = await response.text();
-      console.error("AI gateway error:", response.status, errorText);
-      throw new Error("Erro ao processar imagem");
+    // Media type vem dos MAGIC BYTES. O gateway antigo sniffava o conteúdo e
+    // engolia o rótulo fixo `image/jpeg`; a Anthropic valida o declarado — e a
+    // foto aqui sai da câmera do celular do balcão, onde HEIC é comum.
+    const anexo = montarBlocoImagem(imageBase64);
+    if (!anexo.ok) {
+      return new Response(JSON.stringify(naoIdentificada(anexo.erro)), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
     }
 
-    const aiResult = await response.json();
-    const content = aiResult.choices?.[0]?.message?.content || "";
+    const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
 
-    let parsed;
+    let resposta;
     try {
-      const cleanContent = content.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-      parsed = JSON.parse(cleanContent);
-    } catch {
-      console.error("Failed to parse AI response:", content);
-      parsed = {
-        identified: false,
-        category_name: null,
-        confidence: "baixa",
-        description: "Não foi possível analisar a imagem",
-        specs_detected: {},
-        suggested_services: [],
-      };
+      resposta = await anthropic.messages.create({
+        model: MODELO_PADRAO,
+        max_tokens: 1500,
+        system: systemPrompt,
+        tools: [TOOL_FERRAMENTA],
+        tool_choice: { type: "tool", name: TOOL_FERRAMENTA.name, disable_parallel_tool_use: true },
+        messages: [{
+          role: "user",
+          content: [
+            { type: "text", text: "Identifique esta ferramenta na imagem:" },
+            anexo.bloco,
+          ],
+        }],
+      });
+    } catch (e: unknown) {
+      const status = statusDoErro(e);
+      console.error("[identify-tool] erro na API da Anthropic:", status, e instanceof Error ? e.message : e);
+      const mapeado = traduzirErroAnthropic(status);
+      return new Response(JSON.stringify({ error: mapeado?.mensagem ?? "Erro ao processar imagem" }), {
+        status: mapeado?.http ?? 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // Truncou = leitura incompleta da ferramenta. Devolver "não identifiquei" é
+    // honesto; devolver metade das specs seria uma ficha técnica pela metade
+    // com cara de completa.
+    if (resposta.stop_reason === "max_tokens") {
+      console.error("[identify-tool] resposta truncada");
+      return new Response(
+        JSON.stringify(naoIdentificada("A leitura da foto ficou incompleta. Tente de novo.")),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+
+    const extraido = extrairToolUseUnico(resposta.content);
+    const nomesCategorias = (categories || []).map((c: { name: string }) => c.name).filter(Boolean);
+    const parsed = extraido.ok ? normalizarFerramenta(extraido.input, nomesCategorias) : null;
+
+    if (parsed === null) {
+      console.error(
+        `[identify-tool] sem leitura utilizável (motivo: ${extraido.ok ? "campos inválidos" : extraido.motivo})`,
+      );
+      return new Response(
+        JSON.stringify(naoIdentificada("Não foi possível analisar a imagem")),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
     }
 
     return new Response(JSON.stringify(parsed), {
