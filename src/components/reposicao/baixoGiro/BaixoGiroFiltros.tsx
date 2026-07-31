@@ -70,6 +70,7 @@ export function BaixoGiroFiltros({ filtros, onChange }: BaixoGiroFiltrosProps) {
           <SelectContent>
             <SelectItem value="todos">Qualquer giro</SelectItem>
             <SelectItem value="morto">Giro morto (≥270d)</SelectItem>
+            <SelectItem value="sob_encomenda_candidato">Candidato a sob-encomenda</SelectItem>
           </SelectContent>
         </Select>
       </div>

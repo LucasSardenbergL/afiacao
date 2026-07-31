@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useReposicaoEmpresa } from "@/contexts/ReposicaoEmpresaContext";
-import { BAIXO_GIRO_OR_FILTER, classificarSituacao, diasSemVender, ehGiroMorto, somarCapitalMorto, somarCapitalParado } from "@/lib/reposicao/baixo-giro-helpers";
+import { BAIXO_GIRO_OR_FILTER, classificarSituacao, diasSemVender, ehCandidatoSobEncomenda, ehGiroMorto, somarCapitalMorto, somarCapitalParado } from "@/lib/reposicao/baixo-giro-helpers";
 import type { RowBaixoGiro } from "./types";
 
 const HOJE_ISO = () => new Date().toISOString().slice(0, 10);
@@ -79,6 +79,7 @@ export function useBaixoGiro() {
           tipo_reposicao: r.tipo_reposicao,
           vendas_registradas: vendasRegistradas,
           giro_morto: ehGiroMorto({ diasSemVender: dias, vendasRegistradas, emColdStart }),
+          candidato_sob_encomenda: ehCandidatoSobEncomenda({ vendasRegistradas, saldo, emColdStart }),
         };
       });
     },
@@ -146,12 +147,34 @@ export function useBaixoGiro() {
     onError: (e: Error) => toast.error("Falha ao descontinuar em lote: " + e.message),
   });
 
+  // Postponement da cauda: SKU raro-mas-vivo vira order-driven — o motor para de repor
+  // (tipo_reposicao != 'automatica' sai do sku_base) e o estoque atual escoa. Reversível
+  // pela tela de Revisão. Mesma escrita/gate humano do fluxo Descontinuar.
+  const sobEncomendaLote = useMutation({
+    mutationFn: async (codes: number[]) => {
+      const { error } = await supabase
+        .from("sku_parametros")
+        .update({ tipo_reposicao: "sob_encomenda", habilitado_reposicao_automatica: false })
+        .eq("empresa", empresa)
+        .in("sku_codigo_omie", codes);
+      if (error) throw error;
+    },
+    onSuccess: (_d, codes) => {
+      toast.success(`${codes.length} SKU(s) marcado(s) sob encomenda — fora dos próximos ciclos`);
+      qc.invalidateQueries({ queryKey: ["reposicao-baixo-giro"] });
+      qc.invalidateQueries({ queryKey: ["reposicao-excesso-estoque"] });
+      qc.invalidateQueries({ queryKey: ["pedidos-ciclo"] });
+    },
+    onError: (e: Error) => toast.error("Falha ao marcar sob encomenda: " + e.message),
+  });
+
   const kpis = useMemo(() => {
     const rows = query.data ?? [];
     const cap = somarCapitalParado(rows.map((r) => ({ saldo: r.saldo, cmc: r.cmc })));
     const morto = somarCapitalMorto(rows.map((r) => ({ giroMorto: r.giro_morto, saldo: r.saldo, cmc: r.cmc })));
-    return { ...cap, totalItens: rows.length, morto };
+    const soc = somarCapitalParado(rows.filter((r) => r.candidato_sob_encomenda).map((r) => ({ saldo: r.saldo, cmc: r.cmc })));
+    return { ...cap, totalItens: rows.length, morto, sobEncomenda: { totalRs: soc.totalRs, candidatosN: rows.filter((r) => r.candidato_sob_encomenda).length } };
   }, [query.data]);
 
-  return { rows: query.data ?? [], kpis, isLoading: query.isLoading, error: query.error, refetch: query.refetch, manterEmEstoque, descontinuar, descontinuarLote };
+  return { rows: query.data ?? [], kpis, isLoading: query.isLoading, error: query.error, refetch: query.refetch, manterEmEstoque, descontinuar, descontinuarLote, sobEncomendaLote };
 }
