@@ -12,6 +12,11 @@
 // Semântica top-N: filtra o gate ANTES de cortar no TOP_25 — pega os 25 de
 // maior priority DENTRE os que passam (não os 25 de maior priority e filtra depois).
 //
+// Ordem de EXECUÇÃO: round-robin entre farmers (_shared/tactical-ordem.ts), não a
+// concatenação dos grupos. Cobertura parcial é rotina (timeout/429/402) e sempre come o
+// SUFIXO — com a concatenação, o último farmer ficava zerado (9/15/0 em 30/07, 9/16/0 em
+// 31/07, o mesmo farmer). Intercalado, um prefixo de 24 sobre 9/25/25 dá 8/8/8.
+//
 // Margem AUSENTE não é margem zero (money-path princípio 2): sem margem o gate de R$/h
 // não é decidível, então o cliente sai do ranking e é CONTADO em `sem_margem_indecidivel`.
 // Antes, `Number(null ?? 0)` fabricava R$ 0/h — indistinguível de um cliente de margem
@@ -65,6 +70,12 @@ import {
   type Classificacao,
   classificarAlvo,
 } from '../_shared/tactical-batch-resultado.ts';
+import {
+  type CarteiraFarmer,
+  intercalarPorFarmer,
+  rotacaoDoDia,
+} from '../_shared/tactical-ordem.ts';
+import { inicioDiaOperacional } from '../_shared/dia-operacional.ts';
 
 const TOP_N = 25;
 const CONCURRENCY = 5; // cada chamada faz 1 LLM (~3-5s); 5 em paralelo ~5s/chunk
@@ -175,14 +186,27 @@ Deno.serve(async (req) => {
 
   // 2. Por farmer: ordena por priority desc, filtra gate R$/h, corta em TOP_N.
   //    Semântica: pega os 25 de maior priority DENTRE os que passam no gate.
-  const alvos: Array<{ farmer: string; customer: string }> = [];
+  const carteiras: CarteiraFarmer[] = [];
   let semMargemIndecidivel = 0;
 
   for (const [farmer, scores] of porFarmer) {
     const { selecionados, semMargem } = selecionarParaPregeracao(scores, TOP_N);
     semMargemIndecidivel += semMargem.length;
-    for (const s of selecionados) alvos.push({ farmer, customer: s.customer });
+    carteiras.push({ farmer, clientes: selecionados.map((s) => s.customer) });
   }
+
+  // 2b. ORDEM DE EXECUÇÃO em round-robin entre farmers (_shared/tactical-ordem.ts, testado).
+  //     Antes: concatenação dos grupos do Map (`[A...A, B...B, C...C]`), com a ordem vindo
+  //     da 1ª ocorrência de cada farmer na paginação por customer_user_id — acidental.
+  //     Como toda cobertura parcial come o SUFIXO, o último farmer da concatenação ficava
+  //     ZERADO: medido 9/15/0 em 30/07 e 9/16/0 em 31/07, o MESMO farmer nos dois dias
+  //     (e o precedente de 2026-07-21, "uma vendedora inteira sem plano").
+  //     Isto NÃO conserta o volume — o batch continua podendo truncar por timeout/429/402.
+  //     Conserta a DISTRIBUIÇÃO: um prefixo de 24 sobre 9/25/25 agora dá 8/8/8.
+  //     O dia operacional é BRT (mesma régua da idempotência): 00:00 BRT = 03:00 UTC do
+  //     mesmo dia, então o slice(0,10) do instante devolvido é o dia BRT correto.
+  const diaOperacional = inicioDiaOperacional(new Date()).slice(0, 10);
+  const alvos = intercalarPorFarmer(carteiras, rotacaoDoDia(diaOperacional));
 
   // 3. Fan-out concorrente em chunks de 5. Idempotência é na edge alvo.
   //    A classificação/agregação vive em _shared/tactical-batch-resultado.ts (testada):
