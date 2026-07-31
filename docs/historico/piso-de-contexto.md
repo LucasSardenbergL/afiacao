@@ -50,6 +50,36 @@ skills que o founder usa 86/83/77/70 vezes, com ganho zero, não se entrega.
 Desabilitar `superpowers` tirou 14 skills (186 → 172). O listing **não encolheu**:
 29.994 → 30.001 chars. Mesmo mecanismo de orçamento.
 
+## ❌ Premissa FALSA nº 3 — "esconder as skills NÃO USADAS reduz o piso" (piora)
+
+A nº 2 mediu 14 skills a menos. Faltava saber se o mecanismo de orçamento aguentava um
+corte de outra ordem de grandeza — a hipótese sobrevivente era "com skills suficientes
+fora, o pool não consegue mais preencher os ~30,4k chars e aí encolhe".
+
+Medido o uso REAL de skills em 60 dias de transcript (`tool_use` com `name=="Skill"`):
+**43 skills distintas em 784 invocações**, de 130 top-level em `~/.claude/skills` — que,
+note-se, **não passa por `enabledPlugins`**: é por isso que as skills de growth/marketing
+continuam na listagem mesmo com o plugin `posthog` (105 skills) desabilitado no projeto.
+
+As 115 nunca invocadas — 5 de iOS num repo React, 4 de Sentry, 7 de Adobe, 49 de
+marketing — foram para `skillOverrides: "user-invocable-only"` (113 entradas; `auto-ensino`
+preservada porque o hook `SessionStart` do repo a invoca por nome).
+
+| | piso |
+|---|---|
+| antes | 43.908 |
+| **controle** (antes, re-medido) | **43.909** — drift +1, ambiente estável |
+| depois (113 escondidas) | **44.049** |
+
+**Efeito: +141 tokens — o piso PIOROU**, ~23× o ruído da sonda. Não é só que o orçamento
+se refaz: as descrições promovidas para o espaço liberado eram **mais longas** que as
+removidas, então o saldo inverte de sinal. Esconder skill do modelo é, em token, pior que
+não fazer nada. Revertido.
+
+Fica valendo para roteamento (o modelo deixa de ver 113 skills irrelevantes), mas isso é
+uma afirmação NÃO medida — e o mecanismo de preenchimento sugere ceticismo: o que entra no
+lugar pode ser tão irrelevante quanto o que saiu.
+
 ## ✅ O que REALMENTE move o ponteiro: desabilitar o PLUGIN inteiro
 
 O ganho não vem da lista — vem do payload que o plugin injeta por conta própria (system
@@ -128,6 +158,11 @@ comparar o piso com os 67.244 registrados aqui.
 > O piso não responde a cortes *dentro* de blocos de orçamento fixo (lista de skills,
 > descrições). Responde a **remover um provedor inteiro** (plugin, MCP, servidor).
 > E: "encurtei X, logo economizei" é hipótese — o número vem da sonda, antes e depois.
+>
+> Corolário da nº 3: dentro de um bloco de orçamento fixo, cortar não é neutro — pode
+> **piorar**. O espaço liberado é repreenchido, e nada garante que o que entra seja menor
+> que o que saiu. "No pior caso não muda nada" é falso aqui, e foi a intuição que mediu
+> −0 e entregou +141.
 >
 > E antes de otimizar um alvo, **meça que fração do custo ele é**. O piso parecia o alvo
 > óbvio (é relido em 100% dos requests) e é só 26%. Otimizar bem a coisa errada perde para
