@@ -15,6 +15,7 @@ medidas e REFUTADAS** — as duas teriam virado "otimização" entregue sem núm
 |---|---|---|
 | `scripts/tokens-report.sh` | piso REAL das sessões vividas (lê `~/.claude/projects/**/*.jsonl`) | — |
 | `scripts/piso-contexto.sh` | piso de uma CONFIGURAÇÃO (roda uma sonda e lê o 1º request) | **±6 tokens** |
+| `scripts/ocupacao-contexto.sh` | de onde vem o contexto ACUMULADO (os 74% — ver seção 🎯) | — |
 
 A sonda é o oráculo: repetições da mesma config deram 43.964 / 43.958 / 43.962 / 43.980 /
 43.977. **Delta > ~50 tokens é sinal; abaixo disso é ruído.** O CLI não reproduz o app
@@ -70,6 +71,43 @@ system prompt do harness + schemas das tools built-in. No app soma-se o que as M
 próprias trazem. **Ordem de grandeza: ~2/3 do piso é do harness/app, não da configuração
 do repo.** Cortes locais somam alguns milhares de tokens, não dezenas.
 
+## 🎯 E o piso inteiro é a MENOR metade do problema
+
+Fechada a medição do piso, a pergunta seguinte é quanto ele representa do custo. Separando,
+request a request, o piso (o mínimo visto na sessão) do EXCEDENTE (o que a conversa
+acumulou), sobre os mesmos 20.933 requests:
+
+| | tokens de contexto | custo de entrada |
+|---|---|---|
+| piso (relido sempre) | 1,38 bi (24,3%) | US$ 1.181 (**25,9%**) |
+| conversa acumulada | 4,30 bi (75,7%) | US$ 3.374 (**74,1%**) |
+
+**Zerar o piso INTEIRO — impossível, 2/3 é harness — teto­aria em 26% do custo de entrada.**
+As alavancas locais reais (~4.500 tokens de 67.244) valem ~1,7%. A Fase 1 mirou, de boa-fé,
+a menor metade.
+
+### Onde estão os 74%: custo de OCUPAÇÃO
+
+Um `tool_result` não se paga uma vez — fica no histórico e é **relido em todo request
+seguinte**. O custo real é `tamanho x (requests que ainda virão depois dele)`. Medido nas 3
+sessões mais caras de 7 dias (US$1.209 somados), por duas implementações independentes que
+convergiram:
+
+| ferramenta | chamadas | maior saída | % do custo de ocupação |
+|---|---|---|---|
+| **Read** | 75 | 52.966 chars | **~55%** |
+| **Bash** | 769 | 15.583 chars | **~40%** |
+| Edit | 211 | 808 chars | ~3% |
+| todo o resto | — | — | <1% |
+
+O ponto que inverte a intuição: **Read teve 75 chamadas contra 769 do Bash — e custou
+MAIS.** Não é a frequência que manda, é o tamanho por chamada multiplicado pelo tempo que a
+saída ainda vai ficar no contexto. Uma leitura grande no início de uma sessão longa é o item
+mais caro que existe; a mesma leitura no último request é quase de graça.
+
+Régua: `scripts/ocupacao-contexto.sh --top 3`. O guard de Read do #1647 (nudge por volume e
+por releitura) ataca justamente a fatia nº 1.
+
 ## Pendente de medição — só o founder consegue (é na conta, não no repo)
 
 172 das 337 skills da sessão do app vêm de plugins da conta claude.ai **nunca usados em 48
@@ -90,3 +128,7 @@ comparar o piso com os 67.244 registrados aqui.
 > O piso não responde a cortes *dentro* de blocos de orçamento fixo (lista de skills,
 > descrições). Responde a **remover um provedor inteiro** (plugin, MCP, servidor).
 > E: "encurtei X, logo economizei" é hipótese — o número vem da sonda, antes e depois.
+>
+> E antes de otimizar um alvo, **meça que fração do custo ele é**. O piso parecia o alvo
+> óbvio (é relido em 100% dos requests) e é só 26%. Otimizar bem a coisa errada perde para
+> medir primeiro.
