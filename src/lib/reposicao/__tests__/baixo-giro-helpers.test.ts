@@ -7,6 +7,7 @@ import {
   LIMIAR_GIRO_MORTO_DIAS,
   ehCandidatoSobEncomenda,
   ehGiroMorto,
+  rotuloClasseSB,
   somarCapitalMorto,
 } from "../baixo-giro-helpers";
 
@@ -119,5 +120,17 @@ describe("ehCandidatoSobEncomenda", () => {
     expect(ehCandidatoSobEncomenda({ vendasRegistradas: 2, saldo: 0, emColdStart: false })).toBe(false);
     expect(ehCandidatoSobEncomenda({ vendasRegistradas: 2, saldo: null, emColdStart: false })).toBe(false);
     expect(ehCandidatoSobEncomenda({ vendasRegistradas: 2, saldo: 5, emColdStart: true })).toBe(false);
+  });
+});
+
+describe("rotuloClasseSB", () => {
+  it("mapeia os 4 quadrantes e devolve null p/ desconhecido/ausente", () => {
+    expect(rotuloClasseSB("intermittent")).toBe("intermitente");
+    expect(rotuloClasseSB("lumpy")).toBe("lumpy");
+    expect(rotuloClasseSB("smooth")).toBe("regular");
+    expect(rotuloClasseSB("erratic")).toBe("errática");
+    expect(rotuloClasseSB("qualquer")).toBeNull();
+    expect(rotuloClasseSB(null)).toBeNull();
+    expect(rotuloClasseSB(undefined)).toBeNull();
   });
 });
