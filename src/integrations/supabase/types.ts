@@ -6398,6 +6398,48 @@ export type Database = {
         }
         Relationships: []
       }
+      ia_uso_evento: {
+        Row: {
+          criado_em: string
+          funcao: string
+          id: number
+          user_id: string
+        }
+        Insert: {
+          criado_em?: string
+          funcao: string
+          id?: never
+          user_id: string
+        }
+        Update: {
+          criado_em?: string
+          funcao?: string
+          id?: never
+          user_id?: string
+        }
+        Relationships: []
+      }
+      ia_uso_limite: {
+        Row: {
+          atualizado_em: string
+          funcao: string
+          limite_dia: number
+          limite_hora: number
+        }
+        Insert: {
+          atualizado_em?: string
+          funcao: string
+          limite_dia: number
+          limite_hora: number
+        }
+        Update: {
+          atualizado_em?: string
+          funcao?: string
+          limite_dia?: number
+          limite_hora?: number
+        }
+        Relationships: []
+      }
       impersonation_audit: {
         Row: {
           actor_user_id: string
@@ -19047,6 +19089,18 @@ export type Database = {
           _user_id: string
         }
         Returns: boolean
+      }
+      ia_consumir_cota: {
+        Args: { p_funcao: string; p_user_id: string }
+        Returns: {
+          libera_em_segundos: number
+          limite_dia: number
+          limite_hora: number
+          motivo: string
+          permitido: boolean
+          usado_dia: number
+          usado_hora: number
+        }[]
       }
       import_tint_formulas: {
         Args: { p_account: string; p_personalizada: boolean; p_rows: Json }
