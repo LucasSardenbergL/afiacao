@@ -10,6 +10,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { classBadge, fmt, fmtBRL } from "@/lib/reposicao/sku-param";
+import { rotuloClasseSB } from "@/lib/reposicao/baixo-giro-helpers";
 import { type BadgeVariant } from "@/components/reposicao/revisao/types";
 import type { RowBaixoGiro } from "./types";
 
@@ -127,6 +128,9 @@ export function BaixoGiroTable({
                     <Badge variant={classBadge(row.classe_consolidada) as BadgeVariant}>
                       {row.classe_consolidada ?? "—"}
                     </Badge>
+                    {rotuloClasseSB(row.classe_sb) && (
+                      <div className="mt-0.5 text-[10px] text-muted-foreground">{rotuloClasseSB(row.classe_sb)}</div>
+                    )}
                   </TableCell>
                   <TableCell className="text-right tnum">{capitalCell}</TableCell>
                   <TableCell className="text-right tnum">{fmt(row.saldo, 0)}</TableCell>

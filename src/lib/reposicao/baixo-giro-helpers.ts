@@ -94,6 +94,21 @@ export function ehCandidatoSobEncomenda(args: {
   return (args.saldo ?? 0) > 0;
 }
 
+/**
+ * Rótulo pt-BR do quadrante Syntetos-Boylan (v_sku_classe_sb — ADVISORY, não alimenta o motor).
+ * Medido 2026-07-30: zero "smooth"/"erratic" na carteira — 160 intermitentes + 73 lumpy.
+ * Quadrante desconhecido/ausente → null (a UI mostra nada, nunca inventa rótulo).
+ */
+export function rotuloClasseSB(quadrante: string | null | undefined): string | null {
+  switch (quadrante) {
+    case "smooth": return "regular";
+    case "intermittent": return "intermitente";
+    case "erratic": return "errática";
+    case "lumpy": return "lumpy";
+    default: return null;
+  }
+}
+
 /** Capital parado dos mortos (cmc ausente não fabrica R$0 — conta separada, como somarCapitalParado). */
 export function somarCapitalMorto(
   itens: Array<{ giroMorto: boolean; saldo: number | null; cmc: number | null }>,

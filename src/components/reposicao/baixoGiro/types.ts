@@ -28,6 +28,8 @@ export interface RowBaixoGiro {
   giro_morto: boolean;
   /** Venda RARA (1-2 eventos no histórico) com estoque — candidato a virar sob-encomenda. */
   candidato_sob_encomenda: boolean;
+  /** Quadrante Syntetos-Boylan (v_sku_classe_sb, advisory): smooth|intermittent|erratic|lumpy|null. */
+  classe_sb: string | null;
 }
 
 export interface FiltrosBaixoGiro {
