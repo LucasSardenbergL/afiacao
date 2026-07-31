@@ -64,13 +64,17 @@ export function numeroFinito(v: unknown): number | null {
 }
 
 /**
- * Quantidade inválida cai no default 1 — o declarado no próprio schema
- * ("padrão 1"), não um número inventado. `undefined` viraria NaN ao multiplicar
- * pelo preço; `"2"` string faria a soma concatenar.
+ * Quantidade de peças: INTEIRO positivo, ou `null` (a linha é descartada).
+ *
+ * Não cai em 1: "padrão 1" é texto da DESCRIÇÃO do campo, não um default que o
+ * schema execute — assumir 1 é inventar quantidade, e ela multiplica o preço do
+ * serviço na nota. Fracionário também não passa: a unidade aqui é peça afiada,
+ * então "2,5 serras" é leitura errada, não meia serra.
  */
-export function quantidadeValida(v: unknown): number {
+export function quantidadeValida(v: unknown): number | null {
   const n = numeroFinito(v);
-  return n !== null && n > 0 ? n : 1;
+  if (n === null || n <= 0 || !Number.isInteger(n)) return null;
+  return n;
 }
 
 export interface ItensNormalizados {
@@ -92,6 +96,7 @@ export function normalizarItens(
   if (!Array.isArray(bruto)) return { itens: [], descartados: 0 };
 
   const itens: ItemServico[] = [];
+  const jaVistos = new Set<string>();
   let descartados = 0;
 
   for (const cru of bruto) {
@@ -103,6 +108,13 @@ export function normalizarItens(
 
     const userToolId = texto(o.userToolId);
     if (!userToolId || !idsValidos.has(userToolId)) {
+      descartados++;
+      continue;
+    }
+
+    // Duas linhas para a MESMA ferramenta virariam cobrança dobrada: o filtro a
+    // jusante compara cada item só contra o carrinho anterior, não entre si.
+    if (jaVistos.has(userToolId)) {
       descartados++;
       continue;
     }
@@ -119,12 +131,22 @@ export function normalizarItens(
       continue;
     }
 
+    // Quantidade ilegível DERRUBA a linha em vez de virar 1: a ferramenta ficar
+    // de fora é visível (o caller avisa quantas saíram) — cobrar 1 peça quando
+    // o cliente falou 10 não é.
+    const quantity = quantidadeValida(o.quantity);
+    if (quantity === null) {
+      descartados++;
+      continue;
+    }
+
+    jaVistos.add(userToolId);
     const notes = texto(o.notes);
     itens.push({
       userToolId,
       omie_codigo_servico: codigo,
       servico_descricao: descricao,
-      quantity: quantidadeValida(o.quantity),
+      quantity,
       ...(notes ? { notes } : {}),
     });
   }

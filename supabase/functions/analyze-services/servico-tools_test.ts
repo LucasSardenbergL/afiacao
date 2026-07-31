@@ -62,11 +62,25 @@ Deno.test("normalizarItens: quantity string vira NUMBER — fecha o 1 + \"2\"", 
   assertEquals(1 + itens[0].quantity, 3, "somar deve dar 3, não \"12\"");
 });
 
-Deno.test("normalizarItens: quantity inválida cai no default 1 do schema", () => {
+Deno.test("normalizarItens: quantity inválida DERRUBA a linha (não vira 1)", () => {
+  // "padrão 1" é texto da descrição do campo, não default executado pelo
+  // schema. Assumir 1 quando o cliente falou 10 é inventar quantidade — e ela
+  // multiplica o preço na nota. A ferramenta ficar de fora é visível; a
+  // quantidade errada, não.
   for (const q of [undefined, null, 0, -5, "abc", NaN, {}]) {
-    const { itens } = normalizarItens([{ ...ITEM_OK, quantity: q }], IDS);
-    assertEquals(itens[0].quantity, 1, `quantity ${JSON.stringify(q)}`);
+    const { itens, descartados } = normalizarItens([{ ...ITEM_OK, quantity: q }], IDS);
+    assertEquals(itens.length, 0, `quantity ${JSON.stringify(q)}`);
+    assertEquals(descartados, 1, `quantity ${JSON.stringify(q)}`);
   }
+});
+
+Deno.test("normalizarItens: ferramenta DUPLICADA vira uma linha só", () => {
+  // Duas linhas para a mesma ferramenta = cobrança dobrada; o filtro a jusante
+  // compara cada item só contra o carrinho anterior, não entre si.
+  const { itens, descartados } = normalizarItens([ITEM_OK, { ...ITEM_OK, quantity: 5 }], IDS);
+  assertEquals(itens.length, 1);
+  assertEquals(itens[0].quantity, 3, "vale a primeira ocorrência");
+  assertEquals(descartados, 1);
 });
 
 Deno.test("normalizarItens: descrição vazia derruba a linha", () => {
@@ -108,7 +122,10 @@ Deno.test("numeroFinito: string AMBÍGUA não vira número", () => {
   assertEquals(numeroFinito(7), 7);
 });
 
-Deno.test("quantidadeValida: fracionário positivo é preservado", () => {
-  assertEquals(quantidadeValida(2.5), 2.5);
-  assertEquals(quantidadeValida("0.5"), 0.5);
+Deno.test("quantidadeValida: fracionário é REJEITADO — a unidade é peça afiada", () => {
+  // "2,5 serras" é leitura errada, não meia serra.
+  assertEquals(quantidadeValida(2.5), null);
+  assertEquals(quantidadeValida("0.5"), null);
+  assertEquals(quantidadeValida(3), 3);
+  assertEquals(quantidadeValida("4"), 4);
 });

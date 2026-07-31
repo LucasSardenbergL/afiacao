@@ -15,7 +15,7 @@ export interface FerramentaIdentificada {
   category_name: string | null;
   confidence: "alta" | "media" | "baixa";
   description: string;
-  specs_detected: Record<string, unknown>;
+  specs_detected: Record<string, string>;
   suggested_services: string[];
 }
 
@@ -106,13 +106,23 @@ export function normalizarFerramenta(
     }
   }
 
-  const specs = o.specs_detected && typeof o.specs_detected === "object" &&
-      !Array.isArray(o.specs_detected)
-    ? (o.specs_detected as Record<string, unknown>)
-    : {};
+  // Só ESCALARES. A tela renderiza cada valor direto em `<span>{value}</span>`;
+  // um objeto aninhado (`{ diametro: { valor: 250 } }`) lança "Objects are not
+  // valid as a React child" e derruba a página inteira.
+  const specs: Record<string, string> = {};
+  if (o.specs_detected && typeof o.specs_detected === "object" && !Array.isArray(o.specs_detected)) {
+    for (const [chave, valor] of Object.entries(o.specs_detected as Record<string, unknown>)) {
+      if (typeof valor === "string" && valor.trim()) specs[chave] = valor.trim();
+      else if (typeof valor === "number" && Number.isFinite(valor)) specs[chave] = String(valor);
+      else if (typeof valor === "boolean") specs[chave] = valor ? "sim" : "não";
+    }
+  }
 
   return {
-    identified: identificada,
+    // Sem categoria casada não há o que confirmar: a tela mostraria check verde
+    // e o botão "Usar esta ferramenta" retornaria calado (ele exige
+    // `category_name`). Melhor dizer que não identificou.
+    identified: identificada && categoria !== null,
     category_name: categoria,
     confidence: confianca as FerramentaIdentificada["confidence"],
     description: descricao,

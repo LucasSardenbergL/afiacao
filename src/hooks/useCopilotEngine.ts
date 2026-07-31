@@ -55,6 +55,8 @@ interface CopilotState {
   currentAnalysis: CopilotAnalysis | null;
   analysisHistory: CopilotAnalysis[];
   isAnalyzing: boolean;
+  /** A leitura exibida ficou para trás (a última tentativa falhou). */
+  analiseObsoleta: boolean;
   suggestionsShown: number;
   suggestionsUsed: number;
 }
@@ -71,12 +73,17 @@ export const useCopilotEngine = () => {
     currentAnalysis: null,
     analysisHistory: [],
     isAnalyzing: false,
+    analiseObsoleta: false,
     suggestionsShown: 0,
     suggestionsUsed: 0,
   });
 
   const analysisTimerRef = useRef<NodeJS.Timeout | null>(null);
   const lastAnalyzedRef = useRef<string>('');
+  // Descarta resposta fora de ordem: com tick de 8s, uma análise lenta pode
+  // terminar DEPOIS de uma mais nova e sobrescrever a tela com leitura velha —
+  // "risco" atual viraria "neutro" obsoleto.
+  const analiseSeqRef = useRef(0);
   const sessionIdRef = useRef<string | null>(null);
 
   // Start a copilot session
@@ -116,6 +123,7 @@ export const useCopilotEngine = () => {
       transcript: [],
       currentAnalysis: null,
       analysisHistory: [],
+      analiseObsoleta: false,
       suggestionsShown: 0,
       suggestionsUsed: 0,
     }));
@@ -142,7 +150,10 @@ export const useCopilotEngine = () => {
         .update({
           ended_at: new Date().toISOString(),
           duration_seconds: durationSeconds,
-          final_direction: state.currentAnalysis?.direction || 'neutro',
+          // `?? null`, não `|| 'neutro'`: uma sessão cujas análises TODAS
+          // falharam terminaria gravada como "neutra" — medição inventada sobre
+          // uma conversa que ninguém leu. A coluna é nullable de propósito.
+          final_direction: state.currentAnalysis?.direction ?? null,
           final_intent: state.currentAnalysis?.intent || null,
           final_phase: state.currentAnalysis?.phase || null,
           suggestions_shown: state.suggestionsShown,
@@ -205,6 +216,7 @@ export const useCopilotEngine = () => {
 
       // Fire async analysis
       (async () => {
+        const seq = ++analiseSeqRef.current;
         setState(s => ({ ...s, isAnalyzing: true }));
         try {
           // invokeFunction (e não o invoke cru) para o motivo REAL da edge —
@@ -242,11 +254,15 @@ export const useCopilotEngine = () => {
             confidence: payload.confidence,
           };
 
+          // Chegou fora de ordem: uma análise mais nova já está na tela.
+          if (seq !== analiseSeqRef.current) return;
+
           setState(s => ({
             ...s,
             currentAnalysis: analysis,
             analysisHistory: [...s.analysisHistory, analysis],
             isAnalyzing: false,
+            analiseObsoleta: false,
             suggestionsShown: s.suggestionsShown + 1,
           }));
 
@@ -268,7 +284,19 @@ export const useCopilotEngine = () => {
           }
         } catch (err) {
           console.error('Analysis error:', err);
-          setState(s => ({ ...s, isAnalyzing: false }));
+          // Solta o texto para o próximo tick TENTAR DE NOVO. Sem isto o
+          // copiloto morre calado: `lastAnalyzedRef` já foi marcado antes da
+          // chamada, então uma falha (422, rede) faria todos os ticks seguintes
+          // pularem o mesmo trecho — e a tela seguiria em "AO VIVO" exibindo a
+          // sugestão anterior como se fosse a leitura atual.
+          if (lastAnalyzedRef.current === fullText) lastAnalyzedRef.current = '';
+          setState(s => ({
+            ...s,
+            isAnalyzing: false,
+            // A leitura na tela virou passado: marcar como obsoleta é o que
+            // impede a vendedora de agir sobre uma direção que já mudou.
+            analiseObsoleta: s.currentAnalysis !== null,
+          }));
         }
       })();
 

@@ -34,7 +34,7 @@ Deno.test("normalizarFerramenta: leitura completa passa e preserva os campos", (
   assertEquals(r!.category_name, "Serra Circular");
   assertEquals(r!.confidence, "alta");
   assertEquals(r!.suggested_services, ["Afiação", "Troca de dentes"]);
-  assertEquals(r!.specs_detected, { diametro_mm: 250, dentes: 40 });
+  assertEquals(r!.specs_detected, { diametro_mm: "250", dentes: "40" }, "escalares viram string p/ render");
 });
 
 Deno.test("normalizarFerramenta: categoria INEXISTENTE no cadastro vira null", () => {
@@ -43,6 +43,9 @@ Deno.test("normalizarFerramenta: categoria INEXISTENTE no cadastro vira null", (
   assert(r !== null, "o resto da leitura continua válido");
   assertEquals(r!.category_name, null, "categoria inventada não vira vínculo");
   assertEquals(r!.description, OK.description, "a descrição é preservada");
+  // Sem categoria casada não há o que confirmar: a tela mostraria check verde e
+  // o botão "Usar esta ferramenta" retornaria calado.
+  assertEquals(r!.identified, false, "não pode se dizer identificada");
 });
 
 Deno.test("normalizarFerramenta: casamento de categoria ignora caixa e espaço", () => {
@@ -71,6 +74,16 @@ Deno.test("normalizarFerramenta: serviço não-string é descartado da lista", (
     CATEGORIAS,
   );
   assertEquals(r!.suggested_services, ["Afiação", "Retífica"]);
+});
+
+Deno.test("normalizarFerramenta: spec ANINHADA é filtrada (derrubaria o React)", () => {
+  // A tela renderiza cada valor em <span>{value}</span>; um objeto ali lança
+  // "Objects are not valid as a React child" e quebra a página.
+  const r = normalizarFerramenta(
+    { ...OK, specs_detected: { diametro: { valor: 250 }, dentes: 40, material: "widia", novo: true, nada: null } },
+    CATEGORIAS,
+  );
+  assertEquals(r!.specs_detected, { dentes: "40", material: "widia", novo: "sim" });
 });
 
 Deno.test("normalizarFerramenta: specs não-objeto degrada para vazio", () => {

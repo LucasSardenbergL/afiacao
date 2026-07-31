@@ -15,7 +15,12 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-const MAX_IMAGE_SIZE = 5 * 1024 * 1024; // 5MB in base64 chars (~6.6MB base64)
+// O limite é sobre a string BASE64, que é ~4/3 do binário. Com 5 MiB aqui, a
+// foto de 4 MiB que a tela aceita (limite de 5 MiB no ARQUIVO) virava 5.592.408
+// caracteres e era recusada — o usuário via "imagem muito grande" para um
+// arquivo dentro do limite anunciado. 8 MiB de base64 ≈ 6 MiB de arquivo, com
+// folga sob o teto de 10 MB da API.
+const MAX_IMAGE_SIZE = 8 * 1024 * 1024;
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
