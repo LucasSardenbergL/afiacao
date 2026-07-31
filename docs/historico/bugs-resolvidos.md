@@ -328,3 +328,49 @@ semântica; (b) semeadura multi-conta tem de ser UMA transação — parcial + b
 conta presa; (c) migration committada é imutável MESMO nunca aplicada (hook bloqueia) —
 correção de desenho pré-apply vira migration v2 com DROP da assinatura antiga, e a v1
 morta fica documentada como "não colar".
+
+## Erro terminal do portal virava estoque fantasma e suprimia a recompra (2026-07-30, [PR #1636](https://github.com/LucasSardenbergL/afiacao/pull/1636), migration `20260802120000` ⚠️ apply manual — APLICADA e validada em prod no mesmo dia)
+
+O pedido #1276 (OBEN/Sayerlack, 23/07, R$ 8.237) foi barrado pelo **gate de grupo**: o SKU
+DILUENTE PU DF.4056LT é do grupo `rapido` (Prz Ent 5) e estava num pedido `normal` (LT 8). O gate
+agiu certo — sem ele o pedido entraria com prazo errado. O dano veio **depois**: o pedido ficou em
+`aprovado_aguardando_disparo` + `erro_nao_retentavel`, e o 1º ramo da CTE `em_transito` conta
+`aprovado_aguardando_disparo` por 7 dias **sem olhar o `status_envio_portal`**. 25 unidades que
+nunca existiram entraram no estoque efetivo como "a caminho" e **suprimiram a recompra de 4 SKUs
+por 7 dias** — 3 classe A, um com 1 unidade física contra ponto de pedido 3.
+
+Duas armadilhas de método, ambas quase custando um diagnóstico errado:
+
+1. **`estoque_pendente_entrada = 0` NÃO prova ausência no Omie.** É a leitura intuitiva e está
+   errada: `omie-sync-estoque:fetchEmTransitoKeys` de-duplica os POs do Omie contra o próprio
+   `em_transito` (por `cNumero` e por `cCodIntPed=AFI-<id>`) justamente pra não contar em dobro —
+   então o pedido investigado é exatamente o que some da coluna. A fonte independente é
+   `purchase_orders_tracking` (réplica por-PO, sem de-dup): 0 ocorrências de `AFI-1276` em 716 POs.
+2. **A busca negativa precisa de controle positivo.** "0 linhas" num `raw_data ~ '<sku>'` pode ser
+   ausência real ou sonda quebrada. Falsificado antes de concluir: o PO 1144 casa o SKU esperado
+   (`contem_sku_esperado = t`) ⇒ a negativa é evidência, não silêncio.
+
+**Fix:** um predicado na CTE — erro terminal + sem protocolo + sem nº Omie deixa de contar.
+Fail-CLOSED (as 3 guardas juntas): qualquer sinal de chegada mantém o pedido contando, porque o
+risco assimétrico é comprar 2× e não subcomprar. Seguro por desenho: `erro_nao_retentavel` só é
+alcançado com `efetivarAttempted=false` (o ambíguo tem estado próprio). PG17
+`db/test-em-transito-erro-terminal.sh`: 14 asserts, 6 cenários (um por estado de pedido), 4
+falsificações — reverter a correção volta a suprimir o #1276; derrubar cada guarda gera compra
+dupla. A sabotagem do nº Omie é ancorada em `^...$` de propósito: a mesma condição existe no 2º
+ramo da CTE e um sed global provaria outra coisa.
+
+**Efeito medido no dinheiro** (a validação que importa, não o teste verde): 2 min após a migration
+entrar, o ciclo gerou o #1392 (os 4 SKUs suprimidos, R$ 5.959) e o #1393 (o DF.4056LT, R$ 1.162,
+agora no grupo `rapido` correto). **Ambos passaram no gate na 1ª tentativa** — Omie 1148 e 1147. O
+mesmo gate que barrou o #1276 aprovou o #1393: a defesa não foi enfraquecida, ela deixou de ser
+alimentada com dado errado.
+
+**Lições no `docs/agent/reposicao.md`** (§Portal Sayerlack): a linha "`em_transito` conta
+portal-confirmado" era **falsa** e foi corrigida — o 1º ramo conta por status de aprovação, cego ao
+portal, então *todo estado intermediário de automação vira estoque a caminho por default*. E:
+corrigir o de-para **não** conserta pedido já gerado (grupo/itens são congelados; `sku_portal` não
+é — este o envio relê na hora), a saída é cancelar e deixar o ciclo refazer.
+
+**Não fechado (deliberado):** não existe ação de recompor/dividir pedido gerado com grupo errado.
+Foi a causa de o incidente durar 7 dias — o de-para foi corrigido em 24/07 00:24 e o retry das
+00:27 falhou idêntico. Hoje resolve-se cancelando; vale frente própria se reincidir.
