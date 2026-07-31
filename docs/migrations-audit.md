@@ -21,16 +21,16 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **442** custom migrations totais
-- **1518** objetos esperados (criados por estas migrations)
+- **444** custom migrations totais
+- **1526** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 442
-  - `rls_policy`: 386
-  - `index`: 226
+  - `function`: 443
+  - `rls_policy`: 388
+  - `index`: 229
   - `cron_job`: 160
-  - `table`: 148
+  - `table`: 149
   - `trigger`: 79
-  - `view`: 73
+  - `view`: 74
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -3712,6 +3712,24 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.gerar_pedidos_sugeridos_ciclo` | — |
+
+### `20260802120000_venda_perdida_e_classe_sb.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `view` | `public.v_sku_classe_sb` | — |
+| `table` | `public.venda_perdida_log` | — |
+| `index` | `public.idx_venda_perdida_emp_data` | `venda_perdida_log` |
+| `index` | `public.idx_venda_perdida_sku` | `venda_perdida_log` |
+| `rls_policy` | `public.venda_perdida_sel` | `venda_perdida_log` |
+| `rls_policy` | `public.venda_perdida_ins` | `venda_perdida_log` |
+
+### `20260802130000_tactical_plan_idempotencia_dia.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.criar_plano_tatico` | — |
+| `index` | `public.ux_farmer_tactical_plans_dia_operacional` | `farmer_tactical_plans` |
 
 ## Próximos passos por status
 

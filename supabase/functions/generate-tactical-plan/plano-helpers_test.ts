@@ -7,6 +7,7 @@
 //      genérico gravado com status 'gerado';
 //   2. `Number(null) === 0`: margem/probabilidade não medida virando 0.
 import {
+  ehJaGeradoHojeDaRpc,
   ehSkipLegitimoDaRpc,
   extrairToolUseUnico,
   montarPlano,
@@ -16,6 +17,7 @@ import {
   normalizarPerguntas,
   normalizarRiscos,
   numeroNoIntervalo,
+  numerosDoBundle,
   numeroValido,
   objetivoFinal,
   objetivoValido,
@@ -482,4 +484,97 @@ Deno.test("objetivoFinal: IA nula cai no derivado, sem marcar sobrescrita", () =
 
 Deno.test("objetivoFinal: IA concordando com ativacao não é sobrescrita", () => {
   assertEquals(objetivoFinal("ativacao", "ativacao"), { objetivo: "ativacao", sobrescrito: false });
+});
+
+// ---------------------------------------------------------------------------
+// numerosDoBundle — a segunda porta de fabricação, do lado do PAYLOAD
+// ---------------------------------------------------------------------------
+//
+// Os normalizadores acima cuidam do que a IA devolve. Estes quatro campos vêm de
+// OUTRA fonte (farmer_bundle_recommendations) e escapavam por um `Number(... ?? 0)`
+// no index.ts. Medido em prod 2026-07-31: 339/339 planos com bundle_lie,
+// bundle_probability e bundle_incremental_margin = 0, e NENHUM com
+// bundle_recommendation_id — ou seja, 100% dos zeros são "não havia bundle" gravado
+// como se fosse medição, e o card exibe "LIE R$ 0,00" para toda a base.
+
+Deno.test("numerosDoBundle: SEM bundle os quatro campos sao null, nunca 0", () => {
+  // "não há bundle" ≠ "o bundle vale R$ 0,00". O segundo é um veredito comercial
+  // (não vale a pena vender) que ninguém mediu.
+  assertEquals(numerosDoBundle(null), {
+    bundle_lie: null,
+    bundle_probability: null,
+    bundle_incremental_margin: null,
+    best_individual_lie: null,
+  });
+  assertEquals(numerosDoBundle(undefined), {
+    bundle_lie: null,
+    bundle_probability: null,
+    bundle_incremental_margin: null,
+    best_individual_lie: null,
+  });
+});
+
+Deno.test("numerosDoBundle: bundle COM campo nulo degrada so aquele campo", () => {
+  // As três colunas de farmer_bundle_recommendations são nullable (e ainda têm
+  // `column_default 0`): p_bundle/m_bundle ausentes não podem contaminar o lie medido.
+  assertEquals(numerosDoBundle({ lie_bundle: 1250.5, p_bundle: null, m_bundle: null }), {
+    bundle_lie: 1250.5,
+    bundle_probability: null,
+    bundle_incremental_margin: null,
+    best_individual_lie: null,
+  });
+});
+
+Deno.test("numerosDoBundle: aceita numeric como string (PostgREST) e preserva o zero MEDIDO", () => {
+  // numeric do Postgres chega como string no supabase-js. E `0` vindo da coluna é
+  // veredito apurado — degradá-lo para null seria o erro simétrico.
+  assertEquals(numerosDoBundle({ lie_bundle: "0", p_bundle: "12.5", m_bundle: "-3" }), {
+    bundle_lie: 0,
+    bundle_probability: 12.5,
+    bundle_incremental_margin: -3,
+    best_individual_lie: null,
+  });
+});
+
+Deno.test("numerosDoBundle: best_individual_lie e SEMPRE null (ninguem o calcula)", () => {
+  // Era `0` hardcoded nos dois writers. Nenhum código do repo computa este número;
+  // gravar 0 afirma "nenhum item individual vale a pena" sobre uma conta que não existe.
+  const cheio = numerosDoBundle({ lie_bundle: 10, p_bundle: 20, m_bundle: 30, best_individual_lie: 99 });
+  assertEquals(cheio.best_individual_lie, null);
+});
+
+// ---------------------------------------------------------------------------
+// ehJaGeradoHojeDaRpc — o skip de idempotência vindo do banco
+// ---------------------------------------------------------------------------
+
+// VERBATIM da mensagem que `criar_plano_tatico` levanta — mantida igual à da migration
+// 20260802130000_tactical_plan_idempotencia_dia.sql. Se a migration mudar o texto, este
+// teste é o que trava: sem o casamento, a recusa vira `http_500` no relatório do lote.
+const MSG_RPC_DUPLICATA =
+  "Já existe plano tático gerado hoje para este cliente (dia operacional BRT)";
+
+Deno.test("ehJaGeradoHojeDaRpc: reconhece a recusa da RPC por plano ja gerado hoje", () => {
+  // Casado por trecho ASCII (sem acento) pelo mesmo motivo de PADROES_SKIP_RPC — mas a
+  // mensagem ACENTUADA de produção é a que precisa passar, então é ela que o assert usa.
+  assert(ehJaGeradoHojeDaRpc(MSG_RPC_DUPLICATA), "deveria reconhecer a recusa por duplicata do dia");
+  assert(
+    ehJaGeradoHojeDaRpc("Ja existe plano tatico gerado hoje para este cliente (dia operacional BRT)"),
+    "a variante sem acento tambem tem de casar (normalizacao unicode do driver)",
+  );
+});
+
+Deno.test("ehJaGeradoHojeDaRpc: NAO confunde com os outros skips nem com erro real", () => {
+  // Discriminador: se casar largo demais, um erro de infra vira "pulei de propósito"
+  // e o lote reporta ok:true sem ter gravado (a classe do incidente de 2026-07-21).
+  assertEquals(ehJaGeradoHojeDaRpc("Cliente x sem dono de carteira"), false);
+  assertEquals(ehJaGeradoHojeDaRpc("canceling statement due to statement timeout"), false);
+  assertEquals(ehJaGeradoHojeDaRpc(null), false);
+  assertEquals(ehJaGeradoHojeDaRpc(undefined), false);
+});
+
+Deno.test("ehJaGeradoHojeDaRpc: a duplicata do dia NAO entra no skip de race de posse", () => {
+  // Os dois são `skipped`, mas com motivos DIFERENTES no relatório do lote
+  // (`ja_gerado_hoje` vs `rpc_race`) — misturá-los apaga a distinção entre
+  // "a trava funcionou" e "a carteira mudou no meio".
+  assertEquals(ehSkipLegitimoDaRpc(MSG_RPC_DUPLICATA), false);
 });

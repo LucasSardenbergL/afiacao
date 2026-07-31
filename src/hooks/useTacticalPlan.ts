@@ -3,6 +3,9 @@ import { supabase } from '@/integrations/supabase/client';
 import { invokeFunction } from '@/lib/invoke-function';
 import { selectObjective, clampRecencyCapDays, objetivoFinal } from '@/lib/scoring/objective';
 import { margemConhecida, mediaMargensConhecidas, valorMedido } from '@/lib/scoring/margin';
+import { numerosDoBundle } from '@/lib/tactical/bundle-numeros';
+import { ehJaGeradoHoje } from '@/lib/tactical/plano-duplicata';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 import { fetchAllPages } from '@/lib/postgrest';
 import { ownersAtivosDoAlvo } from '@/lib/carteira/escopo-clientes';
 import { useAuth } from '@/contexts/AuthContext';
@@ -40,12 +43,19 @@ export interface TacticalPlan {
   approachStrategyB: string;
 
   // Bundle
+  // Campos NULLABLE por dado (money-path — ausente ≠ zero): `null` = não havia bundle
+  // prioritário na geração do plano, ou a coluna de origem não estava medida. Eram
+  // `number` e o `Number(x || 0)` da leitura fabricava 0 — "LIE R$ 0,00" e "Probabilidade
+  // 0,0%" leem como veredito comercial apurado. ⚠️ Em comparação relacional o guard
+  // `!= null` é obrigatório: `null > 0` é `false` por coerção, o que aqui até esconde a
+  // seção (desejável), mas `null < x` seria `true` — não reintroduza o padrão sem checar.
   topBundle: BundleSnapshot;
   secondBundle: BundleSnapshot;
-  bundleLie: number;
-  bundleProbability: number;
-  bundleIncrementalMargin: number;
-  bestIndividualLie: number;
+  bundleLie: number | null;
+  bundleProbability: number | null;
+  bundleIncrementalMargin: number | null;
+  /** Nunca medido: nenhum writer do repo o calcula (era `0` hardcoded nos dois). */
+  bestIndividualLie: number | null;
 
   // AI-generated content
   diagnosticQuestions: { question: string; purpose: string; expected_insight: string }[];
@@ -64,7 +74,8 @@ export interface TacticalPlan {
   operationalRisks: string[];
 
   // Efficiency
-  estimatedProfitPerHour: number;
+  /** Derivado do LIE do bundle. `null` = indecidível (não há LIE), não "R$ 0/h". */
+  estimatedProfitPerHour: number | null;
 
   // Tracking
   status: string;
@@ -244,8 +255,16 @@ export const useTacticalPlan = () => {
     const ltvProjection = d.ltv_projection;
     const expectedResult = d.expected_result;
     const avgCallMinutes = 15;
-    const bundleLie = Number(d.bundle_lie || 0);
-    const estimatedProfitPerHour = bundleLie > 0 ? (bundleLie / (avgCallMinutes / 60)) : 0;
+    // [money-path "ausente ≠ zero"] A LEITURA é a metade que faltava: corrigir só os dois
+    // writers deixaria a correção INERTE (money-path.md §2) — o null gravado voltaria a
+    // virar 0 aqui, e a tela continuaria afirmando "LIE R$ 0,00". Agora o tri-estado
+    // atravessa o parse até o card.
+    const bundleLie = valorMedido(d.bundle_lie);
+    // Sem LIE o R$/h é INDECIDÍVEL, não zero — mesmo tri-estado de `checkEfficiency`.
+    // `0` medido continua sendo 0 (bundle apurado que não agrega lucro na ligação).
+    const estimatedProfitPerHour = bundleLie == null
+      ? null
+      : (bundleLie > 0 ? bundleLie / (avgCallMinutes / 60) : 0);
 
     return {
       id: d.id,
@@ -271,9 +290,9 @@ export const useTacticalPlan = () => {
       topBundle,
       secondBundle,
       bundleLie,
-      bundleProbability: Number(d.bundle_probability || 0),
-      bundleIncrementalMargin: Number(d.bundle_incremental_margin || 0),
-      bestIndividualLie: Number(d.best_individual_lie || 0),
+      bundleProbability: valorMedido(d.bundle_probability),
+      bundleIncrementalMargin: valorMedido(d.bundle_incremental_margin),
+      bestIndividualLie: valorMedido(d.best_individual_lie),
       diagnosticQuestions: Array.isArray(d.diagnostic_questions)
         ? (d.diagnostic_questions as TacticalPlan['diagnosticQuestions'])
         : [],
@@ -617,10 +636,12 @@ export const useTacticalPlan = () => {
           plan_type: planType,
           top_bundle: topBundle ? topBundle.bundle_products : {},
           second_bundle: secondBundle ? secondBundle.bundle_products : {},
-          bundle_lie: topBundle ? Number(topBundle.lie_bundle) : 0,
-          bundle_probability: topBundle ? Number(topBundle.p_bundle) : 0,
-          bundle_incremental_margin: topBundle ? Number(topBundle.m_bundle) : 0,
-          best_individual_lie: 0,
+          // [money-path "ausente ≠ zero"] Era `topBundle ? Number(topBundle.lie_bundle) : 0`
+          // nos três + `best_individual_lie: 0`. Duas fabricações: sem bundle, e com bundle
+          // de campo nulo (`Number(null) === 0`). O 0 persistia no banco e virava "Ganho
+          // esperado R$ 0,00" na tela — afirmação que ninguém mediu. Helper espelhado na
+          // edge (`plano-helpers.numerosDoBundle`), que é o OUTRO writer desta mesma tabela.
+          ...numerosDoBundle(topBundle),
           diagnostic_questions: aiPlan?.diagnostic_questions || [],
           implication_question: aiPlan?.implication_question || '',
           offer_transition: aiPlan?.offer_transition || '',
@@ -638,7 +659,25 @@ export const useTacticalPlan = () => {
       await loadPlans();
     } catch (err) {
       console.error('Error generating plan:', err);
-      const message = err instanceof Error ? err.message : String(err);
+      // DUAS fronteiras onde a mensagem acionável morria, e as duas precisam estar de pé:
+      //  1. a da EDGE — resolvida por `invokeFunction`, que lê o corpo de
+      //     `FunctionsHttpError.context`; o `error.message` cru do supabase-js é sempre
+      //     "Edge Function returned a non-2xx status code" e os 422 da edge ("Créditos da
+      //     IA esgotados", "Plano cortado por tamanho") morreriam aí. Não trocar por
+      //     `supabase.functions.invoke` cru.
+      //  2. a do BANCO — `mensagemDeErro`: o `error` da RPC é um objeto PLANO (o
+      //     supabase-js só instancia `PostgrestError` sob `.throwOnError()`), então o
+      //     `err instanceof Error ? … : String(err)` de antes rendia **"[object Object]"**
+      //     para TODA falha de `criar_plano_tatico`.
+      const message = mensagemDeErro(err) ?? 'falha desconhecida';
+      // A trava de idempotência não é falha: o plano de hoje já está na lista. Toast de
+      // ERRO aqui mandaria a vendedora tentar de novo (ou acionar a equipe) por um
+      // não-problema — e ela já pagou a espera da IA.
+      if (ehJaGeradoHoje(message)) {
+        toast.info('Já existe um plano gerado hoje para este cliente');
+        await loadPlans();
+        return;
+      }
       toast.error('Erro ao gerar plano', { description: message });
     } finally {
       setGenerating(null);
@@ -699,7 +738,10 @@ export const useTacticalPlan = () => {
       await loadPlans();
     } catch (err) {
       console.error('Error recording result:', err);
-      const message = err instanceof Error ? err.message : String(err);
+      // Mesmo motivo do generatePlan: `registrar_resultado_plano` devolve o objeto plano do
+      // PostgREST, e o `String(err)` de antes exibia "[object Object]" no lugar da recusa
+      // real da RPC ("Plano fora da sua carteira", constraint, timeout).
+      const message = mensagemDeErro(err) ?? 'falha desconhecida';
       toast.error('Erro ao registrar resultado', { description: message });
     }
   }, [loadPlans]);

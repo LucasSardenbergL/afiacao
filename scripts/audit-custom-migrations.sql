@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 442
+-- Total de custom migrations: 444
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -483,7 +483,9 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260731120000', 'farmer_assoc_rules_delete_qualificado', '20260731120000_farmer_assoc_rules_delete_qualificado.sql'),
   ('20260731120000', 'v_sku_ultima_venda', '20260731120000_v_sku_ultima_venda.sql'),
   ('20260801120000', 'drop_calcular_gatilhos_reposicao', '20260801120000_drop_calcular_gatilhos_reposicao.sql'),
-  ('20260802120000', 'reposicao_erro_terminal_nao_e_estoque_a_caminho', '20260802120000_reposicao_erro_terminal_nao_e_estoque_a_caminho.sql')
+  ('20260802120000', 'reposicao_erro_terminal_nao_e_estoque_a_caminho', '20260802120000_reposicao_erro_terminal_nao_e_estoque_a_caminho.sql'),
+  ('20260802120000', 'venda_perdida_e_classe_sb', '20260802120000_venda_perdida_e_classe_sb.sql'),
+  ('20260802130000', 'tactical_plan_idempotencia_dia', '20260802130000_tactical_plan_idempotencia_dia.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -1990,7 +1992,15 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('reposicao_teto_cobertura_motor', 'rls_policy', 'public', 'teto_cobertura_log_sel', 'reposicao_teto_cobertura_log'),
   ('reposicao_teto_cobertura_motor', 'rls_policy', 'public', 'teto_cobertura_log_ins', 'reposicao_teto_cobertura_log'),
   ('v_sku_ultima_venda', 'view', 'public', 'v_sku_ultima_venda', ''),
-  ('reposicao_erro_terminal_nao_e_estoque_a_caminho', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', '')
+  ('reposicao_erro_terminal_nao_e_estoque_a_caminho', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
+  ('venda_perdida_e_classe_sb', 'view', 'public', 'v_sku_classe_sb', ''),
+  ('venda_perdida_e_classe_sb', 'table', 'public', 'venda_perdida_log', ''),
+  ('venda_perdida_e_classe_sb', 'index', 'public', 'idx_venda_perdida_emp_data', 'venda_perdida_log'),
+  ('venda_perdida_e_classe_sb', 'index', 'public', 'idx_venda_perdida_sku', 'venda_perdida_log'),
+  ('venda_perdida_e_classe_sb', 'rls_policy', 'public', 'venda_perdida_sel', 'venda_perdida_log'),
+  ('venda_perdida_e_classe_sb', 'rls_policy', 'public', 'venda_perdida_ins', 'venda_perdida_log'),
+  ('tactical_plan_idempotencia_dia', 'function', 'public', 'criar_plano_tatico', ''),
+  ('tactical_plan_idempotencia_dia', 'index', 'public', 'ux_farmer_tactical_plans_dia_operacional', 'farmer_tactical_plans')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -3545,7 +3555,15 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('reposicao_teto_cobertura_motor', 'rls_policy', 'public', 'teto_cobertura_log_sel', 'reposicao_teto_cobertura_log'),
   ('reposicao_teto_cobertura_motor', 'rls_policy', 'public', 'teto_cobertura_log_ins', 'reposicao_teto_cobertura_log'),
   ('v_sku_ultima_venda', 'view', 'public', 'v_sku_ultima_venda', ''),
-  ('reposicao_erro_terminal_nao_e_estoque_a_caminho', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', '')
+  ('reposicao_erro_terminal_nao_e_estoque_a_caminho', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
+  ('venda_perdida_e_classe_sb', 'view', 'public', 'v_sku_classe_sb', ''),
+  ('venda_perdida_e_classe_sb', 'table', 'public', 'venda_perdida_log', ''),
+  ('venda_perdida_e_classe_sb', 'index', 'public', 'idx_venda_perdida_emp_data', 'venda_perdida_log'),
+  ('venda_perdida_e_classe_sb', 'index', 'public', 'idx_venda_perdida_sku', 'venda_perdida_log'),
+  ('venda_perdida_e_classe_sb', 'rls_policy', 'public', 'venda_perdida_sel', 'venda_perdida_log'),
+  ('venda_perdida_e_classe_sb', 'rls_policy', 'public', 'venda_perdida_ins', 'venda_perdida_log'),
+  ('tactical_plan_idempotencia_dia', 'function', 'public', 'criar_plano_tatico', ''),
+  ('tactical_plan_idempotencia_dia', 'index', 'public', 'ux_farmer_tactical_plans_dia_operacional', 'farmer_tactical_plans')
 )
 SELECT
   e.migration,

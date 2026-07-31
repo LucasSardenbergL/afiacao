@@ -105,6 +105,54 @@ export function numeroValido(v: unknown): number | null {
   return null;
 }
 
+/** Os quatro números do bundle gravados no plano. `null` = não há bundle / não medido. */
+export interface NumerosDoBundle {
+  bundle_lie: number | null;
+  bundle_probability: number | null;
+  bundle_incremental_margin: number | null;
+  best_individual_lie: number | null;
+}
+
+/**
+ * Números do bundle prioritário para o payload do plano — a SEGUNDA porta de fabricação.
+ *
+ * Os normalizadores acima cuidam do que a IA devolve; estes quatro campos vêm de
+ * `farmer_bundle_recommendations` e escapavam por um `Number(topBundleRow?.x ?? 0)` no
+ * `index.ts` (e pelo `topBundle ? Number(...) : 0` do front). Duas fabricações no mesmo
+ * lugar: **sem bundle** os três viravam 0, e **com bundle de campo nulo** também — as três
+ * colunas da origem são nullable (e ainda têm `column_default 0`).
+ *
+ * POR QUE IMPORTA: "Margem incremental R$ 0,00" e "Probabilidade 0,0%" são AFIRMAÇÕES —
+ * *não vale a pena vender este bundle* — que ninguém mediu. A verdade é "não há bundle"
+ * ou "não calculado", e a UI já sabe exibir "—" (o `fmt` null-safe de
+ * `src/components/farmer/tacticalPlan/config.ts`).
+ *
+ * Medido em prod via psql-ro (2026-07-31): **339 de 339 planos** com os três campos = 0 e
+ * **nenhum** com `bundle_recommendation_id` ⇒ 100% dos zeros eram "não havia bundle"
+ * gravado com cara de medição, e o card mostra "LIE R$ 0,00" para a base inteira.
+ *
+ * ⚠️ `0` vindo da coluna é PRESERVADO: zero apurado é veredito ("este bundle não agrega
+ * margem"), e degradá-lo para null seria o erro simétrico ao que este helper corrige.
+ *
+ * ⚠️ `best_individual_lie` é SEMPRE null: era `0` hardcoded nos dois writers e **nenhum
+ * código do repo o calcula**. Manter o 0 afirmava "nenhum item individual vale a pena"
+ * sobre uma conta que não existe — mesma história de `expansion_score`
+ * (20260727130000_farmer_scores_colunas_orfas_null). Fica aqui, e não solto no call-site,
+ * para que a decisão de gravar "não medido" tenha um único dono testado.
+ *
+ * Espelhado no front por `numerosDoBundle` de `src/lib/tactical/bundle-numeros.ts`
+ * (Deno não importa de `src/`) — mudou aqui, mude lá.
+ */
+export function numerosDoBundle(bundle: unknown): NumerosDoBundle {
+  const row = (bundle ?? null) as Record<string, unknown> | null;
+  return {
+    bundle_lie: row ? numeroValido(row.lie_bundle) : null,
+    bundle_probability: row ? numeroValido(row.p_bundle) : null,
+    bundle_incremental_margin: row ? numeroValido(row.m_bundle) : null,
+    best_individual_lie: null,
+  };
+}
+
 /** Número válido DENTRO de [min, max]; fora da faixa → null (não satura na borda). */
 export function numeroNoIntervalo(v: unknown, min: number, max: number): number | null {
   const n = numeroValido(v);
@@ -544,8 +592,35 @@ export const PADROES_SKIP_RPC = [
 
 export function ehSkipLegitimoDaRpc(mensagem: unknown): boolean {
   if (typeof mensagem !== "string") return false;
+  if (ehJaGeradoHojeDaRpc(mensagem)) return false; // motivo PRÓPRIO — ver abaixo
   const m = mensagem.toLowerCase();
   return PADROES_SKIP_RPC.some((p) => m.includes(p));
+}
+
+/**
+ * Recusa da RPC por JÁ EXISTIR plano do dia — a trava de idempotência funcionando.
+ *
+ * POR QUE É UM MOTIVO SEPARADO de `ehSkipLegitimoDaRpc`: os dois são `skipped`, mas o
+ * relatório do lote agrega POR MOTIVO (`_shared/tactical-batch-resultado.ts`), e
+ * `ja_gerado_hoje` ("a trava pegou") não é `rpc_race` ("a carteira mudou durante a
+ * geração"). Somá-los apagaria justamente o sinal que diz se a idempotência está viva.
+ *
+ * POR QUE EXISTE: a checagem "já gerei hoje?" do `index.ts` roda ANTES da chamada à
+ * Anthropic e é um check-then-insert — dois batches simultâneos consultam antes de
+ * qualquer insert, ambos pagam a IA, e ambos inserem. A trava REAL é o índice único
+ * parcial + o re-teste dentro da RPC (depois do `FOR UPDATE` de `carteira_assignments`);
+ * este predicado é o que converte a recusa do banco em `skipped` honesto em vez de um
+ * 500 genérico que o lote contaria como erro.
+ *
+ * Trecho ASCII e exclusivo do ramo certo, pelo mesmo motivo de `PADROES_SKIP_RPC`: a
+ * mensagem em produção tem acento ("Já existe plano tático…") e comparar o pedaço sem
+ * acento evita depender de normalização unicode entre o Postgres e o runtime.
+ */
+const PADRAO_JA_GERADO_HOJE = "gerado hoje para este cliente";
+
+export function ehJaGeradoHojeDaRpc(mensagem: unknown): boolean {
+  if (typeof mensagem !== "string") return false;
+  return mensagem.toLowerCase().includes(PADRAO_JA_GERADO_HOJE);
 }
 
 /**
