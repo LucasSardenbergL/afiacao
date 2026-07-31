@@ -1,12 +1,13 @@
 import { fmtBRL } from "@/lib/reposicao/sku-param";
 import { LIMIAR_GIRO_MORTO_DIAS, type somarCapitalMorto } from "@/lib/reposicao/baixo-giro-helpers";
 
-export function BaixoGiroKpis({ totalRs, semCustoN, comEstoqueN, totalItens, morto }: {
+export function BaixoGiroKpis({ totalRs, semCustoN, comEstoqueN, totalItens, morto, sobEncomenda }: {
   totalRs: number; semCustoN: number; comEstoqueN: number; totalItens: number;
   morto: ReturnType<typeof somarCapitalMorto>;
+  sobEncomenda: { totalRs: number; candidatosN: number };
 }) {
   return (
-    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
       <div className="rounded-md border p-4">
         <div className="text-xs text-muted-foreground">Capital parado na cauda</div>
         <div className="kpi-value text-2xl font-semibold tnum">{fmtBRL(totalRs)}</div>
@@ -21,6 +22,11 @@ export function BaixoGiroKpis({ totalRs, semCustoN, comEstoqueN, totalItens, mor
           {morto.mortosN} SKU(s), {morto.comEstoqueN} com estoque
           {morto.semCustoN > 0 ? ` · ${morto.semCustoN} sem custo` : ""}
         </div>
+      </div>
+      <div className="rounded-md border p-4">
+        <div className="text-xs text-muted-foreground">Candidatos a sob-encomenda</div>
+        <div className="kpi-value text-2xl font-semibold tnum">{fmtBRL(sobEncomenda.totalRs)}</div>
+        <div className="text-xs text-muted-foreground">{sobEncomenda.candidatosN} SKU(s) com 1–2 vendas no histórico</div>
       </div>
       <div className="rounded-md border p-4">
         <div className="text-xs text-muted-foreground">Itens na cauda</div>

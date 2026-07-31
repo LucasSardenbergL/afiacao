@@ -26,12 +26,14 @@ export interface RowBaixoGiro {
   vendas_registradas: number;
   /** Sem venda há >= LIMIAR_GIRO_MORTO_DIAS (ou nunca), fora de cold start. */
   giro_morto: boolean;
+  /** Venda RARA (1-2 eventos no histórico) com estoque — candidato a virar sob-encomenda. */
+  candidato_sob_encomenda: boolean;
 }
 
 export interface FiltrosBaixoGiro {
   situacao: SituacaoTipo | "todos";
   estoque: "todos" | "com_estoque" | "sem_estoque";
-  giro: "todos" | "morto";
+  giro: "todos" | "morto" | "sob_encomenda_candidato";
   busca: string;
 }
 

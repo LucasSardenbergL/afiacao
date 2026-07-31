@@ -5,6 +5,7 @@ import {
   diasSemVender,
   previewManterLote,
   LIMIAR_GIRO_MORTO_DIAS,
+  ehCandidatoSobEncomenda,
   ehGiroMorto,
   somarCapitalMorto,
 } from "../baixo-giro-helpers";
@@ -102,5 +103,21 @@ describe("somarCapitalMorto", () => {
       { giroMorto: false, saldo: 100, cmc: 100 }, // vivo — fora
     ]);
     expect(r).toEqual({ totalRs: 50, comEstoqueN: 2, semCustoN: 1, mortosN: 3 });
+  });
+});
+
+describe("ehCandidatoSobEncomenda", () => {
+  it("raro (1-2 eventos) com estoque = candidato", () => {
+    expect(ehCandidatoSobEncomenda({ vendasRegistradas: 1, saldo: 5, emColdStart: false })).toBe(true);
+    expect(ehCandidatoSobEncomenda({ vendasRegistradas: 2, saldo: 1, emColdStart: false })).toBe(true);
+  });
+  it("sem venda nenhuma NAO e candidato (e giro morto — fluxo proprio)", () => {
+    expect(ehCandidatoSobEncomenda({ vendasRegistradas: 0, saldo: 5, emColdStart: false })).toBe(false);
+  });
+  it("3+ eventos, sem estoque, ou cold start = fora", () => {
+    expect(ehCandidatoSobEncomenda({ vendasRegistradas: 3, saldo: 5, emColdStart: false })).toBe(false);
+    expect(ehCandidatoSobEncomenda({ vendasRegistradas: 2, saldo: 0, emColdStart: false })).toBe(false);
+    expect(ehCandidatoSobEncomenda({ vendasRegistradas: 2, saldo: null, emColdStart: false })).toBe(false);
+    expect(ehCandidatoSobEncomenda({ vendasRegistradas: 2, saldo: 5, emColdStart: true })).toBe(false);
   });
 });

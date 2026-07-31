@@ -76,6 +76,24 @@ export function ehGiroMorto(args: {
   return args.diasSemVender != null && args.diasSemVender >= LIMIAR_GIRO_MORTO_DIAS;
 }
 
+/**
+ * Candidato a SOB-ENCOMENDA (postponement da cauda): SKU VIVO mas de venda RARA — no máximo
+ * 2 eventos de venda em todo o histórico (fonte all-time v_sku_ultima_venda) — com estoque
+ * parado. Virar sob-encomenda elimina o estoque INTEIRO do SKU (ciclo+proteção+piso): o
+ * cliente espera o lead time. Medido 2026-07-30: 106 SKUs / R$38,7k nesse critério.
+ * Cold start fora (SKU novo sem venda é novo, não raro); sem venda nenhuma = giro morto
+ * (fluxo próprio: descontinuar), não sob-encomenda.
+ */
+export function ehCandidatoSobEncomenda(args: {
+  vendasRegistradas: number;
+  saldo: number | null;
+  emColdStart: boolean;
+}): boolean {
+  if (args.emColdStart) return false;
+  if (args.vendasRegistradas < 1 || args.vendasRegistradas > 2) return false;
+  return (args.saldo ?? 0) > 0;
+}
+
 /** Capital parado dos mortos (cmc ausente não fabrica R$0 — conta separada, como somarCapitalParado). */
 export function somarCapitalMorto(
   itens: Array<{ giroMorto: boolean; saldo: number | null; cmc: number | null }>,

@@ -53,13 +53,14 @@ function exportarCsvExcesso(rows: RowExcesso[]) {
 }
 
 export default function AdminReposicaoBaixoGiro() {
-  const { rows, kpis, isLoading, manterEmEstoque, descontinuar, descontinuarLote } = useBaixoGiro();
+  const { rows, kpis, isLoading, manterEmEstoque, descontinuar, descontinuarLote, sobEncomendaLote } = useBaixoGiro();
   const excesso = useExcessoEstoque();
   const [filtros, setFiltros] = useState<FiltrosBaixoGiro>({ situacao: "todos", estoque: "todos", giro: "todos", busca: "" });
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [dialogAlvos, setDialogAlvos] = useState<RowBaixoGiro[] | null>(null);
   const [descontinuarAlvo, setDescontinuarAlvo] = useState<AlvoDescontinuar | null>(null);
   const [loteAlvos, setLoteAlvos] = useState<RowBaixoGiro[] | null>(null);
+  const [sobEncomendaAlvos, setSobEncomendaAlvos] = useState<RowBaixoGiro[] | null>(null);
 
   const filtered = useMemo(() => {
     return rows.filter((r) => {
@@ -67,6 +68,7 @@ export default function AdminReposicaoBaixoGiro() {
       if (filtros.estoque === "com_estoque" && !(r.saldo && r.saldo > 0)) return false;
       if (filtros.estoque === "sem_estoque" && r.saldo && r.saldo > 0) return false;
       if (filtros.giro === "morto" && !r.giro_morto) return false;
+      if (filtros.giro === "sob_encomenda_candidato" && !r.candidato_sob_encomenda) return false;
       const s = filtros.busca.trim().toLowerCase();
       if (s) {
         const byCode = /^\d+$/.test(s) ? String(r.sku_codigo_omie).includes(s) : false;
@@ -112,6 +114,14 @@ export default function AdminReposicaoBaixoGiro() {
                 }
               >
                 Descontinuar — {selected.size} selecionado(s)
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() =>
+                  setSobEncomendaAlvos(filtered.filter((r) => selected.has(r.sku_codigo_omie)))
+                }
+              >
+                Sob encomenda — {selected.size} selecionado(s)
               </Button>
             </div>
           )}
@@ -250,6 +260,46 @@ export default function AdminReposicaoBaixoGiro() {
               }}
             >
               Descontinuar {loteAlvos?.length ?? 0} SKU(s)
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <AlertDialog open={!!sobEncomendaAlvos} onOpenChange={(v) => { if (!v) setSobEncomendaAlvos(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Marcar {sobEncomendaAlvos?.length ?? 0} SKU(s) como sob encomenda?</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div>
+                <div className="max-h-48 overflow-y-auto rounded-md border p-2 text-xs">
+                  {(sobEncomendaAlvos ?? []).map((r) => (
+                    <div key={r.sku_codigo_omie} className="flex justify-between gap-2 py-0.5">
+                      <span className="truncate">{r.sku_descricao ?? r.sku_codigo_omie}</span>
+                      <span className="shrink-0 text-muted-foreground">
+                        {r.vendas_registradas} venda(s) no histórico
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                <p className="mt-2">
+                  O motor para de repor (o item vira order-driven: compra-se quando o cliente pede e ele
+                  espera o lead time). O estoque atual escoa normalmente. Reversível pela tela de Revisão.
+                </p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                const codes = (sobEncomendaAlvos ?? []).map((r) => r.sku_codigo_omie);
+                if (codes.length > 0) {
+                  sobEncomendaLote.mutate(codes, { onSuccess: () => setSelected(new Set()) });
+                  track("reposicao.sob_encomenda_lote", { skus: codes.length });
+                }
+                setSobEncomendaAlvos(null);
+              }}
+            >
+              Marcar sob encomenda
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
