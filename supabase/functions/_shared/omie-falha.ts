@@ -72,16 +72,6 @@ const MARCADORES_TRANSITORIOS = [
   "aguarde",
   "rate limit",
   "too many",
-  "http 429",
-  "http 500",
-  "http 502",
-  "http 503",
-  "http 504",
-  "status 429",
-  "status 500",
-  "status 502",
-  "status 503",
-  "status 504",
   "bad gateway",
   "service unavailable",
   "internal server error",
@@ -98,6 +88,18 @@ const MARCADORES_TRANSITORIOS = [
   "error sending request",
   "socket",
 ];
+
+// Códigos HTTP entram SÓ por aqui, e só ANCORADOS na forma que os wrappers do repo emitem
+// (`HTTP <n>`, `status <n>`) — nunca como substring solta. É a âncora que separa "código HTTP"
+// de "dígito dentro do identificador que a mensagem ecoa" (ver o bloco acima).
+//
+// ⚠️ A 1ª versão ancorada enumerava 500/502/503/504 À MÃO, e a enumeração erra pelo AVESSO do
+// dígito solto: casa de MENOS. Um 501/505/520 — as formas que gateway e CDN emitem — não casava
+// nada, caía em `indeterminada` e, no wrapper do omie-analytics-sync, abortava na 1ª tentativa
+// SEM backoff: falha de servidor tratada como permanente (achado do challenge Codex do #1623).
+// O padrão cobre TODO 5xx e o 429 do rate-limit — e só esses: 4xx que não seja 429 não é
+// retentável (400/404 são o pedido errado, e repetir o pedido errado devolve o mesmo erro).
+const PADROES_TRANSITORIOS = [/(?:http|status):?\s+(?:429|5\d\d)/];
 
 // Credencial/autorização/validação de acesso: a próxima chamada devolve exatamente o mesmo
 // erro. "Chave de acesso não cadastrada para o aplicativo" é o clássico do Omie quando a
@@ -138,6 +140,7 @@ export function classificarFaultstring(texto: string | null | undefined): Classe
   const t = normalizar(String(texto));
   if (MARCADORES_FIM.some((m) => t.includes(m))) return "fim_de_pagina";
   if (MARCADORES_TRANSITORIOS.some((m) => t.includes(m))) return "transitorio";
+  if (PADROES_TRANSITORIOS.some((p) => p.test(t))) return "transitorio";
   if (MARCADORES_PERMANENTES.some((m) => t.includes(m))) return "permanente";
   return "indeterminada";
 }
