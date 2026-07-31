@@ -6,8 +6,9 @@ rentável de otimização (82% do custo de token é ENTRADA de contexto: `cache_
 `cache_write` 25,0%; gerar resposta é só 16,4%) — cortar 1 token de piso rende em 100% dos
 requests, para sempre.
 
-E é também onde as premissas plausíveis mais enganam. **Duas hipóteses razoáveis foram
-medidas e REFUTADAS** — as duas teriam virado "otimização" entregue sem número.
+E é também onde as premissas plausíveis mais enganam. **Três hipóteses razoáveis foram
+medidas e REFUTADAS** — uma delas chegou a PIORAR o piso. As três teriam virado
+"otimização" entregue sem número.
 
 ## Réguas (as duas são read-only e ficam no repo)
 
@@ -79,6 +80,50 @@ não fazer nada. Revertido.
 Fica valendo para roteamento (o modelo deixa de ver 113 skills irrelevantes), mas isso é
 uma afirmação NÃO medida — e o mecanismo de preenchimento sugere ceticismo: o que entra no
 lugar pode ser tão irrelevante quanto o que saiu.
+## ⚠️ CORREÇÃO — o orçamento existe, mas é CONFIGURÁVEL (e eu tinha concluído o contrário)
+
+As três medições acima estavam certas; a conclusão que tirei delas, não. Eu escrevi que o
+listing só encolhe removendo o provedor inteiro. **Errado** — o orçamento é uma chave do
+`settings.json`, e o schema do Claude Code expõe quatro que importam:
+
+| chave | default | o que faz |
+|---|---|---|
+| `skillListingBudgetFraction` | `0.01` (1% da janela) | **é o orçamento** que se reabastecia sozinho |
+| `skillListingMaxDescChars` | `1536` | teto por descrição (por isso as longas apareciam cortadas) |
+| `skillOverrides` | — | por skill: `name-only`, `user-invocable-only`, `off` |
+| `disableClaudeAiConnectors` | — | o switch CERTO dos connectors (`ENABLE_CLAUDEAI_MCP_SERVERS` **não** funciona) |
+
+Medido com a sonda (baseline 43.896), e o resultado tem uma inversão útil:
+
+| config | piso | economia | skills c/ descrição | as 8 skills que o founder USA |
+|---|---|---|---|---|
+| baseline (`0.01` / `1536`) | 43.896 | — | 55 | 8/8 |
+| `maxDescChars 300` | 43.273 | 623 | **123** | 8/8 |
+| `maxDescChars 300` + `fraction 0.005` | 37.806 | 6.090 | 49 | 8/8 |
+| **`maxDescChars 220` + `fraction 0.004`** | **36.720** | **7.176** | 43 | **8/8** ✅ |
+| `fraction 0.003` (só) | 35.563 | 8.333 | 13 | **0/8** ❌ |
+
+Cortar só o orçamento é a economia maior e a pior escolha: zera a descrição das 13 skills do
+projeto — `fecho`, `prove-sql-money-path`, `lovable-db-operator` viram nome solto e param de
+disparar sozinhas. **Capar a descrição é Pareto-superior**: com `maxDescChars 300` cabem 123
+skills descritas em vez de 55 (mais que o dobro de roteamento) e ainda sobra token.
+
+O ponto escolhido — `220` + `0.004` — economiza **7.176 tokens (16% do piso do CLI)** mantendo
+os gatilhos ("Use SEMPRE que…") de 8/8 das skills usadas. As 3 do projeto que perdem descrição
+(`cfo-colacor`, `farmer-industrial`, `goal`) já estavam sem ela no baseline e têm **uso zero em
+48 dias** — perda real: nenhuma.
+
+Isto também reabilita, por outro caminho, o corte revertido lá em cima: não era preciso editar
+13 `SKILL.md` à mão — uma chave faz o mesmo truncamento, e melhor.
+
+### E isto EXPLICA a premissa falsa nº 3
+
+A nº 3 mediu que esconder 113 skills PIORA o piso em +141 tokens, e diagnosticou a causa:
+"as descrições promovidas para o espaço liberado eram **mais longas** que as removidas".
+`skillListingMaxDescChars` ataca exatamente essa causa — com um teto por descrição, o que
+sobe para o espaço liberado não pode ser mais caro que o que saiu. As duas medições contam
+a mesma história por lados opostos: **mexer em QUEM está na lista não resolve (e pode
+piorar); mexer no TAMANHO de cada entrada resolve.**
 
 ## ✅ O que REALMENTE move o ponteiro: desabilitar o PLUGIN inteiro
 
@@ -136,7 +181,19 @@ saída ainda vai ficar no contexto. Uma leitura grande no início de uma sessão
 mais caro que existe; a mesma leitura no último request é quase de graça.
 
 Régua: `scripts/ocupacao-contexto.sh --top 3`. O guard de Read do #1647 (nudge por volume e
-por releitura) ataca justamente a fatia nº 1.
+por releitura) ataca a fatia nº 1; `.claude/hooks/bash-contexto-nudge.sh` ataca a nº 2.
+
+### O erro no Bash não é esquecer o `head`
+
+As maiores saídas medidas **já usavam** `| head -120` e `| head -60` — e ainda despejaram
+9.784 e 5.460 chars. `head -n` corta LINHAS; o contexto se paga em BYTES, e em SQL, log e
+código a linha passa de 80 chars. Por isso o guard tem dois ramos: quando já havia `head`/
+`tail`, ele ensina `head -c` / `cut -c` (a unidade certa) em vez de repetir o conselho que
+já tinha sido seguido.
+
+O guard é PostToolUse, não Pre, porque no Pre só existe o comando — e prever volume pela
+cara dele é fraco: 46,5% das chamadas medidas caíram em "outros" (compostos, heredoc,
+script inline). Só depois de rodar se sabe o tamanho.
 
 ## Pendente de medição — só o founder consegue (é na conta, não no repo)
 
@@ -155,14 +212,19 @@ comparar o piso com os 67.244 registrados aqui.
 
 ## Lição transferível
 
-> O piso não responde a cortes *dentro* de blocos de orçamento fixo (lista de skills,
-> descrições). Responde a **remover um provedor inteiro** (plugin, MCP, servidor).
+> O piso não responde a cortes *dentro* de um bloco de orçamento — o orçamento se reabastece.
+> Responde a **remover um provedor inteiro** (plugin, MCP, servidor) ou a **mudar o orçamento**
+> (ver a CORREÇÃO acima: ele é uma chave de settings, não uma constante do harness).
 > E: "encurtei X, logo economizei" é hipótese — o número vem da sonda, antes e depois.
 >
 > Corolário da nº 3: dentro de um bloco de orçamento fixo, cortar não é neutro — pode
 > **piorar**. O espaço liberado é repreenchido, e nada garante que o que entra seja menor
 > que o que saiu. "No pior caso não muda nada" é falso aqui, e foi a intuição que mediu
-> −0 e entregou +141.
+> −0 e entregou +141. O que funciona é limitar o TAMANHO de cada entrada, não escolher
+> quais entram.
+>
+> Antes de concluir "não dá para mexer nisso", **procure a chave**: o schema completo do
+> settings sai pela skill `update-config`, e foi lá que apareceram as quatro que faltavam.
 >
 > E antes de otimizar um alvo, **meça que fração do custo ele é**. O piso parecia o alvo
 > óbvio (é relido em 100% dos requests) e é só 26%. Otimizar bem a coisa errada perde para
