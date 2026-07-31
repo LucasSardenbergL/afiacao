@@ -8,6 +8,7 @@ import {
   traduzirErroAnthropic,
 } from "../_shared/anthropic.ts";
 import { montarBlocoImagem } from "../_shared/imagem.ts";
+import { consumirCota, headersDeCota } from "../_shared/ia-cota.ts";
 import { naoIdentificada, normalizarFerramenta, TOOL_FERRAMENTA } from "./ferramenta-tools.ts";
 
 const corsHeaders = {
@@ -75,6 +76,24 @@ serve(async (req) => {
       return new Response(JSON.stringify({ error: "Lista de categorias inválida" }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // COTA — depois da validação (requisição malformada não queima cota do
+    // usuário) e antes da Anthropic. O gate acima só exige JWT válido: sem isto,
+    // um cliente repetindo fotos de até 8 MB esgota o orçamento da ORGANIZAÇÃO e
+    // derruba a IA de todo mundo, em todas as edges.
+    const supabaseCota = createClient(supabaseUrl, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+    const cota = await consumirCota(
+      supabaseCota,
+      user.id,
+      "identify-tool",
+      "identificações por foto",
+    );
+    if (!cota.permitido) {
+      return new Response(JSON.stringify({ error: cota.mensagem }), {
+        status: cota.http,
+        headers: { ...corsHeaders, ...headersDeCota(cota), "Content-Type": "application/json" },
       });
     }
 

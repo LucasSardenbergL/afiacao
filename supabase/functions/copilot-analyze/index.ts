@@ -8,6 +8,7 @@ import {
   statusDoErro,
   traduzirErroAnthropic,
 } from "../_shared/anthropic.ts";
+import { consumirCota, headersDeCota } from "../_shared/ia-cota.ts";
 import { normalizarAnalise, TOOL_COPILOTO } from "./copiloto-tools.ts";
 
 const ALLOWED_ORIGIN = Deno.env.get("ALLOWED_ORIGIN") || "*";
@@ -53,6 +54,25 @@ serve(async (req) => {
       return new Response(
         JSON.stringify({ error: 'AI não configurada' }),
         { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // COTA — aqui o risco não é abuso (a edge é staff-only), é LOOP ACIDENTAL: o
+    // hook dispara a cada 8s enquanto a transcrição muda, então uma aba esquecida
+    // aberta a noite toda faz 10.800 chamadas sem ninguém perceber. O teto
+    // (600/h, 2500/dia) não toca ligação real, que faz ~450 por hora falada.
+    const supabaseCota = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+    );
+    const cota = await consumirCota(supabaseCota, user.id, 'copilot-analyze', 'análises do copiloto');
+    if (!cota.permitido) {
+      return new Response(
+        JSON.stringify({ error: cota.mensagem }),
+        {
+          status: cota.http,
+          headers: { ...corsHeaders, ...headersDeCota(cota), 'Content-Type': 'application/json' },
+        }
       );
     }
 

@@ -698,6 +698,7 @@ export const MODULOS: ModuloApp[] = [
       "src/__tests__/potencial-nao-medido-gate.test.ts",
       "src/__tests__/segredo-em-log-gate.test.ts",
       "src/lib/escape-html.test.ts",
+      "src/lib/invoke-function.test.ts",
       "src/lib/__tests__/**",
       "src/components/__tests__/ErrorBoundary.test.tsx",
       "src/components/__tests__/RequireFinanceiroAccess.test.tsx",
