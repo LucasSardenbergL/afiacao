@@ -72,7 +72,12 @@ describe('invokeFunction — status e Retry-After', () => {
 
   it('sem Retry-After utilizável, deixa undefined em vez de fabricar 0', async () => {
     // `Number(null)` é 0 — um retry de 0s reabriria o martelo imediatamente.
-    for (const headers of [{}, { 'Retry-After': 'depois' }, { 'Retry-After': '0' }]) {
+    const casos: Array<Record<string, string>> = [
+      {},
+      { 'Retry-After': 'depois' },
+      { 'Retry-After': '0' },
+    ];
+    for (const headers of casos) {
       invokeMock.mockResolvedValue(erroDeEdge(429, { error: 'cota' }, headers));
       try {
         await invokeFunction('copilot-analyze');
