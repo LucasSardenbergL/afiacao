@@ -3,6 +3,8 @@
   "env": {
     "ENABLE_CLAUDEAI_MCP_SERVERS": "false"
   },
+  "skillListingMaxDescChars": 220,
+  "skillListingBudgetFraction": 0.004,
   "enabledPlugins": {
     "adobe-for-creativity@claude-plugins-official": false,
     "mercadopago@claude-plugins-official": false,
