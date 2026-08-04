@@ -116,6 +116,18 @@ os gatilhos ("Use SEMPRE que…") de 8/8 das skills usadas. As 3 do projeto que 
 Isto também reabilita, por outro caminho, o corte revertido lá em cima: não era preciso editar
 13 `SKILL.md` à mão — uma chave faz o mesmo truncamento, e melhor.
 
+**APLICADO** no `.claude/settings.json` do repo e reconfirmado no ambiente real, com a régua
+versionada (`scripts/piso-contexto.sh`):
+
+| | piso | listing | skills c/ descrição | skills USADAS c/ descrição |
+|---|---|---|---|---|
+| defaults (`1536` / `0.01`) | 43.950 | 30.446 chars | 55 | 8/8 |
+| **aplicado (`220` / `0.004`)** | **36.771** | **12.148 chars** | 43 | **8/8** |
+
+**−7.179 tokens**, batendo os 7.176 previstos (erro de 3, dentro do ruído de ±6), e
+reprodutível: 36.771 / 36.771 em repetições. O listing caiu 60% sem perder um gatilho sequer
+das skills que o founder de fato invoca.
+
 ### E isto EXPLICA a premissa falsa nº 3
 
 A nº 3 mediu que esconder 113 skills PIORA o piso em +141 tokens, e diagnosticou a causa:
