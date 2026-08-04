@@ -1064,6 +1064,21 @@ export interface CockpitEmpresaEVP {
   min_folga_positiva_receita: number | null; // receita do combo DONO do min — LOCATOR, não severidade: a UI suprime o headline quando imaterial (< sample_min_receita)
   capital_conhecido: number | null; // Σ capital das células reais → deriva EVP a outros hurdles
 }
+// Canal do pedido (PR1 Cabreúva-Colacor): espelho de digitalização da venda + margem por canal.
+// origem ~100% NULL em prod (2026-08-03) → hoje a leitura dominante é erp_direto; a comparação de
+// margem entre canais fica ARMADA para quando o canal digital tiver volume.
+export type CanalPedido = 'erp_direto' | 'app_cliente' | 'app_staff' | 'ligacao' | 'app_sem_origem' | 'outro';
+export interface CockpitRollupCanal {
+  canal: CanalPedido;
+  pedidos: number;          // pedidos DISTINTOS com item Oben na janela
+  clientes: number;         // clientes distintos
+  receita: number;
+  quantidade: number;
+  desconto: number;
+  cm: number | null;        // margem de contribuição (NÃO lucro): null se nenhum item com custo
+  cm_incompleto: boolean;   // há itens sem custo → cm subestima a margem do canal
+  receita_sem_cm: number;   // receita dos itens sem custo (transparência da fatia sem margem)
+}
 export interface ValorCockpitResult {
   company: string;
   k: number | null;                 // hurdle (Ke); null quando ausente/inválido (não fabricado)
@@ -1073,6 +1088,7 @@ export interface ValorCockpitResult {
   motivo?: string;
   porCliente: CockpitRollupCliente[];
   porSKU: CockpitRollupSKU[];
+  porCanal?: CockpitRollupCanal[]; // opcional: edge antiga (pré-deploy) não devolve — UI degrada honesta
   empresa: CockpitEmpresaEVP;
   recomendacoesCliente: Array<{ cliente: string; recomendacoes: CockpitRecomendacao[] }>;
   confianca: { nivel: 'alta' | 'media' | 'baixa'; motivos: string[] };
