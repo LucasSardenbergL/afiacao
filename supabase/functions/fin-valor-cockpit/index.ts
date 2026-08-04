@@ -307,6 +307,43 @@ function scoreConfiancaCockpit(input: { cobertura_receita: number; custo_ausente
   return { nivel: (nivel === 3 ? "alta" : nivel === 2 ? "media" : "baixa") as "alta" | "media" | "baixa", motivos };
 }
 
+// ===== Canal do pedido, espelhado VERBATIM de valor-cockpit-helpers.ts (PR1 Cabreúva-Colacor) =====
+// origem ~100% NULL em prod (2026-08-03) → o rollup por canal nasce como espelho de digitalização.
+type CanalPedido = 'erp_direto' | 'app_cliente' | 'app_staff' | 'ligacao' | 'app_sem_origem' | 'outro';
+function classificarCanalPedido(p: { origem: string | null; checkout_id: string | null }): CanalPedido {
+  const origem = p.origem?.trim() || null;
+  if (origem == null) return p.checkout_id != null ? 'app_sem_origem' : 'erp_direto';
+  if (origem === 'web_customer') return 'app_cliente';
+  if (origem === 'web_staff') return 'app_staff';
+  if (origem === 'ligacao_sainte' || origem === 'ligacao_entrante') return 'ligacao';
+  return 'outro'; // valor desconhecido NÃO cai em bucket conhecido (origem não tem CHECK no banco)
+}
+type ItemCanalInput = { sales_order_id: string; cliente: string; receita_liquida: number; quantidade: number; desconto: number; custo_unitario: number | null };
+type RollupCanal = { canal: CanalPedido; pedidos: number; clientes: number; receita: number; quantidade: number; desconto: number; cm: number | null; cm_incompleto: boolean; receita_sem_cm: number };
+function agregarPorCanal(itens: ItemCanalInput[], canalPorPedido: Map<string, CanalPedido>): RollupCanal[] {
+  type Acc = { canal: CanalPedido; pedidos: Set<string>; clientes: Set<string>; receita: number; quantidade: number; desconto: number; cm: number; cmNull: boolean; cm_incompleto: boolean; receita_sem_cm: number };
+  const m = new Map<CanalPedido, Acc>();
+  for (const it of itens) {
+    // Pedido fora do mapa → 'outro' (defensivo): não fabricar 'erp_direto' para dado inconsistente.
+    const canal = canalPorPedido.get(it.sales_order_id) ?? 'outro';
+    const acc = m.get(canal) ?? { canal, pedidos: new Set<string>(), clientes: new Set<string>(), receita: 0, quantidade: 0, desconto: 0, cm: 0, cmNull: true, cm_incompleto: false, receita_sem_cm: 0 };
+    acc.pedidos.add(it.sales_order_id);
+    acc.clientes.add(it.cliente);
+    acc.receita += it.receita_liquida;
+    acc.quantidade += it.quantidade;
+    acc.desconto += it.desconto;
+    // Margem item a item pela MESMA régua dos combos (custo ausente ≠ zero → item sai do cm e
+    // engorda receita_sem_cm; canal 100% sem custo → cm null, nunca 0 fabricado).
+    const cm = margemContribuicao({ receita_liquida: it.receita_liquida, custo_unitario: it.custo_unitario, quantidade: it.quantidade });
+    if (cm == null) { acc.cm_incompleto = true; acc.receita_sem_cm += it.receita_liquida; }
+    else { acc.cm += cm; acc.cmNull = false; }
+    m.set(canal, acc);
+  }
+  return [...m.values()]
+    .map((a) => ({ canal: a.canal, pedidos: a.pedidos.size, clientes: a.clientes.size, receita: a.receita, quantidade: a.quantidade, desconto: a.desconto, cm: a.cmNull ? null : a.cm, cm_incompleto: a.cm_incompleto, receita_sem_cm: a.receita_sem_cm }))
+    .sort((a, b) => b.receita - a.receita);
+}
+
 // ===== Custo: régua do cockpit, espelhada VERBATIM de src/lib/custos/cost-source.ts (Deno não importa de src/) =====
 // Régua do COCKPIT (computa-e-degrada #1003): exibe a margem mesmo de proxy e marca baixaConfianca p/ rebaixar a
 // confiança — DISTINTA de resolverCustoConfiavel (recommend/audit, que NULIFICA proxy). Mudou? Mude lá e rode
@@ -397,8 +434,8 @@ serve(async (req: Request) => {
     // barato. pedidosNaJanela = faturável (exclui cancelado/rascunho/soft-deletado, régua v_caca) E
     // order_date_kpi ∈ [ttm_inicio, ttm_fim] (Bug C: janela pela DATA DO PEDIDO, não pela carga). SEM filtro
     // de account na faturabilidade (vale p/ qualquer conta); o recorte Oben vem por product_id/SKU abaixo.
-    type SalesOrderRow = { id: string; status: string | null; deleted_at: string | null; order_date_kpi: string | null; account: string | null };
-    const salesOrdersAll = await fetchAll<SalesOrderRow>((f, t) => db.from("sales_orders").select("id, status, deleted_at, order_date_kpi, account").order("id", { ascending: true }).range(f, t), "sales_orders");
+    type SalesOrderRow = { id: string; status: string | null; deleted_at: string | null; order_date_kpi: string | null; account: string | null; origem: string | null; checkout_id: string | null };
+    const salesOrdersAll = await fetchAll<SalesOrderRow>((f, t) => db.from("sales_orders").select("id, status, deleted_at, order_date_kpi, account, origem, checkout_id").order("id", { ascending: true }).range(f, t), "sales_orders");
     // order_date_kpi é DATE → comparação de string 'YYYY-MM-DD' é cronológica (mesmo padrão de
     // carteira-positivacao-snapshot). Reúsa a régua UTC que o cockpit já aplica ao AR (ttm_inicio/ttm_fim).
     const pedidosNaJanela = new Set(
@@ -499,6 +536,19 @@ serve(async (req: Request) => {
     const comboVals = [...comboMap.values()];
     const combos: ComboInput[] = comboVals.map((c) => ({ cliente: c.cliente, sku: c.sku, receita_liquida: c.receita, quantidade: c.qtd, custo_unitario: c.product_id ? (custoPorProduto.get(c.product_id) ?? null) : null }));
 
+    // Canal do pedido (PR1 Cabreúva-Colacor): MESMA base de linhas do cockpit (janela por
+    // order_date_kpi + faturável + recorte Oben) agregada pelo canal de origem do pedido pai.
+    const canalPorPedido = new Map<string, CanalPedido>(salesOrdersAll.map((so) => [so.id, classificarCanalPedido({ origem: so.origem ?? null, checkout_id: so.checkout_id ?? null })]));
+    const itensCanal: ItemCanalInput[] = linhas.map((l) => ({
+      sales_order_id: l.sales_order_id,
+      cliente: userToOmie.get(l.customer_user_id) ?? `app:${l.customer_user_id}`,
+      receita_liquida: l.unit_price * l.quantity - (l.discount ?? 0),
+      quantidade: l.quantity,
+      desconto: l.discount ?? 0,
+      custo_unitario: l.product_id ? (custoPorProduto.get(l.product_id) ?? null) : null,
+    }));
+    const porCanal = agregarPorCanal(itensCanal, canalPorPedido);
+
     // AR da Oben relevante à janela (emitido na janela OU ainda em aberto) — serve p/ AR por cliente e cobertura.
     type CR = { omie_codigo_cliente: number | null; omie_codigo_lancamento: number | null; valor_documento: number; saldo: number; valor_recebido: number; data_emissao: string | null; data_vencimento: string | null; status_titulo: string };
     const crsAll = await fetchAll<CR>((f, t) => db.from("fin_contas_receber").select("omie_codigo_cliente, omie_codigo_lancamento, valor_documento, saldo, valor_recebido, data_emissao, data_vencimento, status_titulo").eq("company", COMPANY).or(`data_recebimento.is.null,data_recebimento.gte.${ttm_inicio},data_emissao.gte.${ttm_inicio}`).order("id", { ascending: true }).range(f, t), "fin_contas_receber");
@@ -583,7 +633,7 @@ serve(async (req: Request) => {
     const porClienteComNome = res.porCliente.map((c) => ({ ...c, nome: clienteParaNome.get(c.cliente) ?? null }));
     return jsonResponse({
       company: COMPANY, k, hurdle_indisponivel, ttm: { inicio: ttm_inicio, fim: ttm_fim },
-      porCliente: porClienteComNome, porSKU: porSKUcomDescricao, empresa: res.empresa,
+      porCliente: porClienteComNome, porSKU: porSKUcomDescricao, porCanal, empresa: res.empresa,
       recomendacoesCliente, confianca, cobertura_receita, cobertura_app_por_ar: app_por_ar,
       cobertura_baixa_ar: coberturaBaixaAR, // Fase 3: fração da AR liquidada com baixa derivada REAL (vs vencimento-proxy)
       // transparência por receita (omissão honesta do EVP otimista — sucede evp_teto_receita_pct):
