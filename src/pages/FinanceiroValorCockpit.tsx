@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
 import type { CockpitRollupCliente, CockpitRollupSKU, CockpitRollupCanal, CanalPedido } from '@/services/financeiroService';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 
 const brl = (x: number | null | undefined) =>
   x == null
@@ -144,7 +145,7 @@ export default function FinanceiroValorCockpit() {
       <div className="p-6">
         <Card>
           <CardContent className="py-6 text-sm text-status-error">
-            Erro: {error instanceof Error ? error.message : String(error)}
+            Erro: {mensagemDeErro(error) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.'}
           </CardContent>
         </Card>
       </div>

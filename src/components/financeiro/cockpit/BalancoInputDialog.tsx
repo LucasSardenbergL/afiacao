@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 
 const num = (v: string): number | null => (v.trim() === '' || Number.isNaN(Number(v)) ? null : Number(v));
 
@@ -36,7 +37,7 @@ export function BalancoInputDialog({ company, empresaLabel, onSaved }: { company
       setOpen(false);
       onSaved?.();
     } catch (e) {
-      toast.error('Falha ao salvar balanço', { description: e instanceof Error ? e.message : String(e) });
+      toast.error('Falha ao salvar balanço', { description: mensagemDeErro(e) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.' });
     } finally {
       setSaving(false);
     }

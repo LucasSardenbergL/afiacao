@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 
 export interface PerformanceScore {
   id: string;
@@ -345,7 +346,7 @@ export const useFarmerPerformance = () => {
       await loadScores(farmerId);
     } catch (err) {
       console.error('Error calculating scores:', err);
-      const message = err instanceof Error ? err.message : String(err);
+      const message = mensagemDeErro(err) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.';
       toast.error('Erro ao calcular índices', { description: message });
     } finally {
       setCalculating(false);

@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
 import { Trash2, Plus, Loader2 } from 'lucide-react';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 
 interface VendorSipCred {
   id: string;
@@ -50,7 +51,7 @@ export default function AdminVendorSipCredentials() {
         setProfiles((profilesRes.data ?? []) as ProfileLite[]);
       } catch (err) {
         toast.error('Erro ao carregar', {
-          description: err instanceof Error ? err.message : String(err),
+          description: mensagemDeErro(err) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.',
         });
       } finally {
         setLoading(false);
@@ -98,7 +99,7 @@ export default function AdminVendorSipCredentials() {
       toast.success('Credencial adicionada');
     } catch (err) {
       toast.error('Erro ao adicionar', {
-        description: err instanceof Error ? err.message : String(err),
+        description: mensagemDeErro(err) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.',
       });
     } finally {
       setSaving(false);
@@ -114,7 +115,7 @@ export default function AdminVendorSipCredentials() {
       toast.success('Removido');
     } catch (err) {
       toast.error('Erro ao remover', {
-        description: err instanceof Error ? err.message : String(err),
+        description: mensagemDeErro(err) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.',
       });
     }
   }

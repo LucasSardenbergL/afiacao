@@ -5,6 +5,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import type { Customer } from './types';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 
 export function RequiresPoToggle({ customer }: { customer: Customer }) {
   const [checked, setChecked] = useState<boolean>(!!customer.requires_po);
@@ -24,7 +25,7 @@ export function RequiresPoToggle({ customer }: { customer: Customer }) {
       toast.success(next ? 'Cliente exige ordem de compra' : 'Ordem de compra desativada');
     } catch (e) {
       setChecked(prev);
-      toast.error('Erro ao salvar', { description: e instanceof Error ? e.message : String(e) });
+      toast.error('Erro ao salvar', { description: mensagemDeErro(e) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.' });
     } finally {
       setSaving(false);
     }

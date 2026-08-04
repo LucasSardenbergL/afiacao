@@ -11,6 +11,7 @@ import { sugerirHurdle } from '@/lib/financeiro/antecipacao-helpers';
 import { saldoDevedorEmAberto } from '@/lib/financeiro/endividamento-helpers';
 import { useDividas, useParcelas } from '@/hooks/useEndividamento';
 import type { Antecipacao, Company, HurdleSugerido } from '@/lib/financeiro/antecipacao-types';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 
 const STALE = 60_000;
 
@@ -80,7 +81,7 @@ export function useUpsertAntecipacao() {
     },
     onError: (e) =>
       toast.error('Falha ao salvar operação', {
-        description: e instanceof Error ? e.message : String(e),
+        description: mensagemDeErro(e) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.',
       }),
   });
 }
@@ -103,7 +104,7 @@ export function useSoftDeleteAntecipacao() {
     },
     onError: (e) =>
       toast.error('Falha ao remover operação', {
-        description: e instanceof Error ? e.message : String(e),
+        description: mensagemDeErro(e) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.',
       }),
   });
 }

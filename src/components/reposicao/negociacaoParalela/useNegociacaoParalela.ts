@@ -9,6 +9,7 @@ import { toast } from "sonner";
 import { EMPRESA, type Sugestao, type ConvertForm, type LinhaViewSugeridos, type CandidatoNegociacao } from "./types";
 import { lastDayOfNextMonth } from "./helpers";
 import { avaliarNegociacao, clampDesconto, DESCONTO_PADRAO } from "@/lib/reposicao/negociacao-valor-helpers";
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 
 const TOP_N = 3;
 
@@ -121,7 +122,7 @@ export function useNegociacaoParalela() {
       toast.success(`Negociação iniciada para ${c.sku_descricao ?? c.sku_codigo_omie}.`);
       queryClient.invalidateQueries({ queryKey: ["neg-paralela-andamento"] });
     } catch (err) {
-      toast.error("Erro ao iniciar negociação: " + (err instanceof Error ? err.message : String(err)));
+      toast.error("Erro ao iniciar negociação: " + (mensagemDeErro(err) ?? "Erro sem mensagem — tente de novo ou avise a equipe."));
     }
   };
 
@@ -158,7 +159,7 @@ export function useNegociacaoParalela() {
       navigate(campanhaId ? `/admin/reposicao/promocoes/${campanhaId}` : `/admin/reposicao/promocoes`);
       setConvertTarget(null);
     } catch (err) {
-      toast.error("Erro ao converter: " + (err instanceof Error ? err.message : String(err)));
+      toast.error("Erro ao converter: " + (mensagemDeErro(err) ?? "Erro sem mensagem — tente de novo ou avise a equipe."));
     } finally {
       setConvertSubmitting(false);
     }

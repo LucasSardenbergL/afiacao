@@ -7,6 +7,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import type { Divida, Parcela, Company } from '@/lib/financeiro/endividamento-types';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 
 const STALE = 60_000;
 
@@ -131,7 +132,7 @@ export function useUpsertDivida() {
     },
     onError: (e) => {
       toast.error('Falha ao salvar dívida', {
-        description: e instanceof Error ? e.message : String(e),
+        description: mensagemDeErro(e) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.',
       });
     },
   });
@@ -152,7 +153,7 @@ export function useDeleteDivida() {
     },
     onError: (e) => {
       toast.error('Falha ao excluir dívida', {
-        description: e instanceof Error ? e.message : String(e),
+        description: mensagemDeErro(e) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.',
       });
     },
   });
@@ -186,7 +187,7 @@ export function useReplaceParcelas() {
     },
     onError: (e) => {
       toast.error('Falha ao salvar parcelas', {
-        description: e instanceof Error ? e.message : String(e),
+        description: mensagemDeErro(e) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.',
       });
     },
   });
@@ -210,7 +211,7 @@ export function useSetCompletude() {
     },
     onError: (e) => {
       toast.error('Falha ao atualizar completude', {
-        description: e instanceof Error ? e.message : String(e),
+        description: mensagemDeErro(e) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.',
       });
     },
   });

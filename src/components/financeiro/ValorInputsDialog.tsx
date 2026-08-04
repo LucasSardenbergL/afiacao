@@ -7,6 +7,7 @@ import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
 import { useUpdateValorInputs } from '@/hooks/useValor';
 import type { ValorInputs } from '@/services/financeiroService';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 
 const num = (v: string): number | null => (v.trim() === '' || Number.isNaN(Number(v)) ? null : Number(v));
 
@@ -56,7 +57,7 @@ export function ValorInputsDialog({ company, atual }: { company: string; atual?:
       toast.success('Inputs salvos. Recalculando…');
       setOpen(false);
     } catch (e) {
-      toast.error('Falha ao salvar inputs', { description: e instanceof Error ? e.message : String(e) });
+      toast.error('Falha ao salvar inputs', { description: mensagemDeErro(e) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.' });
     }
   };
 

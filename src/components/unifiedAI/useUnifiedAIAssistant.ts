@@ -4,6 +4,7 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { toast } from 'sonner';
 import { decodeHtmlEntities } from '@/lib/utils';
 import { invokeFunction } from '@/lib/invoke-function';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 import {
   type AIProduct,
   type AIService,
@@ -82,7 +83,7 @@ export function useUnifiedAIAssistant({
       setRecordingDuration(0);
       timerRef.current = window.setInterval(() => setRecordingDuration(p => p + 1), 1000);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = mensagemDeErro(err) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.';
       const name = err instanceof Error ? err.name : '';
       if (name === 'NotAllowedError') {
         toast.error('Permissão negada', { description: 'Permita o acesso ao microfone.' });
@@ -119,7 +120,7 @@ export function useUnifiedAIAssistant({
         toast.error('Nenhum texto detectado');
       }
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
+      const msg = mensagemDeErro(e) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.';
       toast.error('Erro na transcrição', { description: msg });
     } finally {
       setIsTranscribing(false);

@@ -10,6 +10,7 @@ import { whatsappPendenteParaAcoes } from '@/lib/fila/adapters/whatsappPendente'
 import { dedupe, rankearFila } from '@/lib/fila/ranking';
 import { spBusinessDate } from '@/lib/time/sp-day';
 import { logger } from '@/lib/logger';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 import type { AcaoSugerida } from '@/lib/fila/types';
 
 /** Fonte da fila — identifica QUAL falhou (a UI e o log nomeiam, não mais "uma das fontes"). */
@@ -62,13 +63,12 @@ export function useFilaAcoes(): {
   // faltava p/ saber se é RLS, rede, timeout (incidente de plataforma) ou query.
   useEffect(() => {
     if (fontesComErro.length === 0) return;
-    const msg = (e: unknown) => (e instanceof Error ? e.message : e ? String(e) : null);
     logger.warn('Fila do dia: fonte(s) falharam ao carregar', {
       fontes: fontesComErro,
-      tarefas: msg(tarefas.error),
-      rota: msg(rota.error),
-      mixgap: msg(mixgap.error),
-      whatsapp: msg(whatsapp.error),
+      tarefas: mensagemDeErro(tarefas.error),
+      rota: mensagemDeErro(rota.error),
+      mixgap: mensagemDeErro(mixgap.error),
+      whatsapp: mensagemDeErro(whatsapp.error),
     });
   }, [fontesComErro, tarefas.error, rota.error, mixgap.error, whatsapp.error]);
 

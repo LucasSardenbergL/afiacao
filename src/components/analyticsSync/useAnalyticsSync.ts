@@ -9,6 +9,7 @@ import { useMutationComRegistro } from "@/components/execucoes/useMutationComReg
 import { ULTIMA_EXECUCAO_QUERY_KEY } from "@/components/execucoes/tipos";
 import { OmieAccount, SyncState } from "./types";
 import { ACOES_ANALYTICS_SYNC } from "./acoes";
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 import {
   CONTAS_PEDIDOS,
   haJanelaAberta,
@@ -90,7 +91,7 @@ export function useAnalyticsSync() {
       queryClient.invalidateQueries({ queryKey: ["sync-state"] });
     },
     onError: (error) => {
-      toast.error("Erro no sync", { description: String(error) });
+      toast.error("Erro no sync", { description: mensagemDeErro(error) ?? "Erro sem mensagem — tente de novo ou avise a equipe." });
     },
     // Quem grava é a EDGE (sync_completo + motores por dentro do sync_all) — aqui só re-lê a caption.
     onSettled: () => queryClient.invalidateQueries({ queryKey: [ULTIMA_EXECUCAO_QUERY_KEY] }),
@@ -110,7 +111,7 @@ export function useAnalyticsSync() {
       });
     },
     onError: (error) => {
-      toast.error("Erro ao calcular custos", { description: String(error) });
+      toast.error("Erro ao calcular custos", { description: mensagemDeErro(error) ?? "Erro sem mensagem — tente de novo ou avise a equipe." });
     },
     // Quem grava é a EDGE (analytics_sync.recalcular_custos) — aqui só re-lê a caption na hora.
     onSettled: () => queryClient.invalidateQueries({ queryKey: [ULTIMA_EXECUCAO_QUERY_KEY] }),
@@ -130,7 +131,7 @@ export function useAnalyticsSync() {
       });
     },
     onError: (error) => {
-      toast.error("Erro ao gerar regras", { description: String(error) });
+      toast.error("Erro ao gerar regras", { description: mensagemDeErro(error) ?? "Erro sem mensagem — tente de novo ou avise a equipe." });
     },
     // Quem grava é a EDGE (analytics_sync.recalcular_regras) — aqui só re-lê a caption na hora.
     onSettled: () => queryClient.invalidateQueries({ queryKey: [ULTIMA_EXECUCAO_QUERY_KEY] }),
@@ -149,7 +150,7 @@ export function useAnalyticsSync() {
       queryClient.invalidateQueries({ queryKey: ["recommendation-config"] });
     },
     onError: (error) => {
-      toast.error("Erro ao atualizar", { description: String(error) });
+      toast.error("Erro ao atualizar", { description: mensagemDeErro(error) ?? "Erro sem mensagem — tente de novo ou avise a equipe." });
     },
   });
 
@@ -295,8 +296,10 @@ export function useAnalyticsSync() {
     onError: (error) => {
       setClientSyncProgress(null);
       // A mensagem do parcial já nomeia as contas interrompidas, as páginas e as classes.
+      // O `.replace(/^Error:\s*/)` de antes existia só para tirar o prefixo que o
+      // `String(error)` acrescenta; mensagemDeErro() lê `.message`, que já vem sem ele.
       toast.error("Importação de clientes não concluída", {
-        description: String(error).replace(/^Error:\s*/, ''),
+        description: mensagemDeErro(error) ?? "Erro sem mensagem — tente de novo ou avise a equipe.",
         duration: 30000,
       });
     },
@@ -349,7 +352,7 @@ export function useAnalyticsSync() {
     },
     onError: (error) => {
       setAddressSyncProgress(null);
-      toast.error("Erro na sincronização de endereços", { description: String(error) });
+      toast.error("Erro na sincronização de endereços", { description: mensagemDeErro(error) ?? "Erro sem mensagem — tente de novo ou avise a equipe." });
     },
   });
 
@@ -412,7 +415,7 @@ export function useAnalyticsSync() {
       });
     },
     onError: (error) => {
-      toast.error("Erro ao armar a importação de pedidos", { description: String(error) });
+      toast.error("Erro ao armar a importação de pedidos", { description: mensagemDeErro(error) ?? "Erro sem mensagem — tente de novo ou avise a equipe." });
     },
     // onSettled (não onSuccess): erro também re-lê o cursor — o estado REAL vem do banco.
     onSettled: () => queryClient.invalidateQueries({ queryKey: [JANELAS_CURSOR_QUERY_KEY] }),
@@ -429,7 +432,7 @@ export function useAnalyticsSync() {
       });
     },
     onError: (error) => {
-      toast.error("Erro ao armar a importação recente", { description: String(error) });
+      toast.error("Erro ao armar a importação recente", { description: mensagemDeErro(error) ?? "Erro sem mensagem — tente de novo ou avise a equipe." });
     },
     onSettled: () => queryClient.invalidateQueries({ queryKey: [JANELAS_CURSOR_QUERY_KEY] }),
   });

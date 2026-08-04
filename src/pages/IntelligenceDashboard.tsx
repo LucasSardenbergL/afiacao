@@ -14,6 +14,7 @@ import { IntelligenceManagerialTab } from '@/components/intelligence/Intelligenc
 import { IntelligenceStrategicTab } from '@/components/intelligence/IntelligenceStrategicTab';
 import { IntelligenceUtiTab } from '@/components/intelligence/IntelligenceUtiTab';
 import { IntelligenceUserSimulator } from '@/components/intelligence/IntelligenceUserSimulator';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 
 export default function IntelligenceDashboard() {
   const { user, isAdmin } = useAuth();
@@ -53,7 +54,7 @@ export default function IntelligenceDashboard() {
       }
       toast.success('Scores recalculados com sucesso');
     } catch (e) {
-      toast.error('Erro: ' + (e instanceof Error ? e.message : String(e)));
+      toast.error('Erro: ' + (mensagemDeErro(e) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.'));
     } finally {
       setRunningScores(false);
     }

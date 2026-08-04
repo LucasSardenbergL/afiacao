@@ -3,6 +3,7 @@ import { invokeFunction } from '@/lib/invoke-function';
 import type { ResultadoExtracao } from '@/lib/knowledge-base/aprovacao-fila';
 import type { KbExtractedSpec } from '@/lib/knowledge-base/specs-types';
 import { normalizeExtractedSpec } from '@/lib/knowledge-base/specs-types';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 
 /** Erro ocorrido durante a extração de um documento específico. */
 export interface BatchExtractErro {
@@ -152,7 +153,7 @@ export function useBatchExtract(): BatchExtractState & {
             resultados: [...prev.resultados, resultado],
           }));
         } catch (err) {
-          const mensagem = err instanceof Error ? err.message : String(err);
+          const mensagem = mensagemDeErro(err) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.';
           errosAcumulados.push({ documentId, error: mensagem });
 
           setEstado(prev => ({
