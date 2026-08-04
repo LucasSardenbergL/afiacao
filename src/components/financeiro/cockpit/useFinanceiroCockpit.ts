@@ -13,6 +13,7 @@ import { useFinanceiroRegime } from '@/hooks/useFinanceiroRegime';
 import { logger } from '@/lib/logger';
 import type { DrillDownType } from '@/components/financeiro/CockpitDrillDown';
 import type { FinConfiabilidadeRow, InadimplenteRow } from './types';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 
 const EMPRESAS_COCKPIT: Company[] = ['oben', 'colacor', 'colacor_sc'];
 // Default = indisponível/parcial (Codex P1): em falha de carga, NCG não pode aparecer como R$0 "saudável".
@@ -63,7 +64,7 @@ export function useFinanceiroCockpit() {
         // getResumoFinanceiro agora LANÇA em erro de query (era swallow→R$0); o catch
         // por fonte impede que uma falha do resumo derrube aging/DRE/inadimplentes junto.
         getResumoFinanceiro(['oben', 'colacor', 'colacor_sc']).catch((e): Record<string, FinResumo> => {
-          logger.warn('Resumo financeiro indisponível', { error: e instanceof Error ? e.message : String(e) });
+          logger.warn('Resumo financeiro indisponível', { error: mensagemDeErro(e) ?? '(sem mensagem)' });
           return {};
         }),
         getAgingReceber('all'),
@@ -71,12 +72,12 @@ export function useFinanceiroCockpit() {
         // getTopInadimplentes agora LANÇA em erro (era [] silencioso = falso
         // "ninguém inadimplente"); catch por fonte pra não derrubar o resto.
         getTopInadimplentes('all', 5).catch((e): InadimplenteRow[] => {
-          logger.warn('Top inadimplentes indisponível', { error: e instanceof Error ? e.message : String(e) });
+          logger.warn('Top inadimplentes indisponível', { error: mensagemDeErro(e) ?? '(sem mensagem)' });
           return [];
         }),
         // Projeção 13s + NCG consolidados via snapshot real da engine A1 (não a RPC ingênua)
         getProjecaoSnapshotsCockpit(EMPRESAS_COCKPIT).catch((e) => {
-          logger.warn('Snapshots de projeção indisponíveis', { error: e instanceof Error ? e.message : String(e) });
+          logger.warn('Snapshots de projeção indisponíveis', { error: mensagemDeErro(e) ?? '(sem mensagem)' });
           return [];
         }),
       ]);
@@ -90,7 +91,7 @@ export function useFinanceiroCockpit() {
       // Fleuriet: balanço (master-only via RLS) + NCG histórico casado por data + receita p/ materialidade.
       // Não-master não lê fin_balanco_inputs (RLS) → balancos {} → classificação 'indisponivel' (sem selo).
       const balancos = await getBalancoInputs(EMPRESAS_COCKPIT).catch((e): Record<string, BalancoInputRow> => {
-        logger.warn('Balanço (Fleuriet) indisponível', { error: e instanceof Error ? e.message : String(e) });
+        logger.warn('Balanço (Fleuriet) indisponível', { error: mensagemDeErro(e) ?? '(sem mensagem)' });
         return {};
       });
       const fleurietMap: Record<string, ClassificacaoFleurietEmpresa> = {};
@@ -126,7 +127,7 @@ export function useFinanceiroCockpit() {
         } catch (e) {
           logger.warn('Tabela fin_confiabilidade indisponível', {
             company: co,
-            error: e instanceof Error ? e.message : String(e),
+            error: mensagemDeErro(e) ?? '(sem mensagem)',
           });
         }
       }

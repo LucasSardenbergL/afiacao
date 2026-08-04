@@ -3,6 +3,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { custoCanonico, margemUnitaria } from '@/lib/custo/custoCanonico';
 import { fetchAllPages } from '@/lib/postgrest';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 
 // ─── Types ───────────────────────────────────────────────────────────
 export interface Recommendation {
@@ -525,7 +526,11 @@ export const useCrossSellEngine = () => {
       }
     } catch (error) {
       console.error('Error calculating recommendations:', error);
-      setErro(error instanceof Error ? error : new Error(String(error)));
+      setErro(
+        error instanceof Error
+          ? error
+          : new Error(mensagemDeErro(error) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.'),
+      );
       // Só é "desatualizado" se a tela está exibindo o resultado de uma execução ANTERIOR.
       // Sem nada na mão o estado é indisponível — textos diferentes, e prometer um dado que
       // não existe seria trocar uma mentira por outra.

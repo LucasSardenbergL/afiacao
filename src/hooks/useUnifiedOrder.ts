@@ -24,6 +24,7 @@ import { maskDocument } from '@/lib/format';
 import { buildOmieCustomer } from '@/lib/unified-order/build-omie-customer';
 import { computeCheckoutFingerprint, decideCheckoutEnvelope, type CheckoutEnvelope } from '@/services/orderSubmission/checkout-envelope';
 import { resolveBridgeMetadata } from '@/services/orderSubmission/origem';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 import {
   lerRespostaFormas,
   condicoesDoClienteIndisponiveis,
@@ -926,7 +927,7 @@ export function useUnifiedOrder() {
         });
       }
     } catch (error) {
-      toast.error('Erro ao criar pedido', { description: error instanceof Error ? error.message : String(error) });
+      toast.error('Erro ao criar pedido', { description: mensagemDeErro(error) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.' });
     } finally {
       submittingRef.current = false;
       setSubmitting(false);

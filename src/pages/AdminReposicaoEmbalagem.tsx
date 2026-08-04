@@ -21,6 +21,7 @@ import { EmptyState } from '@/components/EmptyState';
 import { escolherEmbalagemEconomica } from '@/lib/reposicao/embalagem-helpers';
 import { useEmbalagemConsulta, type GrupoEmbalagem } from '@/components/reposicao/embalagem/useEmbalagemConsulta';
 import { PrecoEmbalagemDialog } from '@/components/reposicao/embalagem/PrecoEmbalagemDialog';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 
 // Feature Oben-only por enquanto (sku_embalagem_equivalencia grava 'oben' minúsculo).
 const EMPRESA = 'oben';
@@ -238,7 +239,7 @@ export default function AdminReposicaoEmbalagem() {
       });
     },
     onError: (e) => {
-      const msg = e instanceof Error ? e.message : String(e);
+      const msg = mensagemDeErro(e) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.';
       if (msg === 'run_ativo') {
         toast.info('Já existe uma captura em andamento', { description: 'Aguarde alguns minutos e recarregue.' });
         return;

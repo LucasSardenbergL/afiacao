@@ -14,6 +14,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 import type {
   FinConciliacaoRow,
   FinContaCorrenteRow,
@@ -86,7 +87,7 @@ const FinanceiroConciliacao = () => {
       }
       setStats(s);
     } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
+      const message = mensagemDeErro(e) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.';
       toast.error('Erro', { description: message });
     } finally {
       setLoading(false);
@@ -186,7 +187,7 @@ const FinanceiroConciliacao = () => {
       toast.success(`${criados} itens gerados na fila de conciliação`);
       load();
     } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
+      const message = mensagemDeErro(e) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.';
       toast.error('Erro', { description: message });
     }
   };

@@ -10,6 +10,7 @@ import type { PedidoItem } from "@/types/reposicao";
 import { aprovarEDisparar } from "../pedidos/aprovar-disparar";
 import { EMPRESA } from "../pedidos/shared";
 import { ALL, type CicloFilters } from "./types";
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 
 export interface AutoApprovalGroup {
   fornecedor: string;
@@ -164,7 +165,7 @@ export function useCicloHoje({ user, reviewMode, filteredItems, setFilters }: Us
       setSelected(new Set());
       invalidate();
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = mensagemDeErro(err) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.';
       await logAudit({
         userId: user?.id ?? null,
         action: "Rejeição em lote",
@@ -203,7 +204,7 @@ export function useCicloHoje({ user, reviewMode, filteredItems, setFilters }: Us
       setConfirmAuto(false);
       invalidate();
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = mensagemDeErro(err) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.';
       await logAudit({
         userId: user?.id ?? null,
         action: "Aprovação automática — critérios atingidos",

@@ -1,5 +1,6 @@
 import { useState, useCallback, useMemo } from 'react';
 import type { Company } from '@/contexts/CompanyContext';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 import {
   triggerFinanceiroSync,
   getResumoFinanceiro,
@@ -71,7 +72,7 @@ export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
       setResumo(prev => ({ ...prev, ...data }));
       setLastSync(syncTime);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(mensagemDeErro(e) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.');
     } finally {
       setLoading(false);
     }
@@ -88,7 +89,7 @@ export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
       const data = await getContasPagar(view === 'all' ? 'all' : view as Company, filtros);
       setContasPagar(data);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(mensagemDeErro(e) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.');
     } finally {
       setLoading(false);
     }
@@ -105,7 +106,7 @@ export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
       const data = await getContasReceber(view === 'all' ? 'all' : view as Company, filtros);
       setContasReceber(data);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(mensagemDeErro(e) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.');
     } finally {
       setLoading(false);
     }
@@ -121,7 +122,7 @@ export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
       setAgingReceber(ar);
       setAgingPagar(ap);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(mensagemDeErro(e) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.');
     }
   }, [view]);
 
@@ -141,7 +142,7 @@ export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
         setDre(data);
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(mensagemDeErro(e) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.');
     } finally {
       setLoading(false);
     }
@@ -154,7 +155,7 @@ export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
       const data = await getFluxoCaixa(company, dataInicio, dataFim);
       setFluxoCaixa(data);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(mensagemDeErro(e) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.');
     } finally {
       setLoading(false);
     }
@@ -166,7 +167,7 @@ export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
       const data = await getTopInadimplentes(company, 15);
       setInadimplentes(data);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(mensagemDeErro(e) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.');
     }
   }, [view]);
 
@@ -182,7 +183,7 @@ export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
       // Reload local data after sync
       await loadResumo();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(mensagemDeErro(e) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.');
     } finally {
       setSyncing(false);
     }
@@ -197,7 +198,7 @@ export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
       await triggerFinanceiroSync('calcular_dre', companies, { ano, meses: [mes] });
       await loadDRE(ano, [mes], regime);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(mensagemDeErro(e) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.');
     } finally {
       setSyncing(false);
     }
@@ -212,7 +213,7 @@ export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
       await triggerFinanceiroSync('calcular_dre_year', companies, { ano });
       await loadDRE(ano, undefined, regime);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(mensagemDeErro(e) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.');
     } finally {
       setSyncing(false);
     }
@@ -238,7 +239,7 @@ export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
               allResults[co] = result[co];
             }
           } catch (e) {
-            allResults[co] = { error: e instanceof Error ? e.message : String(e) };
+            allResults[co] = { error: mensagemDeErro(e) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.' };
           }
         }
         return { results: allResults };
@@ -257,7 +258,7 @@ export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
       }
       return result;
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(mensagemDeErro(e) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.');
     } finally {
       setSyncing(false);
     }

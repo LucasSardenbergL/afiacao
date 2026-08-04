@@ -12,6 +12,7 @@ import { toast } from 'sonner';
 import { mediaMargensConhecidas, coberturaMargem, legendaCobertura } from '@/lib/scoring/margin';
 import { fetchAllPages } from '@/lib/postgrest';
 import { KpiCard } from './KpiCard';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 
 interface ScoreLinha {
   customer_user_id: string;
@@ -145,7 +146,7 @@ export function IntelligenceStrategicTab() {
       if (error) throw error;
       toast.success('Algoritmo A executado com sucesso');
     } catch (e) {
-      toast.error('Erro: ' + (e instanceof Error ? e.message : String(e)));
+      toast.error('Erro: ' + (mensagemDeErro(e) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.'));
     } finally {
       setRunningAlgoA(false);
     }

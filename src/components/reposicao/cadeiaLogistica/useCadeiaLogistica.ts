@@ -7,6 +7,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
 import { Etapa, Fornecedor, HistoricoItem } from "./types";
 import { EMPRESA } from "./shared";
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 
 export function useCadeiaLogistica() {
   const { isAdmin } = useAuth();
@@ -115,7 +116,7 @@ export function useCadeiaLogistica() {
           : `LT teórico recalculado (${sinal}${delta} dias úteis). Capital de giro pode variar proporcionalmente.`;
       toast.success(msg);
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
+      const msg = mensagemDeErro(e) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.';
       toast.warning(`Mudança salva mas recálculo falhou: ${msg}`);
     }
   }

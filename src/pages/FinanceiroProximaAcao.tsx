@@ -4,6 +4,7 @@ import { useProximaAcao } from '@/hooks/useProximaAcao';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
 import type { AcaoFila, StatusAcaoFila } from '@/services/financeiroService';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 
 const brl = (x: number | null | undefined) =>
   x == null ? '—' : x.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 });
@@ -35,7 +36,7 @@ export default function FinanceiroProximaAcao() {
     <div className="p-6">
       <Card>
         <CardContent className="py-6 text-sm text-status-error">
-          Erro: {error instanceof Error ? error.message : String(error)}
+          Erro: {mensagemDeErro(error) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.'}
         </CardContent>
       </Card>
     </div>

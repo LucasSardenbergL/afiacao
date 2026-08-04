@@ -18,6 +18,7 @@ import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { findInvalidPricedOmieItems, invalidOmieItemPriceMessage } from '@/services/orderSubmission/priceGuard';
 import { cn } from '@/lib/utils';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
@@ -174,7 +175,7 @@ const SalesQuotes = () => {
       queryClient.invalidateQueries({ queryKey: ['sales-quotes'] });
       toast.success('Orçamento convertido em pedido!');
     } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
+      const message = mensagemDeErro(e) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.';
       toast.error('Erro ao converter: ' + message);
     } finally {
       setConverting(null);

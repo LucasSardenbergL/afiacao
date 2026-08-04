@@ -9,6 +9,7 @@ import { spBusinessDate } from '@/lib/time/sp-day';
 import { derivarSinaisContato, type ContatoLog, type OutcomeStatus, type SinaisContato } from '@/lib/route/route-outcome';
 import { logger } from '@/lib/logger';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 
 interface VisitScoreRow {
   customer_user_id: string;
@@ -282,7 +283,7 @@ export function useRouteContactList(workdayIso: string) {
         fetchProfiles(profileIds),
         fetchContactLog(userIds).catch((e) => {
           cadenciaIndisponivel = true;
-          logger.warn('Leitura de route_contact_log falhou — cadência ao vivo indisponível', { error: e instanceof Error ? e.message : String(e) });
+          logger.warn('Leitura de route_contact_log falhou — cadência ao vivo indisponível', { error: mensagemDeErro(e) ?? '(sem mensagem)' });
           return new Map<string, ContatoLog[]>();
         }),
       ]);

@@ -12,6 +12,7 @@ import { toast } from 'sonner';
 import { Plus, Trash2, ArrowRight, BarChart3, AlertTriangle } from 'lucide-react';
 import { useIcMatches } from '@/hooks/useIcMatches';
 import { Link } from 'react-router-dom';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
@@ -57,7 +58,7 @@ const FinanceiroIntercompany = () => {
         setConsolidado((cons as unknown as ConsolidadoRow[]) || []);
       } catch { /* RPC may not exist */ }
     } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
+      const message = mensagemDeErro(e) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.';
       toast.error('Erro', { description: message });
     } finally {
       setLoading(false);
@@ -79,7 +80,7 @@ const FinanceiroIntercompany = () => {
       setNewRegra(prev => ({ ...prev, descricao: '', cnpj_origem: '', cnpj_destino: '' }));
       load();
     } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
+      const message = mensagemDeErro(e) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.';
       toast.error('Erro', { description: message });
     }
   };
