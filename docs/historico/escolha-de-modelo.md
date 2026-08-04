@@ -113,13 +113,127 @@ em workflows). É lá que "long-horizon → Fable" é decisão dele, não do fou
 ## Como saber se funcionou (evidência positiva, não impressão)
 
 ```bash
-scripts/tokens-report.sh --dias 30
+scripts/tokens-report.sh --dias 45 --desde 2026-09-03
 ```
 
 A asserção falsificável: **a fatia de Fable no custo cai de 34% sem que o share de requests
 de Fable caia abaixo de ~13%.** Se o share de requests despencar junto, o default estará
 sequestrando as sessões long-horizon que legitimamente precisam de Fable — e aí o certo é
 reverter, não celebrar.
+
+O `--desde` (e o `--dias` largo) não são detalhe: ver "Achado 1" abaixo — sem eles a
+asserção é intestável.
+
+---
+
+# Verificação pós-entrega — 2026-08-04
+
+**Veredito: INCONCLUSIVA.** Nem confirmada nem refutada — e a tentativa devolveu dois
+achados que valem mais que o veredito que ela não pôde dar.
+
+## Por que não deu para testar: a verificação rodou 6 minutos depois do merge
+
+Foi agendada para ~30 dias após o merge; disparou no mesmo instante dele (merge
+`aadb96ee` às 2026-08-04T02:27:09Z, medição às 02:33). Requests estritamente posteriores
+ao merge: **280, US$ 50** — 0,2% dos requests e 0,15% do custo da janela. E parte deles é
+a própria sessão de verificação, que roda em Opus por estar numa worktree coberta: a
+amostra não é só minúscula, é **contaminada pelo observador**.
+
+Qualquer número apresentado como "resultado" aqui seria o baseline com outro nome. O
+`--dias 30` rodado devolveu Fable em **31,8% do custo / 16,5% dos requests** (140.601
+requests, US$ 34.231) — parece a asserção passando, e não é: é pré-intervenção medida
+sobre janela deslocada (ver Achado 1). **Não conte isso como vitória.**
+
+## Achado 1 — a asserção era INTESTÁVEL como escrita (corrigido)
+
+`--dias N` não delimita a janela de requests: filtra por mtime do **arquivo**
+(`find -mtime`). Um JSONL de sessão retomada tem mtime de hoje e requests de meses atrás.
+
+Medido: `--dias 30` (nominal desde 07-04) devolveu requests **desde 2026-05-20** — 76 dias
+de span, 49 dias com dados, **7.669 requests (5,1%) fora da janela nominal**.
+
+Consequência para a verificação: a janela sempre arrasta meses de dados pré-mudança, que
+diluem o efeito. Uma intervenção que funcionasse perfeitamente apareceria abafada — e o
+resultado seria lido como "não mudou nada". **A asserção não podia ser satisfeita nem se
+a hipótese estivesse certa.**
+
+Corrigido no `tokens-report.sh`: `--desde`/`--ate` recortam pela data do **request**; o
+relatório passa a imprimir a **JANELA REAL** de datas presentes (o que impede ler
+"`--dias 30`" como "30 dias"); e `POR MODELO` ganhou **`%reqs` ao lado de `%custo`** —
+a asserção tem duas metades e o relatório mostrava só uma. Teste:
+`scripts/test-tokens-report.sh` (falsifica sob 2 sabotagens, em `C` e `pt_BR.UTF-8`).
+
+> Sub-lição, 3ª ocorrência da classe do #1483: a primeira versão do teste casava
+> `50\.0%` e passava só sob `LC_ALL=C` — o `awk` formata `%.1f` pelo `LC_NUMERIC`, e sob
+> `pt_BR.UTF-8` sai `50,0`. Verde no shell de quem escreveu, vermelho no do founder.
+> Agora é `50[.,]0`. **Toda asserção sobre número formatado é suspeita de locale**, não
+> só as sobre acento.
+
+## Achado 2 — ❌ "valendo em todas as worktrees" é FALSO (refuta uma premissa do #1654)
+
+O registro acima diz: *"Uma linha, commitada, valendo em todas as worktrees."* Medido, não
+vale. `.claude/settings.json` é versionado — a linha só existe onde o **branch contém o
+commit**. Worktrees em branches anteriores ao merge seguem sem ela, e não há
+`model` no `~/.claude/settings.json` (user-level) para servir de rede.
+
+Estado em 2026-08-04: **9 de 47 worktrees** têm a linha. E as 38 sem não são zumbis —
+cruzando com os requests dos últimos 7 dias:
+
+| | worktrees c/ tráfego | requests em 7d |
+|---|---|---|
+| **sem** a linha | 6 | **5.109 (77%)** |
+| **com** a linha | 6 | 1.560 (23%) |
+
+As três maiores produtoras de request do período (`eager-lovelace-3bfd80` 2.063,
+`dazzling-chatelet-1210d1` 1.303, `gallant-heisenberg-05b2d1` 1.038) estão **todas sem o
+default**. O diretório principal também: parado em `claude/projeto-verificado-sayerlack`
+desde 2026-06-18, sem o commit.
+
+Ou seja: a correção alcança hoje ~1/4 do tráfego real. Isso não refuta a hipótese do
+#1654 — refuta a premissa de **cobertura** com que ela seria medida. Medir daqui a 30 dias
+sem consertar isso mistura worktrees tratadas e não-tratadas no mesmo número, e o
+resultado não responde nada.
+
+**Correção estruturalmente certa (decisão do founder, não executada aqui):** `model` no
+`~/.claude/settings.json` (user-level) vale em toda worktree independente de branch. O
+custo é sair do versionamento — some do repo e do DR. A alternativa versionada é
+rebasear/recriar as worktrees ativas, que expira sozinha conforme worktrees velhas morrem.
+
+## O que NÃO foi feito: reverter
+
+O cenário de reversão previsto ("custo e requests despencam juntos") não se materializou —
+**e não podia**, sem dados. Reverter agora por precaução seria descartar a intervenção com
+base em ruído. `"model": "opus"` fica.
+
+## Como refazer a medição na data certa (≥ 2026-09-03)
+
+```bash
+scripts/tokens-report.sh --dias 60 --desde 2026-08-04 --tsv /tmp/pos.tsv
+scripts/tokens-report.sh --dias 0  --ate 2026-08-03 --tsv /tmp/pre.tsv
+```
+
+`--dias` largo (só escolhe QUAIS ARQUIVOS ler) + `--desde/--ate` (recorta os requests).
+Compare a linha `claude-fable-5` em `POR MODELO`: `%custo` deve cair de 34%, `%reqs` deve
+ficar em ~13-18%. **Antes de comparar, confira a cobertura** — sem ela o número é média de
+tratados com não-tratados:
+
+```bash
+git worktree list --porcelain | awk '/^worktree /{print $2}' \
+  | while read -r w; do printf '%s %s\n' \
+      "$(jq -r '.model // "AUSENTE"' "$w/.claude/settings.json" 2>/dev/null)" \
+      "$(basename "$w")"; done | sort | uniq -c | sort -rn
+```
+
+## Lição transferível desta verificação
+
+> **Uma verificação pós-entrega precisa ser ensaiada antes da data.** O que quebrou aqui
+> não foi a hipótese — foi o instrumento (`--dias` media outra coisa) e a cobertura (a
+> mudança alcançava 1/4 do que se ia medir). Ambos eram descobríveis no dia 1, e ambos
+> teriam invalidado silenciosamente a medição no dia 30, devolvendo um número que parece
+> resposta e não é.
+>
+> Corolário do "ausente ≠ zero" do CLAUDE.md, aplicado a experimento: **janela errada ≠
+> efeito ausente**, e **default não aplicado ≠ default que não funciona**.
 
 ## Lição transferível
 
