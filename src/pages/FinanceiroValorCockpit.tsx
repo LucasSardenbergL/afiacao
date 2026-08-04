@@ -226,6 +226,26 @@ export default function FinanceiroValorCockpit() {
         </p>
       )}
 
+      {data.giroExecutivo && data.giroExecutivo.skus_medidos > 0 && (
+        <Card>
+          <CardContent className="py-3 text-sm flex flex-wrap gap-x-6 gap-y-1 items-baseline">
+            <span>
+              Capital em estoque (medido): <span className="font-tabular font-medium">{brl(data.giroExecutivo.capital_medido)}</span>
+            </span>
+            <span>
+              Dinheiro morto (sem venda no TTM): <span className={`font-tabular font-medium ${data.giroExecutivo.capital_sem_venda_ttm > 0 ? 'text-status-warning' : ''}`}>{brl(data.giroExecutivo.capital_sem_venda_ttm)}</span>
+            </span>
+            <span>
+              Retorno s/ estoque (proxy): <span className="font-tabular font-medium">{data.giroExecutivo.retorno_proxy != null ? `${(data.giroExecutivo.retorno_proxy * 100).toFixed(0)}%` : '—'}</span>
+            </span>
+            <span className="text-xs text-muted-foreground">
+              margem TTM ÷ snapshot de capital — proxy, não GMROI (sem estoque médio histórico)
+              {data.giroExecutivo.skus_sem_valor > 0 && ` · ${data.giroExecutivo.skus_sem_valor} SKU(s) sem valor confiável fora do total`}
+            </span>
+          </CardContent>
+        </Card>
+      )}
+
       <div className="flex gap-2">
         <Button
           variant={aba === 'cliente' ? 'default' : 'outline'}

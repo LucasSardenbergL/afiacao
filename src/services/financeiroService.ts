@@ -1079,6 +1079,15 @@ export interface CockpitRollupCanal {
   cm_incompleto: boolean;   // há itens sem custo → cm subestima a margem do canal
   receita_sem_cm: number;   // receita dos itens sem custo (transparência da fatia sem margem)
 }
+// Giro executivo (PR3 Cabreúva): capital em estoque nível-empresa + dinheiro morto +
+// retorno-sobre-estoque PROXY (cm TTM ÷ snapshot; NÃO é GMROI — falta estoque médio histórico).
+export interface CockpitGiroExecutivo {
+  capital_medido: number;
+  capital_sem_venda_ttm: number;   // capital em SKUs SEM venda no TTM (dinheiro morto)
+  skus_medidos: number;
+  skus_sem_valor: number;          // presentes no estoque mas sem valor confiável (cmc/saldo)
+  retorno_proxy: number | null;    // null se cm indisponível ou capital ≤ 0 (nunca Infinity)
+}
 export interface ValorCockpitResult {
   company: string;
   k: number | null;                 // hurdle (Ke); null quando ausente/inválido (não fabricado)
@@ -1089,6 +1098,7 @@ export interface ValorCockpitResult {
   porCliente: CockpitRollupCliente[];
   porSKU: CockpitRollupSKU[];
   porCanal?: CockpitRollupCanal[]; // opcional: edge antiga (pré-deploy) não devolve — UI degrada honesta
+  giroExecutivo?: CockpitGiroExecutivo; // idem (PR3): ausente na edge antiga → UI omite o bloco
   empresa: CockpitEmpresaEVP;
   recomendacoesCliente: Array<{ cliente: string; recomendacoes: CockpitRecomendacao[] }>;
   confianca: { nivel: 'alta' | 'media' | 'baixa'; motivos: string[] };

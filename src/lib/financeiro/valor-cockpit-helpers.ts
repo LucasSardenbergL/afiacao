@@ -494,6 +494,36 @@ export function classificarCanalPedido(p: { origem: string | null; checkout_id: 
   return 'outro'; // valor desconhecido NÃO cai em bucket conhecido (origem não tem CHECK no banco)
 }
 
+// ===== Giro executivo (programa Cabreúva-Colacor, PR3) =====
+// Capital em estoque nível-empresa + dinheiro morto (capital de SKU sem venda no TTM) +
+// retorno-sobre-estoque PROXY (cm TTM ÷ snapshot de capital — NÃO é GMROI definitivo: falta
+// estoque MÉDIO histórico; a UI rotula proxy). cmc ausente/sujo fica FORA (cobertura explícita).
+export type GiroExecutivo = {
+  capital_medido: number;          // Σ capital dos SKUs com valor válido (≥0 finito)
+  capital_sem_venda_ttm: number;   // fatia do medido em SKUs SEM venda no TTM (dinheiro morto)
+  skus_medidos: number;
+  skus_sem_valor: number;          // cmc/saldo ausente ou sujo → não medido (nunca 0 fabricado)
+  retorno_proxy: number | null;    // cmTTM/capital_medido; null se cm null ou capital ≤ 0
+};
+
+export function calcularGiroExecutivo(input: {
+  estoquePorSKU: Map<string, number | null>;
+  skusComVendaTTM: Set<string>;
+  cmTTM: number | null;
+}): GiroExecutivo {
+  let capital = 0, morto = 0, medidos = 0, semValor = 0;
+  for (const [sku, valor] of input.estoquePorSKU) {
+    if (valor == null || !Number.isFinite(valor) || valor < 0) { semValor++; continue; }
+    medidos++;
+    capital += valor;
+    if (!input.skusComVendaTTM.has(sku)) morto += valor;
+  }
+  const retorno = input.cmTTM != null && Number.isFinite(input.cmTTM) && capital > 0
+    ? input.cmTTM / capital
+    : null;
+  return { capital_medido: capital, capital_sem_venda_ttm: morto, skus_medidos: medidos, skus_sem_valor: semValor, retorno_proxy: retorno };
+}
+
 export type ItemCanalInput = { sales_order_id: string; cliente: string; receita_liquida: number; quantidade: number; desconto: number; custo_unitario: number | null };
 export type RollupCanal = { canal: CanalPedido; pedidos: number; clientes: number; receita: number; quantidade: number; desconto: number; cm: number | null; cm_incompleto: boolean; receita_sem_cm: number };
 
