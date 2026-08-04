@@ -142,6 +142,9 @@ jobs:
       # helper local. Consequência a saber: teste de edge que precise de `npm:`/`jsr:` NÃO roda aqui
       # — a saída é extrair a lógica PURA e testar ela (o que os 11 arquivos já fazem), não afrouxar
       # o flag.
+      #
+      # O pin do deno tem 2 ocorrências (esta e o job `mutation-check`, que roda contrato .mut de
+      # edge) — bump alinha as duas.
       - name: Setup Deno
         uses: denoland/setup-deno@v2
         with:
@@ -300,6 +303,17 @@ jobs:
 
       - name: Install deps
         run: bun install --frozen-lockfile
+
+      # O job precisa do runtime de TODO contrato registrado, não só do default. Desde
+      # `scripts/mutcheck.d/cmc-snapshot-retry.mut` há contrato de EDGE, cujo `# @test_cmd:`/
+      # `# @compile_cmd:` é `deno` — sem este step o `deno` não existe no PATH, o compila-check do
+      # SRC ORIGINAL falha e o mutcheck aborta com "harness/ambiente quebrado", derrubando o job
+      # inteiro por ambiente, não por cobertura. Pin alinhado ao job `validate` (2ª ocorrência —
+      # bump conferindo `deno --version` e alinhando as duas).
+      - name: Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: 2.9.2
 
       - name: mutcheck — selftest (mecânica da ferramenta, sem vitest)
         run: bun run mutcheck:selftest
