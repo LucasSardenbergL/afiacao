@@ -161,3 +161,106 @@ Apertar para check completo é o destino natural, depois que a dívida encolher.
 4. Versionar `deno.lock` (hoje no `.gitignore`) — reprodutibilidade + chave de cache estável.
 
 Spec: `docs/superpowers/specs/2026-07-21-edges-typecheck-gate-design.md`
+
+---
+
+# Sequela (2026-08-04): o gate de COBERTURA também não alcançava as edges — e a trava era o runner
+
+**Entrega:** PR #1653. Descoberto ao tentar registrar o contrato de mutation-check da política de
+retry do Omie (#1643/#1644).
+
+## O achado
+
+`scripts/mutcheck.d/*.mut` é o registro **versionado** das mutações que uma suíte tem de matar — o
+contrato executável de "esse teste tem PODER". O `mutcheck-all.sh` invocava
+`bash "$MUTCHECK" "$src" "$tst" "$mut"` **sem env por contrato**, e o default do `mutcheck.sh` é
+`bunx vitest run` + `bun build`: ferramenta desenhada para helper de `src/`. Vitest não conhece
+`Deno.test` → baseline **vermelho** → o contrato aborta; e como o laço soma qualquer falha, **um**
+`.mut` de edge no diretório derrubaria o job `mutation-check` inteiro.
+
+A consequência tem nome: os dois helpers cuja suíte tinha sido **de fato medida** — 9/9 mutações
+pegas no #1644, 4/4 no gate de fonte de cada edge, idem no #1643 — eram **exatamente os únicos que
+não podiam ter a medição versionada**. A falsificação existia na transcrição do chat, e transcrição
+de chat não é gate: some no próximo compact, e o refactor seguinte não encontra nada que o segure.
+
+## A mudança — e a armadilha que ela quase criou
+
+Duas diretivas **opcionais** por contrato, lidas com o mesmo `sed` de `@src:`/`@test:`
+(comentário para o `mutcheck.sh`, que ignora `#`):
+
+```
+# @test_cmd: deno test --no-remote --allow-read=supabase/functions   → MUTCHECK_TEST_CMD
+# @compile_cmd: deno check --no-remote                               → MUTCHECK_COMPILE_CMD
+```
+
+A sutileza que merece ficar escrita: elas só entram no ambiente **quando o contrato declara**. A
+implementação óbvia — montar o env sempre, vazio quando o contrato não diz nada — teria **desligado
+o compila-check dos outros 9 em silêncio**. O `mutcheck.sh` lê `${MUTCHECK_COMPILE_CMD-default}`
+com `-`, **não** `:-`: a forma que preserva "setado e vazio" como escolha deliberada (é assim que se
+desliga o guard de propósito). Vazio ≠ ausente ali, e o compila-check é justamente o que separa
+"morto por TESTE" de "morto pelo COMPILADOR" — sem ele o poder aparente da suíte infla. A falha
+seria **silenciosa e na direção segura**: tudo verde, e os números até melhorariam.
+
+> **Regra viva:** injetar env "sempre, vazio quando não houver valor" só equivale a "não injetar"
+> quando quem LÊ usa `${VAR:-default}`. Com `${VAR-default}` os dois são **opostos**. Confira o lado
+> que lê antes de decidir como escrever o lado que grava.
+
+Armadilha gêmea, deixada documentada no cabeçalho do script: `# @compile_cmd:` **pelado** conta como
+ausente e cai no `bun build` default, que num alvo Deno aborta o contrato com
+*"harness/ambiente quebrado (bun no PATH?)"* — mensagem que aponta para o lugar errado. Para
+desligar de verdade: `# @compile_cmd: true` (o comando `true` sai 0 sempre, que é o contrato de
+`compila()`).
+
+## O terceiro pedaço: o job não tinha o runtime
+
+O `mutation-check` só tinha `Setup Bun`. É a **terceira instância** da mesma forma que este documento
+já registra duas vezes: *o gate precisa alcançar o que promete alcançar*. Aqui: **o job precisa do
+runtime de TODO contrato registrado, não só do default.** Sem o step, o `deno check` do SRC
+**original** falha, o baseline-do-compilador aborta antes de qualquer mutação, e o job fica vermelho
+por **ambiente**, não por cobertura — com uma mensagem que manda procurar o bun. Pin `2.9.2`,
+alinhado ao `validate` (2ª ocorrência; bump alinha as duas, anotado nos dois lados).
+
+## Os dois contratos — e um buraco medido
+
+| Contrato | Medição |
+|---|---|
+| `cmc-snapshot-retry.mut` (#1644) | 10 mutações · **9 pegas** · 1 sobrevivente · 0 inválidas |
+| `omie-analytics-politica-retry.mut` (#1643) | 8 mutações · **7 pegas** · 1 sobrevivente · 0 inválidas |
+
+A sobrevivente do `politica-retry` entrou como `?`, **não** `SOBREVIVE`, e a distinção carrega a
+decisão: `SOBREVIVE` afirma "benigno conhecido", e este não é. O código de `mensagemCorpoNaoJson`
+está **certo** (redige e só então trunca em 200), mas nada o prende — inverter para truncar-antes
+parte a app_key na borda e deixa um resto que escapa da máscara `\d{8,}`; o segredo sai pela metade,
+que para efeito de vazamento é sair. É o mesmo furo que `cmc-snapshot-retry_test.ts` já fechou no
+gêmeo de 300 caracteres. Fica **reportado e versionado** até o teste existir (chip aberto), em vez de
+virar dívida que ninguém lembra.
+
+⚠️ Ao escrever esse teste: enchimento **não-hexadecimal** (`x`, não `a`). Na 1ª versão do gêmeo o `a`
+fez a máscara de app_secret (`[0-9a-f]{24,}`) engolir o enchimento junto com a chave, e a mutação
+**sobreviveu mesmo com o teste presente** — verde por acidente do alfabeto, a mesma família do #1483.
+
+## Método: a previsão errada foi a que valeu
+
+Das 8 mutações desenhadas para o `politica-retry`, **7 bateram a previsão**. A única que não bateu
+foi o achado acima. Se os `EXPECT` tivessem sido escritos de memória — o caminho natural depois de 7
+acertos seguidos —, o `.mut` entraria **mentindo sobre o poder da suíte**, que é exatamente o
+falso-verde que a ferramenta existe para impedir.
+
+> **Regra viva:** `.mut` se **preenche com medição**, nunca com previsão. Uma sequência de previsões
+> certas é o que torna esse atalho tentador, não o que o justifica.
+
+## Evidência
+
+O CI reproduziu o fingerprint local **contrato a contrato**, em runner frio (Ubuntu, Deno baixado na
+hora, `--no-remote`, cache vazio) — o que o run local sozinho não podia provar:
+
+```
+Setup Deno → Going to install stable version 2.9.2 … Installation complete.
+  runner do contrato: MUTCHECK_TEST_CMD=deno test --no-remote --allow-read=supabase/functions
+  runner do contrato: MUTCHECK_COMPILE_CMD=deno check --no-remote
+mutcheck-all: ✓ 11 contrato(s) honrado(s) — nenhuma regressão de cobertura.
+```
+
+Os 9 contratos antigos saíram com os **mesmos números** de antes da mudança (`8/6/2`, `9/9/0`,
+`11/11/0`, `18/18/0`, `6/6/0`, `9/7/2`, `10/9/1`, `27/27/0`, `12/12/0`) — a prova de que o override
+por contrato não vaza para quem não o declara. Custo: o job foi de ~2m41s para ~3m54s (teto de 10min).
