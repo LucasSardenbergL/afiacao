@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
 # test-stop-contexto-caro.sh — TDD do hook .claude/hooks/stop-contexto-caro.sh
 #
-# Regra: contexto da sessão >= 250k tokens → emite systemMessage (aviso), UMA VEZ
-# por degrau (250/350/500/700k). Abaixo de 250k, transcript ausente ou sem usage
-# → silêncio (exit 0). NUNCA bloqueia (não emite decision:block).
+# Regra: contexto da sessão >= 250k tokens-OPUS → emite systemMessage (aviso), UMA
+# VEZ por degrau (250/350/500/700k). Abaixo do degrau, transcript ausente ou sem
+# usage → silêncio (exit 0). NUNCA bloqueia (não emite decision:block).
+#
+# "tokens-OPUS" = o degrau é de CUSTO, não de token cru: o contexto é multiplicado
+# pelo preço da família do modelo sobre o do Opus (a referência da calibração).
+# Fable custa 2x → avisa na METADE do contexto (125k); Haiku custa 1/5 → 1,25M.
 #
 # Uso: bash scripts/test-stop-contexto-caro.sh   (exit 0 = verde)
 set -u
@@ -15,15 +19,18 @@ command -v jq >/dev/null 2>&1 || { echo "SKIP — jq ausente"; exit 0; }
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 export TMPDIR="$tmp"          # isola as marcas de degrau deste teste
 
-# transcript sintético: N linhas de usage, a última com o contexto alvo
-mk_transcript() {  # $1=arquivo  $2=cache_read da última linha  $3=nº de linhas
-  local f="$1" ctx="$2" n="${3:-3}" k=1
+# transcript sintético: N linhas de usage, a última com o contexto alvo.
+# $4 (modelo) é OPCIONAL: omitido, a linha sai sem o campo `model` — que é o caso
+# real de um transcript sem modelo declarado e cai no preço de referência (Opus).
+mk_transcript() {  # $1=arquivo  $2=cache_read da última linha  $3=nº de linhas  $4=modelo
+  local f="$1" ctx="$2" n="${3:-3}" modelo="${4:-}" k=1 campo=""
+  [ -n "$modelo" ] && campo="\"model\":\"$modelo\","
   : > "$f"
   while [ "$k" -lt "$n" ]; do
-    printf '{"type":"assistant","message":{"usage":{"input_tokens":4,"cache_creation_input_tokens":100,"cache_read_input_tokens":1000}}}\n' >> "$f"
+    printf '{"type":"assistant","message":{%s"usage":{"input_tokens":4,"cache_creation_input_tokens":100,"cache_read_input_tokens":1000}}}\n' "$campo" >> "$f"
     k=$(( k + 1 ))
   done
-  printf '{"type":"assistant","message":{"usage":{"input_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":%s}}}\n' "$ctx" >> "$f"
+  printf '{"type":"assistant","message":{%s"usage":{"input_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":%s}}}\n' "$campo" "$ctx" >> "$f"
 }
 
 run() {  # $1=transcript  $2=session_id
@@ -97,6 +104,46 @@ saida_abaixo="$(run "$tmp/t5.jsonl" s5)"
 if [ -z "$saida_abaixo" ]
 then ok "falsificação: 249k (1 abaixo do degrau) permanece em silêncio"
 else bad "falsificação: avisou a 249k — o degrau não está sendo respeitado"; fi
+
+echo "== degrau normalizado por CUSTO (o degrau é em tokens-Opus) =="
+
+# 11. Opus explícito: fator 1 → os degraus calibrados ficam INTACTOS (não-regressão)
+mk_transcript "$tmp/o1.jsonl" 260000 5 claude-opus-5
+check "opus 260k → avisa (fator 1, degrau intacto)" msg "$(run "$tmp/o1.jsonl" so1)"
+mk_transcript "$tmp/o2.jsonl" 240000 5 claude-opus-5
+check "opus 240k → silêncio (fator 1, degrau intacto)" silencio "$(run "$tmp/o2.jsonl" so2)"
+
+# 12. Fable custa 2x → 130k de contexto = 260k tokens-Opus, cruza o degrau
+mk_transcript "$tmp/f1.jsonl" 130000 5 claude-fable-5
+out_fable="$(run "$tmp/f1.jsonl" sf1)"
+check "fable 130k → avisa (=260k tokens-Opus, metade do caminho)" msg "$out_fable"
+
+# 13. FALSIFICAÇÃO da normalização: 120k em Fable = 240k tokens-Opus, ABAIXO do
+#     degrau. Sem a conversão o hook ficaria mudo aqui e no caso 12 — este par é
+#     o que separa "normalizou por preço" de "só baixou o degrau para todo mundo".
+mk_transcript "$tmp/f2.jsonl" 120000 5 claude-fable-5
+if [ -z "$(run "$tmp/f2.jsonl" sf2)" ]
+then ok "falsificação: fable 120k (=240k tokens-Opus) permanece em silêncio"
+else bad "falsificação: avisou a 120k em fable — o degrau virou 120k para todos"; fi
+
+# 14. Haiku custa 1/5 do Opus → 600k de contexto ainda é só 120k tokens-Opus
+mk_transcript "$tmp/h1.jsonl" 600000 5 claude-haiku-4-5-20251001
+check "haiku 600k → silêncio (=120k tokens-Opus)" silencio "$(run "$tmp/h1.jsonl" sh1)"
+
+echo "== nota de modelo (só quando o modelo custa mais que a referência) =="
+
+if printf '%s' "$out_fable" | jq -e '.systemMessage | test("/model opus")' >/dev/null 2>&1
+then ok "fable: mensagem oferece '/model opus'"
+else bad "fable: mensagem não oferece a troca de modelo"; fi
+
+if printf '%s' "$out_fable" | jq -e '.hookSpecificOutput.additionalContext | test("money-path")' >/dev/null 2>&1
+then ok "fable: contexto do agente ressalva onde NÃO descer (money-path/auditoria)"
+else bad "fable: contexto do agente não ressalva quando ficar em fable"; fi
+
+# Em Opus a nota não pode aparecer — sugerir '/model opus' a quem já está nele é ruído
+if printf '%s' "$(run "$tmp/o1.jsonl" so3)" | jq -e '.systemMessage | test("/model opus")' >/dev/null 2>&1
+then bad "opus: sugeriu trocar para o modelo em que a sessão já está"
+else ok "opus: sem nota de modelo (nada a trocar)"; fi
 
 echo
 if [ "$fail" -eq 0 ]; then echo "VERDE — todos os casos passaram"; exit 0; fi
