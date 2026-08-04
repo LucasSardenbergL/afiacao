@@ -14,6 +14,16 @@
 #   scripts/tokens-report.sh --dias 7        # janela menor (mais rápido)
 #   scripts/tokens-report.sh --dias 0        # todo o histórico (lento)
 #   scripts/tokens-report.sh --tsv X --pular-coleta   # reusa coleta anterior
+#   scripts/tokens-report.sh --desde 2026-08-04       # recorte por data do REQUEST
+#   scripts/tokens-report.sh --ate 2026-08-03         # (combináveis: pré vs pós)
+#
+# ATENÇÃO — `--dias` NÃO delimita a janela de requests: ele filtra por mtime do
+# ARQUIVO (`find -mtime`). Um JSONL de sessão retomada tem mtime de hoje e
+# requests de meses atrás. Medido em 2026-08-04: `--dias 30` (nominal desde
+# 07-04) devolveu requests desde 05-20 — 7.669 deles (5,1%) fora da janela.
+# Para comparar ANTES vs DEPOIS de uma mudança use `--desde`/`--ate`, que
+# recortam pela data do próprio request; `--dias` só decide QUAIS ARQUIVOS ler
+# (mantenha-o largo o bastante para cobrir o recorte que você quer).
 #
 # Preços = tabela pública da API (US$/MTok de input); output 5x, cache_write
 # 1.25x (TTL 5min), cache_read 0.1x. O total é CUSTO-EQUIVALENTE de API — em
@@ -23,6 +33,8 @@ set -euo pipefail
 DIAS=30
 TSV=""
 PULAR_COLETA=0
+DESDE=""
+ATE=""
 RAIZ="${CLAUDE_PROJECTS_DIR:-$HOME/.claude/projects}"
 
 while [ $# -gt 0 ]; do
@@ -30,8 +42,18 @@ while [ $# -gt 0 ]; do
     --dias)         DIAS="${2:?--dias exige um número}"; shift 2 ;;
     --tsv)          TSV="${2:?--tsv exige um caminho}"; shift 2 ;;
     --pular-coleta) PULAR_COLETA=1; shift ;;
-    -h|--help)      sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --desde)        DESDE="${2:?--desde exige YYYY-MM-DD}"; shift 2 ;;
+    --ate)          ATE="${2:?--ate exige YYYY-MM-DD}"; shift 2 ;;
+    -h|--help)      sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "opção desconhecida: $1 (use --help)" >&2; exit 2 ;;
+  esac
+done
+
+for d in "$DESDE" "$ATE"; do
+  [ -z "$d" ] && continue
+  case "$d" in
+    [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;;
+    *) echo "data inválida: '$d' (use YYYY-MM-DD)" >&2; exit 2 ;;
   esac
 done
 
@@ -74,7 +96,27 @@ fi
 
 [ -s "$TSV" ] || { echo "nenhum request na janela de ${DIAS} dias." >&2; exit 0; }
 echo "linhas coletadas: $(wc -l < "$TSV" | tr -d ' ')" >&2
+
+# ------------------------------------------- recorte por data do REQUEST ----
+# O que os blocos abaixo leem é $DADOS, não $TSV: sem recorte são o mesmo
+# arquivo; com --desde/--ate, $DADOS é o subconjunto cuja data de REQUEST cai
+# na janela pedida (o $TSV bruto fica intacto e reusável com --pular-coleta).
+# A data vem de .timestamp, que é UTC — o dia vira, aqui, 21h do dia anterior.
+DADOS="$TSV"
+if [ -n "$DESDE" ] || [ -n "$ATE" ]; then
+  DADOS="${TSV}.recorte"
+  awk -F'\t' -v d="${DESDE:-0000-00-00}" -v a="${ATE:-9999-99-99}" \
+    '$2 >= d && $2 <= a' "$TSV" > "$DADOS"
+  echo "recorte por data do request: ${DESDE:-(início)} .. ${ATE:-(fim)} — $(wc -l < "$DADOS" | tr -d ' ') linhas" >&2
+  [ -s "$DADOS" ] || { echo "nenhum request no recorte." >&2; exit 0; }
+fi
 echo >&2
+
+# A janela REAL de datas presente nos dados — imprimir isto é o que impede de
+# ler '--dias 30' como '30 dias' quando o mtime arrastou meses junto.
+echo "===== JANELA REAL (datas de request presentes) ====="
+awk -F'\t' '$3 != "<synthetic>" && $3 != "?" { if (!lo || $2 < lo) lo = $2; if ($2 > hi) hi = $2; d[$2]++ }
+END { printf "  de %s a %s   (%d dias com dados)\n", lo, hi, length(d) }' "$DADOS"
 
 # BSD awk (macOS) não tem asorti nem array multidimensional: o que precisa de
 # ordem sai prefixado e é ordenado por `sort`. Locais = parâmetros extras.
@@ -111,17 +153,21 @@ END {
   printf "    output      : %9.0f  (%4.1f%%)  <- gerar\n", OU, 100*OU/T
   printf "    input cru   : %9.0f  (%4.1f%%)\n", IN, 100*IN/T
   printf "    ENTRADA     : %9.0f  (%4.1f%%)\n", CR+CW+IN, 100*(CR+CW+IN)/T
-}' "$TSV"
+}' "$DADOS"
 
 # ------------------------------------------------------- 2. por modelo ------
+# %reqs ao lado de %custo de propósito: a DESPROPORÇÃO entre os dois é o sinal
+# (um modelo 2x mais caro entrega ~2x de %custo por %req). Só com %custo à
+# vista, "trocaram de modelo" e "o mesmo uso ficou mais barato" são
+# indistinguíveis — e a asserção do #1654 depende exatamente de separar os dois.
 echo
 echo "===== POR MODELO ====="
-printf "  %-30s %8s %10s %8s\n" modelo reqs "US\$" "%"
+printf "  %-30s %8s %8s %10s %8s\n" modelo reqs "%reqs" "US\$" "%custo"
 awk -F'\t' "$PRECOS"'
 $3 == "<synthetic>" || $3 == "?" { next }
-{ c = custo($3,$4,$5,$6,$7); C[$3] += c; N[$3]++; T += c }
-END { for (m in C) printf "%.4f\t%s\t%d\t%.1f\n", C[m], m, N[m], 100*C[m]/T }' "$TSV" \
-  | sort -rn | awk -F'\t' '{printf "  %-30s %8s %10.0f %7.1f%%\n", $2, $3, $1, $4}'
+{ c = custo($3,$4,$5,$6,$7); C[$3] += c; N[$3]++; T += c; R++ }
+END { for (m in C) printf "%.4f\t%s\t%d\t%.1f\t%.1f\n", C[m], m, N[m], 100*C[m]/T, 100*N[m]/R }' "$DADOS" \
+  | sort -rn | awk -F'\t' '{printf "  %-30s %8s %7.1f%% %10.0f %7.1f%%\n", $2, $3, $5, $1, $4}'
 
 # ------------------------------- 3. piso de contexto e concentração ---------
 echo
@@ -158,7 +204,7 @@ END {
     f = o[k]
     if (FN[f] > 0) printf "  %-14s %8d %10d %11.0f %7.1f%%\n", f, FN[f], FR[f], FC[f], 100*FC[f]/T
   }
-}' "$TSV"
+}' "$DADOS"
 
 # ---------------------------------------------------------- 4. por dia ------
 echo
@@ -167,14 +213,14 @@ printf "  %-12s %8s %12s %10s\n" dia reqs ctx_médio "US\$"
 awk -F'\t' "$PRECOS"'
 $3 == "<synthetic>" || $3 == "?" { next }
 { C[$2] += custo($3,$4,$5,$6,$7); N[$2]++; X[$2] += $4 + $6 + $7 }
-END { for (d in C) printf "%s\t%d\t%.0f\t%.0f\n", d, N[d], X[d]/N[d], C[d] }' "$TSV" \
+END { for (d in C) printf "%s\t%d\t%.0f\t%.0f\n", d, N[d], X[d]/N[d], C[d] }' "$DADOS" \
   | sort | tail -30 | awk -F'\t' '{printf "  %-12s %8s %12s %10s\n", $1, $2, $3, $4}'
 
 # ------------------------------------------- 5. distribuição do contexto ----
 echo
 echo "===== TAMANHO DE CONTEXTO POR REQUEST ====="
 CTX="${TSV}.ctx"
-awk -F'\t' '$3 != "<synthetic>" && $3 != "?" { print $4 + $6 + $7 }' "$TSV" | sort -n > "$CTX"
+awk -F'\t' '$3 != "<synthetic>" && $3 != "?" { print $4 + $6 + $7 }' "$DADOS" | sort -n > "$CTX"
 N=$(wc -l < "$CTX" | tr -d ' ')
 if [ "$N" -gt 0 ]; then
   for p in 50 75 90 99; do
@@ -187,3 +233,4 @@ rm -f "$CTX"
 
 echo
 echo "TSV bruto: $TSV" >&2
+[ "$DADOS" = "$TSV" ] || rm -f "$DADOS"
