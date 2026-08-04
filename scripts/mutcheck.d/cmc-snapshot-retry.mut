@@ -1,0 +1,21 @@
+# Invariantes money-path da política de retentativa/redação do `callOmie` das edges
+# `cmc-snapshot-smoke` e `cmc-snapshot-backfill` (#1644).
+# @src: supabase/functions/_shared/cmc-snapshot-retry.ts
+# @test: supabase/functions/_shared/cmc-snapshot-retry_test.ts
+# @test_cmd: deno test --no-remote --allow-read=supabase/functions
+# @compile_cmd: deno check --no-remote
+# Rode: bash scripts/mutcheck-all.sh   (o runner sai das diretivas acima — vitest não conhece Deno.test)
+# PEGA = a suíte DEVE matar (gate de cobertura). SOBREVIVE = benigno conhecido. ? = exploratório.
+#
+# ⚠️ `@compile_cmd` aqui é `deno check`, que TYPE-checa — mais forte que o `bun build` default (só
+# sintaxe). Mutação que só quebra tipo vira INVÁLIDA (morta pelo compilador), não falso-PEGA.
+PEGA      | defeito nº1 volta: dígito HTTP cru        | s/const classe = classificarFaultstring\(mensagem\);/const classe = \/50[0-9]|429\/.test(mensagem) ? "transitorio" : classificarFaultstring(mensagem);/
+PEGA      | permanente volta a retentar               | s/const retentavel = classe === "transitorio" \|\| classe === "indeterminada";/const retentavel = classe !== "fim_de_pagina";/
+PEGA      | indeterminada para de retentar            | s/const retentavel = classe === "transitorio" \|\| classe === "indeterminada";/const retentavel = classe === "transitorio";/
+PEGA      | fim_de_pagina passa a dormir e retentar   | s/const retentavel = classe === "transitorio" \|\| classe === "indeterminada";/const retentavel = classe !== "permanente";/
+PEGA      | base do backoff 1000 -> 800               | s/const ATRASO_BASE_MS = 1000;/const ATRASO_BASE_MS = 800;/
+PEGA      | teto de 5s do helper aplicado à curva     | s/return ATRASO_BASE_MS \* 2 \*\* \(Math\.max\(1, Math\.floor\(tentativa\)\) - 1\);/return Math.min(ATRASO_BASE_MS * 2 ** (Math.max(1, Math.floor(tentativa)) - 1), 5000);/
+PEGA      | teto de tentativas 5 -> 4                 | s/MAX_TENTATIVAS_CMC_SNAPSHOT = 5;/MAX_TENTATIVAS_CMC_SNAPSHOT = 4;/
+PEGA      | redação da faultstring removida           | s/redigirSegredo\(String\(faultstring\)\)/String(faultstring)/
+PEGA      | trunca ANTES de redigir (app_key na borda)| s/redigirSegredo\(corpo\)\.slice\(0, 300\)/redigirSegredo(corpo.slice(0, 300))/
+SOBREVIVE | piso do expoente (tentativa<1 não é testada) | s/Math\.max\(1, Math\.floor\(tentativa\)\)/Math.floor(tentativa)/
