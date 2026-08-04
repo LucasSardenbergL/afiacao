@@ -344,6 +344,32 @@ function agregarPorCanal(itens: ItemCanalInput[], canalPorPedido: Map<string, Ca
     .sort((a, b) => b.receita - a.receita);
 }
 
+// ===== Giro executivo, espelhado VERBATIM de valor-cockpit-helpers.ts (PR3 Cabreúva-Colacor) =====
+type GiroExecutivo = {
+  capital_medido: number;
+  capital_sem_venda_ttm: number;
+  skus_medidos: number;
+  skus_sem_valor: number;
+  retorno_proxy: number | null;
+};
+function calcularGiroExecutivo(input: {
+  estoquePorSKU: Map<string, number | null>;
+  skusComVendaTTM: Set<string>;
+  cmTTM: number | null;
+}): GiroExecutivo {
+  let capital = 0, morto = 0, medidos = 0, semValor = 0;
+  for (const [sku, valor] of input.estoquePorSKU) {
+    if (valor == null || !Number.isFinite(valor) || valor < 0) { semValor++; continue; }
+    medidos++;
+    capital += valor;
+    if (!input.skusComVendaTTM.has(sku)) morto += valor;
+  }
+  const retorno = input.cmTTM != null && Number.isFinite(input.cmTTM) && capital > 0
+    ? input.cmTTM / capital
+    : null;
+  return { capital_medido: capital, capital_sem_venda_ttm: morto, skus_medidos: medidos, skus_sem_valor: semValor, retorno_proxy: retorno };
+}
+
 // ===== Custo: régua do cockpit, espelhada VERBATIM de src/lib/custos/cost-source.ts (Deno não importa de src/) =====
 // Régua do COCKPIT (computa-e-degrada #1003): exibe a margem mesmo de proxy e marca baixaConfianca p/ rebaixar a
 // confiança — DISTINTA de resolverCustoConfiavel (recommend/audit, que NULIFICA proxy). Mudou? Mude lá e rode
@@ -598,6 +624,14 @@ serve(async (req: Request) => {
 
     const res = montarCelulasComboEVP({ combos, capitalClientes, capitalSKUs, k });
 
+    // Giro executivo (PR3 Cabreúva): capital nível-empresa sobre o MESMO estoque eleito do
+    // cockpit; dinheiro morto = capital de SKU sem venda no TTM. Retorno é PROXY (snapshot).
+    const giroExecutivo = calcularGiroExecutivo({
+      estoquePorSKU: estoqueValorPorSKU,
+      skusComVendaTTM: new Set(comboVals.map((c) => c.sku)),
+      cmTTM: res.empresa.cm,
+    });
+
     // Recomendações por cliente. NOTA: prazo_medio_dias/dias_estoque ainda não computados por cliente/SKU
     // (deferido) → as regras de prazo/estoque ficam inertes; as de desconto/preço usam dados reais.
     const descontoPorCliente = new Map<string, number>();
@@ -633,7 +667,7 @@ serve(async (req: Request) => {
     const porClienteComNome = res.porCliente.map((c) => ({ ...c, nome: clienteParaNome.get(c.cliente) ?? null }));
     return jsonResponse({
       company: COMPANY, k, hurdle_indisponivel, ttm: { inicio: ttm_inicio, fim: ttm_fim },
-      porCliente: porClienteComNome, porSKU: porSKUcomDescricao, porCanal, empresa: res.empresa,
+      porCliente: porClienteComNome, porSKU: porSKUcomDescricao, porCanal, giroExecutivo, empresa: res.empresa,
       recomendacoesCliente, confianca, cobertura_receita, cobertura_app_por_ar: app_por_ar,
       cobertura_baixa_ar: coberturaBaixaAR, // Fase 3: fração da AR liquidada com baixa derivada REAL (vs vencimento-proxy)
       // transparência por receita (omissão honesta do EVP otimista — sucede evp_teto_receita_pct):
