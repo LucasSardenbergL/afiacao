@@ -11,9 +11,10 @@ const SITUACAO_LABEL: Record<SituacaoExcesso, { label: string; cls: string }> = 
   sem_giro: { label: "Sem giro", cls: "text-status-error" },
 };
 
-export function ExcessoTable({ rows, onDescontinuar }: {
+export function ExcessoTable({ rows, onDescontinuar, onCriarMissao }: {
   rows: RowExcesso[];
   onDescontinuar: (r: RowExcesso) => void;
+  onCriarMissao?: (r: RowExcesso) => void; // desova (PR2 Cabreúva): excesso → tarefa comercial
 }) {
   if (rows.length === 0) {
     return <div className="rounded-md border p-6 text-sm text-muted-foreground">Nenhum SKU com estoque acima do máximo da política.</div>;
@@ -63,11 +64,18 @@ export function ExcessoTable({ rows, onDescontinuar }: {
                   )}
                 </TableCell>
                 <TableCell className="text-right">
-                  {!reposicaoDesligada && (
-                    <Button variant="outline" size="sm" onClick={() => onDescontinuar(r)}>
-                      Descontinuar
-                    </Button>
-                  )}
+                  <div className="flex justify-end gap-1">
+                    {onCriarMissao && (
+                      <Button variant="outline" size="sm" onClick={() => onCriarMissao(r)}>
+                        Desovar
+                      </Button>
+                    )}
+                    {!reposicaoDesligada && (
+                      <Button variant="outline" size="sm" onClick={() => onDescontinuar(r)}>
+                        Descontinuar
+                      </Button>
+                    )}
+                  </div>
                 </TableCell>
               </TableRow>
             );

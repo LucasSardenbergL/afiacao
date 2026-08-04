@@ -7,6 +7,8 @@ import { BaixoGiroTable } from "@/components/reposicao/baixoGiro/BaixoGiroTable"
 import { ExcessoKpis } from "@/components/reposicao/baixoGiro/ExcessoKpis";
 import { ExcessoTable } from "@/components/reposicao/baixoGiro/ExcessoTable";
 import { ManterEmEstoqueDialog } from "@/components/reposicao/baixoGiro/ManterEmEstoqueDialog";
+import { DesovaMissaoDialog } from "@/components/reposicao/baixoGiro/DesovaMissaoDialog";
+import { useReposicaoEmpresa } from "@/contexts/ReposicaoEmpresaContext";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
@@ -60,6 +62,8 @@ export default function AdminReposicaoBaixoGiro() {
   const [dialogAlvos, setDialogAlvos] = useState<RowBaixoGiro[] | null>(null);
   const [descontinuarAlvo, setDescontinuarAlvo] = useState<AlvoDescontinuar | null>(null);
   const [loteAlvos, setLoteAlvos] = useState<RowBaixoGiro[] | null>(null);
+  const [missaoAlvos, setMissaoAlvos] = useState<RowExcesso[] | null>(null); // desova (PR2 Cabreúva)
+  const { empresa } = useReposicaoEmpresa();
   const [sobEncomendaAlvos, setSobEncomendaAlvos] = useState<RowBaixoGiro[] | null>(null);
 
   const filtered = useMemo(() => {
@@ -161,19 +165,32 @@ export default function AdminReposicaoBaixoGiro() {
               Estoque acima do máximo da política. Tempo de digestão pela demanda média (90d) — o motor não
               compra estes SKUs enquanto estiverem acima do ponto; a saída é comercial (queima/kit) ou descontinuar.
             </p>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={excesso.rows.length === 0}
-              onClick={() => {
-                exportarCsvExcesso(excesso.rows);
-                track("reposicao.excesso_export_csv", { skus: excesso.rows.length });
-              }}
-            >
-              Exportar CSV
-            </Button>
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                disabled={excesso.rows.length === 0}
+                onClick={() => setMissaoAlvos(excesso.rows)}
+              >
+                Criar missão de desova ({excesso.rows.length})
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={excesso.rows.length === 0}
+                onClick={() => {
+                  exportarCsvExcesso(excesso.rows);
+                  track("reposicao.excesso_export_csv", { skus: excesso.rows.length });
+                }}
+              >
+                Exportar CSV
+              </Button>
+            </div>
           </div>
-          <ExcessoTable rows={excesso.rows} onDescontinuar={(r) => setDescontinuarAlvo(r)} />
+          <ExcessoTable
+            rows={excesso.rows}
+            onDescontinuar={(r) => setDescontinuarAlvo(r)}
+            onCriarMissao={(r) => setMissaoAlvos([r])}
+          />
           {excesso.isLoading && (
             <div className="text-sm text-muted-foreground">Carregando…</div>
           )}
@@ -185,6 +202,12 @@ export default function AdminReposicaoBaixoGiro() {
         </TabsContent>
       </Tabs>
 
+      <DesovaMissaoDialog
+        open={!!missaoAlvos}
+        onOpenChange={(v) => { if (!v) setMissaoAlvos(null); }}
+        alvos={missaoAlvos ?? []}
+        empresa={empresa.toLowerCase()}
+      />
       <ManterEmEstoqueDialog
         open={!!dialogAlvos}
         onOpenChange={(v) => {
