@@ -18,10 +18,10 @@ Fontes: [Exame](https://exame.com/inteligencia-artificial/lu-do-magalu-ganha-cer
 
 ## O programa (espinha aprovada 2026-07-12)
 
-- 🔄 **PR-1 — Núcleo HSM:** catálogo `whatsapp_templates` + log idempotente `whatsapp_template_sends` (dedupe-first, opt-out enforced) + edge `whatsapp-send-template` + statuses de entrega no `whatsapp-inbound`. Prova PG17 (dedupe/CHECKs/RLS/falsificação). *(este PR)*
-- ⏳ **PR-2 — Fila "respondeu→topo":** ligar pendentes ao Meu Dia via RPC sem cap com `last_outbound_at` real (mata o falso-negativo documentado em `useWhatsappPendentes`).
-- ⏳ **PR-3 — Funil do canal:** eventos enviado→entregue→respondeu→proposta→pedido Omie, atribuição rota/carteira/CNPJ.
-- ⏳ **PR-4 — Proposta 1-toque:** enviar a cesta de `/rota/propostas` via template com recotação Omie no envio; linha sem preço trava (ausente≠zero). 🟥 prove-sql + Codex adversarial.
+- ✅ **PR-1 — Núcleo HSM** (#1316): catálogo `whatsapp_templates` + log idempotente `whatsapp_template_sends` (dedupe-first, opt-out enforced) + edge `whatsapp-send-template` + statuses de entrega no `whatsapp-inbound`. Prova PG17 (dedupe/CHECKs/RLS/falsificação).
+- ✅ **PR-2 — Fila "respondeu→topo"** (#1318): pendentes no Meu Dia via RPC sem cap com `last_outbound_at` real (mata o falso-negativo documentado em `useWhatsappPendentes`).
+- ✅ **PR-3 — Funil do canal** (#1320): elo explícito `sales_orders.whatsapp_conversation_id` + RPC `get_whatsapp_funil` + seção em /whatsapp/sla. Atribuição conservadora (sem elo não conta).
+- 🔄 **PR-4 — Proposta 1-toque:** enviar a cesta de `/rota/propostas` via template com recotação Omie no envio (RPC `get_whatsapp_proposta_cotacao`: praticado▸tabela▸NULL); linha sem preço/estoque/unidade/prazo trava a proposta INTEIRA (ausente≠zero); envio grava orçamento com o elo do funil. Spec: `docs/superpowers/specs/2026-07-13-whatsapp-pr4-proposta-1-toque-design.md`. 🟥 prove-sql (2 falsificações) + Codex adversarial. *(este PR)*
 - ⏳ **PR-5 — Status transacional v0 (utility):** pedido confirmado / sai na rota de amanhã / entregue — estados honestos, sem ETA (o "Ato 1 da Lu": opt-in barato via mensagem útil).
 - ⏳ **PR-6 — Motor de disparo por rota (spec PR2b):** véspera, supressão de quem comprou, cadência, pacing pelo tier Meta (`selectDisparoBatch` já existe), piloto gated. 🟥 prove-sql + Codex adversarial.
 - ⏳ **Épicos:** E1 áudio→rascunho na inbox (transcrição; nunca executa pedido) · E2 pedido conversacional (intenção→cesta→cotação Omie→confirmação→revisão humana→pedido idempotente; knowledge-base e Flows DENTRO; autonomia por níveis) · E3 2ª via de boleto (condicional a documento/status determinísticos no Omie).

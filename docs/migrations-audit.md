@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **444** custom migrations totais
-- **1526** objetos esperados (criados por estas migrations)
+- **448** custom migrations totais
+- **1535** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 443
+  - `function`: 447
   - `rls_policy`: 388
-  - `index`: 229
-  - `cron_job`: 160
-  - `table`: 149
+  - `index`: 231
+  - `cron_job`: 161
+  - `table`: 151
   - `trigger`: 79
   - `view`: 74
   - `enum_value`: 4
@@ -3119,6 +3119,19 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.get_whatsapp_funil` | — |
 | `index` | `public.idx_so_whatsapp_conv` | `sales_orders` |
 
+### `20260713040000_whatsapp_proposta_cotacao.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.get_whatsapp_proposta_cotacao` | — |
+
+### `20260713050000_whatsapp_proposta_cotacao_v2.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.get_whatsapp_proposta_cotacao` | — |
+| `index` | `public.uq_so_whatsapp_proposta_dedupe` | `sales_orders` |
+
 ### `20260713160000_carteira_rebuild_lease.sql`
 
 | Tipo | Objeto | Parent |
@@ -3668,6 +3681,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.farmer_association_rules_substituir` | — |
 
+### `20260729160000_data_health_carteira_rebuild.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
+
 ### `20260730120000_tint_watchdog_fase5_chave.sql`
 
 | Tipo | Objeto | Parent |
@@ -3730,6 +3749,16 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.criar_plano_tatico` | — |
 | `index` | `public.ux_farmer_tactical_plans_dia_operacional` | `farmer_tactical_plans` |
+
+### `20260803093000_ia_uso_cota.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.ia_consumir_cota` | — |
+| `table` | `public.ia_uso_evento` | — |
+| `table` | `public.ia_uso_limite` | — |
+| `index` | `public.ia_uso_evento_janela_idx` | `ia_uso_evento` |
+| `cron_job` | `cron.ia-uso-evento-purga` | — |
 
 ## Próximos passos por status
 

@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 444
+-- Total de custom migrations: 448
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -405,6 +405,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260713010000', 'whatsapp_templates_hsm', '20260713010000_whatsapp_templates_hsm.sql'),
   ('20260713020000', 'whatsapp_pendentes_rpc', '20260713020000_whatsapp_pendentes_rpc.sql'),
   ('20260713030000', 'whatsapp_funil', '20260713030000_whatsapp_funil.sql'),
+  ('20260713040000', 'whatsapp_proposta_cotacao', '20260713040000_whatsapp_proposta_cotacao.sql'),
+  ('20260713050000', 'whatsapp_proposta_cotacao_v2', '20260713050000_whatsapp_proposta_cotacao_v2.sql'),
   ('20260713160000', 'carteira_rebuild_lease', '20260713160000_carteira_rebuild_lease.sql'),
   ('20260713193000', 'reposicao_pedidos_compra_run', '20260713193000_reposicao_pedidos_compra_run.sql'),
   ('20260714215547', 'omie_nfe_recebimento_crons', '20260714215547_omie_nfe_recebimento_crons.sql'),
@@ -477,6 +479,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260728120000', 'farmer_persiste_cobertura_custo', '20260728120000_farmer_persiste_cobertura_custo.sql'),
   ('20260728120001', 'calculate_scores_lease', '20260728120001_calculate_scores_lease.sql'),
   ('20260729120000', 'farmer_association_rules_substituicao_atomica', '20260729120000_farmer_association_rules_substituicao_atomica.sql'),
+  ('20260729160000', 'data_health_carteira_rebuild', '20260729160000_data_health_carteira_rebuild.sql'),
   ('20260730120000', 'tint_watchdog_fase5_chave', '20260730120000_tint_watchdog_fase5_chave.sql'),
   ('20260730120001', 'calculate_scores_reforco_0625', '20260730120001_calculate_scores_reforco_0625.sql'),
   ('20260730130000', 'reposicao_teto_cobertura_motor', '20260730130000_reposicao_teto_cobertura_motor.sql'),
@@ -485,7 +488,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260801120000', 'drop_calcular_gatilhos_reposicao', '20260801120000_drop_calcular_gatilhos_reposicao.sql'),
   ('20260802120000', 'reposicao_erro_terminal_nao_e_estoque_a_caminho', '20260802120000_reposicao_erro_terminal_nao_e_estoque_a_caminho.sql'),
   ('20260802120000', 'venda_perdida_e_classe_sb', '20260802120000_venda_perdida_e_classe_sb.sql'),
-  ('20260802130000', 'tactical_plan_idempotencia_dia', '20260802130000_tactical_plan_idempotencia_dia.sql')
+  ('20260802130000', 'tactical_plan_idempotencia_dia', '20260802130000_tactical_plan_idempotencia_dia.sql'),
+  ('20260803093000', 'ia_uso_cota', '20260803093000_ia_uso_cota.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -1781,6 +1785,9 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('whatsapp_pendentes_rpc', 'trigger', 'public', 'trg_wa_msg_last_outbound', 'whatsapp_messages'),
   ('whatsapp_funil', 'function', 'public', 'get_whatsapp_funil', ''),
   ('whatsapp_funil', 'index', 'public', 'idx_so_whatsapp_conv', 'sales_orders'),
+  ('whatsapp_proposta_cotacao', 'function', 'public', 'get_whatsapp_proposta_cotacao', ''),
+  ('whatsapp_proposta_cotacao_v2', 'function', 'public', 'get_whatsapp_proposta_cotacao', ''),
+  ('whatsapp_proposta_cotacao_v2', 'index', 'public', 'uq_so_whatsapp_proposta_dedupe', 'sales_orders'),
   ('carteira_rebuild_lease', 'function', 'public', 'claim_carteira_rebuild', ''),
   ('carteira_rebuild_lease', 'function', 'public', 'finalizar_carteira_rebuild', ''),
   ('carteira_rebuild_lease', 'rls_policy', 'public', 'carteira_rebuild_lease_no_insert', 'sync_state'),
@@ -1981,6 +1988,7 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('calculate_scores_lease', 'rls_policy', 'public', 'calculate_scores_lease_no_update', 'sync_state'),
   ('calculate_scores_lease', 'rls_policy', 'public', 'calculate_scores_lease_no_delete', 'sync_state'),
   ('farmer_association_rules_substituicao_atomica', 'function', 'public', 'farmer_association_rules_substituir', ''),
+  ('data_health_carteira_rebuild', 'function', 'public', '_data_health_compute', ''),
   ('tint_watchdog_fase5_chave', 'function', 'public', '_tint_watchdog_fase5_transicao', ''),
   ('tint_watchdog_fase5_chave', 'function', 'public', 'tint_watchdog_fase5_check', ''),
   ('tint_watchdog_fase5_chave', 'cron_job', 'cron', 'tint-watchdog-fase5-6h', ''),
@@ -2000,7 +2008,12 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('venda_perdida_e_classe_sb', 'rls_policy', 'public', 'venda_perdida_sel', 'venda_perdida_log'),
   ('venda_perdida_e_classe_sb', 'rls_policy', 'public', 'venda_perdida_ins', 'venda_perdida_log'),
   ('tactical_plan_idempotencia_dia', 'function', 'public', 'criar_plano_tatico', ''),
-  ('tactical_plan_idempotencia_dia', 'index', 'public', 'ux_farmer_tactical_plans_dia_operacional', 'farmer_tactical_plans')
+  ('tactical_plan_idempotencia_dia', 'index', 'public', 'ux_farmer_tactical_plans_dia_operacional', 'farmer_tactical_plans'),
+  ('ia_uso_cota', 'function', 'public', 'ia_consumir_cota', ''),
+  ('ia_uso_cota', 'table', 'public', 'ia_uso_evento', ''),
+  ('ia_uso_cota', 'table', 'public', 'ia_uso_limite', ''),
+  ('ia_uso_cota', 'index', 'public', 'ia_uso_evento_janela_idx', 'ia_uso_evento'),
+  ('ia_uso_cota', 'cron_job', 'cron', 'ia-uso-evento-purga', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -3344,6 +3357,9 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('whatsapp_pendentes_rpc', 'trigger', 'public', 'trg_wa_msg_last_outbound', 'whatsapp_messages'),
   ('whatsapp_funil', 'function', 'public', 'get_whatsapp_funil', ''),
   ('whatsapp_funil', 'index', 'public', 'idx_so_whatsapp_conv', 'sales_orders'),
+  ('whatsapp_proposta_cotacao', 'function', 'public', 'get_whatsapp_proposta_cotacao', ''),
+  ('whatsapp_proposta_cotacao_v2', 'function', 'public', 'get_whatsapp_proposta_cotacao', ''),
+  ('whatsapp_proposta_cotacao_v2', 'index', 'public', 'uq_so_whatsapp_proposta_dedupe', 'sales_orders'),
   ('carteira_rebuild_lease', 'function', 'public', 'claim_carteira_rebuild', ''),
   ('carteira_rebuild_lease', 'function', 'public', 'finalizar_carteira_rebuild', ''),
   ('carteira_rebuild_lease', 'rls_policy', 'public', 'carteira_rebuild_lease_no_insert', 'sync_state'),
@@ -3544,6 +3560,7 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('calculate_scores_lease', 'rls_policy', 'public', 'calculate_scores_lease_no_update', 'sync_state'),
   ('calculate_scores_lease', 'rls_policy', 'public', 'calculate_scores_lease_no_delete', 'sync_state'),
   ('farmer_association_rules_substituicao_atomica', 'function', 'public', 'farmer_association_rules_substituir', ''),
+  ('data_health_carteira_rebuild', 'function', 'public', '_data_health_compute', ''),
   ('tint_watchdog_fase5_chave', 'function', 'public', '_tint_watchdog_fase5_transicao', ''),
   ('tint_watchdog_fase5_chave', 'function', 'public', 'tint_watchdog_fase5_check', ''),
   ('tint_watchdog_fase5_chave', 'cron_job', 'cron', 'tint-watchdog-fase5-6h', ''),
@@ -3563,7 +3580,12 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('venda_perdida_e_classe_sb', 'rls_policy', 'public', 'venda_perdida_sel', 'venda_perdida_log'),
   ('venda_perdida_e_classe_sb', 'rls_policy', 'public', 'venda_perdida_ins', 'venda_perdida_log'),
   ('tactical_plan_idempotencia_dia', 'function', 'public', 'criar_plano_tatico', ''),
-  ('tactical_plan_idempotencia_dia', 'index', 'public', 'ux_farmer_tactical_plans_dia_operacional', 'farmer_tactical_plans')
+  ('tactical_plan_idempotencia_dia', 'index', 'public', 'ux_farmer_tactical_plans_dia_operacional', 'farmer_tactical_plans'),
+  ('ia_uso_cota', 'function', 'public', 'ia_consumir_cota', ''),
+  ('ia_uso_cota', 'table', 'public', 'ia_uso_evento', ''),
+  ('ia_uso_cota', 'table', 'public', 'ia_uso_limite', ''),
+  ('ia_uso_cota', 'index', 'public', 'ia_uso_evento_janela_idx', 'ia_uso_evento'),
+  ('ia_uso_cota', 'cron_job', 'cron', 'ia-uso-evento-purga', '')
 )
 SELECT
   e.migration,
