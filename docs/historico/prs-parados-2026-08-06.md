@@ -28,6 +28,27 @@ Aplicar a intenção original de `EdgeFunctionError` **quebraria o build**. O me
 
 O árbitro certo aqui é mecânico e barato: `bun run typecheck` (strict, com `noUnusedLocals`) prova des-exportação indevida em um passe. Resolver na leitura e conferir no tsc — não o contrário. Sobra do PR sobre a `main` de hoje: **116 arquivos / 821 deleções** (era 132 / 990) — a faxina seguia majoritariamente relevante, mas 12% dela tinha virado no-op.
 
+## Forma 3 — a regra nasce 2 minutos antes, e nenhum dos dois CIs vê o outro
+
+A forma mais aguda apareceu **como consequência deste próprio trabalho**, e derrubou a `main` por ~5 horas:
+
+| Hora (UTC) | Evento |
+|---|---|
+| 13:50:14 | **#1670** mergeia — nasce o gate de índice de `docs/` |
+| 13:52:29 | **#1212** mergeia — traz `faxina-knip-2026-07-07.md`, escrito em 07/07, **sem linha no índice** |
+| 18:43:09 | **#1674** conserta a `main` vermelha, adicionando a linha |
+
+**135 segundos** separam o gate do arquivo que ele reprova. Os dois PRs eram verdes *isoladamente* e se contradizem *somados*: o #1670 não podia ver um arquivo que só entraria depois, e o #1212 rodou seu `validate` contra uma base onde o gate ainda não existia — a suíte local que rodei no merge também não o tinha. Não é conflito de texto (o git mescla sem reclamar), é **conflito semântico**.
+
+Vale reparar que é a Forma 1 outra vez, mas com a defasagem colapsada de três semanas para dois minutos — o que mostra que o problema nunca foi o PR estar *velho*. Um PR de 5 minutos corre o mesmo risco; a idade só aumenta a chance.
+
+**O mecanismo já estava documentado** — no cabeçalho do próprio [`ci.yml`](../../.github/workflows/ci.yml) (medido em 2026-07-21, com o exemplo hipotético do `edges:typecheck`: "PR A remove um export de `_shared/`, PR B adiciona um import dele — cada um passa, juntos dão TS2305"). Este incidente é a instância concreta dele, e acrescenta duas coisas:
+
+- **A janela real de exposição.** `merge de PR não dispara CI na main`: o `auto-merge.yml` usa `secrets.GITHUB_TOKEN` e a proteção anti-loop do GitHub impede que esse push acione workflows. Então `gh run list --branch main` **não serve** para conferir — o último run de `push` na main é de 31/07, semanas antes destes merges. A contramedida existente é o `schedule` diário (09:17 UTC), que pegaria isto **na manhã seguinte**: aqui a `main` quebrou às 13:52 e ficou vermelha ~5h até alguém tropeçar nela por outro caminho (#1674) — dentro do previsto pelo desenho, que assume "piso útil: pega no dia seguinte".
+- **A ferramenta certa, que já existe e eu não usei**: o `workflow_dispatch` do CI (aba Actions → CI → *Run workflow*), posto lá exatamente para *"confirmar a main na hora depois de uma leva de merges"*. Um clique, ~5 min, e o sinal aparece no dia — não no seguinte.
+
+O que reduz o dano, na ordem: **(a)** depois de uma leva de merges, disparar o `workflow_dispatch` do CI na `main` (`gh workflow run CI --ref main`) — não adianta consultar runs de push, eles não existem; **(b)** quando o PR adiciona *arquivo* de uma categoria gateada (`docs/`, `src/` sob o `manifesto.gate`, migrations), conferir se algum PR **recém-mergeado** criou gate novo sobre ela; **(c)** ao entregar um gate estrutural, varrer os PRs **abertos** por violações que já existem neles — o gate nasce sabendo o que a `main` tem, não o que está a caminho.
+
 ## Artefato gerado não se resolve, se regenera
 
 Os 2 conflitos do #1332 eram `docs/migrations-audit.md` e `scripts/audit-custom-migrations.sql` — **saída idempotente** de `bun run audit:migrations`. Escolher lado ali é errado nos dois sentidos (perde as migrations da main ou as do PR). Rodar o gerador sobre a árvore já mesclada deu o inventário correto: 626 migrations = 624 da main + 2 do branch, conferido com `comm -23` contra `git ls-tree origin/main` para provar que nenhuma da main se perdeu.
@@ -57,5 +78,6 @@ O que separa isso de um defeito real é evidência lateral, não fé: **o mesmo 
 
 1. **PR não-draft em conflito é um PR que ninguém está segurando de propósito** — o freio do repo é o draft ([CLAUDE.md](../../CLAUDE.md), §Merge). Conflito não é freio, é esquecimento. Varrer `gh pr list --json mergeable` acha os que caíram nessa.
 2. **CI verde antigo não vale como validação** — re-rode depois do merge da `main`, sempre.
+3. **Depois de uma leva de merges, valide a `main` de propósito** — `gh workflow run CI --ref main`. O verde do PR atesta a base do momento do *run*, e entre ele e o merge cabe outro PR que muda a régua (aqui coube em 135s). Consultar runs de push **não** funciona: o auto-merge usa `GITHUB_TOKEN` e o push dele não aciona workflow nenhum.
 3. **PR de dead code tem prazo de validade curto**: a premissa é sobre o repo inteiro. Se passou de algumas semanas, o barato é medir de novo (`typecheck` + `knip`), não confiar na lista original.
 4. **Antes do rerun de step vermelho, procure o passe vizinho.** Sem evidência de que a causa é ambiental, rerun apaga sinal em vez de destravar.
