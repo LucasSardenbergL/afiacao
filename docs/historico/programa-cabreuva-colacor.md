@@ -35,7 +35,7 @@ CD de R$ 1,3 bi que mudou a operação da Renner: abastecimento por SKU conforme
 - ⏳ **PR3 — Giro executivo no Cockpit:** capital em estoque + margem TTM + retorno-sobre-estoque rotulado proxy (CMC ausente = indisponível).
 
 **Pista B — épicos (ordem de dependência):**
-- ⏳ **ATP/reserva (P0, 3 fases):** pool por conta/depósito + reserva atômica → checkout idempotente → reconciliação Omie + órfãs. prove-sql + Codex por fase.
+- 🔄 **ATP/reserva (P0, 3 fases):** ① banco ✅ (2026-08-06: `estoque_reservas` + `reservar_estoque`/`liberar_reserva_checkout`/`expirar_reservas_vencidas`/`atp_consultar`, `disponivel = saldo_confiavel − reservas_ativas − estoque_seguranca`, fail-closed frescor 24h, pool oben = eleição por frescor `vendas`/`oben`, gate `private.cap_estoque_reservar`, prova PG17 50/50 ×2 locales com 5 falsificações — migration `20260806101417`, apply manual no SQL Editor) → ② checkout idempotente ⏳ → ③ reconciliação Omie + órfãs ⏳. prove-sql + Codex por fase.
 - ⏳ **Pedido sugerido (3 fases, após ATP):** perfil cliente×SKU → sugestão explicável staff → opt-in do cliente. Sem autoenvio.
 - ⏳ **GMROI completo (2 fases):** estoque médio histórico + metas por classe com link pra desova.
 - ⏳ **Expedição (3 fases):** remessa/romaneio → ondas por cliente/rota → rastreio/POD.
