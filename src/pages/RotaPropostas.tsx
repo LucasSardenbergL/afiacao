@@ -24,6 +24,7 @@ import {
 import { waPhoneCandidates } from '@/lib/whatsapp/inbound';
 import { enviarProposta, TEMPLATE_PROPOSTA, type SupabaseWhatsappProposta } from '@/services/whatsappProposta';
 import { track } from '@/lib/analytics';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 
 function todayIso(): string { return new Date().toISOString().slice(0, 10); }
 function fmtBRL(v: number): string { return v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }); }
@@ -94,6 +95,10 @@ async function cotarProposta(
       : Promise.resolve({ data: null, error: null }),
   ]);
   if (cotRes.error) throw new Error(cotRes.error.message);
+  // Falha na leitura do elo NÃO pode degradar para "sem conversa": `donoConversa=null`
+  // apaga a trava `conversa_de_outro_cliente` e a proposta (com preços) sairia no fio de
+  // OUTRO cliente. Erro ≠ ausência — mesmo tratamento da cotação acima (fail-closed).
+  if (convRes.error) throw new Error(convRes.error.message);
 
   // template ilegível (erro OU ausente) → template:null → o avaliador TRAVA (Codex P1)
   const tpl = !tplRes.error && tplRes.data
@@ -220,7 +225,7 @@ function PropostaRow({ cliente, prazo }: { cliente: RouteContactItem; prazo: Pra
         travas: [...r.cotacao.travasGerais, ...r.cotacao.linhas.filter(l => l.motivoTrava).map(l => l.motivoTrava)],
       });
     } catch (e) {
-      toast.error('Recotação falhou: ' + (e instanceof Error ? e.message : 'erro desconhecido'));
+      toast.error('Recotação falhou: ' + (mensagemDeErro(e) ?? 'erro desconhecido'));
     } finally {
       setCotando(false);
     }
@@ -259,7 +264,7 @@ function PropostaRow({ cliente, prazo }: { cliente: RouteContactItem; prazo: Pra
       }
     } catch (e) {
       // inclui o write-guard da lente "Ver como" (rejeição vira aviso, não unhandled)
-      toast.error('Envio não realizado: ' + (e instanceof Error ? e.message : 'erro desconhecido'));
+      toast.error('Envio não realizado: ' + (mensagemDeErro(e) ?? 'erro desconhecido'));
     } finally {
       setEnviando(false);
     }
