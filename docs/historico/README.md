@@ -4,6 +4,8 @@ Registro consultável de **PRs/bugs/programas/auditorias já entregues** — a n
 
 **Não é lido a cada sessão** — o CLAUDE.md ficou só com regras vivas. Venha aqui quando precisar do **detalhe/contexto** de uma entrega. Ao concluir uma entrega nova, **registre aqui** (não no CLAUDE.md).
 
+> 🚦 **A tabela abaixo é GATEADA** (`scripts/docs-indice-gate-check.ts`, dentro do `bun run test`): `.md` neste diretório sem linha na tabela — ou linha apontando para arquivo que não existe — deixa o CI **vermelho**. Não é burocracia: a frase acima já existia e o índice apodreceu duas vezes — o #1658 reconciliou **9 arquivos invisíveis** e horas depois o #1659 (uma PR de feature) reintroduziu um. Contramedida textual reincide; gate estrutural para. Vale igual para `docs/runbooks/`.
+
 | Arquivo | O que tem |
 | --- | --- |
 | [bugs-resolvidos.md](bugs-resolvidos.md) | (era §10) cada bug/contradição/débito resolvido, com PR + lição (multi-domínio: KB, Radar, reposição, sync…) |

@@ -16,6 +16,7 @@
     "audit:migrations": "bun scripts/audit-custom-migrations.ts",
     "authz:check": "bun scripts/authz-gate-check.ts",
     "bunpin:check": "bun scripts/bun-pin-gate-check.ts",
+    "docs:indice": "bun scripts/docs-indice-gate-check.ts",
     "mutcheck": "bash scripts/mutcheck-all.sh",
     "mutcheck:selftest": "bash scripts/mutcheck.sh --selftest",
     "wt": "bash scripts/new-worktree.sh",
