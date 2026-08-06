@@ -199,6 +199,56 @@ resultado não responde nada.
 custo é sair do versionamento — some do repo e do DR. A alternativa versionada é
 rebasear/recriar as worktrees ativas, que expira sozinha conforme worktrees velhas morrem.
 
+### ✅ Reavaliado 48h depois: o Achado 2 estava certo no número e ERRADO na implicação
+
+O que a medição de 08-04 não sabia: **o parque de worktrees rotaciona em dias, não em
+semanas.** Remedido em 2026-08-06, sem que nada fosse feito a respeito:
+
+| das 5 worktrees "sem a linha" que dominavam o tráfego em 08-04 | |
+|---|---|
+| recicladas (`dazzling-chatelet`, `gallant-heisenberg`, `musing-knuth`) | 3 |
+| ganharam a linha sozinhas (`eager-lovelace`, ao sair de um branch velho) | 1 |
+| seguem sem (`adoring-ptolemy`) | 1 |
+
+E o tráfego, que é a métrica que importa (2026-08-04→06, 1.260 requests):
+
+| worktree | requests | |
+|---|---|---|
+| **com** a linha | 1.093 | **86,7%** |
+| **sem** a linha | 0 | 0,0% |
+| já reciclada (eram as "sem" de 08-04) | 167 | 13,3% |
+
+De 23% para **86,7% de cobertura efetiva em 48 horas, sem intervenção**. A contagem crua
+de worktrees piorou no mesmo período (9/47 → 6/41) e é justamente a métrica errada: as
+~34 "AUSENTE" são worktrees paradas que **não geram request**. Ponderar por tráfego era o
+certo desde o começo.
+
+**Consequência prática:** a "correção estruturalmente certa" acima virou desnecessária —
+mexer no `~/.claude/settings.json` (com o custo de sair do versionamento) resolveria um
+problema que expira sozinho. A recomendação passa a ser **não fazer nada**.
+
+**A exceção real, que não rotaciona:** o **diretório principal** é permanente e segue
+parado em `claude/projeto-verificado-sayerlack` desde 2026-06-18. É o único caso que a
+rotação não cura — e é pequeno (14 requests em 7 dias). Vale um `git checkout main` lá,
+não uma mudança de arquitetura de configuração.
+
+> **Lição:** "77% do tráfego está descoberto" e "a cobertura converge sozinha em 48h" são
+> a mesma medição lida em dois horizontes. Uma medição pontual de um sistema que rotaciona
+> mede o **estado**, não a **tendência** — e a decisão dependia da tendência. Antes de
+> propor conserto estrutural para um número ruim, meça se ele anda sozinho.
+
+### Sinal preliminar sobre a asserção (2 dias — NÃO é o veredito)
+
+Nas worktrees que têm o default, 1.093 requests em 48h: **Fable = 37,2% dos requests e
+55,3% do custo** — *acima* dos 16,5%/31,8% do baseline. Duas leituras cabem, e 2 dias não
+separam as duas: (a) o default não sequestrou nada e a troca deliberada para Fable segue
+viva — o que a asserção quer; (b) o período foi dominado por poucas sessões long-horizon,
+e o número é da amostra, não da política.
+
+Registrado como **sinal, não resultado**, justamente para não repetir o erro que este
+documento acabou de catalogar: ler janela curta como tendência. O veredito continua sendo
+o de ≥ 2026-09-03.
+
 ## O que NÃO foi feito: reverter
 
 O cenário de reversão previsto ("custo e requests despencam juntos") não se materializou —
