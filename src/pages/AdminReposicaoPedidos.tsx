@@ -22,6 +22,8 @@ import {
 import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, Clock, CloudDownload, Eye, Loader2, Zap } from 'lucide-react';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { toast } from 'sonner';
+import { useMutationComRegistro } from '@/components/execucoes/useMutationComRegistro';
+import { UltimaExecucao } from '@/components/execucoes/UltimaExecucao';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { PedidoSugerido } from '@/components/reposicao/pedidos/types';
@@ -29,6 +31,7 @@ import { EMPRESA, edgeSyncOk, formatBRL, frescorEstoque, interpretarRespostaDisp
 import { CycleIndicator } from '@/components/reposicao/pedidos/CycleIndicator';
 import { PedidoRow } from '@/components/reposicao/pedidos/PedidoRow';
 import { StatusComMotivo, PortalBadge } from '@/components/reposicao/pedidos/badges';
+import { CaixaCompraCard } from '@/components/reposicao/pedidos/CaixaCompraCard';
 import { DetalhesModal } from '@/components/reposicao/pedidos/DetalhesModal';
 import { CancelarModal } from '@/components/reposicao/pedidos/CancelarModal';
 import { PortalDrawer } from '@/components/reposicao/pedidos/PortalDrawer';
@@ -36,6 +39,8 @@ import { CiclosAnteriores } from '@/components/reposicao/pedidos/CiclosAnteriore
 import { OverrideMinimoButton } from '@/components/reposicao/pedidos/OverrideMinimoButton';
 import { ehGateMinimoFaturamento, particionarAtencao } from '@/components/reposicao/pedidos/shared';
 import { AbaixoMinimoCard } from '@/components/reposicao/pedidos/AbaixoMinimoCard';
+import { PoSumidoCard } from '@/components/reposicao/pedidos/PoSumidoCard';
+import { ehAcessoNegado, normalizarCandidatos, ordenarCandidatos, type PoCandidato } from '@/components/reposicao/pedidos/po-sumido';
 import { useAuth } from '@/contexts/AuthContext';
 import { track } from '@/lib/analytics';
 
@@ -92,7 +97,7 @@ export default function AdminReposicaoPedidos() {
   const queryClient = useQueryClient();
   // Override do mínimo de faturamento é privilegiado: só gestor comercial/master. A tela é
   // RequireStaff (employee|master), então gateamos o botão aqui (o edge reforça no servidor).
-  const { isMaster, isGestorComercial } = useAuth();
+  const { isMaster, isGestorComercial, user } = useAuth();
   const podeOverride = isMaster || isGestorComercial;
   const [searchParams, setSearchParams] = useSearchParams();
   const [detalhesPedido, setDetalhesPedido] = useState<PedidoSugerido | null>(null);
@@ -277,6 +282,40 @@ export default function AdminReposicaoPedidos() {
     staleTime: 30_000,
   });
 
+  // [GATE PO-sumido] pedidos `disparado` cujo PO NÃO apareceu no último run VÁLIDO do sync do Omie — o PO foi
+  // excluído lá e aqui o pedido seguiu disparado (dentro de 7d isso infla o em_transito e some o item do cockpit).
+  // A RPC é a fonte: ela decide quem é candidato E carrega a evidência (protocolo/canal), com gate próprio.
+  // `retry: false` de propósito: o gate nega com 42501 e repetir 3x só gera ruído — quem não pode ver não vê.
+  // Distinguir NEGADO de FALHOU importa: falha vira aviso visível (ver PoSumidoCard), nunca ausência silenciosa.
+  const { data: posSumidos, error: erroPosSumidos, isLoading: apurandoPosSumidos } = useQuery({
+    // A chave inclui o USUÁRIO porque o app não limpa o queryClient no signOut: sem isso, A (autorizado)
+    // popula o cache, B entra na mesma sessão de app e vê a carteira de A até a negativa do servidor
+    // chegar — e, no sentido inverso, o `refetchInterval: false` de um 42501 grudaria na chave e
+    // deixaria o próximo usuário AUTORIZADO sem polling. Chave por principal resolve os dois.
+    queryKey: ['pedidos-ciclo', 'pos-candidatos', EMPRESA, user?.id],
+    queryFn: async (): Promise<PoCandidato[]> => {
+      const { data, error } = await supabase.rpc('reposicao_pos_candidatos' as never, {
+        p_empresa: EMPRESA,
+      } as never);
+      if (error) throw error;
+      // Normaliza na FRONTEIRA: a resposta entra por cast (a RPC não está no types.ts gerado), então
+      // um valor não-finito passaria direto e viraria total NaN / ordenação embaralhada em silêncio.
+      return normalizarCandidatos((data as unknown as PoCandidato[] | null) ?? []);
+    },
+    // Sem principal, NÃO consulta: durante o boot do AuthContext `user` é undefined, e disparar aqui
+    // criaria uma entrada de cache sob a chave [...,undefined] — uma chamada a mais e, pior, um balde
+    // sem dono que poderia ser reapresentado no próximo boot antes de qualquer negativa chegar.
+    // Com `enabled` falso a query fica pending+idle para sempre, então quem alimenta o "apurando" é
+    // `isLoading` (pending E buscando), não `isPending` — senão o card diria "apurando…" eternamente
+    // para quem nem tem sessão.
+    enabled: Boolean(user?.id),
+    retry: false,
+    // Negado uma vez, negado sempre nesta sessão: sem isto o poll repetiria o 42501 a cada minuto,
+    // por aba, para sempre. Falha de apuração continua repolando — essa a gente QUER que se recupere.
+    refetchInterval: (q) => (ehAcessoNegado(q.state.error) ? false : 60_000),
+    staleTime: 30_000,
+  });
+
   // [FILA] o ÚLTIMO recálculo do motor (limpo OU com supressão), carimbado em reposicao_motor_run pela RPC. A fila
   // ancora AQUI: se o último run teve suprimidos_n=0 (sync já confirmou), a mensagem some na hora — em vez de mostrar
   // o último run que teve supressão, que só grava exceções e ficava preso na janela de 24h. Codex 2026-07-08 (Opção 2).
@@ -321,7 +360,18 @@ export default function AdminReposicaoPedidos() {
   // lista / recalcular) num só, a pedido do founder — a lista tem refetchInterval 30s (atualiza
   // sozinha). Se uma sync falhar, NÃO recalcula (regenerar com saldo/status velho = pedido errado,
   // money-path); o resumoSyncRecalc reporta e o usuário reexecuta. Idempotente. ~1–2 min.
-  const syncRecalcMutation = useMutation({
+  // Escritor do slug: frontend (orquestração client-side de 2 edges + RPC). Os crons diários
+  // rodam as EDGES isoladas (outra ação); o composto "sincronizar E recalcular" só existe aqui.
+  // status='sucesso' registra que a EXECUÇÃO completou; o resultado real (sync parcial/recalc)
+  // vai em detalhes — o tom pro usuário continua no toast (resumoSyncRecalc), sem mudança.
+  const syncRecalcMutation = useMutationComRegistro({
+    acao: 'reposicao.sincronizar_recalcular',
+    detalhes: ({ estoqueOk, statusOk, recalc }) => ({
+      estoque_ok: estoqueOk,
+      status_ok: statusOk,
+      recalculou: recalc?.ok ?? false,
+      pedidos: recalc?.pedidos ?? 0,
+    }),
     mutationFn: async () => {
       const [estoque, status] = await Promise.allSettled([
         supabase.functions.invoke('omie-sync-estoque', { body: { empresa: EMPRESA } }),
@@ -519,6 +569,7 @@ export default function AdminReposicaoPedidos() {
               </AlertDialogFooter>
             </AlertDialogContent>
           </AlertDialog>
+          <UltimaExecucao acao="reposicao.sincronizar_recalcular" />
         </div>
       </div>
 
@@ -603,6 +654,8 @@ export default function AdminReposicaoPedidos() {
           </AlertDescription>
         </Alert>
       )}
+
+      <CaixaCompraCard pedidos={pedidos ?? []} />
 
       {mostrarAtencao && atencaoCount > 0 && (
         <Card className="border-status-warning/40">
@@ -690,6 +743,18 @@ export default function AdminReposicaoPedidos() {
           </CardContent>
         </Card>
       )}
+
+      {/* ACESSO NEGADO esconde os dados: o servidor acabou de dizer que este usuário não pode vê-los, e
+          o react-query preserva o `data` do último sucesso — deixá-lo na tela seria falha ABERTA.
+          FALHA DE APURAÇÃO (rede, RPC quebrada) mantém a última lista BOA e mostra o aviso junto: como a
+          chave é escopada pelo usuário, esses dados são dele mesmo, e apagá-los tiraria da tela pedido,
+          protocolo e valor legítimos por causa de um erro transitório. Sumir não é mais honesto que
+          avisar — o card diz que a informação pode estar desatualizada. */}
+      <PoSumidoCard
+        candidatos={ehAcessoNegado(erroPosSumidos) ? [] : ordenarCandidatos(posSumidos ?? [])}
+        falhaApuracao={erroPosSumidos != null && !ehAcessoNegado(erroPosSumidos)}
+        apurando={apurandoPosSumidos}
+      />
 
       <AbaixoMinimoCard
         pedidos={atencaoAbaixoMinimo}

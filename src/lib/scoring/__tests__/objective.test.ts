@@ -86,3 +86,26 @@ describe('selectObjective — cluster AUSENTE (null) degrada honesto (money-path
     expect(selectObjective(0, 0, 10, 25, 0, cap)).toBe('consolidacao_margem'); // 10 < 20
   });
 });
+
+describe('selectObjective — margem DO CLIENTE ausente (null) não fabrica consolidacao', () => {
+  const cap = 180;
+
+  it('marginPct null NÃO dispara consolidacao_margem, mesmo com cluster alto', () => {
+    // `null < 25 * 0.8` é TRUE em JS por coerção (null → 0). Sem o guard, todo cliente sem
+    // custo cadastrado sairia com o objetivo que manda a vendedora defender preço num cliente
+    // sobre o qual não medimos margem alguma.
+    expect(selectObjective(0, 0, null, 25, 0, cap)).toBe('upsell_premium');
+    expect(selectObjective(0, 0, null, 100, 0, cap)).toBe('upsell_premium');
+  });
+
+  it('margem conhecida e baixa continua disparando (o guard não anestesiou a regra)', () => {
+    expect(selectObjective(0, 0, 0, 25, 0, cap)).toBe('consolidacao_margem');
+  });
+
+  it('as regras que PRECEDEM margem seguem valendo com margem null', () => {
+    expect(selectObjective(0, 0, null, 25, 0, cap, 'sem_historico')).toBe('ativacao');
+    expect(selectObjective(0, 0, null, 25, 999, cap)).toBe('reativacao');
+    expect(selectObjective(70, 0, null, 25, 0, cap)).toBe('recuperacao');
+    expect(selectObjective(0, 5, null, 25, 0, cap)).toBe('expansao_mix');
+  });
+});

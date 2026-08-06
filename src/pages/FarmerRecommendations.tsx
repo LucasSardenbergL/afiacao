@@ -29,7 +29,7 @@ const FarmerRecommendations = () => {
   const navigate = useNavigate();
   const { isStaff, loading: authLoading } = useAuth();
   const {
-    recommendations, loading, calculating, calculateRecommendations,
+    recommendations, loading, calculating, calculateRecommendations, erro, desatualizado,
   } = useCrossSellEngine();
   const [expandedClient, setExpandedClient] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -50,6 +50,12 @@ const FarmerRecommendations = () => {
     s + [...cr.crossSell, ...cr.upSell].reduce((s2, r) => s2 + r.lie, 0), 0);
   const totalCrossSell = recommendations.reduce((s, cr) => s + cr.crossSell.length, 0);
   const totalUpSell = recommendations.reduce((s, cr) => s + cr.upSell.length, 0);
+
+  // O cálculo falhou e não sobrou nada de uma execução anterior: os três KPIs somariam sobre a
+  // lista vazia e diriam "EIP Total R$ 0,00 · 0 Cross-sell · 0 Up-sell" — a falha de transporte
+  // apresentada como "não há oportunidade nenhuma na carteira". Nunca zero: "—" e o motivo.
+  const semDado = !!erro && recommendations.length === 0;
+  const ou = (v: string) => (semDado ? '—' : v);
 
   const filtered = recommendations.filter(cr => {
     if (searchQuery) {
@@ -76,24 +82,51 @@ const FarmerRecommendations = () => {
         </Button>
       </div>
 
+      {/* A falha do engine chega aqui: sem isto a tela fica idêntica a um recálculo que deu
+          certo — o vendedor vê a lista se acomodar e segue decidindo sobre números velhos. */}
+      {erro && (
+        <div
+          role="alert"
+          className={`rounded-lg border p-3 text-xs ${desatualizado
+            ? 'border-status-warning/30 bg-status-warning/5 text-status-warning'
+            : 'border-status-error/30 bg-status-error/5 text-status-error'}`}
+        >
+          {desatualizado
+            ? 'Exibindo o último cálculo bem-sucedido — a atualização mais recente falhou. As recomendações podem estar desatualizadas.'
+            : recommendations.length > 0
+              ? 'As recomendações foram calculadas, mas não puderam ser salvas. Os números abaixo são desta execução.'
+              : 'Não foi possível calcular as recomendações — a leitura da base falhou. Nenhum número abaixo foi estimado.'}
+        </div>
+      )}
+
       {/* Summary KPIs */}
       <div className="grid grid-cols-3 gap-3">
         <Card><CardContent className="p-3 text-center">
           <DollarSign className="w-4 h-4 mx-auto mb-1 text-primary" />
-          <p className="text-lg font-bold text-primary">{fmt(totalLIE)}</p>
-          <p className="text-[10px] text-muted-foreground">EIP Total</p>
+          <p className="text-lg font-bold text-primary">{ou(fmt(totalLIE))}</p>
+          <p className="text-[10px] text-muted-foreground">EIP Total (estimativa)</p>
         </CardContent></Card>
         <Card><CardContent className="p-3 text-center">
           <ShoppingCart className="w-4 h-4 mx-auto mb-1 text-status-info" />
-          <p className="text-lg font-bold">{totalCrossSell}</p>
+          <p className="text-lg font-bold">{ou(String(totalCrossSell))}</p>
           <p className="text-[10px] text-muted-foreground">Cross-sell</p>
         </CardContent></Card>
         <Card><CardContent className="p-3 text-center">
           <ArrowUpRight className="w-4 h-4 mx-auto mb-1 text-status-purple" />
-          <p className="text-lg font-bold">{totalUpSell}</p>
+          <p className="text-lg font-bold">{ou(String(totalUpSell))}</p>
           <p className="text-[10px] text-muted-foreground">Up-sell</p>
         </CardContent></Card>
       </div>
+
+      {/* O EIP usa taxa de conversão ARBITRADA (15% cross-sell / 10% up-sell), não medida:
+          o desfecho das recomendações nunca foi registrado, então não há histórico para
+          calibrar. Como a taxa é a mesma para todo produto, a ORDEM do ranking é confiável
+          — o valor em R$ não é previsão de receita. Ver docs/historico/farmer-aprendizado-conversao.md */}
+      <p className="text-[10px] text-muted-foreground leading-relaxed">
+        O EIP usa taxa de conversão fixa, ainda não calibrada com histórico real. Use-o para{' '}
+        <strong className="font-medium">priorizar</strong> — a ordem é confiável; o valor em R$ é
+        estimativa, não previsão de receita.
+      </p>
 
       {/* Search + Filters */}
       <div className="flex items-center gap-2">
@@ -120,7 +153,11 @@ const FarmerRecommendations = () => {
         <Card><CardContent className="py-12 text-center">
           <Target className="w-8 h-8 mx-auto mb-3 text-muted-foreground/40" />
           <p className="text-sm text-muted-foreground">
-            Nenhuma recomendação disponível. Calcule os scores dos clientes primeiro.
+            {/* Sob falha, "nenhuma recomendação disponível" afirma "não existe" onde a verdade
+                é "não consegui ler" — e ainda manda recalcular um cálculo que acabou de falhar. */}
+            {semDado
+              ? 'Não foi possível carregar as recomendações. Tente recalcular em instantes.'
+              : 'Nenhuma recomendação disponível. Calcule os scores dos clientes primeiro.'}
           </p>
         </CardContent></Card>
       ) : (

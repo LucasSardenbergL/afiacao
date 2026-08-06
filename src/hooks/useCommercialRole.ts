@@ -1,8 +1,51 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
+import { useAuthzContract } from '@/hooks/useAuthzContract';
 
-export type CommercialRole = 'operacional' | 'gerencial' | 'estrategico' | 'super_admin';
+/**
+ * Espelha o enum `commercial_role` do banco — os OITO valores, não quatro.
+ *
+ * Estava incompleto (só operacional/gerencial/estrategico/super_admin) enquanto o enum em prod tem
+ * também farmer/hunter/closer/master, e o `as CommercialRole` do fetch abaixo ESCONDIA a
+ * divergência: o cast afirmava um dos quatro para um valor que em runtime podia ser 'master'.
+ *
+ * Não era teórico — é a distribuição REAL de prod (medida 2026-07-29): farmer=2, master=1, e
+ * `super_admin` com ZERO linhas. Ou seja, os três únicos usuários com papel comercial tinham um
+ * valor que o tipo negava existir, e todo predicado deste arquivo lia `false` para eles.
+ *
+ * `useMyCommercialRole.ts` já listava os oito; os dois tipos agora concordam entre si e com o banco.
+ */
+export type CommercialRole =
+  | 'operacional'
+  | 'gerencial'
+  | 'estrategico'
+  | 'super_admin'
+  | 'farmer'
+  | 'hunter'
+  | 'closer'
+  | 'master';
+
+/**
+ * 🔐 Contrato de autorização gerencial (E1 #1424 → E2/FU4 — spec de 2026-07-18).
+ *
+ * Os papéis gerenciais acionavam `pode_ver_carteira_completa`, que NÃO era o gate da carteira:
+ * medido em prod 2026-07-18, gateava **64 policies em 34 tabelas** — incluindo ESCRITA em
+ * `cliente_tier_preco` (tier de preço) e `venda_excecao_credito` (crédito), e LEITURA de
+ * `cmc_ledger` (custo) e `markup_policy`. Conceder o papel entregava tudo isso junto.
+ *
+ * A E1 travou isso com uma constante `false` no código. A E2 substituiu o gate único por uma
+ * matriz de capability por recurso × ação no BANCO — e esta trava virou uma PERGUNTA ao banco
+ * (`useAuthzContract`) em vez de uma constante:
+ *
+ *   · banco em v2 (matriz aplicada) ⇒ o papel gerencial é concedido, e já não carrega
+ *     preço/crédito/custo/compras — as policies dessas tabelas agora exigem capability própria.
+ *   · banco em v1, RPC ausente, erro ou carregando ⇒ capability NEGADA.
+ *
+ * A pergunta importa porque no Lovable merge ≠ produção: a migration é aplicada à mão e falha em
+ * silêncio se esquecida. Uma constante `true` publicada sem a migration reabriria o furo sem
+ * nenhum sinal. Perguntando, o esquecimento vira "gestor sem acesso" — barulhento e seguro.
+ */
 
 interface UseCommercialRoleReturn {
   commercialRole: CommercialRole | null;
@@ -20,6 +63,7 @@ interface UseCommercialRoleReturn {
 
 export function useCommercialRole(): UseCommercialRoleReturn {
   const { user } = useAuth();
+  const { matrizAtiva, loading: loadingContrato } = useAuthzContract();
   const [commercialRole, setCommercialRole] = useState<CommercialRole | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -66,9 +110,13 @@ export function useCommercialRole(): UseCommercialRoleReturn {
     isEstrategico,
     isGerencial,
     isOperacional,
-    canViewStrategic: isSuperAdmin || isEstrategico,
-    canViewManagerial: isSuperAdmin || isEstrategico || isGerencial,
-    loading,
+    // O papel no banco não basta: a matriz de capability (v2) precisa estar aplicada.
+    // `matrizAtiva` é false enquanto carrega e em qualquer erro — fail-closed.
+    canViewStrategic: matrizAtiva && (isSuperAdmin || isEstrategico),
+    canViewManagerial: matrizAtiva && (isSuperAdmin || isEstrategico || isGerencial),
+    // Só está "pronto" quando as DUAS perguntas responderam — senão o consumidor leria
+    // `canView* = false` como decisão final e não como "ainda não sei".
+    loading: loading || loadingContrato,
     refetch: fetchRole,
   };
 }

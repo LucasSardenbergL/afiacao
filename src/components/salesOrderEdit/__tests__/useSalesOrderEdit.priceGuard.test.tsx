@@ -144,13 +144,38 @@ describe('useSalesOrderEdit — guard de preço ao salvar', () => {
     const { result } = await renderLoaded();
     mockedInvoke.mockClear();
     updateSpy.mockClear();
+    // Fase 3: o edge é AGUARDADO e persiste no write-back — o front não faz
+    // update local pré-invoke (o jsonb persistido é o BASELINE do gate tint).
+    mockedInvoke.mockResolvedValue({ data: { success: true }, error: null } as never);
 
     await act(async () => {
       await result.current.handleSave();
     });
 
-    expect(updateSpy).toHaveBeenCalledTimes(1);
+    expect(mockedInvoke).toHaveBeenCalledWith(
+      'omie-vendas-sync',
+      expect.objectContaining({ body: expect.objectContaining({ action: 'alterar_pedido' }) }),
+    );
+    expect(updateSpy).not.toHaveBeenCalled();
     await waitFor(() => expect(navigateSpy).toHaveBeenCalledWith('/sales'));
     expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it('Fase 3: bloqueio tint_preco do edge → NÃO persiste local, NÃO navega, avisa', async () => {
+    const { result } = await renderLoaded();
+    mockedInvoke.mockClear();
+    updateSpy.mockClear();
+    mockedInvoke.mockResolvedValue({
+      data: { success: false, blocked: 'tint_preco', bloqueios: [{ cor_id: 'K1', motivo: 'preco_divergente' }] },
+      error: null,
+    } as never);
+
+    await act(async () => {
+      await result.current.handleSave();
+    });
+
+    expect(toast.error).toHaveBeenCalled();
+    expect(updateSpy).not.toHaveBeenCalled();
+    expect(navigateSpy).not.toHaveBeenCalled();
   });
 });

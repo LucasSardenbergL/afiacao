@@ -10,7 +10,12 @@ import { useExcecoesGestor } from '@/hooks/useExcecoesGestor';
 import { useTarefaMutations } from '@/hooks/useTarefas';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
+import { useMutationComRegistro } from '@/components/execucoes/useMutationComRegistro';
+import { UltimaExecucao } from '@/components/execucoes/UltimaExecucao';
 import type { LinhaExcecao, Severidade } from '@/lib/gestor/excecoes/types';
+
+// Escritor: frontend (ação global; a edge ai-ops-agent não tem cron — sem sobreposição).
+const ACAO_ATUALIZAR_ANALISE = 'dashboard.atualizar_analise_carteira';
 
 const SEV_CLS: Record<Severidade, string> = {
   critico: 'text-status-error', aviso: 'text-status-warning', info: 'text-status-info',
@@ -69,13 +74,20 @@ export function GestorExcecoes() {
     });
   }, [data]);
 
-  const onRodarAgente = async () => {
-    track('gestor.excecoes_run_agent', {});
-    const { error } = await supabase.functions.invoke('ai-ops-agent');
-    if (error) { toast.error('Erro ao atualizar análise'); return; }
-    toast.success('Análise atualizada');
-    refetchAll();
-  };
+  const rodarAgente = useMutationComRegistro({
+    acao: ACAO_ATUALIZAR_ANALISE,
+    mutationFn: async () => {
+      const { error } = await supabase.functions.invoke('ai-ops-agent');
+      if (error) throw new Error((error as { message?: string }).message ?? 'Falha na edge ai-ops-agent');
+    },
+    onMutate: () => track('gestor.excecoes_run_agent', {}),
+    onSuccess: () => {
+      toast.success('Análise atualizada');
+      refetchAll();
+    },
+    onError: () => toast.error('Erro ao atualizar análise'),
+  });
+  const onRodarAgente = () => rodarAgente.mutate();
 
   if (isLoading) {
     return <Card className="p-3 space-y-2"><Skeleton className="h-4 w-40" />{[0, 1].map(i => <Skeleton key={i} className="h-10 w-full" />)}</Card>;
@@ -86,6 +98,7 @@ export function GestorExcecoes() {
       <CardHeader className="pb-2">
         <h2 className="text-base font-medium">Exceções — o que está fora do lugar</h2>
         <p className="text-2xs text-muted-foreground">Só o que precisa de atenção hoje. Cada linha mostra a fonte e o frescor.</p>
+        <UltimaExecucao acao={ACAO_ATUALIZAR_ANALISE} />
       </CardHeader>
       {!data || data.vazio ? (
         <div className="p-6 text-2xs text-muted-foreground">Tudo no lugar hoje 🎯</div>

@@ -1,3 +1,5 @@
+import { margemConhecida } from '@/lib/scoring/margin';
+
 /**
  * Objetivo estratégico do plano tático do farmer — rótulo categórico que entra no
  * prompt da IA (`generate-tactical-plan`) e molda o plano de abordagem.
@@ -26,7 +28,8 @@
 export function selectObjective(
   churnRisk: number,
   mixGap: number,
-  marginPct: number,
+  /** `null` = margem do cliente não apurada → consolidacao_margem fica INDECIDÍVEL (ver abaixo). */
+  marginPct: number | null,
   clusterMargin: number | null,
   daysSince: number,
   recencyCapDays: number,
@@ -41,7 +44,11 @@ export function selectObjective(
   // consolidacao a esmo. (O espelho no edge generate-tactical-plan sempre passa número —
   // benchmarka pela carteira-dono no batch — então a divergência só aparece no caminho client,
   // onde o cluster pode faltar.)
-  if (clusterMargin != null && Number.isFinite(clusterMargin) && marginPct < clusterMargin * 0.8) return 'consolidacao_margem';
+  // A margem do CLIENTE também precisa ser conhecida — simétrico ao cluster. Não se afirma
+  // "margem baixa vs. pares" sem saber a margem, e `null < X` é `true` em JS (null coage a 0),
+  // então sem este guard todo cliente sem margem apurada cairia em consolidacao_margem.
+  const m = margemConhecida(marginPct);
+  if (m != null && clusterMargin != null && Number.isFinite(clusterMargin) && m < clusterMargin * 0.8) return 'consolidacao_margem';
   return 'upsell_premium';
 }
 
@@ -66,4 +73,31 @@ export function clampRecencyCapDays(raw: unknown): number {
   const n = Number(raw);
   if (!Number.isFinite(n)) return DEFAULT_RECENCY_CAP_DAYS;
   return Math.min(MAX_RECENCY_CAP_DAYS, Math.max(MIN_RECENCY_CAP_DAYS, Math.round(n)));
+}
+
+/**
+ * Reconcilia o objetivo vindo da IA com o derivado aqui, por regra medida.
+ *
+ * Espelho VERBATIM de `objetivoFinal` em
+ * `supabase/functions/generate-tactical-plan/plano-helpers.ts` (Deno não importa
+ * de src/) — mudou aqui, mude lá.
+ *
+ * O enum barra objetivo inventado, mas não o objetivo VÁLIDO e errado. Com
+ * `sem_historico`, `selectObjective` devolve `ativacao` a partir de um fato
+ * binário: não existe venda válida no resumo. Um "recuperacao" vindo da IA passa
+ * no enum e, com `aiPlan?.strategic_objective || derivado`, VENCE o fato — a
+ * vendedora recebe plano de recuperação para cliente que nunca comprou.
+ *
+ * Nos demais objetivos o derivado sai de FAIXAS (churn, mix, recência), onde a
+ * leitura da IA pode ser melhor que o corte numérico, e ela prevalece.
+ */
+export function objetivoFinal(
+  daIA: string | null | undefined,
+  doServidor: string | null | undefined,
+): { objetivo: string | null; sobrescrito: boolean } {
+  const ia = typeof daIA === 'string' && daIA.trim() ? daIA.trim().toLowerCase() : null;
+  if (doServidor === 'ativacao' && ia !== null && ia !== 'ativacao') {
+    return { objetivo: 'ativacao', sobrescrito: true };
+  }
+  return { objetivo: ia ?? doServidor ?? null, sobrescrito: false };
 }

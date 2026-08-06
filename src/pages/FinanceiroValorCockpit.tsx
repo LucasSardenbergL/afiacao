@@ -6,7 +6,8 @@ import { useValorCockpit } from '@/hooks/useValorCockpit';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
-import type { CockpitRollupCliente, CockpitRollupSKU } from '@/services/financeiroService';
+import type { CockpitRollupCliente, CockpitRollupSKU, CockpitRollupCanal, CanalPedido } from '@/services/financeiroService';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 
 const brl = (x: number | null | undefined) =>
   x == null
@@ -19,9 +20,103 @@ function nivelClasses(n: 'alta' | 'media' | 'baixa') {
   return 'text-status-error bg-status-error-bg';
 }
 
+// ===== Por canal (PR1 Cabreúva-Colacor): espelho de digitalização + margem por canal =====
+const CANAL_LABEL: Record<CanalPedido, string> = {
+  erp_direto: 'ERP direto (Omie)',
+  app_cliente: 'App — cliente (self-service)',
+  app_staff: 'App — vendedor',
+  ligacao: 'Ligação (tele)',
+  app_sem_origem: 'App — sem origem registrada',
+  outro: 'Outro / não classificado',
+};
+// Digital = passou pelo app (qualquer forma). 'outro' fica FORA dos dois lados (não fabricar leitura).
+const CANAIS_DIGITAIS: ReadonlySet<CanalPedido> = new Set(['app_cliente', 'app_staff', 'ligacao', 'app_sem_origem']);
+
+function CanalSection({ porCanal }: { porCanal: CockpitRollupCanal[] | undefined }) {
+  if (!porCanal) {
+    return (
+      <Card>
+        <CardContent className="py-8 text-center text-sm text-muted-foreground">
+          Dados de canal indisponíveis — a edge fin-valor-cockpit em produção ainda não devolve o rollup por canal (redeploy pendente).
+        </CardContent>
+      </Card>
+    );
+  }
+  const receitaTotal = porCanal.reduce((s, c) => s + c.receita, 0);
+  const receitaDigital = porCanal.filter((c) => CANAIS_DIGITAIS.has(c.canal)).reduce((s, c) => s + c.receita, 0);
+  const pedidosTotal = porCanal.reduce((s, c) => s + c.pedidos, 0);
+  const pedidosDigital = porCanal.filter((c) => CANAIS_DIGITAIS.has(c.canal)).reduce((s, c) => s + c.pedidos, 0);
+  const pctDigital = receitaTotal > 0 ? receitaDigital / receitaTotal : 0;
+  const pct = (x: number) => `${(x * 100).toFixed(x > 0 && x < 0.01 ? 2 : 1)}%`;
+  return (
+    <div className="space-y-3">
+      {pctDigital < 0.01 && (
+        <Card>
+          <CardContent className="py-3 text-sm text-status-warning">
+            O canal digital ainda não tem volume — {pct(1 - pctDigital)} da receita TTM entra direto no ERP
+            ({pedidosDigital} de {pedidosTotal} pedidos nasceram no app). A comparação de margem entre canais
+            fica armada e ativa sozinha quando houver venda pelo app.
+          </CardContent>
+        </Card>
+      )}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">
+            Digitalização da venda: {pct(pctDigital)} da receita nasce no app · {pct(receitaTotal > 0 ? 1 - pctDigital : 0)} direto no ERP
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="text-sm overflow-x-auto">
+          <table className="w-full min-w-[600px]">
+            <thead>
+              <tr className="text-muted-foreground text-xs">
+                <th className="text-left py-1">Canal</th>
+                <th className="text-right">Pedidos</th>
+                <th className="text-right">Clientes</th>
+                <th className="text-right">Receita</th>
+                <th className="text-right">Margem contrib.</th>
+                <th className="text-right">Margem %</th>
+                <th className="text-right">Ticket médio</th>
+              </tr>
+            </thead>
+            <tbody>
+              {porCanal.map((c) => {
+                // Margem % só sobre a fatia COM custo (senão itens sem custo diluiriam o percentual).
+                const receitaComCm = c.receita - c.receita_sem_cm;
+                const cmPct = c.cm != null && receitaComCm > 0 ? c.cm / receitaComCm : null;
+                return (
+                  <tr key={c.canal} className="border-t border-border">
+                    <td className="py-1">{CANAL_LABEL[c.canal]}</td>
+                    <td className="text-right font-tabular">{c.pedidos.toLocaleString('pt-BR')}</td>
+                    <td className="text-right font-tabular">{c.clientes.toLocaleString('pt-BR')}</td>
+                    <td className="text-right font-tabular">{brl(c.receita)}</td>
+                    <td className="text-right font-tabular">
+                      {brl(c.cm)}
+                      {c.cm_incompleto && (
+                        <div className="text-[10px] leading-tight text-muted-foreground">
+                          parcial · {brl(c.receita_sem_cm)} sem custo
+                        </div>
+                      )}
+                    </td>
+                    <td className="text-right font-tabular">{cmPct == null ? '—' : `${(cmPct * 100).toFixed(1)}%`}</td>
+                    <td className="text-right font-tabular">{c.pedidos > 0 ? brl(c.receita / c.pedidos) : '—'}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          <p className="text-xs text-muted-foreground mt-3">
+            Margem de contribuição (receita − custo), não lucro: sem imposto, frete e encargo de capital.
+            Margem % calculada só sobre a fatia com custo cadastrado. Base: itens Oben faturáveis no TTM.
+          </p>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 export default function FinanceiroValorCockpit() {
   const { isMaster, isGestorComercial } = useAuth();
-  const [aba, setAba] = useState<'cliente' | 'sku'>('cliente');
+  const [aba, setAba] = useState<'cliente' | 'sku' | 'canal'>('cliente');
   const podeVer = isMaster || isGestorComercial;
   const { data, isLoading, error } = useValorCockpit(podeVer);
 
@@ -50,7 +145,7 @@ export default function FinanceiroValorCockpit() {
       <div className="p-6">
         <Card>
           <CardContent className="py-6 text-sm text-status-error">
-            Erro: {error instanceof Error ? error.message : String(error)}
+            Erro: {mensagemDeErro(error) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.'}
           </CardContent>
         </Card>
       </div>
@@ -131,6 +226,26 @@ export default function FinanceiroValorCockpit() {
         </p>
       )}
 
+      {data.giroExecutivo && data.giroExecutivo.skus_medidos > 0 && (
+        <Card>
+          <CardContent className="py-3 text-sm flex flex-wrap gap-x-6 gap-y-1 items-baseline">
+            <span>
+              Capital em estoque (medido): <span className="font-tabular font-medium">{brl(data.giroExecutivo.capital_medido)}</span>
+            </span>
+            <span>
+              Dinheiro morto (sem venda no TTM): <span className={`font-tabular font-medium ${data.giroExecutivo.capital_sem_venda_ttm > 0 ? 'text-status-warning' : ''}`}>{brl(data.giroExecutivo.capital_sem_venda_ttm)}</span>
+            </span>
+            <span>
+              Retorno s/ estoque (proxy): <span className="font-tabular font-medium">{data.giroExecutivo.retorno_proxy != null ? `${(data.giroExecutivo.retorno_proxy * 100).toFixed(0)}%` : '—'}</span>
+            </span>
+            <span className="text-xs text-muted-foreground">
+              margem TTM ÷ snapshot de capital — proxy, não GMROI (sem estoque médio histórico)
+              {data.giroExecutivo.skus_sem_valor > 0 && ` · ${data.giroExecutivo.skus_sem_valor} SKU(s) sem valor confiável fora do total`}
+            </span>
+          </CardContent>
+        </Card>
+      )}
+
       <div className="flex gap-2">
         <Button
           variant={aba === 'cliente' ? 'default' : 'outline'}
@@ -146,8 +261,18 @@ export default function FinanceiroValorCockpit() {
         >
           Por SKU
         </Button>
+        <Button
+          variant={aba === 'canal' ? 'default' : 'outline'}
+          size="sm"
+          onClick={() => setAba('canal')}
+        >
+          Por canal
+        </Button>
       </div>
 
+      {aba === 'canal' ? (
+        <CanalSection porCanal={data.porCanal} />
+      ) : (
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Piores destruidores de valor primeiro</CardTitle>
@@ -239,6 +364,7 @@ export default function FinanceiroValorCockpit() {
           )}
         </CardContent>
       </Card>
+      )}
 
       <p className="text-xs text-muted-foreground">
         Direcional: custo é médio atual (sem BOM), imposto estimado nível-empresa, estoque é snapshot run-rate. Escopo: Oben.

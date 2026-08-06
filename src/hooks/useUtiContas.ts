@@ -73,7 +73,10 @@ async function fetchAll<T>(
   for (let from = 0; ; from += PAGE) {
     const { data, error } = await build(from, from + PAGE - 1);
     if (error) throw new Error(error.message);
-    const rows = data ?? [];
+    // data null SEM error = malformada, não fim (classe #1338→#1564; mesmo contrato do
+    // fetchAllPages canônico): tratá-la como fim truncava scores/títulos/snapshots da UTI.
+    if (data == null) throw new Error('fetchAll (UTI): data null sem error — malformada, não é fim');
+    const rows = data;
     out.push(...rows);
     if (rows.length < PAGE) break;
   }

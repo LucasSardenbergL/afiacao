@@ -12,6 +12,7 @@ import { fmt, objectiveColors, profileLabels } from './config';
 import { Section, MetricRow, CopyButton } from './PlanSection';
 import { RecordResultDialog } from './RecordResultDialog';
 import type { RecordResultPayload } from './types';
+import { formatMargemPct } from '@/lib/format';
 
 export const PlanCard = ({
   plan, expanded, onToggle, onCopy, copiedText, onRecordResult,
@@ -63,7 +64,10 @@ export const PlanCard = ({
         </div>
 
         {/* Efficiency indicator */}
-        {plan.estimatedProfitPerHour > 0 && (
+        {/* `!= null` explícito: o R$/h é tri-estado (indecidível quando não há LIE). Sem o
+            guard, `null > 0` seria `false` por coerção — o mesmo resultado por acidente, e
+            o próximo `null < x` que alguém escrever aqui seria `true` (money-path §2). */}
+        {plan.estimatedProfitPerHour != null && plan.estimatedProfitPerHour > 0 && (
           <div className={`mt-1.5 flex items-center gap-1 text-[9px] ${
             plan.estimatedProfitPerHour >= 50 ? 'text-status-success' : 'text-status-warning'
           }`}>
@@ -77,9 +81,12 @@ export const PlanCard = ({
           <div className="mt-3 space-y-3">
             {/* Diagnosis */}
             <Section title="Diagnóstico Resumido" icon={Heart}>
-              <MetricRow label="Margem atual" value={`${plan.currentMarginPct.toFixed(1)}%`} />
+              <MetricRow label="Margem atual" value={formatMargemPct(plan.currentMarginPct)} />
               <MetricRow label="Média cluster" value={plan.clusterAvgMarginPct == null ? '—' : `${plan.clusterAvgMarginPct.toFixed(1)}%`} />
-              <MetricRow label="Potencial expansão" value={`${plan.expansionPotential.toFixed(0)}%`} />
+              {/* "—" e não "0%": expansion_score não tem writer (NULL em 6.633/6.633 linhas), e
+                  "0%" leria como veredito de que o cliente não tem espaço para crescer. Mesmo
+                  tratamento do clusterAvgMarginPct logo acima. */}
+              <MetricRow label="Potencial expansão" value={plan.expansionPotential == null ? '—' : `${plan.expansionPotential.toFixed(0)}%`} />
               <MetricRow label="Perfil" value={profileLabels[plan.customerProfile] || plan.customerProfile} />
             </Section>
 
@@ -88,7 +95,10 @@ export const PlanCard = ({
               <Section title="Projeção de LTV" icon={BarChart3}>
                 <MetricRow label="Faturamento atual/ano" value={fmt(plan.ltvProjection.current_annual)} />
                 <MetricRow label="Projetado/ano" value={fmt(plan.ltvProjection.projected_annual)} />
-                <MetricRow label="Crescimento" value={`+${plan.ltvProjection.growth_pct}%`} />
+                <MetricRow
+                  label="Crescimento"
+                  value={plan.ltvProjection.growth_pct == null ? '—' : `+${plan.ltvProjection.growth_pct}%`}
+                />
               </Section>
             )}
 
@@ -118,12 +128,20 @@ export const PlanCard = ({
             )}
 
             {/* Bundle */}
-            {plan.bundleLie > 0 && (
+            {/* Sem LIE medido não se afirma que há bundle prioritário (precisão > recall):
+                `null` esconde a seção, como o 0 já escondia. O que muda é o resto — os
+                campos DENTRO dela deixam de exibir zero fabricado. */}
+            {plan.bundleLie != null && plan.bundleLie > 0 && (
               <Section title="Bundle Prioritário" icon={Package}>
                 <MetricRow label="LIE Bundle" value={fmt(plan.bundleLie)} />
-                <MetricRow label="Probabilidade" value={`${plan.bundleProbability.toFixed(1)}%`} />
+                {/* "—" e não "0,0%": p_bundle é nullable na origem, e "0,0% de chance de
+                    fechar" é um veredito sobre o bundle que ninguém calculou. */}
+                <MetricRow
+                  label="Probabilidade"
+                  value={plan.bundleProbability == null ? '—' : `${plan.bundleProbability.toFixed(1)}%`}
+                />
                 <MetricRow label="Margem incremental" value={fmt(plan.bundleIncrementalMargin)} />
-                {plan.bestIndividualLie > 0 && (
+                {plan.bestIndividualLie != null && plan.bestIndividualLie > 0 && (
                   <MetricRow label="Melhor individual" value={fmt(plan.bestIndividualLie)} />
                 )}
               </Section>
@@ -177,7 +195,11 @@ export const PlanCard = ({
                   <div key={i} className="p-2 rounded bg-muted/30 space-y-1">
                     <div className="flex items-center justify-between">
                       <p className="text-xs font-medium text-status-error">⚠ {obj.objection}</p>
-                      <Badge variant="outline" className="text-[8px]">{obj.probability}%</Badge>
+                      {/* probability é OMITIDA quando a IA não soube estimar — exibir
+                          "0%" ou "undefined%" afirmaria algo que ela não disse. */}
+                      {obj.probability != null && (
+                        <Badge variant="outline" className="text-[8px]">{obj.probability}%</Badge>
+                      )}
                     </div>
                     <div className="space-y-0.5">
                       <div className="flex items-start gap-1">

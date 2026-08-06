@@ -38,6 +38,57 @@ if [ "$n_sessoes" -gt 6 ]; then
   avisos="${avisos}${n_sessoes} sessões Claude vivas → a alavanca real de RAM é FECHAR sessões (wt:status lista as ociosas). "
 fi
 
+# --- 4) semáforo `heavy` desatualizado ou ausente -----------------------------
+# ~/.local/bin/heavy é CÓPIA de scripts/heavy.sh: mergear na main NÃO atualiza o
+# semáforo em uso (#1459 ficou inerte). Só AVISA — não instala: o CI é ubuntu e
+# nunca prova o heavy (test-heavy.sh é macOS-only), então auto-instalar propagaria
+# para todas as sessões um script não validado, sem ninguém no circuito.
+# A comparação NÃO é reimplementada aqui: quem define os estados é o
+# heavy-install.sh --status, num lugar só (contrato de 4 estados no header dele).
+# Script ausente (worktree antiga) → silêncio.
+#
+# Teto de 3s no --status: este é o PRIMEIRO subprocess BLOQUEANTE deste hook —
+# os blocos 1)/2)/3) acima nunca bloqueiam (o `bun install` do bloco 1 é
+# explicitamente backgrounded; `sysctl`/`pgrep` sempre retornam na hora). Este
+# bloqueia em I/O DE DISCO (git show), justo sob a pressão de swap que o bloco 2
+# existe para reportar — isto NÃO é "o mesmo risco de sempre", é risco NOVO.
+# Sem teto, um `git show` lento pode consumir o timeout:10 do SessionStart
+# (settings.json) inteiro; como a saída só é emitida no fim do script, o hook
+# inteiro morre e NENHUM aviso sai, nem os de 2)/3) já prontos antes deste bloco
+# (medido: >12s nesse ramo, o que já estoura o timeout:10 sozinho).
+#
+# `timeout(1)` não é nativo do macOS (só via Homebrew, /opt/homebrew/bin) — e o
+# PATH deste hook é HERDADO DO PROCESSO DO APP, não do perfil de shell: mesmo
+# com o Homebrew instalado, `command -v timeout` pode não achar porque
+# /opt/homebrew/bin nunca entrou no PATH deste processo. Fallback de caminho
+# absoluto cobre esse caso comum; sem nenhum dos dois, roda sem teto (nunca
+# pula nem quebra por causa disso).
+TO=""
+if command -v timeout >/dev/null 2>&1; then
+  TO="timeout"
+elif [ -x /opt/homebrew/bin/timeout ]; then
+  TO="/opt/homebrew/bin/timeout"
+fi
+
+if [ -x scripts/heavy-install.sh ]; then
+  # shellcheck disable=SC2086  # ${TO:+$TO 3} split de propósito: 0 ou 2 palavras
+  st="$(${TO:+$TO 3} bash scripts/heavy-install.sh --status 2>&1)"
+  rc=$?
+  case "$rc" in
+    0) : ;; # sincronizado OU em voo (--daqui proposital nesta worktree) — silêncio nos dois
+    1)
+      avisos="${avisos}${st:-heavy divergente ou ausente} → rode 'bun run heavy:install' (o heavy em uso é CÓPIA de scripts/heavy.sh; merge na main não atualiza o semáforo). Se outra worktree instalou com --daqui de propósito, ignore. "
+      ;;
+    *)
+      # rc=3 (heavy-install.sh) OU rc=124 (o `timeout` matou por estourar os 3s)
+      # OU qualquer outro código inesperado: NÃO é "divergente" — é falta de
+      # dado. $st carrega o remédio real (ex.: "'git fetch origin' resolve"),
+      # por isso 2>&1 acima em vez de descartar o stderr.
+      avisos="${avisos}não consegui verificar o heavy (${st:-sem detalhe; pode ter sido o teto de 3s}) — isto é FALTA DE DADO, a comparação nem rodou; rode 'bash scripts/heavy-install.sh --status' manualmente pra ver a causa. "
+      ;;
+  esac
+fi
+
 # --- saída --------------------------------------------------------------------
 if [ -n "$avisos" ] && command -v jq >/dev/null 2>&1; then
   jq -n --arg c "Vigia do worktree: $avisos" \

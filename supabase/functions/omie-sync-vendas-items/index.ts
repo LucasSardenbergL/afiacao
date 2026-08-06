@@ -6,6 +6,7 @@
 // Defaults: empresa = "OBEN", dias = 180
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { avaliarPagina, proximoTotalPaginas } from "../_shared/omie-paginacao.ts";
 
 // ─── Type definitions ───
 
@@ -115,6 +116,8 @@ const OMIE_NF_URL = "https://app.omie.com.br/api/v1/produtos/nfconsultar/";
 const RATE_LIMIT_MS = 1100;
 const TIMEOUT_GUARD_MS = 25_000; // retornar antes do gateway cortar (~30s)
 const MAX_RETRIES = 3;
+// Teto anti-runaway do ListarNF: 500 × 50 = 25k NF-es numa janela >> volume real de 180d.
+const MAX_PAGINAS_NF = 500;
 
 // CFOPs de operações que NÃO são venda → pular item
 const CFOPS_NAO_VENDA = new Set<string>([
@@ -225,6 +228,13 @@ async function omieCall(
         return { ok: false, status: res.status, error: fs || "Omie fault" };
       }
 
+      // Só 425 e 429 tinham ramo próprio: qualquer OUTRO status não-2xx (500/502/503) cujo corpo
+      // parseasse SEM `faultstring` chegava aqui como `ok:true` com `data` vazio — e o laço, que
+      // agora LANÇA em `!result.ok`, não via falha nenhuma: lista e total ausentes viravam fim da
+      // fonte pelo `avaliarPagina`. O guard de paginação não alcança o que o wrapper já aprovou.
+      if (!res.ok) {
+        return { ok: false, status: res.status, error: `HTTP ${res.status}: ${text.slice(0, 200)}` };
+      }
       return { ok: true, status: res.status, data };
     } catch (err) {
       console.error(`omieCall network error attempt ${attempt + 1}:`, err);
@@ -357,18 +367,23 @@ Deno.serve(async (req) => {
         console.error("API block (425) detectado, interrompendo");
         break;
       }
+      // Página que falha após os retries LANÇA: o erros++/continue antigo PULAVA a página
+      // pra sempre (pagina++) e as NF-es dela sumiam do venda_items_history com o run
+      // devolvendo ok:true. A retomada é o incremental por chave (próximo run re-cobre).
       if (!result.ok) {
-        erros++;
-        console.error(`Erro ListarNF página ${pagina}:`, result.error);
-        // Avança página para não ficar em loop infinito
-        pagina++;
-        await sleep(RATE_LIMIT_MS);
-        continue;
+        throw new Error(`ListarNF página ${pagina} falhou após retries: ${result.error}`);
       }
 
       const data: OmieNfResponseData = result.data ?? {};
-      totalPaginas = Number(data.total_de_paginas ?? 1);
+      // Piso monotônico + teto fail-fast (_shared/omie-paginacao.ts): o `?? 1` por resposta
+      // encolhia o teto numa intermediária sem o campo e a cauda da janela era perdida.
+      totalPaginas = proximoTotalPaginas(totalPaginas, data.total_de_paginas, MAX_PAGINAS_NF);
       const nfes: OmieNfRecord[] = Array.isArray(data.nfCadastro) ? data.nfCadastro : [];
+      const veredicto = avaliarPagina(nfes.length, pagina, totalPaginas);
+      if (veredicto === "anomalia") {
+        throw new Error(`página ${pagina}/${totalPaginas} do ListarNF veio vazia antes do fim declarado — abortando (retrato parcial)`);
+      }
+      if (veredicto === "fim") break;
       nfes_listadas += nfes.length;
 
       // Diagnóstico do primeiro payload (apenas página 1)
@@ -553,9 +568,15 @@ Deno.serve(async (req) => {
       interrompido_por_api_block,
     };
 
+    // `completo` separa "cobri a janela inteira" de "parei no meio" (timeout de 25s ou bloqueio
+    // 425 da API). Os dois são retomada legítima — o incremental por chave re-cobre no próximo
+    // run —, mas o caller (omie-cron-diario) só via `ok:true` e não tinha COMO distinguir uma
+    // janela coberta de uma janela pela metade. Sinal explícito > silêncio otimista.
+    const completo = !interrompido_por_timeout && !interrompido_por_api_block;
     return new Response(
       JSON.stringify({
         ok: true,
+        completo,
         duracao_ms: Date.now() - startedAt,
         summary: [summary],
       }),

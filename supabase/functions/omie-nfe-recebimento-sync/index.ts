@@ -1,5 +1,10 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
+import { avaliarPagina, proximoTotalPaginas } from "../_shared/omie-paginacao.ts";
+
+// Teto anti-runaway do total DECLARADO pelo Omie (o teto de LEITURA por rodada continua
+// maxPages=3, deliberado: cron horário com MAX_DETAIL_CALLS=1 — amostra retomável, não truncagem).
+const MAX_PAGINAS_RECEBIMENTOS = 500;
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -33,6 +38,7 @@ interface OmieRecebimentoCabec {
 
 interface OmieRecebimentoInfoCadastro {
   cCancelada?: string;
+  cRecebido?: string;
 }
 
 interface OmieRecebimentoListItem {
@@ -67,6 +73,7 @@ interface OmieRecebimentoItem {
 interface OmieConsultarRecebimentoResponse {
   cabec?: OmieRecebimentoCabec;
   itensRecebimento?: OmieRecebimentoItem[];
+  infoCadastro?: OmieRecebimentoInfoCadastro;
 }
 
 interface WarehouseRow {
@@ -192,8 +199,11 @@ Deno.serve(async (req) => {
         .not("omie_id_receb", "is", null);
 
       const existingRecebRows = (existingRecebimentos ?? []) as unknown as NfeRecebimentoExistingRow[];
+      // Normaliza pra number: o Omie pode devolver nIdReceb como string na listagem — sem
+      // isso o has() nunca casa e as MAX_DETAIL_CALLS se esgotam re-consultando NFs já
+      // importadas (starvation: NF nova nunca chega a ser vista). (Codex P2)
       const existingIds = new Set(
-        existingRecebRows.map((r) => r.omie_id_receb)
+        existingRecebRows.map((r) => Number(r.omie_id_receb))
       );
 
       // Filter last 30 days to get recent NF-es with cChaveNfe
@@ -204,6 +214,7 @@ Deno.serve(async (req) => {
       const allRecebimentos: OmieRecebimentoListItem[] = [];
       let page = 1;
       const maxPages = 3;
+      let totalPages = 1; // piso monotônico do total declarado (guards de _shared/omie-paginacao.ts)
       let hasMore = true;
 
       while (hasMore && page <= maxPages) {
@@ -219,14 +230,22 @@ Deno.serve(async (req) => {
               dtEmissaoDe: dtDe,
             },
           )) as unknown as OmieListarRecebimentosResponse;
+          totalPages = proximoTotalPaginas(totalPages, pageResult.nTotalPaginas, MAX_PAGINAS_RECEBIMENTOS);
           const recs = pageResult.recebimentos ?? [];
+          const veredicto = avaliarPagina(recs.length, page, totalPages);
+          if (veredicto === "anomalia") {
+            throw new Error(`página ${page}/${totalPages} veio vazia antes do fim declarado — acumulado parcial`);
+          }
+          if (veredicto === "fim") break;
           allRecebimentos.push(...recs);
-          const totalPages = pageResult.nTotalPaginas ?? 1;
           console.log(`[sync] Página ${page}/${totalPages}, ${recs.length} registros`);
           hasMore = page < totalPages;
           page++;
         } catch (pgErr) {
           const msg = pgErr instanceof Error ? pgErr.message : String(pgErr);
+          // REGISTRA em errors[] (surfaça no response) — o console.warn sozinho deixava o
+          // acumulado parcial seguir adiante com success:true e ninguém sabia da página perdida.
+          errors.push(`${cred.warehouseCode} ListarRecebimentos página ${page}: ${msg}`);
           console.warn(`[sync] Erro na página ${page}: ${msg}`);
           break;
         }
@@ -235,7 +254,11 @@ Deno.serve(async (req) => {
       console.log(`[sync] ${allRecebimentos.length} registros recentes (últimos 30 dias)`);
 
       let detailCalls = 0;
-      const MAX_DETAIL_CALLS = 10;
+      // 1 por conta/rodada: ConsultarRecebimento tem trava anti-redundância POR MÉTODO
+      // (~60s) no Omie — rajada de detalhes = "1 passa, resto REDUNDANT" (visto em prod
+      // 2026-07-16). Com o cron horário, 1/rodada importa 13/dia por conta — dá conta do
+      // fluxo. Follow-up no GOAL: migrar pra ListarRecebimentos(cExibirDetalhes:'S').
+      const MAX_DETAIL_CALLS = 1;
 
       for (const rec of allRecebimentos) {
         if (detailCalls >= MAX_DETAIL_CALLS) break;
@@ -244,8 +267,8 @@ Deno.serve(async (req) => {
         const nIdReceb = cabec.nIdReceb;
         if (!nIdReceb) continue;
 
-        // Quick skip if already imported
-        if (existingIds.has(nIdReceb)) {
+        // Quick skip if already imported (normalizado pra number, como o Set)
+        if (existingIds.has(Number(nIdReceb))) {
           totalSkipped++;
           continue;
         }
@@ -269,6 +292,9 @@ Deno.serve(async (req) => {
           )) as unknown as OmieConsultarRecebimentoResponse;
         } catch (detErr) {
           const msg = detErr instanceof Error ? detErr.message : String(detErr);
+          // REGISTRA: com MAX_DETAIL_CALLS=1, a MESMA NF falhando toda hora starva a fila
+          // inteira atrás dela com success:true — errors[] é o único sinal visível disso.
+          errors.push(`${cred.warehouseCode} ConsultarRecebimento ${nIdReceb}: ${msg}`);
           console.warn(`[sync] Erro ao consultar recebimento ${nIdReceb}: ${msg}`);
           continue;
         }
@@ -278,6 +304,15 @@ Deno.serve(async (req) => {
         if (detailCalls <= 2) {
           console.log(`[sync] Detail cabec keys for ${nIdReceb}: ${JSON.stringify(Object.keys(detCabec))}`);
           console.log(`[sync] Detail cabec sample: ${JSON.stringify(detCabec).slice(0, 500)}`);
+        }
+
+        // NF que o Omie JÁ recebeu (cRecebido=S) não nasce 'pendente' no app — a entrada
+        // foi feita lá (humano); importá-la só criaria pendência fantasma no painel de
+        // conferência (a varredura omie-nfe-reconcile teria que baixá-la em seguida).
+        if (detail.infoCadastro?.cRecebido === "S") {
+          totalSkipped++;
+          console.log(`[sync] Recebimento ${nIdReceb} já recebido no Omie (cRecebido=S), pulando`);
+          continue;
         }
 
         const chaveAcesso = detCabec.cChaveNFe || detCabec.cChaveNfe || null;
@@ -380,8 +415,11 @@ Deno.serve(async (req) => {
 
   console.log(`[sync] Concluído: ${totalImported} importadas, ${totalSkipped} já existentes, ${errors.length} erros`);
 
+  // success reflete o que ACONTECEU, não o fato de a função ter chegado ao fim: com página
+  // perdida ou detalhe que falhou, "sucesso" esconderia NF-e faltando no painel de conferência.
+  // (O HTTP segue 200: o run é retomável pelo cron horário, não é erro de infra.)
   return jsonResponse({
-    success: true,
+    success: errors.length === 0,
     imported: totalImported,
     skipped: totalSkipped,
     errors: errors.length > 0 ? errors : undefined,

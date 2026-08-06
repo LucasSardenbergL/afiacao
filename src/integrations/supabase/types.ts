@@ -14,6 +14,39 @@ export type Database = {
   }
   public: {
     Tables: {
+      _quarantine_omie_clientes_20260722: {
+        Row: {
+          created_at: string
+          empresa_omie: string
+          id: string
+          omie_codigo_cliente: number
+          omie_codigo_cliente_integracao: string | null
+          omie_codigo_vendedor: number | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          empresa_omie?: string
+          id?: string
+          omie_codigo_cliente: number
+          omie_codigo_cliente_integracao?: string | null
+          omie_codigo_vendedor?: number | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          empresa_omie?: string
+          id?: string
+          omie_codigo_cliente?: number
+          omie_codigo_cliente_integracao?: string | null
+          omie_codigo_vendedor?: number | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       abc_xyz_classification: {
         Row: {
           classe_abc: Database["public"]["Enums"]["classe_abc"] | null
@@ -83,6 +116,42 @@ export type Database = {
           sku_codigo_omie?: number
           sku_descricao?: string | null
           valor_consumido_12m?: number | null
+        }
+        Relationships: []
+      }
+      acoes_execucoes: {
+        Row: {
+          acao: string
+          detalhes: Json | null
+          executado_por: string | null
+          executado_por_nome: string | null
+          finalizado_em: string | null
+          id: string
+          iniciado_em: string
+          origem: string
+          status: string
+        }
+        Insert: {
+          acao: string
+          detalhes?: Json | null
+          executado_por?: string | null
+          executado_por_nome?: string | null
+          finalizado_em?: string | null
+          id?: string
+          iniciado_em?: string
+          origem?: string
+          status?: string
+        }
+        Update: {
+          acao?: string
+          detalhes?: Json | null
+          executado_por?: string | null
+          executado_por_nome?: string | null
+          finalizado_em?: string | null
+          id?: string
+          iniciado_em?: string
+          origem?: string
+          status?: string
         }
         Relationships: []
       }
@@ -2413,6 +2482,8 @@ export type Database = {
           health_class: string | null
           health_score: number | null
           id: string
+          itens_com_custo: number | null
+          itens_sem_custo: number | null
           last_signal_recalc_at: string | null
           m_score: number | null
           priority_score: number | null
@@ -2444,6 +2515,8 @@ export type Database = {
           health_class?: string | null
           health_score?: number | null
           id?: string
+          itens_com_custo?: number | null
+          itens_sem_custo?: number | null
           last_signal_recalc_at?: string | null
           m_score?: number | null
           priority_score?: number | null
@@ -2475,6 +2548,8 @@ export type Database = {
           health_class?: string | null
           health_score?: number | null
           id?: string
+          itens_com_custo?: number | null
+          itens_sem_custo?: number | null
           last_signal_recalc_at?: string | null
           m_score?: number | null
           priority_score?: number | null
@@ -6323,6 +6398,48 @@ export type Database = {
         }
         Relationships: []
       }
+      ia_uso_evento: {
+        Row: {
+          criado_em: string
+          funcao: string
+          id: number
+          user_id: string
+        }
+        Insert: {
+          criado_em?: string
+          funcao: string
+          id?: never
+          user_id: string
+        }
+        Update: {
+          criado_em?: string
+          funcao?: string
+          id?: never
+          user_id?: string
+        }
+        Relationships: []
+      }
+      ia_uso_limite: {
+        Row: {
+          atualizado_em: string
+          funcao: string
+          limite_dia: number
+          limite_hora: number
+        }
+        Insert: {
+          atualizado_em?: string
+          funcao: string
+          limite_dia: number
+          limite_hora: number
+        }
+        Update: {
+          atualizado_em?: string
+          funcao?: string
+          limite_dia?: number
+          limite_hora?: number
+        }
+        Relationships: []
+      }
       impersonation_audit: {
         Row: {
           actor_user_id: string
@@ -7621,39 +7738,6 @@ export type Database = {
           },
         ]
       }
-      omie_clientes: {
-        Row: {
-          created_at: string
-          empresa_omie: string
-          id: string
-          omie_codigo_cliente: number
-          omie_codigo_cliente_integracao: string | null
-          omie_codigo_vendedor: number | null
-          updated_at: string
-          user_id: string
-        }
-        Insert: {
-          created_at?: string
-          empresa_omie?: string
-          id?: string
-          omie_codigo_cliente: number
-          omie_codigo_cliente_integracao?: string | null
-          omie_codigo_vendedor?: number | null
-          updated_at?: string
-          user_id: string
-        }
-        Update: {
-          created_at?: string
-          empresa_omie?: string
-          id?: string
-          omie_codigo_cliente?: number
-          omie_codigo_cliente_integracao?: string | null
-          omie_codigo_vendedor?: number | null
-          updated_at?: string
-          user_id?: string
-        }
-        Relationships: []
-      }
       omie_clientes_nao_vinculados: {
         Row: {
           cidade: string | null
@@ -8775,9 +8859,11 @@ export type Database = {
           promocao_item_id: number | null
           qtde_final: number | null
           qtde_sem_promocao: number | null
+          qtde_sem_teto: number | null
           qtde_sugerida: number
           sku_codigo_omie: string
           sku_descricao: string | null
+          teto_cobertura_aplicado: boolean
           valor_linha: number | null
         }
         Insert: {
@@ -8799,9 +8885,11 @@ export type Database = {
           promocao_item_id?: number | null
           qtde_final?: number | null
           qtde_sem_promocao?: number | null
+          qtde_sem_teto?: number | null
           qtde_sugerida: number
           sku_codigo_omie: string
           sku_descricao?: string | null
+          teto_cobertura_aplicado?: boolean
           valor_linha?: number | null
         }
         Update: {
@@ -8823,9 +8911,11 @@ export type Database = {
           promocao_item_id?: number | null
           qtde_final?: number | null
           qtde_sem_promocao?: number | null
+          qtde_sem_teto?: number | null
           qtde_sugerida?: number
           sku_codigo_omie?: string
           sku_descricao?: string | null
+          teto_cobertura_aplicado?: boolean
           valor_linha?: number | null
         }
         Relationships: [
@@ -10340,6 +10430,7 @@ export type Database = {
           nfe_chave_acesso: string | null
           nfe_numero: string | null
           nfe_serie: string | null
+          nid_receb: number | null
           numero_contrato_fornecedor: string | null
           numero_pedido: string | null
           numero_pedido_fornecedor: string | null
@@ -10381,6 +10472,7 @@ export type Database = {
           nfe_chave_acesso?: string | null
           nfe_numero?: string | null
           nfe_serie?: string | null
+          nid_receb?: number | null
           numero_contrato_fornecedor?: string | null
           numero_pedido?: string | null
           numero_pedido_fornecedor?: string | null
@@ -10422,6 +10514,7 @@ export type Database = {
           nfe_chave_acesso?: string | null
           nfe_numero?: string | null
           nfe_serie?: string | null
+          nid_receb?: number | null
           numero_contrato_fornecedor?: string | null
           numero_pedido?: string | null
           numero_pedido_fornecedor?: string | null
@@ -11232,6 +11325,7 @@ export type Database = {
       }
       reposicao_motor_run: {
         Row: {
+          capados_n: number
           criado_em: string
           data_ciclo: string
           empresa: string
@@ -11242,6 +11336,7 @@ export type Database = {
           suprimidos_n: number
         }
         Insert: {
+          capados_n?: number
           criado_em?: string
           data_ciclo: string
           empresa: string
@@ -11252,6 +11347,7 @@ export type Database = {
           suprimidos_n?: number
         }
         Update: {
+          capados_n?: number
           criado_em?: string
           data_ciclo?: string
           empresa?: string
@@ -11466,6 +11562,129 @@ export type Database = {
           pinado_por?: string | null
           ponto_pedido_rejeitado?: number
           sku_codigo_omie?: string
+        }
+        Relationships: []
+      }
+      reposicao_pedidos_compra_run: {
+        Row: {
+          empresa: Database["public"]["Enums"]["empresa_reposicao"]
+          finalizado_em: string
+          ids_distintos: number
+          janela_ate: string
+          janela_de: string
+          run_id: string
+          seq: number
+          status: string
+          volume_baseline: number | null
+          volume_ok: boolean | null
+        }
+        Insert: {
+          empresa: Database["public"]["Enums"]["empresa_reposicao"]
+          finalizado_em?: string
+          ids_distintos: number
+          janela_ate: string
+          janela_de: string
+          run_id: string
+          seq?: number
+          status?: string
+          volume_baseline?: number | null
+          volume_ok?: boolean | null
+        }
+        Update: {
+          empresa?: Database["public"]["Enums"]["empresa_reposicao"]
+          finalizado_em?: string
+          ids_distintos?: number
+          janela_ate?: string
+          janela_de?: string
+          run_id?: string
+          seq?: number
+          status?: string
+          volume_baseline?: number | null
+          volume_ok?: boolean | null
+        }
+        Relationships: []
+      }
+      reposicao_po_last_seen: {
+        Row: {
+          empresa: Database["public"]["Enums"]["empresa_reposicao"]
+          omie_codigo_pedido: number
+          run_id: string
+          visto_em: string
+          visto_seq: number
+        }
+        Insert: {
+          empresa: Database["public"]["Enums"]["empresa_reposicao"]
+          omie_codigo_pedido: number
+          run_id: string
+          visto_em: string
+          visto_seq: number
+        }
+        Update: {
+          empresa?: Database["public"]["Enums"]["empresa_reposicao"]
+          omie_codigo_pedido?: number
+          run_id?: string
+          visto_em?: string
+          visto_seq?: number
+        }
+        Relationships: []
+      }
+      reposicao_teto_cobertura_log: {
+        Row: {
+          cap_teto_ancora: number | null
+          classe_abc: string | null
+          criado_em: string
+          demanda_diaria: number | null
+          empresa: string
+          estoque_efetivo: number | null
+          estoque_maximo: number | null
+          grupo_codigo: string | null
+          id: string
+          motivo: string
+          ponto_pedido: number | null
+          qtde_final: number | null
+          qtde_sem_teto: number | null
+          run_id: string
+          sku_codigo_omie: string
+          sku_descricao: string | null
+          teto_dias: number | null
+        }
+        Insert: {
+          cap_teto_ancora?: number | null
+          classe_abc?: string | null
+          criado_em?: string
+          demanda_diaria?: number | null
+          empresa: string
+          estoque_efetivo?: number | null
+          estoque_maximo?: number | null
+          grupo_codigo?: string | null
+          id?: string
+          motivo: string
+          ponto_pedido?: number | null
+          qtde_final?: number | null
+          qtde_sem_teto?: number | null
+          run_id: string
+          sku_codigo_omie: string
+          sku_descricao?: string | null
+          teto_dias?: number | null
+        }
+        Update: {
+          cap_teto_ancora?: number | null
+          classe_abc?: string | null
+          criado_em?: string
+          demanda_diaria?: number | null
+          empresa?: string
+          estoque_efetivo?: number | null
+          estoque_maximo?: number | null
+          grupo_codigo?: string | null
+          id?: string
+          motivo?: string
+          ponto_pedido?: number | null
+          qtde_final?: number | null
+          qtde_sem_teto?: number | null
+          run_id?: string
+          sku_codigo_omie?: string
+          sku_descricao?: string | null
+          teto_dias?: number | null
         }
         Relationships: []
       }
@@ -12383,6 +12602,45 @@ export type Database = {
         }
         Relationships: []
       }
+      sku_items_sync_controle: {
+        Row: {
+          criado_em: string
+          motivo: string | null
+          tentativas: number
+          tracking_id: string
+          ultima_tentativa: string
+        }
+        Insert: {
+          criado_em?: string
+          motivo?: string | null
+          tentativas?: number
+          tracking_id: string
+          ultima_tentativa?: string
+        }
+        Update: {
+          criado_em?: string
+          motivo?: string | null
+          tentativas?: number
+          tracking_id?: string
+          ultima_tentativa?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sku_items_sync_controle_tracking_id_fkey"
+            columns: ["tracking_id"]
+            isOneToOne: true
+            referencedRelation: "purchase_orders_tracking"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sku_items_sync_controle_tracking_id_fkey"
+            columns: ["tracking_id"]
+            isOneToOne: true
+            referencedRelation: "v_pedidos_em_aberto"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       sku_leadtime_history: {
         Row: {
           created_at: string
@@ -12690,6 +12948,107 @@ export type Database = {
             columns: ["sku_parametro_id"]
             isOneToOne: false
             referencedRelation: "sku_parametros"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      sku_preco_captura_run: {
+        Row: {
+          criado_por: string | null
+          disparo: string
+          empresa: string
+          erro: string | null
+          evidencia_url: string | null
+          id: string
+          iniciado_em: string
+          linhas_finais_portal: number | null
+          modo: string
+          status: string
+          terminado_em: string | null
+          total_alvo: number | null
+          total_falha: number | null
+          total_nao_encontrado: number | null
+          total_ok: number | null
+        }
+        Insert: {
+          criado_por?: string | null
+          disparo: string
+          empresa: string
+          erro?: string | null
+          evidencia_url?: string | null
+          id?: string
+          iniciado_em?: string
+          linhas_finais_portal?: number | null
+          modo: string
+          status?: string
+          terminado_em?: string | null
+          total_alvo?: number | null
+          total_falha?: number | null
+          total_nao_encontrado?: number | null
+          total_ok?: number | null
+        }
+        Update: {
+          criado_por?: string | null
+          disparo?: string
+          empresa?: string
+          erro?: string | null
+          evidencia_url?: string | null
+          id?: string
+          iniciado_em?: string
+          linhas_finais_portal?: number | null
+          modo?: string
+          status?: string
+          terminado_em?: string | null
+          total_alvo?: number | null
+          total_falha?: number | null
+          total_nao_encontrado?: number | null
+          total_ok?: number | null
+        }
+        Relationships: []
+      }
+      sku_preco_captura_run_item: {
+        Row: {
+          criado_em: string
+          detalhe: string | null
+          empresa: string
+          fonte: string | null
+          id: number
+          preco: number | null
+          resultado: string
+          run_id: string
+          sku_codigo_omie: string
+          sku_portal: string
+        }
+        Insert: {
+          criado_em?: string
+          detalhe?: string | null
+          empresa: string
+          fonte?: string | null
+          id?: never
+          preco?: number | null
+          resultado: string
+          run_id: string
+          sku_codigo_omie: string
+          sku_portal: string
+        }
+        Update: {
+          criado_em?: string
+          detalhe?: string | null
+          empresa?: string
+          fonte?: string | null
+          id?: never
+          preco?: number | null
+          resultado?: string
+          run_id?: string
+          sku_codigo_omie?: string
+          sku_portal?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sku_preco_captura_run_item_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: false
+            referencedRelation: "sku_preco_captura_run"
             referencedColumns: ["id"]
           },
         ]
@@ -13644,6 +14003,13 @@ export type Database = {
             referencedRelation: "tint_formulas"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "tint_formula_itens_formula_id_fkey"
+            columns: ["formula_id"]
+            isOneToOne: false
+            referencedRelation: "v_tint_formula_canonica"
+            referencedColumns: ["id"]
+          },
         ]
       }
       tint_formulas: {
@@ -13654,6 +14020,7 @@ export type Database = {
           created_at: string | null
           data_geracao: string | null
           desativada_em: string | null
+          desativada_motivo: string | null
           embalagem_id: string
           id: string
           id_seq: number | null
@@ -13674,6 +14041,7 @@ export type Database = {
           created_at?: string | null
           data_geracao?: string | null
           desativada_em?: string | null
+          desativada_motivo?: string | null
           embalagem_id: string
           id?: string
           id_seq?: number | null
@@ -13694,6 +14062,7 @@ export type Database = {
           created_at?: string | null
           data_geracao?: string | null
           desativada_em?: string | null
+          desativada_motivo?: string | null
           embalagem_id?: string
           id?: string
           id_seq?: number | null
@@ -14407,9 +14776,11 @@ export type Database = {
           cod_produto: string | null
           cor_id: string
           created_at: string
+          expected_item_count: number | null
           id: string
           id_base: string | null
           id_embalagem: string | null
+          is_base_pura: boolean | null
           matched_id: string | null
           nome_cor: string | null
           personalizada: boolean | null
@@ -14426,9 +14797,11 @@ export type Database = {
           cod_produto?: string | null
           cor_id: string
           created_at?: string
+          expected_item_count?: number | null
           id?: string
           id_base?: string | null
           id_embalagem?: string | null
+          is_base_pura?: boolean | null
           matched_id?: string | null
           nome_cor?: string | null
           personalizada?: boolean | null
@@ -14445,9 +14818,11 @@ export type Database = {
           cod_produto?: string | null
           cor_id?: string
           created_at?: string
+          expected_item_count?: number | null
           id?: string
           id_base?: string | null
           id_embalagem?: string | null
+          is_base_pura?: boolean | null
           matched_id?: string | null
           nome_cor?: string | null
           personalizada?: boolean | null
@@ -14964,6 +15339,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "tint_vendas_itens_formula_id_fkey"
+            columns: ["formula_id"]
+            isOneToOne: false
+            referencedRelation: "v_tint_formula_canonica"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "tint_vendas_itens_sku_id_fkey"
             columns: ["sku_id"]
             isOneToOne: false
@@ -15450,6 +15832,45 @@ export type Database = {
           sku_unidade?: string | null
           valor_total?: number | null
           valor_unitario?: number | null
+        }
+        Relationships: []
+      }
+      venda_perdida_log: {
+        Row: {
+          cliente_nome: string | null
+          criado_em: string
+          criado_por: string | null
+          empresa: string
+          id: string
+          motivo: string
+          observacao: string | null
+          quantidade: number
+          sku_codigo_omie: string
+          sku_descricao: string | null
+        }
+        Insert: {
+          cliente_nome?: string | null
+          criado_em?: string
+          criado_por?: string | null
+          empresa?: string
+          id?: string
+          motivo?: string
+          observacao?: string | null
+          quantidade: number
+          sku_codigo_omie: string
+          sku_descricao?: string | null
+        }
+        Update: {
+          cliente_nome?: string | null
+          criado_em?: string
+          criado_por?: string | null
+          empresa?: string
+          id?: string
+          motivo?: string
+          observacao?: string | null
+          quantidade?: number
+          sku_codigo_omie?: string
+          sku_descricao?: string | null
         }
         Relationships: []
       }
@@ -16034,6 +16455,41 @@ export type Database = {
           saidas_realizadas: number | null
         }
         Relationships: []
+      }
+      inventory_position_operacional: {
+        Row: {
+          account: string | null
+          id: string | null
+          omie_codigo_produto: number | null
+          product_id: string | null
+          saldo: number | null
+          synced_at: string | null
+        }
+        Insert: {
+          account?: string | null
+          id?: string | null
+          omie_codigo_produto?: number | null
+          product_id?: string | null
+          saldo?: number | null
+          synced_at?: string | null
+        }
+        Update: {
+          account?: string | null
+          id?: string | null
+          omie_codigo_produto?: number | null
+          product_id?: string | null
+          saldo?: number | null
+          synced_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "inventory_position_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "omie_products"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       omie_customer_account_map_fresco: {
         Row: {
@@ -17110,6 +17566,17 @@ export type Database = {
         }
         Relationships: []
       }
+      v_sku_classe_sb: {
+        Row: {
+          adi: number | null
+          cv2: number | null
+          empresa: string | null
+          n_dias_venda: number | null
+          quadrante: string | null
+          sku_codigo_omie: number | null
+        }
+        Relationships: []
+      }
       v_sku_classificacao_abc_xyz: {
         Row: {
           classe_abc_proposta: string | null
@@ -17188,6 +17655,36 @@ export type Database = {
           sku_descricao: string | null
           sku_unidade: string | null
           valor_total_180d: number | null
+        }
+        Relationships: []
+      }
+      v_sku_leadtime_efetivo: {
+        Row: {
+          dedup_key: string | null
+          empresa: Database["public"]["Enums"]["empresa_reposicao"] | null
+          fornecedor_codigo_omie: number | null
+          fornecedor_nome: string | null
+          grupo_leadtime: string | null
+          lt_bruto_dias_uteis: number | null
+          lt_faturamento_dias_uteis: number | null
+          lt_logistica_dias_uteis: number | null
+          n_copias_origem: number | null
+          nfe_chave_acesso: string | null
+          origem_compra: string | null
+          quantidade_pedida: number | null
+          quantidade_recebida: number | null
+          sku_codigo: string | null
+          sku_codigo_omie: number | null
+          sku_descricao: string | null
+          sku_ncm: string | null
+          sku_unidade: string | null
+          t1_data_pedido: string | null
+          t2_data_faturamento: string | null
+          t3_data_cte: string | null
+          t4_data_recebimento: string | null
+          valor_total: number | null
+          valor_unitario: number | null
+          veio_de_duplicata: boolean | null
         }
         Relationships: []
       }
@@ -17415,6 +17912,15 @@ export type Database = {
         }
         Relationships: []
       }
+      v_sku_ultima_venda: {
+        Row: {
+          empresa: string | null
+          sku_codigo_omie: number | null
+          ultima_venda_data: string | null
+          vendas_registradas: number | null
+        }
+        Relationships: []
+      }
       v_sugestao_negociacao_ativa: {
         Row: {
           campanha_id_gerada: number | null
@@ -17529,6 +18035,40 @@ export type Database = {
           updated_at: string | null
         }
         Relationships: []
+      }
+      v_tint_formula_canonica: {
+        Row: {
+          account: string | null
+          cor_id: string | null
+          id: string | null
+          is_sl: boolean | null
+          nome_cor: string | null
+          personalizada: boolean | null
+          preco_csv_legado: number | null
+          preco_final_sayersystem: number | null
+          preco_piso_legado: number | null
+          receita_valida: boolean | null
+          sku_id: string | null
+          subcolecao_id: string | null
+          tem_receita: boolean | null
+          updated_at: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tint_formulas_sku_id_fkey"
+            columns: ["sku_id"]
+            isOneToOne: false
+            referencedRelation: "tint_skus"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tint_formulas_subcolecao_id_fkey"
+            columns: ["subcolecao_id"]
+            isOneToOne: false
+            referencedRelation: "tint_subcolecoes"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       v_titulo_baixas: {
         Row: {
@@ -17738,11 +18278,28 @@ export type Database = {
         }
         Returns: undefined
       }
+      _registrar_ciclo_oportunidade: {
+        Args: { p_detalhes: Json; p_inicio: string }
+        Returns: undefined
+      }
       _tint_cobertura_bases_lista_email: {
         Args: { p_limit?: number }
         Returns: string
       }
       _tint_preflight: { Args: never; Returns: Json }
+      _tint_watchdog_fase5_transicao: {
+        Args: {
+          p_company: string
+          p_ctx: Json
+          p_fator?: number
+          p_msg: string
+          p_n: number
+          p_sev: string
+          p_tipo: string
+          p_titulo: string
+        }
+        Returns: undefined
+      }
       _vendas_familia_ausente_lista_email: {
         Args: { p_limit?: number }
         Returns: string
@@ -17831,6 +18388,7 @@ export type Database = {
         Args: { p_aprovar: boolean; p_motivo?: string; p_tarefa_id: string }
         Returns: undefined
       }
+      authz_contract_version: { Args: never; Returns: number }
       buscar_skus_candidatos: {
         Args: { p_termos: string[] }
         Returns: {
@@ -17839,10 +18397,6 @@ export type Database = {
           descricao: string
           omie_codigo_produto: number
         }[]
-      }
-      calcular_gatilhos_reposicao: {
-        Args: { p_empresa?: string; p_only_sku?: number }
-        Returns: Record<string, unknown>
       }
       cancelar_pedido_sugerido: {
         Args: {
@@ -17874,10 +18428,6 @@ export type Database = {
           zip_code: string
         }[]
       }
-      carteira_visivel_para: {
-        Args: { _customer_user_id: string; _uid: string }
-        Returns: boolean
-      }
       cep_geo_upsert: {
         Args: {
           p_cep: string
@@ -17902,6 +18452,8 @@ export type Database = {
           skus_incluidos: number
         }[]
       }
+      claim_calculate_scores: { Args: { p_run_id: string }; Returns: boolean }
+      claim_carteira_rebuild: { Args: { p_run_id: string }; Returns: boolean }
       claim_estoque_full_sync: {
         Args: { p_account: string; p_at: string; p_run_id: number }
         Returns: boolean
@@ -18060,16 +18612,16 @@ export type Database = {
           status_envio_portal: string
         }[]
       }
-      estimar_impacto_exclusao_outlier: {
-        Args: { p_evento_id: number }
-        Returns: Json
-      }
       expandir_promocao_item:
         | { Args: { p_item_id: number }; Returns: Json }
         | {
             Args: { p_item_id: number; p_threshold_similaridade?: number }
             Returns: Json
           }
+      farmer_association_rules_substituir: {
+        Args: { p_regras: Json }
+        Returns: number
+      }
       fin_analise_cp_dimensoes_rpc: {
         Args: { p_ano?: number; p_company?: string; p_mes?: number }
         Returns: {
@@ -18199,6 +18751,14 @@ export type Database = {
       fin_sync_watchdog_check: { Args: never; Returns: undefined }
       fin_user_can_access: {
         Args: { check_company?: string }
+        Returns: boolean
+      }
+      finalizar_calculate_scores: {
+        Args: { p_run_id: string; p_status: string }
+        Returns: boolean
+      }
+      finalizar_carteira_rebuild: {
+        Args: { p_run_id: string; p_status: string }
         Returns: boolean
       }
       finalizar_estoque_full_sync: {
@@ -18394,6 +18954,17 @@ export type Database = {
         Args: { _user_id: string }
         Returns: Database["public"]["Enums"]["commercial_role"]
       }
+      get_customer_margin_summary: {
+        Args: never
+        Returns: {
+          custo_conhecido: number
+          customer_user_id: string
+          gross_margin_pct: number
+          itens_com_custo: number
+          itens_sem_custo: number
+          receita_com_custo: number
+        }[]
+      }
       get_customer_metrics: {
         Args: never
         Returns: {
@@ -18451,7 +19022,13 @@ export type Database = {
       get_preco_cockpit: { Args: { p_itens: Json }; Returns: Json }
       get_public_tool_history: { Args: { p_tool_id: string }; Returns: Json }
       get_regua_preco: {
-        Args: { p_customer: string; p_product: string; p_qty: number }
+        Args: {
+          p_customer: string
+          p_prazo_dias?: number[]
+          p_preco_atual: number
+          p_product: string
+          p_qty: number
+        }
         Returns: Json
       }
       get_regua_preco_customer360: {
@@ -18513,6 +19090,18 @@ export type Database = {
         }
         Returns: boolean
       }
+      ia_consumir_cota: {
+        Args: { p_funcao: string; p_user_id: string }
+        Returns: {
+          libera_em_segundos: number
+          limite_dia: number
+          limite_hora: number
+          motivo: string
+          permitido: boolean
+          usado_dia: number
+          usado_hora: number
+        }[]
+      }
       import_tint_formulas: {
         Args: { p_account: string; p_personalizada: boolean; p_rows: Json }
         Returns: Json
@@ -18521,12 +19110,20 @@ export type Database = {
         Args: { p_pedido_id: number }
         Returns: boolean
       }
-      is_super_admin: { Args: { _user_id: string }; Returns: boolean }
       kb_extraction_draft_claim: {
         Args: { p_claim_token: string; p_document_id: string }
         Returns: boolean
       }
       kb_normalizar_catalisador: { Args: { p: string }; Returns: string }
+      leadtime_t1_e_data_de_pedido: {
+        Args: {
+          p_hist_t1: string
+          p_hist_t2: string
+          p_omie_codigo_pedido: number
+          p_tracking_t1: string
+        }
+        Returns: boolean
+      }
       limpar_sugestoes_antigas: {
         Args: never
         Returns: {
@@ -18607,15 +19204,6 @@ export type Database = {
       }
       norm_cidade: { Args: { t: string }; Returns: string }
       normalizar_cep: { Args: { p: string }; Returns: string }
-      omie_cliente_upsert_mapping: {
-        Args: {
-          p_codigo_cliente: number
-          p_codigo_vendedor: number
-          p_empresa: string
-          p_user_id: string
-        }
-        Returns: string
-      }
       omie_sync_identity_snapshot: {
         Args: { p_account: string }
         Returns: Json
@@ -18629,6 +19217,7 @@ export type Database = {
         }[]
       }
       pedidos_programados_watchdog_claims: { Args: never; Returns: number }
+      pode_ler_custo: { Args: never; Returns: boolean }
       pode_ver_carteira_completa: { Args: { _uid: string }; Returns: boolean }
       preencher_parametros_faltantes_skus: {
         Args: { p_empresa: string }
@@ -18733,6 +19322,13 @@ export type Database = {
       }
       rank_precisao: { Args: { p: string }; Returns: number }
       recalcular_picking_task: { Args: { p_task_id: string }; Returns: Json }
+      recomputar_leadtime_derivado: {
+        Args: { p_empresa: string }
+        Returns: {
+          etapa: string
+          valor: number
+        }[]
+      }
       refresh_customer_metrics: { Args: never; Returns: undefined }
       refresh_oportunidade_badge: { Args: never; Returns: undefined }
       refresh_sku_ranking_negociacao: {
@@ -18741,6 +19337,19 @@ export type Database = {
           atualizado_em: string
           skus_ranqueados: number
         }[]
+      }
+      register_carteira_member: {
+        Args: {
+          p_account: string
+          p_omie_codigo_cliente: number
+          p_omie_codigo_vendedor?: number
+          p_user_id: string
+        }
+        Returns: undefined
+      }
+      registrar_aplicacao_regua: {
+        Args: { p_log_id: string; p_preco_final: number }
+        Returns: boolean
       }
       registrar_aumento_via_vision: {
         Args: {
@@ -18774,6 +19383,24 @@ export type Database = {
           p_valor?: number
         }
         Returns: Json
+      }
+      registrar_exibicao_regua: {
+        Args: {
+          p_account: string
+          p_cap_limitou?: boolean
+          p_confianca: string
+          p_customer_user_id: string
+          p_observed_gap_pct?: number
+          p_prazo_dias?: number[]
+          p_preco_atual: number
+          p_preco_referencia?: number
+          p_product_id: string
+          p_quantity: number
+          p_reason_codes?: string[]
+          p_sinal_exibido: string
+          p_suggested_gap_pct?: number
+        }
+        Returns: string
       }
       registrar_polling_resultado: {
         Args: {
@@ -18821,7 +19448,10 @@ export type Database = {
         }
         Returns: undefined
       }
+      reposicao__po_id: { Args: { p: string }; Returns: number }
+      reposicao__trim: { Args: { p: string }; Returns: string }
       reposicao_alerta_pedido_minimo_tick: { Args: never; Returns: undefined }
+      reposicao_alocar_run_seq: { Args: never; Returns: number }
       reposicao_aplicar_depara_sayerlack_auto: {
         Args: {
           p_candidatos: Json
@@ -18857,17 +19487,48 @@ export type Database = {
         Args: { p_pedido_id: number }
         Returns: number
       }
+      reposicao_pos_candidatos: {
+        Args: { p_empresa: string }
+        Returns: {
+          algum_sinal_de_canal: boolean
+          canal_usado: string
+          data_ciclo: string
+          fornecedor_nome: string
+          idade_dias: number
+          itens_sem_valor: number
+          marcador_run_id: string
+          marcador_seq: number
+          na_janela_7d: boolean
+          omie_codigo_pedido: string
+          pedido_id: number
+          po_no_espelho: boolean
+          portal_protocolo: string
+          resposta_canal: Json
+          status_envio_portal: string
+          tem_canal: boolean
+          tem_protocolo: boolean
+          tem_resposta_canal: boolean
+          tem_status_portal: boolean
+          valor_total: number
+          visto_status: string
+        }[]
+      }
+      reposicao_publicar_run_completo: {
+        Args: {
+          p_empresa: string
+          p_ids: number[]
+          p_janela_ate: string
+          p_janela_de: string
+          p_run_id: string
+          p_seq: number
+        }
+        Returns: boolean
+      }
       reposicao_sincronizar_embalagem_wp: {
         Args: { p_empresa?: string }
         Returns: Json
       }
-      reprocessar_sku_items_via_raw_data: {
-        Args: { p_empresa: string }
-        Returns: {
-          etapa: string
-          valor: number
-        }[]
-      }
+      request_customer_metrics_refresh: { Args: never; Returns: undefined }
       resgatar_recompensa: { Args: { p_reward_key: string }; Returns: string }
       resolve_markup_policy: {
         Args: {
@@ -19001,6 +19662,16 @@ export type Database = {
         Args: { p_account: string; p_id_corante: string }
         Returns: string
       }
+      tint_gate_revalida: {
+        Args: {
+          p_account: string
+          p_contexto: string
+          p_customer_user_id: string
+          p_items: Json
+          p_sales_order_id: string
+        }
+        Returns: Json
+      }
       tint_marcar_bases_mixmachine: { Args: never; Returns: number }
       tint_promote_sync_run: { Args: { p_sync_run_id: string }; Returns: Json }
       tint_recalc_preco_oficial: {
@@ -19018,6 +19689,17 @@ export type Database = {
         Args: { p_sync_run_id: string }
         Returns: Json
       }
+      tint_ultimo_preco_cliente: {
+        Args: {
+          p_cor_id: string
+          p_customer_user_id: string
+          p_exclude_sales_order_id?: string
+          p_product_id: string
+        }
+        Returns: Json
+      }
+      tint_watchdog_corante_check: { Args: never; Returns: undefined }
+      tint_watchdog_fase5_check: { Args: never; Returns: undefined }
       upsert_push_subscription: {
         Args: {
           p_endpoint: string
@@ -19066,6 +19748,10 @@ export type Database = {
           p_last_error_kind: string
         }
         Returns: undefined
+      }
+      vendas_sync_semear_janela: {
+        Args: { p_accounts?: string[]; p_date_from: string; p_date_to: string }
+        Returns: Json
       }
       wa_is_stop_keyword: { Args: { p_body: string }; Returns: boolean }
       wa_owner_efetivo: { Args: { p_customer: string }; Returns: string }

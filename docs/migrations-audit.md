@@ -21,16 +21,16 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **365** custom migrations totais
-- **1302** objetos esperados (criados por estas migrations)
+- **448** custom migrations totais
+- **1535** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 367
-  - `rls_policy`: 288
-  - `index`: 218
-  - `cron_job`: 146
-  - `table`: 141
-  - `trigger`: 78
-  - `view`: 60
+  - `function`: 447
+  - `rls_policy`: 388
+  - `index`: 231
+  - `cron_job`: 161
+  - `table`: 151
+  - `trigger`: 79
+  - `view`: 74
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -952,6 +952,7 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `cron_job` | `cron.afiacao_ciclo_oportunidade_diario` | — |
+| `cron_job` | `cron.afiacao_customer_metrics_refresh_6h` | — |
 | `cron_job` | `cron.afiacao_dispatch_notificacoes_30min` | — |
 | `cron_job` | `cron.afiacao_estados_eventos_diarios` | — |
 | `cron_job` | `cron.afiacao_limpeza_sugestoes_mensal` | — |
@@ -985,8 +986,9 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `cron_job` | `cron.fin-sync-watchdog` | — |
 | `cron_job` | `cron.gerar-pedidos-diario-oben` | — |
 | `cron_job` | `cron.gerar-pedidos-intraday-oben` | — |
-| `cron_job` | `cron.monthly-tool-report` | — |
 | `cron_job` | `cron.nao-vinculados-refresh-diario` | — |
+| `cron_job` | `cron.omie-nfe-recebimento-import-1h` | — |
+| `cron_job` | `cron.omie-nfe-reconcile-1h` | — |
 | `cron_job` | `cron.omie-sync-estoque-diario` | — |
 | `cron_job` | `cron.omie-sync-estoque-intraday-oben` | — |
 | `cron_job` | `cron.omie-sync-metadados-daily` | — |
@@ -1000,14 +1002,18 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `cron_job` | `cron.reposicao-classificar-sayerlack-grupo` | — |
 | `cron_job` | `cron.reposicao-cold-start-parametros` | — |
 | `cron_job` | `cron.reposicao-depara-sayerlack-auto-diario` | — |
+| `cron_job` | `cron.reposicao-embalagem-cadastro-wp-daily` | — |
 | `cron_job` | `cron.reposicao-param-auto-resumo` | — |
 | `cron_job` | `cron.reposicao-param-limbo-watchdog` | — |
 | `cron_job` | `cron.reposicao-preencher-parametros-faltantes` | — |
 | `cron_job` | `cron.reposicao-refresh-descricao-diario` | — |
+| `cron_job` | `cron.sayerlack-captura-precos-mensal` | — |
 | `cron_job` | `cron.sayerlack-portal-watchdog` | — |
 | `cron_job` | `cron.sayerlack-retry-orfaos` | — |
 | `cron_job` | `cron.scoring-recalc-batch-nightly` | — |
 | `cron_job` | `cron.sync-colacor-vendas-products` | — |
+| `cron_job` | `cron.sync-customers-colacor-vendas-daily` | — |
+| `cron_job` | `cron.sync-customers-servicos-daily` | — |
 | `cron_job` | `cron.sync-customers-vendas-daily` | — |
 | `cron_job` | `cron.sync-inventory-colacor-vendas-1h` | — |
 | `cron_job` | `cron.sync-inventory-servicos-1h` | — |
@@ -3125,6 +3131,634 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.get_whatsapp_proposta_cotacao` | — |
 | `index` | `public.uq_so_whatsapp_proposta_dedupe` | `sales_orders` |
+
+### `20260713160000_carteira_rebuild_lease.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.claim_carteira_rebuild` | — |
+| `function` | `public.finalizar_carteira_rebuild` | — |
+| `rls_policy` | `public.carteira_rebuild_lease_no_insert` | `sync_state` |
+| `rls_policy` | `public.carteira_rebuild_lease_no_update` | `sync_state` |
+| `rls_policy` | `public.carteira_rebuild_lease_no_delete` | `sync_state` |
+
+### `20260713193000_reposicao_pedidos_compra_run.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.reposicao_alocar_run_seq` | — |
+| `function` | `public.reposicao_publicar_run_completo` | — |
+| `table` | `public.reposicao_pedidos_compra_run` | — |
+| `table` | `public.reposicao_po_last_seen` | — |
+| `index` | `public.idx_reposicao_pedidos_compra_run_baseline` | `reposicao_pedidos_compra_run` |
+| `rls_policy` | `public.reposicao_pedidos_compra_run_sel` | `reposicao_pedidos_compra_run` |
+| `rls_policy` | `public.reposicao_po_last_seen_sel` | `reposicao_po_last_seen` |
+
+### `20260714215547_omie_nfe_recebimento_crons.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `cron_job` | `cron.omie-nfe-recebimento-import-1h` | — |
+| `cron_job` | `cron.omie-nfe-reconcile-1h` | — |
+
+### `20260715001500_sku_items_sync_controle.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.sku_items_sync_controle` | — |
+| `index` | `public.idx_sku_items_sync_controle_fila` | `sku_items_sync_controle` |
+
+### `20260716162000_sayerlack_captura_precos_fase1.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.sku_preco_captura_run` | — |
+| `table` | `public.sku_preco_captura_run_item` | — |
+| `index` | `public.idx_sku_preco_captura_run_lookup` | `sku_preco_captura_run` |
+| `index` | `public.idx_sku_preco_captura_run_item_run` | `sku_preco_captura_run_item` |
+| `index` | `public.idx_sku_preco_captura_run_item_recente` | `sku_preco_captura_run_item` |
+| `cron_job` | `cron.sayerlack-captura-precos-mensal` | — |
+| `rls_policy` | `public.sku_preco_captura_run_select_staff` | `sku_preco_captura_run` |
+| `rls_policy` | `public.sku_preco_captura_run_item_select_staff` | `sku_preco_captura_run_item` |
+
+### `20260716180000_leadtime_efetivo_dedup_nfe.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `view` | `public.v_sku_leadtime_efetivo` | — |
+| `view` | `public.v_sku_leadtime_estatisticas` | — |
+
+### `20260716200000_reposicao_recompute_leadtime_derivado.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.leadtime_t1_e_data_de_pedido` | — |
+| `function` | `public.recomputar_leadtime_derivado` | — |
+
+### `20260716230000_sla_compliance_le_leadtime_efetivo.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `view` | `public.v_sku_sla_compliance` | — |
+
+### `20260717003000_outliers_leadtime_stack_efetivo.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.detectar_outliers_empresa` | — |
+| `function` | `public.estimar_impacto_exclusao_outlier` | — |
+| `function` | `public.resolver_outlier` | — |
+
+### `20260717010000_drop_reprocessar_sku_items_via_raw_data.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260717010000_preco_medio_leadtime_efetivo.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.gerar_pedidos_sugeridos_ciclo` | — |
+
+### `20260717015000_restaurar_security_invoker_views.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260717020000_precos_compra_leadtime_efetivo.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `view` | `public.v_sku_parametros_sugeridos` | — |
+
+### `20260717020000_reposicao_exclusao_outlier_remover.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.resolver_outlier` | — |
+
+### `20260717120000_seg_customer_metrics_gate_staff.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `view` | `public.customer_metrics_mv` | — |
+
+### `20260717130000_seg_customer_metrics_acl_least_privilege.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260717154500_refresh_customer_metrics_automacao.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.refresh_customer_metrics` | — |
+| `function` | `public.request_customer_metrics_refresh` | — |
+| `cron_job` | `cron.afiacao_customer_metrics_refresh_6h` | — |
+
+### `20260717160000_data_health_customer_metrics_watchdog.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
+
+### `20260717163000_tint_promote_fail_closed_receita_parcial.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tint_promote_sync_run` | — |
+
+### `20260717181500_carteira_visivel_para_filtra_eligible.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.carteira_visivel_para` | — |
+| `function` | `public.minha_carteira` | — |
+
+### `20260718091409_drop_omie_cliente_upsert_mapping_orfa.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260718093248_drop_estimar_impacto_exclusao_outlier_orfa.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260718100000_filas_recalc_rls_master_only.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260718120000_pot_nid_receb_retencao.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `index` | `public.idx_pot_backfill_nid_receb` | `purchase_orders_tracking` |
+
+### `20260718140000_tint_promote_guard4_v3.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tint_promote_sync_run` | — |
+
+### `20260718150000_fu7_helpers_rls_schema_privado.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260718160000_tactical_plans_eligible_fail_closed.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.criar_plano_tatico` | — |
+| `function` | `public.registrar_resultado_plano` | — |
+| `function` | `public.tactical_plan_recusa_cliente_mascarado` | — |
+| `trigger` | `public.trg_tactical_plan_recusa_mascarado` | `farmer_tactical_plans` |
+
+### `20260718170000_fu7_conserta_callers_orfaos.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.criar_plano_tatico` | — |
+| `function` | `public.registrar_resultado_plano` | — |
+| `function` | `public.registrar_contato_rota` | — |
+| `function` | `public.protect_master_config` | — |
+
+### `20260718170000_register_carteira_member.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.register_carteira_member` | — |
+
+### `20260718170000_tint_fase1c_expected_item_count.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tint_promote_sync_run` | — |
+
+### `20260718180000_fu7b_pode_ver_carteira_completa_privado.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.pode_ver_carteira_completa` | — |
+
+### `20260718190000_authz_capability_matrix_e2.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.cap_carteira_ler` | — |
+| `function` | `private.cap_carteira_escrever` | — |
+| `function` | `private.cap_custo_ler` | — |
+| `function` | `private.cap_preco_escrever` | — |
+| `function` | `private.cap_credito_escrever` | — |
+| `function` | `private.cap_compras_ler` | — |
+| `function` | `public.fin_estimar_estoque_omie` | — |
+| `function` | `public.medir_abaixo_piso_tier` | — |
+| `function` | `public.authz_contract_version` | — |
+| `rls_policy` | `public.cliente_tier_preco_insert_gestor` | `cliente_tier_preco` |
+| `rls_policy` | `public.cliente_tier_preco_update_gestor` | `cliente_tier_preco` |
+| `rls_policy` | `public.venda_excecao_insert_gestor` | `venda_excecao_credito` |
+| `rls_policy` | `public.cmc_ledger_select_gestor` | `cmc_ledger` |
+| `rls_policy` | `public.markup_policy_select_carteira` | `markup_policy` |
+| `rls_policy` | `public.cold_start_log_sel` | `reposicao_cold_start_log` |
+| `rls_policy` | `public.depara_auto_log_sel` | `reposicao_depara_auto_log` |
+| `rls_policy` | `public.estoque_nao_confirmado_log_sel` | `reposicao_estoque_nao_confirmado_log` |
+| `rls_policy` | `public.reposicao_motor_run_sel` | `reposicao_motor_run` |
+| `rls_policy` | `public.param_auto_log_sel` | `reposicao_param_auto_log` |
+| `rls_policy` | `public.param_auto_run_sel` | `reposicao_param_auto_run` |
+| `rls_policy` | `public.param_auto_pin_sel` | `reposicao_param_pin` |
+| `rls_policy` | `public.reposicao_pedidos_compra_run_sel` | `reposicao_pedidos_compra_run` |
+| `rls_policy` | `public.reposicao_po_last_seen_sel` | `reposicao_po_last_seen` |
+| `rls_policy` | `public.fcs_select_carteira` | `farmer_client_scores` |
+| `rls_policy` | `public.fcs_insert_own_or_gestor` | `farmer_client_scores` |
+| `rls_policy` | `public.fcs_update_own_or_gestor` | `farmer_client_scores` |
+| `rls_policy` | `public.fcs_delete_own_or_gestor` | `farmer_client_scores` |
+| `rls_policy` | `public.cvs_select_carteira` | `customer_visit_scores` |
+| `rls_policy` | `public.cvs_insert_own_or_gestor` | `customer_visit_scores` |
+| `rls_policy` | `public.cvs_update_own_or_gestor` | `customer_visit_scores` |
+| `rls_policy` | `public.cvs_delete_own_or_gestor` | `customer_visit_scores` |
+| `rls_policy` | `public.frec_select_carteira` | `farmer_recommendations` |
+| `rls_policy` | `public.frec_insert_own_or_gestor` | `farmer_recommendations` |
+| `rls_policy` | `public.frec_update_own_or_gestor` | `farmer_recommendations` |
+| `rls_policy` | `public.frec_delete_own_or_gestor` | `farmer_recommendations` |
+| `rls_policy` | `public.fcall_select_carteira` | `farmer_calls` |
+| `rls_policy` | `public.fcall_insert_own_or_gestor` | `farmer_calls` |
+| `rls_policy` | `public.fcall_update_own_or_gestor` | `farmer_calls` |
+| `rls_policy` | `public.fcall_delete_own_or_gestor` | `farmer_calls` |
+| `rls_policy` | `public.fbrec_select_carteira` | `farmer_bundle_recommendations` |
+| `rls_policy` | `public.fbrec_insert_own_or_gestor` | `farmer_bundle_recommendations` |
+| `rls_policy` | `public.fbrec_update_own_or_gestor` | `farmer_bundle_recommendations` |
+| `rls_policy` | `public.fbrec_delete_own_or_gestor` | `farmer_bundle_recommendations` |
+| `rls_policy` | `public.fcop_select_carteira` | `farmer_copilot_sessions` |
+| `rls_policy` | `public.fcop_insert_own_or_gestor` | `farmer_copilot_sessions` |
+| `rls_policy` | `public.fcop_update_own_or_gestor` | `farmer_copilot_sessions` |
+| `rls_policy` | `public.fcop_delete_own_or_gestor` | `farmer_copilot_sessions` |
+| `rls_policy` | `public.rvis_select_carteira` | `route_visits` |
+| `rls_policy` | `public.rvis_insert_own_or_gestor` | `route_visits` |
+| `rls_policy` | `public.rvis_update_own_or_gestor` | `route_visits` |
+| `rls_policy` | `public.rvis_delete_own_or_gestor` | `route_visits` |
+| `rls_policy` | `public.vag_select_own` | `visitas_agendadas` |
+| `rls_policy` | `public.vag_delete_gestor` | `visitas_agendadas` |
+| `rls_policy` | `public.tarefas_select` | `tarefas` |
+| `rls_policy` | `public.tarefas_insert` | `tarefas` |
+| `rls_policy` | `public.tarefas_update` | `tarefas` |
+| `rls_policy` | `public.tevt_select` | `tarefa_eventos` |
+| `rls_policy` | `public.tevt_insert` | `tarefa_eventos` |
+| `rls_policy` | `public.tcand_select` | `tarefa_satisfacao_candidatos` |
+| `rls_policy` | `public.tcand_update` | `tarefa_satisfacao_candidatos` |
+| `rls_policy` | `public.tt_select` | `tarefa_templates` |
+| `rls_policy` | `public.tt_insert` | `tarefa_templates` |
+| `rls_policy` | `public.tt_update` | `tarefa_templates` |
+| `rls_policy` | `public.tt_delete` | `tarefa_templates` |
+| `rls_policy` | `public.radar_empresas_select_gestor` | `radar_empresas` |
+| `rls_policy` | `public.radar_contatos_select_gestor` | `radar_contatos` |
+| `rls_policy` | `public.radar_municipios_select_gestor` | `radar_municipios` |
+| `rls_policy` | `public.radar_ingest_state_select_gestor` | `radar_ingest_state` |
+| `rls_policy` | `public.cca_select_gestor_master` | `customer_canonical_alias` |
+| `rls_policy` | `public.nv_select` | `omie_clientes_nao_vinculados` |
+| `rls_policy` | `public.nv_state_select` | `omie_nao_vinculados_state` |
+| `rls_policy` | `public.ss_allowlist_select` | `selfservice_cliente_allowlist` |
+| `rls_policy` | `public.ss_allowlist_insert` | `selfservice_cliente_allowlist` |
+| `rls_policy` | `public.ss_allowlist_update` | `selfservice_cliente_allowlist` |
+| `rls_policy` | `public.ss_allowlist_delete` | `selfservice_cliente_allowlist` |
+| `rls_policy` | `storage.tarefa_comprov_select_own_ou_gestor` | `objects` |
+
+### `20260718200000_register_carteira_member_source_rpc.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.register_carteira_member` | — |
+
+### `20260718213000_tint_formula_canonica.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `view` | `public.v_tint_formula_canonica` | — |
+
+### `20260718220000_data_health_vendas_cadastros_proof.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
+
+### `20260718220100_seed_targets_faltantes_ledger.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.seed_targets_faltantes` | — |
+
+### `20260718233000_tint_canonica_preco_csv_legado.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `view` | `public.v_tint_formula_canonica` | — |
+
+### `20260719120000_authz_cap_compras_escrever_fu4e.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.cap_compras_escrever` | — |
+
+### `20260720120000_authz_cap_compras_ler_pos_candidatos_fu4g.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260720160000_authz_cap_compras_ler_alertas_auto_aprovacao_fu4h.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `rls_policy` | `public.%I` | `public` |
+
+### `20260721190000_reposicao_pos_candidatos.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.reposicao__trim` | — |
+| `function` | `public.reposicao__po_id` | — |
+| `function` | `public.reposicao_pos_candidatos` | — |
+
+### `20260721190001_pausa_cron_relatorio_mensal_ferramentas.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260722100000_acoes_execucoes_ultima_execucao.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.acoes_execucoes` | — |
+| `index` | `public.acoes_execucoes_acao_idx` | `acoes_execucoes` |
+
+### `20260722100001_tint_gate_revalida_submit.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tint_ultimo_preco_cliente` | — |
+| `function` | `public.tint_gate_revalida` | — |
+
+### `20260722100002_tint_canonica_csv_legado_semantico.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `view` | `public.v_tint_formula_canonica` | — |
+
+### `20260722110000_ciclo_oportunidade_registra_execucao.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._registrar_ciclo_oportunidade` | — |
+| `function` | `public.ciclo_oportunidade_do_dia` | — |
+
+### `20260722110000_quarentena_omie_clientes_espelho.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260722113000_tint_fase1d_is_base_pura.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tint_promote_sync_run` | — |
+
+### `20260723130000_authz_custo_fu4f_fase2_inventory.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `view` | `public.inventory_position_operacional` | — |
+| `rls_policy` | `public.staff_inventory_position_select` | `inventory_position` |
+
+### `20260723140000_authz_custo_fu4f_fase1.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `rls_policy` | `public.cmc_snapshot_select_staff` | `cmc_snapshot` |
+
+### `20260723140000_authz_pedido_compra_item_cap_compras.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `rls_policy` | `public.staff_pedido_compra_item_select` | `pedido_compra_item` |
+| `rls_policy` | `public.staff_pedido_compra_item_insert` | `pedido_compra_item` |
+| `rls_policy` | `public.staff_pedido_compra_item_update` | `pedido_compra_item` |
+| `rls_policy` | `public.staff_pedido_compra_item_delete` | `pedido_compra_item` |
+
+### `20260723150000_authz_custo_fu4f_fase2_regua.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.cap_regua_log_escrever` | — |
+| `function` | `private.regua_num_finito` | — |
+| `function` | `private.regua_piso_calc` | — |
+| `function` | `public.get_regua_preco` | — |
+| `function` | `public.get_regua_preco_customer360` | — |
+| `function` | `public.registrar_exibicao_regua` | — |
+| `function` | `public.registrar_aplicacao_regua` | — |
+| `rls_policy` | `public.regua_preco_log_select_custo` | `regua_preco_log` |
+
+### `20260723150000_farmer_margem_server_side.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.get_customer_margin_summary` | — |
+| `function` | `public.apply_score_updates` | — |
+
+### `20260723160000_authz_fu4e_is_not_true_escritas.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260723160000_farmer_margem_correcoes_review.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.apply_score_updates` | — |
+
+### `20260724120000_authz_sales_orders_split_escrita_fu4.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.cap_pedido_escrever` | — |
+| `rls_policy` | `public.sales_orders_select_staff` | `sales_orders` |
+| `rls_policy` | `public.sales_orders_select_customer` | `sales_orders` |
+| `rls_policy` | `public.sales_orders_insert_staff` | `sales_orders` |
+| `rls_policy` | `public.sales_orders_update_staff` | `sales_orders` |
+| `rls_policy` | `public.sales_orders_delete_staff` | `sales_orders` |
+| `rls_policy` | `public.order_items_select_staff` | `order_items` |
+| `rls_policy` | `public.order_items_select_customer` | `order_items` |
+| `rls_policy` | `public.sales_price_history_select_staff` | `sales_price_history` |
+| `rls_policy` | `public.sales_price_history_select_customer` | `sales_price_history` |
+
+### `20260724130000_authz_custo_fu4f_fase3_recommend.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.pode_ler_custo` | — |
+| `rls_policy` | `public.recommendation_log_select_custo` | `recommendation_log` |
+
+### `20260724130000_tint_canonica_csv_legado_allowlist.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `view` | `public.v_tint_formula_canonica` | — |
+
+### `20260726120000_tint_promote_error_details_completo.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tint_promote_sync_run` | — |
+
+### `20260726120001_cron_tactical_plans_batch_nightly.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `cron_job` | `cron.tactical-plans-batch-nightly` | — |
+
+### `20260726130000_vendas_sync_semear_janela.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.vendas_sync_semear_janela` | — |
+
+### `20260726140000_vendas_sync_semear_janela_v2.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.vendas_sync_semear_janela` | — |
+
+### `20260726150000_margem_cliente_helper_compartilhado.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.margem_cliente_agregada` | — |
+
+### `20260726160000_margem_reconciliacao_universo_unico.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.margem_cliente_agregada` | — |
+| `function` | `public.get_customer_margin_summary` | — |
+
+### `20260726160000_tint_canonica_piso_legado.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tint_gate_revalida` | — |
+| `view` | `public.v_tint_formula_canonica` | — |
+
+### `20260727120000_tint_fase5_desativa_geracao_legada.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `view` | `public.v_tint_formula_canonica` | — |
+
+### `20260727130000_farmer_scores_colunas_orfas_null.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260727140000_authz_preco_fecha_omie_products.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `rls_policy` | `public.omie_products_select_staff` | `omie_products` |
+
+### `20260727150000_tint_watchdog_corante_impagavel.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tint_watchdog_corante_check` | — |
+| `cron_job` | `cron.tint-watchdog-corante-5min` | — |
+
+### `20260728120000_farmer_persiste_cobertura_custo.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.apply_score_updates` | — |
+
+### `20260728120001_calculate_scores_lease.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.claim_calculate_scores` | — |
+| `function` | `public.finalizar_calculate_scores` | — |
+| `rls_policy` | `public.calculate_scores_lease_no_insert` | `sync_state` |
+| `rls_policy` | `public.calculate_scores_lease_no_update` | `sync_state` |
+| `rls_policy` | `public.calculate_scores_lease_no_delete` | `sync_state` |
+
+### `20260729120000_farmer_association_rules_substituicao_atomica.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.farmer_association_rules_substituir` | — |
+
+### `20260729160000_data_health_carteira_rebuild.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
+
+### `20260730120000_tint_watchdog_fase5_chave.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._tint_watchdog_fase5_transicao` | — |
+| `function` | `public.tint_watchdog_fase5_check` | — |
+| `cron_job` | `cron.tint-watchdog-fase5-6h` | — |
+
+### `20260730120001_calculate_scores_reforco_0625.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `cron_job` | `cron.calculate-scores-reforco-0625` | — |
+
+### `20260730130000_reposicao_teto_cobertura_motor.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.gerar_pedidos_sugeridos_ciclo` | — |
+| `table` | `public.reposicao_teto_cobertura_log` | — |
+| `index` | `public.idx_teto_cobertura_log_run` | `reposicao_teto_cobertura_log` |
+| `index` | `public.idx_teto_cobertura_log_emp_data` | `reposicao_teto_cobertura_log` |
+| `rls_policy` | `public.teto_cobertura_log_sel` | `reposicao_teto_cobertura_log` |
+| `rls_policy` | `public.teto_cobertura_log_ins` | `reposicao_teto_cobertura_log` |
+
+### `20260731120000_farmer_assoc_rules_delete_qualificado.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260731120000_v_sku_ultima_venda.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `view` | `public.v_sku_ultima_venda` | — |
+
+### `20260801120000_drop_calcular_gatilhos_reposicao.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260802120000_reposicao_erro_terminal_nao_e_estoque_a_caminho.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.gerar_pedidos_sugeridos_ciclo` | — |
+
+### `20260802120000_venda_perdida_e_classe_sb.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `view` | `public.v_sku_classe_sb` | — |
+| `table` | `public.venda_perdida_log` | — |
+| `index` | `public.idx_venda_perdida_emp_data` | `venda_perdida_log` |
+| `index` | `public.idx_venda_perdida_sku` | `venda_perdida_log` |
+| `rls_policy` | `public.venda_perdida_sel` | `venda_perdida_log` |
+| `rls_policy` | `public.venda_perdida_ins` | `venda_perdida_log` |
+
+### `20260802130000_tactical_plan_idempotencia_dia.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.criar_plano_tatico` | — |
+| `index` | `public.ux_farmer_tactical_plans_dia_operacional` | `farmer_tactical_plans` |
+
+### `20260803093000_ia_uso_cota.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.ia_consumir_cota` | — |
+| `table` | `public.ia_uso_evento` | — |
+| `table` | `public.ia_uso_limite` | — |
+| `index` | `public.ia_uso_evento_janela_idx` | `ia_uso_evento` |
+| `cron_job` | `cron.ia-uso-evento-purga` | — |
 
 ## Próximos passos por status
 

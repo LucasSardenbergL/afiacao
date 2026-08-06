@@ -62,3 +62,29 @@ Pra ficar claro quando os termos entrarem na Fase 3:
 
 Tudo isso vira critério ativo da Fase 2 (heurística D1–D6) e priorização ICE da Fase 3.
 
+
+## Última execução em ações globais (2026-07-18)
+
+Todo botão de ação global (sincronizar/importar/recalcular) passa a mostrar "Última execução:
+há X · quem · status" — pedido do founder a partir do print de `/admin/analytics-sync`.
+Infra: tabela `acoes_execucoes` (RLS staff-only, provada em PG17 com falsificação em
+`db/test-acoes-execucoes.sh`) + primitivos `useMutationComRegistro`/`<UltimaExecucao>`
+(`src/components/execucoes/`, módulo plataforma) + registro server-side na edge
+(`_shared/registro-execucao.ts`) para actions com cron — o clique manual e o cron 2/2h do
+`compute-costs-daily` aparecem na MESMA caption (descoberta que definiu o design: registrar só
+cliques mentiria; o cron dos motores vive só no banco, invisível ao grep do repo). Convenção
+nova no CLAUDE.md §Design System (**1 escritor por slug**; ação per-registro fica de fora — o
+estado vive no próprio registro). Varredura dos demais botões do app (tintImport SyncCard,
+GestorExcecoes, AdminReposicaoPedidos, GerarCicloDialog, PrecoEmbalagemDialog) é o PR2.
+Spec: `docs/superpowers/specs/2026-07-18-ultima-execucao-acoes-design.md`.
+
+### PR3 — ciclo de oportunidade com escritor SQL (2026-07-20)
+
+O slug `reposicao.gerar_ciclo_oportunidade` ganhou o escritor DEFINITIVO: a própria função
+`ciclo_oportunidade_do_dia` (migration `20260722110000`), classificando origem por `auth.uid()`
+(NULL = cron das 11:05 → `automatica`; presente = clique staff → `manual` + nome). INSERT único
+no FIM da função — rollback do ciclo leva o registro junto (sem linha órfã "executando").
+Prova PG17 6/6 (`db/test-ciclo-registro.sh`): cron/manual/rollback/fail-open/invoker preservado
++ falsificação. O harness pegou um bug real de desenho: `auth.uid()` no DECLARE fura o
+EXCEPTION (lição nova em `docs/agent/database.md`). Caption na página de Oportunidades fora do
+condicional do botão (mostra o "automática" diário). Fecha o programa "última execução".

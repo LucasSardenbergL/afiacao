@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
+import { classificarFaultstring, redigirSegredo } from "../_shared/omie-falha.ts";
 // Resend usado via fetch direto à REST API (https://api.resend.com/emails) para evitar dep npm
 
 const ALLOWED_ORIGIN = Deno.env.get("ALLOWED_ORIGIN") || "*";
@@ -77,12 +78,6 @@ interface OmieListarContasCorrentesResponse {
   faultstring?: string;
 }
 
-interface OmieConsultarOSResponse {
-  nCodOS?: number;
-  cNumOS?: string;
-  faultstring?: string;
-}
-
 interface ServicoLocalRow {
   id: string;
   omie_codigo_servico: number;
@@ -111,7 +106,12 @@ async function callOmieApi(
   };
 
   console.log(`[Omie API] Chamando ${endpoint} - ${call}`);
-  console.log(`[Omie API] Payload:`, JSON.stringify(body, null, 2));
+  // ⚠️ NUNCA logar `body`: ele carrega `app_key`/`app_secret` INTEIROS, e o log da edge fica
+  // RETIDO e visível no painel do Supabase/Lovable — a cada invocação. Publicar credencial em
+  // log não é diagnóstico, é vazamento (mesmo corolário de privacidade que obrigou o
+  // `redigirSegredo` na faultstring logo abaixo: money-path §"O MARCADOR mente"). O que torna a
+  // chamada diagnosticável é o `param`, e ele não tem credencial — é o que se loga.
+  console.log(`[Omie API] Param:`, JSON.stringify(body.param, null, 2));
 
   const response = await fetch(`${OMIE_API_URL}/${endpoint}`, {
     method: "POST",
@@ -124,11 +124,68 @@ async function callOmieApi(
   const result = await response.json();
   console.log(`[Omie API] Resposta:`, JSON.stringify(result, null, 2));
 
+  // `faultstring` ANTES do status (ordem canônica do #1614 — docs/agent/sync.md): o EOF do
+  // contrato Omie chega às vezes acompanhado de 5xx, e lê-lo como falha de transporte trocaria
+  // ausência REAL por erro. Quem separa "não existe" de "não consegui ver" são os call-sites,
+  // pelo TEXTO da faultstring — por isso ela tem de sobreviver ao guard de status.
   if (result.faultstring) {
-    throw new Error(`Erro Omie: ${result.faultstring}`);
+    throw new Error(`Erro Omie: ${redigirSegredo(String(result.faultstring))}`);
+  }
+
+  // Sem faultstring, só um 2xx é resposta. `fetch` NÃO lança em HTTP não-2xx: um 429/5xx cujo
+  // corpo parseia sem `faultstring` (o `{}` de proxy/gateway) chegava aqui como resposta BOA, e
+  // cada call-site o lia como um fato afirmado pelo Omie — `IncluirOS` gravava a OS com status
+  // "enviado" e `omie_codigo_os` undefined (pedido carimbado como enviado ao ERP sem existir
+  // lá), e o `ListarClientes` do self-service via `clientes_cadastro ?? []` = cliente inexistente,
+  // porta de entrada para cadastro DUPLICADO. `HTTP <n>` é a forma que `classificarFaultstring`
+  // reconhece como transitória (marcador ancorado, nunca o dígito solto — §"O MARCADOR mente").
+  if (!response.ok) {
+    throw new Error(`Erro Omie: HTTP ${response.status} em ${call}`);
+  }
+
+  // `faultcode` sem `faultstring` é a mesma família (erro sinalizado que o parse não enxerga) e
+  // fecha a ordem canônica do #1614. Sem isto, um `200 {"faultcode":"5113"}` passava como sucesso:
+  // o `sync_services` lia `cadastros` ausente como `[]` e INATIVAVA todo serviço local, e o
+  // `IncluirOS` seguia gravando a OS como enviada (achado Codex xhigh).
+  if (result.faultcode) {
+    throw new Error(`Erro Omie: faultcode ${redigirSegredo(String(result.faultcode))} em ${call}`);
   }
 
   return result;
+}
+
+// Prova POSITIVA de que a OS não existe mais no Omie — o ÚNICO desfecho que autoriza a deleção
+// local (o `sync_deleted_orders` apaga o pedido de 6 tabelas, e isso não tem volta).
+//
+// A classe transitória/permanente vence ANTES de qualquer marcador de ausência, e é essa ordem
+// que faz o predicado valer: um "sem permissão para consultar" (credencial revogada) e um
+// "timeout" carregam o vocabulário da negação sem provar ausência nenhuma — e devolveriam o
+// mesmo erro para TODA OS da varredura, transformando um incidente do Omie em deleção da
+// carteira inteira. Falha de transporte é "não consegui verificar", nunca "não existe".
+//
+// A lista é deliberadamente CONSERVADORA (precisão > recall): errar para "não deletar" deixa um
+// pedido órfão visível, que o ciclo seguinte reavalia; errar para "deletar" destrói pedido,
+// mensagens, avaliações e pontos de fidelidade de um cliente real. Ela é auto-instrumentada — o
+// `console.warn` do call-site imprime toda mensagem que NÃO casou, então a faultstring real de
+// OS inexistente aparece nos logs em vez de ser adivinhada aqui.
+const MARCADORES_OS_AUSENTE = ["nao existe", "nao encontrad", "nao cadastrad"];
+
+function osAusenteNoOmie(erro: unknown): boolean {
+  const texto = erro instanceof Error ? erro.message : String(erro);
+  const classe = classificarFaultstring(texto);
+  // Só a classe INDETERMINADA chega aos marcadores. Barrar apenas transitório/permanente era o
+  // furo: `fim_de_pagina` — o EOF do contrato Omie, "Não existem registros para a página" — passava
+  // pela peneira e, normalizado, casava o marcador "nao existe" (achado Codex xhigh, confirmado
+  // executando `classificarFaultstring`). O EOF de PAGINAÇÃO chegando por um `ConsultarOS` (que
+  // não pagina) é sinal fora de contexto, e a resposta a sinal fora de contexto não pode ser
+  // apagar 6 tabelas. Exigir `indeterminada` barra exatamente a frase do EOF sem cegar as demais
+  // formas de ausência, que não citam "para a página".
+  if (classe !== "indeterminada") return false;
+  // Normalização ASCII (sem acento, minúsculo) — o Omie mistura caixa e acentuação entre
+  // mensagens, e casar acento é armadilha recorrente do repo (money-path §"a sabotagem não
+  // casou nada"). Sequência de ESCAPE, nunca combining mark literal no fonte.
+  const t = texto.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  return MARCADORES_OS_AUSENTE.some((m) => t.includes(m));
 }
 
 // Função para enviar notificação de novo pedido para administração
@@ -360,22 +417,20 @@ async function syncClienteOmie(
   console.log(`[Omie] Cliente encontrado no Omie: ${omieCodigoCliente} - ${cliente?.razao_social ?? ''}`);
   console.log(`[Omie] Vendedor associado: ${omieCodigoVendedor ?? 'Nenhum'}`);
 
-  // TODO Fatia 4: este write-back é WRITER do espelho poluído omie_clientes (grava sem conta, rótulo
-  // 'colacor' default) — será migrado/aposentado na Fatia 4. Mantido por ora: não corrompe leitor que
-  // já lê a view fresca, e ainda serve o cache legado até todos os leitores migrarem.
-  // upsert ON CONFLICT DO NOTHING (ignoreDuplicates): o fluxo agora entra aqui após ausência na VIEW, e
-  // ~24% dos users (1634) têm linha antiga no espelho (UNIQUE(user_id)) — insert cru colidiria e engoliria
-  // o erro (Codex P2). DO NOTHING não sobrescreve a linha existente (não corrompe leitor ainda-não-migrado
-  // que poderia esperar o código de outra conta) e não deixa erro silencioso.
-  const { error: writeErr } = await supabase
-    .from("omie_clientes")
-    .upsert({
-      user_id: userId,
-      omie_codigo_cliente: omieCodigoCliente,
-      omie_codigo_cliente_integracao: cliente?.codigo_cliente_integracao || null,
-      omie_codigo_vendedor: omieCodigoVendedor,
-    }, { onConflict: "user_id", ignoreDuplicates: true });
-  if (writeErr) console.error("[Omie] write-back no espelho falhou (não bloqueia o pedido):", writeErr.message);
+  // [P0-B-bis Fatia 4] O write-back saiu do espelho poluído `omie_clientes` (que gravava SEM conta, sob
+  // o rótulo default 'colacor') para a RPC, que escreve as duas pontas: membership no ledger + vínculo na
+  // proof account-correta. A conta é 'colacor_sc' e não é chute — todo este caminho consulta a conta
+  // colacor_sc (credencial default do `omie-sync`), como o erro de doc-ambíguo logo acima já explicita.
+  // Segue NÃO-BLOQUEANTE: o pedido não depende do write-back (o código já foi resolvido acima). O
+  // `omie_codigo_cliente_integracao` foi descartado junto com o espelho (resíduo §9 do design: 41 de
+  // 6909 linhas o tinham, todas de março, e nenhum leitor o consome).
+  const { error: writeErr } = await supabase.rpc("register_carteira_member", {
+    p_user_id: userId,
+    p_account: "colacor_sc",
+    p_omie_codigo_cliente: omieCodigoCliente,
+    p_omie_codigo_vendedor: omieCodigoVendedor ?? null,
+  });
+  if (writeErr) console.error("[Omie] write-back do vínculo falhou (não bloqueia o pedido):", writeErr.message);
 
   return {
     omieCodigoCliente,
@@ -1496,14 +1551,34 @@ serve(async (req) => {
         }
 
         try {
-          const consultaResult = await callOmieApi("servicos/os/", "ConsultarOS", {
+          await callOmieApi("servicos/os/", "ConsultarOS", {
             nCodOS: osCheck.omie_codigo_os,
-          }) as unknown as OmieConsultarOSResponse;
+          });
 
-          result = { exists: !consultaResult.faultstring };
-        } catch {
-          // If error contains "não encontrada" or similar, OS was deleted
-          result = { exists: false };
+          // 2xx sem faultstring = existe. (O `!consultaResult.faultstring` de antes era código
+          // morto — o wrapper já lança em faultstring, então este ramo só é alcançado no sucesso.)
+          result = { exists: true };
+        } catch (erro) {
+          // Mesma regra do sync_deleted_orders: só a prova positiva de ausência afirma que a OS
+          // sumiu. Falha de transporte devolvia `exists:false` — "não consegui verificar" com
+          // cara de fato, e o consumidor não tinha como distinguir (money-path §2).
+          if (osAusenteNoOmie(erro)) {
+            result = { exists: false };
+          } else {
+            // Indeterminado responde `exists: true`, e isso NÃO é fabricar um fato: é o mesmo
+            // fail-safe que o consumidor já escolhe sozinho nas outras duas portas de falha
+            // (`checkOsExistsInOmie` devolve `{exists:true}` em erro de invoke e no catch —
+            // "assume exists on error"). O motivo é o efeito: `useAdminOrderDetail` faz
+            // `if (!osCheck.exists) → deleteOrderFromOmie()`, então QUALQUER valor falsy — `false`,
+            // `null`, `undefined` — apaga o pedido do cliente. Um campo novo `exists: null` seria
+            // falsy e viraria deleção por falha de rede; a flag separada preserva o diagnóstico
+            // sem tocar no predicado que decide (money-path §7 — a correção termina na tela).
+            result = {
+              exists: true,
+              indeterminado: true,
+              motivo: redigirSegredo(erro instanceof Error ? erro.message : String(erro)),
+            };
+          }
         }
         break;
       }
@@ -1535,30 +1610,48 @@ serve(async (req) => {
 
         // Outer loop também paraleliza (chunks de 5) pra não floodar API Omie.
         // ConsultarOS chama API externa; manter concorrência conservadora.
+        //
+        // ⚠️ Este laço DELETA o pedido de 6 tabelas. Antes, o `catch` deletava em QUALQUER
+        // exceção — timeout, rede, credencial revogada, rate-limit — e o ramo `if
+        // (consultaResult.faultstring)` dentro do try era código MORTO (o wrapper lança em
+        // faultstring), então 100% das deleções já vinham do catch genérico. Um incidente do
+        // Omie apagava a carteira de pedidos inteira, com `success:true`. E o guard de status
+        // recém-posto no wrapper AMPLIARIA isso: o 5xx que antes voltava `{}` (e por acidente
+        // não deletava) passa a lançar. Consertar a leitura sem consertar o consumidor torna o
+        // caminho ruim ALCANÇÁVEL — money-path §7, e aqui o efeito é destrutivo e irreversível.
+        //
+        // Regra: deleção exige PROVA POSITIVA de ausência (§1, precisão > recall). Falha de
+        // transporte é "não consegui verificar", nunca "não existe" — o pedido fica, e o
+        // resultado REPORTA quantos ficaram por verificar (ausência de sinal ≠ aprovação).
         const CHUNK = 5;
+        let naoVerificados = 0;
         for (let i = 0; i < (allOs || []).length; i += CHUNK) {
           const chunk = (allOs || []).slice(i, i + CHUNK);
           await Promise.all(chunk.map(async (os) => {
             try {
-              const consultaResult = await callOmieApi("servicos/os/", "ConsultarOS", {
+              await callOmieApi("servicos/os/", "ConsultarOS", {
                 nCodOS: os.omie_codigo_os,
-              }) as unknown as OmieConsultarOSResponse;
-
-              if (consultaResult.faultstring) {
-                console.log(`[Omie] OS ${os.omie_numero_os} não existe mais no Omie, excluindo localmente...`);
-                await deleteOrphanOs(os.order_id);
-                deletedCount++;
+              });
+              // 2xx sem faultstring = a OS EXISTE no Omie. Nada a fazer.
+            } catch (erro) {
+              if (!osAusenteNoOmie(erro)) {
+                naoVerificados++;
+                console.warn(
+                  `[Omie] OS ${os.omie_numero_os} NÃO verificada (mantida): ${redigirSegredo(erro instanceof Error ? erro.message : String(erro))}`,
+                );
+                return;
               }
-            } catch {
-              console.log(`[Omie] OS ${os.omie_numero_os} possivelmente excluída, removendo...`);
+              console.log(`[Omie] OS ${os.omie_numero_os} não existe mais no Omie, excluindo localmente...`);
               await deleteOrphanOs(os.order_id);
               deletedCount++;
             }
           }));
         }
 
-        console.log(`[Omie] Sincronização de exclusões concluída: ${deletedCount} pedidos removidos`);
-        result = { success: true, deleted: deletedCount };
+        console.log(
+          `[Omie] Sincronização de exclusões concluída: ${deletedCount} pedidos removidos, ${naoVerificados} não verificados`,
+        );
+        result = { success: true, deleted: deletedCount, nao_verificados: naoVerificados, parcial: naoVerificados > 0 };
         break;
       }
 

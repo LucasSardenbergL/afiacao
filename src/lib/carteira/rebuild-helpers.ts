@@ -51,11 +51,15 @@ type Resolved =
  *   com o vendedor herdado (ou Hunter se órfão); os clones do grupo ficam `eligible=false` (escondidos).
  * - **Conflito** (≥2 vendedores distintos no grupo, OU código→2 vendedores no map): NÃO canonicaliza —
  *   processa CADA membro como legado (todos `eligible=true`, dono próprio). NUNCA esconde um membro sem
- *   unificar (evita "cliente some" / estado stale) + registra em `conflicts`. (Membro com conflito de
- *   MAPEAMENTO não é emitido — comportamento legado.)
+ *   unificar (evita "cliente some" / estado stale) + registra em `conflicts`. Membro com conflito de
+ *   MAPEAMENTO é QUARANTINADO (Hunter inerte + `eligible=false`), nunca omitido — omitir + upsert-only
+ *   deixaria o assignment antigo vivo (stale). O caller real torna esse ramo inalcançável filtrando o
+ *   `omie_vendedor_map` por conta (`UNIQUE(omie_account, omie_codigo_vendedor)` ⇒ código→vendedor é função
+ *   DENTRO da conta); o helper é puro e não pode CONFIAR nisso — daí a quarentena defensiva.
  *
  * `chainViolations` não-vazio (canônico que também é alias) → o caller deve abortar o rebuild.
  */
+// MIRROR-START carteira-compute — computeCarteira espelhado verbatim de src/lib/carteira/rebuild-helpers.ts (P0-B-bis)
 export function computeCarteira(
   clientes: OmieClienteRow[],
   vendedorMap: VendedorMapRow[],
@@ -109,10 +113,19 @@ export function computeCarteira(
     if (v.kind === 'omie') {
       assignments.push({ customer_user_id: c.customer_user_id, owner_user_id: v.user, source: 'omie', omie_codigo_vendedor: v.code, eligible });
     } else if (v.kind === 'orphan') {
-      if (eligible) orphanCount++; // conta só órfão VISÍVEL (clone escondido não infla a métrica)
+      // conta só órfão VISÍVEL (clone escondido não infla a métrica)
+      if (eligible) orphanCount++;
       if (hunterUserId) assignments.push({ customer_user_id: c.customer_user_id, owner_user_id: hunterUserId, source: 'hunter_orphan', omie_codigo_vendedor: c.omie_codigo_vendedor ?? null, eligible });
+    } else if (hunterUserId) {
+      // CONFLITO de mapeamento (código → 2+ vendedores): QUARANTINA em vez de omitir. Omitir + upsert-only
+      // (onConflict customer_user_id, sem DELETE) preservaria o assignment ANTIGO — vendedor errado, válido,
+      // cobrando comissão: o furo que refutou o A′. Mesmo padrão da Fatia 2 (membro preservado, eligible=false,
+      // zero comissão, reversível). Hunter é PLACEHOLDER inerte (owner_user_id é NOT NULL e o CHECK de source
+      // só aceita omie|hunter_orphan → zero DDL), NÃO um palpite de dono: eligible=false já nega o efeito.
+      // Preserva o código ambíguo p/ observabilidade (qual code causou). `eligible` do caller é ignorado de
+      // propósito — conflito nunca é elegível, nem no ramo do clone.
+      assignments.push({ customer_user_id: c.customer_user_id, owner_user_id: hunterUserId, source: 'hunter_orphan', omie_codigo_vendedor: v.code, eligible: false });
     }
-    // v.kind === 'conflict' → não emite (legado): código mapeado p/ 2 vendedores.
   };
 
   for (const canonicalId of canonicalIds) {
@@ -163,6 +176,7 @@ export function computeCarteira(
 
   return { assignments, conflicts, orphanCount, chainViolations };
 }
+// MIRROR-END
 
 // ── P0-B-bis: o carteira-rebuild lê a LISTA de membros do carteira_membership_ledger (Fatia 1, acumulador)
 // e o VENDEDOR da PROOF oben omie_customer_account_map_fresco(account='oben') — nem lista nem vendedor vêm
@@ -174,10 +188,13 @@ export function computeCarteira(
 //   • montarClientes: merge LISTA×VENDEDOR preservando a ordem do espelho (clone ausente da proof → null).
 //   • avaliarGuardProof (PRÉ-compute): aborta se proof oben fresca vazia / < 50% da proof CRUA (denominador
 //     é a própria proof, não o espelho misto — corrige o falso-positivo #4) / 0 vendedores não-null.
-//   • avaliarGuardResultado (PÓS-compute): aborta se 0 omie ELEGÍVEL (#3); BLOQUEIA o bootstrap quando o
-//     BASELINE PERSISTIDO é 0 sem flag — INDEPENDENTE da carteira atual (Codex R3: se a persistência falha,
-//     o baseline segue 0 → o cron fica fail-closed); compara SÓ com o baseline persistido (fator 0.8, monotônico
-//     → sem catraca). Retorna o novoBaseline a gravar.
+//   • avaliarGuardResultado (PÓS-compute): aborta se 0 omie ELEGÍVEL. CRON (não-autorizado): compara
+//     omieElegivelNovo SÓ com o BASELINE PERSISTIDO (fator 0.8, monotônico → sem catraca; a carteira atual fica
+//     FORA — Codex R3: se a persistência do baseline falha (0), o cron fica fail-closed). BOOTSTRAP (autorizado):
+//     mede a SAÍDA vs max(carteira ATUAL omie elegível, baseline persistido) — encolher < 80% exige &force=1
+//     (R4b: o max impede erodir o baseline em etapas quando atual<baseline). Fecha o furo Codex R4 (o >0 sozinho
+//     gravava ~Hunter na perda de vendedor grande / flaggeds-consolidação em massa / corrupção de 1 código). A
+//     carteira atual entra SÓ no ramo autorizado → não reabre a catraca do cron. Retorna o novoBaseline.
 //   • parseBaselineSaudavel: valida o baseline lido do company_config (decimal canônico ≤ 2^53); inválido → null
 //     (o edge ABORTA em vez de virar valor inseguro — "4797lixo"→null, "1e9"→null, gigante→null).
 // MIRROR-START carteira-load — espelhado verbatim em supabase/functions/carteira-rebuild/index.ts
@@ -195,6 +212,63 @@ export function montarClientes(espelhoIds: string[], proofOben: Map<string, numb
     omie_codigo_vendedor: proofOben.get(customer_user_id) ?? null,
   }));
 }
+export function extrairQuarantinados(rows: Array<{ user_id: string; identity_state: string | null }>): Set<string> {
+  // FAIL-CLOSED (Fatia 2 D2): quarantina tudo que não for EXATAMENTE 'verified' — inclui null, estado
+  // futuro e qualquer valor que o CHECK venha a aceitar. A Fatia 2 só POPULA 'ambiguous', mas testar
+  // `=== 'ambiguous'` falharia ABERTO (cliente de identidade dúbia pagando comissão) no dia em que outro
+  // estado ganhasse gatilho. Ledger vazio → set vazio → rebuild degrada p/ o comportamento de hoje.
+  const quarantinados = new Set<string>();
+  for (const r of rows) if (r.identity_state !== 'verified') quarantinados.add(r.user_id);
+  return quarantinados;
+}
+export function aplicarMascaras(
+  assignments: ComputedAssignment[],
+  flaggeds: Set<string>,
+  quarantinados: Set<string>,
+): ComputedAssignment[] {
+  // As 2 máscaras derrubam ELEGIBILIDADE, nunca PRESENÇA. Tirar o membro da saída faria o upsert-only
+  // (onConflict customer_user_id, sem DELETE) preservar o assignment ANTIGO — vendedor errado, válido,
+  // cobrando comissão (o furo que refutou o A′). eligible=false já entrega zero comissão + invisível
+  // (todo leitor filtra `WHERE eligible`), e é REVERSÍVEL: volta a 'verified' → volta a valer.
+  return assignments.map((a) => ({
+    ...a,
+    eligible: a.eligible && !flaggeds.has(a.customer_user_id) && !quarantinados.has(a.customer_user_id),
+  }));
+}
+export function verificarCobertura(
+  membroIds: string[],
+  rows: Array<{ customer_user_id: string }>,
+): { ok: boolean; motivo: string | null } {
+  // PÓS-CONDIÇÃO ESTRUTURAL (tripwire): a saída cobre EXATAMENTE o conjunto de membros do ledger.
+  // Por que existe: "membro não chegou na saída" é UMA classe de bug — o conflito de mapeamento, o Hunter
+  // ausente e qualquer omissão futura são instâncias dela — e o upsert-only (onConflict customer_user_id,
+  // sem DELETE) transforma toda omissão em assignment ANTIGO vivo (vendedor errado, elegível, cobrando
+  // comissão: o furo que refutou o A′). Os guards de cardinalidade NÃO pegam isto: contam linhas, e o
+  // membro omitido some silenciosamente sem mudar contagem nenhuma. Aqui provamos o CONJUNTO.
+  // Fail-closed: em anomalia o caller ABORTA sem escrever — nada novo entra, o run fica ruidoso, e o
+  // estado velho é preservado por decisão explícita em vez de por omissão silenciosa.
+  const esperados = new Set(membroIds);
+  const vistos = new Set<string>();
+  const duplicados = new Set<string>();
+  const extras = new Set<string>();
+  for (const r of rows) {
+    if (vistos.has(r.customer_user_id)) duplicados.add(r.customer_user_id);
+    vistos.add(r.customer_user_id);
+    if (!esperados.has(r.customer_user_id)) extras.add(r.customer_user_id);
+  }
+  const faltantes: string[] = [];
+  for (const id of esperados) if (!vistos.has(id)) faltantes.push(id);
+  if (faltantes.length > 0) {
+    return { ok: false, motivo: `cobertura: ${faltantes.length} membro(s) do ledger sem row (ex.: ${faltantes.slice(0, 3).join(', ')}) — upsert-only deixaria o assignment ANTIGO vivo (stale)` };
+  }
+  if (extras.size > 0) {
+    return { ok: false, motivo: `cobertura: ${extras.size} row(s) p/ nao-membro do ledger (ex.: ${[...extras].slice(0, 3).join(', ')})` };
+  }
+  if (duplicados.size > 0) {
+    return { ok: false, motivo: `cobertura: ${duplicados.size} customer_user_id duplicado(s) na saida (ex.: ${[...duplicados].slice(0, 3).join(', ')})` };
+  }
+  return { ok: true, motivo: null };
+}
 export function avaliarGuardProof(m: { proofCrua: number; proofFresca: number; comVendedor: number }): { abortar: boolean; motivo: string | null } {
   if (m.proofFresca === 0) {
     return { abortar: true, motivo: 'proof oben fresca vazia (sync parado / TTL 7d expirado)' };
@@ -207,12 +281,29 @@ export function avaliarGuardProof(m: { proofCrua: number; proofFresca: number; c
   }
   return { abortar: false, motivo: null };
 }
-export function avaliarGuardResultado(m: { omieElegivelNovo: number; baselinePersistido: number; autorizado: boolean }): { abortar: boolean; motivo: string | null; novoBaseline: number } {
+export function avaliarGuardResultado(m: { omieElegivelNovo: number; baselinePersistido: number; autorizado: boolean; omieAtual: number; forcado: boolean }): { abortar: boolean; motivo: string | null; novoBaseline: number } {
   if (m.omieElegivelNovo === 0) {
     return { abortar: true, motivo: '0 assignments omie elegiveis (carteira 100% Hunter) — abortado p/ preservar', novoBaseline: m.baselinePersistido };
   }
   if (m.autorizado) {
-    return { abortar: false, motivo: null, novoBaseline: m.omieElegivelNovo };
+    // BOOTSTRAP mede a SAIDA (omieElegivelNovo POS consolidacao/conflitos/flaggeds), nao a fonte (Codex R4 P1.1-3):
+    // o >0 sozinho gravaria carteira ~Hunter se o vendedor_map dessincronizasse (perda de um vendedor grande),
+    // flaggeds/consolidacao em massa destruissem a saida, OU corrupcao deixasse so 1 codigo valido. Trava vs a
+    // REFERENCIA = max(carteira ATUAL omie elegivel, baseline persistido): o MAIOR sinal saudavel (Codex R4b P2:
+    // usar so a atual permitia erodir o baseline em etapas quando atual<baseline; com o max, &force=1 vira o UNICO
+    // jeito de baixar o baseline, e a primeira populacao TRUNCADA com baseline>0 fica protegida). Encolher < 80%
+    // da ref exige &force=1. A ref entra SO neste ramo autorizado -> NAO reabre a catraca do cron (so-baseline, R3).
+    // Primeira populacao SEM historico (ref=0): so o >0 protege (carteira nascendo; operador confere os contadores).
+    const ref = Math.max(m.omieAtual, m.baselinePersistido);
+    if (!m.forcado && ref > 0 && m.omieElegivelNovo < 0.8 * ref) {
+      return { abortar: true, motivo: `bootstrap encolheria omie elegivel p/ ${m.omieElegivelNovo} (< 80% de ${ref} = max[atual ${m.omieAtual}, baseline ${m.baselinePersistido}]) — investigue vendedor_map/proof ou &force=1 se a queda e legitima`, novoBaseline: m.baselinePersistido };
+    }
+    // Sem force o baseline persiste MONOTONICO sobre as TRES grandezas (atual, baseline, novo) — nunca desce.
+    // O omieAtual PRECISA entrar no max (Codex R5 P1): com baseline DESATUALIZADO (0) e carteira real 2747, um
+    // max(baseline, novo) persistiria 2198 e ESQUECERIA os 2747 — o run seguinte compararia com 2198 e deixaria
+    // cair p/ 1759 (erosao acumulada de 36% sem force). Incluindo o atual, o baseline vira 2747 e o 2º passo
+    // aborta. COM force o reset legitimo assume a queda e grava o novo valor (o UNICO jeito de baixar).
+    return { abortar: false, motivo: null, novoBaseline: m.forcado ? m.omieElegivelNovo : Math.max(m.omieAtual, m.baselinePersistido, m.omieElegivelNovo) };
   }
   if (m.baselinePersistido === 0) {
     return { abortar: true, motivo: 'bootstrap (baseline persistido=0) exige autorizacao explicita — cron nao faz bootstrap', novoBaseline: 0 };

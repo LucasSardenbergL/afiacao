@@ -18,7 +18,8 @@ const wrapper = ({ children }: { children: React.ReactNode }) => {
 const ROWS = [
   { omie_codigo: 7001, product_id: 'p1', preco_atual: 90, preco_atual_at: '2026-06-06',
     qty_ref: 10, qty_ref_source: 'ultima_venda', hide_reason: null,
-    cmc: 100, cmc_confiavel: true, aliquota_venda: 0.20, piso_mc: 125, precos_cliente: [90], comparaveis: [] },
+    abaixo_piso: true, piso_disponivel: true, cmc_confiavel: true, prazo_aplicado: false,
+    piso_mc: 125, piso_gap_pct: 0.388889, precos_cliente: [90], comparaveis: [] },
   { omie_codigo: 7003, hide_reason: 'sem_produto' },
   { omie_codigo: 7004, product_id: 'p4', hide_reason: 'sem_preco' },
   { omie_codigo: 7005, product_id: 'p5', preco_atual: 100, preco_atual_at: '2026-06-10', hide_reason: 'sem_quantidade' },

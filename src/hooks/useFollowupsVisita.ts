@@ -53,7 +53,12 @@ export function useFollowupsVisita() {
           .eq('farmer_id', uid)
           .gte('started_at', desdeISO),
       ]);
+      // Os três erros importam, não só o das visitas: `agRes` vazio faz o cliente que JÁ tem
+      // visita agendada reaparecer como pendente (retrabalho), e `callRes` vazio fabrica
+      // "nunca contatado", que é o insumo da cadência.
       if (visRes.error) throw new Error(visRes.error.message);
+      if (agRes.error) throw new Error(agRes.error.message);
+      if (callRes.error) throw new Error(callRes.error.message);
       const visitas = (visRes.data ?? []) as VisitaFollowupRow[];
 
       const agendadasPendentes = new Set<string>(

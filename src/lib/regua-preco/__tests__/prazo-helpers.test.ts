@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parsePrazoRecebimento, custoCapitalPrazo, pisoComPrazo } from '../prazo-helpers';
+import { parsePrazoRecebimento } from '../prazo-helpers';
 import { avaliarReguaPreco } from '../regua-preco-helpers';
 import type { ReguaPrecoInput } from '../types';
 
@@ -53,83 +53,27 @@ describe('parsePrazoRecebimento — degrada (null) sem adivinhar', () => {
   });
 });
 
-describe('custoCapitalPrazo — (selic+spread)/100, exclui armazenagem, unit gate', () => {
-  it('valores reais da OBEN → 0,1775 (17,75% a.a.)', () => {
-    expect(custoCapitalPrazo(14.75, 3.0)).toBeCloseTo(0.1775, 6);
-  });
-  it('exclui armazenagem: NÃO recebe o 3º componente (assinatura só tem 2 args)', () => {
-    // Garantia estrutural: a função não soma armazenagem_fisica (8,00) — daria 0,2575.
-    expect(custoCapitalPrazo(14.75, 3.0)).not.toBeCloseTo(0.2575, 4);
-  });
-  it('componente fora de [0,100] → null', () => {
-    expect(custoCapitalPrazo(-1, 3)).toBeNull();
-    expect(custoCapitalPrazo(14.75, 200)).toBeNull();
-  });
-  it('taxa final ≥ 100% a.a. (erro de unidade) → null', () => {
-    expect(custoCapitalPrazo(60, 50)).toBeNull(); // 110% → null
-  });
-  it('entradas nulas / não-finitas → null', () => {
-    expect(custoCapitalPrazo(null, 3)).toBeNull();
-    expect(custoCapitalPrazo(14.75, undefined)).toBeNull();
-    expect(custoCapitalPrazo(NaN, 3)).toBeNull();
-  });
-});
-
-describe('pisoComPrazo — Candidato A: piso = cmc/(S − aliquota)', () => {
-  const r = 0.1775;
-  const a = 0.18;
-  const cmc = 100;
-
-  it('90 dias (1 parcela) → 128,12 (número validado pelo Codex)', () => {
-    const res = pisoComPrazo(cmc, a, [90], r)!;
-    expect(res.piso).toBeCloseTo(128.12, 1);
-  });
-  it('0/30/60/90 (4 parcelas iguais) → 124,97', () => {
-    const res = pisoComPrazo(cmc, a, [0, 30, 60, 90], r)!;
-    expect(res.piso).toBeCloseTo(124.97, 1);
-  });
-  it('30/60/90 → 126,01', () => {
-    const res = pisoComPrazo(cmc, a, [30, 60, 90], r)!;
-    expect(res.piso).toBeCloseTo(126.01, 1);
-  });
-  it('à vista pura [0] degenera para o piso à vista (custoRs ≈ 0)', () => {
-    const res = pisoComPrazo(cmc, a, [0], r)!;
-    expect(res.piso).toBeCloseTo(cmc / (1 - a), 6); // 121,951
-    expect(res.custoRs).toBeCloseTo(0, 9);
-    expect(res.S).toBeCloseTo(1, 9);
-  });
-  it('piso do prazo é SEMPRE ≥ piso à vista (custo do prazo ≥ 0)', () => {
-    const res = pisoComPrazo(cmc, a, [30, 60, 90], r)!;
-    expect(res.piso).toBeGreaterThan(cmc / (1 - a));
-    expect(res.custoRs).toBeGreaterThan(0);
-    expect(res.prazoMedio).toBeCloseTo(60, 6);
-  });
-
-  it('gate de denominador: S − aliquota ≤ ε → null (não gera piso negativo/explosivo)', () => {
-    // aliquota altíssima + prazo longo → S < aliquota → denominador negativo.
-    expect(pisoComPrazo(100, 0.99, [180], r)).toBeNull();
-  });
-  it('guards → null', () => {
-    expect(pisoComPrazo(0, a, [30], r)).toBeNull(); // cmc ≤ 0
-    expect(pisoComPrazo(cmc, 1, [30], r)).toBeNull(); // aliquota ≥ 1
-    expect(pisoComPrazo(cmc, a, [30], 0)).toBeNull(); // taxa ≤ 0
-    expect(pisoComPrazo(cmc, a, [30], 1.2)).toBeNull(); // taxa ≥ 1 (unidade)
-    expect(pisoComPrazo(cmc, a, [], r)).toBeNull(); // sem parcelas
-    expect(pisoComPrazo(cmc, a, [200], r)).toBeNull(); // dia > 180 (defesa em profundidade)
-  });
-});
+// `custoCapitalPrazo` e `pisoComPrazo` NÃO existem mais aqui (FU4-F fase 2): ambos precisavam do
+// cmc, que é justamente o que a vendedora deixou de receber. A fórmula virou
+// `private.regua_piso_calc` e a taxa é lida pelo servidor. A cobertura migrou para
+// db/test-authz-custo-fu4f-fase2-regua.sh — A18 (piso com prazo = 13.6684, calculado FORA do SQL
+// para não ser circular), A19 (prazo_aplicado), A22/A23 (dia > 180 degrada para o à vista).
+// A20/A21 são novos e provam o que nenhum teste TS conseguia: que o prazo mudar de lado
+// (cliente → servidor) altera o SINAL, não só o número.
 
 describe('avaliarReguaPreco — integração do custo do prazo (F2)', () => {
+  // piso à vista = 100/(1-0,18) = 121,95; com prazo [30,60,90] @17,75% a.a. = 126,01.
+  // Agora AMBOS vêm decididos do servidor — aqui prova-se a leitura do veredito, não a fórmula.
+  const A_VISTA = 100 / (1 - 0.18);
+  const COM_PRAZO = 126.01;
   const base = (over: Partial<ReguaPrecoInput>): ReguaPrecoInput => ({
     precoAtual: 124,
-    cmc: 100,
-    cmcConfiavel: true,
-    aliquotaVenda: 0.18, // piso à vista = 121,95
+    piso: { abaixoPiso: false, disponivel: true, piso: A_VISTA, gapPct: null,
+            cmcConfiavel: true, prazoAplicado: false },
     precosCliente: [130, 130, 130],
     comparaveis: [],
     caps: { alta: 0.1, media: 0.05 },
     prazoDias: null,
-    custoCapitalAnual: null,
     ...over,
   });
 
@@ -137,7 +81,11 @@ describe('avaliarReguaPreco — integração do custo do prazo (F2)', () => {
     const semPrazo = avaliarReguaPreco(base({}));
     expect(semPrazo.abaixoPiso).toBe(false); // 124 > 121,95
 
-    const comPrazo = avaliarReguaPreco(base({ prazoDias: [30, 60, 90], custoCapitalAnual: 0.1775 }));
+    const comPrazo = avaliarReguaPreco(base({
+      prazoDias: [30, 60, 90],
+      piso: { abaixoPiso: true, disponivel: true, piso: COM_PRAZO, gapPct: null,
+              cmcConfiavel: true, prazoAplicado: true },
+    }));
     expect(comPrazo.pisoMC).toBeCloseTo(126.01, 1); // piso ajustado
     expect(comPrazo.abaixoPiso).toBe(true);
     expect(comPrazo.sinal).toBe('piso'); // early-return de piso vence o cap
@@ -147,29 +95,37 @@ describe('avaliarReguaPreco — integração do custo do prazo (F2)', () => {
   });
 
   it('degrada honesto sem prazo: piso à vista + disclaimer "Prazo não considerado" + frete', () => {
-    const r = avaliarReguaPreco(base({ prazoDias: null, custoCapitalAnual: null }));
+    const r = avaliarReguaPreco(base({ prazoDias: null }));
     expect(r.pisoMC).toBeCloseTo(100 / (1 - 0.18), 6); // à vista, não levantado
     expect(r.disclaimers).toContain('Prazo de recebimento não considerado.');
     expect(r.disclaimers).toContain('Frete não considerado.');
     expect(r.reasonCodes).not.toContain('piso_ajustado_prazo');
   });
 
-  it('cmc proxy (não confiável) NÃO aplica o prazo (não compõe incerteza)', () => {
-    const r = avaliarReguaPreco(base({ cmcConfiavel: false, prazoDias: [30, 60, 90], custoCapitalAnual: 0.1775 }));
-    expect(r.reasonCodes).not.toContain('piso_ajustado_prazo');
-    expect(r.disclaimers).toContain('Prazo de recebimento não considerado.');
-  });
-
-  it('taxa ausente → degrada (NUNCA taxa 0)', () => {
-    const r = avaliarReguaPreco(base({ prazoDias: [30, 60, 90], custoCapitalAnual: null }));
-    expect(r.reasonCodes).not.toContain('piso_ajustado_prazo');
-    expect(r.disclaimers).toContain('Prazo de recebimento não considerado.');
-  });
+  // "cmc proxy não aplica o prazo" e "taxa ausente → degrada" saíram daqui: são decisões do
+  // SERVIDOR agora (regua_piso_calc degrada para o piso à vista em qualquer guard que falhe, e
+  // fin_regua_custo_capital devolve NULL em config ausente/absurda). O cliente não tem mais a
+  // alavanca para simulá-las — testá-las aqui seria testar o mock, não o comportamento.
 
   it('condição à vista pura [0] é APLICADA (lift 0), não degradada', () => {
-    const r = avaliarReguaPreco(base({ precoAtual: 130, prazoDias: [0], custoCapitalAnual: 0.1775 }));
+    const r = avaliarReguaPreco(base({
+      precoAtual: 130, prazoDias: [0],
+      piso: { abaixoPiso: false, disponivel: true, piso: A_VISTA, gapPct: null,
+              cmcConfiavel: true, prazoAplicado: true },
+    }));
     expect(r.reasonCodes).toContain('piso_ajustado_prazo');
-    expect(r.pisoMC).toBeCloseTo(100 / (1 - 0.18), 6); // lift 0
+    expect(r.pisoMC).toBeCloseTo(A_VISTA, 6); // lift 0
     expect(r.disclaimers).not.toContain('Prazo de recebimento não considerado.');
+  });
+
+  it('prazo aplicado com o número MASCARADO: o recibo cita os dias, nunca o valor', () => {
+    const r = avaliarReguaPreco(base({
+      precoAtual: 124, prazoDias: [30, 60, 90],
+      piso: { abaixoPiso: true, disponivel: true, piso: null, gapPct: null,
+              cmcConfiavel: true, prazoAplicado: true },
+    }));
+    expect(r.recibos.some((x) => x.includes('30/60/90 dias'))).toBe(true);
+    expect(r.recibos.join(' ')).not.toMatch(/R\$/);
+    expect(r.pisoMC).toBeNull();
   });
 });

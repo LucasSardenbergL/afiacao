@@ -121,7 +121,7 @@ export const RecommendationCard = React.memo(function RecommendationCard({
                   <p>Família: {item._admin.familia || 'N/A'}</p>
                 </TooltipContent>
               </Tooltip>
-              <span>Score: {item.score_final.toFixed(4)}</span>
+              <span>Score: {item._admin.score_final.toFixed(4)}</span>
               <span>EILTV: {fmt(item._admin.eiltv)}</span>
             </div>
           </div>

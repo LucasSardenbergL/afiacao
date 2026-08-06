@@ -2,7 +2,7 @@ import { lazy, Suspense } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Type, StopCircle, Shield, Loader2 } from 'lucide-react';
+import { Type, StopCircle, Shield, Loader2, AlertCircle } from 'lucide-react';
 import { useFarmerCopilot } from '@/components/farmer/copilot/useFarmerCopilot';
 import { SessionStartCard } from '@/components/farmer/copilot/SessionStartCard';
 import { DirectionIndicator } from '@/components/farmer/copilot/DirectionIndicator';
@@ -139,6 +139,28 @@ const FarmerCopilot = () => {
               <div className="flex items-center gap-2 justify-center py-1">
                 <Loader2 className="w-3 h-3 animate-spin text-primary" />
                 <span className="text-[10px] text-muted-foreground">Analisando...</span>
+              </div>
+            )}
+
+            {/* Cota de IA estourada. Precede o aviso de "desatualizada" porque
+                diz a causa REAL e a ação certa: aqui NÃO adianta esperar o
+                próximo tick — os disparos estão suspensos até a janela virar. */}
+            {copilot.avisoCota && (
+              <div className="flex items-start gap-1.5 justify-center py-1">
+                <AlertCircle className="w-3 h-3 text-status-warning shrink-0 mt-px" />
+                <span className="text-[10px] text-status-warning">{copilot.avisoCota}</span>
+              </div>
+            )}
+
+            {/* A última leitura falhou e a tela ainda mostra a anterior. Sem este
+                aviso o painel segue em "AO VIVO" com uma direção que já passou —
+                e a vendedora age sobre ela achando que é o agora. */}
+            {!copilot.isAnalyzing && copilot.analiseObsoleta && !copilot.avisoCota && (
+              <div className="flex items-center gap-1.5 justify-center py-1">
+                <AlertCircle className="w-3 h-3 text-status-warning shrink-0" />
+                <span className="text-[10px] text-status-warning">
+                  Leitura desatualizada — a última análise não chegou. Tentando de novo.
+                </span>
               </div>
             )}
 

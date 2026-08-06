@@ -1,5 +1,11 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
+
+// Caption isolada: os cards são componentes burros; a UltimaExecucao (query real) tem teste próprio.
+vi.mock("@/components/execucoes/UltimaExecucao", () => ({
+  UltimaExecucao: () => null,
+}));
+
 import { CostEngineCard, AssociationRulesCard } from "../EngineCards";
 import type { RecConfigs } from "../useAnalyticsSync";
 

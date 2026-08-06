@@ -24,7 +24,7 @@ export function CentralEntryCard({ navigate }: CentralEntryCardProps) {
           <div className="min-w-0 flex-1">
             <p className="font-semibold text-foreground">Central da Ferramenta</p>
             <p className="text-sm text-muted-foreground">
-              Economia, ferramentas, agendamentos e pedidos num só lugar
+              Recomendações, economia, ferramentas e pedidos num só lugar
             </p>
           </div>
           <ChevronRight className="w-5 h-5 text-muted-foreground shrink-0" />

@@ -33,7 +33,10 @@ export async function fetchPedidosMTD(
     if (selection !== 'all') q = q.eq('account', selection);
     const { data, error } = await q;
     if (error) throw new Error(error.message);
-    const rows = (data ?? []) as PedidoMTDRow[];
+    // data null SEM error = malformada, não fim (classe #1338→#1564): tratá-la como fim
+    // entregava a receita MTD PARCIAL como número firme no dashboard.
+    if (data == null) throw new Error('sales_orders (MTD): data null sem error — malformada, não é fim');
+    const rows = data as PedidoMTDRow[];
     out.push(...rows);
     if (rows.length < PAGE) break;
   }

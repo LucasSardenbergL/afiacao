@@ -1,7 +1,7 @@
 import { useState, useRef } from 'react';
 import { Camera, Loader2, X, CheckCircle, AlertCircle, Image } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { supabase } from '@/integrations/supabase/client';
+import { invokeFunction } from '@/lib/invoke-function';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -72,19 +72,22 @@ export function ToolImageIdentifier({ categories, onCategoryIdentified, onClose,
   const analyzeImage = async (imageBase64: string) => {
     setIsAnalyzing(true);
     try {
-      const { data, error } = await supabase.functions.invoke('identify-tool', {
-        body: {
-          imageBase64,
-          categories: categories.map(c => ({ name: c.name, description: c.description })),
-        },
+      // invokeFunction (e não o invoke cru) para o motivo REAL da edge chegar
+      // aqui — sem ele, "créditos esgotados" vira "tente novamente" e ninguém
+      // descobre que o problema é orçamento.
+      const data = await invokeFunction<IdentificationResult>('identify-tool', {
+        imageBase64,
+        categories: categories.map(c => ({ name: c.name, description: c.description })),
       });
-
-      if (error) throw error;
-      setResult(data as IdentificationResult);
+      setResult(data);
     } catch (error) {
       console.error('Erro ao analisar imagem:', error);
+      const motivo = error instanceof Error && error.name === 'EdgeFunctionError' &&
+          !/non-2xx status code/i.test(error.message)
+        ? error.message
+        : null;
       toast.error('Erro na análise', {
-        description: 'Não foi possível analisar a imagem. Tente novamente.',
+        description: motivo ?? 'Não foi possível analisar a imagem. Tente novamente.',
       });
     } finally {
       setIsAnalyzing(false);

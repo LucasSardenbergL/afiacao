@@ -1,5 +1,9 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
+// `leaseIndisponivel` saiu do import: deixou de ser chamado aqui e passou a ser consultado DENTRO
+// de `decidirClaim`, que decide o passo inteiro do claim. Mantê-lo importado viraria símbolo órfão.
+import { decidirClaim, esperaClaimMs } from "../_shared/lease.ts";
+import { fetchAll } from "../_shared/paginate.ts";
 
 const ALLOWED_ORIGIN = Deno.env.get("ALLOWED_ORIGIN") || "*";
 
@@ -21,6 +25,9 @@ interface FarmerClientScoreRow {
   avg_monthly_spend_180d: number | null;
   category_count: number | null;
   gross_margin_pct: number | null;
+  // COBERTURA DE CUSTO: lidas do banco (select *) p/ preservar no caso marginRefreshFatal (overlay pulado).
+  itens_com_custo: number | null;
+  itens_sem_custo: number | null;
   avg_repurchase_interval: number | null;
   expansion_score: number | null;
   recover_score: number | null;
@@ -52,17 +59,23 @@ interface FarmerClientScoreSeed {
   days_since_last_purchase: number;
   avg_monthly_spend_180d: number;
   category_count: number;
-  gross_margin_pct: number;
+  // null = margem AINDA NÃO MEDIDA (cliente recém-semeado). Tem de ser enviado EXPLICITAMENTE: a
+  // coluna é nullable mas tem DEFAULT 0, então OMITIR o campo faz o Postgres fabricar 0 — o mesmo
+  // zero que criava o loop fechado. m_score idem (é o score derivado desta margem).
+  gross_margin_pct: number | null;
   avg_repurchase_interval: number;
-  expansion_score: number;
-  recover_score: number;
-  revenue_potential: number;
+  // As 6 colunas SEM produtor (nenhum writer as calcula; só este seed as tocava, com 0). null =
+  // "não medido", nunca 0 — mesma razão do gross_margin_pct acima. O DEFAULT 0 foi removido na
+  // migration 20260727130000; enviar null EXPLÍCITO independe da ordem de deploy migration×edge.
+  expansion_score: number | null;
+  recover_score: number | null;
+  revenue_potential: number | null;
   rf_score: number;
-  m_score: number;
+  m_score: number | null;
   g_score: number;
-  s_score: number;
-  x_score: number;
-  eff_score: number;
+  s_score: number | null;
+  x_score: number | null;
+  eff_score: number | null;
   sales_history_status: 'sem_historico' | 'stale' | 'ativo';
 }
 
@@ -80,8 +93,18 @@ interface ScoreUpdate {
   churn_risk: number;
   priority_score: number;
   rf_score: number;
-  m_score: number;
+  // m_score (componente de MARGEM) é nulável desde o PR 3-zero: null = margem desconhecida, e
+  // apply_score_updates o tirou do guard de obrigatórias justamente por isso. NÃO trocar por 0.
+  m_score: number | null;
   g_score: number;
+  // MARGEM-VIVA: idem — null é "não medido", e a RPC grava direto (sem COALESCE) para que o
+  // desconhecido sobrescreva um valor velho que já não se sustenta.
+  gross_margin_pct: number | null;
+  // COBERTURA DE CUSTO (aditivo): itens com/sem custo por cliente, hoje calculados por
+  // get_customer_margin_summary e descartados. Nuláveis (jsonb_exists na RPC, como gross_margin_pct):
+  // null = não computado (cliente ausente do marginMap), jamais 0. Chave presente → sobrescreve.
+  itens_com_custo: number | null;
+  itens_sem_custo: number | null;
   // RECÊNCIA-VIVA: o compute agora REESCREVE a base de vendas (antes só lia → congelava no seed).
   days_since_last_purchase: number;
   avg_monthly_spend_180d: number;
@@ -98,7 +121,7 @@ interface HealthHistoryRecord {
   health_score: number;
   health_class: string;
   rf_score: number;
-  m_score: number;
+  m_score: number | null;   // null = margem desconhecida neste run (PR 3-zero); nunca 0 por default
   g_score: number;
   x_score: number;
   s_score: number;
@@ -113,6 +136,96 @@ interface PriorityLogRecord {
   churn_risk_component: number;
   repurchase_component: number;
   goal_proximity_component: number;
+}
+
+// Margem-viva (PR 3-zero): contraparte de CustomerSalesSummaryRow para get_customer_margin_summary.
+// `gross_margin_pct` NULL = custo DESCONHECIDO (nenhum item do cliente tem linha em product_costs
+// com custo > 0), NÃO margem zero.
+interface CustomerMarginSummaryRow {
+  customer_user_id: string;
+  itens_com_custo: number;
+  itens_sem_custo: number;
+  gross_margin_pct: number | null;
+}
+
+// Margem conhecida? Só número finito conta. null/undefined/NaN → desconhecida, e quem chama TEM de
+// excluir o componente do score em vez de tratar como 0 — margem 0 é veredito ("cliente ruim"),
+// desconhecida é ausência de dado. Espelha custoValido() de src/lib/custo/custoCanonico.ts.
+function margemConhecida(pct: number | null | undefined): number | null {
+  if (pct == null) return null;
+  const n = Number(pct);
+  return Number.isFinite(n) ? n : null;
+}
+
+// Cobertura de custo por cliente — espelho inline de src/lib/scoring/margin.ts:coberturaCustoCliente
+// (vitest; Deno não importa de src/). ausente≠zero: cliente fora do marginMap → {null,null}, jamais
+// {0,0} (0 = "tem itens, nenhum com custo"). Paridade: mudou aqui → mude lá.
+// contagemFinita é FAIL-CLOSED de propósito: `Number('')`, `Number(false)` e `Number([])` são 0 e
+// fabricariam "medi e deu zero"; fração/negativo/>2^53 violam o contrato de count(*) e o `3.5`
+// chegaria ao `::bigint` da RPC derrubando o batch inteiro (22P02).
+function contagemFinita(raw: unknown): number | null {
+  if (raw == null) return null;
+  if (typeof raw !== 'number' && typeof raw !== 'string') return null;
+  if (typeof raw === 'string' && raw.trim() === '') return null;
+  const n = Number(raw);
+  return Number.isSafeInteger(n) && n >= 0 ? n : null;
+}
+function coberturaCustoCliente(
+  row: { itens_com_custo?: unknown; itens_sem_custo?: unknown } | null | undefined,
+): { itensComCusto: number | null; itensSemCusto: number | null } {
+  if (row == null) return { itensComCusto: null, itensSemCusto: null };
+  return { itensComCusto: contagemFinita(row.itens_com_custo), itensSemCusto: contagemFinita(row.itens_sem_custo) };
+}
+
+// RPC set-returning SEM paginação é truncada em 1.000 linhas pelo PostgREST — SILENCIOSAMENTE, sem
+// erro (docs/agent/money-path.md §35, incidente #1466→#1471). Com 1.214 clientes com pedido isto
+// não era hipótese: medido em prod 2026-07-20, EXATAMENTE 1.000 clientes recebiam refresh de vendas
+// e os outros 214 ficavam com days=999/gasto=0/categorias=0 — 50 deles tinham comprado nos últimos
+// 90 dias (12 na última semana) e apareciam como 'critico' para a vendedora.
+//
+// `.order()` aqui e não ORDER BY dentro da função: PostgREST monta `SELECT * FROM fn() ORDER BY ...
+// LIMIT/OFFSET`, então a ordem tem de estar NA QUERY dele para o fatiamento ser coerente entre
+// páginas. A chave é o GROUP BY das duas RPCs (única por linha) → ordem TOTAL, sem empate a
+// desempatar. Sem isso, páginas podem repetir e omitir linhas mesmo somando o total certo.
+//
+// O parâmetro é tipado ESTRUTURALMENTE (só o que o helper usa), não como
+// `ReturnType<typeof createClient>`: sem argumentos de tipo, o `createClient` resolve os DEFAULTS
+// dos genéricos (`<unknown, …, never>`), enquanto a chamada real infere `<any, 'public', 'public'>`
+// — e `'public'` não é atribuível a `never`, então passar o cliente instanciado dá TS2345. O mesmo
+// mismatch está documentado em omie-sync-status-produtos/index.ts, que o contorna capturando o tipo
+// de uma factory. Aqui o contrato mínimo basta e ainda desacopla o helper da versão do supabase-js.
+type RpcPaginavelClient = {
+  rpc(fn: string): {
+    order(coluna: string, opts: { ascending: boolean }): {
+      range(de: number, ate: number): PromiseLike<{ data: unknown; error: { message: string } | null }>;
+    };
+  };
+};
+
+async function carregarRpcPaginada<T>(
+  supabase: RpcPaginavelClient,
+  fn: 'get_customer_sales_summary' | 'get_customer_margin_summary',
+): Promise<T[]> {
+  const linhas: T[] = [];
+  const sz = 1000;
+  for (let pg = 0; ; pg++) {
+    const { data, error } = await supabase
+      .rpc(fn)
+      .order('customer_user_id', { ascending: true })
+      .range(pg * sz, (pg + 1) * sz - 1);
+    if (error) throw new Error(`${fn} pág.${pg}: ${error.message}`);
+    // `data == null` sem `error` é resposta MALFORMADA — não é fim da fonte. O `?? []` de
+    // antes a convertia em página vazia → EOF falso → o acumulado PARCIAL voltava como se
+    // fosse a fonte inteira. Espelha o fix do coletarPaginado (src/lib/scoring/rpcPaginada.ts);
+    // fim LEGÍTIMO é `data: []`, que encerra por `length < sz` logo abaixo.
+    if (data == null) throw new Error(`${fn} pág.${pg}: data null sem error — resposta malformada, não é fim da fonte`);
+    const lote = data as unknown as T[];
+    linhas.push(...lote);
+    if (lote.length < sz) return linhas;
+    // Guard de sanidade: o universo é "clientes com pedido" (~1,2k). 100 páginas = 100k linhas já é
+    // sintoma de loop/cartesiano, não de crescimento — falhar alto é melhor que estourar a memória.
+    if (pg >= 99) throw new Error(`${fn}: mais de ${100 * sz} linhas — abortado por segurança`);
+  }
 }
 
 // Recência-viva: espelho inline de src/lib/scoring/salesBase.ts (vitest 8/8; Deno não importa de
@@ -183,20 +296,145 @@ Deno.serve(async (req) => {
   const auth = await authorizeCronOrStaff(req);
   if (!auth.ok) return auth.response;
 
+  // ── Service client for privileged operations ──
+  // FORA do try: o finally precisa dele p/ liberar o lease mesmo quando o corpo lança.
+  const supabase = createClient(
+    Deno.env.get('SUPABASE_URL')!,
+    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+  );
+
+  // ═══ LEASE (anti-sobreposição) ═══════════════════════════════════════════════════════════════
+  // O payload de apply_score_updates é montado a partir do SNAPSHOT lido no INÍCIO do run e enviado
+  // no FIM. Sem exclusão mútua, dois runs sobrepostos causam last-writer-wins: um run com
+  // marginRefreshFatal (overlay pulado) carrega o snapshot VELHO e, terminando DEPOIS de um run
+  // saudável, RESTAURA margem/cobertura/recência velhas. Vale p/ gross_margin_pct, m_score,
+  // itens_com_custo/sem_custo, days_since_last_purchase, avg_monthly_spend_180d, category_count e
+  // health_score/churn_risk derivados. Achado do challenge /codex 2026-07-22.
+  //
+  // ⚠️ O caso ruim é AUTO-AGRAVANTE: a falha típica da RPC de margem é TIMEOUT, e o run que dá
+  // timeout é o MAIS LENTO — "o degradado termina depois do saudável" é o desfecho ESPERADO.
+  //
+  // Vias concorrentes reais (medidas em prod 2026-07-23): cron diário 06:00, retry após o corte de
+  // 150s do net.http_post (a edge SEGUE VIVA depois dele), e o botão manual de staff em
+  // IntelligenceDashboard — que já disparou 2 runs em 17min (2026-07-21).
+  //
+  // pg_advisory_lock NÃO serve: o pool do PostgREST não dá afinidade de conexão (o lock vaza/solta
+  // em conexão reciclada) e o lease precisa atravessar N chamadas HTTP. Lease row-based é o padrão
+  // do repo (migration 20260713160000, carteira-rebuild).
+  const runId = crypto.randomUUID();
+  let leaseAdquirido = false;
+  let leaseLiberado = false;
+  let leaseStatusFinal: 'complete' | 'error' = 'error';
+  let leaseAviso: string | null = null;
+
+  // Libera o lease e DISTINGUE os três desfechos (achado /codex, P1):
+  //   'ok'        → finalizado com ownership;
+  //   'ownership' → perdi o lease sem ter liberado. Outro run assumiu enquanto eu escrevia ⇒ a
+  //                 integridade do que gravei é DESCONHECIDA. Não pode virar 200: seria afirmar
+  //                 sucesso sobre um estado que ninguém verificou.
+  //   'transport' → não consegui falar com o banco. A escrita em si pode estar boa; o que ficou
+  //                 incerto é o selo do lease, que auto-expira em 15min (fail-closed, sem
+  //                 force-release).
+  // Nunca lança: um erro daqui não pode sobrescrever a resposta original do run.
+  const liberarLease = async (status: 'complete' | 'error'): Promise<'ok' | 'ownership' | 'transport'> => {
+    if (!leaseAdquirido || leaseLiberado) return 'ok';
+    try {
+      const { data: liberado, error: relErr } = await supabase.rpc(
+        'finalizar_calculate_scores', { p_run_id: runId, p_status: status },
+      );
+      if (relErr) {
+        console.error(`[calculate-scores] finalize do lease falhou (auto-expira em 15min): ${relErr.message}`);
+        return 'transport';
+      }
+      if (liberado !== true) {
+        console.error(`[calculate-scores] finalize SEM ownership (run_id=${runId}) — fencing quebrado ou lease adulterado.`);
+        return 'ownership';
+      }
+      leaseLiberado = true;
+      return 'ok';
+    } catch (e) {
+      console.error('[calculate-scores] finalize do lease lançou:', e instanceof Error ? e.message : String(e));
+      return 'transport';
+    }
+  };
+
   try {
+    // Claim COM RETRY DE TRANSPORTE. `decidirClaim` (puro, testado em _shared/lease_test.ts) decide
+    // o passo; aqui só executamos o efeito.
+    //
+    // O retry cobre UM caso: o banco commitou o claim e a resposta HTTP se perdeu. Retentar com o
+    // MESMO runId aciona a cláusula idempotente da migration — que sem isto nunca era exercida — e
+    // evita que o lease fique preso 15min por uma oscilação de rede.
+    //
+    // NÃO cobre lease ocupado: ali a decisão é 'pular' na primeira resposta. Ver o bloco em
+    // `decidirClaim` — esperar exigiria >30s (o run mediu ~29s em prod) e comeria a margem do
+    // wall-clock sem fechar o furo de frescor, que segue declarado.
+    //
+    // ORDEM DE DEPLOY: se a edge nova subir ANTES da migration, a função não existe (42883/PGRST202)
+    // e `decidirClaim` devolve 'seguir_sem_lease' SEM gastar retry — fail-open DECLARADO no log e na
+    // resposta, nunca silencioso. Erro PERMANENTE lança na hora; só o transitório retenta.
+    const MAX_TENTATIVAS_CLAIM = 2;
+    let pular = false;
+    for (let tentativa = 1; tentativa <= MAX_TENTATIVAS_CLAIM; tentativa++) {
+      const { data: claimed, error: claimErr } = await supabase.rpc('claim_calculate_scores', { p_run_id: runId });
+      const decisao = decidirClaim({ claimed, erro: claimErr }, tentativa, MAX_TENTATIVAS_CLAIM);
+
+      if (decisao === 'adquirido') { leaseAdquirido = true; break; }
+
+      if (decisao === 'seguir_sem_lease') {
+        leaseAviso = 'lease indisponivel (migration 20260728120001 ainda nao aplicada) — run SEM exclusao mutua';
+        console.warn(`[calculate-scores] ${leaseAviso}`);
+        break;
+      }
+
+      if (decisao === 'lancar') {
+        throw new Error(`claim_calculate_scores falhou apos ${tentativa} tentativa(s): ${claimErr?.message}`);
+      }
+
+      if (decisao === 'pular') { pular = true; break; }
+
+      // 'esperar_e_retentar' — só transporte incerto chega aqui, e com o MESMO runId de propósito
+      // (é o que a cláusula idempotente da migration reconhece).
+      const espera = esperaClaimMs(tentativa);
+      console.warn(
+        `[calculate-scores] claim ${tentativa}/${MAX_TENTATIVAS_CLAIM} com transporte incerto ` +
+        `(${claimErr?.message}) — nova tentativa em ${espera}ms com o MESMO run_id.`,
+      );
+      await new Promise((r) => setTimeout(r, espera));
+    }
+
+    if (pular) {
+      // Outro run tem o lease. PULA — idempotente: o próximo cron converge. NÃO é falha (200), mas a
+      // resposta diz explicitamente que nada foi recalculado, p/ o chamador (e o botão manual da
+      // staff) não ler "sucesso" como "recalculou".
+      console.warn(`[calculate-scores] lease ocupado por outro run; pulando (run_id=${runId}).`);
+      return new Response(JSON.stringify({
+        skipped: true,
+        reason: 'lease_ocupado',
+        message: 'Recálculo já em andamento — este disparo foi ignorado. Os scores não foram alterados.',
+      }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
     // ANTI-DRIFT (carteira-Omie Opção A): farmer_id do score = carteira_assignments.owner_user_id.
     // NUNCA seedar/atribuir score por atividade (farmer_calls/route_visits).
 
-    // ── Service client for privileged operations ──
-    const supabase = createClient(
-      Deno.env.get('SUPABASE_URL')!,
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-    );
-
-    // Load configurable weights
-    const { data: configRows } = await supabase
+    // Load configurable weights.
+    // FAIL-CLOSED no ERRO de leitura (achado /codex, P1): antes o `error` era descartado, e uma
+    // falha de transporte/RLS/timeout fazia `configRows` vir undefined → o código caía nos defaults
+    // abaixo e recalculava as ~6.6k linhas com pesos DIFERENTES dos configurados, devolvendo 200.
+    // Blast radius = a base inteira, silenciosamente.
+    // ⚠️ A distinção que importa: ERRO de leitura ≠ AUSÊNCIA de linhas. Zero linhas é o estado real
+    // e legítimo da prod hoje (nenhum hs_weight% cadastrado, medido 2026-07-23) e segue usando os
+    // defaults; só a FALHA lança.
+    const { data: configRows, error: configErr } = await supabase
       .from('farmer_algorithm_config')
       .select('key, value');
+    if (configErr) {
+      throw new Error(
+        `farmer_algorithm_config falhou: ${configErr.message} — abortado ANTES de recomputar, ` +
+        `senao a base inteira seria repontuada com os pesos default em vez dos configurados.`,
+      );
+    }
 
     const config: Record<string, number> = {};
     configRows?.forEach(r => { config[r.key] = Number(r.value); });
@@ -210,6 +448,18 @@ Deno.serve(async (req) => {
       crosssell: (config['hs_weight_crosssell'] ?? 10) / 100,
       engagement: (config['hs_weight_engagement'] ?? 10) / 100,
     };
+
+    // O health score passou a DIVIDIR pela soma dos pesos (renormalização quando a margem é
+    // desconhecida — ver o bloco do compute). Com soma 1,0 isso é identidade; com soma diferente,
+    // reescala o score de todo mundo. Logar em vez de silenciar: config torta tem de aparecer.
+    const somaPesosHs = hs_w.recency + hs_w.frequency + hs_w.margin
+                      + hs_w.diversity + hs_w.crosssell + hs_w.engagement;
+    if (Math.abs(somaPesosHs - 1) > 0.001) {
+      console.warn(
+        `[calculate-scores] pesos do health score somam ${(somaPesosHs * 100).toFixed(1)}, não 100 — ` +
+        `os scores serão normalizados por essa soma. Confira farmer_algorithm_config.hs_weight_*.`,
+      );
+    }
 
     // Priority Score weights
     const ps_w = {
@@ -226,26 +476,22 @@ Deno.serve(async (req) => {
     // sales_history_status: limiar (dias) ativo vs stale — config próprio, desacoplado do cap de recência.
     const salesActiveDays = config['sales_active_threshold_days'] ?? 180;
 
-    // Get all client scores with pagination
-    let clients: FarmerClientScoreRow[] = [];
-    {
-      let pg = 0;
-      const sz = 1000;
-      let more = true;
-      while (more) {
-        const { data: batch, error: bErr } = await supabase
-          .from('farmer_client_scores')
-          .select('*')
-          .range(pg * sz, (pg + 1) * sz - 1);
-        if (bErr) throw bErr;
-        if (!batch || batch.length === 0) { more = false; }
-        else {
-          clients.push(...(batch as unknown as FarmerClientScoreRow[]));
-          if (batch.length < sz) more = false;
-          pg++;
-        }
-      }
-    }
+    // Snapshot inicial dos scores. As DUAS metades da classe de paginação artesanal:
+    //  - fetchAll LANÇA em error E em `data == null` sem error. O `!batch → fim` de antes lia
+    //    página com falha como fim da lista e o compute rodava sobre snapshot PARCIAL — cliente
+    //    fora do recompute é indistinguível de cliente que não existe.
+    //  - `.order('id')` NÃO é decorativo: sem ORDER BY explícito o Postgres não garante ordem
+    //    entre páginas, então o fatiamento por .range() pode REPETIR uma linha e OMITIR outra — e
+    //    a omitida sai do recompute inteiro (fica com o score do dia anterior, sem nenhum sinal).
+    //    `id` é a PK: ordem TOTAL, sem empate a desempatar. (Achado /codex do #1578.)
+    let clients: FarmerClientScoreRow[] = await fetchAll<FarmerClientScoreRow>(
+      (from, to) => supabase
+        .from('farmer_client_scores')
+        .select('*')
+        .order('id', { ascending: true })
+        .range(from, to),
+      'farmer_client_scores (snapshot inicial)',
+    );
 
     // === RECÊNCIA-VIVA: snapshot de vendas (RPC) carregado TODO run ===
     // É a FONTE do refresh de recência/gasto/diversidade de TODA linha (antes só rodava no seed).
@@ -255,19 +501,36 @@ Deno.serve(async (req) => {
     let salesRefreshFatal: Error | null = null;
     const salesMap = new Map<string, CustomerSalesSummaryRow>();
     try {
-      const { data, error } = await supabase.rpc('get_customer_sales_summary');
-      if (error) {
-        salesRefreshFatal = new Error(`get_customer_sales_summary retornou erro — recência congelada este run: ${error.message}`);
-        console.error('[calculate-scores]', salesRefreshFatal.message);
-      } else {
-        for (const s of (data ?? []) as unknown as CustomerSalesSummaryRow[]) salesMap.set(s.customer_user_id, s);
-      }
+      // carregarRpcPaginada LANÇA em erro de página (não devolve {error}), por isso o try/catch
+      // único abaixo cobre os dois modos de falha — o de RPC e o de rede.
+      const linhas = await carregarRpcPaginada<CustomerSalesSummaryRow>(supabase, 'get_customer_sales_summary');
+      for (const s of linhas) salesMap.set(s.customer_user_id, s);
     } catch (e) {
       // supabase-js normalmente RETORNA {error}, mas rejeição de fetch/rede LANÇA — capturar aqui
       // também (senão o try/catch EXTERNO daria 500 ANTES do compute, quebrando o contrato
       // "RPC falha → degrada pra congelado, compute roda" — achado Codex).
       salesRefreshFatal = e instanceof Error ? e : new Error(String(e));
-      console.error('[calculate-scores] get_customer_sales_summary lançou — recência congelada este run:', salesRefreshFatal.message);
+      console.error('[calculate-scores] get_customer_sales_summary falhou — recência congelada este run:', salesRefreshFatal.message);
+    }
+
+    // === MARGEM-VIVA (PR 3-zero): a margem do health score, calculada no SERVIDOR ===
+    // ANTES desta chamada a margem NUNCA era computada: esta função lia client.gross_margin_pct da
+    // PRÓPRIA farmer_client_scores que ela escreve (loop fechado sobre o 0 do seed) — medido em prod
+    // 2026-07-20: 1.214 de 1.214 clientes COM pedido tinham gross_margin_pct = 0, nenhum não-zero.
+    // A RPC é SECURITY DEFINER com EXECUTE só p/ service_role: o custo é lido aqui, no servidor, e
+    // só a margem AGREGADA por cliente atravessa — o custo unitário nunca sai do banco.
+    // Mesma degradação da recência-viva: RPC falha → SEM overlay → margem fica no valor anterior
+    // (stale-mas-não-pior), nunca zerada por acidente.
+    let marginRefreshFatal: Error | null = null;
+    const marginMap = new Map<string, CustomerMarginSummaryRow>();
+    try {
+      const linhas = await carregarRpcPaginada<CustomerMarginSummaryRow>(supabase, 'get_customer_margin_summary');
+      for (const m of linhas) marginMap.set(m.customer_user_id, m);
+    } catch (e) {
+      // supabase-js RETORNA {error} no caso normal, mas rejeição de fetch/rede LANÇA — mesmo motivo
+      // do catch da RPC de vendas: sem isto o try/catch externo daria 500 ANTES do compute.
+      marginRefreshFatal = e instanceof Error ? e : new Error(String(e));
+      console.error('[calculate-scores] get_customer_margin_summary falhou — margem congelada este run:', marginRefreshFatal.message);
     }
 
     // === AUTO-SEED v2 (F1 — reset-path robusto): completa clientes FALTANTES ===
@@ -291,18 +554,17 @@ Deno.serve(async (req) => {
       // réplica) fazia `missing = missingRaw` e RESSUSCITAVA os fornecedores excluídos no seed
       // (FAIL-OPEN, exposto pelo smoke 2026-06-20: semeou os 509 flagged). A RPC lê as 3 tabelas no
       // MESMO snapshot e só retorna quem é SEGURO semear (fail-closed por construção). FAIL-CLOSED:
-      // erro → lança (não semeia às cegas; idempotente, o próximo run converge). Paginada com .range
-      // (ORDER BY user_id estável na RPC — §5 do CLAUDE.md). Espelha src/lib/scoring/seedTargets.ts.
-      const missing: Array<{ user_id: string }> = [];
-      for (let sp = 0; ; sp++) {
-        const { data: sPage, error: sErr } = await supabase
+      // erro OU data:null sem error → fetchAll LANÇA (não semeia às cegas; o `?? []` de antes lia
+      // resposta malformada como fim e semearia com lista PARCIAL; idempotente, o próximo run
+      // converge). .order(user_id) explícito no transporte, além do ORDER BY estável da RPC
+      // (§5 do CLAUDE.md). Espelha src/lib/scoring/seedTargets.ts.
+      const missing = await fetchAll<{ user_id: string }>(
+        (from, to) => supabase
           .rpc('seed_targets_faltantes')
-          .range(sp * 1000, sp * 1000 + 999);
-        if (sErr) throw new Error(`seed_targets_faltantes falhou — não dá p/ semear sem a lista atômica de elegíveis: ${sErr.message}`);
-        const sRows = (sPage ?? []) as Array<{ user_id: string }>;
-        for (const r of sRows) missing.push(r);
-        if (sRows.length < 1000) break;
-      }
+          .order('user_id', { ascending: true })
+          .range(from, to),
+        'seed_targets_faltantes (sem a lista atômica não dá p/ semear)',
+      );
 
       if (missing.length === 0) {
         console.log(`[calculate-scores] 0 faltantes a semear (${clients.length} em fcs). Pula seed.`);
@@ -322,19 +584,25 @@ Deno.serve(async (req) => {
           const defaultFarmerId = employees?.[0]?.user_id || '414a9727-ad1d-4998-914e-9c6ccf26cf50';
 
           // Opção A (carteira-Omie): dono do score = dono da carteira. FAIL-CLOSED: erro de
-          // leitura → lança (ownerMap truncado semearia farmer_id errado = dono errado na
-          // agenda — achado Codex #3). ANTI-DRIFT: score nunca deriva de atividade.
-          const ownerMap = new Map<string, string>();
-          for (let cp = 0; ; cp++) {
-            const { data: aPage, error: aErr } = await supabase
+          // leitura OU data:null sem error → fetchAll LANÇA (ownerMap truncado semearia
+          // farmer_id errado = dono errado na agenda — achado Codex #3; o `?? []` de antes lia
+          // resposta malformada como fim). .order em customer_user_id (UNIQUE) estabiliza o
+          // .range. ANTI-DRIFT: score nunca deriva de atividade.
+          const assignmentRows = await fetchAll<{ customer_user_id: string; owner_user_id: string }>(
+            (from, to) => supabase
               .from('carteira_assignments')
               .select('customer_user_id, owner_user_id')
-              .range(cp * 1000, cp * 1000 + 999);
-            if (aErr) throw new Error(`carteira_assignments falhou ao semear: ${aErr.message}`);
-            const aRows = (aPage ?? []) as Array<{ customer_user_id: string; owner_user_id: string }>;
-            for (const r of aRows) ownerMap.set(r.customer_user_id, r.owner_user_id);
-            if (aRows.length < 1000) break;
-          }
+              // O fail-closed acima cobre o ERRO; a ordem estável pela PK (conferida em prod) cobre
+              // a outra metade: sem ela uma linha pulada entre páginas deixa o cliente FORA do
+              // ownerMap, e o `?? farmer_id` a jusante atribui o score a quem ligou/visitou em vez
+              // do DONO — exatamente o "dono errado na agenda" que o comentário acima cita (§7).
+              // `id` é a chave que o #1589 fixou; mantida (PK, total e imutável).
+              .order('id', { ascending: true })
+              .range(from, to),
+            'carteira_assignments (ownerMap do seed)',
+          );
+          const ownerMap = new Map<string, string>();
+          for (const r of assignmentRows) ownerMap.set(r.customer_user_id, r.owner_user_id);
 
           // Registros de seed só dos FALTANTES, da base de vendas (salesMap do TOPO) via
           // deriveSalesBase — mesma degradação honesta do compute (vitest 8/8). Aqui já é garantido
@@ -352,17 +620,23 @@ Deno.serve(async (req) => {
               days_since_last_purchase: base.days_since_last_purchase,
               avg_monthly_spend_180d: base.avg_monthly_spend_180d,
               category_count: base.category_count,
-              gross_margin_pct: 0,
+              // NULL, não 0: cliente recém-semeado não tem margem MEDIDA. O 0 daqui era metade do
+              // loop fechado (a outra metade era a edge ler a coluna que ela mesma escreve) e
+              // sobrevivia a qualquer run em que a RPC de margem falhasse.
+              gross_margin_pct: null,
               avg_repurchase_interval: 0,
-              expansion_score: 0,
-              recover_score: 0,
-              revenue_potential: 0,
+              // As 6 colunas SEM produtor → null ("não medido"), nunca 0. O 0 aqui era a arma
+              // carregada: um valor de decisão fabricado numa coluna que ninguém calcula (missão de
+              // recuperação/expansão, componentes de health/priority). Ver migration 20260727130000.
+              expansion_score: null,
+              recover_score: null,
+              revenue_potential: null,
               rf_score: 0,
-              m_score: 0,
+              m_score: null,
               g_score: 0,
-              s_score: 0,
-              x_score: 0,
-              eff_score: 0,
+              s_score: null,
+              x_score: null,
+              eff_score: null,
               sales_history_status: deriveSalesHistoryStatus(salesMap.get(client.user_id), salesActiveDays),
             });
           }
@@ -396,28 +670,19 @@ Deno.serve(async (req) => {
           }
           console.log(`[calculate-scores] Seeded ${seeded}/${missing.length} client scores`);
 
-          // Re-fetch p/ incluir os recém-semeados no compute. Em LOCAL: se a leitura falhar
-          // (throw → catch do seed), clients mantém o snapshot original (não clobbera o compute).
-          const refetched: FarmerClientScoreRow[] = [];
-          {
-            let pg2 = 0;
-            const sz2 = 1000;
-            let more2 = true;
-            while (more2) {
-              const { data: batch2, error: rErr2 } = await supabase
-                .from('farmer_client_scores')
-                .select('*')
-                .range(pg2 * sz2, (pg2 + 1) * sz2 - 1);
-              if (rErr2) throw rErr2;
-              if (!batch2 || batch2.length === 0) { more2 = false; }
-              else {
-                refetched.push(...(batch2 as unknown as FarmerClientScoreRow[]));
-                if (batch2.length < sz2) more2 = false;
-                pg2++;
-              }
-            }
-          }
-          clients = refetched;
+          // Re-fetch p/ incluir os recém-semeados no compute. fetchAll LANÇA em error E em
+          // data:null sem error (o `!batch2 → fim` de antes lia página com falha como fim e o
+          // compute seguiria com snapshot PARCIAL); `.order('id')` idem ao select inicial —
+          // ordem estável entre páginas. Em LOCAL: se a leitura falhar (throw → catch do seed),
+          // clients mantém o snapshot original (não clobbera o compute).
+          clients = await fetchAll<FarmerClientScoreRow>(
+            (from, to) => supabase
+              .from('farmer_client_scores')
+              .select('*')
+              .order('id', { ascending: true })
+              .range(from, to),
+            'farmer_client_scores (re-fetch pós-seed)',
+          );
         }
       }
     } catch (e) {
@@ -432,12 +697,19 @@ Deno.serve(async (req) => {
     if (!clients || clients.length === 0) {
       if (seedFatal) throw seedFatal;
       if (salesRefreshFatal) throw salesRefreshFatal;
+      if (marginRefreshFatal) throw marginRefreshFatal;
       if (seedErrors.length > 0) {
         throw new Error(`seed falhou em ${seedErrors.length} cliente(s) numa fcs vazia: ${seedErrors.slice(0, 3).join(' | ')}`);
       }
+      // Saída legítima: nada a computar, não é erro. Libera ANTES de responder para que uma perda
+      // de ownership vire 500 em vez de 200 (o `finally` não consegue trocar a resposta já montada).
+      leaseStatusFinal = 'complete';
+      const relVazio = await liberarLease('complete');
+      if (relVazio === 'ownership') return respostaOwnershipPerdida();
       return new Response(JSON.stringify({
         message: 'Sem clientes para pontuar (rode o sync de clientes).',
         seeded: 0,
+        lease: leaseAviso,
       }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
@@ -458,10 +730,27 @@ Deno.serve(async (req) => {
       }
     }
 
+    // Overlay da MARGEM — separado do de vendas de propósito: são duas RPCs independentes e uma pode
+    // falhar sem a outra; acoplá-las congelaria a margem por causa de um erro de recência (e vice-versa).
+    // Cliente ausente do marginMap (sem pedido, ou só com item sem custo) → NULL, jamais 0.
+    if (!marginRefreshFatal) {
+      for (const c of clients) {
+        const m = marginMap.get(c.customer_user_id);
+        c.gross_margin_pct = margemConhecida(m?.gross_margin_pct);
+        // COBERTURA DE CUSTO: a confiança por trás da margem ("53% sobre 3 de 40 itens"). Mesma
+        // regra do valor acima — cliente AUSENTE do marginMap (sem item elegível) → NULL, jamais 0.
+        const cob = coberturaCustoCliente(m);
+        c.itens_com_custo = cob.itensComCusto;
+        c.itens_sem_custo = cob.itensSemCusto;
+      }
+    }
+
     // Compute normalization ranges (recência NÃO usa min-max — cap configurável via computeRecencyScore)
     const maxInterval = Math.max(...clients.map(c => Number(c.avg_repurchase_interval || 0)), 1);
     const maxSpend = Math.max(...clients.map(c => Number(c.avg_monthly_spend_180d || 0)), 1);
-    const maxMarginPct = Math.max(...clients.map(c => Number(c.gross_margin_pct || 0)), 1);
+    // Só margens CONHECIDAS entram no max: `|| 0` faria o desconhecido participar da normalização
+    // como se fosse margem zero, deprimindo o teto e inflando o score relativo de todo mundo.
+    const maxMarginPct = Math.max(...clients.map(c => margemConhecida(c.gross_margin_pct) ?? 0), 1);
     const maxCategories = Math.max(...clients.map(c => Number(c.category_count || 0)), 1);
     const maxRevPotential = Math.max(...clients.map(c => Number(c.revenue_potential || 0)), 1);
 
@@ -480,10 +769,15 @@ Deno.serve(async (req) => {
         ? Math.max(0, 100 - (Number(client.avg_repurchase_interval || maxInterval) / maxInterval) * 100)
         : 50;
       
-      const marginScore = maxMarginPct > 0
-        ? Math.min(100, (Number(client.gross_margin_pct || 0) / maxMarginPct) * 100)
-        : 0;
-      
+      // Margem DESCONHECIDA → null, e o componente sai do score (renormalização abaixo). Com o
+      // `|| 0` anterior, "não medi" virava veredito "margem zero" = pior cliente possível naquele
+      // eixo — fabricação de número no money-path. Margem negativa é dado real: pontua 0 (piso),
+      // não negativo, senão um único cliente no prejuízo arrastaria o health para baixo do zero.
+      const margemPct = margemConhecida(client.gross_margin_pct);
+      const marginScore = margemPct == null
+        ? null
+        : Math.max(0, Math.min(100, (margemPct / maxMarginPct) * 100));
+
       const diversityScore = maxCategories > 0
         ? Math.min(100, (Number(client.category_count || 0) / maxCategories) * 100)
         : 0;
@@ -491,14 +785,29 @@ Deno.serve(async (req) => {
       const crossSellScore = Number(client.x_score || 0);
       const engagementScore = Number(client.s_score || 0);
 
-      const healthScore = Math.round(
+      // Renormalização: sem margem conhecida, o peso dela é redistribuído entre os componentes que
+      // existem, em vez de contribuir 0 (contribuir 0 seria afirmar "pior cliente neste eixo" para
+      // quem só não foi medido).
+      //
+      // Com os pesos DEFAULT a divisão é identidade para quem TEM margem — 25+20+20+15+10+10 = 100,
+      // logo pesoTotal = 1,0. Mas isso é propriedade dos defaults, não garantia: farmer_algorithm_config
+      // é editável e hoje não tem NENHUMA linha hs_weight% (medido 2026-07-21 — os seis valores vêm
+      // dos defaults do código). Se alguém configurar pesos que não somem 100, a divisão deixa de ser
+      // identidade e passa a normalizar o score de TODOS os clientes, inclusive os com margem
+      // conhecida. Isso é o comportamento correto (um score 0-100 deve usar 100% do peso disponível;
+      // pesos somando 90 faziam o teto ser 90), mas é uma mudança silenciosa demais para acontecer
+      // sem rastro — daí o aviso abaixo, emitido uma única vez por run.
+      const pesoMargem = marginScore == null ? 0 : hs_w.margin;
+      const pesoTotal = hs_w.recency + hs_w.frequency + pesoMargem
+                      + hs_w.diversity + hs_w.crosssell + hs_w.engagement;
+      const somaPonderada =
         recencyScore * hs_w.recency +
         freqScore * hs_w.frequency +
-        marginScore * hs_w.margin +
+        (marginScore ?? 0) * pesoMargem +
         diversityScore * hs_w.diversity +
         crossSellScore * hs_w.crosssell +
-        engagementScore * hs_w.engagement
-      );
+        engagementScore * hs_w.engagement;
+      const healthScore = Math.round(pesoTotal > 0 ? somaPonderada / pesoTotal : 0);
 
       let healthClass = 'critico';
       if (healthScore >= 75) healthClass = 'saudavel';
@@ -542,8 +851,29 @@ Deno.serve(async (req) => {
         churn_risk: churnRisk,
         priority_score: priorityScore,
         rf_score: Math.round(recencyScore),
-        m_score: Math.round(marginScore),
+        // Math.round(null) é 0 — o arredondamento fabricaria justamente o número que este PR
+        // remove. O null tem de atravessar até a coluna.
+        m_score: marginScore == null ? null : Math.round(marginScore),
         g_score: Math.round(diversityScore),
+        // MARGEM-VIVA: persiste a margem calculada no servidor (pós-overlay). Sem esta linha o
+        // cálculo novo morreria em memória e a coluna seguiria no 0 do seed.
+        gross_margin_pct: margemPct,
+        // COBERTURA DE CUSTO: persiste as contagens sobrepostas (pós-overlay) — sem isto a RPC de
+        // margem seguiria calculando e o writer jogando fora. Três caminhos, todos honestos:
+        //   cliente no marginMap        → a contagem medida (0 inclusive: "tem itens, nenhum com custo")
+        //   cliente FORA do marginMap   → null (sem item elegível) — a RPC grava NULL, jamais 0
+        //   marginRefreshFatal          → overlay pulado → valor LIDO DO BANCO → o UPDATE regrava o
+        //                                 mesmo valor. Nunca zera por RPC ausente.
+        // ⚠️ Esse último caso só é no-op se NÃO houver run concorrente: o payload carrega o snapshot
+        // lido no INÍCIO do run, então um run com a RPC de margem falha que termine DEPOIS de um run
+        // saudável restaura o valor velho (last-writer-wins). NÃO é próprio desta coluna — hoje vale
+        // igual para gross_margin_pct, m_score e a base de vendas, que usam o mesmo padrão; fechar
+        // isso exige serializar os runs (lock/lease) e é escopo próprio. Achado do challenge /codex.
+        // Na ordem de deploy INVERTIDA (edge nova publicada antes da migration) a coluna não existe,
+        // o select('*') não a traz e isto vale `undefined` → JSON.stringify OMITE a chave → a RPC cai
+        // no ramo "chave ausente = preserva". Por isso as duas publicações são seguras em qualquer ordem.
+        itens_com_custo: client.itens_com_custo,
+        itens_sem_custo: client.itens_sem_custo,
         // RECÊNCIA-VIVA: persiste a base de vendas FRESCA (pós-overlay) — antes congelava no seed.
         days_since_last_purchase: client.days_since_last_purchase ?? 999,
         avg_monthly_spend_180d: client.avg_monthly_spend_180d ?? 0,
@@ -560,7 +890,7 @@ Deno.serve(async (req) => {
         health_score: healthScore,
         health_class: healthClass,
         rf_score: Math.round(recencyScore),
-        m_score: Math.round(marginScore),
+        m_score: marginScore == null ? null : Math.round(marginScore),  // idem: null ≠ 0
         g_score: Math.round(diversityScore),
         x_score: Math.round(crossSellScore),
         s_score: Math.round(engagementScore),
@@ -615,6 +945,10 @@ Deno.serve(async (req) => {
     // 3 campos foram reescritos com o valor antigo (no-op). Surface 500 (idempotente: o próximo run
     // com a RPC OK refresca a recência). Antes do history.
     if (salesRefreshFatal) throw salesRefreshFatal;
+    // MARGEM-VIVA: mesma regra. Sem isto o run devolvia 200 com a margem inteira congelada — e como
+    // o valor congelado hoje é 0 em 100% das linhas, um 200 mentiria dizendo "margem calculada"
+    // sobre exatamente o estado que este PR existe para eliminar (achado Codex P1.3).
+    if (marginRefreshFatal) throw marginRefreshFatal;
     if (seedErrors.length > 0) {
       throw new Error(`seed falhou em ${seedErrors.length} cliente(s): ${seedErrors.slice(0, 3).join(' | ')}${seedErrors.length > 3 ? ` (+${seedErrors.length - 3})` : ''}`);
     }
@@ -639,9 +973,18 @@ Deno.serve(async (req) => {
       if (pErr) console.warn(`[calculate-scores] priority_score_log insert warn @${i}: ${pErr.message}`);
     }
 
+    // Libera ANTES de responder: se o ownership foi perdido, outro run assumiu enquanto este
+    // escrevia, e o resultado do que gravamos é DESCONHECIDO — tem de ser 500, não 200.
+    leaseStatusFinal = 'complete';
+    const rel = await liberarLease('complete');
+    if (rel === 'ownership') return respostaOwnershipPerdida();
     return new Response(JSON.stringify({
       message: `Scores calculated for ${updates.length} clients`,
       weights: { health: hs_w, priority: ps_w },
+      lease: leaseAviso,
+      // 'transport': a escrita está boa, só o selo do lease ficou incerto (auto-expira em 15min).
+      // Não é erro do recompute, mas o chamador merece saber que o estado do lease é desconhecido.
+      lease_finalize: rel === 'transport' ? 'incerto (auto-expira em 15min)' : 'ok',
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
@@ -652,5 +995,24 @@ Deno.serve(async (req) => {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
+  } finally {
+    // BACKSTOP. Os caminhos de sucesso já liberaram ANTES de responder (só assim uma perda de
+    // ownership vira 500 em vez de 200 — o `finally` não consegue trocar a resposta já montada).
+    // Aqui sobram: o catch (500), os `throw` deliberados de seedFatal/salesRefreshFatal/
+    // marginRefreshFatal — que ocorrem DEPOIS do apply — e qualquer return futuro que esqueça de
+    // liberar. `liberarLease` é idempotente pela flag, então a dupla chamada é inócua.
+    // Não liberar prenderia o lease até o TTL de 15min, pulando o próximo run.
+    await liberarLease(leaseStatusFinal);
   }
 });
+
+// Ownership perdido = outro run assumiu o lease enquanto este escrevia. O que gravamos pode ter
+// competido com ele, então a integridade é DESCONHECIDA — e desconhecido não é sucesso. 500 para
+// que apareça em net._http_response e no Sentinela em vez de passar como recompute normal.
+function respostaOwnershipPerdida(): Response {
+  return new Response(JSON.stringify({
+    error: 'lease perdido durante o run (fencing quebrado ou lease adulterado) — ' +
+           'os scores podem ter sido escritos concorrentemente. Integridade DESCONHECIDA: ' +
+           'confira farmer_client_scores.calculated_at antes de confiar no resultado.',
+  }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+}

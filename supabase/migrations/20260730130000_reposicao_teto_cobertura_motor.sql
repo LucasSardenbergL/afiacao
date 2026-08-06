@@ -1,0 +1,516 @@
+-- Migration: TETO DE COBERTURA pós-compra no motor de reposição (B/C) — cap só-reduz no lote do ciclo normal.
+-- Spec: docs/superpowers/specs/2026-07-29-reposicao-teto-cobertura-motor-spec.md (pós-challenge Codex xhigh).
+-- Money-path. ⚠️ NÃO auto-aplica (nome custom) — colar no SQL Editor do Lovable. Provada em PG17:
+-- db/test-teto-cobertura-motor.sh (falsificada). Fonte viva do corpo: db/embalagem-motor-rpc.sql
+-- (guard de paridade src/lib/reposicao/__tests__/embalagem-motor-paridade.test.ts — por isso o CREATE OR REPLACE
+-- da função é o ÚLTIMO statement deste arquivo, byte-idêntico à fixture do CREATE até EOF).
+--
+-- O que muda:
+--   1. Tabela reposicao_teto_cobertura_log (rastro de linha capada — capado_zero sai do pedido; sem log seria
+--      subcompra silenciosa). RLS: SELECT e INSERT via private.cap_compras_ler (mesmo predicado do INSERT de
+--      pedido_compra_item — quem completa a RPC já o tem; WITH CHECK true permitiria falsificar o audit, Codex P1).
+--   2. pedido_compra_item ganha qtde_sem_teto + teto_cobertura_aplicado (rastro por item; forward_buying pode
+--      elevar qtde_final DEPOIS do cap — exceção documentada à invariante do teto).
+--   3. reposicao_motor_run ganha capados_n (a tela ancora no último run).
+--   4. Config POR EMPRESA em company_config: reposicao_teto_cobertura_oben_{ativa,dias_b,dias_c}.
+--      A flag nasce 'false' (fase dormente): ligar é decisão do founder (UPDATE ... value='true').
+--   5. gerar_pedidos_sugeridos_ciclo: cap = GREATEST(floor(teto·d − estoque_efetivo), ceil(pp − estoque_efetivo))
+--      em unidades-âncora, só p/ classe efetiva B/C sem grupo de embalagem, sem minimo_forcado, com demanda > 0.
+--      O piso de SERVIÇO preserva o ponto de pedido (nunca cria ruptura abaixo do pp); o cap corta apenas o
+--      "encher até o máximo" acima do pp. Rollback: UPDATE da flag p/ 'false' (função fica, cap desliga).
+
+-- ── 1) Tabela de log ─────────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS public.reposicao_teto_cobertura_log (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  run_id uuid NOT NULL,
+  criado_em timestamptz NOT NULL DEFAULT now(),
+  empresa text NOT NULL,
+  sku_codigo_omie text NOT NULL,
+  sku_descricao text,
+  grupo_codigo text,
+  classe_abc text,
+  teto_dias numeric,
+  demanda_diaria numeric,
+  estoque_efetivo numeric,
+  ponto_pedido numeric,
+  estoque_maximo numeric,
+  cap_teto_ancora numeric,
+  qtde_sem_teto numeric,
+  qtde_final numeric,
+  motivo text NOT NULL CHECK (motivo IN ('capado_zero', 'capado_parcial'))
+);
+COMMENT ON TABLE public.reposicao_teto_cobertura_log IS
+  'Linhas do ciclo normal reduzidas pelo teto de cobertura (unidades-âncora). capado_zero = saiu do pedido.';
+CREATE INDEX IF NOT EXISTS idx_teto_cobertura_log_run ON public.reposicao_teto_cobertura_log (run_id);
+CREATE INDEX IF NOT EXISTS idx_teto_cobertura_log_emp_data ON public.reposicao_teto_cobertura_log (empresa, criado_em DESC);
+
+ALTER TABLE public.reposicao_teto_cobertura_log ENABLE ROW LEVEL SECURITY;
+-- REVOKE por NOME (FROM PUBLIC não tira anon/authenticated — grant explícito do Supabase, database.md).
+REVOKE ALL ON public.reposicao_teto_cobertura_log FROM PUBLIC;
+REVOKE ALL ON public.reposicao_teto_cobertura_log FROM anon;
+REVOKE ALL ON public.reposicao_teto_cobertura_log FROM authenticated;
+GRANT SELECT, INSERT ON public.reposicao_teto_cobertura_log TO authenticated;
+GRANT ALL ON public.reposicao_teto_cobertura_log TO service_role;
+
+DROP POLICY IF EXISTS teto_cobertura_log_sel ON public.reposicao_teto_cobertura_log;
+CREATE POLICY teto_cobertura_log_sel ON public.reposicao_teto_cobertura_log
+  FOR SELECT TO authenticated
+  USING ((SELECT private.cap_compras_ler((SELECT auth.uid()))));
+DROP POLICY IF EXISTS teto_cobertura_log_ins ON public.reposicao_teto_cobertura_log;
+CREATE POLICY teto_cobertura_log_ins ON public.reposicao_teto_cobertura_log
+  FOR INSERT TO authenticated
+  WITH CHECK ((SELECT private.cap_compras_ler((SELECT auth.uid()))));
+
+-- ── 2) Rastro por item + marker do run ───────────────────────────────────────────────────────
+ALTER TABLE public.pedido_compra_item
+  ADD COLUMN IF NOT EXISTS qtde_sem_teto numeric,
+  ADD COLUMN IF NOT EXISTS teto_cobertura_aplicado boolean NOT NULL DEFAULT false;
+COMMENT ON COLUMN public.pedido_compra_item.qtde_sem_teto IS
+  'O que o min-max compraria SEM o teto de cobertura (mesma unidade de qtde_final). NULL = pedido pré-teto.';
+COMMENT ON COLUMN public.pedido_compra_item.teto_cobertura_aplicado IS
+  'true = qtde_final foi reduzida pelo teto no momento da geração (forward_buying pode elevar depois).';
+
+ALTER TABLE public.reposicao_motor_run
+  ADD COLUMN IF NOT EXISTS capados_n integer NOT NULL DEFAULT 0;
+COMMENT ON COLUMN public.reposicao_motor_run.capados_n IS
+  'Linhas reduzidas/retiradas pelo teto de cobertura neste run (reposicao_teto_cobertura_log).';
+
+-- ── 3) Config por empresa (flag dormente — ligar é decisão do founder) ───────────────────────
+INSERT INTO public.company_config (key, value) VALUES
+  ('reposicao_teto_cobertura_oben_ativa', 'false'),
+  ('reposicao_teto_cobertura_oben_dias_b', '90'),
+  ('reposicao_teto_cobertura_oben_dias_c', '60')
+ON CONFLICT (key) DO NOTHING;
+
+-- ── 4) A função (ÚLTIMO statement — byte-idêntico a db/embalagem-motor-rpc.sql do CREATE ao EOF) ──
+CREATE OR REPLACE FUNCTION public.gerar_pedidos_sugeridos_ciclo(p_empresa text DEFAULT 'OBEN'::text, p_data_ciclo date DEFAULT CURRENT_DATE)
+ RETURNS TABLE(pedidos_gerados integer, skus_incluidos integer, valor_total_ciclo numeric, bloqueados integer)
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'pg_temp'
+ SET statement_timeout TO '120s'
+AS $function$
+DECLARE
+  v_pedidos INT := 0;
+  v_skus INT := 0;
+  v_valor NUMERIC := 0;
+  v_bloqueados INT := 0;
+  v_stale_dias INT := 45;  -- motor confia no preço-app por N dias (painel usa 24h; manual precisa folga). Config abaixo.
+  v_run_id uuid := gen_random_uuid();  -- [GATE estoque-não-confirmado] carimba os suprimidos desta execução no log
+  -- [TETO cobertura] NULL = classe sem teto (cap desligado). Flag por empresa nasce false; dias só valem com a flag.
+  v_teto_ativo boolean := false;
+  v_teto_b numeric := NULL;
+  v_teto_c numeric := NULL;
+BEGIN
+  -- [INTRADAY 1/4] serializa execuções concorrentes (cron 2/2h × botão "Recalcular" × retry).
+  PERFORM pg_advisory_xact_lock(hashtext('gerar_pedidos_sugeridos_ciclo:' || lower(p_empresa)));
+
+  IF (SELECT count(*) FILTER (WHERE tipo_produto IS NOT NULL) FROM public.omie_products WHERE account = lower(p_empresa)) = 0 THEN
+    RAISE EXCEPTION 'tipo_produto_unhealthy: sinal de classificação ausente em omie_products(account=%) — recusando gerar compras p/ não tratar Produto Acabado como comprável', lower(p_empresa);
+  END IF;
+
+  -- Janela de frescor do preço-app que o motor aceita p/ trocar a embalagem (decisão B da spec). Global.
+  SELECT COALESCE((SELECT NULLIF(btrim(value), '')::int
+                   FROM company_config WHERE key = 'embalagem_preco_motor_stale_dias' LIMIT 1), 45)
+    INTO v_stale_dias;
+
+  -- [TETO cobertura] Config POR EMPRESA, fail-off: flag ausente/≠true → cap desligado; dias com parse blindado
+  -- (regex antes do cast — valor lixo NUNCA aborta o recálculo, só desliga o teto daquela classe). '0' → NULL.
+  SELECT COALESCE((SELECT lower(btrim(value)) = 'true' FROM company_config
+                   WHERE key = 'reposicao_teto_cobertura_' || lower(p_empresa) || '_ativa' LIMIT 1), false)
+    INTO v_teto_ativo;
+  IF v_teto_ativo THEN
+    SELECT NULLIF((SELECT CASE WHEN btrim(value) ~ '^[0-9]+$' THEN btrim(value)::numeric END
+                   FROM company_config
+                   WHERE key = 'reposicao_teto_cobertura_' || lower(p_empresa) || '_dias_b' LIMIT 1), 0)
+      INTO v_teto_b;
+    SELECT NULLIF((SELECT CASE WHEN btrim(value) ~ '^[0-9]+$' THEN btrim(value)::numeric END
+                   FROM company_config
+                   WHERE key = 'reposicao_teto_cobertura_' || lower(p_empresa) || '_dias_c' LIMIT 1), 0)
+      INTO v_teto_c;
+  END IF;
+
+  -- [INTRADAY 2/4] expira pendentes NORMAIS de ciclos anteriores (zumbis pós-corte).
+  UPDATE pedido_compra_sugerido
+  SET status = 'expirado_sem_aprovacao', atualizado_em = now()
+  WHERE empresa = p_empresa
+    AND data_ciclo < p_data_ciclo
+    AND status = 'pendente_aprovacao'
+    AND COALESCE(tipo_ciclo, 'normal') = 'normal';
+
+  -- [INTRADAY 3/4] limpeza do dia: só ciclo NORMAL (preserva oportunidade/promoção pendentes) e
+  -- INCLUI bloqueado_guardrail do dia (re-avaliado a cada rodada; anti compra dupla).
+  DELETE FROM pedido_compra_sugerido
+  WHERE empresa = p_empresa AND data_ciclo = p_data_ciclo
+    AND status IN ('pendente_aprovacao', 'bloqueado_guardrail')
+    AND COALESCE(tipo_ciclo, 'normal') = 'normal';
+
+  WITH em_transito AS (
+    SELECT pcs2.empresa, pci.sku_codigo_omie::text AS sku_codigo_omie, SUM(pci.qtde_final) AS qtde
+    FROM pedido_compra_item pci
+    JOIN pedido_compra_sugerido pcs2 ON pcs2.id = pci.pedido_id
+    WHERE pcs2.empresa = p_empresa
+      AND (
+        (pcs2.status IN ('aprovado_aguardando_disparo','disparado','concluido_recebido') AND pcs2.data_ciclo >= (p_data_ciclo - INTERVAL '7 days'))
+        OR (pcs2.status_envio_portal IN ('sucesso_portal','enviado_portal') AND pcs2.portal_protocolo IS NOT NULL AND pcs2.omie_pedido_compra_numero IS NULL AND pcs2.status NOT IN ('cancelado','expirado_sem_aprovacao'))
+      )
+    GROUP BY pcs2.empresa, pci.sku_codigo_omie
+  ),
+  -- [DEDUP-NFE] 1 obs por (empresa, NFe, SKU); antes: 1 por LINHA de sku_leadtime_history, o que
+  -- ponderava o AVG pela multiplicidade (NFe que fatura N pedidos regravava o item N×).
+  -- [2 CONSUMIDORES] O filtro de preço saiu do WHERE e virou FILTER na agregação — de propósito.
+  -- Esta CTE serve a DOIS consumidores, que fazem perguntas DIFERENTES:
+  --   · preco_unitario → "quanto custou?"  ⇒ agrega só a obs precificável (FILTER). Sem nenhuma
+  --     ⇒ NULL, e o COALESCE(cmc, …) decide. Ausente ≠ zero.
+  --   · n (lido SÓ como `pm.n IS NULL` ⇒ primeira_compra) → "já foi comprado?" ⇒ conta TODA obs.
+  --     COMPRAR ≠ SABER QUANTO CUSTOU. Com o filtro no WHERE, a obs cuja quantidade a view NULLa
+  --     (cópias divergem) derrubaria o SKU INTEIRO da CTE ⇒ o badge mentiria "primeira compra"
+  --     num SKU já comprado. Não é hipótese: medido ZERO no pré-flight e DOIS poucas horas
+  --     depois, na MESMA sessão — o resíduo se move (o sync grava). Com o FILTER, o conjunto de
+  --     primeira_compra fica IDÊNTICO ao de hoje (medido nos dois sentidos: nenhum SKU entra,
+  --     nenhum sai), enquanto o preço passa a ser o deduplicado. É o único ponto em que esta
+  --     migration se afasta do "trocar só o FROM" — e é o que a impede de trocar viés por mentira.
+  preco_medio AS (
+    SELECT slh.empresa::text AS empresa, slh.sku_codigo_omie::text AS sku_codigo_omie,
+           AVG(slh.valor_total / NULLIF(slh.quantidade_recebida, 0))
+             FILTER (WHERE slh.quantidade_recebida > 0 AND slh.valor_total > 0) AS preco_unitario,
+           COUNT(*) AS n
+    FROM v_sku_leadtime_efetivo slh
+    GROUP BY slh.empresa, slh.sku_codigo_omie
+  ),
+  -- ── EMBALAGEM (novo) ─────────────────────────────────────────────────────────────────────
+  -- Membros ativos dos grupos de equivalência (empresa = lower).
+  equiv AS (
+    SELECT grupo_id, sku_codigo_omie::text AS sku, fator_para_base
+    FROM sku_embalagem_equivalencia
+    WHERE empresa = lower(p_empresa) AND ativo = TRUE AND fator_para_base > 0
+  ),
+  -- Só grupos com >= 2 membros têm decisão de embalagem.
+  equiv_grupos AS (
+    SELECT grupo_id FROM equiv GROUP BY grupo_id HAVING count(*) >= 2
+  ),
+  -- Preço-app mais recente por SKU (empresa = lower), líquido e > 0.
+  preco_app AS (
+    SELECT DISTINCT ON (sku_codigo_omie) sku_codigo_omie::text AS sku, preco, capturado_em
+    FROM sku_preco_fornecedor_capturado
+    WHERE empresa = lower(p_empresa) AND status = 'ok' AND preco > 0
+    ORDER BY sku_codigo_omie, capturado_em DESC
+  ),
+  -- Portal-map ativo por SKU (empresa = upper). Sem map → não dá pra emitir ao portal → inelegível.
+  portal_map AS (
+    SELECT DISTINCT sku_omie::text AS sku
+    FROM sku_fornecedor_externo
+    WHERE empresa = p_empresa AND ativo = TRUE AND sku_portal IS NOT NULL AND btrim(sku_portal) <> ''
+  ),
+  -- [P0-a] Saldo físico do Omie por SKU (account-aware; 1 linha/SKU, a mais recente). As 2 fontes de estoque
+  -- DIVERGEM: inventory_position tem alguns galões (WP87/WP04), sku_estoque_atual tem outros (WP01). GREATEST
+  -- (adiante) pega o galão real de onde estiver.
+  inv_saldo AS (
+    SELECT DISTINCT ON (omie_codigo_produto) omie_codigo_produto::text AS sku, saldo
+    FROM inventory_position
+    WHERE account = ANY (CASE lower(p_empresa)
+            WHEN 'oben' THEN ARRAY['vendas'::text,'oben'::text]
+            WHEN 'colacor' THEN ARRAY['colacor_vendas'::text,'colacor'::text]
+            WHEN 'colacor_sc' THEN ARRAY['servicos'::text,'colacor_sc'::text]
+            ELSE ARRAY[lower(p_empresa)] END)
+    ORDER BY omie_codigo_produto, synced_at DESC NULLS LAST
+  ),
+  -- [P1-f] Membro ELEGÍVEL p/ a decisão: preço-app FRESCO + portal-map + CATÁLOGO OK (ativo, tipo≠04, família
+  -- comprável, ativo_no_omie) — os MESMOS filtros que protegem a âncora, agora também no SKU que pode ser escolhido.
+  membro_elegivel AS (
+    SELECT e.grupo_id, e.sku, e.fator_para_base, pa.preco,
+           (pa.preco / e.fator_para_base) AS custo_base
+    FROM equiv e
+    JOIN equiv_grupos eg ON eg.grupo_id = e.grupo_id
+    JOIN preco_app pa ON pa.sku = e.sku AND pa.capturado_em >= now() - make_interval(days => v_stale_dias)
+    JOIN portal_map pm ON pm.sku = e.sku
+    JOIN omie_products opm ON opm.omie_codigo_produto::text = e.sku AND opm.account = lower(p_empresa)
+    LEFT JOIN sku_status_omie ssom ON ssom.empresa = p_empresa AND ssom.sku_codigo_omie = e.sku
+    LEFT JOIN familia_nao_comprada fncm ON fncm.empresa = p_empresa AND fncm.familia = opm.familia
+    WHERE COALESCE(opm.ativo, TRUE) = TRUE
+      AND COALESCE(ssom.ativo_no_omie, TRUE) = TRUE
+      AND fncm.id IS NULL
+      AND COALESCE(opm.tipo_produto, opm.metadata->>'tipo_produto', '') <> '04'
+      AND COALESCE(opm.descricao, '') NOT ILIKE '%450ML'   -- [P1-f] os MESMOS filtros de catálogo da âncora
+      AND COALESCE(opm.descricao, '') NOT ILIKE '%405ML'
+  ),
+  -- Melhor embalagem do grupo (menor custo_base; empate → embalagem maior).
+  embalagem_escolhida AS (
+    SELECT DISTINCT ON (grupo_id)
+           grupo_id, sku AS sku_escolhido, fator_para_base AS fator_escolhido,
+           preco AS preco_escolhido, custo_base AS custo_base_escolhido
+    FROM membro_elegivel
+    ORDER BY grupo_id, custo_base ASC, fator_para_base DESC
+  ),
+  -- [P0-a/P0-b] Estoque consolidado por grupo (escala unidades-âncora):
+  --   físico = Σ GREATEST(inv.saldo, sea.estoque_fisico)   ← pega o galão real de onde estiver
+  --   a caminho = Σ [pendente(sea) + em_transito × fator]  ← galão em voo conta em unidades-base (2 GL = 8), não cru
+  grupo_estoque AS (
+    SELECT e.grupo_id,
+           SUM(GREATEST(COALESCE(inv.saldo, 0), COALESCE(sea.estoque_fisico, 0)))                              AS fisico_grupo,
+           SUM(COALESCE(sea.estoque_pendente_entrada, 0) + COALESCE(et.qtde, 0) * e.fator_para_base)           AS acaminho_grupo,
+           SUM(GREATEST(COALESCE(inv.saldo, 0), COALESCE(sea.estoque_fisico, 0))
+               + COALESCE(sea.estoque_pendente_entrada, 0) + COALESCE(et.qtde, 0) * e.fator_para_base)         AS estoque_grupo,
+           -- [GATE estoque-não-confirmado] grupo NÃO-CONFIRMADO se QUALQUER membro ATIVO tem seed (cold_start_seed)
+           -- sem inventory_position — pode ter saldo real que mudaria a decisão. NÃO conta "sem linha de sea" (galão
+           -- legitimamente vive sem sea próprio; o estoque vem de outro membro — só a LINHA isolada gateia sea ausente).
+           -- inv por PRESENÇA da linha (não saldo, que pode ser NULL — Codex P1, casa a LINHA); membro INATIVO no Omie
+           -- NÃO vota — senão um galão descontinuado seed-only envenenaria o grupo ativo p/ sempre (Codex P1).
+           bool_or(COALESCE(sea.fonte_sync, '') = 'cold_start_seed'
+                   AND inv.sku IS NULL
+                   AND COALESCE(ssg.ativo_no_omie, true) = true)                                               AS grupo_nao_confirmado
+    FROM equiv e
+    LEFT JOIN sku_estoque_atual sea ON sea.empresa = p_empresa AND sea.sku_codigo_omie = e.sku
+    LEFT JOIN inv_saldo inv        ON inv.sku = e.sku
+    LEFT JOIN em_transito et       ON et.sku_codigo_omie = e.sku
+    LEFT JOIN sku_status_omie ssg  ON ssg.empresa = p_empresa AND ssg.sku_codigo_omie = e.sku  -- [GATE] inativo não vota
+    GROUP BY e.grupo_id
+  ),
+  -- ── BASE: 1 linha por ÂNCORA (SKU com sku_parametros, i.e. o quartinho) que dispara ──────────
+  sku_base AS (
+    SELECT sp.empresa, sp.sku_codigo_omie::text AS ancora_sku, sp.sku_descricao, sp.fornecedor_nome,
+           sg.grupo_codigo, sp.ponto_pedido, sp.estoque_maximo, sp.minimo_forcado_manual,
+           -- [TETO cobertura] demanda + teto da classe EFETIVA (forcada→abc; hoje forcada é 100% NULL em prod).
+           -- teto NULL = linha sem cap (classe A, classe ausente, ou flag/config desligada).
+           sp.demanda_media_diaria AS demanda_diaria_linha,
+           substring(COALESCE(NULLIF(btrim(sp.classe_forcada), ''), sp.classe_abc::text) FROM 1 FOR 1) AS classe_abc_efetiva,
+           CASE substring(COALESCE(NULLIF(btrim(sp.classe_forcada), ''), sp.classe_abc::text) FROM 1 FOR 1)
+             WHEN 'B' THEN v_teto_b WHEN 'C' THEN v_teto_c ELSE NULL END AS teto_dias_linha,
+           COALESCE(sea.estoque_fisico, 0) AS estoque_fisico_proprio,
+           (COALESCE(sea.estoque_pendente_entrada, 0) + COALESCE(et.qtde, 0)) AS acaminho_proprio,
+           ea.grupo_id AS equiv_grupo,
+           ge.estoque_grupo, ge.fisico_grupo, ge.acaminho_grupo,
+           -- estoque efetivo: do GRUPO quando a âncora pertence a um grupo; senão o próprio (no-op p/ a maioria).
+           COALESCE(ge.estoque_grupo,
+                    COALESCE(sea.estoque_fisico, 0) + COALESCE(sea.estoque_pendente_entrada, 0) + COALESCE(et.qtde, 0)) AS estoque_efetivo,
+           ee.sku_escolhido, ee.fator_escolhido, ee.preco_escolhido, ee.custo_base_escolhido,
+           me_anc.custo_base AS ancora_custo_base,  -- NULL = âncora não-elegível → estrito (não troca)
+           -- custo da linha p/ a ÂNCORA: cmc account-aware, senão preço médio histórico, senão NULL.
+           -- [PRECO-AUSENTE] ausente≠zero — NÃO fabrica R$0 (o gate de auto-aprovação e o disparo já barram custo desconhecido).
+           COALESCE(
+             ( SELECT ipc.cmc FROM inventory_position ipc
+               WHERE ipc.omie_codigo_produto::text = sp.sku_codigo_omie::text
+                 AND ipc.account = ANY (CASE lower(p_empresa)
+                       WHEN 'oben' THEN ARRAY['vendas'::text,'oben'::text]
+                       WHEN 'colacor' THEN ARRAY['colacor_vendas'::text,'colacor'::text]
+                       WHEN 'colacor_sc' THEN ARRAY['servicos'::text,'colacor_sc'::text]
+                       ELSE ARRAY[lower(p_empresa)] END)
+                 AND ipc.cmc > 0
+               ORDER BY ipc.synced_at DESC NULLS LAST
+               LIMIT 1 ),
+             pm.preco_unitario) AS preco_unitario_ancora,   -- [PRECO-AUSENTE] sem fallback 0
+           (pm.n IS NULL) AS primeira_compra,
+           fh.horario_corte_pedido, fh.valor_maximo_mensal, fh.delta_max_perc,
+           -- [GATE estoque-não-confirmado] confirmação por LINHA (SKU isolado): seed-only OU sem linha de estoque
+           -- (Codex P1: sea AUSENTE é estoque desconhecido, não zero confirmado), sem inventory_position.
+           -- inv via isl = inv_saldo (account-aware ['vendas','oben']), NÃO o ip órfão (account=lower(empresa) só):
+           -- o estoque da OBEN vive em 'vendas'; PRESENÇA da linha de inv (isl.sku), p/ casar o gate de grupo.
+           ((sea.sku_codigo_omie IS NULL OR COALESCE(sea.fonte_sync, '') = 'cold_start_seed') AND isl.sku IS NULL) AS linha_nao_confirmada,
+           ge.grupo_nao_confirmado,
+           sea.fonte_sync AS linha_fonte_sync
+    FROM sku_parametros sp
+    LEFT JOIN sku_grupo_producao sg ON sg.empresa = sp.empresa AND sg.sku_codigo_omie = sp.sku_codigo_omie::text
+    LEFT JOIN sku_estoque_atual sea ON sea.empresa = sp.empresa AND sea.sku_codigo_omie = sp.sku_codigo_omie::text
+    LEFT JOIN fornecedor_habilitado_reposicao fh ON fh.empresa = sp.empresa AND fh.fornecedor_nome = sp.fornecedor_nome
+    LEFT JOIN omie_products op ON op.omie_codigo_produto::text = sp.sku_codigo_omie::text AND op.account = lower(p_empresa)
+    LEFT JOIN familia_nao_comprada fnc ON fnc.empresa = sp.empresa AND fnc.familia = op.familia
+    LEFT JOIN em_transito et ON et.empresa = sp.empresa AND et.sku_codigo_omie = sp.sku_codigo_omie::text
+    LEFT JOIN preco_medio pm ON pm.empresa = sp.empresa AND pm.sku_codigo_omie = sp.sku_codigo_omie::text
+    LEFT JOIN inventory_position ip ON ip.omie_codigo_produto::text = sp.sku_codigo_omie::text AND ip.account = lower(p_empresa)
+    LEFT JOIN inv_saldo isl ON isl.sku = sp.sku_codigo_omie::text   -- [GATE] confirmação por inventory_position (account-aware)
+    LEFT JOIN sku_status_omie sso ON sso.empresa = sp.empresa AND sso.sku_codigo_omie = sp.sku_codigo_omie::text
+    -- equivalência da âncora + estoque consolidado + escolha de embalagem (NULL p/ SKU sem grupo).
+    LEFT JOIN equiv ea ON ea.sku = sp.sku_codigo_omie::text
+    LEFT JOIN grupo_estoque ge ON ge.grupo_id = ea.grupo_id
+    LEFT JOIN embalagem_escolhida ee ON ee.grupo_id = ea.grupo_id
+    LEFT JOIN membro_elegivel me_anc ON me_anc.grupo_id = ea.grupo_id AND me_anc.sku = sp.sku_codigo_omie::text
+    WHERE sp.empresa = p_empresa
+      AND sp.habilitado_reposicao_automatica = TRUE
+      AND COALESCE(sp.tipo_reposicao, 'automatica') = 'automatica'
+      AND sp.fornecedor_nome IS NOT NULL
+      AND btrim(sp.fornecedor_nome) <> ''
+      AND fnc.id IS NULL
+      AND COALESCE(op.ativo, true) = true
+      AND COALESCE(sso.ativo_no_omie, true) = true
+      AND COALESCE(op.descricao, '') NOT ILIKE '%450ML'
+      AND COALESCE(op.descricao, '') NOT ILIKE '%405ML'
+      AND COALESCE((
+            SELECT COALESCE(op04.tipo_produto, op04.metadata->>'tipo_produto')
+            FROM omie_products op04
+            WHERE op04.omie_codigo_produto::text = sp.sku_codigo_omie::text
+              AND op04.account = lower(p_empresa)
+            LIMIT 1
+          ), '') <> '04'
+      -- [P1-c] A âncora NÃO pode ser um galão (membro fator>1 de um grupo): senão um GL com ponto/max viraria
+      -- âncora E seria escolhido por outro membro → 2 linhas do mesmo GL (uma com custo CMC/0). A âncora é
+      -- sempre a unidade-base (fator 1). (Hoje no-op: galões têm ponto/max NULL; isto blinda o futuro.)
+      AND NOT EXISTS (
+            SELECT 1 FROM equiv eg2
+            WHERE eg2.sku = sp.sku_codigo_omie::text AND eg2.fator_para_base > 1
+          )
+      -- [INTRADAY 4/4] o anti-dup de oportunidade foi MOVIDO p/ depois da decisão (skus_necessitando), porque
+      -- precisa olhar o SKU FINAL (âncora OU galão escolhido), não o candidato — senão bloquearia o quartinho
+      -- mantido por causa de uma oportunidade do galão que nem vai ser comprado. [P1-d, refinado pós-re-Codex]
+      AND sp.ponto_pedido IS NOT NULL
+      AND sp.estoque_maximo IS NOT NULL
+      -- GATILHO consolidado: estoque do GRUPO (ou próprio) <= ponto_pedido da âncora.
+      AND COALESCE(ge.estoque_grupo,
+                   COALESCE(sea.estoque_fisico, 0) + COALESCE(sea.estoque_pendente_entrada, 0) + COALESCE(et.qtde, 0)) <= sp.ponto_pedido
+  ),
+  -- ── DECISÃO: troca p/ galão só se ESTRITAMENTE mais barato/base e a âncora também é elegível ──
+  skus_necessitando AS (
+    SELECT b.empresa,
+           CASE WHEN trocou THEN b.sku_escolhido ELSE b.ancora_sku END AS sku_codigo_omie,
+           CASE WHEN trocou
+                THEN COALESCE((SELECT op2.descricao FROM omie_products op2
+                               WHERE op2.omie_codigo_produto::text = b.sku_escolhido
+                                 AND op2.account = lower(p_empresa) LIMIT 1), b.sku_descricao)
+                ELSE b.sku_descricao END AS sku_descricao,
+           b.fornecedor_nome, b.grupo_codigo, b.ponto_pedido, b.estoque_maximo,
+           COALESCE(b.fisico_grupo, b.estoque_fisico_proprio)  AS estoque_fisico,
+           COALESCE(b.acaminho_grupo, b.acaminho_proprio)      AS estoque_a_caminho,
+           b.estoque_efetivo,
+           ceil(b.estoque_maximo - b.estoque_efetivo) AS qtde_sugerida,  -- gate >0 (unidades-âncora)
+           -- nº de embalagens do SKU escolhido: galão = ceil(necessidade / fator); quartinho = lógica atual.
+           -- [P1-e] minimo_forcado_manual (unidades-âncora) aplicado como piso ANTES de dividir pelo fator.
+           -- [TETO cobertura] só o ramo ELSE recebe o cap (trocou ⇒ tem grupo ⇒ cap NULL; min_forcado ⇒ cap NULL).
+           -- LEAST na necessidade-âncora ANTES do ceil; cap 0 zera a linha (sai do pedido via skus_inseriveis + log).
+           CASE
+             WHEN trocou THEN ceil(GREATEST(b.estoque_maximo - b.estoque_efetivo,
+                                            COALESCE(b.minimo_forcado_manual, 0)) / b.fator_escolhido)
+             WHEN b.minimo_forcado_manual IS NOT NULL AND b.minimo_forcado_manual > 0
+                  THEN ceil(GREATEST(b.estoque_maximo - b.estoque_efetivo, b.minimo_forcado_manual))
+             ELSE ceil(LEAST(b.estoque_maximo - b.estoque_efetivo,
+                             COALESCE(b.cap_teto_ancora, b.estoque_maximo - b.estoque_efetivo)))
+           END AS qtde_final,
+           -- [TETO cobertura] o que a linha compraria SEM o cap (mesma unidade de qtde_final — embalagens no galão):
+           -- rastro p/ item/log; capada ⇔ qtde_final < qtde_sem_teto (comparação nos consumidores).
+           CASE
+             WHEN trocou THEN ceil(GREATEST(b.estoque_maximo - b.estoque_efetivo,
+                                            COALESCE(b.minimo_forcado_manual, 0)) / b.fator_escolhido)
+             WHEN b.minimo_forcado_manual IS NOT NULL AND b.minimo_forcado_manual > 0
+                  THEN ceil(GREATEST(b.estoque_maximo - b.estoque_efetivo, b.minimo_forcado_manual))
+             ELSE ceil(b.estoque_maximo - b.estoque_efetivo)
+           END AS qtde_sem_teto,
+           b.cap_teto_ancora, b.teto_dias_linha, b.demanda_diaria_linha, b.classe_abc_efetiva,
+           -- custo da linha: galão → preço-app (R$/embalagem, nunca 0); quartinho → cmc atual.
+           CASE WHEN trocou THEN b.preco_escolhido ELSE b.preco_unitario_ancora END AS preco_unitario,
+           b.primeira_compra, b.horario_corte_pedido, b.valor_maximo_mensal, b.delta_max_perc,
+           -- [GATE estoque-não-confirmado] espelha estoque_efetivo=COALESCE(grupo,linha): decisão pelo grupo usa a
+           -- confirmação do grupo; pela linha, a da linha. Suprime quando a fonte é só seed (ausente≠zero, precisão>recall).
+           COALESCE(b.grupo_nao_confirmado, b.linha_nao_confirmada) AS suprimido,
+           CASE WHEN b.grupo_nao_confirmado THEN 'grupo_membro_seed_only'
+                WHEN b.linha_nao_confirmada THEN 'linha_seed_only'
+                ELSE NULL END AS motivo,
+           b.linha_fonte_sync
+    FROM (
+      SELECT b0.*,
+             ( b0.sku_escolhido IS NOT NULL
+               AND b0.sku_escolhido <> b0.ancora_sku
+               AND b0.ancora_custo_base IS NOT NULL                 -- âncora elegível (comparável)
+               AND b0.custo_base_escolhido < b0.ancora_custo_base   -- galão estritamente mais barato/base
+             ) AS trocou,
+             -- [TETO cobertura] cap em unidades-âncora; NULL = sem cap. Elegível só SEM grupo de embalagem
+             -- (estoque consolidado QT+GL ÷ demanda só da âncora subcontaria → subcompra; Codex P1) e SEM
+             -- minimo_forcado_manual (decisão humana vence). Piso de SERVIÇO ceil(pp − estoque): o cap corta o
+             -- lote ACIMA do ponto de pedido, nunca a proteção — pp=1/estoque=1 compra 0 (mata o dente 1↔2),
+             -- pp alto segue reposto até o pp (sem ruptura). Nunca negativo: no gatilho, estoque ≤ pp.
+             CASE
+               WHEN b0.teto_dias_linha IS NOT NULL
+                AND b0.equiv_grupo IS NULL
+                AND COALESCE(b0.minimo_forcado_manual, 0) <= 0
+                AND COALESCE(b0.demanda_diaria_linha, 0) > 0
+               THEN GREATEST(
+                      floor(b0.teto_dias_linha * b0.demanda_diaria_linha - b0.estoque_efetivo),
+                      GREATEST(0, ceil(b0.ponto_pedido - b0.estoque_efetivo))
+                    )
+               ELSE NULL
+             END AS cap_teto_ancora
+      FROM sku_base b0
+    ) b
+    -- [P1-d] [INTRADAY 4/4] anti-dup de oportunidade sobre o SKU FINAL (o que SERÁ gravado: âncora ou galão).
+    -- Aqui já se sabe "trocou", então não bloqueia o quartinho mantido por uma oportunidade do galão não-usado.
+    WHERE NOT EXISTS (
+      SELECT 1
+      FROM pedido_compra_item pci9
+      JOIN pedido_compra_sugerido pcs9 ON pcs9.id = pci9.pedido_id
+      WHERE pcs9.empresa = b.empresa
+        AND pcs9.status IN ('pendente_aprovacao', 'bloqueado_guardrail')
+        AND COALESCE(pcs9.tipo_ciclo, 'normal') <> 'normal'
+        AND pci9.sku_codigo_omie = CASE WHEN b.trocou THEN b.sku_escolhido ELSE b.ancora_sku END
+    )
+  ),
+  -- [GATE estoque-não-confirmado] LOG dos suprimidos ANTES de inserir o pedido — senão vira subcompra silenciosa.
+  log_ins AS (
+    INSERT INTO public.reposicao_estoque_nao_confirmado_log
+      (run_id, empresa, sku_codigo_omie, sku_descricao, grupo_codigo, motivo, estoque_efetivo, ponto_pedido, fonte_sync)
+    SELECT v_run_id, sn.empresa, sn.sku_codigo_omie, sn.sku_descricao, sn.grupo_codigo, sn.motivo,
+           sn.estoque_efetivo, sn.ponto_pedido, sn.linha_fonte_sync
+    FROM skus_necessitando sn
+    WHERE sn.suprimido AND sn.qtde_sugerida > 0
+    RETURNING 1
+  ),
+  -- [TETO cobertura] LOG de toda linha REDUZIDA pelo cap (parcial ou a zero) — capado_zero sai do pedido, e sem
+  -- este rastro seria subcompra silenciosa (mesma lição do gate acima). Suprimido NÃO loga aqui (o gate de
+  -- estoque já cobre; estoque declarado não-confiável não sustenta um 2º diagnóstico — Codex P2).
+  log_teto_ins AS (
+    INSERT INTO public.reposicao_teto_cobertura_log
+      (run_id, empresa, sku_codigo_omie, sku_descricao, grupo_codigo, classe_abc, teto_dias, demanda_diaria,
+       estoque_efetivo, ponto_pedido, estoque_maximo, cap_teto_ancora, qtde_sem_teto, qtde_final, motivo)
+    SELECT v_run_id, sn.empresa, sn.sku_codigo_omie, sn.sku_descricao, sn.grupo_codigo, sn.classe_abc_efetiva,
+           sn.teto_dias_linha, sn.demanda_diaria_linha, sn.estoque_efetivo, sn.ponto_pedido, sn.estoque_maximo,
+           sn.cap_teto_ancora, sn.qtde_sem_teto, sn.qtde_final,
+           CASE WHEN sn.qtde_final <= 0 THEN 'capado_zero' ELSE 'capado_parcial' END
+    FROM skus_necessitando sn
+    WHERE NOT sn.suprimido AND sn.qtde_sugerida > 0 AND sn.qtde_final < sn.qtde_sem_teto
+    RETURNING 1
+  ),
+  -- [TETO cobertura] Filtro ÚNICO dos dois INSERTs (Codex P0: divergência entre cabeçalho e item geraria pedido
+  -- vazio ou item qtde 0). qtde_final>0 é novo: linha capada a zero fica só no log.
+  skus_inseriveis AS (
+    SELECT * FROM skus_necessitando sn
+    WHERE sn.qtde_sugerida > 0 AND sn.qtde_final > 0 AND NOT sn.suprimido
+  ),
+  pedidos_por_fornecedor_grupo AS (
+    INSERT INTO pedido_compra_sugerido (
+      empresa, fornecedor_nome, grupo_codigo, data_ciclo, horario_corte_planejado,
+      valor_total, num_skus, status, condicao_pagamento_codigo, condicao_pagamento_descricao,
+      num_parcelas, dias_parcelas, condicao_origem
+    )
+    SELECT sn.empresa, sn.fornecedor_nome, sn.grupo_codigo, p_data_ciclo,
+           (p_data_ciclo + MAX(sn.horario_corte_pedido))::timestamptz,
+           COALESCE(SUM(sn.qtde_final * sn.preco_unitario), 0), COUNT(*),   -- [PRECO-AUSENTE] valor_total é NOT NULL; item.valor_linha segue NULL (honesto)
+           'pendente_aprovacao', '000', 'À Vista', 1, NULL, 'default_a_vista'
+    FROM skus_inseriveis sn
+    GROUP BY sn.empresa, sn.fornecedor_nome, sn.grupo_codigo
+    RETURNING id, fornecedor_nome, grupo_codigo
+  )
+  INSERT INTO pedido_compra_item (
+    pedido_id, sku_codigo_omie, sku_descricao, estoque_atual, ponto_pedido, estoque_maximo,
+    qtde_sugerida, qtde_final, preco_unitario, valor_linha, primeira_compra,
+    estoque_fisico, estoque_a_caminho, qtde_sem_teto, teto_cobertura_aplicado
+  )
+  SELECT pfg.id, sn.sku_codigo_omie, sn.sku_descricao, sn.estoque_efetivo, sn.ponto_pedido, sn.estoque_maximo,
+         sn.qtde_sugerida, sn.qtde_final, sn.preco_unitario, sn.qtde_final * sn.preco_unitario, sn.primeira_compra,
+         sn.estoque_fisico, sn.estoque_a_caminho, sn.qtde_sem_teto, (sn.qtde_final < sn.qtde_sem_teto)
+  FROM skus_inseriveis sn
+  JOIN pedidos_por_fornecedor_grupo pfg
+    ON pfg.fornecedor_nome = sn.fornecedor_nome AND COALESCE(pfg.grupo_codigo,'') = COALESCE(sn.grupo_codigo,'');
+
+  SELECT COUNT(*), COALESCE(SUM(num_skus),0), COALESCE(SUM(valor_total),0)
+  INTO v_pedidos, v_skus, v_valor
+  FROM pedido_compra_sugerido
+  WHERE empresa = p_empresa AND data_ciclo = p_data_ciclo AND status = 'pendente_aprovacao';
+
+  -- [FILA estoque-não-confirmado] carimba ESTE run (limpo OU com supressão) em reposicao_motor_run, p/ a fila da
+  -- tela ancorar no ÚLTIMO recálculo — não no último recálculo QUE TEVE supressão. Um run limpo não grava no log de
+  -- suprimidos → sem este marcador a mensagem "N fora da compra" grudava por até 24h após o sync já ter confirmado o
+  -- estoque (Codex 2026-07-08: é bug de FONTE-DE-VERDADE, não de render). Aditivo, FORA dos CTEs de decisão; mesmo
+  -- role/caminho do INSERT no log acima (authenticated já escreve lá, RLS INSERT WITH CHECK true) → NÃO aborta a compra.
+  INSERT INTO public.reposicao_motor_run (run_id, empresa, data_ciclo, pedidos_gerados, skus_incluidos, suprimidos_n, capados_n)
+  VALUES (v_run_id, p_empresa, p_data_ciclo, v_pedidos, v_skus,
+          (SELECT count(*) FROM public.reposicao_estoque_nao_confirmado_log WHERE run_id = v_run_id),
+          (SELECT count(*) FROM public.reposicao_teto_cobertura_log WHERE run_id = v_run_id));
+
+  RETURN QUERY SELECT v_pedidos, v_skus, v_valor, v_bloqueados;
+END;
+$function$;

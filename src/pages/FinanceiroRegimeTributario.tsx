@@ -4,6 +4,7 @@ import { useRegimeTributario } from '@/hooks/useRegimeTributario';
 import { RegimeInputsDialog } from '@/components/financeiro/RegimeInputsDialog';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 import type {
   RegimeEmpresaResult,
   RegimeComparado,
@@ -177,7 +178,7 @@ export default function FinanceiroRegimeTributario() {
       {error && (
         <Card>
           <CardContent className="py-6 text-sm text-status-error">
-            Erro ao carregar regime tributário: {error instanceof Error ? error.message : String(error)}
+            Erro ao carregar regime tributário: {mensagemDeErro(error) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.'}
           </CardContent>
         </Card>
       )}

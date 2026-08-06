@@ -1,5 +1,6 @@
 import type { PostHog } from 'posthog-js';
 import { logger } from '@/lib/logger';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 
 /**
  * Wrapper de telemetria sobre PostHog. Centraliza:
@@ -44,7 +45,7 @@ function withPosthog(fn: (p: PostHog) => void, label: string): void {
     try {
       fn(ph);
     } catch (e) {
-      logger.warn(`Falha no analytics (${label})`, { error: e instanceof Error ? e.message : String(e) });
+      logger.warn(`Falha no analytics (${label})`, { error: mensagemDeErro(e) ?? '(sem mensagem)' });
     }
     return;
   }
@@ -114,7 +115,7 @@ export function initAnalytics(): void {
     .catch((e) => {
       initStarted = false;
       logger.error('Falha ao carregar/inicializar PostHog', {
-        error: e instanceof Error ? e.message : String(e),
+        error: mensagemDeErro(e) ?? '(sem mensagem)',
       });
       // Wi-Fi instável é o cotidiano do vendedor externo: re-tenta quando a
       // rede voltar — sem isso a telemetria morreria pra sessão inteira (o

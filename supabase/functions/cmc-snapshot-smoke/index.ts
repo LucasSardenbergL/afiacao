@@ -22,6 +22,13 @@
 //   (datas aceitam ISO YYYY-MM-DD ou DD/MM/YYYY; o Omie recebe DD/MM/YYYY)
 // ─────────────────────────────────────────────────────────────────────────────
 import { authorizeCronOrStaff, corsHeaders } from "../_shared/auth.ts";
+import {
+  decidirRetentativaCmcSnapshot,
+  MAX_TENTATIVAS_CMC_SNAPSHOT,
+  mensagemFaultstringOmie,
+  mensagemHttpOmie,
+} from "../_shared/cmc-snapshot-retry.ts";
+import { avaliarPagina, MAX_PAGINAS_POS_ESTOQUE, proximoTotalPaginas } from "../_shared/omie-paginacao.ts";
 
 const OMIE_API_URL = "https://app.omie.com.br/api/v1";
 
@@ -52,8 +59,11 @@ function getCredentials(account: OmieAccount) {
   return { key: Deno.env.get("OMIE_COLACOR_SC_APP_KEY"), secret: Deno.env.get("OMIE_COLACOR_SC_APP_SECRET") };
 }
 
-// Chamada Omie com retry curto p/ flakiness transitória (mesma família de erros
-// que o analytics-sync trata: "broken response"/SOAP/timeout/5xx).
+// Chamada Omie com retry curto p/ flakiness transitória. A classificação da falha e a redação da
+// credencial ecoada vivem em `_shared/cmc-snapshot-retry.ts` (lógica pura, testada) — este arquivo é
+// só o transporte. O bloco ad-hoc que morava aqui casava código HTTP por DÍGITO CRU
+// (`includes("503")`), e o dígito casa dentro da app_key que a própria faultstring ecoa: o erro de
+// credencial mais comum do Omie era lido como transitório e queimava as 4 retentativas.
 async function callOmie(
   account: OmieAccount,
   endpoint: string,
@@ -64,36 +74,32 @@ async function callOmie(
   if (!creds.key || !creds.secret) throw new Error(`Credenciais Omie (${account}) não configuradas`);
   const body = { call, app_key: creds.key, app_secret: creds.secret, param: [params] };
 
-  const maxAttempts = 5;
   let lastErr: Error | null = null;
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+  for (let attempt = 1; attempt <= MAX_TENTATIVAS_CMC_SNAPSHOT; attempt++) {
     try {
       const res = await fetch(`${OMIE_API_URL}/${endpoint}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
+      // HTTP não-2xx LANÇA antes de o corpo virar payload (cai no catch abaixo, que retenta e
+      // no fim propaga). Sem isto, um 429/5xx cujo corpo parseia SEM `faultstring` virava amostra
+      // vazia e o smoke emitia seu veredito — "PROVADO" ou "SUSPEITO: não construir o backfill" —
+      // com HTTP 200, sobre um universo que era erro de infraestrutura.
+      if (!res.ok) {
+        throw new Error(mensagemHttpOmie(account, res.status, await res.text()));
+      }
       const result = (await res.json()) as OmieListarPosEstoqueResponse;
-      if (result.faultstring) throw new Error(`Omie (${account}): ${result.faultstring}`);
+      if (result.faultstring) throw new Error(mensagemFaultstringOmie(account, result.faultstring));
       return result;
     } catch (e) {
       lastErr = e instanceof Error ? e : new Error(String(e));
-      const msg = lastErr.message.toLowerCase();
-      const transient = msg.includes("broken response") || msg.includes("soap-error") ||
-        msg.includes("timeout") || msg.includes("timed out") || msg.includes("network") ||
-        msg.includes("connection") || msg.includes("fetch failed") ||
-        msg.includes("502") || msg.includes("503") || msg.includes("504") || msg.includes("500") ||
-        // Lock de concorrência do Omie: recusa 2 chamadas simultâneas do mesmo método.
-        msg.includes("já existe uma requisição") || msg.includes("sendo executada") ||
-        msg.includes("tente novamente");
-      if (transient && attempt < maxAttempts) {
-        await new Promise((r) => setTimeout(r, 1000 * Math.pow(2, attempt - 1)));
-        continue;
-      }
-      throw lastErr;
+      const decisao = decidirRetentativaCmcSnapshot(lastErr.message, attempt);
+      if (!decisao.retentar) throw lastErr;
+      await new Promise((r) => setTimeout(r, decisao.atrasoMs));
     }
   }
-  throw lastErr ?? new Error(`Omie (${account}): falha após ${maxAttempts} tentativas`);
+  throw lastErr ?? new Error(`Omie (${account}): falha após ${MAX_TENTATIVAS_CMC_SNAPSHOT} tentativas`);
 }
 
 // Aceita ISO (YYYY-MM-DD) ou pt-BR (DD/MM/YYYY) e devolve o que o Omie espera (DD/MM/YYYY).
@@ -122,8 +128,18 @@ async function cmcPorData(
       nRegPorPagina: 100,
       dDataPosicao,
     });
-    totalPaginas = result.nTotPaginas || 1;
-    for (const prod of result.produtos || []) {
+    // Piso monotônico + anti-runaway (_shared/omie-paginacao.ts). O teto de AMOSTRA continua
+    // maxPaginas de propósito (diagnóstico) e é REPORTADO em paginasLidas/totalPaginas — o
+    // caller distingue amostra de catálogo; página vazia antes do fim declarado LANÇA (uma
+    // página perdida numa das datas distorceria o cruzamento e o veredito do gate).
+    totalPaginas = proximoTotalPaginas(totalPaginas, result.nTotPaginas, MAX_PAGINAS_POS_ESTOQUE);
+    const produtos = result.produtos || [];
+    const veredicto = avaliarPagina(produtos.length, pagina, totalPaginas);
+    if (veredicto === "anomalia") {
+      throw new Error(`página ${pagina}/${totalPaginas} do ListarPosEstoque (${dDataPosicao}) veio vazia antes do fim declarado — amostra corrompida, abortando`);
+    }
+    if (veredicto === "fim") break;
+    for (const prod of produtos) {
       const cod = prod.nCodProd;
       if (!cod) continue;
       if (cod === codAlvo) alvoVisto = true;

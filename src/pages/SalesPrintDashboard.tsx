@@ -13,8 +13,10 @@ import { openPrintOrder } from '@/components/OrderPrintLayout';
 import {
   COMPANY_LABELS, COMPANY_COLORS, getPeriod,
   type CompanyFilter, type SalesOrderRow, type ProfileLite, type AddressLite,
-  type FormaPagamento, type EnrichedOrder,
+  type EnrichedOrder,
 } from '@/components/sales/print/types';
+import { lerRespostaFormas } from '@/services/orderSubmission/formasDegradacao';
+import { AvisoFormasPagamento } from '@/components/sales/AvisoFormasPagamento';
 import { buildPrintData, buildSingleOrderHtml, buildPrintDocument } from '@/components/sales/print/buildPrintHtml';
 import { PrintFilters } from '@/components/sales/print/PrintFilters';
 import { OrderGroup } from '@/components/sales/print/OrderGroup';
@@ -47,23 +49,34 @@ const SalesPrintDashboard = () => {
 
   // Fetch sales_orders for the selected date
   // Fetch payment terms map (code -> description)
-  const { data: formasMap = {} } = useQuery({
+  // O mapa código→descrição rotula a condição de pagamento na VIA IMPRESSA que vai ao
+  // cliente. Sob degradação (edge #1597), as "formas" são 8 genéricas HARDCODED, não as
+  // do Omie — usá-las aqui fabricaria um rótulo ("30/60 dias") para um código cuja
+  // descrição real ninguém leu. Money-path §2, ausente ≠ zero: a conta degradada não entra
+  // no mapa, o código cru aparece na via (dado bruto verdadeiro) e a tela avisa o porquê.
+  const { data: formasPagamento, refetch: recarregarFormas } = useQuery({
     queryKey: ['sales-print-formas-pagamento'],
     queryFn: async () => {
-      const result: Record<string, string> = {};
+      const mapa: Record<string, string> = {};
+      const contasDegradadas: string[] = [];
       for (const acc of ['oben', 'colacor'] as const) {
         try {
           const { data } = await supabase.functions.invoke('omie-vendas-sync', {
             body: { action: 'listar_formas_pagamento', account: acc },
           });
-          const formas = (data?.formas ?? []) as FormaPagamento[];
-          formas.forEach((f) => { result[f.codigo] = f.descricao; });
-        } catch (_) { /* ignore */ }
+          const estado = lerRespostaFormas(data);
+          if (estado.degradado) { contasDegradadas.push(acc); continue; }
+          estado.formas.forEach((f) => { mapa[f.codigo] = f.descricao; });
+        } catch (_) { contasDegradadas.push(acc); }
       }
-      return result;
+      return { mapa, contasDegradadas };
     },
     staleTime: 1000 * 60 * 30, // cache 30 min
   });
+  // useMemo estabiliza a referência: `?? {}` criaria um objeto novo a cada render e
+  // invalidaria o useMemo de `filteredOrders`, que tem `formasMap` nas deps.
+  const formasMap = useMemo(() => formasPagamento?.mapa ?? {}, [formasPagamento]);
+  const contasComFormasDegradadas = formasPagamento?.contasDegradadas ?? [];
 
   const { data: salesOrders = [], isLoading: loadingSales } = useQuery({
     queryKey: ['sales-print', 'sales', dayStart],
@@ -405,6 +418,20 @@ const SalesPrintDashboard = () => {
             <p className="text-sm text-muted-foreground">Selecione a data e empresa para imprimir</p>
           </div>
         </div>
+
+        {/* Degradação da listagem de condições: a via impressa sai com o CÓDIGO da parcela
+            em vez da descrição — melhor um código cru verdadeiro que um rótulo genérico
+            errado no documento que vai ao cliente. */}
+        <AvisoFormasPagamento
+          degradado={contasComFormasDegradadas.length > 0}
+          onRecarregar={() => { void recarregarFormas(); }}
+          texto={
+            'Condições do Omie indisponíveis para '
+            + contasComFormasDegradadas.map((c) => (c === 'oben' ? 'Oben' : 'Colacor')).join(' e ')
+            + '. A impressão mostra o CÓDIGO da condição no lugar da descrição, para não '
+            + 'imprimir um prazo que não foi conferido.'
+          }
+        />
 
         {/* Filters */}
         <PrintFilters

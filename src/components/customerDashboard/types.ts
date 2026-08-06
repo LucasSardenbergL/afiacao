@@ -25,7 +25,7 @@ export interface UserTool {
 }
 
 export interface PriorityAction {
-  type: 'quote' | 'order_issue' | 'tools_overdue' | 'no_tools' | 'no_address' | 'all_good';
+  type: 'quote' | 'order_issue' | 'tools_overdue' | 'no_tools' | 'no_address' | 'nunca_afiada' | 'all_good';
   title: string;
   description: string;
   buttonLabel?: string;

@@ -14,7 +14,6 @@ import { PriorityCard } from '@/components/customerDashboard/PriorityCard';
 import { GamificationMini } from '@/components/customerDashboard/GamificationMini';
 import { PedidosAndamento } from '@/components/customerDashboard/PedidosAndamento';
 import { FerramentasAtencao } from '@/components/customerDashboard/FerramentasAtencao';
-import { RecomendacoesCliente } from '@/components/customerDashboard/RecomendacoesCliente';
 import { AcoesRapidas } from '@/components/customerDashboard/AcoesRapidas';
 import { CentralEntryCard } from '@/components/customerDashboard/CentralEntryCard';
 import type { Profile, Order, UserTool } from '@/components/customerDashboard/types';
@@ -95,8 +94,8 @@ export function CustomerDashboard({ profile, pendingOrders, userTools, getGreeti
           </motion.section>
         )}
 
-        {/* ─── Recomendações consultivas determinísticas (PR2 · benchmark #13) ─── */}
-        <RecomendacoesCliente userTools={userTools} navigate={navigate} />
+        {/* Recomendações consultivas (benchmark #13) migraram para a Central da
+            Ferramenta (/central) — lar consultivo do ciclo da afiação. */}
 
         {/* ─── SEÇÃO 4: Ações Rápidas ─── */}
         <motion.section variants={fadeUp}>

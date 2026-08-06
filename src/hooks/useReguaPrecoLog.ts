@@ -2,7 +2,9 @@ import { useCallback, useRef } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { registrarExibicaoRegua, registrarAplicacaoRegua, type ExibicaoReguaPayload } from '@/lib/regua-preco/regua-preco-log';
 
-type DadosExibicao = Omit<ExibicaoReguaPayload, 'salespersonId'>;
+// `salespersonId` saiu do payload em FU4-F fase 2: quem o define é a RPC, com auth.uid(), para
+// que o cliente não possa registrar em nome de outra vendedora.
+type DadosExibicao = ExibicaoReguaPayload;
 
 /**
  * Closed-loop da Régua. Dedup por (cliente + chave + sinal + precoReferencia): cada
@@ -21,7 +23,7 @@ export function useReguaPrecoLog() {
     const dedupeKey = `${chaveCliente}:${dados.result.sinal}:${dados.result.precoReferencia}`;
     if (jaLogado.current.has(dedupeKey)) return;
     jaLogado.current.add(dedupeKey);
-    const id = await registrarExibicaoRegua({ ...dados, salespersonId: user.id });
+    const id = await registrarExibicaoRegua(dados);
     if (id) logIds.current.set(chaveCliente, id);
   }, [user?.id]);
 

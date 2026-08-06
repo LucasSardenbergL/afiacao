@@ -190,7 +190,7 @@ export function CartItemList({
                         onExibido={(r) => marcarExibido(chave, {
                           account: 'oben', customerUserId: customerUserId!, productId: item.product.id,
                           quantity: item.quantity, precoAtual: item.unit_price,
-                          cmcUsado: health?.cmc ?? null, result: r,
+                          prazoDias: prazoRegua.prazoDias, result: r,
                         })}
                         onAplicar={(preco) => { onUpdateProductPrice(cartIdx, preco); marcarAplicado(chave, customerUserId!, preco); }}
                       />

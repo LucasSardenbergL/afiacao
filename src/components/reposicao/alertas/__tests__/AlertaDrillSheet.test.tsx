@@ -34,7 +34,7 @@ function baseProps(over: Partial<React.ComponentProps<typeof AlertaDrillSheet>> 
     isSemGrupo: false,
     skuInfo: null,
     historico: null,
-    impacto: null,
+    mediaLt: null,
     gruposFornecedor: [],
     grupoEscolhido: "",
     setGrupoEscolhido: noop,
@@ -48,15 +48,25 @@ function baseProps(over: Partial<React.ComponentProps<typeof AlertaDrillSheet>> 
 }
 
 describe("AlertaDrillSheet", () => {
-  it("venda atípica pendente → seções contexto/SKU/histórico/decisão; Aceitar dispara onAcao", () => {
+  it("venda atípica pendente → seções contexto/SKU/histórico/revisão; botão dispara onAcao", () => {
     const onAcao = vi.fn();
     render(<AlertaDrillSheet {...baseProps({ onAcao })} />);
     expect(screen.getByText("1. Contexto")).toBeTruthy();
     expect(screen.getByText("2. Dados do SKU")).toBeTruthy();
     expect(screen.getByText("3. Histórico")).toBeTruthy();
-    expect(screen.getByText("5. Decisão")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: /Aceitar/ }));
-    expect(onAcao).toHaveBeenCalledWith("aceitar");
+    expect(screen.getByText("4. Revisão")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Marcar como revisado/ }));
+    expect(onAcao).toHaveBeenCalled();
+  });
+
+  // Guarda de regressão: a exclusão foi RETIRADA (spec 2026-07-16). O card prometia
+  // "σ atual → sem outlier" para um efeito que nunca alcançou o motor de reposição.
+  it("não oferece excluir/ignorar nem card de impacto", () => {
+    render(<AlertaDrillSheet {...baseProps()} />);
+    expect(screen.queryByRole("button", { name: /Excluir/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Ignorar/ })).toBeNull();
+    expect(screen.queryByText(/Impacto se excluir/)).toBeNull();
+    expect(screen.queryByText(/sem outlier/)).toBeNull();
   });
 
   it("sku_sem_grupo pendente → atribuição de grupo; botão dispara onAtribuirGrupo", () => {
@@ -75,7 +85,7 @@ describe("AlertaDrillSheet", () => {
     expect(screen.getByText("3. Atribuir grupo de produção")).toBeTruthy();
     expect(screen.getByText("ACME")).toBeTruthy();
     expect(screen.queryByText("3. Histórico")).toBeNull();
-    expect(screen.queryByText("5. Decisão")).toBeNull();
+    expect(screen.queryByText("4. Revisão")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: /Atribuir e marcar como aceito/ }));
     expect(onAtribuirGrupo).toHaveBeenCalled();
   });

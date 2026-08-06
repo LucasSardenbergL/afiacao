@@ -11,7 +11,7 @@ function fn(name: string, body: string, opts: { invoker?: boolean } = {}): strin
  RETURNS numeric LANGUAGE plpgsql STABLE ${sec} SET search_path TO 'public'
 AS $function$ BEGIN ${body} END; $function$;`;
 }
-const GATE = `IF NOT (COALESCE(auth.role()='service_role',false) OR COALESCE(public.pode_ver_carteira_completa(auth.uid()),false)) THEN RAISE EXCEPTION 'Acesso negado' USING ERRCODE='42501'; END IF;`;
+const GATE = `IF NOT (COALESCE(auth.role()='service_role',false) OR COALESCE(private.cap_custo_ler(auth.uid()),false)) THEN RAISE EXCEPTION 'Acesso negado' USING ERRCODE='42501'; END IF;`;
 const READ = `RETURN (SELECT sum(saldo*cmc) FROM inventory_position WHERE account='vendas');`;
 
 const errorsOf = (f: ReturnType<typeof auditAuthz>) => f.filter((x) => x.level === 'error');
@@ -27,7 +27,7 @@ describe('auditAuthz — Parte A (regressão de gate)', () => {
     const err = errorsOf(f);
     expect(err).toHaveLength(1);
     expect(err[0].fn).toBe('public.fin_estimar_estoque_omie');
-    expect(err[0].msg).toContain('pode_ver_carteira_completa');
+    expect(err[0].msg).toContain('cap_custo_ler');
   });
 
   it('last-writer-wins: recriação NOVA sem gate vence a antiga com gate → FALHA', () => {
@@ -80,14 +80,14 @@ describe('auditAuthz — Parte B (cobertura)', () => {
 // ── falsos-negativos do challenge Codex (2026-07-09): cada um DEVE virar erro ──
 describe('auditAuthz — anti falso-negativo (challenge Codex)', () => {
   it('gate DECORATIVO (presente sem bloquear) numa função do manifest → ERRO', () => {
-    const body = `v_can := public.pode_ver_carteira_completa(auth.uid()); ${READ}`;
+    const body = `v_can := private.cap_custo_ler(auth.uid()); ${READ}`;
     const f = auditAuthz([mig('20260710000000_x.sql', fn('fin_estimar_estoque_omie', body))]);
     expect(errorsOf(f)).toHaveLength(1);
     expect(errorsOf(f)[0].msg).toContain('decorativo');
   });
 
   it('guard INVERTIDO (IS NOT NULL AND gate) → ERRO', () => {
-    const body = `IF v_uid IS NOT NULL AND public.pode_ver_carteira_completa(v_uid) THEN RAISE EXCEPTION 'x'; END IF; ${READ}`;
+    const body = `IF v_uid IS NOT NULL AND private.cap_custo_ler(v_uid) THEN RAISE EXCEPTION 'x'; END IF; ${READ}`;
     const f = auditAuthz([mig('20260710000000_x.sql', fn('fin_estimar_estoque_omie', body))]);
     expect(errorsOf(f)).toHaveLength(1);
   });
@@ -118,7 +118,7 @@ describe('auditAuthz — anti falso-negativo (challenge Codex)', () => {
 // ── re-challenge Codex: NOT-de-outra-coisa, comentário-engana, unparsed-sensível ──
 describe('auditAuthz — anti falso-negativo (re-challenge Codex)', () => {
   it('NOT nega outra coisa (NOT v_disabled AND gate) → ERRO', () => {
-    const body = `IF NOT v_disabled AND public.pode_ver_carteira_completa(auth.uid()) THEN RAISE EXCEPTION 'x'; END IF; ${READ}`;
+    const body = `IF NOT v_disabled AND private.cap_custo_ler(auth.uid()) THEN RAISE EXCEPTION 'x'; END IF; ${READ}`;
     const f = auditAuthz([mig('20260710000000_x.sql', fn('fin_estimar_estoque_omie', body))]);
     expect(errorsOf(f)).toHaveLength(1);
   });
@@ -126,7 +126,7 @@ describe('auditAuthz — anti falso-negativo (re-challenge Codex)', () => {
   it('AS $x$ comentado + corpo real sem gate → ERRO (parser pega o corpo real)', () => {
     const sql = [
       'CREATE OR REPLACE FUNCTION public.fin_estimar_estoque_omie(p text) RETURNS numeric LANGUAGE plpgsql SECURITY DEFINER',
-      "-- AS $x$ IF NOT public.pode_ver_carteira_completa(auth.uid()) THEN RAISE EXCEPTION 'x'; END IF; $x$",
+      "-- AS $x$ IF NOT private.cap_custo_ler(auth.uid()) THEN RAISE EXCEPTION 'x'; END IF; $x$",
       'AS $$ BEGIN RETURN (SELECT sum(saldo * cmc) FROM inventory_position); END $$;',
     ].join('\n');
     const f = auditAuthz([mig('20260710000000_x.sql', sql)]);

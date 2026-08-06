@@ -39,7 +39,7 @@ echo "═══ setup PG17 :$PORT ═══"
 P -q <<'SQL'
 CREATE TABLE public.sku_parametros (empresa text, sku_codigo_omie bigint, sku_descricao text, fornecedor_nome text,
   ponto_pedido numeric, estoque_maximo numeric, minimo_forcado_manual numeric,
-  habilitado_reposicao_automatica boolean, tipo_reposicao text, demanda_media_diaria numeric);
+  habilitado_reposicao_automatica boolean, tipo_reposicao text, demanda_media_diaria numeric, classe_abc character(1), classe_forcada text);
 CREATE TABLE public.sku_estoque_atual (empresa text, sku_codigo_omie text, estoque_fisico numeric, estoque_pendente_entrada numeric, fonte_sync text);
 CREATE TABLE public.sku_embalagem_equivalencia (empresa text, grupo_id uuid, sku_codigo_omie text, fator_para_base numeric, ativo boolean);
 CREATE TABLE public.sku_preco_fornecedor_capturado (empresa text, sku_codigo_omie text, preco numeric, status text, capturado_em timestamptz);
@@ -49,6 +49,22 @@ CREATE TABLE public.company_config (key text, value text);
 CREATE TABLE public.omie_products (omie_codigo_produto bigint, account text, descricao text, familia text, ativo boolean, tipo_produto text, metadata jsonb DEFAULT '{}');
 CREATE TABLE public.sku_grupo_producao (empresa text, sku_codigo_omie text, grupo_codigo text);
 CREATE TABLE public.sku_leadtime_history (empresa text, sku_codigo_omie text, quantidade_recebida numeric, valor_total numeric);
+-- [#1366] A CTE preco_medio do motor passou a ler a fonte deduplicada por NFe. Stub 1:1 sobre a tabela acima:
+-- o assunto DESTE harness é o motor de embalagem, não o dedup (esse é provado com a view REAL em
+-- db/test-preco-medio-leadtime-efetivo.sh), e os seeds daqui não têm NFe duplicada — 1:1 é fiel para eles.
+-- Sem este stub a função dá 'relation does not exist' em RUNTIME: o CREATE OR REPLACE passa (late-bound).
+CREATE VIEW public.v_sku_leadtime_efetivo AS
+  SELECT empresa, sku_codigo_omie, quantidade_recebida, valor_total FROM public.sku_leadtime_history;
+-- ⚠️ PRÉ-EXISTENTE (não é do #1366) — este harness estava VERMELHO desde 20260708171049, que meteu o
+-- INSERT em reposicao_motor_run no fim da função: a fixture acompanhou, o stub da tabela não. Ficou ~9 dias
+-- mudo porque a CI roda vitest, NÃO db/*.sh — só aparece pra quem roda o harness na mão. Colunas conferidas
+-- contra a migration real (o test-gate-estoque-nao-confirmado.sh já tinha este stub; aqui faltava).
+CREATE TABLE public.reposicao_motor_run (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  run_id uuid NOT NULL, empresa text NOT NULL, data_ciclo date NOT NULL,
+  pedidos_gerados integer NOT NULL DEFAULT 0, skus_incluidos integer NOT NULL DEFAULT 0,
+  suprimidos_n integer NOT NULL DEFAULT 0, capados_n integer NOT NULL DEFAULT 0, criado_em timestamptz NOT NULL DEFAULT now()
+);
 CREATE TABLE public.fornecedor_habilitado_reposicao (empresa text, fornecedor_nome text, horario_corte_pedido interval, valor_maximo_mensal numeric, delta_max_perc numeric, lt_logistica_dias int);
 CREATE TABLE public.familia_nao_comprada (id bigserial PRIMARY KEY, empresa text, familia text);
 CREATE TABLE public.sku_status_omie (empresa text, sku_codigo_omie text, ativo_no_omie boolean);
@@ -59,11 +75,17 @@ CREATE TABLE public.pedido_compra_sugerido (id bigserial PRIMARY KEY, empresa te
 CREATE TABLE public.pedido_compra_item (id bigserial PRIMARY KEY, pedido_id bigint REFERENCES pedido_compra_sugerido(id) ON DELETE CASCADE,
   sku_codigo_omie text, sku_descricao text, estoque_atual numeric, ponto_pedido numeric, estoque_maximo numeric,
   qtde_sugerida numeric, qtde_final numeric, preco_unitario numeric, valor_linha numeric, primeira_compra boolean,
-  estoque_fisico numeric, estoque_a_caminho numeric);
+  estoque_fisico numeric, estoque_a_caminho numeric, qtde_sem_teto numeric, teto_cobertura_aplicado boolean NOT NULL DEFAULT false);
 -- [GATE estoque-não-confirmado] a função agora LOGA os suprimidos aqui (CTE log_ins). Stub mínimo (sem RLS no harness).
 -- Os seeds deste teste NÃO setam fonte_sync (→ NULL) → o gate não dispara → asserts do galão (a-k) intactos.
 CREATE TABLE public.reposicao_estoque_nao_confirmado_log (id uuid DEFAULT gen_random_uuid(), run_id uuid, criado_em timestamptz DEFAULT now(),
   empresa text, sku_codigo_omie text, sku_descricao text, grupo_codigo text, motivo text, estoque_efetivo numeric, ponto_pedido numeric, fonte_sync text);
+-- [TETO cobertura 2026-07-29] stub minimo — o CTE log_teto_ins e DML e executa SEMPRE (mesmo sem linha capada);
+-- sem config de teto (company_config vazio p/ as chaves) o cap fica NULL e os asserts destes harnesses ficam intactos.
+CREATE TABLE public.reposicao_teto_cobertura_log (id uuid DEFAULT gen_random_uuid(), run_id uuid, criado_em timestamptz DEFAULT now(),
+  empresa text, sku_codigo_omie text, sku_descricao text, grupo_codigo text, classe_abc text, teto_dias numeric,
+  demanda_diaria numeric, estoque_efetivo numeric, ponto_pedido numeric, estoque_maximo numeric,
+  cap_teto_ancora numeric, qtde_sem_teto numeric, qtde_final numeric, motivo text);
 SQL
 
 # ── ZONA 2: aplicar a migration REAL ──

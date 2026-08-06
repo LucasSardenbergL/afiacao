@@ -65,7 +65,10 @@ async function fetchProductsForAccount(account: ProductAccount): Promise<Product
       .order('id')
       .range(from, to);
     if (error) throw error;
-    return (data || []) as Product[];
+    // data null SEM error = malformada, não página vazia: devolvê-la ao paginateAll
+    // encerraria o catálogo vendável PARCIAL em silêncio (classe #1338→#1564).
+    if (data == null) throw new Error('omie_products (catálogo): data null sem error — malformada, não é fim');
+    return data as Product[];
   });
 }
 

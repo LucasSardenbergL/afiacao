@@ -9,6 +9,7 @@ import { useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 import {
   pontoEquilibrio,
   somaCodigosPorPrefixo,
@@ -295,7 +296,7 @@ export function useSalvarDreClassificacao() {
     },
     onError: (e) => {
       toast.error('Falha ao salvar classificação', {
-        description: e instanceof Error ? e.message : String(e),
+        description: mensagemDeErro(e) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.',
       });
     },
   });
@@ -339,7 +340,7 @@ export function useSalvarCustoRateio() {
       toast.success('Rateio salvo. Recalculando o ponto de equilíbrio…');
     },
     onError: (e) => {
-      toast.error('Falha ao salvar o rateio', { description: e instanceof Error ? e.message : String(e) });
+      toast.error('Falha ao salvar o rateio', { description: mensagemDeErro(e) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.' });
     },
   });
 }

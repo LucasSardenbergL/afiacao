@@ -15,6 +15,12 @@ import { useSavingsSummary } from '@/queries/useSavings';
 import { useUserToolsSummary } from '@/queries/useUserTools';
 import { useActiveRecurringSchedules } from '@/queries/useRecurringSchedules';
 import { useCustomerPendingOrders } from '@/queries/useOrders';
+import { RecomendacoesCliente } from '@/components/customerDashboard/RecomendacoesCliente';
+import type { Recomendacao } from '@/lib/afiacao/recomendacoes';
+
+// A Central já traz o herói de economia no topo — aqui as recomendações omitem o
+// card 'economia' (não duplicar) e mostram só as consultivas (atraso / sem programação).
+const RECOMENDACOES_OCULTAR_NA_CENTRAL: Recomendacao['tipo'][] = ['economia'];
 
 /** R$ com separador de milhar (mesmo formato do painel de economia). */
 function formatBRL(v: number): string {
@@ -183,6 +189,14 @@ const CentralFerramenta = () => {
           </CardContent>
         </Card>
       </button>
+
+      {/* Recomendações consultivas determinísticas (benchmark #13). 'economia' fica
+          de fora — o herói acima já cobre; aqui só atraso / sem programação. */}
+      <RecomendacoesCliente
+        userTools={tools}
+        navigate={navigate}
+        ocultarTipos={RECOMENDACOES_OCULTAR_NA_CENTRAL}
+      />
 
       <HubCard
         icon={Wrench}

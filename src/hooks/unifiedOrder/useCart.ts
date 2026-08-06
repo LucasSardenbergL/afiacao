@@ -123,6 +123,8 @@ export function useCart({ getProductPrice, getServicePrice, servicos }: UseCartA
       nomeCor: string,
       precoFinal: number,
       custoCorantes: number,
+      // Fase 3: fonte escolhida + desconto declarado (o gate do submit revalida)
+      pricingMeta?: { source: string | null; discountPct: number; precoSemDesconto: number | null },
     ) => {
       const account = (product.account || 'oben') as ProductAccount;
       setCart(prev => {
@@ -148,6 +150,15 @@ export function useCart({ getProductPrice, getServicePrice, servicos }: UseCartA
             tint_nome_cor: nomeCor,
             tint_custo_corantes: custoCorantes,
             tint_formula_id: formulaId,
+            ...(pricingMeta?.source
+              ? {
+                  tint_price_source: pricingMeta.source,
+                  tint_discount_pct: pricingMeta.discountPct,
+                  ...(pricingMeta.precoSemDesconto != null
+                    ? { tint_preco_sem_desconto: pricingMeta.precoSemDesconto }
+                    : {}),
+                }
+              : {}),
           } as ProductCartItem,
         ];
       });

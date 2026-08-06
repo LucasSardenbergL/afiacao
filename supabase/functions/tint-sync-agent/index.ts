@@ -1,8 +1,17 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+// FASE 1d: builders PUROS payload→staging (testáveis com deno test --no-remote).
+// O contrato (expected_item_count, is_base_pura, id pré-gerado, preservação de
+// item inválido) vive em staging-rows.ts — NÃO reimplementar inline aqui.
+import {
+  montarStagingFormulaRow,
+  montarStagingItemRows,
+  type TintFormulaItem,
+  type TintFormulaPayload,
+} from "./staging-rows.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-sync-token, x-store-code, x-idempotency-key",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-sync-token, x-store-code, x-idempotency-key, x-agent-version",
 };
 
 // ─── Type definitions ───
@@ -35,26 +44,7 @@ interface TintPrecosBaseItem {
   [k: string]: unknown;
 }
 
-/** Item de fórmula (corante + ordem + qtd) */
-interface TintFormulaItem {
-  id_corante?: string;
-  ordem?: number;
-  qtd_ml?: number;
-}
-
-/** Fórmula bruta enviada pelo agente */
-interface TintFormulaPayload {
-  cor_id?: string;
-  nome_cor?: string;
-  cod_produto?: string;
-  id_base?: string;
-  id_embalagem?: string;
-  subcolecao?: string | null;
-  volume_final_ml?: number;
-  preco_final?: number;
-  personalizada?: boolean;
-  itens?: TintFormulaItem[];
-}
+// TintFormulaItem / TintFormulaPayload migraram para ./staging-rows.ts (Fase 1d).
 
 /** Preparação (mistura de tinta concreta) bruta enviada pelo agente */
 interface TintPreparacaoPayload {
@@ -193,6 +183,11 @@ Deno.serve(async (req) => {
       status: "running",
     };
     if (idempotencyKey) row.idempotency_key = idempotencyKey;
+    // Fase 1d: versão do binário do conector (header x-agent-version) fica no rastro do
+    // run — auditoria do estado misto do rollout (binário velho filtra inválidos antes
+    // do POST; sem a versão não dá para saber QUEM alimentou cada run).
+    const agentVersion = req.headers.get("x-agent-version");
+    if (agentVersion) row.metadata = { agent_version: agentVersion };
     const { data } = await sb.from("tint_sync_runs").insert(row).select("id").single();
     return data?.id;
   }
@@ -443,23 +438,13 @@ Deno.serve(async (req) => {
         }
       }
 
-      // Bulk insert valid formulas with .select("id") to get back inserted IDs
-      const formulaRows: Record<string, unknown>[] = validFormulas.map((f) => ({
-        sync_run_id: runId,
-        account: agent.account,
-        store_code: agent.storeCode,
-        cor_id: f.cor_id,
-        nome_cor: f.nome_cor,
-        cod_produto: f.cod_produto,
-        id_base: f.id_base,
-        id_embalagem: f.id_embalagem,
-        subcolecao: f.subcolecao || null,
-        volume_final_ml: f.volume_final_ml,
-        preco_final: f.preco_final,
-        personalizada: f.personalizada || false,
-        raw_data: f,
-        staging_status: "pending",
-      }));
+      // Bulk insert valid formulas. Fase 1c (Codex P2): o id do header é PRÉ-GERADO no builder — a
+      // associação header→itens deixa de depender da ORDEM do retorno de .insert().select("id").
+      // Fase 1d: o contrato inteiro (expected_item_count nunca-0-por-ausência, is_base_pura só
+      // literal true, preservação de item inválido) vive em staging-rows.ts, com teste Deno.
+      // ⚠️ Deploy: a migration 20260722113000 (coluna is_base_pura) vai ANTES desta edge (PGRST204).
+      const formulaRows: Record<string, unknown>[] = validFormulas.map((f) =>
+        montarStagingFormulaRow(f, runId, agent.account, agent.storeCode));
 
       // Insert in chunks of 500, collecting returned IDs
       const FORMULA_CHUNK = 500;
@@ -468,9 +453,8 @@ Deno.serve(async (req) => {
 
       for (let i = 0; i < formulaRows.length; i += FORMULA_CHUNK) {
         const chunk = formulaRows.slice(i, i + FORMULA_CHUNK);
-        const { data: chunkData, error: chunkErr } = await sb.from("tint_staging_formulas")
-          .insert(chunk)
-          .select("id");
+        const { error: chunkErr } = await sb.from("tint_staging_formulas")
+          .insert(chunk);
         if (chunkErr) {
           // All formulas in this chunk fail — count as errors
           const chunkFormulas = validFormulas.slice(i, i + FORMULA_CHUNK);
@@ -482,10 +466,10 @@ Deno.serve(async (req) => {
           // Push nulls so index alignment is preserved for item insertion
           for (let j = 0; j < chunk.length; j++) insertedFormulaIds.push(null);
         } else {
-          inserts += (chunkData?.length ?? 0);
-          for (const row of (chunkData ?? [])) {
-            insertedFormulaIds.push((row as { id: string }).id);
-          }
+          inserts += chunk.length;
+          // Fase 1c (Codex P2): ids pré-gerados na edge — o alinhamento é com o array LOCAL,
+          // não com a ordem que o servidor devolveria.
+          for (const row of chunk) insertedFormulaIds.push(row.id as string);
         }
       }
 
@@ -494,20 +478,8 @@ Deno.serve(async (req) => {
       for (let fi = 0; fi < validFormulas.length; fi++) {
         const formulaId = insertedFormulaIds[fi];
         if (!formulaId) continue; // formula insert failed, skip items
-        const f = validFormulas[fi];
-        const itens: TintFormulaItem[] = f.itens || [];
-        for (const item of itens) {
-          allItemRows.push({
-            formulaId,
-            idx: fi,
-            row: {
-              sync_run_id: runId,
-              staging_formula_id: formulaId,
-              id_corante: item.id_corante || "",
-              ordem: item.ordem,
-              qtd_ml: item.qtd_ml,
-            },
-          });
+        for (const row of montarStagingItemRows(validFormulas[fi], formulaId, runId)) {
+          allItemRows.push({ formulaId, idx: fi, row });
         }
       }
 

@@ -19,3 +19,17 @@ export function custoCanonico(row: {
 }): number | null {
   return custoValido(row.cost_final) ?? custoValido(row.cost_price);
 }
+
+/**
+ * Margem unitária honesta: `null` quando o custo é DESCONHECIDO (SKU fora do costMap).
+ *
+ * O chamador DEVE excluir o SKU do ranking ao receber null — nunca tratar como 0. Com o
+ * antigo `costMap.get(id) || 0`, um SKU sem custo virava `margin = price - 0` = preço cheio
+ * (margem 100%); e como todo engine filtra apenas `margin <= 0`, o SKU sem custo era o ÚNICO
+ * que jamais era excluído — o ranking passava a RECOMENDAR justamente os produtos cujo custo
+ * falta, o inverso do desejado. Margem negativa é dado real e é preservada.
+ */
+export function margemUnitaria(price: number, cost: number | null | undefined): number | null {
+  if (cost == null) return null;
+  return price - cost;
+}

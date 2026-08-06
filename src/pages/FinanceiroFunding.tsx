@@ -19,6 +19,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import type { DecisaoTitulo, TipoFonte, PlanoCobertura } from '@/lib/financeiro/funding-helpers';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 
 // ─── Helpers de formatação ────────────────────────────────────────────────────
 
@@ -339,7 +340,7 @@ export default function FinanceiroFunding() {
       {error && (
         <Card>
           <CardContent className="py-6 text-sm text-status-error">
-            Erro ao carregar funding: {error instanceof Error ? error.message : String(error)}
+            Erro ao carregar funding: {mensagemDeErro(error) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.'}
           </CardContent>
         </Card>
       )}

@@ -247,7 +247,7 @@ const TechnicalDocs = () => {
               <tr className="border-b"><td className="p-2 font-mono">omie-vendas-sync</td><td className="p-2">Sincroniza pedidos de venda com Omie (Oben/Colacor)</td><td className="p-2">JWT</td></tr>
               <tr className="border-b"><td className="p-2 font-mono">omie-analytics-sync</td><td className="p-2">Sincronização analítica periódica de dados Omie</td><td className="p-2">JWT</td></tr>
               <tr className="border-b"><td className="p-2 font-mono">recommend</td><td className="p-2">Motor de recomendações contextual server-side</td><td className="p-2">JWT</td></tr>
-              <tr className="border-b"><td className="p-2 font-mono">generate-tactical-plan</td><td className="p-2">Gera planos táticos pré-ligação via IA (Gemini/GPT)</td><td className="p-2">JWT</td></tr>
+              <tr className="border-b"><td className="p-2 font-mono">generate-tactical-plan</td><td className="p-2">Gera planos táticos pré-ligação via IA (Anthropic, forced tool-use)</td><td className="p-2">JWT</td></tr>
               <tr className="border-b"><td className="p-2 font-mono">copilot-analyze</td><td className="p-2">Análise de transcrição em tempo real para copiloto IA</td><td className="p-2">JWT</td></tr>
               <tr className="border-b"><td className="p-2 font-mono">generate-bundle-argument</td><td className="p-2">Gera argumentos de venda para bundles via IA</td><td className="p-2">JWT</td></tr>
               <tr className="border-b"><td className="p-2 font-mono">calculate-scores</td><td className="p-2">Recálculo batch de Health/Priority Scores</td><td className="p-2">JWT</td></tr>

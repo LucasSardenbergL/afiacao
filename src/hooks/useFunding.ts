@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import type { FundingResult, FundingInputs } from '@/services/financeiroService';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 
 export function useFunding(company: string) {
   return useQuery({
@@ -83,7 +84,7 @@ export function useSalvarFundingInputs() {
     },
     onError: (e) => {
       toast.error('Falha ao salvar inputs', {
-        description: e instanceof Error ? e.message : String(e),
+        description: mensagemDeErro(e) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.',
       });
     },
   });

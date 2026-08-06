@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { COMPANIES, ALL_COMPANIES, type Company } from '@/contexts/CompanyContext';
 import { useFinanceiro, type FinanceiroView } from '@/hooks/useFinanceiro';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 import {
   Loader2, RefreshCw, Database, FolderSync, Building2,
   ArrowDownCircle, ArrowUpCircle, Layers, BarChart3, Wallet,
@@ -62,7 +63,7 @@ const FinanceiroSync = () => {
         }
       }
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
+      const msg = mensagemDeErro(e) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.';
       for (const co of targetCompanies) {
         setResults(prev => [
           ...prev.filter(r => !(r.entity === action && r.company === co)),

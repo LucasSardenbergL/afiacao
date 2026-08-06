@@ -1,5 +1,30 @@
 # Setup do agente — diário de entregas
 
+## 2026-07-18 — `pr-watch.sh`: exit 6 separa "não consegui consultar" de "sem desfecho"
+
+**Falso negativo real (#1396, 2026-07-17):** o watcher saiu **5 (TIMEOUT)** num PR que tinha **MERGEADO** normalmente (auto-merge squash, `validate` verde em 5m16s). Causa: `exit 5` era emitido por DOIS caminhos — a consulta bem-sucedida sem desfecho *e* a consulta que falhou (ramo de erro do `gh pr view`) —, indistinguíveis pelo exit code. Um agente que confiasse no código reportaria "não mergeou" ao founder: exatamente o furo de rastreio que o script existe pra fechar ("PR órfão descoberto dias depois", C5 abaixo).
+
+**Pista que o log dava:** só **2 AVISOs** antes do TIMEOUT — com janela 45min/poll 60s, rede fora daria ~45. Não foi outage: a máquina dormiu e o relógio saltou o deadline, então o script desistiu após 2 tentativas reais, com a rede provavelmente já de volta.
+
+**Fix:**
+- **`exit 6` = NÃO consegui consultar** (estado DESCONHECIDO) vs **`exit 5` = consultei e o PR segue sem desfecho**. JSON ilegível/vazio também cai no 6 — antes caía no ramo de SUCESSO e imprimia estado vazio (`ainda /?`), afirmando ter consultado.
+- **Cartada final com backoff** (`5 15 45`s; env `PR_WATCH_BACKOFFS`, testes usam `0 0 0`) antes de declarar desconhecido — a falha é quase sempre transitória. Desfecho real encontrado aí **vence o timeout**: é o que teria salvado o #1396 (exit 0, não 5).
+- Regra no **CLAUDE.md §Merge**: num 6, confirmar com `gh pr view <nº>` ANTES do PushNotification.
+- **A janela passou a contar VIGÍLIA, não relógio de parede** (`dormir`): no suspend o `sleep` não avança mas o `date` sim, então o tempo dormido é devolvido ao deadline. Sem teto de extensão de propósito — cada wake compra ≥1 poll, e é esse poll que acha o desfecho (o watcher morre com a sessão de qualquer forma). Isso ataca o GATILHO; o exit 6 ataca o DEFEITO. Também no **CLAUDE.md §Merge**: o efeito colateral visível é watcher VIVO além dos N min nominais — sem a regra, um agente lê isso como travamento e mata o processo, reabrindo o furo de rastreio pelo outro lado.
+
+**Prova:** `scripts/test-pr-watch.sh` (12 casos, `gh` stubado, sem rede) — testes escritos ANTES do fix e vistos vermelhos; o harness ganhou stub com contador (`GH_STUB_FALHAS=N` falha as N primeiras chamadas e depois volta, reproduzindo o #1396), asserção de SAÍDA (sem ela um exit 5 "não consultei" se disfarça de 5 "consultei") e RELÓGIO VIRTUAL (`date`/`sleep` stubados; `SLEEP_SALTO` simula suspend — determinístico e instantâneo, sem esperar 40min de verdade). No caso do relógio o exit code NÃO discrimina (5 nos dois mundos): o observável é a **contagem de polls** (2 sem o fix, 6 com).
+
+**Falsificado** — cada sabotagem derruba só o que ela guarda:
+
+| sabotagem | vermelho |
+|---|---|
+| desfaz o `exit 6` | só os 2 casos de "não consegui consultar" |
+| remove a cartada final | só os 2 casos de "a rede volta" |
+| não estende o deadline | só o caso do relógio (volta aos 2 polls) |
+| credita o elapsed inteiro em vez do EXCESSO | deadline recua tanto quanto avança = loop infinito → `exit 143` pelo watchdog do teste (FAIL, não trava) |
+
+**Ponta-a-ponta com `gh`/`date`/`sleep` REAIS:** `#1396 → 0 (MERGEADO)` (era 5) · PR aberto `→ 5` com o estado na mensagem · PR inexistente `→ 6` após 3 tentativas · watcher congelado por `SIGSTOP` 40s com poll de 10s → salto de **33s detectado**, janela estendida, rodou 101s de relógio para uma janela nominal de 60s. `SIGSTOP` é o análogo fiel do suspend **desde que o congelamento seja MAIOR que o poll**: a 1ª tentativa (congelar 25s com poll de 30s) não acusou nada — coube dentro do `sleep` do processo filho, que seguiu correndo, e não somou elapsed nenhum.
+
 ## 2026-07-06 — Anti-fricção do setup Claude Code (candidatos 1–9 do diagnóstico)
 
 Origem: [melhorias-code-2026-07.md](melhorias-code-2026-07.md) — diagnóstico sobre 240 sessões/880MB de transcrições (65% dos erros de ferramenta = classificador de permissões; ~450 mensagens "Retome"; claude-mem com 0 observações em 331 sessões).

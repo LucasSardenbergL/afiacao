@@ -1,5 +1,11 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
+
+// Caption isolada: o card é componente burro; a UltimaExecucao (query real) tem teste próprio.
+vi.mock('@/components/execucoes/UltimaExecucao', () => ({
+  UltimaExecucao: () => null,
+}));
+
 import { SyncCard } from '../SyncCard';
 
 describe('SyncCard', () => {

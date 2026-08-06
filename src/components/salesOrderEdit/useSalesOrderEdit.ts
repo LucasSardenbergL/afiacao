@@ -18,6 +18,11 @@ import {
   type OmieProduct,
 } from './types';
 import { invalidPricedOrderItemIndices, invalidOrderPriceMessage } from './priceGuard';
+import {
+  lerRespostaFormas,
+  condicoesDoClienteIndisponiveis,
+  mensagemCondicoesIndisponiveis,
+} from '@/services/orderSubmission/formasDegradacao';
 
 export function useSalesOrderEdit() {
   const { id } = useParams<{ id: string }>();
@@ -32,6 +37,14 @@ export function useSalesOrderEdit() {
   const [saving, setSaving] = useState(false);
   const [formas, setFormas] = useState<Array<{ codigo: string; descricao: string }>>([]);
   const [selectedParcela, setSelectedParcela] = useState('');
+  // Degradação da listagem (edge #1597) + a condição ORIGINAL do pedido. Guardar o original
+  // é o que permite provar, sob degradação, que a lista exibida não contém a condição deste
+  // pedido — e barrar a TROCA por uma genérica (money-path §7: a degradação tem de chegar
+  // à tela; §2: ausente ≠ zero, aqui "lista genérica" ≠ "condições do cliente").
+  const [formasDegradadas, setFormasDegradadas] = useState(false);
+  const [formasErro, setFormasErro] = useState(false);
+  const [formasMotivo, setFormasMotivo] = useState<string | null>(null);
+  const [parcelaOriginal, setParcelaOriginal] = useState('');
 
   // Add product state
   const [showAddProduct, setShowAddProduct] = useState(false);
@@ -83,7 +96,7 @@ export function useSalesOrderEdit() {
       setItems(o.items || []);
       setNotes(o.notes || '');
       const parcela = o.omie_payload?.cabecalho?.codigo_parcela;
-      if (parcela) setSelectedParcela(parcela);
+      if (parcela) { setSelectedParcela(parcela); setParcelaOriginal(parcela); }
 
       const { data: profile } = await supabase
         .from('profiles')
@@ -117,12 +130,40 @@ export function useSalesOrderEdit() {
             .order('id')
             .range(from, to);
           if (error) throw error;
-          return (data ?? []) as unknown as OmieProduct[];
+          // data null SEM error = malformada, não página vazia: devolvê-la ao paginateAll
+          // encerraria o catálogo de edição PARCIAL em silêncio (classe #1338→#1564).
+          if (data == null) throw new Error('omie_products (edição): data null sem error — malformada, não é fim');
+          return data as unknown as OmieProduct[];
         }),
       ]);
 
-      const formasData = formasRes.data as FormasPagamentoResponse | null;
-      if (formasData?.formas) setFormas(formasData.formas);
+      // ── Duas metades do mesmo site, de PRs diferentes (money-path §9). Elas não são
+      // alternativas: tratam falhas DIFERENTES, e resolver por um lado reverteria a outra.
+      //
+      // (a) #1605 — TRANSPORTE falhou. `functions.invoke` NÃO lança: devolve
+      // `{ data: null, error }`. Sem esta linha a falha escapava do `catch` abaixo,
+      // `setFormas` nunca era chamado e o editor abria com a lista VAZIA — indistinguível
+      // de "esta conta não tem forma cadastrada". Lançar leva ao toast "Erro ao carregar
+      // pedido", que é a verdade.
+      // ⚠️ Mas o `setOrder` acima já rodou: o throw NÃO impede a tela de abrir, só pula o
+      // resto do load. O toast some em segundos e o que fica é uma tela sem card de
+      // pagamento — a mesma omissão, agora silenciosa. Por isso o estado de erro é gravado
+      // ANTES de lançar: o aviso persiste na tela depois que o toast passa (§7).
+      if (formasRes.error) {
+        setFormasErro(true);
+        setFormasMotivo(formasRes.error.message ?? null);
+        throw formasRes.error;
+      }
+      // (b) este PR — transporte OK, o OMIE é que degradou. O edge #1597 responde 200 com 8
+      // condições genéricas hardcoded e declara `degraded`/`source`/`motivo`. Ler só
+      // `formas` devolveria uma lista indistinguível da real; aqui a tela ABRE e avisa.
+      const estadoFormas = lerRespostaFormas(formasRes.data as FormasPagamentoResponse | null);
+      if (estadoFormas.formas.length > 0) setFormas(estadoFormas.formas);
+      setFormasDegradadas(estadoFormas.degradado);
+      // Sem erro de transporte e sem degradação declarada, lista vazia é ambígua (edge
+      // antiga com 200 vazio) — avisa em vez de sumir o card e sugerir "não tem condição".
+      setFormasErro(!estadoFormas.degradado && estadoFormas.formas.length === 0);
+      setFormasMotivo(estadoFormas.motivo);
       setCatalogProducts(products);
     } catch (e) {
       console.error(e);
@@ -136,6 +177,15 @@ export function useSalesOrderEdit() {
     setItems(prev => prev.map((item, i) => {
       if (i !== index) return item;
       const updated = { ...item, [field]: value };
+      // Fase 3: editar o PREÇO de um item tint na mão invalida a prova da fonte
+      // do picker — o item vira fonte 'manual' EXPLÍCITA (não "sem metadados",
+      // que é reservado ao legado pré-Fase-3). O gate valida 'manual' pelo piso
+      // min(calc, tabela): subir é livre; baixar além do piso atual bloqueia.
+      if (field === 'valor_unitario' && item.tint_cor_id) {
+        updated.tint_price_source = 'manual';
+        delete updated.tint_discount_pct;
+        delete updated.tint_preco_sem_desconto;
+      }
       updated.valor_total = updated.quantidade * updated.valor_unitario;
       return updated;
     }));
@@ -178,7 +228,15 @@ export function useSalesOrderEdit() {
     toast.success(`"${product.descricao}" adicionado`);
   };
 
-  const handleTintConfirm = (formulaId: string, corId: string, nomeCor: string, precoFinal: number, _custoCorantes: number, alternativeProduct?: Product) => {
+  const handleTintConfirm = (
+    formulaId: string,
+    corId: string,
+    nomeCor: string,
+    precoFinal: number,
+    _custoCorantes: number,
+    pricingMeta?: { source: string | null; discountPct: number; precoSemDesconto: number | null },
+    alternativeProduct?: Product,
+  ) => {
     const product = alternativeProduct
       ? catalogProducts.find(p => p.id === alternativeProduct.id) || tintPendingProduct!
       : tintPendingProduct!;
@@ -195,6 +253,12 @@ export function useSalesOrderEdit() {
       tint_nome_cor: nomeCor,
       // espelha o balcão (submitOrder.ts): grava a fórmula p/ auditoria e re-precificação.
       tint_formula_id: formulaId,
+      // Fase 3: fonte/desconto declarados — o gate do submit revalida esta decisão.
+      ...(pricingMeta?.source ? {
+        tint_price_source: pricingMeta.source,
+        tint_discount_pct: pricingMeta.discountPct,
+        ...(pricingMeta.precoSemDesconto != null ? { tint_preco_sem_desconto: pricingMeta.precoSemDesconto } : {}),
+      } : {}),
     };
     setItems(prev => [...prev, newItem]);
     setTintPendingProduct(null);
@@ -231,6 +295,21 @@ export function useSalesOrderEdit() {
   // save e para o destaque na UI (aria-invalid + botão travado).
   const invalidPriceItemIndices = useMemo(() => invalidPricedOrderItemIndices(items), [items]);
 
+  // Prova positiva de que a lista exibida não serve para ESTE pedido: degradação declarada
+  // + a condição já gravada nele ausente da lista. Só a conjunção — no caminho bom, código
+  // ausente é parcela inativada no Omie (`cInativo === 'S'` é filtrado), estado legítimo.
+  const condicaoDoPedidoAusente = useMemo(
+    () => condicoesDoClienteIndisponiveis(
+      { formas, degradado: formasDegradadas, motivo: formasMotivo },
+      [parcelaOriginal],
+    ),
+    [formas, formasDegradadas, formasMotivo, parcelaOriginal],
+  );
+  // Trava o SELETOR (não a edição inteira): sem a lista real, trocar a condição por uma
+  // genérica altera o prazo de um pedido já negociado. Não mexer é seguro — `selectedParcela`
+  // continua sendo o código original e vai íntegro ao Omie. Editar item/observação segue livre.
+  const parcelaTravada = condicaoDoPedidoAusente.length > 0;
+
   const handleSave = async () => {
     if (!order) return;
     if (items.length === 0) {
@@ -244,37 +323,26 @@ export function useSalesOrderEdit() {
       toast.error(invalidOrderPriceMessage(invalidPriceItemIndices.map((i) => items[i])));
       return;
     }
+    // Guard money-path da condição de pagamento: o seletor travado é feedback; a proteção
+    // é aqui, no caminho que grava (§5). Sob lista degradada que não contém a condição do
+    // pedido, a ÚNICA parcela aceitável é a original — qualquer outra veio das 8 genéricas.
+    if (parcelaTravada && selectedParcela !== parcelaOriginal) {
+      toast.error(mensagemCondicoesIndisponiveis(condicaoDoPedidoAusente));
+      return;
+    }
     setSaving(true);
     try {
       const account = order.account === 'colacor' ? 'colacor' : 'oben';
 
       if (order.omie_pedido_id) {
-        // Save locally first
-        const updatedPayload = {
-          ...(order.omie_payload || {}),
-          cabecalho: {
-            ...(order.omie_payload?.cabecalho || {}),
-            ...(selectedParcela ? { codigo_parcela: selectedParcela } : {}),
-          },
-        };
-        const { error: localErr } = await supabase
-          .from('sales_orders')
-          .update({
-            items: items as unknown as Json,
-            subtotal,
-            total: subtotal,
-            notes: notes || null,
-            omie_payload: updatedPayload as unknown as Json,
-          })
-          .eq('id', order.id);
-        if (localErr) throw localErr;
-
-        // Navigate immediately and sync in background
-        toast.info('Pedido salvo! Sincronizando com o Omie em segundo plano...');
-        navigate('/sales');
-
-        // Fire-and-forget sync
-        supabase.functions.invoke('omie-vendas-sync', {
+        // ── Fase 3 (refactor exigido pelo gate — achado Codex P1): o edge vem
+        // PRIMEIRO, aguardado. O jsonb persistido fica INTACTO até o sucesso —
+        // ele é o BASELINE que o gate tint usa p/ distinguir item intocado de
+        // alterado e p/ impedir o preço-cliente de se autovalidar. No sucesso o
+        // EDGE persiste items/notes/payload (write-back do alterar_pedido);
+        // bloqueio/erro → permanecer na tela, local intacto, nada de "salvo!".
+        toast.info('Validando e sincronizando com o Omie...');
+        const { data, error } = await supabase.functions.invoke('omie-vendas-sync', {
           body: {
             action: 'alterar_pedido',
             account,
@@ -287,30 +355,61 @@ export function useSalesOrderEdit() {
               unidade: i.unidade,
               quantidade: i.quantidade,
               valor_unitario: i.valor_unitario,
-              ...(i.tint_cor_id ? { tint_cor_id: i.tint_cor_id, tint_nome_cor: i.tint_nome_cor } : {}),
+              ...(i.tint_cor_id ? {
+                tint_cor_id: i.tint_cor_id,
+                tint_nome_cor: i.tint_nome_cor,
+                // Fase 3: o gate do edge revalida a fonte declarada (ou o piso, se legado)
+                ...(i.tint_formula_id ? { tint_formula_id: i.tint_formula_id } : {}),
+                ...(i.tint_price_source ? {
+                  tint_price_source: i.tint_price_source,
+                  tint_discount_pct: i.tint_discount_pct ?? 0,
+                  ...(i.tint_preco_sem_desconto != null ? { tint_preco_sem_desconto: i.tint_preco_sem_desconto } : {}),
+                } : {}),
+              } : {}),
             })),
             observacao: notes,
             codigo_parcela: selectedParcela || undefined,
           },
-        }).then(({ data, error }) => {
-          if (error) {
-            toast.error('Erro ao sincronizar com Omie: ' + (error.message || 'Erro desconhecido'));
-          } else if ((data as { blocked?: string } | null)?.blocked === 'credito') {
-            // Trava Fase 2 (edge devolve 200 estruturado): o gate barrou o AUMENTO —
-            // o Omie NÃO foi atualizado e o pedido local ficou à frente. Nunca
-            // "sincronizado com sucesso" aqui.
-            toast.error('Edição bloqueada por crédito — o Omie NÃO foi atualizado', {
-              description:
-                'Aumento de valor para cliente com vencido 60+ exige exceção de gestor ' +
-                '(Pedidos → abrir o pedido → botão Crédito). Após aprovar, salve o pedido de novo.',
-              duration: 12000,
-            });
-          } else {
-            toast.success('Pedido sincronizado com o Omie com sucesso!');
-          }
-        }).catch((err) => {
-          toast.error('Erro ao sincronizar com Omie: ' + (err.message || 'Erro desconhecido'));
         });
+        if (error) {
+          toast.error('Erro ao sincronizar com Omie: ' + (error.message || 'Erro desconhecido'));
+          setSaving(false);
+          return;
+        }
+        if ((data as { blocked?: string } | null)?.blocked === 'credito') {
+          // Trava Fase 2 (edge devolve 200 estruturado): o gate barrou o AUMENTO —
+          // o Omie NÃO foi atualizado e o pedido local seguiu intacto.
+          toast.error('Edição bloqueada por crédito — o Omie NÃO foi atualizado', {
+            description:
+              'Aumento de valor para cliente com vencido 60+ exige exceção de gestor ' +
+              '(Pedidos → abrir o pedido → botão Crédito). Após aprovar, salve o pedido de novo.',
+            duration: 12000,
+          });
+          setSaving(false);
+          return;
+        }
+        if ((data as { blocked?: string } | null)?.blocked === 'tint_preco') {
+          // Gate tint Fase 3: item de tinta com preço obsoleto/fórmula morta —
+          // o Omie NÃO foi atualizado e o pedido local seguiu intacto.
+          const bloqueios = (data as { bloqueios?: Array<{ cor_id?: string }> }).bloqueios;
+          const cores = [...new Set((bloqueios ?? []).map(b => b.cor_id).filter(Boolean))].join(', ');
+          toast.error('Edição bloqueada: preço de tinta desatualizado — o Omie NÃO foi atualizado', {
+            description:
+              `${cores ? `Cor ${cores}: ` : ''}o preço/fórmula mudou desde a criação do pedido. ` +
+              'Remova o item de tinta e adicione de novo pela tela (o preço recalcula), então salve.',
+            duration: 12000,
+          });
+          setSaving(false);
+          return;
+        }
+        if (!(data as { success?: boolean } | null)?.success) {
+          toast.error('O Omie não confirmou a alteração — o pedido local seguiu intacto. Tente novamente.');
+          setSaving(false);
+          return;
+        }
+        // Sucesso: o edge já persistiu items/subtotal/notes/omie_payload.
+        toast.success('Pedido atualizado e sincronizado com o Omie!');
+        navigate('/sales');
       } else {
         const updatedPayloadLocal = {
           ...(order.omie_payload || {}),
@@ -354,6 +453,11 @@ export function useSalesOrderEdit() {
     formas,
     selectedParcela,
     setSelectedParcela,
+    formasDegradadas,
+    formasErro,
+    formasMotivo,
+    condicaoDoPedidoAusente,
+    parcelaTravada,
     showAddProduct,
     setShowAddProduct,
     productSearch,

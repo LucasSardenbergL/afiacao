@@ -28,6 +28,7 @@ import { useOfflineMutation } from '@/hooks/useOfflineMutation';
 import { confirmUnit, type ConfirmUnitVars } from '@/services/recebimento-confirm';
 import { reportDivergencia, type ReportDivergenciaVars } from '@/services/recebimento-divergencia';
 import { addCte, type AddCteVars } from '@/services/recebimento-cte';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 
 type ItemStatus = 'pendente' | 'em_conferencia' | 'conferido' | 'divergencia';
 
@@ -351,7 +352,7 @@ export default function RecebimentoConferencia() {
         toast.success('Divergência registrada');
       }
     } catch (err) {
-      toast.error('Erro: ' + (err instanceof Error ? err.message : String(err)));
+      toast.error('Erro: ' + (mensagemDeErro(err) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.'));
     } finally {
       setSaving(false);
     }
@@ -386,7 +387,7 @@ export default function RecebimentoConferencia() {
         toast.success('CT-e vinculado');
       }
     } catch (err) {
-      toast.error('Erro: ' + (err instanceof Error ? err.message : String(err)));
+      toast.error('Erro: ' + (mensagemDeErro(err) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.'));
     } finally {
       setCteSaving(false);
     }

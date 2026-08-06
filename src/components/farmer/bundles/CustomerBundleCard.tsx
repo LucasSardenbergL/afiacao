@@ -26,7 +26,9 @@ export const CustomerBundleCard = ({ data, expanded, onToggle, bundleArgs, argGe
   const individualLIE = data.bestIndividual?.lie || 0;
   const bundleWins = bestBundleLIE > individualLIE;
 
-  const profile = classifyCustomerProfile(data.healthScore, data.avgMonthlySpend || 0, data.grossMarginPct || 0, data.categoryCount || 0);
+  // grossMarginPct passa SEM `|| 0`: o guard dentro de classifyCustomerProfile só funciona se o
+  // null chegar até lá. Coagir aqui tornaria a correção inerte (a armadilha do #1508).
+  const profile = classifyCustomerProfile(data.healthScore, data.avgMonthlySpend || 0, data.grossMarginPct, data.categoryCount || 0);
   const profileInfo = profileLabels[profile];
 
   const customerCtx = {

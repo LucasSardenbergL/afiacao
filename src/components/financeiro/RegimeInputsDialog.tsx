@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { toast } from 'sonner';
 import { useUpdateRegimeInputs } from '@/hooks/useRegimeTributario';
 import type { RegimeInputs } from '@/services/financeiroService';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 
 const num = (v: string): number | null => (v.trim() === '' || Number.isNaN(Number(v)) ? null : Number(v));
 
@@ -46,7 +47,7 @@ export function RegimeInputsDialog({ company, atual }: { company: string; atual:
       toast.success('Inputs salvos. Recalculando…');
       setOpen(false);
     } catch (e) {
-      toast.error('Falha ao salvar inputs', { description: e instanceof Error ? e.message : String(e) });
+      toast.error('Falha ao salvar inputs', { description: mensagemDeErro(e) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.' });
     }
   };
 

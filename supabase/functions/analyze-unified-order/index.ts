@@ -1,5 +1,13 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
+import Anthropic from "npm:@anthropic-ai/sdk@^0.93.0";
+import {
+  avisoImagensRejeitadas,
+  type BlocoImagem,
+  type ImagemRejeitada,
+  prepararImagens,
+} from "./imagem-helpers.ts";
+import { extrairToolUseUnico, sanitizarListaIA } from "./saida-ia.ts";
 
 // Strip diacritics/accents for fuzzy comparison
 function stripAccents(str: string): string {
@@ -110,10 +118,12 @@ interface AISuggestion {
   servico_descricao?: string;
 }
 
-interface AIChatMessage {
-  role: "system" | "user" | "assistant";
-  content: string | Array<{ type: string; text?: string; image_url?: { url: string } }>;
-}
+/** Content block da Anthropic: texto ou imagem base64 com media type real. */
+type BlocoConteudo = { type: "text"; text: string } | BlocoImagem;
+
+/** Modelo e teto de saída — ver convenção de LLM em edge no CLAUDE.md. */
+const MODELO = "claude-sonnet-4-6";
+const MAX_TOKENS = 8000;
 
 interface ToolPropertySchema {
   type: string | string[];
@@ -224,8 +234,8 @@ serve(async (req) => {
       });
     }
 
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY is not configured");
+    const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY");
+    if (!ANTHROPIC_API_KEY) throw new Error("ANTHROPIC_API_KEY is not configured");
 
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
@@ -698,20 +708,37 @@ REGRAS DE IDENTIFICAÇÃO DE CLIENTE (CRÍTICAS):
 ` : ""}
 Responda SEMPRE usando a função identify_order_items.`;
 
-    const messages: AIChatMessage[] = [
-      { role: "system", content: systemPrompt },
-    ];
+    // O system prompt (que carrega o catálogo inteiro) vai no parâmetro `system`
+    // da Anthropic, não como mensagem — é isso que habilita o prompt caching.
+    const conteudoUsuario: BlocoConteudo[] = [];
+    let imagensRejeitadas: ImagemRejeitada[] = [];
 
     if (allImages.length > 0) {
-      const content: Array<{ type: string; text?: string; image_url?: { url: string } }> = [
-        { type: "text", text: text || "Identifique os produtos, ferramentas e cliente nestas imagens e sugira os itens para o pedido:" },
-      ];
-      for (const img of allImages) {
-        content.push({ type: "image_url", image_url: { url: `data:image/jpeg;base64,${img}` } });
+      // Media type vem dos MAGIC BYTES. O gateway antigo sniffava o conteúdo e
+      // engolia o rótulo fixo `image/jpeg`; a Anthropic valida o declarado.
+      // O system prompt (catálogo + candidatos) entra no MESMO corpo de request,
+      // então desconta do orçamento antes de acomodar as fotos.
+      const bytesSystem = new TextEncoder().encode(systemPrompt).byteLength;
+      const preparadas = prepararImagens(allImages, bytesSystem);
+      imagensRejeitadas = preparadas.rejeitadas;
+
+      // Nenhuma foto legível e nenhum texto: não há o que analisar. Responder
+      // "não identifiquei itens" aqui esconderia o motivo real do vendedor.
+      if (preparadas.blocos.length === 0 && !text) {
+        return new Response(JSON.stringify({
+          products: [], services: [], suggestions: [], customer: null,
+          imagens_rejeitadas: imagensRejeitadas,
+          error: avisoImagensRejeitadas(imagensRejeitadas),
+        }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
-      messages.push({ role: "user", content });
+
+      conteudoUsuario.push({
+        type: "text",
+        text: text || "Identifique os produtos, ferramentas e cliente nestas imagens e sugira os itens para o pedido:",
+      });
+      conteudoUsuario.push(...preparadas.blocos);
     } else {
-      messages.push({ role: "user", content: text });
+      conteudoUsuario.push({ type: "text", text });
     }
 
     // Build tool schema
@@ -792,60 +819,120 @@ Responda SEMPRE usando a função identify_order_items.`;
       requiredFields.push("customer");
     }
 
-    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${LOVABLE_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: allImages.length > 0 ? "google/gemini-2.5-flash" : "google/gemini-3-flash-preview",
-        messages,
+    const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
+
+    let resposta;
+    try {
+      resposta = await anthropic.messages.create({
+        model: MODELO,
+        max_tokens: MAX_TOKENS,
+        // SEM cache_control de propósito: o prompt começa pelo catálogo,
+        // candidatos e histórico — tudo variável por request. Como o cache é por
+        // PREFIXO, cada chamada seria um miss pagando 1,25× de escrita e nunca
+        // colhendo o 0,1× de leitura. Para cachear de verdade seria preciso
+        // inverter o prompt (regras fixas primeiro, catálogo depois) — mudança
+        // de comportamento que não cabe numa troca de provedor.
+        system: systemPrompt,
         tools: [
           {
-            type: "function",
-            function: {
-              name: "identify_order_items",
-              description: "Retorna produtos, serviços e cliente identificados no pedido",
-              parameters: {
-                type: "object",
-                properties: toolProperties,
-                required: requiredFields,
-              },
+            name: "identify_order_items",
+            description: "Retorna produtos, serviços e cliente identificados no pedido",
+            input_schema: {
+              type: "object" as const,
+              properties: toolProperties,
+              required: requiredFields,
             },
           },
         ],
-        tool_choice: { type: "function", function: { name: "identify_order_items" } },
-      }),
-    });
+        // `type:"tool"` sozinho NÃO desliga chamada paralela: o modelo poderia
+        // emitir um bloco por grupo de itens e o consumo pegaria só o primeiro,
+        // entregando pedido PARCIAL com cara de completo.
+        tool_choice: {
+          type: "tool",
+          name: "identify_order_items",
+          disable_parallel_tool_use: true,
+        },
+        messages: [{ role: "user", content: conteudoUsuario }],
+      });
+    } catch (e: unknown) {
+      const status = (e as { status?: number })?.status;
+      const detalhe = e instanceof Error ? e.message : String(e);
+      console.error("[analyze-unified-order] erro na API da Anthropic:", status, detalhe);
 
-    if (!response.ok) {
-      if (response.status === 429) {
-        return new Response(JSON.stringify({ error: "Limite de requisições excedido. Tente novamente." }), {
-          status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      // O 402 NÃO desapareceu com o gateway: a Anthropic devolve billing_error.
+      // Sem tratá-lo, a mesma falha que motivou esta migração voltaria como 500
+      // genérico e ninguém saberia que o problema é saldo.
+      const porStatus: Record<number, { http: number; msg: string }> = {
+        400: { http: 400, msg: "A IA recusou o conteúdo enviado. Tente outra foto ou descreva o pedido por texto." },
+        402: { http: 402, msg: "Créditos da IA esgotados — avise a equipe. Monte o pedido manualmente por enquanto." },
+        401: { http: 500, msg: "IA mal configurada — avise a equipe." },
+        403: { http: 500, msg: "IA mal configurada — avise a equipe." },
+        404: { http: 500, msg: "IA mal configurada — avise a equipe." },
+        413: { http: 413, msg: "Envio grande demais. Mande menos fotos por vez." },
+        429: { http: 429, msg: "Limite de requisições excedido. Tente novamente." },
+        500: { http: 503, msg: "IA sobrecarregada no momento. Tente de novo em instantes." },
+        503: { http: 503, msg: "IA sobrecarregada no momento. Tente de novo em instantes." },
+        529: { http: 503, msg: "IA sobrecarregada no momento. Tente de novo em instantes." },
+      };
+      const mapeado = status ? porStatus[status] : undefined;
+      if (mapeado) {
+        return new Response(JSON.stringify({ error: mapeado.msg, imagens_rejeitadas: imagensRejeitadas }), {
+          status: mapeado.http, headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
-      if (response.status === 402) {
-        return new Response(JSON.stringify({ error: "Créditos insuficientes." }), {
-          status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-      const errorText = await response.text();
-      console.error("AI gateway error:", response.status, errorText);
       throw new Error("Erro ao processar com IA");
     }
 
-    const aiResponse = await response.json();
-    const toolCall = aiResponse.choices?.[0]?.message?.tool_calls?.[0];
-
-    if (!toolCall) {
+    // §8 money-path: teto que trunca fabrica completude. Uma lista cortada no
+    // meio chega ao vendedor com cara de lista inteira e vira pedido incompleto.
+    if (resposta.stop_reason === "max_tokens") {
+      console.error(`[analyze-unified-order] resposta truncada em ${MAX_TOKENS} tokens`);
       return new Response(JSON.stringify({
         products: [], services: [], suggestions: [], customer: null,
-        message: "Não consegui identificar itens. Seja mais específico ou selecione manualmente.",
+        error: "Pedido grande demais para analisar de uma vez — a resposta foi cortada. Divida em duas partes e envie de novo.",
+      }), { status: 422, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    const extraido = extrairToolUseUnico(resposta.content);
+
+    if (!extraido.ok) {
+      if (extraido.motivo === "multiplo") {
+        // Análise partida em vários blocos: não dá para provar que veio inteira,
+        // e consumir só o primeiro entregaria pedido parcial como se completo.
+        console.error(
+          `[analyze-unified-order] ${extraido.quantidade} blocos tool_use (esperado 1)`,
+        );
+        return new Response(JSON.stringify({
+          products: [], services: [], suggestions: [], customer: null,
+          imagens_rejeitadas: imagensRejeitadas,
+          error:
+            "A IA devolveu a análise em partes e não dá para garantir que veio inteira. Tente de novo ou divida o pedido.",
+        }), { status: 422, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      const avisoSemTool = avisoImagensRejeitadas(imagensRejeitadas);
+      const baseSemTool =
+        "Não consegui identificar itens. Seja mais específico ou selecione manualmente.";
+      return new Response(JSON.stringify({
+        products: [], services: [], suggestions: [], customer: null,
+        imagens_rejeitadas: imagensRejeitadas,
+        message: avisoSemTool ? `${baseSemTool} ⚠️ ${avisoSemTool}` : baseSemTool,
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
-    const result = JSON.parse(toolCall.function.arguments);
+    // Forced tool-use garante que a ferramenta foi USADA — não que os tipos do
+    // input_schema foram respeitados (isso só com `strict:true`). Esta é a
+    // fronteira onde preço-string e quantidade-string param, antes de chegarem
+    // ao carrinho: `"12.50" > 0` é true por coerção e explodiria no checkout;
+    // `1 + "2"` viraria a quantidade "12".
+    const bruto = extraido.input;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- saída de LLM consumida de forma dinâmica em ~20 pontos a jusante (resgate por fuzzy match, casamento de cliente); os campos money-path já foram travados por sanitizarListaIA acima
+    const result: any = bruto && typeof bruto === "object" && !Array.isArray(bruto)
+      ? { ...bruto }
+      : {};
+    result.products = sanitizarListaIA(result.products);
+    result.services = sanitizarListaIA(result.services);
+    result.suggestions = sanitizarListaIA(result.suggestions);
 
     // Validate product IDs - rescue invalid ones by fuzzy matching
     const validProductIds = new Set(prodList.map((p) => p.id));
@@ -1298,6 +1385,17 @@ Responda SEMPRE usando a função identify_order_items.`;
                     }],
                   }),
                 });
+                // `fetch` NÃO lança em HTTP não-2xx: um 429/5xx cujo corpo parseia limpo devolvia
+                // `pedido_venda_produto` ausente → `|| []` → zero preços, indistinguível de "este
+                // cliente nunca comprou". Aqui o efeito é RECALL, não fabricação de número (o
+                // histórico do Omie só PREENCHE GAP — `mergeCustomerPrices` faz order_items vencer,
+                // e `isValidUnitPrice` barra valor inválido), então o desfecho continua sendo o
+                // best-effort que este caminho sempre foi: o catch abaixo devolve `{}`. O que muda
+                // é o motivo deixar de ser invisível — "0 preços" e "o Omie respondeu 503" tinham
+                // exatamente o mesmo log, e só o segundo explica um orçamento sem preço praticado.
+                if (!omieRes.ok) {
+                  throw new Error(`Omie HTTP ${omieRes.status} em ListarPedidos (preços do cliente)`);
+                }
                 const data = await omieRes.json();
                 const precos: Record<number, number> = {};
                 const pedidos = data.pedido_venda_produto || [];
@@ -1401,12 +1499,19 @@ Responda SEMPRE usando a função identify_order_items.`;
         }
       : null;
 
+    // Foto que ficou de fora entra na MENSAGEM, não só num campo: análise de 3
+    // de 5 fotos não pode chegar com cara de análise completa.
+    const avisoFotos = avisoImagensRejeitadas(imagensRejeitadas);
+    const mensagemBase = result.message ||
+      `Identificado ${validProducts.length} produto(s) e ${validServices.length} serviço(s).`;
+
     return new Response(JSON.stringify({
       products: validProducts,
       services: validServices,
       suggestions: validSuggestions,
       customer: safeCustomer,
-      message: result.message || `Identificado ${validProducts.length} produto(s) e ${validServices.length} serviço(s).`,
+      imagens_rejeitadas: imagensRejeitadas,
+      message: avisoFotos ? `${mensagemBase} ⚠️ ${avisoFotos}` : mensagemBase,
     }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
   } catch (error) {

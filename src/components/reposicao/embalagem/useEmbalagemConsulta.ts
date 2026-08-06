@@ -79,6 +79,7 @@ export function useEmbalagemConsulta(empresa: string): EmbalagemConsultaResult {
           .from('omie_products')
           .select('omie_codigo_produto, descricao')
           .in('omie_codigo_produto', skuNums);
+        if (prodResp.error) throw prodResp.error; // senão o SKU perde o rótulo e vira código cru
         ((prodResp.data ?? []) as unknown as { omie_codigo_produto: number | string; descricao: string | null }[])
           .forEach((p) => {
             const k = String(p.omie_codigo_produto);
@@ -95,6 +96,9 @@ export function useEmbalagemConsulta(empresa: string): EmbalagemConsultaResult {
           .select('sku_codigo_omie, demanda_media_diaria')
           .eq('empresa', emp)
           .in('sku_codigo_omie', skuNums);
+        // Falha ≠ "SKU sem demanda": o mapa vazio faz a cobertura em dias sumir da opção de
+        // embalagem, e a comparação entre embalagens sai como se o giro fosse desconhecido.
+        if (paramResp.error) throw paramResp.error;
         ((paramResp.data ?? []) as unknown as { sku_codigo_omie: number; demanda_media_diaria: number | null }[])
           .forEach((p) => demandaMap.set(String(p.sku_codigo_omie), p.demanda_media_diaria));
 
@@ -103,6 +107,9 @@ export function useEmbalagemConsulta(empresa: string): EmbalagemConsultaResult {
           .select('sku_codigo_omie, custo_capital_efetivo_perc')
           .eq('empresa', emp)
           .in('sku_codigo_omie', skuNums);
+        // Falha ≠ "custo de capital zero": o custo de capital é o que penaliza a embalagem
+        // grande (mais estoque parado). Sem ele a economia do lote maior sai INFLADA.
+        if (cmResp.error) throw cmResp.error;
         ((cmResp.data ?? []) as unknown as { sku_codigo_omie: number; custo_capital_efetivo_perc: number | null }[])
           .forEach((p) => cmMap.set(String(p.sku_codigo_omie), p.custo_capital_efetivo_perc));
       }

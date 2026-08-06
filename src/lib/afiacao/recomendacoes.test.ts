@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   gerarRecomendacoes,
+  filtrarRecomendacoes,
   resumirEconomia,
   CUSTO_MEDIO_FERRAMENTA_NOVA_BRL,
   type ToolInput,
@@ -63,8 +64,9 @@ describe('gerarRecomendacoes — possivelmente_atrasada (não-agendada)', () => 
       hoje: HOJE,
     });
     expect(pick(recs, 'possivelmente_atrasada')).toBeUndefined();
-    // e também não cai em sem_programacao (tem intervalo → há base de lembrete)
+    // sem last não é "atrasada" — mas cadastrada-sem-afiação vira nunca_afiada, não sem_programacao
     expect(pick(recs, 'sem_programacao')).toBeUndefined();
+    expect(pick(recs, 'nunca_afiada')).toBeDefined();
   });
 
   it('NÃO sinaliza sem intervalo algum (ferramenta nem categoria)', () => {
@@ -105,29 +107,95 @@ describe('gerarRecomendacoes — possivelmente_atrasada (não-agendada)', () => 
   });
 });
 
-describe('gerarRecomendacoes — sem_programacao', () => {
-  it('sinaliza ferramenta sem next_due e sem intervalo algum', () => {
+describe('gerarRecomendacoes — nunca_afiada (cadastrada, sem afiação alguma)', () => {
+  it('sinaliza ferramenta sem agendamento E sem última afiação (as 4 de produção)', () => {
     const recs = gerarRecomendacoes({
-      tools: [tool({ id: 'x', nome: 'Faca', next_sharpening_due: null, sharpening_interval_days: null, suggested_interval_days: null })],
+      // caso REAL: next_due NULL, last NULL, sem intervalo próprio, categoria dá 120
+      tools: [tool({ id: 'w', nome: 'Serra Circular de Widea', suggested_interval_days: 120 })],
+      economia: null,
+      hoje: HOJE,
+    });
+    const r = pick(recs, 'nunca_afiada');
+    expect(r?.ferramentas).toEqual([{ id: 'w', nome: 'Serra Circular de Widea' }]);
+  });
+
+  it('dispara MESMO com intervalo definido — o intervalo não substitui a 1ª afiação', () => {
+    const recs = gerarRecomendacoes({
+      tools: [tool({ id: 'i', nome: 'Plaina', sharpening_interval_days: 30 })], // last/next NULL
+      economia: null,
+      hoje: HOJE,
+    });
+    expect(pick(recs, 'nunca_afiada')?.ferramentas).toEqual([{ id: 'i', nome: 'Plaina' }]);
+    // e NÃO cai em sem_programacao (nunca_afiada tem precedência) nem em possivelmente_atrasada
+    expect(pick(recs, 'sem_programacao')).toBeUndefined();
+    expect(pick(recs, 'possivelmente_atrasada')).toBeUndefined();
+  });
+
+  it('precede sem_programacao: ferramenta all-null é nunca_afiada, nunca sem_programacao', () => {
+    const recs = gerarRecomendacoes({
+      tools: [tool({ next_sharpening_due: null, last_sharpened_at: null, sharpening_interval_days: null, suggested_interval_days: null })],
+      economia: null,
+      hoje: HOJE,
+    });
+    expect(pick(recs, 'nunca_afiada')).toBeDefined();
+    expect(pick(recs, 'sem_programacao')).toBeUndefined();
+  });
+
+  it('é exclusiva de possivelmente_atrasada: quem já afiou (last set) não é nunca_afiada', () => {
+    const recs = gerarRecomendacoes({
+      tools: [tool({ last_sharpened_at: '2026-06-01', sharpening_interval_days: 30 })], // vencida
+      economia: null,
+      hoje: HOJE,
+    });
+    expect(pick(recs, 'nunca_afiada')).toBeUndefined();
+    expect(pick(recs, 'possivelmente_atrasada')).toBeDefined();
+  });
+
+  it('NÃO sinaliza ferramenta já agendada (tem next_due), mesmo sem last', () => {
+    const recs = gerarRecomendacoes({
+      tools: [tool({ next_sharpening_due: '2026-08-01', last_sharpened_at: null })],
+      economia: null,
+      hoje: HOJE,
+    });
+    expect(pick(recs, 'nunca_afiada')).toBeUndefined();
+  });
+});
+
+describe('gerarRecomendacoes — sem_programacao (já afiou, mas sem cadência)', () => {
+  it('sinaliza ferramenta que JÁ afiou, sem next_due e sem intervalo algum', () => {
+    const recs = gerarRecomendacoes({
+      // last set (já afiou) isola sem_programacao de nunca_afiada
+      tools: [tool({ id: 'x', nome: 'Faca', last_sharpened_at: '2026-01-01', next_sharpening_due: null, sharpening_interval_days: null, suggested_interval_days: null })],
       economia: null,
       hoje: HOJE,
     });
     const r = pick(recs, 'sem_programacao');
     expect(r?.ferramentas).toEqual([{ id: 'x', nome: 'Faca' }]);
+    expect(pick(recs, 'nunca_afiada')).toBeUndefined();
   });
 
   it('NÃO sinaliza quando há intervalo (existe base para lembrete)', () => {
     const recs = gerarRecomendacoes({
-      tools: [tool({ next_sharpening_due: null, sharpening_interval_days: 45 })],
+      tools: [tool({ last_sharpened_at: '2026-07-10', next_sharpening_due: null, sharpening_interval_days: 45 })],
       economia: null,
       hoje: HOJE,
     });
     expect(pick(recs, 'sem_programacao')).toBeUndefined();
   });
 
+  it('NÃO sinaliza ferramenta nunca afiada (essa é nunca_afiada, não sem_programacao)', () => {
+    const recs = gerarRecomendacoes({
+      tools: [tool({ last_sharpened_at: null, next_sharpening_due: null, sharpening_interval_days: null })],
+      economia: null,
+      hoje: HOJE,
+    });
+    expect(pick(recs, 'sem_programacao')).toBeUndefined();
+    expect(pick(recs, 'nunca_afiada')).toBeDefined();
+  });
+
   it('NÃO sinaliza ferramenta já agendada (tem next_due)', () => {
     const recs = gerarRecomendacoes({
-      tools: [tool({ next_sharpening_due: '2026-08-01', sharpening_interval_days: null, suggested_interval_days: null })],
+      tools: [tool({ last_sharpened_at: '2026-01-01', next_sharpening_due: '2026-08-01', sharpening_interval_days: null, suggested_interval_days: null })],
       economia: null,
       hoje: HOJE,
     });
@@ -205,16 +273,17 @@ describe('gerarRecomendacoes — composição e ordem', () => {
     expect(gerarRecomendacoes({ tools: [], economia: null, hoje: HOJE })).toEqual([]);
   });
 
-  it('ordena: possivelmente_atrasada → sem_programacao → economia', () => {
+  it('ordena: possivelmente_atrasada → nunca_afiada → sem_programacao → economia', () => {
     const recs = gerarRecomendacoes({
       tools: [
         tool({ id: 'p', last_sharpened_at: '2026-06-01', sharpening_interval_days: 30 }), // possivelmente atrasada
-        tool({ id: 's', next_sharpening_due: null, sharpening_interval_days: null }), // sem programação
+        tool({ id: 'n', next_sharpening_due: null, last_sharpened_at: null }), // nunca afiada
+        tool({ id: 's', last_sharpened_at: '2026-01-01', next_sharpening_due: null, sharpening_interval_days: null }), // sem programação (já afiou)
       ],
       economia: economia({ totalAfiacoes: 10, totalGastoReal: 500 }),
       hoje: HOJE,
     });
-    expect(recs.map((r) => r.tipo)).toEqual(['possivelmente_atrasada', 'sem_programacao', 'economia']);
+    expect(recs.map((r) => r.tipo)).toEqual(['possivelmente_atrasada', 'nunca_afiada', 'sem_programacao', 'economia']);
   });
 });
 
@@ -238,5 +307,31 @@ describe('resumirEconomia — parse defensivo dos itens (jsonb)', () => {
       { items: undefined as unknown as unknown[], total: 50 },
     ]);
     expect(res).toEqual({ totalAfiacoes: 0, totalGastoReal: 50 });
+  });
+});
+
+describe('filtrarRecomendacoes — corte de apresentação por tela', () => {
+  const atrasada: Recomendacao = { tipo: 'possivelmente_atrasada', ferramentas: [{ id: 'a', nome: 'Serra' }] };
+  const semProg: Recomendacao = { tipo: 'sem_programacao', ferramentas: [{ id: 'b', nome: 'Faca' }] };
+  const eco: Recomendacao = { tipo: 'economia', economiaComprovada: 500, economiaPotencial: 100, nAtrasadas: 2 };
+  const todas: Recomendacao[] = [atrasada, semProg, eco];
+
+  it('sem tipos a ocultar → devolve tudo na mesma ordem', () => {
+    expect(filtrarRecomendacoes(todas, [])).toEqual(todas);
+  });
+
+  it("oculta 'economia' (a Central já tem o herói) preservando as consultivas", () => {
+    const r = filtrarRecomendacoes(todas, ['economia']);
+    expect(r.map((x) => x.tipo)).toEqual(['possivelmente_atrasada', 'sem_programacao']);
+  });
+
+  it('ocultar todos os tipos presentes → lista vazia (dispara o null no componente)', () => {
+    expect(filtrarRecomendacoes(todas, ['possivelmente_atrasada', 'sem_programacao', 'economia'])).toEqual([]);
+  });
+
+  it('é puro: não muta o array de entrada', () => {
+    const entrada = [...todas];
+    filtrarRecomendacoes(entrada, ['economia']);
+    expect(entrada).toEqual(todas);
   });
 });

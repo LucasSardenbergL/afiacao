@@ -67,6 +67,7 @@ Antes da árvore, ancore no **registry do sync** (`references/sync-registry.md`)
 | `2xx` + `complete` + **efeito ausente** | sucesso técnico falso / bug semântico | investigar a lógica (→ `prove-sql-money-path`) |
 | **cursor `next_page` parado >2h** | continuação travada | forçar continuação / investigar budget |
 | cron **sem `timeout_milliseconds`** | `pg_net` default 5s mata função longa | re-agendar o cron com `timeout_milliseconds` |
+| **invocação MANUAL (browser→edge): não-2xx no cliente aos ~150s + órfã `running` + crons da MESMA edge ok** | lote por invocação excede o request timeout (~150s) da edge; isolate morre SEM catch | reduzir o lote do chamador (ex.: `max_pages`) pela duração MEDIDA/pág; backfill grande → modo cursor (#1500) |
 
 ⚠️ **`401` isolado** (uma edge) pode ser `verify_jwt`/header/gate da própria edge — **não** conclua rotação de secret.
 
@@ -87,7 +88,7 @@ Depois que o humano agir, **re-rode a skill**; só então `RECUPERADO` (com novo
 
 ## Armadilhas (as que mais causam falso-diagnóstico)
 
-1. **Atribuir `net._http_response` ao sync errado.** Vários crons compartilham endpoint/minuto e a resposta pode não identificar `action`/empresa. Sem correlação temporal + `fin_sync_log`, marque **INCONCLUSIVO** — não chute.
+1. **Atribuir `net._http_response` ao sync errado.** Vários crons compartilham endpoint/minuto e a resposta pode não identificar `action`/empresa. Sem correlação temporal + `fin_sync_log`, marque **INCONCLUSIVO** — não chute. E a recíproca: invocação **MANUAL** (browser→`functions.invoke`) **não passa pelo pg_net** — a ausência dela em `net._http_response` é esperada, não evidência; a verdade do clique está em `fin_sync_log` (`triggered_by`=UUID do staff) + `acoes_execucoes` (#1500).
 2. **Staleness sem semântica.** `created_at` é data comercial; tabelas dormem legitimamente; `complete` é em rajadas. Use o **probe registrado por sync**, não `MAX(updated_at)`.
 3. **Ausência tratada como falha.** Cron não-devido, fim de semana, resposta já expurgada do `net._http_response`, par dormente. **Calcule a última execução esperada** antes de gritar.
 4. **Generalizar a assinatura "zero `running` = não bootou".** Só vale pra edges cujo contrato grava `running` logo após o boot. Confirme no registry por edge antes de concluir.

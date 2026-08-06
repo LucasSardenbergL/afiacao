@@ -11,8 +11,9 @@ export interface TeamKpis {
   receitaMesAnterior: number;
   /** Variação (fração) da receita do mês vs. mesmo período do mês anterior; null sem base. */
   variacaoMes: number | null;
-  ativosHoje: number;
-  ativos7d: number;
+  /** `null` = a leitura de atividade FALHOU (≠ zero vendedor ativo). Tile mostra "—". */
+  ativosHoje: number | null;
+  ativos7d: number | null;
 }
 
 /**
@@ -59,14 +60,18 @@ export function useTeamKpis() {
       const receitaMesAnterior = somarReceita(ordersAnterior, prior.de, prior.ate);
       const variacaoMes = variacaoPct(receitaMes, receitaMesAnterior);
 
-      // Atividade best-effort (erro → []): sales(empresa) ∪ calls ∪ visits.
+      // Atividade continua sem DERRUBAR o tile (a receita acima é que lança) — mas a falha
+      // deixa de virar zero. `contarAtivos` sobre lista vazia devolve 0, e "0 vendedores
+      // ativos hoje" é lido pela gestão como "o time parou", não como "a leitura falhou":
+      // número fabricado, exatamente a classe. Degrada para `null` → o tile mostra "—".
+      const atividadeIndisponivel = Boolean(salesRes.error || callsRes.error || visitsRes.error);
       const atividade: AtividadeRow[] = [
         ...(salesRes.data ?? []).map((r) => ({ id: r.created_by, ts: r.created_at })),
         ...(callsRes.data ?? []).map((r) => ({ id: r.farmer_id, ts: r.started_at })),
         ...(visitsRes.data ?? []).map((r) => ({ id: r.visited_by, ts: r.check_in_at })),
       ];
-      const ativosHoje = contarAtivos(atividade, inicioHojeUTC);
-      const ativos7d = contarAtivos(atividade, inicio7dUTC);
+      const ativosHoje = atividadeIndisponivel ? null : contarAtivos(atividade, inicioHojeUTC);
+      const ativos7d = atividadeIndisponivel ? null : contarAtivos(atividade, inicio7dUTC);
 
       return { receitaHoje, receitaMes, receitaMesAnterior, variacaoMes, ativosHoje, ativos7d };
     },

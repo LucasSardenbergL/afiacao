@@ -13,6 +13,12 @@ export interface OrderItem {
   tint_cor_id?: string;
   tint_nome_cor?: string;
   tint_formula_id?: string;
+  // Fase 3: metadados de precificação (fonte escolhida + desconto declarado).
+  // Editar o valor_unitario de um item tint MANUALMENTE os limpa (o item vira
+  // "legado" e o gate da fronteira valida pelo piso min(fontes atuais)).
+  tint_price_source?: string;
+  tint_discount_pct?: number;
+  tint_preco_sem_desconto?: number;
 }
 
 export interface OmiePayload {
@@ -38,8 +44,16 @@ export interface SalesOrder {
   created_at: string;
 }
 
+/**
+ * Resposta da action `listar_formas_pagamento`. `source`/`degraded`/`motivo` são ADITIVOS
+ * (edge #1597) e opcionais: edge antiga — ou ainda não deployada — devolve só `formas`, e a
+ * leitura em `@/services/orderSubmission/formasDegradacao` trata a ausência como NÃO-degradado.
+ */
 export interface FormasPagamentoResponse {
   formas?: Array<{ codigo: string; descricao: string }>;
+  source?: string | null;
+  degraded?: boolean | null;
+  motivo?: string | null;
 }
 
 export interface OmieProduct {

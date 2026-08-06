@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 
 export interface PerformanceScore {
   id: string;
@@ -298,7 +299,9 @@ export const useFarmerPerformance = () => {
       const ipfLtvEvolution = Math.round(Math.min(100, (avgSpend / 2000) * 100));
 
       // 5. Churn reduction: % of clients with low churn risk (<30%)
-      const lowChurnClients = clientArr.filter((c) => Number(c.churn_risk || 100) < 30).length;
+      // `?? 100` (não `|| 100`): churn ausente conta como pior caso (não é "baixo churn"), mas
+      // churn REAL = 0 (cliente perfeitamente saudável) tem de contar — `|| 100` o tratava como 100.
+      const lowChurnClients = clientArr.filter((c) => Number(c.churn_risk ?? 100) < 30).length;
       const ipfChurnReduction = clientArr.length > 0
         ? Math.round((lowChurnClients / clientArr.length) * 100)
         : 0;
@@ -343,7 +346,7 @@ export const useFarmerPerformance = () => {
       await loadScores(farmerId);
     } catch (err) {
       console.error('Error calculating scores:', err);
-      const message = err instanceof Error ? err.message : String(err);
+      const message = mensagemDeErro(err) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.';
       toast.error('Erro ao calcular índices', { description: message });
     } finally {
       setCalculating(false);

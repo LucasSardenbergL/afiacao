@@ -85,15 +85,24 @@ const AdminApprovals = () => {
     if (!normalizedDoc) return 'no_data';
 
     try {
-      // Check if already linked. P0-B follow-up: filtra a conta colacor (o vínculo é criado abaixo
-      // com o código de `buscar_por_documento`/colacor_sc, rotulado 'colacor') — casa a checagem
-      // com o INSERT. Hoje inócuo (UNIQUE(user_id) → 1 linha); pós-constraint composta fica correto.
-      const { data: existing } = await supabase
-        .from('omie_clientes')
+      // [P0-B-bis Fatia 4] O gate e o writer abaixo são um PAR INDIVISÍVEL: o que a checagem consulta
+      // tem de ser onde o vínculo é gravado, senão `already_linked` mente e a aprovação re-registra.
+      // Ambos saíram do espelho `omie_clientes` para a proof account-correta. `buscar_por_documento`
+      // consulta a conta colacor_sc (credencial default de `omie-cliente`), que no espelho aparecia sob
+      // o rótulo fabricado 'colacor' — na proof a conta é nomeada pelo que ela É: 'colacor_sc'.
+      const { data: existing, error: existingError } = await supabase
+        .from('omie_customer_account_map')
         .select('id')
         .eq('user_id', profileUserId)
-        .eq('empresa_omie', 'colacor')
+        .eq('account', 'colacor_sc')
         .limit(1);
+
+      // Fail-closed: engolir o erro faria a checagem devolver "não vinculado" e o writer tentaria
+      // registrar por cima de um vínculo existente.
+      if (existingError) {
+        console.error('Error checking existing omie link:', existingError);
+        return 'error';
+      }
 
       if (existing && existing.length > 0) return 'already_linked';
 
@@ -108,23 +117,26 @@ const AdminApprovals = () => {
       }
 
       if (data?.found && data?.codigo_cliente) {
-        // Client exists in Omie — create local link
-        const { error: insertError } = await supabase
-          .from('omie_clientes')
-          .insert({
-            user_id: profileUserId,
-            omie_codigo_cliente: data.codigo_cliente,
-            omie_codigo_cliente_integracao: data.codigo_cliente_integracao || null,
-            omie_codigo_vendedor: data.codigo_vendedor || null,
-            // P0-B follow-up: código vem de `buscar_por_documento` (colacor_sc, rótulo 'colacor' no
-            // espelho). Explícito evita o DEFAULT silencioso e a linha ambígua sob constraint composta.
-            empresa_omie: 'colacor',
-          });
+        // Client exists in Omie — admite o membro na carteira pelas DUAS pontas (ledger + proof) via
+        // RPC. `omie_codigo_cliente_integracao` foi DESCARTADO (resíduo §9 do design): 41 das 6909
+        // linhas do espelho o tinham, todas de março, e nenhum leitor o consome.
+        // as never: a RPC ainda não está nos tipos gerados do Supabase (regenerados pós-deploy).
+        const { error: rpcError } = await supabase.rpc('register_carteira_member' as never, {
+          p_user_id: profileUserId,
+          p_account: 'colacor_sc',
+          p_omie_codigo_cliente: data.codigo_cliente,
+          p_omie_codigo_vendedor: data.codigo_vendedor ?? null,
+        } as never);
 
-        if (insertError) {
-          // Could be duplicate — check unique constraint
-          if (insertError.code === '23505') return 'already_linked';
-          console.error('Error inserting omie_clientes link:', insertError);
+        if (rpcError) {
+          // 23505 = UNIQUE(omie_codigo_cliente, account): o código já é de OUTRO user nesta conta.
+          // Fail-closed deliberado da RPC — não roubamos o vínculo alheio (mandaria pedido ao cliente
+          // errado). Não é 'already_linked' (o gate acima já provou que ESTE user não tem vínculo).
+          if (rpcError.code === '23505') {
+            console.error('Código Omie já vinculado a outro usuário nesta conta:', rpcError);
+            return 'error';
+          }
+          console.error('Error registering carteira member:', rpcError);
           return 'error';
         }
 
