@@ -16,7 +16,7 @@
  * (canônico de calculate-scores: round(componentes 0..100)).
  */
 
-import { potencialConhecido } from '@/lib/scoring/potencial';
+import { valorMedido } from '@/lib/scoring/margin';
 import type { ScoreAdjustment, SignalModifier } from './types';
 
 export interface CarteiraRow {
@@ -111,7 +111,7 @@ export function buildAgendaItems(rows: CarteiraRow[], limit = 10): AgendaItem[] 
     // ⚠️ Guard explícito: `(s.expansion_score ?? 0) > 50` é SEMPRE false quando a coluna é null —
     // e ela é null em 6.633/6.633 linhas, o que fez o tipo 'expansao' virar código morto em
     // produção. Sem produtor não há expansão a afirmar; o ausente é reportado, não fabricado.
-    const expansion = potencialConhecido(s.expansion_score);
+    const expansion = valorMedido(s.expansion_score);
     const insumo_expansao_ausente = expansion == null;
     let agenda_type: AgendaItem['agenda_type'] = 'follow_up';
     if (s.sales_history_status === 'sem_historico') {

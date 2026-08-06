@@ -1,4 +1,4 @@
-import { potencialConhecido } from '@/lib/scoring/potencial';
+import { valorMedido } from '@/lib/scoring/margin';
 import type { ClienteAPositivar } from './types';
 
 /** Ordena candidatos "a positivar" por prioridade comercial (não muta a entrada). */
@@ -10,8 +10,8 @@ export function rankAPositivar(candidatos: ClienteAPositivar[]): ClienteAPositiv
     // `?? 0` fazia todo mundo empatar em 0 — inerte, mas silenciosamente: quando um produtor
     // nascer, cliente sem potencial medido seria ordenado como "potencial zero". Ausente sai do
     // critério e cai para o próximo desempate.
-    const rpB = potencialConhecido(b.revenue_potential);
-    const rpA = potencialConhecido(a.revenue_potential);
+    const rpB = valorMedido(b.revenue_potential);
+    const rpA = valorMedido(a.revenue_potential);
     if (rpA != null && rpB != null) {
       const rp = rpB - rpA;
       if (rp !== 0) return rp;
