@@ -1,13 +1,19 @@
 #!/usr/bin/env bash
 # test-stop-contexto-caro.sh — TDD do hook .claude/hooks/stop-contexto-caro.sh
 #
-# Regra: contexto da sessão >= 250k tokens-OPUS → emite systemMessage (aviso), UMA
-# VEZ por degrau (250/350/500/700k). Abaixo do degrau, transcript ausente ou sem
-# usage → silêncio (exit 0). NUNCA bloqueia (não emite decision:block).
+# Regra: contexto da sessão >= 150k tokens-OPUS → emite systemMessage (aviso), UMA
+# VEZ por degrau (150/250/350/500/700k). Abaixo do degrau, transcript ausente ou
+# sem usage → silêncio (exit 0). NUNCA bloqueia (não emite decision:block).
+#
+# O primeiro degrau era 250k e virou 150k em 2026-08-06: medido sobre dados já
+# deduplicados, 250k avisava com 29,1% do custo da sessão JÁ gasto e deixava 16
+# sessões caras mudas (5,3% da semana); 150k cobre 98,8% do custo, avisa com
+# 16,2% gasto e o ruído medido é ZERO (nenhuma sessão trivial chega a 150k, pois
+# o piso já é ~81k). Detalhe em docs/historico/piso-de-contexto.md.
 #
 # "tokens-OPUS" = o degrau é de CUSTO, não de token cru: o contexto é multiplicado
 # pelo preço da família do modelo sobre o do Opus (a referência da calibração).
-# Fable custa 2x → avisa na METADE do contexto (125k); Haiku custa 1/5 → 1,25M.
+# Fable custa 2x → avisa na METADE do contexto (75k); Haiku custa 1/5 → 750k.
 #
 # Uso: bash scripts/test-stop-contexto-caro.sh   (exit 0 = verde)
 set -u
@@ -99,36 +105,85 @@ check "transcript sem usage → silêncio" silencio "$(run "$tmp/t4.jsonl" s4)"
 # 10. FALSIFICAÇÃO — o teste precisa saber ficar vermelho. Um hook que avisasse
 #     SEMPRE passaria nos casos 2/6/7; é o caso 1 (silêncio abaixo do degrau)
 #     que separa "funciona" de "grita sempre". Confirma que aquele caso é real:
-mk_transcript "$tmp/t5.jsonl" 249000 3
+mk_transcript "$tmp/t5.jsonl" 149000 3
 saida_abaixo="$(run "$tmp/t5.jsonl" s5)"
 if [ -z "$saida_abaixo" ]
-then ok "falsificação: 249k (1 abaixo do degrau) permanece em silêncio"
-else bad "falsificação: avisou a 249k — o degrau não está sendo respeitado"; fi
+then ok "falsificação: 149k (1 abaixo do degrau) permanece em silêncio"
+else bad "falsificação: avisou a 149k — o degrau não está sendo respeitado"; fi
+
+# 10b. 150k e 250k são degraus SEPARADOS: cruzar o primeiro não consome o segundo.
+#      Sem isto, colar um degrau novo no topo da escada poderia calar o antigo.
+mk_transcript "$tmp/t6.jsonl" 160000 3
+check "cruzou o degrau novo de 150k → avisa" msg "$(run "$tmp/t6.jsonl" s6)"
+mk_transcript "$tmp/t7.jsonl" 260000 5
+check "mesma sessão sobe 150k→250k → avisa DE NOVO (degraus separados)" msg "$(run "$tmp/t7.jsonl" s6)"
 
 echo "== degrau normalizado por CUSTO (o degrau é em tokens-Opus) =="
 
 # 11. Opus explícito: fator 1 → os degraus calibrados ficam INTACTOS (não-regressão)
 mk_transcript "$tmp/o1.jsonl" 260000 5 claude-opus-5
 check "opus 260k → avisa (fator 1, degrau intacto)" msg "$(run "$tmp/o1.jsonl" so1)"
-mk_transcript "$tmp/o2.jsonl" 240000 5 claude-opus-5
-check "opus 240k → silêncio (fator 1, degrau intacto)" silencio "$(run "$tmp/o2.jsonl" so2)"
+mk_transcript "$tmp/o2.jsonl" 140000 5 claude-opus-5
+check "opus 140k → silêncio (fator 1, degrau intacto)" silencio "$(run "$tmp/o2.jsonl" so2)"
 
-# 12. Fable custa 2x → 130k de contexto = 260k tokens-Opus, cruza o degrau
-mk_transcript "$tmp/f1.jsonl" 130000 5 claude-fable-5
+# 12. Fable custa 2x → 80k de contexto = 160k tokens-Opus, cruza o degrau novo
+mk_transcript "$tmp/f1.jsonl" 80000 5 claude-fable-5
 out_fable="$(run "$tmp/f1.jsonl" sf1)"
-check "fable 130k → avisa (=260k tokens-Opus, metade do caminho)" msg "$out_fable"
+check "fable 80k → avisa (=160k tokens-Opus, metade do caminho)" msg "$out_fable"
 
-# 13. FALSIFICAÇÃO da normalização: 120k em Fable = 240k tokens-Opus, ABAIXO do
+# 13. FALSIFICAÇÃO da normalização: 70k em Fable = 140k tokens-Opus, ABAIXO do
 #     degrau. Sem a conversão o hook ficaria mudo aqui e no caso 12 — este par é
 #     o que separa "normalizou por preço" de "só baixou o degrau para todo mundo".
-mk_transcript "$tmp/f2.jsonl" 120000 5 claude-fable-5
+#     O par está colado na fronteira (70k/80k) de propósito: é onde a conversão
+#     decide, e um par frouxo passaria mesmo com o fator errado.
+mk_transcript "$tmp/f2.jsonl" 70000 5 claude-fable-5
 if [ -z "$(run "$tmp/f2.jsonl" sf2)" ]
-then ok "falsificação: fable 120k (=240k tokens-Opus) permanece em silêncio"
-else bad "falsificação: avisou a 120k em fable — o degrau virou 120k para todos"; fi
+then ok "falsificação: fable 70k (=140k tokens-Opus) permanece em silêncio"
+else bad "falsificação: avisou a 70k em fable — o degrau virou 70k para todos"; fi
 
 # 14. Haiku custa 1/5 do Opus → 600k de contexto ainda é só 120k tokens-Opus
 mk_transcript "$tmp/h1.jsonl" 600000 5 claude-haiku-4-5-20251001
 check "haiku 600k → silêncio (=120k tokens-Opus)" silencio "$(run "$tmp/h1.jsonl" sh1)"
+
+echo "== custo estimado conta REQUEST, não linha do transcript =="
+
+# Uma resposta com vários blocos vira várias linhas no JSONL repetindo o MESMO
+# usage. O hook contava linhas (`grep -c '"usage"'`) e inflava o US$ em ~2,2x —
+# a mesma dupla contagem que o tokens-report.sh tinha. Aqui: dois transcripts com
+# o MESMO nº de linhas e o MESMO contexto, um com 1 requestId e outro com 12.
+mk_req() {  # $1=arquivo $2=cache_read final $3=nº linhas $4=modo(mesmo|distinto)
+  local f="$1" ctx="$2" n="$3" modo="$4" k=1 rid
+  : > "$f"
+  while [ "$k" -lt "$n" ]; do
+    [ "$modo" = mesmo ] && rid="req_UNICO" || rid="req_$k"
+    printf '{"type":"assistant","requestId":"%s","message":{"usage":{"input_tokens":4,"cache_creation_input_tokens":100,"cache_read_input_tokens":1000}}}\n' "$rid" >> "$f"
+    k=$(( k + 1 ))
+  done
+  [ "$modo" = mesmo ] && rid="req_UNICO" || rid="req_FINAL"
+  printf '{"type":"assistant","requestId":"%s","message":{"usage":{"input_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":%s}}}\n' "$rid" "$ctx" >> "$f"
+}
+usd() { printf '%s' "$1" | command grep -o 'US\$ [0-9]*' | command head -1 | command tr -cd '0-9'; }
+
+mk_req "$tmp/r1.jsonl" 300000 12 mesmo
+mk_req "$tmp/r2.jsonl" 300000 12 distinto
+u1="$(usd "$(run "$tmp/r1.jsonl" sr1)")"
+u2="$(usd "$(run "$tmp/r2.jsonl" sr2)")"
+# 12 linhas / 1 request vs 12 linhas / 12 requests: o 2º tem de custar MAIS.
+# Se o hook contasse linhas, os dois dariam o mesmo número.
+if [ -n "$u1" ] && [ -n "$u2" ] && [ "$u2" -gt "$u1" ]; then
+  ok "12 linhas com 1 requestId estimam MENOS que 12 requests distintos (US\$ $u1 < $u2)"
+else
+  bad "estimativa ignorou o requestId (US\$ '$u1' vs '$u2' — esperava o 1º menor)"
+fi
+
+# FALSIFICAÇÃO: transcript SEM requestId (formato antigo) não pode zerar o aviso
+# — o fallback para contagem de linhas tem de manter a mensagem de pé.
+mk_transcript "$tmp/r3.jsonl" 300000 12
+if printf '%s' "$(run "$tmp/r3.jsonl" sr3)" | command grep -q 'systemMessage'; then
+  ok "falsificação: transcript sem requestId ainda avisa (fallback de linhas)"
+else
+  bad "sem requestId o hook emudeceu — o fallback não segurou"
+fi
 
 echo "== nota de modelo (só quando o modelo custa mais que a referência) =="
 

@@ -246,6 +246,59 @@ O guard é PostToolUse, não Pre, porque no Pre só existe o comando — e preve
 cara dele é fraco: 46,5% das chamadas medidas caíram em "outros" (compostos, heredoc,
 script inline). Só depois de rodar se sabe o tamanho.
 
+## 🎚️ Calibração dos avisos (2026-08-06) — as DUAS premissas eram falsas
+
+Com a régua consertada, dá para perguntar coisas que antes não se podia. As duas
+respostas contrariaram o que eu ia implementar.
+
+### B1 — "o aviso de contexto dispara tarde demais" ❌ REFUTADO (mas achou outra coisa)
+
+A métrica certa não é "em que contexto dispara", é **quanto do custo da sessão já foi
+gasto quando dispara** — é isso que decide se o aviso ainda tem alavanca:
+
+| degrau | sessões | % do custo coberto | % já gasto ao disparar | sessões triviais atingidas |
+|---|---|---|---|---|
+| 120k | 46 | 99,1% | 12,3% | **0** |
+| **150k** | **44** | **98,8%** | **16,2%** | **0** |
+| 180k | 43 | 98,4% | 22,0% | 0 |
+| 250k (era) | 35 | 94,3% | 29,1% | 0 |
+
+A 250k o aviso chega com **71% do custo ainda pela frente** — não é tarde. O problema
+real era outro: **16 sessões CARAS nunca eram avisadas** (ctx_max 159k-248k, US$ 85 =
+5,3% da semana). Primeiro degrau desceu para 150k: cobre 98,8%, dobra a alavanca, e o
+ruído medido é **zero** — com piso de ~81k, nenhuma sessão trivial chega a 150k. 120k
+cobriria marginalmente mais, mas fica a 39k do piso: avisaria antes de haver o que dividir.
+
+Achado colateral: o hook tinha **a mesma dupla contagem da régua** (`grep -c '"usage"'`
+conta linha, não request) e o divisor `0.52` fora calibrado contra o custo igualmente
+inflado — dois erros que se cancelavam e produziam um "7% de erro" ilusório. O US$ exibido
+estava ~1,6× alto. Agora conta `requestId` distinto e usa 0,701.
+
+### C1 — "delegar leitura a subagente economiza" ❌ REFUTADO
+
+Medido sobre **277 invocações** do histórico: um subagente custa **US$ 1,06 na mediana**
+(p75 1,98 · p90 3,62 · máx 10,46 · 19 requests em média) e devolve ~780 tokens (p50 273).
+Manter T tokens no contexto custa `T × requests_restantes × US$0,50/MTok`. Logo:
+
+> delegar compensa quando **T > 780 + 1,06 × 2.000.000 / requests_restantes**
+
+| requests restantes | leitura precisa ter |
+|---|---|
+| 50 | ~43k tokens |
+| 100 | ~22k |
+| 200 | ~11k |
+| 400 | ~6k |
+
+O `read-contexto-nudge.sh` mandava delegar **a partir de 10k** — o que só se paga com
+~200 requests pela frente, enquanto as sessões caras deste parque vivem na faixa de
+50-299. **Na maioria dos disparos o conselho perdia dinheiro.** Corrigido: ≥40k recomenda
+subagente (aí se paga em ~30 turnos); 10-40k recomenda **recorte** (`rg` + `offset/limit`),
+que é gratuito.
+
+O erro de origem foi comparar a coisa errada: "o subagente devolve 638 tokens contra 2.058
+de um Read" é verdade e é **irrelevante** — o que importa não é o que ele devolve, é o que
+ele **cobra para rodar**, e isso ninguém tinha medido.
+
 ## Pendente de medição — só o founder consegue (é na conta, não no repo)
 
 172 das 337 skills da sessão do app vêm de plugins da conta claude.ai **nunca usados em 48
@@ -280,3 +333,15 @@ comparar o piso com os 67.244 registrados aqui.
 > E antes de otimizar um alvo, **meça que fração do custo ele é**. O piso parecia o alvo
 > óbvio (é relido em 100% dos requests) e é só 26%. Otimizar bem a coisa errada perde para
 > medir primeiro.
+>
+> **Meça o preço do REMÉDIO, não só o da doença.** O nudge de leitura empurrava para
+> subagente porque "ele devolve 638 tokens contra 2.058 de um Read" — verdadeiro, e
+> irrelevante: ninguém tinha medido quanto o subagente **cobra para rodar** (US$ 1,06 na
+> mediana, mais que a releitura que evitava na maioria dos casos). Toda recomendação de
+> trocar A por B precisa do custo de B, não só do de A.
+>
+> **E confira a UNIDADE antes da conclusão.** Três achados desta linha (o custo semanal, o
+> US$ do hook, a "calibração de 7% de erro") vieram do mesmo defeito: contar LINHA do JSONL
+> como se fosse REQUEST. Dois erros na mesma direção chegaram a se cancelar e produzir uma
+> validação falsa. Quando duas medições independentes concordam bem demais, desconfie de
+> que compartilham a mesma fonte.
