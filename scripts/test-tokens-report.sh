@@ -91,6 +91,78 @@ else
   bad "POR MODELO deveria ter coluna %reqs com fable em 50%"; printf '%s\n' "$saida" | sed 's/^/      /'
 fi
 
+echo "== dedupe por requestId =="
+# UMA resposta com vários blocos (texto + tool_use + tool_use) vira VÁRIAS linhas
+# no JSONL, e TODAS repetem o mesmo message.usage — verificado: cada requestId tem
+# exatamente 1 valor distinto de usage. Somar linha a linha multiplica o custo.
+# Medido em 2026-08-06: 131.605 linhas brutas para 60.376 requests reais (2,18x).
+# O relatório inflado por isso chegou a US$ 3.347 numa semana que custou US$ 1.596.
+dup_dir() { # $1=nome -> cria dir de projects próprio e ecoa o caminho
+  local d="$tmp/$1"; mkdir -p "$d/proj"; printf '%s' "$d"
+}
+linha_req() { # $1=requestId ("" = ausente, transcript antigo) $2=uuid
+  jq -nc --arg r "$1" --arg u "$2" \
+    '{timestamp:"2026-08-04T10:00:00.000Z", sessionId:"s1", uuid:$u}
+     + (if $r == "" then {} else {requestId:$r} end)
+     + {message:{model:"claude-opus-5", usage:{input_tokens:10, output_tokens:5,
+         cache_creation_input_tokens:0, cache_read_input_tokens:1000}}}'
+}
+reqs_de() { # $1=dir de projects -> nº de requests que o relatório contou
+  CLAUDE_PROJECTS_DIR="$1" bash "$REPORT" --dias 0 2>/dev/null \
+    | command grep -E '^  requests ' | command tr -cd '0-9'
+}
+
+# 3 linhas do MESMO request (uuid distinto, como no JSONL real) + 1 request outro.
+D="$(dup_dir projects-dup)"
+{ linha_req req_AAA u1; linha_req req_AAA u2; linha_req req_AAA u3
+  linha_req req_BBB u4; } > "$D/proj/sessao.jsonl"
+n="$(reqs_de "$D")"
+# 4 = não deduplicou; 1 = colapsou requests distintos. Só o certo dá 2 — a
+# asserção fecha dos DOIS lados, então não passa por acidente.
+if [ "$n" = "2" ]; then
+  ok "3 linhas do mesmo requestId contam 1 request (total 2, não 4 nem 1)"
+else
+  bad "esperava 2 requests após dedupe, veio '$n'"
+fi
+
+# Mesmo request repetido em DOIS arquivos (fork/resume copia o transcript do pai):
+# o dedupe tem de ser GLOBAL, não por arquivo.
+D="$(dup_dir projects-fork)"
+linha_req req_CCC u1 > "$D/proj/pai.jsonl"
+{ linha_req req_CCC u1; linha_req req_DDD u2; } > "$D/proj/filho.jsonl"
+n="$(reqs_de "$D")"
+if [ "$n" = "2" ]; then
+  ok "requestId repetido entre arquivos (fork/resume) conta 1 vez"
+else
+  bad "esperava 2 requests com dedupe global, veio '$n'"
+fi
+
+# FALSIFICAÇÃO da chave: transcript SEM requestId (formato antigo) não pode
+# colapsar. Se o dedupe usasse campo vazio como chave, estes 2 virariam 1.
+D="$(dup_dir projects-sem-req)"
+{ linha_req "" u1; linha_req "" u2; } > "$D/proj/sessao.jsonl"
+n="$(reqs_de "$D")"
+if [ "$n" = "2" ]; then
+  ok "falsificação: linhas SEM requestId não colapsam (2 continuam 2)"
+else
+  bad "sem requestId os 2 requests deveriam sobreviver, veio '$n'"
+fi
+
+# TSV de 8 colunas (coletado por versão ANTERIOR ao dedupe) reusado com
+# --pular-coleta: a col. 9 não existe. Sem o guard NF < 9 a chave seria vazia e
+# IGUAL em toda linha — o arquivo inteiro colapsaria em 1 request. É a regressão
+# mais cara possível aqui: silenciosa, e para MENOS custo (parece otimização).
+T="$tmp/antigo.tsv"
+printf 'proj\t2026-08-04\tclaude-opus-5\t10\t5\t0\t1000\ts1\n'  > "$T"
+printf 'proj\t2026-08-04\tclaude-opus-5\t20\t7\t0\t2000\ts1\n' >> "$T"
+n="$(bash "$REPORT" --tsv "$T" --pular-coleta 2>/dev/null \
+     | command grep -E '^  requests ' | command tr -cd '0-9')"
+if [ "$n" = "2" ]; then
+  ok "TSV antigo (8 colunas) com --pular-coleta não colapsa (2 continuam 2)"
+else
+  bad "TSV de 8 colunas deveria manter 2 requests, veio '$n'"
+fi
+
 echo "== validação de entrada =="
 if bash "$REPORT" --dias 0 --desde "04/08/2026" >/dev/null 2>&1; then rc=0; else rc=$?; fi
 if [ "$rc" -eq 2 ]; then

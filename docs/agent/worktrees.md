@@ -174,4 +174,12 @@ list` mostra `WIP on <seu-branch>`), mas o susto é evitável.
 
 ## MCPs enxutas
 
-`.claude/settings.json` (comitado, **project > user**) desabilita 11 plugins sem uso no dev TS (adobe/mercadopago/sentry/slack/telegram/airtable/zapier/github/posthog/chrome-devtools/serena) + `ENABLE_CLAUDEAI_MCP_SERVERS=false`. **Mantidos:** superpowers/claude-mem/claude-md-management/context7. Religar pontual em `.claude/settings.local.json` (gitignored, precedência maior) + `/reload-plugins`. ⚠️ Desabilitar o **plugin** mata MCP **+ skills + hooks** dele. Worktrees criados via `bun run wt` (de `origin/main`) já nascem enxutos.
+`.claude/settings.json` (comitado, **project > user**) desabilita 11 plugins sem uso no dev TS (adobe/mercadopago/sentry/slack/telegram/airtable/zapier/github/posthog/chrome-devtools/serena) + `disableClaudeAiConnectors: true`. **Mantidos:** superpowers/claude-mem/claude-md-management/context7.
+
+⚠️ **`ENABLE_CLAUDEAI_MCP_SERVERS=false` era INERTE** (chave inventada, não existe no schema) — ficou 
+no arquivo parecendo que desligava os connectors da conta claude.ai enquanto Gmail/Calendar/Drive 
+carregavam em toda sessão do app. O switch certo é a chave de topo `disableClaudeAiConnectors`. 
+Falha SILENCIOSA e invisível ao CLI: `scripts/piso-contexto.sh` **não reproduz** isto — o CLI nunca 
+carrega connector da conta, então a sonda dá delta zero com ou sem o fix. Evidência tem que vir de 
+sessão NOVA do app (a lista de tools não pode mais ter servidor `mcp__<uuid>__*`) ou do 
+`tokens-report.sh`. Uso medido dos 3 connectors em 48 dias: **zero chamadas**. Religar pontual em `.claude/settings.local.json` (gitignored, precedência maior) + `/reload-plugins`. ⚠️ Desabilitar o **plugin** mata MCP **+ skills + hooks** dele. Worktrees criados via `bun run wt` (de `origin/main`) já nascem enxutos.
