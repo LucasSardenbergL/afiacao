@@ -80,6 +80,23 @@ import { inicioDiaOperacional } from '../_shared/dia-operacional.ts';
 const TOP_N = 25;
 const CONCURRENCY = 5; // cada chamada faz 1 LLM (~3-5s); 5 em paralelo ~5s/chunk
 
+// Ausente ≠ zero (money-path): revenue_potential nunca teve writer — NULL em 6.633/6.633
+// linhas de farmer_client_scores (column_default removido). `valorMedido` degrada para null em
+// vez de fabricar 0 no `rev` que alimenta o gate de R$/h (profitPerHora, em _shared/tactical-
+// margem.ts). Sem marcador MIRROR: a paridade textual vigiada (edge-money-path-invariants.
+// test.ts) cobre só o espelho de visit-score-recalc-client/index.ts. Implementação idêntica a
+// src/lib/scoring/margin.ts.
+function valorMedido(raw: unknown): number | null {
+  if (typeof raw === 'number') return Number.isFinite(raw) ? raw : null;
+  if (typeof raw === 'string') {
+    const t = raw.trim();
+    if (t.length === 0) return null;
+    const n = Number(t);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
 // ── Handler ──────────────────────────────────────────────────────────────────
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
@@ -168,7 +185,9 @@ Deno.serve(async (req) => {
       arr.push({
         customer: r.customer_user_id,
         priority: Number(r.priority_score ?? 0),
-        rev: Number(r.revenue_potential ?? 0),
+        // ausente ≠ zero: revenue_potential nunca teve writer. `null` mantém "não sei"
+        // distinguível de "potencial zero" — profitPerHora cai pro avgSpend com guard explícito.
+        rev: valorMedido(r.revenue_potential),
         avg: Number(r.avg_monthly_spend_180d ?? 0),
         // ausente ≠ zero: `null` mantém "não sei" distinguível de "margem 0".
         marginPct: margemConhecida(r.gross_margin_pct),

@@ -50,6 +50,13 @@ Deno.test("profitPerHora: paridade numérica com o oráculo vitest", () => {
   assertClose(profitPerHora(0, 500, 20), 40);
 });
 
+Deno.test("profitPerHora: rev AUSENTE (revenue_potential sem writer) cai pro avgSpend, não 0", () => {
+  // Guard `rev != null && rev > 0` (não só `rev > 0`): sem ele o desfecho aritmético seria o
+  // mesmo por ACIDENTE (`null > 0` é false em JS), mas o tipo `number` mentia que rev nunca
+  // falta. (500 * 20% * 0.1) / 0.25 = 40 — mesmo resultado de rev=0 CONHECIDO (linha acima).
+  assertClose(profitPerHora(null, 500, 20), 40);
+});
+
 Deno.test("profitPerHora: margem DESCONHECIDA → null, não 0", () => {
   // Number(null) === 0 fabricaria "R$ 0/h" — veredito de negócio, não "não sei".
   assertEquals(profitPerHora(1000, 50, null), null);

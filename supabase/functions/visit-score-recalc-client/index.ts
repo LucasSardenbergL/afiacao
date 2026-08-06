@@ -29,6 +29,19 @@ function computeDays(timestamp: string | null | undefined): number | null {
   return Math.max(0, Math.round((Date.now() - new Date(timestamp).getTime()) / MS_PER_DAY));
 }
 
+// MIRROR-START valor-medido — espelhado verbatim de src/lib/scoring/margin.ts
+function valorMedido(raw: unknown): number | null {
+  if (typeof raw === 'number') return Number.isFinite(raw) ? raw : null;
+  if (typeof raw === 'string') {
+    const t = raw.trim();
+    if (t.length === 0) return null;
+    const n = Number(t);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+// MIRROR-END
+
 // =====================================================
 // --- Inline types ---
 // =====================================================
@@ -58,10 +71,12 @@ interface CustomerScoreInputs {
   customer_user_id: string;
   farmer_id: string;
   churn_risk: number;
-  expansion_score: number;
+  // ⚠️ `number | null`: estas três colunas NUNCA tiveram produtor — NULL em 6.633/6.633 linhas
+  // (medido 2026-07-27). Espelha CustomerScoreInputs de src/lib/visit-scoring/types.ts.
+  expansion_score: number | null;
   health_score: number;
-  recover_score: number;
-  revenue_potential: number;
+  recover_score: number | null;
+  revenue_potential: number | null;
   avg_monthly_spend_180d: number;
   days_since_last_purchase: number;
   signal_modifiers: ScoreAdjustment | null;
@@ -73,6 +88,18 @@ interface CustomerScoreInputs {
   city: string | null;
   neighborhood: string | null;
   state: string | null;
+}
+
+/**
+ * Resultado de UMA missão. Espelha MissionResult de src/lib/visit-scoring/types.ts.
+ *
+ * REGRA ÚNICA (vale para as 4 missões): `score` é `null` somente quando NENHUM insumo da missão
+ * foi medido — "não avaliada". Se ao menos um insumo existe, o score é um número e
+ * `insumosAusentes` nomeia os que faltaram ("parcial").
+ */
+interface MissionResult {
+  score: number | null;
+  insumosAusentes: string[];
 }
 
 // =====================================================
@@ -92,24 +119,85 @@ function aplicaveis(
   return (mods ?? []).filter((m) => m.class != null && classesAtivas.has(m.class));
 }
 
-function scoreRecuperacao(c: CustomerScoreInputs, classesAtivas: Set<string>): number {
+/**
+ * RECUPERAÇÃO — cliente que comprava bem e parou. Espelha scoreRecuperacao de
+ * src/lib/visit-scoring/missions.ts.
+ *
+ * `recover_score` é `null` em 100% da base (sem produtor). Pela REGRA ÚNICA ela NÃO vira null:
+ * `churn_risk` está medido em 6.633/6.633 linhas e sustenta a missão sozinho. O ausente é
+ * NOMEADO, não fabricado como 0.
+ */
+function scoreRecuperacao(c: CustomerScoreInputs, classesAtivas: Set<string>): MissionResult {
+  const insumosAusentes: string[] = [];
+  let insumosMedidos = 0;
+
   const churnBoost = c.churn_risk * 0.5;
-  const recoverBoost = c.recover_score * 0.3;
+  insumosMedidos++; // churn_risk sempre tem produtor (nunca null no tipo) — sustenta a missão sozinho
+
+  // Guard explícito ANTES do uso: `null * 0.3` é 0 em JS, que afirmaria "medi e não há o que
+  // recuperar". Sem produtor, o componente simplesmente não entra na soma.
+  let recoverBoost = 0;
+  if (c.recover_score == null) insumosAusentes.push('recover_score');
+  else {
+    recoverBoost = c.recover_score * 0.3;
+    insumosMedidos++;
+  }
+
   const recencyPenalty = Math.max(0, 100 - c.days_since_last_purchase) * -0.1;
+  // aplicaveis(...).reduce(...) é o somaModifiers do src/ + o filtro FA4 (shadow-mode) que só
+  // existe no edge: mantém SÓ modifiers de classe ATIVADA.
   const signalsBoost = aplicaveis(c.signal_modifiers?.breakdown?.churn, classesAtivas)
     .reduce((s, m) => s + m.delta * m.decayedWeight, 0) * 0.1;
-  return clamp(churnBoost + recoverBoost + recencyPenalty + signalsBoost, 0, 100);
+
+  // REGRA ÚNICA (mesmo padrão de scoreExpansao): nenhum insumo medido → não avaliada. Hoje é
+  // inatingível aqui — churn_risk sempre tem produtor — mas a regra existe uma vez só.
+  if (insumosMedidos === 0) return { score: null, insumosAusentes };
+
+  const score = clamp(churnBoost + recoverBoost + recencyPenalty + signalsBoost, 0, 100);
+  return { score, insumosAusentes };
 }
 
-function scoreExpansao(c: CustomerScoreInputs, classesAtivas: Set<string>): number {
-  const expansionBase = c.expansion_score * 0.6;
-  const revenueBoost = normalizeRevenue(c.revenue_potential) * 20;
+/**
+ * EXPANSÃO — cliente saudável com upsell quente. Espelha scoreExpansao de
+ * src/lib/visit-scoring/missions.ts.
+ *
+ * Os DOIS insumos (`expansion_score`, `revenue_potential`) são `null` em 100% da base e nunca
+ * tiveram produtor. Pela REGRA ÚNICA, nenhum insumo medido → `score: null` = "não avaliada".
+ */
+function scoreExpansao(c: CustomerScoreInputs, classesAtivas: Set<string>): MissionResult {
+  const insumosAusentes: string[] = [];
+  let insumosMedidos = 0;
+
+  let expansionBase = 0;
+  if (c.expansion_score == null) insumosAusentes.push('expansion_score');
+  else {
+    expansionBase = c.expansion_score * 0.6;
+    insumosMedidos++;
+  }
+
+  // ⚠️ Guard ANTES de normalizeRevenue: ele faz `if (value <= 0) return 0`, e `null <= 0` é
+  // `true` em JS — o null entraria e sairia como 0 medido, em silêncio.
+  let revenueBoost = 0;
+  if (c.revenue_potential == null) insumosAusentes.push('revenue_potential');
+  else {
+    revenueBoost = normalizeRevenue(c.revenue_potential) * 20;
+    insumosMedidos++;
+  }
+
   const signalsBoost = aplicaveis(c.signal_modifiers?.breakdown?.expansion, classesAtivas)
     .reduce((s, m) => s + m.delta * m.decayedWeight, 0) * 0.2;
-  return clamp(expansionBase + revenueBoost + signalsBoost, 0, 100);
+
+  // REGRA ÚNICA (mesmo padrão de scoreRecuperacao): nenhum insumo medido → não avaliada.
+  if (insumosMedidos === 0) return { score: null, insumosAusentes };
+
+  return { score: clamp(expansionBase + revenueBoost + signalsBoost, 0, 100), insumosAusentes };
 }
 
-function scoreRelacionamento(c: CustomerScoreInputs): number {
+/**
+ * RELACIONAMENTO — cliente VIP saudável precisando manutenção. Espelha scoreRelacionamento de
+ * src/lib/visit-scoring/missions.ts. Todos os insumos têm produtor → nunca fica null.
+ */
+function scoreRelacionamento(c: CustomerScoreInputs): MissionResult {
   // health_score é 0..100 (calculate-scores). * 0.5 → contribuição 0..50.
   const healthBoost = c.health_score * 0.5;
   const revenueBoost = normalizeRevenue(c.avg_monthly_spend_180d) * 30;
@@ -117,12 +205,18 @@ function scoreRelacionamento(c: CustomerScoreInputs): number {
   // Mesma decisão de src/lib/visit-scoring/missions.ts.
   const daysSinceVisitBoost = Math.min(40, (c.days_since_last_visit ?? 30) * 0.3);
   const riskPenalty = c.churn_risk * 0.3;
-  return clamp(healthBoost + revenueBoost + daysSinceVisitBoost - riskPenalty, 0, 100);
+  const score = clamp(healthBoost + revenueBoost + daysSinceVisitBoost - riskPenalty, 0, 100);
+  return { score, insumosAusentes: [] };
 }
 
-function scoreProspeccao(c: CustomerScoreInputs, classesAtivas: Set<string>): number {
+/**
+ * PROSPECÇÃO — lead novo ou cliente sem histórico. Insumos sempre presentes → nunca fica null.
+ * A qualidade de sinal usa `aplicaveis(...)` (FA4 shadow-mode), que só existe no edge: com a
+ * config tudo OFF, `classesAtivas` é vazio e o boost fica idêntico a hoje.
+ */
+function scoreProspeccao(c: CustomerScoreInputs, classesAtivas: Set<string>): MissionResult {
   const isProspectCandidate = c.sales_orders_count === 0 || c.is_prospect === true;
-  if (!isProspectCandidate) return 0;
+  if (!isProspectCandidate) return { score: 0, insumosAusentes: [] };
   const baseProspect = 70;
   const recencyOfSignup = c.days_since_signup < 30 ? 20 : 0;
   // Shadow-safe: a qualidade só sobe com sinal de classe ATIVADA (não com source_call_count
@@ -134,30 +228,51 @@ function scoreProspeccao(c: CustomerScoreInputs, classesAtivas: Set<string>): nu
     aplicaveis(bd?.health, classesAtivas).length > 0 ||
     aplicaveis(bd?.eff, classesAtivas).length > 0;
   const signalsQuality = temSinalAplicavel ? 10 : 0;
-  return clamp(baseProspect + recencyOfSignup + signalsQuality, 0, 100);
+  return { score: clamp(baseProspect + recencyOfSignup + signalsQuality, 0, 100), insumosAusentes: [] };
 }
 
+/**
+ * Computa o visit_score final + primary_mission. Espelha computeVisitScore de
+ * src/lib/visit-scoring/missions.ts, com `classesAtivas` (FA4 shadow-mode) plugado nas 3
+ * missões que usam `aplicaveis(...)`.
+ *
+ * ⚠️ Missão com `score: null` ("não avaliada") é IGNORADA no argmax — não tratada como 0.
+ */
 function computeVisitScore(c: CustomerScoreInputs, classesAtivas: Set<string>): {
-  scores: Record<MissionType, number>;
+  scores: Record<MissionType, MissionResult>;
   visit_score: number;
   primary_mission: MissionType;
+  insumos_ausentes: string[];
 } {
-  const scores: Record<MissionType, number> = {
+  const scores: Record<MissionType, MissionResult> = {
     recuperacao: scoreRecuperacao(c, classesAtivas),
     expansao: scoreExpansao(c, classesAtivas),
     relacionamento: scoreRelacionamento(c),
     prospeccao: scoreProspeccao(c, classesAtivas),
   };
   const ORDER: MissionType[] = ['expansao', 'recuperacao', 'relacionamento', 'prospeccao'];
+
+  // Semente na prospecção, que nunca é null (insumos sempre presentes).
   let primary_mission: MissionType = 'prospeccao';
-  let visit_score = scores.prospeccao;
+  let visit_score = scores.prospeccao.score ?? 0;
+
   for (const m of ORDER) {
-    if (scores[m] > visit_score) {
-      visit_score = scores[m];
+    const s = scores[m].score;
+    if (s == null) continue; // não avaliada: fora da disputa, jamais como 0
+    if (s > visit_score) {
+      visit_score = s;
       primary_mission = m;
     }
   }
-  return { scores, visit_score, primary_mission };
+
+  return {
+    scores,
+    visit_score,
+    primary_mission,
+    // Cópia — não vaza a referência mutável do array interno de MissionResult (mesma razão de
+    // src/lib/visit-scoring/missions.ts).
+    insumos_ausentes: [...scores[primary_mission].insumosAusentes],
+  };
 }
 
 // =====================================================
@@ -254,10 +369,12 @@ async function recalcOne(
     customer_user_id,
     farmer_id,
     churn_risk: Number(scores.churn_risk ?? 0),
-    expansion_score: Number(scores.expansion_score ?? 0),
+    // ausente ≠ zero: as 3 colunas abaixo nunca tiveram writer (NULL em 6.633/6.633 linhas).
+    // valorMedido degrada para null em vez de fabricar 0 — as missões tratam a ausência.
+    expansion_score: valorMedido(scores.expansion_score),
     health_score: Number(scores.health_score ?? 0),
-    recover_score: Number(scores.recover_score ?? 0),
-    revenue_potential: Number(scores.revenue_potential ?? 0),
+    recover_score: valorMedido(scores.recover_score),
+    revenue_potential: valorMedido(scores.revenue_potential),
     avg_monthly_spend_180d: Number(scores.avg_monthly_spend_180d ?? 0),
     days_since_last_purchase: Number(scores.days_since_last_purchase ?? 999),
     signal_modifiers: (scores.signal_modifiers ?? null) as ScoreAdjustment | null,
@@ -292,15 +409,22 @@ async function recalcOne(
       source_call_count: inputs.signal_modifiers?.source_call_count ?? 0,
     },
     mission_scores: result.scores,
+    // Insumos ausentes da missão VENCEDORA — vazio só significa que ELA foi medida por
+    // completo, não diz nada sobre as outras 3. Espelha VisitScore.insumos_ausentes de
+    // src/lib/visit-scoring/types.ts.
+    insumos_ausentes: result.insumos_ausentes,
   };
 
   const { error: upsertErr } = await supabase.from('customer_visit_scores').upsert({
     customer_user_id,
     farmer_id,
-    recuperacao_score: result.scores.recuperacao,
-    expansao_score: result.scores.expansao,
-    relacionamento_score: result.scores.relacionamento,
-    prospeccao_score: result.scores.prospeccao,
+    // .score grava o null DE VERDADE quando a missão não foi avaliada — as colunas são
+    // nullable (sem NOT NULL na migration 20260518120000_visit_intelligence_v1). Fabricar 0
+    // aqui reintroduziria exatamente o que este PR remove.
+    recuperacao_score: result.scores.recuperacao.score,
+    expansao_score: result.scores.expansao.score,
+    relacionamento_score: result.scores.relacionamento.score,
+    prospeccao_score: result.scores.prospeccao.score,
     visit_score: result.visit_score,
     primary_mission: result.primary_mission,
     city: inputs.city,

@@ -21,11 +21,15 @@ export function margemConhecida(raw: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-/** R$/h estimado por ligação. Margem desconhecida → `null` ("não sei"), nunca 0. */
-export function profitPerHora(rev: number, avg: number, marginPct: unknown): number | null {
+/** R$/h estimado por ligação. Margem desconhecida → `null` ("não sei"), nunca 0.
+ *  `rev` ausente (revenue_potential sem writer) cai pro avgSpend — mesma régua de `rev` 0
+ *  CONHECIDO, mas com guard EXPLÍCITO: `null > 0` é `false` em JS, então o desfecho aritmético
+ *  já era certo por acidente; o guard troca a coincidência por decisão declarada (mesmo padrão
+ *  de src/hooks/useTacticalPlan.ts:411 — `revPotential != null && revPotential > 0`). */
+export function profitPerHora(rev: number | null, avg: number, marginPct: unknown): number | null {
   const margem = margemConhecida(marginPct);
   if (margem == null) return null;
-  const baseRev = rev > 0 ? rev : avg;
+  const baseRev = rev != null && rev > 0 ? rev : avg;
   // 10% do GMV como proxy de margem operacional; visita ~15 min → 4 visitas/h.
   return (baseRev * (margem / 100) * 0.1) / (AVG_CALL_MINUTES / 60);
 }
@@ -33,7 +37,8 @@ export function profitPerHora(rev: number, avg: number, marginPct: unknown): num
 export interface LinhaSelecao {
   customer: string;
   priority: number;
-  rev: number;
+  /** null = revenue_potential sem writer ("não medido"). Ver profitPerHora para o guard. */
+  rev: number | null;
   avg: number;
   marginPct: number | null;
 }
