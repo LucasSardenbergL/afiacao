@@ -100,10 +100,13 @@ export function useMyVisitSuggestions(opts: {
       const scores = (scoresData ?? []) as Array<{
         customer_user_id: string;
         farmer_id: string;
-        recuperacao_score: number;
-        expansao_score: number;
-        relacionamento_score: number;
-        prospeccao_score: number;
+        // ⚠️ `number | null`: colunas nullable no Postgres (conferido is_nullable=YES). expansao_score
+        // é null em 100% da base hoje — coagir pra 0 aqui tornaria inertes os guards que leem
+        // MissionResult a jusante (mesma classe do #1498/#1565).
+        recuperacao_score: number | null;
+        expansao_score: number | null;
+        relacionamento_score: number | null;
+        prospeccao_score: number | null;
         visit_score: number;
         primary_mission: MissionType;
         city: string | null;
@@ -134,16 +137,19 @@ export function useMyVisitSuggestions(opts: {
       const visitScores: VisitScore[] = scores.map(s => ({
         customer_user_id: s.customer_user_id,
         scores: {
-          recuperacao: s.recuperacao_score,
-          expansao: s.expansao_score,
-          relacionamento: s.relacionamento_score,
-          prospeccao: s.prospeccao_score,
+          // `?? []` só no array de ausentes; o SCORE preserva o null da coluna — coagir aqui
+          // desfaria, na borda de leitura, exatamente o que a edge acabou de gravar com honestidade.
+          recuperacao: { score: s.recuperacao_score, insumosAusentes: [] },
+          expansao: { score: s.expansao_score, insumosAusentes: [] },
+          relacionamento: { score: s.relacionamento_score, insumosAusentes: [] },
+          prospeccao: { score: s.prospeccao_score, insumosAusentes: [] },
         },
         visit_score: s.visit_score,
         primary_mission: s.primary_mission,
         city: s.city,
         neighborhood: s.neighborhood,
         days_since_last_visit: s.days_since_last_visit,
+        insumos_ausentes: [],
       }));
 
       const picked = pickDailyMix(visitScores, opts.targetCount ?? 6);
