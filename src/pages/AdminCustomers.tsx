@@ -1,7 +1,7 @@
 // Clientes (admin) — carteira com scoring, lista densa e perfil 360.
 // Composição: useAdminCustomers (queries/loads/handlers) + CustomerListView / Customer360View.
 // God-component split de src/pages/AdminCustomers.tsx (comportamento 1:1).
-import { Loader2 } from 'lucide-react';
+import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { AddToolDialog } from '@/components/AddToolDialog';
 import { useAdminCustomers } from '@/components/adminCustomers/useAdminCustomers';
 import { CustomerListView } from '@/components/adminCustomers/CustomerListView';
@@ -35,9 +35,7 @@ const AdminCustomers = () => {
 
   if (authLoading || loading) {
     return (
-      <div className="flex items-center justify-center py-32">
-        <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
-      </div>
+      <PageSkeleton variant="list" />
     );
   }
 

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   pontoEquilibrio,
+  somaCodigosPorPrefixo,
   type MesDRE,
   type TipoCusto,
 } from '../ponto-equilibrio-helpers';
@@ -175,5 +176,101 @@ describe('pontoEquilibrio — degradação honesta (motivo, sem número)', () =>
     });
     expect(r.motivo).toBe('valor_negativo_inesperado');
     expect(r.pe_receita).toBeNull();
+  });
+});
+
+describe('pontoEquilibrio — F3 v2: rateio de custo fixo compartilhado', () => {
+  // Base: doze() → receita TTM 1200, variáveis 720, fixos 300, MC% 40%.
+  const RAT = (valor_mensal: number) => ({ valor_mensal, origem: 'colacor_sc', rotulo: 'folha' });
+
+  it('rateio presente soma ao fixo: valor 10/mês → fixos 420, PE 1050, margem 12,5%, MC% inalterada', () => {
+    const r = pontoEquilibrio({ meses: doze(), classificacao: CLASS, custoCompartilhado: RAT(10) });
+    expect(r.motivo).toBe('ok');
+    expect(r.custos_fixos).toBeCloseTo(420, 2); // 300 + 10*12
+    expect(r.pe_receita).toBeCloseTo(1050, 2); // 420 / 0,40
+    expect(r.margem_seguranca_pct).toBeCloseTo(0.125, 4); // (1200-1050)/1200
+    expect(r.mc_pct).toBeCloseTo(0.4, 4); // folha é FIXO — MC% não muda
+    expect(r.custo_compartilhado_ttm).toBeCloseTo(120, 2);
+    expect(r.custo_compartilhado_mensal).toBeCloseTo(10, 2);
+    expect(r.custo_compartilhado_origem).toBe('colacor_sc');
+    expect(r.can_show_break_even).toBe(true);
+  });
+
+  it('exige && ausente → custo_compartilhado_pendente; vela pe/margem MAS preserva mc_pct/custos_fixos/receita', () => {
+    const r = pontoEquilibrio({ meses: doze(), classificacao: CLASS, exigeCustoCompartilhado: true });
+    expect(r.motivo).toBe('custo_compartilhado_pendente');
+    expect(r.pe_receita).toBeNull();
+    expect(r.margem_seguranca_pct).toBeNull();
+    expect(r.can_show_break_even).toBe(false);
+    expect(r.mc_pct).toBeCloseTo(0.4, 4); // contexto verdadeiro preservado
+    expect(r.custos_fixos).toBeCloseTo(300, 2); // fixo conhecido, SEM folha
+    expect(r.receita_bruta_ttm).toBeCloseTo(1200, 2);
+  });
+
+  it('exige && valor 0 confirmado → ok; PE idêntico ao sem-rateio (750); custo_compartilhado_ttm 0', () => {
+    const r = pontoEquilibrio({
+      meses: doze(),
+      classificacao: CLASS,
+      exigeCustoCompartilhado: true,
+      custoCompartilhado: RAT(0),
+    });
+    expect(r.motivo).toBe('ok');
+    expect(r.pe_receita).toBeCloseTo(750, 2);
+    expect(r.custo_compartilhado_ttm).toBe(0);
+  });
+
+  it('!exige && ausente → inalterado (não degrada, não soma)', () => {
+    const r = pontoEquilibrio({ meses: doze(), classificacao: CLASS });
+    expect(r.motivo).toBe('ok');
+    expect(r.custos_fixos).toBeCloseTo(300, 2);
+    expect(r.custo_compartilhado_ttm).toBe(0);
+    expect(r.can_show_break_even).toBe(true);
+  });
+
+  it('exige && folha no snapshot da própria empresa (material) → custo_compartilhado_possivel_duplicidade; não soma', () => {
+    const r = pontoEquilibrio({
+      meses: doze(),
+      classificacao: CLASS,
+      exigeCustoCompartilhado: true,
+      custoCompartilhado: RAT(10),
+      custoCompartilhadoNoSnapshotTtm: 100, // > 5% de despesasTTM (1020*0,05=51)
+    });
+    expect(r.motivo).toBe('custo_compartilhado_possivel_duplicidade');
+    expect(r.pe_receita).toBeNull();
+    expect(r.can_show_break_even).toBe(false);
+  });
+
+  it('precedência: classificação incompleta E rateio ausente → inconclusivo (não pendente) + latente=true', () => {
+    // 2.05.03=25 não classificado (29% despesas) → inconclusivo dispara antes do pendente.
+    const inc = (): Partial<MesDRE> => ({
+      despesas: { '2.01.01': 60, '2.05.03': 25 },
+      linha_cmv: 60,
+      linha_operacionais: 25,
+    });
+    const r = pontoEquilibrio({
+      meses: doze(inc),
+      classificacao: { '2.01.01': 'variavel' },
+      exigeCustoCompartilhado: true,
+    });
+    expect(r.motivo).toBe('inconclusivo');
+    expect(r.custo_compartilhado_pendente_latente).toBe(true);
+  });
+
+  it('somaCodigosPorPrefixo soma só os códigos do prefixo', () => {
+    const meses: MesDRE[] = [
+      {
+        ano: 2025,
+        mes: 1,
+        receita_bruta: 100,
+        deducoes_col: 0,
+        despesas: { '2.03.01': 10, '2.03.07': 2, '2.01.01': 60 },
+        linha_cmv: 60,
+        linha_operacionais: 12,
+        linha_administrativas: 0,
+        linha_comerciais: 0,
+        linha_financeiras: 0,
+      },
+    ];
+    expect(somaCodigosPorPrefixo(meses, ['2.03'])).toBeCloseTo(12, 2); // 10+2, ignora 2.01.01
   });
 });

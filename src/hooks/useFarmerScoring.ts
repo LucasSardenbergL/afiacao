@@ -3,7 +3,9 @@ import { supabase } from '@/integrations/supabase/client';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import type { Tables } from '@/integrations/supabase/types';
 import { custoCanonico } from '@/lib/custo/custoCanonico';
-import { accumulateMarginFromItems } from '@/lib/scoring/margin';
+import { fetchAllPages } from '@/lib/postgrest';
+import { accumulateMarginFromItems, resolveProductIdsFromItems } from '@/lib/scoring/margin';
+import { calcularHealthScore } from '@/lib/scoring/healthScore';
 
 type AlgorithmConfigRow = Pick<Tables<'farmer_algorithm_config'>, 'key' | 'value'>;
 type ProductCostRow = Pick<Tables<'product_costs'>, 'product_id' | 'cost_price' | 'cost_final'>;
@@ -17,10 +19,15 @@ type SalesOrderRow = Pick<
   'id' | 'customer_user_id' | 'items' | 'total' | 'created_at' | 'order_date_kpi' | 'status'
 >;
 
+// O jsonb real de sales_orders.items é pt-BR (omie_codigo_produto/quantidade/valor_unitario);
+// as chaves em inglês existiam no tipo mas nunca no dado — mantidas por compatibilidade.
 interface SalesOrderItem {
   product_id?: string;
+  omie_codigo_produto?: number | string;
   quantity?: number | string;
+  quantidade?: number | string;
   unit_price?: number | string;
+  valor_unitario?: number | string;
 }
 
 // ─── Types ───────────────────────────────────────────────────────────
@@ -39,7 +46,9 @@ export interface ClientScore {
   customer_name: string;
   customer_phone: string | null;
   // Health
-  rf: number; m: number; g: number; x: number; s: number;
+  rf: number; m: number; x: number; s: number;
+  /** Componente de margem 0-1, ou null quando nenhum item do cliente tem custo conhecido. */
+  g: number | null;
   healthScore: number;
   healthClass: 'saudavel' | 'estavel' | 'atencao' | 'critico';
   // Priority
@@ -50,7 +59,8 @@ export interface ClientScore {
   daysSinceLastPurchase: number;
   avgRepurchaseInterval: number;
   avgMonthlySpend180d: number;
-  grossMarginPct: number;
+  /** PERCENTUAL (0–100, negativo válido). `null` = não apurada. */
+  grossMarginPct: number | null;
   categoryCount: number;
   answerRate60d: number;
   whatsappReplyRate60d: number;
@@ -130,12 +140,18 @@ export const useFarmerScoring = (farmerId?: string) => {
     setCalculating(true);
 
     try {
-      // 1. Load all customers with sales orders
-      const { data: salesOrdersData } = await supabase
-        .from('sales_orders')
-        .select('id, customer_user_id, items, total, created_at, order_date_kpi, status')
-        .in('status', ['confirmado', 'faturado', 'entregue']);
-      const salesOrders = (salesOrdersData ?? []) as SalesOrderRow[];
+      // 1. Load all customers with sales orders (paginado: 19.978 pedidos nos 3 status).
+      // Sem paginar, TODO o scoring — recência, frequência, spend, margem, mix — enxergava
+      // só as primeiras 1.000 linhas, ~5% do histórico. Cross-sell e bundle já paginavam.
+      const salesOrders = await fetchAllPages<SalesOrderRow>((de, ate) =>
+        supabase
+          .from('sales_orders')
+          .select('id, customer_user_id, items, total, created_at, order_date_kpi, status')
+          .in('status', ['confirmado', 'faturado', 'entregue'])
+          .order('id', { ascending: true })
+          .range(de, ate) as unknown as PromiseLike<{ data: SalesOrderRow[] | null; error: unknown }>,
+        'sales_orders/scoring',
+      );
 
       if (salesOrders.length === 0) {
         setClientScores([]);
@@ -146,37 +162,54 @@ export const useFarmerScoring = (farmerId?: string) => {
       }
 
       // Fornecedores fora da carteira: clientes marcados p/ exclusão saem do universo ANTES do cálculo.
-      const flaggeds = new Set<string>();
-      for (let fp = 0; ; fp++) {
-        const { data: fPage, error: fErr } = await supabase
+      // FAIL-CLOSED via fetchAllPages (classe #1338→#1564): o laço manual anterior tratava
+      // `data:null` sem error como fim (conjunto PARCIAL de excluídos = fornecedor voltando ao
+      // fan-out com score) e paginava offset SEM `.order()` estável (pula/duplica linha entre
+      // páginas). O throw do helper cai no catch abaixo — aborta o recálculo/upsert e mantém o
+      // último estado bom, o mesmo fail-closed do Codex P1, agora para erro E malformada.
+      const flaggedRows = await fetchAllPages<{ user_id: string }>((de, ate) =>
+        supabase
           .from('cliente_classificacao')
           .select('user_id')
           .eq('excluir_da_carteira', true)
-          .range(fp * 1000, fp * 1000 + 999);
-        // FAIL-CLOSED (Codex P1): money-path. Se a leitura dos fornecedores excluídos falhar,
-        // aborta o recálculo/upsert (não grava score de fornecedor); mantém o último estado bom.
-        if (fErr) {
-          console.warn('[useFarmerScoring] erro ao ler fornecedores excluídos, abortando:', fErr.message);
-          setCalculating(false);
-          setLoading(false);
-          return;
-        }
-        if (!fPage || fPage.length === 0) break;
-        for (const r of fPage) flaggeds.add(r.user_id);
-        if (fPage.length < 1000) break;
-      }
+          .order('user_id', { ascending: true })
+          .range(de, ate) as unknown as PromiseLike<{ data: { user_id: string }[] | null; error: unknown }>,
+        'cliente_classificacao/scoring',
+      );
+      const flaggeds = new Set<string>(flaggedRows.map((r) => r.user_id));
 
-      // 2. Load product costs for margin calculation
-      const { data: productCostsData } = await supabase
-        .from('product_costs')
-        .select('product_id, cost_final, cost_price');
-      const productCosts = (productCostsData ?? []) as ProductCostRow[];
+      // 2. Load product costs for margin calculation (paginado: 3.637 linhas > capa de 1.000)
+      const productCosts = await fetchAllPages<ProductCostRow>((de, ate) =>
+        supabase
+          .from('product_costs')
+          .select('product_id, cost_final, cost_price')
+          .order('product_id', { ascending: true })
+          .range(de, ate) as unknown as PromiseLike<{ data: ProductCostRow[] | null; error: unknown }>,
+        'product_costs/scoring',
+      );
       const costMap = new Map<string, number>();
       // Custo canônico = cost_final (proxy-aware); cost_price agora é nullable (só custo real).
       // Number(null)===0 inflava a margem (ausente≠zero) — excluir SKU sem custo, não fabricar 0.
       productCosts.forEach((pc) => {
         const c = custoCanonico(pc);
         if (c != null) costMap.set(pc.product_id, c);
+      });
+
+      // 2b. Mapa omie_codigo_produto → UUID. Os itens de pedido em produção são pt-BR e trazem
+      // `omie_codigo_produto`, não `product_id` — sem este mapa, TODO item era descartado e os
+      // componentes de margem (G) e de mix (X) do health score ficavam zerados para todo cliente.
+      type ProdutoOmieRow = { id: string; omie_codigo_produto: number | string | null };
+      const produtos = await fetchAllPages<ProdutoOmieRow>((de, ate) =>
+        supabase
+          .from('omie_products')
+          .select('id, omie_codigo_produto')
+          .order('id', { ascending: true })
+          .range(de, ate) as unknown as PromiseLike<{ data: ProdutoOmieRow[] | null; error: unknown }>,
+        'omie_products/scoring',
+      );
+      const omieToProductId = new Map<number, string>();
+      produtos.forEach((p) => {
+        if (p.omie_codigo_produto != null) omieToProductId.set(Number(p.omie_codigo_produto), p.id);
       });
 
       // 3. Load farmer calls for contact rates
@@ -241,12 +274,12 @@ export const useFarmerScoring = (farmerId?: string) => {
         const items: SalesOrderItem[] = Array.isArray(order.items)
           ? (order.items as unknown as SalesOrderItem[])
           : [];
-        for (const item of items) {
-          if (item.product_id) cd.categories.add(item.product_id);
+        for (const pid of resolveProductIdsFromItems(items, omieToProductId)) {
+          cd.categories.add(pid);
         }
         // Margem só sobre SKU com custo CONHECIDO (custo ausente não vira 0 — inflaria a
         // margem; ausente ≠ zero). Alinhado ao filtro do costMap acima (~linha 176).
-        const { revenue, cost } = accumulateMarginFromItems(items, costMap);
+        const { revenue, cost } = accumulateMarginFromItems(items, costMap, omieToProductId);
         cd.totalRevenue += revenue;
         cd.totalCost += cost;
       }
@@ -317,8 +350,13 @@ export const useFarmerScoring = (farmerId?: string) => {
         const m = clamp(Math.log(1 + avgMonthly) / Math.log(1 + p95MonthlySpend), 0, 1);
 
         // G = clamp((GrossMarginClient - P10Margin) / (P90Margin - P10Margin), 0, 1)
-        const clientMargin = cd.totalRevenue > 0 ? (cd.totalRevenue - cd.totalCost) / cd.totalRevenue : 0;
-        const g = clamp((clientMargin - p10Margin) / marginRange, 0, 1);
+        // Receita 0 = NENHUM item deste cliente tem custo conhecido (accumulateMarginFromItems
+        // já descarta SKU sem custo) → margem DESCONHECIDA, não zero. O `: 0` anterior era
+        // incoerente com a régua construída logo acima: o laço que monta `allMargins` (~l.308)
+        // exclui justamente os clientes de receita 0 do cálculo dos percentis. O código já
+        // sabia que receita 0 não é margem 0 — só não aplicava isso ao próprio cliente.
+        const clientMargin = cd.totalRevenue > 0 ? (cd.totalRevenue - cd.totalCost) / cd.totalRevenue : null;
+        const g = clientMargin == null ? null : clamp((clientMargin - p10Margin) / marginRange, 0, 1);
 
         // X = clamp(CatCount / CatTarget, 0, 1)
         const x = clamp(cd.categories.size / config.cat_target, 0, 1);
@@ -328,13 +366,17 @@ export const useFarmerScoring = (farmerId?: string) => {
         const whatsappRate = cd.whatsappCalls60d > 0 ? cd.whatsappReplied60d / cd.whatsappCalls60d : 0;
         const s = 0.7 * answerRate + 0.3 * whatsappRate;
 
-        // Health = 100 * (0.35*RF + 0.20*M + 0.15*G + 0.15*X + 0.15*S)
-        const healthScore = 100 * (
-          config.health_w_rf * rf +
-          config.health_w_m * m +
-          config.health_w_g * g +
-          config.health_w_x * x +
-          config.health_w_s * s
+        // Health = média ponderada das dimensões CONHECIDAS (0.35*RF + 0.20*M + 0.15*G +
+        // 0.15*X + 0.15*S). Margem desconhecida SAI da conta e seu peso é redistribuído: zero
+        // não é neutro numa média ponderada, é a pior nota do eixo, então entrar como 0 custaria
+        // até 15 pontos por ausência de dado. Oráculo em src/lib/scoring/healthScore.ts; espelha
+        // a renormalização que o #1495 aplicou no calculate-scores (motor server-side).
+        const healthScore = calcularHealthScore(
+          { rf, m, g, x, s },
+          {
+            rf: config.health_w_rf, m: config.health_w_m, g: config.health_w_g,
+            x: config.health_w_x, s: config.health_w_s,
+          },
         );
 
         // ChurnRisk = 100 * (1 - exp(-k1 * max((D/max(I,1)) - 1, 0)))
@@ -377,7 +419,8 @@ export const useFarmerScoring = (farmerId?: string) => {
           daysSinceLastPurchase: D,
           avgRepurchaseInterval: Math.round(I * 10) / 10,
           avgMonthlySpend180d: Math.round(avgMonthly * 100) / 100,
-          grossMarginPct: Math.round(clientMargin * 1000) / 10,
+          // null preservado até a UI: Math.round(null) é 0 e reintroduziria "0,0% de margem".
+          grossMarginPct: clientMargin == null ? null : Math.round(clientMargin * 1000) / 10,
           categoryCount: cd.categories.size,
           answerRate60d: Math.round(answerRate * 1000) / 10,
           whatsappReplyRate60d: Math.round(whatsappRate * 1000) / 10,

@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { supabase } from '@/integrations/supabase/client';
 import { Loader2, AlertTriangle, Search, CheckCircle2, Wrench, ListChecks, PackageSearch } from 'lucide-react';
+import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { toast } from 'sonner';
 import { decodeHtmlEntities } from '@/lib/utils';
 
@@ -165,9 +166,7 @@ const ProducaoBomExcecoes = () => {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-      </div>
+      <PageSkeleton variant="list" />
     );
   }
 

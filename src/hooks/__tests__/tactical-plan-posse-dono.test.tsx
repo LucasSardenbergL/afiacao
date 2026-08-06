@@ -82,6 +82,9 @@ const h = vi.hoisted(() => ({
 vi.mock('@/integrations/supabase/client', () => ({
   supabase: { from: (t: string) => chain(t), rpc: (fn: string, args: Record<string, unknown>) => recordRpc(fn, args), functions: { invoke: (...a: unknown[]) => h.invoke(...a) } },
 }));
+// O hook usa invokeFunction (não o invoke cru): é o que faz o motivo real da
+// edge chegar ao usuário. O helper devolve o corpo direto, sem {data,error}.
+vi.mock('@/lib/invoke-function', () => ({ invokeFunction: (...a: unknown[]) => h.invoke(...a) }));
 vi.mock('@/contexts/ImpersonationContext', () => ({ useImpersonation: () => ({ isImpersonating: false, effectiveUserId: VIEWER }) }));
 vi.mock('@/contexts/AuthContext', () => ({ useAuth: () => ({ user: { id: VIEWER }, isStaff: true }) }));
 vi.mock('sonner', () => ({ toast: { error: (...a: unknown[]) => h.toastError(...a), success: (...a: unknown[]) => h.toastSuccess(...a) } }));
@@ -92,9 +95,9 @@ beforeEach(() => {
   queries = [];
   rpcCalls = [];
   scoreFarmerId = OWNER;
-  h.invoke.mockResolvedValue({ data: { strategic_objective: 'upsell_premium' }, error: null });
+  h.invoke.mockResolvedValue({ strategic_objective: 'upsell_premium' });
   vi.clearAllMocks();
-  h.invoke.mockResolvedValue({ data: { strategic_objective: 'upsell_premium' }, error: null });
+  h.invoke.mockResolvedValue({ strategic_objective: 'upsell_premium' });
 });
 
 describe('generatePlan — POSSE do plano = DONO da carteira (não o executor)', () => {

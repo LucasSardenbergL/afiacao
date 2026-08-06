@@ -3,12 +3,11 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { ilikeOr, isSearchablePostgrestTerm } from "@/lib/postgrest";
 import { useAuth } from "@/contexts/AuthContext";
-import { useReposicaoEmpresa } from "@/contexts/ReposicaoEmpresaContext";
 import { toast } from "sonner";
 import { AlertTriangle } from "lucide-react";
 import {
   PAGE_SIZE,
-  type EventoOutlier, type SkuInfo, type ImpactoData, type GrupoRow, type AcaoConfirm,
+  type EventoOutlier, type SkuInfo, type GrupoRow, type AcaoConfirm,
 } from "@/components/reposicao/alertas/types";
 import { StatsCards } from "@/components/reposicao/alertas/StatsCards";
 import { AlertasFiltros } from "@/components/reposicao/alertas/AlertasFiltros";
@@ -18,7 +17,10 @@ import { ConfirmacaoDialog } from "@/components/reposicao/alertas/ConfirmacaoDia
 
 export default function AdminReposicaoAlertas() {
   const { user } = useAuth();
-  const { empresa } = useReposicaoEmpresa();
+  // Sem `useReposicaoEmpresa`: a empresa do contexto só alimentava o recálculo
+  // pós-exclusão (removido). A lista nunca filtrou por ela — o que, aliás, deixava o
+  // recálculo ainda mais solto: dava para decidir um alerta de uma empresa e recalcular
+  // outra, a do seletor.
   const qc = useQueryClient();
 
   const [page, setPage] = useState(1);
@@ -112,24 +114,31 @@ export default function AdminReposicaoAlertas() {
           .map(([dia, q]) => ({ dia, qtde: q, isOutlier: dia === outlierDay }))
           .sort((a, b) => a.dia.localeCompare(b.dia));
       } else {
-        // NOTE: schema generated em `types.ts` está desincronizado com a tabela
-        // real `sku_leadtime_history` (faltam `data_pedido`/`lt_bruto_dias_uteis`).
-        // Usamos cast pra row local até o schema ser regenerado.
-        type LeadtimeRow = { data_pedido: string; lt_bruto_dias_uteis: number };
+        // A coluna é `t1_data_pedido` — `data_pedido` NUNCA existiu (conferido na prod:
+        // `column "data_pedido" does not exist`). O drill-down de lt_atipico levava 400
+        // e lançava; ninguém notava porque o próprio viés do leadtime escondia o bug —
+        // cópias idênticas zeram o desvio e `z = (lt-media)/NULLIF(desvio,0)` vira NULL,
+        // então o detector quase não emitia lt_atipico. Corrigir a fonte EXPÕE a tela.
+        // Fonte = v_sku_leadtime_efetivo: 1 ponto por NFe, não por linha-de-pedido.
+        // t1 NOT NULL: a view emite t1 NULL quando as cópias divergem e
+        // sem data não há eixo X — a observação é omitida do gráfico, não inventada.
+        type LeadtimeRow = { t1_data_pedido: string; lt_bruto_dias_uteis: number };
         const { data, error } = await supabase
-          .from("sku_leadtime_history")
-          .select("data_pedido, lt_bruto_dias_uteis" as never)
+          .from("v_sku_leadtime_efetivo")
+          .select("t1_data_pedido, lt_bruto_dias_uteis" as never)
           .eq("empresa", drillEvento.empresa as never)
           .eq("sku_codigo_omie", drillEvento.sku_codigo_omie as never)
-          .order("data_pedido", { ascending: true });
+          .not("t1_data_pedido", "is", null)
+          .not("lt_bruto_dias_uteis", "is", null)
+          .order("t1_data_pedido", { ascending: true });
         if (error) throw error;
         const outlierDay = drillEvento.data_evento.slice(0, 10);
         const rows = (data ?? []) as unknown as LeadtimeRow[];
         return rows.map((r, i: number) => ({
           idx: i + 1,
-          dia: String(r.data_pedido).slice(0, 10),
+          dia: String(r.t1_data_pedido).slice(0, 10),
           lt: Number(r.lt_bruto_dias_uteis),
-          isOutlier: String(r.data_pedido).slice(0, 10) === outlierDay,
+          isOutlier: String(r.t1_data_pedido).slice(0, 10) === outlierDay,
         }));
       }
     },
@@ -152,19 +161,15 @@ export default function AdminReposicaoAlertas() {
     },
   });
 
-  // Impacto previsto
-  const { data: impacto } = useQuery<ImpactoData>({
-    enabled: !!drillEvento && !isSemGrupo,
-    queryKey: ["outlier-impacto", drillEvento?.id],
-    queryFn: async () => {
-      if (!drillEvento) return null;
-      const { data, error } = await supabase.rpc("estimar_impacto_exclusao_outlier", {
-        p_evento_id: drillEvento.id,
-      });
-      if (error) throw error;
-      return (data ?? null) as unknown as ImpactoData;
-    },
-  });
+  // Média do LT para a linha de referência do gráfico. Derivada do MESMO histórico que
+  // desenha os pontos — antes vinha da RPC estimar_impacto_exclusao_outlier (removida do
+  // fluxo), cuja fórmula e janela divergiam do que o gráfico plota.
+  const mediaLt = useMemo(() => {
+    if (drillEvento?.tipo === "venda_atipica") return null;
+    const rows = (historico as Array<{ lt: number }> | null) ?? [];
+    if (rows.length === 0) return null;
+    return rows.reduce((acc, r) => acc + r.lt, 0) / rows.length;
+  }, [historico, drillEvento?.tipo]);
 
   // Grupos disponíveis do fornecedor (só para sku_sem_grupo)
   const { data: gruposFornecedor } = useQuery({
@@ -230,30 +235,24 @@ export default function AdminReposicaoAlertas() {
   });
 
   const resolverMut = useMutation({
-    mutationFn: async ({ ids, decisao, just }: { ids: number[]; decisao: string; just: string }) => {
+    mutationFn: async ({ ids, just }: { ids: number[]; just: string }) => {
       const results = [];
       for (const id of ids) {
         const { data, error } = await supabase.rpc("resolver_outlier", {
           p_evento_id: id,
-          p_decisao: decisao,
+          p_decisao: "aceitar",
           p_justificativa: just || undefined,
           p_usuario_email: user?.email || undefined,
         });
         if (error) throw error;
         results.push(data);
       }
-      // Recálculo automático após exclusão
-      if (decisao === "excluir") {
-        try {
-          await supabase.rpc("atualizar_parametros_numericos_skus", { p_empresa: empresa });
-        } catch (e) {
-          console.warn("Recálculo falhou:", e);
-        }
-      }
+      // Sem recálculo aqui: o que existia rodava sobre a MESMA base, sem relação com a
+      // decisão (teatro). O recálculo do fluxo sku_sem_grupo fica — ali o LT muda de fato.
       return results;
     },
     onSuccess: (_, vars) => {
-      toast.success(`${vars.ids.length} alerta(s) ${vars.decisao === "aceitar" ? "aceito(s)" : vars.decisao === "excluir" ? "excluído(s)" : "ignorado(s)"}`);
+      toast.success(`${vars.ids.length} alerta(s) marcado(s) como revisado(s)`);
       qc.invalidateQueries({ queryKey: ["outliers-lista"] });
       qc.invalidateQueries({ queryKey: ["outlier-stats"] });
       qc.invalidateQueries({ queryKey: ["outlier-pendentes-count"] });
@@ -289,7 +288,7 @@ export default function AdminReposicaoAlertas() {
     if (!acaoConfirm) return;
     const ids = acaoConfirm.lote ? Array.from(selecionados) : drillEvento ? [drillEvento.id] : [];
     if (ids.length === 0) return;
-    resolverMut.mutate({ ids, decisao: acaoConfirm.tipo, just: justificativa });
+    resolverMut.mutate({ ids, just: justificativa });
   };
 
   return (
@@ -319,8 +318,7 @@ export default function AdminReposicaoAlertas() {
         setFiltroStatus={setFiltroStatus}
         setPage={setPage}
         selecionadosCount={selecionados.size}
-        onAceitarLote={() => setAcaoConfirm({ tipo: "aceitar", lote: true })}
-        onExcluirLote={() => setAcaoConfirm({ tipo: "excluir", lote: true })}
+        onAceitarLote={() => setAcaoConfirm({ lote: true })}
         onLimparSelecao={() => setSelecionados(new Set())}
       />
 
@@ -346,7 +344,7 @@ export default function AdminReposicaoAlertas() {
         isSemGrupo={!!isSemGrupo}
         skuInfo={skuInfo}
         historico={historico}
-        impacto={impacto}
+        mediaLt={mediaLt}
         gruposFornecedor={gruposFornecedor}
         grupoEscolhido={grupoEscolhido}
         setGrupoEscolhido={setGrupoEscolhido}
@@ -354,7 +352,7 @@ export default function AdminReposicaoAlertas() {
         onAtribuirGrupo={() => atribuirGrupoMut.mutate()}
         justificativa={justificativa}
         setJustificativa={setJustificativa}
-        onAcao={(tipo) => setAcaoConfirm({ tipo, lote: false })}
+        onAcao={() => setAcaoConfirm({ lote: false })}
       />
 
       {/* Confirmação */}

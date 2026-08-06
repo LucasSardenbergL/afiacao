@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { parseCidadesCache, serializeCidadesCache } from './cidades-cache';
-import type { CityOption } from '@/components/reposicao/routePlanner/types';
+import type { CityOption } from '@/components/rota/planner/types';
 
 const cidade: CityOption = { codigo: '3106200', nome: 'BELO HORIZONTE', uf: 'MG', total: 120, comTelefone: 80, aContatar: 60 };
 const TTL = 48 * 60 * 60 * 1000; // 48h

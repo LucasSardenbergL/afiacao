@@ -9,7 +9,7 @@ import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
-import type { CityOption } from '@/components/reposicao/routePlanner/types';
+import type { CityOption } from '@/components/rota/planner/types';
 import { parseCidadesCache, serializeCidadesCache } from '@/lib/route/cidades-cache';
 
 interface RawCidadeRow {

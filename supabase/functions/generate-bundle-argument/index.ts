@@ -1,5 +1,19 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
+import Anthropic from "npm:@anthropic-ai/sdk@^0.93.0";
+import {
+  extrairToolUseUnico,
+  MODELO_PADRAO,
+  statusDoErro,
+  traduzirErroAnthropic,
+} from "../_shared/anthropic.ts";
+import {
+  normalizarArgumentacao,
+  normalizarPerguntas,
+  TOOL_ARGUMENTO,
+  TOOL_PERGUNTAS,
+} from "./argumento-tools.ts";
+import { blocoCliente, REGRA_DADO_AUSENTE } from "./argumento-helpers.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -24,8 +38,9 @@ serve(async (req) => {
       return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY is not configured");
+    const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY");
+    if (!ANTHROPIC_API_KEY) throw new Error("ANTHROPIC_API_KEY is not configured");
+    const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
 
     const { bundle, customer, customerProfile, mode } = await req.json();
 
@@ -53,6 +68,8 @@ REGRAS:
 - Perguntas abertas que estimulem reflexão
 - Baseadas em dados reais do cliente
 - Linguagem técnica mas acessível
+
+${REGRA_DADO_AUSENTE}
 
 Retorne EXATAMENTE um JSON (sem markdown, sem code blocks):
 {
@@ -84,66 +101,59 @@ Retorne EXATAMENTE um JSON (sem markdown, sem code blocks):
   ]
 }`;
 
-      const userPrompt = `Cliente: ${customer.name}
-Segmento/CNAE: ${customer.cnae || 'Não informado'}
-Tipo: ${customer.customerType || 'Não informado'}
-Health Score: ${customer.healthScore}/100
-Dias desde última compra: ${customer.daysSinceLastPurchase || 'N/A'}
-Gasto médio mensal: R$ ${customer.avgMonthlySpend || 0}
-Categorias compradas: ${customer.categoryCount || 0}
+      const userPrompt = `${blocoCliente(customer)}
 
 Bundle sugerido (${bundle.products.length} produtos):
 ${bundle.products.map((p: { name: string; price: number; margin: number }, i: number) => `${i + 1}. ${p.name} - Preço: R$ ${p.price.toFixed(2)} | Margem: R$ ${p.margin.toFixed(2)}`).join('\n')}
 
 LIE do Bundle: R$ ${bundle.lieBundle.toFixed(2)}
-Confidence: ${(bundle.confidence * 100).toFixed(1)}%
+Confidence: ${(bundle.confidence * 100).toFixed(1)}%`;
 
-Histórico de compras recentes: ${customer.recentProducts?.join(', ') || 'Sem dados'}`;
-
-      const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${LOVABLE_API_KEY}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: "google/gemini-2.5-flash",
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: userPrompt },
-          ],
-        }),
-      });
-
-      if (!response.ok) {
-        if (response.status === 429) {
-          return new Response(JSON.stringify({ error: "Rate limit exceeded. Tente novamente em alguns segundos." }), {
-            status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" },
-          });
-        }
-        if (response.status === 402) {
-          return new Response(JSON.stringify({ error: "Créditos insuficientes. Adicione créditos ao workspace." }), {
-            status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" },
-          });
-        }
-        const t = await response.text();
-        console.error("AI gateway error:", response.status, t);
-        throw new Error(`AI gateway error: ${response.status}`);
-      }
-
-      const data = await response.json();
-      const content = data.choices?.[0]?.message?.content || "";
-
-      let parsed;
+      let resposta;
       try {
-        const jsonMatch = content.match(/\{[\s\S]*\}/);
-        parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : JSON.parse(content);
-      } catch {
-        console.error("Failed to parse AI response:", content);
-        parsed = { questions: [] };
+        resposta = await anthropic.messages.create({
+          model: MODELO_PADRAO,
+          max_tokens: 2000,
+          // Explícito: omitir usaria o default 1 da API. Material comercial pede
+          // baixa variabilidade — e o Gemini anterior não tinha o mesmo default.
+          temperature: 0.4,
+          system: systemPrompt,
+          tools: [TOOL_PERGUNTAS],
+          tool_choice: { type: "tool", name: TOOL_PERGUNTAS.name, disable_parallel_tool_use: true },
+          messages: [{ role: "user", content: userPrompt }],
+        });
+      } catch (e: unknown) {
+        const status = statusDoErro(e);
+        console.error("[generate-bundle-argument] erro na API (perguntas):", status, e instanceof Error ? e.message : e);
+        const mapeado = traduzirErroAnthropic(status);
+        return new Response(JSON.stringify({ error: mapeado?.mensagem ?? "Erro ao gerar perguntas" }), {
+          status: mapeado?.http ?? 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
       }
 
-      return new Response(JSON.stringify(parsed), {
+      // Truncou = perguntas cortadas no meio. Entregar as que couberam faria a
+      // vendedora ir para a visita com um roteiro SPIN incompleto achando que
+      // está inteiro.
+      if (resposta.stop_reason === "max_tokens") {
+        console.error("[generate-bundle-argument] perguntas truncadas");
+        return new Response(JSON.stringify({ error: "Geração truncada. Tente novamente." }), {
+          status: 422, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      // ANTES: `JSON.parse` do texto e, no catch, `{ questions: [] }` — lista
+      // vazia silenciosa que a tela mostrava como "sem perguntas" em vez de
+      // "não consegui gerar".
+      const extraido = extrairToolUseUnico(resposta.content);
+      const perguntas = extraido.ok ? normalizarPerguntas(extraido.input) : [];
+      if (perguntas.length === 0) {
+        console.error("[generate-bundle-argument] sem perguntas utilizáveis");
+        return new Response(JSON.stringify({ error: "A IA não devolveu perguntas utilizáveis. Tente novamente." }), {
+          status: 422, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      return new Response(JSON.stringify({ questions: perguntas }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
@@ -165,6 +175,8 @@ PERFIL DO CLIENTE: ${customerProfile}
 - Se "orientado_produtividade": foque em velocidade, uptime, menos paradas
 - Se "misto": balance todos os argumentos
 
+${REGRA_DADO_AUSENTE}
+
 Retorne EXATAMENTE um JSON com esta estrutura (sem markdown, sem code blocks):
 {
   "diagnostico": "Diagnóstico implícito baseado no histórico (1-2 frases)",
@@ -177,73 +189,58 @@ Retorne EXATAMENTE um JSON com esta estrutura (sem markdown, sem code blocks):
   "versao_tecnica": "Versão técnica detalhada (parágrafo completo)"
 }`;
 
-    const userPrompt = `Cliente: ${customer.name}
-Segmento/CNAE: ${customer.cnae || 'Não informado'}
-Tipo: ${customer.customerType || 'Não informado'}
-Health Score: ${customer.healthScore}/100
-Dias desde última compra: ${customer.daysSinceLastPurchase || 'N/A'}
-Gasto médio mensal: R$ ${customer.avgMonthlySpend || 0}
-Categorias compradas: ${customer.categoryCount || 0}
+    const userPrompt = `${blocoCliente(customer)}
 
 Bundle sugerido (${bundle.products.length} produtos):
 ${bundle.products.map((p: { name: string; price: number; margin: number }, i: number) => `${i + 1}. ${p.name} - Preço: R$ ${p.price.toFixed(2)} | Margem: R$ ${p.margin.toFixed(2)}`).join('\n')}
 
 LIE do Bundle: R$ ${bundle.lieBundle.toFixed(2)}
 Confidence: ${(bundle.confidence * 100).toFixed(1)}%
-Lift: ${bundle.lift.toFixed(2)}
+Lift: ${bundle.lift.toFixed(2)}`;
 
-Histórico de compras recentes do cliente: ${customer.recentProducts?.join(', ') || 'Sem dados'}`;
-
-    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${LOVABLE_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt },
-        ],
-      }),
-    });
-
-    if (!response.ok) {
-      if (response.status === 429) {
-        return new Response(JSON.stringify({ error: "Rate limit exceeded. Tente novamente em alguns segundos." }), {
-          status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-      if (response.status === 402) {
-        return new Response(JSON.stringify({ error: "Créditos insuficientes. Adicione créditos ao workspace." }), {
-          status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-      const t = await response.text();
-      console.error("AI gateway error:", response.status, t);
-      throw new Error(`AI gateway error: ${response.status}`);
+    let resposta;
+    try {
+      resposta = await anthropic.messages.create({
+        model: MODELO_PADRAO,
+        max_tokens: 2000,
+        // Explícito: omitir usaria o default 1 da API. Material comercial pede
+        // baixa variabilidade — e o Gemini anterior não tinha o mesmo default.
+        temperature: 0.4,
+        system: systemPrompt,
+        tools: [TOOL_ARGUMENTO],
+        tool_choice: { type: "tool", name: TOOL_ARGUMENTO.name, disable_parallel_tool_use: true },
+        messages: [{ role: "user", content: userPrompt }],
+      });
+    } catch (e: unknown) {
+      const status = statusDoErro(e);
+      console.error("[generate-bundle-argument] erro na API (argumento):", status, e instanceof Error ? e.message : e);
+      const mapeado = traduzirErroAnthropic(status);
+      return new Response(JSON.stringify({ error: mapeado?.mensagem ?? "Erro ao gerar argumentação" }), {
+        status: mapeado?.http ?? 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
     }
 
-    const data = await response.json();
-    const content = data.choices?.[0]?.message?.content || "";
+    // Truncou = argumentação cortada. As versões phone/whatsapp são os últimos
+    // campos do schema, então é justamente o texto que vai ao cliente que some.
+    if (resposta.stop_reason === "max_tokens") {
+      console.error("[generate-bundle-argument] argumentação truncada");
+      return new Response(JSON.stringify({ error: "Geração truncada. Tente novamente." }), {
+        status: 422, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
-    let parsed;
-    try {
-      const jsonMatch = content.match(/\{[\s\S]*\}/);
-      parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : JSON.parse(content);
-    } catch {
-      console.error("Failed to parse AI response:", content);
-      parsed = {
-        diagnostico: "Análise em processamento",
-        insight_tecnico: "Consulte dados técnicos",
-        beneficio_operacional: "Melhoria operacional esperada",
-        beneficio_economico: "Economia potencial identificada",
-        objecao_antecipada: "Avalie custo-benefício",
-        versao_phone: content.slice(0, 200),
-        versao_whatsapp: content.slice(0, 150),
-        versao_tecnica: content,
-      };
+    // ANTES: no catch do JSON.parse, `versao_whatsapp` virava `content.slice(0,150)`
+    // — o texto CRU do modelo (raciocínio, markdown quebrado, JSON pela metade)
+    // como mensagem enviada AO CLIENTE — e `beneficio_economico` virava
+    // "Economia potencial identificada", uma afirmação econômica fabricada.
+    // Com tool-use, ou o schema é satisfeito, ou a edge falha explícito.
+    const extraido = extrairToolUseUnico(resposta.content);
+    const parsed = extraido.ok ? normalizarArgumentacao(extraido.input) : null;
+    if (!parsed) {
+      console.error("[generate-bundle-argument] sem argumentação utilizável");
+      return new Response(JSON.stringify({ error: "A IA não devolveu uma argumentação utilizável. Tente novamente." }), {
+        status: 422, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
     }
 
     return new Response(JSON.stringify(parsed), {

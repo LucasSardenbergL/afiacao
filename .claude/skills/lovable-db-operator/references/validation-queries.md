@@ -76,6 +76,32 @@ FROM information_schema.role_routine_grants
 WHERE routine_schema = 'public' AND routine_name = '<funcao>';
 ```
 
+### `CREATE OR REPLACE` de função: "existe" não é validação
+
+Com `CREATE OR REPLACE`, a função **já existia** — o `EXISTS` acima passa mesmo que nada tenha sido aplicado. Valide o **corpo**, e ancore na **presença do código NOVO**, nunca na **ausência do texto antigo**:
+
+```sql
+-- ✅ ancora no que o fix INTRODUZIU
+SELECT CASE WHEN (
+  SELECT pg_get_functiondef(p.oid) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+  WHERE n.nspname = 'public' AND p.proname = '<funcao>'
+) ILIKE '%<identificador que só o corpo novo tem>%'
+THEN '✅ corpo novo aplicado' ELSE '❌ ainda o corpo antigo' END AS status;
+```
+
+⚠️ **A armadilha (mordeu no #1357):** validar por `... NOT ILIKE '%<coluna_do_bug_antigo>%'` **mente**. `pg_get_functiondef` devolve o corpo **com os comentários**, e um fix bem documentado quase sempre explica o bug antigo citando o nome errado — então o grep casa a **própria explicação** e acusa `❌` numa função correta. É a regra anti-teatro da skill `prove-sql-money-path` aplicada à validação: *a sentinela nunca pode conter o texto que o próprio código emite*. Cuidado extra com substring: `t1_data_pedido` **contém** `data_pedido`, então mesmo sem comentário o `NOT ILIKE` daria falso-negativo.
+
+Lá o erro caiu pro lado seguro (`❌` falso). No sentido inverso — grep que casa por acidente e diz `✅` — você declara aplicado algo que nunca rodou, que é exatamente a falha silenciosa que esta skill existe pra prevenir.
+
+**A validação forte de função é por EXECUÇÃO, não por grep.** Rode via `psql-ro` a query que o corpo novo executa (ou a própria função, se o gate permitir) contra dado REAL e confira que (a) não estoura e (b) o número faz sentido:
+
+```sql
+-- prova que o caminho corrigido roda limpo e devolve valor plausível
+SELECT <a expressão/agregação exata do corpo novo> FROM <fonte nova> WHERE <filtro do corpo novo>;
+```
+
+Se a função tem gate de staff (`SECURITY DEFINER` + `has_role`), o `claude_ro` não a executa — sem JWT, `auth.uid()` é NULL e ela levanta `42501` antes de chegar na lógica. Nesse caso execute **a query interna**, que é onde mora o `42703`/`42P01` que você quer descartar.
+
 ## Trigger
 
 ```sql

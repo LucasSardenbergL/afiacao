@@ -2,6 +2,9 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { omieDateToIso, classifyOmieTransient, classifyPedidosPage, gerarJanelasMensais } from "./pagination.ts";
+import { carregarProductMap } from "../_shared/mapas-paginados.ts";
+import type { BancoPostgrest } from "../_shared/paginate.ts";
+import { avaliarPagina, MAX_PAGINAS_LISTAGEM, MAX_PAGINAS_PEDIDOS, MAX_PAGINAS_POS_ESTOQUE, proximoTotalPaginas } from "../_shared/omie-paginacao.ts";
 
 type OmieGenericResponse = Record<string, unknown> & { faultstring?: string; codigo_status?: number | string; descricao_status?: string };
 
@@ -134,6 +137,12 @@ interface OrderItemPayload {
   desconto?: number;
   tint_cor_id?: string;
   tint_nome_cor?: string;
+  // Fase 3 tint: metadados de precificação do picker — insumo do gate de
+  // revalidação (tint_gate_revalida) na fronteira. Ausentes = item legado.
+  tint_formula_id?: string;
+  tint_price_source?: string;
+  tint_discount_pct?: number;
+  tint_preco_sem_desconto?: number;
 }
 
 // (OrderBatchRow/OrderItemBatchRow/PriceHistoryBatchRow removidos: o sync agora monta o payload
@@ -149,6 +158,11 @@ interface EditItemInput {
   valor_unitario: number;
   tint_cor_id?: string;
   tint_nome_cor?: string;
+  // Fase 3 tint: metadados de precificação (ver OrderItemPayload)
+  tint_formula_id?: string;
+  tint_price_source?: string;
+  tint_discount_pct?: number;
+  tint_preco_sem_desconto?: number;
 }
 
 interface OpItemInput {
@@ -290,6 +304,9 @@ function getOmieItemIntegrationCode(index: number): number {
 async function syncProducts(supabase: SupabaseClient, startPage = 1, maxPages = 12, account: Account = "oben") {
   let pagina = startPage;
   let totalPaginas = 1;
+  // Fim REAL declarado por avaliarPagina (página vazia NA/apos a última declarada) — distingue
+  // "catálogo esgotado" de "lote esgotado" no `complete` abaixo.
+  let fimReal = false;
   let totalSynced = 0;
   let pagesProcessed = 0;
 
@@ -306,16 +323,39 @@ async function syncProducts(supabase: SupabaseClient, startPage = 1, maxPages = 
         apenas_importado_api: "N",
         filtrar_apenas_omiepdv: "N",
       },
-      account
+      account,
+      // throwOnTransient (achado Codex C, P1): sem ele o `null` é AMBÍGUO — "fim real" e
+      // "rate-limit esgotado" chegavam iguais aqui, e o `break` num resume (startPage=13,
+      // totalPaginas ainda 1) caía em `complete = pagina > totalPaginas` = 13>1 = TRUE →
+      // nextPage=null → cursor APAGADO com a cauda stale, e a UI dizendo sucesso. Com o
+      // throw, `null` significa SÓ fim real e o transitório vira erro visível (o caller
+      // retoma do mesmo start_page; o upsert por página é idempotente).
+      { throwOnTransient: true },
     );
 
     if (!result) {
-      console.log(`[Omie Vendas][${account}] Products sync interrupted by rate limit at page ${pagina}`);
+      // null agora é EOF do contrato Omie ("Não existem registros para a página") — fim REAL,
+      // não interrupção. Marcar fimReal fecha o cursor honestamente.
+      console.log(`[Omie Vendas][${account}] Products: fim real (sem registros) na página ${pagina}`);
+      fimReal = true;
       break;
     }
 
-    totalPaginas = (result.total_de_paginas as number) || 1;
+    // Piso MONOTÔNICO + teto fail-fast + anomalia (_shared/omie-paginacao.ts; money-path §9):
+    // era `|| 1` POR RESPOSTA — uma intermediária sem o campo encolhia o teto e o cursor
+    // devolvia complete=true/nextPage=null com o catálogo parcial.
+    totalPaginas = proximoTotalPaginas(totalPaginas, result.total_de_paginas as number | undefined, MAX_PAGINAS_LISTAGEM);
     const produtos: OmieProdutoCadastro[] = (result.produto_servico_cadastro as OmieProdutoCadastro[] | undefined) || [];
+    const veredicto = avaliarPagina(produtos.length, pagina, totalPaginas);
+    if (veredicto === "anomalia") {
+      // Vazia ANTES do fim declarado = fault disfarçado → aborta fail-closed; o caller re-invoca
+      // do start_page e o upsert por página é idempotente.
+      throw new Error(`página ${pagina}/${totalPaginas} do ListarProdutos veio vazia antes do fim declarado — abortando (retrato parcial)`);
+    }
+    if (veredicto === "fim") {
+      fimReal = true;
+      break;
+    }
 
     const EXCLUDED_FAMILIES = ['imobilizado', 'uso e consumo', 'matérias primas para conversão de cintas', 'jumbos de lixa para discos', 'material para tingimix'];
 
@@ -371,7 +411,7 @@ async function syncProducts(supabase: SupabaseClient, startPage = 1, maxPages = 
     pagesProcessed++;
   }
 
-  const complete = pagina > totalPaginas;
+  const complete = fimReal || pagina > totalPaginas;
   return { totalSynced, totalPaginas, lastPage: pagina - 1, nextPage: complete ? null : pagina, complete };
 }
 
@@ -379,6 +419,8 @@ async function syncProducts(supabase: SupabaseClient, startPage = 1, maxPages = 
 async function syncEstoque(supabase: SupabaseClient, startPage = 1, maxPages = 3, account: Account = "oben") {
   let pagina = startPage;
   let totalPaginas = 1;
+  // mesma distinção do syncProducts: fim REAL (avaliarPagina) ≠ lote esgotado.
+  let fimReal = false;
   let totalUpdated = 0;
   let pagesProcessed = 0;
 
@@ -392,16 +434,33 @@ async function syncEstoque(supabase: SupabaseClient, startPage = 1, maxPages = 3
         nRegPorPagina: 100,
         dDataPosicao: new Date().toLocaleDateString("pt-BR"),
       },
-      account
+      account,
+      // throwOnTransient: mesmo achado C do syncProducts — `null` ambíguo num resume fechava
+      // `complete=true/nextPage=null` com o estoque parcial e a UI reportando sucesso.
+      { throwOnTransient: true },
     );
 
     if (!result) {
-      console.log(`[Omie Vendas][${account}] Estoque sync interrupted by rate limit at page ${pagina}`);
+      // null = EOF do contrato Omie (fim REAL), não mais rate-limit disfarçado.
+      console.log(`[Omie Vendas][${account}] Estoque: fim real (sem registros) na página ${pagina}`);
+      fimReal = true;
       break;
     }
 
-    totalPaginas = (result.nTotPaginas as number) || 1;
+    // Piso MONOTÔNICO + teto fail-fast + anomalia (money-path §9): era `|| 1` POR RESPOSTA —
+    // intermediária sem o campo encolhia o teto e o cursor fechava complete com estoque parcial.
+    totalPaginas = proximoTotalPaginas(totalPaginas, result.nTotPaginas as number | undefined, MAX_PAGINAS_POS_ESTOQUE);
     const produtos: OmiePosEstoque[] = Array.isArray(result.produtos) ? (result.produtos as OmiePosEstoque[]) : [];
+    const veredictoEstoque = avaliarPagina(produtos.length, pagina, totalPaginas);
+    if (veredictoEstoque === "anomalia") {
+      // Vazia ANTES do fim declarado = fault disfarçado → aborta; o caller re-invoca do
+      // start_page (UPDATE por id é idempotente).
+      throw new Error(`página ${pagina}/${totalPaginas} do ListarPosEstoque veio vazia antes do fim declarado — abortando (retrato parcial)`);
+    }
+    if (veredictoEstoque === "fim") {
+      fimReal = true;
+      break;
+    }
     const updatedAt = new Date().toISOString();
 
     const productCodes = produtos
@@ -472,7 +531,7 @@ async function syncEstoque(supabase: SupabaseClient, startPage = 1, maxPages = 3
     pagesProcessed++;
   }
 
-  const complete = pagina > totalPaginas;
+  const complete = fimReal || pagina > totalPaginas;
   return { totalUpdated, totalPaginas, lastPage: pagina - 1, nextPage: complete ? null : pagina, complete };
 }
 
@@ -678,46 +737,74 @@ async function listarFormasPagamento(account: Account = "oben") {
     { codigo: "A04", descricao: "28/56/84 DDL" },
   ];
 
+  // Motivo da degradação, propagado no retorno (ver o bloco de fallback no fim da função).
+  let motivoFallback: string | null = null;
+
   try {
     const allParcelas: OmieParcela[] = [];
     let pagina = 1;
     let totalPaginas = 1;
 
     do {
+      // throwOnTransient: rate-limit/transitório ESGOTADO vira throw (→ fallback padrão do catch,
+      // degradação declarada e visível) em vez de null — que aqui era lido como fim e devolvia a
+      // lista PARCIAL como completa (classe money-path §9): parcela ausente = condição de
+      // pagamento do cliente indisponível na criação do pedido. null passa a significar SÓ fim real
+      // ("Não existem registros").
       const result = await callOmieVendasApi(
         "geral/parcelas/",
         "ListarParcelas",
         { pagina, registros_por_pagina: 500 },
-        account
+        account,
+        { throwOnTransient: true },
       );
+      if (!result) break;
 
       const parcelas: OmieParcela[] =
-        (result?.cadastros as OmieParcela[] | undefined)
-        || (result?.parcela_cadastro as OmieParcela[] | undefined)
-        || (result?.lista_parcelas as OmieParcela[] | undefined)
+        (result.cadastros as OmieParcela[] | undefined)
+        || (result.parcela_cadastro as OmieParcela[] | undefined)
+        || (result.lista_parcelas as OmieParcela[] | undefined)
         || [];
-      totalPaginas = (result?.total_de_paginas as number) || 1;
+      // Piso monotônico + teto fail-fast: era `|| 1` POR RESPOSTA (intermediária sem o campo
+      // encolhia o teto). Vazia ANTES do fim declarado = anomalia → throw → fallback padrão.
+      totalPaginas = proximoTotalPaginas(totalPaginas, result.total_de_paginas as number | undefined, MAX_PAGINAS_LISTAGEM);
+      if (avaliarPagina(parcelas.length, pagina, totalPaginas) === "anomalia") {
+        throw new Error(`página ${pagina}/${totalPaginas} do ListarParcelas veio vazia antes do fim declarado`);
+      }
       console.log(`[Omie Vendas][${account}] ListarParcelas página ${pagina}/${totalPaginas} retornou ${parcelas.length} parcelas.`);
       allParcelas.push(...parcelas);
       pagina++;
     } while (pagina <= totalPaginas);
 
     if (allParcelas.length > 0) {
-      return allParcelas
+      const formas = allParcelas
         .filter((f) => f.cInativo !== "S")
         .map((f) => ({
           codigo: f.cCodigo || f.nCodigo?.toString() || '',
           descricao: f.cDescricao || f.cDescParcela || '',
         }))
         .filter((f) => f.codigo && f.descricao);
+      return { formas, source: "omie" as const, degraded: false, motivo: null as string | null };
     }
   } catch (error) {
+    motivoFallback = error instanceof Error ? error.message : String(error);
     console.error(`[Omie Vendas][${account}] Erro ao buscar parcelas:`, error);
   }
 
-  // Fallback: return common payment conditions
-  console.log(`[Omie Vendas][${account}] Usando formas de pagamento padrão (fallback)`);
-  return defaultFormas;
+  // Fallback: condições comuns hardcoded. DECLARADO no retorno (achado Codex D): o caller
+  // recebia `{success:true, formas}` idêntico ao caminho bom e não tinha COMO distinguir
+  // "estas são as condições do Omie" de "o Omie não respondeu, aqui vão 8 genéricas" — o
+  // vendedor não vê a condição customizada do cliente e escolhe outra, que o Omie rejeita
+  // na hora de gravar o pedido. Trocar perda silenciosa por fallback silencioso não é
+  // degradação honesta (money-path §6: a falha tem de estar no CONTRATO).
+  // ⚠️ DEFESA DO FUTURO, declarada como tal: os 3 consumidores (useUnifiedOrder,
+  // useSalesOrderEdit, SalesPrintDashboard) hoje leem só `formas` e ignoram estes campos —
+  // exibir o aviso na tela é o follow-up. Sem eles, porém, nem dá para MEDIR a frequência.
+  console.warn(
+    `[Omie Vendas][${account}] Usando formas de pagamento padrão (FALLBACK degradado)` +
+      (motivoFallback ? ` — motivo: ${motivoFallback}` : " — Omie devolveu lista vazia"),
+  );
+  return { formas: defaultFormas, source: "fallback" as const, degraded: true, motivo: motivoFallback };
 }
 
 // Buscar última forma de pagamento e ranking de parcelas do cliente
@@ -888,30 +975,25 @@ async function syncPedidos(
   let reachedEnd = false;            // true SÓ no fim real do Omie (null = "Não existem registros", ou página vazia)
   let lastErrorKind: 'rate_limit' | 'transient' | 'http' | null = null;
 
-  // ── Pre-load document -> user_id mapping from profiles ──
-  const docToUserMap = new Map<string, string>();
-  let cPage = 0;
+  // ── Snapshot atômico de identidade doc→user (RPC server-side) — fecha a corrida A1 ──
+  // Antes: paginação KEYSET de profiles montava o docToUserMap com buildDocUserMapFailClosed. Era
+  // não-atômica (Codex xhigh 2026-07-10): um profile que nascia/mudava ENTRE páginas escapava da
+  // detecção de doc-ambíguo. Agora a unicidade doc→user é resolvida num ÚNICO snapshot MVCC server-side
+  // (omie_sync_identity_snapshot, sql STABLE): doc com 2+ users DISTINTOS já vem FORA de doc_to_user e
+  // listado em ambiguous_docs (métrica). O fail-closed (precisão>recall) vive no SQL, não mais no TS.
+  // .rpc() NÃO lança em erro (resolve {error}) → checar e FAIL-CLOSED (throw): um mapa PARCIAL silencioso
+  // causaria miss no fallback resolveClientUserId → skip/atribuição arbitrária. Aborta e retoma.
+  const { data: snap, error: snapErr } = await supabase.rpc('omie_sync_identity_snapshot', { p_account: account });
+  if (snapErr) throw new Error(`identity snapshot (${account}): ${snapErr.message}`);
+  // Validação ESTRITA do contrato (Codex challenge PR-1): .rpc() error=null só prova HTTP/SQL, NÃO o JSON.
+  // Uma RPC revertida devolvendo {doc_to_user:null,...} (HTTP 200) degradaria p/ Map(0) SILENCIOSO → pedidos
+  // pulados. parseIdentitySnapshot LANÇA em shape inválido (null/array/não-UUID/doc ambíguo vazado) — fail-closed.
+  const { docToUserMap, ambiguousDocs } = parseIdentitySnapshot(snap);
+  console.log(`[sync_pedidos][${account}] Identity snapshot: ${docToUserMap.size} doc(s) único(s), ${ambiguousDocs.size} ambíguo(s) excluído(s) (fail-closed server-side)`);
+
+  // pgSize/hasMore ficam declarados aqui pois o pré-load do clientCache (abaixo) os reusa.
   const pgSize = 1000;
   let hasMore = true;
-  while (hasMore) {
-    const { data: batch } = await supabase
-      .from('profiles')
-      .select('user_id, document')
-      .not('document', 'is', null)
-      .range(cPage * pgSize, (cPage + 1) * pgSize - 1);
-    if (!batch || batch.length === 0) { hasMore = false; }
-    else {
-      for (const p of batch) {
-        if (p.document) {
-          const cleanDoc = p.document.replace(/\D/g, '');
-          if (cleanDoc.length >= 11) docToUserMap.set(cleanDoc, p.user_id);
-        }
-      }
-      if (batch.length < pgSize) hasMore = false;
-      cPage++;
-    }
-  }
-  console.log(`[sync_pedidos][${account}] Document map: ${docToUserMap.size} profiles`);
 
   // Dedupe DENTRO da run (evita mandar o mesmo pedido 2x na mesma chamada). NÃO pré-carregamos
   // hashes do banco: todos os pedidos válidos da janela vão para a RPC criar_pedidos_com_itens,
@@ -920,43 +1002,49 @@ async function syncPedidos(
   // era pulado pelo hash do pai e os itens nunca eram restaurados.
   const seenHashes = new Set<string>();
 
-  // ── Pre-load omie_clientes mapping (codigo_cliente -> user_id) to AVOID API calls ──
+  // ── Pre-load mapping (codigo_cliente -> user_id) da VIEW FRESCA account-correta p/ EVITAR chamadas API ──
+  // P0-B-bis PR-2: a fonte era o espelho poluído omie_clientes SEM filtro de conta. Como o código Omie é
+  // numerado POR conta, um código desta conta podia colidir com o mesmo número em OUTRA conta e o cache (1
+  // chave global codigo->user) mapeava o user_id ERRADO — pedido atribuído ao cliente errado (bug #4 do
+  // design; o espelho é sobrescrito ao longo do dia pelos writers colacor_sc, então a colisão é intermitente).
+  // A view omie_customer_account_map_fresco é account-correta (UNIQUE(codigo,account)) e document-first; o
+  // miss aqui cai no resolveClientUserId → API ConsultarCliente (fail-safe).
+  // Paginação KEYSET (.gt no código + .limit), não offset: a view filtra updated_at>=now()-7d, então uma
+  // linha pode cruzar o TTL ENTRE páginas; keyset é imune a esse deslocamento (offset .range pularia/repetiria
+  // — Codex P2). O código é UNIQUE(codigo,account) → ordenação sem empate. Erro de query é FAIL-CLOSED (throw):
+  // engolir o error (capa silenciosa do PostgREST) deixaria um cache parcial → milhares de miss → rate-limit
+  // no Omie → skip/atribuição arbitrária no fallback. Melhor abortar o run e retomar na próxima janela.
   const clientCache = new Map<number, string | null>();
-  let ocPage = 0;
+  let lastCodigo = 0;
   hasMore = true;
   while (hasMore) {
-    const { data: batch } = await supabase
-      .from('omie_clientes')
+    const { data: batch, error: cacheErr } = await supabase
+      .from('omie_customer_account_map_fresco')
       .select('omie_codigo_cliente, user_id')
-      .range(ocPage * pgSize, (ocPage + 1) * pgSize - 1);
-    if (!batch || batch.length === 0) { hasMore = false; }
+      .eq('account', account)
+      .gt('omie_codigo_cliente', lastCodigo)
+      .order('omie_codigo_cliente')
+      .limit(pgSize);
+    if (cacheErr) throw new Error(`pre-load client cache (${account}): ${cacheErr.message}`);
+    // data:null SEM error = resposta malformada (≠ fim): lida como fim, o cache sai PARCIAL →
+    // milhares de miss no fallback → rate-limit no Omie → skip/atribuição arbitrária (§9).
+    if (batch == null) throw new Error(`pre-load client cache (${account}): data null sem error — resposta malformada, não é fim`);
+    if (batch.length === 0) { hasMore = false; }
     else {
       for (const oc of batch) {
         clientCache.set(oc.omie_codigo_cliente, oc.user_id);
       }
+      lastCodigo = batch[batch.length - 1].omie_codigo_cliente;
       if (batch.length < pgSize) hasMore = false;
-      ocPage++;
     }
   }
-  console.log(`[sync_pedidos][${account}] Client cache from omie_clientes: ${clientCache.size}`);
+  console.log(`[sync_pedidos][${account}] Client cache from omie_customer_account_map_fresco: ${clientCache.size}`);
 
   // ── Pre-load product mapping ──
-  const productMap = new Map<number, string>();
-  let pPage = 0;
-  hasMore = true;
-  while (hasMore) {
-    const { data: batch } = await supabase
-      .from('omie_products')
-      .select('id, omie_codigo_produto')
-      .eq('account', account)
-      .range(pPage * pgSize, (pPage + 1) * pgSize - 1);
-    if (!batch || batch.length === 0) { hasMore = false; }
-    else {
-      for (const p of batch) productMap.set(p.omie_codigo_produto, p.id);
-      if (batch.length < pgSize) hasMore = false;
-      pPage++;
-    }
-  }
+  // Leitura COMPLETA e fail-closed (`_shared/mapas-paginados.ts`): o laço aqui descartava `error`,
+  // então página que falhava virava "acabou" e todo produto da cauda resolvia `product_id: null`
+  // no item do pedido — null GRAVADO, perda de vínculo persistida (docs/agent/money-path.md §6).
+  const productMap = await carregarProductMap(supabase as unknown as BancoPostgrest, account);
   console.log(`[sync_pedidos][${account}] Product map: ${productMap.size}`);
 
   // System user for created_by
@@ -975,41 +1063,36 @@ async function syncPedidos(
   // Helper: resolve codigo_cliente -> user_id (cache-first, API fallback only for unknown)
   async function resolveClientUserId(codigoCliente: number): Promise<string | null> {
     if (clientCache.has(codigoCliente)) return clientCache.get(codigoCliente) || null;
-    // Fallback: call Omie API only for clients NOT in omie_clientes table.
-    // Modo cursor (backfill): throwOnTransient — um rate-limit/transitório aqui NÃO pode
-    // virar "cliente ausente" cacheado (#4 Codex): isso pularia o pedido (skippedNoClient)
-    // e a janela poderia COMPLETAR sem ele → perda permanente. Re-lançamos o transitório
-    // p/ o loop PAUSAR a janela e retomar depois (o cliente genuinamente sem doc segue null).
-    try {
-      const result = (await callOmieVendasApi(
-        "geral/clientes/",
-        "ConsultarCliente",
-        { codigo_cliente_omie: codigoCliente },
-        account,
-        cursor ? { throwOnTransient: true } : undefined,
-      )) as OmieClienteCadastro | null;
-      if (!result) {
-        clientCache.set(codigoCliente, null);
-        return null;
-      }
-      const doc = (result.cnpj_cpf || '').replace(/\D/g, '');
-      // Cache address/phone from ConsultarCliente result
-      const addrParts = [result.endereco, result.endereco_numero, result.complemento, result.bairro, result.cidade, result.estado, result.cep].filter(Boolean);
-      const phone = result.telefone1_ddd && result.telefone1_numero ? `(${result.telefone1_ddd}) ${result.telefone1_numero}` : '';
-      clientAddressCache.set(codigoCliente, { address: addrParts.join(', '), phone });
+    // Fallback: chama a API Omie só p/ clientes fora do cache. throwOnTransient em AMBOS os modos (cursor
+    // E incremental — P2 Codex xhigh 2026-07-10): um rate-limit/transitório do ConsultarCliente NÃO pode
+    // virar "cliente ausente" cacheado. No incremental (sem cursor) isso pulava o pedido (skippedNoClient++)
+    // e a janela COMPLETAVA success:true; se a falha persistisse até o pedido sair da janela de ~5 dias →
+    // PERDA PERMANENTE silenciosa. SEM try/catch: o transitório (e qualquer erro de lookup) PROPAGA — no
+    // cursor o loop PAUSA e retoma; no incremental propaga (500 + fin_sync_log error) e a próxima run
+    // reprocessa a janela (idempotente, a RPC decide skip/reparo). Só o caminho SEM erro cacheia null:
+    // result null ("Não existem registros" no Omie) ou doc<11 (cliente sem CPF/CNPJ usável) = ausência
+    // CONFIRMADA. Ver callOmieVendasApi: "Não existem registros"/HTTP-erro independem de throwOnTransient.
+    const result = (await callOmieVendasApi(
+      "geral/clientes/",
+      "ConsultarCliente",
+      { codigo_cliente_omie: codigoCliente },
+      account,
+      { throwOnTransient: true },
+    )) as OmieClienteCadastro | null;
+    if (!result) {
+      clientCache.set(codigoCliente, null);
+      return null;
+    }
+    const doc = (result.cnpj_cpf || '').replace(/\D/g, '');
+    // Cache address/phone from ConsultarCliente result
+    const addrParts = [result.endereco, result.endereco_numero, result.complemento, result.bairro, result.cidade, result.estado, result.cep].filter(Boolean);
+    const phone = result.telefone1_ddd && result.telefone1_numero ? `(${result.telefone1_ddd}) ${result.telefone1_numero}` : '';
+    clientAddressCache.set(codigoCliente, { address: addrParts.join(', '), phone });
 
-      if (doc.length >= 11) {
-        const userId = docToUserMap.get(doc) || null;
-        clientCache.set(codigoCliente, userId);
-        return userId;
-      }
-    } catch (e) {
-      // Backfill (#A Codex): QUALQUER erro de lookup (transitório, HTTP, rede, fault
-      // não-classificado) re-lança → o loop PAUSA a janela, não cacheia ausência FALSA.
-      // Só o caminho SEM erro cacheia null: `if (!result)` (Omie diz que não existe) e
-      // doc<11 (cliente existe, sem doc usável) — esses são skip LEGÍTIMO, não erro.
-      if (cursor) throw e;
-      console.warn(`[sync_pedidos][${account}] ConsultarCliente ${codigoCliente} falhou:`, (e as Error).message);
+    if (doc.length >= 11) {
+      const userId = docToUserMap.get(doc) || null;
+      clientCache.set(codigoCliente, userId);
+      return userId;
     }
     clientCache.set(codigoCliente, null);
     return null;
@@ -1315,18 +1398,11 @@ async function repararOrfaosItens(
     return { reparados, itens, divergencias, falhas, semDados, jaCompletos, total: 0, divergenciaAmostra };
   }
 
-  // Pre-load product map (codigo_produto -> product_id)
-  const productMap = new Map<number, string>();
-  {
-    let page = 0; const sz = 1000; let more = true;
-    while (more) {
-      const { data: batch } = await supabase
-        .from('omie_products').select('id, omie_codigo_produto')
-        .eq('account', account).range(page * sz, (page + 1) * sz - 1);
-      if (!batch || batch.length === 0) { more = false; }
-      else { for (const p of batch) productMap.set(p.omie_codigo_produto, p.id); if (batch.length < sz) more = false; page++; }
-    }
-  }
+  // Pre-load product map (codigo_produto -> product_id). Leitura COMPLETA e fail-closed
+  // (`_shared/mapas-paginados.ts`): o laço aqui descartava `error`, então página que falhava
+  // virava "acabou" e o item do pedido órfão era reparado com `product_id: null` — reparo que
+  // GRAVA a perda de vínculo em vez de corrigi-la (docs/agent/money-path.md §6).
+  const productMap = await carregarProductMap(supabase as unknown as BancoPostgrest, account);
 
   // Busca os pais por hash_payload determinístico (omie_<account>_<pid>), NÃO por omie_pedido_id:
   // (account, omie_pedido_id) é duplicado por design (push×pull, ver onda1_fase0) → buscar por id
@@ -1559,23 +1635,14 @@ async function assertOmieItemsAtivos(
   }
 }
 
-// MIRROR-START omie account-coherence — espelhado de src/lib/omie/account-coherence.ts
-// Coerência conta×código por PROVA POSITIVA (money-path): true só quando `code` é o código de OUTRA
-// conta Omie do MESMO cliente (linhas de omie_clientes filtradas por user_id). NÃO acusa por
-// AUSÊNCIA — oben/colacor_sc resolvem o código via API e podem não estar no espelho local. Guard na
-// FRONTEIRA comum (todas as vias de criar_pedido passam aqui). Paridade textual no CI.
-function codeBelongsToWrongAccount(
-  rows: ReadonlyArray<{ omie_codigo_cliente: number; empresa_omie: string }>,
-  code: number,
-  account: string,
-): boolean {
-  if (!Number.isSafeInteger(code) || code <= 0) return false;
-  const eq = (a: number): boolean => String(a) === String(code); // bigint-safe: string decimal canonica (Number colapsa >= 2^53)
-  const matchesTarget = rows.some((r) => eq(r.omie_codigo_cliente) && r.empresa_omie === account);
-  if (matchesTarget) return false;
-  return rows.some((r) => eq(r.omie_codigo_cliente) && r.empresa_omie !== account);
-}
-// MIRROR-END
+// [2026-07-16] `codeBelongsToWrongAccount` (P0-A) foi REMOVIDO daqui — não restaure sem ler isto.
+// Ele provava "conta errada" pelo rótulo `empresa_omie` do espelho `omie_clientes`, e o rótulo é
+// DEFAULT POLUÍDO: 6909/6909 linhas da prod são 'colacor' (ZERO 'oben'), com código oben do bulk
+// syncCustomers morando sob esse rótulo. Para account='oben' a prova positiva era estruturalmente
+// falsa — `matchesTarget` nunca casava e QUALQUER código conhecido acusava. Barrou o PC 214820 com
+// o código oben CORRETO. O design do P0-B (§4.3) já o dava como redundante: a divergência
+// advisory×derivado em decideAccountIdentity é fail-closed e cobre o mesmo ataque com a âncora certa
+// (documento + API Omie), sem depender de rótulo local. Invariante em edge-money-path-invariants.
 
 // MIRROR-START omie derive-account-identity — espelhado verbatim em supabase/functions/omie-vendas-sync/index.ts
 // Decisão de identidade Omie por conta (money-path P0-B). PURA: recebe dados já buscados (espelho local
@@ -1632,6 +1699,51 @@ function decideAccountIdentity(input: DecideInput): DecideResult {
 }
 // MIRROR-END
 
+// [PR-1/A1] O fail-closed doc→user (doc com 2+ users FORA do mapa) migrou do TS para a RPC SQL
+// omie_sync_identity_snapshot (snapshot atômico). O helper abaixo valida o CONTRATO da resposta.
+// MIRROR-START omie identity-snapshot-parse — espelhado verbatim nos edges omie-vendas-sync e omie-analytics-sync
+// Valida o CONTRATO JSON da RPC omie_sync_identity_snapshot e constrói os mapas. FAIL-CLOSED (Codex
+// challenge PR-1): supabase-js .rpc() resolve {error} — error=null só prova HTTP/SQL bem-sucedido, NÃO o
+// contrato. Uma RPC revertida/malformada pode devolver HTTP 200 com {doc_to_user:null,...}; o `?? {}` a
+// degradaria para Map(0) SILENCIOSO (vendas pula pedidos, analytics não vincula) sem SQLSTATE. Aqui shape
+// inválido (null/array/tipo errado/valor não-UUID/doc ambíguo vazado em doc_to_user) LANÇA — precisão>recall.
+const OMIE_SNAPSHOT_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function parseIdentitySnapshot(
+  snap: unknown,
+): { docToUserMap: Map<string, string>; ambiguousDocs: Set<string> } {
+  if (!snap || typeof snap !== "object" || Array.isArray(snap)) {
+    throw new Error("identity snapshot: resposta não é objeto (fail-closed)");
+  }
+  const s = snap as Record<string, unknown>;
+  const d2u = s.doc_to_user;
+  const amb = s.ambiguous_docs;
+  if (!d2u || typeof d2u !== "object" || Array.isArray(d2u)) {
+    throw new Error("identity snapshot: doc_to_user ausente ou não-objeto (fail-closed)");
+  }
+  if (!Array.isArray(amb)) {
+    throw new Error("identity snapshot: ambiguous_docs ausente ou não-array (fail-closed)");
+  }
+  const ambiguousDocs = new Set<string>();
+  for (const doc of amb) {
+    if (typeof doc !== "string") throw new Error("identity snapshot: ambiguous_docs com item não-string (fail-closed)");
+    ambiguousDocs.add(doc);
+  }
+  const docToUserMap = new Map<string, string>();
+  for (const [doc, user] of Object.entries(d2u)) {
+    if (typeof user !== "string" || !OMIE_SNAPSHOT_UUID_RE.test(user)) {
+      throw new Error("identity snapshot: user_id não-UUID em doc_to_user (fail-closed)");
+    }
+    // disjunção: um doc não pode estar em doc_to_user E em ambiguous_docs (seria fail-open da RPC)
+    if (ambiguousDocs.has(doc)) {
+      throw new Error("identity snapshot: doc presente em doc_to_user E ambiguous_docs — fail-open da RPC (fail-closed)");
+    }
+    docToUserMap.set(doc, user);
+  }
+  return { docToUserMap, ambiguousDocs };
+}
+// MIRROR-END
+
 // Resolve os matches de cliente por documento na conta (registros_por_pagina:2 p/ detectar duplicata-CNPJ).
 // throwOnTransient: erro Omie transitório LANÇA (ausência só como array vazio confirmado, nunca timeout).
 async function buscarClienteVendasMatches(document: string, account: Account = "oben"): Promise<OmieMatch[]> {
@@ -1653,7 +1765,8 @@ async function buscarClienteVendasMatches(document: string, account: Account = "
 }
 
 // Deriva a identidade Omie AUTORITATIVA de (documento do pedido, conta) — money-path P0-B. Âncora = documento
-// (imune ao fallback customer_user_id || user.id). Espelho → Omie-por-doc → fail-closed. Backfill gated.
+// (imune ao fallback customer_user_id || user.id). Omie-por-doc → fail-closed. Sem espelho: ver o bloco
+// abaixo (o rótulo local não prova conta e o backfill barrava PV legítimo).
 async function deriveOmieAccountIdentity(
   supabase: SupabaseClient,
   soRow: { customer_user_id: string | null; customer_document: string | null; created_by: string | null },
@@ -1662,58 +1775,36 @@ async function deriveOmieAccountIdentity(
 ): Promise<{ codigo_cliente: number; codigo_vendedor: number | null }> {
   const rawDoc = (soRow.customer_document || "").trim();
   let doc = rawDoc.replace(/\D/g, "");
-  let profileRaw = "";
   // Fallback p/ profiles.document SÓ quando customer_user_id é CONFIÁVEL (≠ created_by). O submit faz
   // customer_user_id = customerUserId || created_by → quando cai no created_by (staff sem cliente local),
   // derivar do doc do VENDEDOR rotearia o PV pro vendedor (Codex P1 #1). Sem doc confiável → fail-closed.
   if (!doc && soRow.customer_user_id && soRow.customer_user_id !== soRow.created_by) {
     const { data: prof } = await supabase.from("profiles").select("document").eq("user_id", soRow.customer_user_id).maybeSingle();
-    profileRaw = ((prof?.document as string | undefined) || "").trim();
-    doc = profileRaw.replace(/\D/g, "");
+    doc = ((prof?.document as string | undefined) || "").trim().replace(/\D/g, "");
   }
   if (!doc) {
     throw new Error(`Pedido rejeitado: sem documento CONFIÁVEL do cliente para provar a identidade Omie na conta ${account} — envio bloqueado (não roteia pelo vendedor).`);
   }
 
-  // profiles.document em prod existe raw E limpo (resolveLocalUserId casa ambos) — casar os dois p/ não
-  // perder o fast-path do espelho quando o formato armazenado difere do documento do pedido.
-  const docCandidates = [...new Set([doc, rawDoc, profileRaw].filter((d) => d.length > 0))];
-  const { data: users } = await supabase.from("profiles").select("user_id").in("document", docCandidates);
-  const userIds = ((users ?? []) as Array<{ user_id: string }>).map((u) => u.user_id);
-  // Espelho SÓ com 1 dono do documento: dup-profiles (mesmo doc, user_ids distintos) podem ter uma linha
-  // de espelho de perfil ERRADO/stale que não vale como prova (Codex P1 #5) → força o Omie autoritativo
-  // (regs:2, dup-safe). Alinha com o gate do backfill (também 1 dono).
-  const mirrorRows: MirrorRow[] = userIds.length === 1
-    ? (((await supabase.from("omie_clientes").select("omie_codigo_cliente, omie_codigo_vendedor, empresa_omie").in("user_id", userIds).eq("empresa_omie", account)).data ?? []) as MirrorRow[])
-    : [];
-
-  let decision = decideAccountIdentity({ account, suppliedCodigo, mirrorRows, omieMatches: null });
-  if (!decision.ok && "needOmie" in decision) {
-    const omieMatches = await buscarClienteVendasMatches(doc, account);
-    decision = decideAccountIdentity({ account, suppliedCodigo, mirrorRows, omieMatches });
-  }
-  // Codex round-2 [P1]: sem advisory (ex.: conversão de orçamento) NÃO há rede de divergência p/ pegar um
-  // ESPELHO DESATUALIZADO (o código Omie do cliente mudou). Confirma o espelho contra o Omie — re-decide
-  // com o Omie autoritativo e o código do espelho como advisory: divergência/ausência/ambiguidade cai no
-  // throw abaixo (fail-closed). Custo: 1 chamada Omie só no caminho SEM código (orçamento), infrequente.
-  if (decision.ok && decision.source === "mirror" && suppliedCodigo === null) {
-    const omieMatches = await buscarClienteVendasMatches(doc, account);
-    decision = decideAccountIdentity({ account, suppliedCodigo: decision.codigo_cliente, mirrorRows: [], omieMatches });
-  }
+  // [2026-07-16] Espelho `omie_clientes` FORA do caminho de PV — a leitura era morta e a escrita
+  // bloqueava. Não religue sem antes re-rotular o espelho por conta (a "Fatia 3" nunca aconteceu):
+  //  • LER era inútil: mirrorRows filtrava `empresa_omie = account`, e o rótulo é DEFAULT POLUÍDO —
+  //    6909/6909 linhas da prod são 'colacor' (ZERO 'oben'/'colacor_sc'), e 'colacor' já era forçado
+  //    a [] pelo BUG-1. O fast-path NUNCA casava em NENHUMA conta: a API Omie por documento sempre
+  //    foi o caminho real. Remover não muda comportamento nem adiciona 1 chamada sequer.
+  //  • ESCREVER bloqueava: o backfill upsertava sob `unique_user_omie UNIQUE(user_id)` — a constraint
+  //    REAL da prod (o design §4.4 assumiu `(user_id, empresa)`, e o harness espelhou a suposição, por
+  //    isso o teste nunca viu). Com a linha 'colacor' do user já presente, o INSERT 'oben' violava a
+  //    UNIQUE → a RPC devolve 'contested' → este edge barrava um PV LEGÍTIMO (2º bloqueio, em série
+  //    com o P0-A; ambos atingiram o PC 214820). Auto-cura do espelho é trabalho do sync diário, não
+  //    do caminho de dinheiro — e a proof-table account-correta é `omie_customer_account_map`.
+  // Sobra UMA fonte autoritativa: documento (âncora) + API Omie, com divergência advisory×derivado,
+  // ambiguidade, ausência e bigint fora de range todos fail-closed em decideAccountIdentity.
+  const omieMatches = await buscarClienteVendasMatches(doc, account);
+  const decision = decideAccountIdentity({ account, suppliedCodigo, mirrorRows: [], omieMatches });
   if (!decision.ok) {
     const reason = "reason" in decision ? decision.reason : "unknown";
     throw new Error(`Pedido rejeitado: identidade Omie do cliente na conta ${account} não pôde ser provada (${reason}) — envio bloqueado para não registrar no cliente errado.`);
-  }
-
-  // Backfill gated (auto-cura do espelho): só derivação inequívoca por Omie E com user confiável
-  // (exatamente 1 dono do documento). Contested (código de outro/diferente) → fail-closa o PV.
-  if (decision.backfill && userIds.length === 1) {
-    const { data: status } = await supabase.rpc("omie_cliente_upsert_mapping", {
-      p_user_id: userIds[0], p_empresa: account, p_codigo_cliente: decision.codigo_cliente, p_codigo_vendedor: decision.codigo_vendedor,
-    });
-    if (status === "contested") {
-      throw new Error(`Pedido rejeitado: identidade Omie contestada no espelho (conta ${account}) — envio bloqueado.`);
-    }
   }
   return { codigo_cliente: decision.codigo_cliente, codigo_vendedor: decision.codigo_vendedor };
 }
@@ -2008,6 +2099,89 @@ async function gateCredito(
   return { permitido: false, gate };
 }
 
+// ── Gate tintométrico Fase 3 — revalidação de preço na fronteira comum ──
+// TODA via de pedido (submit, conversão de orçamento, edição, retry) cruza
+// criar_pedido/alterar_pedido; o guard do preço tint mora AQUI, não na UI
+// (money-path §5). A RPC tint_gate_revalida (provada em db/test-tint-gate-
+// revalida.sh) revalida cada item COM tint_cor_id contra o estado ATUAL:
+// canônica viva + preço recomputado + fonte declarada pela vendedora.
+// ⚠️ FAIL-CLOSED na indisponibilidade — deliberadamente ≠ gateCredito (que é
+// fail-open com log durável): (a) o blast radius é só pedido COM item tint
+// (o caminho comum nem chama a RPC); (b) o risco real aqui é a migration
+// custom NÃO aplicada no Lovable (falha silenciosa clássica) — fail-open
+// criaria um gate fantasma invisível; fail-closed grita na primeira venda.
+interface GateTintResultado {
+  ok: boolean;
+  bloqueios: Array<Record<string, unknown>>;
+  warnings?: Array<Record<string, unknown>>;
+}
+
+async function gateTintPreco(
+  supabase: SupabaseClient,
+  account: Account,
+  customerUserId: string | null,
+  salesOrderId: string,
+  contexto: "criacao" | "edicao",
+  items: Array<{ tint_cor_id?: string; omie_codigo_produto?: number | string }>,
+): Promise<{ permitido: true } | { permitido: false; bloqueios: Array<Record<string, unknown>> }> {
+  if (items.length === 0) return { permitido: true };
+
+  // Classificação em BATCH antes da RPC (Codex P1 do diff): a RPC só roda
+  // quando há marcador tint, produto classificado como BASE tintométrica ou
+  // código ilegível (que a RPC bloqueia como payload_invalido). Assim uma
+  // migration ausente/RPC indisponível NÃO derruba venda comum — o blast
+  // radius do fail-closed fica restrito a pedido com cara de tint. A
+  // classificação lê omie_products (tabela pré-existente — funciona mesmo
+  // sem a migration da Fase 3).
+  const temMarcador = items.some((i) => typeof i.tint_cor_id === "string" && i.tint_cor_id.length > 0);
+  const codigos = [...new Set(items.map((i) => Number(i.omie_codigo_produto)).filter((n) => Number.isFinite(n) && n > 0))];
+  const temCodigoIlegivel = items.some((i) => !Number.isFinite(Number(i.omie_codigo_produto)) || Number(i.omie_codigo_produto) <= 0);
+  let temBaseTint = false;
+  if (!temMarcador && !temCodigoIlegivel && codigos.length > 0) {
+    const { data: prods, error: clsErr } = await supabase
+      .from("omie_products")
+      .select("omie_codigo_produto, is_tintometric, tint_type")
+      .eq("account", account)
+      .in("omie_codigo_produto", codigos);
+    if (clsErr) {
+      // classificação indisponível = não sei se há base tint ⇒ fail-closed
+      // (mesma infra da RPC; se isto falhou, nada do pedido funcionaria)
+      throw new Error(`Classificação tintométrica indisponível (${clsErr.message}) — pedido não enviado (fail-closed).`);
+    }
+    temBaseTint = (prods ?? []).some(
+      (p) => (p as { is_tintometric?: boolean; tint_type?: string | null }).is_tintometric === true &&
+        (p as { tint_type?: string | null }).tint_type === "base",
+    );
+  }
+  if (!temMarcador && !temBaseTint && !temCodigoIlegivel) return { permitido: true };
+
+  const { data, error } = await supabase.rpc("tint_gate_revalida", {
+    p_account: account,
+    p_customer_user_id: customerUserId,
+    p_sales_order_id: salesOrderId,
+    p_contexto: contexto,
+    p_items: items,
+  });
+  if (error) {
+    throw new Error(
+      `Gate tintométrico indisponível (${error.message}) — pedido com item de tinta NÃO enviado (fail-closed). ` +
+        `Confira se a migration 20260722100001_tint_gate_revalida_submit foi aplicada.`,
+    );
+  }
+  const r = data as GateTintResultado | null;
+  if (!r || typeof r.ok !== "boolean") {
+    throw new Error("Gate tintométrico devolveu resposta inválida — pedido NÃO enviado (fail-closed).");
+  }
+  if (!r.ok) {
+    console.warn(`[gate-tint][${account}] pedido bloqueado:`, JSON.stringify(r.bloqueios));
+    return { permitido: false, bloqueios: r.bloqueios };
+  }
+  if (r.warnings && r.warnings.length > 0) {
+    console.log(`[gate-tint][${account}] warnings:`, JSON.stringify(r.warnings));
+  }
+  return { permitido: true };
+}
+
 // Só as actions de SYNC logam (não as interativas de PV). Com action LIKE 'sync_%'
 // + companies=[account], a varredura de órfãs (>30min) e o sinal sync_error do
 // watchdog (#330) passam a cobrir vendas SEM mudar o watchdog. BEST-EFFORT: uma
@@ -2193,6 +2367,8 @@ serve(async (req) => {
         let bfPagina = Number(params.start_page) || 1;
         const bfMaxPages = Number(params.max_pages) || 5;
         let bfTotalPaginas = 1;
+        // fim REAL (avaliarPagina) ≠ lote esgotado — decide o next_page abaixo.
+        let bfFimReal = false;
         let bfPages = 0;
         let bfPedidosComCor = 0;
         let bfPedidosAtualizados = 0;
@@ -2201,10 +2377,28 @@ serve(async (req) => {
         while ((bfPagina <= bfTotalPaginas || bfPages === 0) && bfPages < bfMaxPages) {
           const bfParams: Record<string, unknown> = { pagina: bfPagina, registros_por_pagina: 50, filtrar_apenas_inclusao: "N" };
           if (bfNumeroPedido) { bfParams.numero_pedido_de = bfNumeroPedido; bfParams.numero_pedido_ate = bfNumeroPedido; }
-          const bfRes = (await callOmieVendasApi("produtos/pedido/", "ListarPedidos", bfParams, account)) as OmieListarPedidosResponse | null;
-          if (!bfRes) break; // rate limit → retoma na próxima invocação
-          bfTotalPaginas = bfRes.total_de_paginas || 1;
+          // throwOnTransient (achado Codex C, P1): `null` era AMBÍGUO — rate-limit esgotado e fim
+          // real chegavam iguais. Num resume (start_page=7 com bfTotalPaginas ainda 1), o break
+          // por rate-limit caía em `next_page = bfPagina <= bfTotalPaginas ? … : null` = null e
+          // APAGAVA o cursor: o backfill se declarava terminado com a cauda por processar.
+          const bfRes = (await callOmieVendasApi(
+            "produtos/pedido/", "ListarPedidos", bfParams, account, { throwOnTransient: true },
+          )) as OmieListarPedidosResponse | null;
+          if (!bfRes) { bfFimReal = true; break; } // null = fim real ("Não existem registros")
+          // Piso MONOTÔNICO + teto fail-fast (money-path §9): era `|| 1` POR RESPOSTA — uma
+          // intermediária sem o campo encerrava o cursor prematuro (next_page=null com cauda viva).
+          bfTotalPaginas = proximoTotalPaginas(bfTotalPaginas, bfRes.total_de_paginas, MAX_PAGINAS_PEDIDOS);
           const bfPedidos = bfRes.pedido_venda_produto || [];
+          const bfVeredicto = avaliarPagina(bfPedidos.length, bfPagina, bfTotalPaginas);
+          if (bfVeredicto === "anomalia") {
+            // vazia ANTES do fim declarado = fault disfarçado → aborta; o caller retoma do
+            // start_page desta invocação (o UPDATE só toca registros sem cor — idempotente).
+            throw new Error(`página ${bfPagina}/${bfTotalPaginas} do ListarPedidos (backfill) veio vazia antes do fim declarado`);
+          }
+          if (bfVeredicto === "fim") {
+            bfFimReal = true;
+            break;
+          }
 
           for (const bfPedido of bfPedidos) {
             const bfCab = bfPedido.cabecalho || {};
@@ -2262,7 +2456,7 @@ serve(async (req) => {
           account,
           pedidos_com_cor: bfPedidosComCor,
           pedidos_atualizados: bfPedidosAtualizados,
-          next_page: bfPagina <= bfTotalPaginas ? bfPagina : null,
+          next_page: !bfFimReal && bfPagina <= bfTotalPaginas ? bfPagina : null,
           ...(bfDryRun ? { amostra: bfAmostra } : {}),
         };
         break;
@@ -2361,27 +2555,11 @@ serve(async (req) => {
             `Conta do payload (${account}) diverge do pedido local (${soRow.account}) — pedido não enviado`,
           );
         }
-        // Guard money-path (coerência conta×código, prova positiva): fecha o vazamento cross-conta
-        // em TODAS as vias de criação (SalesQuotes, selectCustomerByUserId, IA, futuras). Um caller
-        // pode resolver o código no espelho parcial `omie_clientes` sem filtrar empresa e mandar o
-        // código de OUTRA conta do mesmo cliente. Deriva do pedido local (customer_user_id) e recusa
-        // só com PROVA POSITIVA (o código é de outra conta) — nunca por ausência (oben vem da API).
-        // Gate Codex P1 #2/#7: só quando customer_user_id é CONFIÁVEL (≠ created_by/vendedor) — senão as
-        // linhas do VENDEDOR fariam false-reject de pedido legítimo por colisão de código cross-conta.
-        if (soRow?.customer_user_id && soRow.customer_user_id !== soRow.created_by) {
-          const { data: idRows, error: idErr } = await supabaseAdmin
-            .from("omie_clientes")
-            .select("omie_codigo_cliente, empresa_omie")
-            .eq("user_id", soRow.customer_user_id);
-          if (idErr) {
-            throw new Error(`Pedido rejeitado: falha ao validar a conta do cliente (${idErr.message}). Tente novamente.`);
-          }
-          if (codeBelongsToWrongAccount(idRows ?? [], Number(codigo_cliente), account)) {
-            throw new Error(
-              `Pedido rejeitado: código de cliente ${codigo_cliente} pertence a outra conta Omie (não ${account}) — envio bloqueado para não registrar no cliente errado.`,
-            );
-          }
-        }
+        // [2026-07-16] O guard de coerência conta×código (P0-A) saiu daqui: ele lia o rótulo
+        // `empresa_omie` do espelho `omie_clientes`, que é default poluído (ver o tombstone acima),
+        // e barrava pedido oben LEGÍTIMO por prova positiva falsa. A cobertura real do cross-conta
+        // é a derivação abaixo: âncora no DOCUMENTO + API Omie, com divergência advisory×derivado
+        // fail-closed — o mesmo ataque, provado pela fonte certa.
         // P0-B: identidade Omie AUTORITATIVA derivada do DOCUMENTO do pedido (prova positiva). Fecha o gap
         // do guard acima (código de OUTRO user passava) e destrava a conversão oben. codigo_cliente do
         // payload é advisory; fail-closed em ambiguidade/ausência/divergência/contested. USA o derivado.
@@ -2408,6 +2586,22 @@ serve(async (req) => {
           result = { success: false, blocked: "credito", gate: credito.gate };
           break;
         }
+        // Gate tintométrico Fase 3: revalida preço/fórmula dos itens tint contra
+        // o estado ATUAL, IMEDIATAMENTE antes da mutação Omie (janela TOCTOU
+        // mínima — veredito Codex). Bloqueio = 200 estruturado, pedido local
+        // intacto p/ retry após reprecificar no balcão.
+        const gateTint = await gateTintPreco(
+          supabaseAdmin,
+          account,
+          soRow?.customer_user_id ?? null,
+          sales_order_id,
+          "criacao",
+          items as Array<{ tint_cor_id?: string }>,
+        );
+        if (!gateTint.permitido) {
+          result = { success: false, blocked: "tint_preco", bloqueios: gateTint.bloqueios };
+          break;
+        }
         const pedido = await criarPedidoVenda(
           supabaseAdmin,
           sales_order_id,
@@ -2427,8 +2621,17 @@ serve(async (req) => {
       }
 
       case "listar_formas_pagamento": {
-        const formas = await listarFormasPagamento(account);
-        result = { success: true, formas };
+        // `formas` continua no mesmo lugar (os 3 consumidores atuais não quebram); `source`/
+        // `degraded`/`motivo` são ADITIVOS e existem para que a lista de fallback deixe de ser
+        // indistinguível da real — achado Codex D deste PR.
+        const parcelas = await listarFormasPagamento(account);
+        result = {
+          success: true,
+          formas: parcelas.formas,
+          source: parcelas.source,
+          degraded: parcelas.degraded,
+          motivo: parcelas.motivo,
+        };
         break;
       }
 
@@ -2483,6 +2686,24 @@ serve(async (req) => {
         // revalidar — é onde um produto desativado depois da criação do PV passaria batido.
         await assertOmieItemsAtivos(supabaseAdmin, editItems, editAccount);
 
+        // Gate tintométrico Fase 3: a edição re-envia TODOS os itens ao Omie.
+        // Revalida ANTES do delete+add destrutivo, contra o BASELINE persistido
+        // (o front só persiste APÓS o sucesso — o baseline é o estado pré-
+        // edição): item tint IDÊNTICO passa com warning (já está no Omie);
+        // novo/alterado revalida; base-sem-cor só passa intocada (inbound).
+        const gateTintEdit = await gateTintPreco(
+          supabaseAdmin,
+          editAccount,
+          (existingOrder as { customer_user_id?: string | null }).customer_user_id ?? null,
+          editSoId,
+          "edicao",
+          editItems as Array<{ tint_cor_id?: string }>,
+        );
+        if (!gateTintEdit.permitido) {
+          result = { success: false, blocked: "tint_preco", contexto: "edicao", bloqueios: gateTintEdit.bloqueios };
+          break;
+        }
+
         // Build updated items payload for local DB
         const editItemsTyped: EditItemInput[] = editItems;
         const updatedItemsPayload = editItemsTyped.map((item) => ({
@@ -2494,7 +2715,19 @@ serve(async (req) => {
           quantidade: item.quantidade,
           valor_unitario: item.valor_unitario,
           valor_total: item.quantidade * item.valor_unitario,
-          ...(item.tint_cor_id ? { tint_cor_id: item.tint_cor_id, tint_nome_cor: item.tint_nome_cor } : {}),
+          ...(item.tint_cor_id
+            ? {
+                tint_cor_id: item.tint_cor_id,
+                tint_nome_cor: item.tint_nome_cor,
+                // Fase 3: preservar auditoria de precificação no jsonb local
+                ...(item.tint_formula_id ? { tint_formula_id: item.tint_formula_id } : {}),
+                ...(item.tint_price_source ? { tint_price_source: item.tint_price_source } : {}),
+                ...(typeof item.tint_discount_pct === "number" ? { tint_discount_pct: item.tint_discount_pct } : {}),
+                ...(typeof item.tint_preco_sem_desconto === "number"
+                  ? { tint_preco_sem_desconto: item.tint_preco_sem_desconto }
+                  : {}),
+              }
+            : {}),
         }));
         const updatedSubtotal = updatedItemsPayload.reduce((s: number, i) => s + i.valor_total, 0);
 
@@ -2803,8 +3036,12 @@ serve(async (req) => {
           validated_items: finalOmieItems.length,
         };
 
-        // Update local DB
-        await supabaseAdmin
+        // Write-back local CHECADO (Codex P1 do diff): o front agora depende
+        // EXCLUSIVAMENTE deste update (não persiste antes do gate — o baseline
+        // é sagrado). Erro/0-linhas aqui com o Omie JÁ mutado = estado
+        // divergente → devolver ERRO explícito (nunca success), para o caller
+        // avisar e ninguém re-salvar por cima sem recarregar.
+        const { data: editWb, error: editWbErr } = await supabaseAdmin
           .from("sales_orders")
           .update({
             items: updatedItemsPayload,
@@ -2815,7 +3052,15 @@ serve(async (req) => {
             omie_response: editResult,
             updated_at: new Date().toISOString(),
           })
-          .eq("id", editSoId);
+          .eq("id", editSoId)
+          .select("id");
+        if (editWbErr || !editWb || editWb.length !== 1) {
+          throw new Error(
+            `Omie ATUALIZADO (${editItems.length} itens) mas o registro local falhou ` +
+              `(${editWbErr?.message ?? `${editWb?.length ?? 0} linhas`}) — NÃO re-salve sem recarregar o pedido; ` +
+              `o Omie está com a versão nova e o app com a antiga.`,
+          );
+        }
 
         result = { success: true, omie_response: editResult };
         break;
@@ -2978,12 +3223,135 @@ serve(async (req) => {
         break;
       }
 
+      case "identidade_probe": {
+        // CANÁRIA COMPORTAMENTAL da derivação de identidade Omie por conta (P0-B) — NÃO escreve, NÃO
+        // chama o Omie, NÃO cria PV, NÃO toca o DB. Roda a DECISÃO PURA `decideAccountIdentity`
+        // DEPLOYADA (não a `main`) sobre fixtures fixos e compara com o esperado. Prova duas coisas que
+        // o commit de deploy NÃO prova: (1) esta action RESPONDE → a derivação P0-B subiu no MESMO build
+        // (senão viria "Ação desconhecida" = binário velho); (2) a tabela-verdade certa está no ar —
+        // 1-dono resolve, divergência/ambiguidade/ausência fail-closam. É a contraparte-DEPLOY do guard
+        // TEXTUAL (que cobre a FONTE/paridade src×edge): a probe cobre o COMPORTAMENTO deployado.
+        // ⚠️ Chama a função PURA (não `deriveOmieAccountIdentity`, que busca espelho/Omie): determinística
+        // e read-only. NÃO prova que o real-path usa a decisão (isso é o guard textual + paridade) —
+        // prova que a DECISÃO deployada está correta. [Codex] Quebra no WRAPPER de I/O (âncora do
+        // documento, query do espelho, fallback Omie, backfill, confirmação de espelho stale) fica FORA
+        // por design (cobri-la exigiria tocar DB/Omie = deixaria de ser dry-run): isso é o quote OBEN
+        // e2e pós-deploy. Gated por authorizeCronOrStaff como toda action.
+        // Igualdade estrutural ESTÁVEL: ordena chaves em qualquer nível (os ramos de DecideResult
+        // retornam chaves em ordens distintas → comparar string crua daria falso-negativo).
+        const stableId = (o: unknown): string =>
+          JSON.stringify(o, (_k, v) =>
+            v && typeof v === "object" && !Array.isArray(v)
+              ? Object.fromEntries(Object.entries(v as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b)))
+              : v);
+        // Cobertura COMPLETA da tabela-verdade de decideAccountIdentity (9 casos = enumeração do
+        // oráculo em src/lib/omie/derive-account-identity.test.ts). [Codex] cobrir só 5 deixaria
+        // um bug deployado em omie/backfill, ambiguous_omie, unsafe_integer ou supplied-equality
+        // passar como ok:true — precisão>recall pede a tabela inteira.
+        const fixturesId: Array<{ caso: string; input: DecideInput; expected: DecideResult }> = [
+          { // caminho feliz: espelho 1-dono na conta resolve (source mirror, sem backfill)
+            caso: "mirror_1_dono",
+            input: { account: "oben", suppliedCodigo: null, mirrorRows: [{ omie_codigo_cliente: 123, omie_codigo_vendedor: 7, empresa_omie: "oben" }], omieMatches: null },
+            expected: { ok: true, source: "mirror", codigo_cliente: 123, codigo_vendedor: 7, backfill: false },
+          },
+          { // advisory que CONFIRMA o derivado (supplied == derived) → ok, NÃO diverge
+            caso: "supplied_confirma",
+            input: { account: "oben", suppliedCodigo: 123, mirrorRows: [{ omie_codigo_cliente: 123, omie_codigo_vendedor: 7, empresa_omie: "oben" }], omieMatches: null },
+            expected: { ok: true, source: "mirror", codigo_cliente: 123, codigo_vendedor: 7, backfill: false },
+          },
+          { // advisory divergente do derivado → fail-closed (não override) — o coração do P0-B
+            caso: "divergencia_supplied",
+            input: { account: "oben", suppliedCodigo: 999, mirrorRows: [{ omie_codigo_cliente: 123, omie_codigo_vendedor: 7, empresa_omie: "oben" }], omieMatches: null },
+            expected: { ok: false, reason: "divergence" },
+          },
+          { // 2 códigos distintos na conta → não chuta (precisão>recall)
+            caso: "ambiguous_mirror",
+            input: { account: "oben", suppliedCodigo: null, mirrorRows: [{ omie_codigo_cliente: 123, omie_codigo_vendedor: 7, empresa_omie: "oben" }, { omie_codigo_cliente: 124, omie_codigo_vendedor: 7, empresa_omie: "oben" }], omieMatches: null },
+            expected: { ok: false, reason: "ambiguous_mirror" },
+          },
+          { // espelho só tem linha de OUTRA conta → ignora e pede Omie (não vaza cross-conta)
+            caso: "outra_conta_ignorada_pede_omie",
+            input: { account: "oben", suppliedCodigo: null, mirrorRows: [{ omie_codigo_cliente: 123, omie_codigo_vendedor: 7, empresa_omie: "colacor" }], omieMatches: null },
+            expected: { ok: false, needOmie: true },
+          },
+          { // espelho vazio + Omie 1 match → resolve por Omie COM backfill (grava o código no espelho)
+            caso: "omie_1match_backfill",
+            input: { account: "oben", suppliedCodigo: null, mirrorRows: [], omieMatches: [{ codigo_cliente: 200, codigo_vendedor: 7 }] },
+            expected: { ok: true, source: "omie", codigo_cliente: 200, codigo_vendedor: 7, backfill: true },
+          },
+          { // Omie >1 match (duplicata-CNPJ) → não chuta (precisão>recall)
+            caso: "ambiguous_omie",
+            input: { account: "oben", suppliedCodigo: null, mirrorRows: [], omieMatches: [{ codigo_cliente: 200, codigo_vendedor: 7 }, { codigo_cliente: 201, codigo_vendedor: 7 }] },
+            expected: { ok: false, reason: "ambiguous_omie" },
+          },
+          { // Omie confirmou ausência (0 match) → fail-closed absent (ausência ≠ zero)
+            caso: "omie_ausente_absent",
+            input: { account: "oben", suppliedCodigo: null, mirrorRows: [], omieMatches: [] },
+            expected: { ok: false, reason: "absent" },
+          },
+          { // código fora do range seguro do bigint (≥ 2^53) → não vai pro Omie (fail-closed)
+            caso: "unsafe_integer",
+            input: { account: "oben", suppliedCodigo: null, mirrorRows: [], omieMatches: [{ codigo_cliente: Number.MAX_SAFE_INTEGER + 1, codigo_vendedor: 1 }] },
+            expected: { ok: false, reason: "unsafe_integer" },
+          },
+        ];
+        const casosId = fixturesId.map((c) => {
+          const resolved = decideAccountIdentity(c.input);
+          return { caso: c.caso, resolved, expected: c.expected, ok: stableId(resolved) === stableId(c.expected) };
+        });
+        result = {
+          success: true,
+          probe_no_ar: true, // a action respondeu → a derivação P0-B está no build deployado
+          account,
+          ok: casosId.every((c) => c.ok), // true = a tabela-verdade deployada bate em TODOS os fixtures
+          casos: casosId,
+        };
+        break;
+      }
+
+      case "identidade_snapshot_probe": {
+        // CANÁRIA DE DEPLOY da RPC omie_sync_identity_snapshot (PR-1/A1) — read-only, NÃO escreve, NÃO
+        // chama o Omie. Prova que a RPC subiu no MESMO build (senão PGRST202) E que a resposta satisfaz o
+        // CONTRATO (parseIdentitySnapshot valida shape/UUID/disjunção e LANÇA). NÃO prova o fail-closed
+        // comportamental (doc-ambíguo=0 em prod hoje); esse é provado no PG17 semeado
+        // (db/test-omie-identidade-snapshot.sh). ⚠️ success/ok refletem o DEPLOY REAL — Codex challenge PR-1:
+        // success:true em PGRST202/nulls era falso-verde (typeof null==='object' + `?? {}` mascaravam).
+        const { data: snapProbe, error: snapProbeErr } = await supabaseAdmin.rpc('omie_sync_identity_snapshot', { p_account: account });
+        let parsedOk = false;
+        let parseErro: string | null = null;
+        let docsUnicos = 0;
+        let ambiguos = 0;
+        if (!snapProbeErr) {
+          try {
+            const p = parseIdentitySnapshot(snapProbe);
+            docsUnicos = p.docToUserMap.size;
+            ambiguos = p.ambiguousDocs.size;
+            parsedOk = true;
+          } catch (e) {
+            parseErro = (e as Error).message;
+          }
+        }
+        result = {
+          success: !snapProbeErr && parsedOk, // falso em PGRST202 (deploy quebrado) OU contrato inválido
+          canary: true,
+          probe_no_ar: !snapProbeErr,
+          account,
+          ok: !snapProbeErr && parsedOk,
+          docs_unicos: docsUnicos,
+          ambiguos,
+          erro: snapProbeErr?.message ?? parseErro,
+        };
+        break;
+      }
+
       case "historico_produtos_cliente": {
         const { codigo_cliente: codCliHist } = params;
         if (!codCliHist) throw new Error("Código do cliente é obrigatório");
         // Fetch last 5 pages of orders for this client from Omie
         const productHistory: Record<string, string> = {}; // omie_codigo_produto -> last date
         try {
+          // Piso do total ao longo das ≤5 páginas — ver o comentário no uso abaixo.
+          let histTotal = 1;
           for (let page = 1; page <= 5; page++) {
             const pedidos = await callOmieVendasApi(
               "produtos/pedido/",
@@ -2996,7 +3364,8 @@ serve(async (req) => {
               },
               account
             );
-            const lista = ((pedidos as { pedido_venda_produto?: OmiePedidoVendaProduto[] } | null)?.pedido_venda_produto) || [];
+            if (!pedidos) break; // null = fim real ("Não existem registros") ou transiente esgotado — para sem fabricar total
+            const lista = ((pedidos as { pedido_venda_produto?: OmiePedidoVendaProduto[] }).pedido_venda_produto) || [];
             for (const pedido of lista) {
               const dataPedido = pedido?.cabecalho?.data_previsao || pedido?.infoCadastro?.dInc || '';
               const itens = pedido?.det || [];
@@ -3007,8 +3376,11 @@ serve(async (req) => {
                 }
               }
             }
-            const totalPages = ((pedidos as { total_de_paginas?: number } | null)?.total_de_paginas) || 1;
-            if (page >= totalPages) break;
+            // Piso monotônico (money-path §9): o `|| 1` POR RESPOSTA truncava o histórico na 1ª
+            // resposta sem o campo (efeito só de recall — menos itens preferidos —, mas é a mesma
+            // forma da classe; o teto de 5 páginas segue no `for`).
+            histTotal = proximoTotalPaginas(histTotal, (pedidos as { total_de_paginas?: number }).total_de_paginas, MAX_PAGINAS_PEDIDOS);
+            if (page >= histTotal) break;
           }
         } catch (e) {
           console.log("[Omie Vendas] Erro ao buscar histórico de pedidos:", e);

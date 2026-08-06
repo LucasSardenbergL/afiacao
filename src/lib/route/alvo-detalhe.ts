@@ -5,7 +5,7 @@
 // Carteira NÃO precisa do raw: o RouteStop já carrega nome/telefone/endereço/
 // diasDesdeVisita (ver desvio documentado no plano). Prospect precisa do raw pra
 // razão social + telefone2, que o prospectRowToStopDraft colapsa.
-import type { RouteStop } from '@/components/reposicao/routePlanner/types';
+import type { RouteStop } from '@/components/rota/planner/types';
 import type { ProspectRow } from './prospect-stop';
 import { labelProspeccaoStatus } from './prospect-stop';
 import { formatBrPhone, isCellphone, whatsappLink } from '@/lib/phone';

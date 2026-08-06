@@ -1,5 +1,6 @@
 import { useAuth } from '@/contexts/AuthContext';
 import { useCommercialRole, CommercialRole } from '@/hooks/useCommercialRole';
+import { useAuthzContract } from '@/hooks/useAuthzContract';
 import { supabase } from '@/integrations/supabase/client';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -23,9 +24,25 @@ const ROLE_COLORS: Record<string, string> = {
   super_admin: 'bg-red-500/10 text-red-700 border-red-500/30',
 };
 
+/**
+ * 🔐 Papéis que dependem da matriz de capability (E1 #1424 → E2/FU4, spec 2026-07-18).
+ *
+ * Enquanto o banco estava no contrato v1, estes papéis acionavam `pode_ver_carteira_completa` —
+ * um gate único sobre 64 policies em 34 tabelas: conceder qualquer um deles entregava ESCRITA em
+ * `cliente_tier_preco` (preço) e `venda_excecao_credito` (crédito) e LEITURA de `cmc_ledger`
+ * (custo) de uma vez. Por isso a E1 os desabilitou aqui.
+ *
+ * Com o contrato v2 aplicado, cada recurso tem capability própria: `gerencial` não carrega mais
+ * preço/crédito/custo/compras, e `estrategico` ganha custo mas não escrita de preço. A trava sai —
+ * mas SÓ quando o banco confirma a v2 (`useAuthzContract`), nunca por constante no código: no
+ * Lovable a migration é manual e falha em silêncio, e destravar sem ela reabriria o furo.
+ */
+const PAPEIS_DEPENDENTES_DA_MATRIZ: readonly CommercialRole[] = ['gerencial', 'estrategico', 'super_admin'];
+
 export default function GovernanceUsers() {
   const { user, isAdmin } = useAuth();
   const { isSuperAdmin } = useCommercialRole();
+  const { matrizAtiva, loading: loadingContrato } = useAuthzContract();
   const queryClient = useQueryClient();
 
   // Fetch all employees with profiles and commercial roles
@@ -73,6 +90,16 @@ export default function GovernanceUsers() {
   // Mutation to set commercial role
   const setRoleMutation = useMutation({
     mutationFn: async ({ userId, role }: { userId: string; role: CommercialRole }) => {
+      // Guarda da E2/FU4: o `disabled` do SelectItem é só a UI — isto barra qualquer outro
+      // caller enquanto o BANCO não confirmar a matriz de capability (contrato v2).
+      if (!matrizAtiva && PAPEIS_DEPENDENTES_DA_MATRIZ.includes(role)) {
+        throw new Error(
+          `Atribuir "${ROLE_LABELS[role] ?? role}" está bloqueado: o banco ainda está no contrato de ` +
+          `autorização v1, onde este papel concede escrita em preço e crédito e leitura de custo de uma vez ` +
+          `(64 policies em 34 tabelas). Aplique a migration da matriz de capability (E2/FU4) e recarregue.`,
+        );
+      }
+
       // Upsert commercial role
       const { error } = await supabase
         .from('commercial_roles')
@@ -172,9 +199,20 @@ export default function GovernanceUsers() {
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="operacional">Operacional</SelectItem>
-                          <SelectItem value="gerencial">Gerencial</SelectItem>
-                          <SelectItem value="estrategico">Estratégico</SelectItem>
-                          {isSuperAdmin && <SelectItem value="super_admin">Super Admin</SelectItem>}
+                          {/* Habilitados só com o contrato v2 no banco (ver PAPEIS_DEPENDENTES_DA_MATRIZ).
+                              Desabilitados em vez de omitidos: sumir com eles leria como bug. O rótulo
+                              diz o que cada papel concede — promover sem saber foi o risco que originou o FU4. */}
+                          <SelectItem value="gerencial" disabled={!matrizAtiva || loadingContrato}>
+                            {matrizAtiva ? 'Gerencial — carteira' : 'Gerencial — requer matriz (v2)'}
+                          </SelectItem>
+                          <SelectItem value="estrategico" disabled={!matrizAtiva || loadingContrato}>
+                            {matrizAtiva ? 'Estratégico — carteira + custo' : 'Estratégico — requer matriz (v2)'}
+                          </SelectItem>
+                          {isSuperAdmin && (
+                            <SelectItem value="super_admin" disabled={!matrizAtiva || loadingContrato}>
+                              {matrizAtiva ? 'Super Admin — carteira + custo' : 'Super Admin — requer matriz (v2)'}
+                            </SelectItem>
+                          )}
                         </SelectContent>
                       </Select>
                     </td>

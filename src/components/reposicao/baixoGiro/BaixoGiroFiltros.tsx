@@ -57,6 +57,24 @@ export function BaixoGiroFiltros({ filtros, onChange }: BaixoGiroFiltrosProps) {
         </Select>
       </div>
 
+      <div className="w-full sm:w-48">
+        <Select
+          value={filtros.giro}
+          onValueChange={(v: FiltrosBaixoGiro["giro"]) =>
+            onChange({ ...filtros, giro: v })
+          }
+        >
+          <SelectTrigger>
+            <SelectValue placeholder="Giro" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="todos">Qualquer giro</SelectItem>
+            <SelectItem value="morto">Giro morto (≥270d)</SelectItem>
+            <SelectItem value="sob_encomenda_candidato">Candidato a sob-encomenda</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+
       <div className="flex-1">
         <Input
           placeholder="Código ou descrição"

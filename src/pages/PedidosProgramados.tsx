@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/EmptyState';
 import { CalendarClock, CalendarDays, ChevronLeft, FileUp, List, Loader2, Settings2 } from 'lucide-react';
+import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { usePedidosProgramadosLista, usePedidosProgramadosMutations } from '@/hooks/usePedidosProgramados';
 import { PedidosProgramadosConfigDialog } from '@/components/pedidosProgramados/ConfigDialog';
 import { CalendarioFaturamento } from '@/components/pedidosProgramados/CalendarioFaturamento';
@@ -89,9 +90,7 @@ const PedidosProgramados = () => {
           onMudarMes={(mes) => setUrlState({ mes })}
         />
       ) : isPending ? (
-        <div className="flex items-center justify-center pt-24">
-          <Loader2 className="w-6 h-6 animate-spin text-primary" />
-        </div>
+        <PageSkeleton variant="list" />
       ) : !pedidos || pedidos.length === 0 ? (
         <EmptyState
           icon={CalendarClock}

@@ -25,10 +25,11 @@ import { createLeadingTrailingThrottle } from "@/lib/leading-trailing-throttle";
 import { escapeHtml } from "@/lib/escape-html";
 import { ContinuarBanner } from "@/components/reposicao/ContinuarBanner";
 import { EtapasGrid } from "@/components/reposicao/EtapasGrid";
-import { SmartAlertsSection } from "@/components/reposicao/SmartAlertsSection";
+import { BaixoGiroBadge } from "@/components/reposicao/BaixoGiroBadge";
 import { MetricsStrip } from "@/components/reposicao/MetricsStrip";
 import { AuditLogSection } from "@/components/reposicao/AuditLogSection";
 import { DataHealthBanner } from "@/components/dataHealth/DataHealthBanner";
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 
 export default function AdminReposicaoCockpit() {
   const navigate = useNavigate();
@@ -135,7 +136,7 @@ export default function AdminReposicaoCockpit() {
       });
       toast.success("CSV exportado");
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = mensagemDeErro(err) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.';
       await logAudit({
         userId: user?.id ?? null,
         action: "CSV exportado",
@@ -165,7 +166,7 @@ export default function AdminReposicaoCockpit() {
       queryClient.invalidateQueries({ queryKey: ["cockpit-itens-dia"] });
       queryClient.invalidateQueries({ queryKey: ["cockpit-current-step"] });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = mensagemDeErro(err) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.';
       await logAudit({
         userId: user?.id ?? null,
         action: "Geração manual",
@@ -334,7 +335,7 @@ export default function AdminReposicaoCockpit() {
       <DataHealthBanner source="reposicao_sugestoes" />
       <DataHealthBanner source="estoque_inventario" />
 
-      <SmartAlertsSection />
+      <BaixoGiroBadge />
 
       <MetricsStrip items={itensDia} />
 

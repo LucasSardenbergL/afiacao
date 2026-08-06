@@ -5,7 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { ilikeOr, isSearchablePostgrestTerm } from '@/lib/postgrest';
 import { useTintPricing, useTintPrices } from '@/hooks/useTintPricing';
-import { selectTintPrice, type TintPriceSource } from '@/lib/tint/select-price';
+import { selectTintPrice, type TintPriceSource, type AltPriceSource } from '@/lib/tint/select-price';
 import type { Product } from '@/hooks/useUnifiedOrder';
 import type { FormulaResult, AlternativePackaging } from './types';
 
@@ -30,6 +30,14 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
       setDebouncedSearch('');
       setSelectedFormula(null);
       setPriceSourceOverride(null);
+      setAltPriceSourceOverrides({});
+      // Fase 3 (achado Codex P1): desconto NÃO sobrevive entre aberturas do
+      // diálogo — senão um 99% digitado numa cor reapareceria silencioso na
+      // próxima, e o gate o consideraria "coerente" (desconto declarado é
+      // escolha POR ITEM, não estado ambiente).
+      setDiscountPct(0);
+      setAltDiscounts({});
+      setSyncDiscount(false);
     }
   }, [open]);
 
@@ -87,21 +95,28 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
     return match ? match[1] : null;
   }, [currentBaseInfo?.descricao]);
 
-  // Search formulas in current SKU
+  // Search formulas in current SKU — lê a CANÔNICA (v_tint_formula_canonica,
+  // Fase 2): 1 linha por (account, sku_id, cor_id), preferência SL, fallback
+  // SAYERLACK. Elimina a duplicata das 2 gerações no picker sem apagar nada.
+  // ORDER determinístico (antes: LIMIT 20 sem order — resultado instável).
   const { data: formulas, isLoading: loadingFormulas } = useQuery({
     queryKey: ['tint-formula-search', skuId, debouncedSearch],
     staleTime: 5 * 60 * 1000,
     enabled: !!skuId && debouncedSearch.length >= 2,
     queryFn: async () => {
       if (!isSearchablePostgrestTerm(debouncedSearch)) return []; // só-wildcard → match-all (#1062); busca vazia
-      const { data } = await supabase
-        .from('tint_formulas')
-        .select('id, cor_id, nome_cor, preco_final_sayersystem')
+      // Erro (timeout/RLS/cache do PostgREST sem a view) LANÇA — senão vira
+      // lista vazia e a UI mente "cor não encontrada" (achado Codex no diff).
+      const { data, error } = await supabase
+        .from('v_tint_formula_canonica')
+        .select('id, cor_id, nome_cor, preco_final_sayersystem, preco_csv_legado, is_sl')
         .eq('account', 'oben')
         .eq('sku_id', skuId!)
-        .is('desativada_em', null)
         .or(ilikeOr(['cor_id', 'nome_cor'], debouncedSearch))
+        .order('cor_id', { ascending: true })
+        .order('id', { ascending: true })
         .limit(20);
+      if (error) throw error;
       return (data || []) as FormulaResult[];
     },
   });
@@ -118,21 +133,30 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
     queryFn: async (): Promise<{ matches: AlternativePackaging[]; colorExists: boolean }> => {
       // só-wildcard → `.or()` match-all (#1062); busca vazia não acha cor nenhuma
       if (!isSearchablePostgrestTerm(debouncedSearch)) return { matches: [], colorExists: false };
-      // Search formulas across all SKUs
-      const { data: globalFormulas } = await supabase
-        .from('tint_formulas')
-        .select('id, cor_id, nome_cor, sku_id, preco_final_sayersystem')
+      // Search formulas across all SKUs — canônica (a view já filtra ativas
+      // com sku e resolve a gêmea SL×SAYERLACK por chave)
+      const { data: globalRaw, error: globalErr } = await supabase
+        .from('v_tint_formula_canonica')
+        .select('id, cor_id, nome_cor, sku_id, preco_final_sayersystem, preco_csv_legado, is_sl')
         .eq('account', 'oben')
-        .is('desativada_em', null)
         .or(ilikeOr(['cor_id', 'nome_cor'], debouncedSearch))
-        .not('sku_id', 'is', null)
+        .order('cor_id', { ascending: true })
+        .order('id', { ascending: true })
         .limit(50);
+      if (globalErr) throw globalErr;
+      // Narrowing na fronteira: o tipo gerado da view é nullable; a base é NOT
+      // NULL e a view filtra sku — o filtro materializa o contrato ANTES de
+      // qualquer uso (o `.in(skuIds)` abaixo usava `!` pré-guard).
+      const globalFormulas = (globalRaw ?? []).filter(
+        (r): r is typeof r & { id: string; sku_id: string; cor_id: string; nome_cor: string } =>
+          r.id != null && r.sku_id != null && r.cor_id != null && r.nome_cor != null,
+      );
 
       // Achou fórmula = a cor EXISTE no catálogo (mesmo que nenhuma seja vendável).
-      if (!globalFormulas || globalFormulas.length === 0) return { matches: [], colorExists: false };
+      if (globalFormulas.length === 0) return { matches: [], colorExists: false };
 
       // Get SKU details
-      const skuIds = [...new Set(globalFormulas.map(f => f.sku_id!))];
+      const skuIds = [...new Set(globalFormulas.map(f => f.sku_id))];
       const { data: skus } = await supabase
         .from('tint_skus')
         .select('id, omie_product_id, produto_id, base_id')
@@ -186,15 +210,16 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
 
         result.push({
           formulaId: gf.id,
-          skuId: gf.sku_id!,
+          skuId: gf.sku_id,
           omieProductId: sku.omie_product_id,
           productDescricao: prod.descricao,
           productCodigo: prod.codigo,
-          precoFinalCsv: gf.preco_final_sayersystem ? Math.ceil(gf.preco_final_sayersystem * 10) / 10 : gf.preco_final_sayersystem,
+          precoFinalCsv: gf.preco_csv_legado ? Math.ceil(gf.preco_csv_legado * 10) / 10 : gf.preco_csv_legado,
           product: prod as Product,
           sameAcabamento: false,
           corId: gf.cor_id,
           nomeCor: gf.nome_cor,
+          isSl: gf.is_sl,
         });
       }
 
@@ -209,40 +234,33 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
   // Pricing breakdown for selected formula (motor honesto get_tint_price)
   const { data: pricing, isLoading: pricingLoading, isError: pricingError } = useTintPricing(selectedFormula?.id || null);
 
-  // Last practiced price for this color+base for the customer
+  // Último preço PRATICADO do cliente — Fase 3: a inferência crua (50 pedidos
+  // sem filtro de status) virou a RPC tint_ultimo_preco_cliente, ENDURECIDA
+  // server-side: só pedido real no Omie (omie_pedido_id), não-cancelado, janela
+  // de 180 dias. A MESMA função valida a fonte 'cliente' no gate do submit
+  // (tint_gate_revalida) — paridade estrutural picker×fronteira, zero espelho.
+  // (`as never`: RPC nova ainda fora do types.ts gerado pelo Lovable — padrão
+  // do repo, ver staff_get_sales_order_payload em useSalesOrderEdit.)
   const { data: lastPracticedPrice, isLoading: loadingLastPrice } = useQuery({
     queryKey: ['tint-last-price', customerUserId, product.id, selectedFormula?.cor_id],
     staleTime: 30 * 1000,
     enabled: !!customerUserId && !!selectedFormula?.cor_id && !!product.id,
     queryFn: async () => {
       if (!customerUserId || !selectedFormula?.cor_id || !product.id) return null;
-
-      const { data: orders } = await supabase
-        .from('sales_orders')
-        .select('items, created_at')
-        .eq('customer_user_id', customerUserId)
-        .eq('account', 'oben')
-        .order('created_at', { ascending: false })
-        .limit(50);
-
-      if (!orders) return null;
-
-      for (const order of orders) {
-        const items = order.items as Array<{ product_id?: string; tint_cor_id?: string; valor_unitario?: number }>;
-        if (!Array.isArray(items)) continue;
-        for (const item of items) {
-          if (
-            item.product_id === product.id &&
-            item.tint_cor_id === selectedFormula.cor_id
-          ) {
-            return {
-              price: item.valor_unitario as number,
-              date: order.created_at as string,
-            };
-          }
-        }
-      }
-      return null;
+      const { data, error } = await supabase.rpc(
+        'tint_ultimo_preco_cliente' as never,
+        {
+          p_customer_user_id: customerUserId,
+          p_product_id: product.id,
+          p_cor_id: selectedFormula.cor_id,
+        } as never,
+      );
+      // Erro (RPC ausente/permissão) → sem histórico, NUNCA preço fabricado;
+      // a fonte 'cliente' simplesmente não aparece no seletor.
+      if (error) return null;
+      const row = data as unknown as { price?: number; date?: string } | null;
+      if (!row || typeof row.price !== 'number' || row.price <= 0) return null;
+      return { price: row.price, date: row.date ?? '' };
     },
   });
 
@@ -254,15 +272,16 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
     queryFn: async (): Promise<AlternativePackaging[]> => {
       if (!selectedFormula?.cor_id || !skuId) return [];
 
-      // Get all formulas with the same cor_id but different sku_id
-      const { data: altFormulas } = await supabase
-        .from('tint_formulas')
-        .select('id, sku_id, preco_final_sayersystem')
+      // Get all formulas with the same cor_id but different sku_id — canônica
+      // (1 por SKU; sem a gêmea SAYERLACK duplicando cada embalagem)
+      const { data: altFormulas, error: altErr } = await supabase
+        .from('v_tint_formula_canonica')
+        .select('id, sku_id, preco_csv_legado, is_sl')
         .eq('account', 'oben')
         .eq('cor_id', selectedFormula.cor_id)
-        .is('desativada_em', null)
         .neq('sku_id', skuId)
-        .not('sku_id', 'is', null);
+        .order('id', { ascending: true });
+      if (altErr) throw altErr;
 
       if (!altFormulas || altFormulas.length === 0) return [];
 
@@ -292,6 +311,8 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
 
       const result: AlternativePackaging[] = [];
       for (const af of altFormulas) {
+        // Guard de narrowing: view gerada é nullable; base é NOT NULL (ver busca global)
+        if (af.id == null || af.sku_id == null) continue;
         const sku = skus.find(s => s.id === af.sku_id);
         if (!sku?.omie_product_id) continue;
         const prod = products.find(p => p.id === sku.omie_product_id);
@@ -299,13 +320,14 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
 
         result.push({
           formulaId: af.id,
-          skuId: af.sku_id!,
+          skuId: af.sku_id,
           omieProductId: sku.omie_product_id,
           productDescricao: prod.descricao,
           productCodigo: prod.codigo,
-          precoFinalCsv: af.preco_final_sayersystem ? Math.ceil(af.preco_final_sayersystem * 10) / 10 : af.preco_final_sayersystem,
+          precoFinalCsv: af.preco_csv_legado ? Math.ceil(af.preco_csv_legado * 10) / 10 : af.preco_csv_legado,
           product: prod as Product,
           sameAcabamento: sku.produto_id === currentProdutoId && sku.base_id === currentBaseId,
+          isSl: af.is_sl,
         });
       }
 
@@ -332,21 +354,36 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
   // Preço honesto da cor selecionada: motor get_tint_price (base + corantes, NULL quando
   // a base/corante falta) + CSV legado + último preço do cliente. Quando o motor não tem
   // preço, vira "sem preço" — nunca um número fabricado. Regras em src/lib/tint/select-price.ts.
-  const rawCsv = selectedFormula?.preco_final_sayersystem ?? null;
+  // Fase 2b: o CSV considerado é o da CHAVE (preco_csv_legado) — desde a migration
+  // 20260722100002 a view GARANTE que, na canônica SL, ele vem só de linhas não-SL
+  // (a VERSÃO ANTERIOR da tinta); a vendedora escolhe entre novo × anterior.
+  const rawCsv = selectedFormula?.preco_csv_legado ?? null;
   const custoCorantes = pricing?.custoCorantes || 0;
 
   const [priceSourceOverride, setPriceSourceOverride] = useState<TintPriceSource | null>(null);
 
+  // Override de fonte POR alternativa (Fase 2b-fix): a vendedora escolhe calculado × tabela
+  // também nas "outras embalagens" e na busca global — antes o selectAltPrice decidia sozinho.
+  // A validação (fonte sem valor → default; sem preço confiável → nada) mora em selectAltPrice.
+  const [altPriceSourceOverrides, setAltPriceSourceOverrides] = useState<Record<string, AltPriceSource>>({});
+  const setAltPriceSourceOverride = (formulaId: string, source: AltPriceSource) =>
+    setAltPriceSourceOverrides((prev) => ({ ...prev, [formulaId]: source }));
+
   // Trocar de cor reseta a escolha manual de fonte — senão um override antigo (ex.: "tabela")
-  // venceria o auto da nova cor e esconderia o aviso de recálculo dela.
+  // venceria o auto da nova cor e esconderia o aviso de recálculo dela. Os overrides das
+  // alternativas resetam junto (a lista de embalagens é da cor anterior).
   useEffect(() => {
     setPriceSourceOverride(null);
+    setAltPriceSourceOverrides({});
+    // Fase 3: o DESCONTO também reseta por cor (escolha por item, nunca herdada).
+    setDiscountPct(0);
   }, [selectedFormula?.id]);
 
-  // Enquanto a RPC de preço (ou o último preço do cliente) carrega, NÃO decidir o preço: o motor
-  // honesto ainda não respondeu e cair no CSV/cliente aqui venderia o preço legado (subfaturado)
-  // antes de saber. A UI mostra "calculando" e segura o "Adicionar".
-  const precoCarregando = !!selectedFormula && (pricingLoading || loadingLastPrice);
+  // Enquanto a RPC do MOTOR carrega, NÃO decidir o preço (a UI mostra
+  // "calculando" e segura o "Adicionar"). Fase 3: o último-preço do cliente
+  // NÃO trava mais o preço seguro — deixou de ser default (é chip opt-in);
+  // lentidão/falha da RPC de histórico não pode impedir calc/tabela (Codex P2).
+  const precoCarregando = !!selectedFormula && pricingLoading;
 
   // A RPC de preço pode FALHAR (erro/permissão/runtime) e o hook devolve pricing null igual a
   // "carregando". Sem distinguir, a seleção cairia no CSV legado/preço-cliente e venderia base/
@@ -394,6 +431,7 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
     setSearch(value);
     setSelectedFormula(null);
     setPriceSourceOverride(null);
+    setAltPriceSourceOverrides({});
   };
 
   return {
@@ -423,6 +461,8 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
     setSyncDiscount,
     priceSource,
     setPriceSourceOverride,
+    altPriceSourceOverrides,
+    setAltPriceSourceOverride,
     precoCsv,
     precoCalc,
     precoCliente,

@@ -2,6 +2,20 @@
 
 > O que NÃO acontece sozinho no merge. Lição durável carregada sob demanda. Runbook passo-a-passo completo: `docs/runbooks/lovable-supabase.md`. Banco/migration: `docs/agent/database.md`. Verificação: skill `lovable-deploy-verify`.
 
+## Domínio canônico — `https://steu.lovable.app`
+
+É **a** URL de produção: o que verificar depois de um Publish, o host do QA visual, e o destino de todo link que uma edge mande para o cliente. **`afiacao.lovable.app` está MORTO** — HTTP 404 `Project not found` (conferido 2026-07-18), assim como `preview--afiacao.lovable.app` e as variações por project-id. O nome do projeto no Lovable não é o nome do repo; não dá para adivinhar a URL a partir de "afiacao".
+
+**Edge que linka o app não hardcoda host** — lê a env, com o canônico só como fallback:
+
+```ts
+const APP_URL = Deno.env.get("APP_URL") ?? "https://steu.lovable.app";
+```
+
+Padrão em `gerar-pedidos-diario`/`disparar-pedidos-aprovados`. O guard `src/__tests__/edge-app-url.test.ts` quebra o CI se alguma edge voltar a citar host nu ou o domínio morto (#1413: o CTA "Agendar Afiação" do `monthly-report` apontava para o 404 — e só era renderizado para o cliente COM ferramenta atrasada, o de maior intenção).
+
+Como provar o que está **SERVIDO** nesse host (hash do index + grep nos chunks): skill `lovable-deploy-verify` — o método vive lá, não é duplicado aqui.
+
 ## Merge na `main` ≠ produção — 3 deploys MANUAIS e independentes
 
 1. **Migration** → colar o SQL no **SQL Editor do Lovable** → Run → validar com query de contagem. O Lovable **NÃO** aplica migration de nome custom sozinho (falha SILENCIOSA: a feature compila e quebra em runtime). Detalhe + ritual + skill `lovable-db-operator`: `docs/agent/database.md`.
@@ -11,25 +25,89 @@
 ## Edge — armadilhas
 
 - **Deploy SÓ depois do merge** — o chat lê a `main`; deployar antes pega o código velho.
+- **Deployar uma edge sobe o ARQUIVO INTEIRO da `main`, não só o seu diff** → o pré-flight é das dependências de banco de TODO o arquivo, inclusive código de PRs de TERCEIROS mergeados desde o último deploy dela. É a irmã da armadilha da migration silenciosa, vista do outro lado: não foi a migration que faltou aplicar — foi o **deploy do código que a exigia** que chegou depois e revelou a falta. Mordido 2026-07-17 (Fatia 2 do épico-drop): deployei `carteira-rebuild` verbatim (a MINHA mudança tinha as deps checadas: `identity_state` existia no schema) — mas o arquivo da main carregava junto o lease do #1333 (`claim_carteira_rebuild`/`finalizar_carteira_rebuild`), mergeado dias antes, cuja migration NUNCA fora aplicada. As duas metades faltando (edge do #1333 nunca deployada + migration nunca aplicada) se cancelavam; meu deploy correto trouxe só a metade-código → **rebuild 500 em produção por ~40min** (`claim: Could not find the function ... in the schema cache`), carteira congelada no snapshot do dia anterior (modo-falha seguro: o `claim` é o 1º passo, morre ANTES de escrever). **Pré-flight barato (roda em segundos, teria pego):** antes de dar o prompt de deploy de uma edge, cruze as RPCs que ela chama com o que existe em prod —
+  ```bash
+  grep -rhoE "\.rpc\('[a-z_]+'" supabase/functions/<edge>/ | sed "s/.*rpc('//;s/'//" | sort -u
+  # cada uma: ~/.config/afiacao/psql-ro -c "select 1 from pg_proc where proname='<rpc>';"  (vazio = bomba armada)
+  ```
+  Varredura do repo inteiro em 2026-07-17: das 16 RPCs chamadas por edges, as 16 existem em prod — o `claim_carteira_rebuild` era o único caso. Vale o mesmo raciocínio p/ tabela/coluna/view nova que o arquivo referencie.
 - **Proibir "melhorias"** — instrua o chat a deployar **verbatim** o arquivo do repo (o Lovable tende a reescrever a função).
 - **Verificar por comportamento/bytes, não pela palavra do Lovable** — `503 LOAD_FUNCTION_ERROR` + zero `running` no log = a edge não BOOTA → fix é **redeploy**, não código (ver `docs/agent/sync.md`).
 - **`config.toml` pode vir com `[functions.<x>]` DUPLICADO** (bug do bot do Lovable) → TOML inválido (`redefine an already defined table`) que **quebra o `supabase` CLI** no parse. Fix: apagar a 2ª entrada (se idêntica = no-op de comportamento) — pode reaparecer num "Changes" do bot. (#974)
 - **Edge "fantasma" (deployada, mas sem invocador):** *deployada/gerenciada pelo Lovable* = commits `gpt-engineer-app[bot]` tocando `<x>/index.ts` (+ commit "Deployou edge function `<x>`"); *invocada* = `cron.job` + `net._http_response` (+ `pg_proc`/código/CI). Antes de apagar um `supabase/functions/<x>/` órfão do repo: prove os DOIS lados E **delete no Lovable PRIMEIRO** (senão o bot regenera o diretório no próximo deploy de scoring). (#974: `n` era clone byte-idêntico de `calculate-scores` — deployado, zero invocador.)
 - **Deploy de edge pode REVERTER um fix mergeado (money-path!)** — o Lovable reconcilia com a cópia VELHA dele e **commita a reversão na `main`** como `Changes`, desfazendo o PR (mordido 2026-06-26: o fallback do `analyze-unified-order` #1077 voltou a `override`, `main` silenciosamente revertida; re-aplicado #1080; noutro deploy o bot apagou o comentário-aviso mas manteve o gate). É **evento que MUDA código**, não deploy puro — não está pronto até `main` E comportamento conferidos. **Pós-deploy, 2 camadas:** (1) **source** — `git fetch origin main` + grep o invariante-alvo (ex.: `&& !priceMap[productId]`); sumiu = deploy FALHO; (2) **comportamento** — grep é necessário mas **NÃO suficiente** (o bot pode deployar da cópia interna SEM refletir na `main`) → canária com fixture (ex.: Omie=999 vs local=123 → espera 123). O aviso anti-reversão **não pode morar no código** (o bot remove comentários) — mora aqui.
 - **"Deploy verbatim" manual é frágil p/ edge money-path** (cópia-fonte mutável do Lovable pode vencer — Codex 2026-06-26). Mitigar: prompt "deploy from `main` at SHA `<sha>`; do NOT reconcile from your internal copy; abort+report if it differs"; idealmente CI que falha se o invariante some, ou deploy por SHA/Action.
+- **Validar edge com `deno lint` é FALSO VERDE: quem barra o CI é o ESLint, e a SUPRESSÃO não é intercambiável.** Os dois lintam as edges, com regras diferentes: `bun lint` (= `eslint .`) cobre `supabase/functions/**` — de tudo que está sob `supabase/functions/`, o `ignores` do `eslint.config.js` exclui **só** `functions/mcp/**` (bundle auto-gerado) — e aplica `tseslint.configs.recommended`, onde **`no-explicit-any` é ERROR**. O `deno lint` tem a mesma regra, mas **cada linter só enxerga o SEU comentário**: `// deno-lint-ignore no-explicit-any` não diz nada ao ESLint, e `// eslint-disable-next-line @typescript-eslint/no-explicit-any` não diz nada ao deno lint. O repo exibe os dois lados da armadilha ao mesmo tempo (medido 2026-07-18): os **6 `any` pré-existentes** das edges têm supressão de ESLint e por isso figuram nos 198 problemas do `deno lint` **com o CI verde**; no #1432 eu fiz o inverso — suprimi só p/ deno, `deno lint` limpo, **CI vermelho com 4 erros**. Ou seja: nenhum dos dois linters, sozinho, prova o outro. **Regra: mexeu em edge, rode `bun lint` (o do CI) antes do push** — `deno lint`/`deno check`/`test:edges` são complemento, não substituto. (Por que `deno lint` não entrou no CI: `docs/historico/ci-testes-edge-deno.md`.)
+
+## Gateway de IA do Lovable — teto MENSAL de créditos derruba 7 edges de uma vez
+
+O `ai.gateway.lovable.dev` (e o `ai.lovable.dev/chat/v1` do `copilot-analyze`) tem orçamento PRÓPRIO — *"AI features usage limit"*, **teto de 4 créditos/mês**, reset no dia 1º. Ao estourar, ele para de servir **todas** as edges de uma vez, e o sintoma NÃO aponta para créditos: o gateway devolve um status fora do `429`/`402` que as edges tratam, então cada uma cai no `else` genérico e reporta **HTTP 500**. Estourou em 2026-07-27 (4,20 de 4) e a geração de planos táticos ficou **3 dias em zero** — cron disparando certo, batch reportando honestamente `{"ok":false,"erros":59}`.
+
+- **Diagnóstico rápido:** quebra ABRUPTA e TOTAL numa feature de IA, com o cron saudável, é teto de créditos até prova em contrário — **não** modelo descontinuado. O discriminante é o conjunto: o gateway serve modelos diferentes (`gemini-3-flash-preview` e `gemini-2.5-flash`), então "modelo removido" derrubaria só um subconjunto; teto derruba todos. `git log -S "<modelo>" --all` acha o diagnóstico anterior em segundos.
+- **A conta que decide a prioridade:** o consumo é MUITO desigual. O batch noturno de planos táticos sozinho fazia 59 chamadas/dia (~1.770/mês) — tirá-lo do gateway protege as demais no mês seguinte. Antes de migrar por ordem alfabética, conte as chamadas/mês de cada uma.
+- **Migração (padrão dos #1592/#1608/#1618):** `claude-sonnet-4-6` via `npm:@anthropic-ai/sdk` (nunca `esm.sh` — falha no boot sem stack), forced tool-use com `disable_parallel_tool_use: true`, prompt caching no `system`, gate de auth preservado, contrato de request/response inalterado, e **mapear o 402 explicitamente** (a Anthropic devolve `billing_error`; sem mapear, crédito esgotado volta a virar `http_500` genérico e o próximo diagnóstico recomeça do zero).
+- **Ao migrar, procure o FALLBACK FABRICADO junto.** Todas essas edges nasceram parseando JSON de texto livre com `try/catch`, e o `catch` costuma inventar uma saída "padrão" que é gravada como real. Forced tool-use elimina a causa; o fallback tem de ser removido no mesmo PR, senão vira falha silenciosa com outro provedor.
+
+## Canárias de deploy (a única prova do que está SERVIDO)
+
+Grep na `main` prova a **fonte**; a canária prova o **deploy**. Chame com `?canary=1` (staff-gated). Nas canárias **VERSIONADAS** (as que têm `contrato` na tabela abaixo) exija os **TRÊS** campos — nunca só o `ok`:
+
+```text
+canary === true   E   contrato === '<marcador da fatia>'   E   ok === true
+```
+
+Nas canárias ainda **não-versionadas** (`contrato` = `—`) só há `canary` + `ok`, o que **não** protege contra deploy integralmente velho (ver ⚠️ abaixo) — versioná-las é dívida aberta.
+
+| edge | rota | `contrato` esperado | o que a fixture discrimina |
+|---|---|---|---|
+| `analyze-unified-order` | Governança → Auditoria (card "Canária de preço") | — | praticado 123 vence Omie 999 |
+| `omie-vendas-sync` | `identidade_probe` | — | identidade derivada por documento |
+| `omie-analytics-sync` | `doc_ambiguo_probe` | — | doc ambíguo não vira vínculo |
+| `carteira-rebuild` | `?canary=1` | `trava-saida-v1` | conflito permanece com `eligible=false` (velho: some) **+** trava de saída do bootstrap (velho: grava ~Hunter) |
+| `omie-financeiro` | `paginacao_probe` | `paginacao-guards-v1` | guards de paginação do #1598: piso NÃO encolhe (vazia antes do fim = anomalia; velho: `\|\| 1` → "fim"), reversa só completa com sonda vazia (velho: `pagina < 1` → complete), fingerprint sem colisão (velho: `1ºcódigo:count`), resposta sem array LANÇA (velho: `\|\| []` → "página vazia" = fim) |
+
+⚠️ **Só é canária se a resposta tiver `"canary":true` E o `contrato` esperado.** Duas falhas distintas:
+1. Deploy ANTERIOR à canária ignora o param e roda o **fluxo real** — no `carteira-rebuild` isso é um rebuild completo (lease + upserts; idempotente e guardado, mas é escrita). Resposta sem `canary:true` = canária não rodou **e** o deploy é velho: já é o veredito.
+2. Deploy **integralmente velho** (com a canária de uma fatia anterior) carrega o `expected` VELHO junto e compara velho×velho → responde `canary:true, ok:true` e **mente verde** (Codex 2026-07-20). Por isso o **`contrato` (version marker) é obrigatório na verificação**: `ok` sozinho não discrimina reversão de fatia. Faça **bump do marcador** a cada fatia que mude o contrato da canária — senão a próxima reversão volta a passar despercebida.
+
+⚠️ **Canária que não discrimina é teatro verde.** Se a mudança for no-op nos dados de hoje (caso do #1397: 0 conflitos em prod), a resposta do fluxo REAL é byte-idêntica com código velho ou novo — não prova deploy nenhum. A fixture tem de exercitar **o comportamento que mudou**, e o teste tem de provar que sob o comportamento ANTIGO a canária ficaria vermelha (ver `rebuild-helpers.test.ts` → "a fixture DISCRIMINA"; e `_shared/omie-paginacao_test.ts` → bloco "CONTROLE DE CALIBRAÇÃO", que roda a forma pré-#1598 sobre os fixtures homônimos da `paginacao_probe`). Sem esse assert, a canária só prova que a função responde.
+
+**Como o founder invoca uma probe sem terminal** (ele não tem acesso de shell ao backend): cole no **SQL Editor do Lovable** — o segredo sai do vault, nunca do chat — e leia a resposta em `net._http_response`. Mesmo mecanismo do cron, com `timeout_milliseconds` EXPLÍCITO (default 5s mata silencioso). Trocando `action`/`url`, serve para as outras probes:
+
+```sql
+SELECT net.http_post(
+  url := 'https://fzvklzpomgnyikkfkzai.supabase.co/functions/v1/omie-financeiro',
+  headers := jsonb_build_object('Content-Type','application/json',
+    'x-cron-secret',(SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name='CRON_SECRET' LIMIT 1)),
+  body := jsonb_build_object('action','paginacao_probe'),
+  timeout_milliseconds := 20000) AS request_id;
+-- ~5s depois, na MESMA aba:
+SELECT status_code, content::jsonb->'canary' AS canary, content::jsonb->'contrato' AS contrato,
+       content::jsonb->'ok' AS ok,
+       (SELECT jsonb_agg(c->'caso') FROM jsonb_array_elements(content::jsonb->'casos') c
+        WHERE (c->>'ok')::bool IS NOT TRUE) AS casos_vermelhos
+FROM net._http_response ORDER BY id DESC LIMIT 1;
+```
+
+Verde = `status_code 200` **E** `canary true` **E** `contrato` batendo com a tabela acima **E** `ok true` **E** `casos_vermelhos NULL` (os cinco, não só o `ok`). `400` com `"Ação desconhecida"` = **bundle velho**, a probe não subiu — e a lista `acoes_disponiveis` da resposta é a confirmação (não cita a action nova). ⚠️ Probe é **dry-run**: se um dia uma delas abrir linha em `fin_sync_log`, ela fabrica frescor — `_data_health_compute` e `fin_calcular_confiabilidade` leem essa tabela **sem filtrar `action`** (só o `fin_sync_heartbeat` filtra). No `omie-financeiro` isso é o `PROBE_ACTIONS` → `logId=""`, pinado no `edge-money-path-invariants`.
 
 ## Quando o Lovable reverte um fix — detectar e restaurar
 
 O bot `gpt-engineer-app[bot]` commita direto na `main` SEM CI ("Changes"/"Deployed"/"Deployou edge") e às vezes reverte um PR (~16% dos commits; ≥4-5 reversões money-path recentes). Prevenção é inviável (o bot precisa de escrita direta) → o jogo é **detectar + restaurar rápido** (MTTR), não governança perfeita. Spec: `docs/superpowers/specs/2026-06-26-lovable-revert-mitigation-design.md`.
 
-- **Sinais automáticos (CI desta frente, `.github/workflows/`):** Issue **`ci-main-red`** = a `main` quebrou build/typecheck/test (antes passava silencioso — ninguém alertado); Issue **`lovable-touched-sensitive`** = o bot tocou path money-path/edge **mesmo com CI verde** (regressão compilável — a classe do #1076/#1077). Ambas assinadas pro founder.
+- **Sinais automáticos (CI desta frente, `.github/workflows/`):** Issue **`ci-main-red`** = a `main` quebrou build/typecheck/test (antes passava silencioso — ninguém alertado); Issue **`lovable-touched-sensitive`** = o bot tocou path money-path/edge **mesmo com CI verde** (regressão compilável — a classe do #1076/#1077); Issue **`lovable-reverted-merge`** = **reversão PROVADA por linha** — o commit direto removeu linhas que um merge das últimas 48h tinha adicionado; acusa QUAL PR foi desfeito + comando de restauração (`scripts/lovable-revert-scan.sh`, testável local: `test-lovable-revert-scan.sh`; filtra comentário puro e linha trivial — o bot apaga aviso sem reverter gate). Todas assinadas pro founder.
 - **Guardrails como rede (testes-invariantes):** `src/lib/reposicao/__tests__/edges-onorder-guardrail.test.ts` (janela on-order #1072/#1076) e `src/__tests__/edge-money-path-invariants.test.ts` (analyze: helper espelhado + paridade edge×src + gate de fallback `!(… in priceMap)` + canária #1077/#1080/#1089; e margem do `algorithm-a-audit`) **quebram o CI** se a regressão volta ao REPO. Em refactor legítimo, **reescrever o teste junto** — não deletar.
 - **Restauração rápida** (o que destravou #1076/#1085): `git checkout <sha-da-correção> -- <arquivo>` → abrir **PR** (auto-merge no verde). **Nunca** restaurar direto na `main` (vira guerra de commits com o bot).
+- ⚠️ **O `lovable-watch` só enxerga o ÚLTIMO commit do push — reversão no PENÚLTIMO passa em silêncio (2026-07-23).** O workflow roda `git diff HEAD^ HEAD`, e o bot empurra em LOTE (`Changes` + `Deployed …` no mesmo push): o GitHub dispara UM run, no HEAD, e o commit intermediário nem tem run próprio. Medido: `018e8abc` ("Changes") removeu de novo as 3 linhas da RPC `farmer_association_rules_substituir` do `types.ts`; o run rodou em `54691cc5` (HEAD), cujo diff contra o pai **já não continha a remoção** → nenhuma issue aberta, `conclusion: success`. Na rodada anterior o gate acusou (issue #1583) só porque a reversão calhou de estar no HEAD do push. ⇒ **o gate cobre ~metade dos casos**; até ser corrigido (varrer `github.event.before..HEAD`, não `HEAD^..HEAD`), o **ritual manual abaixo continua obrigatório** — `git fetch` + conferir o diff de TODOS os commits do bot desde o último merge, não só o último. Corolário da causa-raiz: o bot regenera `types.ts` **a partir do BANCO**, então toda migration entregue e NÃO aplicada vira uma bomba-relógio — o próximo deploy de edge remove a RPC do types e quebra o build do Publish (loop observado 2×; some sozinho quando a migration é aplicada).
 - **Ritual pós-Lovable:** após qualquer Publish/chat-edit, além da verificação de deploy de edge (acima), `git fetch origin main` e cheque o commit do bot — tocou money-path sem intenção → restaure na hora. Para o **edge de preço** (`analyze-unified-order`), confirme o COMPORTAMENTO deployado pela **canária**: Governança → Auditoria — o card "Canária de preço" **roda sozinho ao abrir** (botão "Verificar de novo" para re-checar). Verde = praticado 123 vence Omie 999; vermelho/erro = edge revertida → restaure. É a única prova do que está SERVIDO em prod (o invariante do CI só prova o repo). Evite editar pelo Lovable arquivos mantidos via PR.
 
 ## Verificação de deploy
 
-- A skill **`lovable-deploy-verify`** confere se o bundle servido bate com o esperado (bytes/comportamento). Use após Publish/deploy — não confiar cegamente no "deployed" do Lovable.
+- A skill **`lovable-deploy-verify`** confere se o bundle servido bate com o esperado (bytes/comportamento). Use após Publish/deploy — não confiar cegamente no "deployed" do Lovable. **N2 de edge (prova de versão) é automático quando `~/.config/afiacao/supabase-pat` existe** (Access Token do Supabase, `chmod 600`, padrão psql-ro): `verify-edge.sh` resolve env `SUPABASE_PAT` > arquivo e consulta a Management API; sem o arquivo, cada verificação de versão vira handoff manual na UI (custou 3 retomadas de sessão p/ confirmar 1 deploy). Teste: `scripts/test-verify-edge-pat.sh`. A varredura por bytes é **paralela** (`xargs -P`, halt-on-hit) — o bundle passou de 300 chunks e o modo 1-a-1 estourava o timeout.
+  - ⚠️ **NÃO PEÇA O PAT AO FOUNDER: o projeto roda em Lovable Cloud e o Supabase é da org do LOVABLE** (confirmado pelo founder 2026-07-23, depois de eu pedir o token 2× na mesma sessão). Ele não tem conta no `supabase.com` com acesso ao ref `fzvklzpomgnyikkfkzai`, logo **não existe Access Token para ele gerar** e o N2 é estruturalmente indisponível — o arquivo `supabase-pat` continua válido como mecanismo, só que ninguém pode preenchê-lo neste setup. A escada real de prova de edge aqui é: **N1** (`verify-edge.sh`, OPTIONS → servida) **+ rastro do commit do bot** na `main` (`Deployed …`/`Redeployed …` — evidência de que o deploy rodou, não de qual versão) **+ canária comportamental** quando a edge tiver uma (a ÚNICA prova de versão disponível). Edge sem canária: declare "N1 + rastro; versão não provada" — nunca "no ar". Se a entrega for money-path e a prova importar, **crie a canária junto do fix** (padrão `identidade_probe`/`credito_gate_probe`), porque depois não haverá como provar.
+- ⚠️ **Grep de verificação anda PAREADO com um controle positivo, no MESMO comando — senão o vazio se lê como resposta (2026-07-20).** Verificação por bytes conclui por **ausência** ("a string não está lá"), e ausência é o resultado que qualquer erro de alvo produz: arquivo errado, download que não aconteceu, path inválido. Some ao grep da assinatura o grep de uma string que **comprovadamente existe** no alvo (ex.: `order_date_kpi` para o chunk do farmer); controle vazio = você mediu o lugar errado, e o resultado da assinatura **não vale nada** — não é "não encontrei", é "não procurei". Mordido 3× seguidas verificando o Publish de #1466/#1468/#1471: (a) grep no entry `index-*.js`, que **não contém** o código lazy-loaded — as ~119 páginas e vários hooks têm chunk próprio (`useFarmerScoring-*.js`, `useCrossSellEngine-*.js`), então o entry tem ~232KB de 5,6MB; (b) grep nos chunks `Farmer*.js` das páginas, quando o hook mora em chunk separado; (c) `xargs` abortando com `command line cannot be assembled, too long` → **0 arquivos baixados** e os dois greps seguintes lendo um diretório vazio, com cara de "não achei". Nas três o controle denunciou na hora. **Corolário:** valide a assinatura contra o código PRÉ-fix (`git show <sha>~1:<arquivo> | grep -c '<assinatura>'` tem de dar **0**, e `<sha>` dar ≥1) — sem isso você prova que uma string existe, não que a MUDANÇA entrou. **E prefira a skill à varredura ad-hoc:** ela já resolve paralelismo e lista de chunks; refazer com `curl` na mão é como se cai nos três buracos acima.
+- **Fix que é uma AUSÊNCIA não se prova por bytes.** Remover um `|| 0`, um fallback ou um default não deixa assinatura: no bundle minificado o nome da variável sumiu, e `x.get(a)||0` legítimo (contador, onde 0 é a resposta certa) é indistinguível do que você tirou. Ou você grepa o **par positivo** que entrou junto (no #1471, o `.order("product_id"` da paginação, que só existe pós-fix), ou aceita que a prova é **comportamental** — e vai para a tela.
+- **QA visual pós-Publish** (renderização/comportamento na tela, refactor visual sem texto novo): os bytes não bastam e o `/browse` headless **não monta** a SPA. O padrão é **Claude-in-Chrome na sessão logada do founder** (ele abre o app 1×; o agente confere as telas) — detalhado no Passo 4b da skill `lovable-deploy-verify`.
 - O acesso **read-only** ao banco (`psql-ro`, ver `docs/agent/database.md`) confirma migration aplicada sem depender do founder.
 
 ## Atualização do PWA — modelo `prompt` (offline-first; #1169)

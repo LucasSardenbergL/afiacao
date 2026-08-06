@@ -31,11 +31,15 @@ export function ActivePlanCard({ activePlan, showPlan, onToggle }: ActivePlanCar
             {activePlan.offerTransition && (
               <p className="text-[10px] text-muted-foreground italic">"{activePlan.offerTransition}"</p>
             )}
+            {/* Os dois números do bundle são tri-estado (money-path — ausente ≠ zero): `null`
+                = não havia bundle na geração, ou a coluna não estava medida. Guard `!= null`
+                explícito — o badge OMITIDO é a leitura honesta, e o crachá "+R$ 0/mês" que o
+                `Number(x || 0)` produzia era um veredito de ganho nulo que ninguém apurou. */}
             <div className="flex gap-1.5">
-              {activePlan.bundleIncrementalMargin > 0 && (
+              {activePlan.bundleIncrementalMargin != null && activePlan.bundleIncrementalMargin > 0 && (
                 <Badge variant="outline" className="text-[7px]">+R$ {Math.round(activePlan.bundleIncrementalMargin)}/mês</Badge>
               )}
-              {activePlan.bundleProbability > 0 && (
+              {activePlan.bundleProbability != null && activePlan.bundleProbability > 0 && (
                 <Badge variant="outline" className="text-[7px]">{Math.round(activePlan.bundleProbability * 100)}% aceite</Badge>
               )}
             </div>

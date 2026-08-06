@@ -76,26 +76,56 @@ export function useCustomerScore(customerId: string | undefined, farmerId: strin
   });
 }
 
-/** Itens preferidos via Omie (precisa do código Omie do cliente). */
+interface PreferredItem {
+  product_codigo: string | null;
+  product_descricao: string | null;
+  familia: string | null;
+  order_count: number | null;
+  last_ordered_at: string | null;
+  account: string | null;
+  omie_codigo_produto: number;
+}
+
+/** Itens preferidos via Omie, casados pela view fresca omie_customer_account_map_fresco (Fatia 3 do fix
+ *  de rótulo + P1a staleness). A proof-table mapeia (user_id, account) -> código Omie do cliente NAQUELA
+ *  conta, populada DOCUMENT-FIRST pelo sync (sem a colisão de namespace do espelho omie_clientes poluído);
+ *  a view expõe só as linhas frescas (updated_at nos últimos 7d) — vínculo órfão stale não vaza.
+ *  customer_preferred_items é chaveada por (omie_codigo_cliente, account) da conta de VENDA; casamos
+ *  pelos PARES (código, account) do mapa, cobrindo oben E colacor. Fail-safe (precisão>recall): mapa
+ *  vazio (sync ainda não populou) -> []. NÃO usa .or() cru (guard-rail CLAUDE.md): .in×.in é produto
+ *  cartesiano e traria (código de uma conta × account de outra) por colisão — o filtro de pares
+ *  exatos em memória descarta esses. Ver docs/superpowers/specs/2026-07-07-espelho-omie-rotulo-por-conta-design.md. */
 export function useCustomerPreferredItems(customerId: string | undefined) {
   return useQuery({
     queryKey: ['c360-preferred', customerId],
     enabled: !!customerId,
     staleTime: 5 * 60_000,
-    queryFn: async () => {
-      const { data: link } = await supabase
-        .from('omie_clientes')
-        .select('omie_codigo_cliente')
-        .eq('user_id', customerId!)
-        .maybeSingle();
-      if (!link?.omie_codigo_cliente) return [];
+    queryFn: async (): Promise<PreferredItem[]> => {
+      // 1. mapa (account -> código) do cliente, por conta. Lê a VIEW FRESCA (P1a): só vínculos que o sync
+      //    viu no Omie nos últimos 7d (frescor no relógio do banco) — órfã stale não vaza como verdade.
+      const { data: maps } = await supabase
+        .from('omie_customer_account_map_fresco')
+        .select('account, omie_codigo_cliente')
+        .eq('user_id', customerId!);
+      const pares = (maps ?? []) as Array<{ account: string; omie_codigo_cliente: number }>;
+      if (pares.length === 0) return [];
+
+      const codigos = [...new Set(pares.map((p) => p.omie_codigo_cliente))];
+      const accounts = [...new Set(pares.map((p) => p.account))];
+      const paresValidos = new Set(pares.map((p) => `${p.omie_codigo_cliente}::${p.account}`));
+
+      // 2. preferred_items pelos códigos+contas do cliente; .in×.in (sem interpolar em .or()).
       const { data } = await supabase
         .from('customer_preferred_items')
-        .select('product_codigo, product_descricao, familia, order_count, last_ordered_at, account, omie_codigo_produto')
-        .eq('omie_codigo_cliente', link.omie_codigo_cliente)
-        .order('last_ordered_at', { ascending: false, nullsFirst: false })
-        .limit(10);
-      return data ?? [];
+        .select('product_codigo, product_descricao, familia, order_count, last_ordered_at, account, omie_codigo_produto, omie_codigo_cliente')
+        .in('omie_codigo_cliente', codigos)
+        .in('account', accounts)
+        .order('last_ordered_at', { ascending: false, nullsFirst: false });
+
+      // 3. filtra os PARES EXATOS (código,account) — descarta o cruzamento cartesiano cross-account.
+      return ((data ?? []) as Array<PreferredItem & { omie_codigo_cliente: number }>)
+        .filter((it) => paresValidos.has(`${it.omie_codigo_cliente}::${it.account}`))
+        .slice(0, 10);
     },
   });
 }

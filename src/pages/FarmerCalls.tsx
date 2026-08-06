@@ -206,9 +206,13 @@ const FarmerCalls = () => {
       let mappingByCode: Record<number, string> = {};
       if (omieClientes.length > 0) {
         const codigos = omieClientes.map(c => c.codigo_cliente);
+        // Fatia 3 (épico-drop): resolve o código OBEN -> user_id pela proof fresca account-correta
+        // (account='oben'), não pelo espelho poluído. UNIQUE(código,account) → sem colisão cross-conta.
+        // Miss (sem vínculo fresco) → sem mapa → resolve on save via documento.
         const { data: mappings } = await supabase
-          .from('omie_clientes')
+          .from('omie_customer_account_map_fresco')
           .select('user_id, omie_codigo_cliente')
+          .eq('account', 'oben')
           .in('omie_codigo_cliente', codigos);
         mappingByCode = Object.fromEntries((mappings || []).map(m => [m.omie_codigo_cliente, m.user_id]));
       }
@@ -302,10 +306,13 @@ const FarmerCalls = () => {
         if (profile?.user_id) customerUserId = profile.user_id;
       }
       if (!customerUserId && selectedCustomer.omie_codigo_cliente) {
+        // Fatia 3 (épico-drop): o código veio da busca OBEN — resolve pela proof fresca account-correta
+        // (account='oben'). UNIQUE(código,account) → sem colisão. Miss → null → cai no aviso abaixo.
         const { data: mapping } = await supabase
-          .from('omie_clientes')
+          .from('omie_customer_account_map_fresco')
           .select('user_id')
           .eq('omie_codigo_cliente', selectedCustomer.omie_codigo_cliente)
+          .eq('account', 'oben')
           .maybeSingle();
         if (mapping?.user_id) customerUserId = mapping.user_id;
       }

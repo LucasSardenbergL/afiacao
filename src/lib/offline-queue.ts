@@ -17,6 +17,7 @@
  */
 
 import { track } from '@/lib/analytics';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 
 const STORAGE_KEY = 'offline_queue_v1';
 
@@ -114,7 +115,7 @@ export async function flush(
       failedById.set(item.id, {
         ...item,
         attempts: item.attempts + 1,
-        lastError: e instanceof Error ? e.message : String(e),
+        lastError: mensagemDeErro(e) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.',
       });
       failed++;
     }

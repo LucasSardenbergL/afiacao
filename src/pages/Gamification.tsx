@@ -11,8 +11,9 @@ import { useAuth } from '@/contexts/AuthContext';
 import { 
   Trophy, Shield, Target, BookOpen, Users, Zap, 
   Heart, ChevronRight, Star, Award, TrendingUp,
-  Loader2, Lock, Lightbulb, ArrowRight
+  Lock, Lightbulb, ArrowRight
 } from 'lucide-react';
+import { PageSkeleton } from '@/components/ui/page-skeleton';
 
 const LEVEL_CONFIG = [
   { level: 1, name: 'Operacional', icon: Target, color: 'text-muted-foreground', bg: 'bg-muted' },
@@ -94,9 +95,9 @@ const Gamification = () => {
   if (loading) {
     return (
       <div className="min-h-screen bg-background pb-24">
-        <div className="flex items-center justify-center pt-32">
-          <Loader2 className="w-8 h-8 animate-spin text-primary" />
-        </div>
+        <main className="pt-16 px-4 max-w-lg mx-auto">
+          <PageSkeleton variant="list" />
+        </main>
       </div>
     );
   }

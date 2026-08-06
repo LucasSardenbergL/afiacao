@@ -9,7 +9,8 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
-import { ChevronLeft, Loader2, Send, Trash2, XCircle } from 'lucide-react';
+import { ChevronLeft, Send, Trash2, XCircle } from 'lucide-react';
+import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { toast } from 'sonner';
 import {
   usePedidoProgramadoDetalhe,
@@ -50,9 +51,7 @@ const PedidoProgramadoDetalhe = () => {
 
   if (isPending || !data) {
     return (
-      <div className="flex items-center justify-center pt-32">
-        <Loader2 className="w-8 h-8 animate-spin text-primary" />
-      </div>
+      <PageSkeleton variant="detail" />
     );
   }
   const { pedido, itens, envios } = data;

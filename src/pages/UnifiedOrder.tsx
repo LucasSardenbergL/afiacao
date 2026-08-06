@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Loader2, CheckCircle, Building2, Scissors, Wifi } from 'lucide-react';
+import { CheckCircle, Building2, Scissors, Wifi } from 'lucide-react';
+import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { Badge } from '@/components/ui/badge';
 import { track } from '@/lib/analytics';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -274,7 +275,7 @@ const UnifiedOrder = () => {
   };
 
   if (h.authLoading) {
-    return <div className="flex items-center justify-center py-32"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>;
+    return <PageSkeleton variant="form" />;
   }
 
   /* ─── Derived flags to keep UI clean ─── */
@@ -462,6 +463,9 @@ const UnifiedOrder = () => {
             condicaoPrazoOben={h.selectedParcelaOben}
           />
 
+          {/* estadoFormas + onRecarregarFormas: customer mode não escolhe condição de
+              pagamento (a query nem roda — enabled=isStaff), então espelham o mesmo corte
+              das formas ordenadas abaixo; `undefined` cai no default "sem degradação". */}
           {h.cart.length > 0 && h.selectedCustomer && (
             <CartSummaryBar
               cart={h.cart} obenProductItems={h.obenProductItems} colacorProductItems={h.colacorProductItems}
@@ -473,6 +477,9 @@ const UnifiedOrder = () => {
               selectedParcelaColacor={h.selectedParcelaColacor} setSelectedParcelaColacor={h.setSelectedParcelaColacor}
               loadingFormas={h.loadingFormas} customerParcelaRankingOben={h.customerParcelaRankingOben}
               customerParcelaRankingColacor={h.customerParcelaRankingColacor}
+              estadoFormasOben={isCustomerMode ? undefined : h.estadoFormasOben}
+              estadoFormasColacor={isCustomerMode ? undefined : h.estadoFormasColacor}
+              onRecarregarFormas={isCustomerMode ? undefined : h.recarregarFormas}
               notes={h.notes} setNotes={h.setNotes}
                volumesOben={h.volumesOben}
                volumesColacor={h.volumesColacor}
@@ -551,8 +558,8 @@ const UnifiedOrder = () => {
           onClose={() => { h.setTintPendingProduct(null); setTintInitialSearch(null); }}
           customerUserId={h.customerUserId}
           initialSearch={tintInitialSearch}
-          onConfirm={(formulaId, corId, nomeCor, precoFinal, custoCorantes, alternativeProduct) => {
-            h.addTintProductToCart(alternativeProduct || h.tintPendingProduct!, formulaId, corId, nomeCor, precoFinal, custoCorantes);
+          onConfirm={(formulaId, corId, nomeCor, precoFinal, custoCorantes, pricingMeta, alternativeProduct) => {
+            h.addTintProductToCart(alternativeProduct || h.tintPendingProduct!, formulaId, corId, nomeCor, precoFinal, custoCorantes, pricingMeta);
             setTintInitialSearch(null);
           }}
         />

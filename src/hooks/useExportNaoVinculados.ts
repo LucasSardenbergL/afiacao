@@ -29,7 +29,10 @@ export function useExportNaoVinculados() {
           .order('omie_codigo_cliente', { ascending: true })
           .range(from, from + PAGE - 1);
         if (error) throw new Error(error.message);
-        const rows = (data as NaoVinculadoCsvRow[]) ?? [];
+        // data null SEM error = malformada, não fim (classe #1338→#1564): tratá-la como
+        // fim exportava CSV PARCIAL sem aviso.
+        if (data == null) throw new Error('v_clientes_nao_vinculados_atual: data null sem error — malformada, não é fim');
+        const rows = data as NaoVinculadoCsvRow[];
         all.push(...rows);
         if (rows.length < PAGE) break;
         from += PAGE;

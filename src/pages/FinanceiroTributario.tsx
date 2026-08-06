@@ -7,8 +7,9 @@ import { Progress } from '@/components/ui/progress';
 import { COMPANIES, ALL_COMPANIES } from '@/contexts/CompanyContext';
 import { getDRE, type FinDRE } from '@/services/financeiroService';
 import {
-  Loader2, Calendar, AlertTriangle, Receipt
+  Calendar, AlertTriangle, Receipt
 } from 'lucide-react';
+import { PageSkeleton } from '@/components/ui/page-skeleton';
 
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const fmtCompact = (v: number) => {
@@ -71,7 +72,7 @@ const FinanceiroTributario = () => {
   };
 
   if (loading) {
-    return <div className="flex items-center justify-center py-24"><Loader2 className="w-8 h-8 animate-spin" /></div>;
+    return <PageSkeleton variant="cockpit" />;
   }
 
   return (

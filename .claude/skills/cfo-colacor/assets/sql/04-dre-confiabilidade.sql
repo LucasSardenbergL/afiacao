@@ -1,6 +1,6 @@
 -- ============================================================================
 -- 04 — DRE GERENCIAL + CONFIABILIDADE
--- 🟣 Lovable → SQL Editor → cola → Run
+-- 🟢 read-only → eu rodo via psql-ro (fallback: cola no SQL Editor do Lovable)
 -- ----------------------------------------------------------------------------
 -- fin_dre_snapshots tem 1 linha por (company, ano, mes, regime). SEMPRE filtre
 -- regime ('caixa' | 'competencia') — senão soma os dois e dobra tudo.

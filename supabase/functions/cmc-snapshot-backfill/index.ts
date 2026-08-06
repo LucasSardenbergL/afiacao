@@ -55,6 +55,13 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff, corsHeaders } from "../_shared/auth.ts";
+import {
+  decidirRetentativaCmcSnapshot,
+  MAX_TENTATIVAS_CMC_SNAPSHOT,
+  mensagemFaultstringOmie,
+  mensagemHttpOmie,
+} from "../_shared/cmc-snapshot-retry.ts";
+import { avaliarPagina, proximoTotalPaginas } from "../_shared/omie-paginacao.ts";
 
 const OMIE_API_URL = "https://app.omie.com.br/api/v1";
 
@@ -85,10 +92,15 @@ function getCredentials(account: OmieAccount) {
   return { key: Deno.env.get("OMIE_COLACOR_SC_APP_KEY"), secret: Deno.env.get("OMIE_COLACOR_SC_APP_SECRET") };
 }
 
-// Chamada Omie com retry curto p/ flakiness transitória (mesma família de erros
-// que o analytics-sync trata) — INCLUI o lock de concorrência do Omie ("Já existe
-// uma requisição desse método sendo executada"). Por isso TODAS as chamadas deste
-// edge são serializadas (await sequencial), nunca Promise.all.
+// Chamada Omie com retry curto p/ flakiness transitória — INCLUI o lock de concorrência do Omie
+// ("Já existe uma requisição desse método sendo executada"). Por isso TODAS as chamadas deste edge
+// são serializadas (await sequencial), nunca Promise.all.
+//
+// A classificação da falha e a redação da credencial ecoada vivem em `_shared/cmc-snapshot-retry.ts`
+// (lógica pura, testada) — este arquivo é só o transporte. O bloco ad-hoc que morava aqui tinha dois
+// defeitos: casava código HTTP por DÍGITO CRU (`includes("503")`, que casa dentro da app_key ecoada
+// pela faultstring de credencial) e comparava marcadores ACENTUADOS contra texto só `.toLowerCase()`
+// — o próprio lock acima deixava de ser reconhecido quando o Omie o emitia sem acento.
 async function callOmie(
   account: OmieAccount,
   endpoint: string,
@@ -99,35 +111,33 @@ async function callOmie(
   if (!creds.key || !creds.secret) throw new Error(`Credenciais Omie (${account}) não configuradas`);
   const body = { call, app_key: creds.key, app_secret: creds.secret, param: [params] };
 
-  const maxAttempts = 5;
   let lastErr: Error | null = null;
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+  for (let attempt = 1; attempt <= MAX_TENTATIVAS_CMC_SNAPSHOT; attempt++) {
     try {
       const res = await fetch(`${OMIE_API_URL}/${endpoint}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
+      // HTTP não-2xx LANÇA antes de o corpo virar payload — cai no catch abaixo, que já
+      // classifica 5xx como transitório e retenta com backoff, e no fim propaga. Sem isto, um
+      // 429/5xx cujo corpo parseia SEM `faultstring` devolvia objeto sem nTotPaginas e sem
+      // produtos, que o laço lê como página vazia no fim declarado (EOF) — e o snapshot de CMC
+      // é GRAVADO truncado. Os guards de paginação não alcançam o que o wrapper já aprovou.
+      if (!res.ok) {
+        throw new Error(mensagemHttpOmie(account, res.status, await res.text()));
+      }
       const result = (await res.json()) as OmieListarPosEstoqueResponse;
-      if (result.faultstring) throw new Error(`Omie (${account}): ${result.faultstring}`);
+      if (result.faultstring) throw new Error(mensagemFaultstringOmie(account, result.faultstring));
       return result;
     } catch (e) {
       lastErr = e instanceof Error ? e : new Error(String(e));
-      const msg = lastErr.message.toLowerCase();
-      const transient = msg.includes("broken response") || msg.includes("soap-error") ||
-        msg.includes("timeout") || msg.includes("timed out") || msg.includes("network") ||
-        msg.includes("connection") || msg.includes("fetch failed") ||
-        msg.includes("502") || msg.includes("503") || msg.includes("504") || msg.includes("500") ||
-        msg.includes("já existe uma requisição") || msg.includes("sendo executada") ||
-        msg.includes("tente novamente");
-      if (transient && attempt < maxAttempts) {
-        await new Promise((r) => setTimeout(r, 1000 * Math.pow(2, attempt - 1)));
-        continue;
-      }
-      throw lastErr;
+      const decisao = decidirRetentativaCmcSnapshot(lastErr.message, attempt);
+      if (!decisao.retentar) throw lastErr;
+      await new Promise((r) => setTimeout(r, decisao.atrasoMs));
     }
   }
-  throw lastErr ?? new Error(`Omie (${account}): falha após ${maxAttempts} tentativas`);
+  throw lastErr ?? new Error(`Omie (${account}): falha após ${MAX_TENTATIVAS_CMC_SNAPSHOT} tentativas`);
 }
 
 // Aceita ISO (YYYY-MM-DD) ou pt-BR (DD/MM/YYYY) e devolve o que o Omie espera (DD/MM/YYYY).
@@ -146,8 +156,11 @@ function brParaIso(ddmmyyyy: string): string {
 }
 
 // Pagina ListarPosEstoque numa data e devolve mapa nCodProd -> nCMC (só CMC > 0).
-// Para até a página vazia OU até maxPaginas (guard anti-loop; não confiar só em
-// nTotPaginas — armadilha do projeto com a paginação do Omie).
+// Guards de _shared/omie-paginacao.ts: o `|| 1` por resposta encolhia o teto e o teto
+// esgotado RETORNAVA o parcial — que era GRAVADO em cmc_snapshot como se fosse o catálogo
+// da data. Agora: piso monotônico, página vazia antes do fim declarado LANÇA, e declarado
+// acima de maxPaginas LANÇA fail-fast (suba body.maxPaginas se o catálogo crescer — nunca
+// gravar parcial).
 async function cmcPorData(
   account: OmieAccount,
   dDataPosicao: string,
@@ -156,27 +169,32 @@ async function cmcPorData(
   const mapa = new Map<number, number>();
   let pagina = 1;
   let totalPaginas = 1;
+  let paginasLidas = 0;
 
-  while (pagina <= maxPaginas) {
+  while (pagina <= totalPaginas) {
     const result = await callOmie(account, "estoque/consulta/", "ListarPosEstoque", {
       nPagina: pagina,
       nRegPorPagina: 100,
       cExibeTodos: "S", // catálogo inteiro (inclui saldo 0) — queremos o CMC, não só itens com saldo.
       dDataPosicao,
     });
-    totalPaginas = result.nTotPaginas || 1;
+    totalPaginas = proximoTotalPaginas(totalPaginas, result.nTotPaginas, maxPaginas);
     const produtos = result.produtos || [];
-    if (produtos.length === 0) break; // página vazia → fim (guard além do nTotPaginas)
+    const veredicto = avaliarPagina(produtos.length, pagina, totalPaginas);
+    if (veredicto === "anomalia") {
+      throw new Error(`página ${pagina}/${totalPaginas} do ListarPosEstoque (${dDataPosicao}) veio vazia antes do fim declarado — abortando (parcial NÃO gravado)`);
+    }
+    if (veredicto === "fim") break;
+    paginasLidas++;
     for (const prod of produtos) {
       const cod = Number(prod.nCodProd);
       if (!Number.isSafeInteger(cod) || cod <= 0) continue;
       // "Ausente ≠ zero": só guardamos CMC presente e > 0.
       if (typeof prod.nCMC === "number" && prod.nCMC > 0) mapa.set(cod, prod.nCMC);
     }
-    if (pagina >= totalPaginas) break;
     pagina++;
   }
-  return { mapa, paginasLidas: Math.min(pagina, maxPaginas), totalPaginas };
+  return { mapa, paginasLidas, totalPaginas };
 }
 
 // Upsert em lote no cmc_snapshot (idempotente: on conflict do update do cmc/synced_at).

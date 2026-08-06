@@ -12,6 +12,7 @@ import {
   Loader2, TrendingUp, DollarSign, BarChart3, Users,
   RefreshCw, Brain, Eye, Activity
 } from 'lucide-react';
+import { PageSkeleton } from '@/components/ui/page-skeleton';
 
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
@@ -56,8 +57,10 @@ const ExecutiveDashboard = () => {
 
   if (roleLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
-        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+      <div className="min-h-screen bg-background pb-24">
+        <main className="px-4 py-4 max-w-lg mx-auto">
+          <PageSkeleton variant="cockpit" />
+        </main>
       </div>
     );
   }
@@ -135,9 +138,7 @@ const ExecutiveDashboard = () => {
         </div>
 
         {loading ? (
-          <div className="flex justify-center py-8">
-            <Loader2 className="w-6 h-6 animate-spin text-primary" />
-          </div>
+          <PageSkeleton variant="list" />
         ) : filteredScores.length === 0 ? (
           <Card>
             <CardContent className="p-6 text-center">

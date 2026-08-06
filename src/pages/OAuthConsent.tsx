@@ -10,6 +10,7 @@ import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { Loader2 } from 'lucide-react';
+import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { Button } from '@/components/ui/button';
 
 // Wrapper tipado local pro namespace `supabase.auth.oauth` (ainda em beta no
@@ -78,8 +79,10 @@ export default function OAuthConsent() {
 
   if (!details) {
     return (
-      <main className="min-h-screen flex items-center justify-center">
-        <Loader2 className="w-6 h-6 animate-spin text-primary" />
+      <main className="min-h-screen bg-background px-4 pt-16">
+        <div className="max-w-lg mx-auto">
+          <PageSkeleton variant="auto" />
+        </div>
       </main>
     );
   }

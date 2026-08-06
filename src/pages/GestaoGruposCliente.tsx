@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
-import { Users, Plus, Trash2, ArrowRight, Building2, Loader2 } from 'lucide-react';
+import { Users, Plus, Trash2, ArrowRight, Building2 } from 'lucide-react';
+import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -104,11 +105,7 @@ export default function GestaoGruposCliente() {
         </Button>
       </header>
 
-      {isLoading && (
-        <div className="flex justify-center py-12">
-          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-        </div>
-      )}
+      {isLoading && <PageSkeleton variant="list" />}
 
       {error && (
         <p className="text-sm text-status-error">Não consegui carregar os grupos: {error instanceof Error ? error.message : 'erro'}.</p>

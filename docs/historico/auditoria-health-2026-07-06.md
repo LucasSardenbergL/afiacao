@@ -32,9 +32,35 @@ Auditoria mecânica completa (health stack + 2 sweeps por padrão do CLAUDE.md: 
 - `fin_dre_snapshots` sem `.limit()` — 12 linhas/ano/empresa/regime; precisaria ~80 anos p/ capar em 1000.
 - Somas com `?? 0` em reduce (cashflow saldo_cc/cmv_ttm, fluxo-realizado) — somar 0 ≡ excluir da soma; mudar semântica é decisão de produto, não fix.
 
+## Lote 2 (mesma sessão, pós-merge do PR da auditoria)
+
+Faxina de unused exports em módulos FRIOS (excluídos: financeiro, reposição, vendas/salesOrders, sayerlack, KB — áreas quentes ou com PR draft). 26 exports resolvidos (74→48): 17 símbolos de uso interno perderam só o keyword `export` (formatDocument, TIERS, RETRY_DELAY_MS, classifyProfile, AGENDA_TIPOS, TRACKED_PREFIXES, ORDER_STATUS_INVALIDOS, AuthRequiredError, EdgeFunctionError, PATHS_EXTRAS_SALES_ONLY, CADENCIA_DEFAULT, pickTopModifier, signalsCount, scoreNome, OPTIMISTIC_MSG_PREFIX, fetchCidadesRota, fetchWhatsappSla); 7 símbolos completamente mortos deletados (useInsideAppShell, calculateSharpeningStats, getPosthog, clearOfflineQueue, OUTCOME_STATUSES, WEAR_LEVELS, e 3 hooks de useOrders: useCustomerOrders/useStaffPendingOrders/useCustomerCount). Método: knip garante 0 usos externos; grep no próprio arquivo distingue uso interno (≥2 ocorrências) de morto total (1); typecheck strict (noUnusedLocals) valida.
+
+**Achado**: `omie-sync-status-produtos/paginacao.test.ts` usa sufixo `.test.ts` (vitest-style) mas vitest só inclui `src/**` — o arquivo só roda via `deno test` manual (documentado no cabeçalho). knip.json agora cobre ambos os sufixos de teste Deno (`*_test.ts` e `*.test.ts`) e ignora o specifier `jsr:` (mesmo caso do `npm:`).
+
+## Lote 3 — Responsividade mobile (2026-07-07, mesma sessão)
+
+Auditoria de responsividade 375px: 2 agentes de varredura estática (operacionais + analíticas) + verificação dinâmica via /browse (viewport 375x812, rotas públicas, dev server local).
+
+**Achado central (corrigido)**: a escala tipográfica v3 recalibrou `text-base` para **14px** (densidade desktop) — efeito colateral: NEUTRALIZOU o anti-zoom do shadcn ui/input (`text-base md:text-sm`), então **todo campo do app disparava auto-zoom no iOS Safari ao focar** (Safari zooma quando o font computado do campo é <16px). Personas atingidas: vendedor externo e separador (mobile-first do briefing). Fix: regra no bloco `@media (pointer: coarse)` já existente do index.css — `input, textarea, select, [contenteditable] { font-size: max(16px, 1em) }` — 16px só em ponteiro grosso, desktop denso intacto. Validado no CSSOM via /browse.
+
+**Chão de fábrica saudável**: ScanBar (text-base h-11 ✓), conferência (inputs h-12 ✓), tabs com overflow-x ✓, tabela shadcn com wrapper overflow ✓, sticky/fixed full-width ✓. Só 2 achados pontuais: TabsList `grid-cols-3` fixo no UnifiedOrder:371 e DialogContent `max-w-2xl` no Recebimento:504 [suspeito].
+
+**Analíticas — 29 quebras prováveis**: grids/TabsList com `grid-cols-3..6` fixos sem prefixo responsivo em ~21 páginas (P0: FinanceiroDashboard:168 TabsList grid-cols-5/6). NÃO corrigidos nesta sessão de propósito: as 4 sessões paralelas (cores/skeleton/react-query/faxina) tocam exatamente essas páginas — conflito certo. Chip aberto para lote pós-merge. Verificação dinâmica: /auth e /reset-password em 375px sem overflow horizontal e visualmente corretos.
+
+## Migração react-query — lote 1 (exhaustive-deps, sessão de 2026-07-07)
+
+Ataque ao backlog de `react-hooks/exhaustive-deps`: a correção CERTA do padrão legado `loadData()`+`useEffect([])` é migrar a tela pra `@tanstack/react-query` (não adicionar deps mecanicamente — risco de loop de refetch). Lote pequeno (5 telas do domínio afiação/cliente, **fora do money-path**), teste manual por tela.
+
+- **Telas migradas**: `ToolHistory` (`/tools/:toolId`), `ToolReports` (`/tools/:toolId/reports`), `ToolPublicHistory` (`/tool/:toolId`, pública/QR), `Training` (`/training`), `SavingsDashboard` (`/savings`). Todas saíram da lista de exhaustive-deps; net −57 linhas.
+- **Hooks** (padrão do projeto: `if (error) throw error`, `enabled` p/ dependência, chave por domínio): `useUserTools.ts` ganhou `useUserToolDetail`/`useToolEvents`/`useToolPriceHistory`/`useToolPublicHistory`; `useTraining.ts` (novo) com módulos+conclusões+mutation; `useOrders.ts` ganhou `useDeliveredOrders12m` (consolidei aqui em vez de criar `useSavings` — o módulo já é o dono de `orders`).
+- **Decisões**: chave `['user-tool', toolId, 'events']` compartilhada History↔Reports, servida em **asc canônico** (a timeline do History inverte no consumidor via `useMemo`); o insert do quiz virou `useMutation` com `invalidateQueries` (substitui o append manual de estado); `useUserToolDetail` usa `maybeSingle` → "não encontrada" sem retry. `ToolReports` perdeu o gate `enabled: !!user` (a RLS já limita e a rota é protegida). Des-exportei 7 tipos sem consumidor externo (não engordar o knip que os lotes 1-2 sanearam) — mantive só `ToolEvent`/`TrainingModule` (importados por telas).
+- **Verificação**: typecheck strict 0 erros; lint 0 errors, warnings 78→72. `SalesQuotes.accountGuard.test.tsx` falhou na suíte completa (`findByRole` estourando timeout sob M2 saturada) — **flaky pré-existente e independente** (SalesQuotes não importa nada do diff; mesmo padrão do `priceGuard` que esta auditoria já tratou), confirmado passando isolado, e a suíte completa passou verde no CI (runner limpo).
+- **Não migrado (candidato ao próximo lote)**: `AdminTraining.tsx` redefine `QuizQuestion`/`TrainingModule` locais e repete o `loadData` — reuso natural de `useTraining.ts` quando o lote de telas de staff chegar.
+
 ## Backlog novo (fora do escopo seguro desta sessão — churn alto/multi-worktree)
 
 - ~78 usos de cores Tailwind hardcoded (`text-emerald-600` etc.) onde a convenção v3 pede `text-status-*` — concentrados em páginas de status/governança/farmer. Migração visual dedicada.
-- ~52 `<Loader2 spin>` de página inteira onde a convenção pede `<PageSkeleton>`.
-- 39 warnings `react-hooks/exhaustive-deps` (padrão legado loadData+useEffect; correção certa = migração react-query por tela) + 25 `react-refresh/only-export-components`. Warnings NÃO bloqueiam o CI de propósito (decisão documentada no ci.yml; contagem caiu 82→78, ratchet não se aplica).
+- ~~~52 `<Loader2 spin>` de página inteira onde a convenção pede `<PageSkeleton>`.~~ → ✅ **ENTREGUE 2026-07-07** (70 páginas): #1210 migrou 61 e este follow-up as 9 restantes (que eram conflito certo com os lotes react-query/cores — SavingsDashboard, ToolHistory, ToolPublicHistory, ToolReports, Training, AdminGamification, AdminStandardProcessDetail, FarmerGovernance, FarmerRecommendations). 4 padrões: early-return limpo · página mobile standalone (wrapper + `<main>` real) · `TabFallback` de Suspense → `variant="auto"` · miolo em Card → `variant="list"`. Spinners inline (botão/upload/refetch/ícone de status) preservados.
+- `react-hooks/exhaustive-deps` (padrão legado loadData+useEffect; correção certa = migração react-query por tela) + `react-refresh/only-export-components`. Warnings NÃO bloqueiam o CI de propósito (decisão documentada no ci.yml; ratchet não se aplica). **Lote 1 entregue** (ver seção acima: 5 telas, total 78→72); restam ~20 em `src/pages/` + os de `src/components/`. Atacar em lotes pequenos por tela, teste manual.
 - 74 unused exports + 180 unused types (agora 100% sinal real no knip) — faxina de `export` keyword em sessão dedicada.

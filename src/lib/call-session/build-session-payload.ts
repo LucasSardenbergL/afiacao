@@ -1,4 +1,4 @@
-import type { SpinAnalysis } from '@/lib/spin/types';
+import type { SpinAnalysis } from '@/lib/call/spin/types';
 import type { TranscriptTurn } from '@/lib/transcription/types';
 import { aggregateEntities } from './aggregate-entities';
 

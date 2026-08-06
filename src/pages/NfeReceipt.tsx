@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Package, Loader2, CheckCircle2, XCircle, AlertTriangle, RotateCw, History } from "lucide-react";
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 
 const ACCOUNT_LABELS: Record<string, string> = {
   oben: "Oben",
@@ -98,7 +99,7 @@ export default function NfeReceipt() {
         }),
       );
     } catch (e) {
-      const resultSteps = [{ step: 0, description: "Erro inesperado", status: "error" as const, detail: e instanceof Error ? e.message : String(e) }];
+      const resultSteps = [{ step: 0, description: "Erro inesperado", status: "error" as const, detail: mensagemDeErro(e) ?? "Erro sem mensagem — tente de novo ou avise a equipe." }];
       setSteps(resultSteps);
       setFinalStatus("error");
       setHistory(

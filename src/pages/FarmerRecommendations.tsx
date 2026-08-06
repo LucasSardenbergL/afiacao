@@ -11,6 +11,7 @@ import {
   DollarSign, Target, Search, ChevronDown, ChevronUp, Filter,
   Plus,
 } from 'lucide-react';
+import { PageSkeleton } from '@/components/ui/page-skeleton';
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
@@ -19,16 +20,16 @@ const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', curren
 
 const StockBadge = ({ estoque }: { estoque: number | null }) => {
   if (estoque === null || estoque === undefined) return null;
-  if (estoque > 10) return <Badge variant="outline" className="text-[8px] bg-emerald-50 text-emerald-700 border-emerald-200">Em estoque</Badge>;
-  if (estoque > 0) return <Badge variant="outline" className="text-[8px] bg-amber-50 text-amber-700 border-amber-200">Estoque baixo</Badge>;
-  return <Badge variant="outline" className="text-[8px] bg-destructive/10 text-destructive border-destructive/20">Sem estoque</Badge>;
+  if (estoque > 10) return <Badge variant="outline" className="text-[8px] bg-status-success-bg text-status-success-foreground border-status-success/20">Em estoque</Badge>;
+  if (estoque > 0) return <Badge variant="outline" className="text-[8px] bg-status-warning-bg text-status-warning-foreground border-status-warning/20">Estoque baixo</Badge>;
+  return <Badge variant="outline" className="text-[8px] bg-status-error-bg text-status-error-foreground border-status-error/20">Sem estoque</Badge>;
 };
 
 const FarmerRecommendations = () => {
   const navigate = useNavigate();
   const { isStaff, loading: authLoading } = useAuth();
   const {
-    recommendations, loading, calculating, calculateRecommendations,
+    recommendations, loading, calculating, calculateRecommendations, erro, desatualizado,
   } = useCrossSellEngine();
   const [expandedClient, setExpandedClient] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -40,9 +41,7 @@ const FarmerRecommendations = () => {
 
   if (authLoading || loading) {
     return (
-      <div className="flex items-center justify-center py-32">
-        <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
-      </div>
+      <PageSkeleton variant="list" />
     );
   }
   if (!isStaff) { navigate('/', { replace: true }); return null; }
@@ -51,6 +50,12 @@ const FarmerRecommendations = () => {
     s + [...cr.crossSell, ...cr.upSell].reduce((s2, r) => s2 + r.lie, 0), 0);
   const totalCrossSell = recommendations.reduce((s, cr) => s + cr.crossSell.length, 0);
   const totalUpSell = recommendations.reduce((s, cr) => s + cr.upSell.length, 0);
+
+  // O cálculo falhou e não sobrou nada de uma execução anterior: os três KPIs somariam sobre a
+  // lista vazia e diriam "EIP Total R$ 0,00 · 0 Cross-sell · 0 Up-sell" — a falha de transporte
+  // apresentada como "não há oportunidade nenhuma na carteira". Nunca zero: "—" e o motivo.
+  const semDado = !!erro && recommendations.length === 0;
+  const ou = (v: string) => (semDado ? '—' : v);
 
   const filtered = recommendations.filter(cr => {
     if (searchQuery) {
@@ -77,24 +82,51 @@ const FarmerRecommendations = () => {
         </Button>
       </div>
 
+      {/* A falha do engine chega aqui: sem isto a tela fica idêntica a um recálculo que deu
+          certo — o vendedor vê a lista se acomodar e segue decidindo sobre números velhos. */}
+      {erro && (
+        <div
+          role="alert"
+          className={`rounded-lg border p-3 text-xs ${desatualizado
+            ? 'border-status-warning/30 bg-status-warning/5 text-status-warning'
+            : 'border-status-error/30 bg-status-error/5 text-status-error'}`}
+        >
+          {desatualizado
+            ? 'Exibindo o último cálculo bem-sucedido — a atualização mais recente falhou. As recomendações podem estar desatualizadas.'
+            : recommendations.length > 0
+              ? 'As recomendações foram calculadas, mas não puderam ser salvas. Os números abaixo são desta execução.'
+              : 'Não foi possível calcular as recomendações — a leitura da base falhou. Nenhum número abaixo foi estimado.'}
+        </div>
+      )}
+
       {/* Summary KPIs */}
       <div className="grid grid-cols-3 gap-3">
         <Card><CardContent className="p-3 text-center">
           <DollarSign className="w-4 h-4 mx-auto mb-1 text-primary" />
-          <p className="text-lg font-bold text-primary">{fmt(totalLIE)}</p>
-          <p className="text-[10px] text-muted-foreground">EIP Total</p>
+          <p className="text-lg font-bold text-primary">{ou(fmt(totalLIE))}</p>
+          <p className="text-[10px] text-muted-foreground">EIP Total (estimativa)</p>
         </CardContent></Card>
         <Card><CardContent className="p-3 text-center">
-          <ShoppingCart className="w-4 h-4 mx-auto mb-1 text-blue-600" />
-          <p className="text-lg font-bold">{totalCrossSell}</p>
+          <ShoppingCart className="w-4 h-4 mx-auto mb-1 text-status-info" />
+          <p className="text-lg font-bold">{ou(String(totalCrossSell))}</p>
           <p className="text-[10px] text-muted-foreground">Cross-sell</p>
         </CardContent></Card>
         <Card><CardContent className="p-3 text-center">
-          <ArrowUpRight className="w-4 h-4 mx-auto mb-1 text-purple-600" />
-          <p className="text-lg font-bold">{totalUpSell}</p>
+          <ArrowUpRight className="w-4 h-4 mx-auto mb-1 text-status-purple" />
+          <p className="text-lg font-bold">{ou(String(totalUpSell))}</p>
           <p className="text-[10px] text-muted-foreground">Up-sell</p>
         </CardContent></Card>
       </div>
+
+      {/* O EIP usa taxa de conversão ARBITRADA (15% cross-sell / 10% up-sell), não medida:
+          o desfecho das recomendações nunca foi registrado, então não há histórico para
+          calibrar. Como a taxa é a mesma para todo produto, a ORDEM do ranking é confiável
+          — o valor em R$ não é previsão de receita. Ver docs/historico/farmer-aprendizado-conversao.md */}
+      <p className="text-[10px] text-muted-foreground leading-relaxed">
+        O EIP usa taxa de conversão fixa, ainda não calibrada com histórico real. Use-o para{' '}
+        <strong className="font-medium">priorizar</strong> — a ordem é confiável; o valor em R$ é
+        estimativa, não previsão de receita.
+      </p>
 
       {/* Search + Filters */}
       <div className="flex items-center gap-2">
@@ -121,7 +153,11 @@ const FarmerRecommendations = () => {
         <Card><CardContent className="py-12 text-center">
           <Target className="w-8 h-8 mx-auto mb-3 text-muted-foreground/40" />
           <p className="text-sm text-muted-foreground">
-            Nenhuma recomendação disponível. Calcule os scores dos clientes primeiro.
+            {/* Sob falha, "nenhuma recomendação disponível" afirma "não existe" onde a verdade
+                é "não consegui ler" — e ainda manda recalcular um cálculo que acabou de falhar. */}
+            {semDado
+              ? 'Não foi possível carregar as recomendações. Tente recalcular em instantes.'
+              : 'Nenhuma recomendação disponível. Calcule os scores dos clientes primeiro.'}
           </p>
         </CardContent></Card>
       ) : (
@@ -175,14 +211,14 @@ const FarmerRecommendations = () => {
                   {cr.crossSell.length > 0 && (
                     <div>
                       <p className="text-xs font-semibold flex items-center gap-1 mb-2">
-                        <ShoppingCart className="w-3.5 h-3.5 text-blue-600" /> Cross-sell ({cr.crossSell.length})
+                        <ShoppingCart className="w-3.5 h-3.5 text-status-info" /> Cross-sell ({cr.crossSell.length})
                       </p>
                       <div className="space-y-2">
                         {cr.crossSell.map(rec => {
                           const outOfStock = rec.estoque !== null && rec.estoque === 0;
                           const canOrder = !!rec.customerId && !!rec.productId && !outOfStock;
                           return (
-                          <Card key={rec.productId} className="border-l-4 border-l-blue-500">
+                          <Card key={rec.productId} className="border-l-4 border-l-status-info">
                             <CardContent className="p-3">
                               <div className="flex items-start justify-between gap-2">
                                 <div className="min-w-0 flex-1">
@@ -224,14 +260,14 @@ const FarmerRecommendations = () => {
                   {cr.upSell.length > 0 && (
                     <div>
                       <p className="text-xs font-semibold flex items-center gap-1 mb-2">
-                        <ArrowUpRight className="w-3.5 h-3.5 text-purple-600" /> Up-sell ({cr.upSell.length})
+                        <ArrowUpRight className="w-3.5 h-3.5 text-status-purple" /> Up-sell ({cr.upSell.length})
                       </p>
                       <div className="space-y-2">
                         {cr.upSell.map(rec => {
                           const outOfStock = rec.estoque !== null && rec.estoque === 0;
                           const canOrder = !!rec.customerId && !!rec.productId && !outOfStock;
                           return (
-                          <Card key={rec.productId} className="border-l-4 border-l-purple-500">
+                          <Card key={rec.productId} className="border-l-4 border-l-status-purple">
                             <CardContent className="p-3">
                               <div className="flex items-start justify-between gap-2">
                                 <div className="min-w-0 flex-1">

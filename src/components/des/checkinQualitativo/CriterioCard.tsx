@@ -23,8 +23,8 @@ export function CriterioCard({ criterio: c, resposta: r, percentual: pct, bonus,
       className={cn(
         "transition-colors",
         bonus
-          ? cn("border-amber-500/30", r.atingido && "bg-amber-500/10")
-          : r.atingido && "bg-green-500/5 border-green-500/30",
+          ? cn("border-status-warning/30", r.atingido && "bg-status-warning/10")
+          : r.atingido && "bg-status-success/5 border-status-success/30",
       )}
     >
       <CardHeader className="pb-3">
@@ -39,7 +39,7 @@ export function CriterioCard({ criterio: c, resposta: r, percentual: pct, bonus,
           </div>
           <Badge
             variant="outline"
-            className={cn("shrink-0 text-xs", bonus && "bg-amber-500/10 border-amber-500/40 text-amber-700")}
+            className={cn("shrink-0 text-xs", bonus && "bg-status-warning/10 border-status-warning/40 text-status-warning-foreground")}
           >
             Vale {fmtPct(pct)}
           </Badge>

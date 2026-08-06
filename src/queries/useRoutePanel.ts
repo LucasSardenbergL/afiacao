@@ -15,7 +15,10 @@ async function lerTudo<T>(tabela: string, cols: string, desdeISO: string): Promi
       .select(cols).gte('data_rota', desdeISO)
       .order('data_rota', { ascending: true }).range(from, from + PAGE - 1);
     if (error) throw error;
-    const arr = (data ?? []) as T[];
+    // data null SEM error = malformada, não fim (classe #1338→#1564): tratá-la como fim
+    // deixava o painel (valor da ligação) somado sobre um PREFIXO da janela.
+    if (data == null) throw new Error(`${tabela}: data null sem error — malformada, não é fim`);
+    const arr = data as T[];
     out.push(...arr);
     if (arr.length < PAGE) break;
   }

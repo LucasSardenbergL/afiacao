@@ -21,14 +21,14 @@ export function LoyaltyStats({ totalPointsCirculating, totalEarned, totalRedeeme
       </Card>
       <Card className="text-center">
         <CardContent className="pt-4 pb-3">
-          <Plus className="w-5 h-5 mx-auto text-emerald-500 mb-1" />
+          <Plus className="w-5 h-5 mx-auto text-status-success mb-1" />
           <p className="text-xl font-bold text-foreground">{totalEarned}</p>
           <p className="text-[10px] text-muted-foreground">Total ganhos</p>
         </CardContent>
       </Card>
       <Card className="text-center">
         <CardContent className="pt-4 pb-3">
-          <Gift className="w-5 h-5 mx-auto text-amber-500 mb-1" />
+          <Gift className="w-5 h-5 mx-auto text-status-warning mb-1" />
           <p className="text-xl font-bold text-foreground">{totalRedeemed}</p>
           <p className="text-[10px] text-muted-foreground">Resgatados</p>
         </CardContent>

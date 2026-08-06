@@ -8,19 +8,20 @@ import { StandardProcessStatusBadge } from '@/components/standard-process/Standa
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Loader2, ChevronLeft, Edit, Check, X, Archive, Clock, Wrench, Factory } from 'lucide-react';
+import { ChevronLeft, Edit, Check, X, Archive, Clock, Wrench, Factory } from 'lucide-react';
+import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import type { StandardProcessEtapa } from '@/lib/standard-process/types';
 
 const ETAPA_TYPE_COLOR: Record<string, string> = {
-  preparacao: 'bg-blue-100 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300',
-  aplicacao: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300',
-  secagem: 'bg-orange-100 text-orange-700 dark:bg-orange-950/40 dark:text-orange-300',
-  lixamento: 'bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300',
-  mistura: 'bg-purple-100 text-purple-700 dark:bg-purple-950/40 dark:text-purple-300',
-  inspecao: 'bg-pink-100 text-pink-700 dark:bg-pink-950/40 dark:text-pink-300',
-  embalagem: 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300',
+  preparacao: 'bg-status-info-bg text-status-info-foreground',
+  aplicacao: 'bg-status-success-bg text-status-success-foreground',
+  secagem: 'bg-status-warning-bg text-status-warning-foreground',
+  lixamento: 'bg-status-warning-bg text-status-warning-foreground',
+  mistura: 'bg-status-purple-bg text-status-purple-foreground',
+  inspecao: 'bg-status-error-bg text-status-error-foreground',
+  embalagem: 'bg-muted text-muted-foreground',
   outro: 'bg-muted text-muted-foreground',
 };
 
@@ -34,8 +35,8 @@ export default function AdminStandardProcessDetail() {
 
   if (isLoading) {
     return (
-      <div className="container mx-auto p-4 flex justify-center">
-        <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+      <div className="container mx-auto p-4">
+        <PageSkeleton variant="detail" />
       </div>
     );
   }

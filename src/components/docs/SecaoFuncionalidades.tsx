@@ -57,14 +57,14 @@ export function SecaoFuncionalidades() {
 
       <Module
         name="2.8 Cross-Sell / Up-Sell Engine"
-        desc="Motor de recomendações individuais. Cross-sell: produtos não comprados mas populares no cluster. Up-sell: substituições premium para produtos com margem baixa. Cálculo de LIE (Lucro Incremental Esperado) = P_ij × M_ij × ComplexityFactor. Auto-aprendizado via tabela farmer_category_conversion."
+        desc="Motor de recomendações individuais. Cross-sell: produtos não comprados mas populares no cluster. Up-sell: substituições premium para produtos com margem baixa. Cálculo de LIE (Lucro Incremental Esperado) = P_ij × M_ij × ComplexityFactor. A taxa de conversão e o fator de complexidade são PREMISSAS FIXAS, não aprendidas: o desfecho das recomendações nunca chegou a ser registrado, então não há histórico para calibrar. O LIE serve para ORDENAR (o ranking não depende dessas constantes); o valor absoluto em R$ é estimativa não calibrada."
         audience="Employee (Farmer)"
-        deps="Hook useCrossSellEngine, tabelas farmer_recommendations, farmer_category_conversion, farmer_client_scores"
+        deps="Hook useCrossSellEngine, tabelas farmer_recommendations, farmer_client_scores"
       />
 
       <Module
         name="2.9 Bundle Engine (Market Basket Analysis)"
-        desc="Mineração de regras de associação (Apriori-like) sobre transações históricas. Regras de pares e triplos. Regras sequenciais (produto A comprado antes de B). Geração de bundles de 2-3 produtos por cliente. Métricas: support, confidence, lift. LIE_bundle = P_bundle × M_bundle × ComplexityFactor."
+        desc="Mineração de regras de associação (Apriori-like) sobre transações históricas. Regras de pares e triplos. Regras sequenciais (produto A comprado antes de B). Geração de bundles de 2-3 produtos por cliente. Métricas: support, confidence, lift. LIE_bundle = P_bundle × M_bundle × ComplexityFactor, com o ComplexityFactor sendo premissa fixa (não aprendida) — vale para ordenar, não como previsão de R$."
         audience="Employee (Farmer)"
         deps="Hook useBundleEngine, tabelas farmer_bundle_recommendations, farmer_association_rules"
       />
@@ -143,7 +143,7 @@ export function SecaoFuncionalidades() {
         name="2.20 Integração Omie ERP"
         desc="Sincronização bidirecional: clientes (omie-cliente), produtos (omie-sync), pedidos de serviço (omie-sync com Ordem de Serviço), pedidos de venda (omie-vendas-sync), posição de estoque (inventory_position). Sincronização analítica periódica (omie-analytics-sync). Tabela de mapeamento category_mappings entre categorias de pedido e tool_categories."
         audience="Sistema (automático), Admin (configura e monitora)"
-        deps="Edge Functions omie-sync, omie-cliente, omie-vendas-sync, omie-analytics-sync; tabelas omie_clientes, omie_ordens_servico, omie_products, omie_servicos, sync_state"
+        deps="Edge Functions omie-sync, omie-cliente, omie-vendas-sync, omie-analytics-sync; tabelas omie_customer_account_map, carteira_membership_ledger, customer_canonical_alias, omie_ordens_servico, omie_products, omie_servicos, sync_state"
       />
 
       <Module

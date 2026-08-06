@@ -1,5 +1,6 @@
 import { supabase } from "@/integrations/supabase/client";
 import { logger } from "@/lib/logger";
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 
 export const formatBRL = (v: number | null | undefined) =>
   v === null || v === undefined
@@ -50,7 +51,7 @@ export async function logAudit(params: {
     logger.warn("Falha ao gravar cockpit_audit_log", {
       action: params.action,
       result: params.result,
-      error: e instanceof Error ? e.message : String(e),
+      error: mensagemDeErro(e) ?? '(sem mensagem)',
     });
   }
 }

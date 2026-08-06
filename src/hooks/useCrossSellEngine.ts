@@ -1,7 +1,9 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
-import { custoCanonico } from '@/lib/custo/custoCanonico';
+import { custoCanonico, margemUnitaria } from '@/lib/custo/custoCanonico';
+import { fetchAllPages } from '@/lib/postgrest';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 
 // ─── Types ───────────────────────────────────────────────────────────
 export interface Recommendation {
@@ -71,12 +73,6 @@ interface SalesOrderRow {
   created_at: string;
 }
 
-interface ConversionRow {
-  category_id: string;
-  conversion_rate: number | string | null;
-  complexity_factor: number | string | null;
-}
-
 interface AssocRuleRow {
   antecedent_product_ids: string[] | null;
   consequent_product_ids: string[] | null;
@@ -92,18 +88,25 @@ interface ProfileRow {
   cnae: string | null;
 }
 
-interface RecommendationStatsRow {
-  status: string;
-  actual_margin: number | string | null;
-  time_spent_seconds: number | null;
-}
-
-interface RecommendationUpdate {
-  status: 'aceito';
-  accepted_at: string;
-  actual_margin?: number;
-  time_spent_seconds?: number;
-}
+// ─── Premissas do LIE (NÃO são aprendidas) ───────────────────────────
+// Constantes ARBITRADAS, não medições. Até 2026-07-21 o hook lia
+// `farmer_category_conversion` e caía nestes mesmos valores quando não achava a
+// linha — o que sugeria um "aprendizado histórico por categoria" que nunca
+// existiu: a tabela tem 0 linhas desde que nasceu (fev/2026, `n_tup_ins = 0`),
+// porque o único writer ficava atrás de `markAsAccepted`, que nenhuma UI jamais
+// chamou. As 3.659 linhas de `farmer_recommendations` seguem 100% `pendente`,
+// sem um único desfecho registrado. Ler a tabela vazia era teatro: quem decidia
+// era sempre o default.
+//
+// Como são idênticas para TODO produto, funcionam como fator de ESCALA do LIE: o
+// RANKING não depende delas (0,15·X vs 0,15·Y ordena igual a X vs Y). O que elas
+// contaminam é o VALOR ABSOLUTO em R$ exibido na tela — que por isso é rotulado
+// como estimativa não calibrada. Para virarem dado de verdade é preciso o loop de
+// feedback inteiro (UI de desfecho + margem realizada + tempo gasto):
+// ver docs/historico/farmer-aprendizado-conversao.md.
+const TAXA_CONVERSAO_CROSS_SELL = 0.15;
+const TAXA_CONVERSAO_UP_SELL = 0.10;
+const FATOR_COMPLEXIDADE = 1.0;
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
@@ -117,28 +120,53 @@ export const useCrossSellEngine = () => {
   const [recommendations, setRecommendations] = useState<CustomerRecommendations[]>([]);
   const [loading, setLoading] = useState(false);
   const [calculating, setCalculating] = useState(false);
+  // A falha era ENGOLIDA: o `catch` só fazia `console.error` e o estado voltava a "pronto", com
+  // `recommendations` mantendo o resultado do ÚLTIMO cálculo bem-sucedido. A tela ficava
+  // idêntica a um recálculo que deu certo — o vendedor clicava "Recalcular", via a lista se
+  // acomodar, e seguia decidindo sobre números velhos. Sem isto no contrato, nenhum consumidor
+  // *podia* ser honesto: a correção do money-path só termina na tela.
+  const [erro, setErro] = useState<Error | null>(null);
+  const [desatualizado, setDesatualizado] = useState(false);
+  // Espelha `recommendations` para o `catch` ler o valor ATUAL. Ler o state aqui devolveria o
+  // do render em que o callback foi criado (`recommendations` não está nas deps do useCallback).
+  const recomendacoesRef = useRef<CustomerRecommendations[]>([]);
+
+  const aplicarRecomendacoes = useCallback((recs: CustomerRecommendations[]) => {
+    recomendacoesRef.current = recs;
+    setRecommendations(recs);
+  }, []);
 
   const calculateRecommendations = useCallback(async () => {
     if (!effectiveUserId) return;
     setCalculating(true);
     setLoading(true);
+    setErro(null);
+    setDesatualizado(false);
+    // Discrimina "a falha veio ANTES de produzir resultado" (a tela segue com o cálculo
+    // anterior = desatualizada) de "veio DEPOIS" (falha ao persistir: os números na tela são
+    // desta execução, e chamá-los de desatualizados mentiria na direção oposta).
+    let resultadoDestaExecucao = false;
 
     try {
-      // 1. Load client scores with pagination
-      const fetchAllScores = async (filterFarmerId?: string): Promise<ClientScoreRow[]> => {
-        const all: ClientScoreRow[] = [];
-        let page = 0;
-        const sz = 1000;
-        let hasMore = true;
-        while (hasMore) {
-          let q = supabase.from('farmer_client_scores').select('*').range(page * sz, (page + 1) * sz - 1);
-          if (filterFarmerId) q = q.eq('farmer_id', filterFarmerId);
-          const { data } = (await q) as unknown as { data: ClientScoreRow[] | null };
-          if (!data || data.length === 0) hasMore = false;
-          else { all.push(...data); if (data.length < sz) hasMore = false; page++; }
-        }
-        return all;
-      };
+      // 1. Load client scores with pagination. Era um loop MANUAL com o mesmo defeito que o
+      // #1545 tirou do `fetchAllPages` — mas por não CHAMAR o helper, ficou de fora daquele
+      // grep: descartava o `error` (`const { data } = await q`), tratava `data: null` como fim
+      // da tabela e não pedia `.order()`, então a ordem entre páginas era indefinida (o
+      // Postgres pode repetir e pular linha). `customer_user_id` é UNIQUE na tabela.
+      //
+      // Aqui a página perdida era pior que um total truncado: o caller abaixo interpreta lista
+      // vazia como "este farmer não tem carteira, deve ser super_admin" e RECARREGA SEM FILTRO
+      // de farmer_id — uma falha de transporte trocava o escopo do cálculo.
+      const fetchAllScores = (filterFarmerId?: string): Promise<ClientScoreRow[]> =>
+        fetchAllPages<ClientScoreRow>(
+          (de, ate) => {
+            let q = supabase.from('farmer_client_scores').select('*');
+            if (filterFarmerId) q = q.eq('farmer_id', filterFarmerId);
+            return q.order('customer_user_id', { ascending: true }).range(de, ate) as unknown as
+              PromiseLike<{ data: ClientScoreRow[] | null; error: unknown }>;
+          },
+          'farmer_client_scores/cross-sell',
+        );
 
       // Try farmer-specific first, fallback to all (for super_admin). Na lente NÃO cai
       // no fallback de "todos os scores" — escopa estritamente ao alvo (degradação
@@ -149,46 +177,56 @@ export const useCrossSellEngine = () => {
       }
 
       if (!clientScores?.length) {
-        setRecommendations([]);
+        aplicarRecomendacoes([]);
+        resultadoDestaExecucao = true;
         return;
       }
 
-      // 2. Load all products with costs
-      const { data: products } = (await supabase
-        .from('omie_products')
-        .select('id, codigo, descricao, valor_unitario, metadata, ativo, omie_codigo_produto, estoque')
-        .eq('ativo', true)) as unknown as { data: ProductRow[] | null };
+      // 2. Load all products with costs. AMBAS paginadas: 3.108 SKUs ativos e 3.637 linhas de
+      // custo, contra a capa de 1.000 do PostgREST. Truncado, o costMap lia 72% do catálogo
+      // como "sem custo" e o productList nunca chegava a recomendar 2/3 dos SKUs.
+      const products = await fetchAllPages<ProductRow>((de, ate) =>
+        supabase
+          .from('omie_products')
+          .select('id, codigo, descricao, valor_unitario, metadata, ativo, omie_codigo_produto, estoque')
+          .eq('ativo', true)
+          .order('id', { ascending: true })
+          .range(de, ate) as unknown as PromiseLike<{ data: ProductRow[] | null; error: unknown }>,
+        'omie_products/cross-sell',
+      );
 
-      const { data: productCosts } = (await supabase
-        .from('product_costs')
-        .select('product_id, cost_final, cost_price')) as unknown as { data: ProductCostRow[] | null };
+      const productCosts = await fetchAllPages<ProductCostRow>((de, ate) =>
+        supabase
+          .from('product_costs')
+          .select('product_id, cost_final, cost_price')
+          .order('product_id', { ascending: true })
+          .range(de, ate) as unknown as PromiseLike<{ data: ProductCostRow[] | null; error: unknown }>,
+        'product_costs/cross-sell',
+      );
 
       const costMap = new Map<string, number>();
       // Custo canônico = cost_final (proxy-aware); cost_price agora é nullable (só custo real).
       // Number(null)===0 inflava a margem (ausente≠zero) — excluir SKU sem custo, não fabricar 0.
-      (productCosts || []).forEach((pc) => {
+      productCosts.forEach((pc) => {
         const c = custoCanonico(pc);
         if (c != null) costMap.set(pc.product_id, c);
       });
 
       // 3. Load ALL sales history (avoid huge .in() URL with 3598 IDs)
-      const fetchAllSalesOrders = async (): Promise<SalesOrderRow[]> => {
-        const all: SalesOrderRow[] = [];
-        let page = 0;
-        const sz = 1000;
-        let hasMore = true;
-        while (hasMore) {
-          const { data } = (await supabase
+      // Mesmo defeito do loop manual acima — e aqui a perda é do HISTÓRICO que alimenta as
+      // regras de associação: menos pedidos = menos coocorrência = recomendação mais pobre,
+      // sem nada na tela indicando que o universo encolheu. `.order('id')` (PK) é a ordem
+      // estável; a coluna não precisa estar no `select`.
+      const salesOrders = await fetchAllPages<SalesOrderRow>(
+        (de, ate) =>
+          supabase
             .from('sales_orders')
             .select('customer_user_id, items, total, created_at')
             .in('status', ['confirmado', 'faturado', 'entregue'])
-            .range(page * sz, (page + 1) * sz - 1)) as unknown as { data: SalesOrderRow[] | null };
-          if (!data || data.length === 0) hasMore = false;
-          else { all.push(...data); if (data.length < sz) hasMore = false; page++; }
-        }
-        return all;
-      };
-      const salesOrders = await fetchAllSalesOrders();
+            .order('id', { ascending: true })
+            .range(de, ate) as unknown as PromiseLike<{ data: SalesOrderRow[] | null; error: unknown }>,
+        'sales_orders/cross-sell',
+      );
 
       // Build set of customer IDs that have orders
       const customerIdsWithOrders = new Set<string>();
@@ -199,18 +237,12 @@ export const useCrossSellEngine = () => {
       const customerIds = activeClientScores.map((c) => c.customer_user_id);
 
       if (!customerIds.length) {
-        setRecommendations([]);
+        aplicarRecomendacoes([]);
+        resultadoDestaExecucao = true;
         return;
       }
 
-      // 4. Load category conversion rates (learning data)
-      const { data: conversionData } = (await supabase
-        .from('farmer_category_conversion')
-        .select('*')) as unknown as { data: ConversionRow[] | null };
-      const conversionMap = new Map<string, ConversionRow>();
-      (conversionData || []).forEach((c) => conversionMap.set(c.category_id, c));
-
-      // 4b. Load association rules for personalized recommendations
+      // 4. Load association rules for personalized recommendations
       const { data: assocRules } = (await supabase
         .from('farmer_association_rules')
         .select('antecedent_product_ids, consequent_product_ids, confidence, lift, support')
@@ -246,9 +278,16 @@ export const useCrossSellEngine = () => {
           supabase
             .from('profiles')
             .select('user_id, name, customer_type, cnae')
-            .in('user_id', batch) as unknown as Promise<{ data: ProfileRow[] | null }>,
+            // O cast declarava só `{ data }` e APAGAVA o `error` do tipo — o compilador
+            // deixava de cobrar a checagem, e um lote que falhasse virava "estes clientes
+            // não têm perfil" no cross-sell (segmento/CNAE ausentes = recomendação errada).
+            .in('user_id', batch) as unknown as Promise<{ data: ProfileRow[] | null; error: { message?: string } | null }>,
         ),
       );
+      const loteComFalha = batchResults.findIndex((r) => r.error);
+      if (loteComFalha >= 0) {
+        throw new Error(`cross-sell: lote ${loteComFalha + 1}/${batchResults.length} de profiles falhou — perfis incompletos, recomendação não calculada`);
+      }
       const allProfiles: ProfileRow[] = batchResults.flatMap((r) => r.data || []);
       const profileMap = new Map<string, ProfileRow>();
       allProfiles.forEach((p) => profileMap.set(p.user_id, p));
@@ -260,7 +299,8 @@ export const useCrossSellEngine = () => {
       });
 
       // 7. Build per-customer purchase history
-      const customerProducts = new Map<string, Map<string, { qty: number; price: number; cost: number }>>();
+      // cost: number | null — null = custo DESCONHECIDO (SKU fora do costMap), nunca 0.
+      const customerProducts = new Map<string, Map<string, { qty: number; price: number; cost: number | null }>>();
       const allProductPurchases = new Map<string, number>(); // product_id -> total customers who bought
 
       for (const order of salesOrders || []) {
@@ -277,10 +317,12 @@ export const useCrossSellEngine = () => {
           }
           if (!productId) continue;
 
-          const existing = cp.get(productId) || { qty: 0, price: 0, cost: 0 };
+          const existing = cp.get(productId) || { qty: 0, price: 0, cost: null as number | null };
           existing.qty += Number(item.quantity || item.quantidade || 1);
           existing.price = Number(item.unit_price || item.valor_unitario || 0);
-          existing.cost = costMap.get(productId) || 0;
+          // Custo ausente fica null (ausente≠zero) — com `|| 0` a margem do item virava o preço
+          // cheio e distorcia a comparação de rentabilidade do up-sell logo abaixo.
+          existing.cost = costMap.get(productId) ?? null;
           cp.set(productId, existing);
 
           // Track which products are popular
@@ -329,10 +371,12 @@ export const useCrossSellEngine = () => {
         for (const product of productList) {
           if (purchasedIds.has(product.id)) continue;
 
-          const cost = costMap.get(product.id) || 0;
           const price = Number(product.valor_unitario || 0);
-          const margin = price - cost;
-          if (margin <= 0) continue; // Skip negative margin products
+          // Sem custo conhecido a margem é INDEFINIDA, não cheia: o SKU sai do ranking. Com
+          // `|| 0` ele ganhava margem 100% e, como o único filtro é `margin <= 0`, era o único
+          // que jamais era excluído — o LIE passava a preferir o produto sem custo cadastrado.
+          const margin = margemUnitaria(price, costMap.get(product.id));
+          if (margin == null || margin <= 0) continue; // custo desconhecido, ou margem não-positiva
 
           // Cluster adherence: how many similar customers bought this
           const buyerCount = allProductPurchases.get(product.id) || 0;
@@ -345,21 +389,16 @@ export const useCrossSellEngine = () => {
           if (clusterAdherence < 0.03 && assocBoost === 0) continue;
 
           // Historical conversion rate for this product
-          const conv = conversionMap.get(product.id);
-          const historicalRate = conv ? Number(conv.conversion_rate) : 0.15; // default 15%
-
-          // P_ij = HistoricalRate × (HealthScore/100) × Engagement × (ClusterAdherence + AssocBoost)
+          // P_ij = TaxaArbitrada × (HealthScore/100) × Engagement × (ClusterAdherence + AssocBoost)
           const relevance = clamp(clusterAdherence * 0.4 + assocBoost * 0.6, 0.01, 1.0);
-          const pij = historicalRate * (healthScore / 100) * engagementFactor * relevance;
+          const pij = TAXA_CONVERSAO_CROSS_SELL * (healthScore / 100) * engagementFactor * relevance;
 
           // M_ij = Margin × EstimatedClusterVolume
           const clusterVolume = Math.max(1, Math.round(buyerCount / totalCustomers * 12)); // monthly estimate
           const mij = margin * clusterVolume;
 
-          // Complexity factor from learning data
-          const complexityFactor = conv ? Number(conv.complexity_factor) : 1.0;
-
-          // LIE_ij = P_ij × M_ij × ComplexityFactor
+          // LIE_ij = P_ij × M_ij × FatorComplexidade (constante — ver bloco de premissas)
+          const complexityFactor = FATOR_COMPLEXIDADE;
           const lie = pij * mij * complexityFactor;
 
           if (lie > 0) {
@@ -382,8 +421,10 @@ export const useCrossSellEngine = () => {
 
         // ─── UP-SELL: Find premium alternatives for current low-margin products ───
         for (const [purchasedId, purchaseData] of customerPurchased.entries()) {
-          const currentMargin = purchaseData.price - purchaseData.cost;
-          if (currentMargin <= 0 || purchaseData.price <= 0) continue;
+          // Custo do item comprado desconhecido → não dá para afirmar que a margem atual é ruim;
+          // o produto sai do up-sell em vez de ser tratado como margem cheia.
+          const currentMargin = margemUnitaria(purchaseData.price, purchaseData.cost);
+          if (currentMargin == null || currentMargin <= 0 || purchaseData.price <= 0) continue;
           const currentMarginPct = currentMargin / purchaseData.price;
           if (currentMarginPct > 0.35) continue; // Already good margin, skip
 
@@ -392,24 +433,23 @@ export const useCrossSellEngine = () => {
             if (product.id === purchasedId) continue;
             if (purchasedIds.has(product.id)) continue;
 
-            const premiumCost = costMap.get(product.id) || 0;
             const premiumPrice = Number(product.valor_unitario || 0);
-            const premiumMargin = premiumPrice - premiumCost;
+            const premiumMargin = margemUnitaria(premiumPrice, costMap.get(product.id));
+            // Sem custo não há como PROVAR que a alternativa é mais rentável — fora do up-sell
+            // (com `|| 0` ela aparentava a maior margem possível e vencia a comparação abaixo).
+            if (premiumMargin == null) continue;
 
             // Must be genuinely premium: higher price AND higher margin
             if (premiumPrice <= purchaseData.price * 1.1) continue;
             if (premiumMargin <= currentMargin * 1.2) continue;
 
-            const conv = conversionMap.get(product.id);
-            const historicalRate = conv ? Number(conv.conversion_rate) : 0.10;
-
             // P_ij for up-sell
-            const pij = historicalRate * (healthScore / 100) * engagementFactor * 0.8; // 0.8 = up-sell is harder
+            const pij = TAXA_CONVERSAO_UP_SELL * (healthScore / 100) * engagementFactor * 0.8; // 0.8 = up-sell is harder
 
             // M_ij = (PremiumMargin - CurrentMargin) × CurrentVolume
             const mij = (premiumMargin - currentMargin) * purchaseData.qty;
 
-            const complexityFactor = conv ? Number(conv.complexity_factor) : 1.0;
+            const complexityFactor = FATOR_COMPLEXIDADE;
             const lie = pij * mij * complexityFactor;
 
             if (lie > 0) {
@@ -459,7 +499,8 @@ export const useCrossSellEngine = () => {
         return totalB - totalA;
       });
 
-      setRecommendations(allRecs);
+      aplicarRecomendacoes(allRecs);
+      resultadoDestaExecucao = true;
 
       // Persist recommendations (batch upsert único — antes era N×M serial)
       const recRows = allRecs.flatMap((cr) =>
@@ -485,93 +526,38 @@ export const useCrossSellEngine = () => {
       }
     } catch (error) {
       console.error('Error calculating recommendations:', error);
+      setErro(
+        error instanceof Error
+          ? error
+          : new Error(mensagemDeErro(error) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.'),
+      );
+      // Só é "desatualizado" se a tela está exibindo o resultado de uma execução ANTERIOR.
+      // Sem nada na mão o estado é indisponível — textos diferentes, e prometer um dado que
+      // não existe seria trocar uma mentira por outra.
+      setDesatualizado(!resultadoDestaExecucao && recomendacoesRef.current.length > 0);
     } finally {
       setCalculating(false);
       setLoading(false);
     }
-  }, [effectiveUserId, isImpersonating]);
+  }, [effectiveUserId, isImpersonating, aplicarRecomendacoes]);
 
   // ─── Actions ─────────────────────────────────────────────────────────
-  const markAsOffered = useCallback(async (recId: string) => {
-    await supabase.from('farmer_recommendations')
-      .update({ status: 'ofertado', offered_at: new Date().toISOString() })
-      .eq('id', recId);
-  }, []);
-
-  const markAsAccepted = useCallback(async (recId: string, actualMargin?: number, timeSpent?: number) => {
-    const update: RecommendationUpdate = {
-      status: 'aceito',
-      accepted_at: new Date().toISOString(),
-    };
-    if (actualMargin !== undefined) update.actual_margin = actualMargin;
-    if (timeSpent !== undefined) update.time_spent_seconds = timeSpent;
-
-    await supabase.from('farmer_recommendations').update(update).eq('id', recId);
-
-    // Update category conversion rates (learning)
-    if (actualMargin !== undefined) {
-      const { data: rec } = (await supabase.from('farmer_recommendations')
-        .select('product_id').eq('id', recId).single()) as unknown as { data: { product_id: string } | null };
-      if (rec) {
-        await updateConversionStats(rec.product_id);
-      }
-    }
-  }, []);
-
-  const markAsRejected = useCallback(async (recId: string) => {
-    await supabase.from('farmer_recommendations')
-      .update({ status: 'rejeitado', rejected_at: new Date().toISOString() })
-      .eq('id', recId);
-  }, []);
-
-  // Recalculate conversion stats from historical data
-  const updateConversionStats = async (productId: string) => {
-    const { data: recs } = (await supabase.from('farmer_recommendations')
-      .select('status, actual_margin, time_spent_seconds')
-      .eq('product_id', productId)
-      .in('status', ['aceito', 'rejeitado', 'ofertado'])) as unknown as { data: RecommendationStatsRow[] | null };
-
-    if (!recs?.length) return;
-
-    const offered = recs.filter((r) => ['aceito', 'rejeitado', 'ofertado'].includes(r.status)).length;
-    const accepted = recs.filter((r) => r.status === 'aceito').length;
-    const rate = offered > 0 ? accepted / offered : 0;
-
-    const acceptedRecs = recs.filter((r) => r.status === 'aceito' && r.actual_margin != null);
-    const avgMargin = acceptedRecs.length > 0
-      ? acceptedRecs.reduce((s, r) => s + Number(r.actual_margin), 0) / acceptedRecs.length
-      : 0;
-
-    const withTime = acceptedRecs.filter((r): r is RecommendationStatsRow & { time_spent_seconds: number } => r.time_spent_seconds != null);
-    const avgTime = withTime.length > 0
-      ? Math.round(withTime.reduce((s, r) => s + r.time_spent_seconds, 0) / withTime.length)
-      : 0;
-
-    const profitPerHour = avgTime > 0 ? (avgMargin / (avgTime / 3600)) : 0;
-
-    // Complexity factor: higher profit/hour = lower complexity (easier to sell)
-    const complexity = profitPerHour > 0 ? clamp(1.0 / (1 + Math.log(1 + profitPerHour / 100)), 0.5, 1.5) : 1.0;
-
-    await supabase.from('farmer_category_conversion').upsert({
-      category_id: productId,
-      total_offers: offered,
-      total_accepts: accepted,
-      conversion_rate: Math.round(rate * 1000) / 1000,
-      avg_margin_generated: Math.round(avgMargin * 100) / 100,
-      avg_time_spent_seconds: avgTime,
-      profit_per_hour: Math.round(profitPerHour * 100) / 100,
-      complexity_factor: Math.round(complexity * 1000) / 1000,
-      updated_at: new Date().toISOString(),
-    });
-  };
+  // `markAsOffered` / `markAsAccepted` / `markAsRejected` e o `updateConversionStats`
+  // que gravava `farmer_category_conversion` foram removidos em 2026-07-21: nenhum
+  // componente os importava (só `calculateRecommendations` era consumido), então o
+  // desfecho de uma recomendação nunca chegou a ser registrado — daí as 3.659 linhas
+  // 100% `pendente`. Construir o loop de feedback é decisão de produto e exige mais
+  // que estes métodos (UI de desfecho, margem realizada, `onConflict` correto no
+  // upsert). Desenho preservado em docs/historico/farmer-aprendizado-conversao.md.
 
   return {
     recommendations,
     loading,
     calculating,
     calculateRecommendations,
-    markAsOffered,
-    markAsAccepted,
-    markAsRejected,
+    /** Falha da ÚLTIMA execução (`null` = correu bem). O consumidor decide o que exibir. */
+    erro,
+    /** `true` = o que está em `recommendations` veio de uma execução ANTERIOR à que falhou. */
+    desatualizado,
   };
 };

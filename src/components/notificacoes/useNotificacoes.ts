@@ -8,6 +8,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { SELECT_COLUMNS } from './format';
 import type { AlertaRow } from './types';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 
 export function useNotificacoes() {
   const qc = useQueryClient();
@@ -83,7 +84,7 @@ export function useNotificacoes() {
       qc.invalidateQueries({ queryKey: ['notificacoes'] });
     },
     onError: (err: unknown) => {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = mensagemDeErro(err) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.';
       toast.error(`Falha ao disparar: ${msg}`);
     },
   });

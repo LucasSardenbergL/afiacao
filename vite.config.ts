@@ -1,4 +1,4 @@
-import { defineConfig } from "vite";
+import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react-swc";
 import path from "path";
 import { componentTagger } from "lovable-tagger";
@@ -45,6 +45,34 @@ function buildEnvProbe(): string {
 }
 const commitSha = resolveCommitSha();
 const buildEnvKeys = buildEnvProbe();
+
+// 'virtual:pwa-register' só ganha resolvedor quando o VitePWA está ativo (produção
+// non-preview). Fora dele, o guard `__PWA_ENABLED__` protege o RUNTIME e o BUILD
+// (DCE), mas NÃO o scanner de deps do dev server: o esbuild segue o grafo estático
+// inteiro sem aplicar o DCE do `define`, encontra o virtual órfão em pwa-update.ts
+// e ABORTA o pré-bundle ("imported but could not be resolved") — o _metadata.json
+// nunca nasce, toda dep vira descoberta tardia re-otimizada em voo (?v= muda a cada
+// rodada) e o browser pode misturar gerações: duas cópias de React → dispatcher
+// null ("Cannot read properties of null (reading 'useEffect')") → tela branca no
+// preview do Lovable. O stub dá um resolvedor no-op ao virtual sempre que o plugin
+// real está fora, e o scan completa numa geração única.
+function pwaRegisterStub(): Plugin {
+  const VIRTUAL_ID = "virtual:pwa-register";
+  const RESOLVED_ID = "\0" + VIRTUAL_ID + "-stub";
+  return {
+    name: "pwa-register-stub",
+    resolveId(id) {
+      return id === VIRTUAL_ID ? RESOLVED_ID : undefined;
+    },
+    load(id) {
+      if (id === RESOLVED_ID) {
+        // Mesma forma do registerSW real: retorna um updateSW() assíncrono no-op.
+        return "export const registerSW = () => () => Promise.resolve();";
+      }
+      return undefined;
+    },
+  };
+}
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
@@ -122,7 +150,9 @@ export default defineConfig(({ mode }) => ({
         // Quem sai do precache ganha cobertura PROGRESSIVA pelo runtime
         // caching de /assets/ (CacheFirst) abaixo: visitou 1× online, fica.
         globIgnores: [
-          "**/FarmerCopilot-*.js", // ~465KB — copilot de voz (ElevenLabs), exige rede
+          "**/FarmerCopilot-*.js", // copilot de voz, exige rede (o SDK pesado saiu daqui → vendor-elevenlabs)
+          "**/vendor-elevenlabs-*.js", // ~465KB — SDK de voz; só o copilot usa, lazy no iniciar sessão
+          "**/vendor-tesseract-*.js", // OCR core (LoteScannerOCR, lazy no 1º scan); wasm/traineddata já vêm da rede
           "**/AdminRoutePlanner-*.js", // ~188KB — Leaflet; tiles do mapa exigem rede
           "**/AdminRoutePlanner-*.css", // CSS do Leaflet (único ignorado com CSS próprio)
           "**/vendor-posthog-*.js", // ~186KB — posthog-js core (analytics; lazy via analytics.ts)
@@ -270,6 +300,9 @@ export default defineConfig(({ mode }) => ({
         enabled: false,
       },
     }),
+    // Complemento EXATO da condição do VitePWA acima: onde o plugin real não
+    // está (dev e preview), o stub resolve o virtual pro scan de deps não abortar.
+    (mode !== "production" || isLovablePreview) && pwaRegisterStub(),
   ].filter(Boolean),
   resolve: {
     alias: {
@@ -308,6 +341,11 @@ export default defineConfig(({ mode }) => ({
             // entry ESM do pacote) — nome genérico que o globIgnores do
             // precache não consegue mirar com segurança.
             if (id.includes('posthog-js')) return 'vendor-posthog';
+            // Mesmo racional do vendor-posthog: SDKs pesados atrás de dynamic
+            // import (voz ElevenLabs no MotorVozScribe; OCR no LoteScannerOCR) —
+            // nome explícito pro globIgnores do precache conseguir mirá-los.
+            if (/node_modules[\\/]@elevenlabs[\\/]/.test(id)) return 'vendor-elevenlabs';
+            if (/node_modules[\\/]tesseract\.js[\\/]/.test(id)) return 'vendor-tesseract';
             if (id.includes('framer-motion')) return 'vendor-motion';
             if (id.includes('@radix-ui/')) return 'vendor-ui';
             if (id.includes('lucide-react')) return 'vendor-icons';

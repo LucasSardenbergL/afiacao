@@ -1,9 +1,10 @@
 import { lazy, Suspense } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Palette, Loader2, FlaskConical, Package, Droplet } from "lucide-react";
+import { Palette, FlaskConical, Package, Droplet } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { PageSkeleton } from "@/components/ui/page-skeleton";
 import { supabase } from "@/integrations/supabase/client";
 
 const TintFormulas = lazy(() => import("./TintFormulas"));
@@ -11,12 +12,7 @@ const TintCorantes = lazy(() => import("./TintCorantes"));
 const TintMapping = lazy(() => import("./TintMapping"));
 const TintPricing = lazy(() => import("./TintPricing"));
 
-const TabFallback = () => (
-  <div className="flex items-center justify-center py-16 text-muted-foreground">
-    <Loader2 className="h-5 w-5 animate-spin mr-2" />
-    Carregando...
-  </div>
-);
+const TabFallback = () => <PageSkeleton variant="auto" />;
 
 function KpiCards() {
   const { data } = useQuery({

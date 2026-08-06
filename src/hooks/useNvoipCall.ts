@@ -3,6 +3,7 @@ import { invokeFunction } from '@/lib/invoke-function';
 import { toast } from 'sonner';
 import { normalizeBrPhone, formatBrPhone } from '@/lib/phone';
 import { logger } from '@/lib/logger';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 
 // Após N polls consecutivos falhando (rede caiu, função fora do ar), paramos de
 // pollar e marcamos erro — em vez de bater na Edge Function a cada 2s pra sempre.
@@ -120,7 +121,7 @@ export function useNvoipCall(): UseNvoipCallReturn {
         logger.warn('Falha ao consultar status da chamada Nvoip', {
           callId: id,
           consecutiveErrors: pollErrorsRef.current,
-          error: err instanceof Error ? err.message : String(err),
+          error: mensagemDeErro(err) ?? '(sem mensagem)',
         });
         if (pollErrorsRef.current >= MAX_CONSECUTIVE_POLL_ERRORS) {
           stopPolling();
@@ -211,7 +212,7 @@ export function useNvoipCall(): UseNvoipCallReturn {
     } catch (err) {
       logger.error('Erro ao encerrar chamada Nvoip', {
         callId,
-        error: err instanceof Error ? err.message : String(err),
+        error: mensagemDeErro(err) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.',
       });
       toast.error('Erro ao encerrar', {
         description: err instanceof Error ? err.message : undefined,

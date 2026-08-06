@@ -14,6 +14,7 @@ import { IntelligenceManagerialTab } from '@/components/intelligence/Intelligenc
 import { IntelligenceStrategicTab } from '@/components/intelligence/IntelligenceStrategicTab';
 import { IntelligenceUtiTab } from '@/components/intelligence/IntelligenceUtiTab';
 import { IntelligenceUserSimulator } from '@/components/intelligence/IntelligenceUserSimulator';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 
 export default function IntelligenceDashboard() {
   const { user, isAdmin } = useAuth();
@@ -23,15 +24,37 @@ export default function IntelligenceDashboard() {
   const effectiveFarmerId = simulatingAs || ((!canViewManagerial && !isAdmin) ? user?.id : undefined);
   const defaultTab = canViewStrategic ? 'strategic' : canViewManagerial ? 'managerial' : 'operational';
 
+  // Quem enxerga o botão de recompute. Gatear só por `isSuperAdmin` tornava o botão INALCANÇÁVEL:
+  // `commercial_roles` em prod tem farmer=2 e master=1, e NINGUÉM tem 'super_admin' (medido
+  // 2026-07-29). O valor existe no enum, mas nunca foi atribuído — então o botão nunca renderizou
+  // para pessoa alguma, e nem o próprio dono do sistema conseguia disparar o recálculo pela UI.
+  //
+  // Isto NÃO amplia privilégio: a fronteira REAL é a edge, e `authorizeCronOrStaff` já aceita JWT
+  // com role admin/employee/manager/master. O gate da UI segue MAIS restritivo que ela — quem clica
+  // aqui já podia chamar a função por outra via. Guard na fronteira que toda via cruza, não na UI.
+  //
+  // Escopo deliberadamente limitado a ESTE botão: `isSuperAdmin` também governa 5 telas de
+  // Governança (usuários, permissões, auditoria, parâmetros, settings), e mudar quem as vê é
+  // decisão de autorização com superfície própria — fora do que este ajuste se propõe.
+  const podeRecalcularScores = isSuperAdmin || commercialRole === 'master';
+
   const [runningScores, setRunningScores] = useState(false);
   const runScoreCalc = async () => {
     setRunningScores(true);
     try {
-      const { error } = await supabase.functions.invoke('calculate-scores');
+      const { data, error } = await supabase.functions.invoke('calculate-scores');
       if (error) throw error;
+      // O recompute é serializado por lease (migration 20260728120001): se já há um run em andamento
+      // — o cron das 06:00, um retry, ou outra pessoa que clicou — este disparo é PULADO e nada foi
+      // recalculado. Responde 200, então sem este ramo o toast diria "recalculado com sucesso" sobre
+      // um run que não escreveu nada. Honestidade > conveniência: o clique não fez o que ele diz.
+      if ((data as { skipped?: boolean } | null)?.skipped) {
+        toast.info('Recálculo já em andamento — este disparo foi ignorado. Os scores não mudaram.');
+        return;
+      }
       toast.success('Scores recalculados com sucesso');
     } catch (e) {
-      toast.error('Erro: ' + (e instanceof Error ? e.message : String(e)));
+      toast.error('Erro: ' + (mensagemDeErro(e) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.'));
     } finally {
       setRunningScores(false);
     }
@@ -54,7 +77,7 @@ export default function IntelligenceDashboard() {
           <p className="text-sm text-muted-foreground">Análise de performance, carteira e métricas estratégicas</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          {isSuperAdmin && (
+          {podeRecalcularScores && (
             <Button size="sm" variant="outline" onClick={runScoreCalc} disabled={runningScores} className="h-7 text-xs">
               <RefreshCw className={`w-3 h-3 mr-1 ${runningScores ? 'animate-spin' : ''}`} />
               Recalcular Scores

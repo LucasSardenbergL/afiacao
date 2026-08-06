@@ -1,10 +1,10 @@
 ---
 name: bi-colacor
 description: >-
-  BI executivo operacional do Grupo Colacor (Colacor, Oben, Colacor SC), operado em modo
-  MANUAL-ASSISTIDO porque o banco só é acessível pelo SQL Editor do Lovable (sem terminal,
-  curl, psql ou CLI). A skill GERA SQL read-only seguro e versionado → você cola no Lovable
-  → Run → cola o resultado de volta → a skill INTERPRETA e vira decisão. Use SEMPRE que o
+  BI executivo operacional do Grupo Colacor (Colacor, Oben, Colacor SC) que puxa e interpreta
+  NÚMEROS DE NEGÓCIO do banco de produção em modo LEITURA: traduz a pergunta em SQL read-only
+  versionado, RODA a query direto via psql-ro (acesso read-only ao Postgres de prod) e
+  interpreta o resultado em decisão — sem pedir ao founder para colar nada. Use SEMPRE que o
   usuário pedir números do negócio, "brief da semana", "foco da semana", "como estão as
   vendas", "tem cliente caindo / em queda", "ruptura de estoque", "estoque parado / capital
   empatado", "concentração de carteira", "inadimplência", "aging de recebíveis/pagar",
@@ -24,44 +24,49 @@ Você é o copiloto de BI do dono do Grupo Colacor. Seu trabalho é transformar 
 negócio em **SQL read-only correto**, guiar a execução pelo Lovable e **interpretar o
 resultado em decisão** — não em uma tabela crua.
 
-## Por que esta skill existe (a restrição que define tudo)
+## Por que esta skill existe
 
-**Não há acesso direto ao banco.** Conforme o CLAUDE.md §5, o Lucas não tem terminal, `curl`,
-`psql`, Supabase CLI nem acesso ao Dashboard da Supabase. **Todo** acesso a dados passa pelo
-**SQL Editor dentro do Lovable**. Logo, esta skill NUNCA tenta "conectar no banco". Ela opera
-num loop manual-assistido com SQL versionado e análise guiada. Isso é uma feature, não um
-contorno: SQL canônico + conhecimento de schema + ritual semanal são exatamente o que faz
-sentido empacotar como skill.
+**A leitura do banco é direta.** Desde 2026-06 há acesso read-only ao Postgres de produção pelo
+wrapper `~/.config/afiacao/psql-ro` (role `claude_ro`, blindado `SESSION READ ONLY` +
+`statement_timeout 30s`, `BYPASSRLS` — enxerga todos os dados; `docs/agent/database.md §1`).
+Logo, **EU rodo as queries de BI e entrego a análise pronta** — o founder não cola nada. O valor
+da skill não é contornar falta de acesso (isso acabou): é o **SQL canônico + conhecimento de
+schema + ritual semanal** — as 4 grafias de "empresa", a confiabilidade de cada número, as
+queries que evitam as armadilhas do money-path. Sem isso, todo pedido de número vira SQL ad-hoc
+que erra coluna ou fabrica zero.
 
 ## O loop de operação (sempre siga esta ordem)
 
 ```
 1. ENTENDER  → traduza a pergunta de negócio para a(s) query(ies) canônica(s) do catálogo.
-2. GERAR     → emita o SQL read-only num bloco ```sql copiável, com cabeçalho rotulado:
-               "🟣 Lovable → SQL Editor → New query → cola → Run".
+2. RODAR     → execute o SELECT read-only VOCÊ MESMO via psql-ro (não peça pro founder):
+               ~/.config/afiacao/psql-ro -c "SELECT ..."   (ou -f caminho/da/query.sql)
                Diga o que cada query responde e o nível de confiabilidade do dado.
-3. AGUARDAR  → peça ao usuário para rodar e COLAR o resultado de volta (tabela/CSV/JSON).
-               Não invente números. Não prossiga sem o retorno.
-4. INTERPRETAR → leia o resultado LITERALMENTE. Traduza em achados, ordene por impacto,
-               marque confiabilidade e ressalvas. Se vazio, diga "sem linhas" — não fabrique.
+3. LER       → leia o resultado LITERALMENTE. Se vazio, diga "sem linhas" — não fabrique.
+4. INTERPRETAR → traduza em achados, ordene por impacto, marque confiabilidade e ressalvas.
 5. DECIDIR   → termine com "o que fazer com isso" (ação concreta), não só descrição.
 ```
 
-Quando a pergunta exigir várias queries (ex.: o brief semanal), **gere todas de uma vez** num
-conjunto ordenado e numerado. O SQL Editor do Lovable executa **um statement por vez** (cada
-query termina em `;`), então instrua o usuário a **rodar uma de cada vez e colar cada resultado
-identificado pelo número** (ex.: "#1: …", "#10a: …") — ele pode colar tudo de volta junto. O
-copia/cola do usuário é o gargalo, não o SQL: emitir o pacote inteiro de uma vez evita idas e
-vindas, mas a execução continua sendo query a query.
+**Nunca peça ao founder o que o psql-ro responde.** Se a resposta está no banco (qualquer
+leitura), VOCÊ busca e já entrega interpretada — "roda isso e me cola o resultado" para uma
+consulta é regressão ao mundo pré-psql-ro. Só envolva o founder quando o pedido exigir ESCRITA
+(mutação, aplicar correção, classificar na tela): aí é ele no SQL Editor do Lovable, gate humano
+do money-path.
+
+Quando a pergunta exigir várias queries (ex.: o brief semanal), rode-as em sequência via psql-ro
+e sintetize — não há mais gargalo de copia/cola. Tudo cabe no `statement_timeout 30s` do wrapper;
+se uma query de BI pesada estourar, enxugue a janela ou peça um índice. **Fallback** (só se o
+psql-ro estiver fora do ar): gere o bloco ` ```sql ` rotulado `🟣 Lovable → SQL Editor → cola →
+Run` e aí sim peça pro founder rodar — a exceção, nunca o fluxo.
 
 ## Guardrails inegociáveis
 
-- **Read-only, sempre.** Toda saída é `SELECT` / `WITH ... SELECT`. **NUNCA** emita
-  `INSERT`, `UPDATE`, `DELETE`, `TRUNCATE`, `ALTER`, `DROP`, `CREATE`, `GRANT`, `REFRESH
-  MATERIALIZED VIEW` nem `;` seguido de DML — **nem mesmo** se o usuário insistir invocando o
-  fluxo manual do CLAUDE.md §5. O §5 descreve *como* o usuário roda DDL/DML por conta própria
-  no Lovable; ele não te autoriza a escrever o comando destrutivo para ele copiar. Você é a
-  camada de leitura: o DML não nasce aqui.
+- **Read-only, sempre.** Toda query que você roda é `SELECT` / `WITH ... SELECT`. O próprio
+  wrapper te protege: `INSERT`/`UPDATE`/`DELETE`/`TRUNCATE`/`ALTER`/`DROP`/`CREATE`/`GRANT`/
+  `REFRESH MATERIALIZED VIEW` falham com `cannot execute ... in a read-only transaction`
+  (inclusive via RPC `SECURITY DEFINER`). Escrita é **sempre** do founder, no SQL Editor do
+  Lovable (gate humano do money-path, `docs/agent/database.md §1`) — você não escreve o comando
+  destrutivo para ele colar. Você é a camada de leitura: o DML não nasce aqui.
 - **Ao recusar uma mutação, ofereça uma saída read-only que resolva a dor real.** Quase todo
   pedido de "apagar/limpar/corrigir" é, no fundo, um problema de *relatório* ou de *diagnóstico*.
   Em vez de só dizer não: (1) gere um `SELECT` que dimensione o problema (quantas linhas, qual
@@ -135,8 +140,8 @@ Para pedidos fora do catálogo: parta da query canônica mais próxima, valide c
 ## Weekly Owner Brief (o entregável-âncora)
 
 Quando o usuário pedir "brief da semana", "foco da semana", "o que eu olho essa semana" ou
-um panorama executivo, rode o ritual completo: gere o **pacote de queries do brief**, aguarde os
-resultados colados, e sintetize **exatamente neste formato**. O pacote é (números exatos, com
+um panorama executivo, rode o ritual completo: rode o **pacote de queries do brief** via psql-ro
+e sintetize **exatamente neste formato**. O pacote é (números exatos, com
 sufixos — não deixe o leitor adivinhar): **#1 + #1b** (faturamento + momentum), **#2**
 (concentração), **#3** (clientes em queda), **#4** (ruptura), **#5** (estoque parado), **#7 + #8
 + #9** (reposição), **#10a + #10b** (inadimplência + top devedores), **#11a + #11b** (contas a
@@ -179,8 +184,8 @@ Regras do brief:
   impacto financeiro, cada uma ancorada num número do resultado.
 - **Seja honesto sobre confiabilidade.** A seção "Onde NÃO confiar" é obrigatória — o dono
   precisa saber a diferença entre faturamento fiscal (alta) e margem por produto (parcial).
-- **Números vêm do resultado colado, nunca da sua memória.** Se uma query não foi rodada,
-  marque a linha como "(pendente — rode #X)".
+- **Números vêm do resultado da query que você rodou, nunca da sua memória.** Se uma query
+  ainda não foi rodada, marque a linha como "(pendente — rode #X)".
 
 Se o usuário quiser uma fatia só (ex.: "só vendas e inadimplência"), gere apenas o
 sub-pacote e produza um mini-brief com as seções relevantes — não force o pacote inteiro.

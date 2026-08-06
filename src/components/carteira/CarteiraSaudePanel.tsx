@@ -13,6 +13,10 @@ const DOT: Record<SaudeNivel, string> = {
 };
 
 const NIGHTLY_MAX_AGE = 48;
+// Mensal alerta se o snapshot mais recente passa de ~35 dias. A RPC cai pro EFEITO
+// (max created_at do snapshot) quando o purge do job_run_details apaga o run mensal —
+// então idade grande aqui é atraso REAL, não cegueira de histórico.
+const MENSAL_MAX_AGE = 24 * 35;
 const MENSAL = 'carteira-positivacao-snapshot-mensal';
 
 function Row({ nivel, label, detail, acao }: { nivel: SaudeNivel; label: string; detail: string; acao: string }) {
@@ -37,7 +41,7 @@ export function CarteiraSaudePanel() {
     if (!data || tracked.current) return;
     tracked.current = true;
     const niveis = [
-      ...data.crons.map((c) => statusCron(c, c.jobname === MENSAL ? null : NIGHTLY_MAX_AGE).nivel),
+      ...data.crons.map((c) => statusCron(c, c.jobname === MENSAL ? MENSAL_MAX_AGE : NIGHTLY_MAX_AGE).nivel),
       statusSync(data.sync).nivel,
       statusCoverage(data.score_coverage).nivel,
     ];
@@ -54,7 +58,7 @@ export function CarteiraSaudePanel() {
   if (!data) return null;
 
   const cronRows = data.crons.map((c) => {
-    const st = statusCron(c, c.jobname === MENSAL ? null : NIGHTLY_MAX_AGE);
+    const st = statusCron(c, c.jobname === MENSAL ? MENSAL_MAX_AGE : NIGHTLY_MAX_AGE);
     const detail = c.last_run_at ? `${c.last_status ?? '?'} · há ${c.age_hours ?? '?'}h` : 'nunca rodou';
     return { ...st, label: c.jobname, detail };
   });

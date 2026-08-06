@@ -1,5 +1,6 @@
 import { Fragment, useState, useEffect, useCallback, useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -16,6 +17,7 @@ import { DrillVarianciaPanel } from '@/components/financeiro/DrillVarianciaPanel
 import { toast } from 'sonner';
 import { Loader2, Save, Building2, Calendar, TrendingUp, TrendingDown, Target, History, Plane, ChevronDown, ChevronRight } from 'lucide-react';
 import { AuditTrailDrawer } from '@/components/financeiro/AuditTrailDrawer';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const fmtCompact = (v: number) => {
@@ -107,7 +109,7 @@ const FinanceiroOrcamento = () => {
       for (const o of orc) d[`${o.mes}_${o.dre_linha}`] = o.valor_orcado;
       setDraft(d);
     } catch (e) {
-      toast.error('Erro', { description: e instanceof Error ? e.message : String(e) });
+      toast.error('Erro', { description: mensagemDeErro(e) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.' });
     } finally {
       setLoading(false);
     }
@@ -129,7 +131,7 @@ const FinanceiroOrcamento = () => {
       setEditMode(false);
       load();
     } catch (e) {
-      toast.error('Erro', { description: e instanceof Error ? e.message : String(e) });
+      toast.error('Erro', { description: mensagemDeErro(e) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.' });
     } finally {
       setSaving(false);
     }
@@ -311,7 +313,7 @@ const FinanceiroOrcamento = () => {
   };
 
   if (loading) {
-    return <div className="flex items-center justify-center py-24"><Loader2 className="w-8 h-8 animate-spin" /></div>;
+    return <PageSkeleton variant="list" />;
   }
 
   return (

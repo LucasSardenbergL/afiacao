@@ -5,6 +5,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Loader2, Package, RefreshCw, BarChart3 } from 'lucide-react';
+import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { useFarmerBundles } from '@/components/farmer/bundles/useFarmerBundles';
 import { CustomerBundleCard } from '@/components/farmer/bundles/CustomerBundleCard';
 import { RuleCard } from '@/components/farmer/bundles/RuleCard';
@@ -64,7 +65,7 @@ const FarmerBundles = () => {
 
           <TabsContent value="bundles" className="space-y-3 mt-3">
             {loading && !customerBundles.length ? (
-              <div className="flex justify-center py-8"><Loader2 className="w-6 h-6 animate-spin text-primary" /></div>
+              <PageSkeleton variant="list" />
             ) : customerBundles.length === 0 ? (
               <Card><CardContent className="p-6 text-center"><Package className="w-8 h-8 mx-auto mb-2 opacity-40" /><p className="text-xs text-muted-foreground">Clique em "Calcular" para gerar bundles.</p></CardContent></Card>
             ) : (

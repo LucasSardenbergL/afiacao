@@ -1,77 +1,36 @@
-import { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { supabase } from '@/integrations/supabase/client';
-import { 
-  Loader2, Wrench, AlertTriangle, CheckCircle, 
-  FileText, Settings, Clock, Hash 
+import { useToolPublicHistory } from '@/queries/useUserTools';
+import {
+  Wrench, AlertTriangle, CheckCircle,
+  FileText, Settings, Clock, Hash
 } from 'lucide-react';
+import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { cn } from '@/lib/utils';
 
-interface ToolData {
-  id: string;
-  internal_code: string | null;
-  generated_name: string | null;
-  custom_name: string | null;
-  specifications: Record<string, string> | null;
-  last_sharpened_at: string | null;
-  next_sharpening_due: string | null;
-  created_at: string;
-  tool_categories: { name: string };
-}
-
-interface ToolEvent {
-  id: string;
-  event_type: string;
-  description: string | null;
-  created_at: string;
-}
-
 const EVENT_ICONS: Record<string, { label: string; icon: typeof Wrench; color: string; bg: string }> = {
-  sharpening: { label: 'Afiação', icon: Wrench, color: 'text-blue-600', bg: 'bg-blue-100' },
-  anomaly: { label: 'Anomalia', icon: AlertTriangle, color: 'text-red-600', bg: 'bg-red-100' },
-  inspection: { label: 'Inspeção', icon: CheckCircle, color: 'text-emerald-600', bg: 'bg-emerald-100' },
-  repair: { label: 'Reparo', icon: Settings, color: 'text-amber-600', bg: 'bg-amber-100' },
-  note: { label: 'Observação', icon: FileText, color: 'text-gray-600', bg: 'bg-gray-100' },
+  sharpening: { label: 'Afiação', icon: Wrench, color: 'text-status-info', bg: 'bg-status-info-bg' },
+  anomaly: { label: 'Anomalia', icon: AlertTriangle, color: 'text-status-error', bg: 'bg-status-error-bg' },
+  inspection: { label: 'Inspeção', icon: CheckCircle, color: 'text-status-success', bg: 'bg-status-success-bg' },
+  repair: { label: 'Reparo', icon: Settings, color: 'text-status-warning', bg: 'bg-status-warning-bg' },
+  note: { label: 'Observação', icon: FileText, color: 'text-muted-foreground', bg: 'bg-muted' },
 };
 
 const ToolPublicHistory = () => {
   const { toolId } = useParams<{ toolId: string }>();
-  const [tool, setTool] = useState<ToolData | null>(null);
-  const [events, setEvents] = useState<ToolEvent[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    if (toolId) loadData();
-  }, [toolId]);
-
-  const loadData = async () => {
-    try {
-      // RPC pública SECURITY DEFINER: funciona pra visitante NÃO-LOGADO (QR) e devolve só campos
-      // seguros (sem user_id do dono). As tabelas user_tools/tool_events não têm policy anon.
-      const { data, error } = await supabase.rpc('get_public_tool_history' as never, {
-        p_tool_id: toolId,
-      } as never);
-      if (error) throw error;
-      const payload = data as unknown as { tool: ToolData; events: ToolEvent[] } | null;
-      if (payload?.tool) {
-        setTool(payload.tool);
-        setEvents(payload.events ?? []);
-      }
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
-    }
-  };
+  const { data, isPending: loading } = useToolPublicHistory(toolId);
+  const tool = data?.tool ?? null;
+  const events = data?.events ?? [];
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+      <div className="min-h-screen bg-background">
+        <main className="pt-16 px-4 max-w-lg mx-auto">
+          <PageSkeleton variant="detail" />
+        </main>
       </div>
     );
   }

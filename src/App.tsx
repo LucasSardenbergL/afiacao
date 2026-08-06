@@ -40,11 +40,13 @@ const AdminRoutePlanner = lazy(() => import("./pages/AdminRoutePlanner"));
 const AdminMonthlyReports = lazy(() => import("./pages/AdminMonthlyReports"));
 const AdminProductivity = lazy(() => import("./pages/AdminProductivity"));
 const AdminLoyalty = lazy(() => import("./pages/AdminLoyalty"));
+const AdminPrime = lazy(() => import("./pages/AdminPrime"));
 const AdminGamification = lazy(() => import("./pages/AdminGamification"));
 const Gamification = lazy(() => import("./pages/Gamification"));
 const QualityChecklist = lazy(() => import("./pages/QualityChecklist"));
 const RecurringSchedules = lazy(() => import("./pages/RecurringSchedules"));
 const SavingsDashboard = lazy(() => import("./pages/SavingsDashboard"));
+const CentralFerramenta = lazy(() => import("./pages/CentralFerramenta"));
 const Loyalty = lazy(() => import("./pages/Loyalty"));
 const ToolHistory = lazy(() => import("./pages/ToolHistory"));
 const ToolPublicHistory = lazy(() => import("./pages/ToolPublicHistory"));
@@ -120,6 +122,7 @@ const FinanceiroProximaAcao = lazy(() => import("./pages/FinanceiroProximaAcao")
 const FinanceiroRegimeTributario = lazy(() => import("./pages/FinanceiroRegimeTributario"));
 const FinanceiroFunding = lazy(() => import("./pages/FinanceiroFunding"));
 const FinanceiroEndividamento = lazy(() => import("./pages/FinanceiroEndividamento"));
+const FinanceiroAntecipacao = lazy(() => import("./pages/FinanceiroAntecipacao"));
 const Recebimento = lazy(() => import("./pages/Recebimento"));
 const RecebimentoConferencia = lazy(() => import("./pages/RecebimentoConferencia"));
 const ProductionOrders = lazy(() => import("./pages/ProductionOrders"));
@@ -139,6 +142,7 @@ const AdminReposicaoAumentoDetail = lazy(() => import("./pages/AdminReposicaoAum
 const AdminReposicaoOportunidades = lazy(() => import("./pages/AdminReposicaoOportunidades"));
 const AdminReposicaoNegociacaoParalela = lazy(() => import("./pages/AdminReposicaoNegociacaoParalela"));
 const AdminReposicaoBaixoGiro = lazy(() => import("./pages/AdminReposicaoBaixoGiro"));
+const AdminReposicaoVendaPerdida = lazy(() => import("./pages/AdminReposicaoVendaPerdida"));
 const AdminReposicaoCockpit = lazy(() => import("./pages/AdminReposicaoCockpit"));
 const AdminReposicaoParametros = lazy(() => import("./pages/AdminReposicaoParametros"));
 const AdminReposicaoMercado = lazy(() => import("./pages/AdminReposicaoMercado"));
@@ -244,6 +248,7 @@ const App = () => {
               <Route path="support" element={<Support />} />
               <Route path="recurring-schedules" element={<RecurringSchedules />} />
               <Route path="savings" element={<SavingsDashboard />} />
+              <Route path="central" element={<CentralFerramenta />} />
               <Route path="loyalty" element={<Loyalty />} />
               <Route path="gamification" element={<Gamification />} />
               <Route path="training" element={<Training />} />
@@ -279,6 +284,7 @@ const App = () => {
                 <Route path="financeiro/regime-tributario" element={<FinanceiroRegimeTributario />} />
                 <Route path="financeiro/funding" element={<FinanceiroFunding />} />
                 <Route path="financeiro/endividamento" element={<FinanceiroEndividamento />} />
+                <Route path="financeiro/antecipacao" element={<FinanceiroAntecipacao />} />
                 <Route path="financeiro/gestao" element={<FinanceiroGestao />} />
                 <Route path="financeiro/analise" element={<FinanceiroAnalise />} />
                 {/* Grupo de Cliente 360 (mesmo gate do financeiro — mostra recebível) */}
@@ -301,6 +307,7 @@ const App = () => {
                 <Route path="admin/monthly-reports" element={<AdminMonthlyReports />} />
                 <Route path="admin/productivity" element={<AdminProductivity />} />
                 <Route path="admin/loyalty" element={<AdminLoyalty />} />
+                <Route path="admin/prime" element={<AdminPrime />} />
                 <Route path="admin/gamification" element={<AdminGamification />} />
                 <Route path="admin/training" element={<AdminTraining />} />
                 <Route path="admin/price-table" element={<AdminPriceTable />} />
@@ -351,7 +358,7 @@ const App = () => {
                 <Route path="tintometrico/corantes" element={<Navigate to="/tintometrico/catalogo?tab=corantes" replace />} />
                 <Route path="tintometrico/mapeamento" element={<Navigate to="/tintometrico/catalogo?tab=mapeamento" replace />} />
                 <Route path="tintometrico/precos" element={<Navigate to="/tintometrico/catalogo?tab=precificacao" replace />} />
-                <Route path="tintometrico/importar" element={<Navigate to="/tintometrico/integracao?tab=importar&csv=emergencia" replace />} />
+                <Route path="tintometrico/importar" element={<Navigate to="/tintometrico/integracao?tab=importar" replace />} />
                 <Route path="tintometrico/integracoes" element={<Navigate to="/tintometrico/integracao?tab=integracoes" replace />} />
                 <Route path="tintometrico/reconciliacao" element={<Navigate to="/tintometrico/integracao?tab=reconciliacao" replace />} />
                 <Route path="tintometrico/sync-runs" element={<Navigate to="/tintometrico/integracao?tab=sync-runs" replace />} />
@@ -379,6 +386,7 @@ const App = () => {
                 <Route path="admin/reposicao/oportunidades" element={<AdminReposicaoOportunidades />} />
                 <Route path="admin/reposicao/negociacao-paralela" element={<AdminReposicaoNegociacaoParalela />} />
                 <Route path="admin/reposicao/baixo-giro" element={<AdminReposicaoBaixoGiro />} />
+                <Route path="admin/reposicao/venda-perdida" element={<AdminReposicaoVendaPerdida />} />
                 <Route element={<ReposicaoSessionLayout />}>
                   <Route path="admin/reposicao/sessao" element={<AdminReposicaoCockpit />} />
                   <Route path="admin/reposicao/sessao/mercado" element={<AdminReposicaoMercado />} />

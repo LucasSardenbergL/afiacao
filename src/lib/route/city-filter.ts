@@ -1,7 +1,7 @@
 // Helpers puros do seletor de cidade do contexto "Visitas em campo".
 // Derivam a UF da lista de cidades JÁ cacheada (useRadarCidadesRota.uf) — sem
 // ida ao banco. Selecionar UF filtra o CityMultiSelector.
-import type { CityOption } from '@/components/reposicao/routePlanner/types';
+import type { CityOption } from '@/components/rota/planner/types';
 
 /** UFs distintas presentes nas cidades (uppercase, ordenadas, sem vazios). */
 export function ufsDe(cidades: CityOption[]): string[] {

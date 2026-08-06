@@ -3,7 +3,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
-import { Loader2, BarChart3, Clock, Wrench, Star, TrendingUp, CheckCircle2 } from 'lucide-react';
+import { BarChart3, Clock, Wrench, Star, TrendingUp, CheckCircle2 } from 'lucide-react';
+import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip, CartesianGrid, PieChart, Pie, Cell } from 'recharts';
 import { format, subDays, differenceInHours } from 'date-fns';
 
@@ -123,9 +124,9 @@ const AdminProductivity = () => {
   if (loading) {
     return (
       <div className="min-h-screen bg-background pb-24">
-        <div className="flex items-center justify-center pt-32">
-          <Loader2 className="w-8 h-8 animate-spin text-primary" />
-        </div>
+        <main className="pt-16 px-4 max-w-lg mx-auto">
+          <PageSkeleton variant="cockpit" />
+        </main>
       </div>
     );
   }

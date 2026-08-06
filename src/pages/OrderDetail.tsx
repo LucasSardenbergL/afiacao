@@ -1,5 +1,6 @@
 import { useParams, useNavigate } from 'react-router-dom';
 import { Phone, MessageCircle, Copy, Check, RefreshCw, Camera, Loader2, AlertTriangle, ExternalLink } from 'lucide-react';
+import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { useState, useEffect } from 'react';
 
 // Shape de cada item do pedido (jsonb em orders.items). Só campos consumidos no UI.
@@ -153,8 +154,10 @@ const OrderDetail = () => {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <Loader2 className="w-6 h-6 animate-spin text-primary" />
+      <div className="min-h-screen bg-background pb-24">
+        <main className="pt-16 px-4 max-w-lg mx-auto">
+          <PageSkeleton variant="detail" />
+        </main>
       </div>
     );
   }

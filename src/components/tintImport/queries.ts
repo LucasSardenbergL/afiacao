@@ -4,21 +4,6 @@ import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { ACCOUNT } from './types';
 
-export function useImportHistory() {
-  return useQuery({
-    queryKey: ['tint-import-history'],
-    queryFn: async () => {
-      const { data } = await supabase
-        .from('tint_importacoes')
-        .select('*')
-        .eq('account', ACCOUNT)
-        .order('created_at', { ascending: false })
-        .limit(20);
-      return data ?? [];
-    },
-  });
-}
-
 export function useTintProductCounts() {
   return useQuery({
     queryKey: ['tint-product-counts'],

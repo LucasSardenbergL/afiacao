@@ -16,6 +16,13 @@ import type {
   ProductCartItem, ServiceCartItem, FormaPagamento,
 } from '@/hooks/useUnifiedOrder';
 import { findInvalidPricedProductItems } from '@/services/orderSubmission/priceGuard';
+import {
+  condicoesBloqueantesDoCarrinho,
+  mensagemCondicoesIndisponiveis,
+  ESTADO_FORMAS_UI_OK,
+  type EstadoFormasUI,
+} from '@/services/orderSubmission/formasDegradacao';
+import { AvisoFormasPagamento } from '@/components/sales/AvisoFormasPagamento';
 
 interface CartSummaryBarProps {
   cart: { length: number };
@@ -35,6 +42,10 @@ interface CartSummaryBarProps {
   loadingFormas: boolean;
   customerParcelaRankingOben: string[];
   customerParcelaRankingColacor: string[];
+  /** Degradação da listagem de condições por conta (edge #1597). Default = tudo ok. */
+  estadoFormasOben?: EstadoFormasUI;
+  estadoFormasColacor?: EstadoFormasUI;
+  onRecarregarFormas?: () => void;
   notes: string;
   setNotes: (v: string) => void;
   // Volumes (auto-calculated)
@@ -151,6 +162,9 @@ export function CartSummaryBar({
   selectedParcelaOben, setSelectedParcelaOben,
   selectedParcelaColacor, setSelectedParcelaColacor,
   loadingFormas, customerParcelaRankingOben, customerParcelaRankingColacor,
+  estadoFormasOben = ESTADO_FORMAS_UI_OK,
+  estadoFormasColacor = ESTADO_FORMAS_UI_OK,
+  onRecarregarFormas,
   ordemCompra, setOrdemCompra, isOrdemCompraCustomer,
   readyByDate, setReadyByDate,
   onSubmit, onSubmitQuote, offline = false,
@@ -163,7 +177,18 @@ export function CartSummaryBar({
     () => findInvalidPricedProductItems([...obenProductItems, ...colacorProductItems]).length > 0,
     [obenProductItems, colacorProductItems],
   );
-  const disableSubmit = submitting || serviceItems.some(s => !s.servico) || vendedorDivergencias.length > 0 || hasInvalidPrice;
+  // Guard money-path da condição de pagamento (espelha o submitOrder, que decide pelo MESMO
+  // helper): a listagem do Omie caiu no fallback genérico E este cliente usa condição que
+  // não está lá. Só as contas com item no carrinho contam. "Salvar como Orçamento" segue
+  // liberado de propósito — submitQuote não grava codigo_parcela, então é a saída sem risco.
+  const condicoesBloqueantes = useMemo(
+    () => condicoesBloqueantesDoCarrinho([
+      { temItens: obenProductItems.length > 0, estado: estadoFormasOben },
+      { temItens: colacorProductItems.length > 0, estado: estadoFormasColacor },
+    ]),
+    [obenProductItems.length, colacorProductItems.length, estadoFormasOben, estadoFormasColacor],
+  );
+  const disableSubmit = submitting || serviceItems.some(s => !s.servico) || vendedorDivergencias.length > 0 || hasInvalidPrice || condicoesBloqueantes.length > 0;
 
   // Generate weekdays (Mon-Fri) for current week
   const weekDays = useMemo(() => {
@@ -186,24 +211,46 @@ export function CartSummaryBar({
       <Card>
         <CardContent className="pt-4 space-y-3">
           {obenProductItems.length > 0 && (
-            <PaymentCombobox
-              label="Pagamento Oben"
-              formas={sortedFormasPagamentoOben}
-              selected={selectedParcelaOben}
-              onSelect={setSelectedParcelaOben}
-              customerRanking={customerParcelaRankingOben}
-              loading={loadingFormas}
-            />
+            <div className="space-y-1.5">
+              <PaymentCombobox
+                label="Pagamento Oben"
+                formas={sortedFormasPagamentoOben}
+                selected={selectedParcelaOben}
+                onSelect={setSelectedParcelaOben}
+                customerRanking={customerParcelaRankingOben}
+                loading={loadingFormas}
+              />
+              {!loadingFormas && (
+                <AvisoFormasPagamento
+                  degradado={estadoFormasOben.degradado}
+                  erro={estadoFormasOben.erro}
+                  motivo={estadoFormasOben.motivo}
+                  condicoesAusentes={estadoFormasOben.condicoesAusentes}
+                  onRecarregar={onRecarregarFormas}
+                />
+              )}
+            </div>
           )}
           {colacorProductItems.length > 0 && (
-            <PaymentCombobox
-              label="Pagamento Colacor"
-              formas={sortedFormasPagamentoColacor}
-              selected={selectedParcelaColacor}
-              onSelect={setSelectedParcelaColacor}
-              customerRanking={customerParcelaRankingColacor}
-              loading={loadingFormas}
-            />
+            <div className="space-y-1.5">
+              <PaymentCombobox
+                label="Pagamento Colacor"
+                formas={sortedFormasPagamentoColacor}
+                selected={selectedParcelaColacor}
+                onSelect={setSelectedParcelaColacor}
+                customerRanking={customerParcelaRankingColacor}
+                loading={loadingFormas}
+              />
+              {!loadingFormas && (
+                <AvisoFormasPagamento
+                  degradado={estadoFormasColacor.degradado}
+                  erro={estadoFormasColacor.erro}
+                  motivo={estadoFormasColacor.motivo}
+                  condicoesAusentes={estadoFormasColacor.condicoesAusentes}
+                  onRecarregar={onRecarregarFormas}
+                />
+              )}
+            </div>
           )}
           {isOrdemCompraCustomer && setOrdemCompra && (
             <div>
@@ -247,6 +294,13 @@ export function CartSummaryBar({
             <p className="text-xs text-status-error">
               <AlertCircle className="w-3 h-3 inline mr-1" />
               Defina um preço maior que zero para os itens destacados antes de enviar.
+            </p>
+          )}
+          {condicoesBloqueantes.length > 0 && (
+            <p className="text-xs text-status-error">
+              <AlertCircle className="w-3 h-3 inline mr-1" />
+              {mensagemCondicoesIndisponiveis(condicoesBloqueantes)}
+              {onSubmitQuote && ' Você pode salvar como orçamento e enviar quando o Omie voltar.'}
             </p>
           )}
           <Button className="w-full gap-2" onClick={onSubmit} disabled={disableSubmit}>

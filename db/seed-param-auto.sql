@@ -49,6 +49,8 @@ CREATE VIEW public.v_sku_parametros_sugeridos AS SELECT * FROM public._param_sug
 -- D máx<pp→bloqueia · E pin igual→pina · F pin diferente→aplica+limpa pin · G igual ao atual→sem_mudanca
 -- H fusível>pin→segura · I desabilitado→aplica sem logar · J prod_acabado→aplica sem logar
 -- K base NULL→bloqueia (cold-start) · L queda do máximo→aplica (assimétrico)
+-- M redução do máximo COM estoque abaixo do ponto → aplicado com impacto NEGATIVO (prova a seção
+--   "Maiores reduções" do resumo: o parâmetro cai e LIBERA capital — o análogo de um caso real de prod)
 INSERT INTO public.sku_parametros
   (empresa, sku_codigo_omie, sku_descricao, fornecedor_nome,
    ponto_pedido, estoque_minimo, estoque_maximo, estoque_seguranca, cobertura_alvo_dias,
@@ -65,7 +67,8 @@ VALUES
   ('OBEN', 1009, 'SKU-I desabilitado',   'FORN-I', 50, 20, 120, 15, 30, false,'automatica', true),
   ('OBEN', 1010, 'SKU-J prod_acabado',   'FORN-J', 50, 20, 120, 15, 30, true, 'produto_acabado', true),
   ('OBEN', 1011, 'SKU-K base NULL',      'FORN-K', NULL, NULL, NULL, NULL, NULL, true, 'automatica', true),
-  ('OBEN', 1012, 'SKU-L queda do máximo','FORN-L', 50, 20, 120, 15, 30, true, 'automatica', true);
+  ('OBEN', 1012, 'SKU-L queda do máximo','FORN-L', 50, 20, 120, 15, 30, true, 'automatica', true),
+  ('OBEN', 1013, 'SKU-M reducao capital','FORN-M', 50, 20, 120, 15, 30, true, 'automatica', true);
 
 -- ── Sugestões da view controlada (status já implícito: todos OK = não-NULL) ──
 INSERT INTO public._param_sug_test
@@ -98,7 +101,10 @@ VALUES
   -- K: base NULL (primeira parametrização). Sugestão coerente → BLOQUEADO_VALIDACAO (cold-start manual).
   ('OBEN',1011,'SKU-K base NULL','FORN-K',       20, 60, 140, 15, 35, 4, 1.0, 0.25, 12, 5000, 7, 2, 9, 'historico', 1.64, 'AX'),
   -- L: QUEDA do máximo 120→4 (pp 50→2). Fusível é upward-only → não segura → APLICADO (assimétrico).
-  ('OBEN',1012,'SKU-L queda do máximo','FORN-L',  1,  2,   4,  1, 30, 4, 1.0, 0.25, 12, 5000, 7, 2, 9, 'historico', 1.64, 'AX');
+  ('OBEN',1012,'SKU-L queda do máximo','FORN-L',  1,  2,   4,  1, 30, 4, 1.0, 0.25, 12, 5000, 7, 2, 9, 'historico', 1.64, 'AX'),
+  -- M: REDUÇÃO do máximo 120→90 (pp 50→45), estoque 30 abaixo do ponto em ambos → aplicado (queda não
+  --    segura) com impacto NEGATIVO: qtde_antes=120-30=90, qtde_depois=90-30=60, Δ-30×cmc10 = -300.
+  ('OBEN',1013,'SKU-M reducao capital','FORN-M', 18, 45,  90, 12, 28, 4, 1.0, 0.25, 12, 5000, 7, 2, 9, 'historico', 1.64, 'AX');
 
 -- ── Pins para E (igual), F (diferente) e H (bate, mas pin agora vence o fusível) ──
 INSERT INTO public.reposicao_param_pin (empresa, sku_codigo_omie, ponto_pedido_rejeitado, estoque_maximo_rejeitado)
@@ -113,9 +119,11 @@ INSERT INTO public.sku_estoque_atual (empresa, sku_codigo_omie, estoque_fisico, 
 VALUES
   ('OBEN','1001', 30, 0),
   ('OBEN','1002', 30, 0),
-  ('OBEN','1006', 30, 0);
+  ('OBEN','1006', 30, 0),
+  ('OBEN','1013', 30, 0);   -- M: pos 30 (abaixo do ponto 50/45) → redução do máximo vira impacto negativo
 INSERT INTO public.inventory_position (omie_codigo_produto, account, cmc, preco_medio)
 VALUES
   (1001,'oben', 10, 8),   -- A: cmc=10 → impacto 200
   (1002,'oben', 10, 8),   -- B segurado: Δ0 → impacto 0
-  (1006,'oben', 10, 8);   -- F: custo presente
+  (1006,'oben', 10, 8),   -- F: custo presente
+  (1013,'oben', 10, 8);   -- M: cmc=10 → impacto Δ-30 × 10 = -300

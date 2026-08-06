@@ -156,9 +156,9 @@ export default function GovernancePermissions() {
           </div>
         </div>
 
-        <div className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3">
-          <ShieldCheck className="w-4 h-4 text-amber-500 shrink-0" />
-          <span className="text-xs text-amber-700 dark:text-amber-400">
+        <div className="flex items-center gap-2 rounded-lg border border-status-warning/30 bg-status-warning/5 p-3">
+          <ShieldCheck className="w-4 h-4 text-status-warning shrink-0" />
+          <span className="text-xs text-status-warning-foreground">
             O Super Admin ignora todas as restrições automaticamente — não precisa de overrides.
           </span>
         </div>
@@ -195,7 +195,7 @@ export default function GovernancePermissions() {
                           </div>
                           <div className="flex items-center gap-2 shrink-0">
                             {val === null && <Badge variant="outline" className="text-2xs">Padrão</Badge>}
-                            {val === true && <Badge className="text-2xs bg-emerald-500/10 text-emerald-600 border-emerald-500/20">Concedido</Badge>}
+                            {val === true && <Badge className="text-2xs bg-status-success/10 text-status-success border-status-success/20">Concedido</Badge>}
                             {val === false && <Badge variant="secondary" className="text-2xs">Revogado</Badge>}
                             <Switch
                               checked={val ?? false}

@@ -206,11 +206,11 @@ export function useCustomerSelection({
           if (clientes.length > 0) {
             const codigos = clientes.map(c => c.codigo_cliente);
             const { data: mappings } = await supabase
-              .from('omie_clientes')
+              .from('omie_customer_account_map_fresco')
               .select('user_id, omie_codigo_cliente')
-              // P0-B: a busca é na conta OBEN; sem empresa_omie o código colidiria com colacor e
-              // anexaria o customer_user_id ERRADO (item 2). Fail-safe: 0 linhas oben hoje → sem mapa.
-              .eq('empresa_omie', 'oben')
+              // Fatia 3 (épico-drop): resolve o código OBEN -> user_id pela proof fresca account-correta.
+              // UNIQUE(código,account) → sem colisão cross-conta. Miss → sem mapa → match por documento.
+              .eq('account', 'oben')
               .in('omie_codigo_cliente', codigos);
             if (mappings) {
               for (const c of clientes) {
@@ -244,12 +244,12 @@ export function useCustomerSelection({
     let localUserId = cust.local_user_id || null;
     if (!localUserId) {
       const { data: mapping } = await supabase
-        .from('omie_clientes')
+        .from('omie_customer_account_map_fresco')
         .select('user_id')
         .eq('omie_codigo_cliente', cust.codigo_cliente)
-        // P0-B: filtra a conta OBEN (cust.codigo_cliente é o slot oben) — sem isso um código colacor
-        // colidente mapearia o user errado (item 2). Fail-safe: 0 oben → cai no match por documento abaixo.
-        .eq('empresa_omie', 'oben')
+        // Fatia 3 (épico-drop): resolve o slot OBEN (cust.codigo_cliente) -> user_id pela proof fresca
+        // account-correta. UNIQUE(código,account) → sem colisão. Miss → cai no match por documento abaixo.
+        .eq('account', 'oben')
         .maybeSingle();
       if (mapping?.user_id) localUserId = mapping.user_id;
     }

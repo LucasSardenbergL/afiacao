@@ -9,25 +9,48 @@ import {
   BarChart3, PieChart, ShieldCheck, RefreshCw
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { mediaMargensConhecidas, coberturaMargem, legendaCobertura } from '@/lib/scoring/margin';
+import { fetchAllPages } from '@/lib/postgrest';
 import { KpiCard } from './KpiCard';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
+
+interface ScoreLinha {
+  customer_user_id: string;
+  /** PERCENTUAL (0–100, negativo válido). `null` = não apurada. Ver @/lib/scoring/margin. */
+  gross_margin_pct: number | null;
+  avg_monthly_spend_180d: number | null;
+  avg_repurchase_interval: number | null;
+  revenue_potential: number | null;
+}
 
 export function IntelligenceStrategicTab() {
-  const { data: marginAudit, isLoading } = useQuery({
+  const { data: marginAudit, isLoading: auditCarregando, isError: auditErro } = useQuery({
     queryKey: ['intel-margin-audit'],
+    // A falha era convertida em `[]` EXPLICITAMENTE (`console.error` + `return []`), e os quatro
+    // KPIs monetários abaixo somam sobre esse array: uma leitura que falhou virava "Margem Real
+    // R$ 0 · Gap R$ 0 · 0/0 clientes c/ custo". Zero de vazamento de preço é a leitura mais
+    // tranquilizadora possível — e era fabricada por uma falha de transporte nossa.
     queryFn: async () => {
       const { data, error } = await supabase.from('margin_audit_log').select('*').order('calculated_at', { ascending: false }).limit(100);
-      if (error) { console.error(error); return []; }
-      return data || [];
+      if (error) throw error;
+      return data ?? [];
     },
   });
 
-  const { data: allScores } = useQuery({
+  const { data: allScores, isError: scoresErro, isLoading: scoresCarregando } = useQuery({
     queryKey: ['intel-strategic-scores'],
-    queryFn: async () => {
-      const { data, error } = await supabase.from('farmer_client_scores').select('*').limit(500);
-      if (error) throw error;
-      return data || [];
-    },
+    // Base COMPLETA, paginada. Era `.limit(500)` de 6.632 e SEM `.order()` — o Postgres não
+    // garante ordem sem ORDER BY, então as 500 eram um recorte não determinístico: dois
+    // carregamentos podiam produzir KPIs diferentes da mesma base, sem nada na tela indicando.
+    queryFn: () =>
+      fetchAllPages<ScoreLinha>((de, ate) =>
+        supabase
+          .from('farmer_client_scores')
+          .select('customer_user_id, gross_margin_pct, avg_monthly_spend_180d, avg_repurchase_interval, revenue_potential')
+          .order('customer_user_id', { ascending: true })
+          .range(de, ate) as unknown as PromiseLike<{ data: ScoreLinha[] | null; error: unknown }>,
+        'farmer_client_scores/intel-estrategico',
+      ),
   });
 
   const { data: salesOrders } = useQuery({
@@ -88,6 +111,11 @@ export function IntelligenceStrategicTab() {
   const top20Revenue = sortedByRevenue.slice(0, top20Count).reduce((a, c) => a + Number(c.revenue_potential || 0), 0);
   const totalRevenue = sortedByRevenue.reduce((a, c) => a + Number(c.revenue_potential || 0), 0);
   const concentrationPct = totalRevenue > 0 ? (top20Revenue / totalRevenue * 100) : 0;
+  // revenue_potential não tem produtor server-side (coluna órfã, 0/null para toda a base). Sem
+  // potencial medido a concentração é 0/0 — mostrar "0,0%" fabricaria "carteira nada concentrada".
+  // "—", como a Margem Bruta faz quando avgGrossMargin é null. (≠ scoresIndisponivel, que é erro
+  // de leitura; aqui a leitura foi OK e o dado é que não existe.)
+  const concentracaoIndisponivel = totalRevenue === 0;
 
   const discountedItems = orderItems?.filter(i => Number(i.discount || 0) > 0) || [];
   const avgDiscountQty = discountedItems.length > 0
@@ -104,9 +132,11 @@ export function IntelligenceStrategicTab() {
   const estimatedMarket = Math.max(uniqueCustomers * 3, 100);
   const marketSharePct = (uniqueCustomers / estimatedMarket * 100);
 
-  const avgGrossMargin = allScores?.length
-    ? allScores.reduce((a, c) => a + Number(c.gross_margin_pct || 0), 0) / allScores.length
-    : 0;
+  // Só as margens conhecidas entram na média (numerador E denominador). Com `|| 0`, cliente sem
+  // margem apurada entrava como 0 — e como esse é o caso da maioria da base desde o cálculo
+  // server-side, o KPI estratégico viraria uma medida de cobertura de custo disfarçada de margem.
+  const avgGrossMargin = mediaMargensConhecidas((allScores ?? []).map(c => c.gross_margin_pct));
+  const coberturaGrossMargin = coberturaMargem((allScores ?? []).map(c => c.gross_margin_pct));
 
   const [runningAlgoA, setRunningAlgoA] = useState(false);
   const runAlgoA = async () => {
@@ -116,18 +146,67 @@ export function IntelligenceStrategicTab() {
       if (error) throw error;
       toast.success('Algoritmo A executado com sucesso');
     } catch (e) {
-      toast.error('Erro: ' + (e instanceof Error ? e.message : String(e)));
+      toast.error('Erro: ' + (mensagemDeErro(e) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.'));
     } finally {
       setRunningAlgoA(false);
     }
   };
 
-  if (isLoading) {
+  // O gate espera TODA fonte que a tela apresenta como número. Antes ele olhava só
+  // `margin_audit_log`: bastava a AUDITORIA resolver — com os scores ainda em voo — para a tela
+  // renderizar inteira, e LTV/CAC/Market Share saíam em zero. Um zero de "ainda não chegou" é
+  // indistinguível, na tela, de um zero medido. E "—" não serve nesta janela: "—" é o estado
+  // FINAL de indisponibilidade, e carregar não é indisponível — o honesto é seguir carregando.
+  if (auditCarregando || scoresCarregando) {
     return <div className="grid grid-cols-2 gap-3">{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-24" />)}</div>;
   }
 
+  // Os KPIs derivados de `allScores` (LTV, CAC, Concentração, Market Share, Margem Bruta) não
+  // olhavam o próprio estado de erro, então a tela renderizava INTEIRA como se estivesse tudo
+  // certo, com esses números em zero produzidos por uma falha de transporte. O #1545 fazer
+  // `fetchAllPages` lançar não bastou: a exceção vira `allScores === undefined` e os `|| 0`
+  // fabricam de novo. Nunca zero: "—" e o motivo. `retry` é global (App.tsx: 2 + backoff);
+  // aqui só o estado final.
+  const scoresIndisponivel = scoresErro && !allScores;
+  const scoresDesatualizados = scoresErro && !!allScores;
+  const ou = (v: string) => (scoresIndisponivel ? '—' : v);
+
+  // Mesmo par para a auditoria de margem — as duas queries falham de forma independente, e a
+  // tela precisa dizer QUAL bloco não pôde ser lido (os KPIs de carteira e os de margem vêm de
+  // fontes distintas). Com cache: último dado bom + aviso de stale; sem cache: "—" e o motivo.
+  const auditoriaIndisponivel = auditErro && !marginAudit;
+  const auditoriaDesatualizada = auditErro && !!marginAudit;
+  const ouAudit = (v: string) => (auditoriaIndisponivel ? '—' : v);
+  const legendaAudit = auditoriaIndisponivel
+    ? 'auditoria indisponível'
+    : `parcial — ${auditComCusto}/${auditTotal} clientes c/ custo`;
+
   return (
     <div className="space-y-4">
+      {scoresIndisponivel && (
+        <div role="alert" className="rounded-lg border border-status-error/30 bg-status-error/5 p-3 text-xs text-status-error">
+          Indicadores de carteira indisponíveis — a base de scores não pôde ser lida. LTV, CAC,
+          Concentração, Market Share e Margem Bruta ficam em “—”; nenhum deles foi estimado.
+        </div>
+      )}
+      {scoresDesatualizados && (
+        <div role="alert" className="rounded-lg border border-status-warning/30 bg-status-warning/5 p-3 text-xs text-status-warning">
+          Exibindo a última leitura bem-sucedida da base de scores — a atualização mais recente
+          falhou. Os indicadores de carteira podem estar desatualizados.
+        </div>
+      )}
+      {auditoriaIndisponivel && (
+        <div role="alert" className="rounded-lg border border-status-error/30 bg-status-error/5 p-3 text-xs text-status-error">
+          Auditoria de margem indisponível — o log do Algoritmo A não pôde ser lido. Margem Real,
+          Potencial, Gap e Margem Global ficam em “—”; nenhum valor foi somado.
+        </div>
+      )}
+      {auditoriaDesatualizada && (
+        <div role="alert" className="rounded-lg border border-status-warning/30 bg-status-warning/5 p-3 text-xs text-status-warning">
+          Exibindo a última leitura bem-sucedida da auditoria de margem — a atualização mais
+          recente falhou. Os valores do Algoritmo A podem estar desatualizados.
+        </div>
+      )}
       {/* Algoritmo A – Margin Gap */}
       <div className="rounded-lg border border-status-warning/30 bg-status-warning/5 p-3">
         <div className="flex items-center justify-between mb-3">
@@ -141,26 +220,33 @@ export function IntelligenceStrategicTab() {
           </Button>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <KpiCard title="Margem Real" value={`R$ ${totalMarginReal.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}`} icon={DollarSign} subtitle={`parcial — ${auditComCusto}/${auditTotal} clientes c/ custo`} />
-          <KpiCard title="Margem Potencial" value={`R$ ${totalMarginPotential.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}`} icon={TrendingUp} subtitle={`parcial — ${auditComCusto}/${auditTotal} clientes c/ custo`} />
-          <KpiCard title="Gap de Margem" value={`R$ ${totalGap.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}`} icon={TrendingDown} subtitle="vazamento de preço (todas as linhas)" />
-          <KpiCard title="Registros" value={String(marginAudit?.length || 0)} icon={Eye} />
+          <KpiCard title="Margem Real" value={ouAudit(`R$ ${totalMarginReal.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}`)} icon={DollarSign} subtitle={legendaAudit} />
+          <KpiCard title="Margem Potencial" value={ouAudit(`R$ ${totalMarginPotential.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}`)} icon={TrendingUp} subtitle={legendaAudit} />
+          <KpiCard title="Gap de Margem" value={ouAudit(`R$ ${totalGap.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}`)} icon={TrendingDown} subtitle={auditoriaIndisponivel ? 'auditoria indisponível' : 'vazamento de preço (todas as linhas)'} />
+          {/* "Registros: 0" afirmaria que a auditoria rodou e não achou nada — a mesma troca de
+              "não consegui ler" por "não existe" que os KPIs monetários ao lado fazem em R$. */}
+          <KpiCard title="Registros" value={ouAudit(String(marginAudit?.length ?? 0))} icon={Eye} />
         </div>
       </div>
 
       {/* Strategic KPIs */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <KpiCard title="LTV Projetado (3a)" value={`R$ ${ltvEstimate.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}`} icon={BarChart3} subtitle="Estimativa média" />
-        <KpiCard title="CAC Estimado" value={`R$ ${cacEstimate.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}`} icon={DollarSign} subtitle="Custo aquisição cliente" />
-        <KpiCard title="Concentração Top 20%" value={`${concentrationPct.toFixed(1)}%`} icon={PieChart} subtitle="da receita total" />
-        <KpiCard title="Margem Bruta Média" value={`${avgGrossMargin.toFixed(1)}%`} icon={Percent} />
+        <KpiCard title="LTV Projetado (3a)" value={ou(`R$ ${ltvEstimate.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}`)} icon={BarChart3} subtitle="Estimativa média" />
+        <KpiCard title="CAC Estimado" value={ou(`R$ ${cacEstimate.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}`)} icon={DollarSign} subtitle="Custo aquisição cliente" />
+        <KpiCard title="Concentração Top 20%" value={scoresIndisponivel || concentracaoIndisponivel ? '—' : `${concentrationPct.toFixed(1)}%`} icon={PieChart} subtitle={scoresIndisponivel ? 'base indisponível' : concentracaoIndisponivel ? 'potencial não medido' : 'da receita total'} />
+        <KpiCard
+          title="Margem Bruta Média"
+          value={scoresIndisponivel || avgGrossMargin == null ? '—' : `${avgGrossMargin.toFixed(1)}%`}
+          icon={Percent}
+          subtitle={scoresIndisponivel ? 'base indisponível' : legendaCobertura(coberturaGrossMargin)}
+        />
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <KpiCard title="Elasticidade de Preço" value={`${priceElasticity.toFixed(1)}%`} icon={TrendingUp} subtitle="Δ qty c/ desconto" />
         <KpiCard title="Sensibilidade a Desconto" value={`${discountSensitivity.toFixed(1)}%`} icon={Percent} subtitle={`${ordersWithDiscount} de ${salesOrders?.length || 0} pedidos`} />
-        <KpiCard title="Market Share Est." value={`${marketSharePct.toFixed(1)}%`} icon={Target} subtitle={`${uniqueCustomers} de ~${estimatedMarket} clientes`} />
-        <KpiCard title="Margem Global" value={`R$ ${totalMarginReal.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}`} icon={DollarSign} subtitle={`parcial — ${auditComCusto}/${auditTotal} c/ custo`} />
+        <KpiCard title="Market Share Est." value={ou(`${marketSharePct.toFixed(1)}%`)} icon={Target} subtitle={scoresIndisponivel ? 'base indisponível' : `${uniqueCustomers} de ~${estimatedMarket} clientes`} />
+        <KpiCard title="Margem Global" value={ouAudit(`R$ ${totalMarginReal.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}`)} icon={DollarSign} subtitle={auditoriaIndisponivel ? 'auditoria indisponível' : `parcial — ${auditComCusto}/${auditTotal} c/ custo`} />
       </div>
 
       {/* Margin Audit Table */}

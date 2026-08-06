@@ -1,3 +1,5 @@
+import { captureException } from '@/lib/analytics';
+
 /**
  * Helpers pra montar predicados do `.or()` do PostgREST (supabase-js) SEM abrir
  * brecha de injeção.
@@ -102,4 +104,142 @@ export function eqText(column: string, value: string): string {
 /** Junta cláusulas num predicado pronto pro `.or()`. */
 export function orFilter(...clauses: string[]): string {
   return clauses.join(',');
+}
+
+/** Tamanho da página do PostgREST — é também a capa por request (CLAUDE.md §9b). */
+export const POSTGREST_PAGE_SIZE = 1000;
+
+/**
+ * Lê uma tabela INTEIRA respeitando a capa de 1.000 linhas por request do PostgREST.
+ *
+ * A capa é SILENCIOSA: a resposta vem truncada, sem erro e sem aviso. Quem carrega um
+ * catálogo inteiro para montar um Map (custo, produto, perfil) e não pagina fica com um
+ * mapa parcial — e a cauda vira "não encontrado", que no money-path é lido como "sem
+ * custo"/"produto inexistente". Já mordeu este repo em `product_costs` (ver o teste
+ * "O CORAÇÃO DO FIX" em costCompute) e os edges já paginam por isso
+ * (`algorithm-a-audit`, `fin-valor-cockpit`).
+ *
+ * `buscarPagina` DEVE aplicar um `.order()` estável junto do `.range(de, ate)`: sem
+ * ordenação definida o Postgres não garante a mesma sequência entre requests, e a
+ * paginação pode repetir ou pular linhas.
+ *
+ * FALHA DE PÁGINA REJEITA — página perdida ≠ fim da tabela. Paginar cura a capa de 1.000,
+ * NÃO a falha no meio: uma página que falha (timeout 57014, RLS, 500) devolve
+ * `{ data: null, error }`, e tratar isso como "acabou" devolveria o acumulado parcial como
+ * se fosse a tabela inteira — o MESMO defeito de leitura parcial silenciosa que este helper
+ * existe pra evitar, reintroduzido por outra via. Um farmer de 3.858 clientes que perde a 3ª
+ * página fica com 2.000, indistinguível de uma carteira que de fato tem 2.000; nos callers de
+ * `product_costs` a página perdida vira "SKU sem custo", que INFLA margem. Por isso o `error`
+ * é OBRIGATÓRIO no contrato: sem ele o caller não tem como detectar (era o furo original).
+ * Fim legítimo da tabela é `data: []` sem erro — só isso encerra o loop.
+ *
+ * `fonte` rotula a origem na telemetria (ex.: `'product_costs/bundle'`) e é OBRIGATÓRIA: o
+ * propósito dela é agregação ESTÁVEL, e o compilador é quem garante isso. A alternativa —
+ * cair no stack trace — é instável (a exceção nasce dentro de `relatarPaginaPerdida`; stack
+ * assíncrono, minificação e source-maps mudam entre builds, e o agrupamento junto). Um default
+ * silencioso deixaria justo a lacuna no mecanismo criado para observabilidade. (Codex, #1550.)
+ *
+ * ```ts
+ * const custos = await fetchAllPages<CostRow>(
+ *   (de, ate) =>
+ *     supabase.from('product_costs').select('product_id, cost_final')
+ *       .order('product_id', { ascending: true }).range(de, ate) as unknown as
+ *         PromiseLike<{ data: CostRow[] | null; error: unknown }>,
+ *   'product_costs/exemplo',
+ * );
+ * ```
+ */
+export async function fetchAllPages<T>(
+  buscarPagina: (de: number, ate: number) => PromiseLike<{ data: T[] | null; error: unknown }>,
+  fonte: string,
+): Promise<T[]> {
+  const todas: T[] = [];
+  for (let pagina = 0; ; pagina++) {
+    const de = pagina * POSTGREST_PAGE_SIZE;
+    const ate = (pagina + 1) * POSTGREST_PAGE_SIZE - 1;
+    const { data, error } = await buscarPagina(de, ate);
+    // Falhar alto é a única leitura honesta: o caller escolhe o fallback, mas não pode ser
+    // enganado por um total plausível. `data: null` sem `error` é resposta malformada — o
+    // único sinal legítimo de fim é `data: []`.
+    if (error != null) {
+      relatarPaginaPerdida(fonte, pagina, todas.length, error);
+      throw comCausa(`fetchAllPages: página ${pagina} (${de}-${ate}) falhou`, error);
+    }
+    if (data == null) {
+      relatarPaginaPerdida(fonte, pagina, todas.length, null);
+      throw comCausa(`fetchAllPages: página ${pagina} (${de}-${ate}) devolveu data null sem error`, error);
+    }
+    todas.push(...data);
+    if (data.length < POSTGREST_PAGE_SIZE) return todas;
+  }
+}
+
+/**
+ * `new Error(msg, { cause })` é ES2022 e o projeto compila com `lib: ES2020` — atribuir a
+ * propriedade preserva a causa (o erro original do PostgREST: code/message) sem mexer no
+ * target global. Sem ela o incidente chega como "deu erro", sem dizer QUAL fatia sumiu.
+ */
+function comCausa(mensagem: string, causa: unknown): Error {
+  const erro = new Error(mensagem) as Error & { cause?: unknown };
+  erro.cause = causa;
+  return erro;
+}
+
+/**
+ * Categoriza o erro pelo SQLSTATE (allowlist), NUNCA pelo texto livre. O `code` do PostgREST
+ * é seguro — é de transporte, valor fechado do Postgres. A `message`, não: o PostgREST
+ * encaminha o MESSAGE do Postgres, e função/view/RLS avaliada num SELECT pode lançar mensagem
+ * com valor de linha (`RAISE EXCEPTION` interpolando ID/CPF; erro de cast reproduzindo o valor
+ * inválido). Como o helper é GENÉRICO, categorizar por código dá o sinal de observabilidade
+ * — "está falhando por timeout? por RLS?" — sem arriscar PII na telemetria. (Achado do Codex
+ * gpt-5.6-sol na revisão do #1550: a garantia "message é metadado sem PII" era falsa.)
+ */
+function categoriaDoErro(code: string | null, causa: unknown): string {
+  if (causa === null) return 'data_null_sem_error';
+  if (code === null) return 'desconhecido';
+  if (code === '57014') return 'timeout';
+  if (code === '42501') return 'rls_ou_permissao';
+  if (code === 'P0001') return 'excecao_customizada'; // RAISE do plpgsql — o de maior risco de PII
+  if (code.startsWith('08')) return 'conexao';
+  if (code.startsWith('53')) return 'recursos'; // out of memory, too many connections
+  return 'desconhecido';
+}
+
+/**
+ * Reporta a página perdida ANTES de lançar. Lançar conserta a mentira do número; sem
+ * instrumentar, a falha continua invisível para MEDIÇÃO — e não dá para saber se acontece uma
+ * vez por mês ou toda tarde, nem se um caller sofre mais que os outros. Antes do contrato de
+ * rejeição isso era impossível por construção: a falha virava lista vazia e ninguém sabia.
+ *
+ * Só METADADO SEGURO — nunca a `message` crua (pode carregar PII interpolada; ver
+ * `categoriaDoErro`). Sai o `code` (transporte, valor fechado), a `categoria` normalizada, e
+ * `linhas_lidas_antes_da_falha` (uma CONTAGEM — quantas vieram antes de estourar; o total da
+ * tabela é desconhecido, então NÃO é "linhas perdidas"). Sem payload, sem texto livre. O
+ * caller que quiser diagnosticar a mensagem ainda a tem via `error.cause` na exceção.
+ *
+ * ⚠️ AO LER A MÉTRICA: um evento por TENTATIVA, não por incidente — e quantas tentativas cabem
+ * num incidente DEPENDE DO CALLER. Dentro do `queryFn` de um `useQuery` a chamada herda o
+ * `retry: 2` global (App.tsx), então uma falha única do ponto de vista do usuário emite até 3
+ * eventos: é o caso das abas de Intelligence (`IntelligenceManagerialTab`/`StrategicTab`).
+ * Numa chamada imperativa FORA do react-query não há retentativa nenhuma e 1 evento = 1
+ * incidente: é o caso de `useCrossSellEngine`, `useBundleEngine`, `useFarmerScoring`,
+ * `useTacticalPlan` e `useFarmerTacticalPlan` — hoje a MAIORIA dos sítios de chamada.
+ * Dividir a contagem por 3 uniformemente subestima a frequência real justamente nesses
+ * caminhos money-path (product_costs, farmer_client_scores, sales_orders). Confira o caller
+ * antes de aplicar qualquer divisor — ou agregue por sessão, que independe disso.
+ * Contar tentativas é o que se pode afirmar aqui dentro: o helper não sabe se está numa
+ * retentativa (nem deveria — inferir isso seria estado escondido no lugar errado).
+ * (A generalização anterior, "os callers em react-query herdam `retry: 2`", era falsa para a
+ * maioria deles. Achado do challenge gpt-5.6-sol sobre o #1550, comentado no #1560 tarde demais.)
+ */
+function relatarPaginaPerdida(fonte: string, pagina: number, lidasAntes: number, causa: unknown): void {
+  const pg = causa as { code?: unknown } | null;
+  const code = typeof pg?.code === 'string' ? pg.code : null;
+  captureException(new Error(`fetchAllPages(${fonte}): página ${pagina} perdida`), {
+    fonte,
+    pagina,
+    linhas_lidas_antes_da_falha: lidasAntes,
+    codigo: code,
+    categoria: categoriaDoErro(code, causa),
+  });
 }

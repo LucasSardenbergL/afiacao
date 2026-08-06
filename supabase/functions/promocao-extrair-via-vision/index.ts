@@ -1,24 +1,42 @@
 // Edge Function: promocao-extrair-via-vision
 // Recebe PDF ou imagem de promoção de fornecedor OU de aviso de aumento de preços,
-// extrai estrutura via Lovable AI Gateway (Gemini Pro Vision),
+// extrai estrutura via Anthropic (claude-sonnet-4-6, vision + forced tool-use),
 // grava campanha (promoção) ou registra aumento (RPC) conforme tipo_documento.
+//
+// Migrada do gateway Lovable/Gemini (LOVABLE_API_KEY) para a Anthropic direto:
+// o gateway tem teto próprio de créditos ("AI features usage limit") que derruba
+// a extração de promoção quando estoura. Contrato de request/response inalterado.
 //
 // Body:
 // {
 //   empresa: string,
 //   fornecedor_nome: string,
 //   arquivo_base64: string,
-//   arquivo_tipo: 'pdf'|'image/jpeg'|'image/png',
+//   arquivo_tipo: 'pdf'|'image/jpeg'|'image/png'|'image/webp'|'image/gif',
 //   tipo_documento?: 'campanha_sayerlack' | 'aumento',  // default 'campanha_sayerlack'
 //   origem_email?: { remetente?: string, assunto?: string, data?: string },
 //   criado_por?: string
 // }
 //
-// Modo: best-effort. Sempre grava algo, mesmo quando incerto.
-// Campos com baixa confiança são flagados em extracao_observacoes.
+// Modo: best-effort. Sempre grava algo, mesmo quando incerto — campos de baixa
+// confiança são flagados em extracao_observacoes para revisão humana.
+// EXCEÇÃO money-path: resposta truncada (stop_reason=max_tokens) NÃO grava —
+// lista parcial de descontos gravada como completa é pior que não gravar.
 
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import Anthropic from "npm:@anthropic-ai/sdk@^0.93.0";
+// ⚠️ usar npm: (igual a kb-extract-specs/tarefa-extrair-voz/etc.). O esm.sh/@supabase/supabase-js
+// falhava em resolver no boot do edge runtime → RUNTIME_ERROR sem linha/stack.
+import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@^2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
+import {
+  anotarRejeicoes,
+  type BlocoAnexo,
+  dataValida,
+  montarBlocoAnexo,
+  normalizarCategoriasAumento,
+  normalizarConfianca,
+  normalizarItensPromo,
+} from "./vision-helpers.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -26,40 +44,74 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type",
 };
 
-const LOVABLE_AI_URL = "https://ai.gateway.lovable.dev/v1/chat/completions";
-const VISION_MODEL = "google/gemini-2.5-pro";
+const MODELO = "claude-sonnet-4-6";
+const MAX_TOKENS = 8000;
 
-// Prompt de extração — calibrado para promoções Sayerlack no padrão DES
-const EXTRACTION_PROMPT = `Você está analisando uma imagem ou PDF de promoção de produtos do fornecedor Sayerlack (programa DES - Distribuidores Exclusivos).
+// ============= PROMOÇÃO =============
+const SYSTEM_PROMOCAO =
+  `Você analisa imagens e PDFs de promoções de produtos do fornecedor Sayerlack (programa DES — Distribuidores Exclusivos) e extrai a estrutura da campanha.
 
-Extraia as informações estruturadas da promoção e retorne APENAS JSON válido, sem markdown, sem explicação, sem wrapper de código. O JSON deve seguir exatamente este schema:
+REGRAS
+1. "1ª quinzena" → data_inicio = dia 1, data_fim = dia 15 do mês de referência.
+2. "2ª quinzena" → data_inicio = dia 16, data_fim = último dia do mês.
+3. "mês de X" → dia 1 ao último dia desse mês.
+4. Códigos de produto seguem padrões como DR.XXXX, FL.XXXX.XX, YL.XXXX.NTR, YLO4.XXXX.XX — copie EXATAMENTE como aparecem (caixa, pontos, números). Não normalize, não corrija.
+5. Ano não explícito → use o ano corrente.
+6. Campo que você não conseguir ler: omita o item ou use null, e explique em observacoes. NUNCA chute um percentual de desconto — desconto errado vira preço errado.
+7. confianca < 0.7 quando houver ambiguidade relevante.
 
-{
-  "nome": "string - nome descritivo da campanha (ex: 'DES Promo Abril 2ª Quinzena 2026')",
-  "data_inicio": "YYYY-MM-DD",
-  "data_fim": "YYYY-MM-DD",
-  "fornecedor_nome": "string - nome do fornecedor se identificável",
-  "items": [
-    {
-      "codigo_fornecedor": "string - código do produto (ex: 'DR.4403', 'FL.6269.02')",
-      "descricao": "string ou null - descrição se visível",
-      "desconto_perc": "number - percentual de desconto (ex: 20 para 20%)",
-      "volume_minimo": "number ou null - quantidade mínima se houver condição de volume, senão null"
-    }
-  ],
-  "confianca": "number entre 0 e 1 - seu nível de confiança geral na extração",
-  "observacoes": "string - qualquer observação relevante, ambiguidade, texto não identificado, etc."
-}
+Use SEMPRE a tool registrar_promocao. Não responda em texto fora dela.`;
 
-REGRAS IMPORTANTES:
-1. Se a promoção menciona "1ª quinzena", data_inicio = dia 1 e data_fim = dia 15 do mês referência
-2. Se "2ª quinzena", data_inicio = dia 16 e data_fim = último dia do mês
-3. Se mencionar apenas "mês de X", considerar dia 1 ao último dia desse mês
-4. Códigos de produto seguem padrões como DR.XXXX, FL.XXXX.XX, YL.XXXX.NTR, YLO4.XXXX.XX — mantenha EXATAMENTE como aparecem (case, pontos, números)
-5. Se o ano não estiver claro, use o ano atual
-6. Se não conseguir identificar algum campo obrigatório, use null e anote em observacoes
-7. Ajuste confianca para baixo (< 0.7) se houver ambiguidade significativa
-8. Retorne APENAS o JSON, nada mais`;
+const TOOL_PROMOCAO = {
+  name: "registrar_promocao",
+  description:
+    "Registra a campanha promocional extraída do documento do fornecedor.",
+  input_schema: {
+    type: "object" as const,
+    properties: {
+      nome: {
+        type: "string",
+        description:
+          "Nome descritivo da campanha (ex: 'DES Promo Abril 2ª Quinzena 2026')",
+      },
+      data_inicio: { type: "string", description: "YYYY-MM-DD" },
+      data_fim: { type: "string", description: "YYYY-MM-DD" },
+      fornecedor_nome: {
+        type: ["string", "null"],
+        description: "Nome do fornecedor como aparece no documento",
+      },
+      items: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            codigo_fornecedor: {
+              type: "string",
+              description: "Código do produto, verbatim (ex: 'DR.4403')",
+            },
+            descricao: { type: ["string", "null"] },
+            desconto_perc: {
+              type: "number",
+              description:
+                "Percentual de desconto (20 para 20%). Omita o item inteiro se não conseguir ler com certeza.",
+            },
+            volume_minimo: {
+              type: ["number", "null"],
+              description: "Quantidade mínima, se houver condição de volume",
+            },
+          },
+          required: ["codigo_fornecedor", "desconto_perc"],
+        },
+      },
+      confianca: { type: "number", minimum: 0, maximum: 1 },
+      observacoes: {
+        type: "string",
+        description: "Ambiguidades, texto ilegível, itens omitidos e por quê",
+      },
+    },
+    required: ["nome", "data_inicio", "data_fim", "items", "confianca", "observacoes"],
+  },
+};
 
 interface ExtractedPromo {
   nome: string;
@@ -77,26 +129,50 @@ interface ExtractedPromo {
 }
 
 // ============= AUMENTO =============
-const AUMENTO_PROMPT = `Este documento anuncia reajustes de preços do fornecedor Renner Sayerlack. Extraia:
-- Nome do anúncio / assunto
-- Data em que o novo preço começa a valer (data_vigencia, formato YYYY-MM-DD)
-- Data em que o anúncio foi feito (data_anuncio, se houver)
-- Lista de categorias afetadas, com nome exato como no documento e percentual de aumento
-- Se alguma categoria tem data de vigência específica diferente do geral, registre-a
-- Confiança na extração (0-1)
-- Observações sobre ambiguidades ou dados faltantes
+const SYSTEM_AUMENTO =
+  `Você analisa documentos que anunciam reajustes de preço do fornecedor Renner Sayerlack e extrai a estrutura do aumento.
 
-Retorne APENAS JSON no formato exato:
-{
-  "nome": "...",
-  "data_vigencia": "YYYY-MM-DD",
-  "data_anuncio": "YYYY-MM-DD ou null",
-  "categorias": [
-    { "categoria_fornecedor": "...", "aumento_perc": 5.0, "data_vigencia_especifica": null }
-  ],
-  "confianca": 0.95,
-  "observacoes": "..."
-}`;
+REGRAS
+1. data_vigencia é quando o NOVO preço passa a valer; data_anuncio é quando o comunicado foi emitido.
+2. Nome da categoria: copie EXATAMENTE como aparece no documento.
+3. Categoria com vigência própria diferente da geral → preencha data_vigencia_especifica.
+4. Percentual que você não conseguir ler com certeza: omita a categoria e explique em observacoes. NUNCA chute — aumento errado vira preço errado.
+5. confianca < 0.7 quando houver ambiguidade relevante.
+
+Use SEMPRE a tool registrar_aumento. Não responda em texto fora dela.`;
+
+const TOOL_AUMENTO = {
+  name: "registrar_aumento",
+  description:
+    "Registra o reajuste de preços extraído do comunicado do fornecedor.",
+  input_schema: {
+    type: "object" as const,
+    properties: {
+      nome: { type: "string", description: "Nome/assunto do comunicado" },
+      data_vigencia: { type: "string", description: "YYYY-MM-DD" },
+      data_anuncio: { type: ["string", "null"], description: "YYYY-MM-DD ou null" },
+      categorias: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            categoria_fornecedor: { type: "string" },
+            aumento_perc: {
+              type: "number",
+              description:
+                "Percentual de aumento (5 para 5%). Omita a categoria se não conseguir ler com certeza.",
+            },
+            data_vigencia_especifica: { type: ["string", "null"] },
+          },
+          required: ["categoria_fornecedor", "aumento_perc"],
+        },
+      },
+      confianca: { type: "number", minimum: 0, maximum: 1 },
+      observacoes: { type: "string" },
+    },
+    required: ["nome", "data_vigencia", "categorias", "confianca", "observacoes"],
+  },
+};
 
 interface ExtractedAumento {
   nome: string;
@@ -116,7 +192,7 @@ interface ExtractedAumento {
 // para o nome canônico (razão social) usado no resto do sistema.
 // Fallback hardcoded para Sayerlack/Renner caso a tabela esteja indisponível.
 async function normalizarFornecedor(
-  supabase: ReturnType<typeof createClient>,
+  supabase: SupabaseClient,
   extraido: string | null | undefined,
   _tipoDocumento: string,
 ): Promise<string> {
@@ -125,19 +201,22 @@ async function normalizarFornecedor(
 
   // 1) tenta match exato (case-insensitive) na tabela
   try {
-    const { data: exact } = await supabase
+    // `fornecedor_mapeamento_extracao` não está nos tipos gerados do Supabase;
+    // sem a anotação o supabase-js infere `never` e o acesso ao campo não checa.
+    const { data: exact } = (await supabase
       .from("fornecedor_mapeamento_extracao")
       .select("nome_canonico")
       .eq("ativo", true)
       .ilike("alias_extraido", normalizado)
-      .maybeSingle();
+      .maybeSingle()) as { data: { nome_canonico: string } | null };
     if (exact?.nome_canonico) return exact.nome_canonico;
 
     // 2) tenta match por substring — pega o alias mais longo que esteja contido no extraído
     const { data: aliases } = await supabase
       .from("fornecedor_mapeamento_extracao")
       .select("alias_extraido, nome_canonico")
-      .eq("ativo", true);
+      .eq("ativo", true)
+      .returns<Array<{ alias_extraido: string | null; nome_canonico: string }>>();
 
     if (Array.isArray(aliases) && aliases.length > 0) {
       const ordenados = [...aliases].sort(
@@ -167,7 +246,7 @@ async function normalizarFornecedor(
   return extraido?.trim() || "DESCONHECIDO";
 }
 
-function fallbackExtraction(reason: string, rawText = ""): ExtractedPromo {
+function fallbackExtraction(reason: string): ExtractedPromo {
   const today = new Date().toISOString().slice(0, 10);
   return {
     nome: `Promoção não identificada — ${today}`,
@@ -176,13 +255,11 @@ function fallbackExtraction(reason: string, rawText = ""): ExtractedPromo {
     fornecedor_nome: "DESCONHECIDO",
     items: [],
     confianca: 0,
-    observacoes:
-      `${reason}` +
-      (rawText ? ` Resposta bruta: ${rawText.slice(0, 500)}` : ""),
+    observacoes: reason,
   };
 }
 
-function fallbackAumento(reason: string, rawText = ""): ExtractedAumento {
+function fallbackAumento(reason: string): ExtractedAumento {
   const today = new Date().toISOString().slice(0, 10);
   return {
     nome: `Aumento não identificado — ${today}`,
@@ -190,115 +267,144 @@ function fallbackAumento(reason: string, rawText = ""): ExtractedAumento {
     data_anuncio: null,
     categorias: [],
     confianca: 0,
-    observacoes:
-      `${reason}` +
-      (rawText ? ` Resposta bruta: ${rawText.slice(0, 500)}` : ""),
+    observacoes: reason,
   };
 }
 
-async function callVisionRaw(
-  fileBase64: string,
-  fileType: string,
-  prompt: string,
-): Promise<string> {
-  const apiKey = Deno.env.get("LOVABLE_API_KEY");
-  if (!apiKey) throw new Error("LOVABLE_API_KEY não configurada");
+/** Erro de truncamento — a extração veio parcial e NÃO pode ser gravada. */
+class ExtracaoTruncada extends Error {}
 
-  // Normaliza media_type: pdf, image/jpeg, image/png, image/webp
-  const normalizedType = fileType === "pdf" || fileType === "application/pdf"
-    ? "application/pdf"
-    : fileType;
-
-  const dataUri = `data:${normalizedType};base64,${fileBase64}`;
-
-  const response = await fetch(LOVABLE_AI_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model: VISION_MODEL,
-      messages: [
-        {
-          role: "user",
-          content: [
-            { type: "image_url", image_url: { url: dataUri } },
-            { type: "text", text: prompt },
-          ],
-        },
-      ],
-    }),
+/**
+ * Chamada única à Anthropic com forced tool-use. Devolve o `input` da tool.
+ * O system prompt leva `cache_control` — junto das tools ele é o prefixo estável
+ * entre uploads (a mensagem do usuário, que carrega o anexo, vem depois).
+ */
+async function extrairViaTool(
+  client: Anthropic,
+  system: string,
+  tool: typeof TOOL_PROMOCAO | typeof TOOL_AUMENTO,
+  anexo: BlocoAnexo,
+  instrucao: string,
+): Promise<{ input: unknown; usage: Record<string, number> }> {
+  const response = await client.messages.create({
+    model: MODELO,
+    max_tokens: MAX_TOKENS,
+    system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
+    tools: [tool],
+    tool_choice: { type: "tool", name: tool.name },
+    messages: [
+      {
+        role: "user",
+        content: [
+          anexo,
+          { type: "text", text: instrucao },
+        ],
+      },
+    ],
   });
 
-  if (!response.ok) {
-    const errText = await response.text();
-    if (response.status === 429) {
-      throw new Error(
-        `Lovable AI rate limit atingido (429). Tente novamente em alguns segundos.`,
-      );
-    }
-    if (response.status === 402) {
-      throw new Error(
-        `Lovable AI sem créditos (402). Adicione créditos em Settings > Workspace > Usage.`,
-      );
-    }
+  // §8 money-path: teto que trunca fabrica completude. Uma lista de descontos
+  // cortada ao meio é indistinguível de uma promoção curta para quem lê depois.
+  if (response.stop_reason === "max_tokens") {
+    throw new ExtracaoTruncada(
+      `resposta truncada em ${MAX_TOKENS} tokens — extração parcial não é gravada. Envie o documento em partes menores.`,
+    );
+  }
+
+  const toolUse = response.content.find((b) => b.type === "tool_use");
+  if (!toolUse || toolUse.type !== "tool_use") {
+    const texto = response.content
+      .filter((b) => b.type === "text")
+      .map((b) => (b.type === "text" ? b.text : ""))
+      .join(" ")
+      .slice(0, 300);
     throw new Error(
-      `Lovable AI erro ${response.status}: ${errText.slice(0, 300)}`,
+      `modelo não usou a tool ${tool.name} (stop_reason=${response.stop_reason}) ${texto}`,
     );
   }
 
-  const data = await response.json();
-  return data.choices?.[0]?.message?.content ?? "";
+  return {
+    input: toolUse.input,
+    usage: {
+      input_tokens: response.usage.input_tokens,
+      output_tokens: response.usage.output_tokens,
+      cache_creation_input_tokens: response.usage.cache_creation_input_tokens ?? 0,
+      cache_read_input_tokens: response.usage.cache_read_input_tokens ?? 0,
+    },
+  };
 }
 
-function stripJsonFences(textResponse: string): string {
-  let cleaned = textResponse.trim();
-  if (cleaned.startsWith("```json")) cleaned = cleaned.slice(7);
-  if (cleaned.startsWith("```")) cleaned = cleaned.slice(3);
-  if (cleaned.endsWith("```")) cleaned = cleaned.slice(0, -3);
-  return cleaned.trim();
-}
+function montarPromo(bruto: unknown): ExtractedPromo {
+  const cru = (bruto ?? {}) as Record<string, unknown>;
+  const { itens, rejeitados } = normalizarItensPromo(cru.items);
 
-async function callVisionGateway(
-  fileBase64: string,
-  fileType: string,
-): Promise<ExtractedPromo> {
-  const textResponse = await callVisionRaw(fileBase64, fileType, EXTRACTION_PROMPT);
-  const cleaned = stripJsonFences(textResponse);
-  try {
-    const parsed = JSON.parse(cleaned) as ExtractedPromo;
-    if (!Array.isArray(parsed.items)) parsed.items = [];
-    if (typeof parsed.confianca !== "number") parsed.confianca = 0;
-    if (!parsed.observacoes) parsed.observacoes = "";
-    return parsed;
-  } catch (err) {
-    return fallbackExtraction(
-      `ERRO PARSING: ${String(err).slice(0, 200)}.`,
-      textResponse,
+  const inicio = dataValida(cru.data_inicio);
+  const fim = dataValida(cru.data_fim);
+  const observacoesBase = typeof cru.observacoes === "string" ? cru.observacoes : "";
+
+  if (!inicio || !fim) {
+    // Sem período válido a campanha não pode ser aplicada. Grava rascunho com o
+    // período sinalizado (nunca em silêncio) mas PRESERVA os itens já extraídos —
+    // o revisor corrige a data em vez de pagar uma nova extração. O gate humano
+    // segue intacto: estado 'rascunho' + confirmado=false por item.
+    const base = fallbackExtraction(
+      `PERÍODO NÃO IDENTIFICADO — datas abaixo são placeholder, corrija antes de ativar (data_inicio=${
+        JSON.stringify(cru.data_inicio)
+      }, data_fim=${JSON.stringify(cru.data_fim)}). ${observacoesBase}`.trim(),
     );
+    return {
+      ...base,
+      items: itens,
+      observacoes: anotarRejeicoes(base.observacoes, rejeitados),
+    };
   }
+
+  return {
+    nome: typeof cru.nome === "string" && cru.nome.trim()
+      ? cru.nome.trim()
+      : `Promoção ${inicio}`,
+    data_inicio: inicio,
+    data_fim: fim,
+    fornecedor_nome: typeof cru.fornecedor_nome === "string"
+      ? cru.fornecedor_nome
+      : "",
+    items: itens,
+    confianca: normalizarConfianca(cru.confianca),
+    observacoes: anotarRejeicoes(observacoesBase, rejeitados),
+  };
 }
 
-async function callVisionGatewayAumento(
-  fileBase64: string,
-  fileType: string,
-): Promise<ExtractedAumento> {
-  const textResponse = await callVisionRaw(fileBase64, fileType, AUMENTO_PROMPT);
-  const cleaned = stripJsonFences(textResponse);
-  try {
-    const parsed = JSON.parse(cleaned) as ExtractedAumento;
-    if (!Array.isArray(parsed.categorias)) parsed.categorias = [];
-    if (typeof parsed.confianca !== "number") parsed.confianca = 0;
-    if (!parsed.observacoes) parsed.observacoes = "";
-    if (!parsed.data_anuncio) parsed.data_anuncio = null;
-    return parsed;
-  } catch (err) {
-    return fallbackAumento(
-      `ERRO PARSING: ${String(err).slice(0, 200)}.`,
-      textResponse,
+function montarAumento(bruto: unknown): ExtractedAumento {
+  const cru = (bruto ?? {}) as Record<string, unknown>;
+  const { categorias, rejeitadas } = normalizarCategoriasAumento(cru.categorias);
+
+  const vigencia = dataValida(cru.data_vigencia);
+  const observacoesBase = typeof cru.observacoes === "string" ? cru.observacoes : "";
+
+  if (!vigencia) {
+    // Idem promoção: sinaliza a vigência como placeholder e preserva as categorias.
+    const base = fallbackAumento(
+      `VIGÊNCIA NÃO IDENTIFICADA — data abaixo é placeholder, corrija antes de ativar (data_vigencia=${
+        JSON.stringify(cru.data_vigencia)
+      }). ${observacoesBase}`.trim(),
     );
+    return {
+      ...base,
+      categorias,
+      observacoes: anotarRejeicoes(base.observacoes, rejeitadas),
+    };
   }
+
+  return {
+    nome: typeof cru.nome === "string" && cru.nome.trim()
+      ? cru.nome.trim()
+      : `Aumento ${vigencia}`,
+    data_vigencia: vigencia,
+    data_anuncio: dataValida(cru.data_anuncio),
+    categorias,
+    confianca: normalizarConfianca(cru.confianca),
+    observacoes: anotarRejeicoes(observacoesBase, rejeitadas),
+  };
 }
 
 Deno.serve(async (req: Request) => {
@@ -307,6 +413,17 @@ Deno.serve(async (req: Request) => {
   }
   const __auth = await authorizeCronOrStaff(req);
   if (!__auth.ok) return __auth.response;
+
+  const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
+  if (!apiKey) {
+    return new Response(
+      JSON.stringify({ error: "ANTHROPIC_API_KEY não configurada" }),
+      {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      },
+    );
+  }
 
   const supabase = createClient(
     Deno.env.get("SUPABASE_URL")!,
@@ -321,6 +438,28 @@ Deno.serve(async (req: Request) => {
       status: 400,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
+  }
+
+  // CANÁRIA DE VERSÃO (docs/agent/deploy.md): no Lovable Cloud não há PAT, então o
+  // deploy de edge não tem prova de VERSÃO — só "foi servida". Este probe é a prova:
+  // `{ probe: true }` responde qual motor está no ar sem chamar o modelo (custo zero).
+  //   curl -s -X POST <url> -H "Authorization: Bearer <jwt staff>" \
+  //        -H 'content-type: application/json' -d '{"probe":true}'
+  //   → {"ok":true,"motor":"anthropic",...}  = versão nova no ar
+  //   → 400 "arquivo_base64 obrigatório"     = ainda a versão velha (gateway Lovable)
+  if (body.probe === true) {
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        motor: "anthropic",
+        modelo: MODELO,
+        tools: [TOOL_PROMOCAO.name, TOOL_AUMENTO.name],
+      }),
+      {
+        status: 200,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      },
+    );
   }
 
   const empresa = (body.empresa as string) ?? "OBEN";
@@ -346,29 +485,29 @@ Deno.serve(async (req: Request) => {
     );
   }
 
+  // Valida o anexo ANTES do upload: tipo não suportado ou arquivo grande demais
+  // falha aqui, sem deixar lixo no bucket nem gastar chamada de modelo.
+  const anexo = montarBlocoAnexo(arquivoTipo, arquivoBase64);
+  if (!anexo.ok) {
+    return new Response(JSON.stringify({ error: anexo.erro }), {
+      status: 400,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
   console.log(
-    `[promocao-extrair-via-vision] start empresa=${empresa} tipo_doc=${tipoDocumento} tipo_arq=${arquivoTipo} bytes_b64=${arquivoBase64.length}`,
+    `[promocao-extrair-via-vision] start empresa=${empresa} tipo_doc=${tipoDocumento} media=${anexo.mediaType} bytes_b64=${arquivoBase64.length}`,
   );
 
   // ===== Upload do arquivo no Storage (compartilhado entre fluxos) =====
-  const ext = arquivoTipo === "pdf" || arquivoTipo === "application/pdf"
-    ? "pdf"
-    : arquivoTipo === "image/png"
-    ? "png"
-    : arquivoTipo === "image/webp"
-    ? "webp"
-    : "jpg";
   const fileName = `${empresa}/${Date.now()}_${
     Math.random().toString(36).slice(2, 8)
-  }.${ext}`;
+  }.${anexo.extensao}`;
   const fileBytes = Uint8Array.from(atob(arquivoBase64), (c) => c.charCodeAt(0));
-  const contentType = arquivoTipo === "pdf" || arquivoTipo === "application/pdf"
-    ? "application/pdf"
-    : arquivoTipo;
 
   const { error: uploadErr } = await supabase.storage
     .from("promocoes")
-    .upload(fileName, fileBytes, { contentType });
+    .upload(fileName, fileBytes, { contentType: anexo.mediaType });
   if (uploadErr) {
     console.error(
       `[promocao-extrair-via-vision] upload falhou: ${uploadErr.message}`,
@@ -376,18 +515,31 @@ Deno.serve(async (req: Request) => {
   }
   const arquivoUrl = uploadErr ? null : fileName;
 
+  const client = new Anthropic({ apiKey });
+
   // ===== FLUXO AUMENTO =====
   if (tipoDocumento === "aumento") {
     let extractedAum: ExtractedAumento;
+    let usageAum: Record<string, number>;
     try {
-      extractedAum = await callVisionGatewayAumento(arquivoBase64, arquivoTipo);
+      const { input, usage } = await extrairViaTool(
+        client,
+        SYSTEM_AUMENTO,
+        TOOL_AUMENTO,
+        anexo.bloco,
+        "Extraia o reajuste de preços deste comunicado usando a tool registrar_aumento.",
+      );
+      extractedAum = montarAumento(input);
+      usageAum = usage;
     } catch (err) {
-      const msg = String(err).slice(0, 300);
-      console.error(`[promocao-extrair-via-vision] vision aumento falhou: ${msg}`);
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(
+        `[promocao-extrair-via-vision] vision aumento falhou: ${msg.slice(0, 300)}`,
+      );
       return new Response(
-        JSON.stringify({ error: `Vision falhou: ${msg}` }),
+        JSON.stringify({ error: `Vision falhou: ${msg.slice(0, 300)}` }),
         {
-          status: 500,
+          status: err instanceof ExtracaoTruncada ? 422 : 502,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         },
       );
@@ -432,13 +584,12 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    const aumentoId =
-      typeof aumentoRpc === "string"
-        ? aumentoRpc
-        : (aumentoRpc as { id?: string } | null)?.id ?? aumentoRpc;
+    const aumentoId = typeof aumentoRpc === "string"
+      ? aumentoRpc
+      : (aumentoRpc as { id?: string } | null)?.id ?? aumentoRpc;
 
     console.log(
-      `[promocao-extrair-via-vision] OK aumento_id=${aumentoId} categorias=${extractedAum.categorias.length} confianca=${extractedAum.confianca}`,
+      `[promocao-extrair-via-vision] OK aumento_id=${aumentoId} categorias=${extractedAum.categorias.length} confianca=${extractedAum.confianca} tokens=${usageAum.input_tokens}/${usageAum.output_tokens} cache_read=${usageAum.cache_read_input_tokens}`,
     );
 
     return new Response(
@@ -463,21 +614,30 @@ Deno.serve(async (req: Request) => {
 
   // ===== FLUXO PROMOÇÃO (default — comportamento original) =====
   let extracted: ExtractedPromo;
+  let usagePromo: Record<string, number>;
   try {
-    extracted = await callVisionGateway(arquivoBase64, arquivoTipo);
+    const { input, usage } = await extrairViaTool(
+      client,
+      SYSTEM_PROMOCAO,
+      TOOL_PROMOCAO,
+      anexo.bloco,
+      "Extraia a campanha promocional deste documento usando a tool registrar_promocao.",
+    );
+    extracted = montarPromo(input);
+    usagePromo = usage;
   } catch (err) {
-    const msg = String(err).slice(0, 300);
-    console.error(`[promocao-extrair-via-vision] vision falhou: ${msg}`);
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(
+      `[promocao-extrair-via-vision] vision falhou: ${msg.slice(0, 300)}`,
+    );
     return new Response(
-      JSON.stringify({ error: `Vision falhou: ${msg}` }),
+      JSON.stringify({ error: `Vision falhou: ${msg.slice(0, 300)}` }),
       {
-        status: 500,
+        status: err instanceof ExtracaoTruncada ? 422 : 502,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       },
     );
   }
-
-  // (upload já realizado antes da bifurcação por tipo_documento)
 
   const fornecedorCanonico = await normalizarFornecedor(
     supabase,
@@ -549,10 +709,10 @@ Deno.serve(async (req: Request) => {
 
     const r = resolucao as
       | {
-          qualidade?: string;
-          omie_codigo_produto?: number;
-          candidatos?: unknown;
-        }
+        qualidade?: string;
+        omie_codigo_produto?: number;
+        candidatos?: unknown;
+      }
       | null;
     const qualidade = r?.qualidade ?? "nao_encontrado";
     const skuOmie = qualidade === "unico" ? r?.omie_codigo_produto ?? null : null;
@@ -582,7 +742,7 @@ Deno.serve(async (req: Request) => {
   }
 
   console.log(
-    `[promocao-extrair-via-vision] OK campanha=${campanha.id} items=${extracted.items.length} confianca=${extracted.confianca}`,
+    `[promocao-extrair-via-vision] OK campanha=${campanha.id} items=${extracted.items.length} confianca=${extracted.confianca} tokens=${usagePromo.input_tokens}/${usagePromo.output_tokens} cache_read=${usagePromo.cache_read_input_tokens}`,
   );
 
   return new Response(
@@ -596,8 +756,7 @@ Deno.serve(async (req: Request) => {
       },
       items: itensResults,
       arquivo_url: arquivoUrl,
-      proximo_passo:
-        `Revisar em /admin/reposicao/promocoes/${campanha.id}`,
+      proximo_passo: `Revisar em /admin/reposicao/promocoes/${campanha.id}`,
     }),
     {
       headers: { ...corsHeaders, "Content-Type": "application/json" },

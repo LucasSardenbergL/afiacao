@@ -13,7 +13,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { ChevronLeft, ChevronRight, ArrowLeft, Loader2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, ArrowLeft } from "lucide-react";
+import { PageSkeleton } from "@/components/ui/page-skeleton";
 
 const PAGE_SIZE = 50;
 
@@ -95,9 +96,7 @@ export default function AdminReposicaoHistorico() {
         </CardHeader>
         <CardContent>
           {isLoading ? (
-            <div className="flex justify-center py-8">
-              <Loader2 className="h-6 w-6 animate-spin" />
-            </div>
+            <PageSkeleton variant="list" />
           ) : (
             <Table>
               <TableHeader>

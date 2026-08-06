@@ -68,7 +68,7 @@ export function CheckinQualitativoTab({ empresa, ano, trimestre }: Props) {
           {bonusItems.length > 0 && (
             <>
               <div className="flex items-center gap-3 pt-2">
-                <Sparkles className="h-4 w-4 text-amber-500" />
+                <Sparkles className="h-4 w-4 text-status-warning" />
                 <span className="text-sm font-semibold text-foreground">Bônus extra</span>
                 <Separator className="flex-1" />
               </div>

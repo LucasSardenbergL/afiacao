@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { montarDetalheAlvo, recenciaLabel } from './alvo-detalhe';
 import type { ProspectRow } from './prospect-stop';
-import type { RouteStop } from '@/components/reposicao/routePlanner/types';
+import type { RouteStop } from '@/components/rota/planner/types';
 
 const baseAddr = {
   street: 'Rua A', number: '10', neighborhood: 'Centro',

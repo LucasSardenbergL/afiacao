@@ -1,6 +1,6 @@
 -- ============================================================================
 -- 03 — INADIMPLÊNCIA POR AGING (recebíveis)
--- 🟣 Lovable → SQL Editor → cola → Run
+-- 🟢 read-only → eu rodo via psql-ro (fallback: cola no SQL Editor do Lovable)
 -- ----------------------------------------------------------------------------
 -- Política do dono: flag desde o 1º dia de atraso, ação graduada por faixa:
 --   D+1 a D+7   → WhatsApp/e-mail   | D+8 a D+30 → ligação

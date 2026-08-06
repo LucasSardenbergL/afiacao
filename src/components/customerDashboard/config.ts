@@ -1,6 +1,6 @@
 // Configs do CustomerDashboard: status, animações e ações rápidas.
 // Extraídos verbatim de src/components/CustomerDashboard.tsx (god-component split).
-import { PlusCircle, Wrench, Gamepad2, LifeBuoy } from 'lucide-react';
+import { PlusCircle, Wrench, Gamepad2, LifeBuoy, LayoutGrid } from 'lucide-react';
 
 export const statusConfig: Record<string, { label: string; statusClass: string }> = {
   'pedido_recebido': { label: 'Recebido', statusClass: 'status-progress' },
@@ -25,6 +25,7 @@ export const fadeUp = {
 };
 
 export const QUICK_ACTIONS = [
+  { icon: LayoutGrid, label: 'Central', path: '/central' },
   { icon: PlusCircle, label: 'Novo Pedido', path: '/new-order' },
   { icon: Wrench, label: 'Ferramentas', path: '/tools' },
   { icon: Gamepad2, label: 'Gamificação', path: '/gamification' },

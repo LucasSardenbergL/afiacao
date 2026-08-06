@@ -3,6 +3,12 @@
 // Helpers espelhados VERBATIM de src/lib/financeiro/valor-cockpit-helpers.ts.
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
+// Paginação robusta (anti-truncamento do cap de 1000 do PostgREST). Era um helper LOCAL
+// (definido dentro do handler) com `data ?? []`: resposta malformada (data:null SEM
+// error) virava página vazia → EOF falso, e os 9 call-sites herdavam — produtos/itens/
+// pedidos/custos/estoque/CR parciais viram margem e EVP inflados no cockpit, sem sinal
+// nenhum na tela. O canônico lança nos dois casos (money-path §6/§9).
+import { fetchAll } from "../_shared/paginate.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -301,6 +307,69 @@ function scoreConfiancaCockpit(input: { cobertura_receita: number; custo_ausente
   return { nivel: (nivel === 3 ? "alta" : nivel === 2 ? "media" : "baixa") as "alta" | "media" | "baixa", motivos };
 }
 
+// ===== Canal do pedido, espelhado VERBATIM de valor-cockpit-helpers.ts (PR1 Cabreúva-Colacor) =====
+// origem ~100% NULL em prod (2026-08-03) → o rollup por canal nasce como espelho de digitalização.
+type CanalPedido = 'erp_direto' | 'app_cliente' | 'app_staff' | 'ligacao' | 'app_sem_origem' | 'outro';
+function classificarCanalPedido(p: { origem: string | null; checkout_id: string | null }): CanalPedido {
+  const origem = p.origem?.trim() || null;
+  if (origem == null) return p.checkout_id != null ? 'app_sem_origem' : 'erp_direto';
+  if (origem === 'web_customer') return 'app_cliente';
+  if (origem === 'web_staff') return 'app_staff';
+  if (origem === 'ligacao_sainte' || origem === 'ligacao_entrante') return 'ligacao';
+  return 'outro'; // valor desconhecido NÃO cai em bucket conhecido (origem não tem CHECK no banco)
+}
+type ItemCanalInput = { sales_order_id: string; cliente: string; receita_liquida: number; quantidade: number; desconto: number; custo_unitario: number | null };
+type RollupCanal = { canal: CanalPedido; pedidos: number; clientes: number; receita: number; quantidade: number; desconto: number; cm: number | null; cm_incompleto: boolean; receita_sem_cm: number };
+function agregarPorCanal(itens: ItemCanalInput[], canalPorPedido: Map<string, CanalPedido>): RollupCanal[] {
+  type Acc = { canal: CanalPedido; pedidos: Set<string>; clientes: Set<string>; receita: number; quantidade: number; desconto: number; cm: number; cmNull: boolean; cm_incompleto: boolean; receita_sem_cm: number };
+  const m = new Map<CanalPedido, Acc>();
+  for (const it of itens) {
+    // Pedido fora do mapa → 'outro' (defensivo): não fabricar 'erp_direto' para dado inconsistente.
+    const canal = canalPorPedido.get(it.sales_order_id) ?? 'outro';
+    const acc = m.get(canal) ?? { canal, pedidos: new Set<string>(), clientes: new Set<string>(), receita: 0, quantidade: 0, desconto: 0, cm: 0, cmNull: true, cm_incompleto: false, receita_sem_cm: 0 };
+    acc.pedidos.add(it.sales_order_id);
+    acc.clientes.add(it.cliente);
+    acc.receita += it.receita_liquida;
+    acc.quantidade += it.quantidade;
+    acc.desconto += it.desconto;
+    // Margem item a item pela MESMA régua dos combos (custo ausente ≠ zero → item sai do cm e
+    // engorda receita_sem_cm; canal 100% sem custo → cm null, nunca 0 fabricado).
+    const cm = margemContribuicao({ receita_liquida: it.receita_liquida, custo_unitario: it.custo_unitario, quantidade: it.quantidade });
+    if (cm == null) { acc.cm_incompleto = true; acc.receita_sem_cm += it.receita_liquida; }
+    else { acc.cm += cm; acc.cmNull = false; }
+    m.set(canal, acc);
+  }
+  return [...m.values()]
+    .map((a) => ({ canal: a.canal, pedidos: a.pedidos.size, clientes: a.clientes.size, receita: a.receita, quantidade: a.quantidade, desconto: a.desconto, cm: a.cmNull ? null : a.cm, cm_incompleto: a.cm_incompleto, receita_sem_cm: a.receita_sem_cm }))
+    .sort((a, b) => b.receita - a.receita);
+}
+
+// ===== Giro executivo, espelhado VERBATIM de valor-cockpit-helpers.ts (PR3 Cabreúva-Colacor) =====
+type GiroExecutivo = {
+  capital_medido: number;
+  capital_sem_venda_ttm: number;
+  skus_medidos: number;
+  skus_sem_valor: number;
+  retorno_proxy: number | null;
+};
+function calcularGiroExecutivo(input: {
+  estoquePorSKU: Map<string, number | null>;
+  skusComVendaTTM: Set<string>;
+  cmTTM: number | null;
+}): GiroExecutivo {
+  let capital = 0, morto = 0, medidos = 0, semValor = 0;
+  for (const [sku, valor] of input.estoquePorSKU) {
+    if (valor == null || !Number.isFinite(valor) || valor < 0) { semValor++; continue; }
+    medidos++;
+    capital += valor;
+    if (!input.skusComVendaTTM.has(sku)) morto += valor;
+  }
+  const retorno = input.cmTTM != null && Number.isFinite(input.cmTTM) && capital > 0
+    ? input.cmTTM / capital
+    : null;
+  return { capital_medido: capital, capital_sem_venda_ttm: morto, skus_medidos: medidos, skus_sem_valor: semValor, retorno_proxy: retorno };
+}
+
 // ===== Custo: régua do cockpit, espelhada VERBATIM de src/lib/custos/cost-source.ts (Deno não importa de src/) =====
 // Régua do COCKPIT (computa-e-degrada #1003): exibe a margem mesmo de proxy e marca baixaConfianca p/ rebaixar a
 // confiança — DISTINTA de resolverCustoConfiavel (recommend/audit, que NULIFICA proxy). Mudou? Mude lá e rode
@@ -341,23 +410,6 @@ serve(async (req: Request) => {
   const auth = await authorizeGestorOuMaster(req);
   if (!auth.ok) return auth.response;
   const db = createClient(SUPABASE_URL, SERVICE_ROLE);
-
-  // Paginação robusta: evita o truncamento silencioso do default ~1000 do PostgREST e propaga erro.
-  async function fetchAll<T>(
-    build: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>,
-    label: string,
-  ): Promise<T[]> {
-    const page = 1000; let from = 0; const out: T[] = [];
-    for (;;) {
-      const { data, error } = await build(from, from + page - 1);
-      if (error) throw new Error(`${label}: ${error.message}`);
-      const rows = data ?? [];
-      out.push(...rows);
-      if (rows.length < page) break;
-      from += page;
-    }
-    return out;
-  }
 
   const now = new Date();
   const ttm_fim = now.toISOString().slice(0, 10);
@@ -408,8 +460,8 @@ serve(async (req: Request) => {
     // barato. pedidosNaJanela = faturável (exclui cancelado/rascunho/soft-deletado, régua v_caca) E
     // order_date_kpi ∈ [ttm_inicio, ttm_fim] (Bug C: janela pela DATA DO PEDIDO, não pela carga). SEM filtro
     // de account na faturabilidade (vale p/ qualquer conta); o recorte Oben vem por product_id/SKU abaixo.
-    type SalesOrderRow = { id: string; status: string | null; deleted_at: string | null; order_date_kpi: string | null; account: string | null };
-    const salesOrdersAll = await fetchAll<SalesOrderRow>((f, t) => db.from("sales_orders").select("id, status, deleted_at, order_date_kpi, account").order("id", { ascending: true }).range(f, t), "sales_orders");
+    type SalesOrderRow = { id: string; status: string | null; deleted_at: string | null; order_date_kpi: string | null; account: string | null; origem: string | null; checkout_id: string | null };
+    const salesOrdersAll = await fetchAll<SalesOrderRow>((f, t) => db.from("sales_orders").select("id, status, deleted_at, order_date_kpi, account, origem, checkout_id").order("id", { ascending: true }).range(f, t), "sales_orders");
     // order_date_kpi é DATE → comparação de string 'YYYY-MM-DD' é cronológica (mesmo padrão de
     // carteira-positivacao-snapshot). Reúsa a régua UTC que o cockpit já aplica ao AR (ttm_inicio/ttm_fim).
     const pedidosNaJanela = new Set(
@@ -433,7 +485,12 @@ serve(async (req: Request) => {
     if (linhas.length === 0) return jsonResponse({ company: COMPANY, vazio: true, motivo: "Sem linhas de venda da Oben no TTM." }, 200);
 
     // Mapas de apoio (paginados, sem .in para evitar URL gigante + truncamento)
-    const clientesAll = await fetchAll<{ user_id: string; omie_codigo_cliente: number }>((f, t) => db.from("omie_clientes").select("user_id, omie_codigo_cliente").order("id", { ascending: true }).range(f, t), "omie_clientes");
+    // #8 (P0-B-bis PR-4): mapa user->codigo de DISPLAY pela view fresca account=oben (COMPANY). O espelho
+    // omie_clientes é colacor_sc-dominante sem conta → exibia o código de OUTRA conta do mesmo user.
+    // UNIQUE(user_id,account) → ≤1 linha/user no Map. Display ℹ️ baixo: offset .range basta (um miss de TTL
+    // entre páginas só omitiria 1 código; o syncPedidos, money-path, é que exige keyset). Ordena por
+    // omie_codigo_cliente (UNIQUE por conta → estável e sem empate no offset).
+    const clientesAll = await fetchAll<{ user_id: string; omie_codigo_cliente: number }>((f, t) => db.from("omie_customer_account_map_fresco").select("user_id, omie_codigo_cliente").eq("account", "oben").order("omie_codigo_cliente", { ascending: true }).range(f, t), "omie_customer_account_map_fresco");
     const userToOmie = new Map(clientesAll.map((c) => [c.user_id, String(c.omie_codigo_cliente)]));
     // Nome do cliente: profiles.user_id = order_items.customer_user_id (~98% cobertura na Oben; psql-ro
     // 2026-06-23). razao_social tem prioridade, senão name. service_role bypassa a RLS de profiles.
@@ -505,6 +562,19 @@ serve(async (req: Request) => {
     const comboVals = [...comboMap.values()];
     const combos: ComboInput[] = comboVals.map((c) => ({ cliente: c.cliente, sku: c.sku, receita_liquida: c.receita, quantidade: c.qtd, custo_unitario: c.product_id ? (custoPorProduto.get(c.product_id) ?? null) : null }));
 
+    // Canal do pedido (PR1 Cabreúva-Colacor): MESMA base de linhas do cockpit (janela por
+    // order_date_kpi + faturável + recorte Oben) agregada pelo canal de origem do pedido pai.
+    const canalPorPedido = new Map<string, CanalPedido>(salesOrdersAll.map((so) => [so.id, classificarCanalPedido({ origem: so.origem ?? null, checkout_id: so.checkout_id ?? null })]));
+    const itensCanal: ItemCanalInput[] = linhas.map((l) => ({
+      sales_order_id: l.sales_order_id,
+      cliente: userToOmie.get(l.customer_user_id) ?? `app:${l.customer_user_id}`,
+      receita_liquida: l.unit_price * l.quantity - (l.discount ?? 0),
+      quantidade: l.quantity,
+      desconto: l.discount ?? 0,
+      custo_unitario: l.product_id ? (custoPorProduto.get(l.product_id) ?? null) : null,
+    }));
+    const porCanal = agregarPorCanal(itensCanal, canalPorPedido);
+
     // AR da Oben relevante à janela (emitido na janela OU ainda em aberto) — serve p/ AR por cliente e cobertura.
     type CR = { omie_codigo_cliente: number | null; omie_codigo_lancamento: number | null; valor_documento: number; saldo: number; valor_recebido: number; data_emissao: string | null; data_vencimento: string | null; status_titulo: string };
     const crsAll = await fetchAll<CR>((f, t) => db.from("fin_contas_receber").select("omie_codigo_cliente, omie_codigo_lancamento, valor_documento, saldo, valor_recebido, data_emissao, data_vencimento, status_titulo").eq("company", COMPANY).or(`data_recebimento.is.null,data_recebimento.gte.${ttm_inicio},data_emissao.gte.${ttm_inicio}`).order("id", { ascending: true }).range(f, t), "fin_contas_receber");
@@ -554,6 +624,14 @@ serve(async (req: Request) => {
 
     const res = montarCelulasComboEVP({ combos, capitalClientes, capitalSKUs, k });
 
+    // Giro executivo (PR3 Cabreúva): capital nível-empresa sobre o MESMO estoque eleito do
+    // cockpit; dinheiro morto = capital de SKU sem venda no TTM. Retorno é PROXY (snapshot).
+    const giroExecutivo = calcularGiroExecutivo({
+      estoquePorSKU: estoqueValorPorSKU,
+      skusComVendaTTM: new Set(comboVals.map((c) => c.sku)),
+      cmTTM: res.empresa.cm,
+    });
+
     // Recomendações por cliente. NOTA: prazo_medio_dias/dias_estoque ainda não computados por cliente/SKU
     // (deferido) → as regras de prazo/estoque ficam inertes; as de desconto/preço usam dados reais.
     const descontoPorCliente = new Map<string, number>();
@@ -589,7 +667,7 @@ serve(async (req: Request) => {
     const porClienteComNome = res.porCliente.map((c) => ({ ...c, nome: clienteParaNome.get(c.cliente) ?? null }));
     return jsonResponse({
       company: COMPANY, k, hurdle_indisponivel, ttm: { inicio: ttm_inicio, fim: ttm_fim },
-      porCliente: porClienteComNome, porSKU: porSKUcomDescricao, empresa: res.empresa,
+      porCliente: porClienteComNome, porSKU: porSKUcomDescricao, porCanal, giroExecutivo, empresa: res.empresa,
       recomendacoesCliente, confianca, cobertura_receita, cobertura_app_por_ar: app_por_ar,
       cobertura_baixa_ar: coberturaBaixaAR, // Fase 3: fração da AR liquidada com baixa derivada REAL (vs vencimento-proxy)
       // transparência por receita (omissão honesta do EVP otimista — sucede evp_teto_receita_pct):

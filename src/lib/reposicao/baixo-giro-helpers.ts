@@ -1,5 +1,15 @@
 import { impactoSimulado } from "./param-auto-helpers";
 
+/**
+ * Filtro PostgREST do universo "baixo giro & estoque parado" — FONTE ÚNICA.
+ * Consumido pelo painel (useBaixoGiro) e pelo badge do cockpit (BaixoGiroBadge):
+ * mantê-los no MESMO literal garante que a contagem do badge case exatamente com
+ * a lista que o painel mostra (senão o badge "mente" e reintroduz confusão).
+ * Semântica: (classe B/C × Y/Z) OU demanda diária < 0,05 OU sem parâmetro calculado.
+ */
+export const BAIXO_GIRO_OR_FILTER =
+  "and(classe_abc.in.(B,C),classe_xyz.in.(Y,Z)),demanda_media_diaria.lt.0.05,estoque_minimo.is.null";
+
 export function somarCapitalParado(
   itens: Array<{ saldo: number | null; cmc: number | null }>,
 ): { totalRs: number; semCustoN: number; comEstoqueN: number } {
@@ -42,6 +52,78 @@ export function diasSemVender(ultimaVendaISO: string | null, hojeISO: string): n
   if (!ultimaVendaISO) return null;
   const ms = Date.parse(hojeISO) - Date.parse(ultimaVendaISO);
   return Math.floor(ms / 86_400_000);
+}
+
+/**
+ * Giro morto = sem venda há >= 270 dias, na fonte ALL-TIME (v_sku_ultima_venda).
+ * 270 e não 365: o histórico de vendas OBEN começa em 2025-10-21 (~9 meses) — "1 ano sem vender"
+ * seria inafirmável hoje. Subir para 365 quando o histórico tiver lastro.
+ */
+export const LIMIAR_GIRO_MORTO_DIAS = 270;
+
+/**
+ * SKU em cold start (parâmetro semeado / aguardando 2ª ordem) NUNCA é giro morto — SKU novo sem
+ * venda é novo, não morto (marcar mataria a primeira compra). "Sem NENHUMA venda registrada"
+ * (fora de cold start) conta como morto: o histórico inteiro (~9 meses) sem giro.
+ */
+export function ehGiroMorto(args: {
+  diasSemVender: number | null;
+  vendasRegistradas: number;
+  emColdStart: boolean;
+}): boolean {
+  if (args.emColdStart) return false;
+  if (args.vendasRegistradas <= 0) return true;
+  return args.diasSemVender != null && args.diasSemVender >= LIMIAR_GIRO_MORTO_DIAS;
+}
+
+/**
+ * Candidato a SOB-ENCOMENDA (postponement da cauda): SKU VIVO mas de venda RARA — no máximo
+ * 2 eventos de venda em todo o histórico (fonte all-time v_sku_ultima_venda) — com estoque
+ * parado. Virar sob-encomenda elimina o estoque INTEIRO do SKU (ciclo+proteção+piso): o
+ * cliente espera o lead time. Medido 2026-07-30: 106 SKUs / R$38,7k nesse critério.
+ * Cold start fora (SKU novo sem venda é novo, não raro); sem venda nenhuma = giro morto
+ * (fluxo próprio: descontinuar), não sob-encomenda.
+ */
+export function ehCandidatoSobEncomenda(args: {
+  vendasRegistradas: number;
+  saldo: number | null;
+  emColdStart: boolean;
+}): boolean {
+  if (args.emColdStart) return false;
+  if (args.vendasRegistradas < 1 || args.vendasRegistradas > 2) return false;
+  return (args.saldo ?? 0) > 0;
+}
+
+/**
+ * Rótulo pt-BR do quadrante Syntetos-Boylan (v_sku_classe_sb — ADVISORY, não alimenta o motor).
+ * Medido 2026-07-30: zero "smooth"/"erratic" na carteira — 160 intermitentes + 73 lumpy.
+ * Quadrante desconhecido/ausente → null (a UI mostra nada, nunca inventa rótulo).
+ */
+export function rotuloClasseSB(quadrante: string | null | undefined): string | null {
+  switch (quadrante) {
+    case "smooth": return "regular";
+    case "intermittent": return "intermitente";
+    case "erratic": return "errática";
+    case "lumpy": return "lumpy";
+    default: return null;
+  }
+}
+
+/** Capital parado dos mortos (cmc ausente não fabrica R$0 — conta separada, como somarCapitalParado). */
+export function somarCapitalMorto(
+  itens: Array<{ giroMorto: boolean; saldo: number | null; cmc: number | null }>,
+): { totalRs: number; comEstoqueN: number; semCustoN: number; mortosN: number } {
+  let totalRs = 0, comEstoqueN = 0, semCustoN = 0, mortosN = 0;
+  for (const it of itens) {
+    if (!it.giroMorto) continue;
+    mortosN++;
+    const saldo = it.saldo ?? 0;
+    if (saldo <= 0) continue;
+    comEstoqueN++;
+    if (it.cmc != null && it.cmc > 0) totalRs += saldo * it.cmc;
+    else semCustoN++;
+  }
+  return { totalRs, comEstoqueN, semCustoN, mortosN };
 }
 
 export function previewManterLote(

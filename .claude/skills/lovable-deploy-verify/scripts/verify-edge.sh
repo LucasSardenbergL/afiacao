@@ -25,6 +25,17 @@ REF="${SUPABASE_REF:-fzvklzpomgnyikkfkzai}"
 BASE="https://$REF.supabase.co/functions/v1"
 [ "$#" -ge 1 ] || { echo "uso: verify-edge.sh <funcao> [funcao2 ...]   (SUPABASE_PAT=sbp_... p/ provar versão)"; exit 2; }
 
+# Fonte do PAT p/ N2: env SUPABASE_PAT > arquivo (LDV_PAT_FILE > ~/.config/afiacao/supabase-pat,
+# mesmo padrão do psql-ro: o founder cria 1x com chmod 600 e toda sessão ganha N2 automático —
+# sem isso, cada verificação de versão vira handoff manual na UI do Lovable (#4407: 3 retomadas
+# de sessão para confirmar 1 deploy). O valor NUNCA aparece em chat/log — só viaja no header.
+if [ -z "${SUPABASE_PAT:-}" ]; then
+  pat_file="${LDV_PAT_FILE:-$HOME/.config/afiacao/supabase-pat}"
+  if [ -r "$pat_file" ]; then
+    SUPABASE_PAT="$(head -1 "$pat_file" | tr -d '[:space:]')"
+  fi
+fi
+
 any_missing=0
 for fn in "$@"; do
   code=$(curl -s -o /dev/null -w '%{http_code}' -X OPTIONS "$BASE/$fn" --max-time 12 || echo "000")
@@ -52,5 +63,8 @@ if [ -z "${SUPABASE_PAT:-}" ]; then
   echo "    SUPABASE_PAT=sbp_xxx $(basename "$0") $*"
   echo "    -> compara version/updated_at (a Management API é a fonte canônica)."
   echo "  Sem PAT, o handoff é: o founder confirma no Lovable que a função mostra 'Active' + updated agora."
+  echo "  Permanente (1x): cole um Access Token (supabase.com → Account → Access Tokens) em"
+  echo "    ~/.config/afiacao/supabase-pat   (chmod 600 — padrão psql-ro; nunca no chat)"
+  echo "  e toda sessão passa a provar N2 sozinha."
 fi
 [ "$any_missing" = 0 ] || exit 1

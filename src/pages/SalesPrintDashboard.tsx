@@ -5,15 +5,18 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/integrations/supabase/client';
 import { useQuery } from '@tanstack/react-query';
-import { Loader2, Printer, ArrowLeft } from 'lucide-react';
+import { Printer, ArrowLeft } from 'lucide-react';
+import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { format } from 'date-fns';
 import { janelaQueryDiaCivil, pedidoNoDiaCivil } from '@/lib/pedido/dia-civil';
 import { openPrintOrder } from '@/components/OrderPrintLayout';
 import {
   COMPANY_LABELS, COMPANY_COLORS, getPeriod,
   type CompanyFilter, type SalesOrderRow, type ProfileLite, type AddressLite,
-  type FormaPagamento, type EnrichedOrder,
+  type EnrichedOrder,
 } from '@/components/sales/print/types';
+import { lerRespostaFormas } from '@/services/orderSubmission/formasDegradacao';
+import { AvisoFormasPagamento } from '@/components/sales/AvisoFormasPagamento';
 import { buildPrintData, buildSingleOrderHtml, buildPrintDocument } from '@/components/sales/print/buildPrintHtml';
 import { PrintFilters } from '@/components/sales/print/PrintFilters';
 import { OrderGroup } from '@/components/sales/print/OrderGroup';
@@ -46,36 +49,67 @@ const SalesPrintDashboard = () => {
 
   // Fetch sales_orders for the selected date
   // Fetch payment terms map (code -> description)
-  const { data: formasMap = {} } = useQuery({
+  // O mapa código→descrição rotula a condição de pagamento na VIA IMPRESSA que vai ao
+  // cliente. Sob degradação (edge #1597), as "formas" são 8 genéricas HARDCODED, não as
+  // do Omie — usá-las aqui fabricaria um rótulo ("30/60 dias") para um código cuja
+  // descrição real ninguém leu. Money-path §2, ausente ≠ zero: a conta degradada não entra
+  // no mapa, o código cru aparece na via (dado bruto verdadeiro) e a tela avisa o porquê.
+  const { data: formasPagamento, refetch: recarregarFormas } = useQuery({
     queryKey: ['sales-print-formas-pagamento'],
     queryFn: async () => {
-      const result: Record<string, string> = {};
+      const mapa: Record<string, string> = {};
+      const contasDegradadas: string[] = [];
       for (const acc of ['oben', 'colacor'] as const) {
         try {
           const { data } = await supabase.functions.invoke('omie-vendas-sync', {
             body: { action: 'listar_formas_pagamento', account: acc },
           });
-          const formas = (data?.formas ?? []) as FormaPagamento[];
-          formas.forEach((f) => { result[f.codigo] = f.descricao; });
-        } catch (_) { /* ignore */ }
+          const estado = lerRespostaFormas(data);
+          if (estado.degradado) { contasDegradadas.push(acc); continue; }
+          estado.formas.forEach((f) => { mapa[f.codigo] = f.descricao; });
+        } catch (_) { contasDegradadas.push(acc); }
       }
-      return result;
+      return { mapa, contasDegradadas };
     },
     staleTime: 1000 * 60 * 30, // cache 30 min
   });
+  // useMemo estabiliza a referência: `?? {}` criaria um objeto novo a cada render e
+  // invalidaria o useMemo de `filteredOrders`, que tem `formasMap` nas deps.
+  const formasMap = useMemo(() => formasPagamento?.mapa ?? {}, [formasPagamento]);
+  const contasComFormasDegradadas = formasPagamento?.contasDegradadas ?? [];
 
   const { data: salesOrders = [], isLoading: loadingSales } = useQuery({
     queryKey: ['sales-print', 'sales', dayStart],
     queryFn: async () => {
+      // Colunas explícitas (PR0.0-bis): omie_payload fechado à leitura de `authenticated` —
+      // um `.select('*')` daria 42501 (o * inteiro cai).
       const { data, error } = await supabase
         .from('sales_orders')
-        .select('*')
+        .select('id, customer_user_id, account, omie_numero_pedido, created_at, items, subtotal, total, discount, notes, status, customer_address, customer_phone, customer_document, order_date_kpi')
         .gte('created_at', dayStart)
         .lte('created_at', dayEnd)
         .neq('status', 'cancelado')
         .order('created_at', { ascending: true });
       if (error) throw error;
-      return (data || []) as SalesOrderRow[];
+      const rows = (data ?? []) as unknown as SalesOrderRow[];
+      // A impressão lê cabecalho.codigo_parcela e cabecalho.codigo_cliente do payload —
+      // recupera em LOTE pelo canal staff SECDEF e re-injeta em cada linha.
+      const ids = rows.map((r) => r.id);
+      if (ids.length === 0) return rows;
+      const { data: pl, error: plErr } = await supabase.rpc(
+        'staff_get_sales_order_payload' as never,
+        { p_order_ids: ids } as never,
+      );
+      if (plErr) {
+        // Degrada honestamente: impressão sem codigo_parcela/codigo_cliente, mas SINALIZA
+        // (supabase.rpc RETORNA o erro, não lança). Uma regressão de gate/grant apareceria aqui.
+        console.warn('[SalesPrintDashboard] payload staff indisponível (impressão sem parcela):', plErr);
+        return rows;
+      }
+      const payloadMap = new Map<string, unknown>(
+        ((pl as unknown as Array<{ id: string; omie_payload: unknown }> | null) ?? []).map((p) => [p.id, p.omie_payload]),
+      );
+      return rows.map((r) => ({ ...r, omie_payload: payloadMap.get(r.id) ?? undefined })) as SalesOrderRow[];
     },
   });
 
@@ -153,14 +187,19 @@ const SalesPrintDashboard = () => {
     enabled: customerIds.length > 0,
   });
 
-  // Fetch omie_clientes mappings to get omie_codigo_cliente for address lookup
+  // Código do cliente (conta colacor_sc) p/ address lookup — via view fresca account-correta.
   const { data: omieClientes = [] } = useQuery({
-    queryKey: ['sales-print-omie-clientes', customerIds],
+    queryKey: ['sales-print-omie-map-fresco', customerIds],
     queryFn: async () => {
       if (customerIds.length === 0) return [];
+      // P0-B-bis PR-4 (#12): o código é usado p/ consultar endereço via `omie-cliente` (que bate na conta
+      // colacor_sc) → lê da view fresca omie_customer_account_map_fresco com account=colacor_sc
+      // (document-first, TTL 7d). O filtro antigo .eq('empresa_omie','colacor') era inócuo (o espelho é
+      // 100% 'colacor' rotulado). Miss na fresca → sem código → cai no fallback por documento (fail-closed).
       const { data } = await supabase
-        .from('omie_clientes')
+        .from('omie_customer_account_map_fresco')
         .select('user_id, omie_codigo_cliente')
+        .eq('account', 'colacor_sc')
         .in('user_id', customerIds);
       return data || [];
     },
@@ -189,7 +228,11 @@ const SalesPrintDashboard = () => {
   // Build omie codigo_cliente map from omie_clientes table + order payloads as fallback
   const omieClienteMap = useMemo(() => {
     const m = new Map<string, number>();
-    omieClientes.forEach(oc => m.set(oc.user_id, oc.omie_codigo_cliente));
+    // view fresca é nulável (user_id/omie_codigo_cliente string|null / number|null) → guarda os dois;
+    // linha sem par completo cai no fallback por payload/documento abaixo (fail-closed).
+    omieClientes.forEach(oc => {
+      if (oc.user_id != null && oc.omie_codigo_cliente != null) m.set(oc.user_id, oc.omie_codigo_cliente);
+    });
     // Fallback: extract codigo_cliente from order payloads for customers not in omie_clientes
     allOrdersRaw.forEach(o => {
       const custId = o.customer_user_id || o.user_id;
@@ -376,6 +419,20 @@ const SalesPrintDashboard = () => {
           </div>
         </div>
 
+        {/* Degradação da listagem de condições: a via impressa sai com o CÓDIGO da parcela
+            em vez da descrição — melhor um código cru verdadeiro que um rótulo genérico
+            errado no documento que vai ao cliente. */}
+        <AvisoFormasPagamento
+          degradado={contasComFormasDegradadas.length > 0}
+          onRecarregar={() => { void recarregarFormas(); }}
+          texto={
+            'Condições do Omie indisponíveis para '
+            + contasComFormasDegradadas.map((c) => (c === 'oben' ? 'Oben' : 'Colacor')).join(' e ')
+            + '. A impressão mostra o CÓDIGO da condição no lugar da descrição, para não '
+            + 'imprimir um prazo que não foi conferido.'
+          }
+        />
+
         {/* Filters */}
         <PrintFilters
           selectedDate={selectedDate}
@@ -402,9 +459,7 @@ const SalesPrintDashboard = () => {
 
         {/* Orders grouped by company + period */}
         {isLoading ? (
-          <div className="flex justify-center py-12">
-            <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-          </div>
+          <PageSkeleton variant="list" />
         ) : filteredOrders.length === 0 ? (
           <Card>
             <CardContent className="py-12 text-center text-muted-foreground">

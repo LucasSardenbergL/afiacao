@@ -4,6 +4,7 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import type { Database } from "@/integrations/supabase/types";
 import { useReposicaoEmpresa } from "@/contexts/ReposicaoEmpresaContext";
 import { STATUS_RANK } from "./config";
 import type { ForCompliance, SkuCompliance, SlaStatus } from "./types";
@@ -53,15 +54,28 @@ export function useSlaFornecedor() {
   // Histórico do SKU selecionado
   const { data: historico, isLoading: loadingHist } = useQuery({
     enabled: !!skuDetalhe,
-    queryKey: ["sla-hist", skuDetalhe?.sku_codigo_omie],
+    // empresa na chave E no filtro: as queries irmãs acima já fazem isso; sem elas o
+    // cache devolve o histórico da empresa anterior ao trocar de contexto.
+    queryKey: ["sla-hist", empresa, skuDetalhe?.sku_codigo_omie],
     queryFn: async () => {
       if (!skuDetalhe) return [];
+      // v_sku_leadtime_efetivo, não a tabela crua: 1 NFe que fatura N pedidos gera N
+      // cópias do item, e o gráfico as plotava como N recebimentos distintos (a maioria
+      // dos SKUs com histórico é afetada). Aqui 1 ponto = 1 NFe.
+      // t4 NOT NULL: a view emite t4 NULL quando as cópias divergem — sem data não há
+      // onde plotar, e `order desc` traria os NULL primeiro (NULLS FIRST é o default
+      // do Postgres), encabeçando o gráfico com pontos sem eixo X.
       const { data, error } = await supabase
-        .from("sku_leadtime_history")
+        .from("v_sku_leadtime_efetivo")
         .select("t4_data_recebimento, lt_bruto_dias_uteis, lt_faturamento_dias_uteis, lt_logistica_dias_uteis")
+        // A view efetiva tipa empresa como o ENUM empresa_reposicao (as views irmãs
+        // deste hook a expõem como text, por isso elas aceitam o `empresa: string` do
+        // contexto direto). O contexto só emite 'OBEN'.
+        .eq("empresa", empresa as Database["public"]["Enums"]["empresa_reposicao"])
         .eq("sku_codigo_omie", Number(skuDetalhe.sku_codigo_omie))
         .not("lt_bruto_dias_uteis", "is", null)
-        .order("t4_data_recebimento", { ascending: false })
+        .not("t4_data_recebimento", "is", null)
+        .order("t4_data_recebimento", { ascending: false, nullsFirst: false })
         .limit(15);
       if (error) throw error;
       type HistRow = {

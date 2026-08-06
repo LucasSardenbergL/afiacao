@@ -35,14 +35,18 @@ dir="$(dirname "$main_root")/$repo_name-$slug"
 git fetch origin --quiet
 git worktree add -b "$name" "$dir" "$base"
 
+# worktree nasce pronto: deps instaladas na criação (senão o 1º typecheck da
+# sessão dá "Cannot find module" — falso vermelho; já custou 3× install manual)
+echo "→ instalando deps (bun install)…"
+( cd "$dir" && bun install ) || echo "⚠️ bun install falhou — rode manualmente: cd \"$dir\" && bun install"
+
 cat <<EOF
 
-✅ worktree criada
+✅ worktree criada (deps instaladas)
    pasta:  $dir
    branch: $name (a partir de $base)
 
 Próximos passos:
    cd "$dir"
-   bun install        # worktree nova precisa instalar deps
    claude             # abra a sessão AQUI (isolada, sem colidir com outras)
 EOF

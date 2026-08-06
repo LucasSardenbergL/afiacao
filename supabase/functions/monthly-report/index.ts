@@ -1,6 +1,13 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
+import {
+  type BancoPostgrest,
+  montarRelatorios,
+  type MotivoSemEnvio,
+  planejarEnvios,
+  type RelatorioCliente,
+} from "../_shared/relatorio-mensal.ts";
 // Resend usado via fetch direto à REST API (https://api.resend.com/emails) para evitar dep npm
 
 const corsHeaders = {
@@ -8,29 +15,13 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-cron-secret, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
 };
 
-interface ToolSummary {
-  name: string;
-  internal_code: string | null;
-  category: string;
-  last_sharpened_at: string | null;
-  next_sharpening_due: string | null;
-  sharpening_count: number;
-  anomaly_count: number;
-  is_overdue: boolean;
-  is_due_soon: boolean;
-  days_until_due: number | null;
-}
+// Host do app para os links do e-mail. Mesmo padrão das edges de reposição
+// (gerar-pedidos-diario / disparar-pedidos-aprovados) — nunca hardcodar o domínio.
+const APP_URL = Deno.env.get('APP_URL') ?? 'https://steu.lovable.app';
 
-interface CustomerReport {
-  user_id: string;
-  name: string;
-  email: string | null;
-  phone: string | null;
-  tools: ToolSummary[];
-  overdue_count: number;
-  due_soon_count: number;
-  total_tools: number;
-}
+// A montagem do relatório (e o custo de banco dela) vive em `_shared/relatorio-mensal.ts`,
+// coberta por teste. Aqui ficam só HTTP, auth, template e envio.
+type CustomerReport = RelatorioCliente;
 
 function formatDate(dateStr: string | null): string {
   if (!dateStr) return 'N/A';
@@ -138,7 +129,7 @@ function generateEmailHtml(report: CustomerReport): string {
       <p style="font-size: 14px; color: #666; margin-bottom: 12px;">
         Você tem ferramentas que precisam de afiação!
       </p>
-      <a href="https://afiacao.lovable.app/new-order" 
+      <a href="${APP_URL}/new-order"
          style="display: inline-block; background: linear-gradient(135deg, #dc2626, #991b1b); color: #fff; 
                 padding: 14px 32px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 15px;">
         Agendar Afiação
@@ -256,109 +247,91 @@ serve(async (req) => {
     const sendEmail = body.send_email !== false;
     const previewOnly = body.preview_only === true;
 
-    let profilesQuery = supabase
-      .from('profiles')
-      .select('user_id, name, email, phone');
-    
-    if (targetUserId) {
-      profilesQuery = profilesQuery.eq('user_id', targetUserId);
+    // 3 consultas, independentemente do tamanho da base de clientes (medido: 5.276 perfis →
+    // 3 idas ao banco; a versão anterior fazia ~5.285 e não terminava). O invariante de custo
+    // é testado em `_shared/relatorio-mensal_test.ts`, não aqui.
+    const reports: CustomerReport[] = await montarRelatorios(
+      supabase as unknown as BancoPostgrest,
+      { userIdAlvo: targetUserId, agora: new Date() },
+    );
+
+    // Contadores de entrega: é o que distingue "rodou e não havia para quem enviar" de
+    // "rodou e entregou". Sem eles, uma execução que entrega ZERO é indistinguível de uma
+    // bem-sucedida — foi assim que o cron entregou zero e-mails por meses sem ninguém notar.
+    // Os logs identificam por `user_id`, NUNCA por e-mail/telefone: log de edge não é lugar
+    // de dado pessoal de cliente.
+    const semContato: Record<MotivoSemEnvio, number> = { sem_email: 0, sem_canal_nenhum: 0 };
+    let enviados = 0;
+    let falhasEnvio = 0;
+    let naoEnviadosSemChave = 0;
+
+    const envioArmado = sendEmail && !previewOnly;
+    if (envioArmado && !resendApiKey) {
+      console.error(
+        'monthly-report: envio pedido mas RESEND_API_KEY ausente — NENHUM e-mail sai desta execução',
+      );
     }
 
-    const { data: profiles, error: profilesError } = await profilesQuery;
-    if (profilesError) throw profilesError;
+    // Quem recebe × quem não recebe sai de UMA função pura, testada — inclusive pela
+    // invariante de conservação (nenhum relatório evapora). O gate de envio mora lá e só
+    // lá: replicá-lo aqui como um `continue` extra é exatamente como o caso da chave
+    // ausente escapou dos contadores em #1438.
+    const plano = planejarEnvios(reports, { envioArmado, temChaveResend: !!resendApiKey });
 
-    const reports: CustomerReport[] = [];
+    // Contadores derivados da partição, não recontados por outro caminho.
+    for (const { report, motivo } of plano.pulados) {
+      if (motivo === 'sem_chave_resend') {
+        naoEnviadosSemChave++;
+        continue;
+      }
+      // `envio_desarmado` (preview / `send_email:false`) é o modo pedido, não anomalia:
+      // não polui os contadores nem o log.
+      if (motivo === 'envio_desarmado') continue;
 
-    for (const profile of (profiles || [])) {
-      const { data: tools } = await supabase
-        .from('user_tools')
-        .select('*, tool_categories(name)')
-        .eq('user_id', profile.user_id);
+      semContato[motivo]++;
+      console.warn(
+        `monthly-report: user_id ${report.user_id} PULADO (${motivo}) — ` +
+        `${report.total_tools} ferramenta(s), ${report.overdue_count} atrasada(s)`,
+      );
+    }
 
-      if (!tools || tools.length === 0) continue;
+    for (const report of plano.destinatarios) {
+      const html = generateEmailHtml(report);
 
-      const now = new Date();
-      const toolSummaries: ToolSummary[] = [];
-
-      for (const tool of tools) {
-        const { count: sharpeningCount } = await supabase
-          .from('tool_events')
-          .select('*', { count: 'exact', head: true })
-          .eq('user_tool_id', tool.id)
-          .eq('event_type', 'sharpening');
-
-        const { count: anomalyCount } = await supabase
-          .from('tool_events')
-          .select('*', { count: 'exact', head: true })
-          .eq('user_tool_id', tool.id)
-          .eq('event_type', 'anomaly');
-
-        const nextDue = tool.next_sharpening_due ? new Date(tool.next_sharpening_due) : null;
-        const daysUntilDue = nextDue 
-          ? Math.ceil((nextDue.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
-          : null;
-
-        toolSummaries.push({
-          name: tool.generated_name || tool.custom_name || (tool.tool_categories as { name?: string } | null)?.name || 'Ferramenta',
-          internal_code: tool.internal_code,
-          category: (tool.tool_categories as { name?: string } | null)?.name || '',
-          last_sharpened_at: tool.last_sharpened_at,
-          next_sharpening_due: tool.next_sharpening_due,
-          sharpening_count: sharpeningCount || 0,
-          anomaly_count: anomalyCount || 0,
-          is_overdue: daysUntilDue !== null && daysUntilDue < 0,
-          is_due_soon: daysUntilDue !== null && daysUntilDue >= 0 && daysUntilDue <= 7,
-          days_until_due: daysUntilDue,
+      try {
+        const resp = await fetch("https://api.resend.com/emails", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${resendApiKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            from: 'Colacor <noreply@colacor.com.br>',
+            to: [report.email],
+            subject: `🔧 Relatório Mensal de Ferramentas - ${report.overdue_count > 0 ? `${report.overdue_count} ferramenta(s) atrasada(s)` : 'Tudo em dia!'}`,
+            html,
+          }),
         });
-      }
-
-      toolSummaries.sort((a, b) => {
-        if (a.is_overdue && !b.is_overdue) return -1;
-        if (!a.is_overdue && b.is_overdue) return 1;
-        if (a.is_due_soon && !b.is_due_soon) return -1;
-        if (!a.is_due_soon && b.is_due_soon) return 1;
-        return (a.days_until_due ?? 999) - (b.days_until_due ?? 999);
-      });
-
-      const report: CustomerReport = {
-        user_id: profile.user_id,
-        name: profile.name,
-        email: profile.email,
-        phone: profile.phone,
-        tools: toolSummaries,
-        overdue_count: toolSummaries.filter(t => t.is_overdue).length,
-        due_soon_count: toolSummaries.filter(t => t.is_due_soon).length,
-        total_tools: toolSummaries.length,
-      };
-
-      reports.push(report);
-
-      if (sendEmail && !previewOnly && resendApiKey && profile.email) {
-        const html = generateEmailHtml(report);
-
-        try {
-          const resp = await fetch("https://api.resend.com/emails", {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${resendApiKey}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              from: 'Colacor <noreply@colacor.com.br>',
-              to: [profile.email],
-              subject: `🔧 Relatório Mensal de Ferramentas - ${report.overdue_count > 0 ? `${report.overdue_count} ferramenta(s) atrasada(s)` : 'Tudo em dia!'}`,
-              html,
-            }),
-          });
-          if (!resp.ok) {
-            console.error(`Failed to send email to ${profile.email}: HTTP ${resp.status}`);
-          } else {
-            console.log(`Email sent to ${profile.email}`);
-          }
-        } catch (emailErr) {
-          console.error(`Failed to send email to ${profile.email}:`, emailErr);
+        if (!resp.ok) {
+          falhasEnvio++;
+          console.error(`monthly-report: envio FALHOU p/ user_id ${report.user_id}: HTTP ${resp.status}`);
+        } else {
+          enviados++;
+          console.log(`monthly-report: enviado p/ user_id ${report.user_id}`);
         }
+      } catch (emailErr) {
+        falhasEnvio++;
+        console.error(`monthly-report: envio FALHOU p/ user_id ${report.user_id}:`, emailErr);
       }
+    }
+
+    const puladosTotal = semContato.sem_email + semContato.sem_canal_nenhum;
+    if (puladosTotal > 0) {
+      console.warn(
+        `monthly-report: ${puladosTotal} de ${reports.length} cliente(s) com ferramenta ficaram ` +
+        `SEM relatório por falta de contato (${semContato.sem_email} sem e-mail mas com telefone, ` +
+        `${semContato.sem_canal_nenhum} sem canal nenhum).`,
+      );
     }
 
     const reportsWithWhatsApp = reports.map(report => ({
@@ -370,9 +343,18 @@ serve(async (req) => {
       email_html: previewOnly ? generateEmailHtml(report) : undefined,
     }));
 
-    return new Response(JSON.stringify({ 
-      success: true, 
+    return new Response(JSON.stringify({
+      success: true,
       reports_count: reportsWithWhatsApp.length,
+      // `success: true` + `reports_count: 0` sempre foi ambíguo entre "ninguém tem ferramenta"
+      // e "todo mundo ficou sem contato". Estes campos desambiguam sem precisar ir ao banco.
+      emails_enviados: enviados,
+      falhas_envio: falhasEnvio,
+      pulados_sem_contato: puladosTotal,
+      pulados_detalhe: semContato,
+      // Fecha a conta: sem este campo, os clientes alcançáveis que não chegaram a ser tentados
+      // (envio pedido, ambiente sem chave) sumiriam de todos os totais.
+      nao_enviados_sem_chave: naoEnviadosSemChave,
       reports: reportsWithWhatsApp,
     }), {
       status: 200,

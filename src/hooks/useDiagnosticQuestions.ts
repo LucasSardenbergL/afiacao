@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
+import { invokeFunction } from '@/lib/invoke-function';
 import { useAuth } from '@/contexts/AuthContext';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { toast } from 'sonner';
@@ -61,15 +62,13 @@ export const useDiagnosticQuestions = () => {
     setGenerating(prev => ({ ...prev, [bundleKey]: true }));
 
     try {
-      const { data, error } = await supabase.functions.invoke('generate-bundle-argument', {
-        body: { bundle, customer, customerProfile, mode: 'diagnostic_questions' },
-      });
-
-      if (error) throw error;
-      if (data?.error) {
-        toast.error(data.error);
-        return null;
-      }
+      // invokeFunction extrai o motivo REAL do corpo (ver useBundleArguments):
+      // a edge agora responde 402/422 e o `data.error` de antes só via erro
+      // devolvido com status 200.
+      const data = await invokeFunction<{ questions?: DiagnosticQuestion[] }>(
+        'generate-bundle-argument',
+        { bundle, customer, customerProfile, mode: 'diagnostic_questions' },
+      );
 
       const qs: QuestionWithResponse[] = (data.questions || []).map((q: DiagnosticQuestion) => ({
         ...q,
@@ -80,7 +79,11 @@ export const useDiagnosticQuestions = () => {
       return qs;
     } catch (error) {
       console.error('Error generating diagnostic questions:', error);
-      toast.error('Erro ao gerar perguntas diagnósticas');
+      const motivo = error instanceof Error && error.name === 'EdgeFunctionError' &&
+          !/non-2xx status code/i.test(error.message)
+        ? error.message
+        : null;
+      toast.error(motivo ?? 'Erro ao gerar perguntas diagnósticas');
       return null;
     } finally {
       setGenerating(prev => ({ ...prev, [bundleKey]: false }));

@@ -29,7 +29,7 @@ Este repo roda em **Lovable Cloud**. Existe uma armadilha operacional real e sil
 
 O resultado é o pior tipo de bug: **a feature compila, o PR mergeia, o código referencia uma tabela que não existe no banco, e ninguém percebe até dar erro em produção.** Já aconteceu neste repo (ver histórico de audits na §5).
 
-Some-se a isso uma restrição dura: **o Lucas (dono) NÃO tem terminal, `curl`, `psql` nem Supabase CLI pro backend.** O único caminho dele pro banco é **colar SQL no SQL Editor do Lovable e clicar Run**. Você não pode aplicar a migration por ele — você só pode preparar o material perfeito pra ele colar, e depois confirmar que funcionou.
+Some-se a isso uma restrição dura: **a ESCRITA no banco é só do Lucas — colar SQL no SQL Editor do Lovable e clicar Run** (você não aplica migration por ele). Já a **LEITURA é sua**: `~/.config/afiacao/psql-ro` (role `claude_ro`, read-only) — use-a pra **pré-voar o SQL contra a PROD antes do handoff** (Passo 2.7) e pra **validar você mesmo depois do Run** (Passo 4), sem pedir nada ao founder.
 
 Por isso esta skill existe: ela transforma "escrevi um SQL" em "o objeto existe no banco, validado", fechando a lacuna onde as coisas se perdem.
 
@@ -153,6 +153,18 @@ bun run wt:preflight supabase/migrations/<arquivo>.sql --full   # + origin/main
 
 (O hook `migration-collision-guard` dispara o mesmo check já ao **escrever** a migration; este passo é a rede no **apply** — pega qualquer caminho de criação, inclusive os que o hook não vê.)
 
+### Passo 2.7 — Pré-voo PROD via psql-ro (obrigatório — o SQL não pode quebrar na mão do founder)
+
+≥25 rodadas documentadas de "SQL entregue → **erro em produção** → founder cola o erro de volta" (`42703` coluna não existe, `23505` duplicata em UNIQUE novo, `42P01` relação ausente, `23502` NOT NULL sem default, bloco não-idempotente que falha na re-colada). Cada uma é um round-trip humano inteiro — e TODAS são detectáveis ANTES do handoff, de graça, via `~/.config/afiacao/psql-ro`:
+
+- **Referências existem na PROD?** Toda tabela/coluna/função que o SQL REFERENCIA (FK, JOIN de backfill, trigger sobre tabela) → confira em `information_schema.columns` / `pg_proc`. O repo pode estar à frente do banco (migration anterior ainda não colada) — a ORDEM de apply entra no handoff.
+- **UNIQUE novo?** `SELECT <cols>, count(*) FROM <tab> GROUP BY <cols> HAVING count(*) > 1` — duplicata pré-existente de dado sujo derruba o `CREATE UNIQUE INDEX` na frente do founder (o prove-sql local não pega, o dado é da PROD).
+- **NOT NULL novo em tabela populada?** `SELECT count(*) FROM <tab> WHERE <col> IS NULL` — sem default/backfill, quebra.
+- **`CREATE OR REPLACE` função/view?** `pg_get_functiondef`/`pg_get_viewdef` da PROD ANTES (apply manual diverge do repo — a última a recriar VENCE; view só ACRESCENTA coluna no fim, ordem preservada).
+- **Já aplicado?** Se o objeto já existe na forma nova, diga no handoff ("já aplicado — não precisa colar"; re-colar é seguro por idempotência, mas poupe o founder).
+
+Só entregue o bloco do Passo 3 com o pré-voo 🟢 (ou com a pendência EXPLÍCITA na ordem de apply).
+
 ### Passo 3 — Empacotar o bloco de handoff
 
 Este é o artefato central: o que o usuário copia e cola. Entregue **exatamente** neste formato, porque ele já está rotulado com o caminho do Lovable (§5 manda sempre rotular `🟣 Lovable → SQL Editor → cola → Run`):
@@ -201,7 +213,7 @@ SELECT
 
 Para índice, função, trigger, RLS policy, enum value, constraint, view e cron job, use o catálogo de queries `pg_catalog`/`information_schema` em **`references/validation-queries.md`**. Se a migration cria vários objetos, valide os principais numa query só (o arquivo tem o padrão de validação múltipla).
 
-**Quando o usuário colar o resultado:** interprete honestamente. `✅` → aplicado, pode seguir. `❌` → não pegou; investigue (erro no Run? colou parcial?) — **não** assuma que está ok. Só depois de `✅` você considera a mudança no banco como real.
+**Depois que o founder disser que rodou** (qualquer fraseado — "rodei", "feito", "colei"): **VOCÊ roda a query de validação via psql-ro** — não peça pra ele colar o resultado de volta (esse round-trip morreu com o psql-ro; a query no handoff fica como fallback pra ele conferir sozinho quando quiser). `✅` → aplicado, pode seguir. `❌` → não pegou; investigue (erro no Run? colou parcial? ordem errada?) e reentregue — **não** assuma que está ok. Só depois de `✅` você considera a mudança no banco como real.
 
 ### Passo 5 — Nota pro PR description
 
@@ -258,13 +270,13 @@ Explique que é cosmético (alinha o audit), não muda comportamento.
 
 ## Resumo do que entregar ao usuário
 
-Ao final, sua mensagem ao usuário tem sempre estes elementos, nesta ordem:
+Ao final, sua mensagem ao usuário tem sempre estes elementos, nesta ordem, num **BLOCO ÚNICO NUMERADO** — nunca artefatos soltos espalhados pela conversa ("me dá em ordem o que eu preciso fazer" custou ~22 mensagens no diagnóstico 2026-07). Cada artefato com o **destino rotulado na 1ª linha** (🟣 SQL Editor / 💬 chat do Lovable / ⌨️ seu terminal) e **zero placeholders** (`<VALOR>` não substituído já foi colado em produção):
 
-1. O arquivo de migration criado (caminho).
+1. O arquivo de migration criado (caminho) + resultado do pré-voo PROD (Passo 2.7).
 2. O **bloco de handoff** completo (SQL + validação) — pronto pra colar.
 3. A **nota de PR** — pronta pra colar no description.
 4. Confirmação de que você rodou `bun run audit:migrations` e o que commitar.
-5. Um lembrete honesto: *"Isto ainda NÃO está no banco. Cola no Lovable, roda, e me diz o resultado da validação."*
+5. Um lembrete honesto: *"Isto ainda NÃO está no banco. Cola no Lovable, roda e me avisa — a validação eu rodo daqui (psql-ro)."*
 
 Nunca encerre dizendo que a mudança "está pronta" sem esse lembrete — porque até o Run acontecer, ela não está.
 

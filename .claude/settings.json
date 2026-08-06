@@ -1,7 +1,8 @@
 {
-  "env": {
-    "ENABLE_CLAUDEAI_MCP_SERVERS": "false"
-  },
+  "model": "opus",
+  "disableClaudeAiConnectors": true,
+  "skillListingMaxDescChars": 220,
+  "skillListingBudgetFraction": 0.004,
   "enabledPlugins": {
     "adobe-for-creativity@claude-plugins-official": false,
     "mercadopago@claude-plugins-official": false,
@@ -17,11 +18,49 @@
   },
   "permissions": {
     "allow": [
-      "Bash(bun run test*)",
-      "Bash(bun run typecheck:strict*)",
-      "Bash(bun run vitest*)",
-      "Bash(bun run tsc*)",
-      "Bash(bun lint)"
+      "Bash(heavy bun run test:*)",
+      "Bash(heavy bun run typecheck:*)",
+      "Bash(heavy bun run build:*)",
+      "Bash(heavy bunx vitest:*)",
+      "Bash(bun run test:*)",
+      "Bash(bun run typecheck:*)",
+      "Bash(bun run build:*)",
+      "Bash(bun lint)",
+      "Bash(bun run lint)",
+      "Bash(bun install)",
+      "Bash(bun install:*)",
+      "Bash(bun run wt:*)",
+      "Bash(bun run claude:size)",
+      "Bash(bun run heavy:install)",
+      "Bash(bun run audit:migrations)",
+      "Bash(git status:*)",
+      "Bash(git log:*)",
+      "Bash(git diff:*)",
+      "Bash(git show:*)",
+      "Bash(git fetch:*)",
+      "Bash(git branch)",
+      "Bash(git branch --show-current)",
+      "Bash(git worktree list:*)",
+      "Bash(git push:*)",
+      "Bash(gh pr view:*)",
+      "Bash(gh pr list:*)",
+      "Bash(gh pr create:*)",
+      "Bash(gh pr checks:*)",
+      "Bash(gh run view:*)",
+      "Bash(gh run list:*)",
+      "Bash(ls:*)",
+      "Bash(rg:*)",
+      "Bash(wc:*)",
+      "Bash(jq:*)",
+      "Bash(head:*)",
+      "Bash(tail:*)",
+      "Bash(shellcheck:*)",
+      "Bash(~/.config/afiacao/psql-ro:*)",
+      "Bash(/Users/lucassardenberg/.config/afiacao/psql-ro:*)",
+      "Bash(bash scripts/pr-watch.sh:*)",
+      "Bash(scripts/pr-watch.sh:*)",
+      "Bash(bash scripts/codex-async.sh:*)",
+      "Bash(scripts/codex-async.sh:*)"
     ]
   },
   "hooks": {
@@ -45,6 +84,24 @@
           {
             "type": "command",
             "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/destructive-bash-guard.sh\""
+          },
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/branch-pos-squash-guard.sh\""
+          },
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/pr-collision-guard.sh\""
+          }
+        ]
+      },
+      {
+        "matcher": "Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/read-contexto-nudge.sh\"",
+            "timeout": 5
           }
         ]
       },
@@ -67,12 +124,54 @@
         ]
       }
     ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/bash-contexto-nudge.sh\""
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/pos-compact-ptbr.sh\"",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "startup",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/vigia-worktree.sh\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [
           {
             "type": "command",
             "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/stop-moneypath-nudge.sh\""
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/stop-contexto-caro.sh\"",
+            "timeout": 10
           }
         ]
       }

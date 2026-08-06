@@ -18,7 +18,7 @@ import {
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { cn } from '@/lib/utils';
-import { decodeHtmlEntities } from '@/lib/format';
+import { decodeHtmlEntities, formatMargemPct } from '@/lib/format';
 import { formatBrPhone, whatsappLink } from '@/lib/phone';
 import { CallButton } from '@/components/call/CallButton';
 import { RecommendationsPanel } from '@/components/RecommendationsPanel';
@@ -129,11 +129,15 @@ export function Customer360View({
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <MetricCard icon={DollarSign} label="Gasto mensal" value={fmt(score.avg_monthly_spend_180d)} />
           <MetricCard icon={Activity} label="Score saúde" value={score.health_score.toFixed(0)} />
+          {/* churn_risk é PERCENTUAL 0–100, não fração: prod (2026-07-21) tem 6.632/6.632 linhas
+              acima de 1 (mín. 33, máx. 100, média 96). O `* 100` que estava aqui exibia "9600%",
+              e o limiar `> 0.5` deixava o realce de perigo permanentemente ligado.
+              null = risco não medido → "—" (nunca "0%", que afirmaria risco nulo apurado). */}
           <MetricCard
             icon={AlertTriangle}
             label="Risco churn"
-            value={`${(score.churn_risk * 100).toFixed(0)}%`}
-            danger={score.churn_risk > 0.5}
+            value={score.churn_risk == null ? '—' : `${score.churn_risk.toFixed(0)}%`}
+            danger={score.churn_risk != null && score.churn_risk > 50}
           />
           <MetricCard icon={Package} label="Categorias" value={String(score.category_count)} />
         </div>
@@ -191,7 +195,9 @@ export function Customer360View({
             </CardHeader>
             <CardContent>
               <div className="grid grid-cols-3 md:grid-cols-5 gap-3">
-                <ScoreItem label="Margem" value={`${(score.gross_margin_pct * 100).toFixed(1)}%`} />
+                {/* Sem `* 100`: a coluna já é percentual. Com a margem calculada no servidor,
+                    53,47 viraria "5347.0%" — e `null` virava "0.0%", afirmando margem nula. */}
+                <ScoreItem label="Margem" value={formatMargemPct(score.gross_margin_pct)} />
                 <ScoreItem label="Expansão" value={score.expansion_score.toFixed(1)} />
                 <ScoreItem label="Prioridade" value={score.priority_score.toFixed(1)} />
                 <ScoreItem label="Dias s/ compra" value={String(score.days_since_last_purchase)} danger={score.days_since_last_purchase > 60} />

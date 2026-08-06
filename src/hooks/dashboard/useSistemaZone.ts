@@ -28,8 +28,13 @@ export function useSistemaZone() {
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey,
     queryFn: async () => {
-      let aprovacoesPendentes = 0;
-      let staffAtivos = 0;
+      // `null` = a leitura FALHOU (≠ "zero aprovação pendente" / "zero staff"). Os três
+      // blocos abaixo têm `catch {}` que engole, então o valor inicial É o que a tela mostra
+      // quando algo quebra: começar em 0 fazia o KPI afirmar "0" com a mesma cara de um 0
+      // medido. Com null o KPI mostra "—" e o cartão de prioridade não dispara com base numa
+      // contagem que ninguém leu.
+      let aprovacoesPendentes: number | null = null;
+      let staffAtivos: number | null = null;
       let ultimaAtividadeIso: string | null = null;
       let topItems: TopListItem[] = [];
 
@@ -79,6 +84,11 @@ export function useSistemaZone() {
           supabase.from('orders').select('created_at').order('created_at', { ascending: false }).limit(1).maybeSingle(),
           supabase.from('sales_orders').select('created_at').order('created_at', { ascending: false }).limit(1).maybeSingle(),
         ]);
+        // Este KPI é o proxy de "o sistema está vivo": a leitura que falha não pode se
+        // disfarçar de "nenhum pedido jamais entrou". Lança → o `catch` abaixo deixa
+        // `ultimaAtividadeIso` em null → o KPI mostra "—" em vez de uma data errada.
+        if (ordersRes.error) throw ordersRes.error;
+        if (salesRes.error) throw salesRes.error;
         const o = (ordersRes.data as { created_at?: string | null } | null)?.created_at ?? null;
         const s = (salesRes.data as { created_at?: string | null } | null)?.created_at ?? null;
         if (o && s) {
@@ -97,15 +107,17 @@ export function useSistemaZone() {
   const kpis: KpiSpec[] = useMemo(() => {
     if (!data) return [];
     return [
-      { label: 'Aprovações', value: formatCount(data.aprovacoesPendentes) },
-      { label: 'Staff ativos', value: formatCount(data.staffAtivos) },
+      { label: 'Aprovações', value: data.aprovacoesPendentes === null ? '—' : formatCount(data.aprovacoesPendentes) },
+      { label: 'Staff ativos', value: data.staffAtivos === null ? '—' : formatCount(data.staffAtivos) },
       { label: 'Última atividade', value: formatTimeSince(data.ultimaAtividadeIso) },
     ];
   }, [data]);
 
   const priority: PriorityCandidate | null = useMemo(() => {
     if (!data) return null;
-    if (data.aprovacoesPendentes >= 3) {
+    // Leitura falhou (null) → NÃO dispara o cartão de prioridade: ele afirmaria um número
+    // de liberações que ninguém chegou a ler.
+    if (data.aprovacoesPendentes !== null && data.aprovacoesPendentes >= 3) {
       const score = 70;
       return {
         zone: 'sistema',

@@ -49,7 +49,7 @@ function splitTopLevel(s: string): string[] {
 }
 
 /** conteúdo entre o primeiro '(' em/após `from` e seu ')' correspondente (balanceado) */
-function balancedParens(s: string, from: number): string {
+export function balancedParens(s: string, from: number): string {
   const start = s.indexOf('(', from);
   if (start === -1) return '';
   let depth = 0;
@@ -64,7 +64,7 @@ function balancedParens(s: string, from: number): string {
 }
 
 /** normaliza a assinatura de função para comparação de identidade (tipos de arg) */
-function normalizeSignature(argsRaw: string): string {
+export function normalizeSignature(argsRaw: string): string {
   return splitTopLevel(argsRaw)
     .map((a) =>
       a

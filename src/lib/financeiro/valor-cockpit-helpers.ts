@@ -476,3 +476,77 @@ export function scoreConfiancaCockpit(input: {
 
   return { nivel: nivel === 3 ? 'alta' : nivel === 2 ? 'media' : 'baixa', motivos };
 }
+
+// ===== Canal do pedido (programa Cabreúva-Colacor, PR1) =====
+// sales_orders.origem só é gravada por pedido nascido no app (submitOrder, sem CHECK no banco);
+// prod 2026-08-03 (psql-ro): 30.650 pedidos, origem ~100% NULL → o rollup por canal nasce como
+// ESPELHO DE DIGITALIZAÇÃO da venda (quanto nasce no app vs ERP) e vira comparação de margem
+// entre canais quando o canal digital tiver volume. checkout_id presente sem origem = pedido do
+// app anterior ao rastreio (app_sem_origem, não fabricado em app_staff/app_cliente).
+export type CanalPedido = 'erp_direto' | 'app_cliente' | 'app_staff' | 'ligacao' | 'app_sem_origem' | 'outro';
+
+export function classificarCanalPedido(p: { origem: string | null; checkout_id: string | null }): CanalPedido {
+  const origem = p.origem?.trim() || null;
+  if (origem == null) return p.checkout_id != null ? 'app_sem_origem' : 'erp_direto';
+  if (origem === 'web_customer') return 'app_cliente';
+  if (origem === 'web_staff') return 'app_staff';
+  if (origem === 'ligacao_sainte' || origem === 'ligacao_entrante') return 'ligacao';
+  return 'outro'; // valor desconhecido NÃO cai em bucket conhecido (origem não tem CHECK no banco)
+}
+
+// ===== Giro executivo (programa Cabreúva-Colacor, PR3) =====
+// Capital em estoque nível-empresa + dinheiro morto (capital de SKU sem venda no TTM) +
+// retorno-sobre-estoque PROXY (cm TTM ÷ snapshot de capital — NÃO é GMROI definitivo: falta
+// estoque MÉDIO histórico; a UI rotula proxy). cmc ausente/sujo fica FORA (cobertura explícita).
+export type GiroExecutivo = {
+  capital_medido: number;          // Σ capital dos SKUs com valor válido (≥0 finito)
+  capital_sem_venda_ttm: number;   // fatia do medido em SKUs SEM venda no TTM (dinheiro morto)
+  skus_medidos: number;
+  skus_sem_valor: number;          // cmc/saldo ausente ou sujo → não medido (nunca 0 fabricado)
+  retorno_proxy: number | null;    // cmTTM/capital_medido; null se cm null ou capital ≤ 0
+};
+
+export function calcularGiroExecutivo(input: {
+  estoquePorSKU: Map<string, number | null>;
+  skusComVendaTTM: Set<string>;
+  cmTTM: number | null;
+}): GiroExecutivo {
+  let capital = 0, morto = 0, medidos = 0, semValor = 0;
+  for (const [sku, valor] of input.estoquePorSKU) {
+    if (valor == null || !Number.isFinite(valor) || valor < 0) { semValor++; continue; }
+    medidos++;
+    capital += valor;
+    if (!input.skusComVendaTTM.has(sku)) morto += valor;
+  }
+  const retorno = input.cmTTM != null && Number.isFinite(input.cmTTM) && capital > 0
+    ? input.cmTTM / capital
+    : null;
+  return { capital_medido: capital, capital_sem_venda_ttm: morto, skus_medidos: medidos, skus_sem_valor: semValor, retorno_proxy: retorno };
+}
+
+export type ItemCanalInput = { sales_order_id: string; cliente: string; receita_liquida: number; quantidade: number; desconto: number; custo_unitario: number | null };
+export type RollupCanal = { canal: CanalPedido; pedidos: number; clientes: number; receita: number; quantidade: number; desconto: number; cm: number | null; cm_incompleto: boolean; receita_sem_cm: number };
+
+export function agregarPorCanal(itens: ItemCanalInput[], canalPorPedido: Map<string, CanalPedido>): RollupCanal[] {
+  type Acc = { canal: CanalPedido; pedidos: Set<string>; clientes: Set<string>; receita: number; quantidade: number; desconto: number; cm: number; cmNull: boolean; cm_incompleto: boolean; receita_sem_cm: number };
+  const m = new Map<CanalPedido, Acc>();
+  for (const it of itens) {
+    // Pedido fora do mapa → 'outro' (defensivo): não fabricar 'erp_direto' para dado inconsistente.
+    const canal = canalPorPedido.get(it.sales_order_id) ?? 'outro';
+    const acc = m.get(canal) ?? { canal, pedidos: new Set<string>(), clientes: new Set<string>(), receita: 0, quantidade: 0, desconto: 0, cm: 0, cmNull: true, cm_incompleto: false, receita_sem_cm: 0 };
+    acc.pedidos.add(it.sales_order_id);
+    acc.clientes.add(it.cliente);
+    acc.receita += it.receita_liquida;
+    acc.quantidade += it.quantidade;
+    acc.desconto += it.desconto;
+    // Margem item a item pela MESMA régua dos combos (custo ausente ≠ zero → item sai do cm e
+    // engorda receita_sem_cm; canal 100% sem custo → cm null, nunca 0 fabricado).
+    const cm = margemContribuicao({ receita_liquida: it.receita_liquida, custo_unitario: it.custo_unitario, quantidade: it.quantidade });
+    if (cm == null) { acc.cm_incompleto = true; acc.receita_sem_cm += it.receita_liquida; }
+    else { acc.cm += cm; acc.cmNull = false; }
+    m.set(canal, acc);
+  }
+  return [...m.values()]
+    .map((a) => ({ canal: a.canal, pedidos: a.pedidos.size, clientes: a.clientes.size, receita: a.receita, quantidade: a.quantidade, desconto: a.desconto, cm: a.cmNull ? null : a.cm, cm_incompleto: a.cm_incompleto, receita_sem_cm: a.receita_sem_cm }))
+    .sort((a, b) => b.receita - a.receita);
+}

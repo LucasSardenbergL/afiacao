@@ -20,20 +20,27 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
 import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, Clock, CloudDownload, Eye, Loader2, Zap } from 'lucide-react';
+import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { toast } from 'sonner';
+import { useMutationComRegistro } from '@/components/execucoes/useMutationComRegistro';
+import { UltimaExecucao } from '@/components/execucoes/UltimaExecucao';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { PedidoSugerido } from '@/components/reposicao/pedidos/types';
-import { EMPRESA, edgeSyncOk, formatBRL, frescorEstoque, interpretarRespostaDisparo, particionarCicloHoje, pedidosVisiveis, resumoSyncRecalc, type RespostaDisparo } from '@/components/reposicao/pedidos/shared';
+import { EMPRESA, edgeSyncOk, formatBRL, frescorEstoque, interpretarRespostaDisparo, particionarCicloHoje, pedidosVisiveis, resumoSyncRecalc, selecionarUltimoRunSuprimido, type RespostaDisparo } from '@/components/reposicao/pedidos/shared';
 import { CycleIndicator } from '@/components/reposicao/pedidos/CycleIndicator';
 import { PedidoRow } from '@/components/reposicao/pedidos/PedidoRow';
 import { StatusComMotivo, PortalBadge } from '@/components/reposicao/pedidos/badges';
+import { CaixaCompraCard } from '@/components/reposicao/pedidos/CaixaCompraCard';
 import { DetalhesModal } from '@/components/reposicao/pedidos/DetalhesModal';
 import { CancelarModal } from '@/components/reposicao/pedidos/CancelarModal';
 import { PortalDrawer } from '@/components/reposicao/pedidos/PortalDrawer';
 import { CiclosAnteriores } from '@/components/reposicao/pedidos/CiclosAnteriores';
 import { OverrideMinimoButton } from '@/components/reposicao/pedidos/OverrideMinimoButton';
-import { ehGateMinimoFaturamento } from '@/components/reposicao/pedidos/shared';
+import { ehGateMinimoFaturamento, particionarAtencao } from '@/components/reposicao/pedidos/shared';
+import { AbaixoMinimoCard } from '@/components/reposicao/pedidos/AbaixoMinimoCard';
+import { PoSumidoCard } from '@/components/reposicao/pedidos/PoSumidoCard';
+import { ehAcessoNegado, normalizarCandidatos, ordenarCandidatos, type PoCandidato } from '@/components/reposicao/pedidos/po-sumido';
 import { useAuth } from '@/contexts/AuthContext';
 import { track } from '@/lib/analytics';
 
@@ -90,7 +97,7 @@ export default function AdminReposicaoPedidos() {
   const queryClient = useQueryClient();
   // Override do mínimo de faturamento é privilegiado: só gestor comercial/master. A tela é
   // RequireStaff (employee|master), então gateamos o botão aqui (o edge reforça no servidor).
-  const { isMaster, isGestorComercial } = useAuth();
+  const { isMaster, isGestorComercial, user } = useAuth();
   const podeOverride = isMaster || isGestorComercial;
   const [searchParams, setSearchParams] = useSearchParams();
   const [detalhesPedido, setDetalhesPedido] = useState<PedidoSugerido | null>(null);
@@ -174,7 +181,12 @@ export default function AdminReposicaoPedidos() {
   // construção nunca entra (pedidoPrecisaAtencao só dispara em falha_envio/portal),
   // mas filtramos por defesa em profundidade — coerente com o render do ciclo.
   const atencaoVisivel = pedidosVisiveis(atencao ?? []);
-  const atencaoCount = atencaoVisivel.length;
+  // A′ (Codex xhigh): parte a fila em ação-real (vermelho) × barrado-por-mínimo
+  // (neutro, benigno). O alarme do topo conta SÓ a vermelha — gate de mínimo de
+  // faturamento não é pendência que exige o founder (o motor re-sugere sozinho).
+  const { vermelha: atencaoVermelha, abaixoMinimo: atencaoAbaixoMinimo } =
+    particionarAtencao(atencaoVisivel);
+  const atencaoCount = atencaoVermelha.length;
 
   // Deep link cross-ciclo: aceita ?id=N (ou ?pedido=N como alias usado por links do
   // portal). Se o pedido não está na lista de hoje, busca o pedido único por id.
@@ -248,10 +260,10 @@ export default function AdminReposicaoPedidos() {
   };
 
   // [GATE estoque-não-confirmado] fila de exceção PÓS-geração: o que o motor EFETIVAMENTE suprimiu, gravado em
-  // reposicao_estoque_nao_confirmado_log pela RPC. O preflight acima é preditivo (antes do Recalcular); esta é a
-  // verdade do último ciclo — sem ela o gate suprime no escuro e vira subcompra invisível (Codex consult 019f0a38).
-  // count exato p/ o total 24h (honesto mesmo com a lista capada em 500); a lista cobre folgado 1 run (OBEN ~64).
-  // Key sob 'pedidos-ciclo' de propósito: syncRecalcMutation invalida ['pedidos-ciclo'] → re-busca após recalcular.
+  // reposicao_estoque_nao_confirmado_log pela RPC (append-only, run-stamped). count exato p/ o total 24h (honesto
+  // mesmo com a lista capada em 500). Key sob 'pedidos-ciclo' de propósito: syncRecalcMutation invalida
+  // ['pedidos-ciclo'] → re-busca após recalcular. A fila ANCORA no último run do motor (reposicao_motor_run, abaixo)
+  // — não no último run COM supressão daqui; senão a mensagem grudava por 24h após o sync confirmar (Codex 2026-07-08).
   const { data: suprimidos } = useQuery({
     queryKey: ['pedidos-ciclo', 'estoque-nao-confirmado-log', EMPRESA],
     queryFn: async () => {
@@ -265,6 +277,60 @@ export default function AdminReposicaoPedidos() {
         .limit(500);
       if (error) throw error;
       return { linhas: data ?? [], total24h: count ?? 0 };
+    },
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+  });
+
+  // [GATE PO-sumido] pedidos `disparado` cujo PO NÃO apareceu no último run VÁLIDO do sync do Omie — o PO foi
+  // excluído lá e aqui o pedido seguiu disparado (dentro de 7d isso infla o em_transito e some o item do cockpit).
+  // A RPC é a fonte: ela decide quem é candidato E carrega a evidência (protocolo/canal), com gate próprio.
+  // `retry: false` de propósito: o gate nega com 42501 e repetir 3x só gera ruído — quem não pode ver não vê.
+  // Distinguir NEGADO de FALHOU importa: falha vira aviso visível (ver PoSumidoCard), nunca ausência silenciosa.
+  const { data: posSumidos, error: erroPosSumidos, isLoading: apurandoPosSumidos } = useQuery({
+    // A chave inclui o USUÁRIO porque o app não limpa o queryClient no signOut: sem isso, A (autorizado)
+    // popula o cache, B entra na mesma sessão de app e vê a carteira de A até a negativa do servidor
+    // chegar — e, no sentido inverso, o `refetchInterval: false` de um 42501 grudaria na chave e
+    // deixaria o próximo usuário AUTORIZADO sem polling. Chave por principal resolve os dois.
+    queryKey: ['pedidos-ciclo', 'pos-candidatos', EMPRESA, user?.id],
+    queryFn: async (): Promise<PoCandidato[]> => {
+      const { data, error } = await supabase.rpc('reposicao_pos_candidatos' as never, {
+        p_empresa: EMPRESA,
+      } as never);
+      if (error) throw error;
+      // Normaliza na FRONTEIRA: a resposta entra por cast (a RPC não está no types.ts gerado), então
+      // um valor não-finito passaria direto e viraria total NaN / ordenação embaralhada em silêncio.
+      return normalizarCandidatos((data as unknown as PoCandidato[] | null) ?? []);
+    },
+    // Sem principal, NÃO consulta: durante o boot do AuthContext `user` é undefined, e disparar aqui
+    // criaria uma entrada de cache sob a chave [...,undefined] — uma chamada a mais e, pior, um balde
+    // sem dono que poderia ser reapresentado no próximo boot antes de qualquer negativa chegar.
+    // Com `enabled` falso a query fica pending+idle para sempre, então quem alimenta o "apurando" é
+    // `isLoading` (pending E buscando), não `isPending` — senão o card diria "apurando…" eternamente
+    // para quem nem tem sessão.
+    enabled: Boolean(user?.id),
+    retry: false,
+    // Negado uma vez, negado sempre nesta sessão: sem isto o poll repetiria o 42501 a cada minuto,
+    // por aba, para sempre. Falha de apuração continua repolando — essa a gente QUER que se recupere.
+    refetchInterval: (q) => (ehAcessoNegado(q.state.error) ? false : 60_000),
+    staleTime: 30_000,
+  });
+
+  // [FILA] o ÚLTIMO recálculo do motor (limpo OU com supressão), carimbado em reposicao_motor_run pela RPC. A fila
+  // ancora AQUI: se o último run teve suprimidos_n=0 (sync já confirmou), a mensagem some na hora — em vez de mostrar
+  // o último run que teve supressão, que só grava exceções e ficava preso na janela de 24h. Codex 2026-07-08 (Opção 2).
+  const { data: ultimoRunMotor } = useQuery({
+    queryKey: ['pedidos-ciclo', 'motor-run', EMPRESA],
+    queryFn: async (): Promise<{ run_id: string; suprimidos_n: number; criado_em: string } | null> => {
+      const { data, error } = await supabase
+        .from('reposicao_motor_run' as never)
+        .select('run_id, suprimidos_n, criado_em')
+        .eq('empresa', EMPRESA)
+        .order('criado_em', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (error) throw error;
+      return (data as unknown as { run_id: string; suprimidos_n: number; criado_em: string } | null) ?? null;
     },
     refetchInterval: 60_000,
     staleTime: 30_000,
@@ -294,7 +360,18 @@ export default function AdminReposicaoPedidos() {
   // lista / recalcular) num só, a pedido do founder — a lista tem refetchInterval 30s (atualiza
   // sozinha). Se uma sync falhar, NÃO recalcula (regenerar com saldo/status velho = pedido errado,
   // money-path); o resumoSyncRecalc reporta e o usuário reexecuta. Idempotente. ~1–2 min.
-  const syncRecalcMutation = useMutation({
+  // Escritor do slug: frontend (orquestração client-side de 2 edges + RPC). Os crons diários
+  // rodam as EDGES isoladas (outra ação); o composto "sincronizar E recalcular" só existe aqui.
+  // status='sucesso' registra que a EXECUÇÃO completou; o resultado real (sync parcial/recalc)
+  // vai em detalhes — o tom pro usuário continua no toast (resumoSyncRecalc), sem mudança.
+  const syncRecalcMutation = useMutationComRegistro({
+    acao: 'reposicao.sincronizar_recalcular',
+    detalhes: ({ estoqueOk, statusOk, recalc }) => ({
+      estoque_ok: estoqueOk,
+      status_ok: statusOk,
+      recalculou: recalc?.ok ?? false,
+      pedidos: recalc?.pedidos ?? 0,
+    }),
     mutationFn: async () => {
       const [estoque, status] = await Promise.allSettled([
         supabase.functions.invoke('omie-sync-estoque', { body: { empresa: EMPRESA } }),
@@ -327,7 +404,7 @@ export default function AdminReposicaoPedidos() {
       else toast.success(message);
       track('reposicao.sync_recalc_manual', { empresa: EMPRESA, estoqueOk, statusOk, recalculou: recalc?.ok ?? false });
       queryClient.invalidateQueries({ queryKey: ['estoque-frescor'] });
-      queryClient.invalidateQueries({ queryKey: ['estoque-nao-confirmado'] });
+      // 'pedidos-ciclo' cobre por prefixo a fila de suprimidos E o marcador de run (ambos keyed sob ela).
       queryClient.invalidateQueries({ queryKey: ['pedidos-ciclo'] });
       queryClient.invalidateQueries({ queryKey: ['pedido-itens'] });
     },
@@ -406,15 +483,16 @@ export default function AdminReposicaoPedidos() {
     staleTime: 30_000,
   });
 
-  // [GATE estoque-não-confirmado] suprimidos do ÚLTIMO recálculo (reflete os pedidos na tela) + contexto 24h
-  // (crônico?). supLinhas vem ordenado por criado_em desc → [0] é o run mais recente; filtra esse run_id.
+  // [GATE estoque-não-confirmado] suprimidos do ÚLTIMO recálculo do motor (reflete os pedidos na tela) + contexto
+  // 24h (crônico?). ultimoRunId vem do carimbo em reposicao_motor_run (o último recálculo REAL, limpo ou não) — não
+  // de supLinhas[0] (último run do LOG, que só grava exceções → a mensagem grudava 24h). Fallback legado se o
+  // marcador ainda não populou. Run limpo ⇒ ultimoRunId sem linhas no log ⇒ supUltimoRun vazio ⇒ mensagem some.
   const supLinhas = suprimidos?.linhas ?? [];
-  const ultimoRunId = supLinhas[0]?.run_id ?? null;
-  const supUltimoRun = ultimoRunId ? supLinhas.filter((s) => s.run_id === ultimoRunId) : [];
+  const { runId: ultimoRunId, linhas: supUltimoRun } = selecionarUltimoRunSuprimido(ultimoRunMotor, supLinhas);
   const supLinhaQtd = supUltimoRun.filter((s) => s.motivo === 'linha_seed_only').length;
   const supGrupoQtd = supUltimoRun.filter((s) => s.motivo === 'grupo_membro_seed_only').length;
   const supTotal24h = suprimidos?.total24h ?? 0;
-  const ultimoSupEm = supLinhas[0]?.criado_em ?? null;
+  const ultimoSupEm = supUltimoRun[0]?.criado_em ?? null;
 
   // Telemetria: quantos o gate suprimiu por recálculo — detecta sync cronicamente atrasado (Codex consult
   // 019f0a38). A ref garante 1 disparo por run distinto mesmo com o effect reativo a todas as deps (lint-clean).
@@ -491,6 +569,7 @@ export default function AdminReposicaoPedidos() {
               </AlertDialogFooter>
             </AlertDialogContent>
           </AlertDialog>
+          <UltimaExecucao acao="reposicao.sincronizar_recalcular" />
         </div>
       </div>
 
@@ -576,6 +655,8 @@ export default function AdminReposicaoPedidos() {
         </Alert>
       )}
 
+      <CaixaCompraCard pedidos={pedidos ?? []} />
+
       {mostrarAtencao && atencaoCount > 0 && (
         <Card className="border-status-warning/40">
           <CardHeader>
@@ -603,7 +684,7 @@ export default function AdminReposicaoPedidos() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {atencaoVisivel.map((p) => (
+                {atencaoVermelha.map((p) => (
                   <TableRow key={p.id}>
                     <TableCell className="text-xs tabular-nums whitespace-nowrap">
                       {format(new Date(p.data_ciclo + 'T12:00:00'), 'dd/MM/yyyy')}
@@ -663,6 +744,26 @@ export default function AdminReposicaoPedidos() {
         </Card>
       )}
 
+      {/* ACESSO NEGADO esconde os dados: o servidor acabou de dizer que este usuário não pode vê-los, e
+          o react-query preserva o `data` do último sucesso — deixá-lo na tela seria falha ABERTA.
+          FALHA DE APURAÇÃO (rede, RPC quebrada) mantém a última lista BOA e mostra o aviso junto: como a
+          chave é escopada pelo usuário, esses dados são dele mesmo, e apagá-los tiraria da tela pedido,
+          protocolo e valor legítimos por causa de um erro transitório. Sumir não é mais honesto que
+          avisar — o card diz que a informação pode estar desatualizada. */}
+      <PoSumidoCard
+        candidatos={ehAcessoNegado(erroPosSumidos) ? [] : ordenarCandidatos(posSumidos ?? [])}
+        falhaApuracao={erroPosSumidos != null && !ehAcessoNegado(erroPosSumidos)}
+        apurando={apurandoPosSumidos}
+      />
+
+      <AbaixoMinimoCard
+        pedidos={atencaoAbaixoMinimo}
+        podeOverride={podeOverride}
+        onDetalhes={setDetalhesPedido}
+        onOverride={(id) => dispararOverrideMutation.mutate(id)}
+        disparandoLinha={disparandoLinha}
+      />
+
       <Tabs defaultValue="hoje">
         <TabsList>
           <TabsTrigger value="hoje">Ciclo de hoje</TabsTrigger>
@@ -676,9 +777,7 @@ export default function AdminReposicaoPedidos() {
             </CardHeader>
             <CardContent>
               {isLoading ? (
-                <div className="flex items-center justify-center py-12">
-                  <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
-                </div>
+                <PageSkeleton variant="list" />
               ) : ativos.length === 0 ? (
                 <div className="text-center py-12 text-muted-foreground">
                   {historico.length > 0

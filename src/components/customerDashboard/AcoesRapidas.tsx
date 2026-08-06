@@ -12,7 +12,7 @@ export function AcoesRapidas({ navigate }: AcoesRapidasProps) {
   return (
     <>
       <h2 className="font-display font-bold text-lg text-foreground mb-3">Ações Rápidas</h2>
-      <div className="grid grid-cols-4 gap-2">
+      <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
         {QUICK_ACTIONS.map((item) => (
           <motion.button
             key={item.path}

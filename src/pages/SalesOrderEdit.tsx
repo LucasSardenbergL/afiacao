@@ -4,8 +4,10 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Loader2, Save, Plus, AlertCircle, X } from 'lucide-react';
+import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { useSalesOrderEdit } from '@/components/salesOrderEdit/useSalesOrderEdit';
 import { PaymentComboboxEdit } from '@/components/salesOrderEdit/PaymentComboboxEdit';
+import { AvisoFormasPagamento } from '@/components/sales/AvisoFormasPagamento';
 import { AddProductSearch } from '@/components/salesOrderEdit/AddProductSearch';
 import { OrderItemCard } from '@/components/salesOrderEdit/OrderItemCard';
 
@@ -21,6 +23,11 @@ const SalesOrderEdit = () => {
     formas,
     selectedParcela,
     setSelectedParcela,
+    formasDegradadas,
+    formasErro,
+    formasMotivo,
+    condicaoDoPedidoAusente,
+    parcelaTravada,
     showAddProduct,
     setShowAddProduct,
     productSearch,
@@ -43,9 +50,9 @@ const SalesOrderEdit = () => {
   if (loading) {
     return (
       <div className="min-h-screen bg-background pb-24">
-        <div className="flex items-center justify-center pt-32">
-          <Loader2 className="w-8 h-8 animate-spin text-primary" />
-        </div>
+        <main className="pt-16 px-4 max-w-lg mx-auto">
+          <PageSkeleton variant="form" />
+        </main>
       </div>
     );
   }
@@ -132,19 +139,35 @@ const SalesOrderEdit = () => {
           </CardContent>
         </Card>
 
-        {/* Forma de Pagamento */}
-        {formas.length > 0 && (
+        {/* Forma de Pagamento — o card aparece também quando a listagem degradou ou
+            falhou, mesmo sem opções: sumir levaria o aviso junto e a tela diria, por
+            omissão, que este pedido não tem condição de pagamento (§7). */}
+        {(formas.length > 0 || formasDegradadas || formasErro) && (
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-base">Forma de Pagamento</CardTitle>
             </CardHeader>
-            <CardContent>
-              <PaymentComboboxEdit
-                formas={formas}
-                selected={selectedParcela}
-                onSelect={setSelectedParcela}
-                disabled={isBlocked}
+            <CardContent className="space-y-2">
+              {formas.length > 0 && (
+                <PaymentComboboxEdit
+                  formas={formas}
+                  selected={selectedParcela}
+                  onSelect={setSelectedParcela}
+                  disabled={isBlocked || parcelaTravada}
+                />
+              )}
+              <AvisoFormasPagamento
+                degradado={formasDegradadas}
+                erro={formasErro}
+                motivo={formasMotivo}
+                condicoesAusentes={condicaoDoPedidoAusente}
               />
+              {parcelaTravada && (
+                <p className="text-xs text-muted-foreground">
+                  A condição atual do pedido ({selectedParcela}) foi mantida e vai íntegra ao
+                  Omie. Recarregue a página quando o Omie voltar para poder alterá-la.
+                </p>
+              )}
             </CardContent>
           </Card>
         )}

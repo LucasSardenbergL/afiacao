@@ -40,7 +40,7 @@ echo "═══ setup PG17 :$PORT ═══"
 P -q <<'SQL'
 CREATE TABLE public.sku_parametros (empresa text, sku_codigo_omie bigint, sku_descricao text, fornecedor_nome text,
   ponto_pedido numeric, estoque_maximo numeric, minimo_forcado_manual numeric,
-  habilitado_reposicao_automatica boolean, tipo_reposicao text, demanda_media_diaria numeric);
+  habilitado_reposicao_automatica boolean, tipo_reposicao text, demanda_media_diaria numeric, classe_abc character(1), classe_forcada text);
 CREATE TABLE public.sku_estoque_atual (empresa text, sku_codigo_omie text, estoque_fisico numeric, estoque_pendente_entrada numeric, fonte_sync text);
 CREATE TABLE public.sku_embalagem_equivalencia (empresa text, grupo_id uuid, sku_codigo_omie text, fator_para_base numeric, ativo boolean);
 CREATE TABLE public.sku_preco_fornecedor_capturado (empresa text, sku_codigo_omie text, preco numeric, status text, capturado_em timestamptz);
@@ -50,6 +50,12 @@ CREATE TABLE public.company_config (key text, value text);
 CREATE TABLE public.omie_products (omie_codigo_produto bigint, account text, descricao text, familia text, ativo boolean, tipo_produto text, metadata jsonb DEFAULT '{}');
 CREATE TABLE public.sku_grupo_producao (empresa text, sku_codigo_omie text, grupo_codigo text);
 CREATE TABLE public.sku_leadtime_history (empresa text, sku_codigo_omie text, quantidade_recebida numeric, valor_total numeric);
+-- [#1366] A CTE preco_medio do motor passou a ler a fonte deduplicada por NFe. Stub 1:1 sobre a tabela acima:
+-- o assunto DESTE harness é o gate de estoque-não-confirmado, não o dedup (esse é provado com a view REAL em
+-- db/test-preco-medio-leadtime-efetivo.sh), e os seeds daqui não têm NFe duplicada — 1:1 é fiel para eles.
+-- Sem este stub a função dá 'relation does not exist' em RUNTIME: o CREATE OR REPLACE passa (late-bound).
+CREATE VIEW public.v_sku_leadtime_efetivo AS
+  SELECT empresa, sku_codigo_omie, quantidade_recebida, valor_total FROM public.sku_leadtime_history;
 CREATE TABLE public.fornecedor_habilitado_reposicao (empresa text, fornecedor_nome text, horario_corte_pedido interval, valor_maximo_mensal numeric, delta_max_perc numeric, lt_logistica_dias int);
 CREATE TABLE public.familia_nao_comprada (id bigserial PRIMARY KEY, empresa text, familia text);
 CREATE TABLE public.sku_status_omie (empresa text, sku_codigo_omie text, ativo_no_omie boolean);
@@ -60,9 +66,18 @@ CREATE TABLE public.pedido_compra_sugerido (id bigserial PRIMARY KEY, empresa te
 CREATE TABLE public.pedido_compra_item (id bigserial PRIMARY KEY, pedido_id bigint REFERENCES pedido_compra_sugerido(id) ON DELETE CASCADE,
   sku_codigo_omie text, sku_descricao text, estoque_atual numeric, ponto_pedido numeric, estoque_maximo numeric,
   qtde_sugerida numeric, qtde_final numeric, preco_unitario numeric, valor_linha numeric, primeira_compra boolean,
-  estoque_fisico numeric, estoque_a_caminho numeric);
+  estoque_fisico numeric, estoque_a_caminho numeric, qtde_sem_teto numeric, teto_cobertura_aplicado boolean NOT NULL DEFAULT false);
 CREATE TABLE public.reposicao_estoque_nao_confirmado_log (id uuid DEFAULT gen_random_uuid(), run_id uuid, criado_em timestamptz DEFAULT now(),
   empresa text, sku_codigo_omie text, sku_descricao text, grupo_codigo text, motivo text, estoque_efetivo numeric, ponto_pedido numeric, fonte_sync text);
+-- [TETO cobertura 2026-07-29] stub minimo — o CTE log_teto_ins e DML e executa SEMPRE (mesmo sem linha capada);
+-- sem config de teto (company_config vazio p/ as chaves) o cap fica NULL e os asserts destes harnesses ficam intactos.
+CREATE TABLE public.reposicao_teto_cobertura_log (id uuid DEFAULT gen_random_uuid(), run_id uuid, criado_em timestamptz DEFAULT now(),
+  empresa text, sku_codigo_omie text, sku_descricao text, grupo_codigo text, classe_abc text, teto_dias numeric,
+  demanda_diaria numeric, estoque_efetivo numeric, ponto_pedido numeric, estoque_maximo numeric,
+  cap_teto_ancora numeric, qtde_sem_teto numeric, qtde_final numeric, motivo text);
+-- [FILA] marcador de run: a RPC carimba TODO run (limpo ou não) → a tela ancora no ÚLTIMO recálculo.
+CREATE TABLE public.reposicao_motor_run (id uuid DEFAULT gen_random_uuid(), run_id uuid, empresa text, data_ciclo date,
+  pedidos_gerados int, skus_incluidos int, suprimidos_n int, capados_n int DEFAULT 0, criado_em timestamptz DEFAULT now());
 SQL
 
 # ── ZONA 2: aplicar a função REAL (fixture viva = galão+gate) ──
@@ -134,6 +149,7 @@ G="s.status='pendente_aprovacao' AND COALESCE(s.tipo_ciclo,'normal')='normal'"
 conta()     { Pq -c "SELECT count(*) FROM pedido_compra_item i JOIN pedido_compra_sugerido s ON s.id=i.pedido_id WHERE i.sku_codigo_omie='$1' AND $G;"; }
 log_conta() { Pq -c "SELECT count(*) FROM reposicao_estoque_nao_confirmado_log WHERE sku_codigo_omie='$1';"; }
 log_motivo(){ Pq -c "SELECT motivo FROM reposicao_estoque_nao_confirmado_log WHERE sku_codigo_omie='$1' LIMIT 1;"; }
+marker_n()  { Pq -c "SELECT count(*) FROM reposicao_motor_run;"; }
 
 echo "── asserts (regra verdadeira) ──"
 P -q -c "TRUNCATE reposicao_estoque_nao_confirmado_log;"
@@ -164,12 +180,21 @@ eq "C7 âncora não logou"         "$(log_conta '300001')" "0"
 # total logado = C1 + C4 + C6
 eq "log total = 3"               "$(Pq -c 'SELECT count(*) FROM reposicao_estoque_nao_confirmado_log;')" "3"
 
+# ── [MARCADOR DE RUN] a fila ancora no ÚLTIMO recálculo, não no último COM supressão ──
+echo "── marcador de run (fila) ──"
+# M1 — o run 1 (acima) teve 3 supressões → carimba 1 linha em reposicao_motor_run com suprimidos_n=3
+eq "M1 marker do run existe"     "$(Pq -c 'SELECT count(*) FROM reposicao_motor_run;')" "1"
+eq "M1 suprimidos_n=3"           "$(Pq -c 'SELECT suprimidos_n FROM reposicao_motor_run;')" "3"
+eq "M1 pedidos_gerados coerente" "$(Pq -c 'SELECT (pedidos_gerados > 0)::int FROM reposicao_motor_run;')" "1"
+# run_id do marcador == run_id do log (mesma execução carimbou os dois)
+eq "M1 run_id casa o log"        "$(Pq -c 'SELECT count(*) FROM reposicao_motor_run r WHERE r.run_id = (SELECT run_id FROM reposicao_estoque_nao_confirmado_log LIMIT 1);')" "1"
+
 # ── ZONA 5: FALSIFICAÇÃO (sabota → exige VERMELHO → restaura) ──
 echo "── falsificação ──"
 falsify() { # $1 desc | $2 sed-expr | $3 SQL-valor (eval) | $4 valor_são (deve MUDAR após sabotar)
   sed "$2" "$MIG" > /tmp/mig-gate-sab.sql
   P -q -f /tmp/mig-gate-sab.sql >/dev/null
-  P -q -c "TRUNCATE reposicao_estoque_nao_confirmado_log;" >/dev/null
+  P -q -c "TRUNCATE reposicao_estoque_nao_confirmado_log, reposicao_motor_run;" >/dev/null
   run_ciclo
   local got; got="$(eval "$3")"
   if [ "$got" != "$4" ]; then ok "FALSIFY $1 (são=$4 → furado=$got)"; else bad "FALSIFY $1 — assert SEM DENTE (seguiu $4)"; fi
@@ -192,6 +217,23 @@ falsify "suprime-tudo" \
 falsify "inativo-vota" \
   's/AND COALESCE(ssg.ativo_no_omie, true) = true//' \
   'conta 300001' "1"
+# FAL5 — marker-off: remove o INSERT do carimbo → reposicao_motor_run fica VAZIO (a fila perderia a âncora do run)
+falsify "marker-off" \
+  '/INSERT INTO public.reposicao_motor_run/,/v_run_id));/d' \
+  'marker_n' "1"
+
+# ── [MARCADOR DE RUN] M2 — run LIMPO apaga o fantasma (o conserto do bug reportado) ──
+echo "── marcador: run limpo apaga o fantasma ──"
+P -q -c "TRUNCATE reposicao_estoque_nao_confirmado_log, reposicao_motor_run;" >/dev/null
+run_ciclo   # run A: 3 supressões (estado original dos seeds: C1 linha, C4 galão, C6 sea-ausente)
+P -q -c "UPDATE sku_estoque_atual SET fonte_sync='ListarPosEstoque' WHERE sku_codigo_omie IN ('100001','200002');" >/dev/null
+P -q -c "INSERT INTO sku_estoque_atual (empresa,sku_codigo_omie,estoque_fisico,estoque_pendente_entrada,fonte_sync) VALUES ('OBEN','100006',0,0,'ListarPosEstoque');" >/dev/null
+run_ciclo   # run B: LIMPO — o sync confirmou os 3
+eq "M2 dois markers (A+B)"       "$(marker_n)" "2"
+eq "M2 run limpo tem n=0"        "$(Pq -c 'SELECT count(*) FROM reposicao_motor_run WHERE suprimidos_n=0;')" "1"
+eq "M2 run A mantém n=3"         "$(Pq -c 'SELECT count(*) FROM reposicao_motor_run WHERE suprimidos_n=3;')" "1"
+# a FILA ancorada no ÚLTIMO run (limpo) fica VAZIA: nenhuma linha de log pertence a um run com suprimidos_n=0
+eq "M2 fila do último=vazia"     "$(Pq -c 'SELECT count(*) FROM reposicao_estoque_nao_confirmado_log l JOIN reposicao_motor_run r ON r.run_id=l.run_id WHERE r.suprimidos_n=0;')" "0"
 
 echo "──────────────────────────────"
 echo "RESULTADO: $PASS ok / $FAIL fail"

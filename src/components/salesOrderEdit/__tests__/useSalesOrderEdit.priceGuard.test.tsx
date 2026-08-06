@@ -13,7 +13,7 @@ vi.mock('react-router-dom', () => ({
 vi.mock('@/contexts/AuthContext', () => ({ useAuth: () => ({}) }));
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }));
 vi.mock('@/integrations/supabase/client', () => ({
-  supabase: { from: vi.fn(), functions: { invoke: vi.fn() } },
+  supabase: { from: vi.fn(), functions: { invoke: vi.fn() }, rpc: vi.fn() },
 }));
 
 import { supabase } from '@/integrations/supabase/client';
@@ -22,6 +22,8 @@ import { useSalesOrderEdit } from '../useSalesOrderEdit';
 
 const mockedFrom = vi.mocked(supabase.from);
 const mockedInvoke = vi.mocked(supabase.functions.invoke);
+// PR0.0-bis: loadOrder busca o omie_payload pelo canal staff SECDEF (fechado ao .select()).
+const mockedRpc = vi.mocked(supabase.rpc);
 
 /** Builder auto-retornante até `.range()` — o catálogo de edição agora é PAGINADO
  *  (select → eq → eq → or[exclusão] → order → order → range). Catálogo vazio basta:
@@ -78,6 +80,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   updateSpy.mockReturnValue({ eq: updateEqSpy });
   mockedInvoke.mockResolvedValue({ data: { formas: [] }, error: null } as never);
+  mockedRpc.mockResolvedValue({ data: [{ id: 'ord-1', omie_payload: null, omie_response: null }], error: null } as never);
   mockedFrom.mockImplementation((table) => chainFor(table as string) as never);
 });
 
@@ -141,13 +144,38 @@ describe('useSalesOrderEdit — guard de preço ao salvar', () => {
     const { result } = await renderLoaded();
     mockedInvoke.mockClear();
     updateSpy.mockClear();
+    // Fase 3: o edge é AGUARDADO e persiste no write-back — o front não faz
+    // update local pré-invoke (o jsonb persistido é o BASELINE do gate tint).
+    mockedInvoke.mockResolvedValue({ data: { success: true }, error: null } as never);
 
     await act(async () => {
       await result.current.handleSave();
     });
 
-    expect(updateSpy).toHaveBeenCalledTimes(1);
+    expect(mockedInvoke).toHaveBeenCalledWith(
+      'omie-vendas-sync',
+      expect.objectContaining({ body: expect.objectContaining({ action: 'alterar_pedido' }) }),
+    );
+    expect(updateSpy).not.toHaveBeenCalled();
     await waitFor(() => expect(navigateSpy).toHaveBeenCalledWith('/sales'));
     expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it('Fase 3: bloqueio tint_preco do edge → NÃO persiste local, NÃO navega, avisa', async () => {
+    const { result } = await renderLoaded();
+    mockedInvoke.mockClear();
+    updateSpy.mockClear();
+    mockedInvoke.mockResolvedValue({
+      data: { success: false, blocked: 'tint_preco', bloqueios: [{ cor_id: 'K1', motivo: 'preco_divergente' }] },
+      error: null,
+    } as never);
+
+    await act(async () => {
+      await result.current.handleSave();
+    });
+
+    expect(toast.error).toHaveBeenCalled();
+    expect(updateSpy).not.toHaveBeenCalled();
+    expect(navigateSpy).not.toHaveBeenCalled();
   });
 });

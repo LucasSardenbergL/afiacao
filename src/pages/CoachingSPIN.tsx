@@ -102,10 +102,10 @@ const preCallQuestions: SPINQuestion[] = [
 
 /* ─── Helpers ─── */
 const spinTypeConfig: Record<string, { label: string; color: string; bgColor: string; icon: React.ElementType }> = {
-  situation: { label: 'Situação', color: 'text-blue-700', bgColor: 'bg-blue-50 border-blue-200', icon: HelpCircle },
-  problem: { label: 'Problema', color: 'text-amber-700', bgColor: 'bg-amber-50 border-amber-200', icon: AlertTriangle },
-  implication: { label: 'Implicação', color: 'text-red-700', bgColor: 'bg-red-50 border-red-200', icon: TrendingUp },
-  'need-payoff': { label: 'Necessidade', color: 'text-emerald-700', bgColor: 'bg-emerald-50 border-emerald-200', icon: Target },
+  situation: { label: 'Situação', color: 'text-status-info-foreground', bgColor: 'bg-status-info-bg border-status-info/20', icon: HelpCircle },
+  problem: { label: 'Problema', color: 'text-status-warning-foreground', bgColor: 'bg-status-warning-bg border-status-warning/20', icon: AlertTriangle },
+  implication: { label: 'Implicação', color: 'text-status-error-foreground', bgColor: 'bg-status-error-bg border-status-error/20', icon: TrendingUp },
+  'need-payoff': { label: 'Necessidade', color: 'text-status-success-foreground', bgColor: 'bg-status-success-bg border-status-success/20', icon: Target },
 };
 
 const resultConfig: Record<string, { label: string; variant: 'default' | 'secondary' | 'destructive' }> = {
@@ -119,8 +119,8 @@ const fmt = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', c
 const fmtDuration = (s: number) => `${Math.floor(s / 60)}min ${s % 60}s`;
 
 function ScoreGauge({ label, value, size = 'md' }: { label: string; value: number; size?: 'sm' | 'md' }) {
-  const color = value >= 80 ? 'text-success' : value >= 60 ? 'text-warning' : 'text-destructive';
-  const bgColor = value >= 80 ? 'bg-success/20' : value >= 60 ? 'bg-warning/20' : 'bg-destructive/20';
+  const color = value >= 80 ? 'text-status-success' : value >= 60 ? 'text-status-warning' : 'text-status-error';
+  const bgColor = value >= 80 ? 'bg-status-success/20' : value >= 60 ? 'bg-status-warning/20' : 'bg-status-error/20';
   return (
     <div className="text-center">
       <div className={cn(
@@ -290,7 +290,7 @@ const CoachingSPIN = () => {
                         </div>
                         <div className="flex items-center gap-3 mt-2">
                           <div className="flex items-center gap-1">
-                            <Star className={cn('w-3 h-3', call.spinScore.total >= 80 ? 'text-success fill-success' : call.spinScore.total >= 60 ? 'text-warning fill-warning' : 'text-destructive fill-destructive')} />
+                            <Star className={cn('w-3 h-3', call.spinScore.total >= 80 ? 'text-status-success fill-status-success' : call.spinScore.total >= 60 ? 'text-status-warning fill-status-warning' : 'text-status-error fill-status-error')} />
                             <span className="text-xs font-semibold">{call.spinScore.total}</span>
                           </div>
                           <span className="text-2xs text-muted-foreground">{fmt(call.marginGenerated)} margem</span>
@@ -355,7 +355,7 @@ const CoachingSPIN = () => {
                         onClick={() => toggleSection('highlights')}
                       >
                         <div className="flex items-center gap-2">
-                          <CheckCircle2 className="w-4 h-4 text-success" />
+                          <CheckCircle2 className="w-4 h-4 text-status-success" />
                           <span className="text-sm font-medium">O que funcionou bem</span>
                           <Badge variant="outline" className="text-2xs">{selectedCall.highlights.length}</Badge>
                         </div>
@@ -365,8 +365,8 @@ const CoachingSPIN = () => {
                         <CardContent className="pt-0 pb-3">
                           <div className="space-y-1.5">
                             {selectedCall.highlights.map((h, i) => (
-                              <div key={i} className="flex items-start gap-2 text-xs bg-success/5 rounded-md p-2">
-                                <CheckCircle2 className="w-3 h-3 text-success mt-0.5 shrink-0" />
+                              <div key={i} className="flex items-start gap-2 text-xs bg-status-success/5 rounded-md p-2">
+                                <CheckCircle2 className="w-3 h-3 text-status-success mt-0.5 shrink-0" />
                                 <span>{h}</span>
                               </div>
                             ))}
@@ -382,7 +382,7 @@ const CoachingSPIN = () => {
                         onClick={() => toggleSection('missed')}
                       >
                         <div className="flex items-center gap-2">
-                          <AlertTriangle className="w-4 h-4 text-warning" />
+                          <AlertTriangle className="w-4 h-4 text-status-warning" />
                           <span className="text-sm font-medium">O que faltou</span>
                           <Badge variant="outline" className="text-2xs">{selectedCall.missedOpportunities.length}</Badge>
                         </div>
@@ -392,8 +392,8 @@ const CoachingSPIN = () => {
                         <CardContent className="pt-0 pb-3">
                           <div className="space-y-1.5">
                             {selectedCall.missedOpportunities.map((m, i) => (
-                              <div key={i} className="flex items-start gap-2 text-xs bg-warning/5 rounded-md p-2">
-                                <AlertTriangle className="w-3 h-3 text-warning mt-0.5 shrink-0" />
+                              <div key={i} className="flex items-start gap-2 text-xs bg-status-warning/5 rounded-md p-2">
+                                <AlertTriangle className="w-3 h-3 text-status-warning mt-0.5 shrink-0" />
                                 <span>{m}</span>
                               </div>
                             ))}
@@ -427,7 +427,7 @@ const CoachingSPIN = () => {
                                     <TypeIcon className={cn('w-3 h-3', cfg.color)} />
                                     <span className={cn('text-2xs font-semibold', cfg.color)}>{cfg.label}</span>
                                     {q.wasAsked ? (
-                                      <Badge className="text-2xs bg-success/10 text-success border-success/20 ml-auto">
+                                      <Badge className="text-2xs bg-status-success/10 text-status-success border-status-success/20 ml-auto">
                                         <CheckCircle2 className="w-2.5 h-2.5 mr-0.5" /> Perguntou
                                       </Badge>
                                     ) : (

@@ -53,11 +53,15 @@ export function useReguaPreco360(
     for (const row of query.data ?? []) {
       // sem_produto / sem_preco → não há o que avaliar (o componente apenas não renderiza nada).
       if (row.hide_reason != null || row.preco_atual == null) continue;
+      // fail-closed em cada campo: ausente vira o valor que NÃO produz sinal (false/null), nunca
+      // um default otimista. O 360 é readonly e sem condição de pagamento → prazo sempre à vista.
       const fd: FetchDataRegua = {
-        cmc: row.cmc ?? null,
-        cmc_confiavel: row.cmc_confiavel ?? false,
-        aliquota_venda: row.aliquota_venda ?? 0,
+        abaixo_piso: row.abaixo_piso === true,
+        piso_disponivel: row.piso_disponivel === true,
+        cmc_confiavel: row.cmc_confiavel === true,
+        prazo_aplicado: row.prazo_aplicado === true,
         piso_mc: row.piso_mc ?? null,
+        piso_gap_pct: row.piso_gap_pct ?? null,
         precos_cliente: row.precos_cliente ?? [],
         comparaveis: row.comparaveis ?? [],
       };

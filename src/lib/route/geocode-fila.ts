@@ -1,7 +1,7 @@
 // Ordenação da fila de geocoding progressivo (Sub-PR 4, ponto G). PURO/testável.
 // O worker no useRoutePlanner consome o head a cada ciclo (~1/s) e re-deriva a fila,
 // então marcar um alvo no meio do caminho re-prioriza o PRÓXIMO pick (fila contínua).
-import type { RouteStop } from '@/components/reposicao/routePlanner/types';
+import type { RouteStop } from '@/components/rota/planner/types';
 import { normalizarCep } from './cep';
 import { precisaoVisual } from './marker-visual';
 

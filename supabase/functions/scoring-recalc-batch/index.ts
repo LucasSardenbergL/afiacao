@@ -7,16 +7,34 @@
 // Invoca scoring-recalc-client internamente via fetch.
 // Auth cron via header x-cron-secret (CRON_SECRET env var).
 //
-// Setup pg_cron (manual depois do merge):
+// pg_cron: `scoring-recalc-batch-nightly` JÁ ESTÁ ATIVO em produção (`'0 6 * * *'`, conferido em
+// `cron.job` 2026-07-21). O bloco abaixo é o comando REAL que está rodando — serve para DR ou para
+// recriar (`cron.schedule` faz upsert por nome → idempotente), NÃO é um setup pendente:
 //   SELECT cron.schedule('scoring-recalc-batch-nightly', '0 6 * * *',
 //     $$ SELECT net.http_post(
-//       url := 'https://<PROJECT_REF>.supabase.co/functions/v1/scoring-recalc-batch',
-//       headers := jsonb_build_object('x-cron-secret', current_setting('app.cron_shared_key', true))
+//       url := 'https://fzvklzpomgnyikkfkzai.supabase.co/functions/v1/scoring-recalc-batch',
+//       headers := jsonb_build_object('Content-Type', 'application/json',
+//         'x-cron-secret', (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'CRON_SECRET' LIMIT 1)),
+//       timeout_milliseconds := 55000
 //     ); $$
 //   );
+//
+// Este bloco documentava `current_setting('app.cron_shared_key', true)` — GUC que não existe no
+// projeto. O `true` (missing_ok) devolve NULL calado, o header sai nulo e a edge responde 401, com
+// `cron.job_run_details` marcando `succeeded` mesmo assim (só registra o ENQUEUE do net.http_post;
+// a verdade HTTP está em `net._http_response`). Quem criou o cron não seguiu o comentário — ele
+// descrevia um setup que nunca existiu. Nenhum dos crons vivos usa a GUC.
+//
+// `timeout_milliseconds` também faltava, e é obrigatório: o default do pg_net é 5s e mataria o
+// batch em silêncio. 55000 é o valor em prod; o teto padrão da casa é 150000 (docs/agent/sync.md)
+// — alinhar os dois é follow-up, não deste PR.
+//
+// Schedule é UTC (`cron.timezone` vazio, #1510): '0 6' = 03:00 BRT, como diz o cabeçalho acima.
 
 import { createClient } from 'npm:@supabase/supabase-js@^2';
 import { authorizeCronOrStaff, corsHeaders } from '../_shared/auth.ts';
+import { carregarExcluidosDaCarteira, carregarOwnerMap } from '../_shared/mapas-paginados.ts';
+import type { BancoPostgrest } from '../_shared/paginate.ts';
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
@@ -54,30 +72,26 @@ Deno.serve(async (req) => {
   //    completo da carteira é feito pela fila no rollout, não aqui.
   //    ANTI-DRIFT: o dono vem de carteira_assignments, nunca do farmer_id da ligação.
 
-  // ownerMap: customer_user_id → owner_user_id (carteira_assignments, paginado)
-  const ownerMap = new Map<string, string>();
-  for (let cp = 0; ; cp++) {
-    const { data: aPage } = await supabase
-      .from('carteira_assignments')
-      .select('customer_user_id, owner_user_id')
-      .range(cp * 1000, cp * 1000 + 999);
-    const aRows = (aPage ?? []) as Array<{ customer_user_id: string; owner_user_id: string }>;
-    for (const a of aRows) ownerMap.set(a.customer_user_id, a.owner_user_id);
-    if (aRows.length < 1000) break;
-  }
-
-  // Fornecedores fora da carteira: clientes marcados p/ exclusão não entram no decay
-  // (defesa em profundidade — o scoring-recalc-client também pula; aqui evita o fan-out à toa).
-  const flaggeds = new Set<string>();
-  for (let fp = 0; ; fp++) {
-    const { data: fPage } = await supabase
-      .from('cliente_classificacao')
-      .select('user_id')
-      .eq('excluir_da_carteira', true)
-      .range(fp * 1000, fp * 1000 + 999);
-    const fRows = (fPage ?? []) as Array<{ user_id: string }>;
-    for (const r of fRows) flaggeds.add(r.user_id);
-    if (fRows.length < 1000) break;
+  // ownerMap (customer_user_id → owner_user_id) e excluídos: leitura COMPLETA e fail-closed
+  // em `_shared/mapas-paginados.ts`. Antes o laço era escrito aqui e descartava `error`, então
+  // página que falhava virava "acabou" — e o efeito não era "menos linhas", era TROCA DE REGRA:
+  // com o ownerMap parcial o `?? p.farmer_id` lá embaixo assume o volante e atribui o score a
+  // QUEM LIGOU em vez do dono, exatamente o que o ANTI-DRIFT acima proíbe; e o excluído some do
+  // Set e volta ao fan-out. Melhor não recalcular do que recalcular errado em silêncio
+  // (docs/agent/money-path.md §6/§7).
+  let ownerMap: Map<string, string>;
+  let flaggeds: Set<string>;
+  try {
+    const db = supabase as unknown as BancoPostgrest;
+    ownerMap = await carregarOwnerMap(db);
+    flaggeds = await carregarExcluidosDaCarteira(db);
+  } catch (e) {
+    const motivo = e instanceof Error ? e.message : String(e);
+    console.error('[scoring-recalc-batch] leitura da carteira falhou:', motivo);
+    return new Response(
+      JSON.stringify({ error: `leitura da carteira falhou: ${motivo}`, drained }),
+      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+    );
   }
 
   const { data: pairs, error: pErr } = await supabase

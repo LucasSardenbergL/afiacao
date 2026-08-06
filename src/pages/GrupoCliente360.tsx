@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
-import { ArrowLeft, Building2, Plus, Trash2, Wallet, Users, Loader2, BarChart3 } from 'lucide-react';
+import { ArrowLeft, Building2, Plus, Trash2, Wallet, Users, BarChart3 } from 'lucide-react';
+import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
@@ -33,9 +34,7 @@ export default function GrupoCliente360() {
 
   if (isLoading) {
     return (
-      <div className="flex justify-center py-16">
-        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-      </div>
+      <PageSkeleton variant="detail" />
     );
   }
 

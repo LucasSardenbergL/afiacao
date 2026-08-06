@@ -1,56 +1,31 @@
-// ⚠️ NÃO LIGADO no v1 (Fase 1). A fonte "WhatsApp pendente" foi adiada p/ a Fase 3 (split):
-// esta versão tem falso-negativo (cap 200 do inbox + proxy last_message_at, Codex P1).
-// Na Fase 3, reescrever sobre query/RPC de pendentes (sem cap) com last_outbound_at real. Ver spec §4.
+// Fonte "WhatsApp pendente" da fila do dia (PR-2 do Canal WhatsApp).
+// Reescrito sobre a RPC get_whatsapp_pendentes: pendência decidida no SQL com
+// last_outbound_at REAL (trigger 1-writer) — mata o falso-negativo do v1
+// (cap 200 do inbox + proxy last_message_at, Codex P1). SECURITY INVOKER:
+// a RLS staff aplica; conversa com dono só aparece pro dono.
 import { useMemo } from 'react';
-import { useWhatsappConversations } from '@/queries/useWhatsappInbox';
-import type { WaPendente } from '@/lib/fila/adapters/whatsappPendente';
+import { useQuery } from '@tanstack/react-query';
+import { supabase } from '@/integrations/supabase/client';
+import { mapPendenteRows, type WaPendente } from '@/lib/fila/adapters/whatsappPendente';
 
-const MS_24H = 24 * 60 * 60 * 1000;
+export function useWhatsappPendentes(): {
+  data: WaPendente[];
+  isLoading: boolean;
+  isError: boolean;
+  error: unknown;
+  refetch: () => void;
+} {
+  const q = useQuery({
+    queryKey: ['whatsapp', 'pendentes'],
+    queryFn: async () => {
+      // RPC nova ainda fora do types.ts gerado — mesmo padrão de useDataHealth.ts
+      const { data, error } = await supabase.rpc('get_whatsapp_pendentes' as never);
+      if (error) throw new Error(error.message);
+      return (data ?? []) as unknown[];
+    },
+  });
 
-/**
- * Conversas aguardando resposta da vendedora dentro da janela de 24h.
- *
- * Regra v1: `last_inbound_at` existe, está há < 24h, e NÃO há mensagem
- * posterior registrada em `last_message_at` (proxy de outbound).
- *
- * WaConversation não expõe `last_outbound_at` explícito; usamos
- * `last_message_at` como proxy: se `last_message_at > last_inbound_at`,
- * houve resposta depois da última mensagem do cliente, logo não está pendente.
- * Se `last_message_at` é null ou igual a `last_inbound_at`, ainda aguarda.
- */
-export function useWhatsappPendentes(): { data: WaPendente[]; isLoading: boolean } {
-  const conversas = useWhatsappConversations();
+  const data = useMemo(() => mapPendenteRows(q.data ?? [], Date.now()), [q.data]);
 
-  const data = useMemo<WaPendente[]>(() => {
-    const lista = conversas.data ?? [];
-    const agora = Date.now();
-
-    return lista
-      .map((c): WaPendente | null => {
-        if (!c.last_inbound_at) return null;
-
-        const tInbound = Date.parse(c.last_inbound_at);
-        if (!Number.isFinite(tInbound)) return null;
-
-        const desdeMs = agora - tInbound;
-        if (desdeMs > MS_24H) return null; // fora da janela de 24h
-
-        // Se last_message_at é posterior ao last_inbound_at, staff já respondeu
-        if (c.last_message_at) {
-          const tLastMsg = Date.parse(c.last_message_at);
-          if (Number.isFinite(tLastMsg) && tLastMsg > tInbound) return null;
-        }
-
-        return {
-          conversationId: c.id,
-          clienteUserId: c.customer_user_id,
-          nome: c.contact_name,
-          telefone: c.phone_e164,
-          horasDesde: desdeMs / (1000 * 60 * 60),
-        };
-      })
-      .filter((x): x is WaPendente => x !== null);
-  }, [conversas.data]);
-
-  return { data, isLoading: conversas.isLoading };
+  return { data, isLoading: q.isLoading, isError: q.isError, error: q.error, refetch: () => void q.refetch() };
 }

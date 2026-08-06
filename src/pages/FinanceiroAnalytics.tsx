@@ -8,9 +8,10 @@ import { COMPANIES, ALL_COMPANIES, type Company } from '@/contexts/CompanyContex
 import { getAnaliseDimensional, type Dimensao, type AnaliseDimensional } from '@/services/financeiroV2Service';
 import { downloadCSV } from '@/services/financeiroService';
 import {
-  Loader2, Building2, BarChart3, PieChart, Download,
+  Building2, BarChart3, PieChart, Download,
   ArrowDownCircle, ArrowUpCircle
 } from 'lucide-react';
+import { PageSkeleton } from '@/components/ui/page-skeleton';
 
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const fmtCompact = (v: number) => {
@@ -184,9 +185,7 @@ const FinanceiroAnalytics = () => {
       <Card>
         <CardContent className="p-0">
           {loading ? (
-            <div className="flex items-center justify-center py-16">
-              <Loader2 className="w-6 h-6 animate-spin" />
-            </div>
+            <PageSkeleton variant="list" className="p-4" />
           ) : data.length === 0 ? (
             <div className="text-center py-16 text-muted-foreground">
               <BarChart3 className="w-10 h-10 mx-auto mb-3 opacity-40" />

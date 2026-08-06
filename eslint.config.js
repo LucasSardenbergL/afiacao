@@ -46,6 +46,19 @@ export default tseslint.config(
           message:
             "Não interpole input em .or() do PostgREST com template literal — use os helpers de @/lib/postgrest (ilikeOr/ilike/eqInt/eqText/orFilter), que sanitizam. Ver CLAUDE.md §9b.",
         },
+        {
+          // PR0.0-bis: omie_payload/omie_response de sales_orders foram fechados à leitura de
+          // `authenticated` (REVOKE SELECT column-level). Um `.select('*')` daria 42501 (o *
+          // inteiro cai). Enumere as colunas não-sensíveis; leia o payload via a RPC staff
+          // `staff_get_sales_order_payload`. Reintroduzir `.select('*')` reabriria a quebra.
+          // ⚠️ Defense-in-depth: pega só o chain direto from('sales_orders').select('*') — não
+          // aliases/casts/wrappers (achado Codex). A proteção REAL é o REVOKE (42501 em runtime);
+          // esta regra só evita a reintrodução acidental no padrão comum.
+          selector:
+            "CallExpression[callee.property.name='select'][arguments.0.value='*'][callee.object.callee.property.name='from'][callee.object.arguments.0.value='sales_orders']",
+          message:
+            "sales_orders: NÃO use .select('*') — omie_payload/omie_response são fechados à leitura de `authenticated` (PR0.0-bis) e o * inteiro dá 42501. Enumere as colunas não-sensíveis; leia o payload via staff_get_sales_order_payload. Ver docs/agent/database.md.",
+        },
       ],
     },
   },

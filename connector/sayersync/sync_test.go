@@ -93,6 +93,20 @@ func (f *fakeExtractor) ExtractFormulaChildItems(_ context.Context, hasOrdem boo
 	return make(map[string][]map[string]any), nil
 }
 
+// ExtractFormulasComItens espelha o contrato do pgExtractor (pai+filha atômicos):
+// no fake não há transação — devolve rows + childItems pré-configurados.
+func (f *fakeExtractor) ExtractFormulasComItens(ctx context.Context, entity string, hwm time.Time, hasOrdem bool) ([]map[string]any, map[string][]map[string]any, time.Time, error) {
+	rows, maxDA, err := f.Extract(ctx, entity, hwm)
+	if err != nil {
+		return nil, nil, time.Time{}, err
+	}
+	child, err := f.ExtractFormulaChildItems(ctx, hasOrdem)
+	if err != nil {
+		return nil, nil, time.Time{}, err
+	}
+	return rows, child, maxDA, nil
+}
+
 func (f *fakeExtractor) OriginNow(_ context.Context) (time.Time, error) {
 	if f.err != nil {
 		return time.Time{}, f.err

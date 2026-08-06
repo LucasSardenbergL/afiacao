@@ -4,6 +4,8 @@ import type { Json } from '@/integrations/supabase/types';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { toast } from 'sonner';
 import { custoCanonico } from '@/lib/custo/custoCanonico';
+import { margemConhecida } from '@/lib/scoring/margin';
+import { fetchAllPages } from '@/lib/postgrest';
 
 // ─── Types ───────────────────────────────────────────────────────────
 export interface AssociationRule {
@@ -46,7 +48,9 @@ export interface CustomerBundles {
   bundles: BundleRecommendation[];
   bestIndividual: IndividualComparison | null;
   avgMonthlySpend: number;
-  grossMarginPct: number;
+  /** `null` = margem não apurada. NÃO trocar por 0: 0 classifica o cliente como "sensível a
+   *  preço" via `classifyCustomerProfile`, um veredito que a ausência de dado não sustenta. */
+  grossMarginPct: number | null;
   categoryCount: number;
   daysSinceLastPurchase: number;
   cnae: string;
@@ -89,11 +93,6 @@ interface ProfileRow {
   cnae: string | null;
 }
 
-interface ConversionRow {
-  category_id: string;
-  complexity_factor: number | string | null;
-}
-
 interface SalesOrderItem {
   product_id?: string;
   omie_codigo_produto?: number | string;
@@ -112,24 +111,16 @@ interface ExistingRecRow {
   recommendation_type: 'cross_sell' | 'up_sell';
 }
 
-interface StatsRecRow {
-  status: string;
-  actual_margin: number | string | null;
-  time_spent_seconds: number | null;
-}
-
-interface BundleStatsRow extends StatsRecRow {
-  bundle_products: { id: string }[] | unknown;
-}
-
-interface BundleAcceptUpdate {
-  status: 'aceito_total' | 'aceito_parcial';
-  accepted_at: string;
-  updated_at: string;
-  accepted_products?: string[];
-  actual_margin?: number;
-  time_spent_seconds?: number;
-}
+// ─── Premissa do LIE do bundle (NÃO é aprendida) ─────────────────────
+// Constante ARBITRADA, não medição. Até 2026-07-21 o hook lia
+// `farmer_category_conversion` para derivar um fator por produto e caía neste
+// mesmo 1.0 quando não achava a linha — sugerindo um "aprendizado histórico" que
+// nunca existiu: a tabela tem 0 linhas desde fev/2026 (`n_tup_ins = 0`), porque o
+// único writer ficava atrás de `markBundleAccepted`, que nenhuma UI chamou.
+// Como é idêntica para todo bundle, é fator de ESCALA: não altera o RANKING, só o
+// valor absoluto em R$ — rotulado na tela como estimativa não calibrada.
+// Ver docs/historico/farmer-aprendizado-conversao.md.
+const FATOR_COMPLEXIDADE = 1.0;
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
@@ -162,20 +153,23 @@ export const useBundleEngine = () => {
 
     try {
       // 1. Load data with fallback for super_admin
-      const fetchAllScores = async (filterFarmerId?: string): Promise<ClientScoreRow[]> => {
-        const all: ClientScoreRow[] = [];
-        let page = 0;
-        const sz = 1000;
-        let hasMore = true;
-        while (hasMore) {
-          let q = supabase.from('farmer_client_scores').select('*').range(page * sz, (page + 1) * sz - 1);
-          if (filterFarmerId) q = q.eq('farmer_id', filterFarmerId);
-          const { data } = (await q) as unknown as { data: ClientScoreRow[] | null };
-          if (!data || data.length === 0) hasMore = false;
-          else { all.push(...data); if (data.length < sz) hasMore = false; page++; }
-        }
-        return all;
-      };
+      // Loop MANUAL com o mesmo defeito que o #1545 tirou do `fetchAllPages` — por não CHAMAR
+      // o helper, ficou de fora daquele grep: descartava o `error`, tratava `data: null` como
+      // fim da tabela e não pedia `.order()` (ordem indefinida entre páginas pula e repete
+      // linha). `customer_user_id` é UNIQUE na tabela.
+      //
+      // E a página perdida trocava o ESCOPO: o caller abaixo lê lista vazia como "não tem
+      // carteira, deve ser super_admin" e recarrega SEM filtro de farmer_id.
+      const fetchAllScores = (filterFarmerId?: string): Promise<ClientScoreRow[]> =>
+        fetchAllPages<ClientScoreRow>(
+          (de, ate) => {
+            let q = supabase.from('farmer_client_scores').select('*');
+            if (filterFarmerId) q = q.eq('farmer_id', filterFarmerId);
+            return q.order('customer_user_id', { ascending: true }).range(de, ate) as unknown as
+              PromiseLike<{ data: ClientScoreRow[] | null; error: unknown }>;
+          },
+          'farmer_client_scores/bundle',
+        );
 
       // Try farmer-specific first, fallback to all (super_admin). Na lente NÃO cai no
       // fallback "todos os scores" — escopa estritamente ao alvo (degradação honesta:
@@ -183,38 +177,55 @@ export const useBundleEngine = () => {
       let clientScores = await fetchAllScores(effectiveUserId);
       if (!clientScores.length && !isImpersonating) clientScores = await fetchAllScores();
 
-      const [
-        { data: products },
-        { data: productCosts },
-        { data: profiles },
-        { data: conversionData },
-      ] = await Promise.all([
-        supabase.from('omie_products').select('id, codigo, descricao, valor_unitario, metadata, ativo, omie_codigo_produto').eq('ativo', true) as unknown as Promise<{ data: ProductRow[] | null }>,
-        supabase.from('product_costs').select('product_id, cost_final, cost_price') as unknown as Promise<{ data: ProductCostRow[] | null }>,
-        supabase.from('profiles').select('user_id, name, customer_type, cnae') as unknown as Promise<{ data: ProfileRow[] | null }>,
-        supabase.from('farmer_category_conversion').select('*') as unknown as Promise<{ data: ConversionRow[] | null }>,
+      // As três estouram a capa de 1.000 do PostgREST (3.108 SKUs ativos, 3.637
+      // linhas de custo, 5.668 perfis) e vinham truncadas em silêncio: o costMap lia a maior
+      // parte do catálogo como "sem custo" e o profileMap deixava a maioria dos clientes sem
+      // perfil — e sem perfil o cliente é pulado (`if (!profile) continue`), ou seja, nunca
+      // recebia bundle.
+      const [products, productCosts, profiles] = await Promise.all([
+        fetchAllPages<ProductRow>((de, ate) =>
+          supabase
+            .from('omie_products')
+            .select('id, codigo, descricao, valor_unitario, metadata, ativo, omie_codigo_produto')
+            .eq('ativo', true)
+            .order('id', { ascending: true })
+            .range(de, ate) as unknown as PromiseLike<{ data: ProductRow[] | null; error: unknown }>,
+          'omie_products/bundle',
+        ),
+        fetchAllPages<ProductCostRow>((de, ate) =>
+          supabase
+            .from('product_costs')
+            .select('product_id, cost_final, cost_price')
+            .order('product_id', { ascending: true })
+            .range(de, ate) as unknown as PromiseLike<{ data: ProductCostRow[] | null; error: unknown }>,
+          'product_costs/bundle',
+        ),
+        fetchAllPages<ProfileRow>((de, ate) =>
+          supabase
+            .from('profiles')
+            .select('user_id, name, customer_type, cnae')
+            .order('user_id', { ascending: true })
+            .range(de, ate) as unknown as PromiseLike<{ data: ProfileRow[] | null; error: unknown }>,
+          'profiles/bundle',
+        ),
       ]);
 
       if (!clientScores?.length) { setCustomerBundles([]); return; }
 
       // Load ALL sales orders (avoid huge .in() URL)
-      const fetchAllSalesOrders = async (): Promise<SalesOrderRow[]> => {
-        const all: SalesOrderRow[] = [];
-        let page = 0;
-        const sz = 1000;
-        let hasMore = true;
-        while (hasMore) {
-          const { data } = (await supabase
+      // Mesmo defeito do loop manual acima — aqui a perda é do HISTÓRICO que alimenta as regras
+      // de associação do bundle. `.order('id')` (PK) é a ordem estável; a coluna não precisa
+      // estar no `select`.
+      const salesOrders = await fetchAllPages<SalesOrderRow>(
+        (de, ate) =>
+          supabase
             .from('sales_orders')
             .select('customer_user_id, items, total, created_at')
             .in('status', ['confirmado', 'faturado', 'entregue'])
-            .range(page * sz, (page + 1) * sz - 1)) as unknown as { data: SalesOrderRow[] | null };
-          if (!data || data.length === 0) hasMore = false;
-          else { all.push(...data); if (data.length < sz) hasMore = false; page++; }
-        }
-        return all;
-      };
-      const salesOrders = await fetchAllSalesOrders();
+            .order('id', { ascending: true })
+            .range(de, ate) as unknown as PromiseLike<{ data: SalesOrderRow[] | null; error: unknown }>,
+        'sales_orders/bundle',
+      );
 
       // Build maps
       const costMap = new Map<string, number>();
@@ -232,8 +243,6 @@ export const useBundleEngine = () => {
       });
       const profileMap = new Map<string, ProfileRow>();
       (profiles || []).forEach((p) => profileMap.set(p.user_id, p));
-      const conversionMap = new Map<string, ConversionRow>();
-      (conversionData || []).forEach((c) => conversionMap.set(c.category_id, c));
 
       // 2. Build transaction baskets per customer
       const baskets: string[][] = [];
@@ -367,22 +376,45 @@ export const useBundleEngine = () => {
       discoveredRules.sort((a, b) => b.lift - a.lift);
       setRules(discoveredRules.slice(0, 50)); // Keep top 50
 
-      // Persist top rules — PULADO na lente "Ver como" (a tabela é GLOBAL: o delete
-      // apaga as regras de toda a base; o master inspeciona os bundles do alvo sem
+      // Persist top rules — PULADO na lente "Ver como" (a tabela é GLOBAL: a troca
+      // substitui as regras de toda a base; o master inspeciona os bundles do alvo sem
       // recalcular regras/recomendações da carteira dele).
+      //
+      // Vai por RPC porque `delete()` + `insert()` são DUAS chamadas PostgREST, logo duas
+      // transações: falha entre elas deixava a tabela VAZIA — e ela alimenta o MixGap
+      // (`get_meu_mixgap`), o canal Melhorias (`melhoria_produtos_relacionados`), a edge
+      // `recommend` (assoc_score) e o `useCrossSellEngine`. A RPC faz DELETE+INSERT numa
+      // transação só: INSERT falho devolve as regras antigas. Provada em db/test-farmer-
+      // association-rules-atomica.sh (26 asserts + 4 falsificações).
+      let desfechoRegras: 'gravadas' | 'lente' | 'sem_regras' | 'falhou' = 'lente';
       if (!isImpersonating) {
-        await supabase.from('farmer_association_rules').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-        if (discoveredRules.length > 0) {
-          const rulesToInsert = discoveredRules.slice(0, 50).map(r => ({
-            antecedent_product_ids: r.antecedent,
-            consequent_product_ids: r.consequent,
-            support: Math.round(r.support * 10000) / 10000,
-            confidence: Math.round(r.confidence * 10000) / 10000,
-            lift: Math.round(r.lift * 100) / 100,
-            rule_type: r.type,
-            sample_size: totalBaskets,
-          }));
-          await supabase.from('farmer_association_rules').insert(rulesToInsert);
+        const regrasParaGravar = discoveredRules.slice(0, 50).map(r => ({
+          antecedent_product_ids: r.antecedent,
+          consequent_product_ids: r.consequent,
+          support: Math.round(r.support * 10000) / 10000,
+          confidence: Math.round(r.confidence * 10000) / 10000,
+          lift: Math.round(r.lift * 100) / 100,
+          rule_type: r.type,
+          sample_size: totalBaskets,
+        }));
+
+        if (regrasParaGravar.length === 0) {
+          // Zero regra descoberta quase sempre é dado faltando a montante, não "a base não
+          // tem padrão" — e apagar por isso derruba quatro features. Preserva o que está lá.
+          // (A RPC recusaria o lote vazio de qualquer jeito; não chamamos só pra tomar erro.)
+          desfechoRegras = 'sem_regras';
+        } else {
+          const { error: erroRegras } = await supabase.rpc('farmer_association_rules_substituir', {
+            p_regras: regrasParaGravar as unknown as Json,
+          });
+          // Sem `throw`: os bundles abaixo saem das regras em MEMÓRIA e continuam válidos.
+          // Mas o toast final não pode dizer que deu tudo certo.
+          if (erroRegras) {
+            console.error('Falha ao substituir farmer_association_rules:', erroRegras);
+            desfechoRegras = 'falhou';
+          } else {
+            desfechoRegras = 'gravadas';
+          }
         }
       }
 
@@ -420,7 +452,11 @@ export const useBundleEngine = () => {
           for (const pid of missingProducts) {
             const product = productMap.get(pid);
             if (!product) continue;
-            const cost = costMap.get(pid) || 0;
+            // Custo desconhecido → SKU fora do bundle (ausente≠zero). Com `|| 0` a margem virava
+            // o preço cheio, e como o único filtro é `margin <= 0` o produto sem custo nunca era
+            // excluído: o LIE do bundle passava a preferir justamente o que falta cadastrar.
+            const cost = costMap.get(pid);
+            if (cost == null) continue;
             const price = Number(product.valor_unitario || 0);
             const margin = price - cost;
             if (margin <= 0) continue;
@@ -436,7 +472,9 @@ export const useBundleEngine = () => {
                 if (purchased.has(relatedPid) || relatedPid === pid) continue;
                 const relatedProduct = productMap.get(relatedPid);
                 if (!relatedProduct) continue;
-                const relatedCost = costMap.get(relatedPid) || 0;
+                // Mesmo motivo do produto principal: sem custo o par sai do bundle.
+                const relatedCost = costMap.get(relatedPid);
+                if (relatedCost == null) continue;
                 const relatedPrice = Number(relatedProduct.valor_unitario || 0);
                 const relatedMargin = relatedPrice - relatedCost;
                 if (relatedMargin <= 0) continue;
@@ -453,11 +491,8 @@ export const useBundleEngine = () => {
                 const pBundle = avgConfidence * (avgLift / 2) * (healthScore / 100) * engagementFactor;
                 const mBundle = margin + relatedMargin;
 
-                const conv1 = conversionMap.get(pid);
-                const conv2 = conversionMap.get(relatedPid);
-                const cf1 = conv1 ? Number(conv1.complexity_factor) : 1.0;
-                const cf2 = conv2 ? Number(conv2.complexity_factor) : 1.0;
-                const complexityFactor = (cf1 + cf2) / 2;
+                // Constante (ver bloco de premissas): a média dos dois fatores é ela mesma.
+                const complexityFactor = FATOR_COMPLEXIDADE;
 
                 const lieBundle = pBundle * mBundle * complexityFactor;
 
@@ -521,7 +556,7 @@ export const useBundleEngine = () => {
             bundles: topBundles,
             bestIndividual,
             avgMonthlySpend: Number(score.avg_monthly_spend_180d || 0),
-            grossMarginPct: Number(score.gross_margin_pct || 0),
+            grossMarginPct: margemConhecida(score.gross_margin_pct),
             categoryCount: Number(score.category_count || 0),
             daysSinceLastPurchase: Number(score.days_since_last_purchase || 0),
             cnae: profile.cnae || '',
@@ -542,27 +577,72 @@ export const useBundleEngine = () => {
 
       // Persist bundle recommendations — PULADO na lente "Ver como" (só leitura: o
       // master inspeciona os bundles do alvo sem regravar a carteira dele).
+      //
+      // UM insert em lote, não um por bundle: as linhas são independentes, então os N
+      // round-trips não compravam atomicidade nenhuma — só multiplicavam a janela de falha
+      // parcial (metade das recomendações gravadas, metade não).
+      //
+      // E o `error` é CAPTURADO. Descartá-lo era o mesmo defeito de classe que o #1574 tirou
+      // do bloco de `farmer_association_rules` logo acima, porém sem DELETE: nada é destruído,
+      // o pior caso é a recomendação não existir na TABELA enquanto a UI já mostrou o bundle
+      // em memória — e quem lê a tabela (`OfertaCruaCard`, `useTacticalPlan`) não vê a oferta
+      // que o operador acabou de ver na tela, sem ninguém ficar sabendo.
+      //
+      // Sem `throw`: os bundles em memória continuam válidos e já foram exibidos; só o toast
+      // final deixa de dizer que deu tudo certo.
+      let recomendacoesNaoGravadas = 0;
       if (!isImpersonating) {
-        for (const cb of allCustomerBundles) {
-          for (const bundle of cb.bundles) {
-            await supabase.from('farmer_bundle_recommendations').insert({
-              farmer_id: effectiveUserId,
-              customer_user_id: bundle.customerId,
-              bundle_products: bundle.products as unknown as Json,
-              support: bundle.support,
-              confidence: bundle.confidence,
-              lift: bundle.lift,
-              p_bundle: bundle.pBundle,
-              m_bundle: bundle.mBundle,
-              lie_bundle: bundle.lieBundle,
-              complexity_factor: bundle.complexityFactor,
-              status: 'pendente',
-            });
+        const recomendacoes = allCustomerBundles.flatMap((cb) =>
+          cb.bundles.map((bundle) => ({
+            farmer_id: effectiveUserId,
+            customer_user_id: bundle.customerId,
+            bundle_products: bundle.products as unknown as Json,
+            support: bundle.support,
+            confidence: bundle.confidence,
+            lift: bundle.lift,
+            p_bundle: bundle.pBundle,
+            m_bundle: bundle.mBundle,
+            lie_bundle: bundle.lieBundle,
+            complexity_factor: bundle.complexityFactor,
+            status: 'pendente',
+          })),
+        );
+
+        if (recomendacoes.length > 0) {
+          const { error: erroRecs } = await supabase
+            .from('farmer_bundle_recommendations')
+            .insert(recomendacoes);
+          if (erroRecs) {
+            console.error('Falha ao gravar farmer_bundle_recommendations:', erroRecs);
+            recomendacoesNaoGravadas = recomendacoes.length;
           }
         }
       }
 
-      toast.success(`${discoveredRules.length} regras e ${allCustomerBundles.reduce((s, c) => s + c.bundles.length, 0)} bundles gerados`);
+      // O toast reflete o que REALMENTE aconteceu. Antes ele era `success` incondicional —
+      // com a persistência falhando calada, o operador via "regras gravadas" e ia embora.
+      // Regras e recomendações falham de forma INDEPENDENTE, então os dois desfechos entram
+      // no mesmo aviso: reportar só um deixaria o outro invisível.
+      const totalBundles = allCustomerBundles.reduce((s, c) => s + c.bundles.length, 0);
+      const problemas: string[] = [];
+      if (desfechoRegras === 'falhou') {
+        problemas.push('as regras NÃO foram salvas — as anteriores seguem valendo');
+      } else if (desfechoRegras === 'sem_regras') {
+        problemas.push('nenhuma regra atingiu os pisos — as regras anteriores foram preservadas');
+      }
+      if (recomendacoesNaoGravadas > 0) {
+        problemas.push(
+          recomendacoesNaoGravadas === 1
+            ? '1 recomendação NÃO foi gravada — as telas de oferta seguem com as anteriores'
+            : `${recomendacoesNaoGravadas} recomendações NÃO foram gravadas — as telas de oferta seguem com as anteriores`,
+        );
+      }
+
+      if (problemas.length > 0) {
+        toast.warning(`${totalBundles} bundles gerados, mas ${problemas.join('; e ')}`);
+      } else {
+        toast.success(`${discoveredRules.length} regras e ${totalBundles} bundles gerados`);
+      }
     } catch (error) {
       console.error('Error calculating bundles:', error);
       toast.error('Erro ao calcular bundles');
@@ -573,96 +653,14 @@ export const useBundleEngine = () => {
   }, [effectiveUserId, isImpersonating]);
 
   // ─── Actions ─────────────────────────────────────────────────────────
-  const markBundleOffered = useCallback(async (bundleId: string) => {
-    await supabase.from('farmer_bundle_recommendations')
-      .update({ status: 'ofertado', offered_at: new Date().toISOString() })
-      .eq('id', bundleId);
-  }, []);
-
-  const markBundleAccepted = useCallback(async (
-    bundleId: string,
-    acceptType: 'total' | 'parcial',
-    acceptedProducts?: string[],
-    actualMargin?: number,
-    timeSpent?: number
-  ) => {
-    const update: BundleAcceptUpdate = {
-      status: acceptType === 'total' ? 'aceito_total' : 'aceito_parcial',
-      accepted_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
-    if (acceptedProducts) update.accepted_products = acceptedProducts;
-    if (actualMargin !== undefined) update.actual_margin = actualMargin;
-    if (timeSpent !== undefined) update.time_spent_seconds = timeSpent;
-
-    await supabase.from('farmer_bundle_recommendations').update(update).eq('id', bundleId);
-
-    // Update conversion stats for each product
-    if (acceptedProducts && actualMargin !== undefined) {
-      for (const pid of acceptedProducts) {
-        await updateConversionStats(pid);
-      }
-    }
-    toast.success('Bundle atualizado');
-  }, []);
-
-  const markBundleRejected = useCallback(async (bundleId: string) => {
-    await supabase.from('farmer_bundle_recommendations')
-      .update({ status: 'rejeitado', rejected_at: new Date().toISOString() })
-      .eq('id', bundleId);
-  }, []);
-
-  const updateConversionStats = async (productId: string) => {
-    const { data: recs } = (await supabase.from('farmer_recommendations')
-      .select('status, actual_margin, time_spent_seconds')
-      .eq('product_id', productId)
-      .in('status', ['aceito', 'rejeitado', 'ofertado'])) as unknown as { data: StatsRecRow[] | null };
-
-    const { data: bundleRecs } = (await supabase.from('farmer_bundle_recommendations')
-      .select('status, actual_margin, time_spent_seconds, bundle_products')
-      .in('status', ['aceito_total', 'aceito_parcial', 'rejeitado', 'ofertado'])) as unknown as { data: BundleStatsRow[] | null };
-
-    const allRecs: StatsRecRow[] = [
-      ...(recs || []),
-      ...(bundleRecs || []).filter((b) => {
-        const prods = Array.isArray(b.bundle_products) ? (b.bundle_products as { id: string }[]) : [];
-        return prods.some((p) => p.id === productId);
-      }),
-    ];
-
-    if (!allRecs.length) return;
-
-    const offered = allRecs.length;
-    const accepted = allRecs.filter((r) =>
-      ['aceito', 'aceito_total', 'aceito_parcial'].includes(r.status)
-    ).length;
-    const rate = offered > 0 ? accepted / offered : 0;
-
-    const withMargin = allRecs.filter((r) => r.actual_margin != null);
-    const avgMargin = withMargin.length > 0
-      ? withMargin.reduce((s, r) => s + Number(r.actual_margin), 0) / withMargin.length
-      : 0;
-
-    const withTime = allRecs.filter((r): r is StatsRecRow & { time_spent_seconds: number } => r.time_spent_seconds != null);
-    const avgTime = withTime.length > 0
-      ? Math.round(withTime.reduce((s, r) => s + r.time_spent_seconds, 0) / withTime.length)
-      : 0;
-
-    const profitPerHour = avgTime > 0 ? (avgMargin / (avgTime / 3600)) : 0;
-    const complexity = profitPerHour > 0 ? clamp(1.0 / (1 + Math.log(1 + profitPerHour / 100)), 0.5, 1.5) : 1.0;
-
-    await supabase.from('farmer_category_conversion').upsert({
-      category_id: productId,
-      total_offers: offered,
-      total_accepts: accepted,
-      conversion_rate: Math.round(rate * 1000) / 1000,
-      avg_margin_generated: Math.round(avgMargin * 100) / 100,
-      avg_time_spent_seconds: avgTime,
-      profit_per_hour: Math.round(profitPerHour * 100) / 100,
-      complexity_factor: Math.round(complexity * 1000) / 1000,
-      updated_at: new Date().toISOString(),
-    });
-  };
+  // `markBundleOffered` / `markBundleAccepted` / `markBundleRejected` e o
+  // `updateConversionStats` que gravava `farmer_category_conversion` foram removidos
+  // em 2026-07-21: nenhum componente os importava (`useFarmerBundles` consome apenas
+  // `calculateBundles`), então o desfecho de um bundle nunca foi registrado. Havia
+  // ainda um bug latente no writer — o `upsert` não passava `onConflict`, e como a PK
+  // é `id` (uuid default, ausente do payload) o INSERT nunca conflitava pela PK e
+  // violaria o UNIQUE de `category_id` a partir da 2ª gravação, em silêncio (o retorno
+  // não era checado). Ver docs/historico/farmer-aprendizado-conversao.md.
 
   return {
     customerBundles,
@@ -670,9 +668,6 @@ export const useBundleEngine = () => {
     loading,
     calculating,
     calculateBundles,
-    markBundleOffered,
-    markBundleAccepted,
-    markBundleRejected,
     config: DEFAULT_CONFIG,
   };
 };

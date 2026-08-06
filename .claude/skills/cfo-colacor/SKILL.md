@@ -12,8 +12,9 @@ description: >-
   simulação tributária, "como está o caixa", "rodar o fechamento", "quanto vou pagar de
   imposto", "perto do teto do Simples", "perguntas pro contador", ou qualquer diagnóstico
   financeiro gerencial das 3 empresas — mesmo sem citar "CFO". Trabalha 100% READ-ONLY:
-  gera SELECT pra colar no SQL Editor do Lovable e interpreta o resultado; NÃO apura imposto
-  final, NÃO substitui contador, NÃO faz planejamento fiscal agressivo.
+  roda os SELECT direto via psql-ro (acesso read-only ao Postgres de prod) e interpreta o
+  resultado — sem pedir ao founder pra colar; NÃO apura imposto final, NÃO substitui contador,
+  NÃO faz planejamento fiscal agressivo.
   NÃO use (são outras skills) para: debugar erro/falha de sync do Omie (→ investigate),
   escrever no banco — migrations, cron, INSERT/UPDATE (→ supabase), refatorar código do
   módulo financeiro (.tsx), planilhas xlsx avulsas, comissão de vendedor, gráficos de vendas,
@@ -54,9 +55,11 @@ risco de compliance). Sempre que chegar perto da fronteira, pare e marque
 3. **Não faz planejamento fiscal agressivo.** Nada de "abre tal CNPJ", "muda o regime pra
    pagar menos", "distribui assim pra escapar de X". Se o usuário pedir, redirecione pra uma
    pergunta a ser levada ao contador, conservadoramente.
-4. **Tudo que toca o banco é READ-ONLY e via Lovable.** Você NUNCA escreve no banco. Você
-   gera `SELECT` (e só `SELECT`) pra o usuário colar no **SQL Editor do Lovable**. Sem
-   terminal, sem `curl`, sem CLI, sem `INSERT/UPDATE/DELETE/DDL`. Ver §5 do CLAUDE.md.
+4. **Tudo que toca o banco é READ-ONLY.** Leitura você RODA direto via
+   `~/.config/afiacao/psql-ro` (read-only blindado). Você NUNCA escreve: o wrapper barra
+   `INSERT/UPDATE/DELETE/DDL` (`cannot execute ... in a read-only transaction`, inclusive via
+   RPC `SECURITY DEFINER`) e, se um dia surgir uma mutação necessária, ela é do founder no
+   **SQL Editor do Lovable** (gate do money-path). Ver `docs/agent/database.md §1`.
 5. **Quando não souber a regra tributária/contábil, pergunte ou marque "confirmar com
    contador".** Não invente alíquota, presunção, anexo de Simples, ou tratamento contábil.
 
@@ -76,16 +79,20 @@ Nas tabelas `fin_*` a empresa é a coluna `company text` com exatamente estas st
 
 ## Como você acessa os dados (importante)
 
-Você **não tem acesso ao banco**. O fluxo é sempre o mesmo, e você o conduz:
+Você tem **leitura direta** do Postgres de produção via `~/.config/afiacao/psql-ro` (role
+`claude_ro`, read-only blindado, `BYPASSRLS` — enxerga tudo, sem depender de perfil de app;
+`docs/agent/database.md §1`). O fluxo:
 
-1. Você entrega ao usuário um bloco SQL **read-only** (a partir de `assets/sql/`, adaptando
-   período/empresa). Rotule sempre: **"🟣 Lovable → SQL Editor → cola → Run"**.
-2. O usuário roda no Lovable e cola o resultado de volta no chat.
-3. Você interpreta o resultado, aplica os thresholds, e avança no ritual.
+1. Pegue o `SELECT` read-only de `assets/sql/`, adapte período/empresa, e RODE você mesmo:
+   `~/.config/afiacao/psql-ro -f .claude/skills/cfo-colacor/assets/sql/00-sanity-status.sql`
+   (ou `-c "SELECT ..."`).
+2. Leia o resultado, aplique os thresholds, e avance no ritual.
+3. **Só peça algo ao founder quando for ESCRITA** (aplicar correção, classificar categoria em
+   `/financeiro/mapping`, fechar período) ou dado fora do banco — **nunca** peça pra ele rodar
+   ou colar uma leitura que o psql-ro já responde.
 
-Trabalhe em **lotes**: entregue as queries de uma etapa, espere os resultados, interprete,
-e só então passe pra próxima. Não despeje 8 queries de uma vez — o usuário roda uma de cada
-vez no Lovable.
+Rode as queries de uma etapa em sequência (o gargalo do copia/cola do founder acabou); só
+respeite o `statement_timeout 30s` do wrapper — query pesada que estourar, enxugue a janela.
 
 **Primeira query sempre é a de sanidade** (`assets/sql/00-sanity-status.sql`): valida os valores reais de `status_titulo` e a data do último sync. **Armadilha-mãe (money-path):** o `saldo` **NÃO zera na baixa** — só o `status_titulo` muda; filtre "aberto" por `status_titulo`, **NUNCA por `saldo > 0`** (senão conta quitado como aberto e infla tudo). Os status vêm **com espaço**. Os valores exatos de status, as 8 armadilhas e o caso real (CR da Colacor: R$129k que aparecia como R$17,7M) em `references/schema-financeiro.md` — **leia antes do fechamento**.
 
@@ -192,8 +199,9 @@ Pergunta: "o resultado gerencial do mês é confiável o suficiente pra eu usar?
 Pergunta: "o que está caindo no balde errado do DRE?".
 A query (a) do template lê **direto** as categorias Omie com movimento no período sem linha
 explícita em `fin_categoria_dre_mapping` (que então caem em heurística por palavra-chave, sujeita
-a erro). ⚠️ **Não use a RPC `fin_categorias_sem_mapping`** no SQL Editor: ela tem gate "requer
-perfil financeiro" e devolve `42501: Acesso negado` na sessão do Lovable — a query direta é a
+a erro). ⚠️ **Não chame a RPC `fin_categorias_sem_mapping`**: é `SECURITY DEFINER` com gate
+"requer perfil financeiro" e devolve `42501: Acesso negado` em QUALQUER sessão sem `auth.uid()`
+do app — tanto o `psql-ro` quanto o SQL Editor do Lovable (`database.md §5`). A query direta é a
 mesma lógica (CR+CP por `data_emissao`, fallback `_default`), sem gate.
 - Toda categoria com valor relevante sem mapeamento vira: (a) uma recomendação de classificar
   em `/financeiro/mapping`, e (b) uma candidata a **pergunta pro contador** ("a categoria X é

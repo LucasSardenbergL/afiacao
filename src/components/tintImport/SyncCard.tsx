@@ -3,6 +3,8 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { RefreshCw, Loader2 } from 'lucide-react';
+import { UltimaExecucao } from '@/components/execucoes/UltimaExecucao';
+import { ACOES_TINT_IMPORT } from './acoes';
 
 export function SyncCard({
   syncing, onSync, tintCounts,
@@ -15,6 +17,7 @@ export function SyncCard({
     <Card>
       <CardHeader>
         <CardTitle className="text-base">Sincronizar Produtos Omie</CardTitle>
+        <UltimaExecucao acao={ACOES_TINT_IMPORT.sincronizarProdutos} />
       </CardHeader>
       <CardContent>
         <p className="text-sm text-muted-foreground mb-3">

@@ -29,10 +29,14 @@ export function useBuscaClienteOmie() {
       let empresaByCode: Record<number, string> = {};
       if (omieClientes.length > 0) {
         const codigos = omieClientes.map((c) => c.codigo_cliente);
-        const { data: mappings } = await supabase.from('omie_clientes')
-          .select('user_id, omie_codigo_cliente, empresa_omie').in('omie_codigo_cliente', codigos);
+        // Fatia 3 (épico-drop): resolve o código OBEN -> user_id pela proof fresca account-correta
+        // (account='oben'), não pelo espelho poluído. O código vem da busca OBEN; UNIQUE(código,account)
+        // → sem colisão cross-conta. Miss (sem vínculo fresco) → sem mapa → cai no match por documento.
+        const { data: mappings } = await supabase.from('omie_customer_account_map_fresco')
+          .select('user_id, omie_codigo_cliente, account')
+          .eq('account', 'oben').in('omie_codigo_cliente', codigos);
         mappingByCode = Object.fromEntries((mappings || []).map((m) => [m.omie_codigo_cliente, m.user_id]));
-        empresaByCode = Object.fromEntries((mappings || []).map((m) => [m.omie_codigo_cliente, m.empresa_omie]));
+        empresaByCode = Object.fromEntries((mappings || []).map((m) => [m.omie_codigo_cliente, m.account]));
       }
       const omieMapped: ClienteBusca[] = omieClientes.map((c) => ({
         user_id: mappingByCode[c.codigo_cliente] || '',
@@ -69,8 +73,10 @@ export function useBuscaClienteOmie() {
       if (profile?.user_id) return profile.user_id;
     }
     if (c.omie_codigo_cliente) {
-      const { data: mapping } = await supabase.from('omie_clientes').select('user_id')
-        .eq('omie_codigo_cliente', c.omie_codigo_cliente).maybeSingle();
+      // Fatia 3 (épico-drop): c.omie_codigo_cliente veio da busca OBEN — resolve pela proof fresca
+      // account-correta (account='oben'). UNIQUE(código,account) → sem colisão. Miss → null → sem vínculo.
+      const { data: mapping } = await supabase.from('omie_customer_account_map_fresco').select('user_id')
+        .eq('omie_codigo_cliente', c.omie_codigo_cliente).eq('account', 'oben').maybeSingle();
       if (mapping?.user_id) return mapping.user_id;
     }
     return null;

@@ -16,6 +16,7 @@ import type { ColKey, PedidoItem } from "@/types/reposicao";
 import { aprovarEDisparar } from "../pedidos/aprovar-disparar";
 import { EMPRESA } from "../pedidos/shared";
 import { PrecoCell, ConfiancaBadge } from "./PedidoRowCells";
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 
 export function PedidoRow({
   row,
@@ -109,7 +110,7 @@ export function PedidoRow({
       toast.success("Pedido rejeitado");
       onChanged();
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = mensagemDeErro(err) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.';
       await logAudit({
         userId: user?.id ?? null,
         action: kind === "approve" ? "Aprovação inline" : "Rejeição inline",

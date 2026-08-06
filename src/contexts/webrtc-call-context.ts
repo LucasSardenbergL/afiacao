@@ -1,7 +1,7 @@
 import { createContext, useContext } from 'react';
 import type { IncomingCallInfo } from '@/lib/sip/types';
 import type { TranscriptTurn, TranscriptionStatus } from '@/lib/transcription/types';
-import type { SpinAnalysis, SpinAnalysisStatus } from '@/lib/spin/types';
+import type { SpinAnalysis, SpinAnalysisStatus } from '@/lib/call/spin/types';
 import type { ResolvedCallParty } from '@/lib/call-log/recording-policy';
 
 /**

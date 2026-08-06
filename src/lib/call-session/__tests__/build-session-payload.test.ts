@@ -7,7 +7,7 @@ vi.mock('../aggregate-entities', () => ({
 import { buildSessionPayload, type BuildSessionPayloadInput } from '../build-session-payload';
 import { aggregateEntities } from '../aggregate-entities';
 import type { TranscriptTurn } from '@/lib/transcription/types';
-import type { SpinAnalysis } from '@/lib/spin/types';
+import type { SpinAnalysis } from '@/lib/call/spin/types';
 
 const mockAggregate = vi.mocked(aggregateEntities);
 

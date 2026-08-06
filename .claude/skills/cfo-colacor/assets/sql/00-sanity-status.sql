@@ -1,6 +1,6 @@
 -- ============================================================================
 -- 00 — SANIDADE (rode SEMPRE primeiro)
--- 🟣 Lovable → SQL Editor → cola → Run
+-- 🟢 read-only → eu rodo via psql-ro (fallback: cola no SQL Editor do Lovable)
 -- ----------------------------------------------------------------------------
 -- Valida os valores REAIS de status_titulo e o frescor dos dados antes de tudo.
 -- Status reais (COM espaço): receber = 'A VENCER'/'ATRASADO'/'VENCE HOJE'/'RECEBIDO'/'CANCELADO';

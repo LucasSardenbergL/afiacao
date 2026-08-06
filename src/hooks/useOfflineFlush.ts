@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { flush, subscribeToOfflineQueue, type QueuedMutation } from '@/lib/offline-queue';
 import { logger } from '@/lib/logger';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 
 type Handler = (variables: unknown) => Promise<boolean>;
 
@@ -69,7 +70,7 @@ export function useOfflineFlush(): void {
         } catch (e) {
           logger.warn('Offline flush: handler throw', {
             kind: m.kind,
-            error: e instanceof Error ? e.message : String(e),
+            error: mensagemDeErro(e) ?? '(sem mensagem)',
           });
           return false;
         }

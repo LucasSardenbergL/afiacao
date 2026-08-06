@@ -210,7 +210,13 @@ async function buscarTodasPaginas<T>(
   for (let from = 0; ; from += PAGE) {
     const { data, error } = await fetchPage(from, from + PAGE - 1);
     if (error) throw new Error(`Falha ao carregar ${contexto}: ${error.message}`);
-    const rows = data ?? [];
+    // `data == null` sem `error` é resposta MALFORMADA do PostgREST — não é fim da tabela.
+    // O `?? []` de antes a convertia em página vazia → `0 < PAGE` → laço encerrado → o
+    // acumulado PARCIAL voltava como se fosse a tabela inteira (o defeito que o
+    // fetchAllPages de src/lib/postgrest.ts já rejeita; este helper prometia o mesmo no
+    // JSDoc e não cumpria). Fim LEGÍTIMO é `data: []` — array vazio, que segue adiante.
+    if (data == null) throw new Error(`Falha ao carregar ${contexto}: data=null sem error`);
+    const rows = data;
     out.push(...rows);
     if (rows.length < PAGE) break;
   }
@@ -347,25 +353,31 @@ export async function getFluxoCaixa(
   dataInicio: string,
   dataFim: string
 ): Promise<FluxoCaixaDiario[]> {
-  // Buscar CR e CP para projetar fluxo
-  let crQuery = supabase
-    .from("fin_contas_receber")
-    .select("data_vencimento, data_recebimento, valor_documento, valor_recebido, status_titulo")
-    .gte("data_vencimento", dataInicio)
-    .lte("data_vencimento", dataFim);
-
-  let cpQuery = supabase
-    .from("fin_contas_pagar")
-    .select("data_vencimento, data_pagamento, valor_documento, valor_pago, status_titulo")
-    .gte("data_vencimento", dataInicio)
-    .lte("data_vencimento", dataFim);
-
-  if (company !== 'all') {
-    crQuery = crQuery.eq("company", company);
-    cpQuery = cpQuery.eq("company", company);
-  }
-
-  const [{ data: crData }, { data: cpData }] = await Promise.all([crQuery, cpQuery]);
+  // Previsto: títulos a vencer na janela. Paginado + erro LANÇA. Sem `.range()` o
+  // PostgREST capa em 1000 silenciosamente — prod 2026-07-21: 4.094 títulos de CR
+  // na janela desta tela (oben sozinha 2.897), então ~76% das entradas previstas
+  // sumiam na visão "todas". E o `error` descartado fazia falha de consulta virar
+  // "nada a vencer": uma projeção menor não se anuncia como incompleta.
+  const [crData, cpData] = await Promise.all([
+    buscarTodasPaginas(`CR do fluxo de caixa (${company})`, (from, to) => {
+      let q = supabase
+        .from("fin_contas_receber")
+        .select("data_vencimento, data_recebimento, valor_documento, valor_recebido, status_titulo")
+        .gte("data_vencimento", dataInicio)
+        .lte("data_vencimento", dataFim);
+      if (company !== 'all') q = q.eq("company", company);
+      return q.order("id").range(from, to);
+    }),
+    buscarTodasPaginas(`CP do fluxo de caixa (${company})`, (from, to) => {
+      let q = supabase
+        .from("fin_contas_pagar")
+        .select("data_vencimento, data_pagamento, valor_documento, valor_pago, status_titulo")
+        .gte("data_vencimento", dataInicio)
+        .lte("data_vencimento", dataFim);
+      if (company !== 'all') q = q.eq("company", company);
+      return q.order("id").range(from, to);
+    }),
+  ]);
 
   // Agrupar por dia
   const fluxoMap = new Map<string, FluxoCaixaDiario>();
@@ -385,7 +397,7 @@ export async function getFluxoCaixa(
     return fluxoMap.get(d)!;
   };
 
-  for (const cr of crData || []) {
+  for (const cr of crData) {
     if (cr.data_vencimento) {
       const day = ensureDay(cr.data_vencimento);
       if (cr.status_titulo && ['A VENCER', 'ATRASADO', 'VENCE HOJE'].includes(cr.status_titulo)) {
@@ -394,7 +406,7 @@ export async function getFluxoCaixa(
     }
   }
 
-  for (const cp of cpData || []) {
+  for (const cp of cpData) {
     if (cp.data_vencimento) {
       const day = ensureDay(cp.data_vencimento);
       if (cp.status_titulo && ['A VENCER', 'ATRASADO', 'VENCE HOJE'].includes(cp.status_titulo)) {
@@ -405,24 +417,26 @@ export async function getFluxoCaixa(
 
   // Realizado: caixa que de fato entrou/saiu por dia (fin_movimentacoes).
   // A baixa-do-título (data_recebimento/data_pagamento) está sempre NULL — o
-  // Omie não manda no endpoint LIST. Paginação manual: PostgREST capa em 1000
-  // linhas e a janela pode passar disso.
-  const movimentos: Array<{ data_movimento: string; tipo: string | null; valor: number; omie_codigo_lancamento: number | null }> = [];
-  const PAGE = 1000;
-  for (let from = 0; ; from += PAGE) {
-    let movQuery = supabase
-      .from('fin_movimentacoes')
-      .select('data_movimento, tipo, valor, omie_codigo_lancamento')
-      .gte('data_movimento', dataInicio)
-      .lte('data_movimento', dataFim)
-      .order('data_movimento', { ascending: true })
-      .range(from, from + PAGE - 1);
-    if (company !== 'all') movQuery = movQuery.eq('company', company);
-    const { data: page } = await movQuery;
-    if (!page || page.length === 0) break;
-    movimentos.push(...page);
-    if (page.length < PAGE) break;
-  }
+  // Omie não manda no endpoint LIST.
+  // Paginado + erro LANÇA: a janela passa de 1000 (prod 2026-07-21: 14.104 linhas
+  // = 15 páginas na visão "todas") e uma página perdida encerrando o laço
+  // subnotificava o caixa — exibido como número firme, sem sinal de incompletude.
+  // Ordem TOTAL (data_movimento, id): `data_movimento` sozinho NÃO desempata —
+  // 100,0% das linhas da janela dividem o dia com outra (maior dia = 305, média
+  // ~90), então toda fronteira de página cai dentro de um empate e o offset pula
+  // e duplica linhas, sem erro nenhum. O `id` (PK) fecha a ordem.
+  const movimentos = await buscarTodasPaginas(
+    `movimentações do fluxo de caixa (${company})`,
+    (from, to) => {
+      let q = supabase
+        .from('fin_movimentacoes')
+        .select('data_movimento, tipo, valor, omie_codigo_lancamento')
+        .gte('data_movimento', dataInicio)
+        .lte('data_movimento', dataFim);
+      if (company !== 'all') q = q.eq('company', company);
+      return q.order('data_movimento', { ascending: true }).order('id').range(from, to);
+    },
+  );
 
   const realizadoPorDia = agregarRealizadoPorDia(movimentos);
   for (const [dia, r] of realizadoPorDia) {
@@ -855,7 +869,11 @@ export async function somarSaldoPorStatus(
       .order('id')
       .range(from, from + PAGE - 1);
     if (error) throw new Error(`Falha ao somar saldo (${tabela}/${company}): ${error.message}`);
-    const rows = (data ?? []) as Array<{ saldo: number | null }>;
+    // data null SEM error = malformada, não fim (classe #1338→#1564, mesmo contrato do
+    // buscarTodasPaginas acima): tratá-la como fim devolvia SOMA PARCIAL como total a
+    // receber/pagar — alimenta DSO, KPIs de /financeiro/gestao e o resumo.
+    if (data == null) throw new Error(`Falha ao somar saldo (${tabela}/${company}): data=null sem error`);
+    const rows = data as Array<{ saldo: number | null }>;
     for (const r of rows) total += r.saldo ?? 0;
     if (rows.length < PAGE) break;
     from += PAGE;
@@ -1033,6 +1051,30 @@ interface CockpitEmpresaEVP {
   min_folga_positiva_receita: number | null; // receita do combo DONO do min — LOCATOR, não severidade: a UI suprime o headline quando imaterial (< sample_min_receita)
   capital_conhecido: number | null; // Σ capital das células reais → deriva EVP a outros hurdles
 }
+// Canal do pedido (PR1 Cabreúva-Colacor): espelho de digitalização da venda + margem por canal.
+// origem ~100% NULL em prod (2026-08-03) → hoje a leitura dominante é erp_direto; a comparação de
+// margem entre canais fica ARMADA para quando o canal digital tiver volume.
+export type CanalPedido = 'erp_direto' | 'app_cliente' | 'app_staff' | 'ligacao' | 'app_sem_origem' | 'outro';
+export interface CockpitRollupCanal {
+  canal: CanalPedido;
+  pedidos: number;          // pedidos DISTINTOS com item Oben na janela
+  clientes: number;         // clientes distintos
+  receita: number;
+  quantidade: number;
+  desconto: number;
+  cm: number | null;        // margem de contribuição (NÃO lucro): null se nenhum item com custo
+  cm_incompleto: boolean;   // há itens sem custo → cm subestima a margem do canal
+  receita_sem_cm: number;   // receita dos itens sem custo (transparência da fatia sem margem)
+}
+// Giro executivo (PR3 Cabreúva): capital em estoque nível-empresa + dinheiro morto +
+// retorno-sobre-estoque PROXY (cm TTM ÷ snapshot; NÃO é GMROI — falta estoque médio histórico).
+export interface CockpitGiroExecutivo {
+  capital_medido: number;
+  capital_sem_venda_ttm: number;   // capital em SKUs SEM venda no TTM (dinheiro morto)
+  skus_medidos: number;
+  skus_sem_valor: number;          // presentes no estoque mas sem valor confiável (cmc/saldo)
+  retorno_proxy: number | null;    // null se cm indisponível ou capital ≤ 0 (nunca Infinity)
+}
 export interface ValorCockpitResult {
   company: string;
   k: number | null;                 // hurdle (Ke); null quando ausente/inválido (não fabricado)
@@ -1042,6 +1084,8 @@ export interface ValorCockpitResult {
   motivo?: string;
   porCliente: CockpitRollupCliente[];
   porSKU: CockpitRollupSKU[];
+  porCanal?: CockpitRollupCanal[]; // opcional: edge antiga (pré-deploy) não devolve — UI degrada honesta
+  giroExecutivo?: CockpitGiroExecutivo; // idem (PR3): ausente na edge antiga → UI omite o bloco
   empresa: CockpitEmpresaEVP;
   recomendacoesCliente: Array<{ cliente: string; recomendacoes: CockpitRecomendacao[] }>;
   confianca: { nivel: 'alta' | 'media' | 'baixa'; motivos: string[] };

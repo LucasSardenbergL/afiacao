@@ -15,6 +15,7 @@ import {
 import {
   Loader2, Save, Trash2, Building2, Search, Layers, AlertTriangle, History
 } from 'lucide-react';
+import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { AuditTrailDrawer } from '@/components/financeiro/AuditTrailDrawer';
 import { useSuggestedMapping } from '@/hooks/useSuggestedMapping';
 import { useQueryClient } from '@tanstack/react-query';
@@ -310,9 +311,7 @@ const FinanceiroMapping = () => {
         </CardHeader>
         <CardContent className="p-0">
           {loading ? (
-            <div className="p-8 text-center">
-              <Loader2 className="w-6 h-6 animate-spin mx-auto text-muted-foreground" />
-            </div>
+            <PageSkeleton variant="list" className="p-4" />
           ) : (
             <div className="overflow-x-auto">
               <Table>

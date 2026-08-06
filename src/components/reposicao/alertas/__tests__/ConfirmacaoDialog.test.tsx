@@ -10,11 +10,11 @@ describe("ConfirmacaoDialog", () => {
     expect(screen.queryByText(/Confirmar/)).toBeNull();
   });
 
-  it("excluir em lote → título, contagem, aviso e Confirmar dispara onConfirm", () => {
+  it("lote → título, contagem e Confirmar dispara onConfirm", () => {
     const onConfirm = vi.fn();
     render(
       <ConfirmacaoDialog
-        acaoConfirm={{ tipo: "excluir", lote: true }}
+        acaoConfirm={{ lote: true }}
         onClose={noop}
         selecionadosCount={4}
         justificativa=""
@@ -23,17 +23,15 @@ describe("ConfirmacaoDialog", () => {
         isPending={false}
       />
     );
-    expect(screen.getByText(/Confirmar exclusão/)).toBeTruthy();
-    expect(screen.getByText(/Aplicar a 4 alerta\(s\)/)).toBeTruthy();
-    expect(screen.getByText(/remove os eventos do cálculo estatístico/)).toBeTruthy();
+    expect(screen.getByText(/Marcar 4 alerta\(s\) como revisado\(s\)/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /Confirmar/ }));
     expect(onConfirm).toHaveBeenCalled();
   });
 
-  it("aceitar individual → título de aceitação, sem aviso de exclusão", () => {
+  it("individual → descreve revisão, sem prometer efeito no cálculo", () => {
     render(
       <ConfirmacaoDialog
-        acaoConfirm={{ tipo: "aceitar", lote: false }}
+        acaoConfirm={{ lote: false }}
         onClose={noop}
         selecionadosCount={0}
         justificativa=""
@@ -42,8 +40,25 @@ describe("ConfirmacaoDialog", () => {
         isPending={false}
       />
     );
-    expect(screen.getByText(/Confirmar aceitação/)).toBeTruthy();
-    expect(screen.getByText(/Aplicar ao alerta selecionado/)).toBeTruthy();
-    expect(screen.queryByText(/remove os eventos/)).toBeNull();
+    expect(screen.getByText(/permanece no cálculo/)).toBeTruthy();
+  });
+
+  // Guarda de regressão: a promessa falsa não pode voltar. Havia um teste VERDE
+  // (`expect(getByText(/remove os eventos do cálculo estatístico/)).toBeTruthy()`)
+  // que institucionalizava a mentira — a tela afirmava um efeito que o motor nunca viu.
+  it("não promete remover do cálculo nem recálculo automático", () => {
+    render(
+      <ConfirmacaoDialog
+        acaoConfirm={{ lote: true }}
+        onClose={noop}
+        selecionadosCount={2}
+        justificativa=""
+        setJustificativa={noop}
+        onConfirm={noop}
+        isPending={false}
+      />
+    );
+    expect(screen.queryByText(/remove os eventos do cálculo/)).toBeNull();
+    expect(screen.queryByText(/recálculo automático/)).toBeNull();
   });
 });

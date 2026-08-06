@@ -28,7 +28,12 @@ export function ReguaPrecoSinal({
   const ehFolga = result.sinal === 'auto_ref' || result.sinal === 'benchmark';
   const visivel = ehPiso || ehFolga; // nenhum/discordância/preço-acima = invisível
   const temBotao = !readonly && result.precoReferencia != null && onAplicar != null;
-  const pisoOculto = readonly && ehPiso; // no 360 o valor do piso vaza o custo → não expõe
+  // O valor do piso VAZA o custo (cmc = piso × (1−alíquota), e a alíquota é uma constante global).
+  // Oculta em dois casos: no 360 (tela mais exposta) e sempre que o SERVIDOR não mandou o número —
+  // quem não tem `private.cap_custo_ler` recebe pisoMC null e vê o sinal sem o valor (FU4-F fase 2).
+  // Sem número não há `precoReferencia`, então o botão "Aplicar piso · R$ X" some por construção:
+  // aplicá-lo jogaria o piso no campo de preço, revelando o custo em 1 clique.
+  const pisoOculto = ehPiso && (readonly || result.pisoMC == null);
   const pct = result.suggestedGapPct != null ? Math.round(result.suggestedGapPct * 100) : 0;
 
   useEffect(() => {

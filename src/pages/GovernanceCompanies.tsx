@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Loader2, Building2, Save } from 'lucide-react';
+import { PageSkeleton } from '@/components/ui/page-skeleton';
 
 interface CompanyProfile {
   id: string;
@@ -73,9 +74,7 @@ export default function GovernanceCompanies() {
 
   if (authLoading || roleLoading || loading) {
     return (
-      <div className="flex items-center justify-center py-32">
-        <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
-      </div>
+      <PageSkeleton variant="list" />
     );
   }
 

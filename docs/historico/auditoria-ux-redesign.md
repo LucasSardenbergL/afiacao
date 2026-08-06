@@ -29,6 +29,8 @@ Trabalho posterior à Fase 4, no mesmo branch. Artefatos em `docs/visual-directi
 
 > PR #4 foi mergeado em 2026-05-14. Auditoria pós-merge (PRs #24-33) capturou 4 issues bloqueantes que o PR #4 introduziu (SQL injection em useGlobalSearch, exposição de profiles sem gate, 66 classes Tailwind quebradas, PostHog DEV pollution) — todos corrigidos. **Lição operacional**: `bun lint && bun build` precisa virar required check no GitHub. ✅ **Feito** — CI (`.github/workflows/ci.yml`) + branch protection exigindo o check `validate` (ver §10). Disciplina: não bypassar com `--admin` de rotina.
 
+> **Esteira PageSkeleton (#1215, jul/2026) — convenção `<Loader2 spin>` full-page → `<PageSkeleton variant>` COMPLETA.** ~70 páginas migradas + o último gate de página inteira, `ProtectedRoute` (branch `loading`), fechado no **#1232** → boot sem flash duplo (skeleton → conteúdo, coeso). Verificação de deploy por bytes calibrada para refactor visual em componente **eager** (entry bundle): a marca removida (`animate-spin text-primary`) não era única globalmente (13 telas lazy), então a prova de versão ancorou o chunk pela string renderizada única + assinatura de ausência **com controle positivo irmão** no mesmo chunk. A técnica virou nuance no Passo 4 da skill `lovable-deploy-verify` (**#1238**, decidida via ritual `/codex` com cross-model agreement).
+
 ---
 
 
@@ -60,3 +62,29 @@ Pra ficar claro quando os termos entrarem na Fase 3:
 
 Tudo isso vira critério ativo da Fase 2 (heurística D1–D6) e priorização ICE da Fase 3.
 
+
+## Última execução em ações globais (2026-07-18)
+
+Todo botão de ação global (sincronizar/importar/recalcular) passa a mostrar "Última execução:
+há X · quem · status" — pedido do founder a partir do print de `/admin/analytics-sync`.
+Infra: tabela `acoes_execucoes` (RLS staff-only, provada em PG17 com falsificação em
+`db/test-acoes-execucoes.sh`) + primitivos `useMutationComRegistro`/`<UltimaExecucao>`
+(`src/components/execucoes/`, módulo plataforma) + registro server-side na edge
+(`_shared/registro-execucao.ts`) para actions com cron — o clique manual e o cron 2/2h do
+`compute-costs-daily` aparecem na MESMA caption (descoberta que definiu o design: registrar só
+cliques mentiria; o cron dos motores vive só no banco, invisível ao grep do repo). Convenção
+nova no CLAUDE.md §Design System (**1 escritor por slug**; ação per-registro fica de fora — o
+estado vive no próprio registro). Varredura dos demais botões do app (tintImport SyncCard,
+GestorExcecoes, AdminReposicaoPedidos, GerarCicloDialog, PrecoEmbalagemDialog) é o PR2.
+Spec: `docs/superpowers/specs/2026-07-18-ultima-execucao-acoes-design.md`.
+
+### PR3 — ciclo de oportunidade com escritor SQL (2026-07-20)
+
+O slug `reposicao.gerar_ciclo_oportunidade` ganhou o escritor DEFINITIVO: a própria função
+`ciclo_oportunidade_do_dia` (migration `20260722110000`), classificando origem por `auth.uid()`
+(NULL = cron das 11:05 → `automatica`; presente = clique staff → `manual` + nome). INSERT único
+no FIM da função — rollback do ciclo leva o registro junto (sem linha órfã "executando").
+Prova PG17 6/6 (`db/test-ciclo-registro.sh`): cron/manual/rollback/fail-open/invoker preservado
++ falsificação. O harness pegou um bug real de desenho: `auth.uid()` no DECLARE fura o
+EXCEPTION (lição nova em `docs/agent/database.md`). Caption na página de Oportunidades fora do
+condicional do botão (mostra o "automática" diário). Fecha o programa "última execução".

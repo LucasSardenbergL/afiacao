@@ -4,7 +4,7 @@
 // (stale-while-revalidate). Estes helpers são PUROS (parse/serialize + checagem
 // de TTL recebendo o relógio por parâmetro) pra serem testáveis; o hook injeta
 // Date.now() e o localStorage.
-import type { CityOption } from '@/components/reposicao/routePlanner/types';
+import type { CityOption } from '@/components/rota/planner/types';
 
 export interface CidadesCacheEntry {
   data: CityOption[];

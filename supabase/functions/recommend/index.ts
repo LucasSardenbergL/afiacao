@@ -1,4 +1,10 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import {
+  limiteCandidatos,
+  projetarCandidato,
+  projetarMeta,
+  textoExplicacaoMargem,
+} from "../_shared/recommend-projecao.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -96,11 +102,27 @@ interface Candidate {
   penalties: number;
 }
 
+/**
+ * FU4-F/3: a capability de CUSTO do usuário chamador.
+ *
+ * ⚠️ Recebe o client do JWT DO USUÁRIO (supabaseAuth), nunca o service_role: `public.pode_ler_custo()`
+ * é sem parâmetro e resolve por `auth.uid()`. Com service_role o uid é NULL e a resposta é `false` —
+ * ligar no client errado falha FECHADO (nega custo), nunca aberto.
+ *
+ * Fail-closed também no erro: RPC indisponível ⇒ `false`. "Não consegui verificar" não é permissão.
+ */
+async function podeLerCusto(dbUsuario: ReturnType<typeof createClient>): Promise<boolean> {
+  const { data, error } = await dbUsuario.rpc("pode_ler_custo");
+  if (error) return false;
+  return data === true;
+}
+
 async function recommend(
   db: ReturnType<typeof createClient>,
   customerId: string,
   basketProductIds: string[],
-  farmerId: string
+  farmerId: string,
+  podeCusto: boolean
 ) {
   // 1. Load config + customer orders + products + costs + rules + client score in PARALLEL
   const [
@@ -237,7 +259,8 @@ async function recommend(
       explanationText = `${Math.round(sim * 100)}% dos clientes similares compram ${p.descricao}`;
     } else if (margemExibida != null && margemExibida > 50) {
       explanationKey = "margin";
-      explanationText = `${p.descricao} tem alto potencial de margem (R$ ${margemExibida.toFixed(2)})`;
+      // O R$ ia EMBUTIDO NA PROSA — nenhum gate de campo pegaria isto. O sinal fica, o número sai.
+      explanationText = textoExplicacaoMargem(p.descricao, margemExibida, podeCusto);
     } else if (ctx > 0.2) {
       explanationKey = "context";
       explanationText = `Baseado no histórico de compras, ${p.descricao} complementa bem o mix`;
@@ -259,7 +282,12 @@ async function recommend(
     basketFamilies[familia] = (basketFamilies[familia] || 0) + 1;
   }
 
-  if (candidates.length === 0) return { recommendations: [], meta: { total_candidates: 0, mode: "profit", weights: { wA, wP, wS, wC }, top_n: topN } };
+  // ⚠️ o retorno vazio TAMBÉM passa pela projeção: `weights` é insumo da inversão de score_final e
+  // vazava por aqui. (O `mode` fixo em "profit" desta linha é inconsistência PRÉ-EXISTENTE com o
+  // retorno principal — preservada verbatim para manter o diff restrito a autorização.)
+  if (candidates.length === 0) {
+    return { recommendations: [], meta: projetarMeta(0, "profit", { wA, wP, wS, wC }, topN, podeCusto) };
+  }
 
   // Normalize and score
   const assocNormed = minMaxNorm(candidates.map((c) => c.assoc_score));
@@ -277,7 +305,9 @@ async function recommend(
   }
 
   candidates.sort((a, b) => b.score_final - a.score_final);
-  const topCandidates = candidates.slice(0, topNAdmin);
+  // Sem a capability, `top_n_vendedor` (5) em vez de `top_n_admin` (20): a config já distinguia os
+  // dois e o código devolvia 20 para todos. Menos itens = menos superfície do canal de ordenação.
+  const topCandidates = candidates.slice(0, limiteCandidatos(topN, topNAdmin, podeCusto));
 
   // BATCH log impressions (single insert instead of N inserts)
   const logRows = topCandidates.slice(0, topN).map((c) => ({
@@ -308,28 +338,18 @@ async function recommend(
     await db.from("recommendation_log").insert(logRows);
   }
 
+  // FU4-F/3: a decisão de quem vê número acontece AQUI, no servidor. Antes, `_admin.cost_final` ia
+  // para todo staff e o browser apagava depois de receber (useRecommendationEngine.ts) — a resposta
+  // de rede já tinha entregue o custo.
   return {
-    recommendations: topCandidates.map((c) => ({
-      product_id: c.product_id, codigo: c.codigo, descricao: c.descricao,
-      price: c.price, margin: c.margin, probability: c.probability,
-      eip: c.margin != null ? c.eip : null, score_final: c.score_final,
-      recommendation_type: c.recommendation_type,
-      explanation_text: c.explanation_text, explanation_key: c.explanation_key,
-      estoque: c.estoque,
-      _admin: {
-        cost_final: c.cost_final, cost_source: c.cost_source,
-        cost_confidence: c.cost_confidence, estimated_cost_for_ranking: c.cost_ranking,
-        assoc_score: c.assoc_score,
-        sim_score: c.sim_score, ctx_score: c.ctx_score,
-        penalties: c.penalties, familia: c.familia, eiltv: c.margin != null ? c.eiltv : null,
-      },
-    })),
-    meta: {
-      total_candidates: candidates.length,
-      mode: mode === 0 ? "profit" : "ltv",
-      weights: { wA, wP, wS, wC },
-      top_n: topN,
-    },
+    recommendations: topCandidates.map((c) => projetarCandidato(c, podeCusto)),
+    meta: projetarMeta(
+      candidates.length,
+      mode === 0 ? "profit" : "ltv",
+      { wA, wP, wS, wC },
+      topN,
+      podeCusto,
+    ),
   };
 }
 
@@ -411,7 +431,10 @@ Deno.serve(async (req) => {
       case "recommend": {
         const { customer_id, basket_product_ids = [] } = params;
         if (!customer_id) throw new Error("customer_id obrigatório");
-        result = await recommend(supabaseAdmin, customer_id, basket_product_ids, user.id);
+        // ⚠️ supabaseAuth (JWT do usuário), NÃO supabaseAdmin: pode_ler_custo() resolve por
+        // auth.uid(). Com service_role o uid é NULL e a resposta seria `false` — fail-closed.
+        const podeCusto = await podeLerCusto(supabaseAuth);
+        result = await recommend(supabaseAdmin, customer_id, basket_product_ids, user.id, podeCusto);
         break;
       }
       case "log_accept": {

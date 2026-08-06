@@ -1,6 +1,8 @@
 import { useState, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
+import { invokeFunction } from '@/lib/invoke-function';
 import { toast } from 'sonner';
+import { margemConhecida } from '@/lib/scoring/margin';
 
 export interface BundleArgument {
   diagnostico: string;
@@ -15,16 +17,27 @@ export interface BundleArgument {
 
 export type CustomerProfile = 'sensivel_preco' | 'orientado_qualidade' | 'orientado_produtividade' | 'misto';
 
+/**
+ * Perfil comercial do cliente. Espelho de `classifyProfile` em
+ * `supabase/functions/_shared/tactical-margem.ts` — mudou aqui, mude lá.
+ *
+ * ⚠️ `grossMarginPct` aceita `null` ("não medida") e os dois primeiros ramos SÓ disparam com
+ * margem conhecida. Sem esse guard o JS fabrica o diagnóstico: `null < 20` é `true` (null coage
+ * a 0), então todo cliente de gasto baixo e margem desconhecida seria rotulado "sensível a
+ * preço" — e o rótulo muda a abordagem que a vendedora leva para a rua. Não é hipótese: desde o
+ * cálculo server-side da margem, 84% das linhas ficam com margem nula.
+ */
 export const classifyCustomerProfile = (
   healthScore: number,
   avgMonthlySpend: number,
-  grossMarginPct: number,
+  grossMarginPct: number | null,
   categoryCount: number
 ): CustomerProfile => {
+  const margem = margemConhecida(grossMarginPct);
   // Price-sensitive: low spend, low margin tolerance
-  if (avgMonthlySpend < 500 && grossMarginPct < 20) return 'sensivel_preco';
+  if (margem != null && avgMonthlySpend < 500 && margem < 20) return 'sensivel_preco';
   // Quality-oriented: high margin, fewer categories (focused buyer)
-  if (grossMarginPct > 35 && categoryCount <= 3) return 'orientado_qualidade';
+  if (margem != null && margem > 35 && categoryCount <= 3) return 'orientado_qualidade';
   // Productivity-oriented: high spend, many categories, high health
   if (avgMonthlySpend > 2000 && categoryCount >= 4 && healthScore > 60) return 'orientado_produtividade';
   return 'misto';
@@ -64,23 +77,22 @@ export const useBundleArguments = () => {
     setGenerating(prev => ({ ...prev, [bundleKey]: true }));
 
     try {
-      const { data, error } = await supabase.functions.invoke('generate-bundle-argument', {
-        body: { bundle, customer, customerProfile },
+      // invokeFunction extrai o motivo REAL do corpo da resposta. O `data.error`
+      // de antes só pegava erro devolvido com status 200 — a edge agora responde
+      // 402/422, e com o invoke cru o motivo (créditos esgotados, geração
+      // truncada) virava o toast genérico "Erro ao gerar argumentação".
+      const argument = await invokeFunction<BundleArgument>('generate-bundle-argument', {
+        bundle, customer, customerProfile,
       });
-
-      if (error) throw error;
-
-      if (data?.error) {
-        toast.error(data.error);
-        return null;
-      }
-
-      const argument = data as BundleArgument;
       setArguments(prev => ({ ...prev, [bundleKey]: argument }));
       return argument;
     } catch (error) {
       console.error('Error generating argument:', error);
-      toast.error('Erro ao gerar argumentação');
+      const motivo = error instanceof Error && error.name === 'EdgeFunctionError' &&
+          !/non-2xx status code/i.test(error.message)
+        ? error.message
+        : null;
+      toast.error(motivo ?? 'Erro ao gerar argumentação');
       return null;
     } finally {
       setGenerating(prev => ({ ...prev, [bundleKey]: false }));

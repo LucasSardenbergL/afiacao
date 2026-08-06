@@ -15,7 +15,8 @@ export function statusCron(
     return { nivel: 'red', acao: 'Última execução falhou — ver logs / reinvocar no Lovable.' };
   }
   if (maxAgeHours != null && c.age_hours != null && c.age_hours > maxAgeHours) {
-    return { nivel: 'red', acao: `Atrasado — não roda há ${Math.round(c.age_hours)}h.` };
+    const idade = c.age_hours >= 72 ? `${Math.round(c.age_hours / 24)}d` : `${Math.round(c.age_hours)}h`;
+    return { nivel: 'red', acao: `Atrasado — não roda há ${idade}.` };
   }
   return { nivel: 'green', acao: 'OK.' };
 }

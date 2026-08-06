@@ -1,9 +1,9 @@
 -- ============================================================
--- BASELINE DE CRONS — snapshot da topologia de pg_cron (regenerado 2026-07-04)
+-- BASELINE DE CRONS — snapshot da topologia de pg_cron (regenerado 2026-07-21)
 -- ============================================================
 -- LIÇÃO DO INCIDENTE 2026-05-27: o cron de vendas (omie-vendas-sync sync_pedidos) se perdeu
 -- porque vivia SÓ no banco, nunca versionado → sumiu sem rastro e vendas ficou morto 8 dias.
--- Esta migration versiona TODOS os 75 crons ativos como safety net: se um sumir, re-rodar o
+-- Esta migration versiona TODOS os 81 crons ativos como safety net: se um sumir, re-rodar o
 -- statement correspondente restaura. cron.schedule faz upsert por nome (idempotente).
 --
 -- GERADO automaticamente a partir de cron.job (active=true) via:
@@ -11,7 +11,7 @@
 --          regexp_replace(command,'\s+',' ','g')), E'\n\n' ORDER BY jobname) FROM cron.job WHERE active;
 -- ⚠️ O regexp_replace ACHATA o whitespace do command (1 statement/linha) → o arquivo é LOSSY nesse
 --    aspecto: um command com whitespace SIGNIFICATIVO (texto de e-mail, markdown, regex, JSON com
---    espaços intencionais) seria reescrito. Hoje os 75 são whitespace-insensíveis (SQL/DO/URL/JSON
+--    espaços intencionais) seria reescrito. Hoje os 81 são whitespace-insensíveis (SQL/DO/URL/JSON
 --    compacto) — reavaliar se um cron futuro carregar texto sensível a espaço.
 -- NÃO editar à mão. REGENERAR quando a topologia mudar (rodar o generator de novo e substituir).
 -- NÃO precisa ser aplicada agora (os crons já existem em prod) — é artefato de recuperação.
@@ -19,7 +19,10 @@
 -- (reseta o histórico em job_run_details) — por isso só aplicar sob demanda, não de rotina.
 -- ============================================================
 
+
 SELECT cron.schedule('afiacao_ciclo_oportunidade_diario', '5 11 * * *', 'SELECT public.ciclo_oportunidade_do_dia(''OBEN'');');
+
+SELECT cron.schedule('afiacao_customer_metrics_refresh_6h', '15 */6 * * *', 'SELECT public.refresh_customer_metrics()');
 
 SELECT cron.schedule('afiacao_dispatch_notificacoes_30min', '*/30 * * * *', ' select net.http_post( url := ''https://fzvklzpomgnyikkfkzai.supabase.co/functions/v1/dispatch-notifications'', headers := jsonb_build_object( ''Content-Type'', ''application/json'', ''x-cron-secret'', (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name=''CRON_SECRET'') ), body := ''{}''::jsonb, timeout_milliseconds := 60000 ); ');
 
@@ -87,9 +90,11 @@ SELECT cron.schedule('gerar-pedidos-diario-oben', '15 9 * * *', ' SELECT net.htt
 
 SELECT cron.schedule('gerar-pedidos-intraday-oben', '15 10,12,14,16,18,20 * * *', ' SELECT net.http_post( url := ''https://fzvklzpomgnyikkfkzai.supabase.co/functions/v1/gerar-pedidos-diario'', headers := jsonb_build_object( ''Content-Type'', ''application/json'', ''x-cron-secret'', (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name=''CRON_SECRET'' LIMIT 1) ), body := ''{"empresa":"OBEN","intraday":true}''::jsonb, timeout_milliseconds := 150000 ) AS request_id; ');
 
-SELECT cron.schedule('monthly-tool-report', '0 9 1 * *', ' SELECT net.http_post(url:=''https://fzvklzpomgnyikkfkzai.supabase.co/functions/v1/monthly-report'', headers:=jsonb_build_object(''Content-Type'',''application/json'',''x-cron-secret'',(SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name=''CRON_SECRET'')), body:=''{"send_email": true}''::jsonb,timeout_milliseconds:=150000);');
-
 SELECT cron.schedule('nao-vinculados-refresh-diario', '30 8 * * *', ' SELECT net.http_post( url := ''https://fzvklzpomgnyikkfkzai.supabase.co/functions/v1/omie-analytics-sync'', headers := jsonb_build_object( ''Content-Type'', ''application/json'', ''x-cron-secret'', (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = ''CRON_SECRET'' LIMIT 1) ), body := jsonb_build_object(''action'', ''start_nao_vinculados'', ''account'', ''vendas''), timeout_milliseconds := 60000 ); ');
+
+SELECT cron.schedule('omie-nfe-recebimento-import-1h', '50 10-22 * * 1-6', ' SELECT net.http_post( url := ''https://fzvklzpomgnyikkfkzai.supabase.co/functions/v1/omie-nfe-recebimento-sync'', headers := jsonb_build_object( ''Content-Type'', ''application/json'', ''x-cron-secret'', (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name=''CRON_SECRET'' LIMIT 1) ), body := ''{}''::jsonb, timeout_milliseconds := 150000 ); ');
+
+SELECT cron.schedule('omie-nfe-reconcile-1h', '10 11-23 * * 1-6', ' SELECT net.http_post( url := ''https://fzvklzpomgnyikkfkzai.supabase.co/functions/v1/omie-nfe-reconcile'', headers := jsonb_build_object(''Content-Type'',''application/json'',''x-cron-secret'',(SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name=''CRON_SECRET'' LIMIT 1)), body := ''{}''::jsonb, timeout_milliseconds := 150000); ');
 
 SELECT cron.schedule('omie-sync-estoque-diario', '0 9 * * *', ' SELECT net.http_post( url := ''https://fzvklzpomgnyikkfkzai.supabase.co/functions/v1/omie-sync-estoque'', headers := jsonb_build_object( ''Content-Type'', ''application/json'', ''x-cron-secret'', (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name=''CRON_SECRET'' LIMIT 1) ), body := ''{"empresa": "OBEN"}''::jsonb, timeout_milliseconds := 90000 ) AS request_id; ');
 
@@ -117,6 +122,8 @@ SELECT cron.schedule('reposicao-cold-start-parametros', '15 8 * * *', ' SELECT p
 
 SELECT cron.schedule('reposicao-depara-sayerlack-auto-diario', '0 4 * * *', ' SELECT net.http_post( url := ''https://fzvklzpomgnyikkfkzai.supabase.co/functions/v1/reposicao-depara-sayerlack-auto'', headers := jsonb_build_object( ''Content-Type'', ''application/json'', ''x-cron-secret'', (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name=''CRON_SECRET'' LIMIT 1) ), timeout_milliseconds := 120000 ); ');
 
+SELECT cron.schedule('reposicao-embalagem-cadastro-wp-daily', '0 9 * * *', 'SELECT public.reposicao_sincronizar_embalagem_wp(''oben'')');
+
 SELECT cron.schedule('reposicao-param-auto-resumo', '0 21 * * *', ' SELECT public.reposicao_param_auto_resumo_tick(); ');
 
 SELECT cron.schedule('reposicao-param-limbo-watchdog', '30 11 * * *', ' SELECT public.reposicao_param_limbo_watchdog(); ');
@@ -125,6 +132,8 @@ SELECT cron.schedule('reposicao-preencher-parametros-faltantes', '0 8 * * *', ' 
 
 SELECT cron.schedule('reposicao-refresh-descricao-diario', '45 8 * * *', ' SELECT public.atualizar_descricao_sku_parametros(''OBEN''); ');
 
+SELECT cron.schedule('sayerlack-captura-precos-mensal', '0 9 10-12 * *', ' SELECT net.http_post( url := ''https://fzvklzpomgnyikkfkzai.supabase.co/functions/v1/sayerlack-captura-precos'', headers := jsonb_build_object( ''Content-Type'', ''application/json'', ''x-cron-secret'', (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name=''CRON_SECRET'' LIMIT 1) ), body := ''{"modo":"full","empresa":"oben"}''::jsonb, timeout_milliseconds := 395000 ); ');
+
 SELECT cron.schedule('sayerlack-portal-watchdog', '*/5 * * * *', ' SELECT net.http_post(url:=''https://fzvklzpomgnyikkfkzai.supabase.co/functions/v1/enviar-pedido-portal-sayerlack'', headers:=jsonb_build_object(''Content-Type'',''application/json'',''x-cron-secret'',(SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name=''CRON_SECRET'' LIMIT 1)), body:=jsonb_build_object(''watchdog'',true,''minutos'',5),timeout_milliseconds:=150000);');
 
 SELECT cron.schedule('sayerlack-retry-orfaos', '*/15 * * * *', ' SELECT public.sayerlack_retry_orfaos(); ');
@@ -132,6 +141,10 @@ SELECT cron.schedule('sayerlack-retry-orfaos', '*/15 * * * *', ' SELECT public.s
 SELECT cron.schedule('scoring-recalc-batch-nightly', '0 6 * * *', 'SELECT net.http_post( url := ''https://fzvklzpomgnyikkfkzai.supabase.co/functions/v1/scoring-recalc-batch'', headers := jsonb_build_object( ''Content-Type'', ''application/json'', ''x-cron-secret'', (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = ''CRON_SECRET'' LIMIT 1) ), timeout_milliseconds := 55000 );');
 
 SELECT cron.schedule('sync-colacor-vendas-products', '15 6 * * *', ' SELECT net.http_post(url:=''https://fzvklzpomgnyikkfkzai.supabase.co/functions/v1/omie-analytics-sync'', headers:=jsonb_build_object(''Content-Type'',''application/json'',''x-cron-secret'',(SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name=''CRON_SECRET'')), body:=''{"action": "sync_products", "account": "colacor_vendas", "max_pages": 50}''::jsonb,timeout_milliseconds:=150000);');
+
+SELECT cron.schedule('sync-customers-colacor-vendas-daily', '20 5 * * *', ' SELECT net.http_post( url := ''https://fzvklzpomgnyikkfkzai.supabase.co/functions/v1/omie-analytics-sync'', headers := jsonb_build_object( ''Content-Type'', ''application/json'', ''x-cron-secret'', (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name=''CRON_SECRET'' LIMIT 1) ), body := ''{"action":"sync_customers","account":"colacor_vendas"}''::jsonb, timeout_milliseconds := 60000 ); ');
+
+SELECT cron.schedule('sync-customers-servicos-daily', '40 5 * * *', ' SELECT net.http_post( url := ''https://fzvklzpomgnyikkfkzai.supabase.co/functions/v1/omie-analytics-sync'', headers := jsonb_build_object( ''Content-Type'', ''application/json'', ''x-cron-secret'', (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name=''CRON_SECRET'' LIMIT 1) ), body := ''{"action":"sync_customers","account":"servicos"}''::jsonb, timeout_milliseconds := 60000 ); ');
 
 SELECT cron.schedule('sync-customers-vendas-daily', '0 5 * * *', ' SELECT net.http_post( url := ''https://fzvklzpomgnyikkfkzai.supabase.co/functions/v1/omie-analytics-sync'', headers := jsonb_build_object( ''Content-Type'', ''application/json'', ''x-cron-secret'', (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name=''CRON_SECRET'' LIMIT 1) ), body := ''{"action":"sync_customers","account":"vendas"}''::jsonb, timeout_milliseconds := 60000 ); ');
 

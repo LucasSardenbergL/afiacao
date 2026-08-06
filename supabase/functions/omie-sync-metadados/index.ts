@@ -1,9 +1,13 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCron, corsHeaders } from "../_shared/auth.ts";
+import { avaliarPagina, proximoTotalPaginas } from "../_shared/omie-paginacao.ts";
 
 const OMIE_API_URL = "https://app.omie.com.br/api/v1";
 const PAGE_SIZE = 100;
+// Teto anti-runaway do ListarProdutos (espelha MAX_PAGINAS_PRODUTOS de sync-reprocess/products-lote.ts):
+// 500 × 100 = 50k produtos >> catálogo real (~4.3k colacor, ~3.7k oben).
+const MAX_PAGINAS_PRODUTOS = 500;
 
 type OmieAccount = "vendas" | "colacor_vendas";
 
@@ -49,6 +53,14 @@ async function callOmie(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
+  // HTTP não-2xx LANÇA antes de o corpo virar payload. Sem isto, um 429/5xx cujo corpo parseia
+  // SEM `faultstring` (o `{}` de proxy/gateway) devolvia objeto sem total_de_paginas e sem
+  // produtos — que o laço lê como página vazia no fim declarado (EOF) e o `sync_state
+  // status:'complete'` carimba o catálogo PARCIAL como retrato bom. Os guards de paginação
+  // não alcançam o que o wrapper já entregou como resposta boa.
+  if (!res.ok) {
+    throw new Error(`Omie (${account}) HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`);
+  }
   const result = await res.json();
   if (result.faultstring) throw new Error(`Omie (${account}): ${result.faultstring}`);
   return result;
@@ -78,8 +90,16 @@ async function syncMetadadosAccount(
       produto_servico_cadastro?: Array<Record<string, unknown>>;
     };
 
-    totalPaginas = result.total_de_paginas || 1;
+    // Piso monotônico + teto fail-fast (_shared/omie-paginacao.ts): o `|| 1` por resposta
+    // encolhia o teto numa intermediária sem o campo e o sync completava retrato PARCIAL
+    // (sync_state 'complete' + last_page mentindo).
+    totalPaginas = proximoTotalPaginas(totalPaginas, result.total_de_paginas, MAX_PAGINAS_PRODUTOS);
     const produtos = result.produto_servico_cadastro || [];
+    const veredicto = avaliarPagina(produtos.length, pagina, totalPaginas);
+    if (veredicto === "anomalia") {
+      throw new Error(`página ${pagina}/${totalPaginas} do ListarProdutos veio vazia antes do fim declarado — abortando (retrato parcial)`);
+    }
+    if (veredicto === "fim") break;
 
     const rows = produtos.map((p: Record<string, unknown> & { imagens?: Array<{ url_imagem?: string }> }) => {
       const inativoFlag = p.inativo === "S";
@@ -126,11 +146,12 @@ async function syncMetadadosAccount(
       const { error } = await db
         .from("omie_products")
         .upsert(rows, { onConflict: "omie_codigo_produto,account" });
+      // Upsert com erro LANÇA: o console.error engolia a página (metadados/tipo_produto
+      // perdidos) e o run ainda carimbava sync_state 'complete' com total mentindo.
       if (error) {
-        console.error(`[metadados ${account}] erro upsert p${pagina}:`, error);
-      } else {
-        totalUpserted += rows.length;
+        throw new Error(`upsert omie_products p${pagina}: ${error.message}`);
       }
+      totalUpserted += rows.length;
     }
 
     console.log(`[metadados ${account}] página ${pagina}/${totalPaginas} (${rows.length} itens)`);
@@ -154,6 +175,31 @@ async function syncMetadadosAccount(
     { onConflict: "entity_type,account" },
   );
 
+  // Follow-up 3 (spec 2026-06-15-tint-vigia-cobertura): corrigir a cobertura tint
+  // NA FONTE. Só a conta 'oben' tem famílias "Bases/Concentrados MixMachine"; marcar
+  // logo após o sync gravar os produtos fecha a janela de drift ANTES de o watchdog
+  // alertar (o cron diário tint-marcar-bases-diario/jobid 132 segue como rede de
+  // segurança). tint_marcar_bases_mixmachine() é idempotente/aditiva, nunca desmarca.
+  // Falha aqui NÃO pode derrubar o sync (produtos já gravados) → try/catch isolado.
+  let basesTintMarcadas: number | null = null;
+  if (acctValue === "oben") {
+    try {
+      const { data: marcadas, error: tintError } = await db.rpc(
+        "tint_marcar_bases_mixmachine",
+      );
+      if (tintError) throw tintError;
+      basesTintMarcadas = typeof marcadas === "number" ? marcadas : null;
+      console.log(
+        `[metadados ${account}] cobertura tint: ${basesTintMarcadas ?? "?"} base(s)/concentrado(s) marcado(s)`,
+      );
+    } catch (tintError) {
+      console.error(
+        `[metadados ${account}] tint_marcar_bases_mixmachine falhou (sync preservado):`,
+        tintError,
+      );
+    }
+  }
+
   return {
     account: acctValue,
     paginas: totalPaginas,
@@ -161,6 +207,7 @@ async function syncMetadadosAccount(
     inativos: totalInativos,
     classificados: typedCount,
     produto_acabado_04: tipo04Count,
+    bases_tint_marcadas: basesTintMarcadas,
     tempo_ms: Date.now() - t0,
   };
 }
