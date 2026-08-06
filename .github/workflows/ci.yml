@@ -220,6 +220,19 @@ jobs:
       - name: Bun pin gate check (semver estrito x.y.z)
         run: bun run bunpin:check
 
+      # Anti-regressão do ÍNDICE dos diretórios de docs que têm README (hoje `docs/historico/` e
+      # `docs/runbooks/`). Doc sem linha no índice — ou linha apontando para arquivo que sumiu — é
+      # bug SILENCIOSO por construção: o arquivo existe, o CI passa, e ninguém o encontra. Medido:
+      # o #1658 reconciliou o índice do histórico à mão (9 arquivos invisíveis, metade do histórico
+      # recente) e HORAS depois o #1659 — uma PR de FEATURE que só por acaso escreveu um doc — já
+      # reintroduziu um. A convenção textual ("registre aqui") existia o tempo todo. Gate de
+      # PRECISÃO: só diretório COM README (ter README é a declaração de "aqui há índice");
+      # `docs/agent/` fica fora porque quem o indexa é a tabela do CLAUDE.md, que enumera DOMÍNIOS —
+      # review.md/threat-model-template.md/csv-governo-br.md são sub-docs alcançáveis a um salto e
+      # seriam 3 falsos-positivos permanentes. Estático: lê docs/, sem rede.
+      - name: Docs índice gate (nenhum doc invisível)
+        run: bun run docs:indice
+
       # ─── Alerta de regressão (Componente 1 — mitigação de reversão Lovable) ──
       # O bot do Lovable commita DIRETO na main sem PR/CI; quando quebra build/
       # typecheck (ex.: types.ts stale #1079), o CI fica vermelho mas passa
