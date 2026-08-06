@@ -96,6 +96,30 @@ export const AUTHZ_MANIFEST: Record<string, AuthzEntry> = {
     requiredGate: { anyOf: [{ call: 'has_role', roles: ['employee', 'master'] }] },
     motivo: 'clientes por produto (preço/volume 12m)',
   },
+  // ATP fase 1 (2026-08-06, programa Cabreúva Pista B): as 4 RPCs de reserva de estoque leem
+  // disponibilidade derivada de inventory_position (via private.atp_disponivel) e escrevem
+  // estoque_reservas. Gate único private.cap_estoque_reservar = staff (employee/master) OU
+  // service_role (engines/reconciliação fase 3). Custo (cmc) NUNCA atravessa o retorno.
+  'public.atp_consultar': {
+    sensitive: true,
+    requiredGate: { anyOf: [{ call: 'cap_estoque_reservar' }] },
+    motivo: 'disponibilidade ATP (saldo−reservas−segurança) p/ staff de venda — sem custo',
+  },
+  'public.reservar_estoque': {
+    sensitive: true,
+    requiredGate: { anyOf: [{ call: 'cap_estoque_reservar' }] },
+    motivo: 'cria reserva de estoque (writer único de estoque_reservas)',
+  },
+  'public.liberar_reserva_checkout': {
+    sensitive: true,
+    requiredGate: { anyOf: [{ call: 'cap_estoque_reservar' }] },
+    motivo: 'libera reservas ativas de um checkout (cancelamento/abandono)',
+  },
+  'public.expirar_reservas_vencidas': {
+    sensitive: true,
+    requiredGate: { anyOf: [{ call: 'cap_estoque_reservar' }] },
+    motivo: 'higiene de reservas vencidas (cron da fase 3 via service_role)',
+  },
 };
 
 /**
@@ -107,6 +131,10 @@ export const AUTHZ_MANIFEST: Record<string, AuthzEntry> = {
  * v2: auditar cada uma individualmente e cruzar com os grants reais.
  */
 export const ACKNOWLEDGED_SENSITIVE = new Set<string>([
+  // ATP fase 1 (2026-08-06): cálculo interno disponivel = saldo−reservas−segurança. Lê
+  // inventory_position mas NÃO é executável por authenticated/anon (REVOKE ALL na própria
+  // migration; GRANT só service_role) — chamada exclusivamente pelas 4 RPCs gateadas acima.
+  'private.atp_disponivel',
   // Baseline 2026-07-09: as 7 SECDEF abaixo tocam custo/preço/estoque mas NÃO são executáveis por
   // authenticated nem anon (confirmado psql-ro: auth_exec=f, anon_exec=f) — service_role/cron/
   // trigger/interno, não customer-facing. Vazamento customer-facing exige EXECUTE p/ authenticated.

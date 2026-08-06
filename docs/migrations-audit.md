@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **448** custom migrations totais
-- **1535** objetos esperados (criados por estas migrations)
+- **449** custom migrations totais
+- **1548** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 447
-  - `rls_policy`: 388
-  - `index`: 231
+  - `function`: 453
+  - `rls_policy`: 390
+  - `index`: 235
   - `cron_job`: 161
-  - `table`: 151
+  - `table`: 152
   - `trigger`: 79
   - `view`: 74
   - `enum_value`: 4
@@ -3759,6 +3759,24 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `table` | `public.ia_uso_limite` | — |
 | `index` | `public.ia_uso_evento_janela_idx` | `ia_uso_evento` |
 | `cron_job` | `cron.ia-uso-evento-purga` | — |
+
+### `20260806101417_atp_reserva_estoque_fase1.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.cap_estoque_reservar` | — |
+| `function` | `private.atp_disponivel` | — |
+| `function` | `public.atp_consultar` | — |
+| `function` | `public.reservar_estoque` | — |
+| `function` | `public.liberar_reserva_checkout` | — |
+| `function` | `public.expirar_reservas_vencidas` | — |
+| `table` | `public.estoque_reservas` | — |
+| `index` | `public.idx_estoque_reservas_ativa` | `estoque_reservas` |
+| `index` | `public.idx_estoque_reservas_checkout` | `estoque_reservas` |
+| `index` | `public.idx_estoque_reservas_expira` | `estoque_reservas` |
+| `index` | `public.estoque_reservas_checkout_item_ativa_uq` | `estoque_reservas` |
+| `rls_policy` | `public.estoque_reservas_select_staff` | `estoque_reservas` |
+| `rls_policy` | `public.estoque_reservas_service_all` | `estoque_reservas` |
 
 ## Próximos passos por status
 

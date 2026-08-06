@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 448
+-- Total de custom migrations: 449
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -489,7 +489,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260802120000', 'reposicao_erro_terminal_nao_e_estoque_a_caminho', '20260802120000_reposicao_erro_terminal_nao_e_estoque_a_caminho.sql'),
   ('20260802120000', 'venda_perdida_e_classe_sb', '20260802120000_venda_perdida_e_classe_sb.sql'),
   ('20260802130000', 'tactical_plan_idempotencia_dia', '20260802130000_tactical_plan_idempotencia_dia.sql'),
-  ('20260803093000', 'ia_uso_cota', '20260803093000_ia_uso_cota.sql')
+  ('20260803093000', 'ia_uso_cota', '20260803093000_ia_uso_cota.sql'),
+  ('20260806101417', 'atp_reserva_estoque_fase1', '20260806101417_atp_reserva_estoque_fase1.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2013,7 +2014,20 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('ia_uso_cota', 'table', 'public', 'ia_uso_evento', ''),
   ('ia_uso_cota', 'table', 'public', 'ia_uso_limite', ''),
   ('ia_uso_cota', 'index', 'public', 'ia_uso_evento_janela_idx', 'ia_uso_evento'),
-  ('ia_uso_cota', 'cron_job', 'cron', 'ia-uso-evento-purga', '')
+  ('ia_uso_cota', 'cron_job', 'cron', 'ia-uso-evento-purga', ''),
+  ('atp_reserva_estoque_fase1', 'function', 'private', 'cap_estoque_reservar', ''),
+  ('atp_reserva_estoque_fase1', 'function', 'private', 'atp_disponivel', ''),
+  ('atp_reserva_estoque_fase1', 'function', 'public', 'atp_consultar', ''),
+  ('atp_reserva_estoque_fase1', 'function', 'public', 'reservar_estoque', ''),
+  ('atp_reserva_estoque_fase1', 'function', 'public', 'liberar_reserva_checkout', ''),
+  ('atp_reserva_estoque_fase1', 'function', 'public', 'expirar_reservas_vencidas', ''),
+  ('atp_reserva_estoque_fase1', 'table', 'public', 'estoque_reservas', ''),
+  ('atp_reserva_estoque_fase1', 'index', 'public', 'idx_estoque_reservas_ativa', 'estoque_reservas'),
+  ('atp_reserva_estoque_fase1', 'index', 'public', 'idx_estoque_reservas_checkout', 'estoque_reservas'),
+  ('atp_reserva_estoque_fase1', 'index', 'public', 'idx_estoque_reservas_expira', 'estoque_reservas'),
+  ('atp_reserva_estoque_fase1', 'index', 'public', 'estoque_reservas_checkout_item_ativa_uq', 'estoque_reservas'),
+  ('atp_reserva_estoque_fase1', 'rls_policy', 'public', 'estoque_reservas_select_staff', 'estoque_reservas'),
+  ('atp_reserva_estoque_fase1', 'rls_policy', 'public', 'estoque_reservas_service_all', 'estoque_reservas')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -3585,7 +3599,20 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('ia_uso_cota', 'table', 'public', 'ia_uso_evento', ''),
   ('ia_uso_cota', 'table', 'public', 'ia_uso_limite', ''),
   ('ia_uso_cota', 'index', 'public', 'ia_uso_evento_janela_idx', 'ia_uso_evento'),
-  ('ia_uso_cota', 'cron_job', 'cron', 'ia-uso-evento-purga', '')
+  ('ia_uso_cota', 'cron_job', 'cron', 'ia-uso-evento-purga', ''),
+  ('atp_reserva_estoque_fase1', 'function', 'private', 'cap_estoque_reservar', ''),
+  ('atp_reserva_estoque_fase1', 'function', 'private', 'atp_disponivel', ''),
+  ('atp_reserva_estoque_fase1', 'function', 'public', 'atp_consultar', ''),
+  ('atp_reserva_estoque_fase1', 'function', 'public', 'reservar_estoque', ''),
+  ('atp_reserva_estoque_fase1', 'function', 'public', 'liberar_reserva_checkout', ''),
+  ('atp_reserva_estoque_fase1', 'function', 'public', 'expirar_reservas_vencidas', ''),
+  ('atp_reserva_estoque_fase1', 'table', 'public', 'estoque_reservas', ''),
+  ('atp_reserva_estoque_fase1', 'index', 'public', 'idx_estoque_reservas_ativa', 'estoque_reservas'),
+  ('atp_reserva_estoque_fase1', 'index', 'public', 'idx_estoque_reservas_checkout', 'estoque_reservas'),
+  ('atp_reserva_estoque_fase1', 'index', 'public', 'idx_estoque_reservas_expira', 'estoque_reservas'),
+  ('atp_reserva_estoque_fase1', 'index', 'public', 'estoque_reservas_checkout_item_ativa_uq', 'estoque_reservas'),
+  ('atp_reserva_estoque_fase1', 'rls_policy', 'public', 'estoque_reservas_select_staff', 'estoque_reservas'),
+  ('atp_reserva_estoque_fase1', 'rls_policy', 'public', 'estoque_reservas_service_all', 'estoque_reservas')
 )
 SELECT
   e.migration,
