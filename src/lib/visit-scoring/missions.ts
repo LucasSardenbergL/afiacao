@@ -35,16 +35,28 @@ function somaModifiers(mods: Array<{ delta: number; decayedWeight: number }> | u
  */
 export function scoreRecuperacao(c: CustomerScoreInputs): MissionResult {
   const insumosAusentes: string[] = [];
+  let insumosMedidos = 0;
+
   const churnBoost = c.churn_risk * 0.5;
+  insumosMedidos++; // churn_risk sempre tem produtor (nunca null no tipo) — sustenta a missão sozinho
 
   // Guard explícito ANTES do uso: `null * 0.3` é 0 em JS, que afirmaria "medi e não há o que
   // recuperar". Sem produtor, o componente simplesmente não entra na soma.
   let recoverBoost = 0;
   if (c.recover_score == null) insumosAusentes.push('recover_score');
-  else recoverBoost = c.recover_score * 0.3;
+  else {
+    recoverBoost = c.recover_score * 0.3;
+    insumosMedidos++;
+  }
 
   const recencyPenalty = Math.max(0, 100 - c.days_since_last_purchase) * -0.1;
   const signalsBoost = somaModifiers(c.signal_modifiers?.breakdown?.churn) * 0.1;
+
+  // REGRA ÚNICA (mesmo padrão de scoreExpansao): nenhum insumo medido → não avaliada. Hoje é
+  // inatingível aqui — churn_risk sempre tem produtor — mas a regra existe uma vez só e vale
+  // para as duas funções por igual.
+  if (insumosMedidos === 0) return { score: null, insumosAusentes };
+
   const score = clamp(churnBoost + recoverBoost + recencyPenalty + signalsBoost, 0, 100);
   return { score, insumosAusentes };
 }
@@ -61,23 +73,32 @@ export function scoreRecuperacao(c: CustomerScoreInputs): MissionResult {
  */
 export function scoreExpansao(c: CustomerScoreInputs): MissionResult {
   const insumosAusentes: string[] = [];
+  let insumosMedidos = 0;
 
   let expansionBase = 0;
   if (c.expansion_score == null) insumosAusentes.push('expansion_score');
-  else expansionBase = c.expansion_score * 0.6;
+  else {
+    expansionBase = c.expansion_score * 0.6;
+    insumosMedidos++;
+  }
 
   // ⚠️ Guard ANTES de normalizeRevenue: ele faz `if (value <= 0) return 0`, e `null <= 0` é
   // `true` em JS — o null entraria e sairia como 0 medido, em silêncio. O TS strict também
   // barra (normalizeRevenue declara `value: number`), e essa é a intenção do tipo.
   let revenueBoost = 0;
   if (c.revenue_potential == null) insumosAusentes.push('revenue_potential');
-  else revenueBoost = normalizeRevenue(c.revenue_potential) * 20;
+  else {
+    revenueBoost = normalizeRevenue(c.revenue_potential) * 20;
+    insumosMedidos++;
+  }
 
   const signalsBoost = somaModifiers(c.signal_modifiers?.breakdown?.expansion) * 0.2;
 
-  // REGRA ÚNICA: nenhum insumo medido → não avaliada. O signalsBoost sozinho não é avaliação de
-  // expansão, é ruído de sinal sem base.
-  if (insumosAusentes.length === 2) return { score: null, insumosAusentes };
+  // REGRA ÚNICA (mesmo padrão de scoreRecuperacao): nenhum insumo medido → não avaliada. O
+  // signalsBoost sozinho não é avaliação de expansão, é ruído de sinal sem base. Contar os
+  // MEDIDOS (em vez de comparar insumosAusentes.length com o total fixo de insumos) faz a regra
+  // sobreviver à adição de um 3º insumo sem precisar tocar este número.
+  if (insumosMedidos === 0) return { score: null, insumosAusentes };
 
   return { score: clamp(expansionBase + revenueBoost + signalsBoost, 0, 100), insumosAusentes };
 }
@@ -86,7 +107,8 @@ export function scoreExpansao(c: CustomerScoreInputs): MissionResult {
  * RELACIONAMENTO — cliente VIP saudável precisando manutenção.
  *
  * NOTA DE ESCALA: health_score é 0..100 (vem de calculate-scores). health * 0.5 mapeia
- * 0..100 → contribuição 0..50. Todos os insumos têm produtor → nunca fica null.
+ * 0..100 → contribuição 0..50. (Era * 50 assumindo 0..1, errado.) Todos os insumos têm
+ * produtor → nunca fica null.
  */
 export function scoreRelacionamento(c: CustomerScoreInputs): MissionResult {
   const healthBoost = c.health_score * 0.5;
@@ -149,6 +171,9 @@ export function computeVisitScore(c: CustomerScoreInputs): VisitScore {
     city: c.city,
     neighborhood: c.neighborhood,
     days_since_last_visit: c.days_since_last_visit,
-    insumos_ausentes: scores[primary_mission].insumosAusentes,
+    // Cópia — não vaza a referência mutável do array interno de MissionResult (a partir da
+    // Task 7 isto é persistido em score_breakdown; um consumidor que faça .push()/.sort() não
+    // pode mutar o original).
+    insumos_ausentes: [...scores[primary_mission].insumosAusentes],
   };
 }

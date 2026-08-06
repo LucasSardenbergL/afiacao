@@ -76,6 +76,11 @@ export interface VisitScore {
   city: string | null;
   neighborhood: string | null;
   days_since_last_visit: number | null;
-  /** União dos insumos ausentes da missão VENCEDORA. Vazio = avaliação completa. */
+  /**
+   * Insumos ausentes da missão VENCEDORA (`primary_mission`) — a lista de UMA missão, não a
+   * união das 4. Vazio significa apenas que a vencedora foi medida por completo; não diz nada
+   * sobre as outras 3 (ex.: vencedora = relacionamento ou prospecção → vem vazio mesmo que a
+   * expansão não tenha sido avaliada nesta linha).
+   */
   insumos_ausentes: string[];
 }

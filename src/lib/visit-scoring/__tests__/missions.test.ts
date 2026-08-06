@@ -305,7 +305,14 @@ describe('ausência de insumo (money-path: ausente ≠ zero)', () => {
 });
 
 describe('computeVisitScore com missão não avaliada', () => {
-  it('missão null NÃO empata com 0 no argmax — é ignorada', () => {
+  // O `continue` em missions.ts (no loop do argmax) é invariante SEMÂNTICA — defesa contra
+  // score negativo ou semente nula no futuro — não mudança de comportamento observável hoje.
+  // Com clamp(...,0,100) e a semente da prospecção sempre >= 0, um null tratado como `?? 0`
+  // NUNCA venceria o argmax por resultado: não existe teste de resultado capaz de distinguir
+  // "pular" de "?? 0" (comprovado em .superpowers/sdd/t4.log — a versão transicional com `?? 0`
+  // já passava nestas mesmas asserções). Por isso este teste verifica só o que É observável:
+  // que scores.expansao.score fica null e que a expansão não vence.
+  it('scores.expansao.score fica null e a expansão não vence o argmax (prospecção vence)', () => {
     const r = computeVisitScore(mkInput({
       expansion_score: null, revenue_potential: null,
       sales_orders_count: 0, // vira candidato a prospecção (piso 70)
@@ -322,6 +329,33 @@ describe('computeVisitScore com missão não avaliada', () => {
     }));
     expect(r.primary_mission).toBe('expansao');
     expect(r.insumos_ausentes).toEqual([]);
+  });
+
+  it('empate real entre expansão e recuperação (ambas 50) — expansão vence pela ordem do tiebreak', () => {
+    const r = computeVisitScore(mkInput({
+      // recuperação = 50: churnBoost 100*0.5=50, recover_score ausente (+0), recencyPenalty
+      // max(0,100-100)*-0.1=0.
+      churn_risk: 100,
+      recover_score: null,
+      days_since_last_purchase: 100,
+      // expansão = 50: expansionBase 50*0.6=30 + revenueBoost normalizeRevenue(10000)*20=20,
+      // os dois insumos medidos.
+      expansion_score: 50,
+      revenue_potential: 10000,
+      // relacionamento (0) e prospecção (0) ficam bem abaixo de 50 pra não interferir no empate.
+      health_score: 0,
+      avg_monthly_spend_180d: 0,
+      days_since_last_visit: 0,
+      sales_orders_count: 5,
+      is_prospect: false,
+    }));
+    expect(r.scores.expansao.score).toBe(50);
+    expect(r.scores.recuperacao.score).toBe(50);
+    expect(r.scores.relacionamento.score!).toBeLessThan(50);
+    expect(r.scores.prospeccao.score!).toBeLessThan(50);
+    // Empate de verdade: só a ordem expansao > recuperacao > relacionamento > prospeccao decide.
+    expect(r.primary_mission).toBe('expansao');
+    expect(r.visit_score).toBe(50);
   });
 
   it('insumos_ausentes reporta os da missão VENCEDORA, não a união de todas', () => {
