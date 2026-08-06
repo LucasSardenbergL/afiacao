@@ -5,7 +5,7 @@
 > **vazio (0 linhas *ever*)**, apesar de pedidos elegíveis fluírem quase todo dia. Veredito:
 > **inconclusivo/inerte**, não passou (não há dado pra medir taxa de veto) e não morreu aberto
 > (nenhuma compra errada). Decisão: **encerramento leve** — código-máquina fica **dormente** (não
-> excluído), tarefa agendada de check-in removida. Se um dia religar, exigir **ver auto-aprovações
+> excluído), tarefa agendada de check-in desativada. Se um dia religar, exigir **ver auto-aprovações
 > acontecendo**; NÃO ligar o fusível achando que já rodou.
 
 ## O que era o piloto
@@ -58,8 +58,10 @@ Motivo de não arrancar o código: o founder pausou o envio automático **"por e
 pra retomar), e a cirurgia mexeria numa função quente de money-path (o mesmo tick faz o **alerta** e a
 edge faz o **disparo**). Custo de deixar dormente ≈ zero (gateado em dois lugares).
 
-- ✅ Tarefa agendada `revisar-piloto-auto-aprovacao-sayerlack` **desativada + diretório removido** de
-  `~/.claude/scheduled-tasks/`.
+- ✅ Tarefa agendada `revisar-piloto-auto-aprovacao-sayerlack` **desativada** (`enabled: false`) em
+  `~/.claude/scheduled-tasks/`. ⚠️ *Correção de 2026-08-06: a redação original dizia "diretório
+  removido" — **o diretório existe** (`SKILL.md` presente, `lastRunAt` de 2026-07-09). Sem efeito
+  prático (desativada não dispara), mas quem for reabrir procuraria um diretório que está lá.*
 - ✅ Código-máquina **permanece** (dormente):
   - braço de auto-aprovação dentro de `reposicao_alerta_pedido_minimo_tick` (função SQL, prod);
   - `reposicao_pedido_auto_aprovavel` (calc de elegibilidade, ociosa);
@@ -92,5 +94,25 @@ de sair (era definido por esse limite); pedidos seguem visíveis/aprováveis em 
 Reversível: `SET value='3000'`. Para manter um alerta de pedido pendente SEM piso de valor, seria
 preciso **desacoplar** alerta e gate (hoje é uma régua só) — mudança de código, não feita.
 
-> Referência operacional do domínio: [`docs/agent/reposicao.md`](../agent/reposicao.md). Entrada
-> "Reposição N3 — auto-aprovação Sayerlack v2" no CLAUDE.md §10.
+> Referência operacional do domínio: [`docs/agent/reposicao.md`](../agent/reposicao.md).
+>
+> ⚠️ *Correção de 2026-08-06: a redação original mandava ver a entrada "Reposição N3 —
+> auto-aprovação Sayerlack v2" no **CLAUDE.md §10**. Essa seção não existe mais — o CLAUDE.md foi
+> reestruturado em seções nomeadas e o detalhe operacional migrou para `docs/agent/`.*
+
+## Reconferência de produção — 2026-08-06 (4 semanas depois)
+
+Este post-mortem ficou fora do versionamento desde 07-09 (só como arquivo não commitado no
+diretório principal) e entrou no repo pelo #1665. Ao commitar, as afirmações centrais foram
+**remedidas em PROD** via `~/.config/afiacao/psql-ro` — nenhuma envelheceu, nada religou sozinho:
+
+| Afirmação (medida em 2026-07-09) | Remedido em 2026-08-06 |
+|---|---|
+| `reposicao_auto_aprovacao_log` vazio (*ever*) | ✅ `count(*) = 0` |
+| Fusível `reposicao_auto_aprovacao_ativa` off | ✅ `false` |
+| Régua de R$3k zerada (alerta + gate de disparo) | ✅ `reposicao_alerta_pedido_valor_minimo = 0` |
+
+Chaves dormentes conferem com o descrito acima: `delta_max=0.30`, `cooldown_falha_horas=48`,
+`corte_utc=13:00` (órfã). **O aviso 🚨 continua valendo integralmente** — o piloto não ganhou
+validação por ter passado mais um mês desligado. Ausência de incidente em código que nunca
+executou é ausência de dado, não evidência de segurança.
