@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # tokens-report.sh — painel de consumo de tokens do Claude Code (READ-ONLY).
 #
-# POR QUÊ: 82% do custo de token é ENTRADA de contexto (cache_read 52% +
-# cache_write 29%), não geração (18%). Otimizar "resposta curta" mexe em 18%;
-# medir e cortar contexto mexe em 82%. Este script é a régua — sem baseline
-# não há como provar que uma otimização funcionou (regra da EVIDÊNCIA POSITIVA).
+# POR QUÊ: ~90% do custo de token é ENTRADA de contexto, não geração (medido
+# 2026-08-06, já deduplicado: cache_read 70,3% + cache_write 19,2% vs. output
+# 10,4%). Otimizar "resposta curta" mexe em 10%; medir e cortar contexto mexe
+# em 90%. Este script é a régua — sem baseline não há como provar que uma
+# otimização funcionou (regra da EVIDÊNCIA POSITIVA).
 #
 # Fonte: ~/.claude/projects/**/*.jsonl (campo message.usage de cada request).
 # Nada sai da máquina; nenhum arquivo do projeto é alterado.
@@ -78,7 +79,11 @@ if [ "$PULAR_COLETA" -eq 0 ]; then
     else
       find "$dir" -name '*.jsonl' -type f -print0 2>/dev/null
     fi | while IFS= read -r -d '' f; do
-      # 1 linha por request: projeto, dia, modelo, input, output, cache_w, cache_r, sessão
+      # 1 linha por LINHA do jsonl: projeto, dia, modelo, input, output, cache_w,
+      # cache_r, sessão, requestId. A col. 9 é a chave do dedupe abaixo — sem ela
+      # cada request entra 2-5x (uma resposta com vários blocos vira várias linhas,
+      # todas repetindo o MESMO usage). Fallback p/ .uuid: transcript antigo não
+      # tem requestId, e uuid é único por linha, então não colapsa nada.
       jq -rc --arg p "$proj" '
         select(.message.usage != null)
         | [ $p,
@@ -88,7 +93,8 @@ if [ "$PULAR_COLETA" -eq 0 ]; then
             (.message.usage.output_tokens // 0),
             (.message.usage.cache_creation_input_tokens // 0),
             (.message.usage.cache_read_input_tokens // 0),
-            (.sessionId // "?")
+            (.sessionId // "?"),
+            (.requestId // .uuid // "-")
           ] | @tsv' "$f" 2>/dev/null
     done
   done >> "$TSV"
@@ -97,16 +103,32 @@ fi
 [ -s "$TSV" ] || { echo "nenhum request na janela de ${DIAS} dias." >&2; exit 0; }
 echo "linhas coletadas: $(wc -l < "$TSV" | tr -d ' ')" >&2
 
+# ------------------------------------------------- dedupe por requestId -----
+# UMA chamada de API vira VÁRIAS linhas no JSONL quando a resposta tem vários
+# blocos (texto + tool_use + tool_use), e TODAS repetem o mesmo message.usage
+# (verificado: cada requestId tem exatamente 1 valor distinto de usage). Fork e
+# resume de sessão agravam — copiam o transcript do pai, então o mesmo request
+# reaparece em outro arquivo. Somar linha a linha multiplica o custo: medido em
+# 2026-08-06, 131.605 linhas brutas para 60.376 requests reais (2,18x), o que
+# inflou uma semana de US$ 1.596 para US$ 3.347. O dedupe é GLOBAL de propósito.
+#
+# NF < 9 mantém a linha: TSV coletado por versão anterior (8 colunas) usado com
+# --pular-coleta teria a chave vazia e colapsaria o arquivo inteiro em 1 linha.
+LIMPO="${TSV}.dedup"
+awk -F'\t' 'NF < 9 || $9 == "-" || !($9 in v) { v[$9] = 1; print }' "$TSV" > "$LIMPO"
+echo "requests após dedupe: $(wc -l < "$LIMPO" | tr -d ' ')" >&2
+
 # ------------------------------------------- recorte por data do REQUEST ----
-# O que os blocos abaixo leem é $DADOS, não $TSV: sem recorte são o mesmo
-# arquivo; com --desde/--ate, $DADOS é o subconjunto cuja data de REQUEST cai
-# na janela pedida (o $TSV bruto fica intacto e reusável com --pular-coleta).
+# O que os blocos abaixo leem é $DADOS, não $TSV: sem recorte é o $LIMPO
+# (deduplicado); com --desde/--ate, $DADOS é o subconjunto DELE cuja data de
+# REQUEST cai na janela pedida. O $TSV bruto fica intacto e reusável com
+# --pular-coleta — o dedupe roda de novo sobre ele a cada execução.
 # A data vem de .timestamp, que é UTC — o dia vira, aqui, 21h do dia anterior.
-DADOS="$TSV"
+DADOS="$LIMPO"
 if [ -n "$DESDE" ] || [ -n "$ATE" ]; then
   DADOS="${TSV}.recorte"
   awk -F'\t' -v d="${DESDE:-0000-00-00}" -v a="${ATE:-9999-99-99}" \
-    '$2 >= d && $2 <= a' "$TSV" > "$DADOS"
+    '$2 >= d && $2 <= a' "$LIMPO" > "$DADOS"
   echo "recorte por data do request: ${DESDE:-(início)} .. ${ATE:-(fim)} — $(wc -l < "$DADOS" | tr -d ' ') linhas" >&2
   [ -s "$DADOS" ] || { echo "nenhum request no recorte." >&2; exit 0; }
 fi

@@ -1,8 +1,6 @@
 {
   "model": "opus",
-  "env": {
-    "ENABLE_CLAUDEAI_MCP_SERVERS": "false"
-  },
+  "disableClaudeAiConnectors": true,
   "skillListingMaxDescChars": 220,
   "skillListingBudgetFraction": 0.004,
   "enabledPlugins": {

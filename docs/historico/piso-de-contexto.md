@@ -31,6 +31,45 @@ piso absoluto.
   A diferença (~23k) é o ambiente do app: MCPs próprias + 172 skills de plugins da conta.
 - Distribuição do contexto por request: p50 258.927 · p90 449.812 · máx 782.883.
 
+## ⚠️ CORREÇÃO nº 2 (2026-08-06) — a RÉGUA contava cada request 2 a 5 vezes
+
+O `tokens-report.sh` somava **toda linha** do JSONL com `message.usage`. Mas uma chamada de
+API vira VÁRIAS linhas quando a resposta tem vários blocos (texto + `tool_use` + `tool_use`),
+e **todas repetem o mesmo `usage`** — verificado: cada `requestId` tem exatamente 1 valor
+distinto de `usage`. Fork/resume de sessão agrava (copia o transcript do pai, o mesmo request
+reaparece em outro arquivo).
+
+Medido em 2026-08-06 sobre todo o histórico: **131.605 linhas brutas para 60.376 requests
+reais — 2,18×**. Uma semana relatada como US$ 3.347 / 13.488 requests custou de fato
+**US$ 1.596 / 6.601 requests**.
+
+**O que muda e o que NÃO muda** (a distinção importa — nem todo número derivava da soma):
+
+| número | efeito |
+|---|---|
+| custo US$, contagem de requests | **inflados ~2,2×** — reler tudo que dependia disso |
+| piso por sessão (68.537) | **intacto** — é um MÍNIMO, duplicata não move mínimo |
+| p50/p90 de contexto | levemente enviesados (request duplicado pesa n× no percentil) |
+| **razões e percentuais** | **essencialmente intactos** — a duplicação é ~uniforme, então numerador e denominador inflam juntos |
+
+A última linha é o que salva as conclusões anteriores. `escolha-de-modelo.md` e o #1664 foram
+medidos com a régua torta, mas raciocinam em RAZÃO ("Fable = 34% do custo com 18% dos
+requests", "86,7% de cobertura por tráfego") — e razão sobrevive. **O que não sobrevive são as
+contagens absolutas** citadas naqueles docs (ex.: "1.260 requests" em 48h, "20.933 requests"
+na janela de 7 dias): divida por ~2,2. Nenhuma decisão tomada com base neles muda.
+
+Pós-dedupe a decomposição fica **cache_read 70,3% · cache_write 19,2% · output 10,4% ·
+input 0,2%** — ou seja, ~90% do custo é ENTRADA. A conclusão estrutural sempre esteve certa;
+só a escala estava errada.
+
+Corrigido com dedupe global por `requestId` (fallback `.uuid`, guard `NF < 9` para TSV
+antigo com `--pular-coleta`) + 4 casos em `test-tokens-report.sh`, os dois sentidos fechados
+(4 = não deduplicou · 1 = colapsou demais · só o certo dá 2) e falsificados por sabotagem
+nos locales `C` e `pt_BR.UTF-8`.
+
+**A lição não é o bug — é que a régua não tinha teste para a própria unidade de medida.**
+Havia teste para o recorte por data (#1660) e nenhum para "o que conta como 1 request".
+
 ## ❌ Premissa FALSA nº 1 — "encurtar a `description` das skills reduz o piso"
 
 Encurtei as `description` das 13 skills do projeto de **16.041 → 9.659 chars** (−6.382,
