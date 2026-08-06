@@ -58,6 +58,11 @@ function coercoes(codigo: string): string[] {
 
 const VIGIADOS = [
   'src/hooks/useTacticalPlan.ts',
+  'src/lib/scoring/agenda.ts',
+  'src/lib/carteira/escopo-clientes.ts',
+  'src/lib/positivacao/ranking.ts',
+  'src/hooks/useMyVisitSuggestions.ts',
+  'src/lib/visit-scoring/missions.ts',
 ];
 
 describe('gate: potencial sem writer não é coagido a 0 (src/)', () => {
