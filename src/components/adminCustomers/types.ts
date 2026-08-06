@@ -35,7 +35,8 @@ export interface ClientScore {
   health_score: number;
   health_class: string;
   churn_risk: number | null;
-  expansion_score: number;
+  /** `null` = não apurado (coluna sem produtor) — jamais tratar como potencial zero. */
+  expansion_score: number | null;
   priority_score: number;
   avg_monthly_spend_180d: number;
   days_since_last_purchase: number;

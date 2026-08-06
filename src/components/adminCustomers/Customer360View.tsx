@@ -198,7 +198,9 @@ export function Customer360View({
                 {/* Sem `* 100`: a coluna já é percentual. Com a margem calculada no servidor,
                     53,47 viraria "5347.0%" — e `null` virava "0.0%", afirmando margem nula. */}
                 <ScoreItem label="Margem" value={formatMargemPct(score.gross_margin_pct)} />
-                <ScoreItem label="Expansão" value={score.expansion_score.toFixed(1)} />
+                {/* expansion_score é coluna sem produtor (null em 100% da base hoje) — guard
+                    `== null` com fallback '—' em vez de afirmar "0.0" para quem não foi avaliado. */}
+                <ScoreItem label="Expansão" value={score.expansion_score == null ? '—' : score.expansion_score.toFixed(1)} />
                 <ScoreItem label="Prioridade" value={score.priority_score.toFixed(1)} />
                 <ScoreItem label="Dias s/ compra" value={String(score.days_since_last_purchase)} danger={score.days_since_last_purchase > 60} />
                 <ScoreItem label="Intervalo médio" value={`${score.avg_monthly_spend_180d > 0 ? Math.round(Number(score.avg_monthly_spend_180d)) : '-'}d`} />

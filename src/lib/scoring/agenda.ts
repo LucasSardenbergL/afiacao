@@ -16,6 +16,7 @@
  * (canônico de calculate-scores: round(componentes 0..100)).
  */
 
+import { potencialConhecido } from '@/lib/scoring/potencial';
 import type { ScoreAdjustment, SignalModifier } from './types';
 
 export interface CarteiraRow {
@@ -38,6 +39,8 @@ export interface AgendaItem {
   agenda_type: 'risco' | 'expansao' | 'ativacao' | 'follow_up';
   topModifier: SignalModifier | null;
   signalsCount: number;
+  /** true = expansão não pôde ser avaliada (coluna sem produtor), ≠ "avaliei e não é expansão". */
+  insumo_expansao_ausente: boolean;
 }
 
 /**
@@ -105,13 +108,17 @@ export function buildAgendaItems(rows: CarteiraRow[], limit = 10): AgendaItem[] 
   const items = rows.map((s): AgendaItem => {
     const base = s.priority_score ?? 0;
     const churn = s.churn_risk ?? 0;
-    const expansion = s.expansion_score ?? 0;
+    // ⚠️ Guard explícito: `(s.expansion_score ?? 0) > 50` é SEMPRE false quando a coluna é null —
+    // e ela é null em 6.633/6.633 linhas, o que fez o tipo 'expansao' virar código morto em
+    // produção. Sem produtor não há expansão a afirmar; o ausente é reportado, não fabricado.
+    const expansion = potencialConhecido(s.expansion_score);
+    const insumo_expansao_ausente = expansion == null;
     let agenda_type: AgendaItem['agenda_type'] = 'follow_up';
     if (s.sales_history_status === 'sem_historico') {
       agenda_type = 'ativacao';
     } else if (churn > 50 || s.health_class === 'critico' || s.health_class === 'atencao') {
       agenda_type = 'risco';
-    } else if (expansion > 50) {
+    } else if (expansion != null && expansion > 50) {
       agenda_type = 'expansao';
     }
     return {
@@ -122,6 +129,7 @@ export function buildAgendaItems(rows: CarteiraRow[], limit = 10): AgendaItem[] 
       agenda_type,
       topModifier: pickTopModifier(s.signal_modifiers),
       signalsCount: signalsCount(s.signal_modifiers),
+      insumo_expansao_ausente,
     };
   });
   // Guard de slot ESTRUTURAL (não só tie-break — achado /codex no diff): clientes COM histórico
