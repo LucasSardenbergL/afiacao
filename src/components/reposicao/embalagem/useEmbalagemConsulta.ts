@@ -11,7 +11,7 @@ import type { StatusPreco } from '@/lib/reposicao/embalagem-helpers';
 interface EquivRow { grupo_id: string; sku_codigo_omie: string; unidade_base: string; fator_para_base: number; }
 interface PrecoRow { sku_codigo_omie: string; preco: number; capturado_em: string; status: StatusPreco; }
 
-export interface MembroEmbalagem {
+interface MembroEmbalagem {
   sku_codigo_omie: string;
   fator_para_base: number;            // QT=1, GL=4
   preco: number | null;

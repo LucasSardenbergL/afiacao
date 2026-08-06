@@ -46,10 +46,10 @@ export function valorPagoEfetivo(t: { valor_recebido: number; valor_documento: n
 // Cobertura mínima de baixa derivada POR EMPRESA p/ calibrar curvas empíricas.
 // Abaixo disso (ex: colacor ~10%) o subconjunto com baixa é pequeno E provavelmente
 // enviesado (recentes/bancários) → NENHUMA faixa vira 'alta'; cai no default (codex).
-export const COBERTURA_MIN_EMPRESA = 0.4;
+const COBERTURA_MIN_EMPRESA = 0.4;
 // Mínimo de liquidados-com-data POR FAIXA p/ a faixa ser confiável (≠ viés de seleção,
 // que o gate de empresa cobre; este cobre amostra pequena na faixa).
-export const MIN_LIQUIDADOS_COM_DATA = 5;
+const MIN_LIQUIDADOS_COM_DATA = 5;
 
 // Gate de confiança do prazo (PMR/PMP) pela cobertura de baixa derivada: abaixo de
 // COBERTURA_MIN_EMPRESA o prazo vem de amostra não-representativa → null ("—").
@@ -76,9 +76,9 @@ export function diasCoberturaProjetado(
   return saidaDiaria > 0.01 ? saldoCc / saidaDiaria : null;
 }
 
-export const FAIXAS: Faixa[] = ['a_vencer', '1-30', '31-60', '61-90', '+90'];
+const FAIXAS: Faixa[] = ['a_vencer', '1-30', '31-60', '61-90', '+90'];
 
-export const LAG_MAX: Record<Faixa, number> = {
+const LAG_MAX: Record<Faixa, number> = {
   'a_vencer': 45, '1-30': 60, '31-60': 90, '61-90': 120, '+90': 365,
 };
 

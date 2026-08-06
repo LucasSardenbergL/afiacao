@@ -4,7 +4,7 @@
 // null (ausente ≠ zero — CLAUDE.md); soma de estado anômalo não vira 0 fabricado.
 
 export type StatusEnvio = 'agendado' | 'enviado' | 'erro' | 'cancelado';
-export type AccountPP = 'oben' | 'colacor';
+type AccountPP = 'oben' | 'colacor';
 
 export interface ItemEnvioCalendario {
   quantidade: number;
@@ -22,7 +22,7 @@ export interface EnvioCalendario {
   itens: ItemEnvioCalendario[];
 }
 
-export interface EnvioDia extends EnvioCalendario {
+interface EnvioDia extends EnvioCalendario {
   valor: number | null;
   empresas: AccountPP[];
   semItens: boolean;

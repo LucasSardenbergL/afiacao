@@ -1,9 +1,9 @@
 export type CallDirection = 'inbound' | 'outbound';
-export type CallStatus =
+type CallStatus =
   | 'ringing' | 'answered' | 'missed' | 'rejected'
   | 'busy' | 'failed' | 'canceled' | 'ended';
 export type CallProvider = 'nvoip_click_to_call' | 'nvoip_sip' | 'manual';
-export type CallSource = 'app' | 'cdr' | 'webhook' | 'backfill';
+type CallSource = 'app' | 'cdr' | 'webhook' | 'backfill';
 export type MatchConfidence = 'exact' | 'last8' | 'none';
 
 /** Tipo da parte identificada pela BINA. 'fornecedor' é dormente (sem dado hoje). */

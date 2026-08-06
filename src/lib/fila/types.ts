@@ -4,7 +4,7 @@
 
 export type CategoriaAcao = 'prazo' | 'certo' | 'esperado' | 'risco';
 export type FonteAcao = 'tarefa' | 'rota' | 'whatsapp_pendente' | 'mixgap';
-export type TipoValor = 'certo' | 'estimado' | 'sem_valor';
+type TipoValor = 'certo' | 'estimado' | 'sem_valor';
 export type TipoCta = 'ligar' | 'whatsapp' | 'pedido' | 'tarefa' | 'abrir_cliente';
 
 export type AcaoPayload =

@@ -64,13 +64,6 @@ export function statusLabel(status: StatusSugestao): string {
   }
 }
 
-export function percPromoBadgeClass(p: number | null | undefined): string {
-  const v = Number(p ?? 0);
-  if (v === 0) return "bg-status-success/15 text-status-success border-status-success/30";
-  if (v <= 30) return "bg-status-warning/15 text-status-warning border-status-warning/30";
-  return "bg-destructive/15 text-destructive border-destructive/30";
-}
-
 export function lastDayOfNextMonth(): string {
   const now = new Date();
   const d = new Date(now.getFullYear(), now.getMonth() + 2, 0);

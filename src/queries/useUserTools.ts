@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 
-export interface ToolCategory {
+interface ToolCategory {
   id: string;
   name: string;
   description: string | null;
@@ -9,7 +9,7 @@ export interface ToolCategory {
   suggested_interval_days: number | null;
 }
 
-export interface UserTool {
+interface UserTool {
   id: string;
   tool_category_id: string;
   custom_name: string | null;

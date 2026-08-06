@@ -15,14 +15,14 @@ export interface HistoricoInput {
   pedidos: HistoricoPedidoInput[];
   agora: Date;
 }
-export interface TopProduto {
+interface TopProduto {
   codigo: number;
   nome: string;
   vezes: number;
   ultimoPreco: number;
   ultimaData: string;
 }
-export interface PedidoResumo {
+interface PedidoResumo {
   data: string;
   valor: number;
   nItens: number;

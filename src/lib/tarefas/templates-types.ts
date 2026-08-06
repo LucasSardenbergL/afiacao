@@ -5,7 +5,7 @@ import type { TarefaCategoria, TarefaEstado } from './types';
 // ---------------------------------------------------------------------------
 export type TarefaTemplateCadencia = 'diaria' | 'dias_uteis' | 'semanal' | 'dias_especificos';
 export type TarefaTipoComprovacao = 'nenhuma' | 'foto' | 'leitura' | 'foto_e_leitura';
-export type TarefaAuditoriaStatus =
+type TarefaAuditoriaStatus =
   | 'nao_requer'
   | 'dispensada'
   | 'pendente'

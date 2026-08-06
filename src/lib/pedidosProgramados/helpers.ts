@@ -106,7 +106,7 @@ export function validarEnvioResolvido(
 }
 
 // ── Validação da extração do LLM (espelhada na edge pedido-programado-extrair) ──
-export interface ItemExtraido {
+interface ItemExtraido {
   codigo_item_cliente: string;
   num_ordem_cliente: string | null;
   descricao_cliente: string;
@@ -116,7 +116,7 @@ export interface ItemExtraido {
   data_entrega: string | null;    // YYYY-MM-DD
   cod_forn: string | null;        // NOSSO código impresso no PDF (semente de sugestão)
 }
-export interface ExtracaoValidada {
+interface ExtracaoValidada {
   numero_pedido_compra: string;
   data_emissao: string | null;    // YYYY-MM-DD
   versao: string | null;

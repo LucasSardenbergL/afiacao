@@ -132,7 +132,6 @@ export async function flush(
   return { success, failed };
 }
 
-
 export function subscribeToOfflineQueue(listener: Listener): () => void {
   listeners.add(listener);
   // dispara estado atual imediatamente

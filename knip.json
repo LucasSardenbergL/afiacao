@@ -13,6 +13,7 @@
     "supabase/functions/**/*.ts"
   ],
   "ignore": [
+    "supabase/functions/_shared/sayerlack-sku.ts",
     "src/integrations/supabase/types.ts",
     "src/components/ui/**",
     "src/hooks/use-mobile.tsx",

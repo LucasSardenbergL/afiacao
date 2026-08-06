@@ -201,7 +201,7 @@ export function decidirAcaoPortal(status: StatusEnvioPortal | null | undefined):
 // NÃO inclui pendente_envio_portal/enviando_portal (drenados pelo motor de retry +
 // já vigiados pelo Sentinela — incluí-los falsearia pedido em voo) nem erro_retentavel
 // (o motor sayerlack-retry-orfaos re-tenta sozinho).
-export const STATUS_PORTAL_PRECISA_ATENCAO: ReadonlySet<StatusEnvioPortal> = new Set<StatusEnvioPortal>([
+const STATUS_PORTAL_PRECISA_ATENCAO: ReadonlySet<StatusEnvioPortal> = new Set<StatusEnvioPortal>([
   'aceito_portal_sem_protocolo',
   'indeterminado_requer_conciliacao',
   'falha_envio_portal',

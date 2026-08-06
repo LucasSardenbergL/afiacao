@@ -16,7 +16,7 @@ export type Severity = 'debug' | 'info' | 'warn' | 'error' | 'critical';
 
 export type LogContext = Record<string, unknown>;
 
-export interface SerializedError {
+interface SerializedError {
   name: string;
   message: string;
   stack?: string;
@@ -218,5 +218,3 @@ export const logger = {
     cachedUserId = id;
   },
 };
-
-export type Logger = typeof logger;

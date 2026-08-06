@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { subMonths } from 'date-fns';
 import { supabase } from '@/integrations/supabase/client';
 
-export interface Order {
+interface Order {
   id: string;
   status: string;
   service_type: string;

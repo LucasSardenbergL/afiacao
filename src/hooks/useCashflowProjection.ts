@@ -3,7 +3,7 @@ import { supabase } from '@/integrations/supabase/client';
 
 export type Cenario = 'realista' | 'otimista' | 'pessimista';
 
-export type LinhaCashflow = {
+type LinhaCashflow = {
   origem: 'cr_omie' | 'cp_omie' | 'evento_recorrente' | 'evento_eventual';
   desc: string;
   data: string;
@@ -11,7 +11,7 @@ export type LinhaCashflow = {
   id_origem: string;
 };
 
-export type Semana = {
+type Semana = {
   inicio: string;
   fim: string;
   saldo_inicial: number;
@@ -22,7 +22,7 @@ export type Semana = {
   saldo_final: number;
 };
 
-export type NCGData = {
+type NCGData = {
   aco: { cr_aberto: number; estoque: number; adiantamentos: number; total: number };
   pco: { cp_fornecedor: number; folha_30d: number; tributos_a_pagar: number; total: number };
   valor: number;

@@ -32,7 +32,7 @@ export function AutoBadge({ pedido }: { pedido: PedidoSugerido }) {
 // Ícone de info com tooltip ao lado do status — revela o MOTIVO (bloqueio do
 // guardrail / falha do disparo) sem precisar abrir os detalhes. Renderiza null
 // quando o motivo é vazio. Compartilhado entre PedidoRow e a fila de atenção.
-export function MotivoTooltip({ motivo, label }: { motivo: string | null | undefined; label: string }) {
+function MotivoTooltip({ motivo, label }: { motivo: string | null | undefined; label: string }) {
   if (!motivo) return null;
   return (
     <TooltipProvider>

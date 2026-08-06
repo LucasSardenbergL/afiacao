@@ -42,7 +42,7 @@ function mensagemBloqueioTint(
   );
 }
 
-export function mensagemBloqueioCredito(
+function mensagemBloqueioCredito(
   conta: string,
   gate?: { vencido?: number | null; titulos?: number | null } | null,
 ): string {

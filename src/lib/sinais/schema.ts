@@ -1,12 +1,12 @@
 /** Tipos compartilhados da captura inteligente (Fatia 2).
  *  Espelhados inline na edge scoring-recalc-client (Deno) — este módulo é a fonte testada. */
 
-export type ClasseSinal = 'preco' | 'marca' | 'demanda';
+type ClasseSinal = 'preco' | 'marca' | 'demanda';
 
 /** Threshold de confiança p/ um sinal pontuar no scoring. Calibrável no piloto (Fase B). */
 export const PROB_MIN = 0.6;
 
-export interface Preco {
+interface Preco {
   tipo: 'cliente_paga' | 'concorrente_cobra';
   produto: string | null;
   valor: number | null;
@@ -18,7 +18,7 @@ export interface Preco {
   evidencia: string;
 }
 
-export interface MarcaEmUso {
+interface MarcaEmUso {
   marca: string;
   produto: string | null;
   e_concorrente: boolean | null;
@@ -27,7 +27,7 @@ export interface MarcaEmUso {
   evidencia: string;
 }
 
-export interface ProdutoGap {
+interface ProdutoGap {
   descricao: string;
   familia: string | null;
   material: string | null;
@@ -37,7 +37,7 @@ export interface ProdutoGap {
   evidencia: string;
 }
 
-export interface DemandaNova {
+interface DemandaNova {
   descricao: string;
   contexto: string | null;
   urgencia: string | null;

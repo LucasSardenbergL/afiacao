@@ -18,9 +18,9 @@ export type EntidadeRowRaw = {
   valor: number;
 };
 
-export type EntidadeClasse = 'novo' | 'sumiu' | 'recorrente';
+type EntidadeClasse = 'novo' | 'sumiu' | 'recorrente';
 
-export type EntidadeComponente = {
+type EntidadeComponente = {
   entidade_chave: string;
   entidade_label: string;
   sem_id: boolean;
@@ -44,7 +44,7 @@ export type EntidadeConcentracaoResult = {
   truncado: boolean;
 };
 
-export const EPSILON_MONETARIO = 0.01;
+const EPSILON_MONETARIO = 0.01;
 
 const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
 

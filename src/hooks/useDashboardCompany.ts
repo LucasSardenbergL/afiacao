@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { ALL_COMPANIES, useCompany, type Company } from '@/contexts/CompanyContext';
 
-export type DashboardCompanyMode = 'single' | 'all';
+type DashboardCompanyMode = 'single' | 'all';
 
 export interface UseDashboardCompanyReturn {
   /** 'single' = filtrar por 1 empresa. 'all' = agregar 3 empresas. */

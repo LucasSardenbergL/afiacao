@@ -44,7 +44,7 @@ export interface ContactConfig {
   capacidadeLigacoes: number; // quantos cabem no dia (v1: contagem; codex → tempo)
   cadenciaMinDias: number;    // piso absoluto entre contatos proativos
 }
-export type Bucket = 'top' | 'winback' | 'coldstart';
+type Bucket = 'top' | 'winback' | 'coldstart';
 export interface ScoredCandidate extends ContactCandidate {
   valorDaLigacao: number;
   prontidao: number;

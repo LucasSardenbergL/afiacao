@@ -9,7 +9,7 @@ import { ilikeOr, isSearchablePostgrestTerm } from '@/lib/postgrest';
 import { isOmieIncerto } from '@/lib/pedidosProgramados/helpers';
 import type { EnvioCalendario, StatusEnvio } from '@/lib/pedidosProgramados/calendario';
 
-export interface PedidoProgramado {
+interface PedidoProgramado {
   id: string;
   cliente_ref: string;
   arquivo_path: string;
@@ -48,7 +48,7 @@ export interface PedidoProgramadoItem {
   mapa: { id: string; ultimo_preco: number | null; omie_products: ProdutoMapeado | null } | null;
 }
 
-export interface PedidoProgramadoEnvio {
+interface PedidoProgramadoEnvio {
   id: string;
   pedido_programado_id: string;
   data_envio: string;

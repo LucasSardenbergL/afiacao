@@ -175,4 +175,3 @@ export function pageview(path: string): void {
 export function resetAnalytics(): void {
   withPosthog((p) => p.reset(), 'reset');
 }
-

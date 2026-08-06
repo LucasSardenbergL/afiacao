@@ -3,7 +3,7 @@ export interface VisitaHojeRow {
   customer_user_id: string;
 }
 
-export interface VisitaHojePreview {
+interface VisitaHojePreview {
   id: string;
   customer_user_id: string;
   nome: string;

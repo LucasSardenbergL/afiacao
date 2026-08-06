@@ -2,8 +2,8 @@ export type TarefaCategoria = 'ligar' | 'oferecer' | 'preco' | 'whatsapp' | 'out
 export type TarefaModo = 'data' | 'interacao';
 export type TarefaInteracaoTipo = 'ligacao' | 'visita' | 'entrega';
 export type TarefaAutoSatisfy = 'off' | 'interacao' | 'conteudo';
-export type TarefaStatus = 'aberta' | 'concluida' | 'cancelada';
-export type TarefaConclusaoOrigem = 'manual' | 'auto_interacao' | 'sugestao_confirmada' | 'whatsapp';
+type TarefaStatus = 'aberta' | 'concluida' | 'cancelada';
+type TarefaConclusaoOrigem = 'manual' | 'auto_interacao' | 'sugestao_confirmada' | 'whatsapp';
 
 export interface TarefaEstado {
   id: string;
@@ -36,16 +36,4 @@ export interface TarefaEstado {
   atrasada: boolean;
   escalavel: boolean;
   tem_sugestao_pendente: boolean;
-}
-
-export interface TarefaCandidato {
-  id: string;
-  tarefa_id: string;
-  source_type: 'farmer_call' | 'route_visit' | 'whatsapp' | 'quote';
-  source_id: string | null;
-  mode: 'interacao' | 'conteudo';
-  confidence: number | null;
-  motivo: string | null;
-  matched_payload: { entity_type?: string; value?: string; context?: string } | null;
-  status: 'pending' | 'accepted' | 'rejected' | 'expired';
 }

@@ -6,9 +6,6 @@ import { AIResultPanel } from './unifiedAI/AIResultPanel';
 // Re-exporta os tipos públicos para preservar os imports existentes
 // (ex: useUnifiedOrder.ts importa AIOrderResult / AICustomerMatch deste módulo).
 export type {
-  AIProduct,
-  AIService,
-  AISuggestion,
   AICustomerMatch,
   AIOrderResult,
 } from './unifiedAI/types';

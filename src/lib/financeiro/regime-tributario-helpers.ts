@@ -137,7 +137,7 @@ export function breakEvenMargemReal(input: { presuncaoIrpj: number; presuncaoCsl
 }
 
 export type RegimeNome = 'simples' | 'presumido' | 'real';
-export type StatusElegibilidade = 'elegivel' | 'sublimite_excedido' | 'inelegivel';
+type StatusElegibilidade = 'elegivel' | 'sublimite_excedido' | 'inelegivel';
 export type StatusRecomendacao = 'recomenda' | 'empate_tecnico' | 'manter' | 'incompleto';
 export type RegimeComparado = {
   regime: RegimeNome; elegivel: boolean; status_elegibilidade: StatusElegibilidade; motivo_inelegivel: string | null;

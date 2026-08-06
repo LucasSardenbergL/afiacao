@@ -11,7 +11,7 @@ export interface VendedorMapRow {
   user_id: string;
 }
 
-export interface ComputedAssignment {
+interface ComputedAssignment {
   customer_user_id: string;
   owner_user_id: string;
   source: CarteiraSource;
@@ -20,7 +20,7 @@ export interface ComputedAssignment {
   eligible: boolean;
 }
 
-export interface MappingConflict {
+interface MappingConflict {
   customer_user_id: string;
   omie_codigo_vendedor: number;
   candidate_user_ids: string[];

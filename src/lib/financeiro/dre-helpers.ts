@@ -5,7 +5,6 @@
 import { ANEXOS_SIMPLES, type AnexoSimples, type FaixaSimples, FATOR_R_LIMIAR, PRESUMIDO } from './dre-tabelas-tributarias';
 
 export type RegimeTributario = 'simples' | 'presumido';
-export type RegimeApuracao = 'caixa' | 'competencia';
 
 export const REGIME_POR_EMPRESA: Record<string, RegimeTributario> = {
   colacor: 'presumido',
@@ -15,7 +14,7 @@ export const REGIME_POR_EMPRESA: Record<string, RegimeTributario> = {
 
 // Linhas de imposto regime-aware + linhas estruturais. Deduções (sobre receita) ficam
 // acima da receita líquida; das é linha própria (Simples); irpj/csll abaixo (presumido).
-export type DreLinha =
+type DreLinha =
   | 'receita_bruta' | 'deducoes' | 'receitas_financeiras' | 'outras_receitas'
   | 'cmv' | 'despesas_operacionais' | 'despesas_administrativas' | 'despesas_comerciais'
   | 'despesas_financeiras' | 'outras_despesas'
@@ -258,7 +257,7 @@ export function calcularRBT12(historico: ReceitaMensal[], ano: number, mes: numb
   }, 0);
 }
 
-export function faixaPorRBT12(anexo: AnexoSimples, rbt12: number): FaixaSimples {
+function faixaPorRBT12(anexo: AnexoSimples, rbt12: number): FaixaSimples {
   const faixas = ANEXOS_SIMPLES[anexo];
   for (const f of faixas) {
     if (rbt12 <= f.ate) return f;

@@ -13,24 +13,24 @@ import type { DeliveryOption } from '@/types';
 
 export type SubmitClient = SupabaseClient<Database>;
 
-export interface SubmitCart {
+interface SubmitCart {
   obenProductItems: ProductCartItem[];
   colacorProductItems: ProductCartItem[];
   serviceItems: ServiceCartItem[];
 }
 
-export interface SubmitSubtotals {
+interface SubmitSubtotals {
   oben: number;
   colacor: number;
   service: number;
 }
 
-export interface SubmitVolumes {
+interface SubmitVolumes {
   oben: number;
   colacor: number;
 }
 
-export interface SubmitPayment {
+interface SubmitPayment {
   parcelaOben: string;
   parcelaColacor: string;
   afiacaoMethod: string;
@@ -38,12 +38,12 @@ export interface SubmitPayment {
   formasPagamentoColacor: FormaPagamento[];
 }
 
-export interface SubmitDelivery {
+interface SubmitDelivery {
   option: DeliveryOption;
   selectedAddress: AddressData | undefined;
 }
 
-export interface SubmitMeta {
+interface SubmitMeta {
   notes: string;
   readyByDate: string;
   ordemCompra: string;

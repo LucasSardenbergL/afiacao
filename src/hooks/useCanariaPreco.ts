@@ -6,7 +6,7 @@ import {
   type RespostaCanaria,
 } from "@/lib/governanca/canaria-preco";
 
-export interface VerificacaoCanaria extends ResultadoCanaria {
+interface VerificacaoCanaria extends ResultadoCanaria {
   em: number; // epoch ms da verificação (p/ "última checagem" no card)
 }
 

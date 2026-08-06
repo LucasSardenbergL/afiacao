@@ -6,7 +6,7 @@ import { normalizeExtractedSpec } from '@/lib/knowledge-base/specs-types';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
 
 /** Erro ocorrido durante a extração de um documento específico. */
-export interface BatchExtractErro {
+interface BatchExtractErro {
   documentId: string;
   error: string;
 }

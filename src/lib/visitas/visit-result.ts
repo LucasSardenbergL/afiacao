@@ -1,4 +1,4 @@
-export type VisitResultTone = 'success' | 'info' | 'error' | 'warning' | 'muted';
+type VisitResultTone = 'success' | 'info' | 'error' | 'warning' | 'muted';
 export interface VisitResultLabel {
   label: string;
   emoji: string;
