@@ -114,11 +114,9 @@ export function scoreProspeccao(c: CustomerScoreInputs): MissionResult {
  * Computa o visit_score final + primary_mission.
  * Tiebreak: expansao > recuperacao > relacionamento > prospeccao.
  *
- * ⚠️ TRANSICIONAL (Task 3 desta série): só destrava a leitura de `.score` agora que as 4 missões
- * devolvem `MissionResult` em vez de `number` — ainda trata `score: null` como 0 no argmax
- * (`?? 0`), o mesmo comportamento de antes. O argmax NULL-AWARE (ignorar a missão não avaliada
- * em vez de empatá-la como zero) e o campo `insumos_ausentes` são a Task 4 seguinte, de propósito
- * — para o commit de cada task corresponder exatamente ao que ele diz que muda.
+ * ⚠️ Missão com `score: null` ("não avaliada") é IGNORADA no argmax — não tratada como 0. Tratar
+ * como 0 a faria empatar com missões legitimamente zeradas e reintroduziria a fabricação pela
+ * porta dos fundos.
  */
 export function computeVisitScore(c: CustomerScoreInputs): VisitScore {
   const scores: MissionScores = {
@@ -130,11 +128,13 @@ export function computeVisitScore(c: CustomerScoreInputs): VisitScore {
 
   const ORDER: MissionType[] = ['expansao', 'recuperacao', 'relacionamento', 'prospeccao'];
 
+  // Semente na prospecção, que nunca é null (insumos sempre presentes).
   let primary_mission: MissionType = 'prospeccao';
   let visit_score = scores.prospeccao.score ?? 0;
 
   for (const m of ORDER) {
-    const s = scores[m].score ?? 0;
+    const s = scores[m].score;
+    if (s == null) continue; // não avaliada: fora da disputa, jamais como 0
     if (s > visit_score) {
       visit_score = s;
       primary_mission = m;
@@ -149,5 +149,6 @@ export function computeVisitScore(c: CustomerScoreInputs): VisitScore {
     city: c.city,
     neighborhood: c.neighborhood,
     days_since_last_visit: c.days_since_last_visit,
+    insumos_ausentes: scores[primary_mission].insumosAusentes,
   };
 }

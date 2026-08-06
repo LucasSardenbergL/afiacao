@@ -303,3 +303,41 @@ describe('ausência de insumo (money-path: ausente ≠ zero)', () => {
     expect(scoreRelacionamento(c).insumosAusentes).toEqual([]);
   });
 });
+
+describe('computeVisitScore com missão não avaliada', () => {
+  it('missão null NÃO empata com 0 no argmax — é ignorada', () => {
+    const r = computeVisitScore(mkInput({
+      expansion_score: null, revenue_potential: null,
+      sales_orders_count: 0, // vira candidato a prospecção (piso 70)
+    }));
+    expect(r.scores.expansao.score).toBeNull();
+    expect(r.primary_mission).toBe('prospeccao');
+    expect(r.visit_score).toBe(70);
+  });
+
+  it('expansão MEDIDA e vencedora ainda ganha o tiebreak (a ordem não regrediu)', () => {
+    const r = computeVisitScore(mkInput({
+      expansion_score: 100, revenue_potential: 10000,
+      sales_orders_count: 5, is_prospect: false, health_score: 0, churn_risk: 0,
+    }));
+    expect(r.primary_mission).toBe('expansao');
+    expect(r.insumos_ausentes).toEqual([]);
+  });
+
+  it('insumos_ausentes reporta os da missão VENCEDORA, não a união de todas', () => {
+    const r = computeVisitScore(mkInput({
+      churn_risk: 100, recover_score: null, days_since_last_purchase: 200,
+      expansion_score: null, revenue_potential: null,
+      sales_orders_count: 5, is_prospect: false, health_score: 0,
+    }));
+    expect(r.primary_mission).toBe('recuperacao');
+    expect(r.insumos_ausentes).toEqual(['recover_score']);
+  });
+
+  it('visit_score nunca é null — prospecção sempre fornece um número', () => {
+    const r = computeVisitScore(mkInput({
+      expansion_score: null, revenue_potential: null, recover_score: null,
+    }));
+    expect(typeof r.visit_score).toBe('number');
+  });
+});
