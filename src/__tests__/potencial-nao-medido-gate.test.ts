@@ -35,7 +35,18 @@ function semComentario(linha: string): string {
   return linha.replace(/\/\/.*$/, '');
 }
 
-const CAMPOS = ['expansion_score', 'revenue_potential', 'expansion_potential'];
+const CAMPOS = [
+  'expansion_score',
+  'revenue_potential',
+  'expansion_potential',
+  // Nomes pt-BR das mesmas 3 colunas sem produtor, como saem de customer_visit_scores
+  // (useMyVisitSuggestions.ts) — sem estes, o predicado nunca casa nada naquele arquivo e a
+  // entrada em VIGIADOS é decorativa.
+  'expansao_score',
+  'recuperacao_score',
+  'relacionamento_score',
+  'prospeccao_score',
+];
 
 /**
  * Coerção a zero aplicada a um dos campos, ancorada no NOME da coluna e não na forma do
@@ -58,6 +69,11 @@ function coercoes(codigo: string): string[] {
 
 const VIGIADOS = [
   'src/hooks/useTacticalPlan.ts',
+  'src/lib/scoring/agenda.ts',
+  'src/lib/carteira/escopo-clientes.ts',
+  'src/lib/positivacao/ranking.ts',
+  'src/hooks/useMyVisitSuggestions.ts',
+  'src/lib/visit-scoring/missions.ts',
 ];
 
 describe('gate: potencial sem writer não é coagido a 0 (src/)', () => {
@@ -91,6 +107,9 @@ describe('gate: potencial sem writer não é coagido a 0 (src/)', () => {
       'expansionPotential: Number(d.expansion_potential || 0),',
       'revenuePotential: Number(score.revenue_potential ?? 0),',
       'const rev = (score.revenue_potential as number) || 0;',
+      // Forma pt-BR real: a reescrita hipotética de useMyVisitSuggestions.ts que este gate existe
+      // pra pegar (linhas ~142-145 coagindo o score de volta a 0 no caminho do tooltip).
+      'expansao: { score: s.expansao_score ?? 0, insumosAusentes: [] },',
     ];
     for (const forma of formasReais) {
       expect(coercoes(forma).length, `o detector NÃO pegou: ${forma}`).toBeGreaterThan(0);

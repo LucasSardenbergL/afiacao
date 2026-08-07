@@ -46,9 +46,11 @@ export function margemConhecida(raw: unknown): number | null {
  * este.) Diferença medida por teste, não suposta.
  *
  * Espelhado por `numeroValido` em
- * `supabase/functions/generate-tactical-plan/plano-helpers.ts` e por `valorMedido` em
- * `supabase/functions/generate-bundle-argument/argumento-helpers.ts` (Deno não importa de `src/`).
+ * `supabase/functions/generate-tactical-plan/plano-helpers.ts`, por `valorMedido` em
+ * `supabase/functions/generate-bundle-argument/argumento-helpers.ts` e por `valorMedido` em
+ * `supabase/functions/visit-score-recalc-client/index.ts` (Deno não importa de `src/`).
  */
+// MIRROR-START valor-medido — espelhado verbatim em supabase/functions/visit-score-recalc-client/index.ts
 export function valorMedido(raw: unknown): number | null {
   if (typeof raw === 'number') return Number.isFinite(raw) ? raw : null;
   if (typeof raw === 'string') {
@@ -59,6 +61,7 @@ export function valorMedido(raw: unknown): number | null {
   }
   return null;
 }
+// MIRROR-END
 
 /**
  * Média das margens conhecidas, ou `null` se nenhuma for conhecida.

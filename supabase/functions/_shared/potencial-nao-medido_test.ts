@@ -82,6 +82,14 @@ const VIGIADOS: Array<{ rotulo: string; url: URL }> = [
     rotulo: "generate-tactical-plan/index.ts",
     url: new URL("../generate-tactical-plan/index.ts", import.meta.url),
   },
+  {
+    rotulo: "visit-score-recalc-client/index.ts",
+    url: new URL("../visit-score-recalc-client/index.ts", import.meta.url),
+  },
+  {
+    rotulo: "tactical-plans-batch/index.ts",
+    url: new URL("../tactical-plans-batch/index.ts", import.meta.url),
+  },
 ];
 
 Deno.test("expansion_score/revenue_potential não são coagidos a 0 antes do prompt", async () => {

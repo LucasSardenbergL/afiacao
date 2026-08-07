@@ -22,10 +22,15 @@ export interface CustomerScoreInputs {
   farmer_id: string;
   // de farmer_client_scores
   churn_risk: number;
-  expansion_score: number;
+  // ⚠️ `number | null`: estas três colunas NUNCA tiveram produtor — NULL em 6.633/6.633 linhas
+  // (medido 2026-07-27). O tipo `number` anterior MENTIA, e era o que permitia `Number(x ?? 0)`
+  // passar despercebido. Guardado por src/__tests__/potencial-nao-medido-gate.test.ts (src/) e
+  // supabase/functions/_shared/potencial-nao-medido_test.ts (edge); nuladas por
+  // supabase/migrations/20260727130000_farmer_scores_colunas_orfas_null.
+  expansion_score: number | null;
   health_score: number;
-  recover_score: number;
-  revenue_potential: number;
+  recover_score: number | null;
+  revenue_potential: number | null;
   avg_monthly_spend_180d: number;
   days_since_last_purchase: number;
   // de PR-SCORING-V2
@@ -44,19 +49,40 @@ export interface CustomerScoreInputs {
   state: string | null;
 }
 
-export interface MissionScores {
-  recuperacao: number;
-  expansao: number;
-  relacionamento: number;
-  prospeccao: number;
+/**
+ * Resultado de UMA missão.
+ *
+ * REGRA ÚNICA (vale para as 4 missões): `score` é `null` somente quando NENHUM insumo da missão
+ * foi medido — "não avaliada". Se ao menos um insumo existe, o score é um número e
+ * `insumosAusentes` nomeia os que faltaram ("parcial").
+ *
+ * A regra única substitui dois casos especiais: hoje ela torna a EXPANSÃO `null` (todos os
+ * insumos ausentes) e a RECUPERAÇÃO parcial (o churn_risk a sustenta) — que são exatamente os
+ * dois desfechos decididos, sem exceção codificada.
+ *
+ * `insumosAusentes` nomeia a COLUNA (não um booleano) para que, quando um produtor nascer, a
+ * lista esvazie sozinha e nada precise ser desligado à mão.
+ */
+export interface MissionResult {
+  score: number | null;
+  insumosAusentes: string[];
 }
+
+export type MissionScores = Record<MissionType, MissionResult>;
 
 export interface VisitScore {
   customer_user_id: string;
   scores: MissionScores;
-  visit_score: number;       // = MAX(4 scores)
+  visit_score: number;       // = MAX dos scores NÃO-NULOS
   primary_mission: MissionType;
   city: string | null;
   neighborhood: string | null;
   days_since_last_visit: number | null;
+  /**
+   * Insumos ausentes da missão VENCEDORA (`primary_mission`) — a lista de UMA missão, não a
+   * união das 4. Vazio significa apenas que a vencedora foi medida por completo; não diz nada
+   * sobre as outras 3 (ex.: vencedora = relacionamento ou prospecção → vem vazio mesmo que a
+   * expansão não tenha sido avaliada nesta linha).
+   */
+  insumos_ausentes: string[];
 }

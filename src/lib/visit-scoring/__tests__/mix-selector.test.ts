@@ -1,21 +1,29 @@
 import { describe, it, expect } from 'vitest';
 import { pickDailyMix } from '../mix-selector';
-import type { MissionType, VisitScore } from '../types';
+import type { MissionResult, MissionType, VisitScore } from '../types';
 
+// `pickDailyMix` só lê `primary_mission`/`visit_score`/`customer_user_id` (não `.scores`
+// diretamente) — as fixtures abaixo só precisam do shape novo (`MissionResult`) para tipar,
+// sem insumo ausente relevante ao que este módulo testa.
 function mkScore(id: string, mission: MissionType, score: number): VisitScore {
+  const missao = (m: MissionType): MissionResult => ({
+    score: m === mission ? score : 0,
+    insumosAusentes: [],
+  });
   return {
     customer_user_id: id,
     scores: {
-      recuperacao: mission === 'recuperacao' ? score : 0,
-      expansao: mission === 'expansao' ? score : 0,
-      relacionamento: mission === 'relacionamento' ? score : 0,
-      prospeccao: mission === 'prospeccao' ? score : 0,
+      recuperacao: missao('recuperacao'),
+      expansao: missao('expansao'),
+      relacionamento: missao('relacionamento'),
+      prospeccao: missao('prospeccao'),
     },
     visit_score: score,
     primary_mission: mission,
     city: 'Belo Horizonte',
     neighborhood: null,
     days_since_last_visit: null,
+    insumos_ausentes: [],
   };
 }
 

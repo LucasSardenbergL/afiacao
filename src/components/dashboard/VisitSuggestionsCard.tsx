@@ -37,6 +37,9 @@ const MISSION_META: Record<MissionType, MissionMeta> = {
   prospeccao: { label: 'Prospecção', icon: Sprout, color: 'text-status-warning', bg: 'bg-status-warning-bg' },
 };
 
+/** Score de missão para exibição. `null` = não avaliada (insumo sem produtor), ≠ zero medido. */
+const fmtMissao = (v: number | null) => (v == null ? 'não avaliada' : String(Math.round(v)));
+
 export function VisitSuggestionsCard() {
   const [city, setCity] = useState<string | undefined>();
   const { cities, suggestions, selectedCity, isLoading } = useMyVisitSuggestions({ city });
@@ -97,10 +100,10 @@ export function VisitSuggestionsCard() {
                     <div className="text-2xs space-y-1">
                       <div className="font-medium">{meta.label} — score {Math.round(s.visit_score)}</div>
                       <div className="text-muted-foreground">
-                        Recuperação: {Math.round(s.scores.recuperacao)} · Expansão: {Math.round(s.scores.expansao)}
+                        Recuperação: {fmtMissao(s.scores.recuperacao.score)} · Expansão: {fmtMissao(s.scores.expansao.score)}
                       </div>
                       <div className="text-muted-foreground">
-                        Relacionamento: {Math.round(s.scores.relacionamento)} · Prospecção: {Math.round(s.scores.prospeccao)}
+                        Relacionamento: {fmtMissao(s.scores.relacionamento.score)} · Prospecção: {fmtMissao(s.scores.prospeccao.score)}
                       </div>
                     </div>
                   </TooltipContent>

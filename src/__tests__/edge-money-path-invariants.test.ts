@@ -2436,3 +2436,85 @@ describe('guardrail money-path: canária paginacao_probe (omie-financeiro)', () 
     expect(bloco, 'a probe deixou de capturar/afirmar o LANÇA do listaOmie').toMatch(/catch[\s\S]{0,120}lancou:\s*true/);
   });
 });
+
+// ── Guard money-path: visit-score-recalc-client não fabrica score de missão sem insumo ──
+// `farmer_client_scores.expansion_score`, `.recover_score` e `.revenue_potential` são NULL em
+// 6.633/6.633 linhas em produção (medido via psql-ro 2026-07-29; nenhum writer as calcula — ver
+// migration 20260727130000_farmer_scores_colunas_orfas_null). O edge duplica inline a lógica de
+// src/lib/visit-scoring/missions.ts (Deno não importa de src/): a paridade textual do bloco
+// `valorMedido` aqui pega a reversão do deploy do Lovable, e o guard de fonte (item 2) pega a
+// reintrodução de `?? 0` nessas 3 colunas ANTES das 4 missões terem a chance de tratar a
+// ausência como "não avaliada" em vez de fabricar zero.
+const VISIT_SCORE_RECALC = 'supabase/functions/visit-score-recalc-client/index.ts';
+const MARGIN_HELPER = 'src/lib/scoring/margin.ts';
+const CAMPOS_SEM_WRITER_VISIT_SCORE = ['expansion_score', 'recover_score', 'revenue_potential'];
+
+// Mesmo padrão de src/__tests__/potencial-nao-medido-gate.test.ts: ancorado no NOME da coluna, não
+// na forma do fallback (`?? 0` e `|| 0` são a mesma fabricação — uma regex por forma vira corrida
+// entre o gate e a criatividade de quem escreve, money-path.md §"O GATE mente...").
+function coercoesSemWriterVisitScore(codigo: string): string[] {
+  const achados: string[] = [];
+  for (const campo of CAMPOS_SEM_WRITER_VISIT_SCORE) {
+    for (const m of codigo.matchAll(new RegExp(`${campo}[^;\\n]{0,80}?(\\?\\?|\\|\\|)\\s*0`, 'g'))) {
+      achados.push(m[0]);
+    }
+  }
+  return achados;
+}
+
+describe('guardrail money-path: visit-score-recalc-client não coage score de missão sem writer', () => {
+  const src = read(VISIT_SCORE_RECALC);
+  const helper = read(MARGIN_HELPER);
+
+  it('sentinela: leu os arquivos reais (edge + helper)', () => {
+    expect(src).toContain('valorMedido');
+    expect(src).toContain('MissionResult');
+    expect(helper).toContain('export function valorMedido');
+  });
+
+  it('PARIDADE: o bloco valor-medido do edge é IDÊNTICO ao helper de src/ (pega reversão do Lovable)', () => {
+    expect(
+      mirrorBlockNamed(src, 'valor-medido'),
+      'edge divergiu do helper de src/lib/scoring/margin.ts — o Lovable reescreveu valorMedido no deploy?',
+    ).toBe(mirrorBlockNamed(helper, 'valor-medido'));
+  });
+
+  it('NÃO coage expansion_score/recover_score/revenue_potential a 0 (ausente != zero)', () => {
+    const ofensas = coercoesSemWriterVisitScore(semComentarios(src));
+    expect(
+      ofensas,
+      'Campo sem writer coagido a 0 no cálculo de missão — "ausente != zero".\n' +
+        'expansion_score/recover_score/revenue_potential sao NULL em 6.633/6.633 linhas em prod.\n' +
+        'Use valorMedido (mirror inline no topo do arquivo):\n  ' +
+        ofensas.join('\n  '),
+    ).toEqual([]);
+  });
+
+  it('o DETECTOR enxerga a coerção quando ela existe (par obrigatório)', () => {
+    // Sem este par, "nenhuma ofensa" e "o predicado está quebrado" têm o mesmo output — um
+    // regex morto passa sempre (money-path.md §"O DETECTOR mente").
+    const formasReais = [
+      'expansion_score: Number(scores.expansion_score ?? 0),',
+      'recover_score: Number(scores.recover_score ?? 0),',
+      'revenue_potential: Number(scores.revenue_potential ?? 0),',
+      'const x = (scores.expansion_score as number) || 0;',
+    ];
+    for (const forma of formasReais) {
+      expect(coercoesSemWriterVisitScore(forma).length, `o detector NÃO pegou: ${forma}`).toBeGreaterThan(0);
+    }
+  });
+
+  it('não acusa o código correto nem o comentário que cita o bug', () => {
+    const corretas = [
+      'expansion_score: valorMedido(scores.expansion_score),',
+      'recover_score: valorMedido(scores.recover_score),',
+      'revenue_potential: valorMedido(scores.revenue_potential),',
+    ];
+    for (const forma of corretas) {
+      expect(coercoesSemWriterVisitScore(forma), `falso-VERMELHO em código correto: ${forma}`).toEqual([]);
+    }
+
+    const prosa = '  // Com `Number(x ?? 0)` o revenue_potential ?? 0 chegava como 0 para toda a base';
+    expect(coercoesSemWriterVisitScore(semComentarios(prosa))).toEqual([]);
+  });
+});
