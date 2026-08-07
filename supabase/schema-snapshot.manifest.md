@@ -4,13 +4,15 @@
 
 | Campo | Valor |
 |---|---|
-| Gerado em | 2026-07-21 |
+| Gerado em | 2026-08-06 |
 | Fonte | produção (Supabase Lovable, `fzvklzpomgnyikkfkzai`) — **gerado via `pg_dump` por `~/.config/afiacao/psql-ro`** (read-only, role `claude_ro`). Idêntico objeto-por-objeto ao dump do chat do Lovable (cross-validado no #1093); difere só no **preâmbulo** do `pg_dump`: token `\restrict`, versão 17.9→17.10, e `client_encoding` SQL_ASCII→UTF8 / `standard_conforming_strings` off→on (estilo da ferramenta, **não** conteúdo — corpo dos objetos idêntico; cada dump é internamente consistente; replay valida o restore). |
 | Versão do banco | PostgreSQL 17.6 |
 | pg_dump | 17.10 (Homebrew, via psql-ro) |
 | Flags | `--schema-only --schema=public --schema=private --no-owner --no-privileges` |
-| Linhas do arquivo | 45.022 (anterior no HEAD: 36.907 — ver ⚠️ abaixo sobre a divergência manifest × arquivo) |
-| Tamanho | ~1,7 MB |
+| Linhas do arquivo | 47.028 (anterior: 45.384) |
+| Tamanho | ~1,8 MB |
+
+> **Geração 2026-08-06 (por quê):** a migration `20260806101417_atp_reserva_estoque_fase1.sql` (ATP/reserva de estoque, PR #1672) foi aplicada à mão no SQL Editor e validada por catálogo — sem o re-dump, um DR restauraria prod SEM a tabela `estoque_reservas`, as 6 funções e os privilégios fechados da fase 1. Entra junto o drift acumulado desde 21/07 (+1.812/−168 no git diff); a única remoção de objeto é `calcular_gatilhos_reposicao`, dropada de propósito pela `20260801120000` (limpeza legítima). Contagens desta geração: 328 tabelas · 79 views · 5 matviews · 316 funções public + 17 private · 123 triggers · 687 policies · RLS habilitada em 328 tabelas. Provas do `db/refresh-snapshot.sh`: 5/5 (integridade, paridade com o catálogo de prod, replay PG17 + enforcement RLS OK).
 
 > **Geração anterior (2026-05-24, pg_dump 17.9, 23.745 linhas) estava gravemente stale:** faltavam ~60 tabelas, ~124 funções, ~105 policies, ~75 índices criados por migrations posteriores (inclui o drift da Opção A: `farmer_client_scores`/`customer_visit_scores` → `UNIQUE(customer_user_id)` + `idx_fcs_customer`/`idx_cvs_customer`). As ~16 policies + 1 matview que "sumiram" são **remoções reais** em prod (hardening de RLS substituiu as policies amplas `"Staff can manage …"` pelas granulares por carteira; matview `mv_sku_ranking_negociacao_paralela` **movida para o schema `private`** — NÃO dropada; ver §"Schema `private`" abaixo) — confirmado via psql-ro.
 
