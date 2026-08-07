@@ -70,6 +70,10 @@ export interface SubmitOrderParams {
   isCustomerMode?: boolean;
   /** Chave de idempotência por TENTATIVA de envio (estável entre retries; ver useUnifiedOrder). */
   checkoutId: string;
+  /** ATP fase 2: backorder autorizado pelo VENDEDOR (decisão explícita no painel
+   *  de recusa). Vai no payload do edge; o servidor valida (bloqueio prévio +
+   *  fingerprint) e audita em atp_decisoes. Nunca setar sem decisão humana. */
+  atpBackorder?: { autorizado: true; motivo: string };
   /** Canal de origem. Na Fase 0 é null/'web_*'; a Fase 1 grava 'ligacao_sainte' etc. */
   origem?: string | null;
   /** Liga ligação ↔ N pedidos. null na Fase 0 (Fase 1 preenche). */
@@ -123,6 +127,9 @@ export interface SubmitOrderResult {
   allConfirmed: boolean;
   /** Contas bloqueadas pela trava de crédito neste envio (vazio quando nenhuma). */
   bloqueiosCredito?: BloqueioCreditoPedido[];
+  /** ATP fase 2: bloqueio de estoque devolvido pelo edge (o PV Oben NÃO foi criado).
+   *  A UI abre o painel de backorder explícito com este contexto. */
+  bloqueioAtp?: import('./atp').BloqueioAtpPedido | null;
 }
 
 export interface SubmitQuoteParams {

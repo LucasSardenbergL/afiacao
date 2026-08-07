@@ -369,6 +369,9 @@ export function useSalesOrderEdit() {
             })),
             observacao: notes,
             codigo_parcela: selectedParcela || undefined,
+            // Gate ATP fase 2: esta via entende blocked:'atp' (aumento de
+            // exposição Oben na edição é bloqueado na fronteira).
+            atp_capaz: true,
           },
         });
         if (error) {
@@ -397,6 +400,23 @@ export function useSalesOrderEdit() {
             description:
               `${cores ? `Cor ${cores}: ` : ''}o preço/fórmula mudou desde a criação do pedido. ` +
               'Remova o item de tinta e adicione de novo pela tela (o preço recalcula), então salve.',
+            duration: 12000,
+          });
+          setSaving(false);
+          return;
+        }
+        if ((data as { blocked?: string } | null)?.blocked === 'atp') {
+          // Gate ATP fase 2: a edição AUMENTOU a exposição Oben (quantidade maior
+          // ou SKU novo) — o Omie NÃO foi atualizado. Sem override na edição: a
+          // válvula é um pedido novo pelo balcão (lá reserva/backorder existem).
+          const aumentos = (data as { aumentos?: Array<{ omie_codigo_produto?: number; quantidade_atual?: number; quantidade_nova?: number }> }).aumentos;
+          const detalhe = (aumentos ?? [])
+            .map(a => `${a.omie_codigo_produto}: ${a.quantidade_atual ?? '—'} → ${a.quantidade_nova ?? '—'}`)
+            .join('; ');
+          toast.error('Edição bloqueada: aumento sem estoque reservado — o Omie NÃO foi atualizado', {
+            description:
+              `${detalhe ? `Aumentos: ${detalhe}. ` : ''}Reduza para as quantidades originais e, para o excedente, ` +
+              'crie um pedido novo pelo balcão (lá a reserva de estoque e o backorder explícito existem).',
             duration: 12000,
           });
           setSaving(false);

@@ -37,6 +37,9 @@ interface MakeSupabaseOpts {
   produtosInativos?: string[];
   /** Força erro na query do preflight de vendabilidade (fail-closed). */
   preflightError?: unknown;
+  /** Linha existente devolvida pelo lookup idempotente de sales_orders
+   *  (default null → todo teste vai pro INSERT). */
+  lookupExisting?: { id: string; omie_pedido_id: number | null };
 }
 function makeSupabase(opts: MakeSupabaseOpts = {}) {
   // ── caminho do INSERT: .from('sales_orders').insert().select('id').single() ──
@@ -49,7 +52,7 @@ function makeSupabase(opts: MakeSupabaseOpts = {}) {
   // ── caminho do LOOKUP idempotente: .from('sales_orders')
   //    .select('id, omie_pedido_id').eq('checkout_id', …).eq('account', …).maybeSingle()
   //    Fase 0 (sem linha prévia) → sempre null → ensureSalesOrderRow vai pro INSERT. ──
-  const maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
+  const maybeSingle = vi.fn().mockResolvedValue({ data: opts.lookupExisting ?? null, error: null });
   const eqAccount = vi.fn().mockReturnValue({ maybeSingle });
   const eqCheckout = vi.fn().mockReturnValue({ eq: eqAccount });
   const lookupSelect = vi.fn().mockReturnValue({ eq: eqCheckout });
@@ -96,7 +99,8 @@ const user = { id: 'user-1' } as User;
 function obenItem(): ProductCartItem {
   return {
     type: 'product', account: 'oben', quantity: 2, unit_price: 10,
-    product: { id: 'p1', omie_codigo_produto: 'OBEN1', codigo: 'C1', descricao: 'Lixa', unidade: 'UN' },
+    // omie_codigo_produto NUMÉRICO como no tipo real (a reserva ATP valida Number.isFinite)
+    product: { id: 'p1', omie_codigo_produto: 111, codigo: 'C1', descricao: 'Lixa', unidade: 'UN' },
   } as unknown as ProductCartItem;
 }
 function colacorAcabado(): ProductCartItem {
@@ -443,5 +447,139 @@ describe('submitOrder', () => {
       subtotals: { oben: 0, colacor: 0, service: 0 },
     }));
     expect(r.errors.some((e) => e.step === 'validate_price')).toBe(false);
+  });
+});
+
+describe('submitOrder — gate ATP Oben (fase 2)', () => {
+  it('payload do criar_pedido Oben declara atp_capaz (capability do gate na fronteira)', async () => {
+    const { client, invoke } = makeSupabase({ insertId: 'so-oben' });
+    await submitOrder(makeParams({
+      supabase: client,
+      cart: { obenProductItems: [obenItem()], colacorProductItems: [], serviceItems: [] },
+      subtotals: { oben: 20, colacor: 0, service: 0 },
+    }));
+    expect(invoke).toHaveBeenCalledWith('omie-vendas-sync', expect.objectContaining({
+      body: expect.objectContaining({ action: 'criar_pedido', account: 'oben', atp_capaz: true }),
+    }));
+  });
+
+  it('blocked:"atp" (recusa) → bloqueio nomeado, bloqueioAtp estruturado, NUNCA parece enviado', async () => {
+    const { client } = makeSupabase({
+      insertId: 'so-oben',
+      invokeImpl: () => ({
+        data: {
+          success: false, blocked: 'atp', contexto: 'criacao',
+          recusas: [{ omie_codigo_produto: 111, motivo: 'saldo_insuficiente', solicitado: 2, disponivel: 1 }],
+        },
+        error: null,
+      }),
+    });
+    const r = await submitOrder(makeParams({
+      supabase: client,
+      cart: { obenProductItems: [obenItem()], colacorProductItems: [], serviceItems: [] },
+      subtotals: { oben: 20, colacor: 0, service: 0 },
+    }));
+    expect(r.success).toBe(true);
+    expect(r.results).toContain('PV Oben (bloqueado: estoque)');
+    expect(r.results.some((s) => /PV Oben \d/.test(s))).toBe(false);
+    expect(r.errors.some((e) => e.step === 'bloqueio_atp_oben')).toBe(true);
+    expect(r.bloqueioAtp).toMatchObject({
+      tipo: 'recusa',
+      recusas: [{ omie_codigo_produto: 111, motivo: 'saldo_insuficiente', solicitado: 2, disponivel: 1 }],
+    });
+    // Bloqueio ≠ confirmação → carrinho/checkout preservados p/ decisão de backorder.
+    expect(r.allConfirmed).toBe(false);
+  });
+
+  it('recusa ATP Oben NÃO derruba a conta Colacor do mesmo checkout (padrão dos bloqueios)', async () => {
+    const { client } = makeSupabase({
+      insertId: 'so-x',
+      invokeImpl: (body) => {
+        const b = body as { action?: string; account?: string };
+        if (b.action === 'criar_pedido' && b.account === 'oben') {
+          return {
+            data: { success: false, blocked: 'atp', recusas: [{ omie_codigo_produto: 111, motivo: 'saldo_insuficiente', solicitado: 2, disponivel: 0 }] },
+            error: null,
+          };
+        }
+        return { data: { omie_numero_pedido: '777' }, error: null };
+      },
+    });
+    const r = await submitOrder(makeParams({
+      supabase: client,
+      cart: { obenProductItems: [obenItem()], colacorProductItems: [colacorAcabado()], serviceItems: [] },
+      subtotals: { oben: 20, colacor: 50, service: 0 },
+      defaultProductionAssigneeId: 'assignee-1',
+    }));
+    expect(r.results).toContain('PV Oben (bloqueado: estoque)');
+    expect(r.results.some((s) => s.includes('PV Colacor 777'))).toBe(true);
+  });
+
+  it('verificacao_indisponivel → bloqueioAtp com tipo próprio e semOverride repassado', async () => {
+    const { client } = makeSupabase({
+      insertId: 'so-oben',
+      invokeImpl: () => ({
+        data: {
+          success: false, blocked: 'atp', recusas: [],
+          verificacao_indisponivel: true, sem_override: false, detalhe: 'timeout ao verificar',
+        },
+        error: null,
+      }),
+    });
+    const r = await submitOrder(makeParams({
+      supabase: client,
+      cart: { obenProductItems: [obenItem()], colacorProductItems: [], serviceItems: [] },
+      subtotals: { oben: 20, colacor: 0, service: 0 },
+    }));
+    expect(r.bloqueioAtp).toMatchObject({ tipo: 'verificacao_indisponivel', semOverride: false });
+    expect(r.results).toContain('PV Oben (bloqueado: estoque)');
+    expect(r.allConfirmed).toBe(false);
+  });
+
+  it('atpBackorder autorizado → payload leva atp_backorder {autorizado, motivo}', async () => {
+    const { client, invoke } = makeSupabase({ insertId: 'so-oben' });
+    const r = await submitOrder(makeParams({
+      supabase: client,
+      cart: { obenProductItems: [obenItem()], colacorProductItems: [], serviceItems: [] },
+      subtotals: { oben: 20, colacor: 0, service: 0 },
+      atpBackorder: { autorizado: true, motivo: 'cliente aceita prazo de reposição' },
+    }));
+    expect(invoke).toHaveBeenCalledWith('omie-vendas-sync', expect.objectContaining({
+      body: expect.objectContaining({
+        atp_backorder: { autorizado: true, motivo: 'cliente aceita prazo de reposição' },
+      }),
+    }));
+    expect(r.success).toBe(true);
+  });
+
+  it('modo cliente com item Oben → fail-closed ANTES de qualquer insert (anomalia, não backorder)', async () => {
+    const { client, insert, invoke } = makeSupabase();
+    const r = await submitOrder(makeParams({
+      supabase: client,
+      customer: customerSintetico,
+      isCustomerMode: true,
+      cart: { obenProductItems: [obenItem()], colacorProductItems: [], serviceItems: [] },
+      subtotals: { oben: 20, colacor: 0, service: 0 },
+    }));
+    expect(r.success).toBe(false);
+    expect(r.errors[0].step).toBe('validate_atp_modo_cliente');
+    expect(insert).not.toHaveBeenCalled();
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it('blocked DESCONHECIDO do edge → fail-closed (nunca lê como sucesso — lição Codex)', async () => {
+    const { client } = makeSupabase({
+      insertId: 'so-oben',
+      invokeImpl: () => ({ data: { success: false, blocked: 'gate_futuro_xyz' }, error: null }),
+    });
+    const r = await submitOrder(makeParams({
+      supabase: client,
+      cart: { obenProductItems: [obenItem()], colacorProductItems: [], serviceItems: [] },
+      subtotals: { oben: 20, colacor: 0, service: 0 },
+    }));
+    expect(r.results.some((s) => /PV Oben \d/.test(s))).toBe(false);
+    expect(r.results).toContain('PV Oben (bloqueado: gate_futuro_xyz)');
+    expect(r.allConfirmed).toBe(false);
+    expect(r.errors.some((e) => e.step === 'bloqueio_desconhecido_oben')).toBe(true);
   });
 });
