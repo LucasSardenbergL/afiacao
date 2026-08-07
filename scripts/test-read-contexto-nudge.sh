@@ -157,6 +157,22 @@ check "grande + limit=10 (~2,8k tok) → silêncio" silencio "$(run "$grande" s6
 #     minha ("usou limit → não avisa") — o corte é por tokens, não por flag.
 check "grande + limit=50 (~13k tok) → avisa mesmo com limit" READ-GRANDE "$(run "$grande" s6b 50)"
 
+# 6c. O CONSELHO muda de lado no break-even medido (2026-08-06): um subagente
+#     custa US$ 1,06 na mediana, então delegar só compensa a partir de ~40k
+#     tokens — abaixo disso o certo é recortar (rg + offset/limit), de graça.
+#     A 1ª versão do hook mandava delegar já a partir de 10k, conselho que PERDIA
+#     dinheiro na maioria dos disparos. Marcadores ASCII em CAIXA FIXA ("SE PAGA"
+#     / "PERDE"), sem -i: prosa acentuada casaria o ramo errado sob pt_BR (#1483).
+grande_out="$(run "$grande" s6c)"          # ~111k tok → faixa do subagente
+peq_out="$(run "$grande" s6d 50)"          # ~13k tok  → faixa do recorte
+if tem "SE PAGA" "$grande_out" && ! tem "PERDE" "$grande_out"
+then ok "leitura >=40k: conselho é DELEGAR (o subagente se paga)"
+else bad "leitura de 111k deveria recomendar subagente (veio: '${grande_out:0:80}')"; fi
+
+if tem "PERDE" "$peq_out" && ! tem "SE PAGA" "$peq_out"
+then ok "leitura 10-40k: conselho é RECORTAR (delegar perderia dinheiro)"
+else bad "leitura de 13k deveria desaconselhar subagente (veio: '${peq_out:0:80}')"; fi
+
 # 7. o teto de 2000 linhas do Read entra na conta: arquivo de linhas CURTAS cujo
 #    total passa de 10k tok, mas cujas 2000 primeiras linhas não → silêncio.
 curto="$tmp/muitas-linhas-curtas.ts"; : > "$curto"
