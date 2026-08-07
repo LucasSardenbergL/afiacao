@@ -21,13 +21,13 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **450** custom migrations totais
-- **1548** objetos esperados (criados por estas migrations)
+- **451** custom migrations totais
+- **1554** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 453
-  - `rls_policy`: 390
+  - `function`: 457
+  - `rls_policy`: 391
   - `index`: 235
-  - `cron_job`: 161
+  - `cron_job`: 162
   - `table`: 152
   - `trigger`: 79
   - `view`: 74
@@ -3781,6 +3781,17 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20260806223407_drop_import_tint_formulas.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260806225052_atp_reserva_estoque_fase1_1_hardening.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.atp_disponivel` | — |
+| `function` | `public.reservar_estoque` | — |
+| `function` | `private.expirar_reservas_vencidas_job` | — |
+| `function` | `public.expirar_reservas_vencidas` | — |
+| `cron_job` | `cron.atp-expirar-reservas-vencidas` | — |
+| `rls_policy` | `public.estoque_reservas_service_select` | `estoque_reservas` |
 
 ## Próximos passos por status
 
