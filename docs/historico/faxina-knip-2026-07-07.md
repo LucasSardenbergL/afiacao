@@ -23,3 +23,7 @@ Sessão dedicada prevista no backlog da [auditoria 2026-07-06](auditoria-health-
 - `heavy bun run typecheck` → 0 erros (strict, inclui `noUnusedLocals` — é ele que prova que nenhum des-exportado ficou órfão).
 - `heavy bun run test` → suíte completa verde (inclui os parity tests byte-exatos e o guardrail money-path textual).
 - `bun lint` → 0 errors.
+
+## Desfecho: mergeou só em 2026-08-06 (#1212), 566 commits depois
+
+O PR ficou **4 semanas parado em conflito** — não-draft, mas `CONFLICTING`, estado em que o auto-merge nunca dispara. Quando foi destravado, 4 dos 8 conflitos eram a `main` tendo feito a mesma faxina por outro caminho (`getPosthog`, `clearOfflineQueue`, `useCustomerOrders` e o `backfill-helpers.ts` inteiro já haviam sumido de lá), e **um inverteu de sinal**: `EdgeFunctionError` era dead export em julho e hoje tem 6 consumidores e campos novos (`status`/`retryAfterSeconds`) — aplicar a des-exportação quebraria o build. O `invoke-function.ts` precisou de resolução dividida: `AuthRequiredError` des-exportado, `EdgeFunctionError` mantendo o `export`. Sobra sobre a `main` de hoje: **116 arquivos / 821 deleções** (era 132 / 990). Narrativa completa e a lição geral em [prs-parados-2026-08-06.md](prs-parados-2026-08-06.md).
