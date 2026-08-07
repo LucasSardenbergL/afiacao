@@ -10,6 +10,7 @@ import { AddToolDialog } from '@/components/AddToolDialog';
 import { UnifiedAIAssistant } from '@/components/UnifiedAIAssistant';
 import { TintColorSelectDialog } from '@/components/TintColorSelectDialog';
 import { OrderSuccessDialog } from '@/components/OrderSuccessDialog';
+import { AtpBackorderDialog } from '@/components/unified-order/AtpBackorderDialog';
 import { cn } from '@/lib/utils';
 import { useUnifiedOrder } from '@/hooks/useUnifiedOrder';
 import { useOrderDeepLink } from '@/hooks/useOrderDeepLink';
@@ -527,6 +528,17 @@ const UnifiedOrder = () => {
           onResolverBloqueio={(b) => { h.setOrderSuccessOpen(false); setExcecaoBloqueio(b); }}
         />
       )}
+
+      {/* ATP fase 2: recusa de estoque do Oben → decisão explícita (backorder/voltar).
+          Abre NO LUGAR do dialog de sucesso; ao fechar, o resumo do envio abre. */}
+      <AtpBackorderDialog
+        bloqueio={h.bloqueioAtp}
+        descricaoPorSku={new Map(h.obenProductItems.map(c => [c.product.omie_codigo_produto, c.product.descricao]))}
+        enviando={h.submitting}
+        onAutorizar={(motivo) => { void h.autorizarBackorderAtp(motivo); }}
+        onTentarNovamente={() => { void h.tentarNovamenteAtp(); }}
+        onFechar={h.fecharBloqueioAtp}
+      />
 
       {excecaoBloqueio && (
         <ExcecaoCreditoDialog

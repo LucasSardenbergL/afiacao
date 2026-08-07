@@ -20,6 +20,8 @@ import { buildPrintData } from './buildPrintData';
 import { ensureSalesOrderRow } from './idempotency';
 import { validarVendabilidade, bloqueioVendabilidade } from './vendabilidade';
 import { findInvalidPricedProductItems, invalidPriceMessage } from './priceGuard';
+import { parseBloqueioAtp, mensagemRecusasAtp } from './atp';
+import type { BloqueioAtpPedido } from './atp';
 
 /** Resposta estruturada dos gates do edge (crédito Fase 2 / tint Fase 3 — não cria o PV). */
 interface GateCreditoPayload {
@@ -69,12 +71,13 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
     customer, customerUserId, user, cart, subtotals, volumes,
     payment, delivery, meta, companyProfiles, defaultProductionAssigneeId,
     getServicePrice, supabase, isCustomerMode = false,
-    checkoutId, origem = null, atendimentoId = null,
+    checkoutId, origem = null, atendimentoId = null, atpBackorder,
   } = params;
   const { obenProductItems, colacorProductItems, serviceItems } = cart;
   const errors: SubmitErrorEntry[] = [];
   const results: string[] = [];
   const bloqueiosCredito: BloqueioCreditoPedido[] = [];
+  let bloqueioAtp: BloqueioAtpPedido | null = null;
 
   if (!obenProductItems.length && !colacorProductItems.length && !serviceItems.length) {
     return {
@@ -83,6 +86,25 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
       printDataList: [],
       lastOrderData: null,
       errors: [{ step: 'validate', message: 'Carrinho vazio' }],
+      allConfirmed: false,
+    };
+  }
+
+  // ── Guard ATP (fase 2): modo cliente NÃO vende produto Oben ──
+  // Por UI o autoatendimento só monta serviços de afiação, mas não havia guard
+  // imperativo — e a reserva de estoque assume ator staff (a RPC recusaria com
+  // 42501, que NUNCA pode virar painel de backorder). Item Oben aqui = anomalia:
+  // aborta ANTES de qualquer insert, com mensagem honesta (achado Codex, P0).
+  if (isCustomerMode && obenProductItems.length > 0) {
+    return {
+      success: false,
+      results: [],
+      printDataList: [],
+      lastOrderData: null,
+      errors: [{
+        step: 'validate_atp_modo_cliente',
+        message: 'Produtos Oben não são vendidos pelo autoatendimento — fale com seu vendedor para fechar este pedido.',
+      }],
       allConfirmed: false,
     };
   }
@@ -255,10 +277,15 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
             codigo_parcela: payment.parcelaOben,
             quantidade_volumes: volumes.oben || undefined,
             ordem_compra: meta.ordemCompra || undefined,
+            // ATP fase 2: capability — este caller entende blocked:'atp' (sem
+            // ela o edge fica em modo advisory p/ não quebrar bundle antigo).
+            atp_capaz: true,
+            ...(atpBackorder ? { atp_backorder: atpBackorder } : {}),
           },
         });
         if (!omieError) {
           const gatePayload = omieResult as GateCreditoPayload | null;
+          const atpOben = parseBloqueioAtp(omieResult);
           if (gatePayload?.blocked === 'credito') {
             // Trava Fase 2: o edge NÃO criou o PV — degradar honesto, nunca "parecer enviado".
             results.push('PV Oben (bloqueado: crédito)');
@@ -276,6 +303,29 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
             // O pedido local fica salvo; reprecificar no balcão e reenviar.
             results.push('PV Oben (bloqueado: preço tinta)');
             errors.push({ step: 'bloqueio_tint_oben', message: mensagemBloqueioTint('Oben', gatePayload.bloqueios) });
+          } else if (atpOben) {
+            // Gate ATP fase 2: sem saldo p/ reservar (ou verificação indisponível) —
+            // o edge NÃO criou o PV. O pedido local fica salvo; a UI abre o painel
+            // de backorder EXPLÍCITO com o contexto estruturado (nunca silencioso).
+            bloqueioAtp = atpOben;
+            results.push('PV Oben (bloqueado: estoque)');
+            const porSku = new Map(obenProductItems.map(c => [c.product.omie_codigo_produto, c.product.descricao]));
+            errors.push({
+              step: 'bloqueio_atp_oben',
+              message: atpOben.tipo === 'verificacao_indisponivel'
+                ? `Pedido Oben BLOQUEADO: não foi possível verificar a disponibilidade de estoque${atpOben.detalhe ? ` (${atpOben.detalhe})` : ''}. O pedido ficou salvo.`
+                : `Pedido Oben BLOQUEADO: ${mensagemRecusasAtp(atpOben.recusas, porSku)} O pedido ficou salvo para a decisão de backorder.`,
+            });
+          } else if ((omieResult as { success?: boolean } | null)?.success === false || (omieResult as { blocked?: string } | null)?.blocked) {
+            // Fail-closed p/ bloqueio DESCONHECIDO (gate futuro do edge que esta
+            // versão não conhece): tratar como sucesso pareceria enviado sem PV
+            // no Omie (lição Codex 2026-08-06 — era o furo do bundle antigo).
+            const b = (omieResult as { blocked?: string }).blocked ?? 'sem detalhe';
+            results.push(`PV Oben (bloqueado: ${b})`);
+            errors.push({
+              step: 'bloqueio_desconhecido_oben',
+              message: `Pedido Oben bloqueado pelo servidor (${b}) — o PV NÃO foi criado. Atualize a página (pode haver versão nova do app) e reenvie.`,
+            });
           } else {
             results.push(`PV Oben ${omieResult?.omie_numero_pedido || ''}`);
           }
@@ -374,6 +424,10 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
           },
         });
         const gatePayloadColacor = !omieError ? (omieResult as GateCreditoPayload | null) : null;
+        const colacorBloqueadoDesconhecido = !omieError
+          && gatePayloadColacor?.blocked !== 'credito'
+          && (((omieResult as { success?: boolean } | null)?.success === false)
+            || Boolean((omieResult as { blocked?: string } | null)?.blocked));
         if (!omieError && gatePayloadColacor?.blocked === 'credito') {
           // Trava Fase 2: o edge NÃO criou o PV — degradar honesto, nunca "parecer enviado".
           results.push('PV Colacor (bloqueado: crédito)');
@@ -386,6 +440,16 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
             nomeCliente: customer.nome_fantasia || customer.razao_social,
             vencido: typeof gatePayloadColacor.gate?.vencido === 'number' ? gatePayloadColacor.gate.vencido : null,
             titulos: typeof gatePayloadColacor.gate?.titulos === 'number' ? gatePayloadColacor.gate.titulos : null,
+          });
+        } else if (colacorBloqueadoDesconhecido) {
+          // Fail-closed p/ bloqueio DESCONHECIDO no Colacor (inclui tint_preco,
+          // que este bloco nunca tratou, e gates futuros): sucesso aparente sem
+          // PV no Omie era o furo do bundle antigo (lição Codex 2026-08-06).
+          const b = (omieResult as { blocked?: string } | null)?.blocked ?? 'sem detalhe';
+          results.push(`PV Colacor (bloqueado: ${b})`);
+          errors.push({
+            step: 'bloqueio_desconhecido_colacor',
+            message: `Pedido Colacor bloqueado pelo servidor (${b}) — o PV NÃO foi criado. Atualize a página (pode haver versão nova do app) e reenvie.`,
           });
         } else if (!omieError) {
           results.push(`PV Colacor ${omieResult?.omie_numero_pedido || ''}`);
@@ -604,7 +668,9 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
     allConfirmed: !errors.some(e =>
       e.step === 'sync_oben_omie' || e.step === 'sync_colacor_omie' || e.step === 'sync_os_omie' ||
       e.step === 'bloqueio_credito_oben' || e.step === 'bloqueio_credito_colacor' ||
-      e.step === 'bloqueio_tint_oben'),
+      e.step === 'bloqueio_tint_oben' || e.step === 'bloqueio_atp_oben' ||
+      e.step === 'bloqueio_desconhecido_oben' || e.step === 'bloqueio_desconhecido_colacor'),
     bloqueiosCredito,
+    bloqueioAtp,
   };
 }

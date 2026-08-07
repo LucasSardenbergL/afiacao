@@ -18350,6 +18350,26 @@ export type Database = {
         }
         Returns: string
       }
+      atp_consultar: {
+        Args: { p_pool: string; p_skus: number[] }
+        Returns: {
+          omie_codigo_produto: number
+          disponivel: number | null
+          confiavel: boolean
+          motivo: string | null
+          saldo_synced_at: string | null
+        }[]
+      }
+      atp_gate_pedido: {
+        Args: {
+          p_actor?: string
+          p_autorizar_backorder?: boolean
+          p_enforcement: boolean
+          p_motivo_backorder?: string
+          p_sales_order_id: string
+        }
+        Returns: Json
+      }
       atualizar_campanha_datas_corte: {
         Args: {
           p_campanha_id: number
@@ -18618,6 +18638,7 @@ export type Database = {
             Args: { p_item_id: number; p_threshold_similaridade?: number }
             Returns: Json
           }
+      expirar_reservas_vencidas: { Args: never; Returns: Json }
       farmer_association_rules_substituir: {
         Args: { p_regras: Json }
         Returns: number
@@ -19124,6 +19145,10 @@ export type Database = {
         }
         Returns: boolean
       }
+      liberar_reserva_checkout: {
+        Args: { p_checkout_id: string; p_motivo?: string; p_pool?: string }
+        Returns: Json
+      }
       limpar_sugestoes_antigas: {
         Args: never
         Returns: {
@@ -19529,6 +19554,15 @@ export type Database = {
         Returns: Json
       }
       request_customer_metrics_refresh: { Args: never; Returns: undefined }
+      reservar_estoque: {
+        Args: {
+          p_checkout_id: string
+          p_itens: Json
+          p_pool: string
+          p_ttl_minutos?: number
+        }
+        Returns: Json
+      }
       resgatar_recompensa: { Args: { p_reward_key: string }; Returns: string }
       resolve_markup_policy: {
         Args: {

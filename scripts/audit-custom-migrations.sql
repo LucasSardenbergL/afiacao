@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 451
+-- Total de custom migrations: 452
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -492,7 +492,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260803093000', 'ia_uso_cota', '20260803093000_ia_uso_cota.sql'),
   ('20260806101417', 'atp_reserva_estoque_fase1', '20260806101417_atp_reserva_estoque_fase1.sql'),
   ('20260806223407', 'drop_import_tint_formulas', '20260806223407_drop_import_tint_formulas.sql'),
-  ('20260806225052', 'atp_reserva_estoque_fase1_1_hardening', '20260806225052_atp_reserva_estoque_fase1_1_hardening.sql')
+  ('20260806225052', 'atp_reserva_estoque_fase1_1_hardening', '20260806225052_atp_reserva_estoque_fase1_1_hardening.sql'),
+  ('20260807015000', 'atp_gate_pedido_fase2', '20260807015000_atp_gate_pedido_fase2.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2035,7 +2036,12 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('atp_reserva_estoque_fase1_1_hardening', 'function', 'private', 'expirar_reservas_vencidas_job', ''),
   ('atp_reserva_estoque_fase1_1_hardening', 'function', 'public', 'expirar_reservas_vencidas', ''),
   ('atp_reserva_estoque_fase1_1_hardening', 'cron_job', 'cron', 'atp-expirar-reservas-vencidas', ''),
-  ('atp_reserva_estoque_fase1_1_hardening', 'rls_policy', 'public', 'estoque_reservas_service_select', 'estoque_reservas')
+  ('atp_reserva_estoque_fase1_1_hardening', 'rls_policy', 'public', 'estoque_reservas_service_select', 'estoque_reservas'),
+  ('atp_gate_pedido_fase2', 'function', 'public', 'atp_gate_pedido', ''),
+  ('atp_gate_pedido_fase2', 'table', 'public', 'atp_decisoes', ''),
+  ('atp_gate_pedido_fase2', 'index', 'public', 'idx_atp_decisoes_pedido', 'atp_decisoes'),
+  ('atp_gate_pedido_fase2', 'index', 'public', 'idx_atp_decisoes_created', 'atp_decisoes'),
+  ('atp_gate_pedido_fase2', 'rls_policy', 'public', 'atp_decisoes_select_staff', 'atp_decisoes')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -3626,7 +3632,12 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('atp_reserva_estoque_fase1_1_hardening', 'function', 'private', 'expirar_reservas_vencidas_job', ''),
   ('atp_reserva_estoque_fase1_1_hardening', 'function', 'public', 'expirar_reservas_vencidas', ''),
   ('atp_reserva_estoque_fase1_1_hardening', 'cron_job', 'cron', 'atp-expirar-reservas-vencidas', ''),
-  ('atp_reserva_estoque_fase1_1_hardening', 'rls_policy', 'public', 'estoque_reservas_service_select', 'estoque_reservas')
+  ('atp_reserva_estoque_fase1_1_hardening', 'rls_policy', 'public', 'estoque_reservas_service_select', 'estoque_reservas'),
+  ('atp_gate_pedido_fase2', 'function', 'public', 'atp_gate_pedido', ''),
+  ('atp_gate_pedido_fase2', 'table', 'public', 'atp_decisoes', ''),
+  ('atp_gate_pedido_fase2', 'index', 'public', 'idx_atp_decisoes_pedido', 'atp_decisoes'),
+  ('atp_gate_pedido_fase2', 'index', 'public', 'idx_atp_decisoes_created', 'atp_decisoes'),
+  ('atp_gate_pedido_fase2', 'rls_policy', 'public', 'atp_decisoes_select_staff', 'atp_decisoes')
 )
 SELECT
   e.migration,

@@ -3,6 +3,8 @@ import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { omieDateToIso, classifyOmieTransient, classifyPedidosPage, gerarJanelasMensais } from "./pagination.ts";
 import { carregarProductMap } from "../_shared/mapas-paginados.ts";
+import { classificarErroAtpGate, classificarRetornoAtpGate } from "../_shared/atp-gate.ts";
+import { deltaEdicaoOben } from "../_shared/atp-edicao.ts";
 import type { BancoPostgrest } from "../_shared/paginate.ts";
 import { avaliarPagina, MAX_PAGINAS_LISTAGEM, MAX_PAGINAS_PEDIDOS, MAX_PAGINAS_POS_ESTOQUE, proximoTotalPaginas } from "../_shared/omie-paginacao.ts";
 
@@ -2547,7 +2549,7 @@ serve(async (req) => {
         // silenciosamente pra 'oben' — o pedido local é a âncora server-side.
         const { data: soRow } = await supabaseAdmin
           .from("sales_orders")
-          .select("account, customer_user_id, customer_document, created_by")
+          .select("account, customer_user_id, customer_document, created_by, checkout_id")
           .eq("id", sales_order_id)
           .maybeSingle();
         if (soRow?.account && soRow.account !== account) {
@@ -2601,6 +2603,75 @@ serve(async (req) => {
         if (!gateTint.permitido) {
           result = { success: false, blocked: "tint_preco", bloqueios: gateTint.bloqueios };
           break;
+        }
+        // Gate ATP fase 2 (parecer Codex 2026-08-06): reserva de estoque na
+        // FRONTEIRA, imediatamente antes da mutação Omie. A RPC deriva os itens
+        // da linha sales_orders (nunca do payload) e audita em atp_decisoes.
+        // atp_capaz ausente (bundle antigo em cache) → advisory: a RPC registra
+        // e reserva, mas NÃO bloqueia — caller antigo leria um blocked
+        // desconhecido como sucesso (submitOrder antigo cai no ramo do
+        // omie_numero_pedido). Erro 42501/22023 = autorização/contrato, sem
+        // override; falha de transporte = contingência com fricção na UI.
+        if (account === "oben") {
+          const atpCapaz = (params as { atp_capaz?: unknown }).atp_capaz === true;
+          const atpBackorder = (params as { atp_backorder?: { autorizado?: unknown; motivo?: unknown } }).atp_backorder;
+          const backorderAutorizado = atpBackorder?.autorizado === true;
+          const chamarGate = (comOverride: boolean) =>
+            supabaseAdmin.rpc("atp_gate_pedido", {
+              p_sales_order_id: sales_order_id,
+              p_enforcement: atpCapaz,
+              p_actor: userId ?? null,
+              p_autorizar_backorder: comOverride,
+              p_motivo_backorder: comOverride && typeof atpBackorder?.motivo === "string"
+                ? atpBackorder.motivo
+                : null,
+            });
+          let atpCls;
+          try {
+            let { data: atpData, error: atpError } = await chamarGate(backorderAutorizado);
+            if (atpError && backorderAutorizado) {
+              // Override inválido (sem bloqueio prévio / itens mudaram desde o
+              // bloqueio): re-avalia SEM override — a recusa FRESCA volta ao
+              // painel para nova decisão, nunca um erro opaco.
+              const fresco = await chamarGate(false);
+              atpData = fresco.data;
+              atpError = fresco.error;
+            }
+            atpCls = atpError ? classificarErroAtpGate(atpError) : classificarRetornoAtpGate(atpData);
+          } catch (e) {
+            atpCls = classificarErroAtpGate(e);
+          }
+          if (atpCls.acao === "bloquear") {
+            result = { success: false, blocked: "atp", contexto: "criacao", recusas: atpCls.recusas };
+            break;
+          }
+          if (atpCls.acao === "falha_verificacao") {
+            // Trilha best-effort: a transação da RPC não existe neste caminho.
+            const { error: trilhaErr } = await supabaseAdmin.from("atp_decisoes").insert({
+              sales_order_id,
+              checkout_id: (soRow as { checkout_id?: string | null } | null)?.checkout_id ?? sales_order_id,
+              pool: "oben",
+              account,
+              decisao: "verificacao_indisponivel",
+              contexto: "criacao",
+              enforcement: atpCapaz,
+              actor_user_id: userId ?? null,
+            });
+            if (trilhaErr) console.error("[atp] trilha verificacao_indisponivel falhou:", trilhaErr.message);
+            if (atpCapaz) {
+              result = {
+                success: false,
+                blocked: "atp",
+                contexto: "criacao",
+                recusas: [],
+                verificacao_indisponivel: true,
+                sem_override: atpCls.semOverride,
+                detalhe: atpCls.detalhe,
+              };
+              break;
+            }
+            // caller antigo: segue como hoje (o registro acima mede o furo)
+          }
         }
         const pedido = await criarPedidoVenda(
           supabaseAdmin,
@@ -2702,6 +2773,38 @@ serve(async (req) => {
         if (!gateTintEdit.permitido) {
           result = { success: false, blocked: "tint_preco", contexto: "edicao", bloqueios: gateTintEdit.bloqueios };
           break;
+        }
+
+        // Guard ATP fase 2 na EDIÇÃO (sem isto o gate da criação tem bypass
+        // trivial: criar dentro do ATP e depois aumentar a quantidade). Fase 2
+        // BLOQUEIA aumento de quantidade/SKU novo Oben — sem override na edição;
+        // a válvula é um pedido novo pelo balcão, onde reserva/backorder existem.
+        // Reservar o DELTA da edição é desenho da fase 3 (parecer Codex).
+        if (editAccount === "oben") {
+          const editAtpCapaz = (params as { atp_capaz?: unknown }).atp_capaz === true;
+          const delta = deltaEdicaoOben(
+            (existingOrder as { items?: Array<{ omie_codigo_produto?: number; quantidade?: number }> | null }).items,
+            editItems as Array<{ omie_codigo_produto?: number; quantidade?: number }>,
+          );
+          if (delta.aumentou) {
+            const { error: trilhaEdErr } = await supabaseAdmin.from("atp_decisoes").insert({
+              sales_order_id: editSoId,
+              checkout_id: (existingOrder as { checkout_id?: string | null }).checkout_id ?? editSoId,
+              pool: "oben",
+              account: editAccount,
+              decisao: "bloqueado",
+              contexto: "edicao",
+              enforcement: editAtpCapaz,
+              actor_user_id: userId ?? null,
+              recusas: delta.aumentos,
+            });
+            if (trilhaEdErr) console.error("[atp] trilha edicao falhou:", trilhaEdErr.message);
+            if (editAtpCapaz) {
+              result = { success: false, blocked: "atp", contexto: "edicao", aumentos: delta.aumentos };
+              break;
+            }
+            // caller antigo: segue como hoje (o registro acima mede o furo)
+          }
         }
 
         // Build updated items payload for local DB

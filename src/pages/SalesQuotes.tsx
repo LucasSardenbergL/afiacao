@@ -14,6 +14,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Loader2, Trash2, Send, FileText, ChevronLeft, AlertCircle } from 'lucide-react';
 import { toast } from 'sonner';
+import { parseBloqueioAtp, mensagemRecusasAtp } from '@/services/orderSubmission/atp';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { findInvalidPricedOmieItems, invalidOmieItemPriceMessage } from '@/services/orderSubmission/priceGuard';
@@ -137,7 +138,8 @@ const SalesQuotes = () => {
 
       toast.info('Enviando pedido para o Omie...');
       const { data: omieData, error: omieError } = await supabase.functions.invoke('omie-vendas-sync', {
-        body: { action: 'criar_pedido', account, sales_order_id: quote.id, items, observacao: quote.notes },
+        // atp_capaz: esta via entende blocked:'atp' (gate ATP fase 2 na fronteira)
+        body: { action: 'criar_pedido', account, sales_order_id: quote.id, items, observacao: quote.notes, atp_capaz: true },
       });
       if (omieError) {
         // Inclui o fail-closed da derivação (identidade não provada). Orçamento intacto p/ retry.
@@ -161,6 +163,28 @@ const SalesQuotes = () => {
             `${cores ? `Cor ${cores}: ` : ''}o preço/fórmula mudou desde que o orçamento foi salvo. ` +
             'Refaça o item de tinta num pedido novo (o balcão recalcula) ou atualize o orçamento.',
           duration: 12000,
+        });
+        return;
+      }
+      const bloqueioAtp = parseBloqueioAtp(omieData);
+      if (bloqueioAtp) {
+        // Gate ATP fase 2: sem saldo disponível para reservar — o PV NÃO foi criado
+        // e o orçamento fica intacto. O backorder explícito vive no balcão (pedido
+        // novo pelo UnifiedOrder); aqui a ação é ajustar quantidades ou ir pra lá.
+        toast.error('Conversão bloqueada: sem estoque disponível (ATP)', {
+          description: bloqueioAtp.tipo === 'verificacao_indisponivel'
+            ? 'Não foi possível verificar a disponibilidade agora. Tente de novo; se persistir, envie pelo balcão (backorder explícito).'
+            : `${mensagemRecusasAtp(bloqueioAtp.recusas)} Ajuste as quantidades do orçamento ou envie pelo balcão como backorder explícito.`,
+          duration: 12000,
+        });
+        return;
+      }
+      const blockedDesconhecido = (omieData as { success?: boolean; blocked?: string } | null);
+      if (blockedDesconhecido?.success === false || blockedDesconhecido?.blocked) {
+        // Fail-closed p/ gate FUTURO do edge que esta versão não conhece: tratar
+        // como sucesso marcaria 'rascunho' sem PV no Omie (lição Codex 2026-08-06).
+        toast.error('Conversão recusada pelo servidor', {
+          description: `O envio foi bloqueado (${blockedDesconhecido.blocked ?? 'sem detalhe'}) e o PV não foi criado. Atualize a página — pode haver uma versão nova do app.`,
         });
         return;
       }

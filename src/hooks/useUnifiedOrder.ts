@@ -13,7 +13,7 @@ import { useProductCatalog } from '@/hooks/unifiedOrder/useProductCatalog';
 import { useClienteTier, useTierPrecoConfig } from '@/hooks/useClienteTier';
 import { precoPartida } from '@/lib/pricing/precoPartida';
 import { submitOrder as submitOrderService, submitQuote as submitQuoteService } from '@/services/orderSubmission';
-import type { LastOrderDataShape, BloqueioCreditoPedido } from '@/services/orderSubmission';
+import type { LastOrderDataShape, BloqueioCreditoPedido, BloqueioAtpPedido } from '@/services/orderSubmission';
 import { track } from '@/lib/analytics';
 import type { RecommendationItem } from '@/hooks/useRecommendationEngine';
 import { DeliveryOption } from '@/types';
@@ -217,6 +217,8 @@ export function useUnifiedOrder() {
   // Contas travadas pela trava de crédito no ÚLTIMO envio (Fase 2) — alimenta o
   // painel de bloqueio do dialog de resultado e o fluxo de exceção.
   const [bloqueiosCredito, setBloqueiosCredito] = useState<BloqueioCreditoPedido[]>([]);
+  // ATP fase 2: recusa de estoque do envio corrente → painel de backorder explícito.
+  const [bloqueioAtp, setBloqueioAtp] = useState<BloqueioAtpPedido | null>(null);
 
   // Pricing engine (calc-only, no customer dependency)
   const { loadDefaultPrices, calculatePrice } = usePricingEngine();
@@ -776,7 +778,7 @@ export function useUnifiedOrder() {
     clearCart, navigate,
   ]);
 
-  const submitOrder = useCallback(async () => {
+  const submitOrder = useCallback(async (opts?: { atpBackorder?: { autorizado: true; motivo: string } }) => {
     if (!selectedCustomer || cart.length === 0 || !user) return;
     // Seleção em andamento: o ensure desta seleção ainda nem foi retido (a ref
     // tem a promise placeholder) — o preflight fail-closed do service já
@@ -883,10 +885,24 @@ export function useUnifiedOrder() {
         // legados (criados antes desta fase, sem os campos da ponte).
         origem: checkoutEnvRef.current.origem ?? (isCustomerMode ? 'web_customer' : 'web_staff'),
         atendimentoId: checkoutEnvRef.current.atendimentoId ?? null,
+        atpBackorder: opts?.atpBackorder,
       });
       if (result.success && result.lastOrderData) {
         setLastOrderData(result.lastOrderData);
-        setOrderSuccessOpen(true);
+        // ATP fase 2: recusa de estoque abre o painel de DECISÃO no lugar do
+        // dialog de sucesso (o vendedor decide backorder ali; ao fechar, o
+        // resumo do envio abre). Sem recusa → fluxo normal.
+        const atp = result.bloqueioAtp ?? null;
+        setBloqueioAtp(atp);
+        if (atp) {
+          track('venda.atp_bloqueio_exibido', {
+            tipo: atp.tipo,
+            recusas: atp.recusas.length,
+            sem_override: atp.semOverride,
+          });
+        } else {
+          setOrderSuccessOpen(true);
+        }
         const bloqueios = result.bloqueiosCredito ?? [];
         setBloqueiosCredito(bloqueios);
         for (const b of bloqueios) {
@@ -912,9 +928,13 @@ export function useUnifiedOrder() {
               : 'Alguma conta ficou pendente no ERP. Reenvie — os produtos não duplicam.',
           });
         }
-        // Avisos não-bloqueio: "criado com avisos". Bloqueio de crédito fica FORA deste
-        // toast de sucesso (o PV não foi criado — dizê-lo "criado" seria mentira).
-        const avisos = result.errors.filter(e => !e.step.startsWith('bloqueio_credito'));
+        // Avisos não-bloqueio: "criado com avisos". Bloqueios (crédito/ATP/desconhecido)
+        // ficam FORA deste toast de sucesso (o PV não foi criado — dizê-lo "criado"
+        // seria mentira; o ATP já tem o painel de decisão).
+        const avisos = result.errors.filter(e =>
+          !e.step.startsWith('bloqueio_credito') &&
+          !e.step.startsWith('bloqueio_atp') &&
+          !e.step.startsWith('bloqueio_desconhecido'));
         if (avisos.length > 0) {
           toast.success('Pedido criado com avisos', {
             description: avisos.map(e => e.message).join(' | '),
@@ -947,6 +967,30 @@ export function useUnifiedOrder() {
   ]);
 
   // clearCustomer defined earlier (wraps useCustomerSelection.clearCustomer + clears cart/ordemCompra/userTools)
+
+  // ── ATP fase 2: ações do painel de backorder ──
+  // Autorizar = decisão EXPLÍCITA do vendedor; o motivo viaja ao edge e é
+  // auditado server-side (atp_decisoes). O re-submit reusa o MESMO checkout
+  // (mesma fingerprint → 'reuse'), então a validação de fingerprint do
+  // override casa com o bloqueio registrado.
+  const autorizarBackorderAtp = useCallback(async (motivo: string) => {
+    setBloqueioAtp(null);
+    track('venda.atp_backorder_autorizado', { motivo_len: motivo.trim().length });
+    await submitOrder({ atpBackorder: { autorizado: true, motivo: motivo.trim() } });
+  }, [submitOrder]);
+
+  // "Tentar novamente" (verificação indisponível) e fechar sem decidir: o
+  // resumo do envio (dialog de sucesso) abre ao fechar — o envio ACONTECEU
+  // (contas não-Oben podem ter ido), só o Oben ficou bloqueado.
+  const tentarNovamenteAtp = useCallback(async () => {
+    setBloqueioAtp(null);
+    await submitOrder();
+  }, [submitOrder]);
+
+  const fecharBloqueioAtp = useCallback(() => {
+    setBloqueioAtp(null);
+    setOrderSuccessOpen(true);
+  }, []);
 
 
 
@@ -1002,6 +1046,7 @@ export function useUnifiedOrder() {
     submitOrder, submitQuote, loadUserTools,
     // Order success
     orderSuccessOpen, setOrderSuccessOpen, lastOrderData, bloqueiosCredito,
+    bloqueioAtp, autorizarBackorderAtp, tentarNovamenteAtp, fecharBloqueioAtp,
     // Navigate
     navigate,
   };

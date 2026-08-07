@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **451** custom migrations totais
-- **1554** objetos esperados (criados por estas migrations)
+- **452** custom migrations totais
+- **1559** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 457
-  - `rls_policy`: 391
-  - `index`: 235
+  - `function`: 458
+  - `rls_policy`: 392
+  - `index`: 237
   - `cron_job`: 162
-  - `table`: 152
+  - `table`: 153
   - `trigger`: 79
   - `view`: 74
   - `enum_value`: 4
@@ -3792,6 +3792,16 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.expirar_reservas_vencidas` | — |
 | `cron_job` | `cron.atp-expirar-reservas-vencidas` | — |
 | `rls_policy` | `public.estoque_reservas_service_select` | `estoque_reservas` |
+
+### `20260807015000_atp_gate_pedido_fase2.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.atp_gate_pedido` | — |
+| `table` | `public.atp_decisoes` | — |
+| `index` | `public.idx_atp_decisoes_pedido` | `atp_decisoes` |
+| `index` | `public.idx_atp_decisoes_created` | `atp_decisoes` |
+| `rls_policy` | `public.atp_decisoes_select_staff` | `atp_decisoes` |
 
 ## Próximos passos por status
 
