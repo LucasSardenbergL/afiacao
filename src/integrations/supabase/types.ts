@@ -328,6 +328,72 @@ export type Database = {
         }
         Relationships: []
       }
+      atp_decisoes: {
+        Row: {
+          account: string
+          actor_user_id: string | null
+          atp_snapshot: Json | null
+          checkout_id: string
+          contexto: string
+          created_at: string
+          decisao: string
+          enforcement: boolean
+          id: string
+          itens_fingerprint: string | null
+          motivo_backorder: string | null
+          pool: string
+          recusas: Json | null
+          sales_order_id: string | null
+        }
+        Insert: {
+          account: string
+          actor_user_id?: string | null
+          atp_snapshot?: Json | null
+          checkout_id: string
+          contexto?: string
+          created_at?: string
+          decisao: string
+          enforcement: boolean
+          id?: string
+          itens_fingerprint?: string | null
+          motivo_backorder?: string | null
+          pool: string
+          recusas?: Json | null
+          sales_order_id?: string | null
+        }
+        Update: {
+          account?: string
+          actor_user_id?: string | null
+          atp_snapshot?: Json | null
+          checkout_id?: string
+          contexto?: string
+          created_at?: string
+          decisao?: string
+          enforcement?: boolean
+          id?: string
+          itens_fingerprint?: string | null
+          motivo_backorder?: string | null
+          pool?: string
+          recusas?: Json | null
+          sales_order_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "atp_decisoes_sales_order_id_fkey"
+            columns: ["sales_order_id"]
+            isOneToOne: false
+            referencedRelation: "sales_orders"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "atp_decisoes_sales_order_id_fkey"
+            columns: ["sales_order_id"]
+            isOneToOne: false
+            referencedRelation: "selfservice_meus_pedidos"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       cache_lotes: {
         Row: {
           cache_key: string
@@ -1998,6 +2064,66 @@ export type Database = {
           z_classe_c?: number
         }
         Relationships: []
+      }
+      estoque_reservas: {
+        Row: {
+          atualizado_em: string
+          checkout_id: string
+          created_at: string
+          created_by: string | null
+          expira_em: string
+          id: string
+          motivo: string | null
+          omie_codigo_produto: number
+          pool: string
+          quantidade: number
+          sales_order_id: string | null
+          status: string
+        }
+        Insert: {
+          atualizado_em?: string
+          checkout_id: string
+          created_at?: string
+          created_by?: string | null
+          expira_em: string
+          id?: string
+          motivo?: string | null
+          omie_codigo_produto: number
+          pool: string
+          quantidade: number
+          sales_order_id?: string | null
+          status?: string
+        }
+        Update: {
+          atualizado_em?: string
+          checkout_id?: string
+          created_at?: string
+          created_by?: string | null
+          expira_em?: string
+          id?: string
+          motivo?: string | null
+          omie_codigo_produto?: number
+          pool?: string
+          quantidade?: number
+          sales_order_id?: string | null
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "estoque_reservas_sales_order_id_fkey"
+            columns: ["sales_order_id"]
+            isOneToOne: false
+            referencedRelation: "sales_orders"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "estoque_reservas_sales_order_id_fkey"
+            columns: ["sales_order_id"]
+            isOneToOne: false
+            referencedRelation: "selfservice_meus_pedidos"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       eventos_outlier: {
         Row: {
@@ -12078,6 +12204,7 @@ export type Database = {
           total: number
           updated_at: string
           whatsapp_conversation_id: string | null
+          whatsapp_proposta_dedupe: string | null
         }
         Insert: {
           account?: string
@@ -12108,6 +12235,7 @@ export type Database = {
           total?: number
           updated_at?: string
           whatsapp_conversation_id?: string | null
+          whatsapp_proposta_dedupe?: string | null
         }
         Update: {
           account?: string
@@ -12138,6 +12266,7 @@ export type Database = {
           total?: number
           updated_at?: string
           whatsapp_conversation_id?: string | null
+          whatsapp_proposta_dedupe?: string | null
         }
         Relationships: [
           {
@@ -18353,11 +18482,11 @@ export type Database = {
       atp_consultar: {
         Args: { p_pool: string; p_skus: number[] }
         Returns: {
-          omie_codigo_produto: number
-          disponivel: number | null
           confiavel: boolean
-          motivo: string | null
-          saldo_synced_at: string | null
+          disponivel: number
+          motivo: string
+          omie_codigo_produto: number
+          saldo_synced_at: string
         }[]
       }
       atp_gate_pedido: {
@@ -19104,6 +19233,24 @@ export type Database = {
           phone_e164: string
         }[]
       }
+      get_whatsapp_proposta_cotacao: {
+        Args: {
+          p_account: string
+          p_customer_user_id: string
+          p_skus: number[]
+        }
+        Returns: {
+          ativo: boolean
+          codigo: string
+          descricao: string
+          estoque: number
+          fonte_preco: string
+          omie_codigo_produto: number
+          preco: number
+          product_id: string
+          unidade: string
+        }[]
+      }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]
@@ -19122,10 +19269,6 @@ export type Database = {
           usado_dia: number
           usado_hora: number
         }[]
-      }
-      import_tint_formulas: {
-        Args: { p_account: string; p_personalizada: boolean; p_rows: Json }
-        Returns: Json
       }
       iniciar_envio_portal_pre_claim: {
         Args: { p_pedido_id: number }
