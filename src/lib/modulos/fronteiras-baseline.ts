@@ -174,7 +174,6 @@ export const FRONTEIRAS_BASELINE: Aresta[] = [
   { de: "src/lib/offline-handlers.ts", para: "src/services/recebimento-divergencia.ts", deModulo: "plataforma", paraModulo: "estoque-recebimento", kind: "runtime" },
   { de: "src/lib/route/alvo-detalhe.ts", para: "src/lib/radar/ui-helpers.ts", deModulo: "telefonia-whatsapp-rota", paraModulo: "farmer-inteligencia", kind: "runtime" },
   { de: "src/lib/standard-process/types.ts", para: "src/lib/customer-process/types.ts", deModulo: "knowledge-base", paraModulo: "admin-crm", kind: "type" },
-  { de: "src/lib/tint/preflight-formulas.ts", para: "src/lib/preco/parse-decimal-br.ts", deModulo: "tintometrico", paraModulo: "vendas", kind: "runtime" },
   { de: "src/lib/venda-assistida/__tests__/selos.test.ts", para: "src/lib/knowledge-base/catalisador-link.ts", deModulo: "vendas", paraModulo: "knowledge-base", kind: "runtime" },
   { de: "src/lib/venda-assistida/__tests__/selos.test.ts", para: "src/lib/knowledge-base/spec-link.ts", deModulo: "vendas", paraModulo: "knowledge-base", kind: "runtime" },
   { de: "src/lib/venda-assistida/montar-embalagens.ts", para: "src/lib/reposicao/sayerlack-sku.ts", deModulo: "vendas", paraModulo: "reposicao", kind: "runtime" },
