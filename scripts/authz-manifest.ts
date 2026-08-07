@@ -120,6 +120,16 @@ export const AUTHZ_MANIFEST: Record<string, AuthzEntry> = {
     requiredGate: { anyOf: [{ call: 'cap_estoque_reservar' }] },
     motivo: 'higiene de reservas vencidas (cron da fase 3 via service_role)',
   },
+  // ⚠️ ATP fase 1.1 (migration 20260806225052): existe uma 5ª função que ESCREVE em
+  // estoque_reservas e NÃO tem gate — `private.expirar_reservas_vencidas_job()`. É
+  // DE PROPÓSITO e não é furo: pg_cron nativo roda SEM JWT, então auth.role() e
+  // auth.uid() são NULL e cap_estoque_reservar devolve false — com o gate, a higiene
+  // era INAGENDÁVEL (42501; medido em prod antes do fix). A defesa dela não é gate de
+  // papel, é PRIVILÉGIO: vive em `private`, com REVOKE de PUBLIC/anon/authenticated,
+  // então só o owner (postgres, que é quem o pg_cron usa) a executa. A RPC pública
+  // acima segue gateada e agora apenas DELEGA nela — 1 writer da lógica. Não entra no
+  // manifesto porque o manifesto cataloga superfície ALCANÇÁVEL por anon/authenticated,
+  // e esta não é; se um dia ganhar GRANT para authenticated, ela PRECISA de gate.
 };
 
 /**
