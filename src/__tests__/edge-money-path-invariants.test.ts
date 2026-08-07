@@ -320,10 +320,12 @@ describe('guardrail money-path: criar_pedido não confia no espelho legado omie_
   });
 
   it('deriva do PEDIDO LOCAL (customer_user_id + customer_document), não confia no payload', () => {
+    // checkout_id entrou no select na fase 2 do ATP (o gate ATP ancora a reserva
+    // nele); o pin segue EXATO na forma nova — perder qualquer campo fica vermelho.
     expect(
       src,
       'o edge deixou de ler customer_user_id/customer_document do pedido local — voltaria a confiar no payload',
-    ).toMatch(/select\("account, customer_user_id, customer_document, created_by"\)/);
+    ).toMatch(/select\("account, customer_user_id, customer_document, created_by, checkout_id"\)/);
   });
 });
 
