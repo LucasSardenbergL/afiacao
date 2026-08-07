@@ -2,7 +2,6 @@
 // A2 — Retorno & Valor (ROIC/WACC/EVA). Master-only. Lê DRE TTM (fin_dre_snapshots),
 // NCG (fin_projecao_snapshots.ncg) e inputs manuais (fin_config_cashflow.valor_inputs),
 // e devolve o bloco "valor" por empresa. Helpers espelhados VERBATIM de src/lib/financeiro/valor-helpers.ts.
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
@@ -246,7 +245,7 @@ type ValorInputsRaw = {
   intercompany_giro?: unknown;
 };
 
-serve(async (req: Request) => {
+Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   const auth = await authorizeMaster(req);
   if (!auth.ok) return auth.response;

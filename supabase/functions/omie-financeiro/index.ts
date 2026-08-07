@@ -1,4 +1,3 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 // Paginação canônica do PostgREST — lança em error E em `data:null` sem error (resposta
 // malformada ≠ fim da tabela). Substitui o laço à mão do carregarBaixaMapDRE, cujo
@@ -2246,7 +2245,7 @@ async function runLeasedCompanySync(
 }
 
 // ═══════════════ HANDLER PRINCIPAL ═══════════════
-serve(async (req) => {
+Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }

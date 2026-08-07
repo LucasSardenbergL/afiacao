@@ -4,7 +4,6 @@
 // fin_contas_receber (títulos antecipáveis) e compõe projeção via fin-cashflow-engine.
 // Helpers espelhados VERBATIM de src/lib/financeiro/funding-helpers.ts.
 // Spec: 2026-05-25-financeiro-funding-divida (sub-PR A: decisão de antecipação).
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 // Paginação robusta (anti-truncamento do cap de 1000 do PostgREST). Era uma CÓPIA local
 // do helper do fin-valor-cockpit, com o mesmo furo: `data ?? []` transformava resposta
@@ -354,7 +353,7 @@ type A4Response = {
 
 // ===================== Handler principal =====================
 
-serve(async (req: Request) => {
+Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   const auth = await authorizeMaster(req);
   if (!auth.ok) return auth.response;

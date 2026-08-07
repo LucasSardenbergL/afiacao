@@ -1,4 +1,3 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { fetchAll } from "../_shared/paginate.ts";
 import {
@@ -633,7 +632,7 @@ async function consultarClienteCompleto(codigoCliente: number): Promise<OmieClie
   }
 }
 
-serve(async (req) => {
+Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }

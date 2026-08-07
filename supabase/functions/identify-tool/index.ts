@@ -1,4 +1,3 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import Anthropic from "npm:@anthropic-ai/sdk@^0.93.0";
 import {
@@ -23,7 +22,7 @@ const corsHeaders = {
 // folga sob o teto de 10 MB da API.
 const MAX_IMAGE_SIZE = 8 * 1024 * 1024;
 
-serve(async (req) => {
+Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }

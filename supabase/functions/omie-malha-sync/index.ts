@@ -1,7 +1,6 @@
 // omie-malha-sync — espelha a ESTRUTURA de produtos (malha) do Omie Colacor para pcp_malha_staging.
 // Ações: {action:"probe"} → shape da página 1 (não escreve nada); {action:"sync"} → pagina até vazio + upsert.
 // Spec: docs/superpowers/specs/2026-07-03-pcp-colacor-blueprint-design.md (§3 Camada 0 item 2)
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { avaliarPagina, proximoTotalPaginas } from "../_shared/omie-paginacao.ts";
@@ -108,7 +107,7 @@ function extractPaiCodigo(item: unknown): number {
   return Number.isFinite(n) && n > 0 ? n : NaN;
 }
 
-serve(async (req) => {
+Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   // AuthResult da casa (_shared/auth.ts): no erro já traz uma Response 401 pronta (com CORS) — reusar.
   const auth = await authorizeCronOrStaff(req);
