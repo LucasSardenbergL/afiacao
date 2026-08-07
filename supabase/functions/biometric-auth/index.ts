@@ -1,4 +1,3 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { verifyAuthenticationResponse } from "npm:@simplewebauthn/server@10.0.1";
 
@@ -33,7 +32,7 @@ function getClientIp(req: Request): string {
   );
 }
 
-serve(async (req) => {
+Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }

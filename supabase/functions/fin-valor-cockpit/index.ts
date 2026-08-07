@@ -1,7 +1,6 @@
 // supabase/functions/fin-valor-cockpit/index.ts
 // A3 — Cockpit de Valor (Oben). Gate: master OU commercial_role gerencial/estrategico/super_admin.
 // Helpers espelhados VERBATIM de src/lib/financeiro/valor-cockpit-helpers.ts.
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 // Paginação robusta (anti-truncamento do cap de 1000 do PostgREST). Era um helper LOCAL
 // (definido dentro do handler) com `data ?? []`: resposta malformada (data:null SEM
@@ -405,7 +404,7 @@ const COMPANY = "oben";
 const ESTOQUE_ACCOUNTS = ["vendas", "oben"];
 const CONFIG_DEFAULT: CockpitConfig = { margem_minima_pct: 0.15, desconto_max_pct: 0.10, prazo_alvo_dias: 30, dias_estoque_max: 120, sample_min_receita: 5000 };
 
-serve(async (req: Request) => {
+Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   const auth = await authorizeGestorOuMaster(req);
   if (!auth.ok) return auth.response;

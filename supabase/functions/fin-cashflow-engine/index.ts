@@ -1,4 +1,3 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 // Anti-truncamento do PostgREST (cap default de 1000 linhas): a colacor tem ~11k CP e
 // ~29k CR não-cancelados; um .select() simples carregaria só as 1000 primeiras (quase
@@ -133,7 +132,7 @@ type Input = {
   save_snapshot?: boolean;
 };
 
-serve(async (req: Request) => {
+Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
 
   const auth = await authorizeCronOrStaff(req);

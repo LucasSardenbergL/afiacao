@@ -1,4 +1,3 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { comRegistro, type DbRegistro } from "../_shared/registro-execucao.ts";
@@ -1931,7 +1930,7 @@ async function computeAssociationRules(db: SupabaseClient) {
 
 // ======== MAIN HANDLER ========
 
-serve(async (req) => {
+Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }

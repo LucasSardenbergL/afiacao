@@ -6,7 +6,6 @@
 // ele derrubou as 7 edges que serve, e o batch noturno de planos táticos — o maior
 // consumidor, 59 chamadas/dia — parou por completo (0 planos de 27/07 a 29/07).
 // Contrato de request/response inalterado: o front (useTacticalPlan) não muda.
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import Anthropic from "npm:@anthropic-ai/sdk@^0.93.0";
 // ⚠️ usar npm: (não esm.sh) — esm.sh/@supabase/supabase-js falhava em resolver no boot
 // do edge runtime, dando RUNTIME_ERROR sem linha/stack (lição do #1592).
@@ -51,7 +50,7 @@ function clampRecencyCapDays(raw: unknown): number {
   return Math.min(MAX_RECENCY_CAP_DAYS, Math.max(MIN_RECENCY_CAP_DAYS, Math.round(n)));
 }
 
-serve(async (req) => {
+Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
   }

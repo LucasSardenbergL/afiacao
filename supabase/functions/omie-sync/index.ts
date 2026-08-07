@@ -1,4 +1,3 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { classificarFaultstring, redigirSegredo } from "../_shared/omie-falha.ts";
@@ -880,7 +879,7 @@ async function bumpRetryOsSync(
   return { order_id: orderId, retry: novasTent, em_min: backoffMin };
 }
 
-serve(async (req) => {
+Deno.serve(async (req) => {
   // Handle CORS preflight
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });

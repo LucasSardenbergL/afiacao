@@ -3,7 +3,6 @@
 // Master-only. Lê DRE TTM (fin_dre_snapshots, regime competência) + inputs manuais (fin_regime_inputs).
 // Helpers espelhados VERBATIM de src/lib/financeiro/regime-tributario-helpers.ts (+ dre-tabelas-tributarias.ts
 // e aliquotaEfetivaSimples/faixaPorRBT12 de dre-helpers.ts). Estilo de leitura espelhado de fin-valor-engine.
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
@@ -550,7 +549,7 @@ async function calcularEmpresa(db: DbClient, empresa: Company): Promise<RegimeEm
 
 const NIVEL_NUM: Record<"alta" | "media" | "baixa", number> = { baixa: 1, media: 2, alta: 3 };
 
-serve(async (req: Request) => {
+Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   const auth = await authorizeMaster(req);
   if (!auth.ok) return auth.response;
