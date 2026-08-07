@@ -34,9 +34,14 @@ const DIR_MIGRATIONS = 'supabase/migrations';
 // é uma migration NOVA recriá-la.
 const TS_DROP = '20260806223407';
 
-// §"o ALVO mente" (money-path.md): a própria migration do DROP cita `import_tint_formulas`
-// dezenas de vezes em comentário, explicando por que ela sai. Medir o arquivo cru faria o
-// gate acusar exatamente o commit que fecha o furo — falso VERMELHO garantido.
+// §"o ALVO mente" (money-path.md). Precisão sobre o que isto faz HOJE: a migration do DROP
+// cita `import_tint_formulas` dezenas de vezes em comentário, mas nunca na forma
+// `CREATE ... FUNCTION` — logo o gate NÃO acusaria o próprio fix mesmo medindo o arquivo
+// cru (medido, não presumido). O `semComentarios` é DEFESA DO FUTURO, para quando alguém
+// documentar o corpo antigo dentro de uma migration nova ("era assim que era, não faça"),
+// que é precisamente como esta dívida foi documentada em `tint-import/index.ts`. O teste
+// de fixture abaixo é o que prova que ele funciona — declarado como defesa, não como bug
+// corrigido, porque defesa inerte vendida como conserto dá impressão falsa de furo fechado.
 function semComentarios(sql: string): string {
   return sql
     .replace(/\/\*[\s\S]*?\*\//g, ' ')   // /* bloco */
