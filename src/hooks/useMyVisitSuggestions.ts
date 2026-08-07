@@ -38,6 +38,20 @@ export interface CityWithCount {
   top_score: number;
 }
 
+/**
+ * Insumos ausentes da missão VENCEDORA, lidos de `score_breakdown.insumos_ausentes` — a edge
+ * grava a lista ali (visit-score-recalc-client/index.ts ≈ 415), espelhando
+ * `VisitScore.insumos_ausentes` de @/lib/visit-scoring/types. `Array.isArray` degrada com
+ * segurança tanto pra linha antiga sem a chave (calculada antes deste campo nascer) quanto pra
+ * `score_breakdown` null — nunca lança, e nunca declara "medida por completo" por acidente de
+ * formato. Fabricar `[]` aqui é a mesma classe de erro que este PR existe para matar, só que na
+ * proveniência em vez do score.
+ */
+export function insumosAusentesVencedora(scoreBreakdown: Record<string, unknown> | null): string[] {
+  const raw = (scoreBreakdown as { insumos_ausentes?: string[] } | null)?.insumos_ausentes;
+  return Array.isArray(raw) ? raw : [];
+}
+
 export function useMyVisitSuggestions(opts: {
   city?: string;
   targetCount?: number;
@@ -149,7 +163,7 @@ export function useMyVisitSuggestions(opts: {
         city: s.city,
         neighborhood: s.neighborhood,
         days_since_last_visit: s.days_since_last_visit,
-        insumos_ausentes: [],
+        insumos_ausentes: insumosAusentesVencedora(s.score_breakdown),
       }));
 
       const picked = pickDailyMix(visitScores, opts.targetCount ?? 6);

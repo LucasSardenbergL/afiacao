@@ -24,7 +24,9 @@ export interface CustomerScoreInputs {
   churn_risk: number;
   // ⚠️ `number | null`: estas três colunas NUNCA tiveram produtor — NULL em 6.633/6.633 linhas
   // (medido 2026-07-27). O tipo `number` anterior MENTIA, e era o que permitia `Number(x ?? 0)`
-  // passar despercebido. Ver src/lib/scoring/colunas-sem-produtor.ts.
+  // passar despercebido. Guardado por src/__tests__/potencial-nao-medido-gate.test.ts (src/) e
+  // supabase/functions/_shared/potencial-nao-medido_test.ts (edge); nuladas por
+  // supabase/migrations/20260727130000_farmer_scores_colunas_orfas_null.
   expansion_score: number | null;
   health_score: number;
   recover_score: number | null;

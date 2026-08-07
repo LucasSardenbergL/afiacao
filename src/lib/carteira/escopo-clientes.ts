@@ -2,9 +2,8 @@
 // PUROS + HOFs testáveis aqui; a glue Supabase é anexada na 2ª metade (Task 2).
 // Spec: docs/superpowers/specs/2026-06-11-clientes-escopo-carteira-design.md
 import { supabase } from '@/integrations/supabase/client';
-import { margemConhecida } from '@/lib/scoring/margin';
+import { margemConhecida, valorMedido } from '@/lib/scoring/margin';
 import { churnConhecido } from '@/lib/scoring/churn';
-import { valorMedido } from '@/lib/scoring/margin';
 import type { Customer, ClientScore } from '@/components/adminCustomers/types';
 
 export interface DisplayFlags {
