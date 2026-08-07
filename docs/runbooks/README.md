@@ -2,7 +2,7 @@
 
 Passo-a-passo estável pra tocar áreas sensíveis. **Leia o runbook relevante ANTES de agir.** As REGRAS-chave estão destiladas no CLAUDE.md (§0 Armadilhas + §5 "Banco & deploy"); aqui fica o detalhe operacional completo.
 
-> 🚦 **A tabela abaixo é GATEADA** (`scripts/docs-indice-gate-check.ts`, dentro do `bun run test`): runbook sem linha aqui — ou linha apontando para arquivo que não existe — deixa o CI **vermelho**. O `tint-sync-corte-csv.md` viveu fora do índice **sem um único link no repo inteiro**: existia e era inalcançável.
+> 🚦 **A tabela abaixo é GATEADA** (`scripts/docs-indice-gate-check.ts`, dentro do `bun run test`): o que vale é a **1ª coluna** — ser citado dentro do resumo de outra entrada **não** conta como estar indexado. Deixam o CI **vermelho**: runbook sem linha própria · linha apontando para arquivo que não existe · o mesmo doc em duas linhas · `[a.md](b.md)` (texto ≠ destino) · resumo com menos de 30 chars. O `tint-sync-corte-csv.md` viveu fora do índice **sem um único link no repo inteiro**: existia e era inalcançável. Detalhe em [gate-indice-docs.md](../historico/gate-indice-docs.md).
 
 | Runbook | Quando ler |
 | --- | --- |
