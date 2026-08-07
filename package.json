@@ -24,6 +24,7 @@
     "wt:clean": "bash scripts/wt-clean.sh",
     "wt:reap": "bash scripts/wt-reap.sh",
     "wt:prune": "bash scripts/wt-prune.sh",
+    "wt:orfas": "bash scripts/wt-orfas.sh",
     "wt:map": "bash scripts/wt-map.sh",
     "wt:label": "bash scripts/wt-map.sh label",
     "wt:preflight": "bun scripts/wt-preflight-migration.ts",
