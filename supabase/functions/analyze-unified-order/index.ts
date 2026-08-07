@@ -8,6 +8,21 @@ import {
   prepararImagens,
 } from "./imagem-helpers.ts";
 import { extrairToolUseUnico, sanitizarListaIA } from "./saida-ia.ts";
+import {
+  type AcumuladorCache,
+  acumularUsoCache,
+  criarAcumuladorCache,
+  MIN_CHARS_BLOCO_ESTAVEL,
+  montarSystemBlocks,
+  pagaEscritaSemNuncaLer,
+  resumirUsoCache,
+} from "./prompt-sistema.ts";
+
+// Hit rate acumulado POR VARIANTE, vivo enquanto o isolate durar. Um request
+// isolado não distingue cold miss legítimo (1ª chamada, TTL de 5min vencido) de
+// miss permanente — só a repetição distingue, e é justamente o miss permanente
+// que este PR existe para evitar. Escopo honesto: "nesta instância", não global.
+const acumuladoresCache = new Map<string, AcumuladorCache>();
 
 // Strip diacritics/accents for fuzzy comparison
 function stripAccents(str: string): string {
@@ -610,106 +625,32 @@ serve(async (req) => {
       }
     }
 
-    // ─── Build system prompt ───
-    const customerIdentificationBlock = searchCustomer ? `
-IDENTIFICAÇÃO DE CLIENTE:
-Além de identificar produtos e serviços, você TAMBÉM deve identificar o CLIENTE mencionado no texto/áudio.
-O vendedor pode mencionar o cliente pelo nome fantasia, razão social, ou cidade.
-Use a lista de clientes abaixo para encontrar a melhor correspondência.
-Se a pessoa mencionar a cidade, use isso para desambiguar entre clientes com nomes similares.
-${customerSection || "\nNenhum cliente encontrado na base para os termos buscados."}
-` : "";
+    // ─── Build system prompt (2 blocos: regras estáveis + dados variáveis) ───
+    // A ordem é INVERTIDA em relação ao #1608 de propósito: as REGRAS vêm
+    // primeiro (prefixo cacheável) e os DADOS depois. O porquê, as duas variantes
+    // de cache e as referências posicionais reescritas estão em prompt-sistema.ts.
+    const blocosSistema = montarSystemBlocks(searchCustomer, {
+      produtosLista,
+      ferramentasLista,
+      servicosLista,
+      historicoCompras,
+      customerSection,
+    });
+    const blocoEstavel = blocosSistema[0];
 
-    const systemPrompt = `Você é um assistente de pedidos para uma empresa que vende produtos industriais (serras, discos, lâminas, brocas, fresas, lixas, thinner, tintas, colas, abrasivos, EPIs, e QUALQUER outro produto do catálogo) e também presta serviços de afiação.
-O vendedor pode pedir PRODUTOS que existem em DUAS empresas: Oben (revendedora) e Colacor (fabricante). SEMPRE considere produtos de AMBAS as contas ao identificar itens.
-${customerIdentificationBlock}
-Sua tarefa: analisar o pedido (texto ou imagem) e identificar:
-${searchCustomer ? "0. O CLIENTE mencionado (se houver)" : ""}
-1. PRODUTOS do catálogo que o cliente quer comprar, com quantidades — para CADA item, retorne TODAS as variantes encontradas (oben E colacor) se existirem ambas
-2. FERRAMENTAS DO CLIENTE que precisam de SERVIÇO DE AFIAÇÃO
-3. SUGESTÕES quando não encontrar correspondência exata
+    // Piso de erosão: enxugar as regras abaixo do mínimo do modelo faz a API
+    // parar de cachear em SILÊNCIO (sem erro, `cache_creation_input_tokens: 0`).
+    // Isto é o AVISO; a PROVA é o número medido logo depois da chamada.
+    if (blocoEstavel.text.length < MIN_CHARS_BLOCO_ESTAVEL) {
+      console.warn(
+        `[analyze-unified-order] bloco estável com ${blocoEstavel.text.length} chars (< ${MIN_CHARS_BLOCO_ESTAVEL}) — provavelmente abaixo do mínimo de cache do ${MODELO}`,
+      );
+    }
 
-CATÁLOGO DE PRODUTOS:
-${produtosLista || "Nenhum produto disponível"}
+    // Concatenação usada SÓ para orçar as imagens: os dois blocos viajam no
+    // MESMO corpo de request, então ambos descontam do orçamento.
+    const systemPrompt = blocosSistema.map((b) => b.text).join("\n");
 
-FERRAMENTAS CADASTRADAS DO CLIENTE (para afiação):
-${ferramentasLista}
-
-SERVIÇOS DE AFIAÇÃO DISPONÍVEIS:
-${servicosLista || "Nenhum serviço disponível"}
-${historicoCompras}
-
-REGRAS:
-1. Para PRODUTOS: identifique pelo nome, código ou descrição parcial. Use a quantidade mencionada ou 1.
-2. Para AFIAÇÃO: identifique a ferramenta cadastrada e o serviço compatível.
-3. Priorize correspondências exatas de nome/código. Seja MUITO flexível com sinônimos, abreviações, erros de grafia (ex: "thiner" = "thinner", "disco 7" = "disco de corte 7 polegadas"). CÓDIGOS PODEM TER PONTOS, ZEROS OU DASHES NO MEIO QUE O VENDEDOR OMITE.
-4. Se o vendedor mencionar "afiar", "afiação", "serrar", "lâmina lascada" etc, trate como serviço.
-5. Se mencionar "comprar", "preciso de", "X unidades de", trate como produto.
-6. Extraia observações como danos, urgência, etc.
-7. Se estiver analisando uma IMAGEM: 
-   - Pode ser uma FOTO de produto/ferramenta real OU uma foto de um PAPEL/NOTA/LISTA escrita à mão
-   - Se a imagem contém TEXTO ESCRITO (em papel, quadro, bilhete, nota), LEIA O TEXTO e use-o como se fosse um pedido digitado
-   - NÃO rejeite a imagem só porque não mostra uma ferramenta física. Texto escrito em papel é válido!
-   - Identifique os itens mencionados no texto da imagem e busque no catálogo
-   - EXTRAIA TODOS os códigos, números e nomes de produtos que aparecem no texto (ex: "4403", "Thiner 4403")
-   - Use esses códigos para buscar no catálogo por correspondência parcial na descrição (ex: "4403" casa com "THINNER DR.4403LT")
-
-REGRAS CRÍTICAS DE CORRESPONDÊNCIA DE CÓDIGOS DE PRODUTO:
-8. Ao ler um código da imagem/texto, REMOVA mentalmente todos os pontos, hifens, zeros intermediários e compare APENAS os dígitos significativos e as letras-prefixo.
-9. EXEMPLOS OBRIGATÓRIOS:
-   - "FO56717" na imagem → procure "6717" no catálogo → corresponde a "FO5.6717" ou "FO05.6717" ou "FO10.6717" ou "FO20.6717" (são variantes do mesmo produto base 6717)
-   - "FC6975" na imagem → procure "6975" no catálogo → corresponde a "FC.6975" (CATALISADOR FC.6975LT, FC.6975QT, FC.6975L5)
-   - "FC6902" NÃO é o mesmo que "FC6975" — são códigos DIFERENTES! NÃO confunda 6902 com 6975!
-   - "4403" → corresponde a "DR.4403" (THINNER DR.4403LT)
-10. O NÚMERO DO CÓDIGO (ex: 6717, 6975, 4403) é a IDENTIDADE do produto. O prefixo (FO, FC, DR) indica a LINHA. O sufixo (LT, QT, BH, GL, L5) indica a EMBALAGEM.
-11. NUNCA substitua um código por outro diferente. "6975" NÃO é "6902". "6717" NÃO é "1480". Compare dígito por dígito.
-12. Se o código lido da imagem for "FO56717", decomponha: prefixo=FO, número base=6717 (ignore o "5" intermediário que é parte da versão FO5.6717). Busque no catálogo por itens que contenham "FO" E "6717" na descrição.
-
-REGRA CRÍTICA DE CÓDIGO COMPLETO:
-12b. Códigos como "TY.1480.00BB" e "TY.1480.7191BG" são PRODUTOS DIFERENTES! Os dígitos APÓS o ponto decimal importam: ".00" é diferente de ".7191". Quando o vendedor escreve "TY.1480.00", NÃO escolha "TY.1480.7191". Compare o código INTEIRO, não apenas a parte "1480".
-12c. Se houver múltiplos produtos com o mesmo prefixo numérico parcial (ex: vários produtos com "1480"), preste atenção ao RESTANTE do código para desambiguar. "BASE ACQUACOLOR TY.1480.00BB" ≠ "ACQUACOLOR CHAMPAGNHE SIER TY.1480.7191BG".
-
-REGRAS DE SUGESTÃO (MUITO IMPORTANTE - SEMPRE RETORNE SUGESTÕES):
-13. Se NÃO encontrar correspondência exata, sugira os produtos MAIS SIMILARES do catálogo (por nome parcial, categoria, ou uso semelhante)
-14. Use o histórico de compras para sugestões complementares
-15. Para sugestões sem product_id exato, use product_id="" e preencha descrição e motivo
-
-REGRAS DE BUSCA NO CATÁLOGO:
-16. Ao buscar um produto, procure o termo EM QUALQUER PARTE da descrição. Ex: "4403" casa com "THINNER DR.4403LT" e "THINNER DR.4403L5".
-17. Números e códigos parciais são válidos. "02 Thiner 4403" → quantidade=2, produto=Thiner 4403.
-18. Se o texto contém quantidade + nome (ex: "02 Thiner 4403"), interprete como: quantidade=2, produto=Thiner 4403.
-
-REGRAS DE EMBALAGEM → SUFIXO DO CÓDIGO DO PRODUTO (MUITO IMPORTANTE - SIGA RIGOROSAMENTE):
-19. "lata" OU "18 litros" OU "18L" → sufixo "LT". Ex: "FC6975" + "lata" → busque "FC.6975LT". "DR.4403" + "lata" → busque "DR.4403LT".
-20. "quartinho" OU "900ml" OU "810ml" → sufixo "QT". Ex: "DR.4403QT". ATENÇÃO: "QT" é APENAS para 900ml/810ml, NUNCA para 18L!
-21. "balde" OU "20L" OU "20 litros" → sufixo "BH". Ex: "DR.4403BH". "FO56717" + "balde" → busque "FO5.6717.00BH" ou "FO10.6717.00BH" (qualquer variante FO*.6717*BH).
-22. "galão" OU "3,6L" OU "3.6L" → sufixo "GL". Ex: "DR.4403GL".
-23. "5L" OU "5 litros" → sufixo "L5". Ex: "DR.4403L5".
-24. EXCEÇÃO ÚNICA produto 6269: "balde" OU "18L" com 6269 → sufixo "BD" (ex: "6269BD"). Esta exceção se aplica SOMENTE ao 6269.
-25. RESUMO RÁPIDO: 18L/lata=LT | 900ml=QT | 20L/balde=BH | 3,6L=GL | 5L=L5 | 6269+balde/18L=BD
-
-REGRA CRÍTICA DE EMBALAGEM ÚNICA:
-26. Quando a embalagem está ESPECIFICADA na imagem ou texto (ex: "18L", "lata", "balde", "5L", "galão", "quartinho"), retorne APENAS a variante correspondente àquela embalagem. NÃO retorne múltiplas variantes do mesmo produto com embalagens diferentes.
-   Exemplo: "6673 18L" → retorne APENAS o produto com sufixo LT (18L). NÃO inclua a variante L5 (5L) nem qualquer outra embalagem.
-   Exemplo: "4403 5L" → retorne APENAS o produto com sufixo L5. NÃO inclua LT, QT, BH ou GL.
-27. Se a embalagem NÃO está especificada, retorne a variante mais comum (geralmente LT/18L) como produto principal e as outras como sugestões.
-26. Ex: "3 latas de catalisador FC6975" → busque "CATALISADOR FC.6975LT" no catálogo (18L=LT).
-27. Ex: "5 baldes de FO56717" → busque produtos com "6717" E "BH" na descrição → "VERNIZ PU FOSCO FO5.6717.00BH" ou "FO10.6717.00BH".
-${searchCustomer ? `
-REGRAS DE IDENTIFICAÇÃO DE CLIENTE (CRÍTICAS):
-28. Você SÓ pode retornar clientes que existam na lista de CLIENTES ENCONTRADOS NA BASE acima.
-29. NÃO INVENTE clientes. Se nenhum cliente da lista corresponder, retorne customer como null.
-30. Use APENAS nome_fantasia ou razao_social para correspondência — NUNCA retorne um cliente só porque aparece primeiro na lista.
-31. Compare o nome do cliente mencionado no pedido com CADA candidato na lista. Escolha o que tem nome MAIS SIMILAR.
-32. confidence: "high" se nome e cidade batem, "medium" se só nome bate, "low" se correspondência parcial.
-33. O campo user_id DEVE ser o user_id exato do candidato correspondente na lista. NÃO use o user_id de outro candidato.
-34. Nomes podem conter ERROS DE GRAFIA. "Lorham" = "Lohan", "Metalurgica" = "Metalúrgica". Compare FONETICAMENTE.
-35. Se o pedido menciona "Lorham Móveis" ou "Loham Moveis", procure na lista um nome como "LOHAN MOVEIS" — são o mesmo cliente com grafia diferente.
-` : ""}
-Responda SEMPRE usando a função identify_order_items.`;
-
-    // O system prompt (que carrega o catálogo inteiro) vai no parâmetro `system`
-    // da Anthropic, não como mensagem — é isso que habilita o prompt caching.
     const conteudoUsuario: BlocoConteudo[] = [];
     let imagensRejeitadas: ImagemRejeitada[] = [];
 
@@ -826,13 +767,12 @@ Responda SEMPRE usando a função identify_order_items.`;
       resposta = await anthropic.messages.create({
         model: MODELO,
         max_tokens: MAX_TOKENS,
-        // SEM cache_control de propósito: o prompt começa pelo catálogo,
-        // candidatos e histórico — tudo variável por request. Como o cache é por
-        // PREFIXO, cada chamada seria um miss pagando 1,25× de escrita e nunca
-        // colhendo o 0,1× de leitura. Para cachear de verdade seria preciso
-        // inverter o prompt (regras fixas primeiro, catálogo depois) — mudança
-        // de comportamento que não cabe numa troca de provedor.
-        system: systemPrompt,
+        // Prompt caching por PREFIXO: o bloco 0 (regras estáveis) leva o
+        // `cache_control: ephemeral`; o bloco 1 (catálogo, serviços, histórico,
+        // candidatos) NÃO leva, porque muda a cada request. Como a ordem de
+        // renderização é `tools` → `system` → `messages`, o `input_schema` da
+        // tool entra no MESMO prefixo cacheado, de graça.
+        system: blocosSistema,
         tools: [
           {
             name: "identify_order_items",
@@ -881,6 +821,44 @@ Responda SEMPRE usando a função identify_order_items.`;
         });
       }
       throw new Error("Erro ao processar com IA");
+    }
+
+    // PROVA do cache, não suposição (foi a crítica do Codex no #1608): sem estes
+    // contadores não dá para saber se o `cache_control` pegou — hit rate se mede,
+    // não se acredita. Campo que a API não mandou sai como "—" e NÃO conta como
+    // zero (ausente ≠ zero).
+    const variante = searchCustomer ? "com-cliente" : "sem-cliente";
+    const usoCache = resumirUsoCache(resposta.usage);
+    const acc = acumularUsoCache(
+      acumuladoresCache.get(variante) ?? criarAcumuladorCache(),
+      usoCache,
+    );
+    acumuladoresCache.set(variante, acc);
+
+    const numero = (n: number | null) => (n === null ? "—" : String(n));
+    console.log(
+      `[analyze-unified-order] cache variante=${variante} estado=${usoCache.estado} ` +
+        `escrita=${numero(usoCache.escrita)} leitura=${numero(usoCache.leitura)} ` +
+        `entrada=${numero(usoCache.entrada)} estavel_chars=${blocoEstavel.text.length} | ` +
+        `nesta instância: ${acc.chamadas} chamada(s) · ${acc.leitura} leitura · ` +
+        `${acc.escrita} escrita · ${acc.inativo} inativo · ${acc.desconhecido} desconhecido`,
+    );
+
+    // Dois alertas DIFERENTES, porque são falhas diferentes.
+    if (usoCache.estado === "inativo") {
+      console.warn(
+        `[analyze-unified-order] cache INATIVO: escrita=0 E leitura=0 com cache_control ativo — ` +
+          `prefixo abaixo do mínimo de 1024 tokens do ${MODELO}`,
+      );
+    }
+    // Este é o desastre do #1608 de volta: paga 1,25× de escrita toda chamada e
+    // nunca colhe o 0,1× de leitura. Só a REPETIÇÃO distingue isto de cold miss.
+    if (pagaEscritaSemNuncaLer(acc)) {
+      console.warn(
+        `[analyze-unified-order] cache NUNCA LIDO: ${acc.escrita} escrita(s) e 0 leitura na variante ` +
+          `${variante} desta instância — o prefixo está mudando entre requests (algo variável ` +
+          `vazou para o bloco estável ou para \`tools\`)`,
+      );
     }
 
     // §8 money-path: teto que trunca fabrica completude. Uma lista cortada no
