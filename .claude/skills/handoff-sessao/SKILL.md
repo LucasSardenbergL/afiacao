@@ -60,12 +60,33 @@ Monte com evidência fresca (rode os comandos, não cite de memória):
 - 1ª mensagem: colar este briefing inteiro.
 ```
 
-## Onde persistir (na ordem de preferência)
+## Onde persistir
+
+### O chip é OBRIGATÓRIO — sempre, não "quando a fatia é pequena"
+
+**Todo handoff gerado abre um chip (`spawn_task`) com o briefing INTEIRO no `prompt`.** Sem exceção,
+sem julgar o tamanho da próxima fatia.
+
+O motivo não tem nada a ver com tamanho: **o founder não vai estar na sessão seguinte.** Um briefing
+que só existe na conversa morre com ela — ele teria de achar a transcrição, copiar o bloco e colar
+na sessão nova, o que na prática significa que a fatia não continua. O chip troca "preciso lembrar
+de retomar isto" por um clique. (Pedido explícito do founder, 2026-08-07: *"não seria possível toda
+vez que ele for gerado já abrir o chip, pois não vou continuar na próxima sessão?"*.)
+
+Regras do chip (as do CLAUDE.md valem):
+- **Anuncie o título EXATO no chat** + que quem clica é o founder — senão o rastreio se perde
+  depois ("não sei qual é este chip").
+- `cwd` = diretório PRINCIPAL do repo, e a **1ª linha do prompt manda criar o worktree novo**
+  (`bun run wt <branch>`) — nunca reusar o worktree da sessão que está fechando.
+- O `prompt` carrega o briefing **completo**, não um resumo com ponteiro: a sessão nova não
+  enxerga esta conversa, então o que não estiver no prompt não existe.
+- `tldr` em português de negócio (aparece no tooltip): o que a fatia entrega e por que importa —
+  sem caminho de arquivo nem jargão.
+
+### Redundância (além do chip, quando couber)
 
 1. **Corpo do PR** da fatia atual (se existe PR — o briefing vira a seção "Próxima fatia").
-2. **Arquivo no worktree NOVO** (`HANDOFF.md` na raiz — o `bun run wt` cria o worktree; escreva
-   o arquivo lá ANTES de fechar esta sessão).
-3. Chip (spawn_task) com o briefing no prompt — quando a próxima fatia é bem pequena.
+2. **Arquivo no worktree NOVO** (`HANDOFF.md` na raiz), quando a fatia seguinte já tem worktree.
 
 **NUNCA** arquivo compartilhado de roadmap no repo (ímã de conflito entre worktrees — CLAUDE.md).
 
