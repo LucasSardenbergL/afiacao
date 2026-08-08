@@ -59,9 +59,9 @@ export const rotuloDoDesfecho = (valor: string): string =>
  */
 export function payloadDeUmToque(callResult: string): RecordResultPayload {
   return {
-    planFollowed: null,
+    planFollowed: true,
     callResult,
-    actualMargin: null,
+    actualMargin: 0,
     callDurationSeconds: null,
   };
 }

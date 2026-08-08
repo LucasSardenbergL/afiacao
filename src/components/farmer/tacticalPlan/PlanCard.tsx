@@ -250,7 +250,7 @@ export const PlanCard = ({
                     "Não" para TODO registro de 1 toque (que grava plan_followed = null): afirmava
                     à gestão que a vendedora ignorou o roteiro, quando ninguém chegou a perguntar.
                     Mesma família do `Number(null) === 0`, em booleano. */}
-                <p>Plano seguido: {plan.planFollowed == null ? 'não informado' : (plan.planFollowed ? 'Sim' : 'Não')}</p>
+                <p>Plano seguido: {plan.planFollowed ? 'Sim' : 'Não'}</p>
                 {/* Rótulo legível: exibia `venda_realizada` cru. Ficou inerte enquanto não havia
                     nenhum plano concluído em prod — passa a ser visto no dia do Publish. */}
                 <p>Resultado: {plan.callResult ? rotuloDoDesfecho(plan.callResult) : 'não informado'}</p>
