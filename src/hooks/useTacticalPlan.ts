@@ -166,6 +166,29 @@ interface EffectivenessRow {
   plan_type: PlanType | null;
 }
 
+/**
+ * Acumulador de efetividade. Cada total anda com o SEU denominador de apurados.
+ *
+ * [money-path — ausente ≠ zero] O registro de 1 toque grava `plan_followed`, `actual_margin` e
+ * `call_duration_seconds` como NULL de propósito (afirma só o desfecho). Dividir pelo `count`
+ * bruto — como fazia o `Number(d.actual_margin || 0) / count` — diluiria a média com planos que
+ * ninguém mediu, e o número resultante seria lido como margem média real da carteira.
+ */
+interface AcumuladorEfetividade {
+  count: number;
+  followed: number;
+  /** Quantos declararam adesão ao roteiro (true OU false). Denominador de `followRate`. */
+  comFollow: number;
+  totalMargin: number;
+  comMargem: number;
+  /**
+   * Margem e tempo somados APENAS sobre os planos que têm os dois. R$/h derivado de um total de
+   * margem e um total de tempo vindos de conjuntos diferentes não significa nada.
+   */
+  margemComTempo: number;
+  tempoComMargem: number;
+}
+
 interface AiPlanResponse {
   strategic_objective?: string;
   diagnostic_questions?: TacticalPlan['diagnosticQuestions'];
@@ -348,7 +371,10 @@ export const useTacticalPlan = () => {
       status: d.status,
       planFollowed: d.plan_followed ?? undefined,
       callResult: d.call_result ?? undefined,
-      actualMargin: d.actual_margin ? Number(d.actual_margin) : undefined,
+      // [money-path] `d.actual_margin ? … : undefined` era o `|| 0` ESPELHADO: aqui o número
+      // MEDIDO é que se perdia — margem 0 apurada (ligação que fechou sem margem, ou desconto
+      // total) caía no ramo falso e virava "não registrado". Só `null`/`undefined` é ausência.
+      actualMargin: d.actual_margin == null ? undefined : Number(d.actual_margin),
       callDurationSeconds: d.call_duration_seconds ?? undefined,
       objectionType: d.objection_type ?? undefined,
       notes: d.notes ?? undefined,
@@ -774,11 +800,15 @@ export const useTacticalPlan = () => {
   }, [effectiveUserId, fetchOwnerScope]);
 
   // Record post-call results
+  // [money-path — ausente ≠ zero] Os três nullable são o tri-estado que o registro de 1 toque
+  // produz: ele afirma só o desfecho. A RPC `registrar_resultado_plano` aceita NULL explícito
+  // nos parâmetros (verificado por `pg_get_functiondef` na PROD, 2026-08-07 — o repo não é a
+  // fonte, apply manual diverge) e as colunas de destino são todas nullable, sem CHECK.
   const recordResult = useCallback(async (planId: string, result: {
-    planFollowed: boolean;
+    planFollowed: boolean | null;
     callResult: string;
-    actualMargin: number;
-    callDurationSeconds: number;
+    actualMargin: number | null;
+    callDurationSeconds: number | null;
     objectionType?: string;
     notes?: string;
   }) => {
@@ -824,32 +854,54 @@ export const useTacticalPlan = () => {
 
     if (!data?.length) return null;
 
-    const byType: Record<string, { count: number; followed: number; totalMargin: number; totalTime: number }> = {};
-    const byObjective: Record<string, { count: number; followed: number; totalMargin: number; totalTime: number }> = {};
+    const byType: Record<string, AcumuladorEfetividade> = {};
+    const byObjective: Record<string, AcumuladorEfetividade> = {};
+
+    const acumular = (map: Record<string, AcumuladorEfetividade>, k: string, d: EffectivenessRow) => {
+      if (!map[k]) {
+        map[k] = { count: 0, followed: 0, comFollow: 0, totalMargin: 0, comMargem: 0, margemComTempo: 0, tempoComMargem: 0 };
+      }
+      const a = map[k];
+      a.count++;
+      // `!= null` e não truthy: `false` é declaração ("não segui o plano"), NULL é ausência.
+      // O `if (d.plan_followed)` de antes fundia os dois no mesmo balde de "não seguiu".
+      if (d.plan_followed != null) {
+        a.comFollow++;
+        if (d.plan_followed) a.followed++;
+      }
+      // `valorMedido` (e não `Number(x || 0)`) porque numeric do PostgREST chega como STRING:
+      // preserva o 0 apurado e devolve null para ausência e para lixo não-finito.
+      const margem = valorMedido(d.actual_margin);
+      const tempo = valorMedido(d.call_duration_seconds);
+      if (margem != null) {
+        a.totalMargin += margem;
+        a.comMargem++;
+      }
+      if (margem != null && tempo != null) {
+        a.margemComTempo += margem;
+        a.tempoComMargem += tempo;
+      }
+    };
 
     for (const d of data) {
-      const obj = d.strategic_objective;
-      const pt = d.plan_type || 'essencial';
-
-      for (const [key] of [['obj_' + obj, byObjective], ['type_' + pt, byType]] as const) {
-        const target = key.startsWith('obj_') ? byObjective : byType;
-        const k = key.replace(/^(obj_|type_)/, '');
-        if (!target[k]) target[k] = { count: 0, followed: 0, totalMargin: 0, totalTime: 0 };
-        target[k].count++;
-        if (d.plan_followed) target[k].followed++;
-        target[k].totalMargin += Number(d.actual_margin || 0);
-        target[k].totalTime += Number(d.call_duration_seconds || 0);
-      }
+      acumular(byObjective, d.strategic_objective, d);
+      acumular(byType, d.plan_type || 'essencial', d);
     }
 
-    const mapStats = (map: typeof byObjective) =>
+    // Tri-estado em TODAS as três métricas: `null` = não apurado nesta fatia, e quem exibir
+    // decide como mostrar "sem dado" — nunca 0, que leria como "carteira sem margem" ou
+    // "vendedora nunca segue o plano". `comFollow`/`comMargem` saem junto para que a tela
+    // possa dizer sobre quantos planos a média foi calculada (amostra pequena é dado frágil).
+    const mapStats = (map: Record<string, AcumuladorEfetividade>) =>
       Object.entries(map).map(([key, stats]) => ({
         key,
         label: objectiveLabels[key] || key,
         count: stats.count,
-        followRate: stats.count > 0 ? Math.round((stats.followed / stats.count) * 100) : 0,
-        avgMargin: stats.count > 0 ? stats.totalMargin / stats.count : 0,
-        profitPerHour: stats.totalTime > 0 ? (stats.totalMargin / stats.totalTime) * 3600 : 0,
+        comFollow: stats.comFollow,
+        comMargem: stats.comMargem,
+        followRate: stats.comFollow > 0 ? Math.round((stats.followed / stats.comFollow) * 100) : null,
+        avgMargin: stats.comMargem > 0 ? stats.totalMargin / stats.comMargem : null,
+        profitPerHour: stats.tempoComMargem > 0 ? (stats.margemComTempo / stats.tempoComMargem) * 3600 : null,
       }));
 
     return { byObjective: mapStats(byObjective), byType: mapStats(byType) };
