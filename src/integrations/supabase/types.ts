@@ -2072,6 +2072,7 @@ export type Database = {
           created_at: string
           created_by: string | null
           expira_em: string
+          faturamento_observado_em: string | null
           id: string
           motivo: string | null
           omie_codigo_produto: number
@@ -2086,6 +2087,7 @@ export type Database = {
           created_at?: string
           created_by?: string | null
           expira_em: string
+          faturamento_observado_em?: string | null
           id?: string
           motivo?: string | null
           omie_codigo_produto: number
@@ -2100,6 +2102,7 @@ export type Database = {
           created_at?: string
           created_by?: string | null
           expira_em?: string
+          faturamento_observado_em?: string | null
           id?: string
           motivo?: string | null
           omie_codigo_produto?: number
@@ -18497,6 +18500,25 @@ export type Database = {
           p_motivo_backorder?: string
           p_sales_order_id: string
         }
+        Returns: Json
+      }
+      atp_reconciliar: { Args: never; Returns: Json }
+      atp_reservas_pendentes: {
+        Args: { p_dias?: number }
+        Returns: {
+          ativa_ha_dias: number
+          faturamento_observado_em: string
+          omie_codigo_produto: number
+          omie_pedido_id: number
+          quantidade: number
+          reserva_id: string
+          sales_order_id: string
+          status_canonico: string
+          status_vinculado: string
+        }[]
+      }
+      atp_resolver_reserva: {
+        Args: { p_desfecho: string; p_motivo: string; p_reserva_id: string }
         Returns: Json
       }
       atualizar_campanha_datas_corte: {

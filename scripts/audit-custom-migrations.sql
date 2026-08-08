@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 455
+-- Total de custom migrations: 456
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -496,6 +496,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260807015000', 'atp_gate_pedido_fase2', '20260807015000_atp_gate_pedido_fase2.sql'),
   ('20260807210912', 'expirar_planos_taticos', '20260807210912_expirar_planos_taticos.sql'),
   ('20260807223000', 'check_finitude_money_path', '20260807223000_check_finitude_money_path.sql'),
+  ('20260808012000', 'atp_reconciliacao_fase3', '20260808012000_atp_reconciliacao_fase3.sql'),
   ('20260808020000', 'tactical_plan_idempotencia_janela', '20260808020000_tactical_plan_idempotencia_janela.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
@@ -2047,6 +2048,15 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('atp_gate_pedido_fase2', 'rls_policy', 'public', 'atp_decisoes_select_staff', 'atp_decisoes'),
   ('expirar_planos_taticos', 'function', 'public', 'expirar_planos_taticos', ''),
   ('expirar_planos_taticos', 'cron_job', 'cron', 'expirar-planos-taticos', ''),
+  ('atp_reconciliacao_fase3', 'function', 'private', 'atp_disponivel', ''),
+  ('atp_reconciliacao_fase3', 'function', 'private', 'expirar_reservas_vencidas_job', ''),
+  ('atp_reconciliacao_fase3', 'function', 'private', 'atp_pedido_canonico', ''),
+  ('atp_reconciliacao_fase3', 'function', 'private', 'atp_reconciliar_job', ''),
+  ('atp_reconciliacao_fase3', 'function', 'public', 'atp_reconciliar', ''),
+  ('atp_reconciliacao_fase3', 'function', 'public', 'atp_resolver_reserva', ''),
+  ('atp_reconciliacao_fase3', 'function', 'public', 'atp_reservas_pendentes', ''),
+  ('atp_reconciliacao_fase3', 'index', 'public', 'idx_estoque_reservas_pedido_ativa', 'estoque_reservas'),
+  ('atp_reconciliacao_fase3', 'cron_job', 'cron', 'atp-reconciliar', ''),
   ('tactical_plan_idempotencia_janela', 'function', 'public', 'criar_plano_tatico', '')
 ),
 obj_status AS (
@@ -3646,6 +3656,15 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('atp_gate_pedido_fase2', 'rls_policy', 'public', 'atp_decisoes_select_staff', 'atp_decisoes'),
   ('expirar_planos_taticos', 'function', 'public', 'expirar_planos_taticos', ''),
   ('expirar_planos_taticos', 'cron_job', 'cron', 'expirar-planos-taticos', ''),
+  ('atp_reconciliacao_fase3', 'function', 'private', 'atp_disponivel', ''),
+  ('atp_reconciliacao_fase3', 'function', 'private', 'expirar_reservas_vencidas_job', ''),
+  ('atp_reconciliacao_fase3', 'function', 'private', 'atp_pedido_canonico', ''),
+  ('atp_reconciliacao_fase3', 'function', 'private', 'atp_reconciliar_job', ''),
+  ('atp_reconciliacao_fase3', 'function', 'public', 'atp_reconciliar', ''),
+  ('atp_reconciliacao_fase3', 'function', 'public', 'atp_resolver_reserva', ''),
+  ('atp_reconciliacao_fase3', 'function', 'public', 'atp_reservas_pendentes', ''),
+  ('atp_reconciliacao_fase3', 'index', 'public', 'idx_estoque_reservas_pedido_ativa', 'estoque_reservas'),
+  ('atp_reconciliacao_fase3', 'cron_job', 'cron', 'atp-reconciliar', ''),
   ('tactical_plan_idempotencia_janela', 'function', 'public', 'criar_plano_tatico', '')
 )
 SELECT
