@@ -57,7 +57,7 @@
 // Depois de criar: versione o cron numa migration — cron que vive só no banco some sem rastro
 // (docs/agent/sync.md; o de vendas ficou 8 dias morto por isso).
 
-import { createClient } from 'npm:@supabase/supabase-js@^2';
+import { createClient } from 'npm:@supabase/supabase-js@2';
 import { authorizeCron, corsHeaders } from '../_shared/auth.ts';
 import { fetchAll } from '../_shared/paginate.ts';
 import {

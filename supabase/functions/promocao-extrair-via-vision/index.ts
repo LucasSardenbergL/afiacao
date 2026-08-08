@@ -26,7 +26,7 @@
 import Anthropic from "npm:@anthropic-ai/sdk@^0.93.0";
 // ⚠️ usar npm: (igual a kb-extract-specs/tarefa-extrair-voz/etc.). O esm.sh/@supabase/supabase-js
 // falhava em resolver no boot do edge runtime → RUNTIME_ERROR sem linha/stack.
-import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@^2";
+import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import {
   anotarRejeicoes,

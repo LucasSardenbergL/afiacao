@@ -3,7 +3,7 @@
 // ficou em aceito_portal_sem_protocolo / indeterminado_requer_conciliacao,
 // marcamos como sucesso_portal e disparamos o Omie.
 
-import { createClient } from "npm:@supabase/supabase-js@2.45.0";
+import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff, corsHeaders } from "../_shared/auth.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;

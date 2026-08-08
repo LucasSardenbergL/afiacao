@@ -1,7 +1,7 @@
 import Anthropic from "npm:@anthropic-ai/sdk@^0.93.0";
 // ⚠️ usar npm: (igual a tarefa-extrair-voz/melhoria-triagem/etc.). O esm.sh/@supabase/supabase-js
 // falhava em resolver no boot do edge runtime → RUNTIME_ERROR sem linha/stack (módulo não carrega).
-import { createClient } from "npm:@supabase/supabase-js@^2";
+import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeMaster, corsHeaders } from "../_shared/auth.ts";
 
 const SYSTEM_PROMPT_EXTRACT_SPECS = `Você extrai specs técnicos estruturados de boletins técnicos de tintas industriais para a base de conhecimento da Colacor (distribuidora Sayerlack).

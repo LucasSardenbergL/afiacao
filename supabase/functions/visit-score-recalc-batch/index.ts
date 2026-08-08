@@ -33,7 +33,7 @@
 //
 // Schedule é UTC (`cron.timezone` vazio, #1510): '0 7' = 04:00 BRT, como diz o cabeçalho acima.
 
-import { createClient } from 'npm:@supabase/supabase-js@^2';
+import { createClient } from 'npm:@supabase/supabase-js@2';
 import { authorizeCronOrStaff, corsHeaders } from '../_shared/auth.ts';
 import { carregarExcluidosDaCarteira, carregarOwnerMap } from '../_shared/mapas-paginados.ts';
 import { exigirLeitura } from '../_shared/leitura-critica.ts';

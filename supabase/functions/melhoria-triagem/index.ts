@@ -4,7 +4,7 @@
 // (RPCs com o JWT do CALLER — só quando caller == autor do item) + tool terminal `triar`.
 // A captação NUNCA depende daqui: falha => triagem_status='erro' e o item segue na fila.
 import Anthropic from "npm:@anthropic-ai/sdk@^0.93.0";
-import { createClient } from "npm:@supabase/supabase-js@^2";
+import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff, corsHeaders } from "../_shared/auth.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;

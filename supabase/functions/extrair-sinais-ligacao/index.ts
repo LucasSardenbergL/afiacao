@@ -2,7 +2,7 @@ import Anthropic from "npm:@anthropic-ai/sdk@^0.93.0";
 // ⚠️ usar npm: (igual a kb-extract-specs/claude-spin-analyze/tarefa-extrair-voz/etc.).
 // O esm.sh/@supabase/supabase-js falhava em resolver no boot do edge runtime →
 // RUNTIME_ERROR sem linha/stack (módulo não carrega). npm: é o que o projeto roda.
-import { createClient } from "npm:@supabase/supabase-js@^2";
+import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff, corsHeaders } from "../_shared/auth.ts";
 
 // Idempotência por CONTEÚDO: (source_transcript_hash + prompt_version). Bump PROMPT_VERSION

@@ -17,7 +17,7 @@
 // 'embalagem_captura_automatica_habilitada' gateia SÓ o disparo cron (a captura
 // AUTOMÁTICA); manual staff roda com ele desligado (é como o spike-B valida em prod).
 
-import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2.45.0";
+import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff, corsHeaders } from "../_shared/auth.ts";
 import {
   decidirLeituraEmbalagem,

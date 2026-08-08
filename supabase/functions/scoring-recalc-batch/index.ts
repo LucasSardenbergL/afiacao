@@ -31,7 +31,7 @@
 //
 // Schedule é UTC (`cron.timezone` vazio, #1510): '0 6' = 03:00 BRT, como diz o cabeçalho acima.
 
-import { createClient } from 'npm:@supabase/supabase-js@^2';
+import { createClient } from 'npm:@supabase/supabase-js@2';
 import { authorizeCronOrStaff, corsHeaders } from '../_shared/auth.ts';
 import { carregarExcluidosDaCarteira, carregarOwnerMap } from '../_shared/mapas-paginados.ts';
 import type { BancoPostgrest } from '../_shared/paginate.ts';

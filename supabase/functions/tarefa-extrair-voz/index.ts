@@ -1,6 +1,6 @@
 // supabase/functions/tarefa-extrair-voz/index.ts
 import Anthropic from "npm:@anthropic-ai/sdk@^0.93.0";
-import { createClient } from "npm:@supabase/supabase-js@^2";
+import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff, corsHeaders } from "../_shared/auth.ts";
 
 const SYSTEM_PROMPT = `Você estrutura COMANDOS DE VOZ de um gestor que está criando tarefas para vendedoras de uma distribuidora B2B.
