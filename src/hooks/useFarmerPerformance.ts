@@ -3,6 +3,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
+import { proporcaoChurnBaixo } from '@/lib/scoring/churn';
 
 export interface PerformanceScore {
   id: string;
@@ -298,12 +299,17 @@ export const useFarmerPerformance = () => {
         : 0;
       const ipfLtvEvolution = Math.round(Math.min(100, (avgSpend / 2000) * 100));
 
-      // 5. Churn reduction: % of clients with low churn risk (<30%)
-      // `?? 100` (não `|| 100`): churn ausente conta como pior caso (não é "baixo churn"), mas
-      // churn REAL = 0 (cliente perfeitamente saudável) tem de contar — `|| 100` o tratava como 100.
-      const lowChurnClients = clientArr.filter((c) => Number(c.churn_risk ?? 100) < 30).length;
-      const ipfChurnReduction = clientArr.length > 0
-        ? Math.round((lowChurnClients / clientArr.length) * 100)
+      // 5. Churn reduction: % de clientes com risco de churn conhecido E baixo (<30%).
+      // A BASE é quem tem risco conhecido, não a carteira inteira. O `?? 100` do #1561 consertou
+      // o numerador (churn REAL = 0 voltou a contar como bom), mas o desconhecido continuava no
+      // denominador — então cada cliente sem score derrubava o índice do vendedor por lacuna de
+      // DADO, não por desempenho. Numerador e denominador saem agora da mesma base filtrada.
+      const { abaixo: lowChurnClients, comRisco } = proporcaoChurnBaixo(
+        clientArr.map((c) => c.churn_risk),
+        30,
+      );
+      const ipfChurnReduction = comRisco > 0
+        ? Math.round((lowChurnClients / comRisco) * 100)
         : 0;
 
       // IPF Total (weighted average)
