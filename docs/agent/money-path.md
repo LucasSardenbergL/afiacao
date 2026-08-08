@@ -109,6 +109,20 @@ Helper TS puro (testado com vitest) **espelhado verbatim** no edge (Deno não im
 
 Edge só-TS (sem contraparte SQL): a paridade vira **textual no CI** — bloco entre `// MIRROR-START/END` comparado normalizado src×edge (pega reescrita do Lovable no deploy) — **mais** uma **canária comportamental** `{canary:true}` staff-gated que roda o helper REAL deployado com fixture fixo e retorna `{resolved, expected, ok}`. Probe HTTP = única prova do COMPORTAMENTO em produção: o guard textual cobre a FONTE, a canária cobre o DEPLOY. ⚠️ A canária prova "helper deployado + lógica certa", **não** que o real-path usa o helper (isso é o guard textual + paridade). Ex.: merge de preço do `analyze-unified-order` (#1089); `identidade_probe` (`omie-vendas-sync`); `doc_ambiguo_probe` (`omie-analytics-sync`, P1b — indispensável ali: a ausência do helper é invisível no dado, a proof-table só encolhe com duplicata-CNPJ real na conta, que não há).
 
+## Idempotência: a chave é o ciclo do CONSUMIDOR, não o do produtor
+
+Trava do tipo "já fiz isso hoje?" casa com a periodicidade de quem PRODUZ. Se quem consome trabalha noutro ritmo, a mesma trava — correta, testada, e criada para um incidente real — passa a **autorizar exatamente uma cópia por ciclo do produtor**. É invisível como defeito: nada falha, nada alerta, e o volume parece adoção.
+
+Medido no PTPL (2026-08-08, fase 2 de `docs/historico/fila-plano-tatico.md`): `criar_plano_tatico` travava por dia operacional e o batch passou a rodar diariamente → **533 planos para 80 clientes**; a fila viva tinha 169 planos para 35 clientes, 14 deles com **7 cópias** cada. A chave certa era a JANELA da fila ("este item já está aberto para alguém?"), que é o ciclo do consumidor.
+
+Duas consequências ao trocar a chave:
+- **Prove o par, não só o bloqueio.** "Dentro da janela BLOQUEIA" sozinho é satisfeito por uma trava permanente — que troca *entope* por *congela*. O assert gêmeo ("fora da janela VOLTA a gerar") é o que separa os dois, e a falsificação correspondente estica a janela para exigir que ele quebre.
+- **Filtro de "já na fila" vem ANTES do corte do top-N.** Depois do corte, o produtor escolhe sempre os mesmos N, a trava os pula, e o item N+1 nunca entra. Com N grande isso é invisível; com N pequeno, congela a fila. Por isso a exclusão mora no oráculo puro (parâmetro de `selecionarParaPregeracao`), não no call-site.
+
+Numa trava, **coluna nullable é fail-OPEN**: `coluna >= x` com NULL é NULL, o `EXISTS` não casa e a linha de dado defeituoso deixa de bloquear em silêncio. Feche com `COALESCE(..., now())` — indecidível RECUSA.
+
+Sinal para revisão: **tabela de intenção que cresce sem a contagem de entidades DISTINTAS crescer** ⇒ o defeito está na chave de idempotência, não no volume. É uma query, e nenhuma tela mostra.
+
 ## Diagnóstico
 
 "Diagnosticado ≠ corrigido" — ver `diagnose-supabase-sync` (estados rígidos de saída; só declara RECUPERADO com novo ciclo + efeito no dado; a ação corretiva é entregue ao humano, nunca aplicada às cegas).

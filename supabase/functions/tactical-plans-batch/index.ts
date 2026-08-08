@@ -1,7 +1,7 @@
 // supabase/functions/tactical-plans-batch/index.ts
 //
 // Cron noturno que, para cada vendedora (farmer) com carteira, seleciona o
-// top-25 dos clientes por priority_score que passam no gate de R$/h e dispara
+// top-N dos clientes por priority_score que passam no gate de R$/h e dispara
 // a pré-geração do plano tático chamando generate-tactical-plan no modo
 // self-contained. Idempotência fica na edge alvo (skipped: 'ja_gerado_hoje').
 //
@@ -9,8 +9,11 @@
 //   profitPerHora = ((rev > 0 ? rev : avg) * (margin / 100) * 0.1) / (15 / 60)
 //   Threshold: R$ 50/h.
 //
-// Semântica top-N: filtra o gate ANTES de cortar no TOP_25 — pega os 25 de
-// maior priority DENTRE os que passam (não os 25 de maior priority e filtra depois).
+// Semântica top-N: filtra o gate E a fila aberta ANTES de cortar no TOP_N — pega os N de
+// maior priority DENTRE os que passam (não os N de maior priority e filtra depois). Com
+// TOP_N pequeno essa ordem deixou de ser refinamento e virou requisito: filtrar a fila
+// depois do corte escolheria todo dia os mesmos N, que a idempotência pularia, e o cliente
+// N+1 nunca entraria — fila congelada com aparência de funcionamento.
 //
 // Ordem de EXECUÇÃO: round-robin entre farmers (_shared/tactical-ordem.ts), não a
 // concatenação dos grupos. Cobertura parcial é rotina (timeout/429/402) e sempre come o
@@ -76,8 +79,15 @@ import {
   rotacaoDoDia,
 } from '../_shared/tactical-ordem.ts';
 import { inicioDiaOperacional } from '../_shared/dia-operacional.ts';
+import { inicioDaJanelaFila } from '../_shared/tactical-fila.ts';
+import { mensagemDeErro } from '../_shared/erro-mensagem.ts';
 
-const TOP_N = 25;
+// TOP_N é a taxa de entrada de clientes NOVOS por vendedora por dia — não o tamanho da fila.
+// Com a janela de 7 dias (tactical-fila.ts), a fila estabiliza em TOP_N × 7 por vendedora:
+// 2/dia ⇒ ~14 cartões, que é o que cabe numa semana de venda consultiva B2B (calibrado com o
+// founder em 2026-08-08). Era 25 — que somado à regeração diária produzia 169 planos vivos
+// para 35 clientes. Para mudar o tamanho da fila, mexa AQUI, não na janela.
+const TOP_N = 2;
 const CONCURRENCY = 5; // cada chamada faz 1 LLM (~3-5s); 5 em paralelo ~5s/chunk
 
 // Ausente ≠ zero (money-path): revenue_potential nunca teve writer — NULL em 6.633/6.633
@@ -203,14 +213,72 @@ Deno.serve(async (req) => {
     );
   }
 
-  // 2. Por farmer: ordena por priority desc, filtra gate R$/h, corta em TOP_N.
-  //    Semântica: pega os 25 de maior priority DENTRE os que passam no gate.
+  // 1b. FILA ABERTA: quem já tem plano dentro da janela não volta a disputar vaga.
+  //     Sem isto, o batch regenerava o mesmo cliente todo dia — a idempotência só cobria o DIA
+  //     operacional, então na madrugada seguinte o cliente era candidato de novo. Medido em prod
+  //     (2026-08-08): 23 dos 25 planos de 07/08 eram regeração; a fila viva tinha 169 planos para
+  //     35 clientes, 14 deles com 7 cópias — uma por dia da janela. E dos 174 clientes que passam
+  //     no gate de R$/h, 97 NUNCA tinham recebido plano: a cota diária inteira ia para repetição.
+  //
+  //     Chave (farmer, customer), igual à da RPC criar_plano_tatico: cliente reatribuído precisa
+  //     de plano sob o dono NOVO, e uma chave só por customer o deixaria bloqueado pelo plano do
+  //     dono antigo.
+  //
+  //     Falha ALTO, como os passos 0 e 1: seguir com a fila vazia não degrada — RESSUSCITA a
+  //     duplicata que este passo existe para remover, e em silêncio.
+  const filaPorFarmer = new Map<string, Set<string>>();
+  try {
+    const desdeIso = inicioDaJanelaFila(new Date());
+    const abertos = await fetchAll<{ farmer_id: string; customer_user_id: string }>(
+      (from, to) => supabase
+        .from('farmer_tactical_plans')
+        .select('farmer_id, customer_user_id')
+        .eq('status', 'gerado')
+        // `generated_at`, a MESMA coluna do recorte da tela (useTacticalPlan.ts) e do cron
+        // expirar_planos_taticos. "Estar na fila" precisa ter uma definição só: filtrar por
+        // created_at aqui e generated_at lá faria as pontas discordarem se as duas colunas
+        // divergissem (hoje são idênticas nas 533 linhas, mas isso é acidente, não garantia).
+        // O COALESCE fail-closed contra data nula vive na RPC — aqui é filtro de ECONOMIA
+        // (evitar a chamada paga à IA), não a fronteira; o caso patológico que escapar daqui
+        // é recusado lá e vira skip honesto.
+        .gte('generated_at', desdeIso)
+        .order('id', { ascending: true }) // PK ⇒ ordem total, estável entre páginas
+        .range(from, to),
+      'fila aberta de planos táticos',
+    );
+    for (const p of abertos) {
+      const s = filaPorFarmer.get(p.farmer_id) ?? new Set<string>();
+      s.add(p.customer_user_id);
+      filaPorFarmer.set(p.farmer_id, s);
+    }
+  } catch (e) {
+    // `mensagemDeErro`, não `instanceof Error ? … : String(e)`: o erro que chega aqui vem do
+    // supabase-js, que no caminho sem `.throwOnError()` devolve um objeto PLANO — e `String()`
+    // nele rende "[object Object]", apagando a mensagem que diria se foi timeout, RLS ou rede.
+    // O gate estrutural erro-object-object-gate (classe #1642) vigia isso por CONTAGEM por
+    // arquivo; as 2 ocorrências antigas deste arquivo são dívida baselinada, e sítio novo não
+    // pode aumentá-la.
+    return new Response(
+      JSON.stringify({ ok: false, error: mensagemDeErro(e) ?? 'falha ao ler a fila aberta de planos táticos' }),
+      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+    );
+  }
+
+  // 2. Por farmer: ordena por priority desc, tira quem já está na fila, filtra gate R$/h,
+  //    corta em TOP_N. Semântica: os TOP_N de maior priority DENTRE os que passam no gate
+  //    e ainda NÃO têm plano aberto.
   const carteiras: CarteiraFarmer[] = [];
   let semMargemIndecidivel = 0;
+  let jaNaFila = 0;
 
   for (const [farmer, scores] of porFarmer) {
-    const { selecionados, semMargem } = selecionarParaPregeracao(scores, TOP_N);
+    const { selecionados, semMargem, naFila } = selecionarParaPregeracao(
+      scores,
+      TOP_N,
+      filaPorFarmer.get(farmer) ?? new Set<string>(),
+    );
     semMargemIndecidivel += semMargem.length;
+    jaNaFila += naFila.length;
     carteiras.push({ farmer, clientes: selecionados.map((s) => s.customer) });
   }
 
@@ -275,9 +343,24 @@ Deno.serve(async (req) => {
       // "cobri todo mundo" sem ter coberto (money-path — no silent caps).
       mascarados_ignorados: mascaradosIgnorados,
       // clientes que saíram do ranking por FALTA DE MARGEM (gate indecidível), não por
-      // reprovação no gate. Enquanto nenhum writer calcular gross_margin_pct, este número
-      // tende ao total da carteira — e é o sinal de que o batch está cego, não ocioso.
+      // reprovação no gate. NÃO é disjunto de `ja_na_fila`: é contado sobre a carteira toda
+      // de propósito, para que encher a fila não o faça "melhorar" sozinho.
+      //
+      // ⚠️ NÃO leia este número como "o batch está cego" — a versão anterior deste comentário
+      // dizia isso, e a medição desmente. Cruzamento em prod (2026-08-08, 6.633 scores):
+      //     compra nos 180d + margem: 405  |  compra sem margem:   1
+      //     sem compra      + margem: 670  |  sem compra, s/margem: 5.557
+      // O writer de gross_margin_pct FUNCIONA — cobre 405 dos 406 clientes com compra (99,8%).
+      // O número é alto porque a carteira é ~94% INATIVA, e sem compra nos 180 dias não há
+      // margem a calcular. Ausência honesta, não writer quebrado. Tratá-la como bug levaria a
+      // "consertar" um writer que está certo; o que este número mede é o tamanho do pool vivo.
       sem_margem_indecidivel: semMargemIndecidivel,
+      // clientes que não disputaram vaga por JÁ TEREM plano aberto na janela. Antes eram
+      // regerados e viravam cópia; agora são pulados ANTES da chamada paga à IA. Publicado
+      // porque um corte silencioso leria como "não havia mais ninguém" (money-path: no
+      // silent caps) — e porque é este número que mostra a fila circulando: ele sobe
+      // enquanto a fila enche e cai conforme os planos expiram ou são concluídos.
+      ja_na_fila: jaNaFila,
     }),
     { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
   );

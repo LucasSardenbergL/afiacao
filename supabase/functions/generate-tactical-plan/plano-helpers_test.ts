@@ -7,7 +7,7 @@
 //      genérico gravado com status 'gerado';
 //   2. `Number(null) === 0`: margem/probabilidade não medida virando 0.
 import {
-  ehJaGeradoHojeDaRpc,
+  ehJaNaFilaDaRpc,
   ehSkipLegitimoDaRpc,
   extrairToolUseUnico,
   montarPlano,
@@ -544,37 +544,51 @@ Deno.test("numerosDoBundle: best_individual_lie e SEMPRE null (ninguem o calcula
 });
 
 // ---------------------------------------------------------------------------
-// ehJaGeradoHojeDaRpc — o skip de idempotência vindo do banco
+// ehJaNaFilaDaRpc — o skip de idempotência vindo do banco
 // ---------------------------------------------------------------------------
 
 // VERBATIM da mensagem que `criar_plano_tatico` levanta — mantida igual à da migration
-// 20260802130000_tactical_plan_idempotencia_dia.sql. Se a migration mudar o texto, este
+// 20260808_tactical_plan_idempotencia_janela.sql. Se a migration mudar o texto, este
 // teste é o que trava: sem o casamento, a recusa vira `http_500` no relatório do lote.
-const MSG_RPC_DUPLICATA =
+const MSG_RPC_JA_NA_FILA =
+  "Já existe plano tático aberto na fila para este cliente (janela de 7 dias)";
+
+// A mensagem da fase 1, que a RPC ainda levanta ENQUANTO a migration da fase 2 não for
+// aplicada. O deploy não é atômico (migration pelo SQL Editor, edge pelo chat do Lovable),
+// então as duas convivem durante a janela — ver PADROES_JA_NA_FILA.
+const MSG_RPC_FASE1 =
   "Já existe plano tático gerado hoje para este cliente (dia operacional BRT)";
 
-Deno.test("ehJaGeradoHojeDaRpc: reconhece a recusa da RPC por plano ja gerado hoje", () => {
+Deno.test("ehJaNaFilaDaRpc: reconhece a recusa da RPC por plano ja aberto na fila", () => {
   // Casado por trecho ASCII (sem acento) pelo mesmo motivo de PADROES_SKIP_RPC — mas a
   // mensagem ACENTUADA de produção é a que precisa passar, então é ela que o assert usa.
-  assert(ehJaGeradoHojeDaRpc(MSG_RPC_DUPLICATA), "deveria reconhecer a recusa por duplicata do dia");
+  assert(ehJaNaFilaDaRpc(MSG_RPC_JA_NA_FILA), "deveria reconhecer a recusa por plano na fila");
   assert(
-    ehJaGeradoHojeDaRpc("Ja existe plano tatico gerado hoje para este cliente (dia operacional BRT)"),
+    ehJaNaFilaDaRpc("Ja existe plano tatico aberto na fila para este cliente (janela de 7 dias)"),
     "a variante sem acento tambem tem de casar (normalizacao unicode do driver)",
   );
 });
 
-Deno.test("ehJaGeradoHojeDaRpc: NAO confunde com os outros skips nem com erro real", () => {
-  // Discriminador: se casar largo demais, um erro de infra vira "pulei de propósito"
-  // e o lote reporta ok:true sem ter gravado (a classe do incidente de 2026-07-21).
-  assertEquals(ehJaGeradoHojeDaRpc("Cliente x sem dono de carteira"), false);
-  assertEquals(ehJaGeradoHojeDaRpc("canceling statement due to statement timeout"), false);
-  assertEquals(ehJaGeradoHojeDaRpc(null), false);
-  assertEquals(ehJaGeradoHojeDaRpc(undefined), false);
+Deno.test("ehJaNaFilaDaRpc: ainda reconhece a mensagem da fase 1 (deploy nao-atomico)", () => {
+  // Entre o deploy da edge e o apply da migration, a RPC em prod ainda fala a mensagem
+  // antiga. Sem este casamento a trava voltaria como http_500 e o lote a contaria como
+  // ERRO — um falso alarme de quebra justamente durante a janela de deploy.
+  assert(ehJaNaFilaDaRpc(MSG_RPC_FASE1), "a mensagem da fase 1 tem de continuar casando");
 });
 
-Deno.test("ehJaGeradoHojeDaRpc: a duplicata do dia NAO entra no skip de race de posse", () => {
+Deno.test("ehJaNaFilaDaRpc: NAO confunde com os outros skips nem com erro real", () => {
+  // Discriminador: se casar largo demais, um erro de infra vira "pulei de propósito"
+  // e o lote reporta ok:true sem ter gravado (a classe do incidente de 2026-07-21).
+  assertEquals(ehJaNaFilaDaRpc("Cliente x sem dono de carteira"), false);
+  assertEquals(ehJaNaFilaDaRpc("canceling statement due to statement timeout"), false);
+  assertEquals(ehJaNaFilaDaRpc(null), false);
+  assertEquals(ehJaNaFilaDaRpc(undefined), false);
+});
+
+Deno.test("ehJaNaFilaDaRpc: a trava da fila NAO entra no skip de race de posse", () => {
   // Os dois são `skipped`, mas com motivos DIFERENTES no relatório do lote
-  // (`ja_gerado_hoje` vs `rpc_race`) — misturá-los apaga a distinção entre
+  // (`ja_na_fila` vs `rpc_race`) — misturá-los apaga a distinção entre
   // "a trava funcionou" e "a carteira mudou no meio".
-  assertEquals(ehSkipLegitimoDaRpc(MSG_RPC_DUPLICATA), false);
+  assertEquals(ehSkipLegitimoDaRpc(MSG_RPC_JA_NA_FILA), false);
+  assertEquals(ehSkipLegitimoDaRpc(MSG_RPC_FASE1), false);
 });
