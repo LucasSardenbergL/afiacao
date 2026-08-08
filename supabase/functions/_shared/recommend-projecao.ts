@@ -104,7 +104,7 @@ export function limiteCandidatos(topN: number, topNAdmin: number, podeCusto: boo
  * sendo responsabilidade do produtor — a defesa aqui é profundidade, e o gate primário continua
  * sendo `textoExplicacaoMargem(..., podeCusto)` no caller.
  */
-export function removerValores(texto: string): string {
+function removerValores(texto: string): string {
   // R$ seguido de numero com separadores pt-BR ou en-US (1.234,56 / 1,234.56 / 7.77 / 7,77)
   return texto.replace(/R\$\s*-?\d[\d.,]*/g, "R$ —");
 }

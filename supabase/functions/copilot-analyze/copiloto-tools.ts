@@ -16,7 +16,7 @@
 // mostra que a análise não veio. Sem leitura é pior que leitura errada? Não —
 // leitura errada é pior, porque ela AGE sobre ela.
 
-export const INTENCOES = [
+const INTENCOES = [
   "interesse",
   "objecao_preco",
   "objecao_tecnica",
@@ -25,7 +25,7 @@ export const INTENCOES = [
   "indiferenca",
 ] as const;
 
-export const FASES = [
+const FASES = [
   "abertura",
   "diagnostico",
   "exploracao",
@@ -33,19 +33,19 @@ export const FASES = [
   "fechamento",
 ] as const;
 
-export const DIRECOES = ["positivo", "neutro", "risco"] as const;
+const DIRECOES = ["positivo", "neutro", "risco"] as const;
 
-export const TIPOS_SUGESTAO = [
+const TIPOS_SUGESTAO = [
   "pergunta_diagnostica",
   "resposta_tecnica",
   "argumento_economico",
   "alternativa_abordagem",
 ] as const;
 
-export type Intencao = (typeof INTENCOES)[number];
-export type Fase = (typeof FASES)[number];
-export type Direcao = (typeof DIRECOES)[number];
-export type TipoSugestao = (typeof TIPOS_SUGESTAO)[number];
+type Intencao = (typeof INTENCOES)[number];
+type Fase = (typeof FASES)[number];
+type Direcao = (typeof DIRECOES)[number];
+type TipoSugestao = (typeof TIPOS_SUGESTAO)[number];
 
 export interface AnaliseCopiloto {
   intent: Intencao;

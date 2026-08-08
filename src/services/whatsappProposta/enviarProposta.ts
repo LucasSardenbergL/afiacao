@@ -29,7 +29,7 @@ export function dedupeKeyProposta(customerUserId: string, prazoIso: string): str
 }
 
 /** Subconjunto do client usado aqui (injeção → teste puro; cast no chamador, padrão routeFrom). */
-export interface PropostaQueryChain {
+interface PropostaQueryChain {
   select(cols: string): PropostaQueryChain;
   eq(col: string, v: string): PropostaQueryChain;
   maybeSingle(): Promise<{ data: unknown; error: { message: string } | null }>;

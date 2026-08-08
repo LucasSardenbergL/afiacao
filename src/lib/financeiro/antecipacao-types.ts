@@ -24,7 +24,7 @@ export interface Antecipacao {
   deleted_at: string | null;
 }
 
-export type MotivoOperacao = 'ok' | 'dados_invalidos';
+type MotivoOperacao = 'ok' | 'dados_invalidos';
 export interface CustoOperacao {
   motivo: MotivoOperacao;
   custo: number | null; // bruto + avulsos − liquido
@@ -33,7 +33,7 @@ export interface CustoOperacao {
   taxa_efetiva_aa: number | null;
 }
 
-export type MotivoMedidor = 'ok' | 'sem_operacoes' | 'dados_parciais';
+type MotivoMedidor = 'ok' | 'sem_operacoes' | 'dados_parciais';
 export interface MesAntecipacao {
   ano: number;
   mes: number;
@@ -50,11 +50,11 @@ export interface MedidorResult {
   tendencia: MesAntecipacao[]; // por data_operacao (base declarada, P1)
 }
 
-export interface Hurdle {
+interface Hurdle {
   valor: number;
   unidade: HurdleUnidade;
 }
-export type MotivoFunding =
+type MotivoFunding =
   | 'ok'
   | 'dados_invalidos'
   | 'inputs_conflitantes'
@@ -79,7 +79,7 @@ export interface FundingResult {
   veredito: 'mais_caro' | 'dentro' | null; // SÓ de funding (P1-3), nunca "vale a pena"
 }
 
-export type MotivoHurdleSugerido = 'ok' | 'sem_dados';
+type MotivoHurdleSugerido = 'ok' | 'sem_dados';
 export interface HurdleSugerido {
   valor: number | null;
   unidade: HurdleUnidade | null;

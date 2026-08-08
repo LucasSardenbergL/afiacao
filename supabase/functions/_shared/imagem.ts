@@ -13,7 +13,7 @@
 // só por refactor. Consolidar quando ela for deployada.
 
 /** Media types que a API da Anthropic aceita como imagem. */
-export const MEDIA_TYPES_IMAGEM = [
+const MEDIA_TYPES_IMAGEM = [
   "image/jpeg",
   "image/png",
   "image/gif",
@@ -23,7 +23,7 @@ export const MEDIA_TYPES_IMAGEM = [
 /** Union literal — o SDK da Anthropic tipa `media_type` assim; `string` não casa. */
 export type MediaTypeImagem = (typeof MEDIA_TYPES_IMAGEM)[number];
 
-export interface BlocoImagem {
+interface BlocoImagem {
   type: "image";
   source: { type: "base64"; media_type: MediaTypeImagem; data: string };
 }

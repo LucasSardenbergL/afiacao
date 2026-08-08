@@ -1068,7 +1068,7 @@ export interface CockpitRollupCanal {
 }
 // Giro executivo (PR3 Cabreúva): capital em estoque nível-empresa + dinheiro morto +
 // retorno-sobre-estoque PROXY (cm TTM ÷ snapshot; NÃO é GMROI — falta estoque médio histórico).
-export interface CockpitGiroExecutivo {
+interface CockpitGiroExecutivo {
   capital_medido: number;
   capital_sem_venda_ttm: number;   // capital em SKUs SEM venda no TTM (dinheiro morto)
   skus_medidos: number;

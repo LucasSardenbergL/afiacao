@@ -15,7 +15,7 @@ export interface SavingsOrderInput {
   items: unknown;
 }
 
-export interface SavingsMonthly {
+interface SavingsMonthly {
   month: string;
   sharpeningCost: number;
   newToolCost: number;

@@ -32,7 +32,7 @@ export interface EconomiaInput {
   totalGastoReal: number;
 }
 
-export interface FerramentaAfetada {
+interface FerramentaAfetada {
   id: string;
   nome: string;
 }

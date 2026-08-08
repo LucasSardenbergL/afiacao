@@ -18,7 +18,7 @@ import type { FormaPagamento } from '@/hooks/unifiedOrder/types';
  * opcionais de propósito: edge ANTERIOR ao #1597 (ou ainda não deployada — merge na main
  * ≠ produção) devolve só `{ success, formas }`, e aí `degraded` chega `undefined`.
  */
-export interface RespostaFormasPagamento {
+interface RespostaFormasPagamento {
   formas?: FormaPagamento[] | null;
   source?: string | null;
   degraded?: boolean | null;

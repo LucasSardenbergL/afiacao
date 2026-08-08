@@ -21,7 +21,7 @@ export const MAX_TOKENS = 4000;
  * Objetivos estratégicos aceitos. Espelha o enum de `_shared/tactical-margem.ts`
  * (selectObjective) e `src/lib/scoring/objective.ts` — mudou lá, mude aqui.
  */
-export const OBJETIVOS_VALIDOS = [
+const OBJETIVOS_VALIDOS = [
   "ativacao",
   "recuperacao",
   "expansao_mix",
@@ -59,7 +59,7 @@ export interface Ltv {
   growth_pct: number | null;
 }
 
-export interface Plano {
+interface Plano {
   strategic_objective: Objetivo;
   approach_strategy: string | null;
   approach_strategy_b: string | null;
@@ -411,7 +411,7 @@ const REGRA_SEM_HISTORICO =
 ter só pedidos cancelados/devolvidos), o objetivo é "ativacao": trate como abertura, NÃO assuma relação
 prévia, NÃO trate health/churn como recuperação e NÃO afirme "primeira compra" como fato.`;
 
-export const SYSTEM_ESSENCIAL =
+const SYSTEM_ESSENCIAL =
   `Você é um estrategista comercial especializado em afiação de ferramentas industriais.
 Gere um Plano Tático ESSENCIAL (rápido) para o vendedor (Farmer), personalizado com os dados reais do cliente.
 
@@ -421,7 +421,7 @@ ${REGRA_DADO_AUSENTE}
 
 Use SEMPRE a tool registrar_plano_tatico. Não responda em texto fora dela.`;
 
-export const SYSTEM_ESTRATEGICO =
+const SYSTEM_ESTRATEGICO =
   `Você é um estrategista comercial sênior especializado em afiação de ferramentas industriais.
 Gere um Plano Tático ESTRATÉGICO COMPLETO para o vendedor (Farmer), personalizado com os dados reais do cliente.
 
@@ -462,7 +462,7 @@ const OBJETIVO_PROP = {
 };
 
 /** Tool do modo essencial: abordagem curta, 3 perguntas, 1 objeção. */
-export const TOOL_ESSENCIAL = {
+const TOOL_ESSENCIAL = {
   name: "registrar_plano_tatico",
   description: "Registra o plano tático essencial (rápido) de abordagem ao cliente.",
   input_schema: {
@@ -478,7 +478,7 @@ export const TOOL_ESSENCIAL = {
 };
 
 /** Tool do modo estratégico: acrescenta plano B, implicação, LTV, cenários e riscos. */
-export const TOOL_ESTRATEGICO = {
+const TOOL_ESTRATEGICO = {
   name: "registrar_plano_tatico",
   description: "Registra o plano tático estratégico completo de abordagem ao cliente.",
   input_schema: {
@@ -536,7 +536,7 @@ export function systemDoModo(modo: Modo): string {
 // Extração do bloco tool_use
 // ---------------------------------------------------------------------------
 
-export type BlocoResposta = { type: string; input?: unknown; text?: string };
+type BlocoResposta = { type: string; input?: unknown; text?: string };
 
 export type ExtracaoToolUse =
   | { ok: true; input: unknown }
@@ -584,7 +584,7 @@ export function extrairToolUseUnico(content: unknown): ExtracaoToolUse {
  * 'mascarado' carregam acento, e comparar o trecho antes do acento evita depender de
  * normalização unicode entre o Postgres e o runtime.
  */
-export const PADROES_SKIP_RPC = [
+const PADROES_SKIP_RPC = [
   "sem dono de carteira",
   "foi reatribu", // "... foi reatribuída durante a geração" (race de posse)
   "mascarado na carteira", // eligible=false — não materializa plano

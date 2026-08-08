@@ -11,7 +11,7 @@ export interface ItemQuantidade {
   quantidade?: number | string | null;
 }
 
-export interface DeltaAumento {
+interface DeltaAumento {
   omie_codigo_produto: number;
   quantidade_atual: number;
   quantidade_nova: number;
