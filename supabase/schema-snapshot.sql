@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict WMIwRQ0X9eIXX9UCJVjxyYav81Mo2hLAe6fWQld4fXE21CcGkeDoVquOsi1BPqM
+\restrict QtOdGn7zeAkRw8EWA4bU1xECHIoo4InhVuDzbKGXDwLRsiArEVp8XhnMgdPeKBe
 
 -- Dumped from database version 17.6
 -- Dumped by pg_dump version 17.10 (Homebrew)
@@ -5554,6 +5554,34 @@ BEGIN
     'novos_ids', v_novos_ids,
     'requer_revisao', v_usou_similaridade
   );
+END;
+$$;
+
+
+--
+-- Name: expirar_planos_taticos(integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.expirar_planos_taticos(_dias integer DEFAULT 7) RETURNS integer
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  _n integer;
+BEGIN
+  IF _dias IS NULL OR _dias < 1 THEN
+    RAISE EXCEPTION 'expirar_planos_taticos: _dias deve ser >= 1 (recebido: %)', _dias
+      USING ERRCODE = '22023';
+  END IF;
+
+  UPDATE public.farmer_tactical_plans
+     SET status     = 'expirado',
+         updated_at = now()
+   WHERE status = 'gerado'
+     AND generated_at < now() - make_interval(days => _dias);
+
+  GET DIAGNOSTICS _n = ROW_COUNT;
+  RETURN _n;
 END;
 $$;
 
@@ -21060,7 +21088,7 @@ CREATE TABLE public.cmc_snapshot (
     data_posicao date NOT NULL,
     cmc numeric NOT NULL,
     synced_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT cmc_snapshot_cmc_check CHECK ((cmc > (0)::numeric))
+    CONSTRAINT cmc_snapshot_cmc_check CHECK (((cmc > (0)::numeric) AND (cmc <> 'NaN'::numeric) AND (cmc < 'Infinity'::numeric)))
 );
 
 
@@ -27810,8 +27838,16 @@ CREATE TABLE public.tint_formula_itens (
     corante_id uuid NOT NULL,
     ordem integer NOT NULL,
     qtd_ml numeric NOT NULL,
-    created_at timestamp with time zone DEFAULT now()
+    created_at timestamp with time zone DEFAULT now(),
+    CONSTRAINT tint_formula_itens_qtd_ml_finita CHECK (((qtd_ml > (0)::numeric) AND (qtd_ml <> 'NaN'::numeric) AND (qtd_ml < 'Infinity'::numeric)))
 );
+
+
+--
+-- Name: CONSTRAINT tint_formula_itens_qtd_ml_finita ON tint_formula_itens; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON CONSTRAINT tint_formula_itens_qtd_ml_finita ON public.tint_formula_itens IS 'Dose do corante: finita e positiva. Os 3 lados (>0, <>NaN, <Infinity) porque em numeric NaN > 0 é TRUE — guard de sinal sozinho aceita NaN. Ver docs/agent/money-path.md §2.';
 
 
 --
@@ -47245,5 +47281,5 @@ CREATE POLICY wts_staff_read ON public.whatsapp_template_sends FOR SELECT TO aut
 -- PostgreSQL database dump complete
 --
 
-\unrestrict WMIwRQ0X9eIXX9UCJVjxyYav81Mo2hLAe6fWQld4fXE21CcGkeDoVquOsi1BPqM
+\unrestrict QtOdGn7zeAkRw8EWA4bU1xECHIoo4InhVuDzbKGXDwLRsiArEVp8XhnMgdPeKBe
 
