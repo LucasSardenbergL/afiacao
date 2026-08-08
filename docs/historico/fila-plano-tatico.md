@@ -78,10 +78,8 @@ o assert de REVOKE passaria por acidente de ambiente — falso-verde.
 - **A geração continua em ~30/dia para 3 donos.** ~10 planos/dia por vendedor não é executável em
   venda consultiva. Reduzir é config (`farmer_algorithm_config`, 17 linhas), não código — ficou
   como item separado. → **resolvido na fase 2, mas por outro motivo que não o esperado; ver abaixo.**
-- **O custo de registrar continua alto.** O `RecordResultDialog` pede 4 campos, entre eles a
-  **margem realizada** digitada, que a vendedora dificilmente sabe durante a ligação. O caminho
-  natural é registro de 1 toque (ligou / não atendeu / vendeu / recusou) com a margem vindo do
-  pedido no Omie pelo elo, não do teclado.
+- ~~**O custo de registrar continua alto.**~~ → **resolvido na fase 3** (PR #1701, ao fim deste
+  documento). O elo de margem com o Omie continua pendente.
 - **Não se sabe se a tela é aberta.** Não há telemetria server-side do módulo Farmer
   (`farmer_audit_log` e `farmer_copilot_events` estão vazias); a fonte seria o PostHog.
 
@@ -191,3 +189,48 @@ autorizar exatamente uma cópia por dia.
 Corolário para revisão: **quando uma tabela de intenção cresce mas a contagem de entidades
 distintas não, o defeito está na chave de idempotência, não no volume.** 533 planos e 80 clientes
 é um número que se lê em uma query e que nenhuma tela mostra.
+
+---
+
+# Fase 3 — o custo de captura: registro de desfecho em 1 toque (2026-08-07, PR #1701)
+
+> Entregue **em paralelo** com a fase 2, por outra sessão. As duas são complementares e
+> nenhuma torna a outra dispensável: a fase 2 fecha a **entrada** (a fila parou de regenerar o
+> mesmo cliente), esta baixa o **custo de registrar o desfecho**. A fase 2 fez os planos
+> alcançarem 97 clientes que nunca haviam recebido um; esta faz o resultado da ligação existir
+> como dado. Sem a fase 2, o 1 toque seria aplicado sete vezes ao mesmo cliente.
+
+A fase 1 **falsificou a hipótese da fila**: com saída, janela de 7 dias e ordenação por risco, os
+planos ficaram alcançáveis — e o desfecho seguiu em zero (medido no mesmo dia, já com o cron
+rodando: 364 `expirado` + 169 `gerado`, **0** com `actual_margin`, **0** com `call_result`). Sobrou
+uma causa só: o formulário.
+
+**Cinco botões na FACE do card** (Vendeu · Interesse futuro · Não vendeu · Não atendeu · Remarcou),
+para planos `gerado`. O `RecordResultDialog` permanece no expandido como caminho **detalhado** — e
+é por ele que plano `expirado` segue registrável.
+
+**Nada de SQL.** `pg_get_functiondef` da PROD mostrou que `registrar_resultado_plano` aceita `NULL`
+explícito nos parâmetros (eles não têm `DEFAULT`, mas isso não os torna `NOT NULL`), as colunas de
+destino são todas nullable e a tabela não tem CHECK. A suposição de que "campo obrigatório na
+assinatura" exigiria alterar a função custaria o ritual inteiro de banco por nada.
+
+**O payload é o produto.** Um toque afirma UM fato; margem, duração e adesão ao roteiro vão como
+`NULL`. O `plan_followed` é `null` nos **cinco** — inclusive nos três com conversa: gravar `true`
+ali parece razoável e é fabricação, porque o toque não pergunta se ela seguiu o roteiro. É o `|| 0`
+vestido de booleano.
+
+**As metades que faltavam.** Passar a gravar `null` acendeu quatro leitores inertes *porque não
+existia um único plano concluído* — e cada um deles mentiria no dia seguinte ao Publish:
+`planFollowed ? 'Sim' : 'Não'` exibindo **"Não"** para todo registro de 1 toque; `call_result` cru
+na tela; `parsePlan` com `d.actual_margin ? … : undefined` (o `|| 0` **espelhado**, que perde a
+margem 0 *apurada*); e `getEffectivenessStats` dividindo margem por um `count` que inclui os não
+apurados.
+
+⚠️ **Decisão consciente:** os cinco desfechos **concluem** o plano, porque a RPC força
+`status='concluido'`. Tratar "não atendeu" como não-conclusivo exigiria alterar SQL. Ficou como
+follow-up **medido**: se "não atendeu" sair sub-representado, é sinal de que a vendedora evita o
+botão para não perder o plano — e aí a mudança volta com evidência.
+
+**A prova real não é o CI.** É `SELECT status, count(*), count(actual_margin) FROM
+farmer_tactical_plans GROUP BY 1` uma semana depois. Se `concluido` continuar em 0, o gargalo é
+adoção da tela, não custo do formulário — e isso é informação, não fracasso.
