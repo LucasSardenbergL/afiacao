@@ -155,6 +155,91 @@ O erro a não cometer é o mesmo das quatro: tratar o proxy como se fosse a medi
 "15 pendências, 2 money-path" quando o certo é "15 **candidatas**, verifique o conteúdo" recria
 pendência fantasma — desta vez com o número já corrigido.
 
+## A triagem completa (2026-08-08): 38 candidatas → **1** pendência real
+
+A §limite previu que "candidata ≠ pendência". Triadas as **38** que o script listou, uma a uma,
+pelo conteúdo:
+
+| classe | n |
+|---|---|
+| **entregue** — o conteúdo chegou à main, o commit não | **30** |
+| viva em **PR draft** (#1543 #1622 #1456 #1326 #1139) — represada de propósito, não é órfã | 5 |
+| anexo (spec/plano) de frente que segue represada em draft | 2 |
+| **trabalho perdido, recuperado** → `churn-coacao-fixture`, PR #1708 | **1** |
+
+(as 11 `SEM RASTRO` seguem fora da conta, pela regra de que ausência de sinal não é aprovação)
+
+**Taxa de falso-pendente do proxy: ~97%.** Não é ruído aleatório — são cinco formas de "entregue"
+que a contagem de commits não vê, cada uma exigindo uma pergunta diferente:
+
+1. **Outro PR entregou o mesmo.** `cranky-keller-1c66a6` (#1526) é o retrabalho que o CLAUDE.md
+   já narra: o #1525 mergeou 6 min antes, **nos mesmos arquivos**.
+2. **O conteúdo mudou de casa.** `peaceful-rhodes-c940af` propunha o helper
+   `src/lib/carteira/vendedor-oben.ts`; a main tem a lógica **dentro** do edge `carteira-rebuild`
+   (63 ocorrências) e o teste da branch. Idem `src/lib/margem/` → `src/lib/custos/auditoria-margem.ts`.
+   Arquivo ausente ≠ trabalho ausente.
+3. **A migration foi renomeada.** `blissful-chandrasekhar-ae87d9` referencia `20260718170000_fu7b_…`;
+   na main é `20260718**18**0000_fu7b_…` — colisão de timestamp, o aviso que o CLAUDE.md já dá. Um
+   `ls` do nome exato responde "não existe" com o arquivo lá.
+4. **A main está À FRENTE.** `dazzling-dewdney-6be961` traz "⏳ PR0.2b … sessão dedicada
+   recomendada"; a main tem "⏸️ PR0.2b **ADIADO** (decisão do founder)". A branch carrega a versão
+   **velha** da decisão — recuperá-la seria regredir. Idem `churn-coacao`, que reverteria o helper
+   `mensagemDeErro` e apagaria um `describe` de teste que a main ganhou depois.
+5. **A ausência é a decisão.** `reposicao-pr2-criticidade-insumos` (#1313): "criticidade" não está
+   em SQL nenhum porque o **V3 foi abandonado** pelo challenge do Codex e virou curadoria
+   operacional *sem código novo* — registrado na spec que **está** na main.
+
+O denominador comum: em quatro dos cinco, a prova de entrega estava **na própria main**, escrita
+por outra sessão. O que fecha o veredito não é comparar árvores — é perguntar *onde este conceito
+mora hoje*, e o `git grep` do símbolo responde antes de qualquer diff.
+
+### O filtro que ordena a fila (sem decidir nada)
+
+Duas passadas mecânicas levam 38 → 4 sem emitir veredito:
+
+```bash
+# 1. só na direção POSITIVA: arquivo já idêntico na main → entregue, sem discussão
+git diff origin/main <ref> -- <arquivo>            # vazio = mesmo estado dos dois lados
+# 2. o resíduo: das linhas que a branch ADICIONOU, quantas existem na main hoje?
+git diff --unified=0 $(git merge-base origin/main <ref>) <ref> -- <f> | grep '^+' | ...
+```
+
+**100% presentes ⇒ entregue** (fechou 4 branches sozinho); o que sobra vira lista de símbolos para
+`git grep`. Descartar antes `docs/migrations-audit.md` + `scripts/audit-custom-migrations.sql`
+(auto-gerados — `database.md` §30 manda tomar o lado da main). O que a passada **não** decide é a
+direção: ela conta linha faltante igual, venha de trabalho perdido ou de a main ter reescrito
+melhor. Por isso ordena a fila; não emite veredito.
+
+### A triagem de órfãs também corre risco de corrida
+
+O achado principal da apuração — `clever-herschel-8f3d08`, 638 inserções, 4 suítes, money-path,
+zero linhas na main, sem PR nenhum — **foi recuperado por outra sessão no meio desta triagem**. O
+commit `5a697bfd` cita `8ec822c3` nominalmente e mergeou às 22:47, entre o meu cherry-pick e o fim
+dos gates. Descobri no `git rebase`: o conflito acusava um `HEAD` que já tinha o meu conteúdo.
+
+É a corrida do #1525/#1526 outra vez, agora *dentro do trabalho que existe para consertá-la*.
+A regra do CLAUDE.md — **re-conferir `origin/main` imediatamente antes do `gh pr create`** — vale
+literalmente aqui: uma órfã é um alvo público (qualquer sessão roda `wt:orfas` e vê a mesma lista),
+então a janela entre "escolhi esta" e "abri o PR" é exatamente onde duas sessões colidem. Numa
+triagem longa, **re-verifique o veredito antes de empurrar**, não só no começo.
+
+### Duas armadilhas novas
+
+- **`git show "$ref:src/…"` é corrompido pelo zsh, em silêncio.** `$var:s/x/y/` é *modificador de
+  substituição* do zsh, e casa em path que comece com `s/`: `"$ref:src/lib/scoring/churn.ts"` vira
+  `${ref:s/lib/scoring/}` + `hurn.ts` — o git recebe **outro ref**, devolve `exit 0` e imprime o
+  **commit inteiro** em vez do arquivo. Sem erro, saída plausível. Aconteceu 2× aqui; na primeira
+  eu li o commit como se fosse o conteúdo do arquivo. **Sempre `git show "${ref}":path`** — as
+  chaves fecham o parse. Mesma família do `IFS=$'\t' read` da §4: o shell não erra, ele **desloca**.
+- **Branch sem PR nunca passou por CI — o que ela "entrega" pode não compilar.** A
+  `clever-herschel` tinha import morto (TS6133) e deixou o teste do componente desatualizado com as
+  props que ela mesma tornou obrigatórias: 3 erros de `typecheck` no cherry-pick. O trabalho era bom
+  **e** estava incompleto — as duas coisas ao mesmo tempo. `COMMITS SOLTOS` sem PR significa,
+  literalmente, código que nenhum gate viu: recuperar órfã exige **rodar os gates**, não só abrir o
+  PR. (Corolário do semáforo: com ~24 sessões vivas, `heavy` aborta por timeout de fila em 1800s e
+  devolve `exit 1` **sem ter rodado nada** — indistinguível de teste vermelho se você só olhar o
+  código de saída. Confira a última linha do log.)
+
 ## A ferramenta
 
 ```bash
