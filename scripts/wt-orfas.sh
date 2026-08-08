@@ -22,8 +22,16 @@
 #      bate com os individuais — acusou 18 commits perdidos numa branch de 1.
 #      Aqui: git rev-list --count <headRefOid>..<branch> --not origin/main
 #
+# ⚠️ É um filtro de TRIAGEM, não veredito: mede COMMIT fora da main, que não é o
+#    mesmo que TRABALHO fora da main — num repo que faz squash, o conteúdo pode ter
+#    chegado por outro PR sem o commit virar ancestral. Confirme cada candidata com
+#    o diff ancorado no merge-base antes de agir:
+#      mb=$(git merge-base origin/main <branch>) && git diff "$mb" <branch>
+#    Medido: das 40 candidatas de 2026-08-07, as 2 money-path estavam ENTREGUES.
+#    Detalhe em docs/historico/medicao-trabalho-nao-entregue.md (§ o limite que fica).
+#
 # Uso:
-#   bun run wt:orfas              # só o que tem trabalho NÃO entregue
+#   bun run wt:orfas              # candidatas: commit fora da main (≠ trabalho)
 #   bun run wt:orfas --todas      # inclui as sessões já entregues
 #   bun run wt:orfas --sem-fetch  # pula o `git fetch` (mais rápido, menos fresco)
 #   bun run wt:orfas --sem-cache  # ignora o cache de metadados do transcript
@@ -201,7 +209,7 @@ main() {
       --sem-fetch) FETCH=0 ;;
       --sem-cache) CACHE=0 ;;
       -h | --help)
-        sed -n '2,29p' "$0" | sed 's/^# \{0,1\}//'
+        sed -n '2,37p' "$0" | sed 's/^# \{0,1\}//'
         exit 0
         ;;
       *)
@@ -378,12 +386,18 @@ main() {
   echo
   echo "═══ sessões Claude órfãs (worktree já removido) ═══"
   echo "  pastas do projeto: ${n_pastas} · órfãs: ${n_orfas} · transcritos: ${n_sessoes}"
-  echo "  branches: ${n_pend_total} com pendência · ${n_indef} sem rastro · ${n_ok} entregue(s)"
+  echo "  branches: ${n_pend_total} CANDIDATA(s) · ${n_indef} sem rastro · ${n_ok} entregue(s)"
   echo
   if [ -s "$saida_f" ]; then
     cat "$saida_f"
   else
     echo "  ✅ nada pendente — todo trabalho das sessões órfãs chegou na main."
+  fi
+  if [ -s "$saida_f" ]; then
+    echo
+    echo "  ⚠️  CANDIDATAS, não veredito: isto mede COMMIT fora da main. O conteúdo pode"
+    echo "     ter chegado por outro PR (squash reescreve). Confirme antes de agir:"
+    echo "       mb=\$(git merge-base origin/main <branch>) && git diff \"\$mb\" <branch>"
   fi
   if [ "$TODAS" -eq 0 ] && [ "$n_ok" -gt 0 ]; then
     echo
