@@ -21,7 +21,7 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **452** custom migrations totais
+- **453** custom migrations totais
 - **1559** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 458
@@ -3802,6 +3802,10 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `index` | `public.idx_atp_decisoes_pedido` | `atp_decisoes` |
 | `index` | `public.idx_atp_decisoes_created` | `atp_decisoes` |
 | `rls_policy` | `public.atp_decisoes_select_staff` | `atp_decisoes` |
+
+### `20260807223000_check_finitude_money_path.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ## Próximos passos por status
 
