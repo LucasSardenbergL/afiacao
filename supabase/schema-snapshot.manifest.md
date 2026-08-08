@@ -4,13 +4,15 @@
 
 | Campo | Valor |
 |---|---|
-| Gerado em | 2026-08-06 |
+| Gerado em | 2026-08-08 |
 | Fonte | produção (Supabase Lovable, `fzvklzpomgnyikkfkzai`) — **gerado via `pg_dump` por `~/.config/afiacao/psql-ro`** (read-only, role `claude_ro`). Idêntico objeto-por-objeto ao dump do chat do Lovable (cross-validado no #1093); difere só no **preâmbulo** do `pg_dump`: token `\restrict`, versão 17.9→17.10, e `client_encoding` SQL_ASCII→UTF8 / `standard_conforming_strings` off→on (estilo da ferramenta, **não** conteúdo — corpo dos objetos idêntico; cada dump é internamente consistente; replay valida o restore). |
 | Versão do banco | PostgreSQL 17.6 |
 | pg_dump | 17.10 (Homebrew, via psql-ro) |
 | Flags | `--schema-only --schema=public --schema=private --no-owner --no-privileges` |
-| Linhas do arquivo | 47.028 (anterior: 45.384) |
+| Linhas do arquivo | 47.249 (anterior: 47.028) |
 | Tamanho | ~1,8 MB |
+
+> **Geração 2026-08-08 (por quê):** duas migrations aplicadas à mão no SQL Editor ficaram fora do dump anterior, e o buraco era **de autorização e de hardening**, não de conveniência. (1) **ATP fase 1.1** (`20260806225052`, PR #1682): o snapshot de 06/08 guardava `private.atp_disponivel` na versão da fase 1 — **sem** os guards C1–C4 (saldo `Infinity`, colchão inválido fail-closed, divergência entre contas do pool, bound superior do `synced_at`) — e sem `private.expirar_reservas_vencidas_job` (C7) nem a troca de policy `estoque_reservas_service_all` → `_service_select` (C6). Um DR a partir dele restauraria o motor de reserva **com o hardening desfeito, em silêncio**: a irmã-DR da armadilha do `docs/agent/database.md` §"migration committada é IMUTÁVEL". (2) **ATP fase 2** (`20260807015000`, PR #1683): `public.atp_gate_pedido` e a tabela de trilha `public.atp_decisoes` (+ policy) simplesmente não existiam no dump. Entram junto duas mudanças menores: `public.import_tint_formulas` **sai** (dropada de propósito pela `20260806223407`, PR #1678 — remoção legítima) e `public.get_whatsapp_proposta_cotacao` **entra** (tem migration versionada desde 13/07, `20260713040000`/`_v2`, mas não constava dos snapshots de 21/07 nem de 06/08 e não está em `supabase_migrations.schema_migrations` ⇒ apply manual em prod nesse intervalo). Diff: +393/−172. Provas do `db/refresh-snapshot.sh`: 5/5 — integridade (termina em `\unrestrict`), **paridade objeto-a-objeto contra o catálogo de prod com 0 faltando e 0 sobrando** (tables 329, views 79, funcs 316, policies 688), replay PG17 descartável e enforcement RLS OK.
 
 > **Geração 2026-08-06 (por quê):** a migration `20260806101417_atp_reserva_estoque_fase1.sql` (ATP/reserva de estoque, PR #1672) foi aplicada à mão no SQL Editor e validada por catálogo — sem o re-dump, um DR restauraria prod SEM a tabela `estoque_reservas`, as 6 funções e os privilégios fechados da fase 1. Entra junto o drift acumulado desde 21/07 (+1.812/−168 no git diff); a única remoção de objeto é `calcular_gatilhos_reposicao`, dropada de propósito pela `20260801120000` (limpeza legítima). Contagens desta geração: 328 tabelas · 79 views · 5 matviews · 316 funções public + 17 private · 123 triggers · 687 policies · RLS habilitada em 328 tabelas. Provas do `db/refresh-snapshot.sh`: 5/5 (integridade, paridade com o catálogo de prod, replay PG17 + enforcement RLS OK).
 
@@ -20,15 +22,17 @@
 
 | Objeto | Quantidade |
 |---|---:|
-| `CREATE TABLE` | 323 |
-| `CREATE VIEW` | 77 |
+| `CREATE TABLE` | 329 |
+| `CREATE VIEW` | 79 |
 | `CREATE MATERIALIZED VIEW` | 2 (public; +3 em `private` = 5 no arquivo) |
-| `CREATE FUNCTION` | 303 (public) **+ 14 em `private`** |
+| `CREATE FUNCTION` | 317 (public) **+ 18 em `private`** |
 | `CREATE TRIGGER` | 123 |
 | `CREATE TYPE` | 14 |
-| `CREATE POLICY` | 678 |
-| `ENABLE ROW LEVEL SECURITY` | 323 (= todas as tabelas) |
-| views com `security_invoker` | 72 |
+| `CREATE POLICY` | 688 |
+| `ENABLE ROW LEVEL SECURITY` | 329 (= todas as tabelas) |
+| views com `security_invoker` LIGADO | 73 de 79 (54 `'on'` + 19 `'true'`) — ver ⚠️ abaixo |
+
+> ⚠️ **Contar `security_invoker` no dump exige DOIS padrões, não um** (medido nesta geração; é o §"o `reloptions` preserva o LITERAL" do `docs/agent/database.md` na forma do `pg_dump`). O dump renderiza o valor **com aspas** (`security_invoker='on'` / `='true'` / `='false'`) **e sem aspas** (`security_invoker=off`, sempre acompanhado de `security_barrier='true'`). Um padrão que exija aspas mede **74 de 79** e some justamente com as 5 view-gates — o pior falso-negativo possível, porque são exatamente as views cuja autorização mora no `WHERE`. As **6 desligadas** são todas deliberadas, e o discriminante do §61 (`barrier=true` + `relacl` sem `anon` + gate no corpo) confere nas 6: `v_oportunidade_economica_hoje_badge_cached` (gate sobre MV `private`), `customer_metrics_mv` (fechada no #1380), as 3 `selfservice_*` (definer intencional — ligar o invoker QUEBRA o self-service) e **`inventory_position_operacional`**, que ainda não estava na lista do `database.md` §61 e foi conferida aqui: `barrier=true`, `relacl` = `authenticated=r` + `service_role=r` **sem `anon`**, gate no corpo. Nenhuma regressão.
 
 ## ✅ Schema `private` incluído + replay VALIDADO (2026-06-19)
 

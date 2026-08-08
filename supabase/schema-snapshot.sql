@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict driXFaiNp4oQPVOE1FOZUDiIgQrt4TMGkzunQAxqRc8iB2CNQudWXIBRQYyfgy3
+\restrict WMIwRQ0X9eIXX9UCJVjxyYav81Mo2hLAe6fWQld4fXE21CcGkeDoVquOsi1BPqM
 
 -- Dumped from database version 17.6
 -- Dumped by pg_dump version 17.10 (Homebrew)
@@ -226,33 +226,94 @@ CREATE FUNCTION private.atp_disponivel(p_pool text, p_sku bigint, p_excluir_chec
     LANGUAGE sql STABLE SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
-  WITH linha AS (
+  WITH pool_contas AS (
+    SELECT CASE p_pool WHEN 'oben' THEN ARRAY['vendas','oben'] ELSE ARRAY[]::text[] END AS contas
+  ),
+  linha AS (
     -- eleição por frescor entre as contas do pool (padrão ESTOQUE_ACCOUNTS do
-    -- cockpit): a linha mais recente vence; empate → account em ordem estável
+    -- cockpit): a linha mais recente vence; empate → account em ordem estável.
+    -- Elege entre TODAS as linhas (não só as válidas) de propósito: se a mais
+    -- fresca for inválida, o guard abaixo reprova o SKU inteiro (fail-closed)
+    -- em vez de cair numa linha velha que por acaso passa.
     SELECT ip.saldo, ip.synced_at
-    FROM public.inventory_position ip
+    FROM public.inventory_position ip, pool_contas pc
     WHERE ip.omie_codigo_produto = p_sku
-      AND ip.account = ANY (CASE p_pool WHEN 'oben' THEN ARRAY['vendas','oben'] ELSE ARRAY[]::text[] END)
+      AND ip.account = ANY (pc.contas)
     ORDER BY ip.synced_at DESC NULLS LAST, ip.account
     LIMIT 1
+  ),
+  frescas AS (
+    -- posições do pool que passariam TODOS os guards por si só. Serve só para
+    -- medir concordância entre contas (C3).
+    SELECT ip.saldo
+    FROM public.inventory_position ip, pool_contas pc
+    WHERE ip.omie_codigo_produto = p_sku
+      AND ip.account = ANY (pc.contas)
+      AND ip.synced_at IS NOT NULL
+      AND ip.synced_at > now() - interval '24 hours'
+      AND ip.synced_at <= now() + interval '5 minutes'
+      AND ip.saldo IS NOT NULL
+      AND ip.saldo <> 'NaN'::numeric
+      AND ip.saldo >= 0
+      AND ip.saldo < 'Infinity'::numeric
   ),
   base AS (
     SELECT
       (SELECT l.saldo FROM linha l) AS saldo,
-      (SELECT l.synced_at FROM linha l) AS synced_at
+      (SELECT l.synced_at FROM linha l) AS synced_at,
+      -- C3: 2+ saldos distintos entre posições frescas e válidas = as contas
+      -- deixaram de ser espelho ⇒ não sabemos qual é a verdade ⇒ não prometer.
+      (SELECT count(DISTINCT f.saldo) > 1 FROM frescas f) AS divergente
+  ),
+  seg AS (
+    -- Parâmetro AUSENTE = sem colchão configurado (0) — default de política,
+    -- não dado fabricado. Parâmetro PRESENTE mas inválido (NaN/Infinity/<0) =
+    -- C2: não dá para calcular ⇒ o SKU vira não-confiável (nunca colchão 0,
+    -- que removeria a proteção em silêncio).
+    -- LIMIT 1 sem ORDER BY é seguro: prod tem UNIQUE(empresa, sku_codigo_omie),
+    -- conferido via psql-ro — a duplicata que a fase 1 tratava é impossível.
+    SELECT
+      COALESCE((
+        SELECT sp.estoque_seguranca
+        FROM public.sku_parametros sp
+        WHERE sp.empresa = (CASE p_pool WHEN 'oben' THEN 'OBEN' END)
+          AND sp.sku_codigo_omie = p_sku
+          AND sp.estoque_seguranca IS NOT NULL
+          AND sp.estoque_seguranca <> 'NaN'::numeric
+          AND sp.estoque_seguranca >= 0
+          AND sp.estoque_seguranca < 'Infinity'::numeric
+        LIMIT 1
+      ), 0) AS seguranca,
+      EXISTS (
+        SELECT 1
+        FROM public.sku_parametros sp
+        WHERE sp.empresa = (CASE p_pool WHEN 'oben' THEN 'OBEN' END)
+          AND sp.sku_codigo_omie = p_sku
+          AND sp.estoque_seguranca IS NOT NULL
+          AND NOT (
+            sp.estoque_seguranca <> 'NaN'::numeric
+            AND sp.estoque_seguranca >= 0
+            AND sp.estoque_seguranca < 'Infinity'::numeric
+          )
+      ) AS seg_invalida
   ),
   calc AS (
     SELECT
       b.saldo,
       b.synced_at,
-      -- FAIL-CLOSED: linha presente + sync ≤24h + saldo numérico são.
-      -- NaN em numeric ordena ACIMA de tudo ('NaN'>=0 é true) → guard explícito.
+      -- FAIL-CLOSED. NaN em numeric ordena ACIMA de tudo ('NaN' >= 0 é true) e
+      -- 'NaN' = 'NaN' é true, então o <> 'NaN' pega. Infinity também passaria o
+      -- >= 0 — daí o bound de finitude (C1).
       (b.synced_at IS NOT NULL
         AND b.synced_at > now() - interval '24 hours'
+        AND b.synced_at <= now() + interval '5 minutes'
         AND b.saldo IS NOT NULL
         AND b.saldo <> 'NaN'::numeric
-        AND b.saldo >= 0) AS confiavel
-    FROM base b
+        AND b.saldo >= 0
+        AND b.saldo < 'Infinity'::numeric
+        AND NOT b.divergente
+        AND NOT s.seg_invalida) AS confiavel
+    FROM base b CROSS JOIN seg s
   ),
   res AS (
     SELECT COALESCE(sum(r.quantidade), 0) AS reservado
@@ -262,20 +323,6 @@ CREATE FUNCTION private.atp_disponivel(p_pool text, p_sku bigint, p_excluir_chec
       AND r.status = 'ativa'
       AND r.expira_em > now()
       AND (p_excluir_checkout IS NULL OR r.checkout_id <> p_excluir_checkout)
-  ),
-  seg AS (
-    -- parâmetro ausente = sem colchão configurado (0) — default de política.
-    -- Duplicata improvável de (empresa, sku): vence o colchão MAIOR (conservador).
-    SELECT COALESCE((
-      SELECT sp.estoque_seguranca
-      FROM public.sku_parametros sp
-      WHERE sp.empresa = (CASE p_pool WHEN 'oben' THEN 'OBEN' END)
-        AND sp.sku_codigo_omie = p_sku
-        AND sp.estoque_seguranca IS NOT NULL
-        AND sp.estoque_seguranca >= 0
-      ORDER BY sp.estoque_seguranca DESC
-      LIMIT 1
-    ), 0) AS seguranca
   )
   SELECT
     c.saldo,
@@ -557,6 +604,30 @@ CREATE FUNCTION private.carteira_visivel_para(_customer_user_id uuid, _uid uuid)
           AND (c.valid_until IS NULL OR c.valid_until > now())
       )
     );
+$$;
+
+
+--
+-- Name: expirar_reservas_vencidas_job(); Type: FUNCTION; Schema: private; Owner: -
+--
+
+CREATE FUNCTION private.expirar_reservas_vencidas_job() RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_n integer;
+BEGIN
+  UPDATE public.estoque_reservas
+     SET status = 'expirada',
+         motivo = 'expirada por TTL',
+         atualizado_em = now()
+   WHERE status = 'ativa'
+     AND expira_em <= now();
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+
+  RETURN jsonb_build_object('ok', true, 'expiradas', v_n);
+END;
 $$;
 
 
@@ -2618,6 +2689,166 @@ BEGIN
     d.saldo_synced_at
   FROM unnest(p_skus) AS s(sku)
   CROSS JOIN LATERAL private.atp_disponivel(p_pool, s.sku, NULL) AS d;
+END;
+$$;
+
+
+--
+-- Name: atp_gate_pedido(uuid, boolean, uuid, boolean, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.atp_gate_pedido(p_sales_order_id uuid, p_enforcement boolean, p_actor uuid DEFAULT NULL::uuid, p_autorizar_backorder boolean DEFAULT false, p_motivo_backorder text DEFAULT NULL::text) RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_row record;
+  v_itens jsonb;
+  v_invalidos integer;
+  v_fp text;
+  v_checkout uuid;
+  v_res jsonb;
+  v_bloqueio record;
+  v_snapshot jsonb;
+  v_sku bigint;
+BEGIN
+  -- Defesa em profundidade: o EXECUTE já é service_role-only; o gate interno
+  -- da reserva (cap_estoque_reservar) revalida na chamada aninhada.
+  IF p_sales_order_id IS NULL THEN
+    RAISE EXCEPTION 'p_sales_order_id é obrigatório' USING ERRCODE = '22023';
+  END IF;
+  IF p_enforcement IS NULL THEN
+    RAISE EXCEPTION 'p_enforcement é obrigatório (true=bloqueia, false=advisory)' USING ERRCODE = '22023';
+  END IF;
+
+  SELECT so.id, so.account, so.checkout_id, so.items, so.omie_pedido_id
+    INTO v_row
+  FROM public.sales_orders so
+  WHERE so.id = p_sales_order_id;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'sales_order % não existe', p_sales_order_id USING ERRCODE = '22023';
+  END IF;
+
+  -- Pool fase 2 = 'oben'. Linha de outra conta não passa por reserva (defesa
+  -- em profundidade — o edge só chama para oben).
+  IF v_row.account IS DISTINCT FROM 'oben' THEN
+    RETURN jsonb_build_object('ok', true, 'resultado', 'fora_do_pool', 'account', v_row.account);
+  END IF;
+
+  -- PV já criado no Omie: NUNCA re-reservar (retry idempotente não renova TTL).
+  IF v_row.omie_pedido_id IS NOT NULL THEN
+    RETURN jsonb_build_object('ok', true, 'resultado', 'ja_enviado');
+  END IF;
+
+  -- Deriva itens DO BANCO (nunca do payload): agrega por SKU (a reserva recusa
+  -- duplicata) e valida fail-closed — item ilegível é bug de dado, sem override.
+  IF v_row.items IS NULL OR jsonb_typeof(v_row.items) <> 'array' OR jsonb_array_length(v_row.items) = 0 THEN
+    RAISE EXCEPTION 'sales_order % (oben) sem items legíveis para o gate ATP', p_sales_order_id
+      USING ERRCODE = '22023';
+  END IF;
+
+  SELECT count(*) FILTER (WHERE x.omie_codigo_produto IS NULL OR x.omie_codigo_produto <= 0
+                             OR x.quantidade IS NULL OR x.quantidade <= 0)
+    INTO v_invalidos
+  FROM jsonb_to_recordset(v_row.items) AS x(omie_codigo_produto bigint, quantidade numeric);
+
+  IF v_invalidos > 0 THEN
+    RAISE EXCEPTION 'sales_order % contém item sem omie_codigo_produto/quantidade válidos', p_sales_order_id
+      USING ERRCODE = '22023';
+  END IF;
+
+  SELECT jsonb_agg(jsonb_build_object('omie_codigo_produto', t.sku, 'quantidade', t.qtd)),
+         md5(string_agg(t.sku::text || ':' || trim_scale(t.qtd)::text, '|' ORDER BY t.sku))
+    INTO v_itens, v_fp
+  FROM (
+    SELECT x.omie_codigo_produto AS sku, sum(x.quantidade) AS qtd
+    FROM jsonb_to_recordset(v_row.items) AS x(omie_codigo_produto bigint, quantidade numeric)
+    GROUP BY x.omie_codigo_produto
+  ) t;
+
+  v_checkout := COALESCE(v_row.checkout_id, p_sales_order_id);
+
+  -- Pré-condições do override ANTES de reservar (falha de autorização não é backorder)
+  IF p_autorizar_backorder THEN
+    IF p_actor IS NULL THEN
+      RAISE EXCEPTION 'backorder exige um ator humano (cron/sistema não autoriza)' USING ERRCODE = '42501';
+    END IF;
+    IF p_motivo_backorder IS NULL OR btrim(p_motivo_backorder) = '' THEN
+      RAISE EXCEPTION 'backorder exige motivo textual' USING ERRCODE = '22023';
+    END IF;
+    SELECT d.itens_fingerprint INTO v_bloqueio
+    FROM public.atp_decisoes d
+    WHERE d.sales_order_id = p_sales_order_id AND d.decisao = 'bloqueado'
+    ORDER BY d.created_at DESC
+    LIMIT 1;
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'backorder sem bloqueio ATP prévio deste pedido' USING ERRCODE = '42501';
+    END IF;
+    IF v_bloqueio.itens_fingerprint IS DISTINCT FROM v_fp THEN
+      RAISE EXCEPTION 'os itens mudaram desde o bloqueio ATP — reenvie para reavaliar' USING ERRCODE = '42501';
+    END IF;
+  END IF;
+
+  -- Reserva SEMPRE tentada primeiro (mesmo com backorder autorizado: se o saldo
+  -- voltou, reservar vence). TTL fica no default da RPC (política mora no banco).
+  v_res := public.reservar_estoque('oben', v_checkout, v_itens);
+
+  IF (v_res->>'ok')::boolean THEN
+    -- Vínculo reserva↔pedido na MESMA transação (fase 3 reconcilia por ele)
+    UPDATE public.estoque_reservas
+       SET sales_order_id = p_sales_order_id,
+           atualizado_em = now()
+     WHERE checkout_id = v_checkout
+       AND pool = 'oben'
+       AND status = 'ativa';
+
+    INSERT INTO public.atp_decisoes
+      (sales_order_id, checkout_id, pool, account, decisao, contexto, enforcement,
+       recusas, atp_snapshot, itens_fingerprint, motivo_backorder, actor_user_id)
+    VALUES
+      (p_sales_order_id, v_checkout, 'oben', v_row.account, 'reservado', 'criacao', p_enforcement,
+       NULL, NULL, v_fp, NULL, p_actor);
+
+    RETURN jsonb_build_object('ok', true, 'resultado', 'reservado', 'reservas', v_res->'reservas');
+  END IF;
+
+  -- Recusa: snapshot de disponibilidade/frescor por SKU (reconstrução pós-fato)
+  SELECT jsonb_object_agg(t.sku::text, jsonb_build_object(
+           'disponivel', d.disponivel, 'confiavel', d.saldo_confiavel, 'saldo_synced_at', d.saldo_synced_at))
+    INTO v_snapshot
+  FROM (
+    SELECT DISTINCT (e.item->>'omie_codigo_produto')::bigint AS sku
+    FROM jsonb_array_elements(v_itens) AS e(item)
+  ) t
+  CROSS JOIN LATERAL private.atp_disponivel('oben', t.sku, v_checkout) AS d;
+
+  IF p_autorizar_backorder THEN
+    INSERT INTO public.atp_decisoes
+      (sales_order_id, checkout_id, pool, account, decisao, contexto, enforcement,
+       recusas, atp_snapshot, itens_fingerprint, motivo_backorder, actor_user_id)
+    VALUES
+      (p_sales_order_id, v_checkout, 'oben', v_row.account, 'backorder_autorizado', 'criacao', p_enforcement,
+       v_res->'recusas', v_snapshot, v_fp, btrim(p_motivo_backorder), p_actor);
+
+    RETURN jsonb_build_object('ok', true, 'resultado', 'backorder_autorizado', 'recusas', v_res->'recusas');
+  END IF;
+
+  INSERT INTO public.atp_decisoes
+    (sales_order_id, checkout_id, pool, account, decisao, contexto, enforcement,
+     recusas, atp_snapshot, itens_fingerprint, motivo_backorder, actor_user_id)
+  VALUES
+    (p_sales_order_id, v_checkout, 'oben', v_row.account, 'bloqueado', 'criacao', p_enforcement,
+     v_res->'recusas', v_snapshot, v_fp, NULL, p_actor);
+
+  IF p_enforcement THEN
+    RETURN jsonb_build_object('ok', false, 'blocked', 'atp', 'resultado', 'bloqueado',
+                              'recusas', v_res->'recusas');
+  END IF;
+
+  -- Advisory (caller sem capability): registra o que TERIA bloqueado, não bloqueia.
+  RETURN jsonb_build_object('ok', true, 'resultado', 'advisory_bloqueado', 'bloquearia', true,
+                            'recusas', v_res->'recusas');
 END;
 $$;
 
@@ -5337,22 +5568,13 @@ CREATE FUNCTION public.expirar_reservas_vencidas() RETURNS jsonb
     AS $$
 DECLARE
   v_uid uuid := (SELECT auth.uid());
-  v_n integer;
 BEGIN
   IF NOT private.cap_estoque_reservar(v_uid) THEN
     RAISE EXCEPTION 'Sem permissão para expirar reservas de estoque (staff apenas)'
       USING ERRCODE = '42501';
   END IF;
 
-  UPDATE public.estoque_reservas
-     SET status = 'expirada',
-         motivo = 'expirada por TTL',
-         atualizado_em = now()
-   WHERE status = 'ativa'
-     AND expira_em <= now();
-  GET DIAGNOSTICS v_n = ROW_COUNT;
-
-  RETURN jsonb_build_object('ok', true, 'expiradas', v_n);
+  RETURN private.expirar_reservas_vencidas_job();
 END;
 $$;
 
@@ -9983,6 +10205,57 @@ $$;
 
 
 --
+-- Name: get_whatsapp_proposta_cotacao(uuid, text, bigint[]); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.get_whatsapp_proposta_cotacao(p_customer_user_id uuid, p_account text, p_skus bigint[]) RETURNS TABLE(omie_codigo_produto bigint, product_id uuid, codigo text, descricao text, unidade text, ativo boolean, estoque numeric, preco numeric, fonte_preco text)
+    LANGUAGE sql STABLE
+    SET search_path TO 'public'
+    AS $$
+  WITH praticado AS (
+    -- último preço praticado VÁLIDO do próprio cliente NA CONTA consultada, por SKU
+    -- (cronologia comercial: item → pedido pai; tie-break estável por id)
+    SELECT DISTINCT ON (oi.omie_codigo_produto)
+           oi.omie_codigo_produto, oi.unit_price
+      FROM public.order_items oi
+      JOIN public.sales_orders so ON so.id = oi.sales_order_id
+     WHERE oi.customer_user_id = p_customer_user_id
+       AND so.account = p_account
+       AND oi.omie_codigo_produto = ANY(p_skus)
+       AND oi.unit_price > 0
+       AND oi.unit_price <> 'NaN'::numeric
+       AND oi.unit_price < 'Infinity'::numeric
+     ORDER BY oi.omie_codigo_produto,
+              COALESCE(oi.created_at, so.created_at) DESC NULLS LAST,
+              oi.id DESC
+  )
+  SELECT p.omie_codigo_produto,
+         p.id AS product_id,
+         p.codigo,
+         p.descricao,
+         p.unidade,
+         p.ativo,
+         p.estoque,
+         COALESCE(
+           pr.unit_price,
+           CASE WHEN p.valor_unitario > 0
+                 AND p.valor_unitario <> 'NaN'::numeric
+                 AND p.valor_unitario < 'Infinity'::numeric
+                THEN p.valor_unitario END
+         ) AS preco,
+         CASE WHEN pr.unit_price IS NOT NULL THEN 'praticado'
+              WHEN p.valor_unitario > 0
+               AND p.valor_unitario <> 'NaN'::numeric
+               AND p.valor_unitario < 'Infinity'::numeric THEN 'tabela'
+         END AS fonte_preco
+    FROM public.omie_products p
+    LEFT JOIN praticado pr ON pr.omie_codigo_produto = p.omie_codigo_produto
+   WHERE p.account = p_account
+     AND p.omie_codigo_produto = ANY(p_skus);
+$$;
+
+
+--
 -- Name: gov_iniciativas_set_updated_at(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -10108,138 +10381,6 @@ $$;
 --
 
 COMMENT ON FUNCTION public.ia_consumir_cota(p_user_id uuid, p_funcao text) IS 'Cota de IA por usuário: decide e registra o consumo numa transação só. Fail-closed — função sem linha em ia_uso_limite é negada com motivo sem_limite. Chamada apenas pelas edges (service_role).';
-
-
---
--- Name: import_tint_formulas(text, boolean, jsonb); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.import_tint_formulas(p_account text, p_personalizada boolean, p_rows jsonb) RETURNS jsonb
-    LANGUAGE plpgsql SECURITY DEFINER
-    SET search_path TO 'public'
-    AS $$
-DECLARE
-  r jsonb;
-  v_imported int := 0;
-  v_updated int := 0;
-  v_errors int := 0;
-  v_produto_id uuid;
-  v_base_id uuid;
-  v_emb_id uuid;
-  v_sub_id uuid;
-  v_sku_id uuid;
-  v_formula_id uuid;
-  v_corante_id uuid;
-  v_existing_formula_id uuid;
-  v_cor_key text;
-  v_i int;
-BEGIN
-  IF auth.uid() IS NULL OR NOT (public.has_role(auth.uid(), 'employee'::app_role) OR public.has_role(auth.uid(), 'master'::app_role)) THEN
-    RAISE EXCEPTION 'Acesso negado: requer perfil staff' USING ERRCODE = '42501';
-  END IF;
-  FOR r IN SELECT * FROM jsonb_array_elements(p_rows)
-  LOOP
-    BEGIN
-      INSERT INTO public.tint_produtos (account, cod_produto, descricao)
-      VALUES (p_account, r->>'cod_produto', COALESCE(r->>'produto', r->>'cod_produto'))
-      ON CONFLICT (account, cod_produto) DO NOTHING
-      RETURNING id INTO v_produto_id;
-      IF v_produto_id IS NULL THEN
-        SELECT id INTO v_produto_id FROM public.tint_produtos WHERE account = p_account AND cod_produto = r->>'cod_produto';
-      END IF;
-
-      INSERT INTO public.tint_bases (account, id_base_sayersystem, descricao)
-      VALUES (p_account, r->>'id_base', COALESCE(r->>'base', r->>'id_base'))
-      ON CONFLICT (account, id_base_sayersystem) DO NOTHING
-      RETURNING id INTO v_base_id;
-      IF v_base_id IS NULL THEN
-        SELECT id INTO v_base_id FROM public.tint_bases WHERE account = p_account AND id_base_sayersystem = r->>'id_base';
-      END IF;
-
-      INSERT INTO public.tint_embalagens (account, id_embalagem_sayersystem, descricao, volume_ml)
-      VALUES (p_account, r->>'id_embalagem', r->>'embalagem', COALESCE((r->>'embalagem_ml')::numeric, 0))
-      ON CONFLICT (account, id_embalagem_sayersystem) DO UPDATE SET volume_ml = EXCLUDED.volume_ml
-      RETURNING id INTO v_emb_id;
-      IF v_emb_id IS NULL THEN
-        SELECT id INTO v_emb_id FROM public.tint_embalagens WHERE account = p_account AND id_embalagem_sayersystem = r->>'id_embalagem';
-      END IF;
-
-      v_sub_id := NULL;
-      IF r->>'subcolecao' IS NOT NULL AND r->>'subcolecao' != '' THEN
-        INSERT INTO public.tint_subcolecoes (account, id_subcolecao_sayersystem, descricao)
-        VALUES (p_account, r->>'subcolecao', COALESCE(r->>'sub_colecao', r->>'subcolecao'))
-        ON CONFLICT (account, id_subcolecao_sayersystem) DO NOTHING
-        RETURNING id INTO v_sub_id;
-        IF v_sub_id IS NULL THEN
-          SELECT id INTO v_sub_id FROM public.tint_subcolecoes WHERE account = p_account AND id_subcolecao_sayersystem = r->>'subcolecao';
-        END IF;
-      END IF;
-
-      INSERT INTO public.tint_skus (account, produto_id, base_id, embalagem_id)
-      VALUES (p_account, v_produto_id, v_base_id, v_emb_id)
-      ON CONFLICT (account, produto_id, base_id, embalagem_id) DO NOTHING
-      RETURNING id INTO v_sku_id;
-      IF v_sku_id IS NULL THEN
-        SELECT id INTO v_sku_id FROM public.tint_skus WHERE account = p_account AND produto_id = v_produto_id AND base_id = v_base_id AND embalagem_id = v_emb_id;
-      END IF;
-
-      SELECT id INTO v_existing_formula_id FROM public.tint_formulas
-      WHERE account = p_account
-        AND cor_id = r->>'cor_id'
-        AND produto_id = v_produto_id
-        AND base_id = v_base_id
-        AND COALESCE(subcolecao_id, '00000000-0000-0000-0000-000000000000'::uuid) = COALESCE(v_sub_id, '00000000-0000-0000-0000-000000000000'::uuid)
-        AND embalagem_id = v_emb_id;
-
-      IF v_existing_formula_id IS NOT NULL THEN
-        UPDATE public.tint_formulas SET
-          id_seq = COALESCE((r->>'id_seq')::int, id_seq),
-          nome_cor = COALESCE(r->>'nome_cor', nome_cor),
-          sku_id = v_sku_id,
-          volume_final_ml = COALESCE((r->>'volume_finalml')::numeric, volume_final_ml),
-          preco_final_sayersystem = COALESCE((r->>'preco_final')::numeric, preco_final_sayersystem),
-          data_geracao = CASE WHEN r->>'data_geracao' IS NOT NULL AND r->>'data_geracao' != '' THEN (r->>'data_geracao')::timestamptz ELSE data_geracao END,
-          updated_at = now()
-        WHERE id = v_existing_formula_id;
-        v_formula_id := v_existing_formula_id;
-        v_updated := v_updated + 1;
-      ELSE
-        INSERT INTO public.tint_formulas (account, id_seq, cor_id, nome_cor, produto_id, base_id, embalagem_id, subcolecao_id, sku_id, volume_final_ml, preco_final_sayersystem, data_geracao, personalizada)
-        VALUES (
-          p_account, (r->>'id_seq')::int, r->>'cor_id', r->>'nome_cor',
-          v_produto_id, v_base_id, v_emb_id, v_sub_id, v_sku_id,
-          (r->>'volume_finalml')::numeric, (r->>'preco_final')::numeric,
-          CASE WHEN r->>'data_geracao' IS NOT NULL AND r->>'data_geracao' != '' THEN (r->>'data_geracao')::timestamptz ELSE now() END,
-          p_personalizada
-        )
-        RETURNING id INTO v_formula_id;
-        v_imported := v_imported + 1;
-      END IF;
-
-      DELETE FROM public.tint_formula_itens WHERE formula_id = v_formula_id;
-
-      FOR v_i IN 1..6 LOOP
-        v_cor_key := r->>('corante' || v_i::text);
-        IF v_cor_key IS NOT NULL AND v_cor_key != '' THEN
-          SELECT id INTO v_corante_id FROM public.tint_corantes
-          WHERE account = p_account AND id_corante_sayersystem = v_cor_key;
-          IF v_corante_id IS NOT NULL AND COALESCE((r->>('qtd' || v_i::text || 'ml'))::numeric, 0) > 0 THEN
-            INSERT INTO public.tint_formula_itens (formula_id, corante_id, ordem, qtd_ml)
-            VALUES (v_formula_id, v_corante_id, v_i, (r->>('qtd' || v_i::text || 'ml'))::numeric)
-            ON CONFLICT (formula_id, corante_id) DO UPDATE SET qtd_ml = EXCLUDED.qtd_ml, ordem = EXCLUDED.ordem;
-          END IF;
-        END IF;
-      END LOOP;
-
-    EXCEPTION WHEN OTHERS THEN
-      v_errors := v_errors + 1;
-      RAISE NOTICE 'Error processing row: %', SQLERRM;
-    END;
-  END LOOP;
-
-  RETURN jsonb_build_object('imported', v_imported, 'updated', v_updated, 'errors', v_errors);
-END;
-$$;
 
 
 --
@@ -14050,7 +14191,7 @@ BEGIN
       v_recusas := v_recusas || jsonb_build_object(
         'omie_codigo_produto', v_item.sku,
         'motivo', 'saldo_indisponivel',
-        'detalhe', 'sem posição de estoque confiável (ausente, defasada >24h ou inválida)',
+        'detalhe', 'sem posição de estoque confiável (ausente, defasada >24h, datada no futuro, valor inválido, contas do pool divergentes ou estoque de segurança inválido)',
         'solicitado', v_item.qtd,
         'disponivel', NULL);
     ELSIF v_item.qtd > v_calc.disponivel THEN
@@ -14079,7 +14220,11 @@ BEGIN
      AND pool = p_pool
      AND status = 'ativa';
 
-  v_expira := now() + make_interval(mins => p_ttl_minutos);
+  -- C5: clock_timestamp(), NÃO now(). now() é o instante em que a TRANSAÇÃO
+  -- começou; depois de esperar no advisory lock mais que o TTL, now()+TTL já
+  -- está no passado e a reserva nasce vencida — devolvendo ok:true sem segurar
+  -- nada. O relógio de parede é o único que mede o instante da ESCRITA.
+  v_expira := clock_timestamp() + make_interval(mins => p_ttl_minutos);
 
   FOR v_item IN
     SELECT x.omie_codigo_produto AS sku, x.quantidade AS qtd
@@ -18672,7 +18817,8 @@ CREATE TABLE public.sales_orders (
     atendimento_id uuid,
     pedido_programado_envio_id uuid,
     customer_document text,
-    whatsapp_conversation_id uuid
+    whatsapp_conversation_id uuid,
+    whatsapp_proposta_dedupe text
 );
 
 
@@ -20578,6 +20724,31 @@ CREATE TABLE public.ai_decisions (
     executed_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: atp_decisoes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.atp_decisoes (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    sales_order_id uuid,
+    checkout_id uuid NOT NULL,
+    pool text NOT NULL,
+    account text NOT NULL,
+    decisao text NOT NULL,
+    contexto text DEFAULT 'criacao'::text NOT NULL,
+    enforcement boolean NOT NULL,
+    recusas jsonb,
+    atp_snapshot jsonb,
+    itens_fingerprint text,
+    motivo_backorder text,
+    actor_user_id uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT atp_decisoes_contexto_check CHECK ((contexto = ANY (ARRAY['criacao'::text, 'edicao'::text]))),
+    CONSTRAINT atp_decisoes_decisao_check CHECK ((decisao = ANY (ARRAY['reservado'::text, 'bloqueado'::text, 'backorder_autorizado'::text, 'verificacao_indisponivel'::text]))),
+    CONSTRAINT atp_decisoes_pool_check CHECK ((pool = 'oben'::text))
 );
 
 
@@ -31339,6 +31510,14 @@ ALTER TABLE ONLY public.ai_decisions
 
 
 --
+-- Name: atp_decisoes atp_decisoes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.atp_decisoes
+    ADD CONSTRAINT atp_decisoes_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: cache_lotes cache_lotes_cache_key_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -35095,6 +35274,20 @@ CREATE INDEX idx_alerta_por_tipo ON public.fornecedor_alerta USING btree (empres
 
 
 --
+-- Name: idx_atp_decisoes_created; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_atp_decisoes_created ON public.atp_decisoes USING btree (created_at DESC);
+
+
+--
+-- Name: idx_atp_decisoes_pedido; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_atp_decisoes_pedido ON public.atp_decisoes USING btree (sales_order_id, created_at DESC);
+
+
+--
 -- Name: idx_aumento_estado; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -37440,6 +37633,13 @@ CREATE UNIQUE INDEX uq_reposicao_param_limbo_log_dia ON public.reposicao_param_l
 
 
 --
+-- Name: uq_so_whatsapp_proposta_dedupe; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_so_whatsapp_proposta_dedupe ON public.sales_orders USING btree (whatsapp_proposta_dedupe) WHERE (whatsapp_proposta_dedupe IS NOT NULL);
+
+
+--
 -- Name: uq_tarefa_template_assignee_dia; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -38370,6 +38570,14 @@ ALTER TABLE ONLY public.acoes_execucoes
 
 ALTER TABLE ONLY public.ai_decision_audit_log
     ADD CONSTRAINT ai_decision_audit_log_decision_id_fkey FOREIGN KEY (decision_id) REFERENCES public.ai_decisions(id) ON DELETE CASCADE;
+
+
+--
+-- Name: atp_decisoes atp_decisoes_sales_order_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.atp_decisoes
+    ADD CONSTRAINT atp_decisoes_sales_order_id_fkey FOREIGN KEY (sales_order_id) REFERENCES public.sales_orders(id) ON DELETE SET NULL;
 
 
 --
@@ -41867,6 +42075,19 @@ ALTER TABLE public.ai_decision_audit_log ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.ai_decisions ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: atp_decisoes; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.atp_decisoes ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: atp_decisoes atp_decisoes_select_staff; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY atp_decisoes_select_staff ON public.atp_decisoes FOR SELECT USING (( SELECT private.cap_estoque_reservar(( SELECT auth.uid() AS uid)) AS cap_estoque_reservar));
+
+
+--
 -- Name: cache_lotes; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
@@ -42469,10 +42690,10 @@ CREATE POLICY estoque_reservas_select_staff ON public.estoque_reservas FOR SELEC
 
 
 --
--- Name: estoque_reservas estoque_reservas_service_all; Type: POLICY; Schema: public; Owner: -
+-- Name: estoque_reservas estoque_reservas_service_select; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY estoque_reservas_service_all ON public.estoque_reservas USING ((( SELECT auth.role() AS role) = 'service_role'::text));
+CREATE POLICY estoque_reservas_service_select ON public.estoque_reservas FOR SELECT USING ((( SELECT auth.role() AS role) = 'service_role'::text));
 
 
 --
@@ -47024,5 +47245,5 @@ CREATE POLICY wts_staff_read ON public.whatsapp_template_sends FOR SELECT TO aut
 -- PostgreSQL database dump complete
 --
 
-\unrestrict driXFaiNp4oQPVOE1FOZUDiIgQrt4TMGkzunQAxqRc8iB2CNQudWXIBRQYyfgy3
+\unrestrict WMIwRQ0X9eIXX9UCJVjxyYav81Mo2hLAe6fWQld4fXE21CcGkeDoVquOsi1BPqM
 
