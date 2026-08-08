@@ -12,11 +12,18 @@ export interface ProfileRow {
   name: string | null;
 }
 
+/**
+ * [money-path — ausente ≠ zero] Os três campos nullable NÃO são frouxidão de tipo: são o
+ * tri-estado que o registro de 1 toque produz. Ele captura só o desfecho; margem, duração e
+ * adesão ao roteiro ficam desconhecidos e vão ao banco como NULL (colunas nullable, RPC aceita
+ * null explícito). Tipá-los como `number`/`boolean` obrigava o chamador a inventar `0`/`false`
+ * — e `actual_margin = 0` entra nas médias de efetividade como resultado apurado.
+ */
 export interface RecordResultPayload {
-  planFollowed: boolean;
+  planFollowed: boolean | null;
   callResult: string;
-  actualMargin: number;
-  callDurationSeconds: number;
+  actualMargin: number | null;
+  callDurationSeconds: number | null;
   objectionType?: string;
   notes?: string;
 }

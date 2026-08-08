@@ -103,6 +103,84 @@ describe("PlanCard", () => {
     expect(screen.getByText("Resultado registrado")).toBeTruthy();
   });
 
+  // Registro de desfecho em 1 toque na FACE do card. O ponto da entrega é não precisar abrir o
+  // card: 0 de 533 planos tinham desfecho com o formulário atrás do `expanded`.
+  describe("desfecho em 1 toque", () => {
+    it("[FACE-1T] plano na fila mostra os cinco desfechos SEM precisar expandir", () => {
+      setup({ expanded: false, plan: makePlan({ status: "gerado" }) });
+      for (const nome of ["Vendeu", "Interesse futuro", "Não vendeu", "Não atendeu", "Remarcou"]) {
+        expect(screen.getByRole("button", { name: nome })).toBeTruthy();
+      }
+    });
+
+    it("[FACE-1T] um toque registra sem abrir o card", async () => {
+      const props = setup({ expanded: false, plan: makePlan({ status: "gerado" }) });
+      fireEvent.click(screen.getByRole("button", { name: "Vendeu" }));
+      expect(props.onRecordResult).toHaveBeenCalledWith("p1", expect.objectContaining({
+        callResult: "venda_realizada",
+        actualMargin: null,
+      }));
+      // Registrar não pode abrir/fechar o card: o toggle vive no cabeçalho, e um clique que
+      // vazasse para ele faria a lista pular sob o dedo da vendedora.
+      expect(props.onToggle).not.toHaveBeenCalled();
+    });
+
+    it("[FACE-1T] plano expirado não recebe 1 toque — a fila de trabalho é só `gerado`", () => {
+      setup({ expanded: false, plan: makePlan({ status: "expirado" }) });
+      expect(screen.queryByRole("button", { name: "Vendeu" })).toBeNull();
+    });
+
+    it("[FACE-1T] plano concluído não recebe 1 toque", () => {
+      setup({ expanded: false, plan: makePlan({ status: "concluido" }) });
+      expect(screen.queryByRole("button", { name: "Vendeu" })).toBeNull();
+    });
+
+    it("[FACE-1T] o dialog detalhado continua disponível no expandido", () => {
+      // O 1 toque não remove capacidade: quem sabe a margem ainda pode informá-la.
+      setup({ expanded: true, plan: makePlan({ status: "gerado" }) });
+      expect(screen.getByText("Registrar Resultado")).toBeTruthy();
+    });
+  });
+
+  // O resumo do plano concluído ficou INERTE desde sempre (0 concluídos em prod). No dia do
+  // Publish ele passa a ser lido — e é onde os NULLs do 1 toque chegam primeiro.
+  describe("resumo do concluído — null não pode virar veredito", () => {
+    const concluido = (over: Partial<TacticalPlan> = {}) =>
+      setup({ expanded: true, plan: makePlan({ status: "concluido", callResult: "nao_atendeu", ...over }) });
+
+    it("[RESUMO-1T] plano seguido não informado NAO exibe 'Nao'", () => {
+      // `planFollowed ? 'Sim' : 'Não'` exibia "Não" para todo registro de 1 toque — afirmava
+      // à gestão que a vendedora ignorou o roteiro que ninguém perguntou se ela seguiu.
+      concluido({ planFollowed: undefined });
+      expect(screen.getByText("Plano seguido: não informado")).toBeTruthy();
+      expect(screen.queryByText("Plano seguido: Não")).toBeNull();
+    });
+
+    it("[RESUMO-1T] adesão declarada continua sendo Sim/Não — é veredito, não ausência", () => {
+      concluido({ planFollowed: false });
+      expect(screen.getByText("Plano seguido: Não")).toBeTruthy();
+    });
+
+    it("[RESUMO-1T] margem não apurada é rotulada, não some nem vira R$ 0,00", () => {
+      concluido({ actualMargin: undefined });
+      expect(screen.getByText("Margem: não apurada")).toBeTruthy();
+      expect(screen.queryByText("Margem: R$ 0,00")).toBeNull();
+    });
+
+    it("[RESUMO-1T] margem ZERO apurada continua sendo R$ 0,00", () => {
+      // O par que impede a correção de virar "esconde tudo". `d.actual_margin ? … : undefined`
+      // no parsePlan perdia justamente este caso.
+      concluido({ actualMargin: 0 });
+      expect(screen.getByText("Margem: R$ 0,00")).toBeTruthy();
+    });
+
+    it("[RESUMO-1T] o desfecho aparece em português, não como valor de banco", () => {
+      concluido({ callResult: "nao_atendeu" });
+      expect(screen.getByText("Resultado: Não atendeu")).toBeTruthy();
+      expect(screen.queryByText("Resultado: nao_atendeu")).toBeNull();
+    });
+  });
+
   // A margem gravada no plano é nullable desde que o servidor passou a distinguir "sem custo
   // cadastrado" de "margem zero". O card é o último ponto do caminho: se ele coagir, todo o
   // trabalho de propagar o null (RPC → coluna → parsePlan) morre no `.toFixed()` final.

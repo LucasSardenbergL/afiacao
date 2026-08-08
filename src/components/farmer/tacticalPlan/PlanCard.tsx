@@ -11,6 +11,7 @@ import { getObjectiveLabel, type TacticalPlan } from '@/hooks/useTacticalPlan';
 import { fmt, objectiveColors, profileLabels } from './config';
 import { Section, MetricRow, CopyButton } from './PlanSection';
 import { RecordResultDialog } from './RecordResultDialog';
+import { BotoesDesfecho, rotuloDoDesfecho } from './BotoesDesfecho';
 import type { RecordResultPayload } from './types';
 import { formatMargemPct } from '@/lib/format';
 
@@ -74,6 +75,15 @@ export const PlanCard = ({
             <DollarSign className="w-3 h-3" />
             <span>Lucro estimado: {fmt(plan.estimatedProfitPerHour)}/h</span>
           </div>
+        )}
+
+        {/* Registro de desfecho em 1 toque — na FACE, não no expandido.
+            Só para planos `gerado` (a fila de trabalho). `expirado` está fora da janela e
+            `concluido` já tem desfecho; ambos continuam registráveis pelo dialog detalhado no
+            expandido, que segue gateado por `status !== 'concluido'`. Abrir o card antes de
+            registrar era metade do custo que manteve o desfecho em 0 de 533 (fila-plano-tatico.md). */}
+        {plan.status === 'gerado' && (
+          <BotoesDesfecho planId={plan.id} onRecord={onRecordResult} />
         )}
 
         {/* Expanded content */}
@@ -236,10 +246,19 @@ export const PlanCard = ({
             {plan.status === 'concluido' && (
               <div className="p-2 rounded bg-muted/50 text-[10px] space-y-0.5">
                 <p className="font-semibold">Resultado registrado</p>
-                <p>Plano seguido: {plan.planFollowed ? 'Sim' : 'Não'}</p>
-                <p>Resultado: {plan.callResult}</p>
-                {plan.actualMargin !== undefined && <p>Margem: {fmt(plan.actualMargin)}</p>}
-                {plan.callDurationSeconds && <p>Duração: {Math.round(plan.callDurationSeconds / 60)}min</p>}
+                {/* [money-path — ausente ≠ falso] Tri-estado. O ternário `? 'Sim' : 'Não'` exibia
+                    "Não" para TODO registro de 1 toque (que grava plan_followed = null): afirmava
+                    à gestão que a vendedora ignorou o roteiro, quando ninguém chegou a perguntar.
+                    Mesma família do `Number(null) === 0`, em booleano. */}
+                <p>Plano seguido: {plan.planFollowed == null ? 'não informado' : (plan.planFollowed ? 'Sim' : 'Não')}</p>
+                {/* Rótulo legível: exibia `venda_realizada` cru. Ficou inerte enquanto não havia
+                    nenhum plano concluído em prod — passa a ser visto no dia do Publish. */}
+                <p>Resultado: {plan.callResult ? rotuloDoDesfecho(plan.callResult) : 'não informado'}</p>
+                {/* "não apurada" explícito em vez de sumir a linha: a margem é o dado que a
+                    gestão procura aqui, e uma linha ausente lê como "esqueci de olhar". */}
+                <p>Margem: {plan.actualMargin == null ? 'não apurada' : fmt(plan.actualMargin)}</p>
+                {/* `!= null` e não truthy: duração 0 segundos medida é dado, não ausência. */}
+                {plan.callDurationSeconds != null && <p>Duração: {Math.round(plan.callDurationSeconds / 60)}min</p>}
               </div>
             )}
           </div>
