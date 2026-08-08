@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 453
+-- Total de custom migrations: 454
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -494,6 +494,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260806223407', 'drop_import_tint_formulas', '20260806223407_drop_import_tint_formulas.sql'),
   ('20260806225052', 'atp_reserva_estoque_fase1_1_hardening', '20260806225052_atp_reserva_estoque_fase1_1_hardening.sql'),
   ('20260807015000', 'atp_gate_pedido_fase2', '20260807015000_atp_gate_pedido_fase2.sql'),
+  ('20260807210912', 'expirar_planos_taticos', '20260807210912_expirar_planos_taticos.sql'),
   ('20260807223000', 'check_finitude_money_path', '20260807223000_check_finitude_money_path.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
@@ -2042,7 +2043,9 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('atp_gate_pedido_fase2', 'table', 'public', 'atp_decisoes', ''),
   ('atp_gate_pedido_fase2', 'index', 'public', 'idx_atp_decisoes_pedido', 'atp_decisoes'),
   ('atp_gate_pedido_fase2', 'index', 'public', 'idx_atp_decisoes_created', 'atp_decisoes'),
-  ('atp_gate_pedido_fase2', 'rls_policy', 'public', 'atp_decisoes_select_staff', 'atp_decisoes')
+  ('atp_gate_pedido_fase2', 'rls_policy', 'public', 'atp_decisoes_select_staff', 'atp_decisoes'),
+  ('expirar_planos_taticos', 'function', 'public', 'expirar_planos_taticos', ''),
+  ('expirar_planos_taticos', 'cron_job', 'cron', 'expirar-planos-taticos', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -3638,7 +3641,9 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('atp_gate_pedido_fase2', 'table', 'public', 'atp_decisoes', ''),
   ('atp_gate_pedido_fase2', 'index', 'public', 'idx_atp_decisoes_pedido', 'atp_decisoes'),
   ('atp_gate_pedido_fase2', 'index', 'public', 'idx_atp_decisoes_created', 'atp_decisoes'),
-  ('atp_gate_pedido_fase2', 'rls_policy', 'public', 'atp_decisoes_select_staff', 'atp_decisoes')
+  ('atp_gate_pedido_fase2', 'rls_policy', 'public', 'atp_decisoes_select_staff', 'atp_decisoes'),
+  ('expirar_planos_taticos', 'function', 'public', 'expirar_planos_taticos', ''),
+  ('expirar_planos_taticos', 'cron_job', 'cron', 'expirar-planos-taticos', '')
 )
 SELECT
   e.migration,
