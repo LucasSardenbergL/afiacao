@@ -4,6 +4,16 @@ import { authorizeCronOrStaff } from "../_shared/auth.ts";
 // de `decidirClaim`, que decide o passo inteiro do claim. Mantê-lo importado viraria símbolo órfão.
 import { decidirClaim, esperaClaimMs } from "../_shared/lease.ts";
 import { fetchAll } from "../_shared/paginate.ts";
+// Renormalização testável: componente sem produtor sai do numerador E do denominador. Mora em
+// `_shared` (e não inline aqui) porque este arquivo importa `npm:@supabase/supabase-js` e
+// `test:edges` roda com `--no-remote` — inline, a aritmética que decide os dois scores seria
+// estruturalmente inalcançável por teste de comportamento. Ver `_shared/score-ponderado_test.ts`.
+import {
+  maximoMedido,
+  mediaPonderadaRenormalizada,
+  normalizarPorMaximo,
+  valorMedido,
+} from "../_shared/score-ponderado.ts";
 
 const ALLOWED_ORIGIN = Deno.env.get("ALLOWED_ORIGIN") || "*";
 
@@ -123,8 +133,13 @@ interface HealthHistoryRecord {
   rf_score: number;
   m_score: number | null;   // null = margem desconhecida neste run (PR 3-zero); nunca 0 por default
   g_score: number;
-  x_score: number;
-  s_score: number;
+  // x_score/s_score: mesma disciplina do m_score. NENHUM writer os calcula — 6.633/6.633 NULL em
+  // `farmer_client_scores` (psql-ro, 2026-08-07) —, e esta edge os relia e regravava como 0: as
+  // 673.790 linhas de `health_score_history` têm x=0 e s=0, ZERO nulos. A coluna é nullable com
+  // DEFAULT 0, então o null tem de ir EXPLÍCITO no payload: omitir a chave faz o Postgres fabricar
+  // o mesmo 0 (money-path.md §2 — o par consumidor E produtor).
+  x_score: number | null;
+  s_score: number | null;
   churn_risk: number;
 }
 
@@ -132,7 +147,11 @@ interface PriorityLogRecord {
   customer_user_id: string;
   farmer_id: string;
   priority_score: number;
-  margin_potential_component: number;
+  // null = `revenue_potential` não medido, logo o componente NÃO participou do priority_score (o
+  // peso foi renormalizado). Gravar 0 aqui afirmaria "potencial apurado, deu zero" — e é o que as
+  // 673.790 linhas do log dizem hoje, sem nunca ter havido produtor. Coluna nullable com DEFAULT 0
+  // → null EXPLÍCITO, senão o Postgres refabrica o zero.
+  margin_potential_component: number | null;
   churn_risk_component: number;
   repurchase_component: number;
   goal_proximity_component: number;
@@ -469,6 +488,19 @@ Deno.serve(async (req) => {
       goal_proximity: (config['ps_weight_goal_proximity'] ?? 15) / 100,
     };
 
+    // O priority score passou a DIVIDIR pela soma dos pesos disponíveis, pelo mesmo motivo que o
+    // health já dividia: `revenue_potential` não tem produtor e o peso dele (35%, o MAIOR dos
+    // quatro) precisa ser redistribuído em vez de contribuir 0. Com soma 1,0 a divisão é identidade
+    // para quem TEM o componente; com soma diferente, reescala todo mundo — comportamento correto
+    // (um score 0-100 deve usar 100% do peso disponível), mas silencioso demais para não deixar rastro.
+    const somaPesosPs = ps_w.margin_potential + ps_w.churn_risk + ps_w.repurchase + ps_w.goal_proximity;
+    if (Math.abs(somaPesosPs - 1) > 0.001) {
+      console.warn(
+        `[calculate-scores] pesos do priority score somam ${(somaPesosPs * 100).toFixed(1)}, não 100 — ` +
+        `os scores serão normalizados por essa soma. Confira farmer_algorithm_config.ps_weight_*.`,
+      );
+    }
+
     // Recência: teto (dias até zerar) configurável, guardrail [30,999] (achado /codex: T>999
     // ressuscitaria o sentinela 999). Default 180. Ajustável sem redeploy via farmer_algorithm_config.
     const recencyCapDays = clampRecencyCapDays(config['hs_recency_cap_days']);
@@ -752,7 +784,12 @@ Deno.serve(async (req) => {
     // como se fosse margem zero, deprimindo o teto e inflando o score relativo de todo mundo.
     const maxMarginPct = Math.max(...clients.map(c => margemConhecida(c.gross_margin_pct) ?? 0), 1);
     const maxCategories = Math.max(...clients.map(c => Number(c.category_count || 0)), 1);
-    const maxRevPotential = Math.max(...clients.map(c => Number(c.revenue_potential || 0)), 1);
+    // Teto do potencial: só valores MEDIDOS. O `Math.max(...map(Number(x || 0)), 1)` anterior errava
+    // duas vezes — fazia o desconhecido normalizar como zero E, com a coluna inteira NULL (o estado
+    // real: 6.633/6.633), devolvia o piso `1`, um teto FABRICADO contra o qual todo cliente pontuava
+    // 0. Daí `margin_potential_component = 0` em 673.790/673.790 linhas de priority_score_log.
+    // `null` = ninguém tem potencial medido → o componente sai do score de todos (renormalização).
+    const maxRevPotential = maximoMedido(clients.map(c => c.revenue_potential));
 
     const healthHistoryRecords: HealthHistoryRecord[] = [];
     const priorityLogRecords: PriorityLogRecord[] = [];
@@ -782,32 +819,38 @@ Deno.serve(async (req) => {
         ? Math.min(100, (Number(client.category_count || 0) / maxCategories) * 100)
         : 0;
       
-      const crossSellScore = Number(client.x_score || 0);
-      const engagementScore = Number(client.s_score || 0);
+      // Cross-sell e engajamento: MESMO defeito da margem, na mesma função. Nenhum writer os
+      // calcula (6.633/6.633 NULL), e o `Number(x || 0)` transformava "não medi" no veredito "pior
+      // cliente possível neste eixo" — 20% do health score afirmando um fato que ninguém apurou.
+      const crossSellScore = valorMedido(client.x_score);
+      const engagementScore = valorMedido(client.s_score);
 
-      // Renormalização: sem margem conhecida, o peso dela é redistribuído entre os componentes que
-      // existem, em vez de contribuir 0 (contribuir 0 seria afirmar "pior cliente neste eixo" para
-      // quem só não foi medido).
+      // Renormalização: o peso do componente NÃO MEDIDO é redistribuído entre os que existem, em vez
+      // de contribuir 0 (contribuir 0 afirmaria "pior cliente neste eixo" sobre quem só não foi
+      // medido). Valia só para a margem; passa a valer também para cross-sell e engajamento, que têm
+      // exatamente o mesmo defeito — os três juntos são 50% do peso, e nenhum tem produtor hoje.
       //
-      // Com os pesos DEFAULT a divisão é identidade para quem TEM margem — 25+20+20+15+10+10 = 100,
-      // logo pesoTotal = 1,0. Mas isso é propriedade dos defaults, não garantia: farmer_algorithm_config
-      // é editável e hoje não tem NENHUMA linha hs_weight% (medido 2026-07-21 — os seis valores vêm
-      // dos defaults do código). Se alguém configurar pesos que não somem 100, a divisão deixa de ser
-      // identidade e passa a normalizar o score de TODOS os clientes, inclusive os com margem
-      // conhecida. Isso é o comportamento correto (um score 0-100 deve usar 100% do peso disponível;
-      // pesos somando 90 faziam o teto ser 90), mas é uma mudança silenciosa demais para acontecer
-      // sem rastro — daí o aviso abaixo, emitido uma única vez por run.
-      const pesoMargem = marginScore == null ? 0 : hs_w.margin;
-      const pesoTotal = hs_w.recency + hs_w.frequency + pesoMargem
-                      + hs_w.diversity + hs_w.crosssell + hs_w.engagement;
-      const somaPonderada =
-        recencyScore * hs_w.recency +
-        freqScore * hs_w.frequency +
-        (marginScore ?? 0) * pesoMargem +
-        diversityScore * hs_w.diversity +
-        crossSellScore * hs_w.crosssell +
-        engagementScore * hs_w.engagement;
-      const healthScore = Math.round(pesoTotal > 0 ? somaPonderada / pesoTotal : 0);
+      // Com os pesos DEFAULT a divisão é identidade para quem TEM os componentes — 25+20+20+15+10+10
+      // = 100, logo o peso disponível é 1,0. Mas isso é propriedade dos defaults, não garantia:
+      // farmer_algorithm_config é editável e hoje não tem NENHUMA linha hs_weight% (medido
+      // 2026-07-21 — os seis valores vêm dos defaults do código). Se alguém configurar pesos que não
+      // somem 100, a divisão deixa de ser identidade e passa a normalizar o score de TODOS os
+      // clientes, inclusive os completos. Isso é o comportamento correto (um score 0-100 deve usar
+      // 100% do peso disponível; pesos somando 90 faziam o teto ser 90), mas é uma mudança silenciosa
+      // demais para acontecer sem rastro — daí o aviso emitido uma única vez por run, acima.
+      //
+      // O `?? 0` NÃO é fabricação: `null` aqui só acontece com TODOS os seis pesos zerados na config
+      // (recência, frequência e diversidade são sempre número), o que é ausência de CONFIGURAÇÃO e
+      // não de dado — e preserva exatamente o `pesoTotal > 0 ? … : 0` anterior.
+      const healthMedia = mediaPonderadaRenormalizada([
+        { valor: recencyScore, peso: hs_w.recency },
+        { valor: freqScore, peso: hs_w.frequency },
+        { valor: marginScore, peso: hs_w.margin },
+        { valor: diversityScore, peso: hs_w.diversity },
+        { valor: crossSellScore, peso: hs_w.crosssell },
+        { valor: engagementScore, peso: hs_w.engagement },
+      ]);
+      const healthScore = Math.round(healthMedia ?? 0);
 
       let healthClass = 'critico';
       if (healthScore >= 75) healthClass = 'saudavel';
@@ -817,9 +860,9 @@ Deno.serve(async (req) => {
       const churnRisk = Math.max(0, Math.min(100, 100 - healthScore));
 
       // --- Priority Score ---
-      const marginPotentialComp = maxRevPotential > 0
-        ? (Number(client.revenue_potential || 0) / maxRevPotential) * 100
-        : 0;
+      // `null` = potencial não medido (deste cliente ou de toda a base). O componente sai do score,
+      // e os 35% de peso — o MAIOR dos quatro — são redistribuídos entre churn, recompra e meta.
+      const marginPotentialComp = normalizarPorMaximo(valorMedido(client.revenue_potential), maxRevPotential);
       
       const churnComp = churnRisk;
       
@@ -833,12 +876,18 @@ Deno.serve(async (req) => {
         ? Math.min(100, (Number(client.avg_monthly_spend_180d || 0) / maxSpend) * 100)
         : 0;
 
-      const priorityScore = Math.round(
-        marginPotentialComp * ps_w.margin_potential +
-        churnComp * ps_w.churn_risk +
-        repurchaseComp * ps_w.repurchase +
-        goalComp * ps_w.goal_proximity
-      );
+      // Mesma renormalização do health. Antes o `marginPotentialComp` entrava como 0 para 100% da
+      // base e comia 35 dos 100 pontos possíveis: o priority_score tinha teto REAL de 65 (medido:
+      // max 43, média 29,13 em 6.633 linhas) enquanto a tela o apresenta como 0-100.
+      // O `?? 0` cobre só "todos os quatro pesos zerados na config" — churn, recompra e meta são
+      // sempre número —, preservando o comportamento anterior nesse caso.
+      const priorityMedia = mediaPonderadaRenormalizada([
+        { valor: marginPotentialComp, peso: ps_w.margin_potential },
+        { valor: churnComp, peso: ps_w.churn_risk },
+        { valor: repurchaseComp, peso: ps_w.repurchase },
+        { valor: goalComp, peso: ps_w.goal_proximity },
+      ]);
+      const priorityScore = Math.round(priorityMedia ?? 0);
 
       updates.push({
         id: client.id,
@@ -892,8 +941,10 @@ Deno.serve(async (req) => {
         rf_score: Math.round(recencyScore),
         m_score: marginScore == null ? null : Math.round(marginScore),  // idem: null ≠ 0
         g_score: Math.round(diversityScore),
-        x_score: Math.round(crossSellScore),
-        s_score: Math.round(engagementScore),
+        // Math.round(null) é 0 — o arredondamento refabricaria justamente o zero que este PR remove.
+        // O null tem de atravessar até a coluna (nullable, DEFAULT 0 → chave presente com null).
+        x_score: crossSellScore == null ? null : Math.round(crossSellScore),
+        s_score: engagementScore == null ? null : Math.round(engagementScore),
         churn_risk: churnRisk,
       });
 
@@ -901,7 +952,8 @@ Deno.serve(async (req) => {
         customer_user_id: client.customer_user_id,
         farmer_id: client.farmer_id,
         priority_score: priorityScore,
-        margin_potential_component: Math.round(marginPotentialComp),
+        // idem: null = componente ausente do score, não "apurei e deu zero".
+        margin_potential_component: marginPotentialComp == null ? null : Math.round(marginPotentialComp),
         churn_risk_component: Math.round(churnComp),
         repurchase_component: Math.round(repurchaseComp),
         goal_proximity_component: Math.round(goalComp),

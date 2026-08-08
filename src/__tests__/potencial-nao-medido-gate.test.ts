@@ -46,6 +46,12 @@ const CAMPOS = [
   'recuperacao_score',
   'relacionamento_score',
   'prospeccao_score',
+  // Cross-sell e engajamento (2026-08-07): mesma família, mesma medição — 6.633/6.633 NULL em
+  // farmer_client_scores. Entram aqui em PARIDADE com o gate da edge, que passou a vigiar o writer
+  // (`calculate-scores`): fechar só o writer deixaria a porta do front aberta para a reintrodução,
+  // que é o arranjo de dois gates que estes dois arquivos existem para manter.
+  'x_score',
+  's_score',
 ];
 
 /**
@@ -60,7 +66,9 @@ const CAMPOS = [
 function coercoes(codigo: string): string[] {
   const achados: string[] = [];
   for (const campo of CAMPOS) {
-    for (const m of codigo.matchAll(new RegExp(`${campo}[^;\\n]{0,80}?(\\?\\?|\\|\\|)\\s*0`, 'g'))) {
+    // `\b` na abertura é obrigatório desde que `x_score` entrou na lista: sem ele o padrão casa
+    // DENTRO de outro identificador (`max_score || 0`) e o gate reprova código alheio e íntegro.
+    for (const m of codigo.matchAll(new RegExp(`\\b${campo}[^;\\n]{0,80}?(\\?\\?|\\|\\|)\\s*0`, 'g'))) {
       achados.push(m[0]);
     }
   }
@@ -110,6 +118,9 @@ describe('gate: potencial sem writer não é coagido a 0 (src/)', () => {
       // Forma pt-BR real: a reescrita hipotética de useMyVisitSuggestions.ts que este gate existe
       // pra pegar (linhas ~142-145 coagindo o score de volta a 0 no caminho do tooltip).
       'expansao: { score: s.expansao_score ?? 0, insumosAusentes: [] },',
+      // As formas VIVAS que o PR do writer removeu de supabase/functions/calculate-scores/index.ts.
+      'const crossSellScore = Number(client.x_score || 0);',
+      'const engagementScore = Number(client.s_score || 0);',
     ];
     for (const forma of formasReais) {
       expect(coercoes(forma).length, `o detector NÃO pegou: ${forma}`).toBeGreaterThan(0);
@@ -121,6 +132,10 @@ describe('gate: potencial sem writer não é coagido a 0 (src/)', () => {
       'const revenuePotential = valorMedido(score.revenue_potential);',
       'const expansionPotential = valorMedido(score.expansion_score);',
       'expansionPotential: valorMedido(d.expansion_potential),',
+      'x_score: crossSellScore == null ? null : Math.round(crossSellScore),',
+      // Controle da ÂNCORA `\b`: identificador que CONTÉM "x_score" e coage por conta própria não é
+      // deste gate. Sem o `\b` esta linha reprovaria código alheio e íntegro.
+      'const teto = Math.max(...linhas.map(l => l.max_score || 0), 1);',
     ];
     for (const forma of corretas) {
       expect(coercoes(forma), `falso-VERMELHO em código correto: ${forma}`).toEqual([]);

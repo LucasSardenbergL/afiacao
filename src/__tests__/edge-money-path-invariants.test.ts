@@ -2520,3 +2520,53 @@ describe('guardrail money-path: visit-score-recalc-client não coage score de mi
     expect(coercoesSemWriterVisitScore(semComentarios(prosa))).toEqual([]);
   });
 });
+
+// ── Guard money-path: a renormalização de calculate-scores é um módulo TESTÁVEL, não inline ──
+// `priority_score` e `health_score` são calculados dentro do laço de `calculate-scores/index.ts`,
+// que importa `npm:@supabase/supabase-js` — e `test:edges` roda com `--no-remote`. Enquanto a
+// aritmética morou lá, ela era estruturalmente inalcançável por teste de comportamento e só um gate
+// de FONTE a vigiava; gate de fonte pega a reintrodução do `|| 0`, não a renormalização feita errado
+// (dividir pelo denominador cheio devolve número plausível e sistematicamente baixo). O módulo
+// `_shared/score-ponderado.ts` existe para tornar isso testável — se alguém reinlinar a conta, o
+// teste de comportamento morre em silêncio, e é isso que este bloco pega.
+const SCORE_PONDERADO = 'supabase/functions/_shared/score-ponderado.ts';
+const CALCULATE_SCORES = 'supabase/functions/calculate-scores/index.ts';
+
+describe('guardrail money-path: calculate-scores renormaliza via módulo testável', () => {
+  const modulo = read(SCORE_PONDERADO);
+  const edge = read(CALCULATE_SCORES);
+
+  it('sentinela: leu os arquivos reais (módulo + edge)', () => {
+    expect(modulo).toContain('export function mediaPonderadaRenormalizada');
+    expect(edge).toContain('calculate-scores');
+  });
+
+  it('PARIDADE: o bloco valor-medido do módulo é IDÊNTICO ao helper de src/', () => {
+    expect(
+      mirrorBlockNamed(modulo, 'valor-medido'),
+      'score-ponderado.ts divergiu de src/lib/scoring/margin.ts — o Lovable reescreveu no deploy?',
+    ).toBe(mirrorBlockNamed(read(MARGIN_HELPER), 'valor-medido'));
+  });
+
+  it('o edge USA o módulo nos DOIS scores (não só o define)', () => {
+    expect(edge, 'calculate-scores parou de importar a renormalização compartilhada').toContain(
+      '../_shared/score-ponderado.ts',
+    );
+    // Duas chamadas: uma para o health, outra para o priority. Uma só significa que um dos dois
+    // scores voltou a somar direto — meio-conserto na mesma função (money-path.md §7).
+    const chamadas = (edge.match(/mediaPonderadaRenormalizada\s*\(/g) ?? []).length;
+    expect(chamadas, 'health e priority precisam AMBOS renormalizar').toBeGreaterThanOrEqual(2);
+    expect(edge, 'o teto do potencial voltou a incluir o não medido').toContain('maximoMedido(');
+  });
+
+  it('o zero fabricado não volta pelo arredondamento nem pela chave omitida', () => {
+    // `Math.round(null)` é 0, e as três colunas de destino são nullable com DEFAULT 0: omitir a
+    // chave faz o Postgres refabricar o mesmo zero. Os dois caminhos precisam do null EXPLÍCITO.
+    for (const campo of ['x_score', 's_score', 'margin_potential_component']) {
+      expect(
+        new RegExp(`${campo}:[^,\\n]*== null \\? null`).test(edge),
+        `${campo} perdeu o null explícito — Math.round(null) grava 0 e o histórico volta a mentir`,
+      ).toBe(true);
+    }
+  });
+});

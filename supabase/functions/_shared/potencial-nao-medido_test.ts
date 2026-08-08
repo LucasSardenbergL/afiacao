@@ -39,8 +39,15 @@ function semComentario(linha: string): string {
   return linha.replace(/\/\/.*$/, "");
 }
 
-/** As duas colunas sem writer. Nomes em snake_case (como saem do banco) e camelCase (front). */
-const CAMPOS = ["expansion_score", "revenue_potential"];
+/**
+ * As colunas sem writer. Nomes em snake_case (como saem do banco) e camelCase (front).
+ *
+ * `x_score` (cross-sell) e `s_score` (engajamento) entraram em 2026-08-07: mesma família, mesmo
+ * defeito, e a medição em prod é idêntica à das outras — 6.633/6.633 NULL, 0 zeros, 0 positivos.
+ * `calculate-scores` as relia e regravava com `Number(x || 0)`, o que deixou `health_score_history`
+ * com x=0 e s=0 em 673.790/673.790 linhas, ZERO nulos: o zero fabricado virava histórico.
+ */
+const CAMPOS = ["expansion_score", "revenue_potential", "x_score", "s_score"];
 
 /**
  * Coerção a zero aplicada a um dos campos. Ancorado no NOME da coluna e não na forma do
@@ -54,7 +61,11 @@ const CAMPOS = ["expansion_score", "revenue_potential"];
 function coercoesEmLinha(codigo: string): string[] {
   const achados: string[] = [];
   for (const campo of CAMPOS) {
-    const padrao = new RegExp(`${campo}[^;\\n]{0,80}?(\\?\\?|\\|\\|)\\s*0`, "g");
+    // `\b` na abertura é obrigatório desde que `x_score` entrou na lista: sem ele o padrão casa
+    // DENTRO de outro identificador (`max_score || 0`, `aux_score ?? 0`) e o gate acusa código
+    // alheio — falso-VERMELHO que treina quem lê a suprimir o gate. Provado pelo controle negativo
+    // do par-detector abaixo.
+    const padrao = new RegExp(`\\b${campo}[^;\\n]{0,80}?(\\?\\?|\\|\\|)\\s*0`, "g");
     for (const m of codigo.matchAll(padrao)) achados.push(m[0]);
   }
   return achados;
@@ -67,7 +78,7 @@ function coercoesEmLinha(codigo: string): string[] {
 function numAplicadoACampo(codigo: string): string[] {
   const achados: string[] = [];
   for (const campo of CAMPOS) {
-    for (const m of codigo.matchAll(new RegExp(`\\bnum\\s*\\([^)]*${campo}`, "g"))) achados.push(m[0]);
+    for (const m of codigo.matchAll(new RegExp(`\\bnum\\s*\\([^)]*\\b${campo}`, "g"))) achados.push(m[0]);
   }
   return achados;
 }
@@ -89,6 +100,14 @@ const VIGIADOS: Array<{ rotulo: string; url: URL }> = [
   {
     rotulo: "tactical-plans-batch/index.ts",
     url: new URL("../tactical-plans-batch/index.ts", import.meta.url),
+  },
+  // O WRITER da família, adicionado em 2026-08-07. Os três acima são leitores que montam prompt;
+  // este é quem GRAVA — e enquanto ele coagia, consertar os leitores era enxugar gelo: o zero
+  // fabricado voltava para a tabela a cada run e de lá para o próximo leitor (money-path.md §2, o
+  // par consumidor E produtor).
+  {
+    rotulo: "calculate-scores/index.ts",
+    url: new URL("../calculate-scores/index.ts", import.meta.url),
   },
 ];
 
@@ -127,6 +146,10 @@ Deno.test("[POT-DET] o DETECTOR enxerga a coerção quando ela existe (par obrig
     "revenue_potential: (score.revenue_potential as number) || 0,",
     "expansionPotential: num(score.expansion_score),",
     "revenuePotential: num(score.revenue_potential), salesHistoryStatus };",
+    // As duas formas VIVAS que este PR removeu de calculate-scores/index.ts — copiadas verbatim da
+    // main anterior. Sem elas, a entrada nova em CAMPOS seria decorativa.
+    "const crossSellScore = Number(client.x_score || 0);",
+    "const engagementScore = Number(client.s_score || 0);",
   ];
   for (const forma of formasReais) {
     const pegou = coercoesEmLinha(forma).length + numAplicadoACampo(forma).length;
@@ -138,6 +161,12 @@ Deno.test("[POT-DET] o DETECTOR enxerga a coerção quando ela existe (par obrig
     "const revenuePotential = valorMedido(score.revenue_potential);",
     "const expansionPotential = numeroValido(score.expansion_score);",
     "expansionPotential: valorMedido(d.expansion_potential),",
+    // O pós-fix real deste PR: o null tem de atravessar o arredondamento.
+    "x_score: crossSellScore == null ? null : Math.round(crossSellScore),",
+    // Controle da ÂNCORA `\b`: identificadores que CONTÊM "x_score"/"s_score" e coagem por conta
+    // própria não são deste gate. Sem o `\b` estas duas linhas reprovariam código alheio e íntegro.
+    "const teto = Math.max(...linhas.map(l => l.max_score || 0), 1);",
+    "const aux = dados.aux_score ?? 0;",
   ];
   for (const forma of formasCorretas) {
     const pegou = coercoesEmLinha(forma).length + numAplicadoACampo(forma).length;
