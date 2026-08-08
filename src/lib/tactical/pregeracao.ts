@@ -31,24 +31,43 @@ export function profitPerHora(
   return marginPerCall / (AVG_CALL_MINUTES / 60);
 }
 
-/** Top-N por priorityScore desc, filtrando quem passa no gate de R$/h.
+/** Top-N por priorityScore desc, filtrando quem passa no gate de R$/h e ainda NÃO está na fila.
  *  Filtra ANTES de cortar: retorna os N de maior priority DENTRE OS ELEGÍVEIS.
  *
  *  Quem tem margem desconhecida sai em `semMargem`, NÃO em `selecionados`: o gate não é
  *  decidível sem margem, e tratá-lo como reprovado o confundiria com um cliente de margem
  *  genuinamente ruim. `semMargem` existe para o chamador CONTABILIZAR o descarte — corte
- *  silencioso leria como "cobri todo mundo" sem ter coberto (money-path: no silent caps). */
+ *  silencioso leria como "cobri todo mundo" sem ter coberto (money-path: no silent caps).
+ *
+ *  `jaNaFila` (clientes com plano ABERTO) é excluído AQUI e não no call-site, e a ordem é o
+ *  ponto todo: com topN pequeno, filtrar DEPOIS do corte congelaria a fila. O batch escolheria
+ *  todo dia os mesmos topN de maior priority, a idempotência os pularia, e o cliente de posição
+ *  topN+1 nunca entraria — fila parada com aparência de funcionamento. Medido em prod
+ *  (2026-08-08): 23 dos 25 planos do dia eram regeração de cliente que já estava na fila; a
+ *  fila viva tinha 169 planos para 35 clientes, 14 deles com 7 cópias cada.
+ *
+ *  `naFila` e `semMargem` PODEM SE SOBREPOR — são recortes independentes, não uma partição.
+ *  `semMargem` mede a cegueira da CARTEIRA (quantos clientes não são avaliáveis) e por isso é
+ *  contado sobre todos os scores: se ele passasse a excluir quem está na fila, encher a fila
+ *  faria a cegueira "melhorar" sozinha, e o número deixaria de servir de sinal. */
 export function selecionarParaPregeracao(
   scores: ScoreParaSelecao[],
   topN: number,
-): { selecionados: ScoreParaSelecao[]; semMargem: ScoreParaSelecao[] } {
+  jaNaFila: ReadonlySet<string> = new Set(),
+): {
+  selecionados: ScoreParaSelecao[];
+  semMargem: ScoreParaSelecao[];
+  naFila: ScoreParaSelecao[];
+} {
   const ordenados = [...scores].sort((a, b) => b.priorityScore - a.priorityScore);
   const semMargem = ordenados.filter((s) => margemConhecida(s.marginPct) == null);
+  const naFila = ordenados.filter((s) => jaNaFila.has(s.customerUserId));
   const selecionados = ordenados
     .filter((s) => {
+      if (jaNaFila.has(s.customerUserId)) return false;
       const pph = profitPerHora(s);
       return pph != null && pph >= PROFIT_PER_HOUR_THRESHOLD;
     })
     .slice(0, topN);
-  return { selecionados, semMargem };
+  return { selecionados, semMargem, naFila };
 }

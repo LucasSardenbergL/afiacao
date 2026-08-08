@@ -10,7 +10,7 @@ Registro consultável de **PRs/bugs/programas/auditorias já entregues** — a n
 | --- | --- |
 | [bugs-resolvidos.md](bugs-resolvidos.md) | (era §10) cada bug/contradição/débito resolvido, com PR + lição (multi-domínio: KB, Radar, reposição, sync…) |
 | [programas-vendas.md](programas-vendas.md) | WhatsApp + Motor de Rota; copiloto "Buddy" |
-| [fila-plano-tatico.md](fila-plano-tatico.md) | PTPL: 533 planos com zero desfecho e 72% inalcançáveis — a fila sem saída (expiração + recorte por risco) |
+| [fila-plano-tatico.md](fila-plano-tatico.md) | PTPL fase 1: 533 planos com zero desfecho e 72% inalcançáveis — a fila sem saída (expiração + recorte por risco). Fase 2: os 533 eram **80 clientes** — a trava de idempotência media o DIA, e a fila mede a JANELA |
 | [auditoria-ux-redesign.md](auditoria-ux-redesign.md) | (era §9/§9b/§11) auditoria UX 2026-05-13 + redesign visual v3 + premissas/glossário |
 | [estoque-picking-recebimento.md](estoque-picking-recebimento.md) | offline-first + closed-loop (Picking Bridge Oben, Recebimento honesto) |
 | [tintometrico.md](tintometrico.md) | vínculo `tint_skus`↔Omie (resgate de 62 cores que somem do seletor) + lições de matching de catálogo |

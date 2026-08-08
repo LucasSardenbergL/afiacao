@@ -30,10 +30,20 @@ const DIRS = ['src', 'supabase/functions', 'scripts'];
 const EXT = /\.(ts|tsx)$/;
 const IGNORAR = /(\.test\.|_test\.|\.d\.ts$|__tests__|\.stories\.)/;
 
-// O helper é a ÚNICA fonte legítima de `String(err)` no repo: é o ramo de último recurso
-// DELE, que só roda para primitivo não-objeto (número, symbol, boolean) — exatamente o
+// Os helpers são a ÚNICA fonte legítima de `String(err)` no repo: é o ramo de último recurso
+// DELES, que só roda para primitivo não-objeto (número, symbol, boolean) — exatamente o
 // caso em que `String()` produz texto útil e nunca "[object Object]".
-const HELPER = 'src/lib/erro-mensagem.ts';
+//
+// São DOIS porque Deno não importa de `src/`: o de `_shared` é o espelho verbatim que o
+// comentário de A_DIVIDA aqui embaixo pedia ("as ~93 edges Deno […] precisam de um
+// `_shared/erro-mensagem.ts` próprio"). Sem ele, um sítio NOVO em edge só tinha duas saídas:
+// reintroduzir o idiom (vermelho, correto) ou driblar o regex renomeando a variável (verde,
+// mentira). A isenção vale para o ARQUIVO INTEIRO — mantenha os dois helpers pequenos e sem
+// outra lógica, porque o que entrar neles deixa de ser fiscalizado.
+const HELPERS: ReadonlySet<string> = new Set([
+  'src/lib/erro-mensagem.ts',
+  'supabase/functions/_shared/erro-mensagem.ts',
+]);
 
 function listarFontes(dir: string, acc: string[] = []): string[] {
   for (const nome of readdirSync(resolve(RAIZ, dir))) {
@@ -85,7 +95,7 @@ function contarPorArquivo(re: RegExp): Map<string, number> {
   const mapa = new Map<string, number>();
   for (const dir of DIRS) {
     for (const arquivo of listarFontes(dir)) {
-      if (arquivo === HELPER) continue;
+      if (HELPERS.has(arquivo)) continue;
       const n = contar(re, readFileSync(resolve(RAIZ, arquivo), 'utf8'));
       if (n > 0) mapa.set(arquivo, n);
     }

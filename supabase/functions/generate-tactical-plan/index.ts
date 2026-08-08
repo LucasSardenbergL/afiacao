@@ -13,9 +13,9 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { fetchAll } from "../_shared/paginate.ts";
 import { avaliarCanariaMargem, calcularClusterMargin, classifyProfile, margemConhecida, selectObjective } from "../_shared/tactical-margem.ts";
-import { inicioDiaOperacional } from "../_shared/dia-operacional.ts";
+import { inicioDaJanelaFila } from "../_shared/tactical-fila.ts";
 import {
-  ehJaGeradoHojeDaRpc,
+  ehJaNaFilaDaRpc,
   ehSkipLegitimoDaRpc,
   extrairToolUseUnico,
   MAX_TOKENS,
@@ -149,16 +149,26 @@ Deno.serve(async (req) => {
       const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, { auth: { persistSession: false } });
       const { customerId, farmerId } = body;
 
-      // Idempotência: pula se já há plano 'gerado' no DIA OPERACIONAL (BRT), não no dia UTC.
-      // Era `>= 00:00 UTC` e errava nos DOIS sentidos (incidente 2026-07-21/22, 30 duplicatas):
-      // run às 22:48 BRT não via o das 19:03 do mesmo dia; e o cron das 05:00 BRT do dia
-      // seguinte via o da véspera e pulava o dia inteiro. Ver _shared/dia-operacional.ts.
-      const hojeIso = inicioDiaOperacional(new Date());
+      // Idempotência: pula se o cliente JÁ TEM plano aberto na JANELA da fila (7 dias), não
+      // apenas no dia de hoje. Ver _shared/tactical-fila.ts.
+      //
+      // Era o DIA OPERACIONAL (BRT) — que consertou as 30 duplicatas do mesmo dia do incidente
+      // 2026-07-21/22, mas deixava o cliente voltar a ser candidato na madrugada seguinte. Com
+      // o batch rodando diariamente, isso virou uma cópia por dia: medido em 2026-08-08, a fila
+      // viva tinha 169 planos para 35 clientes, 14 deles com 7 cópias cada, e 23 dos 25 planos
+      // de 07/08 eram regeração. A pergunta certa não é "já gerei hoje?" e sim "este cliente já
+      // está na fila de alguém?" — enquanto estiver, outro plano só produz cópia.
+      //
+      // A janela é DESLIZANTE e não depende do cron de expiração ter rodado (mesma decisão que
+      // a fase 1 tomou no front): plano velho demais deixa de bloquear mesmo que ainda esteja
+      // com status 'gerado', senão um cron morto congelaria a geração inteira.
+      const desdeIso = inicioDaJanelaFila(new Date());
       const { data: existente } = await admin.from('farmer_tactical_plans')
         .select('id').eq('farmer_id', farmerId).eq('customer_user_id', customerId)
-        .eq('status', 'gerado').gte('created_at', hojeIso).limit(1);
+        // `generated_at`: mesma coluna do recorte da tela, do cron de expiração e da RPC.
+        .eq('status', 'gerado').gte('generated_at', desdeIso).limit(1);
       if (existente?.length) {
-        return new Response(JSON.stringify({ id: existente[0].id, skipped: 'ja_gerado_hoje' }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        return new Response(JSON.stringify({ id: existente[0].id, skipped: 'ja_na_fila' }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       }
 
       // Pares da carteira do dono para o cluster de margem. TRÊS correções vs. a versão
@@ -424,7 +434,7 @@ ${JSON.stringify(historicalObjections || [], null, 2)}`;
       });
       if (rpcErr) {
         console.error('criar_plano_tatico falhou', body.customerId, rpcErr.message);
-        // A TRAVA DE IDEMPOTÊNCIA PEGOU. O `ja_gerado_hoje` do começo do handler é um
+        // A TRAVA DE IDEMPOTÊNCIA PEGOU. O `ja_na_fila` do começo do handler é um
         // check-then-insert: dois batches simultâneos consultam antes de qualquer insert,
         // ambos pagam a chamada à Anthropic e ambos inserem (o `FOR UPDATE` da RPC trava a
         // carteira, mas ela não repetia o teste de existência e não havia índice único).
@@ -432,8 +442,8 @@ ${JSON.stringify(historicalObjections || [], null, 2)}`;
         // já gasto vira um skip honesto em vez de um http_500 que o lote contaria como erro.
         // Motivo PRÓPRIO (não `rpc_race`): o relatório precisa distinguir "a trava funcionou"
         // de "a carteira mudou no meio da geração".
-        if (ehJaGeradoHojeDaRpc(rpcErr.message)) {
-          return new Response(JSON.stringify({ skipped: 'ja_gerado_hoje', detail: rpcErr.message }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        if (ehJaNaFilaDaRpc(rpcErr.message)) {
+          return new Response(JSON.stringify({ skipped: 'ja_na_fila', detail: rpcErr.message }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
         }
         // Race de reatribuição / cliente sem dono / cliente mascarado → SKIP legítimo: o
         // próximo ciclo re-lista farmer_client_scores já reconciliado e gera sob o dono

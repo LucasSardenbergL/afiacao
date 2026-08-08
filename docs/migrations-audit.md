@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **454** custom migrations totais
-- **1561** objetos esperados (criados por estas migrations)
+- **455** custom migrations totais
+- **1562** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 459
+  - `function`: 460
   - `rls_policy`: 392
   - `index`: 237
   - `cron_job`: 163
@@ -3813,6 +3813,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20260807223000_check_finitude_money_path.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260808020000_tactical_plan_idempotencia_janela.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.criar_plano_tatico` | — |
 
 ## Próximos passos por status
 

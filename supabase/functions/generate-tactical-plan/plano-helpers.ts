@@ -592,35 +592,44 @@ export const PADROES_SKIP_RPC = [
 
 export function ehSkipLegitimoDaRpc(mensagem: unknown): boolean {
   if (typeof mensagem !== "string") return false;
-  if (ehJaGeradoHojeDaRpc(mensagem)) return false; // motivo PRÓPRIO — ver abaixo
+  if (ehJaNaFilaDaRpc(mensagem)) return false; // motivo PRÓPRIO — ver abaixo
   const m = mensagem.toLowerCase();
   return PADROES_SKIP_RPC.some((p) => m.includes(p));
 }
 
 /**
- * Recusa da RPC por JÁ EXISTIR plano do dia — a trava de idempotência funcionando.
+ * Recusa da RPC por o cliente JÁ TER plano aberto na fila — a trava de idempotência funcionando.
  *
  * POR QUE É UM MOTIVO SEPARADO de `ehSkipLegitimoDaRpc`: os dois são `skipped`, mas o
  * relatório do lote agrega POR MOTIVO (`_shared/tactical-batch-resultado.ts`), e
- * `ja_gerado_hoje` ("a trava pegou") não é `rpc_race` ("a carteira mudou durante a
+ * `ja_na_fila` ("a trava pegou") não é `rpc_race` ("a carteira mudou durante a
  * geração"). Somá-los apagaria justamente o sinal que diz se a idempotência está viva.
  *
- * POR QUE EXISTE: a checagem "já gerei hoje?" do `index.ts` roda ANTES da chamada à
- * Anthropic e é um check-then-insert — dois batches simultâneos consultam antes de
- * qualquer insert, ambos pagam a IA, e ambos inserem. A trava REAL é o índice único
- * parcial + o re-teste dentro da RPC (depois do `FOR UPDATE` de `carteira_assignments`);
- * este predicado é o que converte a recusa do banco em `skipped` honesto em vez de um
- * 500 genérico que o lote contaria como erro.
+ * POR QUE EXISTE: a checagem barata do `index.ts` roda ANTES da chamada à Anthropic e é um
+ * check-then-insert — dois batches simultâneos consultam antes de qualquer insert, ambos
+ * pagam a IA, e ambos inserem. A trava REAL é o índice único parcial + o re-teste dentro da
+ * RPC (depois do `FOR UPDATE` de `carteira_assignments`); este predicado é o que converte a
+ * recusa do banco em `skipped` honesto em vez de um 500 genérico que o lote contaria como erro.
  *
- * Trecho ASCII e exclusivo do ramo certo, pelo mesmo motivo de `PADROES_SKIP_RPC`: a
+ * DOIS PADRÕES, de propósito — o deploy aqui NÃO é atômico (migration pelo SQL Editor, edge
+ * pelo chat do Lovable, em momentos diferentes; docs/agent/deploy.md). Entre um e outro, a
+ * edge nova conversa com a RPC velha ou vice-versa; reconhecer só a mensagem nova faria a
+ * trava antiga voltar como http_500 e o lote contá-la como ERRO durante a janela de deploy.
+ * O padrão "gerado hoje" pode sair deste array depois que a fase 2 estiver aplicada em prod.
+ *
+ * Trechos ASCII e exclusivos do ramo certo, pelo mesmo motivo de `PADROES_SKIP_RPC`: a
  * mensagem em produção tem acento ("Já existe plano tático…") e comparar o pedaço sem
  * acento evita depender de normalização unicode entre o Postgres e o runtime.
  */
-const PADRAO_JA_GERADO_HOJE = "gerado hoje para este cliente";
+const PADROES_JA_NA_FILA = [
+  "aberto na fila para este cliente", // fase 2 — janela da fila
+  "gerado hoje para este cliente", // fase 1 — dia operacional (transição de deploy)
+] as const;
 
-export function ehJaGeradoHojeDaRpc(mensagem: unknown): boolean {
+export function ehJaNaFilaDaRpc(mensagem: unknown): boolean {
   if (typeof mensagem !== "string") return false;
-  return mensagem.toLowerCase().includes(PADRAO_JA_GERADO_HOJE);
+  const m = mensagem.toLowerCase();
+  return PADROES_JA_NA_FILA.some((p) => m.includes(p));
 }
 
 /**

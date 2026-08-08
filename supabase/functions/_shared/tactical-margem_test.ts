@@ -105,6 +105,52 @@ Deno.test("selecao: margem 0 conhecida reprova o gate mas NÃO é semMargem", ()
   assertEquals(semMargem.map((s) => s.customer), ["ausente"]);
 });
 
+// ── fase 2: quem já está na fila não disputa vaga ────────────────────────────
+Deno.test("selecao: exclui de selecionados quem já tem plano aberto", () => {
+  const scores = [linha("a", 90, 1000, 30), linha("b", 80, 1000, 30)];
+  const { selecionados } = selecionarParaPregeracao(scores, 25, new Set(["a"]));
+  assertEquals(selecionados.map((s) => s.customer), ["b"]);
+});
+
+Deno.test("selecao: FILTRA A FILA ANTES DE CORTAR — o seguinte sobe para a vaga", () => {
+  // ESTE é o teste que protege a correção inteira. Filtrar DEPOIS do slice(topN) faria o
+  // batch escolher todo dia os mesmos topN de maior priority, a idempotência os pularia, e
+  // 'c' JAMAIS entraria — fila parada com aparência de funcionamento. Medido em prod
+  // (2026-08-08): 169 planos vivos para 35 clientes, e 97 dos 174 candidatos elegíveis
+  // nunca haviam recebido plano nenhum.
+  const scores = [
+    linha("a", 90, 1000, 30), // já na fila
+    linha("b", 80, 1000, 30), // já na fila
+    linha("c", 70, 1000, 30), // deveria SUBIR
+    linha("d", 60, 1000, 30),
+  ];
+  const { selecionados } = selecionarParaPregeracao(scores, 2, new Set(["a", "b"]));
+  assertEquals(selecionados.map((s) => s.customer), ["c", "d"]);
+});
+
+Deno.test("selecao: os excluídos pela fila são CONTABILIZADOS em naFila (no silent caps)", () => {
+  const scores = [linha("a", 90, 1000, 30), linha("b", 80, 1000, 30)];
+  const { naFila } = selecionarParaPregeracao(scores, 25, new Set(["a"]));
+  assertEquals(naFila.map((s) => s.customer), ["a"]);
+});
+
+Deno.test("selecao: semMargem conta a carteira TODA, mesmo quem está na fila", () => {
+  // Se semMargem excluísse quem está na fila, encher a fila faria a cegueira do batch
+  // "melhorar" sozinha e o número deixaria de servir como sinal. naFila e semMargem são
+  // recortes independentes e podem se sobrepor — de propósito.
+  const scores = [linha("na-fila", 90, 1000, null), linha("fora", 80, 1000, null)];
+  const { semMargem, naFila } = selecionarParaPregeracao(scores, 25, new Set(["na-fila"]));
+  assertEquals(semMargem.map((s) => s.customer), ["na-fila", "fora"]);
+  assertEquals(naFila.map((s) => s.customer), ["na-fila"]);
+});
+
+Deno.test("selecao: sem o 3º argumento o comportamento é o de antes (default vazio)", () => {
+  const scores = [linha("a", 90, 1000, 30), linha("b", 80, 1000, 30)];
+  const { selecionados, naFila } = selecionarParaPregeracao(scores, 25);
+  assertEquals(selecionados.map((s) => s.customer), ["a", "b"]);
+  assertEquals(naFila.length, 0);
+});
+
 Deno.test("selecao: threshold é 50 R$/h (paridade com o front)", () => {
   assertEquals(PROFIT_PER_HOUR_THRESHOLD, 50);
 });

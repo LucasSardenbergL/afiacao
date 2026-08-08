@@ -77,7 +77,7 @@ o assert de REVOKE passaria por acidente de ambiente — falso-verde.
 
 - **A geração continua em ~30/dia para 3 donos.** ~10 planos/dia por vendedor não é executável em
   venda consultiva. Reduzir é config (`farmer_algorithm_config`, 17 linhas), não código — ficou
-  como item separado.
+  como item separado. → **resolvido na fase 2, mas por outro motivo que não o esperado; ver abaixo.**
 - **O custo de registrar continua alto.** O `RecordResultDialog` pede 4 campos, entre eles a
   **margem realizada** digitada, que a vendedora dificilmente sabe durante a ligação. O caminho
   natural é registro de 1 toque (ligou / não atendeu / vendeu / recusou) com a margem vindo do
@@ -98,3 +98,96 @@ nenhuma tela comunica isso sozinha.
 
 E a leitura que veio da matéria: **desfecho que depende de digitação manual não é capturado.**
 É por isso que 70% dos dados se perdem no modelo antigo, e é exatamente o padrão aqui.
+
+---
+
+# Fase 2 — 533 planos eram 80 clientes: a fila regenerava a si mesma
+
+> 2026-08-08. A fase 1 deu SAÍDA à fila. A fase 2 fecha a ENTRADA, e a causa achada no
+> caminho não era a que a fase 1 previa.
+
+## A hipótese herdada estava certa no sintoma e errada na causa
+
+A fase 1 registrou: *"a geração continua em ~30/dia para 3 donos; reduzir é config"*. A leitura
+implícita era "o `TOP_N = 25` da edge é grande demais". Duas medições desmontaram isso:
+
+1. **`TOP_N` é por FARMER, não global** (o loop de `tactical-plans-batch/index.ts` chama
+   `selecionarParaPregeracao` uma vez por carteira). O teto seria 9+25+25 = 59 alvos/dia, e a
+   produção real é ~25 — ou seja, **o `TOP_N` nunca foi o limitante**. O que fixa 25 é o batch
+   truncando (hipótese: o `timeout_milliseconds := 150000` do `net.http_post` cortando o fan-out;
+   não confirmável em retrospecto porque `net._http_response` só retém ~6h e o batch roda 08:00 UTC).
+2. **95% da geração diária era repetição.** Dos 25 planos de 07/08, **23** eram de cliente que já
+   tinha plano nos 7 dias anteriores; em 05/08 e 31/07, **25 de 25**.
+
+| Medição (psql-ro, 2026-08-08) | Valor |
+|---|---|
+| 533 planos ⇒ clientes DISTINTOS | **80** |
+| Fila viva (169 `gerado`) ⇒ clientes | **35** — 14 deles com **7 cópias** cada |
+| Candidatos que passam o gate de R$/h | 174 — **97 nunca receberam plano** |
+| `gross_margin_pct` preenchido | 1.075 de 6.633 (16%) — o batch é cego em 84% da carteira |
+
+A vendedora não via "10 clientes por dia". Via **o mesmo cliente sete vezes** — uma cópia por dia
+da janela — enquanto 97 clientes elegíveis nunca foram alcançados.
+
+## A causa: a idempotência media o DIA, e a fila mede a JANELA
+
+`criar_plano_tatico` perguntava *"já gerei para este cliente HOJE?"* (dia operacional BRT). Aquilo
+consertou as 30 duplicatas do mesmo dia do incidente 2026-07-21/22 — e foi correto para aquele bug.
+Mas com o batch rodando diariamente, o cliente voltava a ser candidato toda madrugada. A trava
+casava com a periodicidade do produtor, não com a do consumidor.
+
+A pergunta certa é **"este cliente já está na fila de alguém?"**. Enquanto o plano estiver aberto,
+outro plano para o mesmo cliente só produz cópia. Quando ele sai — expirado pelo cron da fase 1 ou
+concluído — o cliente volta ao pool. É isso que faz a fila **circular**.
+
+## A correção
+
+1. **RPC (fronteira):** `criar_plano_tatico` bloqueia por plano `gerado` dentro da janela de 7 dias,
+   não pelo dia operacional. `COALESCE(generated_at, created_at, now())` porque as duas colunas são
+   nullable e `coluna >= x` com NULL é NULL — numa trava isso é fail-**open**, e a linha de dado
+   defeituoso deixaria de bloquear em silêncio. Indecidível RECUSA.
+2. **Edge (economia):** `tactical-plans-batch` lê a fila aberta e exclui esses clientes **antes** do
+   corte do top-N; `generate-tactical-plan` pula sem chamar a IA. Novo contador `ja_na_fila`.
+3. **`TOP_N` 25 → 2.** Com o dedupe, o `TOP_N` deixa de ser "tamanho do lote" e vira **taxa de
+   entrada de clientes novos**: a fila estabiliza em `TOP_N × 7`. 2/dia ⇒ ~14 por vendedora
+   (calibrado com o founder).
+
+### O detalhe que quase virou um bug pior
+
+Com `TOP_N` pequeno, **a ordem das operações é tudo**. Se o filtro de "já na fila" rodasse *depois*
+do `slice(topN)`, o batch escolheria todo dia os mesmos 2 de maior priority, a idempotência os
+pularia, e o cliente da posição 3 **nunca entraria** — a fila congelaria com aparência de
+funcionamento. Por isso `jaNaFila` é parâmetro do oráculo (`selecionarParaPregeracao`) e não um
+filtro no call-site: a invariante fica testada nos dois espelhos, não confiada a quem chama.
+
+Pelo mesmo motivo `semMargem` continua contado sobre a carteira **inteira**, sobrepondo-se a
+`naFila`: ele mede a cegueira do batch, e se passasse a excluir quem está na fila, encher a fila
+faria a cegueira "melhorar" sozinha.
+
+### O gate de R$/h NÃO subiu — e a medição é o motivo
+
+A pergunta em aberto era se `PROFIT_PER_HOUR_THRESHOLD` (50) deveria subir junto. Medido: os top-5
+por priority de cada carteira já têm R$/h entre **52 e 14.513**. Com `TOP_N = 2`, quem entra já passa
+folgado — subir a régua seria mexer numa fronteira de negócio sem que ela mudasse resultado nenhum.
+
+## Prova
+
+`db/test-tactical-idempotencia-janela.sh` (PG17, 18 asserts + 3 falsificações). Os asserts que
+importam são o par: **A2** (plano de 3 dias bloqueia) e **A3** (plano de 8 dias volta a gerar) —
+sozinho, o A2 seria satisfeito por uma trava permanente, que troca "entope" por "congela".
+
+A falsificação **F1** restaura a trava da fase 1 e exige que o A2 fique vermelho; **F2** remove o
+`COALESCE` e exige que o A8 (`generated_at` NULL) fique vermelho; **F3** estica a janela para 365
+dias e exige que o A3 quebre — sem ela, o A3 estaria provando apenas "existe algum plano", não a
+janela.
+
+## Lição
+
+**Uma trava de idempotência tem de casar com o ciclo do CONSUMIDOR, não com o do produtor.** A
+chave "por dia" era invisível como defeito: ela funcionava, tinha teste, e o incidente que a
+motivou era real. O que mudou foi o produtor virar diário — e aí a mesma trava correta passou a
+autorizar exatamente uma cópia por dia.
+
+Corolário para revisão: **quando uma tabela de intenção cresce mas a contagem de entidades
+distintas não, o defeito está na chave de idempotência, não no volume.** 533 planos e 80 clientes
+é um número que se lê em uma query e que nenhuma tela mostra.

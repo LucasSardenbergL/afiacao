@@ -43,25 +43,37 @@ export interface LinhaSelecao {
   marginPct: number | null;
 }
 
-/** Top-N por priority desc DENTRE os que passam no gate de R$/h (filtra ANTES de cortar).
+/** Top-N por priority desc DENTRE os que passam no gate de R$/h e ainda NÃO estão na fila
+ *  (filtra ANTES de cortar).
  *
  *  Margem desconhecida sai em `semMargem`, não em `selecionados`: sem margem o gate não é
  *  decidível, e reprovar por omissão confundiria "não sei" com "cliente ruim". O chamador
  *  DEVE reportar `semMargem` — corte silencioso leria como "cobri todo mundo" sem ter
- *  coberto (money-path: no silent caps). */
+ *  coberto (money-path: no silent caps).
+ *
+ *  `jaNaFila` (clientes com plano ABERTO) é excluído AQUI, antes do corte, e a ordem é o ponto
+ *  todo: com topN pequeno, filtrar DEPOIS congelaria a fila — o batch escolheria todo dia os
+ *  mesmos topN de maior priority, a idempotência os pularia, e o cliente topN+1 nunca entraria.
+ *
+ *  `naFila` e `semMargem` PODEM SE SOBREPOR (recortes independentes, não partição): `semMargem`
+ *  é contado sobre TODOS os scores porque mede a cegueira da carteira — excluir quem está na
+ *  fila faria a cegueira "melhorar" só por a fila ter enchido. */
 export function selecionarParaPregeracao(
   scores: LinhaSelecao[],
   topN: number,
-): { selecionados: LinhaSelecao[]; semMargem: LinhaSelecao[] } {
+  jaNaFila: ReadonlySet<string> = new Set(),
+): { selecionados: LinhaSelecao[]; semMargem: LinhaSelecao[]; naFila: LinhaSelecao[] } {
   const ordenados = [...scores].sort((a, b) => b.priority - a.priority);
   const semMargem = ordenados.filter((s) => margemConhecida(s.marginPct) == null);
+  const naFila = ordenados.filter((s) => jaNaFila.has(s.customer));
   const selecionados = ordenados
     .filter((s) => {
+      if (jaNaFila.has(s.customer)) return false;
       const pph = profitPerHora(s.rev, s.avg, s.marginPct);
       return pph != null && pph >= PROFIT_PER_HOUR_THRESHOLD;
     })
     .slice(0, topN);
-  return { selecionados, semMargem };
+  return { selecionados, semMargem, naFila };
 }
 
 /** Margem média dos PARES da carteira, contando SÓ quem tem margem conhecida.
