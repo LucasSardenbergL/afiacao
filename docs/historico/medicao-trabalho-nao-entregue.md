@@ -116,10 +116,49 @@ funções, em `LC_ALL=C` **e** `pt_BR.UTF-8` (a lição do #1483).
   **todas** as branches da sessão, descarta as que ainda estão checadas em worktree viva (trabalho
   vivo não é órfão) e reporta cada branch pendente na sessão mais recente que a tocou.
 
+## O limite que fica: commit fora da main ≠ TRABALHO fora da main
+
+As quatro armadilhas acima consertam a contagem de **commits**. Elas não fecham a distância entre
+essa contagem e a pergunta do founder, que é sobre **conteúdo**. Num repo que faz squash — e onde
+o mesmo arquivo é reescrito por várias sessões — o conteúdo de um commit pode chegar à main por
+**outro PR**, sem que o commit vire ancestral de nada. O `rev-list` continua contando 1; o trabalho
+já está entregue.
+
+Medido na primeira triagem real das 40 pendências apuradas (2026-08-07):
+
+- `claude/caixa-vazio-fail-closed` — reportado `COMMITS SOLTOS [1 commit]`, e o commit é
+  `fix(financeiro): lista VAZIA de conta corrente deixa de virar caixa zero [money-path]`.
+  Verificado arquivo por arquivo: **4 dos 5 idênticos à main**, e o quinto difere porque a **main
+  está à frente** (trocou o `serve` do `deno.land/std` pelo `Deno.serve` nativo — a branch é que
+  ficou velha). Entregue.
+- `claude/fase5-desfecho-doc` — reportado `PR SEM MERGE [4 commits]`. A **migration** da Fase 5 e
+  os testes já estão na main; os 4 arquivos que "diferem" são dois docs que a main evoluiu depois e
+  um **artefato gerado** (`audit-custom-migrations.sql`), que se regenera e não se resolve. A lição
+  `falsificação mente quando o assert tem DUAS defesas independentes` também já está em
+  `money-path.md`. Entregue.
+
+**Nenhum teste automático barato decide isso.** Foram tentados dois, e ambos erram nas duas
+direções: comparar blob a blob marca "revisar" sempre que a main evoluiu o arquivo (39 de 40
+falsos); `git apply --cached --check -R` do patch da branch acerta o primeiro caso mas falha no
+segundo, porque o patch não aplica quando o **contexto** vizinho mudou (5 de 40 confirmados
+entregues, e pelo menos um dos 35 "perdidos" é entregue, provado à mão).
+
+Então a régua honesta é essa: **`wt:orfas` é um filtro de TRIAGEM, não um veredito.** Ele reduz 269
+transcritos / 485 branches às ~40 que merecem olho — ganho real — e o veredito de cada uma exige o
+diff contra a main, ancorado no `merge-base`:
+
+```bash
+mb=$(git merge-base origin/main <branch>) && git diff "$mb" <branch>   # o que a branch REALMENTE fez
+```
+
+O erro a não cometer é o mesmo das quatro: tratar o proxy como se fosse a medida. Dizer
+"15 pendências, 2 money-path" quando o certo é "15 **candidatas**, verifique o conteúdo" recria
+pendência fantasma — desta vez com o número já corrigido.
+
 ## A ferramenta
 
 ```bash
-bun run wt:orfas              # só o que tem trabalho NÃO entregue
+bun run wt:orfas              # candidatas: o que tem COMMIT fora da main (≠ trabalho, ver §limite)
 bun run wt:orfas --todas      # inclui as já entregues
 bun run wt:orfas --sem-fetch  # pula o git fetch
 ```
