@@ -17,9 +17,12 @@ import { createClient } from 'npm:@supabase/supabase-js@^2';
 import { authorizeCronOrStaff, corsHeaders } from '../_shared/auth.ts';
 import {
   carregarCarteiraComElegibilidade,
+  carregarContatadosNoMes,
   carregarPedidosDoMes,
+  carregarVisitadosNoMes,
 } from '../_shared/mapas-paginados.ts';
 import type { BancoPostgrest } from '../_shared/paginate.ts';
+import { montarLinhasSnapshot } from './montar-linhas.ts';
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
@@ -52,9 +55,17 @@ Deno.serve(async (req) => {
   const db = supabase as unknown as BancoPostgrest;
   let assignments: Awaited<ReturnType<typeof carregarCarteiraComElegibilidade>>;
   let pedidosDoMes: Awaited<ReturnType<typeof carregarPedidosDoMes>>;
+  let contatados: Set<string>;
+  let visitados: Set<string>;
   try {
     assignments = await carregarCarteiraComElegibilidade(db);
     pedidosDoMes = await carregarPedidosDoMes(db, mesIso, fimIso);
+    // Mesmo fail-closed dos pedidos, e pelo mesmo motivo: leitura de esforço que falha e
+    // degrada para conjunto vazio grava `contacted_in_month:false` num cliente que FOI
+    // contatado — "não consegui ler" carimbado como "ninguém ligou", congelado num mês que
+    // ninguém recalcula. Subdimensionar o esforço infla a positivação espontânea aparente.
+    contatados = await carregarContatadosNoMes(db, mesIso, fimIso);
+    visitados = await carregarVisitadosNoMes(db, mesIso, fimIso);
   } catch (e) {
     const motivo = e instanceof Error ? e.message : String(e);
     console.error('[carteira-positivacao-snapshot] leitura falhou, snapshot NÃO gravado:', motivo);
@@ -64,27 +75,9 @@ Deno.serve(async (req) => {
     );
   }
 
-  // Pedidos válidos do mês por cliente (receita + 1ª data). order_date_kpi é não-nulo (backfill).
-  const byCustomer = new Map<string, { receita: number; primeira: string | null }>();
-  for (const o of pedidosDoMes) {
-    const cur = byCustomer.get(o.customer_user_id) ?? { receita: 0, primeira: null };
-    cur.receita += Number(o.total ?? 0);
-    if (!cur.primeira || o.order_date_kpi < cur.primeira) cur.primeira = o.order_date_kpi;
-    byCustomer.set(o.customer_user_id, cur);
-  }
-
-  const rows = assignments.map((a) => {
-    const ped = byCustomer.get(a.customer_user_id);
-    return {
-      mes: mesIso,
-      customer_user_id: a.customer_user_id,
-      owner_user_id: a.owner_user_id,
-      eligible: a.eligible,
-      had_order_in_month: !!ped,
-      first_order_date_in_month: ped?.primeira ?? null,
-      revenue_month: ped?.receita ?? 0,
-    };
-  });
+  // Montagem em `montar-linhas.ts` (pura) — o index importa `npm:` e é intestável sob
+  // `--no-remote`, então a regra que decide cada campo mora onde o teste alcança.
+  const rows = montarLinhasSnapshot(mesIso, assignments, pedidosDoMes, contatados, visitados);
 
   let upserted = 0;
   let errors = 0;

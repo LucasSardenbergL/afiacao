@@ -97,6 +97,56 @@ export async function carregarExcluidosDaCarteira(db: BancoPostgrest): Promise<S
   return new Set(linhas.map((l) => l.user_id));
 }
 
+// Clientes TOCADOS por esforço comercial num mês — o lado "causa" do snapshot de
+// positivação, que só tem valor cruzado com `had_order_in_month` (o lado "efeito").
+//
+// Por que a janela é `data_rota`/`visit_date` (date) e não `created_at` (timestamptz):
+// o mês do snapshot é BRT, e `created_at` é UTC — uma ligação às 22h de 31/jan (BRT)
+// grava 01/fev em UTC e seria contada no mês seguinte, atribuindo o esforço de janeiro
+// a fevereiro. As colunas date não têm fuso, e é o mesmo critério que
+// `carregarPedidosDoMes` já usa com `order_date_kpi`.
+//
+// Conta TENTATIVA, não só sucesso: `status` inclui 'sem_resposta', e quem não atendeu
+// consumiu esforço da operação igual. É o denominador honesto de "quantos clientes a
+// rota tocou" — a taxa de resposta sai depois, do log detalhado.
+export async function carregarContatadosNoMes(
+  db: BancoPostgrest,
+  mesIso: string,
+  fimIso: string,
+): Promise<Set<string>> {
+  const linhas = await fetchAll<{ customer_user_id: string | null }>(
+    (de, ate) =>
+      db.from<{ customer_user_id: string | null }>("route_contact_log")
+        .select("customer_user_id")
+        .gte("data_rota", mesIso)
+        .lt("data_rota", fimIso)
+        .order("id", { ascending: true })
+        .range(de, ate),
+    "route_contact_log",
+  );
+  // customer_user_id é NULLABLE nesta tabela: `new Set([null])` daria um membro fantasma
+  // que nunca casa com assignment, mas polui a contagem de esforço em qualquer diagnóstico.
+  return new Set(linhas.map((l) => l.customer_user_id).filter((id): id is string => !!id));
+}
+
+export async function carregarVisitadosNoMes(
+  db: BancoPostgrest,
+  mesIso: string,
+  fimIso: string,
+): Promise<Set<string>> {
+  const linhas = await fetchAll<{ customer_user_id: string }>(
+    (de, ate) =>
+      db.from<{ customer_user_id: string }>("route_visits")
+        .select("customer_user_id")
+        .gte("visit_date", mesIso)
+        .lt("visit_date", fimIso)
+        .order("id", { ascending: true })
+        .range(de, ate),
+    "route_visits",
+  );
+  return new Set(linhas.map((l) => l.customer_user_id));
+}
+
 interface LinhaProduto {
   id: string | null;
   omie_codigo_produto: number | string | null;
