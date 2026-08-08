@@ -48,9 +48,17 @@ function chain(table: string): unknown {
 }
 
 vi.mock('@/integrations/supabase/client', () => ({ supabase: { from: (t: string) => chain(t) } }));
-vi.mock('@/contexts/AuthContext', () => ({
-  useAuth: () => ({ user: { id: 'staff-1' }, isStaff: true, loading: false }),
-}));
+// `user` PRECISA ser o mesmo objeto entre renders: o AuthContext real guarda em `useState`
+// (identidade estável), e `useAdminCustomers` tem `useEffect(…, [user, isStaff])` que chama
+// `setCategories`. Um literal novo a cada chamada — como estava — dá dep sempre "nova" →
+// efeito → setState → render → efeito: loop infinito de render, e o teste TRAVA (não falha).
+// Mock instável = infra de teste divergindo da realidade, não bug do código sob teste.
+// (o objeto nasce DENTRO da factory: `vi.mock` é içado para o topo do arquivo, então
+// referenciar um const de fora cairia na TDZ — o closure roda uma vez e é estável.)
+vi.mock('@/contexts/AuthContext', () => {
+  const user = { id: 'staff-1' };
+  return { useAuth: () => ({ user, isStaff: true, loading: false }) };
+});
 vi.mock('@/contexts/ImpersonationContext', () => ({
   useImpersonation: () => ({ isImpersonating: false, effectiveUserId: 'staff-1' }),
 }));

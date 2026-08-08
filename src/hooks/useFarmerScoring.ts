@@ -3,6 +3,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import type { Tables } from '@/integrations/supabase/types';
 import { custoCanonico } from '@/lib/custo/custoCanonico';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 import { fetchAllPages } from '@/lib/postgrest';
 import { accumulateMarginFromItems, resolveProductIdsFromItems } from '@/lib/scoring/margin';
 import { calcularHealthScore } from '@/lib/scoring/healthScore';
@@ -504,7 +505,10 @@ export const useFarmerScoring = (farmerId?: string) => {
 
     } catch (error) {
       console.error('Error calculating scores:', error);
-      setErro(error instanceof Error ? error.message : 'Falha ao calcular os scores');
+      // `instanceof Error ? .message : <literal>` seria a porta de fuga do gate do #1661: o
+      // erro do supabase-js sem `.throwOnError()` é objeto PLANO, cairia no literal e a recusa
+      // da RLS/PostgREST morreria calada — contradizendo o próprio ponto deste erro honesto.
+      setErro(mensagemDeErro(error) ?? 'Falha ao calcular os scores');
     } finally {
       setCalculating(false);
       setLoading(false);

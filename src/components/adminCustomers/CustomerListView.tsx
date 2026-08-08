@@ -9,7 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import {
   Loader2, Search, User, ChevronRight, Filter, Users, Save, Bookmark, X as XIcon,
-  AlertTriangle, RefreshCw,
+  AlertTriangle,
 } from 'lucide-react';
 import { EmptyState } from '@/components/EmptyState';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
