@@ -7,6 +7,8 @@ import { useSalespeople } from '@/hooks/useCoverage';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { RefreshCw } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import type { GrupoEficacia, TaxaGated, GapCliente } from '@/lib/route/painel/types';
 
@@ -21,14 +23,16 @@ const CANAL_LABEL: Record<string, string> = { ligacao: 'Ligação', whatsapp: 'W
 export default function RotaPainelLigacoes() {
   const { isMaster, isGestorComercial } = useAuth();
   const [dias, setDias] = useState(30);
-  const { data: p, isLoading } = useRoutePanel(dias);
+  const { data: p, isLoading, isError, refetch } = useRoutePanel(dias);
   const { data: salespeople = [] } = useSalespeople();
   const nomeVend = (id: string) => salespeople.find((s) => s.user_id === id)?.name ?? id.slice(0, 8);
 
   if (!isMaster && !isGestorComercial) return <Navigate to="/" replace />;
-  if (isLoading || !p) return <PageSkeleton variant="cockpit" />;
+  // `!p` sozinho era skeleton ETERNO sob erro (anti-padrão §7: sem cache → "indisponível"
+  // com motivo, nunca shimmer sem fim): com a query em erro, `p` nunca chega.
+  if (isLoading || (!p && !isError)) return <PageSkeleton variant="cockpit" />;
 
-  const semDado = p.elegiveis_n === 0 && p.contatos_total === 0;
+  const semDado = p != null && p.elegiveis_n === 0 && p.contatos_total === 0;
 
   return (
     <div className="container py-6 space-y-4 max-w-4xl">
@@ -49,10 +53,28 @@ export default function RotaPainelLigacoes() {
         </Select>
       </div>
 
-      {semDado ? (
+      {!p ? (
+        // Falha SEM dado: dizer o que aconteceu + retry. O "Sem dados no período" de sucesso
+        // seria uma afirmação fabricada sobre um período que não foi lido.
+        <Card role="alert" className="p-6 space-y-3 border-status-error/30 bg-status-error/5">
+          <p className="text-sm text-status-error">
+            Não foi possível carregar o painel — a leitura da base falhou. Nenhum número foi
+            estimado; isto não significa período sem dados.
+          </p>
+          <Button variant="outline" size="sm" onClick={() => refetch()} className="gap-1.5">
+            <RefreshCw className="w-4 h-4" /> Tentar novamente
+          </Button>
+        </Card>
+      ) : semDado ? (
         <Card className="p-6 text-sm text-muted-foreground">Sem dados no período ainda. O painel preenche conforme as vendedoras abrem a lista e registram as ligações.</Card>
       ) : (
         <>
+          {isError && (
+            <div role="alert" className="rounded-lg border border-status-warning/30 bg-status-warning/5 p-3 text-xs text-status-warning">
+              Exibindo a última leitura bem-sucedida — a atualização mais recente falhou. Os
+              números podem estar desatualizados.
+            </div>
+          )}
           {/* Headline: cobertura + gap + capacidade */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <Card className="p-4">

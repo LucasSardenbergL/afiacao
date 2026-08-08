@@ -3,6 +3,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import type { Tables } from '@/integrations/supabase/types';
 import { custoCanonico } from '@/lib/custo/custoCanonico';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 import { fetchAllPages } from '@/lib/postgrest';
 import { accumulateMarginFromItems, resolveProductIdsFromItems } from '@/lib/scoring/margin';
 import { calcularHealthScore } from '@/lib/scoring/healthScore';
@@ -116,6 +117,10 @@ export const useFarmerScoring = (farmerId?: string) => {
   const [agenda, setAgenda] = useState<AgendaItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [calculating, setCalculating] = useState(false);
+  // Falha de leitura NÃO pode morrer no console (§7): sem isto, cold load com erro vira
+  // clientScores=[] e a tela afirma "carteira vazia". O dado anterior é preservado (os
+  // setters só rodam no sucesso) — quem decide entre "indisponível" e "stale" é a UI.
+  const [erro, setErro] = useState<string | null>(null);
 
   // Load algorithm config
   useEffect(() => {
@@ -154,8 +159,10 @@ export const useFarmerScoring = (farmerId?: string) => {
       );
 
       if (salesOrders.length === 0) {
+        // Leitura OK e base genuinamente vazia — vazio aqui é fato, não falha.
         setClientScores([]);
         setAgenda([]);
+        setErro(null);
         setCalculating(false);
         setLoading(false);
         return;
@@ -486,6 +493,7 @@ export const useFarmerScoring = (farmerId?: string) => {
       }
 
       setAgenda(agendaItems);
+      setErro(null);
 
       // 9. Persistência: NENHUMA escrita client-side — este hook é DISPLAY-ONLY by design.
       // Writer autoritativo de farmer_client_scores = edge `calculate-scores` (cron diário
@@ -497,6 +505,10 @@ export const useFarmerScoring = (farmerId?: string) => {
 
     } catch (error) {
       console.error('Error calculating scores:', error);
+      // `instanceof Error ? .message : <literal>` seria a porta de fuga do gate do #1661: o
+      // erro do supabase-js sem `.throwOnError()` é objeto PLANO, cairia no literal e a recusa
+      // da RLS/PostgREST morreria calada — contradizendo o próprio ponto deste erro honesto.
+      setErro(mensagemDeErro(error) ?? 'Falha ao calcular os scores');
     } finally {
       setCalculating(false);
       setLoading(false);
@@ -528,7 +540,7 @@ export const useFarmerScoring = (farmerId?: string) => {
 
   return {
     config, clientScores, agenda, summary,
-    loading, calculating,
+    loading, calculating, erro,
     recalculate: calculateScores,
   };
 };

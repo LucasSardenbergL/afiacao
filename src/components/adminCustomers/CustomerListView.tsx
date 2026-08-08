@@ -9,6 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import {
   Loader2, Search, User, ChevronRight, Filter, Users, Save, Bookmark, X as XIcon,
+  AlertTriangle,
 } from 'lucide-react';
 import { EmptyState } from '@/components/EmptyState';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
@@ -26,6 +27,8 @@ export function CustomerListView({
   customers,
   scores,
   loading,
+  isError,
+  onRetry,
   total,
   isCarteira,
   onSelect,
@@ -36,6 +39,9 @@ export function CustomerListView({
   customers: Customer[];
   scores: Map<string, ClientScore>;
   loading: boolean;
+  /** Falha da fonte da lista (§7): vazia por FALHA ≠ vazia de verdade. */
+  isError: boolean;
+  onRetry: () => void;
   total: number;
   isCarteira: boolean;
   onSelect: (c: Customer) => void;
@@ -114,10 +120,20 @@ export function CustomerListView({
         <div>
           <h1 className="text-xl font-semibold text-foreground">Clientes</h1>
           <p className="text-sm text-muted-foreground">
-            {`${total} ${isCarteira ? 'clientes na carteira' : 'clientes na base'}`}
+            {/* Sob falha sem dado, "0 clientes na base" afirmaria base vazia — não medimos nada. */}
+            {isError && customers.length === 0
+              ? 'contagem indisponível'
+              : `${total} ${isCarteira ? 'clientes na carteira' : 'clientes na base'}`}
           </p>
         </div>
       </div>
+
+      {isError && customers.length > 0 && (
+        <div role="alert" className="rounded-lg border border-status-warning/30 bg-status-warning/5 p-3 text-xs text-status-warning">
+          Exibindo a última leitura bem-sucedida — a atualização mais recente falhou. A lista
+          pode estar desatualizada.
+        </div>
+      )}
 
       {/* Segmentos salvos (chips) */}
       {(segments.length > 0 || savingSegment || (searchQuery || filterHealth !== 'all')) && (
@@ -336,6 +352,19 @@ export function CustomerListView({
         </div>
 
         {filtered.length === 0 && (
+          isError && customers.length === 0 ? (
+            // Falha de leitura ≠ base vazia: o empty state de sucesso mandaria "cadastre um
+            // cliente" sobre uma lista que NÃO foi lida (§7 — ausente ≠ vazio).
+            <div role="alert">
+              <EmptyState
+                icon={AlertTriangle}
+                title="Não foi possível carregar os clientes"
+                description="A leitura da base falhou — a lista não está vazia, está indisponível. Nenhum cliente foi omitido de propósito."
+                actionLabel="Tentar novamente"
+                onAction={onRetry}
+              />
+            </div>
+          ) : (
           <EmptyState
             icon={searchQuery || filterHealth !== 'all' ? Search : Users}
             title={searchQuery || filterHealth !== 'all' ? 'Nenhum cliente com esses filtros' : 'Nenhum cliente na carteira'}
@@ -347,6 +376,7 @@ export function CustomerListView({
             actionLabel={searchQuery || filterHealth !== 'all' ? 'Limpar filtros' : undefined}
             onAction={searchQuery || filterHealth !== 'all' ? () => setUrlState({ search: '', health: 'all' }) : undefined}
           />
+          )
         )}
 
         {/* Infinite scroll sentinel + fallback botão */}
