@@ -21,13 +21,13 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **455** custom migrations totais
-- **1562** objetos esperados (criados por estas migrations)
+- **456** custom migrations totais
+- **1571** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 460
+  - `function`: 467
   - `rls_policy`: 392
-  - `index`: 237
-  - `cron_job`: 163
+  - `index`: 238
+  - `cron_job`: 164
   - `table`: 153
   - `trigger`: 79
   - `view`: 74
@@ -3813,6 +3813,20 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20260807223000_check_finitude_money_path.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260808012000_atp_reconciliacao_fase3.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.atp_disponivel` | — |
+| `function` | `private.expirar_reservas_vencidas_job` | — |
+| `function` | `private.atp_pedido_canonico` | — |
+| `function` | `private.atp_reconciliar_job` | — |
+| `function` | `public.atp_reconciliar` | — |
+| `function` | `public.atp_resolver_reserva` | — |
+| `function` | `public.atp_reservas_pendentes` | — |
+| `index` | `public.idx_estoque_reservas_pedido_ativa` | `estoque_reservas` |
+| `cron_job` | `cron.atp-reconciliar` | — |
 
 ### `20260808020000_tactical_plan_idempotencia_janela.sql`
 
