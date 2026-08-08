@@ -5,7 +5,7 @@
 // Método Omie usado: PesquisarPedCompra
 // Doc: https://app.omie.com.br/api/v1/produtos/pedidocompra/#PesquisarPedCompra
 
-import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import {
   computeJanelaPrevisao,
   deveRodarCompleto,

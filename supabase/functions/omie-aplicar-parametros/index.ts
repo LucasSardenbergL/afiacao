@@ -3,7 +3,7 @@
 // Body: { empresa: 'OBEN', ids: number[] } — IDs de fila_aplicacao_omie a aplicar.
 // Para cada ID: revalida prontidão, chama Omie AlterarProduto, grava resposta.
 
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 
 const corsHeaders = {

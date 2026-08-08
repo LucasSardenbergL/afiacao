@@ -3,7 +3,7 @@
 // para a tabela sku_status_omie. Usa ListarProdutos paginado (500 por página).
 // Aceita empresa OBEN, COLACOR ou ALL (processa todas as suportadas, em série).
 
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { fetchAll } from "../_shared/paginate.ts";
 import { resolverEmpresas, type Empresa } from "../_shared/empresas.ts";
