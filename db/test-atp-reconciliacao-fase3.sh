@@ -292,6 +292,17 @@ eq "A3 reserva pre-PV foi carimbada expirada"          "$(st "$CK_PREPV")" "expi
 # A4 — o carimbo não muda o cálculo (as duas defesas são independentes)
 eq "A4 apos o job, PV firme segue descontando" "$(reservado 3001)" "2"
 
+# A5 — A EXPIRADA NÃO RESSUSCITA quando o pedido ganha PV depois.
+# Cenário levantado por outra sessão do mesmo épico (coordenação multi-sessão,
+# challenge Codex independente): reserva A expira → retry do MESMO pedido cria B
+# (reservar_estoque só substitui as ATIVAS, a expirada fica) → o PV é confirmado
+# → se a suspensão do TTL olhasse a expirada, A+B do mesmo (pedido, SKU) seriam
+# compromisso em DOBRO. Aqui não acontece porque o predicado exige status='ativa',
+# e este assert TRAVA isso: quem "melhorar" o predicado para incluir expirada
+# reabre o duplo, e o vermelho aponta para cá. Medido antes de escrever: 2, não 4.
+P -q -c "UPDATE public.sales_orders SET omie_pedido_id = 9006 WHERE id='$SO_PREPV'"
+eq "A5 expirada NAO ressuscita quando o PV e confirmado depois" "$(reservado 3006)" "0"
+
 # ══════════════════════════════════════════════════════════════════════════════
 # ZONA 5 — O FATO VEM DA LINHA CANÔNICA, NÃO DA VINCULADA
 # (achado A do challenge, medido em prod: 19 pedidos oben com 2+ linhas)
