@@ -10,7 +10,7 @@
 // ⚠️ DEPLOY: exige a migration aplicada ANTES (sem 'processando' no CHECK, o claim
 // falharia 23514 e nenhum envio seria processado).
 // ESPELHO: helpers de src/lib/pedidosProgramados/helpers.ts (verbatim — Deno não importa de src/).
-import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient, SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff, corsHeaders } from "../_shared/auth.ts";
 
 // ── ESPELHO de src/lib/pedidosProgramados/helpers.ts (parte de envio, verbatim) ──

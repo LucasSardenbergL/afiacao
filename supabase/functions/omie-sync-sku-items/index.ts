@@ -22,7 +22,7 @@
 //   4) Para cada item, tenta achar o pedido específico via numero_contrato_fornecedor = nNumPedCompra.
 //   5) UPSERT em sku_leadtime_history (tracking_id, sku_codigo_omie).
 
-import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 
 interface OmieItemCabec {
   nIdProduto?: number | string;

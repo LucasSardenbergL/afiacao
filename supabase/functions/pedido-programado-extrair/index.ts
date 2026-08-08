@@ -4,7 +4,7 @@
 // recria os itens AINDA sem envio (não toca item já vinculado a envio).
 // Auth: staff (UI) ou service_role/cron.
 // ESPELHO: validarExtracao e tipos vêm de src/lib/pedidosProgramados/helpers.ts (verbatim).
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient } from "npm:@supabase/supabase-js@2";
 import Anthropic from "npm:@anthropic-ai/sdk@^0.93.0";
 import { authorizeCronOrStaff, corsHeaders } from "../_shared/auth.ts";
 

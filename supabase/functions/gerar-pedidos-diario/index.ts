@@ -4,7 +4,7 @@
 // 2. Busca detalhes do ciclo gerado (por fornecedor)
 // 3. Envia email digest via Resend para empresa_configuracao_custos.email_notificacoes
 // 4. Grava log em sync_reprocess_log
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { createClient } from "npm:@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
