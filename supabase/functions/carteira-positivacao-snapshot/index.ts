@@ -13,7 +13,7 @@
 //         (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name='CRON_SECRET' LIMIT 1))
 //     ); $$);
 
-import { createClient } from 'npm:@supabase/supabase-js@^2';
+import { createClient } from 'npm:@supabase/supabase-js@2';
 import { authorizeCronOrStaff, corsHeaders } from '../_shared/auth.ts';
 import {
   carregarCarteiraComElegibilidade,

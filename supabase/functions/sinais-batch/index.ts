@@ -14,7 +14,7 @@
 //     ); $$
 //   );
 
-import { createClient } from 'npm:@supabase/supabase-js@^2';
+import { createClient } from 'npm:@supabase/supabase-js@2';
 import { authorizeCronOrStaff, corsHeaders } from '../_shared/auth.ts';
 
 // Cada extração faz 1 LLM (~3-5s); concorrência baixa pra não estourar rate limit.

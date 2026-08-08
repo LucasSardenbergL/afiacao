@@ -7,7 +7,7 @@
 // Fonte canônica: src/lib/scoring/{decay,modulators,aggregate,types}.ts
 // TODO: PR-SCORING-V2.1 — extrair para _shared/scoring/ e remover duplicação.
 
-import { createClient } from 'npm:@supabase/supabase-js@^2';
+import { createClient } from 'npm:@supabase/supabase-js@2';
 import { authorizeCronOrStaff, corsHeaders } from '../_shared/auth.ts';
 
 // --- Inline: decay.ts ---

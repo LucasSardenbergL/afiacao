@@ -8,7 +8,7 @@
 //
 // Auth: authorizeCronOrStaff (cron via x-cron-secret OU staff JWT).
 
-import { createClient } from 'npm:@supabase/supabase-js@^2';
+import { createClient } from 'npm:@supabase/supabase-js@2';
 import { authorizeCronOrStaff, corsHeaders } from '../_shared/auth.ts';
 import { exigirLeitura, FalhaLeituraCritica } from '../_shared/leitura-critica.ts';
 
