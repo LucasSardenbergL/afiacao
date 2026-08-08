@@ -9,7 +9,7 @@
 // Codex expôs na fase 2: forced tool-use garante que a ferramenta foi usada, não
 // que os tipos declarados no schema foram respeitados.
 
-export interface ItemServico {
+interface ItemServico {
   userToolId: string;
   omie_codigo_servico: number;
   servico_descricao: string;

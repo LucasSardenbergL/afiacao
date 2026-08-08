@@ -20,7 +20,7 @@ const MEDIA_TYPE_PDF = "application/pdf";
 export const LIMITE_BASE64_BYTES = 30 * 1024 * 1024;
 
 /** Union literal — o SDK da Anthropic tipa `media_type` assim, `string` não casa. */
-export type MediaTypeImagem = (typeof MEDIA_TYPES_IMAGEM)[number];
+type MediaTypeImagem = (typeof MEDIA_TYPES_IMAGEM)[number];
 
 export type BlocoAnexo =
   | {
@@ -124,7 +124,7 @@ export function dataValida(valor: unknown): string | null {
   return d.toISOString().slice(0, 10) === texto ? texto : null;
 }
 
-export interface ItemPromo {
+interface ItemPromo {
   codigo_fornecedor: string;
   descricao: string | null;
   desconto_perc: number;
@@ -190,7 +190,7 @@ export function normalizarItensPromo(bruto: unknown): ItensNormalizados {
   return { itens, rejeitados };
 }
 
-export interface CategoriaAumento {
+interface CategoriaAumento {
   categoria_fornecedor: string;
   aumento_perc: number;
   data_vigencia_especifica: string | null;

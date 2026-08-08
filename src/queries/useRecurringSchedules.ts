@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 
-export interface RecurringScheduleSummary {
+interface RecurringScheduleSummary {
   id: string;
   frequency_days: number;
   next_order_date: string;

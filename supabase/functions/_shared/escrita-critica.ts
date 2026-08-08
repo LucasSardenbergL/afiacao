@@ -20,7 +20,7 @@
 // produzido por terceiro sem verificar quem o produz e onde ele deságua (§ money-path).
 
 /** Shape mínimo do erro do PostgREST — só o que este contrato lê. */
-export interface ErroEscrita {
+interface ErroEscrita {
   message?: string | null;
   code?: string | null;
   details?: string | null;

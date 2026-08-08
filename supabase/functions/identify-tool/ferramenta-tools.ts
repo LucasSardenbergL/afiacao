@@ -19,7 +19,7 @@ export interface FerramentaIdentificada {
   suggested_services: string[];
 }
 
-export const CONFIANCAS = ["alta", "media", "baixa"] as const;
+const CONFIANCAS = ["alta", "media", "baixa"] as const;
 
 export const TOOL_FERRAMENTA = {
   name: "identificar_ferramenta",

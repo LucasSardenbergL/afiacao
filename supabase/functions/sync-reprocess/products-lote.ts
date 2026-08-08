@@ -45,7 +45,7 @@ export interface LinhaProdutoCatalogo {
   valor_unitario: unknown;
 }
 
-export interface RowUpsertProduto {
+interface RowUpsertProduto {
   omie_codigo_produto: number;
   omie_codigo_produto_integracao: string | null;
   codigo: string;

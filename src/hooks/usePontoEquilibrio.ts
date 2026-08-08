@@ -22,7 +22,7 @@ import {
 const STALE = 5 * 60_000; // snapshot e classificação mudam raramente
 
 /** Prefixo omie dos códigos de folha/pessoal (Salários, FGTS, INSS, VA, férias… todos 2.03.*). */
-export const FAMILIA_FOLHA = ['2.03'];
+const FAMILIA_FOLHA = ['2.03'];
 
 /** Empresas cuja folha roda em OUTRA empresa do grupo → o PE exige rateio (§4 da spec F3 v2). */
 export const EMPRESAS_COM_FOLHA_EXTERNA: Record<string, { origem: string; rotulo: string }> = {

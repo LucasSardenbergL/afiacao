@@ -13,7 +13,7 @@
 // pedido montado a partir de 3 de 5 fotos parece completo e não é.
 
 /** Media types que a API da Anthropic aceita como imagem. */
-export const MEDIA_TYPES_IMAGEM = [
+const MEDIA_TYPES_IMAGEM = [
   "image/jpeg",
   "image/png",
   "image/gif",
