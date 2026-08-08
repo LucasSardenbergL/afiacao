@@ -2,11 +2,34 @@ import { useNavigate } from 'react-router-dom';
 import { Target, FileText } from 'lucide-react';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { Card, CardContent } from '@/components/ui/card';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useAuth } from '@/contexts/AuthContext';
+import { JANELA_FILA_DIAS, LIMITE_FILA, type FiltroFila } from '@/hooks/useTacticalPlan';
 import { useFarmerTacticalPlan } from '@/components/farmer/tacticalPlan/useFarmerTacticalPlan';
 import { GerarPlanoCard } from '@/components/farmer/tacticalPlan/GerarPlanoCard';
 import { EfficiencyAlertDialog } from '@/components/farmer/tacticalPlan/EfficiencyAlertDialog';
 import { PlanCard } from '@/components/farmer/tacticalPlan/PlanCard';
+
+const ROTULO_FILA: Record<FiltroFila, string> = {
+  pendentes: 'pendentes',
+  concluidos: 'concluídos',
+  expirados: 'expirados',
+};
+
+/**
+ * Rodapé honesto da fila. O ponto do PR: a tela precisa DIZER quando existe plano
+ * além dos exibidos — antes, 383 de 533 ficavam fora dos 50 slots sem sinal nenhum.
+ *
+ * `total === null` = contagem não apurada (query falhou). Nesse caso o rótulo OMITE
+ * o total em vez de exibir 0 — "0 pendentes" seria fabricação (ausente ≠ zero).
+ */
+export function resumoDaFila(exibidos: number, total: number | null, filtro: FiltroFila): string {
+  const rotulo = ROTULO_FILA[filtro];
+  const janela = filtro === 'pendentes' ? ` · janela de ${JANELA_FILA_DIAS} dias` : '';
+  if (total === null) return `${exibidos} ${rotulo} exibidos${janela}`;
+  if (total > exibidos) return `Mostrando ${exibidos} de ${total} ${rotulo}${janela}`;
+  return `${total} ${rotulo}${janela}`;
+}
 
 const FarmerTacticalPlan = () => {
   const navigate = useNavigate();
@@ -15,6 +38,9 @@ const FarmerTacticalPlan = () => {
     plans,
     loading,
     generating,
+    totalNaFila,
+    filtroFila,
+    setFiltroFila,
     searchTerm,
     setSearchTerm,
     filteredCustomers,
@@ -64,6 +90,22 @@ const FarmerTacticalPlan = () => {
           onConfirm={confirmGenerate}
         />
 
+        {/* Fila: recorte + contador honesto do que ficou de fora */}
+        <Tabs value={filtroFila} onValueChange={(v) => setFiltroFila(v as FiltroFila)}>
+          <TabsList className="grid w-full grid-cols-3">
+            <TabsTrigger value="pendentes">Pendentes</TabsTrigger>
+            <TabsTrigger value="concluidos">Concluídos</TabsTrigger>
+            <TabsTrigger value="expirados">Expirados</TabsTrigger>
+          </TabsList>
+        </Tabs>
+
+        {!loading && (
+          <p className="text-[10px] text-muted-foreground px-1">
+            {resumoDaFila(plans.length, totalNaFila, filtroFila)}
+            {totalNaFila !== null && totalNaFila > LIMITE_FILA && ' — priorizados por risco de churn'}
+          </p>
+        )}
+
         {/* Plans List */}
         {loading ? (
           <PageSkeleton variant="list" />
@@ -71,7 +113,11 @@ const FarmerTacticalPlan = () => {
           <Card>
             <CardContent className="p-6 text-center">
               <FileText className="w-8 h-8 mx-auto mb-2 opacity-40" />
-              <p className="text-xs text-muted-foreground">Nenhum plano tático gerado ainda.</p>
+              <p className="text-xs text-muted-foreground">
+                {filtroFila === 'pendentes'
+                  ? `Nenhum plano pendente nos últimos ${JANELA_FILA_DIAS} dias.`
+                  : `Nenhum plano ${ROTULO_FILA[filtroFila]}.`}
+              </p>
             </CardContent>
           </Card>
         ) : (

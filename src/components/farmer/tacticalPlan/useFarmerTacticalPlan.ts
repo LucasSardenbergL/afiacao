@@ -5,7 +5,8 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { useMyActiveCoverage } from '@/hooks/useCoverage';
-import { useTacticalPlan, type PlanType } from '@/hooks/useTacticalPlan';
+import { useUrlState } from '@/hooks/useUrlState';
+import { useTacticalPlan, type PlanType, type FiltroFila } from '@/hooks/useTacticalPlan';
 import { supabase } from '@/integrations/supabase/client';
 import { fetchAllPages } from '@/lib/postgrest';
 import type { FarmerClientScoreRow, ProfileRow, CustomerLite } from './types';
@@ -13,6 +14,8 @@ import type { FarmerClientScoreRow, ProfileRow, CustomerLite } from './types';
 // Lote do `.in()` de profiles. 200 UUIDs ≈ 7,4 KB de query string — abaixo do teto de ~8 KB do
 // PostgREST/proxy, com folga para o resto da URL. Ver o guard em `loadCustomers`.
 const PROFILES_BATCH = 200;
+
+const FILTROS_FILA: readonly FiltroFila[] = ['pendentes', 'concluidos', 'expirados'];
 
 export function useFarmerTacticalPlan() {
   const { user, isStaff } = useAuth();
@@ -26,7 +29,16 @@ export function useFarmerTacticalPlan() {
   const coveredIds = (coverage ?? []).map((c) => c.covered_user_id);
   const coveredKey = coveredIds.join(',');
   const ownerIds = isImpersonating && effectiveUserId ? [effectiveUserId] : (user ? [user.id, ...coveredIds] : []);
-  const { plans, loading, generating, loadPlans, generatePlan, checkEfficiency, recordResult } = useTacticalPlan();
+  const { plans, loading, generating, totalNaFila, loadPlans, generatePlan, checkEfficiency, recordResult } = useTacticalPlan();
+  // Filtro na URL (convenção do repo p/ filtro de lista): sobrevive a F5 e é
+  // compartilhável. ⚠️ A query string é input do usuário — `?fila=lixo` cairia num
+  // recorte inexistente e a tela voltaria vazia sem explicação. Valor fora do
+  // domínio degrada para `pendentes`.
+  const [{ fila }, setUrlState] = useUrlState({ fila: 'pendentes' });
+  const filtroFila: FiltroFila = (FILTROS_FILA as readonly string[]).includes(fila)
+    ? (fila as FiltroFila)
+    : 'pendentes';
+  const setFiltroFila = (f: FiltroFila) => setUrlState({ fila: f });
   const [customers, setCustomers] = useState<CustomerLite[]>([]);
   const [expandedPlan, setExpandedPlan] = useState<string | null>(null);
   const [copiedText, setCopiedText] = useState<string | null>(null);
@@ -34,12 +46,17 @@ export function useFarmerTacticalPlan() {
   const [efficiencyAlert, setEfficiencyAlert] = useState<{ customerId: string; profitPerHour: number | null; motivo?: 'sem_margem' | 'indisponivel'; planType: PlanType } | null>(null);
 
   useEffect(() => {
-    if (user?.id && isStaff) {
-      loadPlans();
-      loadCustomers();
-    }
+    if (user?.id && isStaff) loadPlans(filtroFila);
     // effectiveUserId/coveredKey na dep: ao entrar/sair da lente OU mudar a cobertura,
-    // recarrega planos + dropdown (que passa a incluir os clientes cobertos).
+    // recarrega os planos. `filtroFila` na dep: trocar de aba refaz a query.
+
+  }, [user, isStaff, effectiveUserId, coveredKey, filtroFila]);
+
+  // Separado do efeito acima DE PROPÓSITO: `loadCustomers` pagina a carteira inteira
+  // (até 3.858 clientes em prod, vários round-trips) e não depende do filtro da fila.
+  // Recarregá-la a cada troca de aba seria desperdício visível na tela.
+  useEffect(() => {
+    if (user?.id && isStaff) loadCustomers();
 
   }, [user, isStaff, effectiveUserId, coveredKey]);
 
@@ -131,6 +148,9 @@ export function useFarmerTacticalPlan() {
     plans,
     loading,
     generating,
+    totalNaFila,
+    filtroFila,
+    setFiltroFila,
     searchTerm,
     setSearchTerm,
     filteredCustomers,

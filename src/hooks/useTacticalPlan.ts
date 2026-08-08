@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { invokeFunction } from '@/lib/invoke-function';
 import { selectObjective, clampRecencyCapDays, objetivoFinal } from '@/lib/scoring/objective';
@@ -229,6 +229,35 @@ const classifyProfile = (healthScore: number, avgSpend: number, marginPct: numbe
 
 const PROFIT_PER_HOUR_THRESHOLD = 50; // R$/h configurable threshold
 
+/**
+ * Janela da fila de pendentes, em dias. Espelha o argumento do cron
+ * `expirar-planos-taticos` (migration `20260807210912`), que marca `expirado`
+ * fora dela. O front aplica a MESMA janela em vez de confiar que o job rodou:
+ * se o cron falhar, a fila voltaria a entupir e o plano some sem desfecho.
+ */
+export const JANELA_FILA_DIAS = 7;
+
+/** Teto de cards por carga. Não é paginação — é o tamanho do lote acionável. */
+export const LIMITE_FILA = 50;
+
+export type FiltroFila = 'pendentes' | 'concluidos' | 'expirados';
+
+/**
+ * Recorte da fila. Extraído para que a LISTA e a CONTAGEM usem exatamente o
+ * mesmo predicado — se divergirem, o contador da tela mente sobre quantos
+ * planos existem além dos exibidos, que é justamente o número que este PR
+ * passou a mostrar.
+ */
+function recorteDaFila<Q extends { eq: (c: string, v: string) => Q; gte: (c: string, v: string) => Q }>(
+  q: Q,
+  filtro: FiltroFila,
+  desdeIso: string,
+): Q {
+  if (filtro === 'concluidos') return q.eq('status', 'concluido');
+  if (filtro === 'expirados') return q.eq('status', 'expirado');
+  return q.eq('status', 'gerado').gte('generated_at', desdeIso);
+}
+
 export const useTacticalPlan = () => {
   const { user } = useAuth();
   // Lente "Ver como" + COBERTURA (#980): as leituras de EXIBIÇÃO (lista de planos, plano ativo do
@@ -248,6 +277,13 @@ export const useTacticalPlan = () => {
   const [plans, setPlans] = useState<TacticalPlan[]>([]);
   const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState<string | null>(null);
+  /** Total que casa o filtro atual (pode exceder LIMITE_FILA). `null` = não apurado. */
+  const [totalNaFila, setTotalNaFila] = useState<number | null>(null);
+  // Último recorte pedido. `generatePlan`/`recordResult` recarregam a lista sem saber
+  // qual aba está aberta; sem este ref o default os jogaria de volta em `pendentes` e
+  // a lista passaria a discordar da aba selecionada. Ref (não state): só alimenta o
+  // default da próxima carga, não deve disparar render.
+  const filtroAtual = useRef<FiltroFila>('pendentes');
 
   const parsePlan = (d: TacticalPlanRow, profileMap: Map<string, string>): TacticalPlan => {
     const topBundle: BundleSnapshot = d.top_bundle || {};
@@ -338,17 +374,44 @@ export const useTacticalPlan = () => {
   }, []);
 
   // Load existing plans
-  const loadPlans = useCallback(async () => {
+  const loadPlans = useCallback(async (filtro: FiltroFila = filtroAtual.current) => {
     if (!effectiveUserId) return;
+    filtroAtual.current = filtro;
     setLoading(true);
     try {
       const owners = await fetchOwnerScope(effectiveUserId);
-      const { data } = (await supabase
-        .from('farmer_tactical_plans')
-        .select('*')
-        .in('farmer_id', owners)
-        .order('created_at', { ascending: false })
-        .limit(50)) as unknown as { data: TacticalPlanRow[] | null };
+      const desdeIso = new Date(Date.now() - JANELA_FILA_DIAS * 86_400_000).toISOString();
+
+      // Ordena por RISCO, não por recência. `churn_risk` tem 53 valores distintos entre
+      // 33 e 89 nas 533 linhas de prod — discrimina de verdade. `bundle_lie` e
+      // `best_individual_lie` seriam o critério natural de VALOR, mas estão NULL em 100%
+      // das linhas (medido 2026-08-07): ordenar por eles seria ordem indefinida
+      // disfarçada de priorização. `generated_at` desempata (churn_risk tem empates
+      // massivos e, sem ordem total, a fatia de 50 é instável entre cargas).
+      const { data } = (await recorteDaFila(
+        supabase.from('farmer_tactical_plans').select('*').in('farmer_id', owners),
+        filtro,
+        desdeIso,
+      )
+        .order('churn_risk', { ascending: false })
+        .order('generated_at', { ascending: false })
+        .limit(LIMITE_FILA)) as unknown as { data: TacticalPlanRow[] | null };
+
+      // Contagem sob o MESMO recorte. Sem ela a tela não tem como avisar que existe
+      // plano além dos exibidos — foi exatamente assim que 383 de 533 sumiram sem
+      // deixar rastro nenhum na interface.
+      const { count, error: erroContagem } = (await recorteDaFila(
+        supabase
+          .from('farmer_tactical_plans')
+          .select('id', { count: 'exact', head: true })
+          .in('farmer_id', owners),
+        filtro,
+        desdeIso,
+      )) as unknown as { count: number | null; error: unknown };
+      // ausente ≠ zero: contagem que falhou degrada para `null` (a UI omite o rótulo),
+      // nunca para 0 — "0 pendentes" é indistinguível de "a query morreu", e some com
+      // a fila inteira sem sinal. Mesma família do `Number(null) === 0`.
+      setTotalNaFila(erroContagem ? null : (count ?? null));
 
       if (!data) { setPlans([]); return; }
 
@@ -796,6 +859,7 @@ export const useTacticalPlan = () => {
     plans,
     loading,
     generating,
+    totalNaFila,
     loadPlans,
     generatePlan,
     checkEfficiency,

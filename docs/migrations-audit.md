@@ -21,13 +21,13 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **453** custom migrations totais
-- **1559** objetos esperados (criados por estas migrations)
+- **454** custom migrations totais
+- **1561** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 458
+  - `function`: 459
   - `rls_policy`: 392
   - `index`: 237
-  - `cron_job`: 162
+  - `cron_job`: 163
   - `table`: 153
   - `trigger`: 79
   - `view`: 74
@@ -3802,6 +3802,13 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `index` | `public.idx_atp_decisoes_pedido` | `atp_decisoes` |
 | `index` | `public.idx_atp_decisoes_created` | `atp_decisoes` |
 | `rls_policy` | `public.atp_decisoes_select_staff` | `atp_decisoes` |
+
+### `20260807210912_expirar_planos_taticos.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.expirar_planos_taticos` | — |
+| `cron_job` | `cron.expirar-planos-taticos` | — |
 
 ### `20260807223000_check_finitude_money_path.sql`
 

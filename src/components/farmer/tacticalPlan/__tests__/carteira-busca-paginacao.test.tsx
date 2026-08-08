@@ -19,6 +19,12 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { renderHook, waitFor } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
+import type { ReactNode } from 'react';
+
+// `useFarmerTacticalPlan` lê o filtro da fila da URL (useUrlState → useSearchParams),
+// então o hook precisa de um Router no ambiente de teste.
+const ComRouter = ({ children }: { children: ReactNode }) => <MemoryRouter>{children}</MemoryRouter>;
 
 const OWNER = '414a9727-ad1d-4998-914e-9c6ccf26cf50';
 const PAGINA = 1000;
@@ -85,21 +91,21 @@ describe('carteira do PTPL: paginação + nomes em lote', () => {
   beforeEach(() => { queries = []; falhaSeLoteMaiorQue = Infinity; });
 
   it('carrega a carteira INTEIRA, não só a primeira página do PostgREST', async () => {
-    const { result: hook } = renderHook(() => useFarmerTacticalPlan());
+    const { result: hook } = renderHook(() => useFarmerTacticalPlan(), { wrapper: ComRouter });
     await waitFor(() => expect(hook.current.filteredCustomers.length).toBe(TOTAL));
     // O tell da versão quebrada: exatamente 1.000 (a capa), não 1.500.
     expect(hook.current.filteredCustomers.length).not.toBe(PAGINA);
   });
 
   it('pagina com ordem TOTAL — priority_score empata em massa e sozinho pula/repete linha', async () => {
-    renderHook(() => useFarmerTacticalPlan());
+    renderHook(() => useFarmerTacticalPlan(), { wrapper: ComRouter });
     await waitFor(() => expect(queries.some((q) => q.table === 'farmer_client_scores' && q.ranges.length)).toBe(true));
     const scoreQ = queries.filter((q) => q.table === 'farmer_client_scores');
     expect(scoreQ.every((q) => q.orders.includes('customer_user_id'))).toBe(true);
   });
 
   it('busca nomes em LOTES pequenos — nunca um .in() com a carteira toda', async () => {
-    renderHook(() => useFarmerTacticalPlan());
+    renderHook(() => useFarmerTacticalPlan(), { wrapper: ComRouter });
     await waitFor(() => expect(queries.some((q) => q.table === 'profiles')).toBe(true));
     const lotes = queries.filter((q) => q.table === 'profiles');
     expect(lotes.length).toBeGreaterThan(1);
@@ -107,7 +113,7 @@ describe('carteira do PTPL: paginação + nomes em lote', () => {
   });
 
   it('nome REAL chega ao dropdown — o cliente é buscável pelo que o vendedor digita', async () => {
-    const { result: hook } = renderHook(() => useFarmerTacticalPlan());
+    const { result: hook } = renderHook(() => useFarmerTacticalPlan(), { wrapper: ComRouter });
     // Espera QUALQUER carga (não `=== TOTAL`): este teste é sobre o NOME, não sobre a paginação.
     // Amarrá-lo ao total faria a sabotagem da paginação derrubá-lo em cascata, e um vermelho que
     // não é sobre o que o teste afirma medir não prova nada sobre ele.
@@ -120,7 +126,7 @@ describe('carteira do PTPL: paginação + nomes em lote', () => {
 
   it('consulta de nomes que FALHA não vira nome fabricado — o rótulo denuncia', async () => {
     falhaSeLoteMaiorQue = 0; // toda página de profiles falha
-    const { result: hook } = renderHook(() => useFarmerTacticalPlan());
+    const { result: hook } = renderHook(() => useFarmerTacticalPlan(), { wrapper: ComRouter });
     // Idem: independente da paginação — o que se mede aqui é o RÓTULO sob falha de consulta.
     await waitFor(() => expect(hook.current.filteredCustomers.length).toBeGreaterThan(0));
     const nomes = hook.current.filteredCustomers.map((c) => c.name);
