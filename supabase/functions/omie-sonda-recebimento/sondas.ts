@@ -223,6 +223,22 @@ export function normalizarItemPO(item: Record<string, unknown>): ItemPONormaliza
   };
 }
 
+// ── Etapa da PO ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Lê `cabecalho_consulta.cEtapa` de um `raw_data` de PO, sem confiar na forma do objeto.
+ * Devolve `null` quando não dá para saber — quem chama decide, e "não sei" nunca vira "não é".
+ */
+export function etapaDaPO(raw: unknown): string | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const cab = (raw as Record<string, unknown>).cabecalho_consulta;
+  if (typeof cab !== "object" || cab === null) return null;
+  const etapa = (cab as Record<string, unknown>).cEtapa;
+  if (typeof etapa === "string") return etapa.trim() === "" ? null : etapa.trim();
+  if (typeof etapa === "number") return String(etapa);
+  return null;
+}
+
 // ── Trava de leitura ───────────────────────────────────────────────────────────────────────
 
 /** Prefixos de método que o Omie usa para CONSULTA. Allowlist — tudo o mais é negado. */

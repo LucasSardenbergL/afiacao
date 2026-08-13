@@ -285,3 +285,15 @@ no money-path.
 **Consequência para o ledger (§6):** `receipt_allocation` N:N com quantidade **nullable** não é
 generalidade defensiva — é a forma dominante do dado. Qualquer desenho que pressuponha nota→PO 1:1
 cobre 5,7% do problema e erra os outros 94%.
+
+### 8.1 Correção de tipo no M1 — `nQtdeRec` é NUMBER, não string
+
+O M1 (§1) afirma que `nQtdeRec` "é a string literal `"0"`". A **conclusão** está certa e continua
+de pé — sobre os 2.740 itens de PO OBEN do espelho, `nQtdeRec` é `0` em **100%**, zero acima de zero,
+zero ausentes; o "a caminho" nunca decrementa. O que estava errado é o tipo: `jsonb_typeof` devolve
+`number` para `nQtdeRec` **e** para `nQtde` em 2.740 de 2.740.
+
+Registro porque muda código: quem implementar o parse do ledger a partir do M1 escreveria uma
+política para string onde o dado é número. O `parseQtd`/`parseRecebido` de `omie-sync-estoque` já
+trata os dois (string estrita **e** number), e o núcleo da sonda faz o mesmo — mas o comentário
+"Omie omite" ali descreve um caso que, no espelho de hoje, **não ocorre nenhuma vez**.

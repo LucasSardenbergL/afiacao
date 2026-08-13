@@ -36,6 +36,7 @@ import {
   type Desfecho,
   diffCaminhos,
   ehMetodoDeLeitura,
+  etapaDaPO,
   localizarItens,
   normalizarItemPO,
   redigirSegredos,
@@ -206,26 +207,60 @@ interface LinhaPO {
   raw_data: Record<string, unknown> | null;
 }
 
+const COLUNAS_PO =
+  "omie_codigo_pedido, numero_pedido, nid_receb, nfe_chave_acesso, t4_data_recebimento, raw_data";
+const ETAPA_ALVO = "15";
+/** 360 POs OBEN têm `t4` hoje (244 delas em etapa 15) — folga sobre isso, longe da capa de 1.000. */
+const TETO_FALLBACK = 500;
+
+/**
+ * Carrega a amostra de POs etapa-15 já recebidas.
+ *
+ * O filtro por caminho jsonb aninhado (`raw_data->cabecalho_consulta->>cEtapa`) tem precedente no
+ * repo só com UM nível (`metadata->>segmento`, rag-search). Se essa forma não for aceita, o risco
+ * não é erro visível — é a query voltar VAZIA e a sonda concluir "não há PO alvo", trocando
+ * "não consegui filtrar" por "não existe". Então: tenta o filtro no banco e, se ele falhar OU vier
+ * vazio, refaz sem o filtro e resolve a etapa em memória — sempre reportando qual caminho valeu.
+ */
 async function carregarAmostra(
   supabase: SupabaseClient,
   empresa: string,
   limite: number,
   pedidos: string[] | null,
-): Promise<LinhaPO[]> {
+): Promise<{ linhas: LinhaPO[]; via: "filtro_jsonb" | "fallback_memoria" }> {
   let q = supabase
     .from("purchase_orders_tracking")
-    .select(
-      "omie_codigo_pedido, numero_pedido, nid_receb, nfe_chave_acesso, t4_data_recebimento, raw_data",
-    )
+    .select(COLUNAS_PO)
     .eq("empresa", empresa)
     .not("t4_data_recebimento", "is", null)
-    .eq("raw_data->cabecalho_consulta->>cEtapa", "15");
+    .eq(`raw_data->cabecalho_consulta->>cEtapa`, ETAPA_ALVO);
   if (pedidos && pedidos.length > 0) q = q.in("numero_pedido", pedidos);
   const { data, error } = await q
     .order("t4_data_recebimento", { ascending: false })
     .limit(limite);
-  if (error) throw new Error(`leitura da amostra: ${error.message}`);
-  return (data ?? []) as LinhaPO[];
+
+  if (!error && (data?.length ?? 0) > 0) {
+    return { linhas: data as LinhaPO[], via: "filtro_jsonb" };
+  }
+  if (error) {
+    console.warn(`[sonda] filtro jsonb recusado (${error.message}) — caindo no fallback`);
+  }
+
+  let q2 = supabase
+    .from("purchase_orders_tracking")
+    .select(COLUNAS_PO)
+    .eq("empresa", empresa)
+    .not("t4_data_recebimento", "is", null);
+  if (pedidos && pedidos.length > 0) q2 = q2.in("numero_pedido", pedidos);
+  const { data: todas, error: erro2 } = await q2
+    .order("t4_data_recebimento", { ascending: false })
+    .limit(TETO_FALLBACK);
+  if (erro2) throw new Error(`leitura da amostra: ${erro2.message}`);
+
+  const linhas = ((todas ?? []) as LinhaPO[])
+    .filter((l) => etapaDaPO(l.raw_data) === ETAPA_ALVO)
+    .slice(0, limite);
+  return { linhas, via: "fallback_memoria" };
 }
 
 function ddmmyyyy(d: Date): string {
@@ -319,7 +354,12 @@ Deno.serve(async (req: Request): Promise<Response> => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
     );
 
-    const amostra = await carregarAmostra(supabase, empresa, limite, pedidos);
+    const { linhas: amostra, via: viaAmostra } = await carregarAmostra(
+      supabase,
+      empresa,
+      limite,
+      pedidos,
+    );
     if (amostra.length === 0) {
       return json({ ok: false, erro: "nenhuma PO etapa-15 com t4 encontrada para a amostra" }, 404);
     }
@@ -444,6 +484,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
       empresa,
       geradoEm: new Date().toISOString(),
       readOnly: true,
+      viaAmostra,
       chamadasAoOmie: ctx.chamadas,
       amostra: amostra.map((p) => ({
         numeroPedido: p.numero_pedido,

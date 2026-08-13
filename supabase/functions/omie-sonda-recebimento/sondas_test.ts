@@ -12,6 +12,7 @@ import {
   classificarResposta,
   diffCaminhos,
   ehMetodoDeLeitura,
+  etapaDaPO,
   localizarItens,
   normalizarItemPO,
   redigirSegredos,
@@ -185,6 +186,28 @@ Deno.test("redigirSegredos: mascara app_key e app_secret", () => {
 Deno.test("redigirSegredos: mascara mesmo com espaçamento alternativo", () => {
   const s = redigirSegredos('{ "app_secret" : "s3cr3t" }');
   assertEquals(s.includes("s3cr3t"), false);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// etapaDaPO — usada no fallback quando o filtro jsonb do PostgREST não estiver disponível
+// ─────────────────────────────────────────────────────────────────────────────
+
+Deno.test("etapaDaPO: lê a etapa do cabeçalho", () => {
+  assertEquals(etapaDaPO({ cabecalho_consulta: { cEtapa: "15" } }), "15");
+});
+
+Deno.test("etapaDaPO: aceita número e normaliza espaço", () => {
+  assertEquals(etapaDaPO({ cabecalho_consulta: { cEtapa: 15 } }), "15");
+  assertEquals(etapaDaPO({ cabecalho_consulta: { cEtapa: " 15 " } }), "15");
+});
+
+Deno.test("etapaDaPO: forma inesperada devolve null, não string vazia", () => {
+  // "não sei" tem que ficar distinguível de "é outra etapa" — senão o fallback silencia POs.
+  assertEquals(etapaDaPO(null), null);
+  assertEquals(etapaDaPO({}), null);
+  assertEquals(etapaDaPO({ cabecalho_consulta: null }), null);
+  assertEquals(etapaDaPO({ cabecalho_consulta: { cEtapa: "" } }), null);
+  assertEquals(etapaDaPO({ cabecalho_consulta: { cEtapa: null } }), null);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
