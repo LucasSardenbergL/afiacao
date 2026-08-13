@@ -163,8 +163,12 @@ banco é manual.
 Candidata seguinte à allowlist: `sales_orders` (money-path, já fechada em prod). Cada entrada exige
 curadoria própria — entrar em massa produziria uma allowlist que ninguém confia.
 
-**Nenhum gate type-checa `scripts/` nem `db/`:** `tsconfig.app.json` inclui só `src`, e o `knip` só
-olha `src` + `supabase/functions`. `bun run typecheck` verde é **evidência vazia** para o código
-destes dois diretórios — quem os cobre hoje é o vitest (runtime) e os harnesses. Verificado aqui com
-um `tsc` ad-hoc (0 erros nos 4 arquivos da entrega; 19 pré-existentes em `scripts/`, quase todos
-`import.meta.main` sem `bun-types`).
+~~**Nenhum gate type-checa `scripts/` nem `db/`:**~~ **FECHADO em 2026-08-13** pelo gate
+`scripts:typecheck` — ver [ci-typecheck-scripts-db.md](ci-typecheck-scripts-db.md).
+
+O diagnóstico registrado aqui se confirmou por inteiro: os 19 erros do `tsc` ad-hoc eram 9 de
+configuração (`import.meta.main`/`.dir` sem `bun-types`, some com o `types` certo) e 10 de dívida
+real. Entre os 10, um TS2307 que valeu a investigação: o #1201 deletou `src/lib/radar/types.ts`
+como "0 refs provadas" e quebrou `scripts/radar/carga.ts` — a ref era invisível ao knip (fora do
+`project`) **e** ao tsc (fora do `include`), e ficou verde por 5 semanas. Todos corrigidos; o gate
+entrou em zero, sem baseline.

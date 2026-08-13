@@ -13,7 +13,7 @@
  *
  * Rodar: bun scripts/test-migration-objects.ts   (exit 0 = verde)
  */
-import { extractObjects, objectKey } from './lib/migration-objects';
+import { extractObjects, objectKey, type ExtractedObject } from './lib/migration-objects';
 
 let fail = 0;
 function check(desc: string, cond: boolean) {
@@ -23,8 +23,13 @@ function check(desc: string, cond: boolean) {
     fail = 1;
   }
 }
-function has(objs: Array<Record<string, unknown>>, partial: Record<string, string>): boolean {
-  return objs.some((o) => Object.entries(partial).every(([k, v]) => o[k] === v));
+// `partial` é chaveado por `keyof ExtractedObject`, não por `string` solto: assim um typo na
+// chave (`{ kinde: 'view' }`) vira erro de COMPILAÇÃO em vez de um `has()` que devolve false
+// silenciosamente e reporta "FAIL" sem dizer que o culpado é o teste, não a lib. O cast na
+// leitura é seguro justamente porque a assinatura restringe as chaves — `Object.entries` é que
+// alarga a chave para `string` ao iterar.
+function has(objs: ExtractedObject[], partial: Partial<Record<keyof ExtractedObject, string>>): boolean {
+  return objs.some((o) => Object.entries(partial).every(([k, v]) => o[k as keyof ExtractedObject] === v));
 }
 
 console.log('── VIEW (gap que o audit não cobria) ──');
