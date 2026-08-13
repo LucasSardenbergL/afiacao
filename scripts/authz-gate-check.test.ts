@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { auditAuthz, type Migration } from './authz-gate-check';
+import { auditAuthz, auditCompleto, type Migration } from './authz-gate-check';
+import { AUTHZ_TABELAS_FECHADAS } from './authz-tabelas-fechadas';
 
 function mig(file: string, sql: string): Migration {
   return { file, sql };
@@ -137,5 +138,40 @@ describe('auditAuthz — anti falso-negativo (re-challenge Codex)', () => {
     const sql = 'CREATE OR REPLACE FUNCTION public.fuga_atomic() RETURNS numeric LANGUAGE sql SECURITY DEFINER BEGIN ATOMIC SELECT sum(cmc) FROM inventory_position; END;';
     const f = auditAuthz([mig('20260710000000_x.sql', sql)]);
     expect(errorsOf(f).some((e) => e.fn === 'public.fuga_atomic')).toBe(true);
+  });
+});
+
+describe('auditAuthz — Parte C (grants de tabela fechada por privilégio)', () => {
+  /** as âncoras declaradas precisam existir entre as migrations, senão o gate acusa ANCORA_AUSENTE */
+  const ancoras = Object.values(AUTHZ_TABELAS_FECHADAS)
+    .map((e) => e.fechadaPor)
+    .filter((a): a is string => a !== null)
+    .map((a) => mig(a, '-- âncora (fixture)'));
+
+  it('as entradas com fechadaPor=null viram FECHO_PENDENTE (warn), e nenhum erro da Parte C', () => {
+    const f = auditCompleto([...ancoras, mig('20260101000000_noop.sql', 'SELECT 1;')]);
+    const pendentes = f.filter((x) => x.msg.includes('FECHO_PENDENTE'));
+    const esperado = Object.values(AUTHZ_TABELAS_FECHADAS).filter((e) => e.fechadaPor === null).length;
+    expect(pendentes).toHaveLength(esperado);
+    expect(pendentes.every((x) => x.level === 'warn')).toBe(true);
+    // nenhum erro vindo da Parte C (os códigos ASCII só existem nela)
+    expect(errorsOf(f).filter((e) => /\[[A-Z_]+\]/.test(e.msg))).toHaveLength(0);
+  });
+
+  it('a msg convertida carrega o CÓDIGO ASCII, não a frase em pt-BR', () => {
+    const f = auditCompleto([...ancoras, mig('20260101000000_noop.sql', 'SELECT 1;')]);
+    expect(f.some((x) => /\[FECHO_PENDENTE\]/.test(x.msg))).toBe(true);
+  });
+
+  it('DENTE: GRANT INSERT a authenticated pós-âncora na tabela REAL → erro REABERTURA', () => {
+    const ancora = AUTHZ_TABELAS_FECHADAS['public.omie_products'].fechadaPor;
+    expect(ancora).not.toBeNull(); // se um dia voltar a null, este teste tem de gritar
+    const f = auditCompleto([
+      ...ancoras,
+      mig('20991231000000_reabre.sql', 'GRANT INSERT ON TABLE public.omie_products TO authenticated;'),
+    ]);
+    const reab = errorsOf(f).filter((e) => e.msg.includes('[REABERTURA]'));
+    expect(reab).toHaveLength(1);
+    expect(reab[0].fn).toBe('public.omie_products');
   });
 });

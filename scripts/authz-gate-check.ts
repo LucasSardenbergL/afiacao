@@ -22,6 +22,8 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { extractFunctions, checkGate, touchesSensitive, rawIsSensitiveSecdef, type FunctionDef } from './lib/authz-contract';
 import { AUTHZ_MANIFEST, ACKNOWLEDGED_SENSITIVE, manifestKey } from './authz-manifest';
+import { auditGrantsTabelas } from './lib/authz-grants';
+import { AUTHZ_TABELAS_FECHADAS } from './authz-tabelas-fechadas';
 
 export interface Finding {
   level: 'error' | 'warn';
@@ -121,6 +123,33 @@ export function auditAuthz(migrations: Migration[]): Finding[] {
   return findings;
 }
 
+/**
+ * Parte C — grants de tabela fechada por PRIVILÉGIO (allowlist curada em
+ * scripts/authz-tabelas-fechadas.ts). Núcleo puro em scripts/lib/authz-grants.ts; aqui só
+ * convertemos GrantFinding→Finding, prefixando o CÓDIGO ASCII na msg para que ele apareça no log
+ * do CI (e nos testes, que casam por código e nunca pela frase em pt-BR).
+ *
+ * SEPARADA de `auditAuthz` de propósito. A Parte C julga o conjunto de arquivos que EXISTEM no
+ * repo (a âncora sumiu?), enquanto A/B julgam definições de função. Fundidas, todo fixture de A/B
+ * — que naturalmente não contém a migration-âncora — dispararia ANCORA_AUSENTE, e cada teste novo
+ * de A/B teria de carregar o contrato de C. As duas rodam juntas só onde o repo real é lido:
+ * `auditCompleto`, chamada pelo `main()`. O comando de CI continua um só (`bun run authz:check`).
+ */
+function auditGrants(migrations: Migration[]): Finding[] {
+  const filesPresentes = new Set(migrations.map((m) => m.file));
+  return auditGrantsTabelas(migrations, AUTHZ_TABELAS_FECHADAS, filesPresentes).map((gf) => ({
+    level: gf.level,
+    file: gf.file,
+    fn: gf.tabela,
+    msg: `[${gf.codigo}] ${gf.msg}`,
+  }));
+}
+
+/** O que o CI roda: Parte A + B (contrato de gate) e Parte C (grants de tabela fechada). */
+export function auditCompleto(migrations: Migration[]): Finding[] {
+  return [...auditAuthz(migrations), ...auditGrants(migrations)];
+}
+
 function loadMigrations(dir: string): Migration[] {
   return readdirSync(dir)
     .filter((f) => f.endsWith('.sql'))
@@ -130,7 +159,7 @@ function loadMigrations(dir: string): Migration[] {
 function main(): void {
   const json = process.argv.includes('--json');
   const dir = join(process.cwd(), 'supabase', 'migrations');
-  const findings = auditAuthz(loadMigrations(dir));
+  const findings = auditCompleto(loadMigrations(dir));
   const errors = findings.filter((f) => f.level === 'error');
   const warns = findings.filter((f) => f.level === 'warn');
 
@@ -145,7 +174,7 @@ function main(): void {
     console.error(`\nauthz:check — ${errors.length} erro(s) de contrato de autorização. Ver scripts/authz-manifest.ts.`);
     process.exit(1);
   }
-  console.log(`✅ authz:check — contrato de gate ok${warns.length ? ` (${warns.length} aviso(s))` : ''}. Parte A (regressão) + Parte B (cobertura) verdes.`);
+  console.log(`✅ authz:check — contrato de gate ok${warns.length ? ` (${warns.length} aviso(s))` : ''}. Parte A (regressão) + Parte B (cobertura) + Parte C (grants de tabela fechada) verdes.`);
 }
 
 if (import.meta.main) main();
