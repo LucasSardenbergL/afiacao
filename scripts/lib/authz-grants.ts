@@ -2,7 +2,13 @@
  * authz-grants.ts — núcleo PURO da sentinela de grants de tabelas fechadas por privilégio.
  * ============================================================================================
  *
- * Sem I/O. Consumido pela Parte C do `authz:check` (scripts/authz-gate-check.ts).
+ * Sem I/O. Duas guardas, mesma allowlist:
+ *   · auditGrantsTabelas — gate ESTÁTICO, Parte C do `authz:check` (scripts/authz-gate-check.ts).
+ *     Lê as migrations do repo; pega a reabertura DENTRO do PR, antes de virar produção.
+ *   · compararGrantsProd — audit de PROD (db/audit-grants-tabelas-fechadas.ts, sob psql-ro).
+ *     Lê o BANCO; pega o que o estático é cego para ver — grant aplicado à mão no SQL Editor e
+ *     migration que mergeou mas nunca foi aplicada (NAO_APLICADA, a armadilha-mãe do projeto).
+ * Nenhuma das duas fecha o buraco sozinha: uma vê o repo, a outra vê a verdade.
  * Spec: docs/superpowers/specs/2026-07-22-sentinela-grants-tabelas-fechadas-design.md
  *
  * O problema: `product_costs`/`omie_products` são fechadas por PRIVILÉGIO (REVOKE + GRANT SELECT),
@@ -28,14 +34,17 @@ export type GrantCodigo =
   | 'ANCORA_AUSENTE'
   | 'ANCORA_NAO_DECLARADA'
   | 'FECHO_PENDENTE'
-  | 'GRANT_NAO_PARSEAVEL';
+  | 'GRANT_NAO_PARSEAVEL'
+  // exclusivos do audit de prod (compararGrantsProd):
+  | 'NAO_APLICADA'
+  | 'DRIFT_PROD';
 
 export interface GrantFinding {
   level: 'error' | 'warn';
   codigo: GrantCodigo;
   /** schema.name */
   tabela: string;
-  /** migration onde o achado mora, ou '—' quando não há arquivo */
+  /** migration onde o achado mora, '—' quando não há arquivo, '(prod)' no audit de banco */
   file: string;
   msg: string;
 }
@@ -230,6 +239,64 @@ export function auditGrantsTabelas(
           }
         }
       }
+    }
+  }
+  return out;
+}
+
+/**
+ * Estado MEDIDO em prod: tabela (`schema.name`) → role → privilégios PRESENTES.
+ * Só entra o que a role TEM — ausência de chave é ausência de privilégio, não lacuna de dado
+ * (quem mede é db/audit-grants-tabelas-fechadas.ts, que só empurra o `has_table_privilege` = true).
+ */
+export type MedicaoProd = Record<string, Partial<Record<(typeof ROLES_VIGIADAS)[number], Priv[]>>>;
+
+/**
+ * Audit de prod: compara o privilégio medido no BANCO com o contrato da allowlist.
+ *
+ * Dois erros distintos, porque a ação corretiva é distinta:
+ *   · NAO_APLICADA — a role ainda tem INSERT+UPDATE+DELETE, o DML completo que o Supabase concede
+ *     por default a toda relação nova. Assinatura de "a migration de fecho está no repo mas nunca
+ *     foi colada no SQL Editor" (ou foi revertida): merge na main ≠ produção. Corrige-se APLICANDO.
+ *   · DRIFT_PROD — sobra parcial (ex.: só INSERT). Ninguém escreve isso por default: é GRANT
+ *     aplicado à mão em prod, depois do fecho. Corrige-se REVOGANDO e investigando quem fez.
+ *
+ * `fechadaPor === null` não compara nada: o contrato ainda não afirma que a tabela deveria estar
+ * fechada, então divergência não é divergência. Sai warn — e o texto diz explicitamente que prod
+ * NÃO foi comparada, para que o exit 0 não seja lido como "prod bate com o contrato".
+ */
+export function compararGrantsProd(
+  medido: MedicaoProd,
+  allowlist: Record<string, TabelaFechada>,
+): GrantFinding[] {
+  const out: GrantFinding[] = [];
+  for (const [chave, entry] of Object.entries(allowlist)) {
+    if (entry.fechadaPor === null) {
+      out.push({
+        level: 'warn',
+        codigo: 'FECHO_PENDENTE',
+        tabela: chave,
+        file: '(prod)',
+        msg: `${chave}: fecho pendente (fechadaPor=null) — estado de prod NÃO comparado ao contrato. ${entry.motivo}`,
+      });
+      continue;
+    }
+    const medTab = medido[chave] ?? {};
+    for (const role of ROLES_VIGIADAS) {
+      const permit = entry.permitido[role] ?? [];
+      const tem = medTab[role] ?? [];
+      const extra = tem.filter((p) => !permit.includes(p));
+      if (extra.length === 0) continue;
+      const pareceDefault = (['INSERT', 'UPDATE', 'DELETE'] as Priv[]).every((p) => extra.includes(p));
+      out.push({
+        level: 'error',
+        codigo: pareceDefault ? 'NAO_APLICADA' : 'DRIFT_PROD',
+        tabela: chave,
+        file: '(prod)',
+        msg: pareceDefault
+          ? `${chave}: ${role} ainda tem ${extra.join(',')} — o fecho ${entry.fechadaPor} está no repo mas NÃO foi aplicado no SQL Editor (ou foi revertido).`
+          : `${chave}: ${role} tem ${extra.join(',')} fora do permitido [${permit.join(',') || 'nenhum'}] — grant aplicado à mão em prod (drift).`,
+      });
     }
   }
   return out;

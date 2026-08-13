@@ -1,6 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import { AUTHZ_TABELAS_FECHADAS, type TabelaFechada } from './authz-tabelas-fechadas';
-import { auditGrantsTabelas, type GrantFinding } from './lib/authz-grants';
+import {
+  auditGrantsTabelas,
+  compararGrantsProd,
+  type GrantFinding,
+  type MedicaoProd,
+} from './lib/authz-grants';
 
 describe('AUTHZ_TABELAS_FECHADAS — sanidade do contrato', () => {
   it('tem as duas tabelas money-path fechadas por privilégio', () => {
@@ -183,5 +188,58 @@ GRANT SELECT ON TABLE public.product_costs TO authenticated;`;
       files('20260801000000_outra.sql'),
     );
     expect(f).toHaveLength(0);
+  });
+});
+
+describe('compararGrantsProd — audit de prod (puro)', () => {
+  it('1. estado fechado (só SELECT p/ authenticated) → limpo', () => {
+    const m: MedicaoProd = { 'public.product_costs': { anon: [], authenticated: ['SELECT'] } };
+    expect(compararGrantsProd(m, AL)).toHaveLength(0);
+  });
+
+  it('2. authenticated ainda com INSERT+UPDATE+DELETE → NAO_APLICADA', () => {
+    const m: MedicaoProd = {
+      'public.product_costs': { anon: [], authenticated: ['SELECT', 'INSERT', 'UPDATE', 'DELETE'] },
+    };
+    const f = compararGrantsProd(m, AL);
+    expect(f.some((x) => x.codigo === 'NAO_APLICADA')).toBe(true);
+    expect(f.every((x) => x.level === 'error')).toBe(true);
+  });
+
+  it('3. grant parcial à mão (só INSERT) → DRIFT_PROD, não NAO_APLICADA', () => {
+    const m: MedicaoProd = { 'public.product_costs': { anon: [], authenticated: ['SELECT', 'INSERT'] } };
+    const f = compararGrantsProd(m, AL);
+    expect(codigos(f)).toEqual(['DRIFT_PROD']);
+  });
+
+  it('4. anon com SELECT (fora do permitido []) → achado na tabela certa', () => {
+    const m: MedicaoProd = { 'public.product_costs': { anon: ['SELECT'], authenticated: ['SELECT'] } };
+    const f = compararGrantsProd(m, AL);
+    expect(f).toHaveLength(1);
+    expect(f[0].tabela).toBe('public.product_costs');
+    expect(f[0].file).toBe('(prod)');
+  });
+
+  it('5. fechadaPor=null → FECHO_PENDENTE (warn), sem comparar prod', () => {
+    const m: MedicaoProd = { 'public.product_costs': { anon: ['INSERT'], authenticated: ['INSERT'] } };
+    const f = compararGrantsProd(m, AL_PENDENTE);
+    expect(f).toHaveLength(1);
+    expect(f[0].codigo).toBe('FECHO_PENDENTE');
+    expect(f[0].level).toBe('warn');
+  });
+
+  it('6. tabela ausente da medição → limpo (zero privilégio é o estado mais fechado)', () => {
+    // Só entra no mapa o privilégio PRESENTE; tabela sem nenhum privilégio simplesmente não
+    // aparece. Tabela INEXISTENTE em prod não chega aqui: has_table_privilege já teria feito o
+    // psql falhar, e o executável sai 2 (erro de execução) antes de comparar.
+    expect(compararGrantsProd({}, AL)).toHaveLength(0);
+  });
+
+  it('7. anon com o DML completo (default aberto do Supabase) → NAO_APLICADA', () => {
+    const m: MedicaoProd = {
+      'public.product_costs': { anon: ['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE'] },
+    };
+    const f = compararGrantsProd(m, AL);
+    expect(codigos(f)).toEqual(['NAO_APLICADA']);
   });
 });
