@@ -232,5 +232,44 @@ follow-up **medido**: se "não atendeu" sair sub-representado, é sinal de que a
 botão para não perder o plano — e aí a mudança volta com evidência.
 
 **A prova real não é o CI.** É `SELECT status, count(*), count(actual_margin) FROM
-farmer_tactical_plans GROUP BY 1` uma semana depois. Se `concluido` continuar em 0, o gargalo é
-adoção da tela, não custo do formulário — e isso é informação, não fracasso.
+farmer_tactical_plans GROUP BY 1` uma semana depois.
+
+### ⚠️ Errata (2026-08-13) — a inferência acima tinha um buraco
+
+O parágrafo original terminava assim: *"se `concluido` continuar em 0, o gargalo é adoção da tela,
+não custo do formulário"*. **Isso estava errado por omissão**, e a medição de seis dias depois
+mostrou por quê.
+
+Medido em 2026-08-13:
+
+| Fato | Evidência |
+|---|---|
+| Código **no ar** | string `Remarcou` (única de `BotoesDesfecho.tsx`) presente em `/assets/FarmerTacticalPlan-DxJ6Rly6.js`, 331 chunks varridos (`verify-frontend.sh`) |
+| Desfechos | **0** — 508 `expirado` + 169 `gerado`, nenhum `call_result` |
+| Fila | `gerado` estacionou em ~169 com ~24/dia — **regime estacionário**, a fase 2 fechou a entrada |
+| Telemetria da tela | **nenhuma** — zero `track()` em `FarmerTacticalPlan.tsx` e em `tacticalPlan/`, contra 66 arquivos do repo que usam |
+
+E a causa real, dita pelo founder: **as vendedoras ainda não começaram a usar o aplicativo.**
+
+O zero não media a tela nem o formulário — media a **ausência de usuários**. A inferência original
+saltava de "0 desfechos" para "gargalo de adoção da tela" pulando duas hipóteses que a precedem:
+
+1. **O código chegou a produção?** Merge na `main` não publica nada (§Lovable = 3 deploys manuais).
+   Sem verificar por bytes, o zero é indistinguível de "o Publish nunca saiu".
+2. **O público-alvo está em operação?** Um denominador de zero usuários produz numerador zero em
+   QUALQUER desenho de tela — o melhor botão do mundo mede o mesmo que o pior.
+
+É a mesma família de *ausência de dado ≠ afirmação* que este repo já cataloga, um andar acima: não é
+um número fabricado a partir de `null`, é um **veredito de produto fabricado a partir de um zero sem
+denominador**. E o alvo do veredito seria o trabalho de outra pessoa ("a vendedora não adota a
+tela"), o que torna o erro mais caro do que um número errado.
+
+**Corolário para revisão:** antes de ler zero como veredito sobre uma tela, prove (a) que o código
+está no ar e (b) que existe alguém do outro lado. Só depois de descartar essas duas o zero fala
+sobre o desenho. Métrica de adoção sem denominador não é métrica — é o `Number(null) === 0` em
+escala de produto.
+
+**Quando medir de verdade:** quando as vendedoras entrarem em operação — gatilho por **evento**, não
+por calendário. Se nessa altura o desfecho continuar em zero, aí sim a pergunta é a tela, e o
+primeiro passo é instrumentar com `track()` (abertura + clique) para separar "não abrem" de "abrem e
+não registram".
