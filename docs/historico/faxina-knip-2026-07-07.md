@@ -43,3 +43,11 @@ No dia seguinte ao merge, `bunx knip` já acusava **64 achados** (2 deps + 27 un
 - **`papaparse` + `@types/papaparse`**: zero ocorrências em todo o repo versionado — nem import estático, nem dinâmico, nem em script/JSON/MD. (Seguem no `package-lock.json`, que é fóssil no repo: o lockfile vivo é o `bun.lock`.)
 
 **Política adotada: des-exportar, não deletar.** Remover o `export` não altera comportamento algum e só *reduz* alcance, o que neutraliza por construção a regra do money-path ("não pergunte quem chama, pergunte o que acontece se alguém chamar") — uma função com efeito destrutivo e sem chamador fica menos alcançável, não mais. Delete só entraria onde o `noUnusedLocals` do tsc strict provasse órfão, e não foi o caso de nenhum dos 64.
+
+## Desfecho: knip virou gate do CI (2026-08-08)
+
+Zerar de novo não resolvia nada sozinho — o #1707 nasceria com a **mesma meia-vida** do #1212, porque a causa não era a sujeira, era o gate morar fora do CI. O step `Dead code gate (knip)` entrou no job `validate` (`.github/workflows/ci.yml`), rodando `bunx knip`: o **mesmo** comando do health stack local, de propósito — gate de CI que diverge do comando local recria a lacuna que veio fechar. Falsificado antes de entregar: canário `export` morto → exit 1 apontando o símbolo nominalmente; sem ele → exit 0.
+
+A partir daqui a afirmação "knip está exit 0" deixa de ser sobre o worktree de alguém num instante e passa a ser sobre a `main`. **Quando o gate quebrar**, o default é des-exportar (não deletar); export que seja contrato de teste ou fronteira de paridade byte-exata vai para `ignore` no `knip.json` **com o porquê no commit** — precedentes: `sayerlack-sku.ts` e `embalagem-captura-helpers.ts`.
+
+Uma correção de registro: a seção acima disse que `papaparse` seguia num `package-lock.json` "fóssil". A investigação de 08/08 confirmou que ele é fóssil **desde 2026-03-28** e está defasado do `package.json` em dezenas de deps (`@hookform/resolvers` ^3.10.0 vs ^5.2.2, `@lovable.dev/mcp-js` ausente), com a produção rodando o tempo todo. Isso **prova** que o build do Lovable não usa `npm ci`, que rejeitaria a divergência — a hipótese de risco levantada na sessão (o Publish quebrar pela dessincronia introduzida em #1707) está descartada por evidência. O arquivo é inerte; regenerá-lo produz um diff de ~9k linhas que ninguém validou, então ficou como está.
