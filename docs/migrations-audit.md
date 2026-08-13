@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **456** custom migrations totais
-- **1571** objetos esperados (criados por estas migrations)
+- **457** custom migrations totais
+- **1572** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 467
+  - `function`: 468
   - `rls_policy`: 392
   - `index`: 238
   - `cron_job`: 164
@@ -3635,6 +3635,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.tint_gate_revalida` | — |
 | `view` | `public.v_tint_formula_canonica` | — |
+
+### `20260726170000_fu4f_fase3_carteira_margem_faixa.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.get_carteira_margem_faixa` | — |
 
 ### `20260727120000_tint_fase5_desativa_geracao_legada.sql`
 
