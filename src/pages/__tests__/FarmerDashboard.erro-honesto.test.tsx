@@ -25,6 +25,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 const FARMER_A = 'farmer-a';
 
 let falharScores = false;
+let falharFaixas = false;
 let farmerAtual = FARMER_A;
 
 const ERRO_TIMEOUT = { code: '57014', message: 'canceling statement due to statement timeout' };
@@ -37,6 +38,11 @@ const PEDIDOS = [{
 }];
 const PERFIS = [{ user_id: 'c1', name: 'Cliente Um', phone: null }];
 
+// A margem vem da RPC `get_carteira_margem_faixa` (FU4-F fase 3): o hook não baixa mais
+// `product_costs`. `margem_pct: null` com `faixa` presente é o caller SEM `cap_custo_ler` —
+// o número fecha, o sinal fica.
+const FAIXAS = [{ customer_user_id: 'c1', faixa: 'verde', motivo: 'saudavel', g: 0.8, margem_pct: null }];
+
 function resposta(table: string): unknown {
   if (table === 'sales_orders') {
     if (falharScores) return { data: null, error: ERRO_TIMEOUT };
@@ -44,6 +50,14 @@ function resposta(table: string): unknown {
   }
   if (table === 'profiles') return { data: PERFIS, error: null };
   return { data: [], error: null, count: 0 };
+}
+
+function respostaRpc(fn: string): unknown {
+  if (fn === 'get_carteira_margem_faixa') {
+    if (falharScores || falharFaixas) return { data: null, error: ERRO_TIMEOUT };
+    return { data: FAIXAS, error: null };
+  }
+  return { data: [], error: null };
 }
 
 function chain(table: string): unknown {
@@ -57,7 +71,9 @@ function chain(table: string): unknown {
   return c;
 }
 
-vi.mock('@/integrations/supabase/client', () => ({ supabase: { from: (t: string) => chain(t) } }));
+vi.mock('@/integrations/supabase/client', () => ({
+  supabase: { from: (t: string) => chain(t), rpc: (fn: string) => Promise.resolve(respostaRpc(fn)) },
+}));
 vi.mock('@/contexts/ImpersonationContext', () => ({
   useImpersonation: () => ({ isImpersonating: false, effectiveUserId: farmerAtual }),
 }));
@@ -88,6 +104,7 @@ const renderDashboard = () => {
 
 beforeEach(() => {
   falharScores = false;
+  falharFaixas = false;
   farmerAtual = FARMER_A;
   vi.clearAllMocks();
 });
@@ -121,6 +138,23 @@ describe('FarmerDashboard — falha do scoring não vira "carteira vazia"', () =
       screen.getByRole('button', { name: /Tentar novamente/i }),
       'sem retry o farmer fica preso no estado de erro',
     ).toBeTruthy();
+  });
+
+  it('falha SÓ da margem (RPC) também é erro honesto, não carteira sem margem em silêncio', async () => {
+    // Os pedidos LEEM BEM e só `get_carteira_margem_faixa` cai: o caminho que o rebase do
+    // #1543 quase perdeu. A versão original do PR fazia `console.error` + `return`, e o
+    // `?? []` sobre a resposta pontuava TODA a carteira como "sem custo conhecido" — um
+    // veredito fabricado, indistinguível de medição real, sem nada na tela avisando.
+    falharFaixas = true;
+
+    renderDashboard();
+
+    const aviso = await screen.findByRole('alert');
+    expect(aviso.textContent, 'a falha da margem morreu no console').toMatch(/indispon/i);
+    expect(
+      screen.queryByText(/Nenhum cliente na agenda/i),
+      'afirmou carteira vazia onde a verdade é falha ao ler a margem',
+    ).toBeNull();
   });
 
   it('o retry recarrega de verdade: backend recuperado → agenda aparece', async () => {
