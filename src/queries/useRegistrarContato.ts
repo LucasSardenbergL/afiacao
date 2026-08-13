@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { track } from '@/lib/analytics';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 import type { OutcomeStatus } from '@/lib/route/route-outcome';
 
 // route_* não está no types.ts gerado → cast do client (mesmo padrão de useMyPositivacao).
@@ -32,6 +33,10 @@ export function useRegistrarContato() {
       return (data ?? { id: '', deduped: false }) as { id: string; deduped: boolean };
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['route-contact-list'] }),
+    // O OutcomeMenu engole a falha num catch que só mostra toast: uma RPC
+    // quebrada (gate de carteira, RLS, rede) ficava invisível justo no passo
+    // que ALIMENTA route_contact_log. Cobre erro do PostgREST e exceção de rede.
+    onError: (e) => track('rota.contato_erro', { mensagem: mensagemDeErro(e) ?? '(sem mensagem)' }),
   });
 }
 

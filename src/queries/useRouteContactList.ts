@@ -7,6 +7,7 @@ import { buildContactList } from '@/lib/whatsapp/contact-list';
 import type { ContactCandidate, ContactConfig, ScoredCandidate } from '@/lib/whatsapp/contact-list';
 import { spBusinessDate } from '@/lib/time/sp-day';
 import { derivarSinaisContato, type ContatoLog, type OutcomeStatus, type SinaisContato } from '@/lib/route/route-outcome';
+import { classificarFilaVazia, type MotivoFilaVazia } from '@/lib/route/telemetria-fila';
 import { logger } from '@/lib/logger';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
@@ -58,6 +59,10 @@ export interface RouteContactListData {
   cidades: string[];
   dailyStats: DailyStats;
   cadenciaIndisponivel: boolean;          // true se a leitura do log falhou (fail-open)
+  // POR QUE a fila saiu vazia — declarado no ponto que sabe, nunca inferido pela
+  // UI: capacidade 0 e "nenhum candidato" produzem o mesmo `excluidos: []`, e
+  // confundir os dois é fabricar diagnóstico. null = fila não está vazia.
+  motivoFilaVazia: MotivoFilaVazia | null;
 }
 
 // margem média da empresa (v1 — spec §6.5 q2; calibrar no piloto/codex)
@@ -237,12 +242,13 @@ export function useRouteContactList(workdayIso: string) {
       const cfgRow = (cfgRes.data ?? null) as RouteConfigRow | null;
 
       const prep = resolvePrepForWorkday(workdayIso, sched, ovr);
-      const empty: RouteContactListData = {
+      const vazia = (motivoFilaVazia: MotivoFilaVazia): RouteContactListData => ({
         callQueue: [], whatsappQueue: [], resolvidosQueue: [], excluidos: [],
         routeDate: prep.routeDate, dailyOnly: prep.dailyOnly, cidades: prep.cities.map(c => c.city),
         dailyStats: { ligados: 0, atenderam: 0, fecharam: 0 }, cadenciaIndisponivel: false,
-      };
-      if (prep.cities.length === 0) return empty;
+        motivoFilaVazia,
+      });
+      if (prep.cities.length === 0) return vazia('sem_cidade');
 
       // 2) candidatos das cidades-alvo — filtrados NO SERVIDOR por city_norm
       // (#16-full; ver fetchVisitScoresByCityNorm). O cityKeyEquals no client
@@ -262,7 +268,7 @@ export function useRouteContactList(workdayIso: string) {
       }
       const cands0 = [...candByUser.values()];
 
-      if (cands0.length === 0) return empty;
+      if (cands0.length === 0) return vazia('sem_candidato');
 
       // 3) métricas econômicas + perfis (nome/telefone) em lote
       const userIds = [...new Set(cands0.map(c => c.customer_user_id))];
@@ -363,6 +369,14 @@ export function useRouteContactList(workdayIso: string) {
         cidades: prep.cities.map(c => c.city),
         dailyStats: { ligados, atenderam, fecharam },
         cadenciaIndisponivel,
+        // "vivos" = candidatos que sobreviveram aos gates. Separa "todos caíram
+        // num gate" de "passaram e a fila AINDA saiu vazia" (capacidade 0).
+        motivoFilaVazia: classificarFilaVazia({
+          nCidades: prep.cities.length,
+          nCandidatos: candidates.length,
+          nVivos: candidates.length - result.excluidos.length,
+          nFila: result.callQueue.length,
+        }),
       };
     },
   });
