@@ -255,3 +255,33 @@ Todas com `~/.config/afiacao/psql-ro -X -c "…"`. Chaves: itens de PO via
 `pedido_compra_sugerido` (`criado_em`); vendas via `venda_items_history` (`data_emissao`).
 ⚠️ `sku_leadtime_history.sku_codigo_omie` é **bigint** e `pedido_compra_item.sku_codigo_omie` é **text** —
 o join exige `::text`.
+
+## 8. Errata da §3.2/§3.4 — a consolidação de nota é MUITO pior no conjunto que importa
+
+**Medido 2026-08-13 (fatia 1, `psql-ro`), corrigindo o universo da distribuição da §3.2.**
+
+A distribuição da §3.2 ("171 notas 1:1, 15 com 2 POs, …") está aritmeticamente correta, mas descreve
+**todas as 418 POs OBEN com `nid_receb`** — não as **244** que são alvo do desconto. Reproduzido:
+`171` notas 1:1 e `418` POs sobre a tabela inteira; a §3.2 é verdadeira ali. No subconjunto etapa-15
+com `t4` a foto é outra:
+
+| recorte | notas distintas | POs com nota exclusiva |
+|---|---|---|
+| todas as POs OBEN com nota | 230 | 171 (41% das 418) |
+| **as 244 POs alvo** | **68** | **14 (5,7%)** |
+
+**230 das 244 POs (94%) dividem a nota com outra PO** — a nota consolidada é a REGRA no conjunto que
+importa, não a exceção. Distribuição nas 244: 14 notas com 1 PO, 13 com 2, 16 com 3, 6 com 4, 5 com 5,
+5 com 6, 4 com 7, 2 com 8, 2 com 10, 1 com 13.
+
+**E a exclusividade é mesmo relativa — agora medido, não só argumentado.** O Codex derrubou a §3.4 em
+tese ("`nid_receb` exclusivo prova só que nenhuma outra PO *visível hoje* divide o cabeçalho"). Das
+**14** notas exclusivas dentro das 244, só **12 continuam exclusivas** quando a contagem olha a tabela
+OBEN inteira: 2 delas (14%) dividem a nota com POs fora do recorte etapa-15+`t4`. A exclusividade
+mudou **sem nenhum dado novo chegar** — apenas por ampliar a janela de observação sobre o MESMO
+espelho. Um predicado que vira falso ao mudar o `WHERE` da própria query não pode gatilhar desconto
+no money-path.
+
+**Consequência para o ledger (§6):** `receipt_allocation` N:N com quantidade **nullable** não é
+generalidade defensiva — é a forma dominante do dado. Qualquer desenho que pressuponha nota→PO 1:1
+cobre 5,7% do problema e erra os outros 94%.
