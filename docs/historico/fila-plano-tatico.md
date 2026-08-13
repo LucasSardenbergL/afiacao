@@ -273,3 +273,57 @@ escala de produto.
 por calendário. Se nessa altura o desfecho continuar em zero, aí sim a pergunta é a tela, e o
 primeiro passo é instrumentar com `track()` (abertura + clique) para separar "não abrem" de "abrem e
 não registram".
+
+### O gatilho virou query (2026-08-13, 2ª leitura do mesmo dia)
+
+A errata acima deixou o gatilho dependendo de o founder avisar. Isso é frágil pelo mesmo motivo que
+o zero era: **não é verificável**. A 2ª leitura mediu o denominador direto e a fala do founder virou
+dado.
+
+| Medição (psql-ro) | Valor |
+|---|---|
+| `master` | 1 usuário — **1 com sessão viva em 30d** (o próprio founder) |
+| `employee` | 2 usuários — **0 com sessão viva** |
+| `customer` | 5.664 — **0 com sessão viva** |
+
+Os três "donos" de carteira do plano tático, com `auth.users.last_sign_in_at`:
+
+| Farmer | Planos | Último sign-in | Sessão mais recente |
+|---|---|---|---|
+| Tatyana (`employee`) | 334 | **2026-04-15** | 2026-06-23 |
+| Regina (`employee`) | 172 | **2026-04-13** | *nenhuma linha* |
+| Lucas (`master`) | 171 | 2026-07-24 | mesmo dia, 21:07 UTC |
+
+O app inteiro tem **um usuário ativo, e é o founder**. As duas vendedoras não abrem o sistema desde
+abril. O numerador seguia idêntico (508 `expirado` + 169 `gerado`, 0 `call_result`) com a fila
+saudável — 25 planos gerados às 08:03 UTC daquele dia.
+
+**A query canônica do gatilho:**
+
+```sql
+SELECT ur.role,
+       count(DISTINCT ur.user_id) AS usuarios,
+       count(DISTINCT s.user_id)  AS ativos_7d
+FROM user_roles ur
+LEFT JOIN auth.sessions s
+       ON s.user_id = ur.user_id
+      AND s.updated_at > now() - interval '7 days'
+GROUP BY 1 ORDER BY 2 DESC;
+```
+
+Dispara quando `employee → ativos_7d ≥ 1` se sustentar por alguns dias. Só então as três leituras
+previstas (gargalo de tela · `nao_atendeu` sub-representado · elo de margem com o Omie) passam a ter
+denominador.
+
+⚠️ **Por que este par de sinais tem dente, e nenhum dos dois sozinho teria.** `auth.sessions` some no
+logout e na expiração — lida sozinha, "0 sessões" é **ausência de dado**, exatamente a armadilha do
+`used_at`. O que salva a inferência é `last_sign_in_at`: ela é **evidência positiva** (uma data real
+de abril, não um vazio) e o Postgres não a apaga. Os dois sinais são independentes e concordam. Já
+`last_sign_in_at` sozinha também não bastaria na direção oposta: o Supabase não a atualiza no refresh
+de token, então uma data velha seria compatível com uso diário sob sessão persistente — é a sessão
+viva que fecha esse buraco. Um mede que **houve** entrada; o outro, que **há** presença.
+
+**Lição de método:** um gatilho por evento precisa de um **detector**, não de um combinado verbal.
+Enquanto o gatilho é "alguém me avisa", ele herda a mesma falha do zero sem denominador — ninguém
+consegue conferir se já disparou. Escrever a query custou uma consulta e transformou a espera em algo
+que qualquer sessão futura resolve sozinha, sem interromper o founder.
