@@ -1,7 +1,7 @@
 # Sentinela de grants — tabelas fechadas por privilégio
 
 > Diário desta frente. Desenho: `docs/superpowers/specs/2026-07-22-sentinela-grants-tabelas-fechadas-design.md`.
-> Plano (7 tasks, 3 entregues): `docs/superpowers/plans/2026-07-22-sentinela-grants-tabelas-fechadas.md`.
+> Plano (7 tasks, **todas entregues**): `docs/superpowers/plans/2026-07-22-sentinela-grants-tabelas-fechadas.md`.
 
 ## 2026-08-13 — Tasks 1–3: o gate estático entra no CI
 
@@ -76,13 +76,95 @@ silêncio. A correção é uma linha em `scripts/authz-tabelas-fechadas.ts`.
 > frentes se encontram no dia em que o #1520 sair de draft: uma fecha a tabela, a outra passa a vigiar
 > o fecho.
 
-### Pendente (Tasks 4–7)
+## 2026-08-13 — Tasks 4–7: a segunda camada, que olha o banco
 
-Audit de **prod** (`db/audit-grants-tabelas-fechadas.ts` sob `psql-ro`) + harness PG17. O estático
-pega a migration nova dentro do PR mas é cego a drift aplicado à mão; o de prod vê a verdade do
-banco mas não bloqueia ninguém. **Nenhum dos dois sozinho fecha o buraco.** O audit de prod também
-detectaria de graça a armadilha-mãe do projeto: âncora no repo + prod ainda aberta = migration
-mergeada e nunca aplicada no SQL Editor (código `NAO_APLICADA`).
+### O que existe agora
+
+`bun run authz:grants:prod` (`db/audit-grants-tabelas-fechadas.ts`, sob `psql-ro`, on-demand — o CI
+não tem `psql-ro`) mede `has_table_privilege` no banco real e compara com **a mesma allowlist** que
+o CI usa. É TypeScript e não bash exatamente por isso: `import` da fonte única em vez de uma lista
+duplicada num `.sql` que envelheceria em silêncio.
+
+| Código | Significa | Ação |
+|---|---|---|
+| `NAO_APLICADA` | a role ainda tem o **DML completo** (`INSERT+UPDATE+DELETE`, o default do Supabase) e a âncora está no repo | **aplicar** a migration no SQL Editor |
+| `DRIFT_PROD` | sobra **parcial** — ninguém escreve isso por default | **revogar** e descobrir quem concedeu |
+| `FECHO_PENDENTE` | `fechadaPor: null` | nada a comparar; o texto diz que prod **não** foi comparada |
+
+Exit `0` limpo · `1` divergência · `2` **erro de execução** — audit que não conseguiu medir não pode
+sair 0.
+
+### O falso-verde que o dente pegou (a razão de o harness existir)
+
+Na primeira execução, `db/test-audit-grants-tabelas-fechadas.sh` reprovou o audit: com
+`GRANT INSERT ON … TO authenticated` aplicado, ele imprimia **"✅ prod bate com o contrato"**. O
+achado era real e de uma banalidade perigosa: a query concatena o resultado (`'…'||has_table_privilege(…)`),
+e `text||boolean` imprime **`true`/`false`** — o parser esperava `t`/`f`, o formato de *coluna*
+boolean. **100% das linhas descartadas ⇒ medição vazia ⇒ nenhuma divergência ⇒ verde.** O run
+contra prod que eu havia feito minutos antes estava viciado por isso e parecia perfeito.
+
+Duas correções, e a segunda é a que generaliza:
+
+1. o veredito passa a sair de um `CASE … THEN 'SIM' ELSE 'NAO' END` — o formato do dado é
+   responsabilidade da query, não do default de impressão do psql (que `psqlrc`/`\pset` mudam por baixo);
+2. a medição ganhou **PISO**: a query devolve `tabelas × roles × privilégios` linhas *sempre*,
+   inclusive quando a resposta é "não tem nenhum". Vir menos ⇒ exit 2. Sem isso, **audit que não
+   mediu é indistinguível de audit que aprovou** — é a lição "ausência de dado não é aprovação"
+   do CLAUDE.md aparecendo dentro da própria ferramenta que existe para dar evidência.
+
+⇒ Um audit **silencioso** e um audit **satisfeito** imprimem a mesma coisa. Toda leitura de saída
+externa precisa de um invariante de forma (piso, contagem, marcador), não só do parse feliz.
+
+### Falsificação (o dente do dente)
+
+Nos **dois locales** (`C` e `pt_BR.UTF-8`, lição #1483 — asserções em ASCII, caixa fixa, sem `-i`):
+
+| Sabotagem | Esperado | Obtido |
+|---|---|---|
+| parser volta a `'t'` (o bug original) | vermelho | 3 ok / **4 fail**, exit 1 |
+| prefixo da linha trocado (mata o piso) | vermelho | exit 2 `medição inconsistente`, harness exit 1 |
+| nenhuma | verde | **7 ok / 0 fail** nos dois locales |
+
+O harness roda o **executável real** com `PSQL_RO` apontado para um PG17 descartável e a allowlist
+injetada por `AUTHZ_GRANTS_TEST_JSON` — query, parser e exit code sob teste, nada reimplementado em
+shell, e o contrato real do repo intocado. Cada asserção casa o código que **deve** aparecer **e o
+que não pode**: só presença deixaria `NAO_APLICADA` e `DRIFT_PROD` indistinguíveis, e o operador
+aplicaria a correção errada.
+
+Prova de vida contra **prod** (read-only): invertendo o contrato só de `omie_products` num run de
+teste, o audit acusa `authenticated tem SELECT` — o privilégio que de fato está lá.
+
+### Dois desvios deliberados do plano, ambos por medição
+
+- **Tabela entra QUALIFICADA** em `has_table_privilege` (a chave da allowlist, que já é
+  `schema.name`). O plano remontava `'public.'||nome`: uma entrada futura fora de `public` mediria o
+  objeto errado e ficaria verde.
+- **`MAINTAIN` volta para a medição**, sob `CASE server_version_num >= 170000`. O plano o excluiu por
+  "prod pode ser anterior ao 17"; prod é **17.6** (medido) e o `m` de `arwdDxtm` é justamente ele. O
+  `CASE` mantém o audit são se um dia apontar para banco mais velho.
+- Correção de bug no script do plano: sob `set -e`, `run_audit() { bun …; echo $?; }` **morre** no
+  primeiro cenário que sai 1 — isto é, exatamente no que deveria acusar. Vai `|| ec=$?`.
+
+### Estado de prod na entrega (`psql-ro`, 2026-08-13, re-medido)
+
+Inalterado em relação às Tasks 1–3: `omie_products` fechada e **batendo com o contrato**;
+`product_costs` aberta, #1520 ainda OPEN+DRAFT ⇒ 1 aviso `FECHO_PENDENTE`, exit 0.
+
+### Ponto cego conhecido
+
+`fechadaPor: null` faz o audit **não comparar** aquela tabela — logo ele não denuncia o caso
+"prod fechada à mão, sem migration no repo". Não é falso-verde (a mensagem diz explicitamente que
+prod não foi comparada), e o gate estático cobre o caso irmão via `ANCORA_NAO_DECLARADA` assim que
+o `REVOKE` entra no repo. Fica registrado por ser um vetor plausível num projeto onde escrita de
+banco é manual.
+
+### Próximo passo
 
 Candidata seguinte à allowlist: `sales_orders` (money-path, já fechada em prod). Cada entrada exige
 curadoria própria — entrar em massa produziria uma allowlist que ninguém confia.
+
+**Nenhum gate type-checa `scripts/` nem `db/`:** `tsconfig.app.json` inclui só `src`, e o `knip` só
+olha `src` + `supabase/functions`. `bun run typecheck` verde é **evidência vazia** para o código
+destes dois diretórios — quem os cobre hoje é o vitest (runtime) e os harnesses. Verificado aqui com
+um `tsc` ad-hoc (0 erros nos 4 arquivos da entrega; 19 pré-existentes em `scripts/`, quase todos
+`import.meta.main` sem `bun-types`).
