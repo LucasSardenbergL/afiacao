@@ -148,6 +148,12 @@ eq "E4 gestor (cap_carteira_ler) vê os 5" \
    "$(como $A false true "SELECT count(*) FROM public.get_carteira_margem_faixa();")" "5"
 eq "E5 fail-closed: sem auth.uid() → zero linhas" \
    "$(P -tA -q -c "SET test.uid=''; SELECT count(*) FROM public.get_carteira_margem_faixa();")" "0"
+# ⚠️ E5 sozinho NÃO isola o fail-closed: sem uid, `carteira_visivel_para(cid, NULL)` já devolve
+# false e o escopo zeraria o resultado de qualquer jeito. O `IF v_uid IS NULL THEN RETURN` só é
+# a ÚNICA defesa quando a capability resolve permissiva — é esse o caso que E5b fixa, e é ele
+# que a falsificação K1 sabota. Sem E5b, K1 não teria assert para deixar vermelho.
+eq "E5b fail-closed morde mesmo com cap_carteira_ler permissiva" \
+   "$(P -tA -q -c "SET test.uid=''; SET test.cap_carteira='true'; SELECT count(*) FROM public.get_carteira_margem_faixa();")" "0"
 
 echo "-- F. gate de PROJEÇÃO do número --"
 eq "F1 com cap_custo_ler, margem_pct é o valor EXATO" \
@@ -210,6 +216,92 @@ eq "J1 re-aplicar não muda a faixa" \
    "$(como $A false false "SELECT faixa FROM public.get_carteira_margem_faixa() WHERE customer_user_id='c2000000-0000-0000-0000-000000000002';")" "amarelo"
 eq "J2 re-aplicar preserva o REVOKE de anon" \
    "$(Pq -q -c "SELECT has_function_privilege('anon','public.get_carteira_margem_faixa()','EXECUTE');")" "f"
+
+echo "-- K. FALSIFICAÇÃO (o passo que separa prova de teatro) --"
+# Cada bloco SABOTA a migration e exige VERMELHO no assert que a sabotagem mira. Sem isto os
+# asserts acima seriam decorativos: um `WHERE` que não filtra e um `CASE` que não esconde
+# produzem exatamente o mesmo verde que a versão correta, se o assert não tiver dente.
+#
+# A sabotagem é um `sed` CIRÚRGICO sobre o arquivo REAL — nunca um corpo reescrito à mão, que
+# testaria a minha cópia em vez da migration que o founder vai colar no SQL Editor.
+MIG="$REPO_ROOT/supabase/migrations/20260726170000_fu4f_fase3_carteira_margem_faixa.sql"
+SABOTADA="/tmp/sabota-${SLUG}.sql"
+
+sabota() { # $1 = expressão sed
+  sed "$1" "$MIG" > "$SABOTADA"
+  # ANTI-TEATRO (lição do #1483): `sed` que não casa nada devolve a migration ORIGINAL, o assert
+  # segue verde e eu leria isso como "sabotei e nada mudou" — falsificando por acidente de
+  # digitação, não por desenho. Arquivo idêntico = harness quebrado, não sabotagem branda.
+  if cmp -s "$SABOTADA" "$MIG"; then
+    bad "SABOTAGEM NÃO APLICADA — o sed não casou nada: $1"
+    return 1
+  fi
+  P -q -f "$SABOTADA"
+}
+restaura() { P -q -f "$MIG"; }
+# Passa quando o valor MUDOU sob sabotagem — ou seja, o assert original teria ficado vermelho.
+ne() {
+  if [ "$2" != "$3" ]; then ok "$1 (sob sabotagem virou [$2], íntegro era [$3])"
+  else bad "$1 — ASSERT SEM DENTE: seguiu [$3] mesmo com a migration sabotada"; fi
+}
+
+sabota 's/IF v_uid IS NULL THEN/IF false THEN/' && {
+  ne "K1 remover o fail-closed → E5b fica vermelho" \
+     "$(P -tA -q -c "SET test.uid=''; SET test.cap_carteira='true'; SELECT count(*) FROM public.get_carteira_margem_faixa();")" "0"
+  restaura; }
+
+sabota 's/CASE WHEN v_pode_num THEN b.pct END/b.pct/' && {
+  ne "K2 remover o CASE de projeção → F2 fica vermelho" \
+     "$(como $A false false "SELECT coalesce(margem_pct::text,'') FROM public.get_carteira_margem_faixa() WHERE customer_user_id='c2000000-0000-0000-0000-000000000002';")" ""
+  restaura; }
+
+# A régua ANTES do filtro é a decisão de desenho de 2026-07-22 (g comparável entre vendedores).
+# Sabotar = calcular os percentis sobre a carteira do caller, e não sobre a população.
+sabota 's|FROM private.margem_cliente_agregada() m|FROM private.margem_cliente_agregada() m WHERE v_cap_todo OR COALESCE(private.carteira_visivel_para(m.customer_user_id, v_uid), false)|' && {
+  ne "K3 régua por CARTEIRA em vez de população → H1 fica vermelho" \
+     "$(como $A false false "SELECT g FROM public.get_carteira_margem_faixa() WHERE customer_user_id='c2000000-0000-0000-0000-000000000002';")" \
+     "$(como $A false true  "SELECT g FROM public.get_carteira_margem_faixa() WHERE customer_user_id='c2000000-0000-0000-0000-000000000002';")"
+  restaura; }
+
+sabota 's/  WHERE v_cap_todo/  WHERE true OR v_cap_todo/' && {
+  ne "K4 remover o WHERE de escopo → E1 fica vermelho" \
+     "$(como $A false false "SELECT count(*) FROM public.get_carteira_margem_faixa();")" "2"
+  restaura; }
+
+# `g = 0` é VEREDITO ("pior margem da população"); NULL é "não sei". Trocar um pelo outro
+# reintroduz a fabricação que o #1533 removeu, e o health score deixa de renormalizar.
+sabota 's/CASE WHEN b.pct IS NULL THEN NULL/CASE WHEN b.pct IS NULL THEN 0::numeric/' && {
+  ne "K5 g NULL virando 0 → H5 fica vermelho" \
+     "$(como $B false false "SELECT coalesce(g::text,'NULO') FROM public.get_carteira_margem_faixa() WHERE customer_user_id='c5000000-0000-0000-0000-000000000005';")" "NULO"
+  restaura; }
+
+# A restauração precisa ser PROVADA: sem isto, um `restaura` que falhasse deixaria o harness
+# verde com a função sabotada em pé, e as 5 falsificações acima viravam ficção.
+eq "K6 canário: a migration íntegra voltou depois das sabotagens" \
+   "$(como $A false false "SELECT faixa||'|'||coalesce(margem_pct::text,'sem-numero') FROM public.get_carteira_margem_faixa() WHERE customer_user_id='c2000000-0000-0000-0000-000000000002';")" \
+   "amarelo|sem-numero"
+
+echo "-- L. impressão digital (amarra o harness à validação pós-apply) --"
+# A validação que o founder roda depois do SQL Editor prova que o objeto EXISTE e que os gates
+# estão lá. O que ela não provaria sozinha: que o corpo colado é o MESMO que este harness
+# testou. O md5 do `prosrc` normalizado fecha isso — e o assert abaixo garante que o número
+# gravado em db/valida-*.sql nunca envelhece em silêncio: mexeu na migration sem regravar a
+# impressão digital, o harness fica VERMELHO aqui, não na mão do founder.
+MD5_APLICADO="$(Pq -q -c "SELECT md5(regexp_replace(prosrc, '[[:space:]]+', ' ', 'g')) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname='get_carteira_margem_faixa';")"
+# `|| true`: sob `set -o pipefail`, `sed` num arquivo ausente derruba o harness INTEIRO em
+# silêncio — o que já custou uma rodada de diagnóstico aqui. Ausência vira string vazia, que o
+# assert reporta como vermelho legível em vez de morte súbita.
+MD5_DOC="$(sed -n 's/.*IMPRESSAO_DIGITAL=\([0-9a-f]\{32\}\).*/\1/p' "$REPO_ROOT/db/valida-fu4f-fase3-carteira-margem-faixa.sql" 2>/dev/null | head -1 || true)"
+echo "  (md5 do corpo aplicado: $MD5_APLICADO)"
+eq "L1 a impressão digital em db/valida-*.sql casa o corpo realmente aplicado" "$MD5_DOC" "$MD5_APLICADO"
+
+# E roda a PRÓPRIA validação pós-apply contra a migration real. Sem isto, um check meu com
+# formato errado (o `proconfig` que o Postgres normaliza, um nome de role) devolveria `f` num
+# banco CORRETO — e o founder pararia o deploy por um falso alarme meu, do outro lado da tela,
+# sem terminal para investigar. Todos os campos têm de ser `t`.
+VALIDA_OUT="$(Pq -q -f "$REPO_ROOT/db/valida-fu4f-fase3-carteira-margem-faixa.sql")"
+eq "L2 a validação pós-apply dá 't' em TODOS os 11 checks contra a migration real" \
+   "$(printf '%s' "$VALIDA_OUT" | tr '|' '\n' | sort -u | tr -d '\n')" "t"
 
 echo "========================================"
 echo "  $PASS verde(s), $FAIL vermelho(s)"

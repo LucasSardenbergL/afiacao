@@ -29,10 +29,10 @@ export const FAIXA_LABEL: Record<FaixaMargem, string> = {
   neutro: 'Sem custo conhecido',
 };
 
-/** Classe de cor do design system por faixa. `neutro` é neutro de propósito — não é alerta. */
-export const FAIXA_TOM: Record<FaixaMargem, string> = {
-  verde: 'text-status-success',
-  amarelo: 'text-status-warning',
-  vermelho: 'text-status-error',
-  neutro: 'text-muted-foreground',
-};
+// NÃO existe um `FAIXA_TOM` (classe de cor por faixa) aqui, e a ausência é deliberada. Ele
+// existiu na primeira versão desta entrega e saiu no rebase: o único consumidor seria o
+// `MetricRow` do FarmerDashboard, que aceita `value: string` — colori-lo exigiria alargar um
+// componente compartilhado, ou seja, mudança de UI embutida numa entrega de AUTORIZAÇÃO (o
+// mesmo erro que o `gDaFaixa` evitou acima). Export sem consumidor também é dead code, e o
+// `knip` é gate do `validate`. Quando a faixa ganhar tratamento visual próprio, a paleta
+// volta junto do componente que a usa.

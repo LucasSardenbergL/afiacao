@@ -189,9 +189,14 @@ export const ACKNOWLEDGED_SENSITIVE = new Set<string>([
   //     policy `fcs_select_carteira` de farmer_client_scores; sem carteira ⇒ zero linhas;
   //   · PROJEÇÃO (qual campo): `CASE WHEN v_pode_num THEN b.pct END` — sem `cap_custo_ler` o
   //     NÚMERO vem NULL, mas a FAIXA e o `g` saem sempre ("o número fecha, o sinal fica").
-  // Ambos provados em db/test-fu4f-fase3-carteira-margem-faixa.sh: E1-E5 (escopo), F1-F5
-  // (projeção), com as falsificações K4 (remove o WHERE → E1/E2/E3 vermelhos) e K2 (remove o
-  // CASE → F2 vermelho). Fail-closed sem `auth.uid()` provado em E5.
+  // Ambos provados em db/test-fu4f-fase3-carteira-margem-faixa.sh (32 asserts): E1-E5b
+  // (escopo), F1-F5 (projeção), G1-G4 (classificação), H1-H5 (a régua populacional e o `g`
+  // NULL≠0), I1-I4 (ACL). Fail-closed sem `auth.uid()` em E5/E5b.
+  // As falsificações K1-K5 sabotam a migration por `sed` cirúrgico e exigem o VERMELHO do
+  // assert que cada uma mira — K1 o fail-closed (E5b), K2 o CASE de projeção (F2), K3 a régua
+  // populacional (H1), K4 o WHERE de escopo (E1), K5 o `g` NULL virando 0 (H5); K6 é o canário
+  // que prova que a migration íntegra voltou. `sed` que não casa nada FALHA o harness, em vez
+  // de deixá-lo verde com uma sabotagem que nunca aconteceu.
   'public.get_carteira_margem_faixa',
 ]);
 

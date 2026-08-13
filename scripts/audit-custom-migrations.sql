@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 456
+-- Total de custom migrations: 457
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -472,6 +472,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260726150000', 'margem_cliente_helper_compartilhado', '20260726150000_margem_cliente_helper_compartilhado.sql'),
   ('20260726160000', 'margem_reconciliacao_universo_unico', '20260726160000_margem_reconciliacao_universo_unico.sql'),
   ('20260726160000', 'tint_canonica_piso_legado', '20260726160000_tint_canonica_piso_legado.sql'),
+  ('20260726170000', 'fu4f_fase3_carteira_margem_faixa', '20260726170000_fu4f_fase3_carteira_margem_faixa.sql'),
   ('20260727120000', 'tint_fase5_desativa_geracao_legada', '20260727120000_tint_fase5_desativa_geracao_legada.sql'),
   ('20260727130000', 'farmer_scores_colunas_orfas_null', '20260727130000_farmer_scores_colunas_orfas_null.sql'),
   ('20260727140000', 'authz_preco_fecha_omie_products', '20260727140000_authz_preco_fecha_omie_products.sql'),
@@ -1985,6 +1986,7 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('margem_reconciliacao_universo_unico', 'function', 'public', 'get_customer_margin_summary', ''),
   ('tint_canonica_piso_legado', 'function', 'public', 'tint_gate_revalida', ''),
   ('tint_canonica_piso_legado', 'view', 'public', 'v_tint_formula_canonica', ''),
+  ('fu4f_fase3_carteira_margem_faixa', 'function', 'public', 'get_carteira_margem_faixa', ''),
   ('tint_fase5_desativa_geracao_legada', 'view', 'public', 'v_tint_formula_canonica', ''),
   ('authz_preco_fecha_omie_products', 'rls_policy', 'public', 'omie_products_select_staff', 'omie_products'),
   ('tint_watchdog_corante_impagavel', 'function', 'public', 'tint_watchdog_corante_check', ''),
@@ -3593,6 +3595,7 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('margem_reconciliacao_universo_unico', 'function', 'public', 'get_customer_margin_summary', ''),
   ('tint_canonica_piso_legado', 'function', 'public', 'tint_gate_revalida', ''),
   ('tint_canonica_piso_legado', 'view', 'public', 'v_tint_formula_canonica', ''),
+  ('fu4f_fase3_carteira_margem_faixa', 'function', 'public', 'get_carteira_margem_faixa', ''),
   ('tint_fase5_desativa_geracao_legada', 'view', 'public', 'v_tint_formula_canonica', ''),
   ('authz_preco_fecha_omie_products', 'rls_policy', 'public', 'omie_products_select_staff', 'omie_products'),
   ('tint_watchdog_corante_impagavel', 'function', 'public', 'tint_watchdog_corante_check', ''),
