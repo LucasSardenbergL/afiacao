@@ -128,6 +128,12 @@ describe('useCrossSellEngine — custo fora do browser', () => {
     // Degradar para "recomenda tudo" poria produto de PREJUÍZO no topo da lista da vendedora.
     expect(result.current.recommendations).toEqual([]);
     expect(upserts).toEqual([]);
+
+    // ...mas fail-closed CALADO é o defeito do #1606 num caminho novo: lista vazia por falha
+    // fica indistinguível de "não há o que recomendar". A falha tem de ser DECLARADA, e o estado
+    // é INDISPONÍVEL (não "desatualizado" — não sobrou resultado anterior legítimo na tela).
+    expect(result.current.erro).not.toBeNull();
+    expect(result.current.desatualizado).toBe(false);
   });
 
   it('C: não lê product_costs — consulta a RPC', async () => {

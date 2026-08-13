@@ -215,8 +215,21 @@ export const useCrossSellEngine = () => {
       )) as unknown as { data: { product_id: string }[] | null; error: unknown };
       if (erroVendaveis || !skusVendaveis) {
         console.error('get_skus_margem_positiva falhou — sem recomendação (fail-closed):', erroVendaveis);
-        setRecommendations([]);
-        return;
+        // Fail-closed E DECLARADO. Só limpar a lista e sair repetiria, num caminho NOVO, o defeito
+        // que o #1606 tirou deste hook: a tela mostrava fila vazia e o operador não distinguia
+        // "não há o que recomendar" de "não consegui calcular" — e ia embora achando que era a
+        // primeira coisa. Este `return` mudo nem passava pelo `catch` honesto lá embaixo.
+        //
+        // Limpa ANTES de lançar, e não depois: manter as recomendações anteriores na tela
+        // contrariaria o próprio fail-closed (elas podem conter SKU que o servidor já não confirma
+        // como rentável). Com a lista zerada e `resultadoDestaExecucao` marcado, o `catch` conclui
+        // INDISPONÍVEL em vez de DESATUALIZADO — que é a leitura verdadeira aqui.
+        aplicarRecomendacoes([]);
+        resultadoDestaExecucao = true;
+        throw new Error(
+          mensagemDeErro(erroVendaveis) ??
+            'Não consegui confirmar quais SKUs são rentáveis — nenhuma recomendação foi gerada.',
+        );
       }
       const vendaveis = new Set(skusVendaveis.map((r) => r.product_id));
 
