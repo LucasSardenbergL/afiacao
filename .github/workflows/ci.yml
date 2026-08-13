@@ -233,6 +233,24 @@ jobs:
       - name: Docs índice gate (nenhum doc invisível)
         run: bun run docs:indice
 
+      # Anti-regressão de DEAD CODE (export sem consumidor, dep sem import). Existe porque o gate
+      # só-local não barra ninguém, e isso foi MEDIDO: o #1212 zerou os 254 achados e verificou
+      # `exit 0` em 2026-07-07, mas ficou 4 semanas em CONFLICTING (estado em que o auto-merge
+      # nunca dispara) e só mergeou 566 commits depois, em 06/08. No dia seguinte já eram 64
+      # achados — e nenhum era regressão do próprio #1212: TODOS nasceram na janela, o último
+      # (`dedupeKeyProposta`, #1332) 21 MINUTOS antes do #1212 mergear. A faxina chegou na main já
+      # vencida porque nada na janela foi barrado. A lição que este step encerra: medição de gate
+      # FORA do CI expira, e a validade dela é a distância entre medir e mergear — verde local é
+      # fato sobre um worktree num instante, verde de CI é fato sobre a main.
+      # Roda `bunx knip` — o MESMO comando do health stack local (`/health`), de propósito: gate de
+      # CI que diverge do comando local recria a lacuna que ele veio fechar. Config: knip.json.
+      # Quando quebrar: des-exportar (não deletar) é o default — não altera comportamento e só
+      # reduz alcance. Export que é contrato de teste ou fronteira de paridade byte-exata vai para
+      # `ignore` no knip.json COM o porquê no commit (precedentes: sayerlack-sku.ts,
+      # embalagem-captura-helpers.ts). Registro: docs/historico/faxina-knip-2026-07-07.md
+      - name: Dead code gate (knip — export/dep sem consumidor)
+        run: bunx knip
+
       # ─── Alerta de regressão (Componente 1 — mitigação de reversão Lovable) ──
       # O bot do Lovable commita DIRETO na main sem PR/CI; quando quebra build/
       # typecheck (ex.: types.ts stale #1079), o CI fica vermelho mas passa
