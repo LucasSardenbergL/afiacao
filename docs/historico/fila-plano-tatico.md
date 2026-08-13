@@ -232,5 +232,98 @@ follow-up **medido**: se "não atendeu" sair sub-representado, é sinal de que a
 botão para não perder o plano — e aí a mudança volta com evidência.
 
 **A prova real não é o CI.** É `SELECT status, count(*), count(actual_margin) FROM
-farmer_tactical_plans GROUP BY 1` uma semana depois. Se `concluido` continuar em 0, o gargalo é
-adoção da tela, não custo do formulário — e isso é informação, não fracasso.
+farmer_tactical_plans GROUP BY 1` uma semana depois.
+
+### ⚠️ Errata (2026-08-13) — a inferência acima tinha um buraco
+
+O parágrafo original terminava assim: *"se `concluido` continuar em 0, o gargalo é adoção da tela,
+não custo do formulário"*. **Isso estava errado por omissão**, e a medição de seis dias depois
+mostrou por quê.
+
+Medido em 2026-08-13:
+
+| Fato | Evidência |
+|---|---|
+| Código **no ar** | string `Remarcou` (única de `BotoesDesfecho.tsx`) presente em `/assets/FarmerTacticalPlan-DxJ6Rly6.js`, 331 chunks varridos (`verify-frontend.sh`) |
+| Desfechos | **0** — 508 `expirado` + 169 `gerado`, nenhum `call_result` |
+| Fila | `gerado` estacionou em ~169 com ~24/dia — **regime estacionário**, a fase 2 fechou a entrada |
+| Telemetria da tela | **nenhuma** — zero `track()` em `FarmerTacticalPlan.tsx` e em `tacticalPlan/`, contra 66 arquivos do repo que usam |
+
+E a causa real, dita pelo founder: **as vendedoras ainda não começaram a usar o aplicativo.**
+
+O zero não media a tela nem o formulário — media a **ausência de usuários**. A inferência original
+saltava de "0 desfechos" para "gargalo de adoção da tela" pulando duas hipóteses que a precedem:
+
+1. **O código chegou a produção?** Merge na `main` não publica nada (§Lovable = 3 deploys manuais).
+   Sem verificar por bytes, o zero é indistinguível de "o Publish nunca saiu".
+2. **O público-alvo está em operação?** Um denominador de zero usuários produz numerador zero em
+   QUALQUER desenho de tela — o melhor botão do mundo mede o mesmo que o pior.
+
+É a mesma família de *ausência de dado ≠ afirmação* que este repo já cataloga, um andar acima: não é
+um número fabricado a partir de `null`, é um **veredito de produto fabricado a partir de um zero sem
+denominador**. E o alvo do veredito seria o trabalho de outra pessoa ("a vendedora não adota a
+tela"), o que torna o erro mais caro do que um número errado.
+
+**Corolário para revisão:** antes de ler zero como veredito sobre uma tela, prove (a) que o código
+está no ar e (b) que existe alguém do outro lado. Só depois de descartar essas duas o zero fala
+sobre o desenho. Métrica de adoção sem denominador não é métrica — é o `Number(null) === 0` em
+escala de produto.
+
+**Quando medir de verdade:** quando as vendedoras entrarem em operação — gatilho por **evento**, não
+por calendário. Se nessa altura o desfecho continuar em zero, aí sim a pergunta é a tela, e o
+primeiro passo é instrumentar com `track()` (abertura + clique) para separar "não abrem" de "abrem e
+não registram".
+
+### O gatilho virou query (2026-08-13, 2ª leitura do mesmo dia)
+
+A errata acima deixou o gatilho dependendo de o founder avisar. Isso é frágil pelo mesmo motivo que
+o zero era: **não é verificável**. A 2ª leitura mediu o denominador direto e a fala do founder virou
+dado.
+
+| Medição (psql-ro) | Valor |
+|---|---|
+| `master` | 1 usuário — **1 com sessão viva em 30d** (o próprio founder) |
+| `employee` | 2 usuários — **0 com sessão viva** |
+| `customer` | 5.664 — **0 com sessão viva** |
+
+Os três "donos" de carteira do plano tático, com `auth.users.last_sign_in_at`:
+
+| Farmer | Planos | Último sign-in | Sessão mais recente |
+|---|---|---|---|
+| Tatyana (`employee`) | 334 | **2026-04-15** | 2026-06-23 |
+| Regina (`employee`) | 172 | **2026-04-13** | *nenhuma linha* |
+| Lucas (`master`) | 171 | 2026-07-24 | mesmo dia, 21:07 UTC |
+
+O app inteiro tem **um usuário ativo, e é o founder**. As duas vendedoras não abrem o sistema desde
+abril. O numerador seguia idêntico (508 `expirado` + 169 `gerado`, 0 `call_result`) com a fila
+saudável — 25 planos gerados às 08:03 UTC daquele dia.
+
+**A query canônica do gatilho:**
+
+```sql
+SELECT ur.role,
+       count(DISTINCT ur.user_id) AS usuarios,
+       count(DISTINCT s.user_id)  AS ativos_7d
+FROM user_roles ur
+LEFT JOIN auth.sessions s
+       ON s.user_id = ur.user_id
+      AND s.updated_at > now() - interval '7 days'
+GROUP BY 1 ORDER BY 2 DESC;
+```
+
+Dispara quando `employee → ativos_7d ≥ 1` se sustentar por alguns dias. Só então as três leituras
+previstas (gargalo de tela · `nao_atendeu` sub-representado · elo de margem com o Omie) passam a ter
+denominador.
+
+⚠️ **Por que este par de sinais tem dente, e nenhum dos dois sozinho teria.** `auth.sessions` some no
+logout e na expiração — lida sozinha, "0 sessões" é **ausência de dado**, exatamente a armadilha do
+`used_at`. O que salva a inferência é `last_sign_in_at`: ela é **evidência positiva** (uma data real
+de abril, não um vazio) e o Postgres não a apaga. Os dois sinais são independentes e concordam. Já
+`last_sign_in_at` sozinha também não bastaria na direção oposta: o Supabase não a atualiza no refresh
+de token, então uma data velha seria compatível com uso diário sob sessão persistente — é a sessão
+viva que fecha esse buraco. Um mede que **houve** entrada; o outro, que **há** presença.
+
+**Lição de método:** um gatilho por evento precisa de um **detector**, não de um combinado verbal.
+Enquanto o gatilho é "alguém me avisa", ele herda a mesma falha do zero sem denominador — ninguém
+consegue conferir se já disparou. Escrever a query custou uma consulta e transformou a espera em algo
+que qualquer sessão futura resolve sozinha, sem interromper o founder.

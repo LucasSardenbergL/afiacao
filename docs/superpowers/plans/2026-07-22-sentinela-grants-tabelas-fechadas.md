@@ -1,8 +1,20 @@
 # Sentinela de grants — tabelas deliberadamente fechadas — Plano de implementação
 
-> **Estado em 2026-08-13:** Tasks **1–3 ENTREGUES** (allowlist com âncora corrigida, `auditGrantsTabelas`
-> + 14 cenários, Parte C no `authz:check`). Tasks **4–7 PENDENTES** (audit de prod sob `psql-ro`,
-> harness PG17, doc). Duas correções que o plano original não podia prever — ver a "Atualização
+> **Estado em 2026-08-13: plano CONCLUÍDO.** Tasks **1–3** (allowlist com âncora corrigida,
+> `auditGrantsTabelas` + 14 cenários, Parte C no `authz:check`) no PR #1712; Tasks **4–7**
+> (`compararGrantsProd`, audit de prod sob `psql-ro`, harness PG17, docs) na sequência.
+> Resultado e desvios: `docs/historico/sentinela-grants-tabelas-fechadas.md`.
+>
+> **O que a execução das Tasks 4–7 corrigiu no plano** (não invalida os steps; leia junto):
+> · o parser da Task 5 esperava `t`/`f`, mas `text||boolean` imprime `true`/`false` — medição vazia
+>   e audit dizendo "prod bate com o contrato". Corrigido com `CASE … 'SIM'/'NAO'` + PISO de linhas;
+>   foi o harness da Task 6 que pegou.
+> · `run_audit()` da Task 6, sob `set -e`, morre no primeiro cenário que sai 1 (o que deve acusar) —
+>   precisa de `|| ec=$?`.
+> · a tabela entra QUALIFICADA em `has_table_privilege` (nada de `'public.'||nome`), e `MAINTAIN`
+>   volta à medição sob `CASE server_version_num >= 170000` (prod é 17.6, medido).
+>
+> Duas correções que o plano original não podia prever — ver a "Atualização
 > 2026-08-13" no spec:
 > 1. `omie_products` **fechou em prod** (PR #1558, 23/07) → a entrada nasce com âncora preenchida,
 >    não `fechadaPor: null` como a Task 1 escreveu.
