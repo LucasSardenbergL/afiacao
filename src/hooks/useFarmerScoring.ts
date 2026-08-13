@@ -196,7 +196,22 @@ export const useFarmerScoring = (farmerId?: string) => {
       // `g` vem PRONTO do servidor, com a mesma régua de percentis (p10/p90 sobre a POPULAÇÃO)
       // que este arquivo usava. Não é preciosismo: derivar `g` da faixa (verde/amarelo/vermelho
       // → 1/0,5/0) mudaria o health score de 68% dos clientes com margem — 5,73 pontos em média,
-      // 14,42 no pior caso (medido em prod, 2026-07-22). O score fica idêntico.
+      // 14,42 no pior caso (medido em prod, 2026-07-22).
+      //
+      // ⚠️ A RÉGUA é a mesma, mas O SCORE MUDA — e o cabeçalho da migration ainda diz que não
+      // (ficou otimista; o arquivo é imutável depois de commitado). Medido em prod 2026-08-13,
+      // são DOIS deltas conhecidos, ambos consequência de a margem passar a vir da autoridade
+      // única do #1519 em vez de ser recalculada aqui:
+      //   1. UNIVERSO DE PEDIDOS. Este hook filtra por allowlist de status (e duas das três —
+      //      `confirmado`, `entregue` — têm ZERO linhas em prod); o helper filtra por denylist.
+      //      30.833 pedidos contra 20.597: ~50% a mais alimentando a margem.
+      //   2. ESCOPO. `sales_orders` é company-wide para staff (policy `sales_orders_select_staff`),
+      //      mas a RPC devolve só a carteira do caller. Para um VENDEDOR, cliente fora da carteira
+      //      cai no `?? null` abaixo e perde o componente G — o `calcularHealthScore` renormaliza,
+      //      então o score dele muda (não penaliza, mas muda) e a ordem da agenda pode mudar
+      //      junto. Para gestor/master (`cap_carteira_ler`) não há delta: a RPC devolve tudo.
+      // O baseline de paridade TS×SQL da §5.1 do spec — que mediria exatamente estes dois — não
+      // foi feito. Está declarado no corpo do PR em vez de anunciado como equivalência.
       //
       // `margem_pct` só vem preenchido para quem tem `cap_custo_ler`; para os demais é null e a
       // UI mostra a FAIXA no lugar do número. O gate é de PROJEÇÃO, no corpo da RPC.
