@@ -15,6 +15,7 @@
     "edges:typecheck": "bun scripts/edges-typecheck-gate.ts",
     "audit:migrations": "bun scripts/audit-custom-migrations.ts",
     "authz:check": "bun scripts/authz-gate-check.ts",
+    "authz:grants:prod": "bun db/audit-grants-tabelas-fechadas.ts",
     "bunpin:check": "bun scripts/bun-pin-gate-check.ts",
     "docs:indice": "bun scripts/docs-indice-gate-check.ts",
     "mutcheck": "bash scripts/mutcheck-all.sh",
