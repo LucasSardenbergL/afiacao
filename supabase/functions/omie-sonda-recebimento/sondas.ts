@@ -127,10 +127,14 @@ const CHAVES_DE_ITEM = [
   "nIdProduto",
   "cCodigoProduto",
   "nCodItem",
+  "nIdItPedido",
   "nQtde",
   "nQtdeNFe",
   "nQtdeRecebida",
 ];
+
+/** Profundidade da busca DENTRO do elemento ao decidir se um array é de itens. */
+const PROF_MARCADOR = 3;
 
 /**
  * Encontra a lista de itens dentro de um payload SEM assumir onde ela mora — o ponto da sonda é
@@ -152,8 +156,15 @@ export function localizarItens(
         (el): el is Record<string, unknown> =>
           typeof el === "object" && el !== null && !Array.isArray(el),
       );
+      // Busca o marcador EM PROFUNDIDADE dentro do elemento: `itensRecebimento[]` guarda tudo
+      // sob `itensCabec`/`itensAjustes`/`itensInfoAdic`, então olhar só o topo do elemento
+      // devolvia "sem itens" num payload cheio deles (bug apontado pelo Codex).
       const pareceItem = objetos.length > 0 &&
-        objetos.some((el) => CHAVES_DE_ITEM.some((k) => k in el));
+        objetos.some((el) =>
+          CHAVES_DE_ITEM.some((k) =>
+            buscarValorProfundo(el, [k], { profundidadeMax: PROF_MARCADOR }) !== undefined
+          )
+        );
       if (pareceItem && prefixo && (melhor === null || objetos.length > melhor.itens.length)) {
         melhor = { caminho: prefixo, itens: objetos };
       }
@@ -223,6 +234,185 @@ export function normalizarItemPO(item: Record<string, unknown>): ItemPONormaliza
   };
 }
 
+// ── Identificador nativo ───────────────────────────────────────────────────────────────────
+
+/**
+ * Normaliza um ID nativo do Omie, tratando ZERO como AUSÊNCIA.
+ *
+ * Este é o detalhe que decide a medição inteira (Codex): `nIdPedido: 0` é como o Omie diz "este
+ * item não está associado a pedido nenhum". Se 0 virasse id válido, "sem vínculo" seria contado
+ * como "vínculo com a PO 0" — um falso positivo exatamente no campo que a fatia 1 existe para
+ * medir. Presença de NOME não é presença de VALOR.
+ */
+export function idNativo(v: unknown): string | null {
+  if (v === null || v === undefined) return null;
+  if (typeof v === "number") return Number.isFinite(v) && v !== 0 ? String(v) : null;
+  if (typeof v !== "string") return null;
+  const s = v.trim();
+  if (s === "") return null;
+  // "0", "00", "000": zero escrito de qualquer jeito continua sendo ausência.
+  if (/^0+$/.test(s)) return null;
+  return s;
+}
+
+// ── Busca por nome, em profundidade ────────────────────────────────────────────────────────
+
+/**
+ * Procura o primeiro dos `nomes` em qualquer profundidade do objeto e devolve seu valor cru.
+ *
+ * Buscar por NOME em vez de por caminho fixo é deliberado: o item de recebimento aninha os campos
+ * em `itensCabec` / `itensAjustes` / `itensInfoAdic` / `itensIde`, e hardcodar o caminho seria
+ * assumir o contrato — o erro que esta sonda existe para não cometer. A ordem dos `nomes` é a
+ * ordem de preferência (o Omie alterna grafias, ex.: `cChaveNFe` × `cChaveNfe`).
+ */
+export function buscarValorProfundo(
+  obj: unknown,
+  nomes: readonly string[],
+  opts: { profundidadeMax?: number } = {},
+): unknown {
+  const profundidadeMax = opts.profundidadeMax ?? PROFUNDIDADE_PADRAO;
+  for (const nome of nomes) {
+    const achado = procurar(obj, nome, 0, profundidadeMax);
+    if (achado !== undefined) return achado;
+  }
+  return undefined;
+}
+
+function procurar(v: unknown, nome: string, nivel: number, max: number): unknown {
+  if (nivel > max || v === null || typeof v !== "object") return undefined;
+  if (Array.isArray(v)) {
+    for (const el of v.slice(0, ELEMENTOS_AMOSTRADOS)) {
+      const r = procurar(el, nome, nivel + 1, max);
+      if (r !== undefined) return r;
+    }
+    return undefined;
+  }
+  const reg = v as Record<string, unknown>;
+  if (nome in reg) return reg[nome];
+  for (const filho of Object.values(reg)) {
+    const r = procurar(filho, nome, nivel + 1, max);
+    if (r !== undefined) return r;
+  }
+  return undefined;
+}
+
+// ── Item de recebimento e a taxonomia de associação ────────────────────────────────────────
+
+export interface ItemRecebimentoNormalizado {
+  sequencia: string | null;
+  idItemRecebimento: string | null;
+  /** `nIdPedido` — o vínculo NATIVO com o pedido de compra. null quando o Omie manda 0. */
+  idPedido: string | null;
+  /** `nIdItPedido` — o vínculo NATIVO com o ITEM do pedido; é ele que o ledger precisa. */
+  idItemPedido: string | null;
+  /** `nNumPedCompra` — referência TEXTUAL vinda do XML do fornecedor, não vínculo nativo. */
+  numPedidoTexto: string | null;
+  numItemPedidoTexto: string | null;
+  idProduto: string | null;
+  codigoProduto: string | null;
+  unidade: string | null;
+  localEstoque: string | null;
+  qtdeNfe: number | null;
+  qtdeRecebida: number | null;
+  /** `cNaoGerarMovEstoque`: se "S", houve recebimento fiscal SEM movimento de estoque. */
+  naoGeraMovEstoque: string | null;
+}
+
+export function normalizarItemRecebimento(item: unknown): ItemRecebimentoNormalizado {
+  const buscar = (nomes: readonly string[]) => buscarValorProfundo(item, nomes);
+  return {
+    sequencia: idNativo(buscar(["nSequencia"])),
+    idItemRecebimento: idNativo(buscar(["nIdItem"])),
+    idPedido: idNativo(buscar(["nIdPedido", "nIdPedidoExistente"])),
+    idItemPedido: idNativo(buscar(["nIdItPedido", "nIdItPedidoExistente"])),
+    numPedidoTexto: idNativo(buscar(["nNumPedCompra", "cNumPedCompra"])),
+    numItemPedidoTexto: idNativo(buscar(["cNumItPedCompra", "nNumItPedCompra"])),
+    idProduto: idNativo(buscar(["nIdProduto"])),
+    codigoProduto: texto(buscar(["cCodigoProduto", "cCodigo"])),
+    unidade: texto(buscar(["cUnidadeNfe", "cUnidade"])),
+    localEstoque: idNativo(buscar(["codigo_local_estoque", "nCodLocalEstoque"])),
+    qtdeNfe: parseQtdEstrito(buscar(["nQtdeNFe", "nQtde"])),
+    qtdeRecebida: parseQtdEstrito(buscar(["nQtdeRecebida", "nQtdeReceb"])),
+    naoGeraMovEstoque: texto(buscar(["cNaoGerarMovEstoque", "cNaoGerarMovEstoq"])),
+  };
+}
+
+/**
+ * Como este item de NF-e se liga (ou não) à PO alvo. É a resposta da fatia 1 por item.
+ *
+ * `native_exact` é o único estado que autorizaria, mais adiante, um desconto do "a caminho" —
+ * e ainda assim só depois de amarrado a movimento de estoque postado. `xml_hint_only` é a
+ * hipótese que o código do espelho torna provável: `omie-sync-nfes-recebidas` monta o vínculo
+ * PO↔NF-e a partir de `nNumPedCompra`, uma referência textual do XML do fornecedor. Se for esse
+ * o estado dominante, o `t4` do espelho é INFERÊNCIA NOSSA, não recebimento do Omie — e a
+ * etapa-15 deixa de ser contradição.
+ */
+export type ClasseAssociacao =
+  | "native_exact"
+  | "native_other_po"
+  | "native_sem_item"
+  | "xml_hint_only"
+  | "xml_hint_outra_po"
+  | "product_only"
+  | "unassociated";
+
+export function classificarAssociacao(
+  item: ItemRecebimentoNormalizado,
+  alvo: { idPedido: string | null; numeroPedido: string | null },
+): ClasseAssociacao {
+  if (item.idPedido !== null) {
+    if (alvo.idPedido !== null && item.idPedido !== alvo.idPedido) return "native_other_po";
+    return item.idItemPedido !== null ? "native_exact" : "native_sem_item";
+  }
+  if (item.numPedidoTexto !== null) {
+    if (alvo.numeroPedido !== null && item.numPedidoTexto !== alvo.numeroPedido) {
+      return "xml_hint_outra_po";
+    }
+    return "xml_hint_only";
+  }
+  if (item.idProduto !== null || item.codigoProduto !== null) return "product_only";
+  return "unassociated";
+}
+
+// ── Escolha da amostra ─────────────────────────────────────────────────────────────────────
+
+/**
+ * Escolhe POs de NOTAS distintas, cobrindo os dois extremos da consolidação.
+ *
+ * Sem isto, "as 3 POs mais recentes" pode selecionar três POs da MESMA nota (94% das POs alvo
+ * dividem nota com outra) — a S2 rodaria uma vez só e a amostra não representaria nada. A ordem
+ * alterna a nota que cobre MAIS POs (o caso dominante, onde a atribuição é ambígua) com a que
+ * cobre menos (o caso raro de nota exclusiva), porque os dois lados decidem coisas diferentes
+ * no ledger.
+ */
+export function escolherPorNotaDiversa<T extends { nid_receb: number | null }>(
+  linhas: readonly T[],
+  limite: number,
+): T[] {
+  const porNota = new Map<number, T[]>();
+  for (const l of linhas) {
+    if (l.nid_receb == null) continue;
+    const g = porNota.get(l.nid_receb);
+    if (g) g.push(l);
+    else porNota.set(l.nid_receb, [l]);
+  }
+  // Grupos ordenados por quantidade de POs na nota (desc) — empate resolvido pelo id, para a
+  // escolha ser determinística entre execuções.
+  const grupos = [...porNota.entries()]
+    .sort((a, b) => b[1].length - a[1].length || a[0] - b[0]);
+
+  const escolhidas: T[] = [];
+  let inicio = 0;
+  let fim = grupos.length - 1;
+  let pegarDoInicio = true;
+  while (escolhidas.length < limite && inicio <= fim) {
+    const g = pegarDoInicio ? grupos[inicio++] : grupos[fim--];
+    escolhidas.push(g[1][0]);
+    pegarDoInicio = !pegarDoInicio;
+  }
+  return escolhidas;
+}
+
 // ── Etapa da PO ────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -237,6 +427,42 @@ export function etapaDaPO(raw: unknown): string | null {
   if (typeof etapa === "string") return etapa.trim() === "" ? null : etapa.trim();
   if (typeof etapa === "number") return String(etapa);
   return null;
+}
+
+// ── Destino: enum fechado, nunca dado de entrada ───────────────────────────────────────────
+
+/**
+ * Serviços do Omie que a sonda pode consultar. URLs HARDCODED, por segurança, não por estilo.
+ *
+ * A edge manda `app_key`/`app_secret` no CORPO de cada requisição. Se o destino viesse do corpo
+ * da invocação — como vinha na primeira versão, via `candidatos_movimento[].endpoint` — quem
+ * chamasse a sonda poderia apontá-la para um host próprio e receber a credencial do ERP de
+ * produção. A allowlist de MÉTODO não fecha isso: ela restringe o verbo, não o destino.
+ *
+ * Por que não uma allowlist exata de pares (serviço, método), como o Codex sugeriu: descobrir
+ * método ainda não catalogado é justamente o trabalho da S3. O par serviço-fechado + método
+ * restrito a consulta preserva a descoberta sem deixar a credencial sair do host do Omie.
+ */
+const SERVICOS: Readonly<Record<string, string>> = {
+  pedido_compra: "https://app.omie.com.br/api/v1/produtos/pedidocompra/",
+  recebimento_nfe: "https://app.omie.com.br/api/v1/produtos/recebimentonfe/",
+  estoque_consulta: "https://app.omie.com.br/api/v1/estoque/consulta/",
+  estoque_resumo: "https://app.omie.com.br/api/v1/estoque/resumo/",
+  estoque_movestoque: "https://app.omie.com.br/api/v1/estoque/movestoque/",
+  estoque_ajuste: "https://app.omie.com.br/api/v1/estoque/ajuste/",
+  estoque_local: "https://app.omie.com.br/api/v1/estoque/local/",
+};
+
+export type Servico = keyof typeof SERVICOS;
+
+export function servicosConhecidos(): string[] {
+  return Object.keys(SERVICOS).sort();
+}
+
+/** URL do serviço, ou `null` para qualquer entrada que não seja uma chave EXATA do enum. */
+export function urlDoServico(servico: string): string | null {
+  if (typeof servico !== "string") return null;
+  return Object.prototype.hasOwnProperty.call(SERVICOS, servico) ? SERVICOS[servico] : null;
 }
 
 // ── Trava de leitura ───────────────────────────────────────────────────────────────────────
