@@ -208,10 +208,24 @@ export const useFarmerScoring = (farmerId?: string) => {
       //   2. ESCOPO. `sales_orders` é company-wide para staff (policy `sales_orders_select_staff`),
       //      mas a RPC devolve só a carteira do caller. Para um VENDEDOR, cliente fora da carteira
       //      cai no `?? null` abaixo e perde o componente G — o `calcularHealthScore` renormaliza,
-      //      então o score dele muda (não penaliza, mas muda) e a ordem da agenda pode mudar
-      //      junto. Para gestor/master (`cap_carteira_ler`) não há delta: a RPC devolve tudo.
-      // O baseline de paridade TS×SQL da §5.1 do spec — que mediria exatamente estes dois — não
-      // foi feito. Está declarado no corpo do PR em vez de anunciado como equivalência.
+      //      então o score dele muda (não penaliza, mas muda). Para gestor/master
+      //      (`cap_carteira_ler`) não há delta: a RPC devolve tudo.
+      //
+      // ✅ O baseline de paridade TS×SQL da §5.1 do spec AGORA EXISTE e foi medido em prod
+      // (2026-08-13): `db/test-fu4f-fase3-paridade-ts-sql.sh`, análise em
+      // `docs/historico/farmer-scoring-paridade-ts-sql.md`. Os dois deltas acima estão CONFIRMADOS
+      // e quantificados — e um terceiro palpite deste comentário caiu:
+      //   • FAIXA: master 58 clientes (6,9%) · farmers 497 (59,5%) e 405 (48,5%).
+      //   • HEALTH: Δ médio 1,36 / 4,08 / 3,56; muda de CLASSE em 14 (1,7%) / 78 (9,3%) / 44 (5,3%).
+      //   • AGENDA: **ZERO** entram ou saem, nas 3 personas — "a ordem da agenda pode mudar junto"
+      //     era falso. Nenhuma dimensão de quota lê `g`: risco ordena por churnRisk, expansão por
+      //     expansionScore e follow-up por priorityScore, e o health score não entra em nenhum.
+      //     Só o RÓTULO healthClass exibido muda (3/1/2 dos 20 slots). Medido com falsificação —
+      //     perturbando a prioridade, a agenda DIVERGE, então o zero não é comparador morto.
+      //   • O eixo UNIVERSO só ADICIONA sinal (28 ganham margem, 0 perdem); o eixo ESCOPO só
+      //     REMOVE (472 e 379 perdem). Alinhar a allowlist daqui fecha o primeiro (delta do master
+      //     vai a 1 cliente) e não toca o segundo — mas troca 9 dos 20 slots da agenda: é decisão
+      //     de PRODUTO, do founder, não higiene de filtro.
       //
       // `margem_pct` só vem preenchido para quem tem `cap_custo_ler`; para os demais é null e a
       // UI mostra a FAIXA no lugar do número. O gate é de PROJEÇÃO, no corpo da RPC.
