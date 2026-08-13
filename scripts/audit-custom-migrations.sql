@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 457
+-- Total de custom migrations: 458
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -498,7 +498,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260807210912', 'expirar_planos_taticos', '20260807210912_expirar_planos_taticos.sql'),
   ('20260807223000', 'check_finitude_money_path', '20260807223000_check_finitude_money_path.sql'),
   ('20260808012000', 'atp_reconciliacao_fase3', '20260808012000_atp_reconciliacao_fase3.sql'),
-  ('20260808020000', 'tactical_plan_idempotencia_janela', '20260808020000_tactical_plan_idempotencia_janela.sql')
+  ('20260808020000', 'tactical_plan_idempotencia_janela', '20260808020000_tactical_plan_idempotencia_janela.sql'),
+  ('20260813195914', 'reposicao_pos_candidatos_guard_temporal', '20260813195914_reposicao_pos_candidatos_guard_temporal.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2059,7 +2060,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('atp_reconciliacao_fase3', 'function', 'public', 'atp_reservas_pendentes', ''),
   ('atp_reconciliacao_fase3', 'index', 'public', 'idx_estoque_reservas_pedido_ativa', 'estoque_reservas'),
   ('atp_reconciliacao_fase3', 'cron_job', 'cron', 'atp-reconciliar', ''),
-  ('tactical_plan_idempotencia_janela', 'function', 'public', 'criar_plano_tatico', '')
+  ('tactical_plan_idempotencia_janela', 'function', 'public', 'criar_plano_tatico', ''),
+  ('reposicao_pos_candidatos_guard_temporal', 'function', 'public', 'reposicao_pos_candidatos', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -3668,7 +3670,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('atp_reconciliacao_fase3', 'function', 'public', 'atp_reservas_pendentes', ''),
   ('atp_reconciliacao_fase3', 'index', 'public', 'idx_estoque_reservas_pedido_ativa', 'estoque_reservas'),
   ('atp_reconciliacao_fase3', 'cron_job', 'cron', 'atp-reconciliar', ''),
-  ('tactical_plan_idempotencia_janela', 'function', 'public', 'criar_plano_tatico', '')
+  ('tactical_plan_idempotencia_janela', 'function', 'public', 'criar_plano_tatico', ''),
+  ('reposicao_pos_candidatos_guard_temporal', 'function', 'public', 'reposicao_pos_candidatos', '')
 )
 SELECT
   e.migration,
