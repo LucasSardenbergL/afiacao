@@ -1,7 +1,7 @@
 // Hook de dados/estado dos aumentos anunciados.
 // Extraído verbatim de src/pages/AdminReposicaoAumentos.tsx (god-component split):
 // 2 queries (fornecedores + aumentos com agregação de itens), memos de agrupamento
-// por mês e handlers do upload/extração via Gemini Vision.
+// por mês e handlers do upload/extração via IA (vision).
 import { useState, useRef, useMemo, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
@@ -147,7 +147,7 @@ export function useAumentos() {
       const arquivo_tipo =
         arquivo.type === "application/pdf" ? "pdf" : arquivo.type;
 
-      toast.info("Extraindo dados via Gemini Vision…");
+      toast.info("Extraindo dados do documento…");
 
       const { data, error } = await supabase.functions.invoke(
         "promocao-extrair-via-vision",

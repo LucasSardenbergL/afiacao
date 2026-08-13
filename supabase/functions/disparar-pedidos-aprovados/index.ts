@@ -2,7 +2,7 @@
 // Às 10:00 BRT (cron 0 13 * * *), processa pedidos aprovados do ciclo do dia.
 // - DRY-RUN: cria pedido no Omie via IncluirPedidoCompra, NÃO envia ao fornecedor
 // - PRODUÇÃO: cria no Omie + dispara notificação ao fornecedor pelo canal configurado
-import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",

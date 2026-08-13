@@ -36,7 +36,6 @@ export const ALAVANCA_INICIATIVA = {
   risco: 'Risco',
   outro: 'Outro',
 } as const;
-export type AlavancaIniciativa = keyof typeof ALAVANCA_INICIATIVA;
 
 /** Status que compõem o pipeline "abaixo da linha d'água" (ganho ainda não comprovado). */
 export const STATUS_PIPELINE: readonly StatusIniciativa[] = ['ideia', 'em_execucao', 'maturando'];

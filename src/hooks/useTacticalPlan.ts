@@ -1,7 +1,11 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { supabase } from '@/integrations/supabase/client';
-import { selectObjective, clampRecencyCapDays } from '@/lib/scoring/objective';
-import { margemConhecida, mediaMargensConhecidas } from '@/lib/scoring/margin';
+import { invokeFunction } from '@/lib/invoke-function';
+import { selectObjective, clampRecencyCapDays, objetivoFinal } from '@/lib/scoring/objective';
+import { margemConhecida, mediaMargensConhecidas, valorMedido } from '@/lib/scoring/margin';
+import { numerosDoBundle } from '@/lib/tactical/bundle-numeros';
+import { ehJaGeradoHoje } from '@/lib/tactical/plano-duplicata';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 import { fetchAllPages } from '@/lib/postgrest';
 import { ownersAtivosDoAlvo } from '@/lib/carteira/escopo-clientes';
 import { useAuth } from '@/contexts/AuthContext';
@@ -28,7 +32,9 @@ export interface TacticalPlan {
   /** PERCENTUAL (0–100), ou null quando a margem era desconhecida na geração do plano. */
   currentMarginPct: number | null;
   clusterAvgMarginPct: number | null;
-  expansionPotential: number;
+  /** PERCENTUAL, ou null quando o potencial não foi medido — hoje, 100% da base
+   *  (farmer_client_scores.expansion_score é NULL em 6.633/6.633; nenhum writer o calcula). */
+  expansionPotential: number | null;
 
   // Strategy
   strategicObjective: string;
@@ -37,26 +43,39 @@ export interface TacticalPlan {
   approachStrategyB: string;
 
   // Bundle
+  // Campos NULLABLE por dado (money-path — ausente ≠ zero): `null` = não havia bundle
+  // prioritário na geração do plano, ou a coluna de origem não estava medida. Eram
+  // `number` e o `Number(x || 0)` da leitura fabricava 0 — "LIE R$ 0,00" e "Probabilidade
+  // 0,0%" leem como veredito comercial apurado. ⚠️ Em comparação relacional o guard
+  // `!= null` é obrigatório: `null > 0` é `false` por coerção, o que aqui até esconde a
+  // seção (desejável), mas `null < x` seria `true` — não reintroduza o padrão sem checar.
   topBundle: BundleSnapshot;
   secondBundle: BundleSnapshot;
-  bundleLie: number;
-  bundleProbability: number;
-  bundleIncrementalMargin: number;
-  bestIndividualLie: number;
+  bundleLie: number | null;
+  bundleProbability: number | null;
+  bundleIncrementalMargin: number | null;
+  /** Nunca medido: nenhum writer do repo o calcula (era `0` hardcoded nos dois). */
+  bestIndividualLie: number | null;
 
   // AI-generated content
   diagnosticQuestions: { question: string; purpose: string; expected_insight: string }[];
   implicationQuestion: string;
   offerTransition: string;
-  probableObjections: { objection: string; technical_response: string; economic_response: string; probability: number }[];
+  // `probability` é OPCIONAL: a edge omite o campo quando a IA não soube estimar.
+  // Tipá-la como `number` obrigatório fazia o TS garantir um número que o dado não tem.
+  probableObjections: { objection: string; technical_response: string; economic_response: string; probability?: number | null }[];
 
   // Strategic-only fields
-  ltvProjection: { current_annual: number; projected_annual: number; growth_pct: number } | null;
-  expectedResult: { best_case_margin: number; likely_margin: number; worst_case_margin: number } | null;
+  // Campos NULLABLE por dado: margem/LTV não medidos chegam como null (money-path —
+  // ausente ≠ zero). O objeto pode vir PARCIALMENTE medido, então o guard `&& (...)`
+  // do PlanCard não basta: cada campo é null-checado na renderização.
+  ltvProjection: { current_annual: number | null; projected_annual: number | null; growth_pct: number | null } | null;
+  expectedResult: { best_case_margin: number | null; likely_margin: number | null; worst_case_margin: number | null } | null;
   operationalRisks: string[];
 
   // Efficiency
-  estimatedProfitPerHour: number;
+  /** Derivado do LIE do bundle. `null` = indecidível (não há LIE), não "R$ 0/h". */
+  estimatedProfitPerHour: number | null;
 
   // Tracking
   status: string;
@@ -147,6 +166,29 @@ interface EffectivenessRow {
   plan_type: PlanType | null;
 }
 
+/**
+ * Acumulador de efetividade. Cada total anda com o SEU denominador de apurados.
+ *
+ * [money-path — ausente ≠ zero] O registro de 1 toque grava `plan_followed`, `actual_margin` e
+ * `call_duration_seconds` como NULL de propósito (afirma só o desfecho). Dividir pelo `count`
+ * bruto — como fazia o `Number(d.actual_margin || 0) / count` — diluiria a média com planos que
+ * ninguém mediu, e o número resultante seria lido como margem média real da carteira.
+ */
+interface AcumuladorEfetividade {
+  count: number;
+  followed: number;
+  /** Quantos declararam adesão ao roteiro (true OU false). Denominador de `followRate`. */
+  comFollow: number;
+  totalMargin: number;
+  comMargem: number;
+  /**
+   * Margem e tempo somados APENAS sobre os planos que têm os dois. R$/h derivado de um total de
+   * margem e um total de tempo vindos de conjuntos diferentes não significa nada.
+   */
+  margemComTempo: number;
+  tempoComMargem: number;
+}
+
 interface AiPlanResponse {
   strategic_objective?: string;
   diagnostic_questions?: TacticalPlan['diagnosticQuestions'];
@@ -210,6 +252,35 @@ const classifyProfile = (healthScore: number, avgSpend: number, marginPct: numbe
 
 const PROFIT_PER_HOUR_THRESHOLD = 50; // R$/h configurable threshold
 
+/**
+ * Janela da fila de pendentes, em dias. Espelha o argumento do cron
+ * `expirar-planos-taticos` (migration `20260807210912`), que marca `expirado`
+ * fora dela. O front aplica a MESMA janela em vez de confiar que o job rodou:
+ * se o cron falhar, a fila voltaria a entupir e o plano some sem desfecho.
+ */
+export const JANELA_FILA_DIAS = 7;
+
+/** Teto de cards por carga. Não é paginação — é o tamanho do lote acionável. */
+export const LIMITE_FILA = 50;
+
+export type FiltroFila = 'pendentes' | 'concluidos' | 'expirados';
+
+/**
+ * Recorte da fila. Extraído para que a LISTA e a CONTAGEM usem exatamente o
+ * mesmo predicado — se divergirem, o contador da tela mente sobre quantos
+ * planos existem além dos exibidos, que é justamente o número que este PR
+ * passou a mostrar.
+ */
+function recorteDaFila<Q extends { eq: (c: string, v: string) => Q; gte: (c: string, v: string) => Q }>(
+  q: Q,
+  filtro: FiltroFila,
+  desdeIso: string,
+): Q {
+  if (filtro === 'concluidos') return q.eq('status', 'concluido');
+  if (filtro === 'expirados') return q.eq('status', 'expirado');
+  return q.eq('status', 'gerado').gte('generated_at', desdeIso);
+}
+
 export const useTacticalPlan = () => {
   const { user } = useAuth();
   // Lente "Ver como" + COBERTURA (#980): as leituras de EXIBIÇÃO (lista de planos, plano ativo do
@@ -229,6 +300,13 @@ export const useTacticalPlan = () => {
   const [plans, setPlans] = useState<TacticalPlan[]>([]);
   const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState<string | null>(null);
+  /** Total que casa o filtro atual (pode exceder LIMITE_FILA). `null` = não apurado. */
+  const [totalNaFila, setTotalNaFila] = useState<number | null>(null);
+  // Último recorte pedido. `generatePlan`/`recordResult` recarregam a lista sem saber
+  // qual aba está aberta; sem este ref o default os jogaria de volta em `pendentes` e
+  // a lista passaria a discordar da aba selecionada. Ref (não state): só alimenta o
+  // default da próxima carga, não deve disparar render.
+  const filtroAtual = useRef<FiltroFila>('pendentes');
 
   const parsePlan = (d: TacticalPlanRow, profileMap: Map<string, string>): TacticalPlan => {
     const topBundle: BundleSnapshot = d.top_bundle || {};
@@ -236,8 +314,16 @@ export const useTacticalPlan = () => {
     const ltvProjection = d.ltv_projection;
     const expectedResult = d.expected_result;
     const avgCallMinutes = 15;
-    const bundleLie = Number(d.bundle_lie || 0);
-    const estimatedProfitPerHour = bundleLie > 0 ? (bundleLie / (avgCallMinutes / 60)) : 0;
+    // [money-path "ausente ≠ zero"] A LEITURA é a metade que faltava: corrigir só os dois
+    // writers deixaria a correção INERTE (money-path.md §2) — o null gravado voltaria a
+    // virar 0 aqui, e a tela continuaria afirmando "LIE R$ 0,00". Agora o tri-estado
+    // atravessa o parse até o card.
+    const bundleLie = valorMedido(d.bundle_lie);
+    // Sem LIE o R$/h é INDECIDÍVEL, não zero — mesmo tri-estado de `checkEfficiency`.
+    // `0` medido continua sendo 0 (bundle apurado que não agrega lucro na ligação).
+    const estimatedProfitPerHour = bundleLie == null
+      ? null
+      : (bundleLie > 0 ? bundleLie / (avgCallMinutes / 60) : 0);
 
     return {
       id: d.id,
@@ -251,7 +337,11 @@ export const useTacticalPlan = () => {
       // pode ser null, e `Number(null || 0)` a exibiria como "0,0%" — margem nula apurada.
       currentMarginPct: margemConhecida(d.current_margin_pct),
       clusterAvgMarginPct: d.cluster_avg_margin_pct == null ? null : Number(d.cluster_avg_margin_pct),
-      expansionPotential: Number(d.expansion_potential || 0),
+      // Mesma razão do currentMarginPct logo acima, e o irmão que ficou para trás: o plano
+      // persistido pode ter gravado null (potencial não medido na geração), e
+      // `Number(null || 0)` o exibiria como "0%" — um veredito de "cliente sem espaço para
+      // crescer" que ninguém apurou. A coluna expansion_potential é nullable em prod.
+      expansionPotential: valorMedido(d.expansion_potential),
       strategicObjective: d.strategic_objective,
       customerProfile: d.customer_profile,
       approachStrategy: d.approach_strategy || '',
@@ -259,9 +349,9 @@ export const useTacticalPlan = () => {
       topBundle,
       secondBundle,
       bundleLie,
-      bundleProbability: Number(d.bundle_probability || 0),
-      bundleIncrementalMargin: Number(d.bundle_incremental_margin || 0),
-      bestIndividualLie: Number(d.best_individual_lie || 0),
+      bundleProbability: valorMedido(d.bundle_probability),
+      bundleIncrementalMargin: valorMedido(d.bundle_incremental_margin),
+      bestIndividualLie: valorMedido(d.best_individual_lie),
       diagnosticQuestions: Array.isArray(d.diagnostic_questions)
         ? (d.diagnostic_questions as TacticalPlan['diagnosticQuestions'])
         : [],
@@ -281,7 +371,10 @@ export const useTacticalPlan = () => {
       status: d.status,
       planFollowed: d.plan_followed ?? undefined,
       callResult: d.call_result ?? undefined,
-      actualMargin: d.actual_margin ? Number(d.actual_margin) : undefined,
+      // [money-path] `d.actual_margin ? … : undefined` era o `|| 0` ESPELHADO: aqui o número
+      // MEDIDO é que se perdia — margem 0 apurada (ligação que fechou sem margem, ou desconto
+      // total) caía no ramo falso e virava "não registrado". Só `null`/`undefined` é ausência.
+      actualMargin: d.actual_margin == null ? undefined : Number(d.actual_margin),
       callDurationSeconds: d.call_duration_seconds ?? undefined,
       objectionType: d.objection_type ?? undefined,
       notes: d.notes ?? undefined,
@@ -307,17 +400,44 @@ export const useTacticalPlan = () => {
   }, []);
 
   // Load existing plans
-  const loadPlans = useCallback(async () => {
+  const loadPlans = useCallback(async (filtro: FiltroFila = filtroAtual.current) => {
     if (!effectiveUserId) return;
+    filtroAtual.current = filtro;
     setLoading(true);
     try {
       const owners = await fetchOwnerScope(effectiveUserId);
-      const { data } = (await supabase
-        .from('farmer_tactical_plans')
-        .select('*')
-        .in('farmer_id', owners)
-        .order('created_at', { ascending: false })
-        .limit(50)) as unknown as { data: TacticalPlanRow[] | null };
+      const desdeIso = new Date(Date.now() - JANELA_FILA_DIAS * 86_400_000).toISOString();
+
+      // Ordena por RISCO, não por recência. `churn_risk` tem 53 valores distintos entre
+      // 33 e 89 nas 533 linhas de prod — discrimina de verdade. `bundle_lie` e
+      // `best_individual_lie` seriam o critério natural de VALOR, mas estão NULL em 100%
+      // das linhas (medido 2026-08-07): ordenar por eles seria ordem indefinida
+      // disfarçada de priorização. `generated_at` desempata (churn_risk tem empates
+      // massivos e, sem ordem total, a fatia de 50 é instável entre cargas).
+      const { data } = (await recorteDaFila(
+        supabase.from('farmer_tactical_plans').select('*').in('farmer_id', owners),
+        filtro,
+        desdeIso,
+      )
+        .order('churn_risk', { ascending: false })
+        .order('generated_at', { ascending: false })
+        .limit(LIMITE_FILA)) as unknown as { data: TacticalPlanRow[] | null };
+
+      // Contagem sob o MESMO recorte. Sem ela a tela não tem como avisar que existe
+      // plano além dos exibidos — foi exatamente assim que 383 de 533 sumiram sem
+      // deixar rastro nenhum na interface.
+      const { count, error: erroContagem } = (await recorteDaFila(
+        supabase
+          .from('farmer_tactical_plans')
+          .select('id', { count: 'exact', head: true })
+          .in('farmer_id', owners),
+        filtro,
+        desdeIso,
+      )) as unknown as { count: number | null; error: unknown };
+      // ausente ≠ zero: contagem que falhou degrada para `null` (a UI omite o rótulo),
+      // nunca para 0 — "0 pendentes" é indistinguível de "a query morreu", e some com
+      // a fila inteira sem sinal. Mesma família do `Number(null) === 0`.
+      setTotalNaFila(erroContagem ? null : (count ?? null));
 
       if (!data) { setPlans([]); return; }
 
@@ -363,16 +483,24 @@ export const useTacticalPlan = () => {
       return { estimatedProfitPerHour: null, threshold: PROFIT_PER_HOUR_THRESHOLD, isAboveThreshold: null, motivo: 'indisponivel' };
     }
 
-    const revPotential = Number(score.revenue_potential || 0);
+    // Tri-estado explícito: revenue_potential é NULL em 6.633/6.633 linhas (nenhum writer o
+    // calcula). O `|| 0` anterior transformava "não medido" em `0` e só não fabricava número
+    // por ACIDENTE — o `> 0 ?` logo abaixo o mandava para o avgSpend. Acidente não é guard: no
+    // dia em que um produtor gravar potencial 0 APURADO, o código o trataria como ausência.
+    const revPotential = valorMedido(score.revenue_potential);
     const avgSpend = Number(score.avg_monthly_spend_180d || 0);
     // Margem desconhecida → R$/h INDECIDÍVEL, não zero. Com `|| 0` o gate reprovava o cliente por
     // omissão, e "não sei" ficava indistinguível de "não vale a ligação" na tela da vendedora.
     // Espelha profitPerHora de supabase/functions/_shared/tactical-margem.ts.
     const marginPct = margemConhecida(score.gross_margin_pct);
     const avgCallMinutes = 15;
+    // Base do cálculo: o potencial quando MEDIDO e positivo; senão o gasto médio observado.
+    // Potencial ausente e potencial 0 caem ambos no avgSpend — comportamento PRESERVADO desta
+    // entrega (só o `|| 0` saiu), agora por decisão declarada em vez de coincidência aritmética.
+    const baseReceita = revPotential != null && revPotential > 0 ? revPotential : avgSpend;
     const estimatedProfitPerHour = marginPct == null
       ? null
-      : ((revPotential > 0 ? revPotential : avgSpend) * (marginPct / 100) * 0.1) / (avgCallMinutes / 60);
+      : (baseReceita * (marginPct / 100) * 0.1) / (avgCallMinutes / 60);
 
     return {
       estimatedProfitPerHour,
@@ -429,8 +557,16 @@ export const useTacticalPlan = () => {
       const marginPct = margemConhecida(score.gross_margin_pct);
       const categoryCount = Number(score.category_count || 0);
       const daysSince = Number(score.days_since_last_purchase || 0);
-      const expansionPotential = Number(score.expansion_score || 0);
-      const revenuePotential = Number(score.revenue_potential || 0);
+      // [money-path "ausente ≠ zero"] Espelha a edge generate-tactical-plan: estas duas colunas
+      // foram nuladas de propósito (20260727130000_farmer_scores_colunas_orfas_null) porque
+      // nenhum writer as calcula — 6.633/6.633 NULL em prod, `column_default` removido. Com
+      // `|| 0` os dois campos chegavam ao prompt como `0` para TODA a base, e o system prompt
+      // instrui a IA a ler número como MEDIDO: "revenuePotential: 0" afirma "cliente sem
+      // potencial" e muda a abordagem que a vendedora leva para a rua. Nenhum dos dois entra
+      // em comparação relacional daqui para baixo (só no prompt e no payload, ambos nullable),
+      // então o tri-estado não reabre a armadilha do `null < x`.
+      const expansionPotential = valorMedido(score.expansion_score);
+      const revenuePotential = valorMedido(score.revenue_potential);
       const salesHistoryStatus = score.sales_history_status ?? null;
 
       // [GUARD money-path] Cluster = média de margem dos PARES da carteira do DONO (ownerId), não
@@ -525,8 +661,12 @@ export const useTacticalPlan = () => {
         };
       }
 
-      const { data: aiPlan, error: aiError } = await supabase.functions.invoke<AiPlanResponse>('generate-tactical-plan', {
-        body: {
+      // invokeFunction (e não supabase.functions.invoke cru) porque o erro do
+      // supabase é sempre o genérico "non-2xx status code": o motivo REAL da
+      // edge — créditos esgotados, geração truncada — vem no corpo e só o
+      // helper o extrai. Com o invoke cru, o estouro de orçamento que motivou
+      // a migração continuaria invisível para quem usa.
+      const aiPlan = await invokeFunction<AiPlanResponse>('generate-tactical-plan', {
           customerContext: {
             name: profile?.name,
             cnae: profile?.cnae,
@@ -548,16 +688,27 @@ export const useTacticalPlan = () => {
           diagnosticData,
           historicalObjections,
           planType,
-        },
       });
-
-      if (aiError) throw aiError;
 
       // Escrita via RPC-fronteira (#1037 + split de RLS): a posse (farmer_id) é re-resolvida
       // server-side de carteira_assignments e a RLS pós-split NEGA insert direto do client.
       // _expected_owner=ownerId faz a RPC ABORTAR se a carteira foi reatribuída durante a
       // geração da IA (race) em vez de gravar o dono stale; farmer_id/customer_user_id/status
       // são autoritativos do servidor (o client não controla mais a posse).
+      // O enum barra objetivo inventado, não o objetivo VÁLIDO e errado: com
+      // `sem_historico` o derivado é `ativacao` por fato binário (não há venda),
+      // e um "recuperacao" da IA venceria — plano de recuperação para cliente
+      // que nunca comprou. Mesma reconciliação do edge (helper espelhado).
+      const { objetivo: objetivoDoPlano, sobrescrito } = objetivoFinal(
+        aiPlan?.strategic_objective,
+        strategicObjective,
+      );
+      if (sobrescrito) {
+        console.warn(
+          `[useTacticalPlan] objetivo "${aiPlan?.strategic_objective}" da IA descartado: cliente ${customerId} é sem_historico (derivado: ativacao)`,
+        );
+      }
+
       const { error: rpcError } = await supabase.rpc('criar_plano_tatico' as never, {
         _customer_user_id: customerId,
         _expected_owner: ownerId,
@@ -569,15 +720,17 @@ export const useTacticalPlan = () => {
           current_margin_pct: marginPct,
           cluster_avg_margin_pct: clusterMargin,
           expansion_potential: expansionPotential,
-          strategic_objective: aiPlan?.strategic_objective || strategicObjective,
+          strategic_objective: objetivoDoPlano,
           customer_profile: customerProfile,
           plan_type: planType,
           top_bundle: topBundle ? topBundle.bundle_products : {},
           second_bundle: secondBundle ? secondBundle.bundle_products : {},
-          bundle_lie: topBundle ? Number(topBundle.lie_bundle) : 0,
-          bundle_probability: topBundle ? Number(topBundle.p_bundle) : 0,
-          bundle_incremental_margin: topBundle ? Number(topBundle.m_bundle) : 0,
-          best_individual_lie: 0,
+          // [money-path "ausente ≠ zero"] Era `topBundle ? Number(topBundle.lie_bundle) : 0`
+          // nos três + `best_individual_lie: 0`. Duas fabricações: sem bundle, e com bundle
+          // de campo nulo (`Number(null) === 0`). O 0 persistia no banco e virava "Ganho
+          // esperado R$ 0,00" na tela — afirmação que ninguém mediu. Helper espelhado na
+          // edge (`plano-helpers.numerosDoBundle`), que é o OUTRO writer desta mesma tabela.
+          ...numerosDoBundle(topBundle),
           diagnostic_questions: aiPlan?.diagnostic_questions || [],
           implication_question: aiPlan?.implication_question || '',
           offer_transition: aiPlan?.offer_transition || '',
@@ -595,7 +748,25 @@ export const useTacticalPlan = () => {
       await loadPlans();
     } catch (err) {
       console.error('Error generating plan:', err);
-      const message = err instanceof Error ? err.message : String(err);
+      // DUAS fronteiras onde a mensagem acionável morria, e as duas precisam estar de pé:
+      //  1. a da EDGE — resolvida por `invokeFunction`, que lê o corpo de
+      //     `FunctionsHttpError.context`; o `error.message` cru do supabase-js é sempre
+      //     "Edge Function returned a non-2xx status code" e os 422 da edge ("Créditos da
+      //     IA esgotados", "Plano cortado por tamanho") morreriam aí. Não trocar por
+      //     `supabase.functions.invoke` cru.
+      //  2. a do BANCO — `mensagemDeErro`: o `error` da RPC é um objeto PLANO (o
+      //     supabase-js só instancia `PostgrestError` sob `.throwOnError()`), então o
+      //     `err instanceof Error ? … : String(err)` de antes rendia **"[object Object]"**
+      //     para TODA falha de `criar_plano_tatico`.
+      const message = mensagemDeErro(err) ?? 'falha desconhecida';
+      // A trava de idempotência não é falha: o plano de hoje já está na lista. Toast de
+      // ERRO aqui mandaria a vendedora tentar de novo (ou acionar a equipe) por um
+      // não-problema — e ela já pagou a espera da IA.
+      if (ehJaGeradoHoje(message)) {
+        toast.info('Já existe um plano gerado hoje para este cliente');
+        await loadPlans();
+        return;
+      }
       toast.error('Erro ao gerar plano', { description: message });
     } finally {
       setGenerating(null);
@@ -629,11 +800,15 @@ export const useTacticalPlan = () => {
   }, [effectiveUserId, fetchOwnerScope]);
 
   // Record post-call results
+  // [money-path — ausente ≠ zero] Os três nullable são o tri-estado que o registro de 1 toque
+  // produz: ele afirma só o desfecho. A RPC `registrar_resultado_plano` aceita NULL explícito
+  // nos parâmetros (verificado por `pg_get_functiondef` na PROD, 2026-08-07 — o repo não é a
+  // fonte, apply manual diverge) e as colunas de destino são todas nullable, sem CHECK.
   const recordResult = useCallback(async (planId: string, result: {
-    planFollowed: boolean;
+    planFollowed: boolean | null;
     callResult: string;
-    actualMargin: number;
-    callDurationSeconds: number;
+    actualMargin: number | null;
+    callDurationSeconds: number | null;
     objectionType?: string;
     notes?: string;
   }) => {
@@ -656,7 +831,10 @@ export const useTacticalPlan = () => {
       await loadPlans();
     } catch (err) {
       console.error('Error recording result:', err);
-      const message = err instanceof Error ? err.message : String(err);
+      // Mesmo motivo do generatePlan: `registrar_resultado_plano` devolve o objeto plano do
+      // PostgREST, e o `String(err)` de antes exibia "[object Object]" no lugar da recusa
+      // real da RPC ("Plano fora da sua carteira", constraint, timeout).
+      const message = mensagemDeErro(err) ?? 'falha desconhecida';
       toast.error('Erro ao registrar resultado', { description: message });
     }
   }, [loadPlans]);
@@ -676,32 +854,54 @@ export const useTacticalPlan = () => {
 
     if (!data?.length) return null;
 
-    const byType: Record<string, { count: number; followed: number; totalMargin: number; totalTime: number }> = {};
-    const byObjective: Record<string, { count: number; followed: number; totalMargin: number; totalTime: number }> = {};
+    const byType: Record<string, AcumuladorEfetividade> = {};
+    const byObjective: Record<string, AcumuladorEfetividade> = {};
+
+    const acumular = (map: Record<string, AcumuladorEfetividade>, k: string, d: EffectivenessRow) => {
+      if (!map[k]) {
+        map[k] = { count: 0, followed: 0, comFollow: 0, totalMargin: 0, comMargem: 0, margemComTempo: 0, tempoComMargem: 0 };
+      }
+      const a = map[k];
+      a.count++;
+      // `!= null` e não truthy: `false` é declaração ("não segui o plano"), NULL é ausência.
+      // O `if (d.plan_followed)` de antes fundia os dois no mesmo balde de "não seguiu".
+      if (d.plan_followed != null) {
+        a.comFollow++;
+        if (d.plan_followed) a.followed++;
+      }
+      // `valorMedido` (e não `Number(x || 0)`) porque numeric do PostgREST chega como STRING:
+      // preserva o 0 apurado e devolve null para ausência e para lixo não-finito.
+      const margem = valorMedido(d.actual_margin);
+      const tempo = valorMedido(d.call_duration_seconds);
+      if (margem != null) {
+        a.totalMargin += margem;
+        a.comMargem++;
+      }
+      if (margem != null && tempo != null) {
+        a.margemComTempo += margem;
+        a.tempoComMargem += tempo;
+      }
+    };
 
     for (const d of data) {
-      const obj = d.strategic_objective;
-      const pt = d.plan_type || 'essencial';
-
-      for (const [key] of [['obj_' + obj, byObjective], ['type_' + pt, byType]] as const) {
-        const target = key.startsWith('obj_') ? byObjective : byType;
-        const k = key.replace(/^(obj_|type_)/, '');
-        if (!target[k]) target[k] = { count: 0, followed: 0, totalMargin: 0, totalTime: 0 };
-        target[k].count++;
-        if (d.plan_followed) target[k].followed++;
-        target[k].totalMargin += Number(d.actual_margin || 0);
-        target[k].totalTime += Number(d.call_duration_seconds || 0);
-      }
+      acumular(byObjective, d.strategic_objective, d);
+      acumular(byType, d.plan_type || 'essencial', d);
     }
 
-    const mapStats = (map: typeof byObjective) =>
+    // Tri-estado em TODAS as três métricas: `null` = não apurado nesta fatia, e quem exibir
+    // decide como mostrar "sem dado" — nunca 0, que leria como "carteira sem margem" ou
+    // "vendedora nunca segue o plano". `comFollow`/`comMargem` saem junto para que a tela
+    // possa dizer sobre quantos planos a média foi calculada (amostra pequena é dado frágil).
+    const mapStats = (map: Record<string, AcumuladorEfetividade>) =>
       Object.entries(map).map(([key, stats]) => ({
         key,
         label: objectiveLabels[key] || key,
         count: stats.count,
-        followRate: stats.count > 0 ? Math.round((stats.followed / stats.count) * 100) : 0,
-        avgMargin: stats.count > 0 ? stats.totalMargin / stats.count : 0,
-        profitPerHour: stats.totalTime > 0 ? (stats.totalMargin / stats.totalTime) * 3600 : 0,
+        comFollow: stats.comFollow,
+        comMargem: stats.comMargem,
+        followRate: stats.comFollow > 0 ? Math.round((stats.followed / stats.comFollow) * 100) : null,
+        avgMargin: stats.comMargem > 0 ? stats.totalMargin / stats.comMargem : null,
+        profitPerHour: stats.tempoComMargem > 0 ? (stats.margemComTempo / stats.tempoComMargem) * 3600 : null,
       }));
 
     return { byObjective: mapStats(byObjective), byType: mapStats(byType) };
@@ -711,6 +911,7 @@ export const useTacticalPlan = () => {
     plans,
     loading,
     generating,
+    totalNaFila,
     loadPlans,
     generatePlan,
     checkEfficiency,

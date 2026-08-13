@@ -25,7 +25,9 @@ import { renderHook, act } from '@testing-library/react';
 
 const tabelasLidas: string[] = [];
 const rpcsChamadas: string[] = [];
-const inserts: Array<{ tabela: string; linha: Record<string, unknown> }> = [];
+// `linha` pode ser UMA linha ou um LOTE: o engine grava as recomendações num único
+// insert com array (#1594) e as regras de associação linha a linha.
+const inserts: Array<{ tabela: string; linha: Record<string, unknown> | Record<string, unknown>[] }> = [];
 
 let rpcResultado: { data: unknown; error: unknown } = { data: [], error: null };
 
@@ -84,7 +86,7 @@ function stubChain(tabela: string): unknown {
   for (const m of passthrough) chain[m] = () => chain;
   chain.single = () => ({ then: (r: (v: unknown) => void) => r({ data: dados[0] ?? null, error: null }) });
   chain.maybeSingle = chain.single;
-  chain.insert = (linha: Record<string, unknown>) => { inserts.push({ tabela, linha }); return chain; };
+  chain.insert = (linha: Record<string, unknown> | Record<string, unknown>[]) => { inserts.push({ tabela, linha }); return chain; };
   chain.upsert = () => chain;
   chain.update = () => chain;
   chain.delete = () => chain;
@@ -147,7 +149,12 @@ describe('useBundleEngine — custo fora do browser', () => {
     const { result } = renderHook(() => useBundleEngine());
     await act(async () => { await result.current.calculateBundles(); });
 
-    const linhas = inserts.filter((i) => i.tabela === 'farmer_bundle_recommendations').map((i) => i.linha);
+    // O insert é EM LOTE (uma chamada com N linhas — #1594), então achatar é obrigatório:
+    // sem o flat, `linha` seria o próprio array, `linha.bundle_products` viria `undefined` e
+    // o laço abaixo rodaria zero vez — o assert passaria sem olhar produto nenhum.
+    const linhas = inserts
+      .filter((i) => i.tabela === 'farmer_bundle_recommendations')
+      .flatMap((i) => (Array.isArray(i.linha) ? i.linha : [i.linha]));
     expect(linhas.length).toBeGreaterThan(0); // controle positivo: houve o que gravar
     for (const linha of linhas) {
       const produtos = (linha.bundle_products ?? []) as Record<string, unknown>[];

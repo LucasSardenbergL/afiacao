@@ -9,6 +9,7 @@ import { spBusinessDate } from '@/lib/time/sp-day';
 import { derivarSinaisContato, type ContatoLog, type OutcomeStatus, type SinaisContato } from '@/lib/route/route-outcome';
 import { logger } from '@/lib/logger';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 
 interface VisitScoreRow {
   customer_user_id: string;
@@ -46,7 +47,7 @@ export interface RouteContactItem extends ScoredCandidate {
   cadenciaBloqueadaPor: 'real' | 'sem_resposta_esgotada' | null;
   jaConvertidoNaRota: boolean;
 }
-export interface DailyStats { ligados: number; atenderam: number; fecharam: number; }
+interface DailyStats { ligados: number; atenderam: number; fecharam: number; }
 export interface RouteContactListData {
   callQueue: RouteContactItem[];
   whatsappQueue: RouteContactItem[];
@@ -224,6 +225,13 @@ export function useRouteContactList(workdayIso: string) {
           .select('win_back_reserva_pct, cold_start_piso_dia, capacidade_ligacoes_dia, cadencia_min_dias')
           .eq('id', true).maybeSingle(),
       ]);
+      // Agenda vazia é um estado LEGÍTIMO ("hoje não tem rota") — e é exatamente por isso
+      // que a falha não pode se disfarçar dela: sem esta checagem, um erro de RLS/timeout
+      // fazia `resolvePrepForWorkday` devolver zero cidade e a vendedora abria a fila de
+      // ligações VAZIA, indistinguível de um dia sem rota programada.
+      if (schedRes.error) throw schedRes.error;
+      if (ovrRes.error) throw ovrRes.error;
+      if (cfgRes.error) throw cfgRes.error;
       const sched = (schedRes.data ?? []) as RouteScheduleRow[];
       const ovr = (ovrRes.data ?? []) as RouteOverrideRow[];
       const cfgRow = (cfgRes.data ?? null) as RouteConfigRow | null;
@@ -275,7 +283,7 @@ export function useRouteContactList(workdayIso: string) {
         fetchProfiles(profileIds),
         fetchContactLog(userIds).catch((e) => {
           cadenciaIndisponivel = true;
-          logger.warn('Leitura de route_contact_log falhou — cadência ao vivo indisponível', { error: e instanceof Error ? e.message : String(e) });
+          logger.warn('Leitura de route_contact_log falhou — cadência ao vivo indisponível', { error: mensagemDeErro(e) ?? '(sem mensagem)' });
           return new Map<string, ContatoLog[]>();
         }),
       ]);

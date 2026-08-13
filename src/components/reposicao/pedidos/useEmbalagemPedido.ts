@@ -15,7 +15,7 @@ interface EquivRow { empresa: string; grupo_id: string; sku_codigo_omie: string;
 interface PrecoRow { sku_codigo_omie: string; preco: number; capturado_em: string; status: StatusPreco; }
 interface ParamRow { sku_codigo_omie: number; custo_capital_efetivo_perc: number | null; }
 
-export interface EmbalagemItemResult {
+interface EmbalagemItemResult {
   decisao: DecisaoEmbalagem;
   /** SKUs do grupo — p/ o dialog pedir preço mesmo quando a decisão é "indisponível". */
   skusGrupo: string[];
@@ -83,6 +83,9 @@ export function useEmbalagemPedido(
         .select('sku_codigo_omie, demanda_media_diaria')
         .eq('empresa', empresa)
         .in('sku_codigo_omie', skuNums);
+      // Mesma razão do `precoResp` acima: falha ≠ "SKU sem demanda". O mapa vazio apaga a
+      // cobertura em dias da opção de embalagem e esconde o giro real do comprador.
+      if (paramResp.error) throw paramResp.error;
       const demandaMap = new Map<string, number | null>();
       ((paramResp.data ?? []) as unknown as { sku_codigo_omie: number; demanda_media_diaria: number | null }[])
         .forEach((p) => demandaMap.set(String(p.sku_codigo_omie), p.demanda_media_diaria));
@@ -92,6 +95,9 @@ export function useEmbalagemPedido(
         .select('sku_codigo_omie, custo_capital_efetivo_perc')
         .eq('empresa', empresa)
         .in('sku_codigo_omie', skuNums);
+      // Falha ≠ "custo de capital zero": é o custo de capital que penaliza a embalagem grande
+      // (estoque parado). Sem ele a economia do lote maior sai INFLADA — e o pedido cresce.
+      if (cmResp.error) throw cmResp.error;
       const cmMap = new Map<string, number | null>();
       ((cmResp.data ?? []) as unknown as ParamRow[])
         .forEach((p) => cmMap.set(String(p.sku_codigo_omie), p.custo_capital_efetivo_perc));

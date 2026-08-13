@@ -90,8 +90,6 @@ export function clusterStats(
 // --- Precisão honesta da coordenada (Sub-PR 2 geocoding por CEP) ------------
 // Espelha o CHECK de cep_geo.precision. Aceito `string` (a RPC devolve text) p/
 // degradar valor inesperado sem quebrar — ausente ≠ fabricar precisão.
-export type Precisao = 'rooftop' | 'street' | 'postcode_centroid' | 'city_centroid' | 'unknown';
-
 // "Boa o bastante" pra rota de visita = nível-CEP ou melhor. city_centroid
 // (centróide de município) / desconhecido / null são APROXIMADOS: pino oco +
 // "aprox." E entram na fila de geocode por CEP (tenta upgrade). Único ponto de

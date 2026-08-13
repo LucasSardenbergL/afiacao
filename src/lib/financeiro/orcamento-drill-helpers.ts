@@ -24,7 +24,7 @@ export type DimRowRaw = {
   valor: number; // total_documento da view (CR ou CP)
 };
 
-export type DrillComponente = {
+type DrillComponente = {
   categoria_codigo: string;
   categoria_descricao: string; // label mais recente no período (ano atual), fallback ano-1, fallback código
   realizado_ytd: number;
@@ -34,7 +34,7 @@ export type DrillComponente = {
   peso_perc: number; // realizado_ytd / total_decomposto (0 se total ~0)
 };
 
-export type DrillQualidade = 'ok' | 'parcial' | 'diagnostico';
+type DrillQualidade = 'ok' | 'parcial' | 'diagnostico';
 
 export type DrillResult = {
   dre_linha: string;
@@ -50,7 +50,7 @@ export type DrillResult = {
   variancia_anual: number | null;
 };
 
-export const EPSILON_MONETARIO = 0.01;
+const EPSILON_MONETARIO = 0.01;
 
 const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
 

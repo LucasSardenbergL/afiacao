@@ -3,6 +3,7 @@
 import { useState, useRef, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { MAX_CONCURRENT, EMPRESA, FORNECEDOR_DEFAULT, type UploadItem } from "./types";
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 
 /** `onProcessed` é chamado após cada rodada de processamento (para invalidar a lista). */
 export function useUploadPromocoes(onProcessed: () => void) {
@@ -102,7 +103,7 @@ export function useUploadPromocoes(onProcessed: () => void) {
       } catch (e) {
         updateItem(item.id, {
           status: "erro",
-          erro: e instanceof Error ? e.message : String(e),
+          erro: mensagemDeErro(e) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.',
         });
       }
     },

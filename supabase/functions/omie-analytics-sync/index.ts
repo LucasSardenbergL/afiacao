@@ -1,4 +1,3 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { comRegistro, type DbRegistro } from "../_shared/registro-execucao.ts";
@@ -6,8 +5,14 @@ import { fetchAll } from "../_shared/paginate.ts";
 import { montarUpsertsDeCusto } from "../_shared/cost-compute.ts";
 import { recomporCustoProducao } from "../_shared/recompor-custo-producao.ts";
 import { buildProductIdMap, montarCatalogoPorCod } from "../_shared/product-idmap.ts";
-import { avaliarPagina, MAX_PAGINAS_POS_ESTOQUE, proximoTotalPaginas } from "../_shared/omie-paginacao.ts";
+import { avaliarPagina, MAX_PAGINAS_LISTAGEM, MAX_PAGINAS_POS_ESTOQUE, proximoTotalPaginas } from "../_shared/omie-paginacao.ts";
 import { acumularPosicoesDaPagina, type PosicaoEstoque } from "../_shared/pos-estoque.ts";
+import {
+  decidirRetentativaOmie,
+  MAX_TENTATIVAS_OMIE,
+  mensagemCorpoNaoJson,
+  mensagemFalhaOmie,
+} from "./politica-retry.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -171,8 +176,22 @@ async function callOmie(account: OmieAccount, endpoint: string, call: string, pa
   // Retry com backoff p/ erros TRANSITÓRIOS do Omie/rede (ex.: "SOAP-ERROR: Broken response from
   // Application Server" — flakiness intermitente do servidor do Omie que matava a enumeração de ~105
   // páginas). ListarClientes/ListarProdutos são leitura idempotente → seguro re-tentar. Erro PERMANENTE
-  // (credencial/validação) falha rápido (não casa os marcadores transitórios). Backoff: 0.8s, 1.6s, 3.2s.
-  const maxAttempts = 4;
+  // (credencial/validação) falha rápido. Backoff: 0.8s, 1.6s, 3.2s (`atrasoRetentativaMs`).
+  //
+  // ⚠️ A classificação é do helper canônico `_shared/omie-falha.ts`, NÃO ad-hoc aqui. A versão
+  // anterior casava os códigos HTTP CRUS (`msg.includes("503")`) e tinha os dois defeitos que o
+  // helper já fechou: (a) o dígito casa DENTRO do identificador que a própria mensagem ecoa — a
+  // app_key de `"Chave de acesso não cadastrada para o aplicativo [1503123456]"` e o idProduto do
+  // `ConsultarEstrutura` contêm 503, então o erro PERMANENTE mais comum comprava as 4 tentativas
+  // (money-path §"O MARCADOR mente", #1614); (b) a enumeração à mão de 5xx deixava 501/505/520 —
+  // gateway/CDN — abortar sem backoff nenhum (#1623).
+  //
+  // ⚠️ A POLÍTICA (o que retenta, quanto dorme, o que é redigido) vive em `./politica-retry.ts`,
+  // que é puro e importável pelo teste — este arquivo não é (traz `deno.land` e `npm:`, e a suíte
+  // roda com `--no-remote`). A 1ª versão desta entrega deixava a política aqui e a "provava" com
+  // gates que liam o fonte atrás de tokens; o challenge do Codex passou pelos três com mutações
+  // triviais. Decisão de money-path não se prova por token: mora onde o teste a EXECUTA.
+  const maxAttempts = MAX_TENTATIVAS_OMIE;
   let lastErr: Error | null = null;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
@@ -181,22 +200,50 @@ async function callOmie(account: OmieAccount, endpoint: string, call: string, pa
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      const result = (await res.json()) as OmieApiResponseBase;
-      if (result.faultstring) throw new Error(`Omie (${account}): ${result.faultstring}`);
+      // ⚠️ O parse vem ANTES do guard de status (a faultstring é mais acionável que o código), e
+      // é por isso que ele precisa do próprio catch: um 5xx de gateway com corpo de TEXTO estoura
+      // aqui e nunca chega ao `!res.ok`. A mensagem do parser ecoa o corpo ("Unexpected token
+      // 'E', \"ERROR 503\" is not valid JSON") — o classificador antigo via o `503` solto ali e
+      // retentava; sem este ramo, a forma ancorada não veria nada e o 503 de gateway falharia na
+      // 1ª tentativa. Regressão de transporte achada pelo challenge do Codex.
+      let result: OmieApiResponseBase;
+      try {
+        result = (await res.json()) as OmieApiResponseBase;
+      } catch (erroJson) {
+        throw new Error(mensagemCorpoNaoJson(account, res.status, erroJson));
+      }
+      // `faultstring` ANTES do status. ⚠️ Aqui a ordem NÃO preserva EOF nenhum — este wrapper
+      // lança em TODA faultstring, inclusive na de fim de página, e isso é comportamento
+      // preexistente que este PR não muda (achado Codex xhigh, contra a 1ª redação deste
+      // comentário, que prometia preservar o fim real). O que a ordem preserva é a MENSAGEM: é
+      // ela que o catch abaixo classifica para decidir entre retentar e falhar, e um `HTTP 503`
+      // genérico apagaria a faultstring específica que torna o motivo acionável.
+      // `mensagemFalhaOmie` REDIGE o texto do Omie: esta faultstring ECOA a credencial, e daqui
+      // ela ia crua para três sinks (o `sync_state.error_message` persistido, o console e o corpo
+      // da resposta 500). O porquê e o que se preserva estão em `politica-retry.ts`.
+      if (result.faultstring) throw new Error(mensagemFalhaOmie(account, String(result.faultstring)));
+      // Sem faultstring, só um 2xx é resposta. `fetch` NÃO lança em HTTP não-2xx: um 429/5xx cujo
+      // corpo parseia sem fault (o `{}` de proxy/gateway) voltava como resposta boa e chegava aos
+      // laços de enumeração sem `total_de_paginas` e sem lista — o piso degrada para 1 e a página
+      // vazia vira fim da fonte, com todos os guards de paginação corretos e nenhum consultado.
+      // Emitido como `HTTP <n>` — a forma ANCORADA que `classificarFaultstring` reconhece, para
+      // reusar o backoff do catch em vez de virar falha diária. Todo 5xx (não só 500/502/503/504)
+      // e o 429 casam o padrão; a âncora é o que impede o dígito de casar dentro de um id ecoado.
+      if (!res.ok) throw new Error(mensagemFalhaOmie(account, `HTTP ${res.status}`, "runtime"));
+      // `faultcode` sem `faultstring` fecha a ordem canônica: um `200 {"faultcode":"5113"}` chegava
+      // aos laços como página boa e vazia, e o sync publicava `status:"complete"` sobre um retrato
+      // parcial — a fabricação de completude que o G6 existe para barrar, uma casa adiante.
+      if (result.faultcode) throw new Error(mensagemFalhaOmie(account, `faultcode ${result.faultcode}`));
       return result;
     } catch (e) {
-      lastErr = e instanceof Error ? e : new Error(String(e));
-      const msg = lastErr.message.toLowerCase();
-      const transient = msg.includes("broken response") || msg.includes("soap-error") ||
-        msg.includes("timeout") || msg.includes("timed out") || msg.includes("network") ||
-        msg.includes("connection") || msg.includes("fetch failed") ||
-        msg.includes("502") || msg.includes("503") || msg.includes("504") || msg.includes("500") ||
-        msg.includes("429") || msg.includes("too many") || msg.includes("rate limit");
-      if (transient && attempt < maxAttempts) {
-        await new Promise((r) => setTimeout(r, 800 * Math.pow(2, attempt - 1)));
+      const erro = e instanceof Error ? e : new Error(String(e));
+      lastErr = erro;
+      const decisao = decidirRetentativaOmie(erro.message, attempt, maxAttempts);
+      if (decisao.retentar) {
+        await new Promise((r) => setTimeout(r, decisao.atrasoMs));
         continue;
       }
-      throw lastErr;
+      throw erro;
     }
   }
   throw lastErr ?? new Error(`Omie (${account}): falha após ${maxAttempts} tentativas`);
@@ -288,7 +335,6 @@ async function fetchCodigoUserMap(
   account: OmieAccount,
 ): Promise<Map<number, string>> {
   const map = new Map<number, string>();
-  const pageSize = 1000;
   const empresa = accountToEmpresa(account); // vendas->oben · servicos->colacor_sc · colacor_vendas->colacor
 
   // Guard de colisão: dentro de UMA conta o código é único, então dois users para o mesmo código é
@@ -306,64 +352,57 @@ async function fetchCodigoUserMap(
     map.set(cod, uid);
   };
 
-  // Os dois laços são escritos por extenso (em vez de um helper com `.select()` montado por
-  // template string) porque o supabase-js infere o tipo da linha a partir do LITERAL do select —
-  // uma string dinâmica vira `ParserError` e o `deno check` recusa. É também o padrão que
-  // `fetchAllOmieClienteCodigos` já segue neste arquivo.
+  // As duas leituras delegam a `fetchAll` (_shared/paginate.ts): o laço à mão daqui tinha o furo
+  // da classe (money-path §9) — `data ?? []` convertia resposta malformada (data:null SEM error)
+  // em página vazia → EOF falso → o mapa saía PARCIAL, isto é, membro a menos no ledger. O select
+  // fica LITERAL no callback (o supabase-js infere o tipo da linha a partir dele; string dinâmica
+  // vira `ParserError` no deno check).
   //
   // `.order` estável é obrigatório com `.range()` (§CLAUDE.md): sem ele a paginação corre sobre
-  // ordem indefinida e uma linha pode repetir ou SUMIR entre páginas — e sumir aqui vira cliente
-  // não-resolvido, isto é, membro a menos no ledger.
+  // ordem indefinida e uma linha pode repetir ou SUMIR entre páginas. Desempate por user: ordenar
+  // só pelo código deixa a paginação INSTÁVEL se o código repetir.
 
   // 1) aliases fiscais (clones) DA CONTA DO RUN: o par (código → user) que a proof document-first
   // nunca tem. `alias_conta` guarda o slug INTERNO do Omie (o mesmo enum de `account`), ≠ da proof,
   // que guarda o canônico (`empresa`).
-  let from = 0;
-  while (true) {
-    const { data, error } = await db
-      .from("customer_canonical_alias")
-      .select("alias_omie_codigo, alias_user_id")
-      .eq("alias_conta", account)
-      .eq("status", "active")
-      .not("alias_omie_codigo", "is", null)
-      // desempate por user: com `.range()`, ordenar só pelo código deixa a paginação INSTÁVEL se o
-      // código repetir — e linha que some entre páginas vira membro a menos no ledger, em silêncio.
-      .order("alias_omie_codigo")
-      .order("alias_user_id")
-      .range(from, from + pageSize - 1);
-    if (error) throw new Error(`fetch customer_canonical_alias map (${account}): ${error.message}`);
-    const rows = (data ?? []) as { alias_omie_codigo: number | null; alias_user_id: string | null }[];
-    for (const r of rows) {
-      if (r.alias_omie_codigo != null && r.alias_user_id) {
-        setOuFalha("alias", Number(r.alias_omie_codigo), r.alias_user_id);
-      }
+  const aliasRows = await fetchAll<{ alias_omie_codigo: number | null; alias_user_id: string | null }>(
+    (from, to) =>
+      db
+        .from("customer_canonical_alias")
+        .select("alias_omie_codigo, alias_user_id")
+        .eq("alias_conta", account)
+        .eq("status", "active")
+        .not("alias_omie_codigo", "is", null)
+        .order("alias_omie_codigo")
+        .order("alias_user_id")
+        .range(from, to),
+    `fetch customer_canonical_alias map (${account})`,
+  );
+  for (const r of aliasRows) {
+    if (r.alias_omie_codigo != null && r.alias_user_id) {
+      setOuFalha("alias", Number(r.alias_omie_codigo), r.alias_user_id);
     }
-    if (rows.length < pageSize) break;
-    from += pageSize;
   }
   const nAlias = map.size;
 
   // 2) proof account-correta DA MESMA conta. Se um código aparecer nas duas fontes com users
   // diferentes, `setOuFalha` aborta — dentro de uma conta isso é corrupção, não preferência.
-  from = 0;
-  while (true) {
-    const { data, error } = await db
-      .from("omie_customer_account_map")
-      .select("omie_codigo_cliente, user_id")
-      .eq("account", empresa)
-      .not("omie_codigo_cliente", "is", null)
-      .order("omie_codigo_cliente")
-      .order("user_id")
-      .range(from, from + pageSize - 1);
-    if (error) throw new Error(`fetch omie_customer_account_map map (${empresa}): ${error.message}`);
-    const rows = (data ?? []) as { omie_codigo_cliente: number | null; user_id: string | null }[];
-    for (const r of rows) {
-      if (r.omie_codigo_cliente != null && r.user_id) {
-        setOuFalha("proof", Number(r.omie_codigo_cliente), r.user_id);
-      }
+  const proofRows = await fetchAll<{ omie_codigo_cliente: number | null; user_id: string | null }>(
+    (from, to) =>
+      db
+        .from("omie_customer_account_map")
+        .select("omie_codigo_cliente, user_id")
+        .eq("account", empresa)
+        .not("omie_codigo_cliente", "is", null)
+        .order("omie_codigo_cliente")
+        .order("user_id")
+        .range(from, to),
+    `fetch omie_customer_account_map map (${empresa})`,
+  );
+  for (const r of proofRows) {
+    if (r.omie_codigo_cliente != null && r.user_id) {
+      setOuFalha("proof", Number(r.omie_codigo_cliente), r.user_id);
     }
-    if (rows.length < pageSize) break;
-    from += pageSize;
   }
 
   console.log(
@@ -517,8 +556,20 @@ async function syncCustomers(db: SupabaseClient, account: OmieAccount) {
         apenas_importado_api: "N",
       })) as unknown as OmieListarClientesResponse;
 
-      totalPaginas = result.total_de_paginas || 1;
-      for (const c of result.clientes_cadastro || []) {
+      // Piso MONOTÔNICO + teto fail-fast + anomalia (mesma tríade do syncInventory abaixo;
+      // money-path §9). Era `|| 1` POR RESPOSTA: uma intermediária SEM o campo encolhia o teto
+      // e o run fechava sync_state 'complete' com o retrato PARCIAL da carteira.
+      totalPaginas = proximoTotalPaginas(totalPaginas, result.total_de_paginas, MAX_PAGINAS_LISTAGEM);
+      const clientes = result.clientes_cadastro || [];
+      const veredicto = avaliarPagina(clientes.length, pagina, totalPaginas);
+      if (veredicto === "anomalia") {
+        // Página vazia ANTES do fim declarado = fault transiente disfarçado → aborta fail-closed
+        // (status error; o próximo ciclo re-tenta). Nada foi escrito ainda: a enumeração antecede
+        // ledger/proof/tags.
+        throw new Error(`página ${pagina}/${totalPaginas} do ListarClientes veio vazia antes do fim declarado — abortando (retrato parcial)`);
+      }
+      if (veredicto === "fim") break;
+      for (const c of clientes) {
         const doc = (c.cnpj_cpf || "").replace(/\D/g, "");
         if (!doc || c.codigo_cliente_omie == null) continue;
         registrosOmieDoc.push({ doc, codigo: c.codigo_cliente_omie });
@@ -702,21 +753,20 @@ async function syncCustomers(db: SupabaseClient, account: OmieAccount) {
     // Barato no caso normal: 1 SELECT indexado (idx_cml_identity_state) que hoje volta VAZIO → nada a fazer.
     // Paginado (a capa de 1000 do PostgREST é silenciosa). Run parcial reverte só o que viu (fail-safe).
     if (account === "vendas") {
-      const ambNoLedger: string[] = [];
-      for (let from = 0; ;) {
-        const { data, error: ambErr } = await db
-          .from("carteira_membership_ledger")
-          .select("user_id")
-          .eq("identity_state", "ambiguous")
-          .order("user_id", { ascending: true })
-          .range(from, from + 999);
-        if (ambErr) throw new Error(`lê ambiguous do carteira_membership_ledger: ${ambErr.message}`);
-        const page = (data ?? []) as Array<{ user_id: string }>;
-        for (const r of page) ambNoLedger.push(r.user_id);
-        if (page.length === 0) break;
-        from += page.length;
-        if (from > 500_000) throw new Error("paginacao ambiguous do ledger excedeu limite");
-      }
+      // Delegado a fetchAll (money-path §9): o laço à mão convertia data:null SEM error em página
+      // vazia (EOF falso) — a reversão via menos membros e o quarantine ficava preso sem razão
+      // visível. fetchAll lança tanto na página com erro quanto na malformada.
+      const ambRows = await fetchAll<{ user_id: string }>(
+        (from, to) =>
+          db
+            .from("carteira_membership_ledger")
+            .select("user_id")
+            .eq("identity_state", "ambiguous")
+            .order("user_id", { ascending: true })
+            .range(from, to),
+        "lê ambiguous do carteira_membership_ledger",
+      );
+      const ambNoLedger = ambRows.map((r) => r.user_id);
       // só os que ESTE run provou limpos (casados por documento, não-ambíguos)
       const reverter = ambNoLedger.filter((uid) => accountMapByUser.has(uid));
       if (reverter.length > 0) {
@@ -801,46 +851,53 @@ function classifyClienteForSnapshot(
 // não-vinculados em massa (o relatório de oben, o único que roda hoje, mascarava o furo).
 // A fresca é UNIQUE(omie_codigo_cliente, account) → o Set é exatamente a conta do run.
 async function fetchAllOmieClienteCodigos(db: SupabaseClient, empresa: Empresa): Promise<Set<number>> {
+  // Delegado a fetchAll (money-path §9): o laço à mão convertia data:null SEM error em página
+  // vazia (EOF falso) → Set parcial → cliente VINCULADO classificado "unlinked" no relatório.
+  const rows = await fetchAll<{ omie_codigo_cliente: number | null }>(
+    (from, to) =>
+      db
+        .from("omie_customer_account_map_fresco")
+        .select("omie_codigo_cliente")
+        .eq("account", empresa)
+        // .order estável: sem ele o .range pagina sobre ordem indefinida (armadilha PostgREST) e
+        // uma linha pode repetir ou sumir entre páginas — num Set de dedup, sumir vira falso "unlinked".
+        .order("omie_codigo_cliente")
+        .range(from, to),
+    `fetch codigos vinculados (${empresa})`,
+  );
   const set = new Set<number>();
-  const pageSize = 1000;
-  let from = 0;
-  while (true) {
-    const { data, error } = await db
-      .from("omie_customer_account_map_fresco")
-      .select("omie_codigo_cliente")
-      .eq("account", empresa)
-      // .order estável: sem ele o .range pagina sobre ordem indefinida (armadilha PostgREST) e
-      // uma linha pode repetir ou sumir entre páginas — num Set de dedup, sumir vira falso "unlinked".
-      .order("omie_codigo_cliente")
-      .range(from, from + pageSize - 1);
-    if (error) throw new Error(`fetch codigos vinculados (${empresa}): ${error.message}`);
-    const rows = (data ?? []) as { omie_codigo_cliente: number | null }[];
-    for (const r of rows) if (r.omie_codigo_cliente != null) set.add(Number(r.omie_codigo_cliente));
-    if (rows.length < pageSize) break;
-    from += pageSize;
-  }
+  for (const r of rows) if (r.omie_codigo_cliente != null) set.add(Number(r.omie_codigo_cliente));
   return set;
 }
 
 // Lê TODOS os documentos de profiles (normalizados em memória — defensivo contra formatados).
 async function fetchAllProfileDocs(db: SupabaseClient): Promise<Set<string>> {
+  // Este laço tinha as DUAS metades da classe, e cada PR fechou uma:
+  //   · o #1589 pôs o `.order("id")` que faltava (metade §7 — sem ordem estável o `.range()`
+  //     pagina sobre sequência indefinida e um documento some entre páginas);
+  //   · aqui a leitura passa a DELEGAR a `fetchAll`, que fecha a metade §9 — o `data ?? []`
+  //     convertia resposta malformada (data:null SEM error) em página vazia → EOF falso → Set
+  //     PARCIAL.
+  // As duas importam pelo mesmo caminho: documento ausente do Set faz o dedup a jusante criar
+  // usuário Auth NOVO para cliente que JÁ existe — a fábrica de clones do #1425.
+  //
+  // `id` (e não `user_id`) mantém a coluna que o #1589 conferiu em prod: é a PRIMARY KEY
+  // (`profiles_pkey`). `user_id` também seria estável (UNIQUE NOT NULL, 5.668/5.668 distintos
+  // — conferido via psql-ro), mas divergir da coluna já auditada não compra nada.
+  const rows = await fetchAll<{ document: string | null }>(
+    (from, to) =>
+      db
+        .from("profiles")
+        .select("document")
+        .not("document", "is", null)
+        .order("id", { ascending: true })
+        .range(from, to),
+    "fetch profiles docs",
+  );
   const set = new Set<string>();
-  const pageSize = 1000;
-  let from = 0;
-  while (true) {
-    const { data, error } = await db
-      .from("profiles")
-      .select("document")
-      .not("document", "is", null)
-      .range(from, from + pageSize - 1);
-    if (error) throw new Error(`fetch profiles docs: ${error.message}`);
-    const rows = (data ?? []) as { document: string | null }[];
-    for (const r of rows) {
-      const d = (r.document ?? "").replace(/\D/g, "");
-      if (d) set.add(d);
-    }
-    if (rows.length < pageSize) break;
-    from += pageSize;
+  for (const r of rows) {
+    const d = (r.document ?? "").replace(/\D/g, "");
+    if (d) set.add(d);
   }
   return set;
 }
@@ -872,8 +929,17 @@ async function syncNaoVinculados(db: SupabaseClient, account: OmieAccount) {
         apenas_importado_api: "N",
       })) as unknown as OmieListarClientesResponse;
 
-      totalPaginas = result.total_de_paginas || 1;
+      // Piso MONOTÔNICO + teto fail-fast + anomalia (tríade de _shared/omie-paginacao.ts;
+      // money-path §9): era `|| 1` POR RESPOSTA — o snapshot fecharia 'complete' PARCIAL.
+      totalPaginas = proximoTotalPaginas(totalPaginas, result.total_de_paginas, MAX_PAGINAS_LISTAGEM);
       const clientes = result.clientes_cadastro || [];
+      const veredicto = avaliarPagina(clientes.length, pagina, totalPaginas);
+      if (veredicto === "anomalia") {
+        // Vazia ANTES do fim declarado = fault disfarçado → aborta (status error; o finalize
+        // atômico nunca roda com enumeração parcial — o run morto fica invisível na UI).
+        throw new Error(`página ${pagina}/${totalPaginas} do ListarClientes (não-vinculados) veio vazia antes do fim declarado — abortando (retrato parcial)`);
+      }
+      if (veredicto === "fim") break;
       for (const c of clientes) {
         totalOmie++;
         if (classifyClienteForSnapshot(c, codigosVinculados, docsComProfile) === "unlinked") {
@@ -916,7 +982,11 @@ async function syncNaoVinculados(db: SupabaseClient, account: OmieAccount) {
 async function syncProducts(db: SupabaseClient, account: OmieAccount, startPage = 1, maxPages = 10) {
   await updateSyncState(db, "products", account, { status: "running", error_message: null });
   let pagina = startPage;
+  // Piso da run: começa na página pedida (garante a entrada no laço) e daí só cresce.
   let totalPaginas = startPage;
+  // Fim REAL declarado por avaliarPagina (vazia NA última página) — distingue "catálogo
+  // esgotado" de "lote esgotado" no `complete` abaixo.
+  let fimReal = false;
   let totalSynced = 0;
   let pagesProcessed = 0;
 
@@ -929,8 +999,20 @@ async function syncProducts(db: SupabaseClient, account: OmieAccount, startPage 
         filtrar_apenas_omiepdv: "N",
       })) as unknown as OmieListarProdutosResponse;
 
-      totalPaginas = result.total_de_paginas || 1;
+      // Piso MONOTÔNICO + teto fail-fast + anomalia (money-path §9): era `|| 1` POR RESPOSTA —
+      // uma intermediária sem o campo encolhia o teto e o cursor fechava 'complete' prematuro.
+      totalPaginas = proximoTotalPaginas(totalPaginas, result.total_de_paginas, MAX_PAGINAS_LISTAGEM);
       const produtos = result.produto_servico_cadastro || [];
+      const veredicto = avaliarPagina(produtos.length, pagina, totalPaginas);
+      if (veredicto === "anomalia") {
+        // Vazia ANTES do fim declarado = fault disfarçado → aborta (status error); o caller
+        // re-invoca do startPage e o upsert é idempotente.
+        throw new Error(`página ${pagina}/${totalPaginas} do ListarProdutos veio vazia antes do fim declarado — abortando (retrato parcial)`);
+      }
+      if (veredicto === "fim") {
+        fimReal = true;
+        break;
+      }
 
       if (account === "vendas" || account === "colacor_vendas") {
         // UPSERT — INCLUI inativos para refletir o flag `ativo` corretamente
@@ -981,7 +1063,7 @@ async function syncProducts(db: SupabaseClient, account: OmieAccount, startPage 
       last_sync_at: new Date().toISOString(),
       last_page: totalPaginas,
     });
-    const complete = pagina > totalPaginas;
+    const complete = fimReal || pagina > totalPaginas;
     await updateSyncState(db, "products", account, {
       status: complete ? "complete" : "partial",
       total_synced: totalSynced,
@@ -1112,9 +1194,11 @@ async function syncInventory(db: SupabaseClient, account: OmieAccount) {
         .in("omie_codigo_produto", chunk);
       // Falha de SELECT → THROW (defeito registrado no #1341: "o canônico segue sem o chunk"):
       // seguir faria o upsert de posição abaixo CLOBBERar product_id existente para null.
-      // Precisão > recall; o cron re-tenta no próximo ciclo.
+      // Precisão > recall; o cron re-tenta no próximo ciclo. data:null SEM error = resposta
+      // malformada com o MESMO efeito (chunk perdido em silêncio) → mesmo throw (money-path §9).
       if (error) throw new Error(`resolve omie_products: ${error.message}`);
-      prodRows.push(...(data ?? []));
+      if (data == null) throw new Error("resolve omie_products: data null sem error — resposta malformada");
+      prodRows.push(...data);
     }
     const idByCod = buildProductIdMap(prodRows);
     const ambiguos = [...idByCod.values()].filter((v) => v === null).length;
@@ -1214,15 +1298,17 @@ async function syncInventory(db: SupabaseClient, account: OmieAccount) {
       const jaTemCusto = new Set<string>();
       for (const chunk of chunked(costCandidatos.map((x) => x.id), 300)) {
         const { data, error } = await db.from("product_costs").select("product_id").in("product_id", chunk);
-        if (error) {
-          // SELECT falho degrada (≠ resolve de omie_products, que aborta): os candidatos do
-          // chunk caem no "inserir" e o ignoreDuplicates abaixo pula os que já existem —
-          // custo stale por 1 ciclo, nunca corrupção/clobber de proveniência.
+        if (error || data == null) {
+          // SELECT falho OU data:null sem error (malformada — money-path §9) degrada (≠ resolve
+          // de omie_products, que aborta): os candidatos do chunk caem no "inserir" e o
+          // ignoreDuplicates abaixo pula os que já existem — custo stale por 1 ciclo, nunca
+          // corrupção/clobber de proveniência. A malformada contava como sucesso SILENCIOSO;
+          // agora conta em falhasChunk e aparece no error_message do sync_state.
           falhasChunk++;
-          console.error(`[Sync ${account}] resolve product_costs:`, error);
+          console.error(`[Sync ${account}] resolve product_costs:`, error ?? "data null sem error");
           continue;
         }
-        for (const r of data || []) jaTemCusto.add(r.product_id as string);
+        for (const r of data) jaTemCusto.add(r.product_id as string);
       }
 
       const aAtualizar = costCandidatos
@@ -1287,19 +1373,18 @@ async function syncInventoryFull(db: SupabaseClient, account: OmieAccount) {
     //    1000 do PostgREST; .order("id") = paginação estável exigida pelo .range() (mesmo padrão de
     //    computeCosts). buildProductIdMap nulifica ambíguo residual (defense-in-depth).
     const empresa = accountToEmpresa(account);
-    const allProdRows: Array<{ id: string | null; omie_codigo_produto: number | string | null }> = [];
-    for (let from = 0; ; from += 1000) {
-      const { data, error } = await db
-        .from("omie_products")
-        .select("id, omie_codigo_produto")
-        .eq("account", empresa)
-        .order("id", { ascending: true })
-        .range(from, from + 999);
-      if (error) throw error;
-      const rows = data ?? [];
-      allProdRows.push(...rows);
-      if (rows.length < 1000) break;
-    }
+    // Delegado a fetchAll (money-path §9): o laço à mão convertia data:null SEM error em página
+    // vazia (EOF falso) → idMap parcial → CMC gravado com product_id null para a cauda perdida.
+    const allProdRows = await fetchAll<{ id: string | null; omie_codigo_produto: number | string | null }>(
+      (from, to) =>
+        db
+          .from("omie_products")
+          .select("id, omie_codigo_produto")
+          .eq("account", empresa)
+          .order("id", { ascending: true })
+          .range(from, to),
+      `omie_products(inventory_full ${empresa})`,
+    );
     const idMap = buildProductIdMap(allProdRows);
     const ambiguos = [...idMap.values()].filter((v) => v === null).length;
     if (ambiguos > 0) {
@@ -1845,7 +1930,7 @@ async function computeAssociationRules(db: SupabaseClient) {
 
 // ======== MAIN HANDLER ========
 
-serve(async (req) => {
+Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }

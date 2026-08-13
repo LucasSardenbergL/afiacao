@@ -11,8 +11,8 @@
 //   6. Processar o evento em background
 // ============================================================================
 
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.0";
+import { createClient } from "npm:@supabase/supabase-js@2";
+import { redigirSegredo } from "../_shared/omie-falha.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -169,7 +169,7 @@ async function processarEvento(
   }
 }
 
-serve(async (req: Request) => {
+Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
@@ -202,7 +202,15 @@ serve(async (req: Request) => {
 
     const empresa = identificarEmpresa(payload);
     if (!empresa) {
-      console.warn("[auth] app_key desconhecido:", payload.appKey || payload.author);
+      // A app_key que chega aqui é comparada contra as NOSSAS (`OMIE_APPS`): num env com uma conta
+      // faltando, a chave real da empresa é exatamente o valor que cairia neste log — em texto
+      // plano, retido no painel. `redigirSegredo` mascara dígito longo (app_key) e hex longo
+      // (app_secret) e deixa passar texto curto, que é o que mantém o motivo acionável: um valor
+      // curto/estranho aqui é remetente desconhecido, não credencial nossa.
+      console.warn(
+        "[auth] app_key desconhecido:",
+        redigirSegredo(String(payload.appKey || payload.author || "")),
+      );
       return new Response(
         JSON.stringify({ ok: false, reason: "unknown_app_key" }),
         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },

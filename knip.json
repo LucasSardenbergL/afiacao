@@ -13,12 +13,13 @@
     "supabase/functions/**/*.ts"
   ],
   "ignore": [
+    "supabase/functions/_shared/sayerlack-sku.ts",
+    "supabase/functions/_shared/embalagem-captura-helpers.ts",
     "src/integrations/supabase/types.ts",
     "src/components/ui/**",
     "src/hooks/use-mobile.tsx",
     "src/components/NvoipDialer.tsx",
-    "src/hooks/useNvoipCall.ts",
-    "src/hooks/useWhatsappPendentes.ts"
+    "src/hooks/useNvoipCall.ts"
   ],
-  "ignoreDependencies": ["npm", "jsr"]
+  "ignoreDependencies": ["npm"]
 }

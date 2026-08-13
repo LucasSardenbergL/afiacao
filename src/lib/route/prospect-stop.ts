@@ -28,7 +28,7 @@ export interface ProspectRow {
   precision: string | null;
 }
 
-export interface ProspectAddress {
+interface ProspectAddress {
   street: string;
   number: string;
   neighborhood: string;

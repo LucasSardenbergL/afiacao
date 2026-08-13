@@ -2,7 +2,7 @@
 // Automatiza envio de pedidos aprovados (OBEN -> Sayerlack) via Browserless.io
 // Modos: ECO (validacao), lote (cron), individual (manual)
 
-import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2.45.0";
+import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",

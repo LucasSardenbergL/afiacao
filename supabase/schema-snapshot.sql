@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict i8MF1XYXbImkgKe6f8PipnLWLTP4UHGHO5dhoBsEWSXM0jmwpq5cEj8AZwoo8F1
+\restrict QtOdGn7zeAkRw8EWA4bU1xECHIoo4InhVuDzbKGXDwLRsiArEVp8XhnMgdPeKBe
 
 -- Dumped from database version 17.6
 -- Dumped by pg_dump version 17.10 (Homebrew)
@@ -219,6 +219,129 @@ CREATE TYPE public.visit_mission AS ENUM (
 
 
 --
+-- Name: atp_disponivel(text, bigint, uuid); Type: FUNCTION; Schema: private; Owner: -
+--
+
+CREATE FUNCTION private.atp_disponivel(p_pool text, p_sku bigint, p_excluir_checkout uuid DEFAULT NULL::uuid) RETURNS TABLE(saldo numeric, saldo_synced_at timestamp with time zone, saldo_confiavel boolean, reservado numeric, seguranca numeric, disponivel numeric)
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+  WITH pool_contas AS (
+    SELECT CASE p_pool WHEN 'oben' THEN ARRAY['vendas','oben'] ELSE ARRAY[]::text[] END AS contas
+  ),
+  linha AS (
+    -- eleição por frescor entre as contas do pool (padrão ESTOQUE_ACCOUNTS do
+    -- cockpit): a linha mais recente vence; empate → account em ordem estável.
+    -- Elege entre TODAS as linhas (não só as válidas) de propósito: se a mais
+    -- fresca for inválida, o guard abaixo reprova o SKU inteiro (fail-closed)
+    -- em vez de cair numa linha velha que por acaso passa.
+    SELECT ip.saldo, ip.synced_at
+    FROM public.inventory_position ip, pool_contas pc
+    WHERE ip.omie_codigo_produto = p_sku
+      AND ip.account = ANY (pc.contas)
+    ORDER BY ip.synced_at DESC NULLS LAST, ip.account
+    LIMIT 1
+  ),
+  frescas AS (
+    -- posições do pool que passariam TODOS os guards por si só. Serve só para
+    -- medir concordância entre contas (C3).
+    SELECT ip.saldo
+    FROM public.inventory_position ip, pool_contas pc
+    WHERE ip.omie_codigo_produto = p_sku
+      AND ip.account = ANY (pc.contas)
+      AND ip.synced_at IS NOT NULL
+      AND ip.synced_at > now() - interval '24 hours'
+      AND ip.synced_at <= now() + interval '5 minutes'
+      AND ip.saldo IS NOT NULL
+      AND ip.saldo <> 'NaN'::numeric
+      AND ip.saldo >= 0
+      AND ip.saldo < 'Infinity'::numeric
+  ),
+  base AS (
+    SELECT
+      (SELECT l.saldo FROM linha l) AS saldo,
+      (SELECT l.synced_at FROM linha l) AS synced_at,
+      -- C3: 2+ saldos distintos entre posições frescas e válidas = as contas
+      -- deixaram de ser espelho ⇒ não sabemos qual é a verdade ⇒ não prometer.
+      (SELECT count(DISTINCT f.saldo) > 1 FROM frescas f) AS divergente
+  ),
+  seg AS (
+    -- Parâmetro AUSENTE = sem colchão configurado (0) — default de política,
+    -- não dado fabricado. Parâmetro PRESENTE mas inválido (NaN/Infinity/<0) =
+    -- C2: não dá para calcular ⇒ o SKU vira não-confiável (nunca colchão 0,
+    -- que removeria a proteção em silêncio).
+    -- LIMIT 1 sem ORDER BY é seguro: prod tem UNIQUE(empresa, sku_codigo_omie),
+    -- conferido via psql-ro — a duplicata que a fase 1 tratava é impossível.
+    SELECT
+      COALESCE((
+        SELECT sp.estoque_seguranca
+        FROM public.sku_parametros sp
+        WHERE sp.empresa = (CASE p_pool WHEN 'oben' THEN 'OBEN' END)
+          AND sp.sku_codigo_omie = p_sku
+          AND sp.estoque_seguranca IS NOT NULL
+          AND sp.estoque_seguranca <> 'NaN'::numeric
+          AND sp.estoque_seguranca >= 0
+          AND sp.estoque_seguranca < 'Infinity'::numeric
+        LIMIT 1
+      ), 0) AS seguranca,
+      EXISTS (
+        SELECT 1
+        FROM public.sku_parametros sp
+        WHERE sp.empresa = (CASE p_pool WHEN 'oben' THEN 'OBEN' END)
+          AND sp.sku_codigo_omie = p_sku
+          AND sp.estoque_seguranca IS NOT NULL
+          AND NOT (
+            sp.estoque_seguranca <> 'NaN'::numeric
+            AND sp.estoque_seguranca >= 0
+            AND sp.estoque_seguranca < 'Infinity'::numeric
+          )
+      ) AS seg_invalida
+  ),
+  calc AS (
+    SELECT
+      b.saldo,
+      b.synced_at,
+      -- FAIL-CLOSED. NaN em numeric ordena ACIMA de tudo ('NaN' >= 0 é true) e
+      -- 'NaN' = 'NaN' é true, então o <> 'NaN' pega. Infinity também passaria o
+      -- >= 0 — daí o bound de finitude (C1).
+      (b.synced_at IS NOT NULL
+        AND b.synced_at > now() - interval '24 hours'
+        AND b.synced_at <= now() + interval '5 minutes'
+        AND b.saldo IS NOT NULL
+        AND b.saldo <> 'NaN'::numeric
+        AND b.saldo >= 0
+        AND b.saldo < 'Infinity'::numeric
+        AND NOT b.divergente
+        AND NOT s.seg_invalida) AS confiavel
+    FROM base b CROSS JOIN seg s
+  ),
+  res AS (
+    SELECT COALESCE(sum(r.quantidade), 0) AS reservado
+    FROM public.estoque_reservas r
+    WHERE r.pool = p_pool
+      AND r.omie_codigo_produto = p_sku
+      AND r.status = 'ativa'
+      AND r.expira_em > now()
+      AND (p_excluir_checkout IS NULL OR r.checkout_id <> p_excluir_checkout)
+  )
+  SELECT
+    c.saldo,
+    c.synced_at,
+    COALESCE(c.confiavel, false),
+    r.reservado,
+    s.seguranca,
+    -- disponivel pode ser NEGATIVO (reservas+colchão > saldo após queda no sync):
+    -- informação honesta p/ a reconciliação — não clampar em 0.
+    CASE WHEN COALESCE(c.confiavel, false)
+         THEN c.saldo - r.reservado - s.seguranca
+         ELSE NULL END
+  FROM calc c
+  CROSS JOIN res r
+  CROSS JOIN seg s;
+$$;
+
+
+--
 -- Name: cap_carteira_escrever(uuid); Type: FUNCTION; Schema: private; Owner: -
 --
 
@@ -369,6 +492,26 @@ COMMENT ON FUNCTION private.cap_custo_ler(_uid uuid) IS 'E2/FU4 — LER custo m�
 
 
 --
+-- Name: cap_estoque_reservar(uuid); Type: FUNCTION; Schema: private; Owner: -
+--
+
+CREATE FUNCTION private.cap_estoque_reservar(_uid uuid) RETURNS boolean
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+  SELECT COALESCE(
+    (SELECT auth.role()) = 'service_role'
+    OR (
+      _uid IS NOT NULL
+      AND (
+        public.has_role(_uid, 'master'::public.app_role)
+        OR public.has_role(_uid, 'employee'::public.app_role)
+      )
+    ), false);
+$$;
+
+
+--
 -- Name: cap_pedido_escrever(uuid); Type: FUNCTION; Schema: private; Owner: -
 --
 
@@ -461,6 +604,30 @@ CREATE FUNCTION private.carteira_visivel_para(_customer_user_id uuid, _uid uuid)
           AND (c.valid_until IS NULL OR c.valid_until > now())
       )
     );
+$$;
+
+
+--
+-- Name: expirar_reservas_vencidas_job(); Type: FUNCTION; Schema: private; Owner: -
+--
+
+CREATE FUNCTION private.expirar_reservas_vencidas_job() RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_n integer;
+BEGIN
+  UPDATE public.estoque_reservas
+     SET status = 'expirada',
+         motivo = 'expirada por TTL',
+         atualizado_em = now()
+   WHERE status = 'ativa'
+     AND expira_em <= now();
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+
+  RETURN jsonb_build_object('ok', true, 'expiradas', v_n);
+END;
 $$;
 
 
@@ -939,6 +1106,25 @@ CREATE FUNCTION public._data_health_compute() RETURNS TABLE(source text, domain 
       NULL, CASE WHEN max(fcs.calculated_at) IS NULL THEN 'calculate-scores nunca rodou' ELSE NULL END,
       'Re-rode calculate-scores / scoring-recalc-batch no Lovable', 'warning'
     FROM public.farmer_client_scores fcs
+    UNION ALL
+    -- carteira_rebuild: FRESCOR do rebuild da carteira (carteira-rebuild-nightly, 07:30 UTC).
+    -- Existia um ponto cego: o único check da família, 'carteira_scores', mede
+    -- farmer_client_scores.calculated_at — ou seja, o SCORING (calculate-scores), nao o
+    -- REBUILD. Em 2026-07-28 o cron do rebuild enfileirou, a edge nunca respondeu e
+    -- carteira_assignments ficou 24h congelada com o Sentinela VERDE, porque o scoring
+    -- daquela manha estava fresco. Dois writers distintos, dois frescores distintos.
+    SELECT 'carteira_rebuild'::text, 'carteira'::text,
+      CASE WHEN max(ca.last_synced_at) IS NULL THEN 'broken'
+           WHEN now() - max(ca.last_synced_at) > interval '30 hours' THEN 'stale' ELSE 'ok' END,
+      EXTRACT(EPOCH FROM now() - max(ca.last_synced_at))::bigint, (30*3600)::bigint, 'last_synced_at',
+      'Rebuild da carteira: ' || COALESCE(to_char(max(ca.last_synced_at) AT TIME ZONE 'America/Sao_Paulo','DD/MM HH24:MI'),'nunca'),
+      NULL,
+      CASE WHEN max(ca.last_synced_at) IS NULL THEN 'carteira-rebuild nunca rodou'
+           WHEN now() - max(ca.last_synced_at) > interval '30 hours'
+             THEN 'cron enfileirou mas a edge pode nao ter respondido (transporte pg_net / BOOT_ERROR) — cron.job_run_details so prova o ENQUEUE; a verdade HTTP esta em net._http_response (~6h de retencao) e o lease em sync_state.carteira_rebuild'
+           ELSE NULL END,
+      'Re-rode carteira-rebuild no Lovable; confira sync_state (entity_type=''carteira_rebuild'') e net._http_response'::text, 'warning'
+    FROM public.carteira_assignments ca
     UNION ALL
     SELECT 'custos_produtos'::text, 'estoque'::text,
       CASE WHEN max(pc.updated_at) IS NULL THEN 'broken'
@@ -1552,6 +1738,114 @@ END $$;
 
 
 --
+-- Name: _tint_watchdog_fase5_transicao(text, text, bigint, text, text, text, jsonb, numeric); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public._tint_watchdog_fase5_transicao(p_company text, p_tipo text, p_n bigint, p_sev text, p_titulo text, p_msg text, p_ctx jsonb, p_fator numeric DEFAULT 1.0) RETURNS void
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  v_ant      bigint;
+  -- fornecedor_alerta tem CHECK próprio e vocabulário DIFERENTE de fin_alertas
+  -- (info/atencao/urgente vs info/aviso/critico). Derivar aqui, em vez de passar
+  -- como parâmetro, elimina o modo de falha "severidade inválida derruba o cron".
+  v_sev_forn text := CASE p_sev WHEN 'critico' THEN 'urgente'
+                                WHEN 'aviso'   THEN 'atencao'
+                                ELSE 'info' END;
+  v_upd int;
+  v_ant_email bigint;
+  v_emitir boolean;
+  v_sev_ant text;
+BEGIN
+  IF p_n <= 0 THEN
+    UPDATE fin_alertas SET dismissed_at = now()
+     WHERE company = p_company AND tipo = p_tipo AND dismissed_at IS NULL;
+    RETURN;
+  END IF;
+
+  INSERT INTO fin_alertas (company, tipo, severidade, mensagem, contexto)
+  VALUES (p_company, p_tipo, p_sev, p_msg,
+          p_ctx || jsonb_build_object('_n', p_n, 'avaliado_em', now(), '_n_email', p_n))
+  ON CONFLICT (company, tipo) WHERE dismissed_at IS NULL DO NOTHING;
+
+  IF FOUND THEN
+    INSERT INTO fornecedor_alerta (empresa, tipo, severidade, titulo, mensagem, status)
+    VALUES (p_company, 'outro', v_sev_forn, p_titulo, p_msg, 'pendente_notificacao');
+    RETURN;
+  END IF;
+
+  -- Alerta já aberto. Com ON CONFLICT DO NOTHING puro, uma PIORA durante um
+  -- incidente aberto ficaria MUDA (Codex [P1]). Se o conjunto cresceu, atualiza o
+  -- alerta e re-enfileira o e-mail.
+  -- Duas âncoras DIFERENTES, e confundi-las quebra a histerese (pego pelo assert
+  -- B16c): `_n` é o valor do último CICLO e avança sempre, então comparar com ele
+  -- faria o gatilho fugir junto — S2 subindo 15/ciclo nunca alcançaria o dobro e o
+  -- e-mail NUNCA mais sairia, nem se explodisse de 300 para 100.000. A âncora certa
+  -- é `_n_email`: o valor de quando o último e-mail saiu. Assim a re-emissão é
+  -- logarítmica (300 → 600 → 1200 …): silenciosa no crescimento vegetativo, mas
+  -- garantida a cada duplicação.
+  SELECT COALESCE((contexto->>'_n')::bigint, 0),
+         COALESCE((contexto->>'_n_email')::bigint, COALESCE((contexto->>'_n')::bigint, 0)),
+         severidade
+    INTO v_ant, v_ant_email, v_sev_ant
+    FROM fin_alertas
+   WHERE company = p_company AND tipo = p_tipo AND dismissed_at IS NULL;
+
+  -- ⚠️ O UPDATE é INCONDICIONAL (2ª rodada do challenge Codex, [P1]). A versão
+  -- anterior o embrulhava num `IF p_n > v_ant`, então uma MELHORA parcial não
+  -- atualizava nada: com S2 caindo de 1.200 para 300, o alerta seguia mostrando
+  -- 1.200 e a severidade do pico, e S2 podia voltar a 1.199 em silêncio total.
+  -- Estado no banco reflete SEMPRE o ciclo atual; o que a histerese governa é só
+  -- o E-MAIL.
+  --
+  -- Duas âncoras DIFERENTES, e confundi-las quebra a histerese (pego pelo assert
+  -- B16c): `_n` é o valor do ciclo atual; `_n_email` é o valor de quando o último
+  -- e-mail saiu. Comparar com `_n` faria o gatilho fugir junto com o valor e o
+  -- e-mail nunca mais sairia. Com `_n_email`, a re-emissão é logarítmica.
+  --
+  -- REARME NA RECUPERAÇÃO ([P1] da 2ª rodada): se o sinal MELHORA materialmente
+  -- (cai a metade ou menos do valor emailado), a âncora desce junto — senão, depois
+  -- de um pico de 1.200, um novo patamar de 1.199 ficaria mudo para sempre.
+  v_ant_email := CASE WHEN p_n <= v_ant_email / 2 THEN p_n ELSE v_ant_email END;
+
+  -- Emite se DOBROU desde o último e-mail, OU se a SEVERIDADE SUBIU ([P1] da 2ª
+  -- rodada): 9.600 'aviso' → 10.000 'critico' mudava o alerta para crítico sem
+  -- avisar ninguém, e o próximo e-mail só sairia em 19.200.
+  v_emitir := p_n >= GREATEST(v_ant_email * p_fator, v_ant_email + 1)
+              OR (CASE p_sev      WHEN 'critico' THEN 3 WHEN 'aviso' THEN 2 ELSE 1 END
+                > CASE v_sev_ant WHEN 'critico' THEN 3 WHEN 'aviso' THEN 2 ELSE 1 END);
+
+  -- UPDATE ... RETURNING numa passada só: um dismiss CONCORRENTE entre o SELECT e o
+  -- UPDATE faria o UPDATE não achar linha e, com o INSERT incondicional, sairia um
+  -- e-mail "AGRAVOU" fantasma, sem alerta aberto por trás (Codex [P2]).
+  UPDATE fin_alertas
+     SET severidade = p_sev,
+         mensagem   = p_msg,
+         contexto   = p_ctx || jsonb_build_object('_n', p_n, 'avaliado_em', now(),
+                                                  'agravou_de', v_ant,
+                                                  -- só avança quando o e-mail de fato sai
+                                                  '_n_email', CASE WHEN v_emitir THEN p_n ELSE v_ant_email END)
+   WHERE company = p_company AND tipo = p_tipo AND dismissed_at IS NULL
+  RETURNING 1 INTO v_upd;
+
+  IF v_upd IS NOT NULL AND v_emitir AND p_n > v_ant THEN
+    INSERT INTO fornecedor_alerta (empresa, tipo, severidade, titulo, mensagem, status)
+    VALUES (p_company, 'outro', v_sev_forn, 'AGRAVOU: ' || p_titulo,
+            p_msg || E'\n\n(agravamento: eram ' || v_ant || ')', 'pendente_notificacao');
+  END IF;
+END;
+$$;
+
+
+--
+-- Name: FUNCTION _tint_watchdog_fase5_transicao(p_company text, p_tipo text, p_n bigint, p_sev text, p_titulo text, p_msg text, p_ctx jsonb, p_fator numeric); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public._tint_watchdog_fase5_transicao(p_company text, p_tipo text, p_n bigint, p_sev text, p_titulo text, p_msg text, p_ctx jsonb, p_fator numeric) IS 'Privada da Camada B (Fase 5b#2 PR 2): ciclo de vida de um alerta fin_alertas + e-mail via fornecedor_alerta. n=0 dismissa; n>0 abre, ou RE-EMITE se piorou em relação ao contexto->>_n do alerta aberto (ON CONFLICT DO NOTHING sozinho silenciaria o agravamento). Deriva a severidade de fornecedor_alerta da de fin_alertas — os dois CHECKs têm vocabulários diferentes.';
+
+
+--
 -- Name: _vendas_familia_ausente_lista_email(integer); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2095,8 +2389,6 @@ DECLARE
   v_valid int;
 BEGIN
   -- GUARD DE CONTRATO (full-update only): as 12 chaves CORE são obrigatórias em TODA linha.
-  -- Aqui jsonb_to_recordset basta: ausente e null são AMBOS inválidos, então colapsá-los é correto.
-  -- sales_history_status, gross_margin_pct e m_score NÃO entram (nuláveis por semântica).
   v_total := jsonb_array_length(p_updates);
 
   SELECT count(*) INTO v_valid
@@ -2134,7 +2426,8 @@ BEGIN
       USING ERRCODE = 'check_violation';
   END IF;
 
-  -- UPDATE-only por id (anti-ressurreição #971), base de vendas (#987) + sales_history_status (COALESCE).
+  -- UPDATE-only por id (anti-ressurreição #971) + base de vendas (#987) + sales_history_status
+  -- + cobertura de custo (itens_com_custo/itens_sem_custo, jsonb_exists como gross_margin_pct).
   UPDATE public.farmer_client_scores f SET
     health_score             = u.health_score,
     health_class             = u.health_class,
@@ -2144,6 +2437,8 @@ BEGIN
     m_score                  = CASE WHEN u.tem_m_score          THEN u.m_score          ELSE f.m_score          END,
     g_score                  = u.g_score,
     gross_margin_pct         = CASE WHEN u.tem_gross_margin_pct THEN u.gross_margin_pct ELSE f.gross_margin_pct END,
+    itens_com_custo          = CASE WHEN u.tem_itens_com_custo  THEN u.itens_com_custo  ELSE f.itens_com_custo  END,
+    itens_sem_custo          = CASE WHEN u.tem_itens_sem_custo  THEN u.itens_sem_custo  ELSE f.itens_sem_custo  END,
     days_since_last_purchase = u.days_since_last_purchase,
     avg_monthly_spend_180d   = u.avg_monthly_spend_180d,
     category_count           = u.category_count,
@@ -2161,6 +2456,8 @@ BEGIN
       (e.elem->>'m_score')::numeric                  AS m_score,
       (e.elem->>'g_score')::numeric                  AS g_score,
       (e.elem->>'gross_margin_pct')::numeric         AS gross_margin_pct,
+      (e.elem->>'itens_com_custo')::bigint           AS itens_com_custo,
+      (e.elem->>'itens_sem_custo')::bigint           AS itens_sem_custo,
       (e.elem->>'days_since_last_purchase')::integer AS days_since_last_purchase,
       (e.elem->>'avg_monthly_spend_180d')::numeric   AS avg_monthly_spend_180d,
       (e.elem->>'category_count')::integer           AS category_count,
@@ -2169,7 +2466,9 @@ BEGIN
       (e.elem->>'updated_at')::timestamptz           AS updated_at,
       -- jsonb_exists(), e não o operador ?, para não depender de como o parser trata ? em plpgsql.
       jsonb_exists(e.elem, 'm_score')                AS tem_m_score,
-      jsonb_exists(e.elem, 'gross_margin_pct')       AS tem_gross_margin_pct
+      jsonb_exists(e.elem, 'gross_margin_pct')       AS tem_gross_margin_pct,
+      jsonb_exists(e.elem, 'itens_com_custo')        AS tem_itens_com_custo,
+      jsonb_exists(e.elem, 'itens_sem_custo')        AS tem_itens_sem_custo
     FROM jsonb_array_elements(p_updates) AS e(elem)
   ) u
   WHERE f.id = u.id;
@@ -2352,6 +2651,204 @@ BEGIN
    WHERE document_id = p_document_id;
 
   RETURN v_version_id;
+END;
+$$;
+
+
+--
+-- Name: atp_consultar(text, bigint[]); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.atp_consultar(p_pool text, p_skus bigint[]) RETURNS TABLE(omie_codigo_produto bigint, disponivel numeric, confiavel boolean, motivo text, saldo_synced_at timestamp with time zone)
+    LANGUAGE plpgsql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_uid uuid := (SELECT auth.uid());
+BEGIN
+  IF NOT private.cap_estoque_reservar(v_uid) THEN
+    RAISE EXCEPTION 'Sem permissão para consultar disponibilidade de estoque (staff apenas)'
+      USING ERRCODE = '42501';
+  END IF;
+  IF p_pool IS DISTINCT FROM 'oben' THEN
+    RAISE EXCEPTION 'Pool de estoque inválido: % — a fase 1 atende apenas ''oben''', COALESCE(p_pool, 'NULL')
+      USING ERRCODE = '22023';
+  END IF;
+  IF p_skus IS NULL OR cardinality(p_skus) = 0 OR cardinality(p_skus) > 500 THEN
+    RAISE EXCEPTION 'p_skus deve ter entre 1 e 500 códigos' USING ERRCODE = '22023';
+  END IF;
+
+  RETURN QUERY
+  SELECT
+    s.sku,
+    d.disponivel,
+    d.saldo_confiavel,
+    CASE WHEN NOT d.saldo_confiavel
+         THEN 'saldo_indisponivel'::text
+         ELSE NULL::text END,
+    d.saldo_synced_at
+  FROM unnest(p_skus) AS s(sku)
+  CROSS JOIN LATERAL private.atp_disponivel(p_pool, s.sku, NULL) AS d;
+END;
+$$;
+
+
+--
+-- Name: atp_gate_pedido(uuid, boolean, uuid, boolean, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.atp_gate_pedido(p_sales_order_id uuid, p_enforcement boolean, p_actor uuid DEFAULT NULL::uuid, p_autorizar_backorder boolean DEFAULT false, p_motivo_backorder text DEFAULT NULL::text) RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_row record;
+  v_itens jsonb;
+  v_invalidos integer;
+  v_fp text;
+  v_checkout uuid;
+  v_res jsonb;
+  v_bloqueio record;
+  v_snapshot jsonb;
+  v_sku bigint;
+BEGIN
+  -- Defesa em profundidade: o EXECUTE já é service_role-only; o gate interno
+  -- da reserva (cap_estoque_reservar) revalida na chamada aninhada.
+  IF p_sales_order_id IS NULL THEN
+    RAISE EXCEPTION 'p_sales_order_id é obrigatório' USING ERRCODE = '22023';
+  END IF;
+  IF p_enforcement IS NULL THEN
+    RAISE EXCEPTION 'p_enforcement é obrigatório (true=bloqueia, false=advisory)' USING ERRCODE = '22023';
+  END IF;
+
+  SELECT so.id, so.account, so.checkout_id, so.items, so.omie_pedido_id
+    INTO v_row
+  FROM public.sales_orders so
+  WHERE so.id = p_sales_order_id;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'sales_order % não existe', p_sales_order_id USING ERRCODE = '22023';
+  END IF;
+
+  -- Pool fase 2 = 'oben'. Linha de outra conta não passa por reserva (defesa
+  -- em profundidade — o edge só chama para oben).
+  IF v_row.account IS DISTINCT FROM 'oben' THEN
+    RETURN jsonb_build_object('ok', true, 'resultado', 'fora_do_pool', 'account', v_row.account);
+  END IF;
+
+  -- PV já criado no Omie: NUNCA re-reservar (retry idempotente não renova TTL).
+  IF v_row.omie_pedido_id IS NOT NULL THEN
+    RETURN jsonb_build_object('ok', true, 'resultado', 'ja_enviado');
+  END IF;
+
+  -- Deriva itens DO BANCO (nunca do payload): agrega por SKU (a reserva recusa
+  -- duplicata) e valida fail-closed — item ilegível é bug de dado, sem override.
+  IF v_row.items IS NULL OR jsonb_typeof(v_row.items) <> 'array' OR jsonb_array_length(v_row.items) = 0 THEN
+    RAISE EXCEPTION 'sales_order % (oben) sem items legíveis para o gate ATP', p_sales_order_id
+      USING ERRCODE = '22023';
+  END IF;
+
+  SELECT count(*) FILTER (WHERE x.omie_codigo_produto IS NULL OR x.omie_codigo_produto <= 0
+                             OR x.quantidade IS NULL OR x.quantidade <= 0)
+    INTO v_invalidos
+  FROM jsonb_to_recordset(v_row.items) AS x(omie_codigo_produto bigint, quantidade numeric);
+
+  IF v_invalidos > 0 THEN
+    RAISE EXCEPTION 'sales_order % contém item sem omie_codigo_produto/quantidade válidos', p_sales_order_id
+      USING ERRCODE = '22023';
+  END IF;
+
+  SELECT jsonb_agg(jsonb_build_object('omie_codigo_produto', t.sku, 'quantidade', t.qtd)),
+         md5(string_agg(t.sku::text || ':' || trim_scale(t.qtd)::text, '|' ORDER BY t.sku))
+    INTO v_itens, v_fp
+  FROM (
+    SELECT x.omie_codigo_produto AS sku, sum(x.quantidade) AS qtd
+    FROM jsonb_to_recordset(v_row.items) AS x(omie_codigo_produto bigint, quantidade numeric)
+    GROUP BY x.omie_codigo_produto
+  ) t;
+
+  v_checkout := COALESCE(v_row.checkout_id, p_sales_order_id);
+
+  -- Pré-condições do override ANTES de reservar (falha de autorização não é backorder)
+  IF p_autorizar_backorder THEN
+    IF p_actor IS NULL THEN
+      RAISE EXCEPTION 'backorder exige um ator humano (cron/sistema não autoriza)' USING ERRCODE = '42501';
+    END IF;
+    IF p_motivo_backorder IS NULL OR btrim(p_motivo_backorder) = '' THEN
+      RAISE EXCEPTION 'backorder exige motivo textual' USING ERRCODE = '22023';
+    END IF;
+    SELECT d.itens_fingerprint INTO v_bloqueio
+    FROM public.atp_decisoes d
+    WHERE d.sales_order_id = p_sales_order_id AND d.decisao = 'bloqueado'
+    ORDER BY d.created_at DESC
+    LIMIT 1;
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'backorder sem bloqueio ATP prévio deste pedido' USING ERRCODE = '42501';
+    END IF;
+    IF v_bloqueio.itens_fingerprint IS DISTINCT FROM v_fp THEN
+      RAISE EXCEPTION 'os itens mudaram desde o bloqueio ATP — reenvie para reavaliar' USING ERRCODE = '42501';
+    END IF;
+  END IF;
+
+  -- Reserva SEMPRE tentada primeiro (mesmo com backorder autorizado: se o saldo
+  -- voltou, reservar vence). TTL fica no default da RPC (política mora no banco).
+  v_res := public.reservar_estoque('oben', v_checkout, v_itens);
+
+  IF (v_res->>'ok')::boolean THEN
+    -- Vínculo reserva↔pedido na MESMA transação (fase 3 reconcilia por ele)
+    UPDATE public.estoque_reservas
+       SET sales_order_id = p_sales_order_id,
+           atualizado_em = now()
+     WHERE checkout_id = v_checkout
+       AND pool = 'oben'
+       AND status = 'ativa';
+
+    INSERT INTO public.atp_decisoes
+      (sales_order_id, checkout_id, pool, account, decisao, contexto, enforcement,
+       recusas, atp_snapshot, itens_fingerprint, motivo_backorder, actor_user_id)
+    VALUES
+      (p_sales_order_id, v_checkout, 'oben', v_row.account, 'reservado', 'criacao', p_enforcement,
+       NULL, NULL, v_fp, NULL, p_actor);
+
+    RETURN jsonb_build_object('ok', true, 'resultado', 'reservado', 'reservas', v_res->'reservas');
+  END IF;
+
+  -- Recusa: snapshot de disponibilidade/frescor por SKU (reconstrução pós-fato)
+  SELECT jsonb_object_agg(t.sku::text, jsonb_build_object(
+           'disponivel', d.disponivel, 'confiavel', d.saldo_confiavel, 'saldo_synced_at', d.saldo_synced_at))
+    INTO v_snapshot
+  FROM (
+    SELECT DISTINCT (e.item->>'omie_codigo_produto')::bigint AS sku
+    FROM jsonb_array_elements(v_itens) AS e(item)
+  ) t
+  CROSS JOIN LATERAL private.atp_disponivel('oben', t.sku, v_checkout) AS d;
+
+  IF p_autorizar_backorder THEN
+    INSERT INTO public.atp_decisoes
+      (sales_order_id, checkout_id, pool, account, decisao, contexto, enforcement,
+       recusas, atp_snapshot, itens_fingerprint, motivo_backorder, actor_user_id)
+    VALUES
+      (p_sales_order_id, v_checkout, 'oben', v_row.account, 'backorder_autorizado', 'criacao', p_enforcement,
+       v_res->'recusas', v_snapshot, v_fp, btrim(p_motivo_backorder), p_actor);
+
+    RETURN jsonb_build_object('ok', true, 'resultado', 'backorder_autorizado', 'recusas', v_res->'recusas');
+  END IF;
+
+  INSERT INTO public.atp_decisoes
+    (sales_order_id, checkout_id, pool, account, decisao, contexto, enforcement,
+     recusas, atp_snapshot, itens_fingerprint, motivo_backorder, actor_user_id)
+  VALUES
+    (p_sales_order_id, v_checkout, 'oben', v_row.account, 'bloqueado', 'criacao', p_enforcement,
+     v_res->'recusas', v_snapshot, v_fp, NULL, p_actor);
+
+  IF p_enforcement THEN
+    RETURN jsonb_build_object('ok', false, 'blocked', 'atp', 'resultado', 'bloqueado',
+                              'recusas', v_res->'recusas');
+  END IF;
+
+  -- Advisory (caller sem capability): registra o que TERIA bloqueado, não bloqueia.
+  RETURN jsonb_build_object('ok', true, 'resultado', 'advisory_bloqueado', 'bloquearia', true,
+                            'recusas', v_res->'recusas');
 END;
 $$;
 
@@ -2903,127 +3400,6 @@ $$;
 
 
 --
--- Name: calcular_gatilhos_reposicao(text, bigint); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.calcular_gatilhos_reposicao(p_empresa text DEFAULT 'OBEN'::text, p_only_sku bigint DEFAULT NULL::bigint, OUT atualizados integer, OUT skus_baixo_giro integer, OUT skus_normais integer) RETURNS record
-    LANGUAGE plpgsql SECURITY DEFINER
-    SET search_path TO 'public', 'pg_temp'
-    AS $$
-BEGIN
-  WITH base AS (
-    SELECT
-      sp.empresa,
-      sp.sku_codigo_omie,
-      sp.estoque_minimo_omie,
-      sp.ponto_pedido_omie,
-      sp.estoque_maximo_omie,
-      COALESCE(sp.demanda_media_diaria, 0) AS dmd,
-      -- Fallback de desvio-padrão por classe XYZ (CV típico)
-      COALESCE(
-        sp.demanda_desvio_padrao,
-        COALESCE(sp.demanda_media_diaria, 0) *
-          CASE COALESCE(sp.classe_xyz, '')
-            WHEN 'X' THEN 0.20
-            WHEN 'Y' THEN 0.50
-            WHEN 'Z' THEN 1.00
-            ELSE 0.50
-          END
-      ) AS dstd,
-      COALESCE(sp.lt_medio_dias_uteis, 7) AS lt,
-      -- Cobertura padrão por classe ABC: A=15d, B=30d, C=45d
-      COALESCE(
-        sp.cobertura_alvo_dias,
-        CASE COALESCE(sp.classe_abc, '')
-          WHEN 'A' THEN 15
-          WHEN 'B' THEN 30
-          WHEN 'C' THEN 45
-          ELSE 30
-        END
-      ) AS cob,
-      COALESCE(sp.lote_minimo_fornecedor, 1) AS lote_min,
-      CASE COALESCE(sp.classe_abc, '')
-        WHEN 'A' THEN 2.33
-        WHEN 'B' THEN 1.65
-        WHEN 'C' THEN 1.28
-        ELSE 1.65
-      END AS z,
-      -- Baixo giro APENAS quando: (B/C com Y/Z) OU demanda < 0.05/dia
-      -- Itens A-class continuam sendo dimensionados pela fórmula clássica,
-      -- mesmo com demanda irregular (Y/Z) — o z=2.33 já compensa via segurança.
-      (
-        (LEFT(COALESCE(sp.classe_abc, ''), 1) IN ('B','C')
-         AND COALESCE(sp.classe_xyz, '') IN ('Y','Z'))
-        OR COALESCE(sp.demanda_media_diaria, 0) < 0.05
-      ) AS is_baixo_giro
-    FROM sku_parametros sp
-    WHERE sp.empresa = p_empresa
-      AND sp.ativo = TRUE
-      AND sp.habilitado_reposicao_automatica = TRUE
-      AND (p_only_sku IS NULL OR sp.sku_codigo_omie = p_only_sku)
-  ),
-  calc AS (
-    SELECT
-      b.*,
-      -- Estoque de segurança (= estoque mínimo, com piso 1)
-      GREATEST(
-        1::numeric,
-        CASE WHEN b.is_baixo_giro THEN 1::numeric
-             ELSE CEIL(b.z * b.dstd * SQRT(b.lt))
-        END
-      ) AS estoque_min_novo,
-      -- Ponto de pedido (respeita MOQ)
-      GREATEST(
-        b.lote_min,
-        CASE WHEN b.is_baixo_giro THEN GREATEST(1::numeric, b.lote_min)
-             ELSE CEIL(b.dmd * b.lt + b.z * b.dstd * SQRT(b.lt))
-        END
-      ) AS ponto_pedido_novo_raw,
-      -- Estoque máximo bruto
-      CASE WHEN b.is_baixo_giro
-           THEN GREATEST(2::numeric, b.lote_min + 1)
-           ELSE CEIL((b.dmd * b.lt + b.z * b.dstd * SQRT(b.lt)) + b.dmd * b.cob)
-      END AS estoque_max_novo_raw
-    FROM base b
-  ),
-  final AS (
-    SELECT
-      c.*,
-      -- Garantir Emax >= PP + lote_min (para caber pelo menos 1 lote acima do PP)
-      GREATEST(c.estoque_max_novo_raw, c.ponto_pedido_novo_raw + c.lote_min) AS estoque_max_novo,
-      c.ponto_pedido_novo_raw AS ponto_pedido_novo
-    FROM calc c
-  ),
-  upd AS (
-    UPDATE sku_parametros sp
-       SET ponto_pedido = f.ponto_pedido_novo,
-           estoque_minimo = f.estoque_min_novo,
-           estoque_seguranca = f.estoque_min_novo,
-           estoque_maximo = f.estoque_max_novo,
-           ultima_atualizacao_calculo = NOW(),
-           -- Marca para sincronizar com Omie quando algum valor diferiu
-           aplicar_no_omie = CASE
-             WHEN sp.estoque_minimo_omie IS DISTINCT FROM f.estoque_min_novo
-               OR sp.ponto_pedido_omie  IS DISTINCT FROM f.ponto_pedido_novo
-               OR sp.estoque_maximo_omie IS DISTINCT FROM f.estoque_max_novo
-             THEN TRUE
-             ELSE sp.aplicar_no_omie
-           END
-      FROM final f
-     WHERE sp.empresa = f.empresa
-       AND sp.sku_codigo_omie = f.sku_codigo_omie
-    RETURNING f.is_baixo_giro AS bg
-  )
-  SELECT COUNT(*)::int,
-         COUNT(*) FILTER (WHERE bg)::int,
-         COUNT(*) FILTER (WHERE NOT bg)::int
-    INTO atualizados, skus_baixo_giro, skus_normais
-    FROM upd;
-END;
-$$;
-
-
---
 -- Name: cancelar_pedido_sugerido(bigint, text, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3207,6 +3583,44 @@ BEGIN
   RETURN QUERY SELECT true, v_motivo, v_result.pedidos_gerados, v_result.skus_incluidos, v_result.valor_total;
 END;
 $_$;
+
+
+--
+-- Name: claim_calculate_scores(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.claim_calculate_scores(p_run_id text) RETURNS boolean
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  v_claimed boolean := false;
+BEGIN
+  IF p_run_id IS NULL OR p_run_id = '' THEN RAISE EXCEPTION 'p_run_id vazio' USING ERRCODE = '22004'; END IF;
+  INSERT INTO public.sync_state (entity_type, account, status, last_sync_at, total_synced, metadata, updated_at)
+  VALUES ('calculate_scores', 'global', 'syncing', now(), 0,
+          jsonb_build_object('run_id', p_run_id, 'fase', 'inicio'), now())
+  ON CONFLICT (entity_type, account) DO UPDATE
+    SET status = 'syncing', last_sync_at = now(), total_synced = 0,
+        metadata = jsonb_build_object('run_id', p_run_id, 'fase', 'inicio'), updated_at = now()
+    WHERE sync_state.status IS DISTINCT FROM 'syncing'
+       OR sync_state.last_sync_at IS NULL
+       OR sync_state.last_sync_at < now() - interval '15 minutes'  -- TTL > teto de wall-clock do edge
+       -- RE-CLAIM DO MESMO RUN (idempotência — achado do challenge /codex): se o banco CONFIRMA o
+       -- claim mas a resposta HTTP se perde, o retry com o mesmo run_id receberia false e deixaria o
+       -- lease preso até o TTL. Como p_run_id é um crypto.randomUUID() por invocação, dois runs
+       -- DISTINTOS nunca colidem nesta cláusula — ela só reconhece o dono voltando.
+       OR (sync_state.metadata->>'run_id') = p_run_id
+  RETURNING true INTO v_claimed;
+  RETURN COALESCE(v_claimed, false);
+END $$;
+
+
+--
+-- Name: FUNCTION claim_calculate_scores(p_run_id text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.claim_calculate_scores(p_run_id text) IS 'Lease do recompute de scores (edge calculate-scores). true = este run e dono e pode ler o snapshot e escrever; false = ja ha run em andamento, PULE (idempotente: o proximo cron converge). O claim tem de vir ANTES do select do snapshot — reivindicar depois da leitura deixaria a corrida aberta pela porta de tras (o payload ja carregaria valores de fora da exclusao). TTL 15min > wall-clock do edge.';
 
 
 --
@@ -3957,6 +4371,7 @@ DECLARE
   _eligible   boolean;
   _rec        public.farmer_tactical_plans;
   _new_id     uuid;
+  _dia_hoje   date;
 BEGIN
   IF NOT _is_service THEN
     IF _uid IS NULL THEN
@@ -3995,30 +4410,58 @@ BEGIN
 
   _rec := jsonb_populate_record(NULL::public.farmer_tactical_plans, _payload);
 
-  INSERT INTO public.farmer_tactical_plans (
-    farmer_id, customer_user_id, status,
-    bundle_recommendation_id, health_score, churn_risk, mix_gap,
-    current_margin_pct, cluster_avg_margin_pct, expansion_potential,
-    strategic_objective, customer_profile, plan_type,
-    top_bundle, second_bundle, bundle_lie, bundle_probability, bundle_incremental_margin,
-    best_individual_lie, diagnostic_questions, implication_question, offer_transition,
-    probable_objections, approach_strategy, approach_strategy_b,
-    ltv_projection, expected_result, operational_risks
-  ) VALUES (
-    _owner, _customer_user_id, 'gerado',
-    _rec.bundle_recommendation_id, _rec.health_score, _rec.churn_risk, _rec.mix_gap,
-    _rec.current_margin_pct, _rec.cluster_avg_margin_pct, _rec.expansion_potential,
-    COALESCE(_rec.strategic_objective, 'expansao_mix'),
-    COALESCE(_rec.customer_profile, 'misto'),
-    COALESCE(_rec.plan_type, 'essencial'),
-    COALESCE(_rec.top_bundle, '{}'::jsonb), COALESCE(_rec.second_bundle, '{}'::jsonb),
-    _rec.bundle_lie, _rec.bundle_probability, _rec.bundle_incremental_margin,
-    _rec.best_individual_lie,
-    COALESCE(_rec.diagnostic_questions, '[]'::jsonb), _rec.implication_question, _rec.offer_transition,
-    COALESCE(_rec.probable_objections, '[]'::jsonb), _rec.approach_strategy, _rec.approach_strategy_b,
-    _rec.ltv_projection, _rec.expected_result, COALESCE(_rec.operational_risks, '[]'::jsonb)
-  )
-  RETURNING id INTO _new_id;
+  -- [#1618-followup — idempotência] O teste de existência do caller é check-then-insert e
+  -- roda ANTES da chamada paga à IA: dois batches simultâneos passam os dois. Aqui já
+  -- seguramos o lock de carteira_assignments deste cliente, então os concorrentes estão
+  -- serializados e o perdedor enxerga a linha do vencedor (READ COMMITTED: este SELECT
+  -- usa um snapshot posterior à espera pelo lock). Chave IDÊNTICA à do índice único
+  -- ux_farmer_tactical_plans_dia_operacional — divergir faria a RPC autorizar o que o
+  -- índice depois recusaria com 23505 cru.
+  _dia_hoje := ((now() AT TIME ZONE 'UTC') - interval '3 hours')::date;
+
+  IF EXISTS (
+    SELECT 1 FROM public.farmer_tactical_plans p
+     WHERE p.farmer_id = _owner
+       AND p.customer_user_id = _customer_user_id
+       AND p.status = 'gerado'
+       AND COALESCE(p.plan_type, 'essencial') = COALESCE(_rec.plan_type, 'essencial')
+       AND (((p.created_at AT TIME ZONE 'UTC') - interval '3 hours')::date) = _dia_hoje
+  ) THEN
+    RAISE EXCEPTION 'Já existe plano tático gerado hoje para este cliente (dia operacional BRT)'
+      USING ERRCODE = '23505';
+  END IF;
+
+  BEGIN
+    INSERT INTO public.farmer_tactical_plans (
+      farmer_id, customer_user_id, status,
+      bundle_recommendation_id, health_score, churn_risk, mix_gap,
+      current_margin_pct, cluster_avg_margin_pct, expansion_potential,
+      strategic_objective, customer_profile, plan_type,
+      top_bundle, second_bundle, bundle_lie, bundle_probability, bundle_incremental_margin,
+      best_individual_lie, diagnostic_questions, implication_question, offer_transition,
+      probable_objections, approach_strategy, approach_strategy_b,
+      ltv_projection, expected_result, operational_risks
+    ) VALUES (
+      _owner, _customer_user_id, 'gerado',
+      _rec.bundle_recommendation_id, _rec.health_score, _rec.churn_risk, _rec.mix_gap,
+      _rec.current_margin_pct, _rec.cluster_avg_margin_pct, _rec.expansion_potential,
+      COALESCE(_rec.strategic_objective, 'expansao_mix'),
+      COALESCE(_rec.customer_profile, 'misto'),
+      COALESCE(_rec.plan_type, 'essencial'),
+      COALESCE(_rec.top_bundle, '{}'::jsonb), COALESCE(_rec.second_bundle, '{}'::jsonb),
+      _rec.bundle_lie, _rec.bundle_probability, _rec.bundle_incremental_margin,
+      _rec.best_individual_lie,
+      COALESCE(_rec.diagnostic_questions, '[]'::jsonb), _rec.implication_question, _rec.offer_transition,
+      COALESCE(_rec.probable_objections, '[]'::jsonb), _rec.approach_strategy, _rec.approach_strategy_b,
+      _rec.ltv_projection, _rec.expected_result, COALESCE(_rec.operational_risks, '[]'::jsonb)
+    )
+    RETURNING id INTO _new_id;
+  EXCEPTION WHEN unique_violation THEN
+    -- Rede final: qualquer caminho que escape do EXISTS acima (writer futuro, corrida que o
+    -- lock não cubra) fala a MESMA língua, e o caller a lê como skip em vez de erro de infra.
+    RAISE EXCEPTION 'Já existe plano tático gerado hoje para este cliente (dia operacional BRT)'
+      USING ERRCODE = '23505';
+  END;
 
   RETURN _new_id;
 END;
@@ -5113,6 +5556,166 @@ BEGIN
   );
 END;
 $$;
+
+
+--
+-- Name: expirar_planos_taticos(integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.expirar_planos_taticos(_dias integer DEFAULT 7) RETURNS integer
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  _n integer;
+BEGIN
+  IF _dias IS NULL OR _dias < 1 THEN
+    RAISE EXCEPTION 'expirar_planos_taticos: _dias deve ser >= 1 (recebido: %)', _dias
+      USING ERRCODE = '22023';
+  END IF;
+
+  UPDATE public.farmer_tactical_plans
+     SET status     = 'expirado',
+         updated_at = now()
+   WHERE status = 'gerado'
+     AND generated_at < now() - make_interval(days => _dias);
+
+  GET DIAGNOSTICS _n = ROW_COUNT;
+  RETURN _n;
+END;
+$$;
+
+
+--
+-- Name: expirar_reservas_vencidas(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.expirar_reservas_vencidas() RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_uid uuid := (SELECT auth.uid());
+BEGIN
+  IF NOT private.cap_estoque_reservar(v_uid) THEN
+    RAISE EXCEPTION 'Sem permissão para expirar reservas de estoque (staff apenas)'
+      USING ERRCODE = '42501';
+  END IF;
+
+  RETURN private.expirar_reservas_vencidas_job();
+END;
+$$;
+
+
+--
+-- Name: farmer_association_rules_substituir(jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.farmer_association_rules_substituir(p_regras jsonb) RETURNS integer
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  v_total     integer;
+  v_invalidas integer;
+  v_inseridas integer;
+BEGIN
+  -- 1) GATE (a função bypassa RLS: a autorização é AQUI, na fronteira)
+  IF NOT (
+    coalesce(auth.role(), '') = 'service_role'
+    OR public.has_role(auth.uid(), 'master'::public.app_role)
+    OR public.has_role(auth.uid(), 'employee'::public.app_role)
+  ) THEN
+    RAISE EXCEPTION 'Acesso negado: requer perfil staff' USING ERRCODE = '42501';
+  END IF;
+
+  -- 2) FORMATO
+  IF p_regras IS NULL OR jsonb_typeof(p_regras) <> 'array' THEN
+    RAISE EXCEPTION 'p_regras deve ser um array jsonb (recebido: %)',
+      coalesce(jsonb_typeof(p_regras), 'null') USING ERRCODE = 'TR002';
+  END IF;
+
+  v_total := jsonb_array_length(p_regras);
+
+  -- 3) LOTE VAZIO = RECUSA, não "apaga tudo".
+  IF v_total = 0 THEN
+    RAISE EXCEPTION 'lote vazio: as % regra(s) atuais foram preservadas',
+      (SELECT count(*) FROM public.farmer_association_rules) USING ERRCODE = 'TR001';
+  END IF;
+
+  -- Teto defensivo (browser 50; edge max_association_rules default 500).
+  IF v_total > 1000 THEN
+    RAISE EXCEPTION 'lote de % regras excede o teto de 1000', v_total USING ERRCODE = 'TR003';
+  END IF;
+
+  -- 4) SERIALIZAÇÃO (lock transacional: sai sozinho no commit/rollback).
+  IF NOT pg_try_advisory_xact_lock(hashtext('farmer_association_rules_substituir')) THEN
+    RAISE EXCEPTION 'outra substituição de regras está em andamento — nada foi alterado'
+      USING ERRCODE = 'TR004';
+  END IF;
+
+  -- 5) VALIDAÇÃO ANTES DE DESTRUIR.
+  SELECT count(*) INTO v_invalidas
+  FROM jsonb_to_recordset(p_regras) AS r(
+    antecedent_product_ids text[],
+    consequent_product_ids text[],
+    support                numeric,
+    confidence             numeric,
+    lift                   numeric,
+    rule_type              text,
+    sample_size            integer
+  )
+  WHERE r.antecedent_product_ids IS NULL OR cardinality(r.antecedent_product_ids) = 0
+     OR r.consequent_product_ids IS NULL OR cardinality(r.consequent_product_ids) = 0
+     OR r.support    IS NULL OR r.support    < 0 OR r.support    > 1
+     OR r.confidence IS NULL OR r.confidence < 0 OR r.confidence > 1
+     OR r.lift       IS NULL OR r.lift       < 0
+     OR r.rule_type  IS NULL OR r.rule_type NOT IN ('association', 'sequential');
+
+  IF v_invalidas > 0 THEN
+    RAISE EXCEPTION '% de % regra(s) inválidas — nada foi apagado', v_invalidas, v_total
+      USING ERRCODE = 'TR005';
+  END IF;
+
+  -- 6) A TROCA. Os dois statements na MESMA transação.
+  -- ⚠️ `WHERE true` NÃO é decoração — é o que mantém esta função CHAMÁVEL.
+  --    O Supabase pré-carrega o módulo `safeupdate` na sessão do `authenticator`
+  --    (o role do PostgREST). O post_parse_analyze_hook dele RECUSA, com ERRCODE
+  --    21000, todo DELETE/UPDATE cujo `jointree->quals` seja NULL na árvore de
+  --    PARSE — inclusive dentro de plpgsql SECURITY DEFINER, porque o DEFINER
+  --    troca o ROLE e não o hook, que é de SESSÃO. Sem o WHERE, toda chamada via
+  --    PostgREST morre com "DELETE requires a WHERE clause" (incidente 2026-07-29).
+  --    O planner dobra o `true` fora: o plano é o mesmo do DELETE sem WHERE.
+  DELETE FROM public.farmer_association_rules WHERE true;
+
+  INSERT INTO public.farmer_association_rules (
+    antecedent_product_ids, consequent_product_ids,
+    support, confidence, lift, rule_type, sample_size
+  )
+  SELECT
+    r.antecedent_product_ids, r.consequent_product_ids,
+    r.support, r.confidence, r.lift, r.rule_type, coalesce(r.sample_size, 0)
+  FROM jsonb_to_recordset(p_regras) AS r(
+    antecedent_product_ids text[],
+    consequent_product_ids text[],
+    support                numeric,
+    confidence             numeric,
+    lift                   numeric,
+    rule_type              text,
+    sample_size            integer
+  );
+
+  GET DIAGNOSTICS v_inseridas = ROW_COUNT;
+  RETURN v_inseridas;
+END;
+$$;
+
+
+--
+-- Name: FUNCTION farmer_association_rules_substituir(p_regras jsonb); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.farmer_association_rules_substituir(p_regras jsonb) IS 'Substitui ATOMICAMENTE o lote global de farmer_association_rules (DELETE+INSERT numa transação). Recusa lote vazio (TR001) e payload inválido (TR005) sem apagar nada; serializa concorrentes (TR004). Único caminho de escrita destrutiva: useBundleEngine e omie-analytics-sync.';
 
 
 --
@@ -6484,6 +7087,46 @@ $$;
 
 
 --
+-- Name: finalizar_calculate_scores(text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.finalizar_calculate_scores(p_run_id text, p_status text) RETURNS boolean
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  v_done boolean := false;
+BEGIN
+  IF p_run_id IS NULL OR p_run_id = '' THEN RAISE EXCEPTION 'p_run_id vazio' USING ERRCODE = '22004'; END IF;
+  -- p_status IS NULL explícito: `NULL NOT IN (...)` = NULL (não TRUE) → sem o IS NULL o RAISE não
+  -- rodaria e o finalize gravaria status=NULL retornando true. (Lição do re-challenge do #1461.)
+  IF p_status IS NULL OR p_status NOT IN ('complete', 'error') THEN
+    RAISE EXCEPTION 'p_status invalido: %', p_status USING ERRCODE = '22023';
+  END IF;
+  UPDATE public.sync_state
+     SET status = p_status, last_sync_at = now(),
+         metadata = jsonb_build_object('run_id', p_run_id, 'fase', 'fim'),
+         updated_at = now()
+   WHERE entity_type = 'calculate_scores'
+     AND account = 'global'
+     AND (metadata->>'run_id') = p_run_id
+     AND (
+       status = 'syncing'                                       -- finalização normal
+       OR (status = p_status AND (metadata->>'fase') = 'fim')   -- retry idempotente do MESMO run
+     )
+  RETURNING true INTO v_done;
+  RETURN COALESCE(v_done, false);
+END $$;
+
+
+--
+-- Name: FUNCTION finalizar_calculate_scores(p_run_id text, p_status text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.finalizar_calculate_scores(p_run_id text, p_status text) IS 'Libera o lease do calculate-scores com ownership (so o run DONO fecha) e idempotencia (retry do mesmo run apos resposta HTTP perdida nao acusa falso ownership-lost). false = perdi o lease (fencing quebrado ou lease adulterado) — a edge loga, NAO reescreve.';
+
+
+--
 -- Name: finalizar_carteira_rebuild(text, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -7696,6 +8339,10 @@ DECLARE
   v_bloqueados INT := 0;
   v_stale_dias INT := 45;  -- motor confia no preço-app por N dias (painel usa 24h; manual precisa folga). Config abaixo.
   v_run_id uuid := gen_random_uuid();  -- [GATE estoque-não-confirmado] carimba os suprimidos desta execução no log
+  -- [TETO cobertura] NULL = classe sem teto (cap desligado). Flag por empresa nasce false; dias só valem com a flag.
+  v_teto_ativo boolean := false;
+  v_teto_b numeric := NULL;
+  v_teto_c numeric := NULL;
 BEGIN
   -- [INTRADAY 1/4] serializa execuções concorrentes (cron 2/2h × botão "Recalcular" × retry).
   PERFORM pg_advisory_xact_lock(hashtext('gerar_pedidos_sugeridos_ciclo:' || lower(p_empresa)));
@@ -7708,6 +8355,22 @@ BEGIN
   SELECT COALESCE((SELECT NULLIF(btrim(value), '')::int
                    FROM company_config WHERE key = 'embalagem_preco_motor_stale_dias' LIMIT 1), 45)
     INTO v_stale_dias;
+
+  -- [TETO cobertura] Config POR EMPRESA, fail-off: flag ausente/≠true → cap desligado; dias com parse blindado
+  -- (regex antes do cast — valor lixo NUNCA aborta o recálculo, só desliga o teto daquela classe). '0' → NULL.
+  SELECT COALESCE((SELECT lower(btrim(value)) = 'true' FROM company_config
+                   WHERE key = 'reposicao_teto_cobertura_' || lower(p_empresa) || '_ativa' LIMIT 1), false)
+    INTO v_teto_ativo;
+  IF v_teto_ativo THEN
+    SELECT NULLIF((SELECT CASE WHEN btrim(value) ~ '^[0-9]+$' THEN btrim(value)::numeric END
+                   FROM company_config
+                   WHERE key = 'reposicao_teto_cobertura_' || lower(p_empresa) || '_dias_b' LIMIT 1), 0)
+      INTO v_teto_b;
+    SELECT NULLIF((SELECT CASE WHEN btrim(value) ~ '^[0-9]+$' THEN btrim(value)::numeric END
+                   FROM company_config
+                   WHERE key = 'reposicao_teto_cobertura_' || lower(p_empresa) || '_dias_c' LIMIT 1), 0)
+      INTO v_teto_c;
+  END IF;
 
   -- [INTRADAY 2/4] expira pendentes NORMAIS de ciclos anteriores (zumbis pós-corte).
   UPDATE pedido_compra_sugerido
@@ -7730,7 +8393,20 @@ BEGIN
     JOIN pedido_compra_sugerido pcs2 ON pcs2.id = pci.pedido_id
     WHERE pcs2.empresa = p_empresa
       AND (
-        (pcs2.status IN ('aprovado_aguardando_disparo','disparado','concluido_recebido') AND pcs2.data_ciclo >= (p_data_ciclo - INTERVAL '7 days'))
+        (pcs2.status IN ('aprovado_aguardando_disparo','disparado','concluido_recebido') AND pcs2.data_ciclo >= (p_data_ciclo - INTERVAL '7 days')
+         -- [FANTASMA] Erro TERMINAL do portal NÃO é estoque a caminho. 'erro_nao_retentavel' só é alcançado
+         -- com efetivarAttempted=false — o resultado AMBÍGUO tem estado PRÓPRIO (aceito_portal_sem_protocolo
+         -- / indeterminado_requer_conciliacao), então este status significa "nada foi colocado no fornecedor".
+         -- Contá-lo inflava o estoque efetivo e SUPRIMIA a recompra por 7 dias (pedido #1276: 4 SKUs no ou
+         -- abaixo do ponto de pedido ficaram 7 dias sem sugestão, 3 deles classe A).
+         -- As 3 guardas são fail-CLOSED: basta UM sinal de que algo chegou (protocolo do portal ou nº do
+         -- pedido no Omie) para seguir contando. Subcomprar é recuperável; comprar duas vezes queima caixa.
+         AND NOT (
+           pcs2.status = 'aprovado_aguardando_disparo'
+           AND pcs2.status_envio_portal = 'erro_nao_retentavel'
+           AND pcs2.portal_protocolo IS NULL
+           AND pcs2.omie_pedido_compra_numero IS NULL
+         ))
         OR (pcs2.status_envio_portal IN ('sucesso_portal','enviado_portal') AND pcs2.portal_protocolo IS NOT NULL AND pcs2.omie_pedido_compra_numero IS NULL AND pcs2.status NOT IN ('cancelado','expirado_sem_aprovacao'))
       )
     GROUP BY pcs2.empresa, pci.sku_codigo_omie
@@ -7849,6 +8525,12 @@ BEGIN
   sku_base AS (
     SELECT sp.empresa, sp.sku_codigo_omie::text AS ancora_sku, sp.sku_descricao, sp.fornecedor_nome,
            sg.grupo_codigo, sp.ponto_pedido, sp.estoque_maximo, sp.minimo_forcado_manual,
+           -- [TETO cobertura] demanda + teto da classe EFETIVA (forcada→abc; hoje forcada é 100% NULL em prod).
+           -- teto NULL = linha sem cap (classe A, classe ausente, ou flag/config desligada).
+           sp.demanda_media_diaria AS demanda_diaria_linha,
+           substring(COALESCE(NULLIF(btrim(sp.classe_forcada), ''), sp.classe_abc::text) FROM 1 FOR 1) AS classe_abc_efetiva,
+           CASE substring(COALESCE(NULLIF(btrim(sp.classe_forcada), ''), sp.classe_abc::text) FROM 1 FOR 1)
+             WHEN 'B' THEN v_teto_b WHEN 'C' THEN v_teto_c ELSE NULL END AS teto_dias_linha,
            COALESCE(sea.estoque_fisico, 0) AS estoque_fisico_proprio,
            (COALESCE(sea.estoque_pendente_entrada, 0) + COALESCE(et.qtde, 0)) AS acaminho_proprio,
            ea.grupo_id AS equiv_grupo,
@@ -7946,13 +8628,26 @@ BEGIN
            ceil(b.estoque_maximo - b.estoque_efetivo) AS qtde_sugerida,  -- gate >0 (unidades-âncora)
            -- nº de embalagens do SKU escolhido: galão = ceil(necessidade / fator); quartinho = lógica atual.
            -- [P1-e] minimo_forcado_manual (unidades-âncora) aplicado como piso ANTES de dividir pelo fator.
+           -- [TETO cobertura] só o ramo ELSE recebe o cap (trocou ⇒ tem grupo ⇒ cap NULL; min_forcado ⇒ cap NULL).
+           -- LEAST na necessidade-âncora ANTES do ceil; cap 0 zera a linha (sai do pedido via skus_inseriveis + log).
+           CASE
+             WHEN trocou THEN ceil(GREATEST(b.estoque_maximo - b.estoque_efetivo,
+                                            COALESCE(b.minimo_forcado_manual, 0)) / b.fator_escolhido)
+             WHEN b.minimo_forcado_manual IS NOT NULL AND b.minimo_forcado_manual > 0
+                  THEN ceil(GREATEST(b.estoque_maximo - b.estoque_efetivo, b.minimo_forcado_manual))
+             ELSE ceil(LEAST(b.estoque_maximo - b.estoque_efetivo,
+                             COALESCE(b.cap_teto_ancora, b.estoque_maximo - b.estoque_efetivo)))
+           END AS qtde_final,
+           -- [TETO cobertura] o que a linha compraria SEM o cap (mesma unidade de qtde_final — embalagens no galão):
+           -- rastro p/ item/log; capada ⇔ qtde_final < qtde_sem_teto (comparação nos consumidores).
            CASE
              WHEN trocou THEN ceil(GREATEST(b.estoque_maximo - b.estoque_efetivo,
                                             COALESCE(b.minimo_forcado_manual, 0)) / b.fator_escolhido)
              WHEN b.minimo_forcado_manual IS NOT NULL AND b.minimo_forcado_manual > 0
                   THEN ceil(GREATEST(b.estoque_maximo - b.estoque_efetivo, b.minimo_forcado_manual))
              ELSE ceil(b.estoque_maximo - b.estoque_efetivo)
-           END AS qtde_final,
+           END AS qtde_sem_teto,
+           b.cap_teto_ancora, b.teto_dias_linha, b.demanda_diaria_linha, b.classe_abc_efetiva,
            -- custo da linha: galão → preço-app (R$/embalagem, nunca 0); quartinho → cmc atual.
            CASE WHEN trocou THEN b.preco_escolhido ELSE b.preco_unitario_ancora END AS preco_unitario,
            b.primeira_compra, b.horario_corte_pedido, b.valor_maximo_mensal, b.delta_max_perc,
@@ -7969,7 +8664,23 @@ BEGIN
                AND b0.sku_escolhido <> b0.ancora_sku
                AND b0.ancora_custo_base IS NOT NULL                 -- âncora elegível (comparável)
                AND b0.custo_base_escolhido < b0.ancora_custo_base   -- galão estritamente mais barato/base
-             ) AS trocou
+             ) AS trocou,
+             -- [TETO cobertura] cap em unidades-âncora; NULL = sem cap. Elegível só SEM grupo de embalagem
+             -- (estoque consolidado QT+GL ÷ demanda só da âncora subcontaria → subcompra; Codex P1) e SEM
+             -- minimo_forcado_manual (decisão humana vence). Piso de SERVIÇO ceil(pp − estoque): o cap corta o
+             -- lote ACIMA do ponto de pedido, nunca a proteção — pp=1/estoque=1 compra 0 (mata o dente 1↔2),
+             -- pp alto segue reposto até o pp (sem ruptura). Nunca negativo: no gatilho, estoque ≤ pp.
+             CASE
+               WHEN b0.teto_dias_linha IS NOT NULL
+                AND b0.equiv_grupo IS NULL
+                AND COALESCE(b0.minimo_forcado_manual, 0) <= 0
+                AND COALESCE(b0.demanda_diaria_linha, 0) > 0
+               THEN GREATEST(
+                      floor(b0.teto_dias_linha * b0.demanda_diaria_linha - b0.estoque_efetivo),
+                      GREATEST(0, ceil(b0.ponto_pedido - b0.estoque_efetivo))
+                    )
+               ELSE NULL
+             END AS cap_teto_ancora
       FROM sku_base b0
     ) b
     -- [P1-d] [INTRADAY 4/4] anti-dup de oportunidade sobre o SKU FINAL (o que SERÁ gravado: âncora ou galão).
@@ -7994,6 +8705,27 @@ BEGIN
     WHERE sn.suprimido AND sn.qtde_sugerida > 0
     RETURNING 1
   ),
+  -- [TETO cobertura] LOG de toda linha REDUZIDA pelo cap (parcial ou a zero) — capado_zero sai do pedido, e sem
+  -- este rastro seria subcompra silenciosa (mesma lição do gate acima). Suprimido NÃO loga aqui (o gate de
+  -- estoque já cobre; estoque declarado não-confiável não sustenta um 2º diagnóstico — Codex P2).
+  log_teto_ins AS (
+    INSERT INTO public.reposicao_teto_cobertura_log
+      (run_id, empresa, sku_codigo_omie, sku_descricao, grupo_codigo, classe_abc, teto_dias, demanda_diaria,
+       estoque_efetivo, ponto_pedido, estoque_maximo, cap_teto_ancora, qtde_sem_teto, qtde_final, motivo)
+    SELECT v_run_id, sn.empresa, sn.sku_codigo_omie, sn.sku_descricao, sn.grupo_codigo, sn.classe_abc_efetiva,
+           sn.teto_dias_linha, sn.demanda_diaria_linha, sn.estoque_efetivo, sn.ponto_pedido, sn.estoque_maximo,
+           sn.cap_teto_ancora, sn.qtde_sem_teto, sn.qtde_final,
+           CASE WHEN sn.qtde_final <= 0 THEN 'capado_zero' ELSE 'capado_parcial' END
+    FROM skus_necessitando sn
+    WHERE NOT sn.suprimido AND sn.qtde_sugerida > 0 AND sn.qtde_final < sn.qtde_sem_teto
+    RETURNING 1
+  ),
+  -- [TETO cobertura] Filtro ÚNICO dos dois INSERTs (Codex P0: divergência entre cabeçalho e item geraria pedido
+  -- vazio ou item qtde 0). qtde_final>0 é novo: linha capada a zero fica só no log.
+  skus_inseriveis AS (
+    SELECT * FROM skus_necessitando sn
+    WHERE sn.qtde_sugerida > 0 AND sn.qtde_final > 0 AND NOT sn.suprimido
+  ),
   pedidos_por_fornecedor_grupo AS (
     INSERT INTO pedido_compra_sugerido (
       empresa, fornecedor_nome, grupo_codigo, data_ciclo, horario_corte_planejado,
@@ -8004,23 +8736,21 @@ BEGIN
            (p_data_ciclo + MAX(sn.horario_corte_pedido))::timestamptz,
            COALESCE(SUM(sn.qtde_final * sn.preco_unitario), 0), COUNT(*),   -- [PRECO-AUSENTE] valor_total é NOT NULL; item.valor_linha segue NULL (honesto)
            'pendente_aprovacao', '000', 'À Vista', 1, NULL, 'default_a_vista'
-    FROM skus_necessitando sn
-    WHERE sn.qtde_sugerida > 0 AND NOT sn.suprimido   -- [GATE] não gera pedido com estoque não-confirmado
+    FROM skus_inseriveis sn
     GROUP BY sn.empresa, sn.fornecedor_nome, sn.grupo_codigo
     RETURNING id, fornecedor_nome, grupo_codigo
   )
   INSERT INTO pedido_compra_item (
     pedido_id, sku_codigo_omie, sku_descricao, estoque_atual, ponto_pedido, estoque_maximo,
     qtde_sugerida, qtde_final, preco_unitario, valor_linha, primeira_compra,
-    estoque_fisico, estoque_a_caminho
+    estoque_fisico, estoque_a_caminho, qtde_sem_teto, teto_cobertura_aplicado
   )
   SELECT pfg.id, sn.sku_codigo_omie, sn.sku_descricao, sn.estoque_efetivo, sn.ponto_pedido, sn.estoque_maximo,
          sn.qtde_sugerida, sn.qtde_final, sn.preco_unitario, sn.qtde_final * sn.preco_unitario, sn.primeira_compra,
-         sn.estoque_fisico, sn.estoque_a_caminho
-  FROM skus_necessitando sn
+         sn.estoque_fisico, sn.estoque_a_caminho, sn.qtde_sem_teto, (sn.qtde_final < sn.qtde_sem_teto)
+  FROM skus_inseriveis sn
   JOIN pedidos_por_fornecedor_grupo pfg
-    ON pfg.fornecedor_nome = sn.fornecedor_nome AND COALESCE(pfg.grupo_codigo,'') = COALESCE(sn.grupo_codigo,'')
-  WHERE sn.qtde_sugerida > 0 AND NOT sn.suprimido;   -- [GATE] espelha o filtro do pedido
+    ON pfg.fornecedor_nome = sn.fornecedor_nome AND COALESCE(pfg.grupo_codigo,'') = COALESCE(sn.grupo_codigo,'');
 
   SELECT COUNT(*), COALESCE(SUM(num_skus),0), COALESCE(SUM(valor_total),0)
   INTO v_pedidos, v_skus, v_valor
@@ -8032,9 +8762,10 @@ BEGIN
   -- suprimidos → sem este marcador a mensagem "N fora da compra" grudava por até 24h após o sync já ter confirmado o
   -- estoque (Codex 2026-07-08: é bug de FONTE-DE-VERDADE, não de render). Aditivo, FORA dos CTEs de decisão; mesmo
   -- role/caminho do INSERT no log acima (authenticated já escreve lá, RLS INSERT WITH CHECK true) → NÃO aborta a compra.
-  INSERT INTO public.reposicao_motor_run (run_id, empresa, data_ciclo, pedidos_gerados, skus_incluidos, suprimidos_n)
+  INSERT INTO public.reposicao_motor_run (run_id, empresa, data_ciclo, pedidos_gerados, skus_incluidos, suprimidos_n, capados_n)
   VALUES (v_run_id, p_empresa, p_data_ciclo, v_pedidos, v_skus,
-          (SELECT count(*) FROM public.reposicao_estoque_nao_confirmado_log WHERE run_id = v_run_id));
+          (SELECT count(*) FROM public.reposicao_estoque_nao_confirmado_log WHERE run_id = v_run_id),
+          (SELECT count(*) FROM public.reposicao_teto_cobertura_log WHERE run_id = v_run_id));
 
   RETURN QUERY SELECT v_pedidos, v_skus, v_valor, v_bloqueados;
 END;
@@ -9502,6 +10233,57 @@ $$;
 
 
 --
+-- Name: get_whatsapp_proposta_cotacao(uuid, text, bigint[]); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.get_whatsapp_proposta_cotacao(p_customer_user_id uuid, p_account text, p_skus bigint[]) RETURNS TABLE(omie_codigo_produto bigint, product_id uuid, codigo text, descricao text, unidade text, ativo boolean, estoque numeric, preco numeric, fonte_preco text)
+    LANGUAGE sql STABLE
+    SET search_path TO 'public'
+    AS $$
+  WITH praticado AS (
+    -- último preço praticado VÁLIDO do próprio cliente NA CONTA consultada, por SKU
+    -- (cronologia comercial: item → pedido pai; tie-break estável por id)
+    SELECT DISTINCT ON (oi.omie_codigo_produto)
+           oi.omie_codigo_produto, oi.unit_price
+      FROM public.order_items oi
+      JOIN public.sales_orders so ON so.id = oi.sales_order_id
+     WHERE oi.customer_user_id = p_customer_user_id
+       AND so.account = p_account
+       AND oi.omie_codigo_produto = ANY(p_skus)
+       AND oi.unit_price > 0
+       AND oi.unit_price <> 'NaN'::numeric
+       AND oi.unit_price < 'Infinity'::numeric
+     ORDER BY oi.omie_codigo_produto,
+              COALESCE(oi.created_at, so.created_at) DESC NULLS LAST,
+              oi.id DESC
+  )
+  SELECT p.omie_codigo_produto,
+         p.id AS product_id,
+         p.codigo,
+         p.descricao,
+         p.unidade,
+         p.ativo,
+         p.estoque,
+         COALESCE(
+           pr.unit_price,
+           CASE WHEN p.valor_unitario > 0
+                 AND p.valor_unitario <> 'NaN'::numeric
+                 AND p.valor_unitario < 'Infinity'::numeric
+                THEN p.valor_unitario END
+         ) AS preco,
+         CASE WHEN pr.unit_price IS NOT NULL THEN 'praticado'
+              WHEN p.valor_unitario > 0
+               AND p.valor_unitario <> 'NaN'::numeric
+               AND p.valor_unitario < 'Infinity'::numeric THEN 'tabela'
+         END AS fonte_preco
+    FROM public.omie_products p
+    LEFT JOIN praticado pr ON pr.omie_codigo_produto = p.omie_codigo_produto
+   WHERE p.account = p_account
+     AND p.omie_codigo_produto = ANY(p_skus);
+$$;
+
+
+--
 -- Name: gov_iniciativas_set_updated_at(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -9526,135 +10308,107 @@ CREATE FUNCTION public.has_role(_user_id uuid, _role public.app_role) RETURNS bo
 
 
 --
--- Name: import_tint_formulas(text, boolean, jsonb); Type: FUNCTION; Schema: public; Owner: -
+-- Name: ia_consumir_cota(uuid, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.import_tint_formulas(p_account text, p_personalizada boolean, p_rows jsonb) RETURNS jsonb
+CREATE FUNCTION public.ia_consumir_cota(p_user_id uuid, p_funcao text) RETURNS TABLE(permitido boolean, motivo text, usado_hora integer, limite_hora integer, usado_dia integer, limite_dia integer, libera_em_segundos integer)
     LANGUAGE plpgsql SECURITY DEFINER
-    SET search_path TO 'public'
+    SET search_path TO 'public', 'pg_temp'
     AS $$
 DECLARE
-  r jsonb;
-  v_imported int := 0;
-  v_updated int := 0;
-  v_errors int := 0;
-  v_produto_id uuid;
-  v_base_id uuid;
-  v_emb_id uuid;
-  v_sub_id uuid;
-  v_sku_id uuid;
-  v_formula_id uuid;
-  v_corante_id uuid;
-  v_existing_formula_id uuid;
-  v_cor_key text;
-  v_i int;
+  v_limite_hora integer;
+  v_limite_dia  integer;
+  v_usado_hora  integer;
+  v_usado_dia   integer;
+  v_libera      integer;
 BEGIN
-  IF auth.uid() IS NULL OR NOT (public.has_role(auth.uid(), 'employee'::app_role) OR public.has_role(auth.uid(), 'master'::app_role)) THEN
-    RAISE EXCEPTION 'Acesso negado: requer perfil staff' USING ERRCODE = '42501';
+  IF p_user_id IS NULL OR p_funcao IS NULL OR btrim(p_funcao) = '' THEN
+    RAISE EXCEPTION 'ia_consumir_cota: p_user_id e p_funcao são obrigatórios'
+      USING ERRCODE = '22023';
   END IF;
-  FOR r IN SELECT * FROM jsonb_array_elements(p_rows)
-  LOOP
-    BEGIN
-      INSERT INTO public.tint_produtos (account, cod_produto, descricao)
-      VALUES (p_account, r->>'cod_produto', COALESCE(r->>'produto', r->>'cod_produto'))
-      ON CONFLICT (account, cod_produto) DO NOTHING
-      RETURNING id INTO v_produto_id;
-      IF v_produto_id IS NULL THEN
-        SELECT id INTO v_produto_id FROM public.tint_produtos WHERE account = p_account AND cod_produto = r->>'cod_produto';
-      END IF;
 
-      INSERT INTO public.tint_bases (account, id_base_sayersystem, descricao)
-      VALUES (p_account, r->>'id_base', COALESCE(r->>'base', r->>'id_base'))
-      ON CONFLICT (account, id_base_sayersystem) DO NOTHING
-      RETURNING id INTO v_base_id;
-      IF v_base_id IS NULL THEN
-        SELECT id INTO v_base_id FROM public.tint_bases WHERE account = p_account AND id_base_sayersystem = r->>'id_base';
-      END IF;
+  -- Serializa por (usuário, função). Cai sozinho no fim da transação.
+  PERFORM pg_advisory_xact_lock(hashtextextended(p_user_id::text || ':' || p_funcao, 0));
 
-      INSERT INTO public.tint_embalagens (account, id_embalagem_sayersystem, descricao, volume_ml)
-      VALUES (p_account, r->>'id_embalagem', r->>'embalagem', COALESCE((r->>'embalagem_ml')::numeric, 0))
-      ON CONFLICT (account, id_embalagem_sayersystem) DO UPDATE SET volume_ml = EXCLUDED.volume_ml
-      RETURNING id INTO v_emb_id;
-      IF v_emb_id IS NULL THEN
-        SELECT id INTO v_emb_id FROM public.tint_embalagens WHERE account = p_account AND id_embalagem_sayersystem = r->>'id_embalagem';
-      END IF;
+  SELECT l.limite_hora, l.limite_dia
+    INTO v_limite_hora, v_limite_dia
+    FROM public.ia_uso_limite l
+   WHERE l.funcao = p_funcao;
 
-      v_sub_id := NULL;
-      IF r->>'subcolecao' IS NOT NULL AND r->>'subcolecao' != '' THEN
-        INSERT INTO public.tint_subcolecoes (account, id_subcolecao_sayersystem, descricao)
-        VALUES (p_account, r->>'subcolecao', COALESCE(r->>'sub_colecao', r->>'subcolecao'))
-        ON CONFLICT (account, id_subcolecao_sayersystem) DO NOTHING
-        RETURNING id INTO v_sub_id;
-        IF v_sub_id IS NULL THEN
-          SELECT id INTO v_sub_id FROM public.tint_subcolecoes WHERE account = p_account AND id_subcolecao_sayersystem = r->>'subcolecao';
-        END IF;
-      END IF;
+  -- FAIL-CLOSED: função sem limite configurado não gasta orçamento. Edge nova
+  -- que esqueça o seed é negada com motivo próprio, em vez de ganhar acesso
+  -- irrestrito por omissão.
+  IF NOT FOUND THEN
+    RETURN QUERY SELECT false, 'sem_limite'::text, 0, 0, 0, 0, 0;
+    RETURN;
+  END IF;
 
-      INSERT INTO public.tint_skus (account, produto_id, base_id, embalagem_id)
-      VALUES (p_account, v_produto_id, v_base_id, v_emb_id)
-      ON CONFLICT (account, produto_id, base_id, embalagem_id) DO NOTHING
-      RETURNING id INTO v_sku_id;
-      IF v_sku_id IS NULL THEN
-        SELECT id INTO v_sku_id FROM public.tint_skus WHERE account = p_account AND produto_id = v_produto_id AND base_id = v_base_id AND embalagem_id = v_emb_id;
-      END IF;
+  -- Uma varredura só resolve as duas janelas: o filtro externo de 24h delimita,
+  -- o FILTER interno recorta a hora.
+  SELECT
+      count(*) FILTER (WHERE e.criado_em > now() - interval '1 hour')::integer,
+      count(*)::integer
+    INTO v_usado_hora, v_usado_dia
+    FROM public.ia_uso_evento e
+   WHERE e.user_id = p_user_id
+     AND e.funcao  = p_funcao
+     AND e.criado_em > now() - interval '24 hours';
 
-      SELECT id INTO v_existing_formula_id FROM public.tint_formulas
-      WHERE account = p_account
-        AND cor_id = r->>'cor_id'
-        AND produto_id = v_produto_id
-        AND base_id = v_base_id
-        AND COALESCE(subcolecao_id, '00000000-0000-0000-0000-000000000000'::uuid) = COALESCE(v_sub_id, '00000000-0000-0000-0000-000000000000'::uuid)
-        AND embalagem_id = v_emb_id;
+  IF v_usado_hora >= v_limite_hora THEN
+    -- Com janela deslizante, a vaga abre quando a `limite`-ésima chamada mais
+    -- recente sai da janela: as mais recentes que ela são limite-1, e todas as
+    -- mais antigas já saíram (criado_em é monotônico com a posição). Vale
+    -- inclusive se o limite foi REDUZIDO a quente e usado > limite.
+    SELECT GREATEST(1, ceil(extract(epoch FROM (x.criado_em + interval '1 hour' - now()))))::integer
+      INTO v_libera
+      FROM (
+        SELECT e.criado_em
+          FROM public.ia_uso_evento e
+         WHERE e.user_id = p_user_id
+           AND e.funcao  = p_funcao
+           AND e.criado_em > now() - interval '1 hour'
+         ORDER BY e.criado_em DESC
+        OFFSET (v_limite_hora - 1) LIMIT 1
+      ) x;
 
-      IF v_existing_formula_id IS NOT NULL THEN
-        UPDATE public.tint_formulas SET
-          id_seq = COALESCE((r->>'id_seq')::int, id_seq),
-          nome_cor = COALESCE(r->>'nome_cor', nome_cor),
-          sku_id = v_sku_id,
-          volume_final_ml = COALESCE((r->>'volume_finalml')::numeric, volume_final_ml),
-          preco_final_sayersystem = COALESCE((r->>'preco_final')::numeric, preco_final_sayersystem),
-          data_geracao = CASE WHEN r->>'data_geracao' IS NOT NULL AND r->>'data_geracao' != '' THEN (r->>'data_geracao')::timestamptz ELSE data_geracao END,
-          updated_at = now()
-        WHERE id = v_existing_formula_id;
-        v_formula_id := v_existing_formula_id;
-        v_updated := v_updated + 1;
-      ELSE
-        INSERT INTO public.tint_formulas (account, id_seq, cor_id, nome_cor, produto_id, base_id, embalagem_id, subcolecao_id, sku_id, volume_final_ml, preco_final_sayersystem, data_geracao, personalizada)
-        VALUES (
-          p_account, (r->>'id_seq')::int, r->>'cor_id', r->>'nome_cor',
-          v_produto_id, v_base_id, v_emb_id, v_sub_id, v_sku_id,
-          (r->>'volume_finalml')::numeric, (r->>'preco_final')::numeric,
-          CASE WHEN r->>'data_geracao' IS NOT NULL AND r->>'data_geracao' != '' THEN (r->>'data_geracao')::timestamptz ELSE now() END,
-          p_personalizada
-        )
-        RETURNING id INTO v_formula_id;
-        v_imported := v_imported + 1;
-      END IF;
+    RETURN QUERY SELECT false, 'hora'::text, v_usado_hora, v_limite_hora,
+                        v_usado_dia, v_limite_dia, COALESCE(v_libera, 1);
+    RETURN;
+  END IF;
 
-      DELETE FROM public.tint_formula_itens WHERE formula_id = v_formula_id;
+  IF v_usado_dia >= v_limite_dia THEN
+    SELECT GREATEST(1, ceil(extract(epoch FROM (x.criado_em + interval '24 hours' - now()))))::integer
+      INTO v_libera
+      FROM (
+        SELECT e.criado_em
+          FROM public.ia_uso_evento e
+         WHERE e.user_id = p_user_id
+           AND e.funcao  = p_funcao
+           AND e.criado_em > now() - interval '24 hours'
+         ORDER BY e.criado_em DESC
+        OFFSET (v_limite_dia - 1) LIMIT 1
+      ) x;
 
-      FOR v_i IN 1..6 LOOP
-        v_cor_key := r->>('corante' || v_i::text);
-        IF v_cor_key IS NOT NULL AND v_cor_key != '' THEN
-          SELECT id INTO v_corante_id FROM public.tint_corantes
-          WHERE account = p_account AND id_corante_sayersystem = v_cor_key;
-          IF v_corante_id IS NOT NULL AND COALESCE((r->>('qtd' || v_i::text || 'ml'))::numeric, 0) > 0 THEN
-            INSERT INTO public.tint_formula_itens (formula_id, corante_id, ordem, qtd_ml)
-            VALUES (v_formula_id, v_corante_id, v_i, (r->>('qtd' || v_i::text || 'ml'))::numeric)
-            ON CONFLICT (formula_id, corante_id) DO UPDATE SET qtd_ml = EXCLUDED.qtd_ml, ordem = EXCLUDED.ordem;
-          END IF;
-        END IF;
-      END LOOP;
+    RETURN QUERY SELECT false, 'dia'::text, v_usado_hora, v_limite_hora,
+                        v_usado_dia, v_limite_dia, COALESCE(v_libera, 1);
+    RETURN;
+  END IF;
 
-    EXCEPTION WHEN OTHERS THEN
-      v_errors := v_errors + 1;
-      RAISE NOTICE 'Error processing row: %', SQLERRM;
-    END;
-  END LOOP;
+  INSERT INTO public.ia_uso_evento (user_id, funcao) VALUES (p_user_id, p_funcao);
 
-  RETURN jsonb_build_object('imported', v_imported, 'updated', v_updated, 'errors', v_errors);
+  -- Contadores JÁ incluem esta chamada: é o que a edge precisa para dizer
+  -- "você usou 18 de 20" sem uma segunda consulta.
+  RETURN QUERY SELECT true, 'ok'::text, v_usado_hora + 1, v_limite_hora,
+                      v_usado_dia + 1, v_limite_dia, 0;
 END;
 $$;
+
+
+--
+-- Name: FUNCTION ia_consumir_cota(p_user_id uuid, p_funcao text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.ia_consumir_cota(p_user_id uuid, p_funcao text) IS 'Cota de IA por usuário: decide e registra o consumo numa transação só. Fail-closed — função sem linha em ia_uso_limite é negada com motivo sem_limite. Chamada apenas pelas edges (service_role).';
 
 
 --
@@ -9804,6 +10558,46 @@ $$;
 --
 
 COMMENT ON FUNCTION public.leadtime_t1_e_data_de_pedido(p_hist_t1 timestamp with time zone, p_hist_t2 timestamp with time zone, p_tracking_t1 timestamp with time zone, p_omie_codigo_pedido bigint) IS 'TRUE quando o t1_data_pedido gravado em sku_leadtime_history é comprovadamente uma data de PEDIDO (e não o faturamento ou a data de uma NFe órfã). Gate de honestidade do leadtime: só com TRUE o lt_bruto/lt_faturamento pode existir. Preserva o pedido legitimamente faturado no mesmo dia (t1=t2=tracking.t1 com pedido real) — recusar esse seria destruir dado bom por ausência de prova, não por prova de fabricação.';
+
+
+--
+-- Name: liberar_reserva_checkout(uuid, text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.liberar_reserva_checkout(p_checkout_id uuid, p_pool text DEFAULT NULL::text, p_motivo text DEFAULT NULL::text) RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_uid uuid := (SELECT auth.uid());
+  v_n integer;
+BEGIN
+  IF NOT private.cap_estoque_reservar(v_uid) THEN
+    RAISE EXCEPTION 'Sem permissão para liberar reserva de estoque (staff apenas)'
+      USING ERRCODE = '42501';
+  END IF;
+  IF p_checkout_id IS NULL THEN
+    RAISE EXCEPTION 'p_checkout_id é obrigatório' USING ERRCODE = '22023';
+  END IF;
+  IF p_pool IS NOT NULL AND p_pool <> 'oben' THEN
+    RAISE EXCEPTION 'Pool de estoque inválido: % — a fase 1 atende apenas ''oben''', p_pool
+      USING ERRCODE = '22023';
+  END IF;
+
+  PERFORM pg_advisory_xact_lock(hashtextextended('atp:checkout:' || p_checkout_id::text, 0));
+
+  UPDATE public.estoque_reservas
+     SET status = 'liberada',
+         motivo = COALESCE(p_motivo, 'liberacao pelo caller'),
+         atualizado_em = now()
+   WHERE checkout_id = p_checkout_id
+     AND status = 'ativa'
+     AND (p_pool IS NULL OR pool = p_pool);
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+
+  RETURN jsonb_build_object('ok', true, 'checkout_id', p_checkout_id, 'liberadas', v_n);
+END;
+$$;
 
 
 --
@@ -13340,6 +14134,153 @@ $$;
 
 
 --
+-- Name: reservar_estoque(text, uuid, jsonb, integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.reservar_estoque(p_pool text, p_checkout_id uuid, p_itens jsonb, p_ttl_minutos integer DEFAULT 30) RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_uid uuid := (SELECT auth.uid());
+  v_total integer;
+  v_distintos integer;
+  v_invalidos integer;
+  v_sku bigint;
+  v_item record;
+  v_calc record;
+  v_recusas jsonb := '[]'::jsonb;
+  v_reservas jsonb := '[]'::jsonb;
+  v_expira timestamptz;
+  v_id uuid;
+BEGIN
+  IF NOT private.cap_estoque_reservar(v_uid) THEN
+    RAISE EXCEPTION 'Sem permissão para reservar estoque (staff apenas)'
+      USING ERRCODE = '42501';
+  END IF;
+  IF p_pool IS DISTINCT FROM 'oben' THEN
+    RAISE EXCEPTION 'Pool de estoque inválido: % — a fase 1 atende apenas ''oben''', COALESCE(p_pool, 'NULL')
+      USING ERRCODE = '22023';
+  END IF;
+  IF p_checkout_id IS NULL THEN
+    RAISE EXCEPTION 'p_checkout_id é obrigatório' USING ERRCODE = '22023';
+  END IF;
+  IF p_itens IS NULL OR jsonb_typeof(p_itens) <> 'array' OR jsonb_array_length(p_itens) = 0 THEN
+    RAISE EXCEPTION 'p_itens deve ser um array JSON não-vazio de {omie_codigo_produto, quantidade}'
+      USING ERRCODE = '22023';
+  END IF;
+  IF jsonb_array_length(p_itens) > 200 THEN
+    RAISE EXCEPTION 'p_itens excede o limite de 200 itens' USING ERRCODE = '22023';
+  END IF;
+  IF p_ttl_minutos IS NULL OR p_ttl_minutos < 5 OR p_ttl_minutos > 240 THEN
+    RAISE EXCEPTION 'p_ttl_minutos fora do intervalo [5, 240]: %', COALESCE(p_ttl_minutos::text, 'NULL')
+      USING ERRCODE = '22023';
+  END IF;
+
+  -- Shape dos itens: sku e quantidade obrigatórios, quantidade > 0, sem duplicata
+  SELECT count(*),
+         count(DISTINCT x.omie_codigo_produto),
+         count(*) FILTER (WHERE x.omie_codigo_produto IS NULL
+                             OR x.quantidade IS NULL
+                             OR x.quantidade <= 0
+                             OR x.quantidade > 1000000)
+    INTO v_total, v_distintos, v_invalidos
+  FROM jsonb_to_recordset(p_itens) AS x(omie_codigo_produto bigint, quantidade numeric);
+
+  IF v_invalidos > 0 THEN
+    RAISE EXCEPTION 'p_itens contém item inválido (sku/quantidade ausente, quantidade fora de (0, 1000000])'
+      USING ERRCODE = '22023';
+  END IF;
+  IF v_distintos <> v_total THEN
+    RAISE EXCEPTION 'p_itens contém omie_codigo_produto duplicado — agregue as quantidades antes de chamar'
+      USING ERRCODE = '22023';
+  END IF;
+
+  -- Serialização: lock do checkout primeiro, depois SKUs em ordem (deadlock-free)
+  PERFORM pg_advisory_xact_lock(hashtextextended('atp:checkout:' || p_checkout_id::text, 0));
+  FOR v_sku IN
+    SELECT DISTINCT x.omie_codigo_produto
+    FROM jsonb_to_recordset(p_itens) AS x(omie_codigo_produto bigint, quantidade numeric)
+    ORDER BY 1
+  LOOP
+    PERFORM pg_advisory_xact_lock(hashtextextended('atp:sku:' || p_pool || ':' || v_sku::text, 0));
+  END LOOP;
+
+  -- Decide TUDO antes de escrever (all-or-nothing sem depender de exception).
+  -- O cálculo EXCLUI as reservas ativas do próprio checkout: a substituição
+  -- devolve o que ele mesmo segurava antes de decidir.
+  FOR v_item IN
+    SELECT x.omie_codigo_produto AS sku, x.quantidade AS qtd
+    FROM jsonb_to_recordset(p_itens) AS x(omie_codigo_produto bigint, quantidade numeric)
+    ORDER BY x.omie_codigo_produto
+  LOOP
+    SELECT * INTO v_calc FROM private.atp_disponivel(p_pool, v_item.sku, p_checkout_id);
+    IF NOT v_calc.saldo_confiavel THEN
+      v_recusas := v_recusas || jsonb_build_object(
+        'omie_codigo_produto', v_item.sku,
+        'motivo', 'saldo_indisponivel',
+        'detalhe', 'sem posição de estoque confiável (ausente, defasada >24h, datada no futuro, valor inválido, contas do pool divergentes ou estoque de segurança inválido)',
+        'solicitado', v_item.qtd,
+        'disponivel', NULL);
+    ELSIF v_item.qtd > v_calc.disponivel THEN
+      v_recusas := v_recusas || jsonb_build_object(
+        'omie_codigo_produto', v_item.sku,
+        'motivo', 'saldo_insuficiente',
+        'solicitado', v_item.qtd,
+        'disponivel', v_calc.disponivel);
+    END IF;
+  END LOOP;
+
+  IF jsonb_array_length(v_recusas) > 0 THEN
+    RETURN jsonb_build_object(
+      'ok', false,
+      'pool', p_pool,
+      'checkout_id', p_checkout_id,
+      'recusas', v_recusas);
+  END IF;
+
+  -- Substituição: libera as ativas anteriores deste checkout+pool e grava o estado-alvo
+  UPDATE public.estoque_reservas
+     SET status = 'liberada',
+         motivo = 'substituida por nova reserva do mesmo checkout',
+         atualizado_em = now()
+   WHERE checkout_id = p_checkout_id
+     AND pool = p_pool
+     AND status = 'ativa';
+
+  -- C5: clock_timestamp(), NÃO now(). now() é o instante em que a TRANSAÇÃO
+  -- começou; depois de esperar no advisory lock mais que o TTL, now()+TTL já
+  -- está no passado e a reserva nasce vencida — devolvendo ok:true sem segurar
+  -- nada. O relógio de parede é o único que mede o instante da ESCRITA.
+  v_expira := clock_timestamp() + make_interval(mins => p_ttl_minutos);
+
+  FOR v_item IN
+    SELECT x.omie_codigo_produto AS sku, x.quantidade AS qtd
+    FROM jsonb_to_recordset(p_itens) AS x(omie_codigo_produto bigint, quantidade numeric)
+    ORDER BY x.omie_codigo_produto
+  LOOP
+    INSERT INTO public.estoque_reservas
+      (pool, omie_codigo_produto, quantidade, checkout_id, status, expira_em, created_by)
+    VALUES
+      (p_pool, v_item.sku, v_item.qtd, p_checkout_id, 'ativa', v_expira, v_uid)
+    RETURNING id INTO v_id;
+    v_reservas := v_reservas || jsonb_build_object(
+      'id', v_id,
+      'omie_codigo_produto', v_item.sku,
+      'quantidade', v_item.qtd,
+      'expira_em', v_expira);
+  END LOOP;
+
+  RETURN jsonb_build_object(
+    'ok', true,
+    'pool', p_pool,
+    'checkout_id', p_checkout_id,
+    'reservas', v_reservas);
+END;
+$$;
+
+
+--
 -- Name: resgatar_recompensa(text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -16747,6 +17688,388 @@ COMMENT ON FUNCTION public.tint_ultimo_preco_cliente(p_customer_user_id uuid, p_
 
 
 --
+-- Name: tint_watchdog_corante_check(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.tint_watchdog_corante_check() RETURNS void
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  -- tint_watchdog_corante guard v1 — MARCADOR do guard anti-rollback. Uma versão
+  -- SUCESSORA que recrie esta função DEVE trocar este marcador (v2, v3...), para que
+  -- re-aplicar ESTA por cima dela ABORTE em vez de revertê-la em silêncio.
+  v_conta        text := 'oben';   -- 100% do catálogo tint é oben (medido)
+  v_ruins        int;
+  v_formulas     bigint;
+  v_lista        text;
+  v_msg          text;
+  v_sev_fin      text;
+  v_sev_forn     text;
+  v_ant_n        int;
+  v_b_atraso     interval;
+BEGIN
+  -- ── DETECÇÃO ────────────────────────────────────────────────────────────
+  -- Corante cujo custo Omie não precifica, E que está EM USO por fórmula ativa.
+  -- O predicado espelha corantes_completos da RPC get_tint_price / receita_valida
+  -- da v_tint_formula_canonica: valor_unitario>0 E omie ativo E volume_total_ml>0.
+  -- O filtro de USO evita alarmar por corante recém-cadastrado que ninguém dosa.
+  SELECT count(*),
+         COALESCE(sum(x.formulas), 0),
+         string_agg(x.rotulo, '; ' ORDER BY x.formulas DESC)
+    INTO v_ruins, v_formulas, v_lista
+  FROM (
+    SELECT c.id,
+           (SELECT count(*) FROM tint_formula_itens fi
+              JOIN tint_formulas f ON f.id = fi.formula_id
+             WHERE fi.corante_id = c.id
+               AND f.desativada_em IS NULL AND f.sku_id IS NOT NULL) AS formulas,
+           COALESCE(NULLIF(btrim(op.descricao), ''), op.codigo, c.id::text)
+             || ' (' || CASE
+                  WHEN c.omie_product_id IS NULL              THEN 'sem vinculo Omie'
+                  WHEN op.id IS NULL                          THEN 'produto Omie inexistente'
+                  WHEN NOT COALESCE(op.ativo, false)          THEN 'inativo no Omie'
+                  WHEN COALESCE(op.valor_unitario, 0) <= 0    THEN 'sem custo'
+                  ELSE 'volume_total_ml invalido' END || ')' AS rotulo
+      FROM tint_corantes c
+      LEFT JOIN omie_products op ON op.id = c.omie_product_id
+     WHERE NOT (COALESCE(op.valor_unitario, 0) > 0
+                AND COALESCE(op.ativo, false)
+                AND c.volume_total_ml IS NOT NULL
+                AND c.volume_total_ml > 0)
+       AND EXISTS (SELECT 1 FROM tint_formula_itens fi
+                     JOIN tint_formulas f ON f.id = fi.formula_id
+                    WHERE fi.corante_id = c.id
+                      AND f.desativada_em IS NULL AND f.sku_id IS NOT NULL)
+  ) x;
+
+  IF v_ruins > 0 THEN
+    -- Agravamento (Codex [P2]): 1 corante numa fórmula != 1 corante em 300 mil.
+    v_sev_fin  := CASE WHEN v_formulas >= 1000 THEN 'critico'  ELSE 'aviso'   END;
+    v_sev_forn := CASE WHEN v_formulas >= 1000 THEN 'urgente'  ELSE 'atencao' END;
+    v_msg := 'Tintometrico: ' || v_ruins || ' corante(s) sem custo utilizavel atingindo '
+             || v_formulas || ' formula(s) ativa(s) - essas formulas deixam de ter preco '
+             || '(precoFinal NULL, fail-closed) e o balcao nao vende. Apos a Fase 5 a '
+             || 'geracao 1 nao e mais fallback. Corante(s): ' || COALESCE(v_lista, '?');
+
+    INSERT INTO fin_alertas (company, tipo, severidade, mensagem, contexto)
+    VALUES (v_conta, 'tint_corante_impagavel', v_sev_fin, v_msg,
+            jsonb_build_object('corantes', v_ruins, 'formulas_ativas', v_formulas,
+                               'detalhe', v_lista, 'avaliado_em', now()))
+    ON CONFLICT (company, tipo) WHERE dismissed_at IS NULL DO NOTHING;
+
+    IF FOUND THEN
+      INSERT INTO fornecedor_alerta (empresa, tipo, severidade, titulo, mensagem, status)
+      VALUES (v_conta, 'outro', v_sev_forn,
+              '[Tintometrico] corante sem custo - formulas sem preco', v_msg, 'pendente_notificacao');
+    ELSE
+      -- Codex [P1]: com ON CONFLICT DO NOTHING, um SEGUNDO corante caindo durante um
+      -- incidente aberto ficaria MUDO. Se o conjunto PIOROU, atualiza e re-emite.
+      SELECT COALESCE((contexto->>'corantes')::int, 0) INTO v_ant_n
+        FROM fin_alertas
+       WHERE company = v_conta AND tipo = 'tint_corante_impagavel' AND dismissed_at IS NULL;
+
+      IF v_ruins > COALESCE(v_ant_n, 0) THEN
+        UPDATE fin_alertas
+           SET severidade = v_sev_fin, mensagem = v_msg,
+               contexto = jsonb_build_object('corantes', v_ruins, 'formulas_ativas', v_formulas,
+                                             'detalhe', v_lista, 'avaliado_em', now(),
+                                             'agravou_de', v_ant_n)
+         WHERE company = v_conta AND tipo = 'tint_corante_impagavel' AND dismissed_at IS NULL;
+
+        INSERT INTO fornecedor_alerta (empresa, tipo, severidade, titulo, mensagem, status)
+        VALUES (v_conta, 'outro', v_sev_forn,
+                '[Tintometrico] AGRAVOU: ' || v_ruins || ' corantes sem custo',
+                v_msg || E'\n\n(agravamento: eram ' || v_ant_n || ')', 'pendente_notificacao');
+      END IF;
+    END IF;
+  ELSE
+    UPDATE fin_alertas SET dismissed_at = now()
+     WHERE company = v_conta AND tipo = 'tint_corante_impagavel' AND dismissed_at IS NULL;
+  END IF;
+
+  -- ── MARCADOR DE SUCESSO (Codex [P1]: "verde por construção") ────────────
+  -- last_sync_at = último sucesso COMPLETO. Só chega aqui quem avaliou e transicionou
+  -- o alerta; qualquer exceção acima aborta a função e NAO avança o marcador - então
+  -- "sem alerta" deixa de ser indistinguível de "nunca rodou".
+  INSERT INTO sync_state (entity_type, account, last_sync_at, status, error_message, metadata)
+  VALUES ('tint_watchdog_corante', v_conta, now(), 'complete', NULL,
+          jsonb_build_object('corantes_ruins', v_ruins, 'formulas_atingidas', v_formulas))
+  ON CONFLICT (entity_type, account) DO UPDATE
+    SET last_sync_at  = now(),
+        status        = 'complete',
+        error_message = NULL,
+        updated_at    = now(),
+        metadata      = jsonb_build_object('corantes_ruins', v_ruins,
+                                           'formulas_atingidas', v_formulas);
+
+  -- ── VIGILÂNCIA CRUZADA (dead-man da Camada B, quando ela existir) ───────
+  -- Um cron não vigia a si mesmo: cron.job_run_details diz "succeeded" só por ter
+  -- ENFILEIRADO. Como esta camada roda */5 e é barata, ela vigia o marcador da
+  -- camada lenta (6h). O caso "pg_cron inteiro morreu" já é coberto pelo
+  -- dead-man-switch global existente (fin_sync_heartbeat para de enviar).
+  -- Só age se o marcador da B JA existir (ela é o PR 2), senão esta função
+  -- alarmaria por ausência de algo que ainda não foi entregue.
+  SELECT now() - ss.last_sync_at INTO v_b_atraso
+    FROM sync_state ss
+   WHERE ss.entity_type = 'tint_watchdog_fase5' AND ss.account = v_conta;
+
+  IF v_b_atraso IS NOT NULL AND v_b_atraso > interval '13 hours' THEN
+    -- 13h = 2 ciclos de 6h + folga (Codex: "dead-man da B dispara após 2 ciclos perdidos")
+    INSERT INTO fin_alertas (company, tipo, severidade, mensagem, contexto)
+    VALUES (v_conta, 'tint_watchdog_fase5_parado', 'aviso',
+            'Watchdog da Fase 5 (chave sem preco) sem sucesso ha ' ||
+            date_trunc('minute', v_b_atraso) || ' - a rede de deteccao por chave esta CEGA.',
+            jsonb_build_object('atraso', v_b_atraso::text))
+    ON CONFLICT (company, tipo) WHERE dismissed_at IS NULL DO NOTHING;
+    IF FOUND THEN
+      INSERT INTO fornecedor_alerta (empresa, tipo, severidade, titulo, mensagem, status)
+      VALUES (v_conta, 'outro', 'atencao', '[Tintometrico] watchdog da Fase 5 parado',
+              'O watchdog por chave nao conclui ha ' || date_trunc('minute', v_b_atraso) ||
+              '. Cheque o cron tint-watchdog-fase5-6h.', 'pendente_notificacao');
+    END IF;
+  ELSIF v_b_atraso IS NOT NULL THEN
+    UPDATE fin_alertas SET dismissed_at = now()
+     WHERE company = v_conta AND tipo = 'tint_watchdog_fase5_parado' AND dismissed_at IS NULL;
+  END IF;
+END;
+$$;
+
+
+--
+-- Name: FUNCTION tint_watchdog_corante_check(); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.tint_watchdog_corante_check() IS 'Fase 5b#2 (PR 1): vigia a CAUSA-RAIZ do P1-7 - corante sem custo Omie utilizavel que esta EM USO por formula ativa. Com 14 corantes e o maior deles em ~297k formulas, um corante caindo tira o preco de centenas de milhares de chaves de uma vez, e a Fase 5 removeu o fallback da geracao 1. Roda */5 (214ms). NAO depende do carimbo fase5_geracao_legada (tombstone nao e fundamento duravel). Grava marcador sync_state tint_watchdog_corante que so avanca em sucesso COMPLETO. NAO pode migrar para _data_health_compute: authenticated tem statement_timeout=8s e o dashboard /health chama aquele caminho.';
+
+
+--
+-- Name: tint_watchdog_fase5_check(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.tint_watchdog_fase5_check() RETURNS void
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  -- tint_watchdog_fase5 guard v1 — MARCADOR do guard anti-rollback. Uma versão
+  -- SUCESSORA que recrie esta função DEVE trocar este marcador (v2, v3...), para que
+  -- re-aplicar ESTA por cima dela ABORTE em vez de revertê-la em silêncio.
+  v_conta      text := 'oben';   -- 100% do catálogo tint é oben (medido)
+  v_t0         timestamptz := clock_timestamp();
+  v_s1         bigint;
+  v_s2         bigint;
+  v_universo   bigint;
+  v_max        bigint;
+  v_ancora     timestamptz;
+  v_dismiss    timestamptz;
+  v_queda      numeric;
+  v_msg        text;
+BEGIN
+  -- Anti-sobreposição. A varredura custa ~53s contra um ciclo de 6h (margem 400x),
+  -- mas um ciclo preso não pode empilhar um segundo por cima. Se já há um rodando,
+  -- SAI SEM avançar o marcador — e é justamente o marcador parado que faz o
+  -- dead-man cruzado do PR 1 alarmar em 13h. Falha aberta vira alerta, não silêncio.
+  IF NOT pg_try_advisory_xact_lock(hashtext('tint_watchdog_fase5')) THEN
+    RETURN;
+  END IF;
+
+  -- ── VARREDURA ÚNICA (ver "A FORMA DA QUERY" no cabeçalho) ───────────────
+  -- Uma passada só produz os 3 sinais: materializar a view duas vezes dobraria o
+  -- custo, e duas varreduras em instantes diferentes poderiam se contradizer.
+  -- count(DISTINCT ...) no universo, não count(*): o count(*) conta LINHAS pós-JOIN,
+  -- e a unicidade da view por chave é propriedade dela, não invariante imposta aqui
+  -- (Codex [P1]). Medido hoje: 0 chaves com >1 linha na view — então é hardening, não
+  -- correção de bug. Se um dia duplicar, o universo inflaria e uma queda real poderia
+  -- ser mascarada por duplicidade.
+  SELECT count(*) FILTER (WHERE k.tem_ativa AND v.account IS NULL),
+         count(*) FILTER (WHERE NOT k.tem_ativa),
+         count(DISTINCT (k.account, k.sku_id, k.cor_id))
+    INTO v_s1, v_s2, v_universo
+  FROM (
+    -- as chaves carimbadas pela Fase 5, com "ainda existe na fonte?" por agregação
+    SELECT f.account, f.sku_id, f.cor_id,
+           bool_or(f.desativada_em IS NULL AND f.sku_id IS NOT NULL) AS tem_ativa
+      FROM tint_formulas f
+     WHERE (f.account, f.sku_id, f.cor_id) IN (
+             SELECT account, sku_id, cor_id
+               FROM tint_formulas
+              WHERE desativada_motivo = 'fase5_geracao_legada')
+     GROUP BY f.account, f.sku_id, f.cor_id
+  ) k
+  LEFT JOIN (
+    -- o oráculo: o que o balcão consegue precificar hoje
+    SELECT account, sku_id, cor_id
+      FROM v_tint_formula_canonica
+     WHERE receita_valida
+  ) v ON v.account = k.account AND v.sku_id = k.sku_id AND v.cor_id = k.cor_id;
+
+  -- ── S3: CARDINALIDADE do universo (Codex [P1]: o carimbo não é durável) ──
+  -- Sem isto, limpar o carimbo (follow-up 5b#1) ou deletar as linhas esvazia o
+  -- universo, S1 e S2 vão a zero por VACUIDADE, e o watchdog fica "verde" tendo
+  -- perdido a visão. Âncora = maior universo já visto.
+  SELECT COALESCE((metadata->>'universo_max')::bigint, 0),
+         COALESCE((metadata->>'ancora_em')::timestamptz, '-infinity'::timestamptz)
+    INTO v_max, v_ancora
+    FROM sync_state
+   WHERE entity_type = 'tint_watchdog_fase5' AND account = v_conta;
+  v_max    := COALESCE(v_max, 0);
+  v_ancora := COALESCE(v_ancora, '-infinity'::timestamptz);
+
+  -- Um encolhimento DELIBERADO (a limpeza do 5b#1) não pode deixar um alerta preso
+  -- para sempre — alerta imortal treina o founder a ignorar alertas. O dismiss
+  -- MANUAL é o aceite do novo patamar: re-ancora. O auto-dismiss abaixo avança a
+  -- âncora junto, então nunca é lido como aceite manual.
+  SELECT max(dismissed_at) INTO v_dismiss
+    FROM fin_alertas
+   WHERE company = v_conta AND tipo = 'tint_fase5_universo_encolheu'
+     AND dismissed_at IS NOT NULL;
+
+  -- Re-ancorar por dismiss é o aceite do patamar novo — mas dismiss é um clique de UI,
+  -- não uma autorização auditada (Codex [P1]). Dois venenos ficam barrados aqui:
+  --   (a) dismiss com universo ZERO gravaria universo_max=0, e S1/S2/S3 ficariam
+  --       verdes por VACUIDADE para sempre;
+  --   (b) dismiss durante um COLAPSO transitório (>=50%) canonizaria o valor
+  --       degradado como referência.
+  -- Nesses casos o alerta é dispensado (o founder não fica com alerta imortal), mas a
+  -- ÂNCORA NÃO desce: se o colapso for real e deliberado, o rebaseline é decisão
+  -- explícita — uma migration, não um clique.
+  IF v_dismiss IS NOT NULL AND v_dismiss > v_ancora THEN
+    -- Teto ABSOLUTO, não percentual (2ª rodada do Codex, [P1]): 50% de 463.995 são
+    -- ~232 mil chaves — um único clique de dismiss canonizaria a perda de metade da
+    -- cobertura. Uma limpeza legítima do 5b#1 mexe em centenas (hoje S2=300), então
+    -- 1.000 cobre o caso real com folga e barra o catastrófico. Acima disso o
+    -- rebaseline é escrita deliberada no SQL Editor — o gate humano do repo.
+    IF v_universo > 0 AND (v_max - v_universo) <= 1000 THEN
+      v_max := v_universo; v_ancora := now();
+    ELSE
+      v_ancora := v_dismiss;   -- consome o dismiss sem rebaixar o patamar
+    END IF;
+  END IF;
+
+  IF v_universo > v_max THEN                    -- high-water-mark sobe sozinho
+    v_max := v_universo; v_ancora := now();
+  END IF;
+
+  v_queda := CASE WHEN v_max > 0
+                  THEN (v_max - v_universo)::numeric / v_max ELSE 0 END;
+
+  -- Limiar de 1%: este sinal é sobre o universo COLAPSAR (o vigia de vacuidade),
+  -- não sobre erosão de unidades. O universo é estático por desenho — nada o
+  -- escreve — então tolerar <1% custa recall irrelevante e compra silêncio.
+  -- QUALQUER queda alarma (2ª rodada do Codex, [P1]): o piso de 100 que eu tinha
+  -- posto ainda deixava 99 chaves saírem da cobertura em SILÊNCIO PERMANENTE — elas
+  -- somem do universo E de S1/S2, e nada mais as vigia. Como o universo é ESTÁTICO
+  -- por desenho (nenhum writer o toca; só uma limpeza deliberada do 5b#1 o muda),
+  -- o limiar coerente com a premissa é 1, não um percentual: qualquer queda é
+  -- anômala por construção. Trocar 4.639 silenciosas por 99 silenciosas seria
+  -- reduzir o dano em vez de fechar o furo.
+  IF v_max > 0 AND v_universo < v_max THEN
+    v_msg := 'Tintometrico/Fase 5: o universo carimbado ENCOLHEU de ' || v_max ||
+             ' para ' || v_universo || ' chaves (' ||
+             round(v_queda * 100, 1) || '%). O watchdog por chave mede sobre esse ' ||
+             'universo: se ele sumir, S1/S2 vao a zero por VACUIDADE e a rede fica ' ||
+             'cega sem nunca ficar vermelha. ' ||
+             -- A mensagem TEM de dizer a verdade sobre o que o dismiss faz (2a rodada
+             -- do Codex, [P1]): acima do teto ele NAO re-ancora, e o alerta reabre no
+             -- ciclo seguinte. Prometer "dispense e pronto" treinaria o founder a
+             -- clicar num botao que nao resolve.
+             CASE WHEN (v_max - v_universo) <= 1000
+                  THEN 'Se a limpeza foi deliberada (5b#1), dispense este alerta que ' ||
+                       'o patamar novo vira a referencia.'
+                  ELSE 'Queda ACIMA do teto de re-ancoragem (1.000 chaves): dispensar ' ||
+                       'NAO muda o patamar e o alerta reabre no proximo ciclo. Restaure ' ||
+                       'o universo, ou faca o rebaseline explicito no SQL Editor: ' ||
+                       'UPDATE sync_state SET metadata = metadata || jsonb_build_object(' ||
+                       '''universo_max'', ' || v_universo || ', ''ancora_em'', now()) ' ||
+                       'WHERE entity_type=''tint_watchdog_fase5'';' END;
+    PERFORM public._tint_watchdog_fase5_transicao(
+      v_conta, 'tint_fase5_universo_encolheu', v_max - v_universo,
+      CASE WHEN v_universo = 0 OR v_queda >= 0.5 THEN 'critico' ELSE 'aviso' END,
+      '[Tintometrico] universo carimbado da Fase 5 encolheu', v_msg,
+      jsonb_build_object('universo', v_universo, 'universo_max', v_max,
+                         'queda_pct', round(v_queda * 100, 2)));
+  ELSE
+    PERFORM public._tint_watchdog_fase5_transicao(
+      v_conta, 'tint_fase5_universo_encolheu', 0, 'info', '', '', '{}'::jsonb);
+    v_ancora := now();   -- auto-dismiss NAO pode parecer aceite manual
+  END IF;
+
+  -- ── S1: a chave existe e NAO PRECIFICA (dano de venda real) ─────────────
+  IF v_s1 > 0 THEN
+    v_msg := 'Tintometrico: ' || v_s1 || ' chave(s) desativada(s) pela Fase 5 estao ' ||
+             'SEM formula precificavel - a RPC devolve precoFinal NULL (fail-closed) ' ||
+             'e o balcao nao vende essas cores. A geracao 1 que as respaldava ja foi ' ||
+             'desativada e NAO e mais fallback. Causa tipica: corante sem custo Omie ' ||
+             'ou receita corrompida por sync.';
+    PERFORM public._tint_watchdog_fase5_transicao(
+      v_conta, 'tint_fase5_chave_sem_preco', v_s1,
+      CASE WHEN v_s1 >= 1000 THEN 'critico' ELSE 'aviso' END,
+      '[Tintometrico] chaves da Fase 5 sem preco', v_msg,
+      jsonb_build_object('chaves', v_s1, 'universo', v_universo));
+  ELSE
+    PERFORM public._tint_watchdog_fase5_transicao(
+      v_conta, 'tint_fase5_chave_sem_preco', 0, 'info', '', '', '{}'::jsonb);
+  END IF;
+
+  -- ── S2: a FONTE retirou a chave, tombstone órfão (higiene) ──────────────
+  -- Tipo SEPARADO de S1 de propósito: remediação diferente, cadência diferente
+  -- (~30/dia esperados), e no mesmo tipo silenciaria S1 pelo ON CONFLICT.
+  IF v_s2 > 0 THEN
+    v_msg := 'Tintometrico: ' || v_s2 || ' chave(s) carimbada(s) pela Fase 5 nao tem ' ||
+             'mais NENHUMA formula ativa - a fonte retirou a chave e o carimbo da ' ||
+             'geracao 1 ficou orfao (o writer tint_apply_keys_snapshot desativa a SL ' ||
+             'sem setar desativada_motivo). Nao e venda perdida: a cor saiu do ' ||
+             'catalogo. E higiene do carimbo - recarimbar/limpar e o follow-up 5b#1.';
+    PERFORM public._tint_watchdog_fase5_transicao(
+      v_conta, 'tint_fase5_fonte_retirada', v_s2,
+      CASE WHEN v_s2 >= 10000 THEN 'critico'
+           WHEN v_s2 >= 100   THEN 'aviso' ELSE 'info' END,
+      '[Tintometrico] fonte retirou chaves com carimbo da Fase 5', v_msg,
+      jsonb_build_object('chaves', v_s2, 'universo', v_universo),
+      -- HISTERESE 2.0 (Codex [P1]): S2 cresce ~60 chaves/dia por DESENHO da fonte.
+      -- Com re-emissão a cada incremento seriam ~4 e-mails/dia — o alerta viraria
+      -- ruído e treinaria o founder a ignorar a família inteira. Só um SALTO (dobro)
+      -- volta a e-mailar; o alerta em fin_alertas segue sempre atualizado.
+      2.0);
+  ELSE
+    PERFORM public._tint_watchdog_fase5_transicao(
+      v_conta, 'tint_fase5_fonte_retirada', 0, 'info', '', '', '{}'::jsonb);
+  END IF;
+
+  -- ── MARCADOR DE SUCESSO (Codex [P1]: "verde por construção") ────────────
+  -- last_sync_at = último sucesso COMPLETO. Só chega aqui quem varreu E transicionou
+  -- os 3 alertas; qualquer exceção acima aborta a função e NAO avança o marcador.
+  -- É este marcador que o dead-man cruzado do PR 1 (*/5) vigia: >13h sem sucesso
+  -- => alerta tint_watchdog_fase5_parado. Sem ele, "sem alerta" seria
+  -- indistinguível de "nunca rodou" — que é o modo de falha do vigia silencioso.
+  INSERT INTO sync_state (entity_type, account, last_sync_at, status, error_message, metadata)
+  -- clock_timestamp(), não now(): now() é o início da TRANSAÇÃO, e esta varredura
+  -- leva ~53s. Registrar o início faria uma execução longa parecer mais velha do que
+  -- é para o dead-man do PR 1 (Codex [P2]).
+  VALUES ('tint_watchdog_fase5', v_conta, clock_timestamp(), 'complete', NULL,
+          jsonb_build_object('chaves_sem_preco', v_s1, 'fonte_retirada', v_s2,
+                             'universo', v_universo, 'universo_max', v_max,
+                             'ancora_em', v_ancora,
+                             'duracao_s', round(EXTRACT(epoch FROM clock_timestamp() - v_t0)::numeric, 1)))
+  ON CONFLICT (entity_type, account) DO UPDATE
+    SET last_sync_at  = clock_timestamp(),
+        status        = 'complete',
+        error_message = NULL,
+        updated_at    = now(),
+        metadata      = EXCLUDED.metadata;
+END;
+$$;
+
+
+--
+-- Name: FUNCTION tint_watchdog_fase5_check(); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.tint_watchdog_fase5_check() IS 'Fase 5b#2 (PR 2): Camada B do watchdog - vigia a CHAVE carimbada pela Fase 5 que ficou sem formula precificavel, usando v_tint_formula_canonica como oraculo (o que o balcao le), nao uma 3a copia do predicado de validade. Emite 3 sinais em tipos SEPARADOS: chave sem preco (venda perdida), fonte retirada (tombstone orfao) e universo encolheu (o carimbo sumiu => risco de verde por vacuidade). Roda 6h (~53s). Grava o marcador sync_state tint_watchdog_fase5 que o dead-man cruzado do PR 1 vigia. NAO pode migrar para _data_health_compute: authenticated tem statement_timeout=8s e o dashboard /health chama aquele caminho.';
+
+
+--
 -- Name: touch_des_updated_at(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -17522,7 +18845,8 @@ CREATE TABLE public.sales_orders (
     atendimento_id uuid,
     pedido_programado_envio_id uuid,
     customer_document text,
-    whatsapp_conversation_id uuid
+    whatsapp_conversation_id uuid,
+    whatsapp_proposta_dedupe text
 );
 
 
@@ -19432,6 +20756,31 @@ CREATE TABLE public.ai_decisions (
 
 
 --
+-- Name: atp_decisoes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.atp_decisoes (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    sales_order_id uuid,
+    checkout_id uuid NOT NULL,
+    pool text NOT NULL,
+    account text NOT NULL,
+    decisao text NOT NULL,
+    contexto text DEFAULT 'criacao'::text NOT NULL,
+    enforcement boolean NOT NULL,
+    recusas jsonb,
+    atp_snapshot jsonb,
+    itens_fingerprint text,
+    motivo_backorder text,
+    actor_user_id uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT atp_decisoes_contexto_check CHECK ((contexto = ANY (ARRAY['criacao'::text, 'edicao'::text]))),
+    CONSTRAINT atp_decisoes_decisao_check CHECK ((decisao = ANY (ARRAY['reservado'::text, 'bloqueado'::text, 'backorder_autorizado'::text, 'verificacao_indisponivel'::text]))),
+    CONSTRAINT atp_decisoes_pool_check CHECK ((pool = 'oben'::text))
+);
+
+
+--
 -- Name: cache_lotes; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -19739,7 +21088,7 @@ CREATE TABLE public.cmc_snapshot (
     data_posicao date NOT NULL,
     cmc numeric NOT NULL,
     synced_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT cmc_snapshot_cmc_check CHECK ((cmc > (0)::numeric))
+    CONSTRAINT cmc_snapshot_cmc_check CHECK (((cmc > (0)::numeric) AND (cmc <> 'NaN'::numeric) AND (cmc < 'Infinity'::numeric)))
 );
 
 
@@ -20413,6 +21762,29 @@ ALTER SEQUENCE public.des_trimestre_snapshot_id_seq OWNED BY public.des_trimestr
 
 
 --
+-- Name: estoque_reservas; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.estoque_reservas (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pool text NOT NULL,
+    omie_codigo_produto bigint NOT NULL,
+    quantidade numeric NOT NULL,
+    checkout_id uuid NOT NULL,
+    sales_order_id uuid,
+    status text DEFAULT 'ativa'::text NOT NULL,
+    expira_em timestamp with time zone NOT NULL,
+    motivo text,
+    created_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    atualizado_em timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT estoque_reservas_pool_check CHECK ((pool = 'oben'::text)),
+    CONSTRAINT estoque_reservas_qtd_check CHECK (((quantidade > (0)::numeric) AND (quantidade <= (1000000)::numeric))),
+    CONSTRAINT estoque_reservas_status_check CHECK ((status = ANY (ARRAY['ativa'::text, 'liberada'::text, 'consumida'::text, 'expirada'::text])))
+);
+
+
+--
 -- Name: eventos_outlier; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -20721,6 +22093,8 @@ CREATE TABLE public.farmer_client_scores (
     signal_modifiers jsonb DEFAULT '{}'::jsonb,
     last_signal_recalc_at timestamp with time zone,
     sales_history_status text,
+    itens_com_custo bigint,
+    itens_sem_custo bigint,
     CONSTRAINT farmer_client_scores_sales_history_status_check CHECK (((sales_history_status IS NULL) OR (sales_history_status = ANY (ARRAY['sem_historico'::text, 'stale'::text, 'ativo'::text]))))
 );
 
@@ -20751,6 +22125,20 @@ COMMENT ON COLUMN public.farmer_client_scores.signal_modifiers IS 'Breakdown dos
 --
 
 COMMENT ON COLUMN public.farmer_client_scores.last_signal_recalc_at IS 'Última vez que scoring-recalc-client rodou pra esse (customer_user_id, farmer_id).';
+
+
+--
+-- Name: COLUMN farmer_client_scores.itens_com_custo; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.farmer_client_scores.itens_com_custo IS 'Qtd de LINHAS de item do cliente COMPUTAVEIS na margem (private.margem_cliente_agregada.itens_computaveis): custo conhecido E quantidade/preco validos. E a base sobre a qual gross_margin_pct foi apurado. NULL = cobertura nao computada (cliente sem item elegivel, ou RPC de margem falhou no run). 0 = tem itens elegiveis, nenhum computavel. ausente<>zero. Sem DEFAULT de proposito.';
+
+
+--
+-- Name: COLUMN farmer_client_scores.itens_sem_custo; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.farmer_client_scores.itens_sem_custo IS 'Qtd de LINHAS de item NAO computaveis (private.margem_cliente_agregada.itens_ignorados): sem custo conhecido OU com quantidade/preco invalidos — nao e estritamente "sem custo", o nome vem da RPC publica. itens_com_custo + itens_sem_custo = total de linhas elegiveis. ATENCAO ao ler na tela: e contagem de LINHAS, nao de unidades nem de receita, e a margem e ponderada por RECEITA — 3 de 40 linhas pode cobrir 99% do faturamento do cliente, e 39 de 40 pode omitir justamente a linha grande. NULL = nao computado. Sem DEFAULT.';
 
 
 --
@@ -21028,10 +22416,10 @@ CREATE TABLE public.farmer_tactical_plans (
     strategic_objective text DEFAULT 'expansao_mix'::text NOT NULL,
     customer_profile text DEFAULT 'misto'::text,
     top_bundle jsonb DEFAULT '{}'::jsonb,
-    bundle_lie numeric DEFAULT 0,
-    bundle_probability numeric DEFAULT 0,
-    bundle_incremental_margin numeric DEFAULT 0,
-    best_individual_lie numeric DEFAULT 0,
+    bundle_lie numeric,
+    bundle_probability numeric,
+    bundle_incremental_margin numeric,
+    best_individual_lie numeric,
     diagnostic_questions jsonb DEFAULT '[]'::jsonb,
     implication_question text,
     offer_transition text,
@@ -21057,6 +22445,34 @@ CREATE TABLE public.farmer_tactical_plans (
     expected_result jsonb,
     operational_risks jsonb DEFAULT '[]'::jsonb
 );
+
+
+--
+-- Name: COLUMN farmer_tactical_plans.bundle_lie; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.farmer_tactical_plans.bundle_lie IS 'LIE do bundle prioritário no instante da geração. NULL = não havia bundle (ou a origem não estava medida). NUNCA 0 por omissão — 0 é veredito apurado.';
+
+
+--
+-- Name: COLUMN farmer_tactical_plans.bundle_probability; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.farmer_tactical_plans.bundle_probability IS 'Probabilidade do bundle (0-100). NULL = não havia bundle / não medido.';
+
+
+--
+-- Name: COLUMN farmer_tactical_plans.bundle_incremental_margin; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.farmer_tactical_plans.bundle_incremental_margin IS 'Margem incremental do bundle. NULL = não havia bundle / não medido.';
+
+
+--
+-- Name: COLUMN farmer_tactical_plans.best_individual_lie; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.farmer_tactical_plans.best_individual_lie IS 'Melhor LIE individual. Nenhum writer do repo o calcula — sempre NULL até que exista um.';
 
 
 --
@@ -22864,6 +24280,47 @@ CREATE TABLE public.health_score_history (
 
 
 --
+-- Name: ia_uso_evento; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.ia_uso_evento (
+    id bigint NOT NULL,
+    user_id uuid NOT NULL,
+    funcao text NOT NULL,
+    criado_em timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT ia_uso_evento_funcao_nao_vazia CHECK ((btrim(funcao) <> ''::text))
+);
+
+
+--
+-- Name: ia_uso_evento_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.ia_uso_evento ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.ia_uso_evento_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: ia_uso_limite; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.ia_uso_limite (
+    funcao text NOT NULL,
+    limite_hora integer NOT NULL,
+    limite_dia integer NOT NULL,
+    atualizado_em timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT ia_uso_limite_funcao_nao_vazia CHECK ((btrim(funcao) <> ''::text)),
+    CONSTRAINT ia_uso_limite_positivos CHECK (((limite_hora > 0) AND (limite_dia >= limite_hora)))
+);
+
+
+--
 -- Name: impersonation_audit; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -24091,6 +25548,8 @@ CREATE TABLE public.pedido_compra_item (
     economia_estimada_valor numeric,
     estoque_fisico numeric,
     estoque_a_caminho numeric,
+    qtde_sem_teto numeric,
+    teto_cobertura_aplicado boolean DEFAULT false NOT NULL,
     CONSTRAINT pedido_compra_item_modo_promocao_check CHECK ((modo_promocao = ANY (ARRAY['flat'::text, 'forward_buying'::text, NULL::text])))
 );
 
@@ -24114,6 +25573,20 @@ COMMENT ON COLUMN public.pedido_compra_item.estoque_fisico IS 'Snapshot do estoq
 --
 
 COMMENT ON COLUMN public.pedido_compra_item.estoque_a_caminho IS 'Snapshot do pendente de entrada + em trânsito no momento da geração. estoque_fisico + estoque_a_caminho = estoque_atual (efetivo).';
+
+
+--
+-- Name: COLUMN pedido_compra_item.qtde_sem_teto; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.pedido_compra_item.qtde_sem_teto IS 'O que o min-max compraria SEM o teto de cobertura (mesma unidade de qtde_final). NULL = pedido pré-teto.';
+
+
+--
+-- Name: COLUMN pedido_compra_item.teto_cobertura_aplicado; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.pedido_compra_item.teto_cobertura_aplicado IS 'true = qtde_final foi reduzida pelo teto no momento da geração (forward_buying pode elevar depois).';
 
 
 --
@@ -25125,8 +26598,16 @@ CREATE TABLE public.reposicao_motor_run (
     pedidos_gerados integer DEFAULT 0 NOT NULL,
     skus_incluidos integer DEFAULT 0 NOT NULL,
     suprimidos_n integer DEFAULT 0 NOT NULL,
-    criado_em timestamp with time zone DEFAULT now() NOT NULL
+    criado_em timestamp with time zone DEFAULT now() NOT NULL,
+    capados_n integer DEFAULT 0 NOT NULL
 );
+
+
+--
+-- Name: COLUMN reposicao_motor_run.capados_n; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.reposicao_motor_run.capados_n IS 'Linhas reduzidas/retiradas pelo teto de cobertura neste run (reposicao_teto_cobertura_log).';
 
 
 --
@@ -25286,6 +26767,39 @@ CREATE TABLE public.reposicao_po_last_seen (
 --
 
 COMMENT ON TABLE public.reposicao_po_last_seen IS 'Último run VÁLIDO que VIU cada PO (empresa, omie_codigo_pedido → run_id, visto_seq). Base do filtro de candidatos do PR2 (PO cujo run_id <> marcador atual = candidato). Escrito SÓ por reposicao_publicar_run_completo (service_role) — NÃO em purchase_orders_tracking, que é staff-writable (senão staff forjaria "visto" e suprimiria a prova por ID). visto_seq = fencing token de INÍCIO da coleta (guard anti-regressão por ordem lógica, não por publicação nem wall-clock).';
+
+
+--
+-- Name: reposicao_teto_cobertura_log; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.reposicao_teto_cobertura_log (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    run_id uuid NOT NULL,
+    criado_em timestamp with time zone DEFAULT now() NOT NULL,
+    empresa text NOT NULL,
+    sku_codigo_omie text NOT NULL,
+    sku_descricao text,
+    grupo_codigo text,
+    classe_abc text,
+    teto_dias numeric,
+    demanda_diaria numeric,
+    estoque_efetivo numeric,
+    ponto_pedido numeric,
+    estoque_maximo numeric,
+    cap_teto_ancora numeric,
+    qtde_sem_teto numeric,
+    qtde_final numeric,
+    motivo text NOT NULL,
+    CONSTRAINT reposicao_teto_cobertura_log_motivo_check CHECK ((motivo = ANY (ARRAY['capado_zero'::text, 'capado_parcial'::text])))
+);
+
+
+--
+-- Name: TABLE reposicao_teto_cobertura_log; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.reposicao_teto_cobertura_log IS 'Linhas do ciclo normal reduzidas pelo teto de cobertura (unidades-âncora). capado_zero = saiu do pedido.';
 
 
 --
@@ -26324,8 +27838,16 @@ CREATE TABLE public.tint_formula_itens (
     corante_id uuid NOT NULL,
     ordem integer NOT NULL,
     qtd_ml numeric NOT NULL,
-    created_at timestamp with time zone DEFAULT now()
+    created_at timestamp with time zone DEFAULT now(),
+    CONSTRAINT tint_formula_itens_qtd_ml_finita CHECK (((qtd_ml > (0)::numeric) AND (qtd_ml <> 'NaN'::numeric) AND (qtd_ml < 'Infinity'::numeric)))
 );
+
+
+--
+-- Name: CONSTRAINT tint_formula_itens_qtd_ml_finita ON tint_formula_itens; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON CONSTRAINT tint_formula_itens_qtd_ml_finita ON public.tint_formula_itens IS 'Dose do corante: finita e positiva. Os 3 lados (>0, <>NaN, <Infinity) porque em numeric NaN > 0 é TRUE — guard de sinal sozinho aceita NaN. Ver docs/agent/money-path.md §2.';
 
 
 --
@@ -28865,6 +30387,74 @@ CREATE VIEW public.v_sku_candidatos_primeira_compra WITH (security_invoker='on')
 
 
 --
+-- Name: v_sku_classe_sb; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_sku_classe_sb WITH (security_invoker='on') AS
+ WITH vendas AS (
+         SELECT v_venda_items_history_efetivo.empresa,
+            v_venda_items_history_efetivo.sku_codigo_omie,
+            v_venda_items_history_efetivo.data_emissao AS dia,
+            sum(v_venda_items_history_efetivo.quantidade) AS q
+           FROM public.v_venda_items_history_efetivo
+          WHERE (v_venda_items_history_efetivo.quantidade > (0)::numeric)
+          GROUP BY v_venda_items_history_efetivo.empresa, v_venda_items_history_efetivo.sku_codigo_omie, v_venda_items_history_efetivo.data_emissao
+        ), stats AS (
+         SELECT vendas.empresa,
+            vendas.sku_codigo_omie,
+            count(*) AS n_dias_venda,
+            (((max(vendas.dia) - min(vendas.dia)))::numeric / (NULLIF((count(*) - 1), 0))::numeric) AS adi,
+                CASE
+                    WHEN (avg(vendas.q) > (0)::numeric) THEN power((stddev_samp(vendas.q) / avg(vendas.q)), (2)::numeric)
+                    ELSE NULL::numeric
+                END AS cv2
+           FROM vendas
+          GROUP BY vendas.empresa, vendas.sku_codigo_omie
+         HAVING (count(*) >= 3)
+        )
+ SELECT empresa,
+    sku_codigo_omie,
+    n_dias_venda,
+    round(adi, 2) AS adi,
+    round(cv2, 2) AS cv2,
+        CASE
+            WHEN ((adi < 1.32) AND (cv2 < 0.49)) THEN 'smooth'::text
+            WHEN ((adi >= 1.32) AND (cv2 < 0.49)) THEN 'intermittent'::text
+            WHEN ((adi < 1.32) AND (cv2 >= 0.49)) THEN 'erratic'::text
+            ELSE 'lumpy'::text
+        END AS quadrante
+   FROM stats
+  WHERE ((adi IS NOT NULL) AND (cv2 IS NOT NULL));
+
+
+--
+-- Name: VIEW v_sku_classe_sb; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON VIEW public.v_sku_classe_sb IS 'Quadrantes Syntetos-Boylan (ADI x CV2, cutoffs 1.32/0.49) por SKU — ADVISORY, nao alimenta o motor.';
+
+
+--
+-- Name: v_sku_ultima_venda; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_sku_ultima_venda WITH (security_invoker='on') AS
+ SELECT empresa,
+    sku_codigo_omie,
+    max(data_emissao) AS ultima_venda_data,
+    count(*) AS vendas_registradas
+   FROM public.v_venda_items_history_efetivo
+  GROUP BY empresa, sku_codigo_omie;
+
+
+--
+-- Name: VIEW v_sku_ultima_venda; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON VIEW public.v_sku_ultima_venda IS 'Última venda ALL-TIME por SKU (fonte: v_venda_items_history_efetivo — demanda consolidada N→1). Diferente da v_sku_demanda_estatisticas (janela 90d). Consumida pelo painel de baixo giro (giro morto).';
+
+
+--
 -- Name: v_sugestao_negociacao_ativa; Type: VIEW; Schema: public; Owner: -
 --
 
@@ -29231,6 +30821,33 @@ CREATE TABLE public.venda_excecao_credito (
     CONSTRAINT venda_excecao_credito_motivo_check CHECK ((btrim(motivo) <> ''::text)),
     CONSTRAINT venda_excecao_validade_max CHECK ((valido_ate <= (created_at + '30 days'::interval)))
 );
+
+
+--
+-- Name: venda_perdida_log; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.venda_perdida_log (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    criado_em timestamp with time zone DEFAULT now() NOT NULL,
+    criado_por uuid,
+    empresa text DEFAULT 'OBEN'::text NOT NULL,
+    sku_codigo_omie text NOT NULL,
+    sku_descricao text,
+    quantidade numeric NOT NULL,
+    cliente_nome text,
+    motivo text DEFAULT 'sem_estoque'::text NOT NULL,
+    observacao text,
+    CONSTRAINT venda_perdida_log_motivo_check CHECK ((motivo = ANY (ARRAY['sem_estoque'::text, 'preco'::text, 'prazo'::text, 'outro'::text]))),
+    CONSTRAINT venda_perdida_log_quantidade_check CHECK ((quantidade > (0)::numeric))
+);
+
+
+--
+-- Name: TABLE venda_perdida_log; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.venda_perdida_log IS 'Demanda que NAO virou venda (registro manual de staff). Serie de censura p/ analises futuras de servico; sem consumo automatico no motor.';
 
 
 --
@@ -29929,6 +31546,14 @@ ALTER TABLE ONLY public.ai_decisions
 
 
 --
+-- Name: atp_decisoes atp_decisoes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.atp_decisoes
+    ADD CONSTRAINT atp_decisoes_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: cache_lotes cache_lotes_cache_key_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -30390,6 +32015,14 @@ ALTER TABLE ONLY public.des_trimestre_snapshot
 
 ALTER TABLE ONLY public.empresa_configuracao_custos
     ADD CONSTRAINT empresa_configuracao_custos_pkey PRIMARY KEY (empresa);
+
+
+--
+-- Name: estoque_reservas estoque_reservas_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.estoque_reservas
+    ADD CONSTRAINT estoque_reservas_pkey PRIMARY KEY (id);
 
 
 --
@@ -31278,6 +32911,22 @@ ALTER TABLE ONLY public.gov_iniciativas
 
 ALTER TABLE ONLY public.health_score_history
     ADD CONSTRAINT health_score_history_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: ia_uso_evento ia_uso_evento_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.ia_uso_evento
+    ADD CONSTRAINT ia_uso_evento_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: ia_uso_limite ia_uso_limite_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.ia_uso_limite
+    ADD CONSTRAINT ia_uso_limite_pkey PRIMARY KEY (funcao);
 
 
 --
@@ -32214,6 +33863,14 @@ ALTER TABLE ONLY public.reposicao_pedidos_compra_run
 
 ALTER TABLE ONLY public.reposicao_po_last_seen
     ADD CONSTRAINT reposicao_po_last_seen_pkey PRIMARY KEY (empresa, omie_codigo_pedido);
+
+
+--
+-- Name: reposicao_teto_cobertura_log reposicao_teto_cobertura_log_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.reposicao_teto_cobertura_log
+    ADD CONSTRAINT reposicao_teto_cobertura_log_pkey PRIMARY KEY (id);
 
 
 --
@@ -33233,6 +34890,14 @@ ALTER TABLE ONLY public.venda_items_history
 
 
 --
+-- Name: venda_perdida_log venda_perdida_log_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.venda_perdida_log
+    ADD CONSTRAINT venda_perdida_log_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: vendas_sync_cursor vendas_sync_cursor_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -33435,6 +35100,13 @@ CREATE INDEX company_cnpjs_normalized_idx ON public.company_cnpjs USING btree (c
 
 
 --
+-- Name: estoque_reservas_checkout_item_ativa_uq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX estoque_reservas_checkout_item_ativa_uq ON public.estoque_reservas USING btree (checkout_id, pool, omie_codigo_produto) WHERE (status = 'ativa'::text);
+
+
+--
 -- Name: fin_alertas_company_criado_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -33575,6 +35247,13 @@ CREATE UNIQUE INDEX fornecedor_mapeamento_extracao_alias_unique ON public.fornec
 
 
 --
+-- Name: ia_uso_evento_janela_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX ia_uso_evento_janela_idx ON public.ia_uso_evento USING btree (user_id, funcao, criado_em DESC);
+
+
+--
 -- Name: idx_abcxyz_classe; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -33628,6 +35307,20 @@ CREATE INDEX idx_alerta_pendente ON public.fornecedor_alerta USING btree (empres
 --
 
 CREATE INDEX idx_alerta_por_tipo ON public.fornecedor_alerta USING btree (empresa, tipo, criado_em DESC);
+
+
+--
+-- Name: idx_atp_decisoes_created; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_atp_decisoes_created ON public.atp_decisoes USING btree (created_at DESC);
+
+
+--
+-- Name: idx_atp_decisoes_pedido; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_atp_decisoes_pedido ON public.atp_decisoes USING btree (sales_order_id, created_at DESC);
 
 
 --
@@ -33887,6 +35580,27 @@ CREATE INDEX idx_dashboard_visits_user_recent ON public.dashboard_visits USING b
 --
 
 CREATE INDEX idx_estoque_nao_confirmado_log_empresa_data ON public.reposicao_estoque_nao_confirmado_log USING btree (empresa, criado_em DESC);
+
+
+--
+-- Name: idx_estoque_reservas_ativa; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_estoque_reservas_ativa ON public.estoque_reservas USING btree (pool, omie_codigo_produto) WHERE (status = 'ativa'::text);
+
+
+--
+-- Name: idx_estoque_reservas_checkout; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_estoque_reservas_checkout ON public.estoque_reservas USING btree (checkout_id);
+
+
+--
+-- Name: idx_estoque_reservas_expira; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_estoque_reservas_expira ON public.estoque_reservas USING btree (expira_em) WHERE (status = 'ativa'::text);
 
 
 --
@@ -35395,6 +37109,20 @@ CREATE INDEX idx_tarefas_customer_aberta ON public.tarefas USING btree (customer
 
 
 --
+-- Name: idx_teto_cobertura_log_emp_data; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_teto_cobertura_log_emp_data ON public.reposicao_teto_cobertura_log USING btree (empresa, criado_em DESC);
+
+
+--
+-- Name: idx_teto_cobertura_log_run; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_teto_cobertura_log_run ON public.reposicao_teto_cobertura_log USING btree (run_id);
+
+
+--
 -- Name: idx_tint_formulas_ativas; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -35609,6 +37337,20 @@ CREATE INDEX idx_venda_empresa_data ON public.venda_items_history USING btree (e
 --
 
 CREATE INDEX idx_venda_excecao_pedido ON public.venda_excecao_credito USING btree (sales_order_id, valido_ate);
+
+
+--
+-- Name: idx_venda_perdida_emp_data; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_venda_perdida_emp_data ON public.venda_perdida_log USING btree (empresa, criado_em DESC);
+
+
+--
+-- Name: idx_venda_perdida_sku; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_venda_perdida_sku ON public.venda_perdida_log USING btree (empresa, sku_codigo_omie);
 
 
 --
@@ -35927,6 +37669,13 @@ CREATE UNIQUE INDEX uq_reposicao_param_limbo_log_dia ON public.reposicao_param_l
 
 
 --
+-- Name: uq_so_whatsapp_proposta_dedupe; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_so_whatsapp_proposta_dedupe ON public.sales_orders USING btree (whatsapp_proposta_dedupe) WHERE (whatsapp_proposta_dedupe IS NOT NULL);
+
+
+--
 -- Name: uq_tarefa_template_assignee_dia; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -35952,6 +37701,20 @@ CREATE UNIQUE INDEX uq_vag_pendente_cliente_vendedor_data ON public.visitas_agen
 --
 
 CREATE UNIQUE INDEX uq_vag_route_visit_id ON public.visitas_agendadas USING btree (route_visit_id) WHERE (route_visit_id IS NOT NULL);
+
+
+--
+-- Name: ux_farmer_tactical_plans_dia_operacional; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX ux_farmer_tactical_plans_dia_operacional ON public.farmer_tactical_plans USING btree (farmer_id, customer_user_id, ((((created_at AT TIME ZONE 'UTC'::text) - '03:00:00'::interval))::date), COALESCE(plan_type, 'essencial'::text)) WHERE ((status = 'gerado'::text) AND ((((created_at AT TIME ZONE 'UTC'::text) - '03:00:00'::interval))::date >= '2026-07-22'::date));
+
+
+--
+-- Name: INDEX ux_farmer_tactical_plans_dia_operacional; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON INDEX public.ux_farmer_tactical_plans_dia_operacional IS 'Idempotência do plano tático por dia operacional BRT (UTC-3 fixo, paridade com _shared/dia-operacional.ts). Recorte >= 2026-07-22 preserva as 30 duplicatas do incidente de 2026-07-21 sem abrir mão da invariante daqui em diante.';
 
 
 --
@@ -36846,6 +38609,14 @@ ALTER TABLE ONLY public.ai_decision_audit_log
 
 
 --
+-- Name: atp_decisoes atp_decisoes_sales_order_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.atp_decisoes
+    ADD CONSTRAINT atp_decisoes_sales_order_id_fkey FOREIGN KEY (sales_order_id) REFERENCES public.sales_orders(id) ON DELETE SET NULL;
+
+
+--
 -- Name: call_log call_log_farmer_call_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -37075,6 +38846,22 @@ ALTER TABLE ONLY public.des_criterio_qualitativo
 
 ALTER TABLE ONLY public.des_faixa_quantitativa
     ADD CONSTRAINT des_faixa_quantitativa_contrato_versao_id_fkey FOREIGN KEY (contrato_versao_id) REFERENCES public.des_contrato_versao(id);
+
+
+--
+-- Name: estoque_reservas estoque_reservas_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.estoque_reservas
+    ADD CONSTRAINT estoque_reservas_created_by_fkey FOREIGN KEY (created_by) REFERENCES auth.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: estoque_reservas estoque_reservas_sales_order_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.estoque_reservas
+    ADD CONSTRAINT estoque_reservas_sales_order_id_fkey FOREIGN KEY (sales_order_id) REFERENCES public.sales_orders(id) ON DELETE SET NULL;
 
 
 --
@@ -37363,6 +39150,14 @@ ALTER TABLE ONLY public.gov_iniciativas
 
 ALTER TABLE ONLY public.gov_iniciativas
     ADD CONSTRAINT gov_iniciativas_dono_id_fkey FOREIGN KEY (dono_id) REFERENCES auth.users(id);
+
+
+--
+-- Name: ia_uso_evento ia_uso_evento_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.ia_uso_evento
+    ADD CONSTRAINT ia_uso_evento_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE;
 
 
 --
@@ -40316,10 +42111,44 @@ ALTER TABLE public.ai_decision_audit_log ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.ai_decisions ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: atp_decisoes; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.atp_decisoes ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: atp_decisoes atp_decisoes_select_staff; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY atp_decisoes_select_staff ON public.atp_decisoes FOR SELECT USING (( SELECT private.cap_estoque_reservar(( SELECT auth.uid() AS uid)) AS cap_estoque_reservar));
+
+
+--
 -- Name: cache_lotes; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.cache_lotes ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: sync_state calculate_scores_lease_no_delete; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY calculate_scores_lease_no_delete ON public.sync_state AS RESTRICTIVE FOR DELETE USING ((entity_type <> 'calculate_scores'::text));
+
+
+--
+-- Name: sync_state calculate_scores_lease_no_insert; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY calculate_scores_lease_no_insert ON public.sync_state AS RESTRICTIVE FOR INSERT WITH CHECK ((entity_type <> 'calculate_scores'::text));
+
+
+--
+-- Name: sync_state calculate_scores_lease_no_update; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY calculate_scores_lease_no_update ON public.sync_state AS RESTRICTIVE FOR UPDATE USING ((entity_type <> 'calculate_scores'::text)) WITH CHECK ((entity_type <> 'calculate_scores'::text));
+
 
 --
 -- Name: calendario_feriados; Type: ROW SECURITY; Schema: public; Owner: -
@@ -40881,6 +42710,26 @@ CREATE POLICY estoque_nao_confirmado_log_ins ON public.reposicao_estoque_nao_con
 --
 
 CREATE POLICY estoque_nao_confirmado_log_sel ON public.reposicao_estoque_nao_confirmado_log FOR SELECT TO authenticated USING (( SELECT private.cap_compras_ler(( SELECT auth.uid() AS uid)) AS cap_compras_ler));
+
+
+--
+-- Name: estoque_reservas; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.estoque_reservas ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: estoque_reservas estoque_reservas_select_staff; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY estoque_reservas_select_staff ON public.estoque_reservas FOR SELECT USING (( SELECT private.cap_estoque_reservar(( SELECT auth.uid() AS uid)) AS cap_estoque_reservar));
+
+
+--
+-- Name: estoque_reservas estoque_reservas_service_select; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY estoque_reservas_service_select ON public.estoque_reservas FOR SELECT USING ((( SELECT auth.role() AS role) = 'service_role'::text));
 
 
 --
@@ -42315,6 +44164,18 @@ CREATE POLICY gov_iniciativas_update_master_ou_dono ON public.gov_iniciativas FO
 ALTER TABLE public.health_score_history ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: ia_uso_evento; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.ia_uso_evento ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: ia_uso_limite; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.ia_uso_limite ENABLE ROW LEVEL SECURITY;
+
+--
 -- Name: impersonation_audit; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
@@ -43503,6 +45364,12 @@ ALTER TABLE public.reposicao_po_last_seen ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY reposicao_po_last_seen_sel ON public.reposicao_po_last_seen FOR SELECT TO authenticated USING (( SELECT private.cap_compras_ler(( SELECT auth.uid() AS uid)) AS cap_compras_ler));
 
+
+--
+-- Name: reposicao_teto_cobertura_log; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.reposicao_teto_cobertura_log ENABLE ROW LEVEL SECURITY;
 
 --
 -- Name: reposition_parameters; Type: ROW SECURITY; Schema: public; Owner: -
@@ -44808,6 +46675,20 @@ CREATE POLICY tcand_update ON public.tarefa_satisfacao_candidatos FOR UPDATE TO 
 
 
 --
+-- Name: reposicao_teto_cobertura_log teto_cobertura_log_ins; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY teto_cobertura_log_ins ON public.reposicao_teto_cobertura_log FOR INSERT TO authenticated WITH CHECK (( SELECT private.cap_compras_ler(( SELECT auth.uid() AS uid)) AS cap_compras_ler));
+
+
+--
+-- Name: reposicao_teto_cobertura_log teto_cobertura_log_sel; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY teto_cobertura_log_sel ON public.reposicao_teto_cobertura_log FOR SELECT TO authenticated USING (( SELECT private.cap_compras_ler(( SELECT auth.uid() AS uid)) AS cap_compras_ler));
+
+
+--
 -- Name: tarefa_eventos tevt_insert; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -45223,6 +47104,26 @@ CREATE POLICY venda_excecao_service_all ON public.venda_excecao_credito USING ((
 ALTER TABLE public.venda_items_history ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: venda_perdida_log venda_perdida_ins; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY venda_perdida_ins ON public.venda_perdida_log FOR INSERT TO authenticated WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: venda_perdida_log; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.venda_perdida_log ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: venda_perdida_log venda_perdida_sel; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY venda_perdida_sel ON public.venda_perdida_log FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
 -- Name: vendas_sync_cursor; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
@@ -45380,5 +47281,5 @@ CREATE POLICY wts_staff_read ON public.whatsapp_template_sends FOR SELECT TO aut
 -- PostgreSQL database dump complete
 --
 
-\unrestrict i8MF1XYXbImkgKe6f8PipnLWLTP4UHGHO5dhoBsEWSXM0jmwpq5cEj8AZwoo8F1
+\unrestrict QtOdGn7zeAkRw8EWA4bU1xECHIoo4InhVuDzbKGXDwLRsiArEVp8XhnMgdPeKBe
 

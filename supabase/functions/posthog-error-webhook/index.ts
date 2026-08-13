@@ -1,7 +1,7 @@
 // posthog-error-webhook: recebe alerta "issue created/reopened" do PostHog Error Tracking,
 // valida segredo, e delega à RPC enfileirar_erro_app (dedupe + anti-tempestade + insert atômico).
 // Helpers ESPELHADOS verbatim de src/lib/posthog-error/* (Deno não importa de src).
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0';
+import { createClient } from 'npm:@supabase/supabase-js@2';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;

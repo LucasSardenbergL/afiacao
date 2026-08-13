@@ -21,11 +21,15 @@ export function margemConhecida(raw: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-/** R$/h estimado por ligação. Margem desconhecida → `null` ("não sei"), nunca 0. */
-export function profitPerHora(rev: number, avg: number, marginPct: unknown): number | null {
+/** R$/h estimado por ligação. Margem desconhecida → `null` ("não sei"), nunca 0.
+ *  `rev` ausente (revenue_potential sem writer) cai pro avgSpend — mesma régua de `rev` 0
+ *  CONHECIDO, mas com guard EXPLÍCITO: `null > 0` é `false` em JS, então o desfecho aritmético
+ *  já era certo por acidente; o guard troca a coincidência por decisão declarada (mesmo padrão
+ *  de src/hooks/useTacticalPlan.ts:411 — `revPotential != null && revPotential > 0`). */
+export function profitPerHora(rev: number | null, avg: number, marginPct: unknown): number | null {
   const margem = margemConhecida(marginPct);
   if (margem == null) return null;
-  const baseRev = rev > 0 ? rev : avg;
+  const baseRev = rev != null && rev > 0 ? rev : avg;
   // 10% do GMV como proxy de margem operacional; visita ~15 min → 4 visitas/h.
   return (baseRev * (margem / 100) * 0.1) / (AVG_CALL_MINUTES / 60);
 }
@@ -33,30 +37,43 @@ export function profitPerHora(rev: number, avg: number, marginPct: unknown): num
 export interface LinhaSelecao {
   customer: string;
   priority: number;
-  rev: number;
+  /** null = revenue_potential sem writer ("não medido"). Ver profitPerHora para o guard. */
+  rev: number | null;
   avg: number;
   marginPct: number | null;
 }
 
-/** Top-N por priority desc DENTRE os que passam no gate de R$/h (filtra ANTES de cortar).
+/** Top-N por priority desc DENTRE os que passam no gate de R$/h e ainda NÃO estão na fila
+ *  (filtra ANTES de cortar).
  *
  *  Margem desconhecida sai em `semMargem`, não em `selecionados`: sem margem o gate não é
  *  decidível, e reprovar por omissão confundiria "não sei" com "cliente ruim". O chamador
  *  DEVE reportar `semMargem` — corte silencioso leria como "cobri todo mundo" sem ter
- *  coberto (money-path: no silent caps). */
+ *  coberto (money-path: no silent caps).
+ *
+ *  `jaNaFila` (clientes com plano ABERTO) é excluído AQUI, antes do corte, e a ordem é o ponto
+ *  todo: com topN pequeno, filtrar DEPOIS congelaria a fila — o batch escolheria todo dia os
+ *  mesmos topN de maior priority, a idempotência os pularia, e o cliente topN+1 nunca entraria.
+ *
+ *  `naFila` e `semMargem` PODEM SE SOBREPOR (recortes independentes, não partição): `semMargem`
+ *  é contado sobre TODOS os scores porque mede a cegueira da carteira — excluir quem está na
+ *  fila faria a cegueira "melhorar" só por a fila ter enchido. */
 export function selecionarParaPregeracao(
   scores: LinhaSelecao[],
   topN: number,
-): { selecionados: LinhaSelecao[]; semMargem: LinhaSelecao[] } {
+  jaNaFila: ReadonlySet<string> = new Set(),
+): { selecionados: LinhaSelecao[]; semMargem: LinhaSelecao[]; naFila: LinhaSelecao[] } {
   const ordenados = [...scores].sort((a, b) => b.priority - a.priority);
   const semMargem = ordenados.filter((s) => margemConhecida(s.marginPct) == null);
+  const naFila = ordenados.filter((s) => jaNaFila.has(s.customer));
   const selecionados = ordenados
     .filter((s) => {
+      if (jaNaFila.has(s.customer)) return false;
       const pph = profitPerHora(s.rev, s.avg, s.marginPct);
       return pph != null && pph >= PROFIT_PER_HOUR_THRESHOLD;
     })
     .slice(0, topN);
-  return { selecionados, semMargem };
+  return { selecionados, semMargem, naFila };
 }
 
 /** Margem média dos PARES da carteira, contando SÓ quem tem margem conhecida.

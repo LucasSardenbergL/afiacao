@@ -1,6 +1,19 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
-import { leaseIndisponivel } from "../_shared/lease.ts";
+// `leaseIndisponivel` saiu do import: deixou de ser chamado aqui e passou a ser consultado DENTRO
+// de `decidirClaim`, que decide o passo inteiro do claim. Mantê-lo importado viraria símbolo órfão.
+import { decidirClaim, esperaClaimMs } from "../_shared/lease.ts";
+import { fetchAll } from "../_shared/paginate.ts";
+// Renormalização testável: componente sem produtor sai do numerador E do denominador. Mora em
+// `_shared` (e não inline aqui) porque este arquivo importa `npm:@supabase/supabase-js` e
+// `test:edges` roda com `--no-remote` — inline, a aritmética que decide os dois scores seria
+// estruturalmente inalcançável por teste de comportamento. Ver `_shared/score-ponderado_test.ts`.
+import {
+  maximoMedido,
+  mediaPonderadaRenormalizada,
+  normalizarPorMaximo,
+  valorMedido,
+} from "../_shared/score-ponderado.ts";
 
 const ALLOWED_ORIGIN = Deno.env.get("ALLOWED_ORIGIN") || "*";
 
@@ -120,8 +133,13 @@ interface HealthHistoryRecord {
   rf_score: number;
   m_score: number | null;   // null = margem desconhecida neste run (PR 3-zero); nunca 0 por default
   g_score: number;
-  x_score: number;
-  s_score: number;
+  // x_score/s_score: mesma disciplina do m_score. NENHUM writer os calcula — 6.633/6.633 NULL em
+  // `farmer_client_scores` (psql-ro, 2026-08-07) —, e esta edge os relia e regravava como 0: as
+  // 673.790 linhas de `health_score_history` têm x=0 e s=0, ZERO nulos. A coluna é nullable com
+  // DEFAULT 0, então o null tem de ir EXPLÍCITO no payload: omitir a chave faz o Postgres fabricar
+  // o mesmo 0 (money-path.md §2 — o par consumidor E produtor).
+  x_score: number | null;
+  s_score: number | null;
   churn_risk: number;
 }
 
@@ -129,7 +147,11 @@ interface PriorityLogRecord {
   customer_user_id: string;
   farmer_id: string;
   priority_score: number;
-  margin_potential_component: number;
+  // null = `revenue_potential` não medido, logo o componente NÃO participou do priority_score (o
+  // peso foi renormalizado). Gravar 0 aqui afirmaria "potencial apurado, deu zero" — e é o que as
+  // 673.790 linhas do log dizem hoje, sem nunca ter havido produtor. Coluna nullable com DEFAULT 0
+  // → null EXPLÍCITO, senão o Postgres refabrica o zero.
+  margin_potential_component: number | null;
   churn_risk_component: number;
   repurchase_component: number;
   goal_proximity_component: number;
@@ -356,34 +378,60 @@ Deno.serve(async (req) => {
   };
 
   try {
-    const { data: claimed, error: claimErr } = await supabase.rpc('claim_calculate_scores', { p_run_id: runId });
-    if (claimErr) {
-      // ORDEM DE DEPLOY (Lovable publica edge e migration SEPARADAMENTE, em qualquer ordem): se a
-      // edge nova subir ANTES da migration, a função não existe (42883/PGRST202). Tratar isso como
-      // fatal transformaria a janela entre as duas publicações em CRON QUEBRADO — a armadilha que a
-      // migration 20260723160000 documenta. Nesse caso ÚNICO seguimos SEM lease: é exatamente o
-      // comportamento de hoje (nada piora), e o aviso vai no log E na resposta — fail-open
-      // DECLARADO, nunca silencioso. Qualquer OUTRO erro é fail-closed: o lease existe e está
-      // quebrado, e aí não dá para confiar na exclusão.
-      // leaseIndisponivel olha SÓ o código do erro (42883/PGRST202) — zero heurística de mensagem.
-      // Erro de rede, timeout, permissão, tabela ausente: tudo cai aqui e LANÇA (fail-closed).
-      if (!leaseIndisponivel(claimErr)) {
-        throw new Error(`claim_calculate_scores falhou: ${claimErr.message}`);
+    // Claim COM RETRY DE TRANSPORTE. `decidirClaim` (puro, testado em _shared/lease_test.ts) decide
+    // o passo; aqui só executamos o efeito.
+    //
+    // O retry cobre UM caso: o banco commitou o claim e a resposta HTTP se perdeu. Retentar com o
+    // MESMO runId aciona a cláusula idempotente da migration — que sem isto nunca era exercida — e
+    // evita que o lease fique preso 15min por uma oscilação de rede.
+    //
+    // NÃO cobre lease ocupado: ali a decisão é 'pular' na primeira resposta. Ver o bloco em
+    // `decidirClaim` — esperar exigiria >30s (o run mediu ~29s em prod) e comeria a margem do
+    // wall-clock sem fechar o furo de frescor, que segue declarado.
+    //
+    // ORDEM DE DEPLOY: se a edge nova subir ANTES da migration, a função não existe (42883/PGRST202)
+    // e `decidirClaim` devolve 'seguir_sem_lease' SEM gastar retry — fail-open DECLARADO no log e na
+    // resposta, nunca silencioso. Erro PERMANENTE lança na hora; só o transitório retenta.
+    const MAX_TENTATIVAS_CLAIM = 2;
+    let pular = false;
+    for (let tentativa = 1; tentativa <= MAX_TENTATIVAS_CLAIM; tentativa++) {
+      const { data: claimed, error: claimErr } = await supabase.rpc('claim_calculate_scores', { p_run_id: runId });
+      const decisao = decidirClaim({ claimed, erro: claimErr }, tentativa, MAX_TENTATIVAS_CLAIM);
+
+      if (decisao === 'adquirido') { leaseAdquirido = true; break; }
+
+      if (decisao === 'seguir_sem_lease') {
+        leaseAviso = 'lease indisponivel (migration 20260728120001 ainda nao aplicada) — run SEM exclusao mutua';
+        console.warn(`[calculate-scores] ${leaseAviso}`);
+        break;
       }
-      leaseAviso = 'lease indisponivel (migration 20260728120001 ainda nao aplicada) — run SEM exclusao mutua';
-      console.warn(`[calculate-scores] ${leaseAviso}`);
-    } else if (claimed !== true) {
-      // Já há run em andamento. PULA — idempotente: o próximo cron converge. NÃO é falha (200), mas
-      // a resposta diz explicitamente que nada foi recalculado, p/ o chamador (e o botão manual da
+
+      if (decisao === 'lancar') {
+        throw new Error(`claim_calculate_scores falhou apos ${tentativa} tentativa(s): ${claimErr?.message}`);
+      }
+
+      if (decisao === 'pular') { pular = true; break; }
+
+      // 'esperar_e_retentar' — só transporte incerto chega aqui, e com o MESMO runId de propósito
+      // (é o que a cláusula idempotente da migration reconhece).
+      const espera = esperaClaimMs(tentativa);
+      console.warn(
+        `[calculate-scores] claim ${tentativa}/${MAX_TENTATIVAS_CLAIM} com transporte incerto ` +
+        `(${claimErr?.message}) — nova tentativa em ${espera}ms com o MESMO run_id.`,
+      );
+      await new Promise((r) => setTimeout(r, espera));
+    }
+
+    if (pular) {
+      // Outro run tem o lease. PULA — idempotente: o próximo cron converge. NÃO é falha (200), mas a
+      // resposta diz explicitamente que nada foi recalculado, p/ o chamador (e o botão manual da
       // staff) não ler "sucesso" como "recalculou".
-      console.warn(`[calculate-scores] lease ocupado — outro run em andamento; pulando (run_id=${runId}).`);
+      console.warn(`[calculate-scores] lease ocupado por outro run; pulando (run_id=${runId}).`);
       return new Response(JSON.stringify({
         skipped: true,
         reason: 'lease_ocupado',
         message: 'Recálculo já em andamento — este disparo foi ignorado. Os scores não foram alterados.',
       }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
-    } else {
-      leaseAdquirido = true;
     }
 
     // ANTI-DRIFT (carteira-Omie Opção A): farmer_id do score = carteira_assignments.owner_user_id.
@@ -440,6 +488,19 @@ Deno.serve(async (req) => {
       goal_proximity: (config['ps_weight_goal_proximity'] ?? 15) / 100,
     };
 
+    // O priority score passou a DIVIDIR pela soma dos pesos disponíveis, pelo mesmo motivo que o
+    // health já dividia: `revenue_potential` não tem produtor e o peso dele (35%, o MAIOR dos
+    // quatro) precisa ser redistribuído em vez de contribuir 0. Com soma 1,0 a divisão é identidade
+    // para quem TEM o componente; com soma diferente, reescala todo mundo — comportamento correto
+    // (um score 0-100 deve usar 100% do peso disponível), mas silencioso demais para não deixar rastro.
+    const somaPesosPs = ps_w.margin_potential + ps_w.churn_risk + ps_w.repurchase + ps_w.goal_proximity;
+    if (Math.abs(somaPesosPs - 1) > 0.001) {
+      console.warn(
+        `[calculate-scores] pesos do priority score somam ${(somaPesosPs * 100).toFixed(1)}, não 100 — ` +
+        `os scores serão normalizados por essa soma. Confira farmer_algorithm_config.ps_weight_*.`,
+      );
+    }
+
     // Recência: teto (dias até zerar) configurável, guardrail [30,999] (achado /codex: T>999
     // ressuscitaria o sentinela 999). Default 180. Ajustável sem redeploy via farmer_algorithm_config.
     const recencyCapDays = clampRecencyCapDays(config['hs_recency_cap_days']);
@@ -447,32 +508,22 @@ Deno.serve(async (req) => {
     // sales_history_status: limiar (dias) ativo vs stale — config próprio, desacoplado do cap de recência.
     const salesActiveDays = config['sales_active_threshold_days'] ?? 180;
 
-    // Get all client scores with pagination
-    let clients: FarmerClientScoreRow[] = [];
-    {
-      let pg = 0;
-      const sz = 1000;
-      let more = true;
-      while (more) {
-        // `.order('id')` NÃO é decorativo: sem ORDER BY explícito o Postgres não garante ordem entre
-        // páginas, então o fatiamento por .range() pode REPETIR uma linha e OMITIR outra — e a
-        // omitida sai do recompute inteiro (fica com o score do dia anterior, sem nenhum sinal). É a
-        // mesma exigência que o comentário de carregarRpcPaginada já documenta para as RPCs e que
-        // ficou de fora aqui. `id` é a PK: ordem TOTAL, sem empate a desempatar. (Achado /codex.)
-        const { data: batch, error: bErr } = await supabase
-          .from('farmer_client_scores')
-          .select('*')
-          .order('id', { ascending: true })
-          .range(pg * sz, (pg + 1) * sz - 1);
-        if (bErr) throw bErr;
-        if (!batch || batch.length === 0) { more = false; }
-        else {
-          clients.push(...(batch as unknown as FarmerClientScoreRow[]));
-          if (batch.length < sz) more = false;
-          pg++;
-        }
-      }
-    }
+    // Snapshot inicial dos scores. As DUAS metades da classe de paginação artesanal:
+    //  - fetchAll LANÇA em error E em `data == null` sem error. O `!batch → fim` de antes lia
+    //    página com falha como fim da lista e o compute rodava sobre snapshot PARCIAL — cliente
+    //    fora do recompute é indistinguível de cliente que não existe.
+    //  - `.order('id')` NÃO é decorativo: sem ORDER BY explícito o Postgres não garante ordem
+    //    entre páginas, então o fatiamento por .range() pode REPETIR uma linha e OMITIR outra — e
+    //    a omitida sai do recompute inteiro (fica com o score do dia anterior, sem nenhum sinal).
+    //    `id` é a PK: ordem TOTAL, sem empate a desempatar. (Achado /codex do #1578.)
+    let clients: FarmerClientScoreRow[] = await fetchAll<FarmerClientScoreRow>(
+      (from, to) => supabase
+        .from('farmer_client_scores')
+        .select('*')
+        .order('id', { ascending: true })
+        .range(from, to),
+      'farmer_client_scores (snapshot inicial)',
+    );
 
     // === RECÊNCIA-VIVA: snapshot de vendas (RPC) carregado TODO run ===
     // É a FONTE do refresh de recência/gasto/diversidade de TODA linha (antes só rodava no seed).
@@ -535,18 +586,17 @@ Deno.serve(async (req) => {
       // réplica) fazia `missing = missingRaw` e RESSUSCITAVA os fornecedores excluídos no seed
       // (FAIL-OPEN, exposto pelo smoke 2026-06-20: semeou os 509 flagged). A RPC lê as 3 tabelas no
       // MESMO snapshot e só retorna quem é SEGURO semear (fail-closed por construção). FAIL-CLOSED:
-      // erro → lança (não semeia às cegas; idempotente, o próximo run converge). Paginada com .range
-      // (ORDER BY user_id estável na RPC — §5 do CLAUDE.md). Espelha src/lib/scoring/seedTargets.ts.
-      const missing: Array<{ user_id: string }> = [];
-      for (let sp = 0; ; sp++) {
-        const { data: sPage, error: sErr } = await supabase
+      // erro OU data:null sem error → fetchAll LANÇA (não semeia às cegas; o `?? []` de antes lia
+      // resposta malformada como fim e semearia com lista PARCIAL; idempotente, o próximo run
+      // converge). .order(user_id) explícito no transporte, além do ORDER BY estável da RPC
+      // (§5 do CLAUDE.md). Espelha src/lib/scoring/seedTargets.ts.
+      const missing = await fetchAll<{ user_id: string }>(
+        (from, to) => supabase
           .rpc('seed_targets_faltantes')
-          .range(sp * 1000, sp * 1000 + 999);
-        if (sErr) throw new Error(`seed_targets_faltantes falhou — não dá p/ semear sem a lista atômica de elegíveis: ${sErr.message}`);
-        const sRows = (sPage ?? []) as Array<{ user_id: string }>;
-        for (const r of sRows) missing.push(r);
-        if (sRows.length < 1000) break;
-      }
+          .order('user_id', { ascending: true })
+          .range(from, to),
+        'seed_targets_faltantes (sem a lista atômica não dá p/ semear)',
+      );
 
       if (missing.length === 0) {
         console.log(`[calculate-scores] 0 faltantes a semear (${clients.length} em fcs). Pula seed.`);
@@ -566,19 +616,25 @@ Deno.serve(async (req) => {
           const defaultFarmerId = employees?.[0]?.user_id || '414a9727-ad1d-4998-914e-9c6ccf26cf50';
 
           // Opção A (carteira-Omie): dono do score = dono da carteira. FAIL-CLOSED: erro de
-          // leitura → lança (ownerMap truncado semearia farmer_id errado = dono errado na
-          // agenda — achado Codex #3). ANTI-DRIFT: score nunca deriva de atividade.
-          const ownerMap = new Map<string, string>();
-          for (let cp = 0; ; cp++) {
-            const { data: aPage, error: aErr } = await supabase
+          // leitura OU data:null sem error → fetchAll LANÇA (ownerMap truncado semearia
+          // farmer_id errado = dono errado na agenda — achado Codex #3; o `?? []` de antes lia
+          // resposta malformada como fim). .order em customer_user_id (UNIQUE) estabiliza o
+          // .range. ANTI-DRIFT: score nunca deriva de atividade.
+          const assignmentRows = await fetchAll<{ customer_user_id: string; owner_user_id: string }>(
+            (from, to) => supabase
               .from('carteira_assignments')
               .select('customer_user_id, owner_user_id')
-              .range(cp * 1000, cp * 1000 + 999);
-            if (aErr) throw new Error(`carteira_assignments falhou ao semear: ${aErr.message}`);
-            const aRows = (aPage ?? []) as Array<{ customer_user_id: string; owner_user_id: string }>;
-            for (const r of aRows) ownerMap.set(r.customer_user_id, r.owner_user_id);
-            if (aRows.length < 1000) break;
-          }
+              // O fail-closed acima cobre o ERRO; a ordem estável pela PK (conferida em prod) cobre
+              // a outra metade: sem ela uma linha pulada entre páginas deixa o cliente FORA do
+              // ownerMap, e o `?? farmer_id` a jusante atribui o score a quem ligou/visitou em vez
+              // do DONO — exatamente o "dono errado na agenda" que o comentário acima cita (§7).
+              // `id` é a chave que o #1589 fixou; mantida (PK, total e imutável).
+              .order('id', { ascending: true })
+              .range(from, to),
+            'carteira_assignments (ownerMap do seed)',
+          );
+          const ownerMap = new Map<string, string>();
+          for (const r of assignmentRows) ownerMap.set(r.customer_user_id, r.owner_user_id);
 
           // Registros de seed só dos FALTANTES, da base de vendas (salesMap do TOPO) via
           // deriveSalesBase — mesma degradação honesta do compute (vitest 8/8). Aqui já é garantido
@@ -646,29 +702,19 @@ Deno.serve(async (req) => {
           }
           console.log(`[calculate-scores] Seeded ${seeded}/${missing.length} client scores`);
 
-          // Re-fetch p/ incluir os recém-semeados no compute. Em LOCAL: se a leitura falhar
-          // (throw → catch do seed), clients mantém o snapshot original (não clobbera o compute).
-          const refetched: FarmerClientScoreRow[] = [];
-          {
-            let pg2 = 0;
-            const sz2 = 1000;
-            let more2 = true;
-            while (more2) {
-              const { data: batch2, error: rErr2 } = await supabase
-                .from('farmer_client_scores')
-                .select('*')
-                .order('id', { ascending: true })   // idem ao select inicial: ordem estável entre páginas
-                .range(pg2 * sz2, (pg2 + 1) * sz2 - 1);
-              if (rErr2) throw rErr2;
-              if (!batch2 || batch2.length === 0) { more2 = false; }
-              else {
-                refetched.push(...(batch2 as unknown as FarmerClientScoreRow[]));
-                if (batch2.length < sz2) more2 = false;
-                pg2++;
-              }
-            }
-          }
-          clients = refetched;
+          // Re-fetch p/ incluir os recém-semeados no compute. fetchAll LANÇA em error E em
+          // data:null sem error (o `!batch2 → fim` de antes lia página com falha como fim e o
+          // compute seguiria com snapshot PARCIAL); `.order('id')` idem ao select inicial —
+          // ordem estável entre páginas. Em LOCAL: se a leitura falhar (throw → catch do seed),
+          // clients mantém o snapshot original (não clobbera o compute).
+          clients = await fetchAll<FarmerClientScoreRow>(
+            (from, to) => supabase
+              .from('farmer_client_scores')
+              .select('*')
+              .order('id', { ascending: true })
+              .range(from, to),
+            'farmer_client_scores (re-fetch pós-seed)',
+          );
         }
       }
     } catch (e) {
@@ -738,7 +784,12 @@ Deno.serve(async (req) => {
     // como se fosse margem zero, deprimindo o teto e inflando o score relativo de todo mundo.
     const maxMarginPct = Math.max(...clients.map(c => margemConhecida(c.gross_margin_pct) ?? 0), 1);
     const maxCategories = Math.max(...clients.map(c => Number(c.category_count || 0)), 1);
-    const maxRevPotential = Math.max(...clients.map(c => Number(c.revenue_potential || 0)), 1);
+    // Teto do potencial: só valores MEDIDOS. O `Math.max(...map(Number(x || 0)), 1)` anterior errava
+    // duas vezes — fazia o desconhecido normalizar como zero E, com a coluna inteira NULL (o estado
+    // real: 6.633/6.633), devolvia o piso `1`, um teto FABRICADO contra o qual todo cliente pontuava
+    // 0. Daí `margin_potential_component = 0` em 673.790/673.790 linhas de priority_score_log.
+    // `null` = ninguém tem potencial medido → o componente sai do score de todos (renormalização).
+    const maxRevPotential = maximoMedido(clients.map(c => c.revenue_potential));
 
     const healthHistoryRecords: HealthHistoryRecord[] = [];
     const priorityLogRecords: PriorityLogRecord[] = [];
@@ -768,32 +819,38 @@ Deno.serve(async (req) => {
         ? Math.min(100, (Number(client.category_count || 0) / maxCategories) * 100)
         : 0;
       
-      const crossSellScore = Number(client.x_score || 0);
-      const engagementScore = Number(client.s_score || 0);
+      // Cross-sell e engajamento: MESMO defeito da margem, na mesma função. Nenhum writer os
+      // calcula (6.633/6.633 NULL), e o `Number(x || 0)` transformava "não medi" no veredito "pior
+      // cliente possível neste eixo" — 20% do health score afirmando um fato que ninguém apurou.
+      const crossSellScore = valorMedido(client.x_score);
+      const engagementScore = valorMedido(client.s_score);
 
-      // Renormalização: sem margem conhecida, o peso dela é redistribuído entre os componentes que
-      // existem, em vez de contribuir 0 (contribuir 0 seria afirmar "pior cliente neste eixo" para
-      // quem só não foi medido).
+      // Renormalização: o peso do componente NÃO MEDIDO é redistribuído entre os que existem, em vez
+      // de contribuir 0 (contribuir 0 afirmaria "pior cliente neste eixo" sobre quem só não foi
+      // medido). Valia só para a margem; passa a valer também para cross-sell e engajamento, que têm
+      // exatamente o mesmo defeito — os três juntos são 50% do peso, e nenhum tem produtor hoje.
       //
-      // Com os pesos DEFAULT a divisão é identidade para quem TEM margem — 25+20+20+15+10+10 = 100,
-      // logo pesoTotal = 1,0. Mas isso é propriedade dos defaults, não garantia: farmer_algorithm_config
-      // é editável e hoje não tem NENHUMA linha hs_weight% (medido 2026-07-21 — os seis valores vêm
-      // dos defaults do código). Se alguém configurar pesos que não somem 100, a divisão deixa de ser
-      // identidade e passa a normalizar o score de TODOS os clientes, inclusive os com margem
-      // conhecida. Isso é o comportamento correto (um score 0-100 deve usar 100% do peso disponível;
-      // pesos somando 90 faziam o teto ser 90), mas é uma mudança silenciosa demais para acontecer
-      // sem rastro — daí o aviso abaixo, emitido uma única vez por run.
-      const pesoMargem = marginScore == null ? 0 : hs_w.margin;
-      const pesoTotal = hs_w.recency + hs_w.frequency + pesoMargem
-                      + hs_w.diversity + hs_w.crosssell + hs_w.engagement;
-      const somaPonderada =
-        recencyScore * hs_w.recency +
-        freqScore * hs_w.frequency +
-        (marginScore ?? 0) * pesoMargem +
-        diversityScore * hs_w.diversity +
-        crossSellScore * hs_w.crosssell +
-        engagementScore * hs_w.engagement;
-      const healthScore = Math.round(pesoTotal > 0 ? somaPonderada / pesoTotal : 0);
+      // Com os pesos DEFAULT a divisão é identidade para quem TEM os componentes — 25+20+20+15+10+10
+      // = 100, logo o peso disponível é 1,0. Mas isso é propriedade dos defaults, não garantia:
+      // farmer_algorithm_config é editável e hoje não tem NENHUMA linha hs_weight% (medido
+      // 2026-07-21 — os seis valores vêm dos defaults do código). Se alguém configurar pesos que não
+      // somem 100, a divisão deixa de ser identidade e passa a normalizar o score de TODOS os
+      // clientes, inclusive os completos. Isso é o comportamento correto (um score 0-100 deve usar
+      // 100% do peso disponível; pesos somando 90 faziam o teto ser 90), mas é uma mudança silenciosa
+      // demais para acontecer sem rastro — daí o aviso emitido uma única vez por run, acima.
+      //
+      // O `?? 0` NÃO é fabricação: `null` aqui só acontece com TODOS os seis pesos zerados na config
+      // (recência, frequência e diversidade são sempre número), o que é ausência de CONFIGURAÇÃO e
+      // não de dado — e preserva exatamente o `pesoTotal > 0 ? … : 0` anterior.
+      const healthMedia = mediaPonderadaRenormalizada([
+        { valor: recencyScore, peso: hs_w.recency },
+        { valor: freqScore, peso: hs_w.frequency },
+        { valor: marginScore, peso: hs_w.margin },
+        { valor: diversityScore, peso: hs_w.diversity },
+        { valor: crossSellScore, peso: hs_w.crosssell },
+        { valor: engagementScore, peso: hs_w.engagement },
+      ]);
+      const healthScore = Math.round(healthMedia ?? 0);
 
       let healthClass = 'critico';
       if (healthScore >= 75) healthClass = 'saudavel';
@@ -803,9 +860,9 @@ Deno.serve(async (req) => {
       const churnRisk = Math.max(0, Math.min(100, 100 - healthScore));
 
       // --- Priority Score ---
-      const marginPotentialComp = maxRevPotential > 0
-        ? (Number(client.revenue_potential || 0) / maxRevPotential) * 100
-        : 0;
+      // `null` = potencial não medido (deste cliente ou de toda a base). O componente sai do score,
+      // e os 35% de peso — o MAIOR dos quatro — são redistribuídos entre churn, recompra e meta.
+      const marginPotentialComp = normalizarPorMaximo(valorMedido(client.revenue_potential), maxRevPotential);
       
       const churnComp = churnRisk;
       
@@ -819,12 +876,18 @@ Deno.serve(async (req) => {
         ? Math.min(100, (Number(client.avg_monthly_spend_180d || 0) / maxSpend) * 100)
         : 0;
 
-      const priorityScore = Math.round(
-        marginPotentialComp * ps_w.margin_potential +
-        churnComp * ps_w.churn_risk +
-        repurchaseComp * ps_w.repurchase +
-        goalComp * ps_w.goal_proximity
-      );
+      // Mesma renormalização do health. Antes o `marginPotentialComp` entrava como 0 para 100% da
+      // base e comia 35 dos 100 pontos possíveis: o priority_score tinha teto REAL de 65 (medido:
+      // max 43, média 29,13 em 6.633 linhas) enquanto a tela o apresenta como 0-100.
+      // O `?? 0` cobre só "todos os quatro pesos zerados na config" — churn, recompra e meta são
+      // sempre número —, preservando o comportamento anterior nesse caso.
+      const priorityMedia = mediaPonderadaRenormalizada([
+        { valor: marginPotentialComp, peso: ps_w.margin_potential },
+        { valor: churnComp, peso: ps_w.churn_risk },
+        { valor: repurchaseComp, peso: ps_w.repurchase },
+        { valor: goalComp, peso: ps_w.goal_proximity },
+      ]);
+      const priorityScore = Math.round(priorityMedia ?? 0);
 
       updates.push({
         id: client.id,
@@ -878,8 +941,10 @@ Deno.serve(async (req) => {
         rf_score: Math.round(recencyScore),
         m_score: marginScore == null ? null : Math.round(marginScore),  // idem: null ≠ 0
         g_score: Math.round(diversityScore),
-        x_score: Math.round(crossSellScore),
-        s_score: Math.round(engagementScore),
+        // Math.round(null) é 0 — o arredondamento refabricaria justamente o zero que este PR remove.
+        // O null tem de atravessar até a coluna (nullable, DEFAULT 0 → chave presente com null).
+        x_score: crossSellScore == null ? null : Math.round(crossSellScore),
+        s_score: engagementScore == null ? null : Math.round(engagementScore),
         churn_risk: churnRisk,
       });
 
@@ -887,7 +952,8 @@ Deno.serve(async (req) => {
         customer_user_id: client.customer_user_id,
         farmer_id: client.farmer_id,
         priority_score: priorityScore,
-        margin_potential_component: Math.round(marginPotentialComp),
+        // idem: null = componente ausente do score, não "apurei e deu zero".
+        margin_potential_component: marginPotentialComp == null ? null : Math.round(marginPotentialComp),
         churn_risk_component: Math.round(churnComp),
         repurchase_component: Math.round(repurchaseComp),
         goal_proximity_component: Math.round(goalComp),

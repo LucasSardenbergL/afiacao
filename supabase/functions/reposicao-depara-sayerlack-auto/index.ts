@@ -25,7 +25,7 @@
 //       timeout_milliseconds := 120000
 //     ); $$);
 
-import { createClient } from 'npm:@supabase/supabase-js@^2';
+import { createClient } from 'npm:@supabase/supabase-js@2';
 import { authorizeCronOrStaff, corsHeaders } from '../_shared/auth.ts';
 import { fetchAll } from '../_shared/paginate.ts';
 import { sugerirMapeamentos, validarGabarito, PARSER_VERSION } from '../_shared/sayerlack-sku.ts';

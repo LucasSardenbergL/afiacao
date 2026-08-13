@@ -1,5 +1,14 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
+import Anthropic from "npm:@anthropic-ai/sdk@^0.93.0";
+import {
+  extrairToolUseUnico,
+  MODELO_PADRAO,
+  objetoDaTool,
+  statusDoErro,
+  traduzirErroAnthropic,
+} from "../_shared/anthropic.ts";
+import { consumirCota, headersDeCota } from "../_shared/ia-cota.ts";
+import { normalizarItens, TOOL_SERVICOS } from "./servico-tools.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -16,7 +25,7 @@ interface UserTool {
   } | null;
 }
 
-serve(async (req) => {
+Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
@@ -69,15 +78,31 @@ serve(async (req) => {
       );
     }
 
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    if (!LOVABLE_API_KEY) {
-      throw new Error("LOVABLE_API_KEY is not configured");
+    const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY");
+    if (!ANTHROPIC_API_KEY) {
+      throw new Error("ANTHROPIC_API_KEY is not configured");
     }
 
-    // Buscar serviços disponíveis do banco
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
+    // COTA — depois da validação (requisição malformada não queima cota) e antes
+    // da Anthropic. Também poupa a consulta de serviços quando a cota já estourou.
+    // O gate acima só exige JWT válido: sem isto, um cliente repetindo pedidos
+    // com 100 ferramentas esgota o orçamento da ORGANIZAÇÃO — os limites da
+    // Anthropic não são por usuário da aplicação.
+    const cota = await consumirCota(supabase, user.id, "analyze-services", "análises de pedido");
+    if (!cota.permitido) {
+      return new Response(
+        JSON.stringify({ error: cota.mensagem }),
+        {
+          status: cota.http,
+          headers: { ...corsHeaders, ...headersDeCota(cota), "Content-Type": "application/json" },
+        },
+      );
+    }
+
+    // Buscar serviços disponíveis do banco
     const { data: servicos, error: dbError } = await supabase
       .from("omie_servicos")
       .select("omie_codigo_servico, descricao")
@@ -125,95 +150,73 @@ EXEMPLOS:
 
 Responda SEMPRE usando a função suggest_services.`;
 
-    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${LOVABLE_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "google/gemini-3-flash-preview",
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: text },
-        ],
-        tools: [
-          {
-            type: "function",
-            function: {
-              name: "suggest_services",
-              description: "Retorna as ferramentas e serviços identificados no texto do cliente",
-              parameters: {
-                type: "object",
-                properties: {
-                  items: {
-                    type: "array",
-                    description: "Lista de itens identificados (ferramenta + serviço)",
-                    items: {
-                      type: "object",
-                      properties: {
-                        userToolId: { type: "string", description: "ID da ferramenta cadastrada do usuário" },
-                        omie_codigo_servico: { type: "number", description: "Código do serviço no Omie" },
-                        servico_descricao: { type: "string", description: "Descrição do serviço" },
-                        quantity: { type: "number", description: "Quantidade de itens (padrão 1)" },
-                        notes: { type: "string", description: "Observações extraídas do texto (danos, urgência, etc)" },
-                      },
-                      required: ["userToolId", "omie_codigo_servico", "servico_descricao", "quantity"],
-                    },
-                  },
-                  message: { type: "string", description: "Mensagem amigável para o cliente confirmando o que foi identificado" },
-                },
-                required: ["items", "message"],
-              },
-            },
-          },
-        ],
-        tool_choice: { type: "function", function: { name: "suggest_services" } },
-      }),
-    });
+    const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
 
-    if (!response.ok) {
-      if (response.status === 429) {
-        return new Response(
-          JSON.stringify({ error: "Limite de requisições excedido. Tente novamente em alguns segundos." }),
-          { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-      if (response.status === 402) {
-        return new Response(
-          JSON.stringify({ error: "Créditos insuficientes. Entre em contato com o suporte." }),
-          { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-      const errorText = await response.text();
-      console.error("AI gateway error:", response.status, errorText);
-      throw new Error("Erro ao processar com IA");
+    let resposta;
+    try {
+      resposta = await anthropic.messages.create({
+        model: MODELO_PADRAO,
+        max_tokens: 2000,
+        system: systemPrompt,
+        tools: [TOOL_SERVICOS],
+        // `type:'tool'` sozinho não desliga chamada paralela: o modelo poderia
+        // devolver um bloco por ferramenta e o consumo pegaria só o primeiro,
+        // montando um pedido PARCIAL com cara de completo.
+        tool_choice: { type: "tool", name: TOOL_SERVICOS.name, disable_parallel_tool_use: true },
+        messages: [{ role: "user", content: text }],
+      });
+    } catch (e: unknown) {
+      const status = statusDoErro(e);
+      console.error("[analyze-services] erro na API da Anthropic:", status, e instanceof Error ? e.message : e);
+      const mapeado = traduzirErroAnthropic(status);
+      return new Response(
+        JSON.stringify({ error: mapeado?.mensagem ?? "Erro ao processar com IA" }),
+        { status: mapeado?.http ?? 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
     }
 
-    const aiResponse = await response.json();
-    console.log("AI Response:", JSON.stringify(aiResponse, null, 2));
-
-    const toolCall = aiResponse.choices?.[0]?.message?.tool_calls?.[0];
-    if (!toolCall) {
+    // Truncou = lista de itens cortada no meio. O cliente confirmaria um pedido
+    // com 2 de 5 ferramentas achando que pediu todas.
+    if (resposta.stop_reason === "max_tokens") {
+      console.error("[analyze-services] resposta truncada");
       return new Response(
-        JSON.stringify({ 
-          items: [], 
-          message: "Não consegui identificar ferramentas ou serviços. Por favor, seja mais específico ou selecione manualmente." 
+        JSON.stringify({ error: "Pedido longo demais para analisar de uma vez. Divida em duas partes." }),
+        { status: 422, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    const extraido = extrairToolUseUnico(resposta.content);
+    const result = extraido.ok ? objetoDaTool(extraido.input) : null;
+
+    if (result === null) {
+      return new Response(
+        JSON.stringify({
+          items: [],
+          message: "Não consegui identificar ferramentas ou serviços. Por favor, seja mais específico ou selecione manualmente.",
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    const result = JSON.parse(toolCall.function.arguments);
+    // O filtro por ferramenta REAL do cliente já existia; o que faltava era a
+    // disciplina de TIPO — `quantity` multiplica o preço do serviço, e string ou
+    // zero ali vira valor errado na nota.
+    const idsValidos = new Set(tools.map((t) => t.id));
+    const { itens, descartados } = normalizarItens(result.items, idsValidos);
+    if (descartados > 0) {
+      console.warn(`[analyze-services] ${descartados} item(ns) descartado(s) por dado inválido`);
+    }
 
-    const validItems = (result.items || []).filter((item: { userToolId: string }) => 
-      tools.some(t => t.id === item.userToolId)
-    );
+    const mensagem = typeof result.message === "string" && result.message.trim()
+      ? result.message.trim()
+      : `Identificado ${itens.length} item(s) para o pedido.`;
 
     return new Response(
       JSON.stringify({
-        items: validItems,
-        message: result.message || `Identificado ${validItems.length} item(s) para o pedido.`,
+        items: itens,
+        message: descartados > 0
+          ? `${mensagem} (${descartados} item(ns) não reconhecido(s) foram deixados de fora — confira antes de enviar.)`
+          : mensagem,
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );

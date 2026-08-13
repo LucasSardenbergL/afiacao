@@ -17,7 +17,7 @@ const db = supabase as unknown as { from: (table: string) => any };
 
 export type RelationType = 'sucessao' | 'multi_ativo' | 'incerto';
 
-export interface ClienteGrupoMembro {
+interface ClienteGrupoMembro {
   id: string;
   grupo_id: string;
   documento: string; // só dígitos

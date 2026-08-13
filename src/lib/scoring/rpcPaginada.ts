@@ -20,7 +20,7 @@
  * convenção de `salesBase.ts` e `seedTargets.ts`.
  */
 
-export interface PaginaResultado<T> {
+interface PaginaResultado<T> {
   data: T[] | null;
   error: { message: string } | null;
 }

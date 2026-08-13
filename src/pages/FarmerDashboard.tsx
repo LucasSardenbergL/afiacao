@@ -13,6 +13,7 @@ import {
   Zap, Activity,
   Shield, Heart,
   Eye, ShoppingCart,
+  Loader2, RefreshCw,
 } from 'lucide-react';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -45,7 +46,7 @@ const fmtDur = (s: number) => {
 const FarmerDashboard = () => {
   const navigate = useNavigate();
   const { isStaff, loading: authLoading } = useAuth();
-  const { clientScores, agenda, summary, loading, config } = useFarmerScoring();
+  const { clientScores, agenda, summary, loading, config, erro, calculating, recalculate } = useFarmerScoring();
   const { metrics } = useFarmerMetrics();
   const [selectedClient, setSelectedClient] = useState<ClientScore | null>(null);
   // Nome por cliente (do scoring) para a fila de SLA exibir nome em vez de UUID — evita query extra.
@@ -61,6 +62,12 @@ const FarmerDashboard = () => {
   }
 
   if (!isStaff) { navigate('/', { replace: true }); return null; }
+
+  // Erro honesto (§7): falha SEM dado ≠ carteira vazia — "0 clientes" e "Nenhum cliente na
+  // agenda" seriam afirmações fabricadas por uma falha de transporte. Com dado na mão (ex.:
+  // troca de lente com o backend caindo), manter o último estado bom e avisar que é de antes.
+  const carteiraIndisponivel = !!erro && clientScores.length === 0;
+  const carteiraDesatualizada = !!erro && clientScores.length > 0;
 
   return (
     <div className="min-h-screen bg-background pb-24">
@@ -101,6 +108,26 @@ const FarmerDashboard = () => {
         >
           Abrir board da carteira
         </Button>
+
+        {carteiraIndisponivel ? (
+          <div role="alert" className="rounded-lg border border-status-error/30 bg-status-error/5 p-4 space-y-3">
+            <p className="text-sm text-status-error">
+              Carteira indisponível — a leitura da base falhou. Os indicadores não foram
+              estimados; isto não significa carteira vazia.
+            </p>
+            <Button variant="outline" size="sm" onClick={recalculate} disabled={calculating} className="gap-1.5">
+              {calculating ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+              Tentar novamente
+            </Button>
+          </div>
+        ) : (
+        <>
+        {carteiraDesatualizada && (
+          <div role="alert" className="rounded-lg border border-status-warning/30 bg-status-warning/5 p-3 text-xs text-status-warning">
+            Exibindo a última leitura bem-sucedida — a atualização mais recente falhou. Os
+            números podem estar desatualizados.
+          </div>
+        )}
 
         {/* Health Summary */}
         <Card>
@@ -358,6 +385,8 @@ const FarmerDashboard = () => {
             </Button>
           </TabsContent>
         </Tabs>
+        </>
+        )}
       </main>
     </div>
   );

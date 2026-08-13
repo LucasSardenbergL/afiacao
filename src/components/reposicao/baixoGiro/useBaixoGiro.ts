@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useReposicaoEmpresa } from "@/contexts/ReposicaoEmpresaContext";
-import { BAIXO_GIRO_OR_FILTER, classificarSituacao, diasSemVender, somarCapitalParado } from "@/lib/reposicao/baixo-giro-helpers";
+import { BAIXO_GIRO_OR_FILTER, classificarSituacao, diasSemVender, ehCandidatoSobEncomenda, ehGiroMorto, somarCapitalMorto, somarCapitalParado } from "@/lib/reposicao/baixo-giro-helpers";
 import type { RowBaixoGiro } from "./types";
 
 const HOJE_ISO = () => new Date().toISOString().slice(0, 10);
@@ -18,7 +18,7 @@ export function useBaixoGiro() {
       // 1) universo de baixo giro (cap defensivo 1000; baixo giro real < 1000)
       const { data: base, error } = await supabase
         .from("sku_parametros")
-        .select("sku_codigo_omie, sku_descricao, fornecedor_nome, classe_consolidada, demanda_media_diaria, valor_vendido_90d, estoque_minimo, ponto_pedido, estoque_maximo, habilitado_reposicao_automatica, tipo_reposicao")
+        .select("sku_codigo_omie, sku_descricao, fornecedor_nome, classe_consolidada, demanda_media_diaria, valor_vendido_90d, estoque_minimo, ponto_pedido, estoque_maximo, habilitado_reposicao_automatica, tipo_reposicao, parametro_cold_start")
         .eq("empresa", empresa)
         .eq("ativo", true)
         .or(BAIXO_GIRO_OR_FILTER)
@@ -28,14 +28,31 @@ export function useBaixoGiro() {
       const codes = rowsBase.map((r) => Number(r.sku_codigo_omie));
       if (codes.length === 0) return [];
 
-      // 2) enriquecimentos (.in)
-      const [{ data: inv }, { data: dem }, { data: sug }] = await Promise.all([
+      // 2) enriquecimentos (.in) — última venda vem da fonte ALL-TIME (v_sku_ultima_venda):
+      // a v_sku_demanda_estatisticas é janelada em 90d e mostrava "nunca" p/ quem vendeu há 4 meses.
+      // (cast: a view é da migration 20260731120000 e só entra nos types gerados no próximo type-gen)
+      const [{ data: inv }, demRes, { data: sug }, sbRes] = await Promise.all([
         supabase.from("inventory_position").select("omie_codigo_produto, saldo, cmc").eq("account", empresa.toLowerCase()).in("omie_codigo_produto", codes),
-        supabase.from("v_sku_demanda_estatisticas").select("sku_codigo_omie, ultima_venda_data").eq("empresa", empresa).in("sku_codigo_omie", codes),
+        supabase.from("v_sku_ultima_venda" as never).select("sku_codigo_omie, ultima_venda_data, vendas_registradas").eq("empresa", empresa).in("sku_codigo_omie", codes) as unknown as PromiseLike<{
+          data: { sku_codigo_omie: number; ultima_venda_data: string | null; vendas_registradas: number }[] | null;
+          error: unknown;
+        }>,
         supabase.from("v_sku_parametros_sugeridos").select("sku_codigo_omie, status_sugestao").eq("empresa", empresa).in("sku_codigo_omie", codes),
+        // Classificação Syntetos-Boylan (advisory; view da migration 20260802120000, cast pré-type-gen).
+        // Falha aqui NÃO derruba a tela: o badge some (advisory puro — nenhuma decisão em cima).
+        supabase.from("v_sku_classe_sb" as never).select("sku_codigo_omie, quadrante").eq("empresa", empresa).in("sku_codigo_omie", codes) as unknown as PromiseLike<{
+          data: { sku_codigo_omie: number; quadrante: string | null }[] | null;
+          error: unknown;
+        }>,
       ]);
+      // Falha na fonte do giro morto LANÇA — "não consegui ler a última venda" viraria
+      // vendas_registradas=0 ⇒ giro_morto=true na lista INTEIRA (veredito de descontinuar
+      // fabricado por falha de transporte). Ausente ≠ zero vale para leitura também.
+      if (demRes.error != null) throw demRes.error instanceof Error ? demRes.error : new Error("v_sku_ultima_venda: leitura falhou");
+      const dem = demRes.data;
       const invMap = new Map((inv ?? []).map((r) => [Number(r.omie_codigo_produto), r]));
       const demMap = new Map((dem ?? []).map((r) => [Number(r.sku_codigo_omie), r]));
+      const sbMap = new Map((sbRes.error == null ? (sbRes.data ?? []) : []).map((r) => [Number(r.sku_codigo_omie), r.quadrante]));
       const sugMap = new Map((sug ?? []).map((r) => [Number(r.sku_codigo_omie), r]));
       const hoje = HOJE_ISO();
 
@@ -48,6 +65,10 @@ export function useBaixoGiro() {
         const capital = saldo != null && saldo > 0 && cmc != null && cmc > 0 ? saldo * cmc : null;
         const status = sugMap.get(code)?.status_sugestao ?? null;
         const sit = classificarSituacao(status, r.estoque_minimo);
+        const ultimaVenda = demMap.get(code);
+        const vendasRegistradas = Number(ultimaVenda?.vendas_registradas ?? 0);
+        const dias = diasSemVender(ultimaVenda?.ultima_venda_data ?? null, hoje);
+        const emColdStart = r.parametro_cold_start === true || sit.cta === "cold_start";
         return {
           id: String(code),
           sku_codigo_omie: code,
@@ -55,7 +76,7 @@ export function useBaixoGiro() {
           fornecedor_nome: r.fornecedor_nome,
           classe_consolidada: r.classe_consolidada,
           saldo, cmc, capital_parado: capital,
-          dias_sem_vender: diasSemVender(demMap.get(code)?.ultima_venda_data ?? null, hoje),
+          dias_sem_vender: dias,
           demanda_media_diaria: r.demanda_media_diaria,
           valor_vendido_90d: r.valor_vendido_90d,
           status_sugestao: status,
@@ -63,6 +84,10 @@ export function useBaixoGiro() {
           estoque_minimo: r.estoque_minimo, ponto_pedido: r.ponto_pedido, estoque_maximo: r.estoque_maximo,
           habilitado_reposicao_automatica: r.habilitado_reposicao_automatica,
           tipo_reposicao: r.tipo_reposicao,
+          vendas_registradas: vendasRegistradas,
+          giro_morto: ehGiroMorto({ diasSemVender: dias, vendasRegistradas, emColdStart }),
+          candidato_sob_encomenda: ehCandidatoSobEncomenda({ vendasRegistradas, saldo, emColdStart }),
+          classe_sb: sbMap.get(code) ?? null,
         };
       });
     },
@@ -104,16 +129,60 @@ export function useBaixoGiro() {
     onSuccess: () => {
       toast.success("SKU descontinuado — fora dos próximos ciclos");
       qc.invalidateQueries({ queryKey: ["reposicao-baixo-giro"] });
+      qc.invalidateQueries({ queryKey: ["reposicao-excesso-estoque"] });
       qc.invalidateQueries({ queryKey: ["pedidos-ciclo"] });
     },
     onError: (e: Error) => toast.error("Falha ao descontinuar: " + e.message),
   });
 
+  // P3 — descontinuar em LOTE (giro morto): mesma escrita do individual, com o founder confirmando
+  // a lista no AlertDialog (gate humano preservado; a seleção é dele, não do sistema).
+  const descontinuarLote = useMutation({
+    mutationFn: async (codes: number[]) => {
+      const { error } = await supabase
+        .from("sku_parametros")
+        .update({ tipo_reposicao: "descontinuado", habilitado_reposicao_automatica: false })
+        .eq("empresa", empresa)
+        .in("sku_codigo_omie", codes);
+      if (error) throw error;
+    },
+    onSuccess: (_d, codes) => {
+      toast.success(`${codes.length} SKU(s) descontinuado(s) — fora dos próximos ciclos`);
+      qc.invalidateQueries({ queryKey: ["reposicao-baixo-giro"] });
+      qc.invalidateQueries({ queryKey: ["reposicao-excesso-estoque"] });
+      qc.invalidateQueries({ queryKey: ["pedidos-ciclo"] });
+    },
+    onError: (e: Error) => toast.error("Falha ao descontinuar em lote: " + e.message),
+  });
+
+  // Postponement da cauda: SKU raro-mas-vivo vira order-driven — o motor para de repor
+  // (tipo_reposicao != 'automatica' sai do sku_base) e o estoque atual escoa. Reversível
+  // pela tela de Revisão. Mesma escrita/gate humano do fluxo Descontinuar.
+  const sobEncomendaLote = useMutation({
+    mutationFn: async (codes: number[]) => {
+      const { error } = await supabase
+        .from("sku_parametros")
+        .update({ tipo_reposicao: "sob_encomenda", habilitado_reposicao_automatica: false })
+        .eq("empresa", empresa)
+        .in("sku_codigo_omie", codes);
+      if (error) throw error;
+    },
+    onSuccess: (_d, codes) => {
+      toast.success(`${codes.length} SKU(s) marcado(s) sob encomenda — fora dos próximos ciclos`);
+      qc.invalidateQueries({ queryKey: ["reposicao-baixo-giro"] });
+      qc.invalidateQueries({ queryKey: ["reposicao-excesso-estoque"] });
+      qc.invalidateQueries({ queryKey: ["pedidos-ciclo"] });
+    },
+    onError: (e: Error) => toast.error("Falha ao marcar sob encomenda: " + e.message),
+  });
+
   const kpis = useMemo(() => {
     const rows = query.data ?? [];
     const cap = somarCapitalParado(rows.map((r) => ({ saldo: r.saldo, cmc: r.cmc })));
-    return { ...cap, totalItens: rows.length };
+    const morto = somarCapitalMorto(rows.map((r) => ({ giroMorto: r.giro_morto, saldo: r.saldo, cmc: r.cmc })));
+    const soc = somarCapitalParado(rows.filter((r) => r.candidato_sob_encomenda).map((r) => ({ saldo: r.saldo, cmc: r.cmc })));
+    return { ...cap, totalItens: rows.length, morto, sobEncomenda: { totalRs: soc.totalRs, candidatosN: rows.filter((r) => r.candidato_sob_encomenda).length } };
   }, [query.data]);
 
-  return { rows: query.data ?? [], kpis, isLoading: query.isLoading, error: query.error, refetch: query.refetch, manterEmEstoque, descontinuar };
+  return { rows: query.data ?? [], kpis, isLoading: query.isLoading, error: query.error, refetch: query.refetch, manterEmEstoque, descontinuar, descontinuarLote, sobEncomendaLote };
 }

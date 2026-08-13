@@ -115,6 +115,40 @@ export const AUTHZ_MANIFEST: Record<string, AuthzEntry> = {
     requiredGate: { anyOf: [{ call: 'has_role', roles: ['employee', 'master'] }] },
     motivo: 'clientes por produto (preço/volume 12m)',
   },
+  // ATP fase 1 (2026-08-06, programa Cabreúva Pista B): as 4 RPCs de reserva de estoque leem
+  // disponibilidade derivada de inventory_position (via private.atp_disponivel) e escrevem
+  // estoque_reservas. Gate único private.cap_estoque_reservar = staff (employee/master) OU
+  // service_role (engines/reconciliação fase 3). Custo (cmc) NUNCA atravessa o retorno.
+  'public.atp_consultar': {
+    sensitive: true,
+    requiredGate: { anyOf: [{ call: 'cap_estoque_reservar' }] },
+    motivo: 'disponibilidade ATP (saldo−reservas−segurança) p/ staff de venda — sem custo',
+  },
+  'public.reservar_estoque': {
+    sensitive: true,
+    requiredGate: { anyOf: [{ call: 'cap_estoque_reservar' }] },
+    motivo: 'cria reserva de estoque (writer único de estoque_reservas)',
+  },
+  'public.liberar_reserva_checkout': {
+    sensitive: true,
+    requiredGate: { anyOf: [{ call: 'cap_estoque_reservar' }] },
+    motivo: 'libera reservas ativas de um checkout (cancelamento/abandono)',
+  },
+  'public.expirar_reservas_vencidas': {
+    sensitive: true,
+    requiredGate: { anyOf: [{ call: 'cap_estoque_reservar' }] },
+    motivo: 'higiene de reservas vencidas (cron da fase 3 via service_role)',
+  },
+  // ⚠️ ATP fase 1.1 (migration 20260806225052): existe uma 5ª função que ESCREVE em
+  // estoque_reservas e NÃO tem gate — `private.expirar_reservas_vencidas_job()`. É
+  // DE PROPÓSITO e não é furo: pg_cron nativo roda SEM JWT, então auth.role() e
+  // auth.uid() são NULL e cap_estoque_reservar devolve false — com o gate, a higiene
+  // era INAGENDÁVEL (42501; medido em prod antes do fix). A defesa dela não é gate de
+  // papel, é PRIVILÉGIO: vive em `private`, com REVOKE de PUBLIC/anon/authenticated,
+  // então só o owner (postgres, que é quem o pg_cron usa) a executa. A RPC pública
+  // acima segue gateada e agora apenas DELEGA nela — 1 writer da lógica. Não entra no
+  // manifesto porque o manifesto cataloga superfície ALCANÇÁVEL por anon/authenticated,
+  // e esta não é; se um dia ganhar GRANT para authenticated, ela PRECISA de gate.
 };
 
 /**
@@ -126,6 +160,10 @@ export const AUTHZ_MANIFEST: Record<string, AuthzEntry> = {
  * v2: auditar cada uma individualmente e cruzar com os grants reais.
  */
 export const ACKNOWLEDGED_SENSITIVE = new Set<string>([
+  // ATP fase 1 (2026-08-06): cálculo interno disponivel = saldo−reservas−segurança. Lê
+  // inventory_position mas NÃO é executável por authenticated/anon (REVOKE ALL na própria
+  // migration; GRANT só service_role) — chamada exclusivamente pelas 4 RPCs gateadas acima.
+  'private.atp_disponivel',
   // Baseline 2026-07-09: as 7 SECDEF abaixo tocam custo/preço/estoque mas NÃO são executáveis por
   // authenticated nem anon (confirmado psql-ro: auth_exec=f, anon_exec=f) — service_role/cron/
   // trigger/interno, não customer-facing. Vazamento customer-facing exige EXECUTE p/ authenticated.

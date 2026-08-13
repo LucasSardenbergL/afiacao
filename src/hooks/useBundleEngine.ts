@@ -570,43 +570,75 @@ export const useBundleEngine = () => {
 
       // Persist bundle recommendations — PULADO na lente "Ver como" (só leitura: o
       // master inspeciona os bundles do alvo sem regravar a carteira dele).
+      //
+      // UM insert em lote, não um por bundle: as linhas são independentes, então os N
+      // round-trips não compravam atomicidade nenhuma — só multiplicavam a janela de falha
+      // parcial (metade das recomendações gravadas, metade não).
+      //
+      // E o `error` é CAPTURADO. Descartá-lo era o mesmo defeito de classe que o #1574 tirou
+      // do bloco de `farmer_association_rules` logo acima, porém sem DELETE: nada é destruído,
+      // o pior caso é a recomendação não existir na TABELA enquanto a UI já mostrou o bundle
+      // em memória — e quem lê a tabela (`OfertaCruaCard`, `useTacticalPlan`) não vê a oferta
+      // que o operador acabou de ver na tela, sem ninguém ficar sabendo.
+      //
+      // Sem `throw`: os bundles em memória continuam válidos e já foram exibidos; só o toast
+      // final deixa de dizer que deu tudo certo.
+      let recomendacoesNaoGravadas = 0;
       if (!isImpersonating) {
-        for (const cb of allCustomerBundles) {
-          for (const bundle of cb.bundles) {
-            await supabase.from('farmer_bundle_recommendations').insert({
-              farmer_id: effectiveUserId,
-              customer_user_id: bundle.customerId,
-              // Sem `cost`/`margin` por SKU — o jsonb guardava o custo LITERAL (12/12 linhas em
-              // prod). Só id/name/price, e `price` é público.
-              bundle_products: bundle.products as unknown as Json,
-              support: bundle.support,
-              confidence: bundle.confidence,
-              lift: bundle.lift,
-              p_bundle: bundle.pBundle,
-              // m_bundle era a SOMA das margens; e mesmo apagando-o, `lie_bundle` monetário
-              // invertia sozinho: m_bundle ≈ lie_bundle / ((p_bundle/100) × complexity_factor).
-              // Por isso os dois mudam juntos — `lie_bundle` passa a guardar o score de afinidade
-              // (mantido populado porque OfertaCruaCard/useTacticalPlan ordenam por ele).
-              m_bundle: null,
-              lie_bundle: bundle.affinityBundle,
-              complexity_factor: bundle.complexityFactor,
-              status: 'pendente',
-            });
+        const recomendacoes = allCustomerBundles.flatMap((cb) =>
+          cb.bundles.map((bundle) => ({
+            farmer_id: effectiveUserId,
+            customer_user_id: bundle.customerId,
+            // Sem `cost`/`margin` por SKU — o jsonb guardava o custo LITERAL (12/12 linhas em
+            // prod). Só id/name/price, e `price` é público.
+            bundle_products: bundle.products as unknown as Json,
+            support: bundle.support,
+            confidence: bundle.confidence,
+            lift: bundle.lift,
+            p_bundle: bundle.pBundle,
+            // m_bundle era a SOMA das margens; e mesmo apagando-o, `lie_bundle` monetário
+            // invertia sozinho: m_bundle ≈ lie_bundle / ((p_bundle/100) × complexity_factor).
+            // Por isso os dois mudam juntos — `lie_bundle` passa a guardar o score de afinidade
+            // (mantido populado porque OfertaCruaCard/useTacticalPlan ordenam por ele).
+            m_bundle: null,
+            lie_bundle: bundle.affinityBundle,
+            complexity_factor: bundle.complexityFactor,
+            status: 'pendente',
+          })),
+        );
+
+        if (recomendacoes.length > 0) {
+          const { error: erroRecs } = await supabase
+            .from('farmer_bundle_recommendations')
+            .insert(recomendacoes);
+          if (erroRecs) {
+            console.error('Falha ao gravar farmer_bundle_recommendations:', erroRecs);
+            recomendacoesNaoGravadas = recomendacoes.length;
           }
         }
       }
 
       // O toast reflete o que REALMENTE aconteceu. Antes ele era `success` incondicional —
       // com a persistência falhando calada, o operador via "regras gravadas" e ia embora.
+      // Regras e recomendações falham de forma INDEPENDENTE, então os dois desfechos entram
+      // no mesmo aviso: reportar só um deixaria o outro invisível.
       const totalBundles = allCustomerBundles.reduce((s, c) => s + c.bundles.length, 0);
+      const problemas: string[] = [];
       if (desfechoRegras === 'falhou') {
-        toast.warning(
-          `${totalBundles} bundles gerados, mas as regras NÃO foram salvas — as anteriores seguem valendo`,
-        );
+        problemas.push('as regras NÃO foram salvas — as anteriores seguem valendo');
       } else if (desfechoRegras === 'sem_regras') {
-        toast.warning(
-          `Nenhuma regra atingiu os pisos — as regras anteriores foram preservadas (${totalBundles} bundles)`,
+        problemas.push('nenhuma regra atingiu os pisos — as regras anteriores foram preservadas');
+      }
+      if (recomendacoesNaoGravadas > 0) {
+        problemas.push(
+          recomendacoesNaoGravadas === 1
+            ? '1 recomendação NÃO foi gravada — as telas de oferta seguem com as anteriores'
+            : `${recomendacoesNaoGravadas} recomendações NÃO foram gravadas — as telas de oferta seguem com as anteriores`,
         );
+      }
+
+      if (problemas.length > 0) {
+        toast.warning(`${totalBundles} bundles gerados, mas ${problemas.join('; e ')}`);
       } else {
         toast.success(`${discoveredRules.length} regras e ${totalBundles} bundles gerados`);
       }

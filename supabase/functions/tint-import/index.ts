@@ -1,4 +1,3 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 
 const corsHeaders = {
@@ -68,7 +67,7 @@ export function parseDecimalBR(input: string): number | null {
 // O espelho acima fica mesmo SEM uso local: `edge-parse-parity.test.ts` (vitest) lê ESTE
 // arquivo e exige a função verbatim + os marcadores MIRROR. Não remova por parecer órfão.
 
-serve(async (req) => {
+Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }

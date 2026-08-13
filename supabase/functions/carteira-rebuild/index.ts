@@ -17,7 +17,7 @@
 //         (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name='CRON_SECRET' LIMIT 1))
 //     ); $$);
 
-import { createClient } from 'npm:@supabase/supabase-js@^2';
+import { createClient } from 'npm:@supabase/supabase-js@2';
 import { authorizeCronOrStaff, corsHeaders } from '../_shared/auth.ts';
 
 type CarteiraSource = 'omie' | 'hunter_orphan';
@@ -463,7 +463,10 @@ Deno.serve(async (req) => {
         .order('alias_user_id', { ascending: true })
         .range(from, from + PAGE - 1);
       if (error) { console.error('[carteira-rebuild] load aliases error:', error.message); return await failLease(`aliases: ${error.message}`); }
-      const page = (data ?? []) as Array<{ alias_user_id: string; canonical_user_id: string }>;
+      // data:null sem error = resposta malformada, não fim — o `?? []` de antes encerrava o laço
+      // com aliasMap PARCIAL (clone re-exposto). Fim legítimo: página vazia/curta.
+      if (data == null) { console.error('[carteira-rebuild] load aliases: data null sem error'); return await failLease('aliases: data null sem error — resposta malformada, não é fim'); }
+      const page = data as Array<{ alias_user_id: string; canonical_user_id: string }>;
       for (const r of page) if (r.alias_user_id && r.canonical_user_id) aliasMap.set(r.alias_user_id, r.canonical_user_id);
       if (page.length < PAGE) break;
     }
@@ -489,7 +492,11 @@ Deno.serve(async (req) => {
       .order('user_id', { ascending: true })
       .range(from, from + PAGE - 1);
     if (error) { console.error('[carteira-rebuild] load ledger error:', error.message); return await failLease(error.message); }
-    const page = (data ?? []) as Array<{ user_id: string; identity_state: string | null }>;
+    // data:null sem error truncaria membroIds — e a pós-condição D4 compara contra o conjunto
+    // TRUNCADO (cega a isto por construção): o membro omitido viraria assignment antigo vivo,
+    // exatamente o furo que refutou o A′. failLease, nunca "fim".
+    if (data == null) { console.error('[carteira-rebuild] load ledger: data null sem error'); return await failLease('ledger: data null sem error — resposta malformada, não é fim'); }
+    const page = data as Array<{ user_id: string; identity_state: string | null }>;
     for (const r of page) { membroIds.push(r.user_id); ledgerRows.push(r); }
     if (page.length === 0) break;
     from += page.length;
@@ -514,7 +521,10 @@ Deno.serve(async (req) => {
       .order('user_id', { ascending: true })
       .range(from, from + PAGE - 1);
     if (error) { console.error('[carteira-rebuild] load proof oben error:', error.message); return await failLease(`proof oben: ${error.message}`); }
-    const page = (data ?? []) as Array<{ user_id: string; omie_codigo_vendedor: number | string | null }>;
+    // data:null sem error = resposta malformada, não fim — proof truncada rebaixaria membro a
+    // órfão/Hunter em massa (o guard de frescor compara CONTAGEM e pode não disparar no corte).
+    if (data == null) { console.error('[carteira-rebuild] load proof oben: data null sem error'); return await failLease('proof oben: data null sem error — resposta malformada, não é fim'); }
+    const page = data as Array<{ user_id: string; omie_codigo_vendedor: number | string | null }>;
     for (const r of page) {
       const cod = coerceCodigoVendedor(r.omie_codigo_vendedor);
       proofOben.set(r.user_id, cod);
@@ -566,7 +576,10 @@ Deno.serve(async (req) => {
         .order('user_id', { ascending: true })
         .range(from, from + FPAGE - 1);
       if (error) { console.error('[carteira-rebuild] load flaggeds error:', error.message); return await failLease(`flaggeds: ${error.message}`); }
-      const page = (data ?? []) as Array<{ user_id: string }>;
+      // data:null sem error = resposta malformada, não fim — flaggeds truncado re-elegeria
+      // fornecedor excluído (o run reverteria o cleanup em silêncio). failLease, nunca "fim".
+      if (data == null) { console.error('[carteira-rebuild] load flaggeds: data null sem error'); return await failLease('flaggeds: data null sem error — resposta malformada, não é fim'); }
+      const page = data as Array<{ user_id: string }>;
       for (const r of page) flaggeds.add(r.user_id);
       if (page.length < FPAGE) break;
     }

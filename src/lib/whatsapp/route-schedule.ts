@@ -11,7 +11,7 @@ export interface RouteOverrideRow {
   data: string;        // 'YYYY-MM-DD'
   cancela_rota: boolean;
 }
-export interface PrepCity extends CityKey {
+interface PrepCity extends CityKey {
   is_daily: boolean;
 }
 export interface PrepResult {

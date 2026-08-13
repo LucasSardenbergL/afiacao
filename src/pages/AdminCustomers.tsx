@@ -12,6 +12,8 @@ const AdminCustomers = () => {
     authLoading,
     isStaff,
     loading,
+    isError,
+    refetch,
     customers,
     scores,
     categories,
@@ -69,6 +71,8 @@ const AdminCustomers = () => {
           customers={customers}
           scores={scores}
           loading={loading}
+          isError={isError}
+          onRetry={refetch}
           total={total}
           isCarteira={isCarteira}
           onSelect={handleSelectCustomer}

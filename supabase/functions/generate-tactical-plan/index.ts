@@ -1,9 +1,35 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+// Edge Function: generate-tactical-plan
+//
+// Migrada do gateway Lovable/Gemini (LOVABLE_API_KEY + google/gemini-3-flash-preview)
+// para a Anthropic direta — fase 3 de 4 (fase 1: #1592, fase 2: #1608). O gateway tem
+// teto próprio de créditos ("AI features usage limit", 4/mês); ao estourar em 2026-07-27
+// ele derrubou as 7 edges que serve, e o batch noturno de planos táticos — o maior
+// consumidor, 59 chamadas/dia — parou por completo (0 planos de 27/07 a 29/07).
+// Contrato de request/response inalterado: o front (useTacticalPlan) não muda.
+import Anthropic from "npm:@anthropic-ai/sdk@^0.93.0";
+// ⚠️ usar npm: (não esm.sh) — esm.sh/@supabase/supabase-js falhava em resolver no boot
+// do edge runtime, dando RUNTIME_ERROR sem linha/stack (lição do #1592).
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { fetchAll } from "../_shared/paginate.ts";
 import { avaliarCanariaMargem, calcularClusterMargin, classifyProfile, margemConhecida, selectObjective } from "../_shared/tactical-margem.ts";
-import { inicioDiaOperacional } from "../_shared/dia-operacional.ts";
+import { inicioDaJanelaFila } from "../_shared/tactical-fila.ts";
+import {
+  ehJaNaFilaDaRpc,
+  ehSkipLegitimoDaRpc,
+  extrairToolUseUnico,
+  MAX_TOKENS,
+  MODELO,
+  type Modo,
+  montarPlano,
+  numerosDoBundle,
+  numeroValido,
+  objetivoFinal,
+  objetivoValido,
+  statusDeErroIa,
+  systemDoModo,
+  toolDoModo,
+} from "./plano-helpers.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -24,7 +50,7 @@ function clampRecencyCapDays(raw: unknown): number {
   return Math.min(MAX_RECENCY_CAP_DAYS, Math.max(MIN_RECENCY_CAP_DAYS, Math.round(n)));
 }
 
-serve(async (req) => {
+Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
   }
@@ -57,6 +83,26 @@ serve(async (req) => {
         status: ok ? 200 : 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
+    }
+
+    // CANÁRIA DE VERSÃO (docs/agent/deploy.md, padrão do #1590/#1592): no Lovable Cloud não
+    // há PAT, então o deploy de edge não tem prova de VERSÃO — só "foi servida". Este probe
+    // é a prova, e custa zero (não chama o modelo, não toca o DB):
+    //   curl -s -X POST <url> -H 'content-type: application/json' \
+    //        -H "x-cron-secret: <secret>" -d '{"probe":true}'
+    //   → {"motor":"anthropic",...}  = fase 3 no ar
+    //   → {"error":"AI não configurada"} ou plano gerado = ainda a versão do gateway Lovable
+    if (body.probe === true) {
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          motor: 'anthropic',
+          modelo: MODELO,
+          tool: toolDoModo('estrategico').name,
+          fallback_fabricado: false,
+        }),
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+      );
     }
 
     // Modo self-contained (cron): body traz { customerId, farmerId } e a edge monta o
@@ -103,16 +149,26 @@ serve(async (req) => {
       const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, { auth: { persistSession: false } });
       const { customerId, farmerId } = body;
 
-      // Idempotência: pula se já há plano 'gerado' no DIA OPERACIONAL (BRT), não no dia UTC.
-      // Era `>= 00:00 UTC` e errava nos DOIS sentidos (incidente 2026-07-21/22, 30 duplicatas):
-      // run às 22:48 BRT não via o das 19:03 do mesmo dia; e o cron das 05:00 BRT do dia
-      // seguinte via o da véspera e pulava o dia inteiro. Ver _shared/dia-operacional.ts.
-      const hojeIso = inicioDiaOperacional(new Date());
+      // Idempotência: pula se o cliente JÁ TEM plano aberto na JANELA da fila (7 dias), não
+      // apenas no dia de hoje. Ver _shared/tactical-fila.ts.
+      //
+      // Era o DIA OPERACIONAL (BRT) — que consertou as 30 duplicatas do mesmo dia do incidente
+      // 2026-07-21/22, mas deixava o cliente voltar a ser candidato na madrugada seguinte. Com
+      // o batch rodando diariamente, isso virou uma cópia por dia: medido em 2026-08-08, a fila
+      // viva tinha 169 planos para 35 clientes, 14 deles com 7 cópias cada, e 23 dos 25 planos
+      // de 07/08 eram regeração. A pergunta certa não é "já gerei hoje?" e sim "este cliente já
+      // está na fila de alguém?" — enquanto estiver, outro plano só produz cópia.
+      //
+      // A janela é DESLIZANTE e não depende do cron de expiração ter rodado (mesma decisão que
+      // a fase 1 tomou no front): plano velho demais deixa de bloquear mesmo que ainda esteja
+      // com status 'gerado', senão um cron morto congelaria a geração inteira.
+      const desdeIso = inicioDaJanelaFila(new Date());
       const { data: existente } = await admin.from('farmer_tactical_plans')
         .select('id').eq('farmer_id', farmerId).eq('customer_user_id', customerId)
-        .eq('status', 'gerado').gte('created_at', hojeIso).limit(1);
+        // `generated_at`: mesma coluna do recorte da tela, do cron de expiração e da RPC.
+        .eq('status', 'gerado').gte('generated_at', desdeIso).limit(1);
       if (existente?.length) {
-        return new Response(JSON.stringify({ id: existente[0].id, skipped: 'ja_gerado_hoje' }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        return new Response(JSON.stringify({ id: existente[0].id, skipped: 'ja_na_fila' }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       }
 
       // Pares da carteira do dono para o cluster de margem. TRÊS correções vs. a versão
@@ -154,9 +210,27 @@ serve(async (req) => {
         return new Response(JSON.stringify({ skipped: 'sem_score' }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       }
 
+      // `num` só sobrevive nos campos cuja ausência NÃO chega aqui: health_score, churn_risk,
+      // avg_monthly_spend_180d, category_count e days_since_last_purchase têm 0 nulos em prod
+      // (medido via psql-ro em 2026-07-29, 6.633 linhas) e alimentam decisão DETERMINÍSTICA —
+      // classifyProfile/selectObjective/mixGap. Nulá-los seria pior que inerte: `null < 500` é
+      // `true` em JS, então "não medido" viraria o rótulo `sensivel_preco` e `8 - null` daria
+      // mixGap 8 (money-path.md §2, corolário JS). Só se troca `?? 0` por null onde a ausência
+      // REALMENTE chega — e onde o consumidor sabe tratá-la.
       const num = (v: unknown) => Number(v ?? 0);
       const healthScore = num(score.health_score), churnRisk = num(score.churn_risk), avgSpend = num(score.avg_monthly_spend_180d);
       const categoryCount = num(score.category_count), daysSince = num(score.days_since_last_purchase);
+      // [money-path "ausente ≠ zero"] expansion_score e revenue_potential são as DUAS colunas
+      // que a 20260727130000_farmer_scores_colunas_orfas_null nulou de propósito (nenhum writer
+      // as calcula) — e a migration está APLICADA: 6.633/6.633 NULL, `column_default` removido
+      // (psql-ro, 2026-07-29). Com `num()` elas chegavam ao prompt como `0` para 100% da base, e
+      // o system prompt manda a IA ler número como MEDIDO — "revenuePotential: 0" afirma
+      // "cliente sem potencial" sobre um cliente que ninguém mediu, e é a partir disso que a
+      // vendedora decide a abordagem. `numeroValido` devolve o null honesto que a instrução
+      // DADO AUSENTE (plano-helpers.ts) já sabe interpretar. Nenhum dos dois entra em
+      // comparação relacional aqui — só no prompt e no payload (colunas nullable).
+      const expansionPotential = numeroValido(score.expansion_score);
+      const revenuePotential = numeroValido(score.revenue_potential);
       // money-path "ausente ≠ zero": margem desconhecida fica `null` e é EXCLUÍDA dos
       // cálculos — nunca 0 (que afirmaria "cliente sem margem") nem a média fabricada.
       const marginPct = margemConhecida(score.gross_margin_pct);
@@ -189,100 +263,30 @@ serve(async (req) => {
         .map((e: { event_data: { intent?: unknown } | null }) => (e.event_data as { intent?: unknown } | null)?.intent)
         .filter((i: unknown): i is string => typeof i === 'string' && i.startsWith('objecao')).slice(0, 5);
 
-      customerContext = { name: profile?.name, cnae: profile?.cnae, customerType: profile?.customer_type, profile: customerProfile, healthScore, churnRisk, avgMonthlySpend: avgSpend, grossMarginPct: marginPct, categoryCount, daysSinceLastPurchase: daysSince, mixGap, clusterAvgMargin: clusterMargin, expansionPotential: num(score.expansion_score), revenuePotential: num(score.revenue_potential), salesHistoryStatus };
+      customerContext = { name: profile?.name, cnae: profile?.cnae, customerType: profile?.customer_type, profile: customerProfile, healthScore, churnRisk, avgMonthlySpend: avgSpend, grossMarginPct: marginPct, categoryCount, daysSinceLastPurchase: daysSince, mixGap, clusterAvgMargin: clusterMargin, expansionPotential, revenuePotential, salesHistoryStatus };
       bundleContext = topBundleRow ? { products: topBundleRow.bundle_products, lie: topBundleRow.lie_bundle, probability: topBundleRow.p_bundle, margin: topBundleRow.m_bundle } : null;
       diagnosticData = { strategicObjective };
       // Paridade com o front: no modo estratégico, inclui o 2º bundle p/ comparação.
       if (mode === 'estrategico' && secondBundleRow) {
         (diagnosticData as Record<string, unknown>).secondBundle = { products: secondBundleRow.bundle_products, lie: secondBundleRow.lie_bundle, probability: secondBundleRow.p_bundle, margin: secondBundleRow.m_bundle };
       }
-      (body as Record<string, unknown>)._derived = { healthScore, churnRisk, mixGap, marginPct, clusterMargin, expansionPotential: num(score.expansion_score), customerProfile, strategicObjective };
+      (body as Record<string, unknown>)._derived = { healthScore, churnRisk, mixGap, marginPct, clusterMargin, expansionPotential, customerProfile, strategicObjective };
     }
 
-    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
-    if (!LOVABLE_API_KEY) {
+    const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY');
+    if (!ANTHROPIC_API_KEY) {
       return new Response(
         JSON.stringify({ error: 'AI não configurada' }),
         { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    const essentialPrompt = `Você é um estrategista comercial especializado em afiação de ferramentas industriais.
-
-Gere um Plano Tático ESSENCIAL (rápido) para o vendedor (Farmer).
-
-Retorne um JSON com:
-
-1. "strategic_objective": Exatamente um de: "ativacao", "recuperacao", "expansao_mix", "upsell_premium", "reativacao", "consolidacao_margem". IMPORTANTE: se "salesHistoryStatus" do cliente for "sem_historico" (SEM venda válida registrada no histórico — pode nunca ter comprado, OU ter só pedidos cancelados/devolvidos/sem item válido), o objetivo é "ativacao": trate como abertura/ativação, NÃO assuma relação prévia nem trate health/churn como recuperação, e NÃO afirme "primeira compra" como fato.
-
-2. "approach_strategy": Texto curto (1-2 frases) descrevendo a abordagem ideal
-
-3. "diagnostic_questions": Array de 3 objetos com:
-   - "question": Pergunta diagnóstica
-   - "purpose": Por que fazer essa pergunta
-   - "expected_insight": O que esperar da resposta
-
-4. "probable_objections": Array de 1 objeto com:
-   - "objection": Objeção mais provável
-   - "technical_response": Resposta técnica
-   - "economic_response": Resposta econômica
-   - "probability": 0-100
-
-IMPORTANTE: Retorne APENAS o JSON, sem markdown. Personalize com dados reais.
-
-DADO AUSENTE: campo com valor null (ex.: "grossMarginPct": null, "clusterAvgMargin": null) significa
-NÃO MEDIDO — não é zero nem valor baixo. NUNCA estime, preencha ou infira um número para ele, e não
-construa argumento sobre margem a partir dele. Se a margem for necessária ao ponto, diga explicitamente
-que o dado não está disponível.`;
-
-    const strategicPrompt = `Você é um estrategista comercial sênior especializado em afiação de ferramentas industriais.
-
-Gere um Plano Tático ESTRATÉGICO COMPLETO para o vendedor (Farmer).
-
-Retorne um JSON com:
-
-1. "strategic_objective": Exatamente um de: "ativacao", "recuperacao", "expansao_mix", "upsell_premium", "reativacao", "consolidacao_margem". IMPORTANTE: se "salesHistoryStatus" do cliente for "sem_historico" (SEM venda válida registrada no histórico — pode nunca ter comprado, OU ter só pedidos cancelados/devolvidos/sem item válido), o objetivo é "ativacao": trate como abertura/ativação, NÃO assuma relação prévia nem trate health/churn como recuperação, e NÃO afirme "primeira compra" como fato.
-
-2. "approach_strategy": Texto detalhado (3-4 frases) da abordagem ideal
-
-3. "approach_strategy_b": Texto (2-3 frases) com abordagem alternativa caso a principal falhe
-
-4. "diagnostic_questions": Array de 3 objetos com:
-   - "question": Pergunta diagnóstica
-   - "purpose": Por que fazer essa pergunta
-   - "expected_insight": O que esperar da resposta
-
-5. "implication_question": Uma pergunta de implicação (impacto financeiro/operacional)
-
-6. "offer_transition": Frase de transição para a oferta do bundle
-
-7. "probable_objections": Array de até 3 objetos com:
-   - "objection": Objeção provável
-   - "technical_response": Resposta técnica
-   - "economic_response": Resposta econômica
-   - "probability": 0-100
-
-8. "ltv_projection": Objeto com:
-   - "current_annual": Estimativa de faturamento anual atual
-   - "projected_annual": Faturamento anual projetado após ação
-   - "growth_pct": Percentual de crescimento estimado
-
-9. "expected_result": Objeto com:
-   - "best_case_margin": Margem no melhor cenário
-   - "likely_margin": Margem mais provável
-   - "worst_case_margin": Margem no pior cenário
-
-10. "operational_risks": Array de strings com riscos operacionais
-
-IMPORTANTE: Retorne APENAS o JSON, sem markdown. Use dados reais do cliente.
-
-DADO AUSENTE: campo com valor null (ex.: "grossMarginPct": null, "clusterAvgMargin": null) significa
-NÃO MEDIDO — não é zero nem valor baixo. NUNCA estime, preencha ou infira um número para ele. Se a
-margem atual do cliente for null, retorne "expected_result" com null nos três cenários e diga em
-"approach_strategy" que a margem não está medida — projetar margem a partir de dado ausente entrega
-à vendedora um número que parece medido e não é.`;
-
-    const systemPrompt = mode === 'estrategico' ? strategicPrompt : essentialPrompt;
+    // Os prompts e os schemas de tool vivem em plano-helpers.ts (puro ⇒ testável sob
+    // --no-remote). Antes eram dois templates inline pedindo "retorne APENAS o JSON,
+    // sem markdown" — o forced tool-use torna o contrato estrutural em vez de textual,
+    // e com ele some a classe inteira de "resposta não parseou".
+    const modo: Modo = mode === 'estrategico' ? 'estrategico' : 'essencial';
+    const tool = toolDoModo(modo);
 
     const userPrompt = `Dados do cliente:
 ${JSON.stringify(customerContext || {}, null, 2)}
@@ -296,69 +300,85 @@ ${JSON.stringify(diagnosticData || {}, null, 2)}
 Objeções históricas do cluster:
 ${JSON.stringify(historicalObjections || [], null, 2)}`;
 
-    const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'google/gemini-3-flash-preview',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt },
-        ],
-        temperature: 0.4,
-      }),
-    });
+    const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
 
-    if (!response.ok) {
-      const errText = await response.text();
-      console.error('AI error:', response.status, errText);
-      
-      if (response.status === 429) {
-        return new Response(
-          JSON.stringify({ error: 'Limite de requisições excedido. Tente novamente em alguns segundos.' }),
-          { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
+    let resposta;
+    try {
+      resposta = await anthropic.messages.create({
+        model: MODELO,
+        max_tokens: MAX_TOKENS,
+        // prompt caching no system: ele é o prefixo ESTÁVEL entre os 59 alvos do batch
+        // noturno (o contexto do cliente, que varia, vem na mensagem do usuário).
+        system: [{ type: 'text', text: systemDoModo(modo), cache_control: { type: 'ephemeral' } }],
+        tools: [tool],
+        // `type:'tool'` sozinho NÃO desliga chamada paralela: o modelo poderia emitir um
+        // bloco por seção e o consumo pegaria só o primeiro, gravando um plano PARCIAL
+        // com cara de completo (P1 do /codex no #1608).
+        tool_choice: { type: 'tool', name: tool.name, disable_parallel_tool_use: true },
+        messages: [{ role: 'user', content: userPrompt }],
+      });
+    } catch (e: unknown) {
+      const status = (e as { status?: number })?.status;
+      const detalhe = e instanceof Error ? e.message : String(e);
+      console.error('[generate-tactical-plan] erro na API da Anthropic:', status, detalhe);
+      // O 402 NÃO desapareceu com o gateway: a Anthropic devolve billing_error. Sem
+      // mapeá-lo, a MESMA falha que motivou esta migração voltaria como 500 genérico e o
+      // batch registraria http_500 sem dizer que o problema é saldo.
+      const mapeado = statusDeErroIa(status);
+      if (mapeado) {
+        return new Response(JSON.stringify({ error: mapeado.msg }), {
+          status: mapeado.http,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
       }
-      if (response.status === 402) {
-        return new Response(
-          JSON.stringify({ error: 'Créditos de IA esgotados.' }),
-          { status: 402, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-      
+      throw new Error('Erro ao processar com IA');
+    }
+
+    // §8 money-path: teto que trunca fabrica completude. Um plano cortado no meio chega
+    // à vendedora indistinguível de um plano inteiro — não grava.
+    if (resposta.stop_reason === 'max_tokens') {
+      console.error(`[generate-tactical-plan] resposta truncada em ${MAX_TOKENS} tokens`);
       return new Response(
-        JSON.stringify({ error: 'Erro na geração do plano tático' }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        JSON.stringify({ error: `Plano cortado por tamanho (${MAX_TOKENS} tokens) — não gravado.` }),
+        { status: 422, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    const aiResult = await response.json();
-    const content = aiResult.choices?.[0]?.message?.content || '';
-
-    let plan;
-    try {
-      const cleanContent = content.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-      plan = JSON.parse(cleanContent);
-    } catch {
-      plan = {
-        strategic_objective: 'expansao_mix',
-        approach_strategy: 'Abordagem consultiva padrão.',
-        diagnostic_questions: [
-          { question: 'Como está o ritmo de produção atualmente?', purpose: 'Entender contexto', expected_insight: 'Volume de trabalho' },
-          { question: 'Quais ferramentas mais utilizam no dia a dia?', purpose: 'Mapear mix', expected_insight: 'Oportunidades de cross-sell' },
-          { question: 'Têm tido algum problema com durabilidade das afiações?', purpose: 'Identificar dores', expected_insight: 'Qualidade percebida' },
-        ],
-        implication_question: 'Quanto isso impacta na produtividade mensal da equipe?',
-        offer_transition: 'Com base no que você me contou, temos uma solução que pode ajudar...',
-        probable_objections: [],
-      };
+    const extraido = extrairToolUseUnico(resposta.content);
+    if (!extraido.ok) {
+      console.error(
+        `[generate-tactical-plan] tool_use ${extraido.motivo} (${extraido.quantidade} blocos): ${extraido.texto}`,
+      );
+      return new Response(
+        JSON.stringify({ error: 'A IA não devolveu um plano utilizável.' }),
+        { status: 422, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
     }
 
-    // Add plan_type to response
-    plan.plan_type = mode;
+    // Âncora do objetivo: `selectObjective` já decidiu por regra determinística sobre os
+    // scores. É o único campo com fallback legítimo — não é chute, é o valor do servidor.
+    const objetivoServidor = String(
+      (diagnosticData as { strategicObjective?: unknown } | null)?.strategicObjective ?? 'expansao_mix',
+    );
+    const montagem = montarPlano(extraido.input, modo, objetivoServidor);
+
+    // ANTES (P2 aberto desde 2026-07-04, revisao-completa-2026-07-04.md:71): quando o
+    // JSON.parse da resposta em texto livre falhava, a edge montava um plano genérico
+    // — "Abordagem consultiva padrão" + 3 perguntas fixas sobre ritmo de produção — e o
+    // GRAVAVA via criar_plano_tatico com status 'gerado', indistinguível de um plano real.
+    // Falhar alto é barato; um roteiro que ninguém escreveu para aquele cliente, não.
+    if (!montagem.ok) {
+      console.error(`[generate-tactical-plan] plano vazio: ${montagem.detalhe}`);
+      return new Response(
+        JSON.stringify({ error: 'A IA não devolveu um plano utilizável.', detalhe: montagem.detalhe }),
+        { status: 422, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+    for (const aviso of montagem.avisos) {
+      console.warn(`[generate-tactical-plan] ${aviso}`);
+    }
+
+    const plan = { ...montagem.plano, plan_type: modo };
 
     // Modo self-contained (cron): grava o plano via RPC-fronteira criar_plano_tatico.
     // A posse (farmer_id) é re-resolvida server-side de carteira_assignments — não confiamos
@@ -367,10 +387,27 @@ ${JSON.stringify(historicalObjections || [], null, 2)}`;
     // race em vez de gravar dono stale (precisão>recall). farmer_id/customer/status são do servidor.
     if (selfContained) {
       const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, { auth: { persistSession: false } });
-      // marginPct/clusterMargin podem ser null (margem desconhecida). As colunas
-      // current_margin_pct/cluster_avg_margin_pct são nullable — o plano grava "não sei"
-      // em vez de um número, e a UI mostra "—" em vez de uma margem inventada.
+      // marginPct/clusterMargin/expansionPotential podem ser null (dado não medido). As colunas
+      // current_margin_pct/cluster_avg_margin_pct/expansion_potential são nullable (conferido em
+      // prod via psql-ro) — o plano grava "não sei" em vez de um número, e a UI mostra "—" em vez
+      // de um potencial inventado. Gravar o 0 fabricado seria pior que exibi-lo: ele PERSISTE e
+      // vira histórico com cara de medição.
       const d = (body as { _derived: Record<string, number | string | null> })._derived;
+
+      // O enum barra objetivo inventado, não o objetivo VÁLIDO e errado. Com
+      // `sem_historico` o servidor derivou `ativacao` de um fato binário (não há
+      // venda válida); um "recuperacao" vindo do modelo passaria no enum e
+      // venceria, gravando plano de recuperação para quem nunca comprou.
+      const { objetivo: objetivoDoPlano, sobrescrito } = objetivoFinal(
+        objetivoValido(plan.strategic_objective),
+        typeof d.strategicObjective === 'string' ? d.strategicObjective : null,
+      );
+      if (sobrescrito) {
+        console.warn(
+          `[generate-tactical-plan] objetivo "${plan.strategic_objective}" do modelo descartado: cliente ${body.customerId} é sem_historico (servidor: ativacao)`,
+        );
+      }
+
       const { data: newId, error: rpcErr } = await admin.rpc('criar_plano_tatico', {
         _customer_user_id: body.customerId,
         _expected_owner: body.farmerId,
@@ -378,13 +415,16 @@ ${JSON.stringify(historicalObjections || [], null, 2)}`;
           bundle_recommendation_id: (topBundleRow as { id?: string } | null)?.id ?? null,
           health_score: d.healthScore, churn_risk: d.churnRisk, mix_gap: d.mixGap,
           current_margin_pct: d.marginPct, cluster_avg_margin_pct: d.clusterMargin, expansion_potential: d.expansionPotential,
-          strategic_objective: plan.strategic_objective || d.strategicObjective, customer_profile: d.customerProfile, plan_type: mode,
+          strategic_objective: objetivoDoPlano, customer_profile: d.customerProfile, plan_type: mode,
           top_bundle: (topBundleRow ? topBundleRow.bundle_products : {}),
           second_bundle: (secondBundleRow ? (secondBundleRow as { bundle_products: unknown }).bundle_products : {}),
-          bundle_lie: Number((topBundleRow as { lie_bundle?: unknown } | null)?.lie_bundle ?? 0),
-          bundle_probability: Number((topBundleRow as { p_bundle?: unknown } | null)?.p_bundle ?? 0),
-          bundle_incremental_margin: Number((topBundleRow as { m_bundle?: unknown } | null)?.m_bundle ?? 0),
-          best_individual_lie: 0,
+          // [money-path "ausente ≠ zero"] Era `Number(topBundleRow?.x ?? 0)` nos três + um
+          // `best_individual_lie: 0` hardcoded. Sem bundle (o caso de 339/339 planos em prod,
+          // medido 2026-07-31) a vendedora recebia "LIE R$ 0,00" e "Probabilidade 0,0%" como
+          // MEDIÇÃO — a afirmação "não vale a pena vender este bundle", que ninguém fez. As
+          // quatro colunas são nullable e a RPC insere o valor EXPLÍCITO (o `DEFAULT 0` da
+          // tabela não intercepta), então o null chega ao banco de verdade. Ver numerosDoBundle.
+          ...numerosDoBundle(topBundleRow),
           diagnostic_questions: plan.diagnostic_questions ?? [], implication_question: plan.implication_question ?? '',
           offer_transition: plan.offer_transition ?? '', probable_objections: plan.probable_objections ?? [],
           approach_strategy: plan.approach_strategy ?? '', approach_strategy_b: plan.approach_strategy_b ?? '',
@@ -393,10 +433,29 @@ ${JSON.stringify(historicalObjections || [], null, 2)}`;
         },
       });
       if (rpcErr) {
-        // Race de reatribuição / cliente sem dono → pula este alvo (idempotente; o próximo ciclo
-        // re-lista farmer_client_scores já reconciliado e gera sob o dono certo). Não derruba o batch.
         console.error('criar_plano_tatico falhou', body.customerId, rpcErr.message);
-        return new Response(JSON.stringify({ skipped: 'rpc_error', detail: rpcErr.message }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        // A TRAVA DE IDEMPOTÊNCIA PEGOU. O `ja_na_fila` do começo do handler é um
+        // check-then-insert: dois batches simultâneos consultam antes de qualquer insert,
+        // ambos pagam a chamada à Anthropic e ambos inserem (o `FOR UPDATE` da RPC trava a
+        // carteira, mas ela não repetia o teste de existência e não havia índice único).
+        // Agora a RPC recusa DEPOIS do lock — a duplicata deixa de existir, e o custo da IA
+        // já gasto vira um skip honesto em vez de um http_500 que o lote contaria como erro.
+        // Motivo PRÓPRIO (não `rpc_race`): o relatório precisa distinguir "a trava funcionou"
+        // de "a carteira mudou no meio da geração".
+        if (ehJaNaFilaDaRpc(rpcErr.message)) {
+          return new Response(JSON.stringify({ skipped: 'ja_na_fila', detail: rpcErr.message }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        }
+        // Race de reatribuição / cliente sem dono / cliente mascarado → SKIP legítimo: o
+        // próximo ciclo re-lista farmer_client_scores já reconciliado e gera sob o dono
+        // certo. Não derruba o batch.
+        if (ehSkipLegitimoDaRpc(rpcErr.message)) {
+          return new Response(JSON.stringify({ skipped: 'rpc_race', detail: rpcErr.message }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        }
+        // Qualquer OUTRA falha (timeout, cast, constraint, indisponibilidade) é ERRO. Antes
+        // tudo virava `skipped:'rpc_error'`, e o batch conta skip como "pulado" com
+        // `ok: erros === 0` — um lote sem NENHUM plano gravado reportava ok:true, a mesma
+        // classe do incidente de 2026-07-21 (money-path: falha silenciosa).
+        return new Response(JSON.stringify({ error: 'Falha ao gravar o plano', detail: rpcErr.message }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       }
       return new Response(JSON.stringify({ id: newId, generated: true }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }

@@ -154,10 +154,262 @@ Apertar para check completo é o destino natural, depois que a dívida encolher.
 
 ## Follow-ups (medidos)
 
-1. Consolidar `@supabase/supabase-js` numa versão só (hoje 6) — corta download e resolve 17 dos 141.
-2. Migrar `deno.land/std/http/server.ts` → `Deno.serve` (34 edges) e `esm.sh/@supabase/supabase-js` →
-   `npm:` (18 edges). Deixa `registry.npmjs.org` como host único.
+1. ~~Consolidar `@supabase/supabase-js` numa versão só (hoje 6) — corta download e resolve 17 dos 141.~~
+   ✅ **feito em 2026-08-07** — ver a sequela ao fim deste doc.
+2. ~~Migrar `deno.land/std/http/server.ts` → `Deno.serve` (34 edges) e `esm.sh/@supabase/supabase-js` →
+   `npm:` (18 edges). Deixa `registry.npmjs.org` como host único.~~ ✅ **feito em 2026-08-07** — e o 1 e o
+   2 eram **o mesmo trabalho**; ver a sequela ao fim deste doc.
 3. Zerar as 25 edges sujas e apertar o gate para check completo.
 4. Versionar `deno.lock` (hoje no `.gitignore`) — reprodutibilidade + chave de cache estável.
 
 Spec: `docs/superpowers/specs/2026-07-21-edges-typecheck-gate-design.md`
+
+---
+
+# Sequela (2026-08-04): o gate de COBERTURA também não alcançava as edges — e a trava era o runner
+
+**Entrega:** PR #1653. Descoberto ao tentar registrar o contrato de mutation-check da política de
+retry do Omie (#1643/#1644).
+
+## O achado
+
+`scripts/mutcheck.d/*.mut` é o registro **versionado** das mutações que uma suíte tem de matar — o
+contrato executável de "esse teste tem PODER". O `mutcheck-all.sh` invocava
+`bash "$MUTCHECK" "$src" "$tst" "$mut"` **sem env por contrato**, e o default do `mutcheck.sh` é
+`bunx vitest run` + `bun build`: ferramenta desenhada para helper de `src/`. Vitest não conhece
+`Deno.test` → baseline **vermelho** → o contrato aborta; e como o laço soma qualquer falha, **um**
+`.mut` de edge no diretório derrubaria o job `mutation-check` inteiro.
+
+A consequência tem nome: os dois helpers cuja suíte tinha sido **de fato medida** — 9/9 mutações
+pegas no #1644, 4/4 no gate de fonte de cada edge, idem no #1643 — eram **exatamente os únicos que
+não podiam ter a medição versionada**. A falsificação existia na transcrição do chat, e transcrição
+de chat não é gate: some no próximo compact, e o refactor seguinte não encontra nada que o segure.
+
+## A mudança — e a armadilha que ela quase criou
+
+Duas diretivas **opcionais** por contrato, lidas com o mesmo `sed` de `@src:`/`@test:`
+(comentário para o `mutcheck.sh`, que ignora `#`):
+
+```
+# @test_cmd: deno test --no-remote --allow-read=supabase/functions   → MUTCHECK_TEST_CMD
+# @compile_cmd: deno check --no-remote                               → MUTCHECK_COMPILE_CMD
+```
+
+A sutileza que merece ficar escrita: elas só entram no ambiente **quando o contrato declara**. A
+implementação óbvia — montar o env sempre, vazio quando o contrato não diz nada — teria **desligado
+o compila-check dos outros 9 em silêncio**. O `mutcheck.sh` lê `${MUTCHECK_COMPILE_CMD-default}`
+com `-`, **não** `:-`: a forma que preserva "setado e vazio" como escolha deliberada (é assim que se
+desliga o guard de propósito). Vazio ≠ ausente ali, e o compila-check é justamente o que separa
+"morto por TESTE" de "morto pelo COMPILADOR" — sem ele o poder aparente da suíte infla. A falha
+seria **silenciosa e na direção segura**: tudo verde, e os números até melhorariam.
+
+> **Regra viva:** injetar env "sempre, vazio quando não houver valor" só equivale a "não injetar"
+> quando quem LÊ usa `${VAR:-default}`. Com `${VAR-default}` os dois são **opostos**. Confira o lado
+> que lê antes de decidir como escrever o lado que grava.
+
+Armadilha gêmea, deixada documentada no cabeçalho do script: `# @compile_cmd:` **pelado** conta como
+ausente e cai no `bun build` default, que num alvo Deno aborta o contrato com
+*"harness/ambiente quebrado (bun no PATH?)"* — mensagem que aponta para o lugar errado. Para
+desligar de verdade: `# @compile_cmd: true` (o comando `true` sai 0 sempre, que é o contrato de
+`compila()`).
+
+## O terceiro pedaço: o job não tinha o runtime
+
+O `mutation-check` só tinha `Setup Bun`. É a **terceira instância** da mesma forma que este documento
+já registra duas vezes: *o gate precisa alcançar o que promete alcançar*. Aqui: **o job precisa do
+runtime de TODO contrato registrado, não só do default.** Sem o step, o `deno check` do SRC
+**original** falha, o baseline-do-compilador aborta antes de qualquer mutação, e o job fica vermelho
+por **ambiente**, não por cobertura — com uma mensagem que manda procurar o bun. Pin `2.9.2`,
+alinhado ao `validate` (2ª ocorrência; bump alinha as duas, anotado nos dois lados).
+
+## Os dois contratos — e um buraco medido
+
+| Contrato | Medição |
+|---|---|
+| `cmc-snapshot-retry.mut` (#1644) | 10 mutações · **9 pegas** · 1 sobrevivente · 0 inválidas |
+| `omie-analytics-politica-retry.mut` (#1643) | 8 mutações · **7 pegas** · 1 sobrevivente · 0 inválidas |
+
+A sobrevivente do `politica-retry` entrou como `?`, **não** `SOBREVIVE`, e a distinção carrega a
+decisão: `SOBREVIVE` afirma "benigno conhecido", e este não é. O código de `mensagemCorpoNaoJson`
+está **certo** (redige e só então trunca em 200), mas nada o prende — inverter para truncar-antes
+parte a app_key na borda e deixa um resto que escapa da máscara `\d{8,}`; o segredo sai pela metade,
+que para efeito de vazamento é sair. É o mesmo furo que `cmc-snapshot-retry_test.ts` já fechou no
+gêmeo de 300 caracteres. Fica **reportado e versionado** até o teste existir (chip aberto), em vez de
+virar dívida que ninguém lembra.
+
+⚠️ Ao escrever esse teste: enchimento **não-hexadecimal** (`x`, não `a`). Na 1ª versão do gêmeo o `a`
+fez a máscara de app_secret (`[0-9a-f]{24,}`) engolir o enchimento junto com a chave, e a mutação
+**sobreviveu mesmo com o teste presente** — verde por acidente do alfabeto, a mesma família do #1483.
+
+## Método: a previsão errada foi a que valeu
+
+Das 8 mutações desenhadas para o `politica-retry`, **7 bateram a previsão**. A única que não bateu
+foi o achado acima. Se os `EXPECT` tivessem sido escritos de memória — o caminho natural depois de 7
+acertos seguidos —, o `.mut` entraria **mentindo sobre o poder da suíte**, que é exatamente o
+falso-verde que a ferramenta existe para impedir.
+
+> **Regra viva:** `.mut` se **preenche com medição**, nunca com previsão. Uma sequência de previsões
+> certas é o que torna esse atalho tentador, não o que o justifica.
+
+## Evidência
+
+O CI reproduziu o fingerprint local **contrato a contrato**, em runner frio (Ubuntu, Deno baixado na
+hora, `--no-remote`, cache vazio) — o que o run local sozinho não podia provar:
+
+```
+Setup Deno → Going to install stable version 2.9.2 … Installation complete.
+  runner do contrato: MUTCHECK_TEST_CMD=deno test --no-remote --allow-read=supabase/functions
+  runner do contrato: MUTCHECK_COMPILE_CMD=deno check --no-remote
+mutcheck-all: ✓ 11 contrato(s) honrado(s) — nenhuma regressão de cobertura.
+```
+
+Os 9 contratos antigos saíram com os **mesmos números** de antes da mudança (`8/6/2`, `9/9/0`,
+`11/11/0`, `18/18/0`, `6/6/0`, `9/7/2`, `10/9/1`, `27/27/0`, `12/12/0`) — a prova de que o override
+por contrato não vaza para quem não o declara. Custo: o job foi de ~2m41s para ~3m54s (teto de 10min).
+
+---
+
+# Sequela (2026-08-07): os dois hosts saíram do caminho de entrega — e o follow-up 1 era o mesmo trabalho que o 2
+
+**Entrega:** PRs #1685 (34 edges), #1687 (7), #1690 (12), #1694 (17). Gatilho: o **#1670**, uma PR **só
+de documentação**, derrubada pelo `edges:typecheck` com
+
+```
+error: Import 'https://esm.sh/@supabase/supabase-js@2.112.2/dist/index.d.mts' failed: 500 Internal Server Error
+```
+
+O gate agiu certo — *"não conseguir checar não é o mesmo que estar limpo"* é o desenho — e o rerun
+passou. O problema não era ele: o `edges:typecheck` é o **único step do `validate` que precisa de rede**,
+e arrastava dois hosts que não estavam no caminho de entrega por nenhum outro motivo. Mesma forma do
+2026-07-16 (REST API do GitHub degradada matando todo PR em ~6s), que motivou o `bunpin:check`.
+
+## Os follow-ups 1 e 2 eram um trabalho só — e fazer só o 2 pioraria o 1
+
+O nº 2 (migrar de host) parecia independente do nº 1 (consolidar numa versão só). Não era. As edges que
+**já** usavam `npm:` o faziam com **4 especificadores distintos** (`@2`, `^2`, `@2.45.0`, `^2.95.3`), e as
+19 de `esm.sh` traziam mais 3 (`@2.45.0`, `@2`, `@2.39.0`). Migrar de host sem escolher a versão teria
+despejado as 19 no mesmo espalhamento que produzia os 17 `SupabaseClient not assignable` — **trocaria um
+problema por dois**.
+
+> **Regra viva:** migração de HOST e consolidação de VERSÃO são o mesmo trabalho quando o import carrega
+> as duas coisas na mesma string. Fazer só uma metade move o custo, não o remove.
+
+Especificador escolhido para o repo: **`npm:@supabase/supabase-js@2`**, por medição e não por gosto:
+
+- majoritário absoluto — **56 dos 74** imports `npm:` da main;
+- `@2` e `^2` são o **mesmo range semver** (`>=2.0.0 <3.0.0`) — normalizar é textual, não muda o que
+  resolve. Dos 17 do último PR, **14 eram exatamente esse caso**;
+- quem **cria** versão distinta no grafo é o pin exato (`@2.45.0`, `@2.39.0`, `^2.95.3`) — tirá-lo é o que
+  consolida de verdade;
+- reprodutibilidade contra "o range se move sozinho" é papel do **`deno.lock`** (follow-up 4, ainda
+  aberto), não do especificador — pin aqui duplicaria esse papel e criaria bump manual em 73 arquivos.
+
+## O que já se sabia sobre `esm.sh` — e estava escrito no lugar errado
+
+O achado que mais mudou o enquadramento não veio de medição nova: veio de **comentário em quatro edges**,
+deixado pelo #1592 e pelas sequelas dele:
+
+> `⚠️ usar npm: (não esm.sh) — esm.sh/@supabase/supabase-js falhava em resolver no boot do edge runtime,
+> dando RUNTIME_ERROR sem linha/stack`
+
+Ou seja: `esm.sh` **já tinha derrubado edge em produção**, e a correção já era `npm:`. Quatro edges
+migraram uma a uma, por incidente, cada uma deixando o aviso no próprio cabeçalho — e o padrão nunca
+virou varredura. O 500 do #1670 foi a mesma fonte cobrando pelo lado do CI.
+
+> **Regra viva:** aviso repetido em cabeçalho de arquivo é **classe não erradicada**, não documentação.
+> Quando o mesmo `⚠️` aparece no 3º arquivo, o que falta não é mais um comentário — é a varredura.
+
+Consequência prática para o redeploy: migrar `esm.sh` → `npm:` não é risco novo a observar, é aplicar a
+correção que 4 edges já validaram em produção.
+
+## A asserção não podia ser a óbvia
+
+O objetivo era "o host sumiu", e o grep natural —
+
+```
+grep -rlE "https://esm\.sh/|https://deno\.land/" supabase/functions/
+```
+
+— **nunca chega a zero**: 7 arquivos citam os hosts em **prosa de comentário** (os 4 avisos acima, mais 3
+explicando por que a suíte de edge roda offline). Um gate ancorado nele ficaria permanentemente vermelho
+e seria afrouxado até não valer nada.
+
+O que o `deno check` resolve é o `from "https://…"`. A asserção é sobre **import**, não sobre menção:
+
+```
+grep -rlE "from ['\"]https://(esm\.sh|deno\.land)/" supabase/functions/
+```
+
+> **Regra viva:** ao provar que uma classe sumiu, o padrão tem de casar a **forma que o compilador
+> enxerga**, não a string que dá o nome à classe. Prosa que descreve o bug mora no mesmo arquivo que o
+> bug — mesma armadilha do `escrita-critica.ts`, cujo cabeçalho cita a forma do bug de propósito e
+> apareceu como falso positivo no predicado do gate de §11 do `money-path.md`.
+
+## O que a migração NÃO consertou — e por que era previsível
+
+Seis das 12 edges de money-path importavam `type SupabaseClient` junto do `createClient`, então valia
+perguntar se a consolidação derrubaria ali a classe `TS2345`. **Não moveu: 36 antes, 36 depois.** É o
+esperado, e o diff mostra por quê — o valor e o tipo vinham da **mesma linha de import**, então não havia
+mismatch interno a corrigir.
+
+O que **não** era esperado: a consolidação completa também não moveu. Com o repo inteiro em `@2` —
+especificador único, uma versão só no grafo — o gate saiu em **`TS2345:36`, o mesmo número de antes de a
+série começar**. Os 136 tolerados ficaram idênticos, classe por classe, nos quatro PRs.
+
+> **Regra viva:** a previsão do follow-up 1 (*"corta download e resolve 17 dos 141"*) estava certa na
+> primeira metade e **errada na segunda**. O espalhamento de especificador custava download; ele **não
+> era a causa** do `SupabaseClient not assignable`. Estimativa escrita num follow-up é hipótese, não
+> medição — e quem executa o follow-up é quem tem a obrigação de medir o antes/depois em vez de herdar o
+> número. Sem essa medição, a série teria sido reportada como "resolve 17" e ninguém notaria por anos.
+
+A causa dessa classe segue em aberto e passa a ser dado do **follow-up 3**, com uma informação que antes
+não existia: ela **sobrevive à unificação de versão**, então não adianta atacá-la por ali.
+
+## Família B: `Deno.serve` — drop-in conferido, não assumido
+
+34 edges importavam `serve` de `deno.land/std@{0.168.0,0.190.0}/http/server.ts`. A troca só é drop-in se
+ninguém usar o 2º parâmetro do handler (`connInfo` no std, `Deno.ServeHandlerInfo` no nativo) nem as
+options. Medido antes de tocar: **0 handlers com 2º parâmetro, 0 chamadas com options**, 34/34 na forma
+`^serve(` top-level. As outras 61 edges já usavam `Deno.serve`.
+
+## Números
+
+| | Antes (main 2026-08-06) | Depois |
+|---|---|---|
+| imports `https://deno.land/` | 34 | **0** |
+| imports `https://esm.sh/` | 19 | **0** |
+| especificadores distintos de `@supabase/supabase-js` | 7 | **1** (`npm:…@2`) + 1 no bundle gerado |
+| hosts no `deno check` | `registry.npmjs.org` + `esm.sh` + `deno.land` | **só `registry.npmjs.org`** |
+
+`registry.npmjs.org` **já** estava no caminho de entrega via `bun install` — então o `edges:typecheck`
+deixa de ter host próprio.
+
+## Uma edge ficou de fora de propósito
+
+`supabase/functions/mcp/index.ts` usa `npm:@supabase/supabase-js@^2.95.3` e **não** foi normalizada: é
+bundle auto-gerado (`// AUTO-GENERATED by @lovable.dev/mcp-js — do not edit. Regenerated by the Vite
+plugin.`). O banner até oferece uma saída — *"To take ownership, delete this banner line"* — mas tomar
+posse do bundle para arrumar uma string seria trocar regeneração automática por manutenção manual de um
+arquivo gerado. A divergência é do **artefato**; a fonte (`src/lib/mcp/**`) não escolhe essa string.
+
+## Custo de redeploy: nenhum agora, e nenhum mutirão depois
+
+O `deno check` roda sobre o **repo**, então os hosts saem do CI **no merge**. As edges em produção seguem
+com o import antigo até serem redeployadas pelo chat do Lovable. **Não se faz mutirão de redeploy** —
+cada edge pega a mudança no próximo deploy natural dela. As duas edges onde o redeploy muda a versão
+resolvida de verdade (`omie-webhook`, pinada em `2.39.0`, a mais velha do repo; e os 3 pins `2.45.0` do
+portal Sayerlack) tiveram a superfície da lib medida antes: só `.from()` e `.rpc()`, zero
+`auth`/`storage`/`realtime`/`functions` — PostgREST puro, a parte que não mudou de contrato dentro do 2.x.
+
+## Follow-ups (atualizados)
+
+1. ~~Consolidar `@supabase/supabase-js` numa versão só~~ ✅ feito aqui (`npm:…@2`).
+2. ~~Migrar `deno.land/std/http/server.ts` → `Deno.serve` e `esm.sh` → `npm:`~~ ✅ feito aqui.
+3. Zerar as edges sujas e apertar o gate para check completo. **Com um dado novo:** a classe `TS2345`
+   (36, onde mora o `SupabaseClient not assignable`) **não** vem do espalhamento de especificador —
+   sobreviveu intacta à unificação. Quem pegar este follow-up começa sabendo que esse caminho já foi
+   tentado e não é por ali; use `bun run edges:typecheck --json` para ver as mensagens, que o resumo do
+   gate não guarda.
+4. Versionar `deno.lock` (hoje no `.gitignore`) — reprodutibilidade + chave de cache estável. **Subiu de
+   prioridade:** com todo o repo em `@2` (range, não pin), o lock passa a ser o *único* lugar que prende a
+   versão resolvida; sem ele, uma publicação do `@supabase/supabase-js` pode ficar vermelha num PR alheio.

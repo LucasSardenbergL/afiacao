@@ -7,7 +7,7 @@
 // não tem custo, o `precoFinal` é NULL — nunca um número subfaturado. O consumidor
 // mostra "sem preço" / "vincular no Omie", jamais R$ 0.
 
-export interface TintCoranteItem {
+interface TintCoranteItem {
   coranteDescricao: string;
   qtdMl: number;
   custoPorMl: number;

@@ -7,9 +7,13 @@
 // abaixo vieram verbatim (#1341/#1353).
 import {
   avaliarPagina,
+  desfechoContaListagem,
+  desfechoVarreduraReversa,
+  fingerprintPagina,
   MAX_PAGINAS_POS_ESTOQUE,
   proximoTotalPaginas,
   validarTotalPaginas,
+  varreduraTruncada,
 } from "./omie-paginacao.ts";
 
 function assertEquals(a: unknown, b: unknown, msg?: string) {
@@ -107,8 +111,255 @@ Deno.test("página vazia ALÉM do declarado → fim (semântica segura p/ loop f
   assertEquals(avaliarPagina(0, 6, 5), "fim");
 });
 
+// ════════ varreduraTruncada — o que o total-como-teto deixa passar (challenge Codex) ════════
+// Os guards acima só disparam quando uma página vem VAZIA antes do fim declarado. Se o Omie
+// sub-reporta o total (declara 37 quando o real é 43), o laço termina em 37 páginas CHEIAS,
+// sem anomalia nenhuma — e "acabou" fica indistinguível de "truncou". A contagem declarada de
+// registros é o segundo sinal que os separa (money-path §8).
+
+Deno.test("varreduraTruncada — lidos MENOS que o declarado é truncamento (total sub-reportado)", () => {
+  assertEquals(varreduraTruncada(3700, 4283), true);
+});
+
+Deno.test("varreduraTruncada — lidos == declarado NÃO é truncamento (fim legítimo)", () => {
+  assertEquals(varreduraTruncada(4283, 4283), false);
+});
+
+Deno.test("varreduraTruncada — lidos ACIMA do declarado não é truncamento (declarado é piso)", () => {
+  // O total declarado sub-reportar é o defeito conhecido: ler MAIS que ele é o caso são.
+  assertEquals(varreduraTruncada(4300, 4283), false);
+});
+
+Deno.test("varreduraTruncada — sem o segundo sinal (ausente/0/lixo) NÃO afirma truncamento", () => {
+  // Precisão > recall: sem contagem declarada não há como provar truncamento, e afirmar
+  // aqui fabricaria o alerta (suspenderia inativação legítima para sempre).
+  assertEquals(varreduraTruncada(0, undefined), false);
+  assertEquals(varreduraTruncada(0, 0), false);
+  assertEquals(varreduraTruncada(10, Number.NaN), false);
+});
+
+Deno.test("varreduraTruncada — catálogo real vazio (0 lidos, 0 declarados) não é truncamento", () => {
+  assertEquals(varreduraTruncada(0, 0), false);
+});
+
+// ════════ desfechoVarreduraReversa — varredura reversa não completa com teto crescido ════════
+// ListarMovimentos (omie-financeiro) varre da ÚLTIMA página declarada (dado mais recente)
+// até a 1. O nTotPaginas do firstPage decide o ponto de PARTIDA: sub-reporte ali deixa as
+// páginas mais recentes fora da varredura — e o `complete: pagina < 1` antigo carimbava o
+// buraco como completo e zerava o cursor (chip das edges financeiras, 2026-07-23).
+
+// ⚠️ A 1ª versão deste helper usava `retomada` para decidir se o crescimento do piso
+// significava sub-reporte ou dado novo. O challenge do Codex (xhigh) derrubou a heurística
+// com dois cenários: (a) se TODAS as respostas declararem 80 num universo de 300, o piso
+// nunca cresce e a run completa com 81–300 nunca visitadas — para sempre; (b) sub-reporte
+// EM ETAPAS (10→50→300) completa na retomada e descarta a cauda. Nenhuma inferência sobre o
+// número DECLARADO resolve: o único fato que prova topo é PERGUNTAR a página acima dele.
+// Daí `topoVerificadoVazio` — a sonda vive no caller (é I/O), a decisão fica aqui e testável.
+
+Deno.test("varredura reversa — desceu até 1 E a sonda confirmou o topo vazio → complete", () => {
+  assertEquals(
+    desfechoVarreduraReversa({ paginaFinal: 0, inicioVarredura: 80, tetoDeclarado: 80, topoVerificadoVazio: true, paginaSonda: 81 }),
+    { complete: true, nextPage: null },
+  );
+});
+
+Deno.test("varredura reversa — desceu até 1 mas a sonda ACHOU dado acima do topo (sub-reporte) → NÃO completa; cursor na sonda", () => {
+  assertEquals(
+    desfechoVarreduraReversa({ paginaFinal: 0, inicioVarredura: 80, tetoDeclarado: 80, topoVerificadoVazio: false, paginaSonda: 81 }),
+    { complete: false, nextPage: 81 },
+  );
+});
+
+Deno.test("varredura reversa — sub-reporte CONSTANTE (nada cresce durante a run) também não completa: quem decide é a sonda, não a declaração", () => {
+  // O caso que a heurística antiga dava como completo: 300 páginas reais, todas as
+  // respostas declarando 80. Sem a sonda, 81–300 ficariam fora para sempre.
+  assertEquals(
+    desfechoVarreduraReversa({ paginaFinal: 0, inicioVarredura: 80, tetoDeclarado: 80, topoVerificadoVazio: false, paginaSonda: 81 }),
+    { complete: false, nextPage: 81 },
+  );
+});
+
+Deno.test("varredura reversa — interrompida no meio (budget/maxPages/streak) → cursor na página atual, nunca complete, sonda irrelevante", () => {
+  assertEquals(
+    desfechoVarreduraReversa({ paginaFinal: 37, inicioVarredura: 80, tetoDeclarado: 80, topoVerificadoVazio: true, paginaSonda: 81 }),
+    { complete: false, nextPage: 37 },
+  );
+});
+
+Deno.test("varredura reversa — sonda que FALHOU (não sabemos o topo) nunca completa: ausência de sinal não é aprovação", () => {
+  assertEquals(
+    desfechoVarreduraReversa({ paginaFinal: 0, inicioVarredura: 10, tetoDeclarado: 50, topoVerificadoVazio: false, paginaSonda: 51 }),
+    { complete: false, nextPage: 51 },
+  );
+});
+
+// ════════ fingerprintPagina — detectar página REPETIDA sem colidir ════════
+// O fingerprint antigo era `${primeiroCodigo}:${count}` e colidia (achado Codex): duas
+// páginas CHEIAS cujo 1º título não tenha `codigo_lancamento_omie` produzem ambas ":100".
+// Com repetição passando a LANÇAR, colisão viraria sync travado — o fingerprint precisa
+// distinguir páginas diferentes de verdade.
+
+Deno.test("fingerprintPagina — páginas com códigos diferentes têm fingerprints diferentes", () => {
+  const a = fingerprintPagina([101, 102, 103]);
+  const b = fingerprintPagina([201, 202, 203]);
+  assertEquals(a === b, false);
+});
+
+Deno.test("fingerprintPagina — a MESMA página dá o mesmo fingerprint (determinístico)", () => {
+  assertEquals(fingerprintPagina([101, 102, 103]), fingerprintPagina([101, 102, 103]));
+});
+
+Deno.test("fingerprintPagina — duas páginas cheias SEM código no 1º item não colidem (o furo do fingerprint antigo)", () => {
+  const p1 = fingerprintPagina([null, 102, 103]);
+  const p2 = fingerprintPagina([null, 902, 903]);
+  assertEquals(p1 === p2, false);
+});
+
+Deno.test("fingerprintPagina — ordem importa (mesma lista reordenada é outra página)", () => {
+  assertEquals(fingerprintPagina([1, 2, 3]) === fingerprintPagina([3, 2, 1]), false);
+});
+
+Deno.test("fingerprintPagina — páginas de tamanhos diferentes não colidem", () => {
+  assertEquals(fingerprintPagina([1, 2]) === fingerprintPagina([1, 2, 3]), false);
+});
+
+// ════════ desfechoContaListagem — cursor de UMA conta no varredor multi-conta ════════
+// O `sync_all_clients` (omie-cliente) percorre 3 contas Omie, N páginas cada, e o caller
+// reinvoca a edge com o cursor devolvido. Aqui moram os dois defeitos já pagos e o novo:
+//   (a) o piso do total morria entre invocações e a conta fechava com a cauda por importar (#1597);
+//   (b) o `break` de erro devolvia o cursor PARADO na mesma conta/página → laço quente e as
+//       contas seguintes reféns da primeira quebrada (este PR);
+//   (c) "não sei o total" nunca pode significar "acabou" — daí `ultimaPaginaCheia`.
+
+Deno.test("conta em curso — ainda há página dentro do teto → segue na MESMA conta", () => {
+  assertEquals(
+    desfechoContaListagem({ fimReal: false, contaAbandonada: false, paginaCursor: 4, tetoPaginas: 140, ultimaPaginaCheia: true }),
+    { hasMore: true, proximaPagina: 4, avancarConta: false },
+  );
+});
+
+Deno.test("fim REAL (EOF do Omie) → avança de conta e o cursor volta para a página 1", () => {
+  assertEquals(
+    desfechoContaListagem({ fimReal: true, contaAbandonada: false, paginaCursor: 12, tetoPaginas: 140, ultimaPaginaCheia: true }),
+    { hasMore: false, proximaPagina: 1, avancarConta: true },
+  );
+});
+
+// A defesa do #1597 que NÃO depende do caller repassar o piso: numa retomada em que a resposta
+// vem COM clientes mas SEM total_de_paginas, o teto é só a página inicial — e sem esta cláusula
+// `page > teto` fecharia a conta na hora, com as páginas seguintes por sincronizar para sempre.
+Deno.test("teto estourado mas ÚLTIMA PÁGINA CHEIA → continua (página cheia é evidência de continuação)", () => {
+  assertEquals(
+    desfechoContaListagem({ fimReal: false, contaAbandonada: false, paginaCursor: 5, tetoPaginas: 4, ultimaPaginaCheia: true }),
+    { hasMore: true, proximaPagina: 5, avancarConta: false },
+  );
+});
+
+Deno.test("teto estourado e última página INCOMPLETA → conta encerrada (nada indica continuação)", () => {
+  assertEquals(
+    desfechoContaListagem({ fimReal: false, contaAbandonada: false, paginaCursor: 5, tetoPaginas: 4, ultimaPaginaCheia: false }),
+    { hasMore: false, proximaPagina: 1, avancarConta: true },
+  );
+});
+
+// ⚠️ O bug deste PR: falha permanente saía do laço SEM avançar página e SEM fimReal. Com
+// `contaAbandonada` a conta é interrompida e o cursor ANDA — o caller reinvoca a PRÓXIMA conta
+// em vez de a mesma página para sempre. O motivo viaja no resultado (é o call-site que garante).
+Deno.test("conta ABANDONADA por falha → cursor avança de conta mesmo com página cheia e teto sobrando", () => {
+  assertEquals(
+    desfechoContaListagem({ fimReal: false, contaAbandonada: true, paginaCursor: 2, tetoPaginas: 140, ultimaPaginaCheia: true }),
+    { hasMore: false, proximaPagina: 1, avancarConta: true },
+  );
+});
+
+// Antes do fix este era o estado exato do laço quente: nada avançou (cursor na mesma página,
+// teto ≥ página) e nenhum fim foi declarado. Sem `contaAbandonada` o desfecho é — corretamente —
+// "continua na mesma conta"; é justamente por isso que o call-site NÃO pode sair do laço em
+// falha sem marcar a conta como abandonada.
+Deno.test("REGRESSÃO — cursor parado sem fim e sem abandono repete a MESMA conta/página (o laço quente)", () => {
+  assertEquals(
+    desfechoContaListagem({ fimReal: false, contaAbandonada: false, paginaCursor: 1, tetoPaginas: 1, ultimaPaginaCheia: false }),
+    { hasMore: true, proximaPagina: 1, avancarConta: false },
+  );
+});
+
+Deno.test("INVARIANTE — abandono e fim NUNCA devolvem hasMore (senão a conta quebrada prende o sync)", () => {
+  for (const fimReal of [true, false]) {
+    for (const ultimaPaginaCheia of [true, false]) {
+      for (const [paginaCursor, tetoPaginas] of [[1, 1], [3, 140], [200, 4]]) {
+        const abandonada = desfechoContaListagem({ fimReal, contaAbandonada: true, paginaCursor, tetoPaginas, ultimaPaginaCheia });
+        if (abandonada.hasMore) throw new Error(`conta abandonada devolveu hasMore (${paginaCursor}/${tetoPaginas})`);
+        if (!abandonada.avancarConta) throw new Error(`conta abandonada não avançou o cursor (${paginaCursor}/${tetoPaginas})`);
+        const fim = desfechoContaListagem({ fimReal: true, contaAbandonada: false, paginaCursor, tetoPaginas, ultimaPaginaCheia });
+        if (fim.hasMore) throw new Error(`fim real devolveu hasMore (${paginaCursor}/${tetoPaginas})`);
+      }
+    }
+  }
+});
+
 // ════════ teto compartilhado ════════
 
 Deno.test("MAX_PAGINAS_POS_ESTOQUE preservado (500 — folga >10× sobre o maior uso atual)", () => {
   assertEquals(MAX_PAGINAS_POS_ESTOQUE, 500);
+});
+
+// ════════ CONTROLE DE CALIBRAÇÃO da canária `paginacao_probe` (omie-financeiro) ════════
+// "Canária que não discrimina é teatro verde" (docs/agent/deploy.md): a fixture tem de exercitar o
+// comportamento que MUDOU, e é preciso PROVAR que sob a implementação ANTIGA ela ficaria vermelha.
+// Sem estes asserts, a probe só provaria que a edge responde.
+//
+// Cada bloco abaixo reimplementa a forma PRÉ-#1598 e roda o MESMO input do fixture homônimo da
+// probe, exigindo que o resultado DIVIRJA do `expected` que ela carrega. Os nomes dos casos são os
+// da probe de propósito — renomear lá sem atualizar aqui é ruído que se vê no diff.
+// ⚠️ O que isto prova é a DISCRIMINAÇÃO da fixture (a escolha dos inputs). Que o helper deployado
+// está certo é a probe em si; que o real-path usa os helpers é o gate G4/G5
+// (src/__tests__/paginacao-artesanal-gate.test.ts). Três provas distintas, nenhuma substitui outra.
+
+// A forma PRÉ-#1353: o teto era recalculado POR RESPOSTA, sem memória do maior já declarado.
+const tetoPorResposta = (declarado: number | undefined) => declarado || 1;
+
+Deno.test("calibração: `piso_NAO_encolhe_sem_declaracao` fica VERMELHO sob o `|| 1` histórico", () => {
+  // Resposta intermediária sem o campo degradava o teto para 1. A canária espera
+  // {teto:5, veredito:"anomalia"}; a forma antiga produz teto 1 e "fim" — exatamente o carimbo de
+  // completude sobre retrato parcial que o #1353 pagou.
+  assertEquals(tetoPorResposta(undefined), 1);
+  assertEquals(avaliarPagina(0, 3, tetoPorResposta(undefined)), "fim");
+  assertEquals(avaliarPagina(0, 3, proximoTotalPaginas(5, undefined, 500)), "anomalia");
+});
+
+Deno.test("calibração: `piso_NAO_encolhe_com_declaracao_menor` fica VERMELHO sob o total por-resposta", () => {
+  // Declaração MENOR vencia a anterior: teto 3, e a p4 vazia passava por "fim" (retrato curto).
+  assertEquals(tetoPorResposta(3), 3);
+  assertEquals(avaliarPagina(0, 4, tetoPorResposta(3)), "fim");
+  assertEquals(avaliarPagina(0, 4, proximoTotalPaginas(5, 3, 500)), "anomalia");
+});
+
+Deno.test("calibração: `reversa_sonda_COM_dado_...` fica VERMELHO sob o `complete = pagina < 1`", () => {
+  const paginaFinal = 0;
+  // Forma antiga: descer até 1 bastava para completar (e zerar o cursor) — com o topo sub-reportado,
+  // as páginas MAIS RECENTES nunca voltavam a ser pedidas.
+  const antigo = { complete: paginaFinal < 1, nextPage: paginaFinal < 1 ? null : paginaFinal };
+  assertEquals(antigo, { complete: true, nextPage: null });
+  assertEquals(
+    desfechoVarreduraReversa({ paginaFinal, inicioVarredura: 80, tetoDeclarado: 80, topoVerificadoVazio: false, paginaSonda: 81 }),
+    { complete: false, nextPage: 81 },
+  );
+});
+
+Deno.test("calibração: `fingerprint_NAO_colide_com_1o_codigo_ausente` fica VERMELHO sob `1ºcódigo:count`", () => {
+  // Forma antiga: duas páginas CHEIAS e DIFERENTES cujo 1º título não tem código davam a MESMA
+  // string. A canária espera {colide:false}; a forma antiga responde {colide:true}.
+  const antigo = (codigos: ReadonlyArray<number | null>) => `${codigos[0] ?? ""}:${codigos.length}`;
+  assertEquals(antigo([null, 102, 103]) === antigo([null, 902, 903]), true);
+  assertEquals(fingerprintPagina([null, 102, 103]) === fingerprintPagina([null, 902, 903]), false);
+});
+
+Deno.test("calibração: `lista_campo_AUSENTE_lanca` fica VERMELHO sob o `|| []` histórico", () => {
+  // `listaOmie` é helper LOCAL do omie-financeiro (não importável aqui: o index.ts tem import
+  // remoto e o test:edges roda --no-remote). O que se prova aqui é a fixture: sob a forma antiga
+  // ela produz {lancou:false, itens:0} contra o {lancou:true, itens:null} que a canária espera —
+  // ou seja, um retorno sem o array viraria "página vazia" = FIM, com a cauda faltando.
+  const resposta: Record<string, unknown> = { nTotPaginas: 3 };
+  const antigo = (resposta["movimentos"] as unknown[] | undefined) || [];
+  assertEquals({ lancou: false, itens: antigo.length }, { lancou: false, itens: 0 });
 });

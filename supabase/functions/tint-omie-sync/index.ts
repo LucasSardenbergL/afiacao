@@ -1,6 +1,6 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
+import { avaliarPagina, proximoTotalPaginas } from "../_shared/omie-paginacao.ts";
 
 interface OmieProdutoImagem {
   url_imagem?: string;
@@ -69,6 +69,24 @@ async function callOmieApi(
       body: JSON.stringify(body),
     });
 
+    // O Omie sinaliza rate-limit por `faultstring` com HTTP 200 — mas um 429/5xx HTTP real não
+    // passava por NENHUM ramo: o corpo parseava sem `faultstring`, `produto_servico_cadastro`
+    // vinha vazio, e o laço lia isso como fim da fonte. O `completo:true` do retorno é justificado
+    // por "todo caminho parcial LANÇA", e este caminho não lançava. Transitório reusa o mesmo
+    // backoff do rate-limit; esgotado LANÇA (nunca vira EOF).
+    if (!response.ok) {
+      const corpo = (await response.text()).slice(0, 300);
+      if ((response.status === 429 || response.status >= 500) && attempt < maxRetries) {
+        const delay = Math.min((attempt + 1) * 5 + 2, 15) * 1000;
+        console.log(
+          `[tint-omie-sync] HTTP ${response.status}, retry em ${delay / 1000}s (attempt ${attempt + 1}/${maxRetries})`,
+        );
+        await new Promise((r) => setTimeout(r, delay));
+        continue;
+      }
+      throw new Error(`Erro Omie: HTTP ${response.status} — ${corpo}`);
+    }
+
     const result = (await response.json()) as unknown as OmieListarProdutosResponse;
 
     if (result.faultstring) {
@@ -97,7 +115,7 @@ async function callOmieApi(
   }
 }
 
-serve(async (req) => {
+Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
@@ -122,10 +140,22 @@ serve(async (req) => {
     let pagina = 1;
     let totalPaginas = 1;
     let totalSynced = 0;
-    const maxPages = 20;
+    // Teto fail-fast: o catálogo oben real é ~37 páginas de 100 (3.7k produtos) — o teto
+    // antigo de 20 TRUNCAVA toda run em silêncio (bases MixMachine das páginas 21+ nunca
+    // sincronizadas) e ainda devolvia status "ok". 60 = real + folga; declarado acima LANÇA.
+    const maxPages = 60;
     let pagesProcessed = 0;
+    // Deadline ABSOLUTO (P2 do challenge Codex): 60 páginas em série, com até ~17s de espera
+    // por página sob rate-limit, podem ultrapassar o teto do runtime — e o isolate morrendo
+    // no meio deixa upserts parciais SEM resposta nenhuma (nem erro). Lançar antes disso
+    // troca a morte muda por um erro que diz o que houve e manda rodar de novo.
+    const t0 = Date.now();
+    const DEADLINE_MS = 110_000;
 
-    while (pagina <= totalPaginas && pagesProcessed < maxPages) {
+    while (pagina <= totalPaginas) {
+      if (Date.now() - t0 > DEADLINE_MS) {
+        throw new Error(`deadline de ${DEADLINE_MS / 1000}s atingido na página ${pagina}/${totalPaginas} (${totalSynced} gravados) — sync incompleto, rode de novo`);
+      }
       const result = await callOmieApi("geral/produtos/", "ListarProdutos", {
         pagina,
         registros_por_pagina: 100,
@@ -133,13 +163,21 @@ serve(async (req) => {
         filtrar_apenas_omiepdv: "N",
       });
 
+      // Rate-limit esgotado LANÇA: o break antigo fechava HTTP 200 "ok" com catálogo PARCIAL
+      // e sem retomada (o operador relê o toast de sucesso e não roda de novo).
       if (!result) {
-        console.log(`[tint-omie-sync] Sync interrupted by rate limit at page ${pagina}`);
-        break;
+        throw new Error(`rate limit do Omie persistiu após retries na página ${pagina}/${totalPaginas} — sync interrompido, rode de novo`);
       }
 
-      totalPaginas = result.total_de_paginas || 1;
+      // Piso monotônico + teto fail-fast (_shared/omie-paginacao.ts): o `|| 1` por resposta
+      // encolhia o teto e a varredura completava parcial como "ok".
+      totalPaginas = proximoTotalPaginas(totalPaginas, result.total_de_paginas, maxPages);
       const produtos = result.produto_servico_cadastro || [];
+      const veredicto = avaliarPagina(produtos.length, pagina, totalPaginas);
+      if (veredicto === "anomalia") {
+        throw new Error(`página ${pagina}/${totalPaginas} do ListarProdutos veio vazia antes do fim declarado — abortando (retrato parcial)`);
+      }
+      if (veredicto === "fim") break;
 
       const rows = produtos
         .filter((prod: OmieProdutoCadastro) => {
@@ -180,11 +218,12 @@ serve(async (req) => {
         const { error } = await supabase
           .from("omie_products")
           .upsert(rows, { onConflict: "omie_codigo_produto,account" });
+        // Upsert com erro LANÇA: o console.error engolia a página (base/concentrado perdido)
+        // e o run devolvia "ok" com total_sincronizado mentindo por baixo.
         if (error) {
-          console.error(`[tint-omie-sync] Erro upsert página ${pagina}:`, error);
-        } else {
-          totalSynced += rows.length;
+          throw new Error(`upsert omie_products página ${pagina}: ${error.message}`);
         }
+        totalSynced += rows.length;
       }
 
       console.log(
@@ -200,7 +239,9 @@ serve(async (req) => {
         total_sincronizado: totalSynced,
         paginas_processadas: pagesProcessed,
         total_paginas: totalPaginas,
-        completo: pagina > totalPaginas,
+        // Todo caminho parcial agora LANÇA (rate-limit, anomalia, teto, upsert) — chegar aqui
+        // é ter visto o fim da fonte.
+        completo: true,
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );

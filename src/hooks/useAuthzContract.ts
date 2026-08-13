@@ -18,7 +18,7 @@ import { supabase } from '@/integrations/supabase/client';
  *
  * FAIL-CLOSED por construção: erro, RPC ausente (404) ou carregando ⇒ v1 ⇒ capability negada.
  */
-export const AUTHZ_CONTRATO_MATRIZ = 2;
+const AUTHZ_CONTRATO_MATRIZ = 2;
 
 interface UseAuthzContractReturn {
   /** Versão lida do banco. 1 quando indeterminada — nunca otimista. */

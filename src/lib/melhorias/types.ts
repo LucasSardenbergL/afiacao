@@ -8,8 +8,8 @@ export type MelhoriaTipo = (typeof MELHORIA_TIPOS)[number];
 export const MELHORIA_URGENCIAS = ['baixa', 'media', 'alta'] as const;
 export type MelhoriaUrgencia = (typeof MELHORIA_URGENCIAS)[number];
 export type MelhoriaStatus = 'aberto' | 'em_andamento' | 'resolvido' | 'descartado';
-export type MelhoriaTriagemStatus = 'pendente' | 'ok' | 'erro';
-export type MelhoriaPapel = 'funcionario' | 'ia' | 'founder';
+type MelhoriaTriagemStatus = 'pendente' | 'ok' | 'erro';
+type MelhoriaPapel = 'funcionario' | 'ia' | 'founder';
 
 export const MELHORIA_MODULOS = [
   'vendas', 'estoque', 'reposicao', 'financeiro', 'tintometrico', 'afiacao',

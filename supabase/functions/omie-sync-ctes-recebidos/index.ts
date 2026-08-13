@@ -26,7 +26,8 @@
 // Body opcional:
 //   { "empresa": "OBEN" | "COLACOR" | "ALL", "dias": 30, "fornecedor_codigo_omie": 8689681266 }
 
-import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
+import { avaliarPagina, proximoTotalPaginas } from "../_shared/omie-paginacao.ts";
 
 interface OmieCabec {
   nIdReceb?: number;
@@ -96,6 +97,12 @@ const RATE_LIMIT_DELAY_MS = 1100;
 const RETRY_DELAY_MS = 5000;
 const MAX_RETRIES = 3;
 const CTE_MODELO = "57";
+// Teto anti-runaway do ListarRecebimentos: 500 × 50 = 25k recebimentos numa janela >> real.
+const MAX_PAGINAS_RECEBIMENTOS = 500;
+// Fault do Omie que significa "fim legítimo" (sem registros), NÃO erro — espelho conservador de
+// omie-sync-estoque:FIM_SEM_REGISTROS (a fault canônica é "Não existem registros para a página").
+const FIM_SEM_REGISTROS =
+  /(\bsem\s+registros?\b|\bnenhum\s+registros?\b|n[ãa]o\s+(existem?|h[áa])\s+registros?\b|n[ãa]o\s+foram\s+encontrad\w*\s+registros?\b|\bregistros?\s+n[ãa]o\s+(existem?|foram\s+encontrad\w*|encontrad\w*)\b)/i;
 const SAYERLACK_FORNECEDOR_DEFAULT = 8689681266;
 
 // SP Minas – % esperado
@@ -123,6 +130,9 @@ interface EmpresaSummary {
   matches_conect: number;
   ctes_orfaos: number;
   erros: number;
+  // Falha FATAL da varredura da empresa (throw da paginação/fault) — os contadores zerados
+  // acima são "não medido", não "mediu zero" (achado Codex do challenge deste PR).
+  erro_fatal?: string;
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -174,17 +184,31 @@ async function callOmie(
       body: JSON.stringify(body),
     });
     const text = await res.text();
-    let json: OmieApiResponse;
-    try { json = JSON.parse(text) as OmieApiResponse; } catch { json = { raw: text }; }
+    let json: OmieApiResponse | null;
+    try { json = JSON.parse(text) as OmieApiResponse; } catch { json = null; }
 
-    const fault = (json as OmieFaultResponse).faultstring;
+    const fault = json ? (json as OmieFaultResponse).faultstring : undefined;
     if (res.status === 429 || (fault && /rate limit/i.test(fault))) {
       console.warn(`[sync-ctes] ${call} rate limit (try ${attempt}/${MAX_RETRIES})`);
       await sleep(RETRY_DELAY_MS);
       continue;
     }
+    // Fault de "sem registros" = fim legítimo SÓ na paginação do ListarRecebimentos (o Omie
+    // sinaliza fim por faultstring, às vezes com HTTP 500) → devolve o json e o loop lê lista
+    // vazia como fim real. No ConsultarRecebimento (detalhe) qualquer fault LANÇA (abaixo).
+    if (call === "ListarRecebimentos" && fault && FIM_SEM_REGISTROS.test(fault)) {
+      return json as OmieApiResponse;
+    }
     if (!res.ok) {
       throw new Error(`Omie ${call} HTTP ${res.status}: ${text.slice(0, 400)}`);
+    }
+    // Fault 200 não-rate-limit LANÇA: antes era devolvida crua e virava lista vazia = fim
+    // silencioso (varredura de CTes "completa" com 0 itens, run ok). Malformada idem.
+    if (fault) {
+      throw new Error(`Omie ${call} fault: ${fault}`);
+    }
+    if (json === null) {
+      throw new Error(`Omie ${call} HTTP ${res.status} com corpo não-JSON (malformada ≠ fim): ${text.slice(0, 200)}`);
     }
     return json;
   }
@@ -353,7 +377,7 @@ async function processarEmpresa(
   const ctesBase: OmieRecebimentoItem[] = [];
   let pagina = 1;
   let totalPaginas = 1;
-  do {
+  while (pagina <= totalPaginas) {
     const param: Record<string, unknown> = {
       nPagina: pagina,
       nRegistrosPorPagina: PAGE_SIZE,
@@ -365,15 +389,23 @@ async function processarEmpresa(
     };
 
     const resp = (await callOmie(app_key, app_secret, "ListarRecebimentos", param)) as OmieListarRecebimentosResponse;
+    // Piso monotônico + teto fail-fast (_shared/omie-paginacao.ts): o `?? 1` por resposta
+    // encolhia o teto e a varredura completava PARCIAL — CTe da cauda nunca vinculado
+    // (t3_data_cte eternamente NULL) com o run devolvendo ok.
+    totalPaginas = proximoTotalPaginas(totalPaginas, resp?.nTotPaginas ?? resp?.total_de_paginas, MAX_PAGINAS_RECEBIMENTOS);
     const lista: OmieRecebimentoItem[] =
       resp?.recebimentos ?? resp?.recebimentosCadastro ?? resp?.nfCadastro ?? resp?.cadastros ?? resp?.nfes ?? [];
+    const veredicto = avaliarPagina(lista.length, pagina, totalPaginas);
+    if (veredicto === "anomalia") {
+      throw new Error(`página ${pagina}/${totalPaginas} do ListarRecebimentos veio vazia antes do fim declarado — abortando (retrato parcial)`);
+    }
+    if (veredicto === "fim") break;
     const apenasCtes = lista.filter((it) => String(it?.cabec?.cModeloNFe ?? "") === CTE_MODELO);
     ctesBase.push(...apenasCtes);
-    totalPaginas = Number(resp?.nTotPaginas ?? resp?.total_de_paginas ?? 1);
     console.log(`[sync-ctes] ${empresa} pág ${pagina}/${totalPaginas} → ${lista.length} itens (${apenasCtes.length} CTes)`);
     pagina++;
     await sleep(RATE_LIMIT_DELAY_MS);
-  } while (pagina <= totalPaginas);
+  }
 
   console.log(`[sync-ctes] ${empresa} total CTes período: ${ctesBase.length}`);
 
@@ -529,13 +561,17 @@ Deno.serve(async (req) => {
           matches_conect: 0,
           ctes_orfaos: 0,
           erros: 1,
+          erro_fatal: e instanceof Error ? e.message : String(e),
         });
       }
     }
 
+    // ok só quando alguma empresa completou a varredura — TODAS falhando fatal é run com
+    // erro (500), não um resumo zerado com ok:true (o modo ALL preserva o parcial honesto).
+    const todasFalharam = summaries.length > 0 && summaries.every((s) => s.erro_fatal);
     return new Response(
-      JSON.stringify({ ok: true, duracao_ms: Date.now() - t0, summary: summaries }),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      JSON.stringify({ ok: !todasFalharam, duracao_ms: Date.now() - t0, summary: summaries }),
+      { status: todasFalharam ? 500 : 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (e) {
     console.error("[sync-ctes] erro fatal:", e);

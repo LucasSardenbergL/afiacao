@@ -46,6 +46,10 @@ function setup(overrides: Partial<React.ComponentProps<typeof CustomerListView>>
     customers: [customer],
     scores: new Map([["c1", score]]),
     loading: false,
+    // Caminho de sucesso: a lista foi lida. O erro honesto tem suíte própria
+    // (AdminCustomers.erro-honesto) — aqui `isError` é só a prop obrigatória do contrato.
+    isError: false,
+    onRetry: vi.fn(),
     total: 1,
     isCarteira: true,
     onSelect: vi.fn(),
@@ -62,7 +66,7 @@ describe("CustomerListView", () => {
   it("mostra skeleton quando loading", () => {
     const { container } = render(
       <MemoryRouter>
-        <CustomerListView customers={[]} scores={new Map()} loading total={0} isCarteira onSelect={vi.fn()} hasNextPage={false} isFetchingNextPage={false} onLoadMore={vi.fn()} />
+        <CustomerListView customers={[]} scores={new Map()} loading isError={false} onRetry={vi.fn()} total={0} isCarteira onSelect={vi.fn()} hasNextPage={false} isFetchingNextPage={false} onLoadMore={vi.fn()} />
       </MemoryRouter>,
     );
     // PageSkeleton (Skeleton usa animate-shimmer), não mais Loader2 full-page

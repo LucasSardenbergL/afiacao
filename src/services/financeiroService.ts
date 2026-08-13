@@ -348,19 +348,6 @@ export async function getDRE(
   return (data || []) as unknown as FinDRE[];
 }
 
-export async function getDREConsolidado(
-  companies: Company[],
-  ano: number,
-  meses?: number[],
-  regime: 'caixa' | 'competencia' = 'competencia'
-): Promise<Record<string, FinDRE[]>> {
-  const result: Record<string, FinDRE[]> = {};
-  for (const co of companies) {
-    result[co] = await getDRE(co, ano, meses, regime);
-  }
-  return result;
-}
-
 export async function getFluxoCaixa(
   company: Company | 'all',
   dataInicio: string,
@@ -949,7 +936,7 @@ export async function getDsoDpoColacor(hoje: Date = new Date()): Promise<DsoDpoR
 
 // ═══════════════ A2 — Retorno & Valor (contrato com fin-valor-engine) ═══════════════
 
-export interface ValorKeDecomposto {
+interface ValorKeDecomposto {
   ancora: number;
   premio_risco_equity: number;
   premio_tamanho_private: number;
@@ -996,14 +983,14 @@ export interface ValorEmpresaResult {
 }
 
 // ═══════════════ A3 — Cockpit de Valor (contrato com fin-valor-cockpit) ═══════════════
-export interface CockpitConfig {
+interface CockpitConfig {
   margem_minima_pct: number;
   desconto_max_pct: number;
   prazo_alvo_dias: number;
   dias_estoque_max: number;
   sample_min_receita: number;
 }
-export interface CockpitRecomendacao {
+interface CockpitRecomendacao {
   acao: string;
   motivo: string;
   impacto_rs: number | null;
@@ -1046,7 +1033,7 @@ export interface CockpitRollupSKU {
   descricao?: string | null;  // descrição do produto (omie_products) — UI mostra no lugar do código SKU
 }
 // Empresa DECOMPOSTA (capital parcial → um único evp seria mentira contábil; Codex 2026-06-23).
-export interface CockpitEmpresaEVP {
+interface CockpitEmpresaEVP {
   receita: number;
   cm: number | null;
   encargo: number | null;
@@ -1064,6 +1051,30 @@ export interface CockpitEmpresaEVP {
   min_folga_positiva_receita: number | null; // receita do combo DONO do min — LOCATOR, não severidade: a UI suprime o headline quando imaterial (< sample_min_receita)
   capital_conhecido: number | null; // Σ capital das células reais → deriva EVP a outros hurdles
 }
+// Canal do pedido (PR1 Cabreúva-Colacor): espelho de digitalização da venda + margem por canal.
+// origem ~100% NULL em prod (2026-08-03) → hoje a leitura dominante é erp_direto; a comparação de
+// margem entre canais fica ARMADA para quando o canal digital tiver volume.
+export type CanalPedido = 'erp_direto' | 'app_cliente' | 'app_staff' | 'ligacao' | 'app_sem_origem' | 'outro';
+export interface CockpitRollupCanal {
+  canal: CanalPedido;
+  pedidos: number;          // pedidos DISTINTOS com item Oben na janela
+  clientes: number;         // clientes distintos
+  receita: number;
+  quantidade: number;
+  desconto: number;
+  cm: number | null;        // margem de contribuição (NÃO lucro): null se nenhum item com custo
+  cm_incompleto: boolean;   // há itens sem custo → cm subestima a margem do canal
+  receita_sem_cm: number;   // receita dos itens sem custo (transparência da fatia sem margem)
+}
+// Giro executivo (PR3 Cabreúva): capital em estoque nível-empresa + dinheiro morto +
+// retorno-sobre-estoque PROXY (cm TTM ÷ snapshot; NÃO é GMROI — falta estoque médio histórico).
+interface CockpitGiroExecutivo {
+  capital_medido: number;
+  capital_sem_venda_ttm: number;   // capital em SKUs SEM venda no TTM (dinheiro morto)
+  skus_medidos: number;
+  skus_sem_valor: number;          // presentes no estoque mas sem valor confiável (cmc/saldo)
+  retorno_proxy: number | null;    // null se cm indisponível ou capital ≤ 0 (nunca Infinity)
+}
 export interface ValorCockpitResult {
   company: string;
   k: number | null;                 // hurdle (Ke); null quando ausente/inválido (não fabricado)
@@ -1073,6 +1084,8 @@ export interface ValorCockpitResult {
   motivo?: string;
   porCliente: CockpitRollupCliente[];
   porSKU: CockpitRollupSKU[];
+  porCanal?: CockpitRollupCanal[]; // opcional: edge antiga (pré-deploy) não devolve — UI degrada honesta
+  giroExecutivo?: CockpitGiroExecutivo; // idem (PR3): ausente na edge antiga → UI omite o bloco
   empresa: CockpitEmpresaEVP;
   recomendacoesCliente: Array<{ cliente: string; recomendacoes: CockpitRecomendacao[] }>;
   confianca: { nivel: 'alta' | 'media' | 'baixa'; motivos: string[] };
@@ -1089,7 +1102,7 @@ export interface ValorCockpitResult {
 
 // ═══════════════ A4 — Próxima Melhor Ação (contrato com fin-next-best-action) ═══════════════
 export type StatusAcaoFila = 'financiar_ja' | 'financiar_condicional' | 'consertar_antes' | 'falta_dado' | 'nao_financiar';
-export type TipoAcaoFila = 'consertar_valor' | 'liberar_caixa' | 'crescer' | 'benchmark';
+type TipoAcaoFila = 'consertar_valor' | 'liberar_caixa' | 'crescer' | 'benchmark';
 export interface AcaoFila {
   empresa: string;
   descricao: string;
@@ -1151,7 +1164,7 @@ export interface FundingResult {
 
 // ═══════════════ Otimizador Tributário — Comparador de Regime (contrato com fin-regime-tributario) ═══════════════
 export type RegimeNome = 'simples' | 'presumido' | 'real';
-export type StatusElegibilidade = 'elegivel' | 'sublimite_excedido' | 'inelegivel';
+type StatusElegibilidade = 'elegivel' | 'sublimite_excedido' | 'inelegivel';
 export type StatusRecomendacao = 'recomenda' | 'empate_tecnico' | 'manter' | 'incompleto';
 
 export interface RegimeInputs {

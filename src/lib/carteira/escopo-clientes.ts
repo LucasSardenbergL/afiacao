@@ -2,7 +2,7 @@
 // PUROS + HOFs testáveis aqui; a glue Supabase é anexada na 2ª metade (Task 2).
 // Spec: docs/superpowers/specs/2026-06-11-clientes-escopo-carteira-design.md
 import { supabase } from '@/integrations/supabase/client';
-import { margemConhecida } from '@/lib/scoring/margin';
+import { margemConhecida, valorMedido } from '@/lib/scoring/margin';
 import { churnConhecido } from '@/lib/scoring/churn';
 import type { Customer, ClientScore } from '@/components/adminCustomers/types';
 
@@ -187,7 +187,9 @@ export async function fetchScoresPorCustomer(ids: string[]): Promise<Map<string,
       // abaixo). Coagir para 0 afirmaria "sem risco de churn" — o melhor resultado — sobre quem
       // não foi medido. churn_risk é 0–100 e 0 é conhecido.
       churn_risk: churnConhecido(s.churn_risk),
-      expansion_score: s.expansion_score ?? 0,
+      // O #1565 corrigiu `churn_risk` NESTE mesmo map.set e deixou a linha abaixo. Coagir na
+      // fronteira torna inertes os guards de quem lê o mapa (#1498) — mesma razão, mesmo helper.
+      expansion_score: valorMedido(s.expansion_score),
       priority_score: s.priority_score ?? 0,
       avg_monthly_spend_180d: s.avg_monthly_spend_180d ?? 0,
       days_since_last_purchase: s.days_since_last_purchase ?? 0,

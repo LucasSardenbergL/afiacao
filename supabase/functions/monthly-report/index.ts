@@ -1,4 +1,3 @@
-import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import {
@@ -226,7 +225,7 @@ async function authenticateRequest(req: Request): Promise<{ authenticated: boole
   return { authenticated: isStaff, isAdmin: roleData?.role === 'master' };
 }
 
-serve(async (req) => {
+Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }

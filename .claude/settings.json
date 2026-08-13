@@ -1,7 +1,8 @@
 {
-  "env": {
-    "ENABLE_CLAUDEAI_MCP_SERVERS": "false"
-  },
+  "model": "opus",
+  "disableClaudeAiConnectors": true,
+  "skillListingMaxDescChars": 220,
+  "skillListingBudgetFraction": 0.004,
   "enabledPlugins": {
     "adobe-for-creativity@claude-plugins-official": false,
     "mercadopago@claude-plugins-official": false,
@@ -95,6 +96,16 @@
         ]
       },
       {
+        "matcher": "Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/read-contexto-nudge.sh\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
         "matcher": "Write|Edit",
         "hooks": [
           {
@@ -109,6 +120,17 @@
           {
             "type": "command",
             "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/migration-immutability-guard.sh\""
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/bash-contexto-nudge.sh\""
           }
         ]
       }
@@ -141,6 +163,15 @@
           {
             "type": "command",
             "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/stop-moneypath-nudge.sh\""
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/stop-contexto-caro.sh\"",
+            "timeout": 10
           }
         ]
       }

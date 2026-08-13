@@ -16,27 +16,6 @@ export type Department =
   | 'gestao'
   | 'outro';
 
-export interface UserDepartmentRow {
-  id: string;
-  user_id: string;
-  department: Department;
-  primary_dept: boolean;
-  created_at: string;
-  created_by: string | null;
-}
-
-export interface UserDepartmentInsert {
-  user_id: string;
-  department: Department;
-  primary_dept?: boolean;
-  created_by?: string | null;
-}
-
-export interface UserDepartmentUpdate {
-  department?: Department;
-  primary_dept?: boolean;
-}
-
 export const DEPARTMENT_VALUES: Department[] = [
   'separador',
   'conferente',

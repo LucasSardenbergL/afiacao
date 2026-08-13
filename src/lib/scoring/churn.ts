@@ -24,3 +24,32 @@ export function churnConhecido(raw: unknown): number | null {
   const n = Number(raw);
   return Number.isFinite(n) ? n : null;
 }
+
+/**
+ * Proporção de clientes com risco de churn ABAIXO de `limite`, contada só sobre quem tem risco
+ * conhecido.
+ *
+ * Existe como função própria porque a forma errada é sedutora e foi a que estava no código:
+ * filtrar o numerador (empurrando o desconhecido para fora dos "bons") e dividir pelo total
+ * INCLUINDO os desconhecidos. O resultado é um número plausível e sistematicamente baixo — pior
+ * que um erro visível, porque não parece errado. Aqui numerador e denominador saem da MESMA
+ * lista filtrada.
+ */
+export interface ProporcaoChurnBaixo {
+  /** Clientes com risco conhecido E abaixo do limite. */
+  abaixo: number;
+  /** Clientes com risco CONHECIDO (a base honesta da proporção; 0 conta, ausente não). */
+  comRisco: number;
+}
+
+export function proporcaoChurnBaixo(valores: Iterable<unknown>, limite: number): ProporcaoChurnBaixo {
+  let abaixo = 0;
+  let comRisco = 0;
+  for (const v of valores) {
+    const c = churnConhecido(v);
+    if (c == null) continue;
+    comRisco++;
+    if (c < limite) abaixo++;
+  }
+  return { abaixo, comRisco };
+}

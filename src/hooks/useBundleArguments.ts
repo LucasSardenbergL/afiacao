@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
+import { invokeFunction } from '@/lib/invoke-function';
 import { toast } from 'sonner';
 import { margemConhecida } from '@/lib/scoring/margin';
 
@@ -79,23 +80,22 @@ export const useBundleArguments = () => {
     setGenerating(prev => ({ ...prev, [bundleKey]: true }));
 
     try {
-      const { data, error } = await supabase.functions.invoke('generate-bundle-argument', {
-        body: { bundle, customer, customerProfile },
+      // invokeFunction extrai o motivo REAL do corpo da resposta. O `data.error`
+      // de antes só pegava erro devolvido com status 200 — a edge agora responde
+      // 402/422, e com o invoke cru o motivo (créditos esgotados, geração
+      // truncada) virava o toast genérico "Erro ao gerar argumentação".
+      const argument = await invokeFunction<BundleArgument>('generate-bundle-argument', {
+        bundle, customer, customerProfile,
       });
-
-      if (error) throw error;
-
-      if (data?.error) {
-        toast.error(data.error);
-        return null;
-      }
-
-      const argument = data as BundleArgument;
       setArguments(prev => ({ ...prev, [bundleKey]: argument }));
       return argument;
     } catch (error) {
       console.error('Error generating argument:', error);
-      toast.error('Erro ao gerar argumentação');
+      const motivo = error instanceof Error && error.name === 'EdgeFunctionError' &&
+          !/non-2xx status code/i.test(error.message)
+        ? error.message
+        : null;
+      toast.error(motivo ?? 'Erro ao gerar argumentação');
       return null;
     } finally {
       setGenerating(prev => ({ ...prev, [bundleKey]: false }));

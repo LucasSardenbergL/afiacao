@@ -91,4 +91,60 @@ describe('selecionarParaPregeracao', () => {
     expect(selecionados).toEqual([]); // nenhum dos dois gera plano...
     expect(semMargem.map((s) => s.customerUserId)).toEqual(['margem-ausente']); // ...mas por motivos DIFERENTES
   });
+
+  // ── fase 2: quem já está na fila não disputa vaga ──────────────────────────
+  describe('jaNaFila', () => {
+    it('exclui de selecionados quem já tem plano aberto', () => {
+      const scores = [base('a', 90, 1000, 30), base('b', 80, 1000, 30)];
+      const { selecionados } = selecionarParaPregeracao(scores, 25, new Set(['a']));
+      expect(selecionados.map((s) => s.customerUserId)).toEqual(['b']);
+    });
+
+    it('FILTRA ANTES DE CORTAR: o cliente seguinte sobe para a vaga liberada', () => {
+      // ESTE é o teste que protege a correção inteira. Se o filtro rodasse DEPOIS do
+      // slice(topN), o batch escolheria todo dia os mesmos topN de maior priority, a
+      // idempotência os pularia, e 'c' JAMAIS entraria — fila parada com aparência de
+      // funcionamento. Medido em prod: 169 planos vivos para 35 clientes, e 97 dos 174
+      // candidatos elegíveis nunca haviam recebido plano.
+      const scores = [
+        base('a', 90, 1000, 30), // já na fila
+        base('b', 80, 1000, 30), // já na fila
+        base('c', 70, 1000, 30), // deveria SUBIR e ser gerado
+        base('d', 60, 1000, 30),
+      ];
+      const { selecionados } = selecionarParaPregeracao(scores, 2, new Set(['a', 'b']));
+      expect(selecionados.map((s) => s.customerUserId)).toEqual(['c', 'd']);
+    });
+
+    it('contabiliza os excluídos em naFila — no silent caps', () => {
+      const scores = [base('a', 90, 1000, 30), base('b', 80, 1000, 30)];
+      const { naFila } = selecionarParaPregeracao(scores, 25, new Set(['a']));
+      expect(naFila.map((s) => s.customerUserId)).toEqual(['a']);
+    });
+
+    it('estar na fila não isenta do gate: quem está na fila E reprova sai só uma vez de cada lista', () => {
+      // naFila e semMargem são recortes independentes e PODEM se sobrepor — a asserção
+      // documenta isso, para que ninguém "conserte" a sobreposição somando os contadores.
+      const scores = [base('x', 90, 1000, null)];
+      const { selecionados, semMargem, naFila } = selecionarParaPregeracao(scores, 25, new Set(['x']));
+      expect(selecionados).toEqual([]);
+      expect(semMargem.map((s) => s.customerUserId)).toEqual(['x']);
+      expect(naFila.map((s) => s.customerUserId)).toEqual(['x']);
+    });
+
+    it('semMargem é contado sobre a carteira TODA, não só sobre quem está fora da fila', () => {
+      // Se semMargem passasse a excluir quem está na fila, encher a fila faria a cegueira
+      // do batch "melhorar" sozinha — e o número deixaria de servir como sinal.
+      const scores = [base('na-fila', 90, 1000, null), base('fora', 80, 1000, null)];
+      const { semMargem } = selecionarParaPregeracao(scores, 25, new Set(['na-fila']));
+      expect(semMargem.map((s) => s.customerUserId)).toEqual(['na-fila', 'fora']);
+    });
+
+    it('sem jaNaFila o comportamento é o de antes (default vazio)', () => {
+      const scores = [base('a', 90, 1000, 30), base('b', 80, 1000, 30)];
+      const { selecionados, naFila } = selecionarParaPregeracao(scores, 25);
+      expect(selecionados.map((s) => s.customerUserId)).toEqual(['a', 'b']);
+      expect(naFila).toEqual([]);
+    });
+  });
 });

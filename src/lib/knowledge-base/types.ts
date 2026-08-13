@@ -35,10 +35,3 @@ export const KB_DOCUMENT_TYPE_LABEL: Record<KbDocumentType, string> = {
   msds: 'MSDS / FISPQ',
   outro: 'Outro',
 };
-
-export const KB_DOCUMENT_STATUS_LABEL: Record<KbDocumentStatus, string> = {
-  processing: 'Processando',
-  ready: 'Pronto',
-  error: 'Erro',
-  draft: 'Rascunho',
-};

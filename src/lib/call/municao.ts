@@ -1,4 +1,4 @@
-export interface MunicaoPedido {
+interface MunicaoPedido {
   data: string;
   valor: number;
 }

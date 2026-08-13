@@ -16,7 +16,7 @@
 // Medido em prod 2026-07-18. Inverter a direção é o que torna o custo O(ferramentas).
 import { fetchAll, type BancoPostgrest } from "./paginate.ts";
 
-export interface ResumoFerramenta {
+interface ResumoFerramenta {
   name: string;
   internal_code: string | null;
   category: string;
@@ -69,7 +69,7 @@ export function motivoSemEnvio(
  * Por que um relatório MONTADO não gera tentativa de envio. Estende `MotivoSemEnvio` (que é
  * sobre o CADASTRO) com os dois motivos que são sobre a INVOCAÇÃO/AMBIENTE.
  */
-export type MotivoPulo = MotivoSemEnvio | "sem_chave_resend" | "envio_desarmado";
+type MotivoPulo = MotivoSemEnvio | "sem_chave_resend" | "envio_desarmado";
 
 export interface PlanoEnvio {
   /** Recebem tentativa de envio. */

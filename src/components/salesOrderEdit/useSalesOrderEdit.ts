@@ -18,6 +18,11 @@ import {
   type OmieProduct,
 } from './types';
 import { invalidPricedOrderItemIndices, invalidOrderPriceMessage } from './priceGuard';
+import {
+  lerRespostaFormas,
+  condicoesDoClienteIndisponiveis,
+  mensagemCondicoesIndisponiveis,
+} from '@/services/orderSubmission/formasDegradacao';
 
 export function useSalesOrderEdit() {
   const { id } = useParams<{ id: string }>();
@@ -32,6 +37,14 @@ export function useSalesOrderEdit() {
   const [saving, setSaving] = useState(false);
   const [formas, setFormas] = useState<Array<{ codigo: string; descricao: string }>>([]);
   const [selectedParcela, setSelectedParcela] = useState('');
+  // Degradação da listagem (edge #1597) + a condição ORIGINAL do pedido. Guardar o original
+  // é o que permite provar, sob degradação, que a lista exibida não contém a condição deste
+  // pedido — e barrar a TROCA por uma genérica (money-path §7: a degradação tem de chegar
+  // à tela; §2: ausente ≠ zero, aqui "lista genérica" ≠ "condições do cliente").
+  const [formasDegradadas, setFormasDegradadas] = useState(false);
+  const [formasErro, setFormasErro] = useState(false);
+  const [formasMotivo, setFormasMotivo] = useState<string | null>(null);
+  const [parcelaOriginal, setParcelaOriginal] = useState('');
 
   // Add product state
   const [showAddProduct, setShowAddProduct] = useState(false);
@@ -83,7 +96,7 @@ export function useSalesOrderEdit() {
       setItems(o.items || []);
       setNotes(o.notes || '');
       const parcela = o.omie_payload?.cabecalho?.codigo_parcela;
-      if (parcela) setSelectedParcela(parcela);
+      if (parcela) { setSelectedParcela(parcela); setParcelaOriginal(parcela); }
 
       const { data: profile } = await supabase
         .from('profiles')
@@ -124,8 +137,33 @@ export function useSalesOrderEdit() {
         }),
       ]);
 
-      const formasData = formasRes.data as FormasPagamentoResponse | null;
-      if (formasData?.formas) setFormas(formasData.formas);
+      // ── Duas metades do mesmo site, de PRs diferentes (money-path §9). Elas não são
+      // alternativas: tratam falhas DIFERENTES, e resolver por um lado reverteria a outra.
+      //
+      // (a) #1605 — TRANSPORTE falhou. `functions.invoke` NÃO lança: devolve
+      // `{ data: null, error }`. Sem esta linha a falha escapava do `catch` abaixo,
+      // `setFormas` nunca era chamado e o editor abria com a lista VAZIA — indistinguível
+      // de "esta conta não tem forma cadastrada". Lançar leva ao toast "Erro ao carregar
+      // pedido", que é a verdade.
+      // ⚠️ Mas o `setOrder` acima já rodou: o throw NÃO impede a tela de abrir, só pula o
+      // resto do load. O toast some em segundos e o que fica é uma tela sem card de
+      // pagamento — a mesma omissão, agora silenciosa. Por isso o estado de erro é gravado
+      // ANTES de lançar: o aviso persiste na tela depois que o toast passa (§7).
+      if (formasRes.error) {
+        setFormasErro(true);
+        setFormasMotivo(formasRes.error.message ?? null);
+        throw formasRes.error;
+      }
+      // (b) este PR — transporte OK, o OMIE é que degradou. O edge #1597 responde 200 com 8
+      // condições genéricas hardcoded e declara `degraded`/`source`/`motivo`. Ler só
+      // `formas` devolveria uma lista indistinguível da real; aqui a tela ABRE e avisa.
+      const estadoFormas = lerRespostaFormas(formasRes.data as FormasPagamentoResponse | null);
+      if (estadoFormas.formas.length > 0) setFormas(estadoFormas.formas);
+      setFormasDegradadas(estadoFormas.degradado);
+      // Sem erro de transporte e sem degradação declarada, lista vazia é ambígua (edge
+      // antiga com 200 vazio) — avisa em vez de sumir o card e sugerir "não tem condição".
+      setFormasErro(!estadoFormas.degradado && estadoFormas.formas.length === 0);
+      setFormasMotivo(estadoFormas.motivo);
       setCatalogProducts(products);
     } catch (e) {
       console.error(e);
@@ -257,6 +295,21 @@ export function useSalesOrderEdit() {
   // save e para o destaque na UI (aria-invalid + botão travado).
   const invalidPriceItemIndices = useMemo(() => invalidPricedOrderItemIndices(items), [items]);
 
+  // Prova positiva de que a lista exibida não serve para ESTE pedido: degradação declarada
+  // + a condição já gravada nele ausente da lista. Só a conjunção — no caminho bom, código
+  // ausente é parcela inativada no Omie (`cInativo === 'S'` é filtrado), estado legítimo.
+  const condicaoDoPedidoAusente = useMemo(
+    () => condicoesDoClienteIndisponiveis(
+      { formas, degradado: formasDegradadas, motivo: formasMotivo },
+      [parcelaOriginal],
+    ),
+    [formas, formasDegradadas, formasMotivo, parcelaOriginal],
+  );
+  // Trava o SELETOR (não a edição inteira): sem a lista real, trocar a condição por uma
+  // genérica altera o prazo de um pedido já negociado. Não mexer é seguro — `selectedParcela`
+  // continua sendo o código original e vai íntegro ao Omie. Editar item/observação segue livre.
+  const parcelaTravada = condicaoDoPedidoAusente.length > 0;
+
   const handleSave = async () => {
     if (!order) return;
     if (items.length === 0) {
@@ -268,6 +321,13 @@ export function useSalesOrderEdit() {
     // Omie, nos dois caminhos (com e sem omie_pedido_id) — fail-closed imperativo, não só UI.
     if (invalidPriceItemIndices.length > 0) {
       toast.error(invalidOrderPriceMessage(invalidPriceItemIndices.map((i) => items[i])));
+      return;
+    }
+    // Guard money-path da condição de pagamento: o seletor travado é feedback; a proteção
+    // é aqui, no caminho que grava (§5). Sob lista degradada que não contém a condição do
+    // pedido, a ÚNICA parcela aceitável é a original — qualquer outra veio das 8 genéricas.
+    if (parcelaTravada && selectedParcela !== parcelaOriginal) {
+      toast.error(mensagemCondicoesIndisponiveis(condicaoDoPedidoAusente));
       return;
     }
     setSaving(true);
@@ -309,6 +369,9 @@ export function useSalesOrderEdit() {
             })),
             observacao: notes,
             codigo_parcela: selectedParcela || undefined,
+            // Gate ATP fase 2: esta via entende blocked:'atp' (aumento de
+            // exposição Oben na edição é bloqueado na fronteira).
+            atp_capaz: true,
           },
         });
         if (error) {
@@ -337,6 +400,23 @@ export function useSalesOrderEdit() {
             description:
               `${cores ? `Cor ${cores}: ` : ''}o preço/fórmula mudou desde a criação do pedido. ` +
               'Remova o item de tinta e adicione de novo pela tela (o preço recalcula), então salve.',
+            duration: 12000,
+          });
+          setSaving(false);
+          return;
+        }
+        if ((data as { blocked?: string } | null)?.blocked === 'atp') {
+          // Gate ATP fase 2: a edição AUMENTOU a exposição Oben (quantidade maior
+          // ou SKU novo) — o Omie NÃO foi atualizado. Sem override na edição: a
+          // válvula é um pedido novo pelo balcão (lá reserva/backorder existem).
+          const aumentos = (data as { aumentos?: Array<{ omie_codigo_produto?: number; quantidade_atual?: number; quantidade_nova?: number }> }).aumentos;
+          const detalhe = (aumentos ?? [])
+            .map(a => `${a.omie_codigo_produto}: ${a.quantidade_atual ?? '—'} → ${a.quantidade_nova ?? '—'}`)
+            .join('; ');
+          toast.error('Edição bloqueada: aumento sem estoque reservado — o Omie NÃO foi atualizado', {
+            description:
+              `${detalhe ? `Aumentos: ${detalhe}. ` : ''}Reduza para as quantidades originais e, para o excedente, ` +
+              'crie um pedido novo pelo balcão (lá a reserva de estoque e o backorder explícito existem).',
             duration: 12000,
           });
           setSaving(false);
@@ -393,6 +473,11 @@ export function useSalesOrderEdit() {
     formas,
     selectedParcela,
     setSelectedParcela,
+    formasDegradadas,
+    formasErro,
+    formasMotivo,
+    condicaoDoPedidoAusente,
+    parcelaTravada,
     showAddProduct,
     setShowAddProduct,
     productSearch,

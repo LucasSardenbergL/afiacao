@@ -7,13 +7,13 @@ import { toast } from 'sonner';
 import { OmieServico } from '@/services/omieService';
 import { usePricingEngine } from '@/hooks/usePricingEngine';
 import { usePriceHistory } from '@/hooks/usePriceHistory';
-import { useCart, VOLUME_UNITS } from '@/hooks/unifiedOrder/useCart';
+import { useCart } from '@/hooks/unifiedOrder/useCart';
 import { useCustomerSelection } from '@/hooks/unifiedOrder/useCustomerSelection';
 import { useProductCatalog } from '@/hooks/unifiedOrder/useProductCatalog';
 import { useClienteTier, useTierPrecoConfig } from '@/hooks/useClienteTier';
 import { precoPartida } from '@/lib/pricing/precoPartida';
 import { submitOrder as submitOrderService, submitQuote as submitQuoteService } from '@/services/orderSubmission';
-import type { LastOrderDataShape, BloqueioCreditoPedido } from '@/services/orderSubmission';
+import type { LastOrderDataShape, BloqueioCreditoPedido, BloqueioAtpPedido } from '@/services/orderSubmission';
 import { track } from '@/lib/analytics';
 import type { RecommendationItem } from '@/hooks/useRecommendationEngine';
 import { DeliveryOption } from '@/types';
@@ -24,6 +24,15 @@ import { maskDocument } from '@/lib/format';
 import { buildOmieCustomer } from '@/lib/unified-order/build-omie-customer';
 import { computeCheckoutFingerprint, decideCheckoutEnvelope, type CheckoutEnvelope } from '@/services/orderSubmission/checkout-envelope';
 import { resolveBridgeMetadata } from '@/services/orderSubmission/origem';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
+import {
+  lerRespostaFormas,
+  condicoesDoClienteIndisponiveis,
+  condicoesBloqueantesDoCarrinho,
+  mensagemCondicoesIndisponiveis,
+  type EstadoFormasPagamento,
+  type EstadoFormasUI,
+} from '@/services/orderSubmission/formasDegradacao';
 
 const CHECKOUT_ENV_KEY = 'unified_order_checkout_env';
 function loadCheckoutEnv(): CheckoutEnvelope | null {
@@ -36,7 +45,6 @@ function persistCheckoutEnv(e: CheckoutEnvelope | null) {
 }
 
 // Re-export shared types for backwards compatibility
-export { VOLUME_UNITS };
 export type {
   ProductAccount,
   Product,
@@ -58,7 +66,6 @@ import type {
   ServiceCartItem,
   CartItem,
   OmieCustomer,
-  FormaPagamento,
   CompanyProfile,
   ToolCategory,
   UserTool,
@@ -140,21 +147,24 @@ export function useUnifiedOrder() {
     },
   });
 
-  // Payment (forms list & method) — react-query por conta, 10min stale, só staff
-  const formasQueryFn = (account: ProductAccount) => async (): Promise<FormaPagamento[]> => {
+  // Payment (forms list & method) — react-query por conta, 10min stale, só staff.
+  // A query carrega o ENVELOPE inteiro (formas + degradação declarada pelo edge #1597), não
+  // só `formas`: ler só a lista devolve 8 condições genéricas indistinguíveis das reais do
+  // cliente (money-path §7 — a correção do edge só termina na tela).
+  const formasQueryFn = (account: ProductAccount) => async (): Promise<EstadoFormasPagamento> => {
     const { data, error } = await supabase.functions.invoke('omie-vendas-sync', {
       body: { action: 'listar_formas_pagamento', account },
     });
     if (error) throw error;
-    return (data?.formas || []) as FormaPagamento[];
+    return lerRespostaFormas(data);
   };
-  const obenFormasQuery = useQuery<FormaPagamento[]>({
+  const obenFormasQuery = useQuery<EstadoFormasPagamento>({
     queryKey: ['formas-pagamento', 'oben'],
     enabled: isStaff,
     staleTime: 10 * 60 * 1000,
     queryFn: formasQueryFn('oben'),
   });
-  const colacorFormasQuery = useQuery<FormaPagamento[]>({
+  const colacorFormasQuery = useQuery<EstadoFormasPagamento>({
     queryKey: ['formas-pagamento', 'colacor'],
     enabled: isStaff,
     staleTime: 10 * 60 * 1000,
@@ -162,9 +172,14 @@ export function useUnifiedOrder() {
   });
   // useMemo estabiliza a referência: `|| []` criava um array novo a cada render,
   // invalidando os useMemo/useCallback que dependem destes (sortedFormas*, submit).
-  const formasPagamentoOben = useMemo(() => obenFormasQuery.data || [], [obenFormasQuery.data]);
-  const formasPagamentoColacor = useMemo(() => colacorFormasQuery.data || [], [colacorFormasQuery.data]);
+  const formasPagamentoOben = useMemo(() => obenFormasQuery.data?.formas || [], [obenFormasQuery.data]);
+  const formasPagamentoColacor = useMemo(() => colacorFormasQuery.data?.formas || [], [colacorFormasQuery.data]);
   const loadingFormas = obenFormasQuery.isLoading || colacorFormasQuery.isLoading;
+  // Recarrega as DUAS contas: o vendedor não sabe (nem precisa saber) qual delas degradou.
+  const recarregarFormas = useCallback(() => {
+    void obenFormasQuery.refetch();
+    void colacorFormasQuery.refetch();
+  }, [obenFormasQuery, colacorFormasQuery]);
 
   const [ordemCompra, setOrdemCompra] = useState<string>('');
   const [afiacaoPaymentMethod, setAfiacaoPaymentMethod] = useState<string>('a_vista');
@@ -202,6 +217,8 @@ export function useUnifiedOrder() {
   // Contas travadas pela trava de crédito no ÚLTIMO envio (Fase 2) — alimenta o
   // painel de bloqueio do dialog de resultado e o fluxo de exceção.
   const [bloqueiosCredito, setBloqueiosCredito] = useState<BloqueioCreditoPedido[]>([]);
+  // ATP fase 2: recusa de estoque do envio corrente → painel de backorder explícito.
+  const [bloqueioAtp, setBloqueioAtp] = useState<BloqueioAtpPedido | null>(null);
 
   // Pricing engine (calc-only, no customer dependency)
   const { loadDefaultPrices, calculatePrice } = usePricingEngine();
@@ -390,6 +407,37 @@ export function useUnifiedOrder() {
       return 0;
     });
   }, [formasPagamentoColacor, customerParcelaRankingColacor]);
+
+  // Estado da degradação por conta, já cruzado com o histórico REAL do cliente no Omie
+  // (`customerParcelaRanking*` + a parcela pré-selecionada, ambos da action
+  // `buscar_ultima_parcela` — fonte INDEPENDENTE desta query, logo não degradam juntas).
+  // `condicoesAusentes` não-vazio é a prova positiva de que a lista genérica não serve
+  // para ESTE cliente; é o que autoriza o bloqueio do envio (precisão > recall).
+  const estadoFormasOben = useMemo<EstadoFormasUI>(() => {
+    const estado = obenFormasQuery.data ?? { formas: [], degradado: false, motivo: null };
+    return {
+      degradado: estado.degradado,
+      motivo: estado.motivo,
+      erro: obenFormasQuery.isError,
+      condicoesAusentes: condicoesDoClienteIndisponiveis(
+        estado,
+        [selectedParcelaOben, ...customerParcelaRankingOben],
+      ),
+    };
+  }, [obenFormasQuery.data, obenFormasQuery.isError, selectedParcelaOben, customerParcelaRankingOben]);
+
+  const estadoFormasColacor = useMemo<EstadoFormasUI>(() => {
+    const estado = colacorFormasQuery.data ?? { formas: [], degradado: false, motivo: null };
+    return {
+      degradado: estado.degradado,
+      motivo: estado.motivo,
+      erro: colacorFormasQuery.isError,
+      condicoesAusentes: condicoesDoClienteIndisponiveis(
+        estado,
+        [selectedParcelaColacor, ...customerParcelaRankingColacor],
+      ),
+    };
+  }, [colacorFormasQuery.data, colacorFormasQuery.isError, selectedParcelaColacor, customerParcelaRankingColacor]);
 
   const isCustomerMode = !authLoading && !isStaff;
   const currentStep = isCustomerMode
@@ -730,13 +778,27 @@ export function useUnifiedOrder() {
     clearCart, navigate,
   ]);
 
-  const submitOrder = useCallback(async () => {
+  const submitOrder = useCallback(async (opts?: { atpBackorder?: { autorizado: true; motivo: string } }) => {
     if (!selectedCustomer || cart.length === 0 || !user) return;
     // Seleção em andamento: o ensure desta seleção ainda nem foi retido (a ref
     // tem a promise placeholder) — o preflight fail-closed do service já
     // bloquearia, mas barrar aqui dá feedback melhor que o erro do preflight.
     if (loadingCustomer) {
       toast.info('Aguarde — ainda carregando os dados do cliente.');
+      return;
+    }
+    // Guard money-path da condição de pagamento: a listagem do Omie degradou para as 8
+    // genéricas E este cliente usa condição que não está entre elas (prova pelo histórico
+    // real de pedidos). Enviar gravaria um prazo diferente do combinado — DSO errado, ou
+    // rejeição do Omie. Fail-closed no CAMINHO DE ENVIO, não só no `disabled` do botão.
+    // Saída do vendedor: "Tentar de novo" (refetch) ou salvar como orçamento, que não
+    // grava codigo_parcela.
+    const bloqueioFormas = condicoesBloqueantesDoCarrinho([
+      { temItens: obenProductItems.length > 0, estado: estadoFormasOben },
+      { temItens: colacorProductItems.length > 0, estado: estadoFormasColacor },
+    ]);
+    if (bloqueioFormas.length > 0) {
+      toast.error(mensagemCondicoesIndisponiveis(bloqueioFormas));
       return;
     }
     if (submittingRef.current) return; // re-entrância: ver comentário na declaração
@@ -823,10 +885,24 @@ export function useUnifiedOrder() {
         // legados (criados antes desta fase, sem os campos da ponte).
         origem: checkoutEnvRef.current.origem ?? (isCustomerMode ? 'web_customer' : 'web_staff'),
         atendimentoId: checkoutEnvRef.current.atendimentoId ?? null,
+        atpBackorder: opts?.atpBackorder,
       });
       if (result.success && result.lastOrderData) {
         setLastOrderData(result.lastOrderData);
-        setOrderSuccessOpen(true);
+        // ATP fase 2: recusa de estoque abre o painel de DECISÃO no lugar do
+        // dialog de sucesso (o vendedor decide backorder ali; ao fechar, o
+        // resumo do envio abre). Sem recusa → fluxo normal.
+        const atp = result.bloqueioAtp ?? null;
+        setBloqueioAtp(atp);
+        if (atp) {
+          track('venda.atp_bloqueio_exibido', {
+            tipo: atp.tipo,
+            recusas: atp.recusas.length,
+            sem_override: atp.semOverride,
+          });
+        } else {
+          setOrderSuccessOpen(true);
+        }
         const bloqueios = result.bloqueiosCredito ?? [];
         setBloqueiosCredito(bloqueios);
         for (const b of bloqueios) {
@@ -852,9 +928,13 @@ export function useUnifiedOrder() {
               : 'Alguma conta ficou pendente no ERP. Reenvie — os produtos não duplicam.',
           });
         }
-        // Avisos não-bloqueio: "criado com avisos". Bloqueio de crédito fica FORA deste
-        // toast de sucesso (o PV não foi criado — dizê-lo "criado" seria mentira).
-        const avisos = result.errors.filter(e => !e.step.startsWith('bloqueio_credito'));
+        // Avisos não-bloqueio: "criado com avisos". Bloqueios (crédito/ATP/desconhecido)
+        // ficam FORA deste toast de sucesso (o PV não foi criado — dizê-lo "criado"
+        // seria mentira; o ATP já tem o painel de decisão).
+        const avisos = result.errors.filter(e =>
+          !e.step.startsWith('bloqueio_credito') &&
+          !e.step.startsWith('bloqueio_atp') &&
+          !e.step.startsWith('bloqueio_desconhecido'));
         if (avisos.length > 0) {
           toast.success('Pedido criado com avisos', {
             description: avisos.map(e => e.message).join(' | '),
@@ -866,7 +946,7 @@ export function useUnifiedOrder() {
         });
       }
     } catch (error) {
-      toast.error('Erro ao criar pedido', { description: error instanceof Error ? error.message : String(error) });
+      toast.error('Erro ao criar pedido', { description: mensagemDeErro(error) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.' });
     } finally {
       submittingRef.current = false;
       setSubmitting(false);
@@ -883,9 +963,34 @@ export function useUnifiedOrder() {
     companyProfiles, defaultProductionAssigneeId,
     getServicePrice, clearCart, isCustomerMode,
     waitForAccountEnsure, loadingCustomer, searchParams,
+    estadoFormasOben, estadoFormasColacor,
   ]);
 
   // clearCustomer defined earlier (wraps useCustomerSelection.clearCustomer + clears cart/ordemCompra/userTools)
+
+  // ── ATP fase 2: ações do painel de backorder ──
+  // Autorizar = decisão EXPLÍCITA do vendedor; o motivo viaja ao edge e é
+  // auditado server-side (atp_decisoes). O re-submit reusa o MESMO checkout
+  // (mesma fingerprint → 'reuse'), então a validação de fingerprint do
+  // override casa com o bloqueio registrado.
+  const autorizarBackorderAtp = useCallback(async (motivo: string) => {
+    setBloqueioAtp(null);
+    track('venda.atp_backorder_autorizado', { motivo_len: motivo.trim().length });
+    await submitOrder({ atpBackorder: { autorizado: true, motivo: motivo.trim() } });
+  }, [submitOrder]);
+
+  // "Tentar novamente" (verificação indisponível) e fechar sem decidir: o
+  // resumo do envio (dialog de sucesso) abre ao fechar — o envio ACONTECEU
+  // (contas não-Oben podem ter ido), só o Oben ficou bloqueado.
+  const tentarNovamenteAtp = useCallback(async () => {
+    setBloqueioAtp(null);
+    await submitOrder();
+  }, [submitOrder]);
+
+  const fecharBloqueioAtp = useCallback(() => {
+    setBloqueioAtp(null);
+    setOrderSuccessOpen(true);
+  }, []);
 
 
 
@@ -913,6 +1018,7 @@ export function useUnifiedOrder() {
     selectedParcelaOben, setSelectedParcelaOben,
     selectedParcelaColacor, setSelectedParcelaColacor,
     loadingFormas, customerParcelaRankingOben, customerParcelaRankingColacor,
+    estadoFormasOben, estadoFormasColacor, recarregarFormas,
     afiacaoPaymentMethod, setAfiacaoPaymentMethod,
     volumesOben, volumesColacor,
     ordemCompra, setOrdemCompra,
@@ -940,6 +1046,7 @@ export function useUnifiedOrder() {
     submitOrder, submitQuote, loadUserTools,
     // Order success
     orderSuccessOpen, setOrderSuccessOpen, lastOrderData, bloqueiosCredito,
+    bloqueioAtp, autorizarBackorderAtp, tentarNovamenteAtp, fecharBloqueioAtp,
     // Navigate
     navigate,
   };

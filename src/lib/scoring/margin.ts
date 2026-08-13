@@ -23,6 +23,47 @@ export function margemConhecida(raw: unknown): number | null {
 }
 
 /**
+ * A MESMA disciplina de `margemConhecida`, com nome neutro: valor numérico medido, ou `null`.
+ *
+ * Existe separada porque a regra "ausente ≠ zero" não é sobre margem — é sobre qualquer número
+ * que uma pessoa vai ler como fato. Chamar `margemConhecida(revenue_potential)` funcionaria e
+ * mentiria para o próximo leitor sobre o que está sendo medido.
+ *
+ * Nasceu para `farmer_client_scores.revenue_potential` e `expansion_score`, que a migration
+ * 20260727130000_farmer_scores_colunas_orfas_null nulou porque nenhum writer os calcula:
+ * **6.633 de 6.633 linhas são NULL** (medido em prod via psql-ro, 2026-07-29). Cada `|| 0`
+ * sobre elas afirma "potencial zero" a respeito de 100% da base — e esse número entra no
+ * prompt do plano tático, de onde sai a abordagem que a vendedora leva para a rua.
+ *
+ * ⚠️ Vale o mesmo alerta relacional: `null < 20` é `true` em JS. Ao adotar o tri-estado num
+ * campo que já participava de comparação, o guard `!= null` passa a ser obrigatório — trocar
+ * `?? 0` por null sem ele TROCA a fabricação de lugar em vez de eliminá-la (money-path.md §2).
+ *
+ * ⚠️ Allowlist por `typeof`, e não `Number()` seguido de `isFinite`: `Number("") === 0` e
+ * `Number([]) === 0`, então um campo em branco ou um payload malformado atravessariam o
+ * `isFinite` como um zero de aparência perfeita — a coerção já teria fabricado o número antes
+ * do guard olhar. (`margemConhecida` acima é mais permissivo por histórico; código novo usa
+ * este.) Diferença medida por teste, não suposta.
+ *
+ * Espelhado por `numeroValido` em
+ * `supabase/functions/generate-tactical-plan/plano-helpers.ts`, por `valorMedido` em
+ * `supabase/functions/generate-bundle-argument/argumento-helpers.ts` e por `valorMedido` em
+ * `supabase/functions/visit-score-recalc-client/index.ts` (Deno não importa de `src/`).
+ */
+// MIRROR-START valor-medido — espelhado verbatim em supabase/functions/visit-score-recalc-client/index.ts
+export function valorMedido(raw: unknown): number | null {
+  if (typeof raw === 'number') return Number.isFinite(raw) ? raw : null;
+  if (typeof raw === 'string') {
+    const t = raw.trim();
+    if (t.length === 0) return null;
+    const n = Number(t);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+// MIRROR-END
+
+/**
  * Média das margens conhecidas, ou `null` se nenhuma for conhecida.
  *
  * Existe como função própria porque a forma errada é sedutora: filtrar o numerador e esquecer

@@ -21,7 +21,7 @@ export interface CestaOpts {
   dueRatioPrincipal?: number; // default 0.70
   frequenteFrac?: number;     // default 0.50
 }
-export type Confianca = 'alta' | 'media' | 'baixa';
+type Confianca = 'alta' | 'media' | 'baixa';
 export interface CestaItem {
   omie_codigo_produto: number;
   qtdSugerida: number;

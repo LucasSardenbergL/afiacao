@@ -143,13 +143,13 @@ export type CapitalSKU = { sku: string; estoque_valor: number | null };
 // Sucede o `evp_parcial` de #961: lá o teto era exibido/somado mesmo positivo (otimista, money-path #2).
 // Aqui, com o Ke vivo (k=0,30), teto>0 NÃO é afirmável (omitido); teto≤0 com perna ausente válida é
 // não-positivo-garantido (real ≤ teto ≤ 0) e é mantido (não esconder prejuízo). Decisão Claude+Codex 2026-06-23.
-export type EvpStatus =
+type EvpStatus =
   | 'real'                  // capital completo: evp = cm − encargo (afirmável)
   | 'teto_nao_positivo'     // parcial, teto≤0, perna AUSENTE alocaria ≥0: evp = teto (mantido)
   | 'omitido_teto_positivo' // parcial, teto>0 OU teto não-confiável (perna ausente alocaria <0): evp = null
   | 'indisponivel_cm'       // custo ausente (cm null): evp/evp_teto null
   | 'indisponivel_hurdle';  // k null (encargo indisponível): evp/evp_teto null
-export type CelulaEVP = {
+type CelulaEVP = {
   cliente: string; sku: string; receita_liquida: number; quantidade: number;
   cm: number | null; a_cs: number; i_cs: number; encargo: number | null;
   evp_teto: number | null;   // cm − encargo (upper bound bruto; preserva o "evp" de #961). null se cm/encargo ausentes/não-finitos.
@@ -169,12 +169,12 @@ export type CelulaEVP = {
 // (upper bound do grupo, preserva #961); `evp_incompleto` = ∃ célula omitida por otimismo (o `evp` do grupo
 // exclui essa fatia → pode ser maior). `encargo` (só células com cm) / `encargo_total` (todas) mantidos.
 // perda_garantida = ∃ célula 'teto_nao_positivo' no grupo (o evp inclui um teto≤0 → o prejuízo REAL pode ser maior).
-export type RollupCliente = { cliente: string; receita: number; cm: number | null; encargo: number | null; encargo_total: number | null; evp: number | null; evp_teto: number | null; evp_incompleto: boolean; perda_garantida: boolean; cm_incompleto: boolean; qtd_combos_sensiveis: number; qtd_combos_quase_sensiveis: number; min_folga_positiva_pp: number | null; min_folga_positiva_receita: number | null };
-export type RollupSKU = { sku: string; receita: number; quantidade: number; cm: number | null; encargo: number | null; encargo_total: number | null; evp: number | null; evp_teto: number | null; evp_incompleto: boolean; perda_garantida: boolean; cm_incompleto: boolean; qtd_combos_sensiveis: number; qtd_combos_quase_sensiveis: number; min_folga_positiva_pp: number | null; min_folga_positiva_receita: number | null };
+type RollupCliente = { cliente: string; receita: number; cm: number | null; encargo: number | null; encargo_total: number | null; evp: number | null; evp_teto: number | null; evp_incompleto: boolean; perda_garantida: boolean; cm_incompleto: boolean; qtd_combos_sensiveis: number; qtd_combos_quase_sensiveis: number; min_folga_positiva_pp: number | null; min_folga_positiva_receita: number | null };
+type RollupSKU = { sku: string; receita: number; quantidade: number; cm: number | null; encargo: number | null; encargo_total: number | null; evp: number | null; evp_teto: number | null; evp_incompleto: boolean; perda_garantida: boolean; cm_incompleto: boolean; qtd_combos_sensiveis: number; qtd_combos_quase_sensiveis: number; min_folga_positiva_pp: number | null; min_folga_positiva_receita: number | null };
 // Empresa DECOMPOSTA (Codex: somar {reais + tetos≤0} excluindo os teto>0 não é teto nem piso → mentira contábil).
 // evp_conhecido = só capital completo; evp_teto_total = upper bound legado; evp_perda_garantida = piso da fatia
 // parcial-negativa; evp = null se há QUALQUER fatia não-afirmável (não finge um total).
-export type EmpresaEVP = {
+type EmpresaEVP = {
   receita: number; cm: number | null; encargo: number | null; encargo_total: number | null;
   evp_conhecido: number | null; evp_teto_total: number | null; evp_perda_garantida: number | null;
   evp: number | null; evp_incompleto: boolean; cm_incompleto: boolean;
@@ -475,4 +475,78 @@ export function scoreConfiancaCockpit(input: {
   if (input.imposto_estimado) motivos.push('Imposto alocado nível-empresa (estimado), não por linha.');
 
   return { nivel: nivel === 3 ? 'alta' : nivel === 2 ? 'media' : 'baixa', motivos };
+}
+
+// ===== Canal do pedido (programa Cabreúva-Colacor, PR1) =====
+// sales_orders.origem só é gravada por pedido nascido no app (submitOrder, sem CHECK no banco);
+// prod 2026-08-03 (psql-ro): 30.650 pedidos, origem ~100% NULL → o rollup por canal nasce como
+// ESPELHO DE DIGITALIZAÇÃO da venda (quanto nasce no app vs ERP) e vira comparação de margem
+// entre canais quando o canal digital tiver volume. checkout_id presente sem origem = pedido do
+// app anterior ao rastreio (app_sem_origem, não fabricado em app_staff/app_cliente).
+export type CanalPedido = 'erp_direto' | 'app_cliente' | 'app_staff' | 'ligacao' | 'app_sem_origem' | 'outro';
+
+export function classificarCanalPedido(p: { origem: string | null; checkout_id: string | null }): CanalPedido {
+  const origem = p.origem?.trim() || null;
+  if (origem == null) return p.checkout_id != null ? 'app_sem_origem' : 'erp_direto';
+  if (origem === 'web_customer') return 'app_cliente';
+  if (origem === 'web_staff') return 'app_staff';
+  if (origem === 'ligacao_sainte' || origem === 'ligacao_entrante') return 'ligacao';
+  return 'outro'; // valor desconhecido NÃO cai em bucket conhecido (origem não tem CHECK no banco)
+}
+
+// ===== Giro executivo (programa Cabreúva-Colacor, PR3) =====
+// Capital em estoque nível-empresa + dinheiro morto (capital de SKU sem venda no TTM) +
+// retorno-sobre-estoque PROXY (cm TTM ÷ snapshot de capital — NÃO é GMROI definitivo: falta
+// estoque MÉDIO histórico; a UI rotula proxy). cmc ausente/sujo fica FORA (cobertura explícita).
+export type GiroExecutivo = {
+  capital_medido: number;          // Σ capital dos SKUs com valor válido (≥0 finito)
+  capital_sem_venda_ttm: number;   // fatia do medido em SKUs SEM venda no TTM (dinheiro morto)
+  skus_medidos: number;
+  skus_sem_valor: number;          // cmc/saldo ausente ou sujo → não medido (nunca 0 fabricado)
+  retorno_proxy: number | null;    // cmTTM/capital_medido; null se cm null ou capital ≤ 0
+};
+
+export function calcularGiroExecutivo(input: {
+  estoquePorSKU: Map<string, number | null>;
+  skusComVendaTTM: Set<string>;
+  cmTTM: number | null;
+}): GiroExecutivo {
+  let capital = 0, morto = 0, medidos = 0, semValor = 0;
+  for (const [sku, valor] of input.estoquePorSKU) {
+    if (valor == null || !Number.isFinite(valor) || valor < 0) { semValor++; continue; }
+    medidos++;
+    capital += valor;
+    if (!input.skusComVendaTTM.has(sku)) morto += valor;
+  }
+  const retorno = input.cmTTM != null && Number.isFinite(input.cmTTM) && capital > 0
+    ? input.cmTTM / capital
+    : null;
+  return { capital_medido: capital, capital_sem_venda_ttm: morto, skus_medidos: medidos, skus_sem_valor: semValor, retorno_proxy: retorno };
+}
+
+export type ItemCanalInput = { sales_order_id: string; cliente: string; receita_liquida: number; quantidade: number; desconto: number; custo_unitario: number | null };
+export type RollupCanal = { canal: CanalPedido; pedidos: number; clientes: number; receita: number; quantidade: number; desconto: number; cm: number | null; cm_incompleto: boolean; receita_sem_cm: number };
+
+export function agregarPorCanal(itens: ItemCanalInput[], canalPorPedido: Map<string, CanalPedido>): RollupCanal[] {
+  type Acc = { canal: CanalPedido; pedidos: Set<string>; clientes: Set<string>; receita: number; quantidade: number; desconto: number; cm: number; cmNull: boolean; cm_incompleto: boolean; receita_sem_cm: number };
+  const m = new Map<CanalPedido, Acc>();
+  for (const it of itens) {
+    // Pedido fora do mapa → 'outro' (defensivo): não fabricar 'erp_direto' para dado inconsistente.
+    const canal = canalPorPedido.get(it.sales_order_id) ?? 'outro';
+    const acc = m.get(canal) ?? { canal, pedidos: new Set<string>(), clientes: new Set<string>(), receita: 0, quantidade: 0, desconto: 0, cm: 0, cmNull: true, cm_incompleto: false, receita_sem_cm: 0 };
+    acc.pedidos.add(it.sales_order_id);
+    acc.clientes.add(it.cliente);
+    acc.receita += it.receita_liquida;
+    acc.quantidade += it.quantidade;
+    acc.desconto += it.desconto;
+    // Margem item a item pela MESMA régua dos combos (custo ausente ≠ zero → item sai do cm e
+    // engorda receita_sem_cm; canal 100% sem custo → cm null, nunca 0 fabricado).
+    const cm = margemContribuicao({ receita_liquida: it.receita_liquida, custo_unitario: it.custo_unitario, quantidade: it.quantidade });
+    if (cm == null) { acc.cm_incompleto = true; acc.receita_sem_cm += it.receita_liquida; }
+    else { acc.cm += cm; acc.cmNull = false; }
+    m.set(canal, acc);
+  }
+  return [...m.values()]
+    .map((a) => ({ canal: a.canal, pedidos: a.pedidos.size, clientes: a.clientes.size, receita: a.receita, quantidade: a.quantidade, desconto: a.desconto, cm: a.cmNull ? null : a.cm, cm_incompleto: a.cm_incompleto, receita_sem_cm: a.receita_sem_cm }))
+    .sort((a, b) => b.receita - a.receita);
 }

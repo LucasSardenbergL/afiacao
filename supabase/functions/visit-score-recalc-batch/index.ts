@@ -33,9 +33,10 @@
 //
 // Schedule é UTC (`cron.timezone` vazio, #1510): '0 7' = 04:00 BRT, como diz o cabeçalho acima.
 
-import { createClient } from 'npm:@supabase/supabase-js@^2';
+import { createClient } from 'npm:@supabase/supabase-js@2';
 import { authorizeCronOrStaff, corsHeaders } from '../_shared/auth.ts';
 import { carregarExcluidosDaCarteira, carregarOwnerMap } from '../_shared/mapas-paginados.ts';
+import { exigirLeitura } from '../_shared/leitura-critica.ts';
 import type { BancoPostgrest } from '../_shared/paginate.ts';
 
 Deno.serve(async (req) => {
@@ -102,16 +103,36 @@ Deno.serve(async (req) => {
       .not('customer_user_id', 'is', null),
   ]);
 
+  // Fail-closed igual à carteira acima, e pelo mesmo motivo: com `?? []` cru a leitura que
+  // FALHAVA virava "ninguém teve atividade nesta fonte". O batch seguia respondendo 200,
+  // com um `recalculated` menor que ninguém tinha como conferir, e o decay diário
+  // simplesmente NÃO rodava para os clientes daquela fonte — o score envelhecia em
+  // silêncio, que é a falha mais cara aqui (a agenda do vendedor passa a ser ordenada por
+  // score velho). Melhor 500 e deixar o cron re-tentar do que um lote parcial mudo.
+  let calls: Array<{ customer_user_id: string; farmer_id: string }>;
+  let visitasAtivas: Array<{ customer_user_id: string; visited_by: string }>;
+  try {
+    calls = (exigirLeitura(callsRes, 'farmer_calls') ?? []) as Array<{ customer_user_id: string; farmer_id: string }>;
+    visitasAtivas = (exigirLeitura(visitsRes, 'route_visits') ?? []) as Array<{ customer_user_id: string; visited_by: string }>;
+  } catch (e) {
+    const motivo = e instanceof Error ? e.message : String(e);
+    console.error('[visit-score-recalc-batch] leitura de atividade falhou:', motivo);
+    return new Response(
+      JSON.stringify({ error: motivo, drained }),
+      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+    );
+  }
+
   // Dedup por CLIENTE (1 score por cliente); farmer_id = dono (fallback: ator da atividade).
   const unique = new Map<string, { customer_user_id: string; farmer_id: string }>();
-  for (const row of (callsRes.data ?? []) as Array<{ customer_user_id: string; farmer_id: string }>) {
+  for (const row of calls) {
     if (flaggeds.has(row.customer_user_id)) continue;
     unique.set(row.customer_user_id, {
       customer_user_id: row.customer_user_id,
       farmer_id: ownerMap.get(row.customer_user_id) ?? row.farmer_id,
     });
   }
-  for (const row of (visitsRes.data ?? []) as Array<{ customer_user_id: string; visited_by: string }>) {
+  for (const row of visitasAtivas) {
     if (flaggeds.has(row.customer_user_id)) continue;
     unique.set(row.customer_user_id, {
       customer_user_id: row.customer_user_id,

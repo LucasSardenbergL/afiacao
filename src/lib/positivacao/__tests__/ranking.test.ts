@@ -31,4 +31,20 @@ describe('rankAPositivar', () => {
     rankAPositivar(input);
     expect(input.map((x) => x.customer_user_id)).toEqual(['a', 'b']);
   });
+
+  it('desempate por potencial é transitivo quando só um lado é medido (ausente empurra pro fim, não pula o critério)', () => {
+    // Mesmo priority_score → decide no desempate por potencial. Triplete real que formava ciclo
+    // quando "ausente" pulava pro churn_risk em vez de perder dentro do próprio critério:
+    // compare(A,C) por potencial (A>C), compare(A,B) e compare(B,C) por churn (B>A, C>B) → A>C>B>A.
+    const A = c({ customer_user_id: 'A', priority_score: 50, revenue_potential: 100, churn_risk: 0 });
+    const B = c({ customer_user_id: 'B', priority_score: 50, revenue_potential: null, churn_risk: 50 });
+    const C = c({ customer_user_id: 'C', priority_score: 50, revenue_potential: 1, churn_risk: 100 });
+
+    // A ordem final não pode depender da ordem de entrada — um comparador não-transitivo dá
+    // ordem dependente da implementação do sort (money-path: prova por >1 permutação).
+    for (const entrada of [[A, B, C], [B, C, A], [C, A, B], [C, B, A], [B, A, C], [A, C, B]]) {
+      const out = rankAPositivar(entrada);
+      expect(out.map((x) => x.customer_user_id)).toEqual(['A', 'C', 'B']);
+    }
+  });
 });

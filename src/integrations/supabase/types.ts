@@ -328,6 +328,72 @@ export type Database = {
         }
         Relationships: []
       }
+      atp_decisoes: {
+        Row: {
+          account: string
+          actor_user_id: string | null
+          atp_snapshot: Json | null
+          checkout_id: string
+          contexto: string
+          created_at: string
+          decisao: string
+          enforcement: boolean
+          id: string
+          itens_fingerprint: string | null
+          motivo_backorder: string | null
+          pool: string
+          recusas: Json | null
+          sales_order_id: string | null
+        }
+        Insert: {
+          account: string
+          actor_user_id?: string | null
+          atp_snapshot?: Json | null
+          checkout_id: string
+          contexto?: string
+          created_at?: string
+          decisao: string
+          enforcement: boolean
+          id?: string
+          itens_fingerprint?: string | null
+          motivo_backorder?: string | null
+          pool: string
+          recusas?: Json | null
+          sales_order_id?: string | null
+        }
+        Update: {
+          account?: string
+          actor_user_id?: string | null
+          atp_snapshot?: Json | null
+          checkout_id?: string
+          contexto?: string
+          created_at?: string
+          decisao?: string
+          enforcement?: boolean
+          id?: string
+          itens_fingerprint?: string | null
+          motivo_backorder?: string | null
+          pool?: string
+          recusas?: Json | null
+          sales_order_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "atp_decisoes_sales_order_id_fkey"
+            columns: ["sales_order_id"]
+            isOneToOne: false
+            referencedRelation: "sales_orders"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "atp_decisoes_sales_order_id_fkey"
+            columns: ["sales_order_id"]
+            isOneToOne: false
+            referencedRelation: "selfservice_meus_pedidos"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       cache_lotes: {
         Row: {
           cache_key: string
@@ -1998,6 +2064,69 @@ export type Database = {
           z_classe_c?: number
         }
         Relationships: []
+      }
+      estoque_reservas: {
+        Row: {
+          atualizado_em: string
+          checkout_id: string
+          created_at: string
+          created_by: string | null
+          expira_em: string
+          faturamento_observado_em: string | null
+          id: string
+          motivo: string | null
+          omie_codigo_produto: number
+          pool: string
+          quantidade: number
+          sales_order_id: string | null
+          status: string
+        }
+        Insert: {
+          atualizado_em?: string
+          checkout_id: string
+          created_at?: string
+          created_by?: string | null
+          expira_em: string
+          faturamento_observado_em?: string | null
+          id?: string
+          motivo?: string | null
+          omie_codigo_produto: number
+          pool: string
+          quantidade: number
+          sales_order_id?: string | null
+          status?: string
+        }
+        Update: {
+          atualizado_em?: string
+          checkout_id?: string
+          created_at?: string
+          created_by?: string | null
+          expira_em?: string
+          faturamento_observado_em?: string | null
+          id?: string
+          motivo?: string | null
+          omie_codigo_produto?: number
+          pool?: string
+          quantidade?: number
+          sales_order_id?: string | null
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "estoque_reservas_sales_order_id_fkey"
+            columns: ["sales_order_id"]
+            isOneToOne: false
+            referencedRelation: "sales_orders"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "estoque_reservas_sales_order_id_fkey"
+            columns: ["sales_order_id"]
+            isOneToOne: false
+            referencedRelation: "selfservice_meus_pedidos"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       eventos_outlier: {
         Row: {
@@ -6398,6 +6527,48 @@ export type Database = {
         }
         Relationships: []
       }
+      ia_uso_evento: {
+        Row: {
+          criado_em: string
+          funcao: string
+          id: number
+          user_id: string
+        }
+        Insert: {
+          criado_em?: string
+          funcao: string
+          id?: never
+          user_id: string
+        }
+        Update: {
+          criado_em?: string
+          funcao?: string
+          id?: never
+          user_id?: string
+        }
+        Relationships: []
+      }
+      ia_uso_limite: {
+        Row: {
+          atualizado_em: string
+          funcao: string
+          limite_dia: number
+          limite_hora: number
+        }
+        Insert: {
+          atualizado_em?: string
+          funcao: string
+          limite_dia: number
+          limite_hora: number
+        }
+        Update: {
+          atualizado_em?: string
+          funcao?: string
+          limite_dia?: number
+          limite_hora?: number
+        }
+        Relationships: []
+      }
       impersonation_audit: {
         Row: {
           actor_user_id: string
@@ -8817,9 +8988,11 @@ export type Database = {
           promocao_item_id: number | null
           qtde_final: number | null
           qtde_sem_promocao: number | null
+          qtde_sem_teto: number | null
           qtde_sugerida: number
           sku_codigo_omie: string
           sku_descricao: string | null
+          teto_cobertura_aplicado: boolean
           valor_linha: number | null
         }
         Insert: {
@@ -8841,9 +9014,11 @@ export type Database = {
           promocao_item_id?: number | null
           qtde_final?: number | null
           qtde_sem_promocao?: number | null
+          qtde_sem_teto?: number | null
           qtde_sugerida: number
           sku_codigo_omie: string
           sku_descricao?: string | null
+          teto_cobertura_aplicado?: boolean
           valor_linha?: number | null
         }
         Update: {
@@ -8865,9 +9040,11 @@ export type Database = {
           promocao_item_id?: number | null
           qtde_final?: number | null
           qtde_sem_promocao?: number | null
+          qtde_sem_teto?: number | null
           qtde_sugerida?: number
           sku_codigo_omie?: string
           sku_descricao?: string | null
+          teto_cobertura_aplicado?: boolean
           valor_linha?: number | null
         }
         Relationships: [
@@ -11277,6 +11454,7 @@ export type Database = {
       }
       reposicao_motor_run: {
         Row: {
+          capados_n: number
           criado_em: string
           data_ciclo: string
           empresa: string
@@ -11287,6 +11465,7 @@ export type Database = {
           suprimidos_n: number
         }
         Insert: {
+          capados_n?: number
           criado_em?: string
           data_ciclo: string
           empresa: string
@@ -11297,6 +11476,7 @@ export type Database = {
           suprimidos_n?: number
         }
         Update: {
+          capados_n?: number
           criado_em?: string
           data_ciclo?: string
           empresa?: string
@@ -11574,6 +11754,66 @@ export type Database = {
           run_id?: string
           visto_em?: string
           visto_seq?: number
+        }
+        Relationships: []
+      }
+      reposicao_teto_cobertura_log: {
+        Row: {
+          cap_teto_ancora: number | null
+          classe_abc: string | null
+          criado_em: string
+          demanda_diaria: number | null
+          empresa: string
+          estoque_efetivo: number | null
+          estoque_maximo: number | null
+          grupo_codigo: string | null
+          id: string
+          motivo: string
+          ponto_pedido: number | null
+          qtde_final: number | null
+          qtde_sem_teto: number | null
+          run_id: string
+          sku_codigo_omie: string
+          sku_descricao: string | null
+          teto_dias: number | null
+        }
+        Insert: {
+          cap_teto_ancora?: number | null
+          classe_abc?: string | null
+          criado_em?: string
+          demanda_diaria?: number | null
+          empresa: string
+          estoque_efetivo?: number | null
+          estoque_maximo?: number | null
+          grupo_codigo?: string | null
+          id?: string
+          motivo: string
+          ponto_pedido?: number | null
+          qtde_final?: number | null
+          qtde_sem_teto?: number | null
+          run_id: string
+          sku_codigo_omie: string
+          sku_descricao?: string | null
+          teto_dias?: number | null
+        }
+        Update: {
+          cap_teto_ancora?: number | null
+          classe_abc?: string | null
+          criado_em?: string
+          demanda_diaria?: number | null
+          empresa?: string
+          estoque_efetivo?: number | null
+          estoque_maximo?: number | null
+          grupo_codigo?: string | null
+          id?: string
+          motivo?: string
+          ponto_pedido?: number | null
+          qtde_final?: number | null
+          qtde_sem_teto?: number | null
+          run_id?: string
+          sku_codigo_omie?: string
+          sku_descricao?: string | null
+          teto_dias?: number | null
         }
         Relationships: []
       }
@@ -11967,6 +12207,7 @@ export type Database = {
           total: number
           updated_at: string
           whatsapp_conversation_id: string | null
+          whatsapp_proposta_dedupe: string | null
         }
         Insert: {
           account?: string
@@ -11997,6 +12238,7 @@ export type Database = {
           total?: number
           updated_at?: string
           whatsapp_conversation_id?: string | null
+          whatsapp_proposta_dedupe?: string | null
         }
         Update: {
           account?: string
@@ -12027,6 +12269,7 @@ export type Database = {
           total?: number
           updated_at?: string
           whatsapp_conversation_id?: string | null
+          whatsapp_proposta_dedupe?: string | null
         }
         Relationships: [
           {
@@ -15724,6 +15967,45 @@ export type Database = {
         }
         Relationships: []
       }
+      venda_perdida_log: {
+        Row: {
+          cliente_nome: string | null
+          criado_em: string
+          criado_por: string | null
+          empresa: string
+          id: string
+          motivo: string
+          observacao: string | null
+          quantidade: number
+          sku_codigo_omie: string
+          sku_descricao: string | null
+        }
+        Insert: {
+          cliente_nome?: string | null
+          criado_em?: string
+          criado_por?: string | null
+          empresa?: string
+          id?: string
+          motivo?: string
+          observacao?: string | null
+          quantidade: number
+          sku_codigo_omie: string
+          sku_descricao?: string | null
+        }
+        Update: {
+          cliente_nome?: string | null
+          criado_em?: string
+          criado_por?: string | null
+          empresa?: string
+          id?: string
+          motivo?: string
+          observacao?: string | null
+          quantidade?: number
+          sku_codigo_omie?: string
+          sku_descricao?: string | null
+        }
+        Relationships: []
+      }
       vendas_sync_cursor: {
         Row: {
           account: string
@@ -17416,6 +17698,17 @@ export type Database = {
         }
         Relationships: []
       }
+      v_sku_classe_sb: {
+        Row: {
+          adi: number | null
+          cv2: number | null
+          empresa: string | null
+          n_dias_venda: number | null
+          quadrante: string | null
+          sku_codigo_omie: number | null
+        }
+        Relationships: []
+      }
       v_sku_classificacao_abc_xyz: {
         Row: {
           classe_abc_proposta: string | null
@@ -17748,6 +18041,15 @@ export type Database = {
           status_sla: string | null
           tendencia: string | null
           ultimo_recebimento: string | null
+        }
+        Relationships: []
+      }
+      v_sku_ultima_venda: {
+        Row: {
+          empresa: string | null
+          sku_codigo_omie: number | null
+          ultima_venda_data: string | null
+          vendas_registradas: number | null
         }
         Relationships: []
       }
@@ -18117,6 +18419,19 @@ export type Database = {
         Returns: string
       }
       _tint_preflight: { Args: never; Returns: Json }
+      _tint_watchdog_fase5_transicao: {
+        Args: {
+          p_company: string
+          p_ctx: Json
+          p_fator?: number
+          p_msg: string
+          p_n: number
+          p_sev: string
+          p_tipo: string
+          p_titulo: string
+        }
+        Returns: undefined
+      }
       _vendas_familia_ausente_lista_email: {
         Args: { p_limit?: number }
         Returns: string
@@ -18167,6 +18482,45 @@ export type Database = {
         }
         Returns: string
       }
+      atp_consultar: {
+        Args: { p_pool: string; p_skus: number[] }
+        Returns: {
+          confiavel: boolean
+          disponivel: number
+          motivo: string
+          omie_codigo_produto: number
+          saldo_synced_at: string
+        }[]
+      }
+      atp_gate_pedido: {
+        Args: {
+          p_actor?: string
+          p_autorizar_backorder?: boolean
+          p_enforcement: boolean
+          p_motivo_backorder?: string
+          p_sales_order_id: string
+        }
+        Returns: Json
+      }
+      atp_reconciliar: { Args: never; Returns: Json }
+      atp_reservas_pendentes: {
+        Args: { p_dias?: number }
+        Returns: {
+          ativa_ha_dias: number
+          faturamento_observado_em: string
+          omie_codigo_produto: number
+          omie_pedido_id: number
+          quantidade: number
+          reserva_id: string
+          sales_order_id: string
+          status_canonico: string
+          status_vinculado: string
+        }[]
+      }
+      atp_resolver_reserva: {
+        Args: { p_desfecho: string; p_motivo: string; p_reserva_id: string }
+        Returns: Json
+      }
       atualizar_campanha_datas_corte: {
         Args: {
           p_campanha_id: number
@@ -18214,10 +18568,6 @@ export type Database = {
           descricao: string
           omie_codigo_produto: number
         }[]
-      }
-      calcular_gatilhos_reposicao: {
-        Args: { p_empresa?: string; p_only_sku?: number }
-        Returns: Record<string, unknown>
       }
       cancelar_pedido_sugerido: {
         Args: {
@@ -18439,6 +18789,7 @@ export type Database = {
             Args: { p_item_id: number; p_threshold_similaridade?: number }
             Returns: Json
           }
+      expirar_reservas_vencidas: { Args: never; Returns: Json }
       farmer_association_rules_substituir: {
         Args: { p_regras: Json }
         Returns: number
@@ -18910,6 +19261,24 @@ export type Database = {
           phone_e164: string
         }[]
       }
+      get_whatsapp_proposta_cotacao: {
+        Args: {
+          p_account: string
+          p_customer_user_id: string
+          p_skus: number[]
+        }
+        Returns: {
+          ativo: boolean
+          codigo: string
+          descricao: string
+          estoque: number
+          fonte_preco: string
+          omie_codigo_produto: number
+          preco: number
+          product_id: string
+          unidade: string
+        }[]
+      }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]
@@ -18917,9 +19286,17 @@ export type Database = {
         }
         Returns: boolean
       }
-      import_tint_formulas: {
-        Args: { p_account: string; p_personalizada: boolean; p_rows: Json }
-        Returns: Json
+      ia_consumir_cota: {
+        Args: { p_funcao: string; p_user_id: string }
+        Returns: {
+          libera_em_segundos: number
+          limite_dia: number
+          limite_hora: number
+          motivo: string
+          permitido: boolean
+          usado_dia: number
+          usado_hora: number
+        }[]
       }
       iniciar_envio_portal_pre_claim: {
         Args: { p_pedido_id: number }
@@ -18938,6 +19315,10 @@ export type Database = {
           p_tracking_t1: string
         }
         Returns: boolean
+      }
+      liberar_reserva_checkout: {
+        Args: { p_checkout_id: string; p_motivo?: string; p_pool?: string }
+        Returns: Json
       }
       limpar_sugestoes_antigas: {
         Args: never
@@ -19344,6 +19725,15 @@ export type Database = {
         Returns: Json
       }
       request_customer_metrics_refresh: { Args: never; Returns: undefined }
+      reservar_estoque: {
+        Args: {
+          p_checkout_id: string
+          p_itens: Json
+          p_pool: string
+          p_ttl_minutos?: number
+        }
+        Returns: Json
+      }
       resgatar_recompensa: { Args: { p_reward_key: string }; Returns: string }
       resolve_markup_policy: {
         Args: {
@@ -19514,6 +19904,7 @@ export type Database = {
         Returns: Json
       }
       tint_watchdog_corante_check: { Args: never; Returns: undefined }
+      tint_watchdog_fase5_check: { Args: never; Returns: undefined }
       upsert_push_subscription: {
         Args: {
           p_endpoint: string

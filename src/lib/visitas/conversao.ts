@@ -4,7 +4,7 @@ export interface VisitaConversaoRow {
   result: string | null;
   revenue_generated: number | null;
 }
-export interface ConversaoBucket {
+interface ConversaoBucket {
   result: string; // código (pedido_fechado/.../sem_resultado)
   count: number;
   revenue: number;

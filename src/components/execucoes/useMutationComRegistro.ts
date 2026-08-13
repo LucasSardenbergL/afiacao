@@ -8,6 +8,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { logger } from "@/lib/logger";
 import { ULTIMA_EXECUCAO_QUERY_KEY } from "./tipos";
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 
 // Escrita em acoes_execucoes fora do types.ts gerado (regen é do Lovable) → cast estrutural.
 interface EscritaExecucoes {
@@ -43,7 +44,7 @@ async function iniciarRegistro(acao: string, userId: string | null): Promise<str
     }
     return data.id;
   } catch (e) {
-    logger.warn("registro de execução não abriu (fail-open)", { acao, erro: String(e) });
+    logger.warn("registro de execução não abriu (fail-open)", { acao, erro: mensagemDeErro(e) ?? "(sem mensagem)" });
     return null;
   }
 }
@@ -63,7 +64,7 @@ async function fecharRegistro(
       .eq("id", registroId);
     if (error) logger.warn("registro de execução não fechou (fail-open)", { registroId, erro: error.message });
   } catch (e) {
-    logger.warn("registro de execução não fechou (fail-open)", { registroId, erro: String(e) });
+    logger.warn("registro de execução não fechou (fail-open)", { registroId, erro: mensagemDeErro(e) ?? "(sem mensagem)" });
   }
 }
 
@@ -103,7 +104,9 @@ export function useMutationComRegistro<TData, TVariables = void>({
         await fecharRegistro(registroId, "sucesso", detalhes?.(resultado) ?? null);
         return resultado;
       } catch (e) {
-        await fecharRegistro(registroId, "erro", { erro: String(e).slice(0, 300) });
+        await fecharRegistro(registroId, "erro", {
+          erro: (mensagemDeErro(e) ?? "(sem mensagem)").slice(0, 300),
+        });
         throw e;
       } finally {
         queryClient.invalidateQueries({ queryKey: [ULTIMA_EXECUCAO_QUERY_KEY] });

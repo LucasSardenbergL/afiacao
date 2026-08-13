@@ -7,6 +7,13 @@ const CWD = resolve(__dirname, '../..');
 const read = (rel: string) => readFileSync(resolve(CWD, rel), 'utf8');
 const count = (hay: string, needle: string) => hay.split(needle).length - 1;
 
+// Remove comentários antes de um assert NEGATIVO sobre a fonte. Obrigatório, não higiene: a prosa
+// que EXPLICA por que algo é proibido cita o proibido, então `not.toContain` sobre o texto cru
+// reprova código íntegro (§"O ALVO mente"/#1472/#1488 do money-path.md). O `(?<!:)` preserva
+// `https://` — sem ele um `://` viraria início de comentário e cortaria o resto da linha.
+const semComentarios = (s: string) =>
+  s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(?<!:)\/\/.*$/gm, '');
+
 // ── Guard de invariante money-path dos EDGES (Deno, fora do typecheck/vitest do src) ──
 // Por que TEXTUAL: edge function roda no Lovable Cloud; o deploy via chat pode REVERTER um
 // fix mergeado e COMMITAR a reversão na `main` como "Changes" (mordido 2026-06-26: o fallback
@@ -145,7 +152,27 @@ describe('guardrail money-path: algorithm-a-audit (margem)', () => {
   });
 
   it('bestPriceMap lê order_items (não a sph poluída)', () => {
-    expect(src).toContain("'order_items', 'product_id, unit_price, sales_order_id'");
+    // A âncora mudou de FORMA (não de intenção) na erradicação da paginação artesanal
+    // (continuação do #1581): o helper LOCAL `fetchAllPaginated(supabase, 'order_items', '...')`
+    // — que fazia `?? []` e paginava sem `.order()` — foi trocado pelo `fetchAll` de
+    // `_shared/paginate.ts`, então a assinatura posicional que este assert casava deixou de
+    // existir. O invariante money-path é o MESMO e segue valendo: a fonte do bestPriceMap é
+    // `order_items` (preço PRATICADO), nunca `sales_price_history` (poluída pelo writer legado,
+    // com duplicatas divergentes que inflavam o MAX). Ancorado em `.from(...)` + `.select(...)`,
+    // que é a forma atual, MAIS a negativa explícita da fonte proibida — a negativa é a metade
+    // que de fato protege, e ela não existia antes.
+    expect(src).toContain("from('order_items')");
+    expect(src).toContain("select('product_id, unit_price, sales_order_id')");
+    // A negativa roda sobre o CÓDIGO, não sobre o arquivo cru: o comentário logo acima do
+    // bestPriceMap explica "de order_items PRATICADOS — NÃO sales_price_history (poluída…)", e
+    // medir o texto cru fazia esta asserção reprovar código ÍNTEGRO (falso-VERMELHO pego na
+    // 1ª execução). É o §"O ALVO mente"/#1488 do money-path.md: assert sobre fonte roda com
+    // comentários removidos — num assert NEGATIVO o comentário vira falso-vermelho, e num
+    // positivo, falso-verde (o silencioso).
+    expect(
+      semComentarios(src),
+      'a sph poluída voltou como fonte do bestPriceMap — duplicatas divergentes inflam o MAX e destroem margin_potential',
+    ).not.toContain('sales_price_history');
   });
 });
 
@@ -293,10 +320,12 @@ describe('guardrail money-path: criar_pedido não confia no espelho legado omie_
   });
 
   it('deriva do PEDIDO LOCAL (customer_user_id + customer_document), não confia no payload', () => {
+    // checkout_id entrou no select na fase 2 do ATP (o gate ATP ancora a reserva
+    // nele); o pin segue EXATO na forma nova — perder qualquer campo fica vermelho.
     expect(
       src,
       'o edge deixou de ler customer_user_id/customer_document do pedido local — voltaria a confiar no payload',
-    ).toMatch(/select\("account, customer_user_id, customer_document, created_by"\)/);
+    ).toMatch(/select\("account, customer_user_id, customer_document, created_by, checkout_id"\)/);
   });
 });
 
@@ -2145,5 +2174,399 @@ describe('guardrail money-path: retenção do nid_receb (coluna dedicada + 1 wri
       skuItems,
       'REGRESSÃO: o leitor voltou a depender só do jsonb — quando o backfill convergir ele para de regravar o raw_data e o leadtime morre em silêncio',
     ).toMatch(/n\.nid_receb\s*!=\s*null/);
+  });
+});
+
+// ── Falha do Omie no varredor de contas: PERMANENTE pula a conta, e nunca em silêncio ──────
+// O `sync_all_clients` tratava só o EOF do contrato Omie ("Não existem registros para a
+// página"). Todo OUTRO faultstring caía num `break` cru, que sai do laço SEM avançar `page` e
+// SEM marcar fim real: o cursor voltava apontando para a MESMA conta e a MESMA página, o
+// caller (useAnalyticsSync, `while (true)`) reinvocava na hora — laço quente contra o Omie —
+// e as contas SEGUINTES do array nunca sincronizavam. Uma credencial revogada numa conta
+// derrubava o sync das três. Nada disso tinha teste: o cálculo do cursor era inline.
+//
+// Os invariantes abaixo são TEXTUAIS pelo mesmo motivo dos demais deste arquivo: o deploy de
+// edge no Lovable pode reverter um fix mergeado e commitar a reversão como "Changes". O
+// COMPORTAMENTO das duas decisões (classificar/decidir e cursor da conta) é testado de
+// verdade nos helpers puros, sob Deno: _shared/omie-falha_test.ts e _shared/omie-paginacao_test.ts.
+describe('guardrail money-path: erro Omie permanente não prende o sync_all_clients', () => {
+  const src = read(OMIE_CLIENTE);
+  const caller = read('src/components/analyticsSync/useAnalyticsSync.ts');
+  // Sempre sobre o código SEM comentários: a prosa que EXPLICA o bug cita `break` e
+  // `const hasMore = !fimReal`, e mediria a si mesma (§"O ALVO mente").
+  const bloco = semComentarios(blocoCaseCliente(src, 'sync_all_clients'));
+
+  it('sentinela: os helpers puros da decisão estão importados (detector vivo)', () => {
+    expect(
+      src,
+      'REVERSÃO Lovable? sumiu o import de _shared/omie-falha.ts — a classificação de falha voltou a não existir',
+    ).toMatch(/from "\.\.\/_shared\/omie-falha\.ts"/);
+    expect(
+      src,
+      'REVERSÃO Lovable? sumiu o import de desfechoContaListagem — o cursor da conta voltou a ser inline',
+    ).toMatch(/desfechoContaListagem/);
+  });
+
+  it('os DOIS caminhos de saída do laço classificam a falha e decidem — nenhum `break` cru', () => {
+    // Faultstring do Omie e exceção (transporte esgotado, anomalia de página vazia, teto
+    // anti-runaway do total declarado) são as duas portas para o mesmo laço quente. Cada uma
+    // tem de passar por decidirDesfechoFalha: 2, nem 1 nem 0.
+    expect(
+      count(bloco, 'decidirDesfechoFalha({'),
+      'REGRESSÃO: um dos caminhos de falha do sync_all_clients voltou a sair do laço sem decidir — ' +
+        'cursor parado na mesma conta/página = laço quente + contas seguintes reféns',
+    ).toBe(2);
+    expect(
+      bloco,
+      'REGRESSÃO: o faultstring deixou de ser classificado (o EOF do Omie virou comparação de string solta?)',
+    ).toMatch(/classificarFaultstring\(listResult\.faultstring\)/);
+    // `classificarExcecao`, NÃO `classificarFaultstring`: exceção nunca é o EOF do Omie, e
+    // `fim_de_pagina` é a única classe cujo desfecho não termina (nem retenta nem abandona) —
+    // encaminhá-la do catch faria o laço girar sem sair e sem avançar a página.
+    expect(
+      bloco,
+      'REGRESSÃO: a exceção da página deixou de ser classificada — erro de transporte volta a prender o cursor',
+    ).toMatch(/const classe = classificarExcecao\(pageError\)/);
+    expect(
+      bloco,
+      'REGRESSÃO: o catch voltou a classificar a exceção como resposta do Omie — uma mensagem que cite o EOF vira desfecho que não termina',
+    ).not.toMatch(/classificarFaultstring\(motivo\)/);
+    // Só o EOF do contrato Omie encerra a conta. Se `fim_de_pagina` deixar de ser o gate do
+    // `fimReal`, uma falha qualquer voltaria a poder ser lida como fim (completude fabricada).
+    expect(
+      bloco,
+      'REGRESSÃO: `fimReal` não é mais exclusivo do EOF do contrato Omie',
+    ).toMatch(/classe === "fim_de_pagina"[\s\S]{0,80}fimReal = true/);
+  });
+
+  // Achado Codex P1, o mais grave da revisão: `fetch` NÃO lança em HTTP não-2xx. Um
+  // `{"error":"Service unavailable"}` de um 503 chegava ao laço sem `faultstring`, virava
+  // `clientes_cadastro || []`, e `avaliarPagina(0,1,1)` devolvia "fim" — a conta era encerrada
+  // como CONCLUÍDA, com errors:0 e nenhuma falha, sem passar pelo mecanismo de abandono.
+  it('resposta HTTP não-2xx ou fora do contrato vira FALHA, nunca fim de conta', () => {
+    const wrapper = semComentarios(src);
+    expect(
+      wrapper,
+      'REGRESSÃO: o wrapper voltou a ignorar o status HTTP — um 503 com JSON encerra a conta como concluída',
+    ).toMatch(/if \(!response\.ok\)[\s\S]{0,160}throw new Error\(/);
+    expect(
+      wrapper,
+      'REGRESSÃO: faultcode sem faultstring deixou de ser erro — erro sinalizado que o parse não vê',
+    ).toMatch(/resultado\?\.faultcode[\s\S]{0,200}throw new Error\(/);
+    // `clientes_cadastro || []` é o outro meio do mesmo defeito: transforma QUALQUER corpo
+    // inesperado em "página vazia", e página vazia no fim declarado é fim de conta.
+    expect(
+      bloco,
+      'REGRESSÃO: voltou o `clientes_cadastro || []` — corpo fora do contrato vira página vazia = fim de conta',
+    ).not.toMatch(/clientes_cadastro \|\| \[\]/);
+    expect(
+      bloco,
+      'REGRESSÃO: sumiu a exigência de array no shape da resposta — ausência do array não prova catálogo vazio',
+    ).toMatch(/if \(!Array\.isArray\(clientes\)\)[\s\S]{0,200}throw new Error\(/);
+  });
+
+  it('o retry é opt-in e todo fetch tem deadline (senão sync_addresses estoura os 150s)', () => {
+    const wrapper = semComentarios(src);
+    // Retry ligado para todo caller multiplicava a latência do sync_addresses (30
+    // ConsultarCliente por lote × sleeps) além do orçamento da edge — achado Codex P1.
+    expect(
+      wrapper,
+      'REGRESSÃO: o retry voltou a ser global — os callers de N chamadas por invocação estouram o tempo da edge',
+    ).toMatch(/const TENTATIVAS_PADRAO = 1/);
+    expect(
+      wrapper,
+      'REGRESSÃO: o laço de páginas deixou de pedir retry explícito (ou o pedido virou global)',
+    ).toMatch(/\{ tentativas: 3 \}/);
+    // Fetch sem deadline pendura a invocação e o contador de tentativas nunca avança: o laço
+    // deixa de terminar por inanição, não por decisão.
+    expect(
+      wrapper,
+      'REGRESSÃO: sumiu o deadline do fetch — um request pendurado impede o laço de terminar',
+    ).toMatch(/signal: AbortSignal\.timeout\(/);
+  });
+
+  it('o motivo que sai da edge é redigido: a faultstring de credencial ECOA a app_key', () => {
+    // O motivo é persistido em acoes_execucoes.detalhes e exibido num toast. "Chave de acesso
+    // não cadastrada para o aplicativo [1503123456]" contém a app_key (achado Codex P2, provado
+    // com a fixture do próprio teste) — publicá-la nesses sinks é vazamento, não diagnóstico.
+    expect(
+      count(bloco, 'redigirSegredo('),
+      'REGRESSÃO: algum dos 2 motivos voltou a sair cru — a app_key ecoada pelo Omie vaza para a tabela e para a tela',
+    ).toBe(2);
+  });
+
+  it('o cursor da conta passa pelo helper puro e recebe `contaAbandonada`', () => {
+    expect(
+      bloco,
+      'REGRESSÃO: o hasMore da conta voltou a ser calculado inline — sem teste e sem o ramo de abandono',
+    ).not.toMatch(/const hasMore = !fimReal/);
+    expect(
+      bloco,
+      'REGRESSÃO: desfechoContaListagem perdeu o contaAbandonada — a conta interrompida volta a repetir para sempre',
+    ).toMatch(/desfechoContaListagem\(\{[\s\S]{0,200}contaAbandonada,/);
+  });
+
+  it('abandonar a conta NUNCA é silencioso: a falha viaja no resultado e conta como erro', () => {
+    // O par que impede a troca de um laço quente por uma mentira de sucesso (money-path §8):
+    // o campo rico `falha` para quem o lê, e o `errors` para o número que a tela já mostra.
+    expect(
+      bloco,
+      'REGRESSÃO: o resultado do sync_all_clients não carrega mais a falha — a conta pulada some do relatório',
+    ).toMatch(/falha: falhaConta/);
+    expect(
+      bloco,
+      'REGRESSÃO: conta abandonada deixou de contar erro — um caller antigo leria "0 erros" sobre import parcial',
+    ).toMatch(/if \(contaAbandonada\) accErrors\+\+/);
+  });
+
+  it('o caller acumula a falha ANTES de sair do laço e a tela não diz "concluída"', () => {
+    const corpo = semComentarios(caller);
+    expect(
+      corpo,
+      'REGRESSÃO: o caller parou de acumular as contas interrompidas — a edge pula a conta e ninguém fica sabendo',
+    ).toMatch(/data\?\.falha\?\.conta_abandonada === true/);
+    // A leitura tem de acontecer antes do `if (data?.done === true) break;`: a ÚLTIMA conta
+    // abandonada é justamente o caso em que a falha é a única coisa a reportar.
+    const posFalha = corpo.indexOf('data?.falha?.conta_abandonada');
+    const posBreakDone = corpo.indexOf('if (data?.done === true) break;');
+    expect(posFalha, 'sentinela: sumiu a leitura da falha no caller').toBeGreaterThan(-1);
+    expect(posBreakDone, 'sentinela: sumiu o fim-sentinela `done` do caller').toBeGreaterThan(-1);
+    expect(
+      posFalha,
+      'REGRESSÃO: o caller lê a falha DEPOIS de sair do laço — a falha da última conta se perde',
+    ).toBeLessThan(posBreakDone);
+    // Import parcial tem de LANÇAR, não resolver: `useMutationComRegistro` fecha o registro como
+    // 'sucesso' sempre que a Promise resolve, e aí o card <UltimaExecucao> mostra ✓ depois que o
+    // toast some — estado durável mentindo sobre uma conta que ficou fora (achado Codex P1).
+    expect(
+      corpo,
+      'REGRESSÃO: import com conta interrompida voltou a RESOLVER — acoes_execucoes grava sucesso e o card mostra ✓ sobre import parcial',
+    ).toMatch(/if \(falhas\.length > 0\)[\s\S]{0,400}throw new Error\(/);
+    expect(
+      corpo,
+      'REGRESSÃO: sumiu o guard de progresso do cursor — edge revertida volta a girar na mesma conta/página',
+    ).toMatch(/cursorAtual === cursorAnterior[\s\S]{0,200}throw new Error\(/);
+    expect(
+      corpo,
+      'REGRESSÃO: conta sem credencial voltou a sumir do relatório — o import sai "concluído" com um terço da base fora',
+    ).toMatch(/contas_sem_credencial/);
+  });
+});
+
+// ── Canária comportamental dos guards de paginação do omie-financeiro (#1598 → paginacao_probe) ──
+// Assimetria de verificação deste setup: o Supabase é da org do Lovable e o founder não tem conta
+// com acesso ao ref, então a Management API (N2 — prova de VERSÃO da edge) é estruturalmente
+// indisponível (docs/agent/deploy.md #1590). Pós-deploy do #1598 só deu para provar N1 (existência)
+// + rastro do commit do bot; a canária é a ÚNICA prova do COMPORTAMENTO deployado. Os asserts
+// abaixo cobrem a FONTE na main (pegam remoção/rename pelo bot do Lovable); a probe HTTP cobre o
+// DEPLOY; o gate G4/G5 de paginacao-artesanal-gate cobre o REAL-PATH. Nenhum substitui os outros.
+
+const FIN_PAGINACAO = 'supabase/functions/omie-financeiro/index.ts';
+
+describe('guardrail money-path: canária paginacao_probe (omie-financeiro)', () => {
+  const src = read(FIN_PAGINACAO);
+  // Bloco INTEIRO da action, até o próximo case/default.
+  const PROBE_RE = /case "paginacao_probe":[\s\S]*?\n {6}(?=case |default:)/;
+
+  it('sentinela: leu o arquivo real da edge financeira', () => {
+    expect(src).toContain('ListarMovimentos');
+    expect(src).toContain('desfechoVarreduraReversa');
+  });
+
+  it('CANÁRIA de deploy: paginacao_probe existe, é versionada (contrato) e expõe {canary, ok, casos}', () => {
+    expect(
+      src,
+      'canária paginacao_probe ausente/renomeada — sem prova do COMPORTAMENTO deployado (sobra N1 + rastro do commit, mais fraco)',
+    ).toContain('case "paginacao_probe":');
+    const m = src.match(PROBE_RE);
+    expect(m, 'bloco da action paginacao_probe não encontrado').toBeTruthy();
+    const bloco = m![0];
+    expect(bloco, 'a probe perdeu o `canary: true` exigido por docs/agent/deploy.md').toMatch(/canary:\s*true/);
+    // Version marker: sem ele, um deploy INTEGRALMENTE velho compara velho×velho e mente ok:true.
+    expect(bloco, 'a probe perdeu o `contrato` (version marker) — deploy velho voltaria a mentir verde').toMatch(/contrato:\s*"paginacao-guards-v1"/);
+    expect(bloco, 'a probe perdeu o contrato {caso, resolved, expected, ok}').toMatch(/caso[\s\S]{0,120}resolved[\s\S]{0,120}expected[\s\S]{0,120}ok:/);
+    expect(bloco, 'o `ok` agregado deixou de exigir TODOS os casos').toMatch(/casosProbe\.every\(/);
+    // A action tem de ser anunciada no default — é o que discrimina binário velho de action com typo.
+    expect(src, '`paginacao_probe` sumiu de acoes_disponiveis: o default deixaria de discriminar bundle velho').toMatch(/acoes_disponiveis:[\s\S]{0,320}"paginacao_probe"/);
+  });
+
+  it('CANÁRIA read-only: paginacao_probe é dry-run puro (sem Omie, sem DB) e NÃO abre linha em fin_sync_log', () => {
+    const m = src.match(PROBE_RE);
+    expect(m, 'bloco da action paginacao_probe não encontrado').toBeTruthy();
+    const bloco = semComentarios(m![0]);
+    expect(bloco, 'a probe NÃO pode chamar o Omie — deixaria de ser dry-run determinístico').not.toMatch(/callOmie\(/);
+    expect(bloco, 'a probe NÃO pode tocar o DB (.insert/.update/.delete/.upsert/.rpc)').not.toMatch(/\.(insert|update|delete|upsert|rpc)\(/);
+    expect(bloco, 'a probe NÃO pode usar o client supabase').not.toMatch(/\bsupabase\b/);
+    // ⚠️ O invariante que não é óbvio: `logSync` roda ANTES do switch, e DOIS consumidores de frescor
+    // leem fin_sync_log sem filtrar action (`_data_health_compute` do cartão omie_sync_financeiro e
+    // `fin_calcular_confiabilidade`, conferidos via psql-ro). Uma probe logada carimbaria "sync
+    // financeiro recente" nas 3 empresas sem sincronizar nada — canária que envenena o dado que ela
+    // deveria proteger. Sem PROBE_ACTIONS no cálculo do logId, isso volta em silêncio.
+    const semCom = semComentarios(src);
+    expect(semCom, 'sumiu PROBE_ACTIONS — a canária voltaria a abrir linha em fin_sync_log').toMatch(/PROBE_ACTIONS\s*=\s*new Set\(\[[^\]]*"paginacao_probe"/);
+    expect(
+      semCom,
+      'REGRESSÃO: o logId da probe não é mais "" — fin_sync_log ganharia um "complete" que fabrica frescor em _data_health_compute/fin_calcular_confiabilidade',
+    ).toMatch(/usaLogPorCompany \|\| PROBE_ACTIONS\.has\(action\)[\s\S]{0,80}\?\s*""/);
+  });
+
+  it('CANÁRIA cobre os 5 helpers e os casos que se falsificam MUTUAMENTE', () => {
+    const m = src.match(PROBE_RE);
+    expect(m, 'bloco da action paginacao_probe não encontrado').toBeTruthy();
+    const bloco = m![0];
+    // Um helper sempre-X tem de reprovar algum caso. Os pares abaixo são o que garante isso.
+    for (const helper of ['proximoTotalPaginas(', 'avaliarPagina(', 'desfechoVarreduraReversa(', 'fingerprintPagina(', 'listaOmie<']) {
+      expect(bloco, `a probe deixou de exercitar ${helper} — o helper deployado ficaria sem prova`).toContain(helper);
+    }
+    for (const caso of [
+      // veredito de página: sem o par processar/anomalia/fim, um helper constante passaria
+      'pagina_com_itens_processar', 'pagina_vazia_ANTES_do_piso_anomalia', 'pagina_vazia_NO_piso_fim', 'pagina_vazia_ALEM_do_piso_fim',
+      // piso monotônico: crescer + os três "não encolhe" (ausente/0/menor) + o fail-fast do teto
+      'piso_cresce_com_declaracao_maior', 'piso_NAO_encolhe_sem_declaracao', 'piso_NAO_encolhe_com_declaracao_zero',
+      'piso_NAO_encolhe_com_declaracao_menor', 'teto_anti_runaway_LANCA',
+      // varredura reversa: completa só com sonda vazia E descida inteira
+      'reversa_desceu_tudo_e_sonda_VAZIA_completa', 'reversa_sonda_COM_dado_nao_completa_cursor_na_sonda', 'reversa_parou_no_meio_cursor_na_pagina_atual',
+      // fingerprint: o furo do `1ºcódigo:count` + determinismo (senão um hash aleatório passaria)
+      'fingerprint_NAO_colide_com_1o_codigo_ausente', 'fingerprint_deterministico_mesma_pagina',
+      // listaOmie: os dois lados — `[]` de verdade passa, ausente/null LANÇA
+      'lista_array_de_verdade_passa', 'lista_vazia_de_verdade_e_fim_legitimo', 'lista_campo_AUSENTE_lanca', 'lista_campo_NULL_lanca',
+    ]) {
+      expect(bloco, `a probe perdeu o caso ${caso} — a enumeração deixa de falsificar mutuamente`).toContain(caso);
+    }
+    // O caso negativo do listaOmie só vale se a exceção for CAPTURADA e AFIRMADA (deixar vazar
+    // derrubaria a probe inteira em 500 e o founder leria "edge quebrada", não "guard ausente").
+    expect(bloco, 'a probe deixou de capturar/afirmar o LANÇA do listaOmie').toMatch(/catch[\s\S]{0,120}lancou:\s*true/);
+  });
+});
+
+// ── Guard money-path: visit-score-recalc-client não fabrica score de missão sem insumo ──
+// `farmer_client_scores.expansion_score`, `.recover_score` e `.revenue_potential` são NULL em
+// 6.633/6.633 linhas em produção (medido via psql-ro 2026-07-29; nenhum writer as calcula — ver
+// migration 20260727130000_farmer_scores_colunas_orfas_null). O edge duplica inline a lógica de
+// src/lib/visit-scoring/missions.ts (Deno não importa de src/): a paridade textual do bloco
+// `valorMedido` aqui pega a reversão do deploy do Lovable, e o guard de fonte (item 2) pega a
+// reintrodução de `?? 0` nessas 3 colunas ANTES das 4 missões terem a chance de tratar a
+// ausência como "não avaliada" em vez de fabricar zero.
+const VISIT_SCORE_RECALC = 'supabase/functions/visit-score-recalc-client/index.ts';
+const MARGIN_HELPER = 'src/lib/scoring/margin.ts';
+const CAMPOS_SEM_WRITER_VISIT_SCORE = ['expansion_score', 'recover_score', 'revenue_potential'];
+
+// Mesmo padrão de src/__tests__/potencial-nao-medido-gate.test.ts: ancorado no NOME da coluna, não
+// na forma do fallback (`?? 0` e `|| 0` são a mesma fabricação — uma regex por forma vira corrida
+// entre o gate e a criatividade de quem escreve, money-path.md §"O GATE mente...").
+function coercoesSemWriterVisitScore(codigo: string): string[] {
+  const achados: string[] = [];
+  for (const campo of CAMPOS_SEM_WRITER_VISIT_SCORE) {
+    for (const m of codigo.matchAll(new RegExp(`${campo}[^;\\n]{0,80}?(\\?\\?|\\|\\|)\\s*0`, 'g'))) {
+      achados.push(m[0]);
+    }
+  }
+  return achados;
+}
+
+describe('guardrail money-path: visit-score-recalc-client não coage score de missão sem writer', () => {
+  const src = read(VISIT_SCORE_RECALC);
+  const helper = read(MARGIN_HELPER);
+
+  it('sentinela: leu os arquivos reais (edge + helper)', () => {
+    expect(src).toContain('valorMedido');
+    expect(src).toContain('MissionResult');
+    expect(helper).toContain('export function valorMedido');
+  });
+
+  it('PARIDADE: o bloco valor-medido do edge é IDÊNTICO ao helper de src/ (pega reversão do Lovable)', () => {
+    expect(
+      mirrorBlockNamed(src, 'valor-medido'),
+      'edge divergiu do helper de src/lib/scoring/margin.ts — o Lovable reescreveu valorMedido no deploy?',
+    ).toBe(mirrorBlockNamed(helper, 'valor-medido'));
+  });
+
+  it('NÃO coage expansion_score/recover_score/revenue_potential a 0 (ausente != zero)', () => {
+    const ofensas = coercoesSemWriterVisitScore(semComentarios(src));
+    expect(
+      ofensas,
+      'Campo sem writer coagido a 0 no cálculo de missão — "ausente != zero".\n' +
+        'expansion_score/recover_score/revenue_potential sao NULL em 6.633/6.633 linhas em prod.\n' +
+        'Use valorMedido (mirror inline no topo do arquivo):\n  ' +
+        ofensas.join('\n  '),
+    ).toEqual([]);
+  });
+
+  it('o DETECTOR enxerga a coerção quando ela existe (par obrigatório)', () => {
+    // Sem este par, "nenhuma ofensa" e "o predicado está quebrado" têm o mesmo output — um
+    // regex morto passa sempre (money-path.md §"O DETECTOR mente").
+    const formasReais = [
+      'expansion_score: Number(scores.expansion_score ?? 0),',
+      'recover_score: Number(scores.recover_score ?? 0),',
+      'revenue_potential: Number(scores.revenue_potential ?? 0),',
+      'const x = (scores.expansion_score as number) || 0;',
+    ];
+    for (const forma of formasReais) {
+      expect(coercoesSemWriterVisitScore(forma).length, `o detector NÃO pegou: ${forma}`).toBeGreaterThan(0);
+    }
+  });
+
+  it('não acusa o código correto nem o comentário que cita o bug', () => {
+    const corretas = [
+      'expansion_score: valorMedido(scores.expansion_score),',
+      'recover_score: valorMedido(scores.recover_score),',
+      'revenue_potential: valorMedido(scores.revenue_potential),',
+    ];
+    for (const forma of corretas) {
+      expect(coercoesSemWriterVisitScore(forma), `falso-VERMELHO em código correto: ${forma}`).toEqual([]);
+    }
+
+    const prosa = '  // Com `Number(x ?? 0)` o revenue_potential ?? 0 chegava como 0 para toda a base';
+    expect(coercoesSemWriterVisitScore(semComentarios(prosa))).toEqual([]);
+  });
+});
+
+// ── Guard money-path: a renormalização de calculate-scores é um módulo TESTÁVEL, não inline ──
+// `priority_score` e `health_score` são calculados dentro do laço de `calculate-scores/index.ts`,
+// que importa `npm:@supabase/supabase-js` — e `test:edges` roda com `--no-remote`. Enquanto a
+// aritmética morou lá, ela era estruturalmente inalcançável por teste de comportamento e só um gate
+// de FONTE a vigiava; gate de fonte pega a reintrodução do `|| 0`, não a renormalização feita errado
+// (dividir pelo denominador cheio devolve número plausível e sistematicamente baixo). O módulo
+// `_shared/score-ponderado.ts` existe para tornar isso testável — se alguém reinlinar a conta, o
+// teste de comportamento morre em silêncio, e é isso que este bloco pega.
+const SCORE_PONDERADO = 'supabase/functions/_shared/score-ponderado.ts';
+const CALCULATE_SCORES = 'supabase/functions/calculate-scores/index.ts';
+
+describe('guardrail money-path: calculate-scores renormaliza via módulo testável', () => {
+  const modulo = read(SCORE_PONDERADO);
+  const edge = read(CALCULATE_SCORES);
+
+  it('sentinela: leu os arquivos reais (módulo + edge)', () => {
+    expect(modulo).toContain('export function mediaPonderadaRenormalizada');
+    expect(edge).toContain('calculate-scores');
+  });
+
+  it('PARIDADE: o bloco valor-medido do módulo é IDÊNTICO ao helper de src/', () => {
+    expect(
+      mirrorBlockNamed(modulo, 'valor-medido'),
+      'score-ponderado.ts divergiu de src/lib/scoring/margin.ts — o Lovable reescreveu no deploy?',
+    ).toBe(mirrorBlockNamed(read(MARGIN_HELPER), 'valor-medido'));
+  });
+
+  it('o edge USA o módulo nos DOIS scores (não só o define)', () => {
+    expect(edge, 'calculate-scores parou de importar a renormalização compartilhada').toContain(
+      '../_shared/score-ponderado.ts',
+    );
+    // Duas chamadas: uma para o health, outra para o priority. Uma só significa que um dos dois
+    // scores voltou a somar direto — meio-conserto na mesma função (money-path.md §7).
+    const chamadas = (edge.match(/mediaPonderadaRenormalizada\s*\(/g) ?? []).length;
+    expect(chamadas, 'health e priority precisam AMBOS renormalizar').toBeGreaterThanOrEqual(2);
+    expect(edge, 'o teto do potencial voltou a incluir o não medido').toContain('maximoMedido(');
+  });
+
+  it('o zero fabricado não volta pelo arredondamento nem pela chave omitida', () => {
+    // `Math.round(null)` é 0, e as três colunas de destino são nullable com DEFAULT 0: omitir a
+    // chave faz o Postgres refabricar o mesmo zero. Os dois caminhos precisam do null EXPLÍCITO.
+    for (const campo of ['x_score', 's_score', 'margin_potential_component']) {
+      expect(
+        new RegExp(`${campo}:[^,\\n]*== null \\? null`).test(edge),
+        `${campo} perdeu o null explícito — Math.round(null) grava 0 e o histórico volta a mentir`,
+      ).toBe(true);
+    }
   });
 });

@@ -1,7 +1,6 @@
 // supabase/functions/fin-next-best-action/index.ts
 // A4 — Próxima Melhor Ação. Gate gestor+master. Compõe A1/A2/A3 via service_role.
 // Helper espelhado VERBATIM de src/lib/financeiro/next-best-action-helpers.ts.
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -110,7 +109,7 @@ async function invoke<T>(fn: string, body: unknown): Promise<T | null> {
   } catch { return null; } finally { clearTimeout(timer); }
 }
 
-serve(async (req: Request) => {
+Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   const auth = await authorizeGestorOuMaster(req);
   if (!auth.ok) return auth.response;

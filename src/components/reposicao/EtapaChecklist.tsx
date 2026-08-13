@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils";
 import { useReposicaoStatus, type ReposicaoStatus } from "@/hooks/useReposicaoSessao";
 import { useNavigate } from "react-router-dom";
 
-export type ChecklistItem = {
+type ChecklistItem = {
   label: string;
   done: boolean;
   cta?: { label: string; to: string };

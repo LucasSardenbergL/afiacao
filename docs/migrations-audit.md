@@ -21,16 +21,16 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **434** custom migrations totais
-- **1504** objetos esperados (criados por estas migrations)
+- **456** custom migrations totais
+- **1571** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 437
-  - `rls_policy`: 384
-  - `index`: 224
-  - `cron_job`: 157
-  - `table`: 147
+  - `function`: 467
+  - `rls_policy`: 392
+  - `index`: 238
+  - `cron_job`: 164
+  - `table`: 153
   - `trigger`: 79
-  - `view`: 72
+  - `view`: 74
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -3119,6 +3119,19 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.get_whatsapp_funil` | — |
 | `index` | `public.idx_so_whatsapp_conv` | `sales_orders` |
 
+### `20260713040000_whatsapp_proposta_cotacao.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.get_whatsapp_proposta_cotacao` | — |
+
+### `20260713050000_whatsapp_proposta_cotacao_v2.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.get_whatsapp_proposta_cotacao` | — |
+| `index` | `public.uq_so_whatsapp_proposta_dedupe` | `sales_orders` |
+
 ### `20260713160000_carteira_rebuild_lease.sql`
 
 | Tipo | Objeto | Parent |
@@ -3639,6 +3652,13 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `rls_policy` | `public.omie_products_select_staff` | `omie_products` |
 
+### `20260727150000_tint_watchdog_corante_impagavel.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tint_watchdog_corante_check` | — |
+| `cron_job` | `cron.tint-watchdog-corante-5min` | — |
+
 ### `20260728120000_farmer_persiste_cobertura_custo.sql`
 
 | Tipo | Objeto | Parent |
@@ -3660,6 +3680,159 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.farmer_association_rules_substituir` | — |
+
+### `20260729160000_data_health_carteira_rebuild.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
+
+### `20260730120000_tint_watchdog_fase5_chave.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._tint_watchdog_fase5_transicao` | — |
+| `function` | `public.tint_watchdog_fase5_check` | — |
+| `cron_job` | `cron.tint-watchdog-fase5-6h` | — |
+
+### `20260730120001_calculate_scores_reforco_0625.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `cron_job` | `cron.calculate-scores-reforco-0625` | — |
+
+### `20260730130000_reposicao_teto_cobertura_motor.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.gerar_pedidos_sugeridos_ciclo` | — |
+| `table` | `public.reposicao_teto_cobertura_log` | — |
+| `index` | `public.idx_teto_cobertura_log_run` | `reposicao_teto_cobertura_log` |
+| `index` | `public.idx_teto_cobertura_log_emp_data` | `reposicao_teto_cobertura_log` |
+| `rls_policy` | `public.teto_cobertura_log_sel` | `reposicao_teto_cobertura_log` |
+| `rls_policy` | `public.teto_cobertura_log_ins` | `reposicao_teto_cobertura_log` |
+
+### `20260731120000_farmer_assoc_rules_delete_qualificado.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260731120000_v_sku_ultima_venda.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `view` | `public.v_sku_ultima_venda` | — |
+
+### `20260801120000_drop_calcular_gatilhos_reposicao.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260802120000_reposicao_erro_terminal_nao_e_estoque_a_caminho.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.gerar_pedidos_sugeridos_ciclo` | — |
+
+### `20260802120000_venda_perdida_e_classe_sb.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `view` | `public.v_sku_classe_sb` | — |
+| `table` | `public.venda_perdida_log` | — |
+| `index` | `public.idx_venda_perdida_emp_data` | `venda_perdida_log` |
+| `index` | `public.idx_venda_perdida_sku` | `venda_perdida_log` |
+| `rls_policy` | `public.venda_perdida_sel` | `venda_perdida_log` |
+| `rls_policy` | `public.venda_perdida_ins` | `venda_perdida_log` |
+
+### `20260802130000_tactical_plan_idempotencia_dia.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.criar_plano_tatico` | — |
+| `index` | `public.ux_farmer_tactical_plans_dia_operacional` | `farmer_tactical_plans` |
+
+### `20260803093000_ia_uso_cota.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.ia_consumir_cota` | — |
+| `table` | `public.ia_uso_evento` | — |
+| `table` | `public.ia_uso_limite` | — |
+| `index` | `public.ia_uso_evento_janela_idx` | `ia_uso_evento` |
+| `cron_job` | `cron.ia-uso-evento-purga` | — |
+
+### `20260806101417_atp_reserva_estoque_fase1.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.cap_estoque_reservar` | — |
+| `function` | `private.atp_disponivel` | — |
+| `function` | `public.atp_consultar` | — |
+| `function` | `public.reservar_estoque` | — |
+| `function` | `public.liberar_reserva_checkout` | — |
+| `function` | `public.expirar_reservas_vencidas` | — |
+| `table` | `public.estoque_reservas` | — |
+| `index` | `public.idx_estoque_reservas_ativa` | `estoque_reservas` |
+| `index` | `public.idx_estoque_reservas_checkout` | `estoque_reservas` |
+| `index` | `public.idx_estoque_reservas_expira` | `estoque_reservas` |
+| `index` | `public.estoque_reservas_checkout_item_ativa_uq` | `estoque_reservas` |
+| `rls_policy` | `public.estoque_reservas_select_staff` | `estoque_reservas` |
+| `rls_policy` | `public.estoque_reservas_service_all` | `estoque_reservas` |
+
+### `20260806223407_drop_import_tint_formulas.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260806225052_atp_reserva_estoque_fase1_1_hardening.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.atp_disponivel` | — |
+| `function` | `public.reservar_estoque` | — |
+| `function` | `private.expirar_reservas_vencidas_job` | — |
+| `function` | `public.expirar_reservas_vencidas` | — |
+| `cron_job` | `cron.atp-expirar-reservas-vencidas` | — |
+| `rls_policy` | `public.estoque_reservas_service_select` | `estoque_reservas` |
+
+### `20260807015000_atp_gate_pedido_fase2.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.atp_gate_pedido` | — |
+| `table` | `public.atp_decisoes` | — |
+| `index` | `public.idx_atp_decisoes_pedido` | `atp_decisoes` |
+| `index` | `public.idx_atp_decisoes_created` | `atp_decisoes` |
+| `rls_policy` | `public.atp_decisoes_select_staff` | `atp_decisoes` |
+
+### `20260807210912_expirar_planos_taticos.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.expirar_planos_taticos` | — |
+| `cron_job` | `cron.expirar-planos-taticos` | — |
+
+### `20260807223000_check_finitude_money_path.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260808012000_atp_reconciliacao_fase3.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.atp_disponivel` | — |
+| `function` | `private.expirar_reservas_vencidas_job` | — |
+| `function` | `private.atp_pedido_canonico` | — |
+| `function` | `private.atp_reconciliar_job` | — |
+| `function` | `public.atp_reconciliar` | — |
+| `function` | `public.atp_resolver_reserva` | — |
+| `function` | `public.atp_reservas_pendentes` | — |
+| `index` | `public.idx_estoque_reservas_pedido_ativa` | `estoque_reservas` |
+| `cron_job` | `cron.atp-reconciliar` | — |
+
+### `20260808020000_tactical_plan_idempotencia_janela.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.criar_plano_tatico` | — |
 
 ## Próximos passos por status
 

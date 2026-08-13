@@ -46,6 +46,14 @@ export function classifyOmieResponse(
   if (status === 429) return { kind: "retry", reason: "rate_limit" };
   if (status >= 500) return { kind: "retry", reason: "transient" };
   if (status >= 400) return { kind: "permanent" };
+  // `ok` exige 2xx — não "tudo que não é 4xx/5xx". A versão anterior terminava com o `return
+  // {kind:"ok"}` cru, então 1xx e 3xx (300/302/399) eram aprovados como resposta boa: o corpo `{}`
+  // de um redirect degradava o total para 1 e a lista para `[]`, e a conta fechava `complete` com
+  // zero erros — a MESMA fabricação de completude que este classificador existe para impedir,
+  // entrando pela faixa de status que ninguém enumerou (achado Codex xhigh, confirmado por
+  // execução). Improvável não é impossível: `fetch` segue redirect sozinho, mas basta um proxy
+  // com `redirect: manual` na frente, e o custo de fechar a faixa é uma linha.
+  if (status < 200 || status >= 300) return { kind: "permanent" };
   return { kind: "ok" };
 }
 

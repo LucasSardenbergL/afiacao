@@ -1,5 +1,5 @@
 import Anthropic from "npm:@anthropic-ai/sdk@^0.93.0";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff, corsHeaders } from "../_shared/auth.ts";
 
 const SYSTEM_PROMPT = `Você é um copiloto de vendas técnico da Colacor (distribuidora Sayerlack).

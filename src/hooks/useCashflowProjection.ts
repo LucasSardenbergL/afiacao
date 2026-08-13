@@ -3,7 +3,7 @@ import { supabase } from '@/integrations/supabase/client';
 
 export type Cenario = 'realista' | 'otimista' | 'pessimista';
 
-export type LinhaCashflow = {
+type LinhaCashflow = {
   origem: 'cr_omie' | 'cp_omie' | 'evento_recorrente' | 'evento_eventual';
   desc: string;
   data: string;
@@ -11,7 +11,7 @@ export type LinhaCashflow = {
   id_origem: string;
 };
 
-export type Semana = {
+type Semana = {
   inicio: string;
   fim: string;
   saldo_inicial: number;
@@ -22,7 +22,7 @@ export type Semana = {
   saldo_final: number;
 };
 
-export type NCGData = {
+type NCGData = {
   aco: { cr_aberto: number; estoque: number; adiantamentos: number; total: number };
   pco: { cp_fornecedor: number; folha_30d: number; tributos_a_pagar: number; total: number };
   valor: number;
@@ -48,6 +48,12 @@ export type CashflowResult = {
   };
   alertas: Array<{ tipo: string; severidade: string; mensagem: string; valor: number | null; threshold: number | null; contexto: Record<string, unknown> }>;
   premissas_aplicadas: Record<string, unknown>;
+  // Degradação honesta das leituras da engine: motivos das fontes que falharam mas não
+  // derrubam o cálculo (hoje `v_capital_giro_prazos` → PMR/PMP/CCC ficam "—"). Vazio ou
+  // ausente = nenhuma degradação. Fonte que não pode virar zero faz a engine responder
+  // 500 — cai no `error` do react-query, não aqui. Opcional: snapshots/edges antigas
+  // respondem sem o campo.
+  confianca_dados?: { motivos: string[] };
   // Onda 2: ponte de horizonte + curvas de aging calibradas (timing + confiança)
   apos_horizonte?: number;
   ar_impaired?: number;

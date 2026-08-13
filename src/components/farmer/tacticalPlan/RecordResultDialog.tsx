@@ -12,6 +12,20 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import type { RecordResultPayload } from './types';
 
+/**
+ * [money-path — ausente ≠ zero] Campo vazio é AUSÊNCIA, não zero.
+ *
+ * O `parseFloat(x) || 0` que vivia aqui transformava "a vendedora não sabia a margem" em
+ * `actual_margin = 0` — um resultado apurado de R$ 0,00, indistinguível de uma ligação que
+ * de fato não gerou margem. E `0 || 0` faz o zero MEDIDO passar pelo mesmo caminho, então
+ * nem o caso legítimo se salvava.
+ */
+const numeroOuNulo = (v: string): number | null => {
+  if (v.trim() === '') return null;
+  const n = parseFloat(v);
+  return Number.isNaN(n) ? null : n;
+};
+
 export const RecordResultDialog = ({
   planId,
   onRecord,
@@ -32,16 +46,24 @@ export const RecordResultDialog = ({
 
   const handleSave = async () => {
     setSaving(true);
-    await onRecord(planId, {
-      planFollowed,
-      callResult,
-      actualMargin: parseFloat(actualMargin) || 0,
-      callDurationSeconds: (parseFloat(duration) || 0) * 60,
-      objectionType: objectionType || undefined,
-      notes: notes || undefined,
-    });
-    setSaving(false);
-    setOpen(false);
+    const minutos = numeroOuNulo(duration);
+    try {
+      await onRecord(planId, {
+        planFollowed,
+        callResult,
+        actualMargin: numeroOuNulo(actualMargin),
+        callDurationSeconds: minutos == null ? null : minutos * 60,
+        objectionType: objectionType || undefined,
+        notes: notes || undefined,
+      });
+      setOpen(false);
+    } finally {
+      // `recordResult` hoje ENGOLE o erro (try/catch + toast, sem relançar), então na prática
+      // este handler não rejeita e o dialog fecha de qualquer forma. O try/finally é pelo
+      // contrato, não pelo comportamento de hoje: se um dia o hook passar a propagar a recusa
+      // da RPC, o dialog fica em "Salvando…" para sempre sem ele.
+      setSaving(false);
+    }
   };
 
   return (

@@ -1,6 +1,4 @@
-import { useWebRTCCallContext, type WebRTCCallContextValue, type WebRTCCallState } from '@/contexts/webrtc-call-context';
-
-export type { WebRTCCallState };
+import { useWebRTCCallContext, type WebRTCCallContextValue } from '@/contexts/webrtc-call-context';
 
 /**
  * Hook fino que delega TODO o state pro WebRTCCallContext.

@@ -22,7 +22,7 @@ export interface InsumoNegociacao {
   custo_capital_anual: number;  // k (fração/ano) = custo_capital_efetivo_perc / 100
 }
 
-export type MotivoInelegivel = 'sem_giro' | 'sem_preco_compra' | 'sem_cmc' | 'sem_custo_capital';
+type MotivoInelegivel = 'sem_giro' | 'sem_preco_compra' | 'sem_cmc' | 'sem_custo_capital';
 
 export interface ValorNegociacao {
   elegivel: boolean;

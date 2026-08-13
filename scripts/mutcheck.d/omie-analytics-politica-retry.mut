@@ -1,0 +1,26 @@
+# Invariantes money-path da política de retentativa/redação do `callOmie` do `omie-analytics-sync` (#1643).
+# @src: supabase/functions/omie-analytics-sync/politica-retry.ts
+# @test: supabase/functions/omie-analytics-sync/politica-retry_test.ts
+# @test_cmd: deno test --no-remote --allow-read=supabase/functions
+# @compile_cmd: deno check --no-remote
+# Rode: bash scripts/mutcheck-all.sh   (o runner sai das diretivas acima — vitest não conhece Deno.test)
+# PEGA = a suíte DEVE matar (gate de cobertura). SOBREVIVE = benigno conhecido. ? = exploratório.
+#
+# ⚠️ A política daqui NÃO é a do `_shared/cmc-snapshot-retry.ts`: lá `indeterminada` RETENTA, aqui
+# falha rápido — divergência deliberada, a conta está no doc do `decidirRetentativaOmie`. Por isso
+# as duas mutações de `retentavel` abaixo esperam PEGA com o sinal TROCADO em relação ao outro .mut.
+PEGA      | defeito nº1 volta: dígito HTTP cru        | s/const classe = classificarFaultstring\(mensagem\);/const classe = \/50[0-9]|429\/.test(mensagem) ? "transitorio" : classificarFaultstring(mensagem);/
+PEGA      | indeterminada passa a retentar            | s/const retentar = classe === "transitorio" && tentativa < maxTentativas;/const retentar = classe !== "permanente" && tentativa < maxTentativas;/
+PEGA      | transitorio para de retentar              | s/const retentar = classe === "transitorio" && tentativa < maxTentativas;/const retentar = classe === "permanente" && tentativa < maxTentativas;/
+PEGA      | 'Aguarde N' passa a alongar o sleep       | s/atrasoRetentativaMs\(tentativa\)/atrasoRetentativaMs(tentativa, mensagem)/
+PEGA      | teto de tentativas 4 -> 3                 | s/MAX_TENTATIVAS_OMIE = 4;/MAX_TENTATIVAS_OMIE = 3;/
+PEGA      | redação da faultstring removida           | s/redigirSegredo\(String\(texto\)\)/String(texto)/
+PEGA      | status do corpo não-JSON perde a âncora   | s/: HTTP \$\{status\} \(corpo/: codigo \${status} (corpo/
+# ⚠️ SOBREVIVENTE MEDIDA, e é BURACO, não benigno — por isso `?` e não SOBREVIVE. O código está
+# CERTO (redige e só então trunca), mas nada o prende: inverter para truncar-antes parte a app_key
+# na borda dos 200 caracteres e deixa um resto curto que escapa da máscara `\d{8,}` — o segredo sai
+# pela metade, que para efeito de vazamento é sair. É o mesmo furo que o `cmc-snapshot-retry_test.ts`
+# fechou no gêmeo de 300 caracteres (e lá a 1ª fixture usava enchimento `a`, hexadecimal, e a
+# mutação SOBREVIVIA por acidente do alfabeto — use caractere não-hex ao escrever o teste).
+# Vira PEGA quando o teste existir; até lá fica reportado e versionado, não esquecido.
+?         | trunca ANTES de redigir (200 chars) — SEM teste | s/redigirSegredo\(erro instanceof Error \? erro\.message : String\(erro\)\)\.slice\(0, 200\)/redigirSegredo((erro instanceof Error ? erro.message : String(erro)).slice(0, 200))/

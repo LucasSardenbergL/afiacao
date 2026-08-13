@@ -25,10 +25,12 @@ function makePlan(overrides: Partial<TacticalPlan> = {}): TacticalPlan {
     approachStrategyB: "",
     topBundle: {},
     secondBundle: {},
-    bundleLie: 0,
-    bundleProbability: 0,
-    bundleIncrementalMargin: 0,
-    bestIndividualLie: 0,
+    // Tri-estado (money-path — ausente ≠ zero). `null` = não havia bundle prioritário na
+    // geração do plano: o estado de 339/339 planos em prod (psql-ro, 2026-07-31).
+    bundleLie: null,
+    bundleProbability: null,
+    bundleIncrementalMargin: null,
+    bestIndividualLie: null,
     diagnosticQuestions: [],
     implicationQuestion: "",
     offerTransition: "",
@@ -36,11 +38,25 @@ function makePlan(overrides: Partial<TacticalPlan> = {}): TacticalPlan {
     ltvProjection: null,
     expectedResult: null,
     operationalRisks: [],
-    estimatedProfitPerHour: 0,
+    estimatedProfitPerHour: null,
     status: "ativo",
     generatedAt: new Date().toISOString(),
     ...overrides,
   };
+}
+
+/**
+ * Valor renderizado na MetricRow de um rótulo. Buscar `getByText("—")` solto no card
+ * ficou ambíguo quando os números do bundle viraram tri-estado (a caixinha "LIE" do topo
+ * também passa a mostrar "—"): a asserção casava por acaso e deixaria de discriminar QUAL
+ * campo degradou. `<span>{label}</span><span>{value}</span>` — o valor é o irmão seguinte.
+ */
+function valorDaMetrica(label: string): string | null {
+  const el = screen.getByText(label);
+  const txt = el.nextElementSibling?.textContent;
+  // `toLocaleString('pt-BR', { style: 'currency' })` separa "R$" do número com NBSP
+  // (U+00A0) — comparar `textContent` cru falharia com duas strings visualmente iguais.
+  return txt == null ? null : txt.replace(/\s+/g, ' ').trim();
 }
 
 function setup(overrides: Partial<React.ComponentProps<typeof PlanCard>> = {}) {
@@ -87,13 +103,91 @@ describe("PlanCard", () => {
     expect(screen.getByText("Resultado registrado")).toBeTruthy();
   });
 
+  // Registro de desfecho em 1 toque na FACE do card. O ponto da entrega é não precisar abrir o
+  // card: 0 de 533 planos tinham desfecho com o formulário atrás do `expanded`.
+  describe("desfecho em 1 toque", () => {
+    it("[FACE-1T] plano na fila mostra os cinco desfechos SEM precisar expandir", () => {
+      setup({ expanded: false, plan: makePlan({ status: "gerado" }) });
+      for (const nome of ["Vendeu", "Interesse futuro", "Não vendeu", "Não atendeu", "Remarcou"]) {
+        expect(screen.getByRole("button", { name: nome })).toBeTruthy();
+      }
+    });
+
+    it("[FACE-1T] um toque registra sem abrir o card", async () => {
+      const props = setup({ expanded: false, plan: makePlan({ status: "gerado" }) });
+      fireEvent.click(screen.getByRole("button", { name: "Vendeu" }));
+      expect(props.onRecordResult).toHaveBeenCalledWith("p1", expect.objectContaining({
+        callResult: "venda_realizada",
+        actualMargin: null,
+      }));
+      // Registrar não pode abrir/fechar o card: o toggle vive no cabeçalho, e um clique que
+      // vazasse para ele faria a lista pular sob o dedo da vendedora.
+      expect(props.onToggle).not.toHaveBeenCalled();
+    });
+
+    it("[FACE-1T] plano expirado não recebe 1 toque — a fila de trabalho é só `gerado`", () => {
+      setup({ expanded: false, plan: makePlan({ status: "expirado" }) });
+      expect(screen.queryByRole("button", { name: "Vendeu" })).toBeNull();
+    });
+
+    it("[FACE-1T] plano concluído não recebe 1 toque", () => {
+      setup({ expanded: false, plan: makePlan({ status: "concluido" }) });
+      expect(screen.queryByRole("button", { name: "Vendeu" })).toBeNull();
+    });
+
+    it("[FACE-1T] o dialog detalhado continua disponível no expandido", () => {
+      // O 1 toque não remove capacidade: quem sabe a margem ainda pode informá-la.
+      setup({ expanded: true, plan: makePlan({ status: "gerado" }) });
+      expect(screen.getByText("Registrar Resultado")).toBeTruthy();
+    });
+  });
+
+  // O resumo do plano concluído ficou INERTE desde sempre (0 concluídos em prod). No dia do
+  // Publish ele passa a ser lido — e é onde os NULLs do 1 toque chegam primeiro.
+  describe("resumo do concluído — null não pode virar veredito", () => {
+    const concluido = (over: Partial<TacticalPlan> = {}) =>
+      setup({ expanded: true, plan: makePlan({ status: "concluido", callResult: "nao_atendeu", ...over }) });
+
+    it("[RESUMO-1T] plano seguido não informado NAO exibe 'Nao'", () => {
+      // `planFollowed ? 'Sim' : 'Não'` exibia "Não" para todo registro de 1 toque — afirmava
+      // à gestão que a vendedora ignorou o roteiro que ninguém perguntou se ela seguiu.
+      concluido({ planFollowed: undefined });
+      expect(screen.getByText("Plano seguido: não informado")).toBeTruthy();
+      expect(screen.queryByText("Plano seguido: Não")).toBeNull();
+    });
+
+    it("[RESUMO-1T] adesão declarada continua sendo Sim/Não — é veredito, não ausência", () => {
+      concluido({ planFollowed: false });
+      expect(screen.getByText("Plano seguido: Não")).toBeTruthy();
+    });
+
+    it("[RESUMO-1T] margem não apurada é rotulada, não some nem vira R$ 0,00", () => {
+      concluido({ actualMargin: undefined });
+      expect(screen.getByText("Margem: não apurada")).toBeTruthy();
+      expect(screen.queryByText("Margem: R$ 0,00")).toBeNull();
+    });
+
+    it("[RESUMO-1T] margem ZERO apurada continua sendo R$ 0,00", () => {
+      // O par que impede a correção de virar "esconde tudo". `d.actual_margin ? … : undefined`
+      // no parsePlan perdia justamente este caso.
+      concluido({ actualMargin: 0 });
+      expect(screen.getByText("Margem: R$ 0,00")).toBeTruthy();
+    });
+
+    it("[RESUMO-1T] o desfecho aparece em português, não como valor de banco", () => {
+      concluido({ callResult: "nao_atendeu" });
+      expect(screen.getByText("Resultado: Não atendeu")).toBeTruthy();
+      expect(screen.queryByText("Resultado: nao_atendeu")).toBeNull();
+    });
+  });
+
   // A margem gravada no plano é nullable desde que o servidor passou a distinguir "sem custo
   // cadastrado" de "margem zero". O card é o último ponto do caminho: se ele coagir, todo o
   // trabalho de propagar o null (RPC → coluna → parsePlan) morre no `.toFixed()` final.
   describe("margem atual — ausência não pode virar 0,0%", () => {
     it("margem desconhecida exibe travessão, não 0,0%", () => {
       setup({ expanded: true, plan: makePlan({ currentMarginPct: null }) });
-      expect(screen.getByText("—")).toBeTruthy();
+      expect(valorDaMetrica("Margem atual")).toBe("—");
       expect(screen.queryByText("0.0%")).toBeNull();
       expect(screen.queryByText("0%")).toBeNull();
     });
@@ -108,6 +202,137 @@ describe("PlanCard", () => {
       // a coluna como fração (o bug histórico), sairia "5347.0%".
       setup({ expanded: true, plan: makePlan({ currentMarginPct: 53.47 }) });
       expect(screen.getByText("53.5%")).toBeTruthy();
+    });
+  });
+
+  // Mesmo raciocínio da margem, no campo irmão que ficou para trás. `expansion_score` não tem
+  // writer: é NULL em 6.633/6.633 linhas de farmer_client_scores (psql-ro, 2026-07-29), então
+  // "0%" aqui não seria um caso de borda — era o que a vendedora via para TODO cliente, lido
+  // como "não há espaço para crescer nesta conta".
+  describe("potencial de expansão — ausência não pode virar 0%", () => {
+    // O prefixo ASCII é âncora de falsificação: o harness casa "[POT-CARD]" com `grep -F`, e o
+    // nome acentuado não serve para isso (o `grep` deste shell é shim para ugrep, que dobra
+    // acento em todo locale — money-path.md manda ancorar em trecho ASCII, caixa fixa). A
+    // primeira rodada da falsificação reportou "vermelho no lugar errado" só por causa disso.
+    it("[POT-CARD] potencial não medido exibe travessão, não 0%", () => {
+      setup({ expanded: true, plan: makePlan({ expansionPotential: null }) });
+      expect(screen.getAllByText("—").length).toBeGreaterThan(0);
+      expect(screen.queryByText("0%")).toBeNull();
+    });
+
+    it("potencial ZERO medido continua sendo 0% — é veredito, não ausência", () => {
+      // O par que impede a correção de virar "esconde tudo": no dia em que um produtor
+      // apurar potencial nulo, esse fato tem de chegar à tela.
+      setup({ expanded: true, plan: makePlan({ expansionPotential: 0 }) });
+      expect(screen.getByText("0%")).toBeTruthy();
+    });
+
+    it("potencial medido é exibido como percentual", () => {
+      setup({ expanded: true, plan: makePlan({ expansionPotential: 60 }) });
+      expect(screen.getByText("60%")).toBeTruthy();
+    });
+  });
+
+  // LTV/cenários são blocos PARCIALMENTE mensuráveis: a edge grava número no campo que a
+  // IA apurou e null no que ela não apurou. Os guards do card (`plan.ltvProjection && …`)
+  // só testam o OBJETO — com um campo null lá dentro, o `fmt()` antigo executava
+  // `null.toLocaleString()` e o ErrorBoundary global trocava o app inteiro por "Algo deu
+  // errado". Achado do /codex no PR da migração para a Anthropic.
+  describe("blocos parcialmente medidos não derrubam a tela", () => {
+    it("LTV com campos não medidos renderiza travessão em vez de quebrar", () => {
+      setup({
+        expanded: true,
+        plan: makePlan({
+          planType: "estrategico",
+          ltvProjection: { current_annual: 120000, projected_annual: null, growth_pct: null },
+        }),
+      });
+      expect(screen.getByText("Projeção de LTV")).toBeTruthy();
+      expect(screen.getByText("R$ 120.000,00")).toBeTruthy();
+      expect(screen.getAllByText("—").length).toBeGreaterThan(0);
+    });
+
+    it("cenários de margem não medidos renderizam travessão", () => {
+      setup({
+        expanded: true,
+        plan: makePlan({
+          planType: "estrategico",
+          expectedResult: { best_case_margin: null, likely_margin: 22, worst_case_margin: null },
+        }),
+      });
+      expect(screen.getByText("R$ 22,00")).toBeTruthy();
+      expect(screen.getAllByText("—").length).toBeGreaterThan(0);
+    });
+
+    it("objeção sem probabilidade estimada não exibe badge de 0%", () => {
+      // A edge OMITE `probability` quando a IA não soube estimar. Exibir "0%" afirmaria
+      // que o cliente não vai levantar a objeção — algo que ninguém mediu.
+      setup({
+        expanded: true,
+        plan: makePlan({
+          probableObjections: [
+            { objection: "Preço alto", technical_response: "t", economic_response: "e" },
+          ],
+        }),
+      });
+      expect(screen.getByText("⚠ Preço alto")).toBeTruthy();
+      expect(screen.queryByText("0%")).toBeNull();
+      expect(screen.queryByText("undefined%")).toBeNull();
+    });
+
+    it("sem bundle: a métrica LIE do topo mostra travessão, não R$ 0,00", () => {
+      // O card SEMPRE exibe a caixinha "LIE" — e para 339/339 planos em prod ela dizia
+      // "R$ 0,00". "Não há bundle" ≠ "o bundle não vale nada".
+      setup({ plan: makePlan({ bundleLie: null }) });
+      expect(screen.getByText("LIE")).toBeTruthy();
+      expect(screen.getAllByText("—").length).toBeGreaterThan(0);
+      expect(screen.queryByText("R$ 0,00")).toBeNull();
+    });
+
+    it("sem LIE não afirma lucro estimado por hora", () => {
+      // `estimatedProfitPerHour` deriva do LIE: sem LIE é INDECIDÍVEL, não "R$ 0,00/h".
+      setup({ plan: makePlan({ bundleLie: null, estimatedProfitPerHour: null }) });
+      expect(screen.queryByText(/Lucro estimado/)).toBeNull();
+    });
+
+    it("seção do bundle some quando não há LIE medido", () => {
+      setup({ expanded: true, plan: makePlan({ bundleLie: null }) });
+      expect(screen.queryByText("Bundle Prioritário")).toBeNull();
+    });
+
+    it("bundle com LIE medido mas probabilidade/margem ausentes renderiza travessão", () => {
+      // p_bundle/m_bundle são nullable na origem — "0,0%" de chance de fechar é veredito
+      // sobre o bundle que ninguém calculou.
+      setup({
+        expanded: true,
+        plan: makePlan({
+          bundleLie: 1250.5,
+          bundleProbability: null,
+          bundleIncrementalMargin: null,
+          bestIndividualLie: null,
+        }),
+      });
+      expect(screen.getByText("Bundle Prioritário")).toBeTruthy();
+      expect(valorDaMetrica("LIE Bundle")).toBe("R$ 1.250,50");
+      expect(valorDaMetrica("Probabilidade")).toBe("—");
+      expect(valorDaMetrica("Margem incremental")).toBe("—");
+      expect(screen.queryByText("0,0%")).toBeNull();
+      expect(screen.queryByText("Melhor individual")).toBeNull();
+    });
+
+    it("bundle inteiramente medido continua exibindo os números", () => {
+      setup({
+        expanded: true,
+        plan: makePlan({
+          bundleLie: 800,
+          bundleProbability: 62.5,
+          bundleIncrementalMargin: 310,
+          bestIndividualLie: 120,
+        }),
+      });
+      expect(valorDaMetrica("Probabilidade")).toBe("62.5%");
+      expect(valorDaMetrica("Margem incremental")).toBe("R$ 310,00");
+      expect(valorDaMetrica("Melhor individual")).toBe("R$ 120,00");
     });
   });
 });

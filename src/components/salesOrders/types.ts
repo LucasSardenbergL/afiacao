@@ -4,7 +4,6 @@ import type { Tables } from '@/integrations/supabase/types';
 
 export type SalesOrderRow = Tables<'sales_orders'>;
 export type AfiacaoOrderRow = Tables<'orders'>;
-export type ProfileRow = Tables<'profiles'>;
 
 // Shape de cada item dentro de orders.items (jsonb). Só os campos consumidos aqui.
 export interface AfiacaoItemRaw {
@@ -31,7 +30,7 @@ export const decodeHtml = (s: string): string =>
 
 // Item do pedido como vive no jsonb sales_orders.items. Os campos extras
 // (codigo/unidade/tint) só aparecem em alguns itens (ex.: bases tintométricas).
-export interface SalesOrderItem {
+interface SalesOrderItem {
   descricao: string;
   quantidade: number;
   valor_unitario: number;

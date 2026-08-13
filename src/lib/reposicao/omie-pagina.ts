@@ -73,7 +73,7 @@ const FIM_SEM_REGISTROS_RE =
  * Pelo mesmo motivo do lerNCodPed: `Number()` direto COAGE (true→1, "1e3"→1000, [5]→5) e NaN some no
  * `isFinite`, então ilegível viraria "ausente" e um vazio malformado passaria por "empresa vazia legítima".
  */
-export function lerInteiroOmie(raw: unknown): number | null {
+function lerInteiroOmie(raw: unknown): number | null {
   // AUSENTE é só o campo OMITIDO (undefined/null). "" NÃO é ausente: é valor PRESENTE e não-canônico — o contrato
   // do Omie declara os totais como integer, e "" não é integer (Codex #11 P1: {"nTotalRegistros":""} escapava como
   // ausente → vazio virava "empresa vazia legítima" → marcador vazio falso-válido). Ele cai no ramo string abaixo,
@@ -96,7 +96,7 @@ export function lerInteiroOmie(raw: unknown): number | null {
  * TERMINAL e o fault vira "fim" → publica marcador vazio (Codex #11 P1). Mesma classe do lerInteiroOmie/lerNCodPed:
  * todo campo que entra do Omie passa por leitor canônico — nunca por coerção implícita.
  */
-export function lerStringOmie(raw: unknown): string | null | false {
+function lerStringOmie(raw: unknown): string | null | false {
   if (raw === undefined || raw === null) return null;
   if (typeof raw === "string") return raw;
   return false;

@@ -10,7 +10,7 @@
 // ⚠️ DEPLOY: exige a migration aplicada ANTES (sem 'processando' no CHECK, o claim
 // falharia 23514 e nenhum envio seria processado).
 // ESPELHO: helpers de src/lib/pedidosProgramados/helpers.ts (verbatim — Deno não importa de src/).
-import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient, SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff, corsHeaders } from "../_shared/auth.ts";
 
 // ── ESPELHO de src/lib/pedidosProgramados/helpers.ts (parte de envio, verbatim) ──
@@ -355,6 +355,10 @@ async function processarEnvio(
           ordem_compra: numeroPc,
           dados_adicionais_nf: montarDadosAdicionaisNf(cfg.dados_adicionais_nf, numeroPc),
           numero_pedido_cliente: numeroPc,
+          // Gate ATP fase 2: o cron declara capability (enforcement real) e NUNCA
+          // autoriza backorder (sem atp_backorder) — bloqueio persiste no motivo
+          // do envio e a decisão fica com um humano (parecer Codex 2026-08-06).
+          atp_capaz: true,
         }),
       });
       const body = await resp.json().catch(() => ({}));
@@ -362,9 +366,13 @@ async function processarEnvio(
       // Trava de crédito (Fase 2): recusa estruturada vem como 200 {success:false, blocked}
       // SEM body.error — tratar como sucesso marcaria 'enviado' sem PV no Omie.
       if (body?.success === false) {
-        throw new Error(body?.blocked === "credito"
-          ? `criar_pedido ${account} bloqueado por crédito (inadimplência 60+) — aprovar exceção no detalhe do pedido em /sales e usar "Enviar agora"`
-          : `criar_pedido ${account} recusado sem detalhe (success=false)`);
+        if (body?.blocked === "credito") {
+          throw new Error(`criar_pedido ${account} bloqueado por crédito (inadimplência 60+) — aprovar exceção no detalhe do pedido em /sales e usar "Enviar agora"`);
+        }
+        if (body?.blocked === "atp") {
+          throw new Error(`criar_pedido ${account} bloqueado por estoque (ATP): sem disponibilidade para reservar — revisar quantidades ou enviar manualmente pelo balcão (backorder explícito)`);
+        }
+        throw new Error(`criar_pedido ${account} recusado sem detalhe (success=false${body?.blocked ? `, blocked=${body.blocked}` : ""})`);
       }
       sucessos.push(account);
     } catch (e) {

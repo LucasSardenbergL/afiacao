@@ -25,6 +25,15 @@ export interface ClientesScope {
   hasNextPage: boolean;
   isFetchingNextPage: boolean;
   fetchNextPage: () => void;
+  /**
+   * Falha da fonte da LISTA (carteira ou base). Sem isto, `data === undefined` virava
+   * `customers = []` e a tela dizia "Nenhum cliente" — falha de leitura apresentada como
+   * base vazia (§7: ausente ≠ vazio). Com dado em cache o react-query preserva `customers`
+   * através do refetch falho — a tela decide entre "indisponível" (sem dado) e "stale".
+   */
+  isError: boolean;
+  /** Retry da fonte da lista — o "Tentar novamente" do estado de erro. */
+  refetch: () => void;
   /** id efetivo (alvo na lente, próprio fora dela) — consumido pelo orquestrador p/ reset de detalhe. */
   effectiveUserId: string | null;
 }
@@ -118,6 +127,8 @@ export function useClientesScope(): ClientesScope {
     hasNextPage: isCarteira ? false : !!baseQuery.hasNextPage,
     isFetchingNextPage: isCarteira ? false : baseQuery.isFetchingNextPage,
     fetchNextPage: () => { if (!isCarteira) baseQuery.fetchNextPage(); },
+    isError: isCarteira ? carteiraQuery.isError : baseQuery.isError,
+    refetch: () => { if (isCarteira) carteiraQuery.refetch(); else baseQuery.refetch(); },
     effectiveUserId,
   };
 }

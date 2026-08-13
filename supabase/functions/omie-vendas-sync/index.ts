@@ -1,9 +1,11 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { omieDateToIso, classifyOmieTransient, classifyPedidosPage, gerarJanelasMensais } from "./pagination.ts";
 import { carregarProductMap } from "../_shared/mapas-paginados.ts";
+import { classificarErroAtpGate, classificarRetornoAtpGate } from "../_shared/atp-gate.ts";
+import { deltaEdicaoOben } from "../_shared/atp-edicao.ts";
 import type { BancoPostgrest } from "../_shared/paginate.ts";
+import { avaliarPagina, MAX_PAGINAS_LISTAGEM, MAX_PAGINAS_PEDIDOS, MAX_PAGINAS_POS_ESTOQUE, proximoTotalPaginas } from "../_shared/omie-paginacao.ts";
 
 type OmieGenericResponse = Record<string, unknown> & { faultstring?: string; codigo_status?: number | string; descricao_status?: string };
 
@@ -303,6 +305,9 @@ function getOmieItemIntegrationCode(index: number): number {
 async function syncProducts(supabase: SupabaseClient, startPage = 1, maxPages = 12, account: Account = "oben") {
   let pagina = startPage;
   let totalPaginas = 1;
+  // Fim REAL declarado por avaliarPagina (página vazia NA/apos a última declarada) — distingue
+  // "catálogo esgotado" de "lote esgotado" no `complete` abaixo.
+  let fimReal = false;
   let totalSynced = 0;
   let pagesProcessed = 0;
 
@@ -319,16 +324,39 @@ async function syncProducts(supabase: SupabaseClient, startPage = 1, maxPages = 
         apenas_importado_api: "N",
         filtrar_apenas_omiepdv: "N",
       },
-      account
+      account,
+      // throwOnTransient (achado Codex C, P1): sem ele o `null` é AMBÍGUO — "fim real" e
+      // "rate-limit esgotado" chegavam iguais aqui, e o `break` num resume (startPage=13,
+      // totalPaginas ainda 1) caía em `complete = pagina > totalPaginas` = 13>1 = TRUE →
+      // nextPage=null → cursor APAGADO com a cauda stale, e a UI dizendo sucesso. Com o
+      // throw, `null` significa SÓ fim real e o transitório vira erro visível (o caller
+      // retoma do mesmo start_page; o upsert por página é idempotente).
+      { throwOnTransient: true },
     );
 
     if (!result) {
-      console.log(`[Omie Vendas][${account}] Products sync interrupted by rate limit at page ${pagina}`);
+      // null agora é EOF do contrato Omie ("Não existem registros para a página") — fim REAL,
+      // não interrupção. Marcar fimReal fecha o cursor honestamente.
+      console.log(`[Omie Vendas][${account}] Products: fim real (sem registros) na página ${pagina}`);
+      fimReal = true;
       break;
     }
 
-    totalPaginas = (result.total_de_paginas as number) || 1;
+    // Piso MONOTÔNICO + teto fail-fast + anomalia (_shared/omie-paginacao.ts; money-path §9):
+    // era `|| 1` POR RESPOSTA — uma intermediária sem o campo encolhia o teto e o cursor
+    // devolvia complete=true/nextPage=null com o catálogo parcial.
+    totalPaginas = proximoTotalPaginas(totalPaginas, result.total_de_paginas as number | undefined, MAX_PAGINAS_LISTAGEM);
     const produtos: OmieProdutoCadastro[] = (result.produto_servico_cadastro as OmieProdutoCadastro[] | undefined) || [];
+    const veredicto = avaliarPagina(produtos.length, pagina, totalPaginas);
+    if (veredicto === "anomalia") {
+      // Vazia ANTES do fim declarado = fault disfarçado → aborta fail-closed; o caller re-invoca
+      // do start_page e o upsert por página é idempotente.
+      throw new Error(`página ${pagina}/${totalPaginas} do ListarProdutos veio vazia antes do fim declarado — abortando (retrato parcial)`);
+    }
+    if (veredicto === "fim") {
+      fimReal = true;
+      break;
+    }
 
     const EXCLUDED_FAMILIES = ['imobilizado', 'uso e consumo', 'matérias primas para conversão de cintas', 'jumbos de lixa para discos', 'material para tingimix'];
 
@@ -384,7 +412,7 @@ async function syncProducts(supabase: SupabaseClient, startPage = 1, maxPages = 
     pagesProcessed++;
   }
 
-  const complete = pagina > totalPaginas;
+  const complete = fimReal || pagina > totalPaginas;
   return { totalSynced, totalPaginas, lastPage: pagina - 1, nextPage: complete ? null : pagina, complete };
 }
 
@@ -392,6 +420,8 @@ async function syncProducts(supabase: SupabaseClient, startPage = 1, maxPages = 
 async function syncEstoque(supabase: SupabaseClient, startPage = 1, maxPages = 3, account: Account = "oben") {
   let pagina = startPage;
   let totalPaginas = 1;
+  // mesma distinção do syncProducts: fim REAL (avaliarPagina) ≠ lote esgotado.
+  let fimReal = false;
   let totalUpdated = 0;
   let pagesProcessed = 0;
 
@@ -405,16 +435,33 @@ async function syncEstoque(supabase: SupabaseClient, startPage = 1, maxPages = 3
         nRegPorPagina: 100,
         dDataPosicao: new Date().toLocaleDateString("pt-BR"),
       },
-      account
+      account,
+      // throwOnTransient: mesmo achado C do syncProducts — `null` ambíguo num resume fechava
+      // `complete=true/nextPage=null` com o estoque parcial e a UI reportando sucesso.
+      { throwOnTransient: true },
     );
 
     if (!result) {
-      console.log(`[Omie Vendas][${account}] Estoque sync interrupted by rate limit at page ${pagina}`);
+      // null = EOF do contrato Omie (fim REAL), não mais rate-limit disfarçado.
+      console.log(`[Omie Vendas][${account}] Estoque: fim real (sem registros) na página ${pagina}`);
+      fimReal = true;
       break;
     }
 
-    totalPaginas = (result.nTotPaginas as number) || 1;
+    // Piso MONOTÔNICO + teto fail-fast + anomalia (money-path §9): era `|| 1` POR RESPOSTA —
+    // intermediária sem o campo encolhia o teto e o cursor fechava complete com estoque parcial.
+    totalPaginas = proximoTotalPaginas(totalPaginas, result.nTotPaginas as number | undefined, MAX_PAGINAS_POS_ESTOQUE);
     const produtos: OmiePosEstoque[] = Array.isArray(result.produtos) ? (result.produtos as OmiePosEstoque[]) : [];
+    const veredictoEstoque = avaliarPagina(produtos.length, pagina, totalPaginas);
+    if (veredictoEstoque === "anomalia") {
+      // Vazia ANTES do fim declarado = fault disfarçado → aborta; o caller re-invoca do
+      // start_page (UPDATE por id é idempotente).
+      throw new Error(`página ${pagina}/${totalPaginas} do ListarPosEstoque veio vazia antes do fim declarado — abortando (retrato parcial)`);
+    }
+    if (veredictoEstoque === "fim") {
+      fimReal = true;
+      break;
+    }
     const updatedAt = new Date().toISOString();
 
     const productCodes = produtos
@@ -485,7 +532,7 @@ async function syncEstoque(supabase: SupabaseClient, startPage = 1, maxPages = 3
     pagesProcessed++;
   }
 
-  const complete = pagina > totalPaginas;
+  const complete = fimReal || pagina > totalPaginas;
   return { totalUpdated, totalPaginas, lastPage: pagina - 1, nextPage: complete ? null : pagina, complete };
 }
 
@@ -691,46 +738,74 @@ async function listarFormasPagamento(account: Account = "oben") {
     { codigo: "A04", descricao: "28/56/84 DDL" },
   ];
 
+  // Motivo da degradação, propagado no retorno (ver o bloco de fallback no fim da função).
+  let motivoFallback: string | null = null;
+
   try {
     const allParcelas: OmieParcela[] = [];
     let pagina = 1;
     let totalPaginas = 1;
 
     do {
+      // throwOnTransient: rate-limit/transitório ESGOTADO vira throw (→ fallback padrão do catch,
+      // degradação declarada e visível) em vez de null — que aqui era lido como fim e devolvia a
+      // lista PARCIAL como completa (classe money-path §9): parcela ausente = condição de
+      // pagamento do cliente indisponível na criação do pedido. null passa a significar SÓ fim real
+      // ("Não existem registros").
       const result = await callOmieVendasApi(
         "geral/parcelas/",
         "ListarParcelas",
         { pagina, registros_por_pagina: 500 },
-        account
+        account,
+        { throwOnTransient: true },
       );
+      if (!result) break;
 
       const parcelas: OmieParcela[] =
-        (result?.cadastros as OmieParcela[] | undefined)
-        || (result?.parcela_cadastro as OmieParcela[] | undefined)
-        || (result?.lista_parcelas as OmieParcela[] | undefined)
+        (result.cadastros as OmieParcela[] | undefined)
+        || (result.parcela_cadastro as OmieParcela[] | undefined)
+        || (result.lista_parcelas as OmieParcela[] | undefined)
         || [];
-      totalPaginas = (result?.total_de_paginas as number) || 1;
+      // Piso monotônico + teto fail-fast: era `|| 1` POR RESPOSTA (intermediária sem o campo
+      // encolhia o teto). Vazia ANTES do fim declarado = anomalia → throw → fallback padrão.
+      totalPaginas = proximoTotalPaginas(totalPaginas, result.total_de_paginas as number | undefined, MAX_PAGINAS_LISTAGEM);
+      if (avaliarPagina(parcelas.length, pagina, totalPaginas) === "anomalia") {
+        throw new Error(`página ${pagina}/${totalPaginas} do ListarParcelas veio vazia antes do fim declarado`);
+      }
       console.log(`[Omie Vendas][${account}] ListarParcelas página ${pagina}/${totalPaginas} retornou ${parcelas.length} parcelas.`);
       allParcelas.push(...parcelas);
       pagina++;
     } while (pagina <= totalPaginas);
 
     if (allParcelas.length > 0) {
-      return allParcelas
+      const formas = allParcelas
         .filter((f) => f.cInativo !== "S")
         .map((f) => ({
           codigo: f.cCodigo || f.nCodigo?.toString() || '',
           descricao: f.cDescricao || f.cDescParcela || '',
         }))
         .filter((f) => f.codigo && f.descricao);
+      return { formas, source: "omie" as const, degraded: false, motivo: null as string | null };
     }
   } catch (error) {
+    motivoFallback = error instanceof Error ? error.message : String(error);
     console.error(`[Omie Vendas][${account}] Erro ao buscar parcelas:`, error);
   }
 
-  // Fallback: return common payment conditions
-  console.log(`[Omie Vendas][${account}] Usando formas de pagamento padrão (fallback)`);
-  return defaultFormas;
+  // Fallback: condições comuns hardcoded. DECLARADO no retorno (achado Codex D): o caller
+  // recebia `{success:true, formas}` idêntico ao caminho bom e não tinha COMO distinguir
+  // "estas são as condições do Omie" de "o Omie não respondeu, aqui vão 8 genéricas" — o
+  // vendedor não vê a condição customizada do cliente e escolhe outra, que o Omie rejeita
+  // na hora de gravar o pedido. Trocar perda silenciosa por fallback silencioso não é
+  // degradação honesta (money-path §6: a falha tem de estar no CONTRATO).
+  // ⚠️ DEFESA DO FUTURO, declarada como tal: os 3 consumidores (useUnifiedOrder,
+  // useSalesOrderEdit, SalesPrintDashboard) hoje leem só `formas` e ignoram estes campos —
+  // exibir o aviso na tela é o follow-up. Sem eles, porém, nem dá para MEDIR a frequência.
+  console.warn(
+    `[Omie Vendas][${account}] Usando formas de pagamento padrão (FALLBACK degradado)` +
+      (motivoFallback ? ` — motivo: ${motivoFallback}` : " — Omie devolveu lista vazia"),
+  );
+  return { formas: defaultFormas, source: "fallback" as const, degraded: true, motivo: motivoFallback };
 }
 
 // Buscar última forma de pagamento e ranking de parcelas do cliente
@@ -952,7 +1027,10 @@ async function syncPedidos(
       .order('omie_codigo_cliente')
       .limit(pgSize);
     if (cacheErr) throw new Error(`pre-load client cache (${account}): ${cacheErr.message}`);
-    if (!batch || batch.length === 0) { hasMore = false; }
+    // data:null SEM error = resposta malformada (≠ fim): lida como fim, o cache sai PARCIAL →
+    // milhares de miss no fallback → rate-limit no Omie → skip/atribuição arbitrária (§9).
+    if (batch == null) throw new Error(`pre-load client cache (${account}): data null sem error — resposta malformada, não é fim`);
+    if (batch.length === 0) { hasMore = false; }
     else {
       for (const oc of batch) {
         clientCache.set(oc.omie_codigo_cliente, oc.user_id);
@@ -2210,7 +2288,7 @@ async function releaseVendasCursor(
   if (error) console.error(`[sync_pedidos][${account}] release falhou:`, error.message);
 }
 
-serve(async (req) => {
+Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
@@ -2290,6 +2368,8 @@ serve(async (req) => {
         let bfPagina = Number(params.start_page) || 1;
         const bfMaxPages = Number(params.max_pages) || 5;
         let bfTotalPaginas = 1;
+        // fim REAL (avaliarPagina) ≠ lote esgotado — decide o next_page abaixo.
+        let bfFimReal = false;
         let bfPages = 0;
         let bfPedidosComCor = 0;
         let bfPedidosAtualizados = 0;
@@ -2298,10 +2378,28 @@ serve(async (req) => {
         while ((bfPagina <= bfTotalPaginas || bfPages === 0) && bfPages < bfMaxPages) {
           const bfParams: Record<string, unknown> = { pagina: bfPagina, registros_por_pagina: 50, filtrar_apenas_inclusao: "N" };
           if (bfNumeroPedido) { bfParams.numero_pedido_de = bfNumeroPedido; bfParams.numero_pedido_ate = bfNumeroPedido; }
-          const bfRes = (await callOmieVendasApi("produtos/pedido/", "ListarPedidos", bfParams, account)) as OmieListarPedidosResponse | null;
-          if (!bfRes) break; // rate limit → retoma na próxima invocação
-          bfTotalPaginas = bfRes.total_de_paginas || 1;
+          // throwOnTransient (achado Codex C, P1): `null` era AMBÍGUO — rate-limit esgotado e fim
+          // real chegavam iguais. Num resume (start_page=7 com bfTotalPaginas ainda 1), o break
+          // por rate-limit caía em `next_page = bfPagina <= bfTotalPaginas ? … : null` = null e
+          // APAGAVA o cursor: o backfill se declarava terminado com a cauda por processar.
+          const bfRes = (await callOmieVendasApi(
+            "produtos/pedido/", "ListarPedidos", bfParams, account, { throwOnTransient: true },
+          )) as OmieListarPedidosResponse | null;
+          if (!bfRes) { bfFimReal = true; break; } // null = fim real ("Não existem registros")
+          // Piso MONOTÔNICO + teto fail-fast (money-path §9): era `|| 1` POR RESPOSTA — uma
+          // intermediária sem o campo encerrava o cursor prematuro (next_page=null com cauda viva).
+          bfTotalPaginas = proximoTotalPaginas(bfTotalPaginas, bfRes.total_de_paginas, MAX_PAGINAS_PEDIDOS);
           const bfPedidos = bfRes.pedido_venda_produto || [];
+          const bfVeredicto = avaliarPagina(bfPedidos.length, bfPagina, bfTotalPaginas);
+          if (bfVeredicto === "anomalia") {
+            // vazia ANTES do fim declarado = fault disfarçado → aborta; o caller retoma do
+            // start_page desta invocação (o UPDATE só toca registros sem cor — idempotente).
+            throw new Error(`página ${bfPagina}/${bfTotalPaginas} do ListarPedidos (backfill) veio vazia antes do fim declarado`);
+          }
+          if (bfVeredicto === "fim") {
+            bfFimReal = true;
+            break;
+          }
 
           for (const bfPedido of bfPedidos) {
             const bfCab = bfPedido.cabecalho || {};
@@ -2359,7 +2457,7 @@ serve(async (req) => {
           account,
           pedidos_com_cor: bfPedidosComCor,
           pedidos_atualizados: bfPedidosAtualizados,
-          next_page: bfPagina <= bfTotalPaginas ? bfPagina : null,
+          next_page: !bfFimReal && bfPagina <= bfTotalPaginas ? bfPagina : null,
           ...(bfDryRun ? { amostra: bfAmostra } : {}),
         };
         break;
@@ -2450,7 +2548,7 @@ serve(async (req) => {
         // silenciosamente pra 'oben' — o pedido local é a âncora server-side.
         const { data: soRow } = await supabaseAdmin
           .from("sales_orders")
-          .select("account, customer_user_id, customer_document, created_by")
+          .select("account, customer_user_id, customer_document, created_by, checkout_id")
           .eq("id", sales_order_id)
           .maybeSingle();
         if (soRow?.account && soRow.account !== account) {
@@ -2505,6 +2603,75 @@ serve(async (req) => {
           result = { success: false, blocked: "tint_preco", bloqueios: gateTint.bloqueios };
           break;
         }
+        // Gate ATP fase 2 (parecer Codex 2026-08-06): reserva de estoque na
+        // FRONTEIRA, imediatamente antes da mutação Omie. A RPC deriva os itens
+        // da linha sales_orders (nunca do payload) e audita em atp_decisoes.
+        // atp_capaz ausente (bundle antigo em cache) → advisory: a RPC registra
+        // e reserva, mas NÃO bloqueia — caller antigo leria um blocked
+        // desconhecido como sucesso (submitOrder antigo cai no ramo do
+        // omie_numero_pedido). Erro 42501/22023 = autorização/contrato, sem
+        // override; falha de transporte = contingência com fricção na UI.
+        if (account === "oben") {
+          const atpCapaz = (params as { atp_capaz?: unknown }).atp_capaz === true;
+          const atpBackorder = (params as { atp_backorder?: { autorizado?: unknown; motivo?: unknown } }).atp_backorder;
+          const backorderAutorizado = atpBackorder?.autorizado === true;
+          const chamarGate = (comOverride: boolean) =>
+            supabaseAdmin.rpc("atp_gate_pedido", {
+              p_sales_order_id: sales_order_id,
+              p_enforcement: atpCapaz,
+              p_actor: userId ?? null,
+              p_autorizar_backorder: comOverride,
+              p_motivo_backorder: comOverride && typeof atpBackorder?.motivo === "string"
+                ? atpBackorder.motivo
+                : null,
+            });
+          let atpCls;
+          try {
+            let { data: atpData, error: atpError } = await chamarGate(backorderAutorizado);
+            if (atpError && backorderAutorizado) {
+              // Override inválido (sem bloqueio prévio / itens mudaram desde o
+              // bloqueio): re-avalia SEM override — a recusa FRESCA volta ao
+              // painel para nova decisão, nunca um erro opaco.
+              const fresco = await chamarGate(false);
+              atpData = fresco.data;
+              atpError = fresco.error;
+            }
+            atpCls = atpError ? classificarErroAtpGate(atpError) : classificarRetornoAtpGate(atpData);
+          } catch (e) {
+            atpCls = classificarErroAtpGate(e);
+          }
+          if (atpCls.acao === "bloquear") {
+            result = { success: false, blocked: "atp", contexto: "criacao", recusas: atpCls.recusas };
+            break;
+          }
+          if (atpCls.acao === "falha_verificacao") {
+            // Trilha best-effort: a transação da RPC não existe neste caminho.
+            const { error: trilhaErr } = await supabaseAdmin.from("atp_decisoes").insert({
+              sales_order_id,
+              checkout_id: (soRow as { checkout_id?: string | null } | null)?.checkout_id ?? sales_order_id,
+              pool: "oben",
+              account,
+              decisao: "verificacao_indisponivel",
+              contexto: "criacao",
+              enforcement: atpCapaz,
+              actor_user_id: userId ?? null,
+            });
+            if (trilhaErr) console.error("[atp] trilha verificacao_indisponivel falhou:", trilhaErr.message);
+            if (atpCapaz) {
+              result = {
+                success: false,
+                blocked: "atp",
+                contexto: "criacao",
+                recusas: [],
+                verificacao_indisponivel: true,
+                sem_override: atpCls.semOverride,
+                detalhe: atpCls.detalhe,
+              };
+              break;
+            }
+            // caller antigo: segue como hoje (o registro acima mede o furo)
+          }
+        }
         const pedido = await criarPedidoVenda(
           supabaseAdmin,
           sales_order_id,
@@ -2524,8 +2691,17 @@ serve(async (req) => {
       }
 
       case "listar_formas_pagamento": {
-        const formas = await listarFormasPagamento(account);
-        result = { success: true, formas };
+        // `formas` continua no mesmo lugar (os 3 consumidores atuais não quebram); `source`/
+        // `degraded`/`motivo` são ADITIVOS e existem para que a lista de fallback deixe de ser
+        // indistinguível da real — achado Codex D deste PR.
+        const parcelas = await listarFormasPagamento(account);
+        result = {
+          success: true,
+          formas: parcelas.formas,
+          source: parcelas.source,
+          degraded: parcelas.degraded,
+          motivo: parcelas.motivo,
+        };
         break;
       }
 
@@ -2596,6 +2772,38 @@ serve(async (req) => {
         if (!gateTintEdit.permitido) {
           result = { success: false, blocked: "tint_preco", contexto: "edicao", bloqueios: gateTintEdit.bloqueios };
           break;
+        }
+
+        // Guard ATP fase 2 na EDIÇÃO (sem isto o gate da criação tem bypass
+        // trivial: criar dentro do ATP e depois aumentar a quantidade). Fase 2
+        // BLOQUEIA aumento de quantidade/SKU novo Oben — sem override na edição;
+        // a válvula é um pedido novo pelo balcão, onde reserva/backorder existem.
+        // Reservar o DELTA da edição é desenho da fase 3 (parecer Codex).
+        if (editAccount === "oben") {
+          const editAtpCapaz = (params as { atp_capaz?: unknown }).atp_capaz === true;
+          const delta = deltaEdicaoOben(
+            (existingOrder as { items?: Array<{ omie_codigo_produto?: number; quantidade?: number }> | null }).items,
+            editItems as Array<{ omie_codigo_produto?: number; quantidade?: number }>,
+          );
+          if (delta.aumentou) {
+            const { error: trilhaEdErr } = await supabaseAdmin.from("atp_decisoes").insert({
+              sales_order_id: editSoId,
+              checkout_id: (existingOrder as { checkout_id?: string | null }).checkout_id ?? editSoId,
+              pool: "oben",
+              account: editAccount,
+              decisao: "bloqueado",
+              contexto: "edicao",
+              enforcement: editAtpCapaz,
+              actor_user_id: userId ?? null,
+              recusas: delta.aumentos,
+            });
+            if (trilhaEdErr) console.error("[atp] trilha edicao falhou:", trilhaEdErr.message);
+            if (editAtpCapaz) {
+              result = { success: false, blocked: "atp", contexto: "edicao", aumentos: delta.aumentos };
+              break;
+            }
+            // caller antigo: segue como hoje (o registro acima mede o furo)
+          }
         }
 
         // Build updated items payload for local DB
@@ -3244,6 +3452,8 @@ serve(async (req) => {
         // Fetch last 5 pages of orders for this client from Omie
         const productHistory: Record<string, string> = {}; // omie_codigo_produto -> last date
         try {
+          // Piso do total ao longo das ≤5 páginas — ver o comentário no uso abaixo.
+          let histTotal = 1;
           for (let page = 1; page <= 5; page++) {
             const pedidos = await callOmieVendasApi(
               "produtos/pedido/",
@@ -3256,7 +3466,8 @@ serve(async (req) => {
               },
               account
             );
-            const lista = ((pedidos as { pedido_venda_produto?: OmiePedidoVendaProduto[] } | null)?.pedido_venda_produto) || [];
+            if (!pedidos) break; // null = fim real ("Não existem registros") ou transiente esgotado — para sem fabricar total
+            const lista = ((pedidos as { pedido_venda_produto?: OmiePedidoVendaProduto[] }).pedido_venda_produto) || [];
             for (const pedido of lista) {
               const dataPedido = pedido?.cabecalho?.data_previsao || pedido?.infoCadastro?.dInc || '';
               const itens = pedido?.det || [];
@@ -3267,8 +3478,11 @@ serve(async (req) => {
                 }
               }
             }
-            const totalPages = ((pedidos as { total_de_paginas?: number } | null)?.total_de_paginas) || 1;
-            if (page >= totalPages) break;
+            // Piso monotônico (money-path §9): o `|| 1` POR RESPOSTA truncava o histórico na 1ª
+            // resposta sem o campo (efeito só de recall — menos itens preferidos —, mas é a mesma
+            // forma da classe; o teto de 5 páginas segue no `for`).
+            histTotal = proximoTotalPaginas(histTotal, (pedidos as { total_de_paginas?: number }).total_de_paginas, MAX_PAGINAS_PEDIDOS);
+            if (page >= histTotal) break;
           }
         } catch (e) {
           console.log("[Omie Vendas] Erro ao buscar histórico de pedidos:", e);

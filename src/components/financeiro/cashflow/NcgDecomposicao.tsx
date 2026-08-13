@@ -10,9 +10,23 @@ import { formatBRL } from '@/lib/financeiro/cashflow-format';
 export function NcgDecomposicao() {
   const { activeCompany } = useCompany();
   const [cenario, setCenario] = useState<Cenario>('realista');
-  const { data, isLoading } = useCashflowProjection(activeCompany, cenario);
+  const { data, isLoading, error } = useCashflowProjection(activeCompany, cenario);
 
   if (isLoading) return <Skeleton className="h-96 w-full" />;
+  // A engine passou a RESPONDER ERRO quando uma leitura de fonte money-path falha, em vez
+  // de devolver 200 com saldo/estoque/CMV = 0 (money-path §7: consertar a engine torna
+  // ALCANÇÁVEL um caminho que antes não existia). Sem este ramo, a falha caía no
+  // `if (!data) return null` e a decomposição da NCG sumia da tela sem dizer nada — o
+  // operador leria a ausência do bloco como "não há NCG", que é a mesma troca de
+  // "não consegui ler" por "não existe" que o fix eliminou uma camada abaixo.
+  if (error) {
+    return (
+      <div className="rounded-md border border-status-error/20 bg-status-error-bg px-3 py-2 text-sm text-status-error-fg">
+        NCG indisponível — não foi possível ler os dados desta empresa.{' '}
+        <span className="text-xs opacity-80">{String((error as Error).message ?? error)}</span>
+      </div>
+    );
+  }
   if (!data) return null;
 
   const acoData = [
@@ -33,6 +47,13 @@ export function NcgDecomposicao() {
           ⚠ Estoque não informado — NCG e CCC subestimados. Informe o valor do balancete em Configuração.
         </div>
       )}
+      {/* Motivo da degradação: sem isto, uma fonte que FALHOU e um dado que não existe
+          produzem o mesmo "—" nos cards de PMR/PMP/CCC abaixo — indistinguíveis. */}
+      {(data.confianca_dados?.motivos ?? []).map((motivo) => (
+        <div key={motivo} className="rounded-md border border-status-warning-fg/30 bg-status-warning-bg px-3 py-2 text-xs text-status-warning">
+          ⚠ {motivo}
+        </div>
+      ))}
       <div className="flex items-center justify-between">
         <CenarioToggle value={cenario} onChange={setCenario} />
         <div className="text-xs text-muted-foreground">Cenário: <strong>{cenario}</strong></div>

@@ -21,6 +21,7 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 import type { Tables } from '@/integrations/supabase/types';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 
 type NfeStatus = 'pendente' | 'em_conferencia' | 'divergencia' | 'conferido' | 'efetivado' | 'falha_efetivacao' | 'efetivacao_parcial';
 
@@ -185,7 +186,7 @@ export default function Recebimento({ statusFilter }: { statusFilter?: string[] 
       queryClient.invalidateQueries({ queryKey: ['nfe_recebimentos'] });
       queryClient.invalidateQueries({ queryKey: ['nfe_pending_counts'] });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = mensagemDeErro(err) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.';
       toast.error('Erro ao efetivar: ' + (message || 'Tente novamente'));
     } finally {
       setEfetivando(null);
@@ -207,7 +208,7 @@ export default function Recebimento({ statusFilter }: { statusFilter?: string[] 
       setDiagResult(JSON.stringify(res.data, null, 2));
       setDiagOpen(true);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = mensagemDeErro(err) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.';
       toast.error('Erro no diagnóstico: ' + (message || 'Tente novamente'));
     } finally {
       setDiagnosticando(null);
@@ -237,7 +238,7 @@ export default function Recebimento({ statusFilter }: { statusFilter?: string[] 
       queryClient.invalidateQueries({ queryKey: ['nfe_recebimentos'] });
       queryClient.invalidateQueries({ queryKey: ['nfe_pending_counts'] });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = mensagemDeErro(err) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.';
       toast.error('Erro ao importar: ' + (message || 'Verifique a chave'));
     } finally {
       setImporting(false);
@@ -269,13 +270,24 @@ export default function Recebimento({ statusFilter }: { statusFilter?: string[] 
           onClick={async () => {
             setSyncing(true);
             try {
-              const { error } = await supabase.functions.invoke('omie-nfe-recebimento-sync', { body: {} });
+              const { data, error } = await supabase.functions.invoke('omie-nfe-recebimento-sync', { body: {} });
               if (error) throw error;
-              toast.success('Sincronização concluída!');
+              // A edge sinaliza sincronização PARCIAL em success:false + errors[] (página do
+              // Omie perdida, detalhe que falhou). Sem ler isso, o toast dizia "concluída" e a
+              // NF-e faltante virava fila-fantasma no painel (money-path §7: a correção só
+              // termina na tela).
+              const resultado = data as { success?: boolean; errors?: string[] } | null;
+              if (resultado && resultado.success === false) {
+                toast.warning(
+                  `Sincronização parcial — ${resultado.errors?.length ?? 0} falha(s) no Omie. Algumas NF-es podem faltar; rode de novo em instantes.`,
+                );
+              } else {
+                toast.success('Sincronização concluída!');
+              }
               queryClient.invalidateQueries({ queryKey: ['nfe_recebimentos'] });
               queryClient.invalidateQueries({ queryKey: ['nfe_pending_counts'] });
             } catch (err) {
-              const message = err instanceof Error ? err.message : String(err);
+              const message = mensagemDeErro(err) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.';
               toast.error('Erro na sincronização: ' + (message || 'Tente novamente'));
             } finally {
               setSyncing(false);

@@ -15,7 +15,7 @@ import { resolverOpcaoVenda, type OpcaoResolvida, type EmbalagemComEstoque } fro
  * casamento → `catalisadorEmbalagens: []` → o motor degrada honesto a "sob consulta" (nunca fabrica).
  */
 
-export type SeloTone = 'success' | 'warning' | 'muted';
+type SeloTone = 'success' | 'warning' | 'muted';
 
 export interface SeloDescricao {
   estadoLabel: string;

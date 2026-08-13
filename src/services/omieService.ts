@@ -88,37 +88,6 @@ export async function syncOrderToOmie(
   }
 }
 
-export async function checkOmieClient(): Promise<{
-  exists: boolean;
-  omie_codigo_cliente: number | null;
-}> {
-  try {
-    const { data, error } = await supabase.functions.invoke("omie-sync", {
-      body: {
-        action: "check_client",
-      },
-    });
-
-    if (error) {
-      logger.error("Omie check_client failed", {
-        functionName: "omie-sync",
-        action: "check_client",
-        error,
-      });
-      return { exists: false, omie_codigo_cliente: null };
-    }
-
-    return data;
-  } catch (err) {
-    logger.error("Omie check_client unexpected exception", {
-      functionName: "omie-sync",
-      action: "check_client",
-      error: err,
-    });
-    return { exists: false, omie_codigo_cliente: null };
-  }
-}
-
 export interface OmieServico {
   omie_codigo_servico: number;
   omie_codigo_integracao: string;
@@ -127,125 +96,6 @@ export interface OmieServico {
   codigo_servico_municipio: string;
   valor_unitario: number;
   unidade: string;
-}
-
-export async function listOmieServices(): Promise<{
-  success: boolean;
-  servicos: OmieServico[];
-  error?: string;
-}> {
-  try {
-    const { data, error } = await supabase.functions.invoke("omie-sync", {
-      body: {
-        action: "list_services",
-      },
-    });
-
-    if (error) {
-      logger.error("Omie list_services failed", {
-        functionName: "omie-sync",
-        action: "list_services",
-        error,
-      });
-      return { success: false, servicos: [], error: error.message };
-    }
-
-    return data;
-  } catch (err) {
-    logger.error("Omie list_services unexpected exception", {
-      functionName: "omie-sync",
-      action: "list_services",
-      error: err,
-    });
-    return {
-      success: false,
-      servicos: [],
-      error: err instanceof Error ? err.message : "Erro desconhecido",
-    };
-  }
-}
-
-export interface OmieContaCorrente {
-  nCodCC: number;
-  cDescricao: string;
-  cCodCCInt: string;
-  cNomeBanco: string;
-  cAgencia: string;
-  cNumeroConta: string;
-  cTipo: string;
-}
-
-export async function listOmieContasCorrentes(): Promise<{
-  success: boolean;
-  contas_correntes: OmieContaCorrente[];
-  error?: string;
-}> {
-  try {
-    const { data, error } = await supabase.functions.invoke("omie-sync", {
-      body: {
-        action: "list_contas_correntes",
-      },
-    });
-
-    if (error) {
-      logger.error("Omie list_contas_correntes failed", {
-        functionName: "omie-sync",
-        action: "list_contas_correntes",
-        error,
-      });
-      return { success: false, contas_correntes: [], error: error.message };
-    }
-
-    return data;
-  } catch (err) {
-    logger.error("Omie list_contas_correntes unexpected exception", {
-      functionName: "omie-sync",
-      action: "list_contas_correntes",
-      error: err,
-    });
-    return {
-      success: false,
-      contas_correntes: [],
-      error: err instanceof Error ? err.message : "Erro desconhecido",
-    };
-  }
-}
-
-export async function syncOmieServices(): Promise<{
-  success: boolean;
-  adicionados?: number;
-  atualizados?: number;
-  inativados?: number;
-  error?: string;
-}> {
-  try {
-    const { data, error } = await supabase.functions.invoke("omie-sync", {
-      body: {
-        action: "sync_services",
-      },
-    });
-
-    if (error) {
-      logger.error("Omie sync_services failed", {
-        functionName: "omie-sync",
-        action: "sync_services",
-        error,
-      });
-      return { success: false, error: error.message };
-    }
-
-    return data;
-  } catch (err) {
-    logger.error("Omie sync_services unexpected exception", {
-      functionName: "omie-sync",
-      action: "sync_services",
-      error: err,
-    });
-    return {
-      success: false,
-      error: err instanceof Error ? err.message : "Erro desconhecido",
-    };
-  }
 }
 
 export interface UpdateOrderData {
@@ -321,12 +171,18 @@ export async function deleteOrderFromOmie(orderId: string): Promise<{ success: b
   }
 }
 
-export async function checkOsExistsInOmie(orderId: string): Promise<{ exists: boolean }> {
+export async function checkOsExistsInOmie(
+  orderId: string,
+): Promise<{ exists: boolean; indeterminado?: boolean; motivo?: string }> {
   try {
     const { data, error } = await supabase.functions.invoke("omie-sync", {
       body: { action: "check_os_exists", orderId },
     });
-    if (error) return { exists: true }; // Assume exists on error
+    // `indeterminado` acompanha o `exists` em vez de substituí-lo: quem consome faz
+    // `if (!exists) → apaga o pedido`, então qualquer falsy novo viraria deleção por falha de
+    // rede. O tipo precisa carregar a flag, senão o edge reporta "não consegui verificar" e a
+    // informação morre aqui — a correção do wrapper só termina quando chega à tela (money-path §7).
+    if (error) return { exists: true, indeterminado: true, motivo: error.message };
     return data;
   } catch (error) {
     logger.warn('Failed to check OS exists in Omie (assuming exists)', {
@@ -335,6 +191,10 @@ export async function checkOsExistsInOmie(orderId: string): Promise<{ exists: bo
       orderId,
       error,
     });
-    return { exists: true };
+    return {
+      exists: true,
+      indeterminado: true,
+      motivo: error instanceof Error ? error.message : 'falha ao consultar o Omie',
+    };
   }
 }

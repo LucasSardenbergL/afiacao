@@ -33,7 +33,7 @@ export interface ResumoLote {
 /**
  * Classifica a resposta de UM alvo (chamada a generate-tactical-plan).
  *
- * `skipped` é caminho ESPERADO, não falha: `ja_gerado_hoje` (idempotência),
+ * `skipped` é caminho ESPERADO, não falha: `ja_na_fila` (idempotência),
  * `sem_score` e `rpc_error` (race de reatribuição — a edge alvo já o trata).
  * Tratá-lo como erro apagaria o sinal que distingue "pulei de propósito" de
  * "quebrei" — foi `pulados: 0` que provou, no incidente, que os 28 erros não

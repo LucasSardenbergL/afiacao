@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, waitFor, act } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
+import type { ReactNode } from 'react';
+
+// `useFarmerTacticalPlan` lê o filtro da fila da URL (useUrlState → useSearchParams),
+// então o hook precisa de um Router no ambiente de teste.
+const ComRouter = ({ children }: { children: ReactNode }) => <MemoryRouter>{children}</MemoryRouter>;
 
 /**
  * Guard de regressão da lente "Ver como pessoa" no PLANO TÁTICO (engine de IA).
@@ -82,7 +88,7 @@ describe('useTacticalPlan — lente "Ver como"', () => {
 describe('useFarmerTacticalPlan — lente "Ver como" + cobertura', () => {
   it('na lente: o dropdown (loadCustomers) filtra só pelo ALVO, nunca o master', async () => {
     impMock.mockReturnValue({ isImpersonating: true, effectiveUserId: 'alvo-id' });
-    renderHook(() => useFarmerTacticalPlan());
+    renderHook(() => useFarmerTacticalPlan(), { wrapper: ComRouter });
     await waitFor(() => expect(inCalls.some(([col]) => col === 'farmer_id')).toBe(true));
     expect(farmerInValue()).toContain('alvo-id');
     expect(farmerInValue()).not.toContain('master-id');
@@ -90,7 +96,7 @@ describe('useFarmerTacticalPlan — lente "Ver como" + cobertura', () => {
 
   it('fora da lente sem cobertura: filtra pelo próprio usuário', async () => {
     impMock.mockReturnValue({ isImpersonating: false, effectiveUserId: 'master-id' });
-    renderHook(() => useFarmerTacticalPlan());
+    renderHook(() => useFarmerTacticalPlan(), { wrapper: ComRouter });
     await waitFor(() => expect(inCalls.some(([col]) => col === 'farmer_id')).toBe(true));
     expect(farmerInValue()).toContain('master-id');
   });
@@ -98,7 +104,7 @@ describe('useFarmerTacticalPlan — lente "Ver como" + cobertura', () => {
   it('fora da lente COM cobertura: dropdown inclui o coberto (eu + cobertos)', async () => {
     impMock.mockReturnValue({ isImpersonating: false, effectiveUserId: 'master-id' });
     coverageMock.mockReturnValue({ data: [{ covered_user_id: 'coberto-id' }] });
-    renderHook(() => useFarmerTacticalPlan());
+    renderHook(() => useFarmerTacticalPlan(), { wrapper: ComRouter });
     await waitFor(() => expect(inCalls.some(([col]) => col === 'farmer_id')).toBe(true));
     expect(farmerInValue()).toEqual(expect.arrayContaining(['master-id', 'coberto-id']));
   });
@@ -106,7 +112,7 @@ describe('useFarmerTacticalPlan — lente "Ver como" + cobertura', () => {
   it('na lente NÃO vaza a cobertura do master (só o alvo)', async () => {
     impMock.mockReturnValue({ isImpersonating: true, effectiveUserId: 'alvo-id' });
     coverageMock.mockReturnValue({ data: [{ covered_user_id: 'coberto-id' }] });
-    renderHook(() => useFarmerTacticalPlan());
+    renderHook(() => useFarmerTacticalPlan(), { wrapper: ComRouter });
     await waitFor(() => expect(inCalls.some(([col]) => col === 'farmer_id')).toBe(true));
     expect(farmerInValue()).toEqual(['alvo-id']);
     expect(farmerInValue()).not.toContain('coberto-id');

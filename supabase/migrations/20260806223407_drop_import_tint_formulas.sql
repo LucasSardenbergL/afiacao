@@ -1,0 +1,53 @@
+-- ============================================================
+-- DROP da função órfã `import_tint_formulas` (money-path — tintométrico)
+--
+-- POR QUÊ: era o 2º writer de `tint_formula_itens` em produção e o ÚNICO sem o
+-- Guard 4. Mantinha intacto o anti-padrão que as migrations 20260717163000 +
+-- 20260718100000 existiram para matar no `tint_promote_sync_run`:
+--
+--     DELETE FROM tint_formula_itens WHERE formula_id = v_formula_id;   -- incondicional
+--     ...
+--     IF ... COALESCE((r->>('qtd'||i||'ml'))::numeric, 0) > 0 THEN INSERT ...  -- filtrado
+--
+-- ⇒ corante com dose inválida é PULADO **depois** do delete: a fórmula fica com
+--   receita PARCIAL (subfaturamento silencioso) ou ZERADA (receita perdida — a
+--   Regra de Ouro de docs/agent/tintometrico.md), reportando `errors: 0`.
+--
+-- PROVADO EXECUTANDO em PG17 (`db/test-import-tint-formulas.sh`, 17 asserts, exit 0),
+-- contra o corpo BYTE-A-BYTE de produção (assert A0 confere md5 do prosrc):
+--   A1  1 corante com qtd 0    → grava os outros 2 (receita parcial), errors:0
+--   A2  re-import todo-inválido → DELETE roda, INSERT não → receita ZERADA, errors:0
+--   A3  qtd "NaN"              → em numeric, NaN > 0 é TRUE → NaN ENTRA na receita
+--                                (é o C18 que o Guard 4 fechou do outro lado)
+--   A4  muta `preco_final_sayersystem` sem olhar `desativada_em` → alcança as 463.995
+--       linhas carimbadas `fase5_geracao_legada`, que seguem alimentando
+--       `preco_csv_legado` (rótulo) e `preco_piso_legado` (piso do `tint_gate_revalida`)
+--   A2e fronteira medida: qtd ILEGÍVEL ("") lança no ::numeric e o handler por-linha
+--       reverte o subbloco — proteção ACIDENTAL, que cobre justamente o que a fonte
+--       NÃO manda; o que ela emite é 0 (§Fase 1d), e esse passa.
+--
+-- POR QUE DROP e não blindar (decisão do founder, 2026-08-06):
+--   - órfã: 0 chamadores no repo, 0 dependentes/triggers/citações em prod (pg_depend);
+--   - 0 uso real: `tint_importacoes` tem 72 linhas não-`sync:%`, a última de 2026-04-17;
+--   - o caminho vivo do catálogo é o sync (conector → staging → tint_promote_sync_run),
+--     que já é fail-closed;
+--   - `docs/agent/money-path.md` §"Aposentar código": a pergunta não é "quem chama?", é
+--     "o que acontece se alguém chamar?" — e aqui uma invocação apaga receita e mexe no
+--     piso do gate SEM DEIXAR RASTRO (a função não escreve em `tint_importacoes`,
+--     `acoes_execucoes` nem `tint_sync_errors`). Deletar é o movimento conservador.
+--   - fecha o follow-up 5b registrado em docs/agent/tintometrico.md (Fase 5, PR #1549).
+--
+-- SE O IMPORT MANUAL VOLTAR A SER REQUISITO: implemente o fail-closed all-or-nothing
+-- por fórmula do zero (dose positiva E FINITA), como manda o comentário do 410 em
+-- `supabase/functions/tint-import/index.ts`. NÃO ressuscite este corpo do git — ele é a
+-- versão fail-open. O corpo antigo fica em
+-- `supabase/migrations/20260512101346_632761fc-2bd6-4caa-9c61-d35f872c2489.sql` (linhas 1-128)
+-- e o harness `db/test-import-tint-formulas.sh` continua provando por que ele não serve.
+--
+-- SEGURANÇA: isto NÃO reduz o que o staff já pode fazer. `tint_formulas` e
+-- `tint_formula_itens` têm policy `Staff can manage ... ALL {authenticated}`, então staff
+-- já escreve direto nas tabelas. O que sai é a via que executa o anti-padrão em MASSA,
+-- sob SECURITY DEFINER e sem auditoria.
+-- ============================================================
+
+DROP FUNCTION IF EXISTS public.import_tint_formulas(text, boolean, jsonb);

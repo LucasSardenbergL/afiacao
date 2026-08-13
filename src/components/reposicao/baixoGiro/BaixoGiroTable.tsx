@@ -10,6 +10,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { classBadge, fmt, fmtBRL } from "@/lib/reposicao/sku-param";
+import { rotuloClasseSB } from "@/lib/reposicao/baixo-giro-helpers";
 import { type BadgeVariant } from "@/components/reposicao/revisao/types";
 import type { RowBaixoGiro } from "./types";
 
@@ -127,10 +128,15 @@ export function BaixoGiroTable({
                     <Badge variant={classBadge(row.classe_consolidada) as BadgeVariant}>
                       {row.classe_consolidada ?? "—"}
                     </Badge>
+                    {rotuloClasseSB(row.classe_sb) && (
+                      <div className="mt-0.5 text-[10px] text-muted-foreground">{rotuloClasseSB(row.classe_sb)}</div>
+                    )}
                   </TableCell>
                   <TableCell className="text-right tnum">{capitalCell}</TableCell>
                   <TableCell className="text-right tnum">{fmt(row.saldo, 0)}</TableCell>
-                  <TableCell className="text-right tnum">{row.dias_sem_vender ?? "—"}</TableCell>
+                  <TableCell className={`text-right tnum ${row.giro_morto ? "text-status-error font-medium" : ""}`}>
+                    {row.dias_sem_vender ?? (row.vendas_registradas <= 0 ? "sem venda no histórico" : "—")}
+                  </TableCell>
                   <TableCell className="text-right tnum">
                     {fmt(row.demanda_media_diaria, 3)}/dia
                   </TableCell>

@@ -142,6 +142,9 @@ jobs:
       # helper local. Consequência a saber: teste de edge que precise de `npm:`/`jsr:` NÃO roda aqui
       # — a saída é extrair a lógica PURA e testar ela (o que os 11 arquivos já fazem), não afrouxar
       # o flag.
+      #
+      # O pin do deno tem 2 ocorrências (esta e o job `mutation-check`, que roda contrato .mut de
+      # edge) — bump alinha as duas.
       - name: Setup Deno
         uses: denoland/setup-deno@v2
         with:
@@ -216,6 +219,37 @@ jobs:
       # não-draft auto-mergeia no verde. Estático: lê .github/workflows/, sem rede.
       - name: Bun pin gate check (semver estrito x.y.z)
         run: bun run bunpin:check
+
+      # Anti-regressão do ÍNDICE dos diretórios de docs que têm README (hoje `docs/historico/` e
+      # `docs/runbooks/`). Doc sem linha no índice — ou linha apontando para arquivo que sumiu — é
+      # bug SILENCIOSO por construção: o arquivo existe, o CI passa, e ninguém o encontra. Medido:
+      # o #1658 reconciliou o índice do histórico à mão (9 arquivos invisíveis, metade do histórico
+      # recente) e HORAS depois o #1659 — uma PR de FEATURE que só por acaso escreveu um doc — já
+      # reintroduziu um. A convenção textual ("registre aqui") existia o tempo todo. Gate de
+      # PRECISÃO: só diretório COM README (ter README é a declaração de "aqui há índice");
+      # `docs/agent/` fica fora porque quem o indexa é a tabela do CLAUDE.md, que enumera DOMÍNIOS —
+      # review.md/threat-model-template.md/csv-governo-br.md são sub-docs alcançáveis a um salto e
+      # seriam 3 falsos-positivos permanentes. Estático: lê docs/, sem rede.
+      - name: Docs índice gate (nenhum doc invisível)
+        run: bun run docs:indice
+
+      # Anti-regressão de DEAD CODE (export sem consumidor, dep sem import). Existe porque o gate
+      # só-local não barra ninguém, e isso foi MEDIDO: o #1212 zerou os 254 achados e verificou
+      # `exit 0` em 2026-07-07, mas ficou 4 semanas em CONFLICTING (estado em que o auto-merge
+      # nunca dispara) e só mergeou 566 commits depois, em 06/08. No dia seguinte já eram 64
+      # achados — e nenhum era regressão do próprio #1212: TODOS nasceram na janela, o último
+      # (`dedupeKeyProposta`, #1332) 21 MINUTOS antes do #1212 mergear. A faxina chegou na main já
+      # vencida porque nada na janela foi barrado. A lição que este step encerra: medição de gate
+      # FORA do CI expira, e a validade dela é a distância entre medir e mergear — verde local é
+      # fato sobre um worktree num instante, verde de CI é fato sobre a main.
+      # Roda `bunx knip` — o MESMO comando do health stack local (`/health`), de propósito: gate de
+      # CI que diverge do comando local recria a lacuna que ele veio fechar. Config: knip.json.
+      # Quando quebrar: des-exportar (não deletar) é o default — não altera comportamento e só
+      # reduz alcance. Export que é contrato de teste ou fronteira de paridade byte-exata vai para
+      # `ignore` no knip.json COM o porquê no commit (precedentes: sayerlack-sku.ts,
+      # embalagem-captura-helpers.ts). Registro: docs/historico/faxina-knip-2026-07-07.md
+      - name: Dead code gate (knip — export/dep sem consumidor)
+        run: bunx knip
 
       # ─── Alerta de regressão (Componente 1 — mitigação de reversão Lovable) ──
       # O bot do Lovable commita DIRETO na main sem PR/CI; quando quebra build/
@@ -300,6 +334,17 @@ jobs:
 
       - name: Install deps
         run: bun install --frozen-lockfile
+
+      # O job precisa do runtime de TODO contrato registrado, não só do default. Desde
+      # `scripts/mutcheck.d/cmc-snapshot-retry.mut` há contrato de EDGE, cujo `# @test_cmd:`/
+      # `# @compile_cmd:` é `deno` — sem este step o `deno` não existe no PATH, o compila-check do
+      # SRC ORIGINAL falha e o mutcheck aborta com "harness/ambiente quebrado", derrubando o job
+      # inteiro por ambiente, não por cobertura. Pin alinhado ao job `validate` (2ª ocorrência —
+      # bump conferindo `deno --version` e alinhando as duas).
+      - name: Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: 2.9.2
 
       - name: mutcheck — selftest (mecânica da ferramenta, sem vitest)
         run: bun run mutcheck:selftest

@@ -1,4 +1,3 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCron, corsHeaders } from "../_shared/auth.ts";
 import {
@@ -34,6 +33,9 @@ import {
 } from "./products-lote.ts";
 
 const OMIE_API_URL = "https://app.omie.com.br/api/v1";
+
+// Teto anti-runaway do ListarPedidos (reprocessOrders): 500 × 100 = 50k pedidos numa janela >> real.
+const MAX_PAGINAS_PEDIDOS = 500;
 
 type Account = "oben" | "colacor";
 
@@ -110,6 +112,14 @@ async function callOmie(account: Account, endpoint: string, call: string, params
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
+  // HTTP não-2xx LANÇA antes de o corpo virar payload. Sem isto, um 429/5xx cujo corpo parseia
+  // SEM `faultstring` (o `{}` de proxy/gateway) devolvia um objeto sem total e sem lista — e os
+  // três laços deste arquivo leem isso como página vazia no fim declarado, isto é, EOF. Os guards
+  // de _shared/omie-paginacao.ts não alcançam o que o wrapper já entregou como resposta boa:
+  // a classe entra uma camada ACIMA da que eles fecham.
+  if (!res.ok) {
+    throw new Error(`Omie (${account}) HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`);
+  }
   const result = await res.json();
   if (result.faultstring) throw new Error(`Omie (${account}): ${result.faultstring}`);
   return result;
@@ -213,8 +223,15 @@ async function reprocessOrders(
         filtrar_por_data_ate: formatOmieDate(windowEnd),
       })) as unknown as OmieListarPedidosResponse;
 
-      totalPaginas = result.total_de_paginas || 1;
+      // Mesmos guards dos irmãos products/inventory abaixo (piso monotônico + teto fail-fast):
+      // o `|| 1` por resposta encolhia o teto e o reconcile completava retrato PARCIAL.
+      totalPaginas = proximoTotalPaginas(totalPaginas, result.total_de_paginas, MAX_PAGINAS_PEDIDOS);
       const pedidos = result.pedido_venda_produto || [];
+      const veredicto = avaliarPagina(pedidos.length, pagina, totalPaginas);
+      if (veredicto === "anomalia") {
+        throw new Error(`página ${pagina}/${totalPaginas} do ListarPedidos veio vazia antes do fim declarado — abortando (retrato parcial)`);
+      }
+      if (veredicto === "fim") break;
 
       for (const pedido of pedidos) {
         const cab = pedido.cabecalho || {};
@@ -727,7 +744,7 @@ async function reprocessInventory(
 
 // ======== MAIN HANDLER ========
 
-serve(async (req) => {
+Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }

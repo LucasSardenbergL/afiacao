@@ -5,7 +5,7 @@
  * Kept in its own module so it can be unit-tested without React/Supabase.
  */
 
-export type ApprovalMode = "auto" | "review";
+type ApprovalMode = "auto" | "review";
 
 export type ApprovalSuggestion = {
   mode: ApprovalMode;
@@ -22,7 +22,7 @@ export type ApprovalInput = {
 };
 
 /** Threshold above which the value variation vs. previous cycle requires review. */
-export const VALUE_DELTA_REVIEW_THRESHOLD = 0.3;
+const VALUE_DELTA_REVIEW_THRESHOLD = 0.3;
 
 export function calcApprovalSuggestion(item: ApprovalInput): ApprovalSuggestion {
   const reasons: string[] = [];

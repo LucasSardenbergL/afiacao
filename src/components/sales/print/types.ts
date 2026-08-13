@@ -81,11 +81,6 @@ export interface AddressLite {
   is_default: boolean | null;
 }
 
-export interface FormaPagamento {
-  codigo: string;
-  descricao: string;
-}
-
 /** Pedido após enriquecimento (perfil/endereço) + a empresa resolvida. */
 export type EnrichedOrder = SalesOrderRow & { _company: CompanyFilter };
 

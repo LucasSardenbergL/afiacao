@@ -57,8 +57,8 @@ export interface CapturaItemBruto {
   desconto_raw?: string | null; // "% Desconto" por embalagem (contraprova)
 }
 
-export type ResultadoLeitura = 'ok' | 'nao_encontrado' | 'falha';
-export type FonteLeitura = 'portal_capturado_ok' | 'portal_capturado_parcial';
+type ResultadoLeitura = 'ok' | 'nao_encontrado' | 'falha';
+type FonteLeitura = 'portal_capturado_ok' | 'portal_capturado_parcial';
 
 export interface LeituraEmbalagem {
   sku_portal: string;

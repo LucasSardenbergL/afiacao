@@ -14,7 +14,7 @@
 //     ); $$
 //   );
 
-import { createClient } from 'npm:@supabase/supabase-js@^2';
+import { createClient } from 'npm:@supabase/supabase-js@2';
 import { authorizeCronOrStaff, corsHeaders } from '../_shared/auth.ts';
 
 // Cada extração faz 1 LLM (~3-5s); concorrência baixa pra não estourar rate limit.
@@ -57,14 +57,24 @@ Deno.serve(async (req) => {
       .is('sinais_ligacao', null)
       .not('transcript', 'is', null)
       .gte('started_at', cutoff)
+      // Desempate por id (PK): started_at repete e, sem chave TOTAL, o .range pode
+      // pular/duplicar linhas entre páginas.
       .order('started_at', { ascending: false })
+      .order('id', { ascending: true })
       .range(from, from + PAGE - 1);
     if (error) {
       return new Response(JSON.stringify({ ok: false, error: error.message }), {
         status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
-    const rows = (data ?? []) as CallRow[];
+    // data:null sem error = resposta malformada, não fim — o `?? []` de antes encerrava o laço
+    // e a varredura PARCIAL passava por completa. Fim legítimo: página vazia/curta.
+    if (data == null) {
+      return new Response(JSON.stringify({ ok: false, error: `farmer_calls pág.${from / PAGE}: data null sem error — resposta malformada, não é fim` }), {
+        status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+    const rows = data as CallRow[];
     for (const r of rows) {
       if (r.customer_user_id && r.farmer_id && r.transcript) alvos.push(r);
     }

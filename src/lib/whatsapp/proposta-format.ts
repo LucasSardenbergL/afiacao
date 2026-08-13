@@ -22,7 +22,7 @@ export interface PropostaFormatada {
   vazia: boolean; // true = nada a propor (orquestrador NÃO envia)
 }
 
-function fmtQty(q: number): string {
+export function fmtQty(q: number): string {
   return Number.isInteger(q) ? String(q) : String(Math.round(q * 10) / 10);
 }
 

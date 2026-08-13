@@ -56,7 +56,7 @@ export interface OrderRankRow {
   status: string | null;
   created_by: string | null;
 }
-export interface RankingVendedor {
+interface RankingVendedor {
   id: string;
   nome: string;
   receita: number;

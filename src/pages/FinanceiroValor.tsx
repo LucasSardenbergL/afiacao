@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
 import type { ValorEmpresaResult } from '@/services/financeiroService';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 
 const EMPRESAS = ['colacor', 'oben', 'colacor_sc'] as const;
 const NOME: Record<string, string> = { colacor: 'Colacor', oben: 'Oben', colacor_sc: 'Colacor SC' };
@@ -24,7 +25,7 @@ function nivelClasses(n: 'alta' | 'media' | 'baixa') {
 function EmpresaCard({ company, modo }: { company: string; modo: 'reportado' | 'normalizado' }) {
   const { data, isLoading, error } = useValor(company);
   if (isLoading) return <PageSkeleton variant="detail" />;
-  if (error) return <Card><CardContent className="py-6 text-sm text-status-error">Erro ao carregar {NOME[company]}: {error instanceof Error ? error.message : String(error)}</CardContent></Card>;
+  if (error) return <Card><CardContent className="py-6 text-sm text-status-error">Erro ao carregar {NOME[company]}: {mensagemDeErro(error) ?? "Erro sem mensagem — tente de novo ou avise a equipe."}</CardContent></Card>;
   if (!data) return null;
   const v = modo === 'normalizado' ? data.normalizado : data.reportado;
   const roic = v.roic; const spreadV = v.spread; const evaV = v.eva;

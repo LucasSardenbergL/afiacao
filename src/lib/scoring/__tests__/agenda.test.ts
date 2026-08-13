@@ -130,3 +130,25 @@ describe('buildAgendaItems', () => {
     expect(item.agenda_type).toBe('risco');
   });
 });
+
+describe('agenda: expansão sem insumo (money-path)', () => {
+  it('expansion_score null NÃO classifica como follow_up por fabricação de zero', () => {
+    // `expansion > 50` com `expansion = null ?? 0` é sempre false → o tipo 'expansao' virou
+    // CÓDIGO MORTO em produção (0 de 6.633 clientes). Com o guard, a ausência é explícita.
+    const [item] = buildAgendaItems([mkRow({
+      expansion_score: null, churn_risk: 10, health_class: 'estavel',
+      sales_history_status: 'com_historico',
+    })]);
+    expect(item.agenda_type).toBe('follow_up');
+    expect(item.insumo_expansao_ausente).toBe(true);
+  });
+
+  it('expansion_score medido acima de 50 ainda classifica como expansao', () => {
+    const [item] = buildAgendaItems([mkRow({
+      expansion_score: 80, churn_risk: 10, health_class: 'estavel',
+      sales_history_status: 'com_historico',
+    })]);
+    expect(item.agenda_type).toBe('expansao');
+    expect(item.insumo_expansao_ausente).toBe(false);
+  });
+});
