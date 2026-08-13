@@ -188,11 +188,33 @@ async function chamarOmie(
   throw ultimoErro ?? new Error(`falha desconhecida em ${call}`);
 }
 
+/**
+ * Indicadores de paginação, quando o método os declarar.
+ *
+ * Existe para impedir uma leitura errada do relatório: "página 1 vazia" NÃO é "não há dado" — pode
+ * ser filtro, período ou local padrão. Com o total declarado à vista, quem lê sabe se o vazio é
+ * fim de lista ou só o começo dela.
+ */
+function paginacaoDeclarada(json: Record<string, unknown>): Record<string, unknown> | null {
+  const campos = {
+    totalPaginas: buscarValorProfundo(json, ["nTotPaginas", "total_de_paginas", "nTotalPaginas"]),
+    totalRegistros: buscarValorProfundo(json, ["nTotRegistros", "total_de_registros"]),
+    registrosNaPagina: buscarValorProfundo(json, ["nRegistros", "registros"]),
+    pagina: buscarValorProfundo(json, ["nPagina", "pagina"]),
+  };
+  const presentes = Object.entries(campos).filter(([, v]) => v !== undefined);
+  return presentes.length > 0 ? Object.fromEntries(presentes) : null;
+}
+
 /** Resumo uniforme de um desfecho — o que entra no relatório de todas as sondas. */
 function resumirDesfecho(d: Desfecho): Record<string, unknown> {
   switch (d.tipo) {
     case "ok":
-      return { desfecho: "ok", caminhos: caminhosDeChave(d.json) };
+      return {
+        desfecho: "ok",
+        caminhos: caminhosDeChave(d.json),
+        paginacao: paginacaoDeclarada(d.json),
+      };
     case "fault":
       return { desfecho: "fault", faultcode: d.faultcode, faultstring: d.faultstring };
     case "http_erro":
@@ -354,6 +376,10 @@ function candidatosMovimentoPadrao(
   ];
 
   // ── camada B: params reais ──
+  // `lista_local_estoque: "TODOS"` é deliberado: sem ele alguns métodos do Omie respondem só pelo
+  // local PADRÃO, e movimento em quarentena ou armazém de terceiro sumiria — o relatório diria
+  // "sem movimento" onde há movimento em outro local. Se o método não conhecer o param, o fault
+  // aparece no relatório e a camada A (sem params) serve de contraprova.
   lista.push({
     servico: "estoque_consulta",
     call: "ListarMovimentoEstoque",
@@ -362,9 +388,10 @@ function candidatosMovimentoPadrao(
       nRegPorPagina: 20,
       dDtInicial: de,
       dDtFinal: ate,
+      lista_local_estoque: "TODOS",
       ...(codProduto ? { nIdProduto: Number(codProduto) } : {}),
     },
-    nota: "camada B — período em torno do t4 da PO alvo",
+    nota: "camada B — período em torno do t4 da PO alvo, todos os locais",
   });
   if (codProduto) {
     lista.push({
