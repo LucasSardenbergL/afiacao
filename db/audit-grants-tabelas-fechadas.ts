@@ -63,11 +63,17 @@ function carregarAllowlist(): Record<string, TabelaFechada> {
  * anterior. Prod é 17.6 (medido 2026-08-13) e o `m` de `arwdDxtm` é justamente ele, então vale
  * medir — mas sob CASE de `server_version_num`, para o audit não quebrar se algum dia apontar
  * para um banco mais velho.
+ *
+ * O veredito sai como SIM/NAO de um CASE, não como o boolean cru: `'x'||has_table_privilege(...)`
+ * imprime `true`/`false`, e um parser que espere `t`/`f` (o formato de COLUNA boolean) descarta
+ * 100% das linhas — medição vazia, nenhuma divergência, "✅ prod bate com o contrato". Foi
+ * exatamente esse falso-verde que o harness PG17 pegou. O formato do dado é responsabilidade
+ * desta query, não do default de impressão do psql (que psqlrc/\pset podem mudar por baixo).
  */
 function montarQuery(chaves: string[]): string {
   const lista = (xs: readonly string[]) => xs.map((x) => `'${x.replace(/'/g, "''")}'`).join(',');
   const privBase = ['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE'];
-  return `SELECT 'ROW|'||t||'|'||r||'|'||p||'|'||has_table_privilege(r,t,p)
+  return `SELECT 'ROW|'||t||'|'||r||'|'||p||'|'||(CASE WHEN has_table_privilege(r,t,p) THEN 'SIM' ELSE 'NAO' END)
           FROM unnest(ARRAY[${lista(chaves)}]::text[]) t,
                unnest(ARRAY[${lista(ROLES)}]::text[]) r,
                unnest((CASE WHEN current_setting('server_version_num')::int >= 170000
@@ -86,11 +92,25 @@ function medir(al: Record<string, TabelaFechada>): MedicaoProd {
     erroFatal(`falha ao consultar o banco via psql-ro (${PSQL}): ${(e as Error).message}`);
   }
   const med: MedicaoProd = {};
+  let lidas = 0;
   for (const linha of saida.split('\n')) {
     if (!linha.startsWith('ROW|')) continue; // descarta o eco de SET e linhas em branco
+    lidas++;
     const [, tabela, role, priv, tem] = linha.split('|');
-    if (tem !== 't') continue; // só o privilégio PRESENTE entra no mapa
+    if (tem !== 'SIM') continue; // só o privilégio PRESENTE entra no mapa
     ((med[tabela] ??= {})[role as (typeof ROLES)[number]] ??= []).push(priv as Priv);
+  }
+  // A query devolve tabelas × roles × privilégios linhas SEMPRE — inclusive quando a resposta é
+  // "não tem nenhum". Vir menos que o piso significa que a medição quebrou (parser, psqlrc,
+  // saída truncada), e medição quebrada lida como "nada divergente" é o falso-verde perfeito:
+  // um audit silencioso é indistinguível de um audit que aprovou. Ausência de dado sai 2.
+  const piso = chaves.length * ROLES.length * 5;
+  if (lidas < piso) {
+    erroFatal(
+      `medição inconsistente: ${lidas} linha(s) ROW| lidas, mínimo esperado ${piso} ` +
+        `(${chaves.length} tabela(s) × ${ROLES.length} role(s) × 5 privilégios). ` +
+        `A saída do psql mudou de forma — NÃO trate como "tudo fechado".`,
+    );
   }
   return med;
 }
