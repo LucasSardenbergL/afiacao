@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { Phone, CheckCircle2 } from 'lucide-react';
 import { useRouteContactList } from '@/queries/useRouteContactList';
@@ -14,6 +14,9 @@ import { OutcomeMenu } from '@/components/call/OutcomeMenu';
 import { FichaPreContato } from '@/components/call/FichaPreContato';
 import { RouteDisparoConfigPanel } from '@/components/rota/RouteDisparoConfigPanel';
 import { spBusinessDate } from '@/lib/time/sp-day';
+import { eventoDaFila } from '@/lib/route/telemetria-fila';
+import { track } from '@/lib/analytics';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 
 const BUCKET_LABEL: Record<string, string> = {
   top: 'Prioridade',
@@ -43,8 +46,22 @@ function ResolvidosSection({ itens }: { itens: RouteContactItem[] }) {
 export default function RotaListaLigacao() {
   // data de NEGÓCIO em SP (não UTC — senão das ~21h às 24h locais a data vira o dia seguinte → rota errada).
   const workday = useMemo(() => spBusinessDate(new Date()), []);
-  const { data, isLoading, isError, refetch } = useRouteContactList(workday);
+  const { data, isLoading, isError, error, refetch } = useRouteContactList(workday);
   const { isMaster, isGestorComercial } = useAuth();
+
+  // Telemetria do DESFECHO da tela. O $pageview (PageViewTracker) já conta a
+  // abertura; o que faltava era separar "abriu e veio fila" de "abriu e veio
+  // vazia (por qual motivo)" de "abriu e quebrou" — os três eram o mesmo pixel,
+  // e é por isso que route_contact_log/route_queue_snapshot zerados não diziam
+  // se a tela era inútil ou se ninguém entrava. Emite 1× por DESFECHO (chave),
+  // não por render. INCONDICIONAL: hooks não podem ficar atrás de return.
+  const ultimoDesfecho = useRef<string | null>(null);
+  useEffect(() => {
+    const ev = eventoDaFila({ isLoading, isError, mensagemErro: mensagemDeErro(error), data });
+    if (!ev || ultimoDesfecho.current === ev.chave) return;
+    ultimoDesfecho.current = ev.chave;
+    track(ev.evento, ev.props);
+  }, [isLoading, isError, error, data]);
 
   // Grava (idempotente, best-effort) a fila de ligação aberta — denominador do painel.
   // Chamada INCONDICIONAL (hooks não podem ficar atrás de return).
