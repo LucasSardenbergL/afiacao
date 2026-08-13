@@ -197,6 +197,30 @@ export const ACKNOWLEDGED_SENSITIVE = new Set<string>([
   // populacional (H1), K4 o WHERE de escopo (E1), K5 o `g` NULL virando 0 (H5); K6 é o canário
   // que prova que a migration íntegra voltou. `sed` que não casa nada FALHA o harness, em vez
   // de deixá-lo verde com uma sabotagem que nunca aconteceu.
+  //
+  // 2026-08-13 — fase 3b: o gate de PROJEÇÃO só vale se o LIMIAR não for escrevível por quem ele
+  // barra. `v_piso`/`v_meta` vêm de `public.farmer_algorithm_config` (keys `margem_faixa_*`), e
+  // essa tabela era escrita por QUALQUER staff (policy FOR ALL master OR employee + DML de
+  // `authenticated`): mover o piso e reler a FAIXA é uma comparação por chamada, e ~13 delas
+  // reconstroem a margem por busca binária — o número saía pelo canal lateral que o `CASE WHEN
+  // v_pode_num` fechava. Corrigido por 3 policies RESTRICTIVE (INSERT/UPDATE/DELETE) em
+  // `farmer_algorithm_config` gateadas pelo MESMO `private.cap_custo_ler` — quem já lê o número
+  // não ganha nada movendo o limiar, então esse é o corte exato (e não `has_role(master)`, que
+  // criaria um segundo eixo de autorização divergente deste). O SELECT fica aberto de propósito.
+  // ⚠️ Lição transferível: um gate de PROJEÇÃO é derrotado por qualquer entrada ESCREVÍVEL que
+  // mude o veredito exposto. Ao fechar um número atrás de um cap, feche também os PARÂMETROS que
+  // decidem o sinal que continua saindo.
+  // ⚠️ TRUNCATE não passa por RLS — policy nenhuma o vê. `authenticated` o tinha nesta tabela
+  // (o `D` do `arwdDxtm` default do Supabase), e truncar apagaria os limiares devolvendo a RPC
+  // ao COALESCE default: as 3 policies viravam decoração sem serem violadas. Revogado por NOME
+  // na mesma migration. Ao fechar escrita por RLS, cheque TRUNCATE — a RLS não o cobre.
+  // (Não era alcançável pelo browser: o PostgREST não tem verbo de TRUNCATE.)
+  // Provado em db/test-farmer-config-limiar-faixa.sh (22 asserts): aplica a RPC real do #1543,
+  // exerce o ataque ponta-a-ponta (M3) e traz a CONTRAPROVA (M2 — o master move o limiar e a
+  // faixa VIRA amarelo), sem a qual M3 passaria por vacuidade. 4 sabotagens exigem o vermelho
+  // exato, incluindo "UPDATE sem USING" (S2), que prova que o USING não é decorativo: só com
+  // WITH CHECK, `SET key='outra' WHERE key='margem_faixa_piso_pct'` some com a key protegida e
+  // devolve o limiar ao default.
   'public.get_carteira_margem_faixa',
 ]);
 
