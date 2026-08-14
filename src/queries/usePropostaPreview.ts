@@ -103,7 +103,7 @@ export function usePropostaPreview(customerUserId: string | undefined, opts?: { 
         const cestaSkus = new Set([...cestaFiltrada.principal, ...cestaFiltrada.secundarios].map(i => i.omie_codigo_produto));
         const { data: recData } = await supabase
           .from('farmer_recommendations')
-          .select('product_id, lie, status')
+          .select('product_id, affinity_score, status')
           .eq('customer_user_id', customerUserId!);
         const recs = (recData ?? []) as PreviewRec[];
         const recIds = [...new Set(recs.map(r => r.product_id).filter((x): x is string => !!x))];

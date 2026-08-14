@@ -46,7 +46,12 @@ export interface BundleRecommendation {
 export interface IndividualComparison {
   productId: string;
   productName: string;
-  lie: number;
+  /**
+   * Score de AFINIDADE (adimensional) da melhor recomendação individual — NÃO é dinheiro.
+   * Era `lie: number` lendo `farmer_recommendations.lie`, que agora é sempre NULL: `Number(null)`
+   * daria 0 e fabricaria "nenhuma afinidade" onde o certo é "não medida" (money-path §2).
+   */
+  affinity: number | null;
   type: 'cross_sell' | 'up_sell';
 }
 
@@ -110,7 +115,7 @@ interface SalesOrderRow {
 
 interface ExistingRecRow {
   product_id: string;
-  lie: number | string | null;
+  affinity_score: number | string | null;
   recommendation_type: 'cross_sell' | 'up_sell';
 }
 
@@ -519,20 +524,27 @@ export const useBundleEngine = () => {
         let bestIndividual: IndividualComparison | null = null;
         const { data: existingRecs } = (await supabase
           .from('farmer_recommendations')
-          .select('product_id, lie, recommendation_type')
+          .select('product_id, affinity_score, recommendation_type')
           .eq('farmer_id', effectiveUserId)
           .eq('customer_user_id', cid)
           .eq('status', 'pendente')
-          .order('lie', { ascending: false })
+          // `.not(...is null)` é fail-closed: com todas as linhas antigas, ordenar não ordena nada
+          // e o `.limit(1)` elegeria um "melhor individual" arbitrário. `nullsFirst: false` cobre
+          // a MISTURA (DESC implica NULLS FIRST no Postgres); o filtro cobre o caso TODAS-NULL.
+          .not('affinity_score', 'is', null)
+          .order('affinity_score', { ascending: false, nullsFirst: false })
+          .order('updated_at', { ascending: false }) // desempate determinístico
           .limit(1)) as unknown as { data: ExistingRecRow[] | null };
 
         if (existingRecs?.length) {
           const rec = existingRecs[0];
           const prod = productMap.get(rec.product_id);
+          // Ausente ≠ zero: `Number(null)` é 0 e afirmaria afinidade nula medida.
+          const afinidade = rec.affinity_score == null ? NaN : Number(rec.affinity_score);
           bestIndividual = {
             productId: rec.product_id,
             productName: prod?.descricao || 'Produto',
-            lie: Number(rec.lie),
+            affinity: Number.isFinite(afinidade) ? afinidade : null,
             type: rec.recommendation_type,
           };
         }
@@ -598,10 +610,15 @@ export const useBundleEngine = () => {
             p_bundle: bundle.pBundle,
             // m_bundle era a SOMA das margens; e mesmo apagando-o, `lie_bundle` monetário
             // invertia sozinho: m_bundle ≈ lie_bundle / ((p_bundle/100) × complexity_factor).
-            // Por isso os dois mudam juntos — `lie_bundle` passa a guardar o score de afinidade
-            // (mantido populado porque OfertaCruaCard/useTacticalPlan ordenam por ele).
+            // Por isso os dois saem juntos — e a afinidade que ordena a lista vai na coluna
+            // DEDICADA `affinity_bundle`. Guardá-la em `lie_bundle` ordenaria certo (afinidade e
+            // p_bundle são monotônicos entre si) e mentiria para os TRÊS consumidores que leem o
+            // VALOR: `useTacticalPlan` copia para `bundle_lie`, `PlanCard` formata como BRL e
+            // divide por hora de ligação, e a edge `generate-tactical-plan` injeta no prompt do
+            // LLM. Afinidade típica ~0,0094 viraria "R$ 0,01" de lucro esperado.
             m_bundle: null,
-            lie_bundle: bundle.affinityBundle,
+            lie_bundle: null,
+            affinity_bundle: bundle.affinityBundle,
             complexity_factor: bundle.complexityFactor,
             status: 'pendente',
           })),

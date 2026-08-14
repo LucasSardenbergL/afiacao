@@ -152,4 +152,23 @@ describe('useCrossSellEngine — custo fora do browser', () => {
     expect(linhas.length).toBeGreaterThan(0); // controle positivo: houve o que gravar
     for (const linha of linhas) expect(linha.m_ij ?? null).toBeNull();
   });
+
+  it('E: a afinidade vai na coluna DEDICADA — `lie` fica NULL (quem lê `lie` lê DINHEIRO)', async () => {
+    const { result } = renderHook(() => useCrossSellEngine());
+    await act(async () => { await result.current.calculateRecommendations(); });
+
+    const linhas = upserts.filter((u) => u.tabela === 'farmer_recommendations').flatMap((u) => u.linhas);
+    expect(linhas.length).toBeGreaterThan(0); // controle positivo: houve o que gravar
+    for (const linha of linhas) {
+      // `lie` é Lucro Incremental Esperado em REAIS, e nem todo consumidor apenas ORDENA por
+      // ele: o irmão `lie_bundle` é copiado pela edge generate-tactical-plan para
+      // `farmer_tactical_plans.bundle_lie`, que o PlanCard formata com
+      // `{ style: 'currency', currency: 'BRL' }` e divide por hora de ligação. Guardar um score
+      // adimensional (~0,009) numa coluna de dinheiro exibe "R$ 0,01" de lucro esperado.
+      // Ordenar por afinidade continua sendo o desejado — muda a COLUNA, não a intenção.
+      expect(linha.lie ?? null).toBeNull();
+      expect(typeof linha.affinity_score).toBe('number');
+      expect(Number(linha.affinity_score)).toBeGreaterThan(0);
+    }
+  });
 });

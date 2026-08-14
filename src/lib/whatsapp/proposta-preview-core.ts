@@ -7,7 +7,7 @@ import type { CrossSellCand } from './cross-sell';
 
 export interface PreviewOrder { id: string; account: string; order_date_kpi: string | null; created_at: string; status: string }
 export interface PreviewItem { omie_codigo_produto: number | null; quantity: number; unit_price: number; sales_order_id: string }
-export interface PreviewRec { product_id: string | null; lie: number | null; status: string | null }
+export interface PreviewRec { product_id: string | null; affinity_score: number | null; status: string | null }
 export interface PreviewProdById { id: string; omie_codigo_produto: number; descricao: string; ativo: boolean }
 
 export interface LinesContexto {
@@ -56,7 +56,7 @@ export function buildCrossSellCandidatos(recs: PreviewRec[], prodById: PreviewPr
   for (const r of recs) {
     if (!r.product_id || r.status === 'rejected') continue;
     const prod = byId.get(r.product_id);
-    if (prod && prod.ativo) out.push({ omie_codigo_produto: prod.omie_codigo_produto, nome: prod.descricao, lie: r.lie });
+    if (prod && prod.ativo) out.push({ omie_codigo_produto: prod.omie_codigo_produto, nome: prod.descricao, afinidade: r.affinity_score });
   }
   return out;
 }

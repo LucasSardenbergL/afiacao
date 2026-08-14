@@ -198,7 +198,10 @@ Deno.serve(async (req) => {
         // plano do cliente reatribuído. Espelha useTacticalPlan.checkEfficiency (admin = service role).
         admin.from('farmer_client_scores').select('*').eq('customer_user_id', customerId).maybeSingle(),
         admin.from('profiles').select('name, customer_type, cnae').eq('user_id', customerId).maybeSingle(),
-        admin.from('farmer_bundle_recommendations').select('*').eq('customer_user_id', customerId).eq('farmer_id', farmerId).eq('status', 'pendente').order('lie_bundle', { ascending: false }).limit(2),
+        // Ordena por AFINIDADE (coluna dedicada, adimensional): `lie_bundle` é dinheiro e ficou
+        // NULL. `nullsFirst: false` porque DESC implica NULLS FIRST no Postgres — sem ele o
+        // topBundle seria uma linha gravada antes da coluna existir.
+        admin.from('farmer_bundle_recommendations').select('*').eq('customer_user_id', customerId).eq('farmer_id', farmerId).eq('status', 'pendente').not('affinity_bundle', 'is', null).order('affinity_bundle', { ascending: false, nullsFirst: false }).order('created_at', { ascending: false }).limit(2),
         peersClusterPromise, // paginada acima; entra no mesmo Promise.all p/ não serializar
         admin.from('farmer_copilot_events').select('event_data').eq('event_type', 'suggestion').limit(20),
         // Teto de recência (hs_recency_cap_days): a fronteira reativacao/recuperacao ACOMPANHA o teto
@@ -264,11 +267,15 @@ Deno.serve(async (req) => {
         .filter((i: unknown): i is string => typeof i === 'string' && i.startsWith('objecao')).slice(0, 5);
 
       customerContext = { name: profile?.name, cnae: profile?.cnae, customerType: profile?.customer_type, profile: customerProfile, healthScore, churnRisk, avgMonthlySpend: avgSpend, grossMarginPct: marginPct, categoryCount, daysSinceLastPurchase: daysSince, mixGap, clusterAvgMargin: clusterMargin, expansionPotential, revenuePotential, salesHistoryStatus };
-      bundleContext = topBundleRow ? { products: topBundleRow.bundle_products, lie: topBundleRow.lie_bundle, probability: topBundleRow.p_bundle, margin: topBundleRow.m_bundle } : null;
+      // `lie` e `margin` SAEM do contexto do LLM: eram derivados de custo (m_bundle ≈ lie_bundle /
+      // ((p_bundle/100) × complexity_factor)) e agora são NULL em toda linha. Mandá-los como null
+      // só convidaria o modelo a tratar ausência como zero — a REGRA DE NÚMEROS já proíbe cifra
+      // de economia sem margem no contexto, e o que não está no prompt não pode ser fabricado.
+      bundleContext = topBundleRow ? { products: topBundleRow.bundle_products, probability: topBundleRow.p_bundle } : null;
       diagnosticData = { strategicObjective };
       // Paridade com o front: no modo estratégico, inclui o 2º bundle p/ comparação.
       if (mode === 'estrategico' && secondBundleRow) {
-        (diagnosticData as Record<string, unknown>).secondBundle = { products: secondBundleRow.bundle_products, lie: secondBundleRow.lie_bundle, probability: secondBundleRow.p_bundle, margin: secondBundleRow.m_bundle };
+        (diagnosticData as Record<string, unknown>).secondBundle = { products: secondBundleRow.bundle_products, probability: secondBundleRow.p_bundle };
       }
       (body as Record<string, unknown>)._derived = { healthScore, churnRisk, mixGap, marginPct, clusterMargin, expansionPotential, customerProfile, strategicObjective };
     }

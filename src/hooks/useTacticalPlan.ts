@@ -618,7 +618,17 @@ export const useTacticalPlan = () => {
         .eq('customer_user_id', customerId)
         .eq('farmer_id', ownerId)
         .eq('status', 'pendente')
-        .order('lie_bundle', { ascending: false })
+        // Afinidade na coluna dedicada (`lie_bundle` é dinheiro e ficou NULL).
+        // O `.not(...is null)` é FAIL-CLOSED, não cosmético: `nullsFirst` só resolve a MISTURA.
+        // Se TODAS as recomendações do cliente forem anteriores à coluna, ordenar não ordena nada
+        // e o `.limit(2)` devolveria uma linha arbitrária como se fosse a melhor oferta — ranking
+        // fabricado (money-path §2). Sem afinidade medida, o certo é não ter bundle: some no
+        // primeiro recálculo do motor. Achado do challenge Codex nesta entrega.
+        .not('affinity_bundle', 'is', null)
+        .order('affinity_bundle', { ascending: false, nullsFirst: false })
+        // Desempate determinístico: os scores são arredondados e empatam com frequência; sem uma
+        // 2ª chave o "top" oscila entre execuções. Mais recente ganha.
+        .order('created_at', { ascending: false })
         .limit(2)) as unknown as { data: BundleRow[] | null };
 
       const mixGap = Math.max(0, 8 - categoryCount);

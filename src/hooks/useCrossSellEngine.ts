@@ -3,6 +3,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { fetchAllPages } from '@/lib/postgrest';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
+import { toast } from 'sonner';
 
 // ─── Types ───────────────────────────────────────────────────────────
 export interface Recommendation {
@@ -526,11 +527,16 @@ export const useCrossSellEngine = () => {
           // prod: 134,26/2 = 67,13). A limpeza das linhas que NÃO colidem é a migration
           // 20260725123000.
           m_ij: null,
-          // A coluna `lie` passa a guardar o score de AFINIDADE (adimensional). Mantida populada
-          // porque vários consumidores ordenam por ela (usePropostaPreview, lib/whatsapp/cross-sell,
-          // useBundleEngine.bestIndividual) — ordenar por afinidade é o comportamento desejado.
-          // O valor ANTIGO invertia sozinho: m_ij ≈ lie / ((p_ij/100) × complexity_factor).
-          lie: rec.affinityScore,
+          // `lie` é DINHEIRO (Lucro Incremental Esperado em R$) e sai de cena junto com `m_ij`:
+          // o valor antigo invertia sozinho — m_ij ≈ lie / ((p_ij/100) × complexity_factor).
+          // A afinidade que ordena a lista vai na coluna DEDICADA `affinity_score`, adimensional.
+          // Reaproveitar `lie` para o score ordenaria certo (são monotônicos entre si) e mentiria
+          // para quem lê o VALOR — o irmão `lie_bundle` é copiado para
+          // `farmer_tactical_plans.bundle_lie` e formatado como BRL no PlanCard.
+          // Explicitamente NULL, não omitido, pelo mesmo motivo do `m_ij` acima: no upsert do
+          // PostgREST a coluna ausente do payload preserva o valor antigo na linha que colide.
+          lie: null,
+          affinity_score: rec.affinityScore,
           complexity_factor: rec.complexityFactor,
           cluster_volume_estimate: rec.clusterVolume,
           status: 'pendente',
@@ -540,7 +546,22 @@ export const useCrossSellEngine = () => {
       // Persistência PULADA na lente "Ver como" (somente leitura: o master inspeciona
       // as recomendações do alvo sem regravar a carteira dele).
       if (!isImpersonating && recRows.length > 0) {
-        await supabase.from('farmer_recommendations').upsert(recRows);
+        // O `error` é CAPTURADO. O supabase-js NÃO lança em erro de banco — resolve normal com
+        // `error` preenchido — então o `await` solto devolvia sucesso SEM ter gravado, e o `catch`
+        // abaixo nunca rodava. O caso concreto desta entrega: `affinity_score` só existe depois da
+        // migration 20260725121000; publicar o front antes dela devolve 42703/PGRST204 e as
+        // recomendações somem da tabela em silêncio, com a tela mostrando a lista calculada.
+        // Sem `throw`: o cálculo em memória é válido e já foi exibido — quem falhou foi só a
+        // persistência, e derrubar a tela seria pior. Espelha o desfecho do useBundleEngine (#1594).
+        const { error: erroPersistencia } = await supabase
+          .from('farmer_recommendations')
+          .upsert(recRows);
+        if (erroPersistencia) {
+          console.error('Falha ao gravar farmer_recommendations:', erroPersistencia);
+          toast.error(
+            `${recRows.length} recomendação(ões) NÃO foram gravadas — as telas de oferta seguem com as anteriores. ${mensagemDeErro(erroPersistencia) ?? ''}`.trim(),
+          );
+        }
       }
     } catch (error) {
       console.error('Error calculating recommendations:', error);

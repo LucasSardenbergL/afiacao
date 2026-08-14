@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 457
+-- Total de custom migrations: 462
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -465,6 +465,11 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260724120000', 'authz_sales_orders_split_escrita_fu4', '20260724120000_authz_sales_orders_split_escrita_fu4.sql'),
   ('20260724130000', 'authz_custo_fu4f_fase3_recommend', '20260724130000_authz_custo_fu4f_fase3_recommend.sql'),
   ('20260724130000', 'tint_canonica_csv_legado_allowlist', '20260724130000_tint_canonica_csv_legado_allowlist.sql'),
+  ('20260725120000', 'authz_custo_fu4f_fase3_ranking_rpc', '20260725120000_authz_custo_fu4f_fase3_ranking_rpc.sql'),
+  ('20260725121000', 'authz_custo_fu4f_fase3_afinidade_colunas', '20260725121000_authz_custo_fu4f_fase3_afinidade_colunas.sql'),
+  ('20260725125000', 'authz_custo_fu4f_fase3_scrub_recomendacoes', '20260725125000_authz_custo_fu4f_fase3_scrub_recomendacoes.sql'),
+  ('20260725126000', 'authz_custo_fu4f_fase3_trigger_nulifica_lie', '20260725126000_authz_custo_fu4f_fase3_trigger_nulifica_lie.sql'),
+  ('20260725130000', 'authz_custo_fu4f_fase3_fecha_product_costs', '20260725130000_authz_custo_fu4f_fase3_fecha_product_costs.sql'),
   ('20260726120000', 'tint_promote_error_details_completo', '20260726120000_tint_promote_error_details_completo.sql'),
   ('20260726120001', 'cron_tactical_plans_batch_nightly', '20260726120001_cron_tactical_plans_batch_nightly.sql'),
   ('20260726130000', 'vendas_sync_semear_janela', '20260726130000_vendas_sync_semear_janela.sql'),
@@ -1977,6 +1982,17 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('authz_custo_fu4f_fase3_recommend', 'function', 'public', 'pode_ler_custo', ''),
   ('authz_custo_fu4f_fase3_recommend', 'rls_policy', 'public', 'recommendation_log_select_custo', 'recommendation_log'),
   ('tint_canonica_csv_legado_allowlist', 'view', 'public', 'v_tint_formula_canonica', ''),
+  ('authz_custo_fu4f_fase3_ranking_rpc', 'function', 'private', 'custo_canonico', ''),
+  ('authz_custo_fu4f_fase3_ranking_rpc', 'function', 'public', 'get_skus_margem_positiva', ''),
+  ('authz_custo_fu4f_fase3_scrub_recomendacoes', 'function', 'private', 'frec_sem_margem', ''),
+  ('authz_custo_fu4f_fase3_scrub_recomendacoes', 'function', 'private', 'fbrec_sem_margem', ''),
+  ('authz_custo_fu4f_fase3_scrub_recomendacoes', 'trigger', 'public', 'trg_frec_sem_margem', 'farmer_recommendations'),
+  ('authz_custo_fu4f_fase3_scrub_recomendacoes', 'trigger', 'public', 'trg_fbrec_sem_margem', 'farmer_bundle_recommendations'),
+  ('authz_custo_fu4f_fase3_trigger_nulifica_lie', 'function', 'private', 'frec_sem_margem', ''),
+  ('authz_custo_fu4f_fase3_trigger_nulifica_lie', 'function', 'private', 'fbrec_sem_margem', ''),
+  ('authz_custo_fu4f_fase3_trigger_nulifica_lie', 'trigger', 'public', 'trg_frec_sem_margem', 'farmer_recommendations'),
+  ('authz_custo_fu4f_fase3_trigger_nulifica_lie', 'trigger', 'public', 'trg_fbrec_sem_margem', 'farmer_bundle_recommendations'),
+  ('authz_custo_fu4f_fase3_fecha_product_costs', 'rls_policy', 'public', 'product_costs_select_custo', 'product_costs'),
   ('tint_promote_error_details_completo', 'function', 'public', 'tint_promote_sync_run', ''),
   ('cron_tactical_plans_batch_nightly', 'cron_job', 'cron', 'tactical-plans-batch-nightly', ''),
   ('vendas_sync_semear_janela', 'function', 'public', 'vendas_sync_semear_janela', ''),
@@ -3586,6 +3602,17 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('authz_custo_fu4f_fase3_recommend', 'function', 'public', 'pode_ler_custo', ''),
   ('authz_custo_fu4f_fase3_recommend', 'rls_policy', 'public', 'recommendation_log_select_custo', 'recommendation_log'),
   ('tint_canonica_csv_legado_allowlist', 'view', 'public', 'v_tint_formula_canonica', ''),
+  ('authz_custo_fu4f_fase3_ranking_rpc', 'function', 'private', 'custo_canonico', ''),
+  ('authz_custo_fu4f_fase3_ranking_rpc', 'function', 'public', 'get_skus_margem_positiva', ''),
+  ('authz_custo_fu4f_fase3_scrub_recomendacoes', 'function', 'private', 'frec_sem_margem', ''),
+  ('authz_custo_fu4f_fase3_scrub_recomendacoes', 'function', 'private', 'fbrec_sem_margem', ''),
+  ('authz_custo_fu4f_fase3_scrub_recomendacoes', 'trigger', 'public', 'trg_frec_sem_margem', 'farmer_recommendations'),
+  ('authz_custo_fu4f_fase3_scrub_recomendacoes', 'trigger', 'public', 'trg_fbrec_sem_margem', 'farmer_bundle_recommendations'),
+  ('authz_custo_fu4f_fase3_trigger_nulifica_lie', 'function', 'private', 'frec_sem_margem', ''),
+  ('authz_custo_fu4f_fase3_trigger_nulifica_lie', 'function', 'private', 'fbrec_sem_margem', ''),
+  ('authz_custo_fu4f_fase3_trigger_nulifica_lie', 'trigger', 'public', 'trg_frec_sem_margem', 'farmer_recommendations'),
+  ('authz_custo_fu4f_fase3_trigger_nulifica_lie', 'trigger', 'public', 'trg_fbrec_sem_margem', 'farmer_bundle_recommendations'),
+  ('authz_custo_fu4f_fase3_fecha_product_costs', 'rls_policy', 'public', 'product_costs_select_custo', 'product_costs'),
   ('tint_promote_error_details_completo', 'function', 'public', 'tint_promote_sync_run', ''),
   ('cron_tactical_plans_batch_nightly', 'cron_job', 'cron', 'tactical-plans-batch-nightly', ''),
   ('vendas_sync_semear_janela', 'function', 'public', 'vendas_sync_semear_janela', ''),

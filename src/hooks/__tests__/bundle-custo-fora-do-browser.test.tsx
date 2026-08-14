@@ -165,4 +165,25 @@ describe('useBundleEngine — custo fora do browser', () => {
       }
     }
   });
+
+  it('E: a afinidade vai na coluna DEDICADA — `lie_bundle` fica NULL (é coluna de DINHEIRO)', async () => {
+    const { result } = renderHook(() => useBundleEngine());
+    await act(async () => { await result.current.calculateBundles(); });
+
+    const linhas = inserts
+      .filter((i) => i.tabela === 'farmer_bundle_recommendations')
+      .flatMap((i) => (Array.isArray(i.linha) ? i.linha : [i.linha]));
+    expect(linhas.length).toBeGreaterThan(0); // controle positivo: houve o que gravar
+    for (const linha of linhas) {
+      // Três consumidores FORA deste módulo leem o VALOR de `lie_bundle`, não só a ordem:
+      // `useTacticalPlan` o copia para `bundle_lie`, `PlanCard` o formata com
+      // `{ style: 'currency', currency: 'BRL' }` e o divide por hora de ligação, e a edge
+      // `generate-tactical-plan` o injeta no prompt do LLM. Com a afinidade (~0,0094) ali, o
+      // card anunciaria "R$ 0,01" de LIE e ~R$ 0,02/h onde os planos de prod registram
+      // R$ 1.250,50 / R$ 800. Ordenar por afinidade segue certo — na coluna própria.
+      expect(linha.lie_bundle ?? null).toBeNull();
+      expect(typeof linha.affinity_bundle).toBe('number');
+      expect(Number(linha.affinity_bundle)).toBeGreaterThan(0);
+    }
+  });
 });
