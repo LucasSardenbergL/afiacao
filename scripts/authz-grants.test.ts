@@ -8,10 +8,13 @@ import {
 } from './lib/authz-grants';
 
 describe('AUTHZ_TABELAS_FECHADAS — sanidade do contrato', () => {
-  it('tem as duas tabelas money-path fechadas por privilégio', () => {
+  // Lista EXAUSTIVA de propósito: a allowlist é curada, então crescer é decisão, não acidente.
+  // Adicionar tabela aqui sem medir prod é o modo de falha que o §5.2 do design descreve.
+  it('tem as três tabelas money-path fechadas por privilégio', () => {
     expect(Object.keys(AUTHZ_TABELAS_FECHADAS).sort()).toEqual([
       'public.omie_products',
       'public.product_costs',
+      'public.sales_orders',
     ]);
   });
 
@@ -188,6 +191,35 @@ GRANT SELECT ON TABLE public.product_costs TO authenticated;`;
       files('20260801000000_outra.sql'),
     );
     expect(f).toHaveLength(0);
+  });
+
+  // 15/16: o RECRIACAO julga o ALVO do CREATE TABLE, não a menção no statement. Tabela nova com FK
+  // para a protegida é o caso mais comum de todos e não recria nada — foi o falso positivo que a
+  // entrada de sales_orders destampou (2 migrations do ATP, agosto/2026, ambas só com REFERENCES).
+  it('15. CREATE TABLE de OUTRA tabela com FK para a protegida → silêncio (não recria nada)', () => {
+    const f = auditGrantsTabelas(
+      [
+        mig(
+          '20260801000000_fk.sql',
+          'CREATE TABLE IF NOT EXISTS public.estoque_reservas (\n' +
+            '  id uuid PRIMARY KEY,\n' +
+            '  custo_id uuid REFERENCES public.product_costs(id) ON DELETE SET NULL\n' +
+            ');',
+        ),
+      ],
+      AL,
+      files('20260801000000_fk.sql'),
+    );
+    expect(f).toHaveLength(0);
+  });
+
+  it('16. CREATE TABLE da protegida com identificador entre aspas → RECRIACAO (segue pegando)', () => {
+    const f = auditGrantsTabelas(
+      [mig('20260801000000_aspas.sql', 'CREATE TABLE IF NOT EXISTS "public"."product_costs" (id int);')],
+      AL,
+      files('20260801000000_aspas.sql'),
+    );
+    expect(codigos(f)).toContain('RECRIACAO');
   });
 });
 
