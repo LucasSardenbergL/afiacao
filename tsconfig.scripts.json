@@ -1,0 +1,61 @@
+{
+  // tsconfig.scripts.json — type-check de `scripts/` + `db/` (gate `scripts:typecheck`).
+  //
+  // O BURACO QUE ELE TAPA (medido em 2026-08-13, durante o PR #1715): NENHUM gate do CI
+  // type-checava estes dois diretórios.
+  //   - `bun run typecheck` (tsc)  → `tsconfig.app.json`, cujo `include` é só `["src"]`;
+  //   - `bunx knip`                → `project` = `src/**` + `supabase/functions/**`;
+  //   - `bun run test` (vitest)    → executa `scripts/**/*.test.ts`, mas vitest TRANSPILA
+  //                                  (esbuild/swc), não type-checa;
+  //   - `bun lint` (eslint)        → não type-checa;
+  //   - `bun run edges:typecheck`  → só `supabase/functions/*/index.ts`.
+  // Ou seja, erro de TIPO em `scripts/` passava verde nos 4 gates — inclusive nos scripts que SÃO
+  // os gates do CI (authz-gate-check, bun-pin-gate-check, docs-indice-gate-check,
+  // edges-typecheck-gate). Mesma classe do #1498, que fechou a lacuna equivalente das edges.
+  //
+  // NÃO É HIPOTÉTICO — a lacuna já produziu um bug real e o CI ficou verde por 5 semanas:
+  // o #1201 (faxina de dead code) deletou `src/lib/radar/types.ts` como "0 refs provadas". Havia
+  // uma ref: `scripts/radar/carga.ts`. O knip não a viu (fora do `project`), o typecheck não a viu
+  // (fora do `include`), e o TS2307 resultante nunca ficou vermelho. Corrigido junto com este gate
+  // (o tipo foi co-localizado em `scripts/radar/types.ts`, onde vive o único consumidor).
+  //
+  // POR QUE UM tsconfig SEPARADO, e não estender o `include` do app: `scripts/` e `db/` rodam em
+  // BUN/Node (`import.meta.dir`, `node:fs`, `process.argv`), enquanto `tsconfig.app.json` é
+  // ambiente de browser (`lib: DOM`, `jsx: react-jsx`, `types: vitest/globals`). Juntá-los daria a
+  // um script acesso silencioso a `document`/`window` — que não existem em runtime.
+  //
+  // ⚠️ Rode SEMPRE com `-p tsconfig.scripts.json` explícito. `tsc` cru lê o `tsconfig.json` da
+  // raiz, que tem `"files": []` + `"references"` → no-op silencioso (armadilha no CLAUDE.md).
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2023"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "moduleDetection": "force",
+    "isolatedModules": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+
+    // Mesmo rigor do `tsconfig.app.json` — a convergência strict do src/ concluiu em 2026-05-30 e
+    // não há razão para `scripts/` viver num regime mais frouxo: são eles que barram os PRs.
+    "strict": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+
+    // `node`     → `node:fs`, `node:child_process`, `process`, `console`.
+    // `bun-types`→ `import.meta.main` (5 usos) e `import.meta.dir` (4 usos), que são extensões do
+    //              Bun ao `ImportMeta` e não existem no lib padrão nem no @types/node. Sem ele:
+    //              9 × TS2339 espalhados por 8 arquivos. Versão casada com o pin do CI (1.3.14) —
+    //              ao bumpar o `bun-version` do ci.yml, bumpar aqui também.
+    // `vitest/globals` fica FORA de propósito: os 6 `.test.ts` de `scripts/` importam
+    //              `{ describe, it, expect } from 'vitest'` explicitamente. Sem os globals, um
+    //              teste que esqueça o import fica VERMELHO em vez de resolver por magia.
+    "types": ["node", "bun-types"],
+
+    "paths": { "@/*": ["./src/*"] }
+  },
+  // `db/` tem hoje 1 único .ts (audit-grants-tabelas-fechadas.ts) entre 228 .sh e 41 .sql — está no
+  // escopo para que o PRÓXIMO nasça coberto, não por volume.
+  "include": ["scripts/**/*.ts", "db/**/*.ts"]
+}

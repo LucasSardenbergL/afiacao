@@ -18,6 +18,9 @@
 #   noFallthroughCasesInSwitch). O `tsconfig.strict.json` paralelo foi DELETADO e o
 #   2º passo de typecheck removido — este passo único agora é o gate strict de TODO
 #   o src + testes. A migração incremental (539→855 files) está concluída.
+# - scripts:typecheck (tsc -p tsconfig.scripts.json): blocking — `scripts/` e `db/`, que o
+#   passo acima NÃO cobre (`include: ["src"]`). Fechado em 2026-08-13; até então erro de tipo
+#   nos próprios scripts que implementam os gates do CI passava verde. Detalhe no step.
 # - test (vitest run): blocking — regressão de comportamento documentado. ⚠️ Cobre só `src/**` +
 #   `scripts/**` (o `include` do vitest.config.ts) — NÃO as edge functions, que são Deno.
 # - test:edges (deno test --no-remote): blocking — os 119 testes das edge functions. Rodavam em
@@ -113,6 +116,27 @@ jobs:
       # ─── Blocking checks ────────────────────────────────────────────
       - name: Type check (strict — todo o src + testes)
         run: bunx tsc --noEmit -p tsconfig.app.json
+
+      # Type-check de `scripts/` + `db/` — blocking. O passo acima cobre só `src/` (o `include` do
+      # tsconfig.app.json), e mais nada no repo cobria estes dois diretórios: knip varre
+      # `src/**`+`supabase/functions/**`, vitest EXECUTA `scripts/**/*.test.ts` mas transpila sem
+      # type-checar, e eslint não type-checa. Erro de tipo em `scripts/` passava VERDE nos 4 gates —
+      # inclusive nos scripts que SÃO os gates (authz-gate-check, bun-pin-gate-check,
+      # docs-indice-gate-check, edges-typecheck-gate). Mesma classe do #1498, que fechou a lacuna
+      # equivalente das edges.
+      #
+      # Não é hipotético: o #1201 (faxina de dead code) deletou `src/lib/radar/types.ts` como "0 refs
+      # provadas" e quebrou `scripts/radar/carga.ts` — o TS2307 ficou verde 5 semanas, porque a ref
+      # era invisível ao knip (fora do `project`) E ao tsc (fora do `include`). Era 1 dos 10 erros
+      # reais que este gate encontrou ao nascer; todos corrigidos, então ele entra em ZERO.
+      #
+      # SEM baseline/allowlist de propósito: o gate zerou (10 erros → 0), e um arquivo-lista de
+      # exceções viraria ímã de conflito entre as ~30 worktrees paralelas — a mesma razão pela qual
+      # o edges:typecheck preferiu classes-bloqueantes a uma denylist de arquivos. Aqui não precisa
+      # nem disso: erro NOVO em QUALQUER arquivo de scripts/ ou db/ fica vermelho.
+      # Barato (~3s, sem rede nem toolchain extra) → roda cedo, junto do typecheck irmão.
+      - name: Type check (scripts/ + db/)
+        run: bun run scripts:typecheck
 
       - name: Tests
         run: bun run test

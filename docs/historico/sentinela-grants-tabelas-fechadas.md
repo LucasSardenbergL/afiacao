@@ -242,7 +242,8 @@ o vocabulário com uma amostra de um caso.
 | `bunx vitest run scripts/authz-grants.test.ts` | **0** | 26 casos (24 + os 2 novos); RED do 15 visto antes do fix |
 | `bun run authz:grants:prod` | **1** | `DRIFT_PROD` do `anon` — acusando com razão (achado 2) |
 | `bun run test` (suíte inteira) | **0** | 663 arquivos / 6.133 testes — o fix do `RECRIACAO` não regrediu nada |
-| `tsc --noEmit --strict` ad-hoc nos 3 arquivos | **0** | `scripts/` e `db/` não têm gate de tipo próprio (`tsconfig.app.json` só inclui `src`) |
+| `bun run lint` | **0** | 74 warnings, todos pré-existentes em `src/`; zero nos arquivos tocados |
+| `bun run scripts:typecheck` | **0** | o gate que o **#1720 mergeou no meio desta entrega** — `scripts/`+`db/` deixaram de ser ponto cego a tempo de cobrir este PR |
 
 Falsificação da entrada nova contra a allowlist **real** (8 cenários, migrations sintéticas injetadas
 na função pura — sem tocar `supabase/migrations/`): `GRANT SELECT` table-level → `REABERTURA`;
@@ -273,8 +274,12 @@ de banco existe para pegar, já que o estático não vê o SQL Editor. Medir
 `attacl`/`has_column_privilege` é o próximo incremento natural da sentinela, e agora tem um caso
 real que o justifica.
 
-**Nenhum gate type-checa `scripts/` nem `db/`:** `tsconfig.app.json` inclui só `src`, e o `knip` só
-olha `src` + `supabase/functions`. `bun run typecheck` verde é **evidência vazia** para o código
-destes dois diretórios — quem os cobre hoje é o vitest (runtime) e os harnesses. Verificado aqui com
-um `tsc` ad-hoc (0 erros nos 4 arquivos da entrega; 19 pré-existentes em `scripts/`, quase todos
-`import.meta.main` sem `bun-types`).
+~~**Nenhum gate type-checa `scripts/` nem `db/`:**~~ **FECHADO em 2026-08-13** pelo gate
+`scripts:typecheck` — ver [ci-typecheck-scripts-db.md](ci-typecheck-scripts-db.md).
+
+O diagnóstico registrado aqui se confirmou por inteiro: os 19 erros do `tsc` ad-hoc eram 9 de
+configuração (`import.meta.main`/`.dir` sem `bun-types`, some com o `types` certo) e 10 de dívida
+real. Entre os 10, um TS2307 que valeu a investigação: o #1201 deletou `src/lib/radar/types.ts`
+como "0 refs provadas" e quebrou `scripts/radar/carga.ts` — a ref era invisível ao knip (fora do
+`project`) **e** ao tsc (fora do `include`), e ficou verde por 5 semanas. Todos corrigidos; o gate
+entrou em zero, sem baseline.

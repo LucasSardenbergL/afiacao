@@ -15,7 +15,7 @@ import {
   montarCnpj, normalizarData, normalizarTelefone, normalizarCapital,
   splitCnaesSecundarios, normalizarTexto, normalizarChaveMunicipio,
 } from "../../src/lib/radar/normalizar";
-import type { RadarEmpresaRow, RadarMunicipioRow } from "../../src/lib/radar/types";
+import type { RadarEmpresaRow, RadarMunicipioRow } from "./types";
 
 const args = new Map<string, string>();
 for (let i = 2; i < process.argv.length; i++) {
