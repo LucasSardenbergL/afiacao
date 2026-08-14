@@ -293,6 +293,7 @@ export const MODULOS: ModuloApp[] = [
       "src/hooks/__tests__/lens-tactical-plan.test.tsx",
       "src/hooks/__tests__/plano-bundle-ausente.test.tsx",
       "src/hooks/__tests__/tactical-plan-posse-dono.test.tsx",
+      "src/hooks/__tests__/telemetria-plano-tatico.test.tsx",
       "src/hooks/__tests__/useLastVisit.test.tsx",
       "src/hooks/__tests__/useMyVisitSuggestions.test.ts",
       "src/hooks/__tests__/useDashboardCompany.test.ts",

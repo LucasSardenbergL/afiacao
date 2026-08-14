@@ -6,6 +6,8 @@ import { margemConhecida, mediaMargensConhecidas, valorMedido } from '@/lib/scor
 import { numerosDoBundle } from '@/lib/tactical/bundle-numeros';
 import { ehJaGeradoHoje } from '@/lib/tactical/plano-duplicata';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
+import { eventoDaCarga, type SaidaDaCarga } from '@/lib/tactical/telemetria-fila-plano';
+import { track } from '@/lib/analytics';
 import { fetchAllPages } from '@/lib/postgrest';
 import { ownersAtivosDoAlvo } from '@/lib/carteira/escopo-clientes';
 import { useAuth } from '@/contexts/AuthContext';
@@ -401,7 +403,25 @@ export const useTacticalPlan = () => {
 
   // Load existing plans
   const loadPlans = useCallback(async (filtro: FiltroFila = filtroAtual.current) => {
-    if (!effectiveUserId) return;
+    // [SENSOR] Telemetria do DESFECHO da carga (docs/historico/fila-plano-tatico.md). Três das
+    // quatro saídas desta função produzem o MESMO pixel na tela — "Nenhum plano pendente" — e a
+    // quarta deixa a lista ANTIGA no lugar. Sem declarar o motivo em cada uma, "a consulta
+    // morreu" fica indistinguível de "não há plano", que é fabricar diagnóstico.
+    // `total` acompanha o que a carga JÁ apurou: null até a contagem responder, para que
+    // nenhum evento afirme um denominador que aquele ponto do código ainda não tinha.
+    let total: number | null = null;
+    const emitir = (saida: SaidaDaCarga) => {
+      const ev = eventoDaCarga(saida, { filtro, total });
+      track(ev.evento, ev.props);
+    };
+
+    if (!effectiveUserId) {
+      // Hoje inalcançável POR ESTA TELA (useFarmerTacticalPlan gateia por `user?.id`, e
+      // `effectiveUserId` deriva do mesmo `user`). Instrumentado mesmo assim: se outro chamador
+      // aparecer, a saída fica visível em vez de silenciosa — e ela nem liga o `loading`.
+      emitir({ tipo: 'vazia', motivo: 'sem_escopo' });
+      return;
+    }
     filtroAtual.current = filtro;
     setLoading(true);
     try {
@@ -414,14 +434,17 @@ export const useTacticalPlan = () => {
       // das linhas (medido 2026-08-07): ordenar por eles seria ordem indefinida
       // disfarçada de priorização. `generated_at` desempata (churn_risk tem empates
       // massivos e, sem ordem total, a fatia de 50 é instável entre cargas).
-      const { data } = (await recorteDaFila(
+      // [SENSOR] O `error` desta consulta era DESCARTADO no destructuring, e `!data` caía no
+      // mesmo `setPlans([])` de uma fila legitimamente vazia. Ele agora é lido — só para
+      // DECLARAR o motivo na telemetria; o que a tela renderiza é idêntico ao de antes.
+      const { data, error: erroLista } = (await recorteDaFila(
         supabase.from('farmer_tactical_plans').select('*').in('farmer_id', owners),
         filtro,
         desdeIso,
       )
         .order('churn_risk', { ascending: false })
         .order('generated_at', { ascending: false })
-        .limit(LIMITE_FILA)) as unknown as { data: TacticalPlanRow[] | null };
+        .limit(LIMITE_FILA)) as unknown as { data: TacticalPlanRow[] | null; error: unknown };
 
       // Contagem sob o MESMO recorte. Sem ela a tela não tem como avisar que existe
       // plano além dos exibidos — foi exatamente assim que 383 de 533 sumiram sem
@@ -438,8 +461,22 @@ export const useTacticalPlan = () => {
       // nunca para 0 — "0 pendentes" é indistinguível de "a query morreu", e some com
       // a fila inteira sem sinal. Mesma família do `Number(null) === 0`.
       setTotalNaFila(erroContagem ? null : (count ?? null));
+      total = erroContagem ? null : (count ?? null);
 
-      if (!data) { setPlans([]); return; }
+      // [SENSOR] O ERRO TEM PRECEDÊNCIA SOBRE `data`. As duas saídas abaixo faziam exatamente
+      // o mesmo `setPlans([]); return;` — e continuam fazendo, byte por byte, do ponto de vista
+      // da tela. O que mudou é que agora elas se DECLARAM: falha de consulta é `fila_erro`,
+      // e resposta sem `data` e sem `error` é indecidível assumida, não um palpite entre as duas.
+      if (erroLista) {
+        setPlans([]);
+        emitir({ tipo: 'erro', origem: 'consulta', mensagem: mensagemDeErro(erroLista), manteveLista: false });
+        return;
+      }
+      if (!data) {
+        setPlans([]);
+        emitir({ tipo: 'vazia', motivo: 'sem_resposta' });
+        return;
+      }
 
       const customerIdsSet = new Set<string>();
       data.forEach((d) => customerIdsSet.add(String(d.customer_user_id)));
@@ -453,8 +490,14 @@ export const useTacticalPlan = () => {
         (profiles || []).map((p) => [p.user_id ?? '', p.name ?? 'Cliente'])
       );
       setPlans(data.map((d) => parsePlan(d, profileMap)));
+      emitir({ tipo: 'lista', nExibidos: data.length });
     } catch (err) {
       console.error('Error loading plans:', err);
+      // [SENSOR] `manteveLista: true` porque este catch NÃO toca em `plans`: a tela continua
+      // exibindo o retrato do carregamento anterior como se fosse o atual. É a diferença entre
+      // "quebrou e esvaziou" e "quebrou e está mentindo em silêncio" — e ela só existe no dado
+      // se for declarada aqui.
+      emitir({ tipo: 'erro', origem: 'excecao', mensagem: mensagemDeErro(err), manteveLista: true });
     } finally {
       setLoading(false);
     }
@@ -835,6 +878,15 @@ export const useTacticalPlan = () => {
       // PostgREST, e o `String(err)` de antes exibia "[object Object]" no lugar da recusa
       // real da RPC ("Plano fora da sua carteira", constraint, timeout).
       const message = mensagemDeErro(err) ?? 'falha desconhecida';
+      // [SENSOR] O toast avisa a VENDEDORA e some. A falha ficava invisível para quem MEDE,
+      // justo no passo que alimenta o dado escasso (`call_result`): um clique cuja RPC foi
+      // recusada não deixa linha no banco e é indistinguível de "ela nem clicou". Cobre os
+      // DOIS caminhos de registro — 1 toque e dialog detalhado — porque ambos passam por aqui.
+      track('plano_tatico.desfecho_erro', {
+        plano_id: planId,
+        desfecho: result.callResult,
+        mensagem: message,
+      });
       toast.error('Erro ao registrar resultado', { description: message });
     }
   }, [loadPlans]);
