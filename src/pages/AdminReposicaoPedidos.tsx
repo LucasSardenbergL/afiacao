@@ -40,7 +40,7 @@ import { OverrideMinimoButton } from '@/components/reposicao/pedidos/OverrideMin
 import { ehGateMinimoFaturamento, particionarAtencao } from '@/components/reposicao/pedidos/shared';
 import { AbaixoMinimoCard } from '@/components/reposicao/pedidos/AbaixoMinimoCard';
 import { PoSumidoCard } from '@/components/reposicao/pedidos/PoSumidoCard';
-import { ehAcessoNegado, normalizarCandidatos, ordenarCandidatos, type PoCandidato } from '@/components/reposicao/pedidos/po-sumido';
+import { ehAcessoNegado, frescorDoDetector, normalizarCandidatos, normalizarMarcador, ordenarCandidatos, type Frescor, type MarcadorPos, type PoCandidato } from '@/components/reposicao/pedidos/po-sumido';
 import { useAuth } from '@/contexts/AuthContext';
 import { track } from '@/lib/analytics';
 
@@ -287,7 +287,12 @@ export default function AdminReposicaoPedidos() {
   // A RPC é a fonte: ela decide quem é candidato E carrega a evidência (protocolo/canal), com gate próprio.
   // `retry: false` de propósito: o gate nega com 42501 e repetir 3x só gera ruído — quem não pode ver não vê.
   // Distinguir NEGADO de FALHOU importa: falha vira aviso visível (ver PoSumidoCard), nunca ausência silenciosa.
-  const { data: posSumidos, error: erroPosSumidos, isLoading: apurandoPosSumidos } = useQuery({
+  const {
+    data: posSumidos,
+    error: erroPosSumidos,
+    isLoading: apurandoPosSumidos,
+    dataUpdatedAt: listaAtualizadaEm,
+  } = useQuery({
     // A chave inclui o USUÁRIO porque o app não limpa o queryClient no signOut: sem isso, A (autorizado)
     // popula o cache, B entra na mesma sessão de app e vê a carteira de A até a negativa do servidor
     // chegar — e, no sentido inverso, o `refetchInterval: false` de um 42501 grudaria na chave e
@@ -315,6 +320,77 @@ export default function AdminReposicaoPedidos() {
     refetchInterval: (q) => (ehAcessoNegado(q.state.error) ? false : 60_000),
     staleTime: 30_000,
   });
+
+  // [FRESCOR] Quão velha é a BASE de comparação do detector acima. Consulta separada porque coluna é
+  // por linha: com zero candidatos a RPC da lista devolve zero linhas e, portanto, carimbo nenhum —
+  // e "zero candidatos" é exatamente o caso em que a pergunta importa. Sem isto, o card sumia, e
+  // card que some afirma "não há nada a reconciliar" mesmo quando ninguém olhou.
+  //
+  // ⚠️ LIMITAÇÃO CONHECIDA E ACEITA (achada no review adversarial): são DUAS leituras, não uma
+  // atômica. Na janela entre elas um run pode ser promovido a marcador — a lista sai vazia sob o
+  // marcador VELHO, a consulta avulsa lê o NOVO, e o card se cala por até um ciclo de poll (60s)
+  // achando que está tudo fresco. Fechar isso exigiria uma RPC única devolvendo marcador + lista
+  // agregada, o que muda o contrato da RPC de candidatos e o desenho do card — escopo maior que
+  // esta fatia. O trade-off é explícito: troca-se um silêncio PERMANENTE (o bug) por um silêncio de
+  // até 60s numa transição em que o detector, note-se, acabou de voltar a funcionar.
+  const {
+    data: marcadorPos,
+    error: erroMarcador,
+    isLoading: apurandoMarcador,
+    dataUpdatedAt: marcadorAtualizadoEm,
+  } = useQuery({
+    queryKey: ['pedidos-ciclo', 'pos-marcador', EMPRESA, user?.id],
+    queryFn: async (): Promise<MarcadorPos | null> => {
+      const { data, error } = await supabase.rpc('reposicao_pos_marcador' as never, {
+        p_empresa: EMPRESA,
+      } as never);
+      if (error) throw error;
+      // A RPC devolve SEMPRE 1 linha (LEFT JOIN sobre linha sintética), mas o PostgREST entrega
+      // array — e a normalização na fronteira cobre a janela em que este código já está publicado e
+      // a migration ainda não rodou (os dois deploys são manuais e separados neste projeto).
+      return normalizarMarcador(Array.isArray(data) ? data[0] : data);
+    },
+    enabled: Boolean(user?.id),
+    retry: false,
+    refetchInterval: (q) => (ehAcessoNegado(q.state.error) ? false : 60_000),
+    staleTime: 30_000,
+  });
+
+  // [FRESCOR] Tique próprio para a idade do marcador AVANÇAR sem depender de resposta do servidor.
+  // O TanStack pausa o polling quando a aba fica oculta ou a rede cai — a query fica `paused`, NÃO
+  // vira `error`, e o dado anterior permanece; refetch-on-focus está desligado no app inteiro. Sem
+  // este tique, o card exibiria "22h" indefinidamente enquanto o detector envelhece de verdade: o
+  // mesmo congelamento que esta entrega veio denunciar, um andar acima. 60s é a granularidade do
+  // refetch e sobra para uma medida em horas.
+  // O estado É o relógio (e não um contador de tiques): assim ele é usado de verdade no cálculo,
+  // em vez de existir só para forçar render.
+  const [agoraMs, setAgoraMs] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setAgoraMs(Date.now()), 60_000);
+    return () => clearInterval(id);
+  }, []);
+
+  const negadoPosSumidos = ehAcessoNegado(erroPosSumidos) || ehAcessoNegado(erroMarcador);
+  const falhouListaPos = erroPosSumidos != null && !ehAcessoNegado(erroPosSumidos);
+  // Há quanto tempo a resposta mais VELHA das duas chegou (relógio local dos dois lados, então imune
+  // ao offset da máquina). A mais velha, e não a da fonte exata, de propósito: as duas queries têm o
+  // mesmo intervalo e param juntas, e quando divergem o pessimista grita mais cedo — o lado certo
+  // para errar aqui. `dataUpdatedAt` é 0 antes da primeira resposta; aí não há deriva a somar.
+  const carimbos = [listaAtualizadaEm, marcadorAtualizadoEm].filter((t) => t > 0);
+  // `Math.max(0, …)` porque `agoraMs` só anda de 60 em 60s: numa resposta recém-chegada ele ainda é
+  // o relógio do tique anterior, e a diferença sairia negativa.
+  const derivaLocalMs = carimbos.length > 0 ? Math.max(0, agoraMs - Math.min(...carimbos)) : 0;
+  const frescorDetector: Frescor = negadoPosSumidos
+    ? { estado: 'nao_autorizado' }
+    : frescorDoDetector(
+        // Com a lista em FALHA, o carimbo que veio com ela descreve o passado: `apurado_em` ficou
+        // congelado no cache da última apuração bem-sucedida, então a idade calculada seria a
+        // DAQUELE instante e subestimaria a de agora — justamente quando o detector está pior.
+        // Aí só o marcador, lido nesta rodada, responde.
+        falhouListaPos ? [] : (posSumidos ?? []),
+        erroMarcador != null ? null : (marcadorPos ?? null),
+        derivaLocalMs,
+      );
 
   // [FILA] o ÚLTIMO recálculo do motor (limpo OU com supressão), carimbado em reposicao_motor_run pela RPC. A fila
   // ancora AQUI: se o último run teve suprimidos_n=0 (sync já confirmou), a mensagem some na hora — em vez de mostrar
@@ -751,9 +827,13 @@ export default function AdminReposicaoPedidos() {
           protocolo e valor legítimos por causa de um erro transitório. Sumir não é mais honesto que
           avisar — o card diz que a informação pode estar desatualizada. */}
       <PoSumidoCard
-        candidatos={ehAcessoNegado(erroPosSumidos) ? [] : ordenarCandidatos(posSumidos ?? [])}
-        falhaApuracao={erroPosSumidos != null && !ehAcessoNegado(erroPosSumidos)}
-        apurando={apurandoPosSumidos}
+        candidatos={negadoPosSumidos ? [] : ordenarCandidatos(posSumidos ?? [])}
+        frescor={frescorDetector}
+        falhaApuracao={falhouListaPos}
+        // As DUAS apurações entram no "apurando…": se a lista já voltou vazia mas o marcador ainda
+        // está em voo, o frescor seria lido como não-apurado e o card diria "não foi possível
+        // conferir" sobre uma consulta que apenas não terminou. Carregando não é falha.
+        apurando={apurandoPosSumidos || apurandoMarcador}
       />
 
       <AbaixoMinimoCard

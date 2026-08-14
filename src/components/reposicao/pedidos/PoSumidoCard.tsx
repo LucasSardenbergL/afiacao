@@ -5,7 +5,14 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { formatBRL } from './shared';
-import { contarIlegiveis, passosDaAcao, resumirValores, type PoCandidato } from './po-sumido';
+import {
+  contarIlegiveis,
+  descreverIdade,
+  passosDaAcao,
+  resumirValores,
+  type Frescor,
+  type PoCandidato,
+} from './po-sumido';
 
 // Seção NEUTRA (recolhida) da fila de atenção: pedidos `disparado` cujo PO NÃO apareceu no último run
 // VÁLIDO do omie-sync-pedidos-compra — ou seja, o PO sumiu do Omie mas o pedido segue disparado aqui.
@@ -23,18 +30,109 @@ import { contarIlegiveis, passosDaAcao, resumirValores, type PoCandidato } from 
 // ausência no título e ressalvar só depois de expandir seria mentir no lugar mais lido.
 const TITULO = 'Pedidos com PO a reconciliar no Omie';
 
+/**
+ * A frase que descreve o estado do detector, quando ele NÃO está fresco.
+ *
+ * ⚠️ Este bloco é a razão de ser do PR. A lista vazia deste card significava duas coisas
+ * indistinguíveis — "está tudo bem" e "o detector parou" — porque o guard temporal do #1718 esconde
+ * todo PO nascido depois do marcador, e o marcador congela se o run completo parar de produzir run
+ * válido. Um card que some é indistinguível de um card sem nada a dizer. Agora ele fala.
+ *
+ * `null` quando está tudo fresco — e aí o card volta a se comportar como antes.
+ */
+function avisoDeFrescor(frescor: Frescor, temLista: boolean) {
+  switch (frescor.estado) {
+    case 'fresco':
+    // Sem autorização não há aviso: o card inteiro já não é para esta pessoa, e um alerta sobre o
+    // detector de compras revelaria a existência do que o gate acabou de negar.
+    case 'nao_autorizado':
+      return null;
+    case 'desatualizado': {
+      const idade = descreverIdade(frescor.horas);
+      return {
+        badge: `detector desatualizado há ${idade}`,
+        titulo: `${TITULO} — detector desatualizado há ${idade}`,
+        texto: (
+          <>
+            A última varredura completa válida terminou há <strong>{idade}</strong> (o normal é a
+            cada 22h). Enquanto ela não roda, um PO criado depois dela{' '}
+            <strong>não aparece nesta verificação</strong> —{' '}
+            {temLista
+              ? 'a lista abaixo pode estar incompleta.'
+              : 'então a lista vazia aqui não é notícia boa, é ausência de apuração.'}{' '}
+            Se persistir, avise o time técnico.
+          </>
+        ),
+      };
+    }
+    case 'sem_marcador':
+      return {
+        badge: 'detector sem base de comparação',
+        titulo: `${TITULO} — detector sem base de comparação`,
+        texto: (
+          <>
+            Nenhuma varredura completa válida foi concluída, então não há com o que comparar os
+            pedidos. Esta verificação <strong>não está rodando</strong> — o que ela mostra (ou deixa
+            de mostrar) não conclui nada. Avise o time técnico.
+          </>
+        ),
+      };
+    case 'nao_apurado':
+      // Não é o mesmo que "sem marcador": ali sabemos que não há base; aqui não sabemos nada. Manter
+      // os dois separados é o que impede "não consegui perguntar" de ser lido como "perguntei e está
+      // tudo certo" — a distinção que o §2 do money-path exige e que colapsar apagaria.
+      return {
+        badge: 'atualização não conferida',
+        titulo: `${TITULO} — não foi possível conferir a atualização`,
+        texto: (
+          <>
+            Não conseguimos ler quando foi a última varredura completa. Isso{' '}
+            <strong>não</strong> significa que está tudo certo — significa que não sabemos se esta
+            verificação está atualizada.
+          </>
+        ),
+      };
+  }
+}
+
 export function PoSumidoCard({
   candidatos,
+  frescor,
   falhaApuracao = false,
   apurando = false,
 }: {
   candidatos: PoCandidato[];
+  /** Quão velha é a base de comparação do detector. Obrigatório: sem ele o card volta a mentir por omissão. */
+  frescor: Frescor;
   /** A RPC não respondeu (erro que NÃO é o gate de permissão). Ver comentário abaixo. */
   falhaApuracao?: boolean;
   /** Primeira apuração ainda em voo: não sabemos se há candidatos. */
   apurando?: boolean;
 }) {
   const [aberto, setAberto] = useState(false);
+  const avisoBruto = avisoDeFrescor(frescor, candidatos.length > 0);
+  // Com a apuração da LISTA já falhando, "não conseguimos ler o marcador" não acrescenta nada: é a
+  // mesma notícia, quase sempre a mesma causa, dita duas vezes em dois parágrafos. Já "detector
+  // desatualizado" e "sem base de comparação" são fatos NOVOS — e mais graves que uma falha
+  // transitória de rede — então esses continuam aparecendo mesmo empilhados.
+  const aviso = falhaApuracao && frescor.estado === 'nao_apurado' ? null : avisoBruto;
+
+  // A INSTRUÇÃO é suprimida quando a base de comparação não sustenta uma ação irreversível — a mesma
+  // regra que este card já aplica a `falhaApuracao`, agora estendida à causa que faltava.
+  //
+  // Por que marcador velho conta: a evidência "o PO não foi confirmado" é carimbada no run COMPLETO,
+  // então ela tem a idade do marcador. Com 40h, o card está afirmando algo sobre anteontem — e nesse
+  // intervalo alguém pode ter recriado o PO. Manter "recrie o PO" ali produz compra DUPLICADA, que é
+  // o dano que este card existe para evitar, só que pelo outro lado. As travas do plano ("confirme
+  // que não existe nenhum outro PO ativo… achou algum? PARE") reduzem o risco mas não o fecham: elas
+  // dependem de o comprador executá-las, e a linha que ele lê primeiro é "recrie".
+  //
+  // `nao_apurado` NÃO suprime, e a distinção é deliberada: ali não sabemos a idade da base — não
+  // sabemos que ela é velha. Suprimir por não-saber tornaria o card inútil toda vez que a consulta
+  // secundária falhasse, trocando um risco raro por uma perda certa. A evidência continua na tela
+  // nos três casos; o que sai é o comando de agir.
+  const baseNaoSustentaAcao = frescor.estado === 'desatualizado' || frescor.estado === 'sem_marcador';
+  const instrucaoSuprimida = falhaApuracao || baseNaoSustentaAcao;
 
   // "Não consegui apurar" ≠ "não há nada" (money-path). Se a RPC falhou, sumir em silêncio faria o
   // detector parecer saudável justamente quando ele está cego — o mesmo tipo de silêncio que deixou o
@@ -77,7 +175,24 @@ export function PoSumidoCard({
     );
   }
 
-  if (candidatos.length === 0) return null;
+  // ⚠️ ESTE `return null` ERA O BUG. Card que some AFIRMA "não há pedido a reconciliar" — e isso só
+  // é verdade se o detector de fato rodou. Com o marcador congelado, o guard temporal do #1718
+  // esconde todo PO posterior a ele, e a lista fica vazia porque ninguém olhou, não porque não há
+  // nada. Some quando está fresco (aí a ausência é informação); fala quando não está.
+  if (candidatos.length === 0) {
+    if (!aviso) return null;
+    return (
+      <Card className="border-border">
+        <CardHeader>
+          <CardTitle className="text-base flex items-center gap-2 text-status-warning">
+            <FileSearch className="w-4 h-4" />
+            {aviso.titulo}
+          </CardTitle>
+          <p className="text-sm text-muted-foreground">{aviso.texto}</p>
+        </CardHeader>
+      </Card>
+    );
+  }
 
   const comDanoAtivo = candidatos.filter((c) => c.na_janela_7d).length;
   const valores = resumirValores(candidatos);
@@ -106,7 +221,17 @@ export function PoSumidoCard({
               pode estar desatualizado
             </Badge>
           )}
+          {aviso && (
+            <Badge variant="outline" className="text-status-warning border-status-warning/40">
+              {aviso.badge}
+            </Badge>
+          )}
         </CardTitle>
+        {/* Com lista na tela o aviso QUALIFICA a evidência (pode faltar linha — as exibidas não são
+            falsas) e, quando o marcador está velho ou ausente, também retira a INSTRUÇÃO: ver
+            `instrucaoSuprimida`. Evidência sobre base velha é informação; comando de agir sobre base
+            velha é como se produz um PO duplicado. */}
+        {aviso && <p className="text-sm text-status-warning">{aviso.texto}</p>}
         {/* A lista continua na tela, mas o usuário precisa saber que ela é a ÚLTIMA conhecida e não a
             atual — "desatualizado" é informação, "sumiu" seria perda, e nenhum dos dois pode virar
             silêncio. O que NÃO pode continuar é a INSTRUÇÃO: manter "recrie o PO" sobre uma lista
@@ -170,7 +295,7 @@ export function PoSumidoCard({
                 <TableHead>Ciclo</TableHead>
                 <TableHead>Fornecedor / Canal</TableHead>
                 <TableHead>Evidência</TableHead>
-                <TableHead>{falhaApuracao ? 'Ação' : 'O que fazer'}</TableHead>
+                <TableHead>{instrucaoSuprimida ? 'Ação' : 'O que fazer'}</TableHead>
                 <TableHead className="text-right">Valor</TableHead>
               </TableRow>
             </TableHeader>
@@ -216,9 +341,12 @@ export function PoSumidoCard({
                       cai onde couber — quem escaneia encontra "recrie o PO" antes da condição que o
                       impede. Um item por passo mantém a trava colada ao passo a que pertence. */}
                   <TableCell className="text-xs max-w-[24rem]">
-                    {falhaApuracao ? (
+                    {instrucaoSuprimida ? (
                       <span className="text-muted-foreground">
-                        Confira este pedido no Omie — a apuração está desatualizada.
+                        Confira este pedido no Omie —{' '}
+                        {falhaApuracao
+                          ? 'a apuração está desatualizada.'
+                          : 'a base de comparação está velha demais para orientar uma ação.'}
                       </span>
                     ) : (
                       <ol className="list-decimal pl-4 space-y-1">

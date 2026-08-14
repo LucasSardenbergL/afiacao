@@ -3,8 +3,12 @@ import {
   acaoSugerida,
   classificarAcao,
   contarIlegiveis,
+  descreverIdade,
   ehAcessoNegado,
+  frescorDoDetector,
+  LIMIAR_FRESCOR_HORAS,
   normalizarCandidatos,
+  normalizarMarcador,
   ordenarCandidatos,
   OPERACOES,
   passosDaAcao,
@@ -12,6 +16,7 @@ import {
   precondicoesDe,
   temComoBuscar,
   resumirValores,
+  type MarcadorPos,
   type PoCandidato,
 } from '../po-sumido';
 
@@ -32,6 +37,9 @@ const base: PoCandidato = {
   portal_protocolo: null,
   status_envio_portal: null,
   algum_sinal_de_canal: false,
+  // Marcador de 2h — fresco. Os testes de frescor sobrescrevem o par.
+  marcador_finalizado_em: '2026-08-14T10:00:00Z',
+  apurado_em: '2026-08-14T12:00:00Z',
 };
 const c = (over: Partial<PoCandidato> = {}): PoCandidato => ({ ...base, ...over });
 
@@ -424,5 +432,188 @@ describe('ordenarCandidatos — dano ativo primeiro, incerteza no topo', () => {
     const entrada = [c({ pedido_id: 1, valor_total: 1 }), c({ pedido_id: 2, valor_total: 2 })];
     ordenarCandidatos(entrada);
     expect(entrada.map((x) => x.pedido_id)).toEqual([1, 2]);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────────────────────
+// FRESCOR — "esta lista vazia é boa notícia, ou o detector parou?"
+//
+// O guard temporal do #1718 esconde todo PO nascido depois do marcador. Se o run completo parar de
+// produzir run válido, o marcador congela e esses POs somem INDEFINIDAMENTE — e o card, que sumia
+// com lista vazia, passava a afirmar "não há nada a reconciliar" sem que ninguém tivesse olhado.
+// É o §2 do money-path (ausente ≠ zero) numa LISTA em vez de num número.
+// ────────────────────────────────────────────────────────────────────────────────────────────
+
+const m = (over: Partial<MarcadorPos> = {}): MarcadorPos => ({
+  marcador_run_id: 'ffffffff-ffff-ffff-ffff-ffffffffffff',
+  marcador_seq: 33,
+  marcador_finalizado_em: '2026-08-14T10:00:00Z',
+  apurado_em: '2026-08-14T12:00:00Z',
+  ...over,
+});
+
+/** Um par (finalizado, apurado) separado por exatamente `horas`. */
+const idade = (horas: number) => ({
+  marcador_finalizado_em: '2026-08-14T00:00:00Z',
+  apurado_em: new Date(Date.parse('2026-08-14T00:00:00Z') + horas * 3_600_000).toISOString(),
+});
+
+describe('frescorDoDetector', () => {
+  it('lista vazia + marcador velho: DIZ que está desatualizado (o P1 desta correção)', () => {
+    const f = frescorDoDetector([], m(idade(40)));
+    expect(f).toEqual({ estado: 'desatualizado', horas: 40 });
+  });
+
+  it('lista vazia + marcador fresco: nada a dizer', () => {
+    expect(frescorDoDetector([], m(idade(3)))).toEqual({ estado: 'fresco', horas: 3 });
+  });
+
+  // A distinção que dá o nome ao módulo: "nunca houve base" é o pior estado do detector e exige
+  // ação; colapsá-lo em "não apurado" o esconderia atrás de um aviso genérico de leitura.
+  it('marcador respondido porém VAZIO é sem_marcador, não nao_apurado', () => {
+    expect(frescorDoDetector([], m({ marcador_finalizado_em: null, marcador_run_id: null }))).toEqual({
+      estado: 'sem_marcador',
+    });
+  });
+
+  it('marcador não lido é nao_apurado — nunca silêncio', () => {
+    expect(frescorDoDetector([], null)).toEqual({ estado: 'nao_apurado' });
+  });
+
+  // O ponto do carimbo ACOPLADO: as duas RPCs são leituras independentes e um run pode ser promovido
+  // entre elas. Se o frescor viesse da consulta avulsa, o card diria "fresco" sobre uma lista que
+  // saiu do marcador VELHO — falso-negativo, o lado errado para errar num alerta.
+  it('havendo lista, o carimbo DELA vence o da consulta avulsa', () => {
+    const f = frescorDoDetector([c(idade(40))], m(idade(1)));
+    expect(f).toEqual({ estado: 'desatualizado', horas: 40 });
+  });
+
+  it('sem carimbo na lista (front publicado antes da migration), cai no marcador', () => {
+    const semCarimbo = c({ marcador_finalizado_em: null, apurado_em: null });
+    expect(frescorDoDetector([semCarimbo], m(idade(40)))).toEqual({ estado: 'desatualizado', horas: 40 });
+  });
+
+  it('sem carimbo em lugar nenhum: nao_apurado, não "fresco"', () => {
+    const semCarimbo = c({ marcador_finalizado_em: null, apurado_em: null });
+    expect(frescorDoDetector([semCarimbo], null)).toEqual({ estado: 'nao_apurado' });
+  });
+
+  it('o limiar é exclusivo: exatamente no limiar ainda é fresco', () => {
+    expect(frescorDoDetector([], m(idade(LIMIAR_FRESCOR_HORAS)))).toMatchObject({ estado: 'fresco' });
+    expect(frescorDoDetector([], m(idade(LIMIAR_FRESCOR_HORAS + 0.5)))).toMatchObject({
+      estado: 'desatualizado',
+    });
+  });
+
+  // A cadência medida em prod é 22,0h (30 gaps, máx = média = p95). Um ciclo normal NÃO pode
+  // acender o alerta, senão o aviso vira ruído diário e o operador aprende a ignorá-lo — que é
+  // exatamente a perda de sensibilidade que o #1718 existiu para evitar.
+  it('a cadência NORMAL de prod (22h) não acende o alerta', () => {
+    expect(frescorDoDetector([], m(idade(22)))).toMatchObject({ estado: 'fresco' });
+  });
+
+  // Impossível com os dois lados vindos do relógio do banco — e é por isso que, se acontecer, a
+  // premissa quebrou. Devolver 0h ("acabou de rodar") afirmaria frescor sem base.
+  it('idade negativa vira nao_apurado, nunca "fresco há 0h"', () => {
+    expect(frescorDoDetector([], m(idade(-5)))).toEqual({ estado: 'nao_apurado' });
+  });
+
+  it('carimbo impossível de interpretar vira nao_apurado', () => {
+    expect(frescorDoDetector([], m({ marcador_finalizado_em: 'ontem à tarde' }))).toEqual({
+      estado: 'nao_apurado',
+    });
+  });
+});
+
+describe('normalizarMarcador', () => {
+  it('null/undefined viram null (a chamada não respondeu)', () => {
+    expect(normalizarMarcador(null)).toBeNull();
+    expect(normalizarMarcador(undefined)).toBeNull();
+  });
+
+  // A janela real de operação: SQL e frontend são dois deploys MANUAIS separados neste projeto.
+  it('campos ausentes viram null, não undefined', () => {
+    expect(normalizarMarcador({})).toEqual({
+      marcador_run_id: null,
+      marcador_seq: null,
+      marcador_finalizado_em: null,
+      apurado_em: null,
+    });
+  });
+});
+
+describe('normalizarCandidatos — carimbos', () => {
+  it('carimbo ausente vira null e NÃO vaza como undefined para a conta de idade', () => {
+    const cru = { ...base } as Record<string, unknown>;
+    delete cru.marcador_finalizado_em;
+    delete cru.apurado_em;
+    const [r] = normalizarCandidatos([cru as unknown as PoCandidato]);
+    expect(r.marcador_finalizado_em).toBeNull();
+    expect(r.apurado_em).toBeNull();
+    // E o efeito que importa: sem carimbo utilizável não se afirma frescor.
+    expect(frescorDoDetector([r], null)).toEqual({ estado: 'nao_apurado' });
+  });
+
+  it('preserva o carimbo quando ele existe', () => {
+    const [r] = normalizarCandidatos([c(idade(40))]);
+    expect(r.marcador_finalizado_em).toBe('2026-08-14T00:00:00Z');
+  });
+});
+
+describe('descreverIdade', () => {
+  it('horas até 48h — a unidade em que o ciclo (22h) é pensado', () => {
+    expect(descreverIdade(26)).toBe('26h');
+    expect(descreverIdade(47.6)).toBe('48h');
+  });
+
+  it('dias acima disso — "73h" vira aritmética mental', () => {
+    expect(descreverIdade(48)).toBe('2 dias');
+    expect(descreverIdade(73)).toBe('3 dias');
+  });
+});
+
+describe('ehAcessoNegado — a RPC do marcador', () => {
+  it('reconhece o gate da RPC irmã', () => {
+    expect(ehAcessoNegado({ code: '42501', message: 'reposicao_pos_marcador: acesso negado' })).toBe(true);
+  });
+
+  // A razão de as sentinelas serem por FUNÇÃO: um GRANT quebrado também devolve 42501, e tratá-lo
+  // como "negado" faria o card sumir em silêncio para todo mundo — o detector cego parecendo são.
+  it('GRANT quebrado na irmã NÃO conta como negado', () => {
+    expect(ehAcessoNegado({ code: '42501', message: 'permission denied for function reposicao_pos_marcador' })).toBe(false);
+  });
+});
+
+describe('frescorDoDetector — a deriva local (o congelamento do CLIENTE)', () => {
+  // O achado adversarial: `apurado_em` congela no instante da resposta. O TanStack PAUSA o polling
+  // em aba oculta ou offline — a query fica `paused`, NÃO vira `error`, e o dado anterior fica. Sem
+  // somar o tempo decorrido no cliente, o card exibiria "22h" para sempre enquanto o detector
+  // envelhece de verdade: o mesmo congelamento que este módulo denuncia, um andar acima.
+  const H = 3_600_000;
+
+  it('sem deriva, 22h é fresco — com 5h de aba parada, vira desatualizado', () => {
+    expect(frescorDoDetector([], m(idade(22)))).toMatchObject({ estado: 'fresco' });
+    expect(frescorDoDetector([], m(idade(22)), 5 * H)).toEqual({ estado: 'desatualizado', horas: 27 });
+  });
+
+  it('a deriva também alcança o carimbo que veio na lista', () => {
+    expect(frescorDoDetector([c(idade(20))], null, 10 * H)).toEqual({
+      estado: 'desatualizado',
+      horas: 30,
+    });
+  });
+
+  // É seguro somar o relógio do CLIENTE aqui porque isto é a diferença entre dois instantes do
+  // mesmo relógio (chegada → agora). Valor inválido não pode virar NaN e contaminar a comparação.
+  it('deriva inválida ou negativa é ignorada, nunca vira NaN', () => {
+    for (const ruim of [NaN, -1, Infinity, -Infinity]) {
+      expect(frescorDoDetector([], m(idade(3)), ruim)).toEqual({ estado: 'fresco', horas: 3 });
+    }
+  });
+
+  it('a deriva não ressuscita um marcador que nunca existiu', () => {
+    expect(frescorDoDetector([], m({ marcador_finalizado_em: null }), 100 * H)).toEqual({
+      estado: 'sem_marcador',
+    });
   });
 });
