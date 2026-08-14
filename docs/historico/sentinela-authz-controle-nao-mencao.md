@@ -240,15 +240,27 @@ deixado o teste verde pelo motivo errado.
    pega em função**. Enquanto não houver esse detector, a reconfirmação das 12 entradas por
    privilégio é o audit read-only — o mesmo `has_function_privilege` desta entrega.
 2. **Migration que reescreve por `regexp_replace` é invisível ao gate estático** — e isto deixou de
-   ser hipótese durante esta própria sessão: a `20260814022626` (#1737) recria
+   ser hipótese durante esta própria sessão: a `20260814022626` (#1739) recria
    `reposicao_pos_candidatos` aplicando `regexp_replace` sobre `pg_get_functiondef` da definição
    VIVA, sem escrever nenhum `CREATE FUNCTION`. O parser não a vê, então o *last-writer* do repo
    continua sendo a `20260814000125`. A Parte A segue medindo uma definição válida (não há
    falso-verde), mas **não está medindo a última**. O manifesto já registrava que o FU4-G fizera
    isso uma vez; agora aconteceu de novo, na mesma função, 2 dias depois. É padrão, não acidente.
-3. **Drift medido, fora do escopo deste PR:** o corpo de `reposicao_pos_candidatos` em prod
-   (`md5 63296444…`) **não** é o do repo (`2439966a…`) — prod não tem o diagnóstico do #1737
-   (conferido por marcador no `prosrc`). A `20260814022626` mergeou e **ainda não foi aplicada** no
-   SQL Editor. As outras 3 funções desta entrega batem byte a byte.
+3. **O md5 de `reposicao_pos_candidatos` diverge entre repo e prod — e isso é ESPERADO, não deploy
+   pendente.** ⚠️ Correção de uma leitura errada feita na entrega original: a divergência
+   (`repo 2439966a…` vs `prod 63296444…`) foi lida como "a `20260814022626` não foi aplicada", e
+   **foi** — medido em prod: a coluna `omie_po_inexistente_antes_de`, a função
+   `reposicao_marco_pre_omie()`, o trigger `trg_po_inexistente_antes_de_guard` e o predicado causal
+   dentro do corpo, **todos presentes** (e as colunas de frescor da `20260814000125` também).
+   A causa da divergência é o item 2 acima: quem reescreve por `regexp_replace` produz um corpo que
+   **por construção** não é byte-igual a nenhum `CREATE FUNCTION` literal do repo. As outras 3
+   funções desta entrega — que são recriadas por `CREATE OR REPLACE` normal — batem byte a byte.
+   > **Lição, e é a razão de esta correção valer mais que o erro:** num repo onde o apply é manual,
+   > "md5 repo ≠ md5 prod" é um teste bom para função escrita por `CREATE OR REPLACE` e **inválido**
+   > para função reescrita por `regexp_replace` — ali ele acusa deploy pendente **sempre**, mesmo com
+   > tudo aplicado. Detector de drift precisa saber por qual TÉCNICA o objeto foi escrito.
+   > O erro original piorou por um segundo motivo, banal e transferível: o marcador que usei para
+   > "prod tem a mudança?" foi tirado do TÍTULO do PR (`parou`/`diagnóstico`), não do SQL — palavras
+   > que nunca estiveram no corpo. **Marcador de presença sai do artefato, nunca da prosa sobre ele.**
 4. O gate continua provando que a chamada **governa um ramo alcançável que levanta exceção** — não
    que a exceção acontece para quem deve. Isso é asserção EXECUTADA (harness PG17), inalterado.
