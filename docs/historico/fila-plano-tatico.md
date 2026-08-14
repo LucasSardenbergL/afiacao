@@ -402,6 +402,47 @@ Ele mede a tela, não a operação. O denominador continua sendo a query do §"O
 julga o desenho**. A leitura só começa quando as vendedoras entram em operação. O que muda é que,
 a partir daí, o zero deixa de ser mudo.
 
+> ⚠️ Escrito na manhã do merge. **No mesmo dia o `ativos_7d` virou 1** — ver logo abaixo.
+
+### Prova de que está NO AR (2026-08-14, mesmo dia do merge)
+
+A errata de 13/08 existe porque ninguém provou que o código estava em produção antes de ler o
+zero. Esta fase não repete o erro — verificado por BYTES no bundle servido:
+
+| Evento | Chunk em prod |
+|---|---|
+| `plano_tatico.desfecho_clicado` | `FarmerTacticalPlan-_gF1pb_b.js` |
+| `fila_carregada` · `fila_vazia` · `fila_erro` · `desfecho_erro` | `useTacticalPlan-C7zaXS-y.js` |
+
+**318 chunks varridos** (enumerados do entry `index-CqhqXtgJ.js` + `index.html`). O hash do chunk
+da página mudou de `DxJ6Rly6` (13/08) para `_gF1pb_b` ⇒ houve build novo.
+
+⚠️ **Um chunk só nunca é a prova.** Os 4 eventos da fila estão AUSENTES do chunk da página, porque
+`useTacticalPlan` é importado também pelo Copilot e o bundler o manda para um chunk compartilhado.
+Ler esse "ausente" como "não publicado" seria fabricar veredito a partir de enumeração incompleta —
+a varredura tem de ser a UNIÃO das fontes.
+
+### O gatilho DISPAROU — e o sensor chegou junto
+
+Medido no mesmo dia, com o par de sinais que o §"O gatilho virou query" exige:
+
+| Quem | Papel | `last_sign_in_at` | Sessão mais recente |
+|---|---|---|---|
+| Lucas | master | 2026-07-24 | 2026-08-14 22:12 |
+| Tatyana | employee | 2026-04-15 | **2026-08-14 17:03** |
+| Regina | employee | 2026-04-13 | *nenhuma* |
+
+`employee → ativos_7d` saiu de **0 (13/08) para 1**. A sessão da Tatyana, que em 13/08 estava
+parada em 23/06, foi atualizada HOJE — e sob a leitura do próprio §gatilho (o Supabase não mexe em
+`last_sign_in_at` no refresh de token), sign-in velho + sessão viva = presença.
+
+⚠️ **Presença ≠ uso da tela.** Um refresh de token acontece em aba de fundo; isto NÃO prova que ela
+abriu o Plano Tático. Mas essa distinção era indecidível até ontem, e é exatamente a que o sensor
+passa a responder. Desfechos seguem em **0** (533 `expirado` + 148 `gerado`, nenhum `call_result`).
+
+**Próxima leitura é no PostHog, não no banco:** `$pageview` de `/farmer/tactical-plan` e os cinco
+`plano_tatico.*`. Se houver pageview e nenhum `desfecho_clicado`, aí sim a pergunta é a tela.
+
 ## Lição
 
 O sensor tem de nascer com a **taxonomia das saídas**, não com um contador. "Instrumentei a tela"
