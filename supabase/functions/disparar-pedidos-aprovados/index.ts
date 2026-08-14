@@ -4,6 +4,7 @@
 // - PRODUÇÃO: cria no Omie + dispara notificação ao fornecedor pelo canal configurado
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
+import { classificarSonda, respostaSonda, VERSAO } from "./versao.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -449,8 +450,12 @@ async function aguardarPortalTerminar(
  * PR5: divide pedidos Sayerlack/OBEN com mais de SPLIT_CHUNK_SIZE itens em
  * filhos menores. Cada filho cabe na janela de 60s do Browserless.
  *
- * Só atua em modo "producao" — dry_run não toca o banco. Só atua em pedidos
- * Sayerlack/OBEN, e nunca em pedidos que já são filhos de um split anterior.
+ * Só atua em modo "producao" — em dry_run ESTA FUNÇÃO não toca o banco (devolve a lista intacta).
+ * ⚠️ Não leia isso como "dry_run não escreve": dry_run NÃO é dry-run do disparo. Ele chama
+ * `IncluirPedCompra` incondicionalmente (§e de processarPedido) e CRIA PEDIDO DE COMPRA REAL no
+ * Omie — só muda cObs/cObsInt e grava status `disparado_simulado`. Para diagnóstico sem efeito
+ * colateral existe a SONDA (`{"probe":true}`), não o dry_run. Ver versao.ts.
+ * Só atua em pedidos Sayerlack/OBEN, e nunca em pedidos que já são filhos de um split anterior.
  *
  * Retorna a lista expandida: pedidos não-Sayerlack ou pequenos passam direto;
  * pedidos grandes são substituídos pelos seus filhos. Se a RPC falhar, deixa
@@ -1443,6 +1448,14 @@ async function callerPodeIgnorarMinimo(req: Request): Promise<string | null> {
   } catch { return null; }
 }
 
+/** Corpo aceito no POST. `probe` é tratado antes de tudo (ver versao.ts), os demais são o disparo. */
+type CorpoDisparo = {
+  empresa?: string;
+  data_ciclo?: string;
+  pedido_id?: number | string | null;
+  ignorar_minimo?: boolean;
+};
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -1453,6 +1466,39 @@ Deno.serve(async (req: Request) => {
       status: 401,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
+  }
+
+  // ⚠️ SONDA DE VERSÃO — o ÚNICO caminho desta edge SEM efeito colateral, e por isso ele vem
+  // ANTES de tudo: antes do createClient, de qualquer query e de qualquer chamada ao Omie.
+  // `dry_run` NÃO serve de sonda (cria PO real no Omie), e nem o caminho "zero aprovados" serve
+  // (expira oportunidades + grava sync_reprocess_log). Sem isto, "está no ar?" só se responde
+  // esperando um pedido ser disparado de verdade. Ver versao.ts.
+  // Corpo lido UMA vez (req.json() não pode ser chamado duas) e reaproveitado pelo fluxo real.
+  const corpoBruto: unknown = req.method === "POST"
+    ? await req.json().catch(() => ({}))
+    : {};
+  const decisaoSonda = classificarSonda(corpoBruto);
+  if (decisaoSonda.tipo === "sonda") {
+    return new Response(JSON.stringify(respostaSonda()), {
+      status: 200,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+  if (decisaoSonda.tipo === "ambiguo") {
+    // Recusa explícita em vez de disparar por omissão: quem mandou `probe` QUIS sondar e errou a
+    // grafia — seguir para o fluxo real criaria pedido de compra no ERP (sync.md §"o default de um
+    // classificador cai no lado CARO").
+    return new Response(
+      JSON.stringify({
+        ok: false,
+        versao: VERSAO,
+        error:
+          `Parâmetro 'probe' com valor não reconhecido (${decisaoSonda.valor}). Use {"probe":true} ` +
+          `para a sonda de versão, ou omita a chave para disparar. Recusado por segurança: esta ` +
+          `edge cria pedido de compra REAL no Omie, inclusive em dry_run.`,
+      }),
+      { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    );
   }
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
@@ -1469,7 +1515,12 @@ Deno.serve(async (req: Request) => {
 
   try {
     if (req.method === "POST") {
-      const body = await req.json().catch(() => ({}));
+      // Já parseado acima (para a sonda) — req.json() só pode ser consumido uma vez.
+      // Normaliza corpo não-objeto (null/array/escalar) para {} e preserva o comportamento antigo.
+      const body: CorpoDisparo =
+        typeof corpoBruto === "object" && corpoBruto !== null && !Array.isArray(corpoBruto)
+          ? corpoBruto as CorpoDisparo
+          : {};
       if (body.empresa) empresa = body.empresa;
       if (body.data_ciclo) dataCiclo = body.data_ciclo;
       if (body.pedido_id != null) {
@@ -1804,6 +1855,7 @@ Deno.serve(async (req: Request) => {
     return new Response(
       JSON.stringify({
         ok: true,
+        versao: VERSAO,
         empresa,
         modo,
         data_ciclo: dataCiclo,
@@ -1834,7 +1886,7 @@ Deno.serve(async (req: Request) => {
       error_message: msg,
       metadata: { data_ciclo: dataCiclo },
     });
-    return new Response(JSON.stringify({ ok: false, error: msg }), {
+    return new Response(JSON.stringify({ ok: false, versao: VERSAO, error: msg }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
