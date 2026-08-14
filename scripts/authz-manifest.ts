@@ -3,9 +3,16 @@
  * ============================================================================================
  *
  * Fonte de verdade CURADA do check anti-regressão de gate (scripts/authz-gate-check.ts).
- * Cada função SECDEF que toca custo/preço/estoque e é EXECUTÁVEL por `authenticated` DEVE estar
+ * Cada função SECDEF que toca o eixo sensível — custo/preço/estoque **ou** comercial de compras
+ * (`SENSITIVE_*` em scripts/lib/authz-contract.ts) — e é EXECUTÁVEL por `authenticated` DEVE estar
  * aqui, com o gate de bloqueio esperado. O check garante que nenhuma migration recrie a função
  * sem esse gate (Parte A) e que nenhuma SECDEF sensível nova fique sem classificação (Parte B).
+ *
+ * ⚠️ A fronteira MANIFEST vs ACKNOWLEDGED é uma medição, não um julgamento de estilo:
+ * `AUTHZ_MANIFEST` = alcançável por `authenticated`/`anon`, fecha por GATE NO CORPO;
+ * `ACKNOWLEDGED_SENSITIVE` = fecha por PRIVILÉGIO (sem EXECUTE para essas roles).
+ * Decidir sem medir `has_function_privilege` em prod fabrica um contrato falso — e contrato falso
+ * é pior que lacuna, porque o CI passa a AFIRMAR cobertura que não existe.
  *
  * Ao adicionar/gatear uma função SECDEF sensível: classifique-a aqui (o CI falha até você fazê-lo).
  * Ao MUDAR o gate de uma função (decisão de política): atualize o requiredGate aqui — é o ponto
@@ -167,6 +174,59 @@ export const AUTHZ_MANIFEST: Record<string, AuthzEntry> = {
     motivo:
       'detector de PO sumido — protocolo/fornecedor/jsonb cru p/ authenticated; master-only pelo FU4-G',
   },
+
+  // ════════ eixo COMERCIAL DE COMPRAS — o follow-up 1 fechado (2026-08-14) ════════
+  // A entrada acima entrou À MÃO justamente porque a Parte B não a alcançava. Este bloco fecha a
+  // CLASSE: `SENSITIVE_*` ganhou `pedido_compra_sugerido`/`purchase_orders_tracking`/
+  // `fornecedor_nome`/`portal_protocolo`, o que revelou 12 SECDEF sem classificação (`authz:check`
+  // exit 1, 12 erros — medido antes de classificar, para provar que o eixo tem dente).
+  //
+  // Cada uma das 12 foi classificada por MEDIÇÃO em prod (psql-ro, 2026-08-14), nunca por leitura
+  // do corpo: `has_function_privilege(<role>, <oid>, 'EXECUTE')` para `authenticated` E `anon`,
+  // mais o `proacl` cru. Resultado: **2 são alcançáveis por `authenticated`** e entram AQUI, com o
+  // gate que de fato têm; as outras 10 têm `auth=NAO, anon=NAO, svc=SIM` (ACL explícito, sem
+  // `authenticated`) e fecham por PRIVILÉGIO → ACKNOWLEDGED_SENSITIVE, abaixo. `anon` não alcança
+  // NENHUMA das 12.
+  //
+  // Antes de registrar, o detector foi rodado contra o corpo REAL de cada uma (lição §3 do
+  // histórico: "um detector calibrado só na forma canônica não vigia o código que existe") —
+  // `blocksOnCall` = true nas duas, então nenhuma entra aqui só para deixar o CI vermelho.
+  // E o corpo do repo é byte-idêntico ao de prod nas duas (md5 do `prosrc` normalizado): não há
+  // drift de apply manual escondido atrás desta entrada.
+
+  // md5 a2ea61e7… (repo == prod). Gate FAIL-CLOSED também no uid NULL:
+  //   `IF auth.uid() IS NULL OR NOT (has_role(employee) OR has_role(master)) THEN RAISE 42501`.
+  // Escreve `promocao_campanha`/`promocao_item` (o `fornecedor_nome` que o detector pega é o
+  // literal 'RENNER SAYERLACK S/A' da campanha) e fecha a sugestão de negociação.
+  'public.converter_sugestao_em_campanha_flat': {
+    sensitive: true,
+    requiredGate: { anyOf: [{ call: 'has_role', roles: ['employee', 'master'] }] },
+    motivo: 'converte sugestão de negociação em campanha de desconto flat — cria condição comercial com fornecedor; staff-only',
+  },
+  // md5 9ccb9dd5… (repo == prod). Divide um pedido de compra aprovado em pedidos-filho.
+  // ⚠️ A FORMA do gate é diferente da irmã acima e o limite precisa ficar escrito:
+  //   `IF auth.uid() IS NOT NULL THEN IF NOT (has_role(employee) OR has_role(master)) THEN RAISE`.
+  // Com uid NULL o gate NÃO roda — idioma de compatibilidade com cron/service_role (mesma família
+  // do `private.expirar_reservas_vencidas_job` comentado no fim deste manifesto). Aqui isso não
+  // abre buraco de browser, e a razão é MEDIDA, não presumida: `anon` não tem EXECUTE (anon=NAO),
+  // então o único caminho de uid NULL é service_role/postgres. Se um dia `anon` ganhar EXECUTE,
+  // esta função vira anônima — o gate a deixaria passar. Quem conceder, reescreve o gate antes.
+  'public.pedido_compra_split': {
+    sensitive: true,
+    requiredGate: { anyOf: [{ call: 'has_role', roles: ['employee', 'master'] }] },
+    motivo: 'divide pedido de compra aprovado em filhos (fornecedor/condição de pagamento herdados); staff-only quando há JWT',
+  },
+  // md5 99ebc805… (repo == prod). RPC irmã do detector de PO, mesma migration 20260814000125.
+  // Este é o **follow-up 2** do mesmo histórico, e ele NÃO foi revelado pela ampliação do eixo:
+  // o corpo lê `reposicao_pedidos_compra_run` e não cita nenhum dos tokens novos. Está aqui por
+  // registro MANUAL — a mesma rota pela qual a `reposicao_pos_candidatos` entrou, e a prova de
+  // que ampliar o eixo reduz o ponto cego sem eliminá-lo. Gate idêntico ao da irmã, na forma
+  // initplan `(SELECT gate(…)) IS NOT TRUE` que só passou a ser reconhecida com `unwrapSelectScalar`.
+  'public.reposicao_pos_marcador': {
+    sensitive: true,
+    requiredGate: { anyOf: [{ call: 'cap_compras_ler' }] },
+    motivo: 'marcador de frescor do detector de PO (run_id/seq/finalizado_em) p/ authenticated; master-only pelo mesmo cap_compras_ler da irmã',
+  },
   // ⚠️ ATP fase 1.1 (migration 20260806225052): existe uma 5ª função que ESCREVE em
   // estoque_reservas e NÃO tem gate — `private.expirar_reservas_vencidas_job()`. É
   // DE PROPÓSITO e não é furo: pg_cron nativo roda SEM JWT, então auth.role() e
@@ -301,6 +361,41 @@ export const ACKNOWLEDGED_SENSITIVE = new Set<string>([
   // K1-K3 exigem o vermelho exato (K2 sabota gateando `g`, que é o assert que protege o produto)
   // e K4/K4b são o canário do restore.
   'public.get_carteira_margem_faixa',
+
+  // ══════ eixo COMERCIAL DE COMPRAS — as 10 que fecham por PRIVILÉGIO (2026-08-14) ══════
+  // Reveladas pela ampliação de `SENSITIVE_*` (follow-up 1 do #1729). TODAS medidas em prod no
+  // mesmo run (psql-ro, `has_function_privilege` + `proacl` cru):
+  //   `auth=NAO · anon=NAO · svc=SIM`, ACL explícito `postgres=X # service_role=X # sandbox_exec=X`
+  // — isto é, o EXECUTE de `authenticated` não está lá, e não está por omissão: nenhuma delas tem
+  // `proacl` NULL (que valeria EXECUTE implícito a PUBLIC). Elas fecham como a `private.atp_disponivel`
+  // do topo desta lista: por privilégio, não por gate no corpo. Por isso ACK e não AUTHZ_MANIFEST —
+  // pôr gate de papel numa função de cron/edge a tornaria INAGENDÁVEL (pg_cron roda sem JWT ⇒
+  // auth.uid() NULL ⇒ has_role false), que é a armadilha já documentada no fim do AUTHZ_MANIFEST.
+  //
+  // O consumidor de cada uma também foi verificado (cron.job / pg_trigger / grep nas edges), porque
+  // "não é executável por authenticated" responde QUEM não chama, e a justificativa precisa dizer
+  // quem CHAMA:
+  'public.detectar_skus_sem_grupo', // self-heal de SKU sem grupo — cron `detectar-outliers-diario`
+  'public.reposicao_alerta_pedido_minimo_tick', // tick do alerta de pedido mínimo — cron `reposicao-alerta-pedido-minimo`
+  'public.sayerlack_retry_orfaos', // retry de envios órfãos ao portal — cron `sayerlack-retry-orfaos`
+  'public.reposicao_pedido_auto_aprovavel', // veredito de auto-aprovação; chamada SÓ pelo tick acima (medido em pg_proc.prosrc), nunca direto
+  'public.reposicao_aplicar_depara_sayerlack_auto', // de-para automático do boletim Sayerlack — edge `reposicao-depara-sayerlack-auto` (cron → edge, service_role)
+  'public.envio_portal_lock_candidatos', // lock dos candidatos a envio — edge `enviar-pedido-portal-sayerlack`
+  'public.envio_portal_claim_ids', // claim por lista positiva de ids — edges `disparar-pedidos-aprovados` e `enviar-pedido-portal-sayerlack`
+  'public.iniciar_envio_portal_pre_claim', // pré-claim antes do disparo — edge `disparar-pedidos-aprovados`
+  'public.reposicao_persistir_qtde_inteira', // arredonda/persiste qtde inteira do pedido — edge `disparar-pedidos-aprovados`
+  // Esta é a única que não é nem RPC nem chamada por edge: `RETURNS trigger`, disparada por
+  // `trg_set_status_envio_portal` em `pedido_compra_sugerido` (medido em pg_trigger). Função de
+  // trigger não tem rota PostgREST — o fecho por privilégio é a segunda tranca, não a primeira.
+  'public.set_status_envio_portal_on_disparo',
+  //
+  // ⚠️ LIMITE DECLARADO desta baseline, e ele vale para TODA entrada desta lista: o fecho por
+  // privilégio é estado de PROD, e o gate estático não o vigia. `CREATE OR REPLACE` preserva o
+  // ACL, mas `DROP FUNCTION` + `CREATE FUNCTION` o RESETA — e a função renasce com o default
+  // privilege do Supabase, que concede EXECUTE às roles nomeadas. É o irmão exato do vetor
+  // `RECRIACAO` que a Parte C pega em TABELA (docs/historico/sentinela-grants-tabelas-fechadas.md)
+  // e que ninguém pega em FUNÇÃO. Enquanto não houver esse detector, a reconfirmação é o audit
+  // read-only em prod — o mesmo `has_function_privilege` que classificou estas 10.
 ]);
 
 /** chave de lookup a partir de schema+name (case-insensitive, sem assinatura) */

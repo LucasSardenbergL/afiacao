@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { auditAuthz, auditCompleto, type Migration } from './authz-gate-check';
 import { AUTHZ_TABELAS_FECHADAS } from './authz-tabelas-fechadas';
+import { AUTHZ_MANIFEST, ACKNOWLEDGED_SENSITIVE, manifestKey } from './authz-manifest';
 
 function mig(file: string, sql: string): Migration {
   return { file, sql };
@@ -266,5 +267,155 @@ AS $$ BEGIN RETURN QUERY SELECT 1; END $$;`;
     ).filter((e) => e.fn.includes('reposicao_pos_candidatos'));
     expect(err).toHaveLength(1);
     expect(err[0].file).toBe('20991231000000_recria.sql');
+  });
+});
+
+// ══════════ EIXO COMERCIAL DE COMPRAS — a classe fechada (2026-08-14) ══════════
+// Follow-up 1 de docs/historico/sentinela-authz-controle-nao-mencao.md. A RPC do bloco acima entrou
+// no manifest À MÃO porque a Parte B só exigia classificação no eixo custo/preço/estoque. Ampliar
+// `SENSITIVE_*` para compras revelou 12 SECDEF sem classificação (medido: `authz:check` exit 1 com
+// 12 erros ANTES de classificar). Cada uma foi classificada pelos GRANTS REAIS de prod (psql-ro):
+// 2 alcançáveis por `authenticated` → AUTHZ_MANIFEST; 10 fechadas por privilégio → ACKNOWLEDGED.
+//
+// Os testes abaixo existem porque baseline é o momento de maior risco de contrato FALSO: uma lista
+// pode ficar verde por estar silenciando, e não por estar cobrindo.
+const COMPRAS_MANIFEST: Array<{ nome: string; gate: string; arquivo: string; de: string }> = [
+  {
+    nome: 'pedido_compra_split',
+    gate: 'has_role',
+    arquivo: '20260515213420_868822bb-e38c-4fcf-8879-c64e48bd7630.sql',
+    de: "IF NOT (public.has_role(auth.uid(), 'employee'::app_role) OR public.has_role(auth.uid(), 'master'::app_role)) THEN",
+  },
+  {
+    nome: 'converter_sugestao_em_campanha_flat',
+    gate: 'has_role',
+    arquivo: '20260512101121_a96fa007-f688-4c3a-8cd9-43f9d88e5505.sql',
+    de: "IF auth.uid() IS NULL OR NOT (public.has_role(auth.uid(), 'employee'::app_role) OR public.has_role(auth.uid(), 'master'::app_role)) THEN",
+  },
+  {
+    nome: 'reposicao_pos_marcador',
+    gate: 'cap_compras_ler',
+    arquivo: '20260814000125_reposicao_pos_frescor_marcador.sql',
+    de: 'AND (SELECT private.cap_compras_ler((SELECT auth.uid()))) IS NOT TRUE THEN',
+  },
+];
+
+/** as 10 que fecham por PRIVILÉGIO (auth=NAO/anon=NAO medido em prod) — baseline desta entrega */
+const COMPRAS_ACK = [
+  'public.detectar_skus_sem_grupo',
+  'public.reposicao_alerta_pedido_minimo_tick',
+  'public.sayerlack_retry_orfaos',
+  'public.reposicao_pedido_auto_aprovavel',
+  'public.reposicao_aplicar_depara_sayerlack_auto',
+  'public.envio_portal_lock_candidatos',
+  'public.envio_portal_claim_ids',
+  'public.iniciar_envio_portal_pre_claim',
+  'public.reposicao_persistir_qtde_inteira',
+  'public.set_status_envio_portal_on_disparo',
+];
+
+/** SECDEF sintética que toca o eixo de compras, sem gate nenhum */
+function secdefCompras(nome: string): string {
+  return `CREATE OR REPLACE FUNCTION public.${nome}()
+ RETURNS numeric LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public'
+AS $function$ BEGIN RETURN (SELECT count(*) FROM public.pedido_compra_sugerido WHERE fornecedor_nome IS NOT NULL); END; $function$;`;
+}
+
+describe('Parte B — o eixo de compras alcança o que o eixo de custo não alcançava', () => {
+  it('SECDEF nova que toca pedido_compra_sugerido/fornecedor_nome e não está classificada → ERRO', () => {
+    const err = errorsOf(auditAuthz([mig('20991231000000_nova.sql', secdefCompras('fuga_de_compras'))]));
+    expect(err).toHaveLength(1);
+    expect(err[0].fn).toContain('public.fuga_de_compras');
+    expect(err[0].msg).toContain('pedido_compra_sugerido');
+  });
+
+  it('SECURITY INVOKER no eixo de compras continua ignorado (não bypassa RLS)', () => {
+    const invoker = secdefCompras('fuga_invoker').replace('SECURITY DEFINER', 'SECURITY INVOKER');
+    expect(errorsOf(auditAuthz([mig('20991231000000_x.sql', invoker)]))).toHaveLength(0);
+  });
+
+  it('as 10 chaves de ACKNOWLEDGED silenciam DE VERDADE (pega chave com typo)', () => {
+    // Uma chave escrita errada não silencia nada e a função fica sem classificação — este teste é
+    // o que separa "a lista está certa" de "a lista tem 10 strings dentro".
+    for (const chave of COMPRAS_ACK) {
+      expect(ACKNOWLEDGED_SENSITIVE.has(chave)).toBe(true);
+      const nome = chave.replace('public.', '');
+      const err = errorsOf(auditAuthz([mig('20991231000000_ack.sql', secdefCompras(nome))]));
+      expect(err.filter((e) => e.fn.includes(nome))).toHaveLength(0);
+    }
+  });
+});
+
+describe('AUTHZ_MANIFEST — as 3 entradas de compras estão VIVAS, não apenas silenciosas', () => {
+  /**
+   * Recorta a definição de UMA função no arquivo REAL e sabota só dentro dela.
+   * `String.replace(string, …)` troca a PRIMEIRA ocorrência, e a linha de gate
+   * `IF auth.uid() IS NULL OR NOT (has_role…)` aparece 5× em 20260512101121 — a primeira pertence
+   * a `fin_consolidado_intercompany`, não à função sob teste. Sabotar a função errada deixaria o
+   * teste verde pelo motivo errado, que é o modo de falha que este arquivo inteiro existe p/ evitar.
+   */
+  function sabotaFn(sql: string, nome: string, de: string, para: string): string {
+    const ancora = `CREATE OR REPLACE FUNCTION public.${nome}(`;
+    const ini = sql.indexOf(ancora);
+    expect(ini).toBeGreaterThan(-1);
+    expect(sql.indexOf(ancora, ini + 1)).toBe(-1); // âncora única: senão o recorte é ambíguo
+    const prox = sql.indexOf('CREATE OR REPLACE FUNCTION', ini + ancora.length);
+    const fim = prox === -1 ? sql.length : prox;
+    const trecho = sql.slice(ini, fim);
+    expect(trecho).toContain(de); // sabotagem que não casa nada deixaria o teste verde à toa
+    return sql.slice(0, ini) + trecho.replace(de, para) + sql.slice(fim);
+  }
+
+  const leia = (arq: string) => readFileSync(join(process.cwd(), 'supabase', 'migrations', arq), 'utf8');
+
+  for (const alvo of COMPRAS_MANIFEST) {
+    it(`${alvo.nome}: a migration REAL passa no contrato (senão o CI ficaria vermelho por falso positivo)`, () => {
+      expect(AUTHZ_MANIFEST[manifestKey('public', alvo.nome)]).toBeDefined();
+      const err = errorsOf(auditAuthz([mig(alvo.arquivo, leia(alvo.arquivo))])).filter((e) => e.fn.includes(alvo.nome));
+      expect(err).toHaveLength(0);
+    });
+
+    it(`${alvo.nome}: gate REMOVIDO do arquivo real → ERRO nomeando ${alvo.gate}`, () => {
+      const s = sabotaFn(leia(alvo.arquivo), alvo.nome, alvo.de, 'IF false THEN');
+      const err = errorsOf(auditAuthz([mig(alvo.arquivo, s)])).filter((e) => e.fn.includes(alvo.nome));
+      expect(err).toHaveLength(1);
+      expect(err[0].msg).toContain(alvo.gate);
+    });
+
+    it(`${alvo.nome}: recriação POSTERIOR sem gate vence a com gate (last-writer)`, () => {
+      const err = errorsOf(
+        auditAuthz([mig(alvo.arquivo, leia(alvo.arquivo)), mig('20991231000000_recria.sql', secdefCompras(alvo.nome))]),
+      ).filter((e) => e.fn.includes(alvo.nome));
+      expect(err).toHaveLength(1);
+      expect(err[0].file).toBe('20991231000000_recria.sql');
+    });
+  }
+
+  it('gate DECORATIVO (chamada presente, sem bloquear) não salva a entrada', () => {
+    // A distinção que o #1729 comprou: presença de chamada ≠ controle.
+    const decorativo = `CREATE OR REPLACE FUNCTION public.pedido_compra_split(p_pedido_id bigint)
+ RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public'
+AS $function$ DECLARE v boolean; BEGIN
+  v := public.has_role(auth.uid(), 'employee'::app_role);
+  INSERT INTO public.pedido_compra_sugerido (fornecedor_nome) VALUES ('x');
+END; $function$;`;
+    const err = errorsOf(auditAuthz([mig('20991231000000_dec.sql', decorativo)])).filter((e) => e.fn.includes('pedido_compra_split'));
+    expect(err).toHaveLength(1);
+    expect(err[0].msg).toContain('decorativo');
+  });
+});
+
+describe('contrato de classificação — as duas listas não podem se contradizer', () => {
+  it('nenhuma chave está nas DUAS listas (manifest venceria em silêncio e a justificativa do ACK seria mentira)', () => {
+    const nas2 = Object.keys(AUTHZ_MANIFEST).filter((k) => ACKNOWLEDGED_SENSITIVE.has(k));
+    expect(nas2).toEqual([]);
+  });
+
+  it('toda chave está na forma de manifestKey (lowercase schema.name) — chave torta nunca casa', () => {
+    const tortas = [...Object.keys(AUTHZ_MANIFEST), ...ACKNOWLEDGED_SENSITIVE].filter((k) => {
+      const [schema, ...resto] = k.split('.');
+      return resto.length !== 1 || manifestKey(schema, resto[0]) !== k;
+    });
+    expect(tortas).toEqual([]);
   });
 });
