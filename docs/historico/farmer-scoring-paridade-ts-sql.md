@@ -103,6 +103,43 @@ universo, o delta desaparece. O resíduo de 1 cliente vem dos deltas menores con
 Para os farmers o alinhamento **não resolve** (faixa segue em 56,5% e 47,9%): o delta deles é de
 escopo, e escopo não se conserta mexendo em filtro de status.
 
+## 6. Eixo ESCOPO: e se a tela do farmer listasse só a carteira dele? (cenário D, medido)
+
+O eixo dominante não se conserta mexendo em filtro de status. Aqui o universo da **tela** é
+alinhado ao da RPC. ⚠️ Isso muda a **população** do cálculo — e a população é o denominador de
+`m` (p95 de spend) e da régua de `g` (p10/p90), ou seja, mexe em dimensões que a agenda **lê**.
+Diferente do cenário A, aqui a agenda muda.
+
+| | farmer `33f59dc7` | farmer `700657a1` | master (controle) |
+|---|---:|---:|---:|
+| clientes na tela | 835 → **294** | 835 → **395** | 835 → 835 |
+| muda de faixa | 497 (59,5%) → **25 (8,5%)** | 405 (48,5%) → **26 (6,6%)** | 58 (6,9%) → 58 (6,9%) |
+| muda de classe | 76 (9,1%) → **7 (2,4%)** | 45 (5,4%) → **8 (2,0%)** | 15 (1,8%) → 15 (1,8%) |
+| sem margem no SQL | 562 → **21** | 464 → **24** | 71 → 71 |
+| **agenda troca** | **11 de 20 slots** | **12 de 20 slots** | **0 de 20** |
+
+**O master é o controle e ele não se move em nada** — como tem `cap_carteira_ler`, a RPC já lhe
+devolvia tudo. Que os três números dele fiquem idênticos é a prova de que o cenário mexe
+exatamente em quem deveria mexer, e só nele.
+
+**A decomposição fecha.** Os farmers caem de ~50–60% para **8,5% e 6,6%**, que é o mesmo patamar
+do master (6,9%): eliminado o escopo, sobra só o eixo universo, comum a todos. Somando os três
+cenários: A (hoje) = escopo + universo · D = só universo · C = nem universo (0,1%).
+
+**Custo:** 11–12 dos 20 slots trocam — *mais* que os 9 do cenário C, como esperado, porque o
+cenário D mexe na população e portanto em `m`, `recover` e `priority`.
+
+## Reprodutibilidade — o que é estável e o que não é
+
+Em 4 execuções: `mudou_faixa` deu **[497, 58, 405] nas quatro**, sem variação. Já `mudou_classe`
+oscilou (**[78,14,44]** em três, **[76,15,45]** na quarta, horas depois).
+
+Não é instabilidade do harness, é **propriedade da métrica**: a faixa deriva só de `margem_pct`,
+que não depende do tempo; a classe deriva do health score, que depende de `rf` (recência), que
+anda com o relógio de cada extração — e alguns clientes vivem perto das fronteiras 80/60/40.
+⇒ **Δ de ±2 clientes na CLASSE entre extrações é ruído esperado, não regressão.** Quem reexecutar
+e vir 76 onde este doc diz 78 não deve procurar bug no código.
+
 ## Lições
 
 - **Um "zero" só vale com a falsificação que o negaria.** O resultado da agenda era exatamente o
@@ -114,3 +151,9 @@ escopo, e escopo não se conserta mexendo em filtro de status.
 - **Delta agregado esconde deltas de sinais opostos.** "6,9% mudam de faixa" (master) e "59,5%"
   (farmer) são o mesmo PR: um eixo só adiciona sinal, o outro só remove. A média dos três seria
   um número sem significado.
+- **Uma persona sem delta é o controle mais barato que existe.** O master não se move em nenhum
+  cenário de escopo, e é isso que prova que o filtro atingiu quem devia. Sem ele, "os farmers
+  mudaram" seria compatível com um bug que mexe em todo mundo.
+- **Separe a métrica determinística da que depende do relógio.** Faixa é reprodutível ao número;
+  classe carrega ±2 de ruído porque nasce da recência. Publicar as duas com a mesma precisão
+  aparente convida alguém a caçar um bug que não existe.
