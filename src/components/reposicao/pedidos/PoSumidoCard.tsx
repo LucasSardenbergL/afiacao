@@ -43,8 +43,11 @@ const TITULO = 'Pedidos com PO a reconciliar no Omie';
 function avisoDeFrescor(frescor: Frescor, temLista: boolean) {
   switch (frescor.estado) {
     case 'fresco':
-    // Sem autorização não há aviso: o card inteiro já não é para esta pessoa, e um alerta sobre o
-    // detector de compras revelaria a existência do que o gate acabou de negar.
+      return null;
+    // Sem autorização também não há aviso, mas por outra razão: o card inteiro já não é para esta
+    // pessoa, e um alerta sobre o detector de compras revelaria a existência do que o gate acabou
+    // de negar. `return` explícito em cada ramo — o fallthrough de case vazio economizava uma linha
+    // e custava um erro de lint (`no-fallthrough`), além de esconder que são motivos diferentes.
     case 'nao_autorizado':
       return null;
     case 'desatualizado': {
