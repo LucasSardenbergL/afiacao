@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **457** custom migrations totais
-- **1572** objetos esperados (criados por estas migrations)
+- **460** custom migrations totais
+- **1579** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 468
-  - `rls_policy`: 392
+  - `function`: 472
+  - `rls_policy`: 393
   - `index`: 238
   - `cron_job`: 164
   - `table`: 153
-  - `trigger`: 79
+  - `trigger`: 81
   - `view`: 74
   - `enum_value`: 4
 
@@ -3591,6 +3591,28 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `view` | `public.v_tint_formula_canonica` | — |
+
+### `20260725120000_authz_custo_fu4f_fase3_ranking_rpc.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.custo_canonico` | — |
+| `function` | `public.get_skus_margem_positiva` | — |
+
+### `20260725125000_authz_custo_fu4f_fase3_scrub_recomendacoes.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.frec_sem_margem` | — |
+| `function` | `private.fbrec_sem_margem` | — |
+| `trigger` | `public.trg_frec_sem_margem` | `farmer_recommendations` |
+| `trigger` | `public.trg_fbrec_sem_margem` | `farmer_bundle_recommendations` |
+
+### `20260725130000_authz_custo_fu4f_fase3_fecha_product_costs.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `rls_policy` | `public.product_costs_select_custo` | `product_costs` |
 
 ### `20260726120000_tint_promote_error_details_completo.sql`
 
