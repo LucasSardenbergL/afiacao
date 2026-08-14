@@ -107,7 +107,7 @@ das três BUs operam no vermelho e a despesa é o motivo" é artefato de classif
 | 1 | Escopo | **Sanear + decompor** (decompor a base contaminada foi descartado) |
 | 2 | Curadoria do mapeamento | **Claude propõe, founder revisa** antes de virar migration |
 | 3 | Tratamento do não-despesa | **Seção não-operacional explícita** (não excluir silenciosamente) |
-| 4 | Snapshots históricos | **Recomputar os 96 meses** |
+| 4 | Snapshots históricos | **Recomputar os 96 meses** (com o manifesto e o guard de fechamento de §5.5, acrescentados depois do challenge) |
 
 ## 5. Design
 
@@ -133,8 +133,12 @@ Curadoria concentrada: **18 códigos cobrem 90% do valor na colacor, 5 na oben, 
 
 - `DreLinha` ganha `'nao_operacional'`.
 - `montarDRE` **não** soma esses valores em nenhuma linha de resultado.
-- Migration: `ALTER TABLE fin_dre_snapshots ADD COLUMN movimentos_nao_operacionais numeric`
-  **e** `ADD COLUMN valor_nao_classificado numeric` (ver §5.4).
+- Migration — colunas novas em `fin_dre_snapshots` (ver §5.4):
+  `movimentos_nao_operacionais numeric`, `valor_nao_classificado_despesas numeric`,
+  `valor_nao_classificado_receitas numeric`, `classificacao_status text`.
+- O bloco não-operacional deve separar **investimento** (CAPEX), **financiamento** (amortização,
+  captação) e **sócios** (distribuição de lucros, aporte) — somar os três num número só devolve o
+  mesmo problema de agregação que esta fatia existe para resolver, uma camada acima.
 - ⚠️ **Ambas são colunas dedicadas, nunca dentro do `detalhamento` jsonb.** Regra do CLAUDE.md:
   sinal money-path em jsonb multi-writer morre em upsert destrutivo. Coluna dedicada + 1 writer.
 - A UI ganha um bloco abaixo do resultado operacional, para o valor continuar visível e
@@ -142,16 +146,42 @@ Curadoria concentrada: **18 códigos cobrem 90% do valor na colacor, 5 na oben, 
 - Espelhado em `src/lib/financeiro/dre-helpers.ts` (Deno não importa de `src/`; o helper puro é o
   que tem teste vitest).
 
-### 5.4 Fail-closed honesto (money-path §2)
+### 5.4 Fail-closed honesto (money-path §2) — **revisto após o challenge do Codex**
 
-- Categoria sem mapeamento **não cai mais em `despesas_operacionais`**. Acumula em
-  `valor_nao_classificado` (+ `qtd_categorias_sem_mapeamento`, que já existe).
-- Se a cobertura ficar **< 95% do valor de despesa**, as três colunas decompostas gravam **NULL**
-  + motivo — porque abaixo disso a *repartição* não significa nada.
-- **Distinção que o desenho preserva:** o total de despesa é conhecido e nunca vira null; o que é
-  incerto é a repartição. Só a repartição degrada.
+> ⚠️ A primeira versão desta seção tinha um furo que **inflaria o lucro**. Registrado em §10.1.
+> O desenho abaixo é o corrigido.
+
+**Princípio: o desconhecido nunca melhora o resultado.**
+
+- Categoria sem mapeamento **não cai mais em `despesas_operacionais`**, mas também **não sai do
+  cálculo**. Acumula em duas colunas dedicadas e **separadas**:
+  `valor_nao_classificado_despesas` e `valor_nao_classificado_receitas`.
+  Separadas porque uma cobertura global mistura os dois lados e receita alta mascara despesa não
+  mapeada — que é exatamente o defeito do `valorTotal`/`valorMapeado` atuais
+  (`omie-financeiro/index.ts:1753`, incrementados para receita e despesa juntas).
+- **Assunção conservadora, explícita:** o não classificado de **despesa é subtraído** do resultado;
+  o não classificado de **receita não é somado**. Assim o resultado publicado é sempre um **piso** —
+  pode ser melhor que o exibido, nunca pior. Nenhum caminho torna o lucro maior por ignorância.
+- **Degradação por inversão de sinal, não por percentual da base.** O teste não é "5% da despesa":
+  é *"o desconhecido pode inverter o resultado?"*. Se
+  `valor_nao_classificado_despesas + valor_nao_classificado_receitas` for maior que uma fração do
+  |resultado| (proposta: 20%), então **`resultado_liquido`, `resultado_operacional` e as margens
+  também viram NULL** — não só a decomposição.
+  Motivo: com R$ 1M de despesa, R$ 50k não classificados e lucro de R$ 20k, um gate de 95% aprova o
+  snapshot enquanto o resultado real pode ser prejuízo de R$ 30k. O limiar mudaria o **sinal da
+  decisão**.
+- **Cobertura por linha, não só global.** Uma linha inteira pode estar 100% cega e ainda assim passar
+  num gate global (despesas comerciais podem ser 4% do total). Cada linha decomposta grava NULL se a
+  *sua* cobertura for insuficiente, independente das outras.
+- `classificacao_status` (coluna dedicada) carrega o desfecho: `completa` / `parcial` / `insuficiente`.
+- **Cobertura ≠ correção.** Um código mapeado para a linha errada conta como coberto. Nenhuma métrica
+  automática pega isso — é o que a revisão humana do §6 existe para cobrir, e o motivo de os
+  ambíguos não serem mapeados por conta própria.
 - Títulos **sem código de categoria** (R$ 420k na colacor, 383 títulos) entram direto no
-  não-classificado — sem código não há o que mapear.
+  não classificado — sem código não há o que mapear.
+- **Prefix match (`2.03` cobrindo todos os filhos) fica proibido por padrão.** O fato de `2.03.02`
+  significar coisas diferentes por empresa (§2.3) torna herança por prefixo um vetor de erro
+  silencioso. Só vale como regra abrangente marcada e aprovada explicitamente.
 
 **Consumidores que fabricam zero e precisam ser corrigidos junto** (senão o NULL vira 0 rio abaixo,
 que é exatamente o defeito que o fail-closed existe para eliminar):
@@ -164,10 +194,23 @@ que é exatamente o defeito que o fail-closed existe para eliminar):
 As quatro colunas já somam em paralelo — `despesas_operacionais` sempre foi o balde residual, então
 mover valor de um balde para outro é neutro no resultado. Só a exclusão do não-operacional muda o número.
 
-### 5.5 Recompute dos 96 meses
+### 5.5 Recompute — com manifesto e guard de fechamento
 
 Recomputar exige evidência positiva de conclusão (não "enfileirado"), e a data do dado passa a
 aparecer na tela.
+
+**Manifesto explícito, não "atualizar as linhas que existem".** Medido: a série de competência não
+tem buracos internos (colacor 41/41 · oben 27/27 · colacor_sc 27/27), mas nenhuma empresa alcança o
+mês corrente. O alvo do backfill é `(company, regime, mês)` do início de cada empresa **até a última
+competência fechada** — o que resolve decomposição e defasagem no mesmo passo. O que não for
+recomputado tem de aparecer como falta, não como silêncio.
+
+⚠️ **Guard de fechamento.** `fin_fechamentos` guarda FK para um snapshot descrito como congelado, e o
+recompute faz `UPSERT` na mesma chave `(company, ano, mes, regime)` — reescreveria por baixo os
+números que um fechamento aprovado referencia, mantendo o mesmo ID. **Medido hoje: a tabela está
+vazia (0 linhas), então o impacto atual é nulo** — mas o recompute deve recusar-se a sobrescrever
+snapshot referenciado por fechamento, senão o defeito aparece no dia em que o primeiro fechamento
+existir. Achado do challenge do Codex.
 
 **Descoberta adjacente registrada:** não existe **nenhum** cron de DRE entre os 88 jobs
 (`cron.job`). `calculated_at` está congelado em 2026-03-29 / 2026-05-30 — o recompute sempre foi
@@ -253,7 +296,10 @@ mapeados por conta própria.
 - Teste de edge Deno **sem import remoto** (`test:edges` roda com `--no-remote`).
 - `prove-sql-money-path` na migration (PG17 local, com falsificação nos locales `C` e `pt_BR.UTF-8`).
 - Recompute com evidência positiva de conclusão e `exit 0` capturado.
-- 2ª opinião via `/codex` sobre o desenho do fail-closed e do limiar de 95% (regra money-path).
+- ~~2ª opinião via `/codex` sobre o fail-closed e o limiar~~ ✅ **feito** — ver §10. O limiar de 95%
+  foi derrubado e substituído por degradação via inversão de sinal.
+- Teste que **falsifica** o §5.4: um cenário com não classificado material precisa ficar vermelho se
+  o resultado for publicado como número em vez de NULL. Sem isso, o guard não está provado.
 
 ## 9. Riscos
 
@@ -263,3 +309,54 @@ mapeados por conta própria.
 | NULL vira 0 em consumidor esquecido | Os dois consumidores conhecidos estão nomeados em §5.4; varredura por `?? 0` antes de entregar |
 | Margem histórica muda na tela | Decisão 4 do founder foi explícita; a mudança é a correção |
 | Mapeamento errado dá confiança para cortar errado | Ambíguos não são mapeados por conta própria (§6); resíduo fica visível |
+| Desconhecido infla o lucro | §5.4: não classificado de despesa é subtraído, o de receita não é somado — o resultado é piso |
+
+## 10. Challenge do Codex (2026-08-13) — aceito, verificado e refutado
+
+Ritual `/codex` em modo challenge (gpt-5.6-sol, reasoning high), conforme a regra de money-path do
+CLAUDE.md. Veredito dele: **rejeitar o desenho**. Reação: um achado procede e era fatal, dois
+procedem parcialmente, um não sobrevive à medição.
+
+### 10.1 ACEITO e corrigido — o fail-closed não fechava (era P0 real)
+
+A versão original mandava o não classificado para uma coluna própria e **fora** da fórmula
+`resultado_operacional = lucro_bruto − (op + adm + com) + rec_fin − desp_fin`. Como não existe coluna
+independente de "despesa total", tirar valor dos baldes classificados **remove a despesa do
+resultado** — o lucro publicado ficaria maior que o real. Seria *pior* que o comportamento atual, em
+que o não classificado ao menos cai em `despesas_operacionais` e é subtraído.
+
+O gate de 95% era frágil por seis motivos adicionais, todos legítimos: cliff artificial em 94,99%;
+materialidade absoluta ignorada (5% pode superar todo o lucro); cobertura não mede correção; uma
+linha pode estar 100% cega sob gate global; a receita não era protegida — justamente onde está o
+erro de 56,5% da colacor_sc; e o denominador é circular.
+
+Correção em §5.4: assunção conservadora + degradação por **inversão de sinal** em vez de percentual
+da base + cobertura por linha + CR/CP separados.
+
+### 10.2 ACEITO com escopo reduzido — imutabilidade de fechamento
+
+`fin_fechamentos` tem FK para snapshot e o recompute faz UPSERT na mesma chave: reescreveria número
+já aprovado. **Verificado em prod: a tabela tem 0 linhas**, então o impacto hoje é nulo e isso não
+bloqueia a entrega. Virou guard em §5.5, não pré-requisito.
+
+### 10.3 ACEITO como dívida registrada, fora desta fatia
+
+- `resultado_operacional` soma receita financeira e subtrai despesa financeira — **não é EBIT**.
+  Dívida semântica que já existe; renomear afeta consumidores e não cabe aqui.
+- `fin_categorias` faz upsert sem histórico, então o JOIN aplica a descrição **de hoje** a
+  competências de 2023. Baixo impacto esperado, mas real se uma categoria mudou de significado.
+- DRE montado sobre títulos a pagar/receber não é DRE contábil: falta depreciação e provisão, e
+  competência por `data_emissao` é aproximação. Esta fatia melhora a classificação **dentro** dessa
+  limitação; não a remove. O caveat já está no §3.
+
+### 10.4 REFUTADO pela medição — `fin_categorias.tipo` como guard estrutural
+
+O parecer propôs usar `tipo = R/D/T` para bloquear transferências antes da classificação, supondo
+Receita/Despesa/Transferência. **Medido: `tipo = 'T'` em 508 de 508 linhas.** A coluna é constante,
+não discrimina nada e não serve de guard. Descartado.
+
+### 10.5 REFUTADO parcialmente — completude do backfill
+
+O parecer afirmou que "96 snapshots" não define completude e que faltariam meses. **Medido: não há
+buraco interno** (41/41 · 27/27 · 27/27). O ponto de fundo sobreviveu em outra forma — nenhuma
+empresa alcança o mês corrente — e virou o manifesto explícito de §5.5.
