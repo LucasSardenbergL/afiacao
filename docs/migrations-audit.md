@@ -21,7 +21,7 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **468** custom migrations totais
+- **469** custom migrations totais
 - **1593** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 480
@@ -3913,6 +3913,10 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.reposicao_marco_pre_omie` | — |
 | `function` | `public.reposicao__po_inexistente_antes_guard` | — |
 | `trigger` | `public.trg_po_inexistente_antes_de_guard` | `pedido_compra_sugerido` |
+
+### `20260814160441_fu4f_fase3_afinidade_colunas_reaplica.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ## Próximos passos por status
 

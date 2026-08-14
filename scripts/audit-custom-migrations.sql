@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 468
+-- Total de custom migrations: 469
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -509,7 +509,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260813225057', 'fu4f_fase3_comment_honesto_margem_faixa', '20260813225057_fu4f_fase3_comment_honesto_margem_faixa.sql'),
   ('20260813234112', 'carteira_margem_faixa_motivo_gate_custo', '20260813234112_carteira_margem_faixa_motivo_gate_custo.sql'),
   ('20260814000125', 'reposicao_pos_frescor_marcador', '20260814000125_reposicao_pos_frescor_marcador.sql'),
-  ('20260814022626', 'reposicao_po_inexistente_antes_de', '20260814022626_reposicao_po_inexistente_antes_de.sql')
+  ('20260814022626', 'reposicao_po_inexistente_antes_de', '20260814022626_reposicao_po_inexistente_antes_de.sql'),
+  ('20260814160441', 'fu4f_fase3_afinidade_colunas_reaplica', '20260814160441_fu4f_fase3_afinidade_colunas_reaplica.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
