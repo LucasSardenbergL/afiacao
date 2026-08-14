@@ -31,13 +31,16 @@
 // hook (que importa este módulo). O tipo é do domínio da fila; o hook é só onde ele mora hoje.
 import type { FiltroFila } from '@/hooks/useTacticalPlan';
 
-export type MotivoFilaVazia =
+// Não exportados: só `SaidaDaCarga` e `eventoDaCarga` atravessam a fronteira do módulo, e
+// export sem consumidor quebra o gate de dead code (knip) — que é um gate à parte de
+// typecheck/lint/test, com visão própria.
+type MotivoFilaVazia =
   | 'sem_escopo'    // não havia id efetivo — a carga nem chegou a consultar
   | 'sem_resposta'  // sem `error` E sem `data`: indecidível, declarado como tal
   | 'recorte_vazio'; // a consulta RESPONDEU e o recorte não tem nenhum plano
 
 /** De onde veio a falha. `consulta` = o PostgREST devolveu `error`; `excecao` = throw no try. */
-export type OrigemErroFila = 'consulta' | 'excecao';
+type OrigemErroFila = 'consulta' | 'excecao';
 
 /**
  * O que cada saída de `loadPlans` observa. Note que a variante de ERRO **não carrega tamanho
