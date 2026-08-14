@@ -33,7 +33,9 @@ describe('eventoDaCarga — a fila diz POR QUE veio vazia', () => {
     ['sem_escopo', 'a carga nem chegou a consultar (sem id efetivo)'],
     ['sem_resposta', 'sem error E sem data — indecidível, declarado como tal'],
     ['recorte_vazio', 'a consulta respondeu e o recorte não tem plano'],
-  ] as const)('motivo %s viaja no evento em vez de virar o mesmo pixel', (motivo) => {
+    // A 2ª coluna é o porquê de cada motivo — vai no nome do teste (%s) e o callback precisa
+    // recebê-la: sob TS strict, o callback de `it.each` tem de casar a ARIDADE da tupla.
+  ] as const)('motivo %s viaja no evento em vez de virar o mesmo pixel (%s)', (motivo, _porque) => {
     const ev = eventoDaCarga({ tipo: 'vazia', motivo }, { filtro: 'pendentes', total: null });
     expect(ev.evento).toBe('plano_tatico.fila_vazia');
     expect(ev.props.motivo).toBe(motivo);
