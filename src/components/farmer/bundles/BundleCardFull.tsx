@@ -71,15 +71,20 @@ export const BundleCardFull = ({
           <Badge variant="outline" className="text-[8px]">Bundle #{rank}</Badge>
           <Badge className="text-[8px] bg-primary/10 text-primary">{bundle.products.length} produtos</Badge>
         </div>
-        <span className="text-xs font-bold text-status-success">{fmt(bundle.lieBundle)}</span>
+        <span className="text-xs font-bold text-status-success">{bundle.pBundle.toFixed(1)}%</span>
       </div>
 
-      {/* Products */}
+      {/* Products — preço, nunca margem.
+          A margem em R$ por SKU saía daqui mesmo sem o preço no card: a vendedora conhece o
+          catálogo, então `preço − margem` devolvia o custo de cabeça. Decisão do dono
+          (2026-07-20): ela vê apenas que a margem está NEGATIVA — sem reais, sem percentual
+          (percentual inverte igual: custo = preço × (1 − margem%)). E aqui nem esse caso ocorre:
+          o bundle só é montado com SKU que a RPC listou como vendável (margem > 0). */}
       <div className="space-y-1 mb-2">
         {bundle.products.map((p, i) => (
           <div key={i} className="flex items-center justify-between bg-background rounded px-2 py-1">
             <span className="text-[10px] truncate flex-1">{p.name}</span>
-            <span className="text-[10px] font-semibold text-status-success ml-2">{fmt(p.margin)}</span>
+            <span className="text-[10px] font-semibold ml-2">{fmt(p.price)}</span>
           </div>
         ))}
       </div>

@@ -12,6 +12,7 @@ import { useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
+import { track } from '@/lib/analytics';
 import type { RecordResultPayload } from './types';
 
 /**
@@ -83,6 +84,13 @@ export const BotoesDesfecho = ({
   const registrar = async (valor: string) => {
     if (salvando || isImpersonating) return;
     setSalvando(valor);
+    // [SENSOR] Emitido DEPOIS do guard e ANTES do await, de propósito:
+    //  - depois do guard, porque toque barrado (lente / gravação em curso) não é tentativa —
+    //    contá-lo inflaria o numerador com cliques que nunca chegaram à RPC;
+    //  - antes do await, porque o caso que mais interessa medir é "clicou e a gravação morreu".
+    //    No sucesso o dado já existe no banco (`call_result`); é a TENTATIVA que não existia em
+    //    lugar nenhum, e é ela que separa "não registram" de "tentaram e o sistema recusou".
+    track('plano_tatico.desfecho_clicado', { desfecho: valor, plano_id: planId, origem: 'um_toque' });
     try {
       await onRecord(planId, payloadDeUmToque(valor));
     } catch (err) {

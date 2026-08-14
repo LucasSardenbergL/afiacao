@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { auditAuthz, auditCompleto, type Migration } from './authz-gate-check';
 import { AUTHZ_TABELAS_FECHADAS } from './authz-tabelas-fechadas';
 
@@ -159,8 +161,15 @@ describe('auditAuthz — Parte C (grants de tabela fechada por privilégio)', ()
   });
 
   it('a msg convertida carrega o CÓDIGO ASCII, não a frase em pt-BR', () => {
-    const f = auditCompleto([...ancoras, mig('20260101000000_noop.sql', 'SELECT 1;')]);
-    expect(f.some((x) => /\[FECHO_PENDENTE\]/.test(x.msg))).toBe(true);
+    // O cenário é CONSTRUÍDO (omitir as migrations de âncora ⇒ ANCORA_AUSENTE), não herdado do
+    // estado de AUTHZ_TABELAS_FECHADAS. Antes este assert exigia `[FECHO_PENDENTE]`, que só
+    // existia porque product_costs era a última entrada com fechadaPor=null: declarar a âncora
+    // dela (PR #1520) zerava as pendências e derrubava o teste — sem que nada da CONVERSÃO,
+    // que é o que ele prova, tivesse mudado. Um teste do formato da mensagem não pode depender
+    // de quantas tabelas estão pendentes hoje.
+    const f = auditCompleto([mig('20260101000000_noop.sql', 'SELECT 1;')]);
+    expect(f.some((x) => /\[ANCORA_AUSENTE\]/.test(x.msg))).toBe(true);
+    expect(f.every((x) => !/fecho pendente|ausente de supabase\/migrations/.test(x.msg.split(']')[0]))).toBe(true);
   });
 
   it('DENTE: GRANT INSERT a authenticated pós-âncora na tabela REAL → erro REABERTURA', () => {
@@ -173,5 +182,89 @@ describe('auditAuthz — Parte C (grants de tabela fechada por privilégio)', ()
     const reab = errorsOf(f).filter((e) => e.msg.includes('[REABERTURA]'));
     expect(reab).toHaveLength(1);
     expect(reab[0].fn).toBe('public.omie_products');
+  });
+});
+
+// ══════════ CONTROLE ≠ MENÇÃO — a RPC de compras entra no contrato (2026-08-14) ══════════
+// A defesa que existia para public.reposicao_pos_candidatos era um bloco `DO $pos$` de regex sobre
+// pg_get_functiondef que rodou UMA vez, dentro da própria migration 20260813195914. Ele não protege
+// nenhuma recriação futura — e o FU4-G (20260720120000) já reescreveu essa função uma vez.
+// Estes testes fazem duas coisas ao mesmo tempo, contra o ARQUIVO REAL do repo:
+//   1. a definição real passa no contrato de gate (senão o CI ficaria vermelho por falso positivo);
+//   2. as 3 formas da revisão do #1718 REPROVAM aqui — e, no mesmo teste, PASSAM nos 3 regexes da
+//      pós-condição. É o par que mostra por que a sentinela textual não bastava.
+// A prova EXECUTADA (a RPC roda e nega/entrega de verdade) é db/test-pos-candidatos-guard-temporal.sh
+// — asserts D1/D4 e falsificações N1/N2/N3. Este arquivo é a metade estática, que roda em todo PR.
+describe('auditAuthz — reposicao_pos_candidatos: presença não é controle', () => {
+  const ARQ = '20260813195914_reposicao_pos_candidatos_guard_temporal.sql';
+  const sql = readFileSync(join(process.cwd(), 'supabase', 'migrations', ARQ), 'utf8');
+
+  const errosDaRpc = (s: string) =>
+    errorsOf(auditAuthz([mig(ARQ, s)])).filter((e) => e.fn.includes('reposicao_pos_candidatos'));
+
+  /** sabota exigindo que o trecho exista — sed que não casa nada deixaria o teste verde à toa */
+  function sabota(de: string, para: string): string {
+    expect(sql).toContain(de);
+    return sql.replace(de, para);
+  }
+
+  /**
+   * Os 3 regexes do bloco `DO $pos$` da migration, VERBATIM, aplicados só ao corpo da função (é o
+   * que pg_get_functiondef devolve — a prosa da migration ficaria de fora). true = a pós-condição
+   * teria deixado a migration aplicar.
+   */
+  function posCondicaoAprova(s: string): boolean {
+    const i = s.indexOf('CREATE OR REPLACE FUNCTION public.reposicao_pos_candidatos');
+    const d = s.slice(i, s.indexOf('$$;', i) + 3);
+    return (
+      /private\.cap_compras_ler\s*\(\s*\(\s*SELECT/.test(d) &&
+      !/pode_ver_carteira_completa\s*\(\s*\(\s*SELECT/.test(d) &&
+      /AND \(p\.omie_registrado_em IS NULL OR p\.omie_registrado_em <= m\.finalizado_em\)/.test(d)
+    );
+  }
+
+  it('a migration REAL do repo passa no contrato de gate', () => {
+    expect(errosDaRpc(sql)).toHaveLength(0);
+    expect(posCondicaoAprova(sql)).toBe(true); // canário: os regexes aprovam o corpo íntegro
+  });
+
+  it('gate em RAMO MORTO → ERRO aqui, APROVADO pelos regexes da migration', () => {
+    const s = sabota('IF (SELECT auth.uid()) IS NOT NULL', 'IF false AND (SELECT auth.uid()) IS NOT NULL');
+    expect(posCondicaoAprova(s)).toBe(true); // a defesa antiga não via nada de errado
+    const err = errosDaRpc(s);
+    expect(err).toHaveLength(1);
+    expect(err[0].msg).toContain('decorativo');
+  });
+
+  it('chamada nova só em COMENTÁRIO + gate velho real → ERRO aqui, APROVADO pelos regexes', () => {
+    // `pode_ver_carteira_completa(auth.uid())` sem o `((SELECT` escapa do regex c_velho, e o
+    // comentário satisfaz o c_novo. Autorização regride de master-only para "gerencial também vê".
+    const s = sabota(
+      'AND (SELECT private.cap_compras_ler((SELECT auth.uid()))) IS NOT TRUE THEN',
+      'AND /* (SELECT private.cap_compras_ler((SELECT auth.uid()))) IS NOT TRUE */ public.pode_ver_carteira_completa(auth.uid()) IS NOT TRUE THEN',
+    );
+    expect(posCondicaoAprova(s)).toBe(true);
+    const err = errosDaRpc(s);
+    expect(err).toHaveLength(1);
+    expect(err[0].msg).toContain('cap_compras_ler');
+  });
+
+  it('gate REMOVIDO inteiro → ERRO (a regressão clássica que a Parte A existe para pegar)', () => {
+    const s = sabota(
+      'AND (SELECT private.cap_compras_ler((SELECT auth.uid()))) IS NOT TRUE THEN',
+      'AND false THEN',
+    );
+    expect(errosDaRpc(s)).toHaveLength(1);
+  });
+
+  it('recriação POSTERIOR sem gate vence a migration com gate (last-writer)', () => {
+    const semGate = `CREATE OR REPLACE FUNCTION public.reposicao_pos_candidatos(p_empresa text)
+ RETURNS SETOF record LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path TO 'public'
+AS $$ BEGIN RETURN QUERY SELECT 1; END $$;`;
+    const err = errorsOf(
+      auditAuthz([mig(ARQ, sql), mig('20991231000000_recria.sql', semGate)]),
+    ).filter((e) => e.fn.includes('reposicao_pos_candidatos'));
+    expect(err).toHaveLength(1);
+    expect(err[0].file).toBe('20991231000000_recria.sql');
   });
 });

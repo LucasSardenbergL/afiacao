@@ -103,9 +103,8 @@ Retorne EXATAMENTE um JSON (sem markdown, sem code blocks):
       const userPrompt = `${blocoCliente(customer)}
 
 Bundle sugerido (${bundle.products.length} produtos):
-${bundle.products.map((p: { name: string; price: number; margin: number }, i: number) => `${i + 1}. ${p.name} - Preço: R$ ${p.price.toFixed(2)} | Margem: R$ ${p.margin.toFixed(2)}`).join('\n')}
+${bundle.products.map((p: { name: string; price: number }, i: number) => `${i + 1}. ${p.name} - Preço: R$ ${Number(p.price ?? 0).toFixed(2)}`).join('\n')}
 
-LIE do Bundle: R$ ${bundle.lieBundle.toFixed(2)}
 Confidence: ${(bundle.confidence * 100).toFixed(1)}%`;
 
       let resposta;
@@ -176,12 +175,18 @@ PERFIL DO CLIENTE: ${customerProfile}
 
 ${REGRA_DADO_AUSENTE}
 
+REGRA DE NÚMEROS (obrigatória): use APENAS os valores presentes neste prompt (preço e histórico
+do cliente). NÃO estime nem invente economia, payback, percentual de redução ou margem — se o
+número não está acima, escreva o benefício de forma qualitativa. Antes o contexto trazia a
+margem de cada SKU; ela foi removida de propósito (é dado interno de custo), então qualquer
+cifra de economia agora seria fabricada.
+
 Retorne EXATAMENTE um JSON com esta estrutura (sem markdown, sem code blocks):
 {
   "diagnostico": "Diagnóstico implícito baseado no histórico (1-2 frases)",
   "insight_tecnico": "Insight técnico sobre o processo produtivo (1-2 frases)",
   "beneficio_operacional": "Benefício operacional concreto (1 frase)",
-  "beneficio_economico": "Benefício econômico com números quando possível (1 frase)",
+  "beneficio_economico": "Benefício econômico QUALITATIVO, sem cifras inventadas (1 frase)",
   "objecao_antecipada": "Objeção provável e resposta (1-2 frases)",
   "versao_phone": "Script curto para ligação (máximo 4 linhas)",
   "versao_whatsapp": "Mensagem resumida para WhatsApp (2-3 linhas com emoji)",
@@ -191,9 +196,8 @@ Retorne EXATAMENTE um JSON com esta estrutura (sem markdown, sem code blocks):
     const userPrompt = `${blocoCliente(customer)}
 
 Bundle sugerido (${bundle.products.length} produtos):
-${bundle.products.map((p: { name: string; price: number; margin: number }, i: number) => `${i + 1}. ${p.name} - Preço: R$ ${p.price.toFixed(2)} | Margem: R$ ${p.margin.toFixed(2)}`).join('\n')}
+${bundle.products.map((p: { name: string; price: number }, i: number) => `${i + 1}. ${p.name} - Preço: R$ ${Number(p.price ?? 0).toFixed(2)}`).join('\n')}
 
-LIE do Bundle: R$ ${bundle.lieBundle.toFixed(2)}
 Confidence: ${(bundle.confidence * 100).toFixed(1)}%
 Lift: ${bundle.lift.toFixed(2)}`;
 

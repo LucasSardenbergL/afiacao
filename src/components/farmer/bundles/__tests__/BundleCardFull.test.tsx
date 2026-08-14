@@ -15,11 +15,12 @@ beforeEach(() => { impMock.mockReturnValue({ isImpersonating: false }); });
 
 const bundle = {
   id: "b1",
+  // Sem `margin`/`cost`: o custo não chega mais ao browser (FU4-F fase 3). O card mostra PREÇO.
   products: [
-    { name: "Produto A", margin: 100 },
-    { name: "Produto B", margin: 50 },
+    { name: "Produto A", price: 100 },
+    { name: "Produto B", price: 50 },
   ],
-  lieBundle: 150,
+  affinityBundle: 0.42,
   support: 0.25,
   confidence: 0.5,
   lift: 1.8,

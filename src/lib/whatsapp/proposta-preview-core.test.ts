@@ -51,8 +51,8 @@ describe('buildCrossSellCandidatos (codex Risco 2: rec→omie, ativo, órfão)',
     { id: 'uuid-a', omie_codigo_produto: 500, descricao: 'Verniz', ativo: true },
     { id: 'uuid-b', omie_codigo_produto: 600, descricao: 'Estopa', ativo: false }, // inativo
   ];
-  function rec(pid: string | null, lie: number | null, status: string | null = null): PreviewRec {
-    return { product_id: pid, lie, status };
+  function rec(pid: string | null, afinidade: number | null, status: string | null = null): PreviewRec {
+    return { product_id: pid, affinity_score: afinidade, status };
   }
   it('mapeia product_id → omie e mantém só ativos', () => {
     const r = buildCrossSellCandidatos([rec('uuid-a', 50), rec('uuid-b', 90)], prods);

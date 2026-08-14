@@ -187,6 +187,7 @@ export const MODULOS: ModuloApp[] = [
     ],
     testes: [
       "src/__tests__/edge-money-path-invariants.test.ts",
+      "src/hooks/__tests__/cross-sell-custo-fora-do-browser.test.tsx",
       "src/hooks/__tests__/useAlertaCreditoCliente.test.ts",
       "src/hooks/__tests__/usePedidosProgramados.cancelamento.test.tsx",
       "src/hooks/__tests__/usePricingEngine.test.ts",
@@ -279,6 +280,7 @@ export const MODULOS: ModuloApp[] = [
     ],
     testes: [
       "src/components/intelligence/__tests__/tabs-erro-honesto.test.tsx",
+      "src/hooks/__tests__/bundle-custo-fora-do-browser.test.tsx",
       "src/hooks/__tests__/bundle-escopo-sob-falha.test.tsx",
       "src/hooks/__tests__/bundle-recomendacoes-erro-silencioso.test.tsx",
       "src/hooks/__tests__/bundle-regras-substituicao-atomica.test.tsx",
@@ -293,6 +295,7 @@ export const MODULOS: ModuloApp[] = [
       "src/hooks/__tests__/lens-tactical-plan.test.tsx",
       "src/hooks/__tests__/plano-bundle-ausente.test.tsx",
       "src/hooks/__tests__/tactical-plan-posse-dono.test.tsx",
+      "src/hooks/__tests__/telemetria-plano-tatico.test.tsx",
       "src/hooks/__tests__/useLastVisit.test.tsx",
       "src/hooks/__tests__/useMyVisitSuggestions.test.ts",
       "src/hooks/__tests__/useDashboardCompany.test.ts",
@@ -703,6 +706,7 @@ export const MODULOS: ModuloApp[] = [
       "src/__tests__/paginacao-artesanal-gate.test.ts",
       "src/__tests__/escrita-critica-gate.test.ts",
       "src/__tests__/erro-object-object-gate.test.ts",
+      "src/__tests__/afinidade-nao-e-dinheiro-gate.test.ts",
       "src/__tests__/potencial-nao-medido-gate.test.ts",
       "src/__tests__/segredo-em-log-gate.test.ts",
       "src/__tests__/import-tint-formulas-aposentada-gate.test.ts",

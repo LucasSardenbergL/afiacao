@@ -50,9 +50,10 @@ export function CacaConteudo() {
 
   // Filtra os ocultos. `features.documento` é a mesma chave que o onOcultar entrega.
   const visiveis = useMemo(
-    () => (data ?? []).filter((c) => !ocultos.has(c.features.documento)),
+    () => (data?.fila ?? []).filter((c) => !ocultos.has(c.features.documento)),
     [data, ocultos],
   );
+  const empresasSemLucro = data?.empresasSemLucro ?? [];
 
   // caca.exibida: 1×/dia/sessão (NÃO por render) — mede exposição, não re-render.
   useEffect(() => {
@@ -94,5 +95,31 @@ export function CacaConteudo() {
 
   // ─── Loading + lista ───────────────────────────────────────────────────────────
   // FilaDeCaca renderiza seu próprio skeleton quando isLoading.
-  return <FilaDeCaca candidatos={visiveis} isLoading={isLoading} onOcultar={ocultar} />;
+  //
+  // O aviso de lucro fora do índice vem ANTES da lista porque ele muda como a lista se lê: o
+  // índice que ordena os "melhores clientes" pesa lucro em 0,4, e quando nenhum comprador da
+  // empresa tem lucro confiável esse termo vira constante — o ranking passa a ser volume +
+  // fidelidade, com a MESMA aparência de sempre. Silenciar isso é o "ausente ≠ zero" falhando
+  // aberto: a ausência não corrompe a ordem, corrompe o que o operador acha que está vendo.
+  // Duas causas possíveis, e a linha da view não distingue entre elas — o texto nomeia as duas.
+  return (
+    <div className="space-y-3">
+      {empresasSemLucro.length > 0 && (
+        <div
+          role="status"
+          className="rounded-lg border border-status-warning/30 bg-status-warning/5 p-3 text-xs text-status-warning-foreground"
+        >
+          <p className="font-medium">
+            Ranking sem o componente de lucro em {empresasSemLucro.join(' e ')}.
+          </p>
+          <p className="text-2xs text-muted-foreground mt-1">
+            Nenhum comprador dessa(s) empresa(s) tem custo apurado com cobertura suficiente, então
+            a ordem abaixo considera só volume e fidelidade. Pode ser custo ainda não sincronizado
+            ou o seu acesso não incluir leitura de custo.
+          </p>
+        </div>
+      )}
+      <FilaDeCaca candidatos={visiveis} isLoading={isLoading} onOcultar={ocultar} />
+    </div>
+  );
 }

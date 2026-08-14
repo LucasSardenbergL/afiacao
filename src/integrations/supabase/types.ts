@@ -2372,6 +2372,7 @@ export type Database = {
           accepted_at: string | null
           accepted_products: Json | null
           actual_margin: number | null
+          affinity_bundle: number | null
           approach_type: string | null
           argument_effectiveness: number | null
           argument_phone: string | null
@@ -2401,6 +2402,7 @@ export type Database = {
           accepted_at?: string | null
           accepted_products?: Json | null
           actual_margin?: number | null
+          affinity_bundle?: number | null
           approach_type?: string | null
           argument_effectiveness?: number | null
           argument_phone?: string | null
@@ -2430,6 +2432,7 @@ export type Database = {
           accepted_at?: string | null
           accepted_products?: Json | null
           actual_margin?: number | null
+          affinity_bundle?: number | null
           approach_type?: string | null
           argument_effectiveness?: number | null
           argument_phone?: string | null
@@ -3256,6 +3259,7 @@ export type Database = {
         Row: {
           accepted_at: string | null
           actual_margin: number | null
+          affinity_score: number | null
           cluster_volume_estimate: number | null
           complexity_factor: number | null
           created_at: string | null
@@ -3277,6 +3281,7 @@ export type Database = {
         Insert: {
           accepted_at?: string | null
           actual_margin?: number | null
+          affinity_score?: number | null
           cluster_volume_estimate?: number | null
           complexity_factor?: number | null
           created_at?: string | null
@@ -3298,6 +3303,7 @@ export type Database = {
         Update: {
           accepted_at?: string | null
           actual_margin?: number | null
+          affinity_score?: number | null
           cluster_volume_estimate?: number | null
           complexity_factor?: number | null
           created_at?: string | null
@@ -19227,6 +19233,12 @@ export type Database = {
           isOneToOne: false
           isSetofReturn: true
         }
+      }
+      get_skus_margem_positiva: {
+        Args: never
+        Returns: {
+          product_id: string
+        }[]
       }
       get_tint_price: { Args: { p_formula_id: string }; Returns: Json }
       get_tint_prices: { Args: { p_formula_ids: string[] }; Returns: Json }

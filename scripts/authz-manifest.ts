@@ -67,6 +67,25 @@ export const AUTHZ_MANIFEST: Record<string, AuthzEntry> = {
     requiredGate: { anyOf: [{ call: 'has_role', roles: ['employee', 'master'] }] },
     motivo: 'régua de preço no customer 360 — repassa o pacote já mascarado da get_regua_preco',
   },
+  // FU4-F fase 3 (#1520). Toca product_costs com privilégio, mas NÃO devolve custo: responde
+  // só "este SKU tem margem > 0?" para os engines de recomendação filtrarem candidatos. O
+  // ranqueamento ficou no cliente, por afinidade — nada que toque custo.
+  //
+  // Gate é `employee OR master`, NÃO cap_custo_ler, e isso é deliberado: a vendedora PRECISA
+  // do conjunto (é o filtro da feature dela), e usar a capability de custo aqui a excluiria —
+  // exatamente o "fechar e deixar degradar" que apagaria cross-sell e bundles (§5 do spec).
+  // A capability continua governando o dado BRUTO, na policy de product_costs.
+  //
+  // ⚠️ LIMITE, no mesmo espírito do bloco acima: este check não expressa "quanto vaza pela
+  // resposta". O resíduo aceito é 1 bit por SKU POR SNAPSHOT, acumulável no tempo — e ele NÃO
+  // está fechado enquanto `omie_products.valor_unitario` (o limiar da comparação) for
+  // escrevível por employee, o que hoje é o caso. Follow-up no corpo do #1520; a
+  // anti-regressão desta função é db/test-authz-custo-fu4f-fase3-ranking.sh.
+  'public.get_skus_margem_positiva': {
+    sensitive: true,
+    requiredGate: { anyOf: [{ call: 'has_role', roles: ['employee', 'master'] }] },
+    motivo: 'conjunto de SKUs vendáveis (margem > 0) p/ os engines filtrarem candidatos sem ler custo; sem parâmetro, para não virar oráculo ajustável',
+  },
   // Writer do closed-loop da régua. Gate de ESCRITA próprio (`private.cap_regua_log_escrever`,
   // employee|master) — NUNCA cap_custo_ler: o §4.2 do spec de 2026-07-18 proíbe reusar a função de
   // leitura em escrita, e reusá-la deixaria estrategico/super_admin registrar em nome de outro
@@ -119,6 +138,34 @@ export const AUTHZ_MANIFEST: Record<string, AuthzEntry> = {
     sensitive: true,
     requiredGate: { anyOf: [{ call: 'cap_estoque_reservar' }] },
     motivo: 'higiene de reservas vencidas (cron da fase 3 via service_role)',
+  },
+  // 2026-08-14 — a RPC do card "pedido sem PO no Omie". SECDEF com GRANT EXECUTE a `authenticated`,
+  // devolve protocolo do portal, fornecedor e a `resposta_canal` jsonb CRUA. Gate master-only
+  // `private.cap_compras_ler` (FU4-G: "compras não é carteira" — o gate anterior,
+  // `pode_ver_carteira_completa`, liberava o papel gerencial).
+  //
+  // ⚠️ POR QUE ESTAVA FORA — e a lição, que vale para toda RPC nova: a Parte B só EXIGE
+  // classificação de SECDEF que toca o eixo custo/preço/estoque (SENSITIVE_* em
+  // scripts/lib/authz-contract.ts). Esta não toca nenhum desses tokens; o que ela vaza é dado
+  // COMERCIAL de compras. Ou seja: a cobertura automática não a alcançava, e sem esta entrada
+  // nenhuma recriação futura era vigiada — a defesa era um bloco `DO $pos$` de regex que rodou
+  // UMA vez, na própria migration 20260813195914, e não protege a PRÓXIMA (o FU4-G já reescreveu
+  // esta função uma vez, por regexp_replace). Registrar aqui troca "uma vez" por "toda recriação",
+  // via last-writer + fail-closed da Parte A.
+  //
+  // ⚠️ Registrá-la exigiu ANTES consertar `blocksOnCall`: a forma real
+  // `(SELECT private.cap_compras_ler((SELECT auth.uid()))) IS NOT TRUE` era lida como gate
+  // DECORATIVO (medido em 2026-08-14). O detector estava calibrado só na forma canônica — e é
+  // por isso que o eixo nunca foi tentado. Detector cego não é ausência de risco.
+  //
+  // O limite desta entrada, declarado: ela prova que a CHAMADA governa um ramo alcançável que
+  // levanta exceção. NÃO prova que a exceção acontece para quem deve — isso é asserção
+  // EXECUTADA, em db/test-pos-candidatos-guard-temporal.sh (D1/D4 + falsificações N1/N2/N3).
+  'public.reposicao_pos_candidatos': {
+    sensitive: true,
+    requiredGate: { anyOf: [{ call: 'cap_compras_ler' }] },
+    motivo:
+      'detector de PO sumido — protocolo/fornecedor/jsonb cru p/ authenticated; master-only pelo FU4-G',
   },
   // ⚠️ ATP fase 1.1 (migration 20260806225052): existe uma 5ª função que ESCREVE em
   // estoque_reservas e NÃO tem gate — `private.expirar_reservas_vencidas_job()`. É
@@ -221,6 +268,38 @@ export const ACKNOWLEDGED_SENSITIVE = new Set<string>([
   // exato, incluindo "UPDATE sem USING" (S2), que prova que o USING não é decorativo: só com
   // WITH CHECK, `SET key='outra' WHERE key='margem_faixa_piso_pct'` some com a key protegida e
   // devolve o limiar ao default.
+  //
+  // 2026-08-13 — fase 3c: `motivo` entra no gate de PROJEÇÃO, junto de `margem_pct`. A revisão
+  // adversarial do #1723 (Codex gpt-5.6-sol) achou um vazamento de LEITURA pior que o oráculo de
+  // ESCRITA que a fase 3b fechou — este não precisa escrever nada e resolve numa ÚNICA resposta.
+  // Mecanismo: `g` é AFIM na margem (`margem_pct = A + B*g`, A=100*p10, B=100*max(p90-p10,0.01)),
+  // e `motivo` dava as duas ÂNCORAS ABSOLUTAS que faltavam ('abaixo_do_piso' ⇒ margem<30,
+  // 'abaixo_da_meta' ⇒ 30≤margem<50). Tomando o MAIOR `g` de cada motivo, o atacante resolve
+  // B=(50-30)/(g50-g30) e A=30-B*g30 e inverte a carteira inteira.
+  // MEDIDO em prod (read-only, 2026-08-13): A_est=29,4560 vs 29,4260 real (erro 0,03 pp) e
+  // B_est=45,7780 vs 45,7780 (erro ZERO); 859 dos 1.075 clientes com margem reconstruídos com
+  // erro MÁXIMO de 0,03 pp. Não era risco teórico.
+  // ⚠️ Lição transferível (irmã da fase 3b): lá o gate de projeção caía por uma entrada
+  // ESCREVÍVEL; aqui cai por um rótulo LEGÍVEL que ancora a escala. Um campo derivado que é
+  // transformação MONÓTONA do número protegido só resiste enquanto ninguém publicar dois pontos
+  // conhecidos da curva — e um vocabulário categórico com limiares FIXOS é exatamente isso.
+  // Ao gatear um número, enumere o que mais na MESMA resposta permite reconstruí-lo.
+  // ⚠️ O que NÃO foi feito, e por quê: `g` continua saindo sem gate. Gateá-lo fecharia o eixo,
+  // mas `calcularHealthScore` renormaliza os pesos com `g` null, então o score de quem não tem
+  // cap MUDARIA — produto embutido em entrega de autorização (o que o #1543 evitou). O custo foi
+  // MEDIDO antes de descartar (harness `scripts/impacto-gate-g.ts`): 640 visões de cliente
+  // mudariam de score nos 2 farmers sem cap (Δ médio 5,88/6,02; máx 14,5), 91 mudariam de classe,
+  // AGENDA idêntica. Decisão do founder (2026-08-13): fechar a âncora, preservar o score.
+  // ⚠️ Limite honesto da defesa: ela depende de `p10 > 0` (hoje 29,43%). A fronteira 'vermelho'
+  // (margem<0) só não é 2ª âncora porque está SATURADA (todo pct<p10 tem g=0). Se a população
+  // ganhar margem negativa relevante, p10 cai e aquela fronteira devolve a âncora sozinha. E a
+  // ORDENAÇÃO por margem segue exposta por construção. Quem mexer na régua revisita isto.
+  // Provado em db/test-carteira-margem-faixa-motivo-gate.sh (24 asserts): A1-A4 (com cap nada
+  // regride), B1-B3 (sem cap a âncora some), C1-C3 (faixa e `g` PRESERVADOS — a prova de que não
+  // houve mudança de produto), D1-D5 (escopo/ACL/idempotência), E1-E3 (a calibração não fecha, e
+  // o master legítimo AINDA calibra — sem E3 os E1/E2 passariam por vacuidade). Falsificações
+  // K1-K3 exigem o vermelho exato (K2 sabota gateando `g`, que é o assert que protege o produto)
+  // e K4/K4b são o canário do restore.
   'public.get_carteira_margem_faixa',
 ]);
 

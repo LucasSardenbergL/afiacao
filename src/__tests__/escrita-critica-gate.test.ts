@@ -93,7 +93,10 @@ const E1_DIVIDA: ReadonlyMap<string, number> = new Map([
   ['src/contexts/AuthContext.tsx', 2],
   ['src/hooks/useBundleArguments.ts', 1],
   ['src/hooks/useCopilotEngine.ts', 4],
-  ['src/hooks/useCrossSellEngine.ts', 1],
+  // useCrossSellEngine.ts QUITADO no FU4-F fase 3: o `.upsert` das recomendações passou a
+  // capturar `{ error }`. Era o sítio que a coluna nova `affinity_score` tornaria perigoso —
+  // publicar o front antes da migration 20260725121000 devolve 42703/PGRST204, e o `await` solto
+  // reportava sucesso sem ter gravado nada, com a lista calculada na tela.
   ['src/hooks/useCustomerContacts.ts', 1],
   ['src/hooks/useCustomerProcess.ts', 1],
   ['src/hooks/useDepartmentsAdmin.ts', 1],

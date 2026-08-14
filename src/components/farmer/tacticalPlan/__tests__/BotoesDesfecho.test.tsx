@@ -4,9 +4,15 @@ import { BotoesDesfecho, DESFECHOS, payloadDeUmToque, rotuloDoDesfecho } from '.
 
 const impMock = vi.fn(() => ({ isImpersonating: false }));
 vi.mock('@/contexts/ImpersonationContext', () => ({ useImpersonation: () => impMock() }));
+vi.mock('@/lib/analytics', () => ({ track: vi.fn() }));
+
+import { track } from '@/lib/analytics';
+
+const eventos = () => (track as ReturnType<typeof vi.fn>).mock.calls as [string, Record<string, unknown>][];
 
 beforeEach(() => {
   impMock.mockReturnValue({ isImpersonating: false });
+  vi.clearAllMocks();
 });
 
 function setup(onRecord = vi.fn(async () => {})) {
@@ -123,5 +129,57 @@ describe('BotoesDesfecho — interação', () => {
     }
     fireEvent.click(screen.getByRole('button', { name: 'Vendeu' }));
     expect(onRecord).not.toHaveBeenCalled();
+  });
+});
+
+describe('BotoesDesfecho — telemetria do clique', () => {
+  // O sensor previsto pela errata de #1716. Com 533 planos gerados e 0 desfechos, o clique é
+  // a metade que faltava: sem ele, "não abrem a tela" e "abrem, clicam e a RPC recusa" são o
+  // mesmo zero em `farmer_tactical_plans.call_result`.
+  it('[TELE-1T] cada um dos CINCO botões emite desfecho_clicado com o seu valor', () => {
+    for (const d of DESFECHOS) {
+      vi.clearAllMocks();
+      const { unmount } = render(<BotoesDesfecho planId="p1" onRecord={vi.fn(async () => {})} />);
+      fireEvent.click(screen.getByRole('button', { name: d.rotulo }));
+      expect(eventos()).toContainEqual([
+        'plano_tatico.desfecho_clicado',
+        { desfecho: d.valor, plano_id: 'p1', origem: 'um_toque' },
+      ]);
+      unmount();
+    }
+  });
+
+  it('[TELE-1T] o clique é emitido ANTES do await — falha de rede não some com a intenção', async () => {
+    // Se o evento saísse no `onSuccess`, o caso que mais interessa (clicou e a gravação
+    // morreu) não deixaria rastro nenhum — e é justamente ele que separa "não registram"
+    // de "tentaram registrar e o sistema recusou".
+    render(<BotoesDesfecho planId="p1" onRecord={vi.fn(async () => { throw new Error('rede'); })} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Vendeu' }));
+    // Síncrono de propósito: o evento tem de existir ANTES de a promise da gravação resolver.
+    expect(eventos().map(([e]) => e)).toContain('plano_tatico.desfecho_clicado');
+    // Deixa o `finally` reabilitar os botões dentro do act — senão o React avisa que houve
+    // update fora dele, e teste que polui a saída esconde o próximo aviso de verdade.
+    await waitFor(() => {
+      expect((screen.getByRole('button', { name: 'Vendeu' }) as HTMLButtonElement).disabled).toBe(false);
+    });
+  });
+
+  it('[TELE-1T] clique BARRADO pelo guard não vira evento — intenção ≠ tentativa', () => {
+    // Sob a lente e durante a gravação o clique é ignorado. Contá-lo inflaria o numerador
+    // com toques que nunca chegaram à RPC.
+    impMock.mockReturnValue({ isImpersonating: true });
+    render(<BotoesDesfecho planId="p1" onRecord={vi.fn(async () => {})} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Vendeu' }));
+    expect(eventos()).toHaveLength(0);
+  });
+
+  it('[TELE-1T] toque duplo emite UMA vez — 1× por desfecho, não por toque', async () => {
+    let liberar: () => void = () => {};
+    render(<BotoesDesfecho planId="p1" onRecord={vi.fn(() => new Promise<void>((r) => { liberar = r; }))} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Vendeu' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Vendeu' }));
+    expect(eventos().filter(([e]) => e === 'plano_tatico.desfecho_clicado')).toHaveLength(1);
+    liberar();
+    await waitFor(() => expect(eventos().filter(([e]) => e === 'plano_tatico.desfecho_clicado')).toHaveLength(1));
   });
 });

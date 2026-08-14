@@ -5,11 +5,20 @@
 -- falso-negativo sob a role read-only, que nao o tem. Todos os checks tem de vir `t`.
 -- Qualquer `f` = a migration nao aplicou como desenhada -> NAO faca o Publish do frontend.
 --
--- IMPRESSAO_DIGITAL=075209b91d13be52c58220f6ddc88521
+-- IMPRESSAO_DIGITAL=169677feb2e686d3e73ec31426c608b6
 --   md5 do corpo (prosrc) com whitespace colapsado. E o que amarra "o que foi COLADO" a "o que
 --   foi TESTADO": db/test-fu4f-fase3-carteira-margem-faixa.sh (assert L1) recalcula esta digital
 --   contra a migration real num PG17 e falha se as duas divergirem. Mexeu na migration sem
 --   regravar aqui -> vermelho no harness, nao na producao.
+--
+--   ⚠️ A digital cobre a CADEIA de migrations que recriam esta funcao, nao um arquivo so — e
+--   mudou em 2026-08-13 (era 075209b91d13be52c58220f6ddc88521, o corpo do #1543). A fase 3c
+--   (20260813234112_carteira_margem_faixa_motivo_gate_custo.sql) poe o campo `motivo` sob
+--   `private.cap_custo_ler`, e isso ALTERA o prosrc. Os dois harnesses aplicam a cadeia inteira
+--   e recalculam a digital: db/test-fu4f-fase3-carteira-margem-faixa.sh (L1) e
+--   db/test-carteira-margem-faixa-motivo-gate.sh (G1). Quem recriar a funcao de novo regrava
+--   aqui — senao este validador devolve `f` num banco CORRETO e para um deploy por falso alarme.
+--   (O #1728 nao aparece nesta lista de proposito: COMMENT nao toca `prosrc`.)
 
 SELECT
   -- ── existencia e forma ──────────────────────────────────────────────────────
@@ -48,7 +57,7 @@ SELECT
   (SELECT md5(regexp_replace(p.prosrc, '[[:space:]]+', ' ', 'g'))
      FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
      WHERE n.nspname = 'public' AND p.proname = 'get_carteira_margem_faixa')
-    = '075209b91d13be52c58220f6ddc88521'                                           AS c10_corpo_identico_ao_testado,
+    = '169677feb2e686d3e73ec31426c608b6'                                           AS c10_corpo_identico_ao_testado,
 
   -- ── a dependencia que faz o custo NAO sair do servidor ───────────────────────
   -- Sem o helper aplicado (#1519), a funcao criaria bem e so quebraria em RUNTIME (plpgsql e

@@ -36,6 +36,56 @@ interface SelecaoOpts {
   coberturaMinLucro?: number;
 }
 
+/** Cobertura mínima de `lucro_proxy` para o lucro entrar no índice. Fonte ÚNICA do limiar. */
+export const COBERTURA_MIN_LUCRO = 0.5;
+
+/**
+ * O lucro deste comprador é confiável o bastante para entrar no percentil?
+ *
+ * EXPORTADO de propósito: quem AVISA o operador de que o lucro saiu do índice precisa usar
+ * exatamente este predicado. Duplicar o limiar 0,5 no consumidor faria o aviso divergir do
+ * cálculo — a tela diria "com lucro" enquanto o índice já o tinha descartado.
+ *
+ * Fica falso por DOIS motivos que a linha não distingue: custo do produto ausente/não
+ * sincronizado, ou o leitor não ter `private.cap_custo_ler` (a partir do FU4-F fase 3 a
+ * `product_costs` só é legível com a capability, e o `LEFT JOIN` da view devolve NULL em vez
+ * de 403). Quem avisa deve nomear as duas causas — o dado sozinho não escolhe entre elas.
+ */
+export const lucroConfiavel = (
+  c: Pick<CompradorRow, 'lucro_proxy' | 'lucro_cobertura'>,
+  coberturaMin: number = COBERTURA_MIN_LUCRO,
+): boolean => c.lucro_proxy !== null && c.lucro_cobertura >= coberturaMin;
+
+/**
+ * Empresas em que NENHUM comprador tem lucro confiável — logo o termo de lucro (peso 0,4) saiu do
+ * índice para a empresa inteira e o ranking virou volume + fidelidade.
+ *
+ * POR EMPRESA, não global: `montarFilaCaca` roda `selecionarMelhores` uma vez por empresa-alvo,
+ * com percentis calculados dentro de cada uma. Oben pode ter custo sincronizado e Colacor não —
+ * um sinal global diria "tem lucro" e esconderia a empresa cega.
+ *
+ * Empresa sem comprador nenhum NÃO entra: ausência de linha é ausência de fila, não perda de
+ * sinal — avisar ali seria alarme sobre uma tela que já está vazia.
+ *
+ * Ordenado para a saída ser estável (o texto do aviso concatena os nomes).
+ */
+export function empresasSemLucroConfiavel(
+  compradores: Array<Pick<CompradorRow, 'empresa' | 'lucro_proxy' | 'lucro_cobertura'>>,
+  coberturaMin: number = COBERTURA_MIN_LUCRO,
+): string[] {
+  const porEmpresa = new Map<string, boolean>();
+  for (const c of compradores) {
+    porEmpresa.set(
+      c.empresa,
+      (porEmpresa.get(c.empresa) ?? false) || lucroConfiavel(c, coberturaMin),
+    );
+  }
+  return [...porEmpresa.entries()]
+    .filter(([, temLucro]) => !temLucro)
+    .map(([empresa]) => empresa)
+    .sort();
+}
+
 /**
  * Percentil de `v` dentro de `valores` (rank fracionário determinístico).
  *
@@ -70,7 +120,7 @@ export function selecionarMelhores(
   const pesoLucro = opts.pesoLucro ?? 0.4;
   const pesoVolume = opts.pesoVolume ?? 0.3;
   const pesoFidelidade = opts.pesoFidelidade ?? 0.3;
-  const coberturaMinLucro = opts.coberturaMinLucro ?? 0.5;
+  const coberturaMinLucro = opts.coberturaMinLucro ?? COBERTURA_MIN_LUCRO;
 
   // 1. Base = todos os compradores, mapeados 1:1.
   const base = compradores.map((c) => ({
@@ -91,11 +141,11 @@ export function selecionarMelhores(
   // o percentil cresça com a recência.
   const recenciaNeg = compradores.map((c) => -c.recencia_dias);
 
-  // Lucro confiável: só compradores com proxy presente E cobertura suficiente.
-  const lucroConfiavel = (c: CompradorRow): boolean =>
-    c.lucro_proxy !== null && c.lucro_cobertura >= coberturaMinLucro;
+  // Lucro confiável: só compradores com proxy presente E cobertura suficiente (predicado
+  // compartilhado com quem AVISA o operador — ver `lucroConfiavel` acima).
+  const confiavel = (c: CompradorRow): boolean => lucroConfiavel(c, coberturaMinLucro);
   const lucrosValidos = compradores
-    .filter(lucroConfiavel)
+    .filter(confiavel)
     .map((c) => c.lucro_proxy as number);
 
   const comIndice = compradores.map((c) => {
@@ -104,7 +154,7 @@ export function selecionarMelhores(
       (percentil(nPedidos, c.n_pedidos) + percentil(recenciaNeg, -c.recencia_dias)) / 2;
 
     // pctLucro só existe para quem tem lucro confiável; senão null.
-    const pctLucro = lucroConfiavel(c)
+    const pctLucro = confiavel(c)
       ? percentil(lucrosValidos, c.lucro_proxy as number)
       : null;
 
