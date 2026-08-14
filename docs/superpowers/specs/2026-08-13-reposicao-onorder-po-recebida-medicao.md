@@ -297,3 +297,38 @@ Registro porque muda código: quem implementar o parse do ledger a partir do M1 
 política para string onde o dado é número. O `parseQtd`/`parseRecebido` de `omie-sync-estoque` já
 trata os dois (string estrita **e** number), e o núcleo da sonda faz o mesmo — mas o comentário
 "Omie omite" ali descreve um caso que, no espelho de hoje, **não ocorre nenhuma vez**.
+
+## 9. A terceira hipótese para a etapa-15 — e o que a sonda da fatia 1 NÃO mede
+
+### 9.1 O `t4` do espelho pode ser inferência NOSSA
+
+A §6 põe duas explicações para as 244 POs recebidas em etapa 15 (workflow paralelo × associação
+nunca feita). Há uma **terceira**, levantada pelo Codex e sustentada pelo próprio código:
+`omie-sync-nfes-recebidas` monta o vínculo PO↔NF-e a partir de `itensRecebimento[].itensInfoAdic.
+nNumPedCompra` — uma referência **textual** que o fornecedor escreve no XML — e **não** dos ids
+nativos `nIdPedido`/`nIdItPedido` (ver `extractPedidosFromDetalhe`). O `t4` é gravado quando
+`cRecebido=S` e **nunca é limpo** se o recebimento for revertido.
+
+Se esse for o caso dominante, "PO recebida" é **inferência do espelho**, não estado do Omie — e a
+etapa-15 deixa de ser contradição alguma. Medido junto: **nenhuma tabela do espelho guarda
+`nIdPedido`/`nIdItPedido`** (`nfe_recebimentos`, `nfe_recebimento_itens`, `sku_leadtime_history`),
+então a ausência do vínculo nativo aqui **nunca provou** ausência dele no Omie — provou que
+ninguém foi buscar. Por isso a sonda classifica cada item numa taxonomia (`native_exact`,
+`native_other_po`, `native_sem_item`, `xml_hint_only`, `xml_hint_outra_po`, `product_only`,
+`unassociated`) em vez de perguntar "o campo existe?".
+
+### 9.2 Limites conhecidos da sonda — leia antes de interpretar o resultado
+
+- **`dangling` não é verificado.** Um `nIdPedido` que aponta para PO inexistente/inconsultável cai
+  em `native_other_po`. Separar os dois exigiria uma consulta extra por id.
+- **Sem varredura de paginação.** Os candidatos de movimento leem a primeira página. O relatório
+  traz o total de páginas/registros **declarado**, justamente para que "página 1 vazia" não seja
+  lido como "não há dado".
+- **O período parte do `t4`, não do `dRegistro`.** É o `dRegistro` que governa o lançamento de
+  estoque, mas ele só é conhecido **depois** da S2 — a janela é ±7 dias em torno do `t4` como
+  aproximação. Uma segunda rodada pode reapontar usando o `dRegistro` que a S2 devolver.
+- **A amostra é de contrato, não censo.** 3 notas distintas (dos dois extremos da consolidação),
+  não as 68. Serve para fixar a FORMA do dado; frequência exige varredura.
+- **Fault de parâmetro ≠ método inexistente.** A camada A (`param: {}`) só separa isso quando a
+  faultstring é específica. Faultstring genérica não discrimina, e o relatório mostra o texto cru
+  para que a leitura não seja automática.
