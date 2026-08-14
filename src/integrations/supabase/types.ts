@@ -9134,6 +9134,7 @@ export type Database = {
           num_skus: number
           omie_pedido_compra_id: string | null
           omie_pedido_compra_numero: string | null
+          omie_po_inexistente_antes_de: string | null
           omie_registrado_em: string | null
           origem_evento_id: number | null
           origem_evento_tipo: string | null
@@ -9183,6 +9184,7 @@ export type Database = {
           num_skus?: number
           omie_pedido_compra_id?: string | null
           omie_pedido_compra_numero?: string | null
+          omie_po_inexistente_antes_de?: string | null
           omie_registrado_em?: string | null
           origem_evento_id?: number | null
           origem_evento_tipo?: string | null
@@ -9232,6 +9234,7 @@ export type Database = {
           num_skus?: number
           omie_pedido_compra_id?: string | null
           omie_pedido_compra_numero?: string | null
+          omie_po_inexistente_antes_de?: string | null
           omie_registrado_em?: string | null
           origem_evento_id?: number | null
           origem_evento_tipo?: string | null
@@ -19685,6 +19688,7 @@ export type Database = {
           graduados: number
         }[]
       }
+      reposicao_marco_pre_omie: { Args: never; Returns: string }
       reposicao_param_auto_resumo_tick: { Args: never; Returns: undefined }
       reposicao_param_limbo_watchdog: { Args: never; Returns: undefined }
       reposicao_pedido_auto_aprovavel: {
@@ -19704,11 +19708,13 @@ export type Database = {
         Args: { p_empresa: string }
         Returns: {
           algum_sinal_de_canal: boolean
+          apurado_em: string
           canal_usado: string
           data_ciclo: string
           fornecedor_nome: string
           idade_dias: number
           itens_sem_valor: number
+          marcador_finalizado_em: string
           marcador_run_id: string
           marcador_seq: number
           na_janela_7d: boolean
@@ -19724,6 +19730,15 @@ export type Database = {
           tem_status_portal: boolean
           valor_total: number
           visto_status: string
+        }[]
+      }
+      reposicao_pos_marcador: {
+        Args: { p_empresa: string }
+        Returns: {
+          apurado_em: string
+          marcador_finalizado_em: string
+          marcador_run_id: string
+          marcador_seq: number
         }[]
       }
       reposicao_publicar_run_completo: {
