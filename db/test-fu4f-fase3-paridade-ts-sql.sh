@@ -283,6 +283,34 @@ for (let i = 0; i < a.personas.length; i++) {
   if (saiu !== entrou) console.log("      (assimetria saiu/entrou: " + saiu + "/" + entrou + ")");
 }
 '
+# ─── CENÁRIO D — o eixo ESCOPO: e se a tela do farmer listasse só a carteira dele? ────────────
+# É o eixo DOMINANTE do delta (472/379 clientes perdendo o sinal de margem), e ele não se
+# conserta mexendo em filtro de status. Aqui a TELA é alinhada à RPC. ⚠️ Isso muda a POPULAÇÃO
+# do cálculo, e a população é o denominador de `m` (p95 de spend) e da régua de `g` (p10/p90) —
+# ou seja, mexe em dimensões que a agenda LÊ. Diferente do cenário A, aqui a agenda pode mudar.
+echo "→ 9. CENARIO D — tela do farmer restrita a carteira (eixo ESCOPO)"
+( cd "$REPO_ROOT" && bun scripts/paridade-farmer-scoring.ts "$WORK" "$OUT/relatorio-escopo.json" pedidos.csv escopo-carteira ) > "$OUT/relatorio-escopo.txt" 2>&1 || {
+  echo "FAIL: cenario D abortou"; tail -20 "$OUT/relatorio-escopo.txt"; exit 1; }
+
+bun -e '
+const a = require("'"$OUT"'/relatorio.json"), d = require("'"$OUT"'/relatorio-escopo.json");
+for (let i = 0; i < a.personas.length; i++) {
+  const pa = a.personas[i], pd = d.personas.find(x => x.id === pa.id);
+  const setA = new Set(pa.agenda_lista.map(s => s.split(":")[1]));
+  const setD = new Set(pd.agenda_lista.map(s => s.split(":")[1]));
+  const trocou = [...setA].filter(c => !setD.has(c)).length;
+  const semMargemA = pa.clientes - pa.margem_nos_dois - pa.margem_so_no_sql;
+  const semMargemD = pd.clientes - pd.margem_nos_dois - pd.margem_so_no_sql;
+  console.log("   " + pd.rotulo + " " + pd.id.slice(0,8) + (pd.capTodo ? " [controle: cap_carteira_ler]" : ""));
+  console.log("      clientes na tela  " + pa.clientes + " → " + pd.clientes);
+  console.log("      muda de faixa     " + pa.mudou_faixa + " (" + pa.mudou_faixa_pct + "%) → " +
+              pd.mudou_faixa + " (" + pd.mudou_faixa_pct + "%)");
+  console.log("      muda de classe    " + pa.mudou_classe + " (" + pa.mudou_classe_pct + "%) → " +
+              pd.mudou_classe + " (" + pd.mudou_classe_pct + "%)");
+  console.log("      sem margem no SQL " + semMargemA + " → " + semMargemD);
+  console.log("      agenda troca      " + trocou + " de " + pa.agenda_lista.length + " slots");
+}
+'
 echo ""
-echo "✅ paridade TS×SQL medida + 3 falsificacoes com dente + cenario C quantificado"
-echo "   numeros: logs/paridade-fu4f/relatorio.json e relatorio-denylist.json"
+echo "✅ paridade TS×SQL medida + 3 falsificacoes com dente + cenarios C e D quantificados"
+echo "   numeros: logs/paridade-fu4f/relatorio{,-denylist,-escopo}.json"

@@ -97,6 +97,9 @@ const saida = process.argv[3];
 // universo amplo — é assim que se mede o CUSTO DE PRODUTO de alinhar o filtro do hook ao do
 // helper, em vez de chamá-lo de "correção óbvia" sem número.
 const arquivoPedidos = process.argv[4] || 'pedidos.csv';
+// 5º argumento `escopo-carteira`: liga o CENÁRIO D — a tela do farmer passa a listar só a
+// carteira dele, alinhando o universo da TELA ao da RPC (o eixo dominante do delta).
+const ESCOPO_CARTEIRA = process.argv[5] === 'escopo-carteira';
 if (!dir || !saida) {
   console.error('uso: bun scripts/paridade-farmer-scoring.ts <dir-do-corpus> <saida.json> [pedidos.csv]');
   process.exit(1);
@@ -226,17 +229,24 @@ const personas: { id: string; rotulo: string; capTodo: boolean }[] =
   JSON.parse(readFileSync(join(dir, 'personas.json'), 'utf8'));
 
 // ─── População (VERBATIM): p95 de spend e a régua p10/p90 da margem TS ────────────────────────
-const allMonthlySpends: number[] = [];
-customerMap.forEach((cd) => { allMonthlySpends.push(cd.spend180d / 6); });
-const p95MonthlySpend = percentile(allMonthlySpends, 95) || 1;
-
-const allMargins: number[] = [];
-customerMap.forEach((cd) => {
-  if (cd.totalRevenue > 0) allMargins.push((cd.totalRevenue - cd.totalCost) / cd.totalRevenue);
-});
-const p10Margin = percentile(allMargins, 10);
-const p90Margin = percentile(allMargins, 90);
-const marginRange = Math.max(p90Margin - p10Margin, 0.01);
+// Vira FUNÇÃO por causa do cenário D (escopo): restringir a tela à carteira muda QUEM está na
+// população, e a população é o denominador de `m` (via p95) e da régua de `g` (via p10/p90).
+// Calcular a régua sobre a base inteira e pontuar só a carteira misturaria dois universos —
+// o cliente seria medido contra uma população que a tela não mostra mais.
+interface Populacao { p95: number; p10: number; p90: number; range: number }
+function calcularPopulacao(mapa: Map<string, CustomerData>): Populacao {
+  const spends: number[] = [];
+  mapa.forEach((cd) => { spends.push(cd.spend180d / 6); });
+  const p95 = percentile(spends, 95) || 1;
+  const margens: number[] = [];
+  mapa.forEach((cd) => {
+    if (cd.totalRevenue > 0) margens.push((cd.totalRevenue - cd.totalCost) / cd.totalRevenue);
+  });
+  const p10 = percentile(margens, 10);
+  const p90 = percentile(margens, 90);
+  return { p95, p10, p90, range: Math.max(p90 - p10, 0.01) };
+}
+const popGlobal = calcularPopulacao(customerMap);
 
 // Faixa derivada da margem TS com a MESMA régua da RPC (pct em pontos percentuais).
 function faixaDe(pct: number | null): FaixaMargem {
@@ -277,9 +287,20 @@ function pontuar(persona: { id: string; capTodo: boolean }): Score[] {
   }
 
   const visiveis = carteiraDe.get(persona.id) ?? new Set<string>();
+
+  // ── CENÁRIO D (eixo ESCOPO): a tela passa a listar só a carteira do caller ────────────────
+  // Hoje o hook lê `sales_orders` company-wide e lista 835 clientes, dos quais só ~294/395 são
+  // da vendedora — é daí que vem o delta dominante. Aqui o universo da TELA é alinhado ao da
+  // RPC. Para quem tem `cap_carteira_ler` nada muda (a RPC já devolve tudo), o que faz do
+  // master o controle do cenário.
+  const mapaAlvo = ESCOPO_CARTEIRA && !persona.capTodo
+    ? new Map([...customerMap].filter(([cid]) => visiveis.has(cid)))
+    : customerMap;
+  const pop = ESCOPO_CARTEIRA ? calcularPopulacao(mapaAlvo) : popGlobal;
+
   const scores: Score[] = [];
 
-  customerMap.forEach((cd, cid) => {
+  mapaAlvo.forEach((cd, cid) => {
     const profile = profileMap.get(cid);
     if (!profile) return; // VERBATIM: cliente sem profile não é pontuado
 
@@ -297,7 +318,7 @@ function pontuar(persona: { id: string; capTodo: boolean }): Score[] {
     const rfRatio = Math.max((D / Math.max(I, 1)) - 1, 0);
     const rf = Math.exp(-cfg.k2 * rfRatio);
     const avgMonthly = cd.spend180d / 6;
-    const m = clamp(Math.log(1 + avgMonthly) / Math.log(1 + p95MonthlySpend), 0, 1);
+    const m = clamp(Math.log(1 + avgMonthly) / Math.log(1 + pop.p95), 0, 1);
     const x = clamp(cd.categories.size / cfg.cat_target, 0, 1);
 
     const ag = porCliente.get(cid);
@@ -308,7 +329,7 @@ function pontuar(persona: { id: string; capTodo: boolean }): Score[] {
     // ── margem: os DOIS lados ───────────────────────────────────────────────────────────────
     // TS (pré-#1543): fração calculada no browser; null quando NENHUM item tem custo conhecido.
     const clientMargin = cd.totalRevenue > 0 ? (cd.totalRevenue - cd.totalCost) / cd.totalRevenue : null;
-    const gTS = clientMargin == null ? null : clamp((clientMargin - p10Margin) / marginRange, 0, 1);
+    const gTS = clientMargin == null ? null : clamp((clientMargin - pop.p10) / pop.range, 0, 1);
     const pctTS = clientMargin == null ? null : Math.round(clientMargin * 1000) / 10;
 
     // SQL (pós-#1543): só chega o que o ESCOPO da RPC devolve. Fora do escopo → ausente do mapa
@@ -327,7 +348,7 @@ function pontuar(persona: { id: string; capTodo: boolean }): Score[] {
     // Dimensões de PRIORIDADE — idênticas nos dois lados (nenhuma depende de `g`).
     const churnRisk = 100 * (1 - Math.exp(-cfg.k1 * rfRatio));
     const delayedMonths = Math.max(0, (D - I) / 30);
-    const recoverScore = clamp(delayedMonths * avgMonthly / Math.max(p95MonthlySpend * 6, 1) * 100, 0, 100);
+    const recoverScore = clamp(delayedMonths * avgMonthly / Math.max(pop.p95 * 6, 1) * 100, 0, 100);
     const mixGap = 1 - (cd.categories.size / Math.max(cfg.cat_target, 1));
     const expansionScore = clamp((mixGap * 0.6 + m * 0.4) * 100, 0, 100);
     const daysSinceContact = ag && ag.last > 0 ? Math.floor((AGORA - ag.last) / (1000 * 60 * 60 * 24)) : 999;
@@ -398,7 +419,8 @@ const relatorio: Record<string, unknown> = {
     pedidos: csv(dir, arquivoPedidos).length,
     clientes_pontuados: 0,
     clientes_no_sql: sqlPorCliente.size,
-    p10Margin, p90Margin, marginRange, p95MonthlySpend,
+    escopo_carteira: ESCOPO_CARTEIRA,
+    p10Margin: popGlobal.p10, p90Margin: popGlobal.p90, marginRange: popGlobal.range, p95MonthlySpend: popGlobal.p95,
     piso_faixa_pct: PISO,
   },
   personas: [],

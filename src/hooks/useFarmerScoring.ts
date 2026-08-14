@@ -226,6 +226,11 @@ export const useFarmerScoring = (farmerId?: string) => {
       //     REMOVE (472 e 379 perdem). Alinhar a allowlist daqui fecha o primeiro (delta do master
       //     vai a 1 cliente) e não toca o segundo — mas troca 9 dos 20 slots da agenda: é decisão
       //     de PRODUTO, do founder, não higiene de filtro.
+      //   • O eixo ESCOPO também foi medido (cenário D): restringir ESTA lista à carteira do
+      //     caller leva a tela de 835 para 294/395 clientes e derruba o delta de faixa a 8,5%/6,6%
+      //     — o patamar do master, ou seja, sobra só o universo. Custa 11–12 dos 20 slots, MAIS
+      //     que alinhar a allowlist, porque muda a POPULAÇÃO e com ela o p95 que normaliza `m`
+      //     (e portanto recover/priority, que a agenda lê). Também decisão de produto.
       //
       // `margem_pct` só vem preenchido para quem tem `cap_custo_ler`; para os demais é null e a
       // UI mostra a FAIXA no lugar do número. O gate é de PROJEÇÃO, no corpo da RPC.
