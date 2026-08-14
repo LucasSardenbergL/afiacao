@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 466
+-- Total de custom migrations: 467
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -507,7 +507,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260813150000', 'farmer_config_limiar_faixa_escrita_custo', '20260813150000_farmer_config_limiar_faixa_escrita_custo.sql'),
   ('20260813195914', 'reposicao_pos_candidatos_guard_temporal', '20260813195914_reposicao_pos_candidatos_guard_temporal.sql'),
   ('20260813225057', 'fu4f_fase3_comment_honesto_margem_faixa', '20260813225057_fu4f_fase3_comment_honesto_margem_faixa.sql'),
-  ('20260813234112', 'carteira_margem_faixa_motivo_gate_custo', '20260813234112_carteira_margem_faixa_motivo_gate_custo.sql')
+  ('20260813234112', 'carteira_margem_faixa_motivo_gate_custo', '20260813234112_carteira_margem_faixa_motivo_gate_custo.sql'),
+  ('20260814022626', 'reposicao_po_inexistente_antes_de', '20260814022626_reposicao_po_inexistente_antes_de.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2084,7 +2085,10 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('farmer_config_limiar_faixa_escrita_custo', 'rls_policy', 'public', 'limiar_faixa_margem_update_exige_cap_custo', 'farmer_algorithm_config'),
   ('farmer_config_limiar_faixa_escrita_custo', 'rls_policy', 'public', 'limiar_faixa_margem_delete_exige_cap_custo', 'farmer_algorithm_config'),
   ('reposicao_pos_candidatos_guard_temporal', 'function', 'public', 'reposicao_pos_candidatos', ''),
-  ('carteira_margem_faixa_motivo_gate_custo', 'function', 'public', 'get_carteira_margem_faixa', '')
+  ('carteira_margem_faixa_motivo_gate_custo', 'function', 'public', 'get_carteira_margem_faixa', ''),
+  ('reposicao_po_inexistente_antes_de', 'function', 'public', 'reposicao_marco_pre_omie', ''),
+  ('reposicao_po_inexistente_antes_de', 'function', 'public', 'reposicao__po_inexistente_antes_guard', ''),
+  ('reposicao_po_inexistente_antes_de', 'trigger', 'public', 'trg_po_inexistente_antes_de_guard', 'pedido_compra_sugerido')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -3709,7 +3713,10 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('farmer_config_limiar_faixa_escrita_custo', 'rls_policy', 'public', 'limiar_faixa_margem_update_exige_cap_custo', 'farmer_algorithm_config'),
   ('farmer_config_limiar_faixa_escrita_custo', 'rls_policy', 'public', 'limiar_faixa_margem_delete_exige_cap_custo', 'farmer_algorithm_config'),
   ('reposicao_pos_candidatos_guard_temporal', 'function', 'public', 'reposicao_pos_candidatos', ''),
-  ('carteira_margem_faixa_motivo_gate_custo', 'function', 'public', 'get_carteira_margem_faixa', '')
+  ('carteira_margem_faixa_motivo_gate_custo', 'function', 'public', 'get_carteira_margem_faixa', ''),
+  ('reposicao_po_inexistente_antes_de', 'function', 'public', 'reposicao_marco_pre_omie', ''),
+  ('reposicao_po_inexistente_antes_de', 'function', 'public', 'reposicao__po_inexistente_antes_guard', ''),
+  ('reposicao_po_inexistente_antes_de', 'trigger', 'public', 'trg_po_inexistente_antes_de_guard', 'pedido_compra_sugerido')
 )
 SELECT
   e.migration,
