@@ -65,11 +65,16 @@ echo "═══ setup pronto (PG17 :$PORT) ═══"
 P -q <<'SQL'
 CREATE SCHEMA IF NOT EXISTS private;
 
+-- ⚠️ Os NOT NULL abaixo são o schema REAL de prod (information_schema, 2026-08-14), não enfeite:
+-- a v1 da migration de colunas passou VERDE aqui e ABORTOU em produção com 23502, porque o stub
+-- não os tinha e o assert que ESCREVE nunca encontrou a constraint. Um stub só prova a lógica até
+-- onde ele espelha o schema — para assert que INSERE/ATUALIZA, o que falta no stub é justamente o
+-- que morde no apply. Ao stubar tabela para provar escrita, copie as constraints, não só as colunas.
 CREATE TABLE IF NOT EXISTS public.farmer_recommendations (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  farmer_id uuid,
-  customer_user_id uuid,
-  recommendation_type text,
+  farmer_id uuid NOT NULL,
+  customer_user_id uuid NOT NULL,
+  recommendation_type text NOT NULL,
   product_id uuid,
   current_product_id uuid,
   p_ij numeric,
@@ -83,8 +88,8 @@ CREATE TABLE IF NOT EXISTS public.farmer_recommendations (
 
 CREATE TABLE IF NOT EXISTS public.farmer_bundle_recommendations (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  farmer_id uuid,
-  customer_user_id uuid,
+  farmer_id uuid NOT NULL,
+  customer_user_id uuid NOT NULL,
   bundle_products jsonb NOT NULL,
   support numeric,
   confidence numeric,
@@ -134,7 +139,7 @@ eq "B5 m_bundle preenchido antes" "$B5" "1"
 # ══════════════════════════════════════════════════════════════════════════════
 # ZONA 2 — APLICAR A MIGRATION REAL (Lei #1)
 # ══════════════════════════════════════════════════════════════════════════════
-MIG121="$REPO_ROOT/supabase/migrations/20260725121000_authz_custo_fu4f_fase3_afinidade_colunas.sql"
+MIG121="$REPO_ROOT/supabase/migrations/20260725121500_authz_custo_fu4f_fase3_afinidade_colunas_v2.sql"
 MIG="$REPO_ROOT/supabase/migrations/20260725125000_authz_custo_fu4f_fase3_scrub_recomendacoes.sql"
 MIG126="$REPO_ROOT/supabase/migrations/20260725126000_authz_custo_fu4f_fase3_trigger_nulifica_lie.sql"
 
@@ -213,14 +218,14 @@ echo "── T: guarda anti-recontaminação (trigger plpgsql — LATE-BOUND, s�
 # regravaria custo em linhas FRESCAS — pior que o dado velho.
 # CTE p/ o comando EXTERNO ser um SELECT: `INSERT ... RETURNING` no psql -tA devolve o valor
 # E a command tag ("INSERT 0 1") na linha seguinte, o que quebrava a comparação exata.
-T1=$(Pq -c "WITH ins AS (INSERT INTO public.farmer_recommendations (farmer_id, p_ij, m_ij, status) VALUES ('11111111-1111-1111-1111-111111111111', 9.4, 99.99, 'pendente') RETURNING m_ij) SELECT coalesce(m_ij::text,'NULL') FROM ins;")
+T1=$(Pq -c "WITH ins AS (INSERT INTO public.farmer_recommendations (farmer_id, customer_user_id, recommendation_type, p_ij, m_ij, status) VALUES ('11111111-1111-1111-1111-111111111111', '99999999-9999-9999-9999-999999999999', 'cross_sell', 9.4, 99.99, 'pendente') RETURNING m_ij) SELECT coalesce(m_ij::text,'NULL') FROM ins;")
 eq "T1 INSERT com m_ij=99.99 → gravou NULL" "$T1" "NULL"
 
 P -q -c "UPDATE public.farmer_recommendations SET m_ij = 77.77 WHERE status = 'ofertado';"
 T2=$(Pq -c "SELECT coalesce(m_ij::text,'NULL') FROM public.farmer_recommendations WHERE status = 'ofertado';")
 eq "T2 UPDATE tentando m_ij=77.77 → NULL" "$T2" "NULL"
 
-T3=$(Pq -c "WITH ins AS (INSERT INTO public.farmer_bundle_recommendations (farmer_id, bundle_products, m_bundle, status) VALUES ('11111111-1111-1111-1111-111111111111', '[{\"id\":\"ccc\",\"name\":\"C\",\"price\":50,\"cost\":30,\"margin\":20}]'::jsonb, 500, 'pendente') RETURNING bundle_products) SELECT (bundle_products->0) ? 'cost' FROM ins;")
+T3=$(Pq -c "WITH ins AS (INSERT INTO public.farmer_bundle_recommendations (farmer_id, customer_user_id, bundle_products, m_bundle, status) VALUES ('11111111-1111-1111-1111-111111111111', '99999999-9999-9999-9999-999999999999', '[{\"id\":\"ccc\",\"name\":\"C\",\"price\":50,\"cost\":30,\"margin\":20}]'::jsonb, 500, 'pendente') RETURNING bundle_products) SELECT (bundle_products->0) ? 'cost' FROM ins;")
 eq "T3 INSERT com cost no jsonb → chave removida" "$T3" "f"
 T3b=$(Pq -c "SELECT coalesce(m_bundle::text,'NULL') FROM public.farmer_bundle_recommendations WHERE (bundle_products->0->>'id') = 'ccc';")
 eq "T3b m_bundle do INSERT novo → NULL" "$T3b" "NULL"
@@ -235,7 +240,7 @@ eq "T3c price preservado no INSERT (trigger cirúrgico, não destrutivo)" "$T3c"
 # (20260725121000) é o que permite fechá-lo. Falsificados em S3 (preserva o lie) e S5 (mata a
 # afinidade): as duas metades erram em direções opostas e precisam de sabotagem cada uma.
 UUID_T='44444444-4444-4444-4444-444444444444'
-P -q -c "INSERT INTO public.farmer_recommendations (farmer_id, customer_user_id, p_ij, lie, affinity_score, complexity_factor, status) VALUES ('11111111-1111-1111-1111-111111111111', '$UUID_T', 9.4, 12.62, 0.0094, 1.0, 'pendente');"
+P -q -c "INSERT INTO public.farmer_recommendations (farmer_id, customer_user_id, recommendation_type, p_ij, lie, affinity_score, complexity_factor, status) VALUES ('11111111-1111-1111-1111-111111111111', '$UUID_T', 'cross_sell', 9.4, 12.62, 0.0094, 1.0, 'pendente');"
 T4=$(Pq -c "SELECT coalesce(lie::text,'NULL') FROM public.farmer_recommendations WHERE customer_user_id = '$UUID_T';")
 eq "T4 lie MONETÁRIO (12.62) nulificado pelo trigger — a aba antiga não recontamina" "$T4" "NULL"
 T5=$(Pq -c "SELECT coalesce(affinity_score::text,'NULL') FROM public.farmer_recommendations WHERE customer_user_id = '$UUID_T';")
@@ -259,7 +264,7 @@ CREATE OR REPLACE FUNCTION private.frec_sem_margem() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public', pg_temp
 AS $fn$ BEGIN RETURN NEW; END $fn$;
 SQL
-S1=$(Pq -c "WITH ins AS (INSERT INTO public.farmer_recommendations (farmer_id, p_ij, m_ij, status) VALUES ('11111111-1111-1111-1111-111111111111', 1, 42.42, 'pendente') RETURNING m_ij) SELECT coalesce(m_ij::text,'NULL') FROM ins;")
+S1=$(Pq -c "WITH ins AS (INSERT INTO public.farmer_recommendations (farmer_id, customer_user_id, recommendation_type, p_ij, m_ij, status) VALUES ('11111111-1111-1111-1111-111111111111', '99999999-9999-9999-9999-999999999999', 'cross_sell', 1, 42.42, 'pendente') RETURNING m_ij) SELECT coalesce(m_ij::text,'NULL') FROM ins;")
 ne "S1 sabotagem do trigger m_ij faz T1 MORDER" "$S1" "NULL"
 P -q -f "$MIG126" >/dev/null   # restaura a versão verdadeira (a 126000 recria as DUAS funções)
 
@@ -267,7 +272,7 @@ P -q -f "$MIG126" >/dev/null   # restaura a versão verdadeira (a 126000 recria 
 # O INSERT vai POR BAIXO do trigger (DISABLE): com a guarda viva o `lie` já nasceria NULL e a
 # sabotagem mediria a guarda, não o scrub — ficaria verde por acidente e "provaria" o nada.
 P -q -c "ALTER TABLE public.farmer_recommendations DISABLE TRIGGER trg_frec_sem_margem;"
-P -q -c "INSERT INTO public.farmer_recommendations (farmer_id, p_ij, lie, complexity_factor, status) VALUES ('11111111-1111-1111-1111-111111111111', 9.4, 12.62, 1.0, 'pendente');"
+P -q -c "INSERT INTO public.farmer_recommendations (farmer_id, customer_user_id, recommendation_type, p_ij, lie, complexity_factor, status) VALUES ('11111111-1111-1111-1111-111111111111', '99999999-9999-9999-9999-999999999999', 'cross_sell', 9.4, 12.62, 1.0, 'pendente');"
 P -q -c "UPDATE public.farmer_recommendations SET m_ij = NULL WHERE m_ij IS NOT NULL;"  -- scrub PARCIAL
 S2=$(Pq -c "SELECT count(*) FROM public.farmer_recommendations WHERE lie IS NOT NULL;")
 ne "S2 scrub só-de-m_ij deixa lie vivo → A2 MORDE (lie inverte sozinho)" "$S2" "0"
@@ -283,7 +288,7 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public', pg_temp
 AS $fn$ BEGIN NEW.m_ij := NULL; RETURN NEW; END $fn$;
 SQL
 P -q -c "DELETE FROM public.farmer_recommendations WHERE customer_user_id = '$UUID_T';"
-P -q -c "INSERT INTO public.farmer_recommendations (farmer_id, customer_user_id, p_ij, lie, affinity_score, complexity_factor, status) VALUES ('11111111-1111-1111-1111-111111111111', '$UUID_T', 9.4, 12.62, 0.0094, 1.0, 'pendente');"
+P -q -c "INSERT INTO public.farmer_recommendations (farmer_id, customer_user_id, recommendation_type, p_ij, lie, affinity_score, complexity_factor, status) VALUES ('11111111-1111-1111-1111-111111111111', '$UUID_T', 'cross_sell', 9.4, 12.62, 0.0094, 1.0, 'pendente');"
 S3=$(Pq -c "SELECT coalesce(lie::text,'NULL') FROM public.farmer_recommendations WHERE customer_user_id = '$UUID_T';")
 ne "S3 trigger que PRESERVA o lie monetário → T4 MORDE" "$S3" "NULL"
 P -q -f "$MIG126" >/dev/null   # restaura
@@ -296,7 +301,7 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public', pg_temp
 AS $fn$ BEGIN NEW.m_ij := NULL; NEW.lie := NULL; NEW.affinity_score := NULL; RETURN NEW; END $fn$;
 SQL
 P -q -c "DELETE FROM public.farmer_recommendations WHERE customer_user_id = '$UUID_T';"
-P -q -c "INSERT INTO public.farmer_recommendations (farmer_id, customer_user_id, p_ij, lie, affinity_score, complexity_factor, status) VALUES ('11111111-1111-1111-1111-111111111111', '$UUID_T', 9.4, 12.62, 0.0094, 1.0, 'pendente');"
+P -q -c "INSERT INTO public.farmer_recommendations (farmer_id, customer_user_id, recommendation_type, p_ij, lie, affinity_score, complexity_factor, status) VALUES ('11111111-1111-1111-1111-111111111111', '$UUID_T', 'cross_sell', 9.4, 12.62, 0.0094, 1.0, 'pendente');"
 S5=$(Pq -c "SELECT coalesce(affinity_score::text,'NULL') FROM public.farmer_recommendations WHERE customer_user_id = '$UUID_T';")
 eq "S5 trigger que mata a afinidade → T5 MORDE (ranking morto é falha, não segurança)" "$S5" "NULL"
 P -q -f "$MIG126" >/dev/null   # restaura a FUNÇÃO
@@ -304,10 +309,10 @@ P -q -f "$MIG126" >/dev/null   # restaura a FUNÇÃO
 # re-insert, R4 mediria a linha mutilada e acusaria a cadeia verdadeira de matar a afinidade —
 # falso VERMELHO com aparência de achado (o harness já pegou isso uma vez, aqui mesmo).
 P -q -c "DELETE FROM public.farmer_recommendations WHERE customer_user_id = '$UUID_T';"
-P -q -c "INSERT INTO public.farmer_recommendations (farmer_id, customer_user_id, p_ij, lie, affinity_score, complexity_factor, status) VALUES ('11111111-1111-1111-1111-111111111111', '$UUID_T', 9.4, 12.62, 0.0094, 1.0, 'pendente');"
+P -q -c "INSERT INTO public.farmer_recommendations (farmer_id, customer_user_id, recommendation_type, p_ij, lie, affinity_score, complexity_factor, status) VALUES ('11111111-1111-1111-1111-111111111111', '$UUID_T', 'cross_sell', 9.4, 12.62, 0.0094, 1.0, 'pendente');"
 
 # S4 — scrub que não limpa o jsonb → A5 morde
-P -q -c "INSERT INTO public.farmer_bundle_recommendations (farmer_id, bundle_products, status) VALUES ('11111111-1111-1111-1111-111111111111', '[{\"id\":\"zzz\",\"name\":\"Z\",\"price\":10}]'::jsonb, 'pendente');"
+P -q -c "INSERT INTO public.farmer_bundle_recommendations (farmer_id, customer_user_id, bundle_products, status) VALUES ('11111111-1111-1111-1111-111111111111', '99999999-9999-9999-9999-999999999999', '[{\"id\":\"zzz\",\"name\":\"Z\",\"price\":10}]'::jsonb, 'pendente');"
 # injeta o custo por baixo do trigger (o trigger é BEFORE; aqui simulamos o dado legado já gravado)
 P -q -c "ALTER TABLE public.farmer_bundle_recommendations DISABLE TRIGGER trg_fbrec_sem_margem;"
 P -q -c "UPDATE public.farmer_bundle_recommendations SET bundle_products = '[{\"id\":\"zzz\",\"name\":\"Z\",\"price\":10,\"cost\":6}]'::jsonb WHERE (bundle_products->0->>'id') = 'zzz';"
