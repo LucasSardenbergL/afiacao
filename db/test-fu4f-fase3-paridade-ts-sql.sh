@@ -184,9 +184,14 @@ for marca in \
   "const riscoSlots = Math.round(totalSlots * cfg.agenda_pct_risco);" ; do
   command grep -qF "$marca" "$SCRIPT" || { echo "   FAIL: o SCRIPT nao contem mais <$marca>"; falha_ts=1; }
 done
-# a allowlist do hook é o universo do lado TS — se ela mudar, o corpus deste harness ficou velho
-command grep -qF "'confirmado', 'faturado', 'entregue'" "$HOOK" || {
-  echo "   FAIL: a allowlist de status do hook MUDOU — o corpus deste harness nao representa mais o hook"; falha_ts=1; }
+# ⚠️ O hook FECHOU os dois eixos (2026-08-14): universo por DENYLIST + tela recortada pela
+# carteira. Logo `pedidos.csv` (allowlist) representa o hook HISTÓRICO, pré-#1543/#1730 — é o
+# baseline que este harness compara, e é assim de propósito: o valor dele é medir o que MUDOU.
+# O universo do hook ATUAL é `pedidos-denylist.csv` (cenário E, passo 10).
+command grep -qF "STATUS_NAO_VENDA_POSTGREST" "$HOOK" || {
+  echo "   FAIL: o hook nao usa mais a denylist compartilhada — o cenario E nao representa o hook"; falha_ts=1; }
+command grep -qE "\.in\(\s*'status'" "$HOOK" && {
+  echo "   FAIL: o hook VOLTOU a filtrar status por allowlist"; falha_ts=1; }
 [ "$falha_ts" -eq 0 ] || { echo "FAIL: copias verbatim divergiram do hook"; exit 1; }
 echo "   ✓ copias verbatim casam com o hook"
 
