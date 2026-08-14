@@ -127,17 +127,30 @@ eq "B5 o corpo (prosrc) NÃO mudou — a digital do #1543 segue válida" \
    "$DIGITAL_ANTES"
 
 echo "-- C. a validação pós-apply do #1543 continua verde --"
+# ⚠️ A fase 3c (20260813234112) entra AQUI, e a posição é o ponto: depois do B5 — que prova que
+# `COMMENT` não toca `prosrc`, e por isso tem de rodar com o corpo ainda intocado — e antes do C1,
+# que roda o validador compartilhado. A 3c põe `motivo` sob cap_custo_ler e MUDA o corpo, então a
+# impressão digital em db/valida-*.sql passou a ser a da CADEIA (169677fe…, era 075209b9…). Sem
+# esta linha o validador acusaria `f` no c10 — vermelho por defasagem de estado, não por defeito
+# desta migration, e a leitura natural desse vermelho mandaria a próxima pessoa para o lado errado.
+P -q -f "$REPO_ROOT/supabase/migrations/20260813234112_carteira_margem_faixa_motivo_gate_custo.sql"
 VAL="$(Pq -q -f "$REPO_ROOT/db/valida-fu4f-fase3-carteira-margem-faixa.sql")"
 eq "C1 os 11 checks do #1543 seguem 't' depois desta migration" \
    "$(printf '%s' "$VAL" | tr '|' '\n' | sort -u | tr -d '\n')" "t"
 
 echo "-- D. idempotência --"
+# ⚠️ O baseline do D2 é capturado AQUI, e não é mais o `$DIGITAL_ANTES` do topo. A propriedade que
+# este assert prova é "re-aplicar o COMMENT não mexe no corpo" — ela vale contra o corpo VIGENTE,
+# qualquer que ele seja. Prendê-la à digital do #1543 fazia o assert medir, de quebra, "o corpo
+# nunca mudou desde o #1543", que a fase 3c revoga de propósito: o vermelho apareceria aqui, longe
+# da causa, dizendo "COMMENT mexeu no corpo" — uma acusação FALSA contra a migration errada.
+DIGITAL_VIGENTE="$(Pq -q -c "SELECT md5(regexp_replace(prosrc,'[[:space:]]+',' ','g')) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname='get_carteira_margem_faixa';")"
 P -q -f "$MIG_COM"
 eq "D1 re-aplicar mantém o comentário novo" \
    "$(Pq -q -c "SELECT (obj_description('public.get_carteira_margem_faixa()'::regprocedure) LIKE '%health score MUDA%')::text;")" "true"
 eq "D2 re-aplicar não mexe no corpo" \
    "$(Pq -q -c "SELECT md5(regexp_replace(prosrc,'[[:space:]]+',' ','g')) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname='get_carteira_margem_faixa';")" \
-   "$DIGITAL_ANTES"
+   "$DIGITAL_VIGENTE"
 
 echo "-- E. FALSIFICAÇÃO --"
 # Sem isto, B2/B3/B4 seriam decorativos: um arquivo que não aplicasse NADA deixaria o comentário

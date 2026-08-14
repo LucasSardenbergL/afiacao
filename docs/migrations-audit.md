@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **460** custom migrations totais
-- **1576** objetos esperados (criados por estas migrations)
+- **461** custom migrations totais
+- **1577** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 469
+  - `function`: 470
   - `rls_policy`: 395
   - `index`: 238
   - `cron_job`: 164
@@ -3857,6 +3857,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20260813225057_fu4f_fase3_comment_honesto_margem_faixa.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260813234112_carteira_margem_faixa_motivo_gate_custo.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.get_carteira_margem_faixa` | — |
 
 ## Próximos passos por status
 
