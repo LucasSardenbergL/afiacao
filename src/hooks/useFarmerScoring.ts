@@ -4,6 +4,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useCommercialRole } from '@/hooks/useCommercialRole';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { filtrarPorCarteira } from '@/lib/scoring/escopoCarteira';
+import { STATUS_NAO_VENDA_POSTGREST } from '@/lib/scoring/universoPedidos';
 import type { Tables } from '@/integrations/supabase/types';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
 import { fetchAllPages } from '@/lib/postgrest';
@@ -159,14 +160,19 @@ export const useFarmerScoring = (farmerId?: string) => {
     setCalculating(true);
 
     try {
-      // 1. Load all customers with sales orders (paginado: 19.978 pedidos nos 3 status).
+      // 1. Load all customers with sales orders (paginado: 30.834 pedidos na denylist).
       // Sem paginar, TODO o scoring — recência, frequência, spend, margem, mix — enxergava
       // só as primeiras 1.000 linhas, ~5% do histórico. Cross-sell e bundle já paginavam.
       const salesOrders = await fetchAllPages<SalesOrderRow>((de, ate) =>
         supabase
           .from('sales_orders')
           .select('id, customer_user_id, items, total, created_at, order_date_kpi, status')
-          .in('status', ['confirmado', 'faturado', 'entregue'])
+          // DENYLIST + `deleted_at IS NULL`: o MESMO universo de `private.margem_cliente_agregada()`.
+          // A allowlist anterior citava dois status inexistentes (`confirmado`/`entregue`, zero
+          // linhas), resolvia para só `faturado` e escondia 10.236 pedidos reais — a margem vinha
+          // de um universo e o resto do score de outro.
+          .not('status', 'in', STATUS_NAO_VENDA_POSTGREST)
+          .is('deleted_at', null)
           .order('id', { ascending: true })
           .range(de, ate) as unknown as PromiseLike<{ data: SalesOrderRow[] | null; error: unknown }>,
         'sales_orders/scoring',
@@ -274,9 +280,15 @@ export const useFarmerScoring = (farmerId?: string) => {
       //     de 562/464 para 21/24. Custou 11–12 dos 20 slots da agenda, MAIS que alinhar a
       //     allowlist, porque muda a POPULAÇÃO e com ela o p95 que normaliza `m` (e portanto
       //     recover/priority, que a agenda lê).
-      //   • O eixo UNIVERSO (a allowlist logo acima) segue ABERTO — de propósito. Fechá-lo troca
-      //     outros 9 slots e é decisão separada; o chip "Corrigir filtro de status do scoring do
-      //     farmer" continua valendo.
+      //   • O eixo UNIVERSO ✅ FECHADO em 2026-08-14 (decisão do founder): a query acima passou
+      //     de allowlist para a DENYLIST compartilhada (`STATUS_NAO_VENDA_POSTGREST`) + deleted_at.
+      //     Com os DOIS eixos fechados a paridade TS×SQL some — delta de faixa 8,5%/6,6% → 0,2%/0%
+      //     (master 0,1%) —, a tela vai de 294/395 para 431/526 clientes e a agenda troca 15 e 10
+      //     dos 20 slots (medido no cenário E; mais que os 9 do cenário C isolado, porque agora o
+      //     universo maior incide sobre a CARTEIRA e não sobre a base inteira).
+      //     ⚠️ "Sem custo conhecido" SOBE em absoluto (21→51, 24→44): os clientes que entram só
+      //     tinham pedido em `importado`/`separacao`/`enviado` e nem todos têm custo apurado. É
+      //     ganho de cobertura com uma cauda honesta de desconhecido, não regressão do sinal.
       //
       // `margem_pct` só vem preenchido para quem tem `cap_custo_ler`; para os demais é null e a
       // UI mostra a FAIXA no lugar do número. O gate é de PROJEÇÃO, no corpo da RPC.
