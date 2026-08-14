@@ -453,7 +453,9 @@ const SERVICOS: Readonly<Record<string, string>> = {
   estoque_local: "https://app.omie.com.br/api/v1/estoque/local/",
 };
 
-export type Servico = keyof typeof SERVICOS;
+// Sem `export type Servico = keyof typeof SERVICOS`: o serviço chega como string do corpo da
+// requisição e é validado em RUNTIME por `urlDoServico`. Um tipo estático aqui daria falsa
+// segurança sobre um valor que o compilador nunca vê — e o knip acusaria o export morto.
 
 export function servicosConhecidos(): string[] {
   return Object.keys(SERVICOS).sort();
