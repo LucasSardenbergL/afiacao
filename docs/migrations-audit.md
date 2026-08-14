@@ -21,11 +21,11 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **458** custom migrations totais
-- **1573** objetos esperados (criados por estas migrations)
+- **459** custom migrations totais
+- **1576** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 469
-  - `rls_policy`: 392
+  - `rls_policy`: 395
   - `index`: 238
   - `cron_job`: 164
   - `table`: 153
@@ -3839,6 +3839,14 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.criar_plano_tatico` | — |
+
+### `20260813150000_farmer_config_limiar_faixa_escrita_custo.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `rls_policy` | `public.limiar_faixa_margem_insert_exige_cap_custo` | `farmer_algorithm_config` |
+| `rls_policy` | `public.limiar_faixa_margem_update_exige_cap_custo` | `farmer_algorithm_config` |
+| `rls_policy` | `public.limiar_faixa_margem_delete_exige_cap_custo` | `farmer_algorithm_config` |
 
 ### `20260813195914_reposicao_pos_candidatos_guard_temporal.sql`
 
