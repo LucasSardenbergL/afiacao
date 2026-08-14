@@ -88,6 +88,11 @@ SQL
 P -q -f "$REPO_ROOT/supabase/migrations/20260726150000_margem_cliente_helper_compartilhado.sql"
 P -q -f "$REPO_ROOT/supabase/migrations/20260726160000_margem_reconciliacao_universo_unico.sql"
 P -q -f "$REPO_ROOT/supabase/migrations/20260726170000_fu4f_fase3_carteira_margem_faixa.sql"
+# Fase 3c (2026-08-13): poe `motivo` sob cap_custo_ler e portanto RECRIA a funcao. Entra aqui
+# porque o assert L1 compara a digital documentada com o corpo APLICADO — sem esta linha o
+# harness mediria o corpo do #1543 contra a digital da cadeia e ficaria vermelho por defasagem,
+# nao por defeito. O gate do `motivo` em si e provado em db/test-carteira-margem-faixa-motivo-gate.sh.
+P -q -f "$REPO_ROOT/supabase/migrations/20260813234112_carteira_margem_faixa_motivo_gate_custo.sql"
 
 # ── seed: 5 clientes com margens espalhadas, em 2 carteiras ──────────────────
 P -q <<'SQL'
@@ -162,20 +167,32 @@ eq "F2 SEM cap_custo_ler, margem_pct é NULL" \
    "$(como $A false false "SELECT coalesce(margem_pct::text,'') FROM public.get_carteira_margem_faixa() WHERE customer_user_id='c2000000-0000-0000-0000-000000000002';")" ""
 eq "F3 a FAIXA sai mesmo sem cap_custo_ler (o sinal fica)" \
    "$(como $A false false "SELECT faixa FROM public.get_carteira_margem_faixa() WHERE customer_user_id='c2000000-0000-0000-0000-000000000002';")" "amarelo"
-eq "F4 o MOTIVO sai mesmo sem cap_custo_ler" \
-   "$(como $A false false "SELECT motivo FROM public.get_carteira_margem_faixa() WHERE customer_user_id='c2000000-0000-0000-0000-000000000002';")" "abaixo_do_piso"
+# ⚠️ REVISTO na fase 3c (2026-08-13). Este assert afirmava "o MOTIVO sai mesmo sem cap_custo_ler",
+# e essa era a decisão original do #1543. Ela foi REVOGADA de propósito: `motivo` carregava as
+# ÂNCORAS ABSOLUTAS (piso/meta) que, combinadas com `g` — afim na margem —, reconstruíam o número
+# exato (medido em prod: 859 clientes com erro máx. de 0,03 pp). Ver
+# 20260813234112_carteira_margem_faixa_motivo_gate_custo.sql e o harness dedicado.
+# O par de asserts fica: sem cap NÃO sai, com cap SAI — provar só um dos lados deixaria um gate
+# que nega todo mundo passar por correto.
+eq "F4 SEM cap_custo_ler, o MOTIVO é NULL (fase 3c: a âncora some)" \
+   "$(como $A false false "SELECT coalesce(motivo,'') FROM public.get_carteira_margem_faixa() WHERE customer_user_id='c2000000-0000-0000-0000-000000000002';")" ""
+eq "F4b COM cap_custo_ler, o MOTIVO continua saindo" \
+   "$(como $A true false "SELECT motivo FROM public.get_carteira_margem_faixa() WHERE customer_user_id='c2000000-0000-0000-0000-000000000002';")" "abaixo_do_piso"
 eq "F5 o campo g sai mesmo sem cap_custo_ler (é ele que preserva o score)" \
    "$(como $A false false "SELECT (g IS NOT NULL)::text FROM public.get_carteira_margem_faixa() WHERE customer_user_id='c2000000-0000-0000-0000-000000000002';")" "true"
 
 echo "-- G. classificação --"
+# ⚠️ Passaram a rodar COM cap_custo_ler na fase 3c: `motivo` agora é gateado, e sem cap o
+# `faixa||'|'||motivo` seria NULL — o assert mediria o GATE em vez da CLASSIFICAÇÃO, que é o que
+# ele existe para provar. A faixa sem cap continua coberta por F3 (e o gate, por F4/F4b).
 eq "G1 margem negativa → vermelho/abaixo_do_custo" \
-   "$(como $A false false "SELECT faixa||'|'||motivo FROM public.get_carteira_margem_faixa() WHERE customer_user_id='c1000000-0000-0000-0000-000000000001';")" "vermelho|abaixo_do_custo"
+   "$(como $A true false "SELECT faixa||'|'||motivo FROM public.get_carteira_margem_faixa() WHERE customer_user_id='c1000000-0000-0000-0000-000000000001';")" "vermelho|abaixo_do_custo"
 eq "G2 40% → verde/abaixo_da_meta" \
-   "$(como $B false false "SELECT faixa||'|'||motivo FROM public.get_carteira_margem_faixa() WHERE customer_user_id='c3000000-0000-0000-0000-000000000003';")" "verde|abaixo_da_meta"
+   "$(como $B true false "SELECT faixa||'|'||motivo FROM public.get_carteira_margem_faixa() WHERE customer_user_id='c3000000-0000-0000-0000-000000000003';")" "verde|abaixo_da_meta"
 eq "G3 90% → verde/saudavel" \
-   "$(como $B false false "SELECT faixa||'|'||motivo FROM public.get_carteira_margem_faixa() WHERE customer_user_id='c4000000-0000-0000-0000-000000000004';")" "verde|saudavel"
+   "$(como $B true false "SELECT faixa||'|'||motivo FROM public.get_carteira_margem_faixa() WHERE customer_user_id='c4000000-0000-0000-0000-000000000004';")" "verde|saudavel"
 eq "G4 sem custo → neutro/sem_custo" \
-   "$(como $B false false "SELECT faixa||'|'||motivo FROM public.get_carteira_margem_faixa() WHERE customer_user_id='c5000000-0000-0000-0000-000000000005';")" "neutro|sem_custo"
+   "$(como $B true false "SELECT faixa||'|'||motivo FROM public.get_carteira_margem_faixa() WHERE customer_user_id='c5000000-0000-0000-0000-000000000005';")" "neutro|sem_custo"
 
 echo "-- H. o campo g (a decisao de desenho de 2026-07-22) --"
 # ⚠️ ASSERT DECISIVO: a régua é da POPULAÇÃO, não da carteira. O mesmo cliente tem de receber o
@@ -216,6 +233,9 @@ eq "J1 re-aplicar não muda a faixa" \
    "$(como $A false false "SELECT faixa FROM public.get_carteira_margem_faixa() WHERE customer_user_id='c2000000-0000-0000-0000-000000000002';")" "amarelo"
 eq "J2 re-aplicar preserva o REVOKE de anon" \
    "$(Pq -q -c "SELECT has_function_privilege('anon','public.get_carteira_margem_faixa()','EXECUTE');")" "f"
+# Re-aplica a fase 3c: o re-Run da 170000 acima devolveu o corpo PRÉ-gate-do-motivo, e sem esta
+# linha tudo abaixo mediria um corpo que não é o que prod terá.
+P -q -f "$REPO_ROOT/supabase/migrations/20260813234112_carteira_margem_faixa_motivo_gate_custo.sql"
 
 echo "-- K. FALSIFICAÇÃO (o passo que separa prova de teatro) --"
 # Cada bloco SABOTA a migration e exige VERMELHO no assert que a sabotagem mira. Sem isto os
@@ -238,7 +258,13 @@ sabota() { # $1 = expressão sed
   fi
   P -q -f "$SABOTADA"
 }
-restaura() { P -q -f "$MIG"; }
+# ⚠️ Restaura a CADEIA, não só `$MIG`. A fase 3c recria a função por cima da 170000; restaurar só
+# a 170000 devolveria o corpo PRÉ-gate-do-motivo e o assert L1 (a impressão digital) fecharia o
+# harness em vermelho por defasagem de estado, não por defeito — e a leitura natural desse
+# vermelho ("mexi na migration e esqueci de regravar a digital") mandaria a próxima pessoa para o
+# lado errado.
+MIG_3C="$REPO_ROOT/supabase/migrations/20260813234112_carteira_margem_faixa_motivo_gate_custo.sql"
+restaura() { P -q -f "$MIG"; P -q -f "$MIG_3C"; }
 # Passa quando o valor MUDOU sob sabotagem — ou seja, o assert original teria ficado vermelho.
 ne() {
   if [ "$2" != "$3" ]; then ok "$1 (sob sabotagem virou [$2], íntegro era [$3])"

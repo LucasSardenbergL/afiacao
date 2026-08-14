@@ -221,6 +221,38 @@ export const ACKNOWLEDGED_SENSITIVE = new Set<string>([
   // exato, incluindo "UPDATE sem USING" (S2), que prova que o USING não é decorativo: só com
   // WITH CHECK, `SET key='outra' WHERE key='margem_faixa_piso_pct'` some com a key protegida e
   // devolve o limiar ao default.
+  //
+  // 2026-08-13 — fase 3c: `motivo` entra no gate de PROJEÇÃO, junto de `margem_pct`. A revisão
+  // adversarial do #1723 (Codex gpt-5.6-sol) achou um vazamento de LEITURA pior que o oráculo de
+  // ESCRITA que a fase 3b fechou — este não precisa escrever nada e resolve numa ÚNICA resposta.
+  // Mecanismo: `g` é AFIM na margem (`margem_pct = A + B*g`, A=100*p10, B=100*max(p90-p10,0.01)),
+  // e `motivo` dava as duas ÂNCORAS ABSOLUTAS que faltavam ('abaixo_do_piso' ⇒ margem<30,
+  // 'abaixo_da_meta' ⇒ 30≤margem<50). Tomando o MAIOR `g` de cada motivo, o atacante resolve
+  // B=(50-30)/(g50-g30) e A=30-B*g30 e inverte a carteira inteira.
+  // MEDIDO em prod (read-only, 2026-08-13): A_est=29,4560 vs 29,4260 real (erro 0,03 pp) e
+  // B_est=45,7780 vs 45,7780 (erro ZERO); 859 dos 1.075 clientes com margem reconstruídos com
+  // erro MÁXIMO de 0,03 pp. Não era risco teórico.
+  // ⚠️ Lição transferível (irmã da fase 3b): lá o gate de projeção caía por uma entrada
+  // ESCREVÍVEL; aqui cai por um rótulo LEGÍVEL que ancora a escala. Um campo derivado que é
+  // transformação MONÓTONA do número protegido só resiste enquanto ninguém publicar dois pontos
+  // conhecidos da curva — e um vocabulário categórico com limiares FIXOS é exatamente isso.
+  // Ao gatear um número, enumere o que mais na MESMA resposta permite reconstruí-lo.
+  // ⚠️ O que NÃO foi feito, e por quê: `g` continua saindo sem gate. Gateá-lo fecharia o eixo,
+  // mas `calcularHealthScore` renormaliza os pesos com `g` null, então o score de quem não tem
+  // cap MUDARIA — produto embutido em entrega de autorização (o que o #1543 evitou). O custo foi
+  // MEDIDO antes de descartar (harness `scripts/impacto-gate-g.ts`): 640 visões de cliente
+  // mudariam de score nos 2 farmers sem cap (Δ médio 5,88/6,02; máx 14,5), 91 mudariam de classe,
+  // AGENDA idêntica. Decisão do founder (2026-08-13): fechar a âncora, preservar o score.
+  // ⚠️ Limite honesto da defesa: ela depende de `p10 > 0` (hoje 29,43%). A fronteira 'vermelho'
+  // (margem<0) só não é 2ª âncora porque está SATURADA (todo pct<p10 tem g=0). Se a população
+  // ganhar margem negativa relevante, p10 cai e aquela fronteira devolve a âncora sozinha. E a
+  // ORDENAÇÃO por margem segue exposta por construção. Quem mexer na régua revisita isto.
+  // Provado em db/test-carteira-margem-faixa-motivo-gate.sh (24 asserts): A1-A4 (com cap nada
+  // regride), B1-B3 (sem cap a âncora some), C1-C3 (faixa e `g` PRESERVADOS — a prova de que não
+  // houve mudança de produto), D1-D5 (escopo/ACL/idempotência), E1-E3 (a calibração não fecha, e
+  // o master legítimo AINDA calibra — sem E3 os E1/E2 passariam por vacuidade). Falsificações
+  // K1-K3 exigem o vermelho exato (K2 sabota gateando `g`, que é o assert que protege o produto)
+  // e K4/K4b são o canário do restore.
   'public.get_carteira_margem_faixa',
 ]);
 
