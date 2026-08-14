@@ -121,10 +121,11 @@ medidos em 3 execuções, sem rede nem toolchain extra, então falha cedo. Cobre
 (27 em `scripts/`, 1 em `db/`); `db/` entrou no escopo para que o **próximo** `.ts` nasça coberto,
 não por volume — hoje são 228 `.sh` e 41 `.sql` para 1 `.ts` lá.
 
-## O que fica em aberto
+## O que ficava em aberto — e fechou no mesmo dia
 
-`scripts/` continua fora do `project` do knip — dead code lá segue invisível, e uma ref de
-`scripts/` para `src/` ainda não protege o alvo de uma faxina. Este gate fecha o sintoma (o
-TS2307 agora fica vermelho **na hora**), não a causa. Ampliar o `project` do knip é a correção de
-raiz, e é trabalho próprio: mede-se primeiro quantos falsos-positivos os 26 scripts produzem
-(muitos são entrypoints de CLI sem importador nenhum, exatamente o padrão que o knip acusa).
+`scripts/` estava fora do `project` do knip, então este gate fechava o **sintoma** (o TS2307 fica
+vermelho na hora) e não a causa: a faxina continuaria propondo o mesmo delete. A previsão feita
+aqui — "mede-se primeiro quantos falsos-positivos os scripts produzem, muitos são entrypoints de
+CLI sem importador" — foi confirmada na medição: **10 falsos-positivos, todos entrypoints**.
+
+A ampliação está em [knip-scripts-causa-raiz.md](knip-scripts-causa-raiz.md).

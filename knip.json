@@ -6,11 +6,39 @@
     "src/lib/mcp/index.ts",
     "supabase/functions/**/index.ts",
     "supabase/functions/**/*_test.ts",
-    "supabase/functions/**/*.test.ts"
+    "supabase/functions/**/*.test.ts",
+
+    // `scripts/` + `db/` entraram no `project` em 2026-08-13 (ver abaixo), e quase tudo lá é
+    // ENTRYPOINT de CLI: rodado à mão, por doc, por harness `.sh` ou pelo package.json. Sem estas
+    // linhas o knip acusa 10 "unused files" que são todos falsos-positivos — `city-norm-print.ts`
+    // é invocado por `db/test-city-norm-paridade.sh:72`, `fronteiras-modulos.ts` gera a baseline
+    // que `fronteiras.gate.test.ts` cobra, `carga.ts` é CLI documentado no próprio cabeçalho.
+    // Um gate que nasce com 10 falsos-positivos não é lido por ninguém.
+    //
+    // ⚠️ `scripts/lib/**` fica DE FORA de propósito — é a única linha com valor real aqui. Lá mora
+    // a lógica compartilhada (authz-contract, authz-grants, migration-objects), e é exatamente
+    // onde export órfão importa: não sendo entry, seus exports SÃO checados. Foi assim que os 5
+    // primeiros achados apareceram (SENSITIVE_TABLES/SENSITIVE_COLUMNS/UnparsedFn/GateClause/
+    // GrantCodigo, todos usados só dentro do próprio arquivo → des-exportados).
+    // Ao criar uma lib nova compartilhada em `scripts/`, ponha-a sob `scripts/lib/`: é o que a
+    // deixa sob vigilância.
+    "scripts/**/*.ts",
+    "!scripts/lib/**",
+    "db/**/*.ts"
   ],
   "project": [
     "src/**/*.{ts,tsx}",
-    "supabase/functions/**/*.ts"
+    "supabase/functions/**/*.ts",
+
+    // A CAUSA RAIZ que estas duas linhas fecham (2026-08-13): com `scripts/` fora do `project`, o
+    // knip não enxergava as refs de `scripts/` para `src/` — e as tratava como inexistentes. O
+    // #1201 deletou `src/lib/radar/types.ts` como "0 refs provadas"; a ref estava em
+    // `scripts/radar/carga.ts`. O gate `scripts:typecheck` (#1720) fez o TS2307 resultante ficar
+    // vermelho na hora, mas isso é o SINTOMA: o delete continuava sendo sugerido. Com `scripts/`
+    // no `project`, um módulo de `src/` consumido apenas por um script deixa de ser reportado
+    // como órfão — a faxina não volta a propor o mesmo delete.
+    "scripts/**/*.ts",
+    "db/**/*.ts"
   ],
   "ignore": [
     "supabase/functions/_shared/sayerlack-sku.ts",
