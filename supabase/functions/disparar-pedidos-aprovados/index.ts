@@ -3,6 +3,7 @@
 // - DRY-RUN: cria pedido no Omie via IncluirPedidoCompra, NÃO envia ao fornecedor
 // - PRODUÇÃO: cria no Omie + dispara notificação ao fornecedor pelo canal configurado
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
+import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -749,6 +750,56 @@ async function assertItensAtivosNoOmie(
   }
 }
 
+/**
+ * Marco CAUSAL de existência do PO, lido do relógio do BANCO.
+ *
+ * Tem de ser chamada IMEDIATAMENTE ANTES de `IncluirPedCompra`, e o valor só pode ser persistido em
+ * `pedido_compra_sugerido.omie_po_inexistente_antes_de` se o Omie CONFIRMAR a criação — aí o instante
+ * devolvido aqui é, por construção, anterior ao nascimento do PO, que é o que o guard temporal de
+ * `reposicao_pos_candidatos` precisa para deduzir "o run terminou antes de este PO existir".
+ *
+ * ⚠️ NÃO trocar por `new Date().toISOString()`. É esse o defeito que a migration 20260814022626
+ * corrige: o relógio da EDGE, lido DEPOIS da resposta, é POSTERIOR ao nascimento do PO — comparado
+ * com `finalizado_em` (relógio do BANCO) ele suprimia alerta VERDADEIRO (caso 281/286, ~R$3.060
+ * comprados em dobro). Dois relógios diferentes E o instante errado.
+ *
+ * ⚠️ NÃO chamar no caminho de RECONCILIAÇÃO: lá o PO já existia antes da chamada, então o marco seria
+ * um limite inferior inválido.
+ *
+ * Falha aqui NÃO derruba o disparo: devolve `null`, a coluna fica NULL e o pedido segue candidato no
+ * card (fail-closed). Perder o `omie_pedido_compra_id` de um PO que já existe no Omie seria muito pior
+ * que ficar sem o marco.
+ */
+async function lerMarcoPreOmie(
+  db: SupabaseClient,
+  pedidoId: number,
+): Promise<string | null> {
+  try {
+    const { data, error } = await db.rpc("reposicao_marco_pre_omie");
+    if (error) {
+      // `mensagemDeErro`, não `String(error)`: o `error` do supabase-js é objeto PLANO e String() nele
+      // rende "[object Object]" — o motivo da recusa (RLS, grant faltando) morreria no log, que é a
+      // única pista de que a coluna ficou NULL (money-path.md §12).
+      console.warn(
+        `[disparar-pedidos] Pedido ${pedidoId}: marco pré-Omie indisponível (${mensagemDeErro(error) ?? "sem mensagem"}) → sem limite causal; pedido segue candidato no card`,
+      );
+      return null;
+    }
+    if (typeof data !== "string" || data === "") {
+      console.warn(
+        `[disparar-pedidos] Pedido ${pedidoId}: marco pré-Omie com formato inesperado (${typeof data}) → sem limite causal`,
+      );
+      return null;
+    }
+    return data;
+  } catch (e) {
+    console.warn(
+      `[disparar-pedidos] Pedido ${pedidoId}: marco pré-Omie falhou (${mensagemDeErro(e) ?? "sem mensagem"}) → sem limite causal`,
+    );
+    return null;
+  }
+}
+
 async function processarPedido(
   db: SupabaseClient,
   pedido: PedidoRow,
@@ -992,6 +1043,10 @@ async function processarPedido(
     const param = { cabecalho_incluir, produtos_incluir };
 
     // e. Chama Omie (método correto conforme doc: IncluirPedCompra)
+    // ⚠️ O marco vem ANTES da chamada e do relógio do BANCO — é o que torna a supressão do card
+    // dedutível ("o PO não existia antes deste instante"). Ler depois, ou do relógio da edge, é o
+    // defeito que a migration 20260814022626 corrige. Ver lerMarcoPreOmie().
+    const marcoPreOmie = await lerMarcoPreOmie(db, pedido.id);
     const resp = await omieCall(
       OMIE_PEDIDO_COMPRA_URL,
       "IncluirPedCompra",
@@ -1012,6 +1067,10 @@ async function processarPedido(
         omie_pedido_compra_id: omieId,
         omie_pedido_compra_numero: omieNumero,
         omie_registrado_em: new Date().toISOString(),
+        // Só AQUI o marco é persistido: o Omie confirmou a criação, então o instante lido antes da
+        // chamada é comprovadamente anterior ao nascimento deste PO. `null` (RPC indisponível) deixa a
+        // coluna intacta — o trigger usa GREATEST, que ignora NULL.
+        omie_po_inexistente_antes_de: marcoPreOmie,
         horario_disparo_real: new Date().toISOString(),
         canal_usado: result.canal,
         resposta_canal: {
@@ -1063,6 +1122,11 @@ async function processarPedido(
             omie_pedido_compra_id: existente.id,
             omie_pedido_compra_numero: existente.numero,
             omie_registrado_em: new Date().toISOString(),
+            // ⚠️ `omie_po_inexistente_antes_de` NÃO é carimbado aqui, e isso é desenho. O Omie acabou de
+            // recusar por "já cadastrado": este PO nasceu ANTES desta chamada, numa tentativa anterior.
+            // Um marco lido agora seria POSTERIOR ao nascimento — limite inferior INVÁLIDO, e gravá-lo
+            // suprimiria o card para um PO que o run pode legitimamente ter deixado de ver. Sem marco a
+            // coluna fica NULL e o pedido segue candidato (fail-closed). Ver migration 20260814022626.
             status: "disparado",
             resposta_canal: {
               ...overrideTag,
