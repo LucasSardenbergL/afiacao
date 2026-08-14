@@ -148,6 +148,72 @@ quem pergunta — já em `database.md` §5). A variante nova: **grep de policy p
 `reposicao_param_auto_log` pareceu aberta porque filtrei por `cap_custo_ler` e ela usa `cap_compras_ler`
 — falso alarme desfeito ao ler o `qual` real. Case por `%cap\_%`, ou leia a expressão.
 
+### 11. A Caça: o `hunter` entra sem `cap_custo_ler` — e o aviso só cobre a perda UNIFORME
+
+Medido em **2026-08-14** (psql-ro, catálogo), antes de liberar o apply da `20260725130000`:
+
+| classe | medição |
+|---|---|
+| views dependentes de `product_costs` (`pg_depend`/`pg_rewrite`) | **1** — `v_caca_compradores`, `security_invoker=on` |
+| precondições da migration | as 3 passam (`cap_custo_ler`, `get_skus_margem_positiva`, `get_carteira_margem_faixa`) |
+| estado hoje | RLS ON, 2 policies antigas de pé, policy nova ausente → **não aplicada**; `anon` com SELECT+TRUNCATE+INSERT |
+
+**A degradação é honesta no SQL.** A view faz `LEFT JOIN product_costs` e soma
+`… FILTER (WHERE custo_efetivo > 0)`. Sem linhas visíveis o `SUM` cai sobre conjunto vazio e dá
+**NULL**, não zero — `lucro_proxy` vira `null` e `lucro_cobertura` vira 0. Não há 403 (o `GRANT
+SELECT` é preservado de propósito, a RLS é que filtra) **e não há número fabricado**. O front
+declara a perda desde o #1520 (`empresasSemLucroConfiavel` → banner `role="status"` nomeando as
+duas causas).
+
+**O acoplamento que ninguém tinha escrito:**
+
+```
+entra na Caça (RequireCaca) = master OR commercial_role ∈ {hunter, master, super_admin}
+cap_custo_ler               = master OR (employee AND commercial_role ∈ {estrategico, super_admin})
+```
+
+`hunter` — o dono **declarado** da tela ("a fila de look-alike é do HUNTER") — não está na segunda
+lista. Quem for promovido a hunter entra na Caça e roda o índice com 2 dos 3 termos (lucro pesa
+0,4), para sempre, com banner permanente. Hoje isso não atinge ninguém: só **3** usuários têm
+`commercial_role` (2 `farmer`, que nem entram, e 1 `master`, que **tem** a capability) e existem
+**zero hunters**. Por isso o apply é seguro e a RPC `SECURITY DEFINER` que devolveria o lucro foi
+**adiada** — construí-la para população zero é a "fase N+1 sem sinal" do CLAUDE.md.
+
+Re-medir (query, não recado) — se `entra_sem_custo > 0`, a decisão da RPC voltou à mesa:
+
+```sql
+WITH r AS (
+  SELECT cr.user_id, cr.commercial_role::text AS crole,
+         bool_or(ur.role='master')   AS is_master,
+         bool_or(ur.role='employee') AS is_employee
+    FROM public.commercial_roles cr
+    LEFT JOIN public.user_roles ur ON ur.user_id = cr.user_id
+   GROUP BY 1,2
+)
+SELECT count(*) FILTER (
+         WHERE (is_master OR crole IN ('hunter','master','super_admin'))
+           AND NOT (is_master OR (is_employee AND crole IN ('estrategico','super_admin')))
+       ) AS entra_sem_custo
+  FROM r;
+```
+
+**A precondição do aviso — e é ela que importa a longo prazo.** `product_costs_select_custo` usa
+`USING (private.cap_custo_ler(auth.uid()))`: o predicado **não olha a linha**, então o leitor vê a
+tabela inteira ou nenhuma linha. É *só por isso* que a perda por autorização é uniforme e cai no
+caso que o banner cobre. Se a policy virar row-dependent (custo por BU, por empresa, por
+fornecedor), a perda vira **parcial** — e `lucro_cobertura` é `receita_com_custo / receita`, de
+modo que 60% de visibilidade dá cobertura 0,6, que **passa** no limiar de 0,5. O comprador entra
+no percentil com lucro somado só sobre a fatia visível: número presente, enviesado, sem `null`
+para o predicado pegar e **sem banner**. Fixado em `lucro-fora-do-indice.test.ts` (D1/D2):
+sob perda parcial a ordem **inverte**, ao contrário da perda uniforme, que é transformação afim e
+preserva ordem (B2/B3). Row-independence não é detalhe da policy — é a **precondição** do aviso.
+
+**Achado da falsificação (vale além da Caça):** ao sabotar `COBERTURA_MIN_LUCRO` de 0,5 para 0,7,
+**só o D2 ficou vermelho** — os outros 12 testes do arquivo passaram, inclusive o `A3`, que parece
+fixar o limiar mas o compara **consigo mesmo** (`lucroConfiavel({… cobertura: COBERTURA_MIN_LUCRO})`).
+Assert que referencia a própria constante é tautologia quanto ao **valor**: prova a coerência
+interna e nada sobre o número. Para pinar um limiar é preciso um caso com o valor **literal**.
+
 ## Limite honesto herdado do #1465
 
 `get_preco_cockpit` mascara o número mas continua sendo **oráculo por bisseção**: o caller escolhe o
@@ -191,3 +257,9 @@ negativo**: a proteção vem da delegação (variante da lição 10).
   quando `product_costs` for fechada**: é o lembrete executável do limite. Ao fechar a fase 3, **corrija
   o assert** (não reverta o fix) e atualize a seção "limite honesto" da migration `20260723130000`.
 - `db/test-authz-pedido-compra-item.sh` — 15 asserts, 3 falsificações.
+- `src/lib/caca/__tests__/lucro-fora-do-indice.test.ts` — 13 casos. `D1`/`D2` fixam a precondição
+  de **row-independence** da lição 11 (só o D2 pega uma mudança do limiar de cobertura).
+  ⚠️ **Não é prova de SQL**: o `L1` do `fase2.sh` recria as policies antigas no **próprio fixture**
+  (linhas 125-135), então aplicar a `20260725130000` em prod **não** o deixa vermelho — depois do
+  apply a mensagem dele ("a porta segue aberta até lá") fica verdadeira no fixture e falsa em prod.
+  Corrigir o `L1` continua sendo follow-up do apply, não pré-requisito dele.

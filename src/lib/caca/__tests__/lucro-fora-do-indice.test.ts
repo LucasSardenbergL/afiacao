@@ -149,3 +149,69 @@ describe('empresasSemLucroConfiavel — o aviso é POR EMPRESA', () => {
     expect(empresasSemLucroConfiavel(linhas)).toEqual(['oben']);
   });
 });
+
+/**
+ * D — o aviso só é SUFICIENTE porque a policy de custo é INDEPENDENTE DE LINHA.
+ *
+ * `product_costs_select_custo` (migration 20260725130000) tem
+ * `USING (private.cap_custo_ler(auth.uid()))`: o predicado não olha a linha, então o leitor vê
+ * a tabela INTEIRA ou NENHUMA linha. É por isso que a perda por autorização cai no caso C3
+ * (todas as empresas cegas de uma vez) e o banner cobre.
+ *
+ * Se algum dia a policy passar a depender da LINHA — custo visível por BU, por empresa, por
+ * fornecedor —, a perda vira PARCIAL: `lucro_cobertura` é `receita_com_custo / receita` (fração
+ * da receita cujo item tinha custo visível, medido no corpo da view em prod), então uma
+ * visibilidade de 60% produz cobertura 0,6, que PASSA no limiar de 0,5. O comprador entra no
+ * percentil com um lucro somado só sobre a fatia visível — número presente, enviesado, e sem
+ * nenhum `null` para o predicado pegar.
+ *
+ * Estes dois testes fixam o contraste que sustenta o desenho:
+ *   D1 — sob perda parcial a ordem INVERTE (ao contrário de B2/B3, onde a perda uniforme é
+ *        transformação afim e preserva ordem);
+ *   D2 — e o banner NÃO dispara, porque todo mundo continua "confiável".
+ *
+ * Logo: `declarar` só basta enquanto a perda for uniforme. Row-independence não é detalhe de
+ * implementação da policy — é a PRECONDIÇÃO do aviso. Quem tornar a policy row-dependent tem
+ * de trazer o sinal de cobertura junto, senão a Caça volta a falhar ABERTA.
+ */
+describe('D visibilidade PARCIAL de custo — o que o aviso não cobre', () => {
+  // volume e fidelidade idênticos: o lucro é o único discriminante (mesma calibração do B1).
+  const par = (lucroA: number, cobA: number, lucroB: number, cobB: number): CompradorRow[] => [
+    comprador({
+      documento: 'A',
+      empresa: 'oben',
+      volume: 1000,
+      n_pedidos: 5,
+      recencia_dias: 100,
+      lucro_proxy: lucroA,
+      lucro_cobertura: cobA,
+    }),
+    comprador({
+      documento: 'B',
+      empresa: 'oben',
+      volume: 1000,
+      n_pedidos: 5,
+      recencia_dias: 100,
+      lucro_proxy: lucroB,
+      lucro_cobertura: cobB,
+    }),
+  ];
+
+  const ordem = (linhas: CompradorRow[]) =>
+    selecionarMelhores(linhas, { fracaoTop: 1 }).melhores.map((m) => m.documento);
+
+  it('D1 perda PARCIAL reordena — B é o mais lucrativo e cai para segundo', () => {
+    // Verdade (custo 100% visível): B lucra 2000, A lucra 500 ⇒ B na frente.
+    expect(ordem(par(500, 1, 2000, 1))).toEqual(['B', 'A']);
+
+    // Mesmo mundo, mas o leitor só enxerga 60% dos itens de B: o lucro dele soma 300 sobre a
+    // fatia visível. Cobertura 0,6 PASSA no limiar ⇒ entra no percentil como se fosse o total.
+    expect(ordem(par(500, 1, 300, 0.6))).toEqual(['A', 'B']);
+  });
+
+  it('D2 e nenhum aviso dispara — os dois passam em lucroConfiavel', () => {
+    const parcial = par(500, 1, 300, 0.6);
+    expect(parcial.every((c) => lucroConfiavel(c))).toBe(true);
+    expect(empresasSemLucroConfiavel(parcial)).toEqual([]);
+  });
+});
