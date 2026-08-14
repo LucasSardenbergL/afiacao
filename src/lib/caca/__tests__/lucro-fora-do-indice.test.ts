@@ -56,47 +56,59 @@ describe('lucroConfiavel — o predicado é um só', () => {
 });
 
 describe('perder o lucro NÃO reordena — por isso a correção é declarar', () => {
-  // Três compradores com volume/fidelidade distintos. Um cenário COM lucro para todos e outro
-  // SEM lucro para nenhum: a ordem tem de ser a mesma, porque 0,4 × 0,5 é constante somada a
-  // todos (transformação afim crescente). Se algum dia isto quebrar, a correção deixa de ser
-  // "avisar" e passa a ser "recalcular" — e o teste é quem avisa.
-  const base = [
-    comprador({ documento: 'A', volume: 3000, n_pedidos: 9, recencia_dias: 10 }),
-    comprador({ documento: 'B', volume: 2000, n_pedidos: 5, recencia_dias: 40 }),
-    comprador({ documento: 'C', volume: 500, n_pedidos: 2, recencia_dias: 200 }),
+  const ordem = (linhas: CompradorRow[], opts = {}) =>
+    selecionarMelhores(linhas, { fracaoTop: 1, ...opts }).melhores.map((m) => m.documento);
+
+  // ⚠️ FIXTURE CALIBRADO, e o cuidado aqui foi comprado com um vermelho: a primeira versão usava
+  // volume e fidelidade CORRELACIONADOS (A melhor nos dois, C pior nos dois). Ali o lucro nunca
+  // inverte nada — 0,3 + 0,3 domina 0,4 — e o "controle" ficava verde por construção, medindo o
+  // fixture em vez do índice. Aqui volume e fidelidade são ANTI-correlacionados de propósito, de
+  // modo que os dois somem 0,3 para os três compradores: o termo de lucro fica sendo o ÚNICO
+  // discriminante, que é a condição para o controle ter dente.
+  //
+  //   A: volume topo   (pct 1,0) · fidelidade fundo (0,0) → 0,3×1,0 + 0,3×0,0 = 0,3
+  //   B: volume fundo  (pct 0,0) · fidelidade topo  (1,0) → 0,3×0,0 + 0,3×1,0 = 0,3
+  //   C: volume meio   (pct 0,5) · fidelidade meio  (0,5) → 0,3×0,5 + 0,3×0,5 = 0,3
+  const base: CompradorRow[] = [
+    comprador({ documento: 'A', volume: 3000, n_pedidos: 1, recencia_dias: 300 }),
+    comprador({ documento: 'B', volume: 500, n_pedidos: 9, recencia_dias: 10 }),
+    comprador({ documento: 'C', volume: 1500, n_pedidos: 5, recencia_dias: 100 }),
   ];
 
-  it('B1 com lucro em todos vs sem lucro em nenhum → MESMA ordem', () => {
-    // Lucro ANTI-correlacionado ao volume de propósito: se o termo de lucro ainda pesasse, ele
-    // inverteria a ordem e o teste falharia. Isto é o controle que dá dente ao B2.
-    const comLucro = base.map((c, i) => ({
+  it('B1 (controle): o termo de lucro PESA — com ele a ordem é outra', () => {
+    // Lucro crescente de A para B: pctLucro 0 / 0,5 / 1 ⇒ índices 0,3 / 0,5 / 0,7 ⇒ B, C, A.
+    // Sem este assert, o B2 abaixo passaria mesmo num índice que ignorasse lucro por completo.
+    const comLucro = base.map((c) => ({
       ...c,
-      lucro_proxy: [10, 500, 9000][i],
+      lucro_proxy: { A: 10, C: 500, B: 9000 }[c.documento] as number,
       lucro_cobertura: 0.9,
     }));
-    const semLucro = base; // proxy null + cobertura 0 = o mundo pós-REVOKE
-
-    const ordemSem = selecionarMelhores(semLucro, { fracaoTop: 1 }).melhores.map((m) => m.documento);
-    const ordemCom = selecionarMelhores(comLucro, { fracaoTop: 1 }).melhores.map((m) => m.documento);
-
-    expect(ordemSem).toEqual(['A', 'B', 'C']);
-    // O controle: COM lucro anti-correlacionado a ordem MUDA — prova que o termo pesa de verdade
-    // e que o B2 abaixo não está medindo um índice que ignora lucro.
-    expect(ordemCom).not.toEqual(ordemSem);
+    expect(ordem(comLucro)).toEqual(['B', 'C', 'A']);
+    expect(ordem(base)).not.toEqual(ordem(comLucro));
   });
 
-  it('B2 sem lucro em nenhum, a ordem é a mesma que renormalizar os pesos daria', () => {
-    const semLucro = base;
-    const comImputacao = selecionarMelhores(semLucro, { fracaoTop: 1 }).melhores.map((m) => m.documento);
-    // Renormalizar = descartar o termo de lucro e repartir seu peso entre os outros dois.
-    const renormalizado = selecionarMelhores(semLucro, {
-      fracaoTop: 1,
-      pesoLucro: 0,
-      pesoVolume: 0.5,
-      pesoFidelidade: 0.5,
-    }).melhores.map((m) => m.documento);
+  it('B2 sem lucro em nenhum, a ordem é a MESMA que renormalizar os pesos daria', () => {
+    // A afirmação que sustenta "declarar, não recalcular": com pctLucro imputado em 0,5 para
+    // TODOS, `0,4 × 0,5` é uma constante somada a todos — transformação afim crescente, que
+    // preserva ordem e empates. Renormalizar (descartar o termo e repartir o peso) produz o
+    // mesmo ranking. Se algum dia isto quebrar, a correção deixa de ser avisar.
+    expect(ordem(base)).toEqual(
+      ordem(base, { pesoLucro: 0, pesoVolume: 0.5, pesoFidelidade: 0.5 }),
+    );
+  });
 
-    expect(comImputacao).toEqual(renormalizado);
+  it('B3 a igualdade do B2 não é acidente do fixture simétrico', () => {
+    // O fixture do B2 empata volume+fidelidade nos três; um cético diria que a igualdade vem
+    // dali. Aqui os três são distintos em volume E fidelidade — e a conclusão se mantém.
+    const distintos: CompradorRow[] = [
+      comprador({ documento: 'X', volume: 9000, n_pedidos: 12, recencia_dias: 5 }),
+      comprador({ documento: 'Y', volume: 4000, n_pedidos: 7, recencia_dias: 60 }),
+      comprador({ documento: 'Z', volume: 800, n_pedidos: 2, recencia_dias: 250 }),
+    ];
+    expect(ordem(distintos)).toEqual(['X', 'Y', 'Z']);
+    expect(ordem(distintos)).toEqual(
+      ordem(distintos, { pesoLucro: 0, pesoVolume: 0.5, pesoFidelidade: 0.5 }),
+    );
   });
 });
 
