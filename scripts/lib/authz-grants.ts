@@ -27,7 +27,9 @@
 import { stripNoise } from './authz-contract';
 import type { TabelaFechada, Priv } from '../authz-tabelas-fechadas';
 
-export type GrantCodigo =
+// Sem `export`: tipo de suporte de `GrantFinding`, que é a superfície pública. Os testes casam o
+// CÓDIGO como string literal (ver cabeçalho), não o tipo — des-exportar não afrouxa nada.
+type GrantCodigo =
   | 'REABERTURA'
   | 'RECRIACAO'
   | 'RLS_OFF'
@@ -85,6 +87,23 @@ function parsePrivList(s: string): Priv[] {
     if ((TODOS_PRIV as string[]).includes(t)) out.push(t as Priv);
   }
   return out;
+}
+
+/**
+ * ALVO de um `CREATE TABLE` — `x`, `public.x`, `"public"."x"`, com ou sem IF NOT EXISTS.
+ * Normalizado (sem aspas, minúsculo). null = a forma não casou → o chamador trata fail-closed.
+ *
+ * Existe porque "o statement MENCIONA a tabela" não é "o statement RECRIA a tabela": tabela nova
+ * com `REFERENCES public.<protegida>(id)` menciona e não recria — e FK para a tabela protegida é
+ * o caso mais comum que existe.
+ */
+function alvoCreateTable(stmt: string): { schema: string | null; name: string } | null {
+  const m = /^CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?("[^"]+"|[\w$]+)(?:\s*\.\s*("[^"]+"|[\w$]+))?/i.exec(
+    stmt.trim(),
+  );
+  if (!m) return null;
+  const unq = (s: string) => s.replace(/^"|"$/g, '').toLowerCase();
+  return m[2] ? { schema: unq(m[1]), name: unq(m[2]) } : { schema: null, name: unq(m[1]) };
 }
 
 interface ParsedGrant {
@@ -181,14 +200,25 @@ export function auditGrantsTabelas(
 
         // RECRIACAO fecha o vetor mais traiçoeiro: DROP + CREATE faz a tabela RENASCER com o
         // default privilege aberto do Supabase, sem nenhum GRANT explícito no diff.
-        if (/^CREATE\s+TABLE\b/i.test(st) && mencionaTabela(st, schema, name)) {
-          out.push({
-            level: 'error',
-            codigo: 'RECRIACAO',
-            tabela: chave,
-            file: m.file,
-            msg: `CREATE TABLE de ${chave} após o fecho — a tabela renasce com o default privilege aberto do Supabase.`,
-          });
+        // Julga o ALVO do CREATE, não a menção: `CREATE TABLE nova (... REFERENCES <protegida>)`
+        // é FK, não recriação — sem isso o gate fica vermelho em toda tabela que aponte para a
+        // protegida, e o único jeito de calá-lo seria tirar a tabela da allowlist.
+        if (/^CREATE\s+TABLE\b/i.test(st)) {
+          const alvo = alvoCreateTable(st);
+          // Sem alvo extraível, volta a valer a menção: forma que o parser não entendeu não pode
+          // ser declarada inofensiva (mesmo fail-closed do GRANT_NAO_PARSEAVEL).
+          const recria = alvo
+            ? alvo.name === name && (alvo.schema ?? schema) === schema
+            : mencionaTabela(st, schema, name);
+          if (recria) {
+            out.push({
+              level: 'error',
+              codigo: 'RECRIACAO',
+              tabela: chave,
+              file: m.file,
+              msg: `CREATE TABLE de ${chave} após o fecho — a tabela renasce com o default privilege aberto do Supabase.`,
+            });
+          }
           continue;
         }
         if (

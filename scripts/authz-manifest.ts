@@ -139,6 +139,34 @@ export const AUTHZ_MANIFEST: Record<string, AuthzEntry> = {
     requiredGate: { anyOf: [{ call: 'cap_estoque_reservar' }] },
     motivo: 'higiene de reservas vencidas (cron da fase 3 via service_role)',
   },
+  // 2026-08-14 — a RPC do card "pedido sem PO no Omie". SECDEF com GRANT EXECUTE a `authenticated`,
+  // devolve protocolo do portal, fornecedor e a `resposta_canal` jsonb CRUA. Gate master-only
+  // `private.cap_compras_ler` (FU4-G: "compras não é carteira" — o gate anterior,
+  // `pode_ver_carteira_completa`, liberava o papel gerencial).
+  //
+  // ⚠️ POR QUE ESTAVA FORA — e a lição, que vale para toda RPC nova: a Parte B só EXIGE
+  // classificação de SECDEF que toca o eixo custo/preço/estoque (SENSITIVE_* em
+  // scripts/lib/authz-contract.ts). Esta não toca nenhum desses tokens; o que ela vaza é dado
+  // COMERCIAL de compras. Ou seja: a cobertura automática não a alcançava, e sem esta entrada
+  // nenhuma recriação futura era vigiada — a defesa era um bloco `DO $pos$` de regex que rodou
+  // UMA vez, na própria migration 20260813195914, e não protege a PRÓXIMA (o FU4-G já reescreveu
+  // esta função uma vez, por regexp_replace). Registrar aqui troca "uma vez" por "toda recriação",
+  // via last-writer + fail-closed da Parte A.
+  //
+  // ⚠️ Registrá-la exigiu ANTES consertar `blocksOnCall`: a forma real
+  // `(SELECT private.cap_compras_ler((SELECT auth.uid()))) IS NOT TRUE` era lida como gate
+  // DECORATIVO (medido em 2026-08-14). O detector estava calibrado só na forma canônica — e é
+  // por isso que o eixo nunca foi tentado. Detector cego não é ausência de risco.
+  //
+  // O limite desta entrada, declarado: ela prova que a CHAMADA governa um ramo alcançável que
+  // levanta exceção. NÃO prova que a exceção acontece para quem deve — isso é asserção
+  // EXECUTADA, em db/test-pos-candidatos-guard-temporal.sh (D1/D4 + falsificações N1/N2/N3).
+  'public.reposicao_pos_candidatos': {
+    sensitive: true,
+    requiredGate: { anyOf: [{ call: 'cap_compras_ler' }] },
+    motivo:
+      'detector de PO sumido — protocolo/fornecedor/jsonb cru p/ authenticated; master-only pelo FU4-G',
+  },
   // ⚠️ ATP fase 1.1 (migration 20260806225052): existe uma 5ª função que ESCREVE em
   // estoque_reservas e NÃO tem gate — `private.expirar_reservas_vencidas_job()`. É
   // DE PROPÓSITO e não é furo: pg_cron nativo roda SEM JWT, então auth.role() e
@@ -216,6 +244,62 @@ export const ACKNOWLEDGED_SENSITIVE = new Set<string>([
   // populacional (H1), K4 o WHERE de escopo (E1), K5 o `g` NULL virando 0 (H5); K6 é o canário
   // que prova que a migration íntegra voltou. `sed` que não casa nada FALHA o harness, em vez
   // de deixá-lo verde com uma sabotagem que nunca aconteceu.
+  //
+  // 2026-08-13 — fase 3b: o gate de PROJEÇÃO só vale se o LIMIAR não for escrevível por quem ele
+  // barra. `v_piso`/`v_meta` vêm de `public.farmer_algorithm_config` (keys `margem_faixa_*`), e
+  // essa tabela era escrita por QUALQUER staff (policy FOR ALL master OR employee + DML de
+  // `authenticated`): mover o piso e reler a FAIXA é uma comparação por chamada, e ~13 delas
+  // reconstroem a margem por busca binária — o número saía pelo canal lateral que o `CASE WHEN
+  // v_pode_num` fechava. Corrigido por 3 policies RESTRICTIVE (INSERT/UPDATE/DELETE) em
+  // `farmer_algorithm_config` gateadas pelo MESMO `private.cap_custo_ler` — quem já lê o número
+  // não ganha nada movendo o limiar, então esse é o corte exato (e não `has_role(master)`, que
+  // criaria um segundo eixo de autorização divergente deste). O SELECT fica aberto de propósito.
+  // ⚠️ Lição transferível: um gate de PROJEÇÃO é derrotado por qualquer entrada ESCREVÍVEL que
+  // mude o veredito exposto. Ao fechar um número atrás de um cap, feche também os PARÂMETROS que
+  // decidem o sinal que continua saindo.
+  // ⚠️ TRUNCATE não passa por RLS — policy nenhuma o vê. `authenticated` o tinha nesta tabela
+  // (o `D` do `arwdDxtm` default do Supabase), e truncar apagaria os limiares devolvendo a RPC
+  // ao COALESCE default: as 3 policies viravam decoração sem serem violadas. Revogado por NOME
+  // na mesma migration. Ao fechar escrita por RLS, cheque TRUNCATE — a RLS não o cobre.
+  // (Não era alcançável pelo browser: o PostgREST não tem verbo de TRUNCATE.)
+  // Provado em db/test-farmer-config-limiar-faixa.sh (22 asserts): aplica a RPC real do #1543,
+  // exerce o ataque ponta-a-ponta (M3) e traz a CONTRAPROVA (M2 — o master move o limiar e a
+  // faixa VIRA amarelo), sem a qual M3 passaria por vacuidade. 4 sabotagens exigem o vermelho
+  // exato, incluindo "UPDATE sem USING" (S2), que prova que o USING não é decorativo: só com
+  // WITH CHECK, `SET key='outra' WHERE key='margem_faixa_piso_pct'` some com a key protegida e
+  // devolve o limiar ao default.
+  //
+  // 2026-08-13 — fase 3c: `motivo` entra no gate de PROJEÇÃO, junto de `margem_pct`. A revisão
+  // adversarial do #1723 (Codex gpt-5.6-sol) achou um vazamento de LEITURA pior que o oráculo de
+  // ESCRITA que a fase 3b fechou — este não precisa escrever nada e resolve numa ÚNICA resposta.
+  // Mecanismo: `g` é AFIM na margem (`margem_pct = A + B*g`, A=100*p10, B=100*max(p90-p10,0.01)),
+  // e `motivo` dava as duas ÂNCORAS ABSOLUTAS que faltavam ('abaixo_do_piso' ⇒ margem<30,
+  // 'abaixo_da_meta' ⇒ 30≤margem<50). Tomando o MAIOR `g` de cada motivo, o atacante resolve
+  // B=(50-30)/(g50-g30) e A=30-B*g30 e inverte a carteira inteira.
+  // MEDIDO em prod (read-only, 2026-08-13): A_est=29,4560 vs 29,4260 real (erro 0,03 pp) e
+  // B_est=45,7780 vs 45,7780 (erro ZERO); 859 dos 1.075 clientes com margem reconstruídos com
+  // erro MÁXIMO de 0,03 pp. Não era risco teórico.
+  // ⚠️ Lição transferível (irmã da fase 3b): lá o gate de projeção caía por uma entrada
+  // ESCREVÍVEL; aqui cai por um rótulo LEGÍVEL que ancora a escala. Um campo derivado que é
+  // transformação MONÓTONA do número protegido só resiste enquanto ninguém publicar dois pontos
+  // conhecidos da curva — e um vocabulário categórico com limiares FIXOS é exatamente isso.
+  // Ao gatear um número, enumere o que mais na MESMA resposta permite reconstruí-lo.
+  // ⚠️ O que NÃO foi feito, e por quê: `g` continua saindo sem gate. Gateá-lo fecharia o eixo,
+  // mas `calcularHealthScore` renormaliza os pesos com `g` null, então o score de quem não tem
+  // cap MUDARIA — produto embutido em entrega de autorização (o que o #1543 evitou). O custo foi
+  // MEDIDO antes de descartar (harness `scripts/impacto-gate-g.ts`): 640 visões de cliente
+  // mudariam de score nos 2 farmers sem cap (Δ médio 5,88/6,02; máx 14,5), 91 mudariam de classe,
+  // AGENDA idêntica. Decisão do founder (2026-08-13): fechar a âncora, preservar o score.
+  // ⚠️ Limite honesto da defesa: ela depende de `p10 > 0` (hoje 29,43%). A fronteira 'vermelho'
+  // (margem<0) só não é 2ª âncora porque está SATURADA (todo pct<p10 tem g=0). Se a população
+  // ganhar margem negativa relevante, p10 cai e aquela fronteira devolve a âncora sozinha. E a
+  // ORDENAÇÃO por margem segue exposta por construção. Quem mexer na régua revisita isto.
+  // Provado em db/test-carteira-margem-faixa-motivo-gate.sh (24 asserts): A1-A4 (com cap nada
+  // regride), B1-B3 (sem cap a âncora some), C1-C3 (faixa e `g` PRESERVADOS — a prova de que não
+  // houve mudança de produto), D1-D5 (escopo/ACL/idempotência), E1-E3 (a calibração não fecha, e
+  // o master legítimo AINDA calibra — sem E3 os E1/E2 passariam por vacuidade). Falsificações
+  // K1-K3 exigem o vermelho exato (K2 sabota gateando `g`, que é o assert que protege o produto)
+  // e K4/K4b são o canário do restore.
   'public.get_carteira_margem_faixa',
 ]);
 

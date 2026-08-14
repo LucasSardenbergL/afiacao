@@ -18795,6 +18795,7 @@ export type Database = {
             Args: { p_item_id: number; p_threshold_similaridade?: number }
             Returns: Json
           }
+      expirar_planos_taticos: { Args: { _dias?: number }; Returns: number }
       expirar_reservas_vencidas: { Args: never; Returns: Json }
       farmer_association_rules_substituir: {
         Args: { p_regras: Json }
@@ -19132,8 +19133,8 @@ export type Database = {
         Returns: {
           customer_user_id: string
           faixa: string
-          g: number | null
-          margem_pct: number | null
+          g: number
+          margem_pct: number
           motivo: string
         }[]
       }

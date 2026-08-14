@@ -1,6 +1,9 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
+import { useAuth } from '@/contexts/AuthContext';
+import { useCommercialRole } from '@/hooks/useCommercialRole';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
+import { filtrarPorCarteira } from '@/lib/scoring/escopoCarteira';
 import type { Tables } from '@/integrations/supabase/types';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
 import { fetchAllPages } from '@/lib/postgrest';
@@ -113,6 +116,16 @@ export const useFarmerScoring = (farmerId?: string) => {
   const { effectiveUserId } = useImpersonation();
   const targetFarmerId = farmerId || effectiveUserId;
 
+  // `cap_carteira_ler` = master OU employee gerencial/estrategico/super_admin — o MESMO predicado
+  // que `private.cap_carteira_ler` aplica dentro de `get_carteira_margem_faixa()`. Quem passa nele
+  // não é recortado (a RPC já lhe devolve tudo); quem não passa vê só a carteira.
+  //
+  // ⚠️ `loadingRole` importa: enquanto o papel não resolve, `canViewManagerial` é false, e calcular
+  // agora recortaria a tela de um gestor por um instante. O cálculo espera (dependência do effect).
+  const { isMaster } = useAuth();
+  const { canViewManagerial, loading: loadingRole } = useCommercialRole();
+  const capCarteiraLer = isMaster || canViewManagerial;
+
   const [config, setConfig] = useState<AlgorithmConfig>(DEFAULT_CONFIG);
   const [clientScores, setClientScores] = useState<ClientScore[]>([]);
   const [agenda, setAgenda] = useState<AgendaItem[]>([]);
@@ -186,6 +199,34 @@ export const useFarmerScoring = (farmerId?: string) => {
       );
       const flaggeds = new Set<string>(flaggedRows.map((r) => r.user_id));
 
+      // 1b. ESCOPO DA TELA — a carteira visível do caller (decisão do founder, 2026-08-14).
+      //
+      // Sem isto a tela listava `sales_orders` COMPANY-WIDE (a policy `sales_orders_select_staff`
+      // é staff-wide) enquanto `get_carteira_margem_faixa()` responde só pela carteira: medido em
+      // prod, 541 e 440 dos 835 clientes de cada vendedora eram de OUTRA carteira, e a margem
+      // aparecia como "Sem custo conhecido" em 562/464 deles. Alinhar os dois derruba para 21/24.
+      //
+      // A fonte é a RLS, não uma regra reescrita aqui: a policy de SELECT de `carteira_assignments`
+      // É `private.carteira_visivel_para(customer_user_id, auth.uid())` — a MESMA função que a RPC
+      // usa. Um `select` sem filtro de dono já volta recortado, e cobertura ativa entra de graça
+      // (hoje `carteira_coverage` tem 0 linhas, mas a regra não fica devendo quando tiver).
+      // O `.eq('eligible', true)` é redundante com o braço de assignment da função e está explícito
+      // de propósito: se a policy afrouxar, o recorte da tela não afrouxa junto.
+      //
+      // fetchAllPages (não `.select()` cru): são 7.301 assignments, muito além da capa de 1.000 do
+      // PostgREST — e o helper LANÇA em página que falha, então falha de transporte vira erro
+      // declarado, nunca carteira menor em silêncio (que seria cliente sumindo da tela).
+      const carteiraRows = capCarteiraLer ? [] : await fetchAllPages<{ customer_user_id: string }>((de, ate) =>
+        supabase
+          .from('carteira_assignments')
+          .select('customer_user_id')
+          .eq('eligible', true)
+          .order('customer_user_id', { ascending: true })
+          .range(de, ate) as unknown as PromiseLike<{ data: { customer_user_id: string }[] | null; error: unknown }>,
+        'carteira_assignments/scoring',
+      );
+      const carteira = new Set<string>(carteiraRows.map((r) => r.customer_user_id));
+
       // 2. Faixa de margem + componente G, vindos do SERVIDOR (FU4-F fase 3).
       //
       // Antes, este bloco baixava `product_costs` INTEIRA para o browser — 3.637 linhas de
@@ -208,10 +249,34 @@ export const useFarmerScoring = (farmerId?: string) => {
       //   2. ESCOPO. `sales_orders` é company-wide para staff (policy `sales_orders_select_staff`),
       //      mas a RPC devolve só a carteira do caller. Para um VENDEDOR, cliente fora da carteira
       //      cai no `?? null` abaixo e perde o componente G — o `calcularHealthScore` renormaliza,
-      //      então o score dele muda (não penaliza, mas muda) e a ordem da agenda pode mudar
-      //      junto. Para gestor/master (`cap_carteira_ler`) não há delta: a RPC devolve tudo.
-      // O baseline de paridade TS×SQL da §5.1 do spec — que mediria exatamente estes dois — não
-      // foi feito. Está declarado no corpo do PR em vez de anunciado como equivalência.
+      //      então o score dele muda (não penaliza, mas muda). Para gestor/master
+      //      (`cap_carteira_ler`) não há delta: a RPC devolve tudo.
+      //
+      // ✅ O baseline de paridade TS×SQL da §5.1 do spec AGORA EXISTE e foi medido em prod
+      // (2026-08-13): `db/test-fu4f-fase3-paridade-ts-sql.sh`, análise em
+      // `docs/historico/farmer-scoring-paridade-ts-sql.md`. Os dois deltas acima estão CONFIRMADOS
+      // e quantificados — e um terceiro palpite deste comentário caiu:
+      //   • FAIXA: master 58 clientes (6,9%) · farmers 497 (59,5%) e 405 (48,5%).
+      //   • HEALTH: Δ médio 1,36 / 4,08 / 3,56; muda de CLASSE em 14 (1,7%) / 78 (9,3%) / 44 (5,3%).
+      //   • AGENDA: **ZERO** entram ou saem, nas 3 personas — "a ordem da agenda pode mudar junto"
+      //     era falso. Nenhuma dimensão de quota lê `g`: risco ordena por churnRisk, expansão por
+      //     expansionScore e follow-up por priorityScore, e o health score não entra em nenhum.
+      //     Só o RÓTULO healthClass exibido muda (3/1/2 dos 20 slots). Medido com falsificação —
+      //     perturbando a prioridade, a agenda DIVERGE, então o zero não é comparador morto.
+      //   • O eixo UNIVERSO só ADICIONA sinal (28 ganham margem, 0 perdem); o eixo ESCOPO só
+      //     REMOVE (472 e 379 perdem). Alinhar a allowlist daqui fecha o primeiro (delta do master
+      //     vai a 1 cliente) e não toca o segundo — mas troca 9 dos 20 slots da agenda: é decisão
+      //     de PRODUTO, do founder, não higiene de filtro.
+      //   • O eixo ESCOPO foi medido (cenário D) e ✅ FECHADO em 2026-08-14 (decisão do founder):
+      //     esta lista passou a ser recortada pela carteira visível — ver o bloco "1b. ESCOPO DA
+      //     TELA" acima. Leva a tela de 835 para 294/395 clientes, derruba o delta de faixa a
+      //     8,5%/6,6% (o patamar do master, ou seja, sobra só o eixo universo) e o "sem margem"
+      //     de 562/464 para 21/24. Custou 11–12 dos 20 slots da agenda, MAIS que alinhar a
+      //     allowlist, porque muda a POPULAÇÃO e com ela o p95 que normaliza `m` (e portanto
+      //     recover/priority, que a agenda lê).
+      //   • O eixo UNIVERSO (a allowlist logo acima) segue ABERTO — de propósito. Fechá-lo troca
+      //     outros 9 slots e é decisão separada; o chip "Corrigir filtro de status do scoring do
+      //     farmer" continua valendo.
       //
       // `margem_pct` só vem preenchido para quem tem `cap_custo_ler`; para os demais é null e a
       // UI mostra a FAIXA no lugar do número. O gate é de PROJEÇÃO, no corpo da RPC.
@@ -325,6 +390,16 @@ export const useFarmerScoring = (farmerId?: string) => {
         // A margem NÃO é mais acumulada aqui — vem pronta da RPC (fase 3). O laço acima
         // continua porque `categories` alimenta o componente X (diversidade de mix), que não
         // depende de custo.
+      }
+
+      // 5b. Recorte da tela pela carteira — ANTES da população, e isso não é detalhe de ordem.
+      // Os percentis abaixo (p95 de spend) normalizam `m`, que entra em `recover` e `priority`,
+      // que a agenda LÊ. Filtrar depois mediria cada cliente contra uma população que a tela não
+      // mostra mais — número plausível e errado. Medido: a agenda troca 11–12 dos 20 slots
+      // justamente por isso (docs/historico/farmer-scoring-paridade-ts-sql.md §6).
+      const visiveis = new Set(filtrarPorCarteira([...customerMap.keys()], { capCarteiraLer, carteira }));
+      for (const cid of [...customerMap.keys()]) {
+        if (!visiveis.has(cid)) customerMap.delete(cid);
       }
 
       // Aggregate call data
@@ -543,11 +618,14 @@ export const useFarmerScoring = (farmerId?: string) => {
       setCalculating(false);
       setLoading(false);
     }
-  }, [targetFarmerId, config]);
+  }, [targetFarmerId, config, capCarteiraLer]);
 
   useEffect(() => {
-    if (targetFarmerId) calculateScores();
-  }, [targetFarmerId]);
+    // `!loadingRole`: calcular antes de o papel comercial resolver recortaria a tela de um gestor
+    // (canViewManagerial nasce false), e o recálculo só viria no próximo disparo. Esperar é a
+    // diferença entre "gestor vê a base" e "gestor pisca a carteira e depois vê a base".
+    if (targetFarmerId && !loadingRole) calculateScores();
+  }, [targetFarmerId, loadingRole, capCarteiraLer]);
 
   // Summary stats
   const summary = useMemo(() => {
