@@ -22,6 +22,23 @@ export interface PoCandidato {
   portal_protocolo: string | null;
   status_envio_portal: string | null;
   algum_sinal_de_canal: boolean;
+  /** Quando terminou o run que serviu de base para ESTA linha. Ver `frescorDoDetector`. */
+  marcador_finalizado_em: string | null;
+  /** O `now()` do BANCO no instante da consulta — o outro lado da subtração, no mesmo relógio. */
+  apurado_em: string | null;
+}
+
+/**
+ * O retorno de `reposicao_pos_marcador` — SEMPRE uma linha, com campos NULL quando não há marcador.
+ *
+ * Ela existe porque coluna é POR LINHA: com zero candidatos a RPC da lista devolve zero linhas e,
+ * portanto, carimbo nenhum. E "zero candidatos" é exatamente o caso em que a pergunta importa.
+ */
+export interface MarcadorPos {
+  marcador_run_id: string | null;
+  marcador_seq: number | null;
+  marcador_finalizado_em: string | null;
+  apurado_em: string | null;
 }
 
 /**
@@ -184,12 +201,20 @@ export function acaoSugerida(c: PoCandidato): string {
  * detector cego parecendo saudável, que é exatamente o bug que este PR existe para expor. Com a
  * sentinela, esse caso cai em "não apurei" (aviso visível). Erra para o lado de gritar demais.
  */
-const SENTINELA_GATE = 'reposicao_pos_candidatos: acesso negado';
+const SENTINELAS_GATE = [
+  'reposicao_pos_candidatos: acesso negado',
+  // A RPC do marcador levanta a MESMA classe de erro com o próprio nome. Sentinela compartilhada
+  // entre as duas apagaria a distinção que o parágrafo acima existe para preservar: saber QUAL gate
+  // negou é o que separa "esta pessoa não pode ver compras" de "o GRANT de uma delas quebrou".
+  'reposicao_pos_marcador: acesso negado',
+] as const;
 
 export function ehAcessoNegado(erro: unknown): boolean {
   if (erro == null || typeof erro !== 'object') return false;
   const e = erro as { code?: unknown; message?: unknown };
-  return e.code === '42501' && typeof e.message === 'string' && e.message.includes(SENTINELA_GATE);
+  if (e.code !== '42501' || typeof e.message !== 'string') return false;
+  const msg = e.message;
+  return SENTINELAS_GATE.some((s) => msg.includes(s));
 }
 
 /**
@@ -202,12 +227,22 @@ export function ehAcessoNegado(erro: unknown): boolean {
  * Valor não-finito vira null, que é exatamente o que ele significa: não apurado.
  */
 export function normalizarCandidatos(cs: readonly PoCandidato[]): PoCandidato[] {
-  return cs.map((c) =>
-    typeof c.valor_total === 'number' && Number.isFinite(c.valor_total)
-      ? c
-      : { ...c, valor_total: null },
-  );
+  return cs.map((c) => ({
+    ...c,
+    valor_total:
+      typeof c.valor_total === 'number' && Number.isFinite(c.valor_total) ? c.valor_total : null,
+    // Os carimbos passam pela MESMA fronteira, e por um motivo concreto de operação: o SQL e o
+    // frontend são dois deploys manuais SEPARADOS neste projeto. Publicado o front antes de a
+    // migration rodar, a RPC devolve linhas SEM estas colunas — `undefined`, não `null`. Sem
+    // normalizar, `undefined` viajaria até a conta de idade e viraria `NaN`, que compara falso com
+    // tudo e sairia como "fresco" em silêncio. Vira null, que é o que ele significa: não apurado.
+    marcador_finalizado_em: textoOuNulo(c.marcador_finalizado_em),
+    apurado_em: textoOuNulo(c.apurado_em),
+  }));
 }
+
+const textoOuNulo = (v: unknown): string | null =>
+  typeof v === 'string' && v.trim() !== '' ? v : null;
 
 /** Como apresentar a soma dos valores sem inventar número. */
 export type ResumoValor =
@@ -256,4 +291,136 @@ export function ordenarCandidatos(cs: readonly PoCandidato[]): PoCandidato[] {
     if (va !== vb) return vb - va; // maior primeiro; Infinity (desconhecido) encabeça o grupo
     return a.pedido_id - b.pedido_id;
   });
+}
+
+// ────────────────────────────────────────────────────────────────────────────────────────────
+// FRESCOR DO DETECTOR — "esta lista vazia é boa notícia, ou o detector parou?"
+//
+// O guard temporal do #1718 (PO nascido depois do marcador não é candidato) matou 11,0h/pedido de
+// alerta falso e é ganho líquido. Mas o marcador — o último run completo VÁLIDO — é escolhido sem
+// nenhum limite de frescor. Se o run parar de produzir run válido, ele CONGELA, e todo PO criado
+// depois dele fica invisível indefinidamente. A falha ALTA virou SILENCIOSA.
+//
+// É o §2 do money-path (ausente ≠ zero) aplicado a uma LISTA: a lista vazia estava sendo lida como
+// afirmação de ausência quando pode ser ausência de apuração. O conserto não é filtrar marcador
+// velho (isso troca lista incompleta por lista vazia — o mesmo silêncio, com menos informação): é
+// EXPOR a idade e deixar o humano julgar.
+// ────────────────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Acima de quantas horas o marcador deixa de ser base confiável.
+ *
+ * Ancorado em medição, não em palpite: em prod (OBEN, psql-ro 14/08) há 31 runs válidos entre 17/07
+ * e 13/08, e os 30 intervalos entre eles são TODOS de 22,0h — máximo = média = p95 = 22,0h, uma
+ * cadência rígida. 26h dá ~18% de folga sobre o pior caso já observado; passar disso significa que
+ * um ciclo inteiro foi perdido, não que o run atrasou.
+ *
+ * O limiar mora AQUI, e não no SQL, porque é julgamento de produto: a RPC lista e evidencia, não
+ * decide (o desenho do PR2). Mudá-lo é editar esta linha, não recriar uma função em produção.
+ */
+export const LIMIAR_FRESCOR_HORAS = 26;
+
+export type Frescor =
+  /** Nunca houve run completo válido: o detector não tem base de comparação nenhuma. */
+  | { estado: 'sem_marcador' }
+  /** Não conseguimos ler o marcador. "Não sei" — nunca apresentado como "está tudo bem". */
+  | { estado: 'nao_apurado' }
+  /**
+   * O gate de authz negou. Estado PRÓPRIO, e não `fresco` fingido: quem não pode ver compras
+   * também não deve receber aviso sobre elas, mas registrar isso como "está fresco" plantaria uma
+   * afirmação falsa dentro do módulo — pronta para vazar no dia em que alguém a exibir.
+   */
+  | { estado: 'nao_autorizado' }
+  | { estado: 'fresco'; horas: number }
+  | { estado: 'desatualizado'; horas: number };
+
+/** Idade em horas entre os dois carimbos, ou null se ela não é apurável. */
+function idadeEmHoras(finalizado_em: string | null, apurado_em: string | null): number | null {
+  if (finalizado_em == null || apurado_em == null) return null;
+  const fim = Date.parse(finalizado_em);
+  const agora = Date.parse(apurado_em);
+  if (!Number.isFinite(fim) || !Number.isFinite(agora)) return null;
+  const horas = (agora - fim) / 3_600_000;
+  // Negativo é impossível com os dois lados vindos do relógio do BANCO — então, se aparecer, é
+  // sintoma de premissa quebrada, não de sistema fresco. Devolver 0 ("acabou de rodar") afirmaria
+  // frescor sem base, que é a mentira exata que este módulo existe para não contar.
+  return Number.isFinite(horas) && horas >= 0 ? horas : null;
+}
+
+const classificar = (horas: number): Frescor =>
+  horas > LIMIAR_FRESCOR_HORAS ? { estado: 'desatualizado', horas } : { estado: 'fresco', horas };
+
+/**
+ * O frescor da apuração que o usuário está vendo.
+ *
+ * A FONTE do carimbo é deliberada e não é intercambiável:
+ *
+ *  • Havendo candidatos, vale o carimbo QUE VEIO COM A LISTA. As duas RPCs são duas leituras
+ *    independentes, e entre elas um run pode ser promovido a marcador — usar o carimbo da consulta
+ *    avulsa diria "fresco" sobre uma lista gerada pelo marcador velho. Falso-NEGATIVO de frescor:
+ *    o lado errado para errar num alerta que existe justamente para gritar.
+ *
+ *  • Não havendo candidatos, só a consulta avulsa pode responder — zero linhas não carregam
+ *    carimbo. Este é o caso do P1, e é por ele que a RPC irmã existe.
+ */
+export function frescorDoDetector(
+  candidatos: readonly PoCandidato[],
+  marcador: MarcadorPos | null,
+  /**
+   * Há quanto tempo (ms) a resposta que carrega estes carimbos chegou, medido no relógio LOCAL.
+   *
+   * ⚠️ Sem isto o conserto seria pela metade. `apurado_em` congela no instante da resposta, e o
+   * TanStack **pausa** o polling quando a aba fica oculta ou a rede cai — em `networkMode: 'online'`
+   * a query fica `paused`, NÃO produz `error`, e o dado anterior permanece. O app ainda desliga
+   * refetch-on-focus. Resultado: o card exibiria "22h" indefinidamente enquanto o detector envelhece
+   * de verdade — exatamente o congelamento que este módulo veio denunciar, um andar acima.
+   *
+   * É seguro somar o relógio do cliente AQUI, e não no cálculo principal, porque isto é a diferença
+   * entre dois instantes do MESMO relógio (chegada → agora): imune ao offset que tornaria
+   * `Date.now() - marcador_finalizado_em` uma mentira. Só o drift de taxa sobra, e ele é desprezível
+   * numa medida em horas.
+   */
+  derivaLocalMs = 0,
+): Frescor {
+  const deriva = Number.isFinite(derivaLocalMs) && derivaLocalMs > 0 ? derivaLocalMs / 3_600_000 : 0;
+
+  const daLista = candidatos.find((c) => c.marcador_finalizado_em != null && c.apurado_em != null);
+  if (daLista) {
+    const horas = idadeEmHoras(daLista.marcador_finalizado_em, daLista.apurado_em);
+    if (horas != null) return classificar(horas + deriva);
+  }
+
+  // Sem carimbo utilizável na lista (inclusive a janela em que o front já subiu e a migration
+  // ainda não rodou), a consulta avulsa é a única fonte.
+  if (marcador == null) return { estado: 'nao_apurado' };
+  // Marcador respondido, porém VAZIO: não é falha de leitura, é ausência de base — o pior estado do
+  // detector, e o único em que ele nunca funcionou. Colapsar os dois em "não apurado" esconderia
+  // justamente o caso que exige ação.
+  if (marcador.marcador_finalizado_em == null) return { estado: 'sem_marcador' };
+  const horas = idadeEmHoras(marcador.marcador_finalizado_em, marcador.apurado_em);
+  return horas == null ? { estado: 'nao_apurado' } : classificar(horas + deriva);
+}
+
+/** Mesma fronteira de `normalizarCandidatos`, pela mesma razão. */
+export function normalizarMarcador(m: unknown): MarcadorPos | null {
+  if (m == null || typeof m !== 'object') return null;
+  const r = m as Record<string, unknown>;
+  return {
+    marcador_run_id: textoOuNulo(r.marcador_run_id),
+    marcador_seq: typeof r.marcador_seq === 'number' && Number.isFinite(r.marcador_seq)
+      ? r.marcador_seq
+      : null,
+    marcador_finalizado_em: textoOuNulo(r.marcador_finalizado_em),
+    apurado_em: textoOuNulo(r.apurado_em),
+  };
+}
+
+/**
+ * A idade em texto. Horas até 48h porque é a unidade em que o operador pensa o ciclo (22h); acima
+ * disso "73h" vira aritmética mental e "3 dias" comunica a mesma coisa melhor.
+ */
+export function descreverIdade(horas: number): string {
+  if (horas < 48) return `${Math.round(horas)}h`;
+  const dias = Math.floor(horas / 24);
+  return `${dias} dias`;
 }

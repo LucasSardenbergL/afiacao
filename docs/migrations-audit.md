@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **467** custom migrations totais
-- **1591** objetos esperados (criados por estas migrations)
+- **468** custom migrations totais
+- **1593** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 478
+  - `function`: 480
   - `rls_policy`: 396
   - `index`: 238
   - `cron_job`: 164
@@ -3898,6 +3898,13 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.get_carteira_margem_faixa` | — |
+
+### `20260814000125_reposicao_pos_frescor_marcador.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.reposicao_pos_candidatos` | — |
+| `function` | `public.reposicao_pos_marcador` | — |
 
 ### `20260814022626_reposicao_po_inexistente_antes_de.sql`
 

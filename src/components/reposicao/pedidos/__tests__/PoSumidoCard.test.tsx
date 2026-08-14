@@ -1,10 +1,15 @@
 import { describe, it, expect } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { PoSumidoCard } from '../PoSumidoCard';
-import type { PoCandidato } from '../po-sumido';
+import type { Frescor, PoCandidato } from '../po-sumido';
 
 // Os estados em que a UI pode MENTIR — os quatro achados P1 do review adversarial. Cada teste aqui
 // existe porque a versão anterior do card errava exatamente nesse ponto.
+
+// O detector saudável é o PANO DE FUNDO dos testes antigos: eles afirmam o comportamento do card
+// quando a base de comparação está boa, e é só nesse mundo que "some com lista vazia" e "mostra os
+// passos" continuam corretos. O bloco de frescor no fim é que exercita os outros mundos.
+const FRESCO: Frescor = { estado: 'fresco', horas: 2 };
 
 const base: PoCandidato = {
   pedido_id: 1,
@@ -19,22 +24,24 @@ const base: PoCandidato = {
   portal_protocolo: null,
   status_envio_portal: null,
   algum_sinal_de_canal: false,
+  marcador_finalizado_em: '2026-08-14T10:00:00Z',
+  apurado_em: '2026-08-14T12:00:00Z',
 };
 const c = (over: Partial<PoCandidato> = {}): PoCandidato => ({ ...base, ...over });
 
 describe('PoSumidoCard — os estados em que dá para mentir', () => {
   it('lista vazia APURADA não renderiza nada (aí "não há" é verdade)', () => {
-    const { container } = render(<PoSumidoCard candidatos={[]} />);
+    const { container } = render(<PoSumidoCard frescor={FRESCO} candidatos={[]} />);
     expect(container).toBeEmptyDOMElement();
   });
 
   it('apurando: aparece "apurando", NUNCA silêncio — "ainda não sei" ≠ "não há"', () => {
-    render(<PoSumidoCard candidatos={[]} apurando />);
+    render(<PoSumidoCard frescor={FRESCO} candidatos={[]} apurando />);
     expect(screen.getByText(/apurando/i)).toBeInTheDocument();
   });
 
   it('falha de apuração: grita que NÃO sabe, em vez de sumir', () => {
-    render(<PoSumidoCard candidatos={[]} falhaApuracao />);
+    render(<PoSumidoCard frescor={FRESCO} candidatos={[]} falhaApuracao />);
     expect(screen.getByText(/não foi possível apurar/i)).toBeInTheDocument();
     expect(screen.getByText(/significa que não sabemos/i)).toBeInTheDocument();
   });
@@ -42,38 +49,38 @@ describe('PoSumidoCard — os estados em que dá para mentir', () => {
   it('TODOS sem valor: diz "não apurado" e NUNCA imprime R$ 0,00', () => {
     // O furo mais grave do review: [].reduce(soma, 0) === 0 fazia o card anunciar "Total conhecido
     // R$ 0,00" quando nenhum valor havia sido apurado — fabricar zero é fabricar um fato.
-    render(<PoSumidoCard candidatos={[c({ pedido_id: 1, valor_total: null }), c({ pedido_id: 2, valor_total: null })]} />);
+    render(<PoSumidoCard frescor={FRESCO} candidatos={[c({ pedido_id: 1, valor_total: null }), c({ pedido_id: 2, valor_total: null })]} />);
     expect(screen.getByText(/não apurado/i)).toBeInTheDocument();
     expect(screen.queryByText(/R\$\s*0,00/)).not.toBeInTheDocument();
   });
 
   it('misto: apresenta SUBTOTAL declarado, não "total"', () => {
-    render(<PoSumidoCard candidatos={[c({ pedido_id: 1, valor_total: 100 }), c({ pedido_id: 2, valor_total: null })]} />);
+    render(<PoSumidoCard frescor={FRESCO} candidatos={[c({ pedido_id: 1, valor_total: 100 }), c({ pedido_id: 2, valor_total: null })]} />);
     expect(screen.getByText(/subtotal de 1 de 2 pedidos/i)).toBeInTheDocument();
   });
 
   it('título é NEUTRO: não afirma ausência de PO (há linha em que nem deu para comparar)', () => {
-    render(<PoSumidoCard candidatos={[c({ visto_status: 'identidade_nao_interpretavel' })]} />);
+    render(<PoSumidoCard frescor={FRESCO} candidatos={[c({ visto_status: 'identidade_nao_interpretavel' })]} />);
     expect(screen.getByText(/a reconciliar no Omie/i)).toBeInTheDocument();
     // "Pedidos sem PO" seria uma afirmação que a evidência não sustenta para identidade ilegível.
     expect(screen.queryByText(/pedidos sem PO/i)).not.toBeInTheDocument();
   });
 
   it('o card recolhido nunca instrui cancelar — avisa para NÃO cancelar sem conferir', () => {
-    render(<PoSumidoCard candidatos={[c()]} />);
+    render(<PoSumidoCard frescor={FRESCO} candidatos={[c()]} />);
     expect(screen.getByText(/não cancele sem conferir/i)).toBeInTheDocument();
   });
 
   it('a copy recolhida NÃO afirma ausência: diz "não foi confirmado", não "não foi encontrado"', () => {
     // Neutralizar só o título era meia-correção — o parágrafo logo abaixo continuava afirmando que o
     // PO "não foi encontrado", falso para as linhas em que nem foi possível comparar.
-    render(<PoSumidoCard candidatos={[c()]} />);
+    render(<PoSumidoCard frescor={FRESCO} candidatos={[c()]} />);
     expect(screen.getByText(/não foi confirmado na última varredura/i)).toBeInTheDocument();
     expect(screen.queryByText(/não foi encontrado/i)).not.toBeInTheDocument();
   });
 
   it('havendo linha ilegível, o card recolhido DIZ que ali não deu para comparar', () => {
-    render(<PoSumidoCard candidatos={[
+    render(<PoSumidoCard frescor={FRESCO} candidatos={[
       c({ pedido_id: 1, visto_status: 'identidade_nao_interpretavel' }),
       c({ pedido_id: 2 }),
     ]} />);
@@ -82,14 +89,14 @@ describe('PoSumidoCard — os estados em que dá para mentir', () => {
   });
 
   it('sem linha ilegível, não inventa a ressalva', () => {
-    render(<PoSumidoCard candidatos={[c()]} />);
+    render(<PoSumidoCard frescor={FRESCO} candidatos={[c()]} />);
     expect(screen.queryByText(/não foi possível comparar/i)).not.toBeInTheDocument();
   });
 
   it('falha transitória COM lista anterior: mantém os dados e marca como desatualizado', () => {
     // Apagar pedido/protocolo/valor legítimos por um erro de rede seria trocar uma mentira por uma
     // perda. A lista é do próprio usuário (a chave da query é escopada pelo principal).
-    render(<PoSumidoCard candidatos={[c({ fornecedor_nome: 'Sayerlack' })]} falhaApuracao />);
+    render(<PoSumidoCard frescor={FRESCO} candidatos={[c({ fornecedor_nome: 'Sayerlack' })]} falhaApuracao />);
     // O aviso aparece em DOIS lugares de propósito (badge no título + parágrafo), por isso texto exato
     // em cada um: uma regex frouxa casaria os dois e o getByText exige elemento único.
     expect(screen.getByText('pode estar desatualizado')).toBeInTheDocument();
@@ -101,7 +108,7 @@ describe('PoSumidoCard — os estados em que dá para mentir', () => {
     // textContent é idêntico com <ol> ou <span>, então o teste anterior passava verde mesmo trocando a
     // lista por um parágrafo — e é a separação visual que mantém cada trava colada ao seu passo.
     const { container } = render(
-      <PoSumidoCard candidatos={[c({ algum_sinal_de_canal: true, portal_protocolo: '2097501' })]} />,
+      <PoSumidoCard frescor={FRESCO} candidatos={[c({ algum_sinal_de_canal: true, portal_protocolo: '2097501' })]} />,
     );
     fireEvent.click(screen.getByText(/a reconciliar no Omie/i));
     const itens = container.querySelectorAll('ol li');
@@ -116,7 +123,7 @@ describe('PoSumidoCard — os estados em que dá para mentir', () => {
     // falha → o card continua mandando "recrie o PO no Omie" → o comprador recria de novo.
     // Manter a EVIDÊNCIA é útil; manter a AÇÃO é o mesmo dano que este PR combate, pelo outro lado.
     const cand = c({ algum_sinal_de_canal: true, portal_protocolo: '2097501' });
-    const { container } = render(<PoSumidoCard candidatos={[cand]} falhaApuracao />);
+    const { container } = render(<PoSumidoCard frescor={FRESCO} candidatos={[cand]} falhaApuracao />);
     // EXPANDIR é obrigatório: o card nasce recolhido e a coluna "O que fazer" só existe aberta — sem
     // o clique este teste passaria por estar fechado, não por a instrução ter sido suprimida.
     fireEvent.click(screen.getByText(/a reconciliar no Omie/i));
@@ -128,13 +135,13 @@ describe('PoSumidoCard — os estados em que dá para mentir', () => {
 
   it('o guarda acima tem dente: com apuração OK, expandido, a instrução APARECE', () => {
     const cand = c({ algum_sinal_de_canal: true, portal_protocolo: '2097501' });
-    const { container } = render(<PoSumidoCard candidatos={[cand]} />);
+    const { container } = render(<PoSumidoCard frescor={FRESCO} candidatos={[cand]} />);
     fireEvent.click(screen.getByText(/a reconciliar no Omie/i));
     expect(container.textContent ?? '').toMatch(/recrie o PO/i);
   });
 
   it('DESATUALIZADO põe os fatos no passado — sem afirmar estado atual', () => {
-    const { container } = render(<PoSumidoCard candidatos={[c({ na_janela_7d: true })]} falhaApuracao />);
+    const { container } = render(<PoSumidoCard frescor={FRESCO} candidatos={[c({ na_janela_7d: true })]} falhaApuracao />);
     const texto = container.textContent ?? '';
     expect(texto).toMatch(/na última apuração/i);
     // "está disparado ... infla o estoque" afirma o AGORA, e o agora não foi verificado.
@@ -145,14 +152,14 @@ describe('PoSumidoCard — os estados em que dá para mentir', () => {
   it('DESATUALIZADO não ESCONDE a urgência: diz que estava na janela', () => {
     // Suprimir o badge era o pior dos dois lados — escondia dano que de fato havia na última apuração.
     // O fato fica visível, no tempo verbal certo.
-    render(<PoSumidoCard candidatos={[c({ na_janela_7d: true })]} falhaApuracao />);
+    render(<PoSumidoCard frescor={FRESCO} candidatos={[c({ na_janela_7d: true })]} falhaApuracao />);
     expect(screen.getByText(/1 estava na janela na última apuração/i)).toBeInTheDocument();
   });
 
   it('DESATUALIZADO, EXPANDIDO: a linha também não afirma "na janela" no presente', () => {
     // O teste anterior não pegava isto porque a tabela nem é montada com o card recolhido — mesmo erro
     // que já tinha me escapado uma vez.
-    const { container } = render(<PoSumidoCard candidatos={[c({ na_janela_7d: true })]} falhaApuracao />);
+    const { container } = render(<PoSumidoCard frescor={FRESCO} candidatos={[c({ na_janela_7d: true })]} falhaApuracao />);
     fireEvent.click(screen.getByText(/a reconciliar no Omie/i));
     const texto = container.textContent ?? '';
     expect(texto).toMatch(/estava na janela/i);
@@ -162,7 +169,7 @@ describe('PoSumidoCard — os estados em que dá para mentir', () => {
   it('apuração OK volta a afirmar o presente e a instruir', () => {
     // Espelho: sem isto, suprimir tudo sempre também passaria.
     const { container } = render(
-      <PoSumidoCard candidatos={[c({ na_janela_7d: true, algum_sinal_de_canal: true, portal_protocolo: '2097501' })]} />,
+      <PoSumidoCard frescor={FRESCO} candidatos={[c({ na_janela_7d: true, algum_sinal_de_canal: true, portal_protocolo: '2097501' })]} />,
     );
     fireEvent.click(screen.getByText(/a reconciliar no Omie/i));
     const texto = container.textContent ?? '';
@@ -176,7 +183,7 @@ describe('PoSumidoCard — os estados em que dá para mentir', () => {
     // O caminho que isso fecha: A recria a compra sob um PO NOVO; B olha esta tabela, que mostra o
     // número ANTIGO, confirma que o antigo continua ausente (é verdade) e cria um segundo PO.
     const { container } = render(
-      <PoSumidoCard candidatos={[c({ algum_sinal_de_canal: true, portal_protocolo: '2097501' })]} />,
+      <PoSumidoCard frescor={FRESCO} candidatos={[c({ algum_sinal_de_canal: true, portal_protocolo: '2097501' })]} />,
     );
     fireEvent.click(screen.getByText(/a reconciliar no Omie/i));
     const texto = container.textContent ?? '';
@@ -187,5 +194,89 @@ describe('PoSumidoCard — os estados em que dá para mentir', () => {
     // e a TRAVA tem de estar visível junto: sem a condição de parada, "recrie" vira ordem incondicional
     expect(texto).toMatch(/PARE/);
     expect(texto).toMatch(/continua ativo/i);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────────────────────
+// FRESCOR DO DETECTOR — o card só pode SUMIR quando a ausência de linhas é informação.
+//
+// O guard temporal do #1718 esconde todo PO nascido depois do marcador. Marcador congelado ⇒ lista
+// vazia ⇒ o card sumia ⇒ a tela AFIRMAVA "não há nada a reconciliar" sem que ninguém tivesse olhado.
+// ────────────────────────────────────────────────────────────────────────────────────────────
+
+const VELHO: Frescor = { estado: 'desatualizado', horas: 40 };
+const CEGO: Frescor = { estado: 'sem_marcador' };
+const NAO_SEI: Frescor = { estado: 'nao_apurado' };
+
+describe('PoSumidoCard — frescor do detector', () => {
+  it('lista vazia + detector VELHO: o card aparece e diz há quanto tempo', () => {
+    const { container } = render(<PoSumidoCard frescor={VELHO} candidatos={[]} />);
+    expect(container.textContent).toMatch(/desatualizado há 40h/i);
+    // E o ponto todo: dizer que o vazio não conclui nada.
+    expect(container.textContent).toMatch(/não é notícia boa|ausência de apuração/i);
+  });
+
+  it('lista vazia + detector CEGO: o card aparece e diz que a verificação não roda', () => {
+    const { container } = render(<PoSumidoCard frescor={CEGO} candidatos={[]} />);
+    expect(container.textContent).toMatch(/não está rodando/i);
+  });
+
+  it('lista vazia + detector FRESCO: o card some (aí a ausência é informação)', () => {
+    const { container } = render(<PoSumidoCard frescor={FRESCO} candidatos={[]} />);
+    expect(container.innerHTML).toBe('');
+  });
+
+  it('lista vazia + frescor NÃO APURADO: fala, porque "não sei" nunca vira "está tudo bem"', () => {
+    const { container } = render(<PoSumidoCard frescor={NAO_SEI} candidatos={[]} />);
+    expect(container.textContent).toMatch(/não sabemos/i);
+  });
+
+  // O achado adversarial: o aviso qualificava a lista mas não impedia a compra duplicada. Com base
+  // de 40h, "o PO não foi confirmado" é uma afirmação sobre anteontem — e nesse intervalo alguém
+  // pode ter recriado o PO.
+  it('com lista + detector VELHO: a EVIDÊNCIA fica, a INSTRUÇÃO sai', () => {
+    const cand = c({ algum_sinal_de_canal: true, portal_protocolo: '2097501' });
+    const { container } = render(<PoSumidoCard frescor={VELHO} candidatos={[cand]} />);
+    fireEvent.click(screen.getByText(/a reconciliar no Omie/i));
+    expect(container.textContent).toMatch(/2097501/);         // evidência preservada
+    expect(container.textContent).not.toMatch(/recrie o PO/i); // comando de agir, não
+  });
+
+  it('com lista + detector FRESCO: a instrução VOLTA (o teste acima tem dente)', () => {
+    const cand = c({ algum_sinal_de_canal: true, portal_protocolo: '2097501' });
+    const { container } = render(<PoSumidoCard frescor={FRESCO} candidatos={[cand]} />);
+    fireEvent.click(screen.getByText(/a reconciliar no Omie/i));
+    expect(container.textContent).toMatch(/recrie o PO/i);
+  });
+
+  // `nao_apurado` NÃO suprime: ali não sabemos a idade da base, não sabemos que ela é velha.
+  // Suprimir por não-saber tornaria o card inútil sempre que a consulta secundária falhasse.
+  it('com lista + frescor NÃO APURADO: a instrução permanece', () => {
+    const cand = c({ algum_sinal_de_canal: true, portal_protocolo: '2097501' });
+    const { container } = render(<PoSumidoCard frescor={NAO_SEI} candidatos={[cand]} />);
+    fireEvent.click(screen.getByText(/a reconciliar no Omie/i));
+    expect(container.textContent).toMatch(/recrie o PO/i);
+  });
+
+  // Duas mensagens de "não sei" empilhadas são a mesma notícia dita duas vezes.
+  it('falha de apuração + frescor não apurado: um aviso só, não dois', () => {
+    const { container } = render(
+      <PoSumidoCard frescor={NAO_SEI} candidatos={[c()]} falhaApuracao />,
+    );
+    expect(container.textContent).toMatch(/última verificação falhou/i);
+    expect(container.textContent).not.toMatch(/não conseguimos ler quando/i);
+  });
+
+  // Mas um fato NOVO e mais grave que a falha transitória continua aparecendo.
+  it('falha de apuração + detector VELHO: o aviso de frescor ainda aparece', () => {
+    const { container } = render(<PoSumidoCard frescor={VELHO} candidatos={[c()]} falhaApuracao />);
+    expect(container.textContent).toMatch(/desatualizado há 40h/i);
+  });
+
+  it('sem autorização o card não fala do detector (nem revela que ele existe)', () => {
+    const { container } = render(
+      <PoSumidoCard frescor={{ estado: 'nao_autorizado' }} candidatos={[]} />,
+    );
+    expect(container.innerHTML).toBe('');
   });
 });
