@@ -327,3 +327,85 @@ viva que fecha esse buraco. Um mede que **houve** entrada; o outro, que **há** 
 Enquanto o gatilho é "alguém me avisa", ele herda a mesma falha do zero sem denominador — ninguém
 consegue conferir se já disparou. Escrever a query custou uma consulta e transformou a espera em algo
 que qualquer sessão futura resolve sozinha, sem interromper o founder.
+
+---
+
+# Fase 4 — o sensor: a tela passa a dizer POR QUE veio vazia (2026-08-13)
+
+> Aplicação direta da regra do #1726: *"fase N+1 exige SINAL da fase N — superfície de uso nasce
+> com o sensor; sem sensor, a fase N+1 é instalá-lo."* A errata acima previu este passo
+> ("instrumentar com `track()` — abertura + clique"); esta fase o instala. Padrão herdado do
+> **#1717** (`c1c5ad25`), que resolveu a mesma classe na tela irmã `/rota/ligacoes`.
+
+## A abertura já estava coberta — e duplicá-la seria o erro
+
+A rota `/farmer/tactical-plan` vive dentro do `AppShellLayout` → `AppShell` → `PageViewTracker`,
+que emite `$pageview` a cada mudança de rota. Um evento novo de "abertura" criaria um **segundo
+denominador, divergente do primeiro, para a mesma pergunta**. O que faltava era o **desfecho** da
+abertura. Mesma conclusão do #1717, verificada aqui em vez de assumida por analogia.
+
+## São 4 saídas, e 3 produziam o mesmo pixel
+
+`loadPlans` (`src/hooks/useTacticalPlan.ts`):
+
+| # | Saída | O que a tela mostrava | Estado da lista |
+|---|---|---|---|
+| 1 | `!effectiveUserId` → `return` | "Nenhum plano pendente" | intocada (nem liga o `loading`) |
+| 2 | **`error` da consulta** | "Nenhum plano pendente" | limpa |
+| 3 | `data` vazio | "Nenhum plano pendente" | limpa |
+| 4 | `catch` (só `console.error`) | **a lista ANTIGA** | **preservada** |
+
+A perigosa é a **(2)**: o código fazia `const { data } = await …`, **descartando o `error`**, e
+`!data` caía no mesmo `setPlans([])` da (3). Falha de consulta era pixel-idêntica a fila vazia —
+e classificá-la como "não há plano" é fabricar diagnóstico (money-path §2). O `error` passou a
+ser lido **apenas para declarar o motivo**; o que a tela renderiza é byte-a-byte o de antes.
+
+A **(4)** é a que o dado precisava dizer em voz alta: o `catch` não toca em `plans`, então a tela
+segue exibindo o retrato do carregamento anterior *como se fosse o atual*. Daí a propriedade
+`manteve_lista` — sem ela, "quebrou e esvaziou" e "quebrou e está mentindo em silêncio" são o
+mesmo evento.
+
+A **(1)** é hoje inalcançável por esta tela (`useFarmerTacticalPlan` gateia por `user?.id`, e
+`effectiveUserId` deriva do mesmo `user`). Instrumentada mesmo assim, para que um chamador futuro
+a torne visível em vez de silenciosa — declarado no código, não descoberto de novo.
+
+## Eventos (`<area>.<action>`, área `plano_tatico.` — nova, sem colisão)
+
+```
+plano_tatico.fila_carregada   { filtro, n_exibidos, total }
+plano_tatico.fila_vazia       { filtro, total, motivo: sem_escopo | sem_resposta | recorte_vazio }
+plano_tatico.fila_erro        { filtro, total, origem: consulta | excecao, mensagem, manteve_lista }
+plano_tatico.desfecho_clicado { plano_id, desfecho, origem: um_toque }
+plano_tatico.desfecho_erro    { plano_id, desfecho, mensagem }
+```
+
+**Precedência do erro sobre `data` — garantida pelo TIPO, não por ordem de `if`.** A variante de
+erro de `SaidaDaCarga` **não carrega `nExibidos`**: é inrepresentável reportar tamanho de lista
+num caminho de falha. Sem isso, uma carga que *passou* a falhar seguiria reportando sucesso com o
+número velho (que na saída 4 continua na tela).
+
+**`total` viaja como `null` quando não apurado, nunca como 0** — mesma regra do rótulo da tela.
+
+**O clique sai DEPOIS do guard e ANTES do `await`.** Depois do guard porque toque barrado (lente
+"Ver como" / gravação em curso) não é tentativa. Antes do `await` porque o caso que mais importa
+é *clicou e a gravação morreu*: no sucesso o dado já existe no banco (`call_result`); é a
+**tentativa** que não existia em lugar nenhum.
+
+`desfecho_erro` fica no `catch` de `recordResult`, então cobre os **dois** caminhos de registro
+(1 toque e dialog detalhado). O caminho do dialog não emite `desfecho_clicado` — o sucesso dele já
+é visível no banco, e o escopo desta fase são os 5 botões de 1 toque.
+
+## O que este sensor NÃO responde
+
+Ele mede a tela, não a operação. O denominador continua sendo a query do §"O gatilho virou query"
+— com `employee → ativos_7d = 0`, os cinco eventos vão registrar zero, e **esse zero também não
+julga o desenho**. A leitura só começa quando as vendedoras entram em operação. O que muda é que,
+a partir daí, o zero deixa de ser mudo.
+
+## Lição
+
+O sensor tem de nascer com a **taxonomia das saídas**, não com um contador. "Instrumentei a tela"
+com um evento único de abertura teria produzido exatamente o mesmo impasse um nível acima: um
+número sem como saber o que ele significa. O trabalho real não foi chamar `track()` — foi **ler o
+código e enumerar as saídas**, e descobrir que uma delas (o `error` descartado) já era um bug de
+observabilidade esperando para ser lido como veredito de produto.
