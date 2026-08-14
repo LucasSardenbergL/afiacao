@@ -96,6 +96,12 @@ verify_jwt = false
 [functions.omie-sync-metadados]
 verify_jwt = false
 
+# Sonda de diagnóstico read-only (fatia 1 do receipt-first ledger). Mesmo padrão da
+# omie-sync-estoque: o gate é da aplicação (authorizeCronOrStaff), não do JWT do Supabase,
+# para aceitar tanto x-cron-secret quanto bearer de staff/service_role.
+[functions.omie-sonda-recebimento]
+verify_jwt = false
+
 [functions.radar-ingest]
 verify_jwt = false
 
