@@ -26,6 +26,7 @@ const FARMER_A = 'farmer-a';
 
 let falharScores = false;
 let falharFaixas = false;
+let falharCarteira = false;
 let farmerAtual = FARMER_A;
 
 const ERRO_TIMEOUT = { code: '57014', message: 'canceling statement due to statement timeout' };
@@ -43,12 +44,20 @@ const PERFIS = [{ user_id: 'c1', name: 'Cliente Um', phone: null }];
 // o número fecha, o sinal fica.
 const FAIXAS = [{ customer_user_id: 'c1', faixa: 'verde', motivo: 'saudavel', g: 0.8, margem_pct: null }];
 
+// A tela do farmer é recortada pela CARTEIRA visível (decisão de 2026-08-14): sem um assignment
+// para `c1`, o fail-closed de `filtrarPorCarteira` esvazia a lista — e é isso que deve acontecer.
+const CARTEIRA = [{ customer_user_id: 'c1' }];
+
 function resposta(table: string): unknown {
   if (table === 'sales_orders') {
     if (falharScores) return { data: null, error: ERRO_TIMEOUT };
     return { data: PEDIDOS, error: null };
   }
   if (table === 'profiles') return { data: PERFIS, error: null };
+  if (table === 'carteira_assignments') {
+    if (falharCarteira) return { data: null, error: ERRO_TIMEOUT };
+    return { data: CARTEIRA, error: null };
+  }
   return { data: [], error: null, count: 0 };
 }
 
@@ -78,7 +87,12 @@ vi.mock('@/contexts/ImpersonationContext', () => ({
   useImpersonation: () => ({ isImpersonating: false, effectiveUserId: farmerAtual }),
 }));
 vi.mock('@/contexts/AuthContext', () => ({
-  useAuth: () => ({ user: { id: FARMER_A }, isStaff: true, loading: false }),
+  useAuth: () => ({ user: { id: FARMER_A }, isStaff: true, isMaster: false, loading: false }),
+}));
+// Vendedora SEM `cap_carteira_ler`: é quem sofre o recorte da carteira (gestor/master lê tudo, e
+// para ele o filtro é inerte — medido: 835→835, zero slots trocados).
+vi.mock('@/hooks/useCommercialRole', () => ({
+  useCommercialRole: () => ({ canViewManagerial: false, loading: false }),
 }));
 vi.mock('react-router-dom', () => ({ useNavigate: () => vi.fn() }));
 vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
@@ -105,6 +119,7 @@ const renderDashboard = () => {
 beforeEach(() => {
   falharScores = false;
   falharFaixas = false;
+  falharCarteira = false;
   farmerAtual = FARMER_A;
   vi.clearAllMocks();
 });
@@ -154,6 +169,26 @@ describe('FarmerDashboard — falha do scoring não vira "carteira vazia"', () =
     expect(
       screen.queryByText(/Nenhum cliente na agenda/i),
       'afirmou carteira vazia onde a verdade é falha ao ler a margem',
+    ).toBeNull();
+  });
+
+  it('falha ao ler a CARTEIRA é erro honesto — não a tela vazia que o fail-closed produziria', async () => {
+    // A carteira virou o universo da tela (2026-08-14), e com isso ganhou o poder de esvaziá-la:
+    // `filtrarPorCarteira` é fail-closed, então carteira vazia ⇒ zero clientes. Isso é CERTO para
+    // uma vendedora genuinamente sem carteira e seria uma MENTIRA para um timeout de leitura —
+    // as duas situações chegam aqui como "nenhum id". Quem as separa é o `fetchAllPages`, que
+    // LANÇA em página que falha em vez de devolver lista curta (money-path.md §6).
+    // Sem este teste, uma futura troca do helper por `.select()` cru trocaria "não consegui ler"
+    // por "você não tem clientes", que é exatamente o bug que este arquivo inteiro persegue.
+    falharCarteira = true;
+
+    renderDashboard();
+
+    const aviso = await screen.findByRole('alert');
+    expect(aviso.textContent, 'a falha ao ler a carteira morreu no console').toMatch(/indispon/i);
+    expect(
+      screen.queryByText(/Nenhum cliente na agenda/i),
+      'afirmou carteira vazia onde a verdade é falha ao ler a carteira',
     ).toBeNull();
   });
 
