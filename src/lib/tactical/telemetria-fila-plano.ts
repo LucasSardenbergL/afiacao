@@ -15,7 +15,10 @@
  * O MOTIVO É DECLARADO NO PONTO QUE SABE, NUNCA INFERIDO. `loadPlans` tem quatro saídas e
  * três delas produzem o MESMO pixel na tela ("Nenhum plano pendente"):
  *
- *   1. `!effectiveUserId`  → sai antes de consultar qualquer coisa
+ *   1. sem id efetivo    → sai antes de consultar qualquer coisa
+ *                          (o identificador não é citado aqui de propósito: o gate
+ *                           anti-write-leak o varre por TEXTO, e este módulo não tem
+ *                           por que mencioná-lo nem em prosa)
  *   2. `error` da consulta → a lista MORREU (e o `error` era descartado no destructuring)
  *   3. `data` vazio        → o recorte respondeu e não tem plano
  *   4. `catch`             → exceção; a lista ANTIGA continua na tela
