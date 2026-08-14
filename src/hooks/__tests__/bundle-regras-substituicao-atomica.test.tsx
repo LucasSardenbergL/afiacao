@@ -88,6 +88,18 @@ vi.mock('@/integrations/supabase/client', () => ({
     from: (t: string) => chain(t),
     rpc: (nome: string, args: Record<string, unknown>) => {
       rpcs.push({ nome, args });
+      // O engine passou a perguntar quais SKUs são vendáveis antes de montar bundle. Ela
+      // responde SEMPRE, e à parte do `rpcFalha`: o defeito que este arquivo guarda é a
+      // troca de REGRAS falhando, e derrubar as duas juntas mediria outra coisa (o toast
+      // sairia por fail-closed de bundle, não pela regra não gravada).
+      //
+      // Lista VAZIA porque nenhum custo é semeado aqui (`product_costs` cai no `default: []`
+      // de dadosDa). É o espelho honesto do que a main fazia com o costMap vazio: sem custo
+      // conhecido, nenhum SKU é vendável e nenhum bundle nasce — inventar SKU vendável aqui
+      // fabricaria margem que o cenário não tem.
+      if (nome === 'get_skus_margem_positiva') {
+        return Promise.resolve({ data: [] as { product_id: string }[], error: null });
+      }
       return Promise.resolve(rpcFalha ? { data: null, error: ERRO_RPC } : { data: 2, error: null });
     },
   },

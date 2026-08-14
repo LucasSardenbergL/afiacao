@@ -1,9 +1,9 @@
 import { useState, useCallback, useRef } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
-import { custoCanonico, margemUnitaria } from '@/lib/custo/custoCanonico';
 import { fetchAllPages } from '@/lib/postgrest';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
+import { toast } from 'sonner';
 
 // ─── Types ───────────────────────────────────────────────────────────
 export interface Recommendation {
@@ -15,9 +15,26 @@ export interface Recommendation {
   productName: string;
   currentProductId?: string;
   currentProductName?: string;
-  pij: number;          // Probability of conversion
-  mij: number;          // Incremental margin
-  lie: number;          // Expected Incremental Profit
+  pij: number;          // Probabilidade de conversão (0–100, já em %)
+  /**
+   * Score de AFINIDADE — adimensional, NÃO é dinheiro. Ordena a lista; não promete lucro.
+   *
+   * Era `lie` ("Expected Incremental Profit") = pij × mij × complexityFactor, com
+   * `mij = margem × volume`. Sem custo no browser não há margem, e o produto todo caiu junto.
+   *
+   * Hoje é `pij` puro. `complexityFactor` fica fora porque desde o #1514 ele é a CONSTANTE
+   * `FATOR_COMPLEXIDADE = 1.0` — igual para todo candidato, logo incapaz de mudar ORDEM.
+   * (Antes de #1514 ele vinha de `farmer_category_conversion`, e aí havia motivo mais forte
+   * ainda: a tabela é global e o browser faz upsert direto nela, então um employee escrevia o
+   * fator e escolhia o próprio ranking. Se um dia voltar a ser aprendido, precisa nascer
+   * server-owned, finito e limitado — e com a fórmula corrigida: a de updateConversionStats é
+   * invertida, maior lucro/hora produz fator MENOR.)
+   *
+   * ⚠️ Nunca formatar como R$. `clusterVolume` também ficou FORA: ele já entra em `pij` via
+   * `relevance`, e multiplicar de novo favoreceria produto popular contra associação de nicho —
+   * que é o único sinal personalizado por cliente.
+   */
+  affinityScore: number;
   complexityFactor: number;
   clusterVolume: number;
   estoque: number | null; // Stock quantity from omie_products
@@ -49,12 +66,6 @@ interface ProductRow {
   ativo: boolean | null;
   omie_codigo_produto: number | string | null;
   estoque: number | null;
-}
-
-interface ProductCostRow {
-  product_id: string;
-  cost_final: number | string | null;
-  cost_price: number | string | null;
 }
 
 interface SalesOrderItem {
@@ -182,9 +193,7 @@ export const useCrossSellEngine = () => {
         return;
       }
 
-      // 2. Load all products with costs. AMBAS paginadas: 3.108 SKUs ativos e 3.637 linhas de
-      // custo, contra a capa de 1.000 do PostgREST. Truncado, o costMap lia 72% do catálogo
-      // como "sem custo" e o productList nunca chegava a recomendar 2/3 dos SKUs.
+      // 2. Catálogo ativo, paginado (3.108 SKUs contra a capa de 1.000 do PostgREST).
       const products = await fetchAllPages<ProductRow>((de, ate) =>
         supabase
           .from('omie_products')
@@ -195,22 +204,35 @@ export const useCrossSellEngine = () => {
         'omie_products/cross-sell',
       );
 
-      const productCosts = await fetchAllPages<ProductCostRow>((de, ate) =>
-        supabase
-          .from('product_costs')
-          .select('product_id, cost_final, cost_price')
-          .order('product_id', { ascending: true })
-          .range(de, ate) as unknown as PromiseLike<{ data: ProductCostRow[] | null; error: unknown }>,
-        'product_costs/cross-sell',
-      );
-
-      const costMap = new Map<string, number>();
-      // Custo canônico = cost_final (proxy-aware); cost_price agora é nullable (só custo real).
-      // Number(null)===0 inflava a margem (ausente≠zero) — excluir SKU sem custo, não fabricar 0.
-      productCosts.forEach((pc) => {
-        const c = custoCanonico(pc);
-        if (c != null) costMap.set(pc.product_id, c);
-      });
+      // 2b. Quais SKUs são VENDÁVEIS (margem canônica > 0). O browser não vê mais custo:
+      // `public.get_skus_margem_positiva()` responde só o conjunto, sem parâmetro e sem ordem
+      // (a versão que recebia pesos e devolvia ranking era régua graduada — ver o cabeçalho da
+      // migration 20260725120000). SKU sem custo conhecido não entra: ausente≠zero (#1466).
+      //
+      // FAIL-CLOSED: falha na RPC → NÃO recomenda. Degradar para "recomenda tudo" poria produto
+      // de PREJUÍZO no topo da lista da vendedora, que é o pior desfecho possível aqui.
+      const { data: skusVendaveis, error: erroVendaveis } = (await supabase.rpc(
+        'get_skus_margem_positiva',
+      )) as unknown as { data: { product_id: string }[] | null; error: unknown };
+      if (erroVendaveis || !skusVendaveis) {
+        console.error('get_skus_margem_positiva falhou — sem recomendação (fail-closed):', erroVendaveis);
+        // Fail-closed E DECLARADO. Só limpar a lista e sair repetiria, num caminho NOVO, o defeito
+        // que o #1606 tirou deste hook: a tela mostrava fila vazia e o operador não distinguia
+        // "não há o que recomendar" de "não consegui calcular" — e ia embora achando que era a
+        // primeira coisa. Este `return` mudo nem passava pelo `catch` honesto lá embaixo.
+        //
+        // Limpa ANTES de lançar, e não depois: manter as recomendações anteriores na tela
+        // contrariaria o próprio fail-closed (elas podem conter SKU que o servidor já não confirma
+        // como rentável). Com a lista zerada e `resultadoDestaExecucao` marcado, o `catch` conclui
+        // INDISPONÍVEL em vez de DESATUALIZADO — que é a leitura verdadeira aqui.
+        aplicarRecomendacoes([]);
+        resultadoDestaExecucao = true;
+        throw new Error(
+          mensagemDeErro(erroVendaveis) ??
+            'Não consegui confirmar quais SKUs são rentáveis — nenhuma recomendação foi gerada.',
+        );
+      }
+      const vendaveis = new Set(skusVendaveis.map((r) => r.product_id));
 
       // 3. Load ALL sales history (avoid huge .in() URL with 3598 IDs)
       // Mesmo defeito do loop manual acima — e aqui a perda é do HISTÓRICO que alimenta as
@@ -298,9 +320,8 @@ export const useCrossSellEngine = () => {
         if (p.omie_codigo_produto) omieToProductId.set(Number(p.omie_codigo_produto), p.id);
       });
 
-      // 7. Build per-customer purchase history
-      // cost: number | null — null = custo DESCONHECIDO (SKU fora do costMap), nunca 0.
-      const customerProducts = new Map<string, Map<string, { qty: number; price: number; cost: number | null }>>();
+      // 7. Build per-customer purchase history. Sem `cost`: o custo não chega mais ao browser.
+      const customerProducts = new Map<string, Map<string, { qty: number; price: number }>>();
       const allProductPurchases = new Map<string, number>(); // product_id -> total customers who bought
 
       for (const order of salesOrders || []) {
@@ -317,12 +338,9 @@ export const useCrossSellEngine = () => {
           }
           if (!productId) continue;
 
-          const existing = cp.get(productId) || { qty: 0, price: 0, cost: null as number | null };
+          const existing = cp.get(productId) || { qty: 0, price: 0 };
           existing.qty += Number(item.quantity || item.quantidade || 1);
           existing.price = Number(item.unit_price || item.valor_unitario || 0);
-          // Custo ausente fica null (ausente≠zero) — com `|| 0` a margem do item virava o preço
-          // cheio e distorcia a comparação de rentabilidade do up-sell logo abaixo.
-          existing.cost = costMap.get(productId) ?? null;
           cp.set(productId, existing);
 
           // Track which products are popular
@@ -371,12 +389,9 @@ export const useCrossSellEngine = () => {
         for (const product of productList) {
           if (purchasedIds.has(product.id)) continue;
 
-          const price = Number(product.valor_unitario || 0);
-          // Sem custo conhecido a margem é INDEFINIDA, não cheia: o SKU sai do ranking. Com
-          // `|| 0` ele ganhava margem 100% e, como o único filtro é `margin <= 0`, era o único
-          // que jamais era excluído — o LIE passava a preferir o produto sem custo cadastrado.
-          const margin = margemUnitaria(price, costMap.get(product.id));
-          if (margin == null || margin <= 0) continue; // custo desconhecido, ou margem não-positiva
+          // O custo decide EXCLUSÃO, nunca ORDEM: o SKU só entra se a RPC o listou como vendável
+          // (margem canônica > 0). Custo desconhecido não entra — ausente≠zero (#1466).
+          if (!vendaveis.has(product.id)) continue;
 
           // Cluster adherence: how many similar customers bought this
           const buyerCount = allProductPurchases.get(product.id) || 0;
@@ -393,15 +408,18 @@ export const useCrossSellEngine = () => {
           const relevance = clamp(clusterAdherence * 0.4 + assocBoost * 0.6, 0.01, 1.0);
           const pij = TAXA_CONVERSAO_CROSS_SELL * (healthScore / 100) * engagementFactor * relevance;
 
-          // M_ij = Margin × EstimatedClusterVolume
-          const clusterVolume = Math.max(1, Math.round(buyerCount / totalCustomers * 12)); // monthly estimate
-          const mij = margin * clusterVolume;
+          // Estimativa de volume do cluster: preservada como CONTEXTO da recomendação, mas fora
+          // do score (ela já entra em `pij` via `relevance` — remultiplicar afogaria o assocBoost).
+          const clusterVolume = Math.max(1, Math.round(buyerCount / totalCustomers * 12));
 
-          // LIE_ij = P_ij × M_ij × FatorComplexidade (constante — ver bloco de premissas)
+          // Constante desde o #1514 (ver bloco de premissas). Persistida como dado, mas NÃO
+          // multiplica o score: sendo 1.0 e igual para todo candidato, ela não muda ORDEM.
           const complexityFactor = FATOR_COMPLEXIDADE;
-          const lie = pij * mij * complexityFactor;
 
-          if (lie > 0) {
+          // Afinidade pura. Sem custo não existe "lucro esperado" — existe "próxima melhor oferta".
+          const affinityScore = pij;
+
+          if (affinityScore > 0) {
             crossSellRecs.push({
               customerId: cid,
               customerName: profile.name ?? '',
@@ -409,8 +427,7 @@ export const useCrossSellEngine = () => {
               productId: product.id,
               productName: product.descricao,
               pij: Math.round(pij * 1000) / 10,
-              mij: Math.round(mij * 100) / 100,
-              lie: Math.round(lie * 100) / 100,
+              affinityScore: Math.round(affinityScore * 10000) / 10000,
               complexityFactor,
               clusterVolume,
               estoque: product.estoque ?? null,
@@ -421,38 +438,31 @@ export const useCrossSellEngine = () => {
 
         // ─── UP-SELL: Find premium alternatives for current low-margin products ───
         for (const [purchasedId, purchaseData] of customerPurchased.entries()) {
-          // Custo do item comprado desconhecido → não dá para afirmar que a margem atual é ruim;
-          // o produto sai do up-sell em vez de ser tratado como margem cheia.
-          const currentMargin = margemUnitaria(purchaseData.price, purchaseData.cost);
-          if (currentMargin == null || currentMargin <= 0 || purchaseData.price <= 0) continue;
-          const currentMarginPct = currentMargin / purchaseData.price;
-          if (currentMarginPct > 0.35) continue; // Already good margin, skip
+          if (purchaseData.price <= 0) continue;
 
-          // Find premium alternatives (higher price, higher margin)
+          // Alternativas PREMIUM = preço materialmente maior e SKU vendável.
+          //
+          // Os dois testes de margem que existiam aqui ("margem atual < 35%" e "margem premium
+          // > 120% da atual") não sobrevivem à saída do custo: `get_skus_margem_positiva()`
+          // responde "este SKU é vendável?", não compara a rentabilidade de DOIS SKUs. O up-sell
+          // deixa de PROMETER margem melhor e passa a sugerir a linha superior — degradação
+          // honesta, e é a que o parecer do Codex (rodada 3) considerou aceitável. Recuperar a
+          // comparação exige uma RPC própria que devolva a ordem já pronta do servidor.
           for (const product of productList) {
             if (product.id === purchasedId) continue;
             if (purchasedIds.has(product.id)) continue;
+            if (!vendaveis.has(product.id)) continue;
 
             const premiumPrice = Number(product.valor_unitario || 0);
-            const premiumMargin = margemUnitaria(premiumPrice, costMap.get(product.id));
-            // Sem custo não há como PROVAR que a alternativa é mais rentável — fora do up-sell
-            // (com `|| 0` ela aparentava a maior margem possível e vencia a comparação abaixo).
-            if (premiumMargin == null) continue;
-
-            // Must be genuinely premium: higher price AND higher margin
             if (premiumPrice <= purchaseData.price * 1.1) continue;
-            if (premiumMargin <= currentMargin * 1.2) continue;
 
             // P_ij for up-sell
             const pij = TAXA_CONVERSAO_UP_SELL * (healthScore / 100) * engagementFactor * 0.8; // 0.8 = up-sell is harder
 
-            // M_ij = (PremiumMargin - CurrentMargin) × CurrentVolume
-            const mij = (premiumMargin - currentMargin) * purchaseData.qty;
-
             const complexityFactor = FATOR_COMPLEXIDADE;
-            const lie = pij * mij * complexityFactor;
+            const affinityScore = pij;
 
-            if (lie > 0) {
+            if (affinityScore > 0) {
               const currentProduct = productList.find((p) => p.id === purchasedId);
               upSellRecs.push({
                 customerId: cid,
@@ -463,8 +473,7 @@ export const useCrossSellEngine = () => {
                 currentProductId: purchasedId,
                 currentProductName: currentProduct?.descricao || 'Produto atual',
                 pij: Math.round(pij * 1000) / 10,
-                mij: Math.round(mij * 100) / 100,
-                lie: Math.round(lie * 100) / 100,
+                affinityScore: Math.round(affinityScore * 10000) / 10000,
                 complexityFactor,
                 clusterVolume: purchaseData.qty,
                 estoque: product.estoque ?? null,
@@ -474,9 +483,9 @@ export const useCrossSellEngine = () => {
           }
         }
 
-        // Sort by LIE descending, take top 3 cross-sell and top 2 up-sell
-        crossSellRecs.sort((a, b) => b.lie - a.lie);
-        upSellRecs.sort((a, b) => b.lie - a.lie);
+        // Ordena por AFINIDADE (desc), top 3 cross-sell e top 2 up-sell
+        crossSellRecs.sort((a, b) => b.affinityScore - a.affinityScore);
+        upSellRecs.sort((a, b) => b.affinityScore - a.affinityScore);
 
         const topCross = crossSellRecs.slice(0, 3);
         const topUp = upSellRecs.slice(0, 2);
@@ -492,12 +501,13 @@ export const useCrossSellEngine = () => {
         }
       }
 
-      // Sort customers by total LIE potential
-      allRecs.sort((a, b) => {
-        const totalA = [...a.crossSell, ...a.upSell].reduce((s, r) => s + r.lie, 0);
-        const totalB = [...b.crossSell, ...b.upSell].reduce((s, r) => s + r.lie, 0);
-        return totalB - totalA;
-      });
+      // Ordena clientes pela MELHOR afinidade da carteira, não pela soma.
+      // Somar scores de cross-sell e up-sell tratava-os como valores comensuráveis — eles não
+      // são (o `pij` do up-sell já carrega o fator 0,8 e sai de outra base histórica). A soma
+      // também premiava quem tem MAIS itens na lista, não quem tem a melhor oferta.
+      const melhorAfinidade = (c: CustomerRecommendations) =>
+        Math.max(0, ...[...c.crossSell, ...c.upSell].map((r) => r.affinityScore));
+      allRecs.sort((a, b) => melhorAfinidade(b) - melhorAfinidade(a));
 
       aplicarRecomendacoes(allRecs);
       resultadoDestaExecucao = true;
@@ -511,8 +521,22 @@ export const useCrossSellEngine = () => {
           product_id: rec.productId,
           current_product_id: rec.currentProductId || null,
           p_ij: rec.pij,
-          m_ij: rec.mij,
-          lie: rec.lie,
+          // m_ij explicitamente NULL, não omitido: o upsert do PostgREST só atualiza as colunas
+          // presentes no payload, então OMITIR deixaria o valor antigo intacto nas linhas que
+          // colidem — e `m_ij ÷ cluster_volume_estimate` devolve a margem unitária (conferido em
+          // prod: 134,26/2 = 67,13). A limpeza das linhas que NÃO colidem é a migration
+          // 20260725123000.
+          m_ij: null,
+          // `lie` é DINHEIRO (Lucro Incremental Esperado em R$) e sai de cena junto com `m_ij`:
+          // o valor antigo invertia sozinho — m_ij ≈ lie / ((p_ij/100) × complexity_factor).
+          // A afinidade que ordena a lista vai na coluna DEDICADA `affinity_score`, adimensional.
+          // Reaproveitar `lie` para o score ordenaria certo (são monotônicos entre si) e mentiria
+          // para quem lê o VALOR — o irmão `lie_bundle` é copiado para
+          // `farmer_tactical_plans.bundle_lie` e formatado como BRL no PlanCard.
+          // Explicitamente NULL, não omitido, pelo mesmo motivo do `m_ij` acima: no upsert do
+          // PostgREST a coluna ausente do payload preserva o valor antigo na linha que colide.
+          lie: null,
+          affinity_score: rec.affinityScore,
           complexity_factor: rec.complexityFactor,
           cluster_volume_estimate: rec.clusterVolume,
           status: 'pendente',
@@ -522,7 +546,22 @@ export const useCrossSellEngine = () => {
       // Persistência PULADA na lente "Ver como" (somente leitura: o master inspeciona
       // as recomendações do alvo sem regravar a carteira dele).
       if (!isImpersonating && recRows.length > 0) {
-        await supabase.from('farmer_recommendations').upsert(recRows);
+        // O `error` é CAPTURADO. O supabase-js NÃO lança em erro de banco — resolve normal com
+        // `error` preenchido — então o `await` solto devolvia sucesso SEM ter gravado, e o `catch`
+        // abaixo nunca rodava. O caso concreto desta entrega: `affinity_score` só existe depois da
+        // migration 20260725121000; publicar o front antes dela devolve 42703/PGRST204 e as
+        // recomendações somem da tabela em silêncio, com a tela mostrando a lista calculada.
+        // Sem `throw`: o cálculo em memória é válido e já foi exibido — quem falhou foi só a
+        // persistência, e derrubar a tela seria pior. Espelha o desfecho do useBundleEngine (#1594).
+        const { error: erroPersistencia } = await supabase
+          .from('farmer_recommendations')
+          .upsert(recRows);
+        if (erroPersistencia) {
+          console.error('Falha ao gravar farmer_recommendations:', erroPersistencia);
+          toast.error(
+            `${recRows.length} recomendação(ões) NÃO foram gravadas — as telas de oferta seguem com as anteriores. ${mensagemDeErro(erroPersistencia) ?? ''}`.trim(),
+          );
+        }
       }
     } catch (error) {
       console.error('Error calculating recommendations:', error);

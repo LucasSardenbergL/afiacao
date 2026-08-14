@@ -8,7 +8,8 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
  * `console.error`). Isso é metade: consertar o hook não conserta a tela. Esta página tem dois
  * lugares onde uma falha vira afirmação sobre o negócio:
  *
- *  - os três KPIs do topo somam sobre `recommendations` → "EIP Total R$ 0,00", "0 Cross-sell";
+ *  - os três KPIs do topo somam sobre `recommendations` → "0 Clientes com oferta", "0 Cross-sell"
+ *    (o 1º era "EIP Total R$ 0,00" até o custo sair do browser; o zero fabricado é o mesmo);
  *  - o empty state diz "Nenhuma recomendação disponível. Calcule os scores primeiro" — que
  *    manda o vendedor recalcular um cálculo que JÁ rodou e falhou, e afirma "não existe" onde
  *    a verdade é "não consegui ler".
@@ -75,7 +76,29 @@ function chain(table: string): unknown {
   return c;
 }
 
-vi.mock('@/integrations/supabase/client', () => ({ supabase: { from: (t: string) => chain(t) } }));
+/**
+ * O engine não baixa mais o catálogo de custo: pergunta à RPC quais SKUs são VENDÁVEIS
+ * (margem canônica > 0). Derivado de PRODUTOS/CUSTOS para as duas fontes não divergirem.
+ * Declaração de função porque `vi.mock` é içado — um `const` estouraria aqui.
+ */
+function vendaveisDoSeed(): { product_id: string }[] {
+  return CUSTOS.filter((c) => {
+    const p = PRODUTOS.find((x) => x.id === c.product_id);
+    return p != null && c.cost_final != null && p.valor_unitario > c.cost_final;
+  }).map((c) => ({ product_id: c.product_id }));
+}
+
+vi.mock('@/integrations/supabase/client', () => ({
+  supabase: {
+    from: (t: string) => chain(t),
+    rpc: (nome: string) =>
+      Promise.resolve(
+        nome === 'get_skus_margem_positiva'
+          ? { data: vendaveisDoSeed(), error: null }
+          : { data: null, error: null },
+      ),
+  },
+}));
 vi.mock('@/contexts/ImpersonationContext', () => ({
   useImpersonation: () => ({ isImpersonating: false, effectiveUserId: FARMER }),
 }));
@@ -124,7 +147,10 @@ describe('FarmerRecommendations — falha do engine não vira "nenhuma recomenda
     render(<FarmerRecommendations />);
     await screen.findByRole('alert');
 
-    for (const rotulo of ['EIP Total (estimativa)', 'Cross-sell', 'Up-sell']) {
+    // "EIP Total (estimativa)" virou "Clientes com oferta": o custo saiu do browser, então
+    // não há mais lucro esperado em R$ no topo. O GUARD não mudou — o KPI segue tendo de
+    // mostrar "—" em vez de zero fabricado, e é por isso que ele continua passando por `ou()`.
+    for (const rotulo of ['Clientes com oferta', 'Cross-sell', 'Up-sell']) {
       const texto = cardDo(rotulo);
       expect(texto, `KPI "${rotulo}" exibiu zero fabricado`).not.toMatch(/R\$\s*0,00|\b0\b/);
       expect(texto, `KPI "${rotulo}" devia mostrar "—"`).toMatch(/—/);

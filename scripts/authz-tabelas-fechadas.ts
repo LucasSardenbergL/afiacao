@@ -50,12 +50,16 @@ export interface TabelaFechada {
 
 export const AUTHZ_TABELAS_FECHADAS: Record<string, TabelaFechada> = {
   'public.product_costs': {
-    fechadaPor: null,
+    fechadaPor: '20260725130000_authz_custo_fu4f_fase3_fecha_product_costs.sql',
     permitido: { anon: [], authenticated: ['SELECT'] },
     motivo:
-      'custo unitário — fecho no PR #1520 (FU4-F fase 3), ainda DRAFT em 2026-08-13; prod segue aberta ' +
-      '(anon=arwdDxtm). Hoje quem protege é só a RLS (2 policies staff). Leitura por private.cap_custo_ler; ' +
-      'escrita exclusiva de service_role (sync-reprocess, omie-analytics-sync).',
+      'custo unitário — fechada pelo PR #1520 (FU4-F fase 3). A âncora entra JUNTO com a migration de ' +
+      'fecho: enquanto ela não for aplicada, prod segue ABERTA (anon=arwdDxtm, medido por psql-ro em ' +
+      '2026-08-13) e quem protege é só a RLS (2 policies staff) — a divergência que o audit de grants ' +
+      'acusar contra prod até o apply é REAL, não ruído do gate. Leitura por private.cap_custo_ler; ' +
+      'escrita exclusiva de service_role (sync-reprocess, omie-analytics-sync). ORDEM DE APPLY: o ' +
+      'PR #1543 (get_carteira_margem_faixa) vai a produção ANTES — as precondições fail-closed no topo ' +
+      'de 20260725130000 abortam sem ele, porque useFarmerScoring ainda leria product_costs direto.',
   },
   'public.omie_products': {
     fechadaPor: '20260727140000_authz_preco_fecha_omie_products.sql',

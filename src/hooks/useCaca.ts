@@ -19,6 +19,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { montarFilaCaca } from '@/lib/caca/fila';
+import { empresasSemLucroConfiavel } from '@/lib/caca/melhores';
 import type {
   CacaCandidatoDisplay,
   CompradorRow,
@@ -73,8 +74,28 @@ async function paginarView<T>(view: string, sel: string, ordem2: string): Promis
  * Carrega as duas views e monta a fila de caça unificada.
  * Expõe `{ data, isLoading, error }` (shape padrão do useQuery do projeto).
  */
+export interface CacaResultado {
+  fila: CacaCandidatoDisplay[];
+  /**
+   * Empresas em que NENHUM comprador tem lucro confiável — logo o componente de lucro (peso 0,4)
+   * saiu do índice para TODA a empresa, e o ranking passou a ser volume + fidelidade.
+   *
+   * Por que POR EMPRESA e não global: `montarFilaCaca` roda `selecionarMelhores` uma vez por
+   * empresa-alvo, com percentis calculados dentro de cada uma. Oben pode ter custo sincronizado e
+   * Colacor não — um sinal global diria "tem lucro" e esconderia a empresa cega (achado do
+   * challenge Codex nesta entrega).
+   *
+   * Por que isto NÃO muda o ranking: quando o lucro sai de todas as linhas de uma empresa, o
+   * `selecionarMelhores` imputa o percentil neutro 0,5 em todas — e `0,4 × 0,5` vira uma
+   * CONSTANTE somada a todos, transformação afim crescente que preserva ordem e empates. O que se
+   * perde não é a ordem: é o operador saber que o critério mudou. Por isso a correção é DECLARAR,
+   * não recalcular.
+   */
+  empresasSemLucro: string[];
+}
+
 export function useCaca() {
-  return useQuery<CacaCandidatoDisplay[]>({
+  return useQuery<CacaResultado>({
     queryKey: ['caca'],
     staleTime: 60_000,
     queryFn: async () => {
@@ -82,7 +103,13 @@ export function useCaca() {
         paginarView<CompradorRow>('v_caca_compradores', COMPRADORES_SEL, 'empresa'),
         paginarView<CandidatoRow>('v_caca_candidatos', CANDIDATOS_SEL, 'empresa_alvo'),
       ]);
-      return montarFilaCaca(compradores, candidatos);
+
+      // Helper PURO de `melhores.ts`, não reescrito aqui: duplicar o limiar 0,5 faria o aviso
+      // divergir do cálculo — a tela diria "com lucro" com o índice já tendo descartado o termo.
+      return {
+        fila: montarFilaCaca(compradores, candidatos),
+        empresasSemLucro: empresasSemLucroConfiavel(compradores),
+      };
     },
   });
 }

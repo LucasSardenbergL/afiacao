@@ -187,10 +187,10 @@ describe('avaliarCotacaoProposta — travas fail-closed (money-path: ausente ≠
       ...baseInput,
       cesta: mkCesta([mkItem(1, 1)]),
       crossSell: [
-        { omie_codigo_produto: 30, nome: 'OK CROSS', lie: 5 },
-        { omie_codigo_produto: 31, nome: 'INATIVO CROSS', lie: 4 },
-        { omie_codigo_produto: 32, nome: 'SEM ESTOQUE CROSS', lie: 3 },
-        { omie_codigo_produto: 33, nome: 'SUMIDO CROSS', lie: 2 },
+        { omie_codigo_produto: 30, nome: 'OK CROSS', afinidade: 5 },
+        { omie_codigo_produto: 31, nome: 'INATIVO CROSS', afinidade: 4 },
+        { omie_codigo_produto: 32, nome: 'SEM ESTOQUE CROSS', afinidade: 3 },
+        { omie_codigo_produto: 33, nome: 'SUMIDO CROSS', afinidade: 2 },
       ],
       cotacao: [
         mkRow(1),

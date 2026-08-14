@@ -67,6 +67,25 @@ export const AUTHZ_MANIFEST: Record<string, AuthzEntry> = {
     requiredGate: { anyOf: [{ call: 'has_role', roles: ['employee', 'master'] }] },
     motivo: 'régua de preço no customer 360 — repassa o pacote já mascarado da get_regua_preco',
   },
+  // FU4-F fase 3 (#1520). Toca product_costs com privilégio, mas NÃO devolve custo: responde
+  // só "este SKU tem margem > 0?" para os engines de recomendação filtrarem candidatos. O
+  // ranqueamento ficou no cliente, por afinidade — nada que toque custo.
+  //
+  // Gate é `employee OR master`, NÃO cap_custo_ler, e isso é deliberado: a vendedora PRECISA
+  // do conjunto (é o filtro da feature dela), e usar a capability de custo aqui a excluiria —
+  // exatamente o "fechar e deixar degradar" que apagaria cross-sell e bundles (§5 do spec).
+  // A capability continua governando o dado BRUTO, na policy de product_costs.
+  //
+  // ⚠️ LIMITE, no mesmo espírito do bloco acima: este check não expressa "quanto vaza pela
+  // resposta". O resíduo aceito é 1 bit por SKU POR SNAPSHOT, acumulável no tempo — e ele NÃO
+  // está fechado enquanto `omie_products.valor_unitario` (o limiar da comparação) for
+  // escrevível por employee, o que hoje é o caso. Follow-up no corpo do #1520; a
+  // anti-regressão desta função é db/test-authz-custo-fu4f-fase3-ranking.sh.
+  'public.get_skus_margem_positiva': {
+    sensitive: true,
+    requiredGate: { anyOf: [{ call: 'has_role', roles: ['employee', 'master'] }] },
+    motivo: 'conjunto de SKUs vendáveis (margem > 0) p/ os engines filtrarem candidatos sem ler custo; sem parâmetro, para não virar oráculo ajustável',
+  },
   // Writer do closed-loop da régua. Gate de ESCRITA próprio (`private.cap_regua_log_escrever`,
   // employee|master) — NUNCA cap_custo_ler: o §4.2 do spec de 2026-07-18 proíbe reusar a função de
   // leitura em escrita, e reusá-la deixaria estrategico/super_admin registrar em nome de outro

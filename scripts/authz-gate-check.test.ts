@@ -161,8 +161,15 @@ describe('auditAuthz — Parte C (grants de tabela fechada por privilégio)', ()
   });
 
   it('a msg convertida carrega o CÓDIGO ASCII, não a frase em pt-BR', () => {
-    const f = auditCompleto([...ancoras, mig('20260101000000_noop.sql', 'SELECT 1;')]);
-    expect(f.some((x) => /\[FECHO_PENDENTE\]/.test(x.msg))).toBe(true);
+    // O cenário é CONSTRUÍDO (omitir as migrations de âncora ⇒ ANCORA_AUSENTE), não herdado do
+    // estado de AUTHZ_TABELAS_FECHADAS. Antes este assert exigia `[FECHO_PENDENTE]`, que só
+    // existia porque product_costs era a última entrada com fechadaPor=null: declarar a âncora
+    // dela (PR #1520) zerava as pendências e derrubava o teste — sem que nada da CONVERSÃO,
+    // que é o que ele prova, tivesse mudado. Um teste do formato da mensagem não pode depender
+    // de quantas tabelas estão pendentes hoje.
+    const f = auditCompleto([mig('20260101000000_noop.sql', 'SELECT 1;')]);
+    expect(f.some((x) => /\[ANCORA_AUSENTE\]/.test(x.msg))).toBe(true);
+    expect(f.every((x) => !/fecho pendente|ausente de supabase\/migrations/.test(x.msg.split(']')[0]))).toBe(true);
   });
 
   it('DENTE: GRANT INSERT a authenticated pós-âncora na tabela REAL → erro REABERTURA', () => {

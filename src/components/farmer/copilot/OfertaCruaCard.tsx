@@ -53,7 +53,13 @@ export function OfertaCruaCard({ customerId }: Props) {
         .eq('customer_user_id', customerId)
         .eq('farmer_id', ownerId)
         .eq('status', 'pendente')
-        .order('lie_bundle', { ascending: false })
+        // Afinidade (adimensional) na coluna dedicada — `lie_bundle` é dinheiro e ficou NULL.
+        // `.not(...is null)` é FAIL-CLOSED: com TODAS as linhas antigas (afinidade não medida),
+        // ordenar não ordena nada e o `.limit(1)` mostraria uma oferta arbitrária ao operador.
+        // Sem afinidade, melhor não haver oferta crua — ela volta no recálculo do motor.
+        .not('affinity_bundle', 'is', null)
+        .order('affinity_bundle', { ascending: false, nullsFirst: false })
+        .order('created_at', { ascending: false }) // desempate determinístico (scores empatam)
         .limit(1)
         .maybeSingle();
       return data ?? null;
