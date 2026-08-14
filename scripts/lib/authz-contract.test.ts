@@ -109,6 +109,30 @@ describe('touchesSensitive', () => {
   });
 });
 
+// ── eixo 2: comercial de COMPRAS (2026-08-14, follow-up 1 do #1729) ──
+// O eixo nasceu de um ponto cego MEDIDO: `public.reposicao_pos_candidatos` é SECDEF com EXECUTE
+// para `authenticated` e devolve protocolo do portal, fornecedor e jsonb cru — e não tocava
+// NENHUM token do eixo custo/preço/estoque, então a Parte B nunca exigiu sua classificação.
+describe('touchesSensitive — eixo comercial de compras', () => {
+  it('pega as tabelas do eixo (pedido_compra_sugerido, purchase_orders_tracking)', () => {
+    expect(touchesSensitive('insert into public.pedido_compra_sugerido (empresa) values (1)')).toContain('pedido_compra_sugerido');
+    expect(touchesSensitive('select 1 from public.purchase_orders_tracking')).toContain('purchase_orders_tracking');
+  });
+  it('pega as colunas do eixo (fornecedor_nome, portal_protocolo)', () => {
+    expect(touchesSensitive('select fornecedor_nome, portal_protocolo from x')).toEqual(
+      expect.arrayContaining(['fornecedor_nome', 'portal_protocolo']),
+    );
+  });
+  it('coluna casa por PALAVRA INTEIRA — `fornecedor` e `fornecedor_id` sozinhos NÃO ativam o eixo', () => {
+    // O token é largo (existe em 25 tabelas de prod) mas não é frouxo: se `fornecedor` bastasse,
+    // meia reposição viraria "sensível" e a lista de classificação perderia o sentido.
+    expect(touchesSensitive('select fornecedor_id, fornecedor from sku_parametros')).toHaveLength(0);
+  });
+  it('o eixo 1 continua valendo (ampliar não substituiu)', () => {
+    expect(touchesSensitive('select cmc from inventory_position')).toEqual(expect.arrayContaining(['inventory_position', 'cmc']));
+  });
+});
+
 // ── endurecimentos do challenge Codex (2026-07-09) ──
 describe('blocksOnCall — anti falso-negativo', () => {
   it('REJEITA guard invertido (IS NOT NULL AND gate → dispara p/ quem É staff)', () => {

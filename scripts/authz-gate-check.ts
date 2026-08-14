@@ -11,8 +11,10 @@
  *    o gate esperado EM FORMA DE BLOQUEIO. Ausência, gate decorativo (presente sem bloquear), ou
  *    recriação que o parser não conseguiu extrair (fail-closed) → erro nomeando a migration.
  *  - Parte B (cobertura): no estado final (last-writer por ASSINATURA, p/ não perder overloads),
- *    TODA SECDEF que toca custo/preço/estoque deve estar classificada — `gated` ou `acknowledged`.
- *    Uma SECDEF sensível nova não classificada → erro.
+ *    TODA SECDEF que toca o eixo sensível deve estar classificada — `gated` ou `acknowledged`.
+ *    Uma SECDEF sensível nova não classificada → erro. O eixo é custo/preço/estoque **e**
+ *    comercial de compras (`SENSITIVE_*` em scripts/lib/authz-contract.ts — o 2º entrou em
+ *    2026-08-14, ver o cabeçalho daquele arquivo).
  *
  * Uso:  bun run authz:check           # roda no CI (ci.yml, job validate) e local
  *       bun scripts/authz-gate-check.ts --json
@@ -116,7 +118,7 @@ export function auditAuthz(migrations: Migration[]): Finding[] {
     if (sensitive.length > 0) {
       findings.push({ level: 'error', file, fn: mkey, msg: `SECURITY DEFINER que toca dado sensível (${sensitive.join(', ')}) NÃO foi parseável (fail-closed) e não está classificada. Classifique ${mkey} em scripts/authz-manifest.ts e/ou ajuste o parser (scripts/lib/authz-contract.ts).` });
     } else {
-      findings.push({ level: 'warn', file, fn: mkey, msg: `CREATE FUNCTION ${mkey} não extraído pelo parser — se for SECDEF que toca custo/preço/estoque, classifique manualmente.` });
+      findings.push({ level: 'warn', file, fn: mkey, msg: `CREATE FUNCTION ${mkey} não extraído pelo parser — se for SECDEF que toca custo/preço/estoque ou dado comercial de compras, classifique manualmente.` });
     }
   }
 

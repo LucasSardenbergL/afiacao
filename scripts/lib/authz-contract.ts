@@ -38,8 +38,45 @@ import { balancedParens, normalizeSignature } from './migration-objects';
 // Sem `export`: consumidos só por `touchesSensitive()` logo abaixo. Quem precisa da resposta
 // chama a função, que é a superfície pública — a lista crua exportada convidava a duplicar a
 // decisão de "o que é sensível" fora daqui.
-const SENSITIVE_TABLES = ['inventory_position', 'product_costs', 'sku_estoque_atual'];
-const SENSITIVE_COLUMNS = ['cmc', 'custo', 'preco', 'cost_price', 'unit_price'];
+//
+// DOIS EIXOS, e o segundo nasceu de um ponto cego MEDIDO (2026-08-14, follow-up 1 de
+// docs/historico/sentinela-authz-controle-nao-mencao.md):
+//  1. custo/preço/estoque — o eixo original (2026-07-09);
+//  2. comercial de COMPRAS — `public.reposicao_pos_candidatos` é SECDEF, tem GRANT EXECUTE a
+//     `authenticated` e devolve protocolo do portal do fornecedor, nome do fornecedor e a
+//     `resposta_canal` jsonb CRUA. Ela não tocava NENHUM token do eixo 1, então a Parte B nunca
+//     EXIGIU sua classificação: ela entrou no manifest à mão, e a CLASSE ficou aberta. Ampliar o
+//     eixo revelou mais 12 SECDEF não classificadas — todas baselinadas em scripts/authz-manifest.ts
+//     com os grants REAIS de prod medidos um a um (`has_function_privilege`), nunca por palpite.
+//
+// ⚠️ Ao acrescentar token aqui, saiba o que está comprando: cada token novo pode revelar SECDEF
+// que o CI passa a EXIGIR classificadas. Isso é o desenho (a lacuna vira trabalho visível), mas
+// classificar sem medir os grants fabricaria um contrato falso — pior que a lacuna, porque o CI
+// passaria a AFIRMAR cobertura que não existe. Meça primeiro; baselinar o revelado é o certo,
+// afrouxar o detector não é.
+const SENSITIVE_TABLES = [
+  // eixo 1 — custo/preço/estoque
+  'inventory_position',
+  'product_costs',
+  'sku_estoque_atual',
+  // eixo 2 — comercial de compras (2026-08-14)
+  'pedido_compra_sugerido',
+  'purchase_orders_tracking',
+];
+const SENSITIVE_COLUMNS = [
+  // eixo 1
+  'cmc',
+  'custo',
+  'preco',
+  'cost_price',
+  'unit_price',
+  // eixo 2 — `fornecedor_nome` é LARGO de propósito (medido: existe em 25 tabelas de prod, de
+  // `pedido_compra_sugerido` a `sku_preco_fornecedor_capturado`) — é o token que faz o eixo de
+  // compras ter alcance real. `portal_protocolo` (pedido_compra_sugerido) é o identificador do
+  // pedido no portal do fornecedor.
+  'fornecedor_nome',
+  'portal_protocolo',
+];
 
 export interface FunctionDef {
   schema: string;
