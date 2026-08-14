@@ -3603,6 +3603,10 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
+### `20260725121500_authz_custo_fu4f_fase3_afinidade_colunas_v2.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
 ### `20260725125000_authz_custo_fu4f_fase3_scrub_recomendacoes.sql`
 
 | Tipo | Objeto | Parent |

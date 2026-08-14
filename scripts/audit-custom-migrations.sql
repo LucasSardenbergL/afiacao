@@ -467,6 +467,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260724130000', 'tint_canonica_csv_legado_allowlist', '20260724130000_tint_canonica_csv_legado_allowlist.sql'),
   ('20260725120000', 'authz_custo_fu4f_fase3_ranking_rpc', '20260725120000_authz_custo_fu4f_fase3_ranking_rpc.sql'),
   ('20260725121000', 'authz_custo_fu4f_fase3_afinidade_colunas', '20260725121000_authz_custo_fu4f_fase3_afinidade_colunas.sql'),
+  ('20260725121500', 'authz_custo_fu4f_fase3_afinidade_colunas_v2', '20260725121500_authz_custo_fu4f_fase3_afinidade_colunas_v2.sql'),
   ('20260725125000', 'authz_custo_fu4f_fase3_scrub_recomendacoes', '20260725125000_authz_custo_fu4f_fase3_scrub_recomendacoes.sql'),
   ('20260725126000', 'authz_custo_fu4f_fase3_trigger_nulifica_lie', '20260725126000_authz_custo_fu4f_fase3_trigger_nulifica_lie.sql'),
   ('20260725130000', 'authz_custo_fu4f_fase3_fecha_product_costs', '20260725130000_authz_custo_fu4f_fase3_fecha_product_costs.sql'),
