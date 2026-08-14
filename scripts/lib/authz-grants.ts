@@ -27,7 +27,9 @@
 import { stripNoise } from './authz-contract';
 import type { TabelaFechada, Priv } from '../authz-tabelas-fechadas';
 
-export type GrantCodigo =
+// Sem `export`: tipo de suporte de `GrantFinding`, que é a superfície pública. Os testes casam o
+// CÓDIGO como string literal (ver cabeçalho), não o tipo — des-exportar não afrouxa nada.
+type GrantCodigo =
   | 'REABERTURA'
   | 'RECRIACAO'
   | 'RLS_OFF'

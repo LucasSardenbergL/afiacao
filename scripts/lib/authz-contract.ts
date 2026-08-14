@@ -29,8 +29,11 @@
  */
 import { balancedParens, normalizeSignature } from './migration-objects';
 
-export const SENSITIVE_TABLES = ['inventory_position', 'product_costs', 'sku_estoque_atual'];
-export const SENSITIVE_COLUMNS = ['cmc', 'custo', 'preco', 'cost_price', 'unit_price'];
+// Sem `export`: consumidos só por `touchesSensitive()` logo abaixo. Quem precisa da resposta
+// chama a função, que é a superfície pública — a lista crua exportada convidava a duplicar a
+// decisão de "o que é sensível" fora daqui.
+const SENSITIVE_TABLES = ['inventory_position', 'product_costs', 'sku_estoque_atual'];
+const SENSITIVE_COLUMNS = ['cmc', 'custo', 'preco', 'cost_price', 'unit_price'];
 
 export interface FunctionDef {
   schema: string;
@@ -41,8 +44,11 @@ export interface FunctionDef {
   body: string;
   header: string;
 }
-/** um CREATE FUNCTION detectado mas cujo corpo o parser não extraiu — com o texto bruto p/ fail-closed */
-export interface UnparsedFn {
+/**
+ * um CREATE FUNCTION detectado mas cujo corpo o parser não extraiu — com o texto bruto p/ fail-closed.
+ * Sem `export`: tipo de suporte de `ExtractResult`, que é a superfície pública.
+ */
+interface UnparsedFn {
   schema: string;
   name: string;
   raw: string;
@@ -52,7 +58,9 @@ export interface ExtractResult {
   unparsed: UnparsedFn[];
 }
 
-export interface GateClause {
+// Sem `export`: tipo de suporte de `RequiredGate`, que é a superfície pública (o
+// `authz-manifest.ts` importa só ela e constrói as cláusulas por literal).
+interface GateClause {
   call: string;
   roles?: string[];
 }
