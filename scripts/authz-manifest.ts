@@ -120,6 +120,34 @@ export const AUTHZ_MANIFEST: Record<string, AuthzEntry> = {
     requiredGate: { anyOf: [{ call: 'cap_estoque_reservar' }] },
     motivo: 'higiene de reservas vencidas (cron da fase 3 via service_role)',
   },
+  // 2026-08-14 — a RPC do card "pedido sem PO no Omie". SECDEF com GRANT EXECUTE a `authenticated`,
+  // devolve protocolo do portal, fornecedor e a `resposta_canal` jsonb CRUA. Gate master-only
+  // `private.cap_compras_ler` (FU4-G: "compras não é carteira" — o gate anterior,
+  // `pode_ver_carteira_completa`, liberava o papel gerencial).
+  //
+  // ⚠️ POR QUE ESTAVA FORA — e a lição, que vale para toda RPC nova: a Parte B só EXIGE
+  // classificação de SECDEF que toca o eixo custo/preço/estoque (SENSITIVE_* em
+  // scripts/lib/authz-contract.ts). Esta não toca nenhum desses tokens; o que ela vaza é dado
+  // COMERCIAL de compras. Ou seja: a cobertura automática não a alcançava, e sem esta entrada
+  // nenhuma recriação futura era vigiada — a defesa era um bloco `DO $pos$` de regex que rodou
+  // UMA vez, na própria migration 20260813195914, e não protege a PRÓXIMA (o FU4-G já reescreveu
+  // esta função uma vez, por regexp_replace). Registrar aqui troca "uma vez" por "toda recriação",
+  // via last-writer + fail-closed da Parte A.
+  //
+  // ⚠️ Registrá-la exigiu ANTES consertar `blocksOnCall`: a forma real
+  // `(SELECT private.cap_compras_ler((SELECT auth.uid()))) IS NOT TRUE` era lida como gate
+  // DECORATIVO (medido em 2026-08-14). O detector estava calibrado só na forma canônica — e é
+  // por isso que o eixo nunca foi tentado. Detector cego não é ausência de risco.
+  //
+  // O limite desta entrada, declarado: ela prova que a CHAMADA governa um ramo alcançável que
+  // levanta exceção. NÃO prova que a exceção acontece para quem deve — isso é asserção
+  // EXECUTADA, em db/test-pos-candidatos-guard-temporal.sh (D1/D4 + falsificações N1/N2/N3).
+  'public.reposicao_pos_candidatos': {
+    sensitive: true,
+    requiredGate: { anyOf: [{ call: 'cap_compras_ler' }] },
+    motivo:
+      'detector de PO sumido — protocolo/fornecedor/jsonb cru p/ authenticated; master-only pelo FU4-G',
+  },
   // ⚠️ ATP fase 1.1 (migration 20260806225052): existe uma 5ª função que ESCREVE em
   // estoque_reservas e NÃO tem gate — `private.expirar_reservas_vencidas_job()`. É
   // DE PROPÓSITO e não é furo: pg_cron nativo roda SEM JWT, então auth.role() e

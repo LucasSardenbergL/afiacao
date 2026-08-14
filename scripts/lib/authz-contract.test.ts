@@ -217,3 +217,72 @@ describe('hasGateCall — tolera schema e whitespace antes do parêntese', () =>
     expect(hasGateCall('select xgatey from t', 'gate')).toBe(false);
   });
 });
+
+// ══ CONTROLE ≠ MENÇÃO — revisão do #1718 por /codex challenge (gpt-5.6-sol), 2026-08-14 ══
+// Duas cegueiras MEDIDAS (não deduzidas) rodando este detector contra a definição real de
+// public.reposicao_pos_candidatos e contra as formas sabotadas daquela revisão.
+const G = 'cap_compras_ler';
+
+describe('blocksOnCall — o wrapper (SELECT …) do idioma initplan', () => {
+  // Era o que impedia a RPC de compras de entrar no AUTHZ_MANIFEST: um gate LEGÍTIMO lido como
+  // decorativo. Falha fechada, mas o efeito prático foi a função ficar FORA do contrato de gate.
+  it('a forma REAL do repo — (SELECT g((SELECT auth.uid()))) IS NOT TRUE — bloqueia', () => {
+    const b =
+      "IF (SELECT auth.uid()) IS NOT NULL AND (SELECT private.cap_compras_ler((SELECT auth.uid()))) IS NOT TRUE THEN RAISE EXCEPTION 'acesso negado'; END IF;";
+    expect(blocksOnCall(b, G)).toBe(true);
+  });
+
+  it('com quebra de linha antes do operador — bloqueia', () => {
+    const b = "IF (SELECT private.cap_compras_ler(uid))\n     IS NOT TRUE THEN\n RAISE EXCEPTION 'x'; END IF;";
+    expect(blocksOnCall(b, G)).toBe(true);
+  });
+
+  it('(SELECT g(uid)) = false — bloqueia', () => {
+    expect(blocksOnCall("IF (SELECT private.cap_compras_ler(uid)) = false THEN RAISE EXCEPTION 'x'; END IF;", G)).toBe(
+      true,
+    );
+  });
+
+  it('NÃO afrouxa: em NOT outra(g(uid)) quem é negado é `outra`, não o gate', () => {
+    expect(
+      blocksOnCall("IF NOT public.outra(private.cap_compras_ler(uid)) THEN RAISE EXCEPTION 'x'; END IF;", G),
+    ).toBe(false);
+  });
+});
+
+describe('blocksOnCall — o RAISE precisa ser ALCANÇÁVEL (ramo morto)', () => {
+  // Caso 1 da tabela da revisão: chamada, negação e RAISE todos presentes — e nada executa. Qualquer
+  // sentinela de TEXTO que procure a chamada aprova isto; era o caso do bloco DO $pos$ da
+  // 20260813195914 E desta função até 2026-08-14. Prova executada: N1 do harness PG17.
+  it('IF false AND NOT g() THEN RAISE → NÃO bloqueia', () => {
+    expect(blocksOnCall("IF false AND NOT private.cap_compras_ler(uid) THEN RAISE EXCEPTION 'x'; END IF;", G)).toBe(
+      false,
+    );
+  });
+
+  it('IF 1=0 AND (SELECT g(uid)) IS NOT TRUE THEN RAISE → NÃO bloqueia', () => {
+    expect(
+      blocksOnCall("IF 1=0 AND (SELECT private.cap_compras_ler(uid)) IS NOT TRUE THEN RAISE EXCEPTION 'x'; END IF;", G),
+    ).toBe(false);
+  });
+
+  it('IF (false) AND … → NÃO bloqueia', () => {
+    expect(
+      blocksOnCall("IF (false) AND private.cap_compras_ler(uid) IS NOT TRUE THEN RAISE EXCEPTION 'x'; END IF;", G),
+    ).toBe(false);
+  });
+
+  // Os dois anti-falso-positivo do guard: `false` como ARGUMENTO e ramo morto VIZINHO. Sem eles o
+  // guard poderia ser "a palavra false aparece por perto" e ninguém notaria a diferença.
+  it('`false` como ARGUMENTO não é ramo morto: NOT (COALESCE(g(uid), false)) bloqueia', () => {
+    expect(
+      blocksOnCall("IF NOT (COALESCE(private.cap_compras_ler(uid), false)) THEN RAISE EXCEPTION 'x'; END IF;", G),
+    ).toBe(true);
+  });
+
+  it('ramo morto VIZINHO não contamina o gate real do IF seguinte', () => {
+    const b =
+      "IF false THEN RAISE EXCEPTION 'morto'; END IF; IF NOT private.cap_compras_ler(uid) THEN RAISE EXCEPTION 'negado'; END IF;";
+    expect(blocksOnCall(b, G)).toBe(true);
+  });
+});
