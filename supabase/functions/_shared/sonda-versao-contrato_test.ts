@@ -6,14 +6,16 @@
 // quebrar o formato de um marcador quebra um teste com nome que diz qual edge é.
 //
 // Estes imports atravessam diretórios de function DE PROPÓSITO e só valem em teste: os `versao.ts`
-// não têm import remoto (o classificador vem de `_shared/`), então `--no-remote` passa. Nenhum
-// código de produção importa através dessa fronteira.
+// não têm import remoto (o classificador vem de `_shared/`; a `generate-tactical-plan` também puxa
+// o `plano-helpers.ts` dela, que não importa nada), então `--no-remote` passa. Nenhum código de
+// produção importa através dessa fronteira.
 
 import * as disparar from "../disparar-pedidos-aprovados/versao.ts";
 import * as portalSayerlack from "../enviar-pedido-portal-sayerlack/versao.ts";
 import * as conciliar from "../conciliar-pedido-portal/versao.ts";
 import * as gerarDiario from "../gerar-pedidos-diario/versao.ts";
 import * as programado from "../pedido-programado-enviar/versao.ts";
+import * as tactical from "../generate-tactical-plan/versao.ts";
 
 const EDGES: Array<{ nome: string; mod: { VERSAO: string; EFEITO: string } }> = [
   { nome: "disparar-pedidos-aprovados", mod: disparar },
@@ -21,6 +23,7 @@ const EDGES: Array<{ nome: string; mod: { VERSAO: string; EFEITO: string } }> = 
   { nome: "conciliar-pedido-portal", mod: conciliar },
   { nome: "gerar-pedidos-diario", mod: gerarDiario },
   { nome: "pedido-programado-enviar", mod: programado },
+  { nome: "generate-tactical-plan", mod: tactical },
 ];
 
 Deno.test("toda edge instrumentada declara VERSAO no formato vN.N-slug", () => {
@@ -67,5 +70,20 @@ Deno.test("enviar-pedido-portal-sayerlack: o EFEITO precisa dizer que o FORNECED
   // O custo aqui não é banco nem ERP: é um terceiro recebendo um pedido que não dá para desfazer.
   if (!/fornecedor/i.test(portalSayerlack.EFEITO)) {
     throw new Error(`EFEITO não menciona o fornecedor: ${portalSayerlack.EFEITO}`);
+  }
+});
+
+Deno.test("generate-tactical-plan: o marcador NOMEIA a fatia — 'sensor-inicial' aqui seria falso", () => {
+  // As outras cinco nasceram com o sensor, então `v1.0-sensor-inicial` descreve a verdade delas.
+  // Nesta o sensor é ANTERIOR (o `{"probe":true}` do #1618): o que nasce agora é o MARCADOR, e ele
+  // nasce nomeando o contrato do #1520 — a entrega cuja prova de deploy faltou. Normalizar para
+  // "sensor-inicial" apagaria justamente a informação pela qual o marcador existe.
+  // A anotação `: string` é NECESSÁRIA, não ruído: `VERSAO` é `const`, então o TS a estreita ao tipo
+  // literal e recusa a comparação com TS2367 ("no overlap") — o compilador já sabe que hoje difere.
+  // O teste guarda a mudança FUTURA, que é runtime. Os outros asserts deste arquivo escapam disso
+  // por passarem pelo `EDGES`, cujo tipo declarado já alarga para `string`.
+  const versaoTactical: string = tactical.VERSAO;
+  if (versaoTactical === "v1.0-sensor-inicial") {
+    throw new Error("generate-tactical-plan: a sonda é pré-existente (#1618) — o marcador tem de nomear a fatia");
   }
 });

@@ -30,6 +30,7 @@ import {
   systemDoModo,
   toolDoModo,
 } from "./plano-helpers.ts";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSondaTactical, VERSAO } from "./versao.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -60,6 +61,32 @@ Deno.serve(async (req) => {
   try {
     const body = await req.json();
 
+    // SONDA DE VERSÃO — "qual bundle está no ar?", em 1 request, sem custo: responde ANTES do
+    // createClient, de toda query e de toda chamada ao modelo. É a PRIMEIRA coisa depois do parse.
+    //
+    // Era um `body.probe === true` cru desde o #1618; virou o classificador compartilhado
+    // (`_shared/sonda-versao.ts`, #1747/#1750) por dois motivos:
+    //   1. **grafia** — `{"probe":"true"}` (string) é o que `jsonb_build_object` do SQL Editor
+    //      produz com facilidade, e o `=== true` mandava isso para o fluxo real. Aqui o dano é
+    //      menor que nas irmãs money-path (sem `Authorization` a requisição morre em 401 antes do
+    //      modelo), mas 401 é INDISTINGUÍVEL de "bundle velho" — corrompe justamente a verificação
+    //      que a sonda existe para fazer. `probe` com valor não reconhecido agora é 400 explícito.
+    //   2. **versão** — a resposta antiga era constante, então provava "≥ #1618" e nada mais.
+    //      O marcador em `versao.ts` é o que discrimina fatia (ver o cabeçalho de lá).
+    const decisaoSonda = classificarSonda(body);
+    if (decisaoSonda.tipo === 'sonda') {
+      return new Response(JSON.stringify(respostaSondaTactical()), {
+        status: 200,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+    if (decisaoSonda.tipo === 'ambiguo') {
+      return new Response(
+        JSON.stringify({ ok: false, versao: VERSAO, error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+      );
+    }
+
     // CANÁRIA COMPORTAMENTAL do helper de margem (#1498) — NÃO escreve, NÃO chama LLM, NÃO toca o
     // DB. Roda as decisões PURAS de `_shared/tactical-margem.ts` DEPLOYADAS (não as da `main`)
     // sobre fixtures fixos e compara com o esperado.
@@ -77,32 +104,16 @@ Deno.serve(async (req) => {
     // certa está no ar — margem ausente degrada em vez de fabricar. NÃO prova que o real-path usa o
     // helper (isso é o guard textual + paridade), prova que a DECISÃO deployada está correta. Os
     // fixtures vivem no helper (`avaliarCanariaMargem`), testados em tactical-margem_test.ts.
+    //
+    // A resposta carrega o `versao` pelo mesmo motivo da armadilha 2 do deploy.md: uma canária
+    // sem version marker compara VELHO×VELHO e responde `ok:true` — mente verde. Com o marcador,
+    // `canary:true` + `ok:true` + `versao` batendo é que fecham o veredito.
     if (body.canary === true) {
       const { ok, resultados } = avaliarCanariaMargem();
-      return new Response(JSON.stringify({ canary: true, ok, resultados }), {
+      return new Response(JSON.stringify({ canary: true, versao: VERSAO, ok, resultados }), {
         status: ok ? 200 : 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
-    }
-
-    // CANÁRIA DE VERSÃO (docs/agent/deploy.md, padrão do #1590/#1592): no Lovable Cloud não
-    // há PAT, então o deploy de edge não tem prova de VERSÃO — só "foi servida". Este probe
-    // é a prova, e custa zero (não chama o modelo, não toca o DB):
-    //   curl -s -X POST <url> -H 'content-type: application/json' \
-    //        -H "x-cron-secret: <secret>" -d '{"probe":true}'
-    //   → {"motor":"anthropic",...}  = fase 3 no ar
-    //   → {"error":"AI não configurada"} ou plano gerado = ainda a versão do gateway Lovable
-    if (body.probe === true) {
-      return new Response(
-        JSON.stringify({
-          ok: true,
-          motor: 'anthropic',
-          modelo: MODELO,
-          tool: toolDoModo('estrategico').name,
-          fallback_fabricado: false,
-        }),
-        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
-      );
     }
 
     // Modo self-contained (cron): body traz { customerId, farmerId } e a edge monta o
