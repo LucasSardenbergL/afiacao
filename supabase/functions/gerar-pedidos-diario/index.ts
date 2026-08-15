@@ -5,6 +5,7 @@
 // 3. Envia email digest via Resend para empresa_configuracao_custos.email_notificacoes
 // 4. Grava log em sync_reprocess_log
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -225,6 +226,9 @@ async function authorizeCronOrStaff(req: Request): Promise<boolean> {
   } catch { return false; }
 }
 
+/** Corpo aceito no POST. `probe` é tratado antes de tudo (ver versao.ts); os demais são o ciclo. */
+type CorpoGerar = { empresa?: string; data_ciclo?: string; intraday?: boolean };
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -235,6 +239,27 @@ Deno.serve(async (req: Request) => {
       status: 401,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
+  }
+
+  // ⚠️ SONDA DE VERSÃO — único caminho sem efeito colateral, e por isso vem antes do createClient
+  // e de qualquer query: daqui pra frente a edge regenera o ciclo de sugestões e dispara e-mail.
+  // Corpo lido UMA vez (req.json() não pode ser consumido duas) e reaproveitado abaixo.
+  // Ver versao.ts / _shared/sonda-versao.ts.
+  const corpoBruto: unknown = req.method === "POST"
+    ? await req.json().catch(() => ({}))
+    : {};
+  const decisaoSonda = classificarSonda(corpoBruto);
+  if (decisaoSonda.tipo === "sonda") {
+    return new Response(JSON.stringify(respostaSonda(VERSAO)), {
+      status: 200,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+  if (decisaoSonda.tipo === "ambiguo") {
+    return new Response(
+      JSON.stringify({ ok: false, versao: VERSAO, error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }),
+      { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    );
   }
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
@@ -254,7 +279,12 @@ Deno.serve(async (req: Request) => {
 
   try {
     if (req.method === "POST") {
-      const body = await req.json().catch(() => ({}));
+      // Já parseado acima (para a sonda). Normaliza não-objeto para {} — preserva o comportamento
+      // antigo de `.catch(() => ({}))` sem deixar um body `null` quebrar os acessos.
+      const body: CorpoGerar =
+        typeof corpoBruto === "object" && corpoBruto !== null && !Array.isArray(corpoBruto)
+          ? corpoBruto as CorpoGerar
+          : {};
       if (body.empresa) empresa = body.empresa;
       if (body.data_ciclo) dataCiclo = body.data_ciclo;
       if (body.intraday === true) intraday = true;
