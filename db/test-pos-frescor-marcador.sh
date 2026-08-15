@@ -18,7 +18,8 @@
 # ║   M1-M6  a RPC irmã: SEMPRE 1 linha, NULLs sem marcador, e MESMA definição de marcador ║
 # ║   N1-N5  o congelamento NÃO é absorvente: marcador novo faz o pedido voltar            ║
 # ║   P1-P6  ACL: sem anon/PUBLIC (falha ABERTA), com authenticated E service_role         ║
-# ║   D1-D6  authz comportamental nas DUAS: não-staff 42501, master passa, cron passa      ║
+# ║   D1-D8  authz comportamental nas DUAS: não-staff 42501, master passa, cron passa; e   ║
+# ║          D7/D8 o employee GERENCIAL barrado — o único assert que separa os 2 gates     ║
 # ║                                                                                        ║
 # ║  FALSIFICA (o teste tem de FICAR VERMELHO com a migration sabotada)                     ║
 # ║   X1  coluna nova removida        → F1 vermelho (roda a MESMA query do assert)          ║
@@ -27,6 +28,7 @@
 # ║   X4  REVOKE removido             → pós-condição aborta (DEFAULT ACL devolve anon)      ║
 # ║   X5  irmã devolvendo 0 linhas    → M2 vermelho (volta o silêncio que o PR ataca)       ║
 # ║   X6  gate da irmã removido       → D4 vermelho (RPC de money-path aberta)              ║
+# ║   X6b/c gate da irmã REGRIDE ao velho → D7 vermelho; o customer fica barrado (D4 é cego)║
 # ║   X7  corpo VIVO alheio           → pré-condição barra (md5), que as 3 regex não pegam  ║
 # ╚════════════════════════════════════════════════════════════════════════════════════════╝
 set -euo pipefail
@@ -80,9 +82,21 @@ CREATE TABLE public.commercial_roles (user_id uuid, commercial_role text);
 CREATE OR REPLACE FUNCTION public.has_role(_user_id uuid, _role text)
  RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public'
 AS $fn$ SELECT EXISTS (SELECT 1 FROM public.user_roles WHERE user_id=_user_id AND role=_role) $fn$;
+-- Gate ANTERIOR ao FU4-G. Corpo FIEL ao de prod (20260526040000): master OU employee com papel
+-- comercial gerencial/estrategico/super_admin. Modelá-lo de verdade é o que dá DENTE ao bloco D:
+-- até 14/08 este stub era `SELECT has_role(_uid,'master')` — idêntico ao gate NOVO —, e com os dois
+-- gates colapsados o harness não conseguia ver a única diferença que importa. O customer (4444) é
+-- barrado pelos DOIS, então D4 sozinho não distingue `cap_compras_ler` de `pode_ver_carteira_completa`:
+-- uma regressão de gate passaria com 42 OK. O discriminante é o employee GERENCIAL — ver D7/D8 e X6b.
 CREATE OR REPLACE FUNCTION public.pode_ver_carteira_completa(_uid uuid)
  RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public'
-AS $fn$ SELECT public.has_role(_uid,'master') $fn$;
+AS $fn$
+  SELECT public.has_role(_uid,'master')
+      OR (public.has_role(_uid,'employee')
+          AND EXISTS (SELECT 1 FROM public.commercial_roles c
+                       WHERE c.user_id = _uid
+                         AND c.commercial_role IN ('gerencial','estrategico','super_admin')))
+$fn$;
 CREATE OR REPLACE FUNCTION private.cap_compras_ler(_uid uuid)
  RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public'
 AS $fn$ SELECT COALESCE(public.has_role(_uid,'master'), false) $fn$;
@@ -119,8 +133,13 @@ CREATE TABLE public.reposicao_po_last_seen (
 );
 INSERT INTO auth.users(id) VALUES
   ('33333333-3333-3333-3333-333333333333'),   -- master (staff)
-  ('44444444-4444-4444-4444-444444444444');   -- customer (não-staff)
-INSERT INTO public.user_roles(user_id, role) VALUES ('33333333-3333-3333-3333-333333333333','master');
+  ('44444444-4444-4444-4444-444444444444'),   -- customer (não-staff)
+  ('55555555-5555-5555-5555-555555555555');   -- employee GERENCIAL: passa no gate VELHO, barrado no NOVO
+INSERT INTO public.user_roles(user_id, role) VALUES
+  ('33333333-3333-3333-3333-333333333333','master'),
+  ('55555555-5555-5555-5555-555555555555','employee');
+INSERT INTO public.commercial_roles(user_id, commercial_role) VALUES
+  ('55555555-5555-5555-5555-555555555555','gerencial');
 
 -- ⚠️ REPRODUZ A PROD: este projeto tem DEFAULT ACL de funções do owner `postgres` concedendo
 -- EXECUTE a anon (pg_default_acl, conferido por psql-ro 14/08). Sem isto no banco de teste, a
@@ -268,11 +287,13 @@ eq "P6 irmã: service_role mantém EXECUTE" \
    "$(printf '%s' "$(acl reposicao_pos_marcador)" | command grep -c 'service_role=' || true)" "1"
 
 echo "== D: gate de authz (COMPORTAMENTAL: executa e exige 42501) =="
-nega() { # $1 = nome da função
+U_CUSTOMER=44444444-4444-4444-4444-444444444444
+U_GERENCIAL=55555555-5555-5555-5555-555555555555
+nega() { # $1 = nome da função   $2 = uid que TEM de ser barrado
 Pq <<SQL
 DO \$t\$
 BEGIN
-  PERFORM set_config('test.uid','44444444-4444-4444-4444-444444444444',true);
+  PERFORM set_config('test.uid','$2',true);
   PERFORM * FROM public.$1('OBEN');
   RAISE EXCEPTION 'VAZOU-NAO-BARROU';
 EXCEPTION
@@ -283,12 +304,25 @@ SELECT 'barrado';
 SQL
 }
 # tail -1: o psql imprime o 'DO' do bloco anonimo antes do SELECT final.
-eq "D1 candidatos: nao-staff barrado com 42501" "$(nega reposicao_pos_candidatos | tail -1)" "barrado"
+eq "D1 candidatos: nao-staff barrado com 42501" "$(nega reposicao_pos_candidatos "$U_CUSTOMER" | tail -1)" "barrado"
 eq "D2 candidatos: master passa" "$(Pq -c "SELECT set_config('test.uid','33333333-3333-3333-3333-333333333333',true) IS NOT NULL; SELECT count(*)::text FROM public.reposicao_pos_candidatos('OBEN');" | tail -1)" "1"
 eq "D3 candidatos: uid NULL (cron SQL-local) passa" "$(Pq -c "SELECT set_config('test.uid','',true) IS NOT NULL; SELECT count(*)::text FROM public.reposicao_pos_candidatos('OBEN');" | tail -1)" "1"
-eq "D4 irmã: nao-staff barrado com 42501" "$(nega reposicao_pos_marcador | tail -1)" "barrado"
+eq "D4 irmã: nao-staff barrado com 42501" "$(nega reposicao_pos_marcador "$U_CUSTOMER" | tail -1)" "barrado"
 eq "D5 irmã: master passa" "$(Pq -c "SELECT set_config('test.uid','33333333-3333-3333-3333-333333333333',true) IS NOT NULL; SELECT count(*)::text FROM public.reposicao_pos_marcador('OBEN');" | tail -1)" "1"
 eq "D6 irmã: uid NULL (cron SQL-local) passa" "$(Pq -c "SELECT set_config('test.uid','',true) IS NOT NULL; SELECT count(*)::text FROM public.reposicao_pos_marcador('OBEN');" | tail -1)" "1"
+
+# D7 é o assert que X6b quebra, e o único do bloco D que distingue os DOIS gates. O gerencial NÃO é
+# master: `private.cap_compras_ler` o barra DE PROPÓSITO ("compras não é carteira", COMMENT da
+# 20260718190000). D1-D6 usam customer e master, que os dois gates classificam IGUAL — trocar o gate
+# novo pelo velho passaria por eles sem um vermelho. Molde: D4 de db/test-pos-candidatos-guard-temporal.sh.
+eq "D7 irmã: employee GERENCIAL (nao-master) barrado" "$(nega reposicao_pos_marcador "$U_GERENCIAL" | tail -1)" "barrado"
+# CONTRAPROVA — sem ela D7 passaria por VACUIDADE: um uid com seed errado (sem role, ou sem linha em
+# commercial_roles) é barrado por QUALQUER gate, e D7 ficaria verde provando nada. Isto exige que as
+# duas políticas DIVERGAM exatamente nesta persona: velho deixa ENTRAR (t), novo BARRA (f).
+# `boolean::text` devolve 'true'/'false' — o 't'/'f' e so o formato de EXIBICAO do psql, e casar por
+# ele deixaria o assert vermelho sem que nada estivesse errado (foi o que aconteceu na 1a rodada).
+eq "D8 gerencial DIVERGE entre os 2 gates (velho deixa entrar, novo barra)" \
+   "$(Pq -c "SELECT public.pode_ver_carteira_completa('$U_GERENCIAL')::text || '/' || private.cap_compras_ler('$U_GERENCIAL')::text;" | tail -1)" "true/false"
 
 # ══════════════════════════ FALSIFICACAO ══════════════════════════
 # Sem isto o teste e teatro: cada assert acima precisa FICAR VERMELHO com a migration sabotada.
@@ -389,10 +423,36 @@ if P -q -f "$TMP/x6.sql" >/dev/null 2>&1; then
   # Mesma armadilha do X1, agravada por `pipefail`: sob a sabotagem o gate NAO barra, o bloco DO
   # levanta 'VAZOU-NAO-BARROU' e o psql sai != 0 -> a atribuicao herda o status e `set -e` mataria
   # o script exatamente no assert que deveria REPROVAR.
-  X6=$(nega reposicao_pos_marcador 2>&1 | tail -1 || true)
+  X6=$(nega reposicao_pos_marcador "$U_CUSTOMER" 2>&1 | tail -1 || true)
   if [ "$X6" = "barrado" ]; then bad "X6 gate removido -> D4 deveria reprovar, mas passou"; else ok "X6 gate removido -> D4 reprova (=$(printf '%.40s' "$X6"))"; fi
 else
   bad "X6 -- o apply sabotado nao rodou"
+fi
+restaura
+
+# X6b: o gate da irma REGRIDE para o anterior ao FU4-G (`pode_ver_carteira_completa`) em vez de
+# sumir. E a sabotagem que X6 NAO cobre e que D1-D6 NAO pegam: customer e master sao classificados
+# IGUAL pelos dois gates, entao a autorizacao cai de master-only para "gerencial tambem ve" e o
+# harness inteiro segue verde. So D7 fica vermelho. Analoga ao N2 de test-pos-candidatos-guard-temporal.sh.
+# O regex casa o PAR gate+RAISE-DESTA-funcao (o RAISE cita o nome), para nao tocar a irma candidatos.
+perl -0777 -pe "s/(AND \(SELECT )private\.cap_compras_ler(\(\(SELECT auth\.uid\(\)\)\)\) IS NOT TRUE THEN\n    RAISE EXCEPTION 'reposicao_pos_marcador)/\${1}public.pode_ver_carteira_completa\${2}/" \
+  "$TMP/sem-guardas.sql" > "$TMP/x6b.sql"
+command grep -qF "pode_ver_carteira_completa((SELECT auth.uid()" "$TMP/x6b.sql" || { echo "FALSIFICACAO X6b NAO APLICOU"; exit 2; }
+# a irma NAO pode ter sido tocada: se o regex vazasse para ela, o vermelho viria da funcao errada.
+[ "$(command grep -cF 'private.cap_compras_ler((SELECT auth.uid()' "$TMP/x6b.sql")" = "1" ] \
+  || { echo "FALSIFICACAO X6b VAZOU para a irma (ou nao sobrou o gate dela)"; exit 2; }
+if P -q -f "$TMP/x6b.sql" >/dev/null 2>&1; then
+  # mesma armadilha do X6: sob a sabotagem o gerencial ENTRA, o bloco DO levanta VAZOU-NAO-BARROU e
+  # o psql sai != 0 -> sem `|| true` o `set -e` mataria o script no assert que deve REPROVAR.
+  X6B=$(nega reposicao_pos_marcador "$U_GERENCIAL" 2>&1 | tail -1 || true)
+  if [ "$X6B" = "barrado" ]; then bad "X6b gate velho -> D7 deveria reprovar, mas passou"
+  else ok "X6b gate velho -> D7 reprova, o gerencial ENTRA (=$(printf '%.40s' "$X6B"))"; fi
+  # E o customer segue barrado pelos DOIS gates — a prova de que D4 e cego a esta regressao, que e
+  # a razao de D7 existir. Sem este assert, X6b nao mostraria que a cegueira e da PERSONA.
+  eq "X6c sob o gate velho o customer SEGUE barrado (por isso D4 nao pega)" \
+     "$(nega reposicao_pos_marcador "$U_CUSTOMER" 2>&1 | tail -1 || true)" "barrado"
+else
+  bad "X6b -- o apply sabotado nao rodou"
 fi
 restaura
 
