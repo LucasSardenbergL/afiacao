@@ -264,3 +264,126 @@ deixado o teste verde pelo motivo errado.
    > que nunca estiveram no corpo. **Marcador de presença sai do artefato, nunca da prosa sobre ele.**
 4. O gate continua provando que a chamada **governa um ramo alcançável que levanta exceção** — não
    que a exceção acontece para quem deve. Isso é asserção EXECUTADA (harness PG17), inalterado.
+
+---
+
+# 8. A migration que reescreve a definição VIVA deixa de ser invisível (2026-08-14)
+
+> Follow-up do §7.4 item 2, fechado. A Parte A é last-writer sobre o TEXTO das migrations e
+> procura `CREATE [OR REPLACE] FUNCTION`. Quem recria a função aplicando `regexp_replace` sobre
+> `pg_get_functiondef()` da definição VIVA não escreve nenhum `CREATE` — e o "last-writer" que a
+> Parte A mede **não é a última definição**. Agora o CI vê, nomeia e para de afirmar o que não mediu.
+
+## 8.1 A medição, que é a entrega
+
+O detector foi rodado contra as **648** migrations, e o resultado foi conferido contra um oráculo
+**independente**: o corpo VIVO das 19 funções do `AUTHZ_MANIFEST` em prod (psql-ro), comparado com
+o last-writer do repo por md5 do corpo normalizado.
+
+| | resultado |
+|---|---|
+| migrations com o padrão (`pg_get_functiondef` + transformação + `EXECUTE`) | **7 de 648** |
+| …que tocam função do `AUTHZ_MANIFEST` | **3** |
+| …**posteriores** ao last-writer ⇒ Parte A medindo a definição errada | **2**, cobrindo **3 funções** |
+| funções do manifest cujo corpo em prod **difere** do last-writer do repo | **3**: `get_preco_cockpit`, `get_defasagem_cliente`, `reposicao_pos_candidatos` |
+| o detector prevê exatamente esse conjunto | **precisão e recall 3/3**, zero falso positivo/negativo |
+| `checkGate` no corpo **VIVO** das 19 | **OK nas 19** — não há falso-verde hoje |
+
+Dois achados que só a medição dá:
+
+- **`get_preco_cockpit` em prod já NÃO chama `pode_ver_carteira_completa`** (o E2 a trocou por
+  `private.cap_custo_ler` via `regexp_replace`). O manifest ainda a lista como alternativa
+  aceitável e o corpo do repo ainda a chama: o CI estava verde validando uma cláusula que prod
+  não tem mais. Quem protege de fato lá é `has_role(employee|master)`, e ele satisfaz o `anyOf`.
+- **A `20260814022626` FOI aplicada em prod** — o §7.4 item 3 a registrou como "mergeou e ainda
+  não foi aplicada", e o estado mudou desde então. Medido pelo predicado, não pelo md5: prod tem
+  `omie_po_inexistente_antes_de <= m.finalizado_em` e **não** tem `omie_registrado_em <= …`; o
+  last-writer do repo (`20260814000125`) tem exatamente o inverso. Confirmar o estado de aplicação
+  ANTES de comparar repo×prod não é formalidade: sem isso o diff acusa a coisa errada.
+
+## 8.2 Por que (b) e não (a) — decidido por medição, não por preferência
+
+A direção (a) — *exigir que a migration carregue uma pós-condição EXECUTADA equivalente ao gate* —
+**não tem dente, e isso é medido**: as 2 migrations que disparam o detector **já carregam**
+pós-condição executada com `RAISE EXCEPTION` sobre a definição viva (a do E2 e o `DO $pos$` da
+`20260814022626`). Um gate que exigisse isso ficaria **verde hoje** e não teria detectado nada.
+Pior: o CI só consegue ver que a pós-condição **existe** textualmente — e o §1 deste mesmo
+documento já provou que sentinela textual prova presença, nunca controle. Exigi-la estaticamente
+compraria a ilusão de cobertura, que é o erro que o cabeçalho de `authz-contract.ts` adverte.
+
+(c) — *audit read-only de prod* — é o **oráculo**, mas por construção não roda no CI (que não tem
+psql-ro). Virou comando próprio e a âncora da baseline.
+
+Sobrou **(b)**, fail-closed nomeando o arquivo, com precisão medida 3/3. E a semântica escolhida
+importa mais que o mecanismo: **a Parte D não proíbe o padrão** — ele preserva `SECURITY DEFINER`,
+`STABLE`, `SET search_path`, o gate e o ACL, que um corpo colado perderia, e foi assim que os
+próprios gates `cap_custo_ler`/`cap_compras_ler` entraram. O que ela impede é o CI **afirmar o que
+não mediu**.
+
+## 8.3 O que entrou
+
+- **`scripts/lib/authz-reescrita.ts`** — núcleo puro. Segue o data-flow do `EXECUTE` até
+  `pg_get_functiondef` em 2 níveis (`v_def := pg_get_functiondef(…)` → `v_novo := regexp_replace(v_def, …)`
+  → `EXECUTE v_novo`). Sem seguir a variável, a regra viraria "tem os dois no arquivo" e marcaria
+  as **82** migrations que apenas ASSERTAM sobre a definição viva — ruído que desligaria o detector.
+- **Parte D no `authz:check`** — erro `[REESCRITA_VIVA_NAO_MEDIDA]` nomeando arquivo e função;
+  `[REESCRITA_VIVA_ALVO_OPACO]` (aviso) quando o alvo não é resolvível, listando os literais
+  colhidos para o leitor julgar; silêncio quando um `CREATE OR REPLACE` posterior restabeleceu a
+  auditabilidade.
+- **`scripts/authz-reescritas-conhecidas.ts`** — baseline do passado (migration committada é
+  imutável: "o autor reescreve" só vale para o futuro). A entrada **não** diz "está tudo bem": ela
+  DECLARA o não-medido, com a prova executada e o `md5ProdEsperado`.
+- **O verde parou de mentir** — a linha final do `authz:check` agora lista as funções do manifest
+  que não são medidas estaticamente. Era o que faltava para "o gate está verde" deixar de ser lido
+  como "a função está coberta" (§2.1).
+- **`bun run authz:audit:prod`** (`db/audit-authz-reescritas-prod.ts`) — roda o **mesmo**
+  `checkGate` no corpo VIVO das 19 e confere o md5 ancorado. É o que torna a baseline uma asserção
+  verificável em vez de desculpa: reescrita nova por fora muda o md5 e acende, sem nenhum arquivo
+  do repo ter mudado.
+
+## 8.4 Evidência
+
+| o quê | resultado |
+|---|---|
+| `bun run authz:check` | exit **0** — 8 avisos (3 baselinados + 4 alvo-opaco + 1 pré-existente), **0 erros novos** |
+| `bun run authz:audit:prod` | exit **0** — gate vale nas 19 vivas, as 3 baselinadas batem no md5 |
+| suíte completa (`vitest`) | **672 arquivos / 6.273 testes**, exit **0** |
+| testes de authz (4 arquivos) | 112 → **129**: delta **+17**, exatamente os escritos |
+| `scripts:typecheck` · `eslint` (7 arquivos) · `shellcheck` | exit **0** |
+
+**Falsificação** — `db/test-authz-reescrita-falsificacao.sh`, **0 falhas em C e em pt_BR.UTF-8**:
+
+| | sabotagem | esperado | obtido |
+|---|---|---|---|
+| C0/C1 | nenhuma (canário, antes e depois) | verde | exit 0 |
+| F1 | entrada da baseline removida | vermelho | exit 1, `REESCRITA_VIVA_NAO_MEDIDA`, **nomeando arquivo e função certos** |
+| F2 | detector desligado | vermelho | exit 1 — cai o teste anti-decoração da baseline |
+| F3 | migration NOVA reescrevendo função do manifest | vermelho | exit 1, nomeando o arquivo novo |
+| F4 | md5 da baseline sabotado | vermelho **só no audit** | `audit:prod` exit 1 `MD5_DIVERGIU`; `authz:check` segue 0 (não vê prod — é o desenho) |
+
+F2 é o que separa "a baseline existe" de "o silêncio é justificado": com o detector morto, a
+baseline vira decoração e nada mais a segura.
+
+> Dois erros de MÉTODO desta sessão, registrados porque os dois quase viraram conclusão falsa:
+> (1) a 1ª versão do audit trazia o `prosrc` achatando `chr(10)` para espaço — sem quebras de
+> linha, `--` deixa de terminar na linha e o `stripComments` apaga o corpo inteiro a partir do
+> primeiro comentário. O audit acusou **8 das 19 "sem gate em prod"**, todas falso-alarme; a
+> correção é trafegar o corpo em base64. (2) o `restaurar()` da 1ª falsificação usava
+> `git checkout -- scripts/` com trabalho **não commitado** e apagou a implementação. O harness
+> promovido carrega um guard que aborta nesse estado — e a regra geral é **commitar antes de
+> falsificar**.
+
+## 8.5 Limites declarados e o que sobra
+
+1. **O detector não simula a reescrita, de propósito.** Reproduzir `regexp_replace` do Postgres em
+   JS produziria um corpo que ninguém executou — heurística sobre heurística, e o verde afirmaria
+   cobertura inventada. Ele entrega o que é honesto: **saber que a Parte A não mede a última
+   definição**, e nomear arquivo e função. Qual corpo saiu dali é asserção EXECUTADA ou `authz:audit:prod`.
+2. **4 migrations ficam em `ALVO_OPACO`** (escolhem alvo por loop sobre `pg_proc`). Nenhum literal
+   delas bate no manifest — o aviso diz quais foram colhidos —, mas um filtro dinâmico
+   (`proname LIKE 'get_%'`) que alcançasse o manifest passaria como aviso, não erro.
+3. **O `md5ProdEsperado` é conferido só pelo audit**, que roda on-demand. Entre duas execuções, uma
+   reescrita manual no SQL Editor fica invisível — mesma natureza do audit de grants, e o motivo de
+   os dois existirem separados do CI.
+4. **`DROP FUNCTION` + `CREATE FUNCTION` reseta o ACL** — o item 1 do §7.4 continua **aberto**:
+   ninguém pega esse vetor em função (a Parte C pega em tabela).
