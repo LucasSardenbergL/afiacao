@@ -26,7 +26,8 @@
  * MENOR — e criaria um arquivo-lista que vira ímã de conflito entre as ~30 worktrees paralelas.
  * Apertar para check completo é o destino natural, depois que a dívida encolher.
  *
- * TRÊS ARMADILHAS VALIDADAS EMPIRICAMENTE (2026-07-21, deno 2.9.2 — o pin do CI):
+ * QUATRO ARMADILHAS VALIDADAS EMPIRICAMENTE (1-3 em 2026-07-21, deno 2.9.2 — o pin do CI; 4 em
+ * 2026-08-15):
  *
  *  1. `--node-modules-dir=none` é OBRIGATÓRIO. Sem ele o `deno check` ABORTA na RESOLUÇÃO, antes
  *     de type-checar qualquer coisa: o package.json da raiz põe o Deno em modo node_modules e o
@@ -41,6 +42,24 @@
  *  3. Com o cache de check quente a saída é COMPLETAMENTE VAZIA e exit 0. Ou seja, "saída vazia"
  *     é o caso de SUCESSO normal — não pode ser lido como anomalia. A decisão pende do exit code
  *     + do marcador acima, nunca do volume de saída.
+ *
+ *  4. `DENO_NO_PACKAGE_JSON=1` é OBRIGATÓRIO — `--node-modules-dir=none` NÃO basta. As duas
+ *     parecem a mesma coisa e não são: o `none` só diz "não use a pasta node_modules"; o Deno
+ *     continua LENDO o package.json da raiz e resolvendo metadata de todas as deps do FRONTEND,
+ *     que nenhuma edge importa. Medido em 2026-08-15 com DENO_DIR limpo, numa edge só:
+ *     2.019 downloads de metadata (23 deles `@swc/*`) sem a env var, contra 28 com ela.
+ *
+ *     Não é só desperdício: acopla o gate das edges à árvore de build do frontend. Em 2026-08-15
+ *     o `@swc/core@1.16.0` (transitivo de `@vitejs/plugin-react-swc`, range `^3.11.0`) passou a
+ *     não resolver no runner e derrubou o CI da `main` inteira — nenhum PR do repo mergeava, e o
+ *     erro (`Could not find npm package '@swc/core-linux-arm-gnueabihf'`) não citava edge alguma.
+ *     Rerun não adiantava: o Deno revalida um pacote de plataforma por vez e trava no próximo —
+ *     `@swc/core` tem 12 optionalDependencies, incluindo ppc64 e s390x.
+ *
+ *     ⚠️ Isolar assim NÃO enfraquece o gate: as edges declaram os `npm:` que usam no próprio
+ *     import, então o package.json nunca teve papel na checagem delas. Falsificado no mesmo dia —
+ *     com a env var ligada, uma edge sabotada com `const x: TipoQueNaoExiste = 1` continua dando
+ *     `TS2304 [ERROR]` + `error: Type checking failed.` + exit 1.
  *
  * FAIL-CLOSED (CLAUDE.md: "ausência de sinal NÃO é aprovação"):
  *   exit 0                              → passa
@@ -214,7 +233,15 @@ function main(): number {
   }
 
   const args = ['check', '--no-lock', '--node-modules-dir=none', ...edges];
-  const proc = spawnSync('deno', args, { cwd: raiz, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  // `DENO_NO_PACKAGE_JSON=1` — ver armadilha 4 no cabeçalho. Sem ela o Deno resolve o package.json
+  // do FRONTEND inteiro para checar edge, e uma dependência de build quebrada derruba um gate que
+  // nada tem a ver com ela. Medido: 2.019 downloads de metadata → 28.
+  const proc = spawnSync('deno', args, {
+    cwd: raiz,
+    encoding: 'utf8',
+    maxBuffer: 64 * 1024 * 1024,
+    env: { ...process.env, DENO_NO_PACKAGE_JSON: '1' },
+  });
 
   if (proc.error) {
     console.error(`❌ edges-typecheck-gate: não consegui executar o deno — ${proc.error.message}`);
