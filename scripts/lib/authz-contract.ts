@@ -117,8 +117,13 @@ export interface GateResult {
   weak: string[];
 }
 
-/** remove só comentários (linha/bloco); preserva strings e dollar-quotes */
-function stripComments(sql: string): string {
+/**
+ * remove só comentários (linha/bloco); preserva strings e dollar-quotes.
+ * Exportado porque `authz-reescrita.ts` precisa da MESMA regra: lá os alvos são literais de
+ * string (`'public.f(text)'`), então `stripNoise` — que mascara strings — apagaria justamente
+ * o dado procurado. Duas cópias da regra divergiriam no primeiro ajuste.
+ */
+export function stripComments(sql: string): string {
   return sql.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/--[^\n]*/g, ' ');
 }
 

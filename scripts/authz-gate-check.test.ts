@@ -1,9 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { auditAuthz, auditCompleto, type Migration } from './authz-gate-check';
 import { AUTHZ_TABELAS_FECHADAS } from './authz-tabelas-fechadas';
 import { AUTHZ_MANIFEST, ACKNOWLEDGED_SENSITIVE, manifestKey } from './authz-manifest';
+import { AUTHZ_REESCRITAS_CONHECIDAS } from './authz-reescritas-conhecidas';
+import { detectarReescritaViva } from './lib/authz-reescrita';
 
 function mig(file: string, sql: string): Migration {
   return { file, sql };
@@ -417,5 +419,106 @@ describe('contrato de classificação — as duas listas não podem se contradiz
       return resto.length !== 1 || manifestKey(schema, resto[0]) !== k;
     });
     expect(tortas).toEqual([]);
+  });
+});
+
+/**
+ * Parte D — a reescrita da definição VIVA (`pg_get_functiondef` + `EXECUTE`), que recria uma
+ * função SEM escrever `CREATE FUNCTION` e portanto é INVISÍVEL ao last-writer da Parte A.
+ * Medido em 2026-08-14: 7 das 648 migrations usam o padrão; 2 delas deixam 3 funções do manifest
+ * com a Parte A medindo uma definição que não é a última (confirmado contra o corpo vivo de prod).
+ * As asserções casam CÓDIGO ASCII, nunca a frase em pt-BR (lição #1483: `grep -i` + pt_BR.UTF-8
+ * dobra acento e a asserção passa a casar o ramo errado).
+ */
+describe('auditAuthz — Parte D (recriação por reescrita da definição viva)', () => {
+  /** o idioma real do repo: lê a definição viva, transforma e devolve por EXECUTE */
+  const reescritaViva = (alvo: string) => `DO $r$
+DECLARE v_def text := pg_get_functiondef('${alvo}'::regprocedure);
+BEGIN
+  EXECUTE replace(v_def, 'antigo', 'novo');
+END $r$;`;
+
+  it('reescrita POSTERIOR ao last-writer → erro que nomeia o arquivo e a função', () => {
+    const f = auditAuthz([
+      mig('20260101000000_cria.sql', fn('fin_estimar_estoque_omie', GATE + READ)),
+      mig('20260710000000_reescreve.sql', reescritaViva('public.fin_estimar_estoque_omie(text)')),
+    ]);
+    const err = errorsOf(f).filter((e) => e.msg.includes('REESCRITA_VIVA_NAO_MEDIDA'));
+    expect(err).toHaveLength(1);
+    expect(err[0].file).toBe('20260710000000_reescreve.sql');
+    expect(err[0].fn).toBe('public.fin_estimar_estoque_omie');
+  });
+
+  it('CREATE OR REPLACE POSTERIOR à reescrita restabelece a auditabilidade → sem erro', () => {
+    const f = auditAuthz([
+      mig('20260101000000_cria.sql', fn('fin_estimar_estoque_omie', GATE + READ)),
+      mig('20260710000000_reescreve.sql', reescritaViva('public.fin_estimar_estoque_omie(text)')),
+      mig('20260711000000_recria.sql', fn('fin_estimar_estoque_omie', GATE + READ)),
+    ]);
+    expect(errorsOf(f).filter((e) => e.msg.includes('REESCRITA_VIVA'))).toHaveLength(0);
+  });
+
+  it('reescrita de função FORA do manifest não é assunto da Parte D (senão vira ruído e é desligada)', () => {
+    const f = auditAuthz([
+      mig('20260101000000_cria.sql', fn('fin_estimar_estoque_omie', GATE + READ)),
+      mig('20260710000000_outra.sql', reescritaViva('public.uma_funcao_qualquer(text)')),
+    ]);
+    expect(errorsOf(f).filter((e) => e.msg.includes('REESCRITA_VIVA'))).toHaveLength(0);
+  });
+
+  it('alvo OPACO (loop sobre pg_proc, sem literal) vira AVISO — declara o não-medido sem erro falso', () => {
+    const opaca = `DO $x$ DECLARE r record; BEGIN
+      FOR r IN SELECT p.oid FROM pg_proc p WHERE p.prosecdef LOOP
+        EXECUTE regexp_replace(pg_get_functiondef(r.oid), 'a', 'b', 'g');
+      END LOOP; END $x$;`;
+    const f = auditAuthz([
+      mig('20260101000000_cria.sql', fn('fin_estimar_estoque_omie', GATE + READ)),
+      mig('20260710000000_opaca.sql', opaca),
+    ]);
+    expect(errorsOf(f).filter((e) => e.msg.includes('REESCRITA_VIVA'))).toHaveLength(0);
+    const av = f.filter((x) => x.level === 'warn' && x.msg.includes('REESCRITA_VIVA_ALVO_OPACO'));
+    expect(av).toHaveLength(1);
+    expect(av[0].file).toBe('20260710000000_opaca.sql');
+  });
+});
+
+/**
+ * Contrato da BASELINE de reescritas. O §7.3 do histórico ensinou que "a lista está certa" e
+ * "a lista tem N strings dentro" são coisas diferentes: chave com typo não silencia nada e a
+ * entrada vira decoração. Aqui as entradas são conferidas contra o REPO REAL.
+ */
+describe('AUTHZ_REESCRITAS_CONHECIDAS — a baseline não pode ser decoração', () => {
+  const dirMig = join(import.meta.dirname, '..', 'supabase', 'migrations');
+
+  it('toda entrada aponta para migration que EXISTE e função que está no AUTHZ_MANIFEST', () => {
+    const quebradas = AUTHZ_REESCRITAS_CONHECIDAS.filter(
+      (r) => !existsSync(join(dirMig, r.arquivo)) || !AUTHZ_MANIFEST[r.funcao],
+    );
+    expect(quebradas.map((r) => `${r.arquivo}::${r.funcao}`)).toEqual([]);
+  });
+
+  it('toda entrada REALMENTE dispara o detector no arquivo real (entrada morta mascararia o vivo)', () => {
+    // Se a migration deixar de casar o padrão (ou a entrada tiver typo), o silêncio deixa de ser
+    // justificado e passa a ser cego — exatamente o estado que a Parte D existe para acabar.
+    const mortas = AUTHZ_REESCRITAS_CONHECIDAS.filter((r) => {
+      const det = detectarReescritaViva(readFileSync(join(dirMig, r.arquivo), 'utf8'));
+      return !det.detectada || !det.alvos.includes(r.funcao);
+    });
+    expect(mortas.map((r) => `${r.arquivo}::${r.funcao}`)).toEqual([]);
+  });
+
+  it('md5ProdEsperado tem forma de md5 (32 hex) — placeholder não ancora nada', () => {
+    const tortos = AUTHZ_REESCRITAS_CONHECIDAS.filter((r) => !/^[0-9a-f]{32}$/.test(r.md5ProdEsperado));
+    expect(tortos.map((r) => r.funcao)).toEqual([]);
+  });
+
+  it('o repo real não tem NENHUMA reescrita de função do manifest fora da baseline', () => {
+    // O canário do estado atual: se um PR novo introduzir o padrão sobre função do manifest,
+    // este teste cai junto com o `authz:check` — e a mensagem diz qual arquivo.
+    const migs = readdirSync(dirMig)
+      .filter((f) => f.endsWith('.sql'))
+      .map((f) => ({ file: f, sql: readFileSync(join(dirMig, f), 'utf8') }));
+    const naoMedidas = auditCompleto(migs).filter((f) => f.msg.includes('REESCRITA_VIVA_NAO_MEDIDA'));
+    expect(naoMedidas.map((f) => `${f.file}::${f.fn}`)).toEqual([]);
   });
 });
