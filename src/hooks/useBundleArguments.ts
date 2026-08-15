@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { invokeFunction } from '@/lib/invoke-function';
 import { toast } from 'sonner';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 import { margemConhecida } from '@/lib/scoring/margin';
 
 export interface BundleArgument {
@@ -102,20 +103,58 @@ export const useBundleArguments = () => {
     }
   }, []);
 
+  /**
+   * Persiste o argumento gerado na recomendação. Devolve `true` só quando a linha foi
+   * REALMENTE atualizada — `void` não distinguia "gravou" de "não gravou" (money-path §11).
+   *
+   * `.eq('status','pendente')` + RETURNING: desde a migration 20260814223445 um recálculo do
+   * motor APOSENTA a geração anterior (`status='expirado'`), e os três leitores das
+   * recomendações (`useTacticalPlan`, a edge `generate-tactical-plan`, `OfertaCruaCard`)
+   * filtram `pendente`. Sem o filtro, salvar depois de um recálculo gravaria numa linha que
+   * NENHUM leitor mostra — o argumento (uma chamada de LLM paga mais o tempo da vendedora
+   * revisando o texto) sumiria em silêncio. Com o filtro, "0 linhas afetadas" deixa de ser
+   * ambíguo e vira o aviso acionável. O texto em si não se perde: segue no state do hook e
+   * na tela; o que falta é regravá-lo no bundle vigente.
+   */
   const saveArgumentToBundle = useCallback(async (
     bundleId: string,
     argument: BundleArgument,
     profile: CustomerProfile,
     approachType: string
-  ) => {
-    await supabase.from('farmer_bundle_recommendations').update({
-      argument_phone: argument.versao_phone,
-      argument_whatsapp: argument.versao_whatsapp,
-      argument_technical: argument.versao_tecnica,
-      customer_profile: profile,
-      approach_type: approachType,
-      updated_at: new Date().toISOString(),
-    }).eq('id', bundleId);
+  ): Promise<boolean> => {
+    const { data, error } = await supabase
+      .from('farmer_bundle_recommendations')
+      .update({
+        argument_phone: argument.versao_phone,
+        argument_whatsapp: argument.versao_whatsapp,
+        argument_technical: argument.versao_tecnica,
+        customer_profile: profile,
+        approach_type: approachType,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', bundleId)
+      .eq('status', 'pendente')
+      .select('id');
+
+    if (error) {
+      // O supabase-js NÃO lança em erro de banco — resolve normal com `error` preenchido.
+      // Sem esta captura, 42501 da RLS/PGRST204/57014 devolviam sucesso ao caller sem ter
+      // gravado nada. `mensagemDeErro` porque o `error` do PostgREST é objeto PLANO, não
+      // `Error`: o idiom `String(err)` imprimiria "[object Object]" no lugar do motivo (§12).
+      console.error('Erro ao salvar argumentação do bundle:', error);
+      toast.error(mensagemDeErro(error) ?? 'Erro ao salvar a argumentação');
+      return false;
+    }
+
+    if (!data || data.length === 0) {
+      toast.error(
+        'Este bundle foi substituído por um recálculo — a argumentação não foi salva. ' +
+        'Gere o argumento de novo no bundle atual.',
+      );
+      return false;
+    }
+
+    return true;
   }, []);
 
   return {

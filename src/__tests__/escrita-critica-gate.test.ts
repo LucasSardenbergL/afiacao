@@ -91,7 +91,11 @@ const E1_DIVIDA: ReadonlyMap<string, number> = new Map([
   ['src/components/salesOrders/soft-delete.ts', 1],
   ['src/components/salesOrders/useSalesOrders.ts', 1],
   ['src/contexts/AuthContext.tsx', 2],
-  ['src/hooks/useBundleArguments.ts', 1],
+  // useBundleArguments.ts QUITADO: o `.update()` que persistia o argumento gerado pela LLM
+  // passou a capturar `{ data, error }`. Era o sítio que a migration 20260814223445 tornou
+  // perigoso — desde que o recálculo APOSENTA a geração anterior (`status='expirado'`), o
+  // `.eq('id', …)` cru gravava numa linha que nenhum leitor mostra, e o `await` solto
+  // reportava sucesso. Guard em bundle-argumento-gravacao-calada.test.tsx.
   ['src/hooks/useCopilotEngine.ts', 4],
   // useCrossSellEngine.ts QUITADO no FU4-F fase 3: o `.upsert` das recomendações passou a
   // capturar `{ error }`. Era o sítio que a coluna nova `affinity_score` tornaria perigoso —

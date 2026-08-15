@@ -280,6 +280,7 @@ export const MODULOS: ModuloApp[] = [
     ],
     testes: [
       "src/components/intelligence/__tests__/tabs-erro-honesto.test.tsx",
+      "src/hooks/__tests__/bundle-argumento-gravacao-calada.test.tsx",
       "src/hooks/__tests__/bundle-custo-fora-do-browser.test.tsx",
       "src/hooks/__tests__/bundle-escopo-sob-falha.test.tsx",
       "src/hooks/__tests__/bundle-recomendacoes-erro-silencioso.test.tsx",
