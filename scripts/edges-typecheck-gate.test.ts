@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   CLASSES_BLOQUEANTES,
+  ambienteDeno,
   classificar,
   enumerarEdges,
   extrairOcorrencias,
@@ -186,6 +187,18 @@ describe('invariantes do gate', () => {
     for (const divida of ['TS2345', 'TS2322', 'TS2339', 'TS2571', 'TS2578', 'TS2769']) {
       expect(CLASSES_BLOQUEANTES.has(divida)).toBe(false);
     }
+  });
+
+  it('roda o deno SEM auto-resolver o package.json do frontend (armadilha 4)', () => {
+    // 2026-08-15: a main ficou VERMELHA por ~38 min sem que commit algum tocasse o package.json.
+    // O `cwd: raiz` fazia o Deno resolver as ~100 deps de build/UI, e o cooldown de supply-chain
+    // dele (--minimum-dependency-age, 24h) aceitou `@swc/core@1.16.0` às 17:23:06Z enquanto os 12
+    // binários de plataforma — pinados em versão EXATA — só entraram às 18:01:25Z. Tirar esta
+    // chave devolve o gate à mercê do RELÓGIO: falha ~24h depois de qualquer release de dep de
+    // build, intermitente, e trava o auto-merge de TODOS os PRs.
+    expect(ambienteDeno({}).DENO_NO_PACKAGE_JSON).toBe('1');
+    // e preserva o herdado — zerar o PATH viraria "não consegui executar o deno" (falha de infra).
+    expect(ambienteDeno({ PATH: '/usr/bin' }).PATH).toBe('/usr/bin');
   });
 
   it('enumera as edges do repo de verdade (glob vazio seria falso-verde)', () => {

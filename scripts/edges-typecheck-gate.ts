@@ -26,7 +26,7 @@
  * MENOR — e criaria um arquivo-lista que vira ímã de conflito entre as ~30 worktrees paralelas.
  * Apertar para check completo é o destino natural, depois que a dívida encolher.
  *
- * TRÊS ARMADILHAS VALIDADAS EMPIRICAMENTE (2026-07-21, deno 2.9.2 — o pin do CI):
+ * QUATRO ARMADILHAS VALIDADAS EMPIRICAMENTE (2026-07-21 e 2026-08-15, deno 2.9.2 — o pin do CI):
  *
  *  1. `--node-modules-dir=none` é OBRIGATÓRIO. Sem ele o `deno check` ABORTA na RESOLUÇÃO, antes
  *     de type-checar qualquer coisa: o package.json da raiz põe o Deno em modo node_modules e o
@@ -41,6 +41,22 @@
  *  3. Com o cache de check quente a saída é COMPLETAMENTE VAZIA e exit 0. Ou seja, "saída vazia"
  *     é o caso de SUCESSO normal — não pode ser lido como anomalia. A decisão pende do exit code
  *     + do marcador acima, nunca do volume de saída.
+ *
+ *  4. `DENO_NO_PACKAGE_JSON=1` é OBRIGATÓRIO, senão o gate herda o drift do FRONTEND (2026-08-15).
+ *     O `cwd: raiz` faz o Deno auto-resolver o package.json e buscar no registry o packument das
+ *     ~100 deps de build/UI — nenhuma usada por edge alguma: um `deno check` de um `.ts` VAZIO
+ *     rodado da raiz baixa `vitest`, `@eslint/js`, `@hookform/resolvers`… Somado ao cooldown de
+ *     supply-chain do Deno (`--minimum-dependency-age`, default 24h), o gate vira refém do RELÓGIO:
+ *     `@swc/core@1.16.0` (via `@vitejs/plugin-react-swc`) cruzou a janela de 24h às 17:23:06Z, mas
+ *     seus 12 binários de plataforma — pinados em versão EXATA nos `optionalDependencies` — só
+ *     terminaram de entrar às 18:01:25Z. Nessa fresta de 38 min a resolução não fecha e a MAIN
+ *     INTEIRA fica vermelha (auto-merge de todos os PRs parado) sem que commit algum toque o
+ *     package.json: verde 09:37Z, vermelho 17:27Z — 4 min após o pai cruzar o corte. Range `^`
+ *     degrada para a versão anterior madura; pin exato não tem para onde cair. NÃO consertar
+ *     pinando `@swc/core` (trata um pacote e deixa a classe viva, e congela o build do frontend
+ *     por causa de um gate de edge). Repro determinístico, a qualquer hora:
+ *       deno check --no-lock --node-modules-dir=none --minimum-dependency-age=2026-08-14T17:27:00Z x.ts
+ *     → falha sem a env var, passa com ela.
  *
  * FAIL-CLOSED (CLAUDE.md: "ausência de sinal NÃO é aprovação"):
  *   exit 0                              → passa
@@ -186,6 +202,18 @@ export function enumerarEdges(raiz: string): string[] {
 }
 
 /** Agrupa por código, para reportar a dívida tolerada de forma compacta. */
+/**
+ * Ambiente do `deno check`. `DENO_NO_PACKAGE_JSON=1` desacopla o gate do package.json do FRONTEND
+ * (armadilha 4 no cabeçalho) — sem ele o `cwd: raiz` arrasta ~100 deps de build/UI para dentro da
+ * resolução e o drift delas derruba a main. Preserva o ambiente herdado: zerar o PATH aqui viraria
+ * "não consegui executar o deno", ou seja, falha de INFRA disfarçada de gate.
+ */
+export function ambienteDeno(
+  base: Record<string, string | undefined> = process.env,
+): Record<string, string | undefined> {
+  return { ...base, DENO_NO_PACKAGE_JSON: '1' };
+}
+
 function resumirPorCodigo(ocs: Ocorrencia[]): string {
   const porCodigo = new Map<string, number>();
   for (const o of ocs) porCodigo.set(o.codigo, (porCodigo.get(o.codigo) ?? 0) + 1);
@@ -214,7 +242,12 @@ function main(): number {
   }
 
   const args = ['check', '--no-lock', '--node-modules-dir=none', ...edges];
-  const proc = spawnSync('deno', args, { cwd: raiz, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  const proc = spawnSync('deno', args, {
+    cwd: raiz,
+    encoding: 'utf8',
+    maxBuffer: 64 * 1024 * 1024,
+    env: ambienteDeno(),
+  });
 
   if (proc.error) {
     console.error(`❌ edges-typecheck-gate: não consegui executar o deno — ${proc.error.message}`);
@@ -229,7 +262,10 @@ function main(): number {
     return veredito.tipo === 'passa' ? 0 : 1;
   }
 
-  console.log(`🔎 edges-typecheck-gate — ${edges.length} edges · deno check ${args.slice(1, 3).join(' ')}`);
+  console.log(
+    `🔎 edges-typecheck-gate — ${edges.length} edges · deno check ${args.slice(1, 3).join(' ')}` +
+      ' · DENO_NO_PACKAGE_JSON=1',
+  );
 
   if (veredito.tipo === 'bloqueia' && veredito.motivo === 'infra') {
     console.error(
