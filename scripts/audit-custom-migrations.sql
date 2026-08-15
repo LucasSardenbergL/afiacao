@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 471
+-- Total de custom migrations: 472
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -512,7 +512,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260814000125', 'reposicao_pos_frescor_marcador', '20260814000125_reposicao_pos_frescor_marcador.sql'),
   ('20260814022626', 'reposicao_po_inexistente_antes_de', '20260814022626_reposicao_po_inexistente_antes_de.sql'),
   ('20260814160441', 'fu4f_fase3_afinidade_colunas_reaplica', '20260814160441_fu4f_fase3_afinidade_colunas_reaplica.sql'),
-  ('20260814222000', 'data_health_watchdog_reemissao', '20260814222000_data_health_watchdog_reemissao.sql')
+  ('20260814222000', 'data_health_watchdog_reemissao', '20260814222000_data_health_watchdog_reemissao.sql'),
+  ('20260814223445', 'farmer_recomendacoes_geracao_vigente', '20260814223445_farmer_recomendacoes_geracao_vigente.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2099,7 +2100,14 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('data_health_watchdog_reemissao', 'function', 'public', 'data_health_watchdog', ''),
   ('data_health_watchdog_reemissao', 'table', 'public', 'data_health_watchdog_estado', ''),
   ('data_health_watchdog_reemissao', 'rls_policy', 'public', 'data_health_watchdog_estado_select_staff', 'data_health_watchdog_estado'),
-  ('data_health_watchdog_reemissao', 'rls_policy', 'public', 'data_health_watchdog_estado_service_all', 'data_health_watchdog_estado')
+  ('data_health_watchdog_reemissao', 'rls_policy', 'public', 'data_health_watchdog_estado_service_all', 'data_health_watchdog_estado'),
+  ('farmer_recomendacoes_geracao_vigente', 'function', 'public', 'farmer_rec_exige_run_id', ''),
+  ('farmer_recomendacoes_geracao_vigente', 'function', 'public', 'farmer_recomendacoes_substituir', ''),
+  ('farmer_recomendacoes_geracao_vigente', 'function', 'public', 'farmer_bundle_recomendacoes_substituir', ''),
+  ('farmer_recomendacoes_geracao_vigente', 'index', 'public', 'idx_frec_farmer_status_pendente', 'farmer_recommendations'),
+  ('farmer_recomendacoes_geracao_vigente', 'index', 'public', 'idx_fbrec_farmer_status_pendente', 'farmer_bundle_recommendations'),
+  ('farmer_recomendacoes_geracao_vigente', 'trigger', 'public', 'trg_frec_exige_run_id', 'farmer_recommendations'),
+  ('farmer_recomendacoes_geracao_vigente', 'trigger', 'public', 'trg_fbrec_exige_run_id', 'farmer_bundle_recommendations')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -3734,7 +3742,14 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('data_health_watchdog_reemissao', 'function', 'public', 'data_health_watchdog', ''),
   ('data_health_watchdog_reemissao', 'table', 'public', 'data_health_watchdog_estado', ''),
   ('data_health_watchdog_reemissao', 'rls_policy', 'public', 'data_health_watchdog_estado_select_staff', 'data_health_watchdog_estado'),
-  ('data_health_watchdog_reemissao', 'rls_policy', 'public', 'data_health_watchdog_estado_service_all', 'data_health_watchdog_estado')
+  ('data_health_watchdog_reemissao', 'rls_policy', 'public', 'data_health_watchdog_estado_service_all', 'data_health_watchdog_estado'),
+  ('farmer_recomendacoes_geracao_vigente', 'function', 'public', 'farmer_rec_exige_run_id', ''),
+  ('farmer_recomendacoes_geracao_vigente', 'function', 'public', 'farmer_recomendacoes_substituir', ''),
+  ('farmer_recomendacoes_geracao_vigente', 'function', 'public', 'farmer_bundle_recomendacoes_substituir', ''),
+  ('farmer_recomendacoes_geracao_vigente', 'index', 'public', 'idx_frec_farmer_status_pendente', 'farmer_recommendations'),
+  ('farmer_recomendacoes_geracao_vigente', 'index', 'public', 'idx_fbrec_farmer_status_pendente', 'farmer_bundle_recommendations'),
+  ('farmer_recomendacoes_geracao_vigente', 'trigger', 'public', 'trg_frec_exige_run_id', 'farmer_recommendations'),
+  ('farmer_recomendacoes_geracao_vigente', 'trigger', 'public', 'trg_fbrec_exige_run_id', 'farmer_bundle_recommendations')
 )
 SELECT
   e.migration,

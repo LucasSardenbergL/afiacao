@@ -49,12 +49,25 @@ export function assembleLinesEContexto(orders: PreviewOrder[], items: PreviewIte
   return { lines, account, statusesVistos, statusValidos };
 }
 
-/** farmer_recommendations × omie_products(by id) → candidatos de cross-sell (só ativos, não-rejeitados). */
+/**
+ * Status em que uma recomendação ainda é OFERECÍVEL. Allowlist, não denylist: status
+ * novo (hoje 'expirado', amanhã o que for) fica de fora por default — precisão > recall
+ * numa lista que vai pro cliente por WhatsApp.
+ *
+ * ⚠️ O filtro anterior era `r.status === 'rejected'` — rótulo que NÃO existe no domínio
+ * (o CHECK da tabela é pt-BR: pendente/ofertado/aceito/rejeitado/expirado), logo nunca
+ * casava nada. Isto aqui é DEFESA EM PROFUNDIDADE, não a correção de um bug ativo: a
+ * proteção real é o `.eq('status','pendente')` do usePropostaPreview. Vale escrever
+ * porque um helper puro que finge filtrar é pior que um que não filtra.
+ */
+const STATUS_OFERECIVEL = new Set(['pendente', 'ofertado']);
+
+/** farmer_recommendations × omie_products(by id) → candidatos de cross-sell (só ativos e oferecíveis). */
 export function buildCrossSellCandidatos(recs: PreviewRec[], prodById: PreviewProdById[]): CrossSellCand[] {
   const byId = new Map(prodById.map(p => [p.id, p]));
   const out: CrossSellCand[] = [];
   for (const r of recs) {
-    if (!r.product_id || r.status === 'rejected') continue;
+    if (!r.product_id || !STATUS_OFERECIVEL.has(r.status ?? '')) continue;
     const prod = byId.get(r.product_id);
     if (prod && prod.ativo) out.push({ omie_codigo_produto: prod.omie_codigo_produto, nome: prod.descricao, afinidade: r.affinity_score });
   }

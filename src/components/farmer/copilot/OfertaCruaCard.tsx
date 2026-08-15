@@ -59,7 +59,12 @@ export function OfertaCruaCard({ customerId }: Props) {
         // Sem afinidade, melhor não haver oferta crua — ela volta no recálculo do motor.
         .not('affinity_bundle', 'is', null)
         .order('affinity_bundle', { ascending: false, nullsFirst: false })
+        // ⚠️ `created_at` deixou de desempatar: desde a migration 20260814223445 a geração
+        // inteira entra num único INSERT, e `now()` é o instante da TRANSAÇÃO — todas as
+        // linhas do run compartilham o mesmo carimbo. `id` é a PK: última chave, sempre
+        // total (achado do challenge Codex xhigh).
         .order('created_at', { ascending: false }) // desempate determinístico (scores empatam)
+        .order('id', { ascending: false })
         .limit(1)
         .maybeSingle();
       return data ?? null;

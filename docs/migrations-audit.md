@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **471** custom migrations totais
-- **1598** objetos esperados (criados por estas migrations)
+- **472** custom migrations totais
+- **1605** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 482
+  - `function`: 485
   - `rls_policy`: 398
-  - `index`: 238
+  - `index`: 240
   - `cron_job`: 164
   - `table`: 154
-  - `trigger`: 84
+  - `trigger`: 86
   - `view`: 74
   - `enum_value`: 4
 
@@ -3931,6 +3931,18 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `table` | `public.data_health_watchdog_estado` | — |
 | `rls_policy` | `public.data_health_watchdog_estado_select_staff` | `data_health_watchdog_estado` |
 | `rls_policy` | `public.data_health_watchdog_estado_service_all` | `data_health_watchdog_estado` |
+
+### `20260814223445_farmer_recomendacoes_geracao_vigente.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.farmer_rec_exige_run_id` | — |
+| `function` | `public.farmer_recomendacoes_substituir` | — |
+| `function` | `public.farmer_bundle_recomendacoes_substituir` | — |
+| `index` | `public.idx_frec_farmer_status_pendente` | `farmer_recommendations` |
+| `index` | `public.idx_fbrec_farmer_status_pendente` | `farmer_bundle_recommendations` |
+| `trigger` | `public.trg_frec_exige_run_id` | `farmer_recommendations` |
+| `trigger` | `public.trg_fbrec_exige_run_id` | `farmer_bundle_recommendations` |
 
 ## Próximos passos por status
 

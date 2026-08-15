@@ -2415,6 +2415,8 @@ export type Database = {
           created_at: string | null
           customer_profile: string | null
           customer_user_id: string
+          expired_at: string | null
+          expired_by_run: string | null
           farmer_id: string
           id: string
           lie_bundle: number | null
@@ -2423,6 +2425,7 @@ export type Database = {
           offered_at: string | null
           p_bundle: number | null
           rejected_at: string | null
+          run_id: string | null
           status: string | null
           support: number | null
           time_spent_seconds: number | null
@@ -2445,6 +2448,8 @@ export type Database = {
           created_at?: string | null
           customer_profile?: string | null
           customer_user_id: string
+          expired_at?: string | null
+          expired_by_run?: string | null
           farmer_id: string
           id?: string
           lie_bundle?: number | null
@@ -2453,6 +2458,7 @@ export type Database = {
           offered_at?: string | null
           p_bundle?: number | null
           rejected_at?: string | null
+          run_id?: string | null
           status?: string | null
           support?: number | null
           time_spent_seconds?: number | null
@@ -2475,6 +2481,8 @@ export type Database = {
           created_at?: string | null
           customer_profile?: string | null
           customer_user_id?: string
+          expired_at?: string | null
+          expired_by_run?: string | null
           farmer_id?: string
           id?: string
           lie_bundle?: number | null
@@ -2483,6 +2491,7 @@ export type Database = {
           offered_at?: string | null
           p_bundle?: number | null
           rejected_at?: string | null
+          run_id?: string | null
           status?: string | null
           support?: number | null
           time_spent_seconds?: number | null
@@ -3295,6 +3304,8 @@ export type Database = {
           created_at: string | null
           current_product_id: string | null
           customer_user_id: string
+          expired_at: string | null
+          expired_by_run: string | null
           farmer_id: string
           id: string
           lie: number | null
@@ -3304,6 +3315,7 @@ export type Database = {
           product_id: string | null
           recommendation_type: string
           rejected_at: string | null
+          run_id: string | null
           status: string | null
           time_spent_seconds: number | null
           updated_at: string | null
@@ -3317,6 +3329,8 @@ export type Database = {
           created_at?: string | null
           current_product_id?: string | null
           customer_user_id: string
+          expired_at?: string | null
+          expired_by_run?: string | null
           farmer_id: string
           id?: string
           lie?: number | null
@@ -3326,6 +3340,7 @@ export type Database = {
           product_id?: string | null
           recommendation_type: string
           rejected_at?: string | null
+          run_id?: string | null
           status?: string | null
           time_spent_seconds?: number | null
           updated_at?: string | null
@@ -3339,6 +3354,8 @@ export type Database = {
           created_at?: string | null
           current_product_id?: string | null
           customer_user_id?: string
+          expired_at?: string | null
+          expired_by_run?: string | null
           farmer_id?: string
           id?: string
           lie?: number | null
@@ -3348,6 +3365,7 @@ export type Database = {
           product_id?: string | null
           recommendation_type?: string
           rejected_at?: string | null
+          run_id?: string | null
           status?: string | null
           time_spent_seconds?: number | null
           updated_at?: string | null

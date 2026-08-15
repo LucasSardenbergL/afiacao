@@ -5,6 +5,7 @@ import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { toast } from 'sonner';
 import { margemConhecida } from '@/lib/scoring/margin';
 import { fetchAllPages } from '@/lib/postgrest';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 
 // ─── Types ───────────────────────────────────────────────────────────
 export interface AssociationRule {
@@ -160,6 +161,30 @@ export const useBundleEngine = () => {
     setLoading(true);
 
     try {
+      // 0. Identidade desta EXECUÇÃO + a geração de bundles que ela substitui.
+      // Lido ANTES do snapshot (money-path §10: reivindicar depois deixa a corrida
+      // aberta pela porta de trás). Espelha useCrossSellEngine — ver o racional lá.
+      const runId = crypto.randomUUID();
+      let geracaoVista: string | null = null;
+      if (!isImpersonating) {
+        // Mesma ordem que a RPC usa para eleger a geração vigente (created_at desc, id desc).
+        const { data: vigente, error: erroVigente } = await supabase
+          .from('farmer_bundle_recommendations')
+          .select('run_id')
+          .eq('farmer_id', effectiveUserId)
+          .eq('status', 'pendente')
+          .order('created_at', { ascending: false })
+          .order('id', { ascending: false })
+          .limit(1);
+        if (erroVigente) {
+          throw new Error(
+            mensagemDeErro(erroVigente) ??
+              'Não consegui ler a geração vigente de bundles — nada foi recalculado.',
+          );
+        }
+        geracaoVista = vigente?.[0]?.run_id ?? null;
+      }
+
       // 1. Load data with fallback for super_admin
       // Loop MANUAL com o mesmo defeito que o #1545 tirou do `fetchAllPages` — por não CHAMAR
       // o helper, ficou de fora daquele grep: descartava o `error`, tratava `data: null` como
@@ -533,7 +558,12 @@ export const useBundleEngine = () => {
           // a MISTURA (DESC implica NULLS FIRST no Postgres); o filtro cobre o caso TODAS-NULL.
           .not('affinity_score', 'is', null)
           .order('affinity_score', { ascending: false, nullsFirst: false })
+          // ⚠️ `created_at` deixou de desempatar: desde a migration 20260814223445 a geração
+          // inteira entra num único INSERT, e `now()` é o instante da TRANSAÇÃO — todas as
+          // linhas do run compartilham o mesmo carimbo. `id` é a PK: última chave, sempre
+          // total (achado do challenge Codex xhigh).
           .order('updated_at', { ascending: false }) // desempate determinístico
+          .order('id', { ascending: false })
           .limit(1)) as unknown as { data: ExistingRecRow[] | null };
 
         if (existingRecs?.length) {
@@ -580,26 +610,33 @@ export const useBundleEngine = () => {
 
       setCustomerBundles(allCustomerBundles);
 
-      // Persist bundle recommendations — PULADO na lente "Ver como" (só leitura: o
-      // master inspeciona os bundles do alvo sem regravar a carteira dele).
+      // Persist bundle recommendations — via RPC que SUBSTITUI a geração anterior.
+      // PULADO na lente "Ver como" (só leitura: o master inspeciona os bundles do alvo
+      // sem regravar a carteira dele).
       //
-      // UM insert em lote, não um por bundle: as linhas são independentes, então os N
-      // round-trips não compravam atomicidade nenhuma — só multiplicavam a janela de falha
-      // parcial (metade das recomendações gravadas, metade não).
+      // Era `.insert()` puro: cada recálculo EMPILHAVA uma geração nova sem aposentar a
+      // anterior, e como `OfertaCruaCard`/`useTacticalPlan` leem `status='pendente'`
+      // ordenado por `affinity_bundle` desc com `.limit(1)`/`.limit(2)`, um bundle ANTIGO
+      // de score maior seguia sendo o topo indefinidamente. Ver o cabeçalho da migration
+      // 20260814223445 para a medição.
       //
-      // E o `error` é CAPTURADO. Descartá-lo era o mesmo defeito de classe que o #1574 tirou
-      // do bloco de `farmer_association_rules` logo acima, porém sem DELETE: nada é destruído,
-      // o pior caso é a recomendação não existir na TABELA enquanto a UI já mostrou o bundle
-      // em memória — e quem lê a tabela (`OfertaCruaCard`, `useTacticalPlan`) não vê a oferta
-      // que o operador acabou de ver na tela, sem ninguém ficar sabendo.
+      // A RPC expira-e-insere numa transação só; em duas chamadas PostgREST seriam duas
+      // transações, e falhar entre elas deixaria o farmer sem NENHUM bundle pendente.
+      // `m_bundle`/`lie_bundle` saem do payload — a RPC os fixa em NULL.
       //
-      // Sem `throw`: os bundles em memória continuam válidos e já foram exibidos; só o toast
-      // final deixa de dizer que deu tudo certo.
+      // O `error` é CAPTURADO; sem `throw`, porque os bundles em memória continuam válidos
+      // e já foram exibidos — só o toast final deixa de dizer que deu tudo certo.
       let recomendacoesNaoGravadas = 0;
+      /** FG006: outro run JÁ gravou — a tabela tem algo mais NOVO que isto. */
+      let geracaoPerdida = false;
+      /** FG005: outro run está EM VOO — ninguém venceu ainda, e ele pode até dar rollback.
+       *  Separado de propósito: dizer "as telas estão com o resultado dele" quando o
+       *  concorrente ainda não commitou seria afirmar um desfecho que não existe, e o
+       *  operador desistiria de tentar de novo (achado do challenge Codex xhigh). */
+      let recalculoConcorrente = false;
       if (!isImpersonating) {
         const recomendacoes = allCustomerBundles.flatMap((cb) =>
           cb.bundles.map((bundle) => ({
-            farmer_id: effectiveUserId,
             customer_user_id: bundle.customerId,
             // Sem `cost`/`margin` por SKU — o jsonb guardava o custo LITERAL (12/12 linhas em
             // prod). Só id/name/price, e `price` é público.
@@ -608,29 +645,36 @@ export const useBundleEngine = () => {
             confidence: bundle.confidence,
             lift: bundle.lift,
             p_bundle: bundle.pBundle,
-            // m_bundle era a SOMA das margens; e mesmo apagando-o, `lie_bundle` monetário
-            // invertia sozinho: m_bundle ≈ lie_bundle / ((p_bundle/100) × complexity_factor).
-            // Por isso os dois saem juntos — e a afinidade que ordena a lista vai na coluna
-            // DEDICADA `affinity_bundle`. Guardá-la em `lie_bundle` ordenaria certo (afinidade e
-            // p_bundle são monotônicos entre si) e mentiria para os TRÊS consumidores que leem o
-            // VALOR: `useTacticalPlan` copia para `bundle_lie`, `PlanCard` formata como BRL e
-            // divide por hora de ligação, e a edge `generate-tactical-plan` injeta no prompt do
-            // LLM. Afinidade típica ~0,0094 viraria "R$ 0,01" de lucro esperado.
-            m_bundle: null,
-            lie_bundle: null,
             affinity_bundle: bundle.affinityBundle,
             complexity_factor: bundle.complexityFactor,
-            status: 'pendente',
           })),
         );
 
+        // Lote vazio não chama a RPC (ela recusaria com FG003): expirar a geração por
+        // "não achei bundle nenhum" tiraria a oferta da tela por um dado que falta a
+        // montante. Mesmo critério das regras de associação logo acima.
         if (recomendacoes.length > 0) {
-          const { error: erroRecs } = await supabase
-            .from('farmer_bundle_recommendations')
-            .insert(recomendacoes);
+          const { error: erroRecs } = await supabase.rpc(
+            'farmer_bundle_recomendacoes_substituir' as never,
+            {
+              p_farmer_id: effectiveUserId,
+              p_run_id: runId,
+              p_geracao_vista: geracaoVista,
+              p_linhas: recomendacoes,
+            } as never,
+          );
           if (erroRecs) {
-            console.error('Falha ao gravar farmer_bundle_recommendations:', erroRecs);
-            recomendacoesNaoGravadas = recomendacoes.length;
+            console.error('Falha ao substituir farmer_bundle_recommendations:', erroRecs);
+            // FG006 = outro recálculo gravou no meio deste. A tabela ficou com algo MAIS
+            // novo — dizer "não gravou, seguem as anteriores" inverteria o sentido.
+            const codigo = (erroRecs as { code?: string } | null)?.code;
+            if (codigo === 'FG006') {
+              geracaoPerdida = true;
+            } else if (codigo === 'FG005') {
+              recalculoConcorrente = true;
+            } else {
+              recomendacoesNaoGravadas = recomendacoes.length;
+            }
           }
         }
       }
@@ -651,6 +695,16 @@ export const useBundleEngine = () => {
           recomendacoesNaoGravadas === 1
             ? '1 recomendação NÃO foi gravada — as telas de oferta seguem com as anteriores'
             : `${recomendacoesNaoGravadas} recomendações NÃO foram gravadas — as telas de oferta seguem com as anteriores`,
+        );
+      }
+      if (geracaoPerdida) {
+        problemas.push(
+          'outro recálculo deste vendedor já gravou enquanto este rodava — os bundles daqui não foram salvos, e as telas estão com o resultado mais novo',
+        );
+      }
+      if (recalculoConcorrente) {
+        problemas.push(
+          'já havia um recálculo deste vendedor em andamento — os bundles daqui não foram salvos; espere ele terminar e confira',
         );
       }
 

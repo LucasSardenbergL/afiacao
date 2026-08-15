@@ -104,7 +104,12 @@ export function usePropostaPreview(customerUserId: string | undefined, opts?: { 
         const { data: recData } = await supabase
           .from('farmer_recommendations')
           .select('product_id, affinity_score, status')
-          .eq('customer_user_id', customerUserId!);
+          .eq('customer_user_id', customerUserId!)
+          // Só a geração VIGENTE. Desde 20260814223445 o recálculo aposenta a geração
+          // anterior marcando-a `status='expirado'` — sem este filtro a proposta que vai
+          // pro cliente no WhatsApp ofereceria SKU que o motor já descartou. Era inócuo
+          // enquanto nada era expirado; passou a morder no instante em que algo é.
+          .eq('status', 'pendente');
         const recs = (recData ?? []) as PreviewRec[];
         const recIds = [...new Set(recs.map(r => r.product_id).filter((x): x is string => !!x))];
         if (recIds.length > 0) {
