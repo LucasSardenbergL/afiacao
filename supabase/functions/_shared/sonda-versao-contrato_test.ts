@@ -17,6 +17,10 @@ import * as gerarDiario from "../gerar-pedidos-diario/versao.ts";
 import * as programado from "../pedido-programado-enviar/versao.ts";
 import * as tactical from "../generate-tactical-plan/versao.ts";
 import * as argumento from "../generate-bundle-argument/versao.ts";
+import * as nfeRecebimento from "../omie-nfe-recebimento/versao.ts";
+import * as processNfe from "../process-nfe/versao.ts";
+import * as capturaPrecos from "../sayerlack-captura-precos/versao.ts";
+import * as deparaAuto from "../reposicao-depara-sayerlack-auto/versao.ts";
 
 const EDGES: Array<{ nome: string; mod: { VERSAO: string; EFEITO: string } }> = [
   { nome: "disparar-pedidos-aprovados", mod: disparar },
@@ -26,6 +30,11 @@ const EDGES: Array<{ nome: string; mod: { VERSAO: string; EFEITO: string } }> = 
   { nome: "pedido-programado-enviar", mod: programado },
   { nome: "generate-tactical-plan", mod: tactical },
   { nome: "generate-bundle-argument", mod: argumento },
+  // Segunda leva (#1753): efeito irreversível FORA do nosso banco, nenhuma delas tinha sensor.
+  { nome: "omie-nfe-recebimento", mod: nfeRecebimento },
+  { nome: "process-nfe", mod: processNfe },
+  { nome: "sayerlack-captura-precos", mod: capturaPrecos },
+  { nome: "reposicao-depara-sayerlack-auto", mod: deparaAuto },
 ];
 
 Deno.test("toda edge instrumentada declara VERSAO no formato vN.N-slug", () => {
@@ -157,5 +166,35 @@ Deno.test("CALIBRAÇÃO: os padrões reprovam a forma PRÉ-fix e o filtro não c
   const jsdoc = "/**\n * exemplo com body.probe === true dentro de bloco\n */";
   if (/\bbody\.probe\s*===\s*true/.test(semComentario(jsdoc))) {
     throw new Error("bloco /* */ escapou do filtro — JSDoc citando a forma reprovaria edge correta");
+Deno.test("as duas edges que EFETIVAM NF-e dizem isso no EFEITO", () => {
+  // `omie-nfe-recebimento` e `process-nfe` são GÊMEAS: rodam a MESMA tríade no Omie
+  // (AlterarRecebimento → AlterarEtapaRecebimento etapa 40 → ConcluirRecebimento), que dá entrada
+  // de estoque e fiscal no ERP. O risco de quem lê só uma é achar que corrigiu as duas — o assert
+  // existe para que a segunda não fique para trás em silêncio num bump futuro.
+  for (const { nome, mod } of [
+    { nome: "omie-nfe-recebimento", mod: nfeRecebimento },
+    { nome: "process-nfe", mod: processNfe },
+  ]) {
+    if (!/efetiva/i.test(mod.EFEITO) || !/omie/i.test(mod.EFEITO)) {
+      throw new Error(`${nome}: EFEITO não diz que EFETIVA a NF-e no Omie: ${mod.EFEITO}`);
+    }
+  }
+});
+
+Deno.test("process-nfe: o EFEITO precisa avisar que NÃO existe dry_run", () => {
+  // Das edges instrumentadas até aqui, esta é a que menos perdoa: efetiva NF-e e não tem modo de
+  // teste NENHUM — nem `dry_run`, nem o `diagnostico` read-only que a gêmea tem. Quem procurar um
+  // caminho seguro no corpo do arquivo não vai achar, e precisa descobrir isso pela recusa.
+  if (!/dry_run/.test(processNfe.EFEITO)) {
+    throw new Error(`EFEITO não menciona a ausência de dry_run: ${processNfe.EFEITO}`);
+  }
+});
+
+Deno.test("sayerlack-captura-precos: o EFEITO precisa dizer que é o portal do FORNECEDOR", () => {
+  // Ela não envia pedido (teste-invariante próprio garante), mas monta linha no pedido do portal
+  // para ler preço — e um aborto deixa rascunho que o operador humano confunde com pedido próprio.
+  // Sem "fornecedor" no texto, a recusa parece falar de uma tabela nossa.
+  if (!/fornecedor/i.test(capturaPrecos.EFEITO)) {
+    throw new Error(`EFEITO não menciona o fornecedor: ${capturaPrecos.EFEITO}`);
   }
 });

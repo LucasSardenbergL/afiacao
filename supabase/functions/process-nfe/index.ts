@@ -1,5 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
 // ── Omie NF-e (recebimento de NF-e) response types ──
 interface NfeCabec {
@@ -154,6 +155,38 @@ Deno.serve(async (req) => {
   const __auth = await authorizeCronOrStaff(req);
   if (!__auth.ok) return __auth.response;
 
+  // ⚠️ SONDA DE VERSÃO — antes de tudo, porque daqui pra frente a edge EFETIVA a NF-e no Omie
+  // (AlterarRecebimento → AlterarEtapaRecebimento etapa 40 → ConcluirRecebimento) e não existe
+  // dry_run neste código. Fica logo após o authorizeCronOrStaff e ANTES do guard `Bearer` abaixo
+  // de propósito: o guard exige JWT de usuário, e é pelo SQL Editor (x-cron-secret) que a sonda é
+  // invocada em produção — atrás do guard ela seria inalcançável justamente para quem precisa
+  // dela. O FLUXO REAL continua exigindo os dois gates. Ver versao.ts / _shared/sonda-versao.ts.
+  //
+  // O corpo é consumido AQUI (req.json() só pode ser lido uma vez) e reaproveitado no fluxo real.
+  let corpoBruto: unknown = {};
+  try {
+    corpoBruto = await req.json();
+  } catch {
+    corpoBruto = {};
+  }
+  const decisaoSonda = classificarSonda(corpoBruto);
+  if (decisaoSonda.tipo === "sonda") {
+    return new Response(JSON.stringify(respostaSonda(VERSAO)), {
+      status: 200,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+  if (decisaoSonda.tipo === "ambiguo") {
+    return new Response(
+      JSON.stringify({ error: erroSondaAmbigua(decisaoSonda.valor, EFEITO), versao: VERSAO }),
+      { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    );
+  }
+  const corpo: Record<string, unknown> =
+    typeof corpoBruto === "object" && corpoBruto !== null && !Array.isArray(corpoBruto)
+      ? corpoBruto as Record<string, unknown>
+      : {};
+
   try {
     // ── Auth guard ──
     const authHeader = req.headers.get('Authorization');
@@ -169,7 +202,9 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
-    const { nf_number, account = "oben" } = await req.json();
+    // Corpo já consumido no bloco da sonda acima (req.json() é one-shot).
+    const nf_number = corpo.nf_number;
+    const account = typeof corpo.account === "string" && corpo.account ? corpo.account : "oben";
     if (!nf_number) {
       return new Response(JSON.stringify({ error: "nf_number é obrigatório" }), {
         status: 400,
@@ -244,7 +279,7 @@ Deno.serve(async (req) => {
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       steps.push({ step: 1, description: `Buscar NF ${nf_number}`, status: "error", detail: message });
-      return new Response(JSON.stringify({ steps, error: message }), {
+      return new Response(JSON.stringify({ steps, error: message, versao: VERSAO }), {
         status: 200,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -299,7 +334,7 @@ Deno.serve(async (req) => {
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       steps.push({ step: 2, description: "Consultar detalhes da NF", status: "error", detail: message });
-      return new Response(JSON.stringify({ steps, error: message }), {
+      return new Response(JSON.stringify({ steps, error: message, versao: VERSAO }), {
         status: 200,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -434,7 +469,7 @@ Deno.serve(async (req) => {
       // If alter fails, try step by step approach
       const message = e instanceof Error ? e.message : String(e);
       steps.push({ step: 3, description: "Atualizar recebimento", status: "error", detail: message });
-      return new Response(JSON.stringify({ steps, error: message }), {
+      return new Response(JSON.stringify({ steps, error: message, versao: VERSAO }), {
         status: 200,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -454,7 +489,7 @@ Deno.serve(async (req) => {
         steps.push({ step: 4, description: "Etapa já configurada", status: "warning", detail: message });
       } else {
         steps.push({ step: 4, description: "Alterar etapa", status: "error", detail: message });
-        return new Response(JSON.stringify({ steps, error: message }), {
+        return new Response(JSON.stringify({ steps, error: message, versao: VERSAO }), {
           status: 200,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
@@ -471,19 +506,19 @@ Deno.serve(async (req) => {
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       steps.push({ step: 5, description: "Concluir recebimento", status: "error", detail: message });
-      return new Response(JSON.stringify({ steps, error: message }), {
+      return new Response(JSON.stringify({ steps, error: message, versao: VERSAO }), {
         status: 200,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    return new Response(JSON.stringify({ steps, success: true }), {
+    return new Response(JSON.stringify({ steps, success: true, versao: VERSAO }), {
       status: 200,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
-    return new Response(JSON.stringify({ error: message }), {
+    return new Response(JSON.stringify({ error: message, versao: VERSAO }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });

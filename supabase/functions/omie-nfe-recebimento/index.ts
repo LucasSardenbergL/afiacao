@@ -1,4 +1,6 @@
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
+import { authorizeCronOrStaff } from "../_shared/auth.ts";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -28,7 +30,10 @@ interface WarehouseJoin {
 }
 
 function jsonRes(body: Record<string, unknown>, status = 200) {
-  return new Response(JSON.stringify(body), {
+  // `versao` em TODA resposta (sucesso, parcial e erro), não só na da sonda: a pergunta "essa
+  // correção subiu?" quase sempre é feita sobre uma efetivação que JÁ aconteceu — e o caso que
+  // mais importa é o da que falhou.
+  return new Response(JSON.stringify({ ...body, versao: VERSAO }), {
     status,
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
@@ -338,6 +343,33 @@ Deno.serve(async (req) => {
     return jsonRes({ error: "Method not allowed" }, 405);
   }
 
+  // ⚠️ SONDA DE VERSÃO — antes de tudo, porque daqui pra frente a edge EFETIVA a NF-e no Omie
+  // (AlterarRecebimento → AlterarEtapaRecebimento etapa 40 → ConcluirRecebimento): entrada de
+  // estoque e fiscal no ERP, mais o lock e uma tentativa consumida.
+  //
+  // Duas diferenças em relação às outras edges instrumentadas, ambas deliberadas:
+  //  1. o corpo é consumido AQUI (req.json() é one-shot) e reaproveitado no fluxo real abaixo;
+  //  2. a sonda tem gate PRÓPRIO (`authorizeCronOrStaff`) em vez de esperar o gate staff desta
+  //     edge. O gate daqui exige JWT de usuário staff e não aceita x-cron-secret — mas é pelo SQL
+  //     Editor, com cron-secret, que a sonda é invocada em produção; atrás dele, seria inalcançável
+  //     para quem precisa dela. Nenhum caminho fica sem auth, e o FLUXO REAL continua exigindo o
+  //     gate staff completo logo abaixo — o desvio vale só para a resposta sem efeito.
+  // O custo é pago só quando `probe` vem no corpo: sem a chave, nada disto executa.
+  // Ver versao.ts / _shared/sonda-versao.ts.
+  let corpoBruto: unknown = {};
+  try {
+    corpoBruto = await req.json();
+  } catch {
+    corpoBruto = {};
+  }
+  const decisaoSonda = classificarSonda(corpoBruto);
+  if (decisaoSonda.tipo !== "disparo") {
+    const authSonda = await authorizeCronOrStaff(req);
+    if (!authSonda.ok) return authSonda.response;
+    if (decisaoSonda.tipo === "sonda") return jsonRes(respostaSonda(VERSAO), 200);
+    return jsonRes({ error: erroSondaAmbigua(decisaoSonda.valor, EFEITO), versao: VERSAO }, 400);
+  }
+
   // ── Auth check ──
   const authHeader = req.headers.get("Authorization");
   if (!authHeader?.startsWith("Bearer ")) {
@@ -375,8 +407,13 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const body = await req.json();
-    const nfeRecebimentoId: string = body.nfe_recebimento_id;
+    // Corpo já consumido no bloco da sonda acima (req.json() é one-shot). Não-objeto vira {} —
+    // cai no 400 de "nfe_recebimento_id obrigatório", como antes.
+    const body: Record<string, unknown> =
+      typeof corpoBruto === "object" && corpoBruto !== null && !Array.isArray(corpoBruto)
+        ? corpoBruto as Record<string, unknown>
+        : {};
+    const nfeRecebimentoId = body.nfe_recebimento_id as string;
     if (!nfeRecebimentoId) {
       return jsonRes({ error: "nfe_recebimento_id obrigatório" }, 400);
     }
