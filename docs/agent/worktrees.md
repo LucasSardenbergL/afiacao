@@ -62,6 +62,16 @@ diff de 26 arquivos para 8 (#1533).
 **Regra:** re-conferir `gh pr list` **imediatamente antes do `gh pr create`**, filtrando pelo
 domínio (`gh pr list --search "margem"`). Custa segundos; teria pego o #1525 seis minutos antes.
 
+⚠️ **Sincronize antes de MEDIR — número tirado de base defasada é achado FALSO (2026-08-06).** A
+mesma foto velha que causa retrabalho de código também contamina *medição*: uma sessão reportou
+`bun run claude:size` = **2589 palavras** contra os **2495** reais da `origin/main`, porque a
+worktree fora criada antes do #1733 e media a base sem ele. O erro é traiçoeiro porque a medição
+*roda* e *sai verde* — não há sinal de que o denominador está errado (a regra "ausência de sinal não
+é aprovação" na direção que ENGANA em vez de esconder). ⇒ toda medição que vira decisão (orçamento
+de arquivo, contagem de call-sites, varredura de classe) começa por `git fetch` + medir
+`git show origin/main:<arquivo>`, nunca a cópia da worktree. Irmã da re-medição de classe do
+§paginação ("re-MEÇA contra a `origin/main` do instante, não contra a sua árvore").
+
 ⚠️ **Trabalho derivado de achado COMPARTILHADO colide por DESENHO, não por azar (2026-07-23).**
 Parecer do Codex, item de post-mortem, bug descrito em doc: a fonte é lida por VÁRIAS sessões, que
 convergem para o mesmo item — a colisão deixa de ser acidente e passa a ser o resultado esperado.
