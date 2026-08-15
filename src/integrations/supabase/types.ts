@@ -1583,36 +1583,6 @@ export type Database = {
         }
         Relationships: []
       }
-      data_health_watchdog_estado: {
-        Row: {
-          atualizado_em: string
-          checks_avaliados: number | null
-          checks_falhos: number | null
-          id: boolean
-          last_run_at: string | null
-          last_success_at: string | null
-          ultimo_erro: string | null
-        }
-        Insert: {
-          atualizado_em?: string
-          checks_avaliados?: number | null
-          checks_falhos?: number | null
-          id?: boolean
-          last_run_at?: string | null
-          last_success_at?: string | null
-          ultimo_erro?: string | null
-        }
-        Update: {
-          atualizado_em?: string
-          checks_avaliados?: number | null
-          checks_falhos?: number | null
-          id?: boolean
-          last_run_at?: string | null
-          last_success_at?: string | null
-          ultimo_erro?: string | null
-        }
-        Relationships: []
-      }
       dashboard_visits: {
         Row: {
           company_selection: string | null
@@ -3529,8 +3499,6 @@ export type Database = {
       }
       fin_alertas: {
         Row: {
-          acknowledged_at: string | null
-          acknowledged_by: string | null
           company: string
           contexto: Json | null
           criado_em: string
@@ -3540,15 +3508,12 @@ export type Database = {
           email_enfileirado_em: string | null
           id: string
           mensagem: string
-          resolvido_em: string | null
           severidade: string
           threshold: number | null
           tipo: string
           valor: number | null
         }
         Insert: {
-          acknowledged_at?: string | null
-          acknowledged_by?: string | null
           company: string
           contexto?: Json | null
           criado_em?: string
@@ -3558,15 +3523,12 @@ export type Database = {
           email_enfileirado_em?: string | null
           id?: string
           mensagem: string
-          resolvido_em?: string | null
           severidade: string
           threshold?: number | null
           tipo: string
           valor?: number | null
         }
         Update: {
-          acknowledged_at?: string | null
-          acknowledged_by?: string | null
           company?: string
           contexto?: Json | null
           criado_em?: string
@@ -3576,7 +3538,6 @@ export type Database = {
           email_enfileirado_em?: string | null
           id?: string
           mensagem?: string
-          resolvido_em?: string | null
           severidade?: string
           threshold?: number | null
           tipo?: string
@@ -18860,6 +18821,24 @@ export type Database = {
       farmer_association_rules_substituir: {
         Args: { p_regras: Json }
         Returns: number
+      }
+      farmer_bundle_recomendacoes_substituir: {
+        Args: {
+          p_farmer_id: string
+          p_geracao_vista: string
+          p_linhas: Json
+          p_run_id: string
+        }
+        Returns: Json
+      }
+      farmer_recomendacoes_substituir: {
+        Args: {
+          p_farmer_id: string
+          p_geracao_vista: string
+          p_linhas: Json
+          p_run_id: string
+        }
+        Returns: Json
       }
       fin_analise_cp_dimensoes_rpc: {
         Args: { p_ano?: number; p_company?: string; p_mes?: number }
