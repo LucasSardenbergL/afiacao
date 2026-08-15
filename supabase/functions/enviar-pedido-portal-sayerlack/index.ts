@@ -1,8 +1,12 @@
 // Edge Function: enviar-pedido-portal-sayerlack
 // Automatiza envio de pedidos aprovados (OBEN -> Sayerlack) via Browserless.io
-// Modos: ECO (validacao), lote (cron), individual (manual)
-
+// Modos: lote (cron), individual (manual), watchdog (varredura/reprocesso).
+// ⚠️ NÃO existe modo de validação/ensaio: todo modo real SUBMETE no portal do fornecedor. O header
+// citava um modo "ECO (validacao)" que não existe no código — ler isso como caminho seguro é a
+// armadilha que custou uma verificação impossível no #1747. Para diagnóstico use a SONDA
+// (`{"probe":true}`), que responde antes de qualquer IO. Ver versao.ts.
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -2240,6 +2244,24 @@ Deno.serve(async (req) => {
     }
   } catch {
     body = {};
+  }
+
+  // ⚠️ SONDA DE VERSÃO — único caminho sem efeito colateral, e por isso vem antes do createClient
+  // e de todo o resto: daqui pra frente a edge SUBMETE o pedido no portal do fornecedor via
+  // Browserless (o fornecedor recebe de verdade) e registra o PO no Omie. Nem o modo watchdog
+  // serve de sonda: ele varre e reprocessa. Ver versao.ts / _shared/sonda-versao.ts.
+  const decisaoSonda = classificarSonda(body);
+  if (decisaoSonda.tipo === "sonda") {
+    return new Response(JSON.stringify(respostaSonda(VERSAO)), {
+      status: 200,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+  if (decisaoSonda.tipo === "ambiguo") {
+    return new Response(
+      JSON.stringify({ ok: false, versao: VERSAO, error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }),
+      { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    );
   }
 
   const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {

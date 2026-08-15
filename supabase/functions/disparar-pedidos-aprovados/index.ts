@@ -4,7 +4,7 @@
 // - PRODUÇÃO: cria no Omie + dispara notificação ao fornecedor pelo canal configurado
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
-import { classificarSonda, respostaSonda, VERSAO } from "./versao.ts";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -1479,7 +1479,7 @@ Deno.serve(async (req: Request) => {
     : {};
   const decisaoSonda = classificarSonda(corpoBruto);
   if (decisaoSonda.tipo === "sonda") {
-    return new Response(JSON.stringify(respostaSonda()), {
+    return new Response(JSON.stringify(respostaSonda(VERSAO)), {
       status: 200,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
@@ -1492,10 +1492,7 @@ Deno.serve(async (req: Request) => {
       JSON.stringify({
         ok: false,
         versao: VERSAO,
-        error:
-          `Parâmetro 'probe' com valor não reconhecido (${decisaoSonda.valor}). Use {"probe":true} ` +
-          `para a sonda de versão, ou omita a chave para disparar. Recusado por segurança: esta ` +
-          `edge cria pedido de compra REAL no Omie, inclusive em dry_run.`,
+        error: erroSondaAmbigua(decisaoSonda.valor, EFEITO),
       }),
       { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );

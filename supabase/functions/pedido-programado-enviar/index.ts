@@ -12,6 +12,7 @@
 // ESPELHO: helpers de src/lib/pedidosProgramados/helpers.ts (verbatim — Deno não importa de src/).
 import { createClient, SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff, corsHeaders } from "../_shared/auth.ts";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
 // ── ESPELHO de src/lib/pedidosProgramados/helpers.ts (parte de envio, verbatim) ──
 export type AccountPP = 'oben' | 'colacor';
@@ -400,8 +401,30 @@ Deno.serve(async (req) => {
   const auth = await authorizeCronOrStaff(req);
   if (!auth.ok) return auth.response;
 
+  // ⚠️ SONDA DE VERSÃO — único caminho sem efeito colateral, e por isso vem antes do createClient
+  // e de qualquer query: daqui pra frente a edge cria sales_orders e marca envios como enviados.
+  // Ver versao.ts / _shared/sonda-versao.ts.
+  const corpoBruto: unknown = await req.json().catch(() => ({}));
+  const decisaoSonda = classificarSonda(corpoBruto);
+  if (decisaoSonda.tipo === "sonda") {
+    return new Response(JSON.stringify(respostaSonda(VERSAO)), {
+      status: 200,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+  if (decisaoSonda.tipo === "ambiguo") {
+    return new Response(
+      JSON.stringify({ ok: false, versao: VERSAO, error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }),
+      { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    );
+  }
+
   const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
-  const { envio_id } = await req.json().catch(() => ({}));
+  // Corpo já lido acima (req.json() só pode ser consumido uma vez). Normaliza não-objeto para {}:
+  // sem isto, um body `null` faria o destructuring lançar.
+  const { envio_id } = (typeof corpoBruto === "object" && corpoBruto !== null && !Array.isArray(corpoBruto)
+    ? corpoBruto
+    : {}) as { envio_id?: string };
 
   let query = supabase.from("pedidos_programados_envios")
     .select("id, pedido_programado_id, status, data_envio");
