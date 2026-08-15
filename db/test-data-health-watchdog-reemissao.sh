@@ -208,6 +208,26 @@ echo "migration aplicada: $(basename "$MIG")"
 # Idempotência: re-aplicar por cima de si mesma (marcador presente) e' no-op seguro.
 if P -q -f "$MIG" >/dev/null 2>&1; then ok "C15d migration e' idempotente (marcador reconhecido)"; else bad "C15d re-aplicar a migration falhou"; fi
 
+# A v2 desfaz 2 validadores da v1 que reprovavam dado LEGITIMO de prod (medido no 1o tick).
+MIG2="$REPO_ROOT/supabase/migrations/20260815153218_data_health_contrato_severity_idade.sql"
+P -q -f "$MIG2" >/dev/null
+echo "migration aplicada: $(basename "$MIG2")"
+V2=$(Pq -c "SELECT CASE WHEN pg_get_functiondef('public.data_health_watchdog()'::regprocedure) LIKE '%data_health reemissao v2%' THEN 'SIM' ELSE 'NAO' END;")
+eq "C15e marcador subiu para v2" "$V2" "SIM"
+if P -q -f "$MIG" >/dev/null 2>&1; then
+  bad "C15f re-aplicar a v1 por cima da v2 PASSOU (reintroduziria os validadores errados)"
+else ok "C15f re-aplicar a v1 por cima da v2 ABORTA (marcador versionado com dente)"; fi
+# a v1 pode ter deixado o corpo sabotado? nao -- ela abortou antes de tocar em nada. Confirma:
+V2B=$(Pq -c "SELECT CASE WHEN pg_get_functiondef('public.data_health_watchdog()'::regprocedure) LIKE '%data_health reemissao v2%' THEN 'SIM' ELSE 'NAO' END;")
+eq "C15g e o corpo vivo continua sendo a v2" "$V2B" "SIM"
+
+
+
+# shellcheck disable=SC2016  # $function$ e' o dollar-quote do plpgsql: literal de proposito.
+so_episodio() { sed -n '/CREATE OR REPLACE FUNCTION public._data_health_episodio/,/^\$function\$;$/p' ; }
+# shellcheck disable=SC2016
+so_watchdog() { sed -n '/CREATE OR REPLACE FUNCTION public.data_health_watchdog/,/^\$function\$;$/p' ; }
+
 # ══════════════════════════════════════════════════════════════════════════════
 # ZONA 3 — HELPERS DE CENÁRIO
 # ══════════════════════════════════════════════════════════════════════════════
@@ -566,11 +586,15 @@ reset_tudo
 set_check vendas_pedidos stale warning 'Vendas: parado' 100000
 rodar
 eq "K5a alerta aberto" "$(alertas vendas_pedidos)" "1"
-# a conta de frescor quebra: volta 'ok' com idade nula
+# ⚠️ INVERTIDO pela v2 (20260815153218), depois de MEDIR a prod: `ok` com age_seconds NULL e'
+# o estado SAUDAVEL de 3 checks de frescor -- eles derivam a idade de min() sobre as linhas
+# PENDENTES, entao zero pendente => min NULL => idade NULL => ok. Reprovar isso cegou 7 dos 17
+# checks no 1o tick em producao. O oraculo nao era o teste (semeado com a premissa errada) --
+# era o corpo vivo de _data_health_compute.
 P -q -c "UPDATE public._dh_control SET status='ok', severity='info', age_seconds=NULL WHERE source='vendas_pedidos';" >/dev/null
 rodar
-eq "K5b frescor com idade NULA nao resolve (conta quebrada != recuperacao)" "$(alertas vendas_pedidos)" "1"
-eq "K5c e e' contabilizado como falha" "$(Pq -c "SELECT checks_falhos FROM public.data_health_watchdog_estado WHERE id;")" "1"
+eq "K5b frescor 'ok' com idade NULA e' LEGITIMO (zero pendente) e resolve" "$(alertas vendas_pedidos)" "0"
+eq "K5c e NAO e' contabilizado como falha" "$(Pq -c "SELECT checks_falhos FROM public.data_health_watchdog_estado WHERE id;")" "0"
 # ⚠️ mas o recorte e' SO' no ramo 'ok': frescor legitimamente BROKEN porque a fonte nunca
 # sincronizou devolve idade NULL (max(...) nulo => EXTRACT nulo). Barrar ali trocaria um alerta
 # especifico por um generico "vigia com check falhando" -- pior que o bug que se quer fechar.
@@ -585,9 +609,13 @@ eq "K5e e NAO e' contabilizado como falha" "$(Pq -c "SELECT checks_falhos FROM p
 reset_tudo
 set_check pedidos_compra_sync stale critical 'Pedidos: sync parado' 90000
 rodar
+# ⚠️ INVERTIDO pela v2: `severity` e' LITERAL POR CHECK ('critical'::text sem CASE nenhum) --
+# descreve quao grave e' o check QUANDO degrada, nao o estado atual. `ok`+`critical` e' o
+# estado normal de um check critico SAUDAVEL, nao contradicao.
 P -q -c "UPDATE public._dh_control SET status='ok', severity='critical' WHERE source='pedidos_compra_sync';" >/dev/null
 rodar
-eq "K6 status=ok com severity=critical nao resolve o alerta ativo" "$(alertas pedidos_compra_sync)" "1"
+eq "K6a status=ok com severity=critical e' LEGITIMO e resolve" "$(alertas pedidos_compra_sync)" "0"
+eq "K6b e a rodada segue COMPLETA (17/17, zero falhas)" "$(Pq -c "SELECT checks_avaliados||'/'||checks_falhos FROM public.data_health_watchdog_estado WHERE id;")" "17/0"
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ZONA 5 — FALSIFICACAO (Lei #3): sabota => exige VERMELHO => restaura
@@ -599,7 +627,13 @@ verdicto() { # nome  resultado_do_cenario(0=verde,1=vermelho)
   if [ "$2" = "1" ]; then FALSIF_OK=$((FALSIF_OK+1)); echo "  [DENTE] $1 -- sabotagem ficou VERMELHA"
   else FALSIF_BAD=$((FALSIF_BAD+1)); echo "  [SEM-DENTE] $1 -- sabotagem passou VERDE (assert fraco)"; fi
 }
-restaurar() { P -q -f "$MIG" >/dev/null; }
+# Re-aplicar os arquivos inteiros nao serve mais: o guard da v1 ABORTA sobre o marcador v2
+# (de proposito). Restauramos exatamente as duas funcoes sob teste -- _data_health_episodio vem
+# da v1 (a v2 nao a recria) e data_health_watchdog vem da v2.
+restaurar() {
+  P -q -c "$(so_episodio < "$MIG")"  >/dev/null
+  P -q -c "$(so_watchdog < "$MIG2")" >/dev/null
+}
 
 # Cada cenario abaixo devolve 1 quando o invariante QUEBRA (ou seja: quando a sabotagem pegou).
 cen_lembrete() { reset_tudo; set_check carteira_scores stale warning 'M' 1000; rodar
@@ -657,10 +691,6 @@ sabota() { # nome  funcao  marcador_ascii  <sql-na-entrada-padrao>
 }
 EPIS='public._data_health_episodio(text,text,text,text,text,text,text,jsonb,text)'
 WD='public.data_health_watchdog()'
-# shellcheck disable=SC2016  # $function$ e' o dollar-quote do plpgsql: literal de proposito.
-so_episodio() { sed -n '/CREATE OR REPLACE FUNCTION public._data_health_episodio/,/^\$function\$;$/p' ; }
-# shellcheck disable=SC2016
-so_watchdog() { sed -n '/CREATE OR REPLACE FUNCTION public.data_health_watchdog/,/^\$function\$;$/p' ; }
 
 # --- F1: remove o predicado TEMPORAL (lembrete) ---
 if sabota "F1 predicado temporal" "$EPIS" "v_lembrete := false;" < <(perl -0pe 's/v_lembrete := [^;]*;/v_lembrete := false;/s' "$MIG" | so_episodio); then
