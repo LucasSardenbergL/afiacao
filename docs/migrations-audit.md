@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **472** custom migrations totais
-- **1605** objetos esperados (criados por estas migrations)
+- **473** custom migrations totais
+- **1606** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 485
+  - `function`: 486
   - `rls_policy`: 398
   - `index`: 240
   - `cron_job`: 164
@@ -3943,6 +3943,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `index` | `public.idx_fbrec_farmer_status_pendente` | `farmer_bundle_recommendations` |
 | `trigger` | `public.trg_frec_exige_run_id` | `farmer_recommendations` |
 | `trigger` | `public.trg_fbrec_exige_run_id` | `farmer_bundle_recommendations` |
+
+### `20260815153218_data_health_contrato_severity_idade.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.data_health_watchdog` | — |
 
 ## Próximos passos por status
 
