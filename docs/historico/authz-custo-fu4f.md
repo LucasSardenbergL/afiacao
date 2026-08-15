@@ -208,6 +208,38 @@ para o predicado pegar e **sem banner**. Fixado em `lucro-fora-do-indice.test.ts
 sob perda parcial a ordem **inverte**, ao contrário da perda uniforme, que é transformação afim e
 preserva ordem (B2/B3). Row-independence não é detalhe da policy — é a **precondição** do aviso.
 
+**O limiar real é 49,5%, não 50%.** `lucro_cobertura` sai da view já `round(…, 2)`, e
+`round(0.495, 2) = 0.50`, que passa em `>= 0.5` (medido). Então mais da metade da receita de um
+comprador pode estar sem custo e ele ainda conta como "confiável". O erro é sempre para BAIXO
+(lucro somado só sobre a fatia coberta) e **não tem teto**: sem limite para o custo oculto, a
+distorção pode inverter o top 20%, não só arranhar o número.
+
+**Rodada adversarial (Codex, gpt-5.6-sol/high) — o que ela mudou.** Veredito dele: NÃO-PROVADO.
+Duas objeções procediam e foram resolvidas MEDINDO (ele não tinha acesso a prod; eu tinha):
+
+| objeção | medição | desfecho |
+|---|---|---|
+| "a policy pode ERRAR se o caller não puder executar `cap_custo_ler`" | `has_function_privilege('authenticated', …,'EXECUTE') = t` | resolvida — a view degrada, não quebra |
+| "`pg_depend` não enxerga corpo de função; o inventário é insuficiente" | `prosrc ILIKE '%product_costs%'` → **3** funções (`margem_cliente_agregada`, `_data_health_compute`, **`get_skus_margem_positiva`**), as 3 `SECURITY DEFINER`; 0 triggers, 0 policies de outras tabelas, 0 crons | resolvida — **e o inventário anterior dizia 2**: `pg_depend` sozinho subcontou |
+
+Uma objeção foi **refutada por leitura** — a lição de não aceitar parecer de agente sem conferir:
+ele alegou que o `A7` de `db/test-seg-onda1-rls-views-matview.sh` quebraria porque espera `anon`
+lendo `v_caca_compradores`. Mas aquele harness cria uma `v_caca_compradores` **sintética** (3
+colunas sobre `profiles`/`sales_orders`) e menciona `product_costs` **zero** vezes: o REVOKE não a
+alcança. Ele inferiu pelo NOME do objeto sem ler o corpo do fixture.
+
+Outros dois pontos, medidos e sem ação: `relacl` **não tem entrada de grantee vazio**, logo `PUBLIC`
+não concede nada e o `REVOKE … FROM PUBLIC` é no-op (como a própria migration já dizia); `claude_ro`
+lê por `BYPASSRLS` + membership, não por grant, então o diagnóstico read-only sobrevive ao apply.
+⚠️ **Limite honesto:** `sandbox_exec` e `sandbox_exec_<ref>` mantêm `ar` (SELECT+INSERT) **por nome**
+— os asserts A3-A6 da migration só olham `authenticated` e `anon`. São roles de infra do editor SQL,
+fora do browser, mas "product_costs fecha" vale para o caminho do usuário, não para o catálogo todo.
+
+Ponto do Codex **aceito e não resolvido** (fica como dívida declarada): o aviso é sinal para o
+OPERADOR, não para engenharia — `caca.exibida` não carrega role/capability/cobertura, então ninguém
+é alertado no dia em que o primeiro hunter nascer degradado. A query de re-medição acima é o
+substituto pobre; o certo seria um evento `caca.ranking_degradado` com denominador por role.
+
 **Achado da falsificação (vale além da Caça):** ao sabotar `COBERTURA_MIN_LUCRO` de 0,5 para 0,7,
 **só o D2 ficou vermelho** — os outros 12 testes do arquivo passaram, inclusive o `A3`, que parece
 fixar o limiar mas o compara **consigo mesmo** (`lucroConfiavel({… cobertura: COBERTURA_MIN_LUCRO})`).

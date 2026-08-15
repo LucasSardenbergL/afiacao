@@ -165,6 +165,10 @@ describe('empresasSemLucroConfiavel — o aviso é POR EMPRESA', () => {
  * percentil com um lucro somado só sobre a fatia visível — número presente, enviesado, e sem
  * nenhum `null` para o predicado pegar.
  *
+ * E o limiar efetivo é 49,5%, não 50%: a view já entrega `lucro_cobertura` como `round(…, 2)`, e
+ * `round(0,495; 2) = 0,50` (medido em PG17), que passa no `>=`. O erro é sempre para BAIXO e não
+ * tem teto — sem limite para o custo oculto, a distorção inverte o top 20%, não só o arranha.
+ *
  * Estes dois testes fixam o contraste que sustenta o desenho:
  *   D1 — sob perda parcial a ordem INVERTE (ao contrário de B2/B3, onde a perda uniforme é
  *        transformação afim e preserva ordem);
