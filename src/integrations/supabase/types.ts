@@ -1583,6 +1583,36 @@ export type Database = {
         }
         Relationships: []
       }
+      data_health_watchdog_estado: {
+        Row: {
+          atualizado_em: string
+          checks_avaliados: number | null
+          checks_falhos: number | null
+          id: boolean
+          last_run_at: string | null
+          last_success_at: string | null
+          ultimo_erro: string | null
+        }
+        Insert: {
+          atualizado_em?: string
+          checks_avaliados?: number | null
+          checks_falhos?: number | null
+          id?: boolean
+          last_run_at?: string | null
+          last_success_at?: string | null
+          ultimo_erro?: string | null
+        }
+        Update: {
+          atualizado_em?: string
+          checks_avaliados?: number | null
+          checks_falhos?: number | null
+          id?: boolean
+          last_run_at?: string | null
+          last_success_at?: string | null
+          ultimo_erro?: string | null
+        }
+        Relationships: []
+      }
       dashboard_visits: {
         Row: {
           company_selection: string | null
@@ -3481,6 +3511,8 @@ export type Database = {
       }
       fin_alertas: {
         Row: {
+          acknowledged_at: string | null
+          acknowledged_by: string | null
           company: string
           contexto: Json | null
           criado_em: string
@@ -3490,12 +3522,15 @@ export type Database = {
           email_enfileirado_em: string | null
           id: string
           mensagem: string
+          resolvido_em: string | null
           severidade: string
           threshold: number | null
           tipo: string
           valor: number | null
         }
         Insert: {
+          acknowledged_at?: string | null
+          acknowledged_by?: string | null
           company: string
           contexto?: Json | null
           criado_em?: string
@@ -3505,12 +3540,15 @@ export type Database = {
           email_enfileirado_em?: string | null
           id?: string
           mensagem: string
+          resolvido_em?: string | null
           severidade: string
           threshold?: number | null
           tipo: string
           valor?: number | null
         }
         Update: {
+          acknowledged_at?: string | null
+          acknowledged_by?: string | null
           company?: string
           contexto?: Json | null
           criado_em?: string
@@ -3520,6 +3558,7 @@ export type Database = {
           email_enfileirado_em?: string | null
           id?: string
           mensagem?: string
+          resolvido_em?: string | null
           severidade?: string
           threshold?: number | null
           tipo?: string
