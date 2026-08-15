@@ -14,6 +14,8 @@ import * as portalSayerlack from "../enviar-pedido-portal-sayerlack/versao.ts";
 import * as conciliar from "../conciliar-pedido-portal/versao.ts";
 import * as gerarDiario from "../gerar-pedidos-diario/versao.ts";
 import * as programado from "../pedido-programado-enviar/versao.ts";
+import * as argumento from "../generate-bundle-argument/versao.ts";
+import * as tatico from "../generate-tactical-plan/versao.ts";
 
 const EDGES: Array<{ nome: string; mod: { VERSAO: string; EFEITO: string } }> = [
   { nome: "disparar-pedidos-aprovados", mod: disparar },
@@ -21,6 +23,8 @@ const EDGES: Array<{ nome: string; mod: { VERSAO: string; EFEITO: string } }> = 
   { nome: "conciliar-pedido-portal", mod: conciliar },
   { nome: "gerar-pedidos-diario", mod: gerarDiario },
   { nome: "pedido-programado-enviar", mod: programado },
+  { nome: "generate-bundle-argument", mod: argumento },
+  { nome: "generate-tactical-plan", mod: tatico },
 ];
 
 Deno.test("toda edge instrumentada declara VERSAO no formato vN.N-slug", () => {
@@ -67,5 +71,104 @@ Deno.test("enviar-pedido-portal-sayerlack: o EFEITO precisa dizer que o FORNECED
   // O custo aqui não é banco nem ERP: é um terceiro recebendo um pedido que não dá para desfazer.
   if (!/fornecedor/i.test(portalSayerlack.EFEITO)) {
     throw new Error(`EFEITO não menciona o fornecedor: ${portalSayerlack.EFEITO}`);
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Edges do farmer (#1520) — o marcador aqui existe para discriminar FATIA, não provedor.
+// As duas nasceram sem prova de deploy: a `generate-bundle-argument` não tinha sensor nenhum, e a
+// `generate-tactical-plan` tinha dois que respondem verde com o bundle anterior.
+// ─────────────────────────────────────────────────────────────────────────────
+
+Deno.test("edges do farmer: o marcador NOMEIA a fatia, não é o genérico inicial", () => {
+  // `v1.0-sensor-inicial` diz "existe sensor" e nada mais. Nestas duas o sensor nasceu para provar
+  // uma MUDANÇA específica (#1520), então o slug tem de citá-la — senão o próximo a verificar lê
+  // "sensor no ar" e conclui, errado, que a fatia subiu.
+  const esperado: Array<[string, string]> = [
+    ["generate-bundle-argument", "v1.0-prompt-sem-margem"],
+    ["generate-tactical-plan", "v1.0-afinidade-ordena"],
+  ];
+  const real: Record<string, string> = {
+    "generate-bundle-argument": argumento.VERSAO,
+    "generate-tactical-plan": tatico.VERSAO,
+  };
+  for (const [nome, marcador] of esperado) {
+    if (real[nome] !== marcador) {
+      throw new Error(
+        `${nome}: marcador mudou sem atualizar este gate (${real[nome]} ≠ ${marcador}). ` +
+          `Bump é legítimo — atualize aqui E em docs/agent/deploy.md, senão a verificação passa a ` +
+          `comparar com um valor que não existe mais.`,
+      );
+    }
+  }
+});
+
+const fonteDaEdge = (nome: string) => Deno.readTextFileSync(`supabase/functions/${nome}/index.ts`);
+
+/**
+ * Fonte SEM linha de comentário. O gate abaixo proíbe uma FORMA de código, e o comentário que
+ * explica por que aquela forma saiu cita a forma — foi assim que este teste ficou vermelho na
+ * primeira execução, contra uma edge correta. Mesma solução do gate `afinidade não é dinheiro`.
+ */
+const codigoDaEdge = (nome: string) =>
+  fonteDaEdge(nome).split("\n").filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\n");
+
+Deno.test("edges do farmer: a sonda decide por classificarSonda, não por `=== true` cru", () => {
+  // O founder invoca do SQL Editor, onde `jsonb_build_object('probe', true)` vira a STRING "true"
+  // com facilidade. Um `body.probe === true` cru mandaria essa chamada para o fluxo real — LLM,
+  // e no tactical-plan a GRAVAÇÃO do plano via service_role.
+  for (const nome of ["generate-bundle-argument", "generate-tactical-plan"]) {
+    const codigo = codigoDaEdge(nome);
+    if (!/classificarSonda\(/.test(codigo)) {
+      throw new Error(`${nome}: não chama classificarSonda — a sonda não é fail-closed`);
+    }
+    if (/\bbody\.probe\s*===\s*true/.test(codigo)) {
+      throw new Error(`${nome}: voltou o \`body.probe === true\` cru — "true" string cai no fluxo real`);
+    }
+  }
+});
+
+Deno.test("generate-tactical-plan: a canária ecoa `contrato`, senão mente verde", () => {
+  // Armadilha 2 de docs/agent/deploy.md: deploy integralmente velho carrega o `expected` velho e
+  // compara velho×velho. `ok:true` sozinho não discrimina reversão de fatia.
+  const codigo = codigoDaEdge("generate-tactical-plan");
+  const bloco = codigo.slice(codigo.indexOf("body.canary === true"));
+  if (!/canary:\s*true[^}]*contrato:\s*VERSAO/.test(bloco)) {
+    throw new Error("a resposta da canária não ecoa `contrato: VERSAO` junto do `canary: true`");
+  }
+});
+
+Deno.test("CALIBRAÇÃO: os padrões acima reprovam a forma PRÉ-fix e aprovam a PÓS", () => {
+  // Sem isto os três testes acima só provariam que os arquivos existem (docs/agent/deploy.md:
+  // "canária que não discrimina é teatro verde"). Aqui a forma antiga tem de FALHAR.
+  const preSonda = `if (body.probe === true) {\n  return new Response(JSON.stringify({ ok: true, motor: 'anthropic' }));\n}`;
+  if (!/body\.probe\s*===\s*true/.test(preSonda)) {
+    throw new Error("o padrão do `=== true` cru não casa a forma pré-fix — não detectaria a volta");
+  }
+  if (/classificarSonda\(/.test(preSonda)) {
+    throw new Error("o padrão de classificarSonda casa a forma pré-fix — falso verde");
+  }
+
+  const preCanaria = `JSON.stringify({ canary: true, ok, resultados })`;
+  if (/canary:\s*true[^}]*contrato:\s*VERSAO/.test(preCanaria)) {
+    throw new Error("o padrão do `contrato` aprova a canária SEM marcador — falso verde");
+  }
+  const posCanaria = `JSON.stringify({ canary: true, contrato: VERSAO, ok, resultados })`;
+  if (!/canary:\s*true[^}]*contrato:\s*VERSAO/.test(posCanaria)) {
+    throw new Error("o padrão do `contrato` reprova a forma pós-fix — falso vermelho");
+  }
+
+  // O filtro de comentário não pode CEGAR o gate: ele tira a linha que só EXPLICA a forma proibida
+  // (foi o que deixou este arquivo vermelho contra uma edge correta), mas a forma em CÓDIGO tem de
+  // continuar visível. Sem este par, "ignore comentários" viraria "ignore tudo".
+  const semComentario = (s: string) =>
+    s.split("\n").filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\n");
+  const soComentario = "  // `classificarSonda` no lugar de `body.probe === true`: o SQL Editor manda string";
+  if (/\bbody\.probe\s*===\s*true/.test(semComentario(soComentario))) {
+    throw new Error("o filtro não removeu o comentário — o gate reprovaria edge correta");
+  }
+  const codigoProibido = "    if (body.probe === true) {";
+  if (!/\bbody\.probe\s*===\s*true/.test(semComentario(codigoProibido))) {
+    throw new Error("o filtro comeu CÓDIGO — o gate deixaria a forma proibida voltar em silêncio");
   }
 });

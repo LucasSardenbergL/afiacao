@@ -30,6 +30,7 @@ import {
   systemDoModo,
   toolDoModo,
 } from "./plano-helpers.ts";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -77,31 +78,53 @@ Deno.serve(async (req) => {
     // certa está no ar — margem ausente degrada em vez de fabricar. NÃO prova que o real-path usa o
     // helper (isso é o guard textual + paridade), prova que a DECISÃO deployada está correta. Os
     // fixtures vivem no helper (`avaliarCanariaMargem`), testados em tactical-margem_test.ts.
+    //
+    // ⚠️ O `contrato` é OBRIGATÓRIO na verificação, junto do `canary` e do `ok` (docs/agent/deploy.md
+    // §Canárias, armadilha 2): um deploy INTEGRALMENTE velho carrega o `expected` velho junto,
+    // compara velho×velho e responde `ok:true` — mente verde. Sem marcador de versão, esta canária
+    // não distinguiria o bundle do #1553 do bundle do #1520.
     if (body.canary === true) {
       const { ok, resultados } = avaliarCanariaMargem();
-      return new Response(JSON.stringify({ canary: true, ok, resultados }), {
+      return new Response(JSON.stringify({ canary: true, contrato: VERSAO, ok, resultados }), {
         status: ok ? 200 : 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    // CANÁRIA DE VERSÃO (docs/agent/deploy.md, padrão do #1590/#1592): no Lovable Cloud não
-    // há PAT, então o deploy de edge não tem prova de VERSÃO — só "foi servida". Este probe
-    // é a prova, e custa zero (não chama o modelo, não toca o DB):
+    // SONDA DE VERSÃO (docs/agent/deploy.md, padrão do #1590/#1592, mecanismo do #1747): no Lovable
+    // Cloud não há PAT, então o deploy de edge não tem prova de VERSÃO — só "foi servida". Este
+    // probe é a prova, e custa zero (não chama o modelo, não toca o DB):
     //   curl -s -X POST <url> -H 'content-type: application/json' \
     //        -H "x-cron-secret: <secret>" -d '{"probe":true}'
-    //   → {"motor":"anthropic",...}  = fase 3 no ar
-    //   → {"error":"AI não configurada"} ou plano gerado = ainda a versão do gateway Lovable
-    if (body.probe === true) {
+    //   → {"probe":true,"versao":"v1.0-afinidade-ordena",...} = #1520 no ar
+    //   → resposta SEM `versao` = bundle pré-sensor (o do #1592, ou o #1520 deployado antes desta
+    //     fatia); {"error":"AI não configurada"} ou plano gerado = ainda o gateway Lovable
+    //
+    // O `motor`/`modelo`/`tool`/`fallback_fabricado` FICAM: eram o contrato do #1592 e quem já
+    // verificava por eles continua verificando. O que entra é o par `probe`+`versao`, que é o que
+    // discrimina FATIA — os campos antigos só discriminam PROVEDOR.
+    //
+    // `classificarSonda` no lugar de `body.probe === true`: o founder invoca do SQL Editor, onde
+    // `jsonb_build_object('probe', true)` vira `"true"` string com facilidade — um `=== true` cru
+    // mandaria essa chamada para o fluxo real (LLM + gravação de plano). Valor não reconhecido é
+    // 400 fail-closed, nunca execução por omissão.
+    const decisaoSonda = classificarSonda(body);
+    if (decisaoSonda.tipo === 'sonda') {
       return new Response(
         JSON.stringify({
-          ok: true,
+          ...respostaSonda(VERSAO),
           motor: 'anthropic',
           modelo: MODELO,
           tool: toolDoModo('estrategico').name,
           fallback_fabricado: false,
         }),
         { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+      );
+    }
+    if (decisaoSonda.tipo === 'ambiguo') {
+      return new Response(
+        JSON.stringify({ ok: false, versao: VERSAO, error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
       );
     }
 

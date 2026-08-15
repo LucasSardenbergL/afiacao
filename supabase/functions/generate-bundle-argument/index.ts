@@ -12,7 +12,19 @@ import {
   TOOL_ARGUMENTO,
   TOOL_PERGUNTAS,
 } from "./argumento-tools.ts";
-import { blocoCliente, REGRA_DADO_AUSENTE } from "./argumento-helpers.ts";
+import { blocoCliente, type ContextoCliente, REGRA_DADO_AUSENTE } from "./argumento-helpers.ts";
+import { authorizeCronOrStaff } from "../_shared/auth.ts";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
+
+// Formato do corpo, só com o que o prompt realmente lê. Antes vinha do `any` implícito de
+// `req.json()`; a sonda passou a ler o corpo cedo, então o tipo saiu do implícito para o explícito.
+// ⚠️ sem `margin` por SKU e sem `lieBundle`: o #1520 tirou os dois do contrato justamente para que
+// custo não chegue ao prompt da LLM — reintroduzir aqui é reabrir o vazamento.
+interface BundleDoPrompt {
+  products: { name: string; price: number }[];
+  confidence: number;
+  lift: number;
+}
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -21,6 +33,41 @@ const corsHeaders = {
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+
+  // ⚠️ SONDA DE VERSÃO (`{"probe":true}`) — vem antes do createClient, do getUser e de qualquer
+  // chamada à Anthropic: é o único caminho desta edge sem custo de token. Ela responde "qual bundle
+  // está no ar?", que é a pergunta que não tínhamos como fazer (o front chama pelo browser, então
+  // não há rastro em net._http_response nem em cron.job_run_details). Ver versao.ts.
+  //
+  // O corpo é lido UMA vez aqui e reaproveitado no fluxo real — req.json() não pode ser consumido
+  // duas vezes. Corpo ilegível não vira `{}` silencioso: o fluxo real relança, preservando o 500
+  // com mensagem que esta edge já dava.
+  let corpoBruto: unknown = {};
+  let erroDeParse: unknown = null;
+  if (req.method === "POST") {
+    try {
+      corpoBruto = await req.json();
+    } catch (e) {
+      erroDeParse = e;
+    }
+  }
+  const decisaoSonda = classificarSonda(corpoBruto);
+  if (decisaoSonda.tipo !== "disparo") {
+    // Gate próprio da sonda: `x-cron-secret` (comparação de env pura, sem IO) OU staff. O founder
+    // não tem shell — ele invoca do SQL Editor, que manda o secret do vault, nunca `Authorization`.
+    const auth = await authorizeCronOrStaff(req);
+    if (!auth.ok) return auth.response;
+    if (decisaoSonda.tipo === "sonda") {
+      return new Response(JSON.stringify(respostaSonda(VERSAO)), {
+        status: 200,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    return new Response(
+      JSON.stringify({ ok: false, versao: VERSAO, error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }),
+      { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    );
+  }
 
   try {
     // Authenticate user
@@ -41,7 +88,15 @@ Deno.serve(async (req) => {
     if (!ANTHROPIC_API_KEY) throw new Error("ANTHROPIC_API_KEY is not configured");
     const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
 
-    const { bundle, customer, customerProfile, mode } = await req.json();
+    // Corpo ilegível relança AQUI, depois do gate: antes da sonda o `await req.json()` ficava neste
+    // ponto, então quem não passa no auth continua tomando 401 — e não uma mensagem de parse.
+    if (erroDeParse) throw erroDeParse;
+    const { bundle, customer, customerProfile, mode } = corpoBruto as {
+      bundle: BundleDoPrompt;
+      customer: ContextoCliente;
+      customerProfile: string;
+      mode?: string;
+    };
 
     // ─── MODE: diagnostic_questions ─────────────────────────────
     if (mode === 'diagnostic_questions') {
