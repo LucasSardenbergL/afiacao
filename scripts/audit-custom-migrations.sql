@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 469
+-- Total de custom migrations: 471
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -511,7 +511,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260813234112', 'carteira_margem_faixa_motivo_gate_custo', '20260813234112_carteira_margem_faixa_motivo_gate_custo.sql'),
   ('20260814000125', 'reposicao_pos_frescor_marcador', '20260814000125_reposicao_pos_frescor_marcador.sql'),
   ('20260814022626', 'reposicao_po_inexistente_antes_de', '20260814022626_reposicao_po_inexistente_antes_de.sql'),
-  ('20260814160441', 'fu4f_fase3_afinidade_colunas_reaplica', '20260814160441_fu4f_fase3_afinidade_colunas_reaplica.sql')
+  ('20260814160441', 'fu4f_fase3_afinidade_colunas_reaplica', '20260814160441_fu4f_fase3_afinidade_colunas_reaplica.sql'),
+  ('20260814222000', 'data_health_watchdog_reemissao', '20260814222000_data_health_watchdog_reemissao.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2093,7 +2094,12 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('reposicao_pos_frescor_marcador', 'function', 'public', 'reposicao_pos_marcador', ''),
   ('reposicao_po_inexistente_antes_de', 'function', 'public', 'reposicao_marco_pre_omie', ''),
   ('reposicao_po_inexistente_antes_de', 'function', 'public', 'reposicao__po_inexistente_antes_guard', ''),
-  ('reposicao_po_inexistente_antes_de', 'trigger', 'public', 'trg_po_inexistente_antes_de_guard', 'pedido_compra_sugerido')
+  ('reposicao_po_inexistente_antes_de', 'trigger', 'public', 'trg_po_inexistente_antes_de_guard', 'pedido_compra_sugerido'),
+  ('data_health_watchdog_reemissao', 'function', 'public', '_data_health_episodio', ''),
+  ('data_health_watchdog_reemissao', 'function', 'public', 'data_health_watchdog', ''),
+  ('data_health_watchdog_reemissao', 'table', 'public', 'data_health_watchdog_estado', ''),
+  ('data_health_watchdog_reemissao', 'rls_policy', 'public', 'data_health_watchdog_estado_select_staff', 'data_health_watchdog_estado'),
+  ('data_health_watchdog_reemissao', 'rls_policy', 'public', 'data_health_watchdog_estado_service_all', 'data_health_watchdog_estado')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -3723,7 +3729,12 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('reposicao_pos_frescor_marcador', 'function', 'public', 'reposicao_pos_marcador', ''),
   ('reposicao_po_inexistente_antes_de', 'function', 'public', 'reposicao_marco_pre_omie', ''),
   ('reposicao_po_inexistente_antes_de', 'function', 'public', 'reposicao__po_inexistente_antes_guard', ''),
-  ('reposicao_po_inexistente_antes_de', 'trigger', 'public', 'trg_po_inexistente_antes_de_guard', 'pedido_compra_sugerido')
+  ('reposicao_po_inexistente_antes_de', 'trigger', 'public', 'trg_po_inexistente_antes_de_guard', 'pedido_compra_sugerido'),
+  ('data_health_watchdog_reemissao', 'function', 'public', '_data_health_episodio', ''),
+  ('data_health_watchdog_reemissao', 'function', 'public', 'data_health_watchdog', ''),
+  ('data_health_watchdog_reemissao', 'table', 'public', 'data_health_watchdog_estado', ''),
+  ('data_health_watchdog_reemissao', 'rls_policy', 'public', 'data_health_watchdog_estado_select_staff', 'data_health_watchdog_estado'),
+  ('data_health_watchdog_reemissao', 'rls_policy', 'public', 'data_health_watchdog_estado_service_all', 'data_health_watchdog_estado')
 )
 SELECT
   e.migration,

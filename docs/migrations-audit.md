@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **469** custom migrations totais
-- **1593** objetos esperados (criados por estas migrations)
+- **471** custom migrations totais
+- **1598** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 480
-  - `rls_policy`: 396
+  - `function`: 482
+  - `rls_policy`: 398
   - `index`: 238
   - `cron_job`: 164
-  - `table`: 153
+  - `table`: 154
   - `trigger`: 84
   - `view`: 74
   - `enum_value`: 4
@@ -3921,6 +3921,16 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20260814160441_fu4f_fase3_afinidade_colunas_reaplica.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260814222000_data_health_watchdog_reemissao.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_episodio` | — |
+| `function` | `public.data_health_watchdog` | — |
+| `table` | `public.data_health_watchdog_estado` | — |
+| `rls_policy` | `public.data_health_watchdog_estado_select_staff` | `data_health_watchdog_estado` |
+| `rls_policy` | `public.data_health_watchdog_estado_service_all` | `data_health_watchdog_estado` |
 
 ## Próximos passos por status
 
