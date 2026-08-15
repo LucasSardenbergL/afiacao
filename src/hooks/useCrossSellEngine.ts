@@ -159,6 +159,41 @@ export const useCrossSellEngine = () => {
     let resultadoDestaExecucao = false;
 
     try {
+      // 0. Identidade desta EXECUÇÃO + a geração que ela está substituindo.
+      //
+      // Lido ANTES do snapshot de propósito: reivindicar depois deixa a corrida aberta
+      // pela porta de trás (money-path §10). `geracaoVista` é o lado "compare" do
+      // compare-and-swap da RPC — se outro recálculo gravar entre esta leitura e a
+      // escrita lá embaixo, a RPC recusa com FG006 em vez de sobrescrever o resultado
+      // mais NOVO com o meu, que leu dado mais velho. Não depende de relógio nenhum
+      // (nem do browser, nem do servidor).
+      //
+      // Na lente "Ver como" a persistência é pulada, então nem lemos.
+      const runId = crypto.randomUUID();
+      let geracaoVista: string | null = null;
+      if (!isImpersonating) {
+        // Mesma ordem que a RPC usa para eleger a geração vigente (created_at desc, id desc):
+        // divergir aqui faria o compare-and-swap comparar com outra linha e recusar sempre.
+        const { data: vigente, error: erroVigente } = await supabase
+          .from('farmer_recommendations')
+          .select('run_id')
+          .eq('farmer_id', effectiveUserId)
+          .eq('status', 'pendente')
+          .order('created_at', { ascending: false })
+          .order('id', { ascending: false })
+          .limit(1);
+        // FAIL-CLOSED: sem saber qual é a geração vigente não dá para substituí-la com
+        // segurança. Degradar para `null` afirmaria "não há geração nenhuma" e faria a
+        // RPC recusar (ou, pior num desenho sem guard, expirar em cima de dado incerto).
+        if (erroVigente) {
+          throw new Error(
+            mensagemDeErro(erroVigente) ??
+              'Não consegui ler a geração vigente de recomendações — nada foi recalculado.',
+          );
+        }
+        geracaoVista = vigente?.[0]?.run_id ?? null;
+      }
+
       // 1. Load client scores with pagination. Era um loop MANUAL com o mesmo defeito que o
       // #1545 tirou do `fetchAllPages` — mas por não CHAMAR o helper, ficou de fora daquele
       // grep: descartava o `error` (`const { data } = await q`), tratava `data: null` como fim
@@ -265,11 +300,28 @@ export const useCrossSellEngine = () => {
       }
 
       // 4. Load association rules for personalized recommendations
-      const { data: assocRules } = (await supabase
+      //
+      // O `error` é CAPTURADO, e a falha LANÇA. Antes o cast declarava só `{ data }` e
+      // apagava o `error` do tipo: uma leitura falha virava `assocRules || []` → mapa de
+      // associação VAZIO → só o sinal de popularidade sobrava, e o cálculo seguia como se
+      // a base não tivesse padrão nenhum.
+      //
+      // Isso era ruim quando o resultado apenas se somava ao que já existia; virou GRAVE
+      // agora que a persistência SUBSTITUI: um snapshot degradado por falha de transporte
+      // expiraria a carteira inteira do farmer e apagaria cross-sells legítimos de todos os
+      // clientes dele. Expirar por farmer só é seguro se o snapshot for COMPLETO — então a
+      // completude precisa ser verificada, não presumida (achado do challenge Codex xhigh).
+      const { data: assocRules, error: erroAssoc } = (await supabase
         .from('farmer_association_rules')
         .select('antecedent_product_ids, consequent_product_ids, confidence, lift, support')
         .gte('confidence', 0.05)
-        .gte('lift', 1.0)) as unknown as { data: AssocRuleRow[] | null };
+        .gte('lift', 1.0)) as unknown as { data: AssocRuleRow[] | null; error: unknown };
+      if (erroAssoc) {
+        throw new Error(
+          mensagemDeErro(erroAssoc) ??
+            'Não consegui ler as regras de associação — o cálculo seria parcial e substituiria as recomendações atuais, então nada foi alterado.',
+        );
+      }
 
       // Build map: antecedent product -> consequent products with scores
       const assocMap = new Map<string, { productId: string; confidence: number; lift: number; support: number }[]>();
@@ -512,55 +564,77 @@ export const useCrossSellEngine = () => {
       aplicarRecomendacoes(allRecs);
       resultadoDestaExecucao = true;
 
-      // Persist recommendations (batch upsert único — antes era N×M serial)
+      // Persist recommendations — via RPC que SUBSTITUI a geração anterior.
+      //
+      // Era `.upsert(recRows)` SEM `onConflict` e sem `id` no payload: como a única chave
+      // é o uuid DEFAULT, nada nunca colidia e o "upsert" era um INSERT. Cada recálculo
+      // EMPILHAVA, e como os leitores pegam `status='pendente'` ordenado por afinidade
+      // desc com `.limit(1)`, uma recomendação ANTIGA de score maior seguia sendo o topo
+      // para sempre — o operador via uma oferta que o motor já não escolheria. Medido em
+      // prod (2026-08-14): 197 de 473 grupos (farmer,cliente) com ≥2 gerações vivas, e
+      // 18 grupos cujo topo vinha de uma geração de até 70 DIAS antes.
+      //
+      // Vai por RPC porque expirar-e-inserir são DUAS operações: em duas chamadas
+      // PostgREST são duas transações, e falhar entre elas deixaria o farmer com ZERO
+      // oferta pendente. Mesmo motivo que levou `farmer_association_rules_substituir` a
+      // existir. `m_ij`/`lie` saem do payload de vez — a RPC os fixa em NULL, então o
+      // browser não tem mais como fabricar dinheiro de volta nessas colunas.
+      // Provada em db/test-farmer-geracao-vigente.sh (31 asserts + 4 falsificações).
       const recRows = allRecs.flatMap((cr) =>
         [...cr.crossSell, ...cr.upSell].map((rec) => ({
-          farmer_id: effectiveUserId,
           customer_user_id: rec.customerId,
           recommendation_type: rec.type,
           product_id: rec.productId,
           current_product_id: rec.currentProductId || null,
           p_ij: rec.pij,
-          // m_ij explicitamente NULL, não omitido: o upsert do PostgREST só atualiza as colunas
-          // presentes no payload, então OMITIR deixaria o valor antigo intacto nas linhas que
-          // colidem — e `m_ij ÷ cluster_volume_estimate` devolve a margem unitária (conferido em
-          // prod: 134,26/2 = 67,13). A limpeza das linhas que NÃO colidem é a migration
-          // 20260725123000.
-          m_ij: null,
-          // `lie` é DINHEIRO (Lucro Incremental Esperado em R$) e sai de cena junto com `m_ij`:
-          // o valor antigo invertia sozinho — m_ij ≈ lie / ((p_ij/100) × complexity_factor).
-          // A afinidade que ordena a lista vai na coluna DEDICADA `affinity_score`, adimensional.
-          // Reaproveitar `lie` para o score ordenaria certo (são monotônicos entre si) e mentiria
-          // para quem lê o VALOR — o irmão `lie_bundle` é copiado para
-          // `farmer_tactical_plans.bundle_lie` e formatado como BRL no PlanCard.
-          // Explicitamente NULL, não omitido, pelo mesmo motivo do `m_ij` acima: no upsert do
-          // PostgREST a coluna ausente do payload preserva o valor antigo na linha que colide.
-          lie: null,
           affinity_score: rec.affinityScore,
           complexity_factor: rec.complexityFactor,
           cluster_volume_estimate: rec.clusterVolume,
-          status: 'pendente',
-          updated_at: new Date().toISOString(),
         })),
       );
       // Persistência PULADA na lente "Ver como" (somente leitura: o master inspeciona
       // as recomendações do alvo sem regravar a carteira dele).
+      //
+      // `length > 0` continua sendo o guard: lote vazio quase sempre é dado faltando a
+      // montante, e expirar a carteira por causa disso deixaria a vendedora sem NENHUMA
+      // oferta. A RPC recusa o lote vazio de qualquer jeito (FG003) — não a chamamos só
+      // para tomar o erro. Mesmo raciocínio do bloco de regras no useBundleEngine.
       if (!isImpersonating && recRows.length > 0) {
-        // O `error` é CAPTURADO. O supabase-js NÃO lança em erro de banco — resolve normal com
-        // `error` preenchido — então o `await` solto devolvia sucesso SEM ter gravado, e o `catch`
-        // abaixo nunca rodava. O caso concreto desta entrega: `affinity_score` só existe depois da
-        // migration 20260725121000; publicar o front antes dela devolve 42703/PGRST204 e as
-        // recomendações somem da tabela em silêncio, com a tela mostrando a lista calculada.
+        // O `error` é CAPTURADO. O supabase-js NÃO lança em erro de banco — resolve normal
+        // com `error` preenchido — então o `await` solto devolveria sucesso SEM ter gravado.
         // Sem `throw`: o cálculo em memória é válido e já foi exibido — quem falhou foi só a
-        // persistência, e derrubar a tela seria pior. Espelha o desfecho do useBundleEngine (#1594).
-        const { error: erroPersistencia } = await supabase
-          .from('farmer_recommendations')
-          .upsert(recRows);
+        // persistência, e derrubar a tela seria pior. Espelha o useBundleEngine (#1594).
+        const { error: erroPersistencia } = await supabase.rpc(
+          'farmer_recomendacoes_substituir' as never,
+          {
+            p_farmer_id: effectiveUserId,
+            p_run_id: runId,
+            p_geracao_vista: geracaoVista,
+            p_linhas: recRows,
+          } as never,
+        );
         if (erroPersistencia) {
-          console.error('Falha ao gravar farmer_recommendations:', erroPersistencia);
-          toast.error(
-            `${recRows.length} recomendação(ões) NÃO foram gravadas — as telas de oferta seguem com as anteriores. ${mensagemDeErro(erroPersistencia) ?? ''}`.trim(),
-          );
+          console.error('Falha ao substituir farmer_recommendations:', erroPersistencia);
+          // FG006 = outro recálculo gravou no meio do meu. Não é falha: é a recusa
+          // funcionando, e o dado na tabela é MAIS novo que o meu. Dizer "não foi
+          // gravado, as telas seguem com as anteriores" mentiria na direção oposta —
+          // as telas seguem com algo mais RECENTE do que isto aqui.
+          const codigo = (erroPersistencia as { code?: string } | null)?.code;
+          if (codigo === 'FG006') {
+            toast.warning(
+              'Outro recálculo mais recente já gravou enquanto este rodava — o dele valeu, e as telas de oferta estão com o resultado mais novo.',
+            );
+          } else if (codigo === 'FG005') {
+            // Advisory lock: há OUTRO recálculo deste farmer em voo agora. Distinto do
+            // FG006 (que já terminou e venceu) — aqui o desfecho ainda não existe.
+            toast.warning(
+              'Já há um recálculo deste vendedor em andamento — este não foi gravado. Espere ele terminar e veja o resultado.',
+            );
+          } else {
+            toast.error(
+              `${recRows.length} recomendação(ões) NÃO foram gravadas — as telas de oferta seguem com as anteriores. ${mensagemDeErro(erroPersistencia) ?? ''}`.trim(),
+            );
+          }
         }
       }
     } catch (error) {

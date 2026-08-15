@@ -671,7 +671,12 @@ export const useTacticalPlan = () => {
         .order('affinity_bundle', { ascending: false, nullsFirst: false })
         // Desempate determinístico: os scores são arredondados e empatam com frequência; sem uma
         // 2ª chave o "top" oscila entre execuções. Mais recente ganha.
+        // ⚠️ `created_at` deixou de desempatar: desde a migration 20260814223445 a geração
+        // inteira entra num único INSERT, e `now()` é o instante da TRANSAÇÃO — todas as
+        // linhas do run compartilham o mesmo carimbo. `id` é a PK: última chave, sempre
+        // total (achado do challenge Codex xhigh).
         .order('created_at', { ascending: false })
+        .order('id', { ascending: false })
         .limit(2)) as unknown as { data: BundleRow[] | null };
 
       const mixGap = Math.max(0, 8 - categoryCount);

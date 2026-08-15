@@ -100,11 +100,16 @@ function dadosDa(tabela: string): unknown[] {
   }
 }
 
-const ehInsertDeRecomendacao = (q: Q) =>
+/** Desde a migration 20260814223445 a persistência dos bundles não é mais `.insert()` na
+ *  tabela: é a RPC que EXPIRA a geração anterior e insere a nova numa transação só. O que
+ *  este arquivo mede (a falha não pode passar calada) não mudou — mudou onde ela ocorre. */
+const RPC_SUBSTITUIR = 'farmer_bundle_recomendacoes_substituir';
+
+/** Nenhum insert direto deve sobrar nesta tabela — se voltar, o empilhamento volta com ele. */
+const ehInsertDiretoDeRecomendacao = (q: Q) =>
   q.table === 'farmer_bundle_recommendations' && q.metodos.includes('insert');
 
 function respostaDe(q: Q) {
-  if (ehInsertDeRecomendacao(q) && insertRecsFalha) return { data: null, error: ERRO_INSERT };
   return { data: dadosDa(q.table), error: null, count: 0 };
 }
 
@@ -134,6 +139,11 @@ vi.mock('@/integrations/supabase/client', () => ({
       rpcs.push({ nome, args });
       // Pós-#1520 o engine pergunta quais SKUs são vendáveis em vez de baixar custo.
       if (nome === 'get_skus_margem_positiva') return Promise.resolve({ data: VENDAVEIS, error: null });
+      if (nome === RPC_SUBSTITUIR) {
+        return Promise.resolve(
+          insertRecsFalha ? { data: null, error: ERRO_INSERT } : { data: { expiradas: 0, inseridas: 2 }, error: null },
+        );
+      }
       if (regrasFalham) return Promise.resolve({ data: null, error: ERRO_RPC });
       return Promise.resolve({ data: 2, error: null });
     },
@@ -159,11 +169,11 @@ beforeEach(() => {
   vi.spyOn(console, 'error').mockImplementation(() => {});
 });
 
-const insertsDeRecomendacao = () => queries.filter(ehInsertDeRecomendacao);
+const insertsDeRecomendacao = () => rpcs.filter((r) => r.nome === RPC_SUBSTITUIR);
 
 /** Linhas efetivamente enviadas, somando lote e chamada-a-chamada. */
 const linhasEnviadas = () =>
-  insertsDeRecomendacao().flatMap((q) => q.payloads.flatMap((p) => (Array.isArray(p) ? p : [p])));
+  insertsDeRecomendacao().flatMap((r) => (r.args.p_linhas as Record<string, unknown>[]) ?? []);
 
 const avisos = () => toastMock.warning.mock.calls.map((c) => String(c[0]));
 
@@ -181,7 +191,7 @@ describe('useBundleEngine — a gravação das recomendações de bundle não fa
     expect(result.current.customerBundles.length).toBeGreaterThan(0);
   });
 
-  it('INSERT falhando NÃO emite toast de sucesso — o aviso cita as recomendações', async () => {
+  it('a gravação falhando NÃO emite toast de sucesso — o aviso cita as recomendações', async () => {
     insertRecsFalha = true;
     await calcular();
 
@@ -204,13 +214,32 @@ describe('useBundleEngine — a gravação das recomendações de bundle não fa
     expect(avisos()[0]).toContain('anteriores seguem valendo');
   });
 
-  it('grava as recomendações num ÚNICO insert em lote, não uma por vez', async () => {
+  it('grava as recomendações numa ÚNICA chamada em lote, não uma por vez', async () => {
     await calcular();
 
     // As linhas são independentes: N round-trips não compram nada e multiplicam a
     // janela de falha parcial (ficar com metade das recomendações gravadas).
     expect(insertsDeRecomendacao()).toHaveLength(1);
     expect(linhasEnviadas()).toHaveLength(2);
+  });
+
+  it('NÃO resta insert direto na tabela — o empilhamento voltaria com ele', async () => {
+    await calcular();
+
+    // Um `.insert()` direto não expira a geração anterior: é exatamente o writer que a
+    // migration 20260814223445 aposentou. Se alguém reintroduzir um (por conveniência, ou
+    // resolvendo conflito pelo lado errado), a substituição vira empilhamento de novo e
+    // nenhum outro assert deste arquivo perceberia — todos medem a RPC.
+    expect(queries.filter(ehInsertDiretoDeRecomendacao)).toHaveLength(0);
+  });
+
+  it('a chamada leva run_id e a geração vista (o compare-and-swap da corrida)', async () => {
+    await calcular();
+
+    const chamada = insertsDeRecomendacao()[0];
+    expect(chamada.args.p_farmer_id).toBe(FARMER);
+    expect(String(chamada.args.p_run_id)).toMatch(/^[0-9a-f-]{36}$/i);
+    expect(Object.prototype.hasOwnProperty.call(chamada.args, 'p_geracao_vista')).toBe(true);
   });
 
   it('caminho feliz mantém o toast de sucesso', async () => {
@@ -220,7 +249,7 @@ describe('useBundleEngine — a gravação das recomendações de bundle não fa
     expect(toastMock.warning).not.toHaveBeenCalled();
   });
 
-  it('INSERT falhando não some com os bundles da tela — só a tabela fica para trás', async () => {
+  it('a gravação falhando não some com os bundles da tela — só a tabela fica para trás', async () => {
     insertRecsFalha = true;
     const result = await calcular();
 

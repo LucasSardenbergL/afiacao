@@ -51,7 +51,11 @@ describe('buildCrossSellCandidatos (codex Risco 2: rec→omie, ativo, órfão)',
     { id: 'uuid-a', omie_codigo_produto: 500, descricao: 'Verniz', ativo: true },
     { id: 'uuid-b', omie_codigo_produto: 600, descricao: 'Estopa', ativo: false }, // inativo
   ];
-  function rec(pid: string | null, afinidade: number | null, status: string | null = null): PreviewRec {
+  // Default 'pendente': é o status REAL das linhas vigentes (o CHECK da tabela é pt-BR —
+  // pendente/ofertado/aceito/rejeitado/expirado). O default anterior era `null`, que só
+  // passava porque o filtro de então era a denylist `status === 'rejected'` — rótulo em
+  // INGLÊS que a tabela nunca produz, logo um filtro que não filtrava nada.
+  function rec(pid: string | null, afinidade: number | null, status: string | null = 'pendente'): PreviewRec {
     return { product_id: pid, affinity_score: afinidade, status };
   }
   it('mapeia product_id → omie e mantém só ativos', () => {
@@ -61,7 +65,22 @@ describe('buildCrossSellCandidatos (codex Risco 2: rec→omie, ativo, órfão)',
   });
   it('descarta rec órfã (product_id sem produto), rejeitada e null', () => {
     const r = buildCrossSellCandidatos(
-      [rec('uuid-x', 10), rec('uuid-a', 20, 'rejected'), rec(null, 30)], prods);
+      [rec('uuid-x', 10), rec('uuid-a', 20, 'rejeitado'), rec(null, 30)], prods);
     expect(r).toEqual([]);
+  });
+  it('descarta a geração EXPIRADA por um recálculo, e status desconhecido/ausente', () => {
+    // Desde a migration 20260814223445 o recálculo aposenta a geração anterior marcando
+    // `status='expirado'`. Sem allowlist, essa linha entraria na proposta que vai pro
+    // cliente no WhatsApp — oferecendo um SKU que o motor já descartou.
+    const r = buildCrossSellCandidatos(
+      [rec('uuid-a', 90, 'expirado'), rec('uuid-a', 80, null), rec('uuid-a', 70, 'status_que_nao_existe')],
+      prods,
+    );
+    expect(r).toEqual([]);
+  });
+  it('mantém pendente E ofertado (a oferta já feita segue válida)', () => {
+    const r = buildCrossSellCandidatos(
+      [rec('uuid-a', 90, 'pendente'), rec('uuid-a', 80, 'ofertado')], prods);
+    expect(r).toHaveLength(2);
   });
 });

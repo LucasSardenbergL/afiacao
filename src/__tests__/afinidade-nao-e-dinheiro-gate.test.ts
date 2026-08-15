@@ -116,16 +116,49 @@ describe('gate: afinidade não é dinheiro', () => {
     expect(semFiltro).toEqual([]);
   });
 
-  it('G4 os writers gravam a afinidade na coluna DEDICADA e o LIE explicitamente NULL', () => {
+  it('G4 os writers gravam a afinidade na coluna DEDICADA e o LIE fica NULL — garantido no SERVIDOR', () => {
     // Pin ESPECÍFICO, não de forma: um gate genérico ("existe algum .order") ficaria verde se
     // alguém trocasse a coluna de volta. Quando a chave É a defesa, pine a chave.
+    //
+    // ⚠️ A garantia MUDOU DE LUGAR em 2026-08-15 (migration 20260814223445) e o pin acompanhou.
+    // Antes o browser mandava `lie: null` explícito no payload do upsert, e o gate lia isso.
+    // Hoje os writers vão pela RPC `farmer_*_substituir`, que fixa `NULL, NULL` em m_ij/lie no
+    // próprio INSERT — o payload nem carrega as colunas de dinheiro. Isso é ESTRITAMENTE MAIS
+    // FORTE: antes um browser adulterado podia mandar `lie: 999` e o upsert gravaria; agora o
+    // servidor descarta o que vier. Repinar no payload teria sido enfraquecer o gate para o
+    // formato antigo; o certo é pinar onde a defesa REALMENTE mora agora.
     const cross = semComentarios(readFileSync(resolve(RAIZ, 'src/hooks/useCrossSellEngine.ts'), 'utf8'));
-    expect(cross).toMatch(/lie:\s*null/);
     expect(cross).toMatch(/affinity_score:\s*rec\.affinityScore/);
+    // O browser NÃO manda mais dinheiro no payload — nem como null.
+    expect(cross).not.toMatch(/\blie:\s*/);
+    expect(cross).not.toMatch(/\bm_ij:\s*/);
 
     const bundle = semComentarios(readFileSync(resolve(RAIZ, 'src/hooks/useBundleEngine.ts'), 'utf8'));
-    expect(bundle).toMatch(/lie_bundle:\s*null/);
     expect(bundle).toMatch(/affinity_bundle:\s*bundle\.affinityBundle/);
+    expect(bundle).not.toMatch(/\blie_bundle:\s*/);
+    expect(bundle).not.toMatch(/\bm_bundle:\s*/);
+
+    // E a RPC que passou a ser a dona da garantia: o INSERT fixa NULL nas duas colunas de
+    // dinheiro. Sem este assert a propriedade ficaria SEM dono — os `not.toMatch` acima
+    // sozinhos provariam apenas que o browser parou de mandar, não que o servidor zera.
+    // ⚠️ `semComentarios` só conhece `//` e `/* */` — comentário SQL é `--`, e a migration
+    // explica o bug em prosa exatamente ENTRE `r.p_ij,` e o `NULL, NULL`. Sem tirar os `--`
+    // o regex não casa e o gate reprova código íntegro (falso-VERMELHO). É a mesma lição do
+    // §"o ALVO mente": todo predicado textual mede o CÓDIGO, nunca a prosa que o descreve —
+    // só que aqui a linguagem do alvo é outra.
+    const semComentariosSql = (s: string) =>
+      s.split('\n').filter((l) => !/^\s*--/.test(l)).join('\n');
+    const mig = semComentariosSql(
+      readFileSync(resolve(RAIZ, 'supabase/migrations/20260814223445_farmer_recomendacoes_geracao_vigente.sql'), 'utf8'),
+    );
+    // cross-sell: `r.p_ij,\n    NULL, NULL,\n    r.affinity_score`
+    expect(mig).toMatch(/r\.p_ij,\s*NULL,\s*NULL,\s*r\.affinity_score/);
+    // bundle: `r.p_bundle,\n    NULL, NULL,\n    r.affinity_bundle`
+    expect(mig).toMatch(/r\.p_bundle,\s*NULL,\s*NULL,\s*r\.affinity_bundle/);
+    // e as colunas de dinheiro seguem NA lista de INSERT (se saíssem, o DEFAULT 0 da tabela
+    // voltaria a preencher — que é exatamente o número fabricado que este gate existe p/ barrar).
+    expect(mig).toMatch(/p_ij,\s*m_ij,\s*lie,\s*affinity_score/);
+    expect(mig).toMatch(/p_bundle,\s*m_bundle,\s*lie_bundle,\s*affinity_bundle/);
   });
 
   it('G5 CALIBRAÇÃO: os padrões casam a forma PRÉ-fix e não casam a PÓS-fix', () => {

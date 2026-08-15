@@ -35,6 +35,8 @@ interface RecoLinha {
  * exatamente no dia em que o loop de feedback existir que a coluna passaria a mentir em silêncio.
  */
 const STATUS_ACEITO = 'aceito';
+/** Geração aposentada por um recálculo (migration 20260814223445) — nunca chegou a ser ofertada. */
+const STATUS_EXPIRADO = 'expirado';
 
 function IntelligenceManagerialTabImpl() {
   const { data: allScores, isLoading, isError } = useQuery({
@@ -103,6 +105,13 @@ function IntelligenceManagerialTabImpl() {
   }, {} as Record<string, typeof allScores>) || {};
 
   const recoAdoption = recommendations?.reduce((acc, r) => {
+    // `expirado` FORA do denominador. Desde 20260814223445 o recálculo aposenta a geração
+    // anterior em vez de empilhá-la, e uma recomendação que o motor descartou antes de
+    // chegar ao vendedor não é uma "não-adoção" dele — é uma não-oferta. Contá-la infla o
+    // denominador a cada recálculo e faz a taxa de adoção despencar sozinha, num painel
+    // que COMPARA vendedores. Mesmo espírito do `adocaoIndisponivel` abaixo: não acusar
+    // ninguém com um número que a nossa mecânica fabricou.
+    if (r.status === STATUS_EXPIRADO) return acc;
     if (!acc[r.farmer_id]) acc[r.farmer_id] = { total: 0, accepted: 0 };
     acc[r.farmer_id].total++;
     if (r.status === STATUS_ACEITO) acc[r.farmer_id].accepted++;

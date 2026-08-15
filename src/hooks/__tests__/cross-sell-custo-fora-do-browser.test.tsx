@@ -25,9 +25,22 @@ import { renderHook, act } from '@testing-library/react';
 const tabelasLidas: string[] = [];
 const rpcsChamadas: string[] = [];
 const upserts: Array<{ tabela: string; linhas: Record<string, unknown>[] }> = [];
+/** Args de cada RPC — a persistência virou `farmer_recomendacoes_substituir`, então o
+ *  payload que antes se lia do `.upsert()` agora chega aqui (migration 20260814223445). */
+const rpcArgs: Array<{ nome: string; args: Record<string, unknown> }> = [];
 
 /** Resultado da RPC, trocável por teste (data null + error = a RPC falhou). */
 let rpcResultado: { data: unknown; error: unknown } = { data: [], error: null };
+/** Resultado da RPC de SUBSTITUIÇÃO, separado: um teste precisa dela falhando com o
+ *  get_skus_margem_positiva OK, e um resultado único não permitiria isso. */
+let rpcSubstituirResultado: { data: unknown; error: unknown } = { data: null, error: null };
+const RPC_SUBSTITUIR = 'farmer_recomendacoes_substituir';
+
+/** Linhas que a RPC de substituição recebeu (o payload persistido). */
+const linhasPersistidas = (): Record<string, unknown>[] =>
+  rpcArgs
+    .filter((c) => c.nome === RPC_SUBSTITUIR)
+    .flatMap((c) => (c.args.p_linhas as Record<string, unknown>[]) ?? []);
 
 const SKU_COMPRADO = 'sku-ja-comprado';
 const SKU_NOVO = 'sku-vendavel-novo';
@@ -90,9 +103,11 @@ function stubChain(tabela: string): unknown {
 vi.mock('@/integrations/supabase/client', () => ({
   supabase: {
     from: (tabela: string) => { tabelasLidas.push(tabela); return stubChain(tabela); },
-    rpc: (nome: string) => {
+    rpc: (nome: string, args?: Record<string, unknown>) => {
       rpcsChamadas.push(nome);
-      return { then: (resolve: (v: unknown) => void) => resolve(rpcResultado) };
+      rpcArgs.push({ nome, args: args ?? {} });
+      const r = nome === RPC_SUBSTITUIR ? rpcSubstituirResultado : rpcResultado;
+      return { then: (resolve: (v: unknown) => void) => resolve(r) };
     },
   },
 }));
@@ -107,7 +122,9 @@ beforeEach(() => {
   tabelasLidas.length = 0;
   rpcsChamadas.length = 0;
   upserts.length = 0;
+  rpcArgs.length = 0;
   rpcResultado = { data: [{ product_id: SKU_NOVO }], error: null };
+  rpcSubstituirResultado = { data: null, error: null };
   impMock.mockReturnValue({ isImpersonating: false, effectiveUserId: 'farmer-1' });
 });
 
@@ -128,6 +145,7 @@ describe('useCrossSellEngine — custo fora do browser', () => {
     // Degradar para "recomenda tudo" poria produto de PREJUÍZO no topo da lista da vendedora.
     expect(result.current.recommendations).toEqual([]);
     expect(upserts).toEqual([]);
+    expect(rpcsChamadas).not.toContain(RPC_SUBSTITUIR); // não expira a geração vigente
 
     // ...mas fail-closed CALADO é o defeito do #1606 num caminho novo: lista vazia por falha
     // fica indistinguível de "não há o que recomendar". A falha tem de ser DECLARADA, e o estado
@@ -144,20 +162,24 @@ describe('useCrossSellEngine — custo fora do browser', () => {
     expect(rpcsChamadas).toContain('get_skus_margem_positiva');
   });
 
-  it('D: a persistência não grava m_ij (m_ij ÷ cluster_volume_estimate = margem unitária)', async () => {
+  it('D: o payload não carrega m_ij (m_ij ÷ cluster_volume_estimate = margem unitária)', async () => {
     const { result } = renderHook(() => useCrossSellEngine());
     await act(async () => { await result.current.calculateRecommendations(); });
 
-    const linhas = upserts.filter((u) => u.tabela === 'farmer_recommendations').flatMap((u) => u.linhas);
+    const linhas = linhasPersistidas();
     expect(linhas.length).toBeGreaterThan(0); // controle positivo: houve o que gravar
-    for (const linha of linhas) expect(linha.m_ij ?? null).toBeNull();
+    // Antes o payload mandava `m_ij: null` explícito (o upsert do PostgREST preserva coluna
+    // ausente). Com a RPC a coluna nem viaja: quem fixa NULL é o INSERT server-side. Asserto a
+    // AUSÊNCIA da chave, não o valor null — `linha.m_ij ?? null` passaria trivialmente numa
+    // chave inexistente e o assert viraria teatro.
+    for (const linha of linhas) expect(Object.prototype.hasOwnProperty.call(linha, 'm_ij')).toBe(false);
   });
 
-  it('E: a afinidade vai na coluna DEDICADA — `lie` fica NULL (quem lê `lie` lê DINHEIRO)', async () => {
+  it('E: a afinidade vai na coluna DEDICADA e o dinheiro não sobe do browser', async () => {
     const { result } = renderHook(() => useCrossSellEngine());
     await act(async () => { await result.current.calculateRecommendations(); });
 
-    const linhas = upserts.filter((u) => u.tabela === 'farmer_recommendations').flatMap((u) => u.linhas);
+    const linhas = linhasPersistidas();
     expect(linhas.length).toBeGreaterThan(0); // controle positivo: houve o que gravar
     for (const linha of linhas) {
       // `lie` é Lucro Incremental Esperado em REAIS, e nem todo consumidor apenas ORDENA por
@@ -166,9 +188,36 @@ describe('useCrossSellEngine — custo fora do browser', () => {
       // `{ style: 'currency', currency: 'BRL' }` e divide por hora de ligação. Guardar um score
       // adimensional (~0,009) numa coluna de dinheiro exibe "R$ 0,01" de lucro esperado.
       // Ordenar por afinidade continua sendo o desejado — muda a COLUNA, não a intenção.
-      expect(linha.lie ?? null).toBeNull();
+      expect(Object.prototype.hasOwnProperty.call(linha, 'lie')).toBe(false);
       expect(typeof linha.affinity_score).toBe('number');
       expect(Number(linha.affinity_score)).toBeGreaterThan(0);
     }
+  });
+
+  it('F: a persistência SUBSTITUI a geração — manda run_id e a geração vista (compare-and-swap)', async () => {
+    const { result } = renderHook(() => useCrossSellEngine());
+    await act(async () => { await result.current.calculateRecommendations(); });
+
+    const chamada = rpcArgs.find((c) => c.nome === RPC_SUBSTITUIR);
+    expect(chamada).toBeDefined();
+    expect(chamada!.args.p_farmer_id).toBe('farmer-1');
+    // run_id novo a cada execução, para a linha saber de qual recálculo veio.
+    expect(typeof chamada!.args.p_run_id).toBe('string');
+    expect(String(chamada!.args.p_run_id)).toMatch(/^[0-9a-f-]{36}$/i);
+    // Cenário semeia `farmer_recommendations: []` → não há geração vigente → NULL casa NULL
+    // na RPC. O que importa aqui é que o parâmetro EXISTE: sem ele a RPC perderia o
+    // compare-and-swap e dois recálculos sobrepostos voltariam a se sobrescrever.
+    expect(Object.prototype.hasOwnProperty.call(chamada!.args, 'p_geracao_vista')).toBe(true);
+    expect(chamada!.args.p_geracao_vista).toBeNull();
+  });
+
+  it('G: na lente "Ver como" NÃO persiste (o master inspeciona, não regrava a carteira do alvo)', async () => {
+    impMock.mockReturnValue({ isImpersonating: true, effectiveUserId: 'outro-farmer' });
+    const { result } = renderHook(() => useCrossSellEngine());
+    await act(async () => { await result.current.calculateRecommendations(); });
+
+    // Sem este assert, expirar-por-farmer na lente apagaria a geração vigente de OUTRA
+    // vendedora — o desenho novo torna a regressão mais cara que na época do upsert.
+    expect(rpcsChamadas).not.toContain(RPC_SUBSTITUIR);
   });
 });

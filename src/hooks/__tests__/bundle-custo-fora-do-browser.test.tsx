@@ -28,6 +28,14 @@ const rpcsChamadas: string[] = [];
 // `linha` pode ser UMA linha ou um LOTE: o engine grava as recomendações num único
 // insert com array (#1594) e as regras de associação linha a linha.
 const inserts: Array<{ tabela: string; linha: Record<string, unknown> | Record<string, unknown>[] }> = [];
+/** A persistência virou RPC transacional (migration 20260814223445): o payload que antes
+ *  se lia do `.insert()` agora chega como `p_linhas` aqui. */
+const rpcArgs: Array<{ nome: string; args: Record<string, unknown> }> = [];
+const RPC_SUBSTITUIR = 'farmer_bundle_recomendacoes_substituir';
+const linhasPersistidas = (): Record<string, unknown>[] =>
+  rpcArgs
+    .filter((c) => c.nome === RPC_SUBSTITUIR)
+    .flatMap((c) => (c.args.p_linhas as Record<string, unknown>[]) ?? []);
 
 let rpcResultado: { data: unknown; error: unknown } = { data: [], error: null };
 
@@ -97,9 +105,11 @@ function stubChain(tabela: string): unknown {
 vi.mock('@/integrations/supabase/client', () => ({
   supabase: {
     from: (tabela: string) => { tabelasLidas.push(tabela); return stubChain(tabela); },
-    rpc: (nome: string) => {
+    rpc: (nome: string, args?: Record<string, unknown>) => {
       rpcsChamadas.push(nome);
-      return { then: (resolve: (v: unknown) => void) => resolve(rpcResultado) };
+      rpcArgs.push({ nome, args: args ?? {} });
+      const r = nome === RPC_SUBSTITUIR ? { data: null, error: null } : rpcResultado;
+      return { then: (resolve: (v: unknown) => void) => resolve(r) };
     },
   },
 }));
@@ -115,6 +125,7 @@ beforeEach(() => {
   tabelasLidas.length = 0;
   rpcsChamadas.length = 0;
   inserts.length = 0;
+  rpcArgs.length = 0;
   rpcResultado = { data: [{ product_id: SKU_B }, { product_id: SKU_C }], error: null };
   impMock.mockReturnValue({ isImpersonating: false, effectiveUserId: 'farmer-1' });
 });
@@ -135,6 +146,7 @@ describe('useBundleEngine — custo fora do browser', () => {
 
     expect(result.current.customerBundles.flatMap((c) => c.bundles)).toEqual([]);
     expect(inserts.filter((i) => i.tabela === 'farmer_bundle_recommendations')).toEqual([]);
+    expect(rpcsChamadas).not.toContain(RPC_SUBSTITUIR); // não expira a geração vigente
   });
 
   it('C: não lê product_costs — consulta a RPC', async () => {
@@ -149,12 +161,10 @@ describe('useBundleEngine — custo fora do browser', () => {
     const { result } = renderHook(() => useBundleEngine());
     await act(async () => { await result.current.calculateBundles(); });
 
-    // O insert é EM LOTE (uma chamada com N linhas — #1594), então achatar é obrigatório:
-    // sem o flat, `linha` seria o próprio array, `linha.bundle_products` viria `undefined` e
-    // o laço abaixo rodaria zero vez — o assert passaria sem olhar produto nenhum.
-    const linhas = inserts
-      .filter((i) => i.tabela === 'farmer_bundle_recommendations')
-      .flatMap((i) => (Array.isArray(i.linha) ? i.linha : [i.linha]));
+    // A chamada é EM LOTE (uma RPC com N linhas), então achatar é obrigatório: sem o flat,
+    // `linha` seria o próprio array, `linha.bundle_products` viria `undefined` e o laço
+    // abaixo rodaria zero vez — o assert passaria sem olhar produto nenhum.
+    const linhas = linhasPersistidas();
     expect(linhas.length).toBeGreaterThan(0); // controle positivo: houve o que gravar
     for (const linha of linhas) {
       const produtos = (linha.bundle_products ?? []) as Record<string, unknown>[];
@@ -170,9 +180,7 @@ describe('useBundleEngine — custo fora do browser', () => {
     const { result } = renderHook(() => useBundleEngine());
     await act(async () => { await result.current.calculateBundles(); });
 
-    const linhas = inserts
-      .filter((i) => i.tabela === 'farmer_bundle_recommendations')
-      .flatMap((i) => (Array.isArray(i.linha) ? i.linha : [i.linha]));
+    const linhas = linhasPersistidas();
     expect(linhas.length).toBeGreaterThan(0); // controle positivo: houve o que gravar
     for (const linha of linhas) {
       // Três consumidores FORA deste módulo leem o VALOR de `lie_bundle`, não só a ordem:
@@ -181,7 +189,11 @@ describe('useBundleEngine — custo fora do browser', () => {
       // `generate-tactical-plan` o injeta no prompt do LLM. Com a afinidade (~0,0094) ali, o
       // card anunciaria "R$ 0,01" de LIE e ~R$ 0,02/h onde os planos de prod registram
       // R$ 1.250,50 / R$ 800. Ordenar por afinidade segue certo — na coluna própria.
-      expect(linha.lie_bundle ?? null).toBeNull();
+      // A garantia migrou para o servidor: a RPC fixa NULL em m_bundle/lie_bundle no INSERT,
+      // e a coluna nem sobe do browser. Asserto a AUSÊNCIA da chave — `?? null` passaria
+      // trivialmente numa chave inexistente, virando teatro.
+      expect(Object.prototype.hasOwnProperty.call(linha, 'lie_bundle')).toBe(false);
+      expect(Object.prototype.hasOwnProperty.call(linha, 'm_bundle')).toBe(false);
       expect(typeof linha.affinity_bundle).toBe('number');
       expect(Number(linha.affinity_bundle)).toBeGreaterThan(0);
     }
