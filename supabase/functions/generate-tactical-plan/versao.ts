@@ -16,7 +16,10 @@
 // ⚠️ O sensor só prova versões A PARTIR DE SI MESMO: um bundle anterior a este PR responde a sonda
 // VELHA (sem `versao`). Ausência do campo = bundle pré-marcador, não "versão errada".
 
-export { classificarSonda, erroSondaAmbigua, respostaSonda } from "../_shared/sonda-versao.ts";
+// As irmãs re-exportam `respostaSonda` também, porque o `index.ts` delas chama `respostaSonda(VERSAO)`
+// direto. Aqui não: a resposta passa pelo composer abaixo (que acrescenta os campos do #1618), então
+// re-exportar seria export sem consumidor — o `knip` do CI barra, e com razão.
+export { classificarSonda, erroSondaAmbigua } from "../_shared/sonda-versao.ts";
 
 import { respostaSonda } from "../_shared/sonda-versao.ts";
 import { MODELO, toolDoModo } from "./plano-helpers.ts";
