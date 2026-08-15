@@ -347,7 +347,7 @@ não mediu**.
 |---|---|
 | `bun run authz:check` | exit **0** — 8 avisos (3 baselinados + 4 alvo-opaco + 1 pré-existente), **0 erros novos** |
 | `bun run authz:audit:prod` | exit **0** — gate vale nas 19 vivas, as 3 baselinadas batem no md5 |
-| suíte completa (`vitest`) | **672 arquivos / 6.273 testes**, exit **0** |
+| suíte completa (`vitest`) | **672 arquivos / 6.275 testes**, exit **0** (medida DUAS vezes: a `main` andou 4 commits durante a entrega; rebase + re-medição antes de fechar, e os números do detector ficaram idênticos — 7/648, 2 posteriores) |
 | testes de authz (4 arquivos) | 112 → **129**: delta **+17**, exatamente os escritos |
 | `scripts:typecheck` · `eslint` (7 arquivos) · `shellcheck` | exit **0** |
 
