@@ -413,3 +413,104 @@ portal Sayerlack) tiveram a superfície da lib medida antes: só `.from()` e `.r
 4. Versionar `deno.lock` (hoje no `.gitignore`) — reprodutibilidade + chave de cache estável. **Subiu de
    prioridade:** com todo o repo em `@2` (range, não pin), o lock passa a ser o *único* lugar que prende a
    versão resolvida; sem ele, uma publicação do `@supabase/supabase-js` pode ficar vermelha num PR alheio.
+
+# Sequela (2026-08-15): a main VERMELHA sem commit culpado — o gate herdava o drift do FRONTEND, e o gatilho era o RELÓGIO
+
+## O achado
+
+`validate` vermelho na `main`, step **"Type check (edge functions — Deno)"**:
+
+```
+error: Could not find npm package '@swc/core-linux-arm-gnueabihf' matching '1.16.0'.
+❌ NÃO FOI POSSÍVEL TYPE-CHECAR as edges (exit 1)
+```
+
+Auto-merge de **todos** os PRs parado (o `auto-merge.yml` exige `validate` verde), ~20 worktrees sem
+entregar. E nenhum commit para culpar: entre o último verde (09:37Z) e o primeiro vermelho (17:27Z) a
+`main` só recebeu dois commits do Lovable, ambos tocando **apenas** `src/integrations/supabase/types.ts`.
+`@swc/core` nem está no `package.json` — entra por `@vitejs/plugin-react-swc`.
+
+## A mecânica — três fatos que só juntos explicam
+
+1. **O gate lia o `package.json` do frontend.** O `spawnSync` roda com `cwd: raiz`, e o Deno
+   auto-resolve o `package.json` de lá. Prova mínima: um `deno check` de um `.ts` **vazio**, que não
+   importa nada, rodado da raiz com `DENO_DIR` virgem, baixa o packument de `vitest`, `@eslint/js`,
+   `@hookform/resolvers`, `@elevenlabs/react`… — as ~100 deps de build/UI, nenhuma usada por edge
+   alguma. O gate de *edge* era refém do grafo npm do *frontend*.
+2. **O Deno tem cooldown de supply-chain** (`--minimum-dependency-age`, default 24h): recusa versão
+   publicada há menos disso. A mensagem completa denuncia — e foi o fio da meada:
+   `A newer matching version was found, but it was not used because it was newer than the specified
+   minimum dependency date of 2026-08-14 17:49:11 UTC`.
+3. **Publicação escalonada + pin exato.** `@swc/core@1.16.0` saiu 14/08 **17:23:06Z**; seus **12**
+   binários de plataforma, pinados em versão **EXATA** nos `optionalDependencies`, terminaram de sair
+   só às **18:01:25Z**.
+
+Junte: a janela de 24h **desliza com o relógio**, então o pai entrou na janela 38 min antes dos filhos.
+Nessa fresta o Deno aceita `@swc/core@1.16.0` e recusa os binários dele — e como o pin é exato, **não há
+versão anterior para onde cair** (um range `^` teria degradado em silêncio para a 1.15.47 madura).
+
+Cronologia, e o encaixe é de 4 minutos:
+
+| momento | corte de 24h | estado |
+|---|---|---|
+| 15/08 09:37Z | 14/08 09:37Z | pai ainda "novo" → Deno cai para 1.15.47 → **verde** |
+| 15/08 **17:23:06Z** | = publicação do pai | pai entra na janela, filhos não |
+| 15/08 **17:27Z** | — | **primeiro run vermelho** |
+| 15/08 **18:01:25Z** | = último binário | fresta fecha → **volta a verde sozinho** |
+
+O erro **anda** entre binários conforme cada um amadurece (`linux-arm-gnueabihf` no CI às 17:34Z,
+`linux-arm64-gnu` no repro local às 17:49Z): assinatura inconfundível de janela deslizante.
+
+## O reflexo errado — e por que
+
+O diagnóstico natural é "o `^` deixou escorregar para uma versão quebrada; **pine** `@swc/core` via
+`overrides`". O Deno **respeita** `overrides` (verificado: com `"@swc/core": "1.13.2"` ele resolve
+1.13.2), então funcionaria. Mesmo assim é o conserto errado:
+
+- trata **um** pacote e deixa a **classe** viva — qualquer dep de build com binários de plataforma
+  repete isso na próxima release;
+- **congela o build do frontend** para consertar um gate de *edge* — acoplamento invertido;
+- mexe em `package.json` + **3** lockfiles, a superfície mais disputada do repo (~20 worktrees).
+
+O gate, aliás, **acertou**: ele é fail-closed de propósito e reprovou uma resolução que de fato não
+fechou. Afrouxá-lo (`--no-check`, allowlist) trocaria o problema por cegueira.
+
+## A correção
+
+`DENO_NO_PACKAGE_JSON=1` no `spawnSync` do gate (`scripts/edges-typecheck-gate.ts`) — o Deno para de
+auto-resolver o `package.json`. As edges seguem resolvendo seus `npm:` explícitos do registry, que é
+o que o Edge Runtime do Supabase faz de verdade (lá não existe `package.json`). Um arquivo, zero
+lockfile, e a classe inteira morre: o gate deixa de ter opinião sobre dependência de frontend.
+
+Extraído para `ambienteDeno()` (exportado) para o teste travar o invariante — a chave sumir devolve o
+gate à mercê do relógio, e a falha seria **intermitente**, ~24h depois de uma release alheia.
+
+## Falsificação
+
+A janela fecha sozinha às 18:01:25Z, então "passou" deixaria de distinguir **fix** de **auto-cura** —
+o oráculo tinha prazo de validade. `--minimum-dependency-age` aceita timestamp absoluto, o que torna o
+teste determinístico **a qualquer hora**, hoje ou daqui a um mês:
+
+```bash
+# corte que replica o 1º run vermelho (pai maduro, binários não)
+deno check --no-lock --node-modules-dir=none --minimum-dependency-age=2026-08-14T17:27:00Z x.ts
+```
+
+| | resultado |
+|---|---|
+| sem `DENO_NO_PACKAGE_JSON` | **exit 1** — `Could not find npm package '@swc/core-darwin-arm64' matching '1.16.0'` |
+| com `DENO_NO_PACKAGE_JSON=1` | **exit 0**, e **zero** downloads do registry npm |
+
+(`darwin-arm64` saiu 17:27:20Z — 20 s depois do corte.) O repro também exigiu `DENO_DIR` **virgem**: com
+cache quente o gate passava local enquanto o CI, sempre frio, quebrava — cache quente é ausência de
+sinal, não aprovação.
+
+## Lição transferível
+
+**Um gate só deve resolver o que ele checa.** O acoplamento aqui não foi escrito por ninguém — veio de
+graça do `cwd`, e ficou invisível enquanto o registro npm estava calmo. Vale a pergunta em qualquer
+gate: *o que ele baixa que não tem nada a ver com o que ele afirma?*
+
+E: **quando o gatilho é o relógio, o oráculo tem prazo de validade.** Um bug que se auto-cura fabrica
+falso-positivo em quem for validar depois — a prova precisou congelar o tempo (`--minimum-dependency-age`)
+em vez de correr contra ele.
