@@ -16,6 +16,7 @@ import * as conciliar from "../conciliar-pedido-portal/versao.ts";
 import * as gerarDiario from "../gerar-pedidos-diario/versao.ts";
 import * as programado from "../pedido-programado-enviar/versao.ts";
 import * as tactical from "../generate-tactical-plan/versao.ts";
+import * as argumento from "../generate-bundle-argument/versao.ts";
 
 const EDGES: Array<{ nome: string; mod: { VERSAO: string; EFEITO: string } }> = [
   { nome: "disparar-pedidos-aprovados", mod: disparar },
@@ -24,6 +25,7 @@ const EDGES: Array<{ nome: string; mod: { VERSAO: string; EFEITO: string } }> = 
   { nome: "gerar-pedidos-diario", mod: gerarDiario },
   { nome: "pedido-programado-enviar", mod: programado },
   { nome: "generate-tactical-plan", mod: tactical },
+  { nome: "generate-bundle-argument", mod: argumento },
 ];
 
 Deno.test("toda edge instrumentada declara VERSAO no formato vN.N-slug", () => {
@@ -85,5 +87,75 @@ Deno.test("generate-tactical-plan: o marcador NOMEIA a fatia — 'sensor-inicial
   const versaoTactical: string = tactical.VERSAO;
   if (versaoTactical === "v1.0-sensor-inicial") {
     throw new Error("generate-tactical-plan: a sonda é pré-existente (#1618) — o marcador tem de nomear a fatia");
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// generate-bundle-argument — a irmã da tactical-plan no #1520, e o caso mais agudo: a única das
+// duas SEM sensor nenhum (nem sonda, nem canária), e a única cujo dano já é ATIVO. O front
+// publicado parou de mandar `margin`/`lieBundle`; o bundle anterior imprime `p.margin.toFixed(2)`
+// incondicionalmente → TypeError → HTTP 500, o argumento de venda não gera.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Fonte da edge SEM comentário — o gate proíbe uma FORMA de código, e o comentário que explica por
+// que a forma saiu cita a forma. Sem o filtro, o gate fica vermelho contra uma edge correta
+// (aconteceu na primeira execução deste arquivo). Mesma solução do gate `afinidade não é dinheiro`.
+// Os blocos de comentário saem ANTES do filtro de linha: um JSDoc não começa com barra-barra em
+// toda linha, então o filtro de linha sozinho o deixaria passar inteiro.
+function codigoDaEdge(nome: string): string {
+  return Deno.readTextFileSync(`supabase/functions/${nome}/index.ts`)
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .split("\n")
+    .filter((l) => !/^\s*\/\//.test(l))
+    .join("\n");
+}
+
+Deno.test("generate-bundle-argument: a sonda decide por classificarSonda, não por `=== true` cru", () => {
+  // O founder invoca do SQL Editor, onde `jsonb_build_object('probe', true)` vira a STRING "true"
+  // com facilidade. Um `=== true` cru mandaria a verificação para o fluxo real — token gasto, e
+  // pior: a resposta ficaria indistinguível de "bundle velho", corrompendo a única prova que a
+  // sonda existe para dar.
+  const codigo = codigoDaEdge("generate-bundle-argument");
+  if (!/classificarSonda\(/.test(codigo)) {
+    throw new Error("não chama classificarSonda — a sonda não é fail-closed");
+  }
+  if (/\bbody\.probe\s*===\s*true/.test(codigo)) {
+    throw new Error("voltou o `body.probe === true` cru — \"true\" string cai no fluxo real");
+  }
+});
+
+Deno.test("generate-bundle-argument: a sonda responde ANTES do createClient e do modelo", () => {
+  // O valor da sonda é ser o único caminho sem custo. Se ela migrar para depois do `createClient`
+  // ou do `new Anthropic`, deixa de ser barata e volta a haver motivo para não rodá-la.
+  const codigo = codigoDaEdge("generate-bundle-argument");
+  const posSonda = codigo.indexOf("classificarSonda(");
+  const posCliente = codigo.indexOf("createClient(");
+  const posModelo = codigo.indexOf("new Anthropic(");
+  if (posSonda < 0 || posCliente < 0 || posModelo < 0) {
+    throw new Error("âncoras não encontradas — o gate mediu o arquivo errado (controle positivo vazio)");
+  }
+  if (posSonda > posCliente || posSonda > posModelo) {
+    throw new Error("a sonda desceu para depois do createClient/Anthropic — deixou de ser IO-free");
+  }
+});
+
+Deno.test("CALIBRAÇÃO: os padrões reprovam a forma PRÉ-fix e o filtro não cega o gate", () => {
+  // Sem isto os dois testes acima só provariam que o arquivo existe (deploy.md: "canária que não
+  // discrimina é teatro verde"). A forma antiga tem de FALHAR, e o filtro de comentário tem de
+  // apagar SÓ comentário — se comesse código, a forma proibida voltaria em silêncio.
+  const semComentario = (s: string) =>
+    s.replace(/\/\*[\s\S]*?\*\//g, "").split("\n").filter((l) => !/^\s*\/\//.test(l)).join("\n");
+
+  const soComentario = "  // `classificarSonda` no lugar de `body.probe === true`: o SQL Editor manda string";
+  if (/\bbody\.probe\s*===\s*true/.test(semComentario(soComentario))) {
+    throw new Error("o filtro não removeu o comentário — o gate reprovaria edge correta");
+  }
+  const codigoProibido = "    if (body.probe === true) {";
+  if (!/\bbody\.probe\s*===\s*true/.test(semComentario(codigoProibido))) {
+    throw new Error("o filtro comeu CÓDIGO — o gate deixaria a forma proibida voltar em silêncio");
+  }
+  const jsdoc = "/**\n * exemplo com body.probe === true dentro de bloco\n */";
+  if (/\bbody\.probe\s*===\s*true/.test(semComentario(jsdoc))) {
+    throw new Error("bloco /* */ escapou do filtro — JSDoc citando a forma reprovaria edge correta");
   }
 });
