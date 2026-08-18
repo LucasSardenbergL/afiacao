@@ -29,6 +29,7 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 import { authorizeCronOrStaff, corsHeaders } from '../_shared/auth.ts';
 import { fetchAll } from '../_shared/paginate.ts';
 import { sugerirMapeamentos, validarGabarito, PARSER_VERSION } from '../_shared/sayerlack-sku.ts';
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from './versao.ts';
 
 const MIN_GABARITO = 20; // base mínima de de-paras manuais p/ confiar no parser (185 em prod)
 
@@ -38,12 +39,39 @@ Deno.serve(async (req) => {
   const auth = await authorizeCronOrStaff(req);
   if (!auth.ok) return auth.response;
 
+  // ⚠️ SONDA DE VERSÃO — antes do createClient e de toda leitura, porque daqui pra frente a edge
+  // grava de-para de fornecedor (o que torna o item visível ao motor de reposição).
+  // Esta edge NÃO lia o corpo: o cron dispara sem body. O parse abaixo é tolerante justamente por
+  // isso — ausente, inválido ou não-objeto vira {}, que o classificador lê como "sem probe" e
+  // segue o caminho do cron, igual a antes. Ver versao.ts / _shared/sonda-versao.ts.
+  let corpo: unknown = {};
+  try {
+    corpo = await req.json();
+  } catch {
+    corpo = {};
+  }
+  const decisaoSonda = classificarSonda(corpo);
+  if (decisaoSonda.tipo === 'sonda') {
+    return new Response(JSON.stringify(respostaSonda(VERSAO)), {
+      status: 200,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+  if (decisaoSonda.tipo === 'ambiguo') {
+    return new Response(
+      JSON.stringify({ error: erroSondaAmbigua(decisaoSonda.valor, EFEITO), versao: VERSAO }),
+      { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+    );
+  }
+
   const supabase = createClient(
     Deno.env.get('SUPABASE_URL')!,
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
   );
-  const json = (body: unknown, status = 200) =>
-    new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+  // `versao` em TODA resposta (sucesso, abortada pelo gabarito e erro): a pergunta "essa correção
+  // subiu?" costuma ser feita sobre uma corrida que já passou, não sobre uma sonda nova.
+  const json = (body: Record<string, unknown>, status = 200) =>
+    new Response(JSON.stringify({ ...body, versao: VERSAO }), { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 
   try {
     // 1) universo elegível (catálogo comprável SEM de-para, guards do motor espelhados na view)

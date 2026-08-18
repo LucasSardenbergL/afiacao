@@ -3,6 +3,7 @@ import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { auditAuthz, auditCompleto, type Migration } from './authz-gate-check';
 import { AUTHZ_TABELAS_FECHADAS } from './authz-tabelas-fechadas';
+import { AUTHZ_FUNCOES_FECHADAS } from './authz-funcoes-fechadas';
 import { AUTHZ_MANIFEST, ACKNOWLEDGED_SENSITIVE, manifestKey } from './authz-manifest';
 import { AUTHZ_REESCRITAS_CONHECIDAS } from './authz-reescritas-conhecidas';
 import { detectarReescritaViva } from './lib/authz-reescrita';
@@ -147,15 +148,24 @@ describe('auditAuthz — anti falso-negativo (re-challenge Codex)', () => {
 });
 
 describe('auditAuthz — Parte C (grants de tabela fechada por privilégio)', () => {
-  /** as âncoras declaradas precisam existir entre as migrations, senão o gate acusa ANCORA_AUSENTE */
-  const ancoras = Object.values(AUTHZ_TABELAS_FECHADAS)
-    .map((e) => e.fechadaPor)
-    .filter((a): a is string => a !== null)
-    .map((a) => mig(a, '-- âncora (fixture)'));
+  /** as âncoras declaradas precisam existir entre as migrations, senão o gate acusa ANCORA_AUSENTE.
+   *  Inclui as da Parte E (funções) porque o ponto de entrada é `auditCompleto`: sem elas, cada
+   *  entrada de AUTHZ_FUNCOES_FECHADAS viraria FUNCAO_ANCORA_AUSENTE e afogaria o que se testa aqui. */
+  const ancoras = [
+    ...new Set(
+      [...Object.values(AUTHZ_TABELAS_FECHADAS), ...Object.values(AUTHZ_FUNCOES_FECHADAS)]
+        .map((e) => e.fechadaPor)
+        .filter((a): a is string => a !== null),
+    ),
+  ].map((a) => mig(a, '-- âncora (fixture)'));
 
   it('as entradas com fechadaPor=null viram FECHO_PENDENTE (warn), e nenhum erro da Parte C', () => {
     const f = auditCompleto([...ancoras, mig('20260101000000_noop.sql', 'SELECT 1;')]);
-    const pendentes = f.filter((x) => x.msg.includes('FECHO_PENDENTE'));
+    // `[FECHO_PENDENTE]` COM os colchetes, e não a substring solta: a Parte E emite
+    // `[FUNCAO_FECHO_PENDENTE]`, que CONTÉM 'FECHO_PENDENTE'. Sem o delimitador, este filtro
+    // passou a contar achados de outra parte e o teste caiu — prefixo não desambigua substring,
+    // delimitador sim.
+    const pendentes = f.filter((x) => x.msg.includes('[FECHO_PENDENTE]'));
     const esperado = Object.values(AUTHZ_TABELAS_FECHADAS).filter((e) => e.fechadaPor === null).length;
     expect(pendentes).toHaveLength(esperado);
     expect(pendentes.every((x) => x.level === 'warn')).toBe(true);

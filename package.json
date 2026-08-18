@@ -17,6 +17,7 @@
     "audit:migrations": "bun scripts/audit-custom-migrations.ts",
     "authz:check": "bun scripts/authz-gate-check.ts",
     "authz:grants:prod": "bun db/audit-grants-tabelas-fechadas.ts",
+    "authz:funcoes:prod": "bun db/audit-grants-funcoes-fechadas.ts",
     "authz:audit:prod": "bun db/audit-authz-reescritas-prod.ts",
     "bunpin:check": "bun scripts/bun-pin-gate-check.ts",
     "docs:indice": "bun scripts/docs-indice-gate-check.ts",

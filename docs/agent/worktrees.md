@@ -88,6 +88,19 @@ Silva, joao@exemplo.com) sem permissão` passava inteiro — sem aspas e abaixo 
 Implementação descartada por inteiro. **A re-checagem pré-`gh pr create` evita o PR duplicado; só a
 pré-implementação evita a hora perdida.**
 
+⚠️ **E a varredura por TÍTULO é CEGA a quem já MERGEOU (2026-08-15).** Falsificado contra 3
+duplicatas do mesmo dia: `git log origin/main --format='%s' | grep -c <símbolo>` → **0** para
+`reposicao_pos_marcador` e `DENO_NO_PACKAGE_JSON`; `git grep <símbolo> origin/main` → **1** para os
+dois. Duas causas independentes, cada uma bastando sozinha: (a) `gh pr list` lista **aberto** por
+padrão, e o entregador já mergeara; (b) **o PR entrega sob o tema DELE** — o `c542210c` registrou a
+RPC no manifesto como consequência de *"o eixo do gate passa a ver COMPRAS"*, sem nenhum termo que
+você buscaria; quanto mais amplo o PR alheio, mais invisível ao título e mais provável que tenha
+comido o seu item (ali comeu DOIS — o registro da RPC e um follow-up de doc, no mesmo commit).
+⇒ procure o **ARTEFATO**, não o discurso sobre ele: `git fetch && git grep <símbolo> origin/main`
+(`git log -S` para quem introduziu). O símbolo é literal e está na main se alguém entregou, tenha o
+PR o nome que tiver — e sem o `git fetch` na frente o grep devolve "não existe" com cara de
+procura de verdade. Caso completo: [duplicata-por-objetivo.md](../historico/duplicata-por-objetivo.md).
+
 **Rede automática (2026-07-23):** hook `.claude/hooks/pr-collision-guard.sh` (PreToolUse Bash)
 re-executa a conferência POR ARQUIVO na hora do `gh pr create` — fetch fresco + interseção de TRÊS
 pontos com a `origin/main` + `gh pr list --json files` dos PRs abertos de outras branches — e

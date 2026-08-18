@@ -19,6 +19,7 @@
 
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff, corsHeaders } from "../_shared/auth.ts";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import {
   decidirLeituraEmbalagem,
   decidirExecucaoRun,
@@ -694,7 +695,10 @@ interface BrowserlessResponse {
 }
 
 function jsonResponse(status: number, body: Record<string, unknown>): Response {
-  return new Response(JSON.stringify(body), {
+  // `versao` em TODA resposta (sucesso e erro), não só na da sonda: é o que permite descobrir o
+  // bundle a partir de uma corrida que já aconteceu — inclusive de uma que falhou, que é
+  // justamente quando se pergunta "essa correção chegou a subir?".
+  return new Response(JSON.stringify({ ...body, versao: VERSAO }), {
     status,
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
@@ -745,9 +749,31 @@ Deno.serve(async (req) => {
 
   let body: Record<string, unknown> = {};
   try {
-    body = await req.json();
+    const bruto = await req.json();
+    // Não-objeto (array, string, número) normaliza para {} — o classificador da sonda trata isso
+    // como "sem probe" e o fluxo real segue com os defaults, comportamento de antes.
+    if (typeof bruto === "object" && bruto !== null && !Array.isArray(bruto)) {
+      body = bruto as Record<string, unknown>;
+    }
   } catch {
     body = {};
+  }
+
+  // ⚠️ SONDA DE VERSÃO — único caminho sem efeito colateral, e por isso vem antes do createClient,
+  // do kill-switch e de qualquer navegação: daqui pra frente a edge abre sessão no portal do
+  // FORNECEDOR e monta linhas de pedido para ler preço. Ver versao.ts / _shared/sonda-versao.ts.
+  const decisaoSonda = classificarSonda(body);
+  if (decisaoSonda.tipo === "sonda") {
+    return new Response(JSON.stringify(respostaSonda(VERSAO)), {
+      status: 200,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+  if (decisaoSonda.tipo === "ambiguo") {
+    return new Response(
+      JSON.stringify({ error: erroSondaAmbigua(decisaoSonda.valor, EFEITO), versao: VERSAO }),
+      { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    );
   }
 
   const modo: "spike" | "full" = body.modo === "spike" ? "spike" : "full";
