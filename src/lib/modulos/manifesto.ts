@@ -641,6 +641,9 @@ export const MODULOS: ModuloApp[] = [
       "src/lib/analytics.ts",
       "src/lib/erro-mensagem.ts",
       "src/lib/escape-html.ts",
+      // Compartilhado entre `vendas` (useCrossSellEngine) e `farmer-inteligencia`
+      // (useBundleEngine) — por isso mora em plataforma, e não num dos dois.
+      "src/lib/farmer/**",
       "src/lib/format.ts",
       "src/lib/help-utils.ts",
       "src/lib/invoke-function.ts",
@@ -714,6 +717,9 @@ export const MODULOS: ModuloApp[] = [
       "src/lib/escape-html.test.ts",
       "src/lib/invoke-function.test.ts",
       "src/lib/__tests__/**",
+      // Co-localizado com a fonte (`src/lib/farmer/**`), no MESMO módulo: teste que
+      // importa código de outro módulo é vazamento de fronteira.
+      "src/lib/farmer/__tests__/**",
       "src/components/__tests__/ErrorBoundary.test.tsx",
       "src/components/__tests__/RequireFinanceiroAccess.test.tsx",
       "src/components/__tests__/RequireStaff.test.tsx",

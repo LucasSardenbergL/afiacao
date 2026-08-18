@@ -3,6 +3,12 @@ import { supabase } from '@/integrations/supabase/client';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { fetchAllPages } from '@/lib/postgrest';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
+import {
+  avaliarCompletude,
+  INSUMOS_OBRIGATORIOS_CROSS_SELL,
+  type InsumosSnapshot,
+} from '@/lib/farmer/completude-snapshot';
+import { lerHeadVigente, registrarGeracaoFarmer } from '@/lib/farmer/registrar-geracao';
 import { toast } from 'sonner';
 
 // ─── Types ───────────────────────────────────────────────────────────
@@ -158,6 +164,37 @@ export const useCrossSellEngine = () => {
     // desta execução, e chamá-los de desatualizados mentiria na direção oposta).
     let resultadoDestaExecucao = false;
 
+    // Snapshot dos insumos DESTA execução: por insumo, se a leitura deu certo e quantas
+    // linhas vieram. É o que permite ao head declarar a completude — e, mais importante,
+    // é a EVIDÊNCIA que deixa auditar a declaração em vez de confiar no rótulo.
+    const insumos: InsumosSnapshot = {};
+    // O head que esta execução VIU antes de calcular (lado "compare" do CAS do head).
+    // `undefined` = não consegui ler → o registro é PULADO, nunca feito às cegas: `null`
+    // significa "não há head" e faria o CAS passar como primeira execução, sobrescrevendo
+    // um head que existe.
+    let headVisto: string | null | undefined;
+    const runId = crypto.randomUUID();
+
+    /**
+     * Registra a geração VAZIA (ou degradada) — os caminhos que não chamam a RPC de
+     * substituição. Fail-open por dentro: nunca derruba a tela.
+     */
+    const registrarVazio = async () => {
+      if (isImpersonating || headVisto === undefined) return;
+      const { completude, motivo } = avaliarCompletude(insumos, INSUMOS_OBRIGATORIOS_CROSS_SELL);
+      await registrarGeracaoFarmer({
+        motor: 'cross_sell',
+        farmerId: effectiveUserId,
+        runId,
+        resultado: 'vazio',
+        linhasGeradas: 0,
+        completude,
+        motivo,
+        insumos,
+        headVisto,
+      });
+    };
+
     try {
       // 0. Identidade desta EXECUÇÃO + a geração que ela está substituindo.
       //
@@ -169,9 +206,10 @@ export const useCrossSellEngine = () => {
       // (nem do browser, nem do servidor).
       //
       // Na lente "Ver como" a persistência é pulada, então nem lemos.
-      const runId = crypto.randomUUID();
       let geracaoVista: string | null = null;
       if (!isImpersonating) {
+        // O head do motor, lido na MESMA janela que a geração vigente e pelo mesmo motivo.
+        headVisto = await lerHeadVigente('cross_sell', effectiveUserId);
         // Mesma ordem que a RPC usa para eleger a geração vigente (created_at desc, id desc):
         // divergir aqui faria o compare-and-swap comparar com outra linha e recusar sempre.
         const { data: vigente, error: erroVigente } = await supabase
@@ -222,9 +260,19 @@ export const useCrossSellEngine = () => {
         clientScores = await fetchAllScores();
       }
 
+      // `fetchAllPages` LANÇA em falha de página (#1545), então chegar aqui já significa
+      // leitura íntegra — `ok: true`. O que ainda pode ser zero é o CONTEÚDO, e é essa a
+      // diferença que o head passa a registrar.
+      insumos.scores = { ok: true, n: clientScores.length };
+
       if (!clientScores?.length) {
         aplicarRecomendacoes([]);
         resultadoDestaExecucao = true;
+        // Este `return` era MUDO: o recálculo saía por aqui sem gravar linha, sem
+        // registrar execução e sem toast — e era por isso que a frequência do zero não
+        // tinha como ser medida. Agora ele move o head declarando POR QUE deu zero
+        // (`degradado`: carteira sem score é dado faltando a montante, não "nada a ofertar").
+        await registrarVazio();
         return;
       }
 
@@ -249,8 +297,13 @@ export const useCrossSellEngine = () => {
       const { data: skusVendaveis, error: erroVendaveis } = (await supabase.rpc(
         'get_skus_margem_positiva',
       )) as unknown as { data: { product_id: string }[] | null; error: unknown };
+      insumos.catalogo = { ok: true, n: products.length };
       if (erroVendaveis || !skusVendaveis) {
         console.error('get_skus_margem_positiva falhou — sem recomendação (fail-closed):', erroVendaveis);
+        // `ok: false` — não é "veio vazio", é "não consegui ler". A distinção é o produto
+        // desta entrega: um head `degradado` por aqui NUNCA poderá autorizar expiração.
+        insumos.vendaveis = { ok: false, n: 0 };
+        await registrarVazio();
         // Fail-closed E DECLARADO. Só limpar a lista e sair repetiria, num caminho NOVO, o defeito
         // que o #1606 tirou deste hook: a tela mostrava fila vazia e o operador não distinguia
         // "não há o que recomendar" de "não consegui calcular" — e ia embora achando que era a
@@ -268,6 +321,7 @@ export const useCrossSellEngine = () => {
         );
       }
       const vendaveis = new Set(skusVendaveis.map((r) => r.product_id));
+      insumos.vendaveis = { ok: true, n: vendaveis.size };
 
       // 3. Load ALL sales history (avoid huge .in() URL with 3598 IDs)
       // Mesmo defeito do loop manual acima — e aqui a perda é do HISTÓRICO que alimenta as
@@ -292,10 +346,19 @@ export const useCrossSellEngine = () => {
       // Filter clientScores to only those with orders (avoid processing 3598 empty clients)
       const activeClientScores = clientScores.filter((c) => customerIdsWithOrders.has(c.customer_user_id));
       const customerIds = activeClientScores.map((c) => c.customer_user_id);
+      // Dois insumos distintos de propósito: `pedidos` é global (a base tem histórico?) e
+      // `carteira_ativa` é o universo REAL deste cálculo (a carteira DESTE farmer tem?).
+      insumos.pedidos = { ok: true, n: customerIdsWithOrders.size };
+      insumos.carteira_ativa = { ok: true, n: customerIds.length };
 
       if (!customerIds.length) {
         aplicarRecomendacoes([]);
         resultadoDestaExecucao = true;
+        // Outro `return` que era MUDO. Degrada (não "completo"): sem nenhum cliente com
+        // histórico não há coocorrência de onde tirar recomendação, então o zero não julga
+        // o portfólio — e um zero que não julga o portfólio não pode virar licença para
+        // expirar a carteira.
+        await registrarVazio();
         return;
       }
 
@@ -317,11 +380,18 @@ export const useCrossSellEngine = () => {
         .gte('confidence', 0.05)
         .gte('lift', 1.0)) as unknown as { data: AssocRuleRow[] | null; error: unknown };
       if (erroAssoc) {
+        // NÃO move o head: este caminho lança SEM limpar a tela, então a execução não
+        // concluiu e o que o operador vê segue sendo o resultado anterior. O head registra
+        // execução CONCLUÍDA — mover aqui afirmaria um desfecho que não houve.
         throw new Error(
           mensagemDeErro(erroAssoc) ??
             'Não consegui ler as regras de associação — o cálculo seria parcial e substituiria as recomendações atuais, então nada foi alterado.',
         );
       }
+      // `regras` NÃO é obrigatório-não-vazio: base sem padrão de coocorrência é estado
+      // legítimo e o motor ainda recomenda por popularidade. Mas `ok: false` acima degrada,
+      // porque aí o universo foi lido pela metade.
+      insumos.regras = { ok: true, n: (assocRules || []).length };
 
       // Build map: antecedent product -> consequent products with scores
       const assocMap = new Map<string, { productId: string; confidence: number; lift: number; support: number }[]>();
@@ -365,6 +435,17 @@ export const useCrossSellEngine = () => {
       const allProfiles: ProfileRow[] = batchResults.flatMap((r) => r.data || []);
       const profileMap = new Map<string, ProfileRow>();
       allProfiles.forEach((p) => profileMap.set(p.user_id, p));
+
+      // COBERTURA de perfil, não só contagem (achado do challenge Codex xhigh). Mais
+      // abaixo o motor faz `if (!profile) continue`: cliente sem perfil é PULADO em
+      // silêncio, e a base tem 1.633 usuários `@placeholder.local` sem `profiles` (aliases
+      // fiscais — ver database.md §5). Um farmer cujos clientes ativos caiam todos nesse
+      // grupo produziria zero com todos os insumos "não-vazios" — `completo` sem ser.
+      // Medir o universo global (`n > 0`) não pega isso; medir a INTERSEÇÃO pega.
+      insumos.clientes_com_profile = {
+        ok: true,
+        n: customerIds.filter((id) => profileMap.has(id)).length,
+      };
 
       // 6. Build omie_codigo_produto -> product UUID map
       const omieToProductId = new Map<number, string>();
@@ -595,10 +676,20 @@ export const useCrossSellEngine = () => {
       // Persistência PULADA na lente "Ver como" (somente leitura: o master inspeciona
       // as recomendações do alvo sem regravar a carteira dele).
       //
-      // `length > 0` continua sendo o guard: lote vazio quase sempre é dado faltando a
-      // montante, e expirar a carteira por causa disso deixaria a vendedora sem NENHUMA
-      // oferta. A RPC recusa o lote vazio de qualquer jeito (FG003) — não a chamamos só
-      // para tomar o erro. Mesmo raciocínio do bloco de regras no useBundleEngine.
+      // `length > 0` continua sendo o guard, e continua NÃO expirando: lote vazio pode ser
+      // dado faltando a montante, e expirar a carteira por causa disso deixaria a vendedora
+      // sem NENHUMA oferta. A RPC recusa o lote vazio de qualquer jeito (FG003).
+      //
+      // O que MUDOU: o vazio deixou de ser silencioso. Ele move o HEAD, declarando se o
+      // snapshot estava íntegro. Chegar aqui com `recRows` vazio e todos os insumos
+      // completos é o "ZERO DE VERDADE" — o cálculo concluiu que não deve haver
+      // recomendação nenhuma — e é o único sinal que autoriza a fase 2 a ligar a
+      // expiração. Até esta entrega esse estado não tinha COMO ser registrado, e é por
+      // isso que a frequência dele era desconhecida.
+      const { completude, motivo } = avaliarCompletude(insumos, INSUMOS_OBRIGATORIOS_CROSS_SELL);
+      if (!isImpersonating && recRows.length === 0) {
+        await registrarVazio();
+      }
       if (!isImpersonating && recRows.length > 0) {
         // O `error` é CAPTURADO. O supabase-js NÃO lança em erro de banco — resolve normal
         // com `error` preenchido — então o `await` solto devolveria sucesso SEM ter gravado.
@@ -611,6 +702,15 @@ export const useCrossSellEngine = () => {
             p_run_id: runId,
             p_geracao_vista: geracaoVista,
             p_linhas: recRows,
+            // O head é movido pela própria RPC, na MESMA transação: head e linhas em
+            // transações separadas divergiriam, e head divergente é medição corrompida.
+            p_completude: completude,
+            p_motivo: motivo,
+            p_insumos: insumos,
+            // O head que ESTA execução viu, lido antes do cálculo. Sem ele a RPC compararia
+            // o head consigo mesmo e um run vazio mais NOVO seria sobrescrito por este, que
+            // leu snapshot mais velho (achado do challenge Codex xhigh).
+            p_head_visto: headVisto ?? null,
           } as never,
         );
         if (erroPersistencia) {

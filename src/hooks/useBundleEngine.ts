@@ -6,6 +6,12 @@ import { toast } from 'sonner';
 import { margemConhecida } from '@/lib/scoring/margin';
 import { fetchAllPages } from '@/lib/postgrest';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
+import {
+  avaliarCompletude,
+  INSUMOS_OBRIGATORIOS_BUNDLE,
+  type InsumosSnapshot,
+} from '@/lib/farmer/completude-snapshot';
+import { lerHeadVigente, registrarGeracaoFarmer } from '@/lib/farmer/registrar-geracao';
 
 // ─── Types ───────────────────────────────────────────────────────────
 export interface AssociationRule {
@@ -160,13 +166,37 @@ export const useBundleEngine = () => {
     setCalculating(true);
     setLoading(true);
 
+    // Snapshot dos insumos DESTA execução (ver useCrossSellEngine para o racional): o head
+    // precisa declarar se o zero veio de um snapshot íntegro, e isso não se infere do
+    // resultado — só o produtor sabe.
+    const insumos: InsumosSnapshot = {};
+    // `undefined` = não consegui ler o head → registro PULADO, nunca às cegas.
+    let headVisto: string | null | undefined;
+    const runId = crypto.randomUUID();
+
+    const registrarVazio = async () => {
+      if (isImpersonating || headVisto === undefined) return;
+      const { completude, motivo } = avaliarCompletude(insumos, INSUMOS_OBRIGATORIOS_BUNDLE);
+      await registrarGeracaoFarmer({
+        motor: 'bundle',
+        farmerId: effectiveUserId,
+        runId,
+        resultado: 'vazio',
+        linhasGeradas: 0,
+        completude,
+        motivo,
+        insumos,
+        headVisto,
+      });
+    };
+
     try {
       // 0. Identidade desta EXECUÇÃO + a geração de bundles que ela substitui.
       // Lido ANTES do snapshot (money-path §10: reivindicar depois deixa a corrida
       // aberta pela porta de trás). Espelha useCrossSellEngine — ver o racional lá.
-      const runId = crypto.randomUUID();
       let geracaoVista: string | null = null;
       if (!isImpersonating) {
+        headVisto = await lerHeadVigente('bundle', effectiveUserId);
         // Mesma ordem que a RPC usa para eleger a geração vigente (created_at desc, id desc).
         const { data: vigente, error: erroVigente } = await supabase
           .from('farmer_bundle_recommendations')
@@ -237,16 +267,31 @@ export const useBundleEngine = () => {
         supabase.rpc('get_skus_margem_positiva') as unknown as Promise<{ data: { product_id: string }[] | null; error: unknown }>,
       ]);
 
+      // `fetchAllPages` LANÇA em falha de página, então chegar aqui já significa leitura
+      // íntegra — `ok: true`. O que ainda pode ser zero é o CONTEÚDO.
+      insumos.catalogo = { ok: true, n: (products || []).length };
+      insumos.scores = { ok: true, n: clientScores.length };
+
       // FAIL-CLOSED: falha na RPC → NENHUM bundle. Degradar para "monta bundle com tudo" poria
       // produto de PREJUÍZO na oferta combinada, que é o pior desfecho possível aqui.
       if (vendaveisResult.error || !vendaveisResult.data) {
         console.error('get_skus_margem_positiva falhou — sem bundles (fail-closed):', vendaveisResult.error);
+        // `ok: false` = "não consegui ler", não "veio vazio". Um head degradado por aqui
+        // nunca poderá autorizar expiração.
+        insumos.vendaveis = { ok: false, n: 0 };
         setCustomerBundles([]);
+        await registrarVazio();
         return;
       }
       const vendaveis = new Set(vendaveisResult.data.map((r) => r.product_id));
+      insumos.vendaveis = { ok: true, n: vendaveis.size };
 
-      if (!clientScores?.length) { setCustomerBundles([]); return; }
+      if (!clientScores?.length) {
+        setCustomerBundles([]);
+        // Era um `return` MUDO — a razão de a frequência do zero nunca ter sido mensurável.
+        await registrarVazio();
+        return;
+      }
 
       // Load ALL sales orders (avoid huge .in() URL)
       // Mesmo defeito do loop manual acima — aqui a perda é do HISTÓRICO que alimenta as regras
@@ -272,6 +317,19 @@ export const useBundleEngine = () => {
       });
       const profileMap = new Map<string, ProfileRow>();
       (profiles || []).forEach((p) => profileMap.set(p.user_id, p));
+
+      // Dois insumos distintos: `pedidos` é global (a base tem histórico?) e
+      // `carteira_ativa` é o universo REAL deste cálculo (a carteira DESTE farmer tem?).
+      const clientesComPedido = new Set((salesOrders || []).map((o) => o.customer_user_id));
+      insumos.pedidos = { ok: true, n: clientesComPedido.size };
+      const ativos = clientScores.filter((c) => clientesComPedido.has(c.customer_user_id));
+      insumos.carteira_ativa = { ok: true, n: ativos.length };
+      // COBERTURA de perfil: o motor faz `if (!profile) continue` mais abaixo — cliente sem
+      // perfil é pulado em silêncio (ver useCrossSellEngine para o racional completo).
+      insumos.clientes_com_profile = {
+        ok: true,
+        n: ativos.filter((c) => profileMap.has(c.customer_user_id)).length,
+      };
 
       // 2. Build transaction baskets per customer
       const baskets: string[][] = [];
@@ -653,6 +711,14 @@ export const useBundleEngine = () => {
         // Lote vazio não chama a RPC (ela recusaria com FG003): expirar a geração por
         // "não achei bundle nenhum" tiraria a oferta da tela por um dado que falta a
         // montante. Mesmo critério das regras de associação logo acima.
+        //
+        // O que MUDOU: o vazio deixou de ser silencioso — ele move o HEAD declarando se o
+        // snapshot estava íntegro. Vazio com snapshot completo é o "zero de verdade", e é
+        // o único sinal que autorizaria a fase 2 a ligar a expiração.
+        const { completude, motivo } = avaliarCompletude(insumos, INSUMOS_OBRIGATORIOS_BUNDLE);
+        if (recomendacoes.length === 0) {
+          await registrarVazio();
+        }
         if (recomendacoes.length > 0) {
           const { error: erroRecs } = await supabase.rpc(
             'farmer_bundle_recomendacoes_substituir' as never,
@@ -661,6 +727,13 @@ export const useBundleEngine = () => {
               p_run_id: runId,
               p_geracao_vista: geracaoVista,
               p_linhas: recomendacoes,
+              // O head é movido pela própria RPC, na MESMA transação.
+              p_completude: completude,
+              p_motivo: motivo,
+              p_insumos: insumos,
+              // Ver useCrossSellEngine: sem o head ORIGINAL, um run vazio mais novo seria
+              // sobrescrito por este, que leu snapshot mais velho.
+              p_head_visto: headVisto ?? null,
             } as never,
           );
           if (erroRecs) {
