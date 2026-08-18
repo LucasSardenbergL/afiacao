@@ -233,12 +233,12 @@ deixado o teste verde pelo motivo errado.
 
 ## 7.4 Limites declarados e o que sobra
 
-1. **`DROP FUNCTION` + `CREATE FUNCTION` reseta o ACL.** `CREATE OR REPLACE` o preserva; o par
-   DROP+CREATE não, e a função renasce com o default privilege do Supabase (que concede às roles
-   nomeadas). É o irmão exato do vetor `RECRIACAO` que a Parte C pega em **tabela**
-   ([sentinela-grants-tabelas-fechadas.md](sentinela-grants-tabelas-fechadas.md)) e que **ninguém
-   pega em função**. Enquanto não houver esse detector, a reconfirmação das 12 entradas por
-   privilégio é o audit read-only — o mesmo `has_function_privilege` desta entrega.
+1. ~~**`DROP FUNCTION` + `CREATE FUNCTION` reseta o ACL.**~~ **FECHADO em 2026-08-15 → §9.**
+   `CREATE OR REPLACE` preserva o ACL; o par DROP+CREATE não, e a função renasce com o default
+   privilege do Supabase. Era o irmão exato do vetor `RECRIACAO` que a Parte C pega em **tabela**
+   ([sentinela-grants-tabelas-fechadas.md](sentinela-grants-tabelas-fechadas.md)) e que ninguém
+   pegava em função. A **Parte E** agora pega — e a medição que a desenhou mostrou que o default
+   privilege concede a **`anon`**, não só às roles autenticadas.
 2. **Migration que reescreve por `regexp_replace` é invisível ao gate estático** — e isto deixou de
    ser hipótese durante esta própria sessão: a `20260814022626` (#1739) recria
    `reposicao_pos_candidatos` aplicando `regexp_replace` sobre `pg_get_functiondef` da definição
@@ -385,5 +385,163 @@ baseline vira decoração e nada mais a segura.
 3. **O `md5ProdEsperado` é conferido só pelo audit**, que roda on-demand. Entre duas execuções, uma
    reescrita manual no SQL Editor fica invisível — mesma natureza do audit de grants, e o motivo de
    os dois existirem separados do CI.
-4. **`DROP FUNCTION` + `CREATE FUNCTION` reseta o ACL** — o item 1 do §7.4 continua **aberto**:
-   ninguém pega esse vetor em função (a Parte C pega em tabela).
+4. ~~**`DROP FUNCTION` + `CREATE FUNCTION` reseta o ACL**~~ — o item 1 do §7.4 foi **FECHADO em
+   2026-08-15 pela Parte E** (§9): `authz:check` passou a vigiar o grant de EXECUTE das funções
+   classificadas, e `bun run authz:funcoes:prod` mede o ACL vivo em prod.
+
+---
+
+# 9. O grant de EXECUTE de FUNÇÃO entra no contrato — Parte E (2026-08-15)
+
+> Fecha o **§7.4 item 1**, reafirmado no §8.5 item 4, e com ele o último item aberto deste
+> documento. `CREATE OR REPLACE FUNCTION` PRESERVA o ACL; o par `DROP FUNCTION` + `CREATE
+> FUNCTION` **não** — a função renasce com o default privilege do projeto. As Partes A/D julgam o
+> GATE no corpo, a Parte C julga grant de TABELA, e **nada** julgava grant de FUNÇÃO.
+
+## 9.1 A medição, que é a entrega
+
+Duas fontes, porque nenhuma sozinha responde: as **651** migrations do repo e o banco de prod
+(psql-ro). Medido antes de escrever qualquer detector.
+
+| | resultado |
+|---|---|
+| `DROP FUNCTION` + `CREATE` da MESMA função | **18, em 12 migrations** |
+| …que atingem `AUTHZ_MANIFEST` ou `ACKNOWLEDGED_SENSITIVE` | **5** (3 manifest, 2 ACK) |
+| …que restauram o fecho com `REVOKE` **na própria migration** | **5 de 5** |
+| **`pg_default_acl` de `public`, objtype `f`** | **`{postgres=X, anon=X, authenticated=X, service_role=X, …}`** |
+| `pg_default_acl` de `private`, objtype `f` | **não existe** ⇒ função nasce `proacl` NULL = EXECUTE implícito a PUBLIC |
+| funções classificadas medidas em prod | **40** (19 manifest + 21 ACK), 40 presentes, **0** ausentes |
+| …alcançáveis por `anon` | **0** — a medição de 2026-08-14 continua valendo |
+| …com `proacl` NULL | **0** |
+| funções com âncora de ACL no repo | **39 de 40** |
+| `GRANT ON ALL FUNCTIONS IN SCHEMA` / `ALTER DEFAULT PRIVILEGES` no repo | **0 / 0** |
+
+Três achados que só a medição dá:
+
+- **O vetor concede a `anon`, não só a `authenticated`.** O §7.4 dizia "as roles nomeadas"; o
+  `pg_default_acl` diz *quais*. Uma função recriada em `public` nasce alcançável pela role
+  ANÔNIMA. Em `private` é pior: sem default privilege, ela nasce com `proacl` NULL, que é EXECUTE
+  implícito a PUBLIC — e prod já tem **3 funções `private` nesse estado**, duas delas SECDEF
+  (`private.frec_sem_margem`, `private.fbrec_sem_margem`); nenhuma é do contrato, e por isso
+  ficam registradas aqui como achado colateral, não como entrega.
+- **O repo já usava o idioma certo sem que nada o exigisse.** As 5 recriações que tocam o
+  contrato emitem o `REVOKE` de volta. A mais instrutiva é a `20260704120000`
+  (`get_ultimos_precos_cliente`): `DROP` + `CREATE` + `REVOKE EXECUTE … FROM anon, PUBLIC`, sem
+  `GRANT` a `authenticated` — que volta sozinho, pelo default privilege. O autor sabia do vetor.
+  O que faltava não era conhecimento, era a garantia de que o **próximo** também saberia.
+- **`REVOKE … FROM PUBLIC` não fecha nada.** O grant de `anon`/`authenticated` é explícito (veio
+  do default privilege por NOME), então só some com um REVOKE que as nomeie. Um detector que
+  aceitasse `FROM PUBLIC` como fecho ficaria verde exatamente sobre o buraco.
+
+## 9.2 Por que os DOIS, e não só o estático
+
+A pergunta do §8.2 de novo, com resposta diferente — porque o dado é diferente:
+
+- o **estático** tem dente aqui (ao contrário da direção (a) do §8.2, que ficaria verde hoje): o
+  vetor atingiu o contrato **5 vezes**, e a sabotagem F1 prova que remover o `REVOKE` de uma
+  dessas migrations fica vermelha nomeando arquivo e função;
+- o **audit de prod** é o único que enxerga o que o repo não registra — e isso não é hipótese:
+  **3 das 40** têm o fecho SÓ em prod (§9.4). Para elas o gate estático não tem o que ancorar.
+
+## 9.3 O que entrou
+
+- **`scripts/authz-funcoes-fechadas.ts`** — allowlist curada, com `permitido: {anon, authenticated}`
+  declarado a partir do MEDIDO em prod, nunca do desejado. Booleano, não lista de privilégios:
+  função só tem `EXECUTE`.
+- **`scripts/lib/authz-funcoes.ts`** — núcleo puro, as duas guardas. Modela, por role proibida, um
+  estado "aberta por quem" ao longo dos eventos pós-âncora (`GRANT` abre · `CREATE` depois de
+  `DROP` abre · `REVOKE` pelo NOME fecha). Rastrear a ORDEM evita os dois falsos: `GRANT` seguido
+  de `REVOKE` não é buraco, e `REVOKE` seguido de `DROP`+`CREATE` **é**.
+- **Âncora INCLUSIVA (`>=`), e é a decisão de desenho que a medição ditou.** A Parte C de tabela
+  olha o estritamente-posterior ao fecho. Aqui as **5** recriações reais fazem
+  `DROP`+`CREATE`+`REVOKE` na PRÓPRIA migration-âncora: com `>` estrito, o detector nasceria cego
+  para o seu único caso real.
+- **Parte E no `authz:check`**, com códigos `FUNCAO_*`, e o verde passou a declarar as funções que
+  ele NÃO vigia — a mesma regra do §8.3, agora para o eixo de ACL.
+- **`bun run authz:funcoes:prod`** (`db/audit-grants-funcoes-fechadas.ts`) — compara
+  `has_function_privilege` + `proacl` com o contrato. **Diverge de propósito da irmã de tabela:
+  `fechadaPor: null` avisa mas NÃO pula a comparação.** Em tabela, `null` é "o fecho ainda não
+  mergeou" e comparar seria ruído; em função é "prod está fechada e o REVOKE não está no repo".
+  Como o estático já não cobre esses casos, pular aqui também os deixaria sem NENHUMA guarda —
+  justamente as 3 entradas mais frágeis. O primeiro run saiu `✅ … em 37 função(ões)` e foi isso
+  que denunciou o erro: um verde que contava 37 de 40 e chamava as 3 restantes de "não comparadas".
+
+## 9.4 Revelado e baselinado, não acomodado
+
+`public.detectar_skus_sem_grupo` e `public.set_status_envio_portal_on_disparo` estão fechadas para
+`authenticated` em PROD (`auth=NÃO`, ACL explícito `{postgres,service_role,sandbox_exec}`), mas o
+repo ainda as **CONCEDE**: a `20260510235956` ("Fatia E3 Fase 1") revoga de `PUBLIC, anon` e
+mantém `GRANT EXECUTE … TO authenticated` nas 18 SECDEF que trata. O fecho delas aconteceu fora do
+repo. Somadas à `public.cmc_ledger_capture` — que não tem GRANT/REVOKE em migration nenhuma —, são
+**3 funções cujo fecho existe só em produção**.
+
+A saída fácil era declarar `permitido.authenticated = true` e o gate ficaria verde. Seria fabricar
+contrato falso na pior direção: passaria a AUTORIZAR a role que hoje não alcança, e um DROP+CREATE
+que a reabrisse ficaria verde para sempre. `fechadaPor: null` diz a verdade — o fecho não está no
+repo, o estático não vigia, o audit de prod é a única guarda —, e o verde do `authz:check` nomeia
+as três.
+
+> **Follow-up para o founder (mudança de banco, não é decisão minha):** uma migration que emita
+> `REVOKE EXECUTE ON FUNCTION … FROM authenticated` nessas três traria as 3 para a vigilância
+> estática do CI. Enquanto ela não existir, elas dependem de alguém rodar `authz:funcoes:prod`.
+
+## 9.5 Evidência
+
+| o quê | resultado |
+|---|---|
+| `bun run authz:check` | exit **0** — 11 avisos (8 pré-existentes + 3 `FUNCAO_FECHO_PENDENTE`), **0 erros** |
+| `bun run authz:funcoes:prod` | exit **0** — o EXECUTE de prod bate com o contrato nas **40** |
+| testes de authz (5 arquivos) | 129 → **175**: delta **+46**, exatamente os escritos |
+| `scripts:typecheck` · `eslint` (6 arquivos) · `shellcheck` | exit **0** |
+| medição refeita após rebase | a main andou (650 → **651** migrations) e os números do detector ficaram **idênticos**: 18/12, 5 no contrato |
+
+**Falsificação** — `db/test-authz-funcoes-falsificacao.sh`, **0 falhas em C e em pt_BR.UTF-8**:
+
+| | sabotagem | esperado | obtido |
+|---|---|---|---|
+| C0/C1 | nenhuma (canário, antes e depois) | verde | exit 0 |
+| F1 | `REVOKE` removido da migration-âncora que faz DROP+CREATE | vermelho | exit 1, `FUNCAO_RECRIADA_SEM_FECHO`, **nomeando arquivo e função certos** |
+| F2 | migration nova com `GRANT EXECUTE … TO anon` | vermelho | exit 1, `FUNCAO_REABERTURA`, nomeando o arquivo novo |
+| F3 | migration nova com DROP+CREATE sem REVOKE | vermelho | exit 1, `FUNCAO_RECRIADA_SEM_FECHO` |
+| F3b | **a mesma, COM o REVOKE de volta** | **verde** | exit 0 |
+| F3c | a mesma, com REVOKE PARCIAL (só `anon`) | vermelho | exit 1 |
+| F4 | detector desligado | vermelho | exit 1 — caem os testes anti-inércia |
+| F5 | allowlist afrouxada (`permitido.anon = true`) | vermelho | exit 1 — cai o teste de sanidade |
+| F6 | contrato declara fechada uma função que prod tem ABERTA | vermelho **só no audit** | `authz:funcoes:prod` exit 1 `FUNCAO_DRIFT_PROD`; `authz:check` segue 0 |
+
+F3b é o par que impede o detector de virar ruído: sem ela, F3 passaria mesmo que a Parte E
+acusasse toda migration que menciona a função, e o gate seria desligado no primeiro PR legítimo.
+F3c é o que separa esta parte de um detector que só procura a palavra `REVOKE`.
+
+> **Três erros de MÉTODO desta sessão, registrados porque cada um quase virou conclusão falsa:**
+> (1) A contraprova F3b nasceu mirando `get_regua_preco`, do `AUTHZ_MANIFEST` — e ficava vermelha
+> pela **Parte A** (recriar função do manifest com corpo de fixture é gate ausente), não pela E.
+> **Uma contraprova que exige VERDE precisa ser invisível para as outras partes**; o alvo mudou
+> para uma função de `ACKNOWLEDGED_SENSITIVE`.
+> (2) O primeiro teste anti-inércia sabotava por `replace(/REVOKE\s+EXECUTE[^;]*;/)` e não casava
+> `REVOKE ALL` — as duas formas convivem no repo. A sabotagem não acontecia e o teste afirmava
+> "o detector é cego" quando o cego era o `replace`. **Sabotagem que não casa nada precisa falhar
+> o harness**, e é por isso que o F1 do `.sh` carrega um `assert novo != s`.
+> (3) O prefixo `FUNCAO_` NÃO desambigua: `FUNCAO_REABERTURA` **contém** `REABERTURA`, e o teste
+> da Parte C, que filtrava por substring solta, passou a contar achados da Parte E no primeiro run
+> conjunto. **Quem filtra achado por código tem de casar o código DELIMITADO** (`[REABERTURA]`),
+> que é como o `authz-gate-check` o emite. Há agora um teste que trava isso.
+
+## 9.6 Limites declarados e o que sobra
+
+1. **A Parte E prova o que o REPO declara, não o que prod tem** — mesma divisão das outras partes.
+   Um `GRANT EXECUTE` colado à mão no SQL Editor é invisível para ela; quem o pega é o
+   `authz:funcoes:prod`, que roda on-demand. Entre duas execuções, a janela existe.
+2. **3 funções sem âncora no repo** (§9.4) não são vigiadas pelo CI. Está declarado no verde do
+   `authz:check` e no do audit, mas declarar não é cobrir.
+3. **O detector julga por NOME, não por assinatura.** Overloads colapsam em `schema.name`, que é a
+   granularidade do `AUTHZ_MANIFEST`. Um `DROP`+`CREATE` que recriasse só UM overload e revogasse
+   dele passaria como fecho completo. No audit de prod a regra é fail-closed entre overloads (um
+   alcançável basta para acusar); no estático, não.
+4. **`ALTER DEFAULT PRIVILEGES` sobre FUNCTIONS sai como AVISO**, não erro — ele muda a premissa
+   de todo o resto (é dele que a função recriada herda o ACL) e pode até estar fechando o vetor de
+   raiz. Hoje há **0** no repo; se aparecer um, a medição da allowlist precisa ser refeita.
+5. **`CREATE FUNCTION` de função NOVA não é vigiado por esta parte.** Ela ancora no fecho de
+   funções já classificadas; quem exige que uma SECDEF sensível nova seja classificada é a Parte B.
+   Uma função nova que não toque o eixo sensível nasce alcançável por `anon` e ninguém reclama —
+   é o modelo da plataforma, e mudar isso é decisão de produto, não de sentinela.
