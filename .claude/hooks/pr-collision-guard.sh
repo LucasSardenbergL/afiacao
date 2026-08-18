@@ -11,7 +11,7 @@
 # não o DESPERDÍCIO: #1757 e #1764 morreram no mesmo dia com o trabalho já pronto (o #1764 em 36s).
 # O commit é o chokepoint anterior e cadenciado pelo TRABALHO (não pelo relógio — as janelas
 # medidas foram de 24min e 9min, que um "re-cheque a cada 30min" erra por sorte).
-#   - conjunto de arquivos = STAGED ∪ working-tree ∪ commits da branch. Só o diff de 3 pontos
+#   - conjunto de arquivos = STAGED ∪ commits da branch (∪ working-tree só em `-a`). Só o 3 pontos
 #     seria TEATRO: no PRIMEIRO commit ele é VAZIO, e o #1764 tinha 1 commit só.
 #   - anti-alarm-fatigue: avisa 1x por (branch, conjunto colidente) — commit é frequente e aviso
 #     repetido cega. Colisão NOVA fura o silêncio; o `gh pr create` NUNCA é silenciado (último portão).
@@ -65,10 +65,15 @@ mine="$(git diff --name-only origin/main...HEAD 2>/dev/null)" || exit 0
 # No commit o trabalho ainda NÃO está commitado: o 3-pontos é vazio no primeiro commit (#1764
 # tinha 1 commit só) — some o que está STAGED e o que está modificado na árvore.
 if [ "$modo" = "commit" ]; then
+  # working-tree só entra quando o commit é `-a`/`--all` (senão o arquivo nem vai no commit —
+  # incluí-lo sempre só acrescenta ruído; achado da 2ª opinião do Codex, 2026-08-18).
+  wt=""
+  printf '%s' "$scan" | grep -qE '(^|[[:space:]])(-[a-zA-Z]*a[a-zA-Z]*|--all)([[:space:]]|$)' \
+    && wt="$(git diff --name-only 2>/dev/null)"
   mine="$(printf '%s\n%s\n%s\n' \
     "$mine" \
     "$(git diff --name-only --cached 2>/dev/null)" \
-    "$(git diff --name-only 2>/dev/null)" | grep -v '^$')"
+    "$wt" | grep -v '^$')"
 fi
 [ -n "$mine" ] || exit 0
 mine_sorted="$(printf '%s\n' "$mine" | sort -u)"

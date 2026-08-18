@@ -162,6 +162,14 @@ expect_quiet "commit: mencao entre aspas nao e execucao" \
   "PRCG_CACHE_DIR=$stub/cache5 GIT_STUB_STAGED_FILE=$stub/staged_hit.txt GIT_STUB_GAINED_FILE=$stub/gained_hit.txt GH_STUB_FILE=$stub/prs_miss.json" \
   'echo "git commit -m x"'
 
+# working-tree entra so em `-a`: sem ele, arquivo modificado que nao vai no commit e ruido.
+expect_quiet "commit sem -a: working-tree colidente NAO conta" \
+  "PRCG_CACHE_DIR=$stub/cache6 GIT_STUB_MINE_FILE=/dev/null GIT_STUB_STAGED_FILE=/dev/null GIT_STUB_UNSTAGED_FILE=$stub/staged_hit.txt GIT_STUB_GAINED_FILE=$stub/gained_hit.txt GH_STUB_FILE=$stub/prs_miss.json" \
+  'git commit -m "x"'
+expect_warn "commit -a: working-tree colidente CONTA" \
+  "PRCG_CACHE_DIR=$stub/cache7 GIT_STUB_MINE_FILE=/dev/null GIT_STUB_STAGED_FILE=/dev/null GIT_STUB_UNSTAGED_FILE=$stub/staged_hit.txt GIT_STUB_GAINED_FILE=$stub/gained_hit.txt GH_STUB_FILE=$stub/prs_miss.json" \
+  'git commit -am "x"' 'src/lib/quente.ts'
+
 echo "── anti-alarm-fatigue: avisa 1x por (branch, conjunto colidente); colisao NOVA volta a avisar ──"
 # 2a chamada IDENTICA fica muda (commit e frequente; repetir o mesmo aviso cega o leitor)...
 _hook "$C GIT_STUB_MINE_FILE=/dev/null GIT_STUB_STAGED_FILE=$stub/staged_hit.txt GIT_STUB_GAINED_FILE=$stub/gained_hit.txt GH_STUB_FILE=$stub/prs_miss.json" 'git commit -m "1o"' >/dev/null
