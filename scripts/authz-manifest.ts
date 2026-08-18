@@ -240,7 +240,9 @@ export const AUTHZ_MANIFEST: Record<string, AuthzEntry> = {
 };
 
 /**
- * SECDEF que tocam dado sensível mas NÃO precisam de gate customer-facing — baseline 2026-07-09.
+ * Funções classificadas como sensíveis que NÃO precisam de gate customer-facing — baseline
+ * 2026-07-09. Eram só SECDEF até 2026-08-18, quando `private.custo_canonico` (SECURITY
+ * INVOKER) entrou: ver a nota dela no fim da lista.
  * Cada entrada é uma decisão consciente: a função não é executável por `authenticated` (só
  * service_role/cron/staff-internal) OU o "toque" é falso-positivo do parser (menção em string
  * já mascarada / coluna homônima). Justificativa por linha. Semeado a partir do inventário PROD
@@ -388,6 +390,30 @@ export const ACKNOWLEDGED_SENSITIVE = new Set<string>([
   // `trg_set_status_envio_portal` em `pedido_compra_sugerido` (medido em pg_trigger). Função de
   // trigger não tem rota PostgREST — o fecho por privilégio é a segunda tranca, não a primeira.
   'public.set_status_envio_portal_on_disparo',
+
+  // ─────────── 2026-08-18 — as 3 de `private` que nasciam com `proacl` NULL (#1768 §9.1) ───────────
+  // MEDIDO: `pg_default_acl` não tem linha para o schema `private`, então função criada lá nasce
+  // com `proacl` NULL = EXECUTE implícito a PUBLIC (e `private` dá USAGE a anon E authenticated —
+  // o schema nega ROTA, não EXECUTE). Fechadas por privilégio em
+  // 20260818120000_authz_private_execute_fecho.sql; ACL vigiado pela Parte E dali em diante.
+  //
+  // ⚠️ Nenhuma das 3 foi flagrada pela Parte B, e a razão é a MESMA do ponto cego já anotado em
+  // `get_carteira_margem_faixa` acima, numa 2ª forma: o detector é LÉXICO sobre o corpo, e estes
+  // corpos falam o jargão do modelo (`m_ij`, `lie`, `m_bundle`) em vez dos tokens de
+  // SENSITIVE_COLUMNS. Some-se que `custo_canonico` nem chega à Parte B (ela só examina SECDEF) e
+  // que `p_cost_price` não casa `\bcost_price\b` (o `_` antes não é fronteira de palavra).
+  // Registro manual, como lá — ampliar o dicionário não resolveria: `m_ij` como token sensível
+  // teria recall absurdo.
+  //
+  // ⚠️ `private.custo_canonico` é a PRIMEIRA entrada NÃO-SECDEF deste Set (as outras 21 são
+  // SECDEF; medido). Isso não afrouxa nada: a Parte B consulta este Set apenas para PULAR uma
+  // SECDEF já classificada, então uma não-SECDEF aqui não muda veredito nenhum dela. O Set ser
+  // 21/21 SECDEF era CONSEQUÊNCIA de ter sido semeado do inventário de SECDEF de prod, não
+  // invariante desejada — e o 2º papel que ele ganhou no #1768 (ser o universo admissível de
+  // AUTHZ_FUNCOES_FECHADAS) não tem razão para excluir função sensível não-SECDEF.
+  'private.custo_canonico',
+  'private.frec_sem_margem',
+  'private.fbrec_sem_margem',
   //
   // ⚠️ O fecho por privilégio é estado de PROD, e é a **Parte E** do `authz:check` que o vigia
   // desde 2026-08-15 (scripts/authz-funcoes-fechadas.ts + scripts/lib/authz-funcoes.ts; §9 de

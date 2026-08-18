@@ -420,10 +420,11 @@ Três achados que só a medição dá:
 
 - **O vetor concede a `anon`, não só a `authenticated`.** O §7.4 dizia "as roles nomeadas"; o
   `pg_default_acl` diz *quais*. Uma função recriada em `public` nasce alcançável pela role
-  ANÔNIMA. Em `private` é pior: sem default privilege, ela nasce com `proacl` NULL, que é EXECUTE
-  implícito a PUBLIC — e prod já tem **3 funções `private` nesse estado**, duas delas SECDEF
-  (`private.frec_sem_margem`, `private.fbrec_sem_margem`); nenhuma é do contrato, e por isso
-  ficam registradas aqui como achado colateral, não como entrega.
+  ANÔNIMA. Em `private`, sem default privilege, ela nasce com `proacl` NULL, que é EXECUTE
+  implícito a PUBLIC — e prod já tinha **3 funções `private` nesse estado**, duas delas SECDEF
+  (`private.frec_sem_margem`, `private.fbrec_sem_margem`); nenhuma era do contrato, e por isso
+  ficaram registradas aqui como achado colateral, não como entrega.
+  **→ desfecho em §9.1.1 (2026-08-18): fechadas, e o "é pior" desta linha estava errado.**
 - **O repo já usava o idioma certo sem que nada o exigisse.** As 5 recriações que tocam o
   contrato emitem o `REVOKE` de volta. A mais instrutiva é a `20260704120000`
   (`get_ultimos_precos_cliente`): `DROP` + `CREATE` + `REVOKE EXECUTE … FROM anon, PUBLIC`, sem
@@ -432,6 +433,53 @@ Três achados que só a medição dá:
 - **`REVOKE … FROM PUBLIC` não fecha nada.** O grant de `anon`/`authenticated` é explícito (veio
   do default privilege por NOME), então só some com um REVOKE que as nomeie. Um detector que
   aceitasse `FROM PUBLIC` como fecho ficaria verde exatamente sobre o buraco.
+
+
+## 9.1.1 Desfecho do achado colateral (2026-08-18) — as 3 de `private`
+
+Fechadas em `20260818120000_authz_private_execute_fecho.sql`, com prova executada em
+`db/test-authz-private-execute-fecho.sh` (PG17, 15 asserts, 3 falsificações, verde em
+`lc_messages` **C e pt_BR.UTF-8**). As 3 estão agora em `ACKNOWLEDGED_SENSITIVE` e em
+`AUTHZ_FUNCOES_FECHADAS` (`PORTA_FECHADA`), então a Parte E as vigia.
+
+**Correção factual ao §9.1.** "Em `private` é pior" está errado no EFEITO, e a diferença importa
+para não se desenhar defesa contra o risco errado: o default de `public` para funções é
+`{postgres=X, anon=X, authenticated=X, service_role=X}` — ou seja, **os dois** deixam `anon` com
+EXECUTE. A diferença é de FORMA, e favorece `private`: com `proacl` NULL um
+`REVOKE … FROM PUBLIC` basta, enquanto em `public` é preciso revogar de `anon`/`authenticated`
+**por nome**. O que `private` de fato nega é ROTA (o PostgREST não publica o schema), não EXECUTE
+— o `nspacl` concede USAGE a `anon` e `authenticated`.
+
+**Nenhuma das 3 era explorável — mas por razões que não eram privilégio, e é isso que as tornava
+frágeis.** É o achado que a prova dá e a leitura estática não daria:
+
+| | por que não era alcançável | quão robusto |
+|---|---|---|
+| `frec_sem_margem` / `fbrec_sem_margem` | `RETURNS trigger` ⇒ chamada direta morre em `0A000` no EXECUTOR, com ou sem EXECUTE (L3) | **robusto** — é do executor, não do ACL. O REVOKE é 2ª tranca |
+| `custo_canonico` | SECURITY INVOKER que chama `regua_num_finito`, cujo ACL nega `anon` (L4) | **acidental** — F3 abre o helper e `anon` **executa**. Dependia de um ACL vizinho |
+
+E fechar não custou nada, o que a prova mediu em vez de supor: `get_skus_margem_positiva()`
+(SECDEF de owner `postgres`) segue chamando o helper revogado (L8), e os triggers de scrub seguem
+disparando (L9/L10) — **disparar trigger não checa EXECUTE**; quem checa é o `CREATE TRIGGER`, e
+criá-lo exige ser dono da tabela (L11).
+
+**Por que a Parte B não as exigiu** — o mesmo ponto cego já anotado em `get_carteira_margem_faixa`,
+numa 2ª forma. O detector é **léxico sobre o corpo** (`SENSITIVE_TABLES`/`SENSITIVE_COLUMNS`), e
+estes corpos falam o **jargão do modelo** (`m_ij`, `lie`, `m_bundle`), não os tokens do dicionário.
+Somam-se dois detalhes: `custo_canonico` nem chega à Parte B (ela só examina SECDEF), e
+`p_cost_price` **não casa** `\bcost_price\b` — o `_` antes de `cost` não é fronteira de palavra.
+Ampliar o dicionário não resolve (`m_ij` como token sensível teria recall absurdo); o remédio
+continua sendo registro manual, como lá.
+
+**A causa-raiz ficou de fora, de propósito.** `ALTER DEFAULT PRIVILEGES IN SCHEMA private REVOKE
+EXECUTE ON FUNCTIONS FROM PUBLIC` fecharia a classe para funções FUTURAS, mas: (1) só vale para
+objetos criados pelo **ROLE que executa o ALTER**, e o apply aqui é manual — cobertura parcial com
+aparência de total é pior que não ter, porque a Parte E passaria a confiar numa premissa falsa;
+(2) muda a **premissa medida** que o cabeçalho de `scripts/authz-funcoes-fechadas.ts` declara, e a
+Parte E emite `[FUNCAO_DEFAULT_PRIVILEGE_ALTERADO]` justamente para isso; (3) o ganho é menor do
+que parece — as 10 `cap_*` de `private` precisam de `authenticated=X` e já recebem GRANT explícito,
+então o default fechado só trocaria "nasce aberta em silêncio" por "quebra em runtime". Fail-closed
+é desejável, mas é mudança de comportamento de deploy e merece entrega própria, com prova própria.
 
 ## 9.2 Por que os DOIS, e não só o estático
 
