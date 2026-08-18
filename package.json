@@ -33,6 +33,7 @@
     "wt:label": "bash scripts/wt-map.sh label",
     "wt:preflight": "bun scripts/wt-preflight-migration.ts",
     "claude:size": "bash scripts/check-claude-md-budget.sh",
+    "test:hooks": "for t in pr-collision migration-collision branch-pos-squash; do bash scripts/test-$t-guard.sh || exit 1; done",
     "heavy:install": "bash scripts/heavy-install.sh"
   },
   "dependencies": {

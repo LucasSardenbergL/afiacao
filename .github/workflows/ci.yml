@@ -227,6 +227,12 @@ jobs:
       - name: CLAUDE.md size budget
         run: bun run claude:size
 
+      # Guards de colisão multi-sessão (PreToolUse): os 3 têm suíte com git+gh STUBADOS
+      # (hermética, sem rede, ~1s) que até 2026-08-18 NENHUM workflow rodava — teste órfão
+      # só vale quando alguém lembra, e guard que regride vira falso-negativo silencioso.
+      - name: Hooks guard tests
+        run: heavy bun run test:hooks
+
       # Anti-regressão de gate de autorização em RPCs SECURITY DEFINER sensíveis (custo/preço/
       # estoque). Mata o padrão "CREATE OR REPLACE derrubou o gate" — 3 ocorrências (5 views #1246,
       # get_tint_prices, fin_estimar_estoque_omie #1264). Estático: lê supabase/migrations/ no
