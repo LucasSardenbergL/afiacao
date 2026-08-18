@@ -3075,6 +3075,87 @@ export type Database = {
         }
         Relationships: []
       }
+      farmer_geracao_execucoes: {
+        Row: {
+          calculado_em: string
+          completude: string
+          farmer_id: string
+          id: string
+          insumos: Json
+          linhas_geradas: number
+          motivo: string | null
+          motor: string
+          resultado: string
+          run_id: string
+        }
+        Insert: {
+          calculado_em?: string
+          completude: string
+          farmer_id: string
+          id?: string
+          insumos?: Json
+          linhas_geradas: number
+          motivo?: string | null
+          motor: string
+          resultado: string
+          run_id: string
+        }
+        Update: {
+          calculado_em?: string
+          completude?: string
+          farmer_id?: string
+          id?: string
+          insumos?: Json
+          linhas_geradas?: number
+          motivo?: string | null
+          motor?: string
+          resultado?: string
+          run_id?: string
+        }
+        Relationships: []
+      }
+      farmer_geracao_vigente: {
+        Row: {
+          atualizado_em: string
+          calculado_em: string
+          completude: string
+          farmer_id: string
+          id: string
+          insumos: Json
+          linhas_geradas: number
+          motivo: string | null
+          motor: string
+          resultado: string
+          run_id: string
+        }
+        Insert: {
+          atualizado_em?: string
+          calculado_em?: string
+          completude: string
+          farmer_id: string
+          id?: string
+          insumos?: Json
+          linhas_geradas: number
+          motivo?: string | null
+          motor: string
+          resultado: string
+          run_id: string
+        }
+        Update: {
+          atualizado_em?: string
+          calculado_em?: string
+          completude?: string
+          farmer_id?: string
+          id?: string
+          insumos?: Json
+          linhas_geradas?: number
+          motivo?: string | null
+          motor?: string
+          resultado?: string
+          run_id?: string
+        }
+        Relationships: []
+      }
       farmer_governance_proposals: {
         Row: {
           algorithm_version: string | null
@@ -18877,18 +18958,40 @@ export type Database = {
       }
       farmer_bundle_recomendacoes_substituir: {
         Args: {
+          p_completude?: string
           p_farmer_id: string
           p_geracao_vista: string
+          p_head_visto?: string
+          p_insumos?: Json
           p_linhas: Json
+          p_motivo?: string
+          p_run_id: string
+        }
+        Returns: Json
+      }
+      farmer_geracao_registrar: {
+        Args: {
+          p_completude?: string
+          p_farmer_id: string
+          p_head_visto?: string
+          p_insumos?: Json
+          p_linhas_geradas: number
+          p_motivo?: string
+          p_motor: string
+          p_resultado: string
           p_run_id: string
         }
         Returns: Json
       }
       farmer_recomendacoes_substituir: {
         Args: {
+          p_completude?: string
           p_farmer_id: string
           p_geracao_vista: string
+          p_head_visto?: string
+          p_insumos?: Json
           p_linhas: Json
+          p_motivo?: string
           p_run_id: string
         }
         Returns: Json
