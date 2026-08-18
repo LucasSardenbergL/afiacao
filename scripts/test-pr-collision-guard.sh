@@ -1,11 +1,19 @@
 #!/usr/bin/env bash
 # test-pr-collision-guard.sh — TDD do hook pr-collision-guard.sh (git+gh STUBADOS, sem rede).
 #
-# Regra: `gh pr create` com colisão de arquivos — (a) a origin/main ganhou arquivo que EU
+# Regra (gatilho 1 — `gh pr create`): colisão de arquivos — (a) a origin/main ganhou arquivo que EU
 #        também toco desde a merge-base (diff de TRÊS pontos), ou (b) um PR ABERTO de outra
 #        branch toca arquivo meu — → AVISA via additionalContext (permissionDecision=allow),
 #        SEM bloquear. Sem colisão, comando ≠ `gh pr create`, ou erro de infra → stdout mudo.
 #        Fail-open GRANULAR: gh fora → ainda checa a main (git é local).
+#
+# Regra (gatilho 2 — `git commit`, 2026-08-15): mesma checagem no chokepoint ANTERIOR, porque
+#        no create o trabalho JÁ está pronto (evita o merge duplicado, não o desperdício —
+#        #1757 e #1764 morreram assim no mesmo dia). No commit o conjunto de arquivos vem de
+#        STAGED ∪ working-tree ∪ commits da branch: no PRIMEIRO commit o diff de 3 pontos é
+#        VAZIO (o #1764 tinha 1 commit só) e olhar só para ele seria teatro. Anti-alarm-fatigue:
+#        avisa UMA vez por (branch, conjunto colidente) — commit é frequente, e aviso repetido
+#        cega. Colisão NOVA volta a avisar.
 #
 # Uso: bash scripts/test-pr-collision-guard.sh   (exit 0 = tudo verde)
 set -u
@@ -25,8 +33,10 @@ case "$1" in
   branch) printf '%s\n' "${GIT_STUB_BRANCH-minha-branch}" ;;
   diff)
     case "$*" in
+      *--cached*)             cat "${GIT_STUB_STAGED_FILE:-/dev/null}" ;;
       *"origin/main...HEAD"*) [ -n "${GIT_STUB_DIFF_FAIL:-}" ] && exit 128; cat "${GIT_STUB_MINE_FILE:-/dev/null}" ;;
       *"HEAD...origin/main"*) cat "${GIT_STUB_GAINED_FILE:-/dev/null}" ;;
+      *--name-only)           cat "${GIT_STUB_UNSTAGED_FILE:-/dev/null}" ;;
       *) exit 0 ;;
     esac ;;
   *) exit 0 ;;
@@ -50,6 +60,10 @@ printf 'docs/alheio.md\n'                    > "$stub/gained_miss.txt"
 printf '%s' '[{"number":42,"title":"toca o helper quente","headRefName":"outra-branch","files":[{"path":"src/lib/quente.ts"},{"path":"src/so-dele.ts"}]}]' > "$stub/prs_hit.json"
 printf '%s' '[{"number":43,"title":"nada a ver","headRefName":"outra-branch","files":[{"path":"src/so-dele.ts"}]}]' > "$stub/prs_miss.json"
 printf '%s' '[{"number":44,"title":"o MEU proprio PR","headRefName":"minha-branch","files":[{"path":"src/lib/quente.ts"}]}]' > "$stub/prs_own.json"
+printf 'src/lib/quente.ts\n'  > "$stub/staged_hit.txt"   # staged que COLIDE (caso #1764)
+printf 'src/so-meu.ts\n'      > "$stub/staged_miss.txt"
+printf 'src/outro.ts\n'       > "$stub/staged_hit2.txt"  # colisao NOVA, para o dedupe nao cegar
+printf 'src/outro.ts\n'       > "$stub/gained_hit2.txt"  # ...e a main tem de ter tocado ELE
 
 fail=0
 
@@ -127,6 +141,49 @@ expect_warn "fetch falha (offline) → segue com refs locais" \
 expect_quiet "git diff falha" \
   "GIT_STUB_DIFF_FAIL=1 GIT_STUB_GAINED_FILE=$stub/gained_hit.txt GH_STUB_FILE=$stub/prs_hit.json" \
   'gh pr create --fill'
+
+echo '── gatilho 2: git commit (o chokepoint ANTES do trabalho pronto) ──'
+# PRIMEIRO commit da branch: diff de 3 pontos VAZIO (mine=/dev/null) — a colisao so aparece
+# no STAGED. E exatamente o #1764 (1 commit so). Olhar so o 3-pontos seria teatro.
+C="PRCG_CACHE_DIR=$stub/cache1"
+expect_warn "commit: staged colide com a main (3-pontos VAZIO — caso #1764)" \
+  "$C GIT_STUB_MINE_FILE=/dev/null GIT_STUB_STAGED_FILE=$stub/staged_hit.txt GIT_STUB_GAINED_FILE=$stub/gained_hit.txt GH_STUB_FILE=$stub/prs_miss.json" \
+  'git commit -m "fix"' 'origin/main' 'src/lib/quente.ts'
+expect_warn "commit: staged colide com PR ABERTO de outra branch (caso #1757)" \
+  "PRCG_CACHE_DIR=$stub/cache2 GIT_STUB_MINE_FILE=/dev/null GIT_STUB_STAGED_FILE=$stub/staged_hit.txt GIT_STUB_GAINED_FILE=$stub/gained_miss.txt GH_STUB_FILE=$stub/prs_hit.json" \
+  'git commit -am "fix"' '#42' 'src/lib/quente.ts'
+expect_quiet "commit: sem colisao" \
+  "PRCG_CACHE_DIR=$stub/cache3 GIT_STUB_MINE_FILE=/dev/null GIT_STUB_STAGED_FILE=$stub/staged_miss.txt GIT_STUB_GAINED_FILE=$stub/gained_hit.txt GH_STUB_FILE=$stub/prs_miss.json" \
+  'git commit -m "x"'
+expect_quiet "commit: nada staged nem modificado" \
+  "PRCG_CACHE_DIR=$stub/cache4 GIT_STUB_MINE_FILE=/dev/null GIT_STUB_STAGED_FILE=/dev/null GIT_STUB_GAINED_FILE=$stub/gained_hit.txt GH_STUB_FILE=$stub/prs_hit.json" \
+  'git commit -m "x"'
+expect_quiet "commit: mencao entre aspas nao e execucao" \
+  "PRCG_CACHE_DIR=$stub/cache5 GIT_STUB_STAGED_FILE=$stub/staged_hit.txt GIT_STUB_GAINED_FILE=$stub/gained_hit.txt GH_STUB_FILE=$stub/prs_miss.json" \
+  'echo "git commit -m x"'
+
+# working-tree entra so em `-a`: sem ele, arquivo modificado que nao vai no commit e ruido.
+expect_quiet "commit sem -a: working-tree colidente NAO conta" \
+  "PRCG_CACHE_DIR=$stub/cache6 GIT_STUB_MINE_FILE=/dev/null GIT_STUB_STAGED_FILE=/dev/null GIT_STUB_UNSTAGED_FILE=$stub/staged_hit.txt GIT_STUB_GAINED_FILE=$stub/gained_hit.txt GH_STUB_FILE=$stub/prs_miss.json" \
+  'git commit -m "x"'
+expect_warn "commit -a: working-tree colidente CONTA" \
+  "PRCG_CACHE_DIR=$stub/cache7 GIT_STUB_MINE_FILE=/dev/null GIT_STUB_STAGED_FILE=/dev/null GIT_STUB_UNSTAGED_FILE=$stub/staged_hit.txt GIT_STUB_GAINED_FILE=$stub/gained_hit.txt GH_STUB_FILE=$stub/prs_miss.json" \
+  'git commit -am "x"' 'src/lib/quente.ts'
+
+echo "── anti-alarm-fatigue: avisa 1x por (branch, conjunto colidente); colisao NOVA volta a avisar ──"
+# 2a chamada IDENTICA fica muda (commit e frequente; repetir o mesmo aviso cega o leitor)...
+_hook "$C GIT_STUB_MINE_FILE=/dev/null GIT_STUB_STAGED_FILE=$stub/staged_hit.txt GIT_STUB_GAINED_FILE=$stub/gained_hit.txt GH_STUB_FILE=$stub/prs_miss.json" 'git commit -m "1o"' >/dev/null
+expect_quiet "commit: 2a vez com a MESMA colisao → mudo" \
+  "$C GIT_STUB_MINE_FILE=/dev/null GIT_STUB_STAGED_FILE=$stub/staged_hit.txt GIT_STUB_GAINED_FILE=$stub/gained_hit.txt GH_STUB_FILE=$stub/prs_miss.json" \
+  'git commit -m "2o"'
+# ...mas colisao em arquivo DIFERENTE e sinal novo: tem de furar o dedupe.
+expect_warn "commit: colisao NOVA fura o dedupe" \
+  "$C GIT_STUB_MINE_FILE=/dev/null GIT_STUB_STAGED_FILE=$stub/staged_hit2.txt GIT_STUB_GAINED_FILE=$stub/gained_hit2.txt GH_STUB_FILE=$stub/prs_miss.json" \
+  'git commit -m "3o"' 'src/outro.ts'
+# o dedupe e do COMMIT: o create e o ultimo portao e nunca pode ficar mudo por causa dele.
+expect_warn "create NAO herda o silencio do commit (mesmo conjunto)" \
+  "$C $M GIT_STUB_GAINED_FILE=$stub/gained_hit.txt GH_STUB_FILE=$stub/prs_miss.json" \
+  'gh pr create --fill' 'origin/main' 'src/lib/quente.ts'
 
 echo
 if [ "$fail" -eq 0 ]; then echo "PASS — todos os casos"; else echo "FALHOU"; fi

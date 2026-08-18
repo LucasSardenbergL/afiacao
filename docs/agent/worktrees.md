@@ -127,6 +127,61 @@ Limites: cobre a re-checagem por ARQUIVO no create; a varredura por TEMA/título
 **pré-implementação** (bloco acima) seguem manuais — e a race fria (duas sessões, nenhum PR aberto)
 continua fora do alcance.
 
+⚠️ **A detecção no `gh pr create` evita a DUPLICATA, não o DESPERDÍCIO — o gatilho desceu para o
+`git commit` (2026-08-15).** Dois PRs escritos, testados e jogados fora no mesmo dia, **com as duas
+checagens da regra feitas**:
+
+```
+#1757  trabalho commitado 01:13 → PR criado 17:28 (16h depois!) → fechado 17:39   6 arq, +270
+#1754  vencedor da mesma edge, mergeou 01:37 — 24min APÓS o commit do perdedor
+#1764  vencedor (#1763) mergeou 18:12; commit do perdedor 18:21 → PR 18:21 → fechado 18:22  1 arq, +29
+#1763  criado 18:07 → merge 18:12 — viveu 5min16s
+```
+
+Este é o eixo **TEMPO** (*quando* conferir); o eixo **OBJETIVO** (*o que* procurar — o artefato, não
+o título) é o do bloco acima. Os dois são independentes: aqui as duas checagens da regra FORAM
+feitas e no prazo — e ainda assim custaram dois PRs.
+
+O detector **funcionou**: o #1764 morreu 36s depois de criado. O furo é de TIMING — no `create` o
+trabalho já está pronto, então a rede evita o merge duplicado e não a hora perdida. O `git commit` é
+o chokepoint anterior e é cadenciado pelo **trabalho**, não pelo relógio (as janelas medidas foram de
+24min e 9min; um "re-cheque a cada 30min" acerta por sorte). No commit das 01:13 o #1754 estava
+ABERTO → a via (b) do hook teria avisado; às 18:21 o #1763 já estava na main → via (a). Cobre os dois.
+
+Detalhes que decidem entre rede e teatro:
+
+- **O conjunto de arquivos é STAGED ∪ commits da branch** (∪ working-tree só em `git commit -a`).
+  Olhar só o diff de 3 pontos seria TEATRO: no **primeiro** commit ele é VAZIO (provado em repo
+  descartável) — e o #1764 tinha 1 commit só, exatamente o caso cego.
+- **Anti-alarm-fatigue:** avisa 1× por (branch, conjunto colidente); colisão nova fura o silêncio, e
+  o `gh pr create` nunca é silenciado (é o último portão). Commit é frequente — aviso repetido cega.
+- **Sem cache da resposta do `gh`.** Uma versão com TTL de 2min foi escrita e DESCARTADA: mascarou
+  colisão verdadeira nos próprios testes. Cache de "PRs abertos" não é como o do
+  `branch-pos-squash-guard` — "meu PR já mergeou" é **monotônico**, "quais PRs estão abertos" é
+  **volátil**, e cache de estado volátil num guard é falso-negativo silencioso. O que corta ruído é o
+  dedupe do AVISO (por conteúdo), não cache da RESPOSTA (por tempo).
+
+**Rejeitados (para não voltarem como ideia nova):**
+
+- **PR draft vazio no minuto zero como "lock" consultável.** O post-mortem do #1526 aponta *"PR
+  represado em draft é ÍMÃ"* como causa nº 1 de colisão; ~20 worktrees × draft vazio poluiriam o
+  `gh pr list` e degradariam o sinal da própria checagem que se quer preservar; e um draft que saia
+  do rascunho por engano auto-mergeia vazio. **Branch vazia + `git ls-remote`** troca poluição de PR
+  por poluição de refs e só expõe nome/SHA — o escopo teria de caber no nome da branch (no #1764 o
+  vencedor era `claude/mystifying-wescoff-e5c20d`, nome aleatório: invisível por nome).
+- **Re-checagem periódica por relógio** (a cada N min): erra por sorte nas janelas medidas, e é
+  ritual puro — o custo recai sobre quem já está no meio do trabalho.
+
+**Limites conhecidos** (registrados, não resolvidos): o hook AVISA com `permissionDecision:"allow"`,
+então o commit **acontece** e o aviso chega ao modelo na volta seguinte — serve para interromper a
+escrita, não para barrar o commit. O dedupe é por conteúdo do aviso: um PR concorrente que muda de
+conteúdo mantendo os mesmos arquivos não re-avisa dentro do TTL. E a **latência commit→PR** (as 16h
+do #1757) não tem sensor — trabalho pronto e não publicado é exposição pura, e hoje só a disciplina
+cobre isso. A 2ª opinião do Codex (2026-08-18) propõe para isso um *lease* local na primeira mutação
+(as worktrees compartilham o `git-common-dir`) + um Stop guard de "commits sem PR"; ambos ficaram
+FORA desta entrega por escopo — e valem só com sinal de que o backstop do commit não bastou.
+
+
 ⚠️ **Checar colisão de ARQUIVO: `git diff` de TRÊS pontos, não de dois (2026-07-22).** A checagem
 por PR acima tem uma irmã por diff — "a `main` mexeu num arquivo que EU também mexo?" — e o comando
 óbvio **mente depois que você commita**. `git diff --name-only HEAD..origin/main` (DOIS pontos)
