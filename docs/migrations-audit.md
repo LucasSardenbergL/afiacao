@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **473** custom migrations totais
-- **1606** objetos esperados (criados por estas migrations)
+- **475** custom migrations totais
+- **1616** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 486
-  - `rls_policy`: 398
-  - `index`: 240
+  - `function`: 489
+  - `rls_policy`: 400
+  - `index`: 243
   - `cron_job`: 164
-  - `table`: 154
+  - `table`: 156
   - `trigger`: 86
   - `view`: 74
   - `enum_value`: 4
@@ -3949,6 +3949,25 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.data_health_watchdog` | — |
+
+### `20260815181500_farmer_geracao_head_sensor.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.farmer_geracao_registrar` | — |
+| `function` | `public.farmer_recomendacoes_substituir` | — |
+| `function` | `public.farmer_bundle_recomendacoes_substituir` | — |
+| `table` | `public.farmer_geracao_vigente` | — |
+| `table` | `public.farmer_geracao_execucoes` | — |
+| `index` | `public.farmer_geracao_vigente_motor_farmer_uk` | `farmer_geracao_vigente` |
+| `index` | `public.farmer_geracao_execucoes_run_uk` | `farmer_geracao_execucoes` |
+| `index` | `public.farmer_geracao_execucoes_medicao_idx` | `farmer_geracao_execucoes` |
+| `rls_policy` | `public.fgv_select_carteira` | `farmer_geracao_vigente` |
+| `rls_policy` | `public.fge_select_carteira` | `farmer_geracao_execucoes` |
+
+### `20260818121919_authz_fecho_execute_registrado_3_funcoes.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ## Próximos passos por status
 

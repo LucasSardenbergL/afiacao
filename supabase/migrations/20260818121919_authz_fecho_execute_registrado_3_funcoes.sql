@@ -1,0 +1,67 @@
+-- ============================================================================================
+-- authz — REGISTRA NO REPO o fecho de EXECUTE de 3 funções que só existia em PRODUÇÃO
+-- ============================================================================================
+-- Follow-up da Parte E do `authz:check` (§9.4 / §9.6 item 2 de
+-- docs/historico/sentinela-authz-controle-nao-mencao.md).
+--
+-- O QUE ESTA MIGRATION MUDA EM PROD: **NADA**. É deliberado — ela não corrige um buraco, ela
+-- corrige uma LACUNA DE REGISTRO. As 3 funções abaixo já estão fechadas no banco; o que não
+-- existia era uma migration que dissesse isso. Sem âncora no repo, `fechadaPor` era `null` e o
+-- gate estático do CI **não as vigiava**: a única guarda era alguém lembrar de rodar
+-- `bun run authz:funcoes:prod` à mão. Depois desta, as 3 entram na vigilância da Parte E.
+--
+-- MEDIÇÃO QUE JUSTIFICA CADA LINHA (psql-ro, `has_function_privilege` + `proacl` cru;
+-- 2026-08-15, RECONFIRMADA em 2026-08-18) — as 3 idênticas:
+--     anon = NÃO · authenticated = NÃO · proacl = {postgres=X, service_role=X, sandbox_exec=X}
+-- Logo todo REVOKE aqui é NO-OP no banco de hoje. O valor é outro, e é duplo:
+--   (a) traz as 3 para o gate estático (a reabertura por `DROP`+`CREATE` passa a ser pega no PR);
+--   (b) um replay do repo (DR) passa a reproduzir o ACL de prod. Hoje NÃO reproduz: veja abaixo.
+--
+-- POR QUE O REPO DIVERGIA DE PROD, função a função:
+--   · detectar_skus_sem_grupo / set_status_envio_portal_on_disparo — a última migration a tocar
+--     o ACL delas é a 20260510235956 ("Fatia E3 Fase 1"), que revoga de `PUBLIC, anon` e
+--     **MANTÉM `GRANT EXECUTE … TO authenticated`** (linhas 31-32 e 64-65 de lá). O repo, portanto,
+--     AFIRMA que `authenticated` executa; prod diz o contrário. O REVOKE de `authenticated`
+--     aconteceu FORA do repo (apply à mão, ou baseline parqueado no snapshot).
+--   · cmc_ledger_capture — NENHUMA migration do repo emite GRANT ou REVOKE sobre ela, nem
+--     parcial. Ela é criada por `CREATE OR REPLACE` em 20260614170000_cmc_ledger.sql e herda o
+--     default privilege; o fecho veio inteiramente de fora do repo.
+--
+-- ⚠️ POR QUE REVOGAR **POR NOME**, e não só de PUBLIC (armadilha nº 1 de docs/agent/database.md):
+--     `REVOKE … FROM PUBLIC` **NÃO** tira `anon`/`authenticated`. O EXECUTE delas é grant
+--     EXPLÍCITO, herdado por NOME do default privilege do schema `public` — que é
+--     {postgres, anon, authenticated, service_role} (MEDIDO em `pg_default_acl`, não presumido).
+--     Uma migration que revogasse só de PUBLIC ficaria verde por cima do buraco: é exatamente o
+--     falso-fecho que a 20260510235956 produziu para `anon` e que esta linha fecha para
+--     `authenticated`. `PUBLIC` continua na lista por idempotência/reafirmação, não como o fecho.
+--
+-- ⚠️ POR QUE OS `REVOKE` SÃO TOP-LEVEL (e não embrulhados em `DO $$ … $$`): o parser do gate
+--     (scripts/lib/authz-funcoes.ts) julga statements que COMEÇAM com o verbo, sobre um SQL sem
+--     comentários/strings. Dentro de um bloco `DO`, o REVOKE deixa de ser um statement e o gate
+--     não o enxerga — a âncora ficaria muda e esta migration não cumpriria o que se propõe.
+--     Não há perda: `REVOKE` é idempotente por natureza, re-colar é seguro.
+--
+-- ⚠️ `service_role` NÃO é tocado — é ele que faz as 3 funcionarem (ver abaixo). Revogar dele
+--     quebraria cron, trigger e edge de uma vez.
+--
+-- OS CONSUMIDORES CONTINUAM FUNCIONANDO (medido em prod, 2026-08-18 — nenhum entra como
+-- `authenticated` via PostgREST):
+--   · detectar_skus_sem_grupo(p_empresa text) → cron `detectar-outliers-diario`, que roda com
+--     `username = postgres` (superuser: imune a REVOKE). Nenhuma chamada em src/ ou
+--     supabase/functions/ — a única menção no frontend é a assinatura em types.ts (gerada).
+--   · set_status_envio_portal_on_disparo() → trigger `trg_set_status_envio_portal` em
+--     `pedido_compra_sugerido`.
+--   · cmc_ledger_capture() → trigger `trg_cmc_ledger_capture` em `inventory_position`.
+--     Postgres **não** checa EXECUTE da função de trigger no disparo (o privilégio checado é o
+--     DML na tabela), então revogar de `authenticated` não impede o trigger de rodar para um
+--     usuário autenticado que escreve na tabela. Isso não é folclore: está PROVADO executando em
+--     db/test-authz-fecho-execute-registrado.sh (PG17), com falsificação.
+--
+-- Idempotente: `REVOKE` de privilégio ausente é no-op. Pode ser colada mais de uma vez.
+-- ============================================================================================
+
+REVOKE EXECUTE ON FUNCTION public.detectar_skus_sem_grupo(p_empresa text) FROM PUBLIC, anon, authenticated;
+
+REVOKE EXECUTE ON FUNCTION public.set_status_envio_portal_on_disparo() FROM PUBLIC, anon, authenticated;
+
+REVOKE EXECUTE ON FUNCTION public.cmc_ledger_capture() FROM PUBLIC, anon, authenticated;

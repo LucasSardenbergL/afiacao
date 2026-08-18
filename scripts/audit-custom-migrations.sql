@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 473
+-- Total de custom migrations: 475
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -514,7 +514,9 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260814160441', 'fu4f_fase3_afinidade_colunas_reaplica', '20260814160441_fu4f_fase3_afinidade_colunas_reaplica.sql'),
   ('20260814222000', 'data_health_watchdog_reemissao', '20260814222000_data_health_watchdog_reemissao.sql'),
   ('20260814223445', 'farmer_recomendacoes_geracao_vigente', '20260814223445_farmer_recomendacoes_geracao_vigente.sql'),
-  ('20260815153218', 'data_health_contrato_severity_idade', '20260815153218_data_health_contrato_severity_idade.sql')
+  ('20260815153218', 'data_health_contrato_severity_idade', '20260815153218_data_health_contrato_severity_idade.sql'),
+  ('20260815181500', 'farmer_geracao_head_sensor', '20260815181500_farmer_geracao_head_sensor.sql'),
+  ('20260818121919', 'authz_fecho_execute_registrado_3_funcoes', '20260818121919_authz_fecho_execute_registrado_3_funcoes.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2109,7 +2111,17 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('farmer_recomendacoes_geracao_vigente', 'index', 'public', 'idx_fbrec_farmer_status_pendente', 'farmer_bundle_recommendations'),
   ('farmer_recomendacoes_geracao_vigente', 'trigger', 'public', 'trg_frec_exige_run_id', 'farmer_recommendations'),
   ('farmer_recomendacoes_geracao_vigente', 'trigger', 'public', 'trg_fbrec_exige_run_id', 'farmer_bundle_recommendations'),
-  ('data_health_contrato_severity_idade', 'function', 'public', 'data_health_watchdog', '')
+  ('data_health_contrato_severity_idade', 'function', 'public', 'data_health_watchdog', ''),
+  ('farmer_geracao_head_sensor', 'function', 'public', 'farmer_geracao_registrar', ''),
+  ('farmer_geracao_head_sensor', 'function', 'public', 'farmer_recomendacoes_substituir', ''),
+  ('farmer_geracao_head_sensor', 'function', 'public', 'farmer_bundle_recomendacoes_substituir', ''),
+  ('farmer_geracao_head_sensor', 'table', 'public', 'farmer_geracao_vigente', ''),
+  ('farmer_geracao_head_sensor', 'table', 'public', 'farmer_geracao_execucoes', ''),
+  ('farmer_geracao_head_sensor', 'index', 'public', 'farmer_geracao_vigente_motor_farmer_uk', 'farmer_geracao_vigente'),
+  ('farmer_geracao_head_sensor', 'index', 'public', 'farmer_geracao_execucoes_run_uk', 'farmer_geracao_execucoes'),
+  ('farmer_geracao_head_sensor', 'index', 'public', 'farmer_geracao_execucoes_medicao_idx', 'farmer_geracao_execucoes'),
+  ('farmer_geracao_head_sensor', 'rls_policy', 'public', 'fgv_select_carteira', 'farmer_geracao_vigente'),
+  ('farmer_geracao_head_sensor', 'rls_policy', 'public', 'fge_select_carteira', 'farmer_geracao_execucoes')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -3752,7 +3764,17 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('farmer_recomendacoes_geracao_vigente', 'index', 'public', 'idx_fbrec_farmer_status_pendente', 'farmer_bundle_recommendations'),
   ('farmer_recomendacoes_geracao_vigente', 'trigger', 'public', 'trg_frec_exige_run_id', 'farmer_recommendations'),
   ('farmer_recomendacoes_geracao_vigente', 'trigger', 'public', 'trg_fbrec_exige_run_id', 'farmer_bundle_recommendations'),
-  ('data_health_contrato_severity_idade', 'function', 'public', 'data_health_watchdog', '')
+  ('data_health_contrato_severity_idade', 'function', 'public', 'data_health_watchdog', ''),
+  ('farmer_geracao_head_sensor', 'function', 'public', 'farmer_geracao_registrar', ''),
+  ('farmer_geracao_head_sensor', 'function', 'public', 'farmer_recomendacoes_substituir', ''),
+  ('farmer_geracao_head_sensor', 'function', 'public', 'farmer_bundle_recomendacoes_substituir', ''),
+  ('farmer_geracao_head_sensor', 'table', 'public', 'farmer_geracao_vigente', ''),
+  ('farmer_geracao_head_sensor', 'table', 'public', 'farmer_geracao_execucoes', ''),
+  ('farmer_geracao_head_sensor', 'index', 'public', 'farmer_geracao_vigente_motor_farmer_uk', 'farmer_geracao_vigente'),
+  ('farmer_geracao_head_sensor', 'index', 'public', 'farmer_geracao_execucoes_run_uk', 'farmer_geracao_execucoes'),
+  ('farmer_geracao_head_sensor', 'index', 'public', 'farmer_geracao_execucoes_medicao_idx', 'farmer_geracao_execucoes'),
+  ('farmer_geracao_head_sensor', 'rls_policy', 'public', 'fgv_select_carteira', 'farmer_geracao_vigente'),
+  ('farmer_geracao_head_sensor', 'rls_policy', 'public', 'fge_select_carteira', 'farmer_geracao_execucoes')
 )
 SELECT
   e.migration,
