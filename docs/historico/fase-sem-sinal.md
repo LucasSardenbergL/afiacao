@@ -122,6 +122,54 @@ direção oposta, `last_sign_in_at` sozinha também não bastaria: o Supabase n�
 de token, então uma data velha é compatível com uso diário sob sessão persistente. Um mede que
 **houve** entrada; o outro, que **há** presença.
 
+### ⚠️ Instalar o sensor não basta: ele tem de medir a PERGUNTA (2026-08-18, #1765)
+
+O item 2 acima manda instalar o sensor quando a fase N não tem um. Este caso é o que acontece
+**depois** disso — e mostra que "tem sensor" e "a pergunta é respondível" são coisas diferentes.
+
+**A pergunta era frequência:** *"com que frequência o recálculo do farmer produz zero
+recomendações?"* Medido antes de desenhar: 28 execuções COM linha em 5,5 meses, 3 farmers. O
+recálculo vazio saía por `return` mudo — sem linha, sem registro. Numerador sem denominador.
+
+**O sensor projetado foi um HEAD** — 1 linha por `(motor, farmer_id)`, `ON CONFLICT DO UPDATE`,
+avançando a cada execução inclusive quando vazia. Resolvia o compare-and-swap sem depender de haver
+linha, e distinguia "nunca rodou" (head ausente) de "rodou e deu vazio" (head com `resultado=vazio`)
+— duas coisas que antes eram o mesmo estado. Tudo verdade, e ainda assim **ele não responderia a
+pergunta**: o upsert sobrescreve, então um `vazio+completo` de hoje some no run com linhas de
+amanhã. A query de decisão devolveria *"nunca aconteceu"* para algo que aconteceu — a MESMA
+ausência-de-dado que o sensor foi instalado para curar, agora com cara de resposta.
+
+Pego pelo challenge Codex xhigh, depois de a implementação já estar verde com 49 asserts e 6
+falsificações. **Os asserts provavam que o head funcionava; nenhum provava que ele media a
+pergunta.** Correção: separar as duas coisas — `farmer_geracao_vigente` = HEAD (estado corrente +
+CAS) e `farmer_geracao_execucoes` = LOG append-only (frequência), escritos na mesma transação.
+Volume nunca foi objeção: 28 execuções em 5,5 meses.
+
+**A regra:** antes de aceitar um sensor, escreva a query que ele vai responder e confira se a
+ESTRUTURA dele comporta a resposta. Três formas que não comportam:
+
+| a pergunta é… | e o sensor é… | então ele responde |
+|---|---|---|
+| *com que frequência* | um head/upsert (1 linha por chave) | o último estado — o evento anterior foi apagado |
+| *quantos* | um flag booleano | se aconteceu ao menos uma vez |
+| *quando começou* | um `updated_at` sobrescrito | quando mudou pela última vez |
+
+Estado e história são perguntas diferentes, e **o upsert é a forma canônica de perder história sem
+perceber** — porque nada falha, nada fica vermelho, e a tabela existe com dado dentro.
+
+⚠️ **E o par tem de ser à prova de retry:** o log ganhou `UNIQUE(motor, farmer_id, run_id)`, senão a
+"frequência" mede retries junto com execuções. Contador sem chave de idempotência não conta eventos,
+conta chamadas.
+
+⚠️ **Sensor com grant de escrita direto é sensor forjável.** A 1ª versão dava `GRANT INSERT, UPDATE`
+a `authenticated` — com isso o browser dispensava a RPC e escrevia o head por `UPDATE` direto,
+pulando lock, compare-and-swap e anti-forja de uma vez. Guard que se contorna pela porta ao lado não
+é guard; e aqui o contorno não corrompia um número qualquer, corrompia a **medição sobre a qual a
+fase seguinte decidiria**. Escrita só pela RPC (`SECURITY DEFINER`), leitura por RLS. O tell foi o
+próprio spec afirmar *"a tabela não recebe grant de escrita direta"* enquanto o SQL fazia o
+contrário — **contradição entre o documento e o código passa justamente porque o documento está
+certo.**
+
 ### Onde a regra NÃO se aplica
 
 Instrumentar tudo tem custo, e regra que grita errado treina a ignorar o vermelho. O gatilho é a
