@@ -231,7 +231,8 @@ jobs:
       # (hermética, sem rede, ~1s) que até 2026-08-18 NENHUM workflow rodava — teste órfão
       # só vale quando alguém lembra, e guard que regride vira falso-negativo silencioso.
       - name: Hooks guard tests
-        run: heavy bun run test:hooks
+        # sem `heavy` aqui: o semáforo de RAM é da M2 local e nao existe no runner (exit 127).
+        run: bun run test:hooks
 
       # Anti-regressão de gate de autorização em RPCs SECURITY DEFINER sensíveis (custo/preço/
       # estoque). Mata o padrão "CREATE OR REPLACE derrubou o gate" — 3 ocorrências (5 views #1246,
