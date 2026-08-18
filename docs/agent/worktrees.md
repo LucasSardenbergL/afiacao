@@ -121,6 +121,10 @@ checagens da regra feitas**:
 #1763  criado 18:07 → merge 18:12 — viveu 5min16s
 ```
 
+Este é o eixo **TEMPO** (*quando* conferir); o eixo **OBJETIVO** (*o que* procurar — o artefato, não
+o título) é o do bloco acima. Os dois são independentes: aqui as duas checagens da regra FORAM
+feitas e no prazo — e ainda assim custaram dois PRs.
+
 O detector **funcionou**: o #1764 morreu 36s depois de criado. O furo é de TIMING — no `create` o
 trabalho já está pronto, então a rede evita o merge duplicado e não a hora perdida. O `git commit` é
 o chokepoint anterior e é cadenciado pelo **trabalho**, não pelo relógio (as janelas medidas foram de
