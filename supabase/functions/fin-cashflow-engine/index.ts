@@ -18,6 +18,7 @@ import { exigirLeitura, exigirLinhas, tolerarColunaAusente, tolerarLeitura } fro
 // contrato de leitura acima é o que fecha a engine — ler certo e não gravar é tão
 // silencioso quanto gravar lixo; nenhum dos dois basta sozinho.
 import { escritaCritica } from "../_shared/escrita-critica.ts";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 // Observabilidade da execução (acoes_execucoes): sem ela, uma falha diária isolada é
 // INVISÍVEL — o consumidor "latest wins" serve o snapshot de ontem e o fin-valor-engine
 // só considera stale após 45 dias. Medido: em 2026-07-28 faltou 1 dos 9 combos e o rastro
@@ -138,12 +139,30 @@ Deno.serve(async (req: Request) => {
   const auth = await authorizeCronOrStaff(req);
   if (!auth.ok) return auth.response;
 
-  let payload: Input;
+  // ⚠️ SONDA DE VERSÃO — logo após o gate (que já aceita x-cron-secret) e ANTES do createClient e
+  // de toda a projeção. É o único caminho barato desta edge: mesmo sem `save_snapshot`, responder
+  // custa a projeção de 13 semanas inteira. Com `save_snapshot:true` (o caminho do cron) grava
+  // `fin_projecao_snapshots` e mexe em `fin_alertas`.
+  // req.json() é one-shot: o corpo lido aqui é reaproveitado como `payload` abaixo.
+  // Ver versao.ts / _shared/sonda-versao.ts.
+  let corpoBruto: unknown;
   try {
-    payload = await req.json();
+    corpoBruto = await req.json();
   } catch {
     return jsonResponse({ error: 'invalid JSON' }, 400);
   }
+  const decisaoSonda = classificarSonda(corpoBruto);
+  if (decisaoSonda.tipo === 'sonda') return jsonResponse(respostaSonda(VERSAO), 200);
+  if (decisaoSonda.tipo === 'ambiguo') {
+    return jsonResponse({ error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }, 400);
+  }
+
+  // Corpo já consumido acima. Não-objeto vira {} — cai no 400 de "company inválido", como antes
+  // (o JSON malformado continua saindo no 400 de 'invalid JSON' do parse).
+  const payload: Input =
+    typeof corpoBruto === 'object' && corpoBruto !== null && !Array.isArray(corpoBruto)
+      ? corpoBruto as Input
+      : {} as Input;
 
   if (!payload.company || !['oben', 'colacor', 'colacor_sc'].includes(payload.company)) {
     return jsonResponse({ error: 'company inválido' }, 400);
@@ -187,7 +206,16 @@ Deno.serve(async (req: Request) => {
 });
 
 function jsonResponse(body: unknown, status: number): Response {
-  return new Response(JSON.stringify(body), {
+  // `versao` em TODA resposta (sucesso e erro), não só na da sonda: a pergunta "essa correção
+  // subiu?" quase sempre é feita sobre um snapshot que JÁ foi gravado — e o caso que mais importa
+  // é o do run que devolveu número errado sem devolver erro.
+  // O `body` é declarado `unknown`: só dá para espalhar quando de fato for objeto. Não-objeto
+  // (nunca ocorre hoje — os quatro chamadores passam objeto) segue intacto, sem `versao`, em vez
+  // de virar `{"0":...}` por spread de string.
+  const comVersao = typeof body === 'object' && body !== null && !Array.isArray(body)
+    ? { ...body as Record<string, unknown>, versao: VERSAO }
+    : body;
+  return new Response(JSON.stringify(comVersao), {
     status,
     headers: { ...corsHeaders, 'Content-Type': 'application/json' },
   });

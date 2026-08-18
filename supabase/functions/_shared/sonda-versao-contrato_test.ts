@@ -21,6 +21,11 @@ import * as nfeRecebimento from "../omie-nfe-recebimento/versao.ts";
 import * as processNfe from "../process-nfe/versao.ts";
 import * as capturaPrecos from "../sayerlack-captura-precos/versao.ts";
 import * as deparaAuto from "../reposicao-depara-sayerlack-auto/versao.ts";
+import * as omieCliente from "../omie-cliente/versao.ts";
+import * as cashflow from "../fin-cashflow-engine/versao.ts";
+import * as syncEstoque from "../omie-sync-estoque/versao.ts";
+import * as syncNfes from "../omie-sync-nfes-recebidas/versao.ts";
+import * as nfeWebhook from "../omie-nfe-webhook/versao.ts";
 
 const EDGES: Array<{ nome: string; mod: { VERSAO: string; EFEITO: string } }> = [
   { nome: "disparar-pedidos-aprovados", mod: disparar },
@@ -35,7 +40,27 @@ const EDGES: Array<{ nome: string; mod: { VERSAO: string; EFEITO: string } }> = 
   { nome: "process-nfe", mod: processNfe },
   { nome: "sayerlack-captura-precos", mod: capturaPrecos },
   { nome: "reposicao-depara-sayerlack-auto", mod: deparaAuto },
+  // Terceira leva (#1767): escrita money-path no NOSSO banco, nenhuma delas tinha sensor. A leitura
+  // pura (fin-funding, fin-valor-engine, …) ficou de fora de propósito: chamá-la já é grátis, então
+  // a sonda não resolve problema que ela tenha.
+  { nome: "omie-cliente", mod: omieCliente },
+  { nome: "fin-cashflow-engine", mod: cashflow },
+  { nome: "omie-sync-estoque", mod: syncEstoque },
+  { nome: "omie-sync-nfes-recebidas", mod: syncNfes },
+  { nome: "omie-nfe-webhook", mod: nfeWebhook },
 ];
+
+/** As cinco da terceira leva — os gates estruturais abaixo varrem todas. */
+const ESCRITA_NOSSO_BANCO = [
+  "omie-cliente",
+  "fin-cashflow-engine",
+  "omie-sync-estoque",
+  "omie-sync-nfes-recebidas",
+  "omie-nfe-webhook",
+];
+
+/** Destas o gate NÃO aceita `x-cron-secret`, então a sonda precisa de gate PRÓPRIO. */
+const GATE_PROPRIO = ["omie-cliente", "omie-nfe-webhook"];
 
 Deno.test("toda edge instrumentada declara VERSAO no formato vN.N-slug", () => {
   for (const { nome, mod } of EDGES) {
@@ -199,5 +224,124 @@ Deno.test("sayerlack-captura-precos: o EFEITO precisa dizer que é o portal do F
   // Sem "fornecedor" no texto, a recusa parece falar de uma tabela nossa.
   if (!/fornecedor/i.test(capturaPrecos.EFEITO)) {
     throw new Error(`EFEITO não menciona o fornecedor: ${capturaPrecos.EFEITO}`);
+  }
+});
+
+// ─────────────────────────────────────────────
+// Terceira leva (#1767) — as cinco que ESCREVEM money-path no nosso banco. Os três gates abaixo
+// varrem o conjunto em vez de citar edge por edge: o que se quer garantir é a FORMA (fail-closed,
+// IO-free, nunca sem auth), e ela vale igual para as cinco. Um gate por edge envelheceria pior —
+// a sexta entraria sem ninguém notar que ficou de fora.
+// ─────────────────────────────────────────────
+
+/** Só o corpo do handler: em várias destas edges há `createClient` em helper de topo de arquivo,
+ *  e medir o arquivo inteiro compararia a sonda com uma âncora que nem roda por requisição. */
+function trechoDoHandler(nome: string): string {
+  const codigo = codigoDaEdge(nome);
+  const i = codigo.indexOf("Deno.serve(");
+  if (i < 0) throw new Error(`${nome}: 'Deno.serve(' não encontrado — o gate mediu o arquivo errado`);
+  return codigo.slice(i);
+}
+
+Deno.test("terceira leva: a sonda decide por classificarSonda, não por `=== true` cru", () => {
+  // Mesmo motivo do gate da generate-bundle-argument: o founder invoca do SQL Editor, onde
+  // `jsonb_build_object('probe', true)` vira a STRING "true" com facilidade. Aqui o preço de cair
+  // no fluxo real é criar placeholder+profile, reescrever saldo ou gravar projeção de caixa.
+  for (const nome of ESCRITA_NOSSO_BANCO) {
+    const codigo = codigoDaEdge(nome);
+    if (!/classificarSonda\(/.test(codigo)) {
+      throw new Error(`${nome}: não chama classificarSonda — a sonda não é fail-closed`);
+    }
+    if (/\bbody\.probe\s*===\s*true/.test(codigo)) {
+      throw new Error(`${nome}: voltou o \`body.probe === true\` cru — "true" string cai no fluxo real`);
+    }
+  }
+});
+
+Deno.test("terceira leva: a sonda responde ANTES do createClient do handler", () => {
+  // O valor da sonda é ser o único caminho sem custo. Na `omie-sync-nfes-recebidas` o parse do
+  // corpo estava DEPOIS do `createClient` e teve de subir; este gate é o que impede a volta.
+  for (const nome of ESCRITA_NOSSO_BANCO) {
+    const h = trechoDoHandler(nome);
+    const posSonda = h.indexOf("classificarSonda(");
+    const posCliente = h.indexOf("createClient(");
+    if (posSonda < 0 || posCliente < 0) {
+      throw new Error(`${nome}: âncoras não encontradas no handler (controle positivo vazio)`);
+    }
+    if (posSonda > posCliente) {
+      throw new Error(`${nome}: a sonda desceu para depois do createClient — deixou de ser IO-free`);
+    }
+  }
+});
+
+Deno.test("gate próprio: onde o gate da edge não aceita cron-secret, a sonda NÃO fica sem auth", () => {
+  // `omie-cliente` e `omie-nfe-webhook` respondem a sonda ANTES do gate delas (por-ação numa,
+  // `x-webhook-secret` na outra) — nenhum dos dois aceita `x-cron-secret`, que é como o founder
+  // invoca do SQL Editor. O desvio só é legítimo porque a sonda traz gate PRÓPRIO. Sem este
+  // assert, apagar a linha do `authorizeCronOrStaff` abriria um caminho anônimo — e na
+  // `omie-cliente` ele seria PÚBLICO de fato, já que `buscar_por_documento` não exige JWT.
+  for (const nome of GATE_PROPRIO) {
+    const h = trechoDoHandler(nome);
+    const posSonda = h.indexOf("classificarSonda(");
+    const posResposta = h.indexOf("respostaSonda(");
+    if (posSonda < 0 || posResposta < 0 || posResposta < posSonda) {
+      throw new Error(`${nome}: âncoras da sonda não encontradas em ordem (controle positivo vazio)`);
+    }
+    if (!/authorizeCronOrStaff\(req\)/.test(h.slice(posSonda, posResposta))) {
+      throw new Error(`${nome}: a sonda responde sem gate próprio entre a classificação e a resposta`);
+    }
+  }
+});
+
+Deno.test("CALIBRAÇÃO: os gates da terceira leva reprovam a forma errada", () => {
+  // Sem isto os três acima só provariam que os arquivos existem (deploy.md: "canária que não
+  // discrimina é teatro verde"). Cada padrão é exercitado contra a forma que ele existe para
+  // barrar, montada aqui como texto — não dá para sabotar as edges reais dentro do teste.
+  const handlerErrado = 'Deno.serve(async (req) => {\n  const c = createClient(a, b);\n  classificarSonda(body);\n';
+  const iSonda = handlerErrado.indexOf("classificarSonda(");
+  const iCliente = handlerErrado.indexOf("createClient(");
+  if (!(iSonda > iCliente)) {
+    throw new Error("o gate de posição não reprovaria uma sonda depois do createClient");
+  }
+  const semGate = 'classificarSonda(body);\n  return jsonRes(respostaSonda(VERSAO), 200);';
+  if (/authorizeCronOrStaff\(req\)/.test(semGate.slice(0, semGate.indexOf("respostaSonda(")))) {
+    throw new Error("o gate de auth não reprovaria uma sonda sem gate próprio");
+  }
+  const cru = "    if (body.probe === true) {";
+  if (!/\bbody\.probe\s*===\s*true/.test(cru)) {
+    throw new Error("o padrão do `=== true` cru não casa a própria forma que proíbe");
+  }
+});
+
+Deno.test("omie-cliente: o EFEITO precisa nomear `profiles` — o discriminante dos aliases fiscais", () => {
+  // É a lição mais cara do repo já redescoberta 2× (CLAUDE.md §Armadilhas / database.md §5): a
+  // AUSÊNCIA de `profiles` é o que separa os ~1.633 aliases fiscais `@placeholder.local` de lixo
+  // de import. Esta edge CRIA os dois (auth.users + profiles). Se a recusa não nomear `profiles`,
+  // quem tomar o 400 lê "sincroniza clientes" e retenta achando que o custo é uma chamada ao Omie.
+  if (!/profiles/i.test(omieCliente.EFEITO)) {
+    throw new Error(`EFEITO não menciona profiles: ${omieCliente.EFEITO}`);
+  }
+  if (!/auth\.users/i.test(omieCliente.EFEITO)) {
+    throw new Error(`EFEITO não menciona auth.users: ${omieCliente.EFEITO}`);
+  }
+});
+
+Deno.test("omie-sync-nfes-recebidas: o EFEITO precisa avisar que o run FABRICA frescor", () => {
+  // `fin_sync_log` é lido SEM filtro de `action` por `_data_health_compute` e
+  // `fin_calcular_confiabilidade` (só o `fin_sync_heartbeat` filtra) — o mesmo desenho que fez a
+  // probe do `omie-financeiro` precisar do `PROBE_ACTIONS`/`logId=""`. Um run supérfluo aqui não
+  // custa só tempo: sobe a confiabilidade que o financeiro exibe.
+  if (!/fin_sync_log/.test(syncNfes.EFEITO)) {
+    throw new Error(`EFEITO não menciona fin_sync_log: ${syncNfes.EFEITO}`);
+  }
+});
+
+Deno.test("omie-sync-estoque: o EFEITO precisa dizer que o run APAGA o sinal de que foi ruim", () => {
+  // Ela avança o marcador de frescor do Sentinela junto com o saldo. É a falha silenciosa por
+  // desenho: o run parcial escreve saldo pela metade E carimba "fresco", então o próprio sensor
+  // que deveria acusar passa a atestar. Sem isto no texto, a recusa parece falar de um upsert
+  // qualquer — e a decisão de retentar sai errada.
+  if (!/sync_state|frescor|marcador/i.test(syncEstoque.EFEITO)) {
+    throw new Error(`EFEITO não menciona o marcador de frescor: ${syncEstoque.EFEITO}`);
   }
 });

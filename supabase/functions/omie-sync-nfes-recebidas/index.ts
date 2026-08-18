@@ -22,6 +22,7 @@
 //   { "empresa": "OBEN" | "COLACOR" | "ALL", "dias": 30, "fornecedor_codigo_omie": 8689681266 }
 
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { classifyOmieResponse, computeBackoffMs } from "./retry.ts";
 
 const corsHeaders = {
@@ -812,13 +813,41 @@ async function completeSync(
   }
 }
 
+// `versao` em TODA resposta (sucesso e erro), não só na da sonda: a pergunta "essa correção
+// subiu?" quase sempre é feita sobre um run que JÁ aconteceu — e o caso que mais importa é o do
+// run que morreu no meio da varredura.
+function jsonRes(body: Record<string, unknown>, status = 200) {
+  return new Response(JSON.stringify({ ...body, versao: VERSAO }), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
   if (!(await authorizeCronOrStaff(req))) {
-    return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    return jsonRes({ error: "Unauthorized" }, 401);
   }
+
+  // ⚠️ SONDA DE VERSÃO — logo após o gate (que já aceita x-cron-secret) e ANTES do createClient,
+  // da varredura no Omie e de qualquer escrita. O parse do corpo SUBIU para cá de propósito: no
+  // desenho anterior ele vinha depois do `createClient`, e a sonda ali já teria custo.
+  // Daqui pra frente a edge reescreve `purchase_orders_tracking` e abre linha em `fin_sync_log`,
+  // que o cálculo de frescor lê sem filtrar `action` — sondar de graça exige responder antes.
+  // req.json() é one-shot: o corpo lido aqui é reaproveitado no fluxo real abaixo.
+  // Ver versao.ts / _shared/sonda-versao.ts.
+  let corpoBruto: unknown = {};
+  if (req.method === "POST") {
+    try { corpoBruto = await req.json(); } catch { corpoBruto = {}; }
+  }
+  const decisaoSonda = classificarSonda(corpoBruto);
+  if (decisaoSonda.tipo === "sonda") return jsonRes(respostaSonda(VERSAO), 200);
+  if (decisaoSonda.tipo === "ambiguo") {
+    return jsonRes({ error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }, 400);
+  }
+
   const t0 = Date.now();
   // cron = x-cron-secret (cron diário direto) OU service-role (via orquestrador omie-cron-diario,
   // que chama as edges com Bearer SERVICE_ROLE, sem repassar o x-cron-secret). user JWT (staff) = manual.
@@ -830,20 +859,19 @@ Deno.serve(async (req) => {
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
     if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-      return new Response(
-        JSON.stringify({ ok: false, error: "SUPABASE_URL/SERVICE_ROLE_KEY ausentes" }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
+      return jsonRes({ ok: false, error: "SUPABASE_URL/SERVICE_ROLE_KEY ausentes" }, 500);
     }
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
       auth: { persistSession: false },
     });
 
-    let body: RequestBody = {};
-    if (req.method === "POST") {
-      try { body = await req.json(); } catch { body = {}; }
-    }
+    // Corpo já consumido no bloco da sonda acima (req.json() é one-shot). Não-objeto vira {} —
+    // cai nos mesmos defaults de antes (empresa "ALL", dias 30).
+    const body: RequestBody =
+      typeof corpoBruto === "object" && corpoBruto !== null && !Array.isArray(corpoBruto)
+        ? corpoBruto as RequestBody
+        : {};
 
     const empresaParam = (body.empresa ?? "ALL").toUpperCase() as "OBEN" | "COLACOR" | "ALL";
     const dias = typeof body.dias === "number" && body.dias > 0 ? body.dias : 30;
@@ -931,16 +959,10 @@ Deno.serve(async (req) => {
       }
     }
 
-    return new Response(
-      JSON.stringify({ ok: true, duracao_ms: Date.now() - t0, summary }),
-      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-    );
+    return jsonRes({ ok: true, duracao_ms: Date.now() - t0, summary }, 200);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error("[sync-nfes] erro fatal:", msg);
-    return new Response(
-      JSON.stringify({ ok: false, error: msg, duracao_ms: Date.now() - t0 }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-    );
+    return jsonRes({ ok: false, error: msg, duracao_ms: Date.now() - t0 }, 500);
   }
 });

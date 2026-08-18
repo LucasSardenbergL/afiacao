@@ -1,4 +1,6 @@
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
+import { authorizeCronOrStaff } from "../_shared/auth.ts";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { fetchAll } from "../_shared/paginate.ts";
 import {
   avaliarPagina,
@@ -632,6 +634,16 @@ async function consultarClienteCompleto(codigoCliente: number): Promise<OmieClie
   }
 }
 
+// `versao` em TODA resposta (sucesso e erro), não só na da sonda: a pergunta "essa correção
+// subiu?" quase sempre é feita sobre um sync que JÁ rodou — e o caso que mais importa é o do run
+// que criou placeholder/profile e devolveu erro no meio.
+function jsonRes(body: Record<string, unknown>, status = 200) {
+  return new Response(JSON.stringify({ ...body, versao: VERSAO }), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -639,14 +651,32 @@ Deno.serve(async (req) => {
 
   try {
     const body = await req.json();
+
+    // ⚠️ SONDA DE VERSÃO — antes do dispatch, porque daqui pra frente a edge pode CRIAR usuário
+    // em `auth.users` (@placeholder.local) e INSERIR o `profiles` dele: isso não erra um número,
+    // apaga o discriminante dos ~1.633 aliases fiscais (CLAUDE.md §Armadilhas / database.md §5).
+    //
+    // Gate PRÓPRIO (`authorizeCronOrStaff`), como nas edges de NF-e (#1753/#1766) e pelo mesmo
+    // motivo — aqui ainda mais forte: esta edge não tem UM gate, ele é POR AÇÃO, e
+    // `buscar_por_documento` é pública (pré-cadastro, só rate-limit por IP). Nenhum dos caminhos
+    // aceita `x-cron-secret`, que é como a sonda é invocada do SQL Editor. Deixá-la seguir o gate
+    // por-ação a tornaria ou inalcançável (nas de staff) ou pública (na de pré-cadastro) — o gate
+    // próprio evita os dois. O FLUXO REAL continua exigindo o gate da ação, logo abaixo.
+    // O custo só é pago quando `probe` vem no corpo: sem a chave, nada disto executa.
+    // Ver versao.ts / _shared/sonda-versao.ts.
+    const decisaoSonda = classificarSonda(body);
+    if (decisaoSonda.tipo !== "disparo") {
+      const authSonda = await authorizeCronOrStaff(req);
+      if (!authSonda.ok) return authSonda.response;
+      if (decisaoSonda.tipo === "sonda") return jsonRes(respostaSonda(VERSAO), 200);
+      return jsonRes({ error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }, 400);
+    }
+
     const { action, documento, query, codigo_cliente } = body;
 
     // Input validation
     if (!action || typeof action !== "string") {
-      return new Response(
-        JSON.stringify({ error: "Ação inválida" }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+      return jsonRes({ error: "Ação inválida" }, 400);
     }
 
     // buscar_por_documento is allowed without auth (used during signup)
@@ -654,10 +684,7 @@ Deno.serve(async (req) => {
     if (action !== "buscar_por_documento") {
       const authHeader = req.headers.get("Authorization");
       if (!authHeader?.startsWith("Bearer ")) {
-        return new Response(
-          JSON.stringify({ error: "Não autorizado" }),
-          { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
+        return jsonRes({ error: "Não autorizado" }, 401);
       }
 
       const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
@@ -668,10 +695,7 @@ Deno.serve(async (req) => {
 
       const { data: { user }, error: authError } = await supabaseAuth.auth.getUser();
       if (authError || !user) {
-        return new Response(
-          JSON.stringify({ error: "Token inválido" }),
-          { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
+        return jsonRes({ error: "Token inválido" }, 401);
       }
 
       // Staff-only gate for sensitive/privileged actions. Only buscar_por_documento
@@ -693,18 +717,12 @@ Deno.serve(async (req) => {
           .select("role")
           .eq("user_id", user.id);
         if (roleErr) {
-          return new Response(
-            JSON.stringify({ error: "Falha ao verificar permissões" }),
-            { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-          );
+          return jsonRes({ error: "Falha ao verificar permissões" }, 500);
         }
         const allowed = new Set(["employee", "master"]);
         const hasStaff = (roleRows ?? []).some((r: { role: string }) => allowed.has(r.role));
         if (!hasStaff) {
-          return new Response(
-            JSON.stringify({ error: "Acesso restrito a equipe interna" }),
-            { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-          );
+          return jsonRes({ error: "Acesso restrito a equipe interna" }, 403);
         }
       }
     } else {
@@ -713,10 +731,7 @@ Deno.serve(async (req) => {
         || req.headers.get("cf-connecting-ip")
         || "unknown";
       if (!checkRateLimit(ip)) {
-        return new Response(
-          JSON.stringify({ error: "Muitas requisições. Tente novamente em alguns instantes." }),
-          { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
+        return jsonRes({ error: "Muitas requisições. Tente novamente em alguns instantes." }, 429);
       }
     }
 
@@ -725,10 +740,7 @@ Deno.serve(async (req) => {
     switch (action) {
       case "buscar_por_documento": {
         if (!documento || typeof documento !== "string" || documento.length > 20) {
-          return new Response(
-            JSON.stringify({ error: "Documento inválido" }),
-            { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-          );
+          return jsonRes({ error: "Documento inválido" }, 400);
         }
 
         const { cliente, cnpjData } = await buscarClientePorDocumento(documento);
@@ -746,10 +758,7 @@ Deno.serve(async (req) => {
 
       case "pesquisar_clientes": {
         if (!query || typeof query !== "string" || query.length < 3) {
-          return new Response(
-            JSON.stringify({ error: "Informe pelo menos 3 caracteres para pesquisar" }),
-            { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-          );
+          return jsonRes({ error: "Informe pelo menos 3 caracteres para pesquisar" }, 400);
         }
 
         const searchResult = await pesquisarClientes(query);
@@ -772,10 +781,7 @@ Deno.serve(async (req) => {
 
       case "consultar_cliente": {
         if (!codigo_cliente || typeof codigo_cliente !== "number") {
-          return new Response(
-            JSON.stringify({ error: "Código do cliente inválido" }),
-            { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-          );
+          return jsonRes({ error: "Código do cliente inválido" }, 400);
         }
 
         const clienteCompleto = await consultarClienteCompleto(codigo_cliente);
@@ -810,10 +816,7 @@ Deno.serve(async (req) => {
       case "criar_perfil_local": {
         const { cliente } = body;
         if (!cliente || !cliente.codigo_cliente) {
-          return new Response(
-            JSON.stringify({ error: "Dados do cliente inválidos" }),
-            { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-          );
+          return jsonRes({ error: "Dados do cliente inválidos" }, 400);
         }
 
         const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
@@ -902,14 +905,11 @@ Deno.serve(async (req) => {
               // ferramenta ao cliente ERRADO (useUnifiedOrder.handleStaffAddTool usa o user_id de volta).
               if (mappingError) {
                 console.error("[criar_perfil_local] Mapping error:", mappingError);
-                return new Response(
-                  JSON.stringify({
-                    error: mappingError.code === "23505"
-                      ? `O código Omie ${cliente.codigo_cliente} já está vinculado a outro usuário na conta oben — vínculo bloqueado por segurança.`
-                      : `Falha ao registrar o vínculo do cliente: ${mappingError.message}`,
-                  }),
-                  { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-                );
+                return jsonRes({
+                  error: mappingError.code === "23505"
+                    ? `O código Omie ${cliente.codigo_cliente} já está vinculado a outro usuário na conta oben — vínculo bloqueado por segurança.`
+                    : `Falha ao registrar o vínculo do cliente: ${mappingError.message}`,
+                }, 409);
               }
               result = { user_id: matchedUserId };
               break;
@@ -967,15 +967,12 @@ Deno.serve(async (req) => {
         // reconciliação (o erro nomeia o código, que é a chave para achá-lo).
         if (mappingError) {
           console.error("[criar_perfil_local] Mapping error (placeholder já criado:", newUserId, "):", mappingError);
-          return new Response(
-            JSON.stringify({
-              error: mappingError.code === "23505"
-                ? `O código Omie ${cliente.codigo_cliente} já está vinculado a outro usuário na conta oben — vínculo bloqueado por segurança.`
-                : `Falha ao registrar o vínculo do cliente: ${mappingError.message}`,
-              placeholder_user_id: newUserId,
-            }),
-            { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-          );
+          return jsonRes({
+            error: mappingError.code === "23505"
+              ? `O código Omie ${cliente.codigo_cliente} já está vinculado a outro usuário na conta oben — vínculo bloqueado por segurança.`
+              : `Falha ao registrar o vínculo do cliente: ${mappingError.message}`,
+            placeholder_user_id: newUserId,
+          }, 409);
         }
 
         // Upsert address from Omie data
@@ -1614,10 +1611,7 @@ Deno.serve(async (req) => {
       case "validar_vendedor": {
         const { cnpj_cpf } = body;
         if (!cnpj_cpf || typeof cnpj_cpf !== "string") {
-          return new Response(
-            JSON.stringify({ error: "CPF/CNPJ inválido" }),
-            { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-          );
+          return jsonRes({ error: "CPF/CNPJ inválido" }, 400);
         }
 
         const validacao = await validarVendedorMultiOmie(cnpj_cpf);
@@ -1626,21 +1620,12 @@ Deno.serve(async (req) => {
       }
 
       default:
-        return new Response(
-          JSON.stringify({ error: "Ação não reconhecida" }),
-          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
+        return jsonRes({ error: "Ação não reconhecida" }, 400);
     }
 
-    return new Response(JSON.stringify(result), {
-      status: 200,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    return jsonRes(result, 200);
   } catch (error) {
     console.error("[Omie Cliente] Erro:", error);
-    return new Response(
-      JSON.stringify({ error: "Erro ao processar solicitação" }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+    return jsonRes({ error: "Erro ao processar solicitação" }, 500);
   }
 });

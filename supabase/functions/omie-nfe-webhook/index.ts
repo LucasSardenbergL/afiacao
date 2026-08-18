@@ -1,4 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { authorizeCronOrStaff } from "../_shared/auth.ts";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -7,7 +9,10 @@ const corsHeaders = {
 };
 
 function jsonResponse(body: Record<string, unknown>, status = 200) {
-  return new Response(JSON.stringify(body), {
+  // `versao` em TODA resposta (sucesso e erro), não só na da sonda: a pergunta "essa correção
+  // subiu?" quase sempre é feita sobre um recebimento que JÁ entrou — e o caso que mais importa
+  // é o da importação que morreu no meio, deixando cabeçalho sem itens.
+  return new Response(JSON.stringify({ ...body, versao: VERSAO }), {
     status,
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
@@ -31,6 +36,37 @@ Deno.serve(async (req) => {
     return new Response("ok", { headers: corsHeaders });
   }
 
+  // ⚠️ SONDA DE VERSÃO — antes de tudo, porque daqui pra frente a edge MATERIALIZA o recebimento
+  // no nosso banco (insert em `nfe_recebimentos` + `nfe_recebimento_itens`), e a retentativa não
+  // conserta importação parcial: o guard de duplicata responde "já importada".
+  //
+  // Duas diferenças em relação às edges cujo gate já aceita cron-secret, ambas deliberadas:
+  //  1. o corpo é consumido AQUI (req.json() é one-shot) e reaproveitado no fluxo real abaixo;
+  //  2. a sonda tem gate PRÓPRIO (`authorizeCronOrStaff`) em vez de esperar o gate desta edge.
+  //     O gate daqui é `x-webhook-secret`, o segredo compartilhado com o Omie (que não emite JWT),
+  //     e não aceita `x-cron-secret` — mas é pelo SQL Editor, com cron-secret, que a sonda é
+  //     invocada em produção; atrás dele ela seria inalcançável para quem precisa dela. Nenhum
+  //     caminho fica sem auth, e o FLUXO REAL continua exigindo o webhook-secret logo abaixo.
+  // O custo é pago só quando `probe` vem no corpo: sem a chave, nada disto executa.
+  // Ver versao.ts / _shared/sonda-versao.ts.
+  // Sem anotação de propósito: `req.json()` devolve `any`, e é esse o tipo que os acessos com
+  // alias abaixo (chNFe/chave_acesso, det/itens, emit?.cnpj) sempre tiveram. Anotar
+  // `Record<string, any>` reprova no ESLint (no-explicit-any); anotar `unknown` quebraria os
+  // acessos aninhados e viraria dívida no edges:typecheck. Instrumentar não é hora de retipar.
+  let corpoBruto;
+  try {
+    corpoBruto = await req.json();
+  } catch {
+    corpoBruto = {};
+  }
+  const decisaoSonda = classificarSonda(corpoBruto);
+  if (decisaoSonda.tipo !== "disparo") {
+    const authSonda = await authorizeCronOrStaff(req);
+    if (!authSonda.ok) return authSonda.response;
+    if (decisaoSonda.tipo === "sonda") return jsonResponse(respostaSonda(VERSAO), 200);
+    return jsonResponse({ error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }, 400);
+  }
+
   // Shared-secret webhook auth (Omie cannot send a JWT).
   const expectedSecret = Deno.env.get("OMIE_WEBHOOK_SECRET");
   const providedSecret = req.headers.get("x-webhook-secret");
@@ -48,7 +84,12 @@ Deno.serve(async (req) => {
   );
 
   try {
-    const payload = await req.json();
+    // Corpo já consumido no bloco da sonda acima (req.json() é one-shot). Não-objeto vira {} —
+    // cai no 400 de "chave_acesso ausente", como antes.
+    const payload = typeof corpoBruto === "object" && corpoBruto !== null &&
+        !Array.isArray(corpoBruto)
+      ? corpoBruto
+      : {};
     console.log("[omie-nfe-webhook] Payload recebido:", JSON.stringify(payload).slice(0, 500));
 
     const chaveAcesso: string | undefined =
