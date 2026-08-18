@@ -388,6 +388,28 @@ export const ACKNOWLEDGED_SENSITIVE = new Set<string>([
   // `trg_set_status_envio_portal` em `pedido_compra_sugerido` (medido em pg_trigger). Função de
   // trigger não tem rota PostgREST — o fecho por privilégio é a segunda tranca, não a primeira.
   'public.set_status_envio_portal_on_disparo',
+
+  // ─────────── 2026-08-18 — as 3 de `private` que nasciam com `proacl` NULL (#1768 §9.1) ───────────
+  // MEDIDO: `pg_default_acl` não tem linha para o schema `private`, então função criada lá nasce
+  // com `proacl` NULL = EXECUTE implícito a PUBLIC (e `private` dá USAGE a anon E authenticated —
+  // o schema nega ROTA, não EXECUTE). Fechadas por privilégio em
+  // 20260818120000_authz_private_execute_fecho.sql; ACL vigiado pela Parte E dali em diante.
+  //
+  // ⚠️ Nenhuma das 3 foi flagrada pela Parte B, e a razão é a MESMA do ponto cego já anotado em
+  // `get_carteira_margem_faixa` acima, numa 2ª forma: o detector é LÉXICO sobre o corpo, e estes
+  // corpos falam o jargão do modelo (`m_ij`, `lie`, `m_bundle`) em vez dos tokens de
+  // SENSITIVE_COLUMNS. Some-se que `custo_canonico` nem chega à Parte B (ela só examina SECDEF) e
+  // que `p_cost_price` não casa `\bcost_price\b` (o `_` antes não é fronteira de palavra).
+  // Registro manual, como lá — ampliar o dicionário não resolveria: `m_ij` como token sensível
+  // teria recall absurdo.
+  //
+  // ⚠️ `private.custo_canonico` foi tirada DAQUI e posta em `ACL_ONLY_INTERNAL` (abaixo) depois
+  // da revisão adversária do Codex, que achou o modo de falha que eu não vi: este Set não é
+  // documentação, é a lista que faz a Parte B PULAR. Hoje a entrada seria inerte (a função é
+  // INVOKER e a Parte B só examina SECDEF), mas no dia em que ela renascesse SECDEF — a
+  // regressão que o gate existe para pegar — a entrada preexistente a SUPRIMIRIA em silêncio.
+  'private.frec_sem_margem',
+  'private.fbrec_sem_margem',
   //
   // ⚠️ O fecho por privilégio é estado de PROD, e é a **Parte E** do `authz:check` que o vigia
   // desde 2026-08-15 (scripts/authz-funcoes-fechadas.ts + scripts/lib/authz-funcoes.ts; §9 de
@@ -398,6 +420,33 @@ export const ACKNOWLEDGED_SENSITIVE = new Set<string>([
   // MEDIDO em `pg_default_acl`, concede EXECUTE a `anon` E `authenticated` no schema `public`.
   // Limite que continua valendo: o estático prova o que o REPO declara; grant colado à mão em
   // prod só aparece em `bun run authz:funcoes:prod`.
+]);
+
+/**
+ * Helpers INTERNOS fechados por ACL — categoria distinta de `ACKNOWLEDGED_SENSITIVE`, criada em
+ * 2026-08-18 a partir da revisão adversária do Codex (gpt-5.6-sol xhigh) sobre o fecho das 3
+ * funções de `private`.
+ *
+ * A DIFERENÇA QUE JUSTIFICA A CATEGORIA, e ela é de modo de falha, não de gosto:
+ *   · `ACKNOWLEDGED_SENSITIVE` é consultado pela Parte B para **PULAR** uma SECDEF sensível já
+ *     classificada. Pôr aqui uma função INVOKER seria inerte HOJE e perigoso AMANHÃ: se ela
+ *     renascesse SECDEF, a entrada preexistente suprimiria justamente a regressão que o gate
+ *     existe para pegar.
+ *   · Este Set NÃO suprime nada. Ele só declara "é helper interno, fechado por privilégio, e
+ *     pertence ao universo admissível de `AUTHZ_FUNCOES_FECHADAS`" — e vem com um DISCRIMINANTE
+ *     OBRIGATÓRIO: entrada daqui tem de continuar SECURITY INVOKER. Virar SECDEF é ERRO da
+ *     Parte B (não aviso), com a instrução de reclassificar.
+ *
+ * Ou seja: não é o teste "não inventa função" afrouxado para ficar verde — é ele partido em duas
+ * afirmações mais fortes, cada uma com a checagem que a sustenta.
+ */
+export const ACL_ONLY_INTERNAL = new Set<string>([
+  // Helper puro do custo canônico (cost_final → cost_price, finito e > 0, senão NULL). Não lê
+  // tabela: recebe dois numerics do próprio chamador e devolve um deles — não revela custo que o
+  // chamador já não tenha. Fechada por SUPERFÍCIE MÍNIMA, não por sensibilidade de capacidade.
+  // Consumidor real medido: `public.get_skus_margem_positiva()` (SECDEF, owner postgres), que a
+  // alcança como owner mesmo após o REVOKE. Fecho: 20260818120000_authz_private_execute_fecho.sql.
+  'private.custo_canonico',
 ]);
 
 /** chave de lookup a partir de schema+name (case-insensitive, sem assinatura) */

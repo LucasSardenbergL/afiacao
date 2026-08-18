@@ -21,7 +21,7 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **475** custom migrations totais
+- **476** custom migrations totais
 - **1616** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 489
@@ -3964,6 +3964,10 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `index` | `public.farmer_geracao_execucoes_medicao_idx` | `farmer_geracao_execucoes` |
 | `rls_policy` | `public.fgv_select_carteira` | `farmer_geracao_vigente` |
 | `rls_policy` | `public.fge_select_carteira` | `farmer_geracao_execucoes` |
+
+### `20260818120000_authz_private_execute_fecho.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ### `20260818121919_authz_fecho_execute_registrado_3_funcoes.sql`
 

@@ -16,11 +16,25 @@
  *     schema `public`, objtype `f` → {postgres=X, anon=X, authenticated=X, service_role=X, …}
  * Isto é, uma função nova em `public` nasce **executável por `anon` E `authenticated`** — o vetor
  * concede à role ANÔNIMA, não só à autenticada. E o schema `private` **não tem** default privilege
- * de função: lá a função nasce com `proacl` NULL, que é EXECUTE implícito a PUBLIC — pior ainda,
- * e já visível em prod (3 funções `private` estão nesse estado; 2 delas SECDEF).
+ * de função: lá a função nasce com `proacl` NULL, que é EXECUTE implícito a PUBLIC.
+ *
+ * ⚠️ O "pior ainda" que esta nota trazia na 1ª versão estava ERRADO no EFEITO, e a correção
+ * importa para não se desenhar defesa contra o risco errado: `proacl` NULL e o default de
+ * `public` deixam AMBOS o `anon` com EXECUTE. A diferença é de FORMA, e favorece `private` —
+ * com `proacl` NULL um `REVOKE ... FROM PUBLIC` basta, enquanto em `public` é preciso revogar
+ * de `anon`/`authenticated` POR NOME (a armadilha do CLAUDE.md).
+ *
+ * As 3 funções de `private` que estavam nesse estado (2 delas SECDEF) foram FECHADAS em
+ * 20260818120000_authz_private_execute_fecho.sql e estão declaradas no fim desta allowlist. A
+ * CAUSA-RAIZ segue de pé de propósito: um `ALTER DEFAULT PRIVILEGES IN SCHEMA private REVOKE
+ * EXECUTE ON FUNCTIONS FROM PUBLIC` fecharia a classe para funções FUTURAS, mas só vale para
+ * objetos criados pelo ROLE que o executa — cobertura parcial com aparência de total — e mudaria
+ * a premissa medida deste cabeçalho (a Parte E emite [FUNCAO_DEFAULT_PRIVILEGE_ALTERADO] de
+ * propósito). É entrega própria, com prova própria; o raciocínio completo está no cabeçalho
+ * daquela migration.
  *
  * MEDIÇÃO QUE JUSTIFICA CADA ENTRADA (psql-ro, 2026-08-15, `has_function_privilege` +
- * `proacl` cru, nas 40 funções de `AUTHZ_MANIFEST` ∪ `ACKNOWLEDGED_SENSITIVE`):
+ * `proacl` cru, nas então 40 funções de `AUTHZ_MANIFEST` ∪ `ACKNOWLEDGED_SENSITIVE`):
  *   · 40 de 40 presentes no banco, **0** com `proacl` NULL;
  *   · **`anon` não alcança NENHUMA** — reconfirma a medição de 2026-08-14 e é o que autoriza
  *     `permitido.anon = false` em todas (declarar sem medir fabricaria contrato falso, o erro que
@@ -30,6 +44,14 @@
  *   · 20 das 21 de `ACKNOWLEDGED_SENSITIVE` **não** têm — fecham por PRIVILÉGIO. A 21ª,
  *     `get_carteira_margem_faixa`, tem `authenticated=X` de propósito (fecha por gate de ESCOPO e
  *     PROJEÇÃO, não por privilégio) e é a única exceção; ela está anotada abaixo.
+ *
+ * REMEDIÇÃO 2026-08-18 (após entrarem as 3 de `private`): o conjunto tem **43** funções (19
+ * manifest + 24 ACK), 43 de 43 presentes. Enquanto o fecho não for colado no SQL Editor, a
+ * medição de prod acusa **3** com `proacl` NULL e **3** alcançáveis por `anon` — são exatamente
+ * as 3 novas, e `bun run authz:funcoes:prod` as reporta como `[FUNCAO_NAO_APLICADA]`. Depois do
+ * apply o esperado volta a ser `proacl` NULL = 0, `anon` = 0 e `authenticated` = 20 (as 19 do
+ * manifest + `get_carteira_margem_faixa`); hoje são 23 porque `proacl` NULL concede a PUBLIC.
+ * Este parágrafo é o que impede o bloco acima de virar afirmação falsa — releia-o junto.
  *
  * `fechadaPor` é a ÂNCORA: a última migration do repo que estabelece o ACL declarado aqui. A
  * vigilância é dela **para a frente, INCLUSIVE** — diferente da Parte C de tabela, que olha só o
@@ -310,5 +332,40 @@ export const AUTHZ_FUNCOES_FECHADAS: Record<string, FuncaoFechada> = {
     permitido: PORTA_FECHADA,
     motivo:
       'RETURNS trigger em pedido_compra_sugerido (trg_set_status_envio_portal), sem rota PostgREST',
+  },
+
+  // ═══════════ schema `private` — as 3 que nasciam com `proacl` NULL (#1768 §9.1) ═══════════
+  // MEDIDO (psql-ro, 2026-08-15, reconfirmado 2026-08-18): `pg_default_acl` não tem NENHUMA linha
+  // para o schema `private` ⇒ função criada lá nasce com `proacl` NULL = EXECUTE implícito a
+  // PUBLIC. E `private` concede USAGE a `anon` E `authenticated` (nspacl), então o schema não é
+  // barreira de EXECUTE — só de ROTA (o PostgREST não o publica). Estas 3 eram as únicas de 23
+  // nesse estado; as outras 20 já tinham ACL explícito.
+  //
+  // Nenhuma era explorável quando o fecho foi escrito — mas por razões que NÃO eram privilégio, e
+  // é isso que o fecho corrige. Provado em db/test-authz-private-execute-fecho.sh (15 asserts,
+  // 3 falsificações, verde em lc_messages C e pt_BR.UTF-8).
+  'private.custo_canonico': {
+    fechadaPor: '20260818120000_authz_private_execute_fecho.sql',
+    permitido: PORTA_FECHADA,
+    motivo:
+      'helper puro do custo canônico (SECURITY INVOKER, não lê tabela). Barrava anon só por ' +
+      'ACIDENTE — chama private.regua_num_finito, que nega anon; F3 do harness abre o helper e ' +
+      'mostra anon EXECUTANDO. Consumidor real: public.get_skus_margem_positiva (SECDEF, owner ' +
+      'postgres), que segue chamando após o REVOKE (L8)',
+  },
+  'private.frec_sem_margem': {
+    fechadaPor: '20260818120000_authz_private_execute_fecho.sql',
+    permitido: PORTA_FECHADA,
+    motivo:
+      'RETURNS trigger do scrub de margem do FU4-F fase 3 (nulifica m_ij/lie em ' +
+      'farmer_recommendations). Chamada direta já morria em 0A000 no EXECUTOR, com ou sem ' +
+      'EXECUTE (L3) — o REVOKE é 2ª tranca; disparar trigger não checa EXECUTE (L9)',
+  },
+  'private.fbrec_sem_margem': {
+    fechadaPor: '20260818120000_authz_private_execute_fecho.sql',
+    permitido: PORTA_FECHADA,
+    motivo:
+      'irmã da acima em farmer_bundle_recommendations (nulifica m_bundle/lie_bundle e remove ' +
+      'cost/margin do jsonb bundle_products). Mesma barreira de executor e mesma 2ª tranca (L10)',
   },
 };

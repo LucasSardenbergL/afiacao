@@ -85,6 +85,46 @@ describe('auditAuthz — Parte B (cobertura)', () => {
 });
 
 // ── falsos-negativos do challenge Codex (2026-07-09): cada um DEVE virar erro ──
+describe('auditAuthz — discriminante do ACL_ONLY_INTERNAL', () => {
+  // `private.custo_canonico` declara-se helper SECURITY INVOKER fechado por privilégio. O corpo
+  // real dela é reproduzido aqui: repare que NÃO contém nenhum token de SENSITIVE_COLUMNS —
+  // `p_cost_price` não casa `\bcost_price\b` porque o `_` antes não é fronteira de palavra.
+  // É por isso que o discriminante não pode depender de `touchesSensitive`.
+  const CORPO = `SELECT CASE
+    WHEN private.regua_num_finito(p_cost_final) AND p_cost_final > 0 THEN p_cost_final
+    WHEN private.regua_num_finito(p_cost_price) AND p_cost_price  > 0 THEN p_cost_price
+    ELSE NULL END`;
+  const custoCanonico = (sec: 'INVOKER' | 'DEFINER') =>
+    `CREATE OR REPLACE FUNCTION private.custo_canonico(p_cost_final numeric, p_cost_price numeric)
+ RETURNS numeric LANGUAGE sql IMMUTABLE SECURITY ${sec}
+AS $function$ ${CORPO}; $function$;`;
+
+  it('passa enquanto ela continua SECURITY INVOKER (o estado declarado)', () => {
+    const f = auditAuthz([mig('20260818120000_ok.sql', custoCanonico('INVOKER'))]);
+    expect(errorsOf(f)).toHaveLength(0);
+  });
+
+  it('FALHA se ela renascer SECURITY DEFINER — a regressão que motivou a categoria', () => {
+    const f = auditAuthz([mig('20260901000000_regressao.sql', custoCanonico('DEFINER'))]);
+    const err = errorsOf(f);
+    expect(err).toHaveLength(1);
+    expect(err[0].msg).toContain('ACL_ONLY_INTERNAL_VIROU_SECDEF');
+    expect(err[0].fn).toContain('private.custo_canonico');
+  });
+
+  it('a falha NÃO depende do detector léxico: SECDEF com corpo sem token sensível ainda é erro', () => {
+    const f = auditAuthz([
+      mig(
+        '20260901000000_r2.sql',
+        `CREATE OR REPLACE FUNCTION private.custo_canonico(p_cost_final numeric, p_cost_price numeric)
+ RETURNS numeric LANGUAGE sql IMMUTABLE SECURITY DEFINER
+AS $function$ SELECT 1; $function$;`,
+      ),
+    ]);
+    expect(errorsOf(f).map((e) => e.msg).join()).toContain('ACL_ONLY_INTERNAL_VIROU_SECDEF');
+  });
+});
+
 describe('auditAuthz — anti falso-negativo (challenge Codex)', () => {
   it('gate DECORATIVO (presente sem bloquear) numa função do manifest → ERRO', () => {
     const body = `v_can := private.cap_custo_ler(auth.uid()); ${READ}`;

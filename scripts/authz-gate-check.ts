@@ -24,7 +24,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { extractFunctions, checkGate, touchesSensitive, rawIsSensitiveSecdef, type FunctionDef } from './lib/authz-contract';
 import { detectarReescritaViva } from './lib/authz-reescrita';
-import { AUTHZ_MANIFEST, ACKNOWLEDGED_SENSITIVE, manifestKey } from './authz-manifest';
+import { AUTHZ_MANIFEST, ACKNOWLEDGED_SENSITIVE, ACL_ONLY_INTERNAL, manifestKey } from './authz-manifest';
 import { REESCRITAS_CONHECIDAS_INDEX, chaveReescrita } from './authz-reescritas-conhecidas';
 import { auditGrantsTabelas } from './lib/authz-grants';
 import { AUTHZ_TABELAS_FECHADAS } from './authz-tabelas-fechadas';
@@ -110,6 +110,24 @@ export function auditAuthz(migrations: Migration[]): Finding[] {
   // Parte B — cobertura: toda SECDEF sensível no estado final (por assinatura) está classificada.
   for (const [, { def, file }] of finalBySig) {
     if (!def.securityDefiner) continue;
+
+    // DISCRIMINANTE do ACL_ONLY_INTERNAL: quem está lá declarou-se helper INVOKER fechado por
+    // privilégio. Se renasceu SECDEF, a classificação virou mentira e precisa ser refeita.
+    // Roda ANTES do filtro de `touchesSensitive` DE PROPÓSITO: o detector é léxico sobre o corpo
+    // e `private.custo_canonico` não casa token nenhum (`p_cost_price` não casa `\bcost_price\b`
+    // — o `_` antes não é fronteira de palavra), então depender dele deixaria a regressão passar
+    // exatamente na função que motivou a categoria.
+    const mkeyInterno = manifestKey(def.schema, def.name);
+    if (ACL_ONLY_INTERNAL.has(mkeyInterno)) {
+      findings.push({
+        level: 'error',
+        file,
+        fn: def.signature ? `${mkeyInterno}(${def.signature})` : mkeyInterno,
+        msg: `[ACL_ONLY_INTERNAL_VIROU_SECDEF] ${mkeyInterno} está em ACL_ONLY_INTERNAL, que declara helper SECURITY INVOKER fechado por privilégio — e esta definição é SECURITY DEFINER. Reclassifique em scripts/authz-manifest.ts: se passou a precisar de gate, vá para AUTHZ_MANIFEST; se é SECDEF sensível sem gate customer-facing, para ACKNOWLEDGED_SENSITIVE. Não basta remover daqui — a Parte E ainda exige que ela esteja no universo admissível de AUTHZ_FUNCOES_FECHADAS.`,
+      });
+      continue;
+    }
+
     const sensitive = touchesSensitive(def.body);
     if (sensitive.length === 0) continue;
     const mkey = manifestKey(def.schema, def.name);
