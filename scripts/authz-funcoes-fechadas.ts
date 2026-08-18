@@ -34,7 +34,7 @@
  * daquela migration.
  *
  * MEDIÇÃO QUE JUSTIFICA CADA ENTRADA (psql-ro, 2026-08-15, `has_function_privilege` +
- * `proacl` cru, nas 40 funções de `AUTHZ_MANIFEST` ∪ `ACKNOWLEDGED_SENSITIVE`):
+ * `proacl` cru, nas então 40 funções de `AUTHZ_MANIFEST` ∪ `ACKNOWLEDGED_SENSITIVE`):
  *   · 40 de 40 presentes no banco, **0** com `proacl` NULL;
  *   · **`anon` não alcança NENHUMA** — reconfirma a medição de 2026-08-14 e é o que autoriza
  *     `permitido.anon = false` em todas (declarar sem medir fabricaria contrato falso, o erro que
@@ -44,6 +44,14 @@
  *   · 20 das 21 de `ACKNOWLEDGED_SENSITIVE` **não** têm — fecham por PRIVILÉGIO. A 21ª,
  *     `get_carteira_margem_faixa`, tem `authenticated=X` de propósito (fecha por gate de ESCOPO e
  *     PROJEÇÃO, não por privilégio) e é a única exceção; ela está anotada abaixo.
+ *
+ * REMEDIÇÃO 2026-08-18 (após entrarem as 3 de `private`): o conjunto tem **43** funções (19
+ * manifest + 24 ACK), 43 de 43 presentes. Enquanto o fecho não for colado no SQL Editor, a
+ * medição de prod acusa **3** com `proacl` NULL e **3** alcançáveis por `anon` — são exatamente
+ * as 3 novas, e `bun run authz:funcoes:prod` as reporta como `[FUNCAO_NAO_APLICADA]`. Depois do
+ * apply o esperado volta a ser `proacl` NULL = 0, `anon` = 0 e `authenticated` = 20 (as 19 do
+ * manifest + `get_carteira_margem_faixa`); hoje são 23 porque `proacl` NULL concede a PUBLIC.
+ * Este parágrafo é o que impede o bloco acima de virar afirmação falsa — releia-o junto.
  *
  * `fechadaPor` é a ÂNCORA: a última migration do repo que estabelece o ACL declarado aqui. A
  * vigilância é dela **para a frente, INCLUSIVE** — diferente da Parte C de tabela, que olha só o

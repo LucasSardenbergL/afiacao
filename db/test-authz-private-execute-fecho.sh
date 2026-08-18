@@ -183,9 +183,13 @@ eq "L1 custo_canonico nasce com proacl NULL (sem default privilege em private)" 
 ABERTAS=$(Pq -c "SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='private' AND has_function_privilege('anon',p.oid,'EXECUTE');")
 eq "L2 as 3 de private estão executáveis por anon (achado reproduzido)" "$ABERTAS" "3"
 
-# A1 — a barreira das trigger functions é do EXECUTOR (0A000), não do privilégio.
+# A1 — COM EXECUTE, a chamada direta chega ao handler de trigger e morre em 0A000.
+# ⚠️ Isto prova SÓ o caso "com EXECUTE". A revisão adversária do Codex apontou que a ACL é
+# verificada ANTES da invocação, então sem EXECUTE o esperado é 42501, não 0A000 — medido e
+# confirmado; o par está em L12, depois do fecho. A afirmação "morre em 0A000 tenha ou não
+# EXECUTE" era FALSA e foi corrigida na migration.
 V=$(veredito authenticated "PERFORM private.frec_sem_margem()" "feature_not_supported")
-eq "L3 trigger function COM execute ainda morre em 0A000 (chamada direta)" "$V" "BARROU"
+eq "L3 trigger function COM execute morre em 0A000 (handler de trigger)" "$V" "BARROU"
 
 # A3 — custo_canonico é SECURITY INVOKER e chama regua_num_finito, que nega anon.
 V=$(veredito anon "PERFORM private.custo_canonico(10,5)" "insufficient_privilege")
@@ -215,10 +219,52 @@ SCRUBB=$(Pq -c "SET ROLE authenticated; INSERT INTO public.farmer_bundle_recomme
 eq "L10 scrub do bundle idem (cost/margin somem do jsonb, sku fica)" "$SCRUBB" 'N/N/{"sku": "A"}'
 
 # A5 — reusar a trigger function noutra tabela exige ser dono dela; authenticated não é.
+# A5 — reusar a trigger function noutra tabela. `CREATE TRIGGER` exige DUAS coisas: privilégio
+# TRIGGER na TABELA e EXECUTE na FUNÇÃO. A 1ª versão deste assert só provava "falhou", sem
+# distinguir qual das duas faltava — a revisão do Codex pegou isso. Agora as 3 categorias:
 # por SQLSTATE, NUNCA pela palavra 'ERROR': sob lc_messages pt_BR o servidor emite 'ERRO' e o
 # assert daria falso-verde em um shell e falso-vermelho no outro (o acidente de locale do #1483).
-V=$(veredito authenticated "EXECUTE 'CREATE TRIGGER x BEFORE INSERT ON public.farmer_recommendations FOR EACH ROW EXECUTE FUNCTION private.frec_sem_margem()'" "insufficient_privilege")
-eq "L11 authenticated não consegue CREATE TRIGGER com a função" "$V" "BARROU"
+CT="EXECUTE 'CREATE TRIGGER x BEFORE INSERT ON public.farmer_recommendations FOR EACH ROW EXECUTE FUNCTION private.frec_sem_margem()'"
+V=$(veredito authenticated "$CT" "insufficient_privilege")
+eq "L11a sem TRIGGER na tabela e sem EXECUTE na função → barrado" "$V" "BARROU"
+
+P -q -c "GRANT TRIGGER ON public.farmer_recommendations TO authenticated;"
+V=$(veredito authenticated "$CT" "insufficient_privilege")
+eq "L11b COM TRIGGER na tabela, SEM EXECUTE → AINDA barrado (é o EXECUTE que falta)" "$V" "BARROU"
+
+# controle positivo: devolvendo só o EXECUTE, o CREATE TRIGGER passa. Sem este, L11b não prova
+# que o REVOKE é a causa — provaria apenas que algo falhou.
+P -q -c "GRANT EXECUTE ON FUNCTION private.frec_sem_margem() TO authenticated;"
+V=$(veredito authenticated "$CT" "insufficient_privilege")
+eq "L11c COM TRIGGER e COM EXECUTE → passa (isola o EXECUTE como a causa de L11b)" "$V" "EXECUTOU"
+P -q -c "DROP TRIGGER IF EXISTS x ON public.farmer_recommendations; REVOKE ALL ON FUNCTION private.frec_sem_margem() FROM authenticated; REVOKE TRIGGER ON public.farmer_recommendations FROM authenticated;"
+
+# A1' — o par de L3: SEM EXECUTE a ACL barra ANTES do handler de trigger, então o código muda de
+# 0A000 para 42501. É o assert que faltava, e é o que mostra que o REVOKE não é decorativo:
+# ele MOVE a barreira para o privilégio.
+V=$(veredito authenticated "PERFORM private.frec_sem_margem()" "insufficient_privilege")
+eq "L12 pós-REVOKE a chamada direta vira 42501 (ACL antes do handler), não mais 0A000" "$V" "BARROU"
+
+# A6 — nenhum trigger INESPERADO depende destas funções (o REVOKE não neutraliza vínculo já
+# instalado; quem responde isso é pg_trigger, não o ACL).
+NT=$(Pq -c "SELECT count(*) FROM pg_trigger t JOIN pg_proc p ON p.oid=t.tgfoid WHERE p.pronamespace='private'::regnamespace AND p.proname IN ('frec_sem_margem','fbrec_sem_margem') AND NOT t.tgisinternal;")
+eq "L13 exatamente 2 vínculos em pg_trigger (nenhum trigger inesperado)" "$NT" "2"
+
+# A7 — a CAUSA-RAIZ que a migration documenta e rejeita. A formulação intuitiva é INÓCUA: default
+# privilege POR SCHEMA não remove o EXECUTE do default GLOBAL embutido — só adiciona, ou desfaz um
+# GRANT feito também por schema. Medido com canário, porque a doc é sutil e a intuição erra.
+P -q -c "ALTER DEFAULT PRIVILEGES IN SCHEMA private REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;"
+P -q -c "CREATE FUNCTION private.canario_ap() RETURNS int LANGUAGE sql IMMUTABLE AS 'SELECT 1';"
+V=$(Pq -c "SELECT has_function_privilege('anon','private.canario_ap()'::regprocedure,'EXECUTE')::text;")
+eq "L14 ALTER DEFAULT PRIVILEGES IN SCHEMA é INÓCUO (canário nasce aberto a anon)" "$V" "true"
+
+# e a forma GLOBAL (sem IN SCHEMA) funciona — é a que teria efeito, e por isso é grande demais
+# para carona nesta entrega (vale para TODOS os schemas e é por role criadora).
+P -q -c "ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;"
+P -q -c "CREATE FUNCTION private.canario_ap2() RETURNS int LANGUAGE sql IMMUTABLE AS 'SELECT 1';"
+V=$(Pq -c "SELECT has_function_privilege('anon','private.canario_ap2()'::regprocedure,'EXECUTE')::text;")
+eq "L15 a forma GLOBAL funciona (canário nasce fechado) — é a alternativa real, e é invasiva" "$V" "false"
+P -q -c "ALTER DEFAULT PRIVILEGES GRANT EXECUTE ON FUNCTIONS TO PUBLIC; DROP FUNCTION private.canario_ap(); DROP FUNCTION private.canario_ap2();"
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ZONA 5 — FALSIFICAÇÃO (Lei #3): sabota → exige VERMELHO → restaura

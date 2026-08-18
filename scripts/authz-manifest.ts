@@ -240,9 +240,7 @@ export const AUTHZ_MANIFEST: Record<string, AuthzEntry> = {
 };
 
 /**
- * Funções classificadas como sensíveis que NÃO precisam de gate customer-facing — baseline
- * 2026-07-09. Eram só SECDEF até 2026-08-18, quando `private.custo_canonico` (SECURITY
- * INVOKER) entrou: ver a nota dela no fim da lista.
+ * SECDEF que tocam dado sensível mas NÃO precisam de gate customer-facing — baseline 2026-07-09.
  * Cada entrada é uma decisão consciente: a função não é executável por `authenticated` (só
  * service_role/cron/staff-internal) OU o "toque" é falso-positivo do parser (menção em string
  * já mascarada / coluna homônima). Justificativa por linha. Semeado a partir do inventário PROD
@@ -405,13 +403,11 @@ export const ACKNOWLEDGED_SENSITIVE = new Set<string>([
   // Registro manual, como lá — ampliar o dicionário não resolveria: `m_ij` como token sensível
   // teria recall absurdo.
   //
-  // ⚠️ `private.custo_canonico` é a PRIMEIRA entrada NÃO-SECDEF deste Set (as outras 21 são
-  // SECDEF; medido). Isso não afrouxa nada: a Parte B consulta este Set apenas para PULAR uma
-  // SECDEF já classificada, então uma não-SECDEF aqui não muda veredito nenhum dela. O Set ser
-  // 21/21 SECDEF era CONSEQUÊNCIA de ter sido semeado do inventário de SECDEF de prod, não
-  // invariante desejada — e o 2º papel que ele ganhou no #1768 (ser o universo admissível de
-  // AUTHZ_FUNCOES_FECHADAS) não tem razão para excluir função sensível não-SECDEF.
-  'private.custo_canonico',
+  // ⚠️ `private.custo_canonico` foi tirada DAQUI e posta em `ACL_ONLY_INTERNAL` (abaixo) depois
+  // da revisão adversária do Codex, que achou o modo de falha que eu não vi: este Set não é
+  // documentação, é a lista que faz a Parte B PULAR. Hoje a entrada seria inerte (a função é
+  // INVOKER e a Parte B só examina SECDEF), mas no dia em que ela renascesse SECDEF — a
+  // regressão que o gate existe para pegar — a entrada preexistente a SUPRIMIRIA em silêncio.
   'private.frec_sem_margem',
   'private.fbrec_sem_margem',
   //
@@ -424,6 +420,33 @@ export const ACKNOWLEDGED_SENSITIVE = new Set<string>([
   // MEDIDO em `pg_default_acl`, concede EXECUTE a `anon` E `authenticated` no schema `public`.
   // Limite que continua valendo: o estático prova o que o REPO declara; grant colado à mão em
   // prod só aparece em `bun run authz:funcoes:prod`.
+]);
+
+/**
+ * Helpers INTERNOS fechados por ACL — categoria distinta de `ACKNOWLEDGED_SENSITIVE`, criada em
+ * 2026-08-18 a partir da revisão adversária do Codex (gpt-5.6-sol xhigh) sobre o fecho das 3
+ * funções de `private`.
+ *
+ * A DIFERENÇA QUE JUSTIFICA A CATEGORIA, e ela é de modo de falha, não de gosto:
+ *   · `ACKNOWLEDGED_SENSITIVE` é consultado pela Parte B para **PULAR** uma SECDEF sensível já
+ *     classificada. Pôr aqui uma função INVOKER seria inerte HOJE e perigoso AMANHÃ: se ela
+ *     renascesse SECDEF, a entrada preexistente suprimiria justamente a regressão que o gate
+ *     existe para pegar.
+ *   · Este Set NÃO suprime nada. Ele só declara "é helper interno, fechado por privilégio, e
+ *     pertence ao universo admissível de `AUTHZ_FUNCOES_FECHADAS`" — e vem com um DISCRIMINANTE
+ *     OBRIGATÓRIO: entrada daqui tem de continuar SECURITY INVOKER. Virar SECDEF é ERRO da
+ *     Parte B (não aviso), com a instrução de reclassificar.
+ *
+ * Ou seja: não é o teste "não inventa função" afrouxado para ficar verde — é ele partido em duas
+ * afirmações mais fortes, cada uma com a checagem que a sustenta.
+ */
+export const ACL_ONLY_INTERNAL = new Set<string>([
+  // Helper puro do custo canônico (cost_final → cost_price, finito e > 0, senão NULL). Não lê
+  // tabela: recebe dois numerics do próprio chamador e devolve um deles — não revela custo que o
+  // chamador já não tenha. Fechada por SUPERFÍCIE MÍNIMA, não por sensibilidade de capacidade.
+  // Consumidor real medido: `public.get_skus_margem_positiva()` (SECDEF, owner postgres), que a
+  // alcança como owner mesmo após o REVOKE. Fecho: 20260818120000_authz_private_execute_fecho.sql.
+  'private.custo_canonico',
 ]);
 
 /** chave de lookup a partir de schema+name (case-insensitive, sem assinatura) */

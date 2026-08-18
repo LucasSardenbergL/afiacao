@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { AUTHZ_FUNCOES_FECHADAS, type FuncaoFechada } from './authz-funcoes-fechadas';
-import { AUTHZ_MANIFEST, ACKNOWLEDGED_SENSITIVE } from './authz-manifest';
+import { AUTHZ_MANIFEST, ACKNOWLEDGED_SENSITIVE, ACL_ONLY_INTERNAL } from './authz-manifest';
 import {
   auditGrantsFuncoes,
   compararExecuteProd,
@@ -38,10 +38,23 @@ describe('AUTHZ_FUNCOES_FECHADAS — sanidade do contrato', () => {
   });
 
   it('não inventa função: toda chave da allowlist está classificada no manifesto', () => {
+    // A união é dos TRÊS catálogos. Não é o assert afrouxado: `ACL_ONLY_INTERNAL` traz consigo um
+    // discriminante próprio (tem de continuar INVOKER — Parte B), e o teste logo abaixo exige a
+    // cobertura na direção inversa. O princípio preservado é classificação EXAUSTIVA.
     const orfas = Object.keys(AUTHZ_FUNCOES_FECHADAS).filter(
-      (k) => !AUTHZ_MANIFEST[k] && !ACKNOWLEDGED_SENSITIVE.has(k),
+      (k) => !AUTHZ_MANIFEST[k] && !ACKNOWLEDGED_SENSITIVE.has(k) && !ACL_ONLY_INTERNAL.has(k),
     );
     expect(orfas).toEqual([]);
+  });
+
+  it('cobre TODA função do ACL_ONLY_INTERNAL (a direção inversa)', () => {
+    const faltando = [...ACL_ONLY_INTERNAL].filter((k) => !AUTHZ_FUNCOES_FECHADAS[k]);
+    expect(faltando).toEqual([]);
+  });
+
+  it('ACL_ONLY_INTERNAL e ACKNOWLEDGED_SENSITIVE são DISJUNTOS (categoria é discriminante)', () => {
+    const nos2 = [...ACL_ONLY_INTERNAL].filter((k) => ACKNOWLEDGED_SENSITIVE.has(k) || !!AUTHZ_MANIFEST[k]);
+    expect(nos2).toEqual([]);
   });
 
   it('toda entrada tem permitido booleano p/ anon e authenticated, e motivo não-vazio', () => {
