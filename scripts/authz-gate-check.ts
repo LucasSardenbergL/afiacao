@@ -28,6 +28,8 @@ import { AUTHZ_MANIFEST, ACKNOWLEDGED_SENSITIVE, manifestKey } from './authz-man
 import { REESCRITAS_CONHECIDAS_INDEX, chaveReescrita } from './authz-reescritas-conhecidas';
 import { auditGrantsTabelas } from './lib/authz-grants';
 import { AUTHZ_TABELAS_FECHADAS } from './authz-tabelas-fechadas';
+import { auditGrantsFuncoes } from './lib/authz-funcoes';
+import { AUTHZ_FUNCOES_FECHADAS } from './authz-funcoes-fechadas';
 
 export interface Finding {
   level: 'error' | 'warn';
@@ -222,9 +224,32 @@ function auditGrants(migrations: Migration[]): Finding[] {
   }));
 }
 
-/** O que o CI roda: Parte A + B (contrato de gate) e Parte C (grants de tabela fechada). */
+/**
+ * Parte E — grant de EXECUTE das FUNÇÕES sensíveis (allowlist em scripts/authz-funcoes-fechadas.ts).
+ * Núcleo puro em scripts/lib/authz-funcoes.ts; aqui só convertemos FuncaoFinding→Finding.
+ *
+ * É a irmã da Parte C um nível abaixo, e fecha o vetor que o §7.4 item 1 do histórico deixou
+ * aberto: `CREATE OR REPLACE` preserva o ACL, `DROP FUNCTION` + `CREATE FUNCTION` não — a função
+ * renasce com o default privilege, que MEDIDO em prod concede EXECUTE a `anon` e `authenticated`.
+ * As Partes A/D julgam o GATE no corpo e a Parte C o grant de TABELA; nenhuma via grant de FUNÇÃO.
+ *
+ * SEPARADA de `auditAuthz` pelo mesmo motivo da Parte C: ela julga o conjunto de arquivos que
+ * EXISTEM no repo (a âncora sumiu?), enquanto A/B julgam definições de função. Fundidas, todo
+ * fixture de A/B dispararia FUNCAO_ANCORA_AUSENTE.
+ */
+function auditFuncoes(migrations: Migration[]): Finding[] {
+  const filesPresentes = new Set(migrations.map((m) => m.file));
+  return auditGrantsFuncoes(migrations, AUTHZ_FUNCOES_FECHADAS, filesPresentes).map((ff) => ({
+    level: ff.level,
+    file: ff.file,
+    fn: ff.funcao,
+    msg: `[${ff.codigo}] ${ff.msg}`,
+  }));
+}
+
+/** O que o CI roda: Parte A + B (gate no corpo), C (grants de tabela) e E (EXECUTE de função). */
 export function auditCompleto(migrations: Migration[]): Finding[] {
-  return [...auditAuthz(migrations), ...auditGrants(migrations)];
+  return [...auditAuthz(migrations), ...auditGrants(migrations), ...auditFuncoes(migrations)];
 }
 
 function loadMigrations(dir: string): Migration[] {
@@ -259,8 +284,14 @@ function main(): void {
   const ressalva = naoMedidas.length
     ? ` ⚠️ ${naoMedidas.length} função(ões) do manifest NÃO são medidas estaticamente (recriadas por reescrita da definição viva): ${naoMedidas.join(', ')} — o gate delas se prova por asserção EXECUTADA e por 'bun run authz:audit:prod'.`
     : '';
+  // Mesma regra para a Parte E: função com `fechadaPor: null` tem o fecho FORA do repo, então o
+  // gate estático não a vigia. Calar isso deixaria o verde afirmar cobertura que não existe.
+  const semAncora = [...new Set(warns.filter((w) => w.msg.includes('FUNCAO_FECHO_PENDENTE')).map((w) => w.fn))];
+  const ressalvaE = semAncora.length
+    ? ` ⚠️ ${semAncora.length} função(ões) com fecho de EXECUTE fora do repo (fechadaPor=null): ${semAncora.join(', ')} — quem afirma o ACL delas é 'bun run authz:funcoes:prod'.`
+    : '';
   console.log(
-    `✅ authz:check — contrato de gate ok${warns.length ? ` (${warns.length} aviso(s))` : ''}. Parte A (regressão) + Parte B (cobertura) + Parte C (grants de tabela fechada) + Parte D (reescrita da definição viva) verdes.${ressalva}`,
+    `✅ authz:check — contrato de gate ok${warns.length ? ` (${warns.length} aviso(s))` : ''}. Parte A (regressão) + Parte B (cobertura) + Parte C (grants de tabela fechada) + Parte D (reescrita da definição viva) + Parte E (EXECUTE de função fechada) verdes.${ressalva}${ressalvaE}`,
   );
 }
 

@@ -389,13 +389,15 @@ export const ACKNOWLEDGED_SENSITIVE = new Set<string>([
   // trigger não tem rota PostgREST — o fecho por privilégio é a segunda tranca, não a primeira.
   'public.set_status_envio_portal_on_disparo',
   //
-  // ⚠️ LIMITE DECLARADO desta baseline, e ele vale para TODA entrada desta lista: o fecho por
-  // privilégio é estado de PROD, e o gate estático não o vigia. `CREATE OR REPLACE` preserva o
-  // ACL, mas `DROP FUNCTION` + `CREATE FUNCTION` o RESETA — e a função renasce com o default
-  // privilege do Supabase, que concede EXECUTE às roles nomeadas. É o irmão exato do vetor
-  // `RECRIACAO` que a Parte C pega em TABELA (docs/historico/sentinela-grants-tabelas-fechadas.md)
-  // e que ninguém pega em FUNÇÃO. Enquanto não houver esse detector, a reconfirmação é o audit
-  // read-only em prod — o mesmo `has_function_privilege` que classificou estas 10.
+  // ⚠️ O fecho por privilégio é estado de PROD, e é a **Parte E** do `authz:check` que o vigia
+  // desde 2026-08-15 (scripts/authz-funcoes-fechadas.ts + scripts/lib/authz-funcoes.ts; §9 de
+  // docs/historico/sentinela-authz-controle-nao-mencao.md). Toda função desta lista e do
+  // AUTHZ_MANIFEST TEM de estar na allowlist de lá — há teste que falha se faltar.
+  // O vetor que ela fecha: `CREATE OR REPLACE` preserva o ACL, mas `DROP FUNCTION` +
+  // `CREATE FUNCTION` o RESETA, e a função renasce com o default privilege do projeto — que,
+  // MEDIDO em `pg_default_acl`, concede EXECUTE a `anon` E `authenticated` no schema `public`.
+  // Limite que continua valendo: o estático prova o que o REPO declara; grant colado à mão em
+  // prod só aparece em `bun run authz:funcoes:prod`.
 ]);
 
 /** chave de lookup a partir de schema+name (case-insensitive, sem assinatura) */
