@@ -1987,8 +1987,15 @@ describe('guardrail money-path: omie-cliente não fabrica identidade (hardening 
     // destino era o espelho poluído, onde o erro era inócuo. Com a UNIQUE(codigo,account) fail-closed da
     // proof, 23505 significa "este código é de OUTRO user": devolver user_id faz a UI seguir e anexar a
     // ferramenta ao cliente ERRADO (useUnifiedOrder.handleStaffAddTool usa o user_id de volta).
+    // A FORMA migrou no #1767: as respostas da edge passaram por um helper `jsonRes(body, status)`
+    // para carregar o marcador `versao` da sonda em TODA resposta. O 409 que este assert protege
+    // continua exatamente onde estava — só deixou de ser escrito como `{ status: 409, headers }` e
+    // virou o 2º argumento. O padrão aceita as duas grafias e o poder discriminante é o mesmo: o
+    // que reprova continua sendo um ramo do `mappingError` que NÃO responde 409 (ou seja, que
+    // engole o erro e devolve `user_id` como sucesso), e a contagem `toBe(2)` segue exigindo que
+    // os DOIS ramos respondam. Falsificado apagando o 409 de um ramo: cai para 1 e fica vermelho.
     expect(
-      (bloco.match(/if \(mappingError\)[\s\S]{0,700}?status:\s*409/g) ?? []).length,
+      (bloco.match(/if \(mappingError\)[\s\S]{0,700}?(?:status:\s*409|,\s*409\)\s*;)/g) ?? []).length,
       'REGRESSÃO: algum dos 2 ramos do criar_perfil_local voltou a engolir o erro do vínculo e devolver ' +
         'user_id como sucesso — a UI anexaria a ferramenta ao cliente ERRADO',
     ).toBe(2);
