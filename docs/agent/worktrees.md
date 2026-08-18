@@ -101,6 +101,23 @@ comido o seu item (ali comeu DOIS — o registro da RPC e um follow-up de doc, n
 PR o nome que tiver — e sem o `git fetch` na frente o grep devolve "não existe" com cara de
 procura de verdade. Caso completo: [duplicata-por-objetivo.md](../historico/duplicata-por-objetivo.md).
 
+**Rede automática (2026-08-18):** hook `.claude/hooks/pr-duplicata-guard.sh` (PreToolUse Bash) —
+irmão do `pr-collision-guard.sh`, que cobre só o eixo ARQUIVO. Na hora do `gh pr create` ele testa,
+por **(arquivo, símbolo)**, três vias: ausente do arquivo na merge-base + introduzido por mim +
+**já presente no mesmo arquivo na `origin/main`**. As três juntas são a assinatura da duplicata; se a
+main não andou naquele arquivo, (1) e (3) se contradizem e o hook cala — o silêncio é estrutural, não
+sorte. **AVISA** via `additionalContext`, nunca nega (PR que ESTENDE de propósito o recém-mergeado
+existe). Fail-open total (sem `jq`/`git`, sem merge-base, arquivo ausente da main → no-op).
+⚠️ **O escopo por ARQUIVO foi medido, não escolhido:** `reposicao_pos_marcador` já vivia em 10
+arquivos (migrations) na merge-base, então um teste repo-wide de "símbolo novo" o excluiria → falso
+negativo em 1 das 3 ocorrências. Candidato = identificador de ≥12 chars com `_` ou corcova camelCase
+(filtro de forma que mantém prosa portuguesa de `.md` fora). Testes:
+`scripts/test-pr-duplicata-guard.sh` — 8 casos + **falsificação por sabotagem de cada via** numa
+CÓPIA do hook (remover a via 1 ou a via 3, ou trocar o escopo por repo-wide, tem de virar vermelho).
+**Limite:** pega o símbolo que você **escreve**; a duplicata cujo artefato é puro comportamento (mesma
+correção, símbolos diferentes — o caso `DENO_NO_PACKAGE_JSON` só é pego porque o nome coincide)
+continua fora do alcance, como a race fria de duas sessões sem PR aberto.
+
 **Rede automática (2026-07-23):** hook `.claude/hooks/pr-collision-guard.sh` (PreToolUse Bash)
 re-executa a conferência POR ARQUIVO na hora do `gh pr create` — fetch fresco + interseção de TRÊS
 pontos com a `origin/main` + `gh pr list --json files` dos PRs abertos de outras branches — e

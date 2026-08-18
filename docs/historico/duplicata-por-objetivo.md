@@ -89,6 +89,10 @@ Irmã da regra "sincronize antes de MEDIR" (`worktrees.md`).
   um segundo eixo em `worktrees.md`).
 - **`docs/agent/worktrees.md`** — o detector falsificado, anexado ao bullet "achado COMPARTILHADO"
   de 2026-07-23, que é onde o eixo já morava.
+- **`.claude/hooks/pr-duplicata-guard.sh`** (2026-08-18) — o fecho ESTRUTURAL. A cláusula acima é
+  contramedida textual, e a meta-regra do catálogo de retrabalho diz que contramedida textual
+  reincide: a regra do eixo OBJETIVO já existia desde 2026-07-23 e não segurou as 3 ocorrências.
+  O hook testa as três vias por (arquivo, símbolo) na hora do `gh pr create` e AVISA.
 - Aqui — as 3 ocorrências e a falsificação.
 
 ## Precedente
