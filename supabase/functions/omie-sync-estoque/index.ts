@@ -8,6 +8,7 @@
 
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff, corsHeaders as sharedCors } from "../_shared/auth.ts";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import {
   avaliarPagina,
   MAX_PAGINAS_POS_ESTOQUE,
@@ -533,6 +534,16 @@ async function computePendenteViaSaldoPendente(
   return pendente;
 }
 
+// `versao` em TODA resposta (sucesso e erro), não só na da sonda: a pergunta "essa correção
+// subiu?" quase sempre é feita sobre um run que JÁ aconteceu — e o caso que mais importa é o do
+// run que falhou no meio e deixou saldo pela metade.
+function jsonRes(body: Record<string, unknown>, status = 200) {
+  return new Response(JSON.stringify({ ...body, versao: VERSAO }), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -540,6 +551,21 @@ Deno.serve(async (req) => {
 
   const auth = await authorizeCronOrStaff(req);
   if (!auth.ok) return auth.response;
+
+  // ⚠️ SONDA DE VERSÃO — logo após o gate (que já aceita x-cron-secret) e ANTES do createClient,
+  // de toda query e de toda chamada ao Omie: é o único caminho desta edge sem custo nenhum.
+  // Daqui pra frente ela reescreve `sku_estoque_atual`/`sku_status_omie` e AVANÇA o marcador de
+  // frescor — um run indevido não só suja o saldo, apaga o sinal de que sujou.
+  // O corpo é consumido AQUI (req.json() é one-shot) e reaproveitado no fluxo real abaixo.
+  // Ver versao.ts / _shared/sonda-versao.ts.
+  const corpoBruto: unknown = req.method === "POST"
+    ? await req.json().catch(() => ({}))
+    : {};
+  const decisaoSonda = classificarSonda(corpoBruto);
+  if (decisaoSonda.tipo === "sonda") return jsonRes(respostaSonda(VERSAO), 200);
+  if (decisaoSonda.tipo === "ambiguo") {
+    return jsonRes({ error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }, 400);
+  }
 
   const startedAt = new Date();
   const t0 = performance.now();
@@ -550,15 +576,15 @@ Deno.serve(async (req) => {
   let empresaRef: Empresa | null = null;
 
   try {
-    const body = req.method === "POST"
-      ? await req.json().catch(() => ({}))
-      : {};
+    // Corpo já consumido no bloco da sonda acima (req.json() é one-shot). Não-objeto vira {} —
+    // cai no default "OBEN", como antes.
+    const body: Record<string, unknown> =
+      typeof corpoBruto === "object" && corpoBruto !== null && !Array.isArray(corpoBruto)
+        ? corpoBruto as Record<string, unknown>
+        : {};
     const empresa: Empresa = (body?.empresa ?? "OBEN") as Empresa;
     if (empresa !== "OBEN" && empresa !== "COLACOR") {
-      return new Response(
-        JSON.stringify({ error: "empresa inválida. Use OBEN ou COLACOR." }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
+      return jsonRes({ error: "empresa inválida. Use OBEN ou COLACOR." }, 400);
     }
 
     const { appKey, appSecret } = getOmieCredentials(empresa);
@@ -604,15 +630,12 @@ Deno.serve(async (req) => {
         sincronizados: 0,
         nota: "nenhum SKU habilitado",
       });
-      return new Response(
-        JSON.stringify({
-          ok: true,
-          empresa,
-          total_skus_esperados: 0,
-          mensagem: "Nenhum SKU habilitado, nada a sincronizar.",
-        }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
+      return jsonRes({
+        ok: true,
+        empresa,
+        total_skus_esperados: 0,
+        mensagem: "Nenhum SKU habilitado, nada a sincronizar.",
+      });
     }
 
     // 2-3) Paginar Omie — ListarPosEstoque (físico + reservado)
@@ -922,9 +945,7 @@ Deno.serve(async (req) => {
       });
     }
 
-    return new Response(JSON.stringify(summary), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    return jsonRes(summary);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     const isAuth = msg.startsWith("AUTH_ERROR");
@@ -935,17 +956,11 @@ Deno.serve(async (req) => {
     if (supabaseRef && empresaRef) {
       await gravarMarcadorSentinela(supabaseRef, MARKER_FULL, empresaRef, "error", { trigger: "run" }, msg);
     }
-    return new Response(
-      JSON.stringify({
-        ok: false,
-        error: msg,
-        critical: isAuth,
-        duracao_ms: Math.round(performance.now() - t0),
-      }),
-      {
-        status: isAuth ? 401 : 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      },
-    );
+    return jsonRes({
+      ok: false,
+      error: msg,
+      critical: isAuth,
+      duracao_ms: Math.round(performance.now() - t0),
+    }, isAuth ? 401 : 500);
   }
 });
