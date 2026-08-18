@@ -481,9 +481,8 @@ que a reabrisse ficaria verde para sempre. `fechadaPor: null` diz a verdade — 
 repo, o estático não vigia, o audit de prod é a única guarda —, e o verde do `authz:check` nomeia
 as três.
 
-> **Follow-up para o founder (mudança de banco, não é decisão minha):** uma migration que emita
-> `REVOKE EXECUTE ON FUNCTION … FROM authenticated` nessas três traria as 3 para a vigilância
-> estática do CI. Enquanto ela não existir, elas dependem de alguém rodar `authz:funcoes:prod`.
+> **✅ Follow-up ENTREGUE** em `20260818121919_authz_fecho_execute_registrado_3_funcoes.sql` — as 3
+> passaram a ter âncora e o `authz:check` não emite mais nenhum `FUNCAO_FECHO_PENDENTE`. Ver §9.7.
 
 ## 9.5 Evidência
 
@@ -532,8 +531,8 @@ F3c é o que separa esta parte de um detector que só procura a palavra `REVOKE`
 1. **A Parte E prova o que o REPO declara, não o que prod tem** — mesma divisão das outras partes.
    Um `GRANT EXECUTE` colado à mão no SQL Editor é invisível para ela; quem o pega é o
    `authz:funcoes:prod`, que roda on-demand. Entre duas execuções, a janela existe.
-2. **3 funções sem âncora no repo** (§9.4) não são vigiadas pelo CI. Está declarado no verde do
-   `authz:check` e no do audit, mas declarar não é cobrir.
+2. ~~**3 funções sem âncora no repo** (§9.4) não são vigiadas pelo CI.~~ **RESOLVIDO** na entrega do
+   §9.7: as 3 ganharam âncora, e hoje `fechadaPor: null` não sobra em nenhuma das 40.
 3. **O detector julga por NOME, não por assinatura.** Overloads colapsam em `schema.name`, que é a
    granularidade do `AUTHZ_MANIFEST`. Um `DROP`+`CREATE` que recriasse só UM overload e revogasse
    dele passaria como fecho completo. No audit de prod a regra é fail-closed entre overloads (um
@@ -545,3 +544,51 @@ F3c é o que separa esta parte de um detector que só procura a palavra `REVOKE`
    funções já classificadas; quem exige que uma SECDEF sensível nova seja classificada é a Parte B.
    Uma função nova que não toque o eixo sensível nasce alcançável por `anon` e ninguém reclama —
    é o modelo da plataforma, e mudar isso é decisão de produto, não de sentinela.
+
+## 9.7 O fecho das 3 saiu de prod e entrou no repo (follow-up do §9.4, PR pós-#1768)
+
+`20260818121919_authz_fecho_execute_registrado_3_funcoes.sql` emite os 3
+`REVOKE EXECUTE ON FUNCTION … FROM PUBLIC, anon, authenticated`. Com a âncora apontada nas 3
+entradas de `scripts/authz-funcoes-fechadas.ts`, o `authz:check` deixou de emitir
+`FUNCAO_FECHO_PENDENTE` (11 → 8 avisos) e o `authz:funcoes:prod` passou a fechar com **40 vigiadas
+e 0 fora do repo** — o `⚠️` que o verde carregava sumiu.
+
+**A migration é NO-OP em prod, e isso é o ponto, não um defeito.** As 3 já estavam fechadas
+(medido; reconfirmado 2026-08-18). O que não existia era o REGISTRO. O ganho é duplo: o vetor
+`DROP`+`CREATE` nelas passa a ser pego no PR, e um replay do repo (DR) passa a reproduzir o ACL de
+prod — antes não reproduzia, e a diferença não era cosmética: sem GRANT/REVOKE algum sobre
+`cmc_ledger_capture`, um replay a fazia nascer alcançável **por `anon`**.
+
+> ⚠️ **Consequência de ser no-op: o apply em prod é INOBSERVÁVEL por ACL.** `has_function_privilege`
+> devolve o mesmo antes e depois do Run, então o `authz:funcoes:prod` verde **não é evidência de
+> que a migration foi colada** — é evidência de que prod bate com o contrato, que já batia. É o
+> caso em que a "query de validação pós-apply" do ritual `lovable-db-operator` não consegue
+> discriminar, e dizer isso vale mais do que entregar uma query que finge discriminar. O único
+> observável do apply é o `INSERT` opcional em `supabase_migrations.schema_migrations`.
+
+**Prova executada** — `db/test-authz-fecho-execute-registrado.sh` (PG17 descartável, 28 asserts,
+exit 0). Ele reproduz a premissa em vez de presumi-la: aplica o default privilege MEDIDO
+(`public`/`f` → `{postgres,anon,authenticated,service_role}`) e o estado que a `20260510235956`
+deixava, e só então roda a migration real. O que ficou provado, e não alegado:
+
+| # | asserção |
+|---|---|
+| A1c | sem esta migration, um replay do repo faz `cmc_ledger_capture` nascer alcançável por **`anon`** |
+| A2 | `REVOKE … FROM PUBLIC` **não** tira `authenticated` nem `anon` — a armadilha nº 1 de `database.md`, executada |
+| A3-A5b | depois da migration, as 2 roles do browser não alcançam nenhuma das 3 |
+| A6 | `service_role` **mantém** EXECUTE nas 3 — o fecho para exatamente onde devia |
+| A7/A8 | o cron (`postgres`, superuser) executa; `authenticated` é barrado com **42501**, com re-raise de qualquer outra SQLSTATE |
+| **A9/A10** | **os 2 triggers DISPARAM para `authenticated` sem EXECUTE na função** — Postgres não checa esse privilégio no disparo, o privilégio checado é o DML na tabela |
+| A12/A12b | os 3 `REVOKE` são **top-level** |
+| F1/F2/F3 | sabotar o REVOKE (tirar `authenticated`; deixar só `PUBLIC`) fica **vermelho**; a migration verdadeira volta ao verde |
+
+**A9/A10 é a asserção que autorizou a entrega.** "Revogar não quebra os triggers" era exatamente o
+tipo de alegação plausível que, errada, derrubaria a escrita em `pedido_compra_sugerido` e
+`inventory_position`. Provada executando, virou fato.
+
+**A12 congela uma falha silenciosa nova.** O parser de `scripts/lib/authz-funcoes.ts` julga
+statements que começam com o verbo, sobre um SQL sem comentários/strings — mas `stripNoise` **não
+trata dollar-quote**. Um `REVOKE` embrulhado em `DO $$ … $$` deixa de ser statement para o gate: o
+banco fecharia igual, a âncora ficaria **muda**, e a migration não cumpriria o que se propõe sem
+nada ficar vermelho. É a razão de os 3 REVOKE serem top-level, e A12 é o que impede alguém de
+"melhorar" isso depois com um guard de existência.
