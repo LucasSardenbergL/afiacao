@@ -18,8 +18,11 @@
  * errar para `completo` custa a carteira inteira da vendedora.
  */
 
+// Não exportado de propósito: os consumidores montam o snapshot como objeto literal e
+// falam em `InsumosSnapshot`. Exportar sem consumidor faz o gate de dead-code (knip)
+// reprovar no CI — e o `bun run test` local NÃO cobre esse gate (o health stack sim).
 /** Um insumo do snapshot: foi lido com sucesso, e quantas linhas vieram. */
-export interface InsumoLido {
+interface InsumoLido {
   /** `false` = a leitura FALHOU (exceção, página perdida, RPC recusada). */
   ok: boolean;
   /** Quantas linhas o insumo devolveu. Só faz sentido quando `ok`. */
