@@ -142,7 +142,7 @@ expect_quiet "git diff falha" \
   "GIT_STUB_DIFF_FAIL=1 GIT_STUB_GAINED_FILE=$stub/gained_hit.txt GH_STUB_FILE=$stub/prs_hit.json" \
   'gh pr create --fill'
 
-echo "── gatilho 2: `git commit` (o chokepoint ANTES do trabalho pronto) ──"
+echo '── gatilho 2: git commit (o chokepoint ANTES do trabalho pronto) ──'
 # PRIMEIRO commit da branch: diff de 3 pontos VAZIO (mine=/dev/null) — a colisao so aparece
 # no STAGED. E exatamente o #1764 (1 commit so). Olhar so o 3-pontos seria teatro.
 C="PRCG_CACHE_DIR=$stub/cache1"
