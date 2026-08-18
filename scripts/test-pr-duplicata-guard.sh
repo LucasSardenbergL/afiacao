@@ -54,7 +54,7 @@ _hook() {
   local envs="$1" cmd="$2" json
   json="$(jq -n --arg c "$cmd" '{tool_name:"Bash",tool_input:{command:$c}}')"
   # shellcheck disable=SC2086  # envs é lista KEY=VAL, precisa expandir em palavras
-  printf '%s' "$json" | env $envs bash "$HOOK" 2>/dev/null
+  printf '%s' "$json" | env $envs bash "${HOOK_ATUAL:-$HOOK}" 2>/dev/null
 }
 _ok()   { printf '  ✓ %s\n' "$1"; }
 _bad()  { printf '  ✗ %s\n' "$1"; fail=1; }
@@ -136,6 +136,52 @@ printf 'CREATE FUNCTION reposicao_pos_marcador() ...\n' > "$stub/main_supabase_m
 : > "$stub/diff_supabase_migrations_x_sql"
 out="$(_hook "GIT_STUB_MINE_FILE=$stub/mine8.txt" "$CRIAR")"
 _deve_avisar "dispara apesar do símbolo existir noutro arquivo na base" "$out"
+
+# ---------------------------------------------------------------------------------------
+# 9. FALSIFICAÇÃO — sabotar e EXIGIR vermelho. Sem isto os 8 casos acima são teatro: um hook
+# que nunca avisasse passaria em 2,3,4,5,6,7 e um que sempre avisasse passaria em 1 e 8.
+# A sabotagem é aplicada numa CÓPIA (nunca no original) — restaurar por `git checkout --`
+# destruiria trabalho não-commitado, armadilha já registrada no §9 do money-path.
+# ---------------------------------------------------------------------------------------
+echo "== 9. falsificação: cada via do teste tem de ser LOAD-BEARING =="
+
+_sabota() { # $1=nome  $2=expr sed  $3=cenário(mine)  $4=veredito esperado da SABOTADA
+  local nome="$1" expr="$2" mine="$3" esperado="$4" out
+  sed "$expr" "$HOOK" > "$stub/sabotado.sh"
+  if cmp -s "$HOOK" "$stub/sabotado.sh"; then
+    _bad "sabotagem '$nome' não mudou nada (padrão sed obsoleto — o teste estaria cego)"
+    return
+  fi
+  out="$(HOOK_ATUAL=$stub/sabotado.sh _hook "GIT_STUB_MINE_FILE=$mine" "$CRIAR")"
+  if [ "$esperado" = avisa ]; then
+    if _avisa "$out"; then _ok "sabotagem '$nome' → vermelho como esperado (via é load-bearing)"
+    else _bad "sabotagem '$nome' NÃO mudou o veredito — a via não está sendo testada"; fi
+  else
+    if _avisa "$out"; then _bad "sabotagem '$nome' NÃO mudou o veredito — a via não está sendo testada"
+    else _ok "sabotagem '$nome' → vermelho como esperado (via é load-bearing)"; fi
+  fi
+}
+
+# (A) remover a via 1 (ausência na merge-base): o cenário 2 — símbolo PRÉ-EXISTENTE — passa a avisar.
+cp "$stub/main_scripts_authz-manifest_ts" "$stub/base_scripts_authz-manifest_ts"
+# shellcheck disable=SC2016  # sed: o padrão é literal do hook, expandir aqui o quebraria
+_sabota "sem a via 1 (ausencia na base)" 's|^  novos=.*|  novos="$add_ids"|' "$stub/mine.txt" avisa
+printf 'export const AUTHZ_MANIFEST = {\n  reposicao_pos_candidatos: { requiredGate: "compras" },\n}\n' \
+  > "$stub/base_scripts_authz-manifest_ts"
+
+# (C) remover a via 3 (presença na main): o cenário 3 — ninguém entregou — passa a avisar.
+cp "$stub/base_scripts_authz-manifest_ts" "$stub/main_scripts_authz-manifest_ts"
+# shellcheck disable=SC2016  # sed: o padrão é literal do hook, expandir aqui o quebraria
+_sabota "sem a via 3 (presenca na main)" 's|^  dup=.*|  dup="$novos"|' "$stub/mine.txt" avisa
+printf 'export const AUTHZ_MANIFEST = {\n  reposicao_pos_candidatos: { requiredGate: "compras" },\n  reposicao_pos_marcador: { requiredGate: "compras" },\n}\n' \
+  > "$stub/main_scripts_authz-manifest_ts"
+
+# (B) trocar o ESCOPO por repo-wide (acumular a base de todos os arquivos): o cenário 8 emudece.
+# É a variante que a medição rejeitou — 1 falso negativo em 3 ocorrências reais.
+# shellcheck disable=SC2016  # sed: o padrão é literal do hook, expandir aqui o quebraria
+_sabota "escopo repo-wide em vez de por arquivo" \
+  's|^  base_c=.*|  base_c="${acc:-}$(git show "$mb:$f" 2>/dev/null)"; acc="$base_c"|' \
+  "$stub/mine8.txt" cala
 
 echo
 if [ "$fail" -eq 0 ]; then echo "✅ pr-duplicata-guard: tudo verde"; else echo "❌ pr-duplicata-guard: FALHAS acima"; fi
