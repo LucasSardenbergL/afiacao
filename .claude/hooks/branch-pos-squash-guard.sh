@@ -55,7 +55,12 @@ cache_file="$cache_dir/$key"
 
 verdict=""
 if [ "$ttl" -gt 0 ] 2>/dev/null && [ -f "$cache_file" ]; then
-  mtime="$(stat -f %m "$cache_file" 2>/dev/null || stat -c %Y "$cache_file" 2>/dev/null || printf 0)"
+  # GNU primeiro e validando NUMERO: no Linux `stat -f %m` NAO falha (-f = --file-system), entao
+  # o `||` nunca caia pro fallback e o mtime virava lixo → cache sempre "expirado" (verde no macOS,
+  # cego no Linux; so apareceu quando a suite entrou no CI, 2026-08-18).
+  mtime="$(stat -c %Y "$cache_file" 2>/dev/null)"
+  case "$mtime" in ''|*[!0-9]*) mtime="$(stat -f %m "$cache_file" 2>/dev/null)" ;; esac
+  case "$mtime" in ''|*[!0-9]*) mtime=0 ;; esac
   now="$(date +%s)"
   [ "$(( now - mtime ))" -lt "$ttl" ] && verdict="$(cat "$cache_file" 2>/dev/null)"
 fi

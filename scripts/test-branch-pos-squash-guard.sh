@@ -99,6 +99,42 @@ else
   echo "  FAIL  cache não segurou o veredito | out1='$out1' out2='$out2'"; fail=1
 fi
 
+# O cache le mtime via `stat`, cujo contrato DIVERGE entre BSD (macOS, do founder) e GNU (Linux,
+# do CI): no GNU `stat -f %m` NAO falha (-f = --file-system), entao um `a || b` cai no primeiro e
+# devolve lixo — cache eternamente "expirado". Verde num ambiente NAO prova (licao do #1483):
+# aqui os DOIS contratos sao exercitados por stub.
+echo "── portabilidade do stat: cache HIT nos DOIS contratos (BSD e GNU) ──"
+_cache_hit_com_stat() {   # $1=nome  $2=corpo do stub de stat
+  local nome="$1" corpo="$2" d="$stub/statbox-$1" o1 o2
+  mkdir -p "$d"; printf '%s\n' '#!/bin/sh' "$corpo" > "$d/stat"; chmod +x "$d/stat"
+  local cd2="$stub/cache-$1"
+  o1="$(printf '%s' "$(jq -n '{tool_name:"Bash",tool_input:{command:"git commit -m z"}}')" \
+    | env PATH="$d:$PATH" GIT_STUB_BRANCH=feature-cache GIT_STUB_REVCOUNT=3 \
+          GH_STUB_FILE="$stub/merged.json" BSG_CACHE_DIR="$cd2" BSG_CACHE_TTL=120 bash "$HOOK" 2>/dev/null)"
+  o2="$(printf '%s' "$(jq -n '{tool_name:"Bash",tool_input:{command:"git commit -m z"}}')" \
+    | env PATH="$d:$PATH" GIT_STUB_BRANCH=feature-cache GIT_STUB_REVCOUNT=3 GH_STUB_EXIT=1 \
+          BSG_CACHE_DIR="$cd2" BSG_CACHE_TTL=120 bash "$HOOK" 2>/dev/null)"
+  if printf '%s' "$o1" | grep -qi 'squash' && printf '%s' "$o2" | grep -qi 'squash'; then
+    echo "  ok    cache HIT sob stat $nome"
+  else
+    echo "  FAIL  cache nao segurou sob stat $nome | o2='$o2'"; fail=1
+  fi
+}
+# GNU: -c %Y devolve epoch; -f %m SAI 0 com lixo (o exato comportamento que cegou o cache).
+# shellcheck disable=SC2016  # o corpo do stub e literal: $1/$2 sao do stub, nao desta shell
+_cache_hit_com_stat gnu 'case "$1" in
+  -c) [ "$2" = "%Y" ] && { date +%s; exit 0; }; exit 1 ;;
+  -f) echo "Blocks: 123 Size: 456"; exit 0 ;;
+esac
+exit 1'
+# BSD: -c nao existe (falha); -f %m devolve epoch.
+# shellcheck disable=SC2016  # idem
+_cache_hit_com_stat bsd 'case "$1" in
+  -c) echo "stat: illegal option -- c" >&2; exit 1 ;;
+  -f) [ "$2" = "%m" ] && { date +%s; exit 0; }; exit 1 ;;
+esac
+exit 1'
+
 echo
 if [ "$fail" -eq 0 ]; then echo "PASS — todos os casos"; else echo "FALHOU"; fi
 exit "$fail"
