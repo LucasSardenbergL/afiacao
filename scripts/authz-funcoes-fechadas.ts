@@ -215,15 +215,14 @@ export const AUTHZ_FUNCOES_FECHADAS: Record<string, FuncaoFechada> = {
     motivo: 'aplica snapshot de reposição — cron/service_role',
   },
   'public.cmc_ledger_capture': {
-    // ⚠️ A ÚNICA das 40 sem âncora no repo: prod tem o ACL fechado
-    // ({postgres,service_role,sandbox_exec}, auth=NÃO, anon=NÃO — medido 2026-08-15), mas
-    // NENHUMA migration emite GRANT/REVOKE sobre ela. O fecho veio de fora do repo (apply à mão
-    // ou snapshot). Declarar uma âncora falsa aqui seria pior que a lacuna: apontaria o gate para
-    // um arquivo que não fecha nada. `null` mantém o FECHO_PENDENTE visível e deixa o audit de
-    // prod ser quem afirma — que é exatamente a divisão de trabalho das duas guardas.
-    fechadaPor: null,
+    // Era a única das 40 sobre a qual NENHUMA migration emitia GRANT ou REVOKE — nem parcial: ela
+    // nasce por `CREATE OR REPLACE` em 20260614170000_cmc_ledger.sql e herdava o default
+    // privilege, e o fecho medido em prod ({postgres,service_role,sandbox_exec}, auth=NÃO,
+    // anon=NÃO) vinha inteiramente de fora do repo. A âncora abaixo REGISTRA esse fecho (no-op em
+    // prod, de propósito), que é o que a traz para dentro da vigilância estática da Parte E.
+    fechadaPor: '20260818121919_authz_fecho_execute_registrado_3_funcoes.sql',
     permitido: PORTA_FECHADA,
-    motivo: 'captura no ledger de cmc (trigger/service_role) — fechada em prod, fecho AUSENTE do repo',
+    motivo: 'captura no ledger de cmc — trigger trg_cmc_ledger_capture em inventory_position',
   },
   'public.reposicao_cold_start_parametros': {
     fechadaPor: '20260627130000_reposicao_cold_start_fix_gate_cron.sql',
@@ -246,21 +245,20 @@ export const AUTHZ_FUNCOES_FECHADAS: Record<string, FuncaoFechada> = {
     permitido: PORTA_GATE,
     motivo: 'margem por faixa na carteira — o vendedor no browser alcança; fecha por escopo+projeção',
   },
-  // ⚠️ REVELADA pelo detector, e baselinada em vez de acomodada (§7 do histórico). A única
-  // migration que toca o ACL desta é a 20260510235956 ("Fatia E3 Fase 1"), que revoga de
-  // `PUBLIC, anon` e **mantém `GRANT EXECUTE … TO authenticated`** — o repo, portanto, AFIRMA que
-  // authenticated executa. Prod diz o contrário (medido 2026-08-15: auth=NÃO, ACL explícito
-  // `{postgres,service_role,sandbox_exec}`), logo o REVOKE de `authenticated` aconteceu FORA do
-  // repo. Declarar `permitido.authenticated = true` para calar o gate seria fabricar contrato
-  // falso na pior direção: passaria a AUTORIZAR a role que hoje não alcança, e um DROP+CREATE que
-  // a reabrisse ficaria verde. `fechadaPor: null` diz a verdade — o fecho não está no repo, o
-  // gate estático não a vigia, e quem afirma o ACL dela é `bun run authz:funcoes:prod`.
+  // ⚠️ REVELADA pelo detector, e baselinada em vez de acomodada (§7 do histórico). Até
+  // 20260818121919, a última migration a tocar o ACL desta era a 20260510235956 ("Fatia E3
+  // Fase 1"), que revoga de `PUBLIC, anon` e **mantém `GRANT EXECUTE … TO authenticated`** — ou
+  // seja, o repo AFIRMAVA que authenticated executa, enquanto prod dizia o contrário (medido
+  // 2026-08-15 e reconfirmado 2026-08-18: auth=NÃO, ACL `{postgres,service_role,sandbox_exec}`).
+  // A saída NÃO foi declarar `permitido.authenticated = true` para calar o gate — isso fabricaria
+  // contrato falso na pior direção, AUTORIZANDO a role que hoje não alcança e deixando verde um
+  // DROP+CREATE que a reabrisse. Foi REGISTRAR o fecho: a âncora abaixo revoga de `authenticated`
+  // por NOME (revogar de PUBLIC não a tiraria), no-op em prod, e o gate estático passa a vigiar.
   'public.detectar_skus_sem_grupo': {
-    fechadaPor: null,
+    fechadaPor: '20260818121919_authz_fecho_execute_registrado_3_funcoes.sql',
     permitido: PORTA_FECHADA,
     motivo:
-      'self-heal de SKU sem grupo — cron detectar-outliers-diario; fechada para authenticated em PROD, ' +
-      'e esse fecho NÃO está no repo (a 20260510235956 ainda concede a authenticated)',
+      'self-heal de SKU sem grupo — cron detectar-outliers-diario, que roda como postgres (superuser)',
   },
   'public.reposicao_alerta_pedido_minimo_tick': {
     fechadaPor: '20260615210000_reposicao_auto_aprovacao_v2.sql',
@@ -302,12 +300,15 @@ export const AUTHZ_FUNCOES_FECHADAS: Record<string, FuncaoFechada> = {
     permitido: PORTA_FECHADA,
     motivo: 'arredonda/persiste qtde inteira do pedido — edge disparar-pedidos-aprovados',
   },
-  // ⚠️ Mesmo caso da `detectar_skus_sem_grupo` acima, mesma migration, mesma razão para o `null`.
+  // ⚠️ Mesmo caso da `detectar_skus_sem_grupo` acima — mesma 20260510235956 concedendo a
+  // authenticated, mesma âncora registrando o fecho. Sendo `RETURNS trigger`, o EXECUTE nem é o
+  // que a faz rodar: Postgres não checa esse privilégio no disparo do trigger (provado em
+  // db/test-authz-fecho-execute-registrado.sh), então aqui o fecho é 2ª tranca — vale contra a
+  // chamada DIRETA por PostgREST, não contra o trigger.
   'public.set_status_envio_portal_on_disparo': {
-    fechadaPor: null,
+    fechadaPor: '20260818121919_authz_fecho_execute_registrado_3_funcoes.sql',
     permitido: PORTA_FECHADA,
     motivo:
-      'RETURNS trigger em pedido_compra_sugerido (sem rota PostgREST, o fecho é 2ª tranca); fechada ' +
-      'para authenticated em PROD, e esse fecho NÃO está no repo (a 20260510235956 ainda concede)',
+      'RETURNS trigger em pedido_compra_sugerido (trg_set_status_envio_portal), sem rota PostgREST',
   },
 };
