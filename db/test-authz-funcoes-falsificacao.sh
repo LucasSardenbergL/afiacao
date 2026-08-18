@@ -83,25 +83,42 @@ espera "F2 nomeia o arquivo novo"          1 "29991231000001_sabotagem_funcao.sq
 restaurar
 
 # F3 — migration NOVA com DROP+CREATE e sem REVOKE: a função renasce com o default privilege.
+#      Alvo é uma função do ACKNOWLEDGED_SENSITIVE, e não do AUTHZ_MANIFEST, DE PROPÓSITO: a
+#      Parte A julga a última definição de toda função do manifest, então recriar uma delas com
+#      corpo de fixture ficaria vermelha pelo GATE AUSENTE — e a contraprova F3b, que precisa do
+#      verde, nunca conseguiria ficar verde. A falha ensinou o isolamento: para provar a Parte E,
+#      a sabotagem tem de ser invisível para A/B/C/D.
 cat > supabase/migrations/29991231000001_sabotagem_funcao.sql <<'SQL'
-DROP FUNCTION IF EXISTS public.get_regua_preco(uuid, uuid, numeric, numeric, numeric[]);
-CREATE FUNCTION public.get_regua_preco(p_a uuid, p_b uuid, p_c numeric, p_d numeric, p_e numeric[])
+DROP FUNCTION IF EXISTS public.tint_calc_preco_final(text, text, text, text, uuid, numeric);
+CREATE FUNCTION public.tint_calc_preco_final(a text, b text, c text, d text, e uuid, f numeric)
 RETURNS int LANGUAGE sql SECURITY DEFINER AS $$ SELECT 1 $$;
 SQL
 espera "F3 DROP+CREATE sem REVOKE -> erro"  1 "FUNCAO_RECRIADA_SEM_FECHO" bun run authz:check
+espera "F3 nomeia a FUNCAO certa"          1 "public.tint_calc_preco_final" bun run authz:check
 restaurar
 
 # F3b — a CONTRAPROVA de F3: a MESMA migration com o REVOKE de volta tem de ficar VERDE. Sem ela,
 #       F3 passaria mesmo que o detector acusasse toda migration que menciona a função — e o gate
-#       viraria ruído que alguém desligaria no primeiro PR legítimo.
+#       viraria ruído que alguém desligaria no primeiro PR legítimo. Revoga das DUAS roles porque
+#       esta função fecha por privilégio; revogar só de anon deixaria authenticated aberta.
 cat > supabase/migrations/29991231000001_sabotagem_funcao.sql <<'SQL'
-DROP FUNCTION IF EXISTS public.get_regua_preco(uuid, uuid, numeric, numeric, numeric[]);
-CREATE FUNCTION public.get_regua_preco(p_a uuid, p_b uuid, p_c numeric, p_d numeric, p_e numeric[])
+DROP FUNCTION IF EXISTS public.tint_calc_preco_final(text, text, text, text, uuid, numeric);
+CREATE FUNCTION public.tint_calc_preco_final(a text, b text, c text, d text, e uuid, f numeric)
 RETURNS int LANGUAGE sql SECURITY DEFINER AS $$ SELECT 1 $$;
-REVOKE ALL ON FUNCTION public.get_regua_preco(uuid, uuid, numeric, numeric, numeric[]) FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION public.get_regua_preco(uuid, uuid, numeric, numeric, numeric[]) TO authenticated;
+REVOKE ALL ON FUNCTION public.tint_calc_preco_final(text, text, text, text, uuid, numeric) FROM PUBLIC, anon, authenticated;
 SQL
 espera "F3b DROP+CREATE COM revoke -> verde" 0 "" bun run authz:check
+restaurar
+
+# F3c — e o REVOKE PARCIAL (só anon) NÃO basta para função que fecha por privilégio: é o
+#       discriminante que separa esta parte de um detector que só procura a palavra REVOKE.
+cat > supabase/migrations/29991231000001_sabotagem_funcao.sql <<'SQL'
+DROP FUNCTION IF EXISTS public.tint_calc_preco_final(text, text, text, text, uuid, numeric);
+CREATE FUNCTION public.tint_calc_preco_final(a text, b text, c text, d text, e uuid, f numeric)
+RETURNS int LANGUAGE sql SECURITY DEFINER AS $$ SELECT 1 $$;
+REVOKE ALL ON FUNCTION public.tint_calc_preco_final(text, text, text, text, uuid, numeric) FROM PUBLIC, anon;
+SQL
+espera "F3c REVOKE parcial -> ainda erro"   1 "FUNCAO_RECRIADA_SEM_FECHO" bun run authz:check
 restaurar
 
 # F4 — detector desligado: a allowlist vira decoração e os testes anti-inércia têm de cair.
