@@ -166,6 +166,9 @@ Deno.test("CALIBRAÇÃO: os padrões reprovam a forma PRÉ-fix e o filtro não c
   const jsdoc = "/**\n * exemplo com body.probe === true dentro de bloco\n */";
   if (/\bbody\.probe\s*===\s*true/.test(semComentario(jsdoc))) {
     throw new Error("bloco /* */ escapou do filtro — JSDoc citando a forma reprovaria edge correta");
+  }
+});
+
 Deno.test("as duas edges que EFETIVAM NF-e dizem isso no EFEITO", () => {
   // `omie-nfe-recebimento` e `process-nfe` são GÊMEAS: rodam a MESMA tríade no Omie
   // (AlterarRecebimento → AlterarEtapaRecebimento etapa 40 → ConcluirRecebimento), que dá entrada
