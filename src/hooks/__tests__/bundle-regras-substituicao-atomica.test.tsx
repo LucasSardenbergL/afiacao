@@ -98,7 +98,16 @@ vi.mock('@/integrations/supabase/client', () => ({
       // conhecido, nenhum SKU é vendável e nenhum bundle nasce — inventar SKU vendável aqui
       // fabricaria margem que o cenário não tem.
       if (nome === 'get_skus_margem_positiva') {
-        return Promise.resolve({ data: [] as { product_id: string }[], error: null });
+        // PAGINADA (`fetchAllPages`) desde que o cap de 1.000 do PostgREST zerou o motor em
+        // prod: o builder de `.rpc()` expõe `.range()` como o de `.from()`, e o dublê tem de
+        // expor também. Lista vazia ⇒ a 1ª página já encerra a paginação.
+        const vazio = { data: [] as { product_id: string }[], error: null };
+        const c: Record<string, unknown> = {
+          order: () => c,
+          range: () => c,
+          then: (resolve: (v: unknown) => void) => resolve(vazio),
+        };
+        return c;
       }
       return Promise.resolve(rpcFalha ? { data: null, error: ERRO_RPC } : { data: 2, error: null });
     },

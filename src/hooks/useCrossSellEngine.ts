@@ -320,9 +320,24 @@ export const useCrossSellEngine = () => {
       //
       // FAIL-CLOSED: falha na RPC → NÃO recomenda. Degradar para "recomenda tudo" poria produto
       // de PREJUÍZO no topo da lista da vendedora, que é o pior desfecho possível aqui.
-      const { data: skusVendaveis, error: erroVendaveis } = (await supabase.rpc(
-        'get_skus_margem_positiva',
-      )) as unknown as { data: { product_id: string }[] | null; error: unknown };
+      //
+      // PAGINADA, com `.order` estável ANTES do `.range`: a RPC devolve 2.462 linhas em prod e
+      // o PostgREST capa em 1.000 — o cap vale para `.rpc()` como vale para `.from()`. Aqui o
+      // truncamento era pior que no bundle: `insumos.vendaveis` abaixo declarava `ok: true` com
+      // `n` já cortado, ou seja, um head **completo** apoiado em dado incompleto — exatamente o
+      // que NÃO pode autorizar expiração. E como a função não tem `ORDER BY` próprio, paginar
+      // sem ordem total deixaria o plano escolher a ordem de cada página, pulando linhas.
+      const { data: skusVendaveis, error: erroVendaveis } = await fetchAllPages<{ product_id: string }>(
+        (de, ate) =>
+          supabase
+            .rpc('get_skus_margem_positiva')
+            .order('product_id', { ascending: true })
+            .range(de, ate) as unknown as PromiseLike<{ data: { product_id: string }[] | null; error: unknown }>,
+        'get_skus_margem_positiva/cross-sell',
+      ).then(
+        (data) => ({ data, error: null as unknown }),
+        (error: unknown) => ({ data: null, error }),
+      );
       insumos.catalogo = { ok: true, n: products.length };
       if (erroVendaveis || !skusVendaveis) {
         console.error('get_skus_margem_positiva falhou — sem recomendação (fail-closed):', erroVendaveis);

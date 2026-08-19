@@ -81,7 +81,21 @@ function chain(table: string): unknown {
 }
 
 vi.mock('@/integrations/supabase/client', () => ({
-  supabase: { from: (t: string) => chain(t), rpc: (fn: string) => Promise.resolve(respostaRpc(fn)) },
+  supabase: {
+    from: (t: string) => chain(t),
+    rpc: (fn: string) => {
+      const r = respostaRpc(fn);
+      // A leitura de vendáveis é PAGINADA (`fetchAllPages`) desde que o cap de 1.000 do
+      // PostgREST truncou a RPC em prod — e o builder de `.rpc()` expõe `.order()`/`.range()`
+      // como o de `.from()`. O dublê precisa expor também, senão testa uma API que não existe.
+      const c: Record<string, unknown> = {
+        order: () => c,
+        range: () => c,
+        then: (resolve: (v: unknown) => void) => resolve(r),
+      };
+      return c;
+    },
+  },
 }));
 vi.mock('@/contexts/ImpersonationContext', () => ({
   useImpersonation: () => ({ isImpersonating: false, effectiveUserId: farmerAtual }),

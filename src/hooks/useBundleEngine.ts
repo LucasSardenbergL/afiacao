@@ -312,7 +312,36 @@ export const useBundleEngine = () => {
           'profiles/bundle',
         ),
         // Quais SKUs são VENDÁVEIS (margem canônica > 0) — o browser não vê mais custo.
-        supabase.rpc('get_skus_margem_positiva') as unknown as Promise<{ data: { product_id: string }[] | null; error: unknown }>,
+        //
+        // PAGINADA como as duas leituras acima: a RPC devolve 2.462 linhas em prod e vinha
+        // capada nas 1.000 do PostgREST, então todo SKU vendável da cauda era tratado como
+        // NÃO-vendável pelo gate lá embaixo. Isso não encolhia a oferta, CONGELAVA a tabela:
+        // sem um PAR de consequentes vendáveis o lote sai vazio, e lote vazio pula a RPC de
+        // gravação de propósito — nenhuma escrita, nenhum erro, nenhum toast. Era o único
+        // insumo do engine fora do `fetchAllPages` (#1520 criou a RPC; a correção do
+        // truncamento silencioso de `omie_products`/`profiles` não a alcançou).
+        //
+        // A rejeição vira `{ data: null, error }` para PRESERVAR o fail-closed explícito
+        // abaixo (`insumos.vendaveis.ok = false` + `registrarVazio()`): deixar `fetchAllPages`
+        // lançar aqui trocaria esse desfecho registrado por um throw genérico, e o head
+        // degradado passaria a poder autorizar expiração.
+        fetchAllPages<{ product_id: string }>(
+          (de, ate) =>
+            supabase
+              .rpc('get_skus_margem_positiva')
+              // `.order` ESTÁVEL antes do `.range`: a função não tem `ORDER BY` (é um
+              // `RETURN QUERY SELECT p.id FROM omie_products JOIN product_costs`), e paginar
+              // sem ordem total deixa o plano decidir a ordem de cada página — o que PULA e
+              // repete linhas entre elas. Repetir é inócuo (o destino é um Set); pular
+              // reintroduziria em menor escala o próprio bug que este trecho corrige, e de
+              // forma intermitente. `product_id` é a PK do catálogo: ordem total.
+              .order('product_id', { ascending: true })
+              .range(de, ate) as unknown as PromiseLike<{ data: { product_id: string }[] | null; error: unknown }>,
+          'get_skus_margem_positiva/bundle',
+        ).then(
+          (data) => ({ data, error: null as unknown }),
+          (error: unknown) => ({ data: null, error }),
+        ),
       ]);
 
       // `fetchAllPages` LANÇA em falha de página, então chegar aqui já significa leitura

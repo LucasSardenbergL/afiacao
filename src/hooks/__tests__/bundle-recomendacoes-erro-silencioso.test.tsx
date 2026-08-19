@@ -138,7 +138,18 @@ vi.mock('@/integrations/supabase/client', () => ({
     rpc: (nome: string, args: Record<string, unknown>) => {
       rpcs.push({ nome, args });
       // Pós-#1520 o engine pergunta quais SKUs são vendáveis em vez de baixar custo.
-      if (nome === 'get_skus_margem_positiva') return Promise.resolve({ data: VENDAVEIS, error: null });
+      // PAGINADA (`fetchAllPages`) desde que o cap de 1.000 do PostgREST zerou o motor em
+      // prod: o builder de `.rpc()` expõe `.range()` como o de `.from()`, e o dublê tem de
+      // expor também. `VENDAVEIS` é curta ⇒ a 1ª página já encerra a paginação.
+      if (nome === 'get_skus_margem_positiva') {
+        const r = { data: VENDAVEIS, error: null };
+        const c: Record<string, unknown> = {
+          order: () => c,
+          range: () => c,
+          then: (resolve: (v: unknown) => void) => resolve(r),
+        };
+        return c;
+      }
       if (nome === RPC_SUBSTITUIR) {
         return Promise.resolve(
           insertRecsFalha ? { data: null, error: ERRO_INSERT } : { data: { expiradas: 0, inseridas: 2 }, error: null },
