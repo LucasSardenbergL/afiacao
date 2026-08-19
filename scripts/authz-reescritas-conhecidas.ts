@@ -35,7 +35,7 @@ export const AUTHZ_REESCRITAS_CONHECIDAS: ReescritaConhecida[] = [
     arquivo: '20260718190000_authz_capability_matrix_e2.sql',
     funcao: 'public.get_preco_cockpit',
     motivo:
-      'FU4/E2 trocou o gate `pode_ver_carteira_completa` por `private.cap_custo_ler` por regexp sobre a definição viva, porque o corpo do repo divergia de prod e colar um corpo teria REVERTIDO o hardening. Efeito medido: em prod esta função já NÃO chama pode_ver_carteira_completa, mas o manifest ainda a lista como alternativa aceitável e o corpo do repo ainda a chama — o CI valida uma cláusula que prod não tem mais. O gate que de fato protege em prod é has_role(employee|master), e ele satisfaz o anyOf.',
+      'FU4/E2 trocou o gate `pode_ver_carteira_completa` por `private.cap_custo_ler` por regexp sobre a definição viva, porque o corpo do repo divergia de prod e colar um corpo teria REVERTIDO o hardening. Efeito medido: em prod esta função já NÃO chama pode_ver_carteira_completa; quem bloqueia é has_role(employee|master). A dívida de CONTRATO que isso deixou — o manifest listando a cláusula morta como alternativa do anyOf — foi paga em 2026-08-15 (requiredGate agora descreve só o has_role real). O que ESTA entrada continua declarando é a divergência que sobra: o repo mascara o numérico com `v_pode_num := pode_ver_carteira_completa(…)` e prod com cap_custo_ler, então a Parte A segue medindo um corpo que não é o que roda.',
     provaExecutada: 'db/test-authz-capability-matrix.sh',
     md5ProdEsperado: '4f3fb7df939e467f82d36a065e2f0957',
   },
@@ -43,7 +43,7 @@ export const AUTHZ_REESCRITAS_CONHECIDAS: ReescritaConhecida[] = [
     arquivo: '20260718190000_authz_capability_matrix_e2.sql',
     funcao: 'public.get_defasagem_cliente',
     motivo:
-      'Mesma reescrita do E2, mesmo motivo. Em prod `pode_ver_carteira_completa` sobrou só como MENÇÃO em comentário (não é chamada); quem bloqueia é has_role(employee|master) + cap_custo_ler para o numérico.',
+      'Mesma reescrita do E2, mesmo motivo. Em prod `pode_ver_carteira_completa` sobrou só como MENÇÃO em comentário (não é chamada); quem bloqueia é has_role(employee|master) + cap_custo_ler para o numérico. Cláusula morta removida do anyOf do manifest em 2026-08-15, junto com a da get_preco_cockpit; a entrada permanece porque a divergência de MASCARAMENTO entre repo e prod permanece.',
     provaExecutada: 'db/test-authz-capability-matrix.sh',
     md5ProdEsperado: '037ede84a229d5798214511433afb65d',
   },
