@@ -62,7 +62,11 @@ ctx="$(bun "$motor" "$arquivo" 2>/dev/null)"
 
 # systemMessage curto (é o que o founder lê na linha do hook); o texto completo vai no contexto.
 curto="${arquivo%/*}"; curto="${curto##*/}/${arquivo##*/}"
-qtd="$(printf '%s' "$ctx" | command grep -c '^  · ' 2>/dev/null || echo '?')"
+# a contagem sai da 1ª linha do motor ("GUARDRAIL-DE-FORMA: N teste(s) …"), não de contar as linhas
+# listadas: a lista trunca em 8 + uma linha de resumo, então contá-las diria "9" para 20 guardrails.
+# Expansão de parâmetro, sem fork e sem depender de caractere não-ASCII em locale nenhum.
+primeira="${ctx%%$'\n'*}"; qtd="${primeira#*: }"; qtd="${qtd%% *}"
+case "$qtd" in '' | *[!0-9]*) qtd='?' ;; esac
 msg="🧪 $qtd guardrail(s) de FORMA do vitest leem $curto — rode-os antes de entregar (o test:edges/edges:typecheck/lint não os cobre)"
 
 jq -n --arg m "$msg" --arg c "$ctx" \

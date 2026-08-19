@@ -95,6 +95,16 @@ expect_silencio "2ª edição do mesmo arquivo na mesma sessão"
 saida="$(run Write '{"file_path":"supabase/functions/omie-sync/index.ts","content":"1"}' sess-e)"
 expect_fala "OUTRA edge na mesma sessão volta a falar" "vitest"
 
+echo "── (f) o número do resumo é o TOTAL, não o que coube na lista ──"
+# A lista trunca em 8 + uma linha "+N", então contar linhas mentiria assim que o total passasse de
+# 9 (medido: 3 alvos → 11 guardrails, 9 linhas). A asserção compara o número do systemMessage com
+# os testes do comando final — invariante, sem fixar um número que envelhece a cada guardrail novo.
+saida="$(run Write "{\"file_path\":\"$EDGE\",\"content\":\"x\"}" sess-f)"
+n_msg="$(printf '%s' "$saida" | jq -r '.systemMessage' | tr -dc '0-9' | head -c 3)"
+n_cmd="$(printf '%s' "$saida" | jq -r '.hookSpecificOutput.additionalContext' | tail -1 | tr ' ' '\n' | grep -c '\.test\.ts$')"
+if [ -n "$n_msg" ] && [ "$n_msg" = "$n_cmd" ]; then echo "  ok    FALA     | resumo diz $n_msg e o comando roda $n_cmd"
+else echo "  FAIL  want FALA (resumo=$n_msg comando=$n_cmd)"; fail=1; fi
+
 echo
 if [ "$fail" -eq 0 ]; then echo "PASS — edge-guardrail-nudge"; else echo "FALHOU"; fi
 exit "$fail"

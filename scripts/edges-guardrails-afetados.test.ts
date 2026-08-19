@@ -149,6 +149,22 @@ describe('formatarNudge', () => {
   it('lista vazia → string vazia (nada a dizer, o hook não fala)', () => {
     expect(formatarNudge(['supabase/functions/x/index.ts'], [])).toBe('');
   });
+
+  it('o número do RESUMO é o total, mesmo quando a lista trunca', () => {
+    // A lista mostra 8 + uma linha "+N". Contar linhas mentiria: medido, 3 alvos reais dão 11
+    // guardrails em 9 linhas. Quem lê o resumo (o `systemMessage` do hook) precisa do TOTAL.
+    const muitos = Array.from({ length: 12 }, (_, i) => ({
+      teste: `src/__tests__/g${i}.test.ts`,
+      alcance: 'supabase/functions',
+      varredura: true,
+    }));
+    const txt = formatarNudge(['supabase/functions/x/index.ts'], muitos);
+    expect(txt.split('\n')[0]).toContain('12 teste(s)');
+    expect(txt.split('\n').filter((l) => l.startsWith('  · '))).toHaveLength(9); // 8 + o "+4"
+    expect(txt).toContain('+4');
+    // e o comando roda TODOS os 12 — truncar a lista não pode truncar o que precisa rodar
+    expect(txt.split('\n').at(-1)?.match(/\.test\.ts/g)).toHaveLength(12);
+  });
 });
 
 describe('carregarIndice — o mapa REAL do repo (integração)', () => {
