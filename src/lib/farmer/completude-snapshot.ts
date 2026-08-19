@@ -132,12 +132,6 @@ export const INSUMOS_OBRIGATORIOS_BUNDLE = [
   // contra o piso de 1,00% — 5 cestas de 479 — e morrem assim que as cestas passarem
   // de 499.
   'regras',
-  // A cesta UTILIZÁVEL, que não é o pedido. `pedidos` conta clientes com pedido; o motor
-  // consome `baskets`, e só entra em basket o pedido cujos items mapeiam para o catálogo
-  // (`items` vazio, malformado ou com `omie_codigo_produto` desconhecido é descartado em
-  // silêncio no laço). Uma base cujos pedidos não mapeiam deixa `pedidos`, `carteira_ativa` e
-  // `catalogo` fartos, gera zero regra — e sem este insumo o head sairia `completo`.
-  'baskets',
 ] as const;
 
 /**

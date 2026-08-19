@@ -39,7 +39,7 @@ export async function registrarGeracaoFarmer(params: {
 }): Promise<
   | { registrado: true }
   // `head_avancou` é desfecho ESPERADO, não falha — separado para o caller não alarmar por ele.
-  | { registrado: false; motivo: 'head_avancou' | 'falha_rpc' }
+  | { registrado: false; motivo: 'head_avancou' | 'ja_registrado' | 'falha_rpc' }
 > {
   // O `error` é CAPTURADO: o supabase-js NÃO lança em erro de banco, resolve normal com
   // `error` preenchido — um `await` solto devolveria sucesso sem ter gravado (§11). O
@@ -68,6 +68,19 @@ export async function registrarGeracaoFarmer(params: {
   // funcionando, e o head no banco é MAIS novo que este. Registrar por cima seria
   // trocar o resultado mais recente pelo mais velho (money-path §10).
   const codigo = (error as { code?: string } | null)?.code;
+
+  // FG107 = já existem linhas deste mesmo `run_id`. Acontece quando a substituição COMMITOU e
+  // só a resposta se perdeu — a função checa isso ANTES do CAS, então é este código, não o
+  // FG106, que aparece no caminho "gravou e o cliente não soube". Recusa correta: reportá-la
+  // ao Sentry seria alarmar sobre o mecanismo funcionando.
+  if (codigo === 'FG107') {
+    console.error(
+      `[farmer/head] geração ${params.motor}/${params.resultado} já registrada (run_id repetido):`,
+      mensagemDeErro(error) ?? error,
+    );
+    return { registrado: false, motivo: 'ja_registrado' };
+  }
+
   if (codigo === 'FG106') {
     console.error(
       `[farmer/head] head já avançou (recusa correta) ao registrar geração ${params.motor}/${params.resultado}:`,

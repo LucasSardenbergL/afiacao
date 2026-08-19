@@ -182,6 +182,14 @@ export const useBundleEngine = () => {
     setDesatualizado(false);
     // "Esta execução produziu o que está na tela?" — separa INDISPONÍVEL de DESATUALIZADO.
     let resultadoDestaExecucao = false;
+    // "Este cálculo chegou a PRODUZIR linhas?" — trava o registro de `vazio` no `catch`.
+    // Sem isto, uma falha na RPC de substituição (que roda DEPOIS de o resultado já estar na
+    // tela) grava `resultado='vazio'`; e como a gravação não commitou, o head no banco não
+    // mudou e o compare-and-swap ACEITA. Com os insumos todos lidos, sai `vazio` + `completo`:
+    // o sinal exato que autorizaria a fase 2 a expirar a carteira por causa de uma falha de
+    // PERSISTÊNCIA. O CAS só protege quando a gravação commitou — e aí a recusa vem como
+    // FG107 (linhas do mesmo run_id), antes mesmo do FG106.
+    let linhasProduzidas = false;
 
     // Snapshot dos insumos DESTA execução (ver useCrossSellEngine para o racional): o head
     // precisa declarar se o zero veio de um snapshot íntegro, e isso não se infere do
@@ -194,11 +202,16 @@ export const useBundleEngine = () => {
     // O head é gravado UMA vez por execução: o `catch` também registra agora, e sem isto uma
     // falha depois de um `registrarVazio()` já feito gravaria a mesma execução duas vezes.
     let jaRegistrou = false;
+    // O alerta de head ilegível sai UMA vez por execução — `registrarVazio` tem vários
+    // call-sites e o mesmo cálculo emitiria o mesmo alarme repetido.
+    let alertouHeadIlegivel = false;
     const registrarVazio = async () => {
       if (isImpersonating) return;
       if (headVisto === undefined) {
         // Pular às cegas é correto (sobrescrever um head existente seria pior), mas pular em
         // SILÊNCIO é o defeito: "nenhum registro novo" passa a significar duas coisas opostas.
+        if (alertouHeadIlegivel) return;
+        alertouHeadIlegivel = true;
         captureException(new Error('[farmer/head] head ilegível — registro de bundle pulado'), {
           origem: 'farmer/head',
           motor: 'bundle',
@@ -207,9 +220,8 @@ export const useBundleEngine = () => {
         return;
       }
       if (jaRegistrou) return;
-      jaRegistrou = true;
       const { completude, motivo } = avaliarCompletude(insumos, INSUMOS_OBRIGATORIOS_BUNDLE);
-      await registrarGeracaoFarmer({
+      const desfecho = await registrarGeracaoFarmer({
         motor: 'bundle',
         farmerId: effectiveUserId,
         runId,
@@ -220,6 +232,10 @@ export const useBundleEngine = () => {
         insumos,
         headVisto,
       });
+      // `falha_rpc` NÃO trava o slot: travar antes de saber o desfecho faria uma tentativa
+      // falha suprimir uma posterior que daria certo — o sensor se calaria por causa do
+      // próprio erro que precisava registrar.
+      if (desfecho.registrado || desfecho.motivo !== 'falha_rpc') jaRegistrou = true;
     };
 
     try {
@@ -377,11 +393,14 @@ export const useBundleEngine = () => {
         // silêncio e o zero final sairia rotulado `completo`. O universo certo é a carteira
         // ATIVA, não a base global.
         esperado: ativos.length,
-        // Metade: abaixo disso o cálculo ignorou a MAIORIA da carteira, e o que ele conclui
-        // deixa de ser uma afirmação sobre o portfólio do farmer. Precisão > recall — errar
-        // para `degradado` custa uma oferta velha na tela; errar para `completo` custa a
-        // carteira inteira.
-        pisoCobertura: 0.5,
+        // `esperado` entra como EVIDÊNCIA, SEM piso — e isso é decisão medida, não omissão.
+        // Distribuição real (psql-ro, 19/08/2026, 3 farmers com carteira ativa): 2 em 100%
+        // de cobertura e 1 em 85,96%; NENHUM abaixo de 50%. Qualquer piso plausível ou é
+        // inerte (não separa nada do regime atual) ou degrada o farmer de 86% já no primeiro
+        // recálculo. Fixar um número aqui seria inventar o limiar — o mesmo erro que este
+        // arquivo evita em `baskets`, e o que "rótulo com DEFAULT constante não é fato"
+        // (money-path §5) proíbe. O `n`/`esperado` ficam no head justamente para calibrar o
+        // piso quando houver farmers suficientes para que ele signifique algo.
       };
 
       // 2. Build transaction baskets per customer
@@ -425,11 +444,15 @@ export const useBundleEngine = () => {
       insumos.carteira_com_historico_utilizavel = {
         ok: true,
         n: ativos.filter((c) => customerBaskets.has(c.customer_user_id)).length,
-        // `n > 0` deixava passar 1 cliente com histórico para 101 ativos: o motor opinaria
-        // sobre 1% da carteira e calaria sobre o resto, com o head dizendo `completo`. O
-        // universo é a carteira ATIVA, e o piso responde "alcançou a maioria dela?".
+        // `esperado` entra como EVIDÊNCIA, SEM piso — e isso é decisão medida, não omissão.
+        // Distribuição real (psql-ro, 19/08/2026, 3 farmers com carteira ativa): 2 em 100%
+        // de cobertura e 1 em 85,96%; NENHUM abaixo de 50%. Qualquer piso plausível ou é
+        // inerte (não separa nada do regime atual) ou degrada o farmer de 86% já no primeiro
+        // recálculo. Fixar um número aqui seria inventar o limiar — o mesmo erro que este
+        // arquivo evita em `baskets`, e o que "rótulo com DEFAULT constante não é fato"
+        // (money-path §5) proíbe. O `n`/`esperado` ficam no head justamente para calibrar o
+        // piso quando houver farmers suficientes para que ele signifique algo.
         esperado: ativos.length,
-        pisoCobertura: 0.5,
       };
 
       // EVIDÊNCIA, não veredicto — e a distinção importa. `baskets` é o universo GLOBAL que
@@ -753,6 +776,10 @@ export const useBundleEngine = () => {
       );
 
       aplicarBundles(allCustomerBundles);
+      // Marcados JUNTOS e aqui, não na gravação: a partir deste ponto a tela mostra o
+      // resultado DESTE cálculo, e ele produziu linhas — os dois fatos que o `catch` precisa.
+      resultadoDestaExecucao = true;
+      linhasProduzidas = allCustomerBundles.length > 0;
 
       // Persist bundle recommendations — via RPC que SUBSTITUI a geração anterior.
       // PULADO na lente "Ver como" (só leitura: o master inspeciona os bundles do alvo
@@ -883,7 +910,8 @@ export const useBundleEngine = () => {
       // declarado, e "insumo obrigatório não declarado" já degrada (ausente ≠ zero). E quando a
       // gravação de linhas já moveu o head, o CAS recusa este registro com FG106 — que é o
       // desfecho certo, não um erro a corrigir.
-      await registrarVazio();
+      // SÓ registra vazio quem de fato não produziu nada. Ver `linhasProduzidas`.
+      if (!linhasProduzidas) await registrarVazio();
       const e = error instanceof Error
         ? error
         : new Error(mensagemDeErro(error) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.');
