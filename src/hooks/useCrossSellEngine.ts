@@ -497,6 +497,23 @@ export const useCrossSellEngine = () => {
         }
       }
 
+      // COBERTURA de HISTÓRICO, o par de `clientes_com_profile` — e o pré-requisito que o
+      // §7.5 do design deixou declarado como limitação. `carteira_ativa` conta cliente com
+      // PEDIDO; o insumo do cálculo é item que RESOLVE. O loop acima acabou de descartar em
+      // silêncio (`if (!productId) continue`) todo item cujo `omie_codigo_produto` não bate
+      // num SKU ATIVO — e em prod (18/08/2026) isso é 39,9% dos 47.735 itens, deixando 107
+      // dos 861 clientes com pedido e ZERO histórico utilizável.
+      //
+      // Sai de graça: `customerProducts` já foi construído, então isto é um filtro sobre
+      // memória, não uma varredura nova — era esse custo suposto que barrou a instrumentação
+      // no design. Interseção com a CARTEIRA, como o insumo de perfil: contar itens
+      // resolvidos no universo global não distinguiria o farmer cujos clientes são todos
+      // desses 107.
+      insumos.carteira_com_historico_utilizavel = {
+        ok: true,
+        n: customerIds.filter((id) => (customerProducts.get(id)?.size ?? 0) > 0).length,
+      };
+
       const totalCustomers = Math.max(customerIds.length, 1);
       const productList = products || [];
 

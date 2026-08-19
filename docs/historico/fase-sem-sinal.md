@@ -170,6 +170,21 @@ próprio spec afirmar *"a tabela não recebe grant de escrita direta"* enquanto 
 contrário — **contradição entre o documento e o código passa justamente porque o documento está
 certo.**
 
+⚠️ **Sensor recusado por um custo que NÃO existe.** O mesmo design (§7.5) recusou um insumo de
+cobertura — *"quantos clientes da carteira têm item que RESOLVE para um SKU do catálogo?"* — com a
+justificativa de que exigiria percorrer os itens de todos os pedidos só para instrumentar, e o
+deixou como limitação declarada. Não exigia: os dois motores **já percorrem** todos os itens de
+todos os pedidos (para montar `customerProducts` e `baskets`), e o descarte silencioso
+(`if (!productId) continue`) mora DENTRO desse loop — o insumo era um filtro sobre estrutura já
+construída em memória. Fechado em 18/08/2026, mostrou que a limitação era grande: 39,9% dos 47.735
+itens não resolvem, e **107 dos 861 clientes com pedido não têm NENHUM item utilizável**. Um farmer
+feito só deles dava zero com todos os universos fartos — o falso `completo` que a fase seguinte
+usaria como licença para expirar.
+
+O tell é **custo de instrumentação alegado em prosa e nunca medido** (o irmão do "no ar e ninguém
+reclamou": ausência de dado com cara de conclusão). Antes de recusar um sensor por custo, abra o
+call-site e veja se o loop já passa pelo dado — instrumentar o que já se percorre é grátis, e aqui
+a distância entre "caro" e "grátis" foi só ninguém ter aberto o arquivo.
 ### ⚠️ O sinal pode chegar ENVENENADO pela camada de baixo (2026-08-18, follow-up do #1765)
 
 O caso anterior é sobre a ESTRUTURA do sensor comportar a resposta. Este é o passo seguinte: a
@@ -227,6 +242,22 @@ qualquer insumo com **exatamente 1.000** linhas é assinatura de cap do PostgRES
 veredito para `CONTAMINADO` antes de ele virar `DECIDA`. Os quatro ramos foram falsificados contra
 a lógica publicada (tabela substituída por cenário sintético); no ramo `CONTAMINADO` o cenário tem
 `vazios_completos=1`, isto é, sem a guarda ele **teria** autorizado a fase 2.
+
+⚠️ **CONFIRMADO com dado (2026-08-19 01:22 UTC).** A previsão acima deixou de ser previsão. O
+Publish saiu, `farmer_geracao_execucoes` gravou sua **primeira** linha, e ela veio assim:
+
+```
+motor=cross_sell  resultado=linhas  completude=completo
+insumos: scores 3858 · catalogo 3139 · pedidos 861 · carteira_ativa 171 ·
+         clientes_com_profile 147 · regras 24 · vendaveis {"n": 1000, "ok": true}
+```
+
+`vendaveis.n = 1000` **exato** — a assinatura do cap, com `ok:true`, no primeiro registro que o
+sensor produziu na vida. O gatilho classifica `CONTAMINADO` e recusa, que é o desfecho correto.
+Vale reter o que isso custou: o sensor foi desenhado, revisado por challenge, provado com 49
+asserts e publicado — e ainda assim seu primeiro dado é inútil, por um bug numa camada que
+nenhuma dessas etapas olhava. **Instrumentar não termina no sensor; termina no primeiro dado
+lido de verdade.**
 
 ### Onde a regra NÃO se aplica
 
