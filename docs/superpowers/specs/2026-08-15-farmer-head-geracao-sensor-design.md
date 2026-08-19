@@ -274,6 +274,20 @@ GROUP BY 1,2,3 ORDER BY 1,2,3;
 `insumos` plausíveis.** Enquanto essa query não devolver essa linha, a expiração-por-vazio não
 tem sinal que a justifique — e "está no ar e ninguém reclamou" continua sendo ausência de dado.
 
+### Os pré-requisitos da fase 2 (ambos FECHADOS em 18/08/2026)
+
+O sinal acima não basta sozinho: `vazio+completo` só é licença se `completo` de fato afirmar
+*snapshot íntegro*. Dois insumos faltavam para isso, e os dois eram do mesmo tipo — zero por
+CONSTRUÇÃO sendo lido como zero comercial:
+
+| pré-requisito | o que faltava | fechado |
+|---|---|---|
+| `regras` obrigatório no BUNDLE | todo bundle nasce de `applicableRules`; sem regra descoberta o motor devolve zero sempre | #1779 |
+| cobertura de histórico UTILIZÁVEL | `carteira_ativa` conta cliente com PEDIDO, não cliente cujos itens RESOLVEM para SKU do catálogo ativo (`carteira_com_historico_utilizavel`, obrigatório nos dois motores) | ver §7.5 |
+
+Com os dois, `completude='completo'` passa a afirmar o que a fase 2 precisa que ele afirme. O
+que segue faltando é o **sinal** — a query desta seção devolvendo a linha.
+
 ---
 
 ## 7. O que o challenge do Codex (xhigh) mudou no desenho
@@ -362,3 +376,17 @@ sensor, e só nesse caso se cai no head corrente.
   **declarado como limitação**: `carteira_ativa` conta clientes com pedido, não clientes
   com pedido cujos itens resolvem para SKU do catálogo. A fase 2 precisa fechar isso antes
   de expirar — está anotado no §6 como pré-requisito, não como pendência vaga.
+
+  **FECHADO em 18/08/2026 — e a razão da recusa estava ERRADA.** O custo alegado (percorrer
+  os itens de todos os pedidos só para instrumentar) não existe: os dois motores JÁ percorrem
+  todos os itens de todos os pedidos, para montar `customerProducts` (cross-sell) e `baskets`
+  (bundle) — e o descarte silencioso (`if (!productId) continue`) mora DENTRO desse loop. O
+  insumo `carteira_com_historico_utilizavel` é um filtro sobre estrutura já construída em
+  memória: nenhuma leitura nova, nenhuma varredura extra. O que foi orçado aqui foi o custo de
+  uma implementação que não era a necessária.
+
+  E a limitação era real, não hipotética — medido em prod (psql-ro, 18/08/2026), pedidos
+  confirmado/faturado/entregue: **60,1%** dos 47.735 itens resolvem para SKU ativo, e **107
+  dos 861 clientes com pedido (12,4%) não têm NENHUM item utilizável**. Um farmer feito só
+  desses 107 produzia zero com todos os universos fartos e `carteira_ativa` farta — `completo`
+  sem ser, exatamente a licença que a fase 2 usaria para expirar a carteira dele.

@@ -170,6 +170,22 @@ próprio spec afirmar *"a tabela não recebe grant de escrita direta"* enquanto 
 contrário — **contradição entre o documento e o código passa justamente porque o documento está
 certo.**
 
+⚠️ **Sensor recusado por um custo que NÃO existe.** O mesmo design (§7.5) recusou um insumo de
+cobertura — *"quantos clientes da carteira têm item que RESOLVE para um SKU do catálogo?"* — com a
+justificativa de que exigiria percorrer os itens de todos os pedidos só para instrumentar, e o
+deixou como limitação declarada. Não exigia: os dois motores **já percorrem** todos os itens de
+todos os pedidos (para montar `customerProducts` e `baskets`), e o descarte silencioso
+(`if (!productId) continue`) mora DENTRO desse loop — o insumo era um filtro sobre estrutura já
+construída em memória. Fechado em 18/08/2026, mostrou que a limitação era grande: 39,9% dos 47.735
+itens não resolvem, e **107 dos 861 clientes com pedido não têm NENHUM item utilizável**. Um farmer
+feito só deles dava zero com todos os universos fartos — o falso `completo` que a fase seguinte
+usaria como licença para expirar.
+
+O tell é **custo de instrumentação alegado em prosa e nunca medido** (o irmão do "no ar e ninguém
+reclamou": ausência de dado com cara de conclusão). Antes de recusar um sensor por custo, abra o
+call-site e veja se o loop já passa pelo dado — instrumentar o que já se percorre é grátis, e aqui
+a distância entre "caro" e "grátis" foi só ninguém ter aberto o arquivo.
+
 ### Onde a regra NÃO se aplica
 
 Instrumentar tudo tem custo, e regra que grita errado treina a ignorar o vermelho. O gatilho é a
