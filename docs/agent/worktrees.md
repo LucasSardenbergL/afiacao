@@ -102,8 +102,8 @@ PR o nome que tiver — e sem o `git fetch` na frente o grep devolve "não exist
 procura de verdade. Caso completo: [duplicata-por-objetivo.md](../historico/duplicata-por-objetivo.md).
 
 **Rede automática (2026-08-18):** hook `.claude/hooks/pr-duplicata-guard.sh` (PreToolUse Bash) —
-irmão do `pr-collision-guard.sh`, que cobre só o eixo ARQUIVO. Na hora do `gh pr create` ele testa,
-por **(arquivo, símbolo)**, três vias: ausente do arquivo na merge-base + introduzido por mim +
+irmão do `pr-collision-guard.sh`, que cobre só o eixo ARQUIVO. Nos DOIS chokepoints (`git commit` e
+`gh pr create`) ele testa, por **(arquivo, símbolo)**, três vias: ausente do arquivo na merge-base + introduzido por mim +
 **já presente no mesmo arquivo na `origin/main`**. As três juntas são a assinatura da duplicata; se a
 main não andou naquele arquivo, (1) e (3) se contradizem e o hook cala — o silêncio é estrutural, não
 sorte. **AVISA** via `additionalContext`, nunca nega (PR que ESTENDE de propósito o recém-mergeado
@@ -112,11 +112,63 @@ existe). Fail-open total (sem `jq`/`git`, sem merge-base, arquivo ausente da mai
 arquivos (migrations) na merge-base, então um teste repo-wide de "símbolo novo" o excluiria → falso
 negativo em 1 das 3 ocorrências. Candidato = identificador de ≥12 chars com `_` ou corcova camelCase
 (filtro de forma que mantém prosa portuguesa de `.md` fora). Testes:
-`scripts/test-pr-duplicata-guard.sh` — 8 casos + **falsificação por sabotagem de cada via** numa
-CÓPIA do hook (remover a via 1 ou a via 3, ou trocar o escopo por repo-wide, tem de virar vermelho).
+`scripts/test-pr-duplicata-guard.sh` — 13 casos + **falsificação por sabotagem de cada via E de cada
+decisão do gatilho 2** numa CÓPIA do hook (remover a via 1 ou a via 3, trocar o escopo por repo-wide,
+fazer o commit olhar `mb..HEAD` em vez do índice, ou matar o dedupe: cada uma tem de virar vermelho).
+⚠️ Ele **não rodava no CI** até 2026-08-18: o #1769 criou o arquivo e não o pôs no laço do
+`test:hooks` (que listava os guards por nome). Teste órfão é `grep` sem ocorrência — ausência de
+dado com cara de verde; corrigido junto com o gatilho 2.
 **Limite:** pega o símbolo que você **escreve**; a duplicata cujo artefato é puro comportamento (mesma
 correção, símbolos diferentes — o caso `DENO_NO_PACKAGE_JSON` só é pego porque o nome coincide)
 continua fora do alcance, como a race fria de duas sessões sem PR aberto.
+
+⚠️ **E o gatilho desceu para o `git commit` — o mesmo furo de TEMPO do guard irmão (2026-08-18).**
+No `gh pr create` o trabalho JÁ está pronto: a detecção evita o merge duplicado, não o DESPERDÍCIO
+(#1757 6 arq/+270; #1764 1 arq/+29, morto 36s depois de criado). O que muda no commit é a **fonte do
+"meu trabalho"**: o alvo do diff passa a ser o **ÍNDICE** (`git diff <mb> --cached` = STAGED ∪ commits
+da branch numa expressão só) e a **ÁRVORE** em `git commit -a`. Olhar só o `mb..HEAD` seria TEATRO —
+no PRIMEIRO commit ele é VAZIO e o #1764 tinha 1 commit só; é a sabotagem (D) do teste, que tem de
+emudecer o caso do #1764. Anti-alarm-fatigue (1 aviso por (branch, conjunto de achados); achado novo
+fura o silêncio; o `create` nunca é silenciado) e a **ausência de cache de rede** vieram idênticos do
+`pr-collision-guard`: o que corta ruído é o dedupe do AVISO (por conteúdo), nunca cache da RESPOSTA
+(por tempo).
+
+**Descer aqui não custa alarme NOVO, e isso é estrutural — não estimativa.** Disparar exige o símbolo
+ausente em `<mb>:<arquivo>` **e** presente em `origin/main:<arquivo>` ⇒ a main mexeu naquele arquivo
+desde a merge-base ⇒ o arquivo já está no conjunto (a) do `pr-collision-guard`, que avisa no commit
+desde o #1770. Ou seja: **o conjunto de disparos deste guard é subconjunto do daquele** — ele nunca
+fala onde o irmão cala, só acrescenta PRECISÃO (nomeia o símbolo) dentro de um aviso que já sairia.
+Foi esse teorema, e não uma aposta de ruído, que autorizou a descida.
+
+⚠️ **A precisão do eixo OBJETIVO é MODESTA — medido, não suposto (2026-08-18).** Replay do teste de
+3 vias sobre **797 pares de PRs mergeados concorrentemente** (janela de 8h, 60 PRs): num teto
+**pessimista** (merge-base propositalmente velha) o par (arquivo,símbolo) dispara em **51 de 134**
+pares que compartilham arquivo — e como os dois PRs de cada par mergearam, ali todo disparo é falso
+positivo.
+A causa é o que conta como símbolo: "novo NO arquivo" inclui nome **referenciado**, não só criado
+(`AUTHZ_MANIFEST`, `service_role`), e o ruído concentra em arquivo append-only compartilhado
+(`docs/historico/*.md` + `scripts/audit-custom-migrations.sql` sozinhos = 27 dos 51). ⇒ a mensagem diz
+"**possível** duplicata" e manda CONFERIR com `git log -S`; lê-la como veredito é erro de leitura.
+**Filtrar `docs/` foi REJEITADO:** a ocorrência 2 das 3 reais era exatamente um follow-up de doc — o
+filtro compraria silêncio ao preço de um falso negativo já medido.
+
+**O que NÃO foi medido (registrado, não resolvido):** o falso positivo que só o gatilho do commit
+pode criar — símbolo escrito no commit K e REMOVIDO até a ponta da branch, que o `create` nunca
+veria. O replay por-commit das 60 branches reais (buscadas por `refs/pull/N/head`, que dão o
+merge-base VERDADEIRO) foi montado e **não terminou** (~50min, morto antes do fim) ⇒ esse número não
+existe; não o invente. O que existe é o limite superior: **38 das 60 branches têm 1 commit só** — ali
+o gatilho dispara uma vez, com o trabalho inteiro no índice, e é a avaliação do `create` mais cedo,
+sem janela nenhuma para transitório. Sobram 22 branches (2 a 9 commits) onde o transitório é
+possível; e mesmo lá o aviso era VERDADEIRO no instante em que saiu (o símbolo estava escrito e
+estava na main). ⇒ classe pequena e limitada, não zero.
+
+**Custo que a descida introduz (medido no repo real, 2026-08-18):** ~4,2s por `git commit` — `git
+fetch origin main` ~0,8-1,1s + ~170ms por arquivo (3 invocações de `git` cada, teto de 25 ⇒ pior
+caso ~5s) — e isso **soma** com o fetch do `pr-collision-guard`, que roda no mesmo gatilho. Antes
+era 1× por PR; agora é por commit. Não há como cortar pelo lado da rede: pular o fetch por
+recência é justamente o cache de estado volátil rejeitado no #1770, e grep contra `origin/main`
+defasada devolve "não existe" com cara de procura de verdade. Fica REGISTRADO, não otimizado —
+otimizar sem sinal de incômodo é a fase N+1 sem sinal da fase N.
 
 **Rede automática (2026-07-23):** hook `.claude/hooks/pr-collision-guard.sh` (PreToolUse Bash)
 re-executa a conferência POR ARQUIVO na hora do `gh pr create` — fetch fresco + interseção de TRÊS

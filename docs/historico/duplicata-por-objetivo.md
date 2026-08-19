@@ -92,8 +92,57 @@ Irmã da regra "sincronize antes de MEDIR" (`worktrees.md`).
 - **`.claude/hooks/pr-duplicata-guard.sh`** (2026-08-18) — o fecho ESTRUTURAL. A cláusula acima é
   contramedida textual, e a meta-regra do catálogo de retrabalho diz que contramedida textual
   reincide: a regra do eixo OBJETIVO já existia desde 2026-07-23 e não segurou as 3 ocorrências.
-  O hook testa as três vias por (arquivo, símbolo) na hora do `gh pr create` e AVISA.
+  O hook testa as três vias por (arquivo, símbolo) e AVISA — **no `git commit` e no `gh pr create`**
+  (o gatilho do commit desceu no mesmo dia; §abaixo).
 - Aqui — as 3 ocorrências e a falsificação.
+
+## O gatilho desceu para o `git commit` — e o que a medição autorizou (2026-08-18)
+
+O hook nasceu só no `gh pr create`, e isso repetia o furo de TEMPO que o guard irmão
+(`pr-collision-guard.sh`) já havia corrigido no #1770: **no `create` o trabalho JÁ está pronto**, então
+a rede evita o merge duplicado e não o DESPERDÍCIO — #1757 (6 arq, +270) e #1764 (1 arq, +29) foram
+escritos e descartados no mesmo dia, o #1764 morto 36s depois de criado. Decisões reusadas verbatim do
+irmão: conjunto = STAGED ∪ commits da branch (∪ árvore só em `-a`); 1 aviso por (branch, conjunto de
+achados), com achado novo furando o silêncio e o `create` nunca silenciado; e **nenhum cache de rede**.
+
+O que **não** era transplante — e por isso foi medido antes de implementar — é o risco próprio deste
+eixo: extrair "o símbolo que eu ia criar" é mais ruidoso que interseção de nomes de arquivo, e um
+detector impreciso disparando a cada commit cega o leitor e degrada o portão do `create` junto.
+
+**Duas evidências decidiram, em direções opostas:**
+
+1. **Contra descer — a precisão é modesta.** Replay do teste de 3 vias sobre **797 pares de PRs
+   mergeados concorrentemente** (janela de 8h, 60 PRs): num teto **pessimista** (merge-base velha) o par
+   (arquivo,símbolo) dispara em **51 de 134** pares que compartilham arquivo. Os dois PRs de cada par
+   mergearam ⇒ ali todo disparo é falso positivo. Causa: "símbolo novo NO arquivo" inclui nome
+   **referenciado**, não só criado (`AUTHZ_MANIFEST`, `service_role`), e o ruído concentra em arquivo
+   append-only compartilhado — `docs/historico/*.md` + `scripts/audit-custom-migrations.sql` sozinhos
+   são 27 dos 51.
+2. **A favor — descer não cria ocasião de alarme nova, e é teorema, não estimativa.** Disparar exige o
+   símbolo ausente em `<mb>:<arquivo>` **e** presente em `origin/main:<arquivo>` ⇒ a main mexeu naquele
+   arquivo desde a merge-base ⇒ o arquivo já está no conjunto (a) do `pr-collision-guard`, que avisa no
+   commit desde o #1770. **O conjunto de disparos deste guard é subconjunto do daquele:** ele nunca
+   fala onde o irmão cala. O custo marginal de descer não é "um alarme novo por commit" — é uma linha a
+   mais dentro de um alarme que já sairia, e essa linha nomeia o símbolo, que é justamente o que torna a
+   conferência barata.
+
+**O buraco honesto na medição:** o FP que só o commit pode criar — símbolo escrito no commit K e
+removido até a ponta — ficou SEM número. O replay por-commit das 60 branches reais (via
+`refs/pull/N/head`, que dá o merge-base verdadeiro) foi montado e morreu antes de terminar (~50min).
+O que sobrou é o limite: **38 das 60 branches têm 1 commit só**, e nelas o gatilho é a avaliação do
+`create` mais cedo, sem janela para transitório; nas outras 22 a classe existe mas o aviso era
+verdadeiro quando saiu. Classe pequena e limitada — não zero, e não medida. Registrado assim de
+propósito: inventar o número seria pior que admitir o buraco.
+
+⇒ **desce o gatilho, e a imprecisão vira redação:** a mensagem diz "**possível** duplicata" e manda
+conferir com `git log -S`, nunca "você duplicou". **Filtrar `docs/` foi REJEITADO** (para não voltar
+como ideia nova): a ocorrência 2 das 3 acima era exatamente um follow-up de doc — o filtro compraria
+silêncio ao preço de um falso negativo já medido.
+
+**Achado de tabela:** o `scripts/test-pr-duplicata-guard.sh` do #1769 **não rodava no CI** — o arquivo
+foi criado, mas o laço do `test:hooks` lista os guards por nome e ele ficou de fora. Teste órfão é a
+forma mais cara de "ausência de sinal com cara de verde" (irmã do `grep` sem ocorrência, do linter sem
+a regra). Corrigido nesta entrega, junto com os 5 casos novos e as 2 falsificações novas.
 
 ## Precedente
 
