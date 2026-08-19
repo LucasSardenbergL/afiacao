@@ -359,6 +359,21 @@ export const useBundleEngine = () => {
         }
       }
 
+      // COBERTURA de HISTÓRICO (par de `clientes_com_profile`; §7.5 do design). Aqui a
+      // condição é literal no loop acima: a cesta só entra em `customerBaskets` quando
+      // `productIds.length > 0`, isto é, quando ao menos um item resolveu para SKU ATIVO —
+      // 60,1% dos 47.735 itens em prod (18/08/2026). Cliente sem item utilizável não gera
+      // cesta, e sem cesta não há regra a descobrir: `carteira_ativa` farta com esta
+      // cobertura zero é zero por CONSTRUÇÃO, não "nada a ofertar".
+      //
+      // Interseção com a carteira DESTE farmer, não o universo global — 107 dos 861 clientes
+      // com pedido não têm nenhum item que resolva, e um farmer feito só deles produziria
+      // zero com todos os universos "não-vazios".
+      insumos.carteira_com_historico_utilizavel = {
+        ok: true,
+        n: ativos.filter((c) => customerBaskets.has(c.customer_user_id)).length,
+      };
+
       const totalBaskets = Math.max(baskets.length, 1);
 
       // 3. Association rule mining (Apriori-like)

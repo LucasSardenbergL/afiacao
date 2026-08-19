@@ -30,7 +30,19 @@ WITH obs AS (
     count(*) FILTER (WHERE resultado = 'vazio'
                        AND completude = 'completo'
                        AND COALESCE((insumos->'scores'->>'n')::int, 0)    > 0
-                       AND COALESCE((insumos->'vendaveis'->>'n')::int, 0) > 0) AS vazios_completos,
+                       AND COALESCE((insumos->'vendaveis'->>'n')::int, 0) > 0
+                       -- Terceira geracao de cliente. O insumo de COBERTURA so passou a ser
+                       -- declarado depois que o pre-requisito da §7.5 fechou; execucao que nao
+                       -- o traz veio de cliente que ainda contava carteira_ativa (cliente com
+                       -- PEDIDO) como se fosse historico utilizavel. O `completo` dela nao
+                       -- julga a mesma coisa, entao nao pode entrar no mesmo denominador.
+                       AND insumos ? 'carteira_com_historico_utilizavel') AS vazios_completos,
+    -- Contados a parte para nao sumirem em silencio: sao os vazios+completos do cliente
+    -- ANTERIOR a cobertura. Nao servem de sinal, mas some-los a zero seria refazer o
+    -- ausente=zero num arquivo que existe para impedi-lo.
+    count(*) FILTER (WHERE resultado = 'vazio'
+                       AND completude = 'completo'
+                       AND NOT (insumos ? 'carteira_com_historico_utilizavel')) AS vazios_pre_cobertura,
     -- Assinatura de truncamento: QUALQUER insumo com exatamente 1.000 linhas. O cap do
     -- PostgREST devolve 1.000 e sucesso; nenhum insumo real tem esse tamanho por acaso.
     count(*) FILTER (WHERE EXISTS (
@@ -42,16 +54,23 @@ WITH obs AS (
   FROM public.farmer_geracao_execucoes
 )
 SELECT
-  execucoes_totais, julgaveis, vazios_completos, suspeita_cap, farmers, desde, ultima,
+  execucoes_totais, julgaveis, vazios_completos, vazios_pre_cobertura, suspeita_cap,
+  farmers, desde, ultima,
   CASE
     WHEN suspeita_cap > 0 THEN
       'CONTAMINADO — ' || suspeita_cap || ' execucao(oes) com insumo de exatamente 1000 linhas. '
       || 'Truncamento silencioso: o vazio nao prova ausencia de oportunidade. '
       || 'Corrija a paginacao, DESCARTE o periodo e recomece o denominador.'
+    WHEN vazios_pre_cobertura > 0 AND vazios_completos = 0 THEN
+      'AGUARDE (cliente velho) — ' || vazios_pre_cobertura || ' vazio+completo SEM o insumo '
+      || 'carteira_com_historico_utilizavel. Foram gravados por cliente anterior ao fechamento '
+      || 'da §7.5, quando um vazio podia vir de historico inutilizavel sem degradar. NAO contam '
+      || 'como sinal: falta o Publish do frontend, ou o periodo precede a cobertura.'
     WHEN vazios_completos > 0 THEN
-      'DECIDA — ha ' || vazios_completos || ' vazio+completo. Antes de expirar, feche o '
-      || 'pre-requisito da §7.5: carteira_ativa conta cliente com PEDIDO, nao cliente cujos '
-      || 'itens resolvem para SKU do catalogo. Sem isso o vazio pode vir de historico inutilizavel.'
+      'DECIDA — ha ' || vazios_completos || ' vazio+completo COM cobertura declarada. Os dois '
+      || 'pre-requisitos da §7.5 estao fechados (regras no bundle; e carteira_com_historico_'
+      || 'utilizavel, que separa cliente com PEDIDO de cliente cujos itens RESOLVEM para SKU). '
+      || 'Este vazio ja e julgavel: siga para o desenho da expiracao.'
     WHEN julgaveis >= 20 THEN
       'ENCERRE — ' || julgaveis || ' execucoes julgaveis e ZERO vazios: o vazio-de-verdade nao '
       || 'acontece nesses farmers. Nao ligue a expiracao; encerre a linha.'

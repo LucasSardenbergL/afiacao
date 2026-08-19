@@ -68,6 +68,21 @@ export const INSUMOS_OBRIGATORIOS_CROSS_SELL = [
   // com todos os universos globais "não-vazios". Contar `n > 0` no universo não pega isso;
   // contar a INTERSEÇÃO com a carteira pega.
   'clientes_com_profile',
+  // A SEGUNDA cobertura, e a que o §7.5 do design tinha deixado declarada como limitação:
+  // `carteira_ativa` conta cliente com PEDIDO, e pedido não é insumo — insumo é item que
+  // RESOLVE para SKU do catálogo ATIVO. Os itens do jsonb `sales_orders.items` NÃO trazem
+  // `product_id`: 100% da resolução passa por `omie_codigo_produto` → `omie_products`
+  // (`.eq('ativo', true)`), e o que não resolve o motor descarta em silêncio
+  // (`if (!productId) continue`). Um cliente cujos itens todos caem nesse descarte tem
+  // pedido e não tem histórico.
+  //
+  // Medido em prod (psql-ro, 18/08/2026), status confirmado/faturado/entregue:
+  //   47.735 itens · 28.675 resolvem para SKU ativo = 60,1%
+  //   861 clientes com item · 754 com item que resolve → 107 (12,4%) têm pedido e NENHUM
+  //   item utilizável.
+  // Sem este insumo, esses 107 produziriam zero com TODOS os universos fartos — `completo`
+  // sem ser, que é precisamente a licença que a fase 2 usaria para expirar.
+  'carteira_com_historico_utilizavel',
 ] as const;
 
 /**
@@ -81,6 +96,10 @@ export const INSUMOS_OBRIGATORIOS_BUNDLE = [
   'pedidos',
   'carteira_ativa',
   'clientes_com_profile',
+  // Mesma cobertura do cross-sell, e AINDA mais determinante aqui: a cesta do bundle só
+  // entra em `baskets` quando pelo menos um item resolve, então cliente sem item utilizável
+  // não gera cesta, e sem cesta não há regra a descobrir.
+  'carteira_com_historico_utilizavel',
   // `regras` É obrigatório aqui, ao contrário do cross-sell: todo bundle nasce de
   // `applicableRules`, que sai de `discoveredRules`. Sem regra descoberta o motor produz
   // zero por CONSTRUÇÃO, não por não haver o que ofertar — e rotular esse zero de
