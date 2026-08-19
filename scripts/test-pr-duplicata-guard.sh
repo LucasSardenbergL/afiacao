@@ -148,10 +148,24 @@ _main
 echo "== 4. comando fora dos DOIS gatilhos → mudo =="
 # `git commit` agora É gatilho — o que tem de continuar mudo é a MENÇÃO (aspas/heredoc) e
 # comandos vizinhos de nome parecido.
+# ARMADO: os TRÊS alvos do stub servem achado. Com só o $MINE (=HEAD) uma menção que escapasse da
+# sanitização e virasse modo `commit` leria o stub STAGED VAZIO e calaria — o caso passaria por
+# ACIDENTE do fixture, não pela sanitização. Asserção negativa só tem poder se TODO caminho
+# alternativo estivesse armado para FALAR. (mutation-check 2026-08-18: sem isto, desligar a
+# sanitização inteira sobrevivia à suíte.)
+ARMADO="$MINE GIT_STUB_STAGED_FILE=$stub/mine.txt GIT_STUB_WT_FILE=$stub/mine.txt"
 for c in 'echo "gh pr create"' 'echo "git commit -m x"' 'gh pr list' 'git commit-tree -m x' 'git log --grep=commit'; do
-  out="$(_hook "$MINE $DEDUPE" "$c")"
+  out="$(_hook "$ARMADO $DEDUPE" "$c")"
   _deve_calar "mudo em: $c" "$out"
 done
+# heredoc: menção no CORPO não é execução. Classe de bypass que o Codex achou nos hooks do ECC
+# (o guard chegou a bloquear o commit que a documentava).
+HD=$'cat <<'FIM'
+git commit -m x
+gh pr create --title x
+FIM'
+out="$(_hook "$ARMADO $DEDUPE" "$HD")"
+_deve_calar "mudo em: menção dentro de heredoc" "$out"
 
 echo "== 5. arquivo ausente da origin/main → mudo =="
 rm -f "$stub/main_scripts_authz-manifest_ts"
@@ -172,6 +186,23 @@ printf 'Documento. A regra vale imediatamente para toda implementacao subsequent
   > "$stub/main_docs_nota_md"
 out="$(_hook "GIT_STUB_MINE_FILE=$stub/mine_md.txt" "$CRIAR")"
 _deve_calar "prosa portuguesa não dispara" "$out"
+
+echo "== 7b. limiar de tamanho: identificador CURTO (<12) não vira candidato =="
+# Irmão do 7: lá quem filtra é a FORMA (prosa não tem underscore), aqui é o TAMANHO. São dois
+# filtros independentes e o de tamanho é decisão de PRECISÃO medida (cabeçalho do hook: 51/134
+# pares num teto pessimista) — sem este caso, baixar o limiar não reprovava nada.
+printf 'src/curto.ts
+' > "$stub/mine_curto.txt"
+printf '+++ b/src/curto.ts
++const cor_x = 1
+' > "$stub/diff_src_curto_ts"
+printf 'const a = 0
+' > "$stub/base_src_curto_ts"
+printf 'const a = 0
+const cor_x = 1
+' > "$stub/main_src_curto_ts"
+out="$(_hook "GIT_STUB_MINE_FILE=$stub/mine_curto.txt" "$CRIAR")"
+_deve_calar "cor_x (5 chars, forma válida) não dispara" "$out"
 
 echo "== 8. REGRESSÃO do escopo: símbolo existe repo-wide, mas é novo NO ARQUIVO → AVISA =="
 # É a ocorrência 1 real: reposicao_pos_marcador vivia em 10 arquivos (migrations) na merge-base.
