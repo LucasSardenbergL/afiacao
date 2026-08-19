@@ -123,6 +123,41 @@ segurança sobrevive à ambiguidade; só o veredito por edge se perde.
 3. **Enquanto nenhum dos dois existir: sondar UMA edge por vez** e ler o `net._http_response` antes
    de disparar a próxima. Lote = veredito perdido.
 
+## 8. O conserto (#1789) — e o deploy que ainda falta
+
+O §7 foi fechado no #1789 (mergeado 2026-08-19, `ad43dd62`): `_shared/sonda-versao.ts` passou a
+exportar `criarRespostaSonda(edge)`, e cada `versao.ts` declara
+`export const respostaSonda = criarRespostaSonda("<nome-da-edge>")`. A resposta virou:
+
+```json
+{"ok":true,"probe":true,"versao":"v1.0-sensor-inicial","edge":"process-nfe"}
+```
+
+É **fábrica**, não parâmetro a mais, por dois motivos: a identidade fica declarada uma vez por edge
+(nenhuma chamada nova pode esquecer de passá-la) e **nenhum `index.ts` mudou** — os arquivos grandes
+de money-path ficaram fora da superfície tocada. A `respostaSonda` livre foi REMOVIDA do `_shared`
+de propósito: quem não declarar identidade não compila. Dois gates novos no contrato: a sonda tem de
+se identificar com o nome do **diretório** da function, e duas edges nunca podem produzir respostas
+idênticas — esta última falha no desenho antigo, que é o ponto.
+
+### ⏳ PENDENTE: as 16 edges precisam de deploy manual
+
+**Merge não publica edge.** Enquanto o deploy pelo chat do Lovable não acontecer, as sondas em
+produção seguem respondendo o formato antigo, **sem** o campo `edge` — e o §7 continua valendo em
+produção, ainda que esteja resolvido no repo. A degradação é limpa (campo ausente = bundle anterior
+ao #1789, não erro), então não há urgência; mas enquanto não subir, um lote heterogêneo de sondas
+volta a ser indecifrável.
+
+As 16 com `versao.ts`: `conciliar-pedido-portal`, `disparar-pedidos-aprovados`,
+`enviar-pedido-portal-sayerlack`, `fin-cashflow-engine`, `generate-bundle-argument`,
+`generate-tactical-plan`, `gerar-pedidos-diario`, `omie-cliente`, `omie-nfe-recebimento`,
+`omie-nfe-webhook`, `omie-sync-estoque`, `omie-sync-nfes-recebidas`, `pedido-programado-enviar`,
+`process-nfe`, `reposicao-depara-sayerlack-auto`, `sayerlack-captura-precos`.
+
+⚠️ O `_shared/sonda-versao.ts` **também** mudou e é dependência de todas: um deploy que leve só o
+`index.ts` quebra o boot (§3). Prova de que subiu: sondar e ler `content::jsonb->'edge'` em
+`net._http_response` — o nome certo ali é o veredito.
+
 ## Desfecho por edge (2026-08-18)
 
 O lote de 10 sondas das 23:13 UTC **não** produz veredito por edge (§7). O que ficou:
