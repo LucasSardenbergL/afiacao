@@ -107,7 +107,15 @@ vi.mock('@/integrations/supabase/client', () => ({
       rpcsChamadas.push(nome);
       rpcArgs.push({ nome, args: args ?? {} });
       const r = nome === RPC_SUBSTITUIR ? rpcSubstituirResultado : rpcResultado;
-      return { then: (resolve: (v: unknown) => void) => resolve(r) };
+      // A leitura de vendáveis é PAGINADA (`fetchAllPages`) desde que o cap de 1.000 do
+      // PostgREST truncou a RPC em prod — e o builder de `.rpc()` expõe `.order()`/`.range()`
+      // como o de `.from()`. O dublê precisa expor também, senão testa uma API que não existe.
+      const c: Record<string, unknown> = {
+        order: () => c,
+        range: () => c,
+        then: (resolve: (v: unknown) => void) => resolve(r),
+      };
+      return c;
     },
   },
 }));

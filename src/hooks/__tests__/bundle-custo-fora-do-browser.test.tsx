@@ -109,7 +109,19 @@ vi.mock('@/integrations/supabase/client', () => ({
       rpcsChamadas.push(nome);
       rpcArgs.push({ nome, args: args ?? {} });
       const r = nome === RPC_SUBSTITUIR ? { data: null, error: null } : rpcResultado;
-      return { then: (resolve: (v: unknown) => void) => resolve(r) };
+      // A leitura de vendáveis é PAGINADA (`fetchAllPages`) desde que o cap de 1.000 do
+      // PostgREST zerou o motor em prod — e o builder de `.rpc()` expõe `.range()` como o de
+      // `.from()`. O dublê precisa expor também, senão testa uma API que não existe. Estas
+      // listas são curtas, então a 1ª página já encerra a paginação.
+      const paginavel = (): Record<string, unknown> => {
+        const c: Record<string, unknown> = {
+          order: () => c,
+          range: () => c,
+          then: (resolve: (v: unknown) => void) => resolve(r),
+        };
+        return c;
+      };
+      return paginavel();
     },
   },
 }));

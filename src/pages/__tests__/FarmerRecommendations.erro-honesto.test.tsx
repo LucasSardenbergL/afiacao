@@ -91,12 +91,21 @@ function vendaveisDoSeed(): { product_id: string }[] {
 vi.mock('@/integrations/supabase/client', () => ({
   supabase: {
     from: (t: string) => chain(t),
-    rpc: (nome: string) =>
-      Promise.resolve(
+    rpc: (nome: string) => {
+      const r =
         nome === 'get_skus_margem_positiva'
           ? { data: vendaveisDoSeed(), error: null }
-          : { data: null, error: null },
-      ),
+          : { data: null, error: null };
+      // A leitura de vendáveis é PAGINADA (`fetchAllPages`) desde que o cap de 1.000 do
+      // PostgREST truncou a RPC em prod — e o builder de `.rpc()` expõe `.order()`/`.range()`
+      // como o de `.from()`. O dublê precisa expor também, senão testa uma API que não existe.
+      const c: Record<string, unknown> = {
+        order: () => c,
+        range: () => c,
+        then: (resolve: (v: unknown) => void) => resolve(r),
+      };
+      return c;
+    },
   },
 }));
 vi.mock('@/contexts/ImpersonationContext', () => ({
