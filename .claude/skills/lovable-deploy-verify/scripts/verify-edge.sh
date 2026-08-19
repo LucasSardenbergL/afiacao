@@ -9,14 +9,17 @@
 #   N1  EXISTÊNCIA  (este script, sem auth):  OPTIONS na função -> 200/204 (servida) vs 404 (ausente).
 #       Preflight CORS, NÃO executa a lógica. Prova que a função está no ar; NÃO prova a VERSÃO.
 #   N2  VERSÃO      (precisa PAT do Supabase): Management API -> `version` (incrementa a cada deploy)
-#       + `updated_at`. Com SUPABASE_PAT no env, este script consulta; senão imprime o handoff.
-#       É a prova canônica de "a versão NOVA está ativa": updated_at recente + version subiu.
+#       + `updated_at`. Seria a prova canônica de "a versão NOVA está ativa" — mas NESTE projeto ela
+#       é ESTRUTURALMENTE INDISPONÍVEL: o app roda em Lovable Cloud e o Supabase é da org do LOVABLE,
+#       o founder não tem conta com acesso ao ref e NÃO EXISTE token que ele possa gerar. NÃO PEÇA
+#       (confirmado 2026-07-23, após 2 pedidos na mesma sessão; docs/agent/deploy.md §Verificação).
+#       O env/arquivo segue lido — o mecanismo vale para outro setup, só não tem quem preencha aqui.
 #   N3  COMPORTAMENTO (prova real, precisa auth): chamar com um input que exercita a ASSINATURA da
 #       mudança (campo novo na resposta, ação nova aceita, etc.) e confirmar. As funções são gated
 #       (84/85 no auth) -> founder logado ou cron secret. Específico por mudança, não automatizável aqui.
 #
 # Uso:   verify-edge.sh <funcao> [<funcao2> ...]
-#        SUPABASE_PAT=sbp_xxx verify-edge.sh <funcao>     # tenta também N2 (prova de versão)
+#        SUPABASE_PAT=sbp_xxx verify-edge.sh <funcao>     # N2 — indisponível neste projeto (ver acima)
 #        SUPABASE_REF=<ref>   verify-edge.sh <funcao>     # default: fzvklzpomgnyikkfkzai
 # Exit:  0 = todas servidas (N1) · 1 = alguma AUSENTE (404) · 2 = uso inválido
 set -uo pipefail
@@ -59,12 +62,17 @@ done
 
 if [ -z "${SUPABASE_PAT:-}" ]; then
   echo ""
-  echo "  N1 só prova EXISTÊNCIA, não a versão. Para provar que a versão NOVA está ativa (N2):"
-  echo "    SUPABASE_PAT=sbp_xxx $(basename "$0") $*"
-  echo "    -> compara version/updated_at (a Management API é a fonte canônica)."
-  echo "  Sem PAT, o handoff é: o founder confirma no Lovable que a função mostra 'Active' + updated agora."
-  echo "  Permanente (1x): cole um Access Token (supabase.com → Account → Access Tokens) em"
-  echo "    ~/.config/afiacao/supabase-pat   (chmod 600 — padrão psql-ro; nunca no chat)"
-  echo "  e toda sessão passa a provar N2 sozinha."
+  echo "  N1 só prova EXISTÊNCIA, não a versão."
+  echo "  ⛔ NÃO PEÇA PAT AO FOUNDER — neste projeto o N2 é ESTRUTURALMENTE INDISPONÍVEL:"
+  echo "     o app roda em Lovable Cloud e o Supabase (ref $REF) é da org do LOVABLE. O founder"
+  echo "     não tem conta em supabase.com com acesso a esse ref, logo NÃO EXISTE Access Token"
+  echo "     que ele possa gerar (confirmado 2026-07-23 após eu pedir 2x; docs/agent/deploy.md)."
+  echo "     ~/.config/afiacao/supabase-pat segue válido como mecanismo — só que sem quem preencha."
+  echo "  Escada REAL aqui, na ordem:"
+  echo "    N1 existência ....... acima (OPTIONS)"
+  echo "    rastro do deploy .... commit do bot na main ('Deployed …'/'Redeployed …') — prova que UM"
+  echo "                          deploy rodou, não QUAL versão; ausência dele não prova o contrário"
+  echo "    canária ............. comportamento assinado pela mudança — a ÚNICA prova de versão aqui"
+  echo "  Edge SEM canária: declare 'N1 + rastro; versão não provada' — nunca 'no ar'."
 fi
 [ "$any_missing" = 0 ] || exit 1
