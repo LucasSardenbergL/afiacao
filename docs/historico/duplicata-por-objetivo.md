@@ -144,6 +144,31 @@ foi criado, mas o laço do `test:hooks` lista os guards por nome e ele ficou de 
 forma mais cara de "ausência de sinal com cara de verde" (irmã do `grep` sem ocorrência, do linter sem
 a regra). Corrigido nesta entrega, junto com os 5 casos novos e as 2 falsificações novas.
 
+## Auditoria de PODER da suíte (mutation-check, 2026-08-18)
+
+O guard nasceu com bloco de **falsificação embutido** (5 sabotagens: as 3 vias, o escopo por-arquivo,
+o alvo do commit, o dedupe) — e mesmo assim tinha 1 furo. Contrato executável agora em
+[`scripts/mutcheck.d/pr-duplicata-guard.mut`](../../scripts/mutcheck.d/pr-duplicata-guard.mut)
+(6 mutações, todas PEGA; primeiro alvo **shell** do `mutcheck.d` — `@test_cmd: bash`,
+`@compile_cmd: bash -n`).
+
+O que a auditoria mostrou, e vale além deste hook:
+
+1. **A falsificação escrita junto com a feature cobre o NÚCLEO — a periferia é o que o autor não
+   estava pensando.** As 5 sabotagens embutidas miravam o miolo do algoritmo; o furo estava na
+   sanitização de heredoc/aspas (a decisão "menção ≠ execução"), afirmada no cabeçalho e **sem
+   nenhuma sabotagem**. Desligar a sanitização inteira **sobrevivia à suíte**.
+2. **Por que sobrevivia — e a lição geral: asserção negativa só tem poder se TODO caminho
+   alternativo estiver ARMADO para falar.** O caso 4 testava a menção (`echo "git commit -m x"`)
+   com `_deve_calar`, mas rodava só com `GIT_STUB_MINE_FILE`. Ao escapar da sanitização o hook
+   entrava em modo `commit` e lia `GIT_STUB_STAGED_FILE` — **não setado**, default `/dev/null` →
+   calava por **acidente do fixture**, não pela invariante. Correção: o caso 4 arma os três alvos
+   do stub (`ARMADO`) e ganhou caso de **heredoc**; a mutação passou a reprovar.
+3. **Fechado também o limiar de 12 chars** (caso 7b): irmão do filtro de forma, mas eixo
+   independente — sem ele, baixar o limiar de precisão não reprovava nada.
+
+Suíte: 31 → 33 asserções. `bun run test:hooks` verde; contrato roda no job `mutation-check`.
+
 ## Precedente
 
 | quando | caso | forma |
