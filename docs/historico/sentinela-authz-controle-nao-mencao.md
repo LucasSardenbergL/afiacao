@@ -295,6 +295,20 @@ Dois achados que só a medição dá:
   `private.cap_custo_ler` via `regexp_replace`). O manifest ainda a lista como alternativa
   aceitável e o corpo do repo ainda a chama: o CI estava verde validando uma cláusula que prod
   não tem mais. Quem protege de fato lá é `has_role(employee|master)`, e ele satisfaz o `anyOf`.
+  **PAGO em 2026-08-15** (vale também para a `get_defasagem_cliente`, onde a cláusula sobrara só
+  como menção em comentário): as duas entradas do manifest perderam o `{ call:
+  'pode_ver_carteira_completa' }` do `anyOf`. A remeasurement por psql-ro reconfirmou o fato e
+  acrescentou um agravante que o §8.1 não tinha visto — **a cláusula nunca foi bloqueio nessas
+  duas, nem no repo**: lá ela é `v_pode_num := pode_ver_carteira_completa(…)`, mascaramento de
+  campo, a forma que o próprio manifest declara não ser expressável em `requiredGate`. Como
+  `anyOf` fecha na primeira cláusula que BLOQUEIA, ela nunca era avaliada; e no único cenário em
+  que importaria (se `has_role` sumisse do corpo) ela cairia em `weak` e reprovaria igual. Não era
+  uma alternativa de gate enfraquecendo o contrato — era um **erro de categoria** que fazia o
+  leitor inferir um caminho de bloqueio inexistente. Gate efetivo inalterado, nenhum buraco aberto
+  nem fechado; `authz:check` e `authz:audit:prod` (19/19 no corpo VIVO) verdes com o gate enxuto.
+  As duas entradas **permanecem** em `authz-reescritas-conhecidas.ts`: o que as põe lá é a
+  divergência de MASCARAMENTO repo (`pode_ver_carteira_completa`) × prod (`cap_custo_ler`), que
+  segue de pé — pagá-la é a migration de reconciliação do item 5 abaixo.
 - **A `20260814022626` FOI aplicada em prod** — o §7.4 item 3 a registrou como "mergeou e ainda
   não foi aplicada", e o estado mudou desde então. Medido pelo predicado, não pelo md5: prod tem
   `omie_po_inexistente_antes_de <= m.finalizado_em` e **não** tem `omie_registrado_em <= …`; o
@@ -388,13 +402,25 @@ baseline vira decoração e nada mais a segura.
 4. ~~**`DROP FUNCTION` + `CREATE FUNCTION` reseta o ACL**~~ — o item 1 do §7.4 foi **FECHADO em
    2026-08-15 pela Parte E** (§9): `authz:check` passou a vigiar o grant de EXECUTE das funções
    classificadas, e `bun run authz:funcoes:prod` mede o ACL vivo em prod.
+5. **A reconciliação repo×prod de `get_preco_cockpit` e `get_defasagem_cliente` está ABERTA**
+   (aberta pelo pagamento da dívida de contrato do §8.1, em 2026-08-15). O gate de bloqueio já é o
+   mesmo nos dois lados — `has_role(employee|master)` —, então **não há risco de autorização
+   pendente**; o que diverge é o MASCARAMENTO do numérico: repo `pode_ver_carteira_completa`, prod
+   `cap_custo_ler`. Enquanto durar, a Parte A mede um corpo que não é o que roda e as duas seguem
+   na baseline de reescritas. Fechar = uma migration `CREATE OR REPLACE` trazendo o corpo do repo
+   para o de prod, o que as devolve à auditabilidade estática e apaga as duas entradas da baseline.
+   Custo real: migration nova ⇒ ritual `lovable-db-operator` + apply MANUAL no SQL Editor, e o
+   corpo colado precisa preservar `SECURITY DEFINER`/`STABLE`/`SET search_path`/ACL — exatamente o
+   que o §8.2 lembra que um corpo colado perde de graça. Não é urgente; é dívida declarada.
 
 ---
 
 # 9. O grant de EXECUTE de FUNÇÃO entra no contrato — Parte E (2026-08-15)
 
-> Fecha o **§7.4 item 1**, reafirmado no §8.5 item 4, e com ele o último item aberto deste
-> documento. `CREATE OR REPLACE FUNCTION` PRESERVA o ACL; o par `DROP FUNCTION` + `CREATE
+> Fecha o **§7.4 item 1**, reafirmado no §8.5 item 4 — o último item aberto de VIGILÂNCIA
+> deste documento (o §8.5 item 5, aberto no mesmo dia, é dívida de RECONCILIAÇÃO repo×prod:
+> não é ponto cego do CI, e não há autorização pendente nele).
+> `CREATE OR REPLACE FUNCTION` PRESERVA o ACL; o par `DROP FUNCTION` + `CREATE
 > FUNCTION` **não** — a função renasce com o default privilege do projeto. As Partes A/D julgam o
 > GATE no corpo, a Parte C julga grant de TABELA, e **nada** julgava grant de FUNÇÃO.
 

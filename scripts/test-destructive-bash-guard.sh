@@ -15,7 +15,8 @@ command -v jq >/dev/null 2>&1 || { echo "SKIP — jq ausente"; exit 0; }
 
 run() { # <command> → stdout do hook
   local enc
-  enc="$(printf '%s' "$1" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')"
+  # jq (não python3): o script já exige jq acima — uma dependência a menos no runner do CI.
+  enc="$(printf '%s' "$1" | jq -Rs .)"
   printf '{"tool_name":"Bash","tool_input":{"command":%s}}' "$enc" | bash "$HOOK" 2>/dev/null
 }
 is_deny() { grep -q '"permissionDecision"[[:space:]]*:[[:space:]]*"deny"'; }

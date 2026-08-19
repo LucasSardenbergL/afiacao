@@ -43,15 +43,26 @@ export const AUTHZ_MANIFEST: Record<string, AuthzEntry> = {
     requiredGate: { anyOf: [{ call: 'cap_custo_ler' }] },
     motivo: 'folga negativa de margem vs piso de markup — cockpit financeiro; E2/FU4 estreitou p/ estrategico+',
   },
+  // 2026-08-15 — a alternativa `pode_ver_carteira_completa` SAIU do anyOf destas duas. Dívida de
+  // contrato medida no PR #1751 (§8.1 de docs/historico/sentinela-authz-controle-nao-mencao.md) e
+  // reconfirmada por psql-ro no corpo VIVO: em prod nenhuma das duas a CHAMA (na
+  // get_defasagem_cliente ela sobrou só como MENÇÃO em comentário) — o E2/FU4 trocou o `v_pode_num`
+  // delas para `private.cap_custo_ler`. Quem bloqueia, no repo E em prod, é `has_role(employee|master)`.
+  // E ela nunca foi bloqueio AQUI: no corpo ela é `v_pode_num := pode_ver_carteira_completa(…)`,
+  // mascaramento de campo — a forma que o §LIMITE abaixo diz não ser expressável em requiredGate.
+  // Listá-la no anyOf afirmava um caminho de bloqueio alternativo inexistente: como `anyOf` fecha na
+  // primeira cláusula que BLOQUEIA, ela nunca era avaliada, e no único cenário em que importaria (se
+  // has_role sumisse) cairia em `weak` e falharia igual. Contrato enxuto > contrato que descreve o
+  // que não existe. Nenhum buraco foi aberto nem fechado aqui: o gate efetivo é o mesmo de antes.
   'public.get_preco_cockpit': {
     sensitive: true,
-    requiredGate: { anyOf: [{ call: 'has_role', roles: ['employee', 'master'] }, { call: 'pode_ver_carteira_completa' }] },
-    motivo: 'cockpit de preços — bloqueia staff; pode_ver_carteira_completa afina o detalhe',
+    requiredGate: { anyOf: [{ call: 'has_role', roles: ['employee', 'master'] }] },
+    motivo: 'cockpit de preços — bloqueia staff (employee|master); o numérico é mascarado por cap_custo_ler, fora do alcance do requiredGate',
   },
   'public.get_defasagem_cliente': {
     sensitive: true,
-    requiredGate: { anyOf: [{ call: 'has_role', roles: ['employee', 'master'] }, { call: 'pode_ver_carteira_completa' }] },
-    motivo: 'defasagem de preço por cliente vs custo',
+    requiredGate: { anyOf: [{ call: 'has_role', roles: ['employee', 'master'] }] },
+    motivo: 'defasagem de preço por cliente vs custo — mesmo gate de entrada; os absolutos são mascarados por cap_custo_ler',
   },
   // FU4-F fase 2 (2026-07-20): as duas continuam com gate de ENTRADA `has_role(employee|master)`
   // DE PROPÓSITO — a vendedora precisa do SINAL ("abaixo do piso"). O que mudou é interno: elas

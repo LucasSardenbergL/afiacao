@@ -412,17 +412,32 @@ export const useBundleEngine = () => {
         }
       }
 
-      // O insumo que o motor REALMENTE consome. `pedidos` conta clientes com pedido, mas o
-      // Apriori parte de `baskets`, e só vira basket o pedido cujos items mapeiam para o
-      // catálogo — `items` vazio, malformado ou com `omie_codigo_produto` desconhecido é
-      // descartado no laço acima, em silêncio. Sem este insumo, uma base cujos pedidos não
-      // mapeiam deixava `pedidos`, `carteira_ativa` e `catalogo` fartos, gerava zero regra e
-      // ainda assim declarava o head `completo`.
+      // COBERTURA de HISTÓRICO (par de `clientes_com_profile`; §7.5 do design). Aqui a
+      // condição é literal no loop acima: a cesta só entra em `customerBaskets` quando
+      // `productIds.length > 0`, isto é, quando ao menos um item resolveu para SKU ATIVO —
+      // 60,1% dos 47.735 itens em prod (18/08/2026). Cliente sem item utilizável não gera
+      // cesta, e sem cesta não há regra a descobrir: `carteira_ativa` farta com esta
+      // cobertura zero é zero por CONSTRUÇÃO, não "nada a ofertar".
       //
-      // `esperado` entra como EVIDÊNCIA (sem `pisoCobertura`): quantos pedidos lidos viraram
-      // cesta é o número que permite auditar o rótulo depois. Fixar um piso aqui sem medição
-      // de produção seria inventar o limiar — e um piso errado degrada em massa, que é como se
-      // perde a confiança no sensor.
+      // Interseção com a carteira DESTE farmer, não o universo global — 107 dos 861 clientes
+      // com pedido não têm nenhum item que resolva, e um farmer feito só deles produziria
+      // zero com todos os universos "não-vazios".
+      insumos.carteira_com_historico_utilizavel = {
+        ok: true,
+        n: ativos.filter((c) => customerBaskets.has(c.customer_user_id)).length,
+        // `n > 0` deixava passar 1 cliente com histórico para 101 ativos: o motor opinaria
+        // sobre 1% da carteira e calaria sobre o resto, com o head dizendo `completo`. O
+        // universo é a carteira ATIVA, e o piso responde "alcançou a maioria dela?".
+        esperado: ativos.length,
+        pisoCobertura: 0.5,
+      };
+
+      // EVIDÊNCIA, não veredicto — e a distinção importa. `baskets` é o universo GLOBAL que
+      // alimenta o Apriori (TODOS os pedidos, não só os da carteira); o insumo acima mede a
+      // carteira que RECEBE bundle. Fora dos obrigatórios de propósito: `baskets === 0` implica
+      // `regras === 0`, e `regras` já é obrigatório aqui desde o #1779 — exigir os dois
+      // degradaria pela mesma causa duas vezes, com o motivo apontando o sintoma em vez da
+      // causa. Fica no head para auditar quantos pedidos lidos viraram cesta, sem query.
       insumos.baskets = { ok: true, n: baskets.length, esperado: (salesOrders || []).length };
 
       const totalBaskets = Math.max(baskets.length, 1);

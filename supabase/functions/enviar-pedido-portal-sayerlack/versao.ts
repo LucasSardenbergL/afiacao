@@ -6,7 +6,11 @@
 // `disparar-pedidos-aprovados` para registrar o PO no Omie. Não existe caminho de diagnóstico
 // barato sem a sonda.
 
-export { classificarSonda, erroSondaAmbigua, respostaSonda } from "../_shared/sonda-versao.ts";
+export { classificarSonda, erroSondaAmbigua } from "../_shared/sonda-versao.ts";
+import { criarRespostaSonda } from "../_shared/sonda-versao.ts";
+
+/** Resposta da sonda desta edge, com a identidade embutida (ver `criarRespostaSonda`). */
+export const respostaSonda = criarRespostaSonda("enviar-pedido-portal-sayerlack");
 
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
 export const VERSAO = "v1.0-sensor-inicial";

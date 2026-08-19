@@ -11,7 +11,11 @@
 // lê `nfe_recebimentos` + `ConsultarRecebimento` e retorna) — mas ele não responde "qual bundle
 // está no ar", e custa 1 chamada ao Omie. A sonda responde isso sem tocar em nada.
 
-export { classificarSonda, erroSondaAmbigua, respostaSonda } from "../_shared/sonda-versao.ts";
+export { classificarSonda, erroSondaAmbigua } from "../_shared/sonda-versao.ts";
+import { criarRespostaSonda } from "../_shared/sonda-versao.ts";
+
+/** Resposta da sonda desta edge, com a identidade embutida (ver `criarRespostaSonda`). */
+export const respostaSonda = criarRespostaSonda("omie-nfe-recebimento");
 
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
 export const VERSAO = "v1.0-sensor-inicial";

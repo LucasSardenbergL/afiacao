@@ -14,7 +14,11 @@
 // Nota: esta edge não lia o corpo da requisição (o cron dispara sem body). O parse foi introduzido
 // junto da sonda e é tolerante — body ausente/inválido continua sendo o caminho do cron.
 
-export { classificarSonda, erroSondaAmbigua, respostaSonda } from "../_shared/sonda-versao.ts";
+export { classificarSonda, erroSondaAmbigua } from "../_shared/sonda-versao.ts";
+import { criarRespostaSonda } from "../_shared/sonda-versao.ts";
+
+/** Resposta da sonda desta edge, com a identidade embutida (ver `criarRespostaSonda`). */
+export const respostaSonda = criarRespostaSonda("reposicao-depara-sayerlack-auto");
 
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
 export const VERSAO = "v1.0-sensor-inicial";

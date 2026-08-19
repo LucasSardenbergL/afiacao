@@ -6,7 +6,7 @@
 // pedido submetido no portal do fornecedor (`enviar-pedido-portal-sayerlack`). Por isso o default
 // cai no lado caro: `probe` presente mas não reconhecido é AMBÍGUO, nunca execução por omissão.
 
-import { classificarSonda, erroSondaAmbigua, respostaSonda } from "./sonda-versao.ts";
+import { classificarSonda, criarRespostaSonda, erroSondaAmbigua } from "./sonda-versao.ts";
 
 function assertEquals(a: unknown, b: unknown, msg?: string) {
   if (JSON.stringify(a) !== JSON.stringify(b)) {
@@ -16,10 +16,30 @@ function assertEquals(a: unknown, b: unknown, msg?: string) {
   }
 }
 
-Deno.test("respostaSonda: eco `probe` + a versão que o chamador passou", () => {
+Deno.test("respostaSonda: eco `probe` + a versão que o chamador passou + a EDGE que respondeu", () => {
   // O eco `probe:true` não é enfeite: um bundle ANTERIOR à sonda ignora o parâmetro e cai no
   // FLUXO REAL (docs/agent/deploy.md §Canárias, armadilha 1). Ausência do eco = bundle velho.
-  assertEquals(respostaSonda("v1.0-x"), { ok: true, probe: true, versao: "v1.0-x" });
+  //
+  // O `edge` também não: `versao` nasce IGUAL em toda uma leva, então sem ele duas respostas de
+  // edges diferentes são byte a byte idênticas e o veredito por edge se perde — aconteceu em
+  // 2026-08-18 com 10 sondas respondidas (docs/historico/verificar-sonda-versao.md §7).
+  const respostaSonda = criarRespostaSonda("edge-x");
+  assertEquals(respostaSonda("v1.0-x"), {
+    ok: true,
+    probe: true,
+    versao: "v1.0-x",
+    edge: "edge-x",
+  });
+});
+
+Deno.test("criarRespostaSonda: fábricas de edges distintas NÃO colidem", () => {
+  // A propriedade que o desenho antigo não tinha, no menor caso possível: mesmo marcador, corpos
+  // distinguíveis.
+  const a = criarRespostaSonda("edge-a")("v1.0-igual");
+  const b = criarRespostaSonda("edge-b")("v1.0-igual");
+  if (JSON.stringify(a) === JSON.stringify(b)) {
+    throw new Error("duas edges com o mesmo marcador produziram respostas idênticas");
+  }
 });
 
 Deno.test("corpo de chamador legítimo (sem a chave `probe`) → fluxo real", () => {

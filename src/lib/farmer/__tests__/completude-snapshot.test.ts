@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import {
   avaliarCompletude,
   INSUMOS_OBRIGATORIOS_BUNDLE,
@@ -20,12 +22,19 @@ const COMPLETO: InsumosSnapshot = {
   pedidos: { ok: true, n: 861 },
   carteira_ativa: { ok: true, n: 171 },
   clientes_com_profile: { ok: true, n: 168 },
+  carteira_com_historico_utilizavel: { ok: true, n: 150 },
   regras: { ok: true, n: 450 },
-  // Cestas UTILIZÁVEIS (items mapeados para o catálogo), não pedidos.
-  baskets: { ok: true, n: 479 },
 };
 
-const OBRIGATORIOS = ['scores', 'catalogo', 'vendaveis', 'pedidos', 'carteira_ativa', 'clientes_com_profile'];
+const OBRIGATORIOS = [
+  'scores',
+  'catalogo',
+  'vendaveis',
+  'pedidos',
+  'carteira_ativa',
+  'clientes_com_profile',
+  'carteira_com_historico_utilizavel',
+];
 
 describe('avaliarCompletude', () => {
   it('snapshot íntegro é completo, sem motivo', () => {
@@ -217,25 +226,94 @@ describe('avaliarCompletude', () => {
     expect(r.motivo).toContain('não consegui ler');
   });
 
-  // ─── baskets: a cesta UTILIZÁVEL, não o pedido ──────────────────────
-  // `pedidos` conta clientes com pedido. O bundle não consome pedido, consome CESTA: items
-  // vazio, malformado ou com `omie_codigo_produto` sem correspondência no catálogo não vira
-  // basket. Sem este insumo, uma base cujos pedidos não mapeiam deixa `pedidos`,
-  // `carteira_ativa` e `catalogo` fartos, gera zero regra e o head sai `completo`.
-  it('baskets vazio degrada no bundle — pedido sem item mapeável não é cesta', () => {
+  // `baskets` é EVIDÊNCIA, não veredicto: fora dos obrigatórios porque `baskets === 0`
+  // implica `regras === 0`, e `regras` já é obrigatório no bundle desde o #1779 — exigir os
+  // dois degradaria pela mesma causa duas vezes. Mas `ok: false` (não consegui ler) degrada
+  // como em qualquer insumo, e é isso que este caso trava.
+  it('baskets vazio NÃO degrada sozinho — quem julga o zero por construção é `regras`', () => {
     const r = avaliarCompletude(
-      { ...COMPLETO, baskets: { ok: true, n: 0 } },
+      { ...COMPLETO, baskets: { ok: true, n: 0, esperado: 861 } },
+      INSUMOS_OBRIGATORIOS_BUNDLE,
+    );
+    expect(r.completude).toBe('completo');
+  });
+
+  it('baskets ILEGÍVEL degrada — leitura parcial é leitura parcial, obrigatório ou não', () => {
+    const r = avaliarCompletude(
+      { ...COMPLETO, baskets: { ok: false, n: 0 } },
       INSUMOS_OBRIGATORIOS_BUNDLE,
     );
     expect(r.completude).toBe('degradado');
     expect(r.motivo).toContain('baskets');
   });
 
-  it('bundle que NÃO declara baskets degrada por ausência', () => {
-    const semBaskets = { ...COMPLETO };
-    delete semBaskets.baskets;
-    const r = avaliarCompletude(semBaskets, INSUMOS_OBRIGATORIOS_BUNDLE);
+  // ─── carteira ATIVA ≠ carteira com histórico UTILIZÁVEL ────────────────────────
+  // O pré-requisito que o §7.5 do design deixou declarado como LIMITAÇÃO: `carteira_ativa`
+  // conta cliente com PEDIDO, e pedido não é insumo — insumo é item que RESOLVE para SKU do
+  // catálogo ATIVO. Os itens do jsonb `sales_orders.items` não têm `product_id`: 100% da
+  // resolução passa por `omie_codigo_produto` → `omie_products` (`.eq('ativo', true)`), e os
+  // dois motores descartam em silêncio o que não resolve (`if (!productId) continue`).
+  //
+  // Medido em prod (psql-ro, 18/08/2026), pedidos confirmado/faturado/entregue:
+  //   47.735 itens · 28.675 resolvem para SKU ativo = 60,1%
+  //   861 clientes com item · 754 com item que resolve → 107 (12,4%) têm pedido e NENHUM
+  //   item utilizável.
+  // Esses 107 são exatamente o falso `completo` que a fase 2 usaria como licença para
+  // expirar: histórico existe, mas é inutilizável pelo motor.
+
+  const COBERTURA = 'carteira_com_historico_utilizavel';
+
+  it('a cobertura de histórico utilizável é obrigatória nos DOIS motores', () => {
+    // Nomeada LITERALMENTE, e não derivada das listas: um teste que lê a lista para depois
+    // afirmar sobre a lista fica verde justamente quando o insumo é removido dela.
+    expect(INSUMOS_OBRIGATORIOS_CROSS_SELL).toContain(COBERTURA);
+    expect(INSUMOS_OBRIGATORIOS_BUNDLE).toContain(COBERTURA);
+  });
+
+  it.each([
+    ['cross-sell', INSUMOS_OBRIGATORIOS_CROSS_SELL],
+    ['bundle', INSUMOS_OBRIGATORIOS_BUNDLE],
+  ] as const)(
+    'carteira ativa FARTA com zero histórico utilizável degrada (%s)',
+    (_motor, obrigatorios) => {
+      // O caso dos 107: `pedidos` farto (861), `carteira_ativa` farta (171), catálogo e
+      // scores fartos — e mesmo assim nada de onde tirar coocorrência. Sem este insumo o
+      // veredicto seria `completo`, e o zero final seria lido como "não há o que ofertar".
+      const r = avaliarCompletude(
+        { ...COMPLETO, carteira_ativa: { ok: true, n: 171 }, [COBERTURA]: { ok: true, n: 0 } },
+        obrigatorios,
+      );
+      expect(r.completude).toBe('degradado');
+      expect(r.motivo).toContain(COBERTURA);
+    },
+  );
+
+  it('motor que NÃO declara a cobertura degrada por AUSÊNCIA, não por vazio', () => {
+    // `clientes_com_profile` e a cobertura são declarados TARDE nos dois motores (dependem
+    // do cruzamento com a carteira). Um caminho que saia antes disso não pode ser lido como
+    // "li e veio vazio" — e, sobretudo, nunca pode sair `completo` por omissão.
+    const { [COBERTURA]: _omitido, ...semCobertura } = COMPLETO;
+    const r = avaliarCompletude(semCobertura, INSUMOS_OBRIGATORIOS_BUNDLE);
     expect(r.completude).toBe('degradado');
-    expect(r.motivo).toContain('baskets');
+    expect(r.motivo).toContain('não declarado');
+    expect(r.motivo).toContain(COBERTURA);
+  });
+
+  // ─── gate de FONTE: listar aqui não basta, o motor tem de DECLARAR ─────────────
+  it.each([
+    ['src/hooks/useCrossSellEngine.ts', INSUMOS_OBRIGATORIOS_CROSS_SELL],
+    ['src/hooks/useBundleEngine.ts', INSUMOS_OBRIGATORIOS_BUNDLE],
+  ] as const)('%s declara TODOS os insumos que a lista dele exige', (rel, obrigatorios) => {
+    // Por que um gate de FONTE e não só teste de comportamento: obrigatório listado que o
+    // motor não declara cai em "insumo obrigatório não declarado" e derruba TODA geração
+    // daquele motor para `degradado`. É fail-closed, mas silencioso — a fase 2 simplesmente
+    // nunca expiraria nada, e nada no comportamento observável diria por quê. O defeito
+    // desta família nunca está no helper, e sim em não chamá-lo no call-site
+    // (money-path §7); só quem lê a fonte pega.
+    const fonte = readFileSync(resolve(process.cwd(), rel), 'utf8');
+    const naoDeclarados = obrigatorios.filter(
+      (nome) => !new RegExp(`insumos\\.${nome}\\s*=`).test(fonte),
+    );
+    expect(naoDeclarados).toEqual([]);
   });
 });

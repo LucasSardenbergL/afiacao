@@ -170,6 +170,95 @@ próprio spec afirmar *"a tabela não recebe grant de escrita direta"* enquanto 
 contrário — **contradição entre o documento e o código passa justamente porque o documento está
 certo.**
 
+⚠️ **Sensor recusado por um custo que NÃO existe.** O mesmo design (§7.5) recusou um insumo de
+cobertura — *"quantos clientes da carteira têm item que RESOLVE para um SKU do catálogo?"* — com a
+justificativa de que exigiria percorrer os itens de todos os pedidos só para instrumentar, e o
+deixou como limitação declarada. Não exigia: os dois motores **já percorrem** todos os itens de
+todos os pedidos (para montar `customerProducts` e `baskets`), e o descarte silencioso
+(`if (!productId) continue`) mora DENTRO desse loop — o insumo era um filtro sobre estrutura já
+construída em memória. Fechado em 18/08/2026, mostrou que a limitação era grande: 39,9% dos 47.735
+itens não resolvem, e **107 dos 861 clientes com pedido não têm NENHUM item utilizável**. Um farmer
+feito só deles dava zero com todos os universos fartos — o falso `completo` que a fase seguinte
+usaria como licença para expirar.
+
+O tell é **custo de instrumentação alegado em prosa e nunca medido** (o irmão do "no ar e ninguém
+reclamou": ausência de dado com cara de conclusão). Antes de recusar um sensor por custo, abra o
+call-site e veja se o loop já passa pelo dado — instrumentar o que já se percorre é grátis, e aqui
+a distância entre "caro" e "grátis" foi só ninguém ter aberto o arquivo.
+### ⚠️ O sinal pode chegar ENVENENADO pela camada de baixo (2026-08-18, follow-up do #1765)
+
+O caso anterior é sobre a ESTRUTURA do sensor comportar a resposta. Este é o passo seguinte: a
+estrutura está certa, o sensor está armado em prod — e mesmo assim o **primeiro sinal que ele vai
+registrar é falso**.
+
+**O estado medido (prod, via `psql-ro`):** `farmer_geracao_execucoes` = **0 linhas**, e
+`farmer_geracao_vigente` = 0. Duas análises foram abertas contra esse zero (15/08 e 18/08); as duas
+voltaram sem poder concluir nada. A auditoria do sensor descartou as falhas silenciosas — tabelas
+aplicadas, RPC `farmer_geracao_registrar` `SECURITY DEFINER` com EXECUTE para `authenticated` e não
+para `anon`, policies de SELECT no lugar, definição em prod idêntica à do repo. **O sensor está
+correto; o que falta é o Publish do frontend.**
+
+**O discriminante do Publish não é o cross-sell — é o bundle.** São dois motores com cadências
+opostas, e medir só um induz ao erro:
+
+| motor | tela | última gravação | leitura |
+|---|---|---|---|
+| cross-sell (`farmer_recommendations`) | `/farmer/recommendations` (`useEffect`) | 2026-08-15 17:32 UTC | 3 dias de silêncio — normal: **junho e julho tiveram ZERO gerações** |
+| bundle (`farmer_association_rules`) | outra tela | **2026-08-18 07:30 UTC** | roda quase todo dia |
+
+O `useBundleEngine` da `main` **já registra o vazio** (`registrarVazio()`). Logo: o motor de bundle
+rodou hoje, produziu vazio, e não deixou linha no sensor ⇒ o bundle no ar é o **anterior** ao
+Publish. Medir só `farmer_recommendations` levaria à conclusão oposta ("ninguém abre a tela").
+
+**O veneno.** O #1782 mostrou que o motor de bundle produz vazio **todo dia por bug**: a RPC
+`get_skus_margem_positiva` devolve 2.462 linhas e era lida **sem paginação**, então o cap de 1.000
+do PostgREST entrega mil linhas **e sucesso**. No `useBundleEngine`, esse retorno truncado não cai
+no ramo fail-closed — cai aqui:
+
+```ts
+const vendaveis = new Set(vendaveisResult.data.map((r) => r.product_id));
+insumos.vendaveis = { ok: true, n: vendaveis.size };   // ok:true, n:1000
+```
+
+`avaliarCompletude` só degrada quando algum insumo tem `ok:false`. Nenhum tem. O resultado é uma
+execução `resultado='vazio'` + `completude='completo'` + `scores.n>0` + `vendaveis.n>0` — que é
+**exatamente** o predicado que a fase 2 definiu como "o sinal que autoriza ligar a expiração".
+
+> **`ok:true` quer dizer "a leitura não lançou", não "a leitura veio inteira".** Um sensor de
+> completude construído sobre esse `ok` herda, sem saber, todo truncamento silencioso da camada
+> de baixo — e o entrega com a roupa do sinal legítimo.
+
+Se o Publish tivesse saído antes do #1782, o sensor teria coletado esse falso positivo **todo dia**,
+e ligar a expiração por vazio teria **zerado a carteira** de vendedoras cujos bundles existiam e
+foram perdidos na cauda truncada. O sensor não teria errado nada: ele mediria com precisão um
+número já envenenado.
+
+**Ordem operacional que isto impõe:** o #1782 entra **antes** do Publish do sensor. Publicar com o
+bug vivo não é neutro — contamina o denominador que vai levar meses para se acumular.
+
+**O resíduo:** [`db/gatilho-farmer-fase2.sql`](../../db/gatilho-farmer-fase2.sql). A query decide
+sozinha entre `AGUARDE` / `CONTAMINADO` / `DECIDA` / `ENCERRE`, e carrega a guarda que faltava —
+qualquer insumo com **exatamente 1.000** linhas é assinatura de cap do PostgREST e derruba o
+veredito para `CONTAMINADO` antes de ele virar `DECIDA`. Os quatro ramos foram falsificados contra
+a lógica publicada (tabela substituída por cenário sintético); no ramo `CONTAMINADO` o cenário tem
+`vazios_completos=1`, isto é, sem a guarda ele **teria** autorizado a fase 2.
+
+⚠️ **CONFIRMADO com dado (2026-08-19 01:22 UTC).** A previsão acima deixou de ser previsão. O
+Publish saiu, `farmer_geracao_execucoes` gravou sua **primeira** linha, e ela veio assim:
+
+```
+motor=cross_sell  resultado=linhas  completude=completo
+insumos: scores 3858 · catalogo 3139 · pedidos 861 · carteira_ativa 171 ·
+         clientes_com_profile 147 · regras 24 · vendaveis {"n": 1000, "ok": true}
+```
+
+`vendaveis.n = 1000` **exato** — a assinatura do cap, com `ok:true`, no primeiro registro que o
+sensor produziu na vida. O gatilho classifica `CONTAMINADO` e recusa, que é o desfecho correto.
+Vale reter o que isso custou: o sensor foi desenhado, revisado por challenge, provado com 49
+asserts e publicado — e ainda assim seu primeiro dado é inútil, por um bug numa camada que
+nenhuma dessas etapas olhava. **Instrumentar não termina no sensor; termina no primeiro dado
+lido de verdade.**
+
 ### Onde a regra NÃO se aplica
 
 Instrumentar tudo tem custo, e regra que grita errado treina a ignorar o vermelho. O gatilho é a
@@ -190,3 +279,10 @@ sensor** que deixava qualquer história caber no mesmo vazio.
 **Corolário para revisão:** quando um plano diz "fase 2" ou "próximo passo", a primeira pergunta não
 é sobre o desenho da fase 2. É: *qual linha de dado prova que a fase 1 foi usada, e quantos podiam
 tê-la usado?* Se a resposta for uma inferência em vez de uma query, a fase 2 é instalar o sensor.
+
+**Segundo corolário (2026-08-18):** quando o sensor finalmente acender, a pergunta não é só *"o
+sinal chegou?"* — é *"a fonte do sinal estava sã quando ele chegou?"*. Um número medido com
+precisão sobre um insumo truncado em silêncio é indistinguível do número legítimo, e a decisão que
+ele autoriza é irreversível para quem está do outro lado (aqui: a carteira da vendedora). Por isso
+o gatilho não devolve só o placar — ele **recusa** o veredito quando enxerga a assinatura do
+truncamento.

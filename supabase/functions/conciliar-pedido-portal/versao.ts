@@ -5,7 +5,11 @@
 // `disparar-pedidos-aprovados` (guard anti-duplicado por `omie_pedido_compra_id`, §4.4). É a mesma
 // classe de efeito da edge que ela chama — por isso a sonda precisa responder ANTES de tudo.
 
-export { classificarSonda, erroSondaAmbigua, respostaSonda } from "../_shared/sonda-versao.ts";
+export { classificarSonda, erroSondaAmbigua } from "../_shared/sonda-versao.ts";
+import { criarRespostaSonda } from "../_shared/sonda-versao.ts";
+
+/** Resposta da sonda desta edge, com a identidade embutida (ver `criarRespostaSonda`). */
+export const respostaSonda = criarRespostaSonda("conciliar-pedido-portal");
 
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
 export const VERSAO = "v1.0-sensor-inicial";

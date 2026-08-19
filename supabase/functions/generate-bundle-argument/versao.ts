@@ -18,7 +18,11 @@
 // `x-cron-secret`, não `Authorization`). 401 aqui é veredito de "bundle velho", não de permissão —
 // e custa zero, porque o 401 vem antes de qualquer token gasto.
 
-export { classificarSonda, erroSondaAmbigua, respostaSonda } from "../_shared/sonda-versao.ts";
+export { classificarSonda, erroSondaAmbigua } from "../_shared/sonda-versao.ts";
+import { criarRespostaSonda } from "../_shared/sonda-versao.ts";
+
+/** Resposta da sonda desta edge, com a identidade embutida (ver `criarRespostaSonda`). */
+export const respostaSonda = criarRespostaSonda("generate-bundle-argument");
 
 /**
  * Marcador de versão servido pela edge. **Atualize a cada mudança relevante de comportamento** —

@@ -56,13 +56,32 @@ export function classificarSonda(body: unknown): DecisaoSonda {
 }
 
 /**
- * Corpo da resposta da sonda. O eco `probe:true` é OBRIGATÓRIO na verificação: um bundle ANTERIOR
- * à sonda IGNORA o parâmetro e roda o FLUXO REAL (`docs/agent/deploy.md` §Canárias, armadilha 1) —
- * sem o eco, a resposta do fluxo real se confundiria com "a sonda respondeu". Resposta sem
- * `probe:true` já é o veredito: bundle velho — e ele executou o efeito caro.
+ * Fábrica do corpo da resposta da sonda, LIGADA à edge que a serve.
+ *
+ * O eco `probe:true` é OBRIGATÓRIO na verificação: um bundle ANTERIOR à sonda IGNORA o parâmetro e
+ * roda o FLUXO REAL (`docs/agent/deploy.md` §Canárias, armadilha 1) — sem o eco, a resposta do fluxo
+ * real se confundiria com "a sonda respondeu". Resposta sem `probe:true` já é o veredito: bundle
+ * velho — e ele executou o efeito caro.
+ *
+ * O campo `edge` existe porque `versao` NÃO identifica quem respondeu: o marcador nasce igual em
+ * todas as edges de uma leva (o gate de contrato até assere isso), então duas respostas de edges
+ * diferentes eram byte a byte IDÊNTICAS. E nada no banco desfazia o empate — `net._http_response`
+ * não guarda a URL, a `net.http_request_queue` é esvaziada ao processar, os headers são só do
+ * Cloudflare e o `created` é o ciclo de coleta do worker do pg_net (respostas de edges distintas
+ * compartilham timestamp ao microssegundo). Custo real (2026-08-18): 10 sondas respondidas com
+ * sucesso e NENHUM veredito por edge possível — a verificação inteira se perdeu.
+ * Detalhe: `docs/historico/verificar-sonda-versao.md` §7.
+ *
+ * É fábrica, e não um parâmetro a mais em cada chamada, para que a identidade fique declarada UMA
+ * vez no `versao.ts` da edge — o `index.ts` segue chamando `respostaSonda(VERSAO)` sem mudança, e
+ * não há como uma chamada nova esquecer de passar o nome.
  */
-export function respostaSonda(versao: string): { ok: true; probe: true; versao: string } {
-  return { ok: true, probe: true, versao };
+export function criarRespostaSonda(edge: string) {
+  return function respostaSonda(
+    versao: string,
+  ): { ok: true; probe: true; versao: string; edge: string } {
+    return { ok: true, probe: true, versao, edge };
+  };
 }
 
 /** Mensagem do 400 de `probe` ambíguo. `efeito` descreve o custo real daquela edge. */

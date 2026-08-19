@@ -27,7 +27,20 @@ import * as syncEstoque from "../omie-sync-estoque/versao.ts";
 import * as syncNfes from "../omie-sync-nfes-recebidas/versao.ts";
 import * as nfeWebhook from "../omie-nfe-webhook/versao.ts";
 
-const EDGES: Array<{ nome: string; mod: { VERSAO: string; EFEITO: string } }> = [
+/**
+ * `respostaSonda` (a maioria) ou `respostaSondaTactical` (a `generate-tactical-plan`, que embrulha o
+ * contrato num composer). O gate abaixo exige que UMA das duas exista — edge instrumentada sem
+ * nenhuma delas não tem como ser verificada em produção.
+ */
+type CorpoSonda = { ok: true; probe: true; versao: string; edge: string };
+type ModSonda = {
+  VERSAO: string;
+  EFEITO: string;
+  respostaSonda?: (versao: string) => CorpoSonda;
+  respostaSondaTactical?: () => CorpoSonda;
+};
+
+const EDGES: Array<{ nome: string; mod: ModSonda }> = [
   { nome: "disparar-pedidos-aprovados", mod: disparar },
   { nome: "enviar-pedido-portal-sayerlack", mod: portalSayerlack },
   { nome: "conciliar-pedido-portal", mod: conciliar },
@@ -343,5 +356,49 @@ Deno.test("omie-sync-estoque: o EFEITO precisa dizer que o run APAGA o sinal de 
   // qualquer — e a decisão de retentar sai errada.
   if (!/sync_state|frescor|marcador/i.test(syncEstoque.EFEITO)) {
     throw new Error(`EFEITO não menciona o marcador de frescor: ${syncEstoque.EFEITO}`);
+  }
+});
+
+Deno.test("a resposta da sonda IDENTIFICA a edge que respondeu", () => {
+  // O bug que este gate fecha (2026-08-18): `versao` sozinho NÃO identifica quem respondeu — o
+  // marcador nasce igual em toda uma leva (o gate de marcadores acima até assere isso). Dez sondas
+  // voltaram 200 com corpos byte a byte idênticos e o veredito por edge foi IMPOSSÍVEL de emitir;
+  // nada no banco desfaz o empate (`net._http_response` não guarda a URL, a fila é esvaziada, os
+  // headers são só do Cloudflare). Ver `docs/historico/verificar-sonda-versao.md` §7.
+  for (const { nome, mod } of EDGES) {
+    const corpo = mod.respostaSonda?.(mod.VERSAO) ?? mod.respostaSondaTactical?.();
+    if (!corpo) {
+      throw new Error(`${nome}: não exporta respostaSonda nem respostaSondaTactical`);
+    }
+    if (corpo.edge !== nome) {
+      throw new Error(
+        `${nome}: a sonda se identifica como ${JSON.stringify(corpo.edge)} — o nome tem de ser o do ` +
+          `diretório da function, senão o veredito aponta para a edge errada`,
+      );
+    }
+    if (corpo.probe !== true) throw new Error(`${nome}: sonda sem o eco probe:true`);
+    if (corpo.versao !== mod.VERSAO) {
+      throw new Error(`${nome}: sonda devolve versao ${JSON.stringify(corpo.versao)} ≠ VERSAO`);
+    }
+  }
+});
+
+Deno.test("duas edges NUNCA produzem respostas de sonda idênticas", () => {
+  // A asserção que falha no desenho antigo: sem o campo `edge`, todas as edges de uma mesma leva
+  // devolviam exatamente o mesmo corpo. É esta indistinguibilidade — não a ausência do nome em si —
+  // que destrói a verificação quando mais de uma sonda é disparada.
+  const porCorpo = new Map<string, string[]>();
+  for (const { nome, mod } of EDGES) {
+    const corpo = mod.respostaSonda?.(mod.VERSAO) ?? mod.respostaSondaTactical?.();
+    const chave = JSON.stringify(corpo);
+    porCorpo.set(chave, [...(porCorpo.get(chave) ?? []), nome]);
+  }
+  const colisoes = [...porCorpo.values()].filter((edges) => edges.length > 1);
+  if (colisoes.length > 0) {
+    throw new Error(
+      `respostas de sonda indistinguíveis entre edges: ${
+        colisoes.map((e) => e.join(" ≡ ")).join("; ")
+      }`,
+    );
   }
 });

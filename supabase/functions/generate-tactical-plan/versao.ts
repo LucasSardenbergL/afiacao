@@ -21,7 +21,10 @@
 // re-exportar seria export sem consumidor — o `knip` do CI barra, e com razão.
 export { classificarSonda, erroSondaAmbigua } from "../_shared/sonda-versao.ts";
 
-import { respostaSonda } from "../_shared/sonda-versao.ts";
+import { criarRespostaSonda } from "../_shared/sonda-versao.ts";
+
+/** Local, não exportado: a resposta desta edge sai pelo composer abaixo (knip barraria o export). */
+const respostaSonda = criarRespostaSonda("generate-tactical-plan");
 import { MODELO, toolDoModo } from "./plano-helpers.ts";
 
 /**
@@ -53,6 +56,7 @@ export function respostaSondaTactical(): {
   ok: true;
   probe: true;
   versao: string;
+  edge: string;
   motor: "anthropic";
   modelo: string;
   tool: string;

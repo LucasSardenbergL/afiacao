@@ -130,9 +130,37 @@ O lote de 10 sondas das 23:13 UTC **não** produz veredito por edge (§7). O que
 | Edge | Deploy | Prova de versão | Veredito |
 | --- | --- | --- | --- |
 | `reposicao-depara-sayerlack-auto` | founder deployou 2026-08-18; guard anti-reversão limpo; N1 200 | **cron 146 às 04:00 UTC** carimba `versao` em toda resposta — prova não-ambígua, de graça, no dia seguinte | ⏳ aguardando o cron |
-| `sayerlack-captura-precos` | não feito | cron 161 só nos dias 10-12 — longe demais; precisa de sonda | ⏳ deploy pendente |
-| `omie-nfe-recebimento` | não feito | **sem cron** — sonda é o único caminho | ⏳ deploy pendente |
-| `process-nfe` | não feito | **sem cron** — sonda é o único caminho | ⏳ deploy pendente |
+| `sayerlack-captura-precos` | **founder deployou 2026-08-19** | sonda 55521 → `{"ok":true,"probe":true,"versao":"v1.0-sensor-inicial"}` | ✅ no ar |
+| `omie-nfe-recebimento` | **founder deployou 2026-08-19** | sonda 55519 → idem | ✅ no ar |
+| `process-nfe` | **founder deployou 2026-08-19** | sonda 55520 → idem | ✅ no ar |
 
 **Garantia de segurança do ciclo:** em nenhum momento uma edge de bundle velho foi atingida — zero
 respostas sem `probe`, zero 401, zero timeout. Nenhum efeito irreversível disparou.
+
+### Fecho do ciclo (2026-08-19) — as 4 do #1766 estão no ar
+
+Depois de o founder confirmar o deploy, as 4 foram sondadas e as 4 responderam
+`{"ok":true,"probe":true,"versao":"v1.0-sensor-inicial"}` (ids 55519, 55520, 55521, 55523).
+
+**Por que este lote produziu veredito e o das 23:13 não** — e a resposta NÃO é "li por id": a query
+de disparo devolve `nome × request_id` na mesma linha, o que dá o mapa, mas ele sozinho não
+resolveria nada se as respostas divergissem, porque `_http_response` continua sem URL (§7 segue
+valendo). O que fechou o veredito foi a **homogeneidade**: as respostas do lote foram byte a byte
+iguais e todas verdes, então a atribuição individual é irrelevante — cada uma das N edges
+disparadas respondeu sonda, qualquer que seja a permutação. **A leitura só é válida com o lote
+inteiro verde.** Bastaria UMA divergir para o veredito por edge voltar a ser impossível, e aí a
+regra do §7 (uma por vez) é a única saída. Ou seja: o lote é atalho para o caso feliz, não
+substituto do sequencial.
+
+**Reduzir o risco sem sondar às cegas:** antes de disparar, leia no bundle VELHO o que cada edge faz
+com `{"probe":true}`. Das 4, três falhavam fechado sozinhas — `omie-nfe-recebimento` por gate JWT
+que não aceita cron-secret (401), `process-nfe` por `nf_number` obrigatório (400), e
+`sayerlack-captura-precos` pelo kill-switch `embalagem_captura_automatica_habilitada`, que estava
+`false` em prod (verificado no banco, não presumido). Só `reposicao-depara-sayerlack-auto` rodaria
+o fluxo real. Sondar as seguras primeiro converte a incerteza das perigosas em risco baixo.
+
+**Ausência de escrita provada pelo banco, não pela resposta:** de-paras Sayerlack seguem em 250
+automáticos / 301 total com carimbo de 31/07 — inalterados pela sonda de `reposicao-depara-sayerlack-auto`.
+Mesma checagem nas 5 do #1772: `reposicao_estoque_full` parado em 18/08 19:40 e `fin_sync_log` em
+00:20, ambos anteriores às sondas das 00:54. A resposta diz "o bundle novo está no ar"; só o banco
+diz "e ele não fez nada".
