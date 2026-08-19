@@ -14,9 +14,10 @@
 #   A8  trigger do ledger (UPDATE cmc → 1 linha; UPDATE não-cmc/cmc igual → 0)
 #   A9  RLS markup_policy (SET ROLE: select staff ok, INSERT employee 42501, master ok)
 #   A10 REVOKE: get_preco_cockpit não executável por anon; customer authenticated → forbidden
-#   A11 employee GERENCIAL VÊ o número — o único assert que separa a política REAL da
-#       degenerada master-only que este harness stubava (X-A11 regride o gate e exige vermelho)
-#   A12 contraprova: as 2 políticas divergem SÓ no gerencial (X-A12 sabota o seed e exige vermelho)
+#   A11 employee GERENCIAL é BARRADO pelo gate VIVO (private.cap_custo_ler, pós-E2) — o único
+#       assert que o separa do gate anterior (X-A11 regride o gate da RPC e exige vermelho)
+#   A12 contraprova: os 2 gates divergem SÓ no gerencial (X-A12 sabota o seed, exige vermelho)
+#   A13 employee ESTRATÉGICO VÊ — impede A11 de passar por vacuidade (X-A13 exige vermelho)
 # ⚠️ RLS só é enforçada p/ roles NÃO-superuser. O psql roda como `postgres` (superuser, BYPASSA RLS)
 # → asserts de RLS (A9) usam SET ROLE authenticated + SET LOCAL test.uid. A RPC é SECURITY DEFINER
 # com gate INTERNO (has_role(auth.uid())) → asserts da RPC (A1-A8) só setam test.uid, sem SET ROLE.
@@ -90,6 +91,23 @@ RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS
               'estrategico'::public.commercial_role, 'super_admin'::public.commercial_role));
 $f$;
 
+-- private.cap_custo_ler — o gate que a RPC usa EM PRODUÇÃO hoje (medido em pg_get_functiondef:
+-- `v_pode_num := private.cap_custo_ler(auth.uid())`). Corpo fiel: master OR (employee AND
+-- commercial_role IN ('estrategico','super_admin')) — repare que ele EXCLUI o `gerencial`, que
+-- `pode_ver_carteira_completa` INCLUI. Essa é a única persona em que os dois gates divergem, e é
+-- exatamente o que a matriz de capability do #1434 foi escrita para tirar do gerencial.
+CREATE SCHEMA IF NOT EXISTS private;
+CREATE OR REPLACE FUNCTION private.cap_custo_ler(_uid uuid)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $f$
+  SELECT COALESCE(_uid IS NOT NULL AND (
+    public.has_role(_uid, 'master'::public.app_role)
+    OR (public.has_role(_uid, 'employee'::public.app_role)
+        AND EXISTS (SELECT 1 FROM public.commercial_roles cr
+                     WHERE cr.user_id = _uid
+                       AND cr.commercial_role IN ('estrategico'::public.commercial_role,
+                           'super_admin'::public.commercial_role)))), false);
+$f$;
+
 -- inventory_position (colunas que o trigger do ledger + a RPC leem).
 CREATE TABLE IF NOT EXISTS public.inventory_position (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -147,6 +165,50 @@ P -v ON_ERROR_STOP=1 -q -f "$REPO_ROOT/supabase/migrations/20260614190000_get_pr
 echo "→ migration 20260615150000_cockpit_preco_fixes.sql (fixes do challenge)…"
 P -v ON_ERROR_STOP=1 -q -f "$REPO_ROOT/supabase/migrations/20260615150000_cockpit_preco_fixes.sql" >/dev/null
 
+# ── FU4/E2: a RPC passa a usar private.cap_custo_ler ────────────────────────────────────────
+# Em PRODUÇÃO get_preco_cockpit NÃO usa mais `pode_ver_carteira_completa`: a migration
+# 20260718190000_authz_capability_matrix_e2.sql reescreve a DEFINIÇÃO VIVA e troca só a
+# atribuição do gate (medido hoje em prod: `v_pode_num := private.cap_custo_ler(auth.uid())`).
+# Aplicar a E2 inteira aqui é inviável (ela reescreve 64 policies sobre dezenas de tabelas que
+# este harness leve não tem), então reproduzimos a MESMA transformação — com o MESMO guard: se o
+# padrão não casar (migration do repo mudou, corpo diferente do medido), ABORTA em vez de deixar
+# o harness provando um gate que não está no ar. Sem isto, este arquivo provaria a versão de
+# 2026-06 da RPC, não a que atende o cliente.
+echo "→ FU4/E2: reescreve o gate de get_preco_cockpit → private.cap_custo_ler…"
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+DO $reescreve$
+DECLARE
+  v_oid  regprocedure := to_regprocedure('public.get_preco_cockpit(jsonb)');
+  v_def  text; v_novo text; v_ocorr int;
+  c_re_antigo constant text := '(public\.)?pode_ver_carteira_completa\s*\(';
+BEGIN
+  IF v_oid IS NULL THEN
+    RAISE EXCEPTION 'E2/harness: public.get_preco_cockpit(jsonb) nao existe apos as migrations';
+  END IF;
+  v_def := pg_get_functiondef(v_oid);
+  SELECT count(*) INTO v_ocorr FROM regexp_matches(v_def, c_re_antigo, 'g');
+  IF v_ocorr <> 1 THEN
+    RAISE EXCEPTION 'E2/harness: esperava 1 chamada do gate antigo, encontrei % — corpo divergente do medido', v_ocorr;
+  END IF;
+  v_novo := regexp_replace(
+    v_def,
+    'v_pode_num\s*:=\s*(public\.)?pode_ver_carteira_completa\s*\(\s*auth\.uid\(\)\s*\)',
+    'v_pode_num := private.cap_custo_ler(auth.uid())', 'g');
+  IF v_novo = v_def THEN
+    RAISE EXCEPTION 'E2/harness: padrao do gate nao casou — nao aplicar no-op silencioso';
+  END IF;
+  IF v_novo ~ c_re_antigo THEN
+    RAISE EXCEPTION 'E2/harness: sobrou chamada ao gate antigo apos a troca';
+  END IF;
+  EXECUTE v_novo;
+END $reescreve$;
+SQL
+GATE_VIVO=$(P -tA -c "SELECT substring(pg_get_functiondef('public.get_preco_cockpit(jsonb)'::regprocedure) from 'v_pode_num\s*:=[^;]*;');")
+case "$GATE_VIVO" in
+  *"private.cap_custo_ler(auth.uid())"*) echo "  OK gate vivo = private.cap_custo_ler (igual à prod)" ;;
+  *) echo "  FALHOU: gate vivo inesperado após a reescrita: $GATE_VIVO"; exit 1 ;;
+esac
+
 echo "→ seed (roles + grants + produtos/CMC + política de conta + tint)…"
 P -v ON_ERROR_STOP=1 -q <<'SQL'
 -- a=master(gestor) b=employee(vendedora) c=customer
@@ -156,10 +218,13 @@ INSERT INTO public.user_roles (user_id, role) VALUES
   ('00000000-0000-0000-0000-00000000000a', 'master'::public.app_role),
   ('00000000-0000-0000-0000-00000000000b', 'employee'::public.app_role),
   ('00000000-0000-0000-0000-00000000000c', 'customer'::public.app_role),
-  ('00000000-0000-0000-0000-00000000000d', 'employee'::public.app_role)
+  ('00000000-0000-0000-0000-00000000000d', 'employee'::public.app_role),
+  -- e=employee ESTRATÉGICO: sem ele, "o gerencial não vê" passaria por VACUIDADE (ninguém vê).
+  ('00000000-0000-0000-0000-00000000000e', 'employee'::public.app_role)
 ON CONFLICT DO NOTHING;
 INSERT INTO public.commercial_roles (user_id, commercial_role) VALUES
-  ('00000000-0000-0000-0000-00000000000d', 'gerencial'::public.commercial_role);
+  ('00000000-0000-0000-0000-00000000000d', 'gerencial'::public.commercial_role),
+  ('00000000-0000-0000-0000-00000000000e', 'estrategico'::public.commercial_role);
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.markup_policy TO authenticated;
 
@@ -291,9 +356,11 @@ BEGIN
   RAISE NOTICE 'OK A5 — vendedora vê faixa (verde/abaixo_da_meta) mas cmc/markup/prov = null';
 END $$;
 SQL
-# FALSIFICAÇÃO: sabota pode_ver_carteira_completa → true; o número DEVE vazar p/ a vendedora (prova que o gate tem dente).
+# FALSIFICAÇÃO: sabota o gate QUE A RPC USA (private.cap_custo_ler, pós-E2) → true; o número DEVE
+# vazar p/ a vendedora. ⚠️ Sabotar `pode_ver_carteira_completa` aqui NÃO morde mais desde a
+# reescrita da E2 — foi assim que este harness acusou, sozinho, que a falsificação perdera o dente.
 P -v ON_ERROR_STOP=1 -q <<'SQL'
-CREATE OR REPLACE FUNCTION public.pode_ver_carteira_completa(_uid uuid)
+CREATE OR REPLACE FUNCTION private.cap_custo_ler(_uid uuid)
 RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $f$ SELECT true $f$;
 SQL
 SAB=$(P -tA 2>&1 <<'SQL' || true
@@ -315,84 +382,111 @@ else
 fi
 # Restaura o gate correto (corpo FIEL de prod — NÃO o master-only degenerado).
 P -v ON_ERROR_STOP=1 -q <<'SQL'
-CREATE OR REPLACE FUNCTION public.pode_ver_carteira_completa(_uid uuid)
+CREATE OR REPLACE FUNCTION private.cap_custo_ler(_uid uuid)
 RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $f$
-  SELECT public.has_role(_uid, 'master'::public.app_role)
-      OR (public.has_role(_uid, 'employee'::public.app_role)
-          AND public.get_commercial_role(_uid) IN ('gerencial'::public.commercial_role,
-              'estrategico'::public.commercial_role, 'super_admin'::public.commercial_role));
+  SELECT COALESCE(_uid IS NOT NULL AND (
+    public.has_role(_uid, 'master'::public.app_role)
+    OR (public.has_role(_uid, 'employee'::public.app_role)
+        AND EXISTS (SELECT 1 FROM public.commercial_roles cr
+                     WHERE cr.user_id = _uid
+                       AND cr.commercial_role IN ('estrategico'::public.commercial_role,
+                           'super_admin'::public.commercial_role)))), false);
 $f$;
 SQL
 echo "  OK A5 (restauração) — gate fiel à prod de volta"
 
 # ═══════════════════════════════════════════════════════════════════════════════════════
-# A11/A12 — O ASSERT QUE SEPARA AS DUAS POLÍTICAS (molde D7/D8 do #1761)
-# A5 prova que o gate tem DENTE (furá-lo vaza o número), mas não prova QUAL política ele
-# implementa: master-only e a política real de prod dão o MESMO veredito para master,
-# employee-sem-commercial_role e customer. O employee GERENCIAL é o único discriminante.
+# A11/A12/A13 — OS ASSERTS QUE SEPARAM AS DUAS POLÍTICAS (molde D7/D8 do #1761)
+# A5 prova que o gate tem DENTE (furá-lo vaza o número), mas não prova QUAL política ele é.
+# O gate VIVO da RPC é `private.cap_custo_ler` (master + estratégico/super_admin); o gate
+# ANTERIOR era `pode_ver_carteira_completa` (que INCLUI o gerencial). Master, employee sem
+# commercial_role e customer recebem o MESMO veredito dos dois — o employee GERENCIAL é o
+# ÚNICO discriminante, e é justamente o que a matriz do #1434 tirou do custo.
 # ═══════════════════════════════════════════════════════════════════════════════════════
-echo "→ ASSERT A11 — employee GERENCIAL VÊ o número (política real ≠ master-only):"
+echo "→ ASSERT A11 — employee GERENCIAL é BARRADO (cap_custo_ler exclui; o gate velho liberaria):"
 P -v ON_ERROR_STOP=1 <<'SQL'
 DO $$
 DECLARE r jsonb;
 BEGIN
   SET LOCAL test.uid = '00000000-0000-0000-0000-00000000000d';  -- employee GERENCIAL
   SELECT (public.get_preco_cockpit('[{"empresa":"oben","codigo":1001,"preco":85}]'::jsonb))->0 INTO r;
-  IF r->'cmc' = 'null'::jsonb OR (r->>'cmc')::numeric <> 60 THEN
-    RAISE EXCEPTION 'A11 FALHOU: gerencial NAO viu o cmc (=%) — o gate regrediu a master-only', r->>'cmc';
+  IF r->'cmc' <> 'null'::jsonb OR r->'markup_perc' <> 'null'::jsonb OR r->'proveniencia' <> 'null'::jsonb THEN
+    RAISE EXCEPTION 'A11 FALHOU: gerencial VIU o numero (cmc=% markup=%) — o gate voltou a pode_ver_carteira_completa',
+      r->>'cmc', r->>'markup_perc';
   END IF;
-  IF r->'markup_perc' = 'null'::jsonb OR r->'proveniencia' = 'null'::jsonb THEN
-    RAISE EXCEPTION 'A11b FALHOU: gerencial viu cmc mas nao markup/proveniencia (=%/%)',
-      r->>'markup_perc', r->>'proveniencia';
+  IF r->>'faixa' <> 'verde' OR r->>'motivo' <> 'abaixo_da_meta' THEN
+    RAISE EXCEPTION 'A11b FALHOU: gerencial perdeu a FAIXA (=%/%) — o corte foi longe demais', r->>'faixa', r->>'motivo';
   END IF;
-  RAISE NOTICE 'OK A11 — gerencial ve cmc=60 + markup + proveniencia (prod libera; master-only barraria)';
+  RAISE NOTICE 'OK A11 — gerencial ve a faixa mas NAO o numero (cap_custo_ler barra; gate velho liberaria)';
 END $$;
 SQL
 
-# A12 — CONTRAPROVA (sem ela, A11 passa por VACUIDADE: um seed errado — 'd' como master, ou sem
-# commercial_role — deixaria A11 verde sem que persona alguma separasse as políticas).
-echo "→ ASSERT A12 — contraprova: as 2 políticas DIVERGEM no gerencial e CONCORDAM no resto:"
+# A13 — sem ele, A11 passaria por VACUIDADE: um gate que barra TODO MUNDO também deixa o
+# gerencial de fora. O estratégico é quem prova que cap_custo_ler ainda LIBERA alguém além do master.
+echo "→ ASSERT A13 — employee ESTRATÉGICO VÊ o número (A11 não é 'ninguém vê'):"
 P -v ON_ERROR_STOP=1 <<'SQL'
 DO $$
-DECLARE u uuid; real_ boolean; degen boolean; divergiu int := 0;
+DECLARE r jsonb;
 BEGIN
-  -- ⚠️ Compara o EFEITO (`IS TRUE`), não o boolean cru: o corpo de prod NÃO tem COALESCE, então
-  -- para employee SEM commercial_role ele devolve NULL (`false OR (true AND NULL)`), não false.
-  -- Quem consome (policy USING / gate da RPC) trata NULL como negado — é o efeito que importa.
-  -- O stub master-only devolvia FALSE aqui: mais uma semântica que a degeneração escondia.
+  SET LOCAL test.uid = '00000000-0000-0000-0000-00000000000e';  -- employee ESTRATÉGICO
+  SELECT (public.get_preco_cockpit('[{"empresa":"oben","codigo":1001,"preco":85}]'::jsonb))->0 INTO r;
+  IF r->'cmc' = 'null'::jsonb OR (r->>'cmc')::numeric <> 60 THEN
+    RAISE EXCEPTION 'A13 FALHOU: estrategico NAO viu o cmc (=%) — cap_custo_ler degenerou a master-only', r->>'cmc';
+  END IF;
+  RAISE NOTICE 'OK A13 — estrategico ve cmc=60 (cap_custo_ler nao virou master-only)';
+END $$;
+SQL
+
+# A12 — CONTRAPROVA de que as 2 políticas divergem EXATAMENTE no gerencial. Sem ela, A11 poderia
+# estar verde por um seed furado (um 'd' sem commercial_role é barrado pelos DOIS gates, e A11
+# passaria sem que persona alguma separasse as políticas).
+echo "→ ASSERT A12 — contraprova: cap_custo_ler × pode_ver_carteira_completa divergem SÓ no gerencial:"
+P -v ON_ERROR_STOP=1 <<'SQL'
+DO $$
+DECLARE u uuid; custo boolean; carteira boolean; divergiu int := 0;
+BEGIN
+  -- Compara o EFEITO (`IS TRUE`): pode_ver_carteira_completa não tem COALESCE e devolve NULL —
+  -- não false — para employee sem commercial_role; quem consome trata NULL como negado.
   FOREACH u IN ARRAY ARRAY[
     '00000000-0000-0000-0000-00000000000a'::uuid,  -- master
     '00000000-0000-0000-0000-00000000000b'::uuid,  -- employee sem commercial_role (vendedora)
     '00000000-0000-0000-0000-00000000000c'::uuid,  -- customer
-    '00000000-0000-0000-0000-00000000000d'::uuid   -- employee GERENCIAL
+    '00000000-0000-0000-0000-00000000000d'::uuid,  -- employee GERENCIAL
+    '00000000-0000-0000-0000-00000000000e'::uuid   -- employee ESTRATÉGICO
   ] LOOP
-    real_ := public.pode_ver_carteira_completa(u) IS TRUE;          -- política de prod (a que está no ar)
-    degen := public.has_role(u, 'master'::public.app_role) IS TRUE; -- a degenerada (o stub antigo)
+    custo    := private.cap_custo_ler(u) IS TRUE;                  -- gate VIVO da RPC
+    carteira := public.pode_ver_carteira_completa(u) IS TRUE;      -- gate ANTERIOR
     IF u = '00000000-0000-0000-0000-00000000000d'::uuid THEN
-      IF real_ IS NOT TRUE OR degen IS NOT FALSE THEN
-        RAISE EXCEPTION 'A12 FALHOU: gerencial nao discrimina (real=% degenerada=%) — seed furado, A11 seria vacuo', real_, degen;
+      IF custo IS NOT FALSE OR carteira IS NOT TRUE THEN
+        RAISE EXCEPTION 'A12 FALHOU: gerencial nao discrimina (custo=% carteira=%) — seed furado, A11 seria vacuo', custo, carteira;
       END IF;
       divergiu := divergiu + 1;
     ELSE
-      IF real_ IS DISTINCT FROM degen THEN
-        RAISE EXCEPTION 'A12b FALHOU: persona % deveria dar o MESMO veredito nas 2 politicas (real=% degenerada=%)', u, real_, degen;
+      IF custo IS DISTINCT FROM carteira THEN
+        RAISE EXCEPTION 'A12b FALHOU: persona % deveria dar o MESMO veredito nos 2 gates (custo=% carteira=%)', u, custo, carteira;
       END IF;
     END IF;
   END LOOP;
   IF divergiu <> 1 THEN
-    RAISE EXCEPTION 'A12c FALHOU: nenhuma persona separou as politicas — o bloco de authz nao prova politica';
+    RAISE EXCEPTION 'A12c FALHOU: nenhuma persona separou os 2 gates — o bloco de authz nao prova politica';
   END IF;
-  RAISE NOTICE 'OK A12 — gerencial e o UNICO discriminante (real=true, degenerada=false); demais concordam';
+  RAISE NOTICE 'OK A12 — gerencial e o UNICO discriminante (custo=false, carteira=true); demais concordam';
 END $$;
 SQL
 
-# FALSIFICAÇÃO X-A11: regride o gate à política VELHA/degenerada (master-only). A11 TEM de ficar
-# vermelho. Se sobreviver, A11 não guarda a política — é teatro, igual ao que este PR está matando.
+# FALSIFICAÇÃO X-A11: devolve o gate da RPC ao ANTERIOR (pode_ver_carteira_completa) — a regressão
+# de autorização real. A11 TEM de ficar vermelho: o gerencial volta a ver o custo.
+echo "  → FALSIFICAÇÃO X-A11 (gate da RPC regride ao pode_ver_carteira_completa → exige A11 vermelho):"
 P -v ON_ERROR_STOP=1 -q <<'SQL'
-CREATE OR REPLACE FUNCTION public.pode_ver_carteira_completa(_uid uuid)
-RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $f$
-  SELECT public.has_role(_uid, 'master'::public.app_role);
-$f$;
+DO $regride$
+DECLARE v_def text; v_novo text;
+BEGIN
+  v_def := pg_get_functiondef('public.get_preco_cockpit(jsonb)'::regprocedure);
+  v_novo := regexp_replace(v_def, 'v_pode_num\s*:=\s*private\.cap_custo_ler\s*\(\s*auth\.uid\(\)\s*\)',
+                           'v_pode_num := public.pode_ver_carteira_completa(auth.uid())', 'g');
+  IF v_novo = v_def THEN RAISE EXCEPTION 'X-A11: nao consegui regredir o gate (padrao nao casou)'; END IF;
+  EXECUTE v_novo;
+END $regride$;
 SQL
 SAB11=$(P -tA 2>&1 <<'SQL' || true
 DO $$
@@ -400,41 +494,83 @@ DECLARE r jsonb;
 BEGIN
   SET LOCAL test.uid = '00000000-0000-0000-0000-00000000000d';
   SELECT (public.get_preco_cockpit('[{"empresa":"oben","codigo":1001,"preco":85}]'::jsonb))->0 INTO r;
-  IF r->'cmc' = 'null'::jsonb THEN RAISE NOTICE 'A11_FICOU_VERMELHO';
-  ELSE RAISE NOTICE 'A11_SOBREVIVEU cmc=%', r->>'cmc'; END IF;
+  IF r->'cmc' <> 'null'::jsonb THEN RAISE NOTICE 'A11_FICOU_VERMELHO cmc=%', r->>'cmc';
+  ELSE RAISE NOTICE 'A11_SOBREVIVEU'; END IF;
 END $$;
 SQL
 )
 if echo "$SAB11" | grep -q 'A11_FICOU_VERMELHO'; then
-  echo "  OK A11 (falsificação X-A11) — gate regredido a master-only barra o gerencial → A11 REALMENTE separa as 2 políticas"
+  echo "  OK A11 (falsificação X-A11) — gate velho de volta ⇒ o gerencial VÊ o custo → A11 separa as 2 políticas"
 else
-  echo "  A11 FALHOU (falsificação X-A11): master-only NÃO mudou o veredito do gerencial — A11 é teatro. saída: $SAB11"
+  echo "  A11 FALHOU (falsificação X-A11): o gate velho não mudou o veredito do gerencial — A11 é teatro. saída: $SAB11"
   exit 1
 fi
-# Restaura o gate fiel.
+# restaura o gate VIVO (cap_custo_ler)
 P -v ON_ERROR_STOP=1 -q <<'SQL'
-CREATE OR REPLACE FUNCTION public.pode_ver_carteira_completa(_uid uuid)
+DO $volta$
+DECLARE v_def text; v_novo text;
+BEGIN
+  v_def := pg_get_functiondef('public.get_preco_cockpit(jsonb)'::regprocedure);
+  v_novo := regexp_replace(v_def, 'v_pode_num\s*:=\s*(public\.)?pode_ver_carteira_completa\s*\(\s*auth\.uid\(\)\s*\)',
+                           'v_pode_num := private.cap_custo_ler(auth.uid())', 'g');
+  IF v_novo = v_def THEN RAISE EXCEPTION 'X-A11: nao consegui restaurar o gate vivo'; END IF;
+  EXECUTE v_novo;
+END $volta$;
+SQL
+echo "  OK X-A11 (restauração) — gate vivo (cap_custo_ler) de volta"
+
+# FALSIFICAÇÃO X-A13: degenera cap_custo_ler a master-only. A13 TEM de ficar vermelho — é ele que
+# impede A11 de passar por vacuidade ("ninguém vê" também barra o gerencial).
+echo "  → FALSIFICAÇÃO X-A13 (cap_custo_ler := master-only → exige A13 vermelho):"
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+CREATE OR REPLACE FUNCTION private.cap_custo_ler(_uid uuid)
 RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $f$
-  SELECT public.has_role(_uid, 'master'::public.app_role)
-      OR (public.has_role(_uid, 'employee'::public.app_role)
-          AND public.get_commercial_role(_uid) IN ('gerencial'::public.commercial_role,
-              'estrategico'::public.commercial_role, 'super_admin'::public.commercial_role));
+  SELECT COALESCE(public.has_role(_uid, 'master'::public.app_role), false);
 $f$;
 SQL
-echo "  OK X-A11 (restauração) — gate fiel de volta"
+SAB13=$(P -tA 2>&1 <<'SQL' || true
+DO $$
+DECLARE r jsonb;
+BEGIN
+  SET LOCAL test.uid = '00000000-0000-0000-0000-00000000000e';
+  SELECT (public.get_preco_cockpit('[{"empresa":"oben","codigo":1001,"preco":85}]'::jsonb))->0 INTO r;
+  IF r->'cmc' = 'null'::jsonb THEN RAISE NOTICE 'A13_FICOU_VERMELHO';
+  ELSE RAISE NOTICE 'A13_SOBREVIVEU cmc=%', r->>'cmc'; END IF;
+END $$;
+SQL
+)
+if echo "$SAB13" | grep -q 'A13_FICOU_VERMELHO'; then
+  echo "  OK A13 (falsificação X-A13) — master-only barra o estratégico → A13 guarda contra a vacuidade de A11"
+else
+  echo "  A13 FALHOU (falsificação X-A13): master-only não mudou o veredito do estratégico. saída: $SAB13"
+  exit 1
+fi
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+CREATE OR REPLACE FUNCTION private.cap_custo_ler(_uid uuid)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $f$
+  SELECT COALESCE(_uid IS NOT NULL AND (
+    public.has_role(_uid, 'master'::public.app_role)
+    OR (public.has_role(_uid, 'employee'::public.app_role)
+        AND EXISTS (SELECT 1 FROM public.commercial_roles cr
+                     WHERE cr.user_id = _uid
+                       AND cr.commercial_role IN ('estrategico'::public.commercial_role,
+                           'super_admin'::public.commercial_role)))), false);
+$f$;
+SQL
+echo "  OK X-A13 (restauração) — cap_custo_ler fiel de volta"
 
 # FALSIFICAÇÃO X-A12: sabota o SEED (tira o commercial_role do 'd'). A12 TEM de ficar vermelho —
-# é ele que garante que a persona discriminante EXISTE. Sem esta falsificação, A12 poderia estar
-# passando por vacuidade e A11 viraria um assert sobre ninguém.
+# é ele que garante que a persona discriminante EXISTE.
+echo "  → FALSIFICAÇÃO X-A12 (seed sem o gerencial → exige A12 vermelho):"
 P -v ON_ERROR_STOP=1 -q -c "DELETE FROM public.commercial_roles WHERE user_id='00000000-0000-0000-0000-00000000000d';"
 SAB12=$(P -tA 2>&1 <<'SQL' || true
 DO $$
-DECLARE real_ boolean; degen boolean;
+DECLARE custo boolean; carteira boolean;
 BEGIN
-  real_ := public.pode_ver_carteira_completa('00000000-0000-0000-0000-00000000000d'::uuid) IS TRUE;
-  degen := public.has_role('00000000-0000-0000-0000-00000000000d'::uuid, 'master'::public.app_role) IS TRUE;
-  IF real_ IS NOT TRUE OR degen IS NOT FALSE THEN RAISE NOTICE 'A12_FICOU_VERMELHO';
-  ELSE RAISE NOTICE 'A12_SOBREVIVEU real=% degen=%', real_, degen; END IF;
+  custo    := private.cap_custo_ler('00000000-0000-0000-0000-00000000000d'::uuid) IS TRUE;
+  carteira := public.pode_ver_carteira_completa('00000000-0000-0000-0000-00000000000d'::uuid) IS TRUE;
+  IF custo IS NOT FALSE OR carteira IS NOT TRUE THEN RAISE NOTICE 'A12_FICOU_VERMELHO';
+  ELSE RAISE NOTICE 'A12_SOBREVIVEU custo=% carteira=%', custo, carteira; END IF;
 END $$;
 SQL
 )
@@ -729,4 +865,4 @@ END $$;
 SQL
 
 echo ""
-echo "✅ test-cockpit-preco: todos os asserts passaram (A1..A12 + B1..B5 fixes)"
+echo "✅ test-cockpit-preco: todos os asserts passaram (A1..A13 + B1..B5 fixes)"

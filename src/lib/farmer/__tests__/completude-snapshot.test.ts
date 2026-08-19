@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   avaliarCompletude,
+  INSUMOS_OBRIGATORIOS_BUNDLE,
   INSUMOS_OBRIGATORIOS_CROSS_SELL,
   type InsumosSnapshot,
 } from '../completude-snapshot';
@@ -132,5 +133,33 @@ describe('avaliarCompletude', () => {
 
   it('completo SEMPRE tem motivo null — a coluna só é preenchida quando degrada', () => {
     expect(avaliarCompletude(COMPLETO, INSUMOS_OBRIGATORIOS_CROSS_SELL).motivo).toBeNull();
+  });
+
+  // ─── a assimetria entre os DOIS motores ────────────────────────────────────────
+  // Até aqui a suíte só exercia a lista do cross-sell; a do bundle não tinha teste algum,
+  // e foi por essa fresta que ela herdou `regras` como opcional — premissa que vale só
+  // para quem tem caminho por popularidade.
+
+  it('regras vazias DEGRADAM no bundle — lá o zero é por CONSTRUÇÃO, não falta de padrão', () => {
+    // Todo bundle nasce de `applicableRules`, que sai de `discoveredRules`. Sem regra o
+    // motor devolve zero sempre; `completo` aqui daria à fase 2 licença para expirar a
+    // carteira de bundles exatamente quando o histórico ficou insuficiente.
+    const r = avaliarCompletude({ ...COMPLETO, regras: { ok: true, n: 0 } }, INSUMOS_OBRIGATORIOS_BUNDLE);
+    expect(r.completude).toBe('degradado');
+    expect(r.motivo).toContain('regras');
+  });
+
+  it('a MESMA leitura dá veredicto diferente por motor — a assimetria é desenho, não acidente', () => {
+    const semRegras: InsumosSnapshot = { ...COMPLETO, regras: { ok: true, n: 0 } };
+    expect(avaliarCompletude(semRegras, INSUMOS_OBRIGATORIOS_CROSS_SELL).completude).toBe('completo');
+    expect(avaliarCompletude(semRegras, INSUMOS_OBRIGATORIOS_BUNDLE).completude).toBe('degradado');
+  });
+
+  it('bundle que NÃO declara regras degrada por AUSÊNCIA — ausente ≠ zero na própria medição', () => {
+    const { regras: _omitido, ...semRegras } = COMPLETO;
+    const r = avaliarCompletude(semRegras, INSUMOS_OBRIGATORIOS_BUNDLE);
+    expect(r.completude).toBe('degradado');
+    expect(r.motivo).toContain('não declarado');
+    expect(r.motivo).toContain('regras');
   });
 });

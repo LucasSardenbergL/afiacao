@@ -492,6 +492,11 @@ export const useBundleEngine = () => {
       discoveredRules.sort((a, b) => b.lift - a.lift);
       setRules(discoveredRules.slice(0, 50)); // Keep top 50
 
+      // `regras` é insumo OBRIGATÓRIO do bundle (ver completude-snapshot): sem regra
+      // descoberta não há `applicableRules`, e o motor produz zero por construção. Declara-se
+      // o array INTEIRO — é ele que alimenta o filtro abaixo, não o top-50 que vai à tabela.
+      insumos.regras = { ok: true, n: discoveredRules.length };
+
       // Persist top rules — PULADO na lente "Ver como" (a tabela é GLOBAL: a troca
       // substitui as regras de toda a base; o master inspeciona os bundles do alvo sem
       // recalcular regras/recomendações da carteira dele).
