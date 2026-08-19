@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import type { Json } from '@/integrations/supabase/types';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import { margemConhecida } from '@/lib/scoring/margin';
 import { fetchAllPages } from '@/lib/postgrest';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
+import { captureException } from '@/lib/analytics';
 import {
   avaliarCompletude,
   INSUMOS_OBRIGATORIOS_BUNDLE,
@@ -160,11 +161,35 @@ export const useBundleEngine = () => {
   const [rules, setRules] = useState<AssociationRule[]>([]);
   const [loading, setLoading] = useState(false);
   const [calculating, setCalculating] = useState(false);
+  // Espelha `useCrossSellEngine`: a falha precisa CHEGAR à tela. Sem estado de erro a
+  // `FarmerBundles` só sabia dizer "Clique em Calcular" — o mesmo texto de quem nunca calculou.
+  const [erro, setErro] = useState<Error | null>(null);
+  const [desatualizado, setDesatualizado] = useState(false);
+
+  // A ref existe para o `catch` saber se sobrou resultado de uma execução ANTERIOR na tela:
+  // ler `customerBundles` de dentro do `useCallback` pegaria a closure velha.
+  const bundlesRef = useRef<CustomerBundles[]>([]);
+  const aplicarBundles = useCallback((bs: CustomerBundles[]) => {
+    bundlesRef.current = bs;
+    setCustomerBundles(bs);
+  }, []);
 
   const calculateBundles = useCallback(async (config = DEFAULT_CONFIG) => {
     if (!effectiveUserId) return;
     setCalculating(true);
     setLoading(true);
+    setErro(null);
+    setDesatualizado(false);
+    // "Esta execução produziu o que está na tela?" — separa INDISPONÍVEL de DESATUALIZADO.
+    let resultadoDestaExecucao = false;
+    // "Este cálculo chegou a PRODUZIR linhas?" — trava o registro de `vazio` no `catch`.
+    // Sem isto, uma falha na RPC de substituição (que roda DEPOIS de o resultado já estar na
+    // tela) grava `resultado='vazio'`; e como a gravação não commitou, o head no banco não
+    // mudou e o compare-and-swap ACEITA. Com os insumos todos lidos, sai `vazio` + `completo`:
+    // o sinal exato que autorizaria a fase 2 a expirar a carteira por causa de uma falha de
+    // PERSISTÊNCIA. O CAS só protege quando a gravação commitou — e aí a recusa vem como
+    // FG107 (linhas do mesmo run_id), antes mesmo do FG106.
+    let linhasProduzidas = false;
 
     // Snapshot dos insumos DESTA execução (ver useCrossSellEngine para o racional): o head
     // precisa declarar se o zero veio de um snapshot íntegro, e isso não se infere do
@@ -174,10 +199,29 @@ export const useBundleEngine = () => {
     let headVisto: string | null | undefined;
     const runId = crypto.randomUUID();
 
+    // O head é gravado UMA vez por execução: o `catch` também registra agora, e sem isto uma
+    // falha depois de um `registrarVazio()` já feito gravaria a mesma execução duas vezes.
+    let jaRegistrou = false;
+    // O alerta de head ilegível sai UMA vez por execução — `registrarVazio` tem vários
+    // call-sites e o mesmo cálculo emitiria o mesmo alarme repetido.
+    let alertouHeadIlegivel = false;
     const registrarVazio = async () => {
-      if (isImpersonating || headVisto === undefined) return;
+      if (isImpersonating) return;
+      if (headVisto === undefined) {
+        // Pular às cegas é correto (sobrescrever um head existente seria pior), mas pular em
+        // SILÊNCIO é o defeito: "nenhum registro novo" passa a significar duas coisas opostas.
+        if (alertouHeadIlegivel) return;
+        alertouHeadIlegivel = true;
+        captureException(new Error('[farmer/head] head ilegível — registro de bundle pulado'), {
+          origem: 'farmer/head',
+          motor: 'bundle',
+          runId,
+        });
+        return;
+      }
+      if (jaRegistrou) return;
       const { completude, motivo } = avaliarCompletude(insumos, INSUMOS_OBRIGATORIOS_BUNDLE);
-      await registrarGeracaoFarmer({
+      const desfecho = await registrarGeracaoFarmer({
         motor: 'bundle',
         farmerId: effectiveUserId,
         runId,
@@ -188,6 +232,10 @@ export const useBundleEngine = () => {
         insumos,
         headVisto,
       });
+      // `falha_rpc` NÃO trava o slot: travar antes de saber o desfecho faria uma tentativa
+      // falha suprimir uma posterior que daria certo — o sensor se calaria por causa do
+      // próprio erro que precisava registrar.
+      if (desfecho.registrado || desfecho.motivo !== 'falha_rpc') jaRegistrou = true;
     };
 
     try {
@@ -308,15 +356,27 @@ export const useBundleEngine = () => {
         // `ok: false` = "não consegui ler", não "veio vazio". Um head degradado por aqui
         // nunca poderá autorizar expiração.
         insumos.vendaveis = { ok: false, n: 0 };
-        setCustomerBundles([]);
         await registrarVazio();
-        return;
+        // Fail-closed E DECLARADO — alinhado ao `useCrossSellEngine` (#1606). O `return` mudo
+        // daqui não passava pelo `catch`, não emitia toast e não deixava nada na tela: para o
+        // operador era idêntico a um cálculo que concluiu "esta carteira não tem bundle", e ele
+        // ia embora achando que era a primeira coisa.
+        //
+        // Limpa ANTES de lançar: manter bundles anteriores contrariaria o fail-closed (podem
+        // conter SKU que o servidor já não confirma como rentável). Com a lista zerada e
+        // `resultadoDestaExecucao` marcado, a tela conclui INDISPONÍVEL, não DESATUALIZADO.
+        aplicarBundles([]);
+        resultadoDestaExecucao = true;
+        throw new Error(
+          mensagemDeErro(vendaveisResult.error) ??
+            'Não consegui confirmar quais SKUs são rentáveis — nenhum bundle foi gerado.',
+        );
       }
       const vendaveis = new Set(vendaveisResult.data.map((r) => r.product_id));
       insumos.vendaveis = { ok: true, n: vendaveis.size };
 
       if (!clientScores?.length) {
-        setCustomerBundles([]);
+        aplicarBundles([]);
         // Era um `return` MUDO — a razão de a frequência do zero nunca ter sido mensurável.
         await registrarVazio();
         return;
@@ -358,6 +418,18 @@ export const useBundleEngine = () => {
       insumos.clientes_com_profile = {
         ok: true,
         n: ativos.filter((c) => profileMap.has(c.customer_user_id)).length,
+        // `n > 0` aceitava 1 perfil para 101 clientes ativos: o motor pularia 100 deles em
+        // silêncio e o zero final sairia rotulado `completo`. O universo certo é a carteira
+        // ATIVA, não a base global.
+        esperado: ativos.length,
+        // `esperado` entra como EVIDÊNCIA, SEM piso — e isso é decisão medida, não omissão.
+        // Distribuição real (psql-ro, 19/08/2026, 3 farmers com carteira ativa): 2 em 100%
+        // de cobertura e 1 em 85,96%; NENHUM abaixo de 50%. Qualquer piso plausível ou é
+        // inerte (não separa nada do regime atual) ou degrada o farmer de 86% já no primeiro
+        // recálculo. Fixar um número aqui seria inventar o limiar — o mesmo erro que este
+        // arquivo evita em `baskets`, e o que "rótulo com DEFAULT constante não é fato"
+        // (money-path §5) proíbe. O `n`/`esperado` ficam no head justamente para calibrar o
+        // piso quando houver farmers suficientes para que ele signifique algo.
       };
 
       // 2. Build transaction baskets per customer
@@ -401,7 +473,24 @@ export const useBundleEngine = () => {
       insumos.carteira_com_historico_utilizavel = {
         ok: true,
         n: ativos.filter((c) => customerBaskets.has(c.customer_user_id)).length,
+        // `esperado` entra como EVIDÊNCIA, SEM piso — e isso é decisão medida, não omissão.
+        // Distribuição real (psql-ro, 19/08/2026, 3 farmers com carteira ativa): 2 em 100%
+        // de cobertura e 1 em 85,96%; NENHUM abaixo de 50%. Qualquer piso plausível ou é
+        // inerte (não separa nada do regime atual) ou degrada o farmer de 86% já no primeiro
+        // recálculo. Fixar um número aqui seria inventar o limiar — o mesmo erro que este
+        // arquivo evita em `baskets`, e o que "rótulo com DEFAULT constante não é fato"
+        // (money-path §5) proíbe. O `n`/`esperado` ficam no head justamente para calibrar o
+        // piso quando houver farmers suficientes para que ele signifique algo.
+        esperado: ativos.length,
       };
+
+      // EVIDÊNCIA, não veredicto — e a distinção importa. `baskets` é o universo GLOBAL que
+      // alimenta o Apriori (TODOS os pedidos, não só os da carteira); o insumo acima mede a
+      // carteira que RECEBE bundle. Fora dos obrigatórios de propósito: `baskets === 0` implica
+      // `regras === 0`, e `regras` já é obrigatório aqui desde o #1779 — exigir os dois
+      // degradaria pela mesma causa duas vezes, com o motivo apontando o sintoma em vez da
+      // causa. Fica no head para auditar quantos pedidos lidos viraram cesta, sem query.
+      insumos.baskets = { ok: true, n: baskets.length, esperado: (salesOrders || []).length };
 
       const totalBaskets = Math.max(baskets.length, 1);
 
@@ -715,7 +804,11 @@ export const useBundleEngine = () => {
           Math.max(0, ...a.bundles.map((x) => x.affinityBundle)),
       );
 
-      setCustomerBundles(allCustomerBundles);
+      aplicarBundles(allCustomerBundles);
+      // Marcados JUNTOS e aqui, não na gravação: a partir deste ponto a tela mostra o
+      // resultado DESTE cálculo, e ele produziu linhas — os dois fatos que o `catch` precisa.
+      resultadoDestaExecucao = true;
+      linhasProduzidas = allCustomerBundles.length > 0;
 
       // Persist bundle recommendations — via RPC que SUBSTITUI a geração anterior.
       // PULADO na lente "Ver como" (só leitura: o master inspeciona os bundles do alvo
@@ -837,7 +930,23 @@ export const useBundleEngine = () => {
       }
     } catch (error) {
       console.error('Error calculating bundles:', error);
-      toast.error('Erro ao calcular bundles');
+      // O head TAMBÉM se move aqui. `vendaveis` tinha tratamento próprio, mas scores, catálogo,
+      // perfis e pedidos são lidos por `fetchAllPages`, que LANÇA — e a exceção caía neste
+      // `catch`, que só fazia console+toast. O head anterior, gravado quando a base estava sã,
+      // seguia dizendo `completo` — o único rótulo que autoriza a fase 2 a expirar a carteira.
+      //
+      // `avaliarCompletude` não precisa de ajuda: o insumo que falhou nunca chega a ser
+      // declarado, e "insumo obrigatório não declarado" já degrada (ausente ≠ zero). E quando a
+      // gravação de linhas já moveu o head, o CAS recusa este registro com FG106 — que é o
+      // desfecho certo, não um erro a corrigir.
+      // SÓ registra vazio quem de fato não produziu nada. Ver `linhasProduzidas`.
+      if (!linhasProduzidas) await registrarVazio();
+      const e = error instanceof Error
+        ? error
+        : new Error(mensagemDeErro(error) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.');
+      setErro(e);
+      toast.error(e.message);
+      setDesatualizado(!resultadoDestaExecucao && bundlesRef.current.length > 0);
     } finally {
       setCalculating(false);
       setLoading(false);
@@ -859,6 +968,8 @@ export const useBundleEngine = () => {
     rules,
     loading,
     calculating,
+    erro,
+    desatualizado,
     calculateBundles,
     config: DEFAULT_CONFIG,
   };

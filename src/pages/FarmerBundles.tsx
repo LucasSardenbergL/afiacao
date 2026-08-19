@@ -17,6 +17,8 @@ const FarmerBundles = () => {
     loading,
     calculating,
     calculateBundles,
+    erro,
+    desatualizado,
     bundleArgs,
     argGenerating,
     generateArgument,
@@ -48,6 +50,22 @@ const FarmerBundles = () => {
           </CardContent>
         </Card>
 
+        {/* A falha do engine PRECISA chegar aqui. Sem isto a tela ficava idêntica à de um
+            cálculo bem-sucedido que não achou bundle — o vendedor via a lista vazia e ia
+            embora achando que não havia oportunidade, quando na verdade não houve leitura. */}
+        {erro && (
+          <div
+            role="alert"
+            className={`rounded-lg border p-3 text-xs ${desatualizado
+              ? 'border-status-warning/30 bg-status-warning/5 text-status-warning'
+              : 'border-status-error/30 bg-status-error/5 text-status-error'}`}
+          >
+            {desatualizado
+              ? 'Exibindo o último cálculo bem-sucedido — a atualização mais recente falhou. Os bundles podem estar desatualizados.'
+              : 'Não foi possível calcular os bundles — a leitura da base falhou. Nada abaixo foi estimado.'}
+          </div>
+        )}
+
         {/* KPIs */}
         <div className="grid grid-cols-3 gap-2">
           <Card><CardContent className="p-2.5 text-center"><p className="text-lg font-bold">{rules.length}</p><p className="text-[9px] text-muted-foreground">Regras</p></CardContent></Card>
@@ -66,7 +84,7 @@ const FarmerBundles = () => {
             {loading && !customerBundles.length ? (
               <PageSkeleton variant="list" />
             ) : customerBundles.length === 0 ? (
-              <Card><CardContent className="p-6 text-center"><Package className="w-8 h-8 mx-auto mb-2 opacity-40" /><p className="text-xs text-muted-foreground">Clique em "Calcular" para gerar bundles.</p></CardContent></Card>
+              <Card><CardContent className="p-6 text-center"><Package className="w-8 h-8 mx-auto mb-2 opacity-40" /><p className="text-xs text-muted-foreground">{erro ? 'O cálculo falhou — nenhum bundle pôde ser gerado.' : 'Clique em "Calcular" para gerar bundles.'}</p></CardContent></Card>
             ) : (
               customerBundles.map(cb => (
                 <CustomerBundleCard

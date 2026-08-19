@@ -27,6 +27,25 @@ interface InsumoLido {
   ok: boolean;
   /** Quantas linhas o insumo devolveu. Só faz sentido quando `ok`. */
   n: number;
+  /**
+   * Universo de referência do qual `n` é a fatia ÚTIL — declarado só por quem mede
+   * COBERTURA, não universo.
+   *
+   * `n > 0` responde "esse insumo existe?", que não é a pergunta que a fase 2 faz. Um farmer
+   * com 101 clientes ativos e 1 perfil produz zero por ter PULADO 100 deles (`if (!profile)
+   * continue`), e mesmo assim todos os contadores globais seguem fartos — o head sairia
+   * `completo` e autorizaria expirar a carteira.
+   */
+  esperado?: number;
+  /**
+   * Fração mínima de `esperado` que `n` precisa alcançar (0..1). Sem ele, `esperado` é só
+   * evidência para auditoria e não muda veredicto.
+   *
+   * Deliberadamente NÃO é uma constante global: o piso é uma afirmação sobre o motor que
+   * mede, e um número mágico aqui viraria "rótulo com DEFAULT constante", que o money-path §5
+   * proíbe justamente por não ser fato. Cada call-site declara o seu e responde por ele.
+   */
+  pisoCobertura?: number;
 }
 
 export type InsumosSnapshot = Record<string, InsumoLido>;
@@ -160,6 +179,25 @@ export function avaliarCompletude(
     return {
       completude: 'degradado',
       motivo: `insumo obrigatório veio vazio: ${[...vazios].sort().join(', ')}`,
+    };
+  }
+
+  // COBERTURA por último: só chega aqui quem leu tudo, declarou tudo e não veio vazio. O que
+  // resta é o buraco que nenhum contador global mostra — a parte do universo que o motor
+  // efetivamente ALCANÇOU.
+  const semCobertura = nomes.filter((nome) => {
+    const i = insumos[nome];
+    if (i.esperado == null || i.pisoCobertura == null) return false;
+    // Universo vazio não é cobertura ruim: 0 de 0 é 100% do que havia. Quem julga o universo
+    // vazio é a regra dos obrigatórios acima — aqui isso seria contar a mesma falta duas vezes,
+    // com o motivo apontando o sintoma em vez da causa.
+    if (i.esperado <= 0) return false;
+    return i.n < i.esperado * i.pisoCobertura;
+  });
+  if (semCobertura.length > 0) {
+    return {
+      completude: 'degradado',
+      motivo: `cobertura insuficiente: ${[...semCobertura].sort().join(', ')}`,
     };
   }
 

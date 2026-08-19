@@ -3,6 +3,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { fetchAllPages } from '@/lib/postgrest';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
+import { captureException } from '@/lib/analytics';
 import {
   avaliarCompletude,
   INSUMOS_OBRIGATORIOS_CROSS_SELL,
@@ -163,6 +164,9 @@ export const useCrossSellEngine = () => {
     // anterior = desatualizada) de "veio DEPOIS" (falha ao persistir: os números na tela são
     // desta execução, e chamá-los de desatualizados mentiria na direção oposta).
     let resultadoDestaExecucao = false;
+    // Ver `useBundleEngine`: sem isto, falha na gravação DEPOIS de calcular grava
+    // `vazio`+`completo` — falha de persistência virando licença para expirar a carteira.
+    let linhasProduzidas = false;
 
     // Snapshot dos insumos DESTA execução: por insumo, se a leitura deu certo e quantas
     // linhas vieram. É o que permite ao head declarar a completude — e, mais importante,
@@ -179,10 +183,28 @@ export const useCrossSellEngine = () => {
      * Registra a geração VAZIA (ou degradada) — os caminhos que não chamam a RPC de
      * substituição. Fail-open por dentro: nunca derruba a tela.
      */
+    // Uma gravação de head por execução: o `catch` também registra agora.
+    let jaRegistrou = false;
+    // O alerta de head ilegível sai UMA vez por execução — `registrarVazio` tem vários
+    // call-sites e o mesmo cálculo emitiria o mesmo alarme repetido.
+    let alertouHeadIlegivel = false;
     const registrarVazio = async () => {
-      if (isImpersonating || headVisto === undefined) return;
+      if (isImpersonating) return;
+      if (headVisto === undefined) {
+        // Pular às cegas é correto; pular em SILÊNCIO é o defeito — "nenhum registro novo"
+        // passaria a significar tanto vazio legítimo quanto sensor cego.
+        if (alertouHeadIlegivel) return;
+        alertouHeadIlegivel = true;
+        captureException(new Error('[farmer/head] head ilegível — registro de cross-sell pulado'), {
+          origem: 'farmer/head',
+          motor: 'cross_sell',
+          runId,
+        });
+        return;
+      }
+      if (jaRegistrou) return;
       const { completude, motivo } = avaliarCompletude(insumos, INSUMOS_OBRIGATORIOS_CROSS_SELL);
-      await registrarGeracaoFarmer({
+      const desfecho = await registrarGeracaoFarmer({
         motor: 'cross_sell',
         farmerId: effectiveUserId,
         runId,
@@ -193,6 +215,10 @@ export const useCrossSellEngine = () => {
         insumos,
         headVisto,
       });
+      // `falha_rpc` NÃO trava o slot: travar antes de saber o desfecho faria uma tentativa
+      // falha suprimir uma posterior que daria certo — o sensor se calaria por causa do
+      // próprio erro que precisava registrar.
+      if (desfecho.registrado || desfecho.motivo !== 'falha_rpc') jaRegistrou = true;
     };
 
     try {
@@ -460,6 +486,15 @@ export const useCrossSellEngine = () => {
       insumos.clientes_com_profile = {
         ok: true,
         n: customerIds.filter((id) => profileMap.has(id)).length,
+        // `n > 0` aceitava 1 perfil para 101 clientes: o motor pula os outros 100 em silêncio e
+        // o zero resultante sairia `completo`. O universo é a carteira do cálculo.
+        // `esperado` é EVIDÊNCIA, SEM piso — decisão medida, não omissão. Distribuição real
+        // (psql-ro, 19/08/2026, 3 farmers com carteira ativa): 2 em 100% de cobertura e 1 em
+        // 85,96%; NENHUM abaixo de 50%. Qualquer piso plausível ou é inerte no regime atual ou
+        // degrada o farmer de 86% já no primeiro recálculo. Fixar um número seria inventar o
+        // limiar (money-path §5); o `n`/`esperado` ficam no head para calibrá-lo quando houver
+        // farmers suficientes para que ele signifique algo.
+        esperado: customerIds.length,
       };
 
       // 6. Build omie_codigo_produto -> product UUID map
@@ -512,6 +547,15 @@ export const useCrossSellEngine = () => {
       insumos.carteira_com_historico_utilizavel = {
         ok: true,
         n: customerIds.filter((id) => (customerProducts.get(id)?.size ?? 0) > 0).length,
+        // Mesma correção de `clientes_com_profile`: `n > 0` aceitaria 1 cliente com histórico
+        // para 101 na carteira — o motor opinaria sobre 1% dela e o head diria `completo`.
+        // `esperado` é EVIDÊNCIA, SEM piso — decisão medida, não omissão. Distribuição real
+        // (psql-ro, 19/08/2026, 3 farmers com carteira ativa): 2 em 100% de cobertura e 1 em
+        // 85,96%; NENHUM abaixo de 50%. Qualquer piso plausível ou é inerte no regime atual ou
+        // degrada o farmer de 86% já no primeiro recálculo. Fixar um número seria inventar o
+        // limiar (money-path §5); o `n`/`esperado` ficam no head para calibrá-lo quando houver
+        // farmers suficientes para que ele signifique algo.
+        esperado: customerIds.length,
       };
 
       const totalCustomers = Math.max(customerIds.length, 1);
@@ -675,6 +719,7 @@ export const useCrossSellEngine = () => {
       allRecs.sort((a, b) => melhorAfinidade(b) - melhorAfinidade(a));
 
       aplicarRecomendacoes(allRecs);
+      linhasProduzidas = allRecs.length > 0;
       resultadoDestaExecucao = true;
 
       // Persist recommendations — via RPC que SUBSTITUI a geração anterior.
@@ -771,6 +816,11 @@ export const useCrossSellEngine = () => {
       }
     } catch (error) {
       console.error('Error calculating recommendations:', error);
+      // O head também se move aqui: falha paginada em scores, catálogo, perfis ou pedidos
+      // LANÇA e caía neste `catch` sem mover nada — deixando vigente um head `completo`
+      // gravado quando a base estava sã, que é o único rótulo capaz de autorizar expiração.
+      // Se a gravação de linhas já moveu o head, o CAS recusa com FG106: desfecho certo.
+      if (!linhasProduzidas) await registrarVazio();
       setErro(
         error instanceof Error
           ? error

@@ -101,6 +101,23 @@ comido o seu item (ali comeu DOIS — o registro da RPC e um follow-up de doc, n
 PR o nome que tiver — e sem o `git fetch` na frente o grep devolve "não existe" com cara de
 procura de verdade. Caso completo: [duplicata-por-objetivo.md](../historico/duplicata-por-objetivo.md).
 
+**…e o SÍMBOLO ainda é cego ao vocabulário alheio (2026-08-19, #1786).** O grep por artefato
+resolve o eixo "título não descreve o conteúdo", mas cria outro ponto cego: ele só acha quem
+escolheu a MESMA palavra que você. Nesta sessão, os follow-ups do challenge Codex incluíam
+"medir cobertura útil em vez de `n > 0`" no sensor do farmer. A busca por `baskets`,
+`pisoCobertura` e `insumos.baskets` em `origin/main` deu **0 hits nos três** — e o trabalho
+equivalente já estava mergeado havia ~1h, sob o nome `carteira_com_historico_utilizavel`
+(#1786). Zero hit não significou "ninguém fez"; significou "ninguém fez com o MEU nome".
+
+⇒ O invariante não é o símbolo, é o **ARQUIVO**: `git log origin/main -- <path>` (ou
+`--since=<data>`) lista quem mexeu ali seja qual for o vocabulário. Use os dois eixos — símbolo
+para achar o artefato exato, arquivo para achar o CONCORRENTE. Regra prática: rode o `git log`
+pelo arquivo que você está prestes a editar, **não** pelo conceito que você está prestes a criar.
+
+Custo evitado ali: o `baskets` obrigatório teria degradado o head pela mesma causa que `regras`
+já degradava — motivo apontando o sintoma, não a causa. Detectado a tempo de rebaixá-lo a
+evidência; o diferencial real (a mecânica de cobertura, que o #1786 não tocou) foi preservado.
+
 **Rede automática (2026-08-18):** hook `.claude/hooks/pr-duplicata-guard.sh` (PreToolUse Bash) —
 irmão do `pr-collision-guard.sh`, que cobre só o eixo ARQUIVO. Nos DOIS chokepoints (`git commit` e
 `gh pr create`) ele testa, por **(arquivo, símbolo)**, três vias: ausente do arquivo na merge-base + introduzido por mim +

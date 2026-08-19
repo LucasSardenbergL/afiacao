@@ -173,6 +173,80 @@ describe('avaliarCompletude', () => {
     expect(r.motivo).toContain('não declarado');
     expect(r.motivo).toContain('regras');
   });
+  // ─── COBERTURA útil, não `n > 0` ────────────────────────────────────
+  // `n > 0` responde "esse insumo existe?", que não é a pergunta. A pergunta é "o cálculo
+  // alcançou a carteira?". Um farmer com 101 clientes ativos e 1 perfil produz zero por ter
+  // pulado 100 deles (`if (!profile) continue`) — e todos os universos globais seguem fartos.
+  it('cobertura ABAIXO do piso degrada — 1 perfil para 101 clientes ativos não é snapshot íntegro', () => {
+    const r = avaliarCompletude(
+      {
+        ...COMPLETO,
+        carteira_ativa: { ok: true, n: 101 },
+        clientes_com_profile: { ok: true, n: 1, esperado: 101, pisoCobertura: 0.5 },
+      },
+      INSUMOS_OBRIGATORIOS_CROSS_SELL,
+    );
+    expect(r.completude).toBe('degradado');
+    expect(r.motivo).toContain('cobertura insuficiente');
+    expect(r.motivo).toContain('clientes_com_profile');
+  });
+
+  it('cobertura ACIMA do piso segue completa — a regra mede o buraco, não a existência', () => {
+    const r = avaliarCompletude(
+      {
+        ...COMPLETO,
+        carteira_ativa: { ok: true, n: 171 },
+        clientes_com_profile: { ok: true, n: 168, esperado: 171, pisoCobertura: 0.5 },
+      },
+      INSUMOS_OBRIGATORIOS_CROSS_SELL,
+    );
+    expect(r).toEqual({ completude: 'completo', motivo: null });
+  });
+
+  it('esperado ZERO não degrada por cobertura — 0/0 é o universo vazio, que outro insumo já julga', () => {
+    const r = avaliarCompletude(
+      {
+        ...COMPLETO,
+        clientes_com_profile: { ok: true, n: 5, esperado: 0, pisoCobertura: 0.5 },
+      },
+      INSUMOS_OBRIGATORIOS_CROSS_SELL,
+    );
+    expect(r.completude).toBe('completo');
+  });
+
+  it('a falha de LEITURA ainda vence a cobertura — causa raiz primeiro', () => {
+    const r = avaliarCompletude(
+      {
+        ...COMPLETO,
+        scores: { ok: false, n: 0 },
+        clientes_com_profile: { ok: true, n: 1, esperado: 101, pisoCobertura: 0.5 },
+      },
+      INSUMOS_OBRIGATORIOS_CROSS_SELL,
+    );
+    expect(r.motivo).toContain('não consegui ler');
+  });
+
+  // `baskets` é EVIDÊNCIA, não veredicto: fora dos obrigatórios porque `baskets === 0`
+  // implica `regras === 0`, e `regras` já é obrigatório no bundle desde o #1779 — exigir os
+  // dois degradaria pela mesma causa duas vezes. Mas `ok: false` (não consegui ler) degrada
+  // como em qualquer insumo, e é isso que este caso trava.
+  it('baskets vazio NÃO degrada sozinho — quem julga o zero por construção é `regras`', () => {
+    const r = avaliarCompletude(
+      { ...COMPLETO, baskets: { ok: true, n: 0, esperado: 861 } },
+      INSUMOS_OBRIGATORIOS_BUNDLE,
+    );
+    expect(r.completude).toBe('completo');
+  });
+
+  it('baskets ILEGÍVEL degrada — leitura parcial é leitura parcial, obrigatório ou não', () => {
+    const r = avaliarCompletude(
+      { ...COMPLETO, baskets: { ok: false, n: 0 } },
+      INSUMOS_OBRIGATORIOS_BUNDLE,
+    );
+    expect(r.completude).toBe('degradado');
+    expect(r.motivo).toContain('baskets');
+  });
+
   // ─── carteira ATIVA ≠ carteira com histórico UTILIZÁVEL ────────────────────────
   // O pré-requisito que o §7.5 do design deixou declarado como LIMITAÇÃO: `carteira_ativa`
   // conta cliente com PEDIDO, e pedido não é insumo — insumo é item que RESOLVE para SKU do
