@@ -227,9 +227,13 @@ jobs:
       - name: CLAUDE.md size budget
         run: bun run claude:size
 
-      # Guards de colisão multi-sessão (PreToolUse): os 3 têm suíte com git+gh STUBADOS
-      # (hermética, sem rede, ~1s) que até 2026-08-18 NENHUM workflow rodava — teste órfão
-      # só vale quando alguém lembra, e guard que regride vira falso-negativo silencioso.
+      # Guards de PreToolUse (colisão multi-sessão, comando destrutivo, imutabilidade de migration):
+      # cada um tem suíte HERMÉTICA (sem rede) em scripts/test-*-guard.sh — os de colisão stubam
+      # git/gh num mktemp; os demais não saem do processo (só passam strings ao hook) ou montam um
+      # repo git temporário com `git init`.
+      # O loop do `test:hooks` é a ÚNICA coisa que os roda — script fora do loop é teste órfão, e
+      # teste que não roda é ausência de dado, não aprovação: o guard regride em silêncio.
+      # Ao criar um scripts/test-<x>-guard.sh, ACRESCENTE <x> ao `for t in ...` do package.json.
       - name: Hooks guard tests
         # sem `heavy` aqui: o semáforo de RAM é da M2 local e nao existe no runner (exit 127).
         run: bun run test:hooks
