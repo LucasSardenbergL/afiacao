@@ -51,12 +51,22 @@ function chain(table: string): unknown {
 vi.mock('@/integrations/supabase/client', () => ({
   supabase: {
     from: (t: string) => chain(t),
-    rpc: (nome: string) =>
-      Promise.resolve(
-        nome === 'get_skus_margem_positiva' && falharVendaveis
-          ? { data: null, error: ERRO_RPC }
-          : { data: [], error: null },
-      ),
+    // A RPC de vendáveis é PAGINADA desde o #1782 (`.order().range()`), então o mock precisa
+    // ser um builder — devolver Promise crua aqui faz `.order is not a function`, e o
+    // `.then(..., e => ...)` do engine converteria esse TypeError em "vendáveis indisponíveis".
+    // O segundo caso deste arquivo existe justamente para pegar isso.
+    rpc: (nome: string) => {
+      if (nome === 'get_skus_margem_positiva') {
+        const chain: Record<string, unknown> = {
+          order: () => chain,
+          range: () => chain,
+          then: (resolve: (v: unknown) => void) =>
+            resolve(falharVendaveis ? { data: null, error: ERRO_RPC } : { data: [], error: null }),
+        };
+        return chain;
+      }
+      return Promise.resolve({ data: [], error: null });
+    },
   },
 }));
 vi.mock('@/contexts/ImpersonationContext', () => ({

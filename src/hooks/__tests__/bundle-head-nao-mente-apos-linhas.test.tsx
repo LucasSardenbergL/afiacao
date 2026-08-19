@@ -77,8 +77,15 @@ vi.mock('@/integrations/supabase/client', () => ({
   supabase: {
     from: (t: string) => chain(t),
     rpc: (nome: string, args?: Record<string, unknown>) => {
+      // Paginada desde o #1782 — builder com `.order().range()`, não Promise crua.
       if (nome === 'get_skus_margem_positiva') {
-        return Promise.resolve({ data: PRODUTOS.map((p) => ({ product_id: p.id })), error: null });
+        const chain: Record<string, unknown> = {
+          order: () => chain,
+          range: () => chain,
+          then: (resolve: (v: unknown) => void) =>
+            resolve({ data: PRODUTOS.map((p) => ({ product_id: p.id })), error: null }),
+        };
+        return chain;
       }
       if (nome === 'farmer_geracao_registrar') {
         registros.push(args ?? {});
