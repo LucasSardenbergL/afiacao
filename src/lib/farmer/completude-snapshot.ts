@@ -42,8 +42,11 @@ export interface VeredictoCompletude {
 /**
  * Insumos sem os quais o motor de cross-sell não pode concluir "não há o que recomendar".
  *
- * `regras` (associação) NÃO entra: uma base sem padrão de coocorrência é um estado
- * legítimo, e o motor ainda recomenda por popularidade. Já `vendaveis` entra mesmo
+ * `regras` (associação) NÃO entra AQUI: uma base sem padrão de coocorrência é um estado
+ * legítimo para ESTE motor, que segue recomendando por popularidade (`clusterAdherence`).
+ * A justificativa é do cross-sell e NÃO se transporta — o bundle não tem caminho por
+ * popularidade, e lá `regras` é obrigatório (ver `INSUMOS_OBRIGATORIOS_BUNDLE`). Já
+ * `vendaveis` entra mesmo
  * podendo ser legitimamente vazio (todo SKU sem custo conhecido é fail-closed por
  * desenho, #1466) — porque "nenhum SKU rentável em toda a base" é muito mais provável
  * ser custo não calculado do que verdade comercial, e o empate resolve fail-closed.
@@ -67,7 +70,10 @@ export const INSUMOS_OBRIGATORIOS_CROSS_SELL = [
   'clientes_com_profile',
 ] as const;
 
-/** Idem para o motor de bundles, que parte das regras de associação. */
+/**
+ * Idem para o motor de bundles — que, ao contrário do cross-sell, parte EXCLUSIVAMENTE das
+ * regras de associação.
+ */
 export const INSUMOS_OBRIGATORIOS_BUNDLE = [
   'scores',
   'catalogo',
@@ -75,6 +81,19 @@ export const INSUMOS_OBRIGATORIOS_BUNDLE = [
   'pedidos',
   'carteira_ativa',
   'clientes_com_profile',
+  // `regras` É obrigatório aqui, ao contrário do cross-sell: todo bundle nasce de
+  // `applicableRules`, que sai de `discoveredRules`. Sem regra descoberta o motor produz
+  // zero por CONSTRUÇÃO, não por não haver o que ofertar — e rotular esse zero de
+  // `completo` daria à fase 2 licença para expirar a carteira de bundles justamente
+  // quando o histórico ficou insuficiente. O próprio `useBundleEngine` já trata o caso
+  // assim ("zero regra descoberta quase sempre é dado faltando a montante, não 'a base
+  // não tem padrão'") e preserva as regras anteriores; era a completude que discordava
+  // dele.
+  //
+  // Não é hipótese: medido em 18/08/2026, 12 das 24 regras vivas tinham support 1,04%
+  // contra o piso de 1,00% — 5 cestas de 479 — e morrem assim que as cestas passarem
+  // de 499.
+  'regras',
 ] as const;
 
 /**
