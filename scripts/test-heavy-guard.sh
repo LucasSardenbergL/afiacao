@@ -153,6 +153,108 @@ expect_quiet 'grep -r "bun run test" docs/'
 expect_quiet 'echo "bun run test"'
 expect_quiet 'git commit -m "fix: bun run build agora passa por heavy"'
 
+echo "── heredoc/aspas: menção ≠ execução (#1770 — o \`heavy\` foi parar no ci.yml) ──"
+# Os casos abaixo são multi-linha e sujariam o log das helpers acima (que ecoam o
+# comando inteiro) → variantes rotuladas.
+expect_quiet_rot() {
+  local rot="$1" out
+  out="$(run "$2")"
+  if [ -z "$out" ]; then echo "  ok    quiet  | $rot"
+  else echo "  FAIL  want quiet | $rot → $out"; fail=1; fi
+}
+expect_rewrite_rot() {
+  local rot="$1" cmd="$2" want="$3" out got
+  out="$(run "$cmd")"
+  got="$(printf '%s' "$out" | jq -r '.hookSpecificOutput.updatedInput.command // empty' 2>/dev/null)"
+  if printf '%s' "$out" | grep -q '"permissionDecision"[[:space:]]*:[[:space:]]*"allow"' \
+     && [ "$got" = "$want" ]; then
+    echo "  ok    rewrite | $rot"
+  else
+    echo "  FAIL  want rewrite | $rot"
+    printf '        esperado: %s\n        obtido:   %s\n' "$want" "${got:-<sem updatedInput>}"; fail=1
+  fi
+}
+
+# O caso MEDIDO (2026-08-18, PR #1770): uma sessão gravou um step de CI que
+# CONTÉM o comando pesado. O guard casou o padrão dentro do heredoc e o
+# `.github/workflows/ci.yml` foi gravado com `run: heavy bun run test:hooks`; no
+# runner ubuntu o `heavy` não existe (semáforo da M2 local) → 127, `validate`
+# VERMELHO. Local passava: o erro só existia no CI.
+caso_ci="$(cat <<'CASO'
+python3 - <<'PY'
+import pathlib
+p = pathlib.Path('.github/workflows/ci.yml')
+p.write_text(p.read_text() + '      - name: Hooks guard tests\n        run: bun run test:hooks\n')
+PY
+CASO
+)"
+expect_quiet_rot 'heredoc python3 que GRAVA o step do CI' "$caso_ci"
+
+# `tee` de propósito: com `cat >`/`printf >` o teste seria TEATRO — o check de
+# leitura (nº 4) já barra essas linhas pelo PROGRAMA que as abre e o caso
+# passaria mesmo sem sanitização nenhuma. `tee` não está na lista, então só a
+# sanitização o segura.
+caso_tee="$(cat <<'CASO'
+tee /tmp/ci.yml <<'EOF'
+  run: bun run test
+EOF
+CASO
+)"
+expect_quiet_rot 'heredoc tee (fora da lista de leitura)' "$caso_tee"
+
+caso_tag_nua="$(cat <<'CASO'
+tee /tmp/ci.yml <<EOF
+  run: bun run typecheck
+EOF
+CASO
+)"
+expect_quiet_rot 'heredoc de tag NUA (<<EOF, sem aspas)' "$caso_tag_nua"
+
+caso_aspas="$(cat <<'CASO'
+python3 -c 'print("bun run test")'
+CASO
+)"
+expect_quiet_rot 'padrão só dentro de aspas' "$caso_aspas"
+
+# A asserção que impede o "fix" preguiçoso de DESLIGAR o guard quando há
+# heredoc: comando MISTO grava o step E roda o teste de verdade. O heredoc sai
+# byte a byte igual; só a linha executável recebe o prefixo.
+caso_misto="$(cat <<'CASO'
+tee /tmp/ci.yml <<'EOF'
+  run: bun run test:hooks
+EOF
+bun run test
+CASO
+)"
+misto_quer="$(cat <<'CASO'
+tee /tmp/ci.yml <<'EOF'
+  run: bun run test:hooks
+EOF
+heavy bun run test
+CASO
+)"
+expect_rewrite_rot 'MISTO: grava o step E roda o teste' "$caso_misto" "$misto_quer"
+
+# Espelho do anterior: `heavy` CITADO no heredoc não é o comando passando pelo
+# semáforo. Ler o cmd cru no check "já tem heavy" silenciaria o guard e deixaria
+# o pesado real da última linha passar NU — falso negativo pelo mesmo motivo.
+caso_heavy_citado="$(cat <<'CASO'
+tee /tmp/doc.md <<'EOF'
+Prefixe com `heavy bun run test` — é o semáforo de RAM.
+EOF
+bun run test
+CASO
+)"
+heavy_citado_quer="$(cat <<'CASO'
+tee /tmp/doc.md <<'EOF'
+Prefixe com `heavy bun run test` — é o semáforo de RAM.
+EOF
+heavy bun run test
+CASO
+)"
+expect_rewrite_rot 'heavy CITADO no heredoc não silencia o guard' \
+  "$caso_heavy_citado" "$heavy_citado_quer"
+
 echo
 if [ "$fail" -eq 0 ]; then echo "PASS — todos os casos"; else echo "FALHOU"; fi
 exit "$fail"
