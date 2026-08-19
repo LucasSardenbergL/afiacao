@@ -3,6 +3,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { fetchAllPages } from '@/lib/postgrest';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
+import { captureException } from '@/lib/analytics';
 import {
   avaliarCompletude,
   INSUMOS_OBRIGATORIOS_CROSS_SELL,
@@ -179,8 +180,22 @@ export const useCrossSellEngine = () => {
      * Registra a geração VAZIA (ou degradada) — os caminhos que não chamam a RPC de
      * substituição. Fail-open por dentro: nunca derruba a tela.
      */
+    // Uma gravação de head por execução: o `catch` também registra agora.
+    let jaRegistrou = false;
     const registrarVazio = async () => {
-      if (isImpersonating || headVisto === undefined) return;
+      if (isImpersonating) return;
+      if (headVisto === undefined) {
+        // Pular às cegas é correto; pular em SILÊNCIO é o defeito — "nenhum registro novo"
+        // passaria a significar tanto vazio legítimo quanto sensor cego.
+        captureException(new Error('[farmer/head] head ilegível — registro de cross-sell pulado'), {
+          origem: 'farmer/head',
+          motor: 'cross_sell',
+          runId,
+        });
+        return;
+      }
+      if (jaRegistrou) return;
+      jaRegistrou = true;
       const { completude, motivo } = avaliarCompletude(insumos, INSUMOS_OBRIGATORIOS_CROSS_SELL);
       await registrarGeracaoFarmer({
         motor: 'cross_sell',
@@ -445,6 +460,12 @@ export const useCrossSellEngine = () => {
       insumos.clientes_com_profile = {
         ok: true,
         n: customerIds.filter((id) => profileMap.has(id)).length,
+        // `n > 0` aceitava 1 perfil para 101 clientes: o motor pula os outros 100 em silêncio e
+        // o zero resultante sairia `completo`. O universo é a carteira do cálculo.
+        esperado: customerIds.length,
+        // Metade — abaixo disso o cálculo ignorou a MAIORIA da carteira e deixa de ser uma
+        // afirmação sobre ela. Precisão > recall (ver `completude-snapshot`).
+        pisoCobertura: 0.5,
       };
 
       // 6. Build omie_codigo_produto -> product UUID map
@@ -739,6 +760,11 @@ export const useCrossSellEngine = () => {
       }
     } catch (error) {
       console.error('Error calculating recommendations:', error);
+      // O head também se move aqui: falha paginada em scores, catálogo, perfis ou pedidos
+      // LANÇA e caía neste `catch` sem mover nada — deixando vigente um head `completo`
+      // gravado quando a base estava sã, que é o único rótulo capaz de autorizar expiração.
+      // Se a gravação de linhas já moveu o head, o CAS recusa com FG106: desfecho certo.
+      await registrarVazio();
       setErro(
         error instanceof Error
           ? error

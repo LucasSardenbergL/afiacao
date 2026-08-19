@@ -7,7 +7,8 @@ import { useBundleArguments } from '@/hooks/useBundleArguments';
 import { useDiagnosticQuestions } from '@/hooks/useDiagnosticQuestions';
 
 export function useFarmerBundles() {
-  const { customerBundles, rules, loading, calculating, calculateBundles } = useBundleEngine();
+  const { customerBundles, rules, loading, calculating, calculateBundles, erro, desatualizado } =
+    useBundleEngine();
   const { arguments: bundleArgs, generating: argGenerating, generateArgument } = useBundleArguments();
   const diagHook = useDiagnosticQuestions();
   const [expandedCustomer, setExpandedCustomer] = useState<string | null>(null);
@@ -24,6 +25,8 @@ export function useFarmerBundles() {
     rules,
     loading,
     calculating,
+    erro,
+    desatualizado,
     calculateBundles,
     bundleArgs,
     argGenerating,

@@ -21,6 +21,8 @@ const COMPLETO: InsumosSnapshot = {
   carteira_ativa: { ok: true, n: 171 },
   clientes_com_profile: { ok: true, n: 168 },
   regras: { ok: true, n: 450 },
+  // Cestas UTILIZÁVEIS (items mapeados para o catálogo), não pedidos.
+  baskets: { ok: true, n: 479 },
 };
 
 const OBRIGATORIOS = ['scores', 'catalogo', 'vendaveis', 'pedidos', 'carteira_ativa', 'clientes_com_profile'];
@@ -161,5 +163,79 @@ describe('avaliarCompletude', () => {
     expect(r.completude).toBe('degradado');
     expect(r.motivo).toContain('não declarado');
     expect(r.motivo).toContain('regras');
+  });
+  // ─── COBERTURA útil, não `n > 0` ────────────────────────────────────
+  // `n > 0` responde "esse insumo existe?", que não é a pergunta. A pergunta é "o cálculo
+  // alcançou a carteira?". Um farmer com 101 clientes ativos e 1 perfil produz zero por ter
+  // pulado 100 deles (`if (!profile) continue`) — e todos os universos globais seguem fartos.
+  it('cobertura ABAIXO do piso degrada — 1 perfil para 101 clientes ativos não é snapshot íntegro', () => {
+    const r = avaliarCompletude(
+      {
+        ...COMPLETO,
+        carteira_ativa: { ok: true, n: 101 },
+        clientes_com_profile: { ok: true, n: 1, esperado: 101, pisoCobertura: 0.5 },
+      },
+      INSUMOS_OBRIGATORIOS_CROSS_SELL,
+    );
+    expect(r.completude).toBe('degradado');
+    expect(r.motivo).toContain('cobertura insuficiente');
+    expect(r.motivo).toContain('clientes_com_profile');
+  });
+
+  it('cobertura ACIMA do piso segue completa — a regra mede o buraco, não a existência', () => {
+    const r = avaliarCompletude(
+      {
+        ...COMPLETO,
+        carteira_ativa: { ok: true, n: 171 },
+        clientes_com_profile: { ok: true, n: 168, esperado: 171, pisoCobertura: 0.5 },
+      },
+      INSUMOS_OBRIGATORIOS_CROSS_SELL,
+    );
+    expect(r).toEqual({ completude: 'completo', motivo: null });
+  });
+
+  it('esperado ZERO não degrada por cobertura — 0/0 é o universo vazio, que outro insumo já julga', () => {
+    const r = avaliarCompletude(
+      {
+        ...COMPLETO,
+        clientes_com_profile: { ok: true, n: 5, esperado: 0, pisoCobertura: 0.5 },
+      },
+      INSUMOS_OBRIGATORIOS_CROSS_SELL,
+    );
+    expect(r.completude).toBe('completo');
+  });
+
+  it('a falha de LEITURA ainda vence a cobertura — causa raiz primeiro', () => {
+    const r = avaliarCompletude(
+      {
+        ...COMPLETO,
+        scores: { ok: false, n: 0 },
+        clientes_com_profile: { ok: true, n: 1, esperado: 101, pisoCobertura: 0.5 },
+      },
+      INSUMOS_OBRIGATORIOS_CROSS_SELL,
+    );
+    expect(r.motivo).toContain('não consegui ler');
+  });
+
+  // ─── baskets: a cesta UTILIZÁVEL, não o pedido ──────────────────────
+  // `pedidos` conta clientes com pedido. O bundle não consome pedido, consome CESTA: items
+  // vazio, malformado ou com `omie_codigo_produto` sem correspondência no catálogo não vira
+  // basket. Sem este insumo, uma base cujos pedidos não mapeiam deixa `pedidos`,
+  // `carteira_ativa` e `catalogo` fartos, gera zero regra e o head sai `completo`.
+  it('baskets vazio degrada no bundle — pedido sem item mapeável não é cesta', () => {
+    const r = avaliarCompletude(
+      { ...COMPLETO, baskets: { ok: true, n: 0 } },
+      INSUMOS_OBRIGATORIOS_BUNDLE,
+    );
+    expect(r.completude).toBe('degradado');
+    expect(r.motivo).toContain('baskets');
+  });
+
+  it('bundle que NÃO declara baskets degrada por ausência', () => {
+    const semBaskets = { ...COMPLETO };
+    delete semBaskets.baskets;
+    const r = avaliarCompletude(semBaskets, INSUMOS_OBRIGATORIOS_BUNDLE);
+    expect(r.completude).toBe('degradado');
+    expect(r.motivo).toContain('baskets');
   });
 });
