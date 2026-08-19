@@ -51,6 +51,9 @@ Monte com evidência fresca (rode os comandos, não cite de memória):
 
 ## 5. Validações a rodar (a prova da entrega)
 - <heavy bun run test …> · <psql-ro: query> · <prove-sql / paridade / canária se money-path>
+- Tocou `supabase/functions/`? São **QUATRO** comandos, não três: `test:edges` · `edges:typecheck` ·
+  `bun lint` · **`bun run test`** — o vitest lê edge como TEXTO em 20 guardrails de FORMA, então
+  refactor sintático reprova lá com os outros três verdes (#1772). Ver `docs/agent/deploy.md`.
 
 ## 6. Pendências do founder (se houver)
 - 🟣 SQL Editor: <migration pendente> · 💬 chat Lovable: <edge> · 🖱️ Publish

@@ -514,3 +514,74 @@ gate: *o que ele baixa que não tem nada a ver com o que ele afirma?*
 E: **quando o gatilho é o relógio, o oráculo tem prazo de validade.** Um bug que se auto-cura fabrica
 falso-positivo em quem for validar depois — a prova precisou congelar o tempo (`--minimum-dependency-age`)
 em vez de correr contra ele.
+
+---
+
+# Sequela (2026-08-18): a TERCEIRA perna — o **vitest** vigia a FORMA da edge, e nenhum dos três comandos "de edge" a enxerga
+
+**Entrega:** #1772 (sonda de versão nas 5 edges que escrevem money-path no nosso banco, merge `77e46ab9`);
+correção do CI em `f765a71b`.
+
+## O achado
+
+O `validate` ficou **vermelho** com os três comandos de edge **verdes**, cada um com exit 0 capturado:
+
+| comando | resultado |
+|---|---|
+| `bun run test:edges` | exit 0 |
+| `bun run edges:typecheck` | exit 0, baseline 136/0 |
+| `bun lint` | exit 0, zero ocorrências em `supabase/functions` |
+
+Quem reprovou foi a **suíte vitest** (`bun run test`), em `src/__tests__/edge-money-path-invariants.test.ts`.
+
+Este documento já registrava duas pernas — a suíte Deno **roda** (#1437) e ela **não type-checa**, o que
+o `edges:typecheck` fechou (#1462). Falta a terceira, e ela é de outra natureza: **o vitest não roda a
+edge, ele a LÊ.** O guardrail mora em `src/`, dentro do `include` do vitest
+(`src/**/*.{test,spec}.{ts,tsx}` — `supabase/functions/**` continua fora, como sempre esteve), abre o
+arquivo da edge com `readFileSync` e casa **regex contra o texto do código-fonte**.
+
+Consequência que não é óbvia partindo das duas primeiras pernas: **uma mudança PURAMENTE sintática numa
+edge pode reprovar o CI sem nenhuma mudança de semântica.** Extrair um helper, reordenar, renomear —
+nada que `test:edges`, `edges:typecheck` ou `bun lint` tenham como notar.
+
+## O caso concreto
+
+A sonda de versão exigia que o marcador `versao` fosse em **toda** resposta da `omie-cliente`, o que
+levou a centralizar as respostas num helper `jsonRes(body, status)`. O guardrail do `criar_perfil_local`
+casava:
+
+```
+/if \(mappingError\)[\s\S]{0,700}?status:\s*409/g
+```
+
+`{ status: 409, headers }` virou o **2º argumento** de `jsonRes(..., 409)`. O 409 dos dois ramos
+continuou exatamente onde estava — mudou só a grafia, e o `.length` caiu de 2 para 0.
+
+**O guardrail estava CERTO em reagir.** Ele é um teste de forma protegendo semântica fail-loud: o que
+ele impede é um ramo do `mappingError` que **não** responda 409 — isto é, que engula o erro e devolva
+`user_id` como sucesso, fazendo a UI (`useUnifiedOrder.handleStaffAddTool`) anexar a ferramenta ao
+cliente **errado**. A correção acompanhou a forma nova **sem afrouxar o poder discriminante**: o padrão
+aceita as duas grafias, e o `toBe(2)` segue exigindo os DOIS ramos.
+
+## Números (medidos 2026-08-18)
+
+- **20 arquivos** de teste do vitest leem `supabase/functions/` como texto (`readFileSync`).
+- Eles citam **71 diretórios** distintos sob `supabase/functions/` — `_shared` + **70 edges**, de **95**
+  no repo. Não é caso de canto: ~3 em cada 4 edges têm pelo menos um teste de forma apontado para elas.
+- Reproduzir a lista:
+
+```bash
+for f in $(grep -rl supabase/functions src --include='*.test.ts'); do grep -q readFileSync "$f" && echo "$f"; done
+```
+
+## Lição transferível
+
+**"Comando por tecnologia" é um mapa errado do CI.** A pergunta que importa não é *"qual runtime é este
+arquivo?"* mas *"quem lê este arquivo?"* — e um teste em `src/` pode ler uma edge em
+`supabase/functions/`. A lista de validação de edge tem **quatro** entradas, não três: `test:edges` ·
+`edges:typecheck` · `bun lint` · **`bun run test`**.
+
+É a mesma família das duas armadilhas de método já registradas acima e da armadilha do `deno lint` em
+`docs/agent/deploy.md`: **cada ferramenta só enxerga o próprio universo**, e ausência de sinal em três
+delas não é aprovação da quarta. O que fecha o buraco não é lembrar da lista — é rodar a suíte
+autoritativa (`heavy bun run test`, a que o CI roda) sempre que o diff tocar `supabase/functions/`.
