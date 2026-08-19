@@ -140,8 +140,21 @@ function varrerTestes(raiz: string, dir: string, saida: string[]): void {
   }
 }
 
+/**
+ * Raiz do repo. Sob `bun` (o caso do hook) `import.meta.url` é um `file:` e a raiz sai do PRÓPRIO
+ * arquivo — melhor que `cwd`, porque o hook pode ser chamado de qualquer diretório. Sob vitest o
+ * Vite transforma o módulo e a URL NÃO é `file:` (`fileURLToPath` lança "The URL must be of scheme
+ * file"); ali o `cwd` é a raiz do projeto e serve. Medido: o teste de integração deste motor foi
+ * quem pegou — a 1ª versão só tinha o ramo `file:` e a suíte inteira nem coletava.
+ */
+export function raizRepo(): string {
+  const url = import.meta.url;
+  if (url && url.startsWith('file:')) return fileURLToPath(new URL('..', url));
+  return process.cwd();
+}
+
 /** Lê o repo e monta o índice dos guardrails de forma que existem hoje. */
-export function carregarIndice(raiz = fileURLToPath(new URL('..', import.meta.url))): EntradaIndice[] {
+export function carregarIndice(raiz = raizRepo()): EntradaIndice[] {
   const arquivos: string[] = [];
   for (const d of DIRS_TESTE) varrerTestes(raiz, d, arquivos);
 

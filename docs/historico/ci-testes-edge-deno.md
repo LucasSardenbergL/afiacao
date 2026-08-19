@@ -658,19 +658,29 @@ gravou `heavy` no `ci.yml`, quebrando o CI — **menção ≠ execução**, e aq
 defesa é dupla: o matcher só pega `Write|Edit|MultiEdit`, e o hook ainda confere `tool_name` por
 dentro (o mesmo cinto-e-suspensório do `read-contexto-nudge.sh`, "defesa se o matcher mudar").
 
-A própria suíte teve um falso-vermelho instrutivo na 1ª rodada: o caso (d) fazia
+**A raiz do repo tem dois ambientes, não um.** Sob `bun` (o hook) `import.meta.url` é um `file:` e a
+raiz sai do próprio arquivo do motor — melhor que `cwd`, porque o hook pode ser chamado de qualquer
+diretório. Sob vitest o Vite transforma o módulo, a URL **não** é `file:` e `fileURLToPath` lança
+`The URL must be of scheme file`: a 1ª versão só tinha esse ramo e a suíte do motor **nem coletava**.
+Quem pegou foi o teste de integração — e o ramo `file:`, que o vitest não exercita, é coberto pela
+suíte de shell do hook, que roda o `bun` de verdade. Cada perna testada no ambiente em que roda.
+
+A suíte do hook também teve um falso-vermelho instrutivo na 1ª rodada: o caso (d) fazia
 `PATH="$tmp/vazio" bash "$HOOK"`, e o **`bash`** passou a ser procurado no PATH estreitado — `rc=127`
 media o interpretador ausente, não o fail-open do hook. Resolver o interpretador **antes** de
 estreitar o PATH é o que faz o caso medir o que diz medir.
 
 ## Números (medidos 2026-08-18, worktree `claude/gate-guardrails-edge`)
 
-- 676 arquivos de teste varridos; **20** são guardrails de forma de edge.
-- `omie-cliente/index.ts` (o arquivo do #1772): **10** guardrails — 3 por literal próprio
-  (`edge-money-path-invariants`, `erro-object-object-gate`, `segredo-em-log-gate`) + 7 por varredura.
+- 676 arquivos de teste varridos; **20** são guardrails de forma de edge (bate com o `grep` da sequela
+  anterior).
+- `omie-cliente/index.ts` (o arquivo do #1772): **9** guardrails — 3 por literal próprio
+  (`edge-money-path-invariants`, `erro-object-object-gate`, `segredo-em-log-gate`) + 6 por varredura.
   Os 3 literais batem exatamente com o `grep` manual.
 - `_shared/cost-compute.ts`: **9** — 1 literal (`costCompute.parity.test.ts`) + 8 por varredura;
-  também bate com o `grep`.
+  também bate com o `grep`. O mesmo teste muda de coluna conforme o alvo: o `erro-object-object-gate`
+  entra por literal para o `omie-cliente` (está na baseline dele) e por varredura para o
+  `cost-compute` — o alcance mais específico é que vence.
 - Latência do hook: **0,2–0,7 s**, uma vez por (sessão, arquivo).
 
 ## O que ficou de fora — e é decisão, não esquecimento
