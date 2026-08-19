@@ -10,7 +10,11 @@
 // aprovados o fluxo expira oportunidades e grava `sync_reprocess_log`. A única prova de deploy era
 // esperar um pedido ser disparado de verdade.
 
-export { classificarSonda, erroSondaAmbigua, respostaSonda } from "../_shared/sonda-versao.ts";
+export { classificarSonda, erroSondaAmbigua } from "../_shared/sonda-versao.ts";
+import { criarRespostaSonda } from "../_shared/sonda-versao.ts";
+
+/** Resposta da sonda desta edge, com a identidade embutida (ver `criarRespostaSonda`). */
+export const respostaSonda = criarRespostaSonda("disparar-pedidos-aprovados");
 
 /**
  * Marcador de versão servido pela edge. **Atualize a cada mudança relevante de comportamento** —

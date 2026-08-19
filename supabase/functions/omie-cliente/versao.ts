@@ -21,7 +21,11 @@
 // como o founder invoca a sonda pelo SQL Editor. Por isso a sonda tem gate PRÓPRIO
 // (`authorizeCronOrStaff`) e responde antes do dispatch; ver o comentário no `index.ts`.
 
-export { classificarSonda, erroSondaAmbigua, respostaSonda } from "../_shared/sonda-versao.ts";
+export { classificarSonda, erroSondaAmbigua } from "../_shared/sonda-versao.ts";
+import { criarRespostaSonda } from "../_shared/sonda-versao.ts";
+
+/** Resposta da sonda desta edge, com a identidade embutida (ver `criarRespostaSonda`). */
+export const respostaSonda = criarRespostaSonda("omie-cliente");
 
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
 export const VERSAO = "v1.0-sensor-inicial";

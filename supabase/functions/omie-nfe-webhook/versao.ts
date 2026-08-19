@@ -15,7 +15,11 @@
 // JWT) — ele NÃO aceita `x-cron-secret`, que é como o founder invoca a sonda pelo SQL Editor.
 // Daí o gate próprio da sonda no `index.ts`; ver o comentário lá.
 
-export { classificarSonda, erroSondaAmbigua, respostaSonda } from "../_shared/sonda-versao.ts";
+export { classificarSonda, erroSondaAmbigua } from "../_shared/sonda-versao.ts";
+import { criarRespostaSonda } from "../_shared/sonda-versao.ts";
+
+/** Resposta da sonda desta edge, com a identidade embutida (ver `criarRespostaSonda`). */
+export const respostaSonda = criarRespostaSonda("omie-nfe-webhook");
 
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
 export const VERSAO = "v1.0-sensor-inicial";
