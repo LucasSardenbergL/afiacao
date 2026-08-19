@@ -585,3 +585,99 @@ arquivo?"* mas *"quem lê este arquivo?"* — e um teste em `src/` pode ler uma 
 `docs/agent/deploy.md`: **cada ferramenta só enxerga o próprio universo**, e ausência de sinal em três
 delas não é aprovação da quarta. O que fecha o buraco não é lembrar da lista — é rodar a suíte
 autoritativa (`heavy bun run test`, a que o CI roda) sempre que o diff tocar `supabase/functions/`.
+
+---
+
+# Sequela (2026-08-18, mesmo dia): a regra virou GATE — o ambiente responde "quem lê este arquivo?"
+
+A sequela acima registrou a 3ª perna **em texto** (CLAUDE.md, `docs/agent/deploy.md`, este doc, skill
+`handoff-sessao`). Pela meta-regra do `/matar-classe`, isso é meia entrega: **contramedida textual
+reincide; gate estrutural para.** O precedente medido está no `docs-indice-gate-check` — o #1658
+reconciliou o índice à mão e o #1659 o quebrou de novo **no mesmo dia**. Uma frase não sobrevive à
+próxima sessão que não a leu.
+
+## A decisão que definiu o desenho: **não** é gate de CI
+
+O CI já pega — foi ele quem reprovou o #1772. Um gate de CI aqui seria redundante e mais lento. O
+buraco é o **loop de feedback local**: descobrir só depois do push. Então o gate mora no ambiente de
+edição, e **só avisa** (o `permissionDecision` fica de fora; nada é negado).
+
+## Duas peças, espelhando o par que já existe no repo (`*-gate-check.ts` + hook fino)
+
+1. **Motor** — `scripts/edges-guardrails-afetados.ts`. Dado N caminhos sob `supabase/functions/`,
+   devolve os `*.test.ts` que os leem, com o `bunx vitest run` já montado. Rodável à mão. Testado em
+   `scripts/edges-guardrails-afetados.test.ts`, que está dentro do `include` do vitest — ou seja, **o
+   CI passa a vigiar o próprio motor**.
+2. **Hook** — `.claude/hooks/edge-guardrail-nudge.sh` (PreToolUse `Write|Edit|MultiEdit`), registrado
+   em `.claude/settings.json`. Escopo estreito: só `file_path` sob `supabase/functions/`. Fail-open
+   (sem `jq`/`bun` → exit 0), e **um aviso por (sessão, arquivo)** — nudge repetido vira ruído, e
+   gate que vira ruído morre.
+
+## Como o motor resolve: literal entre aspas, prefixo por SEGMENTO
+
+Um teste é guardrail-de-forma quando cita `supabase/functions` **num literal** e lê o disco. Cada
+literal é um *alcance*; ele cobre o arquivo editado quando é ele mesmo ou um diretório ancestral. As
+duas formas reais do repo caem no mesmo teste:
+
+```ts
+const OMIE_CLIENTE = 'supabase/functions/omie-cliente/index.ts';   // cobre 1 arquivo
+const DIRS = ['src', 'supabase/functions', 'scripts'];             // cobre TODA edge
+```
+
+**Só literal ENTRE ASPAS conta** — `// vide supabase/functions/x` é prosa, e citar não é ler. É a
+mesma doutrina de precisão>recall do `edges:typecheck` e do `docs-indice-gate-check`: guardrail que
+monte o caminho dinamicamente escapa do motor, e tudo bem — o CI segue sendo a rede. O que não pode é
+gritar errado, porque gate que grita errado treina a ignorar o vermelho.
+
+**A fronteira é de SEGMENTO, não de string**, e isso não é teoria: `supabase/functions/omie-sync` e
+`supabase/functions/omie-sync-pedidos-compra` existem os dois. Prefixo de string casaria os dois, e o
+falso-positivo seria permanente.
+
+## A auto-referência que o teste pegou antes de a suíte rodar
+
+O arquivo de teste do motor cita edges o tempo todo (fixtures). Se ele também soletrar o nome da API
+de leitura do `node:fs`, o motor **classifica o próprio teste como guardrail** e a lista nasce com um
+falso-positivo fixo. Foi exatamente o que aconteceu: a primeira versão da nota que existia *para
+avisar do risco* soletrou o nome no comentário. O caso `não se auto-inclui` do teste cobre isso.
+
+## Falsificação — as quatro sabotagens do hook
+
+Criar o hook não prova nada; `scripts/test-edge-guardrail-nudge.sh` exige o **resultado certo** em
+cada caso, e cada um mata um modo de falha diferente:
+
+| caso | entrada | esperado | o que mataria sem isso |
+|---|---|---|---|
+| (a) | `Write`/`Edit` de edge (inclusive caminho ABSOLUTO do worktree) | a lista sai | gate mudo = gate inexistente |
+| (b) | arquivo em `src/`, migration | silêncio | ruído em todo arquivo do repo |
+| (c) | `Bash` com heredoc/`grep` citando o path; `Read` do arquivo | silêncio | **a armadilha do #1778** |
+| (d) | `PATH` sem `jq`; `PATH` com `jq` e sem `bun` | exit 0 e silêncio | guard que trava trabalho por bug próprio |
+| (e) | 2ª edição do mesmo arquivo na mesma sessão | silêncio | nudge vira ruído e morre |
+
+O caso (c) é o mais importante: no #1778 o `heavy-guard` casou um padrão **dentro de um heredoc** e
+gravou `heavy` no `ci.yml`, quebrando o CI — **menção ≠ execução**, e aqui **menção ≠ edição**. A
+defesa é dupla: o matcher só pega `Write|Edit|MultiEdit`, e o hook ainda confere `tool_name` por
+dentro (o mesmo cinto-e-suspensório do `read-contexto-nudge.sh`, "defesa se o matcher mudar").
+
+A própria suíte teve um falso-vermelho instrutivo na 1ª rodada: o caso (d) fazia
+`PATH="$tmp/vazio" bash "$HOOK"`, e o **`bash`** passou a ser procurado no PATH estreitado — `rc=127`
+media o interpretador ausente, não o fail-open do hook. Resolver o interpretador **antes** de
+estreitar o PATH é o que faz o caso medir o que diz medir.
+
+## Números (medidos 2026-08-18, worktree `claude/gate-guardrails-edge`)
+
+- 676 arquivos de teste varridos; **20** são guardrails de forma de edge.
+- `omie-cliente/index.ts` (o arquivo do #1772): **10** guardrails — 3 por literal próprio
+  (`edge-money-path-invariants`, `erro-object-object-gate`, `segredo-em-log-gate`) + 7 por varredura.
+  Os 3 literais batem exatamente com o `grep` manual.
+- `_shared/cost-compute.ts`: **9** — 1 literal (`costCompute.parity.test.ts`) + 8 por varredura;
+  também bate com o `grep`.
+- Latência do hook: **0,2–0,7 s**, uma vez por (sessão, arquivo).
+
+## O que ficou de fora — e é decisão, não esquecimento
+
+O hook **avisa**; ele não **nega** no `git commit`/`gh pr create` quando o diff toca
+`supabase/functions/` e a suíte não rodou verde desde a última edição. Negar é mais forte e tem
+precedente (`pr-collision-guard`), mas exige guardar **estado** (hash/timestamp do último verde) —
+peça que nenhum hook do repo tem hoje. Construir o estado antes de saber se o aviso basta é a
+armadilha da *fase N+1 sem sinal da fase N*: entrega-se o aviso, mede-se se a classe reincide, e só
+então se paga o estado.
