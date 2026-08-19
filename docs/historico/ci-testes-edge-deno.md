@@ -658,6 +658,37 @@ gravou `heavy` no `ci.yml`, quebrando o CI — **menção ≠ execução**, e aq
 defesa é dupla: o matcher só pega `Write|Edit|MultiEdit`, e o hook ainda confere `tool_name` por
 dentro (o mesmo cinto-e-suspensório do `read-contexto-nudge.sh`, "defesa se o matcher mudar").
 
+### Sabotar UMA linha não falsifica um comportamento defendido em CAMADAS
+
+A primeira tentativa de falsificação sabotou uma linha por vez, e duas saíram **não-falsificáveis**:
+remover o filtro de path do hook manteve a suíte verde, e remover as guardas de `jq`/`bun` também.
+Não é teste fraco — é defesa em profundidade. "Silêncio para não-edge" é sustentado por **três**
+camadas independentes (o `case` do hook, o `.filter(ehEdge)` do motor e o próprio `alcanceCobre`), e
+o fail-open por **quatro** (guardas de `jq`/`bun`, campos vazios, `tool_name` fora da lista, `ctx`
+vazio). Cada uma sozinha basta, então derrubar uma não muda nada de observável.
+
+A falsificação que **prova o poder discriminante** ataca o comportamento, não a linha: um hook que
+**sempre fala** (JSON no topo) tem de virar vermelho em **todos** os casos de silêncio; um que
+**sempre cala** (`exit 0` no topo), em todos os de fala. Medido: 6/6 e 4/4, e o controle volta verde.
+Rodado em `LC_ALL=C` **e** `pt_BR.UTF-8` — a exigência do #1483.
+
+E os marcadores da suíte são **ASCII em caixa fixa** (`FALA`/`SILENCIO`) por causa desse mesmo #1483:
+a 1ª versão imprimia "silêncio" e o `grep -F silencio` do falsificador não casava, transformando um
+vermelho legítimo em "vermelho no caso errado". Quem falsifica precisa casar o **ramo certo**.
+
+### A falsificação MUTA o worktree — e validação concorrente lê o mesmo disco
+
+O `bun run test:hooks` desta entrega saiu **vermelho no caso (e)** — o mesmo caso que passa quando
+rodado isolado. Causa: ele estava na fila do semáforo `heavy` e foi executar **no instante em que a
+falsificação tinha o hook sabotado em disco** (a sabotagem que remove a marca anti-repetição derruba
+exatamente o (e)). Falso vermelho, e um que aponta para o lugar certo pelo motivo errado.
+
+Lição transferível, e ela cresce com a máquina: **falsificação exige exclusividade do worktree.**
+Com ~24 sessões e um semáforo de RAM, "lancei em background" não quer dizer "já rodou" — quer dizer
+"vai rodar em algum momento que eu não escolho". Antes de sabotar: fila vazia ou nada pendente neste
+worktree; e todo vermelho colhido durante uma janela de sabotagem é suspeito até ser reproduzido com
+a árvore limpa.
+
 **A raiz do repo tem dois ambientes, não um.** Sob `bun` (o hook) `import.meta.url` é um `file:` e a
 raiz sai do próprio arquivo do motor — melhor que `cwd`, porque o hook pode ser chamado de qualquer
 diretório. Sob vitest o Vite transforma o módulo, a URL **não** é `file:` e `fileURLToPath` lança

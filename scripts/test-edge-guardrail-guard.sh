@@ -11,6 +11,10 @@
 #       ≠ execução; lá o heavy-guard casou o padrão DENTRO do heredoc e gravou `heavy` no ci.yml)
 #   (d) sem jq / sem bun no PATH         → exit 0, sem travar e sem falar
 #
+# Os marcadores de resultado são ASCII e em CAIXA FIXA (`FALA`/`SILENCIO`) de propósito: quem
+# falsifica precisa casar o ramo certo do vermelho com `grep -F`, e acento dobra entre locales
+# (#1483). Falsificar em um locale só não prova a asserção.
+#
 # Uso: bash scripts/test-edge-guardrail-nudge.sh   (exit 0 = verde)
 set -u
 
@@ -33,16 +37,16 @@ fail=0
 saida=""
 expect_fala() { # <descrição> <trecho esperado>
   if printf '%s' "$saida" | grep -q "additionalContext" && printf '%s' "$saida" | grep -q -- "$2"; then
-    echo "  ok    fala   | $1"
+    echo "  ok    FALA     | $1"
   else
-    echo "  FAIL  want fala ($2) | $1"; fail=1
+    echo "  FAIL  want FALA ($2) | $1"; fail=1
   fi
 }
 expect_silencio() { # <descrição>
   if [ -z "$(printf '%s' "$saida" | tr -d '[:space:]')" ]; then
-    echo "  ok    silêncio | $1"
+    echo "  ok    SILENCIO | $1"
   else
-    echo "  FAIL  want silêncio, veio: $(printf '%s' "$saida" | head -c 120) | $1"; fail=1
+    echo "  FAIL  want SILENCIO, veio: $(printf '%s' "$saida" | head -c 120) | $1"; fail=1
   fi
 }
 
