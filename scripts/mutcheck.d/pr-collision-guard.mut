@@ -1,0 +1,30 @@
+# Invariantes do guard de COLISÃO por ARQUIVO (.claude/hooks/pr-collision-guard.sh).
+# @src: .claude/hooks/pr-collision-guard.sh
+# @test: scripts/test-pr-collision-guard.sh
+# @test_cmd: bash
+# @compile_cmd: bash -n
+#
+# POR QUE ESTE ARQUIVO: o irmão (pr-duplicata) trouxe falsificação embutida e AINDA tinha furo
+# na periferia. Este aqui não tem falsificação nenhuma — o poder da suíte dele nunca foi MEDIDO.
+# Predizer furo não é achá-lo; isto mede.
+
+# CONTROLE+ : matar a colisão-por-main tem de reprovar o caso-alvo (a). Se sobreviver, o
+# problema é o harness, não a suíte.
+PEGA      | controle+: colisao por main removida | s{^  col_main=.*}{  col_main=""}
+
+# Periferia 1 — sanitização de aspas/heredoc desligada: MENÇÃO passa a valer como EXECUÇÃO.
+PEGA      | sanitizacao heredoc/aspas desligada  | s{^\[ -n "\$scan" \] \|\| scan="\$cmd"}{scan="\$cmd"}
+
+# Periferia 2 — o cache de anti-alarm-fatigue vaza para o `create`. O cabeçalho AFIRMA que o
+# `gh pr create` é o último portão e NUNCA é silenciado. Âncora ASCII-única (a linha do `if`
+# se repete 3x); flag atribuído pelo RESULTADO do s///, nunca incrementado como gate.
+PEGA      | cache de dedupe vaza p/ o `create`   | $arm = 1 if /silenciado por este cache/; if ($arm && !$done) { $done = s{^if \[ "\$modo" = "commit" \]; then}{if true; then}; }
+
+# Periferia 3 — a detecção de `-a` some: a árvore deixa de entrar em `git commit -a`.
+PEGA      | deteccao de `git commit -a` neutralizada | s{&& wt="\$\(git diff --name-only 2>/dev/null\)"}{&& wt=""}
+
+# Periferia 4 — a colisão por PR ABERTO de outra branch morre (fica só o eixo main).
+PEGA      | colisao por PR aberto removida       | s{^    if \[ -n "\$col_prs" \]; then}{    if false; then}
+
+# Periferia 5 — o TEATRO do 3-pontos: no commit, ignorar staged/árvore e olhar só mb..HEAD.
+PEGA      | commit ignora staged (so 3-pontos)   | if (!$done) { $done = s{^if \[ "\$modo" = "commit" \]; then}{if false; then}; }
