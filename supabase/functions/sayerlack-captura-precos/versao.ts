@@ -15,7 +15,11 @@
 // `src/lib/reposicao/__tests__/embalagem-captura-edge-invariants.test.ts` quebra o CI se um token
 // de finalização aparecer no arquivo. Promessa com fiador, não comentário solto.
 
-export { classificarSonda, erroSondaAmbigua, respostaSonda } from "../_shared/sonda-versao.ts";
+export { classificarSonda, erroSondaAmbigua } from "../_shared/sonda-versao.ts";
+import { criarRespostaSonda } from "../_shared/sonda-versao.ts";
+
+/** Resposta da sonda desta edge, com a identidade embutida (ver `criarRespostaSonda`). */
+export const respostaSonda = criarRespostaSonda("sayerlack-captura-precos");
 
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
 export const VERSAO = "v1.0-sensor-inicial";

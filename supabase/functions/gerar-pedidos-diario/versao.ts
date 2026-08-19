@@ -5,7 +5,11 @@
 // O e-mail é externo e não se desfaz; a regeneração mexe no ciclo que o comprador está olhando.
 // Menos grave que submeter pedido ao fornecedor, mas ainda sem caminho de diagnóstico barato.
 
-export { classificarSonda, erroSondaAmbigua, respostaSonda } from "../_shared/sonda-versao.ts";
+export { classificarSonda, erroSondaAmbigua } from "../_shared/sonda-versao.ts";
+import { criarRespostaSonda } from "../_shared/sonda-versao.ts";
+
+/** Resposta da sonda desta edge, com a identidade embutida (ver `criarRespostaSonda`). */
+export const respostaSonda = criarRespostaSonda("gerar-pedidos-diario");
 
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
 export const VERSAO = "v1.0-sensor-inicial";

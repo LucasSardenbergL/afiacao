@@ -15,7 +15,11 @@
 // O gate desta edge é um `authorizeCronOrStaff` INLINE (não o de `_shared/auth.ts`), e ele JÁ
 // aceita `x-cron-secret`: a sonda entra logo APÓS ele, sem gate próprio.
 
-export { classificarSonda, erroSondaAmbigua, respostaSonda } from "../_shared/sonda-versao.ts";
+export { classificarSonda, erroSondaAmbigua } from "../_shared/sonda-versao.ts";
+import { criarRespostaSonda } from "../_shared/sonda-versao.ts";
+
+/** Resposta da sonda desta edge, com a identidade embutida (ver `criarRespostaSonda`). */
+export const respostaSonda = criarRespostaSonda("omie-sync-nfes-recebidas");
 
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
 export const VERSAO = "v1.0-sensor-inicial";
