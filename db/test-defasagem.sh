@@ -14,9 +14,10 @@
 #   D8  account-aware: mesmo código em 2 contas → âncora da conta certa + FALSIFICAÇÃO
 #   D9  role-gate: gestor vê c_*, vendedora só p_req/status + FALSIFICAÇÃO
 #   D10 REVOKE anon (permission denied for function)
-#   D11 employee GERENCIAL vê os absolutos — o único assert que separa a política REAL da
-#       degenerada master-only que este harness stubava (X-D11 regride o gate, exige vermelho)
-#   D12 contraprova: as 2 políticas divergem SÓ no gerencial (X-D12 sabota o seed, exige vermelho)
+#   D11 employee GERENCIAL é BARRADO pelo gate VIVO (private.cap_custo_ler, pós-E2) — o único
+#       assert que o separa do gate anterior (X-D11 regride o gate da RPC, exige vermelho)
+#   D12 contraprova: os 2 gates divergem SÓ no gerencial (X-D12 sabota o seed, exige vermelho)
+#   D13 employee ESTRATÉGICO vê — impede D11 de passar por vacuidade (X-D13 exige vermelho)
 # ⚠️ RLS só p/ não-superuser; psql roda como postgres (bypassa RLS) → A RPC é SECURITY
 # DEFINER com gate INTERNO (has_role(auth.uid())) → asserts da RPC só setam test.uid;
 # o REVOKE (D10) usa SET ROLE anon. Assert negativo: captura SQLSTATE esperada + re-lança.
@@ -84,6 +85,22 @@ RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS
               'estrategico'::public.commercial_role, 'super_admin'::public.commercial_role));
 $f$;
 
+-- private.cap_custo_ler — o gate que a RPC usa EM PRODUÇÃO hoje (medido em pg_get_functiondef:
+-- `v_pode_num := private.cap_custo_ler(auth.uid())`). Corpo fiel: master OR (employee AND
+-- commercial_role IN ('estrategico','super_admin')) — ele EXCLUI o `gerencial`, que
+-- `pode_ver_carteira_completa` INCLUI: a única persona em que os dois gates divergem.
+CREATE SCHEMA IF NOT EXISTS private;
+CREATE OR REPLACE FUNCTION private.cap_custo_ler(_uid uuid)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $f$
+  SELECT COALESCE(_uid IS NOT NULL AND (
+    public.has_role(_uid, 'master'::public.app_role)
+    OR (public.has_role(_uid, 'employee'::public.app_role)
+        AND EXISTS (SELECT 1 FROM public.commercial_roles cr
+                     WHERE cr.user_id = _uid
+                       AND cr.commercial_role IN ('estrategico'::public.commercial_role,
+                           'super_admin'::public.commercial_role)))), false);
+$f$;
+
 -- order_items (colunas que a RPC lê).
 CREATE TABLE IF NOT EXISTS public.order_items (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -123,6 +140,48 @@ P -v ON_ERROR_STOP=1 -q -f "$REPO_ROOT/supabase/migrations/20260627180000_cmc_sn
 echo "→ migration 20260627180100_get_defasagem_cliente.sql…"
 P -v ON_ERROR_STOP=1 -q -f "$REPO_ROOT/supabase/migrations/20260627180100_get_defasagem_cliente.sql" >/dev/null
 
+# ── FU4/E2: a RPC passa a usar private.cap_custo_ler ────────────────────────────────────────
+# Em PRODUÇÃO get_defasagem_cliente NÃO usa mais `pode_ver_carteira_completa`: a migration
+# 20260718190000_authz_capability_matrix_e2.sql reescreve a DEFINIÇÃO VIVA e troca só a
+# atribuição do gate (medido hoje em prod: `v_pode_num := private.cap_custo_ler(auth.uid())`).
+# Aplicar a E2 inteira aqui é inviável (64 policies sobre dezenas de tabelas que este harness leve
+# não tem), então reproduzimos a MESMA transformação com o MESMO guard: se o padrão não casar,
+# ABORTA em vez de deixar o harness provando um gate que não está no ar.
+echo "→ FU4/E2: reescreve o gate de get_defasagem_cliente → private.cap_custo_ler…"
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+DO $reescreve$
+DECLARE
+  v_oid  regprocedure := to_regprocedure('public.get_defasagem_cliente(jsonb,uuid)');
+  v_def  text; v_novo text; v_ocorr int;
+  c_re_antigo constant text := '(public\.)?pode_ver_carteira_completa\s*\(';
+BEGIN
+  IF v_oid IS NULL THEN
+    RAISE EXCEPTION 'E2/harness: public.get_defasagem_cliente(jsonb,uuid) nao existe apos as migrations';
+  END IF;
+  v_def := pg_get_functiondef(v_oid);
+  SELECT count(*) INTO v_ocorr FROM regexp_matches(v_def, c_re_antigo, 'g');
+  IF v_ocorr <> 1 THEN
+    RAISE EXCEPTION 'E2/harness: esperava 1 chamada do gate antigo, encontrei % — corpo divergente do medido', v_ocorr;
+  END IF;
+  v_novo := regexp_replace(
+    v_def,
+    'v_pode_num\s*:=\s*(public\.)?pode_ver_carteira_completa\s*\(\s*auth\.uid\(\)\s*\)',
+    'v_pode_num := private.cap_custo_ler(auth.uid())', 'g');
+  IF v_novo = v_def THEN
+    RAISE EXCEPTION 'E2/harness: padrao do gate nao casou — nao aplicar no-op silencioso';
+  END IF;
+  IF v_novo ~ c_re_antigo THEN
+    RAISE EXCEPTION 'E2/harness: sobrou chamada ao gate antigo apos a troca';
+  END IF;
+  EXECUTE v_novo;
+END $reescreve$;
+SQL
+GATE_VIVO=$(P -tA -c "SELECT substring(pg_get_functiondef('public.get_defasagem_cliente(jsonb,uuid)'::regprocedure) from 'v_pode_num\s*:=[^;]*;');")
+case "$GATE_VIVO" in
+  *"private.cap_custo_ler(auth.uid())"*) echo "  OK gate vivo = private.cap_custo_ler (igual à prod)" ;;
+  *) echo "  FALHOU: gate vivo inesperado após a reescrita: $GATE_VIVO"; exit 1 ;;
+esac
+
 echo "→ seed (roles + grants + âncoras + snapshots + C_now)…"
 P -v ON_ERROR_STOP=1 -q <<'SQL'
 -- a=master(gestor) b=employee(vendedora) c=customer
@@ -132,10 +191,13 @@ INSERT INTO public.user_roles (user_id, role) VALUES
   ('00000000-0000-0000-0000-00000000000c','customer'::public.app_role),
   -- d=employee GERENCIAL: a ÚNICA persona em que a política real e a degenerada (master-only)
   -- discordam. Sem ela no seed, o bloco de authz não prova política — só "master vs resto".
-  ('00000000-0000-0000-0000-00000000000d','employee'::public.app_role)
+  ('00000000-0000-0000-0000-00000000000d','employee'::public.app_role),
+  -- e=employee ESTRATÉGICO: sem ele, "o gerencial não vê" passaria por VACUIDADE (ninguém vê).
+  ('00000000-0000-0000-0000-00000000000e','employee'::public.app_role)
 ON CONFLICT DO NOTHING;
 INSERT INTO public.commercial_roles (user_id, commercial_role) VALUES
-  ('00000000-0000-0000-0000-00000000000d','gerencial'::public.commercial_role);
+  ('00000000-0000-0000-0000-00000000000d','gerencial'::public.commercial_role),
+  ('00000000-0000-0000-0000-00000000000e','estrategico'::public.commercial_role);
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.cmc_snapshot, public.order_items, public.sales_orders, public.inventory_position TO authenticated, service_role;
 
 -- cliente de teste
@@ -436,10 +498,11 @@ BEGIN
   RAISE NOTICE 'OK D9 — gestor vê c_*; vendedora vê só status/p_req (120), absolutos null';
 END $$;
 SQL
-# FALSIFICAÇÃO D9: sabota pode_ver_carteira_completa → true; o c_last DEVE vazar p/ a vendedora.
-echo "  → FALSIFICAÇÃO D9 (sabota pode_ver_carteira_completa → true → exige vazamento):"
+# FALSIFICAÇÃO D9: sabota o gate QUE A RPC USA (private.cap_custo_ler, pós-E2) → true; o c_last
+# DEVE vazar p/ a vendedora. ⚠️ Sabotar `pode_ver_carteira_completa` não morde mais desde a E2.
+echo "  → FALSIFICAÇÃO D9 (sabota private.cap_custo_ler → true → exige vazamento):"
 P -v ON_ERROR_STOP=1 -q <<'SQL'
-CREATE OR REPLACE FUNCTION public.pode_ver_carteira_completa(_uid uuid)
+CREATE OR REPLACE FUNCTION private.cap_custo_ler(_uid uuid)
 RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $f$ SELECT true $f$;
 SQL
 SAB=$(P -tA 2>&1 <<'SQL' || true
@@ -457,24 +520,28 @@ SQL
 echo "$SAB" | grep -q 'SAB_VAZOU' && echo "  OK D9 (falsificação) — gate furado vazou c_last 60 p/ a vendedora → D9 tem dente" || { echo "  D9 FALHOU (falsificação): $SAB"; exit 1; }
 # Restaura o gate correto (corpo FIEL de prod — NÃO o master-only degenerado).
 P -v ON_ERROR_STOP=1 -q <<'SQL'
-CREATE OR REPLACE FUNCTION public.pode_ver_carteira_completa(_uid uuid)
+CREATE OR REPLACE FUNCTION private.cap_custo_ler(_uid uuid)
 RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $f$
-  SELECT public.has_role(_uid, 'master'::public.app_role)
-      OR (public.has_role(_uid, 'employee'::public.app_role)
-          AND public.get_commercial_role(_uid) IN ('gerencial'::public.commercial_role,
-              'estrategico'::public.commercial_role, 'super_admin'::public.commercial_role));
+  SELECT COALESCE(_uid IS NOT NULL AND (
+    public.has_role(_uid, 'master'::public.app_role)
+    OR (public.has_role(_uid, 'employee'::public.app_role)
+        AND EXISTS (SELECT 1 FROM public.commercial_roles cr
+                     WHERE cr.user_id = _uid
+                       AND cr.commercial_role IN ('estrategico'::public.commercial_role,
+                           'super_admin'::public.commercial_role)))), false);
 $f$;
 SQL
 echo "  OK D9 (restauração) — gate fiel à prod de volta"
 
 # ═══════════════════════════════════════════════════════════════════════════════════════
-# D11/D12 — O ASSERT QUE SEPARA AS DUAS POLÍTICAS (molde D7/D8 do #1761)
-# D9 prova que o gate tem DENTE (furá-lo vaza c_last), mas não prova QUAL política ele é:
-# master-only e a política real de prod dão o MESMO veredito para master, employee-sem-
-# commercial_role e customer. O employee GERENCIAL é o único discriminante.
+# D11/D12/D13 — OS ASSERTS QUE SEPARAM AS DUAS POLÍTICAS (molde D7/D8 do #1761)
+# D9 prova que o gate tem DENTE (furá-lo vaza c_last), mas não prova QUAL política ele é.
+# O gate VIVO da RPC é `private.cap_custo_ler` (master + estratégico/super_admin); o ANTERIOR
+# era `pode_ver_carteira_completa` (que INCLUI o gerencial). Master, employee sem
+# commercial_role e customer recebem o MESMO veredito dos dois — o GERENCIAL é o discriminante.
 # ═══════════════════════════════════════════════════════════════════════════════════════
 echo ""
-echo "→ ASSERT D11 — employee GERENCIAL vê os absolutos (política real ≠ master-only):"
+echo "→ ASSERT D11 — employee GERENCIAL é BARRADO (cap_custo_ler exclui; o gate velho liberaria):"
 P -v ON_ERROR_STOP=1 <<'SQL'
 DO $$
 DECLARE r jsonb;
@@ -482,59 +549,82 @@ BEGIN
   SET LOCAL test.uid = '00000000-0000-0000-0000-00000000000d';  -- employee GERENCIAL
   SELECT (public.get_defasagem_cliente('[{"empresa":"oben","codigo":1001,"preco":100}]'::jsonb,
           '11111111-1111-1111-1111-111111111111'::uuid))->0 INTO r;
-  IF r->'c_last' = 'null'::jsonb OR r->'c_now' = 'null'::jsonb OR r->'p_last' = 'null'::jsonb THEN
-    RAISE EXCEPTION 'D11 FALHOU: gerencial NAO viu os absolutos (c_last=% c_now=% p_last=%) — gate regrediu a master-only',
+  IF r->'c_last' <> 'null'::jsonb OR r->'c_now' <> 'null'::jsonb
+     OR r->'p_last' <> 'null'::jsonb OR r->'markup_anterior' <> 'null'::jsonb THEN
+    RAISE EXCEPTION 'D11 FALHOU: gerencial VIU os absolutos (c_last=% c_now=% p_last=%) — o gate voltou ao anterior',
       r->>'c_last', r->>'c_now', r->>'p_last';
   END IF;
-  RAISE NOTICE 'OK D11 — gerencial ve c_last/c_now/p_last (prod libera; master-only barraria)';
+  IF r->>'status_defasagem' <> 'defasado' OR (r->>'p_req')::numeric <> 120 THEN
+    RAISE EXCEPTION 'D11b FALHOU: gerencial perdeu status/p_req (=%/%) — o corte foi longe demais',
+      r->>'status_defasagem', r->>'p_req';
+  END IF;
+  RAISE NOTICE 'OK D11 — gerencial ve status/p_req mas NAO os absolutos (cap_custo_ler barra; gate velho liberaria)';
 END $$;
 SQL
 
-# D12 — CONTRAPROVA (sem ela D11 passa por VACUIDADE: seed errado — 'd' como master, ou sem
-# commercial_role — deixaria D11 verde sem que persona alguma separasse as políticas).
-echo "→ ASSERT D12 — contraprova: as 2 políticas DIVERGEM no gerencial e CONCORDAM no resto:"
+# D13 — sem ele, D11 passaria por VACUIDADE: um gate que barra TODO MUNDO também barra o gerencial.
+echo "→ ASSERT D13 — employee ESTRATÉGICO vê os absolutos (D11 não é 'ninguém vê'):"
 P -v ON_ERROR_STOP=1 <<'SQL'
 DO $$
-DECLARE u uuid; real_ boolean; degen boolean; divergiu int := 0;
+DECLARE r jsonb;
 BEGIN
-  -- ⚠️ Compara o EFEITO (`IS TRUE`), não o boolean cru: o corpo de prod NÃO tem COALESCE, então
-  -- para employee SEM commercial_role devolve NULL (`false OR (true AND NULL)`), não false. Quem
-  -- consome (policy USING / gate da RPC) trata NULL como negado — é o efeito que importa. O stub
-  -- master-only devolvia FALSE: mais uma semântica que a degeneração escondia.
+  SET LOCAL test.uid = '00000000-0000-0000-0000-00000000000e';  -- employee ESTRATÉGICO
+  SELECT (public.get_defasagem_cliente('[{"empresa":"oben","codigo":1001,"preco":100}]'::jsonb,
+          '11111111-1111-1111-1111-111111111111'::uuid))->0 INTO r;
+  IF r->'c_last' = 'null'::jsonb OR r->'c_now' = 'null'::jsonb OR r->'p_last' = 'null'::jsonb THEN
+    RAISE EXCEPTION 'D13 FALHOU: estrategico NAO viu os absolutos — cap_custo_ler degenerou a master-only';
+  END IF;
+  RAISE NOTICE 'OK D13 — estrategico ve c_last/c_now/p_last (cap_custo_ler nao virou master-only)';
+END $$;
+SQL
+
+# D12 — CONTRAPROVA de que os 2 gates divergem EXATAMENTE no gerencial.
+echo "→ ASSERT D12 — contraprova: cap_custo_ler × pode_ver_carteira_completa divergem SÓ no gerencial:"
+P -v ON_ERROR_STOP=1 <<'SQL'
+DO $$
+DECLARE u uuid; custo boolean; carteira boolean; divergiu int := 0;
+BEGIN
+  -- Compara o EFEITO (`IS TRUE`): pode_ver_carteira_completa não tem COALESCE e devolve NULL —
+  -- não false — para employee sem commercial_role; quem consome trata NULL como negado.
   FOREACH u IN ARRAY ARRAY[
     '00000000-0000-0000-0000-00000000000a'::uuid,  -- master
     '00000000-0000-0000-0000-00000000000b'::uuid,  -- employee sem commercial_role (vendedora)
     '00000000-0000-0000-0000-00000000000c'::uuid,  -- customer
-    '00000000-0000-0000-0000-00000000000d'::uuid   -- employee GERENCIAL
+    '00000000-0000-0000-0000-00000000000d'::uuid,  -- employee GERENCIAL
+    '00000000-0000-0000-0000-00000000000e'::uuid   -- employee ESTRATÉGICO
   ] LOOP
-    real_ := public.pode_ver_carteira_completa(u) IS TRUE;
-    degen := public.has_role(u, 'master'::public.app_role) IS TRUE;
+    custo    := private.cap_custo_ler(u) IS TRUE;               -- gate VIVO da RPC
+    carteira := public.pode_ver_carteira_completa(u) IS TRUE;   -- gate ANTERIOR
     IF u = '00000000-0000-0000-0000-00000000000d'::uuid THEN
-      IF real_ IS NOT TRUE OR degen IS NOT FALSE THEN
-        RAISE EXCEPTION 'D12 FALHOU: gerencial nao discrimina (real=% degenerada=%) — seed furado, D11 seria vacuo', real_, degen;
+      IF custo IS NOT FALSE OR carteira IS NOT TRUE THEN
+        RAISE EXCEPTION 'D12 FALHOU: gerencial nao discrimina (custo=% carteira=%) — seed furado, D11 seria vacuo', custo, carteira;
       END IF;
       divergiu := divergiu + 1;
     ELSE
-      IF real_ IS DISTINCT FROM degen THEN
-        RAISE EXCEPTION 'D12b FALHOU: persona % deveria dar o MESMO veredito nas 2 politicas (real=% degenerada=%)', u, real_, degen;
+      IF custo IS DISTINCT FROM carteira THEN
+        RAISE EXCEPTION 'D12b FALHOU: persona % deveria dar o MESMO veredito nos 2 gates (custo=% carteira=%)', u, custo, carteira;
       END IF;
     END IF;
   END LOOP;
   IF divergiu <> 1 THEN
-    RAISE EXCEPTION 'D12c FALHOU: nenhuma persona separou as politicas — o bloco de authz nao prova politica';
+    RAISE EXCEPTION 'D12c FALHOU: nenhuma persona separou os 2 gates — o bloco de authz nao prova politica';
   END IF;
-  RAISE NOTICE 'OK D12 — gerencial e o UNICO discriminante (real=true, degenerada=false); demais concordam';
+  RAISE NOTICE 'OK D12 — gerencial e o UNICO discriminante (custo=false, carteira=true); demais concordam';
 END $$;
 SQL
 
-# FALSIFICAÇÃO X-D11: regride o gate à política VELHA/degenerada (master-only). D11 TEM de ficar
-# vermelho — se sobreviver, D11 não guarda a política.
-echo "  → FALSIFICAÇÃO X-D11 (gate regride a master-only → exige D11 vermelho):"
+# FALSIFICAÇÃO X-D11: devolve o gate da RPC ao ANTERIOR — a regressão de autorização real.
+echo "  → FALSIFICAÇÃO X-D11 (gate da RPC regride ao pode_ver_carteira_completa → exige D11 vermelho):"
 P -v ON_ERROR_STOP=1 -q <<'SQL'
-CREATE OR REPLACE FUNCTION public.pode_ver_carteira_completa(_uid uuid)
-RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $f$
-  SELECT public.has_role(_uid, 'master'::public.app_role);
-$f$;
+DO $regride$
+DECLARE v_def text; v_novo text;
+BEGIN
+  v_def := pg_get_functiondef('public.get_defasagem_cliente(jsonb,uuid)'::regprocedure);
+  v_novo := regexp_replace(v_def, 'v_pode_num\s*:=\s*private\.cap_custo_ler\s*\(\s*auth\.uid\(\)\s*\)',
+                           'v_pode_num := public.pode_ver_carteira_completa(auth.uid())', 'g');
+  IF v_novo = v_def THEN RAISE EXCEPTION 'X-D11: nao consegui regredir o gate (padrao nao casou)'; END IF;
+  EXECUTE v_novo;
+END $regride$;
 SQL
 SAB11=$(P -tA 2>&1 <<'SQL' || true
 DO $$
@@ -543,40 +633,81 @@ BEGIN
   SET LOCAL test.uid = '00000000-0000-0000-0000-00000000000d';
   SELECT (public.get_defasagem_cliente('[{"empresa":"oben","codigo":1001,"preco":100}]'::jsonb,
           '11111111-1111-1111-1111-111111111111'::uuid))->0 INTO r;
-  IF r->'c_last' = 'null'::jsonb THEN RAISE NOTICE 'D11_FICOU_VERMELHO';
-  ELSE RAISE NOTICE 'D11_SOBREVIVEU c_last=%', r->>'c_last'; END IF;
+  IF r->'c_last' <> 'null'::jsonb THEN RAISE NOTICE 'D11_FICOU_VERMELHO c_last=%', r->>'c_last';
+  ELSE RAISE NOTICE 'D11_SOBREVIVEU'; END IF;
 END $$;
 SQL
 )
 if echo "$SAB11" | grep -q 'D11_FICOU_VERMELHO'; then
-  echo "  OK D11 (falsificação X-D11) — master-only barra o gerencial → D11 REALMENTE separa as 2 políticas"
+  echo "  OK D11 (falsificação X-D11) — gate velho de volta ⇒ o gerencial VÊ os absolutos → D11 separa as 2 políticas"
 else
-  echo "  D11 FALHOU (falsificação X-D11): master-only não mudou o veredito do gerencial — D11 é teatro. saída: $SAB11"
+  echo "  D11 FALHOU (falsificação X-D11): o gate velho não mudou o veredito do gerencial — D11 é teatro. saída: $SAB11"
   exit 1
 fi
 P -v ON_ERROR_STOP=1 -q <<'SQL'
-CREATE OR REPLACE FUNCTION public.pode_ver_carteira_completa(_uid uuid)
+DO $volta$
+DECLARE v_def text; v_novo text;
+BEGIN
+  v_def := pg_get_functiondef('public.get_defasagem_cliente(jsonb,uuid)'::regprocedure);
+  v_novo := regexp_replace(v_def, 'v_pode_num\s*:=\s*(public\.)?pode_ver_carteira_completa\s*\(\s*auth\.uid\(\)\s*\)',
+                           'v_pode_num := private.cap_custo_ler(auth.uid())', 'g');
+  IF v_novo = v_def THEN RAISE EXCEPTION 'X-D11: nao consegui restaurar o gate vivo'; END IF;
+  EXECUTE v_novo;
+END $volta$;
+SQL
+echo "  OK X-D11 (restauração) — gate vivo (cap_custo_ler) de volta"
+
+# FALSIFICAÇÃO X-D13: degenera cap_custo_ler a master-only → D13 vermelho.
+echo "  → FALSIFICAÇÃO X-D13 (cap_custo_ler := master-only → exige D13 vermelho):"
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+CREATE OR REPLACE FUNCTION private.cap_custo_ler(_uid uuid)
 RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $f$
-  SELECT public.has_role(_uid, 'master'::public.app_role)
-      OR (public.has_role(_uid, 'employee'::public.app_role)
-          AND public.get_commercial_role(_uid) IN ('gerencial'::public.commercial_role,
-              'estrategico'::public.commercial_role, 'super_admin'::public.commercial_role));
+  SELECT COALESCE(public.has_role(_uid, 'master'::public.app_role), false);
 $f$;
 SQL
-echo "  OK X-D11 (restauração) — gate fiel de volta"
+SAB13=$(P -tA 2>&1 <<'SQL' || true
+DO $$
+DECLARE r jsonb;
+BEGIN
+  SET LOCAL test.uid = '00000000-0000-0000-0000-00000000000e';
+  SELECT (public.get_defasagem_cliente('[{"empresa":"oben","codigo":1001,"preco":100}]'::jsonb,
+          '11111111-1111-1111-1111-111111111111'::uuid))->0 INTO r;
+  IF r->'c_last' = 'null'::jsonb THEN RAISE NOTICE 'D13_FICOU_VERMELHO';
+  ELSE RAISE NOTICE 'D13_SOBREVIVEU c_last=%', r->>'c_last'; END IF;
+END $$;
+SQL
+)
+if echo "$SAB13" | grep -q 'D13_FICOU_VERMELHO'; then
+  echo "  OK D13 (falsificação X-D13) — master-only barra o estratégico → D13 guarda contra a vacuidade de D11"
+else
+  echo "  D13 FALHOU (falsificação X-D13): master-only não mudou o veredito do estratégico. saída: $SAB13"
+  exit 1
+fi
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+CREATE OR REPLACE FUNCTION private.cap_custo_ler(_uid uuid)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $f$
+  SELECT COALESCE(_uid IS NOT NULL AND (
+    public.has_role(_uid, 'master'::public.app_role)
+    OR (public.has_role(_uid, 'employee'::public.app_role)
+        AND EXISTS (SELECT 1 FROM public.commercial_roles cr
+                     WHERE cr.user_id = _uid
+                       AND cr.commercial_role IN ('estrategico'::public.commercial_role,
+                           'super_admin'::public.commercial_role)))), false);
+$f$;
+SQL
+echo "  OK X-D13 (restauração) — cap_custo_ler fiel de volta"
 
-# FALSIFICAÇÃO X-D12: sabota o SEED (tira o commercial_role do 'd'). D12 TEM de ficar vermelho —
-# é ele que garante que a persona discriminante EXISTE.
+# FALSIFICAÇÃO X-D12: sabota o SEED (tira o commercial_role do 'd') → D12 vermelho.
 echo "  → FALSIFICAÇÃO X-D12 (seed sem o gerencial → exige D12 vermelho):"
 P -v ON_ERROR_STOP=1 -q -c "DELETE FROM public.commercial_roles WHERE user_id='00000000-0000-0000-0000-00000000000d';"
 SAB12=$(P -tA 2>&1 <<'SQL' || true
 DO $$
-DECLARE real_ boolean; degen boolean;
+DECLARE custo boolean; carteira boolean;
 BEGIN
-  real_ := public.pode_ver_carteira_completa('00000000-0000-0000-0000-00000000000d'::uuid) IS TRUE;
-  degen := public.has_role('00000000-0000-0000-0000-00000000000d'::uuid, 'master'::public.app_role) IS TRUE;
-  IF real_ IS NOT TRUE OR degen IS NOT FALSE THEN RAISE NOTICE 'D12_FICOU_VERMELHO';
-  ELSE RAISE NOTICE 'D12_SOBREVIVEU real=% degen=%', real_, degen; END IF;
+  custo    := private.cap_custo_ler('00000000-0000-0000-0000-00000000000d'::uuid) IS TRUE;
+  carteira := public.pode_ver_carteira_completa('00000000-0000-0000-0000-00000000000d'::uuid) IS TRUE;
+  IF custo IS NOT FALSE OR carteira IS NOT TRUE THEN RAISE NOTICE 'D12_FICOU_VERMELHO';
+  ELSE RAISE NOTICE 'D12_SOBREVIVEU custo=% carteira=%', custo, carteira; END IF;
 END $$;
 SQL
 )
@@ -611,4 +742,4 @@ END $$;
 SQL
 
 echo ""
-echo "✅ test-defasagem: todos os asserts passaram (D1..D12 + falsificações D8/D9 + X-D11/X-D12)"
+echo "✅ test-defasagem: todos os asserts passaram (D1..D13 + falsificações D8/D9 + X-D11/X-D12/X-D13)"
