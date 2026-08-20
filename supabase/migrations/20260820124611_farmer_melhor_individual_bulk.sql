@@ -13,11 +13,17 @@
 --       snapshot coerente. Um SELECT unico e um snapshot MVCC unico: a incoerencia de
 --       LEITURA some por construcao, nao por sorte.
 --
--- `run_id` entra no retorno pelo que sobra: o bulk cura a incoerencia de leitura, nao a
--- do DADO (duas geracoes vivas na tabela ao mesmo tempo). Antes isso era indetectavel —
--- o `.select()` do caller nem pedia a coluna. Medido em prod (psql-ro, 20/08/2026):
--- 1.361 pendentes, 671 com `affinity_score`, e UM unico `run_id` — o estado sao, contra
--- o qual o aviso do caller e um canario, nao um alarme esperado.
+-- ⚠️ E preciso ser exato sobre o alcance: uma PAGINA e um snapshot MVCC, a paginacao
+-- inteira NAO e. Com 3.858 clientes sao ~4 requests, e uma substituicao concorrente entre
+-- a pagina 0 e a 1 volta a misturar geracoes. O ganho e real mas e de GRAU — de N
+-- instantes (um por cliente) para K (um por pagina), com K tres ordens de grandeza menor.
+--
+-- E por isso que `run_id` entra no RETURNS: ele faz a mistura RESIDUAL ser DETECTAVEL em
+-- vez de apenas improvavel, e cobre com um sensor so as duas causas — a mistura entre
+-- PAGINAS e a que nem depende da leitura (duas geracoes vivas na tabela ao mesmo tempo).
+-- Antes nenhuma das duas era visivel do caller: o `.select()` nem pedia a coluna. Medido
+-- em prod (psql-ro, 20/08/2026): 1.361 pendentes, 671 com `affinity_score`, e UM unico
+-- `run_id` — o estado sao, contra o qual o aviso do caller e um canario, nao um alarme.
 --
 -- ⚠️ O DESEMPATE E LITERAL, NAO "equivalente". Ele foi conquistado num challenge anterior
 -- e cada peca responde por um modo de falha:

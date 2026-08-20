@@ -803,12 +803,20 @@ export const useBundleEngine = () => {
           'farmer_melhor_individual_por_cliente/bundle',
         );
         for (const linha of linhas) melhorIndividual.set(linha.customer_user_id, linha);
-        // O bulk cura a incoerência da LEITURA, não a do DADO: duas gerações vivas ao mesmo
-        // tempo na tabela continuam possíveis, e antes eram indetectáveis daqui (o `.select()`
-        // nem pedia a coluna). Canário, não alarme — medido em prod (psql-ro, 20/08/2026):
-        // 1.361 pendentes, 671 com score, UM único `run_id`. Só avisa; não degrada nem
-        // fail-closed, porque quem responde pela unicidade da geração é a RPC de substituição
-        // do cross-sell, e mover a decisão para cá poria o gate longe da causa.
+        // ⚠️ SEJAMOS PRECISOS sobre o que o bulk resolve. Uma PÁGINA é um snapshot MVCC, a
+        // paginação inteira NÃO é: com 3.858 clientes são ~4 requests, e uma substituição
+        // concorrente entre a página 0 e a 1 volta a misturar gerações. O ganho é real mas é
+        // de GRAU — de N instantes (um por cliente) para K instantes (um por página), com K
+        // três ordens de grandeza menor. É por isso que `run_id` entrou no RETURNS: ele é o
+        // que faz a mistura residual ser DETECTÁVEL em vez de apenas improvável, e cobre as
+        // duas causas com um sensor só — a mistura entre PÁGINAS e a que nem depende da
+        // leitura (duas gerações vivas na tabela ao mesmo tempo). Antes, nenhuma das duas
+        // era visível daqui: o `.select()` nem pedia a coluna.
+        //
+        // Canário, não alarme — medido em prod (psql-ro, 20/08/2026): 1.361 pendentes, 671
+        // com score, UM único `run_id`. Só avisa; não degrada nem fecha, porque quem responde
+        // pela unicidade da geração é a RPC de substituição do cross-sell, e mover a decisão
+        // para cá poria o gate longe da causa.
         geracoesMisturadas = new Set(linhas.map((l) => l.run_id ?? 'sem-run')).size;
       } catch (erroIndividual) {
         console.error('Falha ao ler o melhor individual da carteira:', erroIndividual);
