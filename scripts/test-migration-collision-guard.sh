@@ -25,7 +25,23 @@ run() { # <file_path> <content>  → stdout do hook
   enc="$(printf '%s' "$c" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')"
   printf '{"tool_name":"Write","tool_input":{"file_path":"%s","content":%s}}' "$fp" "$enc" | bash "$HOOK" 2>/dev/null
 }
-is_deny() { grep -q '"permissionDecision"[[:space:]]*:[[:space:]]*"deny"'; }
+# Casa o CONTRATO, não o texto: o host só BLOQUEIA de fato se vier permissionDecision "deny"
+# sob hookEventName PreToolUse — e o MOTIVO é o que manda o founder coordenar (deny opaco é
+# deny que ele não sabe resolver). Grepar o JSON cru deixava as duas coisas passarem.
+# (mutation-check 2026-08-20; ambas sobreviviam)
+# O hook lê `.tool_input.content // .tool_input.new_string`: o segundo é o caminho do Edit.
+# Só com Write, perder o `new_string` do jq passava — e Edit em migration deixava de ser
+# checado em SILÊNCIO (fail-open). (mutation-check 2026-08-20)
+run_edit() { # <file_path> <new_string> → stdout do hook
+  local fp="$1" c="$2" enc
+  enc="$(printf '%s' "$c" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')"
+  printf '{"tool_name":"Edit","tool_input":{"file_path":"%s","new_string":%s}}' "$fp" "$enc" \
+    | bash "$HOOK" 2>/dev/null
+}
+is_deny() { jq -e '.hookSpecificOutput.hookEventName == "PreToolUse"
+  and .hookSpecificOutput.permissionDecision == "deny"
+  and ((.hookSpecificOutput.permissionDecisionReason // "") | test("wt:preflight"))' \
+  >/dev/null 2>&1; }
 
 fail=0
 expect_deny() { if run "$1" "$2" | is_deny; then echo "  ok    deny  | $3"; else echo "  FAIL  want deny  | $3"; fail=1; fi; }
@@ -46,6 +62,17 @@ WT_PREFLIGHT_COMMITTED="20260101000000_a.sql" expect_allow "$mine" \
 WT_PREFLIGHT_COMMITTED="" expect_allow "$tmp/mine/src/foo.ts" \
   'CREATE OR REPLACE FUNCTION public.foo(x integer) RETURNS int AS $$ $$ LANGUAGE sql;' \
   "arquivo fora de supabase/migrations → no-op"
+
+echo "── o caminho do Edit (new_string) também é checado ──"
+expect_deny_edit() { if run_edit "$1" "$2" | is_deny; then echo "  ok    deny  | $3"; else echo "  FAIL  want deny  | $3"; fail=1; fi; }
+WT_PREFLIGHT_COMMITTED="" expect_deny_edit "$mine" \
+  'CREATE OR REPLACE FUNCTION public.foo(x integer) RETURNS int AS $$ select 1 $$ LANGUAGE sql;' \
+  "Edit em migration colidente também é bloqueado"
+
+echo "── caminho RELATIVO conta (o 2o padrão do filtro existe para isto) ──"
+WT_PREFLIGHT_COMMITTED="" expect_deny "supabase/migrations/20260202000000_mine.sql" \
+  'CREATE OR REPLACE FUNCTION public.foo(x integer) RETURNS int AS $$ select 1 $$ LANGUAGE sql;' \
+  "file_path relativo não escapa do filtro"
 
 echo
 if [ "$fail" -eq 0 ]; then echo "PASS — migration-collision-guard"; else echo "FALHOU"; fi

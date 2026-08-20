@@ -1,0 +1,31 @@
+# Invariantes do heavy-guard (.claude/hooks/heavy-guard.sh) — semáforo de RAM da M2 8GB.
+# @src: .claude/hooks/heavy-guard.sh
+# @test: scripts/test-heavy-guard.sh
+# @test_cmd: bash
+# @compile_cmd: bash -n
+#
+# Guard que REESCREVE o comando do usuário: o modo de falha caro não é só deixar de agir, é
+# agir no lugar ERRADO (o #1778 reescreveu DENTRO de um heredoc e o `heavy` foi parar no ci.yml).
+
+# CONTROLE+ : nada é pesado ⇒ nunca reescreve nem nega.
+PEGA      | controle+: nada e considerado pesado  | s{printf '%s' "\$scan" \| grep -qE "\$heavy_re" \|\| exit 0}{exit 0}
+
+# Já prefixado com `heavy` é no-op (senão duplica o prefixo a cada passagem).
+PEGA      | ja-tem-heavy deixa de ser detectado   | s{printf '%s' "\$scan" \| grep -qE "\$re_ja_heavy" && exit 0}{:}
+
+# --- medidas na 1a rodada: heredoc e sanitizacao JA eram load-bearing; allowlist saiu
+#     INVALIDA (ancora errada, ausencia de dado) e as duas do DENY sobreviveram porque a
+#     suite nao tinha NENHUMA assercao sobre negar. Todas fechadas. ---
+# A proteção de heredoc/aspas na REESCRITA — exatamente o bug do #1778.
+PEGA      | reescrita perde a protecao de heredoc | s{\Q<<-?\s*(?<q>[\x27\x22]?)(?<tag>\w+)\k<q>[\s\S]*?^\k<tag>[ \t]*$|\E}{}
+# A sanitização da DETECÇÃO (menção ≠ execução) no caminho com perl.
+PEGA      | deteccao perde a sanitizacao          | s{^  scan="\$\(printf '%s' "\$cmd" \| perl -0777.*}{  scan="\$cmd"}
+# A allowlist de comandos inofensivos (echo/cat/git/...) some — mira o CORPO do case, que e
+# unico. Sem ancora de fim de linha: neste formato \$ vale CIFRAO LITERAL (e o que faz \$var
+# do shell casar), entao um \$ no fim NAO ancora — procura um cifrao que a linha nao tem, e a
+# mutacao sai INVALIDA. Ancora quer $ pelado; variavel do shell quer \$.
+PEGA      | allowlist de comandos leves some      | s{^    exit 0 ;;}{    : ;;}
+# A validação final: só vira `allow` se a reescrita REALMENTE mudou e ficou com heavy.
+PEGA      | reescrita invalida vira allow         | s{^if \[ "\$rewritten" != "\$cmd" \] && printf '%s' "\$rewritten" \| grep -qE "\$re_ja_heavy"; then}{if true; then}
+# O contrato do deny (caminho com jq).
+PEGA      | deny vira allow no caminho com jq     | s{permissionDecision:"deny",permissionDecisionReason:\$r}{permissionDecision:"allow",permissionDecisionReason:\$r}

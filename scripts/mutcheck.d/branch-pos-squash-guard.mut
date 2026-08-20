@@ -1,0 +1,33 @@
+# Invariantes do guard de BRANCH PÓS-SQUASH (.claude/hooks/branch-pos-squash-guard.sh).
+# @src: .claude/hooks/branch-pos-squash-guard.sh
+# @test: scripts/test-branch-pos-squash-guard.sh
+# @test_cmd: bash
+# @compile_cmd: bash -n
+
+# CONTROLE+ : nunca avisar tem de reprovar o caso-alvo.
+PEGA      | controle+: guard nunca avisa          | s{^\[ "\$verdict" = "merged" \] \|\| exit 0}{exit 0}
+
+# main/master é exceção de DESENHO (lá o commit é legítimo).
+PEGA      | main/master deixa de ser excecao      | s{case "\$branch" in main\|master\) exit 0 ;; esac}{:}
+
+# Sem commits locais fora da main não há nada a avisar (o squash já bastou).
+PEGA      | commits locais deixam de ser exigidos | s{^\[ "\$n" -gt 0 \] 2>/dev/null \|\| exit 0}{:}
+
+# `gh` fora do ar é fail-open: não avisa e NÃO cacheia (chutar aqui vira alarme falso eterno).
+PEGA      | gh fora do ar passa a CHUTAR merged   | s{\[ -n "\$merged_n" \] \|\| exit 0}{[ -n "\$merged_n" ] || merged_n=1}
+
+# Menção ≠ execução (mesma família dos guards irmãos).
+PEGA      | sanitizacao heredoc/aspas desligada   | s{^\[ -n "\$scan" \] \|\| scan="\$cmd"}{scan="\$cmd"}
+
+# --- eram lacunas; medidas na 1a rodada (2 sobreviventes + 1 inválida) e fechadas ---
+# A do `--state` exigiu tornar o STUB de gh sensível ao argumento: enquanto ele aceitava
+# qualquer coisa, a mutação era invisível — "invisível ao dublê" lia-se como "coberto".
+PEGA      | consulta PR aberto em vez de merged   | s{--head "\$branch" --state merged}{--head "\$branch" --state open}
+# Quem IMPÕE o TTL é a comparação interna, não o `[ "$ttl" -gt 0 ]` externo — mirei o externo na
+# 1a rodada e a mutação sobreviveu por estar mal-apontada, não por falta de teste.
+PEGA      | TTL nunca expira (silencio eterno)    | s{\[ "\$\(\( now - mtime \)\)" -lt "\$ttl" \] && verdict=}{verdict=}
+# TRIADO E NÃO TESTADO (teatro reverso): remover o `[ "$ttl" -gt 0 ]` externo é INOBSERVÁVEL —
+# com ttl=0 a comparação interna (`-lt 0`) já é falsa para qualquer idade, e com ttl não-numérico
+# o teste interno também falha. É redundância defensiva, não invariante.
+PEGA      | evento do JSON deixa de ser PreToolUse | s{hookEventName:"PreToolUse"}{hookEventName:"PostToolUse"}
+PEGA      | additionalContext muda de chave       | s{additionalContext:}{additional_context:}
