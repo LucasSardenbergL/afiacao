@@ -42,6 +42,14 @@
 --    virariam `ENCERRE`, encerrando a linha do BUNDLE com dado que é todo do cross-sell.
 --    Por isso a query devolve UMA LINHA POR MOTOR, e o esqueleto de motores é fixo: motor sem
 --    execução tem de aparecer com zero, nunca sumir da saída (ausente ≠ zero, de novo).
+--
+-- 5. **`AGUARDE` sem prazo é indistinguível de espera infinita.** O veredito exige 20 julgáveis,
+--    e nada garante que 20 cheguem: medido em 20/08, 3 farmers TÊM carteira, 1 só executou
+--    alguma vez, e as ultimas 24h tiveram ZERO execucoes — as 10 de 19/08 sairam todas num
+--    intervalo de 1h04 (sessao de teste, nao rotina). Esperar nao produz denominador quando a
+--    superficie nao esta em uso; a fase N+1 aqui e INSTALAR O USO, nao aguardar o sinal.
+--    Por isso `taxa_7d` e `farmers_com_carteira` saem na propria linha: um denominador que nao
+--    cresce e um fato observavel, e o veredito ESTAGNADO o nomeia em vez de repetir "aguarde".
 WITH motores AS (
   -- Esqueleto FIXO: o motor que nunca executou precisa APARECER com zero. Um `GROUP BY motor`
   -- sozinho simplesmente não produz linha para ele, e a ausência seria lida como "não há nada
@@ -98,6 +106,12 @@ obs AS (
                        AND m.completude = 'completo'
                        AND NOT (m.insumos ? 'carteira_com_historico_utilizavel')) AS vazios_pre_cobertura,
     count(DISTINCT m.farmer_id)                                       AS farmers,
+    -- Taxa OBSERVAVEL: sem ela, "3/20" nao distingue "crescendo devagar" de "parado".
+    count(*) FILTER (WHERE m.calculado_em > now() - interval '7 days')  AS exec_7d,
+    -- Denominador de USUARIOS (global, nao por motor): farmer que tem carteira mas nunca
+    -- executou nao aparece em `farmers`, e some — a mesma cobertura-vs-universo do insumo
+    -- carteira_com_historico_utilizavel, agora aplicada a ADOCAO da propria tela.
+    (SELECT count(DISTINCT farmer_id) FROM public.farmer_client_scores) AS farmers_com_carteira,
     min(m.calculado_em)::date                                         AS desde,
     max(m.calculado_em)                                               AS ultima
   FROM corte c
@@ -109,7 +123,7 @@ obs AS (
 )
 SELECT
   motor, execucoes_totais, julgaveis, vazios_completos, vazios_pre_cobertura,
-  descartadas_cap, farmers, desde, ultima,
+  descartadas_cap, farmers, farmers_com_carteira, exec_7d, desde, ultima,
   CASE
     WHEN cap_ativo THEN
       'CONTAMINADO (ATIVO) — a execucao MAIS RECENTE deste motor ainda traz insumo de exatamente '
@@ -134,11 +148,18 @@ SELECT
       'ENCERRE — ' || julgaveis || ' execucoes julgaveis DESTE motor e ZERO vazios: o '
       || 'vazio-de-verdade nao acontece nele. Nao ligue a expiracao; encerre a linha DELE '
       || '(o veredito e por motor: nao decide nada sobre o outro).'
+    WHEN execucoes_totais > 0 AND exec_7d = 0 THEN
+      'ESTAGNADO — ' || julgaveis || '/20 julgaveis e ZERO execucoes nos ultimos 7 dias. O '
+      || 'denominador NAO esta crescendo: aguardar nao produz sinal quando a superficie nao '
+      || 'esta em uso (' || farmers || ' de ' || farmers_com_carteira || ' farmers com carteira '
+      || 'ja executaram alguma vez). A fase seguinte aqui e INSTALAR O USO — nao esperar.'
     ELSE
       'AGUARDE — denominador insuficiente (' || julgaveis || '/20 julgaveis'
       || CASE WHEN descartadas_cap > 0
               THEN '; ' || descartadas_cap || ' execucao(oes) DESCARTADAS por truncamento, '
                    || 'denominador recomecado' ELSE '' END
+      || '; ' || exec_7d || ' execucao(oes) nos ultimos 7 dias, ' || farmers || '/'
+      || farmers_com_carteira || ' farmers com carteira ja executaram'
       || '). NAO interprete como "o vazio nao acontece": e ausencia de dado.'
   END AS veredito
 FROM obs
