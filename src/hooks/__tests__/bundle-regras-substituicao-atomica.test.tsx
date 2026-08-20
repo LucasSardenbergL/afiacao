@@ -87,6 +87,11 @@ vi.mock('@/integrations/supabase/client', () => ({
   supabase: {
     from: (t: string) => chain(t),
     rpc: (nome: string, args: Record<string, unknown>) => {
+      // Leitura ATÔMICA do melhor individual: UMA tupla jsonb (array), não linhas paginadas.
+      // `[]` = li e não há — que é o estado deste cenário. `null` seria FALHA, não vazio.
+      if (nome === 'farmer_melhor_individual_por_cliente') {
+        return Promise.resolve({ data: [], error: null });
+      }
       rpcs.push({ nome, args });
       // O engine passou a perguntar quais SKUs são vendáveis antes de montar bundle. Ela
       // responde SEMPRE, e à parte do `rpcFalha`: o defeito que este arquivo guarda é a

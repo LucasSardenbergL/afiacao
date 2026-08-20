@@ -18983,6 +18983,10 @@ export type Database = {
         }
         Returns: Json
       }
+      farmer_melhor_individual_por_cliente: {
+        Args: { p_farmer_id: string }
+        Returns: Json
+      }
       farmer_recomendacoes_substituir: {
         Args: {
           p_completude?: string

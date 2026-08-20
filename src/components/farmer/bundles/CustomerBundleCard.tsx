@@ -22,7 +22,15 @@ interface CustomerBundleCardProps {
 export const CustomerBundleCard = ({ data, expanded, onToggle, bundleArgs, argGenerating, onGenerateArgument, diagHook }: CustomerBundleCardProps) => {
   // A probabilidade do MELHOR bundle (`pBundle`, em %) substitui o antigo "LIE em R$": sem custo
   // no browser não existe lucro esperado, e somar scores premiava quem tem mais bundles.
-  const melhorProbabilidade = data.bundles[0]?.pBundle ?? 0;
+  //
+  // ⚠️ `?? null`, não `?? 0`. O `?? 0` fazia "não há bundle" virar "0,0% de conversão" — em
+  // verde de sucesso —, que é `Number(null) === 0` na forma de rótulo. Era raro porque o
+  // cliente sem bundle costumava ser OMITIDO da lista; deixou de ser: com a comparação
+  // individual `indisponivel` esses clientes passam a entrar de propósito, e na maior carteira
+  // isso são milhares de cartões anunciando uma taxa de conversão que ninguém calculou.
+  // (Achado 4 do challenge Codex — consequência direta de consertar a omissão.)
+  const melhorProbabilidade = data.bundles[0]?.pBundle ?? null;
+  const comparacaoIndisponivel = data.bestIndividual.status === 'indisponivel';
 
   // grossMarginPct passa SEM `|| 0`: o guard dentro de classifyCustomerProfile só funciona se o
   // null chegar até lá. Coagir aqui tornaria a correção inerte (a armadilha do #1508).
@@ -52,7 +60,17 @@ export const CustomerBundleCard = ({ data, expanded, onToggle, bundleArgs, argGe
             </div>
             <div className="flex items-center gap-2 mt-0.5">
               <span className="text-[10px] text-muted-foreground">{data.bundles.length} bundles</span>
-              <span className="text-[10px] font-semibold text-status-success">{melhorProbabilidade.toFixed(1)}% de conversão</span>
+              {melhorProbabilidade == null ? (
+                <span className="text-[10px] text-muted-foreground">sem bundle</span>
+              ) : (
+                <span className="text-[10px] font-semibold text-status-success">{melhorProbabilidade.toFixed(1)}% de conversão</span>
+              )}
+              {/* O estado indisponível precisa aparecer COLAPSADO: sem isto, o cliente que só
+                  entrou na lista por causa da falha se apresenta como um cartão comum, e o
+                  operador teria de expandir um a um para descobrir que não sabemos nada dele. */}
+              {comparacaoIndisponivel && (
+                <span className="text-[10px] font-semibold text-status-warning">comparação indisponível</span>
+              )}
               <Badge variant="outline" className={`text-[7px] ${profileInfo.color}`}>{profileInfo.label}</Badge>
             </div>
           </div>
@@ -73,12 +91,37 @@ export const CustomerBundleCard = ({ data, expanded, onToggle, bundleArgs, argGe
                 <div className="rounded p-1.5 text-center bg-muted">
                   <Layers className="w-3 h-3 mx-auto mb-0.5 text-status-success" />
                   <p className="text-[9px] text-muted-foreground">Melhor bundle</p>
-                  <p className="text-xs font-bold">{melhorProbabilidade.toFixed(1)}%</p>
+                  <p className="text-xs font-bold">
+                    {melhorProbabilidade == null ? 'Sem bundle' : `${melhorProbabilidade.toFixed(1)}%`}
+                  </p>
                 </div>
                 <div className="rounded p-1.5 text-center bg-muted">
-                  <Zap className="w-3 h-3 mx-auto mb-0.5 text-status-info" />
+                  <Zap className={`w-3 h-3 mx-auto mb-0.5 ${comparacaoIndisponivel ? 'text-status-warning' : 'text-status-info'}`} />
                   <p className="text-[9px] text-muted-foreground">Melhor individual</p>
-                  <p className="text-xs font-bold">{data.bestIndividual?.productName ?? '—'}</p>
+                  {/* TRÊS estados, não dois. O `?? '—'` de antes lia a união colapsada em
+                      `IndividualComparison | null` e dava o MESMO traço para "li e não há" e
+                      para "não consegui ler" — e, junto com o filtro que omitia da lista o
+                      cliente sem bundle, transformava a falha de leitura na afirmação "não há
+                      rota individual para este cliente" (money-path §2 na forma de rótulo).
+                      O traço continua sendo o certo para `nenhum`: ali a leitura ACONTECEU. */}
+                  {data.bestIndividual.status === 'encontrado' ? (
+                    <p className="text-xs font-bold">{data.bestIndividual.value.productName}</p>
+                  ) : data.bestIndividual.status === 'indisponivel' ? (
+                    <p
+                      className="text-[10px] font-bold text-status-warning leading-tight"
+                      title={
+                        data.bestIndividual.motivo === 'leitura_falhou'
+                          ? "A leitura das recomendações individuais falhou nesta execução. Não é 'não existe' — é 'não sei'. Recalcule para tentar de novo."
+                          : 'A recomendação existe, mas o produto dela não está no catálogo ativo — não dá para dizer qual é.'
+                      }
+                    >
+                      Comparação indisponível
+                    </p>
+                  ) : (
+                    <p className="text-xs font-bold" title="Este cliente não tem oferta individual pendente.">
+                      —
+                    </p>
+                  )}
                 </div>
               </div>
             </div>
