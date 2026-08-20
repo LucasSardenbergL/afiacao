@@ -46,10 +46,22 @@ import { montarDetalheAlvo, type AlvoDetalhe } from '@/lib/route/alvo-detalhe';
 import { ordenarFilaGeocode, ordenarFilaGeocodeCep } from '@/lib/route/geocode-fila';
 import { interpretarResolver } from '@/lib/route/cep-resolver';
 import { normalizarCep } from '@/lib/route/cep';
+import { fetchAllPages } from '@/lib/postgrest';
 
 // Teto de prospects por cidade pedido à RPC (a RPC capa em 2000 no SQL).
-// Divinópolis (600) cabe inteira; metrópole mostra os 1000 mais quentes.
+// Divinópolis (673) cabe inteira; metrópole mostra os 1000 mais quentes — e são MUITAS: em
+// 2026-08-20, 80 municípios têm ≥1.000 prospects elegíveis, São Paulo (7107) tem 25.512.
 const PROSPECTS_POR_CIDADE = 1000;
+
+/**
+ * O mínimo do builder do PostgREST que a paginação usa. Existe porque as duas RPCs abaixo
+ * entram por `as never` (tipos ainda não regenerados) e o `as never` apaga `.order`/`.range`
+ * do tipo — mesmo recurso de `financeiroV2Service.ts`.
+ */
+type LeituraOrdenavel<T> = {
+  order: (coluna: string, opts: { ascending: boolean }) => LeituraOrdenavel<T>;
+  range: (de: number, ate: number) => PromiseLike<{ data: T[] | null; error: unknown }>;
+};
 
 // Linha de route_visits enriquecida com o nome do cliente (resolvido via profiles).
 export type TodayVisitRow = Tables<'route_visits'> & { customerName: string };
@@ -813,19 +825,37 @@ export function useRoutePlanner() {
     setLoadingProspects(true);
     rawProspectById.current.clear();
     try {
-      const results = await Promise.all(
+      // PAGINADA: a capa de 1.000 do PostgREST vale para `.rpc()` e é SILENCIOSA (#1782, #1801).
+      // Aqui o empate era EXATO e por isso invisível: o `LIMIT GREATEST(1, LEAST(p_limit, 2000))`
+      // da RPC com `PROSPECTS_POR_CIDADE = 1000` produz no máximo 1.000 linhas — exatamente a
+      // capa. Hoje nada se perde (1.000 pedidos = 1.000 entregues), e é justamente esse empate
+      // que torna a armadilha traiçoeira: o teto do TRANSPORTE e o do PRODUTO são o mesmo número
+      // por coincidência, e o do produto é uma const TS que sobe com um caractere — sem migration,
+      // sem SQL Editor, sem ritual. Subir para 1.500 devolveria 1.000 sem erro e sem sinal, e a
+      // tela de rota mostraria "todos os prospects da cidade" com um terço a menos. Paginando, o
+      // teto passa a ser só o do produto (até os 2.000 do SQL).
+      //
+      // `cnpj` é a PK de `radar_empresas`, logo ordem TOTAL: LIMIT/OFFSET não pula nem repete.
+      // Ordenar por ela não altera QUAIS linhas vêm — o `ORDER BY` de prioridade que escolhe as
+      // 1.000 melhores é INTERNO à função, aplicado antes do LIMIT; o `.order()` daqui só ordena
+      // o resultado, e o consumidor abaixo re-pontua tudo com `enrichWithPriority`.
+      const porCidade = await Promise.all(
         cities.map((city) =>
-          supabase.rpc(
-            'radar_prospects_para_rota' as never,
-            { p_municipio_codigo: city.codigo, p_limit: PROSPECTS_POR_CIDADE } as never,
+          fetchAllPages<ProspectRow>(
+            (de, ate) =>
+              (
+                supabase.rpc(
+                  'radar_prospects_para_rota' as never,
+                  { p_municipio_codigo: city.codigo, p_limit: PROSPECTS_POR_CIDADE } as never,
+                ) as unknown as LeituraOrdenavel<ProspectRow>
+              )
+                .order('cnpj', { ascending: true })
+                .range(de, ate),
+            `radar_prospects_para_rota/${city.codigo}`,
           ),
         ),
       );
-      const rows: ProspectRow[] = [];
-      for (const { data, error } of results) {
-        if (error) throw error;
-        rows.push(...((data ?? []) as unknown as ProspectRow[]));
-      }
+      const rows: ProspectRow[] = porCidade.flat();
       const stops: RouteStop[] = rows.map((row) => {
         const draft = prospectRowToStopDraft(row);
         rawProspectById.current.set(draft.id, row);
@@ -871,13 +901,32 @@ export function useRoutePlanner() {
   const loadCarteiraDaCidade = useCallback(async (cities: CityOption[]) => {
     if (cities.length === 0) { setCarteiraCidadeStops([]); return; }
     try {
+      // PAGINADA, e aqui não era risco futuro: esta RPC não tem LIMIT nenhum no `RETURN QUERY`
+      // (o único `LIMIT 1` do corpo pertence ao `SELECT … INTO` que resolve o nome do município),
+      // então o teto é o DADO. Medido em prod 2026-08-20 via psql-ro, reproduzindo o corpo como
+      // SELECT — `SELECT count(DISTINCT a.user_id)` sobre `addresses` casado por
+      // `norm_cidade(city)` + UF com `radar_empresas`, `JOIN profiles` com
+      // `COALESCE(is_employee,false)=false`, agrupado por município: DIVINÓPOLIS/MG = 1.014.
+      // Acima da capa. Os 14 clientes da cauda sumiam do planejamento de rota em silêncio —
+      // é a assinatura exata do #1765, onde 227 clientes caíram fora do Map e viraram veredito
+      // fabricado. Aqui o efeito é uma carteira que PARECE completa com 14 visitas a menos.
+      //
+      // `user_id` é a chave do `DISTINCT ON (user_id)` da própria RPC, logo é única por linha:
+      // ordem TOTAL. É também o que o dedupe entre cidades usa logo abaixo.
       const perCity = await Promise.all(
         cities.map(async (city) => {
-          const { data, error } = await supabase.rpc('carteira_por_municipio', {
-            p_municipio_codigo: city.codigo,
-          });
-          if (error) throw error;
-          return { cityNome: city.nome, rows: (data ?? []) as unknown as CarteiraRow[] };
+          const rows = await fetchAllPages<CarteiraRow>(
+            (de, ate) =>
+              (
+                supabase.rpc('carteira_por_municipio', {
+                  p_municipio_codigo: city.codigo,
+                }) as unknown as LeituraOrdenavel<CarteiraRow>
+              )
+                .order('user_id', { ascending: true })
+                .range(de, ate),
+            `carteira_por_municipio/${city.codigo}`,
+          );
+          return { cityNome: city.nome, rows };
         }),
       );
       // Dedup por user_id (a primeira cidade que trouxe vence).
@@ -912,6 +961,13 @@ export function useRoutePlanner() {
     } catch (err) {
       console.error('Error loading carteira da cidade:', err);
       setCarteiraCidadeStops([]);
+      // O `catch` já zerava a lista (fail-closed correto), mas fazia isso MUDO — e mudo era
+      // tolerável enquanto a única falha possível era a leitura inteira cair. Com a paginação
+      // surge uma falha PARCIAL (`fetchAllPages` lança se a página 2 falhar depois da 1 ter
+      // vindo), e aí "lista vazia sem aviso" é indistinguível de "esta cidade não tem cliente
+      // na carteira" — o vazio-por-erro vestido de resposta legítima. O toast é o que separa
+      // os dois na tela; o prospects logo acima já avisava assim.
+      toast.error('Erro ao carregar a carteira da cidade');
     }
   }, []);
 
