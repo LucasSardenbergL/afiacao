@@ -46,18 +46,42 @@ PEGA      | encadeado volta a casar como `create` | s{^if \[ -n "\$tem_commit" \
 # o stdout, então esta família inteira sobrevivia antes do caso 16 registrar a saída não-zero.
 PEGA      | sem achados o hook sai 1 (fail-closed) | s{^\[ -n "\$achados" \] \|\| exit 0}{[ -n "\$achados" ] || exit 1}
 
-# ─── LACUNAS CONHECIDAS, AINDA ABERTAS (2ª opinião Codex, 2026-08-19) ───────────────────────
-# Não estão aqui como mutação porque hoje SOBREVIVERIAM: a suíte precisa de caso novo antes.
-# Ficam registradas para não se perderem — lacuna documentada é dívida; lacuna esquecida é furo.
-#   - `origin/main` → `origin/master` na merge-base: o stub aceita qualquer ref.
-#   - remover `"$mb"` dos `git diff`: o stub só olha HEAD/--cached/árvore, então some sem sinal.
-#   - `base_c=""` → `continue`: duas sessões criando o MESMO arquivo novo deixam de ser
-#     detectadas (nenhum positivo usa arquivo ausente da merge-base). É a mais grave das abertas.
-#   - contrato JSON (`hookEventName`/`additionalContext`): `_avisa` casa o texto cru, então
-#     renomear a chave passa — e o host ignoraria o aviso.
-#   - `*.md` na lista de ignorados: o único fixture Markdown é negativo, então ignorar todo doc
-#     passa — e contradiz o cabeçalho do hook, que mediu que filtrar `docs/` dá falso negativo.
-#   - TTL do dedupe reduzido a `[ -f "$marca" ]`: silêncio virava permanente; os testes só
-#     fazem repetição imediata.
-#   - opções globais (`git -C dir commit`, `gh --repo x/y pr create`): só as formas simples
-#     são testadas.
+# Arquivo NOVO em ambas as sessões (o caso de duplicata mais caro): sem base, o fallback
+# `base_c=""` é o que mantém TUDO do diff como candidato. Trocá-lo por `continue` matava só
+# esse caminho — era a lacuna mais grave das que o Codex apontou, fechada pelo caso 7c.
+PEGA      | arquivo ausente da base e IGNORADO    | s{\|\| base_c=""}{|| continue}
+
+
+# Contrato JSON com o host: o aviso só CHEGA se vier em hookSpecificOutput.additionalContext
+# sob hookEventName PreToolUse. Grepar o stdout cru não vê renomeação de chave — fechado ao
+# fazer `_avisa` casar a ESTRUTURA (jq), não o texto.
+PEGA      | evento do JSON deixa de ser PreToolUse | s{hookEventName:"PreToolUse"}{hookEventName:"PostToolUse"}
+PEGA      | additionalContext muda de chave       | s{additionalContext:}{additional_context:}
+
+
+# Opções globais antes do subcomando: o grupo que pula flags é o que faz `git -C dir commit` e
+# `gh --repo x/y pr create` dispararem. Perdê-lo cala o guard em SILÊNCIO. `\Q..\E` cita o
+# regex literal (ele é cheio de metacaracteres) — fechado pelo caso 7d.
+PEGA      | git perde as opcoes globais           | s{\Qgit([[:space:]]+-{1,2}[^[:space:]]+([[:space:]]+[^-][^[:space:]]*)?)*[[:space:]]+commit\E}{git[[:space:]]+commit}
+PEGA      | gh perde as opcoes globais            | s{\Qgh([[:space:]]+-{1,2}[^[:space:]]+([[:space:]]+[^-][^[:space:]]*)?)*[[:space:]]+pr\E}{gh[[:space:]]+pr}
+
+# Doc é superfície de duplicata por MEDIÇÃO (a ocorrência 2 das 3 reais era follow-up de doc):
+# acrescentar *.md aos ignorados contradiz o cabeçalho — fechado pelo caso 7e.
+PEGA      | Markdown passa a ser ignorado         | s{\*\.svg \|}{*.svg | *.md |}
+
+
+# Ref e merge-base: o stub aceitava qualquer argumento, então estas três eram invisíveis.
+# Fechadas tornando o stub sensível a `origin/main` e à presença de `MB` nos diffs.
+PEGA      | merge-base usa a ref errada           | s{^(mb=.*)origin/main}{$1origin/master}
+PEGA      | diff de nomes perde a merge-base      | s{--name-only "\$mb" \$alvo}{--name-only \$alvo}
+PEGA      | diff de conteudo perde a merge-base   | s{git diff "\$mb" \$alvo -- "\$f"}{git diff \$alvo -- "\$f"}
+
+# TTL do dedupe: sem ele o silêncio vira PERMANENTE naquela branch — fechado pelo caso 12b.
+PEGA      | silencio do dedupe nunca expira       | s{^    if \[ -f "\$marca" \] && \[ -z "\$\(find.*}{    if [ -f "\$marca" ]; then}
+
+
+# ─── COBERTURA ───────────────────────────────────────────────────────────────────────────────
+# As 7 lacunas que a 2ª opinião adversária (Codex, 2026-08-19) apontou foram TODAS fechadas —
+# cada uma virou caso + mutação acima, e cada mutação foi medida PEGA. Duas exigiram tornar o
+# stub sensível a ref/merge-base: enquanto ele aceitava qualquer argumento, as mutações eram
+# invisíveis, e "invisível ao stub" lia-se como "coberto".
