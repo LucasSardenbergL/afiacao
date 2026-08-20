@@ -248,3 +248,51 @@ com o dispatch.**
 Para as duas ❌ sobra a via passiva (§1): `omie-sync-estoque` tem cron (`0 9` + `40 9,11,13,15,17,19`),
 então a próxima execução carimba `versao` de graça — dentro da janela de ~6h da §5.
 `omie-sync-nfes-recebidas` **não tem cron**: só o painel do Lovable.
+
+### Edge sem cron próprio: o orquestrador ecoa o corpo da filha (2026-08-20)
+
+`omie-sync-nfes-recebidas` **não tem cron**. Pelo §1 a verificação passiva parecia não se aplicar, e
+sobrava o painel ou uma sonda perigosa — o gate dela aceita `x-cron-secret`, então a sonda passaria e
+rodaria o sync (tabela da seção anterior).
+
+Só que ela **é chamada**: o `omie-cron-diario` (cron 52, `15 */2 * * *`) a invoca por `fetch` interno
+(`{ key: "nfes", name: "omie-sync-nfes-recebidas", body: { empresa, dias } }`). Esse `fetch` não passa
+pelo `net.http_post` e por isso **não gera linha própria** em `net._http_response` — mas o orquestrador
+**ecoa o corpo de cada filha** em `resultados.<chave>.body`. Como o bundle novo carimba `versao` em
+toda resposta (§1), a versão da filha viaja dentro da resposta do pai:
+
+```sql
+SELECT content::jsonb->'resultados'->'nfes'->>'status'          AS http,
+       content::jsonb->'resultados'->'nfes'->'body'->>'versao'  AS versao_filha
+FROM net._http_response
+WHERE created > now() - interval '6 hours' AND content ~ '"nfes"'
+ORDER BY id DESC LIMIT 1;
+-- 200 | v1.0-sensor-inicial   (run das 10:15 UTC) -> no ar, sem disparar nada
+```
+
+**Generalização do §1:** a pergunta não é *"esta edge tem cron?"* — é ***"alguma coisa que produz linha
+em `net._http_response` carrega a resposta dela dentro?"***. Um orquestrador que ecoa filhas estende a
+verificação passiva a **toda** edge que ele chama, inclusive as sem cron e justamente as que seriam
+perigosas de sondar. Vale olhar o orquestrador antes de concluir "só resta o painel".
+
+⚠️ **Atribuir pelo corpo, não pelo horário** — o §2 de novo, e quase mordeu: às 09:40 (horário do cron
+`omie-sync-estoque-intraday-oben`) as duas linhas de `net._http_response` eram
+`{"success":true,"action":"sync_movimentacoes",…}` **sem** `versao`, o que lido de relance dá "o estoque
+está com bundle velho". `sync_movimentacoes` é da `omie-financeiro`. A resposta real do estoque saiu
+**1m42s depois** (o sync leva 47s) e trazia `versao` — o cron só marca o INÍCIO, e a linha aparece no
+fim. Casar cron×resposta por horário é achado falso esperando acontecer; case por **chave exclusiva do
+corpo** (aqui, `total_skus_esperados`/`paginas_omie`).
+
+### Desfecho do lote do #1772 — 5/5 no ar (2026-08-20)
+
+| Edge | Prova | Risco pago |
+| --- | --- | --- |
+| `omie-cliente` | sonda → `{"probe":true,…,"edge":"omie-cliente"}` | zero (dispatch por ação) |
+| `omie-nfe-webhook` | sonda → idem | zero (exige `x-webhook-secret`) |
+| `fin-cashflow-engine` | sonda → idem | zero (`save_snapshot ?? false`) |
+| `omie-sync-estoque` | **passiva** — cron 09:40, `versao` + `total_skus_esperados: 371` | zero |
+| `omie-sync-nfes-recebidas` | **passiva** — eco em `resultados.nfes.body` do orquestrador | zero |
+
+Nenhuma escrita indevida e nenhum sync disparado à toa: as 2 edges perigosas foram provadas **sem**
+serem invocadas. Quando a via passiva existe, ela é estritamente melhor que a sonda — não custa nada
+e não pode errar para o lado caro.
