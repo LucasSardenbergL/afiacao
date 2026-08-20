@@ -22,6 +22,14 @@ const FARMER = 'farmer-1';
 const SKU_BASE = 'sku-base-colacor';
 const SKU_ALVO_COLACOR = 'sku-alvo-colacor';
 const SKU_ALVO_OBEN = 'sku-alvo-oben';
+/**
+ * Candidatos `colacor` que passam todos os gates e NÃO cabem no top-3/top-2. Existem para
+ * reproduzir a assinatura de produção: a disponibilidade favorece `colacor` e a ORDENAÇÃO
+ * entrega `oben`. Sem folga entre candidatos e slots, as duas frações do par seriam iguais
+ * por construção e o teste não provaria nada.
+ */
+const SKUS_EXTRA_COLACOR = ['sku-extra-1', 'sku-extra-2', 'sku-extra-3'];
+const CODIGO_EXTRA: Record<string, number> = { 'sku-extra-1': 5, 'sku-extra-2': 6, 'sku-extra-3': 7 };
 
 /** Compram os dois alvos (um pedido por conta) e dão popularidade a ambos. */
 const CLIENTES_POPULARIDADE = ['cli-2', 'cli-3', 'cli-4', 'cli-5', 'cli-6'];
@@ -45,8 +53,15 @@ function linhasPorTabela(): Record<string, Record<string, unknown>[]> {
     ],
     omie_products: [
       { id: SKU_BASE, codigo: 'B', descricao: 'Base Colacor', valor_unitario: 50, metadata: null, ativo: true, omie_codigo_produto: 1, estoque: 9, account: 'colacor' },
-      { id: SKU_ALVO_COLACOR, codigo: 'AC', descricao: 'Alvo Colacor', valor_unitario: 100, metadata: null, ativo: true, omie_codigo_produto: 2, estoque: 9, account: 'colacor' },
+      // O `oben` ANTES dos `colacor` de propósito: os candidatos empatam em afinidade, então
+      // quem ordena é a posição no `productList` — e é assim que a fixture faz o ranking
+      // preferir a conta alheia mesmo com `colacor` sendo a maioria dos candidatos.
       { id: SKU_ALVO_OBEN, codigo: 'AO', descricao: 'Alvo Oben', valor_unitario: 100, metadata: null, ativo: true, omie_codigo_produto: 3, estoque: 9, account: 'oben' },
+      { id: SKU_ALVO_COLACOR, codigo: 'AC', descricao: 'Alvo Colacor', valor_unitario: 100, metadata: null, ativo: true, omie_codigo_produto: 2, estoque: 9, account: 'colacor' },
+      ...SKUS_EXTRA_COLACOR.map((id) => ({
+        id, codigo: id, descricao: `Extra ${id}`, valor_unitario: 100, metadata: null, ativo: true,
+        omie_codigo_produto: CODIGO_EXTRA[id], estoque: 9, account: 'colacor',
+      })),
       // Só para dar ao alvo um pedido `oben` quando `alvoCompraNasDuas`: barato e já comprado,
       // então não vira candidato e não mexe na contagem de ofertas.
       { id: 'sku-miudo-oben', codigo: 'M', descricao: 'Miudo Oben', valor_unitario: 10, metadata: null, ativo: true, omie_codigo_produto: 4, estoque: 9, account: 'oben' },
@@ -56,7 +71,10 @@ function linhasPorTabela(): Record<string, Record<string, unknown>[]> {
       // Um pedido por CONTA: o SKU `oben` só resolve dentro de um pedido `oben` (#1807), então
       // dar popularidade aos dois exige as duas contas — e é isso que torna os alvos empatados.
       ...CLIENTES_POPULARIDADE.flatMap((cid) => [
-        { customer_user_id: cid, items: [{ omie_codigo_produto: 2, quantity: 1, unit_price: 100 }], total: 100, created_at: '2026-01-01T00:00:00Z', account: 'colacor' },
+        { customer_user_id: cid, items: [
+          { omie_codigo_produto: 2, quantity: 1, unit_price: 100 },
+          ...SKUS_EXTRA_COLACOR.map((id) => ({ omie_codigo_produto: CODIGO_EXTRA[id], quantity: 1, unit_price: 100 })),
+        ], total: 400, created_at: '2026-01-01T00:00:00Z', account: 'colacor' },
         { customer_user_id: cid, items: [{ omie_codigo_produto: 3, quantity: 1, unit_price: 100 }], total: 100, created_at: '2026-01-01T00:00:00Z', account: 'oben' },
       ]),
     ],
@@ -101,7 +119,11 @@ vi.mock('@/integrations/supabase/client', () => ({
             return chain;
           },
           then: (resolve: (v: unknown) => void) => {
-            const todos = [{ product_id: SKU_ALVO_COLACOR }, { product_id: SKU_ALVO_OBEN }];
+            const todos = [
+              { product_id: SKU_ALVO_COLACOR },
+              { product_id: SKU_ALVO_OBEN },
+              ...SKUS_EXTRA_COLACOR.map((id) => ({ product_id: id })),
+            ];
             const c = chain as { _de?: number; _ate?: number };
             resolve({ data: todos.slice(c._de ?? 0, (c._ate ?? todos.length - 1) + 1), error: null });
           },
@@ -195,6 +217,28 @@ describe('useCrossSellEngine — a conta da OFERTA é contada, não filtrada', (
     const sensor = sensorDoHead();
     expect(sensor.n).toBe(sensor.esperado);
     expect(sensor.esperado).toBe(emitidas.length);
+  });
+
+  it('F: `candidatos_conta_do_cliente` é o denominador que separa carteira de RANKING', async () => {
+    // O sensor de emitidas SOZINHO não distingue "a carteira só tinha candidato de fora" de
+    // "havia candidato da conta e o ranking preferiu o de fora" — e as duas leituras pedem
+    // ações opostas (crítica do challenge Codex, aceita). O par distingue.
+    //
+    // Esta fixture reproduz a assinatura de produção: a maioria dos candidatos é `colacor` e o
+    // ranking entrega `oben` nos slots de topo. Logo a fração dos CANDIDATOS na conta do
+    // cliente tem de ser ESTRITAMENTE MAIOR que a das EMITIDAS — se as duas empatassem, o
+    // segundo insumo seria redundante e não valeria o custo.
+    await rodar();
+    const emitidas = sensorDoHead();
+    const insumos = (persistidas[0]?.p_insumos ?? {}) as Record<string, { ok: boolean; n: number; esperado?: number }>;
+    const candidatos = insumos.candidatos_conta_do_cliente;
+
+    expect(candidatos).toBeTruthy();
+    expect(candidatos.ok).toBe(true);
+    // Todo emitido foi antes um candidato: o denominador maior é invariante, não coincidência.
+    expect(candidatos.esperado).toBeGreaterThan(emitidas.esperado as number);
+    expect(candidatos.n / (candidatos.esperado as number))
+      .toBeGreaterThan(emitidas.n / (emitidas.esperado as number));
   });
 
   it('E: o sensor conta a OFERTA emitida, não o candidato considerado', async () => {
