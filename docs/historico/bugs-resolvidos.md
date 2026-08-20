@@ -385,7 +385,7 @@ corrigir o de-para **não** conserta pedido já gerado (grupo/itens são congela
 Foi a causa de o incidente durar 7 dias — o de-para foi corrigido em 24/07 00:24 e o retry das
 00:27 falhou idêntico. Hoje resolve-se cancelando; vale frente própria se reincidir.
 
-## Bug de código chegava rotulado como "vendáveis indisponíveis" — e o resíduo de snapshot que ficou (2026-08-19, PR #1793)
+## Bug de código chegava rotulado como "vendáveis indisponíveis" — e o resíduo de snapshot que ficou (2026-08-19)
 
 Os dois findings [P2] que o challenge Codex (gpt-5.6-sol, xhigh) sobre o sensor de head do Farmer
 deixou para depois do #1782, agora implementáveis contra a main. Um foi corrigido; **o outro virou
