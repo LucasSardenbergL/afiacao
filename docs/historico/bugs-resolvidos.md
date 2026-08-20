@@ -454,3 +454,46 @@ catálogo ativo, num domínio account-aware — mais grave que a inconsistência
 (mexe em identidade de produto/basket e pede testes próprios). E a premissa "nunca produto de prejuízo
 ofertado" é **frouxa por construção**: um SKU lido na 1ª página pode perder a margem antes de o cálculo
 terminar, e nem a RPC agregada fecha isso — só revalidação server-side na transação da persistência.
+
+## A capa de 1.000 do PostgREST na 2ª RPC — `get_carteira_margem_faixa` fabricava faixa `neutro` (#1801)
+
+Irmão do #1782, achado enquanto se conferia se aquele fix já cobria a tarefa. Mesma classe, outro
+motor, **vivo em produção**: `useFarmerScoring` chamava `get_carteira_margem_faixa()` crua. A RPC
+devolve **uma linha por cliente da carteira** e, para quem passa em `cap_carteira_ler` (master ou
+gestor), a carteira é a população INTEIRA — **1.227 linhas medidas em prod** (2026-08-19, psql-ro,
+reproduzindo `private.margem_cliente_agregada()`, já que `claude_ro` não tem EXECUTE na função).
+Contra a capa de 1.000: **227 clientes, 18,5%, caíam fora**.
+
+**O que o truncamento produzia não era erro, era veredito FABRICADO.** O cliente ausente do Map cai
+em `margemFaixa: mf?.faixa ?? 'neutro'` e `g: mf?.g ?? null` — faixa neutra e health score com os
+pesos renormalizados, indistinguível de "margem genuinamente não apurável". O detalhe que fecha o
+diagnóstico: o bloco que lê a RPC já tinha defesa explícita contra erro de transporte **e** contra
+`data: null`, e o comentário lá diz, com todas as letras, que o `?? []` foi removido porque "mudava
+a faixa de TODO cliente para `neutro` em silêncio". **A defesa cobria o vazio TOTAL e era cega ao
+vazio PARCIAL** — o cap entregava exatamente aquele veredito, 227 clientes por vez, pela porta dos
+fundos. Era a **única** das cinco leituras do hook fora do `fetchAllPages`, a mesma assinatura do
+#1782: a varredura que paginou as TABELAS não alcança RPC.
+
+**O fix:** `fetchAllPages` + `.order('customer_user_id')` ANTES do `.range()` (ordem total — uma
+linha por cliente; a função não tem `ORDER BY` próprio e paginar sobre ordem indefinida pula linhas
+entre páginas, reintroduzindo o bug de forma intermitente). O fail-closed foi preservado sem código
+extra: `fetchAllPages` lança nos três desfechos que os dois `throw` cobriam (erro, página perdida,
+`data: null`), e cai no mesmo catch que declara a falha — com o ganho lateral de o erro virar
+`Error` com causa em vez do objeto plano que `instanceof Error` viraria "[object Object]".
+
+**O resíduo durável — `src/__tests__/rpc-set-returning-paginacao-gate.test.ts`.** Duas ocorrências
+da mesma classe em dois dias mostram que corrigir a instância não fecha o buraco. O gate deriva
+"quem é set-returning" do **próprio `types.ts` gerado do schema** (`Returns` ARRAY), então RPC nova
+entra sozinha na vigilância — não há lista para alguém esquecer de atualizar — e reprova a chamada
+crua. As **23 chamadas** que já existiam entram numa BASELINE **enumerada, não aprovada**: o motivo
+honesto de não estarem corrigidas é que `claude_ro` não tem EXECUTE nelas, logo o universo de cada
+uma não foi MEDIDO, e paginar no escuro mudaria reposição/financeiro/pricing sem prova — fabricar
+um "universo pequeno" por linha seria o `Number(null)===0` da apuração. O gate impede a lista de
+crescer **e** obriga a encolher (entrada que sai do código tem de sair da baseline, senão a lista
+apodrece e passa a "aprovar" o que não existe mais).
+
+**Falsificação:** o gate carrega fixtures próprias — acusa a chamada crua, absolve a paginada,
+ignora a escalar, e tolera comentário longo entre `.rpc()` e `.range()`. Essa última nasceu de um
+falso positivo real: a primeira medição acusou o **próprio fix do #1782**, porque o comentário
+entre as duas chamadas estourava a janela. Gate inerte é o pior desfecho — passa verde para sempre
+e ninguém percebe.
