@@ -10,6 +10,7 @@ import {
   type InsumosSnapshot,
 } from '@/lib/farmer/completude-snapshot';
 import { lerHeadVigente, registrarGeracaoFarmer } from '@/lib/farmer/registrar-geracao';
+import { indexarCatalogoAtivo, resolverItemNoCatalogo } from '@/lib/farmer/identidade-item';
 import { toast } from 'sonner';
 
 // ─── Types ───────────────────────────────────────────────────────────
@@ -73,6 +74,8 @@ interface ProductRow {
   ativo: boolean | null;
   omie_codigo_produto: number | string | null;
   estoque: number | null;
+  /** Metade da chave de identidade do SKU (`UNIQUE (omie_codigo_produto, account)`). */
+  account: string | null;
 }
 
 interface SalesOrderItem {
@@ -89,6 +92,8 @@ interface SalesOrderRow {
   items: SalesOrderItem[] | unknown;
   total: number | string | null;
   created_at: string;
+  /** A conta do PEDIDO — o lado do par que qualifica a resolução de cada item. */
+  account: string | null;
 }
 
 interface AssocRuleRow {
@@ -306,7 +311,7 @@ export const useCrossSellEngine = () => {
       const products = await fetchAllPages<ProductRow>((de, ate) =>
         supabase
           .from('omie_products')
-          .select('id, codigo, descricao, valor_unitario, metadata, ativo, omie_codigo_produto, estoque')
+          .select('id, codigo, descricao, valor_unitario, metadata, ativo, omie_codigo_produto, estoque, account')
           .eq('ativo', true)
           .order('id', { ascending: true })
           .range(de, ate) as unknown as PromiseLike<{ data: ProductRow[] | null; error: unknown }>,
@@ -402,7 +407,7 @@ export const useCrossSellEngine = () => {
         (de, ate) =>
           supabase
             .from('sales_orders')
-            .select('customer_user_id, items, total, created_at')
+            .select('customer_user_id, items, total, created_at, account')
             .in('status', ['confirmado', 'faturado', 'entregue'])
             .order('id', { ascending: true })
             .range(de, ate) as unknown as PromiseLike<{ data: SalesOrderRow[] | null; error: unknown }>,
@@ -526,15 +531,18 @@ export const useCrossSellEngine = () => {
         esperado: customerIds.length,
       };
 
-      // 6. Build omie_codigo_produto -> product UUID map
-      const omieToProductId = new Map<number, string>();
-      (products || []).forEach((p) => {
-        if (p.omie_codigo_produto) omieToProductId.set(Number(p.omie_codigo_produto), p.id);
-      });
+      // 6. Índice ACCOUNT-AWARE do catálogo ativo — o par `(omie_codigo_produto, account)`, que é
+      // a chave que `omie_products` declara única. O `Map<number, string>` global que estava
+      // aqui assumia unicidade do código sozinho: onde o schema permite duas linhas, o Map
+      // guardava uma, e o vencedor era a ordem da paginação.
+      // Ver `src/lib/farmer/identidade-item.ts` para a medição e o racional.
+      const indiceCatalogo = indexarCatalogoAtivo(products || []);
 
       // 7. Build per-customer purchase history. Sem `cost`: o custo não chega mais ao browser.
       const customerProducts = new Map<string, Map<string, { qty: number; price: number }>>();
       const allProductPurchases = new Map<string, number>(); // product_id -> total customers who bought
+      let itensResolvidos = 0;
+      let itensContaDivergente = 0;
 
       for (const order of salesOrders || []) {
         const cid = order.customer_user_id;
@@ -543,12 +551,16 @@ export const useCrossSellEngine = () => {
 
         const items: SalesOrderItem[] = Array.isArray(order.items) ? (order.items as SalesOrderItem[]) : [];
         for (const item of items) {
-          // Resolve product_id: use direct product_id or map from omie_codigo_produto
-          let productId = item.product_id;
-          if (!productId && item.omie_codigo_produto) {
-            productId = omieToProductId.get(Number(item.omie_codigo_produto));
+          // Resolução qualificada pela conta DO PEDIDO. `product_id` deixou de entrar direto:
+          // é confrontado com o catálogo ativo e com a conta, como o código sempre foi.
+          const r = resolverItemNoCatalogo(item, order.account, indiceCatalogo);
+          if (!r.ok) {
+            // Contador que torna o guard auditável — ver o insumo `itens_identidade_conforme`.
+            if (r.motivo === 'conta_divergente') itensContaDivergente++;
+            continue;
           }
-          if (!productId) continue;
+          const productId = r.productId;
+          itensResolvidos++;
 
           const existing = cp.get(productId) || { qty: 0, price: 0 };
           existing.qty += Number(item.quantity || item.quantidade || 1);
@@ -564,9 +576,11 @@ export const useCrossSellEngine = () => {
       // COBERTURA de HISTÓRICO, o par de `clientes_com_profile` — e o pré-requisito que o
       // §7.5 do design deixou declarado como limitação. `carteira_ativa` conta cliente com
       // PEDIDO; o insumo do cálculo é item que RESOLVE. O loop acima acabou de descartar em
-      // silêncio (`if (!productId) continue`) todo item cujo `omie_codigo_produto` não bate
-      // num SKU ATIVO — e em prod (18/08/2026) isso é 39,9% dos 47.735 itens, deixando 107
-      // dos 861 clientes com pedido e ZERO histórico utilizável.
+      // silêncio (`if (!r.ok) continue`) todo item cujo `omie_codigo_produto` não bate num SKU
+      // ATIVO — e em prod (18/08/2026) isso é 39,9% dos 47.735 itens, deixando 107 dos 861
+      // clientes com pedido e ZERO histórico utilizável. Medido de novo em 20/08/2026: os
+      // 19.060 descartes são 100% SKU INATIVO da PRÓPRIA conta (zero código órfão, zero
+      // cross-account), então a qualificação por conta não mexeu neste número.
       //
       // Sai de graça: `customerProducts` já foi construído, então isto é um filtro sobre
       // memória, não uma varredura nova — era esse custo suposto que barrou a instrumentação
@@ -585,6 +599,20 @@ export const useCrossSellEngine = () => {
         // limiar (money-path §5); o `n`/`esperado` ficam no head para calibrá-lo quando houver
         // farmers suficientes para que ele signifique algo.
         esperado: customerIds.length,
+      };
+
+      // SENSOR da identidade account-aware (par `(omie_codigo_produto, account)`). `n` são os
+      // itens que resolveram; `esperado` soma a esses SÓ os que saíram por DIVERGÊNCIA DE
+      // CONTA. Item de SKU inativo fica fora do denominador de propósito: são 39,9% em prod
+      // (regime normal, já auditado por `carteira_com_historico_utilizavel`), e diluir a
+      // divergência neles daria um número farto que nunca chamaria atenção.
+      //
+      // Hoje `n === esperado` em produção (0 de 47.798 itens divergem, psql-ro 20/08/2026).
+      // SEM piso: não muda veredicto. `n < esperado` é o gatilho para reabrir o achado.
+      insumos.itens_identidade_conforme = {
+        ok: true,
+        n: itensResolvidos,
+        esperado: itensResolvidos + itensContaDivergente,
       };
 
       const totalCustomers = Math.max(customerIds.length, 1);
