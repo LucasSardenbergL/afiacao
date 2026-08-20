@@ -76,9 +76,32 @@ export const CustomerBundleCard = ({ data, expanded, onToggle, bundleArgs, argGe
                   <p className="text-xs font-bold">{melhorProbabilidade.toFixed(1)}%</p>
                 </div>
                 <div className="rounded p-1.5 text-center bg-muted">
-                  <Zap className="w-3 h-3 mx-auto mb-0.5 text-status-info" />
+                  <Zap
+                    className={`w-3 h-3 mx-auto mb-0.5 ${
+                      data.bestIndividual.status === 'indisponivel' ? 'text-status-warning' : 'text-status-info'
+                    }`}
+                  />
                   <p className="text-[9px] text-muted-foreground">Melhor individual</p>
-                  <p className="text-xs font-bold">{data.bestIndividual?.productName ?? '—'}</p>
+                  {/* TRÊS estados, não dois. O `?? '—'` de antes lia a união colapsada em
+                      `IndividualComparison | null` e dava o MESMO traço para "li e não há" e
+                      para "não consegui ler" — e, junto com o filtro que omitia da lista o
+                      cliente sem bundle, transformava a falha de leitura na afirmação "não há
+                      rota individual para este cliente" (money-path §2 na forma de rótulo).
+                      O traço continua sendo o certo para `nenhum`: ali a leitura ACONTECEU. */}
+                  {data.bestIndividual.status === 'encontrado' ? (
+                    <p className="text-xs font-bold">{data.bestIndividual.value.productName}</p>
+                  ) : data.bestIndividual.status === 'indisponivel' ? (
+                    <p
+                      className="text-[10px] font-bold text-status-warning leading-tight"
+                      title="A leitura das recomendações individuais falhou nesta execução. Não é 'não existe' — é 'não sei'. Recalcule para tentar de novo."
+                    >
+                      Comparação indisponível
+                    </p>
+                  ) : (
+                    <p className="text-xs font-bold" title="Este cliente não tem oferta individual pendente.">
+                      —
+                    </p>
+                  )}
                 </div>
               </div>
             </div>

@@ -64,12 +64,32 @@ export interface IndividualComparison {
   type: 'cross_sell' | 'up_sell';
 }
 
+/**
+ * O resultado da comparação com o melhor produto individual — TRÊS estados, não dois.
+ *
+ * `IndividualComparison | null` colapsava "li e não existe" com "não consegui ler", e o
+ * conjunto UI+filtro transformava o colapso numa AFIRMAÇÃO: a tela renderizava
+ * `bestIndividual?.productName ?? '—'` e, pior, o cliente sem bundle próprio era OMITIDO da
+ * lista inteira (`if (topBundles.length > 0 || bestIndividual)`). O traço não fabricava
+ * número, mas a dupla fabricava o rótulo "não há rota individual para este cliente" — é o
+ * §2 do money-path (ausente ≠ zero) na forma de rótulo, o mesmo defeito que o #1800 tirou
+ * do `error` descartado e que sobrevivia um passo adiante, no tipo.
+ *
+ * `indisponivel` existe porque a leitura é ACESSÓRIA e não derruba a carteira: ela não entra
+ * em `p_linhas`, então falhar nela não pode custar os bundles já descobertos — mas também não
+ * pode desaparecer.
+ */
+export type ComparacaoIndividual =
+  | { status: 'encontrado'; value: IndividualComparison }
+  | { status: 'nenhum' }
+  | { status: 'indisponivel' };
+
 export interface CustomerBundles {
   customerId: string;
   customerName: string;
   healthScore: number;
   bundles: BundleRecommendation[];
-  bestIndividual: IndividualComparison | null;
+  bestIndividual: ComparacaoIndividual;
   avgMonthlySpend: number;
   /** `null` = margem não apurada. NÃO trocar por 0: 0 classifica o cliente como "sensível a
    *  preço" via `classifyCustomerProfile`, um veredito que a ausência de dado não sustenta. */
@@ -126,10 +146,14 @@ interface SalesOrderRow {
   account: string | null;
 }
 
-interface ExistingRecRow {
+/** Uma linha da RPC `farmer_melhor_individual_por_cliente` — já é O melhor do cliente. */
+interface MelhorIndividualRow {
+  customer_user_id: string;
   product_id: string;
   affinity_score: number | string | null;
   recommendation_type: 'cross_sell' | 'up_sell';
+  /** Geração a que a linha pertence. Todas deveriam trazer a MESMA — ver o aviso no toast. */
+  run_id: string | null;
 }
 
 // ─── Premissa do LIE do bundle (NÃO é aprendida) ─────────────────────
@@ -729,10 +753,90 @@ export const useBundleEngine = () => {
         }
       }
 
+      // 4.5. O melhor produto individual de CADA cliente — UMA leitura, não N.
+      //
+      // Era uma consulta a `farmer_recommendations` POR CLIENTE, dentro do laço abaixo. O
+      // #1800 consertou a honestidade dela (o `error` resolvido e a Promise rejeitada
+      // passaram a ser capturados); o que sobrou, e que o challenge Codex (gpt-5.6-sol,
+      // xhigh) apontou, foi a FORMA:
+      //
+      //   (a) numa carteira de centenas — a maior em prod tem 3.858 clientes — são centenas
+      //       de round-trips seriais;
+      //   (b) e, o que importa mais: as N consultas são N INSTANTES. Uma substituição
+      //       concorrente de `farmer_recommendations` (a RPC de cross-sell expira a geração
+      //       e insere a nova) podia fazer metade dos clientes enxergar uma geração e a
+      //       outra metade enxergar outra — todas com sucesso, nenhuma com erro, e o
+      //       conjunto NÃO formando um snapshot coerente. Um SELECT único é um snapshot
+      //       MVCC único: a incoerência de leitura some por construção.
+      //
+      // A RPC preserva o desempate LITERAL que o `.order()` encadeado emitia
+      // (`affinity_score DESC NULLS LAST, updated_at DESC NULLS FIRST, id DESC`) — inclusive
+      // o NULLS FIRST implícito do `updated_at`, que o postgrest-js só serializa quando
+      // `nullsFirst` é passado. A migration tem o racional de cada peça, e o harness
+      // `db/test-farmer-melhor-individual-bulk.sh` prova a PARIDADE cliente a cliente.
+      //
+      // PAGINADA como as outras: a capa de 1.000 do PostgREST vale para `.rpc()` igual a
+      // `.from()` e já zerou este motor duas vezes (#1782, #1801). `customer_user_id` é
+      // único no resultado do `DISTINCT ON`, logo é ordem TOTAL — paginar não pula linha.
+      const melhorIndividual = new Map<string, MelhorIndividualRow>();
+      /**
+       * A leitura acessória falhou — UMA vez, para a execução inteira. Era um CONTADOR de
+       * clientes porque a consulta era por-cliente; com a leitura em bloco a falha deixou de
+       * ser parcial, e contar clientes daria a impressão de que alguns escaparam.
+       */
+      let comparacaoIndisponivel = false;
+      /** Quantas gerações distintas apareceram na leitura. >1 = a tabela tem duas vivas. */
+      let geracoesMisturadas = 0;
+      try {
+        const linhas = await fetchAllPages<MelhorIndividualRow>(
+          (de, ate) =>
+            supabase
+              .rpc('farmer_melhor_individual_por_cliente', { p_farmer_id: effectiveUserId })
+              .order('customer_user_id', { ascending: true })
+              .range(de, ate) as unknown as PromiseLike<{
+              data: MelhorIndividualRow[] | null;
+              error: unknown;
+            }>,
+          'farmer_melhor_individual_por_cliente/bundle',
+        );
+        for (const linha of linhas) melhorIndividual.set(linha.customer_user_id, linha);
+        // O bulk cura a incoerência da LEITURA, não a do DADO: duas gerações vivas ao mesmo
+        // tempo na tabela continuam possíveis, e antes eram indetectáveis daqui (o `.select()`
+        // nem pedia a coluna). Canário, não alarme — medido em prod (psql-ro, 20/08/2026):
+        // 1.361 pendentes, 671 com score, UM único `run_id`. Só avisa; não degrada nem
+        // fail-closed, porque quem responde pela unicidade da geração é a RPC de substituição
+        // do cross-sell, e mover a decisão para cá poria o gate longe da causa.
+        geracoesMisturadas = new Set(linhas.map((l) => l.run_id ?? 'sem-run')).size;
+      } catch (erroIndividual) {
+        console.error('Falha ao ler o melhor individual da carteira:', erroIndividual);
+        // Sem `throw`: esta comparação é ACESSÓRIA — ela não entra em `recomendacoes`, o
+        // payload da RPC de substituição, então derrubar a carteira inteira por causa dela
+        // trocaria uma afirmação errada por um prejuízo maior. O que a falha NÃO pode é
+        // sumir: ela reprova o toast de sucesso, marca cada cliente como `indisponivel` na
+        // tela, e impede que a omissão da lista vire um veredicto.
+        comparacaoIndisponivel = true;
+        insumos.melhor_individual = { ok: false, n: 0 };
+      }
+      if (!comparacaoIndisponivel) {
+        // Declarado como insumo NÃO-OBRIGATÓRIO (fora de `INSUMOS_OBRIGATORIOS_BUNDLE`): o
+        // zero aqui é legítimo — farmer cujo motor de cross-sell nunca rodou não tem nenhuma
+        // recomendação pendente, e isso não diz nada sobre a integridade do zero de BUNDLES.
+        //
+        // ⚠️ REAVALIAÇÃO (o comentário anterior mandava NÃO declarar): o argumento de antes
+        // era o RUÍDO — `avaliarCompletude` degrada com um único `ok:false`, e com a consulta
+        // POR CLIENTE uma falha isolada carimbaria `degradado` em quase toda execução de uma
+        // carteira grande; um sinal que nunca varia deixa de ser sinal. Com a leitura em bloco
+        // essa premissa caiu: são 1 leitura e 1 falha possível por execução, então `degradado`
+        // volta a ser raro e informativo. O que NÃO mudou é a assimetria de custo — errar para
+        // `degradado` custa uma oferta velha a mais na tela, errar para `completo` custa a
+        // carteira da vendedora — e agora que declarar é barato, precisão > recall manda
+        // declarar. `p_linhas` segue INVARIANTE a esta leitura, então o head só fica mais
+        // conservador, nunca mais permissivo.
+        insumos.melhor_individual = { ok: true, n: melhorIndividual.size };
+      }
+
       // 5. Generate bundles per customer
       const allCustomerBundles: CustomerBundles[] = [];
-      /** Clientes cuja comparação com o melhor produto individual não pôde ser lida. */
-      let comparacaoIndisponivel = 0;
 
       for (const score of clientScores) {
         const cid = score.customer_user_id;
@@ -829,75 +933,36 @@ export const useBundleEngine = () => {
         bundles.sort((a, b) => b.affinityBundle - a.affinityBundle);
         const topBundles = bundles.slice(0, 2);
 
-        // Best individual product (from cross-sell engine data)
-        let bestIndividual: IndividualComparison | null = null;
-        // O `error` desta consulta era DESCARTADO na desestruturação, e a falha virava um
-        // veredicto: `bestIndividual` nulo (= "não há oferta individual melhor"), cliente sem
-        // bundle próprio OMITIDO da lista inteira, e `toast.success` no fim. É o §2 (ausente ≠
-        // zero) na forma de rótulo.
-        //
-        // O `try` existe porque erro RESOLVIDO e Promise REJEITADA são portas diferentes para o
-        // mesmo defeito, e a segunda é a pior (achado do challenge Codex gpt-5.6-sol/xhigh):
-        // uma rejeição de rede/CORS escapava do laço para o `catch` externo, onde todos os
-        // insumos obrigatórios JÁ foram declarados íntegros (são lidos antes do laço) e
-        // `linhasProduzidas` ainda é false — e `registrarVazio()` gravava `resultado='vazio'`
-        // com `completude='completo'`. Esse par é a licença exata que a fase 2 usaria para
-        // EXPIRAR a carteira. Mesmo defeito do #1791, por outra porta.
-        let recsIndividuais: ExistingRecRow[] | null = null;
-        try {
-          const { data, error } = (await supabase
-            .from('farmer_recommendations')
-            .select('product_id, affinity_score, recommendation_type')
-            .eq('farmer_id', effectiveUserId)
-            .eq('customer_user_id', cid)
-            .eq('status', 'pendente')
-            // `.not(...is null)` é fail-closed: com todas as linhas antigas, ordenar não ordena
-            // nada e o `.limit(1)` elegeria um "melhor individual" arbitrário. `nullsFirst:
-            // false` cobre a MISTURA (DESC implica NULLS FIRST no Postgres); o filtro cobre o
-            // caso TODAS-NULL.
-            .not('affinity_score', 'is', null)
-            .order('affinity_score', { ascending: false, nullsFirst: false })
-            // ⚠️ `created_at` deixou de desempatar: desde a migration 20260814223445 a geração
-            // inteira entra num único INSERT, e `now()` é o instante da TRANSAÇÃO — todas as
-            // linhas do run compartilham o mesmo carimbo. `id` é a PK: última chave, sempre
-            // total (achado do challenge Codex xhigh).
-            .order('updated_at', { ascending: false }) // desempate determinístico
-            .order('id', { ascending: false })
-            .limit(1)) as unknown as { data: ExistingRecRow[] | null; error: unknown };
-          if (error) throw error;
-          recsIndividuais = data;
-        } catch (erroIndividual) {
-          console.error(`Falha ao ler o melhor individual de ${cid}:`, erroIndividual);
-          // Sem `throw`: esta comparação é ACESSÓRIA — ela não entra em `recomendacoes`, o
-          // payload da RPC de substituição, então derrubar a carteira inteira por causa dela
-          // trocaria uma afirmação errada por um prejuízo maior. O que a falha NÃO pode é
-          // sumir: ela reprova o toast de sucesso logo abaixo.
-          //
-          // ⚠️ De propósito NÃO vira insumo do `InsumosSnapshot`: `avaliarCompletude` degrada
-          // com um único `ok:false`, e esta consulta roda uma vez POR CLIENTE — numa carteira
-          // de centenas, uma falha isolada carimbaria `degradado` em quase toda execução. O
-          // head ficaria degradado para sempre, e um sinal que nunca varia não é sinal: a
-          // fase 2 aprenderia a ignorá-lo. Vale porque `p_linhas` é INVARIANTE a esta leitura
-          // (cliente com bundle entra de qualquer jeito; cliente sem bundle contribui zero
-          // linhas com ou sem ela), logo a integridade do ZERO DE BUNDLES — que é o que a
-          // completude julga — não depende dela.
-          comparacaoIndisponivel += 1;
-        }
-
-        if (recsIndividuais?.length) {
-          const rec = recsIndividuais[0];
+        // Best individual product (from cross-sell engine data) — agora do Map lido em bloco
+        // no passo 4.5. Três estados, e o terceiro é o que o tipo antigo não sabia dizer:
+        // `nenhum` = a RPC respondeu e este cliente não tem oferta individual pendente;
+        // `indisponivel` = a leitura falhou, e ninguém pode afirmar nada sobre este cliente.
+        let bestIndividual: ComparacaoIndividual;
+        const rec = melhorIndividual.get(cid);
+        if (comparacaoIndisponivel) {
+          bestIndividual = { status: 'indisponivel' };
+        } else if (rec) {
           const prod = productMap.get(rec.product_id);
-          // Ausente ≠ zero: `Number(null)` é 0 e afirmaria afinidade nula medida.
+          // Ausente ≠ zero: `Number(null)` é 0 e afirmaria afinidade nula MEDIDA.
           const afinidade = rec.affinity_score == null ? NaN : Number(rec.affinity_score);
           bestIndividual = {
-            productId: rec.product_id,
-            productName: prod?.descricao || 'Produto',
-            affinity: Number.isFinite(afinidade) ? afinidade : null,
-            type: rec.recommendation_type,
+            status: 'encontrado',
+            value: {
+              productId: rec.product_id,
+              productName: prod?.descricao || 'Produto',
+              affinity: Number.isFinite(afinidade) ? afinidade : null,
+              type: rec.recommendation_type,
+            },
           };
+        } else {
+          bestIndividual = { status: 'nenhum' };
         }
 
-        if (topBundles.length > 0 || bestIndividual) {
+        // `nenhum` é a ÚNICA ausência que autoriza omitir o cliente da lista, porque é a
+        // única que foi de fato verificada. Com `indisponivel` o cliente entra mesmo sem
+        // bundle: some-lo seria afirmar, pelo silêncio, que não há rota individual para
+        // ele — a afirmação que nenhuma leitura sustentou.
+        if (topBundles.length > 0 || bestIndividual.status !== 'nenhum') {
           const purchasedProducts = [...purchased]
             .map((pid) => productMap.get(pid)?.descricao)
             .filter((d): d is string => Boolean(d));
@@ -934,8 +999,8 @@ export const useBundleEngine = () => {
       // gravação — e é este flag que impede a tela de culpar a leitura por ela.
       setCalculado(true);
       // Linhas PERSISTÍVEIS, não clientes: um cliente entra em `allCustomerBundles` só com
-      // `bestIndividual` e nenhum bundle, e essa comparação não vira linha nenhuma no payload
-      // da RPC. Contando clientes, esse caso travava o `registrarVazio()` do `catch` sobre uma
+      // `bestIndividual` (`encontrado` ou `indisponivel`) e nenhum bundle, e essa comparação
+      // não vira linha nenhuma no payload da RPC. Contando clientes, esse caso travava o `registrarVazio()` do `catch` sobre uma
       // execução que de fato não produziu nada — o head parava de se mover e "nenhum registro
       // novo" voltava a significar duas coisas opostas (challenge Codex xhigh).
       linhasProduzidas = allCustomerBundles.some((cb) => cb.bundles.length > 0);
@@ -1052,14 +1117,20 @@ export const useBundleEngine = () => {
           'já havia um recálculo deste vendedor em andamento — os bundles daqui não foram salvos; espere ele terminar e confira',
         );
       }
-      // A lista pode ter ficado INCOMPLETA: o cliente que só entraria pela comparação
-      // individual foi omitido quando a leitura dele falhou. Dizer o número é o que separa
-      // "não há mais nada" de "não consegui ver o resto".
-      if (comparacaoIndisponivel > 0) {
+      // A falha agora é UMA e vale para a carteira inteira — antes era um contador, porque a
+      // consulta era por-cliente. O aviso mudou de "N clientes podem ter ficado fora" para o
+      // fato exato: a coluna existe na tela, marcada como indisponível, em TODOS os clientes.
+      if (comparacaoIndisponivel) {
         problemas.push(
-          comparacaoIndisponivel === 1
-            ? '1 cliente ficou sem a comparação com o melhor produto individual — a leitura falhou, e ele pode ter ficado fora da lista'
-            : `${comparacaoIndisponivel} clientes ficaram sem a comparação com o melhor produto individual — a leitura falhou, e eles podem ter ficado fora da lista`,
+          'a comparação com o melhor produto individual não pôde ser lida — os cartões mostram "indisponível" no lugar dela, e nenhum cliente foi omitido por isso',
+        );
+      }
+      // Duas gerações vivas em `farmer_recommendations` ao mesmo tempo: o melhor individual de
+      // um cliente pode vir de um cálculo e o do vizinho de outro. Não é falha DESTA leitura
+      // (um SELECT é um snapshot só) — é estado do dado, e antes era invisível daqui.
+      if (geracoesMisturadas > 1) {
+        problemas.push(
+          `as recomendações individuais vêm de ${geracoesMisturadas} gerações diferentes — a comparação mistura cálculos de momentos distintos`,
         );
       }
 

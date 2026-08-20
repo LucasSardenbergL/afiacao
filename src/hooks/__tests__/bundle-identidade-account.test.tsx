@@ -127,6 +127,18 @@ vi.mock('@/integrations/supabase/client', () => ({
   supabase: {
     from: (tabela: string) => stubChain(tabela),
     rpc: (nome: string, args?: Record<string, unknown>) => {
+      // Leitura BULK do melhor individual — PAGINADA (`fetchAllPages`), então o dublê tem de
+      // expor `.order().range()`. Promise crua daria `supabase.rpc(...).order is not a
+      // function`, e o engine converteria o bug de CÓDIGO em "comparação indisponível" — o
+      // mesmo disfarce que o #1782 documentou.
+      if (nome === 'farmer_melhor_individual_por_cliente') {
+        const mi: Record<string, unknown> = {
+          order: () => mi,
+          range: () => mi,
+          then: (resolve: (v: unknown) => void) => resolve({ data: [], error: null }),
+        };
+        return mi;
+      }
       rpcArgs.push({ nome, args: args ?? {} });
       if (nome === RPC_VENDAVEIS) {
         // Builder, não Promise crua: o engine encadeia `.order().range()` (#1782).

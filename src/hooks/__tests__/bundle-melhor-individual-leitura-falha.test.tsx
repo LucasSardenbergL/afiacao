@@ -6,10 +6,12 @@ import { toast } from 'sonner';
  * Guard money-path — a leitura do "melhor individual" não pode virar nem um zero fabricado
  * nem um head `vazio/completo`.
  *
- * O motor lê `farmer_recommendations` UMA VEZ POR CLIENTE, dentro do laço, para montar a
- * comparação "bundle × melhor produto individual". O `error` dessa consulta era DESCARTADO na
- * desestruturação (`const { data: existingRecs } = await ...`), e daí saíam dois defeitos de
- * gravidade bem diferente:
+ * O motor lê o melhor individual da carteira e monta a comparação "bundle × melhor produto
+ * individual". A leitura era um `.from('farmer_recommendations')` POR CLIENTE, dentro do laço,
+ * e hoje é a RPC em bloco `farmer_melhor_individual_por_cliente` — a PORTA mudou, os dois
+ * defeitos abaixo são os mesmos e continuam sendo o que este arquivo guarda. O `error` era
+ * DESCARTADO na desestruturação (`const { data: existingRecs } = await ...`), e daí saíam dois
+ * defeitos de gravidade bem diferente:
  *
  *  1. `{ data: null, error }` resolvido — a falha vira "não há recomendação pendente":
  *     `bestIndividual` fica `null`, o cliente sem bundle próprio é OMITIDO da lista inteira, e
@@ -25,6 +27,12 @@ import { toast } from 'sonner';
  *
  * DISCRIMINADOR: nenhum registro de head `vazio` + `completo` nascido desta leitura, e nenhum
  * `toast.success` quando ela falhou.
+ *
+ * ⚠️ Com a leitura em BLOCO a falha deixou de ser por-cliente: é UMA, e vale para a execução
+ * inteira. Isso não afrouxa nada aqui — o que estes testes julgam é o DESFECHO da execução
+ * (head, toast, bundles na tela), e ele é o mesmo. O que a leitura em bloco acrescenta está no
+ * irmão `bundle-melhor-individual-bulk.test.tsx`: os três estados chegam à UI e nenhum cliente
+ * é omitido em silêncio.
  */
 const FARMER = 'farmer-real';
 
@@ -76,15 +84,7 @@ function chain(table: string): unknown {
     'range', 'or', 'eq', 'neq', 'filter', 'single', 'maybeSingle', 'contains',
     'upsert', 'insert', 'update', 'delete',
   ]) c[m] = () => c;
-  c.then = (resolve: (v: unknown) => void, reject: (e: unknown) => void) => {
-    if (table === 'farmer_recommendations') {
-      // A REJEIÇÃO é o caminho perigoso: escapa do laço e cai no `catch` externo com todos os
-      // insumos obrigatórios já íntegros. O `{ error }` resolvido é o silencioso.
-      if (falhaMelhorIndividual === 'rejeita') return reject(new Error('Failed to fetch'));
-      if (falhaMelhorIndividual === 'erro') return resolve({ data: null, error: ERRO_TIMEOUT });
-    }
-    return resolve({ data: dadosDa(table), error: null, count: 0 });
-  };
+  c.then = (resolve: (v: unknown) => void) => resolve({ data: dadosDa(table), error: null, count: 0 });
   return c;
 }
 
@@ -101,6 +101,22 @@ vi.mock('@/integrations/supabase/client', () => ({
             resolve({ data: PRODUTOS.map((p) => ({ product_id: p.id })), error: null }),
         };
         return c;
+      }
+      // A leitura do melhor individual: builder PAGINÁVEL (`.order().range()`), porque o
+      // caller passa por `fetchAllPages`. As duas falhas entram por aqui.
+      if (nome === 'farmer_melhor_individual_por_cliente') {
+        const mi: Record<string, unknown> = {
+          order: () => mi,
+          range: () => mi,
+          then: (resolve: (v: unknown) => void, reject: (e: unknown) => void) => {
+            // A REJEIÇÃO é o caminho perigoso: escapa para o `catch` externo com todos os
+            // insumos obrigatórios já íntegros. O `{ error }` resolvido é o silencioso.
+            if (falhaMelhorIndividual === 'rejeita') return reject(new Error('Failed to fetch'));
+            if (falhaMelhorIndividual === 'erro') return resolve({ data: null, error: ERRO_TIMEOUT });
+            return resolve({ data: [], error: null });
+          },
+        };
+        return mi;
       }
       if (nome === 'farmer_geracao_registrar') {
         registros.push(args ?? {});

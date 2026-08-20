@@ -136,6 +136,18 @@ vi.mock('@/integrations/supabase/client', () => ({
   supabase: {
     from: (t: string) => chain(t),
     rpc: (nome: string, args: Record<string, unknown>) => {
+      // Leitura BULK do melhor individual — PAGINADA (`fetchAllPages`), então o dublê tem de
+      // expor `.order().range()`. Promise crua daria `supabase.rpc(...).order is not a
+      // function`, e o engine converteria o bug de CÓDIGO em "comparação indisponível" — o
+      // mesmo disfarce que o #1782 documentou.
+      if (nome === 'farmer_melhor_individual_por_cliente') {
+        const mi: Record<string, unknown> = {
+          order: () => mi,
+          range: () => mi,
+          then: (resolve: (v: unknown) => void) => resolve({ data: [], error: null }),
+        };
+        return mi;
+      }
       rpcs.push({ nome, args });
       // Pós-#1520 o engine pergunta quais SKUs são vendáveis em vez de baixar custo.
       // PAGINADA (`fetchAllPages`) desde que o cap de 1.000 do PostgREST zerou o motor em

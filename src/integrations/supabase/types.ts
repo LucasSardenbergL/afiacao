@@ -18983,6 +18983,16 @@ export type Database = {
         }
         Returns: Json
       }
+      farmer_melhor_individual_por_cliente: {
+        Args: { p_farmer_id: string }
+        Returns: {
+          affinity_score: number
+          customer_user_id: string
+          product_id: string
+          recommendation_type: string
+          run_id: string
+        }[]
+      }
       farmer_recomendacoes_substituir: {
         Args: {
           p_completude?: string

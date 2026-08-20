@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **476** custom migrations totais
-- **1616** objetos esperados (criados por estas migrations)
+- **477** custom migrations totais
+- **1617** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 489
+  - `function`: 490
   - `rls_policy`: 400
   - `index`: 243
   - `cron_job`: 164
@@ -3972,6 +3972,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20260818121919_authz_fecho_execute_registrado_3_funcoes.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260820124611_farmer_melhor_individual_bulk.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.farmer_melhor_individual_por_cliente` | — |
 
 ## Próximos passos por status
 

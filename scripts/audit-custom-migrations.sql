@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 476
+-- Total de custom migrations: 477
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -517,7 +517,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260815153218', 'data_health_contrato_severity_idade', '20260815153218_data_health_contrato_severity_idade.sql'),
   ('20260815181500', 'farmer_geracao_head_sensor', '20260815181500_farmer_geracao_head_sensor.sql'),
   ('20260818120000', 'authz_private_execute_fecho', '20260818120000_authz_private_execute_fecho.sql'),
-  ('20260818121919', 'authz_fecho_execute_registrado_3_funcoes', '20260818121919_authz_fecho_execute_registrado_3_funcoes.sql')
+  ('20260818121919', 'authz_fecho_execute_registrado_3_funcoes', '20260818121919_authz_fecho_execute_registrado_3_funcoes.sql'),
+  ('20260820124611', 'farmer_melhor_individual_bulk', '20260820124611_farmer_melhor_individual_bulk.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2122,7 +2123,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('farmer_geracao_head_sensor', 'index', 'public', 'farmer_geracao_execucoes_run_uk', 'farmer_geracao_execucoes'),
   ('farmer_geracao_head_sensor', 'index', 'public', 'farmer_geracao_execucoes_medicao_idx', 'farmer_geracao_execucoes'),
   ('farmer_geracao_head_sensor', 'rls_policy', 'public', 'fgv_select_carteira', 'farmer_geracao_vigente'),
-  ('farmer_geracao_head_sensor', 'rls_policy', 'public', 'fge_select_carteira', 'farmer_geracao_execucoes')
+  ('farmer_geracao_head_sensor', 'rls_policy', 'public', 'fge_select_carteira', 'farmer_geracao_execucoes'),
+  ('farmer_melhor_individual_bulk', 'function', 'public', 'farmer_melhor_individual_por_cliente', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -3775,7 +3777,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('farmer_geracao_head_sensor', 'index', 'public', 'farmer_geracao_execucoes_run_uk', 'farmer_geracao_execucoes'),
   ('farmer_geracao_head_sensor', 'index', 'public', 'farmer_geracao_execucoes_medicao_idx', 'farmer_geracao_execucoes'),
   ('farmer_geracao_head_sensor', 'rls_policy', 'public', 'fgv_select_carteira', 'farmer_geracao_vigente'),
-  ('farmer_geracao_head_sensor', 'rls_policy', 'public', 'fge_select_carteira', 'farmer_geracao_execucoes')
+  ('farmer_geracao_head_sensor', 'rls_policy', 'public', 'fge_select_carteira', 'farmer_geracao_execucoes'),
+  ('farmer_melhor_individual_bulk', 'function', 'public', 'farmer_melhor_individual_por_cliente', '')
 )
 SELECT
   e.migration,
