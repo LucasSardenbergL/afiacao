@@ -1,4 +1,5 @@
 import { supabase } from "@/integrations/supabase/client";
+import { fetchAllPages } from "@/lib/postgrest";
 import type { Company } from "@/contexts/CompanyContext";
 import type { Json } from "@/integrations/supabase/types";
 import type { DimRowRaw } from "@/lib/financeiro/orcamento-drill-helpers";
@@ -400,6 +401,54 @@ export type Dimensao = 'categoria' | 'departamento' | 'centro_custo' | 'vendedor
 
 type DimRow = FinAnaliseCrDimensoesView | FinAnaliseCpDimensoesView;
 
+/**
+ * Chave de ordenação TOTAL de cada matview dimensional: o `GROUP BY` dela, INTEIRO.
+ *
+ * Paginar exige ordem total — sem ela o plano escolhe a ordem de cada página e o offset
+ * pula/duplica linha entre requests (o bug de volta, e intermitente). Estas matviews são
+ * AGREGADAS e não têm `id`; a chave é o conjunto de colunas do `GROUP BY`, porque duas linhas
+ * com os mesmos valores nele não podem coexistir — é o que agrupar significa.
+ *
+ * A unicidade aqui é IMPOSTA, não observada: as duas matviews têm índice UNIQUE
+ * (`idx_fin_analise_c{p,r}_unique`) sobre exatamente estas colunas menos `categoria_descricao`
+ * — o `REFRESH … CONCURRENTLY` do cron `fin-refresh-analise-dimensoes` exige um. Um superconjunto
+ * de uma chave única é chave única, então esta lista é ordem total por construção do banco. (A
+ * contagem `count(*) = count(DISTINCT (…))` de 2026-08-20 — 4.693 e 622 — só confirma o que o
+ * índice já garante; era a prova FRACA, e o Codex apontou isso.)
+ *
+ * ⚠️ NÃO encurte para um prefixo "que também é único hoje": unicidade observada nos dados de
+ * hoje não é ordem total amanhã, e o defeito que ela reintroduz é intermitente. O repo já
+ * pagou por isso um degrau abaixo, em `getCategoriasCompetenciaRaw` — lá foi
+ * `categoria_descricao` que empatava dentro de `categoria_codigo`.
+ */
+const CHAVE_TOTAL_CP = [
+  'company', 'ano', 'mes', 'categoria_codigo', 'categoria_descricao', 'departamento',
+  'centro_custo', 'nome_fornecedor', 'cnpj_cpf', 'tipo_documento', 'status_titulo',
+] as const;
+const CHAVE_TOTAL_CR = [
+  'company', 'ano', 'mes', 'categoria_codigo', 'categoria_descricao', 'departamento',
+  'centro_custo', 'vendedor_id', 'nome_cliente', 'cnpj_cpf', 'status_titulo',
+] as const;
+
+/** O mínimo do builder do PostgREST que a paginação usa — o `.rpc()` daqui já entra por `as never`. */
+type LeituraOrdenavel = {
+  order: (coluna: string, opts: { ascending: boolean; nullsFirst: boolean }) => LeituraOrdenavel;
+  range: (de: number, ate: number) => PromiseLike<{ data: unknown; error: unknown }>;
+};
+
+/**
+ * Encadeia um `.order()` por coluna da chave. `nullsFirst` é EXPLÍCITO de propósito: as colunas
+ * de dimensão são nullable (`departamento`, `centro_custo` e `cnpj_cpf` vêm nulos em títulos sem
+ * classificação) e o posicionamento dos nulos precisa ser o mesmo em TODAS as páginas — deixá-lo
+ * no default do servidor amarra a estabilidade da paginação a algo que não está escrito aqui.
+ */
+function ordenarPorChaveTotal(builder: unknown, chave: readonly string[]): LeituraOrdenavel {
+  return chave.reduce<LeituraOrdenavel>(
+    (q, coluna) => q.order(coluna, { ascending: true, nullsFirst: false }),
+    builder as LeituraOrdenavel,
+  );
+}
+
 export async function getAnaliseDimensional(
   tipo: 'cr' | 'cp',
   company: Company | 'all',
@@ -432,21 +481,63 @@ export async function getAnaliseDimensional(
     p_ano: ano ?? null,
     p_mes: mes ?? null,
   };
+  // PAGINADAS, com ordem TOTAL antes do `.range` — a capa de 1.000 do PostgREST vale para
+  // `.rpc()` e é SILENCIOSA (#1782, #1801). Medido em prod (2026-08-20, psql-ro, contando as
+  // matviews que as RPCs devolvem via `SETOF`), no pior caso REAL da tela — que é o estado
+  // INICIAL dela: mês = "todos" (`FinanceiroAnalytics.tsx` abre com `mes = null`) e ano
+  // corrente, com a empresa podendo ser `all` (⇒ `p_company: null`):
+  //
+  //   cp: 877 linhas (ano 2025, todas as empresas) — 88% da capa. A série anual é monotônica
+  //       e cresce ~14%/ano: 407 (2020) → 483 → 546 → 614 → 770 → 877 (2025). A próxima safra
+  //       fechada rompe 1.000; a matview inteira já tem 4.693.
+  //   cr: 138 linhas no pior ano. Folga de 7×, e ainda assim pagina: é o MESMO caller, o mesmo
+  //       `rpcParams` e o mesmo `.reduce` de ordem — paginar só um ramo do if/else deixaria uma
+  //       assimetria que o próximo leitor teria de re-medir para entender.
+  //
+  // O que o truncamento produziria aqui não é erro, é NÚMERO FABRICADO: o laço abaixo AGREGA
+  // (`+=` de qtd_titulos e dos três totais) num Map por dimensão, então perder a cauda não
+  // esvazia a tela — encolhe cada total em silêncio, e um "total de contas a pagar por
+  // categoria" 12% menor é indistinguível de um mês mais fraco.
+  //
+  // FAIL-CLOSED de lado: o `?? []` que estava aqui cobria `data: null` SEM error (resposta
+  // malformada, classe #1581) transformando-a em "nenhum título" — zero fabricado. `fetchAllPages`
+  // LANÇA nesse caso (`data_null_sem_error`), e o caller já trata erro (o `throw` de antes).
+  //
+  // ⚠️ LIMITE CONHECIDO, que a paginação NÃO cura (achado do Codex nesta revisão): páginas são
+  // requests HTTP distintos e não compartilham snapshot. O cron `fin-refresh-analise-dimensoes`
+  // roda `REFRESH MATERIALIZED VIEW CONCURRENTLY` às 10h e 16h; um refresh que caia ENTRE duas
+  // páginas pode fazer o offset pular ou repetir linha apesar da ordem total. Hoje o risco é
+  // nulo na prática — 877 linhas cabem na 1ª página e o laço encerra sem 2ª requisição — e ele
+  // nasce junto com o rompimento da capa, que é justamente o que esta paginação existe para
+  // atender. Mesmo então, paginar é estritamente melhor que não paginar: o risco vira uma janela
+  // de dois instantes por dia contra uma perda GARANTIDA de toda a cauda, todo dia. A cura de
+  // verdade é agregar server-side (a RPC devolver o Map já somado, em vez de N linhas cruas) —
+  // escopo próprio, deliberadamente fora deste.
   let rows: DimRow[];
   if (tipo === 'cr') {
-    const { data, error } = await supabase.rpc(
-      'fin_analise_cr_dimensoes_rpc' as never,
-      rpcParams as never,
+    rows = await fetchAllPages<FinAnaliseCrDimensoesView>(
+      (de, ate) =>
+        ordenarPorChaveTotal(
+          supabase.rpc('fin_analise_cr_dimensoes_rpc' as never, rpcParams as never),
+          CHAVE_TOTAL_CR,
+        ).range(de, ate) as unknown as PromiseLike<{
+          data: FinAnaliseCrDimensoesView[] | null;
+          error: unknown;
+        }>,
+      'fin_analise_cr_dimensoes_rpc/analise-dimensional',
     );
-    if (error) throw error;
-    rows = (data as unknown as FinAnaliseCrDimensoesView[]) ?? [];
   } else {
-    const { data, error } = await supabase.rpc(
-      'fin_analise_cp_dimensoes_rpc' as never,
-      rpcParams as never,
+    rows = await fetchAllPages<FinAnaliseCpDimensoesView>(
+      (de, ate) =>
+        ordenarPorChaveTotal(
+          supabase.rpc('fin_analise_cp_dimensoes_rpc' as never, rpcParams as never),
+          CHAVE_TOTAL_CP,
+        ).range(de, ate) as unknown as PromiseLike<{
+          data: FinAnaliseCpDimensoesView[] | null;
+          error: unknown;
+        }>,
+      'fin_analise_cp_dimensoes_rpc/analise-dimensional',
     );
-    if (error) throw error;
-    rows = (data as unknown as FinAnaliseCpDimensoesView[]) ?? [];
   }
 
   const col = (tipo === 'cr' ? dimColCr[dimensao] : dimColCp[dimensao]) as keyof DimRow;

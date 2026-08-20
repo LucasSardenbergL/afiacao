@@ -514,3 +514,66 @@ ignora a escalar, e tolera comentário longo entre `.rpc()` e `.range()`. Essa �
 falso positivo real: a primeira medição acusou o **próprio fix do #1782**, porque o comentário
 entre as duas chamadas estourava a janela. Gate inerte é o pior desfecho — passa verde para sempre
 e ninguém percebe.
+
+## A classe do cap de 1.000 nas RPCs: medir 15, paginar 2 — e o scanner que só via aspas simples (2026-08-20)
+
+Terceiro capítulo da classe (#1782, #1801). Desta vez o pedido não era achar mais um caso, era
+**fechar o universo**: as 11 RPCs set-returning sem teto interno estavam na BASELINE do gate com um
+motivo honesto porém cego — "`claude_ro` não tem EXECUTE, então não pude MEDIR".
+
+**O motivo caiu.** Dá para medir sem EXECUTE: ler `pg_get_functiondef` e reproduzir o corpo como
+SELECT sobre a prod (psql-ro). Medidas 15 chamadas em 2026-08-20. O resultado surpreende na direção
+contrária à esperada — **9 tinham teto ESTRUTURAL provado pela própria definição**, não por sorte de
+volume: `fin_projecao_13_semanas` é `FOR i IN 0..12` (13 linhas, sempre); `fin_consolidado_intercompany`
+é `UNION ALL` de 4 agregados; `fin_estimar_estoque_omie` e `get_whatsapp_funil` são um SELECT agregado
+sem GROUP BY (1 linha); `get_data_health` são 25 ramos de UNION ALL; `staff_get_sales_order_payload`
+recebe `[id]` em 2 dos 3 callers. Outras 4 têm teto nos dados, com folga: `get_ultimos_precos_cliente`
+407 (é `DISTINCT ON (product_id)` — o cliente de maior variedade), `get_whatsapp_proposta_cotacao` ≤412,
+`staff_get_sales_order_payload` no dashboard de impressão 68 (o lote é o de UM dia; pior dia da
+história = 68), `list_impersonation_targets` 3.
+
+**Uma passou:** `fin_analise_cp_dimensoes_rpc`, com **877 linhas** no pior caso REAL da tela — que é o
+estado INICIAL dela, mês = "todos" e empresa `all`. 88% da capa, e a série anual é monotônica:
+407 (2020) → 483 → 546 → 614 → 770 → **877** (2025), ~14% ao ano. `877 × 1,14 = 999,8`: a própria
+série prevê consumir toda a folga na safra seguinte. E 1.000 exatos são ambíguos por construção — não
+há como distinguir "acabou aqui" de "foi truncado". O consumidor **agrega** (`+=` de `qtd_titulos` e
+dos três totais) num Map por dimensão, então o truncamento não esvaziaria a tela: encolheria cada
+total em silêncio, e um "contas a pagar por categoria" 12% menor é indistinguível de um mês fraco.
+Paginada junto a `fin_analise_cr_dimensoes_rpc` (138, folga de 7×) — mesmo caller, mesmo `rpcParams`,
+mesmo `if/else`: paginar um ramo só deixaria uma assimetria que o próximo leitor teria de re-medir.
+
+**A ordem estável, que é o que faz paginação funcionar.** As matviews são AGREGADAS e não têm `id`. A
+chave é o `GROUP BY` inteiro (11 colunas), e a garantia não é estatística: o `REFRESH … CONCURRENTLY`
+do cron `fin-refresh-analise-dimensoes` **exige** índice UNIQUE, e ele existe (`idx_fin_analise_c{p,r}_unique`)
+sobre exatamente essas colunas menos `categoria_descricao`. Superconjunto de chave única é chave única.
+A contagem `count(*) = count(DISTINCT (…))` (4.693 e 622) só confirma o que o índice já impõe — era a
+prova fraca, e o Codex apontou.
+
+**O furo que o Codex achou e que valia mais que o resto:** o scanner do gate casava só
+`.rpc('nome')` — **aspas simples**. `src/` tem 10 chamadas `.rpc("nome")`, duas delas set-returning
+(`fin_projecao_13_semanas` em `CaixaCompraCard`, `ciclo_oportunidade_do_dia` em
+`AdminReposicaoOportunidades`). Enquanto o furo existiu, a frase "a BASELINE enumera a dívida" era
+**falsa**: o gate não olhava o universo que dizia vigiar, e o verde vinha de não ter procurado — a
+versão-scanner do `Number(null)===0`. As duas entraram na lista (ambas com teto estrutural).
+
+**O resíduo durável — waiver com prova e prazo.** A BASELINE deixou de ser `Set<string>` e virou
+`Map<string, Waiver>` com três formas: `estrutural` (a definição limita; NÃO expira, porque definição
+só muda por `CREATE OR REPLACE`, que passa pelo ritual de migration — dado é que cresce sozinho),
+`medido` (fotografia da prod, com `medidoEm` + `revisarAte`, e a query da medição escrita no campo
+`prova`) e `nao_medido` (dívida sem número, prazo mais curto). Três regras novas no CI: teto medido
+acima de **500** (metade da capa — o universo precisa DOBRAR para romper) não recebe waiver, tem de
+paginar; waiver vencido reprova; waiver sem prova escrita reprova. As regras são funções PURAS com
+fixtures de falsificação — regra de gate inerte passa verde para sempre e ninguém desconfia.
+Recusado do parecer do Codex o `definitionHash` para os estruturais: o gate roda no CI **sem banco**,
+o hash só poderia ser do arquivo de migration, e neste repo a prod diverge do repo por apply manual —
+daria verde com a prod já mudada e vermelho num refactor que não mudou a prod.
+
+**Limite conhecido, documentado no código:** páginas são requests HTTP distintos e não compartilham
+snapshot; o cron de refresh roda às 10h e 16h. Um refresh entre duas páginas pode pular/repetir linha
+apesar da ordem total. Hoje o risco é nulo (877 cabem na 1ª página, o laço encerra sem 2ª requisição)
+e nasce junto com o rompimento da capa. Mesmo então paginar é estritamente melhor: janela de dois
+instantes por dia contra perda GARANTIDA de toda a cauda, todo dia. A cura real é agregar server-side.
+
+**Sobrou para a 2ª fatia:** as 8 com `LIMIT` no corpo — `LIMIT` não é garantia (`LIMIT p_limit` com
+parâmetro grande não protege), e `reposicao_pos_candidatos` é money-path. Estão marcadas `nao_medido`
+com prazo, não "provavelmente pequenas".
