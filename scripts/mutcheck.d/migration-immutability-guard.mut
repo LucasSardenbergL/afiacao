@@ -1,0 +1,27 @@
+# Invariantes do guard de IMUTABILIDADE DE MIGRATION (.claude/hooks/migration-immutability-guard.sh).
+# @src: .claude/hooks/migration-immutability-guard.sh
+# @test: scripts/test-migration-immutability-guard.sh
+# @test_cmd: bash
+# @compile_cmd: bash -n
+#
+# O que ele protege é a fonte de DR: editar um .sql já committado diverge repo×banco e NÃO
+# re-aplica (o apply é manual, no SQL Editor). Os dois modos de falha doem: deixar editar o
+# committed, e barrar a migration NOVA (aí o founder não consegue trabalhar).
+
+# CONTROLE+ : nunca negar reprova o caso-alvo.
+PEGA      | controle+: guard nunca nega           | s{^git -C "\$toptop" cat-file -e "HEAD:\$rel" 2>/dev/null \|\| exit 0}{exit 0}
+
+# --- medidas: 4 de 7 já eram load-bearing ---
+# O inverso: negar SEMPRE, inclusive a migration nova que ainda não está no HEAD.
+PEGA      | nega ate a migration NOVA             | s{cat-file -e "HEAD:\$rel" 2>/dev/null \|\| exit 0}{cat-file -e "HEAD:\$rel" 2>/dev/null; :}
+# A ref consultada: com HEAD~1 a migration do ÚLTIMO commit deixa de ser protegida.
+PEGA      | consulta a ref errada (HEAD~1)        | s{"HEAD:\$rel"}{"HEAD~1:\$rel"}
+# Caminho relativo some do filtro (irmão do migration-collision, mesma lacuna).
+PEGA      | filtro perde o caminho relativo       | s{ \| supabase/migrations/\*\.sql\) ;;}{) ;;}
+# TRIADO E NÃO TESTADO (teatro reverso): sem o `|| exit 0`, o $fdir fica VAZIO, o caminho
+# absoluto não cai sob o toplevel e o guard sai pela porta de contenção — comportamento
+# OBSERVÁVEL idêntico. É redundância defensiva, não invariante. Fica `?` de propósito.
+?         | dir inexistente deixa de ser allow    | s{^fdir="\$\(cd "\$\(dirname "\$fpath"\)" 2>/dev/null && pwd -P\)" \|\| exit 0}{fdir="\$(cd "\$(dirname "\$fpath")" 2>/dev/null && pwd -P)"}
+# Contrato com o host.
+PEGA      | decisao vira allow                    | s{permissionDecision:"deny"}{permissionDecision:"allow"}
+PEGA      | evento do JSON deixa de ser PreToolUse | s{hookEventName:"PreToolUse"}{hookEventName:"PostToolUse"}

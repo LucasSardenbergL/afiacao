@@ -19,7 +19,12 @@ run() { # <command> → stdout do hook
   enc="$(printf '%s' "$1" | jq -Rs .)"
   printf '{"tool_name":"Bash","tool_input":{"command":%s}}' "$enc" | bash "$HOOK" 2>/dev/null
 }
-is_deny() { grep -q '"permissionDecision"[[:space:]]*:[[:space:]]*"deny"'; }
+# Casa o CONTRATO, não o texto: sob hookEventName errado o host ignora a decisão e o comando
+# destrutivo ROda — o "deny" ficaria no stdout sem bloquear nada. (mutation-check 2026-08-20)
+is_deny() { jq -e '.hookSpecificOutput.hookEventName == "PreToolUse"
+  and .hookSpecificOutput.permissionDecision == "deny"
+  and ((.hookSpecificOutput.permissionDecisionReason // "") | test("CONFIRM_DESTRUCTIVE"))' \
+  >/dev/null 2>&1; }
 fail=0
 d() { if run "$1" | is_deny; then echo "  ok    deny  | $1"; else echo "  FAIL  want deny  | $1"; fail=1; fi; }
 a() { if run "$1" | is_deny; then echo "  FAIL  want allow | $1"; fail=1; else echo "  ok    allow | $1"; fi; }
