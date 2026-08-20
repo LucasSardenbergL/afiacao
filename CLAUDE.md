@@ -76,7 +76,7 @@ Health stack (`/health`): typecheck · lint · test · `bunx knip` (deadcode) ·
 
 ## Design System (v3 — "fintech premium": Vercel/Mercury/Stripe Dashboard)
 
-Tokens em `src/index.css` (paleta quase-neutra low-fatigue; `--status-*` dessaturadas; radius 6px; motion easing Vercel; dark via `next-themes`; `density-compact` global). Direção completa: `docs/visual-direction/`. Benchmark UX: Linear/Notion/Carbon/Polaris/Retool (anti-referências: Material 3, Bootstrap, Stripe landing consumer). **Convenções de código novo:**
+Tokens em `src/index.css` (paleta quase-neutra low-fatigue; `--status-*` dessaturadas; radius 6px; motion easing Vercel; dark via `next-themes`; `density-compact` global). Direção, benchmarks (pattern nominal, nunca skin) e anti-referências: `docs/visual-direction/`. **Convenções de código novo:**
 
 - Status colors: `text-status-success/warning/error/info` — **não** `text-emerald-600`/`text-red-600`.
 - Filtros de lista: `useUrlState` — não `useState`. Listas grandes: `useInfiniteScroll` + `useInfiniteQuery`.
