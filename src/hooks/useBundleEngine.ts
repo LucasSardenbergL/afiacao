@@ -177,6 +177,11 @@ export const useBundleEngine = () => {
    *
    * Descreve a ÚLTIMA execução, não a sessão: um recálculo que morre na leitura volta o
    * flag a `false`, senão o veredicto velho responderia por um cálculo que não existiu.
+   *
+   * ⚠️ Marcado nos pontos de CONCLUSÃO, nunca dentro de `aplicarBundles`. O fail-closed de
+   * `vendaveis` também chama `aplicarBundles([])` — para limpar a lista antes de lançar — e
+   * ali NADA foi calculado: marcar junto da publicação faria esse caminho anunciar "o cálculo
+   * terminou, só não salvou", que é exatamente a mentira que este flag existe para desfazer.
    */
   const [calculado, setCalculado] = useState(false);
 
@@ -186,11 +191,6 @@ export const useBundleEngine = () => {
   const aplicarBundles = useCallback((bs: CustomerBundles[]) => {
     bundlesRef.current = bs;
     setCustomerBundles(bs);
-    // Marcado AQUI, e não junto de `resultadoDestaExecucao`: esta é a única função que
-    // publica resultado na tela, e ela também atende o `return` precoce de "nenhum cliente
-    // com score" — que conclui de verdade, com `aplicarBundles([])`, e cuja tela vazia é um
-    // veredicto do motor, não um cálculo que ninguém pediu.
-    setCalculado(true);
   }, []);
 
   const calculateBundles = useCallback(async (config = DEFAULT_CONFIG) => {
@@ -397,6 +397,9 @@ export const useBundleEngine = () => {
 
       if (!clientScores?.length) {
         aplicarBundles([]);
+        // CONCLUIU: "esta carteira não tem cliente com score" é um veredicto do motor, não uma
+        // falha — e a tela precisa dizer isso em vez de "clique em Calcular".
+        setCalculado(true);
         // Era um `return` MUDO — a razão de a frequência do zero nunca ter sido mensurável.
         await registrarVazio();
         return;
@@ -864,6 +867,9 @@ export const useBundleEngine = () => {
       // Marcados JUNTOS e aqui, não na gravação: a partir deste ponto a tela mostra o
       // resultado DESTE cálculo, e ele produziu linhas — os dois fatos que o `catch` precisa.
       resultadoDestaExecucao = true;
+      // CONCLUIU: daqui para baixo só resta PERSISTIR, então qualquer falha adiante é de
+      // gravação — e é este flag que impede a tela de culpar a leitura por ela.
+      setCalculado(true);
       // Linhas PERSISTÍVEIS, não clientes: um cliente entra em `allCustomerBundles` só com
       // `bestIndividual` e nenhum bundle, e essa comparação não vira linha nenhuma no payload
       // da RPC. Contando clientes, esse caso travava o `registrarVazio()` do `catch` sobre uma

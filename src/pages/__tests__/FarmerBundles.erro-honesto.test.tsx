@@ -29,6 +29,12 @@ const FARMER = 'farmer-real';
 
 /** Falha na LEITURA (scores) — a exceção nasce antes de qualquer resultado. */
 let falharLeitura = false;
+/**
+ * Falha na RPC de vendáveis — o fail-closed. Caminho traiçoeiro: ele chama `aplicarBundles([])`
+ * para LIMPAR a lista antes de lançar (manter bundles velhos poria SKU sem margem confirmada na
+ * oferta), e essa publicação não é um cálculo concluído.
+ */
+let falharVendaveis = false;
 /** Falha na GRAVAÇÃO — a exceção nasce depois de os bundles já estarem na tela. */
 let falharGravacao = false;
 /** Seed sem coocorrência: o Apriori não acha regra e o motor conclui vazio SEM erro. */
@@ -109,7 +115,11 @@ vi.mock('@/integrations/supabase/client', () => ({
           order: () => c,
           range: () => c,
           then: (resolve: (v: unknown) => void) =>
-            resolve({ data: PRODUTOS.map((p) => ({ product_id: p.id })), error: null }),
+            resolve(
+              falharVendaveis
+                ? { data: null, error: ERRO_TIMEOUT }
+                : { data: PRODUTOS.map((p) => ({ product_id: p.id })), error: null },
+            ),
         };
         return c;
       }
@@ -135,6 +145,7 @@ import FarmerBundles from '../FarmerBundles';
 
 beforeEach(() => {
   falharLeitura = false;
+  falharVendaveis = false;
   falharGravacao = false;
   semBundles = false;
   vi.clearAllMocks();
@@ -186,6 +197,31 @@ describe('FarmerBundles — o texto na tela descreve o que aconteceu', () => {
     expect(aviso.textContent, 'a falha de leitura deixou de ser anunciada').toMatch(
       /leitura da base falhou|n[ãa]o foi poss[íi]vel calcular/i,
     );
+  });
+
+  it('o fail-closed de vendáveis NÃO se apresenta como "calculei, só não salvei"', async () => {
+    // Este caminho publica `aplicarBundles([])` e LANÇA logo depois. Se o flag de "concluí"
+    // for marcado junto da publicação (em vez de nos pontos de conclusão), a tela passa a
+    // dizer que o cálculo terminou e só a gravação falhou — o defeito desta entrega ao
+    // contrário, e mais perigoso: aqui o motor não confirmou margem de SKU nenhum.
+    falharVendaveis = true;
+
+    render(<FarmerBundles />);
+    calcular();
+
+    const aviso = await screen.findByRole('alert');
+    expect(
+      aviso.textContent,
+      'uma falha de LEITURA foi anunciada como falha de gravação',
+    ).not.toMatch(/n[ãa]o p[ôo]de ser salvo|desta execu[çc][ãa]o/i);
+    expect(aviso.textContent, 'o alerta não diz que o cálculo não pôde ser feito').toMatch(
+      /n[ãa]o foi poss[íi]vel calcular|leitura da base falhou/i,
+    );
+    // E o empty state segue no ramo de falha, não no de "rodou e não achou".
+    expect(
+      screen.queryByText(/não encontrou nenhum bundle/i),
+      'anunciou veredicto de carteira vazia sobre um cálculo que nem rodou',
+    ).toBeNull();
   });
 
   it('separa "calculei e não há bundle" de "clique em Calcular"', async () => {
