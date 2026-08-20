@@ -104,7 +104,7 @@ export function chamadasSemPaginacao(fonte: string, setReturning: Set<string>): 
   //     await (supabase.rpc as RpcFn)('nome', params)
   //     await (supabase.rpc as (fn: string, a: unknown) => ReturnType<typeof supabase.rpc>)('nome', p)
   //
-  // — 53 das 125 ocorrências de `.rpc` em `src/` não são `\.rpc\(`, e duas delas eram
+  // — 22 das 108 ocorrências de `.rpc` em `src/` (fonte que o gate lê: sem testes/types.ts, comentários já removidos) escapavam ao regex antigo, e duas delas eram
   // set-returning e estavam FORA da baseline: `radar_contagem_por_municipio` em
   // useRadarContagemMunicipios.ts e `buscar_skus_candidatos` em useProductSpecLink.ts. Ambas
   // com teto estrutural — mas isso o gate não sabia, porque nunca as viu. Enumerar dívida com
@@ -382,7 +382,7 @@ describe('RPC set-returning chamada do frontend pagina', () => {
       .toEqual(['minha_rpc_grande']);
 
     // CAST — o segundo disfarce da mesma cegueira, e o idioma DOMINANTE do repo para RPC ainda
-    // não tipada: 53 das 125 ocorrências de `.rpc` em `src/` não são `.rpc(`. Estas duas formas
+    // não tipada: das 108 ocorrências de `.rpc` em `src/`, o regex antigo casava 86 — 22 escapavam. Estas duas formas
     // são literais dos dois callers que estavam fora da baseline até esta medição.
     expect(
       chamadasSemPaginacao(`const { data } = await (supabase.rpc as RpcFn)('minha_rpc_grande', params);`, setRet),
