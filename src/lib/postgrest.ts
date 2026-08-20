@@ -198,8 +198,12 @@ export async function fetchAllPages<T>(
  *
  *  - `pagina_falhou`       — a página voltou com `error` (timeout 57014, RLS 42501, 500…);
  *  - `data_null_sem_error` — resposta malformada (`data: null` sem `error`).
+ *
+ * NÃO exportado: o caller discrimina pelo guard `ehFalhaDePagina`, não pelo literal — quem
+ * precisasse importar o tipo estaria comparando `motivo` na mão, que é o acoplamento que o
+ * guard existe para evitar. (Exportá-lo reprovava o gate de dead code do CI.)
  */
-export type MotivoFalhaDePagina = 'pagina_falhou' | 'data_null_sem_error';
+type MotivoFalhaDePagina = 'pagina_falhou' | 'data_null_sem_error';
 
 /**
  * Marca ESTRUTURAL do erro que este helper lança. Não é `instanceof` (uma classe exportada
