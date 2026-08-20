@@ -310,13 +310,17 @@ export const useFarmerScoring = (farmerId?: string) => {
       // função não tem `ORDER BY` próprio: sem ordem estável o plano escolhe a de cada página e
       // PULA linhas entre elas — o mesmo bug de volta, e intermitente.
       //
-      // FAIL-CLOSED (money-path) preservado: `fetchAllPages` LANÇA em erro de transporte, em
-      // página perdida e em `data: null` sem erro (resposta malformada, classe do #1581) — os três
-      // desfechos que os dois `throw` daqui cobriam. O throw cai no mesmo catch, que DECLARA a
+      // FAIL-CLOSED (money-path) preservado: `fetchAllPages` LANÇA nos MESMOS dois desfechos que
+      // os dois `throw` daqui cobriam — erro/página perdida (`pagina_falhou`) e `data: null` sem
+      // erro (`data_null_sem_error`, resposta malformada, classe do #1581). O throw cai no mesmo
+      // catch, que DECLARA a
       // falha (`setErro`/`mensagemDeErro`) e preserva o último estado bom. Seguir com o mapa vazio
       // pontuaria toda a carteira como "sem margem conhecida": ausente ≠ zero vale também para a
       // falha de transporte. Ganho de lado: o erro do `supabase.rpc()` cru era objeto PLANO (que o
       // idiom `instanceof Error` viraria "[object Object]"); `fetchAllPages` lança `Error` com causa.
+      // NÃO se usa aqui o `ehFalhaDePagina` do #1798 (que separa falha de LEITURA de BUG DE CÓDIGO
+      // na mensagem): este catch é genérico e já declara a falha. Aplicar a distinção neste hook é
+      // melhoria de MENSAGEM, não de fail-closed — escopo próprio, deliberadamente fora daqui.
       const faixasData = await fetchAllPages<{
         customer_user_id: string;
         faixa: string;
