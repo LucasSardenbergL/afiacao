@@ -51,7 +51,7 @@ const catalogo = () =>
 const pedido = (
   cliente: string,
   codigos: number[],
-  status: string,
+  status: string | null,
   deletadoEm: string | null = null,
 ) => ({
   customer_user_id: cliente,
@@ -80,6 +80,11 @@ const PEDIDOS = [
   // passa de 5 — é assim que a exclusão vira asserção, e não fé.
   pedido('cli-6', [COD.A, COD.B, COD.C], 'cancelado'),
   pedido('cli-7', [COD.A, COD.B, COD.C], 'faturado', '2026-02-01T00:00:00Z'),
+  // NEGATIVO de PARIDADE: `status` nulo não passa no `not.in` do PostgREST (vira NULL, e NULL
+  // não é TRUE) — exatamente como `NOT IN` no corpo de `margem_cliente_agregada()`. Espelhar a
+  // autoridade inclui espelhar como ela trata o nulo. Prod tem 0 linhas assim; o teste é o
+  // único lugar onde isso é observável.
+  pedido('cli-8', [COD.A, COD.B, COD.C], null),
 ];
 
 function linhasPorTabela(): Record<string, Record<string, unknown>[]> {
@@ -140,7 +145,11 @@ function stubChain(tabela: string): unknown {
       if (op !== 'in') throw new Error(`stub: .not(…, '${op}', …) não modelado`);
       const proibidos = listaPostgrest(valor);
       filtrosDePedidos.push(`not.in:${coluna}=${valor}`);
-      filtros.push((l) => !proibidos.includes(String(l[coluna])));
+      // NULL-BLIND, como o PostgREST: `not.in` vira `NOT (col IN (…))`, que é NULL — logo
+      // NÃO passa — quando a coluna é nula. Um stub que deixasse o nulo passar mentiria a
+      // favor da mudança (universo maior do que o real). Prod tem 0 status nulo hoje, mas o
+      // harness não pode divergir do operador que ele afirma reproduzir.
+      filtros.push((l) => l[coluna] != null && !proibidos.includes(String(l[coluna])));
     }
     return chain;
   };
@@ -236,8 +245,9 @@ describe('useBundleEngine — o universo de pedidos é a denylist da autoridade'
   it('B: `cancelado` e pedido soft-deletado NÃO entram — a exclusão é medida, não presumida', async () => {
     await rodar();
     const insumos = insumosDaExecucao();
-    // `esperado` de `baskets` é o total de pedidos LIDOS. Os 7 da fixture menos o `cancelado`
-    // (denylist) e o `deleted_at` (o `.is`) dão 5: se um dos dois vazar, vira 6.
+    // `esperado` de `baskets` é o total de pedidos LIDOS. Os 8 da fixture menos o `cancelado`
+    // (denylist), o `deleted_at` (o `.is`) e o de status NULO (o `not.in` é NULL-blind) dão 5:
+    // se qualquer um dos três vazar, o número sobe.
     expect(insumos.baskets.esperado).toBe(5);
     expect(insumos.baskets.n).toBe(5);
   });

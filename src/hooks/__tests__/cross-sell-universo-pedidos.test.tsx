@@ -37,7 +37,7 @@ const filtrosDePedidos: string[] = [];
 const pedido = (
   cliente: string,
   produtos: string[],
-  status: string,
+  status: string | null,
   deletadoEm: string | null = null,
 ) => ({
   customer_user_id: cliente,
@@ -66,6 +66,11 @@ const PEDIDOS = [
   // de clientes com pedido passa de 6 — é assim que a exclusão vira asserção, e não fé.
   pedido('cli-6', [SKU_BASE, SKU_POPULAR], 'cancelado'),
   pedido('cli-7', [SKU_BASE, SKU_POPULAR], 'faturado', '2026-02-01T00:00:00Z'),
+  // NEGATIVO de PARIDADE: `status` nulo não passa no `not.in` do PostgREST (vira NULL, e NULL
+  // não é TRUE) — exatamente como `NOT IN` no corpo de `margem_cliente_agregada()`. Espelhar a
+  // autoridade inclui espelhar como ela trata o nulo. Prod tem 0 linhas assim; o teste é o
+  // único lugar onde isso é observável.
+  pedido('cli-8', [SKU_BASE, SKU_POPULAR], null),
 ];
 
 function linhasPorTabela(): Record<string, Record<string, unknown>[]> {
@@ -122,7 +127,11 @@ function stubChain(tabela: string): unknown {
       if (op !== 'in') throw new Error(`stub: .not(…, '${op}', …) não modelado`);
       const proibidos = listaPostgrest(valor);
       filtrosDePedidos.push(`not.in:${coluna}=${valor}`);
-      filtros.push((l) => !proibidos.includes(String(l[coluna])));
+      // NULL-BLIND, como o PostgREST: `not.in` vira `NOT (col IN (…))`, que é NULL — logo
+      // NÃO passa — quando a coluna é nula. Um stub que deixasse o nulo passar mentiria a
+      // favor da mudança (universo maior do que o real). Prod tem 0 status nulo hoje, mas o
+      // harness não pode divergir do operador que ele afirma reproduzir.
+      filtros.push((l) => l[coluna] != null && !proibidos.includes(String(l[coluna])));
     }
     return chain;
   };
@@ -231,8 +240,8 @@ describe('useCrossSellEngine — o universo de pedidos é a denylist da autorida
   });
 
   it('C: `cancelado` e pedido soft-deletado NÃO entram — a exclusão é medida, não presumida', async () => {
-    // `cli-6` (cancelado) e `cli-7` (deleted_at) têm pedido na fixture e NÃO podem contar. Se um
-    // dos dois vazar, `pedidos.n` vira 7 ou 8 — o mesmo número que o caso A trava em 6.
+    // `cli-6` (cancelado), `cli-7` (deleted_at) e `cli-8` (status NULO) têm pedido na fixture e
+    // NÃO podem contar. Se qualquer um vazar, `pedidos.n` passa de 6 — o número que o caso A trava.
     await rodar();
     const insumos = insumosDaExecucao();
     expect(insumos.pedidos.n).toBe(6);
