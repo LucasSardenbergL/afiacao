@@ -818,6 +818,10 @@ export const useBundleEngine = () => {
         // pela unicidade da geração é a RPC de substituição do cross-sell, e mover a decisão
         // para cá poria o gate longe da causa.
         geracoesMisturadas = new Set(linhas.map((l) => l.run_id ?? 'sem-run')).size;
+        // Declarado como insumo NÃO-OBRIGATÓRIO (fora de `INSUMOS_OBRIGATORIOS_BUNDLE`): o
+        // zero aqui é legítimo — farmer cujo motor de cross-sell nunca rodou não tem nenhuma
+        // recomendação pendente, e isso não diz nada sobre a integridade do zero de BUNDLES.
+        insumos.melhor_individual = { ok: true, n: melhorIndividual.size };
       } catch (erroIndividual) {
         console.error('Falha ao ler o melhor individual da carteira:', erroIndividual);
         // Sem `throw`: esta comparação é ACESSÓRIA — ela não entra em `recomendacoes`, o
@@ -826,24 +830,22 @@ export const useBundleEngine = () => {
         // sumir: ela reprova o toast de sucesso, marca cada cliente como `indisponivel` na
         // tela, e impede que a omissão da lista vire um veredicto.
         comparacaoIndisponivel = true;
-        insumos.melhor_individual = { ok: false, n: 0 };
-      }
-      if (!comparacaoIndisponivel) {
-        // Declarado como insumo NÃO-OBRIGATÓRIO (fora de `INSUMOS_OBRIGATORIOS_BUNDLE`): o
-        // zero aqui é legítimo — farmer cujo motor de cross-sell nunca rodou não tem nenhuma
-        // recomendação pendente, e isso não diz nada sobre a integridade do zero de BUNDLES.
+        // ⚠️ REAVALIAÇÃO — até o #1800 esta leitura era de PROPÓSITO mantida FORA do
+        // `InsumosSnapshot`, e o fundamento era um só: o RUÍDO. `avaliarCompletude` degrada
+        // com um único `ok:false`, e com a consulta POR CLIENTE uma falha isolada carimbaria
+        // `degradado` em quase toda execução de carteira grande — um sinal que nunca varia
+        // deixa de ser sinal, e a fase 2 aprenderia a ignorá-lo. Com a leitura em BLOCO a
+        // premissa caiu: é 1 leitura e 1 falha possível por execução, então `degradado` volta
+        // a ser raro e informativo.
         //
-        // ⚠️ REAVALIAÇÃO (o comentário anterior mandava NÃO declarar): o argumento de antes
-        // era o RUÍDO — `avaliarCompletude` degrada com um único `ok:false`, e com a consulta
-        // POR CLIENTE uma falha isolada carimbaria `degradado` em quase toda execução de uma
-        // carteira grande; um sinal que nunca varia deixa de ser sinal. Com a leitura em bloco
-        // essa premissa caiu: são 1 leitura e 1 falha possível por execução, então `degradado`
-        // volta a ser raro e informativo. O que NÃO mudou é a assimetria de custo — errar para
-        // `degradado` custa uma oferta velha a mais na tela, errar para `completo` custa a
-        // carteira da vendedora — e agora que declarar é barato, precisão > recall manda
-        // declarar. `p_linhas` segue INVARIANTE a esta leitura, então o head só fica mais
-        // conservador, nunca mais permissivo.
-        insumos.melhor_individual = { ok: true, n: melhorIndividual.size };
+        // O que NÃO mudou é a assimetria de custo, e é ela que decide: errar para `degradado`
+        // custa uma oferta velha a mais na tela; errar para `completo` custa a carteira da
+        // vendedora, porque `completo` é o único rótulo que autoriza a fase 2 a expirar.
+        // Declarar ficou barato, então precisão > recall manda declarar. `p_linhas` segue
+        // INVARIANTE a esta leitura (cliente com bundle entra de qualquer jeito; cliente sem
+        // bundle contribui zero linhas com ou sem ela), logo o head só pode ficar mais
+        // conservador — nunca mais permissivo.
+        insumos.melhor_individual = { ok: false, n: 0 };
       }
 
       // 5. Generate bundles per customer
