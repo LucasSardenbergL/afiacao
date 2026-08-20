@@ -304,6 +304,7 @@ export const MODULOS: ModuloApp[] = [
       "src/hooks/__tests__/useLastVisit.test.tsx",
       "src/hooks/__tests__/useMyVisitSuggestions.test.ts",
       "src/hooks/__tests__/useDashboardCompany.test.ts",
+      "src/pages/__tests__/FarmerBundles.erro-honesto.test.tsx",
       "src/pages/__tests__/FarmerDashboard.erro-honesto.test.tsx",
       "src/pages/__tests__/FarmerRecommendations.erro-honesto.test.tsx",
     ],
