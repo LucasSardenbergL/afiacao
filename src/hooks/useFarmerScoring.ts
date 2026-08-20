@@ -4,7 +4,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useCommercialRole } from '@/hooks/useCommercialRole';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { filtrarPorCarteira } from '@/lib/scoring/escopoCarteira';
-import { STATUS_NAO_VENDA_POSTGREST } from '@/lib/scoring/universoPedidos';
+import { STATUS_NAO_VENDA_POSTGREST } from '@/lib/farmer/universo-pedidos';
 import type { Tables } from '@/integrations/supabase/types';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
 import { fetchAllPages } from '@/lib/postgrest';

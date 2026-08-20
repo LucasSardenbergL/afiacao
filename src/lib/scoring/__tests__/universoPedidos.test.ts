@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { STATUS_NAO_VENDA } from '../universoPedidos';
+import { STATUS_NAO_VENDA } from '@/lib/farmer/universo-pedidos';
 
 /**
  * O universo de PEDIDOS do scoring do farmer.
