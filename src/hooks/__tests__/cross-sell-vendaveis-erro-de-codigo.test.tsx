@@ -173,7 +173,9 @@ describe('useCrossSellEngine — falha de vendáveis: bug de código ≠ dado in
     // testar `instanceof Error` não discriminaria nada — o handler antigo também produzia um
     // `Error`. O que separa os dois desenhos é a SUBCLASSE sobreviver.
     expect(result.current.erro).toBeInstanceOf(TypeError);
-    expect(result.current.erro?.message).not.toContain('quais SKUs são rentáveis');
+    // Âncora ASCII e exclusiva da frase de negócio: casar com acento faria a asserção depender
+    // do locale, e uma que só é vermelha no shell de quem a escreveu não vale como prova (#1483).
+    expect(result.current.erro?.message).not.toContain('SKUs');
 
     // 2. FAIL-CLOSED intacto: a lista da execução ANTERIOR não sobrevive a esta falha.
     expect(result.current.recommendations).toEqual([]);

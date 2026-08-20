@@ -186,8 +186,10 @@ describe('useBundleEngine — falha de vendáveis: bug de código ≠ dado indis
     // testar `instanceof Error` não discriminaria nada — o handler antigo também produzia um
     // `Error`. O que separa os dois desenhos é a SUBCLASSE sobreviver.
     expect(result.current.erro).toBeInstanceOf(TypeError);
-    // E a mensagem NÃO é a de domínio (que o handler antigo colocaria aqui).
-    expect(result.current.erro?.message).not.toContain('quais SKUs são rentáveis');
+    // E a mensagem NÃO é a de domínio (que o handler antigo colocaria aqui). Âncora ASCII e
+    // exclusiva da frase de negócio: casar com acento faria a asserção depender do locale, e
+    // uma que só é vermelha no shell de quem a escreveu não vale como prova (#1483).
+    expect(result.current.erro?.message).not.toContain('SKUs');
 
     // 2. FAIL-CLOSED intacto: a lista da execução ANTERIOR não sobrevive a esta falha.
     expect(result.current.customerBundles).toHaveLength(0);
