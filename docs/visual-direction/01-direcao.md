@@ -267,3 +267,34 @@ Todos com versões `-bg` muito claras (light) ou muito escuras (dark) pra fundos
 - **Opção γ** — `AdminCustomers`: tabela densa com filtros, segmentos (que acabamos de implementar), avatar de cliente. Boa pra mostrar tipografia + tabela + chips + tabular nums em coluna "gasto mensal".
 
 Próximo doc (`02-tokens.md`) é independente da escolha — define os tokens novos no nível CSS. Mas `03-pilotos.md` depende dessa escolha. Aguardo sua resposta.
+
+---
+
+## 7. Elenco de referências — o que se toma de cada uma (2026-08-20)
+
+As §2-§5 destilam as **três primárias** (Vercel · Mercury · Stripe Dashboard). O elenco de apoio nasceu depois, na auditoria de UX (`docs/ux-audit/`), e nunca foi consolidado aqui — por isso a lista de benchmarks citada no `CLAUDE.md` tinha nomes sem rastro nesta pasta. Esta seção é o mapa: **cada referência, o que se toma dela, e onde isso já está aplicado.**
+
+Atenção ao ler a §1: ali **Polaris**, **Notion** e **Material** aparecem descrevendo a identidade **antiga** (`HubSpot Canvas + Polaris + Gong`, azul saturado, easing Material) — é diagnóstico do que saiu, não benchmark.
+
+### Benchmarks
+
+| Referência | O que se toma | Onde já está aplicado |
+|---|---|---|
+| **Vercel · Mercury · Stripe Dashboard** | Direção primária: tipografia geométrica, tabular nums, border > sombra, easing próprio | §2-§5 · tokens de `src/index.css` |
+| **Linear** | Quase-neutro que aguenta jornada longa; densidade alta como **escolha**, não como aperto | Decisão A1 e D1 (§5) · `src/index.css:306` |
+| **Notion** | Navegação por seções, Recentes/Favoritos na sidebar, stagger na expansão | `05-revisao-skill.md` SB1/SB2 · `docs/ux-audit/03-roadmap.md:141` |
+| **Polaris** (Shopify) | Componentes de dado B2B: EmptyState compacto, ResourceList | `docs/ux-audit/03-roadmap.md:221,268` |
+| **Carbon** (IBM) | **Rigor de sistema, não estética** — (a) *design tokens*: todo sinal semântico via token, nunca cor crua; (b) *touch target spec*: 44×44 mínimo, 56×56 para uso com luva | A regra `text-status-*` (em vez de `text-emerald-600`) vem de `03-roadmap.md:330`; `<Button size="touch">` 44px e `balcao` 56px vêm de `03-roadmap.md:92` |
+| **Retool** | O vocabulário de **ferramenta interna**: a tabela densa é a superfície principal — bulk actions, atalhos `j/k`, e tela de gestão pode ser desktop-only sem se desculpar | `src/index.css:306` (32px densos em ponteiro fino, decisão explícita) · `docs/ux-audit/02-heuristica.md:133,416` · `03-roadmap.md:268` |
+
+Carbon e Retool entram exatamente onde as três primárias **não alcançam**: Vercel/Mercury/Stripe são produtos de sessão curta e superfície pequena; o Afiação é operação de 8h com tabela densa, coletor e luva. Carbon dá a régua de sistema (token semântico e alvo de toque), Retool o precedente de densidade — juntos são o que sustenta `density-compact` global convivendo com `size="balcao"` de 56px na mesma base de código.
+
+### Anti-referências
+
+| Anti-referência | Por quê | O que contradiz aqui |
+|---|---|---|
+| **Material 3** | É **de onde o app saiu**, não um caminho que se deixou de tomar: a §1 registra o azul saturado "tipo HubSpot/Material" e o easing `cubic-bezier(0.4, 0, 0.2, 1)` como "sem assinatura própria". O M3 aprofunda justamente o que o redesign desfez — cor tonal saturada, profundidade por elevação/sombra, shape bem arredondado e alvos generosos herdados de mobile-touch. | As quatro decisões da §5 ao mesmo tempo: A1 (quase-neutro), D1 (radius 6px), E1 (border 1px, sombra só em overlay), G1 (easing Vercel) |
+| **Bootstrap** | Piso genérico: componente com identidade de "site" (primário saturado, sombra e radius default) e utilitário de cor **crua**, sem camada semântica. Adotar esse vocabulário reintroduz `text-red-600` no lugar de `text-status-error` — o débito de ~50 callsites que a auditoria de UX está pagando. | A camada `--status-*` de `src/index.css` · o veredicto da §1 (piso decente, nenhuma escolha visual cria identidade) |
+| **Stripe landing** (consumer) | O Stripe entra **só pelo Dashboard**. A landing é consumer-facing: radius maior, ilustração, respiro — outro produto. | Já registrado na Dimensão D (§3): "mais friendly, mais Stripe-landing-page. Não combina com fintech sério" |
+
+> **Regra prática:** benchmark aqui é **pattern nominal** (o componente e a régua), nunca skin. A identidade do Afiação segue sendo tipografia + quase-neutro + densidade; copiar a estética de qualquer um dos cinco quebraria a decisão A1.
