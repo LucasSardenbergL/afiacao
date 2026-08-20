@@ -44,9 +44,17 @@ _alvo() {
 }
 case "$1" in
   fetch) exit 0 ;;
-  merge-base) [ -n "${GIT_STUB_NO_MB:-}" ] && exit 128; echo MB ;;
+  # O stub aceitava QUALQUER ref: trocar origin/main por origin/master era invisível. Agora
+  # exige a ref certa — a mutação passa a virar merge-base ausente, que é o efeito real.
+  merge-base) [ -n "${GIT_STUB_NO_MB:-}" ] && exit 128
+    case " $* " in *" origin/main "*) ;; *) exit 128 ;; esac
+    echo MB ;;
   branch) printf '%s\n' "${GIT_STUB_BRANCH-minha-branch}" ;;
   diff)
+    # Todo diff do hook passa a merge-base. Sem esta exigência, REMOVER "$mb" do comando era
+    # invisível ao stub (ele só olhava HEAD/--cached/árvore) e os commits da branch sumiriam
+    # do conjunto em produção, calando o guard. (lacuna da 2ª opinião, Codex 2026-08-19)
+    case " $* " in *" MB "*) ;; *) exit 128 ;; esac
     a="$(_alvo "$@")"
     case "$*" in
       *--name-only*)
@@ -98,7 +106,15 @@ _hook() {
 }
 _ok()   { printf '  ✓ %s\n' "$1"; }
 _bad()  { printf '  ✗ %s\n' "$1"; fail=1; }
-_avisa()  { [ -n "$1" ] && printf '%s' "$1" | grep -q 'DUPLICATA por OBJETIVO'; }
+# Casa o CONTRATO, não só o texto: o host lê `hookSpecificOutput.additionalContext` sob
+# `hookEventName:"PreToolUse"`. Grepar o JSON cru deixava passar renomear a chave — o aviso
+# continuaria no stdout e seria IGNORADO pelo host (lacuna da 2ª opinião, Codex 2026-08-19).
+# `printf '%s' | jq` e nunca `echo` — no zsh o echo corrompe o \n escapado do JSON (CLAUDE.md).
+_avisa()  { [ -n "$1" ] || return 1
+  printf '%s' "$1" | jq -e '.hookSpecificOutput.hookEventName == "PreToolUse"
+    and .hookSpecificOutput.permissionDecision == "allow"
+    and ((.hookSpecificOutput.additionalContext // "") | test("DUPLICATA por OBJETIVO"))' \
+    >/dev/null 2>&1; }
 # if/then explícito: A && B || C roda C mesmo com A verdadeiro se B falhar (SC2015).
 _deve_avisar() { if _avisa "$2"; then _ok "$1"; else _bad "$1"; fi; }
 _deve_calar()  { if _avisa "$2"; then _bad "$1"; else _ok "$1"; fi; }
@@ -209,6 +225,46 @@ const cor_x = 1
 out="$(_hook "GIT_STUB_MINE_FILE=$stub/mine_curto.txt" "$CRIAR")"
 _deve_calar "cor_x (5 chars, forma válida) não dispara" "$out"
 
+echo "== 7c. arquivo NOVO (ausente da merge-base): duas sessões criaram o mesmo => AVISA =="
+# O caso de duplicata mais CARO: as duas sessões criaram o MESMO arquivo novo. Aqui o
+# git show MB:<f> falha (o arquivo não existia) e o hook degrada para base_c="" — de
+# propósito, porque sem base TUDO que o diff adiciona é novo. Trocar esse fallback por
+# `continue` mataria exatamente este caso, e nenhum outro positivo usa arquivo ausente da
+# merge-base. Lacuna apontada pela 2ª opinião (Codex, 2026-08-19) e a mais grave delas.
+printf 'src/lib/modulo-novo.ts\n' > "$stub/mine_novo.txt"
+printf '+++ b/src/lib/modulo-novo.ts\n+export function registrar_modulo_novo() {}\n' \
+  > "$stub/diff_src_lib_modulo-novo_ts"
+# NÃO existe base_src_lib_modulo-novo_ts: é essa AUSÊNCIA que faz o git show sair 128.
+rm -f "$stub/base_src_lib_modulo-novo_ts"
+printf 'export function registrar_modulo_novo() {}\n' > "$stub/main_src_lib_modulo-novo_ts"
+out="$(_hook "GIT_STUB_MINE_FILE=$stub/mine_novo.txt" "$CRIAR")"
+_deve_avisar "arquivo novo em ambas as sessões dispara" "$out"
+
+echo "== 7d. opções GLOBAIS do git/gh contam como gatilho =="
+# O regex do modo pula flags antes do subcomando de propósito. Sem caso, perder esse grupo
+# faria git -C dir commit e gh --repo x/y pr create deixarem de disparar — em SILÊNCIO.
+# (lacuna da 2ª opinião, Codex 2026-08-19; a mesma forma que ele achou nos hooks do ECC)
+# cache PRÓPRIO: usar o $DEDUPE compartilhado gravaria o marcador desta MESMA assinatura e
+# silenciaria o caso 9 adiante (acoplamento de ordem — visto ao vivo ao escrever este caso).
+out="$(_hook "GIT_STUB_MINE_FILE=$stub/vazio.txt GIT_STUB_STAGED_FILE=$stub/mine.txt PRDG_CACHE_DIR=$stub/cache7d" \
+  'git -C /tmp/repo commit -m "wip"')"
+_deve_avisar "git -C <dir> commit dispara" "$out"
+out="$(_hook "$MINE" 'gh --repo lucas/afiacao pr create --fill')"
+_deve_avisar "gh --repo <x/y> pr create dispara" "$out"
+
+echo "== 7e. .md POSITIVO: doc também é superfície de duplicata =="
+# O caso 7 prova que PROSA não vira candidato; falta o outro lado. O cabeçalho do hook diz
+# que filtrar docs/ daria falso negativo — a ocorrência 2 das 3 reais era follow-up de doc.
+# Sem este caso, acrescentar *.md aos ignorados passava, contradizendo o desenho medido.
+printf 'docs/historico/registro.md\n' > "$stub/mine_docpos.txt"
+printf '+++ b/docs/historico/registro.md\n+O gate agora cobre reposicao_pos_marcador.\n' \
+  > "$stub/diff_docs_historico_registro_md"
+printf 'Registro.\n' > "$stub/base_docs_historico_registro_md"
+printf 'Registro. O gate agora cobre reposicao_pos_marcador.\n' \
+  > "$stub/main_docs_historico_registro_md"
+out="$(_hook "GIT_STUB_MINE_FILE=$stub/mine_docpos.txt" "$CRIAR")"
+_deve_avisar "símbolo repetido em .md dispara" "$out"
+
 echo "== 8. REGRESSÃO do escopo: símbolo existe repo-wide, mas é novo NO ARQUIVO → AVISA =="
 # É a ocorrência 1 real: reposicao_pos_marcador vivia em 10 arquivos (migrations) na merge-base.
 # O escopo por arquivo tem de disparar mesmo assim; repo-wide daria falso negativo.
@@ -260,6 +316,20 @@ _deve_avisar "colisão NOVA fura o silêncio do dedupe" "$out"
 # ...e a branch faz parte da assinatura: outra branch com o MESMO achado volta a avisar
 out="$(_hook "$C9 GIT_STUB_BRANCH=outra-branch" "$COMITAR")"
 _deve_avisar "outra branch com o mesmo achado avisa (assinatura inclui a branch)" "$out"
+
+echo "== 12b. o silêncio do dedupe EXPIRA (TTL) =="
+# O caso 12 prova que o MESMO achado não repete; falta provar que o silêncio não é ETERNO.
+# Sem isto, reduzir a checagem a [ -f "$marca" ] passava e o guard emudecia para sempre
+# naquela branch. (lacuna da 2ª opinião, Codex 2026-08-19)
+rm -rf "$CACHE"
+C12B="GIT_STUB_MINE_FILE=$stub/vazio.txt GIT_STUB_STAGED_FILE=$stub/mine.txt $DEDUPE"
+_hook "$C12B" "$COMITAR" >/dev/null
+out="$(_hook "$C12B" "$COMITAR")"
+_deve_calar "2a vez seguida: mudo (dedupe ativo)" "$out"
+# envelhece a marca além do TTL — `touch -t` no formato POSIX vale no macOS E no GNU.
+find "$CACHE" -type f -exec touch -t 202001010000 {} +
+out="$(_hook "$C12B" "$COMITAR")"
+_deve_avisar "depois do TTL o aviso VOLTA (silêncio não é permanente)" "$out"
 
 echo "== 13. o \`gh pr create\` NUNCA é silenciado pelo dedupe (último portão) =="
 out="$(_hook "$MINE $DEDUPE" "$CRIAR")"; _deve_avisar "create avisa a 1ª vez" "$out"
