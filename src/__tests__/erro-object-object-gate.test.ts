@@ -149,11 +149,11 @@ const A_DIVIDA: ReadonlyMap<string, number> = new Map([
   ['supabase/functions/process-nfe/index.ts', 7],
   ['supabase/functions/promocao-extrair-via-vision/index.ts', 2],
   ['supabase/functions/reposicao-depara-sayerlack-auto/index.ts', 1],
-  // 1→3 é REVELAÇÃO, não reintrodução (2026-08-20): o stripper regex desta suíte apagava
-  // 1.041 das 1.226 linhas deste arquivo — o `/*` do `*/*` no header Accept pareava com o
-  // primeiro `*/` real e o fiscal media 15% do arquivo. Com `@/lib/gates/limpeza-fonte` os
-  // sítios das linhas 737 e 986 apareceram; nasceram com o arquivo, ninguém os reintroduziu.
-  ['supabase/functions/sayerlack-captura-precos/index.ts', 3],
+  // QUITADO (3→0) no PR do pós-login Sayerlack: os 3 sítios do lado Deno passaram a usar
+  // `mensagemDeErro` (_shared/erro-mensagem.ts). Eles só puderam ser vistos porque o
+  // `limpeza-fonte` revelou as 1.041 linhas que o stripper regex apagava — a revelação foi
+  // de um PR, a quitação é deste. O sítio que sobra vive no template do Browserless (não
+  // importa _shared) e segue baselinado em C_DIVIDA.
   ['supabase/functions/scoring-recalc-batch/index.ts', 1],
   ['supabase/functions/scoring-recalc-client/index.ts', 1],
   ['supabase/functions/sync-reprocess/index.ts', 3],
@@ -172,6 +172,10 @@ const C_DIVIDA: ReadonlyMap<string, number> = new Map([
   ['supabase/functions/cep-geo-resolver/index.ts', 1],
   ['supabase/functions/dispatch-notifications/index.ts', 1],
   ['supabase/functions/enviar-pedido-portal-sayerlack/index.ts', 3],
+  // REVELADO, não reintroduzido (0→1): estava na região que o `semComentarios` apagava
+  // (ver A_DIVIDA acima). Não dá para quitar com `mensagemDeErro`: o sítio vive DENTRO do
+  // template do Browserless, que roda no Chrome remoto e não importa nada do _shared.
+  ['supabase/functions/sayerlack-captura-precos/index.ts', 1],
   ['supabase/functions/omie-analytics-sync/index.ts', 6],
   ['supabase/functions/omie-analytics-sync/politica-retry.ts', 1],
   ['supabase/functions/omie-aplicar-parametros/index.ts', 1],

@@ -34,6 +34,8 @@ import {
   classificarLinhasRascunho,
   ehPlaceholderDataTables,
 } from "../_shared/embalagem-captura-helpers.ts";
+import { classificarPosLogin } from "../_shared/sayerlack-pos-login.ts";
+import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? Deno.env.get("VITE_SUPABASE_URL")!;
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -60,6 +62,10 @@ export default async ({ page, context }) => {
   // (não é linha real — spike-B f4d9fd92) e classificação de rascunho.
   const ehPlaceholderDataTables = ${ehPlaceholderDataTables.toString()};
   const classificarLinhasRascunho = ${classificarLinhasRascunho.toString()};
+  // Confirmação POSITIVA de dashboard pós-login: 'url_changed' só prova que a URL
+  // saiu de /login (falso positivo real em 2026-08-20, quando o portal passou a
+  // pedir troca de senha). Mesma fonte única da edge de envio.
+  const classificarPosLogin = ${classificarPosLogin.toString()};
 
   // === Budget management (deadline global, aborto limpo) ===
   // Supabase edge tem wall-clock ~400s e a PERSISTÊNCIA pós-browser (uploads +
@@ -328,6 +334,65 @@ export default async ({ page, context }) => {
     trace.push({ step: 'login_success', via: loginCheck.via, t: Date.now() - t0 });
 
     await sleep(2000);
+
+    // === Confirmação POSITIVA de dashboard ===
+    // Sem isto, um redirecionamento pós-login (troca de senha obrigatória, mudança de
+    // endereço do portal) vira timeout anônimo lá na frente e o run inteiro reporta
+    // uma causa que não é a verdadeira. A espera é pelo MESMO sinal que a navegação
+    // já exige adiante: no caminho feliz não custa nada.
+    await page.waitForFunction(
+      () => document.querySelectorAll('#sidebar .menu-link, .app-sidebar .menu-link').length > 0,
+      { timeout: budgetFor('pos-login-dashboard', 15_000), polling: 250 }
+    ).catch(() => null);
+
+    const sinaisPosLogin = await page.evaluate(function() {
+      const menu = document.querySelectorAll('#sidebar .menu-link, .app-sidebar .menu-link');
+      const senhas = Array.from(document.querySelectorAll('input[type=password]')).filter(function(el) {
+        return el.offsetParent !== null;
+      });
+      return {
+        url: window.location.href,
+        menuLinks: menu.length,
+        camposSenha: senhas.length,
+        titulo: document.title || '',
+        texto: (document.body ? (document.body.innerText || '') : '').substring(0, 3000),
+      };
+    });
+    sinaisPosLogin.origemEsperada = portalUrl || null;
+
+    const posLogin = classificarPosLogin(sinaisPosLogin);
+    trace.push({
+      step: 'pos_login_check',
+      tipo: posLogin.tipo,
+      url: sinaisPosLogin.url,
+      menuLinks: sinaisPosLogin.menuLinks,
+      camposSenha: sinaisPosLogin.camposSenha,
+      origemDivergente: posLogin.origemDivergente,
+      t: Date.now() - t0,
+    });
+
+    if (posLogin.tipo !== 'dashboard') {
+      const posLoginScreenshot = await page.screenshot({ type: 'jpeg', quality: 70, encoding: 'base64' }).catch(() => null);
+      return {
+        data: {
+          success: false,
+          erro: posLogin.motivo,
+          erroTipo: posLogin.erroTipo,
+          posLoginCheck: {
+            tipo: posLogin.tipo,
+            origemDivergente: posLogin.origemDivergente,
+            menuLinks: sinaisPosLogin.menuLinks,
+            camposSenha: sinaisPosLogin.camposSenha,
+            titulo: sinaisPosLogin.titulo,
+            textoPreview: sinaisPosLogin.texto.substring(0, 300),
+          },
+          itens, itens_nao_processados: items.map(function(it){ return it.sku_portal; }),
+          trace,
+        },
+        type: 'application/json',
+        screenshot: posLoginScreenshot,
+      };
+    }
 
     // Navegação SEMPRE via clique no menu (goto direto redireciona p/ rota de erro)
     await page.evaluate(() => {
@@ -734,7 +799,7 @@ async function uploadEvidencia(
       .createSignedUrl(path, 60 * 60 * 24 * 30);
     return { path, signedUrl: signed?.signedUrl ?? null };
   } catch (e) {
-    console.error(`[captura-precos] run ${runId}: exceção upload screenshot:`, e instanceof Error ? e.message : String(e));
+    console.error(`[captura-precos] run ${runId}: exceção upload screenshot:`, mensagemDeErro(e) ?? "erro sem mensagem");
     return { path: null, signedUrl: null };
   }
 }
@@ -983,7 +1048,7 @@ Deno.serve(async (req) => {
         bResp = { raw: txt.slice(0, 2000) };
       }
     } catch (e) {
-      httpErr = e instanceof Error ? e.message : String(e);
+      httpErr = mensagemDeErro(e) ?? "erro sem mensagem";
     }
     const browserlessMs = Date.now() - tBrowserless;
     console.log(`[captura-precos] run ${runId}: Browserless retornou em ${browserlessMs}ms — status=${httpStatus}${httpErr ? ` erro=${httpErr}` : ""}`);
@@ -1102,7 +1167,15 @@ Deno.serve(async (req) => {
       try {
         const tail = JSON.stringify(envelope.trace.slice(-8)).slice(0, 1600);
         erroFinal = `${erroFinal ?? "falha"} | trace_tail: ${tail}`;
-      } catch { /* trace não-serializável não pode derrubar o fechamento do run */ }
+      } catch {
+        // trace não-serializável não pode derrubar o fechamento do run.
+        // ⚠️ Comentário de LINHA de propósito: o header HTTP `Accept` lá em cima carrega a
+        // sequência coringa de mimetype (barra entre asteriscos) dentro de uma string, e os
+        // gates textuais (escrita-critica, erro-object-object) removem comentários por regex
+        // sem entender strings. Enquanto este era um comentário de BLOCO, ele fechava o par
+        // que aquela string abriu e apagava 1.041 das 1.226 linhas do arquivo do campo de
+        // visão dos fiscais — medido em 2026-08-20. Não reintroduzir delimitador de bloco aqui.
+      }
     }
 
     const evidencia = await uploadEvidencia(supabase, runId, bResp?.screenshot ?? null);
@@ -1150,7 +1223,7 @@ Deno.serve(async (req) => {
       erro: erroFinal,
     });
   } catch (e) {
-    const erro = e instanceof Error ? e.message : String(e);
+    const erro = mensagemDeErro(e) ?? "erro sem mensagem";
     console.error(`[captura-precos] run ${runId}: exceção:`, erro);
     await supabase
       .from("sku_preco_captura_run")

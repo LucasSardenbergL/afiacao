@@ -122,7 +122,11 @@ const E1_DIVIDA: ReadonlyMap<string, number> = new Map([
   ['supabase/functions/biometric-auth/index.ts', 3],
   ['supabase/functions/conciliar-pedido-portal/index.ts', 1],
   ['supabase/functions/disparar-pedidos-aprovados/index.ts', 8],
-  ['supabase/functions/enviar-pedido-portal-sayerlack/index.ts', 10],
+  // 10→9: o `.insert()` do `fornecedor_alerta` passou a capturar `{ error }` ao virar o
+  // sítio único `alertarFornecedor()`. Era o alerta de "senha do portal expirou" — uma
+  // escrita cega no caminho que EXISTE para avisar o founder de que o pedido parou;
+  // falhando calada, o silêncio do banco somava ao silêncio que o PR conserta.
+  ['supabase/functions/enviar-pedido-portal-sayerlack/index.ts', 9],
   ['supabase/functions/extrair-sinais-ligacao/index.ts', 1],
   ['supabase/functions/fin-ic-reconcile/index.ts', 1],
   ['supabase/functions/gerar-pedidos-diario/index.ts', 2],

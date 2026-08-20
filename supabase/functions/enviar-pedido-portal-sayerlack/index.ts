@@ -7,6 +7,7 @@
 // (`{"probe":true}`), que responde antes de qualquer IO. Ver versao.ts.
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
+import { classificarPosLogin, decidirAlertaPortal } from "../_shared/sayerlack-pos-login.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -38,6 +39,12 @@ export default async ({ page, context }) => {
   const { user, pass, portalUrl, clienteCodigo, items, ltEsperado } = context;
   const trace = [];
   const t0 = Date.now();
+
+  // Confirmação POSITIVA de dashboard pós-login (money-path), interpolada do
+  // _shared via .toString() — fonte única testada em vitest. A COLETA dos sinais
+  // fica no page.evaluate abaixo porque ele roda no contexto da página e não
+  // enxerga este escopo.
+  const classificarPosLogin = ${classificarPosLogin.toString()};
   // Não usamos timeout interno menor que o Browserless: em 14/05, o pedido #116
   // clicou em "Efetivar Pedido" por volta de 53s e a Promise.race anterior
   // devolveu TIMEOUT_INTERNO aos 55s, encerrando o browser antes do portal concluir.
@@ -335,7 +342,8 @@ export default async ({ page, context }) => {
 
     const tipo = data.erroTipo || 'UNKNOWN';
     const erroLogicoPreSubmit =
-      tipo === 'LOGIN_FAILED' || tipo === 'CLIENTE_NOT_FOUND' || tipo === 'SKU_NOT_FOUND'
+      tipo === 'LOGIN_FAILED' || tipo === 'PASSWORD_CHANGE_REQUIRED'
+      || tipo === 'CLIENTE_NOT_FOUND' || tipo === 'SKU_NOT_FOUND'
       || tipo === 'GRUPO_LEADTIME_MISMATCH';
 
     if (data.success === true) {
@@ -558,6 +566,71 @@ export default async ({ page, context }) => {
     trace.push({ step: 'login_success', via: loginCheck.via, url: loginCheck.url, t: Date.now() - t0 });
 
     await sleep(2000); // dá tempo do portal estabilizar sessão pós-login antes de navegar
+
+    // === Confirmação POSITIVA de dashboard (money-path) ===
+    // 'url_changed' prova só que a URL saiu de /login — NÃO que a área logada abriu.
+    // Em 2026-08-20 o portal redirecionou o login para a tela de troca de senha
+    // obrigatória: o falso positivo seguiu até o menu, morreu 3s depois como
+    // "Waiting failed: 3000ms exceeded" (erroTipo EXCEPTION) e, como o
+    // fornecedor_alerta só disparava para LOGIN_FAILED, ninguém foi avisado da causa
+    // real por ~1h (pedido 1939, 3 tentativas). Aqui a ausência de dashboard vira
+    // erroTipo NOMEADO, e a classificação é a mesma testada em vitest.
+    // A espera é pelo MESMO sinal que a navegação já exige adiante: no caminho feliz
+    // resolve assim que o menu aparece e não custa nada.
+    await page.waitForFunction(
+      () => document.querySelectorAll('#sidebar .menu-link, .app-sidebar .menu-link').length > 0,
+      { timeout: budgetFor('pos-login-dashboard', 15_000), polling: 250 }
+    ).catch(() => null);
+
+    const sinaisPosLogin = await page.evaluate(function() {
+      const menu = document.querySelectorAll('#sidebar .menu-link, .app-sidebar .menu-link');
+      const senhas = Array.from(document.querySelectorAll('input[type=password]')).filter(function(el) {
+        return el.offsetParent !== null;
+      });
+      return {
+        url: window.location.href,
+        menuLinks: menu.length,
+        camposSenha: senhas.length,
+        titulo: document.title || '',
+        texto: (document.body ? (document.body.innerText || '') : '').substring(0, 3000),
+      };
+    });
+    sinaisPosLogin.origemEsperada = portalUrl || null;
+
+    const posLogin = classificarPosLogin(sinaisPosLogin);
+    trace.push({
+      step: 'pos_login_check',
+      tipo: posLogin.tipo,
+      url: sinaisPosLogin.url,
+      menuLinks: sinaisPosLogin.menuLinks,
+      camposSenha: sinaisPosLogin.camposSenha,
+      origemDivergente: posLogin.origemDivergente,
+      t: Date.now() - t0,
+    });
+
+    if (posLogin.tipo !== 'dashboard') {
+      const posLoginScreenshot = await page.screenshot({ type: 'png', encoding: 'base64' }).catch(() => null);
+      return {
+        data: {
+          success: false,
+          erro: posLogin.motivo,
+          erroTipo: posLogin.erroTipo,
+          urlFinal: sinaisPosLogin.url,
+          posLoginCheck: {
+            tipo: posLogin.tipo,
+            origemDivergente: posLogin.origemDivergente,
+            menuLinks: sinaisPosLogin.menuLinks,
+            camposSenha: sinaisPosLogin.camposSenha,
+            titulo: sinaisPosLogin.titulo,
+            textoPreview: sinaisPosLogin.texto.substring(0, 300),
+          },
+          trace,
+        },
+        type: 'application/json',
+        screenshot: posLoginScreenshot,
+        preLoginScreenshot,
+      };
+    }
 
     // Navegação para /order-creation: SEMPRE via click no menu, NUNCA via goto direto
     // Razão: portal Sayerlack redireciona goto direto para /login/order-creation (rota de erro)
@@ -2070,25 +2143,11 @@ async function processarPedido(
   }
 
   if (envStatus === "erro_nao_retentavel") {
-    // Erro logico do automador (login / cliente / sku invalido).
+    // Erro logico do automador (login / senha / cliente / sku invalido).
     const erroTipo: string = evidence?.erroTipo ?? "UNKNOWN";
     const erroMsg: string = evidence?.erro ?? "Falha logica do automador";
     const r = await aplicarTransicao("erro_nao_retentavel", { erro: erroMsg });
-    if (erroTipo === "LOGIN_FAILED") {
-      await supabase.from("fornecedor_alerta").insert({
-        empresa: "OBEN",
-        fornecedor_nome: "RENNER SAYERLACK S/A",
-        tipo: "outro",
-        severidade: "urgente",
-        titulo: "Senha do portal Sayerlack expirou",
-        mensagem:
-          `Login falhou no portal ${SAYERLACK_PORTAL_URL}. Provavel expiracao de senha. ` +
-          `ACAO: 1) Trocar senha no portal Sayerlack, 2) Atualizar SAYERLACK_PORTAL_PASS no Supabase Edge Functions Secrets, ` +
-          `3) Em /admin/reposicao/pedidos, clicar em "Forcar reenvio ao portal" no pedido afetado.`,
-        status: "pendente_notificacao",
-        metadata: { pedido_id: pedido.id, edge_function: "enviar-pedido-portal-sayerlack" },
-      });
-    }
+    await alertarFornecedor(supabase, erroTipo, pedido.id, { esgotado: true });
     return r;
   }
 
@@ -2097,6 +2156,12 @@ async function processarPedido(
   // desconhecido já foi endurecido pra indeterminado na rede de segurança acima.
   const erroMsg: string = evidence?.erro ?? "Falha do automador (retentavel)";
   const esgotado = novasTentativas >= MAX_TENTATIVAS;
+  // O incidente de 2026-08-20 morreu AQUI: 3 tentativas idênticas, o pedido parou
+  // por esgotamento e nenhum alerta saiu — o insert só existia no ramo acima. Causa
+  // possivelmente transitória alerta ao ESGOTAR (antes disso seria ruído que
+  // dessensibiliza); `decidirAlertaPortal` decide, e devolve null quando não há o
+  // que dizer.
+  await alertarFornecedor(supabase, evidence?.erroTipo ?? null, pedido.id, { esgotado });
   return await aplicarTransicao(
     esgotado ? "erro_nao_retentavel" : "erro_retentavel",
     {
@@ -2104,6 +2169,57 @@ async function processarPedido(
       proximoRetryEm: esgotado ? null : new Date(Date.now() + 15 * 60 * 1000).toISOString(),
     },
   );
+}
+
+// Insere o `fornecedor_alerta` quando o automador falha de um jeito que exige ação
+// humana. A DECISÃO (se alerta, com que texto) vive em `decidirAlertaPortal`
+// (_shared, testado em vitest); aqui fica só a escrita.
+//
+// Sítio ÚNICO de escrita de propósito: antes existia um `.insert()` solto no ramo de
+// `erro_nao_retentavel` que cobria só LOGIN_FAILED — e a falha de 2026-08-20 chegou
+// como EXCEPTION, por fora dele. O `{ error }` é capturado porque um alerta que falha
+// em silêncio é a mesma classe de bug que este PR conserta.
+//
+// ⚠️ COMENTÁRIO DE LINHA, NUNCA de bloco, neste arquivo — e sem escrever delimitador
+// de bloco nem em prosa. O header HTTP `Accept` acima carrega a sequência coringa de
+// mimetype (barra entre dois asteriscos) DENTRO de uma string, e os gates textuais
+// (escrita-critica, erro-object-object) removem comentários por regex, sem entender
+// strings: qualquer fechamento de bloco depois dela fecha o par que ela abriu e APAGA
+// ~1.700 linhas do que o fiscal enxerga — o gate fica verde por CEGUEIRA, não por
+// mérito. Medido em 2026-08-20; a edge irmã de captura já vive assim.
+async function alertarFornecedor(
+  supabase: SupabaseClient,
+  erroTipo: string | null,
+  pedidoId: number,
+  ctx: { esgotado: boolean },
+): Promise<void> {
+  const alerta = decidirAlertaPortal(erroTipo, {
+    esgotado: ctx.esgotado,
+    portalUrl: SAYERLACK_PORTAL_URL,
+  });
+  if (!alerta) return;
+
+  const { error } = await supabase.from("fornecedor_alerta").insert({
+    empresa: "OBEN",
+    fornecedor_nome: "RENNER SAYERLACK S/A",
+    tipo: "outro",
+    severidade: alerta.severidade,
+    titulo: alerta.titulo,
+    mensagem: alerta.mensagem,
+    status: "pendente_notificacao",
+    metadata: {
+      pedido_id: pedidoId,
+      edge_function: "enviar-pedido-portal-sayerlack",
+      erro_tipo: erroTipo,
+    },
+  });
+  if (error) {
+    console.error("[ALERTA_FORNECEDOR] falha ao inserir alerta", {
+      erroTipo,
+      pedidoId,
+      error: error.message,
+    });
+  }
 }
 
 async function authorizeCronOrStaff(req: Request): Promise<boolean> {
