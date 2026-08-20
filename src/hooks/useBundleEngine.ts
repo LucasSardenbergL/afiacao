@@ -14,6 +14,7 @@ import {
 } from '@/lib/farmer/completude-snapshot';
 import { lerHeadVigente, registrarGeracaoFarmer } from '@/lib/farmer/registrar-geracao';
 import { indexarCatalogoAtivo, resolverItemNoCatalogo } from '@/lib/farmer/identidade-item';
+import { STATUS_NAO_VENDA_POSTGREST } from '@/lib/farmer/universo-pedidos';
 
 // ─── Types ───────────────────────────────────────────────────────────
 export interface AssociationRule {
@@ -488,7 +489,14 @@ export const useBundleEngine = () => {
           supabase
             .from('sales_orders')
             .select('customer_user_id, items, total, created_at, account')
-            .in('status', ['confirmado', 'faturado', 'entregue'])
+            // DENYLIST + `deleted_at IS NULL`: o MESMO universo de
+            // `private.margem_cliente_agregada()` e do `useFarmerScoring` (#1738). A allowlist que
+            // estava aqui citava DOIS status que nunca existiram nesta tabela (`confirmado`,
+            // `entregue`) e resolvia para só `faturado`: 10.281 pedidos reais — `importado` 5.455,
+            // `separacao` 2.817, `enviado` 2.009 — ficavam fora das cestas que alimentam o Apriori. Ver
+            // `@/lib/farmer/universo-pedidos` (inclusive o efeito no denominador do support).
+            .not('status', 'in', STATUS_NAO_VENDA_POSTGREST)
+            .is('deleted_at', null)
             .order('id', { ascending: true })
             .range(de, ate) as unknown as PromiseLike<{ data: SalesOrderRow[] | null; error: unknown }>,
         'sales_orders/bundle',

@@ -101,6 +101,14 @@ export const INSUMOS_OBRIGATORIOS_CROSS_SELL = [
   //   item utilizável.
   // Sem este insumo, esses 107 produziriam zero com TODOS os universos fartos — `completo`
   // sem ser, que é precisamente a licença que a fase 2 usaria para expirar.
+  //
+  // ⚠️ Aquele retrato é do universo ANTIGO (a allowlist `confirmado/faturado/entregue`, que
+  // resolvia para só `faturado`). Re-medido sob a DENYLIST da autoridade (psql-ro, 20/08/2026),
+  // que é o universo em vigor desde este PR:
+  //   70.227 itens · 41.923 resolvem para SKU ativo = 59,7% (a TAXA praticamente não mudou)
+  //   1.227 clientes com item · 1.073 com item que resolve → 154 (12,6%) sem item utilizável
+  // O denominador cresceu ~42% e a proporção de descarte ficou onde estava — o que entrou não é
+  // de outra natureza. Ver `@/lib/farmer/universo-pedidos`.
   'carteira_com_historico_utilizavel',
 ] as const;
 
