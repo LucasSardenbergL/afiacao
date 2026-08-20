@@ -102,21 +102,13 @@ vi.mock('@/integrations/supabase/client', () => ({
         };
         return c;
       }
-      // A leitura do melhor individual: builder PAGINÁVEL (`.order().range()`), porque o
-      // caller passa por `fetchAllPages`. As duas falhas entram por aqui.
+      // A leitura do melhor individual — UMA tupla jsonb. As duas falhas entram por aqui.
       if (nome === 'farmer_melhor_individual_por_cliente') {
-        const mi: Record<string, unknown> = {
-          order: () => mi,
-          range: () => mi,
-          then: (resolve: (v: unknown) => void, reject: (e: unknown) => void) => {
-            // A REJEIÇÃO é o caminho perigoso: escapa para o `catch` externo com todos os
-            // insumos obrigatórios já íntegros. O `{ error }` resolvido é o silencioso.
-            if (falhaMelhorIndividual === 'rejeita') return reject(new Error('Failed to fetch'));
-            if (falhaMelhorIndividual === 'erro') return resolve({ data: null, error: ERRO_TIMEOUT });
-            return resolve({ data: [], error: null });
-          },
-        };
-        return mi;
+        // A REJEIÇÃO é o caminho perigoso: escapa para o `catch` externo com todos os
+        // insumos obrigatórios já íntegros. O `{ error }` resolvido é o silencioso.
+        if (falhaMelhorIndividual === 'rejeita') return Promise.reject(new Error('Failed to fetch'));
+        if (falhaMelhorIndividual === 'erro') return Promise.resolve({ data: null, error: ERRO_TIMEOUT });
+        return Promise.resolve({ data: [], error: null });
       }
       if (nome === 'farmer_geracao_registrar') {
         registros.push(args ?? {});

@@ -107,7 +107,11 @@ SQL
 # ══════════════════════════════════════════════════════════════════════════════
 # ZONA 2 — APLICAR A MIGRATION REAL (Lei #1: o .sql commitado, não um stub)
 # ══════════════════════════════════════════════════════════════════════════════
-MIG="$REPO_ROOT/supabase/migrations/20260820124611_farmer_melhor_individual_bulk.sql"
+# As DUAS, na ordem: a 1a nunca foi aplicada em prod, mas o harness prova o caminho REAL do
+# founder — se ele colar as duas, a 2a tem de substituir a 1a (DROP + CREATE, ACL reemitido).
+MIG_V1="$REPO_ROOT/supabase/migrations/20260820124611_farmer_melhor_individual_bulk.sql"
+MIG="$REPO_ROOT/supabase/migrations/20260820133119_farmer_melhor_individual_atomico.sql"
+P -q -f "$MIG_V1"
 P -q -f "$MIG"
 echo "migration aplicada: $(basename "$MIG")"
 
@@ -166,8 +170,12 @@ echo "seed: 15 recomendações, 7 clientes, 2 farmers"
 # MEDIÇÕES (reusadas pelos asserts E pela falsificação — o assert falsificado tem de ser
 # LITERALMENTE o mesmo, senão a sabotagem prova outra coisa)
 # ══════════════════════════════════════════════════════════════════════════════
-vencedor()  { Pq -c "SELECT coalesce(max(product_id::text),'AUSENTE') FROM public.farmer_melhor_individual_por_cliente('$FA') WHERE customer_user_id='$1';"; }
-linhas_de() { Pq -c "SELECT count(*) FROM public.farmer_melhor_individual_por_cliente('$FA') WHERE customer_user_id='$1';"; }
+# A RPC devolve UMA tupla jsonb (um array de objetos). `jsonb_array_elements` reabre para os
+# asserts sem mudar o que esta sob teste.
+elems()     { echo "jsonb_array_elements(public.farmer_melhor_individual_por_cliente('$FA'))"; }
+vencedor()  { Pq -c "SELECT coalesce(max(e->>'product_id'),'AUSENTE') FROM $(elems) e WHERE e->>'customer_user_id'='$1';"; }
+linhas_de() { Pq -c "SELECT count(*) FROM $(elems) e WHERE e->>'customer_user_id'='$1';"; }
+todos()     { Pq -c "SELECT count(*) FROM $(elems) e;"; }
 
 # PARIDADE — o assert central: para CADA cliente, a linha que a RPC elege é a MESMA que a
 # consulta por-cliente do PostgREST elegia. `CROSS JOIN LATERAL ... LIMIT 1` reproduz o
@@ -189,7 +197,8 @@ WITH clientes AS (
     LIMIT 1
   ) r
 ), nova AS (
-  SELECT customer_user_id AS cid, product_id FROM public.farmer_melhor_individual_por_cliente('$FA')
+  SELECT (e->>'customer_user_id')::uuid AS cid, (e->>'product_id')::uuid AS product_id
+  FROM jsonb_array_elements(public.farmer_melhor_individual_por_cliente('$FA')) e
 )
 SELECT count(*) FROM antiga a FULL OUTER JOIN nova n USING (cid)
 WHERE a.cid IS NULL OR n.cid IS NULL OR a.product_id IS DISTINCT FROM n.product_id;
@@ -209,13 +218,28 @@ eq "P5 empate de score, updated_at NULL VENCE (NULLS FIRST herdado)" "$(vencedor
 
 eq "N1 cliente só com score NULL fica AUSENTE (fail-closed #1800)" "$(vencedor "$C4")" "AUSENTE"
 eq "N2 status != pendente fica AUSENTE"     "$(vencedor "$C5")" "AUSENTE"
-eq "N3 carteira do OUTRO farmer não vaza pelo filtro" \
-   "$(Pq -c "SELECT count(*) FROM public.farmer_melhor_individual_por_cliente('$FA') WHERE customer_user_id='$C7';")" "0"
+eq "N3 carteira do OUTRO farmer não vaza pelo filtro" "$(linhas_de "$C7")" "0"
 
-eq "O1 ordem TOTAL p/ paginar: sem customer_user_id repetido" \
-   "$(Pq -c "SELECT (count(*) = count(DISTINCT customer_user_id))::text FROM public.farmer_melhor_individual_por_cliente('$FA');")" "true"
-eq "O2 run_id volta no contrato (torna a mistura de gerações DETECTÁVEL)" \
-   "$(Pq -c "SELECT count(DISTINCT run_id) FROM public.farmer_melhor_individual_por_cliente('$FA');")" "1"
+eq "O1 um cliente aparece UMA vez no array" \
+   "$(Pq -c "SELECT (count(*) = count(DISTINCT e->>'customer_user_id'))::text FROM $(elems) e;")" "true"
+eq "O2 run_id vem no payload (canário de gerações entre os VENCEDORES — não invariante da tabela)" \
+   "$(Pq -c "SELECT count(DISTINCT e->>'run_id') FROM $(elems) e;")" "1"
+
+# ── ATOMICIDADE — o achado ALTO do challenge Codex ──────────────────────────────────────────
+# A versão anterior era `RETURNS TABLE` + `fetchAllPages`: K requests, K snapshots. Uma
+# substituição concorrente entre a página 0 e a 1 fazia a cauda virar `nenhum` — um VEREDICTO
+# na tela — sem o canário de run_id notar. Uma tupla só torna isso impossível por construção.
+eq "A1 a resposta INTEIRA é uma tupla jsonb (1 request = 1 snapshot MVCC)" \
+   "$(Pq -c "SELECT jsonb_typeof(public.farmer_melhor_individual_por_cliente('$FA'));")" "array"
+eq "A2 e traz TODOS os clientes de uma vez (sem cap de linhas para a cauda perder)" "$(todos)" "4"
+
+# ── O par `[]` vs NULL — §6 do money-path: o contrato tem de EXPOR a falha ──────────────────
+# Sem o `coalesce`, carteira vazia devolve NULL, e NULL é indistinguível de "a leitura falhou".
+# O caller trata NULL como FALHA; se o SQL puder devolvê-lo por um caminho legítimo, o caller
+# passa a gritar por um vazio honesto — e a defesa vira ruído que alguém desliga.
+FVAZIO='eeee0000-0000-4000-8000-00000000000e'
+eq "A3 carteira VAZIA devolve [] e nunca NULL (senão vazio e falha ficam iguais)" \
+   "$(Pq -c "SELECT public.farmer_melhor_individual_por_cliente('$FVAZIO')::text;")" "[]"
 
 eq "★ PARIDADE: divergências vs. o desempate que o PostgREST emitia" "$(paridade)" "0"
 
@@ -223,9 +247,9 @@ eq "★ PARIDADE: divergências vs. o desempate que o PostgREST emitia" "$(parid
 # 4, não 6: dos 6 clientes de FA, C4 (só score NULL) e C5 (nada pendente) são filtrados —
 # o próprio número é evidência de que N1/N2 valem também sob a RLS, não só como superuser.
 eq "R1 o dono da carteira LÊ as suas (controle positivo — sem ele R2 passa por vacuidade)" \
-   "$(Pq -c "SET test.uid='$FA'; SET ROLE authenticated; SELECT count(*) FROM public.farmer_melhor_individual_por_cliente('$FA');" | tail -1)" "4"
+   "$(Pq -c "SET test.uid='$FA'; SET ROLE authenticated; SELECT jsonb_array_length(public.farmer_melhor_individual_por_cliente('$FA'));" | tail -1)" "4"
 eq "R2 OUTRO farmer pedindo a carteira alheia recebe ZERO (a RLS decide, não o parâmetro)" \
-   "$(Pq -c "SET test.uid='$FB'; SET ROLE authenticated; SELECT count(*) FROM public.farmer_melhor_individual_por_cliente('$FA');" | tail -1)" "0"
+   "$(Pq -c "SET test.uid='$FB'; SET ROLE authenticated; SELECT jsonb_array_length(public.farmer_melhor_individual_por_cliente('$FA'));" | tail -1)" "0"
 
 # ── R3 negativo com SQLSTATE + re-raise (Lei #2). Sentinela NÃO contém o texto do erro do
 #    Postgres ("permission denied for function"), senão um match casaria a própria sentinela. ──
@@ -233,7 +257,7 @@ R3=$(P -tA 2>&1 <<SQL || true
 SET ROLE anon;
 DO \$\$
 BEGIN
-  PERFORM count(*) FROM public.farmer_melhor_individual_por_cliente('$FA');
+  PERFORM public.farmer_melhor_individual_por_cliente('$FA');
   RAISE NOTICE 'ZZANONEXECUTOU';
 EXCEPTION
   WHEN insufficient_privilege THEN RAISE NOTICE 'ZZANONBARRADO';
@@ -256,20 +280,25 @@ SAB_PASS=0; SAB_FAIL=0
 red() { if [ "$2" != "$3" ]; then SAB_PASS=$((SAB_PASS+1)); echo "  🔴 $1 — assert caiu como devia (veio [$2], o verde era [$3])";
         else SAB_FAIL=$((SAB_FAIL+1)); echo "  ⚠️  $1 — SABOTADO E AINDA VERDE: o assert não tem dente"; fi; }
 
-sabota() {  # $1 = corpo do SELECT da função (o resto da assinatura é fixo)
+# $1 = corpo da subquery interna; $2 = SECURITY …; $3 (opcional) = agregação, p/ falsificar o coalesce
+sabota() {
   P -q <<SQL
-CREATE OR REPLACE FUNCTION public.farmer_melhor_individual_por_cliente(p_farmer_id uuid)
-RETURNS TABLE (customer_user_id uuid, product_id uuid, affinity_score numeric, recommendation_type text, run_id uuid)
-LANGUAGE sql STABLE $2 SET search_path TO 'public', pg_temp AS \$fn\$
+DROP FUNCTION IF EXISTS public.farmer_melhor_individual_por_cliente(uuid);
+CREATE FUNCTION public.farmer_melhor_individual_por_cliente(p_farmer_id uuid)
+RETURNS jsonb LANGUAGE sql STABLE $2 SET search_path TO 'public', pg_temp AS \$fn\$
+  SELECT ${3:-coalesce(jsonb_agg(to_jsonb(m) ORDER BY m.customer_user_id), '[]'::jsonb)}
+  FROM (
 $1
+  ) m
 \$fn\$;
+GRANT EXECUTE ON FUNCTION public.farmer_melhor_individual_por_cliente(uuid) TO authenticated;
 SQL
 }
 restaura() { P -q -f "$MIG"; }
 
-SEL_BASE="  SELECT DISTINCT ON (r.customer_user_id) r.customer_user_id, r.product_id, r.affinity_score, r.recommendation_type, r.run_id
-  FROM public.farmer_recommendations r
-  WHERE r.farmer_id = p_farmer_id AND r.status = 'pendente'"
+SEL_BASE="    SELECT DISTINCT ON (r.customer_user_id) r.customer_user_id, r.product_id, r.affinity_score, r.recommendation_type, r.run_id
+    FROM public.farmer_recommendations r
+    WHERE r.farmer_id = p_farmer_id AND r.status = 'pendente'"
 
 # F1 — tira o WHERE do score: o cliente que só tem NULL passa a ganhar um vencedor ARBITRÁRIO.
 sabota "$SEL_BASE
@@ -298,18 +327,18 @@ red "F4 id ASC -> P4" "$(vencedor "$C3")" "9998aaaa-0000-4000-8000-000000000008"
 restaura
 
 # F5 — tira o filtro de status: oferta já aceita/expirada volta a ser "a melhor pendente".
-sabota "  SELECT DISTINCT ON (r.customer_user_id) r.customer_user_id, r.product_id, r.affinity_score, r.recommendation_type, r.run_id
-  FROM public.farmer_recommendations r
-  WHERE r.farmer_id = p_farmer_id AND r.affinity_score IS NOT NULL
-  ORDER BY r.customer_user_id, r.affinity_score DESC NULLS LAST, r.updated_at DESC NULLS FIRST, r.id DESC" "SECURITY INVOKER"
+sabota "    SELECT DISTINCT ON (r.customer_user_id) r.customer_user_id, r.product_id, r.affinity_score, r.recommendation_type, r.run_id
+    FROM public.farmer_recommendations r
+    WHERE r.farmer_id = p_farmer_id AND r.affinity_score IS NOT NULL
+    ORDER BY r.customer_user_id, r.affinity_score DESC NULLS LAST, r.updated_at DESC NULLS FIRST, r.id DESC" "SECURITY INVOKER"
 red "F5 sem status='pendente' -> N2" "$(vencedor "$C5")" "AUSENTE"
 restaura
 
 # F6 — sem DISTINCT ON: volta a ser a lista inteira, e paginar sobre ela repete cliente.
-sabota "  SELECT r.customer_user_id, r.product_id, r.affinity_score, r.recommendation_type, r.run_id
-  FROM public.farmer_recommendations r
-  WHERE r.farmer_id = p_farmer_id AND r.status = 'pendente' AND r.affinity_score IS NOT NULL
-  ORDER BY r.customer_user_id, r.affinity_score DESC NULLS LAST, r.updated_at DESC NULLS FIRST, r.id DESC" "SECURITY INVOKER"
+sabota "    SELECT r.customer_user_id, r.product_id, r.affinity_score, r.recommendation_type, r.run_id
+    FROM public.farmer_recommendations r
+    WHERE r.farmer_id = p_farmer_id AND r.status = 'pendente' AND r.affinity_score IS NOT NULL
+    ORDER BY r.customer_user_id, r.affinity_score DESC NULLS LAST, r.updated_at DESC NULLS FIRST, r.id DESC" "SECURITY INVOKER"
 red "F6 sem DISTINCT ON -> P1" "$(linhas_de "$C1")" "1"
 restaura
 
@@ -319,7 +348,7 @@ restaura
 sabota "$SEL_BASE AND r.affinity_score IS NOT NULL
   ORDER BY r.customer_user_id, r.affinity_score DESC NULLS LAST, r.updated_at DESC NULLS FIRST, r.id DESC" "SECURITY DEFINER"
 red "F7 SECURITY DEFINER -> R2 (a carteira alheia vaza)" \
-    "$(Pq -c "SET test.uid='$FB'; SET ROLE authenticated; SELECT count(*) FROM public.farmer_melhor_individual_por_cliente('$FA');" | tail -1)" "0"
+    "$(Pq -c "SET test.uid='$FB'; SET ROLE authenticated; SELECT jsonb_array_length(public.farmer_melhor_individual_por_cliente('$FA'));" | tail -1)" "0"
 restaura
 
 # F8 — o assert de PARIDADE precisa de dente próprio: se ele só contasse linhas, qualquer
@@ -327,6 +356,15 @@ restaura
 sabota "$SEL_BASE AND r.affinity_score IS NOT NULL
   ORDER BY r.customer_user_id, r.affinity_score DESC NULLS LAST, r.updated_at ASC, r.id DESC" "SECURITY INVOKER"
 red "F8 updated_at ASC -> ★PARIDADE" "$(paridade)" "0"
+restaura
+
+# F9 — o `coalesce` do §6: sem ele, carteira vazia devolve NULL, e NULL é o que o caller
+# trata como FALHA. Vazio honesto passaria a gritar, e a defesa viraria ruído que alguém desliga.
+sabota "$SEL_BASE AND r.affinity_score IS NOT NULL
+    ORDER BY r.customer_user_id, r.affinity_score DESC NULLS LAST, r.updated_at DESC NULLS FIRST, r.id DESC" \
+  "SECURITY INVOKER" "jsonb_agg(to_jsonb(m) ORDER BY m.customer_user_id)"
+red "F9 sem o coalesce -> A3 (vazio vira NULL)" \
+    "$(Pq -c "SELECT coalesce(public.farmer_melhor_individual_por_cliente('eeee0000-0000-4000-8000-00000000000e')::text,'NULO');")" "[]"
 restaura
 
 # CONTROLE DA RESTAURAÇÃO: se `restaura` não funcionasse, os vermelhos acima seriam do

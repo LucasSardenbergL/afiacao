@@ -18985,13 +18985,7 @@ export type Database = {
       }
       farmer_melhor_individual_por_cliente: {
         Args: { p_farmer_id: string }
-        Returns: {
-          affinity_score: number
-          customer_user_id: string
-          product_id: string
-          recommendation_type: string
-          run_id: string
-        }[]
+        Returns: Json
       }
       farmer_recomendacoes_substituir: {
         Args: {

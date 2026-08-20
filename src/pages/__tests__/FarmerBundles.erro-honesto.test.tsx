@@ -109,17 +109,10 @@ vi.mock('@/integrations/supabase/client', () => ({
   supabase: {
     from: (t: string) => chain(t),
     rpc: (nome: string) => {
-      // Leitura BULK do melhor individual — PAGINADA (`fetchAllPages`), então o dublê tem de
-      // expor `.order().range()`. Promise crua daria `supabase.rpc(...).order is not a
-      // function`, e o engine converteria o bug de CÓDIGO em "comparação indisponível" — o
-      // mesmo disfarce que o #1782 documentou.
+      // Leitura ATÔMICA do melhor individual: UMA tupla jsonb (array), não linhas paginadas.
+      // `[]` = li e não há — que é o estado deste cenário. `null` seria FALHA, não vazio.
       if (nome === 'farmer_melhor_individual_por_cliente') {
-        const mi: Record<string, unknown> = {
-          order: () => mi,
-          range: () => mi,
-          then: (resolve: (v: unknown) => void) => resolve({ data: [], error: null }),
-        };
-        return mi;
+        return Promise.resolve({ data: [], error: null });
       }
       // Paginada desde o #1782 — builder com `.order().range()`, não Promise crua.
       if (nome === 'get_skus_margem_positiva') {

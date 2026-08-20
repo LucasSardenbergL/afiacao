@@ -89,10 +89,47 @@ describe("CustomerBundleCard", () => {
   });
 
   it("expandido, `indisponivel` diz que não sabe — e NÃO usa o mesmo traço do `nenhum`", () => {
-    comData({ status: "indisponivel" });
+    comData({ status: "indisponivel", motivo: "leitura_falhou" });
     expect(screen.getByText("Comparação indisponível")).toBeTruthy();
     // O discriminador: se o traço aparecesse aqui também, a falha de leitura seguiria
     // indistinguível da ausência verificada — que é exatamente o defeito corrigido.
     expect(screen.queryByText("—")).toBeNull();
+  });
+
+  // ── O zero fabricado que a própria correção tornou comum (achado 4 do challenge Codex) ────
+  //
+  // `melhorProbabilidade = data.bundles[0]?.pBundle ?? 0` fazia "não há bundle" virar
+  // "0,0% de conversão" — em VERDE de sucesso. Era raro porque o cliente sem bundle costumava
+  // ser OMITIDO da lista; deixou de ser: com a comparação `indisponivel` esses clientes
+  // passam a entrar de propósito, e na maior carteira isso são milhares de cartões anunciando
+  // uma taxa que ninguém calculou. É `Number(null) === 0` na forma de rótulo.
+  it("sem bundle NÃO vira `0,0% de conversão` — nem colapsado, nem expandido", () => {
+    comData({ status: "nenhum" });
+    expect(screen.queryByText(/0\.0% de conversão/)).toBeNull();
+    expect(screen.queryByText("0.0%")).toBeNull();
+    expect(screen.getAllByText(/[Ss]em bundle/).length).toBeGreaterThan(0);
+  });
+
+  it("CONTRAPROVA: COM bundle, a porcentagem real continua aparecendo", () => {
+    // Sem esta, trocar a renderização por um literal fixo passaria no teste acima.
+    // Colapsado de propósito: expandir renderiza `BundleCardFull`, que usa `useNavigate` e
+    // exigiria um Router — o cabeçalho já carrega a porcentagem, que é o que está sob teste.
+    setup({
+      expanded: false,
+      data: {
+        ...data,
+        bundles: [{ pBundle: 42.5 } as unknown as CustomerBundles["bundles"][number]],
+      } as unknown as CustomerBundles,
+    });
+    expect(screen.getByText(/42\.5% de conversão/)).toBeTruthy();
+    expect(screen.queryByText(/[Ss]em bundle/)).toBeNull();
+  });
+
+  it("colapsado, `indisponivel` já se anuncia — sem precisar expandir cartão por cartão", () => {
+    setup({
+      expanded: false,
+      data: { ...data, bestIndividual: { status: "indisponivel", motivo: "leitura_falhou" } } as unknown as CustomerBundles,
+    });
+    expect(screen.getByText("comparação indisponível")).toBeTruthy();
   });
 });

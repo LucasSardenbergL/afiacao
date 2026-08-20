@@ -17,9 +17,13 @@ import { renderHook, act } from '@testing-library/react';
  *
  *   1. A leitura é UMA (bulk) — não uma por cliente. É o (a)+(b) medido pelo número de
  *      chamadas, que é a única evidência que não some num refactor.
- *   2. Ela é PAGINADA. A capa de 1.000 do PostgREST vale para `.rpc()` igual a `.from()` e já
- *      zerou este motor duas vezes (#1782, #1801). Sem `.range()`, o cliente da posição 1.001
- *      viraria "não tem oferta individual" — um veredicto, não uma ausência.
+ *   2. Ela é ATÔMICA — uma tupla `jsonb`, não N linhas paginadas. A primeira versão desta
+ *      correção usava `RETURNS TABLE` + `fetchAllPages`, e o challenge Codex mostrou que isso
+ *      TROCA o defeito de lugar: K requests são K snapshots. Geração A com 1.500 clientes,
+ *      página 0 lê os 1.000 primeiros; uma substituição grava a geração B com 500; a página 1
+ *      pede OFFSET 1000, recebe `[]` — o sinal de FIM — e os clientes 1.001–1.500 viram
+ *      `nenhum`, que é um VEREDICTO. O canário de `run_id` é cego ao caso (só viu linhas de A).
+ *      Uma tupla mata as duas coisas: o cap de 1.000 conta LINHAS, e agora há uma.
  *   3. `indisponivel` NÃO omite o cliente da lista. Este é o §2 do money-path (ausente ≠ zero)
  *      na forma de rótulo: `IndividualComparison | null` colapsava "li e não há" com "não
  *      consegui ler", e o filtro `if (topBundles.length > 0 || bestIndividual)` transformava o
@@ -29,18 +33,15 @@ import { renderHook, act } from '@testing-library/react';
  * P2+P3 como bundle. `c8` NÃO recebe bundle nenhum — é ele quem revela a omissão.
  */
 const FARMER = 'farmer-bulk';
-/** Igual ao `POSTGREST_PAGE_SIZE` de `@/lib/postgrest` — é o cap que estamos reproduzindo. */
-const PAGINA = 1000;
-
-/** 'nao' | 'erro' (resolvido) | 'rejeita' (Promise rejeitada). */
-let falhaBulk: 'nao' | 'erro' | 'rejeita' = 'nao';
-/** `true` = o melhor individual de `c8` cai na 2ª página (o defeito que o cap causaria). */
-let c8NaCauda = false;
+let falhaBulk: 'nao' | 'erro' | 'rejeita' | 'null_mudo' | 'nao_array' = 'nao';
+/** `true` = a carteira devolvida tem 1.500 entradas — mais que o antigo cap de 1.000. */
+let carteiraGrande = false;
+/** `true` = o SKU eleito não está no catálogo ATIVO (`productMap` não resolve). */
+let produtoForaDoCatalogo = false;
 /** `true` = a tabela tem DUAS gerações pendentes vivas ao mesmo tempo. */
 let duasGeracoes = false;
 
-const chamadasBulk: Array<{ de: number; ate: number }> = [];
-const ordenacoesBulk: string[] = [];
+const chamadasBulk: number[] = [];
 /** Args da RPC que persiste os bundles — é por ela que o head (completude) é movido. */
 const argsSubstituir: Array<Record<string, unknown>> = [];
 
@@ -77,14 +78,15 @@ const linhaBulk = (cid: string, pid: string, run = 'run-unico') => ({
   customer_user_id: cid, product_id: pid, affinity_score: 0.42,
   recommendation_type: 'cross_sell', run_id: run,
 });
-/** Ruído de clientes que não estão na carteira — só serve para empurrar `c8` para a 2ª página. */
-const RUIDO = Array.from({ length: PAGINA }, (_, i) => linhaBulk(`ruido-${i}`, 'P4'));
+/** 1.500 clientes de enchimento: 50% acima do cap de linhas que a versão paginada sofria. */
+const CARTEIRA_GRANDE = Array.from({ length: 1500 }, (_, i) => linhaBulk(`extra-${i}`, 'P4'));
 
 function linhasBulk(): Array<Record<string, unknown>> {
   const uteis = duasGeracoes
     ? [linhaBulk('c8', 'P4', 'run-A'), linhaBulk('c9', 'P2', 'run-B')]
-    : [linhaBulk('c8', 'P4')];
-  return c8NaCauda ? [...RUIDO, ...uteis] : uteis;
+    : [linhaBulk('c8', produtoForaDoCatalogo ? 'SKU-QUE-NAO-EXISTE' : 'P4')];
+  // O cliente útil vai no FIM: na versão paginada ele cairia fora do cap e viraria `nenhum`.
+  return carteiraGrande ? [...CARTEIRA_GRANDE, ...uteis] : uteis;
 }
 
 function chain(table: string): unknown {
@@ -115,23 +117,18 @@ vi.mock('@/integrations/supabase/client', () => ({
         return c;
       }
       if (nome === 'farmer_melhor_individual_por_cliente') {
-        // Reproduz o PostgREST: a fatia pedida por `.range()`, e SEM `.range()` as 1.000
-        // primeiras. Um dublê que devolvesse tudo não provaria paginação nenhuma.
-        let de = 0;
-        let ate = PAGINA - 1;
-        const c: Record<string, unknown> = {
-          order: (coluna: string) => { ordenacoesBulk.push(coluna); return c; },
-          range: (d: number, a: number) => { de = d; ate = a; return c; },
-          then: (resolve: (v: unknown) => void, reject: (e: unknown) => void) => {
-            chamadasBulk.push({ de, ate });
-            if (falhaBulk === 'rejeita') return reject(new Error('Failed to fetch'));
-            if (falhaBulk === 'erro') {
-              return resolve({ data: null, error: { code: '57014', message: 'statement timeout' } });
-            }
-            return resolve({ data: linhasBulk().slice(de, ate + 1), error: null });
-          },
-        };
-        return c;
+        chamadasBulk.push(1);
+        if (falhaBulk === 'rejeita') return Promise.reject(new Error('Failed to fetch'));
+        if (falhaBulk === 'erro') {
+          return Promise.resolve({ data: null, error: { code: '57014', message: 'statement timeout' } });
+        }
+        // `data: null` SEM `error` é o caso perigoso e é próprio: a RPC faz
+        // `coalesce(…, '[]')`, então null só chega aqui se algo quebrou. Tratá-lo como vazio
+        // faria a carteira inteira virar `nenhum` — a leitura que não aconteceu virando
+        // veredicto (§6 do money-path).
+        if (falhaBulk === 'null_mudo') return Promise.resolve({ data: null, error: null });
+        if (falhaBulk === 'nao_array') return Promise.resolve({ data: { erro: 'oops' }, error: null });
+        return Promise.resolve({ data: linhasBulk(), error: null });
       }
       return Promise.resolve({ data: null, error: null });
     },
@@ -155,10 +152,10 @@ async function calcular() {
 
 beforeEach(() => {
   falhaBulk = 'nao';
-  c8NaCauda = false;
+  carteiraGrande = false;
   duasGeracoes = false;
+  produtoForaDoCatalogo = false;
   chamadasBulk.length = 0;
-  ordenacoesBulk.length = 0;
   argsSubstituir.length = 0;
   vi.clearAllMocks();
 });
@@ -186,21 +183,49 @@ describe('useBundleEngine — o melhor individual em UMA leitura, com os três e
     expect(chamadasBulk.length).toBe(1);
   });
 
-  it('a RPC é PAGINADA — o cliente da posição 1.001 não vira "não tem oferta"', async () => {
-    // Sem `.range()` o motor receberia as 1.000 primeiras e trataria a cauda como ausência —
-    // e ausência, aqui, é renderizada como veredicto. É o #1782/#1801 nesta terceira RPC.
-    c8NaCauda = true;
+  it('não há cap de linhas — 1.500 clientes chegam inteiros numa tupla só', async () => {
+    // Na versão paginada, o cliente útil no fim de uma lista de 1.501 caía na 2ª página, e uma
+    // substituição concorrente entre as duas o transformaria em `nenhum` — um veredicto. Aqui
+    // ele chega junto com todo o resto, porque o cap conta LINHAS e a resposta é uma linha.
+    carteiraGrande = true;
     const result = await calcular();
 
-    expect(chamadasBulk.length, 'parou na 1ª página e chamou a cauda de "acabou"').toBeGreaterThan(1);
     const c8 = result.current.customerBundles.find((c) => c.customerId === 'c8');
     expect(c8?.bestIndividual.status).toBe('encontrado');
+    expect(chamadasBulk.length, 'voltou a fatiar a leitura em mais de um request').toBe(1);
   });
 
-  it('a paginação pede ORDEM ESTÁVEL — sem ela as páginas pulam clientes', async () => {
-    c8NaCauda = true;
-    await calcular();
-    expect(ordenacoesBulk).toContain('customer_user_id');
+  it('`data: null` SEM erro é FALHA, não vazio', async () => {
+    // O §6 do money-path: o contrato tem de EXPOR a falha, senão o caller não pode detectar. A
+    // RPC faz `coalesce(…, '[]')` — o assert A3 do harness PG17 é o outro lado deste par —, então
+    // `null` só chega aqui se algo quebrou. Tratá-lo como lista vazia faria a carteira INTEIRA
+    // virar `nenhum`, silenciosamente, com toast de sucesso.
+    falhaBulk = 'null_mudo';
+    const result = await calcular();
+
+    const c8 = result.current.customerBundles.find((c) => c.customerId === 'c8');
+    expect(c8?.bestIndividual.status).toBe('indisponivel');
+  });
+
+  it('resposta de FORMA errada também é falha — não é lista, não é vazio', async () => {
+    // Defesa em profundidade do caso acima: um objeto no lugar do array (RPC trocada, versão
+    // antiga do schema, proxy que embrulha) não pode virar "nenhum cliente tem oferta".
+    falhaBulk = 'nao_array';
+    const result = await calcular();
+    expect(
+      result.current.customerBundles.find((c) => c.customerId === 'c8')?.bestIndividual.status,
+    ).toBe('indisponivel');
+  });
+
+  it('SKU eleito fora do catálogo ativo vira `indisponivel`, não um nome inventado', async () => {
+    // Era `productName: prod?.descricao || 'Produto'`: a tela dizia ter ENCONTRADO o melhor
+    // individual e mostrava um literal. É a mesma fabricação de rótulo que esta união veio
+    // matar, um nível abaixo — e `product_id` é nullable no schema, então há duas portas.
+    produtoForaDoCatalogo = true;
+    const result = await calcular();
+
+    const c8 = result.current.customerBundles.find((c) => c.customerId === 'c8');
+    expect(c8?.bestIndividual).toEqual({ status: 'indisponivel', motivo: 'produto_nao_resolve' });
   });
 
   it.each(['erro', 'rejeita'] as const)(
@@ -244,36 +269,36 @@ describe('useBundleEngine — o melhor individual em UMA leitura, com os três e
     expect(avisos.some((m) => m.includes('gerações diferentes'))).toBe(false);
   });
 
-  // ── O insumo do snapshot de completude (a reavaliação que o bulk destravou) ───────────────
+  // ── A reavaliação: `melhor_individual` NÃO entra no `InsumosSnapshot` ─────────────────────
   //
-  // `melhor_individual` era de PROPÓSITO mantido FORA do `InsumosSnapshot`, e o fundamento era
-  // um só: o RUÍDO. `avaliarCompletude` degrada com um único `ok:false`, e com a consulta POR
-  // CLIENTE uma falha isolada carimbaria `degradado` em quase toda execução de carteira grande
-  // — sinal que nunca varia deixa de ser sinal. Com a leitura em BLOCO é 1 leitura e 1 falha
-  // possível por execução: a premissa caiu, e a assimetria de custo (degradar custa uma oferta
-  // velha na tela; `completo` errado custa a carteira da vendedora) passa a mandar declarar.
-  it('a leitura ÍNTEGRA declara o insumo e o head sai `completo`', async () => {
-    // Controle positivo obrigatório: sem ele, "saiu degradado" e "o cenário nunca chega a
-    // gravar" seriam indistinguíveis, e o teste seguinte passaria por vacuidade.
-    await calcular();
-
-    expect(argsSubstituir.length, 'o cenário não chegou a persistir nada').toBeGreaterThan(0);
-    const head = argsSubstituir[0];
-    expect((head.p_insumos as Record<string, unknown>).melhor_individual).toEqual({ ok: true, n: 1 });
-    expect(head.p_completude).toBe('completo');
-  });
-
-  it('a leitura FALHANDO degrada o head — e o motivo NOMEIA o insumo', async () => {
-    // O que isto compra: `completo` é o único rótulo que autoriza a fase 2 a EXPIRAR a carteira.
-    // Com o insumo declarado, uma execução que não conseguiu ler nunca produz essa licença.
+  // A tarefa pedia para reavaliar, porque o fundamento antigo (o RUÍDO de N consultas por
+  // execução) caiu com a leitura em bloco. Cheguei a declarar o insumo; o challenge Codex
+  // mostrou que o argumento certo é outro e aponta para o lado oposto: "'não obrigatório' só
+  // vale para `n===0`; `ok:false` SEMPRE degrada. Portanto `melhor_individual` passa a bloquear
+  // a expiração de bundles embora seja comprovadamente invariante para `p_linhas`."
+  //
+  // A completude julga UMA coisa — se o zero de BUNDLES veio de snapshot íntegro — e esta
+  // leitura não participa dela. Declará-la faria uma leitura acessória travar para sempre o
+  // mecanismo de aposentadoria da fase 2, porque `degradado` nunca autoriza expirar.
+  it('a falha da comparação NÃO degrada o head — ela não participa do que a completude julga', async () => {
     falhaBulk = 'erro';
     await calcular();
 
     expect(argsSubstituir.length, 'o cenário não chegou a persistir nada').toBeGreaterThan(0);
     const head = argsSubstituir[0];
-    expect((head.p_insumos as Record<string, unknown>).melhor_individual).toEqual({ ok: false, n: 0 });
-    expect(head.p_completude).toBe('degradado');
-    expect(String(head.p_motivo)).toContain('melhor_individual');
+    expect(head.p_completude).toBe('completo');
+    expect(Object.keys(head.p_insumos as Record<string, unknown>)).not.toContain('melhor_individual');
+  });
+
+  it('mas a falha TAMBÉM não vira sucesso — ela sai pelo aviso, que é onde ela pertence', async () => {
+    // O par indispensável do teste acima: sem ele, "não degrada o head" se leria como "a falha
+    // sumiu". Ela não some — muda de canal.
+    falhaBulk = 'erro';
+    await calcular();
+
+    expect(toast.success).not.toHaveBeenCalled();
+    const avisos = vi.mocked(toast.warning).mock.calls.map((c) => String(c[0]));
+    expect(avisos.some((m) => m.includes('não pôde ser lida'))).toBe(true);
   });
 
   it('"li e não há" continua sendo `nenhum` — a falha não contamina o zero legítimo', async () => {
