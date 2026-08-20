@@ -90,6 +90,11 @@ _hook() {
   json="$(jq -n --arg c "$cmd" '{tool_name:"Bash",tool_input:{command:$c}}')"
   # shellcheck disable=SC2086  # envs é lista KEY=VAL, precisa expandir em palavras
   printf '%s' "$json" | env $envs bash "${HOOK_ATUAL:-$HOOK}" 2>/dev/null
+  # O hook é fail-open TOTAL: DEVE sair 0 sempre. As asserções olham só o stdout, então
+  # trocar um `exit 0`/`continue` por `exit 1` sobrevivia a TODAS elas (achado do Codex,
+  # 2026-08-19). Subshell não propaga variável: o registro vai por ARQUIVO, conferido no fim.
+  _rc=$?
+  [ "$_rc" -eq 0 ] || [ -n "${HOOK_ATUAL:-}" ] || printf 'rc=%s cmd=%s\n' "$_rc" "$cmd" >> "$stub/exit-nao-zero.log"
 }
 _ok()   { printf '  ✓ %s\n' "$1"; }
 _bad()  { printf '  ✗ %s\n' "$1"; fail=1; }
@@ -321,6 +326,28 @@ else
   out="$(HOOK_ATUAL=$stub/sem-dedupe.sh _hook "$C9" "$COMITAR")"
   if _avisa "$out"; then _ok "sabotagem 'sem dedupe' → 2º commit volta a avisar (dedupe é load-bearing)"
   else _bad "sabotagem 'sem dedupe' NÃO mudou o veredito — o silêncio do caso 12 não é do dedupe"; fi
+fi
+
+echo "== 15. ENCADEADO: \`git commit\` + \`gh pr create\` é modo COMMIT =="
+# A ordem do if/elif casava `create` primeiro, mas quem EXECUTA antes é o commit — e ali o
+# mb..HEAD está vazio no 1º commit (#1764), então o guard calava. Fixture: HEAD vazio; staged E
+# árvore armados (o `-am` faz o alvo ser a ÁRVORE — armar só o índice deixaria o caso passar
+# por acidente, que é o furo que este mesmo PR corrige no caso 4).
+# ATENÇÃO: crase dentro de aspas duplas é substituição de comando — escapar SEMPRE no header.
+rm -rf "$CACHE"
+ENC="GIT_STUB_MINE_FILE=$stub/vazio.txt GIT_STUB_STAGED_FILE=$stub/mine.txt"
+ENC="$ENC GIT_STUB_WT_FILE=$stub/mine.txt $DEDUPE"
+out="$(_hook "$ENC" 'git commit -am "wip" && gh pr create --fill')"
+_deve_avisar "encadeado lê índice/árvore (não o HEAD vazio)" "$out"
+# o último portão vale também no encadeado: repetir NÃO pode calar (o comando contém create).
+out="$(_hook "$ENC" 'git commit -am "wip" && gh pr create --fill')"
+_deve_avisar "encadeado não é silenciado pelo dedupe (contém create)" "$out"
+
+echo "== 16. fail-open TOTAL: o hook nunca sai não-zero =="
+if [ -s "$stub/exit-nao-zero.log" ]; then
+  _bad "hook saiu não-zero: $(head -1 "$stub/exit-nao-zero.log")"
+else
+  _ok "todas as chamadas saíram 0 (fail-open preservado)"
 fi
 
 echo
