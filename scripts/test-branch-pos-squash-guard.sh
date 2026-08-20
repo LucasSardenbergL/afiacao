@@ -30,6 +30,10 @@ chmod +x "$stub/git"
 cat >"$stub/gh" <<'STUB'
 #!/bin/sh
 [ -n "${GH_STUB_EXIT:-}" ] && exit "$GH_STUB_EXIT"
+# O stub aceitava QUALQUER argumento, então trocar --state merged por --state open era
+# invisível — e a pergunta que o guard faz mudaria por completo. Agora só serve o fixture
+# para a pergunta CERTA; qualquer outra devolve lista vazia. (mutation-check 2026-08-20)
+case " $* " in *" --state merged "*) ;; *) printf '%s' '[]'; exit 0 ;; esac
 cat "${GH_STUB_FILE:-/dev/null}"
 STUB
 chmod +x "$stub/gh"
@@ -52,7 +56,10 @@ expect_warn() {  # dispara: allow + additionalContext mencionando 'squash'
   local nome="$1" out ctx
   out="$(_hook "$2" "$3")"
   ctx="$(printf '%s' "$out" | jq -r '.hookSpecificOutput.additionalContext // empty' 2>/dev/null)"
-  if printf '%s' "$out" | grep -q '"permissionDecision"[[:space:]]*:[[:space:]]*"allow"' \
+  # o EVENTO faz parte do contrato: sob hookEventName errado o host ignora o additionalContext,
+  # e o aviso ficaria no stdout sem chegar a ninguém. (mutation-check 2026-08-20: sobrevivia)
+  if printf '%s' "$out" | jq -e '.hookSpecificOutput.hookEventName == "PreToolUse"' >/dev/null 2>&1 \
+     && printf '%s' "$out" | grep -q '"permissionDecision"[[:space:]]*:[[:space:]]*"allow"' \
      && printf '%s' "$ctx" | grep -qi 'squash'; then
     echo "  ok    warn  | $nome"
   else
@@ -97,6 +104,19 @@ if printf '%s' "$out1" | grep -qi 'squash' && printf '%s' "$out2" | grep -qi 'sq
   echo "  ok    cache HIT: 2ª chamada avisa mesmo com gh quebrado"
 else
   echo "  FAIL  cache não segurou o veredito | out1='$out1' out2='$out2'"; fail=1
+fi
+
+# ...e o cache EXPIRA: envelhecida a marca além do TTL, o veredito velho não vale mais. Com o gh
+# quebrado o hook tem de CALAR (fail-open), não reusar o cache vencido. Sem este caso, reduzir a
+# checagem a [ -f "$cache_file" ] passava e o veredito virava eterno. (mutation-check 2026-08-20)
+find "$cachedir" -type f -exec touch -t 202001010000 {} +
+out3="$(printf '%s' "$(jq -n '{tool_name:"Bash",tool_input:{command:"git commit -m z"}}')" \
+  | env GIT_STUB_BRANCH=feature-cache GIT_STUB_REVCOUNT=3 GH_STUB_EXIT=1 \
+        BSG_CACHE_DIR="$cachedir" BSG_CACHE_TTL=120 bash "$HOOK" 2>/dev/null)"
+if [ -z "$out3" ]; then
+  echo "  ok    cache EXPIRA: veredito vencido não é reusado"
+else
+  echo "  FAIL  cache vencido foi reusado | out3='$out3'"; fail=1
 fi
 
 # O cache le mtime via `stat`, cujo contrato DIVERGE entre BSD (macOS, do founder) e GNU (Linux,

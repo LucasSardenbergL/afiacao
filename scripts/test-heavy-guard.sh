@@ -39,6 +39,20 @@ expect_rewrite() {
   fi
 }
 
+# deny: o guard NÃO conseguiu reescrever e bloqueia. Este caminho é a razão de ser do guard
+# (comando pesado que escaparia do semáforo) e não tinha NENHUMA asserção — trocar o
+# permissionDecision de "deny" para "allow" sobrevivia à suíte inteira, e o comando pesado
+# rodaria sem semáforo. (mutation-check 2026-08-20)
+expect_deny() {
+  local cmd="$1" out
+  out="$(run "$cmd")"
+  if printf '%s' "$out" | jq -e '.hookSpecificOutput.hookEventName == "PreToolUse"
+      and .hookSpecificOutput.permissionDecision == "deny"
+      and ((.hookSpecificOutput.permissionDecisionReason // "") | test("heavy"))' >/dev/null 2>&1
+  then echo "  ok    deny   | $cmd"
+  else echo "  FAIL  want deny | $cmd → '$out'"; fail=1; fi
+}
+
 # updatedInput preserva os demais campos do tool_input (description/timeout)
 expect_preserva_campos() {
   local out
@@ -128,6 +142,13 @@ expect_quiet 'cd /tmp/x && heavy bun run test'
 
 echo "── leves / não-pesados → não interfere ──"
 expect_quiet 'bun lint'
+
+# allowlist de comandos leves: MENCIONAR um comando pesado não é executá-lo. Sem ela o guard
+# reescreveria o texto do echo/da mensagem de commit — a mesma classe do #1778, que enfiou um
+# `heavy` dentro do ci.yml. Não havia caso: matar a allowlist inteira sobrevivia à suíte.
+# (mutation-check 2026-08-20)
+expect_quiet 'echo bun run test'
+expect_quiet 'git commit -m documenta o bun run test'
 expect_quiet 'bun run lint'
 expect_quiet 'bun dev'
 expect_quiet 'git status'
@@ -254,6 +275,16 @@ CASO
 )"
 expect_rewrite_rot 'heavy CITADO no heredoc não silencia o guard' \
   "$caso_heavy_citado" "$heavy_citado_quer"
+
+echo "── deny: pesado que o guard NÃO consegue reescrever é BLOQUEADO ──"
+# Dentro de crase o casamento acontece (a crase não é sanitizada), mas a reescrita não: ela só
+# insere o prefixo depois de ^ ou de [ \t;&|(] — e a crase não está na classe. Sobra rewritten
+# == cmd, e aí a única saída correta é negar: deixar passar rodaria o pesado sem semáforo.
+# shellcheck disable=SC2016  # a crase TEM de chegar literal ao guard — expandi-la aqui
+# executaria `bun run test` de verdade dentro da suíte, que é o oposto do teste.
+expect_deny 'resultado=`bun run test`'
+
+echo
 
 echo
 if [ "$fail" -eq 0 ]; then echo "PASS — todos os casos"; else echo "FALHOU"; fi

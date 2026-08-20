@@ -1,0 +1,27 @@
+# Invariantes do guard de COLISÃO DE MIGRATION (.claude/hooks/migration-collision-guard.sh).
+# @src: .claude/hooks/migration-collision-guard.sh
+# @test: scripts/test-migration-collision-guard.sh
+# @test_cmd: bash
+# @compile_cmd: bash -n
+#
+# Único guard de DENY do conjunto (os outros avisam). Aqui o modo de falha caro é o inverso:
+# deixar de negar = migration concorrente entra e o SQL Editor recebe as duas fora de ordem.
+
+# CONTROLE+ : nunca negar tem de reprovar o caso-alvo. Se sobreviver, o harness é que quebrou.
+PEGA      | controle+: guard nunca nega           | s{grep -q ': RED' \|\| exit 0}{exit 0}
+
+# O oposto: negar SEM ser RED (🟡 commitada / 🟢 inédito viram deny) — os 3 allow reprovam.
+PEGA      | nega em qualquer veredito, nao so RED | s{grep -q ': RED'}{grep -q ':'}
+
+# Contrato com o host: `deny` é o campo que BLOQUEIA de fato.
+PEGA      | decisao vira allow                    | s{permissionDecision:"deny"}{permissionDecision:"allow"}
+
+# --- eram lacunas; medidas SOBREVIVENTES na 1a rodada e fechadas por caso novo ---
+# Edit usa `new_string`, não `content`. O run() da suíte só monta tool_name:"Write".
+PEGA      | Edit deixa de ser lido (new_string)   | s{ // \.tool_input\.new_string}{}
+# Caminho RELATIVO some do filtro. A suíte só usa caminho absoluto ($tmp/...).
+PEGA      | filtro perde o caminho relativo       | s{ \| supabase/migrations/\*\.sql\) ;;}{) ;;}
+# Evento do JSON: o is_deny só casa permissionDecision, não o evento.
+PEGA      | evento do JSON deixa de ser PreToolUse | s{hookEventName:"PreToolUse"}{hookEventName:"PostToolUse"}
+# O motivo do bloqueio some: nega sem dizer por quê (o founder fica sem a instrução de coordenar).
+PEGA      | deny perde o motivo                   | s{permissionDecisionReason:\$r}{permissionDecisionReason:"x"}
