@@ -384,3 +384,73 @@ corrigir o de-para **não** conserta pedido já gerado (grupo/itens são congela
 **Não fechado (deliberado):** não existe ação de recompor/dividir pedido gerado com grupo errado.
 Foi a causa de o incidente durar 7 dias — o de-para foi corrigido em 24/07 00:24 e o retry das
 00:27 falhou idêntico. Hoje resolve-se cancelando; vale frente própria se reincidir.
+
+## Bug de código chegava rotulado como "vendáveis indisponíveis" — e o resíduo de snapshot que ficou (2026-08-19)
+
+Os dois findings [P2] que o challenge Codex (gpt-5.6-sol, xhigh) sobre o sensor de head do Farmer
+deixou para depois do #1782, agora implementáveis contra a main. Um foi corrigido; **o outro virou
+resíduo declarado, com o desenho pronto** — e a razão de não fazê-lo agora é o conteúdo desta entrada.
+
+**Finding 1 — a conversão de erro era ampla demais (CORRIGIDO).** Em `useBundleEngine` e
+`useCrossSellEngine`, a leitura paginada da RPC `get_skus_margem_positiva` terminava em
+`.then(data => ({data, error:null}), error => ({data:null, error}))`. O handler de rejeição existe
+para preservar o fail-closed DECLARADO (insumo `ok:false` + head degradado + lista limpa + mensagem
+própria) em vez de deixar `fetchAllPages` lançar — mas, capturando tudo, rotulava também `TypeError`
+por builder quebrado com a frase de negócio. Não é hipotético: quando o #1782 mergeou, mocks que
+devolviam Promise crua produziram `supabase.rpc(...).order is not a function` e o `.then` o converteu
+em "vendáveis indisponíveis" em silêncio. Fix: `fetchAllPages` passa a **assinar** o que ele mesmo
+lança (`marcaDeFalha` + `motivo` em allowlist fechada, guard `ehFalhaDePagina` com `hasOwnProperty` e
+validação do literal); os hooks discriminam. Detalhe do padrão em
+[docs/agent/money-path.md](../agent/money-path.md) §"Fail-closed que CAPTURA rejeição".
+
+⚠️ **O primeiro desenho estava errado e o Codex o reprovou como [P1]** — vale mais que o fix: eu ia
+deixar o `TypeError` subir **cru do ponto da falha**, antes de limpar a lista, argumentando que é o
+mesmo tratamento que scores/catálogo/perfis já têm. É diferente: aqueles não são o **gate de
+rentabilidade**. Com a lista intacta a tela concluiria DESATUALIZADO e seguiria exibindo a oferta da
+execução anterior, que pode conter SKU cuja margem já não é positiva. **"Desatualizado" não é sinônimo
+de "seguro de usar".** Forma final: fail-closed inteiro para TODA falha, e a natureza do erro decide
+só **qual erro sobe** (o original cru quando é bug — preserva stack e subclasse; a frase de domínio
+com `cause` quando é falha de leitura esperada). Dois `[P2]` do mesmo parecer foram **recusados com
+razão**: um terceiro `motivo` marcado para rejeição assíncrona (assinar rejeição de origem
+desconhecida reintroduz o mascaramento um nível abaixo) e a suposta chamada dupla de
+`registrarVazio()` (o guard `jaRegistrou` já a torna idempotente — o Codex não viu o trecho).
+
+**Finding 2 — paginação por OFFSET não dá snapshot consistente (RESÍDUO DECLARADO, não corrigido).**
+Cada página é outra requisição/transação: um SKU que entra ou sai do conjunto durante o clique pode
+ser pulado (deslize de OFFSET) ou repetido (inócuo — o destino é um `Set`). O `.order('product_id')`
+resolve a ordem instável do PLANO, não a mutação concorrente. **Nenhuma das saídas vale o custo hoje**
+e o veredito é do Codex, contra a expectativa com que a sessão começou:
+
+- **cursor** (`.gt('product_id', ultimoId)`) elimina o deslize, mas **não** cria snapshot — sobra o
+  conjunto mudando de verdade durante a leitura;
+- **RPC agregada** (`uuid[]` numa linha só, um round-trip) resolve consistência E carga, mas é
+  migration com **apply manual** pelo founder no SQL Editor (janela em que a main já mudou e o banco
+  não) **mais** a reescrita de ~14 arquivos de teste que mockam a RPC por nome com builder
+  `.order()/.range()` — incluindo `bundle-vendaveis-paginacao.test.tsx`, que existe para provar a
+  paginação e perderia o sentido;
+- **agregar pela própria API** não existe: o PostgREST só expõe `avg/count/max/min/sum`, e agregados
+  vêm desabilitados por default.
+
+Contra isso, o dano do status quo é "SKU vendável eventualmente pulado numa janela de milissegundos,
+oferta menor" — nunca produto de prejuízo ofertado. **Fica o OFFSET.**
+
+**O desenho da RPC agregada, para quem for fazer** (respostas medidas do Codex, para não se perderem):
+função NOVA `public.get_skus_margem_positiva_ids() RETURNS uuid[]` que **não reimplementa a regra** e
+sim agrega a existente (`SELECT COALESCE(array_agg(product_id ORDER BY product_id), ARRAY[]::uuid[])
+FROM public.get_skus_margem_positiva()`) — uma fonte de verdade só. `CREATE OR REPLACE` mesmo sendo
+nova (a Parte D do `authz:check` exige a forma) e ACL explícito, porque `DROP`+`CREATE` reseta o
+default privilege. O gate staff **tem de ser próprio**, na forma `IF NOT ( … ) THEN RAISE`: o
+reconhecimento do CI é textual e um wrapper que só delega não passa — duplique a AUTORIZAÇÃO, nunca a
+regra de margem. Se ficar `SECURITY INVOKER`, o caller precisa de `EXECUTE` em `has_role` também.
+Sobre tamanho: 2.462 uuids ≈ 96KB e o cap de 1.000 do PostgREST conta LINHAS, não elementos do array —
+o risco real é tempo (`statement_timeout` de 8s para `authenticated`), então 10x pede `EXPLAIN ANALYZE`,
+não estimativa. E o rollout precisa ser compatível com a migration manual: **migration primeiro**, ou
+fallback para a RPC antiga **apenas** em "função inexistente" (fallback amplo esconderia erro de
+autorização e de SQL).
+
+**Duas advertências herdadas do mesmo parecer, deliberadamente fora deste PR:**
+[P1] `omie_codigo_produto` é resolvido sem `account` e `product_id` é aceito sem confirmar presença no
+catálogo ativo, num domínio account-aware — mais grave que a inconsistência do OFFSET, e outra entrega
+(mexe em identidade de produto/basket e pede testes próprios). E a premissa "nunca produto de prejuízo
+ofertado" é **frouxa por construção**: um SKU lido na 1ª página pode perder a margem antes de o cálculo
+terminar, e nem a RPC agregada fecha isso — só revalidação server-side na transação da persistência.

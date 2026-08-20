@@ -35,3 +35,18 @@ export function mensagemDeErro(err: unknown): string | null {
   const s = String(err).trim();
   return s.length > 0 ? s : null;
 }
+
+/**
+ * `Error` com a CAUSA presa — `new Error(msg, { cause })` é ES2022 e o projeto compila com
+ * `lib: ES2020`, então a propriedade é atribuída à mão (mesmo padrão de `fetchAllPages`).
+ *
+ * POR QUE EXISTE: quando um caller traduz uma falha técnica em mensagem de domínio ("não
+ * consegui confirmar quais SKUs são rentáveis"), o erro ORIGINAL — com `code`, `details` e a
+ * stack — some se o novo `Error` não o carregar. O usuário precisa da mensagem de domínio; o
+ * plantão precisa do original. `cause` entrega os dois sem escolher entre eles.
+ */
+export function erroComCausa(mensagem: string, causa: unknown): Error {
+  const erro = new Error(mensagem) as Error & { cause?: unknown };
+  erro.cause = causa;
+  return erro;
+}
