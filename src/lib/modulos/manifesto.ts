@@ -285,6 +285,7 @@ export const MODULOS: ModuloApp[] = [
       "src/hooks/__tests__/bundle-escopo-sob-falha.test.tsx",
       "src/hooks/__tests__/bundle-head-degradado-todos-insumos.test.tsx",
       "src/hooks/__tests__/bundle-head-nao-mente-apos-linhas.test.tsx",
+      "src/hooks/__tests__/bundle-melhor-individual-leitura-falha.test.tsx",
       "src/hooks/__tests__/bundle-recomendacoes-erro-silencioso.test.tsx",
       "src/hooks/__tests__/bundle-regras-substituicao-atomica.test.tsx",
       "src/hooks/__tests__/bundle-vendaveis-erro-honesto.test.tsx",
