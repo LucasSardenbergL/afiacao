@@ -157,17 +157,35 @@ export async function fetchAllPages<T>(
   for (let pagina = 0; ; pagina++) {
     const de = pagina * POSTGREST_PAGE_SIZE;
     const ate = (pagina + 1) * POSTGREST_PAGE_SIZE - 1;
-    const { data, error } = await buscarPagina(de, ate);
+    // CONSTRUÇÃO e ESPERA em passos separados, de propósito. Construir o builder pode LANÇAR
+    // SÍNCRONO (`supabase.rpc(...).order is not a function` quando um encadeamento quebra), e
+    // esperar pode REJEITAR (um `PromiseLike` que rejeita em vez de resolver `{data, error}` —
+    // p.ex. sob `throwOnError()`, que este contrato não usa). NENHUMA das duas recebe marca:
+    // o helper só assina o que ele MESMO decidiu lançar. Assinar uma rejeição de origem
+    // desconhecida seria reintroduzir, dentro do helper, exatamente o mascaramento que a marca
+    // existe para impedir — um bug de código chegaria ao caller com cara de falha de leitura
+    // esperada. (O Codex sugeriu um terceiro motivo `rejeicao_da_leitura` aqui; recusado pelo
+    // mesmo argumento — a allowlist fecha em duas, e o resto sobe cru.)
+    const requisicao = buscarPagina(de, ate);
+    const { data, error } = await requisicao;
     // Falhar alto é a única leitura honesta: o caller escolhe o fallback, mas não pode ser
     // enganado por um total plausível. `data: null` sem `error` é resposta malformada — o
     // único sinal legítimo de fim é `data: []`.
     if (error != null) {
       relatarPaginaPerdida(fonte, pagina, todas.length, error);
-      throw comCausa(`fetchAllPages: página ${pagina} (${de}-${ate}) falhou`, error);
+      throw falhaDePagina(`fetchAllPages: página ${pagina} (${de}-${ate}) falhou`, error, {
+        motivo: 'pagina_falhou',
+        fonte,
+        pagina,
+      });
     }
     if (data == null) {
       relatarPaginaPerdida(fonte, pagina, todas.length, null);
-      throw comCausa(`fetchAllPages: página ${pagina} (${de}-${ate}) devolveu data null sem error`, error);
+      throw falhaDePagina(`fetchAllPages: página ${pagina} (${de}-${ate}) devolveu data null sem error`, error, {
+        motivo: 'data_null_sem_error',
+        fonte,
+        pagina,
+      });
     }
     todas.push(...data);
     if (data.length < POSTGREST_PAGE_SIZE) return todas;
@@ -175,14 +193,83 @@ export async function fetchAllPages<T>(
 }
 
 /**
+ * As DUAS falhas de leitura que este helper conhece e assina. A allowlist é fechada de
+ * propósito: quem discrimina lá no caller precisa saber que a lista tem fim.
+ *
+ *  - `pagina_falhou`       — a página voltou com `error` (timeout 57014, RLS 42501, 500…);
+ *  - `data_null_sem_error` — resposta malformada (`data: null` sem `error`).
+ */
+export type MotivoFalhaDePagina = 'pagina_falhou' | 'data_null_sem_error';
+
+/**
+ * Marca ESTRUTURAL do erro que este helper lança. Não é `instanceof` (uma classe exportada
+ * atravessa mal bundle/HMR/duplicação de módulo — dois `postgrest.ts` na mesma página dariam
+ * duas classes distintas e o guard falharia ABERTO), nem casamento pelo TEXTO da mensagem
+ * (que já é proibido em telemetria por PII e é igualmente frágil como contrato).
+ */
+const MARCA_FALHA_DE_PAGINA = 'fetchAllPages/falha-de-pagina';
+
+/** Erro assinado por `fetchAllPages` — o que `ehFalhaDePagina` reconhece. */
+type FalhaDePagina = Error & {
+  cause?: unknown;
+  marcaDeFalha: typeof MARCA_FALHA_DE_PAGINA;
+  motivo: MotivoFalhaDePagina;
+  fonte: string;
+  pagina: number;
+};
+
+/**
  * `new Error(msg, { cause })` é ES2022 e o projeto compila com `lib: ES2020` — atribuir a
  * propriedade preserva a causa (o erro original do PostgREST: code/message) sem mexer no
  * target global. Sem ela o incidente chega como "deu erro", sem dizer QUAL fatia sumiu.
+ *
+ * Além da causa, ASSINA o erro: `marcaDeFalha` + `motivo` + `fonte`/`pagina`. A assinatura
+ * existe para o caller poder tratar a falha ESPERADA de leitura sem, no mesmo gesto, engolir
+ * um bug de código (ver `ehFalhaDePagina`).
  */
-function comCausa(mensagem: string, causa: unknown): Error {
-  const erro = new Error(mensagem) as Error & { cause?: unknown };
+function falhaDePagina(
+  mensagem: string,
+  causa: unknown,
+  { motivo, fonte, pagina }: { motivo: MotivoFalhaDePagina; fonte: string; pagina: number },
+): FalhaDePagina {
+  const erro = new Error(mensagem) as FalhaDePagina;
   erro.cause = causa;
+  erro.marcaDeFalha = MARCA_FALHA_DE_PAGINA;
+  erro.motivo = motivo;
+  erro.fonte = fonte;
+  erro.pagina = pagina;
   return erro;
+}
+
+/**
+ * "Esta rejeição é uma falha de LEITURA que o `fetchAllPages` assinou?" — o discriminante que
+ * separa o esperado do bug.
+ *
+ * POR QUE EXISTE. Um caller que precisa preservar um fail-closed DECLARADO (registrar head
+ * degradado, limpar a lista, emitir mensagem própria) em vez de deixar a exceção subir escreve
+ * um `onRejected` que converte a rejeição em `{ data: null, error }`. Sem discriminar, esse
+ * handler engole QUALQUER rejeição — inclusive `TypeError` por quebra do builder — e rotula
+ * tudo com o mesmo rótulo de negócio ("vendáveis indisponíveis"). Não é hipotético: quando a
+ * paginação chegou à RPC dos engines (#1782), mocks que devolviam Promise crua produziram
+ * `supabase.rpc(...).order is not a function` e o handler converteu o TypeError em
+ * "vendáveis indisponíveis" — em produção, qualquer regressão de builder faria o mesmo, e o
+ * incidente chegaria disfarçado de indisponibilidade de dado.
+ *
+ * Com o guard: falha assinada segue o fail-closed declarado; o resto SOBE CRU, com a stack e a
+ * mensagem verdadeiras. (Achado do challenge gpt-5.6-sol sobre o #1791.)
+ */
+export function ehFalhaDePagina(erro: unknown): erro is FalhaDePagina {
+  if (typeof erro !== 'object' || erro === null) return false;
+  // Propriedade PRÓPRIA, não herdada: um `marcaDeFalha` plantado em `Error.prototype` (ou numa
+  // classe de erro de terceiro) faria o guard aceitar erro que este helper nunca assinou — e o
+  // guard falha ABERTO quando aceita demais, que é o defeito que ele existe para fechar.
+  const proprio = (chave: string) => Object.prototype.hasOwnProperty.call(erro, chave);
+  if (!proprio('marcaDeFalha') || !proprio('motivo')) return false;
+  const candidato = erro as { marcaDeFalha?: unknown; motivo?: unknown };
+  if (candidato.marcaDeFalha !== MARCA_FALHA_DE_PAGINA) return false;
+  // O `motivo` também é verificado contra a allowlist FECHADA: aceitar um literal desconhecido
+  // seria confiar num erro meio-assinado. (Endurecimento pedido pelo Codex gpt-5.6-sol.)
+  return candidato.motivo === 'pagina_falhou' || candidato.motivo === 'data_null_sem_error';
 }
 
 /**
