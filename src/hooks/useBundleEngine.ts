@@ -165,6 +165,25 @@ export const useBundleEngine = () => {
   // `FarmerBundles` só sabia dizer "Clique em Calcular" — o mesmo texto de quem nunca calculou.
   const [erro, setErro] = useState<Error | null>(null);
   const [desatualizado, setDesatualizado] = useState(false);
+  /**
+   * "A execução mais recente chegou a PUBLICAR um resultado (mesmo vazio) na tela?"
+   *
+   * Dois estados dependiam disso e não tinham como perguntar (challenge Codex do #1791):
+   *  - a lista vazia de um cálculo CONCLUÍDO ficava idêntica à de quem nunca clicou em
+   *    Calcular — "não há oportunidade nesta carteira" apresentado como "não comecei";
+   *  - sob `erro`, a tela culpava a LEITURA mesmo quando a leitura foi perfeita e o que
+   *    falhou foi a GRAVAÇÃO (a RPC roda DEPOIS de `aplicarBundles`), desacreditando
+   *    bundles válidos e desta execução.
+   *
+   * Descreve a ÚLTIMA execução, não a sessão: um recálculo que morre na leitura volta o
+   * flag a `false`, senão o veredicto velho responderia por um cálculo que não existiu.
+   *
+   * ⚠️ Marcado nos pontos de CONCLUSÃO, nunca dentro de `aplicarBundles`. O fail-closed de
+   * `vendaveis` também chama `aplicarBundles([])` — para limpar a lista antes de lançar — e
+   * ali NADA foi calculado: marcar junto da publicação faria esse caminho anunciar "o cálculo
+   * terminou, só não salvou", que é exatamente a mentira que este flag existe para desfazer.
+   */
+  const [calculado, setCalculado] = useState(false);
 
   // A ref existe para o `catch` saber se sobrou resultado de uma execução ANTERIOR na tela:
   // ler `customerBundles` de dentro do `useCallback` pegaria a closure velha.
@@ -180,6 +199,7 @@ export const useBundleEngine = () => {
     setLoading(true);
     setErro(null);
     setDesatualizado(false);
+    setCalculado(false);
     // "Esta execução produziu o que está na tela?" — separa INDISPONÍVEL de DESATUALIZADO.
     let resultadoDestaExecucao = false;
     // "Este cálculo chegou a PRODUZIR linhas?" — trava o registro de `vazio` no `catch`.
@@ -406,6 +426,9 @@ export const useBundleEngine = () => {
 
       if (!clientScores?.length) {
         aplicarBundles([]);
+        // CONCLUIU: "esta carteira não tem cliente com score" é um veredicto do motor, não uma
+        // falha — e a tela precisa dizer isso em vez de "clique em Calcular".
+        setCalculado(true);
         // Era um `return` MUDO — a razão de a frequência do zero nunca ter sido mensurável.
         await registrarVazio();
         return;
@@ -674,6 +697,8 @@ export const useBundleEngine = () => {
 
       // 5. Generate bundles per customer
       const allCustomerBundles: CustomerBundles[] = [];
+      /** Clientes cuja comparação com o melhor produto individual não pôde ser lida. */
+      let comparacaoIndisponivel = 0;
 
       for (const score of clientScores) {
         const cid = score.customer_user_id;
@@ -772,27 +797,61 @@ export const useBundleEngine = () => {
 
         // Best individual product (from cross-sell engine data)
         let bestIndividual: IndividualComparison | null = null;
-        const { data: existingRecs } = (await supabase
-          .from('farmer_recommendations')
-          .select('product_id, affinity_score, recommendation_type')
-          .eq('farmer_id', effectiveUserId)
-          .eq('customer_user_id', cid)
-          .eq('status', 'pendente')
-          // `.not(...is null)` é fail-closed: com todas as linhas antigas, ordenar não ordena nada
-          // e o `.limit(1)` elegeria um "melhor individual" arbitrário. `nullsFirst: false` cobre
-          // a MISTURA (DESC implica NULLS FIRST no Postgres); o filtro cobre o caso TODAS-NULL.
-          .not('affinity_score', 'is', null)
-          .order('affinity_score', { ascending: false, nullsFirst: false })
-          // ⚠️ `created_at` deixou de desempatar: desde a migration 20260814223445 a geração
-          // inteira entra num único INSERT, e `now()` é o instante da TRANSAÇÃO — todas as
-          // linhas do run compartilham o mesmo carimbo. `id` é a PK: última chave, sempre
-          // total (achado do challenge Codex xhigh).
-          .order('updated_at', { ascending: false }) // desempate determinístico
-          .order('id', { ascending: false })
-          .limit(1)) as unknown as { data: ExistingRecRow[] | null };
+        // O `error` desta consulta era DESCARTADO na desestruturação, e a falha virava um
+        // veredicto: `bestIndividual` nulo (= "não há oferta individual melhor"), cliente sem
+        // bundle próprio OMITIDO da lista inteira, e `toast.success` no fim. É o §2 (ausente ≠
+        // zero) na forma de rótulo.
+        //
+        // O `try` existe porque erro RESOLVIDO e Promise REJEITADA são portas diferentes para o
+        // mesmo defeito, e a segunda é a pior (achado do challenge Codex gpt-5.6-sol/xhigh):
+        // uma rejeição de rede/CORS escapava do laço para o `catch` externo, onde todos os
+        // insumos obrigatórios JÁ foram declarados íntegros (são lidos antes do laço) e
+        // `linhasProduzidas` ainda é false — e `registrarVazio()` gravava `resultado='vazio'`
+        // com `completude='completo'`. Esse par é a licença exata que a fase 2 usaria para
+        // EXPIRAR a carteira. Mesmo defeito do #1791, por outra porta.
+        let recsIndividuais: ExistingRecRow[] | null = null;
+        try {
+          const { data, error } = (await supabase
+            .from('farmer_recommendations')
+            .select('product_id, affinity_score, recommendation_type')
+            .eq('farmer_id', effectiveUserId)
+            .eq('customer_user_id', cid)
+            .eq('status', 'pendente')
+            // `.not(...is null)` é fail-closed: com todas as linhas antigas, ordenar não ordena
+            // nada e o `.limit(1)` elegeria um "melhor individual" arbitrário. `nullsFirst:
+            // false` cobre a MISTURA (DESC implica NULLS FIRST no Postgres); o filtro cobre o
+            // caso TODAS-NULL.
+            .not('affinity_score', 'is', null)
+            .order('affinity_score', { ascending: false, nullsFirst: false })
+            // ⚠️ `created_at` deixou de desempatar: desde a migration 20260814223445 a geração
+            // inteira entra num único INSERT, e `now()` é o instante da TRANSAÇÃO — todas as
+            // linhas do run compartilham o mesmo carimbo. `id` é a PK: última chave, sempre
+            // total (achado do challenge Codex xhigh).
+            .order('updated_at', { ascending: false }) // desempate determinístico
+            .order('id', { ascending: false })
+            .limit(1)) as unknown as { data: ExistingRecRow[] | null; error: unknown };
+          if (error) throw error;
+          recsIndividuais = data;
+        } catch (erroIndividual) {
+          console.error(`Falha ao ler o melhor individual de ${cid}:`, erroIndividual);
+          // Sem `throw`: esta comparação é ACESSÓRIA — ela não entra em `recomendacoes`, o
+          // payload da RPC de substituição, então derrubar a carteira inteira por causa dela
+          // trocaria uma afirmação errada por um prejuízo maior. O que a falha NÃO pode é
+          // sumir: ela reprova o toast de sucesso logo abaixo.
+          //
+          // ⚠️ De propósito NÃO vira insumo do `InsumosSnapshot`: `avaliarCompletude` degrada
+          // com um único `ok:false`, e esta consulta roda uma vez POR CLIENTE — numa carteira
+          // de centenas, uma falha isolada carimbaria `degradado` em quase toda execução. O
+          // head ficaria degradado para sempre, e um sinal que nunca varia não é sinal: a
+          // fase 2 aprenderia a ignorá-lo. Vale porque `p_linhas` é INVARIANTE a esta leitura
+          // (cliente com bundle entra de qualquer jeito; cliente sem bundle contribui zero
+          // linhas com ou sem ela), logo a integridade do ZERO DE BUNDLES — que é o que a
+          // completude julga — não depende dela.
+          comparacaoIndisponivel += 1;
+        }
 
-        if (existingRecs?.length) {
-          const rec = existingRecs[0];
+        if (recsIndividuais?.length) {
+          const rec = recsIndividuais[0];
           const prod = productMap.get(rec.product_id);
           // Ausente ≠ zero: `Number(null)` é 0 e afirmaria afinidade nula medida.
           const afinidade = rec.affinity_score == null ? NaN : Number(rec.affinity_score);
@@ -837,7 +896,15 @@ export const useBundleEngine = () => {
       // Marcados JUNTOS e aqui, não na gravação: a partir deste ponto a tela mostra o
       // resultado DESTE cálculo, e ele produziu linhas — os dois fatos que o `catch` precisa.
       resultadoDestaExecucao = true;
-      linhasProduzidas = allCustomerBundles.length > 0;
+      // CONCLUIU: daqui para baixo só resta PERSISTIR, então qualquer falha adiante é de
+      // gravação — e é este flag que impede a tela de culpar a leitura por ela.
+      setCalculado(true);
+      // Linhas PERSISTÍVEIS, não clientes: um cliente entra em `allCustomerBundles` só com
+      // `bestIndividual` e nenhum bundle, e essa comparação não vira linha nenhuma no payload
+      // da RPC. Contando clientes, esse caso travava o `registrarVazio()` do `catch` sobre uma
+      // execução que de fato não produziu nada — o head parava de se mover e "nenhum registro
+      // novo" voltava a significar duas coisas opostas (challenge Codex xhigh).
+      linhasProduzidas = allCustomerBundles.some((cb) => cb.bundles.length > 0);
 
       // Persist bundle recommendations — via RPC que SUBSTITUI a geração anterior.
       // PULADO na lente "Ver como" (só leitura: o master inspeciona os bundles do alvo
@@ -951,6 +1018,16 @@ export const useBundleEngine = () => {
           'já havia um recálculo deste vendedor em andamento — os bundles daqui não foram salvos; espere ele terminar e confira',
         );
       }
+      // A lista pode ter ficado INCOMPLETA: o cliente que só entraria pela comparação
+      // individual foi omitido quando a leitura dele falhou. Dizer o número é o que separa
+      // "não há mais nada" de "não consegui ver o resto".
+      if (comparacaoIndisponivel > 0) {
+        problemas.push(
+          comparacaoIndisponivel === 1
+            ? '1 cliente ficou sem a comparação com o melhor produto individual — a leitura falhou, e ele pode ter ficado fora da lista'
+            : `${comparacaoIndisponivel} clientes ficaram sem a comparação com o melhor produto individual — a leitura falhou, e eles podem ter ficado fora da lista`,
+        );
+      }
 
       if (problemas.length > 0) {
         toast.warning(`${totalBundles} bundles gerados, mas ${problemas.join('; e ')}`);
@@ -999,6 +1076,7 @@ export const useBundleEngine = () => {
     calculating,
     erro,
     desatualizado,
+    calculado,
     calculateBundles,
     config: DEFAULT_CONFIG,
   };
