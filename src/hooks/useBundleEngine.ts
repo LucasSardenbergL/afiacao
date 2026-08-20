@@ -52,7 +52,10 @@ export interface BundleRecommendation {
   status: string;
 }
 
-export interface IndividualComparison {
+// Não exportado: os consumidores falam em `ComparacaoIndividual` (a união), e só alcançam
+// isto pelo ramo `encontrado`. Export sem consumidor externo reprova no knip — que roda no
+// health stack, não no `bun run test` (mesma armadilha anotada em completude-snapshot.ts).
+interface IndividualComparison {
   productId: string;
   productName: string;
   /**
