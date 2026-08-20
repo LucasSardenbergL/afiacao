@@ -259,6 +259,21 @@ asserts e publicado — e ainda assim seu primeiro dado é inútil, por um bug n
 nenhuma dessas etapas olhava. **Instrumentar não termina no sensor; termina no primeiro dado
 lido de verdade.**
 
+⚠️ **E o gatilho que NUNCA pode ficar verde.** O sensor acima ganhou uma query de decisão — "já há
+o que analisar?" — que recusava vazio envenenado pelo cap de 1.000. Ela contava a assinatura de
+truncamento sobre a tabela INTEIRA. Mas `farmer_geracao_execucoes` é append-only: as 7 execuções
+truncadas de 19/08 nunca saem de lá. O veredito seria `CONTAMINADO` **para sempre**, mandando
+"descarte o período e recomece o denominador" sem oferecer meio de fazê-lo — e o primeiro
+vazio+completo legítimo apareceria enterrado atrás de linhas velhas e imutáveis. Provado com o mesmo
+cenário nas duas versões: a antiga responde `CONTAMINADO`, a nova responde `DECIDA`.
+
+Um gatilho que só sabe dizer "não" parece o lado seguro do precisão>recall, e não é: ele não decide,
+ele **abdica** — e some com o sinal que a fase seguinte precisa ver. A correção é uma janela que
+começa depois da última contaminação, com as descartadas em coluna própria (cap silencioso é o
+defeito, não a cura) e a contaminação ATIVA ainda travando tudo. **Ao escrever um sensor, pergunte
+também o que precisa acontecer para ele dizer SIM** — se não houver resposta, ele não mede a
+pergunta, mede o passado.
+
 ### Onde a regra NÃO se aplica
 
 Instrumentar tudo tem custo, e regra que grita errado treina a ignorar o vermelho. O gatilho é a
