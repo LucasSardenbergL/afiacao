@@ -274,6 +274,20 @@ defeito, não a cura) e a contaminação ATIVA ainda travando tudo. **Ao escreve
 também o que precisa acontecer para ele dizer SIM** — se não houver resposta, ele não mede a
 pergunta, mede o passado.
 
+⚠️ **E o agregado que esconde o sensor que nunca foi exercido.** O mesmo gatilho somava os DOIS
+motores. Em 20/08: 10 execuções de `cross_sell`, **zero** de `bundle` — somadas, "10 execuções". A
+causa não é preguiça de ninguém: `FarmerRecommendations` recalcula num `useEffect` ao ABRIR a tela,
+`FarmerBundles` só calcula por BOTÃO. Um acumula por uso orgânico, o outro nunca. Provado com 20
+execuções sintéticas de cross-sell e zero de bundle: a versão agregada responde
+`ENCERRE — encerre a linha`, decidindo pelos dois; a versão por motor responde `ENCERRE` para o
+cross-sell e `SEM DENOMINADOR` para o bundle.
+
+Encerrar uma linha é a decisão mais irreversível que este arquivo governa, e ela sairia sobre um
+motor cujo denominador é **zero** — o `ausente=zero` promovido a veredito. **Quando um sensor cobre
+mais de uma superfície, o denominador é por superfície**; e superfícies que se exercem de formas
+diferentes (automático vs. manual) nunca compartilham denominador, mesmo medindo a mesma coisa.
+
+
 ### Onde a regra NÃO se aplica
 
 Instrumentar tudo tem custo, e regra que grita errado treina a ignorar o vermelho. O gatilho é a
