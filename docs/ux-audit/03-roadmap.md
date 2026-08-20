@@ -3,6 +3,8 @@
 > Data: 2026-05-13 · 20 intervenções derivadas dos padrões transversais e telas críticas da Fase 2. Ordenadas por ICE = Impact × Confidence × Ease (max 1000).
 >
 > **Esta fase NÃO toca em código.** A execução acontece na Fase 4, sob comando explícito por intervenção.
+>
+> **Estado: EXECUTADO — 20/20.** Isto é registro de **proveniência** ("de onde veio a regra"), **não backlog**: o que de fato saiu, item a item, está em [04-execucao.md](04-execucao.md), e as regras que sobreviveram vivem no CLAUDE.md §Design System. Antes de "implementar" qualquer item daqui, confira o 04 — reimplementar é retrabalho puro.
 
 ---
 
