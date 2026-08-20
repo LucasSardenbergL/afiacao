@@ -34,9 +34,26 @@
 --    da última execução contaminada. As descartadas não somem — saem em `descartadas_cap`,
 --    porque cap silencioso é o defeito, não a cura. E a contaminação ATIVA (a execução mais
 --    recente ainda truncada) continua travando tudo, que é quando travar é a resposta certa.
-WITH marcada AS (
+--
+-- 4. **O agregado esconde o motor que NUNCA rodou.** São DOIS motores (`cross_sell` e `bundle`,
+--    pelo CHECK da tabela) e eles não acumulam igual: `FarmerRecommendations` recalcula no
+--    `useEffect` ao abrir a tela, e `FarmerBundles` só calcula por BOTÃO. Medido em 20/08:
+--    10 execuções de `cross_sell` e ZERO de `bundle`. Somados, viram "10 execuções" — e um dia
+--    virariam `ENCERRE`, encerrando a linha do BUNDLE com dado que é todo do cross-sell.
+--    Por isso a query devolve UMA LINHA POR MOTOR, e o esqueleto de motores é fixo: motor sem
+--    execução tem de aparecer com zero, nunca sumir da saída (ausente ≠ zero, de novo).
+WITH motores AS (
+  -- Esqueleto FIXO: o motor que nunca executou precisa APARECER com zero. Um `GROUP BY motor`
+  -- sozinho simplesmente não produz linha para ele, e a ausência seria lida como "não há nada
+  -- a relatar". A lista espelha o CHECK da tabela; o UNION garante que um motor novo que
+  -- apareça no banco antes de entrar aqui também saia na saída, em vez de sumir.
+  SELECT motor FROM (VALUES ('cross_sell'), ('bundle')) AS v(motor)
+  UNION
+  SELECT DISTINCT motor FROM public.farmer_geracao_execucoes
+),
+marcada AS (
   SELECT
-    calculado_em, resultado, completude, insumos, farmer_id,
+    motor, calculado_em, resultado, completude, insumos, farmer_id,
     -- Assinatura de truncamento: QUALQUER insumo com exatamente 1.000 linhas. O cap do
     -- PostgREST devolve 1.000 e sucesso; nenhum insumo real tem esse tamanho por acaso.
     EXISTS (SELECT 1 FROM jsonb_each(insumos) AS i(nome, val)
@@ -44,19 +61,22 @@ WITH marcada AS (
   FROM public.farmer_geracao_execucoes
 ),
 corte AS (
+  -- Janela POR MOTOR: o cap que envenenou o cross-sell não pode descartar execução do bundle.
   SELECT
-    -- A janela julgável começa DEPOIS da última execução truncada. Com a tabela limpa isso é
-    -- `-infinity` e a janela é tudo — o corte só morde quando houve contaminação de fato.
-    COALESCE(max(calculado_em) FILTER (WHERE tem_cap), '-infinity'::timestamptz) AS janela_desde,
-    count(*) FILTER (WHERE tem_cap)                                              AS descartadas_cap,
-    -- Contaminação ATIVA ≠ contaminação passada: se a execução MAIS RECENTE ainda vem
-    -- truncada, o cliente no ar segue truncando e nenhuma janela nova é confiável.
-    COALESCE((SELECT tem_cap FROM marcada ORDER BY calculado_em DESC LIMIT 1), false) AS cap_ativo
-  FROM marcada
+    mo.motor,
+    COALESCE(max(ma.calculado_em) FILTER (WHERE ma.tem_cap), '-infinity'::timestamptz) AS janela_desde,
+    count(*) FILTER (WHERE ma.tem_cap)                                                 AS descartadas_cap,
+    -- Contaminação ATIVA ≠ passada: se a execução MAIS RECENTE deste motor ainda vem truncada,
+    -- o cliente no ar segue truncando e nenhuma janela nova é confiável.
+    COALESCE((SELECT y.tem_cap FROM marcada y WHERE y.motor = mo.motor
+              ORDER BY y.calculado_em DESC LIMIT 1), false)                            AS cap_ativo
+  FROM motores mo
+  LEFT JOIN marcada ma ON ma.motor = mo.motor
+  GROUP BY mo.motor
 ),
 obs AS (
   SELECT
-    c.descartadas_cap, c.cap_ativo, c.janela_desde,
+    c.motor, c.descartadas_cap, c.cap_ativo,
     count(m.calculado_em)                                             AS execucoes_totais,
     -- O cliente ANTERIOR ao Publish não declarava insumo nenhum: conta como "rodou",
     -- nunca como evidência sobre completude.
@@ -81,20 +101,25 @@ obs AS (
     min(m.calculado_em)::date                                         AS desde,
     max(m.calculado_em)                                               AS ultima
   FROM corte c
-  -- LEFT JOIN de proposito: com a janela VAZIA (contaminacao ativa, ou nenhuma execucao ainda)
-  -- a query tem de devolver UMA linha dizendo isso, nao zero linhas — resultado ausente seria
-  -- lido como "rodou e nao achou nada", que e o ausente=zero de novo.
-  LEFT JOIN marcada m ON m.calculado_em > c.janela_desde
-  GROUP BY c.descartadas_cap, c.cap_ativo, c.janela_desde
+  -- LEFT JOIN de proposito: com a janela VAZIA (motor que nunca rodou, ou contaminacao ativa)
+  -- a query tem de devolver a linha DELE dizendo isso, e nao omiti-lo — linha ausente seria
+  -- lida como "nao ha o que relatar", que e o ausente=zero.
+  LEFT JOIN marcada m ON m.motor = c.motor AND m.calculado_em > c.janela_desde
+  GROUP BY c.motor, c.descartadas_cap, c.cap_ativo
 )
 SELECT
-  execucoes_totais, julgaveis, vazios_completos, vazios_pre_cobertura,
+  motor, execucoes_totais, julgaveis, vazios_completos, vazios_pre_cobertura,
   descartadas_cap, farmers, desde, ultima,
   CASE
     WHEN cap_ativo THEN
-      'CONTAMINADO (ATIVO) — a execucao MAIS RECENTE ainda traz insumo de exatamente 1000 '
-      || 'linhas. O cliente no ar segue truncando em silencio: nenhuma janela nova e '
+      'CONTAMINADO (ATIVO) — a execucao MAIS RECENTE deste motor ainda traz insumo de exatamente '
+      || '1000 linhas. O cliente no ar segue truncando em silencio: nenhuma janela nova e '
       || 'confiavel. Corrija a paginacao e faca o Publish ANTES de julgar qualquer vazio.'
+    WHEN execucoes_totais = 0 THEN
+      'SEM DENOMINADOR — este motor NUNCA executou. Nao e "o vazio nao acontece": e superficie '
+      || 'sem sensor exercido. Os dois motores nao acumulam igual — FarmerRecommendations '
+      || 'recalcula no useEffect ao ABRIR a tela, FarmerBundles so calcula por BOTAO — entao '
+      || 'este aqui nao acumula por uso organico. Exercer a tela e o pre-requisito, nao esperar.'
     WHEN vazios_pre_cobertura > 0 AND vazios_completos = 0 THEN
       'AGUARDE (cliente velho) — ' || vazios_pre_cobertura || ' vazio+completo SEM o insumo '
       || 'carteira_com_historico_utilizavel. Foram gravados por cliente anterior ao fechamento '
@@ -104,10 +129,11 @@ SELECT
       'DECIDA — ha ' || vazios_completos || ' vazio+completo COM cobertura declarada. Os dois '
       || 'pre-requisitos da §7.5 estao fechados (regras no bundle; e carteira_com_historico_'
       || 'utilizavel, que separa cliente com PEDIDO de cliente cujos itens RESOLVEM para SKU). '
-      || 'Este vazio ja e julgavel: siga para o desenho da expiracao.'
+      || 'Este vazio ja e julgavel: siga para o desenho da expiracao DESTE motor.'
     WHEN julgaveis >= 20 THEN
-      'ENCERRE — ' || julgaveis || ' execucoes julgaveis e ZERO vazios: o vazio-de-verdade nao '
-      || 'acontece nesses farmers. Nao ligue a expiracao; encerre a linha.'
+      'ENCERRE — ' || julgaveis || ' execucoes julgaveis DESTE motor e ZERO vazios: o '
+      || 'vazio-de-verdade nao acontece nele. Nao ligue a expiracao; encerre a linha DELE '
+      || '(o veredito e por motor: nao decide nada sobre o outro).'
     ELSE
       'AGUARDE — denominador insuficiente (' || julgaveis || '/20 julgaveis'
       || CASE WHEN descartadas_cap > 0
@@ -115,4 +141,5 @@ SELECT
                    || 'denominador recomecado' ELSE '' END
       || '). NAO interprete como "o vazio nao acontece": e ausencia de dado.'
   END AS veredito
-FROM obs;
+FROM obs
+ORDER BY motor;
