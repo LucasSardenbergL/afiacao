@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 /**
  * `product_id` do item entrava no histórico SEM confronto nenhum — nem catálogo, nem conta.
@@ -214,5 +216,31 @@ describe('useCrossSellEngine — `product_id` do item é confrontado com catálo
     await rodar();
     const insumos = (persistidas[0]?.p_insumos ?? {}) as Record<string, { n: number; esperado?: number }>;
     expect(insumos.itens_identidade_conforme.esperado).toBe(insumos.itens_identidade_conforme.n);
+  });
+});
+
+/**
+ * O guard tem um modo de falha próprio, e ele é MAIS CARO que o bug que fecha: se `account`
+ * sumir do `select` de `omie_products`, o catálogo inteiro chega sem conta, TODO item de
+ * pedido com conta vira `conta_divergente` e o motor zera — em silêncio, exatamente como o
+ * cap de 1.000 fazia (#1782). O achado é do parecer Codex desta entrega.
+ *
+ * Os testes acima não pegam isso: o stub de `supabase.from()` é passthrough e devolve a
+ * fixture inteira, ignorando o que o `select` pediu. Então a FORMA da query precisa ser
+ * vigiada como TEXTO — o mesmo recurso que o repo já usa para vigiar a forma das edges.
+ */
+describe('useCrossSellEngine — as duas pontas do par vêm do banco', () => {
+  const fonte = readFileSync(resolve(process.cwd(), 'src/hooks/useCrossSellEngine.ts'), 'utf8');
+
+  it('o `select` de `omie_products` pede `account` — sem ele todo item vira divergente', () => {
+    const select = fonte.match(/\.select\('id, codigo, descricao[^']*'\)/)?.[0];
+    expect(select, 'o select do catálogo mudou de forma — reveja este guard').toBeTruthy();
+    expect(select).toContain('account');
+  });
+
+  it('o `select` de `sales_orders` pede `account` — é a conta que qualifica cada item', () => {
+    const select = fonte.match(/\.select\('customer_user_id, items[^']*'\)/)?.[0];
+    expect(select, 'o select de pedidos mudou de forma — reveja este guard').toBeTruthy();
+    expect(select).toContain('account');
   });
 });
