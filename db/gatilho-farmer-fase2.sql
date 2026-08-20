@@ -21,46 +21,80 @@
 --    leitura truncada em silêncio (cap de 1.000 do PostgREST sobre RPC sem paginação) chega
 --    aqui como `ok:true`, e o vazio que ela produz veste a roupa exata do sinal legítimo.
 --    Por isso a coluna `suspeita_cap` abaixo: n≡1000 é a assinatura do truncamento.
-WITH obs AS (
+--
+-- 3. **A contaminação é HISTÓRIA, não estado.** `farmer_geracao_execucoes` é append-only: uma
+--    execução truncada fica lá para sempre. A 1ª versão desta query contava `suspeita_cap`
+--    sobre a tabela INTEIRA e travava em `CONTAMINADO` de forma PERMANENTE — mandava
+--    "descarte o período e recomece o denominador" sem oferecer meio de fazê-lo, e teria
+--    escondido o primeiro sinal legítimo atrás de 7 linhas velhas e imutáveis. Um gatilho que
+--    nunca pode ficar verde não é conservador: é um sensor que não mede a própria pergunta
+--    (fase-sem-sinal.md), agora cometido DENTRO do arquivo que existe para impedir isso.
+--
+--    O corte abaixo faz o descarte que o texto mandava fazer: a janela julgável começa DEPOIS
+--    da última execução contaminada. As descartadas não somem — saem em `descartadas_cap`,
+--    porque cap silencioso é o defeito, não a cura. E a contaminação ATIVA (a execução mais
+--    recente ainda truncada) continua travando tudo, que é quando travar é a resposta certa.
+WITH marcada AS (
   SELECT
-    count(*)                                                          AS execucoes_totais,
+    calculado_em, resultado, completude, insumos, farmer_id,
+    -- Assinatura de truncamento: QUALQUER insumo com exatamente 1.000 linhas. O cap do
+    -- PostgREST devolve 1.000 e sucesso; nenhum insumo real tem esse tamanho por acaso.
+    EXISTS (SELECT 1 FROM jsonb_each(insumos) AS i(nome, val)
+            WHERE (val->>'n')::int = 1000) AS tem_cap
+  FROM public.farmer_geracao_execucoes
+),
+corte AS (
+  SELECT
+    -- A janela julgável começa DEPOIS da última execução truncada. Com a tabela limpa isso é
+    -- `-infinity` e a janela é tudo — o corte só morde quando houve contaminação de fato.
+    COALESCE(max(calculado_em) FILTER (WHERE tem_cap), '-infinity'::timestamptz) AS janela_desde,
+    count(*) FILTER (WHERE tem_cap)                                              AS descartadas_cap,
+    -- Contaminação ATIVA ≠ contaminação passada: se a execução MAIS RECENTE ainda vem
+    -- truncada, o cliente no ar segue truncando e nenhuma janela nova é confiável.
+    COALESCE((SELECT tem_cap FROM marcada ORDER BY calculado_em DESC LIMIT 1), false) AS cap_ativo
+  FROM marcada
+),
+obs AS (
+  SELECT
+    c.descartadas_cap, c.cap_ativo, c.janela_desde,
+    count(m.calculado_em)                                             AS execucoes_totais,
     -- O cliente ANTERIOR ao Publish não declarava insumo nenhum: conta como "rodou",
     -- nunca como evidência sobre completude.
-    count(*) FILTER (WHERE completude <> 'desconhecido')              AS julgaveis,
-    count(*) FILTER (WHERE resultado = 'vazio'
-                       AND completude = 'completo'
-                       AND COALESCE((insumos->'scores'->>'n')::int, 0)    > 0
-                       AND COALESCE((insumos->'vendaveis'->>'n')::int, 0) > 0
+    count(*) FILTER (WHERE m.completude <> 'desconhecido')            AS julgaveis,
+    count(*) FILTER (WHERE m.resultado = 'vazio'
+                       AND m.completude = 'completo'
+                       AND COALESCE((m.insumos->'scores'->>'n')::int, 0)    > 0
+                       AND COALESCE((m.insumos->'vendaveis'->>'n')::int, 0) > 0
                        -- Terceira geracao de cliente. O insumo de COBERTURA so passou a ser
                        -- declarado depois que o pre-requisito da §7.5 fechou; execucao que nao
                        -- o traz veio de cliente que ainda contava carteira_ativa (cliente com
                        -- PEDIDO) como se fosse historico utilizavel. O `completo` dela nao
                        -- julga a mesma coisa, entao nao pode entrar no mesmo denominador.
-                       AND insumos ? 'carteira_com_historico_utilizavel') AS vazios_completos,
+                       AND m.insumos ? 'carteira_com_historico_utilizavel') AS vazios_completos,
     -- Contados a parte para nao sumirem em silencio: sao os vazios+completos do cliente
     -- ANTERIOR a cobertura. Nao servem de sinal, mas some-los a zero seria refazer o
     -- ausente=zero num arquivo que existe para impedi-lo.
-    count(*) FILTER (WHERE resultado = 'vazio'
-                       AND completude = 'completo'
-                       AND NOT (insumos ? 'carteira_com_historico_utilizavel')) AS vazios_pre_cobertura,
-    -- Assinatura de truncamento: QUALQUER insumo com exatamente 1.000 linhas. O cap do
-    -- PostgREST devolve 1.000 e sucesso; nenhum insumo real tem esse tamanho por acaso.
-    count(*) FILTER (WHERE EXISTS (
-                       SELECT 1 FROM jsonb_each(insumos) AS i(nome, val)
-                       WHERE (val->>'n')::int = 1000))                 AS suspeita_cap,
-    count(DISTINCT farmer_id)                                         AS farmers,
-    min(calculado_em)::date                                           AS desde,
-    max(calculado_em)                                                 AS ultima
-  FROM public.farmer_geracao_execucoes
+    count(*) FILTER (WHERE m.resultado = 'vazio'
+                       AND m.completude = 'completo'
+                       AND NOT (m.insumos ? 'carteira_com_historico_utilizavel')) AS vazios_pre_cobertura,
+    count(DISTINCT m.farmer_id)                                       AS farmers,
+    min(m.calculado_em)::date                                         AS desde,
+    max(m.calculado_em)                                               AS ultima
+  FROM corte c
+  -- LEFT JOIN de proposito: com a janela VAZIA (contaminacao ativa, ou nenhuma execucao ainda)
+  -- a query tem de devolver UMA linha dizendo isso, nao zero linhas — resultado ausente seria
+  -- lido como "rodou e nao achou nada", que e o ausente=zero de novo.
+  LEFT JOIN marcada m ON m.calculado_em > c.janela_desde
+  GROUP BY c.descartadas_cap, c.cap_ativo, c.janela_desde
 )
 SELECT
-  execucoes_totais, julgaveis, vazios_completos, vazios_pre_cobertura, suspeita_cap,
-  farmers, desde, ultima,
+  execucoes_totais, julgaveis, vazios_completos, vazios_pre_cobertura,
+  descartadas_cap, farmers, desde, ultima,
   CASE
-    WHEN suspeita_cap > 0 THEN
-      'CONTAMINADO — ' || suspeita_cap || ' execucao(oes) com insumo de exatamente 1000 linhas. '
-      || 'Truncamento silencioso: o vazio nao prova ausencia de oportunidade. '
-      || 'Corrija a paginacao, DESCARTE o periodo e recomece o denominador.'
+    WHEN cap_ativo THEN
+      'CONTAMINADO (ATIVO) — a execucao MAIS RECENTE ainda traz insumo de exatamente 1000 '
+      || 'linhas. O cliente no ar segue truncando em silencio: nenhuma janela nova e '
+      || 'confiavel. Corrija a paginacao e faca o Publish ANTES de julgar qualquer vazio.'
     WHEN vazios_pre_cobertura > 0 AND vazios_completos = 0 THEN
       'AGUARDE (cliente velho) — ' || vazios_pre_cobertura || ' vazio+completo SEM o insumo '
       || 'carteira_com_historico_utilizavel. Foram gravados por cliente anterior ao fechamento '
@@ -75,7 +109,10 @@ SELECT
       'ENCERRE — ' || julgaveis || ' execucoes julgaveis e ZERO vazios: o vazio-de-verdade nao '
       || 'acontece nesses farmers. Nao ligue a expiracao; encerre a linha.'
     ELSE
-      'AGUARDE — denominador insuficiente (' || julgaveis || '/20 julgaveis). '
-      || 'NAO interprete como "o vazio nao acontece": e ausencia de dado.'
+      'AGUARDE — denominador insuficiente (' || julgaveis || '/20 julgaveis'
+      || CASE WHEN descartadas_cap > 0
+              THEN '; ' || descartadas_cap || ' execucao(oes) DESCARTADAS por truncamento, '
+                   || 'denominador recomecado' ELSE '' END
+      || '). NAO interprete como "o vazio nao acontece": e ausencia de dado.'
   END AS veredito
 FROM obs;
