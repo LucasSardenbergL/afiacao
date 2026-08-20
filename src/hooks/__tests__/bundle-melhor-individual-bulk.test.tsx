@@ -33,7 +33,7 @@ import { renderHook, act } from '@testing-library/react';
  * P2+P3 como bundle. `c8` NÃO recebe bundle nenhum — é ele quem revela a omissão.
  */
 const FARMER = 'farmer-bulk';
-let falhaBulk: 'nao' | 'erro' | 'rejeita' | 'null_mudo' | 'nao_array' = 'nao';
+let falhaBulk: 'nao' | 'erro' | 'rejeita' | 'null_mudo' | 'nao_array' | 'string_json' = 'nao';
 /** `true` = a carteira devolvida tem 1.500 entradas — mais que o antigo cap de 1.000. */
 let carteiraGrande = false;
 /** `true` = o SKU eleito não está no catálogo ATIVO (`productMap` não resolve). */
@@ -128,6 +128,11 @@ vi.mock('@/integrations/supabase/client', () => ({
         // veredicto (§6 do money-path).
         if (falhaBulk === 'null_mudo') return Promise.resolve({ data: null, error: null });
         if (falhaBulk === 'nao_array') return Promise.resolve({ data: { erro: 'oops' }, error: null });
+        // O caso que NÃO é redundante com o `TypeError` do `for…of`: string é ITERÁVEL. Sem o
+        // guard de forma, `for (const linha of '[]')` percorre CARACTERES, `linha.customer_user_id`
+        // é `undefined` em cada um, e o Map fica com uma chave `undefined` — nenhum erro, nenhum
+        // aviso, e a carteira INTEIRA vira `nenhum`. Achado da falsificação S10.
+        if (falhaBulk === 'string_json') return Promise.resolve({ data: '[]', error: null });
         return Promise.resolve({ data: linhasBulk(), error: null });
       }
       return Promise.resolve({ data: null, error: null });
@@ -207,15 +212,23 @@ describe('useBundleEngine — o melhor individual em UMA leitura, com os três e
     expect(c8?.bestIndividual.status).toBe('indisponivel');
   });
 
-  it('resposta de FORMA errada também é falha — não é lista, não é vazio', async () => {
-    // Defesa em profundidade do caso acima: um objeto no lugar do array (RPC trocada, versão
-    // antiga do schema, proxy que embrulha) não pode virar "nenhum cliente tem oferta".
-    falhaBulk = 'nao_array';
-    const result = await calcular();
-    expect(
-      result.current.customerBundles.find((c) => c.customerId === 'c8')?.bestIndividual.status,
-    ).toBe('indisponivel');
-  });
+  it.each(['nao_array', 'string_json'] as const)(
+    'resposta de FORMA errada (%s) também é falha — não é lista, não é vazio',
+    async (modo) => {
+      // Um objeto no lugar do array (RPC trocada, schema antigo, proxy que embrulha) já cairia
+      // no `TypeError` do `for…of`. O caso `string_json` é o que torna o guard de FORMA
+      // indispensável em vez de redundante: string é ITERÁVEL, então sem o guard o laço
+      // percorre CARACTERES, o Map ganha uma chave `undefined`, e a carteira inteira vira
+      // `nenhum` — sem erro, sem aviso, com toast de sucesso. A falsificação S10 encontrou
+      // isto: com só o caso do objeto, desligar o guard passava VERDE.
+      falhaBulk = modo;
+      const result = await calcular();
+      expect(
+        result.current.customerBundles.find((c) => c.customerId === 'c8')?.bestIndividual.status,
+      ).toBe('indisponivel');
+      expect(toast.success, 'anunciou sucesso sobre uma leitura que não aconteceu').not.toHaveBeenCalled();
+    },
+  );
 
   it('SKU eleito fora do catálogo ativo vira `indisponivel`, não um nome inventado', async () => {
     // Era `productName: prod?.descricao || 'Produto'`: a tela dizia ter ENCONTRADO o melhor
