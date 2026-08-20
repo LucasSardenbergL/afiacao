@@ -457,6 +457,21 @@ catálogo ativo, num domínio account-aware — mais grave que a inconsistência
 ofertado" é **frouxa por construção**: um SKU lido na 1ª página pode perder a margem antes de o cálculo
 terminar, e nem a RPC agregada fecha isso — só revalidação server-side na transação da persistência.
 
+**Reaberto e mantido em 2026-08-20 — e a conta acima estava INCOMPLETA.** O veredito segue de pé, agora
+por um motivo que não existia quando ele foi dado: o gate `rpc-set-returning-paginacao-gate`, nascido no
+mesmo 2026-08-19 (#1801), deriva "quem é set-returning" do `types.ts` e **exigiria `.range()` na função
+criada justamente para não paginar**. `RETURNS uuid[]` gera `Returns: string[]`, e o segundo padrão do
+classificador (`/Returns:\s*\w+\[\]/`) o captura — medido rodando o próprio `nomesSetReturning` contra a
+assinatura que o Supabase geraria, não deduzido da leitura do regex. A ironia é que a INTENÇÃO declarada
+do gate é o oposto ("Escalar não sofre capa de LINHAS"): a lacuna está no classificador, hoje inerte
+porque nenhuma função do schema retorna array escalar — a agregada seria a primeira a expô-la. Quem a
+fizer paga também o ajuste do classificador com falsificação própria; pôr a entrada na BASELINE seria
+registrar como dívida a própria correção, dentro do gate que existe para a lista não crescer. Custo
+remedido: **15** arquivos de teste tocam a RPC por nome (não ~14), e os consumidores são mesmo dois —
+`useFarmerScoring` só a cita em comentário. E o que a agregada compra continua sendo RECALL (SKU pulado,
+oferta menor), não a PRECISÃO do parágrafo anterior: pelo princípio nº1, o OFFSET já erra para o lado
+certo.
+
 ## A capa de 1.000 do PostgREST na 2ª RPC — `get_carteira_margem_faixa` fabricava faixa `neutro` (#1801)
 
 Irmão do #1782, achado enquanto se conferia se aquele fix já cobria a tarefa. Mesma classe, outro
