@@ -13,6 +13,7 @@ import {
   type InsumosSnapshot,
 } from '@/lib/farmer/completude-snapshot';
 import { lerHeadVigente, registrarGeracaoFarmer } from '@/lib/farmer/registrar-geracao';
+import { indexarCatalogoAtivo, resolverItemNoCatalogo } from '@/lib/farmer/identidade-item';
 
 // ─── Types ───────────────────────────────────────────────────────────
 export interface AssociationRule {
@@ -100,6 +101,8 @@ interface ProductRow {
   metadata: unknown;
   ativo: boolean | null;
   omie_codigo_produto: number | string | null;
+  /** Metade da chave de identidade do SKU (`UNIQUE (omie_codigo_produto, account)`). */
+  account: string | null;
 }
 
 interface ProfileRow {
@@ -119,6 +122,8 @@ interface SalesOrderRow {
   items: SalesOrderItem[] | unknown;
   total: number | string | null;
   created_at: string;
+  /** A conta do PEDIDO — o lado do par que qualifica a resolução de cada item. */
+  account: string | null;
 }
 
 interface ExistingRecRow {
@@ -317,7 +322,7 @@ export const useBundleEngine = () => {
         fetchAllPages<ProductRow>((de, ate) =>
           supabase
             .from('omie_products')
-            .select('id, codigo, descricao, valor_unitario, metadata, ativo, omie_codigo_produto')
+            .select('id, codigo, descricao, valor_unitario, metadata, ativo, omie_codigo_produto, account')
             .eq('ativo', true)
             .order('id', { ascending: true })
             .range(de, ate) as unknown as PromiseLike<{ data: ProductRow[] | null; error: unknown }>,
@@ -442,7 +447,7 @@ export const useBundleEngine = () => {
         (de, ate) =>
           supabase
             .from('sales_orders')
-            .select('customer_user_id, items, total, created_at')
+            .select('customer_user_id, items, total, created_at, account')
             .in('status', ['confirmado', 'faturado', 'entregue'])
             .order('id', { ascending: true })
             .range(de, ate) as unknown as PromiseLike<{ data: SalesOrderRow[] | null; error: unknown }>,
@@ -452,10 +457,11 @@ export const useBundleEngine = () => {
       // Build maps
       const productMap = new Map<string, ProductRow>();
       (products || []).forEach((p) => productMap.set(p.id, p));
-      const omieToProductId = new Map<number, string>();
-      (products || []).forEach((p) => {
-        if (p.omie_codigo_produto) omieToProductId.set(Number(p.omie_codigo_produto), p.id);
-      });
+      // Índice ACCOUNT-AWARE do catálogo ativo. O `Map<number, string>` global que estava aqui
+      // assumia que `omie_codigo_produto` é único — mas o banco declara
+      // `UNIQUE (omie_codigo_produto, account)`, e onde o schema permite duas linhas o Map
+      // guarda uma: a última que a paginação escreveu. Ver `src/lib/farmer/identidade-item.ts`.
+      const indiceCatalogo = indexarCatalogoAtivo(products || []);
       const profileMap = new Map<string, ProfileRow>();
       (profiles || []).forEach((p) => profileMap.set(p.user_id, p));
 
@@ -485,17 +491,27 @@ export const useBundleEngine = () => {
       };
 
       // 2. Build transaction baskets per customer
+      let itensResolvidos = 0;
+      let itensContaDivergente = 0;
       const baskets: string[][] = [];
       const customerBaskets = new Map<string, Set<string>>();
       const sequentialPurchases = new Map<string, { productId: string; date: Date }[]>();
 
       for (const order of salesOrders || []) {
         const items: SalesOrderItem[] = Array.isArray(order.items) ? (order.items as SalesOrderItem[]) : [];
-        const productIds = items.map((i) => {
-          if (i.product_id) return i.product_id;
-          if (i.omie_codigo_produto) return omieToProductId.get(Number(i.omie_codigo_produto));
-          return null;
-        }).filter((id): id is string => Boolean(id));
+        const productIds: string[] = [];
+        for (const i of items) {
+          const r = resolverItemNoCatalogo(i, order.account, indiceCatalogo);
+          if (r.ok) {
+            productIds.push(r.productId);
+            itensResolvidos++;
+          } else if (r.motivo === 'conta_divergente') {
+            // O contador que faz este guard ser auditável em vez de inerte-e-mudo: em prod
+            // ele vale ZERO hoje (0 de 47.798 itens, medido em 20/08/2026), e é o primeiro
+            // sinal de que a colisão que o schema autoriza deixou de ser hipótese.
+            itensContaDivergente++;
+          }
+        }
         if (productIds.length > 0) {
           baskets.push(productIds);
           if (!customerBaskets.has(order.customer_user_id)) customerBaskets.set(order.customer_user_id, new Set());
@@ -514,8 +530,10 @@ export const useBundleEngine = () => {
 
       // COBERTURA de HISTÓRICO (par de `clientes_com_profile`; §7.5 do design). Aqui a
       // condição é literal no loop acima: a cesta só entra em `customerBaskets` quando
-      // `productIds.length > 0`, isto é, quando ao menos um item resolveu para SKU ATIVO —
-      // 60,1% dos 47.735 itens em prod (18/08/2026). Cliente sem item utilizável não gera
+      // `productIds.length > 0`, isto é, quando ao menos um item resolveu para SKU ATIVO DA
+      // CONTA DO PEDIDO — 60,1% dos 47.735 itens em prod (18/08/2026), e a qualificação por
+      // conta não mexeu nesse número (medição de 20/08/2026: os 39,9% descartados são 100% SKU
+      // inativo da PRÓPRIA conta; zero código órfão, zero cross-account). Cliente sem item utilizável não gera
       // cesta, e sem cesta não há regra a descobrir: `carteira_ativa` farta com esta
       // cobertura zero é zero por CONSTRUÇÃO, não "nada a ofertar".
       //
@@ -543,6 +561,22 @@ export const useBundleEngine = () => {
       // degradaria pela mesma causa duas vezes, com o motivo apontando o sintoma em vez da
       // causa. Fica no head para auditar quantos pedidos lidos viraram cesta, sem query.
       insumos.baskets = { ok: true, n: baskets.length, esperado: (salesOrders || []).length };
+
+      // SENSOR da identidade account-aware (o par `(omie_codigo_produto, account)` que o banco
+      // declara único). `n` conta os itens que resolveram; `esperado` soma a esses os que saíram
+      // por DIVERGÊNCIA DE CONTA — e só esses. Item de SKU inativo fica de fora do denominador
+      // de propósito: são 39,9% em prod (regime normal, já auditado por
+      // `carteira_com_historico_utilizavel`), e diluir a divergência dentro deles daria um
+      // número farto que nunca chamaria atenção — o "rótulo com DEFAULT constante" do §5.
+      //
+      // Hoje `n === esperado` em produção (0 de 47.798 itens divergem, psql-ro 20/08/2026).
+      // SEM piso: o veredicto não muda por isto. `n < esperado` é o gatilho para reabrir o
+      // achado — é o primeiro dia em que a colisão que o schema autoriza existiu de verdade.
+      insumos.itens_identidade_conforme = {
+        ok: true,
+        n: itensResolvidos,
+        esperado: itensResolvidos + itensContaDivergente,
+      };
 
       const totalBaskets = Math.max(baskets.length, 1);
 
