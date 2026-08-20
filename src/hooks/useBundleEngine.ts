@@ -349,7 +349,7 @@ export const useBundleEngine = () => {
           // Promise crua produziram `supabase.rpc(...).order is not a function`, e este `.then`
           // converteu o TypeError em "vendáveis indisponíveis" — um defeito de CÓDIGO chegando
           // disfarçado de INDISPONIBILIDADE DE DADO, que manda o plantão para o lado errado.
-          (error: unknown) => ({ ok: false as const, error, esperada: ehFalhaDePagina(error) }),
+          (error: unknown) => ({ ok: false as const, error, falha: ehFalhaDePagina(error) ? error : null }),
         ),
       ]);
 
@@ -387,11 +387,16 @@ export const useBundleEngine = () => {
         //  • não-esperada (bug: builder quebrado, TypeError) → relança o objeto ORIGINAL, com a
         //    stack e a mensagem verdadeiras. Traduzi-lo para a frase de negócio apagaria o
         //    único rastro que aponta para a linha defeituosa;
-        //  • esperada (página com `error`, `data: null` malformado) → frase de domínio, com o
-        //    erro do PostgREST preso em `cause` para o plantão.
-        if (!vendaveisResult.esperada) throw vendaveisResult.error;
+        //  • esperada (página com `error`, `data: null` malformado) → mensagem do SERVIDOR, com
+        //    o erro assinado preso em `cause` para o plantão.
+        if (!vendaveisResult.falha) throw vendaveisResult.error;
+        // A mensagem sai da CAUSA, não do erro assinado: a dele é `fetchAllPages: página 0
+        // (0-999) falhou` — jargão de helper, que diz ao vendedor menos do que o servidor já
+        // tinha dito. É o defeito que `mensagemDeErro` existe para evitar ("a mensagem
+        // acionável existe, o servidor a mandou, e ela morre na fronteira"), reaparecendo uma
+        // camada acima. Em `data_null_sem_error` não há causa e o fallback de domínio é o certo.
         throw erroComCausa(
-          mensagemDeErro(vendaveisResult.error) ??
+          mensagemDeErro(vendaveisResult.falha.cause) ??
             'Não consegui confirmar quais SKUs são rentáveis — nenhum bundle foi gerado.',
           vendaveisResult.error,
         );
