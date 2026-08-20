@@ -286,3 +286,56 @@ precisão sobre um insumo truncado em silêncio é indistinguível do número le
 ele autoriza é irreversível para quem está do outro lado (aqui: a carteira da vendedora). Por isso
 o gatilho não devolve só o placar — ele **recusa** o veredito quando enxerga a assinatura do
 truncamento.
+
+---
+
+## Corolário 2026-08-19 — a época do sensor, e a unidade em que ele conta
+
+O sensor do caso 3 entrou em produção e as duas primeiras perguntas que ele levantou não são sobre o
+desenho dele, e sim sobre **como ler o número que ele produz**. Ambas mordem depois, quando quem lê
+já não é quem instalou.
+
+### A época é o deploy do ESCRITOR, não a migration
+
+Cronologia real, cada passo com evidência:
+
+| quando (UTC) | o quê | as tabelas do sensor |
+| --- | --- | --- |
+| 08-18 15:15 | PR mergeado na `main` | não existem |
+| 08-18 ~23:00 | migration aplicada no SQL Editor (tipos regenerados pelo bot às 23:01) | existem, **0 linhas** |
+| 08-19 ~00:30 | **Publish** do frontend (provado nos bytes: chunk `registrar-geracao-*.js`) | existem, **0 linhas** |
+| 08-19 01:22 | 1ª execução real registrada | 1 linha |
+
+Entre 23:00 e 00:30 as tabelas existiam, estavam vazias, e o vazio **não era dado**: não havia escritor
+no ar. Uma query de frequência rodada nessa janela responderia "nunca aconteceu" — a mesma
+ausência-de-dado com cara de resposta que o sensor foi instalado para curar, agora deslocada para a
+janela de deploy.
+
+**Regra:** toda query de frequência sobre um sensor carrega um `data_inicio`, e ele é o **deploy do
+escritor** — não a data da migration, não a do merge. Sem isso o numerador é honesto e o
+**denominador de tempo mente**. E num app com service worker a época é ainda mais tarde para cada
+usuário individualmente: quem não recarregou segue no bundle anterior, que não escreve. O primeiro
+zero pós-deploy é ambíguo por construção; o segundo já não é.
+
+### O contador conta a unidade DELE, não a do baseline
+
+O baseline que justificou o sensor era "**28 execuções em 5,5 meses**", obtido agrupando linhas de
+`farmer_recommendations` por dia. O log novo conta **execuções do motor** — e o motor recalcula **ao
+montar a tela**. Na primeira sessão real de uso: **3 execuções em 6 minutos**, as três com as mesmas
+671 linhas.
+
+São unidades diferentes: uma conta *dias com resultado*, a outra conta *aberturas de tela*. Comparar
+os dois direto lê como explosão de uso que não houve — e a decisão que vier dessa comparação estará
+errada na direção mais convincente possível, porque os dois números são verdadeiros.
+
+**Regra:** ao instalar um contador que vai substituir um baseline, escreva **na mesma linha** a
+unidade dos dois. Se não forem a mesma, ou o baseline se recalcula na unidade nova, ou a comparação
+fica proibida por escrito. `UNIQUE(motor, farmer_id, run_id)` protege contra *retry da mesma
+execução*; nada protege contra **trocar a definição de "execução"**.
+
+### O que essas 3 execuções provaram sobre o desenho
+
+O head mostra **uma**. O log mostra **três**. Se o sensor tivesse ficado só no head — o desenho
+original, que estava verde com 49 asserts e 6 falsificações —, a resposta a *"com que frequência
+isso roda?"* seria "uma vez", e as outras duas teriam sido sobrescritas sem deixar rastro. A lição do
+capítulo anterior deixou de ser argumento e virou medição: **na primeira execução real**.
