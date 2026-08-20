@@ -188,6 +188,7 @@ export const MODULOS: ModuloApp[] = [
     testes: [
       "src/__tests__/edge-money-path-invariants.test.ts",
       "src/hooks/__tests__/cross-sell-custo-fora-do-browser.test.tsx",
+      "src/hooks/__tests__/cross-sell-vendaveis-erro-de-codigo.test.tsx",
       "src/hooks/__tests__/useAlertaCreditoCliente.test.ts",
       "src/hooks/__tests__/usePedidosProgramados.cancelamento.test.tsx",
       "src/hooks/__tests__/usePricingEngine.test.ts",
@@ -287,6 +288,7 @@ export const MODULOS: ModuloApp[] = [
       "src/hooks/__tests__/bundle-head-nao-mente-apos-linhas.test.tsx",
       "src/hooks/__tests__/bundle-recomendacoes-erro-silencioso.test.tsx",
       "src/hooks/__tests__/bundle-regras-substituicao-atomica.test.tsx",
+      "src/hooks/__tests__/bundle-vendaveis-erro-de-codigo.test.tsx",
       "src/hooks/__tests__/bundle-vendaveis-erro-honesto.test.tsx",
       "src/hooks/__tests__/bundle-vendaveis-paginacao.test.tsx",
       "src/hooks/__tests__/scoring-faixa-margem-paginacao.test.tsx",

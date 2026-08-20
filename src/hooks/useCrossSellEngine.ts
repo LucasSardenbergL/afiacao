@@ -1,8 +1,8 @@
 import { useState, useCallback, useRef } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
-import { fetchAllPages } from '@/lib/postgrest';
-import { mensagemDeErro } from '@/lib/erro-mensagem';
+import { ehFalhaDePagina, fetchAllPages } from '@/lib/postgrest';
+import { erroComCausa, mensagemDeErro } from '@/lib/erro-mensagem';
 import { captureException } from '@/lib/analytics';
 import {
   avaliarCompletude,
@@ -327,7 +327,7 @@ export const useCrossSellEngine = () => {
       // `n` já cortado, ou seja, um head **completo** apoiado em dado incompleto — exatamente o
       // que NÃO pode autorizar expiração. E como a função não tem `ORDER BY` próprio, paginar
       // sem ordem total deixaria o plano escolher a ordem de cada página, pulando linhas.
-      const { data: skusVendaveis, error: erroVendaveis } = await fetchAllPages<{ product_id: string }>(
+      const vendaveisResult = await fetchAllPages<{ product_id: string }>(
         (de, ate) =>
           supabase
             .rpc('get_skus_margem_positiva')
@@ -335,12 +335,21 @@ export const useCrossSellEngine = () => {
             .range(de, ate) as unknown as PromiseLike<{ data: { product_id: string }[] | null; error: unknown }>,
         'get_skus_margem_positiva/cross-sell',
       ).then(
-        (data) => ({ data, error: null as unknown }),
-        (error: unknown) => ({ data: null, error }),
+        (data) => ({ ok: true as const, data }),
+        // NÃO relança aqui, e a distinção NÃO é sobre agir ou não agir: o fail-closed vale para
+        // QUALQUER falha na leitura de vendáveis — inclusive bug de código. O que `esperada`
+        // discrimina é só o DIAGNÓSTICO: qual erro chega à tela e ao plantão.
+        //
+        // O handler anterior (`error => ({ data: null, error })`) engolia QUALQUER rejeição e a
+        // rotulava com a mensagem de negócio. Não é hipotético: no #1782 mocks devolvendo
+        // Promise crua produziram `supabase.rpc(...).order is not a function`, e este `.then`
+        // converteu o TypeError em "vendáveis indisponíveis" — um defeito de CÓDIGO chegando
+        // disfarçado de INDISPONIBILIDADE DE DADO, que manda o plantão para o lado errado.
+        (error: unknown) => ({ ok: false as const, error, falha: ehFalhaDePagina(error) ? error : null }),
       );
       insumos.catalogo = { ok: true, n: products.length };
-      if (erroVendaveis || !skusVendaveis) {
-        console.error('get_skus_margem_positiva falhou — sem recomendação (fail-closed):', erroVendaveis);
+      if (!vendaveisResult.ok) {
+        console.error('get_skus_margem_positiva falhou — sem recomendação (fail-closed):', vendaveisResult.error);
         // `ok: false` — não é "veio vazio", é "não consegui ler". A distinção é o produto
         // desta entrega: um head `degradado` por aqui NUNCA poderá autorizar expiração.
         insumos.vendaveis = { ok: false, n: 0 };
@@ -354,14 +363,34 @@ export const useCrossSellEngine = () => {
         // contrariaria o próprio fail-closed (elas podem conter SKU que o servidor já não confirma
         // como rentável). Com a lista zerada e `resultadoDestaExecucao` marcado, o `catch` conclui
         // INDISPONÍVEL em vez de DESATUALIZADO — que é a leitura verdadeira aqui.
+        //
+        // ⚠️ Este bloco roda para TODA falha da leitura de vendáveis, inclusive bug de código.
+        // Deixar o TypeError subir cru DAQUI (sem limpar a lista) foi o desenho que o Codex
+        // gpt-5.6-sol reprovou como [P1]: a tela concluiria DESATUALIZADO e seguiria exibindo
+        // recomendações da execução anterior — que podem conter SKU cuja margem já não é
+        // positiva. "Desatualizado" não é sinônimo de "seguro de usar", e o gate de
+        // RENTABILIDADE não pode degradar mais fraco só porque a falha foi de outra natureza.
         aplicarRecomendacoes([]);
         resultadoDestaExecucao = true;
-        throw new Error(
-          mensagemDeErro(erroVendaveis) ??
+        // O que a natureza da falha decide é SÓ o erro que sobe:
+        //  • não-esperada (bug: builder quebrado, TypeError) → relança o objeto ORIGINAL, com a
+        //    stack e a mensagem verdadeiras. Traduzi-lo para a frase de negócio apagaria o
+        //    único rastro que aponta para a linha defeituosa;
+        //  • esperada (página com `error`, `data: null` malformado) → mensagem do SERVIDOR, com
+        //    o erro assinado preso em `cause` para o plantão.
+        if (!vendaveisResult.falha) throw vendaveisResult.error;
+        // A mensagem sai da CAUSA, não do erro assinado: a dele é `fetchAllPages: página 0
+        // (0-999) falhou` — jargão de helper, que diz à vendedora menos do que o servidor já
+        // tinha dito. É o defeito que `mensagemDeErro` existe para evitar ("a mensagem
+        // acionável existe, o servidor a mandou, e ela morre na fronteira"), reaparecendo uma
+        // camada acima. Em `data_null_sem_error` não há causa e o fallback de domínio é o certo.
+        throw erroComCausa(
+          mensagemDeErro(vendaveisResult.falha.cause) ??
             'Não consegui confirmar quais SKUs são rentáveis — nenhuma recomendação foi gerada.',
+          vendaveisResult.error,
         );
       }
-      const vendaveis = new Set(skusVendaveis.map((r) => r.product_id));
+      const vendaveis = new Set(vendaveisResult.data.map((r) => r.product_id));
       insumos.vendaveis = { ok: true, n: vendaveis.size };
 
       // 3. Load ALL sales history (avoid huge .in() URL with 3598 IDs)

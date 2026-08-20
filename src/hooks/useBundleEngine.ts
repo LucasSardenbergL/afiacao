@@ -4,8 +4,8 @@ import type { Json } from '@/integrations/supabase/types';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { toast } from 'sonner';
 import { margemConhecida } from '@/lib/scoring/margin';
-import { fetchAllPages } from '@/lib/postgrest';
-import { mensagemDeErro } from '@/lib/erro-mensagem';
+import { ehFalhaDePagina, fetchAllPages } from '@/lib/postgrest';
+import { erroComCausa, mensagemDeErro } from '@/lib/erro-mensagem';
 import { captureException } from '@/lib/analytics';
 import {
   avaliarCompletude,
@@ -339,8 +339,17 @@ export const useBundleEngine = () => {
               .range(de, ate) as unknown as PromiseLike<{ data: { product_id: string }[] | null; error: unknown }>,
           'get_skus_margem_positiva/bundle',
         ).then(
-          (data) => ({ data, error: null as unknown }),
-          (error: unknown) => ({ data: null, error }),
+          (data) => ({ ok: true as const, data }),
+          // NÃO relança aqui, e a distinção NÃO é sobre agir ou não agir: o fail-closed vale
+          // para QUALQUER falha na leitura de vendáveis — inclusive bug de código. O que
+          // `esperada` discrimina é só o DIAGNÓSTICO: qual erro chega à tela e ao plantão.
+          //
+          // O handler anterior (`error => ({ data: null, error })`) engolia QUALQUER rejeição e
+          // a rotulava com a mensagem de negócio. Não é hipotético: no #1782 mocks devolvendo
+          // Promise crua produziram `supabase.rpc(...).order is not a function`, e este `.then`
+          // converteu o TypeError em "vendáveis indisponíveis" — um defeito de CÓDIGO chegando
+          // disfarçado de INDISPONIBILIDADE DE DADO, que manda o plantão para o lado errado.
+          (error: unknown) => ({ ok: false as const, error, falha: ehFalhaDePagina(error) ? error : null }),
         ),
       ]);
 
@@ -351,7 +360,7 @@ export const useBundleEngine = () => {
 
       // FAIL-CLOSED: falha na RPC → NENHUM bundle. Degradar para "monta bundle com tudo" poria
       // produto de PREJUÍZO na oferta combinada, que é o pior desfecho possível aqui.
-      if (vendaveisResult.error || !vendaveisResult.data) {
+      if (!vendaveisResult.ok) {
         console.error('get_skus_margem_positiva falhou — sem bundles (fail-closed):', vendaveisResult.error);
         // `ok: false` = "não consegui ler", não "veio vazio". Um head degradado por aqui
         // nunca poderá autorizar expiração.
@@ -365,11 +374,31 @@ export const useBundleEngine = () => {
         // Limpa ANTES de lançar: manter bundles anteriores contrariaria o fail-closed (podem
         // conter SKU que o servidor já não confirma como rentável). Com a lista zerada e
         // `resultadoDestaExecucao` marcado, a tela conclui INDISPONÍVEL, não DESATUALIZADO.
+        //
+        // ⚠️ Este bloco roda para TODA falha da leitura de vendáveis, inclusive bug de código.
+        // Deixar o TypeError subir cru DAQUI (sem limpar a lista) foi o desenho que o Codex
+        // gpt-5.6-sol reprovou como [P1]: a tela concluiria DESATUALIZADO e seguiria exibindo
+        // bundles da execução anterior — que podem conter SKU cuja margem já não é positiva.
+        // "Desatualizado" não é sinônimo de "seguro de usar", e o gate de RENTABILIDADE não
+        // pode ser o insumo que degrada mais fraco só porque a falha foi de outra natureza.
         aplicarBundles([]);
         resultadoDestaExecucao = true;
-        throw new Error(
-          mensagemDeErro(vendaveisResult.error) ??
+        // O que a natureza da falha decide é SÓ o erro que sobe:
+        //  • não-esperada (bug: builder quebrado, TypeError) → relança o objeto ORIGINAL, com a
+        //    stack e a mensagem verdadeiras. Traduzi-lo para a frase de negócio apagaria o
+        //    único rastro que aponta para a linha defeituosa;
+        //  • esperada (página com `error`, `data: null` malformado) → mensagem do SERVIDOR, com
+        //    o erro assinado preso em `cause` para o plantão.
+        if (!vendaveisResult.falha) throw vendaveisResult.error;
+        // A mensagem sai da CAUSA, não do erro assinado: a dele é `fetchAllPages: página 0
+        // (0-999) falhou` — jargão de helper, que diz ao vendedor menos do que o servidor já
+        // tinha dito. É o defeito que `mensagemDeErro` existe para evitar ("a mensagem
+        // acionável existe, o servidor a mandou, e ela morre na fronteira"), reaparecendo uma
+        // camada acima. Em `data_null_sem_error` não há causa e o fallback de domínio é o certo.
+        throw erroComCausa(
+          mensagemDeErro(vendaveisResult.falha.cause) ??
             'Não consegui confirmar quais SKUs são rentáveis — nenhum bundle foi gerado.',
+          vendaveisResult.error,
         );
       }
       const vendaveis = new Set(vendaveisResult.data.map((r) => r.product_id));
