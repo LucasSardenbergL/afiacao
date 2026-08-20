@@ -585,3 +585,160 @@ arquivo?"* mas *"quem lê este arquivo?"* — e um teste em `src/` pode ler uma 
 `docs/agent/deploy.md`: **cada ferramenta só enxerga o próprio universo**, e ausência de sinal em três
 delas não é aprovação da quarta. O que fecha o buraco não é lembrar da lista — é rodar a suíte
 autoritativa (`heavy bun run test`, a que o CI roda) sempre que o diff tocar `supabase/functions/`.
+
+---
+
+# Sequela (2026-08-18, mesmo dia): a regra virou GATE — o ambiente responde "quem lê este arquivo?"
+
+A sequela acima registrou a 3ª perna **em texto** (CLAUDE.md, `docs/agent/deploy.md`, este doc, skill
+`handoff-sessao`). Pela meta-regra do `/matar-classe`, isso é meia entrega: **contramedida textual
+reincide; gate estrutural para.** O precedente medido está no `docs-indice-gate-check` — o #1658
+reconciliou o índice à mão e o #1659 o quebrou de novo **no mesmo dia**. Uma frase não sobrevive à
+próxima sessão que não a leu.
+
+## A decisão que definiu o desenho: **não** é gate de CI
+
+O CI já pega — foi ele quem reprovou o #1772. Um gate de CI aqui seria redundante e mais lento. O
+buraco é o **loop de feedback local**: descobrir só depois do push. Então o gate mora no ambiente de
+edição, e **só avisa** (o `permissionDecision` fica de fora; nada é negado).
+
+## Duas peças, espelhando o par que já existe no repo (`*-gate-check.ts` + hook fino)
+
+1. **Motor** — `scripts/edges-guardrails-afetados.ts`. Dado N caminhos sob `supabase/functions/`,
+   devolve os `*.test.ts` que os leem, com o `bunx vitest run` já montado. Rodável à mão. Testado em
+   `scripts/edges-guardrails-afetados.test.ts`, que está dentro do `include` do vitest — ou seja, **o
+   CI passa a vigiar o próprio motor**.
+2. **Hook** — `.claude/hooks/edge-guardrail-nudge.sh` (PreToolUse `Write|Edit|MultiEdit`), registrado
+   em `.claude/settings.json`. Escopo estreito: só `file_path` sob `supabase/functions/`. Fail-open
+   (sem `jq`/`bun` → exit 0), e **um aviso por (sessão, arquivo)** — nudge repetido vira ruído, e
+   gate que vira ruído morre.
+
+## Como o motor resolve: literal entre aspas, prefixo por SEGMENTO
+
+Um teste é guardrail-de-forma quando cita `supabase/functions` **num literal** e lê o disco. Cada
+literal é um *alcance*; ele cobre o arquivo editado quando é ele mesmo ou um diretório ancestral. As
+duas formas reais do repo caem no mesmo teste:
+
+```ts
+const OMIE_CLIENTE = 'supabase/functions/omie-cliente/index.ts';   // cobre 1 arquivo
+const DIRS = ['src', 'supabase/functions', 'scripts'];             // cobre TODA edge
+```
+
+**Só literal ENTRE ASPAS conta** — `// vide supabase/functions/x` é prosa, e citar não é ler. É a
+mesma doutrina de precisão>recall do `edges:typecheck` e do `docs-indice-gate-check`: guardrail que
+monte o caminho dinamicamente escapa do motor, e tudo bem — o CI segue sendo a rede. O que não pode é
+gritar errado, porque gate que grita errado treina a ignorar o vermelho.
+
+**A fronteira é de SEGMENTO, não de string**, e isso não é teoria: `supabase/functions/omie-sync` e
+`supabase/functions/omie-sync-pedidos-compra` existem os dois. Prefixo de string casaria os dois, e o
+falso-positivo seria permanente.
+
+## A auto-referência que o teste pegou antes de a suíte rodar
+
+O arquivo de teste do motor cita edges o tempo todo (fixtures). Se ele também soletrar o nome da API
+de leitura do `node:fs`, o motor **classifica o próprio teste como guardrail** e a lista nasce com um
+falso-positivo fixo. Foi exatamente o que aconteceu: a primeira versão da nota que existia *para
+avisar do risco* soletrou o nome no comentário. O caso `não se auto-inclui` do teste cobre isso.
+
+## Falsificação — as quatro sabotagens do hook
+
+Criar o hook não prova nada; `scripts/test-edge-guardrail-guard.sh` exige o **resultado certo** em
+cada caso, e cada um mata um modo de falha diferente:
+
+| caso | entrada | esperado | o que mataria sem isso |
+|---|---|---|---|
+| (a) | `Write`/`Edit` de edge (inclusive caminho ABSOLUTO do worktree) | a lista sai | gate mudo = gate inexistente |
+| (b) | arquivo em `src/`, migration | silêncio | ruído em todo arquivo do repo |
+| (c) | `Bash` com heredoc/`grep` citando o path; `Read` do arquivo | silêncio | **a armadilha do #1778** |
+| (d) | `PATH` sem `jq`; `PATH` com `jq` e sem `bun` | exit 0 e silêncio | guard que trava trabalho por bug próprio |
+| (e) | 2ª edição do mesmo arquivo na mesma sessão | silêncio | nudge vira ruído e morre |
+
+O caso (c) é o mais importante: no #1778 o `heavy-guard` casou um padrão **dentro de um heredoc** e
+gravou `heavy` no `ci.yml`, quebrando o CI — **menção ≠ execução**, e aqui **menção ≠ edição**. A
+defesa é dupla: o matcher só pega `Write|Edit|MultiEdit`, e o hook ainda confere `tool_name` por
+dentro (o mesmo cinto-e-suspensório do `read-contexto-nudge.sh`, "defesa se o matcher mudar").
+
+### Sabotar UMA linha não falsifica um comportamento defendido em CAMADAS
+
+A primeira tentativa de falsificação sabotou uma linha por vez, e duas saíram **não-falsificáveis**:
+remover o filtro de path do hook manteve a suíte verde, e remover as guardas de `jq`/`bun` também.
+Não é teste fraco — é defesa em profundidade. "Silêncio para não-edge" é sustentado por **três**
+camadas independentes (o `case` do hook, o `.filter(ehEdge)` do motor e o próprio `alcanceCobre`), e
+o fail-open por **quatro** (guardas de `jq`/`bun`, campos vazios, `tool_name` fora da lista, `ctx`
+vazio). Cada uma sozinha basta, então derrubar uma não muda nada de observável.
+
+A falsificação que **prova o poder discriminante** ataca o comportamento, não a linha: um hook que
+**sempre fala** (JSON no topo) tem de virar vermelho em **todos** os casos de silêncio; um que
+**sempre cala** (`exit 0` no topo), em todos os de fala. Medido: 6/6 e 4/4, e o controle volta verde.
+Rodado em `LC_ALL=C` **e** `pt_BR.UTF-8` — a exigência do #1483.
+
+E os marcadores da suíte são **ASCII em caixa fixa** (`FALA`/`SILENCIO`) por causa desse mesmo #1483:
+a 1ª versão imprimia "silêncio" e o `grep -F silencio` do falsificador não casava, transformando um
+vermelho legítimo em "vermelho no caso errado". Quem falsifica precisa casar o **ramo certo**.
+
+### A suíte deste hook entra no LOOP, não ao lado dele
+
+Entre o commit e a entrega, o **#1787** mergeou na main com a mesma classe deste trabalho: duas
+suítes de guard existiam e **nunca rodavam**, e ele criou `scripts/hooks-guard-cobertura.test.ts`
+para tornar isso impossível — todo `scripts/test-<x>-guard.sh` precisa estar no `for t in …` do
+`test:hooks`.
+
+A suíte daqui nascera como `test-edge-guardrail-nudge.sh`, pendurada no `package.json` com um
+`&& bash …` **fora** do loop. Isso passava no CI — e passava pelo motivo errado: o regex do gate
+casa `-guard.sh`, então a suíte simplesmente **não era vista**. Tirá-la do `package.json` não
+deixaria nada vermelho, que é exatamente a classe "teste órfão é ausência de dado" que o #1787
+acabara de matar. Renomeada para `test-edge-guardrail-guard.sh` e movida para dentro do loop, ela
+passa a ser vigiada. O sufixo `-guard` é convenção do loop, não afirmação de que o hook nega.
+
+Vale como caso da regra de coordenação multi-sessão: **conflito de ARQUIVO é só um eixo.** O
+`package.json` conflitou de verdade nos dois rebases, mas o que mudou a entrega foi um CONTRATO
+novo — um gate que não existia quando esta fatia começou e que redefine o que "registrar um teste"
+significa neste repo. Buscar pelo título do PR não acharia: o dele fala de guard de duplicata e
+destructive-bash, não de edges.
+
+### A falsificação MUTA o worktree — e validação concorrente lê o mesmo disco
+
+O `bun run test:hooks` desta entrega saiu **vermelho no caso (e)** — o mesmo caso que passa quando
+rodado isolado. Causa: ele estava na fila do semáforo `heavy` e foi executar **no instante em que a
+falsificação tinha o hook sabotado em disco** (a sabotagem que remove a marca anti-repetição derruba
+exatamente o (e)). Falso vermelho, e um que aponta para o lugar certo pelo motivo errado.
+
+Lição transferível, e ela cresce com a máquina: **falsificação exige exclusividade do worktree.**
+Com ~24 sessões e um semáforo de RAM, "lancei em background" não quer dizer "já rodou" — quer dizer
+"vai rodar em algum momento que eu não escolho". Antes de sabotar: fila vazia ou nada pendente neste
+worktree; e todo vermelho colhido durante uma janela de sabotagem é suspeito até ser reproduzido com
+a árvore limpa.
+
+**A raiz do repo tem dois ambientes, não um.** Sob `bun` (o hook) `import.meta.url` é um `file:` e a
+raiz sai do próprio arquivo do motor — melhor que `cwd`, porque o hook pode ser chamado de qualquer
+diretório. Sob vitest o Vite transforma o módulo, a URL **não** é `file:` e `fileURLToPath` lança
+`The URL must be of scheme file`: a 1ª versão só tinha esse ramo e a suíte do motor **nem coletava**.
+Quem pegou foi o teste de integração — e o ramo `file:`, que o vitest não exercita, é coberto pela
+suíte de shell do hook, que roda o `bun` de verdade. Cada perna testada no ambiente em que roda.
+
+A suíte do hook também teve um falso-vermelho instrutivo na 1ª rodada: o caso (d) fazia
+`PATH="$tmp/vazio" bash "$HOOK"`, e o **`bash`** passou a ser procurado no PATH estreitado — `rc=127`
+media o interpretador ausente, não o fail-open do hook. Resolver o interpretador **antes** de
+estreitar o PATH é o que faz o caso medir o que diz medir.
+
+## Números (medidos 2026-08-18, worktree `claude/gate-guardrails-edge`)
+
+- 676 arquivos de teste varridos; **20** são guardrails de forma de edge (bate com o `grep` da sequela
+  anterior).
+- `omie-cliente/index.ts` (o arquivo do #1772): **9** guardrails — 3 por literal próprio
+  (`edge-money-path-invariants`, `erro-object-object-gate`, `segredo-em-log-gate`) + 6 por varredura.
+  Os 3 literais batem exatamente com o `grep` manual.
+- `_shared/cost-compute.ts`: **9** — 1 literal (`costCompute.parity.test.ts`) + 8 por varredura;
+  também bate com o `grep`. O mesmo teste muda de coluna conforme o alvo: o `erro-object-object-gate`
+  entra por literal para o `omie-cliente` (está na baseline dele) e por varredura para o
+  `cost-compute` — o alcance mais específico é que vence.
+- Latência do hook: **0,2–0,7 s**, uma vez por (sessão, arquivo).
+
+## O que ficou de fora — e é decisão, não esquecimento
+
+O hook **avisa**; ele não **nega** no `git commit`/`gh pr create` quando o diff toca
+`supabase/functions/` e a suíte não rodou verde desde a última edição. Negar é mais forte e tem
+precedente (`pr-collision-guard`), mas exige guardar **estado** (hash/timestamp do último verde) —
+peça que nenhum hook do repo tem hoje. Construir o estado antes de saber se o aviso basta é a
+armadilha da *fase N+1 sem sinal da fase N*: entrega-se o aviso, mede-se se a classe reincide, e só
+então se paga o estado.

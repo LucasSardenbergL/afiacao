@@ -292,24 +292,56 @@ export const useFarmerScoring = (farmerId?: string) => {
       //
       // `margem_pct` só vem preenchido para quem tem `cap_custo_ler`; para os demais é null e a
       // UI mostra a FAIXA no lugar do número. O gate é de PROJEÇÃO, no corpo da RPC.
-      const { data: faixasData, error: faixasErr } = await supabase.rpc('get_carteira_margem_faixa');
-      // FAIL-CLOSED (money-path): sem a faixa, ABORTA. Seguir com o mapa vazio pontuaria toda a
-      // carteira como "sem margem conhecida" — um veredito inventado que o vendedor leria como
-      // dado. Ausente ≠ zero vale também para a falha de transporte.
       //
-      // O `throw` cai no catch, que DECLARA a falha (`setErro`/`mensagemDeErro`) e preserva o
-      // último estado bom — os setters de sucesso não rodam. Um `return` silencioso aqui seria a
-      // regressão do #1550/#1697: a falha vira tela sem aviso, e `console.error` não é canal de
-      // usuário. `mensagemDeErro` existe exatamente para este erro: o do `supabase.rpc()` sem
-      // `.throwOnError()` é objeto PLANO, que o idiom `instanceof Error` transformaria em
-      // "[object Object]".
-      if (faixasErr) throw faixasErr;
-      // `data: null` sem `error` é resposta MALFORMADA, não carteira vazia (classe do #1581).
-      // O `?? []` que estava aqui mudava a faixa de TODO cliente para `neutro` em silêncio — o
-      // veredito fabricado que este bloco existe para impedir, entrando pela porta dos fundos.
-      if (faixasData == null) {
-        throw new Error('get_carteira_margem_faixa devolveu data null sem error');
-      }
+      // PAGINADA, com `.order` estável ANTES do `.range`: a RPC devolve UMA LINHA POR CLIENTE da
+      // carteira e, para quem passa em `cap_carteira_ler`, a carteira é a população INTEIRA —
+      // 1.227 linhas em prod (2026-08-19, psql-ro, reproduzindo `private.margem_cliente_agregada()`),
+      // contra a capa de 1.000 do PostgREST. Era a ÚNICA das cinco leituras deste hook fora do
+      // `fetchAllPages`, exatamente como `get_skus_margem_positiva` era a única do bundle (#1782):
+      // a varredura que paginou as TABELAS não alcança RPC.
+      //
+      // O que o truncamento produzia não era erro, era VEREDITO FABRICADO: os 227 clientes da
+      // cauda somem do Map e caem no `?? 'neutro'` / `?? null` lá embaixo — faixa neutra e health
+      // score com os pesos RENORMALIZADOS, indistinguíveis de "margem não apurável". É o mesmo
+      // `neutro` em silêncio que o `?? []` removido abaixo causava, entrando pela porta dos fundos.
+      // A defesa que já existia aqui cobre o vazio TOTAL e é cega ao PARCIAL.
+      //
+      // `customer_user_id` é ordem TOTAL (uma linha por cliente, `GROUP BY n.cid` na função). A
+      // função não tem `ORDER BY` próprio: sem ordem estável o plano escolhe a de cada página e
+      // PULA linhas entre elas — o mesmo bug de volta, e intermitente.
+      //
+      // FAIL-CLOSED (money-path) preservado: `fetchAllPages` LANÇA nos MESMOS dois desfechos que
+      // os dois `throw` daqui cobriam — erro/página perdida (`pagina_falhou`) e `data: null` sem
+      // erro (`data_null_sem_error`, resposta malformada, classe do #1581). O throw cai no mesmo
+      // catch, que DECLARA a
+      // falha (`setErro`/`mensagemDeErro`) e preserva o último estado bom. Seguir com o mapa vazio
+      // pontuaria toda a carteira como "sem margem conhecida": ausente ≠ zero vale também para a
+      // falha de transporte. Ganho de lado: o erro do `supabase.rpc()` cru era objeto PLANO (que o
+      // idiom `instanceof Error` viraria "[object Object]"); `fetchAllPages` lança `Error` com causa.
+      // NÃO se usa aqui o `ehFalhaDePagina` do #1798 (que separa falha de LEITURA de BUG DE CÓDIGO
+      // na mensagem): este catch é genérico e já declara a falha. Aplicar a distinção neste hook é
+      // melhoria de MENSAGEM, não de fail-closed — escopo próprio, deliberadamente fora daqui.
+      const faixasData = await fetchAllPages<{
+        customer_user_id: string;
+        faixa: string;
+        g: number | string | null;
+        margem_pct: number | string | null;
+      }>(
+        (de, ate) =>
+          supabase
+            .rpc('get_carteira_margem_faixa')
+            .order('customer_user_id', { ascending: true })
+            .range(de, ate) as unknown as PromiseLike<{
+            data: Array<{
+              customer_user_id: string;
+              faixa: string;
+              g: number | string | null;
+              margem_pct: number | string | null;
+            }> | null;
+            error: unknown;
+          }>,
+        'get_carteira_margem_faixa/scoring',
+      );
       const margemPorCliente = new Map<string, { faixa: FaixaMargem; g: number | null; pct: number | null }>();
       for (const linha of faixasData) {
         margemPorCliente.set(linha.customer_user_id, {

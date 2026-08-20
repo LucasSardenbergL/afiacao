@@ -4,8 +4,8 @@ import type { Json } from '@/integrations/supabase/types';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { toast } from 'sonner';
 import { margemConhecida } from '@/lib/scoring/margin';
-import { fetchAllPages } from '@/lib/postgrest';
-import { mensagemDeErro } from '@/lib/erro-mensagem';
+import { ehFalhaDePagina, fetchAllPages } from '@/lib/postgrest';
+import { erroComCausa, mensagemDeErro } from '@/lib/erro-mensagem';
 import { captureException } from '@/lib/analytics';
 import {
   avaliarCompletude,
@@ -165,6 +165,25 @@ export const useBundleEngine = () => {
   // `FarmerBundles` só sabia dizer "Clique em Calcular" — o mesmo texto de quem nunca calculou.
   const [erro, setErro] = useState<Error | null>(null);
   const [desatualizado, setDesatualizado] = useState(false);
+  /**
+   * "A execução mais recente chegou a PUBLICAR um resultado (mesmo vazio) na tela?"
+   *
+   * Dois estados dependiam disso e não tinham como perguntar (challenge Codex do #1791):
+   *  - a lista vazia de um cálculo CONCLUÍDO ficava idêntica à de quem nunca clicou em
+   *    Calcular — "não há oportunidade nesta carteira" apresentado como "não comecei";
+   *  - sob `erro`, a tela culpava a LEITURA mesmo quando a leitura foi perfeita e o que
+   *    falhou foi a GRAVAÇÃO (a RPC roda DEPOIS de `aplicarBundles`), desacreditando
+   *    bundles válidos e desta execução.
+   *
+   * Descreve a ÚLTIMA execução, não a sessão: um recálculo que morre na leitura volta o
+   * flag a `false`, senão o veredicto velho responderia por um cálculo que não existiu.
+   *
+   * ⚠️ Marcado nos pontos de CONCLUSÃO, nunca dentro de `aplicarBundles`. O fail-closed de
+   * `vendaveis` também chama `aplicarBundles([])` — para limpar a lista antes de lançar — e
+   * ali NADA foi calculado: marcar junto da publicação faria esse caminho anunciar "o cálculo
+   * terminou, só não salvou", que é exatamente a mentira que este flag existe para desfazer.
+   */
+  const [calculado, setCalculado] = useState(false);
 
   // A ref existe para o `catch` saber se sobrou resultado de uma execução ANTERIOR na tela:
   // ler `customerBundles` de dentro do `useCallback` pegaria a closure velha.
@@ -180,6 +199,7 @@ export const useBundleEngine = () => {
     setLoading(true);
     setErro(null);
     setDesatualizado(false);
+    setCalculado(false);
     // "Esta execução produziu o que está na tela?" — separa INDISPONÍVEL de DESATUALIZADO.
     let resultadoDestaExecucao = false;
     // "Este cálculo chegou a PRODUZIR linhas?" — trava o registro de `vazio` no `catch`.
@@ -339,8 +359,17 @@ export const useBundleEngine = () => {
               .range(de, ate) as unknown as PromiseLike<{ data: { product_id: string }[] | null; error: unknown }>,
           'get_skus_margem_positiva/bundle',
         ).then(
-          (data) => ({ data, error: null as unknown }),
-          (error: unknown) => ({ data: null, error }),
+          (data) => ({ ok: true as const, data }),
+          // NÃO relança aqui, e a distinção NÃO é sobre agir ou não agir: o fail-closed vale
+          // para QUALQUER falha na leitura de vendáveis — inclusive bug de código. O que
+          // `esperada` discrimina é só o DIAGNÓSTICO: qual erro chega à tela e ao plantão.
+          //
+          // O handler anterior (`error => ({ data: null, error })`) engolia QUALQUER rejeição e
+          // a rotulava com a mensagem de negócio. Não é hipotético: no #1782 mocks devolvendo
+          // Promise crua produziram `supabase.rpc(...).order is not a function`, e este `.then`
+          // converteu o TypeError em "vendáveis indisponíveis" — um defeito de CÓDIGO chegando
+          // disfarçado de INDISPONIBILIDADE DE DADO, que manda o plantão para o lado errado.
+          (error: unknown) => ({ ok: false as const, error, falha: ehFalhaDePagina(error) ? error : null }),
         ),
       ]);
 
@@ -351,7 +380,7 @@ export const useBundleEngine = () => {
 
       // FAIL-CLOSED: falha na RPC → NENHUM bundle. Degradar para "monta bundle com tudo" poria
       // produto de PREJUÍZO na oferta combinada, que é o pior desfecho possível aqui.
-      if (vendaveisResult.error || !vendaveisResult.data) {
+      if (!vendaveisResult.ok) {
         console.error('get_skus_margem_positiva falhou — sem bundles (fail-closed):', vendaveisResult.error);
         // `ok: false` = "não consegui ler", não "veio vazio". Um head degradado por aqui
         // nunca poderá autorizar expiração.
@@ -365,11 +394,31 @@ export const useBundleEngine = () => {
         // Limpa ANTES de lançar: manter bundles anteriores contrariaria o fail-closed (podem
         // conter SKU que o servidor já não confirma como rentável). Com a lista zerada e
         // `resultadoDestaExecucao` marcado, a tela conclui INDISPONÍVEL, não DESATUALIZADO.
+        //
+        // ⚠️ Este bloco roda para TODA falha da leitura de vendáveis, inclusive bug de código.
+        // Deixar o TypeError subir cru DAQUI (sem limpar a lista) foi o desenho que o Codex
+        // gpt-5.6-sol reprovou como [P1]: a tela concluiria DESATUALIZADO e seguiria exibindo
+        // bundles da execução anterior — que podem conter SKU cuja margem já não é positiva.
+        // "Desatualizado" não é sinônimo de "seguro de usar", e o gate de RENTABILIDADE não
+        // pode ser o insumo que degrada mais fraco só porque a falha foi de outra natureza.
         aplicarBundles([]);
         resultadoDestaExecucao = true;
-        throw new Error(
-          mensagemDeErro(vendaveisResult.error) ??
+        // O que a natureza da falha decide é SÓ o erro que sobe:
+        //  • não-esperada (bug: builder quebrado, TypeError) → relança o objeto ORIGINAL, com a
+        //    stack e a mensagem verdadeiras. Traduzi-lo para a frase de negócio apagaria o
+        //    único rastro que aponta para a linha defeituosa;
+        //  • esperada (página com `error`, `data: null` malformado) → mensagem do SERVIDOR, com
+        //    o erro assinado preso em `cause` para o plantão.
+        if (!vendaveisResult.falha) throw vendaveisResult.error;
+        // A mensagem sai da CAUSA, não do erro assinado: a dele é `fetchAllPages: página 0
+        // (0-999) falhou` — jargão de helper, que diz ao vendedor menos do que o servidor já
+        // tinha dito. É o defeito que `mensagemDeErro` existe para evitar ("a mensagem
+        // acionável existe, o servidor a mandou, e ela morre na fronteira"), reaparecendo uma
+        // camada acima. Em `data_null_sem_error` não há causa e o fallback de domínio é o certo.
+        throw erroComCausa(
+          mensagemDeErro(vendaveisResult.falha.cause) ??
             'Não consegui confirmar quais SKUs são rentáveis — nenhum bundle foi gerado.',
+          vendaveisResult.error,
         );
       }
       const vendaveis = new Set(vendaveisResult.data.map((r) => r.product_id));
@@ -377,6 +426,9 @@ export const useBundleEngine = () => {
 
       if (!clientScores?.length) {
         aplicarBundles([]);
+        // CONCLUIU: "esta carteira não tem cliente com score" é um veredicto do motor, não uma
+        // falha — e a tela precisa dizer isso em vez de "clique em Calcular".
+        setCalculado(true);
         // Era um `return` MUDO — a razão de a frequência do zero nunca ter sido mensurável.
         await registrarVazio();
         return;
@@ -645,6 +697,8 @@ export const useBundleEngine = () => {
 
       // 5. Generate bundles per customer
       const allCustomerBundles: CustomerBundles[] = [];
+      /** Clientes cuja comparação com o melhor produto individual não pôde ser lida. */
+      let comparacaoIndisponivel = 0;
 
       for (const score of clientScores) {
         const cid = score.customer_user_id;
@@ -743,27 +797,61 @@ export const useBundleEngine = () => {
 
         // Best individual product (from cross-sell engine data)
         let bestIndividual: IndividualComparison | null = null;
-        const { data: existingRecs } = (await supabase
-          .from('farmer_recommendations')
-          .select('product_id, affinity_score, recommendation_type')
-          .eq('farmer_id', effectiveUserId)
-          .eq('customer_user_id', cid)
-          .eq('status', 'pendente')
-          // `.not(...is null)` é fail-closed: com todas as linhas antigas, ordenar não ordena nada
-          // e o `.limit(1)` elegeria um "melhor individual" arbitrário. `nullsFirst: false` cobre
-          // a MISTURA (DESC implica NULLS FIRST no Postgres); o filtro cobre o caso TODAS-NULL.
-          .not('affinity_score', 'is', null)
-          .order('affinity_score', { ascending: false, nullsFirst: false })
-          // ⚠️ `created_at` deixou de desempatar: desde a migration 20260814223445 a geração
-          // inteira entra num único INSERT, e `now()` é o instante da TRANSAÇÃO — todas as
-          // linhas do run compartilham o mesmo carimbo. `id` é a PK: última chave, sempre
-          // total (achado do challenge Codex xhigh).
-          .order('updated_at', { ascending: false }) // desempate determinístico
-          .order('id', { ascending: false })
-          .limit(1)) as unknown as { data: ExistingRecRow[] | null };
+        // O `error` desta consulta era DESCARTADO na desestruturação, e a falha virava um
+        // veredicto: `bestIndividual` nulo (= "não há oferta individual melhor"), cliente sem
+        // bundle próprio OMITIDO da lista inteira, e `toast.success` no fim. É o §2 (ausente ≠
+        // zero) na forma de rótulo.
+        //
+        // O `try` existe porque erro RESOLVIDO e Promise REJEITADA são portas diferentes para o
+        // mesmo defeito, e a segunda é a pior (achado do challenge Codex gpt-5.6-sol/xhigh):
+        // uma rejeição de rede/CORS escapava do laço para o `catch` externo, onde todos os
+        // insumos obrigatórios JÁ foram declarados íntegros (são lidos antes do laço) e
+        // `linhasProduzidas` ainda é false — e `registrarVazio()` gravava `resultado='vazio'`
+        // com `completude='completo'`. Esse par é a licença exata que a fase 2 usaria para
+        // EXPIRAR a carteira. Mesmo defeito do #1791, por outra porta.
+        let recsIndividuais: ExistingRecRow[] | null = null;
+        try {
+          const { data, error } = (await supabase
+            .from('farmer_recommendations')
+            .select('product_id, affinity_score, recommendation_type')
+            .eq('farmer_id', effectiveUserId)
+            .eq('customer_user_id', cid)
+            .eq('status', 'pendente')
+            // `.not(...is null)` é fail-closed: com todas as linhas antigas, ordenar não ordena
+            // nada e o `.limit(1)` elegeria um "melhor individual" arbitrário. `nullsFirst:
+            // false` cobre a MISTURA (DESC implica NULLS FIRST no Postgres); o filtro cobre o
+            // caso TODAS-NULL.
+            .not('affinity_score', 'is', null)
+            .order('affinity_score', { ascending: false, nullsFirst: false })
+            // ⚠️ `created_at` deixou de desempatar: desde a migration 20260814223445 a geração
+            // inteira entra num único INSERT, e `now()` é o instante da TRANSAÇÃO — todas as
+            // linhas do run compartilham o mesmo carimbo. `id` é a PK: última chave, sempre
+            // total (achado do challenge Codex xhigh).
+            .order('updated_at', { ascending: false }) // desempate determinístico
+            .order('id', { ascending: false })
+            .limit(1)) as unknown as { data: ExistingRecRow[] | null; error: unknown };
+          if (error) throw error;
+          recsIndividuais = data;
+        } catch (erroIndividual) {
+          console.error(`Falha ao ler o melhor individual de ${cid}:`, erroIndividual);
+          // Sem `throw`: esta comparação é ACESSÓRIA — ela não entra em `recomendacoes`, o
+          // payload da RPC de substituição, então derrubar a carteira inteira por causa dela
+          // trocaria uma afirmação errada por um prejuízo maior. O que a falha NÃO pode é
+          // sumir: ela reprova o toast de sucesso logo abaixo.
+          //
+          // ⚠️ De propósito NÃO vira insumo do `InsumosSnapshot`: `avaliarCompletude` degrada
+          // com um único `ok:false`, e esta consulta roda uma vez POR CLIENTE — numa carteira
+          // de centenas, uma falha isolada carimbaria `degradado` em quase toda execução. O
+          // head ficaria degradado para sempre, e um sinal que nunca varia não é sinal: a
+          // fase 2 aprenderia a ignorá-lo. Vale porque `p_linhas` é INVARIANTE a esta leitura
+          // (cliente com bundle entra de qualquer jeito; cliente sem bundle contribui zero
+          // linhas com ou sem ela), logo a integridade do ZERO DE BUNDLES — que é o que a
+          // completude julga — não depende dela.
+          comparacaoIndisponivel += 1;
+        }
 
-        if (existingRecs?.length) {
-          const rec = existingRecs[0];
+        if (recsIndividuais?.length) {
+          const rec = recsIndividuais[0];
           const prod = productMap.get(rec.product_id);
           // Ausente ≠ zero: `Number(null)` é 0 e afirmaria afinidade nula medida.
           const afinidade = rec.affinity_score == null ? NaN : Number(rec.affinity_score);
@@ -808,7 +896,15 @@ export const useBundleEngine = () => {
       // Marcados JUNTOS e aqui, não na gravação: a partir deste ponto a tela mostra o
       // resultado DESTE cálculo, e ele produziu linhas — os dois fatos que o `catch` precisa.
       resultadoDestaExecucao = true;
-      linhasProduzidas = allCustomerBundles.length > 0;
+      // CONCLUIU: daqui para baixo só resta PERSISTIR, então qualquer falha adiante é de
+      // gravação — e é este flag que impede a tela de culpar a leitura por ela.
+      setCalculado(true);
+      // Linhas PERSISTÍVEIS, não clientes: um cliente entra em `allCustomerBundles` só com
+      // `bestIndividual` e nenhum bundle, e essa comparação não vira linha nenhuma no payload
+      // da RPC. Contando clientes, esse caso travava o `registrarVazio()` do `catch` sobre uma
+      // execução que de fato não produziu nada — o head parava de se mover e "nenhum registro
+      // novo" voltava a significar duas coisas opostas (challenge Codex xhigh).
+      linhasProduzidas = allCustomerBundles.some((cb) => cb.bundles.length > 0);
 
       // Persist bundle recommendations — via RPC que SUBSTITUI a geração anterior.
       // PULADO na lente "Ver como" (só leitura: o master inspeciona os bundles do alvo
@@ -922,6 +1018,16 @@ export const useBundleEngine = () => {
           'já havia um recálculo deste vendedor em andamento — os bundles daqui não foram salvos; espere ele terminar e confira',
         );
       }
+      // A lista pode ter ficado INCOMPLETA: o cliente que só entraria pela comparação
+      // individual foi omitido quando a leitura dele falhou. Dizer o número é o que separa
+      // "não há mais nada" de "não consegui ver o resto".
+      if (comparacaoIndisponivel > 0) {
+        problemas.push(
+          comparacaoIndisponivel === 1
+            ? '1 cliente ficou sem a comparação com o melhor produto individual — a leitura falhou, e ele pode ter ficado fora da lista'
+            : `${comparacaoIndisponivel} clientes ficaram sem a comparação com o melhor produto individual — a leitura falhou, e eles podem ter ficado fora da lista`,
+        );
+      }
 
       if (problemas.length > 0) {
         toast.warning(`${totalBundles} bundles gerados, mas ${problemas.join('; e ')}`);
@@ -970,6 +1076,7 @@ export const useBundleEngine = () => {
     calculating,
     erro,
     desatualizado,
+    calculado,
     calculateBundles,
     config: DEFAULT_CONFIG,
   };

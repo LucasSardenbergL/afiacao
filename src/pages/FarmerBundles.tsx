@@ -19,6 +19,7 @@ const FarmerBundles = () => {
     calculateBundles,
     erro,
     desatualizado,
+    calculado,
     bundleArgs,
     argGenerating,
     generateArgument,
@@ -52,17 +53,24 @@ const FarmerBundles = () => {
 
         {/* A falha do engine PRECISA chegar aqui. Sem isto a tela ficava idêntica à de um
             cálculo bem-sucedido que não achou bundle — o vendedor via a lista vazia e ia
-            embora achando que não havia oportunidade, quando na verdade não houve leitura. */}
+            embora achando que não havia oportunidade, quando na verdade não houve leitura.
+
+            Os TRÊS casos são separados (igual `FarmerRecommendations`) porque o `catch` do
+            engine é um só e cobre fases diferentes: `calculado` diz que a leitura terminou e
+            o resultado desta execução já foi publicado, então o que sobrou para falhar foi a
+            GRAVAÇÃO — e aí acusar a leitura descarta bundles válidos que estão logo abaixo. */}
         {erro && (
           <div
             role="alert"
-            className={`rounded-lg border p-3 text-xs ${desatualizado
+            className={`rounded-lg border p-3 text-xs ${desatualizado || calculado
               ? 'border-status-warning/30 bg-status-warning/5 text-status-warning'
               : 'border-status-error/30 bg-status-error/5 text-status-error'}`}
           >
             {desatualizado
               ? 'Exibindo o último cálculo bem-sucedido — a atualização mais recente falhou. Os bundles podem estar desatualizados.'
-              : 'Não foi possível calcular os bundles — a leitura da base falhou. Nada abaixo foi estimado.'}
+              : calculado
+                ? 'O cálculo terminou, mas o resultado não pôde ser salvo. O que está na tela é desta execução; as outras telas de oferta seguem com o cálculo anterior.'
+                : 'Não foi possível calcular os bundles — a leitura da base falhou. Nada abaixo foi estimado.'}
           </div>
         )}
 
@@ -84,7 +92,20 @@ const FarmerBundles = () => {
             {loading && !customerBundles.length ? (
               <PageSkeleton variant="list" />
             ) : customerBundles.length === 0 ? (
-              <Card><CardContent className="p-6 text-center"><Package className="w-8 h-8 mx-auto mb-2 opacity-40" /><p className="text-xs text-muted-foreground">{erro ? 'O cálculo falhou — nenhum bundle pôde ser gerado.' : 'Clique em "Calcular" para gerar bundles.'}</p></CardContent></Card>
+              <Card><CardContent className="p-6 text-center"><Package className="w-8 h-8 mx-auto mb-2 opacity-40" /><p className="text-xs text-muted-foreground">{
+                // Três estados, e só um deles é trabalho a fazer. Um cálculo que RODOU e
+                // concluiu "não há bundle" é um veredicto do motor — dizer a esse vendedor
+                // para clicar em Calcular o manda repetir o que acabou de rodar, e apaga a
+                // única informação que ele tinha: não há oportunidade nesta carteira agora.
+                // `calculado` vem primeiro porque, com erro DE GRAVAÇÃO sobre um resultado
+                // vazio, o veredicto continua sendo o do motor — quem conta o resto é o
+                // alerta acima.
+                calculado
+                  ? 'O cálculo rodou e não encontrou nenhum bundle para esta carteira.'
+                  : erro
+                    ? 'O cálculo falhou — nenhum bundle pôde ser gerado.'
+                    : 'Clique em "Calcular" para gerar bundles.'
+              }</p></CardContent></Card>
             ) : (
               customerBundles.map(cb => (
                 <CustomerBundleCard

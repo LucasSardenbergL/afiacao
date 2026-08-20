@@ -123,6 +123,41 @@ segurança sobrevive à ambiguidade; só o veredito por edge se perde.
 3. **Enquanto nenhum dos dois existir: sondar UMA edge por vez** e ler o `net._http_response` antes
    de disparar a próxima. Lote = veredito perdido.
 
+## 8. O conserto (#1789) — e o deploy que ainda falta
+
+O §7 foi fechado no #1789 (mergeado 2026-08-19, `ad43dd62`): `_shared/sonda-versao.ts` passou a
+exportar `criarRespostaSonda(edge)`, e cada `versao.ts` declara
+`export const respostaSonda = criarRespostaSonda("<nome-da-edge>")`. A resposta virou:
+
+```json
+{"ok":true,"probe":true,"versao":"v1.0-sensor-inicial","edge":"process-nfe"}
+```
+
+É **fábrica**, não parâmetro a mais, por dois motivos: a identidade fica declarada uma vez por edge
+(nenhuma chamada nova pode esquecer de passá-la) e **nenhum `index.ts` mudou** — os arquivos grandes
+de money-path ficaram fora da superfície tocada. A `respostaSonda` livre foi REMOVIDA do `_shared`
+de propósito: quem não declarar identidade não compila. Dois gates novos no contrato: a sonda tem de
+se identificar com o nome do **diretório** da function, e duas edges nunca podem produzir respostas
+idênticas — esta última falha no desenho antigo, que é o ponto.
+
+### ⏳ PENDENTE: as 16 edges precisam de deploy manual
+
+**Merge não publica edge.** Enquanto o deploy pelo chat do Lovable não acontecer, as sondas em
+produção seguem respondendo o formato antigo, **sem** o campo `edge` — e o §7 continua valendo em
+produção, ainda que esteja resolvido no repo. A degradação é limpa (campo ausente = bundle anterior
+ao #1789, não erro), então não há urgência; mas enquanto não subir, um lote heterogêneo de sondas
+volta a ser indecifrável.
+
+As 16 com `versao.ts`: `conciliar-pedido-portal`, `disparar-pedidos-aprovados`,
+`enviar-pedido-portal-sayerlack`, `fin-cashflow-engine`, `generate-bundle-argument`,
+`generate-tactical-plan`, `gerar-pedidos-diario`, `omie-cliente`, `omie-nfe-recebimento`,
+`omie-nfe-webhook`, `omie-sync-estoque`, `omie-sync-nfes-recebidas`, `pedido-programado-enviar`,
+`process-nfe`, `reposicao-depara-sayerlack-auto`, `sayerlack-captura-precos`.
+
+⚠️ O `_shared/sonda-versao.ts` **também** mudou e é dependência de todas: um deploy que leve só o
+`index.ts` quebra o boot (§3). Prova de que subiu: sondar e ler `content::jsonb->'edge'` em
+`net._http_response` — o nome certo ali é o veredito.
+
 ## Desfecho por edge (2026-08-18)
 
 O lote de 10 sondas das 23:13 UTC **não** produz veredito por edge (§7). O que ficou:
@@ -164,3 +199,52 @@ automáticos / 301 total com carimbo de 31/07 — inalterados pela sonda de `rep
 Mesma checagem nas 5 do #1772: `reposicao_estoque_full` parado em 18/08 19:40 e `fin_sync_log` em
 00:20, ambos anteriores às sondas das 00:54. A resposta diz "o bundle novo está no ar"; só o banco
 diz "e ele não fez nada".
+
+## Lote do #1772 (2026-08-19/20) — `omie-cliente` no ar, e o `edge` do #1789 confirmado EM PRODUÇÃO
+
+O founder colou os 5 prompts de deploy do #1772 em **2026-08-19 ~01:45 UTC**. A sonda da
+`omie-cliente` (SQL Editor, `{"probe":true}` + `x-cron-secret`) devolveu, às 23:50 do mesmo dia:
+
+```
+status 200 · {"ok":true,"probe":true,"versao":"v1.0-sensor-inicial","edge":"omie-cliente"}
+```
+
+Dois vereditos numa resposta só: a edge está na versão nova, **e o campo `edge` do #1789 está no ar**
+— a §"PENDENTE" acima previa o formato antigo (sem `edge`) enquanto o deploy não acontecesse, e para
+esta edge ele já aconteceu. O campo veio porque o #1789 entrou na `main` às **01:45 UTC**, minutos
+antes de o founder colar os prompts: o Lovable leu a main já corrigida.
+
+⚠️ **Campo inesperado em produção é "a main andou" ANTES de ser "o Lovable melhorou o código".** O
+`edge` não existia no worktree de quem sondou (18 commits atrás), e a primeira hipótese levantada foi
+adulteração no deploy — que é a acusação cara, e estava errada. O desempate é uma linha:
+`git log -S'edge' origin/main -- supabase/functions/_shared/sonda-versao.ts`. Worktree defasado
+produz "achado" que não existe; sincronize antes de acusar.
+
+⚠️ **O rastro do commit do bot NÃO serve como sinal de deploy pelo chat.** Esperei **22h** por um
+commit `Deployed …`/`Redeployed …` que nunca veio — com **122 commits do tipo** no histórico, o que
+tornava a ausência aparentemente informativa. O deploy tinha acontecido: a sonda provou. Rastro
+ausente **não** degrada para "não deployou"; ele não é sinal de nada neste caminho, e tratá-lo como
+sinal me fez reportar "provavelmente não executou" sobre algo que estava no ar. Só a sonda (ou a
+verificação passiva do §1) decide.
+
+### Segurança de sonda nas 5 do #1772 — lido no bundle velho (`77e46ab9^1`)
+
+Mesma técnica da §"Reduzir o risco sem sondar às cegas", aplicada a este lote:
+
+| edge | o bundle VELHO faz o quê com `{"probe":true}` | seguro? |
+| --- | --- | --- |
+| `omie-cliente` | `switch (action)`; sem `action` cai no `default:` → 400 "Ação não reconhecida" | ✅ provado em prod |
+| `fin-cashflow-engine` | `save_snapshot ?? false`, e os 2 `insert` estão dentro de `if (save)` → calcula e devolve, não grava | ✅ |
+| `omie-nfe-webhook` | exige `x-webhook-secret` (a sonda manda `x-cron-secret`) → 401 antes de qualquer escrita | ✅ |
+| `omie-sync-estoque` | `authorizeCronOrStaff` **aceita** `x-cron-secret` → passa o gate e roda o sync, reescrevendo o saldo que o motor de reposição consome | ❌ |
+| `omie-sync-nfes-recebidas` | idem — gate próprio que aceita `x-cron-secret`, sem parâmetro que barre | ❌ |
+
+**O discriminante não é a edge ser "leve"** — é o bundle velho ter um **ponto de recusa antes da
+primeira escrita**: dispatch por ação, segredo diferente, ou flag de escrita que nasce `false`.
+Conferir só o dispatch não basta: as duas ❌ não têm `switch (action)` e ainda assim são perigosas,
+porque o gate delas aceita exatamente a credencial com que a sonda é invocada. **Leia o gate junto
+com o dispatch.**
+
+Para as duas ❌ sobra a via passiva (§1): `omie-sync-estoque` tem cron (`0 9` + `40 9,11,13,15,17,19`),
+então a próxima execução carimba `versao` de graça — dentro da janela de ~6h da §5.
+`omie-sync-nfes-recebidas` **não tem cron**: só o painel do Lovable.

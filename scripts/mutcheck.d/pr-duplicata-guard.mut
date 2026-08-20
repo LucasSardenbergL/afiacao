@@ -20,7 +20,7 @@ PEGA      | controle+: via 3 (presenca na main) removida | s{^  dup=.*}{  dup="\
 # O cache de anti-alarm-fatigue vaza para o `create`. O cabeçalho AFIRMA "o gh pr create NUNCA é
 # silenciado por este cache (último portão)" — invariante em prosa. `!$done++` restringe à 1ª
 # ocorrência (a linha é byte-idêntica à do bloco de mensagem, adiante).
-PEGA      | cache de dedupe vaza p/ o `create`   | $arm = 1 if /silenciado por este cache/; if ($arm && !$done) { $done = s{^if \[ "\$modo" = commit \]; then}{if true; then}; }
+PEGA      | cache de dedupe vaza p/ o `create`   | $arm = 1 if /silenciado por este cache/; if ($arm && !$done) { $done = s{^if \[ "\$modo" = commit \] && \[ -z "\$tem_create" \]; then}{if true; then}; }
 
 # A detecção de `-a` some: `git commit -a` volta a ler só o ÍNDICE, e o trabalho não-staged
 # (que ENTRARIA no commit) fica invisível ao guard.
@@ -36,3 +36,52 @@ PEGA      | filtro de forma do identificador removido | s{grep -E '_\|\[a-z\]\[A
 # O limiar de 12 chars. Sobreviveu na 1a rodada; triado como BORDA CANONICA (o cabecalho declara
 # o limiar como decisao de precisao MEDIDA, nao detalhe interno) e fechado pelo caso 7b.
 PEGA      | limiar do identificador 12 -> 3 chars | s/\{11,\}/{2,}/
+
+# --- achados da 2ª opinião adversária (Codex, 2026-08-19) ---
+# Precedência no comando ENCADEADO: restaurar o bug (create vence quando os dois aparecem).
+# Era invisível: nenhum caso usava `git commit ... && gh pr create ...`.
+PEGA      | encadeado volta a casar como `create` | s{^if \[ -n "\$tem_commit" \]; then}{if [ -n "\$tem_commit" ] && [ -z "\$tem_create" ]; then}
+
+# Fail-open perdido: o hook passa a sair 1 quando não há achado. TODAS as asserções olhavam só
+# o stdout, então esta família inteira sobrevivia antes do caso 16 registrar a saída não-zero.
+PEGA      | sem achados o hook sai 1 (fail-closed) | s{^\[ -n "\$achados" \] \|\| exit 0}{[ -n "\$achados" ] || exit 1}
+
+# Arquivo NOVO em ambas as sessões (o caso de duplicata mais caro): sem base, o fallback
+# `base_c=""` é o que mantém TUDO do diff como candidato. Trocá-lo por `continue` matava só
+# esse caminho — era a lacuna mais grave das que o Codex apontou, fechada pelo caso 7c.
+PEGA      | arquivo ausente da base e IGNORADO    | s{\|\| base_c=""}{|| continue}
+
+
+# Contrato JSON com o host: o aviso só CHEGA se vier em hookSpecificOutput.additionalContext
+# sob hookEventName PreToolUse. Grepar o stdout cru não vê renomeação de chave — fechado ao
+# fazer `_avisa` casar a ESTRUTURA (jq), não o texto.
+PEGA      | evento do JSON deixa de ser PreToolUse | s{hookEventName:"PreToolUse"}{hookEventName:"PostToolUse"}
+PEGA      | additionalContext muda de chave       | s{additionalContext:}{additional_context:}
+
+
+# Opções globais antes do subcomando: o grupo que pula flags é o que faz `git -C dir commit` e
+# `gh --repo x/y pr create` dispararem. Perdê-lo cala o guard em SILÊNCIO. `\Q..\E` cita o
+# regex literal (ele é cheio de metacaracteres) — fechado pelo caso 7d.
+PEGA      | git perde as opcoes globais           | s{\Qgit([[:space:]]+-{1,2}[^[:space:]]+([[:space:]]+[^-][^[:space:]]*)?)*[[:space:]]+commit\E}{git[[:space:]]+commit}
+PEGA      | gh perde as opcoes globais            | s{\Qgh([[:space:]]+-{1,2}[^[:space:]]+([[:space:]]+[^-][^[:space:]]*)?)*[[:space:]]+pr\E}{gh[[:space:]]+pr}
+
+# Doc é superfície de duplicata por MEDIÇÃO (a ocorrência 2 das 3 reais era follow-up de doc):
+# acrescentar *.md aos ignorados contradiz o cabeçalho — fechado pelo caso 7e.
+PEGA      | Markdown passa a ser ignorado         | s{\*\.svg \|}{*.svg | *.md |}
+
+
+# Ref e merge-base: o stub aceitava qualquer argumento, então estas três eram invisíveis.
+# Fechadas tornando o stub sensível a `origin/main` e à presença de `MB` nos diffs.
+PEGA      | merge-base usa a ref errada           | s{^(mb=.*)origin/main}{$1origin/master}
+PEGA      | diff de nomes perde a merge-base      | s{--name-only "\$mb" \$alvo}{--name-only \$alvo}
+PEGA      | diff de conteudo perde a merge-base   | s{git diff "\$mb" \$alvo -- "\$f"}{git diff \$alvo -- "\$f"}
+
+# TTL do dedupe: sem ele o silêncio vira PERMANENTE naquela branch — fechado pelo caso 12b.
+PEGA      | silencio do dedupe nunca expira       | s{^    if \[ -f "\$marca" \] && \[ -z "\$\(find.*}{    if [ -f "\$marca" ]; then}
+
+
+# ─── COBERTURA ───────────────────────────────────────────────────────────────────────────────
+# As 7 lacunas que a 2ª opinião adversária (Codex, 2026-08-19) apontou foram TODAS fechadas —
+# cada uma virou caso + mutação acima, e cada mutação foi medida PEGA. Duas exigiram tornar o
+# stub sensível a ref/merge-base: enquanto ele aceitava qualquer argumento, as mutações eram
+# invisíveis, e "invisível ao stub" lia-se como "coberto".
