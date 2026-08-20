@@ -41,6 +41,8 @@ let duasGeracoes = false;
 
 const chamadasBulk: Array<{ de: number; ate: number }> = [];
 const ordenacoesBulk: string[] = [];
+/** Args da RPC que persiste os bundles — é por ela que o head (completude) é movido. */
+const argsSubstituir: Array<Record<string, unknown>> = [];
 
 const PEDIDOS = [
   { customer_user_id: 'c9', items: [{ product_id: 'P1' }, { product_id: 'P2' }, { product_id: 'P3' }], total: 300, created_at: '2026-07-01T00:00:00Z' },
@@ -99,7 +101,11 @@ function chain(table: string): unknown {
 vi.mock('@/integrations/supabase/client', () => ({
   supabase: {
     from: (t: string) => chain(t),
-    rpc: (nome: string) => {
+    rpc: (nome: string, args?: Record<string, unknown>) => {
+      if (nome === 'farmer_bundle_recomendacoes_substituir') {
+        argsSubstituir.push(args ?? {});
+        return Promise.resolve({ data: null, error: null });
+      }
       if (nome === 'get_skus_margem_positiva') {
         const c: Record<string, unknown> = {
           order: () => c, range: () => c,
@@ -153,6 +159,7 @@ beforeEach(() => {
   duasGeracoes = false;
   chamadasBulk.length = 0;
   ordenacoesBulk.length = 0;
+  argsSubstituir.length = 0;
   vi.clearAllMocks();
 });
 
@@ -235,6 +242,38 @@ describe('useBundleEngine — o melhor individual em UMA leitura, com os três e
     await calcular();
     const avisos = vi.mocked(toast.warning).mock.calls.map((c) => String(c[0]));
     expect(avisos.some((m) => m.includes('gerações diferentes'))).toBe(false);
+  });
+
+  // ── O insumo do snapshot de completude (a reavaliação que o bulk destravou) ───────────────
+  //
+  // `melhor_individual` era de PROPÓSITO mantido FORA do `InsumosSnapshot`, e o fundamento era
+  // um só: o RUÍDO. `avaliarCompletude` degrada com um único `ok:false`, e com a consulta POR
+  // CLIENTE uma falha isolada carimbaria `degradado` em quase toda execução de carteira grande
+  // — sinal que nunca varia deixa de ser sinal. Com a leitura em BLOCO é 1 leitura e 1 falha
+  // possível por execução: a premissa caiu, e a assimetria de custo (degradar custa uma oferta
+  // velha na tela; `completo` errado custa a carteira da vendedora) passa a mandar declarar.
+  it('a leitura ÍNTEGRA declara o insumo e o head sai `completo`', async () => {
+    // Controle positivo obrigatório: sem ele, "saiu degradado" e "o cenário nunca chega a
+    // gravar" seriam indistinguíveis, e o teste seguinte passaria por vacuidade.
+    await calcular();
+
+    expect(argsSubstituir.length, 'o cenário não chegou a persistir nada').toBeGreaterThan(0);
+    const head = argsSubstituir[0];
+    expect((head.p_insumos as Record<string, unknown>).melhor_individual).toEqual({ ok: true, n: 1 });
+    expect(head.p_completude).toBe('completo');
+  });
+
+  it('a leitura FALHANDO degrada o head — e o motivo NOMEIA o insumo', async () => {
+    // O que isto compra: `completo` é o único rótulo que autoriza a fase 2 a EXPIRAR a carteira.
+    // Com o insumo declarado, uma execução que não conseguiu ler nunca produz essa licença.
+    falhaBulk = 'erro';
+    await calcular();
+
+    expect(argsSubstituir.length, 'o cenário não chegou a persistir nada').toBeGreaterThan(0);
+    const head = argsSubstituir[0];
+    expect((head.p_insumos as Record<string, unknown>).melhor_individual).toEqual({ ok: false, n: 0 });
+    expect(head.p_completude).toBe('degradado');
+    expect(String(head.p_motivo)).toContain('melhor_individual');
   });
 
   it('"li e não há" continua sendo `nenhum` — a falha não contamina o zero legítimo', async () => {
