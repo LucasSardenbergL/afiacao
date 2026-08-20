@@ -385,7 +385,7 @@ corrigir o de-para **não** conserta pedido já gerado (grupo/itens são congela
 Foi a causa de o incidente durar 7 dias — o de-para foi corrigido em 24/07 00:24 e o retry das
 00:27 falhou idêntico. Hoje resolve-se cancelando; vale frente própria se reincidir.
 
-## A capa de 1.000 do PostgREST na 2ª RPC — `get_carteira_margem_faixa` fabricava faixa `neutro` (PR-PLACEHOLDER)
+## A capa de 1.000 do PostgREST na 2ª RPC — `get_carteira_margem_faixa` fabricava faixa `neutro` (#1801)
 
 Irmão do #1782, achado enquanto se conferia se aquele fix já cobria a tarefa. Mesma classe, outro
 motor, **vivo em produção**: `useFarmerScoring` chamava `get_carteira_margem_faixa()` crua. A RPC
