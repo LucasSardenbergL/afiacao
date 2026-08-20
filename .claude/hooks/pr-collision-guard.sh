@@ -46,10 +46,18 @@ else
 fi
 [ -n "$scan" ] || scan="$cmd"
 modo=""
-if printf '%s' "$scan" | grep -qE '(^|[^[:alnum:]_./-])gh([[:space:]]+-{1,2}[^[:space:]]+([[:space:]]+[^-][^[:space:]]*)?)*[[:space:]]+pr[[:space:]]+create([[:space:]]|$)'; then
-  modo="create"
-elif printf '%s' "$scan" | grep -qE '(^|[^[:alnum:]_./-])git([[:space:]]+-{1,2}[^[:space:]]+([[:space:]]+[^-][^[:space:]]*)?)*[[:space:]]+commit([[:space:]]|$)'; then
+# Encadeado (`git commit -am x && gh pr create ...`) casava como `create` pela ORDEM do if/elif —
+# mas quem EXECUTA primeiro é o commit, e ali o `mb..HEAD` ainda está vazio (o #1764 tinha 1
+# commit só) ⇒ o guard calava justamente no cenário que o gatilho 2 existe para cobrir. O alvo do
+# commit é SUPERCONJUNTO do alvo do create, então o commit vence quando os dois aparecem.
+# (achado da 2ª opinião adversária — Codex, 2026-08-19)
+tem_create=""; tem_commit=""
+printf '%s' "$scan" | grep -qE '(^|[^[:alnum:]_./-])gh([[:space:]]+-{1,2}[^[:space:]]+([[:space:]]+[^-][^[:space:]]*)?)*[[:space:]]+pr[[:space:]]+create([[:space:]]|$)' && tem_create=1
+printf '%s' "$scan" | grep -qE '(^|[^[:alnum:]_./-])git([[:space:]]+-{1,2}[^[:space:]]+([[:space:]]+[^-][^[:space:]]*)?)*[[:space:]]+commit([[:space:]]|$)' && tem_commit=1
+if [ -n "$tem_commit" ]; then
   modo="commit"
+elif [ -n "$tem_create" ]; then
+  modo="create"
 fi
 [ -n "$modo" ] || exit 0
 
@@ -121,8 +129,9 @@ fi
 
 # Anti-alarm-fatigue (só no commit): avisa 1x por (branch, conjunto colidente). Commit é
 # frequente — repetir o MESMO aviso cega o leitor. Colisão nova = assinatura nova = avisa.
-# O `gh pr create` é o último portão e NUNCA é silenciado por este cache.
-if [ "$modo" = "commit" ]; then
+# O `gh pr create` é o último portão e NUNCA é silenciado por este cache — inclusive
+# quando vem ENCADEADO com o commit (`$tem_create`), caso em que o modo é `commit`.
+if [ "$modo" = "commit" ] && [ -z "$tem_create" ]; then
   cache_dir="${PRCG_CACHE_DIR:-${TMPDIR:-/tmp}/prcg-$(id -u 2>/dev/null || echo 0)}"
   mkdir -p "$cache_dir" 2>/dev/null || true
   assin="$(printf '%s\n%s' "$(git branch --show-current 2>/dev/null)" "$avisos" \

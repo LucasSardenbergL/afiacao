@@ -73,6 +73,11 @@ _hook() {
   json="$(jq -n --arg c "$cmd" '{tool_name:"Bash",tool_input:{command:$c}}')"
   # shellcheck disable=SC2086  # envs é lista KEY=VAL controlada (valores sem espaço) — split intencional
   printf '%s' "$json" | env $envs bash "$HOOK" 2>/dev/null
+  # fail-open TOTAL: o hook DEVE sair 0 sempre. As asserções olham só o stdout, então trocar
+  # um `exit 0` por `exit 1` sobrevivia a todas (achado do Codex, 2026-08-19). Subshell não
+  # propaga variável: registro por ARQUIVO, conferido no fim.
+  _rc=$?
+  [ "$_rc" -eq 0 ] || printf 'rc=%s cmd=%s\n' "$_rc" "$cmd" >> "$stub/exit-nao-zero.log"
 }
 
 # expect_warn <nome> <envs> <cmd> <token1> [token2] — allow + additionalContext com os tokens (ASCII, caixa fixa)
@@ -184,6 +189,26 @@ expect_warn "commit: colisao NOVA fura o dedupe" \
 expect_warn "create NAO herda o silencio do commit (mesmo conjunto)" \
   "$C $M GIT_STUB_GAINED_FILE=$stub/gained_hit.txt GH_STUB_FILE=$stub/prs_miss.json" \
   'gh pr create --fill' 'origin/main' 'src/lib/quente.ts'
+
+echo "── ENCADEADO: git commit + gh pr create é modo COMMIT (lê o índice) ──"
+# A ordem do if/elif casava `create` primeiro, mas quem EXECUTA antes é o commit — e ali o
+# 3-pontos está vazio no 1o commit (#1764), então o guard calava. Fixture DISCRIMINANTE: o
+# 3-pontos (MINE) vazio e o staged colidente — se o modo virar `create`, lê MINE vazio e cala.
+ENC="PRCG_CACHE_DIR=$stub/cache_enc GIT_STUB_MINE_FILE=/dev/null"
+ENC="$ENC GIT_STUB_STAGED_FILE=$stub/staged_hit.txt GIT_STUB_GAINED_FILE=$stub/gained_hit.txt"
+ENC="$ENC GH_STUB_FILE=$stub/prs_miss.json"
+expect_warn "encadeado le o indice (nao o 3-pontos vazio)" "$ENC" \
+  'git commit -am "wip" && gh pr create --fill' 'origin/main' 'src/lib/quente.ts'
+# o ultimo portao vale tambem no encadeado: repetir NAO pode calar (o comando contem create).
+expect_warn "encadeado nao e silenciado pelo dedupe (contem create)" "$ENC" \
+  'git commit -am "wip" && gh pr create --fill' 'origin/main' 'src/lib/quente.ts'
+
+echo "── fail-open TOTAL: o hook nunca sai não-zero ──"
+if [ -s "$stub/exit-nao-zero.log" ]; then
+  echo "  FAIL  hook saiu não-zero: $(head -1 "$stub/exit-nao-zero.log")"; fail=1
+else
+  echo "  ok    todas as chamadas saíram 0 (fail-open preservado)"
+fi
 
 echo
 if [ "$fail" -eq 0 ]; then echo "PASS — todos os casos"; else echo "FALHOU"; fi
