@@ -287,6 +287,23 @@ motor cujo denominador é **zero** — o `ausente=zero` promovido a veredito. **
 mais de uma superfície, o denominador é por superfície**; e superfícies que se exercem de formas
 diferentes (automático vs. manual) nunca compartilham denominador, mesmo medindo a mesma coisa.
 
+⚠️ **E o `AGUARDE` que nunca vira nada — porque falta USO, não sensor.** O gatilho exigia 20
+execuções julgáveis. Medido em 20/08: **3 farmers têm carteira, 1 executou alguma vez, e as últimas
+24h tiveram ZERO execuções** — as 10 de 19/08 saíram todas num intervalo de 1h04, que é sessão de
+teste, não rotina. Nesse ritmo o 20 não chega nunca, e o veredito repetiria "aguarde" para sempre.
+
+Este é o topo da escada que este documento sobe: primeiro faltava o sensor, depois o sensor não
+media a pergunta, depois o agregado escondia o motor zerado — e no fim **o que falta não é medição,
+é a superfície ser usada**. Um `AGUARDE` sem taxa não distingue "crescendo devagar" de "parado", e a
+diferença decide a ação: no primeiro caso espera-se, no segundo **a fase seguinte é instalar o uso**.
+Correção: `taxa_7d` e `farmers_com_carteira` saem na própria linha, e o ramo `ESTAGNADO` nomeia o
+denominador que não cresce. Falsificado com 5 execuções há 30 dias (`ESTAGNADO`) contra 5 há 2 dias
+(`AGUARDE`).
+
+**A regra:** todo veredito de espera tem de carregar a taxa que o justifica. Sem ela, "aguarde" não
+é uma decisão — é o silêncio com cara de decisão.
+
+
 
 ### Onde a regra NÃO se aplica
 
