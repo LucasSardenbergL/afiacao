@@ -44,73 +44,89 @@ function abreRegex(anterior: string): boolean {
 // compara POSIÇÃO (`indexOf` de A antes de B) continuam medindo a mesma coisa.
 //
 export function removerComentarios(fonte: string): string {
-  let saida = '';
-  let i = 0;
-  const n = fonte.length;
+  const partes: string[] = [];
+  // CAUDA em vez do texto todo: `abreRegex` precisa do último caractere significativo, e olhar a
+  // saída acumulada a cada `/` fazia o stripper ser O(n²) — 27× mais lento que a regex que ele
+  // substitui, o bastante para estourar o timeout de 20s do vitest em gate que varre 2.390 fontes.
+  let cauda = '\n';
+  const empurrar = (t: string) => {
+    if (t === '') return;
+    partes.push(t);
+    cauda = (cauda + t).slice(-16);
+  };
 
+  let i = 0;
+  let inicioTrecho = 0;
+  const n = fonte.length;
   const preservaLinhas = (trecho: string) => trecho.replace(/[^\n]/g, '');
 
   while (i < n) {
     const c = fonte[i];
+    if (c !== '/' && c !== '"' && c !== "'" && c !== '`') {
+      i++;
+      continue;
+    }
+    empurrar(fonte.slice(inicioTrecho, i));
+
     const prox = fonte[i + 1];
 
-    // ── comentário de linha ────────────────────────────────────────────────────────────
     if (c === '/' && prox === '/') {
       while (i < n && fonte[i] !== '\n') i++;
+      inicioTrecho = i;
       continue;
     }
 
-    // ── comentário de bloco ────────────────────────────────────────────────────────────
     if (c === '/' && prox === '*') {
       const fim = fonte.indexOf('*/', i + 2);
       const ate = fim === -1 ? n : fim + 2;
-      saida += preservaLinhas(fonte.slice(i, ate));
+      empurrar(preservaLinhas(fonte.slice(i, ate)));
       i = ate;
+      inicioTrecho = i;
       continue;
     }
 
-    // ── string de aspas simples/duplas (aborta na quebra de linha) ──────────────────────
     if (c === '"' || c === "'") {
       const fecha = fimDeString(fonte, i);
       if (fecha !== -1) {
-        saida += fonte.slice(i, fecha + 1);
+        empurrar(fonte.slice(i, fecha + 1));
         i = fecha + 1;
+        inicioTrecho = i;
         continue;
       }
       // Não fechou na mesma linha: não era string (texto JSX, apóstrofo de prosa). Segue como
       // código — o caractere sai verbatim e o resto da linha é reavaliado normalmente.
-      saida += c;
+      empurrar(c);
       i++;
+      inicioTrecho = i;
       continue;
     }
 
-    // ── template literal (com `${…}` aninhado) ─────────────────────────────────────────
     if (c === '`') {
       const fecha = fimDeTemplate(fonte, i);
       const ate = fecha === -1 ? n : fecha + 1;
-      saida += fonte.slice(i, ate);
+      empurrar(fonte.slice(i, ate));
       i = ate;
+      inicioTrecho = i;
       continue;
     }
 
-    // ── regex literal (aborta na quebra de linha) ──────────────────────────────────────
-    if (c === '/' && abreRegex(saida)) {
+    if (abreRegex(cauda)) {
       const fecha = fimDeRegex(fonte, i);
       if (fecha !== -1) {
-        saida += fonte.slice(i, fecha + 1);
+        empurrar(fonte.slice(i, fecha + 1));
         i = fecha + 1;
+        inicioTrecho = i;
         continue;
       }
-      saida += c;
-      i++;
-      continue;
     }
 
-    saida += c;
+    empurrar(c);
     i++;
+    inicioTrecho = i;
   }
 
-  return saida;
+  empurrar(fonte.slice(inicioTrecho, n));
+  return partes.join('');
 }
 
 // Índice da aspa de fechamento, ou -1 se a linha acabar antes (⇒ não era string).
