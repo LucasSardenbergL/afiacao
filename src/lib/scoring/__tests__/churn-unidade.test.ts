@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { removerComentarios } from '@/lib/gates/limpeza-fonte';
 
 // Guard de REGRESSÃO textual sobre a UNIDADE de `farmer_client_scores.churn_risk`.
 //
@@ -31,11 +32,9 @@ const CONSUMIDORES = [
 /** Remove comentários antes de casar: um `* 100` citado em comentário que explica o bug
  *  produziria falso-vermelho. Mesma lição do #1488 — assert sobre texto mede prosa se não
  *  normalizar antes. */
-function semComentarios(fonte: string): string {
-  return fonte
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
-}
+// O stripper é COMPARTILHADO (`@/lib/gates/limpeza-fonte`) e entende string/template/regex:
+// a cópia local aqui limpava bloco com regex, e um `/*` dentro de string pareava com o `*/`
+// seguinte apagando o miolo do arquivo ANTES de o fiscal olhar (classe medida em 2026-08-20).
 
 /** Casa a coluna de churn multiplicada por 100 — a conversão fração→percentual de um valor que
  *  JÁ é percentual.
@@ -49,7 +48,7 @@ const MULTIPLICACAO = /(?:churn_risk|churnRisk)\s*(?:\?\?\s*[\d.]+\s*)?\)?\s*\*\
 
 describe('consumidores de churn_risk não tratam a coluna como fração', () => {
   it.each(CONSUMIDORES)('%s não multiplica churn_risk por 100', (relativo) => {
-    const fonte = semComentarios(readFileSync(resolve(RAIZ, relativo), 'utf8'));
+    const fonte = removerComentarios(readFileSync(resolve(RAIZ, relativo), 'utf8'));
     const ofensoras = fonte
       .split('\n')
       .map((linha, i) => ({ linha: linha.trim(), n: i + 1 }))
@@ -87,7 +86,7 @@ describe('o guard textual tem dente', () => {
   });
 
   it('ignora multiplicação citada em comentário (senão o próprio aviso vira vermelho)', () => {
-    const fonte = semComentarios('// nunca faça churn_risk * 100 aqui\nconst x = 1;');
+    const fonte = removerComentarios('// nunca faça churn_risk * 100 aqui\nconst x = 1;');
     expect(MULTIPLICACAO.test(fonte)).toBe(false);
   });
 });

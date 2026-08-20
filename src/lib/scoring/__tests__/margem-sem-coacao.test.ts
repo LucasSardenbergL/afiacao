@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { removerComentarios } from '@/lib/gates/limpeza-fonte';
 
 // Guard de REGRESSÃO textual sobre os consumidores de margem que não têm teste unitário
 // próprio (hooks com query no meio do caminho, componentes de KPI).
@@ -33,11 +34,9 @@ const CONSUMIDORES = [
 /** Remove comentários antes de casar: um `|| 0` citado em comentário explicando o bug
  *  produziria falso-vermelho, e o inverso (código escondido em comentário) não existe.
  *  Mesma lição do #1488 — assert sobre texto mede prosa se não normalizar antes. */
-function semComentarios(fonte: string): string {
-  return fonte
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
-}
+// O stripper é COMPARTILHADO (`@/lib/gates/limpeza-fonte`) e entende string/template/regex:
+// a cópia local aqui limpava bloco com regex, e um `/*` dentro de string pareava com o `*/`
+// seguinte apagando o miolo do arquivo ANTES de o fiscal olhar (classe medida em 2026-08-20).
 
 /** Casa coação aplicada à margem PERCENTUAL do cliente — e SÓ a ela.
  *
@@ -58,7 +57,7 @@ const COACAO = new RegExp(`(?:${CAMPOS.join('|')})\\s*(?:\\|\\||\\?\\?)\\s*0`);
 
 describe('consumidores de margem não coagem ausência para zero', () => {
   it.each(CONSUMIDORES)('%s não contém `margem || 0` nem `margem ?? 0`', (relativo) => {
-    const fonte = semComentarios(readFileSync(resolve(RAIZ, relativo), 'utf8'));
+    const fonte = removerComentarios(readFileSync(resolve(RAIZ, relativo), 'utf8'));
     const linhas = fonte.split('\n');
     const ofensoras = linhas
       .map((linha, i) => ({ linha: linha.trim(), n: i + 1 }))
@@ -91,7 +90,7 @@ describe('o guard textual tem dente', () => {
   });
 
   it('ignora coação citada em comentário (senão o próprio aviso vira vermelho)', () => {
-    const fonte = semComentarios('// evite gross_margin_pct || 0 aqui\nconst x = 1;');
+    const fonte = removerComentarios('// evite gross_margin_pct || 0 aqui\nconst x = 1;');
     expect(COACAO.test(fonte)).toBe(false);
   });
 });
@@ -112,7 +111,7 @@ describe('consumidores de margem paginam a base inteira', () => {
   ] as const;
 
   it.each(PAGINADOS)('%s usa fetchAllPages — %s', (relativo) => {
-    const fonte = semComentarios(readFileSync(resolve(RAIZ, relativo), 'utf8'));
+    const fonte = removerComentarios(readFileSync(resolve(RAIZ, relativo), 'utf8'));
     expect(
       fonte.includes('fetchAllPages'),
       `${relativo} deixou de paginar. Consulta a farmer_client_scores sem fetchAllPages ` +

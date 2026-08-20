@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
+import { removerComentarios } from '@/lib/gates/limpeza-fonte';
 
 // Gate estrutural da classe "[object Object]" no tratamento de erro.
 //
@@ -63,13 +64,9 @@ function listarFontes(dir: string, acc: string[] = []): string[] {
 // idiom citado em prosa em useTacticalPlan.ts (linhas 670/742) para explicar o que foi
 // consertado, e a primeira varredura desta classe acusou essas duas linhas. O fiscal não
 // pode medir a explicação do bug (mesma lição de #1472/#1488 e do gate irmão).
-function semComentarios(s: string): string {
-  return s
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .split('\n')
-    .filter((l) => !/^\s*\/\//.test(l))
-    .join('\n');
-}
+// O stripper é COMPARTILHADO (`@/lib/gates/limpeza-fonte`) e entende string/template/regex:
+// a cópia local aqui limpava bloco com regex, e um `/*` dentro de string pareava com o `*/`
+// seguinte apagando o miolo do arquivo ANTES de o fiscal olhar (classe medida em 2026-08-20).
 
 // ── A: ternário cujo ramo "não é Error" cai em String() ───────────────────────────────
 // Casa as duas formas que produzem "[object Object]": `? x.message : String(x)` e o
@@ -88,7 +85,7 @@ const C = /(?<![.\w$])String\s*\(\s*(err|error|erro)\s*\)/g;
 const B = /instanceof\s+Error\s*\?\s*[\w$.]+\.message\s*:\s*['"`]/g;
 
 function contar(re: RegExp, fonte: string): number {
-  return [...semComentarios(fonte).matchAll(re)].length;
+  return [...removerComentarios(fonte).matchAll(re)].length;
 }
 
 function contarPorArquivo(re: RegExp): Map<string, number> {
@@ -152,7 +149,11 @@ const A_DIVIDA: ReadonlyMap<string, number> = new Map([
   ['supabase/functions/process-nfe/index.ts', 7],
   ['supabase/functions/promocao-extrair-via-vision/index.ts', 2],
   ['supabase/functions/reposicao-depara-sayerlack-auto/index.ts', 1],
-  ['supabase/functions/sayerlack-captura-precos/index.ts', 1],
+  // 1→3 é REVELAÇÃO, não reintrodução (2026-08-20): o stripper regex desta suíte apagava
+  // 1.041 das 1.226 linhas deste arquivo — o `/*` do `*/*` no header Accept pareava com o
+  // primeiro `*/` real e o fiscal media 15% do arquivo. Com `@/lib/gates/limpeza-fonte` os
+  // sítios das linhas 737 e 986 apareceram; nasceram com o arquivo, ninguém os reintroduziu.
+  ['supabase/functions/sayerlack-captura-precos/index.ts', 3],
   ['supabase/functions/scoring-recalc-batch/index.ts', 1],
   ['supabase/functions/scoring-recalc-client/index.ts', 1],
   ['supabase/functions/sync-reprocess/index.ts', 3],
@@ -189,6 +190,9 @@ const C_DIVIDA: ReadonlyMap<string, number> = new Map([
   ['supabase/functions/omie-webhook/index.ts', 2],
   ['supabase/functions/process-recurring-orders/index.ts', 1],
   ['supabase/functions/promocao-extrair-via-vision/index.ts', 3],
+  // Entrada NOVA por REVELAÇÃO (2026-08-20), não por regressão: o `String(err)` cru da linha
+  // 659 estava dentro da região que o stripper regex apagava antes de o fiscal olhar.
+  ['supabase/functions/sayerlack-captura-precos/index.ts', 1],
   ['supabase/functions/scoring-recalc-batch/index.ts', 1],
   ['supabase/functions/scoring-recalc-client/index.ts', 1],
   ['supabase/functions/sync-reprocess/index.ts', 3],
