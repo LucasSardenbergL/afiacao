@@ -1,5 +1,63 @@
 # Setup do agente — diário de entregas
 
+## 2026-08-19 — Vigia do claude-mem: a mitigação não pode usar a classe que causou o incidente (fora do repo)
+
+**O incidente:** `fork failed: resource temporarily unavailable` em **qualquer** comando na M2 8GB —
+a máquina sem tabela de processos. Causa dupla: um loop de recycle por mismatch de versão do plugin
+`claude-mem@thedotmack` (cache 13.10.2 × marketplace 13.15.x) somado a **dois hooks que disparam por
+AÇÃO**, cada um spawnando login shell + node + bun (~5-8 processos por disparo): `PostToolUse` com
+matcher `*` (a cada tool call) e `PreToolUse` com matcher `Read` (a cada leitura de arquivo). Saldo:
+**124 processos `chroma-mcp` órfãos com PPID=1**. Fix imediato: plugin em 13.15.3, órfãos mortos, os
+dois hooks removidos do `hooks.json` do cache — ficam ativos os 4 baratos (`Setup`, `SessionStart`,
+`UserPromptSubmit`, `Stop`).
+
+**A pendência que sobrou:** qualquer `claude plugin update claude-mem@thedotmack` **reescreve o
+`hooks.json` e traz os dois de volta em silêncio**. Existia um `~/.claude/reaplicar-desarme-claude-mem.sh`
+idempotente e testado — mas rodá-lo dependia do founder **lembrar**. Memória não é controle: uma
+pendência cuja única barreira é alguém se recordar já está aberta.
+
+**A entrega:** `~/.claude/hooks/claude-mem-vigia-hooks.sh` — hook `SessionStart` com matcher
+`startup` (**1 execução por sessão nova**, timeout 10s), registrado no `~/.claude/settings.json` ao
+lado do `concurrent-session-guard` e do `auto-ensino-trigger`.
+
+- **Vale para versão futura:** resolve a mais recente do cache por glob (`"$BASE"/[0-9]*/` +
+  `sort -V | tail -1`) — sem `ls | grep` (SC2010; a mesma correção foi aplicada ao script de
+  reaplicação, que tinha a linha original).
+- **Detecção por CHAVE, não por substring:** `jq '.hooks | keys'`; fallback sem `jq` casa a linha de
+  chave ancorada (`^\s*"PostToolUse"\s*:`), então uma menção dentro de um `command` não dispara.
+- **Desarmado → silencioso** (0 bytes, nada no contexto). **Rearmado →** roda o reaplicar e injeta
+  `additionalContext` com o que voltou, o que foi removido e a ordem de avisar o founder.
+- **Kill-switch:** `~/.claude/.claude-mem-permitir-hooks-caros` desliga o vigia — se um dia os hooks
+  caros forem desejados de volta, o automático não briga com a decisão.
+
+**Custo:** caminho comum **10–40ms** e saída vazia (não atrasa o startup); o `node` só aparece no
+caminho raro do rearme (1,4s).
+
+**Evidência — os 5 testes rodados, não deduzidos:**
+
+| teste | resultado |
+|---|---|
+| já desarmado | 0 bytes, exit 0, 10–40ms |
+| rearme real (`hooks.json.bak-original` por cima) | detectou os 2, reaplicou, voltou aos 4, JSON de saída válido |
+| kill-switch ligado **com o arquivo rearmado** | silencioso e **6 chaves intactas** — é o que prova que o teste acima não era falso verde |
+| versão futura forjada (`13.20.0`) **sem `jq` no PATH** | resolveu a versão nova e o fallback `grep` detectou e corrigiu |
+| `"PostToolUse"` só como texto dentro de um `command` | silencioso com e sem `jq` — sem falso positivo |
+
+**As duas lições:**
+
+1. **A mitigação não pode usar a classe que causou o incidente.** O reflexo para "detectar que um
+   arquivo mudou" é um hook `PostToolUse`/`PreToolUse` — exatamente o padrão que esgotou o fork.
+   Verificação de estado que muda por *evento externo raro* (um `plugin update`) pertence ao
+   **início da sessão**, não a cada ação. A régua: *quantas vezes isso roda por sessão?* Se a
+   resposta é "uma por tool call", o custo é o produto, não a parcela.
+2. **Detecção tardia ≠ prevenção, e o vigia é honesto sobre isso.** Quando o hook roda, a config de
+   hooks do plugin **já foi carregada** — o desarme só vale a partir do próximo restart. O ganho não
+   é zero exposição, é **uma sessão em vez de todas as seguintes**; por isso a mensagem manda avisar
+   o founder para reiniciar, em vez de declarar o problema resolvido.
+
+**Escopo:** tudo em `~/.claude/` (config pessoal) — nada deste item vive no repo. Continuação natural
+do **C6** da entrada de 2026-07-06 abaixo.
+
 ## 2026-07-18 — `pr-watch.sh`: exit 6 separa "não consegui consultar" de "sem desfecho"
 
 **Falso negativo real (#1396, 2026-07-17):** o watcher saiu **5 (TIMEOUT)** num PR que tinha **MERGEADO** normalmente (auto-merge squash, `validate` verde em 5m16s). Causa: `exit 5` era emitido por DOIS caminhos — a consulta bem-sucedida sem desfecho *e* a consulta que falhou (ramo de erro do `gh pr view`) —, indistinguíveis pelo exit code. Um agente que confiasse no código reportaria "não mergeou" ao founder: exatamente o furo de rastreio que o script existe pra fechar ("PR órfão descoberto dias depois", C5 abaixo).
