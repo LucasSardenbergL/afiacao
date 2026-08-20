@@ -36,6 +36,8 @@ const PAGINA = 1000;
 let falhaBulk: 'nao' | 'erro' | 'rejeita' = 'nao';
 /** `true` = o melhor individual de `c8` cai na 2ª página (o defeito que o cap causaria). */
 let c8NaCauda = false;
+/** `true` = a tabela tem DUAS gerações pendentes vivas ao mesmo tempo. */
+let duasGeracoes = false;
 
 const chamadasBulk: Array<{ de: number; ate: number }> = [];
 const ordenacoesBulk: string[] = [];
@@ -69,15 +71,17 @@ function dadosDa(tabela: string): unknown[] {
   }
 }
 
-const linhaBulk = (cid: string, pid: string) => ({
+const linhaBulk = (cid: string, pid: string, run = 'run-unico') => ({
   customer_user_id: cid, product_id: pid, affinity_score: 0.42,
-  recommendation_type: 'cross_sell', run_id: 'run-unico',
+  recommendation_type: 'cross_sell', run_id: run,
 });
 /** Ruído de clientes que não estão na carteira — só serve para empurrar `c8` para a 2ª página. */
 const RUIDO = Array.from({ length: PAGINA }, (_, i) => linhaBulk(`ruido-${i}`, 'P4'));
 
 function linhasBulk(): Array<Record<string, unknown>> {
-  const uteis = [linhaBulk('c8', 'P4')];
+  const uteis = duasGeracoes
+    ? [linhaBulk('c8', 'P4', 'run-A'), linhaBulk('c9', 'P2', 'run-B')]
+    : [linhaBulk('c8', 'P4')];
   return c8NaCauda ? [...RUIDO, ...uteis] : uteis;
 }
 
@@ -134,6 +138,7 @@ vi.mock('@/contexts/AuthContext', () => ({ useAuth: () => ({ user: { id: FARMER 
 vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn(), warning: vi.fn() } }));
 vi.mock('@/lib/analytics', () => ({ captureException: vi.fn(), track: vi.fn() }));
 
+import { toast } from 'sonner';
 import { useBundleEngine } from '../useBundleEngine';
 
 async function calcular() {
@@ -145,6 +150,7 @@ async function calcular() {
 beforeEach(() => {
   falhaBulk = 'nao';
   c8NaCauda = false;
+  duasGeracoes = false;
   chamadasBulk.length = 0;
   ordenacoesBulk.length = 0;
   vi.clearAllMocks();
@@ -209,6 +215,27 @@ describe('useBundleEngine — o melhor individual em UMA leitura, com os três e
       expect(c7?.bestIndividual.status).toBe('indisponivel');
     },
   );
+
+  it('duas gerações vivas viram AVISO — o `run_id` existe para isso', async () => {
+    // O bulk cura a incoerência da LEITURA (um SELECT é um snapshot só), não a do DADO: duas
+    // gerações pendentes ao mesmo tempo fazem o melhor individual de um cliente vir de um
+    // cálculo e o do vizinho de outro. Antes isso era INDETECTÁVEL daqui — o `.select()` nem
+    // pedia `run_id`. Canário, não fail-closed: quem responde pela unicidade da geração é a
+    // RPC de substituição do cross-sell, e mover a decisão para cá poria o gate longe da causa.
+    duasGeracoes = true;
+    await calcular();
+
+    const avisos = vi.mocked(toast.warning).mock.calls.map((c) => String(c[0]));
+    expect(avisos.some((m) => m.includes('gerações diferentes'))).toBe(true);
+  });
+
+  it('CONTRAPROVA: com UMA geração o aviso não aparece (senão seria ruído constante)', async () => {
+    // Sem esta, um `toast.warning` disparado sempre passaria no teste acima e o canário seria
+    // indistinguível de um alarme quebrado — o "rótulo com DEFAULT constante não é fato".
+    await calcular();
+    const avisos = vi.mocked(toast.warning).mock.calls.map((c) => String(c[0]));
+    expect(avisos.some((m) => m.includes('gerações diferentes'))).toBe(false);
+  });
 
   it('"li e não há" continua sendo `nenhum` — a falha não contamina o zero legítimo', async () => {
     // A contraprova do caso acima: sem falha, `c7` (que de fato não tem recomendação pendente)
