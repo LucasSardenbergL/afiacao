@@ -7,7 +7,7 @@
 // (`{"probe":true}`), que responde antes de qualquer IO. Ver versao.ts.
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
-import { classificarPosLogin, decidirAlertaPortal } from "../_shared/sayerlack-pos-login.ts";
+import { classificarPosLogin, decidirAlertaPortal, ehFalhaSistemicaDoPortal } from "../_shared/sayerlack-pos-login.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -406,6 +406,9 @@ export default async ({ page, context }) => {
           erro: data.erro || null,
           successText: data.successText || null,
           loginCheckResult: data.loginCheckResult || null,
+          // Sem isto não dá para MEDIR falso positivo da classificação depois do deploy
+          // (Codex challenge, item e): o envelope só copia campos selecionados.
+          posLoginCheck: data.posLoginCheck || null,
           trace: data.trace || trace,
         },
         elapsedMs,
@@ -575,8 +578,21 @@ export default async ({ page, context }) => {
     // fornecedor_alerta só disparava para LOGIN_FAILED, ninguém foi avisado da causa
     // real por ~1h (pedido 1939, 3 tentativas). Aqui a ausência de dashboard vira
     // erroTipo NOMEADO, e a classificação é a mesma testada em vitest.
-    // A espera é pelo MESMO sinal que a navegação já exige adiante: no caminho feliz
-    // resolve assim que o menu aparece e não custa nada.
+    //
+    // ⚠️ A EXPANSÃO DA SIDEBAR VEM ANTES DE MEDIR, e é por isso que ela mora aqui em vez
+    // de no bloco de navegação (Codex challenge 2026-08-20, P1): o portal abre com a
+    // sidebar minificada, e medir os itens de menu antes de expandir mediria o efeito da
+    // interação que ainda não aconteceu — um dashboard legítimo viraria
+    // POS_LOGIN_NAO_DASHBOARD e travaria pedido bom. "É o mesmo sinal que a navegação já
+    // exigia" só vale se a ORDEM da interação for a mesma; ela não era.
+    await page.evaluate(() => {
+      const app = document.querySelector('#app');
+      if (app && app.classList.contains('app-sidebar-minified')) {
+        const minifyBtn = document.querySelector('.app-sidebar-minify-btn');
+        if (minifyBtn) minifyBtn.click();
+      }
+    });
+
     await page.waitForFunction(
       () => document.querySelectorAll('#sidebar .menu-link, .app-sidebar .menu-link').length > 0,
       { timeout: budgetFor('pos-login-dashboard', 15_000), polling: 250 }
@@ -641,24 +657,10 @@ export default async ({ page, context }) => {
       console.log('[DEBUG_NAV] URL inesperada após login:', urlAposLogin);
     }
 
-    // Garante sidebar expandida (portal tem botão minify que recolhe sidebar por padrão)
-    await page.evaluate(() => {
-      const app = document.querySelector('#app');
-      if (app && app.classList.contains('app-sidebar-minified')) {
-        const minifyBtn = document.querySelector('.app-sidebar-minify-btn');
-        if (minifyBtn) minifyBtn.click();
-      }
-    });
+    // Sidebar já foi expandida e confirmada na checagem pós-login acima (uma etapa só:
+    // expandir → esperar o sinal → classificar). O segundo par expandir+esperar que morava
+    // aqui era redundante e gastava o MESMO deadline global (Codex challenge, item d).
     await sleep(800);
-
-    // Aguarda sidebar com itens estar disponível (DOM completo, não só aparente)
-    await page.waitForFunction(
-      () => {
-        const sidebarLinks = document.querySelectorAll('#sidebar .menu-link, .app-sidebar .menu-link');
-        return sidebarLinks.length > 0;
-      },
-      { timeout: budgetFor('sidebar-links', 15_000) }
-    ).catch(() => null);
 
     // Click em "Vendas" para expandir submenu
     const expandiu_vendas = await page.evaluate(() => {
@@ -1509,6 +1511,8 @@ interface ProcessResult {
   erro: string | null;
   screenshot_url: string | null;
   duracao_ms: number;
+  // erroTipo do envelope — o lote usa para o circuit breaker de falha sistêmica.
+  erro_tipo?: string | null;
 }
 
 interface PostgrestErrorLike {
@@ -2147,7 +2151,11 @@ async function processarPedido(
     const erroTipo: string = evidence?.erroTipo ?? "UNKNOWN";
     const erroMsg: string = evidence?.erro ?? "Falha logica do automador";
     const r = await aplicarTransicao("erro_nao_retentavel", { erro: erroMsg });
-    await alertarFornecedor(supabase, erroTipo, pedido.id, { esgotado: true });
+    r.erro_tipo = erroTipo;
+    await alertarFornecedor(supabase, erroTipo, pedido.id, {
+      esgotado: true,
+      origemDivergente: evidence?.posLoginCheck?.origemDivergente === true,
+    });
     return r;
   }
 
@@ -2161,14 +2169,19 @@ async function processarPedido(
   // possivelmente transitória alerta ao ESGOTAR (antes disso seria ruído que
   // dessensibiliza); `decidirAlertaPortal` decide, e devolve null quando não há o
   // que dizer.
-  await alertarFornecedor(supabase, evidence?.erroTipo ?? null, pedido.id, { esgotado });
-  return await aplicarTransicao(
+  await alertarFornecedor(supabase, evidence?.erroTipo ?? null, pedido.id, {
+    esgotado,
+    origemDivergente: evidence?.posLoginCheck?.origemDivergente === true,
+  });
+  const rFinal = await aplicarTransicao(
     esgotado ? "erro_nao_retentavel" : "erro_retentavel",
     {
       erro: erroMsg,
       proximoRetryEm: esgotado ? null : new Date(Date.now() + 15 * 60 * 1000).toISOString(),
     },
   );
+  rFinal.erro_tipo = evidence?.erroTipo ?? null;
+  return rFinal;
 }
 
 // Insere o `fornecedor_alerta` quando o automador falha de um jeito que exige ação
@@ -2332,6 +2345,18 @@ async function processCandidatos(
         screenshot_url: null,
         duracao_ms: 0,
       });
+    }
+
+    // Circuit breaker: falha de CREDENCIAL é do portal, não do pedido — os que sobraram
+    // bateriam na mesma parede. Sair aqui deixa os demais PENDENTES (nenhum status é
+    // gravado sem tentativa), então eles voltam sozinhos quando a senha for corrigida.
+    const ultimo = detalhes[detalhes.length - 1];
+    if (ultimo && ehFalhaSistemicaDoPortal(ultimo.erro_tipo)) {
+      console.warn(
+        `[envio-portal] lote interrompido apos pedido #${ultimo.pedido_id}: ${ultimo.erro_tipo} ` +
+          `e falha sistemica do portal — ${candidatos.length - detalhes.length} pedido(s) seguem pendentes`,
+      );
+      break;
     }
   }
   return { detalhes, sucesso, falhasDef, falhasTmp, indeterminados };

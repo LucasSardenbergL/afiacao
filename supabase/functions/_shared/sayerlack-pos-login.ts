@@ -43,6 +43,8 @@ export interface ResultadoPosLogin {
   motivo: string;
   /** A URL pós-login saiu da origem do portal configurado (fato objetivo). */
   origemDivergente: boolean;
+  /** Havia menu E sinal forte de troca de senha ao mesmo tempo (menu stale/SPA). */
+  conflitoDeSinais: boolean;
 }
 
 /**
@@ -74,20 +76,27 @@ export function classificarPosLogin(s: SinaisPosLogin): ResultadoPosLogin {
   const origemAlvo = origemDe(s.origemEsperada);
   const origemDivergente = origemAtual !== null && origemAlvo !== null && origemAtual !== origemAlvo;
 
-  // 1. Sinal positivo de área logada. Vence tudo: com o menu presente a
-  //    navegação funciona, e um item "Alterar senha" no dropdown do usuário
-  //    não pode ser lido como tela de troca de senha.
-  if (s.menuLinks > 0) {
-    return {
-      tipo: 'dashboard',
-      erroTipo: null,
-      motivo: 'Dashboard confirmado (' + s.menuLinks + ' itens de menu) em ' + s.url,
-      origemDivergente: origemDivergente,
-    };
-  }
-
-  // 2. Sinal positivo de troca de senha obrigatória.
-  const TERMOS = [
+  // FORTE: afirma EXPIRAÇÃO/OBRIGATORIEDADE. Só aparece numa tela que realmente barra o
+  // acesso — vale sozinho, e vale até contra a presença de menu.
+  const TERMOS_FORTES = [
+    'senha expirou',
+    'senha expirada',
+    'senha esta expirada',
+    'sua senha expir',
+    'senha provisoria',
+    'senha temporaria',
+    'troca de senha obrigatoria',
+    'troque sua senha',
+    'password expired',
+    'password has expired',
+    'must change your password',
+    'must be changed',
+  ];
+  // FRACO: nomeia a AÇÃO, não a obrigação. "Alterar senha" é item normal do dropdown de
+  // usuário em dashboard saudável (Codex challenge P1: com drift do seletor .menu-link,
+  // sozinho ele travaria pedido bom como não-retentável e mandaria trocar a senha à toa).
+  // Só conta CORROBORADO por pelo menos um campo de senha na tela.
+  const TERMOS_FRACOS = [
     'trocar senha',
     'troca de senha',
     'trocar a senha',
@@ -100,17 +109,11 @@ export function classificarPosLogin(s: SinaisPosLogin): ResultadoPosLogin {
     'redefinir a senha',
     'atualizar senha',
     'atualizar a senha',
-    'senha expirou',
-    'senha expirada',
-    'senha esta expirada',
-    'senha provisoria',
-    'senha temporaria',
+    'renove suas credenciais',
     'primeiro acesso',
     'change password',
     'change your password',
     'new password',
-    'password expired',
-    'password has expired',
     'reset password',
     'update your password',
   ];
@@ -140,52 +143,77 @@ export function classificarPosLogin(s: SinaisPosLogin): ResultadoPosLogin {
 
   const alvoTexto = normalizar(s.titulo) + ' ' + normalizar(s.texto);
   const alvoUrl = normalizar(s.url);
-
-  let termoAchado: string | null = null;
-  for (let i = 0; i < TERMOS.length; i++) {
-    if (alvoTexto.indexOf(TERMOS[i]) !== -1) {
-      termoAchado = TERMOS[i];
-      break;
+  const achar = function (lista: string[], alvo: string): string | null {
+    for (let i = 0; i < lista.length; i++) {
+      if (alvo.indexOf(lista[i]) !== -1) return lista[i];
     }
-  }
-  if (termoAchado === null) {
-    for (let j = 0; j < FRAGMENTOS_URL.length; j++) {
-      if (alvoUrl.indexOf(FRAGMENTOS_URL[j]) !== -1) {
-        termoAchado = FRAGMENTOS_URL[j];
-        break;
-      }
-    }
-  }
+    return null;
+  };
 
-  // Dois campos de senha pós-login = "nova senha" + "confirmação". UM campo
-  // isolado NÃO basta (pode ser a própria tela de login re-renderizada).
+  const forte = achar(TERMOS_FORTES, alvoTexto);
+  const fraco = achar(TERMOS_FRACOS, alvoTexto);
+  const naUrl = achar(FRAGMENTOS_URL, alvoUrl);
+  // DOIS campos de senha pós-login = "nova senha" + "confirmação": formulário de troca,
+  // sinal forte por si. UM campo apenas CORROBORA um termo fraco (portal que pede a senha
+  // atual numa etapa), nunca decide sozinho — a tela de login re-renderizada também tem um.
   const formularioDeTroca = s.camposSenha >= 2;
 
-  if (termoAchado !== null || formularioDeTroca) {
-    const porQue = termoAchado !== null
-      ? 'sinal "' + termoAchado + '"'
-      : s.camposSenha + ' campos de senha';
+  const sinalForte = forte !== null || naUrl !== null || formularioDeTroca;
+  const sinalCorroborado = fraco !== null && s.camposSenha >= 1;
+
+  // Sinal FORTE vence o menu: nós de sidebar sobrevivem a redirect de SPA e a menu stale,
+  // e deixar o menu ganhar cegamente esconderia uma troca de senha REAL — que é o bug
+  // original voltando por outra porta (Codex challenge P1).
+  const conflitoDeSinais = s.menuLinks > 0 && sinalForte;
+
+  if (sinalForte || sinalCorroborado) {
+    const porQue = forte !== null
+      ? 'sinal "' + forte + '"'
+      : naUrl !== null
+        ? 'URL com "' + naUrl + '"'
+        : formularioDeTroca
+          ? s.camposSenha + ' campos de senha'
+          : 'sinal "' + String(fraco) + '" com ' + s.camposSenha + ' campo(s) de senha';
+    const nota = conflitoDeSinais
+      ? ' Havia itens de menu na pagina ao mesmo tempo (menu stale ou SPA): o sinal de senha prevaleceu.'
+      : '';
     return {
       tipo: 'troca_de_senha',
       erroTipo: 'PASSWORD_CHANGE_REQUIRED',
       motivo:
         'O portal exige troca de senha antes de liberar o dashboard (' + porQue + '), em ' + s.url +
-        '. O automador nao troca senha: precisa de acao humana.',
+        '. O automador nao troca senha: precisa de acao humana.' + nota,
       origemDivergente: origemDivergente,
+      conflitoDeSinais: conflitoDeSinais,
     };
   }
 
-  // 3. Nem dashboard nem troca de senha: relata o que foi OBSERVADO, sem inventar causa.
+  // Sinal POSITIVO de area logada, agora que nenhum sinal de senha o contesta.
+  if (s.menuLinks > 0) {
+    return {
+      tipo: 'dashboard',
+      erroTipo: null,
+      motivo: 'Dashboard confirmado (' + s.menuLinks + ' itens de menu) em ' + s.url,
+      origemDivergente: origemDivergente,
+      conflitoDeSinais: false,
+    };
+  }
+
+  // Nem dashboard nem troca de senha: relata o que foi OBSERVADO, sem inventar causa.
   const extra = origemDivergente
     ? ' A URL saiu da origem configurada do portal (' + String(s.origemEsperada) + ').'
+    : '';
+  const pista = fraco !== null
+    ? ' Havia o texto "' + fraco + '" na pagina, mas sem campo de senha que o corrobore.'
     : '';
   return {
     tipo: 'desconhecido',
     erroTipo: 'POS_LOGIN_NAO_DASHBOARD',
     motivo:
       'Login aceito, mas a pagina pos-login nao e o dashboard (nenhum item de menu) em ' +
-      s.url + '.' + extra,
+      s.url + '.' + extra + pista,
     origemDivergente: origemDivergente,
+    conflitoDeSinais: false,
   };
 }
 
@@ -200,6 +228,8 @@ export interface ContextoAlerta {
   esgotado: boolean;
   /** `SAYERLACK_PORTAL_URL` — o founder precisa saber ONDE agir. */
   portalUrl: string | null | undefined;
+  /** A URL pós-login saiu da origem configurada — fato objetivo, alerta na hora. */
+  origemDivergente?: boolean;
 }
 
 const ACAO_SENHA =
@@ -222,7 +252,9 @@ export function decidirAlertaPortal(
   ctx: ContextoAlerta,
 ): AlertaPortal | null {
   const portal = ctx.portalUrl ? String(ctx.portalUrl) : '(URL do portal nao configurada)';
+  const tipo = erroTipo ? String(erroTipo) : 'sem erroTipo';
 
+  // Falha de credencial/senha: retentar não resolve, avisa na primeira.
   if (erroTipo === 'PASSWORD_CHANGE_REQUIRED') {
     return {
       titulo: 'Portal Sayerlack exige troca de senha',
@@ -235,25 +267,73 @@ export function decidirAlertaPortal(
 
   if (erroTipo === 'LOGIN_FAILED') {
     return {
-      titulo: 'Senha do portal Sayerlack expirou',
+      titulo: 'Login do portal Sayerlack falhou',
       mensagem:
-        'Login falhou no portal ' + portal + '. Provavel expiracao de senha. ' + ACAO_SENHA,
+        'Login recusado em ' + portal + '. A causa mais comum e expiracao de senha, mas conta ' +
+        'bloqueada, bloqueio por WAF ou mudanca no formulario dao o MESMO sintoma — confira antes ' +
+        'de trocar a senha. ' + ACAO_SENHA,
       severidade: 'urgente',
     };
   }
 
+  // Mudança de ORIGEM é fato objetivo e forte: 40+ logins bem-sucedidos vinham da origem
+  // configurada. Não espera esgotar — retentar não muda para onde o portal redireciona.
+  if (ctx.origemDivergente === true) {
+    return {
+      titulo: 'Portal Sayerlack redirecionou para outro endereço',
+      mensagem:
+        'O login em ' + portal + ' foi aceito, mas o portal levou a outro endereço (origem ' +
+        'diferente da configurada) e a pagina seguinte nao tem o menu da area logada — o pedido ' +
+        'nao foi enviado (' + tipo + '). ACAO: abrir ' + portal + '/login no navegador e ver para ' +
+        'onde o portal leva. Se o endereco mudou de vez, o SAYERLACK_PORTAL_URL precisa ser revisto.',
+      severidade: 'urgente',
+    };
+  }
+
+  // Antes de esgotar, causa não-identificada segue calada: a retentativa é o caminho normal
+  // e alertar a cada tentativa dessensibiliza o alerta que existe para o caso raro.
+  if (!ctx.esgotado) return null;
+
+  // ESGOTOU. Daqui em diante SEMPRE alerta — inclusive erroTipo desconhecido ou ausente.
+  // Esta é a lição do incidente na forma de CLASSE: o alerta antigo era gateado por um
+  // erroTipo específico e a falha real chegou com outro rótulo (EXCEPTION), então o pedido
+  // parou calado. O rótulo agora só escolhe o TEXTO — nunca decide se o founder é avisado.
   if (erroTipo === 'POS_LOGIN_NAO_DASHBOARD') {
-    if (!ctx.esgotado) return null;
     return {
       titulo: 'Portal Sayerlack nao abre o dashboard apos o login',
       mensagem:
         'O login em ' + portal + ' foi aceito, mas a pagina seguinte nao tem o menu da area ' +
         'logada — as retentativas se esgotaram sem enviar o pedido. Causa NAO identificada pelo ' +
-        'automador (pode ser mudanca de layout/endereco do portal, bloqueio da conta ou queda). ' +
+        'automador (pode ser mudanca de layout do portal, bloqueio da conta ou queda). ' +
         'ACAO: abrir ' + portal + '/login no navegador e conferir o que o portal mostra apos entrar.',
       severidade: 'urgente',
     };
   }
 
-  return null;
+  return {
+    titulo: 'Pedido ao portal Sayerlack parou apos esgotar as tentativas',
+    mensagem:
+      'O automador tentou ate o limite e nao enviou o pedido em ' + portal + '. Ultimo erro: ' +
+      tipo + '. Nenhum pedido foi colocado no fornecedor (o clique de finalizacao nunca ocorreu). ' +
+      'ACAO: abrir a tentativa em /admin/reposicao/pedidos e ver o trace/screenshot para saber o ' +
+      'que o portal mostrou.',
+    severidade: 'urgente',
+  };
+}
+
+/**
+ * Falha SISTÊMICA do portal — a que vale igual para todos os pedidos do lote.
+ *
+ * Codex challenge 2026-08-20: sem isto, um portal pedindo troca de senha faz o lote
+ * gastar os 5 pedidos batendo na mesma parede. Antes deste PR o custo era baixo (viravam
+ * `erro_retentavel` e voltavam para a fila); com `PASSWORD_CHANGE_REQUIRED` marcado como
+ * pré-submit, os 5 virariam NÃO-retentáveis de uma vez — 5 pedidos travados e 5 alertas
+ * urgentes iguais, por uma causa só. Depois do primeiro, o resto fica pendente e é
+ * retentado quando a senha for corrigida.
+ *
+ * Só entram tipos que provam falha de CREDENCIAL/ACESSO: um `SKU_NOT_FOUND` é do pedido,
+ * não do portal, e interromper o lote por ele suprimiria compra boa.
+ */
+export function ehFalhaSistemicaDoPortal(erroTipo: string | null | undefined): boolean {
+  return erroTipo === 'PASSWORD_CHANGE_REQUIRED' || erroTipo === 'LOGIN_FAILED';
 }

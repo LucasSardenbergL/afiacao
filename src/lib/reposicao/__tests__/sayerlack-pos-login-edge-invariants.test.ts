@@ -57,7 +57,36 @@ describe('edges Sayerlack: a confirmação de dashboard pós-login não pode sum
     // Se ela voltar, o próximo tipo de falha nasce mudo de novo.
     expect(src).not.toMatch(/if\s*\(\s*erroTipo === "LOGIN_FAILED"\s*\)/);
     // Alerta também no ramo de esgotamento — foi onde o incidente morreu calado.
-    expect(src).toMatch(/alertarFornecedor\([\s\S]{0,200}?esgotado\s*\}\)/);
+    expect(src).toMatch(/alertarFornecedor\([\s\S]{0,300}?esgotado[,\s]/);
+  });
+
+  // Codex challenge 2026-08-20 (P1): o gate media `.menu-link` ANTES da expansão da sidebar,
+  // que é a interação que materializa os links. Um dashboard legítimo viraria
+  // POS_LOGIN_NAO_DASHBOARD e travaria pedido bom. A expansão TEM de vir antes de medir.
+  for (const [nome, caminho] of [['envio', ENVIO], ['captura', CAPTURA]] as const) {
+    it(`${nome}: expande a sidebar ANTES de medir o menu (ordem da interação)`, () => {
+      const src = ler(caminho);
+      const expansao = src.indexOf('app-sidebar-minify-btn');
+      const espera = src.indexOf("budgetFor('pos-login-dashboard'");
+      const classificacao = src.indexOf('classificarPosLogin(sinaisPosLogin)');
+      expect(expansao).toBeGreaterThan(-1);
+      expect(expansao).toBeLessThan(espera);
+      expect(espera).toBeLessThan(classificacao);
+      // E não sobrou um segundo par expandir+esperar gastando o mesmo deadline global.
+      expect(src.split('app-sidebar-minify-btn').length - 1).toBe(1);
+    });
+  }
+
+  it('envio: o lote para na primeira falha SISTÊMICA — não queima os 5 pedidos', () => {
+    const src = ler(ENVIO);
+    expect(src).toContain('ehFalhaSistemicaDoPortal(ultimo.erro_tipo)');
+    // `break`, não `continue`: os pedidos restantes ficam PENDENTES e voltam sozinhos.
+    expect(src).toMatch(/ehFalhaSistemicaDoPortal\(ultimo\.erro_tipo\)\)[\s\S]{0,400}?break;/);
+  });
+
+  it('envio: a evidência do pós-login chega ao envelope (sem isso não dá para medir em prod)', () => {
+    const src = ler(ENVIO);
+    expect(src).toContain('posLoginCheck: data.posLoginCheck || null');
   });
 
   it('calibração: o gate enxerga a forma pré-fix e não confunde com a pós-fix', () => {

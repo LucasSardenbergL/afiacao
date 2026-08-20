@@ -336,10 +336,28 @@ export default async ({ page, context }) => {
     await sleep(2000);
 
     // === Confirmação POSITIVA de dashboard ===
-    // Sem isto, um redirecionamento pós-login (troca de senha obrigatória, mudança de
-    // endereço do portal) vira timeout anônimo lá na frente e o run inteiro reporta
-    // uma causa que não é a verdadeira. A espera é pelo MESMO sinal que a navegação
-    // já exige adiante: no caminho feliz não custa nada.
+    // 'url_changed' prova só que a URL saiu de /login — NÃO que a área logada abriu.
+    // Em 2026-08-20 o portal redirecionou o login para a tela de troca de senha
+    // obrigatória: o falso positivo seguiu até o menu, morreu 3s depois como
+    // "Waiting failed: 3000ms exceeded" (erroTipo EXCEPTION) e, como o
+    // fornecedor_alerta só disparava para LOGIN_FAILED, ninguém foi avisado da causa
+    // real por ~1h (pedido 1939, 3 tentativas). Aqui a ausência de dashboard vira
+    // erroTipo NOMEADO, e a classificação é a mesma testada em vitest.
+    //
+    // ⚠️ A EXPANSÃO DA SIDEBAR VEM ANTES DE MEDIR, e é por isso que ela mora aqui em vez
+    // de no bloco de navegação (Codex challenge 2026-08-20, P1): o portal abre com a
+    // sidebar minificada, e medir os itens de menu antes de expandir mediria o efeito da
+    // interação que ainda não aconteceu — um dashboard legítimo viraria
+    // POS_LOGIN_NAO_DASHBOARD e travaria pedido bom. "É o mesmo sinal que a navegação já
+    // exigia" só vale se a ORDEM da interação for a mesma; ela não era.
+    await page.evaluate(() => {
+      const app = document.querySelector('#app');
+      if (app && app.classList.contains('app-sidebar-minified')) {
+        const minifyBtn = document.querySelector('.app-sidebar-minify-btn');
+        if (minifyBtn) minifyBtn.click();
+      }
+    });
+
     await page.waitForFunction(
       () => document.querySelectorAll('#sidebar .menu-link, .app-sidebar .menu-link').length > 0,
       { timeout: budgetFor('pos-login-dashboard', 15_000), polling: 250 }
@@ -394,14 +412,8 @@ export default async ({ page, context }) => {
       };
     }
 
-    // Navegação SEMPRE via clique no menu (goto direto redireciona p/ rota de erro)
-    await page.evaluate(() => {
-      const app = document.querySelector('#app');
-      if (app && app.classList.contains('app-sidebar-minified')) {
-        const minifyBtn = document.querySelector('.app-sidebar-minify-btn');
-        if (minifyBtn) minifyBtn.click();
-      }
-    });
+    // Navegação SEMPRE via clique no menu (goto direto redireciona p/ rota de erro).
+    // A sidebar já foi expandida e confirmada na checagem pós-login acima.
     await sleep(800);
     await page.waitForFunction(
       () => document.querySelectorAll('#sidebar .menu-link, .app-sidebar .menu-link').length > 0,
