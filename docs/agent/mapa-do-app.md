@@ -69,4 +69,17 @@ Os 6 compromissos de produto que o app assumiu, com o estado de cada um. Valem c
 
 Ao mexer no estado de um deles, atualize a coluna aqui — o CLAUDE.md não carrega mais este placar.
 
+## De onde vieram esses padrões — a auditoria de UX (`docs/ux-audit/`, EXECUTADA)
+
+O placar acima e boa parte do §Design System do CLAUDE.md saíram de uma auditoria de UX em 4 fases (2026-05-13), arquivada em **[`docs/ux-audit/`](../ux-audit/)**. Ela está **entregue, 20/20** — leia-a como **proveniência ("por que a regra é essa"), nunca como backlog**: o `03-roadmap.md` é um plano de 20 itens JÁ executado, e reimplementá-lo é retrabalho puro.
+
+| Arquivo | O que é | Por que ainda se lê |
+|---|---|---|
+| [01-inventario.md](../ux-audit/01-inventario.md) | as 119 rotas com persona / densidade / plataforma / frequência / criticidade | o complemento deste mapa: aqui está o **módulo**, lá está **quem usa e se a operação para se a tela cair**. Snapshot datado — a rota exata segue sendo `grep` no `App.tsx` |
+| [02-heuristica.md](../ux-audit/02-heuristica.md) | Nielsen H1-H10 + domínio D1-D6 nas 10 telas top | o diagnóstico por trás de cada intervenção, e o vocabulário Retool: desktop-only assumido sem se desculpar (`:133`), atalhos `j/k` em lista (`:416`) |
+| [03-roadmap.md](../ux-audit/03-roadmap.md) | as 20 intervenções priorizadas por ICE | **a origem das regras vivas**: `:94` = Carbon Touch Target (44×44 mín, 56×56 para uso com luva) → `<Button size="touch">` e `balcao`; `:332` = Carbon tokens (todo sinal via token, nunca cor crua) → a regra `text-status-*`; `:270` = bulk actions do Retool |
+| [04-execucao.md](../ux-audit/04-execucao.md) | o que saiu, item a item (intervenção → arquivo tocado) | o que ficou **pendente de decisão do founder**: schema de `nfe_receipt_runs`/`user_segments` (hoje localStorage), tamanho do catálogo tintométrico offline, dual-view do picking mobile, política de conflito offline |
+
+Por que isto mora aqui e não no CLAUDE.md: é **arquivo de proveniência**, não regra que vale sempre — as regras que sobreviveram já estão no CLAUDE.md §Design System. O elenco de benchmarks (o que se toma de Carbon, Retool, Linear, Notion e Polaris — e por que Material 3 e Bootstrap são anti-referência) está consolidado em [`docs/visual-direction/01-direcao.md`](../visual-direction/01-direcao.md) §7. **Já custou uma sessão** concluir que "Carbon e Retool eram conhecimento perdido" por procurar só em `docs/visual-direction/`: quando a pergunta for *de onde veio essa decisão de UI*, os dois lugares são esta pasta e aquela §7.
+
 > Manutenção: quando um módulo NOVO nascer (prefixo novo no `App.tsx`), acrescente 1 linha aqui. Telas individuais que mudam de rota NÃO precisam entrar — o `grep` no `App.tsx` é a fonte exata.

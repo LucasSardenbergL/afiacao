@@ -282,10 +282,10 @@ Atenção ao ler a §1: ali **Polaris**, **Notion** e **Material** aparecem desc
 |---|---|---|
 | **Vercel · Mercury · Stripe Dashboard** | Direção primária: tipografia geométrica, tabular nums, border > sombra, easing próprio | §2-§5 · tokens de `src/index.css` |
 | **Linear** | Quase-neutro que aguenta jornada longa; densidade alta como **escolha**, não como aperto | Decisão A1 e D1 (§5) · `src/index.css:306` |
-| **Notion** | Navegação por seções, Recentes/Favoritos na sidebar, stagger na expansão | `05-revisao-skill.md` SB1/SB2 · `docs/ux-audit/03-roadmap.md:141` |
-| **Polaris** (Shopify) | Componentes de dado B2B: EmptyState compacto, ResourceList | `docs/ux-audit/03-roadmap.md:221,268` |
-| **Carbon** (IBM) | **Rigor de sistema, não estética** — (a) *design tokens*: todo sinal semântico via token, nunca cor crua; (b) *touch target spec*: 44×44 mínimo, 56×56 para uso com luva | A regra `text-status-*` (em vez de `text-emerald-600`) vem de `03-roadmap.md:330`; `<Button size="touch">` 44px e `balcao` 56px vêm de `03-roadmap.md:92` |
-| **Retool** | O vocabulário de **ferramenta interna**: a tabela densa é a superfície principal — bulk actions, atalhos `j/k`, e tela de gestão pode ser desktop-only sem se desculpar | `src/index.css:306` (32px densos em ponteiro fino, decisão explícita) · `docs/ux-audit/02-heuristica.md:133,416` · `03-roadmap.md:268` |
+| **Notion** | Navegação por seções, Recentes/Favoritos na sidebar, stagger na expansão | `05-revisao-skill.md` SB1/SB2 · `docs/ux-audit/03-roadmap.md:143` |
+| **Polaris** (Shopify) | Componentes de dado B2B: EmptyState compacto, ResourceList | `docs/ux-audit/03-roadmap.md:223,270` |
+| **Carbon** (IBM) | **Rigor de sistema, não estética** — (a) *design tokens*: todo sinal semântico via token, nunca cor crua; (b) *touch target spec*: 44×44 mínimo, 56×56 para uso com luva | A regra `text-status-*` (em vez de `text-emerald-600`) vem de `03-roadmap.md:332`; `<Button size="touch">` 44px e `balcao` 56px vêm de `03-roadmap.md:94` |
+| **Retool** | O vocabulário de **ferramenta interna**: a tabela densa é a superfície principal — bulk actions, atalhos `j/k`, e tela de gestão pode ser desktop-only sem se desculpar | `src/index.css:306` (32px densos em ponteiro fino, decisão explícita) · `docs/ux-audit/02-heuristica.md:133,416` · `03-roadmap.md:270` |
 
 Carbon e Retool entram exatamente onde as três primárias **não alcançam**: Vercel/Mercury/Stripe são produtos de sessão curta e superfície pequena; o Afiação é operação de 8h com tabela densa, coletor e luva. Carbon dá a régua de sistema (token semântico e alvo de toque), Retool o precedente de densidade — juntos são o que sustenta `density-compact` global convivendo com `size="balcao"` de 56px na mesma base de código.
 
