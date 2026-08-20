@@ -576,4 +576,73 @@ instantes por dia contra perda GARANTIDA de toda a cauda, todo dia. A cura real 
 
 **Sobrou para a 2ª fatia:** as 8 com `LIMIT` no corpo — `LIMIT` não é garantia (`LIMIT p_limit` com
 parâmetro grande não protege), e `reposicao_pos_candidatos` é money-path. Estão marcadas `nao_medido`
-com prazo, não "provavelmente pequenas".
+com prazo, não "provavelmente pequenas". *(Fechadas em 2026-08-20 — seção seguinte.)*
+
+## A 2ª fatia: o `LIMIT` no corpo era o disfarce — 1.014 truncando e um teto EXATAMENTE na capa (2026-08-20)
+
+Quarto e último capítulo da classe (#1782, #1801, #1816). O escopo era pequeno e fechado: medir as
+**8 chamadas `nao_medido`** e, para cada uma, registrar o teto com prova ou paginar. As 8 eram
+exatamente as que **tinham `LIMIT` no corpo** — o critério que na 1ª fatia parecia tranquilizador e
+que se revelou o disfarce.
+
+**Seis eram o que aparentavam.** `fin_regua_condicao_prazo` é `LIMIT 1`; `listar_pedidos_a_separar`,
+`LIMIT 100`; `get_whatsapp_pendentes`, `LIMIT 500` (universo hoje = 0); `radar_contagem_por_municipio`
+é `LIMIT GREATEST(1, LEAST(p_limit, 2000))` com os **dois** callers passando a constante `500`;
+`reposicao_pos_marcador` devolve exatamente 1 linha por construção (`FROM (SELECT 1) AS sempre LEFT
+JOIN LATERAL (… LIMIT 1)` — o "sem marcador" vem como NULL, não como zero linhas). A money-path
+`reposicao_pos_candidatos` precisou de contagem: o único `LIMIT` do corpo é o da CTE `marcador`, o
+`RETURN QUERY` não tem teto. Medida em **101** (OBEN; COLACOR, a outra da enum `empresa_reposicao`,
+tem 0) — e é teto SUPERIOR, porque os filtros `ls.run_id <> m.run_id` e `omie_po_inexistente_antes_de`
+só reduzem. Sem o filtro de status são 109, e a tabela INTEIRA tem 428 linhas: nem o universo
+acumulado alcança a capa.
+
+**Duas não eram — e cada uma escondia o `LIMIT` de um jeito diferente.**
+
+`carteira_por_municipio` **estava truncando, em produção, hoje**. O `LIMIT 1` que a fez parecer
+segura é do `SELECT … INTO` que resolve o NOME do município; o `RETURN QUERY` não tem LIMIT nenhum.
+Reproduzido o corpo como SELECT sobre a prod — `addresses` casado por `norm_cidade(city)` + UF com
+`radar_empresas`, `JOIN profiles` com `COALESCE(is_employee,false)=false`, agrupado por município —
+**DIVINÓPOLIS/MG = 1.014**. Catorze clientes da carteira caíam fora do planejamento de rota sem erro
+e sem toast: a assinatura exata do #1765, onde 227 clientes viraram veredito fabricado. Aqui o efeito
+é uma carteira que *parece* completa com 14 visitas a menos.
+
+`radar_prospects_para_rota` é o caso mais instrutivo da série, porque **hoje não perde nada**. O
+`LIMIT GREATEST(1, LEAST(p_limit, 2000))` com `PROSPECTS_POR_CIDADE = 1000` produz no máximo 1.000
+linhas — *exatamente* a capa. 1.000 pedidos, 1.000 entregues, nenhum sintoma. É o pior lugar em que
+um teto pode estar: o do TRANSPORTE e o do PRODUTO são o mesmo número por coincidência, e o do
+produto é uma **const TS que sobe com um caractere** — sem migration, sem SQL Editor, sem ritual.
+Subir para 1.500 devolveria 1.000 em silêncio, e há para onde subir: **80 municípios têm ≥1.000
+prospects elegíveis; São Paulo tem 25.512** (Divinópolis, 673, cabe inteira — o comentário no código
+dizia 600). Paginada, o teto passa a ser só o do produto.
+
+**Ordem total nas duas.** `user_id` é a chave do `DISTINCT ON (user_id)` da própria
+`carteira_por_municipio` — única por linha, e é o mesmo campo do dedupe entre cidades. `cnpj` é a
+**PK de `radar_empresas`** (`radar_empresas_pkey`), e os dois LEFT JOIN da função não multiplicam:
+`cep_geo` e `municipio_geo` têm PK única na coluna de junção (conferido no catálogo, zero duplicatas).
+Ordenar por `cnpj` não muda QUAIS linhas vêm: o `ORDER BY` de prioridade que escolhe as 1.000
+melhores é INTERNO à função, aplicado antes do LIMIT, e o consumidor re-pontua tudo com
+`enrichWithPriority`.
+
+**O furo do scanner, de novo — mesma cegueira, segundo disfarce.** No #1816 o Codex achou que o
+scanner só via `.rpc('nome')` com aspas simples. Desta vez o `(` **colado** em `.rpc` era o furo: o
+idioma dominante do repo para RPC ainda não tipada é o cast — `await (supabase.rpc as RpcFn)('nome',
+params)`. **53 das 125 ocorrências de `.rpc` em `src/` não são `.rpc(`**, e duas delas eram
+set-returning e estavam FORA da baseline: `radar_contagem_por_municipio` em
+`useRadarContagemMunicipios.ts` e `buscar_skus_candidatos` em `useProductSpecLink.ts`. Ambas com teto
+estrutural — mas isso o gate não sabia, porque nunca as viu. A tolerância entre `.rpc` e o literal
+passou de "nada" para "até 200 caracteres", e o que segura o falso positivo não é o regex: é a
+checagem no `types.ts`, porque o nome tem de ser uma função set-returning REAL. **Limite conhecido:**
+nome dinâmico (`.rpc(fn, params)`, em `services/pcp-apontamento.ts`) continua invisível — não há
+literal para casar, e heurística de fluxo aqui daria falsa cobertura. Vigiar por nome é o contrato.
+
+**Um silêncio de lado, fechado.** O `catch` de `loadCarteiraDaCidade` zerava a lista (fail-closed
+correto) mas **mudo** — tolerável enquanto a única falha possível era a leitura inteira cair. Com
+paginação nasce a falha PARCIAL (`fetchAllPages` lança se a página 2 falhar depois da 1 ter vindo), e
+aí "lista vazia sem aviso" fica indistinguível de "esta cidade não tem cliente na carteira". Ganhou
+`toast.error`, como o de prospects logo acima.
+
+**A lição que sobra não é sobre `LIMIT`, é sobre evidência.** "Tem `LIMIT` no corpo" descreve o
+**texto** da função, não o número de linhas que ela devolve. As duas perigosas só se separaram das
+seis seguras quando alguém contou — e uma delas já estava errando havia meses sem produzir um único
+sintoma. A BASELINE do gate ficou **sem nenhuma entrada `nao_medido`**: toda chamada set-returning
+sem `.range()` em `src/` hoje carrega teto com prova.

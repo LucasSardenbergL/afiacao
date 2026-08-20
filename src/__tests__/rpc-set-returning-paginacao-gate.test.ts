@@ -37,6 +37,26 @@ import { resolve, join } from 'node:path';
  * — marcadas `nao_medido`, não "provavelmente pequeno", que seria o `Number(null)===0` da
  * apuração.
  *
+ * ⚠️ AS 8 ERAM AS QUE TINHAM `LIMIT` NO CORPO — e o `LIMIT` foi o disfarce, não a proteção.
+ * Medidas (2026-08-20, 2ª fatia), cinco tinham LIMIT constante mesmo e uma precisou de
+ * contagem; as outras duas eram as que o `LIMIT` escondia, cada uma de um jeito:
+ *
+ *   `carteira_por_municipio` — o `LIMIT 1` do corpo é do `SELECT … INTO` que resolve o NOME do
+ *       município. O `RETURN QUERY` não tem LIMIT nenhum. Teto = dado, e o dado é 1.014 em
+ *       DIVINÓPOLIS/MG: acima da capa. Não era risco futuro, estava truncando — 14 clientes da
+ *       carteira sumiam do planejamento de rota, em silêncio, exatamente como no #1765. PAGINA.
+ *
+ *   `radar_prospects_para_rota` — `LIMIT GREATEST(1, LEAST(p_limit, 2000))`, e o caller passa
+ *       `PROSPECTS_POR_CIDADE = 1000`. Teto EXATAMENTE igual à capa, que é o pior lugar para um
+ *       teto estar: nada se perde hoje (1.000 pedidos = 1.000 entregues), então nenhum sintoma
+ *       aponta para cá, e o número que separa "correto" de "trunca em silêncio" é uma const TS
+ *       que sobe com um caractere — sem migration, sem SQL Editor, sem ritual. E há para onde
+ *       subir: 80 municípios têm ≥1.000 prospects elegíveis, São Paulo tem 25.512. PAGINA.
+ *
+ * A lição que sobra é sobre a EVIDÊNCIA, não sobre `LIMIT`: "tem LIMIT no corpo" descreve o
+ * texto da função, não o número de linhas que ela devolve. As duas só se separaram das outras
+ * seis quando alguém contou.
+ *
  * ⚠️ Estar na baseline NÃO é atestado de segurança, e o waiver não é texto livre: cada entrada
  * declara a PROVA do teto e, quando essa prova envelhece (medição em dados), um PRAZO. O que
  * mora aqui é uma chamada que o gate CONSEGUE ver — durante um tempo o scanner só reconhecia
@@ -76,11 +96,36 @@ export function chamadasSemPaginacao(fonte: string, setReturning: Set<string>): 
   // em AdminReposicaoOportunidades). Enquanto o furo existiu, a frase "a baseline enumera a
   // dívida" era FALSA: o gate não olhava para o universo inteiro que dizia vigiar, e o
   // veredito verde vinha de não ter procurado — a versão-scanner do `Number(null)===0`.
-  // (Achado do Codex xhigh na revisão deste PR; conferido com `git grep '\.rpc("'`.)
-  for (const m of txt.matchAll(/\.rpc\(\s*(?:'([a-z0-9_]+)'|"([a-z0-9_]+)")/g)) {
+  // (Achado do Codex xhigh na revisão daquele PR; conferido com `git grep '\.rpc("'`.)
+  //
+  // E o `(` COLADO em `.rpc` era a MESMA cegueira num segundo disfarce, encontrado ao medir a
+  // 2ª fatia (2026-08-20). O idioma deste repo para RPC ainda não tipada é o cast:
+  //
+  //     await (supabase.rpc as RpcFn)('nome', params)
+  //     await (supabase.rpc as (fn: string, a: unknown) => ReturnType<typeof supabase.rpc>)('nome', p)
+  //
+  // — 53 das 125 ocorrências de `.rpc` em `src/` não são `\.rpc\(`, e duas delas eram
+  // set-returning e estavam FORA da baseline: `radar_contagem_por_municipio` em
+  // useRadarContagemMunicipios.ts e `buscar_skus_candidatos` em useProductSpecLink.ts. Ambas
+  // com teto estrutural — mas isso o gate não sabia, porque nunca as viu. Enumerar dívida com
+  // um scanner que não alcança o idioma dominante do repo é contar o que é fácil de contar.
+  //
+  // Por isso a tolerância entre `.rpc` e o literal deixou de ser "nada" e passou a ser "até 200
+  // caracteres", com a checagem de verdade no `types.ts`: o nome tem de ser uma função
+  // set-returning REAL. É o que segura o falso positivo — uma string arbitrária dentro da
+  // janela não vira achado por acaso; ela teria de coincidir com o nome de uma RPC que devolve
+  // ARRAY. Nome dinâmico (`.rpc(fn, params)`, como em `services/pcp-apontamento.ts`) continua
+  // invisível e é limite CONHECIDO: não há literal para casar, e inventar heurística de fluxo
+  // aqui daria falsa cobertura — vigiar por nome é o contrato deste gate.
+  const RE_RPC = /\.rpc\b[\s\S]{0,200}?(?:'([a-z0-9_]+)'|"([a-z0-9_]+)")/g;
+  for (const m of txt.matchAll(RE_RPC)) {
     const nome = m[1] ?? m[2];
     if (!setReturning.has(nome)) continue;
-    if (!/\.range\(/.test(txt.slice(m.index!, m.index! + 400))) achados.push(nome);
+    // A janela do `.range()` conta a partir do FIM do match, não do início: com o cast, o
+    // próprio match já consome até 200 caracteres, e medir da abertura encurtaria a busca
+    // justamente nas chamadas mais verbosas — que são as que este trecho passou a enxergar.
+    const depois = m.index! + m[0].length;
+    if (!/\.range\(/.test(txt.slice(depois, depois + 400))) achados.push(nome);
   }
   return achados;
 }
@@ -187,24 +232,29 @@ const BASELINE = new Map<string, Waiver>([
     { tipo: 'medido', teto: 3, medidoEm: '2026-08-20', revisarAte: '2027-08-20',
       prova: 'SELECT count(DISTINCT owner_user_id) FROM carteira_assignments = 3' }],
 
-  // ── NÃO medidas: 2ª fatia. Têm `LIMIT` no corpo, que NÃO é garantia — `LIMIT p_limit` com
-  //    parâmetro grande não protege, e o valor precisa ser conferido constante e < 1.000.
-  ['carteira_por_municipio @ src/hooks/useRoutePlanner.ts',
-    { tipo: 'nao_medido', bloqueio: 'tem LIMIT no corpo; falta conferir se é constante e < 1.000', revisarAte: '2027-02-20' }],
+  // ── 2ª fatia (2026-08-20): o `LIMIT` no corpo virou NÚMERO. Das 8, cinco tinham LIMIT
+  //    constante de verdade, uma precisou de contagem, e duas foram PAGINAR — ver o rodapé.
   ['fin_regua_condicao_prazo @ src/hooks/useCustoPrazoRegua.ts',
-    { tipo: 'nao_medido', bloqueio: 'tem LIMIT no corpo; falta conferir se é constante e < 1.000', revisarAte: '2027-02-20' }],
-  ['get_whatsapp_pendentes @ src/hooks/useWhatsappPendentes.ts',
-    { tipo: 'nao_medido', bloqueio: 'tem LIMIT no corpo; falta conferir se é constante e < 1.000', revisarAte: '2027-02-20' }],
-  ['listar_pedidos_a_separar @ src/queries/usePedidosASeparar.ts',
-    { tipo: 'nao_medido', bloqueio: 'tem LIMIT no corpo; falta conferir se é constante e < 1.000', revisarAte: '2027-02-20' }],
-  ['radar_contagem_por_municipio @ src/queries/useRadarCidadesRota.ts',
-    { tipo: 'nao_medido', bloqueio: 'tem LIMIT no corpo; falta conferir se é constante e < 1.000', revisarAte: '2027-02-20' }],
-  ['radar_prospects_para_rota @ src/hooks/useRoutePlanner.ts',
-    { tipo: 'nao_medido', bloqueio: 'tem LIMIT no corpo; falta conferir se é constante e < 1.000', revisarAte: '2027-02-20' }],
-  ['reposicao_pos_candidatos @ src/pages/AdminReposicaoPedidos.tsx',
-    { tipo: 'nao_medido', bloqueio: 'MONEY-PATH: tem LIMIT no corpo; falta conferir se é constante e < 1.000', revisarAte: '2027-02-20' }],
+    { tipo: 'estrutural', teto: 1, prova: '`LIMIT 1` constante no `RETURN QUERY` (busca a condição de pagamento por `codigo`+`empresa`)' }],
   ['reposicao_pos_marcador @ src/pages/AdminReposicaoPedidos.tsx',
-    { tipo: 'nao_medido', bloqueio: 'tem LIMIT no corpo; falta conferir se é constante e < 1.000', revisarAte: '2027-02-20' }],
+    { tipo: 'estrutural', teto: 1, prova: '`FROM (SELECT 1) AS sempre LEFT JOIN LATERAL (… ORDER BY seq DESC LIMIT 1)` — o lado esquerdo tem 1 linha e o LEFT JOIN preserva-a, então devolve exatamente 1 (o "sem marcador" vem como NULL, não como zero linhas)' }],
+  ['listar_pedidos_a_separar @ src/queries/usePedidosASeparar.ts',
+    { tipo: 'estrutural', teto: 100, prova: '`LIMIT 100` constante no `RETURN QUERY`' }],
+  ['get_whatsapp_pendentes @ src/hooks/useWhatsappPendentes.ts',
+    { tipo: 'estrutural', teto: 500, prova: '`LIMIT 500` constante (função SQL pura); o universo hoje é 0 — a janela é `last_inbound_at > now() - 24h` sem resposta' }],
+  ['radar_contagem_por_municipio @ src/queries/useRadarCidadesRota.ts',
+    { tipo: 'estrutural', teto: 500, prova: '`LIMIT GREATEST(1, LEAST(COALESCE(p_limit, 500), 2000))` nos DOIS ramos (fast e slow path) e o caller passa a constante literal `p_limit: 500`' }],
+  // ── Chamadas que o scanner só passou a ENXERGAR em 2026-08-20, quando aprendeu a ler o cast
+  //    `(supabase.rpc as RpcFn)('nome')`. Estavam no código o tempo todo, fora da baseline.
+  ['radar_contagem_por_municipio @ src/queries/useRadarContagemMunicipios.ts',
+    { tipo: 'estrutural', teto: 500, prova: 'mesma função da entrada acima, mesmo `LEAST(p_limit, 2000)`; este caller também passa a constante `p_limit: 500` (com os filtros do Radar, que só REDUZEM o conjunto)' }],
+  ['buscar_skus_candidatos @ src/hooks/useProductSpecLink.ts',
+    { tipo: 'estrutural', teto: 100, prova: '`LIMIT 100` constante no `RETURN QUERY` sobre `omie_products`' }],
+
+  // ── Teto MEDIDO nos dados: 2ª fatia ────────────────────────────────────────────────────
+  ['reposicao_pos_candidatos @ src/pages/AdminReposicaoPedidos.tsx',
+    { tipo: 'medido', teto: 101, medidoEm: '2026-08-20', revisarAte: '2027-08-20',
+      prova: 'MONEY-PATH. O único LIMIT do corpo é o `LIMIT 1` da CTE `marcador`; o `RETURN QUERY` não tem teto, então é dado. `SELECT upper(btrim(empresa)), count(*) FROM pedido_compra_sugerido WHERE status IN (disparado, aprovado_aguardando_disparo) AND omie_pedido_compra_id IS NOT NULL AND btrim(omie_pedido_compra_id) <> \'\' GROUP BY 1` — máx 101 (OBEN; COLACOR, a outra da enum `empresa_reposicao`, tem 0). É TETO SUPERIOR: os filtros `ls.run_id <> m.run_id` e `omie_po_inexistente_antes_de <= m.finalizado_em` só reduzem. Sem o filtro de status são 109, e a tabela INTEIRA tem 428 linhas — ou seja, nem o universo acumulado alcança a capa' }],
 ]);
 
 /**
@@ -330,6 +380,29 @@ describe('RPC set-returning chamada do frontend pagina', () => {
     // nem nos achados, e o verde do gate vinha de não ter procurado.
     expect(chamadasSemPaginacao(`const { data } = await supabase.rpc("minha_rpc_grande");`, setRet))
       .toEqual(['minha_rpc_grande']);
+
+    // CAST — o segundo disfarce da mesma cegueira, e o idioma DOMINANTE do repo para RPC ainda
+    // não tipada: 53 das 125 ocorrências de `.rpc` em `src/` não são `.rpc(`. Estas duas formas
+    // são literais dos dois callers que estavam fora da baseline até esta medição.
+    expect(
+      chamadasSemPaginacao(`const { data } = await (supabase.rpc as RpcFn)('minha_rpc_grande', params);`, setRet),
+    ).toEqual(['minha_rpc_grande']);
+    expect(
+      chamadasSemPaginacao(
+        `const { data, error } = await (\n` +
+          `  supabase.rpc as (fn: string, args: unknown) => ReturnType<typeof supabase.rpc>\n` +
+          `)('minha_rpc_grande', params);`,
+        setRet,
+      ),
+    ).toEqual(['minha_rpc_grande']);
+    // …e o cast PAGINADO continua absolvido: a janela do `.range()` conta do fim do match, senão
+    // a tolerância nova acusaria justamente quem já se defendeu.
+    expect(
+      chamadasSemPaginacao(
+        `fetchAllPages((de, ate) => (supabase.rpc as RpcFn)('minha_rpc_grande', p).order('id').range(de, ate), 'x')`,
+        setRet,
+      ),
+    ).toEqual([]);
     expect(
       chamadasSemPaginacao(
         `fetchAllPages((de, ate) => supabase.rpc("minha_rpc_grande").order('id').range(de, ate), 'x')`,
