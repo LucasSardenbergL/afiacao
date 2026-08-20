@@ -642,7 +642,7 @@ avisar do risco* soletrou o nome no comentário. O caso `não se auto-inclui` do
 
 ## Falsificação — as quatro sabotagens do hook
 
-Criar o hook não prova nada; `scripts/test-edge-guardrail-nudge.sh` exige o **resultado certo** em
+Criar o hook não prova nada; `scripts/test-edge-guardrail-guard.sh` exige o **resultado certo** em
 cada caso, e cada um mata um modo de falha diferente:
 
 | caso | entrada | esperado | o que mataria sem isso |
@@ -675,6 +675,26 @@ Rodado em `LC_ALL=C` **e** `pt_BR.UTF-8` — a exigência do #1483.
 E os marcadores da suíte são **ASCII em caixa fixa** (`FALA`/`SILENCIO`) por causa desse mesmo #1483:
 a 1ª versão imprimia "silêncio" e o `grep -F silencio` do falsificador não casava, transformando um
 vermelho legítimo em "vermelho no caso errado". Quem falsifica precisa casar o **ramo certo**.
+
+### A suíte deste hook entra no LOOP, não ao lado dele
+
+Entre o commit e a entrega, o **#1787** mergeou na main com a mesma classe deste trabalho: duas
+suítes de guard existiam e **nunca rodavam**, e ele criou `scripts/hooks-guard-cobertura.test.ts`
+para tornar isso impossível — todo `scripts/test-<x>-guard.sh` precisa estar no `for t in …` do
+`test:hooks`.
+
+A suíte daqui nascera como `test-edge-guardrail-nudge.sh`, pendurada no `package.json` com um
+`&& bash …` **fora** do loop. Isso passava no CI — e passava pelo motivo errado: o regex do gate
+casa `-guard.sh`, então a suíte simplesmente **não era vista**. Tirá-la do `package.json` não
+deixaria nada vermelho, que é exatamente a classe "teste órfão é ausência de dado" que o #1787
+acabara de matar. Renomeada para `test-edge-guardrail-guard.sh` e movida para dentro do loop, ela
+passa a ser vigiada. O sufixo `-guard` é convenção do loop, não afirmação de que o hook nega.
+
+Vale como caso da regra de coordenação multi-sessão: **conflito de ARQUIVO é só um eixo.** O
+`package.json` conflitou de verdade nos dois rebases, mas o que mudou a entrega foi um CONTRATO
+novo — um gate que não existia quando esta fatia começou e que redefine o que "registrar um teste"
+significa neste repo. Buscar pelo título do PR não acharia: o dele fala de guard de duplicata e
+destructive-bash, não de edges.
 
 ### A falsificação MUTA o worktree — e validação concorrente lê o mesmo disco
 

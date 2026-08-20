@@ -19,7 +19,7 @@
 # checagem de tool_name (a armadilha do #1778, onde o heavy-guard casou padrão DENTRO de heredoc e
 # gravou `heavy` no ci.yml). Uma vez por (sessão, arquivo): nudge repetido vira ruído, e gate que
 # vira ruído morre. Fail-open: sem jq/bun, ou motor mudo → exit 0.
-# Testes em scripts/test-edge-guardrail-nudge.sh.
+# Testes em scripts/test-edge-guardrail-guard.sh.
 set -u
 
 # ANTES de qualquer coisa (inclusive do `cat` do stdin, que é externo): sem as ferramentas não há

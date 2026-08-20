@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
-# test-edge-guardrail-nudge.sh — TDD do hook .claude/hooks/edge-guardrail-nudge.sh
+# test-edge-guardrail-guard.sh — TDD do hook .claude/hooks/edge-guardrail-nudge.sh
+#
+# O sufixo `-guard.sh` é a convenção do LOOP do `test:hooks`, não uma afirmação de que o hook
+# nega — ele só avisa. O gate `scripts/hooks-guard-cobertura.test.ts` (#1787) casa exatamente
+# `test-<x>-guard.sh` e exige que todo `<x>` esteja no loop; com o nome `-nudge.sh` esta suíte
+# escaparia do gate, e tirá-la do `package.json` não deixaria nada vermelho — a própria classe
+# de "teste órfão é ausência de dado" que o #1787 veio matar.
 #
 # Regra: Write/Edit de arquivo sob supabase/functions/ → injeta a lista dos guardrails de FORMA
 # do vitest que leem AQUELE arquivo. Qualquer outra coisa → silêncio absoluto.
@@ -15,7 +21,7 @@
 # falsifica precisa casar o ramo certo do vermelho com `grep -F`, e acento dobra entre locales
 # (#1483). Falsificar em um locale só não prova a asserção.
 #
-# Uso: bash scripts/test-edge-guardrail-nudge.sh   (exit 0 = verde)
+# Uso: bash scripts/test-edge-guardrail-guard.sh   (exit 0 = verde)
 set -u
 
 here="$(cd "$(dirname "$0")" && pwd)"
