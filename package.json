@@ -20,6 +20,7 @@
     "authz:funcoes:prod": "bun db/audit-grants-funcoes-fechadas.ts",
     "authz:audit:prod": "bun db/audit-authz-reescritas-prod.ts",
     "bunpin:check": "bun scripts/bun-pin-gate-check.ts",
+    "docs:citacoes": "bun scripts/docs-citacoes-gate-check.ts",
     "docs:indice": "bun scripts/docs-indice-gate-check.ts",
     "mutcheck": "bash scripts/mutcheck-all.sh",
     "mutcheck:selftest": "bash scripts/mutcheck.sh --selftest",

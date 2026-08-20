@@ -268,6 +268,21 @@ jobs:
       - name: Docs índice gate (nenhum doc invisível)
         run: bun run docs:indice
 
+      # Irmão do gate acima, para a outra metade da mesma classe: lá o doc some do índice, aqui a
+      # CITAÇÃO some do alvo. `arquivo:linha` não tem vínculo com o conteúdo — qualquer inserção
+      # acima do ponto citado desloca o alvo e a citação passa a apontar para outra coisa EM
+      # SILÊNCIO (arquivo existe, linha existe, CI verde). Medido na janela de um dia: o #1803
+      # gravou 5 citações na §7 de `01-direcao.md`; o #1813 inseriu 2 linhas no cabeçalho de
+      # `03-roadmap.md` e as 5 passaram a apontar para linhas de `**ICE**: I=8 · C=10 · E=9`.
+      # Pegou por leitura manual, por acaso. Por isso a citação carrega âncora co-locada
+      # (`<!--cita: trecho-->`) e o gate compara com o conteúdo REAL da linha — checar só "o
+      # arquivo tem N linhas" não pegaria nada, porque a linha continuava existindo.
+      # Escopo de PRECISÃO: só docs VIVOS. `historico/`, `superpowers/` e `ux-audit/` são
+      # artefatos DATADOS — citar o código do dia deles é correto, e cobrá-los seria churn sobre
+      # história (553 das 580 citações do repo estão lá). Estático: lê docs/, sem rede.
+      - name: Docs citações gate (arquivo:linha ainda aponta pro que diz)
+        run: bun run docs:citacoes
+
       # Anti-regressão de DEAD CODE (export sem consumidor, dep sem import). Existe porque o gate
       # só-local não barra ninguém, e isso foi MEDIDO: o #1212 zerou os 254 achados e verificou
       # `exit 0` em 2026-07-07, mas ficou 4 semanas em CONFLICTING (estado em que o auto-merge
