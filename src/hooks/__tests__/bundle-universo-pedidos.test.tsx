@@ -149,7 +149,13 @@ function stubChain(tabela: string): unknown {
       // NÃO passa — quando a coluna é nula. Um stub que deixasse o nulo passar mentiria a
       // favor da mudança (universo maior do que o real). Prod tem 0 status nulo hoje, mas o
       // harness não pode divergir do operador que ele afirma reproduzir.
-      filtros.push((l) => l[coluna] != null && !proibidos.includes(String(l[coluna])));
+      // `null` é VALOR DE BANCO; coluna AUSENTE é fixture malformada e LANÇA — senão um
+      // esquecimento na fixture viraria silenciosamente um terceiro comportamento, que não é
+      // nem o do Postgres nem o que o teste afirma medir (achado do parecer Codex xhigh).
+      filtros.push((l) => {
+        if (!(coluna in l)) throw new Error(`stub: fixture de sales_orders sem a coluna \`${coluna}\``);
+        return l[coluna] !== null && !proibidos.includes(String(l[coluna]));
+      });
     }
     return chain;
   };
@@ -157,7 +163,10 @@ function stubChain(tabela: string): unknown {
     if (filtraDeVerdade) {
       if (valor !== null) throw new Error(`stub: .is(…, ${String(valor)}) não modelado`);
       filtrosDePedidos.push(`is.null:${coluna}`);
-      filtros.push((l) => l[coluna] == null);
+      filtros.push((l) => {
+        if (!(coluna in l)) throw new Error(`stub: fixture de sales_orders sem a coluna \`${coluna}\``);
+        return l[coluna] === null;
+      });
     }
     return chain;
   };

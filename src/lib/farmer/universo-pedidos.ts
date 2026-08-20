@@ -27,13 +27,37 @@
 // traria pedido apagado (hoje 0 linhas, mas o helper filtra e a paridade exige que este também
 // filtre).
 //
-// ⚠️ SUPPORT É RAZÃO — ampliar o universo mexe no DENOMINADOR do Apriori (`useBundleEngine`), e
-// isso troca regra sem que nenhuma cesta seja perdida. Medido em prod (2026-08-20): o par
+// ⚠️ SUPPORT É RAZÃO — ampliar o universo mexe no DENOMINADOR do Apriori (`useBundleEngine`) e
+// troca regra SEM que nenhuma cesta seja perdida. Medido em prod (2026-08-20): o par
 // CATALISADOR FC.6975LT ↔ FUNDO PU FL.6673.00LT GANHA cestas (151→197) e ainda assim CAI do piso
 // de 1% (1,0305% → 0,9129%), enquanto o par com o FUNDO PU FL.6298.00LT SOBE (134→225 cestas,
-// 0,9145% → 1,0427%) e entra com lift maior (24,93 contra 16,37). Quem mexer no universo daqui
-// para a frente mede as duas pontas — as 4 regras que o motor descobre vivem TODAS entre 1,03% e
-// 1,22% de support, coladas no piso.
+// 0,9145% → 1,0427%) e entra com lift maior (24,93 contra 16,37).
+//
+// ⚠️ Mas "só o denominador cresceu" é leitura INCOMPLETA, e o parecer Codex (xhigh) fez a conta
+// marginal que faltava: as 6.926 cestas que ENTRAM têm distribuição DIFERENTE das faturadas.
+// Nelas o par que morre ocorre a 0,664% (46/6.926) contra 1,031% nas faturadas — queda relativa
+// de 35,5% — e o que nasce ocorre a 1,314% (91/6.926) contra 0,915% — alta de 43,7%. Não é
+// aritmética neutra: é COORTE diferente. Ela é a coorte que a autoridade da margem já modela,
+// e por isso o alinhamento é o desenho — mas quem afirmar equivalência entre as duas precisa
+// prová-la (taxa de transição status→`faturado`, estabilidade em holdout), não presumi-la.
+//
+// ⚠️ E a fragilidade tem NÚMERO, não retórica: com 21.579 cestas o piso de 1% exige 216
+// coocorrências; o par que sobrevive tem 225. Ele cai perdendo 10 coocorrências, ou ganhando
+// ~922 cestas que não o contenham. Perto, não "a uma cesta" (correção do mesmo parecer).
+//
+// ⚠️ LIMITE HONESTO do `importado`: ele é o mapeamento da etapa 10 E o DEFAULT de etapa
+// ausente/desconhecida (`omieEtapaToStatus`). Qual dos dois cada linha é NÃO é recuperável do
+// dado local — `omie_payload`/`omie_response` são nulos em 100% dos 5.455 (o sync só guarda
+// payload de pedido que o app EMPURROU). O que dá para afirmar, medido: esses pedidos são
+// estruturalmente indistinguíveis dos demais — 2,04 itens por pedido (faturado 2,32 · separacao
+// 2,38 · enviado 2,27) e 58,6% dos itens resolvem para SKU ativo (faturado 60,2% · separacao
+// 55,2% · enviado 64,4%). Leitura malformada não produziria itens bem-formados nessa proporção.
+//
+// ⚠️ O `deleted_at IS NULL` é METADE do contrato e este módulo NÃO o aplica — quem consome tem
+// de lembrar dos DOIS predicados. Isso é travado por teste nos três consumidores
+// (`universoPedidos.test.ts`, `bundle-universo-pedidos.test.tsx`,
+// `cross-sell-universo-pedidos.test.tsx`), não por tipo. Fechar de verdade pede uma view/RPC
+// canônica — apontado pelo Codex, fora do escopo desta entrega.
 
 /** Status que NÃO são venda. Verbatim do corpo em prod de `private.margem_cliente_agregada()`. */
 export const STATUS_NAO_VENDA: readonly string[] = [
