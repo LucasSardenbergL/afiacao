@@ -14,23 +14,27 @@
 
 const FONTE = new URL("./index.ts", import.meta.url);
 
-/**
- * Remove comentários antes de medir a ordem.
- *
- * OBRIGATÓRIO, não higiene: os comentários deste arquivo citam `claim_calculate_scores` e
- * `farmer_client_scores` várias vezes, inclusive no bloco explicativo do topo — que vem ANTES de
- * tudo. Medir a ordem sobre o fonte cru casaria a PROSA e o assert ficaria verde mesmo com o
- * snapshot movido para antes do claim: o falso-verde do #1472/#1488, onde a defesa satisfaz o fiscal
- * que deveria fiscalizá-la.
- *
- * O `(?<!:)` preserva `https://` — sem ele um `://` seria lido como início de comentário e cortaria
- * o resto da linha.
- */
-function semComentarios(src: string): string {
-  return src
-    .replace(/\/\*[\s\S]*?\*\//g, "")   // blocos /* ... */
-    .replace(/(?<!:)\/\/.*$/gm, "");    // linha // ... (preservando :// de URLs)
-}
+// Remove comentários antes de medir a ordem.
+//
+// OBRIGATÓRIO, não higiene: os comentários deste arquivo citam `claim_calculate_scores` e
+// `farmer_client_scores` várias vezes, inclusive no bloco explicativo do topo — que vem ANTES de
+// tudo. Medir a ordem sobre o fonte cru casaria a PROSA e o assert ficaria verde mesmo com o
+// snapshot movido para antes do claim: o falso-verde do #1472/#1488, onde a defesa satisfaz o
+// fiscal que deveria fiscalizá-la.
+//
+// A limpeza vem do módulo COMPARTILHADO (espelho byte-idêntico de `src/lib/gates/limpeza-fonte.ts`,
+// amarrado por `limpeza-fonte.parity.test.ts`). A cópia local que vivia aqui era regex pura: não
+// sabia o que era string — um abre-bloco dentro de uma string pareava com o próximo fecha-bloco
+// REAL do arquivo e apagava tudo entre os dois ANTES desta medição, verde por CEGUEIRA
+// (docs/historico/gates-textuais-cegos.md).
+//
+// O `(?<!:)` que a cópia local usava para preservar `https://` deixa de ser necessário: o walker
+// entende string, então um `://` dentro de aspas nunca é lido como comentário.
+//
+// NB: esta explicação usa comentário de LINHA de propósito. Escrever a sequência fecha-bloco
+// dentro de um bloco `/*` encerraria o próprio comentário — a mesma confusão léxica que o módulo
+// importado existe para resolver.
+import { removerComentarios as semComentarios } from "../_shared/limpeza-fonte.ts";
 
 function idxOuFalha(codigo: string, agulha: string, rotulo: string): number {
   const i = codigo.indexOf(agulha);

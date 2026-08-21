@@ -10,6 +10,7 @@
 // o `plano-helpers.ts` dela, que não importa nada), então `--no-remote` passa. Nenhum código de
 // produção importa através dessa fronteira.
 
+import { removerComentarios } from "./limpeza-fonte.ts";
 import * as disparar from "../disparar-pedidos-aprovados/versao.ts";
 import * as portalSayerlack from "../enviar-pedido-portal-sayerlack/versao.ts";
 import * as conciliar from "../conciliar-pedido-portal/versao.ts";
@@ -147,14 +148,15 @@ Deno.test("generate-tactical-plan: o marcador NOMEIA a fatia — 'sensor-inicial
 // Fonte da edge SEM comentário — o gate proíbe uma FORMA de código, e o comentário que explica por
 // que a forma saiu cita a forma. Sem o filtro, o gate fica vermelho contra uma edge correta
 // (aconteceu na primeira execução deste arquivo). Mesma solução do gate `afinidade não é dinheiro`.
-// Os blocos de comentário saem ANTES do filtro de linha: um JSDoc não começa com barra-barra em
-// toda linha, então o filtro de linha sozinho o deixaria passar inteiro.
+//
+// A limpeza vem do módulo COMPARTILHADO (espelho byte-idêntico de `src/lib/gates/limpeza-fonte.ts`,
+// amarrado por `limpeza-fonte.parity.test.ts`). A cópia local que vivia aqui era regex pura: não
+// sabia o que era string — um abre-bloco dentro de aspas pareava com o próximo fecha-bloco REAL do
+// arquivo e apagava tudo entre os dois ANTES da medição, verde por CEGUEIRA
+// (docs/historico/gates-textuais-cegos.md). Ela também só descartava a linha que COMEÇAVA com
+// barra-barra, deixando comentário de fim-de-linha ser medido como código.
 function codigoDaEdge(nome: string): string {
-  return Deno.readTextFileSync(`supabase/functions/${nome}/index.ts`)
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .split("\n")
-    .filter((l) => !/^\s*\/\//.test(l))
-    .join("\n");
+  return removerComentarios(Deno.readTextFileSync(`supabase/functions/${nome}/index.ts`));
 }
 
 Deno.test("generate-bundle-argument: a sonda decide por classificarSonda, não por `=== true` cru", () => {
@@ -190,8 +192,7 @@ Deno.test("CALIBRAÇÃO: os padrões reprovam a forma PRÉ-fix e o filtro não c
   // Sem isto os dois testes acima só provariam que o arquivo existe (deploy.md: "canária que não
   // discrimina é teatro verde"). A forma antiga tem de FALHAR, e o filtro de comentário tem de
   // apagar SÓ comentário — se comesse código, a forma proibida voltaria em silêncio.
-  const semComentario = (s: string) =>
-    s.replace(/\/\*[\s\S]*?\*\//g, "").split("\n").filter((l) => !/^\s*\/\//.test(l)).join("\n");
+  const semComentario = removerComentarios;
 
   const soComentario = "  // `classificarSonda` no lugar de `body.probe === true`: o SQL Editor manda string";
   if (/\bbody\.probe\s*===\s*true/.test(semComentario(soComentario))) {

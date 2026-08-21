@@ -41,6 +41,11 @@
     "db/**/*.ts"
   ],
   "ignore": [
+    // Espelhos BYTE-IDÊNTICOS de um canônico em `src/`, amarrados por um `*.parity.test.ts`. O
+    // knip acusa os exports que só o lado `src/` consome — e obedecê-lo (des-exportar aqui)
+    // quebraria a paridade, que é justamente o que impede as duas cópias de divergirem. A
+    // duplicação existe porque `test:edges` roda `deno test --no-remote`: edge não importa de `src/`.
+    "supabase/functions/_shared/limpeza-fonte.ts",
     "supabase/functions/_shared/sayerlack-sku.ts",
     "supabase/functions/_shared/embalagem-captura-helpers.ts",
     "src/integrations/supabase/types.ts",
