@@ -50,6 +50,19 @@
 --    superficie nao esta em uso; a fase N+1 aqui e INSTALAR O USO, nao aguardar o sinal.
 --    Por isso `taxa_7d` e `farmers_com_carteira` saem na propria linha: um denominador que nao
 --    cresce e um fato observavel, e o veredito ESTAGNADO o nomeia em vez de repetir "aguarde".
+--
+-- 6. **`completo` não garante que o universo lido era o CERTO.** Até o #1822 (merge 20/08
+--    23:58) os dois motores filtravam `sales_orders` por `status IN ('confirmado','faturado',
+--    'entregue')` — e DOIS desses status nunca existiram nesta tabela: a allowlist tinha sido
+--    copiada de outra. As leituras não falhavam, não truncavam em 1.000, e saíam `ok:true`;
+--    simplesmente enxergavam menos base. Medido: as 10 execucoes de cross_sell leram
+--    `pedidos=861`; a 1a execucao POSTERIOR ao fix leu **1227** — mesma farmer, +42%.
+--
+--    Nenhuma assinatura numerica pega isso (n=1000 e cap do PostgREST, nao allowlist errada),
+--    e `completude='completo'` e verdadeiro e inutil aqui: o insumo FOI lido com sucesso, da
+--    fonte errada. Por isso a EPOCA abaixo — execucao anterior a ela mediu outro universo e
+--    nao entra no mesmo denominador, do mesmo jeito que `vazios_pre_cobertura`. Ao corrigir
+--    um bug que muda o UNIVERSO lido, AVANCE a epoca; o que conta e o Publish, nao o merge.
 WITH motores AS (
   -- Esqueleto FIXO: o motor que nunca executou precisa APARECER com zero. Um `GROUP BY motor`
   -- sozinho simplesmente não produz linha para ele, e a ausência seria lida como "não há nada
@@ -68,11 +81,20 @@ marcada AS (
             WHERE (val->>'n')::int = 1000) AS tem_cap
   FROM public.farmer_geracao_execucoes
 ),
+epoca AS (
+  -- Merge do #1822 (o Publish veio depois; a 1a execucao com universo correto e 21/08 01:33).
+  -- Usar o merge e o piso CONSERVADOR: nunca inclui execucao que rodou com o codigo velho.
+  SELECT '2026-08-20T23:58:43Z'::timestamptz AS inicio
+),
 corte AS (
   -- Janela POR MOTOR: o cap que envenenou o cross-sell não pode descartar execução do bundle.
   SELECT
     mo.motor,
-    COALESCE(max(ma.calculado_em) FILTER (WHERE ma.tem_cap), '-infinity'::timestamptz) AS janela_desde,
+    GREATEST(
+      COALESCE(max(ma.calculado_em) FILTER (WHERE ma.tem_cap), '-infinity'::timestamptz),
+      (SELECT inicio FROM epoca)
+    )                                                                                  AS janela_desde,
+    count(*) FILTER (WHERE ma.calculado_em <= (SELECT inicio FROM epoca))               AS pre_epoca,
     count(*) FILTER (WHERE ma.tem_cap)                                                 AS descartadas_cap,
     -- Contaminação ATIVA ≠ passada: se a execução MAIS RECENTE deste motor ainda vem truncada,
     -- o cliente no ar segue truncando e nenhuma janela nova é confiável.
@@ -84,7 +106,7 @@ corte AS (
 ),
 obs AS (
   SELECT
-    c.motor, c.descartadas_cap, c.cap_ativo,
+    c.motor, c.descartadas_cap, c.cap_ativo, c.pre_epoca,
     count(m.calculado_em)                                             AS execucoes_totais,
     -- O cliente ANTERIOR ao Publish não declarava insumo nenhum: conta como "rodou",
     -- nunca como evidência sobre completude.
@@ -119,16 +141,21 @@ obs AS (
   -- a query tem de devolver a linha DELE dizendo isso, e nao omiti-lo — linha ausente seria
   -- lida como "nao ha o que relatar", que e o ausente=zero.
   LEFT JOIN marcada m ON m.motor = c.motor AND m.calculado_em > c.janela_desde
-  GROUP BY c.motor, c.descartadas_cap, c.cap_ativo
+  GROUP BY c.motor, c.descartadas_cap, c.cap_ativo, c.pre_epoca
 )
 SELECT
   motor, execucoes_totais, julgaveis, vazios_completos, vazios_pre_cobertura,
-  descartadas_cap, farmers, farmers_com_carteira, exec_7d, desde, ultima,
+  descartadas_cap, pre_epoca, farmers, farmers_com_carteira, exec_7d, desde, ultima,
   CASE
     WHEN cap_ativo THEN
       'CONTAMINADO (ATIVO) — a execucao MAIS RECENTE deste motor ainda traz insumo de exatamente '
       || '1000 linhas. O cliente no ar segue truncando em silencio: nenhuma janela nova e '
       || 'confiavel. Corrija a paginacao e faca o Publish ANTES de julgar qualquer vazio.'
+    WHEN execucoes_totais = 0 AND pre_epoca > 0 THEN
+      'ZERADO POR EPOCA — ' || pre_epoca || ' execucao(oes) existem, mas TODAS anteriores ao '
+      || 'fix da allowlist de status (#1822): elas leram um universo de pedidos MENOR (861 '
+      || 'contra 1227 apos o fix) e nao medem a mesma coisa. Nao e "nunca rodou" nem "deu '
+      || 'vazio" — e denominador ZERADO por troca de universo. Exercer a tela de novo repovoa.'
     WHEN execucoes_totais = 0 THEN
       'SEM DENOMINADOR — este motor NUNCA executou. Nao e "o vazio nao acontece": e superficie '
       || 'sem sensor exercido. Os dois motores nao acumulam igual — FarmerRecommendations '

@@ -303,6 +303,23 @@ denominador que não cresce. Falsificado com 5 execuções há 30 dias (`ESTAGNA
 **A regra:** todo veredito de espera tem de carregar a taxa que o justifica. Sem ela, "aguarde" não
 é uma decisão — é o silêncio com cara de decisão.
 
+⚠️ **E `completo` que não garante o UNIVERSO certo.** Até o #1822 os dois motores filtravam
+`sales_orders` por `status IN ('confirmado','faturado','entregue')` — e **dois desses status nunca
+existiram nesta tabela**: a allowlist tinha sido copiada de outra. As leituras não falhavam, não
+truncavam em 1.000, saíam `ok:true` e `completude='completo'`. Só enxergavam menos base. Medido no
+mesmo farmer: `pedidos=861` nas 10 execuções pré-fix contra **1227** na primeira pós-fix, +42%.
+
+Nenhuma assinatura numérica pega isso — `n=1000` é cap do PostgREST, não allowlist errada — e
+`completo` aqui é **verdadeiro e inútil**: o insumo foi lido com sucesso, da fonte errada. É o
+limite do rótulo que esta linha inteira construiu: completude atesta que a leitura não falhou,
+nunca que ela mirava o lugar certo.
+
+Daí a **época** (o conceito do #1796): execução anterior ao fix mediu outro universo e não entra no
+mesmo denominador. Ao corrigir um bug que muda o universo lido, **avance a época** — e o que conta
+é o Publish, não o merge. Efeito imediato e desconfortável: o cross-sell caiu de "3 julgáveis" para
+**zero**, porque as 3 que pareciam limpas liam a base errada.
+
+
 
 
 ### Onde a regra NÃO se aplica
