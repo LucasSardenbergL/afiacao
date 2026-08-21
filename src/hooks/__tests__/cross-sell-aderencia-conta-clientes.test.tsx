@@ -40,15 +40,25 @@ const SKU_BASE = 'sku-base';
 const SKU_CONCENTRADO = 'sku-concentrado';
 /** Comprado por TRÊS clientes, uma vez cada: volume baixo, adesão ampla. */
 const SKU_ESPALHADO = 'sku-espalhado';
+/** INATIVO: item que não resolve no catálogo ativo — dá pedido a `cli-7` sem dar histórico. */
+const SKU_INATIVO = 'sku-inativo';
+
+const CODIGO: Record<string, number> = {
+  [SKU_BASE]: 1, [SKU_CONCENTRADO]: 2, [SKU_ESPALHADO]: 3, [SKU_INATIVO]: 4,
+};
 
 const persistidas: Array<Record<string, unknown>> = [];
 
-/** Carteira: o alvo + 5 que formam o histórico. Todos com pedido ⇒ `totalCustomers` = 6. */
-const CARTEIRA = ['cli-1', 'cli-2', 'cli-3', 'cli-4', 'cli-5', 'cli-6'];
+/**
+ * Carteira de SETE. Todos têm pedido (⇒ a carteira ATIVA é 7), mas `cli-7` só comprou SKU
+ * inativo, então o histórico UTILIZÁVEL é 6. É essa diferença que torna a escolha do
+ * denominador observável — sem ela o teste passaria com qualquer um dos dois.
+ */
+const CARTEIRA = ['cli-1', 'cli-2', 'cli-3', 'cli-4', 'cli-5', 'cli-6', 'cli-7'];
 
 const pedido = (cid: string, sku: string, preco: number) => ({
   customer_user_id: cid,
-  items: [{ omie_codigo_produto: sku === SKU_BASE ? 1 : sku === SKU_CONCENTRADO ? 2 : 3, quantity: 1, unit_price: preco }],
+  items: [{ omie_codigo_produto: CODIGO[sku], quantity: 1, unit_price: preco }],
   total: preco,
   created_at: '2026-01-01T00:00:00Z',
   account: CONTA,
@@ -67,6 +77,9 @@ function linhasPorTabela(): Record<string, Record<string, unknown>[]> {
       { id: SKU_BASE, codigo: 'B', descricao: 'Base', valor_unitario: 50, metadata: null, ativo: true, omie_codigo_produto: 1, estoque: 9, account: CONTA },
       { id: SKU_CONCENTRADO, codigo: 'C', descricao: 'Concentrado', valor_unitario: 100, metadata: null, ativo: true, omie_codigo_produto: 2, estoque: 9, account: CONTA },
       { id: SKU_ESPALHADO, codigo: 'E', descricao: 'Espalhado', valor_unitario: 100, metadata: null, ativo: true, omie_codigo_produto: 3, estoque: 9, account: CONTA },
+      // SKU_INATIVO fica FORA da lista de propósito: o motor lê `omie_products` com
+      // `.eq('ativo', true)`, e este stub não aplica filtros — ausência do catálogo é como se
+      // representa "inativo" aqui. O item de `cli-7` cai em `fora_do_catalogo_ativo`.
     ],
     sales_orders: [
       // O alvo: tem pedido (entra na carteira ativa) e comprou só o base, então os DOIS
@@ -78,6 +91,10 @@ function linhasPorTabela(): Record<string, Record<string, unknown>[]> {
       ...['cli-3', 'cli-4', 'cli-5'].map((cid) => pedido(cid, SKU_ESPALHADO, 100)),
       // cli-6 só o base: histórico utilizável, sem tocar em nenhum dos candidatos.
       pedido('cli-6', SKU_BASE, 50),
+      // cli-7 tem PEDIDO mas não tem HISTÓRICO: o item é de SKU inativo, descartado por
+      // `resolverItemNoCatalogo`. Ele conta na carteira ativa e não pode contar no
+      // denominador da aderência — é o cliente que separa os dois candidatos a denominador.
+      pedido('cli-7', SKU_INATIVO, 70),
     ],
     // Só o alvo tem perfil: `if (!profile) continue` restringe a GERAÇÃO a ele, enquanto os
     // outros cinco seguem contando no histórico e no denominador. Isola o observável.
@@ -200,5 +217,17 @@ describe('useCrossSellEngine — `clusterAdherence` conta CLIENTES, não ocorrê
     }
     expect(crossSellDe(result).find((r) => r.productId === SKU_CONCENTRADO)!.clusterVolume)
       .toBeLessThan(crossSellDe(result).find((r) => r.productId === SKU_ESPALHADO)!.clusterVolume);
+  });
+
+  it('D: o denominador é a carteira COM HISTÓRICO (6), não a carteira ativa (7)', async () => {
+    // `cli-7` tem pedido e nenhum histórico utilizável: ele jamais pode aparecer no numerador
+    // de SKU nenhum, então mantê-lo no denominador diluiria a fração por um universo incapaz
+    // de contribuir — o mesmo defeito de escala do bug, em grau menor.
+    //
+    // O ESPALHADO tem 3 compradores. Sobre 6 (com histórico) dá 0,5 → `clusterVolume` 6;
+    // sobre 7 (carteira ativa) daria 0,4286 → 5. O valor EXATO é o que distingue os dois
+    // denominadores — uma asserção de ordem passaria com qualquer um dos dois.
+    const result = await rodar();
+    expect(crossSellDe(result).find((r) => r.productId === SKU_ESPALHADO)!.clusterVolume).toBe(6);
   });
 });
