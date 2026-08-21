@@ -54,40 +54,37 @@ desconhecida alerta ao **esgotar** (alertar a cada tentativa dessensibiliza o al
 **Não introduz falha nova:** a espera é pelo MESMO sinal que a navegação já exigia 3s adiante.
 No caminho feliz resolve assim que o menu aparece. O que muda é o **nome** do que já falhava.
 
-## O efeito colateral que valeu o PR: um fiscal cego por uma string
+## O efeito colateral: um fiscal cego por uma string — e quem fechou a classe
 
-Ao adicionar um JSDoc `/** … */` no fim da edge, três gates textuais ficaram vermelhos acusando
-"dívida quitada" — 10→1, 5→1, 3→1. Nenhuma dívida tinha sido quitada.
+Ao adicionar um JSDoc no fim da edge, três gates textuais ficaram vermelhos acusando "dívida
+quitada" — 10→1, 5→1, 3→1. Nenhuma dívida tinha sido quitada.
 
-Os gates (`escrita-critica`, `erro-object-object`) removem comentários com
-`.replace(/\/\*[\s\S]*?\*\//g, '')` antes de medir — regex, **sem entender strings**. E o header
-HTTP das duas edges carrega:
+Os gates removiam comentários com `.replace(/\/\*[\s\S]*?\*\//g, '')` antes de medir — regex,
+**sem entender strings**. E o header HTTP das duas edges carrega `'Accept': '…image/webp,*/*;q=0.8'`:
+o `*/*` do mimetype coringa contém `/*`. Antes, nenhum `*/` vinha depois dela no arquivo, então o
+regex não casava nada. **O JSDoc foi o par que faltava** — e o `semComentarios` passou a apagar
+**1.730 linhas** antes de o fiscal olhar. Medindo o repo na hora: **4 arquivos** já viviam assim, o
+pior sendo a edge irmã `sayerlack-captura-precos`, com **1.041 das 1.226 linhas invisíveis**.
 
-```
-'Accept': 'text/html,…,image/webp,*/*;q=0.8'
-```
+**A classe foi fechada por outra sessão, não por esta.** O chip aberto aqui virou o PR
+[#1817] (`05bb821f`, mesma data): `src/lib/gates/limpeza-fonte.ts`, um stripper com máquina de
+estados (aspas, template com `${…}` aninhado, regex literal) que preserva a contagem de linhas, e
+os **10** gates textuais passaram a importar dele — as cópias locais morreram. Foi ele quem
+**revelou** os sítios que a cegueira escondia; este PR é quem os **quita**: os 3 do lado Deno da
+captura passaram a usar `mensagemDeErro`, e o `A_DIVIDA` daquele arquivo vai de 3 para 0. O que
+sobra (1 em `C_DIVIDA`) vive dentro do template do Browserless, que não importa `_shared`.
 
-O `*/*` do mimetype coringa contém `/*`. Antes, nenhum `*/` vinha depois dela no arquivo, então
-o regex não casava nada. **Meu JSDoc foi o par que faltava** — e o `semComentarios` passou a
-apagar **1.730 linhas** da edge antes de o fiscal olhar.
+**O que este PR deixou de carregar por causa disso:** o paliativo. A proibição de comentário de
+bloco nestas duas edges — e o guard que a vigiava — foi **retirada de propósito**: era uma regra de
+estilo cuja única razão morreu junto com o stripper regex. Contramedida textual que sobrevive à
+causa vira dívida, e o guard de preservação agora é geral, dentro do `limpeza-fonte`, valendo para
+todos os arquivos em vez de dois.
 
-Medido em seguida no repo inteiro: **4 arquivos** já viviam com região apagada, e o pior era a
-edge irmã — `sayerlack-captura-precos`, **1.041 das 1.226 linhas invisíveis** desde sempre, por
-um `} catch { /* … */ }` inline. Destravar aquele único comentário revelou **2 sítios reais** da
-classe #1642 que nunca tinham sido medidos (quitados aqui com `mensagemDeErro`) e **1** que não
-dá para quitar (vive dentro do template do Browserless, que não importa `_shared` — baselinado
-com o motivo).
-
-**A lição:** um gate textual que verde por **cegueira** é indistinguível de um que verde por
-mérito — e o gate não tem como saber a diferença sozinho. O sentinela de denominador que esses
-gates já têm ("o walker anda de verdade") mede *quantos arquivos* foram lidos, não *quanto de
-cada arquivo* sobrou depois da limpeza. Guard novo em
-`sayerlack-pos-login-edge-invariants.test.ts`: nas duas edges, `semBloco` tem de ter o mesmo
-número de linhas do arquivo bruto.
-
-⚠️ **Aberto (classe, não instância):** o `semComentarios` continua ingênuo para os outros ~3
-arquivos e para qualquer arquivo futuro. O conserto real é um stripper que entenda string/regex,
-e ele reclassifica dívida do repo inteiro — PR próprio, chip separado.
+⚠️ **Lição de coordenação, não de código:** as duas sessões rodaram **em paralelo no mesmo repo** e
+o custo apareceu no fim — conflito real em `erro-object-object-gate.test.ts`, resolvido em favor da
+quitação, mais três trechos meus que viraram obsoletos e precisaram ser desfeitos. O aviso do
+`pr-collision-guard` chegou no `git commit`, tarde: quando duas frentes tocam a MESMA tabela de
+dívida, o barato é decidir cedo quem é dono dela.
 
 ## O challenge do Codex derrubou meia correção — e a metade que sobrou era a errada
 

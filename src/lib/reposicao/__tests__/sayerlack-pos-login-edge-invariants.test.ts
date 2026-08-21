@@ -97,21 +97,10 @@ describe('edges Sayerlack: a confirmação de dashboard pós-login não pode sum
     expect(/if\s*\(\s*erroTipo === "LOGIN_FAILED"\s*\)/.test(posFix)).toBe(false);
   });
 
-  it('nenhuma das duas edges reintroduz delimitador de comentário de BLOCO', () => {
-    // O header HTTP `Accept` das duas carrega a sequência coringa de mimetype dentro de
-    // uma string. O `semComentarios` dos gates textuais (escrita-critica,
-    // erro-object-object) é regex e não entende strings: qualquer bloco aberto/fechado
-    // depois dela parea com ela e apaga o miolo do arquivo do campo de visão do fiscal —
-    // medido em 2026-08-20: 1.041 das 1.226 linhas da captura eram invisíveis, escondendo
-    // 2 sítios reais da classe #1642. O gate ficava verde por CEGUEIRA, não por mérito.
-    for (const [nome, caminho] of [['envio', ENVIO], ['captura', CAPTURA]] as const) {
-      const src = ler(caminho);
-      const semBloco = src.replace(/\/\*[\s\S]*?\*\//g, '');
-      expect(
-        semBloco.split('\n').length,
-        `${nome}: um comentário de bloco fechou o par que a string do header Accept abriu — ` +
-          'o fiscal textual parou de enxergar o miolo do arquivo. Use comentário de linha.',
-      ).toBe(src.split('\n').length);
-    }
-  });
+  // O guard "não use comentário de bloco nestas edges" foi RETIRADO, não esquecido: ele
+  // existia porque o stripper dos gates textuais era regex e o `/*` do `*/*` no header
+  // `Accept` apagava o miolo do arquivo. Isso morreu com `@/lib/gates/limpeza-fonte`
+  // (máquina de estados que entende string), adotado pelos 10 gates. Manter a proibição
+  // seria dívida: uma regra de estilo sem a razão que a justificava — e o guard geral de
+  // preservação agora mora no próprio limpeza-fonte, para TODOS os arquivos, não só estes.
 });

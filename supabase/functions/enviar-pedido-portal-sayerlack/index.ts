@@ -2192,14 +2192,6 @@ async function processarPedido(
 // `erro_nao_retentavel` que cobria só LOGIN_FAILED — e a falha de 2026-08-20 chegou
 // como EXCEPTION, por fora dele. O `{ error }` é capturado porque um alerta que falha
 // em silêncio é a mesma classe de bug que este PR conserta.
-//
-// ⚠️ COMENTÁRIO DE LINHA, NUNCA de bloco, neste arquivo — e sem escrever delimitador
-// de bloco nem em prosa. O header HTTP `Accept` acima carrega a sequência coringa de
-// mimetype (barra entre dois asteriscos) DENTRO de uma string, e os gates textuais
-// (escrita-critica, erro-object-object) removem comentários por regex, sem entender
-// strings: qualquer fechamento de bloco depois dela fecha o par que ela abriu e APAGA
-// ~1.700 linhas do que o fiscal enxerga — o gate fica verde por CEGUEIRA, não por
-// mérito. Medido em 2026-08-20; a edge irmã de captura já vive assim.
 async function alertarFornecedor(
   supabase: SupabaseClient,
   erroTipo: string | null,

@@ -1179,15 +1179,7 @@ Deno.serve(async (req) => {
       try {
         const tail = JSON.stringify(envelope.trace.slice(-8)).slice(0, 1600);
         erroFinal = `${erroFinal ?? "falha"} | trace_tail: ${tail}`;
-      } catch {
-        // trace não-serializável não pode derrubar o fechamento do run.
-        // ⚠️ Comentário de LINHA de propósito: o header HTTP `Accept` lá em cima carrega a
-        // sequência coringa de mimetype (barra entre asteriscos) dentro de uma string, e os
-        // gates textuais (escrita-critica, erro-object-object) removem comentários por regex
-        // sem entender strings. Enquanto este era um comentário de BLOCO, ele fechava o par
-        // que aquela string abriu e apagava 1.041 das 1.226 linhas do arquivo do campo de
-        // visão dos fiscais — medido em 2026-08-20. Não reintroduzir delimitador de bloco aqui.
-      }
+      } catch { /* trace não-serializável não pode derrubar o fechamento do run */ }
     }
 
     const evidencia = await uploadEvidencia(supabase, runId, bResp?.screenshot ?? null);
