@@ -33,7 +33,7 @@ Após **3 incidentes resolvidos** (loop de re-envio → hash v0.2.0; lock timeou
 
 1. **PR #914 mergeado** na `main` (tirar do DRAFT → auto-merge no CI verde).
 2. **`sayersync.exe` v0.2.0 buildado** — cross-compile `GOOS=windows GOARCH=amd64` **sem CGO** (procedimento no corpo do #914).
-3. **Edge `tint-sync-agent` em PROD** — ✅ **já confirmado por evidência**: 129 promoções `sync_agent` rodaram em prod (última 16/06 11:54), logo o gate existe e funciona (`index.ts:397` `/catalogs`, `index.ts:542` `/formulas`). **Revalidar com `lovable-deploy-verify` só se a edge for redeployada** antes do flip.
+3. **Edge `tint-sync-agent` em PROD** — ✅ **já confirmado por evidência**: 129 promoções `sync_agent` rodaram em prod (última 16/06 11:54), logo o gate existe e funciona (`supabase/functions/tint-sync-agent/index.ts:290`<!--cita: path === "catalogs"--> `/catalogs`, `supabase/functions/tint-sync-agent/index.ts:405`<!--cita: path === "formulas"--> `/formulas`). **Revalidar com `lovable-deploy-verify` só se a edge for redeployada** antes do flip.
 
 > 🛡️ **Proteção barata até o v0.2.0:** o serviço `SayerSync` pode ficar **PARADO/desabilitado** sem nenhum impacto no balcão. **NÃO** religar o v0.1.7 (reenche o staging). Como a máquina está desligada, o risco é só amanhã ao abrir a loja — deixar o serviço em *startup manual* elimina o risco.
 
