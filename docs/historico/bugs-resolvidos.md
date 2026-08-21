@@ -786,3 +786,39 @@ porque a diferença é um fator uniforme por farmer e fator uniforme não muda o
 Empatadas no desfecho, ficou a que **falha melhor**: "com histórico" encolhe o denominador junto com
 a cobertura (1 cliente com histórico em 100 ativos daria 1/1 = 100%). O critério de desempate entre
 opções equivalentes é o modo de falha, não a elegância do argumento.
+
+**Fecho do ciclo: o deploy da edge provado pelo LOG DELA MESMA (2026-08-21).** O #1836 mergeou às
+03:17 e o founder publicou a edge pelo chat do Lovable. "Publiquei" não é "está no ar", e aqui a
+verificação canônica não existe: o **N2** (Management API — `version` sobe, `updated_at` recente)
+é **estruturalmente indisponível** neste projeto, porque o Supabase é da org do Lovable e não há
+Access Token que o founder possa gerar (pedir o PAT já foi erro 3×). Sobrava o **N1** (a função
+responde OPTIONS — prova existência, não versão) e o rastro do commit `Deployed …` do bot, que
+**nem apareceu** nesta publicação.
+
+A saída foi um **N3 que não precisou de canária nem de sonda**: a edge ESCREVE em
+`recommendation_log`, e o defeito tinha testemunha lá dentro. Sob truncagem, o custo de ~73% dos
+candidatos ficava fora da página e a edge gravava `cost_source = 'UNKNOWN'`; com a paginação,
+produto **que tem custo cadastrado** não pode mais sair UNKNOWN. Medido:
+
+| chamada | impressões | UNKNOWN |
+|---|---|---|
+| **08-21 20:04** (pós-deploy) | 5 | **0** |
+| 08-08 · 06-12 · 06-10 (3×) · 06-08 | 5 cada | 5 (100%) |
+| 06-10 12:17 | 15 | 14 (93%) |
+| 06-14 | 5 | 3 (60%) |
+| 05-19 · 05-18 | 5 cada | 4 (80%) |
+
+Nove chamadas históricas entre 60% e 100%; a primeira pós-deploy, 0 de 5 — sorte de ~1% no melhor
+caso da base, ~0,001% no típico. E a query que **elimina o confundidor**: dos 283 UNKNOWN
+históricos, **279 (98,6%) TINHAM custo em `product_costs`**. Não era "faltava custo no banco" — o
+dado existia e a edge não alcançava. Isso é a truncagem medida no PRODUTO, não inferida do código;
+o PR alegava 73,5% de candidatos sem custo por simulação da primeira página, e o log independente
+mostrou 60–100% por chamada de verdade.
+
+**A generalização, que já foi para `docs/agent/deploy.md`:** quando a edge grava numa tabela,
+pergunte *que valor o código VELHO gravava e o NOVO não pode gravar* — se existir, a versão se
+prova por SQL, **retroativamente**, sem código novo na edge e sem o founder chamar nada. Canária e
+sonda exigem instrumentação escrita ANTES do deploy; esta não. As duas armadilhas: a linha de base
+é **obrigatória e por CHAMADA** (impressões da mesma chamada não são independentes — mesmo
+catálogo, mesma página truncada), e o **confundidor** ("alguém fez backfill") tem de ser descartado
+por query própria, não por suposição.

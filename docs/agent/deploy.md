@@ -116,6 +116,48 @@ FROM net._http_response ORDER BY id DESC LIMIT 1;
 
 Verde = `status_code 200` **E** `canary true` **E** `contrato` batendo com a tabela acima **E** `ok true` **E** `casos_vermelhos NULL` (os cinco, não só o `ok`). `400` com `"Ação desconhecida"` = **bundle velho**, a probe não subiu — e a lista `acoes_disponiveis` da resposta é a confirmação (não cita a action nova). ⚠️ Probe é **dry-run**: se um dia uma delas abrir linha em `fin_sync_log`, ela fabrica frescor — `_data_health_compute` e `fin_calcular_confiabilidade` leem essa tabela **sem filtrar `action`** (só o `fin_sync_heartbeat` filtra). No `omie-financeiro` isso é o `PROBE_ACTIONS` → `logId=""`, pinado no `edge-money-path-invariants`.
 
+### Assinatura no PRÓPRIO log da edge — N3 retroativo, sem canária e sem sonda
+
+Terceiro caminho, e o mais barato quando existe: **a edge que ESCREVE numa tabela já carrega a
+prova do que ela é**. Se o defeito corrigido deixava rastro nos dados que a edge grava, a versão
+se prova por SQL — sem canária, sem sonda, sem `?canary=1`, sem o founder chamar nada, e
+**retroativamente** (serve para deploy que já aconteceu, inclusive um que ninguém verificou na
+hora). Diferença para as duas outras: canária e sonda exigem CÓDIGO na edge, escrito ANTES do
+deploy; esta não exige nada — só que o defeito tenha uma testemunha na tabela de saída.
+
+**Como achar a assinatura.** Pergunte: *que valor o código VELHO gravava e o NOVO não pode
+gravar?* Não serve um valor que os dois possam produzir. Tem de ser um estado que a correção
+torna IMPOSSÍVEL.
+
+**Caso que a fundou (`recommend`, 2026-08-21, PR #1836).** As seis leituras não paginavam, então
+o custo de ~73% dos candidatos ficava fora da página do PostgREST e a edge gravava
+`recommendation_log.cost_source = 'UNKNOWN'`. Depois da paginação, produto **que tem custo
+cadastrado** não pode mais sair UNKNOWN. Duas queries fecharam:
+
+```sql
+-- (1) O defeito, medido no PRODUTO: o custo existia e a edge não via.
+SELECT count(*) FILTER (WHERE rl.cost_source='UNKNOWN')                            AS unknown,
+       count(*) FILTER (WHERE rl.cost_source='UNKNOWN' AND pc.product_id IS NOT NULL) AS unknown_mas_tem_custo
+FROM recommendation_log rl LEFT JOIN product_costs pc ON pc.product_id = rl.product_id
+WHERE rl.event_type='impression';        -- 283 UNKNOWN, dos quais 279 (98,6%) TINHAM custo
+
+-- (2) A linha de base POR CHAMADA, que é o que dá poder estatístico ao veredito.
+SELECT date_trunc('minute',created_at) chamada, count(*) n,
+       count(*) FILTER (WHERE cost_source='UNKNOWN') unk
+FROM recommendation_log WHERE event_type='impression' GROUP BY 1 ORDER BY 1 DESC LIMIT 10;
+-- 9 chamadas históricas: 60–100% UNKNOWN · 1ª chamada pós-deploy: 0 de 5
+```
+
+⚠️ **A linha de base é obrigatória, e é POR CHAMADA.** "0 de 5 UNKNOWN" não significa nada sozinho
+— é a regra do denominador de novo. Contra uma base de 60–100%, um 0/5 seria sorte de ~1% no
+melhor caso e ~0,001% no típico; contra uma base de 10%, não provaria coisa alguma. Agrupe por
+chamada (as impressões de uma mesma chamada **não são independentes** — mesmo catálogo, mesmo
+cliente, mesma página truncada), e diga o tamanho da amostra no veredito.
+
+⚠️ **Descarte o confundidor antes de concluir.** "Caiu o UNKNOWN" também aconteceria se alguém
+tivesse feito backfill de `product_costs`. Foi a query (1) que eliminou isso: os UNKNOWN antigos
+**já tinham** custo no banco — o dado existia, a edge é que não alcançava.
+
 ## Quando o Lovable reverte um fix — detectar e restaurar
 
 O bot `gpt-engineer-app[bot]` commita direto na `main` SEM CI ("Changes"/"Deployed"/"Deployou edge") e às vezes reverte um PR (~16% dos commits; ≥4-5 reversões money-path recentes). Prevenção é inviável (o bot precisa de escrita direta) → o jogo é **detectar + restaurar rápido** (MTTR), não governança perfeita. Spec: `docs/superpowers/specs/2026-06-26-lovable-revert-mitigation-design.md`.
