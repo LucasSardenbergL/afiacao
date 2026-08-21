@@ -120,19 +120,57 @@ const G1_ALLOW: ReadonlyMap<string, number> = new Map([
 // A forma fina da classe (F3, controle: buscarTodasPaginas pré-#1564): o laço já lança
 // em `error`, mas `data ?? []` converte a resposta malformada (`data:null` SEM error) em
 // página vazia → EOF falso → o acumulado PARCIAL volta como se fosse a tabela inteira.
-// Detecção posicional (não regex única): um `.range(` com `for`/`while` até 300 chars
+// Detecção posicional (não regex única): um `.range(` com `for`/`while` até ANTES_G3 chars
 // ANTES (laço local — callbacks de helper não têm) e `?? []`/`|| []` até 260 chars
 // DEPOIS (o acumulador da página). Single-shots e callbacks de helper não casam.
+//
+// ANTES_G3 era 300 e virou 1200 ao aplicar a regra do DENOMINADOR (§9 do money-path) a este
+// arquivo. Medido em 2026-08-21 sobre as 1.642 fontes que o gate varre, com `.range(` como
+// âncora (129 ocorrências):
+//
+//   janela │  300   600   900  1200  1600  2400  4000
+//   laços  │   14    25    37    42    48    57    65     ← NÃO converge: acima de ~600 o `for`
+//   acusa  │    0     1     1     1     1     1     1        já é de outro escopo, é ruído
+//
+// As duas linhas dizem coisas opostas, e é por isso que a medição valeu. "Laços vistos" cresce
+// para sempre — seria um denominador enganoso, do tipo que faz alguém escolher a janela pelo
+// número que quer ver. **ACUSADOS** (laço + coalescência de página) estabiliza em 1 já aos 600 e
+// não se move até 4000: o veredito é o MESMO em toda a faixa, então 1200 não foi escolhido a
+// dedo — qualquer valor ≥600 dá esta resposta. O que a janela de 300 fazia era não olhar: o
+// único sítio candidato do repo tem o `for` a 460 chars do `.range(`, e o gate declarava
+// `G3_DIVIDA` VAZIA sem nunca tê-lo inspecionado. Zero não medido com cara de zero auditado —
+// exatamente a regra (a) do §9.
+const ANTES_G3 = 1200;
+
 function contarG3(fonte: string): number {
   let i = -1;
   let n = 0;
   while ((i = fonte.indexOf('.range(', i + 1)) !== -1) {
-    const antes = fonte.slice(Math.max(0, i - 300), i);
+    const antes = fonte.slice(Math.max(0, i - ANTES_G3), i);
     const depois = fonte.slice(i, i + 260);
     if (/\b(for|while)\s*\(/.test(antes) && /(\?\?|\|\|)\s*\[\]/.test(depois)) n++;
   }
   return n;
 }
+
+/**
+ * G3 ALLOW — sítio inspecionado e ABSOLVIDO, que é diferente de dívida.
+ *
+ * `useSalesOrders.ts` é o laço que a janela de 300 escondia. Ele TEM a forma (`for` + `.range(`
+ * + `(data ?? [])`), e mesmo assim não produz o silêncio da classe, porque o `?? []` não é a
+ * única testemunha: o drain pede `count: 'exact'` na 1ª página e guarda o total. Se `data` vier
+ * null SEM error, `rows` fica vazio e o laço encerra — mas `total` continua sendo o count do
+ * servidor, então (i) `result.rows.length < result.count` dispara um re-drain, e (ii) se ainda
+ * assim faltar linha, `truncated = totalCount > orders.length` acende o aviso na tela. O parcial
+ * NÃO passa por completo, que é o dano que o G3 existe para impedir.
+ *
+ * Fica na ALLOW e não na DÍVIDA de propósito: dívida é o que se pretende quitar, e aqui não há
+ * o que quitar. O que este waiver compra é que a próxima mudança nesse laço — tirar o `count`,
+ * tirar o re-drain, tirar o `truncated` — reprove aqui em vez de passar despercebida.
+ */
+const G3_ALLOW: ReadonlyMap<string, number> = new Map([
+  ['src/components/salesOrders/useSalesOrders.ts', 1],
+]);
 
 // DÍVIDA G3 (baseline por CONTAGEM, 2026-07-23 — chips de erradicação por domínio
 // abertos na mesma data). NÃO adicione entradas nem aumente contagens: crescer é
@@ -449,7 +487,10 @@ describe('gate estrutural: paginação artesanal que trata falha como fim (class
   });
 
   it('G3: nenhum laço `.range(` com `?? []`/`|| []` de página além da dívida baselinada', () => {
-    const { reintroducoes, quitacoes } = desvios(contarPorArquivo(contarG3), G3_DIVIDA);
+    const { reintroducoes, quitacoes } = desvios(
+      contarPorArquivo(contarG3),
+      new Map([...G3_ALLOW, ...G3_DIVIDA]),
+    );
     expect(
       reintroducoes,
       `REINTRODUÇÃO da classe (F3 — \`?? []\` sobre página dentro de laço: data:null sem error vira ` +
@@ -758,6 +799,214 @@ serve(async (req) => {
   );
   const mapa = new Map((outraCoisa ?? []).map((x) => [x.id, x]));`;
     expect(contarG3(callbackCorreto), 'G3 casa callback de helper — falso positivo de calibração').toBe(0);
+  });
+
+  // ── DENOMINADOR: cada detector publica quanto da sua âncora ele ALCANÇA ───────────────
+  //
+  // A regra vem do §9 do `money-path.md`, e ela nasceu de duas reincidências do MESMO defeito:
+  // o G4 daqui media 0 em arquivos com sites vivos porque `\s*` não atravessava ` as number)`,
+  // e oito dias depois o `rpc-set-returning-paginacao-gate` repetiu a façanha com
+  // `(supabase.rpc as RpcFn)('nome')`. Nos dois casos o gate deu VERDE por não ter procurado, e
+  // nos dois a baseline de dívida deu ao número zero uma aparência de auditado.
+  //
+  // "Conferir se a regex conhece a forma real do repo" não tem gatilho — ninguém lembra. Contar
+  // tem: a diferença entre as ocorrências CRUAS da âncora e as que o detector alcança é uma
+  // subtração, e ela aparece antes de você saber qual forma escapou. Os testes abaixo publicam
+  // essa subtração para cada gate e falham quando o RESTO cresce — o resto pode até ser grande,
+  // desde que esteja explicado; o que não pode é aumentar sem ninguém olhar.
+  //
+  // Medido em 2026-08-21 sobre as 1.642 fontes varridas:
+  //
+  //   G1  `.range(`               129 âncoras │ 0 fora do alcance da janela de 600
+  //   G3  `.range(`               129 âncoras │ veredito idêntico de 600 a 4000 (ver ANTES_G3)
+  //   G4  total de páginas Omie    81 âncoras │ 5 identificadores `*pagina*` vizinhos, absolvidos
+  //   G5  `proximoTotalPaginas(`   31 âncoras │ 0 — `indexOf` literal, alcance é 100% por
+  //                                             construção; não há janela nem vocabulário a errar
+  //   G6  `await fetch(`          122 âncoras │ 26 Omie, 96 excluídos, 11 na vizinhança do corte
+  //
+  // G2 não entra: ele não VARRE, é uma lista de contract-pins em arquivos nomeados. Um detector
+  // sem âncora não tem denominador — e dizer isso é mais honesto que inventar um.
+
+  function todasAsFontes(): Array<{ arquivo: string; fonte: string }> {
+    const out: Array<{ arquivo: string; fonte: string }> = [];
+    for (const dir of DIRS) {
+      for (const arquivo of listarFontes(dir)) {
+        out.push({ arquivo, fonte: removerComentarios(readFileSync(resolve(RAIZ, arquivo), 'utf8')) });
+      }
+    }
+    return out;
+  }
+
+  it('DENOMINADOR/G1: toda âncora `.range(` está ao alcance da janela de 600', () => {
+    // O G1 casa `const { data } = await …[^;]{0,600}?.range(`. Se a instrução que abre a leitura
+    // ficar a mais de 600 chars — ou se não houver `;`/`{` no caminho —, o regex não chega lá e
+    // o site fica invisível. Hoje isso não acontece em nenhum dos 129; o teste existe para o dia
+    // em que um encadeamento longo (muitos `.order()`, muitos filtros) empurrar o início para
+    // fora, que é uma mudança silenciosa: o gate não fica vermelho, ele para de olhar.
+    const foraDeAlcance: string[] = [];
+    for (const { arquivo, fonte } of todasAsFontes()) {
+      let i = -1;
+      while ((i = fonte.indexOf('.range(', i + 1)) !== -1) {
+        const janela = fonte.slice(Math.max(0, i - 600), i);
+        if (!janela.includes(';') && !janela.includes('{')) foraDeAlcance.push(`${arquivo} @${i}`);
+      }
+    }
+    expect(
+      foraDeAlcance,
+      `\`.range(\` cuja instrução o G1 não alcança em 600 chars — o gate PAROU DE OLHAR esses ` +
+        `sites (não ficou vermelho, ficou cego). Aumente a janela do G1 e re-meça: ${foraDeAlcance.join(', ')}`,
+    ).toEqual([]);
+  });
+
+  it('DENOMINADOR/G3: o veredito não depende da janela — 600 a 4000 dão a MESMA lista', () => {
+    // A prova de que `ANTES_G3` não foi escolhido a dedo. Um parâmetro de janela é exatamente o
+    // tipo de número que se ajusta até o resultado agradar; se o veredito muda dentro da faixa,
+    // o valor escolhido está decidindo o resultado e alguém precisa dizer POR QUÊ. Enquanto a
+    // lista for a mesma dos 600 aos 4000, a janela não está opinando — só o padrão está.
+    const fontes = todasAsFontes();
+    const veredito = (janela: number): string[] => {
+      const acusados: string[] = [];
+      for (const { arquivo, fonte } of fontes) {
+        let i = -1;
+        while ((i = fonte.indexOf('.range(', i + 1)) !== -1) {
+          const antes = fonte.slice(Math.max(0, i - janela), i);
+          if (/\b(for|while)\s*\(/.test(antes) && /(\?\?|\|\|)\s*\[\]/.test(fonte.slice(i, i + 260))) {
+            acusados.push(arquivo);
+          }
+        }
+      }
+      return [...new Set(acusados)].sort();
+    };
+    const referencia = veredito(ANTES_G3);
+    for (const janela of [600, 900, 1600, 2400, 4000]) {
+      expect(
+        veredito(janela),
+        `o veredito do G3 MUDA entre a janela ${ANTES_G3} e ${janela} — então o valor de ` +
+          `ANTES_G3 está decidindo quem é acusado, e não o padrão. Investigue o site que entra ` +
+          `ou sai antes de mexer no número.`,
+      ).toEqual(referencia);
+    }
+  });
+
+  /**
+   * G4 — a vizinhança do VOCABULÁRIO, que é onde o G4 já se enganou uma vez.
+   *
+   * O gate conhece dois nomes para o total de páginas do Omie (`nTot(al)?Paginas` e
+   * `total_de_paginas`). A pergunta que a regra do denominador faz é: existe algum OUTRO
+   * identificador com cara de página sendo confiado cru? Estes cinco existem e foram lidos um a
+   * um — nenhum é o campo cru da resposta, e é por isso que o G4 não precisa crescer:
+   */
+  const G4_VIZINHOS: ReadonlyMap<string, number> = new Map([
+    // parâmetro do PRÓPRIO validador canônico (`validarTotalPaginas(nTot, maxPaginas)`) — o
+    // `?? 1` que aparece na janela é o do `nTot`, dentro da função que existe para tratá-lo.
+    ['maxPaginas', 1],
+    // página INICIAL vinda do body (`omie-malha-sync`), não o total: `|| 1` aqui é o default de
+    // "começa da primeira", que é o significado certo do valor ausente.
+    ['desdePagina', 1],
+    // idem, backfill do `omie-vendas-sync` (`params.start_page`).
+    ['bfPagina', 1],
+    // 3 sítios, todos derivados e não crus: em `omie-sync-nfes-recebidas` e `omie-vendas-sync` é
+    // a VARIÁVEL recebendo um valor cujo lado direito o G4 já casa (`nTotalPaginas`,
+    // `total_de_paginas` — ambos na dívida/allowlist); em `omie-sync-status-produtos/paginacao.ts`
+    // é o PISO monotônico (`Math.max(1, p1.totalPaginas || 1)` com `if (t > piso) piso = t`),
+    // que é a defesa contra a classe, não a classe.
+    ['totalPaginas', 3],
+  ]);
+
+  it('DENOMINADOR/G4: nenhum identificador *pagina* NOVO confiado cru fora do vocabulário', () => {
+    const medido = new Map<string, number>();
+    const onde = new Map<string, Set<string>>();
+    for (const { arquivo, fonte } of todasAsFontes()) {
+      for (const m of fonte.matchAll(/([A-Za-z_$][\w$]*[Pp]agina[\w$]*)[^;]{0,60}?(\|\||\?\?)\s*1\b/g)) {
+        const nome = m[1];
+        if (/^(nTot(?:al)?Paginas|total_de_paginas)$/.test(nome)) continue; // o G4 já vigia
+        medido.set(nome, (medido.get(nome) ?? 0) + 1);
+        (onde.get(nome) ?? onde.set(nome, new Set()).get(nome)!).add(arquivo);
+      }
+    }
+    const novos: string[] = [];
+    for (const [nome, n] of medido) {
+      const base = G4_VIZINHOS.get(nome) ?? 0;
+      if (n > base) novos.push(`${nome} (${base}→${n}) em ${[...(onde.get(nome) ?? [])].join(', ')}`);
+    }
+    expect(
+      novos,
+      `identificador com cara de página confiado cru (\`|| 1\`/\`?? 1\`) que o vocabulário do G4 ` +
+        `NÃO conhece. Leia cada um: se for o campo cru da resposta do Omie sob outro nome, o G4 ` +
+        `precisa aprender o nome — foi assim que ele já mediu 0 com 6 sites vivos. Se for página ` +
+        `inicial, piso monotônico ou parâmetro de helper, registre em G4_VIZINHOS com o porquê: ` +
+        `${novos.join(' | ')}`,
+    ).toEqual([]);
+    const sumiram = [...G4_VIZINHOS].filter(([n, b]) => (medido.get(n) ?? 0) < b).map(([n]) => n);
+    expect(sumiram, `vizinho do G4 sumiu — ATUALIZE G4_VIZINHOS: ${sumiram.join(', ')}`).toEqual([]);
+  });
+
+  /**
+   * G6 — a vizinhança do CORTE de relevância.
+   *
+   * O G6 só inspeciona `await fetch(` que tenha "omie" nos 260 chars seguintes; os outros 96 ele
+   * ignora de propósito (Supabase, Resend, Receita e LLM têm outro contrato de erro). Esse corte
+   * é uma janela, e janela erra para os dois lados — a diferença é que aqui errar para MENOS não
+   * deixa rastro: o gate simplesmente não olha, e a ausência de acusação parece aprovação.
+   *
+   * Os 11 abaixo são os que ficam entre 260 e 1000 — perto o bastante do corte para merecerem
+   * leitura. Foram lidos: são `RESEND_URL`, `${SUPABASE_URL}/rest/v1/…`, `api.resend.com` e a
+   * API da Receita, todos dentro de arquivos cujo NOME ou vizinhança menciona Omie. Nenhum é
+   * chamada ao Omie, e alargar o corte para 1000 só traria 11 falsos positivos. O corte de 260
+   * está certo; este teste é que vigia a próxima linha que cair nessa faixa.
+   */
+  const G6_VIZINHOS: ReadonlyMap<string, number> = new Map([
+    ['supabase/functions/disparar-pedidos-aprovados/index.ts', 4],
+    ['supabase/functions/enviar-pedido-portal-sayerlack/index.ts', 1],
+    ['supabase/functions/fin-suggest-mapping/index.ts', 1],
+    ['supabase/functions/omie-cliente/index.ts', 1],
+    ['supabase/functions/omie-nfe-recebimento/index.ts', 1],
+    ['supabase/functions/omie-nfe-reconcile/index.ts', 1],
+    ['supabase/functions/omie-sync/index.ts', 1],
+    ['supabase/functions/omie-sync-vendas-items/index.ts', 1],
+  ]);
+
+  it('DENOMINADOR/G6: a vizinhança do corte de 260 não cresce sem alguém ler', () => {
+    const medido = new Map<string, number>();
+    for (const { arquivo, fonte } of todasAsFontes()) {
+      let i = -1;
+      while ((i = fonte.indexOf('await fetch(', i + 1)) !== -1) {
+        if (/omie/i.test(fonte.slice(i, i + 260))) continue; // o G6 já inspeciona
+        if (/omie/i.test(fonte.slice(i, i + 1000))) medido.set(arquivo, (medido.get(arquivo) ?? 0) + 1);
+      }
+    }
+    const { reintroducoes, quitacoes } = desvios(medido, G6_VIZINHOS);
+    expect(
+      reintroducoes,
+      `\`await fetch(\` com "omie" logo depois do corte de 260 — o G6 NÃO olha esses. Leia: se ` +
+        `for chamada ao Omie, o corte precisa crescer (e aí 11 não-Omie entram junto, então o ` +
+        `filtro tem de ficar mais esperto, não mais largo). Se não for, registre em G6_VIZINHOS: ` +
+        `${reintroducoes.join(', ')}`,
+    ).toEqual([]);
+    expect(
+      quitacoes,
+      `vizinho do G6 sumiu — ATUALIZE G6_VIZINHOS para ele só encolher: ${quitacoes.join(', ')}`,
+    ).toEqual([]);
+  });
+
+  it('DENOMINADOR/G5: a âncora é literal, então o alcance é 100% por construção', () => {
+    // G5 acha `proximoTotalPaginas(` com `indexOf` — não há janela nem vocabulário entre a âncora
+    // e o detector, logo não há resto possível. O que ele pode perder é o helper chamado por
+    // ALIAS, e isso o teste abaixo mede: hoje os aliases são todos variáveis que RECEBEM o
+    // retorno (`const totalPaginas = proximoTotalPaginas(...)`), não nomes alternativos da
+    // função. Um `const p = proximoTotalPaginas; p(x)` seria invisível — nunca aconteceu, e se
+    // acontecer é aqui que aparece.
+    const reexportado: string[] = [];
+    for (const { arquivo, fonte } of todasAsFontes()) {
+      for (const m of fonte.matchAll(/\b(?:const|let|var)\s+(\w+)\s*=\s*proximoTotalPaginas\s*[;,\n]/g)) {
+        reexportado.push(`${arquivo}: ${m[1]}`);
+      }
+    }
+    expect(
+      reexportado,
+      `\`proximoTotalPaginas\` guardado em variável SEM chamar — o G5 procura o nome literal e ` +
+        `ficaria cego a \`${'${alias}'}(...)\`. Chame o helper pelo nome: ${reexportado.join(', ')}`,
+    ).toEqual([]);
   });
 
   // ── G2: contract-pins — os helpers canônicos mantêm o contrato que a classe exige ────
