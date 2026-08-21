@@ -324,13 +324,14 @@ Deno.test("INVARIANTE — redigir o segredo não muda a classe de nenhuma mensag
 // política não volte a ser reimplementada inline, onde nenhum teste a alcança. Medido com os
 // comentários REMOVIDOS: este arquivo e os dois `callOmie` citam a forma do bug de propósito, e um
 // predicado que lê a prosa acusa a documentação (money-path §"o ALVO mente").
-function semComentarios(fonte: string): string {
-  return fonte
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .split("\n")
-    .filter((linha) => !/^\s*\/\//.test(linha))
-    .join("\n");
-}
+// A limpeza vem do módulo COMPARTILHADO (espelho byte-idêntico de `src/lib/gates/limpeza-fonte.ts`,
+// amarrado por `limpeza-fonte.parity.test.ts`). A cópia local que vivia aqui era regex pura, e
+// além de não saber o que era string (um abre-bloco dentro de aspas pareava com o próximo
+// fecha-bloco REAL e apagava tudo entre os dois — verde por CEGUEIRA,
+// docs/historico/gates-textuais-cegos.md), ela só descartava a linha que COMEÇAVA com barra-barra:
+// comentário no FIM de uma linha de código continuava sendo medido como se fosse código. O módulo
+// remove os dois.
+import { removerComentarios as semComentarios } from "./limpeza-fonte.ts";
 
 const EDGES = ["cmc-snapshot-smoke", "cmc-snapshot-backfill"];
 const FONTES = new Map<string, string>(

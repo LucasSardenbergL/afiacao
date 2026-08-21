@@ -80,11 +80,7 @@ extremo — e o comentário no teste diz explicitamente que ela NÃO teria pego 
 
 ## O que sobrou aberto (medido, não presumido)
 
-- **4 gates Deno** (`supabase/functions/**/*_test.ts`) ainda têm cópia local: não podem importar de `src/`
-  (`--no-remote`), precisam de um `_shared/limpeza-fonte.ts` + teste de paridade. **Medido hoje: zero
-  impacto** — os alvos deles (`calculate-scores/index.ts`, `generate-bundle-argument/index.ts`,
-  `_shared/cmc-snapshot-retry.ts`, `omie-analytics-sync/politica-retry.ts`) não estão na tabela acima.
-  Latente, não ativo. Chip próprio.
+- ~~**4 gates Deno**~~ — **FECHADO** (ver §"Perna Deno" abaixo).
 - **Sub-classe CSS** (`table-overscroll.test.ts`): insumo é um arquivo só (`src/index.css`), sob nosso
   controle; varredura deu **zero**. Registro, sem chip.
 - **Sub-classe SQL — eixo `--`, medida ATÉ O VEREDITO (3ª rodada, 2026-08-20). Exposição real, dano
@@ -133,6 +129,49 @@ extremo — e o comentário no teste diz explicitamente que ela NÃO teria pego 
   2,3× abaixo do estrago — a mesma folga do sentinela irmão (150 sobre 88). O teste também **prova o
   alarme disparando** num arquivo envenenado: alarme que nunca se viu disparar é decoração.
 
+## Perna Deno — fechada (2026-08-20, mesmo dia)
+
+`supabase/functions/_shared/limpeza-fonte.ts` é **espelho byte-idêntico** de `src/lib/gates/limpeza-fonte.ts`,
+amarrado por `src/lib/gates/__tests__/limpeza-fonte.parity.test.ts`. A duplicação é obrigatória, não
+preguiça: `test:edges` roda `deno test --no-remote`, e sob esse flag um teste de edge não pode importar
+de `src/` — o jeito de não ter duas verdades é provar que os bytes são os mesmos.
+
+**5 sítios** trocados em 4 arquivos (o `sonda-versao-contrato_test.ts` tinha dois — o `codigoDaEdge` e um
+`semComentario` local dentro do teste de calibração):
+
+| arquivo | sítios |
+| --- | --- |
+| `calculate-scores/ordem-lease_test.ts` | 1 |
+| `_shared/cmc-snapshot-retry_test.ts` | 1 |
+| `_shared/sonda-versao-contrato_test.ts` | 2 |
+| `omie-analytics-sync/politica-retry_test.ts` | 1 |
+
+### Re-medição dos alvos (não presumida)
+
+Confirma o que a tabela do topo já dizia: **a classe estava LATENTE aqui, não ativa**. Nenhum alvo tinha
+`/*` dentro de string; o maior bloco descartado foi 56 linhas (`omie-analytics-sync/index.ts`), bem abaixo
+do teto de 150, e a fração preservada ficou entre 0,63 e 0,87.
+
+O que MUDOU não é a classe catastrófica e sim uma **segunda cegueira, menor e real**: 4 dos 5 sítios usavam
+`.filter((l) => !/^\s*\/\//.test(l))`, que só descarta a linha que **começa** com barra-barra —
+comentário no FIM de uma linha de código continuava sendo medido como se fosse código (9 linhas em
+`omie-analytics-sync/index.ts`, 3 em `cmc-snapshot-backfill/index.ts`). Isso produz **falso VERMELHO**:
+um comentário de fim-de-linha que cite a forma proibida reprova uma edge correta. O módulo remove os dois
+tipos. **Nenhum veredito virou** — `test:edges` seguiu 765/765 antes e depois.
+
+### Falsificação (todo gate exigido em vermelho)
+
+- **Stripper portado vira no-op** (`return fonte`): `politica-retry`, `cmc-snapshot-retry` e
+  `sonda-versao-contrato` ficam **vermelhos** (3 testes). `ordem-lease` **continua verde** — a proteção
+  dele também é latente hoje: nenhuma das agulhas que ele usa (`claim_calculate_scores`,
+  `farmer_algorithm_config`, `finalizar_calculate_scores`) aparece em comentário do `index.ts`.
+- **Controle positivo 2×2 para o `ordem-lease`** (o único que a sabotagem sozinha não discriminava):
+  injetando no topo do `calculate-scores/index.ts` um comentário que cita `farmer_algorithm_config`,
+  o gate fica **verde com o stripper real** e **vermelho com o no-op**
+  (`ORDEM QUEBRADA: os pesos (indice 26) sao lidos ANTES do claim (indice 52)` — o índice 26 é a PROSA).
+  Prova que a limpeza é carga, e que sem ela o modo de falha é falso-vermelho contra edge correta.
+- **Paridade**: 1 byte de divergência no espelho → `limpeza-fonte.parity.test.ts` vermelho.
+
 ## Assinatura para varredura futura
 
 ```bash
@@ -140,7 +179,22 @@ rg -n "replace\(/\\\\/\\\\\*\[\\\\s\\\\S\]\*\?\\\\\*\\\\//" src/ supabase/ scrip
 ```
 
 Casa toda cópia do stripper regex. Em `.ts/.tsx` de `src/`, o correto é importar
-`removerComentarios` de `@/lib/gates/limpeza-fonte`.
+`removerComentarios` de `@/lib/gates/limpeza-fonte`; em `supabase/functions/**`, de
+`_shared/limpeza-fonte.ts` (espelho byte-idêntico — **não** editar só um dos lados).
+
+Medido na base de 2026-08-20 (pós-#1832/#1833), o comando acima devolve **8 ocorrências**, e o
+número sozinho não julga nada — o que julga é a classificação:
+
+| ocorrência | veredito |
+| --- | --- |
+| `src/lib/gates/limpeza-fonte.ts:5` · `supabase/functions/_shared/limpeza-fonte.ts:5` · `scripts/lib/sql-comentarios.ts:5` | cabeçalho citando a forma ANTIGA para explicar o que a substituiu |
+| `src/lib/gates/__tests__/limpeza-fonte.test.ts:9,56` · `scripts/sql-comentarios.test.ts:9` | controle deliberado — o teste roda a regex velha para exigir que ela FALHE onde a nova passa |
+| **`src/__tests__/import-tint-formulas-aposentada-gate.test.ts:47`** | **uso ATIVO** — sub-classe SQL, aberta acima |
+| **`src/components/ui/__tests__/table-overscroll.test.ts:25`** | **uso ATIVO** — sub-classe CSS, aberta acima |
+
+Ou seja: **6 legítimas e 2 usos ativos**, os dois já registrados como sub-classe aberta. Em
+`supabase/functions/` isoladamente a varredura devolve **1**, e é cabeçalho. Qualquer match novo
+fora dessas 8 é reincidência da classe.
 
 O eixo `--` (SQL) tem assinatura própria — casa quem limpa comentário de SQL sem gramática:
 
