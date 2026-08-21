@@ -123,7 +123,7 @@ export async function fetchAll<T>(
  * faria `.gt()` pular as empatadas; o caso patológico (cursor que não avança) é detectado
  * aqui e LANÇA, em vez de girar para sempre.
  */
-export async function fetchAllKeyset<T, K>(
+export async function fetchAllKeyset<T, K extends string | number>(
   build: (
     cursor: K | null,
     limite: number,
@@ -143,16 +143,33 @@ export async function fetchAllKeyset<T, K>(
       throw new Error(`${label}: data null sem error — resposta malformada, não é fim da tabela`);
     }
     const rows = data;
+    // Ordem DENTRO da página, antes de qualquer acumulação. É aqui que o `.order()` DESC do
+    // call-site é pego — e tem de ser aqui: sob DESC a 2ª página já volta curta, o laço
+    // encerraria pelo `length < PAGE` abaixo e a checagem de cursor nunca rodaria. O
+    // desfecho silencioso seria devolver a 1ª página duas vezes e nunca ler a cauda.
+    if (rows.length > 1 && chave(rows[0]) > chave(rows[rows.length - 1])) {
+      throw new Error(
+        `${label}: página em ordem DECRESCENTE — o keyset exige .order(chave, { ascending: true }), senão .gt(cursor) reserve a mesma faixa e a cauda nunca é lida`,
+      );
+    }
     out.push(...rows);
     if (rows.length < PAGE) break;
     const proximo = chave(rows[rows.length - 1]);
-    // Cursor parado = a chave NÃO é única no recorte (o contrato foi violado). Sem esta
-    // guarda o laço pediria a mesma página para sempre e a edge morreria no timeout, que
-    // é um sintoma que não se parece nem um pouco com a causa.
-    if (cursor !== null && proximo === cursor) {
-      throw new Error(
-        `${label}: cursor não avançou (chave repetida em ${JSON.stringify(proximo)}) — a chave do keyset precisa ser ÚNICA no recorte`,
-      );
+    // O cursor tem de avançar ESTRITAMENTE. Os dois modos de violar o contrato falham aqui,
+    // e nenhum dos dois se denuncia sozinho:
+    //   PARADO  — chave repetida (não é única no recorte): o laço pediria a mesma página
+    //             para sempre e a edge morreria no timeout, sintoma que não se parece nada
+    //             com a causa.
+    //   PARA TRÁS — o call-site ordenou DESC. `fetchAllKeyset` só recebe `build`, então não
+    //             enxerga o `.order()`: com `.gt(cursor)` sobre página decrescente o cursor
+    //             recua, a página seguinte reserve quase tudo e o resto do recorte nunca é
+    //             lido. Sem esta guarda a leitura RESOLVE, com duplicata em massa e cauda
+    //             faltando — em silêncio, que é o pior desfecho possível aqui.
+    if (cursor !== null && proximo <= cursor) {
+      const modo = proximo === cursor
+        ? `chave repetida em ${JSON.stringify(proximo)} — a chave precisa ser ÚNICA no recorte`
+        : `cursor RECUOU (${JSON.stringify(cursor)} → ${JSON.stringify(proximo)}) — o keyset exige .order() ASCENDENTE na mesma coluna`;
+      throw new Error(`${label}: cursor não avançou: ${modo}`);
     }
     cursor = proximo;
   }

@@ -172,3 +172,24 @@ Deno.test("keyset: erro lança com o label prefixado", async () => {
     "minha_tabela: boom",
   );
 });
+
+Deno.test("keyset: página em ordem DECRESCENTE lança em vez de duplicar em massa", async () => {
+  // O helper só recebe `build` — não enxerga o `.order()` do call-site. Um
+  // `.order('id',{ascending:false})` combinado com `.gt(cursor)` faria o cursor andar
+  // PARA TRÁS e reservir quase a mesma página: duplicação em massa, e a guarda de
+  // "cursor parado" não pega, porque ele de fato muda a cada volta.
+  const dados = Array.from({ length: 2300 }, (_, i) => ({ id: i }));
+  let calls = 0;
+  const build = (cursor: number | null, limite: number) => {
+    calls++;
+    if (calls > 20) throw new Error("DUPLICAÇÃO EM MASSA: o helper não detectou ordem decrescente");
+    const janela = dados.filter((l) => cursor === null || l.id > cursor)
+      .sort((a, b) => b.id - a.id) // DESC, como o call-site pediu
+      .slice(0, limite);
+    return Promise.resolve({ data: janela, error: null });
+  };
+  await assertLanca(
+    () => fetchAllKeyset<{ id: number }, number>(build, (l) => l.id, "t"),
+    "DECRESCENTE",
+  );
+});

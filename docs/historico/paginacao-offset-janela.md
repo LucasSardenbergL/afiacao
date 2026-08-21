@@ -88,3 +88,27 @@ demais: não é migrar os 21 call-sites de `fetchAll`, é o recorte que a mediç
 Precedente do repo, que esta medição confirma em vez de contrariar: `fin-valor-cockpit:490`
 já decidiu "display ℹ️ baixo: offset `.range` basta — o syncPedidos, money-path, é que exige
 keyset".
+
+## Adendo: o acoplamento `PAGE` ↔ `max-rows` (outra classe, PR próprio)
+
+Do mesmo parecer: `fetchAll` (e agora `fetchAllKeyset`) tratam página curta como EOF. Com
+`PAGE = 1000` e o `max-rows` do PostgREST em prod **também** 1.000, o laço pede exatamente
+o cap e segue correto — medido: 3.140 linhas de `omie_products` devolvendo 1.000. Mas se
+alguém baixasse o `max-rows` para 500, toda leitura pararia na primeira página e devolveria
+o parcial **em silêncio** — a truncagem do #1836 de volta, por outra porta. Nada vigia isso.
+
+Fica FORA deste PR de propósito: é truncagem por cap, não deslocamento por mutação, e
+misturar duas classes num PR money-path é o que faz metade de um fix se perder. As duas
+saídas, na ordem em que valem a pena:
+
+1. **`PAGE` menor que o cap** (ex.: 900). Qualquer `max-rows` ≥ 900 passa a devolver página
+   cheia e o EOF volta a ser inequívoco. Custa ~11% mais requests e **zero** trabalho no
+   banco. Não exige mudar nenhuma assinatura.
+2. **`count:'exact'` na primeira página** como testemunha independente, comparando o total
+   com o lido no fim. É a checagem mais forte — e a mais cara: um COUNT completo por
+   leitura, em cima de `fin_contas_receber` (44.092 linhas) toda vez. `RespostaPostgrest`
+   já carrega `count`, mas o `build` de hoje não tem por onde pedi-lo: exigiria mexer na
+   assinatura dos 21 call-sites, que é exatamente o que a medição desaconselhou.
+
+A (1) compra quase todo o valor por quase nenhum custo; a (2) só se paga se o `max-rows`
+passar a ser configurável por alguém de fora do time.
