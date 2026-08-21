@@ -91,6 +91,14 @@ function fakeDb(
         reg.ranges.push([de, ate]);
         return q;
       },
+      limit(_n: number): QueryPostgrest<Linha> {
+        // Este double modela só paginação por `.range()`. Se um loader passar a usar
+        // `.limit()`, é para o teste ficar VERMELHO na hora — não para ser ignorado.
+        throw new Error("double: .limit() não é modelado aqui");
+      },
+      maybeSingle(): PromiseLike<{ data: Linha | null; error: { message: string } | null }> {
+        throw new Error("double: .maybeSingle() não é modelado aqui");
+      },
       then<R1, R2>(
         resolve?: ((v: RespostaPostgrest<Linha>) => R1 | PromiseLike<R1>) | null,
         rejeitar?: ((motivo: unknown) => R2 | PromiseLike<R2>) | null,

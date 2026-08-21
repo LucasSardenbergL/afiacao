@@ -81,6 +81,14 @@ function bancoFake(tabelas: Record<string, Linha[]>, erroDoBanco?: string) {
         linhas = linhas.slice(de, ate + 1);
         return q;
       },
+      limit(_n: number): QueryPostgrest<Linha> {
+        // Este double modela só paginação por `.range()`. Se um loader passar a usar
+        // `.limit()`, é para o teste ficar VERMELHO na hora — não para ser ignorado.
+        throw new Error("double: .limit() não é modelado aqui");
+      },
+      maybeSingle(): PromiseLike<{ data: Linha | null; error: { message: string } | null }> {
+        throw new Error("double: .maybeSingle() não é modelado aqui");
+      },
       then(aoResolver) {
         idas.push(tabela);
         // O cap silencioso: sem `.range()` explícito, a cauda além de 1000 some sem erro.
