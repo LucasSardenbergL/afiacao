@@ -167,7 +167,14 @@ interface SalesOrderRow {
 /** Uma linha da RPC `farmer_melhor_individual_por_cliente` — já é O melhor do cliente. */
 interface MelhorIndividualRow {
   customer_user_id: string;
-  product_id: string;
+  /**
+   * NULLABLE no schema (`information_schema`, conferido 21/08/2026) — e o tipo dizia `string`.
+   * Era uma mentira BARATA de manter enquanto ninguém media: `productMap.get(null)` só dá miss
+   * e cai no mesmo ramo do SKU inativo. Com o sensor de resolução abaixo os dois passam a
+   * CONTAR, e um tipo que esconde uma das portas faz o número nascer torto. (Achado do
+   * challenge Codex gpt-5.6-sol/xhigh, 21/08.)
+   */
+  product_id: string | null;
   affinity_score: number | string | null;
   recommendation_type: 'cross_sell' | 'up_sell';
   /** Geração a que a linha pertence. Todas deveriam trazer a MESMA — ver o aviso no toast. */
@@ -881,6 +888,19 @@ export const useBundleEngine = () => {
         // leitura acessória travar o mecanismo de aposentadoria da fase 2 (`degradado` nunca
         // autoriza expirar) por um motivo que não tem relação com o que está sendo expirado.
         // A falha continua visível — no toast e em cada cartão —, que é onde ela pertence.
+        //
+        // ⚠️ 3º round (21/08, challenge Codex gpt-5.6-sol/xhigh): "fora do RÓTULO" NÃO quer
+        // dizer "fora do `insumos`". A pergunta reaberta não foi a causalidade — essa está
+        // fechada acima — e sim que a falha não deixava SÉRIE. O `captureException` acima (#1839)
+        // resolveu a metade VISÍVEL: cada falha passa a existir para o plantão. Mas alarme é
+        // NUMERADOR — ele só sai QUANDO falha, então "3 falhas" não distingue 3 em 400 execuções
+        // de 3 em 3, e quem perguntasse "com que frequência isso falha?" seguia sem denominador
+        // (`docs/historico/fase-sem-sinal.md`). Desde este PR a leitura entra no snapshot como
+        // EVIDÊNCIA INERTE — `comparacao_individual_leitura` e
+        // `comparacao_individual_produto_resolvido`, `ok:true` sempre, fora dos obrigatórios e
+        // sem piso (ver o bloco onde são declaradas). Elas não podem degradar veredicto nenhum;
+        // registram. **Não as converta em `ok:false` na falha** — é exatamente a mudança que os
+        // dois challenges anteriores rejeitaram, agora com o rótulo trocado de lugar.
         comparacaoIndisponivel = true;
       }
 
@@ -898,6 +918,18 @@ export const useBundleEngine = () => {
        * está NA TELA mistura cálculos de momentos diferentes.
        */
       const geracoesExibidas = new Set<string>();
+      /**
+       * Denominador do sensor de RESOLUÇÃO: registros que a RPC devolveu E que o laço de fato
+       * exercitou contra o `productMap` (depois do gate `if (!profile) continue`).
+       *
+       * Contado AQUI, não reaproveitado de `insumos.clientes_com_profile`: aquele conta sobre
+       * `ativos` (carteira ∩ quem tem pedido) e este laço percorre TODO `clientScores` — em
+       * prod os dois empatam, mas não é invariante, e um denominador que coincide por acaso é
+       * o "rótulo com DEFAULT constante" do §5 esperando a base mudar.
+       */
+      let comparacoesAvaliadas = 0;
+      /** Quantas delas resolveram para SKU do catálogo ATIVO — o numerador. */
+      let comparacoesResolvidas = 0;
 
       for (const score of clientScores) {
         const cid = score.customer_user_id;
@@ -1004,10 +1036,14 @@ export const useBundleEngine = () => {
         if (comparacaoIndisponivel) {
           bestIndividual = { status: 'indisponivel', motivo: 'leitura_falhou' };
         } else if (rec) {
-          const prod = productMap.get(rec.product_id);
+          comparacoesAvaliadas++;
+          // `product_id` separado ANTES do Map: com `string | null` o compilador passa a EXIGIR
+          // o tratamento, em vez de a chave `null` virar um miss indistinguível de SKU inativo.
+          const pid = rec.product_id;
+          const prod = pid == null ? undefined : productMap.get(pid);
           // Ausente ≠ zero: `Number(null)` é 0 e afirmaria afinidade nula MEDIDA.
           const afinidade = rec.affinity_score == null ? NaN : Number(rec.affinity_score);
-          if (!prod?.descricao) {
+          if (pid == null || !prod?.descricao) {
             // Era `productName: prod?.descricao || 'Produto'`: a tela dizia ter ENCONTRADO o
             // melhor individual e mostrava um nome inventado. O `productMap` só tem SKU
             // ATIVO, e `product_id` é nullable no schema — as duas portas caem aqui.
@@ -1015,10 +1051,11 @@ export const useBundleEngine = () => {
             bestIndividual = { status: 'indisponivel', motivo: 'produto_nao_resolve' };
           } else {
             geracoesExibidas.add(rec.run_id ?? 'sem-run');
+            comparacoesResolvidas++;
             bestIndividual = {
               status: 'encontrado',
               value: {
-                productId: rec.product_id,
+                productId: pid,
                 productName: prod.descricao,
                 affinity: Number.isFinite(afinidade) ? afinidade : null,
                 type: rec.recommendation_type,
@@ -1078,6 +1115,55 @@ export const useBundleEngine = () => {
           allCustomerBundles.flatMap((cb) => cb.bundles),
           indiceCatalogo.contaDoProduto,
         ),
+      };
+
+      // ── EVIDÊNCIA INERTE da comparação individual (money-path §13, relato DURÁVEL) ────────
+      //
+      // A leitura do melhor individual segue FORA do juízo da completude, e o motivo não mudou:
+      // `p_linhas` é invariante a ela (ver o `catch` do passo 4.5). O que muda aqui é que a
+      // falha dela deixa de morrer no toast. Sem isto, "com que frequência a comparação falha?"
+      // não tem denominador — o defeito de `docs/historico/fase-sem-sinal.md`, e a tabela é
+      // append-only: execução já gravada NÃO aceita backfill.
+      //
+      // ⚠️ `ok` é `true` por DESENHO, e não é otimismo: para evidência inerte `ok` significa
+      // "o sensor conseguiu registrar o desfecho", não "a leitura observada deu certo" — essa
+      // está em `n/esperado`. Trocar para `ok:false` na falha PREGA a leitura no veredicto
+      // (`avaliarCompletude` filtra `!ok` antes da lista de obrigatórios, então `ok:false`
+      // degrada SEMPRE, obrigatório ou não) e trava a aposentadoria da fase 2 por um motivo que
+      // não tem relação com o que está sendo expirado. Sem `pisoCobertura` pelo mesmo motivo:
+      // com piso, `esperado` deixaria de ser auditoria e voltaria a julgar.
+      //
+      // São DUAS chaves porque são DUAS unidades, e uma só usaria o denominador errado (achado
+      // do challenge Codex gpt-5.6-sol/xhigh): num cenário de 238 avaliados com 1 pendente cujo
+      // produto não resolve, "clientes com veredicto" grava 237/238 = 99,6% — o `nenhum`,
+      // que é fato comercial legítimo, MASCARA exatamente a deriva que o sensor existe para
+      // expor. A resolução real é 0/1.
+      //
+      //   falha global .................. leitura 0/1 · resolução 0/0
+      //   RPC íntegra, ninguém pendente .. leitura 1/1 · resolução 0/0
+      //   todo produto quebrado ......... leitura 1/1 · resolução 0/K
+      //   tudo íntegro .................. leitura 1/1 · resolução K/K
+      //
+      // Baseline medido em prod (psql-ro, 21/08/2026): 0 de 313 pendentes não resolvem, em 2
+      // farmers (166 + 147). Zero COM denominador — é o regime ANTERIOR à primeira deriva, que
+      // é o que torna possível datar quando ela começar (foi assim que o cross-sell expôs o
+      // 934/939 `oben`).
+      insumos.comparacao_individual_leitura = {
+        ok: true,
+        // Por EXECUÇÃO: a RPC é 1 request desde o #1817, então a falha é tudo-ou-nada. `n` aqui
+        // é booleano honesto — não o disfarce de razão que "clientes lidos" seria (0 ou 238,
+        // nunca no meio).
+        n: comparacaoIndisponivel ? 0 : 1,
+        esperado: 1,
+      };
+      insumos.comparacao_individual_produto_resolvido = {
+        ok: true,
+        // Por REGISTRO PENDENTE, que é a unidade da deriva: SKU desativado depois da geração do
+        // cross-sell, ou `product_id` null. As duas portas caem no ramo `produto_nao_resolve`,
+        // que hoje é o ÚNICO estado do motor invisível em toda parte — não está no toast, e sem
+        // esta chave não estaria no head.
+        n: comparacoesResolvidas,
+        esperado: comparacoesAvaliadas,
       };
 
       aplicarBundles(allCustomerBundles);

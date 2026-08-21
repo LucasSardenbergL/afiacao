@@ -34,6 +34,8 @@ import { renderHook, act } from '@testing-library/react';
  */
 const FARMER = 'farmer-bulk';
 let falhaBulk: 'nao' | 'erro' | 'rejeita' | 'null_mudo' | 'nao_array' | 'string_json' = 'nao';
+/** RPC íntegra devolvendo `[]` — o vazio LEGÍTIMO, que não é falha de leitura nenhuma. */
+let semPendentes = false;
 /** `true` = a carteira devolvida tem 1.500 entradas — mais que o antigo cap de 1.000. */
 let carteiraGrande = false;
 /** `true` = o SKU eleito não está no catálogo ATIVO (`productMap` não resolve). */
@@ -133,7 +135,7 @@ vi.mock('@/integrations/supabase/client', () => ({
         // é `undefined` em cada um, e o Map fica com uma chave `undefined` — nenhum erro, nenhum
         // aviso, e a carteira INTEIRA vira `nenhum`. Achado da falsificação S10.
         if (falhaBulk === 'string_json') return Promise.resolve({ data: '[]', error: null });
-        return Promise.resolve({ data: linhasBulk(), error: null });
+        return Promise.resolve({ data: semPendentes ? [] : linhasBulk(), error: null });
       }
       return Promise.resolve({ data: null, error: null });
     },
@@ -157,6 +159,7 @@ async function calcular() {
 
 beforeEach(() => {
   falhaBulk = 'nao';
+  semPendentes = false;
   carteiraGrande = false;
   duasGeracoes = false;
   produtoForaDoCatalogo = false;
@@ -300,7 +303,71 @@ describe('useBundleEngine — o melhor individual em UMA leitura, com os três e
     expect(argsSubstituir.length, 'o cenário não chegou a persistir nada').toBeGreaterThan(0);
     const head = argsSubstituir[0];
     expect(head.p_completude).toBe('completo');
-    expect(Object.keys(head.p_insumos as Record<string, unknown>)).not.toContain('melhor_individual');
+
+    // ⚠️ Era `not.toContain('melhor_individual')` — asserção pelo NOME, e o nome é a parte
+    // frágil: as chaves mudaram para `comparacao_individual_*` neste PR e aquela linha teria
+    // seguido VERDE por coincidência, com a decisão que ela guarda invertida. O que precisa
+    // valer é a FORMA: a comparação não prega NADA no veredicto — nem `ok:false` (que degrada
+    // SEMPRE, obrigatório ou não) nem `pisoCobertura` (que faria `esperado` voltar a julgar).
+    const insumos = head.p_insumos as Record<string, { ok: boolean; pisoCobertura?: number }>;
+    const chaves = Object.keys(insumos).filter((k) => k.startsWith('comparacao_individual'));
+    expect(chaves.length, 'as evidências inertes sumiram do head — a série morre com elas').toBe(2);
+    for (const nome of chaves) {
+      expect(insumos[nome].ok, `${nome} virou ok:false — degrada SEMPRE e trava a fase 2`).toBe(true);
+      expect(insumos[nome].pisoCobertura, `${nome} ganhou piso — voltou a julgar`).toBeUndefined();
+    }
+  });
+
+  // ── Os 4 estados da evidência inerte (money-path §13) ────────────────────────────────────
+  //
+  // A tabela existe porque UMA chave só não distingue os casos: "clientes com veredicto"
+  // gravaria 237/238 num cenário em que a resolução real é 0/1 — o `nenhum`, que é fato
+  // comercial legítimo, mascarando a deriva que o sensor existe para expor.
+  function evidencias() {
+    const i = argsSubstituir[0].p_insumos as Record<string, { n: number; esperado?: number }>;
+    const par = (k: string) => (i[k] ? `${i[k].n}/${i[k].esperado}` : 'AUSENTE');
+    return {
+      leitura: par('comparacao_individual_leitura'),
+      resolucao: par('comparacao_individual_produto_resolvido'),
+    };
+  }
+
+  it('tudo íntegro: leitura 1/1 e resolução 1/1', async () => {
+    await calcular();
+    expect(evidencias()).toEqual({ leitura: '1/1', resolucao: '1/1' });
+  });
+
+  it('falha global: leitura 0/1 e resolução 0/0 — o denominador some junto, não vira 0/N', async () => {
+    // Com a leitura falha o motor não exercitou `productMap` para ninguém. Gravar `0/N` aqui
+    // afirmaria N deriva de catálogo que ninguém mediu — o §2 (ausente ≠ zero) no sensor.
+    falhaBulk = 'erro';
+    await calcular();
+    expect(evidencias()).toEqual({ leitura: '0/1', resolucao: '0/0' });
+  });
+
+  it('RPC íntegra e ninguém pendente: leitura 1/1 e resolução 0/0', async () => {
+    semPendentes = true;
+    await calcular();
+    expect(evidencias()).toEqual({ leitura: '1/1', resolucao: '0/0' });
+  });
+
+  it('produto fora do catálogo ativo: leitura 1/1 e resolução 0/1 — a deriva aparece', async () => {
+    // O estado que HOJE é invisível em toda parte: não está no toast, e sem esta chave não
+    // estaria no head. É a deriva que o cross-sell só enxergou quando ganhou série (934/939).
+    produtoForaDoCatalogo = true;
+    await calcular();
+    expect(evidencias()).toEqual({ leitura: '1/1', resolucao: '0/1' });
+  });
+
+  it('o denominador é o LAÇO, não o payload da RPC', async () => {
+    // 1.500 linhas de clientes que não estão em `farmer_client_scores`: a RPC devolve, o laço
+    // nunca os avalia, e `productMap` nunca é exercitado para eles. Contá-los inflaria o
+    // denominador com trabalho que não aconteceu — e é por isso que o contador vive no laço em
+    // vez de reaproveitar `insumos.clientes_com_profile`, que conta sobre outro universo
+    // (`ativos`) e só EMPATA com este em produção por acaso.
+    carteiraGrande = true;
+    await calcular();
+    expect(evidencias()).toEqual({ leitura: '1/1', resolucao: '1/1' });
   });
 
   it('mas a falha TAMBÉM não vira sucesso — ela sai pelo aviso, que é onde ela pertence', async () => {
