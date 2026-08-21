@@ -75,18 +75,32 @@ du_mb() {
 }
 
 echo "═══ RAM (total 8 GB nesta máquina) ═══"
+# `sysctl hw.memsize` e `vm_stat` são do macOS. Ausentes (ou falhando), o
+# `pipefail` devolvia 127 e o `set -e` matava o script INTEIRO na primeira
+# seção — a mesma classe de defeito que este arquivo existe pra não repetir:
+# sonda que falta derruba o sensor todo. Agora a seção degrada e as outras
+# seguem. Pego pelo CI Ubuntu do #1838, que é o 1º ambiente não-macOS a
+# EXECUTAR este script.
+ram_ok=1
 mem_total="$(sysctl -n hw.memsize 2>/dev/null || echo 0)"
-pgsize="$(vm_stat 2>/dev/null | sed -n 's/.*page size of \([0-9]*\) bytes.*/\1/p')"
+pgsize="$(vm_stat 2>/dev/null | sed -n 's/.*page size of \([0-9]*\) bytes.*/\1/p')" || ram_ok=0
 pgsize="${pgsize:-16384}"
 # "disponível" ≈ páginas livres + inativas (o macOS recicla as inativas)
 avail_pages="$(vm_stat 2>/dev/null | awk '
   /Pages free/         { gsub(/[.]/,"",$3); f=$3 }
   /Pages inactive/     { gsub(/[.]/,"",$3); i=$3 }
   /File-backed pages/  { gsub(/[.]/,"",$3); fb=$3 }
-  END { print f + i + fb }')"
-avail_bytes=$((avail_pages * pgsize))
-echo "  total:      $(human_gb "$mem_total") GB"
-echo "  disponível: $(human_gb "$avail_bytes") GB"
+  END { print f + i + fb }')" || ram_ok=0
+case "$mem_total" in '' | *[!0-9]*) mem_total=0 ;; esac
+case "$avail_pages" in '' | *[!0-9]*) ram_ok=0 ;; esac
+if [ "$ram_ok" -eq 1 ] && [ "$mem_total" -gt 0 ]; then
+  avail_bytes=$((avail_pages * pgsize))
+  echo "  total:      $(human_gb "$mem_total") GB"
+  echo "  disponível: $(human_gb "$avail_bytes") GB"
+else
+  echo "  ⚠️  sem medida: sysctl/vm_stat não responderam (raio-X de RAM é de macOS)."
+  echo "      Não é 0 GB — é dado que falta."
+fi
 swap="$(sysctl -n vm.swapusage 2>/dev/null || true)"
 [ -n "$swap" ] && echo "  swap:       $swap"
 case "$swap" in

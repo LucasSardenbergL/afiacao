@@ -83,6 +83,17 @@ STUB
 
 chmod +x "$stub/git" "$stub/du" "$stub/ps" "$stub/lsof"
 
+# Stubs do ambiente NÃO-macOS, num diretório à parte: entram no PATH só no
+# caso que simula o CI Ubuntu, pros demais seguirem lendo a RAM de verdade.
+# 127 é o código de "command not found" — foi exatamente o que o CI do #1838
+# devolveu, matando o script na PRIMEIRA seção.
+naomac="$(mktemp -d)"
+trap 'rm -rf "$stub" "$fix" "$naomac"' EXIT
+for c in vm_stat sysctl; do
+  printf '#!/bin/sh\nexit 127\n' > "$naomac/$c"
+  chmod +x "$naomac/$c"
+done
+
 # roda o script com os stubs na frente do PATH; ecoa "EXIT=<rc>" na última linha
 roda() {
   PATH="$stub:$PATH" bash "$ALVO" 2>/dev/null
@@ -220,6 +231,27 @@ if printf '%s' "$saida" | secao_nm | command grep -q 'sem medida'; then
   falha "caminho feliz nao pode falar em 'sem medida'"
 else
   ok "caminho feliz nao inventa degradacao"
+fi
+
+# ── caso 7 — sonda de RAM ausente (não-macOS) não derruba o script ────────
+# Regressão do CI do #1838: `vm_stat` não existe no Ubuntu ⇒ 127 ⇒ pipefail
+# ⇒ set -e matava tudo na 1ª seção. Uma sonda que falta tem de degradar a SUA
+# seção, não o sensor inteiro — é a tese deste arquivo aplicada a ele mesmo.
+saida="$(PATH="$naomac:$stub:$PATH" bash "$ALVO" 2>/dev/null; echo "EXIT=$?")"
+if [ "${saida##*EXIT=}" = "0" ]; then
+  ok "sem vm_stat/sysctl → script sai 0 (nao morre na 1a secao)"
+else
+  falha "sem vm_stat/sysctl → EXIT=${saida##*EXIT=} (127 = command not found matando o set -e)"
+fi
+if printf '%s' "$saida" | command grep -q 'sem medida: sysctl/vm_stat'; then
+  ok "sem vm_stat/sysctl → declara a RAM como sem medida"
+else
+  falha "sem vm_stat/sysctl → nao declarou a RAM como sem medida"
+fi
+if printf '%s' "$saida" | secao_nm | command grep -q 'medidos: 4 de 4'; then
+  ok "sem vm_stat/sysctl → as secoes POSTERIORES ainda medem"
+else
+  falha "sem vm_stat/sysctl → perdeu as secoes seguintes"
 fi
 
 echo
