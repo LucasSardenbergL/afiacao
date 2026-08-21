@@ -33,7 +33,9 @@ export interface SinaisPosLogin {
   texto: string;
 }
 
-export type TipoPosLogin = 'dashboard' | 'troca_de_senha' | 'desconhecido';
+// Não exportado: só nomeia o campo `tipo` de ResultadoPosLogin. Export sem consumidor
+// reprova no `bunx knip` (gate de deadcode do CI, fora dos comandos de teste).
+type TipoPosLogin = 'dashboard' | 'troca_de_senha' | 'desconhecido';
 
 export interface ResultadoPosLogin {
   tipo: TipoPosLogin;
