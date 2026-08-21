@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { resolve, join } from 'node:path';
+import { removerComentarios } from '@/lib/gates/limpeza-fonte';
 
 // ── GATE ESTRUTURAL da classe "leitura single-shot cuja FALHA vira ZERO" ─────────────
 //
@@ -55,13 +56,9 @@ function listarFontes(dir: string, acc: string[] = []): string[] {
 // Comentários fora antes de medir: sem isso a prosa que DESCREVE o defeito (o cabeçalho
 // de leitura-critica.ts cita `?? []` de propósito) dispara o gate — o assert mediria o
 // texto que o próprio fix escreveu (money-path #1472/#1488).
-function semComentarios(s: string): string {
-  return s
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .split('\n')
-    .filter((l) => !/^\s*\/\//.test(l))
-    .join('\n');
-}
+// O stripper é COMPARTILHADO (`@/lib/gates/limpeza-fonte`) e entende string/template/regex:
+// a cópia local aqui limpava bloco com regex, e um `/*` dentro de string pareava com o `*/`
+// seguinte apagando o miolo do arquivo ANTES de o fiscal olhar (classe medida em 2026-08-20).
 
 // ── G5: `.data` coalescido — o `error` nunca foi consultado ──────────────────────────
 // As formas REAIS do repo, todas medidas antes de fixar o padrão (lição do G4, cujo `\s*`
@@ -122,7 +119,7 @@ function contarPorArquivo(padrao: RegExp): Map<string, number> {
   const g = new RegExp(padrao.source, 'g');
   for (const dir of DIRS) {
     for (const arquivo of listarFontes(dir)) {
-      const fonte = semComentarios(readFileSync(resolve(RAIZ, arquivo), 'utf8'));
+      const fonte = removerComentarios(readFileSync(resolve(RAIZ, arquivo), 'utf8'));
       const n = [...fonte.matchAll(g)].length;
       if (n > 0) mapa.set(arquivo, n);
     }
@@ -212,7 +209,7 @@ function sitesCrusEmSrc(): Map<string, number> {
   const g = new RegExp(G5.source, 'g');
   for (const dir of DIRS_SRC) {
     for (const arquivo of listarFontes(dir)) {
-      const fonte = semComentarios(readFileSync(resolve(RAIZ, arquivo), 'utf8'));
+      const fonte = removerComentarios(readFileSync(resolve(RAIZ, arquivo), 'utf8'));
       let n = 0;
       for (const m of fonte.matchAll(g)) {
         const antes = fonte.slice(0, m.index);
@@ -300,7 +297,7 @@ describe('gate estrutural: leitura single-shot que trata falha como zero (irmã 
   });
 
   it('G5 pin: as 6 leituras corrigidas do fin-cashflow-engine não voltam ao `?? 0` cru', () => {
-    const fonte = semComentarios(
+    const fonte = removerComentarios(
       readFileSync(resolve(RAIZ, 'supabase/functions/fin-cashflow-engine/index.ts'), 'utf8'),
     );
     // Pin por FONTE nomeada (não por contagem): o gate genérico não protege QUAL leitura
@@ -398,7 +395,7 @@ describe('gate estrutural: leitura single-shot que trata falha como zero (irmã 
     // real ou uma origem mal resolvida dariam verde eterno. Aqui o defeito é injetado no
     // TEXTO de um arquivo que o gate realmente varre, e o veredito tem de virar.
     const arquivoReal = resolve(RAIZ, 'src/hooks/useTeamKpis.ts');
-    const fonte = semComentarios(readFileSync(arquivoReal, 'utf8'));
+    const fonte = removerComentarios(readFileSync(arquivoReal, 'utf8'));
     const sabotado = `${fonte}\nasync function _sabotagem() {\n  const novoRes = await supabase.from('sales_orders').select('id');\n  return novoRes.data ?? [];\n}\n`;
 
     const g = new RegExp(G5.source, 'g');

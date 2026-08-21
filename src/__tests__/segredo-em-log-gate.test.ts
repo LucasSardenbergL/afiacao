@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { resolve, join } from 'node:path';
+import { removerComentarios } from '@/lib/gates/limpeza-fonte';
 
 // ── GATE ESTRUTURAL da classe "segredo publicado em log" ────────────────────────────────
 //
@@ -50,13 +51,9 @@ function listarFontes(dir: string, acc: string[] = []): string[] {
 // Comentário de linha inteira e bloco saem antes dos padrões — senão a prosa que DESCREVE o
 // defeito (o cabeçalho do omie-sync corrigido cita `app_key`/`app_secret` de propósito)
 // dispararia o gate (lição #1472/#1488: comentário que dispara o fiscal é falso sinal).
-function semComentarios(s: string): string {
-  return s
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .split('\n')
-    .filter((l) => !/^\s*\/\//.test(l))
-    .join('\n');
-}
+// O stripper é COMPARTILHADO (`@/lib/gates/limpeza-fonte`) e entende string/template/regex:
+// a cópia local aqui limpava bloco com regex, e um `/*` dentro de string pareava com o `*/`
+// seguinte apagando o miolo do arquivo ANTES de o fiscal olhar (classe medida em 2026-08-20).
 
 // Apaga o TEXTO das strings e PRESERVA o interior de `${…}` dos templates. É o que separa
 // `console.warn("app_key desconhecido:", x)` — rótulo, inofensivo — de `console.warn(x.appKey)`,
@@ -238,7 +235,7 @@ function medir(detector: (fonte: string) => string[]): Map<string, string[]> {
   const mapa = new Map<string, string[]>();
   for (const dir of DIRS) {
     for (const arquivo of listarFontes(dir)) {
-      const bruto = semComentarios(readFileSync(resolve(RAIZ, arquivo), 'utf8'));
+      const bruto = removerComentarios(readFileSync(resolve(RAIZ, arquivo), 'utf8'));
       // S3 precisa das strings; S1/S2 precisam delas apagadas. O detector recebe a fonte já
       // preparada por ele mesmo — aqui passamos a versão com strings, e S1/S2 apagam.
       const achados = detector(bruto);
@@ -269,7 +266,7 @@ describe('gate estrutural: segredo publicado em log (classe do omie-sync, achada
     // (medido 2026-07-30) e só o omie-sync o mandava ao console. Se este piso cair, o zero de S1
     // virou vácuo e a varredura precisa ser refeita ANTES de confiar no verde.
     const comCredencial = DIRS.flatMap((d) => listarFontes(d)).filter(
-      (a) => varsComCredencial(semStrings(semComentarios(readFileSync(resolve(RAIZ, a), 'utf8')))).size > 0,
+      (a) => varsComCredencial(semStrings(removerComentarios(readFileSync(resolve(RAIZ, a), 'utf8')))).size > 0,
     );
     expect(
       comCredencial.length,

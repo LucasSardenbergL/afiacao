@@ -716,6 +716,8 @@ export const MODULOS: ModuloApp[] = [
       "src/hooks/useMyCommercialRole.ts",
       "src/hooks/useUserDepartment.ts",
       "src/hooks/useSalesOnlyRestriction.ts",
+      // Stripper compartilhado dos gates textuais (entende string/template/regex).
+      "src/lib/gates/**",
     ],
     testes: [
       "src/__tests__/app-route-dedupe.test.ts",
@@ -731,6 +733,7 @@ export const MODULOS: ModuloApp[] = [
       "src/__tests__/segredo-em-log-gate.test.ts",
       "src/__tests__/rpc-set-returning-paginacao-gate.test.ts",
       "src/__tests__/import-tint-formulas-aposentada-gate.test.ts",
+      "src/lib/gates/__tests__/**",
       "src/lib/escape-html.test.ts",
       "src/lib/invoke-function.test.ts",
       "src/lib/__tests__/**",

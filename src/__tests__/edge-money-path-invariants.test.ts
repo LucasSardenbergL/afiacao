@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { removerComentarios } from '@/lib/gates/limpeza-fonte';
 
 // repo root: src/__tests__ → src → repo (2 níveis).
 const CWD = resolve(__dirname, '../..');
@@ -11,8 +12,9 @@ const count = (hay: string, needle: string) => hay.split(needle).length - 1;
 // que EXPLICA por que algo é proibido cita o proibido, então `not.toContain` sobre o texto cru
 // reprova código íntegro (§"O ALVO mente"/#1472/#1488 do money-path.md). O `(?<!:)` preserva
 // `https://` — sem ele um `://` viraria início de comentário e cortaria o resto da linha.
-const semComentarios = (s: string) =>
-  s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(?<!:)\/\/.*$/gm, '');
+// O stripper é COMPARTILHADO (`@/lib/gates/limpeza-fonte`) e entende string/template/regex:
+// a cópia local aqui limpava bloco com regex, e um `/*` dentro de string pareava com o `*/`
+// seguinte apagando o miolo do arquivo ANTES de o fiscal olhar (classe medida em 2026-08-20).
 
 // ── Guard de invariante money-path dos EDGES (Deno, fora do typecheck/vitest do src) ──
 // Por que TEXTUAL: edge function roda no Lovable Cloud; o deploy via chat pode REVERTER um
@@ -170,7 +172,7 @@ describe('guardrail money-path: algorithm-a-audit (margem)', () => {
     // comentários removidos — num assert NEGATIVO o comentário vira falso-vermelho, e num
     // positivo, falso-verde (o silencioso).
     expect(
-      semComentarios(src),
+      removerComentarios(src),
       'a sph poluída voltou como fonte do bestPriceMap — duplicatas divergentes inflam o MAX e destroem margin_potential',
     ).not.toContain('sales_price_history');
   });
@@ -2201,7 +2203,7 @@ describe('guardrail money-path: erro Omie permanente não prende o sync_all_clie
   const caller = read('src/components/analyticsSync/useAnalyticsSync.ts');
   // Sempre sobre o código SEM comentários: a prosa que EXPLICA o bug cita `break` e
   // `const hasMore = !fimReal`, e mediria a si mesma (§"O ALVO mente").
-  const bloco = semComentarios(blocoCaseCliente(src, 'sync_all_clients'));
+  const bloco = removerComentarios(blocoCaseCliente(src, 'sync_all_clients'));
 
   it('sentinela: os helpers puros da decisão estão importados (detector vivo)', () => {
     expect(
@@ -2251,7 +2253,7 @@ describe('guardrail money-path: erro Omie permanente não prende o sync_all_clie
   // `clientes_cadastro || []`, e `avaliarPagina(0,1,1)` devolvia "fim" — a conta era encerrada
   // como CONCLUÍDA, com errors:0 e nenhuma falha, sem passar pelo mecanismo de abandono.
   it('resposta HTTP não-2xx ou fora do contrato vira FALHA, nunca fim de conta', () => {
-    const wrapper = semComentarios(src);
+    const wrapper = removerComentarios(src);
     expect(
       wrapper,
       'REGRESSÃO: o wrapper voltou a ignorar o status HTTP — um 503 com JSON encerra a conta como concluída',
@@ -2273,7 +2275,7 @@ describe('guardrail money-path: erro Omie permanente não prende o sync_all_clie
   });
 
   it('o retry é opt-in e todo fetch tem deadline (senão sync_addresses estoura os 150s)', () => {
-    const wrapper = semComentarios(src);
+    const wrapper = removerComentarios(src);
     // Retry ligado para todo caller multiplicava a latência do sync_addresses (30
     // ConsultarCliente por lote × sleeps) além do orçamento da edge — achado Codex P1.
     expect(
@@ -2327,7 +2329,7 @@ describe('guardrail money-path: erro Omie permanente não prende o sync_all_clie
   });
 
   it('o caller acumula a falha ANTES de sair do laço e a tela não diz "concluída"', () => {
-    const corpo = semComentarios(caller);
+    const corpo = removerComentarios(caller);
     expect(
       corpo,
       'REGRESSÃO: o caller parou de acumular as contas interrompidas — a edge pula a conta e ninguém fica sabendo',
@@ -2400,7 +2402,7 @@ describe('guardrail money-path: canária paginacao_probe (omie-financeiro)', () 
   it('CANÁRIA read-only: paginacao_probe é dry-run puro (sem Omie, sem DB) e NÃO abre linha em fin_sync_log', () => {
     const m = src.match(PROBE_RE);
     expect(m, 'bloco da action paginacao_probe não encontrado').toBeTruthy();
-    const bloco = semComentarios(m![0]);
+    const bloco = removerComentarios(m![0]);
     expect(bloco, 'a probe NÃO pode chamar o Omie — deixaria de ser dry-run determinístico').not.toMatch(/callOmie\(/);
     expect(bloco, 'a probe NÃO pode tocar o DB (.insert/.update/.delete/.upsert/.rpc)').not.toMatch(/\.(insert|update|delete|upsert|rpc)\(/);
     expect(bloco, 'a probe NÃO pode usar o client supabase').not.toMatch(/\bsupabase\b/);
@@ -2409,7 +2411,7 @@ describe('guardrail money-path: canária paginacao_probe (omie-financeiro)', () 
     // `fin_calcular_confiabilidade`, conferidos via psql-ro). Uma probe logada carimbaria "sync
     // financeiro recente" nas 3 empresas sem sincronizar nada — canária que envenena o dado que ela
     // deveria proteger. Sem PROBE_ACTIONS no cálculo do logId, isso volta em silêncio.
-    const semCom = semComentarios(src);
+    const semCom = removerComentarios(src);
     expect(semCom, 'sumiu PROBE_ACTIONS — a canária voltaria a abrir linha em fin_sync_log').toMatch(/PROBE_ACTIONS\s*=\s*new Set\(\[[^\]]*"paginacao_probe"/);
     expect(
       semCom,
@@ -2489,7 +2491,7 @@ describe('guardrail money-path: visit-score-recalc-client não coage score de mi
   });
 
   it('NÃO coage expansion_score/recover_score/revenue_potential a 0 (ausente != zero)', () => {
-    const ofensas = coercoesSemWriterVisitScore(semComentarios(src));
+    const ofensas = coercoesSemWriterVisitScore(removerComentarios(src));
     expect(
       ofensas,
       'Campo sem writer coagido a 0 no cálculo de missão — "ausente != zero".\n' +
@@ -2524,7 +2526,7 @@ describe('guardrail money-path: visit-score-recalc-client não coage score de mi
     }
 
     const prosa = '  // Com `Number(x ?? 0)` o revenue_potential ?? 0 chegava como 0 para toda a base';
-    expect(coercoesSemWriterVisitScore(semComentarios(prosa))).toEqual([]);
+    expect(coercoesSemWriterVisitScore(removerComentarios(prosa))).toEqual([]);
   });
 });
 

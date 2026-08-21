@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { resolve, join } from 'node:path';
+import { removerComentarios } from '@/lib/gates/limpeza-fonte';
 
 // ── GATE ESTRUTURAL da classe "laço de paginação artesanal que trata página com falha
 // como fim da lista" (money-path §6/§7/§8) ─────────────────────────────────────────────
@@ -54,13 +55,9 @@ function listarFontes(dir: string, acc: string[] = []): string[] {
 // Comentário no FIM de linha de código sobrevive de propósito: removê-lo por regex
 // mutilaria strings com `//` (URLs de import Deno), e os padrões abaixo são multiline
 // ancorados em código — não casam prosa de fim de linha.
-function semComentarios(s: string): string {
-  return s
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .split('\n')
-    .filter((l) => !/^\s*\/\//.test(l))
-    .join('\n');
-}
+// O stripper é COMPARTILHADO (`@/lib/gates/limpeza-fonte`) e entende string/template/regex:
+// a cópia local aqui limpava bloco com regex, e um `/*` dentro de string pareava com o `*/`
+// seguinte apagando o miolo do arquivo ANTES de o fiscal olhar (classe medida em 2026-08-20).
 
 // Conta TODAS as ocorrências do padrão por arquivo (não só a primeira). A baseline é por
 // CONTAGEM, não por caminho (achado Codex xhigh): baseline por-arquivo aceitaria um 2º
@@ -71,7 +68,7 @@ function contarPorArquivo(contar: (fonte: string) => number): Map<string, number
   const mapa = new Map<string, number>();
   for (const dir of DIRS) {
     for (const arquivo of listarFontes(dir)) {
-      const n = contar(semComentarios(readFileSync(resolve(RAIZ, arquivo), 'utf8')));
+      const n = contar(removerComentarios(readFileSync(resolve(RAIZ, arquivo), 'utf8')));
       if (n > 0) mapa.set(arquivo, n);
     }
   }
@@ -503,7 +500,7 @@ describe('gate estrutural: paginação artesanal que trata falha como fim (class
     // outro órfão no mesmo arquivo passaria verde (achado do challenge Codex).
     const trocas: string[] = [];
     for (const [arquivo, permitidas] of G5_ALLOW_VARS) {
-      const medidas = orfaosG5(semComentarios(readFileSync(resolve(RAIZ, arquivo), 'utf8')));
+      const medidas = orfaosG5(removerComentarios(readFileSync(resolve(RAIZ, arquivo), 'utf8')));
       const inesperadas = medidas.filter((v) => !permitidas.includes(v));
       if (inesperadas.length > 0) trocas.push(`${arquivo}: ${inesperadas.join(', ')}`);
     }
@@ -848,7 +845,7 @@ serve(async (req) => {
 
   for (const pin of pins) {
     it(`G2 pin: ${pin.arquivo} mantém o contrato (${pin.motivo})`, () => {
-      const fonte = semComentarios(readFileSync(resolve(RAIZ, pin.arquivo), 'utf8'));
+      const fonte = removerComentarios(readFileSync(resolve(RAIZ, pin.arquivo), 'utf8'));
       expect(pin.presente.test(fonte), `sumiu o guard: ${pin.motivo}`).toBe(true);
     });
   }
@@ -862,7 +859,7 @@ serve(async (req) => {
       'src/lib/postgrest.ts',
     ];
     for (const arquivo of helpers) {
-      const fonte = semComentarios(readFileSync(resolve(RAIZ, arquivo), 'utf8'));
+      const fonte = removerComentarios(readFileSync(resolve(RAIZ, arquivo), 'utf8'));
       expect(
         /\bdata\s*(\?\?|\|\|)\s*\[\]/.test(fonte),
         `${arquivo}: voltou o \`data ?? []\` — data:null sem error viraria EOF falso de novo`,
@@ -906,7 +903,7 @@ serve(async (req) => {
     const ENGOLE = /\b(break|continue)\b/;
     const ofensas: string[] = [];
     for (const arquivo of pinados) {
-      const fonte = semComentarios(readFileSync(resolve(RAIZ, arquivo), 'utf8'));
+      const fonte = removerComentarios(readFileSync(resolve(RAIZ, arquivo), 'utf8'));
       for (const m of fonte.matchAll(VARS)) {
         const ramo = fonte.slice(m.index!, m.index! + 240);
         const iAborto = ramo.search(ABORTO);
@@ -933,7 +930,7 @@ serve(async (req) => {
     // e some (cliente sem plano) ou duplica (disputa o TOP_N 2×). Um pin de presença de
     // `.order('customer_user_id')` não barra alguém REACRESCENTAR o farmer_id antes dele — por
     // isso este é um pin de AUSÊNCIA. Total ≠ estável: a chave tem de ser IMUTÁVEL.
-    const fonte = semComentarios(
+    const fonte = removerComentarios(
       readFileSync(resolve(RAIZ, 'supabase/functions/tactical-plans-batch/index.ts'), 'utf8'),
     );
     expect(

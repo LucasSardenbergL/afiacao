@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { resolve, join } from 'node:path';
+import { removerComentarios } from '@/lib/gates/limpeza-fonte';
 
 // Gate estrutural: AFINIDADE não mora em coluna de DINHEIRO, e ranking não sai de coluna vazia.
 //
@@ -48,13 +49,9 @@ function listarFontes(dir: string, acc: string[] = []): string[] {
 // Comentários removidos ANTES de medir. Não é zelo teórico: os arquivos corrigidos por esta
 // entrega EXPLICAM o bug em prosa, citando `lie_bundle` e a ordenação antiga. Sem isto, o fiscal
 // mede a explicação e reprova código íntegro (falso-VERMELHO — a lição de #1472/#1488).
-function semComentarios(s: string): string {
-  return s
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .split('\n')
-    .filter((l) => !/^\s*\/\//.test(l))
-    .join('\n');
-}
+// O stripper é COMPARTILHADO (`@/lib/gates/limpeza-fonte`) e entende string/template/regex:
+// a cópia local aqui limpava bloco com regex, e um `/*` dentro de string pareava com o `*/`
+// seguinte apagando o miolo do arquivo ANTES de o fiscal olhar (classe medida em 2026-08-20).
 
 // ── G1: ordenar por coluna de DINHEIRO ──────────────────────────────────────
 // `.order('lie')` / `.order('lie_bundle')` — a forma exata que este PR removeu. Depois do scrub
@@ -74,7 +71,7 @@ const G2 = /(?:\.\s*(?:lie|lie_bundle)\b(?!\s*:)|\{\s*[^}]*\b(?:lie|lie_bundle)\
 const G3_ORDER = /\.\s*order\s*\(\s*['"`]affinity_(score|bundle)['"`]/g;
 
 function contar(re: RegExp, fonte: string): number {
-  return [...semComentarios(fonte).matchAll(re)].length;
+  return [...removerComentarios(fonte).matchAll(re)].length;
 }
 
 const FONTES = DIRS.flatMap((d) => listarFontes(d));
@@ -109,7 +106,7 @@ describe('gate: afinidade não é dinheiro', () => {
 
   it('G3 todo `.order` por afinidade tem `.not(...is null)` no mesmo arquivo (fail-closed)', () => {
     const semFiltro = FONTES.filter((f) => {
-      const fonte = semComentarios(readFileSync(resolve(RAIZ, f), 'utf8'));
+      const fonte = removerComentarios(readFileSync(resolve(RAIZ, f), 'utf8'));
       if (contar(G3_ORDER, fonte) === 0) return false;
       return !/\.\s*not\s*\(\s*['"`]affinity_(score|bundle)['"`]\s*,\s*['"`]is['"`]\s*,\s*null/.test(fonte);
     });
@@ -127,13 +124,13 @@ describe('gate: afinidade não é dinheiro', () => {
     // FORTE: antes um browser adulterado podia mandar `lie: 999` e o upsert gravaria; agora o
     // servidor descarta o que vier. Repinar no payload teria sido enfraquecer o gate para o
     // formato antigo; o certo é pinar onde a defesa REALMENTE mora agora.
-    const cross = semComentarios(readFileSync(resolve(RAIZ, 'src/hooks/useCrossSellEngine.ts'), 'utf8'));
+    const cross = removerComentarios(readFileSync(resolve(RAIZ, 'src/hooks/useCrossSellEngine.ts'), 'utf8'));
     expect(cross).toMatch(/affinity_score:\s*rec\.affinityScore/);
     // O browser NÃO manda mais dinheiro no payload — nem como null.
     expect(cross).not.toMatch(/\blie:\s*/);
     expect(cross).not.toMatch(/\bm_ij:\s*/);
 
-    const bundle = semComentarios(readFileSync(resolve(RAIZ, 'src/hooks/useBundleEngine.ts'), 'utf8'));
+    const bundle = removerComentarios(readFileSync(resolve(RAIZ, 'src/hooks/useBundleEngine.ts'), 'utf8'));
     expect(bundle).toMatch(/affinity_bundle:\s*bundle\.affinityBundle/);
     expect(bundle).not.toMatch(/\blie_bundle:\s*/);
     expect(bundle).not.toMatch(/\bm_bundle:\s*/);
@@ -141,7 +138,7 @@ describe('gate: afinidade não é dinheiro', () => {
     // E a RPC que passou a ser a dona da garantia: o INSERT fixa NULL nas duas colunas de
     // dinheiro. Sem este assert a propriedade ficaria SEM dono — os `not.toMatch` acima
     // sozinhos provariam apenas que o browser parou de mandar, não que o servidor zera.
-    // ⚠️ `semComentarios` só conhece `//` e `/* */` — comentário SQL é `--`, e a migration
+    // ⚠️ `removerComentarios` só conhece `//` e `/* */` — comentário SQL é `--`, e a migration
     // explica o bug em prosa exatamente ENTRE `r.p_ij,` e o `NULL, NULL`. Sem tirar os `--`
     // o regex não casa e o gate reprova código íntegro (falso-VERMELHO). É a mesma lição do
     // §"o ALVO mente": todo predicado textual mede o CÓDIGO, nunca a prosa que o descreve —

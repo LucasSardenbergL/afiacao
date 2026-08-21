@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { resolve, join } from 'node:path';
+import { removerComentarios } from '@/lib/gates/limpeza-fonte';
 
 // Gate estrutural da classe "escrita Supabase que falha CALADA".
 //
@@ -46,13 +47,9 @@ function listarFontes(dir: string, acc: string[] = []): string[] {
 // `await supabase.from(x).insert(...)` de propósito, e foi exatamente esse falso
 // positivo que apareceu ao medir (lição #1472/#1488 — assert sobre fonte roda com
 // comentário removido; o fiscal não pode medir a explicação do bug).
-function semComentarios(s: string): string {
-  return s
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .split('\n')
-    .filter((l) => !/^\s*\/\//.test(l))
-    .join('\n');
-}
+// O stripper é COMPARTILHADO (`@/lib/gates/limpeza-fonte`) e entende string/template/regex:
+// a cópia local aqui limpava bloco com regex, e um `/*` dentro de string pareava com o `*/`
+// seguinte apagando o miolo do arquivo ANTES de o fiscal olhar (classe medida em 2026-08-20).
 
 // ── E1: escrita cujo `error` não tem COMO ser lido ────────────────────────────────────
 // Ancorada em statement que começa com `await`/`void`: se o error fosse capturado, a
@@ -63,7 +60,7 @@ const E1 =
   /^[ \t]*(?:await|void)\s+[\w$]+(?:\s*\.\s*[\w$]+)*\s*\.\s*from\s*\([^;]{0,700}?\.\s*(?:insert|upsert|update|delete)\s*\(/gm;
 
 function contarE1(fonte: string): number {
-  return [...semComentarios(fonte).matchAll(E1)].length;
+  return [...removerComentarios(fonte).matchAll(E1)].length;
 }
 
 function contarPorArquivo(): Map<string, number> {
@@ -234,7 +231,7 @@ describe('gate estrutural: escrita Supabase que falha calada (classe #1574/#1594
     expect(contarE1(fonte), `${ALVO} voltou a escrever sem checar error`).toBe(0);
     // As 4 escritas continuam existindo — o gate acima ficaria verde se alguém apagasse
     // a persistência inteira, e "não escreve nada" não é o contrato que queremos pinar.
-    const semCom = semComentarios(fonte);
+    const semCom = removerComentarios(fonte);
     expect(
       [...semCom.matchAll(/escritaCritica\(/g)].length,
       'as 4 escritas de calcular() passam pelo contrato',
@@ -242,7 +239,7 @@ describe('gate estrutural: escrita Supabase que falha calada (classe #1574/#1594
   });
 
   it('E3: o snapshot autoritativo grava ANTES dos alertas (ordem é a defesa do residual)', () => {
-    const fonte = semComentarios(readFileSync(resolve(RAIZ, ALVO), 'utf8'));
+    const fonte = removerComentarios(readFileSync(resolve(RAIZ, ALVO), 'utf8'));
     const posSnapshot = fonte.indexOf("'fin_projecao_snapshots.insert'");
     const posAlerta = fonte.search(/'fin_alertas\.(update|insert)'/);
     expect(posSnapshot, 'o insert do snapshot precisa passar pelo contrato').toBeGreaterThan(-1);
@@ -255,7 +252,7 @@ describe('gate estrutural: escrita Supabase que falha calada (classe #1574/#1594
   });
 
   it('E4: o contrato LANÇA — nunca engole nem devolve booleano', () => {
-    const helper = semComentarios(
+    const helper = removerComentarios(
       readFileSync(resolve(RAIZ, 'supabase/functions/_shared/escrita-critica.ts'), 'utf8'),
     );
     expect(helper).toMatch(/throw new EscritaCriticaError\(/);

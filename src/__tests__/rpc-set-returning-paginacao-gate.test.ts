@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { resolve, join } from 'node:path';
+import { removerComentarios } from '@/lib/gates/limpeza-fonte';
 
 /**
  * Gate: RPC **set-returning** chamada do frontend precisa PAGINAR.
@@ -66,9 +67,9 @@ import { resolve, join } from 'node:path';
 const RAIZ = resolve(__dirname, '../..');
 
 /** Comentário entre `.rpc()` e `.range()` é ruído — e neste repo ele é LONGO de propósito. */
-function semComentarios(src: string): string {
-  return src.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/^[ \t]*\/\/[^\n]*/gm, '');
-}
+// O stripper é COMPARTILHADO (`@/lib/gates/limpeza-fonte`) e entende string/template/regex:
+// a cópia local aqui limpava bloco com regex, e um `/*` dentro de string pareava com o `*/`
+// seguinte apagando o miolo do arquivo ANTES de o fiscal olhar (classe medida em 2026-08-20).
 
 /** Nomes cujo `Returns` no types.ts é ARRAY — só esses sofrem a capa de linhas. */
 export function nomesSetReturning(types: string): Set<string> {
@@ -88,7 +89,7 @@ export function nomesSetReturning(types: string): Set<string> {
  * Puro de propósito: é o que as fixtures abaixo falsificam sem tocar arquivo real.
  */
 export function chamadasSemPaginacao(fonte: string, setReturning: Set<string>): string[] {
-  const txt = semComentarios(fonte);
+  const txt = removerComentarios(fonte);
   const achados: string[] = [];
   // ASPAS SIMPLES **OU DUPLAS**. O regex original só via `'` e por isso deixava passar
   // `supabase.rpc("nome")` — que não é hipótese: `src/` tem 10 chamadas assim, duas delas
