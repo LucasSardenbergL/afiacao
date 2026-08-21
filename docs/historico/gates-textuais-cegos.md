@@ -87,25 +87,51 @@ extremo — e o comentário no teste diz explicitamente que ela NÃO teria pego 
   Latente, não ativo. Chip próprio.
 - **Sub-classe CSS** (`table-overscroll.test.ts`): insumo é um arquivo só (`src/index.css`), sob nosso
   controle; varredura deu **zero**. Registro, sem chip.
-- **Sub-classe SQL — NÃO está limpa, e o eixo é outro.** Medido em 2026-08-20 (2ª rodada, sobre as 656
-  migrations), separando os eixos:
+- **Sub-classe SQL — eixo `--`, medida ATÉ O VEREDITO (3ª rodada, 2026-08-20). Exposição real, dano
+  zero, blindada mesmo assim.** É irmã desta classe, não a mesma: mecanismo idêntico (limpeza que não
+  entende literal), delimitador `--` em vez de `/*`.
 
-  | eixo | exposição |
-  | --- | --- |
-  | `/*` dentro de literal | **0/656** |
-  | bloco ANINHADO (`/* /* */ */` — Postgres permite, e `[\s\S]*?` fecha no `*/` interno) | **0/656** |
-  | **`--` dentro de literal** | **16/656** |
+  | eixo | exposição | veredito do `authz:check` |
+  | --- | --- | --- |
+  | `/*` dentro de literal | 0/656 | — |
+  | bloco ANINHADO (`/* /* */ */` — Postgres permite, e `[\s\S]*?` fecha no `*/` interno) | 0/656 | — |
+  | **`--` dentro de literal** | **6/656** | **não muda (byte-a-byte)** |
 
-  `stripComments` (`scripts/lib/authz-contract.ts`) faz `.replace(/--[^\n]*/g, ' ')` **sem olhar string**,
-  e o docstring imediatamente acima dele afirma *"preserva strings e dollar-quotes"* — invariante
-  **DECLARADA** que o código não cumpre, no gate de **authz**: o lugar mais caro do repo para ficar cego.
-  Casos reais: `20260703090000_pedidos_programados.sql` tem `'FORMA DE PGTO BOLETO\n\n-- --\nOperação
-  contratada…'`; `20260727120000_tint_fase5_desativa_geracao_legada.sql` e
-  `20260724130000_authz_custo_fu4f_fase3_recommend.sql` carregam o literal `'--[^\n]*'` como DADO.
+  **O `16/656` da rodada anterior não reproduz.** Três métodos independentes convergem em **6**: (a)
+  walker de gramática recursivo, (b) diff do SQL entregue ao parser pelos dois strippers ignorando
+  espaço, (c) contagem ingênua de aspas ímpares antes do `--` na linha. Os três apontam o MESMO
+  conjunto de 6 arquivos. Denominador publicado só vale com o método junto.
 
-  É irmã desta classe, não a mesma: o mecanismo é idêntico (limpeza que não entende literal), o
-  delimitador é `--` em vez de `/*`. Chip próprio — e o passo 1 dele é MEDIR se algum veredito do
-  `authz:check` muda, porque exposição não é dano até a medição dizer que é.
+  **O que a medição do dano diz** — e é o ponto: rodar `authz:check --json` com o stripper velho e com
+  o novo dá saída **byte-a-byte idêntica** (`ok:true`, 8 avisos). A sonda mais sensível, um dump de
+  `extractFunctions` + `detectarReescritaViva` das 656 migrations, também é **idêntica** — e a sonda foi
+  **falsificada** (com o stripper virando no-op, 254/656 arquivos mudam, então ela enxerga).
+  A razão é **estrutural, não sorte**: os 6 sítios ficam **fora de corpo de `CREATE FUNCTION`** — 5 dentro
+  de bloco `DO $tag$` (assertivas que fazem `regexp_replace(pg_get_functiondef(…), '--[^\n]*', …)`, ou
+  seja, carregam o próprio padrão como DADO) e 1 num arquivo sem função nenhuma (o template fiscal
+  `E'FORMA DE PGTO BOLETO\n\n-- --\n…'` de `20260703090000_pedidos_programados.sql`). O parser da Parte
+  A/B só lê corpo de `CREATE FUNCTION`; a Parte D exige `pg_get_functiondef` **+ EXECUTE**.
+
+  **Mesmo assim foi trocado**, e a neutralidade é justamente o argumento: `stripComments` passou a
+  delegar para `scripts/lib/sql-comentarios.ts` (máquina de estados: `''` escapado, `E'…\'…'`,
+  `"ident"`, `$tag$` recursivo, bloco ANINHADO). Trocar quando a saída é **provadamente igual** é a
+  adoção mais barata que existe — depois vira migração de veredito. E o que estava aberto não era a
+  exposição, era a **invariante DECLARADA**: o docstring afirmava *"preserva strings e dollar-quotes"*
+  enquanto o código não preservava. A inércia de hoje é contingente ao corpus: o dia em que alguém
+  escrever `regexp_replace(…, '--[^\n]*', …)` **dentro** de uma SECDEF — e há um `DO` block a poucas
+  linhas de distância que já faz exatamente isso — a cegueira cai sobre o gate de authz.
+
+  **Decisão de gramática que não é óbvia:** `$tag$…$tag$` **não** é tratado como opaco. Um lexer puro
+  pararia ali; aqui o consumidor é o gate de authz, cuja razão de existir é não ser enganado por
+  `-- gate comentado` DENTRO do corpo. Medido: tratar como opaco divergia do stripper anterior em
+  **277/656** migrations. O interior é re-analisado com a mesma gramática.
+
+  **Sentinela** (herdado de `maiorBlocoDescartado`): `maiorBlocoDescartadoSql` + teto de **300** linhas
+  em `scripts/sql-comentarios.test.ts`. Calibração medida: maior bloco LEGÍTIMO descartado nas 656
+  migrations = **175** (`20260615130000_tint_vigia_cobertura_sentinela.sql`); um `/*` que nunca fecha
+  no quarto inicial dos 3 maiores arquivos devolve **676–762**. O teto fica 1,7× acima do legítimo e
+  2,3× abaixo do estrago — a mesma folga do sentinela irmão (150 sobre 88). O teste também **prova o
+  alarme disparando** num arquivo envenenado: alarme que nunca se viu disparar é decoração.
 
 ## Assinatura para varredura futura
 
@@ -115,3 +141,11 @@ rg -n "replace\(/\\\\/\\\\\*\[\\\\s\\\\S\]\*\?\\\\\*\\\\//" src/ supabase/ scrip
 
 Casa toda cópia do stripper regex. Em `.ts/.tsx` de `src/`, o correto é importar
 `removerComentarios` de `@/lib/gates/limpeza-fonte`.
+
+O eixo `--` (SQL) tem assinatura própria — casa quem limpa comentário de SQL sem gramática:
+
+```bash
+rg -n "replace\(/--\[\^" src/ supabase/ scripts/ db/
+```
+
+Quem lê SQL deve importar `removerComentariosSql` de `scripts/lib/sql-comentarios.ts`.
