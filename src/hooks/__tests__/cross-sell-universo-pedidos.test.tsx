@@ -54,16 +54,14 @@ const pedido = (
  * em `separacao`. Sob a allowlist antiga ele não existia para o motor — é a miniatura dos +319
  * clientes que a denylist devolve ao universo em produção (754 → 1.073).
  */
-// `cli-2`..`cli-5` entram na carteira porque são eles que dão POPULARIDADE ao SKU_POPULAR, e
-// `clusterAdherence` passou a contar clientes DA CARTEIRA — comprador de fora já não promove
-// SKU nenhum. Os NEGATIVOS (`cli-6` cancelado, `cli-7` deletado, `cli-8` status nulo) ficam de
-// FORA da carteira de propósito: se a exclusão deles falhasse, seria por entrarem no universo
-// de PEDIDOS, que é o que este arquivo mede — pô-los na carteira embaralharia os dois eixos.
-// Só `cli-1` tem `profiles`, então a GERAÇÃO segue restrita a ele.
-const CARTEIRA = ['cli-1', 'cli-9', 'cli-2', 'cli-3', 'cli-4', 'cli-5'];
+const CARTEIRA = ['cli-1', 'cli-9'];
 const PEDIDOS = [
   pedido('cli-1', [SKU_BASE], 'faturado'), // alvo clássico: comprou só a base
-  pedido('cli-9', [SKU_BASE], 'separacao'), // ← na carteira, invisível sob a allowlist
+  // `cli-9` carrega TAMBÉM o SKU_POPULAR. Desde que `clusterAdherence` conta clientes DA
+  // CARTEIRA (e não ocorrências na base inteira), a popularidade que vira oferta precisa
+  // nascer DENTRO da carteira — e pôr o popular justamente no cliente cujo único pedido é
+  // `separacao` aperta o teste: a oferta de D só existe se este pedido entrar no universo.
+  pedido('cli-9', [SKU_BASE, SKU_POPULAR], 'separacao'), // ← na carteira, invisível sob a allowlist
   pedido('cli-2', [SKU_BASE, SKU_POPULAR], 'separacao'), // ← só entra com a denylist
   pedido('cli-3', [SKU_BASE, SKU_POPULAR], 'importado'), // ← só entra com a denylist
   pedido('cli-4', [SKU_BASE, SKU_POPULAR], 'enviado'), // ← só entra com a denylist
