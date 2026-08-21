@@ -194,6 +194,7 @@ export const MODULOS: ModuloApp[] = [
       "src/hooks/__tests__/cross-sell-universo-pedidos.test.tsx",
       "src/hooks/__tests__/cross-sell-conta-da-oferta.test.tsx",
       "src/hooks/__tests__/cross-sell-up-sell-ordem.test.tsx",
+      "src/hooks/__tests__/cross-sell-aderencia-conta-clientes.test.tsx",
       "src/hooks/__tests__/useAlertaCreditoCliente.test.ts",
       "src/hooks/__tests__/usePedidosProgramados.cancelamento.test.tsx",
       "src/hooks/__tests__/usePricingEngine.test.ts",

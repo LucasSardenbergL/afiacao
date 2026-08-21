@@ -236,7 +236,16 @@ const FarmerRecommendations = () => {
                                       igual: custo = preço × (1 − margem%)). E neste motor nem
                                       esse caso aparece: só entra SKU que a RPC listou como
                                       vendável (margem canônica > 0). */}
-                                  <p className="text-[10px] text-muted-foreground">{rec.clusterVolume}× /mês no cluster</p>
+                                  {/* NÃO é "por mês": a fórmula é `round(aderência × 12)` — uma reescala da FRAÇÃO de
+                                      clientes do cluster que compraram o SKU, sem janela temporal, sem
+                                      ocorrências e sem quantidade. O rótulo antigo ("N× /mês no cluster")
+                                      afirmava uma frequência que o número nunca mediu, e com o numerador
+                                      inflado chegava a exibir "40× /mês" para uma carteira de 211.
+                                      ⚠️ Pendência declarada (achado /codex): o campo `cluster_volume_estimate`
+                                      mistura duas semânticas — aqui é fração reescalada, no up-sell é
+                                      QUANTIDADE histórica. Separar isso é mudança de contrato, fora do
+                                      escopo da correção da aderência. */}
+                                  <p className="text-[10px] text-muted-foreground">≈{rec.clusterVolume} em cada 12 do cluster</p>
                                 </div>
                                 <div className="text-right shrink-0">
                                   <p className="text-sm font-bold text-primary">{rec.pij}%</p>

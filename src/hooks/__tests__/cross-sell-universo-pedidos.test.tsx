@@ -57,7 +57,11 @@ const pedido = (
 const CARTEIRA = ['cli-1', 'cli-9'];
 const PEDIDOS = [
   pedido('cli-1', [SKU_BASE], 'faturado'), // alvo clássico: comprou só a base
-  pedido('cli-9', [SKU_BASE], 'separacao'), // ← na carteira, invisível sob a allowlist
+  // `cli-9` carrega TAMBÉM o SKU_POPULAR. Desde que `clusterAdherence` conta clientes DA
+  // CARTEIRA (e não ocorrências na base inteira), a popularidade que vira oferta precisa
+  // nascer DENTRO da carteira — e pôr o popular justamente no cliente cujo único pedido é
+  // `separacao` aperta o teste: a oferta de D só existe se este pedido entrar no universo.
+  pedido('cli-9', [SKU_BASE, SKU_POPULAR], 'separacao'), // ← na carteira, invisível sob a allowlist
   pedido('cli-2', [SKU_BASE, SKU_POPULAR], 'separacao'), // ← só entra com a denylist
   pedido('cli-3', [SKU_BASE, SKU_POPULAR], 'importado'), // ← só entra com a denylist
   pedido('cli-4', [SKU_BASE, SKU_POPULAR], 'enviado'), // ← só entra com a denylist

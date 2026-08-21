@@ -56,6 +56,16 @@ export interface Recommendation {
    */
   affinityScore: number;
   complexityFactor: number;
+  /**
+   * `round(clusterAdherence × 12)` no cross-sell — uma REESCALA da fração de clientes do
+   * cluster que compraram o SKU. NÃO é frequência: não há janela temporal, ocorrência nem
+   * quantidade na fórmula. (A UI dizia "N× /mês no cluster"; o rótulo foi corrigido.)
+   *
+   * ⚠️ Pendência declarada (achado /codex xhigh): o campo carrega DUAS semânticas — aqui a
+   * fração reescalada, e no up-sell a QUANTIDADE histórica comprada (`purchaseData.qty`).
+   * Ambas caem na mesma coluna `cluster_volume_estimate`. Separar isso é mudança de contrato
+   * de dado, fora do escopo da correção da aderência.
+   */
   clusterVolume: number;
   estoque: number | null; // Stock quantity from omie_products
   status: 'pendente' | 'ofertado' | 'aceito' | 'rejeitado' | 'expirado';
@@ -566,7 +576,6 @@ export const useCrossSellEngine = () => {
 
       // 7. Build per-customer purchase history. Sem `cost`: o custo não chega mais ao browser.
       const customerProducts = new Map<string, Map<string, { qty: number; price: number }>>();
-      const allProductPurchases = new Map<string, number>(); // product_id -> total customers who bought
       // Contas em que cada cliente EFETIVAMENTE comprou — o lado "histórico" do sensor
       // `oferta_conta_do_cliente`. Sai de `sales_orders.account`, a mesma coluna que
       // qualifica o item, e é montado neste loop porque ele já varre todos os pedidos.
@@ -599,10 +608,6 @@ export const useCrossSellEngine = () => {
           existing.qty += Number(item.quantity || item.quantidade || 1);
           existing.price = Number(item.unit_price || item.valor_unitario || 0);
           cp.set(productId, existing);
-
-          // Track which products are popular
-          if (!allProductPurchases.has(productId)) allProductPurchases.set(productId, 0);
-          allProductPurchases.set(productId, allProductPurchases.get(productId)! + 1);
         }
       }
 
@@ -648,6 +653,70 @@ export const useCrossSellEngine = () => {
         esperado: itensResolvidos + itensContaDivergente,
       };
 
+      // ADERÊNCIA AO CLUSTER — quantos CLIENTES compraram, não quantas vezes foi comprado.
+      //
+      // O que havia aqui dividia OCORRÊNCIAS DE ITEM (contadas dentro do laço de itens de
+      // TODOS os pedidos da base, universo global) por `customerIds.length` (a carteira DESTE
+      // farmer, universo local). Um cliente que comprasse o mesmo SKU em 10 pedidos contava
+      // 10, e o quociente não era fração de coisa nenhuma — embora o comentário da linha o
+      // chamasse de "total customers who bought". O `clamp(…, 0, 1)` não corrigia: ESCONDIA,
+      // saturando em 1,0 todo SKU de volume alto.
+      //
+      // O estrago é de RANKING, e foi medido antes de escolher (psql-ro replicando o motor em
+      // SQL + simulação sobre os 3 farmers com carteira ativa — 526/432/269, 20/08/2026):
+      //   · 839 dos 1.052 clientes tinham o top-3 em EMPATE TOTAL de `affinityScore` — três
+      //     SKUs saturados em 1,0 com `assocBoost` 0 dão `relevance` 0,4 idêntico, e quem
+      //     escolhia a oferta era a ordem de `.order('id')` do catálogo. Depois: 158. NÃO vai
+      //     a zero, e o resíduo é real: `affinityScore` é arredondado a 4 casas ANTES do
+      //     `sort` (linha ~769), então SKUs de aderência próxima seguem colidindo.
+      //   · 98,5% do top-3 caía em `oben` contra 1,5% `colacor`; depois, 56,1% `colacor`. É o
+      //     mesmo viés que o #1823 mediu em prod (934 dos 939 cross-sell vivos `oben`) e
+      //     descartou como "não é o gate de popularidade": não era a ADMISSÃO no gate, era a
+      //     SATURAÇÃO que colapsa o ranking em empate e entrega o desempate à ordem do id.
+      //   · A inflação é ANTI-correlacionada com o tamanho da carteira (numerador global sobre
+      //     denominador local): o farmer de 269 clientes tinha 587 SKUs acima do gate de 3%,
+      //     224 deles SEM UM ÚNICO comprador na própria carteira.
+      //
+      // POR QUE A CARTEIRA E NÃO A BASE INTEIRA. A alternativa (clientes distintos da BASE ÷
+      // 1.073 com histórico) também conserta a escala e chega perto: 198 empates, 59,8%
+      // `colacor`. Duas coisas decidiram pela carteira: as carteiras NÃO são intercambiáveis
+      // (Spearman 0,47–0,49 entre os rankings de adesão das três — se fossem, seria ~0,9), e
+      // precisão > recall — na dúvida, não ofertar o SKU que a carteira nunca comprou. O custo
+      // é declarado: 1.318 dos 1.964 SKUs comprados na base não têm comprador na carteira
+      // menor, e essa evidência é descartada de propósito. Em prod nada se PERDE, só se
+      // particiona: 481+381+211 = 1.073 = exatamente os clientes com histórico da base.
+      //
+      // Custo do aperto, medido: NENHUM em volume. As recomendações são as mesmas 3.156 — o
+      // gate corta candidato de sobra, nunca os 3 do topo, e nenhum farmer seca. O que muda é
+      // a ORDEM e o equilíbrio com o `assocBoost`, que sai de decidir 1,0% dos topos para
+      // 12,8% — ele é o ÚNICO termo personalizado por cliente, e estava afogado pela saturação.
+      //
+      // ⚠️ PENDÊNCIAS DECLARADAS, fora do escopo desta correção (achados do /codex xhigh):
+      //   · o gate `0.03` e os pesos `0,4/0,6` foram herdados da escala INCOERENTE e nunca
+      //     calibrados (não há feedback de conversão: as recomendações seguem 100% `pendente`).
+      //     Numa escala que encolheu, `0.03` aceita 15/12/7 compradores — abaixo do que um
+      //     limite inferior de Wilson exigiria para AFIRMAR 3%. Recalibrar exige outcome, não
+      //     opinião, e mexer nisso junto confundiria duas mudanças.
+      const clientesQueCompraram = new Map<string, number>(); // product_id -> clientes DISTINTOS da carteira
+      for (const cid of customerIds) {
+        // `keys()` do histórico já é o conjunto de SKUs distintos DAQUELE cliente: cada
+        // cliente entra no máximo UMA vez por SKU, quantos pedidos tenha feito.
+        for (const productId of (customerProducts.get(cid) ?? new Map()).keys()) {
+          clientesQueCompraram.set(productId, (clientesQueCompraram.get(productId) ?? 0) + 1);
+        }
+      }
+      // Denominador = a carteira ATIVA, não "a carteira com histórico utilizável". As duas
+      // foram medidas e são INDISTINGUÍVEIS no dado de hoje (empate 158, 56,1% `colacor`,
+      // 241 SKUs no gate — idênticos): a diferença é um fator uniforme por farmer, e fator
+      // uniforme não muda ordem DENTRO do farmer, que é onde o ranking acontece.
+      //
+      // Empatadas no desfecho, vale a que FALHA melhor. "Com histórico" encolhe o denominador
+      // junto com a cobertura, então quanto pior a cobertura, MAIOR a aderência: no limite, 1
+      // cliente com histórico numa carteira de 100 daria 1/1 = 100% e mandaria o SKU dele para
+      // os outros 99 — e nada barra isso, porque `carteira_com_historico_utilizavel` é
+      // registrado SEM piso. O viés ainda é dirigido: "histórico utilizável" depende de o SKU
+      // comprado continuar ATIVO, o que favorece cliente recente e linha sobrevivente.
+      // A carteira ativa é imune a esse modo de falha ao custo medido de zero.
       const totalCustomers = Math.max(customerIds.length, 1);
       const productList = products || [];
 
@@ -706,8 +775,10 @@ export const useCrossSellEngine = () => {
           // (margem canônica > 0). Custo desconhecido não entra — ausente≠zero (#1466).
           if (!vendaveis.has(product.id)) continue;
 
-          // Cluster adherence: how many similar customers bought this
-          const buyerCount = allProductPurchases.get(product.id) || 0;
+          // Aderência do cluster: QUANTOS CLIENTES da carteira compraram isto — não quantas
+          // vezes foi comprado. O numerador é subconjunto do denominador por construção, então
+          // o quociente já é uma fração ≤ 1: o `clamp` fica como rede, não como disfarce.
+          const buyerCount = clientesQueCompraram.get(product.id) || 0;
           const clusterAdherence = clamp(buyerCount / totalCustomers, 0, 1);
 
           // Association boost: personalized score based on what THIS customer bought
@@ -723,6 +794,9 @@ export const useCrossSellEngine = () => {
 
           // Estimativa de volume do cluster: preservada como CONTEXTO da recomendação, mas fora
           // do score (ela já entra em `pij` via `relevance` — remultiplicar afogaria o assocBoost).
+          // Segue a MESMA fração — senão volta a afirmar volume que a carteira não comporta:
+          // com o numerador em ocorrências ele chegava a 40 numa carteira de 211 (medido), e
+          // este número é PERSISTIDO em `cluster_volume_estimate`.
           const clusterVolume = Math.max(1, Math.round(buyerCount / totalCustomers * 12));
 
           // Constante desde o #1514 (ver bloco de premissas). Persistida como dado, mas NÃO
@@ -815,7 +889,20 @@ export const useCrossSellEngine = () => {
 
             const chave: ChaveUpSell = {
               razaoPreco: premiumPrice / purchaseData.price,
-              popularidade: allProductPurchases.get(product.id) || 0,
+              // MESMA métrica do cross-sell: clientes DISTINTOS da carteira. Este ponto nasceu
+              // no #1837 lendo `allProductPurchases` — ocorrências de item na base inteira —,
+              // que é o número que este PR está removendo por não ser fração nem contagem de
+              // nada (10 pedidos do mesmo cliente contavam 10). Manter as duas convivendo daria
+              // DUAS definições de "popularidade" no mesmo arquivo, que é exatamente a
+              // incoerência em correção. "O mais vendido" do comentário do comparador vira
+              // "o que mais clientes compraram", que é o sentido acionável para o vendedor.
+              //
+              // ⚠️ Efeito colateral DECLARADO, não medido: contar clientes (números pequenos,
+              // 0..N da carteira) empata mais que contar ocorrências (números grandes e
+              // dispersos), e `popularidade` é o 2º critério — só desempata quando `razaoPreco`
+              // bate EXATO. Quem responde isso em prod é o sensor que o próprio #1837
+              // instalou: `posicoesDecididasPorSinal` / `up_sell_posicoes_decididas`.
+              popularidade: clientesQueCompraram.get(product.id) || 0,
             };
 
             const anterior = upSellPorProduto.get(product.id);

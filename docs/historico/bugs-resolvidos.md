@@ -743,3 +743,46 @@ encontram classes diferentes. O que ela pegou, tudo dentro do que eu tinha acaba
   gen_random_uuid()`, então os 100 menores UUIDs são amostra pseudoaleatória determinística, não
   prefixo temporal. O viés continua (mesmo subconjunto para todos, tamanho pequeno), mas **não é
   o viés que eu tinha escrito** — e a versão errada estava a caminho do PR.
+## O `clamp` não consertava a incoerência de universo — ESCONDIA, e 839 top-3 eram empate puro (2026-08-21)
+
+`clusterAdherence`, no cross-sell, dividia **ocorrências de item** (numerador contado no laço de
+itens de TODOS os pedidos da base) por **clientes da carteira** daquele farmer. Numerador global
+sobre denominador local: o quociente não é fração de nada — e o comentário da linha o chamava de
+`total customers who bought`. Um cliente que comprasse o mesmo SKU em 10 pedidos contava 10.
+
+**O `clamp(…, 0, 1)` é o vilão silencioso.** Ele não corrigia a incoerência: fazia todo SKU de
+volume alto saturar em 1,0. Com `assocBoost` 0, `relevance` dava 0,4 idêntico para todos os
+saturados, e o `sort` estável entregava o desempate à ordem de `.order('id')` do catálogo. Medido
+por simulação do motor sobre os 3 farmers (psql-ro): **839 dos 1.052 clientes tinham o top-3 inteiro
+em empate total de score**. A "recomendação" desses clientes era a ordem dos uuids.
+
+**Isso fechou um achado que outro PR deixou aberto.** O #1823 mediu em prod que 934 dos 939
+cross-sell vivos eram `oben` e descartou o gate de popularidade **por eliminação** ("234 × 233 SKUs
+acima do limiar"). A eliminação estava certa sobre a ADMISSÃO e cega para a SATURAÇÃO: a simulação
+da definição antiga reproduz 98,5% `oben`. O gate admitia os dois lados; o empate é que escolhia
+sempre o mesmo.
+
+Contando clientes distintos da carteira: empate 839 → **158**, e `colacor` 1,5% → **56,1%**
+(coerente com 71% dos vendáveis serem `colacor`). Volume de recomendação **idêntico** (3.156 =
+3.156) — o gate corta candidato de sobra, nunca os 3 do topo, então nenhum farmer seca.
+
+**Três lições que sobram:**
+
+1. **`clamp` sobre quociente é suspeito de esconder incoerência de unidade.** Um `clamp` que dispara
+   com frequência não está protegendo contra o caso raro — está mascarando que as duas pontas medem
+   universos diferentes. Sinal de saúde: com o numerador certo, o `clamp` fica **inerte** (0% de
+   saturação nos candidatos), e isso vira invariante testável.
+2. **Empate total num ranking não é neutro — ele transfere a decisão para a ordem de iteração.**
+   É a mesma patologia que o #1837 corrigiu no mesmo dia no ramo do up-sell (lá o `affinityScore` não
+   tinha NENHUM termo do produto candidato). Ranking cujo score empata é ranking que não existe.
+3. **"Zero empates" precisa ser medido no código REAL, não no modelo mental dele.** Eu afirmei
+   839 → 0; o `/codex challenge xhigh` apontou que `affinityScore` é arredondado a 4 casas **antes**
+   do `sort` e minha simulação ordenava pelo valor cru. O número honesto é 158 — 81% de redução, com
+   resíduo estrutural. A simulação tinha de replicar o arredondamento para valer como evidência.
+
+**Nota sobre escolher denominador quando o dado empata.** Testei "carteira ativa" contra "carteira
+com histórico utilizável": **indistinguíveis** hoje (empate 158, 56,1%, 241 SKUs no gate — iguais),
+porque a diferença é um fator uniforme por farmer e fator uniforme não muda ordem dentro do farmer.
+Empatadas no desfecho, ficou a que **falha melhor**: "com histórico" encolhe o denominador junto com
+a cobertura (1 cliente com histórico em 100 ativos daria 1/1 = 100%). O critério de desempate entre
+opções equivalentes é o modo de falha, não a elegância do argumento.
