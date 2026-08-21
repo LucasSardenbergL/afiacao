@@ -78,7 +78,18 @@ tokens=$(( bytes * 10 / 36 ))          # ~3,6 bytes/token em código e markdown
 # velho); offset/limite porque ler OUTRO trecho é leitura complementar, não
 # desperdício. Só a repetição exata dos três é cópia pura.
 marca="${TMPDIR:-/tmp}/afiacao-read-${sessao}"
-mtime="$(stat -f '%m' "$arquivo" 2>/dev/null || stat -c '%Y' "$arquivo" 2>/dev/null || echo 0)"
+# GNU primeiro e validando NUMERO: no Linux `stat -f %m` NAO falha do jeito que o
+# `||` supunha — `-f` la e --file-system e nao consome formato, entao '%m' vira um
+# OPERANDO invalido: o stat sai !=0 (disparando o fallback) mas ANTES ja despejou no
+# stdout o bloco multi-linha do filesystem do arquivo. Os dois se concatenavam e o
+# mtime virava lixo de 6 linhas. Chave multi-linha envenena o `grep -Fx` abaixo: cada
+# linha vira um PADRAO independente e as constantes do bloco casam sempre, entao o
+# hook gritava "releitura" justamente quando reler e LEGITIMO (outro trecho, ou
+# arquivo alterado). Verde no macOS, cego no Linux — mesmo defeito ja corrigido em
+# branch-pos-squash-guard.sh. A validacao numerica e a trava: garante 1 linha so.
+mtime="$(stat -c '%Y' "$arquivo" 2>/dev/null)"
+case "$mtime" in ''|*[!0-9]*) mtime="$(stat -f '%m' "$arquivo" 2>/dev/null)" ;; esac
+case "$mtime" in ''|*[!0-9]*) mtime=0 ;; esac
 chave="${mtime}|${inicio}|${limite}|${arquivo}"
 vistas=0
 if [ -f "$marca" ]; then
