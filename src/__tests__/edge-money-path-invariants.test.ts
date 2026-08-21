@@ -632,6 +632,84 @@ describe('guardrail money-path: identidade dos pedidos pela RPC atômica + contr
   });
 });
 
+// ── PR-2 / achado A2: PROVA POSITIVA `client_to_user` vence o cache de identidade ──────────────────
+// O clientCache do syncPedidos vinha só da view `omie_customer_account_map_fresco`, que atesta "existe
+// vínculo com menos de 7 dias" mas nunca QUAL documento o provou — vínculo por ausência de
+// contraindicação. A migration 20260821192817 adiciona a evidência e faz a RPC devolver `client_to_user`
+// com a prova viva; o edge a sobrepõe ao cache. Textual pelo mesmo motivo do resto do arquivo (o deploy
+// pelo chat do Lovable pode reverter e commitar a reversão), e sobre a fonte SEM comentários — a prosa
+// que explica o achado cita os mesmos tokens que o assert procura.
+describe('guardrail money-path: prova positiva client_to_user sobre o cache de identidade (PR-2/A2)', () => {
+  const srcCru = read(VENDAS); // a paridade MIRROR precisa dos marcadores, que SÃO comentários
+  const src = removerComentarios(srcCru);
+  const analytics = removerComentarios(read(ANALYTICS));
+  const helper = read(IDENTITY_SNAPSHOT);
+
+  it('sentinela: o stripper não comeu o arquivo (asserts abaixo mediriam vazio)', () => {
+    expect(src).toContain('async function resolveClientUserId');
+    expect(src.length).toBeGreaterThan(50_000);
+    expect(analytics).toContain('async function syncCustomers');
+    expect(analytics.length).toBeGreaterThan(30_000);
+  });
+
+  it('PARIDADE: aplicarProvaPositivaNoCache idêntico em src × vendas', () => {
+    expect(
+      mirrorBlockNamed(srcCru, 'omie prova-positiva-cache'),
+      'vendas divergiu do helper de src/ (reversão do deploy?)',
+    ).toBe(mirrorBlockNamed(helper, 'omie prova-positiva-cache'));
+  });
+
+  it('o edge USA o helper: DEFINE o espelho E o CHAMA (≥2 menções)', () => {
+    expect(src).toMatch(/function aplicarProvaPositivaNoCache\(/);
+    expect(src, 'REGRESSÃO: o edge não chama mais aplicarProvaPositivaNoCache').toMatch(
+      /aplicarProvaPositivaNoCache\(clientCache, clientToUser\)/,
+    );
+    expect(count(src, 'aplicarProvaPositivaNoCache')).toBeGreaterThanOrEqual(2);
+  });
+
+  it('o edge destrutura clientToUser do snapshot (senão a prova nunca chega ao cache)', () => {
+    expect(src).toMatch(/const \{ docToUserMap, ambiguousDocs, clientToUser \} = parseIdentitySnapshot\(snap\)/);
+  });
+
+  it('a sobreposição vem DEPOIS do pré-load da view — não no lugar dele', () => {
+    // Substituir o pré-load pela prova (em vez de sobrepor) jogaria os ~10.822 vínculos frescos sem
+    // evidência direto no fallback ConsultarCliente → rate-limit no Omie. A prova é aditiva.
+    const iView = src.indexOf("from('omie_customer_account_map_fresco')");
+    const iProva = src.indexOf('aplicarProvaPositivaNoCache(clientCache');
+    expect(iView, 'REGRESSÃO: o pré-load da view fresca sumiu do syncPedidos').toBeGreaterThan(-1);
+    expect(iProva).toBeGreaterThan(-1);
+    expect(iProva, 'a prova precisa sobrepor o cache JÁ montado, não substituí-lo').toBeGreaterThan(iView);
+  });
+
+  it('resolveClientUserId consulta a PROVA antes do cache (precedência no ponto de decisão)', () => {
+    const bloco = src.match(/async function resolveClientUserId[\s\S]*?async function getClientAddressPhone/)?.[0] ?? '';
+    expect(bloco, 'âncora quebrada: não achei o corpo de resolveClientUserId').not.toBe('');
+    const iProva = bloco.indexOf('clientToUser.get(codigoCliente)');
+    const iCache = bloco.indexOf('clientCache.has(codigoCliente)');
+    expect(iProva, 'REGRESSÃO A2: resolveClientUserId não consulta mais clientToUser').toBeGreaterThan(-1);
+    expect(iCache).toBeGreaterThan(-1);
+    expect(iProva, 'REGRESSÃO A2: o cache voltou a ser consultado ANTES da prova positiva').toBeLessThan(iCache);
+  });
+
+  it('o writer do analytics grava a EVIDÊNCIA no vínculo document-first', () => {
+    // Sem isto a coluna nasce e permanece NULL, client_to_user fica vazio para sempre e o PR inteiro
+    // é INERTE — a falha mais provável desta entrega, e a que nenhum erro de runtime denunciaria.
+    const i = analytics.indexOf('accountMapByUser.set(userIdByDoc, {');
+    expect(i, 'âncora quebrada: não achei o writer da proof-table').toBeGreaterThan(-1);
+    const objeto = analytics.slice(i, i + 700);
+    expect(objeto, 'REGRESSÃO: o writer voltou a gravar o vínculo SEM o documento que o provou').toMatch(
+      /evidence_document_normalized: doc,/,
+    );
+    expect(objeto).toMatch(/source: "document",/);
+  });
+
+  it('o canário de deploy reporta a cobertura da prova (o sensor da fase seguinte)', () => {
+    expect(src, 'sem clientes_provados não há como saber se a prova saiu do zero em produção').toContain(
+      'clientes_provados: clientesProvados',
+    );
+  });
+});
+
 // ── P0-B-bis PR-1 (omie-sync self-service USA a view fresca account-correta + helper espelhado) ──
 // O pedido self-service (conta colacor_sc) resolvia a identidade Omie pelo espelho poluído omie_clientes
 // (mix de contas, rótulo 'colacor' mentiroso) e fallback registros:1 (last-write-wins). Migrado p/ a view
