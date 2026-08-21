@@ -1,0 +1,35 @@
+# Invariantes do guard de COMANDO DESTRUTIVO (.claude/hooks/destructive-bash-guard.sh).
+# @src: .claude/hooks/destructive-bash-guard.sh
+# @test: scripts/test-destructive-bash-guard.sh
+# @test_cmd: bash
+# @compile_cmd: bash -n
+#
+# Guard de DENY com dois modos de falha caros e OPOSTOS: deixar passar o irreversível, e negar
+# a alternativa SEGURA que a própria mensagem recomenda (aí o founder aprende a contornar o guard).
+
+# CONTROLE+ : nunca negar reprova os casos-alvo.
+PEGA      | controle+: guard nunca nega           | s{^\[ -n "\$deny" \] \|\| exit 0}{exit 0}
+
+# O bypass exige a confirmação NO INÍCIO do comando. Sem a âncora, MENCIONAR
+# CONFIRM_DESTRUCTIVE em qualquer lugar viraria passe livre.
+PEGA      | bypass deixa de exigir o INICIO       | s{\Q'^[[:space:]]*CONFIRM_DESTRUCTIVE=(1|true)([[:space:]]|$)'\E}{'CONFIRM_DESTRUCTIVE=(1|true)'}
+
+# --- medidas: 7 de 10 já eram load-bearing ---
+# `--force-with-lease` é a alternativa SEGURA que a mensagem recomenda: o `[^-]` existe para não
+# negá-la. Perdê-lo faz o guard proibir o remédio que ele mesmo receita.
+PEGA      | push nega ate o --force-with-lease    | s{\Q--force([^-]|\$)\E}{--force}
+# `git clean -n`/`-fdn` é dry-run: negar dry-run é falso positivo puro.
+PEGA      | clean passa a negar ate o dry-run     | s{ && ! det "\$\{B\}\$\{G\}clean\[\^;&\|\]\*\(-\[a-zA-Z\]\*n\|--dry-run\)"}{}
+# PERGUNTA DE DESENHO EM ABERTO, deliberadamente NÃO fechada (2026-08-20).
+# Estas duas sobreviveram, e as duas deixam o guard MAIS ESTRITO — só um caso de *allow* as
+# pegaria, e escrevê-lo CRAVARIA como intencional que `rm -f *` (force sem recursão) e
+# `rm -r /` (recursão sem force) passem. Isso é decisão do founder, não do teste: pinar aqui
+# transformaria uma dúvida em contrato. Ficam marcadas `?` — reportadas, não silenciadas.
+?         | rm deixa de exigir recursao           | s{\Qgrep -qE '(-[a-zA-Z]*[rR]|--recursive)' || return 1\E}{grep -qE '(-[a-zA-Z]*[rR]|--recursive)' || true}
+?         | rm deixa de exigir force              | s{\Qgrep -qE '(-[a-zA-Z]*f|--force)'        || return 1\E}{grep -qE '(-[a-zA-Z]*f|--force)'        || true}
+PEGA      | rm: qualquer alvo vira catastrofico   | s{^      "/"\|}{      *|"/"|}
+# Menção ≠ execução.
+PEGA      | sanitizacao heredoc/aspas desligada   | s{^\[ -n "\$scan" \] \|\| scan="\$cmd"}{scan="\$cmd"}
+# Contrato com o host.
+PEGA      | decisao vira allow                    | s{permissionDecision:"deny"}{permissionDecision:"allow"}
+PEGA      | evento do JSON deixa de ser PreToolUse | s{hookEventName:"PreToolUse"}{hookEventName:"PostToolUse"}

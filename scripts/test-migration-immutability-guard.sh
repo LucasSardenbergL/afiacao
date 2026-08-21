@@ -33,7 +33,13 @@ run() { # <file_path> <tool> → stdout do hook, com CLAUDE_PROJECT_DIR apontand
   printf '{"tool_name":"%s","tool_input":{"file_path":"%s","new_string":"x","content":"x"}}' "$tool" "$fp" \
     | CLAUDE_PROJECT_DIR="$repo" bash "$HOOK" 2>/dev/null
 }
-is_deny() { grep -q '"permissionDecision"[[:space:]]*:[[:space:]]*"deny"'; }
+# Casa o CONTRATO, não o texto: sob hookEventName errado o host ignora a decisão e a edição
+# no .sql committed PASSA — o snapshot de DR diverge do banco em silêncio.
+# (mutation-check 2026-08-20: a mutação do evento sobrevivia)
+is_deny() { jq -e '.hookSpecificOutput.hookEventName == "PreToolUse"
+  and .hookSpecificOutput.permissionDecision == "deny"
+  and ((.hookSpecificOutput.permissionDecisionReason // "") | test("imutável"))' \
+  >/dev/null 2>&1; }
 
 fail=0
 expect_deny()  { if run "$1" "${3:-Edit}" | is_deny; then echo "  ok    deny  | $2"; else echo "  FAIL  want deny  | $2"; fail=1; fi; }
@@ -51,6 +57,10 @@ expect_allow "$repo/supabase/migrations/20260303000000_inexistente.sql" "migrati
 
 echo "── bypass de path normalizado (Codex 2026-06-24) → deny ──"
 expect_deny "./supabase/migrations/20260101000000_committed.sql" "path com ./ (resolve relativo ao root)" Edit
+# ...e o relativo PURO (sem ./), que é o motivo de o filtro ter DOIS padrões: o `./` já casa o
+# primeiro (`*/supabase/...`), então sem este caso remover o segundo padrão passava batido.
+# (mutation-check 2026-08-20)
+expect_deny "supabase/migrations/20260101000000_committed.sql" "path relativo puro (sem ./)" Edit
 # CLAUDE_PROJECT_DIR divergente do toplevel: rel tem de vir do git toplevel, não do prefixo textual
 if printf '{"tool_name":"Edit","tool_input":{"file_path":"%s","new_string":"x"}}' \
      "$repo/supabase/migrations/20260101000000_committed.sql" \

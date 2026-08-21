@@ -79,6 +79,13 @@ if [ "${1:-}" = "--falsificar" ]; then
          's%chave="\${mtime}|%chave="%'
   sabota "range fora da chave"  "ler OUTRO trecho nao e releitura" \
          's%\${inicio}|\${limite}|%%'
+  # A regressao de portabilidade: voltar ao `stat -f` na frente. So o bloco (c),
+  # com o stub do contrato GNU, deixa isto vermelho — no macOS puro passaria
+  # verde, que foi exatamente como o defeito entrou (#1808). Delimitador `#`
+  # porque o padrao tem `%`.
+  sabota "stat BSD na frente"   "mtime portavel entre BSD e GNU" \
+         's#^mtime="$(stat -c '"'"'%Y'"'"'#mtime="$(stat -f '"'"'%m'"'"'#'
+
   sabota "decide permissao"     "nunca emitir permissionDecision" \
          's%hookEventName:"PreToolUse"%hookEventName:"PreToolUse", permissionDecision:"deny"%'
 
@@ -200,6 +207,94 @@ check "arquivo alterado entre leituras → silêncio" silencio "$(run "$mudou" s
 # 11. a marca é POR SESSÃO — outra sessão relendo o mesmo arquivo não herda
 _=$(run "$pequeno" s11)
 check "outra sessão, 1ª leitura → silêncio" silencio "$(run "$pequeno" s11b)"
+
+# --- (c) portabilidade da chave: os DOIS contratos do `stat` ------------------
+# A chave da releitura carrega o mtime, e `stat` DIVERGE entre BSD (macOS, do
+# founder) e GNU (Linux, do CI): no GNU `-f` é --file-system e NÃO consome
+# formato, então `stat -f '%m' arq` trata '%m' como um segundo OPERANDO — sai
+# !=0 e ainda imprime no stdout o bloco MULTI-LINHA do filesystem. Num `a || b`
+# isso concatena os dois e o mtime vira lixo de várias linhas; a chave deixa de
+# ter uma linha só, e `grep -Fx` passa a ler cada linha como um PADRÃO
+# independente: as constantes do bloco casam sempre e o hook grita "releitura"
+# justamente quando reler é LEGÍTIMO. Verde no macOS, cego no Linux — o mesmo
+# defeito já corrigido em .claude/hooks/branch-pos-squash-guard.sh.
+# Verde num ambiente NÃO prova (#1483): aqui os dois contratos são exercitados
+# por stub, e o caso (i) existe para que um mtime CONSTANTE não passe de graça.
+echo "── portabilidade do stat: a chave discrimina nos DOIS contratos ──"
+STAT_REAL="$(command -v stat || echo /usr/bin/stat)"
+
+_porta() {  # $1=nome do contrato  $2=corpo do stub de `stat`
+  local nome="$1" corpo="$2" d="$tmp/statbox-$1" alvo="$tmp/port-$1.md" o
+  mkdir -p "$d"
+  # `_m` devolve o mtime REAL resolvendo sozinho o contrato do stat de verdade
+  # (o teste roda nas duas plataformas); `$STAT_REAL` é caminho absoluto, então
+  # o stub não chama a si mesmo.
+  # shellcheck disable=SC2016  # o corpo do stub é LITERAL: $STAT_REAL/$1/$v são
+  # dele, resolvidos quando o stub roda — expandir aqui escreveria um stub vazio.
+  { printf '%s\n' '#!/bin/sh' \
+      '_m() { v="$("$STAT_REAL" -c %Y "$1" 2>/dev/null)"' \
+      '  case "$v" in ""|*[!0-9]*) v="$("$STAT_REAL" -f %m "$1" 2>/dev/null)" ;; esac' \
+      '  case "$v" in ""|*[!0-9]*) v=0 ;; esac; printf "%s" "$v"; }'
+    printf '%s\n' "$corpo"; } > "$d/stat"
+  chmod +x "$d/stat"
+
+  _run() {  # mesma forma do run() global, com o stub de stat na frente do PATH
+    jq -nc --arg f "$1" --arg s "$2" --argjson l "${3:-0}" --argjson o "${4:-0}" \
+      '{hook_event_name:"PreToolUse", tool_name:"Read", session_id:$s,
+        tool_input:({file_path:$f}
+                    + (if $l > 0 then {limit:$l} else {} end)
+                    + (if $o > 0 then {offset:$o} else {} end))}' \
+    | env PATH="$d:$PATH" STAT_REAL="$STAT_REAL" bash "$HOOK" 2>/dev/null
+  }
+
+  # (i) ainda DETECTA a releitura de verdade. Sem este caso, um mtime constante
+  #     (o próprio bug, ou um `mtime=0` fixo) passaria (ii) e (iii) de graça.
+  printf 'a\n' > "$alvo"
+  _=$(_run "$alvo" "p$nome-1")
+  o="$(_run "$alvo" "p$nome-1")"
+  if tem READ-RELEITURA "$o"
+  then ok "[$nome] 2ª leitura idêntica ainda avisa releitura"
+  else bad "[$nome] releitura idêntica parou de avisar (veio: '${o:0:60}')"; fi
+
+  # (ii) o mtime discrimina: arquivo alterado entre as leituras não é releitura
+  _=$(_run "$alvo" "p$nome-2")
+  sleep 1; printf 'b\n' >> "$alvo"
+  check "[$nome] arquivo alterado → silêncio" silencio "$(_run "$alvo" "p$nome-2")"
+
+  # (iii) o range discrimina: outro trecho é leitura complementar, não releitura
+  _=$(_run "$grande" "p$nome-3" 10 1)
+  check "[$nome] range diferente → silêncio" silencio "$(_run "$grande" "p$nome-3" 10 200)"
+}
+
+# GNU: `-c %Y` devolve o epoch; `-f` NÃO consome formato — '%m' vira operando
+# inexistente (exit !=0) e o arquivo real despeja o bloco multi-linha. É o
+# contrato exato que cegou o hook no CI.
+# shellcheck disable=SC2016  # corpo literal do stub: $1/$@ são do stub, não desta shell
+_porta gnu 'case "$1" in
+  -c) [ "$2" = "%Y" ] && { _m "$3"; exit 0; }; exit 1 ;;
+  -f) shift; rc=0
+      for op in "$@"; do
+        if [ -e "$op" ]; then
+          echo "  File: \"$op\""
+          echo "    ID: 9a1b2c3d Namelen: 255     Type: ext2/ext3"
+          echo "Block size: 4096       Fundamental block size: 4096"
+          echo "Blocks: Total: 20971520   Free: 15000000   Available: 14000000"
+          echo "Inodes: Total: 5242880    Free: 5000000"
+        else
+          echo "stat: cannot read file system information for '"'"'$op'"'"'" >&2; rc=1
+        fi
+      done
+      exit "$rc" ;;
+esac
+exit 1'
+
+# BSD: `-c` não existe (falha limpo); `-f %m` devolve o epoch.
+# shellcheck disable=SC2016  # idem
+_porta bsd 'case "$1" in
+  -c) echo "stat: illegal option -- c" >&2; exit 1 ;;
+  -f) [ "$2" = "%m" ] && { _m "$3"; exit 0; }; exit 1 ;;
+esac
+exit 1'
 
 # --- fail-safes --------------------------------------------------------------
 # 12. arquivo inexistente → silêncio (o próprio Read reporta o erro)
