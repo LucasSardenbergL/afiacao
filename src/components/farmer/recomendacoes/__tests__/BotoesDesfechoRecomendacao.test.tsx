@@ -8,8 +8,16 @@ vi.mock('@/contexts/ImpersonationContext', () => ({ useImpersonation: () => impM
 vi.mock('@/lib/analytics', () => ({ track: vi.fn() }));
 const toastMock = { success: vi.fn(), error: vi.fn(), warning: vi.fn() };
 vi.mock('sonner', () => ({ toast: toastMock }));
-const rpcMock = vi.fn(async () => ({ data: null, error: null }));
-vi.mock('@/integrations/supabase/client', () => ({ supabase: { rpc: (...a: unknown[]) => rpcMock(...(a as [])) } }));
+/**
+ * O retorno é tipado à mão porque `vi.fn(async () => ({data:null,error:null}))` INFERE
+ * `error: null` como o tipo, e todo `mockResolvedValue` com erro vira TS2322. Os
+ * argumentos idem: sem `..._a`, `mock.calls[0]` é `[]` e o cast para ler o payload
+ * vira TS2352. (Pego pelo `Type check (strict)` do CI, que checa os testes também.)
+ */
+type RpcRet = { data: unknown; error: { code?: string; message: string } | null };
+type RpcArgs = [string, Record<string, unknown>];
+const rpcMock = vi.fn(async (..._a: unknown[]): Promise<RpcRet> => ({ data: null, error: null }));
+vi.mock('@/integrations/supabase/client', () => ({ supabase: { rpc: (...a: unknown[]) => rpcMock(...a) } }));
 
 import { track } from '@/lib/analytics';
 const eventos = () => (track as ReturnType<typeof vi.fn>).mock.calls as [string, Record<string, unknown>][];
@@ -43,7 +51,7 @@ describe('o aceite grava UM fato', () => {
     render(<Host />);
     fireEvent.click(screen.getByRole('button', { name: 'Cliente comprou' }));
     await waitFor(() => expect(rpcMock).toHaveBeenCalledTimes(1));
-    const [nome, args] = rpcMock.mock.calls[0] as [string, Record<string, unknown>];
+    const [nome, args] = rpcMock.mock.calls[0] as unknown as RpcArgs;
     expect(nome).toBe('farmer_recomendacao_registrar_desfecho');
     expect(args.p_desfecho).toBe('aceito');
     expect(args.p_customer_user_id).toBe('cli-1');
@@ -79,7 +87,7 @@ describe('a recusa exige o PORQUÊ — é o motivo que calibra, não o placar', 
     await waitFor(() => screen.getByText('Por que o cliente recusou?'));
     fireEvent.click(screen.getByRole('button', { name: 'Preço' }));
     await waitFor(() => expect(rpcMock).toHaveBeenCalledTimes(1));
-    const args = (rpcMock.mock.calls[0] as [string, Record<string, unknown>])[1];
+    const args = (rpcMock.mock.calls[0] as unknown as RpcArgs)[1];
     expect(args.p_desfecho).toBe('rejeitado');
     expect(args.p_motivo).toBe('preco');
   });
@@ -169,8 +177,8 @@ describe('a trava de concorrência é síncrona', () => {
   it('[TRAVA] dois cliques no MESMO tick geram UMA chamada', async () => {
     // `registrando` é o valor do RENDER — dois cliques antes do re-render leriam
     // ambos `null` e passariam. A trava real é uma ref, checada de forma síncrona.
-    let resolver: (v: unknown) => void = () => {};
-    rpcMock.mockImplementation(() => new Promise((r) => { resolver = r; }));
+    let resolver: (v: RpcRet) => void = () => {};
+    rpcMock.mockImplementation(() => new Promise<RpcRet>((r) => { resolver = r; }));
     render(<Host />);
     const b = screen.getByRole('button', { name: 'Cliente comprou' });
     fireEvent.click(b);
