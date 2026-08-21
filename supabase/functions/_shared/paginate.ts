@@ -8,6 +8,21 @@
 // `fetchAll` lê em páginas de 1000 via `.range()` até a página vir incompleta.
 // O call-site DEVE encadear `.order()` numa coluna ESTÁVEL e única no recorte
 // (ex.: a PK), senão o `.range()` pode pular/duplicar linhas entre páginas.
+//
+// ⚠️ PII — o SEGUNDO contrato desta função, e o motivo de ela lançar `FalhaLeituraCritica`
+// em vez de `Error`: `error.message` do PostgREST encaminha o MESSAGE do Postgres, que pode
+// interpolar valor de LINHA (`RAISE EXCEPTION` com ID/CPF; erro de cast reproduzindo o valor
+// inválido). O `catch` do `Deno.serve` das edges devolve `String(err.message)` no CORPO da
+// resposta HTTP — então um ``new Error(`${label}: ${error.message}`)`` aqui SAI DA EDGE. É a
+// "garantia de privacidade afirmada sem verificar o SINK" que `leitura-critica.ts` documenta,
+// e a classe de lá é a resposta: mensagem em domínio FECHADO (nome da fonte, que é constante
+// do código, + código sanitizado por allowlist de FORMA), texto original só em `cause`, que a
+// resposta HTTP não serializa e que sobrevive nos logs da edge.
+//
+// A irmã single-shot (`leitura-critica.ts`) e a paginação passam então a lançar a MESMA classe:
+// quem trata falha de leitura no money-path ramifica uma vez só, e não por cardinalidade.
+import { FalhaLeituraCritica, type ErroPostgrest } from "./leitura-critica.ts";
+
 const PAGE = 1000;
 
 // ── Contrato mínimo do PostgREST que a paginação usa ────────────────────────
@@ -73,20 +88,25 @@ export async function fetchAll<T>(
   build: (
     from: number,
     to: number,
-  ) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>,
+  ) => PromiseLike<{ data: T[] | null; error: ErroPostgrest | null }>,
   label: string,
 ): Promise<T[]> {
   let from = 0;
   const out: T[] = [];
   for (;;) {
     const { data, error } = await build(from, from + PAGE - 1);
-    if (error) throw new Error(`${label}: ${error.message}`);
+    // Envelope na ORIGEM, dentro do laço: o `code` do PostgREST (57014 timeout, 42501 RLS) é o
+    // que separa "o banco piscou" de "a role não enxerga" na classificação operacional, e ele
+    // morreria num envelope aplicado por FORA — lá só chega a `Error` já reduzida a texto.
+    if (error) throw new FalhaLeituraCritica(label, error);
     // `data == null` sem `error` é resposta MALFORMADA do PostgREST — não é fim da tabela.
     // O `?? []` de antes a convertia em página vazia → EOF falso → o acumulado PARCIAL
     // voltava como se fosse a tabela inteira (o defeito que fetchAllPages de
     // src/lib/postgrest.ts e buscarTodasPaginas pós-#1564 já rejeitam). Fim LEGÍTIMO é
     // `data: []` — array vazio, que segue adiante e encerra por `length < PAGE`.
-    if (data == null) throw new Error(`${label}: data null sem error — resposta malformada, não é fim da tabela`);
+    // Mesmo código que `exigirLista` dá à malformada de UMA página: é o mesmo defeito
+    // entrando pela porta do lado, e quem lê o log não deveria ter de saber por qual porta.
+    if (data == null) throw new FalhaLeituraCritica(label, { code: 'MALFORMADA' });
     const rows = data;
     out.push(...rows);
     if (rows.length < PAGE) break;

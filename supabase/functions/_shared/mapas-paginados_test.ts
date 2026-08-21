@@ -12,6 +12,7 @@ import {
   carregarProductMap,
 } from "./mapas-paginados.ts";
 import type { BancoPostgrest, QueryPostgrest, RespostaPostgrest } from "./paginate.ts";
+import { FalhaLeituraCritica } from "./leitura-critica.ts";
 
 function assertEquals(a: unknown, b: unknown, msg?: string) {
   if (JSON.stringify(a) !== JSON.stringify(b)) {
@@ -167,6 +168,34 @@ function assignments(n: number) {
 
 // ── carregarOwnerMap ────────────────────────────────────────────────────────
 
+// Falha de página em DOMÍNIO FECHADO. Até aqui estes 5 testes casavam a mensagem INTEIRA
+// contra `${fonte}: ${message do Postgres}` — ou seja, afirmavam o vazamento como contrato:
+// o MESSAGE do Postgres interpola valor de LINHA (`RAISE EXCEPTION` com ID/CPF, cast
+// reproduzindo o valor inválido) e o `catch` do `Deno.serve` o devolve no CORPO da resposta.
+// A intenção do teste (não engolir a falha, preservar o diagnóstico) segue de pé: o cru foi
+// para `cause`, que a resposta HTTP não serializa e que sobrevive nos logs da edge.
+// As DUAS metades juntas, de propósito: só "lançou" deixaria o vazamento passar de novo, e
+// só "não vazou" passaria com o diagnóstico perdido.
+function exigirFalhaFechada(e: unknown, fonte: string, cruDoServidor: string): FalhaLeituraCritica {
+  if (!(e instanceof FalhaLeituraCritica)) {
+    const nome = e === null ? "null" : typeof e === "object" ? (e as Error).constructor?.name : typeof e;
+    throw new Error(`esperava FalhaLeituraCritica, veio ${nome}: ${(e as Error)?.message}`);
+  }
+  assertEquals(e.fonte, fonte, "a fonte se perdeu no envelope");
+  if (!e.message.includes(fonte)) {
+    throw new Error(`a fonte nao chegou a mensagem publica: ${e.message}`);
+  }
+  if (e.message.includes(cruDoServidor)) {
+    throw new Error(`texto do servidor vazou na mensagem publica: ${e.message}`);
+  }
+  assertEquals(
+    (e.cause as { message?: string } | undefined)?.message,
+    cruDoServidor,
+    "o detalhe cru sumiu de cause — os logs da edge perderam o diagnostico",
+  );
+  return e;
+}
+
 Deno.test("ownerMap: monta customer→owner a partir das linhas", async () => {
   const { db } = fakeDb({ carteira_assignments: assignments(3) });
   const mapa = await carregarOwnerMap(db);
@@ -188,10 +217,7 @@ Deno.test("ownerMap: página com ERRO lança — não devolve mapa parcial", asy
     await carregarOwnerMap(db);
   } catch (e) {
     lancou = true;
-    assertEquals(
-      (e as Error).message,
-      "carteira_assignments: canceling statement due to statement timeout",
-    );
+    exigirFalhaFechada(e, "carteira_assignments", "canceling statement due to statement timeout");
   }
   assertEquals(lancou, true, "carregarOwnerMap devolveu mapa PARCIAL em vez de lançar");
 });
@@ -235,7 +261,7 @@ Deno.test("carteira: página com ERRO lança — snapshot parcial não é snapsh
     await carregarCarteiraComElegibilidade(db);
   } catch (e) {
     lancou = true;
-    assertEquals((e as Error).message, "carteira_assignments: boom");
+    exigirFalhaFechada(e, "carteira_assignments", "boom");
   }
   assertEquals(lancou, true, "carregarCarteiraComElegibilidade devolveu lista PARCIAL");
 });
@@ -306,10 +332,7 @@ Deno.test("pedidos do mês: página com ERRO lança — não vira receita 0", as
     await carregarPedidosDoMes(db, "2026-06-01", "2026-07-01");
   } catch (e) {
     lancou = true;
-    assertEquals(
-      (e as Error).message,
-      "sales_orders: canceling statement due to statement timeout",
-    );
+    exigirFalhaFechada(e, "sales_orders", "canceling statement due to statement timeout");
   }
   assertEquals(lancou, true, "carregarPedidosDoMes devolveu lista PARCIAL");
 });
@@ -354,7 +377,7 @@ Deno.test("excluídos: página com ERRO lança — não devolve Set parcial", as
     await carregarExcluidosDaCarteira(db);
   } catch (e) {
     lancou = true;
-    assertEquals((e as Error).message, "cliente_classificacao: permission denied");
+    exigirFalhaFechada(e, "cliente_classificacao", "permission denied");
   }
   assertEquals(lancou, true, "carregarExcluidosDaCarteira devolveu Set PARCIAL");
 });
@@ -395,7 +418,7 @@ Deno.test("productMap: página com ERRO lança — não devolve mapa parcial", a
     await carregarProductMap(db, "colacor");
   } catch (e) {
     lancou = true;
-    assertEquals((e as Error).message, "omie_products: boom");
+    exigirFalhaFechada(e, "omie_products", "boom");
   }
   assertEquals(lancou, true, "carregarProductMap devolveu mapa PARCIAL");
 });

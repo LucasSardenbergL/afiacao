@@ -1016,8 +1016,20 @@ serve(async (req) => {
   const pins: Array<{ arquivo: string; presente: RegExp; motivo: string }> = [
     {
       arquivo: 'supabase/functions/_shared/paginate.ts',
-      presente: /if \(data == null\) throw new Error\(`\$\{label\}: data null sem error/,
+      presente: /if \(data == null\) throw new FalhaLeituraCritica\(label, \{ code: ['"]MALFORMADA['"] \}\)/,
       motivo: 'fetchAll voltaria a converter data:null em pagina vazia (EOF falso)',
+    },
+    // O ramo do `error` é o OUTRO desfecho da mesma pagina, e o pin acima nao o cobre: dava
+    // para trocar o `throw new FalhaLeituraCritica(label, error)` de volta por um
+    // `new Error(`${label}: ${error.message}`)` com o pin de MALFORMADA intacto e verde. E o
+    // que volta nao e uma mensagem mais feia — e o MESSAGE do Postgres, que interpola valor de
+    // LINHA (RAISE EXCEPTION com ID/CPF, cast reproduzindo o valor invalido) e que o catch do
+    // Deno.serve devolve no CORPO da resposta HTTP. Ancorado no ramo, nao no import: um
+    // `import` orfao passaria verde enquanto o throw continuasse vazando.
+    {
+      arquivo: 'supabase/functions/_shared/paginate.ts',
+      presente: /if \(error\) throw new FalhaLeituraCritica\(label, error\)/,
+      motivo: 'fetchAll voltaria a vazar o MESSAGE do Postgres (PII) no corpo da resposta HTTP',
     },
     {
       arquivo: 'src/lib/scoring/rpcPaginada.ts',

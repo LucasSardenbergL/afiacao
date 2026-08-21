@@ -13,6 +13,7 @@ import {
   type QueryPostgrest,
   type RespostaPostgrest,
 } from "./relatorio-mensal.ts";
+import { FalhaLeituraCritica } from "./leitura-critica.ts";
 
 function assertEquals(a: unknown, b: unknown, msg?: string) {
   if (JSON.stringify(a) !== JSON.stringify(b)) {
@@ -329,9 +330,21 @@ Deno.test("erro do banco PROPAGA (fail-closed), não vira relatório vazio nem c
     await montarRelatorios(f.banco, { agora: AGORA });
   } catch (e) {
     lancou = true;
+    // A causa original continua exigida — mudou ONDE ela vive. Este assert casava a causa
+    // dentro da MENSAGEM, e a mensagem é o que o `catch` do `Deno.serve` devolve no CORPO da
+    // resposta HTTP: o MESSAGE do Postgres interpola valor de LINHA (`RAISE EXCEPTION` com
+    // ID/CPF), então "carregar a causa original" ali era vazar PII para o cliente. `fetchAll`
+    // lança em domínio FECHADO e põe o cru em `cause`, que a resposta não serializa.
+    if (!(e instanceof FalhaLeituraCritica)) {
+      throw new Error(`esperava FalhaLeituraCritica, veio ${(e as Error)?.name}: ${(e as Error)?.message}`);
+    }
     assert(
-      (e as Error).message.includes("boom"),
-      `erro deveria carregar a causa original, veio: ${(e as Error).message}`,
+      (e.cause as { message?: string } | undefined)?.message === "boom",
+      `a causa original sumiu de cause, veio: ${JSON.stringify(e.cause)}`,
+    );
+    assert(
+      !e.message.includes("boom"),
+      `texto do servidor vazou na mensagem publica: ${e.message}`,
     );
   }
   assertEquals(lancou, true, "erro de banco não pode ser engolido — relatório mudo é pior que 500");

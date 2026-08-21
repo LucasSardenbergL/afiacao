@@ -1,11 +1,35 @@
 // Testa o CÓDIGO REAL de `fetchAll` (não uma cópia) no runtime real (Deno).
 // Roda com: deno test supabase/functions/_shared/paginate_test.ts
 import { fetchAll } from "./paginate.ts";
+import { FalhaLeituraCritica } from "./leitura-critica.ts";
 
 function assertEquals(a: unknown, b: unknown, msg?: string) {
   if (JSON.stringify(a) !== JSON.stringify(b)) {
     throw new Error(msg ?? `assertEquals falhou: ${JSON.stringify(a)} !== ${JSON.stringify(b)}`);
   }
+}
+
+// Exige rejeição E a CLASSE. Um try/catch que só checasse "rejeitou" seria teatro: passaria
+// com um TypeError de código quebrado e deixaria de provar QUAL guard disparou.
+async function capturarFalha(fn: () => Promise<unknown>): Promise<FalhaLeituraCritica> {
+  let capturado: unknown;
+  let rejeitou = false;
+  try {
+    await fn();
+  } catch (e) {
+    rejeitou = true;
+    capturado = e;
+  }
+  if (!rejeitou) throw new Error("esperava rejeição, mas a promise RESOLVEU");
+  if (!(capturado instanceof FalhaLeituraCritica)) {
+    const nome = capturado === null
+      ? "null"
+      : typeof capturado === "object"
+      ? (capturado as Error).constructor?.name
+      : typeof capturado;
+    throw new Error(`esperava FalhaLeituraCritica, veio ${nome}: ${(capturado as Error)?.message}`);
+  }
+  return capturado;
 }
 
 // "Banco" fake de N linhas; o build() pagina por .range() como o PostgREST faria,
@@ -56,53 +80,103 @@ Deno.test("tabela vazia: 1 request, zero linhas", async () => {
   assertEquals(t.calls(), 1);
 });
 
-Deno.test("erro: lança com o label prefixado", async () => {
-  let threw = false;
-  try {
-    await fetchAll(
-      (_f, _t) => Promise.resolve({ data: null, error: { message: "boom" } }),
+// ── PII: o texto do servidor não pode sair da edge ──────────────────────────────────────
+// `error.message` do PostgREST encaminha o MESSAGE do Postgres, que pode interpolar valor de
+// LINHA (`RAISE EXCEPTION` com ID/CPF; erro de cast reproduzindo o valor inválido). O `catch`
+// do `Deno.serve` das edges devolve `String(err.message)` no CORPO da resposta HTTP — então
+// esse texto SAI DA EDGE. `fetchAll` lança em DOMÍNIO FECHADO: fonte (constante do código) +
+// código sanitizado por allowlist de FORMA. O cru sobrevive em `cause`, que a resposta não
+// serializa e que fica só nos logs. Mesmo contrato da irmã single-shot (`leitura-critica.ts`).
+
+Deno.test("erro na página: lança FalhaLeituraCritica e NÃO vaza o texto do servidor", async () => {
+  const erro = await capturarFalha(() =>
+    fetchAll(
+      (_f, _t) =>
+        Promise.resolve({
+          data: null,
+          error: { message: "boom cpf 52998224725 invalido", code: "57014" },
+        }),
       "minha_tabela",
-    );
-  } catch (e) {
-    threw = true;
-    assertEquals((e as Error).message, "minha_tabela: boom");
+    )
+  );
+  assertEquals(erro.fonte, "minha_tabela", "a fonte se perdeu no envelope");
+  assertEquals(erro.codigo, "57014", "o code do PostgREST se perdeu no envelope");
+  if (!erro.message.includes("minha_tabela")) {
+    throw new Error(`a fonte não chegou à mensagem: ${erro.message}`);
   }
-  assertEquals(threw, true);
+  if (!erro.message.includes("57014")) {
+    throw new Error(`o code não chegou à mensagem: ${erro.message}`);
+  }
+  if (erro.message.includes("boom")) {
+    throw new Error(`texto do servidor vazou na mensagem publica: ${erro.message}`);
+  }
+  if (erro.message.includes("52998224725")) {
+    throw new Error(`valor de linha (PII) vazou na mensagem publica: ${erro.message}`);
+  }
+  // O cru não some: fica em `cause`, para os logs da edge.
+  assertEquals(
+    (erro.cause as { message?: string } | undefined)?.message,
+    "boom cpf 52998224725 invalido",
+    "o detalhe cru sumiu de cause — os logs da edge perderam o diagnóstico",
+  );
 });
 
-Deno.test("data null SEM error: LANÇA — resposta malformada não é fim da tabela", async () => {
+Deno.test("erro sem code: o codigo degrada para 'desconhecido', a mensagem segue fechada", async () => {
+  const erro = await capturarFalha(() =>
+    fetchAll(
+      (_f, _t) => Promise.resolve({ data: null, error: { message: "detalhe cru do servidor" } }),
+      "outra_tabela",
+    )
+  );
+  assertEquals(erro.codigo, "desconhecido");
+  if (erro.message.includes("detalhe cru")) {
+    throw new Error(`texto do servidor vazou na mensagem publica: ${erro.message}`);
+  }
+});
+
+Deno.test("erro na 2a pagina: o envelope fecha a cauda também, não só a 1a leitura", async () => {
+  // O laço tem N páginas e só a PRIMEIRA passa pelo caminho feliz. Um envelope aplicado só
+  // fora do laço deixaria a página 2+ vazar — este é o eixo que o teste de 1 página não vê.
+  const p0 = Array.from({ length: 1000 }, (_, i) => ({ id: i }));
+  const erro = await capturarFalha(() =>
+    fetchAll<{ id: number }>(
+      (from, _to) =>
+        Promise.resolve(
+          from === 0
+            ? { data: p0, error: null }
+            : { data: null, error: { message: "boom na cauda", code: "42501" } },
+        ),
+      "t_cauda",
+    )
+  );
+  assertEquals(erro.codigo, "42501");
+  if (erro.message.includes("boom")) {
+    throw new Error(`texto do servidor vazou na pagina 2: ${erro.message}`);
+  }
+});
+
+Deno.test("data null SEM error: LANÇA MALFORMADA — resposta malformada não é fim da tabela", async () => {
   // O `?? []` convertia `{data:null, error:null}` em página vazia → EOF falso → o acumulado
   // PARCIAL voltava como se fosse a tabela inteira. Mesmo contrato do fetchAllPages
   // (src/lib/postgrest.ts) e do buscarTodasPaginas pós-#1564: só `data: []` encerra.
-  let threw = false;
-  try {
-    await fetchAll(
-      (_f, _t) => Promise.resolve({ data: null, error: null }),
-      "minha_tabela",
-    );
-  } catch (e) {
-    threw = true;
-    assertEquals(
-      (e as Error).message.includes("data null sem error"),
-      true,
-      `mensagem inesperada: ${(e as Error).message}`,
-    );
-  }
-  assertEquals(threw, true, "fetchAll resolveu com data:null sem error — deveria lançar");
+  // O código `MALFORMADA` é o mesmo que `exigirLista` nomeia para a leitura de uma página só.
+  const erro = await capturarFalha(() =>
+    fetchAll((_f, _t) => Promise.resolve({ data: null, error: null }), "minha_tabela")
+  );
+  assertEquals(erro.codigo, "MALFORMADA");
+  assertEquals(erro.fonte, "minha_tabela");
 });
 
 Deno.test("data null SEM error no MEIO: lança e NÃO devolve o acumulado parcial", async () => {
   // Página 0 cheia + página 1 malformada: o bug antigo devolveria as 1000 primeiras como
   // se fossem a tabela inteira — numericamente indistinguível de uma tabela de 1000.
   const p0 = Array.from({ length: 1000 }, (_, i) => ({ id: i }));
-  let threw = false;
-  try {
-    await fetchAll<{ id: number }>(
-      (from, _to) => Promise.resolve(from === 0 ? { data: p0, error: null } : { data: null, error: null }),
+  const erro = await capturarFalha(() =>
+    fetchAll<{ id: number }>(
+      (from, _to) =>
+        Promise.resolve(from === 0 ? { data: p0, error: null } : { data: null, error: null }),
       "t_parcial",
-    );
-  } catch {
-    threw = true;
-  }
-  assertEquals(threw, true, "fetchAll devolveu parcial em vez de lançar na página malformada");
+    )
+  );
+  assertEquals(erro.codigo, "MALFORMADA");
 });
