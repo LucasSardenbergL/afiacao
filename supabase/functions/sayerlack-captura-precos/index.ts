@@ -34,6 +34,8 @@ import {
   classificarLinhasRascunho,
   ehPlaceholderDataTables,
 } from "../_shared/embalagem-captura-helpers.ts";
+import { classificarPosLogin } from "../_shared/sayerlack-pos-login.ts";
+import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? Deno.env.get("VITE_SUPABASE_URL")!;
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -60,6 +62,10 @@ export default async ({ page, context }) => {
   // (não é linha real — spike-B f4d9fd92) e classificação de rascunho.
   const ehPlaceholderDataTables = ${ehPlaceholderDataTables.toString()};
   const classificarLinhasRascunho = ${classificarLinhasRascunho.toString()};
+  // Confirmação POSITIVA de dashboard pós-login: 'url_changed' só prova que a URL
+  // saiu de /login (falso positivo real em 2026-08-20, quando o portal passou a
+  // pedir troca de senha). Mesma fonte única da edge de envio.
+  const classificarPosLogin = ${classificarPosLogin.toString()};
 
   // === Budget management (deadline global, aborto limpo) ===
   // Supabase edge tem wall-clock ~400s e a PERSISTÊNCIA pós-browser (uploads +
@@ -329,7 +335,21 @@ export default async ({ page, context }) => {
 
     await sleep(2000);
 
-    // Navegação SEMPRE via clique no menu (goto direto redireciona p/ rota de erro)
+    // === Confirmação POSITIVA de dashboard ===
+    // 'url_changed' prova só que a URL saiu de /login — NÃO que a área logada abriu.
+    // Em 2026-08-20 o portal redirecionou o login para a tela de troca de senha
+    // obrigatória: o falso positivo seguiu até o menu, morreu 3s depois como
+    // "Waiting failed: 3000ms exceeded" (erroTipo EXCEPTION) e, como o
+    // fornecedor_alerta só disparava para LOGIN_FAILED, ninguém foi avisado da causa
+    // real por ~1h (pedido 1939, 3 tentativas). Aqui a ausência de dashboard vira
+    // erroTipo NOMEADO, e a classificação é a mesma testada em vitest.
+    //
+    // ⚠️ A EXPANSÃO DA SIDEBAR VEM ANTES DE MEDIR, e é por isso que ela mora aqui em vez
+    // de no bloco de navegação (Codex challenge 2026-08-20, P1): o portal abre com a
+    // sidebar minificada, e medir os itens de menu antes de expandir mediria o efeito da
+    // interação que ainda não aconteceu — um dashboard legítimo viraria
+    // POS_LOGIN_NAO_DASHBOARD e travaria pedido bom. "É o mesmo sinal que a navegação já
+    // exigia" só vale se a ORDEM da interação for a mesma; ela não era.
     await page.evaluate(() => {
       const app = document.querySelector('#app');
       if (app && app.classList.contains('app-sidebar-minified')) {
@@ -337,6 +357,63 @@ export default async ({ page, context }) => {
         if (minifyBtn) minifyBtn.click();
       }
     });
+
+    await page.waitForFunction(
+      () => document.querySelectorAll('#sidebar .menu-link, .app-sidebar .menu-link').length > 0,
+      { timeout: budgetFor('pos-login-dashboard', 15_000), polling: 250 }
+    ).catch(() => null);
+
+    const sinaisPosLogin = await page.evaluate(function() {
+      const menu = document.querySelectorAll('#sidebar .menu-link, .app-sidebar .menu-link');
+      const senhas = Array.from(document.querySelectorAll('input[type=password]')).filter(function(el) {
+        return el.offsetParent !== null;
+      });
+      return {
+        url: window.location.href,
+        menuLinks: menu.length,
+        camposSenha: senhas.length,
+        titulo: document.title || '',
+        texto: (document.body ? (document.body.innerText || '') : '').substring(0, 3000),
+      };
+    });
+    sinaisPosLogin.origemEsperada = portalUrl || null;
+
+    const posLogin = classificarPosLogin(sinaisPosLogin);
+    trace.push({
+      step: 'pos_login_check',
+      tipo: posLogin.tipo,
+      url: sinaisPosLogin.url,
+      menuLinks: sinaisPosLogin.menuLinks,
+      camposSenha: sinaisPosLogin.camposSenha,
+      origemDivergente: posLogin.origemDivergente,
+      t: Date.now() - t0,
+    });
+
+    if (posLogin.tipo !== 'dashboard') {
+      const posLoginScreenshot = await page.screenshot({ type: 'jpeg', quality: 70, encoding: 'base64' }).catch(() => null);
+      return {
+        data: {
+          success: false,
+          erro: posLogin.motivo,
+          erroTipo: posLogin.erroTipo,
+          posLoginCheck: {
+            tipo: posLogin.tipo,
+            origemDivergente: posLogin.origemDivergente,
+            menuLinks: sinaisPosLogin.menuLinks,
+            camposSenha: sinaisPosLogin.camposSenha,
+            titulo: sinaisPosLogin.titulo,
+            textoPreview: sinaisPosLogin.texto.substring(0, 300),
+          },
+          itens, itens_nao_processados: items.map(function(it){ return it.sku_portal; }),
+          trace,
+        },
+        type: 'application/json',
+        screenshot: posLoginScreenshot,
+      };
+    }
+
+    // Navegação SEMPRE via clique no menu (goto direto redireciona p/ rota de erro).
+    // A sidebar já foi expandida e confirmada na checagem pós-login acima.
     await sleep(800);
     await page.waitForFunction(
       () => document.querySelectorAll('#sidebar .menu-link, .app-sidebar .menu-link').length > 0,
@@ -734,7 +811,7 @@ async function uploadEvidencia(
       .createSignedUrl(path, 60 * 60 * 24 * 30);
     return { path, signedUrl: signed?.signedUrl ?? null };
   } catch (e) {
-    console.error(`[captura-precos] run ${runId}: exceção upload screenshot:`, e instanceof Error ? e.message : String(e));
+    console.error(`[captura-precos] run ${runId}: exceção upload screenshot:`, mensagemDeErro(e) ?? "erro sem mensagem");
     return { path: null, signedUrl: null };
   }
 }
@@ -983,7 +1060,7 @@ Deno.serve(async (req) => {
         bResp = { raw: txt.slice(0, 2000) };
       }
     } catch (e) {
-      httpErr = e instanceof Error ? e.message : String(e);
+      httpErr = mensagemDeErro(e) ?? "erro sem mensagem";
     }
     const browserlessMs = Date.now() - tBrowserless;
     console.log(`[captura-precos] run ${runId}: Browserless retornou em ${browserlessMs}ms — status=${httpStatus}${httpErr ? ` erro=${httpErr}` : ""}`);
@@ -1150,7 +1227,7 @@ Deno.serve(async (req) => {
       erro: erroFinal,
     });
   } catch (e) {
-    const erro = e instanceof Error ? e.message : String(e);
+    const erro = mensagemDeErro(e) ?? "erro sem mensagem";
     console.error(`[captura-precos] run ${runId}: exceção:`, erro);
     await supabase
       .from("sku_preco_captura_run")

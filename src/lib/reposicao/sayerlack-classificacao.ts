@@ -49,6 +49,11 @@ export interface ClassifyResult {
 // Todos ocorrem antes do "Efetivar" → nunca implicam pedido colocado.
 const ERROS_LOGICOS_PRE_SUBMIT: ReadonlySet<string> = new Set([
   "LOGIN_FAILED",
+  // O portal exige troca de senha antes do dashboard: retentar com a MESMA senha
+  // repete a mesma tela (provado — pedido 1939 falhou 3× idêntico em 2026-08-20).
+  // Só sai com ação humana. NÃO inclui POS_LOGIN_NAO_DASHBOARD: causa desconhecida
+  // pode ser transitória e continua retentável (o alerta lá sai ao esgotar).
+  "PASSWORD_CHANGE_REQUIRED",
   "CLIENTE_NOT_FOUND",
   "SKU_NOT_FOUND",
   "GRUPO_LEADTIME_MISMATCH",
