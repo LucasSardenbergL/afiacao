@@ -35,6 +35,13 @@ const VIGIADAS = [
   "visit-score-recalc-batch",
   "sync-reprocess",
   "omie-vendas-sync",
+  // `recommend` entrou por CONVERSÃO, não por reescrita: as seis leituras do motor eram um
+  // `Promise.all` sem paginação nenhuma (o catálogo ativo tem 3.140 linhas e a edge via as
+  // 1.000 do cap) e mudaram para `_shared/recommend-leituras.ts`. O invariante do `.order()`
+  // dessas páginas NÃO cabe aqui — este gate só lê `<edge>/index.ts`, e lá não há mais
+  // `.range(` nenhum. Quem vigia a ordem estável é `recommend-leituras_test.ts`, que afirma
+  // sobre a query EXECUTADA (registro por página), não sobre o texto.
+  "recommend",
 ];
 
 Deno.test("edges convertidas não paginam à mão (sem .range() no call-site)", async () => {

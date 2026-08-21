@@ -650,3 +650,96 @@ aí "lista vazia sem aviso" fica indistinguível de "esta cidade não tem client
 seis seguras quando alguém contou — e uma delas já estava errando havia meses sem produzir um único
 sintoma. A BASELINE do gate ficou **sem nenhuma entrada `nao_medido`**: toda chamada set-returning
 sem `.range()` em `src/` hoje carrega teto com prova.
+
+## A capa de 1.000 num `Promise.all` de SEIS leituras — e a lição do DENOMINADOR (2026-08-20)
+
+A mesma classe, agora fora das RPCs: a edge `recommend` (motor de recomendação, money-path — é o
+top-N que o vendedor oferece). O `Promise.all` de `recommend()` desestruturava **apenas `{ data }`
+nas seis leituras** e **nenhuma paginava**. Medido via psql-ro: `omie_products WHERE ativo` tem
+**3.140** linhas e a edge via **1.000**; `product_costs`, **3.676** → 1.000; `order_items` do
+cliente chega a **2.849**, e **8 clientes** — os maiores — estouravam a capa.
+
+**A lição nova é o denominador, e ela custou uma afirmação errada minha.** Eu tinha escrito "73%
+dos custos ausentes" a partir de `1.000/3.676`. Isso é cobertura de **linhas da tabela lida**. O
+challenge Codex apontou que a pergunta é outra: quantos **CANDIDATOS** ficam sem custo. Medido —
+dos 3.140 produtos ativos, só **833 (26,5%)** têm custo na primeira página `ORDER BY id`. A
+conclusão sobreviveu (73,5%), mas por sorte: as duas contas só coincidem quando as duas tabelas
+estão alinhadas por id, e nada garantia isso. **Cobertura da FONTE não é cobertura do CONSUMIDOR
+— derive o número do lado de quem sofre o dano.** É a regra do denominador (#1829, `fase-sem-sinal.md`)
+aplicada a truncagem em vez de a adoção.
+
+**O efeito canônico do §6 NÃO era o efeito aqui.** "Custo ausente infla margem" é a patologia que
+o money-path.md ensina, e foi o que eu esperava encontrar. Mas neste call-site o consumidor já
+degradava honesto: `derivarMargensCandidato` devolve `margemExibida = null` e `margemRank` cai em
+`?? 0` ("EIP neutro, não máximo" — está comentado no código). Então não havia número inflado. O
+dano era outro: o componente de **lucro**, que tem o **maior peso** (`w_eip` 0.35), passava a ser
+decidido sobre um quarto dos custos, com corte **não-determinístico** (sem `ORDER BY` o Postgres
+não promete sequência). Perda por **omissão**, não por fabricação. Conferir qual dos dois é o dano
+muda o que se escreve no PR e o que se testa — assumir a patologia canônica teria produzido uma
+afirmação falsa sobre a própria correção.
+
+**O `--no-remote` como força de DESENHO.** A edge importa `npm:@supabase/supabase-js@2` e
+`test:edges` roda `--no-remote`, então **nada afirmado dentro do `index.ts` é provável por
+execução**. Enquanto as leituras morassem lá, "o catálogo volta inteiro" era leitura, não prova.
+Extrair para `_shared/recommend-leituras.ts` — contra a interface estrutural `BancoPostgrest` de
+`paginate.ts` — é o que tornou as 22 asserções executáveis. **A restrição do runner é critério de
+onde o código mora**, não um obstáculo a contornar. Ver `ci-testes-edge-deno.md`.
+
+**O double precisa SIMULAR o cap, senão a suíte é teatro.** Um double que devolve a tabela inteira
+aprovaria a leitura NÃO paginada. O daqui corta em 1.000 sem `.range()`, como o Data API real — e
+há um **controle de calibração** que afirma isso diretamente. Falsificado: quando o double para de
+capar, é o controle que fica vermelho, não os testes de conteúdo. Sabotagens e desfechos: tirar a
+paginação → 3 vermelhos; engolir o erro → 7; tirar o `.order("id")` → 1; double sem cap → 1.
+
+**Dois achados que a LEITURA não pegou e o TESTE pegou.** (1) `fetchAll` lança
+``new Error(`${label}: ${error.message}`)`` — o MESSAGE cru do Postgres —, e o `catch` do
+`Deno.serve` devolve `message` no corpo da resposta: o texto do servidor **saía da edge**, o
+"privacidade afirmada sem verificar o SINK". Envelopado em domínio fechado só no módulo novo,
+porque `fetchAll` tem 21 call-sites e `visit-score-recalc-client:361` já ramifica em
+`instanceof FalhaLeituraCritica` — fechar a classe no helper é entrega própria. (2) `exigirLeitura`
+**mistura cardinalidades**: para `.maybeSingle()` o `data:null` é ausência legítima, mas para uma
+lista o mesmo `null` coalescido com `?? []` é o **EOF falso** que `fetchAll` já rejeita no laço,
+entrando pela porta do lado numa leitura de página única. Daí o `exigirLista`.
+
+**O que NÃO foi consertado, e por quê.** `.order("id").limit(100)` na amostra do cluster é
+**prefixo por PK, não amostragem**: dos 6.185 clientes `critico` saem sempre os mesmos 100. O
+`.order()` é melhora real (antes o `sim_score` do mesmo cliente mudava entre execuções sem nada
+mudar), mas troca viés aleatório por viés **estável** — reprodutibilidade, não representatividade.
+E `clusterSize` conta 100 clientes enquanto as compras vêm de 50, então `sim` sai pela metade
+(invariante sob `minMaxNorm`, mas os cortes em `sim` cru — 0.1/0.15/0.2 — sentem). O Codex pediu
+para **bloquear o merge** até redesenhar a amostra; recusado com motivo: é desenho de **ranking**,
+outro eixo que truncagem de **transporte**, e mudá-lo altera o top-N que o vendedor vê — precisa de
+antes/depois medido, não de carona. Segurar a entrega deixaria 68% do catálogo invisível por mais
+tempo. **Defeito fora de escopo se escreve no código** (os dois estão nomeados por extenso nos
+comentários) **e vira chip** — o que não pode é sair do diff sem deixar rastro e passar por
+consertado.
+
+**A 2ª rodada do Codex foi sobre o CÓDIGO, e achou o que a 1ª (sobre o desenho) não podia
+achar.** Vale como método: a 1ª rodada corrige a ideia, a 2ª corrige a implementação, e as duas
+encontram classes diferentes. O que ela pegou, tudo dentro do que eu tinha acabado de escrever:
+
+- **`amostraSaturada` prometia mais do que media.** Com 1.000 compras existentes e 1.000 lidas,
+  nada foi cortado — e o campo era `true`. Virou **`amostraNoTeto`**, que é o que o código sabe;
+  afirmar "há mais" exigiria `count:'exact'`. É a mesma classe que a entrega combate, cometida
+  no nome do próprio remédio.
+- **O campo era contrato MORTO** — ninguém o lia. Sinal que não chega em consumidor é o cap
+  silencioso com outro nome; ligado a um `console.warn` na edge.
+- **Minha afirmação sobre `cause` estava errada.** Eu escrevi que o erro original do PostgREST
+  ficava em `cause`; `fetchAll` o reduz a `new Error(label+message)` ANTES, então o `code`
+  (57014, 42501) morria ali. Corrigido interceptando `res.error` **antes** de entregar ao
+  helper — diagnóstico preservado e mensagem pública fechada, com um teste que afirma as duas
+  metades juntas (`codigo === "57014"` **e** ausência de `"boom"`).
+- **Seis falsos-verdes na minha própria suíte**, cada um com uma saída errada concreta: teto
+  comparado com a **constante importada** (tautologia — subir 100→1000 ficava verde e dividia
+  `sim` por 1.000 lendo compras de 50); double ignorando `.select()` (tirar `cost_final` ficava
+  verde e sumia com margem/EIP em prod); double registrando `.order()` sem ordenar nem olhar
+  `ascending` (descendente é ordem *estável* e trocaria QUAIS 100 clientes entram); nenhum caso
+  `data:null, error:null` para lista (o `exigirLista` estava certo mas **não falsificado**);
+  saturação testada em 1.500 e não no teto exato. **Um teste que não falsifica cada asserção
+  que faz é inventário, não prova** — e "22 asserções" soava suficiente até alguém perguntar
+  qual saída errada cada uma pega. 22 → 33, com 9 sabotagens vermelhas ao todo.
+- **Derrubou também uma afirmação minha por leitura de schema:** eu escrevi que o prefixo por PK
+  pegaria "provavelmente os mais antigos"; `farmer_client_scores.id` é `UUID DEFAULT
+  gen_random_uuid()`, então os 100 menores UUIDs são amostra pseudoaleatória determinística, não
+  prefixo temporal. O viés continua (mesmo subconjunto para todos, tamanho pequeno), mas **não é
+  o viés que eu tinha escrito** — e a versão errada estava a caminho do PR.

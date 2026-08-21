@@ -19,10 +19,13 @@ const PAGE = 1000;
 // Mora aqui (e não em `relatorio-mensal.ts`, onde nasceu) porque descreve a forma da
 // query que `fetchAll` pagina: é contrato de paginação, não do relatório mensal.
 
+// `error` carrega o `code` do PostgREST (opcional) porque `_shared/leitura-critica.ts`
+// decide POR CÓDIGO o que tolerar (`42703` coluna ausente) e o que lançar — e as duas
+// famílias, paginação e leitura single-shot, convivem na MESMA query encadeada.
 export interface RespostaPostgrest<T> {
   data: T[] | null;
   count?: number | null;
-  error: { message: string } | null;
+  error: { message: string; code?: string | null; details?: string | null; hint?: string | null } | null;
 }
 
 export interface QueryPostgrest<T> extends PromiseLike<RespostaPostgrest<T>> {
@@ -34,6 +37,16 @@ export interface QueryPostgrest<T> extends PromiseLike<RespostaPostgrest<T>> {
   not(coluna: string, operador: string, valor: unknown): QueryPostgrest<T>;
   order(coluna: string, opts?: { ascending?: boolean }): QueryPostgrest<T>;
   range(de: number, ate: number): QueryPostgrest<T>;
+  // `limit` é a AMOSTRA deliberada (teto de negócio), não a paginação: quem usa `limit`
+  // está dizendo "cabe menos e tudo bem". Continua exigindo `.order()` estável, senão a
+  // amostra muda a cada execução e o resultado deixa de ser reprodutível.
+  limit(n: number): QueryPostgrest<T>;
+  // Termina a cadeia devolvendo UMA linha (ou `null`) em vez de array — mesma resposta
+  // `{data,error}`, outro formato de `data`.
+  maybeSingle(): PromiseLike<{
+    data: T | null;
+    error: { message: string; code?: string | null; details?: string | null; hint?: string | null } | null;
+  }>;
 }
 
 export interface BancoPostgrest {

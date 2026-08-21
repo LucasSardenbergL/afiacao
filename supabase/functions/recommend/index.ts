@@ -5,6 +5,13 @@ import {
   projetarMeta,
   textoExplicacaoMargem,
 } from "../_shared/recommend-projecao.ts";
+// As seis leituras do motor moram em `_shared` para poderem ser EXECUTADAS num teste: esta
+// edge importa `npm:@supabase/supabase-js@2` e `test:edges` roda com `--no-remote`, então
+// nada afirmado aqui dentro é provável por execução. Elas paginam (o PostgREST capa em 1000
+// linhas EM SILÊNCIO — o catálogo ativo tem 3.140 e a edge via 1.000) e LANÇAM na falha, em
+// vez de recomendar sobre catálogo parcial. Detalhe e medições: recommend-leituras.ts.
+import { carregarCluster, carregarInsumos } from "../_shared/recommend-leituras.ts";
+import type { BancoPostgrest } from "../_shared/paginate.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -125,24 +132,15 @@ async function recommend(
   podeCusto: boolean
 ) {
   // 1. Load config + customer orders + products + costs + rules + client score in PARALLEL
-  const [
-    { data: configs },
-    { data: orderItems },
-    { data: products },
-    { data: costs },
-    { data: rules },
-    { data: clientScore },
-  ] = await Promise.all([
-    db.from("recommendation_config").select("key, value"),
-    db.from("order_items").select("product_id, quantity, unit_price").eq("customer_user_id", customerId),
-    db.from("omie_products").select("id, omie_codigo_produto, descricao, codigo, valor_unitario, estoque, familia, subfamilia").eq("ativo", true),
-    db.from("product_costs").select("product_id, cost_price, cost_final, cost_source, cost_confidence"),
-    db.from("farmer_association_rules").select("*").gte("lift", 1.2).gte("support", 0.01),
-    db.from("farmer_client_scores").select("health_class, category_count").eq("customer_user_id", customerId).maybeSingle(),
-  ]);
+  // (paginado e fail-closed — ver `_shared/recommend-leituras.ts`).
+  const banco = db as unknown as BancoPostgrest;
+  const { configs, orderItems, products, costs, rules, clientScore } = await carregarInsumos(
+    banco,
+    customerId,
+  );
 
   const cfg: Record<string, number> = {};
-  for (const c of configs || []) cfg[c.key] = c.value;
+  for (const c of configs) cfg[c.key] = c.value;
 
   const wA = cfg.w_assoc ?? 0.25;
   const wP = cfg.w_eip ?? 0.35;
@@ -157,7 +155,7 @@ async function recommend(
   // Build purchased set & counts
   const purchasedProductIds = new Set<string>();
   const purchaseCounts: Record<string, number> = {};
-  for (const item of orderItems || []) {
+  for (const item of orderItems) {
     if (item.product_id) {
       purchasedProductIds.add(item.product_id);
       purchaseCounts[item.product_id] = (purchaseCounts[item.product_id] || 0) + 1;
@@ -166,12 +164,12 @@ async function recommend(
 
   // Cost map
   const costMap: Record<string, CostRow> = {};
-  for (const c of costs || []) costMap[c.product_id] = c;
+  for (const c of costs) costMap[c.product_id] = c;
 
   // Association scores
   const basketSet = new Set(basketProductIds);
   const assocScores: Record<string, number> = {};
-  for (const rule of rules || []) {
+  for (const rule of rules) {
     const antecedent = rule.antecedent_product_ids || [];
     const consequent = rule.consequent_product_ids || [];
     if (!antecedent.every((id: string) => basketSet.has(id) || purchasedProductIds.has(id))) continue;
@@ -184,24 +182,26 @@ async function recommend(
   // Cluster similarity - load cluster customers + their purchases in parallel
   const customerCluster = clientScore?.health_class || "misto";
 
-  const { data: clusterCustomers } = await db
-    .from("farmer_client_scores")
-    .select("customer_user_id")
-    .eq("health_class", customerCluster)
-    .limit(100);
-
-  const clusterUserIds = (clusterCustomers || []).map((c) => c.customer_user_id);
+  const { clusterUserIds, clusterPurchases, amostraNoTeto } = await carregarCluster(banco, customerCluster);
+  if (amostraNoTeto) {
+    // O sinal do teto tem de CHEGAR em alguém: um campo que ninguém lê é o cap silencioso com
+    // outro nome (2ª rodada do Codex — "contrato novo morto"). O log da edge é o consumidor
+    // barato; expor no `meta` da resposta mudaria o contrato da API e é decisão de produto.
+    console.warn(
+      `[Recommend] amostra de similaridade NO TETO (${clusterPurchases.length} compras de ` +
+        `${clusterUserIds.length} clientes do cluster "${customerCluster}") — sim_score pode ser parcial`,
+    );
+  }
+  // ⚠️ DENOMINADOR PRÉ-EXISTENTE, preservado verbatim: `clusterSize` conta os até 100 clientes
+  // do cluster, mas as compras vêm só dos 50 primeiros — então `sim` sai sistematicamente pela
+  // METADE. `minMaxNorm` é invariante a fator uniforme (o `sim_score` normalizado do ranking não
+  // muda), mas os CORTES em `sim` crus abaixo (0.1 do ctx, 0.15 do recType, 0.2 da explicação)
+  // são afetados. É defeito de outro eixo — desenho da amostra, não truncagem de transporte —
+  // e corrigi-lo aqui misturaria duas mudanças de ranking no mesmo diff.
   const clusterSize = Math.max(clusterUserIds.length, 1);
 
-  // Get cluster purchases (limit for performance)
-  const { data: clusterPurchases } = await db
-    .from("order_items")
-    .select("product_id, customer_user_id")
-    .in("customer_user_id", clusterUserIds.slice(0, 50))
-    .limit(1000);
-
   const clusterProductCounts: Record<string, Set<string>> = {};
-  for (const p of clusterPurchases || []) {
+  for (const p of clusterPurchases) {
     if (!p.product_id) continue;
     if (!clusterProductCounts[p.product_id]) clusterProductCounts[p.product_id] = new Set();
     clusterProductCounts[p.product_id].add(p.customer_user_id);
@@ -211,7 +211,7 @@ async function recommend(
   const candidates: Candidate[] = [];
   const basketFamilies: Record<string, number> = {};
 
-  for (const p of products || []) {
+  for (const p of products) {
     if (basketSet.has(p.id)) continue;
     if ((p.estoque || 0) <= 0) continue;
 
