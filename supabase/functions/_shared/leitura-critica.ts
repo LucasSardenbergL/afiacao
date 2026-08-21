@@ -60,6 +60,8 @@ export class FalhaLeituraCritica extends Error {
     super(
       codigo === 'SEM_LINHAS'
         ? `${fonte} não tem nenhuma linha para esta empresa — valor DESCONHECIDO, não zero. Verifique o cadastro.`
+        : codigo === 'MALFORMADA'
+        ? `Leitura de ${fonte} veio malformada (data null sem erro) — DESCONHECIDO, não lista vazia.`
         : `Leitura de ${fonte} falhou (código ${codigo}) — dado indisponível, não zero.`,
     );
     this.name = 'FalhaLeituraCritica';
@@ -100,6 +102,26 @@ export function exigirLinhas<T>(res: RespostaLeitura<T>, fonte: string): T {
   const dados = exigirLeitura(res, fonte);
   if (dados == null || (Array.isArray(dados) && dados.length === 0)) {
     throw new FalhaLeituraCritica(fonte, { code: 'SEM_LINHAS' });
+  }
+  return dados;
+}
+
+/**
+ * Leitura de LISTA: `data` tem de vir array. `data:null` SEM `error` é resposta MALFORMADA
+ * do PostgREST, não "a lista está vazia" — vazio legítimo é `[]`.
+ *
+ * Existe porque `exigirLeitura` mistura as duas CARDINALIDADES (achado do challenge Codex
+ * nesta entrega): para um `.maybeSingle()` o `data:null` é ausência legítima e o caller deve
+ * mesmo cair no default; para um `.select()` de lista o mesmo `null` coalescido com `?? []`
+ * vira "ninguém comprou nada" — que é o EOF falso que `fetchAll` já rejeita no laço, entrando
+ * pela porta do lado na leitura de uma página só.
+ *
+ * Lista VAZIA passa: `[]` é estado de negócio (quem precisa de ≥1 linha usa `exigirLinhas`).
+ */
+export function exigirLista<T>(res: RespostaLeitura<T[]>, fonte: string): T[] {
+  const dados = exigirLeitura(res, fonte);
+  if (!Array.isArray(dados)) {
+    throw new FalhaLeituraCritica(fonte, { code: 'MALFORMADA' });
   }
   return dados;
 }
