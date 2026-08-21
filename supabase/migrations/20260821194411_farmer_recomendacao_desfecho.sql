@@ -95,6 +95,12 @@ BEGIN
         -- mas um UPDATE direto (authenticated tem `w` na tabela) não passaria por ela.
         (
           status = 'rejeitado'
+          -- ⚠️ `IS NOT NULL` ANTES do `IN`: com rejection_reason NULL, `NULL IN (...)`
+          -- devolve NULL, o ramo inteiro vira NULL, e um CHECK que resulta em NULL é
+          -- considerado SATISFEITO pelo Postgres. Sem esta linha a constraint deixava
+          -- passar exatamente o caso que ela existe para barrar — recusa sem porquê.
+          -- (Pego pelo assert 18 do db/test-farmer-desfecho.sh, não por leitura.)
+          AND rejection_reason IS NOT NULL
           AND rejection_reason IN (
             'preco', 'sem_necessidade', 'ja_compra_concorrente',
             'sem_estoque', 'prazo_entrega', 'outro'

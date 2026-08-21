@@ -144,9 +144,18 @@ PRODA='44444444-4444-4444-4444-444444444444'
 PRODB='55555555-5555-5555-5555-555555555555'
 PRODC='77777777-7777-7777-7777-777777777777'
 PRODD='88888888-8888-8888-8888-888888888888'
+# Gestor SEM carteira própria. Na 1ª versão deste teste o papel de gestor era do
+# $OUTRO, que TEM uma oferta da mesma chave — a RPC achava a linha DELE e registrava
+# com sucesso. O gate estava certo e o assert é que perguntava a coisa errada.
+GESTOR='99999999-9999-9999-9999-999999999999'
 
 P -q <<SQL
 GRANT USAGE ON SCHEMA public, private TO authenticated, anon;
+-- O Supabase já concede isto em prod; o stub precisa reproduzir, senão a RPC
+-- SECURITY INVOKER morre em 'permission denied for schema auth' e o teste
+-- reprovaria por um defeito do harness, não do SQL sob prova.
+GRANT USAGE ON SCHEMA auth TO authenticated, anon;
+GRANT EXECUTE ON FUNCTION auth.uid(), auth.role() TO authenticated, anon;
 GRANT SELECT, UPDATE ON public.farmer_recommendations TO authenticated;
 
 INSERT INTO public.farmer_recommendations
@@ -198,6 +207,16 @@ negsql() { # negsql <nome> <sqlstate> <sql>
   fi
 }
 RPC='public.farmer_recomendacao_registrar_desfecho'
+# Repõe uma oferta pendente do vendedor. DELETE+INSERT e não UPDATE: a trigger de
+# imutabilidade barra UPDATE de linha terminal — o que é o comportamento desejado,
+# e por isso a fixture se repõe destruindo a linha, não reescrevendo-a.
+repor_pendente() { # repor_pendente <product_id> <tipo> <score>
+  P -q -c "DELETE FROM public.farmer_recommendations
+            WHERE farmer_id='$VEND' AND product_id='$1' AND recommendation_type='$2' AND status<>'expirado';
+           INSERT INTO public.farmer_recommendations
+             (farmer_id, customer_user_id, recommendation_type, product_id, affinity_score, status)
+             VALUES ('$VEND','$CLI','$2','$1', $3, 'pendente');"
+}
 
 echo ""
 echo "═══ CONTROLE POSITIVO (a fixture produz oferta, e o zero de partida é REAL) ═══"
@@ -262,7 +281,12 @@ neg "09 motivo de recusa num ACEITE"         "$VEND" "FD003" "$RPC('$CLI','$PROD
 # ⚠️ O assert da LENTE "Ver como": o GESTOR (cap_carteira_escrever=true, que a policy
 # deixaria passar) tenta registrar na carteira da vendedora. Barra porque o farmer_id
 # da RPC é auth.uid() FIXO — defesa estrutural, não `disabled` de UI.
-neg "10 GESTOR não registra na carteira alheia" "$OUTRO" "FD004" "$RPC('$CLI','$PRODA','cross_sell','aceito')" "on"
+neg "10 GESTOR não registra na carteira alheia" "$GESTOR" "FD004" "$RPC('$CLI','$PRODA','cross_sell','aceito')" "on"
+# Conta em vez de ler o status: nesta altura a chave tem DUAS linhas do vendedor —
+# a 'aceito' do assert 01 e a 'pendente' que o recompute do 04 criou. Ler "o status"
+# pegaria uma delas ao acaso; o que prova o gate é a pendente CONTINUAR pendente.
+eq "10b a oferta pendente da vendedora seguiu INTACTA após a tentativa do gestor" \
+   "$(val "SELECT count(*)::text FROM farmer_recommendations WHERE farmer_id='$VEND' AND product_id='$PRODA' AND status='pendente'")" "1"
 neg "11 oferta EXPIRADA não recebe desfecho"    "$VEND" "FD004" "$RPC('$CLI','$PRODD','cross_sell','aceito')"
 neg "12 par cliente/produto inexistente"        "$VEND" "FD004" "$RPC('$CLI','$OUTRO','cross_sell','aceito')"
 neg "13 desfecho TERMINAL não se reescreve"     "$VEND" "FD004" "$RPC('$CLI','$PRODB','up_sell','aceito')"
@@ -352,15 +376,14 @@ falsifica "F1 gate farmer_id=auth.uid() (assert 10)" "FD004" \
   "SET LOCAL ROLE authenticated; PERFORM set_config('test.uid','$OUTRO',true); PERFORM set_config('test.gestor','on',true);
    PERFORM $RPC('$CLI','$PRODA','cross_sell','aceito');"
 restaura
-P -q -c "UPDATE public.farmer_recommendations SET status='pendente', accepted_at=NULL
-          WHERE farmer_id='$VEND' AND product_id='$PRODA' AND status='aceito' AND affinity_score=44;"
+repor_pendente "$PRODA" 'cross_sell' 44
 
 # ── F2: dropar o CHECK de motivo ⇒ o assert 18 (recusa SEM porquê) tem de passar.
 P -q -c "ALTER TABLE public.farmer_recommendations DROP CONSTRAINT farmer_recommendations_motivo_coerente;"
 falsifica "F2 CHECK de motivo (assert 18)" "23514" \
   "UPDATE public.farmer_recommendations SET status='rejeitado', rejected_at=now()
     WHERE farmer_id='$VEND' AND status='pendente';"
-P -q -c "UPDATE public.farmer_recommendations SET status='pendente', rejected_at=NULL
+P -q -c "DELETE FROM public.farmer_recommendations
           WHERE farmer_id='$VEND' AND status='rejeitado' AND rejection_reason IS NULL;"
 restaura
 
@@ -370,8 +393,10 @@ P -q -c "DROP TRIGGER trg_frec_desfecho_imutavel ON public.farmer_recommendation
 falsifica "F3 trigger de imutabilidade (assert 16)" "FD007" \
   "UPDATE public.farmer_recommendations SET status='aceito', accepted_at=now(), rejected_at=NULL, rejection_reason=NULL
     WHERE product_id='$PRODB' AND status='rejeitado';"
-P -q -c "UPDATE public.farmer_recommendations SET status='rejeitado', rejected_at=now(), rejection_reason='preco', accepted_at=NULL
-          WHERE product_id='$PRODB' AND status='aceito';"
+P -q -c "DELETE FROM public.farmer_recommendations WHERE product_id='$PRODB';
+         INSERT INTO public.farmer_recommendations
+           (farmer_id, customer_user_id, recommendation_type, product_id, affinity_score, status, rejected_at, rejection_reason)
+           VALUES ('$VEND','$CLI','up_sell','$PRODB', 37, 'rejeitado', now(), 'preco');"
 restaura
 
 # ── F4: trocar o guard de ambiguidade pelo `ORDER BY ... LIMIT 1` do desenho
