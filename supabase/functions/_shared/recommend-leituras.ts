@@ -90,19 +90,24 @@ async function paginarFonte<T>(
 }
 
 // ── Formas das linhas (o que o `.select()` de cada leitura promete) ────────────────────
+// NÃO exportadas de propósito: ninguém fora daqui as nomeia, e `export` sem consumidor
+// reprova no gate de dead code (`bunx knip`, passo "Dead code gate" do CI — que roda
+// DEPOIS do typecheck e do teste, então uma suíte inteiramente verde não diz nada sobre
+// ele). Elas seguem visíveis onde importa: `InsumosRecommend`/`ClusterRecommend`, que são
+// exportados, as referenciam. Reexportar só quando alguém de fato importar.
 
-export interface LinhaConfig {
+interface LinhaConfig {
   key: string;
   value: number;
 }
 
-export interface LinhaOrderItem {
+interface LinhaOrderItem {
   product_id: string | null;
   quantity: number | null;
   unit_price: number | null;
 }
 
-export interface LinhaProduto {
+interface LinhaProduto {
   id: string;
   omie_codigo_produto: number;
   descricao: string;
@@ -113,7 +118,7 @@ export interface LinhaProduto {
   subfamilia: string | null;
 }
 
-export interface LinhaCusto {
+interface LinhaCusto {
   product_id: string;
   cost_price: number | null;
   cost_final: number | null;
@@ -121,7 +126,7 @@ export interface LinhaCusto {
   cost_confidence: number | null;
 }
 
-export interface LinhaRegra {
+interface LinhaRegra {
   id?: string;
   antecedent_product_ids: string[] | null;
   consequent_product_ids: string[] | null;
@@ -130,12 +135,12 @@ export interface LinhaRegra {
   support: number;
 }
 
-export interface LinhaClientScore {
+interface LinhaClientScore {
   health_class: string | null;
   category_count: number | null;
 }
 
-export interface LinhaCompraCluster {
+interface LinhaCompraCluster {
   product_id: string | null;
   customer_user_id: string;
 }
