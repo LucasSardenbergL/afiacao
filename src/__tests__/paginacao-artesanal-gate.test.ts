@@ -125,7 +125,7 @@ const G1_ALLOW: ReadonlyMap<string, number> = new Map([
 // DEPOIS (o acumulador da página). Single-shots e callbacks de helper não casam.
 //
 // ANTES_G3 era 300 e virou 1200 ao aplicar a regra do DENOMINADOR (§9 do money-path) a este
-// arquivo. Medido em 2026-08-21 sobre as 1.642 fontes que o gate varre, com `.range(` como
+// arquivo. Medido em 2026-08-21 sobre as 1.643 fontes que o gate varre, com `.range(` como
 // âncora (129 ocorrências):
 //
 //   janela │  300   600   900  1200  1600  2400  4000
@@ -815,7 +815,7 @@ serve(async (req) => {
   // essa subtração para cada gate e falham quando o RESTO cresce — o resto pode até ser grande,
   // desde que esteja explicado; o que não pode é aumentar sem ninguém olhar.
   //
-  // Medido em 2026-08-21 sobre as 1.642 fontes varridas:
+  // Medido em 2026-08-21 sobre as 1.643 fontes varridas:
   //
   //   G1  `.range(`               129 âncoras │ 0 fora do alcance da janela de 600
   //   G3  `.range(`               129 âncoras │ veredito idêntico de 600 a 4000 (ver ANTES_G3)
