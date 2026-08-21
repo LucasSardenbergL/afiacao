@@ -54,8 +54,16 @@ const itensDoPedido = () => [
 
 function linhasPorTabela(): Record<string, Record<string, unknown>[]> {
   return {
+    // A carteira inclui os 5 clientes que FORMAM o histórico, não só o alvo. Desde que
+    // `clusterAdherence` conta clientes DA CARTEIRA (e não ocorrências na base inteira), um
+    // comprador fora da carteira não empurra SKU nenhum para dentro da oferta deste farmer —
+    // então a popularidade que este teste usa como veículo precisa nascer DENTRO dela.
+    // Só `cli-1` tem `profiles`, então a GERAÇÃO segue restrita a ele: o observável não muda.
     farmer_client_scores: [
       { customer_user_id: 'cli-1', farmer_id: FARMER, health_score: 80, answer_rate_60d: 50, whatsapp_reply_rate_60d: 50 },
+      ...CLIENTES_COM_PEDIDO.map((cid) => ({
+        customer_user_id: cid, farmer_id: FARMER, health_score: 80, answer_rate_60d: 50, whatsapp_reply_rate_60d: 50,
+      })),
     ],
     omie_products: [
       { id: SKU_BASE, codigo: 'B', descricao: 'Base', valor_unitario: 50, metadata: null, ativo: true, omie_codigo_produto: 1, estoque: 9, account: CONTA },

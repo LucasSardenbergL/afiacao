@@ -9,28 +9,33 @@ import { renderHook, act } from '@testing-library/react';
  * pedidos da base: um cliente que compra o mesmo SKU em 10 pedidos contava 10. O denominador
  * (`totalCustomers`) é a carteira DAQUELE farmer. Nenhuma das duas pontas mede a mesma coisa,
  * então o quociente não é fração de nada — e o `clamp(…, 0, 1)` escondia a incoerência
- * saturando em 1.0 todo SKU de volume alto.
+ * saturando em 1,0 todo SKU de volume alto.
  *
- * O EFEITO não é acadêmico. Medido em produção (psql-ro, 20/08/2026), simulando o motor sobre
- * os 3 farmers com carteira ativa:
- *   · 829 dos 1.052 clientes tinham o top-3 inteiro em EMPATE TOTAL de score — os três SKUs
- *     saturados em `clusterAdherence = 1.0` e `assocBoost = 0` dão `relevance = 0.4` idêntico,
- *     então quem decidia a oferta era a ordem de `.order('id')` do catálogo, não o ranking.
- *   · 98,5% do top-3 caía numa única empresa do grupo (`oben`), contra 63,2% de `colacor`
- *     depois da correção — o mesmo viés que o #1823 mediu em prod (934 dos 939 cross-sell
- *     vivos `oben`) e atribuiu, por eliminação, a algo que não era o gate de popularidade.
- *     Era: não a ADMISSÃO no gate, mas a SATURAÇÃO que colapsa o ranking em empate.
+ * O EFEITO não é acadêmico. Medido em produção (psql-ro replicando o motor em SQL + simulação
+ * sobre os 3 farmers com carteira ativa, 20/08/2026):
+ *   · 839 dos 1.052 clientes tinham o top-3 inteiro em EMPATE TOTAL de `affinityScore` — três
+ *     SKUs saturados em 1,0 com `assocBoost` 0 dão `relevance` 0,4 idêntico, então quem
+ *     decidia a oferta era a ordem de `.order('id')` do catálogo, não o ranking. Depois: 158.
+ *     NÃO vai a zero, e o resíduo é honesto: `affinityScore` é arredondado a 4 casas ANTES do
+ *     `sort`, então SKUs de aderência próxima seguem colidindo.
+ *   · 98,5% do top-3 caía numa única empresa do grupo (`oben`), contra 56,1% de `colacor`
+ *     depois — o mesmo viés que o #1823 mediu em prod (934 dos 939 cross-sell vivos `oben`) e
+ *     atribuiu, por eliminação, a algo que não era o gate de popularidade. Era: não a ADMISSÃO
+ *     no gate, mas a SATURAÇÃO que colapsa o ranking em empate.
  *
- * A correção conta CLIENTES DISTINTOS DA CARTEIRA sobre CLIENTES DA CARTEIRA COM HISTÓRICO
- * UTILIZÁVEL — as duas pontas no mesmo universo, que é o universo do cálculo (o mesmo que os
- * insumos `clientes_com_profile` e `carteira_com_historico_utilizavel` já declaram medir).
+ * A correção conta CLIENTES DISTINTOS DA CARTEIRA sobre a CARTEIRA ATIVA. O denominador ficou
+ * o que já era: medido contra "carteira com histórico utilizável", os dois são indistinguíveis
+ * no dado de hoje, e a carteira ativa é imune ao caso em que a cobertura despenca (1 cliente
+ * com histórico em 100 ativos daria 1/1 = 100%).
  *
- * CENÁRIO discriminante — os dois candidatos passam o gate de 3% nas DUAS definições, então o
- * que este teste mede é a ORDEM, não a admissão:
+ * CENÁRIO discriminante — os candidatos passam o gate de 3% nas duas definições, então o que
+ * este teste mede é a ORDEM, não a admissão:
  *   · SKU_CONCENTRADO: 1 cliente comprando em 10 pedidos → 10 ocorrências, 1 cliente.
  *   · SKU_ESPALHADO:   3 clientes comprando 1 pedido cada →  3 ocorrências, 3 clientes.
- * Na definição velha o CONCENTRADO vence (10/6 → satura em 1,0 contra 0,5). Na correta ele
- * perde (1/6 = 0,167 contra 0,5). Adesão ampla é o que "aderência ao cluster" promete medir.
+ *   · SKU_ALHEIO:      5 clientes de FORA da carteira     →  5 ocorrências, 0 na carteira.
+ * Na definição velha o CONCENTRADO vence (10/7 satura em 1,0 contra 0,43) e o ALHEIO entra
+ * (5/7 = 0,71). Na correta o CONCENTRADO cai para 1/7 = 0,14 e o ALHEIO some — ele vale 0
+ * aqui, por mais vendido que seja na base.
  */
 const FARMER = 'farmer-1';
 const CONTA = 'oben';
@@ -42,10 +47,15 @@ const SKU_CONCENTRADO = 'sku-concentrado';
 const SKU_ESPALHADO = 'sku-espalhado';
 /** INATIVO: item que não resolve no catálogo ativo — dá pedido a `cli-7` sem dar histórico. */
 const SKU_INATIVO = 'sku-inativo';
+/** Comprado SÓ por clientes de FORA da carteira: o eixo carteira-vs-base. */
+const SKU_ALHEIO = 'sku-alheio';
 
 const CODIGO: Record<string, number> = {
-  [SKU_BASE]: 1, [SKU_CONCENTRADO]: 2, [SKU_ESPALHADO]: 3, [SKU_INATIVO]: 4,
+  [SKU_BASE]: 1, [SKU_CONCENTRADO]: 2, [SKU_ESPALHADO]: 3, [SKU_INATIVO]: 4, [SKU_ALHEIO]: 5,
 };
+
+/** Têm pedido na base e NÃO pertencem à carteira deste farmer. */
+const FORA_DA_CARTEIRA = ['ext-1', 'ext-2', 'ext-3', 'ext-4', 'ext-5'];
 
 const persistidas: Array<Record<string, unknown>> = [];
 
@@ -77,6 +87,7 @@ function linhasPorTabela(): Record<string, Record<string, unknown>[]> {
       { id: SKU_BASE, codigo: 'B', descricao: 'Base', valor_unitario: 50, metadata: null, ativo: true, omie_codigo_produto: 1, estoque: 9, account: CONTA },
       { id: SKU_CONCENTRADO, codigo: 'C', descricao: 'Concentrado', valor_unitario: 100, metadata: null, ativo: true, omie_codigo_produto: 2, estoque: 9, account: CONTA },
       { id: SKU_ESPALHADO, codigo: 'E', descricao: 'Espalhado', valor_unitario: 100, metadata: null, ativo: true, omie_codigo_produto: 3, estoque: 9, account: CONTA },
+      { id: SKU_ALHEIO, codigo: 'A', descricao: 'Alheio', valor_unitario: 100, metadata: null, ativo: true, omie_codigo_produto: 5, estoque: 9, account: CONTA },
       // SKU_INATIVO fica FORA da lista de propósito: o motor lê `omie_products` com
       // `.eq('ativo', true)`, e este stub não aplica filtros — ausência do catálogo é como se
       // representa "inativo" aqui. O item de `cli-7` cai em `fora_do_catalogo_ativo`.
@@ -95,6 +106,10 @@ function linhasPorTabela(): Record<string, Record<string, unknown>[]> {
       // `resolverItemNoCatalogo`. Ele conta na carteira ativa e não pode contar no
       // denominador da aderência — é o cliente que separa os dois candidatos a denominador.
       pedido('cli-7', SKU_INATIVO, 70),
+      // FORA DA CARTEIRA: cinco clientes da base, sem linha em `farmer_client_scores`, que
+      // compram o ALHEIO. Sob a definição antiga (numerador global) eles empurravam o SKU
+      // deles para dentro da oferta DESTE farmer; sob a nova, não têm voz nenhuma aqui.
+      ...FORA_DA_CARTEIRA.map((cid) => pedido(cid, SKU_ALHEIO, 100)),
     ],
     // Só o alvo tem perfil: `if (!profile) continue` restringe a GERAÇÃO a ele, enquanto os
     // outros cinco seguem contando no histórico e no denominador. Isola o observável.
@@ -141,7 +156,7 @@ vi.mock('@/integrations/supabase/client', () => ({
             return chain;
           },
           then: (resolve: (v: unknown) => void) => {
-            const todos = [{ product_id: SKU_CONCENTRADO }, { product_id: SKU_ESPALHADO }, { product_id: SKU_BASE }];
+            const todos = [{ product_id: SKU_CONCENTRADO }, { product_id: SKU_ESPALHADO }, { product_id: SKU_BASE }, { product_id: SKU_ALHEIO }];
             const c = chain as { _de?: number; _ate?: number };
             resolve({ data: todos.slice(c._de ?? 0, (c._ate ?? todos.length - 1) + 1), error: null });
           },
@@ -219,15 +234,30 @@ describe('useCrossSellEngine — `clusterAdherence` conta CLIENTES, não ocorrê
       .toBeLessThan(crossSellDe(result).find((r) => r.productId === SKU_ESPALHADO)!.clusterVolume);
   });
 
-  it('D: o denominador é a carteira COM HISTÓRICO (6), não a carteira ativa (7)', async () => {
-    // `cli-7` tem pedido e nenhum histórico utilizável: ele jamais pode aparecer no numerador
-    // de SKU nenhum, então mantê-lo no denominador diluiria a fração por um universo incapaz
-    // de contribuir — o mesmo defeito de escala do bug, em grau menor.
+  it('D: o denominador é a carteira ATIVA (7), não só a carteira com histórico (6)', async () => {
+    // As duas foram medidas em prod e são INDISTINGUÍVEIS no dado de hoje — a diferença é um
+    // fator uniforme por farmer, e fator uniforme não muda ordem dentro do farmer. Empatadas,
+    // vale a que falha melhor: "com histórico" encolhe o denominador junto com a cobertura,
+    // então 1 cliente com histórico em 100 ativos daria 1/1 = 100%. A carteira ativa é imune.
     //
-    // O ESPALHADO tem 3 compradores. Sobre 6 (com histórico) dá 0,5 → `clusterVolume` 6;
-    // sobre 7 (carteira ativa) daria 0,4286 → 5. O valor EXATO é o que distingue os dois
-    // denominadores — uma asserção de ordem passaria com qualquer um dos dois.
+    // O ESPALHADO tem 3 compradores. Sobre 7 (ativa) dá 0,4286 → `clusterVolume` 5; sobre 6
+    // (com histórico) daria 0,5 → 6. O valor EXATO é o que distingue os dois denominadores —
+    // uma asserção de ordem passaria com qualquer um deles.
     const result = await rodar();
-    expect(crossSellDe(result).find((r) => r.productId === SKU_ESPALHADO)!.clusterVolume).toBe(6);
+    expect(crossSellDe(result).find((r) => r.productId === SKU_ESPALHADO)!.clusterVolume).toBe(5);
+  });
+
+  it('E: comprador de FORA da carteira não empurra SKU para dentro da oferta', async () => {
+    // O eixo que separa "aderência da CARTEIRA" de "popularidade da BASE". O ALHEIO tem 5
+    // compradores na base — mais que os 3 do ESPALHADO — e ZERO na carteira deste farmer.
+    // Com o numerador global ele seria o mais aderente de todos e lideraria a oferta; com o
+    // numerador da carteira ele não passa nem no gate de 3%, porque aqui ele vale 0.
+    //
+    // É a metade que faltava do teste B: lá o numerador errado contava DEMAIS o mesmo
+    // cliente; aqui ele contaria clientes que não são deste farmer.
+    const result = await rodar();
+    expect(idsRecomendados(result)).not.toContain(SKU_ALHEIO);
+    // E o controle: os candidatos legítimos seguem lá — o corte foi do alheio, não geral.
+    expect(idsRecomendados(result)).toContain(SKU_ESPALHADO);
   });
 });

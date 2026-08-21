@@ -54,8 +54,15 @@ const pedidosDoAlvo = () => [
 
 function linhasPorTabela(): Record<string, Record<string, unknown>[]> {
   return {
+    // Os clientes que dão POPULARIDADE entram na carteira. `clusterAdherence` passou a contar
+    // clientes DA CARTEIRA (não ocorrências na base inteira), então comprador de fora não
+    // promove SKU nenhum aqui — e sem eles na carteira os dois alvos não teriam aderência.
+    // Só `cli-1` tem `profiles`, então a GERAÇÃO segue restrita a ele.
     farmer_client_scores: [
       { customer_user_id: 'cli-1', farmer_id: FARMER, health_score: 80, answer_rate_60d: 50, whatsapp_reply_rate_60d: 50 },
+      ...CLIENTES_POPULARIDADE.map((cid) => ({
+        customer_user_id: cid, farmer_id: FARMER, health_score: 80, answer_rate_60d: 50, whatsapp_reply_rate_60d: 50,
+      })),
     ],
     omie_products: [
       { id: SKU_BASE, codigo: 'B', descricao: 'Base Colacor', valor_unitario: 50, metadata: null, familia: 'Linha Unica', unidade: 'UN', ativo: true, omie_codigo_produto: 1, estoque: 9, account: 'colacor' },

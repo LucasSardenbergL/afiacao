@@ -56,6 +56,16 @@ export interface Recommendation {
    */
   affinityScore: number;
   complexityFactor: number;
+  /**
+   * `round(clusterAdherence × 12)` no cross-sell — uma REESCALA da fração de clientes do
+   * cluster que compraram o SKU. NÃO é frequência: não há janela temporal, ocorrência nem
+   * quantidade na fórmula. (A UI dizia "N× /mês no cluster"; o rótulo foi corrigido.)
+   *
+   * ⚠️ Pendência declarada (achado /codex xhigh): o campo carrega DUAS semânticas — aqui a
+   * fração reescalada, e no up-sell a QUANTIDADE histórica comprada (`purchaseData.qty`).
+   * Ambas caem na mesma coluna `cluster_volume_estimate`. Separar isso é mudança de contrato
+   * de dado, fora do escopo da correção da aderência.
+   */
   clusterVolume: number;
   estoque: number | null; // Stock quantity from omie_products
   status: 'pendente' | 'ofertado' | 'aceito' | 'rejeitado' | 'expirado';
@@ -643,40 +653,50 @@ export const useCrossSellEngine = () => {
         esperado: itensResolvidos + itensContaDivergente,
       };
 
-      // ADERÊNCIA AO CLUSTER — as duas pontas no MESMO universo, que é a carteira do cálculo.
+      // ADERÊNCIA AO CLUSTER — quantos CLIENTES compraram, não quantas vezes foi comprado.
       //
       // O que havia aqui dividia OCORRÊNCIAS DE ITEM (contadas dentro do laço de itens de
       // TODOS os pedidos da base, universo global) por `customerIds.length` (a carteira DESTE
       // farmer, universo local). Um cliente que comprasse o mesmo SKU em 10 pedidos contava
       // 10, e o quociente não era fração de coisa nenhuma — embora o comentário da linha o
-      // chamasse de "total customers who bought". O `clamp(…, 0, 1)` não corrigia: ele
-      // ESCONDIA, saturando em 1,0 todo SKU de volume alto.
+      // chamasse de "total customers who bought". O `clamp(…, 0, 1)` não corrigia: ESCONDIA,
+      // saturando em 1,0 todo SKU de volume alto.
       //
-      // O estrago é de RANKING, e foi medido antes de escolher (psql-ro + simulação do motor
-      // sobre os 3 farmers com carteira ativa, 20/08/2026):
-      //   · 829 dos 1.052 clientes tinham o top-3 em EMPATE TOTAL de score — três SKUs
-      //     saturados em 1,0 com `assocBoost` 0 dão `relevance` 0,4 idêntico, e quem escolhia
-      //     a oferta era a ordem de `.order('id')` do catálogo. Depois: ZERO empates.
-      //   · 98,5% do top-3 caía em `oben` contra 1,5% `colacor`; depois, 63,2% `colacor` —
-      //     coerente com a disponibilidade (71% dos vendáveis são `colacor`). É o mesmo viés
-      //     que o #1823 mediu em prod (934 dos 939 cross-sell vivos `oben`) e descartou como
-      //     "não é o gate de popularidade": não era a ADMISSÃO no gate, era a SATURAÇÃO.
+      // O estrago é de RANKING, e foi medido antes de escolher (psql-ro replicando o motor em
+      // SQL + simulação sobre os 3 farmers com carteira ativa — 526/432/269, 20/08/2026):
+      //   · 839 dos 1.052 clientes tinham o top-3 em EMPATE TOTAL de `affinityScore` — três
+      //     SKUs saturados em 1,0 com `assocBoost` 0 dão `relevance` 0,4 idêntico, e quem
+      //     escolhia a oferta era a ordem de `.order('id')` do catálogo. Depois: 158. NÃO vai
+      //     a zero, e o resíduo é real: `affinityScore` é arredondado a 4 casas ANTES do
+      //     `sort` (linha ~769), então SKUs de aderência próxima seguem colidindo.
+      //   · 98,5% do top-3 caía em `oben` contra 1,5% `colacor`; depois, 56,1% `colacor`. É o
+      //     mesmo viés que o #1823 mediu em prod (934 dos 939 cross-sell vivos `oben`) e
+      //     descartou como "não é o gate de popularidade": não era a ADMISSÃO no gate, era a
+      //     SATURAÇÃO que colapsa o ranking em empate e entrega o desempate à ordem do id.
       //   · A inflação é ANTI-correlacionada com o tamanho da carteira (numerador global sobre
       //     denominador local): o farmer de 269 clientes tinha 587 SKUs acima do gate de 3%,
       //     224 deles SEM UM ÚNICO comprador na própria carteira.
       //
-      // A alternativa era global nas duas pontas (clientes distintos da BASE ÷ 1.073 clientes
-      // com histórico). Ela também conserta a escala, mas foi DESCARTADA pelo dado: produz o
-      // mesmo conjunto de 80 SKUs para os três farmers — um termo que não distingue carteira
-      // nenhuma, o oposto do que "aderência do CLUSTER" promete. A local varia (112/103/26) e
-      // é o universo que o resto do arquivo já declara medir (`clientes_com_profile`,
-      // `carteira_com_historico_utilizavel`).
+      // POR QUE A CARTEIRA E NÃO A BASE INTEIRA. A alternativa (clientes distintos da BASE ÷
+      // 1.073 com histórico) também conserta a escala e chega perto: 198 empates, 59,8%
+      // `colacor`. Duas coisas decidiram pela carteira: as carteiras NÃO são intercambiáveis
+      // (Spearman 0,47–0,49 entre os rankings de adesão das três — se fossem, seria ~0,9), e
+      // precisão > recall — na dúvida, não ofertar o SKU que a carteira nunca comprou. O custo
+      // é declarado: 1.318 dos 1.964 SKUs comprados na base não têm comprador na carteira
+      // menor, e essa evidência é descartada de propósito. Em prod nada se PERDE, só se
+      // particiona: 481+381+211 = 1.073 = exatamente os clientes com histórico da base.
       //
-      // Custo do aperto, medido: NENHUM. O volume de recomendação é idêntico (3.156 = 3.156):
-      // o gate corta candidato de sobra, nunca os 3 do topo — nenhum farmer seca. O que muda é
-      // a ORDEM (top-3 diferente em 1.026 dos 1.052 clientes; top-1 em 532) e o equilíbrio com
-      // o `assocBoost`, que sai de decidir 1,0% dos topos para 12,8% — ele é o ÚNICO termo
-      // personalizado por cliente, e estava afogado pela saturação.
+      // Custo do aperto, medido: NENHUM em volume. As recomendações são as mesmas 3.156 — o
+      // gate corta candidato de sobra, nunca os 3 do topo, e nenhum farmer seca. O que muda é
+      // a ORDEM e o equilíbrio com o `assocBoost`, que sai de decidir 1,0% dos topos para
+      // 12,8% — ele é o ÚNICO termo personalizado por cliente, e estava afogado pela saturação.
+      //
+      // ⚠️ PENDÊNCIAS DECLARADAS, fora do escopo desta correção (achados do /codex xhigh):
+      //   · o gate `0.03` e os pesos `0,4/0,6` foram herdados da escala INCOERENTE e nunca
+      //     calibrados (não há feedback de conversão: as recomendações seguem 100% `pendente`).
+      //     Numa escala que encolheu, `0.03` aceita 15/12/7 compradores — abaixo do que um
+      //     limite inferior de Wilson exigiria para AFIRMAR 3%. Recalibrar exige outcome, não
+      //     opinião, e mexer nisso junto confundiria duas mudanças.
       const clientesQueCompraram = new Map<string, number>(); // product_id -> clientes DISTINTOS da carteira
       for (const cid of customerIds) {
         // `keys()` do histórico já é o conjunto de SKUs distintos DAQUELE cliente: cada
@@ -685,14 +705,19 @@ export const useCrossSellEngine = () => {
           clientesQueCompraram.set(productId, (clientesQueCompraram.get(productId) ?? 0) + 1);
         }
       }
-      // O denominador é quem PODERIA estar no numerador. Cliente da carteira sem histórico
-      // utilizável (pedido só de SKU inativo) nunca pode ser contado como comprador de nada,
-      // então incluí-lo diluiria a fração por um universo incapaz de contribuir — o mesmo
-      // defeito de escala, de grau menor. Em prod são 45/51/58 clientes por farmer.
-      const carteiraComHistorico = Math.max(
-        customerIds.filter((id) => (customerProducts.get(id)?.size ?? 0) > 0).length,
-        1,
-      );
+      // Denominador = a carteira ATIVA, não "a carteira com histórico utilizável". As duas
+      // foram medidas e são INDISTINGUÍVEIS no dado de hoje (empate 158, 56,1% `colacor`,
+      // 241 SKUs no gate — idênticos): a diferença é um fator uniforme por farmer, e fator
+      // uniforme não muda ordem DENTRO do farmer, que é onde o ranking acontece.
+      //
+      // Empatadas no desfecho, vale a que FALHA melhor. "Com histórico" encolhe o denominador
+      // junto com a cobertura, então quanto pior a cobertura, MAIOR a aderência: no limite, 1
+      // cliente com histórico numa carteira de 100 daria 1/1 = 100% e mandaria o SKU dele para
+      // os outros 99 — e nada barra isso, porque `carteira_com_historico_utilizavel` é
+      // registrado SEM piso. O viés ainda é dirigido: "histórico utilizável" depende de o SKU
+      // comprado continuar ATIVO, o que favorece cliente recente e linha sobrevivente.
+      // A carteira ativa é imune a esse modo de falha ao custo medido de zero.
+      const totalCustomers = Math.max(customerIds.length, 1);
       const productList = products || [];
 
       // 7. Calculate recommendations per client
@@ -754,7 +779,7 @@ export const useCrossSellEngine = () => {
           // vezes foi comprado. O numerador é subconjunto do denominador por construção, então
           // o quociente já é uma fração ≤ 1: o `clamp` fica como rede, não como disfarce.
           const buyerCount = clientesQueCompraram.get(product.id) || 0;
-          const clusterAdherence = clamp(buyerCount / carteiraComHistorico, 0, 1);
+          const clusterAdherence = clamp(buyerCount / totalCustomers, 0, 1);
 
           // Association boost: personalized score based on what THIS customer bought
           const assocBoost = assocBoostMap.get(product.id) || 0;
@@ -772,7 +797,7 @@ export const useCrossSellEngine = () => {
           // Segue a MESMA fração — senão volta a afirmar volume que a carteira não comporta:
           // com o numerador em ocorrências ele chegava a 40 numa carteira de 211 (medido), e
           // este número é PERSISTIDO em `cluster_volume_estimate`.
-          const clusterVolume = Math.max(1, Math.round(buyerCount / carteiraComHistorico * 12));
+          const clusterVolume = Math.max(1, Math.round(buyerCount / totalCustomers * 12));
 
           // Constante desde o #1514 (ver bloco de premissas). Persistida como dado, mas NÃO
           // multiplica o score: sendo 1.0 e igual para todo candidato, ela não muda ORDEM.
