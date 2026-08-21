@@ -85,9 +85,27 @@ extremo — e o comentário no teste diz explicitamente que ela NÃO teria pego 
   impacto** — os alvos deles (`calculate-scores/index.ts`, `generate-bundle-argument/index.ts`,
   `_shared/cmc-snapshot-retry.ts`, `omie-analytics-sync/politica-retry.ts`) não estão na tabela acima.
   Latente, não ativo. Chip próprio.
-- **Sub-classe SQL** (`scripts/lib/authz-contract.ts`, `import-tint-formulas-aposentada-gate`) e
-  **sub-classe CSS** (`table-overscroll.test.ts`): gramática diferente (`--`, dollar-quoting; `content:`).
-  Varredura de hoje: **zero** `/*` dentro de literal em `supabase/migrations/*.sql` e em `src/index.css`.
+- **Sub-classe CSS** (`table-overscroll.test.ts`): insumo é um arquivo só (`src/index.css`), sob nosso
+  controle; varredura deu **zero**. Registro, sem chip.
+- **Sub-classe SQL — NÃO está limpa, e o eixo é outro.** Medido em 2026-08-20 (2ª rodada, sobre as 656
+  migrations), separando os eixos:
+
+  | eixo | exposição |
+  | --- | --- |
+  | `/*` dentro de literal | **0/656** |
+  | bloco ANINHADO (`/* /* */ */` — Postgres permite, e `[\s\S]*?` fecha no `*/` interno) | **0/656** |
+  | **`--` dentro de literal** | **16/656** |
+
+  `stripComments` (`scripts/lib/authz-contract.ts`) faz `.replace(/--[^\n]*/g, ' ')` **sem olhar string**,
+  e o docstring imediatamente acima dele afirma *"preserva strings e dollar-quotes"* — invariante
+  **DECLARADA** que o código não cumpre, no gate de **authz**: o lugar mais caro do repo para ficar cego.
+  Casos reais: `20260703090000_pedidos_programados.sql` tem `'FORMA DE PGTO BOLETO\n\n-- --\nOperação
+  contratada…'`; `20260727120000_tint_fase5_desativa_geracao_legada.sql` e
+  `20260724130000_authz_custo_fu4f_fase3_recommend.sql` carregam o literal `'--[^\n]*'` como DADO.
+
+  É irmã desta classe, não a mesma: o mecanismo é idêntico (limpeza que não entende literal), o
+  delimitador é `--` em vez de `/*`. Chip próprio — e o passo 1 dele é MEDIR se algum veredito do
+  `authz:check` muda, porque exposição não é dano até a medição dizer que é.
 
 ## Assinatura para varredura futura
 
