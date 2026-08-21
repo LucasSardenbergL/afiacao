@@ -88,3 +88,67 @@ export async function fetchAll<T>(
   }
   return out;
 }
+
+/**
+ * Paginação por KEYSET — para leitura que precisa sobreviver a escrita CONCORRENTE.
+ *
+ * `fetchAll` pagina por OFFSET: N requests independentes, cada um sua própria transação.
+ * O `.order()` numa coluna estável resolve a instabilidade de ORDEM numa tabela parada,
+ * mas não cria snapshot. Um INSERT antes do offset corrente desloca as páginas seguintes
+ * (uma linha pode ser lida DUAS VEZES); um DELETE desloca no outro sentido (uma linha pode
+ * ser PULADA).
+ *
+ * O keyset (`WHERE chave > cursor ORDER BY chave LIMIT n`) elimina a classe inteira do
+ * deslocamento por offset. Não dá snapshot transacional — para isso só uma RPC, como o
+ * `omie_sync_identity_snapshot` de `omie-vendas-sync` — mas nenhuma linha some ou repete
+ * por causa da posição.
+ *
+ * QUANDO USAR, e não "sempre": o que desloca uma paginação não é o VOLUME de escrita da
+ * tabela, é a escrita que atravessa a FRONTEIRA DO RECORTE — INSERT e DELETE sempre
+ * atravessam, UPDATE só se tocar a coluna do `.order()` ou do `WHERE`. `product_costs`
+ * leva 8,0M de updates e zero deletes: offset basta. `omie_products` leva 86 inserts e
+ * zero deletes e ainda assim exige keyset, porque o `.eq('ativo',true)` do leitor é
+ * exatamente o que o cron de status reescreve. A medição está em
+ * `docs/historico/paginacao-offset-janela.md`; o precedente de deixar offset onde o custo
+ * não se paga, em `fin-valor-cockpit/index.ts:490`.
+ *
+ * CONTRATO: `chave` tem de ser ÚNICA no recorte e o call-site tem de `.order()` por ela
+ * — e o `.select()` precisa TRAZER a coluna (o `.range()` não exigia isso). Chave repetida
+ * faria `.gt()` pular as empatadas; o caso patológico (cursor que não avança) é detectado
+ * aqui e LANÇA, em vez de girar para sempre.
+ */
+export async function fetchAllKeyset<T, K>(
+  build: (
+    cursor: K | null,
+    limite: number,
+  ) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>,
+  chave: (linha: T) => K,
+  label: string,
+): Promise<T[]> {
+  let cursor: K | null = null;
+  const out: T[] = [];
+  for (;;) {
+    const { data, error } = await build(cursor, PAGE);
+    if (error) throw new Error(`${label}: ${error.message}`);
+    // Mesmo fail-closed de `fetchAll`: `data:null` sem `error` é resposta MALFORMADA,
+    // não fim da tabela — devolver o acumulado parcial seria a truncagem silenciosa que
+    // o #1581 tirou de 24 call-sites.
+    if (data == null) {
+      throw new Error(`${label}: data null sem error — resposta malformada, não é fim da tabela`);
+    }
+    const rows = data;
+    out.push(...rows);
+    if (rows.length < PAGE) break;
+    const proximo = chave(rows[rows.length - 1]);
+    // Cursor parado = a chave NÃO é única no recorte (o contrato foi violado). Sem esta
+    // guarda o laço pediria a mesma página para sempre e a edge morreria no timeout, que
+    // é um sintoma que não se parece nem um pouco com a causa.
+    if (cursor !== null && proximo === cursor) {
+      throw new Error(
+        `${label}: cursor não avançou (chave repetida em ${JSON.stringify(proximo)}) — a chave do keyset precisa ser ÚNICA no recorte`,
+      );
+    }
+    cursor = proximo;
+  }
+  return out;
+}
