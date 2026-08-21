@@ -28,6 +28,40 @@
 #
 # `git fetch origin --prune` é OBRIGATÓRIO no início; se falhar, não remove nada.
 #
+# ⚠️ Este script REMOVE worktrees. Quatro regras vieram do #1838 e da varredura
+# dos irmãos — todas travadas por `scripts/test-wt-prune.sh`:
+#
+#   0. `mktemp` puro, NUNCA `mktemp -t <prefixo>`: o BSD trata o argumento como
+#      PREFIXO e funciona; o GNU o trata como TEMPLATE e EXIGE `XXXXXX`, saindo
+#      1 com "too few X's". Sob `set -e` isso mata o script na primeira linha —
+#      ou seja, este script nunca rodou em Linux, e só se soube quando a suíte
+#      nova o EXECUTOU no CI Ubuntu (20 de 25 asserções vermelhas). É o mesmo
+#      eco que o #1838 levou do `vm_stat`, e a irmã da flag homônima BSD/GNU já
+#      registrada no CLAUDE.md — só que esta FALHA em vez de fazer outra coisa.
+#
+#   1. Sonda de segurança AUSENTE é fail-CLOSED, não "sem medida". Medidos DOIS
+#      casos, os dois virando remoção indevida em silêncio: (a) `lsof` devolvendo
+#      127 esvazia o `active_file`, `is_active` responde "não" para todo mundo e
+#      a worktree de sessão VIVA passa de "skip (sessão/processo ativo)" para
+#      "would … -250 MB"; (b) `md5` ausente faz os dois lados da comparação
+#      virarem string vazia, `[ "" = "" ]` dá VERDADEIRO e o `.env` com segredo
+#      único — o exato caso que a allowlist existe para bloquear — é classificado
+#      como descartável. Guard que emudece não protege nada.
+#   2. `sz="$(du -sm "$wt" | cut -f1)"` sob `set -e`+`pipefail`, em `handle()`
+#      (chamada SOLTA, `set -e` ativo), MATA o script quando o `du` falha —
+#      medido: EXIT=1 com a varredura parando na 1ª worktree, e no `--yes` isso
+#      acontece DEPOIS de já ter removido, sem imprimir o resumo do que fez. O
+#      `${sz:-0}` da linha seguinte nunca chegava a rodar. Sem teto, ainda: aqui
+#      o `du` é da worktree INTEIRA (node_modules incluso).
+#   3. Nenhum leitor que fecha o pipe cedo (`| head`): use `awk 'NR<=N'`, que lê
+#      até o EOF. Hoje o `| head -3` do `ignored_blockers` sobrevive por ACIDENTE
+#      — `classify` só é chamada dentro de `if !`, e isso suspende o `set -e`
+#      (medido: o mesmo pipeline solto sai 141 e mata). Depender de contexto de
+#      chamada para não morrer é armadilha para o próximo refactor. Esta troca é
+#      PREVENTIVA e não tem teste que a distinga: devolver o `| head -3` numa
+#      cópia deixa o `test-wt-prune.sh` VERDE (medido na falsificação), porque
+#      enquanto a chamada estiver dentro do `if !` a diferença é inobservável.
+#
 # Uso:
 #   bun run wt:prune          # DRY-RUN: classifica e mostra o que faria
 #   bun run wt:prune --yes    # executa de verdade
@@ -38,12 +72,16 @@ for arg in "$@"; do
   case "$arg" in
     --yes | -y) YES=1 ;;
     -h | --help)
-      sed -n '2,29p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,53p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     *) echo "argumento desconhecido: $arg" >&2; exit 2 ;;
   esac
 done
+
+here="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=scripts/lib/wt-medida.sh disable=SC1091
+. "$here/lib/wt-medida.sh"
 
 rp() { realpath "$1" 2>/dev/null || (cd "$1" 2>/dev/null && pwd -P) || echo "$1"; }
 self="$(rp "$PWD")"
@@ -61,7 +99,7 @@ if ! git rev-parse --verify origin/main >/dev/null 2>&1; then
 fi
 
 # --- mapa branch->headRefOid de PRs mergeados (best-effort) ------------------
-prmap="$(mktemp -t wtprune)"
+prmap="$(mktemp)"
 trap 'rm -f "$prmap" "$active_file" 2>/dev/null || true' EXIT
 if ! { command -v gh >/dev/null 2>&1 \
   && gh pr list --state merged --limit 2000 --json headRefName,headRefOid \
@@ -71,7 +109,20 @@ if ! { command -v gh >/dev/null 2>&1 \
 fi
 
 # --- diretórios com processo vivo (cwd dentro) ------------------------------
-active_file="$(mktemp -t wtpruneact)"
+# Sem `lsof` não há como saber quem está trabalhando, e o efeito colateral de
+# errar aqui é remover a worktree de uma sessão viva.
+if ! sonda_lsof_ok; then
+  if [ "$YES" -eq 1 ]; then
+    echo "❌ lsof não respondeu (ausente ou quebrado) — sem ele não sei quais worktrees têm" >&2
+    echo "   sessão viva, e remover às cegas pode derrubar a worktree de quem está trabalhando. Abortando." >&2
+    exit 1
+  fi
+  SONDA_ATIVIDADE=0
+else
+  SONDA_ATIVIDADE=1
+fi
+
+active_file="$(mktemp)"
 {
   for proc in claude bun node vite tsx vitest esbuild npm; do
     lsof -nP -a -c "$proc" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p'
@@ -90,15 +141,20 @@ is_active() {
 
 # arquivos ignorados que NÃO são descartáveis (vazio = pode remover) ----------
 ignored_blockers() {
-  local wt="$1" p base
+  local wt="$1" p base h1 h2
   git -C "$wt" status --porcelain --ignored 2>/dev/null | sed -n 's/^!! //p' | while IFS= read -r p; do
     [ -n "$p" ] || continue
     base="$(basename "${p%/}")"
     case "$base" in
       node_modules | dist | build | .vite | .turbo | coverage | .DS_Store | *.log | *.tsbuildinfo) ;;
       .env | .env.*)
+        # Fail-closed: sem sonda de hash não dá para afirmar "idêntico ao de
+        # referência", e o custo de errar é perder um .env com segredo único.
+        # Comparar dois `md5` ausentes dava `[ "" = "" ]` → verdadeiro → descarte.
         if [ -f "$ref_env_dir/$base" ] \
-          && [ "$(md5 -q "$wt/${p%/}" 2>/dev/null)" = "$(md5 -q "$ref_env_dir/$base" 2>/dev/null)" ]; then
+          && h1="$(hash_arquivo "$wt/${p%/}")" \
+          && h2="$(hash_arquivo "$ref_env_dir/$base")" \
+          && [ -n "$h1" ] && [ "$h1" = "$h2" ]; then
           : # idêntico ao de referência → descartável
         else
           echo "$p"
@@ -128,7 +184,7 @@ classify() {
   dirty="$(git -C "$wt" status --porcelain --untracked-files=all 2>/dev/null | wc -l | tr -d ' ')"
   [ "$dirty" != "0" ] && { REASON="trabalho não-commitado ($dirty)"; return 1; }
 
-  blk="$(ignored_blockers "$wt" | head -3 | tr '\n' ' ')"
+  blk="$(ignored_blockers "$wt" | awk 'NR<=3' | tr '\n' ' ')"
   [ -n "$blk" ] && { REASON="ignored não-descartável: $blk"; return 1; }
 
   if has_transcript "$wt"; then REASON="conversa ainda no histórico [$branch]"; return 1; fi
@@ -143,12 +199,16 @@ classify() {
 }
 
 # --- varre os worktrees -----------------------------------------------------
-removed=0; freed=0; kept=0
+removed=0; freed=0; kept=0; sem_medida=0
+# ausente ≠ zero: o não-medido conta na COBERTURA, nunca no total de MB.
+soma_medida() {
+  if [ "$2" -eq 0 ]; then freed=$((freed + $1)); else sem_medida=$((sem_medida + 1)); fi
+}
 cur_wt=""; cur_locked=0
 
 handle() {
   [ -n "$cur_wt" ] || return 0
-  local wt sz; wt="$(rp "$cur_wt")"
+  local wt sz rc; wt="$(rp "$cur_wt")"
   local short="${wt/#$HOME/~}"
 
   if [ "$wt" = "$self" ]; then printf '  skip    %-50s (atual)\n' "$short"; kept=$((kept+1)); return 0; fi
@@ -159,21 +219,21 @@ handle() {
     printf '  KEEP    %-50s (%s)\n' "$short" "$REASON"; kept=$((kept+1)); return 0
   fi
 
-  sz="$(du -sm "$wt" 2>/dev/null | cut -f1)"; sz="${sz:-0}"
+  sz="$(du_mb "$wt")" && rc=0 || rc=$?
   if [ "$YES" -eq 1 ]; then
     # revalidação final (fecha corrida com sessão que reabriu / arquivo que mudou)
     if is_active "$wt" || ! classify "$wt"; then
       printf '  skip    %-50s (mudou na revalidação)\n' "$short"; kept=$((kept+1)); return 0
     fi
     if git worktree remove "$wt" 2>/tmp/wt-prune-err; then
-      printf '  PRUNE   %-50s -%s MB (%s)\n' "$short" "$sz" "$REASON"
-      removed=$((removed+1)); freed=$((freed+sz))
+      printf '  PRUNE   %-50s %s (%s)\n' "$short" "$(medida_humana "$sz" "$rc")" "$REASON"
+      removed=$((removed+1)); soma_medida "$sz" "$rc"
     else
       printf '  FALHOU  %-50s (%s)\n' "$short" "$(tr -d '\n' </tmp/wt-prune-err)"; kept=$((kept+1))
     fi
   else
-    printf '  would   %-50s -%s MB (%s)\n' "$short" "$sz" "$REASON"
-    removed=$((removed+1)); freed=$((freed+sz))
+    printf '  would   %-50s %s (%s)\n' "$short" "$(medida_humana "$sz" "$rc")" "$REASON"
+    removed=$((removed+1)); soma_medida "$sz" "$rc"
   fi
 }
 
@@ -190,10 +250,19 @@ handle
 [ "$YES" -eq 1 ] && git worktree prune 2>/dev/null || true
 
 echo
+piso=""
+[ "$sem_medida" -gt 0 ] && piso=" (piso — medidos: $((removed - sem_medida)) de ${removed})"
 if [ "$YES" -eq 1 ]; then
-  echo "✅ removidas ${removed} worktree(s) de conversa excluída, ~${freed} MB liberados. ${kept} preservada(s)."
+  echo "✅ removidas ${removed} worktree(s) de conversa excluída, ~${freed} MB liberados${piso}. ${kept} preservada(s)."
   echo "   Branches NÃO foram apagadas — recupere qualquer uma com: git worktree add <path> <branch>"
 else
-  echo "DRY-RUN: removeria ${removed} worktree(s) de conversa EXCLUÍDA (~${freed} MB); preservaria ${kept}."
+  echo "DRY-RUN: removeria ${removed} worktree(s) de conversa EXCLUÍDA (~${freed} MB${piso}); preservaria ${kept}."
   echo "         Rode 'bun run wt:prune --yes' pra executar."
+fi
+if [ "$sem_medida" -gt 0 ]; then
+  echo "         sem medida: ${sem_medida} — não é 0 MB, é dado que falta (o total acima é PISO)."
+fi
+if [ "$SONDA_ATIVIDADE" -eq 0 ]; then
+  echo "⚠️  lsof não respondeu: NÃO sei quais worktrees têm sessão viva, então este dry-run" >&2
+  echo "   não é confiável — qualquer 'would' pode ser de uma sessão em uso. O --yes aborta." >&2
 fi
