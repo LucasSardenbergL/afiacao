@@ -12,6 +12,7 @@ import {
 import { lerHeadVigente, registrarGeracaoFarmer } from '@/lib/farmer/registrar-geracao';
 import { indexarCatalogoAtivo, resolverItemNoCatalogo } from '@/lib/farmer/identidade-item';
 import { STATUS_NAO_VENDA_POSTGREST } from '@/lib/farmer/universo-pedidos';
+import { acumularContaDeCompra, medirCoberturaContaDaOferta, ofertaNaContaDoCliente } from '@/lib/farmer/cobertura-conta-oferta';
 import { toast } from 'sonner';
 
 // ─── Types ───────────────────────────────────────────────────────────
@@ -549,6 +550,10 @@ export const useCrossSellEngine = () => {
       // 7. Build per-customer purchase history. Sem `cost`: o custo não chega mais ao browser.
       const customerProducts = new Map<string, Map<string, { qty: number; price: number }>>();
       const allProductPurchases = new Map<string, number>(); // product_id -> total customers who bought
+      // Contas em que cada cliente EFETIVAMENTE comprou — o lado "histórico" do sensor
+      // `oferta_conta_do_cliente`. Sai de `sales_orders.account`, a mesma coluna que
+      // qualifica o item, e é montado neste loop porque ele já varre todos os pedidos.
+      const contasDeCompraPorCliente = new Map<string, Set<string | null>>();
       let itensResolvidos = 0;
       let itensContaDivergente = 0;
 
@@ -556,6 +561,9 @@ export const useCrossSellEngine = () => {
         const cid = order.customer_user_id;
         if (!customerProducts.has(cid)) customerProducts.set(cid, new Map());
         const cp = customerProducts.get(cid)!;
+        // ANTES do parse dos itens de propósito: a conta do cliente é fato do PEDIDO, e vale
+        // mesmo quando nenhum item dele resolve para SKU ativo (39,9% dos itens em prod).
+        acumularContaDeCompra(contasDeCompraPorCliente, cid, order.account);
 
         const items: SalesOrderItem[] = Array.isArray(order.items) ? (order.items as SalesOrderItem[]) : [];
         for (const item of items) {
@@ -628,6 +636,10 @@ export const useCrossSellEngine = () => {
 
       // 7. Calculate recommendations per client
       const allRecs: CustomerRecommendations[] = [];
+      // Os CANDIDATOS que sobreviveram a todos os gates — o denominador que separa
+      // "a carteira é assim" de "o ranking prefere assim". Ver `candidatos_conta_do_cliente`.
+      let candidatosElegiveis = 0;
+      let candidatosNaContaDoCliente = 0;
 
       for (const score of activeClientScores) {
         const cid = score.customer_user_id;
@@ -694,6 +706,10 @@ export const useCrossSellEngine = () => {
           const affinityScore = pij;
 
           if (affinityScore > 0) {
+            candidatosElegiveis++;
+            if (ofertaNaContaDoCliente(product.id, contasDeCompraPorCliente.get(cid), indiceCatalogo.contaDoProduto)) {
+              candidatosNaContaDoCliente++;
+            }
             crossSellRecs.push({
               customerId: cid,
               customerName: profile.name ?? '',
@@ -737,6 +753,10 @@ export const useCrossSellEngine = () => {
             const affinityScore = pij;
 
             if (affinityScore > 0) {
+              candidatosElegiveis++;
+              if (ofertaNaContaDoCliente(product.id, contasDeCompraPorCliente.get(cid), indiceCatalogo.contaDoProduto)) {
+                candidatosNaContaDoCliente++;
+              }
               const currentProduct = productList.find((p) => p.id === purchasedId);
               upSellRecs.push({
                 customerId: cid,
@@ -782,6 +802,46 @@ export const useCrossSellEngine = () => {
       const melhorAfinidade = (c: CustomerRecommendations) =>
         Math.max(0, ...[...c.crossSell, ...c.upSell].map((r) => r.affinityScore));
       allRecs.sort((a, b) => melhorAfinidade(b) - melhorAfinidade(a));
+
+      // SENSOR da conta da OFERTA — o par do `itens_identidade_conforme`, que governa o item
+      // do HISTÓRICO. `n` são as ofertas emitidas cuja conta o cliente já compra; `esperado`
+      // são todas as emitidas. Medido em prod (psql-ro, 20/08/2026): 946 de 1.361 = 69,5%.
+      //
+      // SEM piso e FORA de `INSUMOS_OBRIGATORIOS_CROSS_SELL`: ofertar cross-empresa é legítimo
+      // (47,4% dos clientes compram pelas duas), então degradar a completude por causa dele
+      // transformaria um fato comercial em defeito. O que ele existe para expor é a DERIVA —
+      // hoje 934 dos 939 cross-sell vivos são `oben`, e os 106 clientes 100% `colacor` recebem
+      // ZERO oferta `colacor` tendo 495 candidatos elegíveis. Ver `cobertura-conta-oferta.ts`.
+      //
+      // Contado sobre `allRecs` (o top-3 + top-2 que CHEGA ao farmer), não sobre os candidatos
+      // considerados: o candidato descartado no ranking nunca virou oferta, e somá-lo mediria
+      // o que o motor pensou em vez do que ele entregou.
+      insumos.oferta_conta_do_cliente = {
+        ok: true,
+        ...medirCoberturaContaDaOferta(
+          allRecs.flatMap((cr) => [...cr.crossSell, ...cr.upSell].map((r) => ({ customerId: r.customerId, productId: r.productId }))),
+          contasDeCompraPorCliente,
+          indiceCatalogo.contaDoProduto,
+        ),
+      };
+
+      // O DENOMINADOR do sensor acima, e a resposta ao "69,5% confunde composição da carteira
+      // com preferência do ranking" (challenge Codex). Sozinho, `oferta_conta_do_cliente` não
+      // distingue "a carteira só tem candidato de fora" de "havia candidato da conta e o
+      // ranking preferiu o de fora" — e as duas leituras pedem ações opostas. Este insumo mede
+      // a MESMA regra sobre os candidatos que passaram todos os gates, antes do top-3/top-2:
+      // comparar as duas frações é o que torna o desvio do ranking visível.
+      //
+      // Em prod (psql-ro, 20/08/2026) a diferença é gritante e é o achado desta entrega: os
+      // 106 clientes que só compram `colacor` têm, em média, 495 candidatos `colacor`
+      // elegíveis contra 332 `oben` — e as 342 ofertas de cross-sell que recebem são 100%
+      // `oben`. A disponibilidade favorece `colacor`; o que entrega só `oben` é a ordenação.
+      // (Candidatos remedidos sobre o universo do #1819 — a allowlist antiga dava 349/299.)
+      insumos.candidatos_conta_do_cliente = {
+        ok: true,
+        n: candidatosNaContaDoCliente,
+        esperado: candidatosElegiveis,
+      };
 
       aplicarRecomendacoes(allRecs);
       linhasProduzidas = allRecs.length > 0;

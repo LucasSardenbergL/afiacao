@@ -15,6 +15,7 @@ import {
 import { lerHeadVigente, registrarGeracaoFarmer } from '@/lib/farmer/registrar-geracao';
 import { indexarCatalogoAtivo, resolverItemNoCatalogo } from '@/lib/farmer/identidade-item';
 import { STATUS_NAO_VENDA_POSTGREST } from '@/lib/farmer/universo-pedidos';
+import { medirBundlesDeContaUnica } from '@/lib/farmer/cobertura-conta-oferta';
 
 // ─── Types ───────────────────────────────────────────────────────────
 export interface AssociationRule {
@@ -1050,6 +1051,24 @@ export const useBundleEngine = () => {
           Math.max(0, ...b.bundles.map((x) => x.affinityBundle)) -
           Math.max(0, ...a.bundles.map((x) => x.affinityBundle)),
       );
+
+      // SENSOR do bundle MISTO. O `useCrossSellEngine` mede outra coisa (se a oferta saiu da
+      // conta em que o cliente compra) porque lá as duas direções são legítimas — 47,4% dos
+      // clientes compram pelas duas empresas do grupo. Aqui não: um bundle é "compre JUNTOS",
+      // e SKUs de empresas diferentes não cabem num pedido só. `esperado` é 100%, e qualquer
+      // `n < esperado` é oferta que o fluxo de venda não executa. Ver `cobertura-conta-oferta.ts`.
+      //
+      // Fora de `INSUMOS_OBRIGATORIOS_BUNDLE` mesmo tendo gatilho: a lista governa se o motor
+      // pode declarar "não há o que ofertar" (e expirar a carteira), e um bundle misto não diz
+      // nada sobre isso — degradar por causa dele expiraria a carteira INTEIRA por um defeito
+      // de composição de UMA linha.
+      insumos.bundle_conta_unica = {
+        ok: true,
+        ...medirBundlesDeContaUnica(
+          allCustomerBundles.flatMap((cb) => cb.bundles),
+          indiceCatalogo.contaDoProduto,
+        ),
+      };
 
       aplicarBundles(allCustomerBundles);
       // Marcados JUNTOS e aqui, não na gravação: a partir deste ponto a tela mostra o
