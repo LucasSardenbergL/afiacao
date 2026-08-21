@@ -342,6 +342,58 @@ list` mostra `WIP on <seu-branch>`), mas o susto é evitável.
 - ⚠️ **`git checkout -b <nova> origin/main` seguido de `git checkout <antiga> -- <arquivo>` APAGA o edit uncommitted daquele arquivo** (mordido 2026-08-06, ao mover uma lição de doc para branch própria depois do merge). O `checkout -- <path>` restaura a versão **commitada** da branch citada; a edição que só existia no working tree não está em commit nenhum e **some sem aviso** — `git status` fica limpo e parece que nada havia. É o mesmo mecanismo do §9 do money-path ("restaurar sabotagem com `git checkout --` destrói fix uncommitted"), aqui no fluxo inocente de *"vou levar esta mudança para um PR separado"*. ⇒ **commite ANTES de trocar de branch** (ou `git stash` / `cp` do arquivo), nunca conte com o working tree para atravessar um checkout.
 - ⚠️ **Log em `/private/tmp` não atravessa REBOOT — e o scratchpad da sessão mora lá dentro.** Mordido 2026-08-20: armei `pr-watch.sh 1811 > /tmp/prwatch-1811.log`, o PR mergeou 10min depois e, horas mais tarde, o log **não existia**. Apliquei a regra do CLAUDE.md ("saída VAZIA de job verde = não rodou"), concluí que o watcher nunca rodou e **reportei isso ao founder** — errado. A máquina havia reiniciado (`sysctl -n kern.boottime` = 21:54; o merge foi 12:53) e o boot limpa `/private/tmp` INTEIRO: sumiram os 8 logs da sessão **e** o `fn.mjs` do scratchpad, que é `/private/tmp/claude-501/<sessão>/scratchpad` — ou seja, a bullet acima ("escreva no scratchpad") resolve a COLISÃO entre sessões, não a DURABILIDADE. ⇒ dentro de uma janela contínua, log ausente é sinal de "não rodou"; **atravessando pausa longa ele não distingue "não rodou" de "foi limpo"** e vira ausência de dado — o que aconteceu de fato é **indecidível**, porque a evidência foi destruída. Evidência que precisa sobreviver a uma pausa vai para o **worktree** (commit), não para `/tmp`. E desfecho de PR se confirma com `gh pr view`/`gh pr checks`, NUNCA com a presença do log do watcher — é o que a regra do **exit 6** já manda.
 
+## Portabilidade BSD × GNU: a flag que existe nos DOIS contratos com significado DIFERENTE (2026-08-18, #1808)
+
+Máquina do founder = **BSD** (macOS); CI = **GNU** (ubuntu). Quando a flag **não existe** do outro lado, o
+comando falha e o idioma `valor="$(a … || b …)"` salva. O caso caro é o oposto: **a flag existe nos dois e
+quer dizer outra coisa** — aí não há falha para o `||` aparar, ou ela chega **depois** de `a` já ter escrito
+lixo no stdout. Verde no macOS não é evidência de nada, e o defeito só aparece quando a suíte entra no CI.
+
+**O caso, medido** (GNU coreutils 9.11): em `stat -f '%m' arq` o BSD lê `-f` como *formato* e devolve o epoch;
+o GNU lê `-f` como `--file-system`, que **não consome formato** — `'%m'` vira um OPERANDO de arquivo inválido.
+O stat sai `1` (dispara o `||`) **mas antes já despejou 5 linhas** do bloco de filesystem no stdout: o
+`a || b` concatena as duas saídas e a variável vira **6 linhas** de lixo.
+
+Duas mordidas em 3 dias, com danos de gravidade oposta:
+
+- `.claude/hooks/branch-pos-squash-guard.sh` (2026-08-18): mtime lixo ⇒ cache do veredito eternamente
+  "expirado". Falha **fechada** — só desperdício, e invisível até a suíte entrar no CI.
+- `.claude/hooks/read-contexto-nudge.sh` (#1808): o lixo entrou na **chave** da marca de sessão, lida com
+  `grep -Fx` — chave multi-linha vira **um PADRÃO por linha**, e as constantes do bloco de filesystem casam
+  sempre. O hook passou a anunciar "releitura, role para cima e use o que já leu" **justamente quando reler
+  era legítimo** (outro trecho do arquivo, ou arquivo alterado). Falha **ABERTA**: conselho errado, não silêncio.
+
+**O padrão** (copie dos dois hooks acima) — GNU primeiro, e a trava real é **validar o FORMATO esperado**, não o `||`:
+
+```sh
+mtime="$(stat -c '%Y' "$arq" 2>/dev/null)"
+case "$mtime" in ''|*[!0-9]*) mtime="$(stat -f '%m' "$arq" 2>/dev/null)" ;; esac
+case "$mtime" in ''|*[!0-9]*) mtime=0 ;; esac
+```
+
+A validação numérica também garante **uma linha só** — o que importa quando o valor entra numa chave lida por
+`grep -Fx`. Generalizando para além do `stat`: **valide o formato que você espera** (numérico, 1 linha, prefixo
+conhecido) em vez de confiar no exit code do primeiro ramo.
+
+**A trava de teste** — verde num ambiente NÃO prova (mesma classe do #1483, locale): exercite **os DOIS
+contratos por STUB de `stat` no PATH**, como no bloco "portabilidade do stat" de
+`scripts/test-branch-pos-squash-guard.sh` e `scripts/test-read-contexto-nudge.sh`. Este último tem ainda a
+sabotagem `"stat BSD na frente"` no modo `--falsificar` e um caso **(i)** que impede um valor CONSTANTE (um
+`mtime=0` fixo, ou o próprio bug) de passar de graça — sem ele o stub provaria só que "não quebrou".
+
+**Varredura** (`command grep -rn "stat -f" scripts/ .claude/hooks/`) — o alvo é o que o **CI ubuntu roda de
+fato** (hoje: o laço do `test:hooks` no `package.json`); decida caso a caso:
+
+- ⚠️ **Espaço × colado muda o desfecho.** `stat -f %m arq` envenena o stdout; `stat -f%z arq` (formato
+  COLADO) o GNU rejeita como cluster de opções inválidas — exit `1` com **stdout vazio**, e aí o `||`
+  funciona *por acidente*. É o caso de `scripts/generate-lgpd-preroll.sh` (roda à mão, nunca no CI):
+  sobrevive, mas **não é modelo para copiar**.
+- A família `heavy` (`scripts/heavy.sh`, `scripts/test-heavy*.sh`) é **macOS-only por desenho** e não roda no
+  CI — não "conserte" o que é deliberado.
+- `scripts/wt-orfas.sh` tinha o idioma frágil exato (`mtime_de`) e foi alinhado ao padrão: ferramenta local
+  hoje, mas "não roda no CI" era **exatamente** o que valia para o `branch-pos-squash-guard` até a suíte dele
+  entrar lá.
+
 ## MCPs enxutas
 
 `.claude/settings.json` (comitado, **project > user**) desabilita 11 plugins sem uso no dev TS (adobe/mercadopago/sentry/slack/telegram/airtable/zapier/github/posthog/chrome-devtools/serena) + `disableClaudeAiConnectors: true`. **Mantidos:** superpowers/claude-mem/claude-md-management/context7.
