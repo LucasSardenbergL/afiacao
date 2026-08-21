@@ -75,10 +75,29 @@ WITH motores AS (
 marcada AS (
   SELECT
     motor, calculado_em, resultado, completude, insumos, farmer_id,
-    -- Assinatura de truncamento: QUALQUER insumo com exatamente 1.000 linhas. O cap do
-    -- PostgREST devolve 1.000 e sucesso; nenhum insumo real tem esse tamanho por acaso.
+    -- Assinatura de truncamento: insumo com exatamente 1.000 linhas. O cap do PostgREST
+    -- devolve 1.000 e sucesso.
+    --
+    -- ⚠️ O `QUALQUER insumo` original era GENÉRICO demais, e a justificativa dele ("nenhum
+    -- insumo real tem esse tamanho por acaso") já era falsa quando foi escrita: metade das
+    -- chaves não é cardinalidade de página nenhuma — é contagem DERIVADA (`baskets`=21.579 de
+    -- 30.939, `itens_identidade_conforme`=41.923, `bundle_conta_unica`, os dois sensores de
+    -- conta do cross-sell). Para essas, 1.000 é um valor como outro qualquer, e o falso
+    -- positivo não custa "uma execução": ele empurra `janela_desde` e descarta TODA a história
+    -- anterior junto — e, se for a execução mais recente, o motor inteiro sai `cap_ativo`.
+    --
+    -- O filtro é ESTRUTURAL de propósito, não uma lista de nomes. `esperado` só é declarado por
+    -- quem mede COBERTURA (o contrato está em `src/lib/farmer/completude-snapshot.ts`): `n` é
+    -- então uma FATIA de um universo declarado, nunca o tamanho de uma página. Uma leitura
+    -- crua não tem universo a declarar, então continua sendo checada SEM ninguém precisar
+    -- lembrar de cadastrá-la — e é essa a direção fail-closed: esquecer de excluir uma chave
+    -- derivada custa um falso positivo (a janela encolhe, a fase 2 espera mais); esquecer de
+    -- INCLUIR uma leitura crua numa allowlist custaria o cap passar batido, que é a licença
+    -- para a fase 2 expirar carteira em cima de dado truncado. Escapar da checagem exige o ato
+    -- afirmativo de declarar um universo.
     EXISTS (SELECT 1 FROM jsonb_each(insumos) AS i(nome, val)
-            WHERE (val->>'n')::int = 1000) AS tem_cap
+            WHERE NOT (val ? 'esperado')
+              AND (val->>'n')::int = 1000) AS tem_cap
   FROM public.farmer_geracao_execucoes
 ),
 epoca AS (
