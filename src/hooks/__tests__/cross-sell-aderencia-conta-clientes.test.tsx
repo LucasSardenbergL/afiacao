@@ -260,4 +260,21 @@ describe('useCrossSellEngine — `clusterAdherence` conta CLIENTES, não ocorrê
     // E o controle: os candidatos legítimos seguem lá — o corte foi do alheio, não geral.
     expect(idsRecomendados(result)).toContain(SKU_ESPALHADO);
   });
+
+  it('F: o valor corrigido CHEGA ao banco — `cluster_volume_estimate` do payload persistido', async () => {
+    // A correção só vale se sobreviver até a persistência: `cluster_volume_estimate` é coluna
+    // de `farmer_recommendations`, não número de tela. Com o numerador em ocorrências o
+    // CONCENTRADO gravava round(10/7*12) = 17; contando clientes grava round(1/7*12) = 2.
+    // Sem esta asserção, o payload poderia seguir carregando o número velho sem ninguém ver.
+    const result = await rodar();
+    const linhas = (persistidas[0]?.p_linhas ?? []) as Array<{
+      product_id: string; recommendation_type: string; cluster_volume_estimate: number;
+    }>;
+    const cross = linhas.filter((l) => l.recommendation_type === 'cross_sell');
+    expect(cross.length).toBeGreaterThan(0);
+    const concentrado = cross.find((l) => l.product_id === SKU_CONCENTRADO);
+    expect(concentrado?.cluster_volume_estimate).toBe(2);
+    // E o que a tela mostra é o MESMO que foi gravado — nenhum dos dois inventa o seu próprio.
+    expect(crossSellDe(result).find((r) => r.productId === SKU_CONCENTRADO)!.clusterVolume).toBe(2);
+  });
 });
