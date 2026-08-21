@@ -10,7 +10,7 @@
 // ele resolve o vendedor por `auth.uid()` FIXO, valida a transição e é o único
 // ponto que carimba as colunas de desfecho. Este hook é transporte + tradução de
 // erro. Ver supabase/migrations/20260821194411_farmer_recomendacao_desfecho.sql.
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
@@ -81,13 +81,21 @@ export function useFarmerDesfecho() {
   const { isImpersonating } = useImpersonation();
   /** Desfechos registrados NESTA sessão, por chave — o card reflete sem refetch. */
   const [registrados, setRegistrados] = useState<Record<string, Desfecho>>({});
-  /** Chave em gravação. Trava o card inteiro: dois cliques = dois UPDATEs. */
+  /** Chave em gravação — o que a UI DESENHA (spinner, botões desabilitados). */
   const [registrando, setRegistrando] = useState<string | null>(null);
+  /**
+   * A trava de verdade. `registrando` é o valor do RENDER: dois cliques no mesmo
+   * tick leem ambos `null` e passam, porque o `setState` não é síncrono. O banco
+   * recusaria o segundo (a linha já não é 'pendente' ⇒ FD004), mas a vendedora
+   * veria um toast de erro por ter tocado duas vezes num alvo de 44px.
+   */
+  const gravandoRef = useRef(false);
 
   const registrar = useCallback(
     async (alvo: AlvoDesfecho, desfecho: Desfecho, motivo?: MotivoRecusa): Promise<boolean> => {
       const chave = chaveDoAlvo(alvo);
-      if (isImpersonating || registrando) return false;
+      if (isImpersonating || gravandoRef.current) return false;
+      gravandoRef.current = true;
       setRegistrando(chave);
       // [SENSOR] Emitido depois do guard e ANTES do await, como no BotoesDesfecho do
       // plano tático: toque barrado não é tentativa, e o caso que mais interessa
@@ -130,11 +138,15 @@ export function useFarmerDesfecho() {
       } finally {
         // `finally`, não o fim do try: sem ele uma falha de rede travaria o card em
         // "salvando" para sempre, e o desfecho se perderia justamente no caso em
-        // que ela tentou.
+        // que ela tentou. Os DOIS são soltos aqui — deixar a ref presa travaria o
+        // hook inteiro em silêncio, sem nem o spinner para denunciar.
+        gravandoRef.current = false;
         setRegistrando(null);
       }
     },
-    [isImpersonating, registrando],
+    // `registrando` sai das deps: a trava agora é a ref, e mantê-lo aqui recriaria
+    // o callback a cada gravação sem mudar comportamento nenhum.
+    [isImpersonating],
   );
 
   return { registrar, registrados, registrando, bloqueadoPelaLente: isImpersonating };

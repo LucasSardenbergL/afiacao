@@ -164,3 +164,32 @@ describe('o sensor mede a TENTATIVA, não só o sucesso', () => {
     expect(eventos().filter(([n]) => n === 'recomendacao.desfecho_clicado')).toHaveLength(0);
   });
 });
+
+describe('a trava de concorrência é síncrona', () => {
+  it('[TRAVA] dois cliques no MESMO tick geram UMA chamada', async () => {
+    // `registrando` é o valor do RENDER — dois cliques antes do re-render leriam
+    // ambos `null` e passariam. A trava real é uma ref, checada de forma síncrona.
+    let resolver: (v: unknown) => void = () => {};
+    rpcMock.mockImplementation(() => new Promise((r) => { resolver = r; }));
+    render(<Host />);
+    const b = screen.getByRole('button', { name: 'Cliente comprou' });
+    fireEvent.click(b);
+    fireEvent.click(b);
+    fireEvent.click(b);
+    expect(rpcMock).toHaveBeenCalledTimes(1);
+    resolver({ data: null, error: null });
+    await waitFor(() => expect(screen.getByText('Venda registrada')).toBeInTheDocument());
+  });
+
+  it('[TRAVA] a trava é SOLTA após um erro — o card não congela', async () => {
+    // Sem soltar a ref no finally, uma falha travaria o hook inteiro em silêncio:
+    // os botões voltariam a parecer clicáveis e nenhum clique faria nada.
+    rpcMock.mockResolvedValue({ data: null, error: { code: 'FD004', message: 'x' } });
+    render(<Host />);
+    fireEvent.click(screen.getByRole('button', { name: 'Cliente comprou' }));
+    await waitFor(() => expect(toastMock.error).toHaveBeenCalledTimes(1));
+    rpcMock.mockResolvedValue({ data: null, error: null });
+    fireEvent.click(screen.getByRole('button', { name: 'Cliente comprou' }));
+    await waitFor(() => expect(screen.getByText('Venda registrada')).toBeInTheDocument());
+  });
+});
