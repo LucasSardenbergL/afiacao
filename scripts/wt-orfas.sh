@@ -139,7 +139,17 @@ eh_pendente() {
 
 # ─────────────────────────── coleta ───────────────────────────────────────────
 
-mtime_de() { stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null || echo 0; }
+# GNU primeiro e validando NUMERO, nao confiando no `||`: no Linux `stat -f %m` NAO falha do jeito
+# que o idioma supoe (-f la e --file-system e nao consome formato) — sai !=0 mas ANTES ja despejou no
+# stdout o bloco multi-linha do filesystem, e o `a || b` concatena os dois. Mordido 2× em hooks
+# (branch-pos-squash-guard, read-contexto-nudge). Ver docs/agent/worktrees.md.
+mtime_de() {
+  local v
+  v="$(stat -c %Y "$1" 2>/dev/null)"
+  case "$v" in '' | *[!0-9]*) v="$(stat -f %m "$1" 2>/dev/null)" ;; esac
+  case "$v" in '' | *[!0-9]*) v=0 ;; esac
+  printf '%s' "$v"
+}
 
 # metadados de UM transcript, numa passada só de grep (os .jsonl têm MBs; jq
 # direto neles é lento demais). Emite (· = SEP):

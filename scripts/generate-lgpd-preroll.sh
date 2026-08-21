@@ -61,6 +61,10 @@ if [[ "${HTTP_CODE}" != "200" ]]; then
 fi
 
 SIZE=$(du -h "${OUTPUT_FILE}" | cut -f1)
+# NAO copie este `a || b` como modelo: ele so sobrevive porque o formato esta COLADO na flag —
+# o GNU rejeita `-f%z` como cluster de opcoes invalidas (exit 1, stdout VAZIO). Com espaco
+# (`stat -f %z`) o GNU imprimiria o bloco do filesystem e o `||` concatenaria lixo.
+# Ver docs/agent/worktrees.md (portabilidade BSD x GNU).
 SIZE_BYTES=$(stat -f%z "${OUTPUT_FILE}" 2>/dev/null || stat -c%s "${OUTPUT_FILE}" 2>/dev/null)
 
 if [[ "${SIZE_BYTES}" -lt 5000 ]]; then
