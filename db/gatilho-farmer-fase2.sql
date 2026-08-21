@@ -95,6 +95,61 @@ marcada AS (
     -- INCLUIR uma leitura crua numa allowlist custaria o cap passar batido, que é a licença
     -- para a fase 2 expirar carteira em cima de dado truncado. Escapar da checagem exige o ato
     -- afirmativo de declarar um universo.
+    --
+    -- ── TAXONOMIA, chave a chave (conferida no CÓDIGO em 21/08/2026, #1843 já mergeado) ────
+    --
+    -- Quem classifica não é o NOME do insumo — é o que produz o `n`. Três classes, e só a
+    -- primeira pode carregar a assinatura de cap:
+    --   (a) cardinalidade BRUTA de uma leitura;
+    --   (b) interseção / contagem DERIVADA de uma leitura;
+    --   (c) contagem sobre a SAÍDA do motor (nunca tocou o PostgREST).
+    --
+    -- `regras` é a prova de que o eixo é o MOTOR, não o nome: no cross-sell é (a) — leitura
+    -- CRUA de `farmer_association_rules`, `.select()` sem `.range()` (useCrossSellEngine:489),
+    -- a única leitura viva que ainda pode ser capada; no bundle é (c) — saída do Apriori que
+    -- roda no browser. Uma allowlist por NOME precisaria pôr a MESMA chave nas duas classes.
+    --
+    --   chave                                    classe  declara `esperado`?  origem do `n`
+    --   regras (cross_sell) ....................... (a)   não   .select() CRU ← pode capar
+    --   catalogo · scores ......................... (a)   não   fetchAllPages
+    --   vendaveis ................................. (b)   não   Set de fetchAllPages (RPC)
+    --   pedidos · carteira_ativa .................. (b)   não   Set/filtro sobre sales_orders
+    --   regras (bundle) ........................... (c)   não   Apriori in-browser
+    --   clientes_com_profile ...................... (b)   SIM   profiles em `.in()` de 100
+    --   carteira_com_historico_utilizavel ......... (b)   SIM   fetchAllPages
+    --   baskets · itens_identidade_conforme ....... (b)   SIM   fetchAllPages
+    --   bundle_conta_unica · oferta_conta_do_c. ... (c)   SIM   saída do motor
+    --   candidatos_conta_do_c. · upsell_ordem_d. .. (c)   SIM   saída do motor
+    --   comparacao_individual_leitura ............. (c)   SIM   booleano 0|1
+    --   comparacao_individual_produto_resolvido ... (c)   SIM   loop sobre a saída
+    --
+    -- NENHUMA chave que declara `esperado` é (a) — e essa era a pergunta perigosa: se uma
+    -- fosse, o filtro estrutural teria DESLIGADO em silêncio a detecção de cap para ela, que é
+    -- a falha ABERTA que o money-path proíbe. Duas razões independentes sustentam isso, e
+    -- nenhuma delas depende de lembrar de cadastrar chave nova:
+    --   • `fetchAllPages` só PARA quando uma página vem com MENOS de 1.000 (postgrest.ts:180),
+    --     então um total de exatamente 1.000 é universo verdadeiro, nunca cap;
+    --   • as duas leituras que NÃO paginam são imunes por outra via — `profiles` do cross-sell
+    --     pede lotes de 100 (`.in()`), e `farmer_melhor_individual_por_cliente` é
+    --     `RETURNS jsonb`, 1 tupla (o cap conta LINHAS; conferido em prod por pg_proc).
+    --
+    -- Falsos positivos que RESTAM, e são a direção barata (janela encolhe, fase 2 espera mais):
+    -- `pedidos` é derivada, não declara `esperado` e JÁ ATRAVESSOU a faixa — 861 → 1.227 no
+    -- #1822. Uma execução que tivesse caído no 1.000 exato teria descartado a história inteira
+    -- deste motor. `carteira_ativa` (269), `regras`/bundle (24) e `vendaveis` (2.465) estão
+    -- longe da faixa hoje.
+    --
+    -- ⚠️ O teste é por OCORRÊNCIA, não por nome, e isso é o certo numa tabela append-only:
+    -- `clientes_com_profile` tem 14 ocorrências gravadas e só 5 trazem `esperado` (as outras
+    -- são de gerações anteriores do cliente). As antigas seguem checadas.
+    --
+    -- ⚠️ O predicado olha só `n`. Em `baskets` quem espelha a cardinalidade bruta é o
+    -- `esperado` (= `salesOrders.length`): se um dia essa leitura deixar de paginar, o cap
+    -- apareceria no `esperado` e passaria batido aqui. Hoje ela pagina.
+    --
+    -- Prova executável, nos dois sentidos e falsificada por sabotagem (o predicado pré-#1843
+    -- entra como controle, e o conjunto REPROVA se nenhum caso distinguir os dois):
+    --   ~/.config/afiacao/psql-ro -v ON_ERROR_STOP=1 -f db/falsifica-discriminador-cap-farmer.sql
     EXISTS (SELECT 1 FROM jsonb_each(insumos) AS i(nome, val)
             WHERE NOT (val ? 'esperado')
               AND (val->>'n')::int = 1000) AS tem_cap
