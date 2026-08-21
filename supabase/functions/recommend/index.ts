@@ -182,7 +182,16 @@ async function recommend(
   // Cluster similarity - load cluster customers + their purchases in parallel
   const customerCluster = clientScore?.health_class || "misto";
 
-  const { clusterUserIds, clusterPurchases } = await carregarCluster(banco, customerCluster);
+  const { clusterUserIds, clusterPurchases, amostraNoTeto } = await carregarCluster(banco, customerCluster);
+  if (amostraNoTeto) {
+    // O sinal do teto tem de CHEGAR em alguém: um campo que ninguém lê é o cap silencioso com
+    // outro nome (2ª rodada do Codex — "contrato novo morto"). O log da edge é o consumidor
+    // barato; expor no `meta` da resposta mudaria o contrato da API e é decisão de produto.
+    console.warn(
+      `[Recommend] amostra de similaridade NO TETO (${clusterPurchases.length} compras de ` +
+        `${clusterUserIds.length} clientes do cluster "${customerCluster}") — sim_score pode ser parcial`,
+    );
+  }
   // ⚠️ DENOMINADOR PRÉ-EXISTENTE, preservado verbatim: `clusterSize` conta os até 100 clientes
   // do cluster, mas as compras vêm só dos 50 primeiros — então `sim` sai sistematicamente pela
   // METADE. `minMaxNorm` é invariante a fator uniforme (o `sim_score` normalizado do ranking não

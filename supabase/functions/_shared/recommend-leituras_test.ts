@@ -39,7 +39,11 @@ async function assertLanca(fn: () => Promise<unknown>, msg: string): Promise<Err
 // olhando só o resultado de um double que devolve as páginas já ordenadas.
 type Registro = {
   tabela: string;
+  colunas: string;
   order: string | null;
+  // Guardado separado do nome da coluna: um `.order("id", {ascending:false})` mantém a ordem
+  // ESTÁVEL (o gate textual passaria) e mesmo assim inverte QUAIS linhas entram num `.limit()`.
+  ascending: boolean | null;
   filtros: string[];
   ranges: Array<[number, number]>;
   limit: number | null;
@@ -58,14 +62,16 @@ const CAP_POSTGREST = 1000;
 
 function fakeDb(
   porTabela: Record<string, Linha[]>,
-  opts: { erroEm?: string; codigo?: string } = {},
+  opts: { erroEm?: string; codigo?: string; nulaEm?: string } = {},
 ) {
   const registros: Registro[] = [];
 
   // Um registro por `from()` — ou seja, um por PÁGINA, que é o que permite afirmar que
   // TODA página (não só a primeira) foi pedida com `.order()` estável.
   function query(tabela: string): QueryPostgrest<Linha> {
-    const reg: Registro = { tabela, order: null, filtros: [], ranges: [], limit: null, single: false };
+    const reg: Registro = {
+      tabela, colunas: "", order: null, ascending: null, filtros: [], ranges: [], limit: null, single: false,
+    };
     registros.push(reg);
     // Os predicados filtram DE VERDADE: um double que registra o filtro sem aplicá-lo
     // mediria mais linhas do que a query devolveria, e o teste ficaria falso-verde.
@@ -73,6 +79,14 @@ function fakeDb(
 
     function corpo(): Linha[] {
       const linhas = (porTabela[tabela] ?? []).filter((l) => predicados.every((p) => p(l)));
+      // Ordena DE VERDADE: um double que só registra `.order()` deixa `ascending:false` verde,
+      // e no cluster isso troca QUAIS 100 clientes entram na amostra (2ª rodada do Codex).
+      if (reg.order) {
+        const col = reg.order;
+        linhas.sort((a, b) =>
+          String(a[col] ?? "").localeCompare(String(b[col] ?? "")) * (reg.ascending === false ? -1 : 1)
+        );
+      }
       const alcance = reg.ranges[reg.ranges.length - 1];
       if (alcance) return linhas.slice(alcance[0], alcance[1] + 1);
       const teto = reg.limit ?? CAP_POSTGREST;
@@ -83,11 +97,15 @@ function fakeDb(
       if (opts.erroEm === tabela) {
         return { data: null, error: { message: "boom", code: opts.codigo ?? "57014" } };
       }
+      // `data:null` SEM error: resposta MALFORMADA do PostgREST. Não é "lista vazia" —
+      // é o EOF falso que `fetchAll`/`exigirLista` existem para rejeitar.
+      if (opts.nulaEm === tabela) return { data: null, error: null };
       return { data: corpo(), error: null };
     }
 
     const q: QueryPostgrest<Linha> = {
-      select(_colunas: string) {
+      select(colunas: string) {
+        reg.colunas = colunas;
         return q;
       },
       eq(coluna: string, valor: unknown) {
@@ -115,8 +133,9 @@ function fakeDb(
         reg.filtros.push(`not:${coluna} ${operador}`);
         return q;
       },
-      order(coluna: string, _opts?: { ascending?: boolean }) {
+      order(coluna: string, opts?: { ascending?: boolean }) {
         reg.order = coluna;
+        reg.ascending = opts?.ascending ?? true;
         return q;
       },
       range(de: number, ate: number) {
@@ -342,7 +361,7 @@ Deno.test("cluster: .limit() é amostra deliberada, mas pedida com .order('id') 
     order_items: itens(300, "u00000"),
   });
   const { clusterUserIds } = await carregarCluster(db, "critico");
-  assertEquals(clusterUserIds.length, TETO_CLUSTER_CLIENTES, "teto do cluster mudou sem o teste saber");
+  assertEquals(clusterUserIds.length, 100, "teto do cluster mudou sem o teste saber");
   const semOrdem = registros.filter((r) => r.limit !== null && r.order !== "id");
   if (semOrdem.length > 0) {
     throw new Error(`amostra sem ordem estável em: ${semOrdem.map((r) => r.tabela).join(", ")}`);
@@ -368,7 +387,7 @@ Deno.test("cluster vazio: nenhuma compra buscada e nenhum erro (health_class sem
   assertEquals(registros.filter((x) => x.tabela === "order_items").length, 0, "buscou compras de cluster vazio");
 });
 
-Deno.test("cluster: a amostra saturada é SINALIZADA (cap deliberado não é cap silencioso)", async () => {
+Deno.test("cluster: a amostra NO TETO é SINALIZADA (cap deliberado não é cap silencioso)", async () => {
   const muitos = Array.from({ length: TETO_CLUSTER_COMPRAS + 500 }, (_, i) => ({
     id: `i${String(i).padStart(6, "0")}`,
     product_id: `p${i % 50}`,
@@ -377,5 +396,94 @@ Deno.test("cluster: a amostra saturada é SINALIZADA (cap deliberado não é cap
   const { db } = fakeDb({ farmer_client_scores: scoresDoCluster(60), order_items: muitos });
   const r = await carregarCluster(db, "critico");
   assertEquals(r.clusterPurchases.length, TETO_CLUSTER_COMPRAS);
-  assertEquals(r.amostraSaturada, true, "saturação da amostra não foi exposta no contrato");
+  assertEquals(r.amostraNoTeto, true, "o teto da amostra não foi exposto no contrato");
+});
+
+// ── 7. Os buracos que a 2ª rodada do Codex encontrou nesta própria suíte ───────────────
+
+Deno.test("tetos pinados por LITERAL — comparar com a constante importada é tautologia", () => {
+  // Subir TETO_CLUSTER_CLIENTES para 1.000 mantinha tudo verde e dividia `sim` por 1.000
+  // enquanto as compras seguiam vindo de 50: os cortes de cluster cairiam 10×.
+  assertEquals(TETO_CLUSTER_CLIENTES, 100, "teto de clientes do cluster mudou");
+  assertEquals(TETO_CLUSTER_USUARIOS_AMOSTRA, 50, "teto de usuários amostrados mudou");
+  assertEquals(TETO_CLUSTER_COMPRAS, 1000, "teto de compras da amostra mudou");
+  if (TETO_CLUSTER_USUARIOS_AMOSTRA > TETO_CLUSTER_CLIENTES) {
+    throw new Error("amostrar mais usuários do que o cluster tem é incoerente");
+  }
+});
+
+Deno.test("as colunas de DINHEIRO estão no .select() — tirar uma some com margem/EIP calado", () => {
+  const { db, registros } = fakeDb(bancoCheio());
+  return carregarInsumos(db, CLIENTE).then(() => {
+    const colunasDe = (t: string) => registros.filter((r) => r.tabela === t).map((r) => r.colunas).join(" ");
+    for (const col of ["cost_final", "cost_source", "cost_price", "cost_confidence", "product_id"]) {
+      if (!colunasDe("product_costs").includes(col)) {
+        throw new Error(`product_costs deixou de pedir '${col}' — custo some sem sinal`);
+      }
+    }
+    for (const col of ["valor_unitario", "estoque", "id"]) {
+      if (!colunasDe("omie_products").includes(col)) {
+        throw new Error(`omie_products deixou de pedir '${col}' — preço/estoque somem sem sinal`);
+      }
+    }
+  });
+});
+
+Deno.test("toda ordenação é ASCENDENTE — `ascending:false` é ordem estável que troca a amostra", async () => {
+  const { db, registros } = fakeDb(bancoCheio());
+  await carregarInsumos(db, CLIENTE);
+  const descendentes = registros.filter((r) => r.order !== null && r.ascending === false);
+  if (descendentes.length > 0) {
+    throw new Error(`ordem descendente em: ${descendentes.map((r) => r.tabela).join(", ")}`);
+  }
+});
+
+Deno.test("cluster: `ascending:false` mudaria QUAIS clientes entram (o double ordena de verdade)", async () => {
+  const { db } = fakeDb({ farmer_client_scores: scoresDoCluster(6185) });
+  const { clusterUserIds } = await carregarCluster(db, "critico");
+  // Prova que a ordenação do double MORDE: ascendente pega o menor id, não um qualquer.
+  assertEquals(clusterUserIds[0], "u00000", "a amostra não veio do começo da ordem");
+  assertEquals(clusterUserIds[99], "u00099", "a amostra não é contígua na ordem pedida");
+});
+
+for (const tabela of ["omie_products", "product_costs", "order_items", "recommendation_config"]) {
+  Deno.test(`\`data:null\` SEM error em ${tabela} LANÇA — malformada ≠ lista vazia`, async () => {
+    const { db } = fakeDb(bancoCheio(), { nulaEm: tabela });
+    const erro = await assertLanca(() => carregarInsumos(db, CLIENTE), `null em ${tabela}`);
+    if (!(erro instanceof FalhaLeituraCritica)) {
+      throw new Error(`esperava FalhaLeituraCritica, veio ${erro.name}: ${erro.message}`);
+    }
+  });
+}
+
+Deno.test("cluster: `data:null` SEM error LANÇA — é o que falsifica o exigirLista", async () => {
+  const { db } = fakeDb({ farmer_client_scores: scoresDoCluster(10) }, { nulaEm: "farmer_client_scores" });
+  const erro = await assertLanca(() => carregarCluster(db, "critico"), "cluster null");
+  if (!(erro instanceof FalhaLeituraCritica)) {
+    throw new Error(`esperava FalhaLeituraCritica, veio ${erro.name}: ${erro.message}`);
+  }
+});
+
+Deno.test("o `code` do PostgREST SOBREVIVE ao envelope, e o texto do servidor NÃO", async () => {
+  const { db } = fakeDb(bancoCheio(), { erroEm: "product_costs", codigo: "57014" });
+  const erro = await assertLanca(() => carregarInsumos(db, CLIENTE), "custos");
+  if (!(erro instanceof FalhaLeituraCritica)) throw new Error(`veio ${erro.name}`);
+  // As duas metades juntas: diagnóstico preservado E mensagem pública fechada.
+  assertEquals(erro.codigo, "57014", "o code do PostgREST se perdeu no envelope");
+  if (!erro.message.includes("57014")) throw new Error(`o code não chegou à mensagem: ${erro.message}`);
+  if (erro.message.includes("boom")) throw new Error(`texto do servidor vazou: ${erro.message}`);
+});
+
+Deno.test("`amostraNoTeto` diz só o que sabe: EXATAMENTE no teto, sem nada cortado, ainda é true", async () => {
+  // O nome antigo ("saturada") afirmava "há mais compras" — com 1.000 existentes e 1.000
+  // lidas, nada foi cortado. Provar `true` aqui é o que trava o nome honesto no lugar.
+  const exatas = Array.from({ length: TETO_CLUSTER_COMPRAS }, (_, i) => ({
+    id: `i${String(i).padStart(6, "0")}`,
+    product_id: `p${i % 50}`,
+    customer_user_id: `u${String(i % TETO_CLUSTER_USUARIOS_AMOSTRA).padStart(5, "0")}`,
+  }));
+  const { db } = fakeDb({ farmer_client_scores: scoresDoCluster(60), order_items: exatas });
+  const r = await carregarCluster(db, "critico");
+  assertEquals(r.clusterPurchases.length, TETO_CLUSTER_COMPRAS);
+  assertEquals(r.amostraNoTeto, true, "no teto tem de ser sinalizado, mesmo sem corte");
 });

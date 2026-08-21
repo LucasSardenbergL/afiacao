@@ -61,14 +61,29 @@ import { exigirLeitura, exigirLista, FalhaLeituraCritica } from "./leitura-criti
  * classe no helper é entrega própria, não carona nesta.
  */
 async function paginarFonte<T>(
-  build: (de: number, ate: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>,
+  build: (
+    de: number,
+    ate: number,
+  ) => PromiseLike<{ data: T[] | null; error: { message: string; code?: string | null } | null }>,
   fonte: string,
 ): Promise<T[]> {
+  // O erro é interceptado AQUI, antes de `fetchAll` vê-lo: o helper reduz a resposta a
+  // ``new Error(`${label}: ${message}`)`` e o `code` do PostgREST (57014 timeout, 42501 RLS)
+  // se perde no caminho. Interceptando na origem, o código sobrevive para a classificação
+  // operacional e a mensagem PÚBLICA continua fechada (achado da 2ª rodada do Codex, que
+  // corrigiu minha afirmação anterior de que "o original fica em `cause`" — não ficava).
+  const comErroFechado = async (de: number, ate: number) => {
+    const res = await build(de, ate);
+    if (res.error) throw new FalhaLeituraCritica(fonte, res.error);
+    return res;
+  };
   try {
-    return await fetchAll<T>(build, fonte);
+    return await fetchAll<T>(comErroFechado, fonte);
   } catch (e) {
     if (e instanceof FalhaLeituraCritica) throw e;
-    const falha = new FalhaLeituraCritica(fonte, null);
+    // O que resta é o `data:null` sem erro, que `fetchAll` rejeita por conta própria — mesma
+    // resposta malformada que `exigirLista` nomeia, então mesmo código.
+    const falha = new FalhaLeituraCritica(fonte, { code: "MALFORMADA" });
     falha.cause = e;
     throw falha;
   }
@@ -153,11 +168,16 @@ export interface ClusterRecommend {
   usuariosAmostrados: string[];
   clusterPurchases: LinhaCompraCluster[];
   /**
-   * `true` quando a amostra bateu em `TETO_CLUSTER_COMPRAS` — há mais compras do que
-   * coube. Cap deliberado deixa de ser cap SILENCIOSO: o consumidor pode dizer que o
-   * `sim_score` saiu de uma amostra parcial em vez de afirmá-lo como se fosse o total.
+   * `true` quando a amostra bateu em `TETO_CLUSTER_COMPRAS`. Chama-se "no teto" e não
+   * "saturada" porque é exatamente isso que o código SABE: com 1.000 compras existentes e
+   * 1.000 lidas nada foi cortado, e o campo ainda assim é `true`. Afirmar "há mais compras"
+   * exigiria `count:'exact'`, que não se pede aqui. (2ª rodada do Codex — o nome anterior
+   * prometia mais do que a medição sustenta, que é a própria classe que esta entrega combate.)
+   *
+   * O que ele compra: o cap DELIBERADO deixa de ser cap SILENCIOSO — quem consome pode dizer
+   * que o `sim_score` pode ter saído de amostra parcial em vez de afirmá-lo como total.
    */
-  amostraSaturada: boolean;
+  amostraNoTeto: boolean;
 }
 
 /**
@@ -268,7 +288,7 @@ export async function carregarCluster(
   // `.in()` com lista vazia é round-trip inútil e, no PostgREST, a forma degenerada `in.()`.
   // Cluster vazio é estado legítimo (nenhum cliente naquele `health_class`).
   if (usuariosAmostrados.length === 0) {
-    return { clusterUserIds, usuariosAmostrados, clusterPurchases: [], amostraSaturada: false };
+    return { clusterUserIds, usuariosAmostrados, clusterPurchases: [], amostraNoTeto: false };
   }
 
   const clusterPurchases = exigirLista(
@@ -284,6 +304,6 @@ export async function carregarCluster(
     clusterUserIds,
     usuariosAmostrados,
     clusterPurchases,
-    amostraSaturada: clusterPurchases.length >= TETO_CLUSTER_COMPRAS,
+    amostraNoTeto: clusterPurchases.length >= TETO_CLUSTER_COMPRAS,
   };
 }
