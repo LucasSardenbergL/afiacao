@@ -736,47 +736,37 @@ export const useBundleEngine = () => {
       // o array INTEIRO — é ele que alimenta o filtro abaixo, não o top-50 que vai à tabela.
       insumos.regras = { ok: true, n: discoveredRules.length };
 
-      // Persist top rules — PULADO na lente "Ver como" (a tabela é GLOBAL: a troca
-      // substitui as regras de toda a base; o master inspeciona os bundles do alvo sem
-      // recalcular regras/recomendações da carteira dele).
+      // ESTE HOOK NÃO PUBLICA MAIS O MODELO GLOBAL. As regras acima seguem alimentando os
+      // bundles DESTA execução, em memória — o que saiu foi a persistência em
+      // `farmer_association_rules`, que é uma tabela GLOBAL.
       //
-      // Vai por RPC porque `delete()` + `insert()` são DUAS chamadas PostgREST, logo duas
-      // transações: falha entre elas deixava a tabela VAZIA — e ela alimenta o MixGap
-      // (`get_meu_mixgap`), o canal Melhorias (`melhoria_produtos_relacionados`), a edge
-      // `recommend` (assoc_score) e o `useCrossSellEngine`. A RPC faz DELETE+INSERT numa
-      // transação só: INSERT falho devolve as regras antigas. Provada em db/test-farmer-
-      // association-rules-atomica.sh (26 asserts + 4 falsificações).
-      let desfechoRegras: 'gravadas' | 'lente' | 'sem_regras' | 'falhou' = 'lente';
-      if (!isImpersonating) {
-        const regrasParaGravar = discoveredRules.slice(0, 50).map(r => ({
-          antecedent_product_ids: r.antecedent,
-          consequent_product_ids: r.consequent,
-          support: Math.round(r.support * 10000) / 10000,
-          confidence: Math.round(r.confidence * 10000) / 10000,
-          lift: Math.round(r.lift * 100) / 100,
-          rule_type: r.type,
-          sample_size: totalBaskets,
-        }));
-
-        if (regrasParaGravar.length === 0) {
-          // Zero regra descoberta quase sempre é dado faltando a montante, não "a base não
-          // tem padrão" — e apagar por isso derruba quatro features. Preserva o que está lá.
-          // (A RPC recusaria o lote vazio de qualquer jeito; não chamamos só pra tomar erro.)
-          desfechoRegras = 'sem_regras';
-        } else {
-          const { error: erroRegras } = await supabase.rpc('farmer_association_rules_substituir', {
-            p_regras: regrasParaGravar as unknown as Json,
-          });
-          // Sem `throw`: os bundles abaixo saem das regras em MEMÓRIA e continuam válidos.
-          // Mas o toast final não pode dizer que deu tudo certo.
-          if (erroRegras) {
-            console.error('Falha ao substituir farmer_association_rules:', erroRegras);
-            desfechoRegras = 'falhou';
-          } else {
-            desfechoRegras = 'gravadas';
-          }
-        }
-      }
+      // POR QUÊ (medido em prod, psql-ro, 2026-08-20/21). A tabela tinha DOIS escritores
+      // chamando a mesma RPC com modelos diferentes, e o último a escrever vencia:
+      //   · o cron `compute-association-rules-daily` (edge `omie-analytics-sync`) gravou 24
+      //     regras às 07:30 UTC com `sample_size` 479;
+      //   · este hook gravou 4 regras às 01:33 UTC do dia seguinte com `sample_size` 21.579,
+      //     porque alguém abriu a tela.
+      // Não é hipótese: foi observado ACONTECENDO durante a investigação. Os dois universos
+      // discordam (21.579 cestas aqui, de `sales_orders.items` com SKU ativo, contra 30.239
+      // no produtor server-side, de `order_items`), e a MESMA coluna `sample_size` passava a
+      // significar coisas diferentes conforme quem escreveu por último. Enquanto os dois
+      // existissem, corrigir um era ser revertido pelo outro no clique seguinte — a correção
+      // do cap de 1.000 no produtor teria meia-vida de uma abertura de tela.
+      //
+      // Violava, além disso, "1 escritor por slug" (CLAUDE.md): uma VISITA a uma tela não
+      // pode republicar o modelo de toda a base.
+      //
+      // O `rule_type: 'sequential'` que só este caminho produzia NÃO se perde de verdade: ele
+      // nunca foi um modelo sequencial — o código apenas TROCAVA o rótulo de uma regra de
+      // associação já descoberta quando achava uma ocorrência ordenada na janela, sem
+      // support/confidence próprios, sem exigir repetição e aceitando itens do MESMO pedido
+      // (diferença de zero dias). As 4 regras vivas em prod estavam TODAS rotuladas
+      // `sequential`, o que confirma que o rótulo não discrimina nada. Sequencial de verdade
+      // é outro modelo, com unidade, janela e métricas próprias — fatia separada.
+      //
+      // O fence de verdade é no BANCO (`REVOKE EXECUTE ... FROM authenticated` + a policy de
+      // escrita), não neste `if`: código do browser é uma via, não a fronteira (money-path §5).
+      // Este bloco sai para o operador não tomar um erro de permissão no lugar de um toast.
 
       // 4.5. O melhor produto individual de CADA cliente — UMA leitura, não N.
       //
@@ -1194,11 +1184,11 @@ export const useBundleEngine = () => {
       // no mesmo aviso: reportar só um deixaria o outro invisível.
       const totalBundles = allCustomerBundles.reduce((s, c) => s + c.bundles.length, 0);
       const problemas: string[] = [];
-      if (desfechoRegras === 'falhou') {
-        problemas.push('as regras NÃO foram salvas — as anteriores seguem valendo');
-      } else if (desfechoRegras === 'sem_regras') {
-        problemas.push('nenhuma regra atingiu os pisos — as regras anteriores foram preservadas');
-      }
+      // Os dois desfechos de PERSISTÊNCIA DE REGRA saíram junto com a escrita: este hook não
+      // publica mais `farmer_association_rules` (ver o bloco da seção 4). Sem escrita não há
+      // desfecho a relatar — e manter a frase "as regras NÃO foram salvas" seria pior que
+      // silêncio, porque afirmaria uma tentativa que não existe. As regras deste run seguem
+      // valendo em memória para os bundles abaixo; quem publica o modelo global é o cron.
       if (recomendacoesNaoGravadas > 0) {
         problemas.push(
           recomendacoesNaoGravadas === 1

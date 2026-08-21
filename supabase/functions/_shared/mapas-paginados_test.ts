@@ -64,6 +64,15 @@ function fakeDb(
         predicados.push((l) => alvo.has(l[coluna]));
         return q;
       },
+      // `.is(coluna, null)` — o predicado de soft-delete. Só o caso `null` está implementado
+      // de propósito: é o único uso no módulo, e um double que aceita `true`/`false` sem
+      // modelá-los mentiria por omissão no dia em que alguém os usasse.
+      is(coluna: string, valor: unknown) {
+        reg.filtros.push(`is:${coluna}=${String(valor)}`);
+        if (valor !== null) throw new Error(`double: .is(_, ${String(valor)}) não implementado`);
+        predicados.push((l) => l[coluna] === null || l[coluna] === undefined);
+        return q;
+      },
       gte(coluna: string, valor: unknown) {
         reg.filtros.push(`gte:${coluna}=${String(valor)}`);
         predicados.push((l) => String(l[coluna] ?? "") >= String(valor));
@@ -77,8 +86,18 @@ function fakeDb(
       not(coluna: string, operador: string, valor: unknown) {
         reg.filtros.push(`not:${coluna} ${operador} ${String(valor)}`);
         if (operador !== "in") throw new Error(`double: .not(_, ${operador}) não implementado`);
+        // O PostgREST aceita a lista do `in` com OU sem aspas por valor — `(a,b)` e
+        // `("a","b")` são equivalentes. Este double só entendia a forma SEM aspas, e por
+        // isso deu falso-VERMELHO quando o call-site passou a usar a constante canônica
+        // `STATUS_NAO_VENDA_POSTGREST` (que emite a forma COM aspas, a mesma que os três
+        // hooks do `src/` usam contra o PostgREST real em produção). Um double que modela
+        // menos que o serviço real reprova código íntegro — o §"o ALVO mente" na versão
+        // fake. Tira as aspas junto com os espaços.
         const fora = new Set(
-          String(valor).replace(/^\(|\)$/g, "").split(",").map((s) => s.trim()),
+          String(valor)
+            .replace(/^\(|\)$/g, "")
+            .split(",")
+            .map((s) => s.trim().replace(/^"|"$/g, "")),
         );
         predicados.push((l) => !fora.has(String(l[coluna])));
         return q;
@@ -241,10 +260,32 @@ Deno.test("pedidos do mês: filtra status/janela e ordena por id", async () => {
   assertEquals(linhas.length, 2);
   assertEquals(registros[0].order, "id");
   assertEquals(registros[0].filtros, [
-    "not:status in (cancelado,rascunho,pendente)",
+    // A literal de 3 status virou a constante canônica de 4 (`STATUS_NAO_VENDA_POSTGREST`,
+    // espelhada de `src/lib/farmer/universo-pedidos.ts`). A que estava aqui era uma 3ª cópia
+    // que já tinha divergido da autoridade — faltava `orcamento`. Efeito medido em prod antes
+    // de trocar: 0 linhas com `status = 'orcamento'`, logo é no-op HOJE; o que muda é a lista
+    // deixar de poder divergir de novo em silêncio. Pinado aqui de propósito: este assert é o
+    // que faria uma reversão da constante aparecer.
+    'not:status in ("cancelado","rascunho","pendente","orcamento")',
+    // A metade que faltava: sem ela um pedido APAGADO entrava no snapshot CONGELADO de
+    // positivação — o mês não é recalculado, então o erro não se corrige sozinho.
+    "is:deleted_at=null",
     "gte:order_date_kpi=2026-06-01",
     "lt:order_date_kpi=2026-07-01",
   ]);
+});
+
+Deno.test("pedidos do mês: pedido soft-deletado NÃO entra no snapshot congelado", async () => {
+  // Falsificação do predicado novo: sem o `.is('deleted_at', null)` este pedido apagado
+  // vira receita de um mês fechado. Sem este caso, remover o filtro seguiria VERDE.
+  const { db } = fakeDb({
+    sales_orders: [
+      ...pedidos(2),
+      ...pedidos(1).map((p) => ({ ...p, deleted_at: "2026-06-20T00:00:00Z" })),
+    ],
+  });
+  const linhas = await carregarPedidosDoMes(db, "2026-06-01", "2026-07-01");
+  assertEquals(linhas.length, 2);
 });
 
 Deno.test("pedidos do mês: página com ERRO lança — não vira receita 0", async () => {
