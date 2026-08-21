@@ -12,6 +12,8 @@ import {
   Plus,
 } from 'lucide-react';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
+import { BotoesDesfechoRecomendacao } from '@/components/farmer/recomendacoes/BotoesDesfechoRecomendacao';
+import { useFarmerDesfecho } from '@/hooks/useFarmerDesfecho';
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
@@ -32,6 +34,10 @@ const FarmerRecommendations = () => {
   const {
     recommendations, loading, calculating, calculateRecommendations, erro, desatualizado,
   } = useCrossSellEngine();
+  // UM escritor de desfecho por tela — não um por card. O estado de "gravando"
+  // é global de propósito: dois cliques em cards diferentes seriam dois UPDATEs
+  // concorrentes na mesma carteira.
+  const registroDesfecho = useFarmerDesfecho();
   const [expandedClient, setExpandedClient] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterType, setFilterType] = useState<'all' | 'cross_sell' | 'up_sell'>('all');
@@ -267,6 +273,18 @@ const FarmerRecommendations = () => {
                                 <Plus className="w-3 h-3" />
                                 {outOfStock ? 'Sem estoque' : 'Adicionar ao pedido'}
                               </Button>
+                              {/* O SENSOR. Sem ele o motor recomenda e nunca sabe se
+                                  acertou — 17.316 linhas com zero desfecho até aqui.
+                                  Só aparece quando há chave de negócio completa: sem
+                                  cliente ou sem produto a RPC não teria como achar a
+                                  linha, e um botão que só sabe falhar é pior que
+                                  botão nenhum. */}
+                              {!!rec.customerId && !!rec.productId && (
+                                <BotoesDesfechoRecomendacao
+                                  alvo={{ customerId: rec.customerId, productId: rec.productId, type: rec.type }}
+                                  registro={registroDesfecho}
+                                />
+                              )}
                             </CardContent>
                           </Card>
                           );
@@ -321,6 +339,18 @@ const FarmerRecommendations = () => {
                                 <Plus className="w-3 h-3" />
                                 {outOfStock ? 'Sem estoque' : 'Adicionar ao pedido'}
                               </Button>
+                              {/* O SENSOR. Sem ele o motor recomenda e nunca sabe se
+                                  acertou — 17.316 linhas com zero desfecho até aqui.
+                                  Só aparece quando há chave de negócio completa: sem
+                                  cliente ou sem produto a RPC não teria como achar a
+                                  linha, e um botão que só sabe falhar é pior que
+                                  botão nenhum. */}
+                              {!!rec.customerId && !!rec.productId && (
+                                <BotoesDesfechoRecomendacao
+                                  alvo={{ customerId: rec.customerId, productId: rec.productId, type: rec.type }}
+                                  registro={registroDesfecho}
+                                />
+                              )}
                             </CardContent>
                           </Card>
                           );
