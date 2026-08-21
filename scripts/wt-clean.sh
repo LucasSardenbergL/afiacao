@@ -77,7 +77,7 @@ else
   SONDA_ATIVIDADE=1
 fi
 
-active_file="$(mktemp -t wtclean)"
+active_file="$(mktemp)"
 trap 'rm -f "$active_file"' EXIT
 {
   for proc in claude bun node vite tsx vitest esbuild npm; do

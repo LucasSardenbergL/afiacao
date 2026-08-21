@@ -43,7 +43,15 @@ fi
 du_mb() {
   local alvo="$1" teto="${2:-$WT_CAP_ITEM}" saida rc tmp pid guard t0
   if [ -n "$WT_TIMEOUT_BIN" ]; then
-    saida="$("$WT_TIMEOUT_BIN" "$teto" du -sm "$alvo" 2>/dev/null)" && rc=0 || rc=$?
+    # A saída vai para ARQUIVO, não para `$(...)`. O `timeout` mata o `du`, mas
+    # não o neto que ele tenha gerado — e um neto vivo segura o pipe da
+    # substituição de comando, fazendo o teto valer nada na prática (medido: o
+    # caso "du lento" custava quase o mesmo COM e SEM teto sob carga, o que
+    # deixaria o teste flaky no CI). Com arquivo não há pipe a segurar.
+    tmp="$(mktemp)"
+    if "$WT_TIMEOUT_BIN" "$teto" du -sm "$alvo" >"$tmp" 2>/dev/null; then rc=0; else rc=$?; fi
+    saida="$(cat "$tmp" 2>/dev/null)"
+    rm -f "$tmp"
     [ "$rc" -eq 0 ] || return "$rc"
   else
     t0="$SECONDS"

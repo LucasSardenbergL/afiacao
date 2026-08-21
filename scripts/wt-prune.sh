@@ -28,8 +28,16 @@
 #
 # `git fetch origin --prune` é OBRIGATÓRIO no início; se falhar, não remove nada.
 #
-# ⚠️ Este script REMOVE worktrees. Três regras vieram do #1838 e da varredura dos
-# irmãos — as três travadas por `scripts/test-wt-prune.sh`:
+# ⚠️ Este script REMOVE worktrees. Quatro regras vieram do #1838 e da varredura
+# dos irmãos — todas travadas por `scripts/test-wt-prune.sh`:
+#
+#   0. `mktemp` puro, NUNCA `mktemp -t <prefixo>`: o BSD trata o argumento como
+#      PREFIXO e funciona; o GNU o trata como TEMPLATE e EXIGE `XXXXXX`, saindo
+#      1 com "too few X's". Sob `set -e` isso mata o script na primeira linha —
+#      ou seja, este script nunca rodou em Linux, e só se soube quando a suíte
+#      nova o EXECUTOU no CI Ubuntu (20 de 25 asserções vermelhas). É o mesmo
+#      eco que o #1838 levou do `vm_stat`, e a irmã da flag homônima BSD/GNU já
+#      registrada no CLAUDE.md — só que esta FALHA em vez de fazer outra coisa.
 #
 #   1. Sonda de segurança AUSENTE é fail-CLOSED, não "sem medida". Medidos DOIS
 #      casos, os dois virando remoção indevida em silêncio: (a) `lsof` devolvendo
@@ -91,7 +99,7 @@ if ! git rev-parse --verify origin/main >/dev/null 2>&1; then
 fi
 
 # --- mapa branch->headRefOid de PRs mergeados (best-effort) ------------------
-prmap="$(mktemp -t wtprune)"
+prmap="$(mktemp)"
 trap 'rm -f "$prmap" "$active_file" 2>/dev/null || true' EXIT
 if ! { command -v gh >/dev/null 2>&1 \
   && gh pr list --state merged --limit 2000 --json headRefName,headRefOid \
@@ -114,7 +122,7 @@ else
   SONDA_ATIVIDADE=1
 fi
 
-active_file="$(mktemp -t wtpruneact)"
+active_file="$(mktemp)"
 {
   for proc in claude bun node vite tsx vitest esbuild npm; do
     lsof -nP -a -c "$proc" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p'
