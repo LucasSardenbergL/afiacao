@@ -312,13 +312,25 @@ export const useCrossSellEngine = () => {
           'farmer_client_scores/cross-sell',
         );
 
-      // Try farmer-specific first, fallback to all (for super_admin). Na lente NÃO cai
-      // no fallback de "todos os scores" — escopa estritamente ao alvo (degradação
-      // honesta: alvo sem score → lista vazia, nunca a carteira de todo mundo).
-      let clientScores = await fetchAllScores(effectiveUserId);
-      if (!clientScores.length && !isImpersonating) {
-        clientScores = await fetchAllScores();
-      }
+      // ESCOPO ESTRITO: a carteira DESTE farmer, sempre. Aqui havia um fallback
+      // ("try farmer-specific first, fallback to all — for super_admin") que, ao ver a
+      // primeira leitura vazia, recarregava a base INTEIRA e a gravava com
+      // `p_farmer_id: effectiveUserId`. A condição nunca perguntou se o usuário é
+      // super_admin: perguntou se a leitura veio vazia — então carteira legitimamente
+      // vazia e falha de transporte armavam a mesma troca de escopo.
+      //
+      // Medido em prod (psql-ro, 21/08/2026), contra o dono ATUAL de cada cliente: o lote
+      // de abril sob o farmer 33f59dc7 cobria 166 clientes e só 25,9% eram dele — ele detém
+      // 18,8% da base, ou seja, recebeu o que o ACASO dá a quem sorteou da base inteira.
+      // Em maio, 4,3% de 138. Total: 2.676 linhas com `farmer_id` ≠ dono do cliente.
+      //
+      // E a linha fora de escopo não é só ruído de tela: as RPCs de substituição expiram
+      // `WHERE farmer_id = p_farmer_id`, então a oferta do cliente C gravada sob A quando o
+      // dono é B fica INVISÍVEL ao recálculo de B — o dono real recalcula e ela sobrevive,
+      // dando ao mesmo cliente duas gerações pendentes. A degradação honesta é a que a lente
+      // "Ver como" já usava: carteira vazia → lista vazia (tratada logo abaixo), nunca a
+      // carteira de todo mundo sob o nome de um. O gate FG008 da RPC recusa o resto.
+      const clientScores = await fetchAllScores(effectiveUserId);
 
       // `fetchAllPages` LANÇA em falha de página (#1545), então chegar aqui já significa
       // leitura íntegra — `ok: true`. O que ainda pode ser zero é o CONTEÚDO, e é essa a

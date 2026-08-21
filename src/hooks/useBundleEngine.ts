@@ -356,11 +356,15 @@ export const useBundleEngine = () => {
           'farmer_client_scores/bundle',
         );
 
-      // Try farmer-specific first, fallback to all (super_admin). Na lente NÃO cai no
-      // fallback "todos os scores" — escopa estritamente ao alvo (degradação honesta:
-      // alvo sem score → lista vazia, nunca a carteira de todo mundo).
-      let clientScores = await fetchAllScores(effectiveUserId);
-      if (!clientScores.length && !isImpersonating) clientScores = await fetchAllScores();
+      // ESCOPO ESTRITO: a carteira DESTE farmer, sempre. Aqui havia um fallback
+      // ("try farmer-specific first, fallback to all — super_admin") que, ao ver a primeira
+      // leitura vazia, recarregava a base INTEIRA e a gravava com `p_farmer_id:
+      // effectiveUserId`. A condição nunca perguntou se o usuário é super_admin: perguntou
+      // se a leitura veio vazia. Racional completo e os números de prod em
+      // `useCrossSellEngine` — o defeito era literalmente o mesmo nos dois motores, e a
+      // gêmea deste bundle deixou 12 linhas de março sob um farmer que não era o dono de
+      // nenhum dos 4 clientes. Carteira vazia → lista vazia (tratada logo abaixo).
+      const clientScores = await fetchAllScores(effectiveUserId);
 
       // As duas paginadas estouram a capa de 1.000 do PostgREST (3.108 SKUs ativos, 5.668
       // perfis) e vinham truncadas em silêncio: o profileMap deixava a maioria dos clientes sem
