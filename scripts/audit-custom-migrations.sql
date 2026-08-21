@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 478
+-- Total de custom migrations: 479
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -519,7 +519,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260818120000', 'authz_private_execute_fecho', '20260818120000_authz_private_execute_fecho.sql'),
   ('20260818121919', 'authz_fecho_execute_registrado_3_funcoes', '20260818121919_authz_fecho_execute_registrado_3_funcoes.sql'),
   ('20260820124611', 'farmer_melhor_individual_bulk', '20260820124611_farmer_melhor_individual_bulk.sql'),
-  ('20260820133119', 'farmer_melhor_individual_atomico', '20260820133119_farmer_melhor_individual_atomico.sql')
+  ('20260820133119', 'farmer_melhor_individual_atomico', '20260820133119_farmer_melhor_individual_atomico.sql'),
+  ('20260820225840', 'farmer_assoc_rules_escritor_unico', '20260820225840_farmer_assoc_rules_escritor_unico.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),

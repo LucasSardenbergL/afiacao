@@ -14,6 +14,7 @@
 // `--no-remote`, então um módulo testável não pode importar `npm:` nem para tipo. O
 // call-site passa `supabase as unknown as BancoPostgrest` (padrão do monthly-report).
 import { fetchAll, type BancoPostgrest } from "./paginate.ts";
+import { STATUS_NAO_VENDA_POSTGREST } from "./universo-pedidos.ts";
 
 export interface LinhaAssignment {
   customer_user_id: string;
@@ -71,7 +72,20 @@ export async function carregarPedidosDoMes(
     (de, ate) =>
       db.from<LinhaPedidoMes>("sales_orders")
         .select("customer_user_id, total, order_date_kpi")
-        .not("status", "in", "(cancelado,rascunho,pendente)")
+        // Era a literal `"(cancelado,rascunho,pendente)"` — TRÊS dos quatro status da
+        // autoridade (`orcamento` faltava), uma terceira cópia do conceito que já tinha
+        // divergido. Passa a apontar para o espelho canônico. Medido em prod antes de
+        // aplicar: 0 linhas com `status = 'orcamento'`, então é no-op HOJE — o que muda é
+        // que a lista deixa de poder divergir de novo em silêncio.
+        .not("status", "in", STATUS_NAO_VENDA_POSTGREST)
+        // A OUTRA METADE do contrato do universo. O espelho canônico avisa em prosa que
+        // `deleted_at IS NULL` anda junto da denylist e que quem consome tem de aplicar os
+        // DOIS — e este call-site aplicava só um. Apontar para a constante sem aplicar o par
+        // seria importar a promessa sem a defesa (achado do challenge Codex xhigh). Aqui o
+        // estrago seria pior que uma tela errada: este é o caller do SNAPSHOT CONGELADO de
+        // positivação, então um pedido apagado entraria como receita de um mês que ninguém
+        // recalcula. Medido em prod antes de aplicar: 0 linhas com `deleted_at` — no-op hoje.
+        .is("deleted_at", null)
         .gte("order_date_kpi", mesIso)
         .lt("order_date_kpi", fimIso)
         .order("id", { ascending: true })

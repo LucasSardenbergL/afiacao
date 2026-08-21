@@ -35,6 +35,14 @@ export interface QueryPostgrest<T> extends PromiseLike<RespostaPostgrest<T>> {
   gte(coluna: string, valor: unknown): QueryPostgrest<T>;
   lt(coluna: string, valor: unknown): QueryPostgrest<T>;
   not(coluna: string, operador: string, valor: unknown): QueryPostgrest<T>;
+  /**
+   * `IS` do PostgREST — na prática, o predicado de soft-delete (`.is('deleted_at', null)`).
+   * Entrou quando `carregarPedidosDoMes` passou a aplicar as DUAS metades do contrato do
+   * universo de pedidos (denylist de status + `deleted_at IS NULL`): faltava a segunda, e
+   * o caller é o do snapshot CONGELADO de positivação, onde um pedido apagado vira receita
+   * de um mês que ninguém recalcula.
+   */
+  is(coluna: string, valor: unknown): QueryPostgrest<T>;
   order(coluna: string, opts?: { ascending?: boolean }): QueryPostgrest<T>;
   range(de: number, ate: number): QueryPostgrest<T>;
   // `limit` é a AMOSTRA deliberada (teto de negócio), não a paginação: quem usa `limit`

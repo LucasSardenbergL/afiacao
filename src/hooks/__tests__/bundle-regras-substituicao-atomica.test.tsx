@@ -150,28 +150,48 @@ async function calcular() {
   return result;
 }
 
-describe('useBundleEngine — troca de regras é atômica ou não acontece', () => {
-  it('substitui via RPC e nunca apaga a tabela pelo cliente', async () => {
-    await calcular();
+/**
+ * ⚠️ ESTE ARQUIVO FOI INVERTIDO (2026-08-21). A invariante antiga era "substitui via RPC";
+ * a nova é "NÃO ESCREVE POR VIA NENHUMA".
+ *
+ * O que mudou não foi opinião, foi medição. `farmer_association_rules` tinha DOIS escritores
+ * chamando a mesma RPC com universos diferentes, e o último vencia. Medido em prod (psql-ro):
+ * o cron gravou 24 regras (`sample_size` 479) às 07:30 UTC; este hook gravou 4 regras
+ * (`sample_size` 21.579) às 01:33 UTC do dia seguinte, porque alguém abriu a tela. A corrida
+ * foi OBSERVADA acontecendo, não deduzida. Enquanto os dois existissem, corrigir o produtor
+ * server-side (que lia 479 dos 30.259 pedidos por causa do cap de 1.000 do PostgREST) teria
+ * meia-vida de uma abertura de tela.
+ *
+ * O teste antigo não estava errado no que afirmava — a atomicidade da RPC segue valendo e
+ * segue provada em `db/test-farmer-association-rules-atomica.sh`. Ele estava PINANDO uma
+ * escrita que não deve mais existir: um teste que exige `substituicoes()).toHaveLength(1)`
+ * transforma a remoção do 2º escritor em regressão vermelha. Por isso a inversão em vez do
+ * delete (money-path §6: teste pode canonizar o defeito — ao consertar, reverta o teste).
+ *
+ * DISCRIMINADOR NOVO, mais forte que o anterior: nenhuma via de escrita sobre
+ * `farmer_association_rules` pode partir do cliente — nem `delete()`, nem `insert()`,
+ * nem `update()`, nem a RPC. Em NENHUM cenário (caminho feliz, zero regras, lente).
+ *
+ * ⚠️ Este guard cobre o CÓDIGO. A fronteira de verdade é o BANCO (`REVOKE EXECUTE ... FROM
+ * authenticated` na RPC + a policy de escrita da tabela) — money-path §5: guard na fronteira
+ * que TODA via cruza, não só na UI. Um teste de fonte não impede um PostgREST cru.
+ */
+const escritasNaTabelaDeRegras = () =>
+  queries.filter(
+    (q) =>
+      q.table === 'farmer_association_rules' &&
+      q.metodos.some((m) => m === 'delete' || m === 'insert' || m === 'update' || m === 'upsert'),
+  );
 
-    expect(deletesNaTabelaDeRegras()).toHaveLength(0);
-    expect(substituicoes()).toHaveLength(1);
+describe('useBundleEngine — não publica mais o modelo global de regras', () => {
+  it('caminho feliz: descobre regras, usa em memória e NÃO escreve na tabela', async () => {
+    const result = await calcular();
 
-    const lote = substituicoes()[0].args.p_regras as Array<Record<string, unknown>>;
-    expect(lote.length).toBeGreaterThan(0);
-    expect(lote[0]).toMatchObject({ rule_type: expect.stringMatching(/^(association|sequential)$/) });
-  });
+    // As regras seguem existindo — o que saiu foi a persistência, não a mineração.
+    expect(result.current.rules.length).toBeGreaterThan(0);
 
-  it('RPC falhando NÃO emite toast de sucesso — e nada foi apagado', async () => {
-    rpcFalha = true;
-    await calcular();
-
-    // O ponto do parecer: falhou, então a tela não pode dizer que gravou.
-    expect(toastMock.success).not.toHaveBeenCalled();
-    expect(toastMock.warning).toHaveBeenCalledTimes(1);
-    expect(String(toastMock.warning.mock.calls[0][0])).toContain('anteriores seguem valendo');
-
-    // E as regras que já estavam lá sobrevivem, porque nenhum DELETE partiu daqui.
+    expect(substituicoes()).toHaveLength(0);
+    expect(escritasNaTabelaDeRegras()).toHaveLength(0);
     expect(deletesNaTabelaDeRegras()).toHaveLength(0);
   });
 
@@ -182,21 +202,41 @@ describe('useBundleEngine — troca de regras é atômica ou não acontece', () 
     expect(toastMock.warning).not.toHaveBeenCalled();
   });
 
-  it('zero regras descobertas preserva as vigentes — não chama a RPC nem apaga', async () => {
+  it('o toast não fala mais de persistência de REGRA — não há escrita a relatar', async () => {
+    await calcular();
+
+    // Falar "as regras NÃO foram salvas" seria pior que silêncio: afirmaria uma tentativa
+    // que não existe. As duas frases antigas saíram junto com a escrita.
+    const ditos = [...toastMock.success.mock.calls, ...toastMock.warning.mock.calls]
+      .map((c) => String(c[0]))
+      .join(' | ');
+    expect(ditos).not.toContain('anteriores seguem valendo');
+    expect(ditos).not.toContain('regras anteriores foram preservadas');
+  });
+
+  it('zero regras descobertas: nada de escrita, e nada de aviso sobre regra', async () => {
     semPedidos = true;
     await calcular();
 
     expect(substituicoes()).toHaveLength(0);
-    expect(deletesNaTabelaDeRegras()).toHaveLength(0);
-    expect(toastMock.success).not.toHaveBeenCalled();
-    expect(String(toastMock.warning.mock.calls[0][0])).toContain('preservadas');
+    expect(escritasNaTabelaDeRegras()).toHaveLength(0);
   });
 
-  it('na lente "Ver como" não escreve nada (o master inspeciona, não regrava)', async () => {
+  it('na lente "Ver como" também não escreve (era o único cenário já protegido)', async () => {
     naLente = true;
     await calcular();
 
     expect(substituicoes()).toHaveLength(0);
-    expect(deletesNaTabelaDeRegras()).toHaveLength(0);
+    expect(escritasNaTabelaDeRegras()).toHaveLength(0);
+  });
+
+  it('a RPC falhando é IRRELEVANTE agora — o hook não a chama em cenário nenhum', async () => {
+    // Falsificação do próprio guard: se alguém reintroduzir a escrita, `rpcFalha` volta a
+    // ter efeito e este teste fica vermelho junto com os de cima.
+    rpcFalha = true;
+    await calcular();
+
+    expect(substituicoes()).toHaveLength(0);
+    expect(toastMock.success).toHaveBeenCalledTimes(1);
   });
 });

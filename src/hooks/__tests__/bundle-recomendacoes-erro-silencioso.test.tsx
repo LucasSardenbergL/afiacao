@@ -219,15 +219,30 @@ describe('useBundleEngine — a gravação das recomendações de bundle não fa
     expect(avisos()[0]).toContain('recomenda');
   });
 
-  it('as duas falhas juntas (regras + recomendações) aparecem no MESMO aviso', async () => {
-    regrasFalham = true;
+  // ⚠️ REESCRITO (2026-08-21). Este caso exigia que o aviso trouxesse as DUAS falhas —
+  // regras + recomendações — e casava a frase 'anteriores seguem valendo', que era do ramo
+  // de falha da PERSISTÊNCIA DE REGRAS. Esse ramo não existe mais: o hook deixou de publicar
+  // `farmer_association_rules` (tabela GLOBAL com dois escritores concorrentes; a corrida foi
+  // medida acontecendo em prod — cron gravou 24 regras às 07:30 UTC, o browser gravou 4 às
+  // 01:33 UTC do dia seguinte). Sem escrita não há desfecho de escrita a relatar.
+  //
+  // O invariante que SOBREVIVE — e que era o ponto real deste arquivo — é que a falha da
+  // gravação de RECOMENDAÇÕES não sai calada. Ele continua pinado abaixo. Manter a asserção
+  // antiga transformaria a remoção do 2º escritor em regressão vermelha (money-path §6:
+  // teste pode canonizar o que se quer remover).
+  it('a falha das recomendações continua aparecendo — e sozinha, sem inventar a das regras', async () => {
+    regrasFalham = true;      // deixado LIGADO de propósito: hoje não deve produzir efeito nenhum
     insertRecsFalha = true;
     await calcular();
 
     expect(toastMock.success).not.toHaveBeenCalled();
     expect(toastMock.warning).toHaveBeenCalledTimes(1);
     expect(avisos()[0]).toContain('recomenda');
-    expect(avisos()[0]).toContain('anteriores seguem valendo');
+
+    // E o aviso NÃO pode falar de regra: afirmar "as regras não foram salvas" quando não
+    // houve tentativa é pior que silêncio — é relatar um desfecho que não aconteceu.
+    expect(avisos()[0]).not.toContain('anteriores seguem valendo');
+    expect(avisos()[0]).not.toContain('regras anteriores foram preservadas');
   });
 
   it('grava as recomendações numa ÚNICA chamada em lote, não uma por vez', async () => {

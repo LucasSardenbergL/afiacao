@@ -2579,3 +2579,151 @@ describe('guardrail money-path: calculate-scores renormaliza via módulo testáv
     }
   });
 });
+
+// ── computeAssociationRules: o universo do Apriori é PAGINADO, ORDENADO e FILTRADO ──────
+//
+// O defeito (medido em prod via psql-ro, 2026-08-20/21): a leitura era UMA chamada só,
+// `db.from("order_items").select("sales_order_id, product_id").not("product_id","is",null)`,
+// sem paginação, sem `.order()`, sem filtro de status, e com o `error` DESCARTADO na
+// desestruturação. O cap silencioso de 1.000 do PostgREST entregava 479 dos 30.259 pedidos —
+// e o `sample_size` das 24 regras vigentes era 479 em TODAS, o que prova que o universo de
+// PRODUÇÃO era a fatia. Uma réplica SQL do algoritmo rodada sobre `LIMIT 1000` reproduziu as
+// 24 regras EXATAMENTE (mesmos pares, mesmo lift até 6 casas).
+//
+// Por que TEXTUAL e por que AQUI: a edge é Deno, fora do typecheck e do vitest; `test:edges`
+// não enxerga a FORMA da query e `edges:typecheck` não roda a leitura. Este é o único dos
+// três gates de edge que pega a regressão — inclusive uma reescrita do Lovable no deploy.
+const ASSOC_INICIO = 'async function computeAssociationRules(';
+
+function blocoAssoc(s: string): string {
+  const i = s.indexOf(ASSOC_INICIO);
+  if (i < 0) throw new Error('computeAssociationRules não encontrada (âncora quebrada)');
+  const resto = s.slice(i);
+  const fim = resto.search(/\n\/\/ ======== /);
+  return fim < 0 ? resto : resto.slice(0, fim);
+}
+
+describe('guardrail money-path: Apriori lê o universo INTEIRO de cestas (cap de 1.000)', () => {
+  it('a leitura delega a fetchAll — nunca uma chamada single-shot', () => {
+    const bloco = removerComentarios(blocoAssoc(read(ANALYTICS)));
+
+    expect(bloco, 'âncora quebrada: bloco vazio').not.toBe('');
+    expect(
+      /const items = await fetchAll</.test(bloco),
+      'a leitura de order_items parou de delegar a fetchAll — o cap de 1.000 volta em silêncio',
+    ).toBe(true);
+    // O defeito original tinha ESTA forma. Assert negativo sobre a fonte SEM comentários:
+    // a prosa acima cita o código proibido de propósito (§"O ALVO mente").
+    expect(
+      /const\s*\{\s*data:\s*items\s*\}\s*=\s*await/.test(bloco),
+      'voltou a desestruturar só `data` — o error da leitura vira "0 regras, preservadas"',
+    ).toBe(false);
+  });
+
+  it('pagina com ORDEM ESTÁVEL — sem .order() o .range() pula/duplica entre páginas', () => {
+    const bloco = removerComentarios(blocoAssoc(read(ANALYTICS)));
+
+    expect(count(bloco, '.range(from, to)'), 'esperava exatamente 1 .range() no bloco').toBe(1);
+    expect(
+      /\.order\("id",\s*\{\s*ascending:\s*true\s*\}\)/.test(bloco),
+      'sumiu o .order("id") — a chave é a PK de order_items, e é ELA que estabiliza a paginação',
+    ).toBe(true);
+  });
+
+  it('filtra o universo pela denylist da autoridade + deleted_at (paridade com useBundleEngine)', () => {
+    const bloco = removerComentarios(blocoAssoc(read(ANALYTICS)));
+
+    // A denylist NÃO pode ser literal aqui: literal é como a 3ª cópia divergiu
+    // (`mapas-paginados.ts` citava 3 dos 4 status). Tem de vir do espelho canônico.
+    //
+    // ⚠️ Pinar só o NOME da constante era guard frouxo (achado do challenge Codex xhigh):
+    // daria para apagar o `.not(…)` inteiro e deixar a constante num uso decorativo que
+    // mantém o assert VERDE. É o §9 — "gate de forma não protege a ESCOLHA"; quando o que
+    // defende é a CHAMADA, pine a chamada. Aqui: a constante DENTRO do `.not` do status.
+    expect(
+      /\.not\(\s*"sales_orders\.status"\s*,\s*"in"\s*,\s*STATUS_NAO_VENDA_POSTGREST\s*\)/.test(bloco),
+      'o filtro de status saiu, ou a denylist deixou de vir do espelho canônico',
+    ).toBe(true);
+    expect(
+      bloco.includes('sales_orders!inner('),
+      'sumiu o !inner — sem o join o filtro de status do PAI não é aplicado a nada',
+    ).toBe(true);
+    expect(
+      /\.is\("sales_orders\.deleted_at",\s*null\)/.test(bloco),
+      'sumiu o deleted_at IS NULL — é a METADE do contrato do universo, anda junto com a denylist',
+    ).toBe(true);
+  });
+
+  it('o edge IMPORTA o espelho da denylist (não redeclara uma cópia local)', () => {
+    const fonte = removerComentarios(read(ANALYTICS));
+
+    expect(
+      /import\s*\{[^}]*STATUS_NAO_VENDA_POSTGREST[^}]*\}\s*from\s*"\.\.\/_shared\/universo-pedidos\.ts"/.test(fonte),
+      'a constante deixou de vir de _shared/universo-pedidos.ts',
+    ).toBe(true);
+    expect(
+      /const\s+STATUS_NAO_VENDA/.test(fonte),
+      'o edge redeclarou a denylist localmente — vira a 4ª cópia, que é o defeito que este PR fechou',
+    ).toBe(false);
+  });
+});
+
+// ── PARIDADE do espelho da denylist: src × edge (pega reversão do Lovable no deploy) ──────
+// O edge não importa de `src/` (Deno + suíte com `--no-remote`), então a constante é copiada.
+// Cópia sem guard textual É a divergência esperando acontecer — foi assim que
+// `mapas-paginados.ts` ficou com 3 dos 4 status. Ver money-path.md § "Helper espelhado".
+const UNIVERSO_SRC = 'src/lib/farmer/universo-pedidos.ts';
+const UNIVERSO_EDGE = 'supabase/functions/_shared/universo-pedidos.ts';
+
+// Compara a LISTA PARSEADA, não um bloco textual normalizado.
+//
+// O padrão MIRROR do resto deste arquivo exige marcadores-comentário nos DOIS lados. Aqui isso
+// custaria caro no lado `src/`: `universo-pedidos.ts` é 90% prosa por desenho (é o documento da
+// autoridade, com o histórico de medição inteiro), e 7 linhas de código em 69. Cinco linhas de
+// marcador+explicação derrubaram a fração preservada de 0,101 para 0,095 e reprovaram a
+// sentinela de `limpeza-fonte` — um falso positivo da PREMISSA dela (ela existe para pegar
+// stripper que engole código, não densidade de comentário), mas resolver enfraquecendo o
+// detector seria pior que o problema.
+//
+// Extrair a lista é, além de mais barato, um guard MAIS FORTE: pina os VALORES em vez da
+// formatação. Reordenar, reindentar ou trocar aspas não reprova; ACRESCENTAR ou REMOVER um
+// status reprova — que é exatamente a divergência que este gate existe para pegar (a 3ª cópia
+// em `mapas-paginados.ts` tinha três dos quatro).
+function listaDeStatus(fonte: string): string[] {
+  const m = fonte.match(/STATUS_NAO_VENDA:\s*readonly string\[\]\s*=\s*\[([\s\S]*?)\]/);
+  if (!m) throw new Error('não achei o literal de STATUS_NAO_VENDA (âncora quebrada)');
+  return [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]).sort();
+}
+
+describe('guardrail money-path: denylist do universo de pedidos não divergiu entre src e edge', () => {
+  it('a lista de status é a mesma dos dois lados', () => {
+    expect(
+      listaDeStatus(read(UNIVERSO_EDGE)),
+      'o espelho do edge divergiu da autoridade em src/',
+    ).toEqual(listaDeStatus(read(UNIVERSO_SRC)));
+  });
+
+  it('os quatro status estão lá — e a lista não encolheu para os três da cópia antiga', () => {
+    expect(listaDeStatus(read(UNIVERSO_EDGE))).toEqual([
+      'cancelado',
+      'orcamento',
+      'pendente',
+      'rascunho',
+    ]);
+  });
+
+  it('a expressão do valor PostgREST é a mesma nos dois — a forma com aspas é a que roda em prod', () => {
+    const expr = /STATUS_NAO_VENDA_POSTGREST\s*=\s*`\("\$\{STATUS_NAO_VENDA\.join\('","'\)\}"\)`/;
+    expect(expr.test(read(UNIVERSO_SRC)), 'a autoridade mudou a forma do valor').toBe(true);
+    expect(expr.test(read(UNIVERSO_EDGE)), 'o espelho do edge mudou a forma do valor').toBe(true);
+  });
+
+  it('nenhuma edge cita a denylist como literal solta (era a 3ª cópia divergente)', () => {
+    const mapas = removerComentarios(read('supabase/functions/_shared/mapas-paginados.ts'));
+    expect(
+      mapas.includes('(cancelado,rascunho,pendente)'),
+      'a literal divergente voltou a mapas-paginados.ts — ela citava 3 dos 4 status',
+    ).toBe(false);
+    expect(mapas.includes('STATUS_NAO_VENDA_POSTGREST')).toBe(true);
+  });
+});

@@ -57,6 +57,9 @@ function bancoFake(tabelas: Record<string, Linha[]>, erroDoBanco?: string) {
       // filtro que o double ignora em silêncio faria o teste medir mais linhas do que a
       // query devolveria de verdade — falso-verde. Se o núcleo passar a usá-los, o teste
       // quebra alto e pede a implementação aqui.
+      is(coluna) {
+        throw new Error(`double: .is(${coluna}) não implementado neste núcleo`);
+      },
       gte(coluna) {
         throw new Error(`double: .gte(${coluna}) não implementado neste núcleo`);
       },

@@ -146,6 +146,14 @@ function fakeDb(
         reg.limit = n;
         return q;
       },
+      // `is` entrou na interface pelo PR irmão (escritor único de `farmer_association_rules`),
+      // que precisou de `.is('deleted_at', null)` para aplicar as DUAS metades do contrato do
+      // universo de pedidos. Este núcleo não usa o predicado: LANÇA em vez de devolver `q` sem
+      // filtrar, seguindo a convenção dos outros doubles deste `_shared` — um filtro que o
+      // double ignora em silêncio faz o teste medir mais linhas do que a query devolveria.
+      is(coluna: string) {
+        throw new Error(`double: .is(${coluna}) não implementado neste núcleo`);
+      },
       maybeSingle() {
         reg.single = true;
         const r = resposta();

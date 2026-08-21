@@ -2,6 +2,7 @@ import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { comRegistro, type DbRegistro } from "../_shared/registro-execucao.ts";
 import { fetchAll } from "../_shared/paginate.ts";
+import { STATUS_NAO_VENDA_POSTGREST } from "../_shared/universo-pedidos.ts";
 import { montarUpsertsDeCusto } from "../_shared/cost-compute.ts";
 import { recomporCustoProducao } from "../_shared/recompor-custo-producao.ts";
 import { buildProductIdMap, montarCatalogoPorCod } from "../_shared/product-idmap.ts";
@@ -1799,22 +1800,99 @@ async function syncCustoProducao(db: SupabaseClient, account: OmieAccount) {
 // ======== COMPUTE ASSOCIATION RULES (Apriori-like) ========
 
 async function computeAssociationRules(db: SupabaseClient) {
-  // Load config
-  const { data: configs } = await db.from("recommendation_config").select("key, value");
+  // A CONFIG também falhava ABERTO (achado do challenge Codex xhigh nesta entrega). Era
+  // `const { data: configs } = await …` — o MESMO defeito da leitura de cestas, doze linhas
+  // acima dela: `error` descartado ⇒ "não consegui LER a configuração" virava "configuração
+  // AUSENTE", e os `??` abaixo publicavam o modelo com os DEFAULTS como se fossem os pisos
+  // escolhidos. Numa tabela cujo consumidor confia no `support` publicado, isso é fabricar o
+  // próprio CRITÉRIO. Fechar a leitura grande e deixar esta seria trancar a porta e esquecer
+  // a janela. Quem chama é `comRegistro`, que registra a falha — então lançar aqui é visível.
+  const { data: configs, error: erroConfig } = await db
+    .from("recommendation_config")
+    .select("key, value");
+  if (erroConfig) throw new Error(`recommendation_config: ${erroConfig.message}`);
   const cfg: Record<string, number> = {};
-  for (const c of configs || []) cfg[c.key] = c.value;
+  for (const c of configs ?? []) cfg[c.key] = c.value;
 
   const minSupport = cfg.s_min ?? 0.01;
   const minLift = cfg.l_min ?? 1.2;
   const maxRules = cfg.max_association_rules ?? 500;
 
-  // Load all order_items grouped by sales_order_id
-  const { data: items } = await db
-    .from("order_items")
-    .select("sales_order_id, product_id")
-    .not("product_id", "is", null);
+  // O UNIVERSO DE CESTAS — paginado, ordenado e filtrado. Aqui havia UMA leitura só:
+  //   const { data: items } = await db.from("order_items")
+  //     .select("sales_order_id, product_id").not("product_id","is",null);
+  // Quatro defeitos empilhados, todos MEDIDOS em prod via psql-ro (2026-08-20/21):
+  //
+  //  1. SEM PAGINAÇÃO → o cap silencioso de 1.000 linhas do PostgREST. `order_items` tem 68.350
+  //     linhas com `product_id` e 30.259 pedidos distintos; as 1.000 primeiras dão exatamente
+  //     479 pedidos. E o `sample_size` das 24 regras que estavam vigentes era 479 em TODAS —
+  //     ou seja, o universo de PRODUÇÃO era a fatia, e a prova não é inferência: uma réplica
+  //     SQL do algoritmo abaixo rodada sobre `LIMIT 1000` reproduz as 24 regras EXATAMENTE
+  //     (mesmos pares, mesmo lift até 6 casas).
+  //  2. SEM `.order()` → a fatia não é nem estável nem aleatória entre execuções (§7/§9 do
+  //     money-path). O gate `_shared/paginacao-delegada_test.ts` exige `.order(` junto de todo
+  //     `.range(` nesta edge exatamente por isto.
+  //  3. SEM FILTRO DE STATUS → pedido cancelado/soft-deletado entrava na cesta. O motor irmão
+  //     (`useBundleEngine`) já usa a DENYLIST da autoridade + `deleted_at IS NULL`; a paridade
+  //     de universo entre os dois motores é o desenho, não coincidência. Efeito isolado hoje:
+  //     20 cestas de 30.259 — pequeno, mas é o predicado que impede um cancelamento em massa
+  //     amanhã de virar "padrão de compra".
+  //  4. `const { data: items }` DESCARTAVA o `error` → página com timeout/RLS/500 virava `[]`,
+  //     e o retorno dizia "0 regras, regras vigentes preservadas" com cara de sucesso (§6/§11).
+  //     `fetchAll` LANÇA na página com erro E na malformada (`data:null` sem `error`), então
+  //     "não consegui ler" para de ser indistinguível de "não há padrão".
+  //
+  // ⚠️ O `!inner` é o que aplica o filtro do PAI sem uma segunda leitura paginada — duas
+  // leituras seriam 2×K instantes (§14: paginar não faz snapshot), e o Set intermediário de
+  // 30 mil ids seria mais uma superfície onde a página perdida troca o ESCOPO em silêncio.
+  // ⚠️ STATUS NULO: o `not.in` do PostgREST é NULL-BLIND — pedido com `status IS NULL` não
+  // passa no filtro e some do universo. Espelhar a autoridade (que é NULL-blind pelo mesmo
+  // motivo em SQL) mantém a PARIDADE, mas espelhar em SILÊNCIO seria trocar o defeito de
+  // lugar: amanhã um nulo encolheria o denominador e o `sample_size` publicado teria cara de
+  // universo completo — o §2 (ausente ≠ zero) na forma de RÓTULO. Precisão > recall diz para
+  // NÃO publicar sob ambiguidade, não para publicar um número menor sem avisar. Medido em
+  // prod (2026-08-20): 0 linhas. Se deixar de ser 0, a publicação PARA e diz quantas são.
+  // (Achado do challenge Codex xhigh: "excluir desconhecido é compatível com precisão>recall;
+  // fazê-lo silenciosamente não é".)
+  const { count: pedidosSemStatus, error: erroNulo } = await db
+    .from("sales_orders")
+    .select("id", { count: "exact", head: true })
+    .is("status", null)
+    .is("deleted_at", null);
+  if (erroNulo) throw new Error(`sales_orders/status-nulo: ${erroNulo.message}`);
+  if ((pedidosSemStatus ?? 0) > 0) {
+    throw new Error(
+      `${pedidosSemStatus} pedido(s) com status NULL: o universo do Apriori seria menor que o real ` +
+        `e o sample_size publicado mentiria sobre a base. Classifique o status antes de recalcular.`,
+    );
+  }
 
-  if (!items?.length) return { rules_generated: 0 };
+  // O tipo declara a forma REAL da linha, INCLUSIVE o objeto embedado. Declarar só as duas
+  // colunas era uma mentira de tipo — a resposta traz o `sales_orders` em cada uma das ~68 mil
+  // linhas, e um tipo que esconde isso esconde também o custo de memória de quem for revisar.
+  const items = await fetchAll<{
+    sales_order_id: string | null;
+    product_id: string | null;
+    sales_orders: { status: string | null; deleted_at: string | null } | null;
+  }>(
+    (from, to) =>
+      db
+        .from("order_items")
+        // `id` NÃO entra no select: o `.order()` não exige a coluna projetada (mesma
+        // convenção de `useBundleEngine`), e são ~68 mil linhas — o uuid a mais seria
+        // payload puro numa edge que já segura o universo inteiro em memória.
+        .select("sales_order_id, product_id, sales_orders!inner(status, deleted_at)")
+        .not("product_id", "is", null)
+        .not("sales_orders.status", "in", STATUS_NAO_VENDA_POSTGREST)
+        .is("sales_orders.deleted_at", null)
+        .order("id", { ascending: true })
+        .range(from, to),
+    "order_items/assoc-rules",
+  );
+
+  // `items.length === 0` agora só pode ser "li a tabela inteira e não há item" — falha de
+  // leitura virou exceção acima. Antes os dois estados chegavam aqui iguais.
+  if (!items.length) return { rules_generated: 0, itens_lidos: 0 };
 
   // Build transactions: Map<order_id, Set<product_id>>
   const transactions = new Map<string, Set<string>>();
@@ -1924,8 +2002,21 @@ async function computeAssociationRules(db: SupabaseClient) {
     throw new Error(`farmer_association_rules_substituir: ${erroSubstituir.message}`);
   }
 
-  console.log(`[AssocRules] Generated ${inserted} rules from ${totalTx} transactions`);
-  return { rules_generated: inserted, total_transactions: totalTx, frequent_items: frequentItems.size };
+  // PROVENIÊNCIA no payload, não só a contagem. O lote não tem coluna de origem/parâmetros
+  // (isso é fatia própria), mas o retorno cai no registro de execução — e sem estes campos
+  // "24 regras" e "2 regras" são indistinguíveis na auditoria, que foi exatamente como o cap
+  // de 1.000 sobreviveu: o número publicado nunca vinha acompanhado do universo que o gerou.
+  console.log(
+    `[AssocRules] ${inserted} regras de ${totalTx} cestas (${items.length} itens lidos) ` +
+      `— s_min=${minSupport} l_min=${minLift} max=${maxRules}`,
+  );
+  return {
+    rules_generated: inserted,
+    total_transactions: totalTx,
+    frequent_items: frequentItems.size,
+    itens_lidos: items.length,
+    params: { s_min: minSupport, l_min: minLift, max_rules: maxRules },
+  };
 }
 
 // ======== MAIN HANDLER ========
@@ -2047,9 +2138,26 @@ Deno.serve(async (req) => {
         result = await comRegistro(
           dbRegistro, "analytics_sync.recalcular_regras", auth,
           () => computeAssociationRules(supabaseAdmin),
+          // O mapper guardava SÓ `rules_generated` e `total_transactions`. Com isso, os campos
+          // de proveniência que a função passou a devolver (`itens_lidos`, `params`) eram
+          // DESCARTADOS aqui — e o comentário que os introduziu prometia auditoria durável.
+          // Promessa que o mapper desfaz é a mesma classe de "rótulo que não é fato": a
+          // auditoria pareceria existir. Achado do challenge Codex xhigh, conferido na linha.
+          // Sem estes campos, "24 regras" e "2 regras" são indistinguíveis no registro — que
+          // é exatamente como o cap de 1.000 sobreviveu por tanto tempo.
           (r) => {
-            const a = r as { rules_generated?: number; total_transactions?: number };
-            return { rules_generated: a.rules_generated ?? null, total_transactions: a.total_transactions ?? null };
+            const a = r as {
+              rules_generated?: number;
+              total_transactions?: number;
+              itens_lidos?: number;
+              params?: Record<string, number>;
+            };
+            return {
+              rules_generated: a.rules_generated ?? null,
+              total_transactions: a.total_transactions ?? null,
+              itens_lidos: a.itens_lidos ?? null,
+              params: a.params ?? null,
+            };
           },
         );
         break;
