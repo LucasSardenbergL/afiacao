@@ -713,3 +713,33 @@ antes/depois medido, não de carona. Segurar a entrega deixaria 68% do catálogo
 tempo. **Defeito fora de escopo se escreve no código** (os dois estão nomeados por extenso nos
 comentários) **e vira chip** — o que não pode é sair do diff sem deixar rastro e passar por
 consertado.
+
+**A 2ª rodada do Codex foi sobre o CÓDIGO, e achou o que a 1ª (sobre o desenho) não podia
+achar.** Vale como método: a 1ª rodada corrige a ideia, a 2ª corrige a implementação, e as duas
+encontram classes diferentes. O que ela pegou, tudo dentro do que eu tinha acabado de escrever:
+
+- **`amostraSaturada` prometia mais do que media.** Com 1.000 compras existentes e 1.000 lidas,
+  nada foi cortado — e o campo era `true`. Virou **`amostraNoTeto`**, que é o que o código sabe;
+  afirmar "há mais" exigiria `count:'exact'`. É a mesma classe que a entrega combate, cometida
+  no nome do próprio remédio.
+- **O campo era contrato MORTO** — ninguém o lia. Sinal que não chega em consumidor é o cap
+  silencioso com outro nome; ligado a um `console.warn` na edge.
+- **Minha afirmação sobre `cause` estava errada.** Eu escrevi que o erro original do PostgREST
+  ficava em `cause`; `fetchAll` o reduz a `new Error(label+message)` ANTES, então o `code`
+  (57014, 42501) morria ali. Corrigido interceptando `res.error` **antes** de entregar ao
+  helper — diagnóstico preservado e mensagem pública fechada, com um teste que afirma as duas
+  metades juntas (`codigo === "57014"` **e** ausência de `"boom"`).
+- **Seis falsos-verdes na minha própria suíte**, cada um com uma saída errada concreta: teto
+  comparado com a **constante importada** (tautologia — subir 100→1000 ficava verde e dividia
+  `sim` por 1.000 lendo compras de 50); double ignorando `.select()` (tirar `cost_final` ficava
+  verde e sumia com margem/EIP em prod); double registrando `.order()` sem ordenar nem olhar
+  `ascending` (descendente é ordem *estável* e trocaria QUAIS 100 clientes entram); nenhum caso
+  `data:null, error:null` para lista (o `exigirLista` estava certo mas **não falsificado**);
+  saturação testada em 1.500 e não no teto exato. **Um teste que não falsifica cada asserção
+  que faz é inventário, não prova** — e "22 asserções" soava suficiente até alguém perguntar
+  qual saída errada cada uma pega. 22 → 33, com 9 sabotagens vermelhas ao todo.
+- **Derrubou também uma afirmação minha por leitura de schema:** eu escrevi que o prefixo por PK
+  pegaria "provavelmente os mais antigos"; `farmer_client_scores.id` é `UUID DEFAULT
+  gen_random_uuid()`, então os 100 menores UUIDs são amostra pseudoaleatória determinística, não
+  prefixo temporal. O viés continua (mesmo subconjunto para todos, tamanho pequeno), mas **não é
+  o viés que eu tinha escrito** — e a versão errada estava a caminho do PR.
