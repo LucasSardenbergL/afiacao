@@ -33,6 +33,12 @@ export interface QueryPostgrest<T> extends PromiseLike<RespostaPostgrest<T>> {
   eq(coluna: string, valor: unknown): QueryPostgrest<T>;
   in(coluna: string, valores: readonly unknown[]): QueryPostgrest<T>;
   gte(coluna: string, valor: unknown): QueryPostgrest<T>;
+  /**
+   * `>` estrito — o avanço do cursor de `fetchAllKeyset`. Estrito e não `gte` porque a
+   * chave é ÚNICA no recorte: com `gte` a última linha de cada página voltaria na página
+   * seguinte, duplicada.
+   */
+  gt(coluna: string, valor: unknown): QueryPostgrest<T>;
   lt(coluna: string, valor: unknown): QueryPostgrest<T>;
   not(coluna: string, operador: string, valor: unknown): QueryPostgrest<T>;
   /**

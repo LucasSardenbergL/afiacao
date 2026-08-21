@@ -62,9 +62,20 @@ const CAP_POSTGREST = 1000;
 
 function fakeDb(
   porTabela: Record<string, Linha[]>,
-  opts: { erroEm?: string; codigo?: string; nulaEm?: string } = {},
+  opts: {
+    erroEm?: string;
+    codigo?: string;
+    nulaEm?: string;
+    /**
+     * Roda DEPOIS de servir cada página, com a tabela e o nº da página. É o que torna a
+     * escrita CONCORRENTE: mutar antes de servir só mudaria o estado inicial e a leitura
+     * nem perceberia.
+     */
+    aoServirPagina?: (tabela: string, pagina: number) => void;
+  } = {},
 ) {
   const registros: Registro[] = [];
+  const paginasServidas: Record<string, number> = {};
 
   // Um registro por `from()` — ou seja, um por PÁGINA, que é o que permite afirmar que
   // TODA página (não só a primeira) foi pedida com `.order()` estável.
@@ -88,9 +99,14 @@ function fakeDb(
         );
       }
       const alcance = reg.ranges[reg.ranges.length - 1];
-      if (alcance) return linhas.slice(alcance[0], alcance[1] + 1);
-      const teto = reg.limit ?? CAP_POSTGREST;
-      return linhas.slice(0, Math.min(teto, CAP_POSTGREST));
+      const servida = alcance
+        ? linhas.slice(alcance[0], alcance[1] + 1)
+        : linhas.slice(0, Math.min(reg.limit ?? CAP_POSTGREST, CAP_POSTGREST));
+      if (opts.aoServirPagina) {
+        paginasServidas[tabela] = (paginasServidas[tabela] ?? 0) + 1;
+        opts.aoServirPagina(tabela, paginasServidas[tabela]);
+      }
+      return servida;
     }
 
     function resposta(): RespostaPostgrest<Linha> {
@@ -117,6 +133,14 @@ function fakeDb(
         const alvo = new Set(valores);
         reg.filtros.push(`in:${coluna}=${valores.length}`);
         predicados.push((l) => alvo.has(l[coluna]));
+        return q;
+      },
+      gt(coluna: string, valor: unknown) {
+        reg.filtros.push(`gt:${coluna}`);
+        // Compara como STRING: a chave real do keyset aqui é `id` (uuid), e um
+        // `Number(uuid)` daria NaN — todo predicado viraria falso e o teste ficaria
+        // verde por não devolver nada.
+        predicados.push((l) => String(l[coluna] ?? "") > String(valor));
         return q;
       },
       gte(coluna: string, valor: unknown) {
@@ -494,4 +518,53 @@ Deno.test("`amostraNoTeto` diz só o que sabe: EXATAMENTE no teto, sem nada cort
   const r = await carregarCluster(db, "critico");
   assertEquals(r.clusterPurchases.length, TETO_CLUSTER_COMPRAS);
   assertEquals(r.amostraNoTeto, true, "no teto tem de ser sinalizado, mesmo sem corte");
+});
+
+// ── 6. Escrita CONCORRENTE durante a leitura paginada ────────────────────────────────
+// Medido em prod (docs/historico/paginacao-offset-janela.md): `sync-reprocess` roda
+// `15 */2 * * *` — inclusive 12:15/14:15/16:15 BRT — e faz `.delete().in('id', …)` em
+// `order_items`, enquanto o `recommend` é on-demand e lê durante o expediente. Sob offset
+// um DELETE antes do cursor desloca as páginas seguintes e uma linha VIVA nunca é lida.
+
+Deno.test("order_items sob DELETE concorrente: a linha viva NÃO é pulada", async () => {
+  const banco = bancoCheio();
+  const { db } = fakeDb(banco, {
+    aoServirPagina: (tabela, pagina) => {
+      // Apaga uma linha JÁ SERVIDA na 1ª página: é isso que desloca o offset das seguintes.
+      if (tabela === "order_items" && pagina === 1) {
+        const i = banco.order_items.findIndex((l) => l.id === "i00000");
+        if (i >= 0) banco.order_items.splice(i, 1);
+      }
+    },
+  });
+  const insumos = await carregarInsumos(db, CLIENTE);
+  // Sob offset saem 2.848: o DELETE puxou tudo uma casa e `i01000` caiu no vão entre as
+  // páginas 1 e 2. Sob keyset saem 2.849 — as 2.848 sobreviventes mais `i00000`, lida
+  // antes de morrer (leitura não-repetível, que é outra classe e não se resolve aqui).
+  assertEquals(insumos.orderItems.length, N_ITENS_DO_CLIENTE, "uma linha viva foi PULADA");
+});
+
+Deno.test("omie_products sob flip de ativo: nenhum SKU ativo some do catálogo", async () => {
+  const banco = bancoCheio();
+  // `omie-sync-status-produtos` (cron 03:30) espelha ativo/inativo em `omie_products` — o
+  // `.eq('ativo',true)` do leitor é exatamente a coluna que ele reescreve, então o recorte
+  // ENCOLHE no meio da leitura. É por isso que a tabela com 86 inserts e zero deletes é a
+  // mais exposta do banco, e não as de milhões de updates.
+  const { db } = fakeDb(banco, {
+    aoServirPagina: (tabela, pagina) => {
+      if (tabela === "omie_products" && pagina === 1) {
+        const p = banco.omie_products.find((l) => l.id === "p00001");
+        if (p) p.ativo = false;
+      }
+    },
+  });
+  const insumos = await carregarInsumos(db, CLIENTE);
+  const lidos = new Set(insumos.products.map((p) => p.id));
+  const aindaAtivos = banco.omie_products.filter((l) => l.ativo === true).map((l) => String(l.id));
+  const sumiram = aindaAtivos.filter((id) => !lidos.has(id));
+  // Contar não denuncia: 2.825 lidos para 2.825 ativos, com um SKU vivo trocado por outro
+  // já inativado. Só a identidade denuncia.
+  if (sumiram.length > 0) {
+    throw new Error(`${sumiram.length} SKU(s) ATIVO(s) sumiram do catálogo: ${sumiram.slice(0, 3).join(", ")}`);
+  }
 });

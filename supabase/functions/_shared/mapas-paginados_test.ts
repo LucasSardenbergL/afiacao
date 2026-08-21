@@ -73,6 +73,11 @@ function fakeDb(
         predicados.push((l) => l[coluna] === null || l[coluna] === undefined);
         return q;
       },
+      gt(coluna: string, valor: unknown) {
+        reg.filtros.push(`gt:${coluna}=${String(valor)}`);
+        predicados.push((l) => String(l[coluna] ?? "") > String(valor));
+        return q;
+      },
       gte(coluna: string, valor: unknown) {
         reg.filtros.push(`gte:${coluna}=${String(valor)}`);
         predicados.push((l) => String(l[coluna] ?? "") >= String(valor));
