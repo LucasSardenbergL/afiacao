@@ -136,24 +136,32 @@ const vendaveis = (): string[] => {
 /** Clientes que só existem para dar popularidade — nenhum deles é `cli-1`. */
 const CLIENTES_POPULARIDADE = ['cli-2', 'cli-3', 'cli-4', 'cli-5', 'cli-6'];
 
-function itensDePopularidade(): Array<Record<string, unknown>> {
+function itensDePopularidade(indiceDoCliente: number): Array<Record<string, unknown>> {
   return vendaveis().flatMap((id) => {
-    // `allProductPurchases` conta OCORRÊNCIA de item: repetir a linha dobra a popularidade.
-    // Fora do cenário `popularidade` todos ficam iguais, para que a popularidade nunca seja
-    // o que decide onde o teste afirma que quem decide é o preço.
-    const vezes = cenario === 'popularidade' && id === 'sku-pop-alta' ? 2 : 1;
-    return Array.from({ length: vezes }, () => ({
-      omie_codigo_produto: CODIGO[id],
-      quantity: 1,
-      unit_price: 100,
-    }));
+    // A popularidade conta CLIENTES DISTINTOS da carteira, então quem a move é o número de
+    // clientes que compram — não a repetição da linha (repetir contava OCORRÊNCIA, e essa
+    // definição saiu). No cenário `popularidade`, `sku-pop-baixa` é comprado só pelos 2
+    // primeiros clientes e `sku-pop-alta` por todos os 5.
+    //
+    // Fora desse cenário todos ficam iguais, para que a popularidade nunca seja o que decide
+    // onde o teste afirma que quem decide é o preço.
+    const soOsDoisPrimeiros = cenario === 'popularidade' && id === 'sku-pop-baixa';
+    if (soOsDoisPrimeiros && indiceDoCliente >= 2) return [];
+    return [{ omie_codigo_produto: CODIGO[id], quantity: 1, unit_price: 100 }];
   });
 }
 
 function linhasPorTabela(): Record<string, Record<string, unknown>[]> {
   return {
+    // Quem dá POPULARIDADE precisa estar na CARTEIRA: a métrica passou a contar clientes
+    // distintos da carteira (antes eram ocorrências de item na base inteira), então comprador
+    // de fora não pontua mais. Só `cli-1` tem `profiles`, então a GERAÇÃO segue restrita a ele
+    // e o observável destes testes — o top-2 de up-sell do alvo — não muda.
     farmer_client_scores: [
       { customer_user_id: 'cli-1', farmer_id: FARMER, health_score: 80, answer_rate_60d: 50, whatsapp_reply_rate_60d: 50 },
+      ...CLIENTES_POPULARIDADE.map((cid) => ({
+        customer_user_id: cid, farmer_id: FARMER, health_score: 80, answer_rate_60d: 50, whatsapp_reply_rate_60d: 50,
+      })),
     ],
     omie_products: catalogo(),
     sales_orders: [
@@ -164,9 +172,9 @@ function linhasPorTabela(): Record<string, Record<string, unknown>[]> {
         created_at: '2026-01-01T00:00:00Z',
         account: 'colacor',
       },
-      ...CLIENTES_POPULARIDADE.map((cid) => ({
+      ...CLIENTES_POPULARIDADE.map((cid, i) => ({
         customer_user_id: cid,
-        items: itensDePopularidade(),
+        items: itensDePopularidade(i),
         total: 999,
         created_at: '2026-01-01T00:00:00Z',
         account: 'colacor',
@@ -318,8 +326,8 @@ describe('useCrossSellEngine — o top-2 do up-sell sai de SINAL, não da ordem 
 
   it('E: a POPULARIDADE desempata preços iguais — a 2ª chave não é decorativa', async () => {
     // Sem este caso a 2ª chave estaria escrita e nunca exercida: as duas fixtures de preço
-    // acima têm popularidade uniforme. `sku-pop-baixa` (5 ocorrências) vem ANTES de
-    // `sku-pop-alta` (10) no `productList` e tem o MESMO preço, então a ordem de `id` daria
+    // acima têm popularidade uniforme. `sku-pop-baixa` (2 clientes da carteira) vem ANTES de
+    // `sku-pop-alta` (5) no `productList` e tem o MESMO preço, então a ordem de `id` daria
     // a resposta errada e só a popularidade pode dar a certa.
     cenario = 'popularidade';
     const up = await rodar();

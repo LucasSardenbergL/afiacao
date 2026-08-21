@@ -889,7 +889,20 @@ export const useCrossSellEngine = () => {
 
             const chave: ChaveUpSell = {
               razaoPreco: premiumPrice / purchaseData.price,
-              popularidade: allProductPurchases.get(product.id) || 0,
+              // MESMA métrica do cross-sell: clientes DISTINTOS da carteira. Este ponto nasceu
+              // no #1837 lendo `allProductPurchases` — ocorrências de item na base inteira —,
+              // que é o número que este PR está removendo por não ser fração nem contagem de
+              // nada (10 pedidos do mesmo cliente contavam 10). Manter as duas convivendo daria
+              // DUAS definições de "popularidade" no mesmo arquivo, que é exatamente a
+              // incoerência em correção. "O mais vendido" do comentário do comparador vira
+              // "o que mais clientes compraram", que é o sentido acionável para o vendedor.
+              //
+              // ⚠️ Efeito colateral DECLARADO, não medido: contar clientes (números pequenos,
+              // 0..N da carteira) empata mais que contar ocorrências (números grandes e
+              // dispersos), e `popularidade` é o 2º critério — só desempata quando `razaoPreco`
+              // bate EXATO. Quem responde isso em prod é o sensor que o próprio #1837
+              // instalou: `posicoesDecididasPorSinal` / `up_sell_posicoes_decididas`.
+              popularidade: clientesQueCompraram.get(product.id) || 0,
             };
 
             const anterior = upSellPorProduto.get(product.id);
