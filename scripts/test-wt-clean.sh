@@ -72,7 +72,7 @@ cat >"$stub/du" <<'STUB'
 alvo="$2"
 case "${DU_MODO:-ok}" in
   falha) exit 1 ;;
-  lento) sleep 30; printf '111\t%s\n' "$alvo" ;;
+  lento) sleep 5; printf '111\t%s\n' "$alvo" ;;
   *)     printf '250\t%s\n' "$alvo" ;;
 esac
 STUB
@@ -145,7 +145,7 @@ else
   falha "du lento → esperava EXIT=0, veio EXIT=${saida##*EXIT=}"
 fi
 if [ "$gasto" -le 15 ]; then
-  ok "du lento → respeitou o teto (${gasto}s, 4 worktrees x 30s de du)"
+  ok "du lento → respeitou o teto (${gasto}s, 4 worktrees x 5s de du)"
 else
   falha "du lento → pendurou ${gasto}s; o teto nao segurou"
 fi

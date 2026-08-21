@@ -49,7 +49,10 @@
 #      até o EOF. Hoje o `| head -3` do `ignored_blockers` sobrevive por ACIDENTE
 #      — `classify` só é chamada dentro de `if !`, e isso suspende o `set -e`
 #      (medido: o mesmo pipeline solto sai 141 e mata). Depender de contexto de
-#      chamada para não morrer é armadilha para o próximo refactor.
+#      chamada para não morrer é armadilha para o próximo refactor. Esta troca é
+#      PREVENTIVA e não tem teste que a distinga: devolver o `| head -3` numa
+#      cópia deixa o `test-wt-prune.sh` VERDE (medido na falsificação), porque
+#      enquanto a chamada estiver dentro do `if !` a diferença é inobservável.
 #
 # Uso:
 #   bun run wt:prune          # DRY-RUN: classifica e mostra o que faria

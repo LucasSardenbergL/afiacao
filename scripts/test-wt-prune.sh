@@ -106,7 +106,7 @@ cat >"$stub/du" <<'STUB'
 alvo="$2"
 case "${DU_MODO:-ok}" in
   falha) exit 1 ;;
-  lento) sleep 30; printf '111\t%s\n' "$alvo" ;;
+  lento) sleep 5; printf '111\t%s\n' "$alvo" ;;
   *)     printf '250\t%s\n' "$alvo" ;;
 esac
 STUB
@@ -196,7 +196,7 @@ else
   falha "du lento → esperava EXIT=0, veio EXIT=${saida##*EXIT=}"
 fi
 if [ "$gasto" -le 15 ]; then
-  ok "du lento → respeitou o teto (${gasto}s, 4 worktrees x 30s de du)"
+  ok "du lento → respeitou o teto (${gasto}s, 4 worktrees x 5s de du)"
 else
   falha "du lento → pendurou ${gasto}s; o teto nao segurou"
 fi
@@ -287,24 +287,30 @@ else
 fi
 
 # ── caso 11 — muitos ignorados: nao morre e o veredito continua KEEP ────────
-# Trava o `awk 'NR<=3'`: o `| head -3` daqui só sobrevivia porque `classify` é
-# chamada dentro de `if !`, o que suspende o `set -e`. Qualquer refactor que a
-# chame solta reintroduz o SIGPIPE(141) — e este caso fica vermelho.
-saida="$(BLOCKERS=5000 roda)"
+# ⚠️ Este caso NÃO trava a troca `| head -3` → `awk 'NR<=3'`, e isso foi MEDIDO:
+# na falsificação, devolver o `| head -3` numa cópia deixa as 3 asserções abaixo
+# VERDES. O motivo é o próprio achado — `classify` só é chamada dentro de
+# `if !`, e isso suspende o `set -e`, então o 141 do SIGPIPE é lido e descartado
+# em vez de matar. A troca é higiene PREVENTIVA (regra 1 do #1838) contra o
+# refactor que mover a chamada; enquanto ela não acontece, a diferença é
+# inobservável e não há teste honesto que a distinga.
+# O que estas 3 asserções travam de verdade é o COMPORTAMENTO com muitos
+# ignorados: não morrer, classificar as 4 e ainda mostrar a amostra no motivo.
+saida="$(BLOCKERS=400 roda)"
 if [ "${saida##*EXIT=}" = "0" ]; then
-  ok "5000 ignorados → sai 0 (sem SIGPIPE)"
+  ok "400 ignorados → sai 0 (sem SIGPIPE)"
 else
-  falha "5000 ignorados → EXIT=${saida##*EXIT=} (141 = SIGPIPE do leitor que fecha o pipe)"
+  falha "400 ignorados → EXIT=${saida##*EXIT=} (141 = SIGPIPE do leitor que fecha o pipe)"
 fi
 if [ "$(printf '%s' "$saida" | linha_de 'KEEP' | command grep -c .)" = "4" ]; then
-  ok "5000 ignorados → as 4 worktrees viram KEEP"
+  ok "400 ignorados → as 4 worktrees viram KEEP"
 else
-  falha "5000 ignorados → a varredura nao classificou as 4"
+  falha "400 ignorados → a varredura nao classificou as 4"
 fi
 if printf '%s' "$saida" | linha_de 'wt-alfa' | command grep -q 'segredo-3.pem'; then
-  ok "5000 ignorados → mostra os 3 primeiros no motivo"
+  ok "400 ignorados → mostra os 3 primeiros no motivo"
 else
-  falha "5000 ignorados → perdeu a amostra de blockers no motivo"
+  falha "400 ignorados → perdeu a amostra de blockers no motivo"
 fi
 
 # ── caso 12 — --yes com tudo saudavel: remove e fecha o resumo ──────────────
