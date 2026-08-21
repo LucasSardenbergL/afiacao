@@ -628,7 +628,7 @@ melhores é INTERNO à função, aplicado antes do LIMIT, e o consumidor re-pont
 **O furo do scanner, de novo — mesma cegueira, segundo disfarce.** No #1816 o Codex achou que o
 scanner só via `.rpc('nome')` com aspas simples. Desta vez o `(` **colado** em `.rpc` era o furo: o
 idioma dominante do repo para RPC ainda não tipada é o cast — `await (supabase.rpc as RpcFn)('nome',
-params)`. **53 das 125 ocorrências de `.rpc` em `src/` não são `.rpc(`**, e duas delas eram
+params)`. **Das 108 ocorrências de `.rpc` em `src/` (a fonte que o gate lê), o regex antigo casava 86 — 22 escapavam**, e duas delas eram
 set-returning e estavam FORA da baseline: `radar_contagem_por_municipio` em
 `useRadarContagemMunicipios.ts` e `buscar_skus_candidatos` em `useProductSpecLink.ts`. Ambas com teto
 estrutural — mas isso o gate não sabia, porque nunca as viu. A tolerância entre `.rpc` e o literal
