@@ -13,6 +13,12 @@ import { renderHook, act } from '@testing-library/react';
  * Sem (1) o teste viraria a prova de um filtro que a medição descartou; sem (2) a decisão
  * ficaria só num comentário, e "está no ar e ninguém reclamou" não é dado.
  *
+ * ⚠️ Todos os SKUs desta fixture compartilham `familia`/`unidade` (`Linha Unica`/`UN`), e é
+ * requisito, não enfeite: o up-sell passou a exigir a MESMA linha do item comprado
+ * (`@/lib/farmer/upsell-ordem`), e sem esses campos o ramo de up-sell sairia vazio — o caso A
+ * abaixo viraria falso-verde por vacuidade. A linha é uniforme de propósito para que ela nunca
+ * seja o que separa os desfechos: o assunto aqui continua sendo a CONTA.
+ *
  * CENÁRIO: `cli-1` só comprou pela `colacor`. Dois SKUs alvo — um `colacor`, um `oben` — são
  * ativos, vendáveis e igualmente populares, e `cli-1` não comprou nenhum dos dois. Nada além
  * da CONTA os separa, então o que o sensor contar é atribuível só a ela.
@@ -52,19 +58,19 @@ function linhasPorTabela(): Record<string, Record<string, unknown>[]> {
       { customer_user_id: 'cli-1', farmer_id: FARMER, health_score: 80, answer_rate_60d: 50, whatsapp_reply_rate_60d: 50 },
     ],
     omie_products: [
-      { id: SKU_BASE, codigo: 'B', descricao: 'Base Colacor', valor_unitario: 50, metadata: null, ativo: true, omie_codigo_produto: 1, estoque: 9, account: 'colacor' },
+      { id: SKU_BASE, codigo: 'B', descricao: 'Base Colacor', valor_unitario: 50, metadata: null, familia: 'Linha Unica', unidade: 'UN', ativo: true, omie_codigo_produto: 1, estoque: 9, account: 'colacor' },
       // O `oben` ANTES dos `colacor` de propósito: os candidatos empatam em afinidade, então
       // quem ordena é a posição no `productList` — e é assim que a fixture faz o ranking
       // preferir a conta alheia mesmo com `colacor` sendo a maioria dos candidatos.
-      { id: SKU_ALVO_OBEN, codigo: 'AO', descricao: 'Alvo Oben', valor_unitario: 100, metadata: null, ativo: true, omie_codigo_produto: 3, estoque: 9, account: 'oben' },
-      { id: SKU_ALVO_COLACOR, codigo: 'AC', descricao: 'Alvo Colacor', valor_unitario: 100, metadata: null, ativo: true, omie_codigo_produto: 2, estoque: 9, account: 'colacor' },
+      { id: SKU_ALVO_OBEN, codigo: 'AO', descricao: 'Alvo Oben', valor_unitario: 100, metadata: null, familia: 'Linha Unica', unidade: 'UN', ativo: true, omie_codigo_produto: 3, estoque: 9, account: 'oben' },
+      { id: SKU_ALVO_COLACOR, codigo: 'AC', descricao: 'Alvo Colacor', valor_unitario: 100, metadata: null, familia: 'Linha Unica', unidade: 'UN', ativo: true, omie_codigo_produto: 2, estoque: 9, account: 'colacor' },
       ...SKUS_EXTRA_COLACOR.map((id) => ({
-        id, codigo: id, descricao: `Extra ${id}`, valor_unitario: 100, metadata: null, ativo: true,
+        id, codigo: id, descricao: `Extra ${id}`, valor_unitario: 100, metadata: null, familia: 'Linha Unica', unidade: 'UN', ativo: true,
         omie_codigo_produto: CODIGO_EXTRA[id], estoque: 9, account: 'colacor',
       })),
       // Só para dar ao alvo um pedido `oben` quando `alvoCompraNasDuas`: barato e já comprado,
       // então não vira candidato e não mexe na contagem de ofertas.
-      { id: 'sku-miudo-oben', codigo: 'M', descricao: 'Miudo Oben', valor_unitario: 10, metadata: null, ativo: true, omie_codigo_produto: 4, estoque: 9, account: 'oben' },
+      { id: 'sku-miudo-oben', codigo: 'M', descricao: 'Miudo Oben', valor_unitario: 10, metadata: null, familia: 'Linha Unica', unidade: 'UN', ativo: true, omie_codigo_produto: 4, estoque: 9, account: 'oben' },
     ],
     sales_orders: [
       ...pedidosDoAlvo(),

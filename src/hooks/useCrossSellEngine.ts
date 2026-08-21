@@ -12,6 +12,16 @@ import {
 import { lerHeadVigente, registrarGeracaoFarmer } from '@/lib/farmer/registrar-geracao';
 import { indexarCatalogoAtivo, resolverItemNoCatalogo } from '@/lib/farmer/identidade-item';
 import { STATUS_NAO_VENDA_POSTGREST } from '@/lib/farmer/universo-pedidos';
+import {
+  campoDeLinha,
+  compararCandidatosUpSell,
+  mesmaLinha,
+  posicoesDecididasPorSinal,
+  PISO_RAZAO_UP_SELL,
+  VAGAS_UP_SELL,
+  type ChaveUpSell,
+  type LinhaDeProduto,
+} from '@/lib/farmer/upsell-ordem';
 import { acumularContaDeCompra, medirCoberturaContaDaOferta, ofertaNaContaDoCliente } from '@/lib/farmer/cobertura-conta-oferta';
 import { toast } from 'sonner';
 
@@ -78,6 +88,13 @@ interface ProductRow {
   estoque: number | null;
   /** Metade da chave de identidade do SKU (`UNIQUE (omie_codigo_produto, account)`). */
   account: string | null;
+  /**
+   * A LINHA do SKU — o recorte que torna "linha superior" verificável no up-sell.
+   * Colunas DEDICADAS, não a cópia em `metadata->>'descricao_familia'`: divergência é zero
+   * em prod hoje, mas a coluna é a autoridade. Ver `@/lib/farmer/upsell-ordem`.
+   */
+  familia: string | null;
+  unidade: string | null;
 }
 
 interface SalesOrderItem {
@@ -313,7 +330,7 @@ export const useCrossSellEngine = () => {
       const products = await fetchAllPages<ProductRow>((de, ate) =>
         supabase
           .from('omie_products')
-          .select('id, codigo, descricao, valor_unitario, metadata, ativo, omie_codigo_produto, estoque, account')
+          .select('id, codigo, descricao, valor_unitario, metadata, ativo, omie_codigo_produto, estoque, account, familia, unidade')
           .eq('ativo', true)
           .order('id', { ascending: true })
           .range(de, ate) as unknown as PromiseLike<{ data: ProductRow[] | null; error: unknown }>,
@@ -640,6 +657,16 @@ export const useCrossSellEngine = () => {
       // "a carteira é assim" de "o ranking prefere assim". Ver `candidatos_conta_do_cliente`.
       let candidatosElegiveis = 0;
       let candidatosNaContaDoCliente = 0;
+      // O par do `upsell_ordem_decidida`: quantas posições de up-sell chegaram ao vendedor e
+      // quantas delas o SINAL decidiu (ver `posicoesDecididasPorSinal`).
+      let upSellPosicoesEmitidas = 0;
+      let upSellPosicoesDecididas = 0;
+
+      // `productList` indexado por id. Existia como `productList.find(...)` DENTRO do laço de
+      // candidatos do up-sell (O(catálogo) por oferta, com o catálogo em 3.140 SKUs); agora o
+      // item comprado também precisa ser resolvido para dar a LINHA, o que faria o `find`
+      // rodar por CANDIDATO em vez de por oferta.
+      const indiceProdutos = new Map(productList.map((p) => [p.id, p]));
 
       for (const score of activeClientScores) {
         const cid = score.customer_user_id;
@@ -726,39 +753,87 @@ export const useCrossSellEngine = () => {
           }
         }
 
-        // ─── UP-SELL: Find premium alternatives for current low-margin products ───
+        // ─── UP-SELL: a LINHA superior do item já comprado ───
+        //
+        // Os dois testes de margem que existiam aqui ("margem atual < 35%" e "margem premium
+        // > 120% da atual") não sobrevivem à saída do custo: `get_skus_margem_positiva()`
+        // responde "este SKU é vendável?", não compara a rentabilidade de DOIS SKUs. Isso
+        // segue valendo — o conserto abaixo NÃO reintroduz custo no browser.
+        //
+        // O que o motor tinha de errado é a ORDEM, e ela era invisível: `affinityScore = pij`
+        // não contém nenhum termo do produto, então todos os candidatos do cliente empatavam,
+        // o `sort` (estável) preservava a inserção e o `slice` entregava os 2 primeiros da
+        // varredura do `productList` — a ordem de uuid do `.order('id')`. Em prod isso são 2
+        // escolhidos entre uma MEDIANA de 2.068 elegíveis, e as 422 ofertas vivas cabem em 15
+        // SKUs. Agora quem decide são dois atributos observados, na ordem lexicográfica de
+        // `compararCandidatosUpSell`: menor RAZÃO de preço, e popularidade como desempate.
+        // O porquê de cada peça (e por que `affinityScore` NÃO carrega a ordem) está em
+        // `@/lib/farmer/upsell-ordem`.
+        //
+        // DEDUPLICADO por produto: o laço externo percorre os itens JÁ COMPRADOS, então o
+        // mesmo candidato aparece uma vez por item que ele supera. Sem dedup, um único SKU
+        // podia ocupar as DUAS vagas com `currentProductId` diferentes — a tela repetiria o
+        // produto (e usa `productId` como key React), e o WhatsApp deduplicaria depois SEM
+        // repor a vaga perdida, virando 2 ofertas em 1. Não é hipótese: em prod há 37 pares
+        // `(cliente, SKU)` duplicados nas ofertas vivas de hoje (achado do challenge Codex).
+        // Fica o MELHOR salto de cada candidato.
+        const upSellPorProduto = new Map<string, { rec: Recommendation; chave: ChaveUpSell }>();
         for (const [purchasedId, purchaseData] of customerPurchased.entries()) {
           if (purchaseData.price <= 0) continue;
 
-          // Alternativas PREMIUM = preço materialmente maior e SKU vendável.
-          //
-          // Os dois testes de margem que existiam aqui ("margem atual < 35%" e "margem premium
-          // > 120% da atual") não sobrevivem à saída do custo: `get_skus_margem_positiva()`
-          // responde "este SKU é vendável?", não compara a rentabilidade de DOIS SKUs. O up-sell
-          // deixa de PROMETER margem melhor e passa a sugerir a linha superior — degradação
-          // honesta, e é a que o parecer do Codex (rodada 3) considerou aceitável. Recuperar a
-          // comparação exige uma RPC própria que devolva a ordem já pronta do servidor.
+          // Hoisted: era um `productList.find` DENTRO do laço de candidatos, e agora também
+          // decide a elegibilidade, não só o nome exibido.
+          const currentProduct = indiceProdutos.get(purchasedId);
+          const linhaAtual: LinhaDeProduto = {
+            familia: campoDeLinha(currentProduct?.familia),
+            unidade: campoDeLinha(currentProduct?.unidade),
+          };
+
           for (const product of productList) {
             if (product.id === purchasedId) continue;
             if (purchasedIds.has(product.id)) continue;
             if (!vendaveis.has(product.id)) continue;
 
-            const premiumPrice = Number(product.valor_unitario || 0);
-            if (premiumPrice <= purchaseData.price * 1.1) continue;
+            // O gate de LINHA. Sem ele "premium" é qualquer SKU mais caro do catálogo inteiro,
+            // e nenhuma ordenação transforma isso em up-sell. `unidade` entra junto porque 19
+            // das 81 famílias misturam unidades (1.080 SKUs, 34% do catálogo): comparar preço
+            // entre unidades diferentes é comparar preço-por-litro com preço-por-caixa.
+            if (!mesmaLinha(linhaAtual, { familia: campoDeLinha(product.familia), unidade: campoDeLinha(product.unidade) })) continue;
 
-            // P_ij for up-sell
+            const premiumPrice = Number(product.valor_unitario || 0);
+            if (premiumPrice <= purchaseData.price * PISO_RAZAO_UP_SELL) continue;
+
+            // P_ij for up-sell. Segue sendo a propensão do CLIENTE — constante entre
+            // candidatos, agora por desenho DECLARADO e não por defeito escondido. A tela
+            // mostra este número como "% de conversão", então ele não pode ser dobrado por
+            // fator de ranking nenhum: isso seria fabricar evidência.
             const pij = TAXA_CONVERSAO_UP_SELL * (healthScore / 100) * engagementFactor * 0.8; // 0.8 = up-sell is harder
 
             const complexityFactor = FATOR_COMPLEXIDADE;
             const affinityScore = pij;
+            if (affinityScore <= 0) continue;
 
-            if (affinityScore > 0) {
+            const chave: ChaveUpSell = {
+              razaoPreco: premiumPrice / purchaseData.price,
+              popularidade: allProductPurchases.get(product.id) || 0,
+            };
+
+            const anterior = upSellPorProduto.get(product.id);
+            if (anterior && compararCandidatosUpSell(anterior.chave, chave) <= 0) continue;
+
+            // Contado uma vez por candidato DISTINTO — `candidatos_conta_do_cliente` compara
+            // sua fração com a das EMITIDAS, e emitida é sempre um SKU único: contar o mesmo
+            // produto uma vez por item comprado inflaria só o denominador e enviesaria o par.
+            if (!anterior) {
               candidatosElegiveis++;
               if (ofertaNaContaDoCliente(product.id, contasDeCompraPorCliente.get(cid), indiceCatalogo.contaDoProduto)) {
                 candidatosNaContaDoCliente++;
               }
-              const currentProduct = productList.find((p) => p.id === purchasedId);
-              upSellRecs.push({
+            }
+
+            upSellPorProduto.set(product.id, {
+              chave,
+              rec: {
                 customerId: cid,
                 customerName: profile.name ?? '',
                 type: 'up_sell',
@@ -772,17 +847,38 @@ export const useCrossSellEngine = () => {
                 clusterVolume: purchaseData.qty,
                 estoque: product.estoque ?? null,
                 status: 'pendente',
-              });
-            }
+              },
+            });
           }
         }
 
-        // Ordena por AFINIDADE (desc), top 3 cross-sell e top 2 up-sell
-        crossSellRecs.sort((a, b) => b.affinityScore - a.affinityScore);
-        upSellRecs.sort((a, b) => b.affinityScore - a.affinityScore);
+        const upSellOrdenado = [...upSellPorProduto.values()].sort((a, b) =>
+          compararCandidatosUpSell(a.chave, b.chave),
+        );
+        upSellRecs.push(...upSellOrdenado.map((c) => c.rec));
 
+        // Cross-sell ordena por AFINIDADE (desc) — lá o `pij` carrega `relevance`, que é
+        // termo do PRODUTO, então o score realmente discrimina candidatos.
+        crossSellRecs.sort((a, b) => b.affinityScore - a.affinityScore);
+
+        // Up-sell NÃO reordena aqui, e a ausência é o conserto: `upSellRecs` já chega
+        // ordenado por `compararCandidatosUpSell`. Um `sort` por afinidade seria um no-op
+        // (as chaves são todas iguais — é o bug) que ainda por cima DECLARARIA que a
+        // afinidade decide. Foi essa declaração falsa que escondeu o defeito até aqui.
         const topCross = crossSellRecs.slice(0, 3);
-        const topUp = upSellRecs.slice(0, 2);
+        const topUp = upSellRecs.slice(0, VAGAS_UP_SELL);
+
+        // SENSOR da ordem do up-sell — o entregável mínimo quando o sinal não decide.
+        // Uma posição só conta como decidida se nenhum candidato DESCARTADO tem a chave
+        // idêntica; empate que não cruza o corte não custou vaga a ninguém e não entra.
+        // Em prod: 8,3% dos 1.033 clientes que descartam algum candidato empatam na vaga 2.
+        // Sem isto o empate voltaria a ser invisível — que é o defeito original com outra
+        // roupa, e a razão de o head existir.
+        upSellPosicoesEmitidas += topUp.length;
+        upSellPosicoesDecididas += posicoesDecididasPorSinal(
+          upSellOrdenado.map((c) => c.chave),
+          VAGAS_UP_SELL,
+        );
 
         if (topCross.length > 0 || topUp.length > 0) {
           allRecs.push({
@@ -841,6 +937,23 @@ export const useCrossSellEngine = () => {
         ok: true,
         n: candidatosNaContaDoCliente,
         esperado: candidatosElegiveis,
+      };
+
+      // A ordem do up-sell é decidida por SINAL? `n` são as posições emitidas em que nenhum
+      // candidato descartado tinha chave idêntica; `esperado` são todas as emitidas.
+      //
+      // SEM piso e FORA de `INSUMOS_OBRIGATORIOS_CROSS_SELL`: empate é fato do catálogo (dois
+      // SKUs da mesma linha, mesmo preço, mesma popularidade existem), não defeito de leitura
+      // — degradar a completude por causa dele transformaria um fato em falha.
+      //
+      // Ele existe porque até esta entrega o top-2 do up-sell era 100% arbitrário e NADA na
+      // tela ou no head dizia isso. Trocar um sorteio invisível por um ranking com 8,3% de
+      // empate residual só é honesto se os 8,3% forem VISÍVEIS — senão a próxima sessão lê
+      // "o motor ordena por mérito" e acredita, como esta leu.
+      insumos.upsell_ordem_decidida = {
+        ok: true,
+        n: upSellPosicoesDecididas,
+        esperado: upSellPosicoesEmitidas,
       };
 
       aplicarRecomendacoes(allRecs);
