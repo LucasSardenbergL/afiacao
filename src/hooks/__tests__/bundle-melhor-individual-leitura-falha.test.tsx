@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { toast } from 'sonner';
+import { captureException } from '@/lib/analytics';
 
 /**
  * Guard money-path — a leitura do "melhor individual" não pode virar nem um zero fabricado
@@ -25,8 +26,14 @@ import { toast } from 'sonner';
  *     `completude='completo'`. Esse par é a licença exata que a fase 2 usaria para EXPIRAR a
  *     carteira de ofertas da vendedora. Mesmo defeito que o #1791 fechou, por outra porta.
  *
- * DISCRIMINADOR: nenhum registro de head `vazio` + `completo` nascido desta leitura, e nenhum
- * `toast.success` quando ela falhou.
+ *  3. A falha só existia como `console.error`. O vendedor recebe o toast e o "indisponível" no
+ *     cartão — e o diagnóstico morre no DevTools DELE, que ele não abre e não reporta. É o
+ *     RELATO do §13 (money-path) faltando o canal do plantão: a decisão de manter esta leitura
+ *     fora do `InsumosSnapshot` (ela não participa do juízo da completude) tira o insumo do
+ *     RÓTULO, não do RELATO.
+ *
+ * DISCRIMINADOR: nenhum registro de head `vazio` + `completo` nascido desta leitura, nenhum
+ * `toast.success` quando ela falhou, e a falha EXISTINDO fora do browser de quem a viu.
  *
  * ⚠️ Com a leitura em BLOCO a falha deixou de ser por-cliente: é UMA, e vale para a execução
  * inteira. Isso não afrouxa nada aqui — o que estes testes julgam é o DESFECHO da execução
@@ -184,5 +191,50 @@ describe('useBundleEngine — a leitura do melhor individual não fabrica zero n
       result.current.customerBundles.length,
       'a falha de um insumo acessório levou junto os bundles válidos',
     ).toBeGreaterThan(0);
+  });
+  it('a falha ACORDA o plantão — `console.error` sozinho morre no DevTools que ninguém abre', async () => {
+    // ⚠️ Aqui `erroIndividual` é o objeto PLANO do PostgREST (`{code, message}`), NÃO um `Error`:
+    // é justamente o caso em que o idiom `String(err)` imprimiria "[object Object]" e o alarme
+    // chegaria ao plantão sem dizer o que quebrou. Por isso `mensagemDeErro` + `erroComCausa`.
+    falhaMelhorIndividual = 'erro';
+
+    const { result } = renderHook(() => useBundleEngine());
+    await act(async () => { await result.current.calculateBundles(); });
+
+    const alarmes = vi
+      .mocked(captureException)
+      .mock.calls.filter(([e]) => String((e as Error)?.message).includes('[farmer/melhor-individual]'));
+
+    expect(
+      alarmes.length,
+      'a falha de leitura não gerou alarme — ela chegou ao vendedor e a mais ninguém',
+    ).toBe(1);
+
+    const [erro, contexto] = alarmes[0];
+    expect(
+      (erro as Error).message,
+      'o alarme diz QUE falhou mas não POR QUÊ — a mensagem técnica se perdeu na tradução',
+    ).toContain(ERRO_TIMEOUT.message);
+    expect(
+      (erro as Error & { cause?: unknown }).cause,
+      'a causa original (code/details do PostgREST) não foi preservada em `cause`',
+    ).toBe(ERRO_TIMEOUT);
+    expect(contexto).toMatchObject({ origem: 'farmer/melhor-individual', motor: 'bundle' });
+    expect(
+      typeof (contexto as Record<string, unknown>).runId,
+      'sem `runId` o alarme não casa com a execução que o produziu',
+    ).toBe('string');
+  });
+
+  it('CONTRAPROVA: execução saudável NÃO dispara o alarme', async () => {
+    // Sem isto, um `captureException` incondicional no topo do `try` passaria no teste acima. E
+    // é o §13 do money-path no eixo da saturação: alarme que toca em toda execução não é sinal.
+    const { result } = renderHook(() => useBundleEngine());
+    await act(async () => { await result.current.calculateBundles(); });
+
+    const alarmes = vi
+      .mocked(captureException)
+      .mock.calls.filter(([e]) => String((e as Error)?.message).includes('[farmer/melhor-individual]'));
+    expect(alarmes, 'alarmou sem falha nenhuma — o plantão aprende a ignorar').toEqual([]);
   });
 });

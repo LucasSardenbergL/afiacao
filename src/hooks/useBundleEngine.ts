@@ -845,11 +845,31 @@ export const useBundleEngine = () => {
         }
       } catch (erroIndividual) {
         console.error('Falha ao ler o melhor individual da carteira:', erroIndividual);
+        // …e o `console.error` acima morre no DevTools de quem nunca abre o DevTools. Sem esta
+        // linha a falha chegava ao vendedor (toast + "indisponível" em cada cartão) e a MAIS
+        // NINGUÉM — o plantão só ficava sabendo se ele reportasse, o que não acontece. O
+        // vizinho de cima (head ilegível) já saía por aqui; a assimetria era acidental.
+        //
+        // `erroComCausa` guarda as duas pontas: a mensagem de domínio para quem lê o alarme e o
+        // erro ORIGINAL preso em `cause` para quem for diagnosticar — o `error` do PostgREST é
+        // um objeto PLANO (`{message, details, hint, code}`), não um `Error`, e `String(err)`
+        // nele imprime "[object Object]"; por isso `mensagemDeErro`, e não `String`.
+        //
+        // ⚠️ Isto é o RELATO, não uma SÉRIE (§13 do money-path): o alarme prova QUE falhou, não
+        // com que frequência — a taxa continua sem denominador, preço reconhecido de manter
+        // esta leitura fora do `InsumosSnapshot` pelo motivo do parágrafo abaixo.
+        captureException(
+          erroComCausa(
+            `[farmer/melhor-individual] leitura em bloco falhou — ${mensagemDeErro(erroIndividual) ?? 'erro sem mensagem'}`,
+            erroIndividual,
+          ),
+          { origem: 'farmer/melhor-individual', motor: 'bundle', runId },
+        );
         // Sem `throw`: esta comparação é ACESSÓRIA — ela não entra em `recomendacoes`, o
         // payload da RPC de substituição, então derrubar a carteira inteira por causa dela
         // trocaria uma afirmação errada por um prejuízo maior. O que a falha NÃO pode é
-        // sumir: ela reprova o toast de sucesso, marca cada cliente como `indisponivel` na
-        // tela, e impede que a omissão da lista vire um veredicto.
+        // sumir: ela acorda o plantão (acima), reprova o toast de sucesso, marca cada cliente
+        // como `indisponivel` na tela, e impede que a omissão da lista vire um veredicto.
         //
         // ⚠️ DE PROPÓSITO **não** vira insumo do `InsumosSnapshot`, e a reavaliação que esta
         // entrega fez CONFIRMOU a decisão anterior trocando o fundamento dela.
