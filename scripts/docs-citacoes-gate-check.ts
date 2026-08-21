@@ -40,10 +40,17 @@
  *    história, além de falso-positivo permanente (medido: 553 das 580 citações do repo vivem
  *    nesses três, e 4 já estão fora de range hoje). Citação PARA dentro deles continua coberta —
  *    quem é varrido é o doc que CITA.
- * 2. **Basename ambíguo** (`index.ts:397`): sem `/`, e o repo tem dezenas de `index.ts`. Resolver
- *    no chute é fábrica de falso-positivo; o gate só resolve basename que casa com UM arquivo no
- *    repo inteiro. Os ambíguos são CONTADOS e impressos, para o buraco ficar visível sem barrar.
- * 3. **Caminho externo** (`node_modules`, lib de terceiro): allowlist explícita em `EXTERNOS`.
+ * 2. **Caminho externo** (`node_modules`, lib de terceiro, outro projeto): allowlist explícita em
+ *    `EXTERNOS`.
+ *
+ * Basename nu (`index.ts:397`) NÃO é exceção: **reprova**. O repo tem 99 `index.ts`, então resolver
+ * no chute seria fábrica de falso-positivo — mas *pular* é pior, porque vira a saída de emergência
+ * que esvazia o gate (basta escrever o nome curto para nunca mais ser cobrado). Até o #1820 eles
+ * eram pulados-e-contados (5 no repo); o #1826 converteu os 5 para caminho completo e fechou a
+ * porta. Converter sem fechar seria a contramedida TEXTUAL que este repo já sabe que reincide.
+ * Ao converter, dois dos cinco estavam quebrados havia meses: os call sites de
+ * `tint_promote_sync_run` tinham ido de :397/:542 para :392/:514, e o `estoque=0` do
+ * `fin-cashflow-engine` de :306 para :467.
  *
  * Gate que nasce com exceção implícita é gate que treina a ignorar o vermelho — por isso cada
  * exclusão acima é nominal e tem o porquê escrito.
@@ -70,6 +77,7 @@ export const CONGELADOS = [
 /** Caminhos que não moram no repo. Nominal e com motivo — nunca um catch-all. */
 export const EXTERNOS = [
   'postgrest-js/', // lib do @supabase/postgrest-js; citada para explicar a capa de 1.000 linhas
+  'THREAT_MODEL.md', // do projeto `aura`, citado como EXEMPLO de doc×código divergindo no default
 ];
 
 /** Extensões que valem como alvo de citação. */
@@ -137,7 +145,6 @@ export function indexarRepo(raiz: string): Map<string, string[]> {
 export interface Resultado {
   achados: Achado[];
   verificadas: number;
-  ambiguas: number;
   externas: number;
 }
 
@@ -150,7 +157,6 @@ export function auditarCitacoes(
 ): Resultado {
   const achados: Achado[] = [];
   let verificadas = 0;
-  let ambiguas = 0;
   let externas = 0;
 
   for (const c of citacoes) {
@@ -170,11 +176,14 @@ export function auditarCitacoes(
     }
     if (conteudo === null && !c.alvo.includes('/')) {
       const casos = idx.get(basename(c.alvo)) ?? [];
-      if (casos.length !== 1) {
-        ambiguas++; // basename que casa com 0 ou N arquivos — inverificável, ver cabeçalho §2
+      if (casos.length > 1) {
+        achados.push({
+          ...onde,
+          msg: `\`${c.alvo}\` é basename ambíguo — casa com ${casos.length} arquivos no repo. Escreva o caminho completo a partir da raiz (ex.: \`${relative(raiz, casos[0])}\`).`,
+        });
         continue;
       }
-      conteudo = lerArquivo(casos[0]);
+      if (casos.length === 1) conteudo = lerArquivo(casos[0]);
     }
     if (conteudo === null) {
       achados.push({ ...onde, msg: `cita \`${c.alvo}\`, que NÃO existe no repo` });
@@ -219,7 +228,7 @@ export function auditarCitacoes(
     }
     verificadas++;
   }
-  return { achados, verificadas, ambiguas, externas };
+  return { achados, verificadas, externas };
 }
 
 const recorte = (s: string) => {
@@ -265,7 +274,7 @@ if (import.meta.main) {
     }
   });
 
-  const resumo = `${r.verificadas} citação(ões) verificada(s) contra o conteúdo real · ${r.ambiguas} inverificável(is) por basename ambíguo · ${r.externas} externa(s)`;
+  const resumo = `${r.verificadas} citação(ões) verificada(s) contra o conteúdo real · ${r.externas} externa(s)`;
   if (r.achados.length === 0) {
     console.log(`docs-citacoes-gate: ✓ ${resumo}.`);
     process.exit(0);

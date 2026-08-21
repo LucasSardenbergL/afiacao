@@ -138,16 +138,23 @@ describe('auditarCitacoes — a regressão que este gate existe para pegar', () 
     expect(r.verificadas).toBe(1);
   });
 
-  // Precisão: adivinhar QUAL `index.ts` seria fábrica de falso-positivo.
-  it('PULA basename ambíguo em vez de chutar — e conta o buraco', () => {
+  // Adivinhar QUAL `index.ts` seria falso-positivo; PULAR seria a saída de emergência que
+  // esvazia o gate (bastaria escrever o nome curto). Então reprova e diz o que fazer.
+  it('REPROVA basename ambíguo, sugerindo o caminho completo', () => {
     const r = auditarCitacoes(
       [cita('index.ts', ['1'], 'x')],
       RAIZ,
       new Map([['index.ts', ['/repo/a/index.ts', '/repo/b/index.ts']]]),
       repo({}),
     );
-    expect(r.achados).toHaveLength(0);
-    expect(r.ambiguas).toBe(1);
+    expect(msgs(r)).toContain('basename ambíguo');
+    expect(msgs(r)).toContain('casa com 2 arquivos');
+    expect(msgs(r)).toContain('a/index.ts'); // sugere um caminho concreto para o conserto
+  });
+
+  it('REPROVA basename que não casa com arquivo NENHUM', () => {
+    const r = auditarCitacoes([cita('sumiu.ts', ['1'], 'x')], RAIZ, new Map(), repo({}));
+    expect(msgs(r)).toContain('NÃO existe no repo');
   });
 
   it('PULA caminho externo declarado em EXTERNOS', () => {
