@@ -12,6 +12,7 @@
 import {
   carregarCluster,
   carregarInsumos,
+  CLUSTER_STATUS_COM_HISTORICO,
   TETO_CLUSTER_CLIENTES,
   TETO_CLUSTER_COMPRAS,
   TETO_CLUSTER_USUARIOS_AMOSTRA,
@@ -378,12 +379,29 @@ Deno.test("cliente sem histórico: lista vazia é estado legítimo, não erro", 
 
 // ── 6. Cluster: amostra deliberada, mas DETERMINÍSTICA e que expõe falha ───────────────
 
-function scoresDoCluster(n: number): Linha[] {
+function scoresDoCluster(n: number, status: string | null = "ativo"): Linha[] {
   return Array.from({ length: n }, (_, i) => ({
     id: `s${String(i).padStart(5, "0")}`,
     customer_user_id: `u${String(i).padStart(5, "0")}`,
     health_class: "critico",
     category_count: 1,
+    // Sem esta coluna a whitelist de `carregarCluster` excluiria TODA linha do double, e as
+    // asserções de cluster ficariam verdes medindo zero.
+    sales_history_status: status,
+  }));
+}
+
+/** Linhas do cluster com `id` CONTROLADO, para provar quem vence o `.order("id").limit()`. */
+function linhasCluster(
+  n: number,
+  opts: { prefixoId: string; prefixoUser: string; status: string | null },
+): Linha[] {
+  return Array.from({ length: n }, (_, i) => ({
+    id: `${opts.prefixoId}${String(i).padStart(5, "0")}`,
+    customer_user_id: `${opts.prefixoUser}${String(i).padStart(5, "0")}`,
+    health_class: "critico",
+    category_count: 1,
+    sales_history_status: opts.status,
   }));
 }
 
@@ -520,7 +538,7 @@ Deno.test("`amostraNoTeto` diz só o que sabe: EXATAMENTE no teto, sem nada cort
   assertEquals(r.amostraNoTeto, true, "no teto tem de ser sinalizado, mesmo sem corte");
 });
 
-// ── 6. Escrita CONCORRENTE durante a leitura paginada ────────────────────────────────
+// ── 8. Escrita CONCORRENTE durante a leitura paginada ────────────────────────────────
 // Medido em prod (docs/historico/paginacao-offset-janela.md): `sync-reprocess` roda
 // `15 */2 * * *` — inclusive 12:15/14:15/16:15 BRT — e faz `.delete().in('id', …)` em
 // `order_items`, enquanto o `recommend` é on-demand e lê durante o expediente. Sob offset
@@ -566,5 +584,114 @@ Deno.test("omie_products sob flip de ativo: nenhum SKU ativo some do catálogo",
   // já inativado. Só a identidade denuncia.
   if (sumiram.length > 0) {
     throw new Error(`${sumiram.length} SKU(s) ATIVO(s) sumiram do catálogo: ${sumiram.slice(0, 3).join(", ")}`);
+
+// ── 9. Desenho da AMOSTRA: quem entra no cluster é quem entra no DENOMINADOR de `sim` ──
+//
+// Eixo distinto do da seção 6 (que prova reprodutibilidade e exposição de falha). Aqui a
+// pergunta é REPRESENTATIVIDADE: medido em prod 2026-08-21, o cluster `critico` tinha 6.185
+// linhas, 5.406 delas (87%) `sem_historico`. Como `.order("id")` sobre UUID é sorteio estável,
+// a amostra de 50 pegava ~42 linhas vazias — que contam no denominador e nunca no numerador.
+
+Deno.test("amostra: `sem_historico` FICA DE FORA mesmo tendo os MENORES ids (87% do cluster em prod)", async () => {
+  // Os `sem_historico` recebem os ids MENORES de propósito: sem o filtro eles VENCEM o
+  // `.order("id").limit(100)` e tomam a amostra inteira. É a falsificação embutida — apagar
+  // o `.in(...)` de `carregarCluster` faz este teste ficar vermelho, não verde por sorte.
+  const vazias = linhasCluster(200, { prefixoId: "a", prefixoUser: "v", status: "sem_historico" });
+  const comHistorico = linhasCluster(80, { prefixoId: "z", prefixoUser: "u", status: "ativo" });
+  const { db } = fakeDb({
+    farmer_client_scores: [...vazias, ...comHistorico],
+    order_items: itens(10, "u00000"),
+  });
+  const r = await carregarCluster(db, "critico");
+  assertEquals(r.clusterUserIds.length, 80, "linha `sem_historico` entrou na amostra");
+  const intrusos = r.clusterUserIds.filter((id) => id.startsWith("v"));
+  if (intrusos.length > 0) {
+    throw new Error(`cliente sem histórico no cluster (${intrusos.length}) — o denominador volta a inflar`);
+  }
+});
+
+Deno.test("amostra: `sales_history_status` NULL fica de fora — a coluna é NULLABLE em prod", async () => {
+  // Zero nulos hoje, mas o schema permite. A whitelist POSITIVA decide isto explicitamente;
+  // um `.neq('sem_historico')` excluiria NULL também, só que por efeito colateral invisível
+  // (negação no PostgREST é NULL-blind) — e deixaria entrar um status NOVO de "sem venda".
+  const nulos = linhasCluster(60, { prefixoId: "a", prefixoUser: "n", status: null });
+  const ativos = linhasCluster(30, { prefixoId: "z", prefixoUser: "u", status: "ativo" });
+  const { db } = fakeDb({ farmer_client_scores: [...nulos, ...ativos], order_items: itens(5, "u00000") });
+  const r = await carregarCluster(db, "critico");
+  assertEquals(r.clusterUserIds.length, 30, "linha com status NULL entrou na amostra");
+});
+
+Deno.test("amostra: um status DESCONHECIDO fica de fora (whitelist falha FECHADA)", async () => {
+  // Se um dia nascer `sem_venda_valida`, ele NÃO deve entrar sozinho na amostra e reabrir o
+  // defeito em silêncio. Whitelist exclui até alguém decidir; `.neq` incluiria.
+  const novos = linhasCluster(60, { prefixoId: "a", prefixoUser: "x", status: "status_que_nao_existia" });
+  const ativos = linhasCluster(30, { prefixoId: "z", prefixoUser: "u", status: "ativo" });
+  const { db } = fakeDb({ farmer_client_scores: [...novos, ...ativos], order_items: itens(5, "u00000") });
+  const r = await carregarCluster(db, "critico");
+  assertEquals(r.clusterUserIds.length, 30, "status desconhecido entrou na amostra sem decisão");
+});
+
+Deno.test("amostra: `stale` ENTRA — são 705 dos 779 compradores `critico`, cortá-los esvazia o cluster", async () => {
+  // Reduzir a whitelist a `["ativo"]` deixaria 74 clientes em `critico` (medido em prod) e
+  // manteria os outros testes verdes. Este é o que morde.
+  const { db } = fakeDb({
+    farmer_client_scores: linhasCluster(40, { prefixoId: "s", prefixoUser: "u", status: "stale" }),
+    order_items: itens(10, "u00000"),
+  });
+  const r = await carregarCluster(db, "critico");
+  assertEquals(r.clusterUserIds.length, 40, "`stale` foi excluído — o cluster perde 90% dos compradores");
+});
+
+Deno.test("whitelist pinada por LITERAL — comparar com a constante importada é tautologia", () => {
+  // Espelho de `SalesHistoryStatus` (src/lib/scoring/salesHistoryStatus.ts) menos
+  // `sem_historico`. A paridade com a união de lá é gate de vitest
+  // (src/__tests__/edge-money-path-invariants.test.ts): daqui o Deno não enxerga `src/`.
+  assertEquals([...CLUSTER_STATUS_COM_HISTORICO], ["ativo", "stale"], "a whitelist da amostra mudou");
+});
+
+Deno.test("`usuariosAmostrados` é o DENOMINADOR — e DIFERE de `clusterUserIds`, que era o bug", async () => {
+  const { db } = fakeDb({
+    farmer_client_scores: scoresDoCluster(6185),
+    order_items: itens(300, "u00000"),
+  });
+  const r = await carregarCluster(db, "critico");
+  assertEquals(r.clusterUserIds.length, TETO_CLUSTER_CLIENTES, "leu um número de clientes diferente do teto");
+  assertEquals(r.usuariosAmostrados.length, TETO_CLUSTER_USUARIOS_AMOSTRA, "amostrou um número diferente do teto");
+  // A DIFERENÇA entre os dois é o defeito: o consumidor dividia por 100 o que contou sobre 50.
+  if (r.usuariosAmostrados.length === r.clusterUserIds.length) {
+    throw new Error("os dois tetos coincidiram — este teste deixou de vigiar o denominador");
+  }
+  assertEquals(
+    r.usuariosAmostrados.join(","),
+    r.clusterUserIds.slice(0, TETO_CLUSTER_USUARIOS_AMOSTRA).join(","),
+    "`usuariosAmostrados` não é o prefixo exato de quem foi lido",
+  );
+});
+
+Deno.test("as compras são pedidas SÓ dos amostrados — o `.in()` leva 50 ids, não 100", async () => {
+  const { db, registros } = fakeDb({
+    farmer_client_scores: scoresDoCluster(6185),
+    order_items: itens(300, "u00000"),
+  });
+  await carregarCluster(db, "critico");
+  const compras = registros.find((r) => r.tabela === "order_items");
+  if (!compras) throw new Error("não pediu as compras do cluster");
+  if (!compras.filtros.includes(`in:customer_user_id=${TETO_CLUSTER_USUARIOS_AMOSTRA}`)) {
+    throw new Error(`o \`.in()\` das compras não levou ${TETO_CLUSTER_USUARIOS_AMOSTRA} ids: ${compras.filtros.join(", ")}`);
+  }
+});
+
+Deno.test("o filtro de histórico é PEDIDO ao banco, não aplicado depois no cliente", async () => {
+  // Filtrar em memória depois do `.limit(100)` devolveria menos de 100 elegíveis e voltaria a
+  // misturar os dois eixos: o teto tem de cair sobre quem JÁ passou pelo filtro.
+  const { db, registros } = fakeDb({
+    farmer_client_scores: scoresDoCluster(6185),
+    order_items: itens(300, "u00000"),
+  });
+  await carregarCluster(db, "critico");
+  const cluster = registros.find((r) => r.tabela === "farmer_client_scores");
+  if (!cluster) throw new Error("não pediu o cluster");
+  if (!cluster.filtros.includes(`in:sales_history_status=${CLUSTER_STATUS_COM_HISTORICO.length}`)) {
+    throw new Error(`o filtro de histórico não foi para a query: ${cluster.filtros.join(", ")}`);
   }
 });

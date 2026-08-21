@@ -2727,3 +2727,73 @@ describe('guardrail money-path: denylist do universo de pedidos não divergiu en
     expect(mapas.includes('STATUS_NAO_VENDA_POSTGREST')).toBe(true);
   });
 });
+
+
+// ── Guardrail money-path: amostra e denominador do `sim_score` do motor de recomendação ──
+// Por que TEXTUAL e não Deno: `recommend/index.ts` importa `npm:@supabase/supabase-js@2` e
+// NUNCA roda sob `--no-remote`, então o consumo do denominador não é executável na suíte de
+// edge. O contrato (`usuariosAmostrados`, whitelist) é provado lá, em
+// `supabase/functions/_shared/recommend-leituras_test.ts`; o que se prova AQUI é que o
+// consumidor de fato usa o campo certo — e que a whitelist do edge não sai de sincronia com a
+// união de `SalesHistoryStatus`, que é a fonte da verdade e mora em `src/`.
+describe('guardrail money-path: denominador e amostra do sim_score (recommend)', () => {
+  const LEITURAS = 'supabase/functions/_shared/recommend-leituras.ts';
+  const CONSUMIDOR = 'supabase/functions/recommend/index.ts';
+  const FONTE_STATUS = 'src/lib/scoring/salesHistoryStatus.ts';
+  const leituras = read(LEITURAS);
+  const consumidor = read(CONSUMIDOR);
+  const fonteStatus = read(FONTE_STATUS);
+
+  it('sentinela: leu os três arquivos reais', () => {
+    expect(leituras).toContain('carregarCluster');
+    expect(consumidor).toContain('clusterSize');
+    expect(fonteStatus).toContain('SalesHistoryStatus');
+  });
+
+  it('DENOMINADOR: `clusterSize` conta os AMOSTRADOS, não os lidos (numerador vinha de 50, denominador de 100)', () => {
+    const limpo = removerComentarios(consumidor);
+    expect(limpo, 'clusterSize deixou de sair de usuariosAmostrados — `sim` volta a sair pela metade')
+      .toMatch(/clusterSize\s*=\s*Math\.max\(\s*usuariosAmostrados\.length\s*,\s*1\s*\)/);
+    expect(limpo, 'REGRESSÃO: clusterSize voltou a contar clusterUserIds (os até 100 lidos)')
+      .not.toMatch(/clusterSize\s*=\s*Math\.max\(\s*clusterUserIds\.length/);
+  });
+
+  it('o consumidor DESESTRUTURA `usuariosAmostrados` do contrato (campo morto é cap silencioso com outro nome)', () => {
+    expect(removerComentarios(consumidor)).toMatch(/usuariosAmostrados[^=]*=\s*await\s+carregarCluster|\{[^}]*usuariosAmostrados[^}]*\}\s*=\s*await\s+carregarCluster/s);
+  });
+
+  it('AMOSTRA: o cluster filtra por histórico de venda na QUERY (whitelist positiva)', () => {
+    const limpo = removerComentarios(leituras);
+    expect(limpo, 'sumiu o filtro de histórico — 87% do cluster `critico` volta ao denominador')
+      .toMatch(/\.in\(\s*["']sales_history_status["']\s*,\s*CLUSTER_STATUS_COM_HISTORICO\s*\)/);
+  });
+
+  it('a exclusão NÃO é por negação: `.neq`/`.not` em sales_history_status é NULL-blind e deixa entrar status novo', () => {
+    const limpo = removerComentarios(leituras);
+    expect(limpo, 'trocaram a whitelist por negação — NULL sai por efeito colateral e status novo ENTRA')
+      .not.toMatch(/\.(neq|not)\(\s*["']sales_history_status["']/);
+  });
+
+  it('PARIDADE: a whitelist do edge é exatamente a união `SalesHistoryStatus` menos `sem_historico`', () => {
+    const mWhitelist = removerComentarios(leituras).match(
+      /CLUSTER_STATUS_COM_HISTORICO\s*=\s*\[([^\]]*)\]/,
+    );
+    expect(mWhitelist, 'não achei a constante CLUSTER_STATUS_COM_HISTORICO no edge').not.toBeNull();
+    const doEdge = [...mWhitelist![1].matchAll(/["']([^"']+)["']/g)].map((x) => x[1]).sort();
+
+    const mUniao = removerComentarios(fonteStatus).match(
+      /export\s+type\s+SalesHistoryStatus\s*=([^;]+);/,
+    );
+    expect(mUniao, 'não achei a união SalesHistoryStatus na fonte da verdade').not.toBeNull();
+    const daFonte = [...mUniao![1].matchAll(/["']([^"']+)["']/g)]
+      .map((x) => x[1])
+      .filter((v) => v !== 'sem_historico')
+      .sort();
+
+    expect(daFonte.length, 'a união da fonte ficou vazia — o parse quebrou').toBeGreaterThan(0);
+    expect(
+      doEdge,
+      'a whitelist do edge divergiu de SalesHistoryStatus: um status novo entra ou some da amostra em silêncio',
+    ).toEqual(daFonte);
+  });
+});
