@@ -34,6 +34,7 @@
  * migration maliciosa passa por review humano; o complemento é o audit read-only periódico em PROD).
  */
 import { balancedParens, normalizeSignature } from './migration-objects';
+import { removerComentariosSql } from './sql-comentarios';
 
 // Sem `export`: consumidos só por `touchesSensitive()` logo abaixo. Quem precisa da resposta
 // chama a função, que é a superfície pública — a lista crua exportada convidava a duplicar a
@@ -122,9 +123,17 @@ export interface GateResult {
  * Exportado porque `authz-reescrita.ts` precisa da MESMA regra: lá os alvos são literais de
  * string (`'public.f(text)'`), então `stripNoise` — que mascara strings — apagaria justamente
  * o dado procurado. Duas cópias da regra divergiriam no primeiro ajuste.
+ *
+ * (2026-08-20) Este docstring era uma invariante DECLARADA que o código não cumpria: a
+ * implementação era um `.replace` de regex "`--` até a quebra de linha", que come sem olhar
+ * se está dentro de literal — e `'--[^\n]*'` aparece como DADO nas próprias migrations de authz.
+ * Trocado pelo walker de `./sql-comentarios`, que conhece a gramática. A troca foi medida antes
+ * de ser feita e é NEUTRA no corpus de hoje: `extractFunctions` + `detectarReescritaViva` dão
+ * saída idêntica nas 656 migrations e o `authz:check --json` sai byte-a-byte igual. Ver
+ * docs/historico/gates-textuais-cegos.md §sub-classe SQL.
  */
 export function stripComments(sql: string): string {
-  return sql.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/--[^\n]*/g, ' ');
+  return removerComentariosSql(sql);
 }
 
 /** remove comentários E mascara string-literais → '' (corpo executável p/ busca de gate/tabela) */
