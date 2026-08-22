@@ -1,0 +1,16 @@
+# GERADO por `bash scripts/check-claude-md-budget.sh --gerar-baseline` — NÃO editar à mão.
+# Ratchet de PALAVRAS por seção do CLAUDE.md (heading `## `; "(preâmbulo)" = tudo antes do 1º).
+# Cada teto é o valor MEDIDO no dia da geração — crescer acima dele = CI vermelho.
+# Subir um teto é ato DELIBERADO e aparece neste diff, que é onde se revisa.
+# Por que teto por seção (e não só do arquivo inteiro): topo de scripts/check-claude-md-budget.sh.
+110	(preâmbulo)
+312	## Preferências do founder (Lucas)
+170	## Índice — `docs/agent/` (referência operacional, LEIA o doc ANTES de tocar o domínio)
+1083	## ⚠️ Armadilhas recorrentes (caras — a maioria money-path/banco; detalhe no doc/agent indicado)
+84	## Merge (auto)
+158	## Stack
+148	## Design System (v3 — "fintech premium": Vercel/Mercury/Stripe Dashboard)
+70	## Auth & roles
+56	## Convenções de código
+34	## gstack (REQUIRED)
+122	## Multi-sessão (regra — detalhe em `docs/agent/worktrees.md`)

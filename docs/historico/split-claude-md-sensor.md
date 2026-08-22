@@ -45,7 +45,7 @@ Está errado, por três razões específicas deste repo:
 
 Núcleo sempre-ligado cairia de 2.306 → **~1.890** sem mover nenhuma regra fail-open.
 
-## O furo no gate atual
+## O furo no gate atual (FECHADO no mesmo dia)
 
 `scripts/check-claude-md-budget.sh` mede o **arquivo inteiro**. Isso deixa Armadilhas crescer
 sendo paga pelo encolhimento de Stack — ou seja, **encolher a parte segura para financiar a
@@ -54,6 +54,21 @@ arriscada**, invisível ao gate. A correção de CLASSE é teto **por seção** 
 
 Corolário mais geral: compactação melhora o **nível**, não a **inclinação**. Armadilhas cresce a
 cada lição aprendida; só um teto por seção muda a inclinação.
+
+**Fechado em 2026-08-22** (mesmo dia): o gate passou a medir por seção (`## `), com ratchet em
+`scripts/claude-md-secoes-baseline.txt` — teto de cada seção = o valor MEDIDO no dia, número
+inventado nenhum. Armadilhas ficou travada em **1.083 palavras**. Três saídas de emergência foram
+fechadas junto, porque cada uma devolveria o furo por outro caminho: seção **nova** sem teto
+(bastaria mover o bullet para `## Armadilhas parte 2`), teto **órfão** por renome do título (o teto
+passaria a medir NADA, verde por cegueira), e **encolher sem re-fixar** (a compactação de hoje
+viraria crédito silencioso de recrescimento amanhã — de novo nível, não inclinação). O caso que dá
+nome à suíte é o furo original: uma seção cresce, outra encolhe o mesmo tanto, o total do arquivo
+não muda — verde no gate antigo, vermelho no novo (`scripts/test-claude-md-budget.sh`).
+
+Efeito colateral medido no caminho: `wc -w` conta o `⚠️` do título de Armadilhas como 1 palavra em
+`LC_ALL=C` e 2 em `pt_BR.UTF-8` (2337 x 2338). Com teto apertado por seção isso seria vermelho
+falso em um dos ambientes — o gate inteiro passou a contar por `awk NF`, que deu o mesmo número
+nos dois. É o #1483 aparecendo na própria régua.
 
 ## A pergunta que a doc NÃO responde — e o sensor
 
@@ -156,3 +171,7 @@ mover as 413 palavras compraria nível de novo, não inclinação — mais um mo
 apressar a fase 2 e gastar o esforço no ratchet por seção.
 
 Enquanto isso: núcleo em 2.337 palavras, zero regra movida, zero regra fail-open tocada.
+
+E o esforço foi mesmo para o ratchet: ele entrou no mesmo dia (seção "O furo no gate atual"
+acima). A partir daqui, os "+31 palavras em 4 PRs" só passam se couberem na seção que os
+recebe — ou se alguém subir aquele teto no diff, à vista.
