@@ -21,6 +21,7 @@
 #   - preflight (binário + auth) ANTES de gastar tempo/quota, com instrução clara;
 #   - retry com backoff (20s/60s) só em transitório (rate limit/timeout/overload);
 #   - cota esgotada NÃO é transitório → falha na hora instruindo o Caminho B;
+#   - modelo recusado pela conta (400) → exit 78, instruindo CONFIG (≠ cota, ≠ retry);
 #   - mktemp XXXXXX (sem colisão de tmp entre execuções paralelas);
 #   - sandbox read-only (consulta nunca escreve no repo).
 set -u
@@ -88,6 +89,19 @@ for backoff in "${backoffs[@]}"; do
   if grep -qiE 'usage limit|quota|plan limit' "$err"; then
     echo "COTA_ESGOTADA: janela rolante de 7d do ChatGPT Plus esgotou. Siga o Caminho B (validação adversária própria + registrar 'REVISÃO INDEPENDENTE PENDENTE') — docs/agent/money-path.md." >&2
     exit 75
+  fi
+  # modelo recusado pela CONTA = erro de CONFIG. Não é cota (esperar não resolve) nem
+  # transitório (repetir não resolve): as duas saídas erradas custam tempo apontando para
+  # o lugar errado. Medido em 2026-08-22: os 10 nomes tentados (gpt-5.6-sol, -codex, 5.1,
+  # 5, o3, codex-mini-latest…) voltaram o MESMO 400, então o eixo não é o nome do modelo
+  # — é o direito de acesso da conta ao Codex. Por isso a instrução cobre os dois: trocar
+  # o modelo E revalidar o login.
+  if grep -qiE 'model is not supported|unsupported_model|model_not_found' "$err"; then
+    echo "MODELO_NAO_ACEITO: o modelo '$modelo' não é aceito por esta conta Codex (HTTP 400)." >&2
+    echo "  → passe outro com -m, ou ajuste 'model =' em \${CODEX_HOME:-~/.codex}/config.toml;" >&2
+    echo "  → se NENHUM modelo passar, é acesso da conta: rode 'codex login' e confira a assinatura." >&2
+    echo "  (não é cota nem falha transitória: esperar e repetir não consertam config.)" >&2
+    exit 78
   fi
   # transitório (rede/limite/kill do watchdog) → tenta de novo
   if grep -qiE 'rate.?limit|429|timed?.?out|overloaded|temporarily|connection|ECONN|ETIMEDOUT|5[0-9][0-9]' "$err" || [ "$rc" -ge 124 ]; then
