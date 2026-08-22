@@ -76,7 +76,7 @@ O que separa isso de um defeito real é evidência lateral, não fé: **o mesmo 
 
 ## Prática que sai daqui
 
-1. **PR não-draft em conflito é um PR que ninguém está segurando de propósito** — o freio do repo é o draft ([CLAUDE.md](../../CLAUDE.md), §Merge). Conflito não é freio, é esquecimento. Varrer `gh pr list --json mergeable` acha os que caíram nessa.
+1. **PR não-draft em conflito é um PR que ninguém está segurando de propósito** — o freio do repo é o draft ([CLAUDE.md](../../CLAUDE.md), §Merge). Conflito não é freio, é esquecimento. Varrer `gh pr list --json mergeable` acha os que caíram nessa — **mas a varredura one-shot MENTE**: o campo é calculado sob demanda e o PR frio devolve `UNKNOWN`, não o estado. Rodada aqui em 21/08, ela deu `UNKNOWN` em 6 de 7 e a segunda chamada devolveu 5 `CONFLICTING`. Consulte, espere, **re-consulte** — e trate `UNKNOWN` como ausência de dado. → [mergeabilidade-assincrona.md](mergeabilidade-assincrona.md)
 2. **CI verde antigo não vale como validação** — re-rode depois do merge da `main`, sempre.
 3. **Depois de uma leva de merges, valide a `main` de propósito** — `gh workflow run CI --ref main`. O verde do PR atesta a base do momento do *run*, e entre ele e o merge cabe outro PR que muda a régua (aqui coube em 135s). Consultar runs de push **não** funciona: o auto-merge usa `GITHUB_TOKEN` e o push dele não aciona workflow nenhum.
 3. **PR de dead code tem prazo de validade curto**: a premissa é sobre o repo inteiro. Se passou de algumas semanas, o barato é medir de novo (`typecheck` + `knip`), não confiar na lista original.

@@ -65,7 +65,19 @@ Pra cada PR encontrado/citado:
 
 ```bash
 gh pr view <N> --json state,mergeStateStatus,statusCheckRollup,url
+# saiu `UNKNOWN`/vazio em mergeStateStatus? a 1ª consulta só ENFILEIROU o cálculo — re-consulte:
+sleep 5 && gh pr view <N> --json state,mergeStateStatus,statusCheckRollup,url
 ```
+
+⚠️ **`mergeStateStatus` é calculado sob demanda e a sonda cega no PR FRIO** — que é exatamente
+o PR de sessão parada que a `/fecho` audita. Medido em 2026-08-21: **6 de 7 PRs abertos** vieram
+`UNKNOWN` na 1ª chamada; a 2ª devolveu **5 `CONFLICTING`**. O único que respondeu de primeira
+tinha 0 dia de idade. → [mergeabilidade-assincrona.md](../../../docs/historico/mergeabilidade-assincrona.md)
+
+**Default do passo: sem leitura POSITIVA, não libera.** `UNKNOWN` é ausência de dado, nunca "não
+está em conflito" — ler assim é o `Number(null) === 0` da mergeabilidade, e é fail-OPEN num ritual
+que termina em EXCLUSÃO. (2ª reincidência da classe nesta skill: o #1677 já a consertou de "dava
+'pode excluir' sem nunca olhar se a `main` está verde".)
 
 - `MERGED` → ✅
 - `OPEN` + CI rodando → ⏳ **arme o watcher antes de fechar**: `scripts/pr-watch.sh <N>` via
@@ -73,8 +85,14 @@ gh pr view <N> --json state,mergeStateStatus,statusCheckRollup,url
   A sessão PODE ser excluída com watcher armado? **Não** — o watcher morre com a sessão.
   Nesse caso o veredito é "espere o merge" OU entregue ao founder o link pra conferir depois.
 - `OPEN` + `mergeStateStatus: DIRTY` → ❌ conflito; resolver antes de fechar.
+- `OPEN` + `mergeStateStatus` **`UNKNOWN`/vazio nas DUAS leituras** → ❌ **não sei ≠ está limpo**;
+  o veredito é *não consegui verificar* (irmão do exit **6** do `pr-watch.sh`). Não libere a
+  exclusão nesse estado — entregue o link pro founder conferir depois.
 - CI vermelho → ❌ investigar antes de fechar (PR não-draft NÃO mergeia vermelho).
-- DRAFT segurado de propósito → listar como pendência consciente (com o porquê).
+- DRAFT segurado de propósito → listar como pendência consciente (com o porquê) **e com a
+  DISTÂNCIA**: `git rev-list --count <branch>..origin/main`. Freio puxado não tem mola de retorno —
+  o #1332 estava 415 commits atrás e o rebase revelou 2 defeitos reais de money-path. Acima disso,
+  "segurado de propósito" precisa do propósito dito em voz alta, senão é esquecimento.
 
 ### Passo 2 — Migrations: entregue ≠ aplicada
 
