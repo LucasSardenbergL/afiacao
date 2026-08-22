@@ -90,8 +90,10 @@ export function MixGapCard() {
   const inerte = isPending && fetchStatus === 'idle';   // query desabilitada (sem user)
   const carregando = isPending && fetchStatus === 'fetching';
 
-  // Pausado ANTES de erro: se a rede caiu depois de uma falha, "sem conexão" é o motivo atual e o
-  // acionável (recarregar não resolve; voltar para a área coberta, sim).
+  // Pausado ANTES de erro, e a ordem só decide ALGUMA coisa aqui: `fetchState` (query-core) zera
+  // `error`/`status` ao iniciar um fetch APENAS quando `data === undefined` — sem dado, erro e
+  // pausa nunca coexistem; COM dado no cache o erro é preservado e os dois se sobrepõem. Nesse
+  // caso o motivo acionável é o atual: recarregar não resolve falta de sinal.
   const desatualizado: MotivoDesatualizado | null =
     !temDado ? null : pausado ? 'sem_rede' : error ? 'erro' : null;
 
@@ -101,7 +103,7 @@ export function MixGapCard() {
       : temDado
         ? (data.totalComGap > 0 ? 'com_gap' : 'zero')
         : pausado
-          ? 'aguardando_rede'
+          ? 'aguardando_rede'   // sem dado os dois ramos são exclusivos (ver `desatualizado`)
           : error
             ? 'erro'
             : null;

@@ -243,9 +243,11 @@ describe('MixGapCard — offline é um estado, não ausência de acesso', () => 
     onlineManager.setOnline(false);
     await act(async () => { void qc.invalidateQueries({ queryKey: ['my-mixgap'] }); });
 
-    // O `error` anterior continua no cache e a query fica pausada ao mesmo tempo. Mandar o
-    // vendedor "avisar o suporte" quando o problema é o sinal do celular dele queima o canal de
-    // incidente — o motivo ATUAL é o acionável.
+    // Sem dado no cache quem troca o estado é o próprio react-query: `fetchState` zera
+    // `error`/`status` ao (re)iniciar o fetch quando `data === undefined`. O que este caso fixa é
+    // o COMPORTAMENTO — mandar o vendedor "avisar o suporte" quando o problema é o sinal do
+    // celular dele queima o canal de incidente. A precedência de verdade se decide COM dado no
+    // cache, no caso abaixo.
     expect(await screen.findByText(/sem conexão/i)).toBeTruthy();
     expect(screen.queryByText(/avise o suporte/i)).toBeNull();
     await waitFor(() =>
@@ -307,6 +309,29 @@ describe('MixGapCard — dado bom no cache sobrevive à atualização que falha'
     // Mesmo estado visível, motivo novo: a dedup por estado PURO engoliria esta transição, que é
     // justamente o sinal de leitura falhando em campo.
     expect(eventosVistos()[1]).toMatchObject({ estado: 'com_gap', total_com_gap: 2, desatualizado: 'erro' });
+  });
+
+  it('com a LISTA no cache, erro e queda de rede COEXISTEM — vence o motivo ATUAL', async () => {
+    resposta = { data: COM_GAP, error: null };
+    const { qc } = renderCard();
+    await screen.findByText('Marcenaria Alfa');
+
+    // 1) refetch falha com o dado ainda no cache: aqui o `error` é PRESERVADO (`fetchState` só
+    //    zera `error`/`status` quando `data === undefined`).
+    resposta = { data: null, error: { message: 'timeout' } };
+    await act(async () => { await qc.refetchQueries({ queryKey: ['my-mixgap'] }).catch(() => {}); });
+    await waitFor(() => expect(eventosVistos()).toHaveLength(2));
+    expect(eventosVistos()[1]).toMatchObject({ desatualizado: 'erro' });
+
+    // 2) agora a rede cai: `status:'error'` e `fetchStatus:'paused'` ao MESMO tempo — o único
+    //    ponto do card em que a precedência decide algo. "Recarregue a página" seria conselho
+    //    inútil para quem está sem sinal.
+    onlineManager.setOnline(false);
+    await act(async () => { void qc.invalidateQueries({ queryKey: ['my-mixgap'] }); });
+
+    await waitFor(() => expect(eventosVistos()).toHaveLength(3));
+    expect(eventosVistos()[2]).toMatchObject({ estado: 'com_gap', desatualizado: 'sem_rede' });
+    expect(screen.getByText('Marcenaria Alfa')).toBeTruthy();
   });
 
   it('OFFLINE com dado no cache: mantém a lista e marca o motivo como falta de REDE', async () => {
