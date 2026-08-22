@@ -82,7 +82,11 @@ const ESCRITA_NOSSO_BANCO = [
 ];
 
 /** Destas o gate NÃO aceita `x-cron-secret`, então a sonda precisa de gate PRÓPRIO. */
-const GATE_PROPRIO = ["omie-cliente", "omie-nfe-webhook"];
+// `recommend` entra aqui porque seu gate normal é JWT e o `getUser` PRECISA do client — mas a
+// sonda responde ANTES do `createClient` (o gate acima exige). Sobrava só o
+// `startsWith("Bearer ")`: verificado em PROD, `Authorization: Bearer x` (token inválido)
+// devolvia a versão. Semi-público por acidente, não por decisão.
+const GATE_PROPRIO = ["omie-cliente", "omie-nfe-webhook", "recommend"];
 
 Deno.test("toda edge instrumentada declara VERSAO no formato vN.N-slug", () => {
   for (const { nome, mod } of EDGES) {

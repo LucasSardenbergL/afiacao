@@ -21,7 +21,7 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **482** custom migrations totais
+- **483** custom migrations totais
 - **1671** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 496
@@ -2735,6 +2735,10 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `table` | `public.fin_balanco_inputs` | — |
 | `rls_policy` | `public.fin_balanco_inputs_select_master` | `fin_balanco_inputs` |
 | `rls_policy` | `public.fin_balanco_inputs_write_master` | `fin_balanco_inputs` |
+
+### `20260701200017_backfill_kb_documents_product_code.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ### `20260702210000_gov_iniciativas_iceberg.sql`
 
