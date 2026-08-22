@@ -45,7 +45,7 @@ Está errado, por três razões específicas deste repo:
 
 Núcleo sempre-ligado cairia de 2.306 → **~1.890** sem mover nenhuma regra fail-open.
 
-## O furo no gate atual
+## O furo no gate atual (FECHADO no mesmo dia)
 
 `scripts/check-claude-md-budget.sh` mede o **arquivo inteiro**. Isso deixa Armadilhas crescer
 sendo paga pelo encolhimento de Stack — ou seja, **encolher a parte segura para financiar a
@@ -171,3 +171,7 @@ mover as 413 palavras compraria nível de novo, não inclinação — mais um mo
 apressar a fase 2 e gastar o esforço no ratchet por seção.
 
 Enquanto isso: núcleo em 2.337 palavras, zero regra movida, zero regra fail-open tocada.
+
+E o esforço foi mesmo para o ratchet: ele entrou no mesmo dia (seção "O furo no gate atual"
+acima). A partir daqui, os "+31 palavras em 4 PRs" só passam se couberem na seção que os
+recebe — ou se alguém subir aquele teto no diff, à vista.
