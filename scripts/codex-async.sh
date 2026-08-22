@@ -90,16 +90,21 @@ for backoff in "${backoffs[@]}"; do
     echo "COTA_ESGOTADA: janela rolante de 7d do ChatGPT Plus esgotou. Siga o Caminho B (validação adversária própria + registrar 'REVISÃO INDEPENDENTE PENDENTE') — docs/agent/money-path.md." >&2
     exit 75
   fi
-  # modelo recusado pela CONTA = erro de CONFIG. Não é cota (esperar não resolve) nem
-  # transitório (repetir não resolve): as duas saídas erradas custam tempo apontando para
-  # o lugar errado. Medido em 2026-08-22: os 10 nomes tentados (gpt-5.6-sol, -codex, 5.1,
-  # 5, o3, codex-mini-latest…) voltaram o MESMO 400, então o eixo não é o nome do modelo
-  # — é o direito de acesso da conta ao Codex. Por isso a instrução cobre os dois: trocar
-  # o modelo E revalidar o login.
+  # modelo recusado = erro de CONFIG. Não é cota (esperar não resolve) nem transitório
+  # (repetir não resolve): as duas saídas erradas custam tempo apontando para o lugar errado.
+  # ⚠️ O eixo é o MODELO, não o acesso da conta — a nota anterior aqui dizia o contrário e
+  # estava errada. Medido 2026-08-22 (challenge retroativo do #1859), stderr cru do servidor:
+  #   gpt-5.6-sol  → 400 "The 'gpt-5.6-sol' model is not supported when using Codex with a
+  #                  ChatGPT account" — IDÊNTICO em -r high e -r xhigh (o effort não é a causa)
+  #   gpt-5.6      → mesmo 400
+  #   gpt-5.6-terra / gpt-5.6-luna → rc=0, respondem normalmente
+  # Ou seja: "nenhum modelo passa ⇒ é a conta" é inferência de ausência de dado. Trocar o
+  # modelo RESOLVE. Só suspeite do login se um modelo SABIDAMENTE servido também falhar.
   if grep -qiE 'model is not supported|unsupported_model|model_not_found' "$err"; then
     echo "MODELO_NAO_ACEITO: o modelo '$modelo' não é aceito por esta conta Codex (HTTP 400)." >&2
     echo "  → passe outro com -m, ou ajuste 'model =' em \${CODEX_HOME:-~/.codex}/config.toml;" >&2
-    echo "  → se NENHUM modelo passar, é acesso da conta: rode 'codex login' e confira a assinatura." >&2
+    echo "  → medidos OK nesta conta (2026-08-22): gpt-5.6-terra, gpt-5.6-luna. Recusados: -sol, gpt-5.6;" >&2
+    echo "  → só se um SABIDAMENTE servido também falhar é acesso da conta: 'codex login' e confira a assinatura." >&2
     echo "  (não é cota nem falha transitória: esperar e repetir não consertam config.)" >&2
     exit 78
   fi
