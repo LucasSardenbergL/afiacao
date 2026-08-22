@@ -495,6 +495,28 @@ Os outros achados que sobreviveram à verificação:
   porque depois some em silêncio. Mesma lição do parágrafo acima, agora aplicada ao parecer que revisa
   o PR que a escreveu.
 
+#### Correção do quarto estado (offline) — e o que a SABOTAGEM VERDE ensinou (#PR desta sessão)
+
+`MixGapCard` passou a discriminar por `fetchStatus`, não por `isLoading`: `data === undefined` é
+pendente, pausado OU desabilitado; só `data === null` é a RPC dizendo "sem acesso". Offline virou
+estado próprio (`aguardando_rede`, tela de conexão) e **emite** evento com `total_com_gap: null` —
+não emitir recriaria o buraco do #1859 ("offline" indistinguível de "nunca abriu"), e emitir não
+contamina o denominador porque adoção se calcula sobre os estados com número honesto
+(`com_gap`/`zero`), como já era preciso com `erro`. O que segue MUDO é `semAcesso`. O erro deixou de
+ter precedência sobre o cache: com dado, a lista fica na tela + faixa de aviso e o evento leva
+`desatualizado: 'erro' | 'sem_rede'` (a dedup passou a ser por `estado:motivo`, senão engoliria a
+transição "número fresco" → "número velho", que é o sinal de leitura falhando em campo).
+
+**A lição durável está na falsificação que ficou VERDE.** Sabotar a precedência `pausado`-antes-de
+-`error` no ramo SEM dado não derrubou teste nenhum. Não era teste fraco: era o mecanismo que eu
+tinha descrito errado. `fetchState` (query-core, `query.ts`) zera `error`/`status` ao iniciar um
+fetch **apenas quando `data === undefined`** ⇒ sem dado, erro e pausa **nunca coexistem** (a ordem
+ali é inócua), e só COM dado no cache eles se sobrepõem — que é onde a precedência decide algo. O
+comentário do código afirmava um conflito inexistente e o teste passava por não discriminar nada.
+⇒ **sabotagem que não fica vermelha é achado, não aprovação**: ou o assert não mede o que diz, ou o
+mecanismo é outro. Investigue o mecanismo antes de aceitar o verde — foi o que produziu o único
+teste que mede a precedência de verdade (erro no cache + rede caindo depois).
+
 Denominador do card: `commercial_roles` = **3 vendedores**. Com n=3 o argumento do sensor fica mais
 forte, não mais fraco — um evento perdido é um terço da série.
 
