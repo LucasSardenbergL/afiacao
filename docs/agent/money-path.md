@@ -60,6 +60,17 @@
     - ⚠️ **Custo antes de generalizar:** a tupla única troca K round-trips por um payload maior (3.858 clientes ≈ 770 KB). Vale para leitura de carteira disparada a mão; NÃO vale para stream contínuo nem para universo sem teto conhecido — aí a resposta é fixar a geração explicitamente, não agregar.
     - ⚠️ **Guard de FORMA no consumidor: `Array.isArray`, não "confio no `for…of`".** `null`/objeto já explodem no laço, então o guard PARECE redundante e sai verde quando sabotado — mas **string é ITERÁVEL**: `for (const x of '[]')` percorre CARACTERES, cada `x.campo` é `undefined`, o Map ganha chave `undefined`, e a coleção inteira vira vazio SEM erro e COM toast de sucesso. Foi o único caso que deu dente ao assert (#1817).
 
+## A leitura que falha e vira silêncio afirmativo (classe erradicada em 2026-08-22)
+
+**Um `data` de react-query lido SEM o `error` do mesmo hook não distingue "não há" de "não consegui".** O hook lança quando a RPC falha ⇒ `data` fica `undefined`, a MESMA condição do vazio e do "nunca carregou". Quem devolve `return null` por `!data` colapsa os três — e quando a tela é ALERTA ou painel de SAÚDE, a ausência **afirma segurança**. Corolário do §2 (ausente ≠ zero) na camada de UI.
+
+- **Assinatura (estrutural, AST — grep MENTE aqui):** desestruturação `const { data } = useX()` sem `error`/`isError`, cujo `data` (ou uma **derivada** dele) guarda um `return null`. Testar "trata erro?" com grep de `error` no arquivo dá **falso negativo** justo nos piores casos: `text-status-error` do Tailwind casa e o arquivo passa.
+- **O padrão certo já existia no repo:** `DataHealthBadge` faz `isError ? 'red' : badgeLevel(data ?? [])` — fail-closed. `DataHealthBanner`, MESMO hook 20 linhas ao lado, fazia `const { data } = useDataHealth()` e sumia da tela financeira. Copie do primeiro.
+- **Ferramenta:** `estadoDeLeitura`/`naoConsegui` (`@/lib/leitura/estado-de-leitura`) nomeiam as 9 combinações de `status × fetchStatus`, e `<AvisoLeituraFalhou>` é o que a tela mostra em `erro`/`sem-rede`. **O quarto estado é o OFFLINE** (`pending` + `paused`): `isLoading` é FALSE, `data` undefined e `error` null — quem testa só `isLoading`/`error` cai no ramo do vazio. Num PWA de campo não é o caso raro.
+- **Gate:** `src/__tests__/erro-colapsado-em-vazio-gate.test.ts` (baseline por contagem) fiscaliza a **auto-ocultação total** (`return null`). A forma `jsx-&&` fica de fora **de propósito** — 93 sítios, idioma legítimo na maioria; gateá-la faria a baseline crescer por motivo benigno e ensinaria a atualizá-la no automático, que é como um gate morre. Ela está MEDIDA e é o segundo front.
+- **Convergência independente (2026-08-22):** o #1892 derivou À MÃO o mesmo mapeamento dentro do `MixGapCard` (`pausado`/`inerte`/`carregando` sobre `fetchStatus`) enquanto este helper nascia em paralelo — duas sessões, a mesma máquina de estados. É evidência de que o mapeamento está certo **e** a duplicação que o helper existe para eliminar: quem tocar o `MixGapCard` a seguir deve trocá-la por `estadoDeLeitura` (fonte única).
+- **Telemetria junto:** evento de adoção sai em TODO estado resolvido (erro inclusive) e leva `null` — nunca `0`/`'green'` — senão a série soma falha de leitura a "ninguém abriu".
+
 ## Aposentar código: "quem chama?" é a pergunta errada
 
 Ao decidir o destino de uma função money-path órfã, a pergunta não é **"quem a chama?"** — é **"o que acontece se alguém chamar?"**. Função sem cron e sem UI não é dívida inerte: pode ser uma **arma carregada**, e o custo de mantê-la não é o código, é o efeito de uma invocação.

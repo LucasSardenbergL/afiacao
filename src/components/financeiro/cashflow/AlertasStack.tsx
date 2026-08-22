@@ -6,6 +6,8 @@ import { Badge } from '@/components/ui/badge';
 import { AlertTriangle, AlertOctagon, Info, Check, Clock, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
+import { estadoDeLeitura, naoConsegui, desatualizado } from '@/lib/leitura/estado-de-leitura';
+import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
 
 const SEVERIDADE_ICON: Record<Alerta['severidade'], typeof Info> = {
   info: Info,
@@ -23,12 +25,40 @@ function sonecaVigente(a: Alerta): boolean {
   return Boolean(a.dismissed_until && new Date(a.dismissed_until).getTime() > Date.now());
 }
 
+/**
+ * ⚠️ FAIL-CLOSED de propósito. A guarda era:
+ *
+ *     const { data, isLoading } = useCashflowAlertas(activeCompany);
+ *     if (isLoading || !data || data.length === 0) return null;
+ *
+ * `useCashflowAlertas` lança quando o SELECT de `fin_alertas` falha, então no erro
+ * `data` fica `undefined` — a MESMA condição do zero. Carregando, erro e "nenhum
+ * alerta" produziam a mesma tela em branco, e numa tela de FLUXO DE CAIXA a ausência
+ * de alerta afirma segurança (docs/historico/fase-sem-sinal.md).
+ *
+ * Não é hipótese: medido em prod (2026-08-22, psql-ro) `fin_alertas` tem 14 alertas
+ * vivos (`dismissed_at IS NULL`) nas 3 empresas — 2 deles CRÍTICOS. Uma falha de
+ * leitura sumia com os 14 e a tela dizia, em silêncio, que não havia nada a ver.
+ */
 export function AlertasStack() {
   const { activeCompany } = useCompany();
-  const { data, isLoading } = useCashflowAlertas(activeCompany);
+  const q = useCashflowAlertas(activeCompany);
+  const { data } = q;
   const acao = useAcaoAlerta();
+  const estado = estadoDeLeitura(q);
 
-  if (isLoading || !data || data.length === 0) return null;
+  // Sem NADA em mãos: só o aviso — é o caso que o defeito escondia.
+  if (naoConsegui(estado) && !data) {
+    return <AvisoLeituraFalhou oque="os alertas de fluxo de caixa" estado={estado} />;
+  }
+  // COM alertas no cache e um refetch que falhou, apagar a lista trocaria um defeito por
+  // outro: 14 alertas vivos (2 críticos, medidos em prod) sumiriam da tela por causa de uma
+  // falha de rede. Estado COMPOSTO — a lista fica, com o aviso de desatualizada.
+  const velho = desatualizado(q, Boolean(data));
+  // `desabilitada` (sem empresa ativa) e `carregando` continuam mudas: a primeira é
+  // pergunta não feita, a segunda é transitória. O silêncio PERSISTENTE — que era o
+  // dano — agora só sobra para o zero de verdade.
+  if (!data || data.length === 0) return null;
 
   const agir = async (id: string, a: AcaoAlerta) => {
     try {
@@ -49,6 +79,7 @@ export function AlertasStack() {
 
   return (
     <div className="space-y-2">
+      {velho && <AvisoLeituraFalhou oque="os alertas mais recentes" estado={velho} />}
       {data.map(a => {
         const Icon = SEVERIDADE_ICON[a.severidade];
         const reconhecido = Boolean(a.acknowledged_at);
