@@ -3396,6 +3396,7 @@ export type Database = {
           product_id: string | null
           recommendation_type: string
           rejected_at: string | null
+          rejection_reason: string | null
           run_id: string | null
           status: string | null
           time_spent_seconds: number | null
@@ -3421,6 +3422,7 @@ export type Database = {
           product_id?: string | null
           recommendation_type: string
           rejected_at?: string | null
+          rejection_reason?: string | null
           run_id?: string | null
           status?: string | null
           time_spent_seconds?: number | null
@@ -3446,6 +3448,7 @@ export type Database = {
           product_id?: string | null
           recommendation_type?: string
           rejected_at?: string | null
+          rejection_reason?: string | null
           run_id?: string | null
           status?: string | null
           time_spent_seconds?: number | null
@@ -18985,6 +18988,16 @@ export type Database = {
       }
       farmer_melhor_individual_por_cliente: {
         Args: { p_farmer_id: string }
+        Returns: Json
+      }
+      farmer_recomendacao_registrar_desfecho: {
+        Args: {
+          p_customer_user_id: string
+          p_desfecho: string
+          p_motivo?: string
+          p_product_id: string
+          p_recommendation_type: string
+        }
         Returns: Json
       }
       farmer_recomendacoes_substituir: {
