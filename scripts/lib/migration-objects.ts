@@ -128,10 +128,18 @@ export function extractObjects(sql: string): ExtractedObject[] {
     objects.push({ kind: 'enum_value', schema: m[1] || 'public', name: m[3], parent: m[2] });
   }
 
-  // CREATE POLICY name ON [schema.]table
-  const policyRe = /CREATE\s+POLICY\s+"?([^\s"]+)"?\s+ON\s+(?:(\w+)\.)?(\w+)/gi;
+  // CREATE POLICY [IF NOT EXISTS] "nome com espaço"|nome ON [schema.]table
+  // O nome CITADO é a forma majoritária no corpus e a classe `[^\s"]+` parava no 1º espaço:
+  // 11% das policies sumiam do inventário (viravam AUSÊNCIA, não vermelho). Capturas aceitam
+  // `%` só para RECONHECER a DDL gerada por `EXECUTE format(...)` e DESCARTÁ-LA — `%I` como
+  // nome esperado é vermelho eterno; o certo é não inventariar. Ver migration-objects.test.ts.
+  const policyRe = /CREATE\s+POLICY\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:"([^"]+)"|([\w%]+))\s+ON\s+(?:([\w%]+)\.)?([\w%]+)/gi;
   for (const m of stripped.matchAll(policyRe)) {
-    objects.push({ kind: 'rls_policy', schema: m[2] || 'public', name: m[1], parent: m[3] });
+    const name = m[1] ?? m[2];
+    const schema = m[3] || 'public';
+    const parent = m[4];
+    if ([name, schema, parent].some((s) => s.includes('%'))) continue;
+    objects.push({ kind: 'rls_policy', schema, name, parent });
   }
 
   // dedupe por chave de colisão (IF NOT EXISTS pode repetir o mesmo objeto)
