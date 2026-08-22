@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 479
+-- Total de custom migrations: 480
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -520,7 +520,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260818121919', 'authz_fecho_execute_registrado_3_funcoes', '20260818121919_authz_fecho_execute_registrado_3_funcoes.sql'),
   ('20260820124611', 'farmer_melhor_individual_bulk', '20260820124611_farmer_melhor_individual_bulk.sql'),
   ('20260820133119', 'farmer_melhor_individual_atomico', '20260820133119_farmer_melhor_individual_atomico.sql'),
-  ('20260820225840', 'farmer_assoc_rules_escritor_unico', '20260820225840_farmer_assoc_rules_escritor_unico.sql')
+  ('20260820225840', 'farmer_assoc_rules_escritor_unico', '20260820225840_farmer_assoc_rules_escritor_unico.sql'),
+  ('20260821200000', 'farmer_assoc_rules_segmento', '20260821200000_farmer_assoc_rules_segmento.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2127,7 +2128,9 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('farmer_geracao_head_sensor', 'rls_policy', 'public', 'fgv_select_carteira', 'farmer_geracao_vigente'),
   ('farmer_geracao_head_sensor', 'rls_policy', 'public', 'fge_select_carteira', 'farmer_geracao_execucoes'),
   ('farmer_melhor_individual_bulk', 'function', 'public', 'farmer_melhor_individual_por_cliente', ''),
-  ('farmer_melhor_individual_atomico', 'function', 'public', 'farmer_melhor_individual_por_cliente', '')
+  ('farmer_melhor_individual_atomico', 'function', 'public', 'farmer_melhor_individual_por_cliente', ''),
+  ('farmer_assoc_rules_segmento', 'function', 'public', 'omie_products_codigos_multi_conta', ''),
+  ('farmer_assoc_rules_segmento', 'function', 'public', 'farmer_association_rules_substituir', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -3782,7 +3785,9 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('farmer_geracao_head_sensor', 'rls_policy', 'public', 'fgv_select_carteira', 'farmer_geracao_vigente'),
   ('farmer_geracao_head_sensor', 'rls_policy', 'public', 'fge_select_carteira', 'farmer_geracao_execucoes'),
   ('farmer_melhor_individual_bulk', 'function', 'public', 'farmer_melhor_individual_por_cliente', ''),
-  ('farmer_melhor_individual_atomico', 'function', 'public', 'farmer_melhor_individual_por_cliente', '')
+  ('farmer_melhor_individual_atomico', 'function', 'public', 'farmer_melhor_individual_por_cliente', ''),
+  ('farmer_assoc_rules_segmento', 'function', 'public', 'omie_products_codigos_multi_conta', ''),
+  ('farmer_assoc_rules_segmento', 'function', 'public', 'farmer_association_rules_substituir', '')
 )
 SELECT
   e.migration,

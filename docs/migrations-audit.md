@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **479** custom migrations totais
-- **1618** objetos esperados (criados por estas migrations)
+- **480** custom migrations totais
+- **1620** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 491
+  - `function`: 493
   - `rls_policy`: 400
   - `index`: 243
   - `cron_job`: 164
@@ -3988,6 +3988,13 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20260820225840_farmer_assoc_rules_escritor_unico.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260821200000_farmer_assoc_rules_segmento.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.omie_products_codigos_multi_conta` | — |
+| `function` | `public.farmer_association_rules_substituir` | — |
 
 ## Próximos passos por status
 
