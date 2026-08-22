@@ -105,10 +105,14 @@ for backoff in "${backoffs[@]}"; do
   #   · o inverso — prompt citando "usage limit", ou a própria frase "model is not supported"
   #     (o prompt que DIAGNOSTICOU este bug tinha as duas) — abortava na 1ª tentativa com
   #     COTA_ESGOTADA/MODELO_NAO_ACEITO sem retry nenhum.
-  # ⇒ tira-se o eco: `grep -Fvxf` remove as linhas que são do prompt e classifica-se o resto.
+  # ⇒ tira-se o eco: as linhas que vieram do prompt saem, e classifica-se o resto.
   #   (Filtrar por prefixo `ERROR:` seria mais frágil: nem toda mensagem do codex o traz —
   #   a de cota, p.ex., não vem prefixada, e sumiria da classificação.)
-  diag="$(grep -aFvxf <(printf '%s\n' "$prompt") "$err" 2>/dev/null)"
+  # `awk` com hash, NÃO `grep -Fvxf`: com um prompt de 5.000 linhas — tamanho normal no
+  # ritual — o BSD grep do macOS leva 29s POR TENTATIVA (O(n·m)), ~2min nas 3. O GNU grep
+  # do CI e o ugrep resolvem na hora, então a lentidão seria invisível no CI e só doeria na
+  # máquina do founder. awk é O(n+m): <1s com 50.000 linhas. (medido 2026-08-22)
+  diag="$(awk 'NR==FNR{p[$0];next} !($0 in p)' <(printf '%s\n' "$prompt") "$err" 2>/dev/null)"
   classifica() { printf '%s\n' "$diag" | grep -qiE "$1"; }
 
   # cota esgotada = NÃO-transitório → Caminho B na hora (money-path.md)

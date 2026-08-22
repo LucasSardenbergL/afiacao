@@ -178,6 +178,23 @@ case "$saida" in
   *) echo "  FAIL  perdeu o motivo cru do erro"; fail=1 ;;
 esac
 
+# (g) prompt GRANDE: tirar o eco não pode ser O(n·m). Medido 2026-08-22 no macOS com um
+#     prompt de 5.000 linhas: `grep -Fvxf` (BSD grep) levou 29s POR TENTATIVA — 3 tentativas
+#     = ~2min de espera antes de o ritual sequer reportar o erro. O ugrep e o GNU grep do CI
+#     resolvem na hora, então a lentidão seria INVISÍVEL no CI e só doeria na máquina do
+#     founder. `awk` com hash é O(n+m): <1s. O teto de 20s abaixo é folgado de propósito —
+#     é guarda contra a regressão catastrófica, não benchmark.
+prompt_grande=$(awk 'BEGIN{for(i=1;i<=5000;i++) printf "%6d\tlinha de codigo %d;\n", i, i}')
+t0=$(date +%s)
+saida=$(run generico400 "$prompt_grande" 2>&1)
+gasto=$(( $(date +%s) - t0 ))
+if [ "$gasto" -le 20 ]; then echo "  ok    prompt de 5k linhas classificado em ${gasto}s (teto 20s)"
+else echo "  FAIL  ${gasto}s para um prompt de 5k linhas — remoção do eco virou O(n*m)"; fail=1; fi
+case "$saida" in
+  *"linha de codigo 512"*) echo "  FAIL  vazou o prompt grande na saída"; fail=1 ;;
+  *) echo "  ok    …e sem vazar o prompt na saída" ;;
+esac
+
 echo "── watchdog (execução travada) ──"
 # -t 3, não -t 1: o stub conta a invocação na PRIMEIRA linha, mas sob swap (M2 8GB com
 # vitest ao lado) o processo pode não ser escalonado a tempo e morrer antes de contar —
