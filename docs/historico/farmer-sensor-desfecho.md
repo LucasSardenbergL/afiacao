@@ -130,6 +130,50 @@ sugerindo retry) derrubam testes **nomeados**, não "algum teste".
 
 ## Quando medir (é query, não recado)
 
+**A query só é legível depois de expediente decorrido — e expediente não é relógio
+de parede.** O Publish foi **sexta 21/08 às 22:40 BRT**; à 00:13 de sábado nenhum
+minuto de carteira havia corrido. Mas esperar não era o remédio, e a query da
+precondição é que mostrou por quê.
+
+### Medido em 2026-08-22 00:20 BRT (psql-ro) — a coorte está VAZIA e o dono é o founder
+
+```
+geradas_na_janela = 0        (nenhuma linha desde o Publish: a razão seria 0/0)
+```
+
+| farmer | clientes na carteira | papel | recs total | **pendentes** | última atividade |
+|---|---|---|---|---|---|
+| `414a9727` | 3.858 | **master (o founder)** | 16.626 | **1.083** | 21/08 (ontem) |
+| `700657a1` | 1.530 | employee | **0** | 0 | **nunca** |
+| `33f59dc7` | 1.245 | employee | 690 | **0** | 10/04 (**134 dias**) |
+
+São **3 farmers com carteira**, não 1 — e o dono das 1.083 pendentes é a conta do
+**founder**, não uma vendedora. Como os botões só existem em card `pendente`, os
+dois vendedores reais têm **zero card clicável**: não é "não clicaram ainda", é que
+**não há o que clicar**. Um abriu a tela uma vez, há 134 dias; o outro nunca abriu.
+
+**Esperar não produziria sinal sobre vendedor — mediria o founder clicando nos
+próprios botões.** É o `MONOUSUARIO` de [`fase-sem-sinal.md`](fase-sem-sinal.md)
+(gatilho `db/gatilho-farmer-fase2.sql`, #1865) chegando ao sensor de desfecho pelo
+mesmo caminho: *"a fase seguinte é INSTALAR O USO nos demais farmers com carteira —
+não esperar."*
+
+> A armadilha é auto-referente e já mordeu duas vezes no domínio: em #1865 o ato de
+> verificar renovava `exec_7d` e **apagava** o alarme; aqui o ato de verificar é o
+> que **cria** a coorte. Em ambos, quem olha vira a amostra.
+
+A calibração continua bloqueada, e agora sabe-se por quê: não falta tempo, falta
+**usuário**. A fase seguinte não é medir de novo — é a tela chegar aos dois
+vendedores com carteira.
+
+Antes da query de adoção, a da precondição — se o motor não rodou, não há coorte:
+
+```sql
+SELECT max(created_at) AS ultima_geracao, count(*) AS geradas_na_janela
+FROM farmer_recommendations
+WHERE created_at >= '2026-08-22 01:40:00+00';   -- Publish do sensor
+```
+
 ```sql
 SELECT
   count(*)                                                        AS geradas,
@@ -154,9 +198,20 @@ Vieses conhecidos, a carregar para a calibração: quem registra aceite e omite 
 infla a taxa; `sem_estoque` e `prazo_entrega` são falha **operacional**, não erro do
 motor, e penalizariam a afinidade se contados junto.
 
-## Se a query continuar vazia
+## Se a query voltar zerada — são TRÊS casos, não dois
 
-Aí a pergunta seguinte é sobre **adoção**, não sobre código: a superfície está no ar
-e ninguém a usa. O evento `recomendacao.desfecho_clicado` (PostHog) separa os dois
-casos — ele mede a **tentativa**, então tentativa alta com linha zero significa que
-o banco está recusando, e tentativa zero significa que ninguém clicou.
+| Leitura | O que aconteceu | Próximo passo |
+|---|---|---|
+| **`geradas = 0`** | O recompute não rodou na janela: a coorte está **vazia** e o card nunca chegou a ser oferecido. `(aceitas+recusadas)/geradas` é `0/0` — **indefinido**, não "0% de adoção". | Rodar a query de precondição acima. Nada a concluir sobre uso. |
+| `geradas > 0`, desfechos 0, **tentativa > 0** | O banco está recusando o clique. | Códigos FD001–FD007 da migration. É código. |
+| `geradas > 0`, desfechos 0, **tentativa 0** | Ninguém clicou. | Conversa com a vendedora. Não é commit. |
+
+A tentativa vem do evento `recomendacao.desfecho_clicado` (PostHog): ele mede o
+**clique**, não a linha gravada — é o que separa a segunda linha da terceira.
+
+**A classe:** `geradas = 0` é o `Number(null) === 0` da adoção. Zerar numerador e
+denominador ao mesmo tempo produz uma tela **idêntica** à do desuso, e a versão
+anterior desta seção mandava ler as duas como "a superfície está no ar e ninguém a
+usa" — uma conclusão sobre a vendedora tirada de um motor que talvez não tenha
+rodado. Irmã da regra de corte por ranking: o denominador precisa ser conferido
+**antes** da razão que ele sustenta.
