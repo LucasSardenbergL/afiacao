@@ -65,8 +65,14 @@ export function CarteiraSaudePanel() {
   const estado = estadoDeLeitura(q);
 
   const trackedEstado = useRef<EstadoLeitura | null>(null);
+  // `data == null` com a leitura PRONTA é a RPC dizendo "você não é staff": conferido em
+  // prod, `get_carteira_saude` faz RETURN NULL sem uid ou sem role master/employee.
+  // Ausência de ACESSO não é um estado do painel — contá-la como "visto" poluiria o
+  // denominador de adoção com quem nunca poderia ver a tela. Não renderiza e NÃO emite;
+  // é a única ausência de evento legítima (mesma regra do #1859).
+  const semAcesso = estado === 'pronta' && data == null;
   useEffect(() => {
-    if (estado === 'carregando' || estado === 'desabilitada') return;
+    if (estado === 'carregando' || estado === 'desabilitada' || semAcesso) return;
     if (trackedEstado.current === estado) return;
     trackedEstado.current = estado;
     const nivel = data
@@ -77,7 +83,7 @@ export function CarteiraSaudePanel() {
         ])
       : null;
     track('carteira.saude_vista', { estado, nivel });
-  }, [estado, data]);
+  }, [estado, data, semAcesso]);
 
   if (naoConsegui(estado)) {
     return (

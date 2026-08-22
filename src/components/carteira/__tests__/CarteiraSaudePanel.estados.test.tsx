@@ -86,6 +86,15 @@ describe('CarteiraSaudePanel — o painel de saúde não pode se apagar por não
     expect(await screen.findByText(AVISO)).toBeTruthy();
   });
 
+  it('ausência de ACESSO não emite — é a única ausência de evento legítima', async () => {
+    // `get_carteira_saude` devolve NULL sem role (conferido em prod). Contar isso como
+    // "visto" encheria o denominador de adoção de quem nunca poderia ver a tela.
+    resposta = { data: null, error: null };
+    const { container } = renderPainel();
+    await waitFor(() => expect(container.textContent).toBe(''));
+    expect(evento(), 'sem acesso emitiu evento — o denominador foi poluído').toBeUndefined();
+  });
+
   it('erro e ausência-de-acesso NÃO produzem a mesma tela', async () => {
     resposta = { data: null, error: null };            // RPC devolve NULL = sem acesso
     const semAcesso = renderPainel();
