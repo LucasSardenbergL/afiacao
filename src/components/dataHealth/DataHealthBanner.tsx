@@ -60,11 +60,3 @@ export function DataHealthBanner({ source }: { source: string }) {
     </div>
   );
 }
-
-// SABOTAGEM TEMPORÁRIA — falsificação do gate. Revertida no commit seguinte.
-export function BannerSabotado({ source }: { source: string }) {
-  const { data } = useDataHealth();
-  const check = data?.find((c) => c.source === source);
-  if (!check) return null;
-  return <span>{check.message}</span>;
-}
