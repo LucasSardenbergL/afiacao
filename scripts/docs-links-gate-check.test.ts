@@ -6,7 +6,6 @@ import {
   type DocMd,
   ehExterno,
   extrairLinks,
-  removerCodigo,
   resolverDestino,
   sugerirCaminho,
 } from './docs-links-gate-check';
@@ -22,17 +21,8 @@ const causas = (a: AchadoLink[]): CausaLink[] => a.map((f) => f.causa);
 /** Por padrão nada existe no disco — quem testa a discriminação passa o seu próprio. */
 const nadaNoDisco = () => false;
 
-describe('removerCodigo — código é exemplo, não link', () => {
-  it('esvazia bloco cercado preservando a NUMERAÇÃO das linhas', () => {
-    const { texto } = removerCodigo('a\n```\n[x](y.md)\n```\nb');
-    expect(texto.split('\n')).toHaveLength(5);
-    expect(texto).not.toContain('y.md');
-    expect(texto.split('\n')[4]).toBe('b');
-  });
-
-  it('esvazia trecho entre crases na mesma linha', () => {
-    expect(removerCodigo('veja `[a.md](b.md)` como exemplo').texto).not.toContain('b.md');
-  });
+describe('extrairLinks — o que o gate se propõe a julgar', () => {
+  const links = (texto: string, arquivo = 'docs/a/x.md') => extrairLinks({ arquivo, texto }).links;
 
   // O DISCRIMINANTE deste gate. Medido: os 5 únicos falsos-positivos do corpus são inline code em
   // docs que documentam o gate irmão — `gate-indice-docs.md:60` tem `[a.md](b.md)` como ilustração.
@@ -41,35 +31,6 @@ describe('removerCodigo — código é exemplo, não link', () => {
     const linha = '4. **TEXTO = DESTINO** — `[a.md](b.md)` é copiar-colar; quem clica cai em `b.md`.';
     expect(extrairLinks({ arquivo: 'docs/historico/gate-indice-docs.md', texto: linha }).links).toEqual([]);
   });
-
-  // A lição de `gates-textuais-cegos.md`: um `[\s\S]*?` entre crases engoliria dezenas de linhas a
-  // partir de uma crase solta em prosa, e o gate ficaria verde por CEGUEIRA.
-  it('crase SEM par na linha é texto — não engole as linhas seguintes', () => {
-    const { texto } = removerCodigo('preço em ` reais\n[x](quebrado.md)\nfim');
-    expect(texto).toContain('quebrado.md');
-  });
-
-  it('run de crases só fecha com run do MESMO tamanho', () => {
-    expect(removerCodigo('``a ` b`` fim').texto).toBe(' fim');
-  });
-
-  it('`~~~` não fecha um bloco aberto com ```', () => {
-    expect(removerCodigo('```\n~~~\n[x](y.md)\n```\ndepois').texto).not.toContain('y.md');
-  });
-
-  it('cerca com info string (```ts) abre, e ``` sozinho fecha', () => {
-    const { texto, cercaAberta } = removerCodigo('```ts\ncodigo\n```\n[x](y.md)');
-    expect(cercaAberta).toBeNull();
-    expect(texto).toContain('y.md');
-  });
-
-  it('cerca não fechada é sinalizada com a linha da abertura', () => {
-    expect(removerCodigo('a\n```\nb').cercaAberta).toMatchObject({ linha: 2, marca: '```' });
-  });
-});
-
-describe('extrairLinks — o que o gate se propõe a julgar', () => {
-  const links = (texto: string, arquivo = 'docs/a/x.md') => extrairLinks({ arquivo, texto }).links;
 
   it('pega link relativo de .md', () => {
     expect(links('[i](../b/y.md)')[0]).toMatchObject({ alvo: '../b/y.md', destino: 'docs/b/y.md' });

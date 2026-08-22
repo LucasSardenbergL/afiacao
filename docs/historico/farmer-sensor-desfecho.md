@@ -293,6 +293,38 @@ virou "transitório" — 3 tentativas e 80s de backoff atrás de algo que nunca 
 > entrada de volta. O padrão precisa casar na linha de ERRO, não no eco do que foi
 > enviado — senão o conteúdo do prompt decide a política de retry.
 
+### Desfecho — corrigido no mesmo dia (2026-08-22)
+
+Os dois bugs foram corrigidos com teste que os falsifica. O que a correção ensinou além
+do diagnóstico acima:
+
+- **O eco corrompe nos DOIS sentidos, e o inverso é o mais traiçoeiro.** O relato viu um
+  400 permanente virar "transitório". O caminho de volta também existia: prompt citando
+  `usage limit` virava `COTA_ESGOTADA`, e prompt citando `model is not supported` virava
+  `MODELO_NAO_ACEITO` — abortando na 1ª tentativa, sem retry, um erro que era transitório.
+  O prompt que DIAGNOSTICOU este bug contém as duas frases: o ritual se auto-sabotava.
+- **Corrigir na fonte > apertar o padrão.** Tira-se o eco (`grep -Fvxf` remove do stderr as
+  linhas que vieram do prompt) e classifica-se o resto. A alternativa óbvia — só casar
+  linhas `ERROR:` — é mais frágil: a mensagem de cota do codex **não** vem prefixada e
+  sumiria da classificação, trocando um bug por outro. O teste da cota é que mostrou isso.
+- **Verde pela camada errada conta como não-testado.** Três defesas foram adicionadas (tirar
+  o eco · ancorar o 5xx num marcador HTTP · `invalid_request_error` explícito). O primeiro
+  caso escrito passava por causa da 3ª, não da 1ª — sabotar a remoção do eco não o deixava
+  vermelho. Só a matriz de falsificação (sabotar cada camada e ver **qual** caso cai)
+  expôs isso; cada camada ganhou o caso que só ela sustenta.
+- **Um ramo que só faz `break` é intestável.** O ramo do 400 permanente era indistinguível
+  do `break` final: removê-lo não mudava nada observável. Passou a DIZER o julgamento
+  (`ERRO_PERMANENTE` + o que fazer) — que é o que o chamador precisa ler, e o que o teste
+  consegue afirmar.
+- **E o teste era ÓRFÃO.** `scripts/test-codex-async.sh` existia desde o #1217 e não estava
+  em nenhum dos dois loops do `test:hooks`: o contrato do exit 78, escrito no #1860, nunca
+  rodou no CI. Registrado. Restam 8 órfãos no mesmo padrão (`test-<x>.sh` sem `-guard`), que
+  o `hooks-guard-cobertura.test.ts` não vigia porque ele só cobre `test-<x>-guard.sh`.
+
+O default do modelo virou **medição datada dentro do próprio script** (o ping dos 5 nomes,
+com a data e a versão do codex-cli), não uma escolha: disponibilidade muda por tier, e o
+registro anterior já tinha envelhecido para `-sol` sem ninguém perceber até o ritual falhar.
+
 ## O achado P1: a chave de negócio é identidade DENTRO de uma geração
 
 O parecer e a auto-revisão chegaram nele por caminhos independentes.

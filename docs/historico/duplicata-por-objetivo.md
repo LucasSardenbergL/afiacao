@@ -169,6 +169,124 @@ O que a auditoria mostrou, e vale além deste hook:
 
 Suíte: 31 → 33 asserções. `bun run test:hooks` verde; contrato roda no job `mutation-check`.
 
+## 4ª ocorrência: entrega por DESENHO DIFERENTE — quando o grep do ARTEFATO devolve 0 e mesmo assim é duplicata (2026-08-22, PR #928)
+
+As 3 ocorrências acima têm o mesmo formato: o símbolo que a sessão ia criar **já estava literalmente
+na `origin/main`**, então "procure o ARTEFATO" resolve. O PR #928 é o caso que **derrota a regra que
+fecha esta página** — e por isso vale mais do que os outros três juntos.
+
+`#928` (DRAFT, 65 dias parado) entregava `CREATE UNIQUE INDEX uniq_sales_orders_pull_identity ON
+sales_orders (account, omie_pedido_id) WHERE checkout_id IS NULL …`, para impedir duplicata de pedido
+vinda do sync de entrada do Omie. O detector prescrito roda limpo e diz **não entregue**:
+
+```
+git fetch origin && git grep -l uniq_sales_orders_pull_identity origin/main   → 0 hits
+git grep -l pull_identity origin/main                                        → 0 hits
+```
+
+E ainda assim o objetivo **estava entregue em produção havia 65 dias**, por
+[`20260617133634_sales_orders_omie_hash_unique.sql`](../../supabase/migrations/20260617133634_sales_orders_omie_hash_unique.sql) —
+outro nome, outra coluna, **a mesma garantia**:
+
+| | #928 (parado) | o que já existe em prod |
+|---|---|---|
+| índice | `uniq_sales_orders_pull_identity` | `uniq_sales_orders_omie_hash` |
+| chave | `(account, omie_pedido_id)` | `(account, hash_payload)` |
+| escopo | `WHERE checkout_id IS NULL` | `WHERE hash_payload LIKE 'omie\_%'` |
+
+São **a mesma asserção escrita em coordenadas diferentes**: o pull monta o hash como
+`omie_${account}_${codigoPedido}` ([`omie-vendas-sync/index.ts:1242`](../../supabase/functions/omie-vendas-sync/index.ts))
+e grava `omie_pedido_id: codigoPedido` — logo unicidade de `(account, hash)` **é** unicidade de
+`(account, codigoPedido)` entre linhas pull. Nenhuma busca por símbolo cruza essa ponte, porque a
+ponte é **semântica**, não léxica.
+
+E não foi só o índice: no MESMO 17/06, às 16:00, entrou a RPC atômica
+[`criar_pedidos_com_itens`](../../supabase/migrations/20260617160000_criar_pedidos_com_itens.sql)
+(existe em prod), por onde o pull passou a escrever pai+filhos. Ela fecha os **três** pré-requisitos
+que o próprio #928 listava no cabeçalho como condição para poder ser aplicado:
+
+| pré-requisito declarado no #928 | onde já está resolvido na `main` |
+|---|---|
+| edge dedupa e trata `23505` como "já existe" | `ON CONFLICT (account, hash_payload) WHERE hash_payload LIKE 'omie\_%'` (linha 85 da RPC) — duplicata vira **no-op**, não erro |
+| `sync-reprocess` para de reescrever `hash_payload` | `sync-reprocess/index.ts:275` — *"NUNCA toca hash_payload do pai (causa-raiz #B)"* |
+| limpar as duplicatas pull pré-existentes | não há o que limpar: duplicatas pull×pull = **0** |
+
+E o `RAISE … ERRCODE '22023'` na linha 56 da RPC (*"pedido sem account/hash_payload"*) é o que torna
+**estrutural** o que a medição viu como empírico: linha pull sem hash não entra — fail-closed. Por
+isso `hash_payload` deixou de ser o "campo mutável e multi-writer" que o #928 descrevia; ele virou a
+identidade imutável do pull, com guard no banco e escrita por um único caminho.
+
+### O que torna esta variante cara: o PR parado não ficou obsoleto, ficou ERRADO
+
+O #928 justificava trocar a chave dizendo que `hash_payload` era mutável (o edge `sync-reprocess`
+reescrevia o hash). Verdade em 17/06 — e **consertada por outra rota** nos 65 dias: a `main` de hoje
+diz em `sync-reprocess/index.ts:275` *"NUNCA toca hash_payload do pai (causa-raiz #B)"*. Reviver o PR
+sobre uma premissa já reparada não seria só trabalho descartado; seria **destrutivo**. Medido em prod
+(psql-ro, 2026-08-22 ~19:40 UTC):
+
+- o `CREATE UNIQUE INDEX` **falharia**: 24 grupos violam o predicado do PR;
+- mas os 24 grupos **não são duplicatas** — são os pares **push × pull legítimos** que
+  [`20260613120000`](../../supabase/migrations/20260613120000_onda1_fase0_sales_orders_identidade.sql)
+  removeu o `UNIQUE(account, omie_pedido_id)` justamente para permitir. Assinatura sem ambiguidade:
+  lado `hash NULL` = **24/24** com `omie_payload` **e** `omie_response`, status `enviado` (push);
+  lado `hash omie_%` = **0/24** com payload, status `faturado`/`importado` (pull). Somas de `total`
+  diferem (13.419,56 × 15.489,16) — não são cópias, são **duas faces do mesmo pedido**;
+- o discriminante do PR (`checkout_id IS NULL` ⇒ "é pull") **não vale para linha legada**: a coluna
+  `checkout_id` nasceu em **13/06** e as 48 linhas foram criadas entre **06/04 e 10/06** — todas
+  anteriores à coluna, logo todas com `checkout_id NULL`, push inclusive;
+- e a classe de bug que o PR existe para impedir tem **zero instâncias**: duplicatas pull×pull = **0**,
+  linhas pull fora do índice parcial existente = **0**, nenhuma duplicata nova desde **10/06**.
+
+Ou seja: "dedupar antes de criar o índice" — o passo que parece óbvio quando o `CREATE` falha —
+apagaria dado money-path real (o lado push é o único registro do que foi enviado ao Omie) para
+satisfazer um índice que não deveria existir. **O `CREATE UNIQUE INDEX` falhando foi fail-safe
+funcionando**: ele recusou porque a premissa estava errada, não porque faltava limpeza.
+
+### O detector que teria pego
+
+Símbolo não cruza desenho. O que cruza é o **objeto que a mudança governa** — aqui, a tabela:
+
+```bash
+# migrations da MESMA tabela na main, com o timestamp do seu PR como âncora
+git ls-tree -r --name-only origin/main -- supabase/migrations | grep -i sales_order
+```
+
+Isso devolve `20260617133634_…omie_hash_unique` contra o `20260617140000` do PR: **23 minutos** de
+distância, mesmo dia — duas sessões atacando o mesmo bug em paralelo, uma mergeou e a outra virou
+draft. **Adjacência de timestamp entre uma migration parada e uma migration mergeada da mesma tabela
+é presunção de duplicata por objetivo**, e é barata de olhar.
+
+⇒ A regra da seção anterior ganha um degrau: **procure o ARTEFATO; se der 0, procure o INVARIANTE.**
+Grep por símbolo tem o mesmo modo de falha do grep por título — só um nível abaixo. Ele responde
+"ninguém escreveu ESTE nome", nunca "ninguém garantiu ESTA propriedade". Para mudança de banco, a
+pergunta correta não é *o índice existe?* e sim *a unicidade existe?* — e quem responde isso é o
+**catálogo de prod**, não o repo (`pg_indexes` + a definição do predicado), a mesma raiz do
+"para o CORPO de um objeto, o repo não é a verdade; prod é" (`docs/agent/database.md` §3).
+
+### A prova da equivalência (e o que ficou pendente)
+
+A ponte semântica acima foi **medida**, não só lida no código — o teste que a falsificaria é
+perguntar se algum hash foge da forma canônica:
+
+```sql
+select count(*) from public.sales_orders
+ where hash_payload like 'omie\_%'
+   and hash_payload <> ('omie_' || account || '_' || omie_pedido_id::text);   -- → 0, em 30.951 linhas
+```
+
+Zero. Somado a `pg_get_indexdef` da PROD (o predicado do índice é o esperado) e a
+`standard_conforming_strings=on` (o `\_` é escape de LIKE, casa `_` literal), a unicidade
+`(account, hash_payload)` **é** a unicidade `(account, omie_pedido_id)` entre linhas pull — para
+todas as linhas existentes, não por argumento.
+
+⚠️ **REVISÃO INDEPENDENTE PENDENTE** — a 2ª opinião do Codex (ritual money-path) não rodou: cota da
+janela de 7d esgotada (`codex-async.sh` exit 75 → Caminho B). O que está acima é validação adversária
+própria. O ponto mais frágil, se alguém quiser atacar: tudo aqui descreve o estado **atual** das
+linhas; um caminho de escrita FUTURO que insira linha pull fora da RPC atômica escaparia da forma
+canônica — mitigado hoje pelo `RAISE` da linha 56, que é o guard estrutural, mas é código, não
+constraint. Um `CHECK` de canonicidade do hash seria o hardening residual honesto — não foi feito
+aqui (nenhuma instância, e é escopo novo).
+
 ## Precedente
 
 | quando | caso | forma |
@@ -176,3 +294,4 @@ Suíte: 31 → 33 asserções. `bun run test:hooks` verde; contrato roda no job 
 | 2026-07-23 | #1550/#1560 (redação de PII do PostgREST) | 2 sessões, mesmo achado de Codex; implementação descartada inteira; desenho alheio melhor |
 | 2026-08-06 | #1525/#1526 | duplicata detectada 6 min tarde demais; 26 arquivos jogados fora |
 | 2026-08-15 | as 3 acima | primeira vez com o entregador **já na main** — o que expôs a cegueira do detector por título |
+| 2026-08-22 | #928 (parado 65 d) | entregue sob **outro desenho** (`uniq_sales_orders_omie_hash`) — o grep do ARTEFATO dá **0** e ainda assim é duplicata; reviver seria **destrutivo** |

@@ -440,20 +440,22 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const authHeader = req.headers.get("Authorization");
-    if (!authHeader?.startsWith("Bearer ")) {
-      return jsonRes({ error: "Não autorizado" }, 401);
-    }
-
     // ── Sonda de versão ────────────────────────────────────────────────────────────────
     // Responde ANTES do `createClient` e de qualquer leitura/escrita: o ponto da canária é
     // dizer QUAL bundle está no ar sem pagar o efeito da edge. Aqui o efeito é gravar
     // `recommendation_log` — o sensor de desfecho do motor (#1851) —, e uma linha inventada
     // por sondagem entraria no denominador de "a recomendação virou venda".
     //
-    // Depois do gate de `Bearer` e não antes: o gate desta edge é o padrão (JWT + staff), não
-    // o gate-próprio de `omie-cliente`/`omie-nfe-webhook`. Sondar continua exigindo um token,
-    // que é o que impede a canária de virar um oráculo público de versão.
+    // ANTES do gate de `Bearer ` do handler, e isto é o ponto (corrige o #1877): aquele gate
+    // exige `Authorization: Bearer …`, então um request com `x-cron-secret` e sem Authorization
+    // morria nele e NUNCA alcançava `authorizeCronOrStaff` — justamente quem sabe validar o
+    // cron secret. Medido em prod: `net.http_post` do SQL Editor com o secret devolveu 401
+    // {"error":"Não autorizado"} (mensagem do HANDLER). Das três credenciais que o helper
+    // aceita, só as que por acaso vinham em `Bearer` chegavam até ele — e o caminho
+    // DOCUMENTADO para sondar era exatamente o que não passava.
+    //
+    // A sonda não fica desprotegida: quem a gateia é o `authorizeCronOrStaff` logo abaixo, que
+    // é mais estrito que o `startsWith("Bearer ")` daqui (este aceita qualquer string).
     //
     // O corpo é lido AQUI (antes era só na linha do `switch`) porque a decisão depende dele.
     // JSON malformado passa a devolver 400 explícito em vez de cair no catch genérico — o
@@ -485,6 +487,11 @@ Deno.serve(async (req) => {
       if (!authSonda.ok) return authSonda.response;
       if (decisaoSonda.tipo === "sonda") return jsonRes(respostaSonda(VERSAO), 200);
       return jsonRes({ error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }, 400);
+    }
+
+    const authHeader = req.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return jsonRes({ error: "Não autorizado" }, 401);
     }
 
     const supabaseAdmin = createClient(

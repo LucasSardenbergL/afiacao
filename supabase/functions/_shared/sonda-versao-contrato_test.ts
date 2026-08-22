@@ -340,6 +340,29 @@ Deno.test("gate próprio: onde o gate da edge não aceita cron-secret, a sonda N
   }
 });
 
+Deno.test("recommend: a sonda vem ANTES do gate de Bearer do handler", () => {
+  // Medido em prod (2026-08-22): `net.http_post` com `x-cron-secret` e SEM `Authorization`
+  // devolveu 401 {"error":"Não autorizado"} — a mensagem do HANDLER, não do helper. Causa: o
+  // `startsWith("Bearer ")` do handler estava ANTES da sonda, então o request morria ali e
+  // nunca alcançava `authorizeCronOrStaff` — justamente quem sabe validar `x-cron-secret`.
+  //
+  // O efeito é uma credencial que o gate ACEITA no papel e o fluxo REJEITA na prática: das três
+  // que o helper reconhece (cron secret, service role, JWT), só as que por acaso vêm em
+  // `Authorization: Bearer` chegam até ele. O caminho documentado (SQL Editor via
+  // net.http_post) é exatamente o que não passa.
+  const h = trechoDoHandler("recommend");
+  const posSonda = h.indexOf("classificarSonda(");
+  const posBearer = h.indexOf('startsWith("Bearer ")');
+  if (posSonda < 0 || posBearer < 0) {
+    throw new Error("recommend: âncoras não encontradas (controle positivo vazio)");
+  }
+  if (posSonda > posBearer) {
+    throw new Error(
+      "recommend: a sonda está DEPOIS do gate de Bearer — x-cron-secret nunca chega ao authorizeCronOrStaff",
+    );
+  }
+});
+
 Deno.test("CALIBRAÇÃO: os gates da terceira leva reprovam a forma errada", () => {
   // Sem isto os três acima só provariam que os arquivos existem (deploy.md: "canária que não
   // discrimina é teatro verde"). Cada padrão é exercitado contra a forma que ele existe para
