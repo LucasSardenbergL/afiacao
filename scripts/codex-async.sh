@@ -106,8 +106,14 @@ for backoff in "${backoffs[@]}"; do
   #     (o prompt que DIAGNOSTICOU este bug tinha as duas) — abortava na 1ª tentativa com
   #     COTA_ESGOTADA/MODELO_NAO_ACEITO sem retry nenhum.
   # ⇒ tira-se o eco: as linhas que vieram do prompt saem, e classifica-se o resto.
-  #   (Filtrar por prefixo `ERROR:` seria mais frágil: nem toda mensagem do codex o traz —
-  #   a de cota, p.ex., não vem prefixada, e sumiria da classificação.)
+  #   (Por que não casar só linhas `ERROR:`, a alternativa óbvia: prompts do ritual colam
+  #   stderr de erro o tempo todo — "diagnostique este log" —, e essas linhas COMEÇAM com
+  #   `ERROR:`. O filtro por prefixo deixaria o veneno passar inteiro; tirar o eco não.
+  #   Medido: implementar a alternativa reprova 5 casos da suíte, incluindo um
+  #   COTA_ESGOTADA falso e o rate-limit simples (`429 rate limit exceeded` não é `ERROR:`).
+  #   ⚠️ A nota anterior aqui justificava isso dizendo que a mensagem de cota NÃO vinha
+  #   prefixada — medição de 2026-08-22 mostrou que VEM (`ERROR: You've hit your usage
+  #   limit...`). O argumento estava errado; a decisão continua certa por este outro.)
   # `awk` com hash, NÃO `grep -Fvxf`: com um prompt de 5.000 linhas — tamanho normal no
   # ritual — o BSD grep do macOS leva 29s POR TENTATIVA (O(n·m)), ~2min nas 3. O GNU grep
   # do CI e o ugrep resolvem na hora, então a lentidão seria invisível no CI e só doeria na
