@@ -7,6 +7,7 @@
 // primeiro, o segundo não prova nada — provaria só que um laço que ninguém
 // perturbou devolve o que colocaram nele.
 import { fetchAll, fetchAllKeyset } from "./paginate.ts";
+import { FalhaLeituraCritica } from "./leitura-critica.ts";
 
 function assertEquals(a: unknown, b: unknown, msg?: string) {
   if (JSON.stringify(a) !== JSON.stringify(b)) {
@@ -14,15 +15,48 @@ function assertEquals(a: unknown, b: unknown, msg?: string) {
   }
 }
 
-async function assertLanca(fn: () => Promise<unknown>, trecho: string) {
-  let msg: string | null = null;
+/**
+ * Falha em DOMÍNIO FECHADO, afirmada pelo CÓDIGO e não por substring da mensagem.
+ *
+ * O assert anterior casava trechos do TEXTO, e um deles pedia `"minha_tabela: boom"` — ou seja,
+ * afirmava o VAZAMENTO como contrato: `boom` está no lugar do MESSAGE do Postgres, que
+ * interpola valor de LINHA e que o `catch` do `Deno.serve` devolve no CORPO da resposta HTTP.
+ * `fetchAllKeyset` passou a lançar `FalhaLeituraCritica` como o irmão `fetchAll`, então o MODO
+ * da violação virou CÓDIGO — constante do código, mais estável e mais preciso que uma substring
+ * — e o detalhe, que carrega os VALORES de chave (dados da linha), foi para `cause`.
+ *
+ * `detalheEsperado` continua exigindo o diagnóstico: ele não sumiu, mudou de lugar. As duas
+ * metades juntas, sempre: só "lançou" deixa o vazamento voltar; só "não vazou" passa com o
+ * diagnóstico perdido.
+ */
+async function assertFalhaFechada(
+  fn: () => Promise<unknown>,
+  codigo: string,
+  detalheEsperado?: string,
+  naoDeveVazar?: string,
+) {
+  let capturado: unknown = null;
+  let rejeitou = false;
   try {
     await fn();
   } catch (e) {
-    msg = e instanceof Error ? e.message : String(e);
+    rejeitou = true;
+    capturado = e;
   }
-  if (msg === null) throw new Error(`esperava lançar contendo ${JSON.stringify(trecho)}, mas resolveu`);
-  if (!msg.includes(trecho)) throw new Error(`mensagem ${JSON.stringify(msg)} não contém ${JSON.stringify(trecho)}`);
+  if (!rejeitou) throw new Error(`esperava lançar ${codigo}, mas resolveu`);
+  if (!(capturado instanceof FalhaLeituraCritica)) {
+    throw new Error(`esperava FalhaLeituraCritica, veio ${(capturado as Error)?.name}: ${(capturado as Error)?.message}`);
+  }
+  assertEquals(capturado.codigo, codigo, `código errado — veio ${capturado.codigo}`);
+  if (detalheEsperado !== undefined) {
+    const detalhe = (capturado.cause as { message?: string } | undefined)?.message ?? "";
+    if (!detalhe.includes(detalheEsperado)) {
+      throw new Error(`o diagnóstico sumiu de cause: esperava ${JSON.stringify(detalheEsperado)}, veio ${JSON.stringify(detalhe)}`);
+    }
+  }
+  if (naoDeveVazar !== undefined && capturado.message.includes(naoDeveVazar)) {
+    throw new Error(`vazou ${JSON.stringify(naoDeveVazar)} na mensagem publica: ${capturado.message}`);
+  }
 }
 
 /** Linhas com `id` numérico crescente — o análogo do uuid único e ordenável. */
@@ -154,25 +188,32 @@ Deno.test("keyset: chave NÃO-ÚNICA (cursor não avança) LANÇA em vez de loop
   // Detectado já na 1ª página pela varredura de ordem (7 → 7 viola a monotonia estrita),
   // antes de gastar um segundo request. A guarda de cursor entre páginas segue no helper
   // como rede de baixo, para a chave que só repete NA FRONTEIRA entre duas páginas.
-  await assertLanca(
+  await assertFalhaFechada(
     () => fetchAllKeyset<{ id: number; grupo: number }, number>(build, (l) => l.grupo, "t"),
+    "KEYSET_CHAVE_REPETIDA",
     "ÚNICA",
   );
 });
 
 Deno.test("keyset: data null SEM error LANÇA — malformada não é fim da tabela", async () => {
   const build = () => Promise.resolve({ data: null, error: null });
-  await assertLanca(
+  // A FONTE segue pública de propósito: é constante do código, não dado da linha — é ela que
+  // diz ao operador QUAL leitura degradou.
+  await assertFalhaFechada(
     () => fetchAllKeyset<{ id: number }, number>(build, (l) => l.id, "minha_tabela"),
-    "minha_tabela",
+    "MALFORMADA",
   );
 });
 
-Deno.test("keyset: erro lança com o label prefixado", async () => {
-  const build = () => Promise.resolve({ data: null, error: { message: "boom" } });
-  await assertLanca(
+Deno.test("keyset: erro NÃO leva o texto do servidor à mensagem pública", async () => {
+  // Este assert pedia a mensagem `minha_tabela: boom` — afirmava o vazamento. O `boom` está no
+  // lugar certo agora: `cause`, que a resposta HTTP não serializa e que fica nos logs da edge.
+  const build = () => Promise.resolve({ data: null, error: { message: "boom", code: "57014" } });
+  await assertFalhaFechada(
     () => fetchAllKeyset<{ id: number }, number>(build, (l) => l.id, "minha_tabela"),
-    "minha_tabela: boom",
+    "57014",
+    "boom",
+    "boom",
   );
 });
 
@@ -191,8 +232,9 @@ Deno.test("keyset: página em ordem DECRESCENTE lança em vez de duplicar em mas
       .slice(0, limite);
     return Promise.resolve({ data: janela, error: null });
   };
-  await assertLanca(
+  await assertFalhaFechada(
     () => fetchAllKeyset<{ id: number }, number>(build, (l) => l.id, "t"),
+    "KEYSET_FORA_DE_ORDEM",
     "ordem",
   );
 });
@@ -210,8 +252,9 @@ Deno.test("keyset: coluna-chave FORA do .select() lança (não vira cursor undef
       .map((l) => ({ ...l, id: undefined as unknown as number })); // select sem a chave
     return Promise.resolve({ data: janela, error: null });
   };
-  await assertLanca(
+  await assertFalhaFechada(
     () => fetchAllKeyset<{ id: number }, number>(build, (l) => l.id, "t"),
+    "KEYSET_CHAVE_AUSENTE",
     "chave",
   );
 });
@@ -230,8 +273,9 @@ Deno.test("keyset: página fora de ordem NO MEIO lança (não só extremos troca
     }
     return Promise.resolve({ data: janela, error: null });
   };
-  await assertLanca(
+  await assertFalhaFechada(
     () => fetchAllKeyset<{ id: number }, number>(build, (l) => l.id, "t"),
+    "KEYSET_FORA_DE_ORDEM",
     "ordem",
   );
 });

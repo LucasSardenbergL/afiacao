@@ -8,6 +8,22 @@
 // `fetchAll` lê em páginas de 1000 via `.range()` até a página vir incompleta.
 // O call-site DEVE encadear `.order()` numa coluna ESTÁVEL e única no recorte
 // (ex.: a PK), senão o `.range()` pode pular/duplicar linhas entre páginas.
+//
+// ⚠️ PII — o SEGUNDO contrato desta função, e o motivo de ela lançar `FalhaLeituraCritica`
+// em vez de `Error`: `error.message` do PostgREST encaminha o MESSAGE do Postgres, que pode
+// interpolar valor de LINHA (`RAISE EXCEPTION` com ID/CPF; erro de cast reproduzindo o valor
+// inválido). O `catch` do `Deno.serve` das edges devolve `String(err.message)` no CORPO da
+// resposta HTTP — então um ``new Error(`${label}: ${error.message}`)`` aqui SAI DA EDGE. É a
+// "garantia de privacidade afirmada sem verificar o SINK" que `leitura-critica.ts` documenta,
+// e a classe de lá é a resposta: mensagem em domínio FECHADO (nome da fonte, que é constante
+// do código, + código sanitizado por allowlist de FORMA), texto original só em `cause`, que a
+// resposta HTTP não serializa e que sobrevive nos logs da edge.
+//
+// A irmã single-shot (`leitura-critica.ts`) e a paginação passam então a lançar a MESMA classe:
+// quem trata falha de leitura no money-path ramifica uma vez só, e não por cardinalidade.
+import { FalhaLeituraCritica, type ErroPostgrest } from "./leitura-critica.ts";
+import { mensagemDeErro } from "./erro-mensagem.ts";
+
 const PAGE = 1000;
 
 // ── Contrato mínimo do PostgREST que a paginação usa ────────────────────────
@@ -73,20 +89,51 @@ export async function fetchAll<T>(
   build: (
     from: number,
     to: number,
-  ) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>,
+  ) => PromiseLike<{ data: T[] | null; error: ErroPostgrest | null }>,
   label: string,
 ): Promise<T[]> {
   let from = 0;
   const out: T[] = [];
   for (;;) {
-    const { data, error } = await build(from, from + PAGE - 1);
-    if (error) throw new Error(`${label}: ${error.message}`);
+    // A página tem TRÊS desfechos de falha, não um. O `await` pode REJEITAR (fetch derrubado,
+    // `.throwOnError()` de um caller futuro, erro de programação no callback) — e a rejeição
+    // crua atravessava `fetchAll` inteira até o `catch` do `Deno.serve`, pelo mesmo caminho
+    // que devolve `.message` no corpo. O wrapper local que este helper substituiu cobria isto
+    // com um try/catch; a cobertura tinha de vir junto.
+    let resposta: { data: T[] | null; error: ErroPostgrest | null };
+    try {
+      resposta = await build(from, from + PAGE - 1);
+    } catch (e) {
+      // Já fechada por um caller que valida a própria página: re-envelopar trocaria o `code`
+      // real (57014) por `REJEITADA` e apagaria a fonte de origem.
+      if (e instanceof FalhaLeituraCritica) throw e;
+      throw new FalhaLeituraCritica(label, {
+        code: 'REJEITADA',
+        // `mensagemDeErro`, não `e instanceof Error ? e.message : String(e)`: para um objeto
+        // sem `message` aquele idiom devolve "[object Object]" — um texto que PARECE
+        // diagnóstico e não é (classe #1642, gate `erro-object-object`). Aqui o destino é
+        // `cause`, o que torna o lixo ainda mais caro: some no log em vez de gritar.
+        message: mensagemDeErro(e) ?? 'rejeição sem mensagem utilizável',
+      });
+    }
+    const { data, error } = resposta;
+    // Envelope na ORIGEM, dentro do laço: o `code` do PostgREST (57014 timeout, 42501 RLS) é o
+    // que separa "o banco piscou" de "a role não enxerga" na classificação operacional, e ele
+    // morreria num envelope aplicado por FORA — lá só chega a `Error` já reduzida a texto.
+    if (error) throw new FalhaLeituraCritica(label, error);
     // `data == null` sem `error` é resposta MALFORMADA do PostgREST — não é fim da tabela.
     // O `?? []` de antes a convertia em página vazia → EOF falso → o acumulado PARCIAL
     // voltava como se fosse a tabela inteira (o defeito que fetchAllPages de
     // src/lib/postgrest.ts e buscarTodasPaginas pós-#1564 já rejeitam). Fim LEGÍTIMO é
     // `data: []` — array vazio, que segue adiante e encerra por `length < PAGE`.
-    if (data == null) throw new Error(`${label}: data null sem error — resposta malformada, não é fim da tabela`);
+    // Mesmo código que `exigirLista` dá à malformada de UMA página: é o mesmo defeito
+    // entrando pela porta do lado, e quem lê o log não deveria ter de saber por qual porta.
+    //
+    // A checagem é `!Array.isArray`, não `== null`: `out.push(...rows)` ESPALHA qualquer
+    // iterável, então `{ data: "CPF" }` resolvia `["C","P","F"]` — três "linhas" que o
+    // call-site soma como dados do banco. Pior que um erro, é PII picada em caracteres
+    // entrando no cálculo com cara de leitura legítima (challenge Codex desta entrega).
+    if (!Array.isArray(data)) throw new FalhaLeituraCritica(label, { code: 'MALFORMADA' });
     const rows = data;
     out.push(...rows);
     if (rows.length < PAGE) break;
@@ -127,21 +174,36 @@ export async function fetchAllKeyset<T, K extends string | number>(
   build: (
     cursor: K | null,
     limite: number,
-  ) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>,
+  ) => PromiseLike<{ data: T[] | null; error: ErroPostgrest | null }>,
   chave: (linha: T) => K,
   label: string,
 ): Promise<T[]> {
   let cursor: K | null = null;
   const out: T[] = [];
   for (;;) {
-    const { data, error } = await build(cursor, PAGE);
-    if (error) throw new Error(`${label}: ${error.message}`);
-    // Mesmo fail-closed de `fetchAll`: `data:null` sem `error` é resposta MALFORMADA,
-    // não fim da tabela — devolver o acumulado parcial seria a truncagem silenciosa que
-    // o #1581 tirou de 24 call-sites.
-    if (data == null) {
-      throw new Error(`${label}: data null sem error — resposta malformada, não é fim da tabela`);
+    // Mesmo envelope do irmão `fetchAll`, pelos mesmos três desfechos e pelo mesmo motivo: o
+    // `catch` do `Deno.serve` devolve `.message` no CORPO da resposta HTTP, e o MESSAGE do
+    // Postgres interpola valor de LINHA. Ver o cabeçalho deste módulo.
+    let resposta: { data: T[] | null; error: ErroPostgrest | null };
+    try {
+      resposta = await build(cursor, PAGE);
+    } catch (e) {
+      if (e instanceof FalhaLeituraCritica) throw e;
+      throw new FalhaLeituraCritica(label, {
+        code: 'REJEITADA',
+        // `mensagemDeErro`, não `e instanceof Error ? e.message : String(e)`: para um objeto
+        // sem `message` aquele idiom devolve "[object Object]" — um texto que PARECE
+        // diagnóstico e não é (classe #1642, gate `erro-object-object`). Aqui o destino é
+        // `cause`, o que torna o lixo ainda mais caro: some no log em vez de gritar.
+        message: mensagemDeErro(e) ?? 'rejeição sem mensagem utilizável',
+      });
     }
+    const { data, error } = resposta;
+    if (error) throw new FalhaLeituraCritica(label, error);
+    // Mesmo fail-closed de `fetchAll`: `data` que não é ARRAY é resposta MALFORMADA, não fim
+    // da tabela — devolver o acumulado parcial seria a truncagem silenciosa que o #1581 tirou
+    // de 24 call-sites, e `push(...rows)` espalharia uma string em caracteres.
+    if (!Array.isArray(data)) throw new FalhaLeituraCritica(label, { code: 'MALFORMADA' });
     const rows = data;
     // Varre a PÁGINA INTEIRA antes de acumular nada. Três violações do contrato do keyset
     // caem aqui, e as três resolveriam em SILÊNCIO sem esta varredura:
@@ -162,14 +224,25 @@ export async function fetchAllKeyset<T, K extends string | number>(
     for (const linha of rows) {
       const k = chave(linha);
       if (k === null || k === undefined) {
-        throw new Error(
-          `${label}: chave do keyset ausente numa linha — a coluna do cursor precisa estar no .select()`,
-        );
+        throw new FalhaLeituraCritica(label, {
+          code: 'KEYSET_CHAVE_AUSENTE',
+          message: 'chave do keyset ausente numa linha — a coluna do cursor precisa estar no .select()',
+        });
       }
       if (anterior !== null && k <= anterior) {
-        throw new Error(
-          `${label}: página fora de ordem ASCENDENTE (${JSON.stringify(anterior)} → ${JSON.stringify(k)}) — o keyset exige .order(chave, { ascending: true }) e chave ÚNICA no recorte`,
-        );
+        // O VALOR das chaves ia na mensagem por `JSON.stringify` — e a chave é uma COLUNA da
+        // linha (PK, código de cliente). O modo da violação é constante do código e fica
+        // público; os valores vão para `cause`, com o resto do diagnóstico.
+        // Igualdade e decrescente são MODOS distintos e têm conserto distinto: chave repetida
+        // significa "a coluna não é única no recorte" (troque a chave); decrescente significa
+        // "o `.order()` está ao contrário". Fundir os dois em `k <= anterior` sem separar o
+        // código manda o leitor caçar um `.order()` que está correto.
+        throw new FalhaLeituraCritica(label, {
+          code: k === anterior ? 'KEYSET_CHAVE_REPETIDA' : 'KEYSET_FORA_DE_ORDEM',
+          message: k === anterior
+            ? `chave repetida em ${JSON.stringify(k)} dentro da mesma página — a chave precisa ser ÚNICA no recorte`
+            : `página fora de ordem ASCENDENTE (${JSON.stringify(anterior)} → ${JSON.stringify(k)}) — o keyset exige .order() ascendente na MESMA coluna do cursor`,
+        });
       }
       anterior = k;
     }
@@ -190,7 +263,11 @@ export async function fetchAllKeyset<T, K extends string | number>(
       const modo = proximo === cursor
         ? `chave repetida em ${JSON.stringify(proximo)} — a chave precisa ser ÚNICA no recorte`
         : `cursor RECUOU (${JSON.stringify(cursor)} → ${JSON.stringify(proximo)}) — o keyset exige .order() ASCENDENTE na mesma coluna`;
-      throw new Error(`${label}: cursor não avançou: ${modo}`);
+      // Idem: o modo classifica, os valores ficam em `cause`.
+      throw new FalhaLeituraCritica(label, {
+        code: proximo === cursor ? 'KEYSET_CHAVE_REPETIDA' : 'KEYSET_FORA_DE_ORDEM',
+        message: `cursor não avançou: ${modo}`,
+      });
     }
     cursor = proximo;
   }

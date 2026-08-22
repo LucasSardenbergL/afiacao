@@ -78,6 +78,43 @@ Um caller money-path costuma capturar a rejeição de um helper para preservar o
 - ⚠️ **A discriminação vale só para o DIAGNÓSTICO, nunca para o fail-closed.** O primeiro desenho desta correção deixava o `TypeError` subir cru ANTES de limpar a lista — e o Codex reprovou como [P1]: a tela concluiria DESATUALIZADO e seguiria exibindo a oferta anterior, que pode conter SKU cuja margem já não é positiva. **"Desatualizado" não é sinônimo de "seguro de usar".** Forma correta: fail-closed inteiro para TODA falha (insumo `ok:false` + head + limpar + `resultadoDestaExecucao`), e só então escolher **qual erro sobe** — o original cru quando é bug (preserva stack/subclasse, o único rastro que aponta a linha), a frase de domínio com `cause` quando é falha de leitura esperada.
 - **Teste com as duas asserções.** Provar só o diagnóstico (`instanceof TypeError`) deixa passar um conserto que afrouxou o fail-closed; provar só o fail-closed deixa passar o mascaramento de volta. E o caso precisa de **controle positivo** antes: "lista vazia" é o desfecho de qualquer insumo faltando, então sem provar que a fixture SABE produzir resultado o teste passa de graça.
 
+## Privacidade AFIRMADA ≠ privacidade MEDIDA (e o teste que afirma o vazamento)
+
+Um comentário que promete "o texto cru fica em `cause`, que a resposta não serializa" é uma
+HIPÓTESE até alguém rodar o serializador que o sink de verdade usa. Em `leitura-critica.ts` a
+promessa era falsa por um detalhe de JavaScript:
+
+```ts
+this.cause = erro;            // propriedade PRÓPRIA e ENUMERÁVEL → JSON.stringify(err) e {...err} levam o cru
+super(msg, { cause: erro });  // não-enumerável → invisível a quem serializa, acessível a quem pede pelo nome
+```
+
+O cru do PostgREST não é só `message`: `details` e `hint` também carregam valor de linha. Cada
+sink enxerga um conjunto diferente de propriedades (`JSON.stringify`, spread, `Response.json`,
+`console.error`), e "não-enumerável" é a fronteira entre invisível e exposto. Custo de medir:
+um `deno run` de dez linhas. **Nunca conclua pelo comentário — nem pelo seu próprio.**
+
+Três corolários, todos medidos na mesma entrega (2026-08-21, `fetchAll`):
+
+- **Allowlist de FORMA não fecha DOMÍNIO.** `^[A-Za-z0-9_]{1,12}$` foi escrito como "código
+  sanitizado" e deixa passar um CPF sem pontuação INTEIRO — pela porta que existe para fechá-lo.
+  Quando o domínio legítimo é pequeno e enumerável (SQLSTATE tem exatamente 5 chars; PostgREST
+  usa `PGRST`+3 dígitos), é o DOMÍNIO que vale; o resto vira `desconhecido`.
+- **`data == null` não cobre resposta malformada.** `push(...rows)` espalha qualquer iterável:
+  `{ data: "CPF" }` vira `["C","P","F"]` — PII picada em caracteres entrando no cálculo como
+  linha do banco. A checagem é `!Array.isArray(data)`.
+- **Envelope fora do laço perde o `code`** (57014 timeout × 42501 RLS viram texto) e não cobre a
+  REJEIÇÃO do `await` — que é o terceiro desfecho de falha da página, além de `error` e de
+  `data` malformada. Ver a seção irmã acima sobre discriminar o que se captura.
+
+E o mais caro de enxergar: **um teste pode afirmar o vazamento como CONTRATO.** Seis testes de
+edge casavam a mensagem INTEIRA contra `${fonte}: ${MESSAGE do Postgres}` — um deles justificando
+"erro deveria carregar a causa original". Suíte verde não provava ausência do defeito: provava
+que ele estava PROTEGIDO, e cada teste era uma trava contra a correção. Quando um teste fica
+vermelho ao corrigir um defeito, a pergunta é QUE CONTRATO ele afirma — não como fazê-lo passar.
+Asserção de erro no money-path quer as DUAS metades: diagnóstico preservado (em `cause`) **e**
+texto do servidor ausente da mensagem pública. Narrativa: `docs/historico/teste-que-afirma-o-defeito.md`.
+
 ## Fallback por lista VAZIA troca o ESCOPO — e o comentário descreve a intenção, não a condição
 
 Irmã da seção acima, do outro lado: lá o handler amplo captura demais; aqui a **condição**

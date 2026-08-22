@@ -40,87 +40,20 @@
 // deixar duas exceções obrigaria todo leitor futuro a re-derivar quais são. O que sobra é a
 // leitura de UMA linha, que passa por `exigirLeitura`. Falha de leitura vira exceção: a
 // edge devolve 500 em vez de uma recomendação calculada sobre catálogo parcial.
+//
+// O 500 carrega mensagem em DOMÍNIO FECHADO nas duas cardinalidades e nos dois modos de
+// paginação — `fetchAll`, `fetchAllKeyset` e `exigirLeitura` lançam a MESMA
+// `FalhaLeituraCritica`. Aqui existiram DOIS wrappers locais (`paginarFonte` e
+// `paginarFonteKeyset`) que envelopavam o erro antes de o helper vê-lo, porque os helpers
+// ainda reconstruíam ``new Error(`${label}: ${error.message}`)`` e mandavam o MESSAGE do
+// Postgres para o corpo da resposta HTTP. Os helpers foram fechados; os wrappers saíram
+// junto — inclusive o `falha.cause = e` deles, que criava a propriedade ENUMERÁVEL que
+// `JSON.stringify(err)` serializa. O guarda não mudou: `recommend-leituras_test.ts` segue
+// afirmando as DUAS metades JUNTAS — o `code` 57014 preservado E o texto do servidor
+// ausente da mensagem pública.
 import { fetchAll, fetchAllKeyset } from "./paginate.ts";
 import type { BancoPostgrest } from "./paginate.ts";
-import { exigirLeitura, exigirLista, FalhaLeituraCritica } from "./leitura-critica.ts";
-
-/**
- * `fetchAll` com o erro em DOMÍNIO FECHADO.
- *
- * O helper canônico lança ``new Error(`${label}: ${error.message}`)`` — e `error.message` do
- * PostgREST encaminha o MESSAGE do Postgres, que pode interpolar valor de linha (`RAISE
- * EXCEPTION` com ID/CPF, erro de cast reproduzindo o valor inválido). O `catch` do
- * `Deno.serve` de `recommend/index.ts` devolve `error.message` no CORPO da resposta, então
- * esse texto SAI DA EDGE — é o "garantia de privacidade afirmada sem verificar o SINK" que
- * `leitura-critica.ts` documenta. (Achado pelo teste desta entrega, não pela leitura.)
- *
- * O texto original não some: vai para `cause`, que a resposta HTTP não serializa e que
- * sobrevive nos logs da edge. Envelopar aqui, e não em `paginate.ts`, é deliberado — mudar o
- * tipo lançado pelo helper mexeria nos 21 call-sites de `fetchAll`, e um deles
- * (`visit-score-recalc-client`) já RAMIFICA em `instanceof FalhaLeituraCritica`. Fechar a
- * classe no helper é entrega própria, não carona nesta.
- */
-async function paginarFonte<T>(
-  build: (
-    de: number,
-    ate: number,
-  ) => PromiseLike<{ data: T[] | null; error: { message: string; code?: string | null } | null }>,
-  fonte: string,
-): Promise<T[]> {
-  // O erro é interceptado AQUI, antes de `fetchAll` vê-lo: o helper reduz a resposta a
-  // ``new Error(`${label}: ${message}`)`` e o `code` do PostgREST (57014 timeout, 42501 RLS)
-  // se perde no caminho. Interceptando na origem, o código sobrevive para a classificação
-  // operacional e a mensagem PÚBLICA continua fechada (achado da 2ª rodada do Codex, que
-  // corrigiu minha afirmação anterior de que "o original fica em `cause`" — não ficava).
-  const comErroFechado = async (de: number, ate: number) => {
-    const res = await build(de, ate);
-    if (res.error) throw new FalhaLeituraCritica(fonte, res.error);
-    return res;
-  };
-  try {
-    return await fetchAll<T>(comErroFechado, fonte);
-  } catch (e) {
-    if (e instanceof FalhaLeituraCritica) throw e;
-    // O que resta é o `data:null` sem erro, que `fetchAll` rejeita por conta própria — mesma
-    // resposta malformada que `exigirLista` nomeia, então mesmo código.
-    const falha = new FalhaLeituraCritica(fonte, { code: "MALFORMADA" });
-    falha.cause = e;
-    throw falha;
-  }
-}
-
-/**
- * Irmão de `paginarFonte` para as leituras que precisam sobreviver a escrita CONCORRENTE.
- *
- * Mesma redução de erro a domínio FECHADO; o que muda é o transporte: keyset em vez de
- * offset. Só as duas leituras cujo recorte a escrita de fato ATRAVESSA usam este — as
- * outras quatro seguem em `paginarFonte`, porque `UPDATE` de preço/estoque não move linha
- * numa ordenação por `id` e trocar por trocar custaria a coluna-chave no `.select()` sem
- * comprar nada. A medição que separa um caso do outro está em
- * `docs/historico/paginacao-offset-janela.md`.
- */
-async function paginarFonteKeyset<T>(
-  build: (
-    cursor: string | null,
-    limite: number,
-  ) => PromiseLike<{ data: T[] | null; error: { message: string; code?: string | null } | null }>,
-  chave: (linha: T) => string,
-  fonte: string,
-): Promise<T[]> {
-  const comErroFechado = async (cursor: string | null, limite: number) => {
-    const res = await build(cursor, limite);
-    if (res.error) throw new FalhaLeituraCritica(fonte, res.error);
-    return res;
-  };
-  try {
-    return await fetchAllKeyset<T, string>(comErroFechado, chave, fonte);
-  } catch (e) {
-    if (e instanceof FalhaLeituraCritica) throw e;
-    const falha = new FalhaLeituraCritica(fonte, { code: "MALFORMADA" });
-    falha.cause = e;
-    throw falha;
-  }
-}
+import { exigirLeitura, exigirLista } from "./leitura-critica.ts";
 
 // ── Formas das linhas (o que o `.select()` de cada leitura promete) ────────────────────
 // NÃO exportadas de propósito: ninguém fora daqui as nomeia, e `export` sem consumidor
@@ -255,7 +188,7 @@ export async function carregarInsumos(
   customerId: string,
 ): Promise<InsumosRecommend> {
   const [configs, orderItems, products, costs, rules, clientScore] = await Promise.all([
-    paginarFonte<LinhaConfig>(
+    fetchAll<LinhaConfig>(
       (de, ate) =>
         db.from<LinhaConfig>("recommendation_config")
           .select("key, value")
@@ -263,7 +196,7 @@ export async function carregarInsumos(
           .range(de, ate),
       "recommendation_config",
     ),
-    paginarFonteKeyset<LinhaOrderItem>(
+    fetchAllKeyset<LinhaOrderItem, string>(
       (cursor, limite) => {
         const q = db.from<LinhaOrderItem>("order_items")
           .select("id, product_id, quantity, unit_price")
@@ -275,7 +208,7 @@ export async function carregarInsumos(
       (l) => l.id,
       "order_items",
     ),
-    paginarFonteKeyset<LinhaProduto>(
+    fetchAllKeyset<LinhaProduto, string>(
       (cursor, limite) => {
         const q = db.from<LinhaProduto>("omie_products")
           .select("id, omie_codigo_produto, descricao, codigo, valor_unitario, estoque, familia, subfamilia")
@@ -287,7 +220,7 @@ export async function carregarInsumos(
       (l) => l.id,
       "omie_products",
     ),
-    paginarFonte<LinhaCusto>(
+    fetchAll<LinhaCusto>(
       (de, ate) =>
         db.from<LinhaCusto>("product_costs")
           .select("product_id, cost_price, cost_final, cost_source, cost_confidence")
@@ -298,7 +231,7 @@ export async function carregarInsumos(
     // 4 linhas em prod hoje. Pagina mesmo assim: o volume desta tabela é função do PISO de
     // `lift`/`support` — baixar o piso é uma decisão de produto de uma linha, que não tem
     // como saber que existe um cap de 1000 esperando do outro lado.
-    paginarFonte<LinhaRegra>(
+    fetchAll<LinhaRegra>(
       (de, ate) =>
         db.from<LinhaRegra>("farmer_association_rules")
           .select("*")
