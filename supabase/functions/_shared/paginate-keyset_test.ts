@@ -151,9 +151,12 @@ Deno.test("keyset: chave NÃO-ÚNICA (cursor não avança) LANÇA em vez de loop
     const janela = dados.filter((l) => cursor === null || l.grupo >= cursor).slice(0, limite);
     return Promise.resolve({ data: janela, error: null });
   };
+  // Detectado já na 1ª página pela varredura de ordem (7 → 7 viola a monotonia estrita),
+  // antes de gastar um segundo request. A guarda de cursor entre páginas segue no helper
+  // como rede de baixo, para a chave que só repete NA FRONTEIRA entre duas páginas.
   await assertLanca(
     () => fetchAllKeyset<{ id: number; grupo: number }, number>(build, (l) => l.grupo, "t"),
-    "cursor não avançou",
+    "ÚNICA",
   );
 });
 
@@ -190,6 +193,45 @@ Deno.test("keyset: página em ordem DECRESCENTE lança em vez de duplicar em mas
   };
   await assertLanca(
     () => fetchAllKeyset<{ id: number }, number>(build, (l) => l.id, "t"),
-    "DECRESCENTE",
+    "ordem",
+  );
+});
+
+// ── Caminho B (auto-challenge; Codex sem cota em 2026-08-21) ─────────────────────────
+// Dois vetores que a primeira versão não cobria. Ambos falham em SILÊNCIO, que é o modo
+// que esta entrega inteira existe para combater.
+
+Deno.test("keyset: coluna-chave FORA do .select() lança (não vira cursor undefined)", async () => {
+  // O `.select()` do call-site é uma string; a interface da linha PROMETE `id`. Tirar `id`
+  // do select não quebra o typecheck — quebra o cursor, em runtime, sem uma palavra.
+  const dados = Array.from({ length: 2300 }, (_, i) => ({ id: i }));
+  const build = (cursor: number | null, limite: number) => {
+    const janela = dados.filter((l) => cursor === null || l.id > cursor).slice(0, limite)
+      .map((l) => ({ ...l, id: undefined as unknown as number })); // select sem a chave
+    return Promise.resolve({ data: janela, error: null });
+  };
+  await assertLanca(
+    () => fetchAllKeyset<{ id: number }, number>(build, (l) => l.id, "t"),
+    "chave",
+  );
+});
+
+Deno.test("keyset: página fora de ordem NO MEIO lança (não só extremos trocados)", async () => {
+  // Sem `.order()` o PostgREST devolve ordem arbitrária. Comparar só primeira vs última
+  // deixa passar a página cujos extremos por acaso estão certos e o miolo não — e aí a
+  // "última linha" não é a maior chave, então o cursor pula o resto.
+  const dados = Array.from({ length: 2300 }, (_, i) => ({ id: i }));
+  const build = (cursor: number | null, limite: number) => {
+    const janela = dados.filter((l) => cursor === null || l.id > cursor).slice(0, limite);
+    if (janela.length > 3) {
+      const t = janela[1];
+      janela[1] = janela[janela.length - 2];
+      janela[janela.length - 2] = t; // extremos intactos, miolo trocado
+    }
+    return Promise.resolve({ data: janela, error: null });
+  };
+  await assertLanca(
+    () => fetchAllKeyset<{ id: number }, number>(build, (l) => l.id, "t"),
+    "ordem",
   );
 });

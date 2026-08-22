@@ -143,14 +143,35 @@ export async function fetchAllKeyset<T, K extends string | number>(
       throw new Error(`${label}: data null sem error — resposta malformada, não é fim da tabela`);
     }
     const rows = data;
-    // Ordem DENTRO da página, antes de qualquer acumulação. É aqui que o `.order()` DESC do
-    // call-site é pego — e tem de ser aqui: sob DESC a 2ª página já volta curta, o laço
-    // encerraria pelo `length < PAGE` abaixo e a checagem de cursor nunca rodaria. O
-    // desfecho silencioso seria devolver a 1ª página duas vezes e nunca ler a cauda.
-    if (rows.length > 1 && chave(rows[0]) > chave(rows[rows.length - 1])) {
-      throw new Error(
-        `${label}: página em ordem DECRESCENTE — o keyset exige .order(chave, { ascending: true }), senão .gt(cursor) reserve a mesma faixa e a cauda nunca é lida`,
-      );
+    // Varre a PÁGINA INTEIRA antes de acumular nada. Três violações do contrato do keyset
+    // caem aqui, e as três resolveriam em SILÊNCIO sem esta varredura:
+    //
+    //   chave AUSENTE  — a coluna-chave ficou fora do `.select()`. O `.select()` é uma
+    //     string e a interface da linha PROMETE o campo, então o typecheck passa e só o
+    //     runtime descobre; o cursor viraria `undefined` e o `.gt()` filtraria o que desse.
+    //   ordem DESC     — `.order(chave,{ascending:false})` no call-site. Precisa ser pego
+    //     aqui e não na comparação de cursor lá embaixo: sob DESC a 2ª página já volta
+    //     curta, o laço encerraria pelo `length < PAGE` e a comparação nunca rodaria.
+    //   ordem ARBITRÁRIA — `.limit()` sem `.order()`. Comparar só os extremos da página
+    //     deixaria passar a que tem o miolo embaralhado, e aí a última linha não é a maior
+    //     chave: o cursor salta e a faixa entre ela e a real nunca é lida.
+    //
+    // Custa uma comparação por linha (≤1.000 por página) — a leitura em si é uma ida à
+    // rede, então isto não aparece no perfil.
+    let anterior: K | null = null;
+    for (const linha of rows) {
+      const k = chave(linha);
+      if (k === null || k === undefined) {
+        throw new Error(
+          `${label}: chave do keyset ausente numa linha — a coluna do cursor precisa estar no .select()`,
+        );
+      }
+      if (anterior !== null && k <= anterior) {
+        throw new Error(
+          `${label}: página fora de ordem ASCENDENTE (${JSON.stringify(anterior)} → ${JSON.stringify(k)}) — o keyset exige .order(chave, { ascending: true }) e chave ÚNICA no recorte`,
+        );
+      }
+      anterior = k;
     }
     out.push(...rows);
     if (rows.length < PAGE) break;
