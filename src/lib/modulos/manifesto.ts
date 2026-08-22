@@ -726,6 +726,10 @@ export const MODULOS: ModuloApp[] = [
       "src/hooks/useSalesOnlyRestriction.ts",
       // Stripper compartilhado dos gates textuais (entende string/template/regex).
       "src/lib/gates/**",
+      // Estados de leitura react-query (separa "não há" de "não consegui") + o aviso
+      // que os consumidores mostram — usados por vários domínios, logo plataforma.
+      "src/lib/leitura/**",
+      "src/components/leitura/**",
     ],
     testes: [
       "src/__tests__/app-route-dedupe.test.ts",
@@ -741,6 +745,7 @@ export const MODULOS: ModuloApp[] = [
       "src/__tests__/segredo-em-log-gate.test.ts",
       "src/__tests__/rpc-set-returning-paginacao-gate.test.ts",
       "src/__tests__/tothrow-pelado-gate.test.ts",
+      "src/__tests__/erro-colapsado-em-vazio-gate.test.ts",
       "src/__tests__/import-tint-formulas-aposentada-gate.test.ts",
       "src/lib/gates/__tests__/**",
       "src/lib/escape-html.test.ts",

@@ -19,6 +19,8 @@ import { AgendaQueueCard } from '@/components/farmer/calls/AgendaQueueCard';
 import { CallListPanel } from '@/components/farmer/calls/CallListPanel';
 import { NewCallDialog } from '@/components/farmer/calls/NewCallDialog';
 import { useMyPositivacao } from '@/hooks/useMyPositivacao';
+import { estadoDeLeitura, naoConsegui } from '@/lib/leitura/estado-de-leitura';
+import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
 import { useMyCommercialRole } from '@/hooks/useMyCommercialRole';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { PositivacaoHero } from '@/components/farmer/PositivacaoHero';
@@ -30,7 +32,14 @@ const FarmerCalls = () => {
   const navigate = useNavigate();
   const { user, isStaff, loading: authLoading } = useAuth();
   const { agenda, clientScores, loading: agendaLoading } = useFarmerScoring();
-  const { data: positivacao } = useMyPositivacao();
+  // `error` desestruturado de propósito: sem ele o `positivacao &&` lá embaixo esconderia
+  // o bloco inteiro — MixGapCard incluso — quando a RPC falhasse, e como as duas saem pelo
+  // MESMO PostgREST a falha correlacionada é o caso COMUM. A correção dos três estados do
+  // #1859 ficava inacessível justamente na situação que a motivou (revisão retroativa,
+  // docs/historico/fase-sem-sinal.md).
+  const qPositivacao = useMyPositivacao();
+  const { data: positivacao } = qPositivacao;
+  const estadoPositivacao = estadoDeLeitura(qPositivacao);
   const { data: commercialRole } = useMyCommercialRole();
   const isHunter = commercialRole === 'hunter';
   const { isImpersonating, effectiveUserId } = useImpersonation();
@@ -433,13 +442,20 @@ const FarmerCalls = () => {
         </div>
 
         {/* ─── Positivação da carteira (hero principal) ─── */}
-        {positivacao && (
-          <div className="space-y-3">
-            <PositivacaoHero kpis={positivacao} isHunter={isHunter} />
-            <ClientesAPositivarCard clientes={positivacao.aPositivar} />
-            <MixGapCard />
-          </div>
-        )}
+        <div className="space-y-3">
+          {naoConsegui(estadoPositivacao) && (
+            <AvisoLeituraFalhou oque="a positivação da sua carteira" estado={estadoPositivacao} />
+          )}
+          {positivacao && (
+            <>
+              <PositivacaoHero kpis={positivacao} isHunter={isHunter} />
+              <ClientesAPositivarCard clientes={positivacao.aPositivar} />
+            </>
+          )}
+          {/* FORA do `&&`: o card já distingue erro, zero e sem-acesso sozinho (#1859), e
+              pendurá-lo na query irmã fazia ele nem montar quando ela falhava. */}
+          <MixGapCard />
+        </div>
 
         {/* Atividade de hoje (secundário) */}
         <div className="space-y-1.5">
