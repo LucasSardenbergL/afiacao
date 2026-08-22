@@ -477,7 +477,15 @@ Os outros achados que sobreviveram à verificação:
   `fetchStatus:'paused'`/`status:'pending'`: `isLoading` (v5 = `isPending && isFetching`) é **false**,
   `data` `undefined`, `error` `null` ⇒ cai em `semAcesso`, some da tela e **não emite**. Num PWA de
   campo esse não é o caso raro. As duas análises (Codex e a minha, escrita antes de abrir o parecer)
-  chegaram nele por caminhos separados.
+  chegaram nele por caminhos separados. **Medido** (vitest, `onlineManager.setOnline(false)`,
+  exit 0): tela `''` e **zero** eventos. No mesmo arquivo, o cenário de refetch-que-falha-com-cache
+  renderiza a lista normalmente antes de falhar — é o controle que descarta "mock quebrado" como
+  causa do vazio.
+- **O erro tem precedência sobre o dado stale, e isso custa a lista.** Medido no mesmo par: com
+  `com_gap` já na tela, um refetch que falha leva a `erro` e a lista de oportunidades **some**
+  (`listaAindaNaTela=false`), embora o cache ainda a tenha. Honesto para o sensor, regressão para o
+  vendedor em campo — o desenho que serve aos dois é um estado composto (lista + aviso de
+  desatualizada), não a escolha entre um e outro.
 - **A dedup por estado não reseta na troca de sujeito.** `trackedEstado` sobrevive à mudança de
   `effectiveUserId` ("Ver como"): alvo diferente com o mesmo estado não emite — e a 1ª emissão não
   marca que era impersonação, então o denominador de adoção conta staff como vendedor.
