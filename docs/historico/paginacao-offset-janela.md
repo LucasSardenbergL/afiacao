@@ -112,3 +112,31 @@ saídas, na ordem em que valem a pena:
 
 A (1) compra quase todo o valor por quase nenhum custo; a (2) só se paga se o `max-rows`
 passar a ser configurável por alguém de fora do time.
+
+## ⚠️ REVISÃO INDEPENDENTE PENDENTE
+
+O ritual `/codex` desta entrega **não rodou**: a cota do ChatGPT Plus (janela rolante de 7
+dias) esgotou em 2026-08-21 — `codex-async.sh` saiu com `COTA_ESGOTADA` (exit 75) antes de
+gastar tempo. Seguido o **Caminho B** de `docs/agent/money-path.md`: validação adversária
+própria, registrada aqui. **Auto-revisão não substitui revisão independente** — ela cobre o
+intervalo. Rodar o Codex retroativo quando a cota voltar; o prompt do challenge está em
+`/tmp/codex-prompt.txt` (efêmero) e é reconstituível a partir deste doc.
+
+O auto-challenge achou **dois defeitos no próprio `fetchAllKeyset`**, ambos resolvendo em
+SILÊNCIO — a classe que esta entrega existe para combater:
+
+1. **Ordem `DESC` do call-site.** O helper só recebe `build`, então não enxerga o `.order()`.
+   Com `.order(id,{ascending:false})` + `.gt(cursor)` o cursor recua: 1.999 linhas devolvidas,
+   ~999 duplicadas e **1.300 nunca lidas**. A guarda de "cursor parado" não pegava — sob DESC
+   a 2ª página já volta curta e o laço encerra pelo `length < PAGE` antes da comparação.
+2. **Coluna-chave fora do `.select()`.** O `.select()` é uma string e a interface da linha
+   PROMETE o campo: tirar `id` do select **passa no typecheck** e só quebra em runtime, com
+   cursor `undefined`.
+
+E um terceiro, de escopo: a guarda de ordem comparava só os extremos da página — a página com
+o miolo embaralhado (o que `.limit()` sem `.order()` produz) passava. Todas as três viraram
+uma varredura da PÁGINA INTEIRA, que custa uma comparação por linha contra uma ida à rede.
+
+Falsificado 4× (cada guarda sabotada exigiu vermelho, e o vermelho veio): cursor pela primeira
+linha da página · guarda de cursor removida · guarda de ordem removida · guarda de
+ordem/unicidade removida.
