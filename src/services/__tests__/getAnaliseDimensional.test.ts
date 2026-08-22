@@ -81,6 +81,7 @@ vi.mock('@/integrations/supabase/client', () => ({
 vi.mock('@/lib/analytics', () => ({ captureException: vi.fn(), track: vi.fn() }));
 
 import { getAnaliseDimensional } from '@/services/financeiroV2Service';
+import { ehFalhaDePagina } from '@/lib/postgrest';
 
 /** Uma linha da matview dimensional, com 1 título e R$ 10 — o total é a CONTAGEM de linhas. */
 const linha = (i: number, tipo: 'cp' | 'cr'): Row => ({
@@ -157,7 +158,12 @@ describe('getAnaliseDimensional pagina a RPC set-returning', () => {
     state.universo = Array.from({ length: 1227 }, (_, i) => linha(i, 'cp'));
     state.erroNaPagina = 1;
 
-    await expect(getAnaliseDimensional('cp', 'all', 'categoria', 2025)).rejects.toThrow();
+    // Casa a MARCA do ramo, não "lançou algo". Um `rejects.toThrow()` PELADO fica verde com
+    // qualquer TypeError vindo do dublê e a garantia fail-closed some sem ninguém notar —
+    // medido: trocar a mensagem dos DOIS guards de `fetchAllPages` não matava este teste.
+    const erro = await getAnaliseDimensional('cp', 'all', 'categoria', 2025).catch((e: unknown) => e);
+    expect(ehFalhaDePagina(erro)).toBe(true); // se RESOLVEU, cai aqui mostrando o parcial devolvido
+    expect((erro as { motivo: string }).motivo).toBe('pagina_falhou');
   });
 
   it('FAIL-CLOSED: `data: null` sem error é resposta malformada, não fim de tabela', async () => {
@@ -165,6 +171,8 @@ describe('getAnaliseDimensional pagina a RPC set-returning', () => {
     state.universo = Array.from({ length: 1227 }, (_, i) => linha(i, 'cp'));
     state.nullNaPagina = 1;
 
-    await expect(getAnaliseDimensional('cp', 'all', 'categoria', 2025)).rejects.toThrow();
+    const erro = await getAnaliseDimensional('cp', 'all', 'categoria', 2025).catch((e: unknown) => e);
+    expect(ehFalhaDePagina(erro)).toBe(true);
+    expect((erro as { motivo: string }).motivo).toBe('data_null_sem_error');
   });
 });
