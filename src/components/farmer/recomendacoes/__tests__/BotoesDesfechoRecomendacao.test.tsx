@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { BotoesDesfechoRecomendacao } from '../BotoesDesfechoRecomendacao';
@@ -96,14 +98,64 @@ describe('a recusa exige o PORQUÊ — é o motivo que calibra, não o placar', 
     const args = (rpcMock.mock.calls[0] as unknown as RpcArgs)[1];
     expect(args.p_desfecho).toBe('rejeitado');
     expect(args.p_motivo).toBe('preco');
+    // A CHAVE DE NEGÓCIO é a única identidade que o browser tem — o id da linha nunca
+    // volta do motor. Mandá-la errada só na recusa dava FD004, ou pior: carimbava outra
+    // linha. O teste do aceite conferia isto; o da recusa, não (achado do /codex).
+    expect(args.p_customer_user_id).toBe('cli-1');
+    expect(args.p_product_id).toBe('prod-1');
+    expect(args.p_recommendation_type).toBe('cross_sell');
+  });
+
+  it('[SENSOR] a recusa confirmada vira "Recusa registrada" — nunca "Venda registrada"', async () => {
+    // Nada exigia isto: renderizar "Venda registrada" para um desfecho `rejeitado`
+    // deixava os 16 testes verdes (achado do /codex). Seria a UI afirmando uma venda
+    // onde o banco gravou uma recusa — o dado errado que é pior que dado nenhum.
+    render(<Host />);
+    fireEvent.click(screen.getByRole('button', { name: 'Cliente recusou' }));
+    await waitFor(() => screen.getByText('Por que o cliente recusou?'));
+    fireEvent.click(screen.getByRole('button', { name: 'Preço' }));
+
+    await waitFor(() => expect(screen.getByText('Recusa registrada')).toBeInTheDocument());
+    expect(screen.queryByText('Venda registrada')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Cliente recusou' })).toBeNull();
+  });
+
+  it('[SENSOR] o dialog RENDERIZA os seis motivos, não só o primeiro', async () => {
+    // O teste de vocabulário abaixo prova a CONSTANTE. Renderizar só "Preço" mantendo a
+    // constante intacta ficava verde (achado do /codex) — e um motivo que não aparece na
+    // tela nunca entra na calibração, enviesando o porquê das recusas.
+    render(<Host />);
+    fireEvent.click(screen.getByRole('button', { name: 'Cliente recusou' }));
+    await waitFor(() => screen.getByText('Por que o cliente recusou?'));
+    // O laço percorre a MESMA constante que o componente mapeia — sozinho ele só prova
+    // "renderiza o que a constante diz". O elo com o banco é o teste acima (constante ↔
+    // CHECK da migration); o elo aqui é constante ↔ tela. A contagem explícita fecha o
+    // caso de renderizar um subconjunto.
+    for (const m of MOTIVOS_RECUSA) {
+      expect(screen.getByRole('button', { name: m.rotulo }), `motivo "${m.rotulo}" não foi renderizado`).toBeInTheDocument();
+    }
+    expect(MOTIVOS_RECUSA).toHaveLength(6);
   });
 
   it('[SENSOR] o vocabulário do dialog é EXATAMENTE o do CHECK da tabela', () => {
-    // Um rótulo a mais aqui é um clique que o banco recusa com 23514. A migration
-    // farmer_recommendations_motivo_coerente lista estes seis e só estes.
-    expect(MOTIVOS_RECUSA.map((m) => m.valor)).toEqual([
-      'preco', 'sem_necessidade', 'ja_compra_concorrente', 'sem_estoque', 'prazo_entrega', 'outro',
-    ]);
+    // Um rótulo a mais aqui é um clique que o banco recusa com 23514.
+    //
+    // Este assert comparava a constante TS com um literal TS — o nome prometia acordo
+    // com o CHECK e provava acordo consigo mesmo. Agora ele LÊ a migration. Não prova a
+    // prod (apply manual pode divergir do repo — CLAUDE.md §migration), mas fecha a
+    // corrente com o outro elo: db/test-farmer-desfecho.sh executa este mesmo CHECK num
+    // PG17 de verdade. TS↔arquivo aqui, arquivo↔Postgres lá.
+    const sql = readFileSync(
+      resolve(process.cwd(), 'supabase/migrations/20260821194411_farmer_recomendacao_desfecho.sql'),
+      'utf-8',
+    );
+    const lista = /rejection_reason IN \(([^)]*)\)/.exec(sql)?.[1];
+    // CONTROLE: sem isto, uma regex que não casa devolveria [] e o `toEqual` falharia por
+    // um motivo que eu leria como "o vocabulário divergiu". Fail-closed com o nome certo.
+    expect(lista, 'não achei a lista do CHECK na migration — o assert abaixo seria cego').toBeTruthy();
+    const doBanco = [...lista!.matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
+    expect(doBanco).toHaveLength(6);
+    expect(MOTIVOS_RECUSA.map((m) => m.valor)).toEqual(doBanco);
   });
 
   it('[SENSOR] o dialog NÃO fecha quando o banco recusa', async () => {
@@ -156,8 +208,27 @@ describe('erro do banco vira instrução, não "erro ao salvar"', () => {
     const fd004 = mensagemDoErro('FD004', 'fb');
     expect(fd004).toMatch(/Recarregue/);
     expect(fd004).not.toMatch(/tente de novo|tentar novamente/i);
+    // FD002/FD007 existem no contrato e nenhum assert os chamava (achado do /codex):
+    // quebrá-los devolvia o fallback genérico, que não diz o que fazer.
+    expect(mensagemDoErro('FD002', 'fb')).toMatch(/inválido/i);
+    expect(mensagemDoErro('FD007', 'fb')).toMatch(/já tem desfecho|histórico/i);
     // Código desconhecido cai no fallback — nunca numa mensagem inventada.
     expect(mensagemDoErro(undefined, 'fb')).toBe('fb');
+  });
+
+  it('[ERRO] falha de TRANSPORTE não marca o card como registrado', async () => {
+    // O `catch` (rede/CORS) não tinha teste NENHUM (achado do /codex): sabotá-lo para
+    // chamar setRegistrados e devolver `true` deixava a suíte inteira verde. É o irmão
+    // do erro de banco — a UI afirmando uma gravação sem nenhuma evidência de que ela
+    // aconteceu, no caso em que o servidor sequer respondeu.
+    rpcMock.mockRejectedValueOnce(new Error('Failed to fetch'));
+    render(<Host />);
+    fireEvent.click(screen.getByRole('button', { name: 'Cliente comprou' }));
+
+    await waitFor(() => expect(toastMock.error).toHaveBeenCalledTimes(1));
+    expect(toastMock.error.mock.calls[0][0]).toMatch(/NÃO foi registrado/);
+    expect(screen.queryByText('Venda registrada')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Cliente comprou' })).toBeInTheDocument();
   });
 
   it('[ERRO] erro de banco NÃO marca o card como registrado', async () => {
@@ -173,13 +244,37 @@ describe('erro do banco vira instrução, não "erro ao salvar"', () => {
 });
 
 describe('o sensor mede a TENTATIVA, não só o sucesso', () => {
-  it('[TRACK] o evento sai antes do await e carrega desfecho e tipo', async () => {
+  it('[TRACK] o evento sai ANTES do await e carrega desfecho e tipo', async () => {
+    // A RPC fica PENDENTE de propósito. Com um mock que resolve na hora, este assert
+    // passava com o `track()` movido para DEPOIS do await (achado do /codex adversarial):
+    // ele provava que o evento existe em algum momento, não que ele precede a ida ao
+    // banco. E é justamente o caso "clicou e a gravação nunca voltou" que o sensor
+    // existe para medir — no sucesso o dado já está no banco e não precisa do evento.
+    let resolver: (v: RpcRet) => void = () => {};
+    rpcMock.mockImplementation(() => new Promise<RpcRet>((r) => { resolver = r; }));
     render(<Host />);
     fireEvent.click(screen.getByRole('button', { name: 'Cliente comprou' }));
+
+    // Sem `waitFor`: o evento tem de estar aqui AGORA, com a RPC ainda em voo.
+    const ev = eventos().find(([n]) => n === 'recomendacao.desfecho_clicado');
+    expect(ev, 'o evento só saiu depois do await — tentativa que morre não seria medida').toBeTruthy();
+    expect(ev![1]).toMatchObject({ desfecho: 'aceito', tipo: 'cross_sell', motivo: null });
+
+    resolver({ data: null, error: null });
+    await waitFor(() => expect(screen.getByText('Venda registrada')).toBeInTheDocument());
+  });
+
+  it('[TRACK] a RECUSA também conta como tentativa, e carrega o motivo', async () => {
+    // Emitir só no aceite enviesaria o sensor na direção mais cara: as recusas são
+    // metade do sinal, e o motivo é o que separa erro do motor de falha operacional.
+    render(<Host />);
+    fireEvent.click(screen.getByRole('button', { name: 'Cliente recusou' }));
+    await waitFor(() => screen.getByText('Por que o cliente recusou?'));
+    fireEvent.click(screen.getByRole('button', { name: 'Preço' }));
+
     await waitFor(() => expect(rpcMock).toHaveBeenCalled());
     const ev = eventos().find(([n]) => n === 'recomendacao.desfecho_clicado');
-    expect(ev).toBeTruthy();
-    expect(ev![1]).toMatchObject({ desfecho: 'aceito', tipo: 'cross_sell', motivo: null });
+    expect(ev![1]).toMatchObject({ desfecho: 'rejeitado', motivo: 'preco', tipo: 'cross_sell' });
   });
 
   it('[TRACK] toque barrado pela lente NÃO conta como tentativa', () => {

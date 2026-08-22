@@ -149,5 +149,25 @@ export function useFarmerDesfecho() {
     [isImpersonating],
   );
 
-  return { registrar, registrados, registrando, bloqueadoPelaLente: isImpersonating };
+  /**
+   * Esquece os desfechos memorizados NESTA sessão.
+   *
+   * `registrados` é memória de UMA geração. Quando o motor recalcula, a
+   * `farmer_recomendacoes_substituir` expira as pendentes e insere linhas NOVAS com a
+   * MESMA chave de negócio — o card passa a falar de outra linha, que não tem desfecho.
+   * Sem esquecer, ele afirmaria "Venda registrada" sobre uma linha ainda `pendente` E
+   * esconderia os botões: o desfecho da geração nova ficaria impossível de registrar e
+   * ela morreria como `expirado` ("substituída sem interação") — exatamente o zero que
+   * este sensor existe para acabar. (Achado P1 do /codex adversarial no CÓDIGO.)
+   *
+   * Esquece em TODO recálculo, inclusive nos que FALHAM ao persistir — aí as linhas
+   * antigas seguem valendo e a memória era boa. É o lado seguro do trade-off: o pior
+   * caso vira um clique que o banco recusa com FD007 ("já tem desfecho"), mensagem
+   * honesta e zero dado corrompido; o outro lado perde sinal em SILÊNCIO. Distinguir os
+   * casos exigiria ler o desfecho da persistência do engine, acoplando este hook às
+   * SQLSTATEs FG005/FG006 dele para comprar precisão numa direção que já é segura.
+   */
+  const esquecerRegistros = useCallback(() => setRegistrados({}), []);
+
+  return { registrar, registrados, registrando, esquecerRegistros, bloqueadoPelaLente: isImpersonating };
 }
