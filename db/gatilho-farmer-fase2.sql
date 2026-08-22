@@ -245,6 +245,36 @@ SELECT
       || 'pre-requisitos da §7.5 estao fechados (regras no bundle; e carteira_com_historico_'
       || 'utilizavel, que separa cliente com PEDIDO de cliente cujos itens RESOLVEM para SKU). '
       || 'Este vazio ja e julgavel: siga para o desenho da expiracao DESTE motor.'
+    -- 7. **Um denominador de UM ator nao licencia conclusao POPULACIONAL.** Esta e a forma que
+    --    a fase-sem-sinal assume DENTRO do proprio gatilho. Medido em 21/08: as 14 execucoes
+    --    que a tabela tem sao de 1 farmer so — o founder, VERIFICANDO o sensor — e 2 dos 3
+    --    farmers com carteira nunca abriram a tela. O arquivo ja EXPUNHA o fato (`farmers` e
+    --    `farmers_com_carteira` saem na linha, e o comentario deles ate nomeia a adocao); o
+    --    que faltava era o VEREDITO agir sobre ele. Relatar sem poder concluir e o defeito.
+    --
+    --    Por que ACIMA do `ENCERRE`: `ENCERRE` e afirmacao UNIVERSAL ("o vazio-de-verdade nao
+    --    acontece neste motor"), e universal exige amostra que represente a populacao. Com 20
+    --    julgaveis feitos clique a clique por uma pessoa, o gatilho encerraria a linha com
+    --    n=1 — o "agregado esconde o motor" (item 4) uma camada acima, agora sobre PESSOAS.
+    --    Nao e hipotetico: o executor unico ja produziu 14 dos 20.
+    --
+    --    Por que ABAIXO do `vazios_completos > 0`: aquilo e afirmacao de EXISTENCIA, e uma
+    --    ocorrencia basta para prova-la, venha de quem vier. Amostra enviesada derruba o
+    --    universal, nao o existencial — rebaixar o existencial aqui seria trocar um erro por
+    --    outro.
+    --
+    --    Por que o `ESTAGNADO` (exec_7d = 0) NAO pega: verificar o sensor E uma execucao. Quem
+    --    abre a tela para conferir renova `exec_7d` e derruba o veredito para `AGUARDE` — o
+    --    alarme e suprimido pelo ATO DE MEDIR, e some justo quando alguem foi olhar. Provado
+    --    por falsificacao em db/test-gatilho-farmer-fase2.sh (caso 4: sem este ramo, 20
+    --    julgaveis de 1 ator saem como `ENCERRE`).
+    WHEN farmers = 1 AND farmers_com_carteira > 1 THEN
+      'MONOUSUARIO — ' || julgaveis || '/20 julgaveis, mas TODAS de UM UNICO farmer (de '
+      || farmers_com_carteira || ' com carteira). Denominador de 1 ator nao sustenta conclusao '
+      || 'populacional: nem ENCERRE (que e universal) nem AGUARDE (o sinal nao esta "vindo" — '
+      || 'nao ha quem o produza). E se o executor unico for quem VERIFICA o sensor, cada '
+      || 'verificacao renova exec_7d e impede ESTAGNADO: o alarme se apaga por ser olhado. A '
+      || 'fase seguinte e INSTALAR O USO nos demais farmers com carteira — nao esperar.'
     WHEN julgaveis >= 20 THEN
       'ENCERRE — ' || julgaveis || ' execucoes julgaveis DESTE motor e ZERO vazios: o '
       || 'vazio-de-verdade nao acontece nele. Nao ligue a expiracao; encerre a linha DELE '
