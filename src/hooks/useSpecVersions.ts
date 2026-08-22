@@ -22,7 +22,7 @@ export interface SpecVersion extends Partial<KbExtractedSpec> {
  * Histórico de versões de um PRODUTO (identidade = supplier + product_code_normalized).
  * Ordenado da mais recente pra mais antiga (version_number DESC).
  *
- * ⚠️ Passe o `supplier`/`productCode` da FICHA APROVADA (useKbProductSpecs), não do
+ * ⚠️ Passe o `supplier`/`productCode` da FICHA APROVADA (useKbProductSpecsByDocument), não do
  * kb_documents — foi esse par que o backfill/RPC gravou na identidade.
  *
  * Cast `as any` porque kb_product_spec_versions ainda não está em types.ts
