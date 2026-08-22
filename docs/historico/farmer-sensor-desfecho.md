@@ -154,9 +154,109 @@ Vieses conhecidos, a carregar para a calibração: quem registra aceite e omite 
 infla a taxa; `sem_estoque` e `prazo_entrega` são falha **operacional**, não erro do
 motor, e penalizariam a afinidade se contados junto.
 
+### Medição 1 — 2026-08-22 03:02 UTC · janela de 83 min · **coorte VAZIA (`geradas=0`)**
+
+```
+geradas | aceitas | recusadas | expiradas_sem_interacao | pendentes_sem_interacao
+      0 |       0 |         0 |                       0 |                       0
+rejection_reason: (0 linhas)
+```
+
+**Isto NÃO é "adoção 0%".** `(aceitas+recusadas)/geradas` = `0/0` — **indefinido, não zero**.
+O denominador está AUSENTE, e reportar "0%" seria fabricar o número que o money-path
+proíbe: é o `Number(null)===0` aplicado ao próprio instrumento de medição. A leitura
+honesta da coorte é **"ainda não há o que medir"**.
+
+Mas a pergunta seguinte — *por que* não há — tem resposta, e ela é dura.
+
+#### Camada 1: o motor não rodou desde o Publish
+
+| Sonda | Leitura | Conclusão |
+|---|---|---|
+| `farmer_recommendations` | total **17.316** (idêntico ao marco zero), `max(created_at)` = **2026-08-21 20:16 UTC** | nenhuma linha nova desde o Publish (01:40 UTC) |
+| `farmer_geracao_execucoes` (`cross_sell`) | 13 execuções, **0 desde o Publish**, última **2026-08-21 20:16 UTC** | a página não CARREGOU nenhuma vez |
+
+A segunda sonda é a decisiva e já existia: `useCrossSellEngine` registra **toda**
+execução — inclusive a de resultado vazio, via `registrarVazio` — então "nenhuma linha
+nova" e "nenhum carregamento" são fatos **separados**, e os dois foram medidos.
+
+#### Camada 2: a tela não tem usuário — e nunca teve
+
+O denominador humano **não é "1 farmer"**. Medido:
+
+```
+farmers_com_carteira=3 · farmers_que_executaram=1 · nunca_abriram=2
+o único executor é o FOUNDER (conferido contra auth.users)
+```
+
+E o histórico inteiro da tabela, desde fev/2026, separa os atores sem ambiguidade:
+
+| Ator | Linhas | Execuções | Primeira | Última |
+|---|---|---|---|---|
+| **founder** (verificando) | 16.626 (96%) | 37 | 2026-03-02 | **2026-08-21** |
+| **vendedora** | 690 (4%) | 4 | 2026-04-10 | **2026-04-10** |
+
+**A única vendedora que já abriu a tela abriu num único dia — 10/04/2026 — e nunca
+mais voltou.** As 1.083 pendentes do marco zero são de sessão do founder, não de
+carteira em uso. Das 3 carteiras, 2 nunca abriram a tela uma vez sequer.
+
+> **A regra transferível: a janela de adoção conta SESSÕES DO USUÁRIO-ALVO, não horas
+> de relógio nem execuções de qualquer ator.** 83 minutos de sexta à noite não contêm
+> oportunidade de uso; e 41 execuções não são adoção quando 37 são de quem foi
+> conferir. É a mesma ausência de dado de [`fase-sem-sinal.md`](fase-sem-sinal.md),
+> agora na hora de LER o sensor — e a razão de o gatilho da fase 2 ter ganho o ramo
+> `MONOUSUARIO` (#1865): **um ator não é população.**
+
+Corolário operacional: **antes de reler a query de coorte, cheque
+`farmer_geracao_execucoes`** — sem execução nova a coorte não pode ter mudado, e reler
+é ruído. E **cheque de quem** é a execução: renovar o contador indo olhar a tela é o
+defeito que o #1865 corrigiu. Medir por `psql-ro` **não contamina**; abrir a tela sim.
+
+#### A superfície ESTÁ no ar — provado, não presumido
+
+Contra a armadilha "merge ≠ produção", as três camadas do deploy Lovable:
+
+- **Banco** — `pg_get_functiondef` em PROD: 4 colunas (`accepted_at`/`rejected_at`/
+  `rejection_reason`/`offered_at`), RPC `farmer_recomendacao_registrar_desfecho`,
+  trigger `trg_frec_desfecho_imutavel`, e o guard **FD006** na definição real.
+- **Frontend** — varredura por BYTES do bundle publicado (332 chunks, 6,1 MB,
+  332/332 baixados não-vazios): `recomendacao.desfecho_clicado`, `ja_compra_concorrente`
+  e `farmer_recomendacao_registrar_desfecho` estão em
+  `assets/FarmerRecommendations-*.js`. **Controle positivo** (`carteira.mixgap_visto`,
+  feature antiga) achado; **controle negativo** zero — a varredura enxerga.
+- **Edge** — não aplicável: o sensor não tem edge.
+
+O botão está lá e o banco aceita. **Não falta código: falta usuário.**
+
+#### O que isto decide
+
+Não é a fase de calibração (não há desfecho contra o que calibrar) e **não é esperar**
+(esperar não produz sinal numa tela sem usuário — é a definição de `fase-sem-sinal`).
+A fase seguinte é **instalar o uso** nas 2 carteiras que nunca abriram — ou **encerrar
+a linha**. Só depois de existirem sessões de vendedora a coorte acumula, e só então
+calibrar o gate `clusterAdherence < 0.03`, os pesos do `relevance` e as constantes
+`TAXA_CONVERSAO_*`/`FATOR_COMPLEXIDADE` passa a ser uma pergunta respondível.
+
 ## Se a query continuar vazia
 
-Aí a pergunta seguinte é sobre **adoção**, não sobre código: a superfície está no ar
-e ninguém a usa. O evento `recomendacao.desfecho_clicado` (PostHog) separa os dois
-casos — ele mede a **tentativa**, então tentativa alta com linha zero significa que
-o banco está recusando, e tentativa zero significa que ninguém clicou.
+A pergunta passa a ser de **adoção**, não de código — mas **na ordem certa**, porque a
+query de coorte não distingue "ninguém clicou" de "ninguém abriu a tela":
+
+1. **Primeiro `farmer_geracao_execucoes`** (motor `cross_sell`, `calculado_em >= Publish`).
+   **Zero execução ⇒ pare aqui:** não houve carregamento, logo não houve clique, logo o
+   banco não pode ter recusado nada. Nenhuma outra sonda desempata isso, e nenhuma
+   conclusão sobre desenho, motor ou UI é possível. É o estado da Medição 1.
+2. **Depois, de QUEM é a execução.** Execução > 0 do próprio verificador não é adoção —
+   compare `farmer_id` contra as carteiras (`farmer_client_scores`) e contra quem foi
+   olhar. Enquanto o executor for o founder, o veredito é `MONOUSUARIO` (#1865), e a
+   pergunta continua sendo instalar uso, não medir de novo.
+3. **Só com execução de VENDEDORA > 0 e linha zero** o evento `recomendacao.desfecho_clicado` (PostHog)
+   vira o desempate que ele foi feito para ser: ele mede a **tentativa**, então tentativa
+   alta com linha zero significa que o banco está recusando (códigos FD001–FD007), e
+   tentativa zero significa que a tela abriu e ninguém clicou — e aí, sim, é conversa com
+   a vendedora.
+
+⚠️ **O PostHog não é lido daqui.** Não há credencial nem script de leitura no repo, e
+silêncio que não se consegue observar **não é dado** — a etapa 3 depende do founder ou de
+uma sonda que ainda não existe. As etapas 1 e 2 respondem no mesmo `psql-ro`, sem
+depender de ninguém: foi por isso que elas vieram primeiro.
