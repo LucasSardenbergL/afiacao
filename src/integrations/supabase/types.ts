@@ -8096,6 +8096,7 @@ export type Database = {
         Row: {
           account: string
           created_at: string
+          evidence_document_normalized: string | null
           id: string
           omie_codigo_cliente: number
           omie_codigo_vendedor: number | null
@@ -8106,6 +8107,7 @@ export type Database = {
         Insert: {
           account: string
           created_at?: string
+          evidence_document_normalized?: string | null
           id?: string
           omie_codigo_cliente: number
           omie_codigo_vendedor?: number | null
@@ -8116,6 +8118,7 @@ export type Database = {
         Update: {
           account?: string
           created_at?: string
+          evidence_document_normalized?: string | null
           id?: string
           omie_codigo_cliente?: number
           omie_codigo_vendedor?: number | null
