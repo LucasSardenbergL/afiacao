@@ -20,6 +20,14 @@ mkdir -p "$tmp/bin" "$tmp/codexhome_ok" "$tmp/codexhome_vazio"
 cat >"$tmp/bin/codex" <<'STUB'
 #!/bin/sh
 echo x >> "$CODEX_STUB_COUNT"
+# stderr FIEL ao codex real (medido 2026-08-22, codex-cli 0.144.1): header, o PROMPT
+# ECOADO sob "user", e só então as linhas ERROR:. O eco é o que envenena qualquer
+# classificação feita sobre o arquivo cru.
+for a in "$@"; do prompt="$a"; done
+{ echo "OpenAI Codex v0.144.1"; echo "--------"; echo "model: stub"
+  echo "sandbox: read-only"; echo "--------"; echo "user"; printf '%s\n' "$prompt"
+  echo "warning: Model metadata for \`stub\` not found. Defaulting to fallback metadata."
+} >&2
 case "$CODEX_STUB_MODE" in
   ok)        echo "parecer: aprovado com ressalvas"; exit 0 ;;
   quota)     echo "You have reached your usage limit" >&2; exit 1 ;;
@@ -27,6 +35,12 @@ case "$CODEX_STUB_MODE" in
   ratelimit) n=$(wc -l < "$CODEX_STUB_COUNT" | tr -d ' ')
              if [ "$n" -ge 2 ]; then echo "parecer pós-retry"; exit 0
              else echo "429 rate limit exceeded" >&2; exit 1; fi ;;
+  # 400 permanente que NAO e cota nem modelo-recusado (repetir manda o mesmo request)
+  permanente) echo 'ERROR: {"type":"error","status":400,"error":{"type":"invalid_request_error","message":"Unsupported parameter: reasoning.effort is not supported with this model."}}' >&2; exit 1 ;;
+  # 5xx de VERDADE, em linha de ERRO: transitorio legitimo, tem de continuar retentando
+  erro5xx)   n=$(wc -l < "$CODEX_STUB_COUNT" | tr -d ' ')
+             if [ "$n" -ge 2 ]; then echo "parecer pos-503"; exit 0
+             else echo 'ERROR: {"type":"error","status":503,"error":{"message":"upstream unavailable"}}' >&2; exit 1; fi ;;
   trava)     sleep 30 ;;
   *)         echo "erro desconhecido" >&2; exit 1 ;;
 esac
@@ -96,6 +110,39 @@ out="$(run ratelimit "x" 2>/dev/null)"; rc=$?
 caso_exit "rate limit transitório → retry → 0" 0 "$rc"
 if [ "$(invocacoes)" -eq 2 ]; then echo "  ok    exatamente 1 retry (2 invocações)"
 else echo "  FAIL  invocações=$(invocacoes), esperava 2"; fail=1; fi
+
+echo "── classificação não pode ler o ECO DO PROMPT ──"
+# O stderr do codex reimprime o prompt inteiro sob "user" (medido 2026-08-22). Classificar
+# o arquivo CRU deixa o CONTEÚDO do prompt decidir o controle de fluxo — e o ritual /codex
+# cola log, stderr e `cat -n` de arquivo dentro do prompt o tempo todo.
+
+# (a) o bug caro: `5[0-9][0-9]` casava o número de linha do `cat -n` colado no prompt,
+#     então um 400 que nunca mudaria queimava 3 tentativas + 80s de backoff.
+prompt_numerado="revise este trecho:
+   511	const a = 1;
+   512	const b = 2;
+   513	const c = 3;"
+run permanente "$prompt_numerado" >/dev/null 2>&1; rc=$?
+if [ "$(invocacoes)" -eq 1 ]; then echo "  ok    400 permanente NÃO retenta (1 invocação)"
+else echo "  FAIL  400 permanente retentou ($(invocacoes)×) — eco do prompt virou 'transitório'"; fail=1; fi
+
+# (b) o inverso: prompt que FALA de cota, erro real transitório → tem de retentar
+run ratelimit "por que deu 'You have reached your usage limit' ontem?" >/dev/null 2>&1; rc=$?
+caso_exit "prompt citando cota + 429 real → retry → 0" 0 "$rc"
+if [ "$(invocacoes)" -eq 2 ]; then echo "  ok    prompt citando cota não vira COTA_ESGOTADA"
+else echo "  FAIL  invocações=$(invocacoes), esperava 2 — eco do prompt virou cota"; fail=1; fi
+
+# (c) idem modelo: ESTE bug foi levado ao Codex com a frase dentro do prompt.
+run ratelimit "o 400 diz: model is not supported when using Codex — o que eu faço?" >/dev/null 2>&1; rc=$?
+caso_exit "prompt citando 'model is not supported' + 429 real → retry → 0" 0 "$rc"
+if [ "$(invocacoes)" -eq 2 ]; then echo "  ok    prompt citando modelo não vira MODELO_NAO_ACEITO"
+else echo "  FAIL  invocações=$(invocacoes), esperava 2 — eco do prompt virou modelo recusado"; fail=1; fi
+
+# (d) não regredir: 5xx de VERDADE (em linha ERROR:) continua transitório
+run erro5xx "x" >/dev/null 2>&1; rc=$?
+caso_exit "503 real → retry → 0" 0 "$rc"
+if [ "$(invocacoes)" -eq 2 ]; then echo "  ok    503 real ainda retenta (2 invocações)"
+else echo "  FAIL  invocações=$(invocacoes), esperava 2 — perdeu o retry legítimo"; fail=1; fi
 
 echo "── watchdog (execução travada) ──"
 run trava -t 1 "x" >/dev/null 2>&1; rc=$?

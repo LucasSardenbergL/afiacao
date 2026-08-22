@@ -15,19 +15,26 @@
 # Uso:
 #   scripts/codex-async.sh [-m MODELO] [-r low|medium|high|xhigh] [-t SEGUNDOS] "PROMPT"
 #   echo "PROMPT" | scripts/codex-async.sh -r xhigh -
-# Defaults: -m gpt-5.6-sol · -r high · -t 1200 (20min hard-stop)
+# Defaults: -m gpt-5.6-luna · -r high · -t 1200 (20min hard-stop)
 #
 # Garantias:
 #   - preflight (binário + auth) ANTES de gastar tempo/quota, com instrução clara;
-#   - retry com backoff (20s/60s) só em transitório (rate limit/timeout/overload);
+#   - retry com backoff (20s/60s) só em transitório (rate limit/timeout/overload),
+#     classificado SEM o eco do prompt no stderr (senão o texto do prompt decide o fluxo);
 #   - cota esgotada NÃO é transitório → falha na hora instruindo o Caminho B;
 #   - modelo recusado pela conta (400) → exit 78, instruindo CONFIG (≠ cota, ≠ retry);
 #   - mktemp XXXXXX (sem colisão de tmp entre execuções paralelas);
 #   - sandbox read-only (consulta nunca escreve no repo).
 set -u
 
-# gpt-5.6-* exige codex-cli ≥ 0.143 (server rejeita CLI antigo com 400)
-modelo="gpt-5.6-sol"; reasoning="high"; timeout_s=1200
+# gpt-5.6-* exige codex-cli ≥ 0.143 (server rejeita CLI antigo com 400).
+# ⚠️ O default É MEDIÇÃO, não escolha: `gpt-5.6-sol` era o default e está MORTO para esta
+# conta — todo ritual /codex do repo falhava. Ping `codex exec --model M --sandbox read-only
+# "responda apenas: OK"` em 2026-08-22 (codex-cli 0.144.1, conta ChatGPT):
+#   gpt-5.6-luna  → rc=0 "OK"     gpt-5.6-terra → rc=0 "OK"
+#   gpt-5.6-sol   → 400           gpt-5.6       → 400        gpt-5.1-codex-max → 400
+# A disponibilidade muda por tier: RE-MEÇA com o ping antes de confiar nesta lista.
+modelo="gpt-5.6-luna"; reasoning="high"; timeout_s=1200
 while getopts "m:r:t:" opt; do
   case "$opt" in
     m) modelo="$OPTARG" ;;
@@ -85,8 +92,24 @@ for backoff in "${backoffs[@]}"; do
     exit 0
   fi
 
+  # --- classificação do erro ------------------------------------------------
+  # ⚠️ O stderr do codex ECOA o prompt inteiro (bloco "user") ANTES das linhas de erro
+  # (medido 2026-08-22, codex-cli 0.144.1). Classificar o arquivo CRU faz o CONTEÚDO do
+  # prompt decidir o controle de fluxo — e o ritual /codex cola log, stderr e `cat -n`
+  # dentro do prompt o tempo todo. Custou nos DOIS sentidos:
+  #   · `5[0-9][0-9]` casava o número de linha de um `cat -n` colado (qualquer 500-599) e
+  #     um 400 PERMANENTE virava "transitório": 3 tentativas + 80s por um erro que não muda;
+  #   · o inverso — prompt citando "usage limit", ou a própria frase "model is not supported"
+  #     (o prompt que DIAGNOSTICOU este bug tinha as duas) — abortava na 1ª tentativa com
+  #     COTA_ESGOTADA/MODELO_NAO_ACEITO sem retry nenhum.
+  # ⇒ tira-se o eco: `grep -Fvxf` remove as linhas que são do prompt e classifica-se o resto.
+  #   (Filtrar por prefixo `ERROR:` seria mais frágil: nem toda mensagem do codex o traz —
+  #   a de cota, p.ex., não vem prefixada, e sumiria da classificação.)
+  diag="$(grep -aFvxf <(printf '%s\n' "$prompt") "$err" 2>/dev/null)"
+  classifica() { printf '%s\n' "$diag" | grep -qiE "$1"; }
+
   # cota esgotada = NÃO-transitório → Caminho B na hora (money-path.md)
-  if grep -qiE 'usage limit|quota|plan limit' "$err"; then
+  if classifica 'usage limit|quota|plan limit'; then
     echo "COTA_ESGOTADA: janela rolante de 7d do ChatGPT Plus esgotou. Siga o Caminho B (validação adversária própria + registrar 'REVISÃO INDEPENDENTE PENDENTE') — docs/agent/money-path.md." >&2
     exit 75
   fi
@@ -100,7 +123,7 @@ for backoff in "${backoffs[@]}"; do
   #   gpt-5.6-terra / gpt-5.6-luna → rc=0, respondem normalmente
   # Ou seja: "nenhum modelo passa ⇒ é a conta" é inferência de ausência de dado. Trocar o
   # modelo RESOLVE. Só suspeite do login se um modelo SABIDAMENTE servido também falhar.
-  if grep -qiE 'model is not supported|unsupported_model|model_not_found' "$err"; then
+  if classifica 'model is not supported|unsupported_model|model_not_found'; then
     echo "MODELO_NAO_ACEITO: o modelo '$modelo' não é aceito por esta conta Codex (HTTP 400)." >&2
     echo "  → passe outro com -m, ou ajuste 'model =' em \${CODEX_HOME:-~/.codex}/config.toml;" >&2
     echo "  → medidos OK nesta conta (2026-08-22): gpt-5.6-terra, gpt-5.6-luna. Recusados: -sol, gpt-5.6;" >&2
@@ -108,8 +131,15 @@ for backoff in "${backoffs[@]}"; do
     echo "  (não é cota nem falha transitória: esperar e repetir não consertam config.)" >&2
     exit 78
   fi
-  # transitório (rede/limite/kill do watchdog) → tenta de novo
-  if grep -qiE 'rate.?limit|429|timed?.?out|overloaded|temporarily|connection|ECONN|ETIMEDOUT|5[0-9][0-9]' "$err" || [ "$rc" -ge 124 ]; then
+  # 400 de requisição inválida é PERMANENTE: repetir manda exatamente o mesmo request.
+  # Explícito (e não "sobrou, então para") para não depender de nenhum regex falhar por acaso.
+  if classifica 'invalid_request_error|unsupported_parameter|invalid_value'; then
+    break
+  fi
+  # transitório (rede/limite/kill do watchdog) → tenta de novo.
+  # 5xx só conta ancorado num marcador HTTP — solto, `5[0-9][0-9]` casa qualquer número de
+  # 3 dígitos que passe por aqui (era o bug: número de linha vira "erro de servidor").
+  if classifica 'rate.?limit|429|timed?.?out|overloaded|temporarily|connection|ECONN|ETIMEDOUT|status"?[:= ]*5[0-9][0-9]|HTTP/?[0-9.]* *5[0-9][0-9]' || [ "$rc" -ge 124 ]; then
     continue
   fi
   break  # erro não-transitório → não insiste
