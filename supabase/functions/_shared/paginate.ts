@@ -94,7 +94,24 @@ export async function fetchAll<T>(
   let from = 0;
   const out: T[] = [];
   for (;;) {
-    const { data, error } = await build(from, from + PAGE - 1);
+    // A página tem TRÊS desfechos de falha, não um. O `await` pode REJEITAR (fetch derrubado,
+    // `.throwOnError()` de um caller futuro, erro de programação no callback) — e a rejeição
+    // crua atravessava `fetchAll` inteira até o `catch` do `Deno.serve`, pelo mesmo caminho
+    // que devolve `.message` no corpo. O wrapper local que este helper substituiu cobria isto
+    // com um try/catch; a cobertura tinha de vir junto.
+    let resposta: { data: T[] | null; error: ErroPostgrest | null };
+    try {
+      resposta = await build(from, from + PAGE - 1);
+    } catch (e) {
+      // Já fechada por um caller que valida a própria página: re-envelopar trocaria o `code`
+      // real (57014) por `REJEITADA` e apagaria a fonte de origem.
+      if (e instanceof FalhaLeituraCritica) throw e;
+      throw new FalhaLeituraCritica(label, {
+        code: 'REJEITADA',
+        message: e instanceof Error ? e.message : String(e),
+      });
+    }
+    const { data, error } = resposta;
     // Envelope na ORIGEM, dentro do laço: o `code` do PostgREST (57014 timeout, 42501 RLS) é o
     // que separa "o banco piscou" de "a role não enxerga" na classificação operacional, e ele
     // morreria num envelope aplicado por FORA — lá só chega a `Error` já reduzida a texto.
@@ -106,7 +123,12 @@ export async function fetchAll<T>(
     // `data: []` — array vazio, que segue adiante e encerra por `length < PAGE`.
     // Mesmo código que `exigirLista` dá à malformada de UMA página: é o mesmo defeito
     // entrando pela porta do lado, e quem lê o log não deveria ter de saber por qual porta.
-    if (data == null) throw new FalhaLeituraCritica(label, { code: 'MALFORMADA' });
+    //
+    // A checagem é `!Array.isArray`, não `== null`: `out.push(...rows)` ESPALHA qualquer
+    // iterável, então `{ data: "CPF" }` resolvia `["C","P","F"]` — três "linhas" que o
+    // call-site soma como dados do banco. Pior que um erro, é PII picada em caracteres
+    // entrando no cálculo com cara de leitura legítima (challenge Codex desta entrega).
+    if (!Array.isArray(data)) throw new FalhaLeituraCritica(label, { code: 'MALFORMADA' });
     const rows = data;
     out.push(...rows);
     if (rows.length < PAGE) break;

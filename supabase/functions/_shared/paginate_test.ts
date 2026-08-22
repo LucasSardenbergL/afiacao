@@ -180,3 +180,52 @@ Deno.test("data null SEM error no MEIO: lança e NÃO devolve o acumulado parcia
   );
   assertEquals(erro.codigo, "MALFORMADA");
 });
+
+// ── Os dois furos que sobravam ao redor do envelope (challenge Codex desta entrega) ──
+
+Deno.test("build que REJEITA (não resolve com {error}): a rejeição crua não escapa", async () => {
+  // O `await build(...)` tem DOIS desfechos de falha e o envelope só cobria um. Uma rejeição
+  // — fetch derrubado, `.throwOnError()` de um caller futuro, erro de programação no callback
+  // — passava direto por `fetchAll` e chegava ao `catch` do `Deno.serve` como `Error` crua,
+  // pelo caminho que devolve `.message` no corpo. O wrapper `paginarFonte` que este PR removeu
+  // cobria isto com um try/catch; a cobertura tinha de ir para o helper junto, e não foi.
+  const erro = await capturarFalha(() =>
+    fetchAll(() => Promise.reject(new Error("CPF-RAW-52998224725")), "t_rejeita")
+  );
+  assertEquals(erro.codigo, "REJEITADA");
+  assertEquals(erro.fonte, "t_rejeita");
+  if (erro.message.includes("52998224725")) {
+    throw new Error(`a rejeicao crua vazou na mensagem publica: ${erro.message}`);
+  }
+  assertEquals(
+    (erro.cause as { message?: string } | undefined)?.message,
+    "CPF-RAW-52998224725",
+    "o motivo da rejeicao sumiu de cause — os logs da edge perderam o diagnostico",
+  );
+});
+
+Deno.test("uma FalhaLeituraCritica que sobe de dentro do build não é re-envelopada", async () => {
+  // Sem esta guarda o envelope de rejeição empacotaria a falha JÁ fechada de um caller que
+  // valida a página por conta própria, trocando o `code` real (57014) por `REJEITADA`.
+  const dentro = new FalhaLeituraCritica("fonte_interna", { code: "57014" });
+  const erro = await capturarFalha(() => fetchAll(() => Promise.reject(dentro), "t_fora"));
+  assertEquals(erro.codigo, "57014", "o code original virou REJEITADA no re-envelope");
+  assertEquals(erro.fonte, "fonte_interna");
+});
+
+Deno.test("data que não é ARRAY: LANÇA — `data == null` não bastava", async () => {
+  // `out.push(...rows)` com uma string ESPALHA os caracteres: `{data:"CPF"}` resolvia
+  // `["C","P","F"]` — três "linhas" que o call-site trata como dados do banco. Pior que um
+  // erro: é PII picada em caracteres entrando no cálculo como se fosse leitura legítima.
+  const erro = await capturarFalha(() =>
+    fetchAll((_f, _t) => Promise.resolve({ data: "CPF" as unknown as string[], error: null }), "t_texto")
+  );
+  assertEquals(erro.codigo, "MALFORMADA");
+});
+
+Deno.test("data:{} (objeto, não array) também LANÇA — a forma é que decide", async () => {
+  const erro = await capturarFalha(() =>
+    fetchAll((_f, _t) => Promise.resolve({ data: {} as unknown as string[], error: null }), "t_objeto")
+  );
+  assertEquals(erro.codigo, "MALFORMADA");
+});

@@ -23,9 +23,11 @@
 // interpolar valor de linha (`RAISE EXCEPTION` com ID/CPF, erro de cast reproduzindo o
 // valor inválido). O `serve()` das edges devolve `String(err.message)` ao CLIENTE, então
 // a mensagem daqui carrega só domínio FECHADO — nome da fonte (constante do código) e
-// código sanitizado. O texto original fica em `cause`, que não é serializado pela
-// resposta e sobrevive só nos logs da edge. (money-path: "garantia de privacidade
-// afirmada sem verificar o SINK".)
+// código de domínio fechado. O texto original fica em `cause` — passada pelo OPTIONS do
+// `Error`, e por isso NÃO-ENUMERÁVEL: invisível a `JSON.stringify`/spread, acessível a
+// quem a pede pelo nome (o log da edge). A versão que atribuía `this.cause = erro` fazia
+// a propriedade enumerável e a garantia era falsa. (money-path: "garantia de privacidade
+// afirmada sem verificar o SINK" — verificar o sink é medir, não reler o comentário.)
 
 export type ErroPostgrest = {
   message?: string | null;
@@ -39,12 +41,29 @@ export type RespostaLeitura<T> = {
   error: ErroPostgrest | null;
 };
 
-/** Código sanitizado por FORMA (allowlist), nunca texto livre do servidor. */
-const FORMA_CODIGO = /^[A-Za-z0-9_]{1,12}$/;
+/**
+ * Código em DOMÍNIO fechado — não só em FORMA.
+ *
+ * A versão anterior era `^[A-Za-z0-9_]{1,12}$`, que valida forma e nada mais: um CPF sem
+ * pontuação tem 11 dígitos e passava INTEIRO para a mensagem pública, pela porta que existe
+ * justamente para fechá-la (`codigoDoErro({ code: '52998224725' }) === '52998224725'`, medido
+ * no challenge Codex desta entrega). O domínio real é pequeno e enumerável, então é ele que
+ * vale: SQLSTATE tem EXATAMENTE 5 caracteres, o PostgREST usa `PGRST` + 3 dígitos, e os
+ * códigos INTERNOS desta família são três — nenhum deles colide com SQLSTATE (que não tem `_`
+ * nem passa de 5 chars, e portanto não alcança `MALFORMADA`/`SEM_LINHAS`/`REJEITADA`).
+ *
+ * Fora do domínio vira `desconhecido`: perder a granularidade de um código exótico custa menos
+ * que devolver texto do servidor com nome de "código sanitizado".
+ */
+const SQLSTATE = /^[0-9A-Z]{5}$/;
+const CODIGO_POSTGREST = /^PGRST[0-9]{3}$/;
+const CODIGOS_INTERNOS = new Set(['MALFORMADA', 'SEM_LINHAS', 'REJEITADA']);
 
 export function codigoDoErro(erro: ErroPostgrest | null | undefined): string {
   const bruto = erro?.code;
-  if (typeof bruto === 'string' && FORMA_CODIGO.test(bruto)) return bruto;
+  if (typeof bruto !== 'string') return 'desconhecido';
+  if (CODIGOS_INTERNOS.has(bruto)) return bruto;
+  if (SQLSTATE.test(bruto) || CODIGO_POSTGREST.test(bruto)) return bruto;
   return 'desconhecido';
 }
 
@@ -57,18 +76,26 @@ export class FalhaLeituraCritica extends Error {
     // Mensagem = domínio fechado. Vai ao cliente pelo catch do serve().
     // `SEM_LINHAS` não é falha de transporte (a leitura funcionou e voltou vazia), então
     // ganha texto próprio — dizer "falhou" mandaria o leitor caçar um erro que não houve.
+    // `cause` vai pelo OPTIONS do `Error`, nunca por atribuição: `this.cause = x` cria uma
+    // propriedade PRÓPRIA e ENUMERÁVEL, e aí `JSON.stringify(err)` e `{ ...err }` carregam o
+    // objeto cru do PostgREST inteiro — `message`, `details` e `hint`, que são onde o Postgres
+    // interpola valor de linha. Era assim até o challenge Codex desta entrega medir o sink:
+    // `JSON.stringify(new FalhaLeituraCritica('x', {message:'CPF 52998224725...'}))` devolvia o
+    // CPF. Nenhum consumidor serializava o Error inteiro, então era munição carregada e não
+    // tiro disparado — mas a garantia estava afirmada sem o sink verificado, que é o pecado
+    // que esta família existe para combater. Pelo options a propriedade é não-enumerável:
+    // segue acessível a quem a pede pelo nome (o log da edge), invisível a quem serializa.
     super(
       codigo === 'SEM_LINHAS'
         ? `${fonte} não tem nenhuma linha para esta empresa — valor DESCONHECIDO, não zero. Verifique o cadastro.`
         : codigo === 'MALFORMADA'
         ? `Leitura de ${fonte} veio malformada (data null sem erro) — DESCONHECIDO, não lista vazia.`
         : `Leitura de ${fonte} falhou (código ${codigo}) — dado indisponível, não zero.`,
+      { cause: erro ?? undefined },
     );
     this.name = 'FalhaLeituraCritica';
     this.fonte = fonte;
     this.codigo = codigo;
-    // Detalhe cru só aqui: não é serializado na resposta HTTP.
-    this.cause = erro ?? undefined;
   }
 }
 

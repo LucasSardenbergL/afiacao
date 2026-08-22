@@ -188,3 +188,71 @@ Deno.test("codigoDoErro: código fora da forma esperada vira 'desconhecido' (all
   assertEq(codigoDoErro(null), "desconhecido");
   assertEq(codigoDoErro(undefined), "desconhecido");
 });
+
+// ── O SINK, medido em vez de afirmado (challenge Codex desta entrega) ────────────────
+// O cabeçalho deste módulo afirma que "o texto original fica em `cause`, que não é
+// serializado pela resposta". Isso era FALSO por um detalhe de JavaScript: `this.cause = x`
+// cria uma propriedade PRÓPRIA e ENUMERÁVEL, enquanto `super(msg, { cause: x })` cria uma
+// não-enumerável. Com a atribuição, `JSON.stringify(err)` e `{ ...err }` carregam o objeto
+// cru do PostgREST inteiro — `message`, `details` e `hint` incluídos, e é neles que o
+// Postgres interpola valor de linha. Medido antes de corrigir:
+//     Object.keys(err) => ["fonte","codigo","name","cause"]
+//     JSON.stringify(err).includes("52998224725") => true
+// Nenhum consumidor de hoje serializa o Error inteiro na resposta (todos usam `.message`),
+// então isto era munição carregada, não tiro disparado — mas a garantia estava afirmada
+// sem o sink verificado, que é exatamente o pecado que esta família de helpers combate.
+
+const CRU_PII = {
+  message: "CPF 52998224725 invalido",
+  details: "row id=9",
+  hint: "segredo",
+  code: "57014",
+};
+
+Deno.test("cause NÃO é enumerável: JSON.stringify do erro não carrega o cru do PostgREST", () => {
+  const e = new FalhaLeituraCritica("fonte_x", CRU_PII);
+  const serializado = JSON.stringify(e);
+  for (const vazamento of ["52998224725", "row id=9", "segredo", "CPF"]) {
+    if (serializado.includes(vazamento)) {
+      throw new Error(`JSON.stringify(err) vazou ${JSON.stringify(vazamento)}: ${serializado}`);
+    }
+  }
+  assertEq(Object.keys(e).includes("cause"), false, "cause voltou a ser enumerável");
+});
+
+Deno.test("cause NÃO é enumerável: o spread `{...err}` não copia o cru", () => {
+  const e = new FalhaLeituraCritica("fonte_x", CRU_PII);
+  const copia = { ...e } as Record<string, unknown>;
+  assertEq("cause" in copia, false, "o spread copiou cause — um `{...err}` num handler vaza");
+  if (JSON.stringify(copia).includes("52998224725")) {
+    throw new Error(`spread vazou PII: ${JSON.stringify(copia)}`);
+  }
+});
+
+Deno.test("cause continua ACESSÍVEL: não-enumerável não é apagado (o log da edge precisa dele)", () => {
+  const e = new FalhaLeituraCritica("fonte_x", CRU_PII);
+  assertEq((e.cause as { message?: string } | undefined)?.message, CRU_PII.message);
+});
+
+// ── O código "sanitizado" aceitava PII ──────────────────────────────────────────────
+// `FORMA_CODIGO = /^[A-Za-z0-9_]{1,12}$/` valida FORMA, não domínio: um CPF sem pontuação
+// tem 11 dígitos e passava INTEIRO para a mensagem pública, pela porta que existe para
+// fechá-la. O domínio real é pequeno e conhecido: SQLSTATE (5 chars) + PGRSTnnn + os dois
+// códigos INTERNOS desta família.
+
+Deno.test("codigo: um CPF no campo `code` NÃO passa por sanitizado", () => {
+  assertEq(codigoDoErro({ code: "52998224725" }), "desconhecido");
+  const e = new FalhaLeituraCritica("fonte_x", { code: "52998224725" });
+  if (e.message.includes("52998224725")) {
+    throw new Error(`PII pelo campo code chegou a mensagem publica: ${e.message}`);
+  }
+});
+
+Deno.test("codigo: o domínio LEGÍTIMO continua passando inteiro", () => {
+  for (const c of ["57014", "42501", "42703", "42P01", "PGRST204", "PGRST202"]) {
+    assertEq(codigoDoErro({ code: c }), c, `o código real ${c} foi descartado`);
+  }
+  for (const c of ["MALFORMADA", "SEM_LINHAS"]) {
+    assertEq(codigoDoErro({ code: c }), c, `o código interno ${c} foi descartado`);
+  }
+});

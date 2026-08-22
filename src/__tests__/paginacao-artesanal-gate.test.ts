@@ -1016,7 +1016,7 @@ serve(async (req) => {
   const pins: Array<{ arquivo: string; presente: RegExp; motivo: string }> = [
     {
       arquivo: 'supabase/functions/_shared/paginate.ts',
-      presente: /if \(data == null\) throw new FalhaLeituraCritica\(label, \{ code: ['"]MALFORMADA['"] \}\)/,
+      presente: /if \(!Array\.isArray\(data\)\) throw new FalhaLeituraCritica\(label, \{ code: ['"]MALFORMADA['"] \}\)/,
       motivo: 'fetchAll voltaria a converter data:null em pagina vazia (EOF falso)',
     },
     // O ramo do `error` é o OUTRO desfecho da mesma pagina, e o pin acima nao o cobre: dava
