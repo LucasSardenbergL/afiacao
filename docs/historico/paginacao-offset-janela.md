@@ -110,8 +110,18 @@ saídas, na ordem em que valem a pena:
    já carrega `count`, mas o `build` de hoje não tem por onde pedi-lo: exigiria mexer na
    assinatura dos 21 call-sites, que é exatamente o que a medição desaconselhou.
 
-A (1) compra quase todo o valor por quase nenhum custo; a (2) só se paga se o `max-rows`
-passar a ser configurável por alguém de fora do time.
+**ERRATA (2026-08-22, ao implementar): a saída (1) estava errada.** `PAGE = 900` protege só
+contra caps entre 900 e 999 — com `max-rows` em 500, `500 < 900` continua sendo lido como EOF e
+a leitura trunca igual. E paga +11% de requisições em TODA leitura, não uma por laço.
+
+O que foi feito é uma terceira saída, que nenhuma das duas anteriores enxergava: **EOF por
+página VAZIA + avanço pelo número REAL de linhas devolvidas** (`from += rows.length`, não
+`from += PAGE`). As duas metades são necessárias — só trocar o critério de parada ainda pularia
+linhas, porque o offset avançaria 1.000 sobre um servidor que devolveu 500.
+
+Isso vale para QUALQUER cap, sem `count:'exact'` e sem mexer nos 21 call-sites. Custo: uma
+requisição a mais por leitura, a que volta vazia. O fim da tabela deixa de ser uma inferência a
+partir de um número que o servidor escolhe, e passa a ser um fato observado.
 
 ## ⚠️ REVISÃO INDEPENDENTE PENDENTE
 
