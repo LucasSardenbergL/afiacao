@@ -30,7 +30,12 @@ for a in "$@"; do prompt="$a"; done
 } >&2
 case "$CODEX_STUB_MODE" in
   ok)        echo "parecer: aprovado com ressalvas"; exit 0 ;;
-  quota)     echo "You have reached your usage limit" >&2; exit 1 ;;
+  # mensagem REAL medida 2026-08-22 (vem prefixada com ERROR:, ao contrario do que o stub
+  # anterior supunha) — o texto e literal do servidor.
+  quota)     echo "ERROR: You've hit your usage limit. To continue using Codex and get access to GPT-5.3-Codex, start a free trial of Plus today (https://chatgpt.com/explore/plus), or try again at Sep 20th, 2026 10:37 PM." >&2; exit 1 ;;
+  # variante SEM prefixo: o classificador nao pode depender de conhecer o vocabulario de
+  # prefixos do codex-cli, que muda entre versoes.
+  quota_sem_prefixo) echo "You have reached your usage limit" >&2; exit 1 ;;
   modelo)    echo 'ERROR: {"type":"error","status":400,"error":{"type":"invalid_request_error","message":"The '"'"'gpt-5.6-sol'"'"' model is not supported when using Codex with a ChatGPT account."}}' >&2; exit 1 ;;
   ratelimit) n=$(wc -l < "$CODEX_STUB_COUNT" | tr -d ' ')
              if [ "$n" -ge 2 ]; then echo "parecer pós-retry"; exit 0
@@ -88,6 +93,8 @@ run quota "x" >/dev/null 2>&1; rc=$?
 caso_exit "cota esgotada → 75" 75 "$rc"
 if [ "$(invocacoes)" -eq 1 ]; then echo "  ok    cota NÃO faz retry (1 invocação)"
 else echo "  FAIL  cota fez retry ($(invocacoes) invocações)"; fail=1; fi
+run quota_sem_prefixo "x" >/dev/null 2>&1
+caso_exit "cota SEM prefixo ERROR: também vira 75" 75 $?
 
 echo "── modelo recusado pela conta ──"
 # 400 do servidor quando o modelo do config não vale para a conta (2026-08-22: os 10
@@ -151,6 +158,18 @@ run erro5xx "x" >/dev/null 2>&1; rc=$?
 caso_exit "503 real → retry → 0" 0 "$rc"
 if [ "$(invocacoes)" -eq 2 ]; then echo "  ok    503 real ainda retenta (2 invocações)"
 else echo "  FAIL  invocações=$(invocacoes), esperava 2 — perdeu o retry legítimo"; fail=1; fi
+
+# (h) por que a correção tira o ECO em vez de casar só linhas `ERROR:` — a alternativa
+#     óbvia. Prompts do ritual colam stderr de erro o tempo todo, e essas linhas COMEÇAM
+#     com "ERROR:": um filtro por prefixo deixaria o veneno passar inteiro. (A justificativa
+#     anterior aqui dizia que a mensagem de cota não vinha prefixada; medição de 2026-08-22
+#     mostrou que VEM — o argumento estava errado, a decisão continua certa por este outro.)
+run ratelimit "diagnostique este log que colei:
+ERROR: You've hit your usage limit. Try again at Sep 20th.
+o que houve?" >/dev/null 2>&1
+caso_exit "prompt com LINHA 'ERROR: ...usage limit' + 429 real → retry → 0" 0 $?
+if [ "$(invocacoes)" -eq 2 ]; then echo "  ok    filtro por prefixo não bastaria — o eco tem de sair"
+else echo "  FAIL  invocações=$(invocacoes), esperava 2"; fail=1; fi
 
 # (e2) o ramo do 400 de requisição inválida tem de DIZER o julgamento — um ramo que só
 #      faz `break` é indistinguível do break final: ninguém lê, nenhum teste falsifica.
