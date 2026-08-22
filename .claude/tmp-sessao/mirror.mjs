@@ -1,0 +1,10 @@
+import {readFileSync} from 'fs';
+const norm = (s,label) => { const m = s.match(new RegExp(`// MIRROR-START ${label}[^\\n]*\\n([\\s\\S]*?)\\n[^\\n]*// MIRROR-END`));
+  if(!m) return null;
+  return m[1].replace(/\bexport\s+/g,'').split('\n').map(l=>l.trim()).filter(l=>l.length>0 && !l.startsWith('//')).join('\n'); };
+const h=readFileSync('src/lib/omie/omie-identity-snapshot.ts','utf8');
+const v=readFileSync('supabase/functions/omie-vendas-sync/index.ts','utf8');
+const a=readFileSync('supabase/functions/omie-analytics-sync/index.ts','utf8');
+console.log('parse src==vendas:', norm(h,'omie identity-snapshot-parse')===norm(v,'omie identity-snapshot-parse'));
+console.log('parse src==analyt:', norm(h,'omie identity-snapshot-parse')===norm(a,'omie identity-snapshot-parse'));
+console.log('prova src==vendas:', norm(h,'omie prova-positiva-cache')===norm(v,'omie prova-positiva-cache'));

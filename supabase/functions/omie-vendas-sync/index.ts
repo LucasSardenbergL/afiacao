@@ -980,18 +980,6 @@ async function syncPedidos(
   // Antes: paginação KEYSET de profiles montava o docToUserMap com buildDocUserMapFailClosed. Era
   // não-atômica (Codex xhigh 2026-07-10): um profile que nascia/mudava ENTRE páginas escapava da
   // detecção de doc-ambíguo. Agora a unicidade doc→user é resolvida num ÚNICO snapshot MVCC server-side
-  // (omie_sync_identity_snapshot, sql STABLE): doc com 2+ users DISTINTOS já vem FORA de doc_to_user e
-  // listado em ambiguous_docs (métrica). O fail-closed (precisão>recall) vive no SQL, não mais no TS.
-  // .rpc() NÃO lança em erro (resolve {error}) → checar e FAIL-CLOSED (throw): um mapa PARCIAL silencioso
-  // causaria miss no fallback resolveClientUserId → skip/atribuição arbitrária. Aborta e retoma.
-  const { data: snap, error: snapErr } = await supabase.rpc('omie_sync_identity_snapshot', { p_account: account });
-  if (snapErr) throw new Error(`identity snapshot (${account}): ${snapErr.message}`);
-  // Validação ESTRITA do contrato (Codex challenge PR-1): .rpc() error=null só prova HTTP/SQL, NÃO o JSON.
-  // Uma RPC revertida devolvendo {doc_to_user:null,...} (HTTP 200) degradaria p/ Map(0) SILENCIOSO → pedidos
-  // pulados. parseIdentitySnapshot LANÇA em shape inválido (null/array/não-UUID/doc ambíguo vazado) — fail-closed.
-  const { docToUserMap, ambiguousDocs, clientToUser, revokedClientCodes } = parseIdentitySnapshot(snap);
-  console.log(`[sync_pedidos][${account}] Identity snapshot: ${docToUserMap.size} doc(s) único(s), ${ambiguousDocs.size} ambíguo(s) excluído(s) (fail-closed server-side)`);
-
   // pgSize/hasMore ficam declarados aqui pois o pré-load do clientCache (abaixo) os reusa.
   const pgSize = 1000;
   let hasMore = true;
@@ -1040,6 +1028,25 @@ async function syncPedidos(
     }
   }
   console.log(`[sync_pedidos][${account}] Client cache from omie_customer_account_map_fresco: ${clientCache.size}`);
+
+  // ── Identidade por snapshot atômico — lida DEPOIS do cache da view, de propósito ─────────────────
+  // Ordem invertida na 2ª rodada do challenge Codex xhigh. Antes a RPC era lida ANTES da view, e a
+  // sobreposição abaixo escrevia a prova por cima de um cache MAIS NOVO: numa transferência de vínculo
+  // concorrente, a view já trazia o dono novo e a prova velha o revertia — inversão de recência que o
+  // código sem este PR não tinha. As duas leituras seguem em instantes distintos (a view é paginada, e
+  // um snapshot conjunto exigiria devolver o cache pela própria RPC — fica para o PR-3), mas agora a
+  // mais nova é a que vence.
+  // (omie_sync_identity_snapshot, sql STABLE): doc com 2+ users DISTINTOS já vem FORA de doc_to_user e
+  // listado em ambiguous_docs (métrica). O fail-closed (precisão>recall) vive no SQL, não mais no TS.
+  // .rpc() NÃO lança em erro (resolve {error}) → checar e FAIL-CLOSED (throw): um mapa PARCIAL silencioso
+  // causaria miss no fallback resolveClientUserId → skip/atribuição arbitrária. Aborta e retoma.
+  const { data: snap, error: snapErr } = await supabase.rpc('omie_sync_identity_snapshot', { p_account: account });
+  if (snapErr) throw new Error(`identity snapshot (${account}): ${snapErr.message}`);
+  // Validação ESTRITA do contrato (Codex challenge PR-1): .rpc() error=null só prova HTTP/SQL, NÃO o JSON.
+  // Uma RPC revertida devolvendo {doc_to_user:null,...} (HTTP 200) degradaria p/ Map(0) SILENCIOSO → pedidos
+  // pulados. parseIdentitySnapshot LANÇA em shape inválido (null/array/não-UUID/doc ambíguo vazado) — fail-closed.
+  const { docToUserMap, ambiguousDocs, clientToUser, revokedClientCodes } = parseIdentitySnapshot(snap);
+  console.log(`[sync_pedidos][${account}] Identity snapshot: ${docToUserMap.size} doc(s) único(s), ${ambiguousDocs.size} ambíguo(s) excluído(s) (fail-closed server-side)`);
 
   // ── PR-2/A2: PROVA POSITIVA por cima do cache ────────────────────────────────────────────────
   // O clientCache acima é vínculo por AUSÊNCIA DE CONTRAINDICAÇÃO: a view fresca só atesta "existe um
@@ -1851,6 +1858,25 @@ function aplicarProvaPositivaNoCache(
   revogados: ReadonlySet<number>,
 ): { cacheDaView: number; provados: number; divergencias: number; revogados: number; cobertura: number } {
   const cacheDaView = cache.size;
+  // Teto de sanidade ANTES de mutar (2ª rodada do challenge Codex xhigh). Revogar é caro: cada código
+  // removido vira uma chamada ConsultarCliente no fallback. Transferência de documento é rara, então
+  // revogação em MASSA não é a realidade — é assinatura de snapshot degradado (doc_to_user parcial,
+  // migration meio-aplicada, conta errada no p_account). Nesse estado, empurrar milhares de códigos
+  // para a API do Omie derrubaria o run por rate-limit de qualquer forma, só que depois de já ter
+  // gravado metade dos pedidos. Abortar aqui é a mesma decisão, tomada cedo e com nome: o run pausa e
+  // retoma na próxima janela (a RPC de criação de pedidos é idempotente), nada se perde e o alarme
+  // aparece. 30% é folgado de propósito — pega catástrofe, não regula o regime normal.
+  //
+  // O PISO de 100 não é detalhe: percentual sobre denominador pequeno é ruído. Numa conta com 3
+  // clientes no cache, revogar 1 já daria 33% e abortaria o sync inteiro por um caso banal. Abaixo de
+  // 100 o volume absoluto de chamadas é pequeno por definição, então não há catástrofe a evitar —
+  // o guard só faz sentido onde a proporção significa alguma coisa.
+  if (cacheDaView >= 100 && revogados.size > cacheDaView * 0.3) {
+    throw new Error(
+      `identity snapshot: ${revogados.size} de ${cacheDaView} vínculos do cache revogados (>30%) — ` +
+        `revogação em massa é sinal de snapshot degradado, não de realidade; abortando fail-closed`,
+    );
+  }
   let divergencias = 0;
   for (const [codigo, userProvado] of prova) {
     const doCache = cache.get(codigo);

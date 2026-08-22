@@ -122,6 +122,25 @@ export function aplicarProvaPositivaNoCache(
   revogados: ReadonlySet<number>,
 ): { cacheDaView: number; provados: number; divergencias: number; revogados: number; cobertura: number } {
   const cacheDaView = cache.size;
+  // Teto de sanidade ANTES de mutar (2ª rodada do challenge Codex xhigh). Revogar é caro: cada código
+  // removido vira uma chamada ConsultarCliente no fallback. Transferência de documento é rara, então
+  // revogação em MASSA não é a realidade — é assinatura de snapshot degradado (doc_to_user parcial,
+  // migration meio-aplicada, conta errada no p_account). Nesse estado, empurrar milhares de códigos
+  // para a API do Omie derrubaria o run por rate-limit de qualquer forma, só que depois de já ter
+  // gravado metade dos pedidos. Abortar aqui é a mesma decisão, tomada cedo e com nome: o run pausa e
+  // retoma na próxima janela (a RPC de criação de pedidos é idempotente), nada se perde e o alarme
+  // aparece. 30% é folgado de propósito — pega catástrofe, não regula o regime normal.
+  //
+  // O PISO de 100 não é detalhe: percentual sobre denominador pequeno é ruído. Numa conta com 3
+  // clientes no cache, revogar 1 já daria 33% e abortaria o sync inteiro por um caso banal. Abaixo de
+  // 100 o volume absoluto de chamadas é pequeno por definição, então não há catástrofe a evitar —
+  // o guard só faz sentido onde a proporção significa alguma coisa.
+  if (cacheDaView >= 100 && revogados.size > cacheDaView * 0.3) {
+    throw new Error(
+      `identity snapshot: ${revogados.size} de ${cacheDaView} vínculos do cache revogados (>30%) — ` +
+        `revogação em massa é sinal de snapshot degradado, não de realidade; abortando fail-closed`,
+    );
+  }
   let divergencias = 0;
   for (const [codigo, userProvado] of prova) {
     const doCache = cache.get(codigo);

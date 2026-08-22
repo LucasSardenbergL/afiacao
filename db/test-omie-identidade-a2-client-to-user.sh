@@ -65,6 +65,7 @@ U10=00000000-0000-0000-0000-000000000010
 U11=00000000-0000-0000-0000-000000000011
 U12=00000000-0000-0000-0000-000000000012
 U13=00000000-0000-0000-0000-000000000013
+U14=00000000-0000-0000-0000-000000000014
 FN='public.omie_sync_identity_snapshot(text)'
 echo "=== setup pronto (PG17 :$PORT) ==="
 
@@ -106,7 +107,7 @@ SENT=$(Pq -c "SELECT (pg_get_functiondef(to_regprocedure('$FN')::oid) LIKE '%cli
 P -q <<'SQL'
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 INSERT INTO auth.users(id) SELECT ('00000000-0000-0000-0000-0000000000' || lpad(i::text,2,'0'))::uuid
-  FROM generate_series(1,13) i ON CONFLICT DO NOTHING;
+  FROM generate_series(1,14) i ON CONFLICT DO NOTHING;
 INSERT INTO public.profiles(user_id, document) VALUES
   ('00000000-0000-0000-0000-000000000001', '11111111111'),  -- unico
   ('00000000-0000-0000-0000-000000000002', '22222222222'),  -- ambiguo com u3
@@ -142,7 +143,11 @@ INSERT INTO public.omie_customer_account_map (user_id, account, omie_codigo_clie
   -- STALE **e** com evidencia MORTA. O 110 acima nao serve para provar o TTL da revogacao: a evidencia
   -- dele esta VIVA, entao ele ficaria fora da revogacao com ou sem o filtro de 7d -- o assert passaria
   -- pelo motivo errado (foi o que a falsificacao F12 flagrou). Aqui SO o TTL o exclui.
-  ('00000000-0000-0000-0000-000000000013','oben',   113,'document','11111111111', now() - interval '8 days');
+  ('00000000-0000-0000-0000-000000000013','oben',   113,'document','11111111111', now() - interval '8 days'),
+  -- Override HUMANO com evidencia MORTA (evidencia = doc do u1, vinculo do u14). O repo da imunidade
+  -- explicita a 'manual' (o delete de ambiguos do syncCustomers filtra source IN document/rpc pelo mesmo
+  -- motivo): revogar aqui faria evidencia historica derrubar decisao de gente.
+  ('00000000-0000-0000-0000-000000000014','oben',   114,'manual',  '11111111111', now());
 SQL
 
 # ══ ZONA 4 — asserts ══
@@ -241,19 +246,51 @@ eq "V6 source='rpc' com evidencia VIVA e consistente: nem provado nem revogado (
 eq "V7 source='rpc' com evidencia MORTA E REVOGADO -- o writer que renova updated_at sem prova nao escapa" "$(REVOGA 112)" "t"
 eq "V8a vinculo STALE com evidencia VIVA nao e revogado (a evidencia sustenta o vinculo)"               "$(REVOGA 110)" "f"
 eq "V8b vinculo STALE com evidencia MORTA tambem nao e revogado -- fora da view, revogar seria ruido"   "$(REVOGA 113)" "f"
-eq "V9 DENOMINADOR: exatamente 3+1 revogados em 'oben' (105,102,111,112)" \
+eq "V9 DENOMINADOR: exatamente 4 revogados em 'oben' (105,102,111,112) -- 106/108/110/113/114 fora" \
    "$(RS "SELECT jsonb_array_length(public.omie_sync_identity_snapshot('oben')->'revoked_client_codes');")" "4"
 eq "V10 conta desconhecida -> array VAZIO (nunca NULL: o parser exige array)" \
    "$(RS "SELECT public.omie_sync_identity_snapshot('conta_que_nao_existe')->>'revoked_client_codes';")" "[]"
 eq "V11 as 4 chaves do contrato estao presentes" \
    "$(RS "SELECT (s ? 'doc_to_user') AND (s ? 'ambiguous_docs') AND (s ? 'client_to_user') AND (s ? 'revoked_client_codes') FROM (SELECT public.omie_sync_identity_snapshot('oben') s) t;")" "t"
 
+eq "V12 override HUMANO ('manual') com evidencia MORTA NAO e revogado -- imunidade ao fail-closed automatico" "$(REVOGA 114)" "f"
+
 echo "-- asserts: LGPD (a evidencia e CPF/CNPJ e pode ser o de OUTRA pessoa) --"
+# A view REAL da prod (security_invoker=on) — sem ela o teste de grant abaixo mediria so o catalogo.
+P -q <<'SQL'
+CREATE VIEW public.omie_customer_account_map_fresco WITH (security_invoker=on) AS
+  SELECT id, user_id, account, omie_codigo_cliente, omie_codigo_vendedor, source, created_at, updated_at
+  FROM public.omie_customer_account_map
+  WHERE updated_at >= (now() - '7 days'::interval);
+GRANT SELECT ON public.omie_customer_account_map_fresco TO anon, authenticated, service_role;
+SQL
 T='public.omie_customer_account_map'
 eq "L1 authenticated NAO le a coluna de evidencia" "$(Pq -c "SELECT has_column_privilege('authenticated','$T','evidence_document_normalized','SELECT');")" "f"
 eq "L2 anon NAO le a coluna de evidencia"          "$(Pq -c "SELECT has_column_privilege('anon','$T','evidence_document_normalized','SELECT');")" "f"
-eq "L3 authenticated SEGUE lendo as colunas antigas (a view fresca e security_invoker e depende disso)" \
-   "$(Pq -c "SELECT has_column_privilege('authenticated','$T','omie_codigo_cliente','SELECT') AND has_column_privilege('authenticated','$T','user_id','SELECT') AND has_column_privilege('authenticated','$T','source','SELECT');")" "t"
+# As OITO colunas que a view projeta/filtra, uma a uma: conferir 3 delas deixaria remover `updated_at`
+# do grant (que a view usa no WHERE) e o assert seguiria verde (achado da 2a rodada do Codex).
+COLS_OK=$(Pq -c "SELECT bool_and(has_column_privilege('authenticated','$T',c,'SELECT')) FROM unnest(ARRAY['id','user_id','account','omie_codigo_cliente','omie_codigo_vendedor','source','created_at','updated_at']) c;")
+eq "L3a authenticated le as 8 colunas que a view projeta/filtra (nao 3 de 8)" "$COLS_OK" "t"
+# E o teste que de fato importa: a view EXECUTA como authenticated. security_invoker exige o privilegio
+# do CHAMADOR em cada coluna referenciada — o catalogo sozinho nao prova que a consulta passa.
+VIEW_OK=$(Pq -c "SET ROLE authenticated; SELECT count(*) >= 0 FROM public.omie_customer_account_map_fresco;" 2>&1 | tail -1)
+eq "L3b a view fresca EXECUTA como authenticated (security_invoker + grant por coluna)" "$VIEW_OK" "t"
+# E o vazamento fechado: SELECT * na tabela BASE (que inclui a evidencia) tem de ser NEGADO.
+R_LGPD=$(P -tA 2>&1 <<SQL || true
+DO \$\$
+BEGIN
+  SET LOCAL ROLE authenticated;
+  PERFORM evidence_document_normalized FROM public.omie_customer_account_map LIMIT 1;
+  RAISE NOTICE 'SENT_LEU_A_EVIDENCIA';
+EXCEPTION
+  WHEN insufficient_privilege THEN RAISE NOTICE 'SENT_BARROU_42501';
+END \$\$;
+SQL
+)
+case "$R_LGPD" in
+  *SENT_BARROU_42501*) ok "L3c authenticated tentando LER a evidencia leva 42501 (execucao real, nao catalogo)" ;;
+  *) bad "L3c authenticated LEU a evidencia (saida: $R_LGPD)" ;;
+esac
 eq "L4 service_role (o writer/leitor real) SEGUE lendo a evidencia" \
    "$(Pq -c "SELECT has_column_privilege('service_role','$T','evidence_document_normalized','SELECT');")" "t"
 
@@ -388,6 +425,11 @@ eq "F11 restaurado: authenticated NAO le a evidencia" \
 # F12 -- TTL da REVOGACAO: revogar fora da janela da view seria ruido (o codigo nem esta no cache).
 falsifica "F12 TTL de 7 dias na revogacao (V8b)" "SELECT public.omie_sync_identity_snapshot('oben')->'revoked_client_codes' @> '[\"113\"]';" "f" "t" \
   '/client_revogado AS (/,/^  )$/ { /AND m.updated_at >= now/d; }'
+
+# F13 -- o filtro `source IN (document,rpc)` da revogacao protege o override HUMANO. Sem ele, evidencia
+# historica morta derruba decisao de gente.
+falsifica "F13 revogacao preserva override manual (V12)" "SELECT public.omie_sync_identity_snapshot('oben')->'revoked_client_codes' @> '[\"114\"]';" "f" "t" \
+  "/client_revogado AS (/,/^  )\$/ { /AND m.source IN /d; }"
 
 # ══ ZONA 6 — ESCALA (gate de crescimento do design 4.1: o risco futuro e 57014, nao o payload) ══
 # Semeia volume ~2x a prod de hoje (16.118 vinculos / 16k profiles) numa conta SEPARADA, para nao

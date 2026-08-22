@@ -94,8 +94,13 @@ BEGIN ATOMIC
   -- vínculo obsoleto que já está no cache da view. Pior, o argumento "o TTL de 7d expira sozinho" é
   -- FALSO — `register_carteira_member` (conferida em prod) faz `ON CONFLICT ... updated_at = now()`
   -- SEM tocar a evidência e trocando `source` para 'rpc': a linha errada renova o frescor para sempre.
-  -- Por isso a revogação NÃO filtra `source='document'` (filtrar deixaria escapar exatamente a linha
-  -- que aquele writer converteu) — basta TER evidência que não sustenta mais o vínculo.
+  -- Por isso a revogação NÃO se restringe a `source='document'` (isso deixaria escapar exatamente a
+  -- linha que aquele writer converteu) — basta TER evidência que não sustenta mais o vínculo.
+  -- Mas `manual` FICA DE FORA: é override HUMANO, e o repo já lhe dá imunidade explícita ao fail-closed
+  -- automático (o delete de ambíguos do syncCustomers filtra `source IN ('document','rpc')` pelo mesmo
+  -- motivo). Revogar um `manual` faria a evidência histórica derrubar uma decisão de gente — e o
+  -- fallback poderia atribuir o pedido a outro user, contra o que a pessoa decidiu. 2ª rodada do
+  -- challenge Codex xhigh.
   -- `evidence IS NULL` continua FORA daqui: é o "sem prova, nunca houve" das linhas antigas, que
   -- degrada para o status quo em vez de jogar 10.822 códigos no fallback da API do Omie.
   -- Disjunto de client_prova por construção: UNIQUE(omie_codigo_cliente, account) garante 1 linha por
@@ -104,6 +109,7 @@ BEGIN ATOMIC
     SELECT m.omie_codigo_cliente::text AS codigo
     FROM public.omie_customer_account_map m
     WHERE m.account = p_account
+      AND m.source IN ('document', 'rpc')
       AND m.evidence_document_normalized IS NOT NULL
       AND m.updated_at >= now() - interval '7 days'
       AND NOT EXISTS (
@@ -147,6 +153,59 @@ GRANT  EXECUTE ON FUNCTION public.omie_sync_identity_snapshot(text) TO service_r
 
 COMMENT ON FUNCTION public.omie_sync_identity_snapshot(text) IS
   'PR-1/A1 + PR-2/A2: identidade num snapshot atômico (sql STABLE). {doc_to_user, ambiguous_docs, client_to_user, revoked_client_codes}. doc ambíguo (2+ users) fica FORA de doc_to_user. client_to_user = prova positiva codigo_omie→user por conta (source=document + evidência única e consistente + TTL 7d). revoked_client_codes = códigos cuja evidência EXISTE mas não sustenta mais o vínculo (qualquer source) — o leitor os REMOVE do cache e refaz pela API. Só service_role executa.';
+
+-- ── 4. A evidência não pode SOBREVIVER a quem não a provou ────────────────────────────────────────
+-- `register_carteira_member` é o SEGUNDO writer da proof-table. Ela grava `source='rpc'` e, no conflito,
+-- TROCA `omie_codigo_cliente` e renova `updated_at` — sem nunca ter casado documento nenhum. Antes desta
+-- coluna isso era só procedência; agora a linha ficaria com uma evidência que prova "este user tem este
+-- doc" enquanto o CÓDIGO já é outro. A evidência passaria a MENTIR sobre o vínculo, e o `NOT EXISTS` da
+-- revogação não a pegaria enquanto o doc seguisse do mesmo user (achado da 2ª rodada do Codex xhigh).
+-- Correção mínima e conservadora: este writer sempre ZERA a evidência. NULL é "sem prova" — a linha cai
+-- no status quo (cache da view) e o próximo ciclo do syncCustomers, que é quem casa por documento,
+-- repõe a evidência de verdade. Nada é fabricado e nada é revogado por engano.
+--
+-- Corpo verbatim da PROD (pg_get_functiondef, 2026-08-21) + as 2 linhas de evidência. CREATE OR REPLACE
+-- preserva o ACL. Se outra sessão recriar esta função, a última a rodar vence — confira antes de aplicar.
+CREATE OR REPLACE FUNCTION public.register_carteira_member(p_user_id uuid, p_account text, p_omie_codigo_cliente bigint, p_omie_codigo_vendedor bigint DEFAULT NULL::bigint)
+RETURNS void
+LANGUAGE plpgsql
+SET search_path TO 'public'
+AS $function$
+BEGIN
+  IF p_user_id IS NULL OR p_omie_codigo_cliente IS NULL THEN
+    RAISE EXCEPTION 'register_carteira_member: user_id e omie_codigo_cliente são obrigatórios'
+      USING ERRCODE = 'null_value_not_allowed';
+  END IF;
+
+  -- Membership (acumulador). DO NOTHING preserva first_seen_at E identity_state de quem já é membro:
+  -- um quarantinado (ambiguous/conflict) NÃO volta a verified por re-chamada.
+  INSERT INTO public.carteira_membership_ledger (user_id, identity_state, first_seen_at, source, updated_at)
+  VALUES (p_user_id, 'verified', now(), 'rpc', now())
+  ON CONFLICT (user_id) DO NOTHING;
+
+  -- Proof account-correta. `source='rpc'` (NÃO 'manual'): diz a verdade sobre a procedência e mantém a
+  -- linha alcançável pelo delete de ambiguidade do sync — 'manual' é reservado a override HUMANO, que é
+  -- o único que merece imunidade ao fail-closed.
+  -- `p_account` é validado pelo CHECK `chk_ocam_account` ('oben'|'colacor'|'colacor_sc'): o slug INTERNO
+  -- do sync ('vendas'|'servicos'|'colacor_vendas') levanta 23514 em vez de gravar conta errada.
+  -- Vendedor ausente NUNCA é fabricado como 0 — COALESCE preserva o vendedor já conhecido.
+  INSERT INTO public.omie_customer_account_map (
+    user_id, account, omie_codigo_cliente, omie_codigo_vendedor, source, evidence_document_normalized, updated_at
+  )
+  VALUES (
+    p_user_id, p_account, p_omie_codigo_cliente, p_omie_codigo_vendedor, 'rpc', NULL, now()
+  )
+  ON CONFLICT (user_id, account) DO UPDATE SET
+    omie_codigo_cliente  = EXCLUDED.omie_codigo_cliente,
+    omie_codigo_vendedor = COALESCE(EXCLUDED.omie_codigo_vendedor, omie_customer_account_map.omie_codigo_vendedor),
+    -- NÃO rebaixa um override humano: se a linha já é 'manual', permanece 'manual'.
+    source               = CASE WHEN omie_customer_account_map.source = 'manual' THEN 'manual' ELSE 'rpc' END,
+    -- PR-2/A2: esta RPC não prova identidade por documento — não pode deixar a prova de outro writer
+    -- (possivelmente de OUTRO código) colada na linha que ela acabou de reescrever.
+    evidence_document_normalized = NULL,
+    updated_at           = now();
+END
+$function$;
 
 -- PostgREST cacheia o schema: sem isto a 1ª chamada pós-apply pode devolver PGRST202.
 NOTIFY pgrst, 'reload schema';

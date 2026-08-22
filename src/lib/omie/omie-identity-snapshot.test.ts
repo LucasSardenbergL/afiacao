@@ -213,12 +213,49 @@ describe('aplicarProvaPositivaNoCache — revogação (PR-2/A2)', () => {
     expect(cache.size).toBe(1);
   });
 
-  it('revogação vence a prova se os conjuntos se cruzarem (fail-closed, não fail-open)', () => {
-    // Por construção eles são disjuntos e o parser assere isso. Se um dia deixarem de ser, o cache
-    // fica SEM entrada (força ida à API) em vez de manter um vínculo cuja regra não sabemos qual é.
+  it('helper isolado: revogação vence a prova se os conjuntos se cruzarem (fail-closed)', () => {
+    // Este estado NÃO é alcançável pela RPC (a UNIQUE(codigo,account) o impede) nem pelo parser (que
+    // lança na interseção) — o Codex apontou isso, e é verdade. O teste fica porque o helper é público
+    // e espelhado: ele documenta a ordem interna (revogar DEPOIS de sobrepor) para quem o edite no
+    // futuro. Não conte este assert como prova do contrato da RPC; quem prova aquilo é o harness PG17.
     const cache = new Map<number, string | null>([[101, U1]]);
     aplicarProvaPositivaNoCache(cache, new Map([[101, U2]]), new Set([101]));
     expect(cache.has(101)).toBe(false);
+  });
+
+  const cacheDe = (n: number) => new Map<number, string | null>(Array.from({ length: n }, (_, i) => [i + 1, U1]));
+
+  it('revogação em MASSA (>30% de um cache grande) LANÇA em vez de inundar a API do Omie', () => {
+    // Q1 do Codex: cada revogado vira uma chamada ConsultarCliente. Revogação em massa é assinatura de
+    // snapshot degradado, não de realidade — abortar cedo pausa o run (idempotente) em vez de derrubá-lo
+    // por rate-limit no meio da escrita.
+    const cache = cacheDe(200);
+    const muitos = new Set(Array.from({ length: 61 }, (_, i) => i + 1));
+    expect(() => aplicarProvaPositivaNoCache(cache, new Map(), muitos)).toThrow(/revogação em massa/);
+    expect(cache.size, 'não pode mutar o cache antes de abortar').toBe(200);
+  });
+
+  it('revogação exatamente no limiar (30%) NÃO lança — o teto pega catástrofe, não o regime normal', () => {
+    const cache = cacheDe(200);
+    const noLimite = new Set(Array.from({ length: 60 }, (_, i) => i + 1));
+    expect(() => aplicarProvaPositivaNoCache(cache, new Map(), noLimite)).not.toThrow();
+    expect(cache.size).toBe(140);
+  });
+
+  it('PISO: cache pequeno nunca dispara o teto — 1 de 3 é 33%, e abortar por isso seria absurdo', () => {
+    // Percentual sobre denominador pequeno é ruído. Sem o piso, uma conta com 3 clientes abortaria o
+    // sync ao revogar um único vínculo — o guard mataria o caso normal em vez da catástrofe.
+    const cache = cacheDe(3);
+    expect(() => aplicarProvaPositivaNoCache(cache, new Map(), new Set([1]))).not.toThrow();
+    expect(cache.has(1)).toBe(false);
+    // e mesmo 100% de um cache pequeno passa: são ≤99 chamadas de API, não uma inundação
+    const cache2 = cacheDe(99);
+    expect(() => aplicarProvaPositivaNoCache(cache2, new Map(), new Set(cache2.keys()))).not.toThrow();
+    expect(cache2.size).toBe(0);
+  });
+
+  it('cache VAZIO com revogados não lança (denominador zero não julga nada)', () => {
+    expect(() => aplicarProvaPositivaNoCache(new Map(), new Map(), new Set([1, 2, 3]))).not.toThrow();
   });
 
   it('revogação vazia → cache intacto (o estado inerte de hoje: nenhuma linha tem evidência)', () => {
