@@ -19616,6 +19616,13 @@ export type Database = {
       }
       norm_cidade: { Args: { t: string }; Returns: string }
       normalizar_cep: { Args: { p: string }; Returns: string }
+      omie_products_codigos_multi_conta: {
+        Args: never
+        Returns: {
+          contas: number
+          omie_codigo_produto: string
+        }[]
+      }
       omie_sync_identity_snapshot: {
         Args: { p_account: string }
         Returns: Json
