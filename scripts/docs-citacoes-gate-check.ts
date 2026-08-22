@@ -42,6 +42,12 @@
  *    quem é varrido é o doc que CITA.
  * 2. **Caminho externo** (`node_modules`, lib de terceiro, outro projeto): allowlist explícita em
  *    `EXTERNOS`.
+ * 3. **Bloco de código cercado** (```/~~~): ali a citação ILUSTRA o formato — cobrá-la obrigaria
+ *    quem documenta este gate a inventar um alvo real só para o exemplo. Sai só a CERCA, nunca a
+ *    crase inline: a citação canônica NASCE entre crases, e passar o texto pelo `removerCodigo`
+ *    do gate de links leva as 22 citações vivas a 0 com exit 0 — verde por cegueira, que é a
+ *    falha de `docs/historico/gates-textuais-cegos.md` de novo. Cerca que nunca FECHA engole o
+ *    resto do arquivo e vira achado, quando esconde citação.
  *
  * Basename nu (`index.ts:397`) NÃO é exceção: **reprova**. O repo tem 99 `index.ts`, então resolver
  * no chute seria fábrica de falso-positivo — mas *pular* é pior, porque vira a saída de emergência
