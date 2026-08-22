@@ -1,8 +1,6 @@
-import { useEffect, useRef } from 'react';
 import { Info } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
-import { track } from '@/lib/analytics';
 import { pctNovos } from '@/lib/positivacao/format';
 import type { PositivacaoKpis } from '@/hooks/useMyPositivacao';
 
@@ -28,20 +26,13 @@ function KpiCard({ label, value, sub, info }: { label: string; value: string; su
   );
 }
 
+/**
+ * Só a APRESENTAÇÃO do placar. O `carteira.positivacao_vista` morava aqui e, por isso, só existia
+ * no ramo de sucesso: quem não recebia `kpis` (leitura falhou, sem rede) não emitia nada e a série
+ * de adoção ficava sem denominador. O evento passou para `useSinalPositivacao`, que enxerga os
+ * desfechos todos — 1 escritor por slug.
+ */
 export function PositivacaoHero({ kpis, isHunter }: { kpis: PositivacaoKpis; isHunter: boolean }) {
-  const tracked = useRef(false);
-  useEffect(() => {
-    if (tracked.current) return;
-    tracked.current = true;
-    track('carteira.positivacao_vista', {
-      pct: kpis.pctPositivacao,
-      positivados: kpis.positivados,
-      total_eligible: kpis.totalEligible,
-      a_positivar: kpis.aPositivar.length,
-      is_hunter: isHunter,
-    });
-  }, [kpis, isHunter]);
-
   const ticket = `R$ ${kpis.ticketMedio.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}`;
   const receita = `R$ ${kpis.receitaMtd.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}`;
 
