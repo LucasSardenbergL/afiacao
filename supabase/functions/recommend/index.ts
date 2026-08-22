@@ -12,6 +12,7 @@ import {
 // vez de recomendar sobre catálogo parcial. Detalhe e medições: recommend-leituras.ts.
 import { carregarCluster, carregarInsumos } from "../_shared/recommend-leituras.ts";
 import type { BancoPostgrest } from "../_shared/paginate.ts";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -406,6 +407,31 @@ Deno.serve(async (req) => {
       return jsonRes({ error: "Não autorizado" }, 401);
     }
 
+    // ── Sonda de versão ────────────────────────────────────────────────────────────────
+    // Responde ANTES do `createClient` e de qualquer leitura/escrita: o ponto da canária é
+    // dizer QUAL bundle está no ar sem pagar o efeito da edge. Aqui o efeito é gravar
+    // `recommendation_log` — o sensor de desfecho do motor (#1851) —, e uma linha inventada
+    // por sondagem entraria no denominador de "a recomendação virou venda".
+    //
+    // Depois do gate de `Bearer` e não antes: o gate desta edge é o padrão (JWT + staff), não
+    // o gate-próprio de `omie-cliente`/`omie-nfe-webhook`. Sondar continua exigindo um token,
+    // que é o que impede a canária de virar um oráculo público de versão.
+    //
+    // O corpo é lido AQUI (antes era só na linha do `switch`) porque a decisão depende dele.
+    // JSON malformado passa a devolver 400 explícito em vez de cair no catch genérico — o
+    // status muda de 500 para 400, que é a classificação correta de corpo inválido.
+    let corpoBruto: unknown;
+    try {
+      corpoBruto = await req.json();
+    } catch {
+      return jsonRes({ error: "invalid JSON" }, 400);
+    }
+    const decisaoSonda = classificarSonda(corpoBruto);
+    if (decisaoSonda.tipo === "sonda") return jsonRes(respostaSonda(VERSAO), 200);
+    if (decisaoSonda.tipo === "ambiguo") {
+      return jsonRes({ error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }, 400);
+    }
+
     const supabaseAdmin = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
@@ -439,7 +465,9 @@ Deno.serve(async (req) => {
       return jsonRes({ error: "Forbidden" }, 403);
     }
 
-    const { action, ...params } = await req.json();
+    // Corpo já consumido pela sonda acima — `req.json()` só pode ser lido UMA vez; chamar de
+    // novo devolveria erro de stream já travado.
+    const { action, ...params } = (corpoBruto ?? {}) as { action?: string; [k: string]: unknown };
     let result: unknown;
 
     switch (action) {

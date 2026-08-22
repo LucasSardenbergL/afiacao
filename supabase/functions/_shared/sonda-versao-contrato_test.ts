@@ -23,6 +23,7 @@ import * as processNfe from "../process-nfe/versao.ts";
 import * as capturaPrecos from "../sayerlack-captura-precos/versao.ts";
 import * as deparaAuto from "../reposicao-depara-sayerlack-auto/versao.ts";
 import * as omieCliente from "../omie-cliente/versao.ts";
+import * as recommendMod from "../recommend/versao.ts";
 import * as cashflow from "../fin-cashflow-engine/versao.ts";
 import * as syncEstoque from "../omie-sync-estoque/versao.ts";
 import * as syncNfes from "../omie-sync-nfes-recebidas/versao.ts";
@@ -62,10 +63,17 @@ const EDGES: Array<{ nome: string; mod: ModSonda }> = [
   { nome: "omie-sync-estoque", mod: syncEstoque },
   { nome: "omie-sync-nfes-recebidas", mod: syncNfes },
   { nome: "omie-nfe-webhook", mod: nfeWebhook },
+  // Quarta leva (#canaria-recommend): mesma regra da terceira — escrita money-path no NOSSO
+  // banco. `recommend` grava `recommendation_log`, que é o SENSOR DE DESFECHO do motor
+  // (#1851): sondar sem guarda inventaria uma recomendação que ninguém fez e enviesaria a
+  // própria medição de acerto. Não é leitura pura — por isso não cai na exceção declarada
+  // acima (fin-funding, fin-valor-engine).
+  { nome: "recommend", mod: recommendMod },
 ];
 
 /** As cinco da terceira leva — os gates estruturais abaixo varrem todas. */
 const ESCRITA_NOSSO_BANCO = [
+  "recommend",
   "omie-cliente",
   "fin-cashflow-engine",
   "omie-sync-estoque",
