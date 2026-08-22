@@ -152,6 +152,9 @@ for backoff in "${backoffs[@]}"; do
   break  # erro não-transitório → não insiste
 done
 
-echo "CODEX_FALHOU (rc=$rc) após $tentativa tentativa(s). stderr:" >&2
-tail -20 "$err" >&2
+echo "CODEX_FALHOU (rc=$rc) após $tentativa tentativa(s). stderr (sem o eco do prompt):" >&2
+# o eco é que escondia o erro: um 400 de 1 linha some no meio de 100 linhas de código
+# colado, e foi assim que este bug passou dias parecendo "cota". `${diag:-}` porque um
+# CODEX_ASYNC_BACKOFFS vazio não entra no loop e nunca chega a definir diag (set -u).
+if [ -n "${diag:-}" ]; then printf '%s\n' "$diag" | tail -20 >&2; else tail -20 "$err" >&2; fi
 exit "$rc"

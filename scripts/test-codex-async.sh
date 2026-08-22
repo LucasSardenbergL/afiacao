@@ -166,8 +166,24 @@ run num5xx "x" >/dev/null 2>&1; rc=$?
 if [ "$(invocacoes)" -eq 1 ]; then echo "  ok    5xx só conta ancorado em HTTP (1 invocação)"
 else echo "  FAIL  invocações=$(invocacoes), esperava 1 — '5120 tokens' virou 'erro 5xx'"; fail=1; fi
 
+# (f) o relatório de falha também não pode devolver o prompt: `tail` do stderr CRU
+#     despeja o eco inteiro, que é exatamente o ruído que escondeu o 400 no diagnóstico.
+saida=$(run generico400 "$prompt_numerado" 2>&1)
+case "$saida" in
+  *"const b = 2;"*) echo "  FAIL  CODEX_FALHOU devolveu o prompt ecoado no stderr"; fail=1 ;;
+  *) echo "  ok    CODEX_FALHOU mostra o diagnóstico, não o eco do prompt" ;;
+esac
+case "$saida" in
+  *"malformed request"*) echo "  ok    …e o motivo cru continua visível" ;;
+  *) echo "  FAIL  perdeu o motivo cru do erro"; fail=1 ;;
+esac
+
 echo "── watchdog (execução travada) ──"
-run trava -t 1 "x" >/dev/null 2>&1; rc=$?
+# -t 3, não -t 1: o stub conta a invocação na PRIMEIRA linha, mas sob swap (M2 8GB com
+# vitest ao lado) o processo pode não ser escalonado a tempo e morrer antes de contar —
+# visto 1× ao registrar esta suíte no CI, com invocações=2. O que se testa aqui é o
+# watchdog matar e o kill contar como transitório, não a agilidade do escalonador.
+run trava -t 3 "x" >/dev/null 2>&1; rc=$?
 if [ "$rc" -ne 0 ] && [ "$rc" -ne 75 ]; then echo "  ok    exit $rc ≠ 0 (matou o processo travado)"
 else echo "  FAIL  watchdog não matou (exit $rc)"; fail=1; fi
 if [ "$(invocacoes)" -eq 3 ]; then echo "  ok    esgotou as 3 tentativas"
