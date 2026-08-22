@@ -47,8 +47,9 @@ const alerta = (over: Record<string, unknown> = {}): Alerta => ({
   acknowledged_at: null, resolvido_em: null, ...over,
 });
 
+let qc: QueryClient;
 function renderStack() {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+  qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
   return render(
     <QueryClientProvider client={qc}>
       <AlertasStack />
@@ -86,6 +87,25 @@ describe('AlertasStack — "sem alertas" tem de ser um FATO, não uma falha de l
     resposta = { data: [alerta()], error: null };
     renderStack();
     expect(await screen.findByText(AVISO)).toBeTruthy();
+  });
+
+  it('refetch falha COM alertas no cache: a lista FICA, e o aviso vem JUNTO', async () => {
+    // Guarda de regressão. Escolher entre a lista e o aviso é honesto para o sensor e
+    // regressão para quem usa: apagar 14 alertas vivos (2 críticos, medidos em prod)
+    // porque um refetch falhou troca um defeito por outro. O desenho que serve aos dois é
+    // o estado COMPOSTO — achado da revisão retroativa em fase-sem-sinal.md.
+    resposta = { data: [alerta()], error: null };
+    renderStack();
+    expect(await screen.findByText(/Caixa projetado negativo em 12 dias/)).toBeTruthy();
+
+    resposta = { data: null, error: { message: 'connection failure' } };
+    await qc.refetchQueries();
+
+    await waitFor(() => expect(screen.queryByText(AVISO)).toBeTruthy());
+    expect(
+      screen.queryByText(/Caixa projetado negativo em 12 dias/),
+      'a lista sumiu quando o refetch falhou — o erro não pode ter precedência sobre o dado em mãos',
+    ).toBeTruthy();
   });
 
   it('erro e zero NÃO produzem a mesma tela (o colapso, medido)', async () => {

@@ -68,3 +68,28 @@ export function estadoDeLeitura(q: FatiaDeQuery): EstadoLeitura {
 export function naoConsegui(e: EstadoLeitura): e is EstadoSemLeitura {
   return e === 'erro' || e === 'sem-rede';
 }
+
+/**
+ * A leitura falhou MAS há dado em mãos — mostre os DOIS, não escolha.
+ *
+ * Escolher entre a lista e o aviso é honesto para o sensor e regressão para o usuário:
+ * apagar 14 alertas de fluxo de caixa que estão no cache porque um refetch falhou é
+ * trocar um defeito por outro. O desenho que serve aos dois é composto — o conteúdo
+ * continua na tela, com o aviso de que está desatualizado
+ * (`docs/historico/fase-sem-sinal.md`, achado da revisão retroativa do #1859).
+ *
+ * ⚠️ A ORDEM importa e é `sem-rede` antes de `erro`, mas só COM dado em mãos: o
+ * `fetchState` do query-core zera `error` ao iniciar um fetch APENAS quando
+ * `data === undefined`, então sem dado os dois nunca coexistem. Com dado no cache eles se
+ * sobrepõem, e aí o motivo acionável é o atual — recarregar não resolve falta de sinal.
+ * (Sutileza medida pelo #1892 no MixGapCard.)
+ *
+ * Devolve `null` quando não há o que avisar: leitura boa, ou nada em mãos — nesse último
+ * caso o certo é `naoConsegui` + <AvisoLeituraFalhou> sozinho.
+ */
+export function desatualizado(q: FatiaDeQuery, temDado: boolean): EstadoSemLeitura | null {
+  if (!temDado) return null;
+  if (q.fetchStatus === 'paused') return 'sem-rede';
+  if (q.status === 'error') return 'erro';
+  return null;
+}

@@ -5,7 +5,7 @@ import { useCarteiraSaude } from '@/hooks/useCarteiraSaude';
 import { statusCron, statusSync, statusCoverage, nivelAgregado } from '@/lib/carteira-saude/status';
 import { track } from '@/lib/analytics';
 import type { SaudeNivel } from '@/lib/carteira-saude/types';
-import { estadoDeLeitura, naoConsegui, type EstadoLeitura } from '@/lib/leitura/estado-de-leitura';
+import { estadoDeLeitura, naoConsegui, desatualizado, type EstadoLeitura } from '@/lib/leitura/estado-de-leitura';
 import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
 
 const DOT: Record<SaudeNivel, string> = {
@@ -85,13 +85,18 @@ export function CarteiraSaudePanel() {
     track('carteira.saude_vista', { estado, nivel });
   }, [estado, data, semAcesso]);
 
-  if (naoConsegui(estado)) {
+  // Sem NADA em mãos: só o aviso — é o caso que o defeito escondia.
+  if (naoConsegui(estado) && !data) {
     return (
       <Card className="p-4">
         <AvisoLeituraFalhou oque="a saúde da carteira" estado={estado} className="mb-0" />
       </Card>
     );
   }
+  // COM o semáforo no cache e um refetch que falhou, apagar o painel seria trocar um
+  // defeito por outro — o vermelho que ele já mostrava sumiria por falta de rede. Estado
+  // COMPOSTO: o painel fica, com o aviso de que está desatualizado.
+  const velho = desatualizado(q, Boolean(data));
   if (estado === 'carregando') {
     return (
       <Card className="p-6 flex justify-center">
@@ -129,6 +134,7 @@ export function CarteiraSaudePanel() {
         </p>
       </CardHeader>
       <div className="px-6 pb-4 divide-y divide-border">
+        {velho && <AvisoLeituraFalhou oque="a leitura mais recente" estado={velho} className="mt-2" />}
         <Row nivel={syncSt.nivel} label="Sync da carteira" detail={syncDetail} acao={syncSt.acao} />
         <Row nivel={covSt.nivel} label="Cobertura de score" detail={covDetail} acao={covSt.acao} />
         {cronRows.map((r) => (

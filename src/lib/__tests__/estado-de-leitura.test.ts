@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { estadoDeLeitura, naoConsegui, type EstadoLeitura, type FatiaDeQuery } from '../leitura/estado-de-leitura';
+import { estadoDeLeitura, naoConsegui, desatualizado, type EstadoLeitura, type FatiaDeQuery } from '../leitura/estado-de-leitura';
 
 /**
  * O mapeamento (status × fetchStatus) → estado é EXAUSTIVO de propósito: estado sem nome
@@ -58,5 +58,29 @@ describe('naoConsegui — a fronteira entre "não há" e "não sei"', () => {
     expect(naoConsegui('carregando')).toBe(false);
     expect(naoConsegui('desabilitada')).toBe(false);
     expect(naoConsegui('pronta')).toBe(false);
+  });
+});
+
+describe('desatualizado — dado em mãos + leitura falha = mostre os DOIS', () => {
+  it('sem dado NÃO há o que avisar aqui (o caso é naoConsegui + aviso sozinho)', () => {
+    expect(desatualizado({ status: 'error', fetchStatus: 'idle' }, false)).toBeNull();
+    expect(desatualizado({ status: 'pending', fetchStatus: 'paused' }, false)).toBeNull();
+  });
+
+  it('com dado: refetch que falha vira aviso de desatualizado, e o conteúdo fica', () => {
+    expect(desatualizado({ status: 'error', fetchStatus: 'idle' }, true)).toBe('erro');
+    expect(desatualizado({ status: 'pending', fetchStatus: 'paused' }, true)).toBe('sem-rede');
+  });
+
+  it('sem-rede tem PRECEDÊNCIA sobre erro quando os dois se sobrepõem', () => {
+    // Só COM dado em cache eles coexistem: o `fetchState` do query-core zera `error` ao
+    // iniciar um fetch apenas quando `data === undefined`. E o motivo acionável é o atual —
+    // recarregar não resolve falta de sinal.
+    expect(desatualizado({ status: 'error', fetchStatus: 'paused' }, true)).toBe('sem-rede');
+  });
+
+  it('leitura boa não inventa aviso', () => {
+    expect(desatualizado({ status: 'success', fetchStatus: 'idle' }, true)).toBeNull();
+    expect(desatualizado({ status: 'success', fetchStatus: 'fetching' }, true)).toBeNull();
   });
 });

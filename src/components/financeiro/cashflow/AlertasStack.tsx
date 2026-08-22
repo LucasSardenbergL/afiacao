@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { AlertTriangle, AlertOctagon, Info, Check, Clock, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
-import { estadoDeLeitura, naoConsegui } from '@/lib/leitura/estado-de-leitura';
+import { estadoDeLeitura, naoConsegui, desatualizado } from '@/lib/leitura/estado-de-leitura';
 import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
 
 const SEVERIDADE_ICON: Record<Alerta['severidade'], typeof Info> = {
@@ -47,13 +47,18 @@ export function AlertasStack() {
   const acao = useAcaoAlerta();
   const estado = estadoDeLeitura(q);
 
-  if (naoConsegui(estado)) {
+  // Sem NADA em mãos: só o aviso — é o caso que o defeito escondia.
+  if (naoConsegui(estado) && !data) {
     return <AvisoLeituraFalhou oque="os alertas de fluxo de caixa" estado={estado} />;
   }
+  // COM alertas no cache e um refetch que falhou, apagar a lista trocaria um defeito por
+  // outro: 14 alertas vivos (2 críticos, medidos em prod) sumiriam da tela por causa de uma
+  // falha de rede. Estado COMPOSTO — a lista fica, com o aviso de desatualizada.
+  const velho = desatualizado(q, Boolean(data));
   // `desabilitada` (sem empresa ativa) e `carregando` continuam mudas: a primeira é
   // pergunta não feita, a segunda é transitória. O silêncio PERSISTENTE — que era o
   // dano — agora só sobra para o zero de verdade.
-  if (estado !== 'pronta' || !data || data.length === 0) return null;
+  if (!data || data.length === 0) return null;
 
   const agir = async (id: string, a: AcaoAlerta) => {
     try {
@@ -74,6 +79,7 @@ export function AlertasStack() {
 
   return (
     <div className="space-y-2">
+      {velho && <AvisoLeituraFalhou oque="os alertas mais recentes" estado={velho} />}
       {data.map(a => {
         const Icon = SEVERIDADE_ICON[a.severidade];
         const reconhecido = Boolean(a.acknowledged_at);
