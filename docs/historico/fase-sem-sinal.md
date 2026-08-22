@@ -620,3 +620,45 @@ comentário do código afirmava um conflito inexistente e o teste passava por n�
 ⇒ **sabotagem que não fica vermelha é achado, não aprovação**: ou o assert não mede o que diz, ou o
 mecanismo é outro. Investigue o mecanismo antes de aceitar o verde — foi o que produziu o único
 teste que mede a precedência de verdade (erro no cache + rede caindo depois).
+
+## O que sobra quando a correção mergeia por outra sessão (2026-08-22): o sensor e o guard
+
+O achado retroativo do #1859 (seção acima) virou DUAS entregas paralelas no mesmo dia, em sessões
+diferentes. O #1886 varreu a classe e mergeou: `estadoDeLeitura` (exaustivo sobre
+`status × fetchStatus`, com o offline nomeado), `AvisoLeituraFalhou` em 4 telas, gate com parser TS
+que reconhece `return-null`/`ternario-null`/`jsx-&&`, e o `<MixGapCard />` fora do `&&`.
+
+**A regra que isto acrescenta: consertar o que a tela MOSTRA não conserta o que ela MEDE — e o
+segundo não tem gate estrutural que o pegue.** Depois do #1886 em produção, o
+`carteira.positivacao_vista` continuava dentro do `PositivacaoHero`, isto é, só no ramo de sucesso:
+falha de leitura e falta de rede seguiam emitindo NADA. A tela ficou honesta e a série continuou
+mentindo por omissão, que é a forma mais cara — "no ar e ninguém reclamou" sobre um denominador que
+não existe. Renderizar e medir são trabalhos diferentes; por isso o sensor virou **hook**
+(`useSinalPositivacao`) e não mais um componente de estado, que teria duplicado a camada de render
+do #1886. Corolário prático: ao varrer uma classe de "leitura que falha calada", varra os DOIS
+consumidores da leitura — o JSX e o `track()`.
+
+**E o gate estrutural não substitui o teste de host.** O gate do #1886 pega a FORMA `{x && <Card/>}`
+quando o hook é desestruturado sem `error`. Esconder o card atrás de uma condição nova que
+desestruture `error` (`{!erroPositivacao && <MixGapCard/>}`) passa verde no gate e reintroduz o
+defeito. Um é sintático e barato de varrer o repo inteiro; o outro é comportamental e prova o que a
+tela faz. O #1886 mudou `FarmerCalls.tsx` sem nenhum teste que MONTE `FarmerCalls`.
+
+### Três coisas que a verificação pegou e que valem mais que o patch
+
+- **Sabotagem que não muda nada nem sempre acusa asserção inerte — pode ser o RAMO que é inerte.**
+  Ao falsificar o tratamento de offline, o número de falhas não mudou. A leitura óbvia ("o teste não
+  testa isso") estava errada: o teste testava, e o furo era que eu havia derivado `estado` para o
+  EVENTO deixando os guards de RENDER lendo `isLoading`/`error` crus. O ramo offline existia no
+  sensor e não na tela. **Duas derivações do mesmo estado divergem no primeiro caso de borda** — e o
+  de borda era exatamente o que eu tinha acabado de acrescentar. Cura: uma fonte de verdade só, e a
+  porta do ramo de sucesso exigindo o dado (`if (data)`, sem `!`), para que o crash deixe de ser
+  representável em vez de depender de eu ter derivado certo.
+- **Suíte vermelha sob máquina saturada não é sinal.** 10 arquivos "falharam" com load 99 — todos
+  timeout de 20s, nenhum defeito. Concluir "são pré-existentes, não são meus" porque a mensagem não
+  cita meus arquivos teria ACERTADO PELO MOTIVO ERRADO. Com `--testTimeout` folgado: 718/718 verde.
+  (O gate do manifesto era o pior caso, e foi consertado em paralelo pelo #1893.)
+- **Re-medir contra a `origin/main` do INSTANTE, não contra a base do ramo.** Entre o começo e o fim
+  desta entrega a main ganhou 12 commits, dois deles exatamente sobre os arquivos em questão. Metade
+  do que estava pronto e verificado virou descarte — corretamente. O tell barato: `git diff
+  origin/main --stat` acusando arquivos que você nunca tocou.
