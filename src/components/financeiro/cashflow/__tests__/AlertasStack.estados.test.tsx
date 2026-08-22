@@ -34,12 +34,17 @@ vi.mock('@/contexts/CompanyContext', () => ({ useCompany: () => ({ activeCompany
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 import { AlertasStack } from '../AlertasStack';
+import type { Alerta } from '@/hooks/useCashflowAlertas';
 
-const alerta = (over: Record<string, unknown> = {}) => ({
+// Fixture COLADA no tipo `Alerta` de useCashflowAlertas — o campo de texto é `mensagem`.
+// (A 1ª versão inventou `titulo`/`detalhe`: o mock devolve `unknown`, então o TS não
+// reclama e o teste falha só em runtime. Foi o CI que pegou.)
+const alerta = (over: Record<string, unknown> = {}): Alerta => ({
   id: 'a1', company: 'colacor', tipo: 'saldo', severidade: 'critico',
-  titulo: 'Caixa projetado negativo', detalhe: 'em 12 dias',
+  mensagem: 'Caixa projetado negativo em 12 dias',
+  valor: -1234.5, threshold: 0, contexto: null,
   criado_em: '2026-08-20T10:00:00Z', dismissed_at: null, dismissed_until: null,
-  reconhecido_em: null, ...over,
+  acknowledged_at: null, resolvido_em: null, ...over,
 });
 
 function renderStack() {
@@ -66,7 +71,7 @@ describe('AlertasStack — "sem alertas" tem de ser um FATO, não uma falha de l
   it('com alertas: renderiza a pilha', async () => {
     resposta = { data: [alerta()], error: null };
     renderStack();
-    expect(await screen.findByText(/Caixa projetado negativo/)).toBeTruthy();
+    expect(await screen.findByText(/Caixa projetado negativo em 12 dias/)).toBeTruthy();
     expect(screen.queryByText(AVISO)).toBeNull();
   });
 
