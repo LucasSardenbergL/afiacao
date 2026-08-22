@@ -78,6 +78,46 @@ Um caller money-path costuma capturar a rejeição de um helper para preservar o
 - ⚠️ **A discriminação vale só para o DIAGNÓSTICO, nunca para o fail-closed.** O primeiro desenho desta correção deixava o `TypeError` subir cru ANTES de limpar a lista — e o Codex reprovou como [P1]: a tela concluiria DESATUALIZADO e seguiria exibindo a oferta anterior, que pode conter SKU cuja margem já não é positiva. **"Desatualizado" não é sinônimo de "seguro de usar".** Forma correta: fail-closed inteiro para TODA falha (insumo `ok:false` + head + limpar + `resultadoDestaExecucao`), e só então escolher **qual erro sobe** — o original cru quando é bug (preserva stack/subclasse, o único rastro que aponta a linha), a frase de domínio com `cause` quando é falha de leitura esperada.
 - **Teste com as duas asserções.** Provar só o diagnóstico (`instanceof TypeError`) deixa passar um conserto que afrouxou o fail-closed; provar só o fail-closed deixa passar o mascaramento de volta. E o caso precisa de **controle positivo** antes: "lista vazia" é o desfecho de qualquer insumo faltando, então sem provar que a fixture SABE produzir resultado o teste passa de graça.
 
+## Fallback por lista VAZIA troca o ESCOPO — e o comentário descreve a intenção, não a condição
+
+Irmã da seção acima, do outro lado: lá o handler amplo captura demais; aqui a **condição**
+pergunta menos do que o comentário promete.
+
+```ts
+let clientScores = await fetchAllScores(effectiveUserId);           // .eq('farmer_id', X)
+if (!clientScores.length && !isImpersonating) clientScores = await fetchAllScores(); // TODOS
+```
+
+O comentário chamava isso de *"fallback to all (for super_admin)"*. A condição **não** pergunta
+se o usuário é super_admin — pergunta se a leitura **veio vazia**. Assim o desfecho mais
+destrutivo possível ("carregue a base inteira e grave sob este nome") virou o **default de uma
+falha**: carteira legitimamente vazia, página perdida, RLS, timeout — todos desembocam nele.
+
+- **Leia a CONDIÇÃO, não o comentário.** Quando os dois discordam, quem roda é a condição. O
+  cheiro é o comentário nomear um PERFIL (`super_admin`) enquanto o `if` mede um SINTOMA
+  (`length === 0`). Perfil se checa por role; sintoma nunca é prova de perfil.
+- **Vazio é ambíguo por natureza — nunca o gatilho de uma ação AMPLIADORA.** "Não achei nada"
+  é indistinguível de "não pude ver". Se o vazio precisa de resposta, que seja a de menor
+  alcance (degradar, recusar, avisar), jamais a de maior.
+- **Gateie no SERVIDOR quando o dano PERSISTE.** Consertar só o browser tem meia-vida de um
+  deploy (#1840: o browser reescrevia as regras do servidor por cima). Se existe um invariante
+  computável no banco — aqui `farmer_client_scores` tem `UNIQUE (customer_user_id)`, logo o
+  dono de um cliente é uma **função** — o gate mora lá, e o cliente deixa de ser autoridade
+  sobre o próprio escopo.
+- **`IS DISTINCT FROM`, não `<>`, quando o NULL é o caso suspeito.** `<>` com NULL devolve NULL,
+  o `WHERE` descarta, e o registro de dono **desconhecido** passa — justamente o que mais se
+  quer barrar.
+- **A cegueira da RLS tem de RECUSAR.** Numa RPC `SECURITY INVOKER`, a linha que a RLS esconde
+  vira NULL no LEFT JOIN. Escrito num sentido, isso é fail-closed; escrito no outro, a RLS
+  vira a porta de trás do gate. Prove com a RLS **ligada**, não só com a lógica.
+- **ERRCODE novo se confere ANTES.** SQLSTATE repetida é indistinguível para quem trata — e o
+  seu próprio harness casaria o erro errado e pintaria verde. (`FG008` já era da trigger de
+  pendente-sem-`run_id`; o gate de escopo virou `FG009`.)
+
+Custo medido: **2.676** recomendações do Farmer gravadas sob um `farmer_id` que não era o dono
+do cliente, invisíveis ao recálculo do dono real. Caso completo, com os números por lote:
+`docs/historico/fallback-lista-vazia-troca-escopo.md`.
+
 ## Provar antes de aplicar
 
 - **Função/RPC/trigger/policy money-path → `prove-sql-money-path`** (PG17 local com falsificação) ANTES de entregar a migration. plpgsql é late-bound: `CREATE` passa com SQL inválido, só falha ao EXECUTAR. O teste aplica a migração REAL, semeia, faz asserts positivos E negativos (SQLSTATE + re-raise), prova RLS (`SET ROLE` + GUC), e **se sabota de propósito pra provar que os asserts têm dente**.

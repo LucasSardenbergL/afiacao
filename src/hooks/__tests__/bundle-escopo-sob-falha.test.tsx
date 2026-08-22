@@ -27,6 +27,14 @@ import { renderHook, act } from '@testing-library/react';
  * Separados porque os hooks pertencem a MÓDULOS diferentes — `useBundleEngine` é de
  * `farmer-inteligencia`, `useCrossSellEngine` é de `vendas`; um arquivo só cruzaria a
  * fronteira e o `fronteiras.gate` reprovaria (corretamente).
+ *
+ * ⚠️ ATUALIZAÇÃO: o fallback descrito acima foi REMOVIDO (o escopo é sempre a carteira do
+ * farmer). Ele não existia só para o super_admin — a condição perguntava se a leitura veio
+ * vazia, e por essa porta 2.676 recomendações foram gravadas sob um `farmer_id` que não era
+ * o dono do cliente. Ver `bundle-escopo-carteira.test.tsx`. Este arquivo
+ * segue valendo: ele prova que a falha de leitura LANÇA em vez de virar lista vazia, que é
+ * a porta de ENTRADA — e a asserção "nenhuma query sem `farmer_id`" agora é garantida
+ * estruturalmente, não por sorte.
  */
 const FARMER = 'farmer-real';
 
