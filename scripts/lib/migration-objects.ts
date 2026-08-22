@@ -9,6 +9,7 @@
  * Heurístico (regex), não parser SQL completo — cobre os patterns do projeto. Acréscimos
  * sobre o extractObjects original (pedidos pelo Codex):
  *  - `view`  — o audit não detectava CREATE [OR REPLACE] [MATERIALIZED] VIEW (views v_grupo_*).
+ *  - limpeza de comentário pelo stripper COMPARTILHADO `sql-comentarios.ts` — ver extractObjects.
  *  - assinatura de função — identidade PG = nome + tipos de arg; sem isso, overloads colidiriam
  *    falsamente (foo(int) vs foo(text)).
  *
@@ -16,6 +17,8 @@
  * grants, nem SQL dinâmico; a assinatura é a lista de args normalizada (renomear param muda a
  * chave). O preflight degrada para "não detectado", nunca fabrica colisão.
  */
+
+import { removerComentariosSql } from './sql-comentarios';
 
 export type ObjectKind = 'table' | 'index' | 'function' | 'trigger' | 'cron_job' | 'enum_value' | 'rls_policy' | 'view';
 
@@ -79,10 +82,20 @@ export function normalizeSignature(argsRaw: string): string {
 }
 
 /**
- * Extrai os objetos criados por uma migration. Ignora comentários de linha (`-- ...`).
+ * Extrai os objetos criados por uma migration.
+ *
+ * A limpeza de comentário é a COMPARTILHADA (`removerComentariosSql`), que entende a gramática do
+ * Postgres. O `sql.replace(/--.*$/gm, '')` que morava aqui errava nos dois sentidos — a classe de
+ * `docs/historico/gates-textuais-cegos.md`, aqui no eixo SQL:
+ *  - comia de um `--` DENTRO de literal ou de identificador citado até o fim da linha, e a DDL
+ *    seguinte sumia do inventário (ausência, o pior modo de falha de um audit);
+ *  - não removia comentário de BLOCO, então DDL comentada para rollback entrava como objeto
+ *    esperado — vermelho eterno, porque o banco nunca vai tê-la.
+ * Medido no corpus de 483 migrations custom ao trocar: delta ZERO (1671 objetos antes e depois).
+ * É endurecimento, não correção de falha ativa. Casos em migration-objects.test.ts.
  */
 export function extractObjects(sql: string): ExtractedObject[] {
-  const stripped = sql.replace(/--.*$/gm, '');
+  const stripped = removerComentariosSql(sql);
   const objects: ExtractedObject[] = [];
 
   // CREATE [OR REPLACE] FUNCTION [schema.]name(args) — captura args via parênteses balanceados

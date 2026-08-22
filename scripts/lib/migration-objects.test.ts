@@ -129,6 +129,37 @@ describe('extractObjects — DDL dinâmica não vira objeto esperado', () => {
   });
 });
 
+describe('extractObjects — comentário é o do POSTGRES, não `--` até o fim da linha', () => {
+  it('DDL dentro de bloco /* */ NÃO vira objeto (o inventário diz o que a migration CRIA)', () => {
+    const sql = [
+      `/* rollback da tentativa anterior — não aplicar:`,
+      `CREATE POLICY "desativada" ON public.t FOR SELECT USING (true);`,
+      `*/`,
+      `CREATE POLICY "ativa" ON public.u FOR SELECT USING (true);`,
+    ].join('\n');
+    expect(policies(sql).map((p) => p.name)).toEqual(['ativa']);
+  });
+
+  it('`--` dentro de LITERAL não trunca a DDL seguinte da mesma linha', () => {
+    const sql = `CREATE POLICY "filtra marcador" ON public.t FOR SELECT USING (obs = 'a -- b'); CREATE POLICY "sobrevivente" ON public.u FOR SELECT USING (true);`;
+    expect(policies(sql).map((p) => p.name)).toEqual(['filtra marcador', 'sobrevivente']);
+  });
+
+  it('`--` dentro do NOME CITADO não engole a própria DDL', () => {
+    const sql = `CREATE POLICY "Staff le -- log" ON public.t FOR SELECT USING (true);`;
+    expect(policies(sql)).toEqual([
+      { kind: 'rls_policy', schema: 'public', name: 'Staff le -- log', parent: 't' },
+    ]);
+  });
+
+  it('comentário de LINHA de verdade segue fora do inventário (regressão)', () => {
+    const sql = [
+      `-- CREATE POLICY "comentada" ON public.t FOR SELECT USING (true);`,
+      `CREATE POLICY "ativa" ON public.u FOR SELECT USING (true);`,
+    ].join('\n');
+    expect(policies(sql).map((p) => p.name)).toEqual(['ativa']);
+  });
+});
 describe('corpus real — nenhuma CREATE POLICY custom fica fora do inventário', () => {
   const DIR = join(process.cwd(), 'supabase', 'migrations');
   const UUID = /_[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\.sql$/;
