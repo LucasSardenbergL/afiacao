@@ -594,3 +594,29 @@ tinha suposto a forma de um "vazio julgável" em vez de lê-la (`scores.n > 0` *
 **e** a cobertura declarada). O teste barato pagou-se antes de existir PR: sem ele, eu teria
 entregue um ramo que atropelava a existência e só descobriria isso quando o primeiro vazio real
 chegasse — e aí ele viria mudo.
+
+## Quarto estado do MixGap: OFFLINE (2026-08-22) — e a sabotagem que ficou VERDE
+
+> Continuação da seção "Revisão independente RETROATIVA" acima. Fica aqui no fim, e não lá,
+> porque o #1886 (a mesma classe, varrida e gateada) insere no mesmo ponto do arquivo —
+> hunk vizinho entre worktrees paralelas é conflito garantido.
+
+`MixGapCard` passou a discriminar por `fetchStatus`, não por `isLoading`: `data === undefined` é
+pendente, pausado OU desabilitado; só `data === null` é a RPC dizendo "sem acesso". Offline virou
+estado próprio (`aguardando_rede`, tela de conexão) e **emite** evento com `total_com_gap: null` —
+não emitir recriaria o buraco do #1859 ("offline" indistinguível de "nunca abriu"), e emitir não
+contamina o denominador porque adoção se calcula sobre os estados com número honesto
+(`com_gap`/`zero`), como já era preciso com `erro`. O que segue MUDO é `semAcesso`. O erro deixou de
+ter precedência sobre o cache: com dado, a lista fica na tela + faixa de aviso e o evento leva
+`desatualizado: 'erro' | 'sem_rede'` (a dedup passou a ser por `estado:motivo`, senão engoliria a
+transição "número fresco" → "número velho", que é o sinal de leitura falhando em campo).
+
+**A lição durável está na falsificação que ficou VERDE.** Sabotar a precedência `pausado`-antes-de
+-`error` no ramo SEM dado não derrubou teste nenhum. Não era teste fraco: era o mecanismo que eu
+tinha descrito errado. `fetchState` (query-core, `query.ts`) zera `error`/`status` ao iniciar um
+fetch **apenas quando `data === undefined`** ⇒ sem dado, erro e pausa **nunca coexistem** (a ordem
+ali é inócua), e só COM dado no cache eles se sobrepõem — que é onde a precedência decide algo. O
+comentário do código afirmava um conflito inexistente e o teste passava por não discriminar nada.
+⇒ **sabotagem que não fica vermelha é achado, não aprovação**: ou o assert não mede o que diz, ou o
+mecanismo é outro. Investigue o mecanismo antes de aceitar o verde — foi o que produziu o único
+teste que mede a precedência de verdade (erro no cache + rede caindo depois).

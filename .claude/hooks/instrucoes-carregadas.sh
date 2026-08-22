@@ -40,7 +40,15 @@ if ! printf '%s' "$entrada" | jq -c --arg ts "$ts" '{
       ts: $ts,
       motivo: (.load_reason // "?"),
       arquivo: (.file_path // "?"),
-      chars: ((.file_content // "") | length),
+      # ausente ≠ zero: `(.file_content // "") | length` gravava 0 quando o payload
+      # NÃO traz o campo — ausência de dado virando a MEDIDA 0 (a mesma fabricação
+      # que `Number(null)===0` é no money-path). null diz "não sei"; 0 mentiria.
+      chars: (if has("file_content") then (.file_content|length) else null end),
+      # o payload real é o contrato — `campos` PARA de adivinhar qual chave existe:
+      # foi assim que descobrimos que `file_content` nunca vem. Serve também para
+      # saber se `agent_type` estava AUSENTE (⇒ o "principal" abaixo é default, não
+      # observação) no dia em que um subagente finalmente aparecer.
+      campos: (keys|join(",")),
       agente: (.agent_type // "principal"),
       agent_id: (.agent_id // null),
       sessao: (.session_id // "?"),

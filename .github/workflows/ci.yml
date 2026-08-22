@@ -224,6 +224,10 @@ jobs:
       # apertado (20 KB / 2,6k palavras / linha ≤2000c) vs ~13 KB pós-refactor
       # da frente 1 (2026-06-15). Estourar = mover a lição pra docs/agent/ e o
       # histórico pra docs/historico/ (ver topo do CLAUDE.md). Ver scripts/check-claude-md-budget.sh.
+      # Desde 2026-08-22 mede também POR SEÇÃO, com ratchet em scripts/claude-md-secoes-baseline.txt:
+      # teto só do arquivo inteiro deixava "⚠️ Armadilhas recorrentes" (46% do arquivo, e a seção
+      # cujas regras falham ABERTO) crescer PAGA pelo encolhimento das seções seguras — invisível.
+      # A suíte de falsificação do gate roda no passo `Hooks guard tests` (test-claude-md-budget.sh).
       - name: CLAUDE.md size budget
         run: bun run claude:size
 

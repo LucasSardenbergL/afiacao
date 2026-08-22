@@ -1,7 +1,7 @@
 # CLAUDE.md — Afiação (Sistema Operacional B2B Sardenberg)
 
 > Manual de **regras VIVAS** para agentes de código. O detalhe operacional de cada domínio vive em `docs/agent/*` (índice abaixo, carregado sob demanda); o **diário de PR** em `docs/historico/`; spec/plano profundo em `docs/superpowers/{specs,plans}/`.
-> **Política (mantenha enxuto):** só **REGRA/invariante que vale sempre** fica aqui. Histórico → `docs/historico/`; lição de domínio → `docs/agent/`; pendência em voo → PR/issue. Ao concluir uma entrega, registre em `docs/historico/` (ou no doc/agent se for lição nova) — **não engorde este arquivo**. O CI vigia o tamanho (`bun run claude:size` — teto apertado; estourar = mover para `docs/`).
+> **Política (mantenha enxuto):** só **REGRA/invariante que vale sempre** fica aqui. Histórico → `docs/historico/`; lição de domínio → `docs/agent/`; pendência em voo → PR/issue. Ao concluir uma entrega, registre em `docs/historico/` (ou no doc/agent se for lição nova) — **não engorde este arquivo**. O CI vigia o tamanho (`bun run claude:size` — teto do arquivo **e de cada seção**; estourar = mover para `docs/`, nunca pagar encolhendo outra seção).
 
 ## Preferências do founder (Lucas)
 

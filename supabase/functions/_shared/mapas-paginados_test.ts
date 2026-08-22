@@ -227,7 +227,7 @@ Deno.test("ownerMap: atravessa o cap de 1000 (não trunca a carteira)", async ()
   const mapa = await carregarOwnerMap(db);
   assertEquals(mapa.size, 2500);
   assertEquals(mapa.get("c2499"), "o2499");
-  assertEquals(registros.length, 3); // 1000 + 1000 + 500
+  assertEquals(registros.length, 4); // 1000 + 1000 + 500 + a vazia que confirma o fim
 });
 
 Deno.test("ownerMap: TODA página pede .order() estável na chave", async () => {
@@ -236,7 +236,7 @@ Deno.test("ownerMap: TODA página pede .order() estável na chave", async () => 
   // Sem .order() o Postgres não garante a mesma sequência entre requests: a página 2
   // pode repetir linha da 1 e PULAR outra — cliente somindo da carteira em silêncio.
   // customer_user_id é UNIQUE em prod (carteira_assignments_customer_user_id_key).
-  assertEquals(registros.length, 3);
+  assertEquals(registros.length, 4);
   for (const reg of registros) {
     assertEquals(reg.order, "customer_user_id", "página paginada sem .order() estável");
   }

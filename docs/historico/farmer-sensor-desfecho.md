@@ -321,6 +321,35 @@ do diagnóstico acima:
   rodou no CI. Registrado. Restam 8 órfãos no mesmo padrão (`test-<x>.sh` sem `-guard`), que
   o `hooks-guard-cobertura.test.ts` não vigia porque ele só cobre `test-<x>-guard.sh`.
 
+### O ritual rodado de verdade achou um erro na própria correção (2026-08-22)
+
+Rodar o `/codex` real logo após o merge — com um prompt propositalmente venenoso (4×
+"usage limit", 5× "model is not supported", 3 linhas numeradas 5xx) — derrubou uma
+afirmação que eu tinha escrito no código:
+
+- **O comentário dizia que a mensagem de cota "não vem prefixada".** A mensagem real é
+  `ERROR: You've hit your usage limit. ... try again at Sep 20th, 2026 10:37 PM.` — **vem**
+  prefixada. Eu tinha escrito aquilo a partir do STUB do teste, que supunha o formato: o
+  stub virou a fonte da verdade sobre o mundo real. **A classe:** um stub é uma hipótese
+  sobre o mundo, e usar a hipótese para justificar a decisão fecha o laço sem medir nada.
+- **A decisão (tirar o eco em vez de casar linhas `ERROR:`) continua certa — por outro
+  motivo, agora testado.** Prompts do ritual colam stderr de erro o tempo todo
+  ("diagnostique este log"), e essas linhas começam com `ERROR:`: o filtro por prefixo
+  deixaria o veneno passar inteiro. Implementar a alternativa reprova 5 casos da suíte,
+  incluindo um COTA_ESGOTADA falso e o rate-limit simples (`429 rate limit exceeded` não é
+  linha `ERROR:`). O caso (h) do teste é quem sustenta a escolha — e é o que a alternativa
+  derruba. Justificativa certa pelo motivo errado ainda é sorte, não desenho.
+
+**E o transporte se comportou como desenhado sob o veneno:** o prompt que antes se
+auto-sabotava não produziu classificação errada — 1 tentativa, sem retry, com o
+diagnóstico certo. O `EXIT=75` que ele devolveu era **cota REAL**, confirmada por ping
+direto ao CLI, não falso positivo.
+
+> ⚠️ **Cota do Codex esgotada até 20/09/2026 22:37** (medido 2026-08-22). A mensagem
+> sugere conta sem Plus ativo ("start a free trial of Plus today"). Enquanto isso, todo
+> trabalho money-path cai no **Caminho B** (validação adversária própria + registrar
+> "REVISÃO INDEPENDENTE PENDENTE") — `docs/agent/money-path.md`.
+
 O default do modelo virou **medição datada dentro do próprio script** (o ping dos 5 nomes,
 com a data e a versão do codex-cli), não uma escolha: disponibilidade muda por tier, e o
 registro anterior já tinha envelhecido para `-sol` sem ninguém perceber até o ritual falhar.

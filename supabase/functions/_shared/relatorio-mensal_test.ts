@@ -294,7 +294,10 @@ Deno.test("custo de banco NÃO cresce com o número de ferramentas (sem 2 counts
 
   const emEventos = f.idasA("tool_events");
   assert(
-    emEventos <= 3,
+    // Teto 4 (era 3): o EOF virou página VAZIA para desacoplar do `max-rows`, o que soma UMA
+    // requisição por leitura — fixa, não por ferramenta. O invariante que este teste protege
+    // (custo não cresce com o nº de ferramentas) segue intacto: com N+1 seriam 600.
+    emEventos <= 4,
     `contagem de eventos deveria ser agregada, mas foram ${emEventos} consultas a tool_events ` +
       `(o N+1 fazia 2 por ferramenta = 600)`,
   );

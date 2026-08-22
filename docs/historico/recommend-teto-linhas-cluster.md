@@ -141,15 +141,66 @@ O que esperar quando alguém usar a tela: `cluster_based` sumindo de `critico` (
 DOMINAR o mix contra `cross_sell`, é consequência esperada de destampar sinal real — e é o gatilho
 para a decisão de produto sobre os cortes, que segue aberta abaixo.
 
-## ⚠️ REVISÃO INDEPENDENTE PENDENTE
+## ⚠️ REVISÃO INDEPENDENTE PENDENTE — e o diagnóstico ANTERIOR estava errado
 
-O ritual `/codex` não pôde rodar: a conta recusa **todos** os modelos com HTTP 400
-(`model is not supported when using Codex with a ChatGPT account`) — e o
-[#1860](https://github.com/) já mediu que o eixo não é o nome do modelo (10 nomes, mesmo 400), é o
-acesso da conta. Seguido o **Caminho B** de `money-path.md` §170: PG17 falsificável + auto-challenge
-com medição. Auto-prova **não** substitui revisão independente — rodar o Codex retroativo quando o
-acesso voltar, mirando em: (a) denominador população×observados, (b) histórico inteiro carregar par
-de 6 anos, (c) a renormalização de pesos sob `truncado`.
+**Correção do que este doc afirmava em 2026-08-22.** Estava escrito aqui que "a conta recusa
+**todos** os modelos com HTTP 400" e que o eixo era acesso de conta, não nome de modelo. **Falso**,
+e a causa é instrutiva: o `codex-async.sh` classificava o erro lendo o stderr CRU, que **ecoa o
+prompt inteiro** antes das linhas de erro. O prompt que diagnosticou o problema continha a própria
+frase `model is not supported` — então o TEXTO DO PROMPT decidia o controle de fluxo, abortando com
+`MODELO_NAO_ACEITO` sem retry. O #1880 consertou (classifica só o que NÃO veio do prompt) e mediu:
+`gpt-5.6-terra` e `gpt-5.6-luna` respondem `rc=0`; só `-sol`, `gpt-5.6` e `codex-max` dão 400. O
+default era `sol` — morto — então **todo ritual `/codex` do repo falhava**, e o diagnóstico daqui
+generalizou de um bug de classificação para uma conclusão sobre a conta.
+
+⚠️ **Corolário de método:** `git show <commit>:<arquivo>` responde sobre o COMMIT; `./script`
+executa o DISCO. Ao rodar o ritual depois disso, li o conserto do #1880 por `git show` e executei a
+versão velha do script que estava no worktree (criado alguns commits antes) — que tentou `sol` de
+novo. Num repo com ~30 worktrees paralelas os dois divergem o tempo todo: **atualize o worktree
+antes de executar um script que você acabou de ver ser consertado.**
+
+**Estado real (2026-08-22):** a cota Codex esgotou até 20/09 — confirmei por ping mínimo
+independente (prompt de 4 palavras, sem nenhuma frase-gatilho, mesmo limite), e o #1887 chegou ao
+mesmo em paralelo e registrou o assunto em
+[`farmer-sensor-desfecho.md`](farmer-sensor-desfecho.md), que é onde ele mora — não duplico aqui.
+Segue o **Caminho B**, agora com o alvo (a) efetivamente atacado (abaixo). Rodar o Codex retroativo em
+setembro, mirando em (b) histórico inteiro carregar par de 6 anos e (c) a renormalização de pesos
+sob `truncado` — que segue sem nenhuma execução real.
+
+## O que o Caminho B ACHOU no alvo (a): o filtro de SKU mistura duas perguntas
+
+O denominador é a população elegível (780 em `critico`), e `observados` é 634. Eu justifiquei a
+diferença como fato observado — "li o histórico inteiro dele e o produto X não está lá". **Medido,
+a justificativa não se sustenta como escrita:**
+
+```
+sem_par=146 · tem_order_items=146 · sobrevive_universo=146 · zero_linhas_de_todo=0
+```
+
+Os 146 têm compra, e os pedidos passam pelo filtro de universo. Quem os elimina é **exclusivamente
+`o.ativo`** — todo produto que compraram saiu do catálogo. Eles não são "clientes que não compraram
+X": são clientes sobre quem a pergunta não é respondível com este recorte. O erro conceitual é
+misturar, no MESMO denominador, um filtro de **cliente** (`health_class`, `sales_history_status`,
+que define a população) com um filtro de **produto** (`o.ativo`, que define o que é recomendável).
+
+E o viés **não é neutro**: correlaciona com o próprio eixo do cluster. Quem parou de comprar
+comprava o que hoje está descontinuado — 146/780 = **18,7%** em `critico`, 14/347 = 4,0% em
+`atencao`, **0** em `estavel`. É o que separa 0 de 2 produtos cruzando o corte de 0,10:
+
+| cluster | pop | obs | só SKU inativo | simmax pop | simmax obs | >0,10 pop | >0,10 obs |
+|---|---|---|---|---|---|---|---|
+| critico | 780 | 634 | **146** | 0,096 | **0,118** | **0** | **2** |
+| atencao | 347 | 333 | 14 | 0,213 | 0,222 | 12 | 15 |
+| estavel | 100 | 100 | 0 | 0,430 | 0,430 | 128 | 128 |
+
+⚠️ **Mas a contra-medição rebaixa a severidade, e ela também é obrigatória.** Os 146 são clientes
+LEVES: 427 linhas no total, média 2,9, **mediana 2**, e 38% têm uma linha só. Um cliente de 2 linhas
+contribuiria no máximo 2 produtos entre 957 — para quase todo produto ele é um "não comprou"
+legítimo, ativo ou não. Então isto é **[P2]: escolha de denominador com viés medido**, não a
+fabricação grosseira que a primeira leitura sugeria. Registrado sem correção porque mudar o
+denominador altera ranking em produção e é decisão de produto, não de implementação — mas agora com
+número, não com opinião. O que fica como regra durável, independente da magnitude: **filtro de
+PRODUTO não pertence ao denominador de uma proporção sobre CLIENTES.**
 
 ## Segue aberto (nomeado para não passar por consertado)
 
