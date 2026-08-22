@@ -8,10 +8,10 @@
 Quatro fases concluídas. Artefatos em `docs/ux-audit/`:
 
 - ✅ **Fase 0** — Setup + este CLAUDE.md
-- ✅ **Fase 1** — Inventário de telas em [docs/ux-audit/01-inventario.md](docs/ux-audit/01-inventario.md)
-- ✅ **Fase 2** — Auditoria heurística (Nielsen + critérios de domínio D1-D6) das 10 telas top em [docs/ux-audit/02-heuristica.md](docs/ux-audit/02-heuristica.md)
-- ✅ **Fase 3** — Roadmap ICE com top 20 intervenções em [docs/ux-audit/03-roadmap.md](docs/ux-audit/03-roadmap.md)
-- ✅ **Fase 4** — Execução completa em [docs/ux-audit/04-execucao.md](docs/ux-audit/04-execucao.md) (20/20 itens entregues; alguns como scaffold pendente decisão de produto/schema)
+- ✅ **Fase 1** — Inventário de telas em [docs/ux-audit/01-inventario.md](../ux-audit/01-inventario.md)
+- ✅ **Fase 2** — Auditoria heurística (Nielsen + critérios de domínio D1-D6) das 10 telas top em [docs/ux-audit/02-heuristica.md](../ux-audit/02-heuristica.md)
+- ✅ **Fase 3** — Roadmap ICE com top 20 intervenções em [docs/ux-audit/03-roadmap.md](../ux-audit/03-roadmap.md)
+- ✅ **Fase 4** — Execução completa em [docs/ux-audit/04-execucao.md](../ux-audit/04-execucao.md) (20/20 itens entregues; alguns como scaffold pendente decisão de produto/schema)
 
 
 ## §9b — Redesign visual + telemetria

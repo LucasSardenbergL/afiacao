@@ -283,6 +283,19 @@ jobs:
       - name: Docs citações gate (arquivo:linha ainda aponta pro que diz)
         run: bun run docs:citacoes
 
+      # Terceiro irmão da família: os dois gates acima leem o ÍNDICE e a CITAÇÃO, e nenhum RESOLVE
+      # link. Medido no #1863: `](../../docs/historico/…)` escrito de `.claude/skills/fecho/` cai em
+      # `.claude/docs/historico/…` — os dois gates ficaram VERDES com o link quebrado. E
+      # `.claude/skills/` (35 arquivos, o maior corpo de instrução operacional do projeto) não tinha
+      # cobertura automatizada NENHUMA: nenhum código do repo lê as skills, então nada as media.
+      # Ao nascer o gate achou 10 links quebrados vivos na main, todos da mesma variante — caminho
+      # escrito a partir da RAIZ do repo dentro de doc que não está na raiz. Entra em ZERO, sem
+      # baseline/allowlist (arquivo-lista de exceção é o começo do gate que ninguém lê).
+      # A autoridade é o índice do GIT, não o `existsSync`: o APFS do macOS é case-insensitive, e
+      # `](../Historico/x.md)` passaria no laptop para quebrar aqui e no GitHub. Estático, sem rede.
+      - name: Docs links gate (link relativo de .md resolve)
+        run: bun run docs:links
+
       # Anti-regressão de DEAD CODE (export sem consumidor, dep sem import). Existe porque o gate
       # só-local não barra ninguém, e isso foi MEDIDO: o #1212 zerou os 254 achados e verificou
       # `exit 0` em 2026-07-07, mas ficou 4 semanas em CONFLICTING (estado em que o auto-merge
