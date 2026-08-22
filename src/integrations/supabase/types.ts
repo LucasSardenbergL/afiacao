@@ -2417,6 +2417,7 @@ export type Database = {
           customer_user_id: string
           expired_at: string | null
           expired_by_run: string | null
+          expired_reason: string | null
           farmer_id: string
           id: string
           lie_bundle: number | null
@@ -2450,6 +2451,7 @@ export type Database = {
           customer_user_id: string
           expired_at?: string | null
           expired_by_run?: string | null
+          expired_reason?: string | null
           farmer_id: string
           id?: string
           lie_bundle?: number | null
@@ -2483,6 +2485,7 @@ export type Database = {
           customer_user_id?: string
           expired_at?: string | null
           expired_by_run?: string | null
+          expired_reason?: string | null
           farmer_id?: string
           id?: string
           lie_bundle?: number | null
@@ -3387,6 +3390,7 @@ export type Database = {
           customer_user_id: string
           expired_at: string | null
           expired_by_run: string | null
+          expired_reason: string | null
           farmer_id: string
           id: string
           lie: number | null
@@ -3413,6 +3417,7 @@ export type Database = {
           customer_user_id: string
           expired_at?: string | null
           expired_by_run?: string | null
+          expired_reason?: string | null
           farmer_id: string
           id?: string
           lie?: number | null
@@ -3439,6 +3444,7 @@ export type Database = {
           customer_user_id?: string
           expired_at?: string | null
           expired_by_run?: string | null
+          expired_reason?: string | null
           farmer_id?: string
           id?: string
           lie?: number | null
@@ -18972,6 +18978,19 @@ export type Database = {
         }
         Returns: Json
       }
+      farmer_escopo_invariante: {
+        Args: never
+        Returns: {
+          expiradas_perda_de_dono: number
+          expiradas_troca_de_dono: number
+          pct_violacao: number
+          pendentes_dono_divergente: number
+          pendentes_sem_dono: number
+          pendentes_total: number
+          tabela: string
+          violacoes: number
+        }[]
+      }
       farmer_geracao_registrar: {
         Args: {
           p_completude?: string
@@ -19754,6 +19773,15 @@ export type Database = {
       }
       rank_precisao: { Args: { p: string }; Returns: number }
       recalcular_picking_task: { Args: { p_task_id: string }; Returns: Json }
+      recommend_cluster_agregado: {
+        Args: { p_health_class: string; p_teto_clientes?: number }
+        Returns: {
+          denominador: number
+          observados: number
+          produtos: Json
+          truncado: boolean
+        }[]
+      }
       recomputar_leadtime_derivado: {
         Args: { p_empresa: string }
         Returns: {

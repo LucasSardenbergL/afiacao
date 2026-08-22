@@ -35,6 +35,7 @@
     "wt:label": "bash scripts/wt-map.sh label",
     "wt:preflight": "bun scripts/wt-preflight-migration.ts",
     "claude:size": "bash scripts/check-claude-md-budget.sh",
+    "claude:instr": "bash scripts/instrucoes-relatorio.sh",
     "test:hooks": "for t in heavy pr-collision pr-duplicata migration-collision branch-pos-squash destructive-bash migration-immutability edge-guardrail; do bash scripts/test-$t-guard.sh || exit 1; done; for t in wt-status wt-orfas bash-contexto-nudge read-contexto-nudge stop-contexto-caro stop-moneypath-nudge wt-prune wt-clean codex-async; do bash scripts/test-$t.sh || exit 1; done",
     "heavy:install": "bash scripts/heavy-install.sh"
   },

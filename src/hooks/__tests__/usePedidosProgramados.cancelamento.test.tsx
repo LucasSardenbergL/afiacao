@@ -164,7 +164,7 @@ describe('cancelarEnvio — CAS antes do desanexo (corrida agendado→enviado)',
     };
     const { result } = setup();
     await act(async () => {
-      await expect(result.current.cancelarEnvio.mutateAsync(ENVIO_A)).rejects.toThrow();
+      await expect(result.current.cancelarEnvio.mutateAsync(ENVIO_A)).rejects.toThrow(/mudou de estado/);
     });
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['pedidos-programados'] });
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['pedido-programado', PEDIDO] });

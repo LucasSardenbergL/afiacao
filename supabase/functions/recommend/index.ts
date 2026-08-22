@@ -12,6 +12,7 @@ import {
 // vez de recomendar sobre catálogo parcial. Detalhe e medições: recommend-leituras.ts.
 import { carregarCluster, carregarInsumos } from "../_shared/recommend-leituras.ts";
 import type { BancoPostgrest } from "../_shared/paginate.ts";
+import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
 const corsHeaders = {
@@ -463,9 +464,26 @@ Deno.serve(async (req) => {
     } catch {
       return jsonRes({ error: "invalid JSON" }, 400);
     }
+    // Gate PRÓPRIO da sonda (padrão de `omie-cliente`), e não o `Bearer ` do handler.
+    //
+    // O gate normal desta edge é JWT, e `supabaseAuth.auth.getUser()` PRECISA do client — que
+    // ainda não existe aqui, porque a sonda tem de responder antes dele. Sobrava então só o
+    // `startsWith("Bearer ")` lá em cima, que qualquer string satisfaz: medido em PROD,
+    // `Authorization: Bearer x` devolvia `{"versao":"v1.2-cluster-rpc"}`. A versão do bundle
+    // virava pública para quem tivesse a URL — semi-público por ACIDENTE, que é diferente de
+    // público por decisão.
+    //
+    // `authorizeCronOrStaff` resolve os dois lados: valida `x-cron-secret`, service role ou o
+    // JWT de verdade (via `fetch` em /auth/v1/user), sem `createClient` — então autentica sem
+    // violar a ordem que o gate de CI exige.
+    //
+    // Só roda quando `probe` VEM no corpo (`tipo !== "disparo"`): o caminho normal da edge não
+    // paga nada por esta checagem.
     const decisaoSonda = classificarSonda(corpoBruto);
-    if (decisaoSonda.tipo === "sonda") return jsonRes(respostaSonda(VERSAO), 200);
-    if (decisaoSonda.tipo === "ambiguo") {
+    if (decisaoSonda.tipo !== "disparo") {
+      const authSonda = await authorizeCronOrStaff(req);
+      if (!authSonda.ok) return authSonda.response;
+      if (decisaoSonda.tipo === "sonda") return jsonRes(respostaSonda(VERSAO), 200);
       return jsonRes({ error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }, 400);
     }
 
