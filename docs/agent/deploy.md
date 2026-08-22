@@ -158,6 +158,54 @@ cliente, mesma página truncada), e diga o tamanho da amostra no veredito.
 tivesse feito backfill de `product_costs`. Foi a query (1) que eliminou isso: os UNKNOWN antigos
 **já tinham** custo no banco — o dado existia, a edge é que não alcançava.
 
+### Assinatura de GATE — quando a sonda EXISTE mas está FECHADA para você
+
+Quarto caminho, e o que resolve o impasse que a própria sonda criou: desde o #1877 ela exige
+credencial (`authorizeCronOrStaff`), então quem não tem JWT de staff **não consegue mais ler a
+versão** — o agente inclusive, que só tem `claude_ro` no banco e nenhuma credencial de edge. Mas
+**um gate que RECUSA também informa**: cada gate erra com a sua própria string, então a mensagem de
+recusa é uma assinatura de versão. Não precisa de credencial, nem de canária, e serve retroativo.
+
+**Como achar a assinatura.** Uma string de erro que a versão NOVA emite e a VELHA **não podia**
+emitir. Status HTTP não serve (401 é 401 nas duas) — tem de ser o CORPO.
+
+**Caso que a fundou (`recommend`, 2026-08-22, #1876 + #1877).** Quatro chamadas, zero credencial:
+
+| chamada | HTTP | corpo | quem respondeu |
+|---|---|---|---|
+| edge **inexistente** | 404 | `{"code":"NOT_FOUND"}` | **gateway** — prova que ele não valida JWT |
+| `recommend`, **sem** `Authorization` | 401 | `{"error":"Não autorizado"}` | gate do handler (pt-BR) |
+| `recommend`, `{}` + `Bearer x` | 401 | `{"error":"Token inválido"}` | gate do handler (pt-BR) |
+| `recommend`, `{"probe":true}` + `Bearer x` | 401 | `{"error":"Unauthorized"}` | `authorizeCronOrStaff` (en) |
+
+A quarta decide — mas **só depois de três descartes**:
+
+1. **o gateway não é a origem**: a chamada à edge inexistente voltou 404, logo ele roteia sem
+   validar JWT (se voltasse 401, nada abaixo valeria — a edge nem teria rodado);
+2. **a edge está executando**: as outras duas respostas são em português, dos gates internos dela;
+3. **a versão velha não podia emitir aquilo**: no bundle anterior `{"probe":true}` retornava
+   **200 + versão incondicionalmente**, e a string `"Unauthorized"` não existe em `index.ts` nenhum
+   (velho nem novo) — só pode vir de `_shared/auth.ts`, chamado no caminho da sonda **apenas a
+   partir do #1877**.
+
+⚠️ **Sem os três descartes isto é adivinhação.** Um 401 sozinho é compatível com "gateway barrou",
+"edge não existe" e "gate velho barrou". A conclusão vem do CONJUNTO de respostas DISTINTAS, não de
+uma. E confira a string velha com `git show <commit-velho>:<arquivo>`, nunca de memória — o ponto
+inteiro é provar que a versão anterior era incapaz daquela saída.
+
+⚠️ **Isto prova o BUNDLE, não o seu arquivo.** "Meu PR está no ar" é conclusão TRANSITIVA: o commit
+cuja assinatura você viu precisa ter o seu como ancestral **e** carregar o seu símbolo. Confirme os
+dois (`git merge-base --is-ancestor` e `git show <commit>:<arquivo>`), e confirme que ninguém tocou
+o arquivo entre eles — a reversão do Lovable (seção abaixo) é exatamente esse risco.
+
+⚠️ **A assinatura é POR VERSÃO — e é isso que a torna útil.** Horas depois da medição acima, o
+#1882 moveu a sonda para ANTES do gate de `Bearer ` do handler, e a MESMA chamada (`{"probe":true}`
+**sem** `Authorization`) passou de `{"error":"Não autorizado"}` (v1.3) para `{"error":"Unauthorized"}`
+(v1.4). Foi exatamente assim que o deploy do #1882 se provou: **a técnica flagrou a troca de versão
+ao vivo**, sem credencial e sem ninguém avisar. A consequência prática, porém, é que a tabela acima
+descreve o `v1.3` e não uma constante do sistema — levante a SUA assinatura com
+`git show <commit>:<arquivo>` a cada uso, nunca copie a tabela.
+
 ## Quando o Lovable reverte um fix — detectar e restaurar
 
 O bot `gpt-engineer-app[bot]` commita direto na `main` SEM CI ("Changes"/"Deployed"/"Deployou edge") e às vezes reverte um PR (~16% dos commits; ≥4-5 reversões money-path recentes). Prevenção é inviável (o bot precisa de escrita direta) → o jogo é **detectar + restaurar rápido** (MTTR), não governança perfeita. Spec: `docs/superpowers/specs/2026-06-26-lovable-revert-mitigation-design.md`.

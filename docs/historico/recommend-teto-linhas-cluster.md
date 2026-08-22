@@ -108,6 +108,39 @@ evidência positiva com denominador que `docs/historico/fase-sem-sinal.md` exige
 - **Edge:** 38 testes em `recommend-leituras_test.ts` (`test:edges` 825/825), com 4 falsificações
   próprias conferindo dente.
 
+## Pós-deploy — o que ficou PROVADO e o que não (2026-08-22)
+
+**Migration:** aplicada e revalidada em prod por DEFINIÇÃO — ACL `anon=f authenticated=f
+service_role=t`, `SECURITY INVOKER`, `search_path` fixo, 8/8 invariantes em `pg_get_functiondef`.
+⚠️ Ela **não pode ser executada** pelo `claude_ro`: o próprio REVOKE que a protege bloqueia a role
+de diagnóstico. Esta função só se valida por definição — prova de execução exige passar pela edge.
+
+**Edge:** provada no ar por **assinatura de gate**, técnica registrada em
+[deploy.md](../agent/deploy.md). O bundle servido passou por #1877 (v1.3) e, horas
+depois, #1882 (v1.4) — ambos com este PR como ancestral e ambos carregando a RPC (`git merge-base --is-ancestor` + `git show <commit>:<arquivo>`, e nenhum commit
+tocou `recommend-leituras.ts` entre os dois).
+
+**Antes/depois reproduzido em prod** (`db/recommend-cluster-rpc-antes-depois.sql`, `EXIT=0`): bate
+com o medido no PR dentro de ±1 cliente — banco vivo. Os 5 e 2 clientes zerados em
+`atencao`/`estavel` seguiam lá até o deploy.
+
+⚠️ **O efeito no ranking está medido OFFLINE, não observado.** A query reproduz a lógica da RPC
+contra os dados reais; ela não é a edge rodando. Desde o merge do #1877 (2026-08-22 18:33Z),
+`recommendation_log` tem **0 impressões** — a última execução do motor, de qualquer tipo, é de
+**2026-08-21 23:52:48** local, anterior à entrega. Zero impressão é ausência de dado, não
+aprovação: pela regra de `fase-sem-sinal.md` esta entrega **ainda não tem sinal de uso próprio**, e
+quem julga é:
+
+```sql
+SELECT recommendation_type, count(*) FROM recommendation_log
+WHERE created_at >= '2026-08-22T18:33:16Z' GROUP BY 1;
+```
+
+O que esperar quando alguém usar a tela: `cluster_based` sumindo de `critico` (nenhum produto cruza
+0,10 com n=780) e acendendo em `estavel` (62 produtos cruzam 0,15, contra 1 antes). Se ele passar a
+DOMINAR o mix contra `cross_sell`, é consequência esperada de destampar sinal real — e é o gatilho
+para a decisão de produto sobre os cortes, que segue aberta abaixo.
+
 ## ⚠️ REVISÃO INDEPENDENTE PENDENTE
 
 O ritual `/codex` não pôde rodar: a conta recusa **todos** os modelos com HTTP 400
