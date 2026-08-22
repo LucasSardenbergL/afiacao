@@ -6,7 +6,13 @@ import { useFarmerDesfecho, mensagemDoErro, MOTIVOS_RECUSA } from '@/hooks/useFa
 const impMock = vi.fn(() => ({ isImpersonating: false }));
 vi.mock('@/contexts/ImpersonationContext', () => ({ useImpersonation: () => impMock() }));
 vi.mock('@/lib/analytics', () => ({ track: vi.fn() }));
-const toastMock = { success: vi.fn(), error: vi.fn(), warning: vi.fn() };
+// `vi.mock` é HOISTED para o topo do arquivo, e esta factory lê a variável na hora
+// de montar o objeto (`{ toast: toastMock }`) — não dentro de uma função, como as
+// outras. Sem `vi.hoisted` isso é `ReferenceError: Cannot access 'toastMock' before
+// initialization`, e a suíte inteira falha na COLETA (nenhum teste chega a rodar).
+const { toastMock } = vi.hoisted(() => ({
+  toastMock: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
+}));
 vi.mock('sonner', () => ({ toast: toastMock }));
 /**
  * O retorno é tipado à mão porque `vi.fn(async () => ({data:null,error:null}))` INFERE
