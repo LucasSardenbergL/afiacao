@@ -98,7 +98,8 @@ interface Candidate {
   estoque: number;
   margin: number | null;
   assoc_score: number;
-  sim_score: number;
+  /** `null` = similaridade NÃO MEDIDA (disjuntor da RPC). Distinto de 0 = "medi, ninguém compra". */
+  sim_score: number | null;
   ctx_score: number;
   probability: number;
   eip: number;
@@ -183,45 +184,48 @@ async function recommend(
   // Cluster similarity - load cluster customers + their purchases in parallel
   const customerCluster = clientScore?.health_class || "misto";
 
-  const { clusterUserIds, usuariosAmostrados, clusterPurchases, amostraNoTeto } = await carregarCluster(
+  const { denominador, observados, clientesPorProduto, truncado } = await carregarCluster(
     banco,
     customerCluster,
   );
-  if (amostraNoTeto) {
-    // O sinal do teto tem de CHEGAR em alguém: um campo que ninguém lê é o cap silencioso com
-    // outro nome (2ª rodada do Codex — "contrato novo morto"). O log da edge é o consumidor
-    // barato; expor no `meta` da resposta mudaria o contrato da API e é decisão de produto.
+
+  // `sim` INDISPONÍVEL (≠ zero). O disjuntor da RPC recusou medir, então não sabemos quantos
+  // clientes similares compram cada produto — e o repo proíbe transformar isso num número.
+  // Antes existia um teto de 1.000 LINHAS que cortava no meio e seguia ranqueando sobre o
+  // pedaço, sinalizando só por `console.warn`. Um campo que ninguém lê é o cap silencioso com
+  // outro nome; aqui o sinal DESLIGA o componente.
+  const simIndisponivel = truncado || clientesPorProduto === null;
+  if (simIndisponivel) {
     console.warn(
-      `[Recommend] amostra de similaridade NO TETO (${clusterPurchases.length} compras de ` +
-        `${usuariosAmostrados.length} clientes amostrados, de ${clusterUserIds.length} elegíveis ` +
-        `no cluster "${customerCluster}") — sim_score pode ser parcial`,
+      `[Recommend] similaridade INDISPONÍVEL no cluster "${customerCluster}" ` +
+        `(${denominador} clientes elegíveis > teto do disjuntor) — sim_score fora do ranking, ` +
+        `não zerado`,
+    );
+  } else {
+    console.log(
+      `[Recommend] similaridade sobre o cluster "${customerCluster}" INTEIRO: ` +
+        `${denominador} elegíveis, ${observados} com compra no recorte, ` +
+        `${Object.keys(clientesPorProduto ?? {}).length} produtos`,
     );
   }
-  // DENOMINADOR = de quem as compras foram DE FATO buscadas. Antes contava os até 100 clientes
-  // LIDOS enquanto o numerador vinha só dos 50 amostrados, e `sim` saía sistematicamente pela
-  // METADE. `carregarCluster` já devolvia `usuariosAmostrados` no contrato para isto.
-  //
-  // O que a correção move, e o que NÃO move (medido em prod 2026-08-21, psql-ro):
-  //   · NÃO move o componente `score_sim` do score ponderado (peso 0,20): `minMaxNorm` é
-  //     `(v-min)/(max-min)`, afim-invariante, e um fator uniforme cancela;
-  //   · MOVE os três cortes em `sim` CRU abaixo (0,10 do ctx, 0,15 do recType, 0,20 da
-  //     explicação) — são comparações contra constante, onde fator uniforme não cancela;
-  //   · MOVE o caminho `simNorm → sigmoid → probability → eip → minMaxNorm`, de peso 0,35 (o
-  //     MAIOR): o sigmoide não é linear, então dobrar `sim` não é um reescalonamento uniforme
-  //     de `eip` e a normalização não o desfaz;
-  //   · MOVE `probability`, que NÃO é número interno: o vendedor o vê como "Prob. conversão"
-  //     em `src/components/RecommendationCard.tsx`.
-  // Sozinha esta linha não acende o ramo de cluster em `critico` (0,04 → 0,08, ainda < 0,10):
-  // ela depende do filtro de amostra em `carregarCluster`, e é por isso que as duas mudanças
-  // saem na MESMA entrega. Detalhe e o que segue aberto: `_shared/recommend-leituras.ts`.
-  const clusterSize = Math.max(usuariosAmostrados.length, 1);
 
-  const clusterProductCounts: Record<string, Set<string>> = {};
-  for (const p of clusterPurchases) {
-    if (!p.product_id) continue;
-    if (!clusterProductCounts[p.product_id]) clusterProductCounts[p.product_id] = new Set();
-    clusterProductCounts[p.product_id].add(p.customer_user_id);
-  }
+  // DENOMINADOR = população elegível do cluster, vinda do banco. Duas correções em relação ao
+  // que havia aqui: (a) não é mais `usuariosAmostrados.length` (a amostra deixou de existir), e
+  // (b) o numerador não vem mais de uma leitura capada em 1.000 linhas que zerava clientes
+  // reais — 5 em `atencao` e 2 em `estavel`, medido. O `Math.max(…, 1)` continua sendo só
+  // guarda de divisão por zero: com denominador 0 não há produto no agregado, então nenhum
+  // `sim` chega a ser calculado.
+  const clusterSize = Math.max(denominador, 1);
+
+  // O que a correção move, e o que NÃO move (medido em prod, psql-ro):
+  //   · NÃO move o componente `score_sim` do score ponderado: `minMaxNorm` é `(v-min)/(max-min)`,
+  //     afim-invariante, e um fator uniforme cancela;
+  //   · MOVE os três cortes em `sim` CRU (0,10 do ctx, 0,15 do recType, 0,20 da explicação) —
+  //     são comparações contra constante, onde fator uniforme não cancela;
+  //   · MOVE o caminho `simNorm → sigmoid → probability → eip`, de peso 0,35 (o MAIOR): o
+  //     sigmoide não é linear, então a normalização a jusante não desfaz a mudança;
+  //   · MOVE `probability`, que o vendedor VÊ como "Prob. conversão" em `RecommendationCard`.
+  const clusterProductCounts: Record<string, number> = clientesPorProduto ?? {};
 
   // Build candidates
   const candidates: Candidate[] = [];
@@ -238,20 +242,29 @@ async function recommend(
     const { custoConfiavel, custoRanking, margemExibida, margemRanking } = derivarMargensCandidato(cost ?? null, price);
     const margemRank = margemRanking ?? 0; // EIP neutro (0, não máximo) quando custo de ranking ausente
     const assoc = assocScores[p.id] || 0;
-    const simCustomers = clusterProductCounts[p.id]?.size || 0;
-    const sim = simCustomers / clusterSize;
+    // `null` = não medido (disjuntor). NUNCA 0 — este é exatamente o `Number(null) === 0` que
+    // fabricaria "nenhum cliente similar compra isto" a partir de "não perguntei".
+    const sim: number | null = simIndisponivel ? null : (clusterProductCounts[p.id] ?? 0) / clusterSize;
 
     const hasPurchased = purchasedProductIds.has(p.id);
     const purchaseCount = purchaseCounts[p.id] || 0;
     let ctx = 0;
-    if (!hasPurchased && sim > 0.1) ctx += 0.3;
+    // `sim !== null &&` explícito: `null > 0.1` já é `false` em JS, mas quem lê a linha
+    // não deve ter que confiar em coerção para saber que ausência não vira gatilho.
+    if (!hasPurchased && sim !== null && sim > 0.1) ctx += 0.3;
     if (purchaseCount >= 2) ctx += 0.2;
 
     const assocNorm = assoc > 0 ? Math.min(assoc / 2, 1) : 0;
-    const simNorm = Math.min(sim, 1);
+    const simNorm = sim === null ? 0 : Math.min(sim, 1);
     const ctxNorm = Math.min(ctx, 1);
 
-    const probability = sigmoid(-1.5 + 2.0 * assocNorm + 1.5 * simNorm + 1.0 * ctxNorm);
+    // Sem sinal de cluster o termo de `sim` SAI do modelo — não entra como 0 "medido". O efeito
+    // é subestimar a conversão, que é a direção conservadora (precisão > recall): melhor mostrar
+    // uma probabilidade baixa demais do que afirmar uma que não medimos. O vendedor lê este
+    // número como "Prob. conversão" em `RecommendationCard`.
+    const probability = simIndisponivel
+      ? sigmoid(-1.5 + 2.0 * assocNorm + 1.0 * ctxNorm)
+      : sigmoid(-1.5 + 2.0 * assocNorm + 1.5 * simNorm + 1.0 * ctxNorm);
     const eip = probability * margemRank;
     const recurrenceScore = Math.min(purchaseCount / 5, 1);
     const eiltv = probability * (margemRank + kappa * recurrenceScore * margemRank);
@@ -263,14 +276,14 @@ async function recommend(
     let recType = "cross_sell";
     if (hasPurchased) recType = "repurchase";
     else if (assoc > 0) recType = "cross_sell";
-    else if (sim > 0.15) recType = "cluster_based";
+    else if (sim !== null && sim > 0.15) recType = "cluster_based";
 
     let explanationKey = "margin";
     let explanationText = "";
     if (assoc > 0.5) {
       explanationKey = "association";
       explanationText = `Clientes que compraram itens do seu carrinho frequentemente também compraram ${p.descricao}`;
-    } else if (sim > 0.2) {
+    } else if (sim !== null && sim > 0.2) {
       explanationKey = "cluster";
       explanationText = `${Math.round(sim * 100)}% dos clientes similares compram ${p.descricao}`;
     } else if (margemExibida != null && margemExibida > 50) {
@@ -308,11 +321,31 @@ async function recommend(
   // Normalize and score
   const assocNormed = minMaxNorm(candidates.map((c) => c.assoc_score));
   const eipNormed = minMaxNorm(candidates.map((c) => mode === 0 ? c.eip : c.eiltv));
-  const simNormed = minMaxNorm(candidates.map((c) => c.sim_score));
+  // `?? 0` é seguro AQUI e só aqui: quando `sim` é null ele é null para TODOS os candidatos
+  // (o disjuntor é do cluster, não do produto), e o bloco abaixo tira o componente do score
+  // inteiro. Sem essa renormalização o `?? 0` seria o zero fabricado de sempre.
+  const simNormed = minMaxNorm(candidates.map((c) => c.sim_score ?? 0));
   const ctxNormed = minMaxNorm(candidates.map((c) => c.ctx_score));
 
+  // Similaridade indisponível ⇒ o componente SAI e os outros três dividem o peso dele.
+  //
+  // Por que renormalizar em vez de deixar `sim = 0` entrar: `minMaxNorm` de todos-zeros devolve
+  // 0,5 uniforme, então `wS` viraria uma constante somada a todo candidato — inofensiva no
+  // ranking, mas o `score_final` sairia numa escala DIFERENTE da dos clusters medidos, e ele é
+  // gravado em `recommendation_log` e comparado entre execuções. Redistribuir mantém o score
+  // somando os mesmos pesos e diz a verdade: decidimos com três sinais, não quatro.
+  const somaPesos = wA + wP + wS + wC;
+  const semSim = wA + wP + wC;
+  // `semSim > 0` guarda a config degenerada (todo peso em `w_sim`): aí não há para onde
+  // redistribuir e o fator cairia em divisão por zero.
+  const fator = simIndisponivel && semSim > 0 ? somaPesos / semSim : 1;
+  const pA = simIndisponivel ? wA * fator : wA;
+  const pP = simIndisponivel ? wP * fator : wP;
+  const pC = simIndisponivel ? wC * fator : wC;
+  const pS = simIndisponivel ? 0 : wS;
+
   for (let i = 0; i < candidates.length; i++) {
-    candidates[i].score_final = wA * assocNormed[i] + wP * eipNormed[i] + wS * simNormed[i] + wC * ctxNormed[i] - candidates[i].penalties;
+    candidates[i].score_final = pA * assocNormed[i] + pP * eipNormed[i] + pS * simNormed[i] + pC * ctxNormed[i] - candidates[i].penalties;
   }
 
   // Epsilon-greedy
@@ -347,7 +380,11 @@ async function recommend(
     eip: c.margin != null ? c.eip : null,
     event_type: "impression",
     mode: mode === 0 ? "profit" : "ltv",
-    weights: { wA, wP, wS, wC },
+    // Os pesos EFETIVAMENTE aplicados, não os de config: com similaridade indisponível o
+    // componente saiu e os outros três absorveram o peso dele. Gravar a config aqui faria o
+    // `recommendation_log` afirmar uma decomposição que não produziu este `score_final` — e é
+    // por este log que se audita ranking depois.
+    weights: { wA: pA, wP: pP, wS: pS, wC: pC },
   }));
 
   if (logRows.length > 0) {
@@ -362,7 +399,7 @@ async function recommend(
     meta: projetarMeta(
       candidates.length,
       mode === 0 ? "profit" : "ltv",
-      { wA, wP, wS, wC },
+      { wA: pA, wP: pP, wS: pS, wC: pC },
       topN,
       podeCusto,
     ),

@@ -14,8 +14,6 @@ import {
   carregarInsumos,
   CLUSTER_STATUS_COM_HISTORICO,
   TETO_CLUSTER_CLIENTES,
-  TETO_CLUSTER_COMPRAS,
-  TETO_CLUSTER_USUARIOS_AMOSTRA,
 } from "./recommend-leituras.ts";
 import { FalhaLeituraCritica } from "./leitura-critica.ts";
 import type { BancoPostgrest, QueryPostgrest, RespostaPostgrest } from "./paginate.ts";
@@ -68,6 +66,15 @@ function fakeDb(
     codigo?: string;
     nulaEm?: string;
     /**
+     * Resposta da `.rpc()`. O double NÃO reimplementa a agregação SQL de propósito: um double
+     * que refaz a lógica prova o double, não a função. O SQL de verdade está provado
+     * EXECUTANDO em `db/test-recommend-cluster-agregado.sh` (PG17, 25 asserts + 6
+     * falsificações). O que se prova AQUI é a TRADUÇÃO — que o TypeScript lê a resposta sem
+     * transformar ausência em zero, e que lança no que é malformado.
+     */
+    rpcResposta?: { data: unknown[] | null; error: { message: string; code?: string } | null };
+    erroEmRpc?: boolean;
+    /**
      * Roda DEPOIS de servir cada página, com a tabela e o nº da página. É o que torna a
      * escrita CONCORRENTE: mutar antes de servir só mudaria o estado inicial e a leitura
      * nem perceberia.
@@ -77,6 +84,7 @@ function fakeDb(
 ) {
   const registros: Registro[] = [];
   const paginasServidas: Record<string, number> = {};
+  const chamadasRpc: Array<{ fn: string; args: Record<string, unknown> }> = [];
 
   // Um registro por `from()` — ou seja, um por PÁGINA, que é o que permite afirmar que
   // TODA página (não só a primeira) foi pedida com `.order()` estável.
@@ -200,9 +208,21 @@ function fakeDb(
   // satisfaz sozinho o `from<T>` genérico da interface real.
   const db = {
     from: <T>(tabela: string) => query(tabela) as unknown as QueryPostgrest<T>,
+    rpc: <T>(fn: string, args: Record<string, unknown>) => {
+      chamadasRpc.push({ fn, args });
+      if (opts.erroEmRpc) {
+        return Promise.resolve({ data: null, error: { message: "boom do servidor", code: "57014" } });
+      }
+      // Sem `rpcResposta` explícita: uma linha plausível, para os testes que não são sobre a RPC.
+      const r = opts.rpcResposta ??
+        { data: [{ denominador: 3, observados: 2, produtos: { p1: 2 }, truncado: false }], error: null };
+      return Promise.resolve(r) as unknown as PromiseLike<
+        { data: T[] | null; error: { message: string; code?: string | null } | null }
+      >;
+    },
   } as BancoPostgrest;
 
-  return { db, registros };
+  return { db, registros, chamadasRpc };
 }
 
 // ── Fixtures dimensionadas pela PROD medida em 2026-08-20 via psql-ro ──────────────────
@@ -405,60 +425,121 @@ function linhasCluster(
   }));
 }
 
-Deno.test("cluster: .limit() é amostra deliberada, mas pedida com .order('id') — reprodutível", async () => {
+// O nome e os parâmetros são CONTRATO com a migration 20260822000358 — se um lado mudar
+// sozinho, a edge chama uma função que não existe e o `sim` some em runtime, não no CI.
+const RPC_CLUSTER = "recommend_cluster_agregado";
+
+Deno.test("cluster: chama a RPC de agregação com o nome e os parâmetros da migration", async () => {
+  const { db, chamadasRpc } = fakeDb({});
+  await carregarCluster(db, "critico");
+  assertEquals(chamadasRpc.length, 1, "não chamou a RPC exatamente uma vez");
+  assertEquals(chamadasRpc[0].fn, RPC_CLUSTER, "nome da RPC divergiu da migration");
+  assertEquals(chamadasRpc[0].args.p_health_class, "critico");
+  assertEquals(chamadasRpc[0].args.p_teto_clientes, TETO_CLUSTER_CLIENTES);
+});
+
+Deno.test("cluster: a agregação NÃO volta para o TypeScript (era ela que trazia o teto junto)", async () => {
+  // O defeito consertado era estrutural: agregar no edge obrigava a LER as linhas, e ler linhas
+  // obrigava a um teto. Se alguém reintroduzir a leitura de `order_items` aqui, o teto volta
+  // atrás dela — por isso o assert é sobre a AUSÊNCIA da leitura, não sobre o resultado.
   const { db, registros } = fakeDb({
     farmer_client_scores: scoresDoCluster(6185),
-    order_items: itens(300, "u00000"),
+    order_items: itens(5000, "u00000"),
   });
-  const { clusterUserIds } = await carregarCluster(db, "critico");
-  assertEquals(clusterUserIds.length, 100, "teto do cluster mudou sem o teste saber");
-  const semOrdem = registros.filter((r) => r.limit !== null && r.order !== "id");
-  if (semOrdem.length > 0) {
-    throw new Error(`amostra sem ordem estável em: ${semOrdem.map((r) => r.tabela).join(", ")}`);
+  await carregarCluster(db, "critico");
+  const lidas = registros.map((r) => r.tabela);
+  for (const t of ["order_items", "farmer_client_scores"]) {
+    if (lidas.includes(t)) {
+      throw new Error(`carregarCluster voltou a ler ${t} linha a linha — o teto volta junto`);
+    }
   }
 });
 
-Deno.test("cluster: erro em farmer_client_scores LANÇA (sim_score não some em silêncio)", async () => {
-  const { db } = fakeDb({ farmer_client_scores: scoresDoCluster(10) }, { erroEm: "farmer_client_scores" });
-  await assertLanca(() => carregarCluster(db, "critico"), "cluster");
+Deno.test("cluster: o agregado de 1.312 produtos volta INTEIRO (uma linha não passa pelo cap de 1.000)", async () => {
+  // Esta é a armadilha que quase reabriu o defeito. Em prod o agregado tem 957 / 1.312 / 1.109
+  // produtos por cluster, e o PostgREST capa em 1.000 EM SILÊNCIO — inclusive `.rpc()`. Uma RPC
+  // linha-por-produto truncaria DOIS dos três clusters hoje. O double capa em `CAP_POSTGREST`
+  // igual ao real, então este teste falharia se o contrato voltasse a ser linha-por-produto.
+  const muitos: Record<string, number> = {};
+  for (let i = 0; i < 1312; i++) muitos[`p${String(i).padStart(5, "0")}`] = (i % 40) + 1;
+  const { db } = fakeDb({}, {
+    rpcResposta: { data: [{ denominador: 348, observados: 334, produtos: muitos, truncado: false }], error: null },
+  });
+  const r = await carregarCluster(db, "atencao");
+  assertEquals(Object.keys(r.clientesPorProduto ?? {}).length, 1312, "o agregado voltou truncado");
+  assertEquals(r.denominador, 348);
+  assertEquals(r.observados, 334);
 });
 
-Deno.test("cluster: erro em order_items LANÇA", async () => {
-  const { db } = fakeDb({ farmer_client_scores: scoresDoCluster(10), order_items: itens(10, "u00000") }, { erroEm: "order_items" });
-  await assertLanca(() => carregarCluster(db, "critico"), "compras do cluster");
-});
-
-Deno.test("cluster vazio: nenhuma compra buscada e nenhum erro (health_class sem ninguém)", async () => {
-  const { db, registros } = fakeDb({ farmer_client_scores: scoresDoCluster(5) });
-  const r = await carregarCluster(db, "misto");
-  assertEquals(r.clusterUserIds.length, 0);
-  assertEquals(r.clusterPurchases.length, 0);
-  // `.in()` com lista vazia é round-trip inútil — e no PostgREST real é `in.()`, forma degenerada.
-  assertEquals(registros.filter((x) => x.tabela === "order_items").length, 0, "buscou compras de cluster vazio");
-});
-
-Deno.test("cluster: a amostra NO TETO é SINALIZADA (cap deliberado não é cap silencioso)", async () => {
-  const muitos = Array.from({ length: TETO_CLUSTER_COMPRAS + 500 }, (_, i) => ({
-    id: `i${String(i).padStart(6, "0")}`,
-    product_id: `p${i % 50}`,
-    customer_user_id: `u${String(i % TETO_CLUSTER_USUARIOS_AMOSTRA).padStart(5, "0")}`,
-  }));
-  const { db } = fakeDb({ farmer_client_scores: scoresDoCluster(60), order_items: muitos });
+Deno.test("cluster: denominador é a POPULAÇÃO, e `observados` DIVERGE dele (não é o mesmo número)", async () => {
+  // Em prod divergem: 779 vs 633 em `critico`. Se o contrato colapsasse os dois num campo só, a
+  // escolha de denominador viraria invisível — e ela muda quais produtos cruzam os cortes.
+  const { db } = fakeDb({}, {
+    rpcResposta: { data: [{ denominador: 779, observados: 633, produtos: { p1: 75 }, truncado: false }], error: null },
+  });
   const r = await carregarCluster(db, "critico");
-  assertEquals(r.clusterPurchases.length, TETO_CLUSTER_COMPRAS);
-  assertEquals(r.amostraNoTeto, true, "o teto da amostra não foi exposto no contrato");
+  assertEquals(r.denominador, 779, "denominador deixou de ser a população elegível");
+  assertEquals(r.observados, 633, "observados colapsou no denominador");
+  if (r.denominador === r.observados) throw new Error("os dois campos viraram o mesmo número");
+});
+
+Deno.test("cluster TRUNCADO: os campos medidos vêm NULL, não 0 nem {} (ausente ≠ zero)", async () => {
+  // O coração da entrega. `observados: 0` diria "medi e ninguém comprou"; `produtos: {}` diria a
+  // mesma coisa de outra forma. Os dois seriam o zero fabricado que o teto de 1.000 produzia.
+  const { db } = fakeDb({}, {
+    rpcResposta: { data: [{ denominador: 90000, observados: null, produtos: null, truncado: true }], error: null },
+  });
+  const r = await carregarCluster(db, "critico");
+  assertEquals(r.truncado, true);
+  assertEquals(r.observados, null, "observados virou número sob truncagem");
+  assertEquals(r.clientesPorProduto, null, "produtos virou {} sob truncagem — é o zero fabricado");
+  assertEquals(r.denominador, 90000, "o denominador é FATO mesmo truncado — some junto era perda de sinal");
+});
+
+Deno.test("cluster VAZIO é estado legítimo e distinto de truncado (aqui o vazio É medido)", async () => {
+  const { db } = fakeDb({}, {
+    rpcResposta: { data: [{ denominador: 0, observados: 0, produtos: {}, truncado: false }], error: null },
+  });
+  const r = await carregarCluster(db, "misto");
+  assertEquals(r.denominador, 0);
+  assertEquals(r.observados, 0, "cluster vazio observou 0 DE VERDADE — aqui 0 não é fabricação");
+  assertEquals(r.clientesPorProduto, {}, "cluster vazio devolve {} medido, não null");
+  assertEquals(r.truncado, false);
+});
+
+Deno.test("cluster: erro na RPC LANÇA (sim_score não some em silêncio)", async () => {
+  const { db } = fakeDb({}, { erroEmRpc: true });
+  const e = await assertLanca(() => carregarCluster(db, "critico"), "cluster");
+  // Domínio FECHADO: o `catch` do Deno.serve devolve `error.message` no CORPO da resposta, e o
+  // MESSAGE do Postgres pode interpolar valor de linha.
+  if (e.message.includes("boom do servidor")) {
+    throw new Error(`o texto do servidor vazou na mensagem pública: ${e.message}`);
+  }
+});
+
+Deno.test("cluster: `data: null` sem erro LANÇA — malformada não é cluster vazio", async () => {
+  const { db } = fakeDb({}, { rpcResposta: { data: null, error: null } });
+  await assertLanca(() => carregarCluster(db, "critico"), "rpc malformada");
+});
+
+Deno.test("cluster: RPC de UMA linha que volta ZERO linhas LANÇA (não vira denominador 0)", async () => {
+  // Sem este assert, `data: []` cairia num `?? {}` e o cluster inteiro pareceria vazio — um
+  // denominador 0 fabricado a partir de uma resposta quebrada.
+  const { db } = fakeDb({}, { rpcResposta: { data: [], error: null } });
+  await assertLanca(() => carregarCluster(db, "critico"), "rpc sem linha");
 });
 
 // ── 7. Os buracos que a 2ª rodada do Codex encontrou nesta própria suíte ───────────────
 
-Deno.test("tetos pinados por LITERAL — comparar com a constante importada é tautologia", () => {
-  // Subir TETO_CLUSTER_CLIENTES para 1.000 mantinha tudo verde e dividia `sim` por 1.000
-  // enquanto as compras seguiam vindo de 50: os cortes de cluster cairiam 10×.
-  assertEquals(TETO_CLUSTER_CLIENTES, 100, "teto de clientes do cluster mudou");
-  assertEquals(TETO_CLUSTER_USUARIOS_AMOSTRA, 50, "teto de usuários amostrados mudou");
-  assertEquals(TETO_CLUSTER_COMPRAS, 1000, "teto de compras da amostra mudou");
-  if (TETO_CLUSTER_USUARIOS_AMOSTRA > TETO_CLUSTER_CLIENTES) {
-    throw new Error("amostrar mais usuários do que o cluster tem é incoerente");
+Deno.test("teto pinado por LITERAL — comparar com a constante importada é tautologia", () => {
+  // O teto mudou de NATUREZA nesta entrega: era amostra (100 lidos / 50 medidos / 1.000 linhas
+  // de compra), virou DISJUNTOR de custo. Baixá-lo para perto da população real (779 no maior
+  // cluster) faria a RPC recusar medir em silêncio e `sim` sumir do ranking em produção.
+  assertEquals(TETO_CLUSTER_CLIENTES, 5000, "teto do disjuntor do cluster mudou");
+  // Folga sobre o maior cluster medido em prod (779 elegíveis em `critico`, 2026-08-22). Se um
+  // dia isto apertar, é decisão de produto — não pode acontecer por acidente.
+  if (TETO_CLUSTER_CLIENTES < 779 * 2) {
+    throw new Error("o disjuntor ficou perto demais da população real medida (779)");
   }
 });
 
@@ -488,14 +569,6 @@ Deno.test("toda ordenação é ASCENDENTE — `ascending:false` é ordem estáve
   }
 });
 
-Deno.test("cluster: `ascending:false` mudaria QUAIS clientes entram (o double ordena de verdade)", async () => {
-  const { db } = fakeDb({ farmer_client_scores: scoresDoCluster(6185) });
-  const { clusterUserIds } = await carregarCluster(db, "critico");
-  // Prova que a ordenação do double MORDE: ascendente pega o menor id, não um qualquer.
-  assertEquals(clusterUserIds[0], "u00000", "a amostra não veio do começo da ordem");
-  assertEquals(clusterUserIds[99], "u00099", "a amostra não é contígua na ordem pedida");
-});
-
 for (const tabela of ["omie_products", "product_costs", "order_items", "recommendation_config"]) {
   Deno.test(`\`data:null\` SEM error em ${tabela} LANÇA — malformada ≠ lista vazia`, async () => {
     const { db } = fakeDb(bancoCheio(), { nulaEm: tabela });
@@ -506,12 +579,13 @@ for (const tabela of ["omie_products", "product_costs", "order_items", "recommen
   });
 }
 
-Deno.test("cluster: `data:null` SEM error LANÇA — é o que falsifica o exigirLista", async () => {
-  const { db } = fakeDb({ farmer_client_scores: scoresDoCluster(10) }, { nulaEm: "farmer_client_scores" });
-  const erro = await assertLanca(() => carregarCluster(db, "critico"), "cluster null");
+Deno.test("cluster: a falha da RPC é FalhaLeituraCritica, com o `code` preservado", async () => {
+  const { db } = fakeDb({}, { erroEmRpc: true });
+  const erro = await assertLanca(() => carregarCluster(db, "critico"), "cluster rpc");
   if (!(erro instanceof FalhaLeituraCritica)) {
     throw new Error(`esperava FalhaLeituraCritica, veio ${erro.name}: ${erro.message}`);
   }
+  assertEquals(erro.codigo, "57014", "o code do PostgREST se perdeu no envelope da RPC");
 });
 
 Deno.test("o `code` do PostgREST SOBREVIVE ao envelope, e o texto do servidor NÃO", async () => {
@@ -522,20 +596,6 @@ Deno.test("o `code` do PostgREST SOBREVIVE ao envelope, e o texto do servidor N�
   assertEquals(erro.codigo, "57014", "o code do PostgREST se perdeu no envelope");
   if (!erro.message.includes("57014")) throw new Error(`o code não chegou à mensagem: ${erro.message}`);
   if (erro.message.includes("boom")) throw new Error(`texto do servidor vazou: ${erro.message}`);
-});
-
-Deno.test("`amostraNoTeto` diz só o que sabe: EXATAMENTE no teto, sem nada cortado, ainda é true", async () => {
-  // O nome antigo ("saturada") afirmava "há mais compras" — com 1.000 existentes e 1.000
-  // lidas, nada foi cortado. Provar `true` aqui é o que trava o nome honesto no lugar.
-  const exatas = Array.from({ length: TETO_CLUSTER_COMPRAS }, (_, i) => ({
-    id: `i${String(i).padStart(6, "0")}`,
-    product_id: `p${i % 50}`,
-    customer_user_id: `u${String(i % TETO_CLUSTER_USUARIOS_AMOSTRA).padStart(5, "0")}`,
-  }));
-  const { db } = fakeDb({ farmer_client_scores: scoresDoCluster(60), order_items: exatas });
-  const r = await carregarCluster(db, "critico");
-  assertEquals(r.clusterPurchases.length, TETO_CLUSTER_COMPRAS);
-  assertEquals(r.amostraNoTeto, true, "no teto tem de ser sinalizado, mesmo sem corte");
 });
 
 // ── 8. Escrita CONCORRENTE durante a leitura paginada ────────────────────────────────
@@ -594,106 +654,21 @@ Deno.test("omie_products sob flip de ativo: nenhum SKU ativo some do catálogo",
 // linhas, 5.406 delas (87%) `sem_historico`. Como `.order("id")` sobre UUID é sorteio estável,
 // a amostra de 50 pegava ~42 linhas vazias — que contam no denominador e nunca no numerador.
 
-Deno.test("amostra: `sem_historico` FICA DE FORA mesmo tendo os MENORES ids (87% do cluster em prod)", async () => {
-  // Os `sem_historico` recebem os ids MENORES de propósito: sem o filtro eles VENCEM o
-  // `.order("id").limit(100)` e tomam a amostra inteira. É a falsificação embutida — apagar
-  // o `.in(...)` de `carregarCluster` faz este teste ficar vermelho, não verde por sorte.
-  const vazias = linhasCluster(200, { prefixoId: "a", prefixoUser: "v", status: "sem_historico" });
-  const comHistorico = linhasCluster(80, { prefixoId: "z", prefixoUser: "u", status: "ativo" });
-  const { db } = fakeDb({
-    farmer_client_scores: [...vazias, ...comHistorico],
-    order_items: itens(10, "u00000"),
-  });
-  const r = await carregarCluster(db, "critico");
-  assertEquals(r.clusterUserIds.length, 80, "linha `sem_historico` entrou na amostra");
-  const intrusos = r.clusterUserIds.filter((id) => id.startsWith("v"));
-  if (intrusos.length > 0) {
-    throw new Error(`cliente sem histórico no cluster (${intrusos.length}) — o denominador volta a inflar`);
-  }
-});
+// ⚠️ ONDE ESTA PROVA FOI PARAR. Quatro testes viviam aqui exercitando a whitelist contra
+// `carregarCluster` (sem_historico fora, NULL fora, status desconhecido fora, `stale` DENTRO).
+// O filtro migrou para o SQL da RPC, então eles não têm mais o que exercitar neste runtime — e
+// mantê-los contra um double que reimplementasse o SQL provaria o double. A cobertura não caiu,
+// mudou de camada: `db/test-recommend-cluster-agregado.sh` prova as quatro EXECUTANDO em PG17
+// (assert A4) e a falsificação F2 abre a whitelist e exige o vermelho. O que sobra aqui é o
+// espelho — a constante que os dois gates de paridade comparam.
 
-Deno.test("amostra: `sales_history_status` NULL fica de fora — a coluna é NULLABLE em prod", async () => {
-  // Zero nulos hoje, mas o schema permite. A whitelist POSITIVA decide isto explicitamente;
-  // um `.neq('sem_historico')` excluiria NULL também, só que por efeito colateral invisível
-  // (negação no PostgREST é NULL-blind) — e deixaria entrar um status NOVO de "sem venda".
-  const nulos = linhasCluster(60, { prefixoId: "a", prefixoUser: "n", status: null });
-  const ativos = linhasCluster(30, { prefixoId: "z", prefixoUser: "u", status: "ativo" });
-  const { db } = fakeDb({ farmer_client_scores: [...nulos, ...ativos], order_items: itens(5, "u00000") });
-  const r = await carregarCluster(db, "critico");
-  assertEquals(r.clusterUserIds.length, 30, "linha com status NULL entrou na amostra");
-});
-
-Deno.test("amostra: um status DESCONHECIDO fica de fora (whitelist falha FECHADA)", async () => {
-  // Se um dia nascer `sem_venda_valida`, ele NÃO deve entrar sozinho na amostra e reabrir o
-  // defeito em silêncio. Whitelist exclui até alguém decidir; `.neq` incluiria.
-  const novos = linhasCluster(60, { prefixoId: "a", prefixoUser: "x", status: "status_que_nao_existia" });
-  const ativos = linhasCluster(30, { prefixoId: "z", prefixoUser: "u", status: "ativo" });
-  const { db } = fakeDb({ farmer_client_scores: [...novos, ...ativos], order_items: itens(5, "u00000") });
-  const r = await carregarCluster(db, "critico");
-  assertEquals(r.clusterUserIds.length, 30, "status desconhecido entrou na amostra sem decisão");
-});
-
-Deno.test("amostra: `stale` ENTRA — são 705 dos 779 compradores `critico`, cortá-los esvazia o cluster", async () => {
-  // Reduzir a whitelist a `["ativo"]` deixaria 74 clientes em `critico` (medido em prod) e
-  // manteria os outros testes verdes. Este é o que morde.
-  const { db } = fakeDb({
-    farmer_client_scores: linhasCluster(40, { prefixoId: "s", prefixoUser: "u", status: "stale" }),
-    order_items: itens(10, "u00000"),
-  });
-  const r = await carregarCluster(db, "critico");
-  assertEquals(r.clusterUserIds.length, 40, "`stale` foi excluído — o cluster perde 90% dos compradores");
-});
-
-Deno.test("whitelist pinada por LITERAL — comparar com a constante importada é tautologia", () => {
-  // Espelho de `SalesHistoryStatus` (src/lib/scoring/salesHistoryStatus.ts) menos
-  // `sem_historico`. A paridade com a união de lá é gate de vitest
-  // (src/__tests__/edge-money-path-invariants.test.ts): daqui o Deno não enxerga `src/`.
-  assertEquals([...CLUSTER_STATUS_COM_HISTORICO], ["ativo", "stale"], "a whitelist da amostra mudou");
-});
-
-Deno.test("`usuariosAmostrados` é o DENOMINADOR — e DIFERE de `clusterUserIds`, que era o bug", async () => {
-  const { db } = fakeDb({
-    farmer_client_scores: scoresDoCluster(6185),
-    order_items: itens(300, "u00000"),
-  });
-  const r = await carregarCluster(db, "critico");
-  assertEquals(r.clusterUserIds.length, TETO_CLUSTER_CLIENTES, "leu um número de clientes diferente do teto");
-  assertEquals(r.usuariosAmostrados.length, TETO_CLUSTER_USUARIOS_AMOSTRA, "amostrou um número diferente do teto");
-  // A DIFERENÇA entre os dois é o defeito: o consumidor dividia por 100 o que contou sobre 50.
-  if (r.usuariosAmostrados.length === r.clusterUserIds.length) {
-    throw new Error("os dois tetos coincidiram — este teste deixou de vigiar o denominador");
-  }
-  assertEquals(
-    r.usuariosAmostrados.join(","),
-    r.clusterUserIds.slice(0, TETO_CLUSTER_USUARIOS_AMOSTRA).join(","),
-    "`usuariosAmostrados` não é o prefixo exato de quem foi lido",
-  );
-});
-
-Deno.test("as compras são pedidas SÓ dos amostrados — o `.in()` leva 50 ids, não 100", async () => {
-  const { db, registros } = fakeDb({
-    farmer_client_scores: scoresDoCluster(6185),
-    order_items: itens(300, "u00000"),
-  });
-  await carregarCluster(db, "critico");
-  const compras = registros.find((r) => r.tabela === "order_items");
-  if (!compras) throw new Error("não pediu as compras do cluster");
-  if (!compras.filtros.includes(`in:customer_user_id=${TETO_CLUSTER_USUARIOS_AMOSTRA}`)) {
-    throw new Error(`o \`.in()\` das compras não levou ${TETO_CLUSTER_USUARIOS_AMOSTRA} ids: ${compras.filtros.join(", ")}`);
-  }
-});
-
-Deno.test("o filtro de histórico é PEDIDO ao banco, não aplicado depois no cliente", async () => {
-  // Filtrar em memória depois do `.limit(100)` devolveria menos de 100 elegíveis e voltaria a
-  // misturar os dois eixos: o teto tem de cair sobre quem JÁ passou pelo filtro.
-  const { db, registros } = fakeDb({
-    farmer_client_scores: scoresDoCluster(6185),
-    order_items: itens(300, "u00000"),
-  });
-  await carregarCluster(db, "critico");
-  const cluster = registros.find((r) => r.tabela === "farmer_client_scores");
-  if (!cluster) throw new Error("não pediu o cluster");
-  if (!cluster.filtros.includes(`in:sales_history_status=${CLUSTER_STATUS_COM_HISTORICO.length}`)) {
-    throw new Error(`o filtro de histórico não foi para a query: ${cluster.filtros.join(", ")}`);
-  }
+Deno.test("a whitelist de status ainda é ESPELHO — o valor mudou de lugar, não de dono", () => {
+  // O filtro migrou para o SQL da RPC (provado EXECUTANDO em db/test-recommend-cluster-agregado.sh:
+  // 'sem_historico' e NULL fora do denominador, com falsificação). A constante segue aqui porque
+  // ela é o espelho que o gate de paridade compara — com `SalesHistoryStatus` de src/ no vitest, e
+  // com o literal da migration. Se ela sumir, os dois gates ficam sem um dos lados.
+  // Literal, não comparação com a própria constante: o `as const` já faz o TypeScript rejeitar
+  // `sem_historico` aqui em tempo de compilação, então um assert sobre isso seria tautologia.
+  // O que este pino vigia é a MUDANÇA silenciosa do valor.
+  assertEquals([...CLUSTER_STATUS_COM_HISTORICO], ["ativo", "stale"], "a whitelist mudou");
 });

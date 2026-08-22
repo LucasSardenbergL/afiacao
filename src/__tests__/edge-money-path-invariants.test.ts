@@ -2732,7 +2732,7 @@ describe('guardrail money-path: denylist do universo de pedidos não divergiu en
 // ── Guardrail money-path: amostra e denominador do `sim_score` do motor de recomendação ──
 // Por que TEXTUAL e não Deno: `recommend/index.ts` importa `npm:@supabase/supabase-js@2` e
 // NUNCA roda sob `--no-remote`, então o consumo do denominador não é executável na suíte de
-// edge. O contrato (`usuariosAmostrados`, whitelist) é provado lá, em
+// edge. O contrato (denominador, `truncado`, whitelist) é provado lá, em
 // `supabase/functions/_shared/recommend-leituras_test.ts`; o que se prova AQUI é que o
 // consumidor de fato usa o campo certo — e que a whitelist do edge não sai de sincronia com a
 // união de `SalesHistoryStatus`, que é a fonte da verdade e mora em `src/`.
@@ -2740,6 +2740,10 @@ describe('guardrail money-path: denominador e amostra do sim_score (recommend)',
   const LEITURAS = 'supabase/functions/_shared/recommend-leituras.ts';
   const CONSUMIDOR = 'supabase/functions/recommend/index.ts';
   const FONTE_STATUS = 'src/lib/scoring/salesHistoryStatus.ts';
+  // A whitelist e a agregação migraram para o SQL: o gate precisa vigiar os DOIS lados do
+  // espelho, senão a migration pode divergir do edge sem ninguém ver (o CI não executa SQL).
+  const MIGRATION = 'supabase/migrations/20260822000358_recommend_cluster_agregado.sql';
+  const migration = read(MIGRATION);
   const leituras = read(LEITURAS);
   const consumidor = read(CONSUMIDOR);
   const fonteStatus = read(FONTE_STATUS);
@@ -2750,28 +2754,58 @@ describe('guardrail money-path: denominador e amostra do sim_score (recommend)',
     expect(fonteStatus).toContain('SalesHistoryStatus');
   });
 
-  it('DENOMINADOR: `clusterSize` conta os AMOSTRADOS, não os lidos (numerador vinha de 50, denominador de 100)', () => {
+  it('DENOMINADOR: `clusterSize` é a POPULAÇÃO do cluster vinda da RPC, não uma amostra', () => {
     const limpo = removerComentarios(consumidor);
-    expect(limpo, 'clusterSize deixou de sair de usuariosAmostrados — `sim` volta a sair pela metade')
-      .toMatch(/clusterSize\s*=\s*Math\.max\(\s*usuariosAmostrados\.length\s*,\s*1\s*\)/);
-    expect(limpo, 'REGRESSÃO: clusterSize voltou a contar clusterUserIds (os até 100 lidos)')
-      .not.toMatch(/clusterSize\s*=\s*Math\.max\(\s*clusterUserIds\.length/);
+    expect(limpo, 'clusterSize deixou de sair do denominador da RPC — `sim` volta a sair de amostra')
+      .toMatch(/clusterSize\s*=\s*Math\.max\(\s*denominador\s*,\s*1\s*\)/);
+    expect(limpo, 'REGRESSÃO: clusterSize voltou a contar uma amostra local')
+      .not.toMatch(/clusterSize\s*=\s*Math\.max\(\s*(clusterUserIds|usuariosAmostrados)\.length/);
   });
 
-  it('o consumidor DESESTRUTURA `usuariosAmostrados` do contrato (campo morto é cap silencioso com outro nome)', () => {
-    expect(removerComentarios(consumidor)).toMatch(/usuariosAmostrados[^=]*=\s*await\s+carregarCluster|\{[^}]*usuariosAmostrados[^}]*\}\s*=\s*await\s+carregarCluster/s);
-  });
-
-  it('AMOSTRA: o cluster filtra por histórico de venda na QUERY (whitelist positiva)', () => {
+  it('o teto de 1.000 LINHAS de compra não voltou: a agregação não é feita no edge', () => {
+    // O defeito consertado: agregar no TypeScript obriga a LER linhas, e ler linhas obriga a um
+    // teto — que zerava 5 clientes em `atencao` e 2 em `estavel` (medido em prod 2026-08-21).
     const limpo = removerComentarios(leituras);
-    expect(limpo, 'sumiu o filtro de histórico — 87% do cluster `critico` volta ao denominador')
-      .toMatch(/\.in\(\s*["']sales_history_status["']\s*,\s*CLUSTER_STATUS_COM_HISTORICO\s*\)/);
+    expect(limpo, 'a agregação do cluster tem de vir da RPC, não de um .limit() local')
+      .toMatch(/db\.rpc<[^>]*>\(\s*["']recommend_cluster_agregado["']/);
+    expect(limpo, 'carregarCluster voltou a ler order_items — o teto de linhas volta atrás disso')
+      .not.toMatch(/TETO_CLUSTER_COMPRAS/);
   });
 
-  it('a exclusão NÃO é por negação: `.neq`/`.not` em sales_history_status é NULL-blind e deixa entrar status novo', () => {
-    const limpo = removerComentarios(leituras);
-    expect(limpo, 'trocaram a whitelist por negação — NULL sai por efeito colateral e status novo ENTRA')
-      .not.toMatch(/\.(neq|not)\(\s*["']sales_history_status["']/);
+  it('TRUNCADO: o consumidor DESLIGA o componente em vez de tratar ausência como zero', () => {
+    const limpo = removerComentarios(consumidor);
+    expect(limpo, 'sumiu o ramo de indisponibilidade — o disjuntor vira cap silencioso de novo')
+      .toMatch(/simIndisponivel\s*=\s*truncado\s*\|\|\s*clientesPorProduto\s*===\s*null/);
+    expect(limpo, '`sim` voltou a ser number puro: ausência de medição vira 0 e fabrica "ninguém compra"')
+      .toMatch(/const\s+sim:\s*number\s*\|\s*null\s*=\s*simIndisponivel\s*\?\s*null/);
+    // Sem a renormalização, o peso do componente ausente ficaria distribuído por acidente.
+    expect(limpo, 'a renormalização dos pesos sumiu — o score muda de escala em silêncio')
+      .toMatch(/const\s+fator\s*=\s*simIndisponivel/);
+  });
+
+  it('PARIDADE edge↔migration: a whitelist do SQL é a MESMA do TypeScript', () => {
+    // Os dois lados são espelho: o edge nomeia a constante, o SQL repete os literais. Se um
+    // mudar sozinho, o cluster medido deixa de ser o cluster filtrado — e nada falha, só o
+    // número fica errado.
+    const doEdge = [...(removerComentarios(leituras)
+      .match(/CLUSTER_STATUS_COM_HISTORICO\s*=\s*\[([^\]]*)\]/)?.[1] ?? '')
+      .matchAll(/["']([^"']+)["']/g)].map((x) => x[1]).sort();
+    const mSql = migration.match(/sales_history_status\s+IN\s*\(([^)]*)\)/i);
+    expect(mSql, 'não achei a whitelist na migration — ela é metade do espelho').not.toBeNull();
+    const doSql = [...mSql![1].matchAll(/'([^']+)'/g)].map((x) => x[1]).sort();
+    expect(doEdge.length, 'o parse do edge veio vazio — o gate ficaria verde por cegueira')
+      .toBeGreaterThan(0);
+    expect(doSql, 'a whitelist da migration divergiu da do edge').toEqual(doEdge);
+  });
+
+  it('a migration NÃO exclui por negação (NULL-blind vale em SQL também)', () => {
+    expect(migration, 'trocaram a whitelist por negação — NULL sai por efeito colateral invisível')
+      .not.toMatch(/sales_history_status\s*(<>|!=|NOT\s+IN)/i);
+  });
+
+  it('a migration DEDUPLICA (cliente,produto) — sem isso o numerador conta recompra', () => {
+    expect(migration, 'sumiu o DISTINCT: comprador que recompra passa a valer por vários clientes')
+      .toMatch(/SELECT\s+DISTINCT\s+i\.customer_user_id,\s*i\.product_id/);
   });
 
   it('PARIDADE: a whitelist do edge é exatamente a união `SalesHistoryStatus` menos `sem_historico`', () => {
