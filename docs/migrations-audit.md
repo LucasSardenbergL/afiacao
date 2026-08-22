@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **480** custom migrations totais
-- **1620** objetos esperados (criados por estas migrations)
+- **481** custom migrations totais
+- **1624** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 493
+  - `function`: 495
   - `rls_policy`: 400
-  - `index`: 243
+  - `index`: 244
   - `cron_job`: 164
   - `table`: 156
-  - `trigger`: 86
+  - `trigger`: 87
   - `view`: 74
   - `enum_value`: 4
 
@@ -3988,6 +3988,15 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20260820225840_farmer_assoc_rules_escritor_unico.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260821194411_farmer_recomendacao_desfecho.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.frec_desfecho_imutavel` | — |
+| `function` | `public.farmer_recomendacao_registrar_desfecho` | — |
+| `index` | `public.idx_frec_desfecho` | `farmer_recommendations` |
+| `trigger` | `public.trg_frec_desfecho_imutavel` | `farmer_recommendations` |
 
 ### `20260821200000_farmer_assoc_rules_segmento.sql`
 
