@@ -18,7 +18,9 @@ const CHAVES_DE_ERRO = new Set([
   "error", "isError", "isLoadingError", "isRefetchError", "failureReason", "status",
 ]);
 
-export type FormaDeSilencio = "return-null" | "ternario-null" | "jsx-&&";
+// Sem `export`: o knip reprova export sem consumidor, e ninguém precisa NOMEAR a forma —
+// ela é alcançável pela estrutura de `SitioColapso`, que é o que o gate consome.
+type FormaDeSilencio = "return-null" | "ternario-null" | "jsx-&&";
 
 export type SitioColapso = {
   hook: string;
