@@ -23,6 +23,7 @@ import * as processNfe from "../process-nfe/versao.ts";
 import * as capturaPrecos from "../sayerlack-captura-precos/versao.ts";
 import * as deparaAuto from "../reposicao-depara-sayerlack-auto/versao.ts";
 import * as omieCliente from "../omie-cliente/versao.ts";
+import * as recommendMod from "../recommend/versao.ts";
 import * as cashflow from "../fin-cashflow-engine/versao.ts";
 import * as syncEstoque from "../omie-sync-estoque/versao.ts";
 import * as syncNfes from "../omie-sync-nfes-recebidas/versao.ts";
@@ -62,10 +63,17 @@ const EDGES: Array<{ nome: string; mod: ModSonda }> = [
   { nome: "omie-sync-estoque", mod: syncEstoque },
   { nome: "omie-sync-nfes-recebidas", mod: syncNfes },
   { nome: "omie-nfe-webhook", mod: nfeWebhook },
+  // Quarta leva (#canaria-recommend): mesma regra da terceira — escrita money-path no NOSSO
+  // banco. `recommend` grava `recommendation_log`, que é o SENSOR DE DESFECHO do motor
+  // (#1851): sondar sem guarda inventaria uma recomendação que ninguém fez e enviesaria a
+  // própria medição de acerto. Não é leitura pura — por isso não cai na exceção declarada
+  // acima (fin-funding, fin-valor-engine).
+  { nome: "recommend", mod: recommendMod },
 ];
 
 /** As cinco da terceira leva — os gates estruturais abaixo varrem todas. */
 const ESCRITA_NOSSO_BANCO = [
+  "recommend",
   "omie-cliente",
   "fin-cashflow-engine",
   "omie-sync-estoque",
@@ -256,6 +264,27 @@ function trechoDoHandler(nome: string): string {
   if (i < 0) throw new Error(`${nome}: 'Deno.serve(' não encontrado — o gate mediu o arquivo errado`);
   return codigo.slice(i);
 }
+
+Deno.test("toda edge instrumentada RESPONDE à sonda (chamar classificarSonda não basta)", () => {
+  // Buraco encontrado ao falsificar a canária da `recommend`: apagar a linha que RESPONDE
+  // (`if (decisao.tipo === "sonda") return ...respostaSonda(VERSAO)`) deixava todos os gates
+  // VERDES. Os vizinhos afirmam que `classificarSonda` é CHAMADA e que vem antes do
+  // `createClient` — nenhum afirma que a decisão vira RESPOSTA. Uma edge assim classifica a
+  // sonda e seguve para o fluxo real: o efeito caro roda, e quem sondou lê o resultado do
+  // disparo como se fosse diagnóstico. É o pior desfecho que a sonda existe para evitar,
+  // passando por instrumentado.
+  for (const { nome } of EDGES) {
+    const codigo = codigoDaEdge(nome);
+    // `\w*` porque a resposta pode ter nome próprio: `generate-tactical-plan` exporta
+    // `respostaSondaTactical()`. Exigir o nome exato reprovava uma edge que responde certo.
+    if (!/respostaSonda\w*\(/.test(codigo)) {
+      throw new Error(`${nome}: classifica a sonda mas nunca chama respostaSonda — o diagnóstico não sai`);
+    }
+    if (!/["\x27]sonda["\x27]/.test(codigo)) {
+      throw new Error(`${nome}: não ramifica no tipo "sonda" — a decisão é calculada e descartada`);
+    }
+  }
+});
 
 Deno.test("terceira leva: a sonda decide por classificarSonda, não por `=== true` cru", () => {
   // Mesmo motivo do gate da generate-bundle-argument: o founder invoca do SQL Editor, onde
