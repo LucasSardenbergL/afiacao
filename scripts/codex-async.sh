@@ -132,8 +132,12 @@ for backoff in "${backoffs[@]}"; do
     exit 78
   fi
   # 400 de requisição inválida é PERMANENTE: repetir manda exatamente o mesmo request.
-  # Explícito (e não "sobrou, então para") para não depender de nenhum regex falhar por acaso.
+  # Explícito (e não "sobrou, então para"): um ramo que só faz `break` é indistinguível do
+  # break final — não dá para testar nem para ler no stderr qual foi o julgamento.
   if classifica 'invalid_request_error|unsupported_parameter|invalid_value'; then
+    echo "ERRO_PERMANENTE: o servidor recusou o pedido (HTTP 400). Não é cota nem falha" >&2
+    echo "  transitória — repetir manda exatamente o mesmo request. Ajuste o pedido (modelo," >&2
+    echo "  reasoning, tamanho do prompt) e re-rode. Motivo cru abaixo." >&2
     break
   fi
   # transitório (rede/limite/kill do watchdog) → tenta de novo.

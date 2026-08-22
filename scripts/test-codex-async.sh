@@ -35,12 +35,18 @@ case "$CODEX_STUB_MODE" in
   ratelimit) n=$(wc -l < "$CODEX_STUB_COUNT" | tr -d ' ')
              if [ "$n" -ge 2 ]; then echo "parecer pós-retry"; exit 0
              else echo "429 rate limit exceeded" >&2; exit 1; fi ;;
+  # 400 permanente SEM marcador nenhum: nao casa cota, modelo, nem invalid_request_error.
+  # E o unico caso em que so a REMOCAO DO ECO decide — por isso ele testa o bug original.
+  generico400) echo 'ERROR: {"type":"error","status":400,"error":{"message":"malformed request"}}' >&2; exit 1 ;;
   # 400 permanente que NAO e cota nem modelo-recusado (repetir manda o mesmo request)
   permanente) echo 'ERROR: {"type":"error","status":400,"error":{"type":"invalid_request_error","message":"Unsupported parameter: reasoning.effort is not supported with this model."}}' >&2; exit 1 ;;
   # 5xx de VERDADE, em linha de ERRO: transitorio legitimo, tem de continuar retentando
   erro5xx)   n=$(wc -l < "$CODEX_STUB_COUNT" | tr -d ' ')
              if [ "$n" -ge 2 ]; then echo "parecer pos-503"; exit 0
              else echo 'ERROR: {"type":"error","status":503,"error":{"message":"upstream unavailable"}}' >&2; exit 1; fi ;;
+  # numero 500-599 DENTRO da mensagem de erro, sem ser status HTTP (contagem de tokens).
+  # Isola a ancora: aqui remover o eco do prompt nao salva — o "5120" esta na linha de ERRO.
+  num5xx)    echo 'ERROR: {"type":"error","status":400,"error":{"type":"context_length_exceeded","message":"prompt has 5120 tokens; maximum for this model is 4096"}}' >&2; exit 1 ;;
   trava)     sleep 30 ;;
   *)         echo "erro desconhecido" >&2; exit 1 ;;
 esac
@@ -122,9 +128,9 @@ prompt_numerado="revise este trecho:
    511	const a = 1;
    512	const b = 2;
    513	const c = 3;"
-run permanente "$prompt_numerado" >/dev/null 2>&1; rc=$?
+run generico400 "$prompt_numerado" >/dev/null 2>&1
 if [ "$(invocacoes)" -eq 1 ]; then echo "  ok    400 permanente NÃO retenta (1 invocação)"
-else echo "  FAIL  400 permanente retentou ($(invocacoes)×) — eco do prompt virou 'transitório'"; fail=1; fi
+else echo "  FAIL  400 permanente retentou ($(invocacoes)x) — eco do prompt virou transitorio"; fail=1; fi
 
 # (b) o inverso: prompt que FALA de cota, erro real transitório → tem de retentar
 run ratelimit "por que deu 'You have reached your usage limit' ontem?" >/dev/null 2>&1; rc=$?
@@ -143,6 +149,20 @@ run erro5xx "x" >/dev/null 2>&1; rc=$?
 caso_exit "503 real → retry → 0" 0 "$rc"
 if [ "$(invocacoes)" -eq 2 ]; then echo "  ok    503 real ainda retenta (2 invocações)"
 else echo "  FAIL  invocações=$(invocacoes), esperava 2 — perdeu o retry legítimo"; fail=1; fi
+
+# (e2) o ramo do 400 de requisição inválida tem de DIZER o julgamento — um ramo que só
+#      faz `break` é indistinguível do break final: ninguém lê, nenhum teste falsifica.
+saida=$(run permanente "x" 2>&1)
+case "$saida" in
+  *ERRO_PERMANENTE*) echo "  ok    400 inválido diz que é permanente (não para em silêncio)" ;;
+  *) echo "  FAIL  parou sem dizer o julgamento — indistinguível do break final"; fail=1 ;;
+esac
+
+# (e) a âncora do 5xx, isolada: tirar o eco do prompt NÃO cobre este caso — o número
+#     500-599 está DENTRO da linha de erro ("5120 tokens"), e não é status HTTP nenhum.
+run num5xx "x" >/dev/null 2>&1; rc=$?
+if [ "$(invocacoes)" -eq 1 ]; then echo "  ok    5xx só conta ancorado em HTTP (1 invocação)"
+else echo "  FAIL  invocações=$(invocacoes), esperava 1 — '5120 tokens' virou 'erro 5xx'"; fail=1; fi
 
 echo "── watchdog (execução travada) ──"
 run trava -t 1 "x" >/dev/null 2>&1; rc=$?
