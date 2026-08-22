@@ -15,7 +15,7 @@
 # Uso:
 #   scripts/codex-async.sh [-m MODELO] [-r low|medium|high|xhigh] [-t SEGUNDOS] "PROMPT"
 #   echo "PROMPT" | scripts/codex-async.sh -r xhigh -
-# Defaults: -m gpt-5.6-luna · -r high · -t 1200 (20min hard-stop)
+# Defaults: -m gpt-5.6-terra · -r high · -t 1200 (20min hard-stop)
 #
 # Garantias:
 #   - preflight (binário + auth) ANTES de gastar tempo/quota, com instrução clara;
@@ -31,10 +31,13 @@ set -u
 # ⚠️ O default É MEDIÇÃO, não escolha: `gpt-5.6-sol` era o default e está MORTO para esta
 # conta — todo ritual /codex do repo falhava. Ping `codex exec --model M --sandbox read-only
 # "responda apenas: OK"` em 2026-08-22 (codex-cli 0.144.1, conta ChatGPT):
-#   gpt-5.6-luna  → rc=0 "OK"     gpt-5.6-terra → rc=0 "OK"
+#   gpt-5.6-terra → rc=0 "OK"     gpt-5.6-luna  → rc=0 "OK"
 #   gpt-5.6-sol   → 400           gpt-5.6       → 400        gpt-5.1-codex-max → 400
-# A disponibilidade muda por tier: RE-MEÇA com o ping antes de confiar nesta lista.
-modelo="gpt-5.6-luna"; reasoning="high"; timeout_s=1200
+# Default = `terra` porque é o degrau mais ALTO entre os que respondem (o frontier `sol`
+# está fora): o /codex é a rede de segurança do money-path, então o default é o teto
+# disponível, não o degrau rápido. A disponibilidade muda por tier — RE-MEÇA com o ping
+# acima antes de confiar nesta lista.
+modelo="gpt-5.6-terra"; reasoning="high"; timeout_s=1200
 while getopts "m:r:t:" opt; do
   case "$opt" in
     m) modelo="$OPTARG" ;;

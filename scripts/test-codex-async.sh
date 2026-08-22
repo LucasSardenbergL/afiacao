@@ -122,8 +122,10 @@ echo "── classificação não pode ler o ECO DO PROMPT ──"
 # o arquivo CRU deixa o CONTEÚDO do prompt decidir o controle de fluxo — e o ritual /codex
 # cola log, stderr e `cat -n` de arquivo dentro do prompt o tempo todo.
 
-# (a) o bug caro: `5[0-9][0-9]` casava o número de linha do `cat -n` colado no prompt,
-#     então um 400 que nunca mudaria queimava 3 tentativas + 80s de backoff.
+# (a) o CENÁRIO DO RELATO, tal como ocorreu: `5[0-9][0-9]` casava o número de linha de um
+#     `cat -n` colado no prompt e um 400 que nunca mudaria queimava 3 tentativas + 80s.
+#     Precisa das DUAS proteções para ficar verde (eco removido E 5xx ancorado) — sabotar
+#     só uma delas não o derruba; por isso (b)/(c) e (e) existem, isolando cada camada.
 prompt_numerado="revise este trecho:
    511	const a = 1;
    512	const b = 2;
