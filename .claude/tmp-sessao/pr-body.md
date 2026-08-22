@@ -31,11 +31,27 @@ Omitir não corrige nada — o código continua no cache. Então a RPC devolve *
 `evidence IS NULL` fica fora das duas: é o *"sem prova, nunca houve"* das linhas antigas, que degrada para
 o status quo em vez de jogar 10.822 códigos no fallback da API.
 
-**A revogação deliberadamente NÃO filtra `source`.** Eu tinha argumentado que o TTL de 7d expiraria o
+**A revogação cobre `source IN ('document','rpc')`.** Eu tinha argumentado que o TTL de 7d expiraria o
 vínculo podre sozinho. Está errado, e conferi em prod: `register_carteira_member` faz
-`ON CONFLICT … source = CASE WHEN source='manual' THEN 'manual' ELSE 'rpc' END, updated_at = now()`
-**sem tocar a evidência** — a linha errada renova o frescor para sempre. Filtrar por `source='document'`
-deixaria escapar exatamente essa linha. Provado por execução: assert **V7** + falsificação **F9**.
+`ON CONFLICT … source = CASE WHEN … ELSE 'rpc' END, updated_at = now()` **sem tocar a evidência** — a
+linha errada renova o frescor para sempre. Restringir a `source='document'` deixaria escapar exatamente
+essa linha (assert **V7** + falsificação **F9**). Mas `manual` fica **de fora**: é override humano, e o
+repo já lhe dá imunidade explícita ao fail-closed automático — revogar ali faria evidência histórica
+derrubar decisão de gente (assert **V12** + falsificação **F13**).
+
+Três defesas que vieram da segunda rodada do challenge:
+
+- **A evidência não sobrevive a quem não a provou.** `register_carteira_member` também **troca** o
+  `omie_codigo_cliente` no conflito. A evidência antiga ficaria colada num código novo que ela nunca
+  provou — e o `NOT EXISTS` não a pegaria enquanto o doc seguisse do mesmo user. A migration passa a
+  zerá-la nessa RPC: `NULL` = sem prova, e o próximo ciclo do `syncCustomers` repõe a de verdade.
+- **Recência.** A RPC agora é lida **depois** do pré-load da view. Antes, a prova (mais velha) sobrepunha
+  um cache mais novo — inversão que o código sem este PR não tinha.
+- **Teto de revogação em massa.** Cada revogado vira uma chamada `ConsultarCliente`. Acima de 30% de um
+  cache com ≥100 entradas, o helper **aborta** em vez de inundar a API do Omie: revogação em massa é
+  assinatura de snapshot degradado, não de realidade, e o run retoma na janela seguinte (idempotente).
+  O piso de 100 importa — percentual sobre denominador pequeno é ruído, e sem ele uma conta com 3
+  clientes abortaria o sync ao revogar um único vínculo.
 
 ## Uma correção só no `resolveClientUserId` seria inerte
 
@@ -70,26 +86,34 @@ helper é no-op: comportamento idêntico ao de hoje. A cobertura sobe a cada cic
 
 ### Fora de escopo, declarado (vira PR-3)
 
-Dois achados do Codex que não fecho aqui: (a) o writer não consegue **transferir** um código para o novo
-dono — o insert bate na `UNIQUE(omie_codigo_cliente, account)` e dá 23505; a reconciliação precisa de uma
-RPC transacional; (b) a RPC e a view são lidas em **instantes diferentes**, então cache/prova/revogação
-não vêm de um snapshot conjunto. Nenhum dos dois torna esta entrega pior que o status quo — a revogação já
-força o caminho fail-closed —, mas os dois limitam quanto ela se auto-cura.
+Dois achados do Codex que não fecho aqui, e o que eles custam:
+
+- **O writer não consegue transferir um código para o novo dono.** O insert bate na
+  `UNIQUE(omie_codigo_cliente, account)` e dá 23505; a reconciliação precisa de uma RPC transacional. Com
+  a revogação, esse vínculo passa a ser refeito pelo `ConsultarCliente` **toda run** em vez de cicatrizar
+  — o Codex chama isso de "hot path permanente", e ele tem razão. Aceito conscientemente: é o preço de
+  trocar atribuição errada silenciosa por uma chamada de API, e o teto de 30% limita o pior caso.
+- **RPC e view em instantes diferentes.** Um snapshot conjunto exigiria a RPC devolver também o cache.
+  Mitigado (a leitura mais nova agora vence), não eliminado.
+
+Nenhum dos dois torna esta entrega pior que o status quo, mas os dois limitam quanto ela se auto-cura.
 
 ## Gates
 
 | Gate | Resultado |
 |---|---|
-| `prove-sql-money-path` (PG17, `db/test-omie-identidade-a2-client-to-user.sh`) | **74 asserts, 0 falhas** |
-| ↳ falsificação, cada defesa **sozinha** | **12 mutantes**, todos deixam o assert correspondente vermelho |
+| `prove-sql-money-path` (PG17, `db/test-omie-identidade-a2-client-to-user.sh`) | **79 asserts, 0 falhas** |
+| ↳ falsificação, cada defesa **sozinha** | **13 mutantes**, todos deixam o assert correspondente vermelho |
 | `bun run test` | verde · falsificação dos gates textuais: 6 sabotagens → todas vermelhas |
 | `test:edges` (Deno `--no-remote`) · `edges:typecheck` · `typecheck` · `lint` · `bunx knip` | verdes |
-| `/codex challenge` xhigh (`gpt-5.6-sol`), 2 rodadas | rodada 1 reprovou; 3 dos 4 P1 corrigidos, 2 declarados como PR-3 |
+| `/codex challenge` xhigh (`gpt-5.6-sol`) | 3 rodadas; achados aceitos e corrigidos, o que ficou está declarado abaixo |
 
 Cada defesa é sabotada **sozinha**, por `sed` cirúrgico sobre a migration real, com guard `cmp` contra
-sabotagem no-op. Dois mutantes valem menção: **F1b** mostra o achado em carne e osso (removida a
-consistência, o código `105` volta a apontar para o dono obsoleto); e **F12** flagrou um assert meu que
-estava verde pelo motivo errado — o seed stale tinha evidência viva, então o TTL nunca era o que o excluía.
+sabotagem no-op. Três mutantes valem menção: **F1b** mostra o achado em carne e osso (removida a
+consistência, o código `105` volta a apontar para o dono obsoleto); **F12** flagrou um assert meu que
+estava verde pelo motivo errado — o seed stale tinha evidência viva, então o TTL nunca era o que o
+excluía; e o teste de LGPD deixou de conferir 3 de 8 colunas no catálogo e passou a **executar** a view
+como `authenticated` e a exigir `42501` na leitura da evidência.
 
 ## ⚠️ ATENÇÃO: migration manual necessária — e **migration ANTES da edge**
 

@@ -1048,7 +1048,7 @@ async function syncPedidos(
   const { docToUserMap, ambiguousDocs, clientToUser, revokedClientCodes } = parseIdentitySnapshot(snap);
   console.log(`[sync_pedidos][${account}] Identity snapshot: ${docToUserMap.size} doc(s) único(s), ${ambiguousDocs.size} ambíguo(s) excluído(s) (fail-closed server-side)`);
 
-  // ── PR-2/A2: PROVA POSITIVA por cima do cache ────────────────────────────────────────────────
+  // ── PR-2/A2: PROVA POSITIVA + REVOGAÇÃO por cima do cache ────────────────────────────────────
   // O clientCache acima é vínculo por AUSÊNCIA DE CONTRAINDICAÇÃO: a view fresca só atesta "existe um
   // vínculo com menos de 7 dias", nunca QUAL documento o provou. Por isso um C→u1 casado com o doc X
   // sobrevivia a u1 migrar para Y e u2 receber X — sem a evidência, "não há contraindicação" era
@@ -1061,9 +1061,15 @@ async function syncPedidos(
   // só roda para os códigos que NÃO estão no cache (`unknownCodes`). Corrigir apenas lá seria INERTE
   // exatamente no caso do achado, em que o vínculo obsoleto ESTÁ no cache.
   //
+  // E a metade que de fato fecha o achado é a REVOGAÇÃO: a prova só EMITE o código quando a evidência
+  // ainda concorda com a linha que alimenta a view, então em estado estável ela sempre concorda —
+  // omitir o vínculo podre deixaria o cache servindo-o igual. `revokedClientCodes` traz os códigos cuja
+  // evidência EXISTE mas não sustenta mais o vínculo, e o helper os REMOVE do cache; eles caem em
+  // `unknownCodes` e são refeitos pelo ConsultarCliente, que resolve pelo doc ATUAL do Omie.
+  //
   // Enquanto o omie-analytics-sync não repovoar `evidence_document_normalized` (o backfill é NULL =
-  // sem prova, fail-closed), clientToUser vem VAZIO e este bloco é no-op: nasce INERTE e ganha
-  // cobertura a cada run do sync de clientes. Os dois números do log são o sensor disso.
+  // sem prova, fail-closed), os dois conjuntos vêm VAZIOS e este bloco é no-op: nasce INERTE e ganha
+  // cobertura a cada run do sync de clientes. Os números do log são o sensor disso.
   const prova = aplicarProvaPositivaNoCache(clientCache, clientToUser, revokedClientCodes);
   console.log(`[sync_pedidos][${account}] Prova positiva: ${prova.provados} código(s) com evidência viva sobre ${prova.cacheDaView} do cache (${prova.cobertura}% de cobertura); ${prova.divergencias} divergiram do cache e foram corrigidos; ${prova.revogados} REVOGADOS do cache (evidência morta) → refazem pela API`);
 
