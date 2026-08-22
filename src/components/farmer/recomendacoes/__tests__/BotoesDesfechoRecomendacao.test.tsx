@@ -127,9 +127,22 @@ describe('a lente "Ver como" não registra na carteira alheia', () => {
     expect(comprou).toBeDisabled();
     fireEvent.click(comprou);
     expect(rpcMock).not.toHaveBeenCalled();
-    // Defesa em profundidade: mesmo se o clique passasse, a RPC busca por
-    // auth.uid() (o master REAL) e recusaria com FD004 — provado no
-    // db/test-farmer-desfecho.sh, asserts 10 e 10b.
+  });
+
+  it('[LENTE] o HOOK recusa mesmo sem passar pelo botão', async () => {
+    // Este teste existe porque a falsificação denunciou o de cima: remover o guard
+    // do hook deixava a suíte VERDE. `fireEvent.click` num botão `disabled` nem
+    // dispara o handler, então aquele assert prova o `disabled` do COMPONENTE e
+    // nada sobre o hook — e o hook é a camada que um POST direto alcançaria.
+    impMock.mockReturnValue({ isImpersonating: true });
+    let registrar: ReturnType<typeof useFarmerDesfecho>['registrar'] | null = null;
+    const Sonda = () => { registrar = useFarmerDesfecho().registrar; return null; };
+    render(<Sonda />);
+    const ok = await registrar!(ALVO, 'aceito');
+    expect(ok).toBe(false);
+    expect(rpcMock).not.toHaveBeenCalled();
+    // A terceira camada é o banco: a RPC busca por auth.uid() (o master REAL) e
+    // recusa com FD004 — provado em db/test-farmer-desfecho.sh, asserts 10 e 10b.
   });
 });
 
@@ -180,19 +193,38 @@ describe('o sensor mede a TENTATIVA, não só o sucesso', () => {
 });
 
 describe('a trava de concorrência é síncrona', () => {
-  it('[TRAVA] dois cliques no MESMO tick geram UMA chamada', async () => {
-    // `registrando` é o valor do RENDER — dois cliques antes do re-render leriam
-    // ambos `null` e passariam. A trava real é uma ref, checada de forma síncrona.
+  it('[TRAVA] o botão fica desabilitado durante a gravação', async () => {
+    // Camada 1 (UI): cliques do USUÁRIO são eventos separados, e o `fireEvent` do
+    // RTL passa por `act()` — o `setState` já fez flush quando o segundo chega.
+    // Este teste prova essa camada, e SÓ ela: ele passa com ou sem a ref (foi a
+    // falsificação que mostrou isso). O caminho que só a ref cobre está abaixo.
     let resolver: (v: RpcRet) => void = () => {};
     rpcMock.mockImplementation(() => new Promise<RpcRet>((r) => { resolver = r; }));
     render(<Host />);
     const b = screen.getByRole('button', { name: 'Cliente comprou' });
     fireEvent.click(b);
-    fireEvent.click(b);
+    expect(b).toBeDisabled();
     fireEvent.click(b);
     expect(rpcMock).toHaveBeenCalledTimes(1);
     resolver({ data: null, error: null });
     await waitFor(() => expect(screen.getByText('Venda registrada')).toBeInTheDocument());
+  });
+
+  it('[TRAVA] duas chamadas no MESMO tick geram UMA chamada à RPC', async () => {
+    // Camada 2 (hook): aqui não há `act()` entre as duas invocações, então
+    // `registrando` ainda é `null` na segunda — exatamente o caso que o `useState`
+    // deixa passar e a ref barra. Trocar a ref por estado deixa este teste VERMELHO.
+    let resolver: (v: RpcRet) => void = () => {};
+    rpcMock.mockImplementation(() => new Promise<RpcRet>((r) => { resolver = r; }));
+    let registrar: ReturnType<typeof useFarmerDesfecho>['registrar'] | null = null;
+    const Sonda = () => { registrar = useFarmerDesfecho().registrar; return null; };
+    render(<Sonda />);
+    const a = registrar!(ALVO, 'aceito');
+    const b = registrar!(ALVO, 'aceito');
+    expect(rpcMock).toHaveBeenCalledTimes(1);
+    resolver({ data: null, error: null });
+    expect(await a).toBe(true);
+    expect(await b).toBe(false);
   });
 
   it('[TRAVA] a trava é SOLTA após um erro — o card não congela', async () => {
