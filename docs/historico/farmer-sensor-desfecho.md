@@ -98,6 +98,26 @@ motivo nº 1 da skill `prove-sql-money-path` — PL/pgSQL e CHECKs são late-bou
 - as falsificações removem o gate `auth.uid()`, o CHECK, a trigger e o guard de
   ambiguidade — cada assert correspondente fica vermelho.
 
+## A falsificação do vitest encontrou DOIS asserts de teatro
+
+O harness SQL já falsificava. Ao aplicar a mesma disciplina aos testes de
+componente, duas sabotagens saíram **verdes** — ou seja, dois asserts não provavam
+o que o nome deles dizia:
+
+| Sabotagem | Por que ficou verde |
+|---|---|
+| Remover o guard `isImpersonating` do **hook** | `fireEvent.click` num botão `disabled` **não dispara o handler**. O assert provava o `disabled` do COMPONENTE e nada sobre o hook — justamente a camada que um POST direto alcançaria. |
+| Trocar a trava `useRef` por `useState` | O `fireEvent` do RTL passa por `act()`, então o `setState` já fez flush quando o segundo clique chega. O teste nunca reproduziu o "mesmo tick" que a ref existe para cobrir. |
+
+> **A classe:** testar defesa em profundidade **através da UI** só prova a camada de
+> cima. Se a camada de baixo tem razão de existir, ela precisa de um teste que
+> **pule a de cima** — aqui, uma sonda que chama o hook direto, sem botão no meio.
+
+É a irmã em TypeScript do `WHEN OTHERS THEN 'OK'` do SQL: o teste passa, e o que ele
+mede não é o que o nome promete. As seis sabotagens finais (guard da lente, motivo
+fabricado, erro do banco ignorado, `ref`→`useState`, recusa sem porquê, e `FD004`
+sugerindo retry) derrubam testes **nomeados**, não "algum teste".
+
 ## Fora de escopo (deliberado)
 
 - **`'ofertado'`** volta quando a UI tiver o `id`, o que exige a
