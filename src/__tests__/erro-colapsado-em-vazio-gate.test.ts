@@ -195,6 +195,22 @@ describe('gate: erro colapsado em vazio', () => {
     expect(contarAutoOcultacao(comRest, 'Card.tsx')).toBe(0);
   });
 
+  it('o card do #1859 não volta para dentro do && de uma query IRMÃ (FarmerCalls)', () => {
+    // A revisão retroativa achou o defeito principal FORA do componente: `<MixGapCard />`
+    // morava dentro de `{positivacao && (…)}`, e como as duas RPCs saem pelo MESMO
+    // PostgREST a falha correlacionada é o caso COMUM — os três estados novos ficavam
+    // inacessíveis justamente na situação que os motivou. A lição que isto gateia: um
+    // teste de componente ISOLADO não prova o estado que o HOST decide.
+    const fonte = readFileSync(resolve(RAIZ, 'src/pages/FarmerCalls.tsx'), 'utf8');
+    const presos = acharColapsos(fonte, 'src/pages/FarmerCalls.tsx')
+      .filter((s) => s.silencios.length > 0);
+    expect(
+      presos.map((s) => `${s.hook}(${s.aliasData}) → ${s.silencios.map((x) => x.forma).join(',')}`),
+      'uma leitura sem `error` voltou a esconder bloco em FarmerCalls — o MixGapCard pode ' +
+      'estar preso de novo no && de uma query irmã',
+    ).toEqual([]);
+  });
+
   it('a forma `jsx-&&` é detectada mas NÃO gateada — a distinção é deliberada', () => {
     const host = `
       export function Page() {
