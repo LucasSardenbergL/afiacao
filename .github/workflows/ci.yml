@@ -235,9 +235,13 @@ jobs:
       # cada um tem suíte HERMÉTICA (sem rede) em scripts/test-*-guard.sh — os de colisão stubam
       # git/gh num mktemp; os demais não saem do processo (só passam strings ao hook) ou montam um
       # repo git temporário com `git init`.
-      # O loop do `test:hooks` é a ÚNICA coisa que os roda — script fora do loop é teste órfão, e
-      # teste que não roda é ausência de dado, não aprovação: o guard regride em silêncio.
-      # Ao criar um scripts/test-<x>-guard.sh, ACRESCENTE <x> ao `for t in ...` do package.json.
+      # Os DOIS laços do `test:hooks` são a ÚNICA coisa que roda essas suítes — script fora deles é
+      # teste órfão, e teste que não roda é ausência de dado, não aprovação: o guard regride em
+      # silêncio. Ao criar um scripts/test-<x>.sh (com ou sem sufixo -guard), ACRESCENTE <x> ao laço
+      # correspondente no package.json. Quem cobra isso é scripts/hooks-guard-cobertura.test.ts, que
+      # lê os dois laços e cobra TODO scripts/test-*.sh; a única saída é a baseline explícita de
+      # scripts/hooks-suites-baseline.ts (hoje só a família `heavy`, que é macOS-only), com
+      # burn-down obrigatório.
       - name: Hooks guard tests
         # sem `heavy` aqui: o semáforo de RAM é da M2 local e nao existe no runner (exit 127).
         run: bun run test:hooks
