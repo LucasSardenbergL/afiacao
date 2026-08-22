@@ -85,7 +85,23 @@ const FarmerRecommendations = () => {
           <h1 className="text-xl font-semibold">Recomendações</h1>
           <p className="text-sm text-muted-foreground">Cross-sell e up-sell priorizados por afinidade com o cliente</p>
         </div>
-        <Button variant="outline" size="sm" onClick={calculateRecommendations} disabled={calculating} className="gap-1.5">
+        <Button
+          variant="outline"
+          size="sm"
+          // Recalcular SUBSTITUI as linhas no banco (`farmer_recomendacoes_substituir`
+          // expira as pendentes e insere outras com a mesma chave de negócio). Esquecer
+          // a memória local é o que impede o card de afirmar "Venda registrada" sobre uma
+          // linha NOVA, ainda pendente — e de esconder os botões dela. Ver a nota longa
+          // em useFarmerDesfecho.esquecerRegistros.
+          onClick={() => { registroDesfecho.esquecerRegistros(); calculateRecommendations(); }}
+          // Recalcular COM uma gravação em voo faz a substituição correr contra a RPC de
+          // desfecho pela mesma chave: se a substituição vencer a corrida, o aceite cai na
+          // geração NOVA — um cálculo que a vendedora nunca viu. O banco não tem como
+          // distinguir (a chave de negócio é a única identidade que o browser tem), então
+          // a serialização é aqui.
+          disabled={calculating || !!registroDesfecho.registrando}
+          className="gap-1.5"
+        >
           {calculating ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
           Recalcular
         </Button>

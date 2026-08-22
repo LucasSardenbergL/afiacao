@@ -260,3 +260,151 @@ query de coorte não distingue "ninguém clicou" de "ninguém abriu a tela":
 silêncio que não se consegue observar **não é dado** — a etapa 3 depende do founder ou de
 uma sonda que ainda não existe. As etapas 1 e 2 respondem no mesmo `psql-ro`, sem
 depender de ninguém: foi por isso que elas vieram primeiro.
+---
+
+# O adversarial no CÓDIGO — o passo que faltava (2026-08-22)
+
+O ritual `/codex` do money-path é metodologia → spec → plano → **adversarial no código**.
+No #1851 os três primeiros rodaram (e o primeiro derrubou o botão "Ofertei"); o quarto
+não. O PR foi mergeado com "REVISÃO INDEPENDENTE PENDENTE" no corpo, pelo Caminho B.
+Esta seção fecha a lacuna: `gpt-5.6-luna`, reasoning `xhigh`, sobre os quatro arquivos
+TypeScript, com o SQL fora de escopo (ele já tinha o harness PG17 como oráculo).
+
+## O diagnóstico anterior estava errado — não era cota
+
+O registro dizia `COTA_ESGOTADA` (janela rolante de 7 dias do ChatGPT Plus). Ao re-rodar,
+o erro real apareceu:
+
+```
+status 400 invalid_request_error
+"The 'gpt-5.6-sol' model is not supported when using Codex with a ChatGPT account."
+```
+
+`gpt-5.6` e `gpt-5.1-codex-max` dão o mesmo 400; `gpt-5.6-luna` responde. O default do
+`scripts/codex-async.sh` é `gpt-5.6-sol` — **o transporte do ritual está quebrado para
+todo o repo**, não só para esta sessão.
+
+E ele mente sobre o motivo: o classificador de transitório roda `grep -E '…|5[0-9][0-9]'`
+sobre um stderr que contém o **prompt ecoado**. O prompt trazia saída de `cat -n`, então
+um número de linha entre 500 e 599 casou com o padrão de erro 5xx e um 400 permanente
+virou "transitório" — 3 tentativas e 80s de backoff atrás de algo que nunca ia mudar.
+
+> **A classe:** um classificador de erro que lê o stderr INTEIRO está lendo a própria
+> entrada de volta. O padrão precisa casar na linha de ERRO, não no eco do que foi
+> enviado — senão o conteúdo do prompt decide a política de retry.
+
+## O achado P1: a chave de negócio é identidade DENTRO de uma geração
+
+O parecer e a auto-revisão chegaram nele por caminhos independentes.
+
+`useFarmerDesfecho` memoriza os desfechos da sessão num mapa por chave de negócio
+(`cliente|produto|tipo`) — porque o browser não tem o id da linha. O botão **"Recalcular"**
+chama `farmer_recomendacoes_substituir`, que expira as pendentes e insere linhas NOVAS
+com a **mesma chave**. O mapa sobrevive: a página não desmonta.
+
+1. R1 nasce `pendente`; a vendedora marca "Comprou" → R1 vira `aceito`, mapa guarda a chave.
+2. Ela clica em "Recalcular" → R1 (já com desfecho) sobrevive, e R2 nasce `pendente`.
+3. O card de R2 lê o mapa pela chave e mostra **"Venda registrada"** — sobre uma linha
+   que está `pendente` no banco — **e esconde os botões**.
+
+O segundo efeito é o pior: o desfecho de R2 fica impossível de registrar, e R2 morre como
+`expirado`, que a query de medição lê como "substituída sem interação". É **perda
+silenciosa do sinal que este sensor existe para produzir** — o zero volta, indistinguível
+do zero real.
+
+> **A lição transferível:** o SQL gastou três guardas (derrubar `ofertado`, FD006, a
+> trigger de imutabilidade) para tornar a chave de negócio uma **identidade** — e ela só
+> é identidade **dentro de uma geração**. Um cache do cliente indexado pela MESMA chave
+> **herda o escopo do invariante**; se ele vive mais que a geração, quebra em silêncio a
+> garantia que o banco comprou caro. O guard ficou de um lado do fio e a violação do outro.
+
+**A correção** é `esquecerRegistros()`, chamado no "Recalcular". Ele esquece em TODO
+recálculo, **inclusive nos que falham ao persistir** — ali as linhas antigas seguem
+valendo e a memória era boa. É o lado seguro do trade-off: o pior caso vira um clique que
+o banco recusa com FD007 ("já tem desfecho"), mensagem honesta e zero dado corrompido;
+o outro lado perde sinal sem avisar. Distinguir os casos exigiria acoplar o hook às
+SQLSTATEs `FG005`/`FG006` do engine para comprar precisão numa direção que já é segura.
+
+O mesmo achado trouxe a corrida: "Recalcular" **com uma gravação em voo** faz a
+substituição correr contra a RPC de desfecho pela mesma chave — se a substituição vencer,
+o aceite cai na geração nova. O banco não tem como distinguir (a chave é a única
+identidade que o browser tem), então a serialização é do cliente: o botão fica travado
+enquanto `registrando`.
+
+## Falsificar contra a PROMESSA DO NOME, não contra a funcionalidade
+
+O #1851 já tinha falsificado os testes com seis sabotagens, e duas revelaram teatro. Ainda
+assim, o adversarial achou mais — e o padrão do que **escapou** é o achado metodológico:
+
+| Teste | O que o nome prometia | O que o assert media |
+|---|---|---|
+| `o evento sai antes do await` | uma **ordem** | que o evento existe em algum momento (o mock resolvia na hora) |
+| `o vocabulário é EXATAMENTE o do CHECK da tabela` | acordo **TS↔SQL** | acordo da constante TS com um literal TS |
+
+As seis sabotagens anteriores miravam a **funcionalidade** (o desfecho grava? a lente
+barra?) e por isso passaram ao largo: nenhuma delas mexia na ORDEM nem no CHECK.
+
+> **A classe (irmã de "falsificar pela UI só prova a camada de cima"):** quando o nome do
+> teste afirma uma **ordem**, um **acordo entre camadas** ou uma **negativa**, a sabotagem
+> tem de mirar essa afirmação específica. Sabotar a feature deixa esses asserts verdes,
+> porque não é a feature que eles prometem medir.
+
+O de ordem agora segura a RPC pendente e exige o evento **antes** de resolver. O de
+vocabulário **lê a migration** e compara com a constante: não prova a prod (apply manual
+diverge do repo), mas fecha a corrente com o outro elo — `db/test-farmer-desfecho.sh`
+executa esse mesmo CHECK num PG17 de verdade. TS↔arquivo aqui, arquivo↔Postgres lá. E o
+extrator tem controle positivo: regex que não casa **falha nomeando o motivo**, em vez de
+devolver lista vazia e passar.
+
+Outras quatro lacunas fechadas, todas com a mesma assinatura — sabotagem que ficava verde:
+o ramo `catch` (falha de transporte) não tinha teste **nenhum**; a recusa bem-sucedida
+nunca era confirmada na tela (renderizar "Venda registrada" numa recusa passava); a recusa
+não conferia a chave de negócio; e `FD002`/`FD007` nunca eram exercitados.
+
+## O achado recusado, com o porquê
+
+**"Exceção do analytics deixa a trava presa"** — o parecer notou que `track()` roda depois
+de `gravandoRef.current = true` e **fora** do `try`, e concluiu que um throw síncrono
+travaria o hook para sempre.
+
+Recusado com evidência: `track()` delega a `withPosthog`, que invoca o callback dentro de
+um `try/catch` próprio (`src/lib/analytics.ts`). Não há caminho de throw síncrono.
+
+E a "correção" seria **pior que o bug**: mover o `track()` para dentro do `try` faria uma
+falha de analytics cair no `catch` de transporte e mostrar *"Não consegui falar com o
+servidor — o desfecho NÃO foi registrado"* — uma mensagem **falsa**, sobre uma gravação
+que teria acontecido. Achado sem trigger não vira código; e defesa em profundidade que
+mente na degradação não é defesa.
+
+## E a falsificação desta rodada pegou um teatro MEU
+
+Seis sabotagens, seis vermelhos — mas **dois** dos asserts que eu esperava derrubar
+ficaram verdes. Um era alvo errado meu; o outro era teatro de verdade:
+
+```ts
+fireEvent.click(recalcular());
+await waitFor(() => expect(screen.queryByText('Venda registrada')).toBeNull());
+```
+
+`waitFor` passa no **primeiro poll** em que a condição vale — e a lista some sozinha
+enquanto remonta o recálculo. O assert media a remontagem, não a invalidação da memória:
+ficava **verde com a sabotagem aplicada**. O teste irmão ("os botões VOLTAM") usava
+`findByRole`, que espera algo **aparecer**, e ficou vermelho como devia.
+
+Corrigido ancorando a ausência num instante em que o card comprovadamente existe:
+
+```ts
+await screen.findByRole('button', { name: 'Cliente comprou' });  // a geração nova está na tela
+expect(screen.queryByText('Venda registrada')).toBeNull();       // e não afirma nada
+```
+
+> **A classe:** **ausência só é evidência quando medida sobre algo que está lá.** É a irmã
+> em RTL do "`grep` sem ocorrência é ausência de dado" do CLAUDE.md — e a assinatura é
+> `waitFor` + assert NEGATIVO, que se satisfaz com qualquer janela em que o alvo não
+> exista, inclusive as que o bug não causa. Para negativa, ancore num positivo primeiro.
+
+O outro verde (`o dialog RENDERIZA os seis motivos`) **não** era teatro: a sabotagem
+mexeu na constante `MOTIVOS_RECUSA`, e esse dano é o que o teste de vocabulário pega
+(ficou vermelho). O alvo dele é o componente renderizar um SUBCONJUNTO da constante —
+sabotado corretamente na segunda rodada, vermelho. Falsificação com alvo errado não
+condena o assert; só não o absolve.
