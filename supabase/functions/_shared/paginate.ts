@@ -33,6 +33,12 @@ export interface QueryPostgrest<T> extends PromiseLike<RespostaPostgrest<T>> {
   eq(coluna: string, valor: unknown): QueryPostgrest<T>;
   in(coluna: string, valores: readonly unknown[]): QueryPostgrest<T>;
   gte(coluna: string, valor: unknown): QueryPostgrest<T>;
+  /**
+   * `>` estrito — o avanço do cursor de `fetchAllKeyset`. Estrito e não `gte` porque a
+   * chave é ÚNICA no recorte: com `gte` a última linha de cada página voltaria na página
+   * seguinte, duplicada.
+   */
+  gt(coluna: string, valor: unknown): QueryPostgrest<T>;
   lt(coluna: string, valor: unknown): QueryPostgrest<T>;
   not(coluna: string, operador: string, valor: unknown): QueryPostgrest<T>;
   /**
@@ -85,6 +91,108 @@ export async function fetchAll<T>(
     out.push(...rows);
     if (rows.length < PAGE) break;
     from += PAGE;
+  }
+  return out;
+}
+
+/**
+ * Paginação por KEYSET — para leitura que precisa sobreviver a escrita CONCORRENTE.
+ *
+ * `fetchAll` pagina por OFFSET: N requests independentes, cada um sua própria transação.
+ * O `.order()` numa coluna estável resolve a instabilidade de ORDEM numa tabela parada,
+ * mas não cria snapshot. Um INSERT antes do offset corrente desloca as páginas seguintes
+ * (uma linha pode ser lida DUAS VEZES); um DELETE desloca no outro sentido (uma linha pode
+ * ser PULADA).
+ *
+ * O keyset (`WHERE chave > cursor ORDER BY chave LIMIT n`) elimina a classe inteira do
+ * deslocamento por offset. Não dá snapshot transacional — para isso só uma RPC, como o
+ * `omie_sync_identity_snapshot` de `omie-vendas-sync` — mas nenhuma linha some ou repete
+ * por causa da posição.
+ *
+ * QUANDO USAR, e não "sempre": o que desloca uma paginação não é o VOLUME de escrita da
+ * tabela, é a escrita que atravessa a FRONTEIRA DO RECORTE — INSERT e DELETE sempre
+ * atravessam, UPDATE só se tocar a coluna do `.order()` ou do `WHERE`. `product_costs`
+ * leva 8,0M de updates e zero deletes: offset basta. `omie_products` leva 86 inserts e
+ * zero deletes e ainda assim exige keyset, porque o `.eq('ativo',true)` do leitor é
+ * exatamente o que o cron de status reescreve. A medição está em
+ * `docs/historico/paginacao-offset-janela.md`; o precedente de deixar offset onde o custo
+ * não se paga, em `fin-valor-cockpit/index.ts:490`.
+ *
+ * CONTRATO: `chave` tem de ser ÚNICA no recorte e o call-site tem de `.order()` por ela
+ * — e o `.select()` precisa TRAZER a coluna (o `.range()` não exigia isso). Chave repetida
+ * faria `.gt()` pular as empatadas; o caso patológico (cursor que não avança) é detectado
+ * aqui e LANÇA, em vez de girar para sempre.
+ */
+export async function fetchAllKeyset<T, K extends string | number>(
+  build: (
+    cursor: K | null,
+    limite: number,
+  ) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>,
+  chave: (linha: T) => K,
+  label: string,
+): Promise<T[]> {
+  let cursor: K | null = null;
+  const out: T[] = [];
+  for (;;) {
+    const { data, error } = await build(cursor, PAGE);
+    if (error) throw new Error(`${label}: ${error.message}`);
+    // Mesmo fail-closed de `fetchAll`: `data:null` sem `error` é resposta MALFORMADA,
+    // não fim da tabela — devolver o acumulado parcial seria a truncagem silenciosa que
+    // o #1581 tirou de 24 call-sites.
+    if (data == null) {
+      throw new Error(`${label}: data null sem error — resposta malformada, não é fim da tabela`);
+    }
+    const rows = data;
+    // Varre a PÁGINA INTEIRA antes de acumular nada. Três violações do contrato do keyset
+    // caem aqui, e as três resolveriam em SILÊNCIO sem esta varredura:
+    //
+    //   chave AUSENTE  — a coluna-chave ficou fora do `.select()`. O `.select()` é uma
+    //     string e a interface da linha PROMETE o campo, então o typecheck passa e só o
+    //     runtime descobre; o cursor viraria `undefined` e o `.gt()` filtraria o que desse.
+    //   ordem DESC     — `.order(chave,{ascending:false})` no call-site. Precisa ser pego
+    //     aqui e não na comparação de cursor lá embaixo: sob DESC a 2ª página já volta
+    //     curta, o laço encerraria pelo `length < PAGE` e a comparação nunca rodaria.
+    //   ordem ARBITRÁRIA — `.limit()` sem `.order()`. Comparar só os extremos da página
+    //     deixaria passar a que tem o miolo embaralhado, e aí a última linha não é a maior
+    //     chave: o cursor salta e a faixa entre ela e a real nunca é lida.
+    //
+    // Custa uma comparação por linha (≤1.000 por página) — a leitura em si é uma ida à
+    // rede, então isto não aparece no perfil.
+    let anterior: K | null = null;
+    for (const linha of rows) {
+      const k = chave(linha);
+      if (k === null || k === undefined) {
+        throw new Error(
+          `${label}: chave do keyset ausente numa linha — a coluna do cursor precisa estar no .select()`,
+        );
+      }
+      if (anterior !== null && k <= anterior) {
+        throw new Error(
+          `${label}: página fora de ordem ASCENDENTE (${JSON.stringify(anterior)} → ${JSON.stringify(k)}) — o keyset exige .order(chave, { ascending: true }) e chave ÚNICA no recorte`,
+        );
+      }
+      anterior = k;
+    }
+    out.push(...rows);
+    if (rows.length < PAGE) break;
+    const proximo = chave(rows[rows.length - 1]);
+    // O cursor tem de avançar ESTRITAMENTE. Os dois modos de violar o contrato falham aqui,
+    // e nenhum dos dois se denuncia sozinho:
+    //   PARADO  — chave repetida (não é única no recorte): o laço pediria a mesma página
+    //             para sempre e a edge morreria no timeout, sintoma que não se parece nada
+    //             com a causa.
+    //   PARA TRÁS — o call-site ordenou DESC. `fetchAllKeyset` só recebe `build`, então não
+    //             enxerga o `.order()`: com `.gt(cursor)` sobre página decrescente o cursor
+    //             recua, a página seguinte reserve quase tudo e o resto do recorte nunca é
+    //             lido. Sem esta guarda a leitura RESOLVE, com duplicata em massa e cauda
+    //             faltando — em silêncio, que é o pior desfecho possível aqui.
+    if (cursor !== null && proximo <= cursor) {
+      const modo = proximo === cursor
+        ? `chave repetida em ${JSON.stringify(proximo)} — a chave precisa ser ÚNICA no recorte`
+        : `cursor RECUOU (${JSON.stringify(cursor)} → ${JSON.stringify(proximo)}) — o keyset exige .order() ASCENDENTE na mesma coluna`;
+      throw new Error(`${label}: cursor não avançou: ${modo}`);
+    }
+    cursor = proximo;
   }
   return out;
 }

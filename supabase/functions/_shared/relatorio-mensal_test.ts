@@ -60,6 +60,9 @@ function bancoFake(tabelas: Record<string, Linha[]>, erroDoBanco?: string) {
       is(coluna) {
         throw new Error(`double: .is(${coluna}) não implementado neste núcleo`);
       },
+      gt(coluna) {
+        throw new Error(`double: .gt(${coluna}) não implementado neste núcleo`);
+      },
       gte(coluna) {
         throw new Error(`double: .gte(${coluna}) não implementado neste núcleo`);
       },

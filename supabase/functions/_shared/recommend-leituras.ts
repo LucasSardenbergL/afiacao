@@ -40,7 +40,7 @@
 // deixar duas exceções obrigaria todo leitor futuro a re-derivar quais são. O que sobra é a
 // leitura de UMA linha, que passa por `exigirLeitura`. Falha de leitura vira exceção: a
 // edge devolve 500 em vez de uma recomendação calculada sobre catálogo parcial.
-import { fetchAll } from "./paginate.ts";
+import { fetchAll, fetchAllKeyset } from "./paginate.ts";
 import type { BancoPostgrest } from "./paginate.ts";
 import { exigirLeitura, exigirLista, FalhaLeituraCritica } from "./leitura-critica.ts";
 
@@ -89,6 +89,39 @@ async function paginarFonte<T>(
   }
 }
 
+/**
+ * Irmão de `paginarFonte` para as leituras que precisam sobreviver a escrita CONCORRENTE.
+ *
+ * Mesma redução de erro a domínio FECHADO; o que muda é o transporte: keyset em vez de
+ * offset. Só as duas leituras cujo recorte a escrita de fato ATRAVESSA usam este — as
+ * outras quatro seguem em `paginarFonte`, porque `UPDATE` de preço/estoque não move linha
+ * numa ordenação por `id` e trocar por trocar custaria a coluna-chave no `.select()` sem
+ * comprar nada. A medição que separa um caso do outro está em
+ * `docs/historico/paginacao-offset-janela.md`.
+ */
+async function paginarFonteKeyset<T>(
+  build: (
+    cursor: string | null,
+    limite: number,
+  ) => PromiseLike<{ data: T[] | null; error: { message: string; code?: string | null } | null }>,
+  chave: (linha: T) => string,
+  fonte: string,
+): Promise<T[]> {
+  const comErroFechado = async (cursor: string | null, limite: number) => {
+    const res = await build(cursor, limite);
+    if (res.error) throw new FalhaLeituraCritica(fonte, res.error);
+    return res;
+  };
+  try {
+    return await fetchAllKeyset<T, string>(comErroFechado, chave, fonte);
+  } catch (e) {
+    if (e instanceof FalhaLeituraCritica) throw e;
+    const falha = new FalhaLeituraCritica(fonte, { code: "MALFORMADA" });
+    falha.cause = e;
+    throw falha;
+  }
+}
+
 // ── Formas das linhas (o que o `.select()` de cada leitura promete) ────────────────────
 // NÃO exportadas de propósito: ninguém fora daqui as nomeia, e `export` sem consumidor
 // reprova no gate de dead code (`bunx knip`, passo "Dead code gate" do CI — que roda
@@ -102,6 +135,9 @@ interface LinhaConfig {
 }
 
 interface LinhaOrderItem {
+  /** Chave do keyset. Não entra em nenhum cálculo — está no `.select()` porque o cursor
+   *  precisa dela; sob `.range()` ela não era pedida. */
+  id: string;
   product_id: string | null;
   quantity: number | null;
   unit_price: number | null;
@@ -205,22 +241,28 @@ export async function carregarInsumos(
           .range(de, ate),
       "recommendation_config",
     ),
-    paginarFonte<LinhaOrderItem>(
-      (de, ate) =>
-        db.from<LinhaOrderItem>("order_items")
-          .select("product_id, quantity, unit_price")
+    paginarFonteKeyset<LinhaOrderItem>(
+      (cursor, limite) => {
+        const q = db.from<LinhaOrderItem>("order_items")
+          .select("id, product_id, quantity, unit_price")
           .eq("customer_user_id", customerId)
           .order("id", { ascending: true })
-          .range(de, ate),
+          .limit(limite);
+        return cursor === null ? q : q.gt("id", cursor);
+      },
+      (l) => l.id,
       "order_items",
     ),
-    paginarFonte<LinhaProduto>(
-      (de, ate) =>
-        db.from<LinhaProduto>("omie_products")
+    paginarFonteKeyset<LinhaProduto>(
+      (cursor, limite) => {
+        const q = db.from<LinhaProduto>("omie_products")
           .select("id, omie_codigo_produto, descricao, codigo, valor_unitario, estoque, familia, subfamilia")
           .eq("ativo", true)
           .order("id", { ascending: true })
-          .range(de, ate),
+          .limit(limite);
+        return cursor === null ? q : q.gt("id", cursor);
+      },
+      (l) => l.id,
       "omie_products",
     ),
     paginarFonte<LinhaCusto>(
