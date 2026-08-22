@@ -139,7 +139,7 @@ describe('guardrail money-path: analyze-unified-order USA o helper de merge de p
 // fonte com comentários removidos viraria tautologia verde (§"O ALVO mente" do money-path.md).
 describe('guardrail money-path: analyze-unified-order mantém o prompt caching LIGADO', () => {
   const src = read(ANALYZE);
-  const codigo = semComentarios(src);
+  const codigo = removerComentarios(src);
   const modulo = read('supabase/functions/analyze-unified-order/prompt-sistema.ts');
 
   it('sentinela: leu o edge real e o módulo de montagem do prompt', () => {
