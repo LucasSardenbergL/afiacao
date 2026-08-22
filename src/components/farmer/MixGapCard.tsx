@@ -100,7 +100,7 @@ export function MixGapCard() {
   const estado: EstadoMixGap | null =
     semAcesso || inerte || carregando
       ? null
-      : temDado
+      : data != null
         ? (data.totalComGap > 0 ? 'com_gap' : 'zero')
         : pausado
           ? 'aguardando_rede'   // sem dado os dois ramos são exclusivos (ver `desatualizado`)
@@ -120,10 +120,10 @@ export function MixGapCard() {
     trackedChave.current = chave;
     track('carteira.mixgap_visto', {
       estado,
-      total_com_gap: temDado ? data.totalComGap : null,
+      total_com_gap: data != null ? data.totalComGap : null,
       desatualizado,
     });
-  }, [estado, desatualizado, temDado, data]);
+  }, [estado, desatualizado, data]);
 
   if (semAcesso || inerte) return null;
 
