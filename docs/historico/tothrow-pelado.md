@@ -50,7 +50,7 @@ separam os dois throws da mesma função).
 
 ## Meta-achado: o instrumento de diagnóstico foi o artefato menos testado da sessão
 
-Três bugs, todos no MEU script ad-hoc, todos se apresentando como "achado sobre o repo":
+Cinco bugs, todos no MEU ferramental ad-hoc, todos se apresentando como "achado sobre o repo":
 
 1. **Re-implementei a regra de descoberta do runner.** Filtrei `supabase/**/*_test.ts` assumindo a convenção do
    underscore → declarei `paginacao.test.ts` como "teste que nunca roda". O Deno descobre `*.test.ts` por padrão:
@@ -63,5 +63,13 @@ Três bugs, todos no MEU script ad-hoc, todos se apresentando como "achado sobre
    `gates-textuais-cegos.md`) — eu não a apliquei porque a tinha arquivado como regra de código de PRODUÇÃO,
    não de script de diagnóstico descartável.
 
-As três regras já existiam no repo, em roupagem de produção. **Script de medição descartável merece o mesmo
+4. **`$R:src/...` no zsh não é "variável e dois-pontos" — é o modificador `:s` de substituição.** A checagem
+   final do resíduo (`git show "$R:src/__tests__/...gate.test.ts" | wc -l`) devolveu **19 linhas para um arquivo
+   de 89**, e o manifesto acusou **0** ocorrências de uma entrada que existe. Nenhum dos dois FALHOU — o zsh
+   comeu o caminho e o `git show` leu outra coisa. Se eu tivesse acreditado no número, teria "consertado" um
+   arquivo íntegro. Cura: `"${R}:caminho"` entre chaves. É a armadilha que o CLAUDE.md já cataloga em outra
+   roupa (*"flag homônima entre BSD e GNU não FALHA — faz OUTRA coisa"*) ⇒ **valide o FORMATO esperado**
+   (89 linhas, não 19), nunca só o exit code.
+
+Quatro dessas cinco regras já existiam no repo, em roupagem de produção. **Script de medição descartável merece o mesmo
 guard que código de produção** — porque o resultado dele é que decide o que você vai "consertar".
