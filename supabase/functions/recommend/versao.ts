@@ -24,8 +24,14 @@ export const respostaSonda = criarRespostaSonda("recommend");
  * do #1856. Carimbar `v1.0` sugeriria que esta é a primeira versão instrumentada de um código
  * parado, quando o que a sonda passa a distinguir daqui para a frente é justamente o que veio
  * depois dele.
+ *
+ * `v1.2`: o `sim_score` passou a vir agregado do banco (`recommend_cluster_agregado`) em vez de
+ * um teto de 1.000 linhas de `order_items` que zerava clientes com compra real. É a primeira vez
+ * que a sonda serve ao propósito para que nasceu — este deploy depende de uma MIGRATION manual,
+ * e sem ela "a edge nova está no ar?" e "a função existe no banco?" seriam duas perguntas sem
+ * resposta em vez de uma consulta e uma sonda.
  */
-export const VERSAO = "v1.1-keyset-leituras";
+export const VERSAO = "v1.2-cluster-rpc";
 
 /** Efeito citado no 400 de `probe` ambíguo. */
 export const EFEITO =

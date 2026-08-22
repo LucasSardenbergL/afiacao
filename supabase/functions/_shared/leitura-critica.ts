@@ -144,26 +144,6 @@ export function exigirLinhas<T>(res: RespostaLeitura<T>, fonte: string): T {
 }
 
 /**
- * Leitura de LISTA: `data` tem de vir array. `data:null` SEM `error` é resposta MALFORMADA
- * do PostgREST, não "a lista está vazia" — vazio legítimo é `[]`.
- *
- * Existe porque `exigirLeitura` mistura as duas CARDINALIDADES (achado do challenge Codex
- * nesta entrega): para um `.maybeSingle()` o `data:null` é ausência legítima e o caller deve
- * mesmo cair no default; para um `.select()` de lista o mesmo `null` coalescido com `?? []`
- * vira "ninguém comprou nada" — que é o EOF falso que `fetchAll` já rejeita no laço, entrando
- * pela porta do lado na leitura de uma página só.
- *
- * Lista VAZIA passa: `[]` é estado de negócio (quem precisa de ≥1 linha usa `exigirLinhas`).
- */
-export function exigirLista<T>(res: RespostaLeitura<T[]>, fonte: string): T[] {
-  const dados = exigirLeitura(res, fonte);
-  if (!Array.isArray(dados)) {
-    throw new FalhaLeituraCritica(fonte, { code: 'MALFORMADA' });
-  }
-  return dados;
-}
-
-/**
  * Códigos que significam "a coluna/relação pedida não existe no schema" — o único caso em
  * que uma leitura de coluna OPCIONAL pode ser engolida (a feature ainda não foi migrada).
  * `42703` undefined_column · `42P01` undefined_table · `PGRST204`/`PGRST202` são as

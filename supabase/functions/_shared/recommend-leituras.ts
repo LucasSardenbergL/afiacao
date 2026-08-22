@@ -53,7 +53,7 @@
 // ausente da mensagem pública.
 import { fetchAll, fetchAllKeyset } from "./paginate.ts";
 import type { BancoPostgrest } from "./paginate.ts";
-import { exigirLeitura, exigirLista } from "./leitura-critica.ts";
+import { exigirLeitura, FalhaLeituraCritica } from "./leitura-critica.ts";
 
 // ── Formas das linhas (o que o `.select()` de cada leitura promete) ────────────────────
 // NÃO exportadas de propósito: ninguém fora daqui as nomeia, e `export` sem consumidor
@@ -109,10 +109,6 @@ interface LinhaClientScore {
   category_count: number | null;
 }
 
-interface LinhaCompraCluster {
-  product_id: string | null;
-  customer_user_id: string;
-}
 
 export interface InsumosRecommend {
   configs: LinhaConfig[];
@@ -124,56 +120,74 @@ export interface InsumosRecommend {
   clientScore: LinhaClientScore | null;
 }
 
-// ── Tetos do cluster: amostra DELIBERADA, e por isso nomeada ───────────────────────────
-// Estes três números são teto de custo, não cap acidental do transporte. Ficam como
-// constantes exportadas para o teste afirmar sobre eles em vez de repeti-los.
-
-/** Quantos clientes do mesmo `health_class` entram na amostra de similaridade. */
-export const TETO_CLUSTER_CLIENTES = 100;
-/** Destes, de quantos se buscam as compras (o `.in()` cresce a URL do PostgREST). */
-export const TETO_CLUSTER_USUARIOS_AMOSTRA = 50;
-/** Teto de linhas de compra da amostra. */
-export const TETO_CLUSTER_COMPRAS = 1000;
+// ── O teto do cluster: agora DISJUNTOR de custo, não amostra ──────────────────────────
+// Os três tetos de antes (100 clientes lidos / 50 amostrados / 1.000 linhas de compra) saíram
+// junto com a amostragem: `recommend_cluster_agregado` agrega no BANCO, e a população elegível
+// é PEQUENA — 779 / 348 / 100 clientes nos três clusters (medido em prod 2026-08-22). Não há
+// cauda longa a amostrar; o cluster inteiro custa 51,9 ms (EXPLAIN ANALYZE no pior caso).
+//
+// Some junto a auto-inclusão que o #1852 deixou nomeada: com n=50 o cliente-alvo valia 2% do
+// próprio denominador; com o cluster inteiro vale 0,13% / 0,29% / 1,00%. Diluída, não consertada
+// — leave-one-out segue não implementado, e agora custa menos deixá-lo assim.
 
 /**
- * Os `sales_history_status` que ENTRAM na amostra de similaridade — whitelist POSITIVA.
+ * Acima disto a RPC NÃO mede: devolve `truncado` e os campos medidos em NULL.
  *
- * Espelha `SalesHistoryStatus` de `src/lib/scoring/salesHistoryStatus.ts` menos
- * `'sem_historico'` (Deno não importa de `src/`); lá a união é FECHADA em três valores, e o
- * gate de paridade que pega a divergência está em
- * `src/__tests__/edge-money-path-invariants.test.ts`.
+ * É disjuntor de CUSTO, e o número vem de folga medida: o maior cluster tem 779 elegíveis, então
+ * 5.000 é ~6,4× o pior caso de hoje. O outro eixo — quantos PRODUTOS o agregado tem — não precisa
+ * de teto porque é limitado ESTRUTURALMENTE pelo catálogo ativo (3.140 SKUs), e o `jsonb` de uma
+ * linha não passa pelo cap de 1.000 do PostgREST.
  *
- * Por que whitelist e não `.neq('sem_historico')`, que seria mais curto: a coluna é NULLABLE
- * (zero nulos hoje, mas o schema permite) e negação no PostgREST é NULL-blind — o `.neq`
- * excluiria NULL por efeito colateral invisível. E um status NOVO que signifique "sem venda"
- * entraria SOZINHO na amostra sob `.neq`, reabrindo este defeito em silêncio. Whitelist falha
- * FECHADA: status desconhecido fica de fora até alguém decidir.
- *
- * `sem_historico` é mais estrito que "não tem linha em `order_items`": significa "sem venda
- * VÁLIDA monetizada", e a RPC que alimenta a coluna já aplica blocklist de status e
- * `deleted_at IS NULL`. Medido em prod hoje bate EXATAMENTE com os 5.406 `critico` sem nenhuma
- * compra (0 falso-positivo, 0 falso-negativo), e a divergência futura é na direção desejada:
- * cliente cujos únicos pedidos foram cancelados sai da amostra.
+ * ⚠️ Este teto não é o teto antigo com outro nome. O de 1.000 LINHAS cortava no meio e seguia
+ * ranqueando sobre o pedaço; este RECUSA medir. A diferença é o contrato de `truncado`.
  */
+export const TETO_CLUSTER_CLIENTES = 5000;
+
 export const CLUSTER_STATUS_COM_HISTORICO = ["ativo", "stale"] as const;
 
 export interface ClusterRecommend {
-  /** Os até `TETO_CLUSTER_CLIENTES` clientes do mesmo `health_class` COM histórico de venda. */
-  clusterUserIds: string[];
-  /** O recorte de `clusterUserIds` de quem as compras foram efetivamente buscadas. */
-  usuariosAmostrados: string[];
-  clusterPurchases: LinhaCompraCluster[];
   /**
-   * `true` quando a amostra bateu em `TETO_CLUSTER_COMPRAS`. Chama-se "no teto" e não
-   * "saturada" porque é exatamente isso que o código SABE: com 1.000 compras existentes e
-   * 1.000 lidas nada foi cortado, e o campo ainda assim é `true`. Afirmar "há mais compras"
-   * exigiria `count:'exact'`, que não se pede aqui. (2ª rodada do Codex — o nome anterior
-   * prometia mais do que a medição sustenta, que é a própria classe que esta entrega combate.)
+   * Denominador de `sim`: quantos clientes ELEGÍVEIS o cluster tem (whitelist de
+   * `sales_history_status` aplicada). População, não "quem comprou alguma coisa".
    *
-   * O que ele compra: o cap DELIBERADO deixa de ser cap SILENCIOSO — quem consome pode dizer
-   * que o `sim_score` pode ter saído de amostra parcial em vez de afirmá-lo como total.
+   * Os dois DIVERGEM em prod — 779 vs 633 em `critico`, 348 vs 334 em `atencao` — e a escolha
+   * muda comportamento observável (com população, zero produtos cruzam o corte de 0,10 em
+   * `critico`; com observados, dois cruzam). População é o certo porque a leitura é EXAUSTIVA:
+   * cliente sem par é fato OBSERVADO ("li o histórico inteiro dele e X não está lá"), não
+   * truncagem. Dividir pelos observados é viés de seleção — o denominador filtrado pelo
+   * numerador — e infla `sim` sistematicamente.
    */
-  amostraNoTeto: boolean;
+  denominador: number;
+  /**
+   * Quantos dos elegíveis têm ≥1 par no recorte. DIAGNÓSTICO, não denominador: é o sensor que
+   * permite ver a distância entre população e observação sem ter que inferi-la. `null` quando
+   * `truncado`.
+   */
+  observados: number | null;
+  /**
+   * `product_id` → nº de clientes DISTINTOS do cluster que o compraram. Já deduplicado por
+   * `(cliente, produto)` no banco, então recompra e pedido com muitos SKUs não pesam.
+   *
+   * `null` (e NÃO `{}`) quando `truncado`: `{}` diria "medi e ninguém comprou", que é o zero
+   * fabricado que esta entrega existe para matar.
+   */
+  clientesPorProduto: Record<string, number> | null;
+  /**
+   * `true` = a população passou de `TETO_CLUSTER_CLIENTES` e a RPC RECUSOU medir. O consumidor
+   * trata `sim` como INDISPONÍVEL — não como zero.
+   *
+   * Sucessor de `amostraNoTeto`, e a diferença é a que importa: aquele sinalizava um corte que
+   * o código seguia usando (só um `console.warn` do outro lado), este desliga o componente.
+   */
+  truncado: boolean;
+}
+
+/** A forma da linha ÚNICA que `recommend_cluster_agregado` devolve. */
+interface LinhaClusterAgregado {
+  denominador: number | null;
+  observados: number | null;
+  produtos: Record<string, number> | null;
+  truncado: boolean | null;
 }
 
 /**
@@ -255,81 +269,72 @@ export async function carregarInsumos(
 }
 
 /**
- * Amostra de similaridade: clientes do mesmo `health_class` e o que compraram.
+ * Similaridade de cluster: quantos clientes do mesmo `health_class` compram cada produto.
  *
- * Aqui o teto é de NEGÓCIO (custo da chamada), não o cap do transporte — por isso `.limit()`
- * e não `fetchAll`. O que muda em relação ao código anterior é o resto do contrato: a amostra
- * é pedida com `.order("id")` (antes o Postgres escolhia 100 quaisquer, e escolhia outros 100
- * na execução seguinte — o `sim_score` do mesmo cliente mudava sem nada ter mudado), o `error`
- * passa a LANÇAR, e a saturação vira campo em vez de silêncio.
+ * ⚠️ O QUE ESTA ENTREGA CONSERTA (medido em prod 2026-08-21/22, psql-ro).
  *
- * ⚠️ O QUE ESTA ENTREGA CONSERTA — e o que segue aberto (medido em prod 2026-08-21, psql-ro).
+ * Antes, esta função lia `order_items` dos 50 clientes amostrados com
+ * `.order("id").limit(1000)` e o TypeScript agregava. Como `order_items.id` é UUID
+ * `gen_random_uuid()`, esse LIMIT era amostra de LINHAS, não janela temporal — e mordia:
  *
- * `.order("id").limit(100)` NÃO é prefixo temporal: `farmer_client_scores.id` é UUID
- * `gen_random_uuid()`, então os 100 menores são amostra pseudoaleatória DETERMINÍSTICA, e a
- * reprodutibilidade é o ganho real do #1836. (A versão anterior deste comentário dizia
- * "provavelmente os mais antigos" — estava factualmente errado.)
+ *   cluster | linhas existentes | linhas VISTAS | clientes com compra REAL | clientes ZERADOS
+ *   critico |               749 |           749 |                       50 |                0
+ *   atencao |             2.413 |         1.000 |                       50 |                5
+ *   estavel |            16.738 |         1.000 |                       50 |                2
  *
- * O defeito dominante era OUTRO: o cluster `critico` tem 6.185 linhas, das quais 5.406 (87%)
- * são `sales_history_status = 'sem_historico'` — cliente sem venda válida monetizada. A
- * amostra pegava ~42 dessas linhas vazias, que entravam no DENOMINADOR de `sim` e nunca no
- * numerador. Medido: dos 50 amostrados, 8 tinham qualquer compra; 321 linhas de compra; máximo
- * de 4 clientes por produto ⇒ `sim` máximo 0,04. Com o filtro: 749 linhas, 299 produtos,
- * máximo 9 ⇒ `sim` máximo 0,18. O conserto do denominador vive no consumidor
- * (`recommend/index.ts`) e só vale junto com este filtro: sozinhos, nenhum dos dois faz `sim`
- * cruzar 0,10 em `critico` (0,08 e 0,09 respectivamente).
+ * Os 5 e 2 ZERADOS são o defeito: o cliente TINHA compra, o teto comeu todas as linhas dele
+ * (comprador pesado ocupa o orçamento desproporcionalmente; recompra e pedido grande gastam cap
+ * sem mover o numerador, que conta clientes DISTINTOS), e o denominador o contava como "não
+ * comprou". Fabricar zero é o que `money-path.md` §2 proíbe. Em `estavel` a edge via 6% das
+ * linhas e 30% dos produtos.
  *
- * ⚠️ SEGUE ABERTO, nomeado para não passar por consertado (challenge Codex gpt-5.6-sol/xhigh):
- *   · AUTO-INCLUSÃO: o cliente que recebe a recomendação pode estar entre os 50 e contar no
- *     próprio denominador — falta leave-one-out com reposição da vaga;
- *   · o TETO PLANO de 1.000 compras MORDE hoje em `atencao` e `estavel` (1.000 exatas, medido).
- *     Como `order_items.id` também é UUID, o corte é amostra de LINHAS e não janela temporal:
- *     comprador pesado ocupa mais linhas e pode deixar outro cliente do cluster sem nenhuma
- *     linha observada — que o denominador então trata como "não comprou". O certo é agregar no
- *     banco (últimos K PEDIDOS por cliente, dedup `(cliente, produto)`) via RPC;
+ * Agora a agregação inteira vive em `recommend_cluster_agregado` (migration
+ * `20260822000358`), que também elimina o `.in()` com 50 UUIDs na URL do PostgREST. O porquê de
+ * cada escolha do recorte — histórico inteiro, universo de pedidos canônico, SKU ativo,
+ * denominador-população, retorno em jsonb de UMA linha — está no cabeçalho da migration, com as
+ * medições que a sustentam. Aqui fica só o que o CHAMADOR precisa saber.
+ *
+ * ⚠️ SEGUE ABERTO, nomeado para não passar por consertado:
+ *   · AUTO-INCLUSÃO: o cliente-alvo ainda pode contar no próprio denominador. Diluída de 2% para
+ *     0,13%/0,29%/1,00% ao trocar a amostra pela população — não consertada;
  *   · o cluster é global por `health_class` e ignora `farmer_id`, embora a coluna exista;
- *   · `TETO_CLUSTER_CLIENTES` (100) segue maior que a amostra de fato (50): lemos 100 e medimos
- *     sobre 50;
- *   · os cortes 0,10/0,15/0,20 de `recommend/index.ts` NÃO foram recalibrados. Com n=50 e
- *     comparação estrita eles exigem 6, 8 e 11 clientes distintos; o máximo medido depois do
- *     conserto é 9, então a explicação percentual (>0,20) segue inalcançável em `critico`.
+ *   · os cortes 0,10/0,15/0,20 de `recommend/index.ts` NÃO foram recalibrados, e agora eles
+ *     mordem de forma MUITO diferente por cluster: com o cluster inteiro o `sim` máximo é 0,096
+ *     em `critico` (n=779, nada cruza 0,10), 0,210 em `atencao` e 0,430 em `estavel` (n=100, 34
+ *     produtos cruzam 0,20). Não recalibrei de propósito: em `critico` o silêncio é o sistema
+ *     dizendo a verdade — não HÁ produto que 10% do cluster compre. Baixar o corte para fazer o
+ *     ramo acender seria fabricar disparo.
  */
 export async function carregarCluster(
   db: BancoPostgrest,
   healthClass: string,
 ): Promise<ClusterRecommend> {
-  const clusterCustomers = exigirLista(
-    await db.from<{ customer_user_id: string }>("farmer_client_scores")
-      .select("customer_user_id")
-      .eq("health_class", healthClass)
-      .in("sales_history_status", CLUSTER_STATUS_COM_HISTORICO)
-      .order("id", { ascending: true })
-      .limit(TETO_CLUSTER_CLIENTES),
-    "farmer_client_scores (cluster)",
-  );
+  const { data, error } = await db.rpc<LinhaClusterAgregado>("recommend_cluster_agregado", {
+    p_health_class: healthClass,
+    p_teto_clientes: TETO_CLUSTER_CLIENTES,
+  });
+  // Mesma redução a domínio FECHADO das outras leituras: o `error.message` do PostgREST
+  // encaminha o MESSAGE do Postgres, e o `catch` do `Deno.serve` de `recommend/index.ts` devolve
+  // esse texto no CORPO da resposta.
+  if (error) throw new FalhaLeituraCritica("recommend_cluster_agregado", error);
 
-  const clusterUserIds = clusterCustomers.map((c) => c.customer_user_id);
-  const usuariosAmostrados = clusterUserIds.slice(0, TETO_CLUSTER_USUARIOS_AMOSTRA);
-
-  // `.in()` com lista vazia é round-trip inútil e, no PostgREST, a forma degenerada `in.()`.
-  // Cluster vazio é estado legítimo (nenhum cliente naquele `health_class`).
-  if (usuariosAmostrados.length === 0) {
-    return { clusterUserIds, usuariosAmostrados, clusterPurchases: [], amostraNoTeto: false };
+  // `data: null` sem erro é resposta MALFORMADA — não é "cluster vazio". Cluster vazio é uma
+  // linha com `denominador: 0`, que segue adiante. Tratar um pelo outro é o EOF falso que o
+  // resto deste módulo existe para rejeitar.
+  const linha = data?.[0];
+  if (data == null || linha == null) {
+    throw new FalhaLeituraCritica("recommend_cluster_agregado", { code: "MALFORMADA" });
   }
 
-  const clusterPurchases = exigirLista(
-    await db.from<LinhaCompraCluster>("order_items")
-      .select("product_id, customer_user_id")
-      .in("customer_user_id", usuariosAmostrados)
-      .order("id", { ascending: true })
-      .limit(TETO_CLUSTER_COMPRAS),
-    "order_items (cluster)",
-  );
-
+  const truncado = linha.truncado === true;
   return {
-    clusterUserIds,
-    usuariosAmostrados,
-    clusterPurchases,
-    amostraNoTeto: clusterPurchases.length >= TETO_CLUSTER_COMPRAS,
+    // `denominador` é o único campo que a RPC devolve mesmo truncada (é o fato: a população
+    // existe e foi contada). `?? 0` aqui NÃO fabrica — a coluna é `count(*)`, nunca nula; o
+    // fallback só satisfaz o tipo.
+    denominador: linha.denominador ?? 0,
+    // Truncado ⇒ null, não 0. A distinção inteira da entrega: 0 é "medi e ninguém comprou".
+    observados: truncado ? null : linha.observados,
+    clientesPorProduto: truncado ? null : (linha.produtos ?? {}),
+    truncado,
   };
 }

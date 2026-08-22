@@ -83,6 +83,23 @@ export interface BancoPostgrest {
   // Genérico (e não `QueryPostgrest<unknown>`) para o call-site declarar a forma da linha
   // que espera de cada tabela — é o que mantém `fetchAll<T>` tipado ponta a ponta.
   from<T>(tabela: string): QueryPostgrest<T>;
+  /**
+   * Chamada de função SQL. Entrou para `recommend_cluster_agregado`, que faz no BANCO a
+   * agregação que o edge fazia sobre uma amostra de 1.000 LINHAS de `order_items`.
+   *
+   * Não devolve `QueryPostgrest`: esta RPC responde UMA linha já agregada, então não há o que
+   * paginar nem o que ordenar. ⚠️ Isso NÃO é dispensa geral do cap — o PostgREST capa `.rpc()`
+   * em 1.000 linhas igual a qualquer leitura. É justamente por isso que a função devolve o
+   * agregado num `jsonb` de uma linha: linha-por-produto truncaria dois dos três clusters HOJE
+   * (957/1.312/1.109 produtos, medido). RPC que devolva LISTA precisa paginar como as outras.
+   */
+  rpc<T>(
+    fn: string,
+    args: Record<string, unknown>,
+  ): PromiseLike<{
+    data: T[] | null;
+    error: { message: string; code?: string | null; details?: string | null; hint?: string | null } | null;
+  }>;
 }
 
 export async function fetchAll<T>(
