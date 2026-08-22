@@ -21,7 +21,7 @@ describe('chunk', () => {
   it('divide com resto', () => expect(chunk([1, 2, 3, 4, 5], 2)).toEqual([[1, 2], [3, 4], [5]]));
   it('lista vazia', () => expect(chunk([], 3)).toEqual([]));
   it('size maior que a lista', () => expect(chunk([1, 2], 5)).toEqual([[1, 2]]));
-  it('size inválido lança', () => expect(() => chunk([1], 0)).toThrow());
+  it('size inválido lança', () => expect(() => chunk([1], 0)).toThrow(/size deve ser > 0/));
 });
 
 describe('marcarCobertura', () => {

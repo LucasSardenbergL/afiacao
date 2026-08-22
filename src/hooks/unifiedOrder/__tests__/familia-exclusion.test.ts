@@ -37,18 +37,18 @@ describe('buildFamiliaExclusionOrFilter', () => {
   it('lança se um pattern contém vírgula (quebraria o separador do .or())', () => {
     // Money-path: pattern mal-formado deve falhar alto, nunca virar query
     // silenciosamente errada (a vírgula seria lida como separador de cláusula).
-    expect(() => buildFamiliaExclusionOrFilter(['%bombas, válvulas%'])).toThrow();
+    expect(() => buildFamiliaExclusionOrFilter(['%bombas, válvulas%'])).toThrow(/Pattern de família inválido/);
   });
 
   it('lança se um pattern contém parêntese ou aspas (quebraria o agrupamento do .or())', () => {
-    expect(() => buildFamiliaExclusionOrFilter(['%a(b)%'])).toThrow();
-    expect(() => buildFamiliaExclusionOrFilter(['%a"b%'])).toThrow();
+    expect(() => buildFamiliaExclusionOrFilter(['%a(b)%'])).toThrow(/Pattern de família inválido/);
+    expect(() => buildFamiliaExclusionOrFilter(['%a"b%'])).toThrow(/Pattern de família inválido/);
   });
 
   it('lança se a lista de patterns for vazia (and() vazio é inválido no PostgREST)', () => {
     // Invariante money-path: sem patterns, geraria `familia.is.null,and()` →
     // 400 do parser → catálogo vira [] silencioso. Falha alto em vez disso.
-    expect(() => buildFamiliaExclusionOrFilter([])).toThrow();
+    expect(() => buildFamiliaExclusionOrFilter([])).toThrow(/ao menos um pattern/);
   });
 });
 

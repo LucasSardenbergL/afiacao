@@ -44,7 +44,7 @@ describe('montarDadosAdicionaisNf', () => {
     expect(montarDadosAdicionaisNf(null, '213294')).toBe('PEDIDO DE COMPRA Nº: 213294');
   });
   it('lança com numeroPc vazio (backstop — nunca emitir NF com nº fabricado)', () => {
-    expect(() => montarDadosAdicionaisNf('MSG', '')).toThrow();
+    expect(() => montarDadosAdicionaisNf('MSG', '')).toThrow(/numeroPc obrigatório/);
   });
 });
 

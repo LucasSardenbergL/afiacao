@@ -343,7 +343,7 @@ describe('fetchAllPages — instrumentação da página perdida', () => {
   it('reporta fonte, índice da página, linhas lidas antes da falha e o código do PostgREST', async () => {
     await expect(
       fetchAllPages<{ id: number }>(falhaNaTerceira, 'product_costs/bundle'),
-    ).rejects.toThrow();
+    ).rejects.toThrow(/\(2000-2999\) falhou/);
 
     expect(captureExceptionMock).toHaveBeenCalledTimes(1);
     const [, ctx] = captureExceptionMock.mock.calls[0] as [unknown, Record<string, unknown>];
@@ -367,7 +367,7 @@ describe('fetchAllPages — instrumentação da página perdida', () => {
     };
     await expect(
       fetchAllPages<{ id: number }>(() => Promise.resolve({ data: null, error: comPII }), 'x/y'),
-    ).rejects.toThrow();
+    ).rejects.toThrow(/\(0-999\) falhou/);
 
     const [errArg, ctx] = captureExceptionMock.mock.calls[0] as [unknown, Record<string, unknown>];
     const tudo = JSON.stringify(ctx) + String((errArg as Error)?.message ?? '');
@@ -394,14 +394,14 @@ describe('fetchAllPages — instrumentação da página perdida', () => {
           () => Promise.resolve({ data: null, error: code ? { code, message: 'x' } : { message: 'x' } }),
           'x/y',
         ),
-      ).rejects.toThrow();
+      ).rejects.toThrow(/\(0-999\) falhou/);
       const [, ctx] = captureExceptionMock.mock.calls[0] as [unknown, Record<string, unknown>];
       expect(ctx.categoria, `code=${code}`).toBe(categoriaEsperada);
     }
   });
 
   it('NÃO envia as linhas lidas — metadado só, sem payload', async () => {
-    await expect(fetchAllPages<{ id: number }>(falhaNaTerceira, 'product_costs/bundle')).rejects.toThrow();
+    await expect(fetchAllPages<{ id: number }>(falhaNaTerceira, 'product_costs/bundle')).rejects.toThrow(/\(2000-2999\) falhou/);
 
     const [, ctx] = captureExceptionMock.mock.calls[0] as [unknown, Record<string, unknown>];
     expect(JSON.stringify(ctx)).not.toMatch(/"id"/);
@@ -411,7 +411,7 @@ describe('fetchAllPages — instrumentação da página perdida', () => {
   it('data:null sem error é categorizado à parte (não confundido com timeout)', async () => {
     await expect(
       fetchAllPages<{ id: number }>(() => Promise.resolve({ data: null, error: null }), 'x/y'),
-    ).rejects.toThrow();
+    ).rejects.toThrow(/data null sem error/);
 
     const [, ctx] = captureExceptionMock.mock.calls[0] as [unknown, Record<string, unknown>];
     expect(ctx.codigo).toBeNull();
