@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 482
+-- Total de custom migrations: 483
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -359,6 +359,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260629140000', 'reposicao_preco_ausente_null', '20260629140000_reposicao_preco_ausente_null.sql'),
   ('20260629150000', 'kb_catalisador_links', '20260629150000_kb_catalisador_links.sql'),
   ('20260701120000', 'fin_balanco_inputs', '20260701120000_fin_balanco_inputs.sql'),
+  ('20260701200017', 'backfill_kb_documents_product_code', '20260701200017_backfill_kb_documents_product_code.sql'),
   ('20260702210000', 'gov_iniciativas_iceberg', '20260702210000_gov_iniciativas_iceberg.sql'),
   ('20260702212000', 'data_health_estoque_reposicao_fonte_dado', '20260702212000_data_health_estoque_reposicao_fonte_dado.sql'),
   ('20260702213000', 'gov_iniciativas_check_ganhos', '20260702213000_gov_iniciativas_check_ganhos.sql'),
