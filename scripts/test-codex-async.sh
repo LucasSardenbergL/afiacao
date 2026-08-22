@@ -23,6 +23,7 @@ echo x >> "$CODEX_STUB_COUNT"
 case "$CODEX_STUB_MODE" in
   ok)        echo "parecer: aprovado com ressalvas"; exit 0 ;;
   quota)     echo "You have reached your usage limit" >&2; exit 1 ;;
+  modelo)    echo 'ERROR: {"type":"error","status":400,"error":{"type":"invalid_request_error","message":"The '"'"'gpt-5.6-sol'"'"' model is not supported when using Codex with a ChatGPT account."}}' >&2; exit 1 ;;
   ratelimit) n=$(wc -l < "$CODEX_STUB_COUNT" | tr -d ' ')
              if [ "$n" -ge 2 ]; then echo "parecer pós-retry"; exit 0
              else echo "429 rate limit exceeded" >&2; exit 1; fi ;;
@@ -67,6 +68,29 @@ run quota "x" >/dev/null 2>&1; rc=$?
 caso_exit "cota esgotada → 75" 75 "$rc"
 if [ "$(invocacoes)" -eq 1 ]; then echo "  ok    cota NÃO faz retry (1 invocação)"
 else echo "  FAIL  cota fez retry ($(invocacoes) invocações)"; fail=1; fi
+
+echo "── modelo recusado pela conta ──"
+# 400 do servidor quando o modelo do config não vale para a conta (2026-08-22: os 10
+# nomes testados foram recusados, então NÃO é erro de digitação do nome — é direito de
+# acesso). Antes caía no CODEX_FALHOU genérico: rc=1 e um tail de stderr, sem dizer o
+# que fazer. Confundir com cota manda para o Caminho B, que é esperar — e esperar não
+# conserta config.
+saida=$(run modelo "x" 2>&1); rc=$?
+caso_exit "modelo recusado → 78 (EX_CONFIG), não 75 nem 1" 78 "$rc"
+if [ "$(invocacoes)" -eq 1 ]; then echo "  ok    modelo recusado NÃO faz retry (1 invocação)"
+else echo "  FAIL  modelo recusado fez retry ($(invocacoes) invocações)"; fail=1; fi
+case "$saida" in
+  *MODELO_NAO_ACEITO*) echo "  ok    diagnóstico próprio (MODELO_NAO_ACEITO)" ;;
+  *) echo "  FAIL  sem diagnóstico próprio: $(printf '%s' "$saida" | tr '\n' ' ' | cut -c1-90)"; fail=1 ;;
+esac
+case "$saida" in
+  *"codex login"*|*config.toml*) echo "  ok    diz o que FAZER (login/config)" ;;
+  *) echo "  FAIL  não instrui a ação"; fail=1 ;;
+esac
+case "$saida" in
+  *Caminho\ B*) echo "  FAIL  mandou para o Caminho B (esperar não conserta config)"; fail=1 ;;
+  *) echo "  ok    NÃO manda para o Caminho B" ;;
+esac
 
 out="$(run ratelimit "x" 2>/dev/null)"; rc=$?
 caso_exit "rate limit transitório → retry → 0" 0 "$rc"
