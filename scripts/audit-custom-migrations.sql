@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 483
+-- Total de custom migrations: 484
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -522,6 +522,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260820124611', 'farmer_melhor_individual_bulk', '20260820124611_farmer_melhor_individual_bulk.sql'),
   ('20260820133119', 'farmer_melhor_individual_atomico', '20260820133119_farmer_melhor_individual_atomico.sql'),
   ('20260820225840', 'farmer_assoc_rules_escritor_unico', '20260820225840_farmer_assoc_rules_escritor_unico.sql'),
+  ('20260821192817', 'omie_identidade_a2_client_to_user', '20260821192817_omie_identidade_a2_client_to_user.sql'),
   ('20260821194411', 'farmer_recomendacao_desfecho', '20260821194411_farmer_recomendacao_desfecho.sql'),
   ('20260821200000', 'farmer_assoc_rules_segmento', '20260821200000_farmer_assoc_rules_segmento.sql'),
   ('20260822000358', 'recommend_cluster_agregado', '20260822000358_recommend_cluster_agregado.sql')
@@ -2178,6 +2179,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('farmer_melhor_individual_bulk', 'function', 'public', 'farmer_melhor_individual_por_cliente', ''),
   ('farmer_melhor_individual_atomico', 'function', 'public', 'farmer_melhor_individual_por_cliente', ''),
   ('farmer_assoc_rules_escritor_unico', 'rls_policy', 'public', 'Staff can read association rules', 'farmer_association_rules'),
+  ('omie_identidade_a2_client_to_user', 'function', 'public', 'omie_sync_identity_snapshot', ''),
+  ('omie_identidade_a2_client_to_user', 'function', 'public', 'register_carteira_member', ''),
   ('farmer_recomendacao_desfecho', 'function', 'private', 'frec_desfecho_imutavel', ''),
   ('farmer_recomendacao_desfecho', 'function', 'public', 'farmer_recomendacao_registrar_desfecho', ''),
   ('farmer_recomendacao_desfecho', 'index', 'public', 'idx_frec_desfecho', 'farmer_recommendations'),
@@ -3886,6 +3889,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('farmer_melhor_individual_bulk', 'function', 'public', 'farmer_melhor_individual_por_cliente', ''),
   ('farmer_melhor_individual_atomico', 'function', 'public', 'farmer_melhor_individual_por_cliente', ''),
   ('farmer_assoc_rules_escritor_unico', 'rls_policy', 'public', 'Staff can read association rules', 'farmer_association_rules'),
+  ('omie_identidade_a2_client_to_user', 'function', 'public', 'omie_sync_identity_snapshot', ''),
+  ('omie_identidade_a2_client_to_user', 'function', 'public', 'register_carteira_member', ''),
   ('farmer_recomendacao_desfecho', 'function', 'private', 'frec_desfecho_imutavel', ''),
   ('farmer_recomendacao_desfecho', 'function', 'public', 'farmer_recomendacao_registrar_desfecho', ''),
   ('farmer_recomendacao_desfecho', 'index', 'public', 'idx_frec_desfecho', 'farmer_recommendations'),

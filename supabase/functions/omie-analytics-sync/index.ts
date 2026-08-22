@@ -421,10 +421,19 @@ async function fetchCodigoUserMap(
 // degradaria para Map(0) SILENCIOSO (vendas pula pedidos, analytics não vincula) sem SQLSTATE. Aqui shape
 // inválido (null/array/tipo errado/valor não-UUID/doc ambíguo vazado em doc_to_user) LANÇA — precisão>recall.
 const OMIE_SNAPSHOT_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// PR-2/A2: código Omie decimal puro. NÃO usar só `Number()`: ele aceita '0x10' (16), '1e3' (1000),
+// ' 12 ' e '' (0) — cada um vira um código de cliente FABRICADO no cache do sync, que é a família
+// `Number(null)===0` aplicada a uma CHAVE de identidade. Só dígitos, sem zero à esquerda.
+const OMIE_SNAPSHOT_CODIGO_RE = /^[1-9][0-9]*$/;
 
 function parseIdentitySnapshot(
   snap: unknown,
-): { docToUserMap: Map<string, string>; ambiguousDocs: Set<string> } {
+): {
+  docToUserMap: Map<string, string>;
+  ambiguousDocs: Set<string>;
+  clientToUser: Map<number, string>;
+  revokedClientCodes: Set<number>;
+} {
   if (!snap || typeof snap !== "object" || Array.isArray(snap)) {
     throw new Error("identity snapshot: resposta não é objeto (fail-closed)");
   }
@@ -453,7 +462,55 @@ function parseIdentitySnapshot(
     }
     docToUserMap.set(doc, user);
   }
-  return { docToUserMap, ambiguousDocs };
+  // PR-2/A2 — PROVA POSITIVA código Omie → user, por conta. Vazio é o estado ESPERADO enquanto o
+  // omie-analytics-sync não repovoar `evidence_document_normalized` (o backfill é NULL, fail-closed):
+  // o leitor degrada para o comportamento de hoje. Ausente/não-objeto, porém, é contrato QUEBRADO —
+  // uma RPC anterior ao PR-1 não tem a chave, e aí `{}` silencioso seria indistinguível de "sem prova".
+  const c2u = s.client_to_user;
+  if (!c2u || typeof c2u !== "object" || Array.isArray(c2u)) {
+    throw new Error("identity snapshot: client_to_user ausente ou não-objeto (fail-closed)");
+  }
+  // A prova v1 é só `source='document'`, e ela exige um doc ÚNICO apontando para o MESMO user do
+  // vínculo — logo TODO user provado está, por construção, no contradomínio de doc_to_user. Um user
+  // fora dele significa que a RPC no ar não é a deste contrato (revertida, ou já com manual/code):
+  // fail-closed em vez de confiar num vínculo cuja regra não conhecemos.
+  const usuariosComDocUnico = new Set(docToUserMap.values());
+  const clientToUser = new Map<number, string>();
+  for (const [codigo, user] of Object.entries(c2u)) {
+    if (typeof user !== "string" || !OMIE_SNAPSHOT_UUID_RE.test(user)) {
+      throw new Error("identity snapshot: user_id não-UUID em client_to_user (fail-closed)");
+    }
+    if (!OMIE_SNAPSHOT_CODIGO_RE.test(codigo) || !Number.isSafeInteger(Number(codigo))) {
+      throw new Error("identity snapshot: código de cliente inválido em client_to_user (fail-closed)");
+    }
+    if (!usuariosComDocUnico.has(user)) {
+      throw new Error("identity snapshot: user de client_to_user fora de doc_to_user — RPC divergente do contrato v1 (fail-closed)");
+    }
+    clientToUser.set(Number(codigo), user);
+  }
+  // PR-2/A2 — REVOGAÇÃO. Sem ela a prova só OMITE, e omitir não corrige nada: o código obsoleto
+  // continua no cache do leitor. Aqui vêm os códigos cuja evidência EXISTE mas deixou de sustentar o
+  // vínculo (doc migrou de dono, virou ambíguo, ou o profile sumiu) — o leitor os REMOVE do cache e
+  // refaz pela API. Ausente/não-array é contrato QUEBRADO: `[]` silencioso reabriria o fail-open.
+  const rev = s.revoked_client_codes;
+  if (!Array.isArray(rev)) {
+    throw new Error("identity snapshot: revoked_client_codes ausente ou não-array (fail-closed)");
+  }
+  const revokedClientCodes = new Set<number>();
+  for (const codigo of rev) {
+    if (typeof codigo !== "string" || !OMIE_SNAPSHOT_CODIGO_RE.test(codigo) || !Number.isSafeInteger(Number(codigo))) {
+      throw new Error("identity snapshot: código de cliente inválido em revoked_client_codes (fail-closed)");
+    }
+    const cod = Number(codigo);
+    // disjunção: um código não pode ser provado E revogado (seria fail-open da RPC). A UNIQUE
+    // (omie_codigo_cliente, account) garante 1 linha por código/conta, então os dois conjuntos nascem
+    // disjuntos; ver os dois juntos significa que a RPC no ar não é a deste contrato.
+    if (clientToUser.has(cod)) {
+      throw new Error("identity snapshot: código em client_to_user E revoked_client_codes — fail-open da RPC (fail-closed)");
+    }
+    revokedClientCodes.add(cod);
+  }
+  return { docToUserMap, ambiguousDocs, clientToUser, revokedClientCodes };
 }
 // MIRROR-END
 
@@ -543,6 +600,7 @@ async function syncCustomers(db: SupabaseClient, account: OmieAccount) {
       omie_codigo_cliente: number;
       omie_codigo_vendedor: number | null;
       source: string;
+      evidence_document_normalized: string;
       updated_at: string;
     }>();
     // P1b: acumula (doc, código) de TODO registro Omie com doc — inclusive os SEM profile casado — p/
@@ -605,6 +663,14 @@ async function syncCustomers(db: SupabaseClient, account: OmieAccount) {
             // migra p/ ler a proof (carteira-rebuild). Só a proof alimenta a carteira daqui pra frente.
             omie_codigo_vendedor: extrairCodigoVendedor(c),
             source: "document",
+            // PR-2/A2: PROVENANCE da prova. Sem esta coluna, a proof-table registrava QUE havia vínculo
+            // mas não QUAL documento o provou — e aí o leitor (omie-vendas-sync) só podia concluir por
+            // AUSÊNCIA DE CONTRAINDICAÇÃO, que é fail-open: um C→u1 casado com o doc X sobrevivia a u1
+            // migrar para Y e u2 receber X. `doc` é exatamente o documento que casou logo acima
+            // (userByDoc.get(doc)), já normalizado a dígitos; userByDoc vem de doc_to_user, que só
+            // admite doc com length>=11 — o CHECK da coluna trava a regressão em que isto passasse a
+            // gravar o doc FORMATADO e o JOIN da RPC deixasse de casar em silêncio.
+            evidence_document_normalized: doc,
             updated_at: new Date().toISOString(),
           });
         }

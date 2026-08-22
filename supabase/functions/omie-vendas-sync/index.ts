@@ -980,18 +980,6 @@ async function syncPedidos(
   // Antes: paginação KEYSET de profiles montava o docToUserMap com buildDocUserMapFailClosed. Era
   // não-atômica (Codex xhigh 2026-07-10): um profile que nascia/mudava ENTRE páginas escapava da
   // detecção de doc-ambíguo. Agora a unicidade doc→user é resolvida num ÚNICO snapshot MVCC server-side
-  // (omie_sync_identity_snapshot, sql STABLE): doc com 2+ users DISTINTOS já vem FORA de doc_to_user e
-  // listado em ambiguous_docs (métrica). O fail-closed (precisão>recall) vive no SQL, não mais no TS.
-  // .rpc() NÃO lança em erro (resolve {error}) → checar e FAIL-CLOSED (throw): um mapa PARCIAL silencioso
-  // causaria miss no fallback resolveClientUserId → skip/atribuição arbitrária. Aborta e retoma.
-  const { data: snap, error: snapErr } = await supabase.rpc('omie_sync_identity_snapshot', { p_account: account });
-  if (snapErr) throw new Error(`identity snapshot (${account}): ${snapErr.message}`);
-  // Validação ESTRITA do contrato (Codex challenge PR-1): .rpc() error=null só prova HTTP/SQL, NÃO o JSON.
-  // Uma RPC revertida devolvendo {doc_to_user:null,...} (HTTP 200) degradaria p/ Map(0) SILENCIOSO → pedidos
-  // pulados. parseIdentitySnapshot LANÇA em shape inválido (null/array/não-UUID/doc ambíguo vazado) — fail-closed.
-  const { docToUserMap, ambiguousDocs } = parseIdentitySnapshot(snap);
-  console.log(`[sync_pedidos][${account}] Identity snapshot: ${docToUserMap.size} doc(s) único(s), ${ambiguousDocs.size} ambíguo(s) excluído(s) (fail-closed server-side)`);
-
   // pgSize/hasMore ficam declarados aqui pois o pré-load do clientCache (abaixo) os reusa.
   const pgSize = 1000;
   let hasMore = true;
@@ -1041,6 +1029,50 @@ async function syncPedidos(
   }
   console.log(`[sync_pedidos][${account}] Client cache from omie_customer_account_map_fresco: ${clientCache.size}`);
 
+  // ── Identidade por snapshot atômico — lida DEPOIS do cache da view, de propósito ─────────────────
+  // Ordem invertida na 2ª rodada do challenge Codex xhigh. Antes a RPC era lida ANTES da view, e a
+  // sobreposição abaixo escrevia a prova por cima de um cache MAIS NOVO: numa transferência de vínculo
+  // concorrente, a view já trazia o dono novo e a prova velha o revertia — inversão de recência que o
+  // código sem este PR não tinha. As duas leituras seguem em instantes distintos (a view é paginada, e
+  // um snapshot conjunto exigiria devolver o cache pela própria RPC — fica para o PR-3), mas agora a
+  // mais nova é a que vence.
+  // (omie_sync_identity_snapshot, sql STABLE): doc com 2+ users DISTINTOS já vem FORA de doc_to_user e
+  // listado em ambiguous_docs (métrica). O fail-closed (precisão>recall) vive no SQL, não mais no TS.
+  // .rpc() NÃO lança em erro (resolve {error}) → checar e FAIL-CLOSED (throw): um mapa PARCIAL silencioso
+  // causaria miss no fallback resolveClientUserId → skip/atribuição arbitrária. Aborta e retoma.
+  const { data: snap, error: snapErr } = await supabase.rpc('omie_sync_identity_snapshot', { p_account: account });
+  if (snapErr) throw new Error(`identity snapshot (${account}): ${snapErr.message}`);
+  // Validação ESTRITA do contrato (Codex challenge PR-1): .rpc() error=null só prova HTTP/SQL, NÃO o JSON.
+  // Uma RPC revertida devolvendo {doc_to_user:null,...} (HTTP 200) degradaria p/ Map(0) SILENCIOSO → pedidos
+  // pulados. parseIdentitySnapshot LANÇA em shape inválido (null/array/não-UUID/doc ambíguo vazado) — fail-closed.
+  const { docToUserMap, ambiguousDocs, clientToUser, revokedClientCodes } = parseIdentitySnapshot(snap);
+  console.log(`[sync_pedidos][${account}] Identity snapshot: ${docToUserMap.size} doc(s) único(s), ${ambiguousDocs.size} ambíguo(s) excluído(s) (fail-closed server-side)`);
+
+  // ── PR-2/A2: PROVA POSITIVA + REVOGAÇÃO por cima do cache ────────────────────────────────────
+  // O clientCache acima é vínculo por AUSÊNCIA DE CONTRAINDICAÇÃO: a view fresca só atesta "existe um
+  // vínculo com menos de 7 dias", nunca QUAL documento o provou. Por isso um C→u1 casado com o doc X
+  // sobrevivia a u1 migrar para Y e u2 receber X — sem a evidência, "não há contraindicação" era
+  // indistinguível de "há prova". `client_to_user` vem do MESMO snapshot MVCC de `doc_to_user` e só
+  // traz o vínculo cuja evidência ainda é ÚNICA e aponta para o MESMO user (RPC omie_sync_identity_
+  // snapshot, migration 20260821192817). Onde há prova, ela VENCE o cache.
+  //
+  // A sobreposição vive AQUI, na construção, e não só dentro de resolveClientUserId — porque o dono do
+  // pedido é lido DIRETO do cache mais abaixo (`clientCache.get(codigoCliente)`), e resolveClientUserId
+  // só roda para os códigos que NÃO estão no cache (`unknownCodes`). Corrigir apenas lá seria INERTE
+  // exatamente no caso do achado, em que o vínculo obsoleto ESTÁ no cache.
+  //
+  // E a metade que de fato fecha o achado é a REVOGAÇÃO: a prova só EMITE o código quando a evidência
+  // ainda concorda com a linha que alimenta a view, então em estado estável ela sempre concorda —
+  // omitir o vínculo podre deixaria o cache servindo-o igual. `revokedClientCodes` traz os códigos cuja
+  // evidência EXISTE mas não sustenta mais o vínculo, e o helper os REMOVE do cache; eles caem em
+  // `unknownCodes` e são refeitos pelo ConsultarCliente, que resolve pelo doc ATUAL do Omie.
+  //
+  // Enquanto o omie-analytics-sync não repovoar `evidence_document_normalized` (o backfill é NULL =
+  // sem prova, fail-closed), os dois conjuntos vêm VAZIOS e este bloco é no-op: nasce INERTE e ganha
+  // cobertura a cada run do sync de clientes. Os números do log são o sensor disso.
+  const prova = aplicarProvaPositivaNoCache(clientCache, clientToUser, revokedClientCodes);
+  console.log(`[sync_pedidos][${account}] Prova positiva: ${prova.provados} código(s) com evidência viva sobre ${prova.cacheDaView} do cache (${prova.cobertura}% de cobertura); ${prova.divergencias} divergiram do cache e foram corrigidos; ${prova.revogados} REVOGADOS do cache (evidência morta) → refazem pela API`);
+
   // ── Pre-load product mapping ──
   // Leitura COMPLETA e fail-closed (`_shared/mapas-paginados.ts`): o laço aqui descartava `error`,
   // então página que falhava virava "acabou" e todo produto da cauda resolvia `product_id: null`
@@ -1063,6 +1095,12 @@ async function syncPedidos(
 
   // Helper: resolve codigo_cliente -> user_id (cache-first, API fallback only for unknown)
   async function resolveClientUserId(codigoCliente: number): Promise<string | null> {
+    // PR-2/A2: a PROVA POSITIVA é consultada ANTES do cache. Na prática o clientCache já foi sobreposto
+    // por ela na construção (acima), então os dois concordam — esta consulta é a defesa em profundidade
+    // que sobrevive a alguém remover a sobreposição, e deixa a precedência explícita onde a decisão
+    // acontece. O cache segue valendo onde não há prova: degradação para o status quo, nunca fabricação.
+    const userProvado = clientToUser.get(codigoCliente);
+    if (userProvado) return userProvado;
     if (clientCache.has(codigoCliente)) return clientCache.get(codigoCliente) || null;
     // Fallback: chama a API Omie só p/ clientes fora do cache. throwOnTransient em AMBOS os modos (cursor
     // E incremental — P2 Codex xhigh 2026-07-10): um rate-limit/transitório do ConsultarCliente NÃO pode
@@ -1709,10 +1747,19 @@ function decideAccountIdentity(input: DecideInput): DecideResult {
 // degradaria para Map(0) SILENCIOSO (vendas pula pedidos, analytics não vincula) sem SQLSTATE. Aqui shape
 // inválido (null/array/tipo errado/valor não-UUID/doc ambíguo vazado em doc_to_user) LANÇA — precisão>recall.
 const OMIE_SNAPSHOT_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// PR-2/A2: código Omie decimal puro. NÃO usar só `Number()`: ele aceita '0x10' (16), '1e3' (1000),
+// ' 12 ' e '' (0) — cada um vira um código de cliente FABRICADO no cache do sync, que é a família
+// `Number(null)===0` aplicada a uma CHAVE de identidade. Só dígitos, sem zero à esquerda.
+const OMIE_SNAPSHOT_CODIGO_RE = /^[1-9][0-9]*$/;
 
 function parseIdentitySnapshot(
   snap: unknown,
-): { docToUserMap: Map<string, string>; ambiguousDocs: Set<string> } {
+): {
+  docToUserMap: Map<string, string>;
+  ambiguousDocs: Set<string>;
+  clientToUser: Map<number, string>;
+  revokedClientCodes: Set<number>;
+} {
   if (!snap || typeof snap !== "object" || Array.isArray(snap)) {
     throw new Error("identity snapshot: resposta não é objeto (fail-closed)");
   }
@@ -1741,7 +1788,120 @@ function parseIdentitySnapshot(
     }
     docToUserMap.set(doc, user);
   }
-  return { docToUserMap, ambiguousDocs };
+  // PR-2/A2 — PROVA POSITIVA código Omie → user, por conta. Vazio é o estado ESPERADO enquanto o
+  // omie-analytics-sync não repovoar `evidence_document_normalized` (o backfill é NULL, fail-closed):
+  // o leitor degrada para o comportamento de hoje. Ausente/não-objeto, porém, é contrato QUEBRADO —
+  // uma RPC anterior ao PR-1 não tem a chave, e aí `{}` silencioso seria indistinguível de "sem prova".
+  const c2u = s.client_to_user;
+  if (!c2u || typeof c2u !== "object" || Array.isArray(c2u)) {
+    throw new Error("identity snapshot: client_to_user ausente ou não-objeto (fail-closed)");
+  }
+  // A prova v1 é só `source='document'`, e ela exige um doc ÚNICO apontando para o MESMO user do
+  // vínculo — logo TODO user provado está, por construção, no contradomínio de doc_to_user. Um user
+  // fora dele significa que a RPC no ar não é a deste contrato (revertida, ou já com manual/code):
+  // fail-closed em vez de confiar num vínculo cuja regra não conhecemos.
+  const usuariosComDocUnico = new Set(docToUserMap.values());
+  const clientToUser = new Map<number, string>();
+  for (const [codigo, user] of Object.entries(c2u)) {
+    if (typeof user !== "string" || !OMIE_SNAPSHOT_UUID_RE.test(user)) {
+      throw new Error("identity snapshot: user_id não-UUID em client_to_user (fail-closed)");
+    }
+    if (!OMIE_SNAPSHOT_CODIGO_RE.test(codigo) || !Number.isSafeInteger(Number(codigo))) {
+      throw new Error("identity snapshot: código de cliente inválido em client_to_user (fail-closed)");
+    }
+    if (!usuariosComDocUnico.has(user)) {
+      throw new Error("identity snapshot: user de client_to_user fora de doc_to_user — RPC divergente do contrato v1 (fail-closed)");
+    }
+    clientToUser.set(Number(codigo), user);
+  }
+  // PR-2/A2 — REVOGAÇÃO. Sem ela a prova só OMITE, e omitir não corrige nada: o código obsoleto
+  // continua no cache do leitor. Aqui vêm os códigos cuja evidência EXISTE mas deixou de sustentar o
+  // vínculo (doc migrou de dono, virou ambíguo, ou o profile sumiu) — o leitor os REMOVE do cache e
+  // refaz pela API. Ausente/não-array é contrato QUEBRADO: `[]` silencioso reabriria o fail-open.
+  const rev = s.revoked_client_codes;
+  if (!Array.isArray(rev)) {
+    throw new Error("identity snapshot: revoked_client_codes ausente ou não-array (fail-closed)");
+  }
+  const revokedClientCodes = new Set<number>();
+  for (const codigo of rev) {
+    if (typeof codigo !== "string" || !OMIE_SNAPSHOT_CODIGO_RE.test(codigo) || !Number.isSafeInteger(Number(codigo))) {
+      throw new Error("identity snapshot: código de cliente inválido em revoked_client_codes (fail-closed)");
+    }
+    const cod = Number(codigo);
+    // disjunção: um código não pode ser provado E revogado (seria fail-open da RPC). A UNIQUE
+    // (omie_codigo_cliente, account) garante 1 linha por código/conta, então os dois conjuntos nascem
+    // disjuntos; ver os dois juntos significa que a RPC no ar não é a deste contrato.
+    if (clientToUser.has(cod)) {
+      throw new Error("identity snapshot: código em client_to_user E revoked_client_codes — fail-open da RPC (fail-closed)");
+    }
+    revokedClientCodes.add(cod);
+  }
+  return { docToUserMap, ambiguousDocs, clientToUser, revokedClientCodes };
+}
+// MIRROR-END
+
+// MIRROR-START omie prova-positiva-cache — espelhado verbatim de src/lib/omie/omie-identity-snapshot.ts
+// PR-2/A2: sobrepõe a PROVA POSITIVA (`client_to_user`) ao cache de identidade montado da view fresca
+// `omie_customer_account_map_fresco`. O cache é vínculo por AUSÊNCIA DE CONTRAINDICAÇÃO — a view só
+// atesta "existe vínculo com menos de 7 dias", nunca QUAL documento o provou; a prova vem do mesmo
+// snapshot MVCC de `doc_to_user` e exige evidência viva, única e consistente. Onde há prova, ela VENCE.
+// MUTA o cache de propósito: é a fronteira única por onde toda leitura de dono de pedido passa (o
+// `clientCache.get()` que decide o dono, e o `resolveClientUserId` dos códigos ausentes). Uma correção
+// feita só dentro de resolveClientUserId seria inerte justamente no caso do achado — o vínculo obsoleto
+// mora NO cache, e resolveClientUserId só roda para quem está FORA dele.
+// `divergencias` e `revogados` são os sensores do achado em produção. `cobertura` é o denominador —
+// enquanto o writer não repovoar a evidência, os dois conjuntos vêm vazios e a função é no-op (nasce
+// INERTE). Ausência de prova NUNCA apaga o cache: degrada para o status quo, não fabrica nem zera.
+//
+// A REVOGAÇÃO é o que de fato fecha o achado, e sobrepor positivos não a substitui (challenge Codex
+// xhigh): a prova só EMITE o código quando a evidência ainda concorda com a linha que alimenta a view,
+// então em estado estável ela sempre concorda — omitir o vínculo podre deixa o cache servindo-o igual.
+// Remover do cache faz o código cair em `unknownCodes` e ser refeito pelo ConsultarCliente, que resolve
+// pelo doc ATUAL do Omie via doc_to_user. Por isso o `delete` tem de acontecer ANTES de `unknownCodes`.
+function aplicarProvaPositivaNoCache(
+  cache: Map<number, string | null>,
+  prova: ReadonlyMap<number, string>,
+  revogados: ReadonlySet<number>,
+): { cacheDaView: number; provados: number; divergencias: number; revogados: number; cobertura: number } {
+  const cacheDaView = cache.size;
+  // Teto de sanidade ANTES de mutar (2ª rodada do challenge Codex xhigh). Revogar é caro: cada código
+  // removido vira uma chamada ConsultarCliente no fallback. Transferência de documento é rara, então
+  // revogação em MASSA não é a realidade — é assinatura de snapshot degradado (doc_to_user parcial,
+  // migration meio-aplicada, conta errada no p_account). Nesse estado, empurrar milhares de códigos
+  // para a API do Omie derrubaria o run por rate-limit de qualquer forma, só que depois de já ter
+  // gravado metade dos pedidos. Abortar aqui é a mesma decisão, tomada cedo e com nome: o run pausa e
+  // retoma na próxima janela (a RPC de criação de pedidos é idempotente), nada se perde e o alarme
+  // aparece. 30% é folgado de propósito — pega catástrofe, não regula o regime normal.
+  //
+  // O PISO de 100 não é detalhe: percentual sobre denominador pequeno é ruído. Numa conta com 3
+  // clientes no cache, revogar 1 já daria 33% e abortaria o sync inteiro por um caso banal. Abaixo de
+  // 100 o volume absoluto de chamadas é pequeno por definição, então não há catástrofe a evitar —
+  // o guard só faz sentido onde a proporção significa alguma coisa.
+  if (cacheDaView >= 100 && revogados.size > cacheDaView * 0.3) {
+    throw new Error(
+      `identity snapshot: ${revogados.size} de ${cacheDaView} vínculos do cache revogados (>30%) — ` +
+        `revogação em massa é sinal de snapshot degradado, não de realidade; abortando fail-closed`,
+    );
+  }
+  let divergencias = 0;
+  for (const [codigo, userProvado] of prova) {
+    const doCache = cache.get(codigo);
+    if (doCache !== undefined && doCache !== userProvado) divergencias++;
+    cache.set(codigo, userProvado);
+  }
+  // Depois da sobreposição, de propósito: os conjuntos são disjuntos por construção (e o parser
+  // assere isso), mas se algum dia deixarem de ser, a revogação vence — fail-closed, não fail-open.
+  let revogadosNoCache = 0;
+  for (const codigo of revogados) {
+    if (cache.delete(codigo)) revogadosNoCache++;
+  }
+  return {
+    cacheDaView,
+    provados: prova.size,
+    divergencias,
+    revogados: revogadosNoCache,
+    cobertura: cacheDaView > 0 ? Math.round((prova.size / cacheDaView) * 100) : 0,
+  };
 }
 // MIRROR-END
 
@@ -3423,11 +3583,18 @@ Deno.serve(async (req) => {
         let parseErro: string | null = null;
         let docsUnicos = 0;
         let ambiguos = 0;
+        let clientesProvados = 0;
+        let codigosRevogados = 0;
         if (!snapProbeErr) {
           try {
             const p = parseIdentitySnapshot(snapProbe);
             docsUnicos = p.docToUserMap.size;
             ambiguos = p.ambiguousDocs.size;
+            // PR-2/A2: SENSOR da cobertura da prova positiva, sem escrever nada. Nasce 0 (o backfill é
+            // NULL) e sobe conforme o omie-analytics-sync repovoa evidence_document_normalized — é o
+            // número que decide se a fase seguinte tem sinal, em vez de "está no ar e ninguém reclamou".
+            clientesProvados = p.clientToUser.size;
+            codigosRevogados = p.revokedClientCodes.size;
             parsedOk = true;
           } catch (e) {
             parseErro = (e as Error).message;
@@ -3441,6 +3608,8 @@ Deno.serve(async (req) => {
           ok: !snapProbeErr && parsedOk,
           docs_unicos: docsUnicos,
           ambiguos,
+          clientes_provados: clientesProvados,
+          codigos_revogados: codigosRevogados,
           erro: snapProbeErr?.message ?? parseErro,
         };
         break;

@@ -570,7 +570,10 @@ describe('guardrail money-path: identidade dos pedidos pela RPC atômica + contr
   // ── A1 VENDAS: docToUserMap vem do snapshot atômico + validação estrita de contrato ──
   it('A1 vendas: docToUserMap vem da RPC via parseIdentitySnapshot (não paginação, não helper antigo)', () => {
     expect(src, 'edge vendas não chama mais a RPC').toContain("rpc('omie_sync_identity_snapshot'");
-    expect(src, 'REGRESSÃO: docToUserMap não vem mais de parseIdentitySnapshot').toMatch(/docToUserMap[\s\S]{0,40}=[\s\S]{0,40}parseIdentitySnapshot\(/);
+    // O gap era {0,40}: o destructuring do PR-2/A2 ganhou `clientToUser` e `revokedClientCodes` e
+    // passou de 50 chars entre `docToUserMap` e `=`. Ampliado ao mínimo que acomoda as 4 chaves — a
+    // âncora (docToUserMap … = … parseIdentitySnapshot) continua a mesma.
+    expect(src, 'REGRESSÃO: docToUserMap não vem mais de parseIdentitySnapshot').toMatch(/docToUserMap[\s\S]{0,80}=[\s\S]{0,40}parseIdentitySnapshot\(/);
     expect(src, 'erro da RPC deve ser FAIL-CLOSED (throw)').toMatch(/if \(snapErr\) throw new Error/);
     expect(src, 'REVERSÃO Lovable? voltou a paginar profiles por keyset').not.toMatch(/from\('profiles'\)[\s\S]{0,200}\.order\('user_id'\)[\s\S]{0,120}\.gt\('user_id'/);
     expect(src, 'REVERSÃO: voltou a chamar o helper TS antigo').not.toMatch(/buildDocUserMapFailClosed\(/);
@@ -629,6 +632,116 @@ describe('guardrail money-path: identidade dos pedidos pela RPC atômica + contr
       bloco,
       'REGRESSÃO P2: voltou o catch que engole o transitório no incremental (fail-open → null cacheado + skip)',
     ).not.toMatch(/catch\s*\(/);
+  });
+});
+
+// ── PR-2 / achado A2: PROVA POSITIVA `client_to_user` vence o cache de identidade ──────────────────
+// O clientCache do syncPedidos vinha só da view `omie_customer_account_map_fresco`, que atesta "existe
+// vínculo com menos de 7 dias" mas nunca QUAL documento o provou — vínculo por ausência de
+// contraindicação. A migration 20260821192817 adiciona a evidência e faz a RPC devolver `client_to_user`
+// com a prova viva; o edge a sobrepõe ao cache. Textual pelo mesmo motivo do resto do arquivo (o deploy
+// pelo chat do Lovable pode reverter e commitar a reversão), e sobre a fonte SEM comentários — a prosa
+// que explica o achado cita os mesmos tokens que o assert procura.
+describe('guardrail money-path: prova positiva client_to_user sobre o cache de identidade (PR-2/A2)', () => {
+  const srcCru = read(VENDAS); // a paridade MIRROR precisa dos marcadores, que SÃO comentários
+  const src = removerComentarios(srcCru);
+  const analytics = removerComentarios(read(ANALYTICS));
+  const helper = read(IDENTITY_SNAPSHOT);
+
+  it('sentinela: o stripper não comeu o arquivo (asserts abaixo mediriam vazio)', () => {
+    expect(src).toContain('async function resolveClientUserId');
+    expect(src.length).toBeGreaterThan(50_000);
+    expect(analytics).toContain('async function syncCustomers');
+    expect(analytics.length).toBeGreaterThan(30_000);
+  });
+
+  it('PARIDADE: aplicarProvaPositivaNoCache idêntico em src × vendas', () => {
+    expect(
+      mirrorBlockNamed(srcCru, 'omie prova-positiva-cache'),
+      'vendas divergiu do helper de src/ (reversão do deploy?)',
+    ).toBe(mirrorBlockNamed(helper, 'omie prova-positiva-cache'));
+  });
+
+  it('o edge USA o helper: DEFINE o espelho E o CHAMA (≥2 menções)', () => {
+    expect(src).toMatch(/function aplicarProvaPositivaNoCache\(/);
+    expect(src, 'REGRESSÃO: o edge não chama mais aplicarProvaPositivaNoCache').toMatch(
+      /aplicarProvaPositivaNoCache\(clientCache, clientToUser, revokedClientCodes\)/,
+    );
+    expect(count(src, 'aplicarProvaPositivaNoCache')).toBeGreaterThanOrEqual(2);
+  });
+
+  it('o edge destrutura clientToUser E revokedClientCodes do snapshot', () => {
+    expect(src).toMatch(
+      /const \{ docToUserMap, ambiguousDocs, clientToUser, revokedClientCodes \} = parseIdentitySnapshot\(snap\)/,
+    );
+  });
+
+  it('a REVOGAÇÃO acontece ANTES de unknownCodes — senão o código podre nunca vai à API', () => {
+    // O par indispensável da prova (challenge Codex): a prova positiva só EMITE o código quando a
+    // evidência ainda concorda com a linha que alimenta a view, então em estado estável ela sempre
+    // concorda e omitir o vínculo podre deixa o cache servindo-o igual. Quem fecha o achado é o
+    // `delete` do cache — e ele só tem efeito se acontecer antes de `unknownCodes` ser calculado,
+    // porque é `unknownCodes` que decide quem é refeito pelo ConsultarCliente.
+    const iProva = src.indexOf('aplicarProvaPositivaNoCache(clientCache');
+    const iUnknown = src.indexOf('const unknownCodes = uniqueClientCodes.filter');
+    expect(iProva, 'sobreposição/revogação sumiu do syncPedidos').toBeGreaterThan(-1);
+    expect(iUnknown, 'âncora quebrada: não achei o cálculo de unknownCodes').toBeGreaterThan(-1);
+    expect(iProva, 'REGRESSÃO: a revogação passou a rodar DEPOIS de unknownCodes — vira no-op').toBeLessThan(iUnknown);
+  });
+
+  it('a sobreposição vem DEPOIS do pré-load da view — não no lugar dele', () => {
+    // Substituir o pré-load pela prova (em vez de sobrepor) jogaria os ~10.822 vínculos frescos sem
+    // evidência direto no fallback ConsultarCliente → rate-limit no Omie. A prova é aditiva.
+    const iView = src.indexOf("from('omie_customer_account_map_fresco')");
+    const iProva = src.indexOf('aplicarProvaPositivaNoCache(clientCache');
+    expect(iView, 'REGRESSÃO: o pré-load da view fresca sumiu do syncPedidos').toBeGreaterThan(-1);
+    expect(iProva).toBeGreaterThan(-1);
+    expect(iProva, 'a prova precisa sobrepor o cache JÁ montado, não substituí-lo').toBeGreaterThan(iView);
+  });
+
+  it('resolveClientUserId consulta a PROVA antes do cache (precedência no ponto de decisão)', () => {
+    const bloco = src.match(/async function resolveClientUserId[\s\S]*?async function getClientAddressPhone/)?.[0] ?? '';
+    expect(bloco, 'âncora quebrada: não achei o corpo de resolveClientUserId').not.toBe('');
+    const iProva = bloco.indexOf('clientToUser.get(codigoCliente)');
+    const iCache = bloco.indexOf('clientCache.has(codigoCliente)');
+    expect(iProva, 'REGRESSÃO A2: resolveClientUserId não consulta mais clientToUser').toBeGreaterThan(-1);
+    expect(iCache).toBeGreaterThan(-1);
+    expect(iProva, 'REGRESSÃO A2: o cache voltou a ser consultado ANTES da prova positiva').toBeLessThan(iCache);
+  });
+
+  it('o writer do analytics grava a EVIDÊNCIA no vínculo document-first', () => {
+    // Sem isto a coluna nasce e permanece NULL, client_to_user fica vazio para sempre e o PR inteiro
+    // é INERTE — a falha mais provável desta entrega, e a que nenhum erro de runtime denunciaria.
+    const i = analytics.indexOf('accountMapByUser.set(userIdByDoc, {');
+    expect(i, 'âncora quebrada: não achei o writer da proof-table').toBeGreaterThan(-1);
+    const objeto = analytics.slice(i, i + 700);
+    expect(objeto, 'REGRESSÃO: o writer voltou a gravar o vínculo SEM o documento que o provou').toMatch(
+      /evidence_document_normalized: doc,/,
+    );
+    expect(objeto).toMatch(/source: "document",/);
+  });
+
+  it('o p_account da RPC e o filtro da view usam a MESMA expressão de conta', () => {
+    // A falha MAIS PROVÁVEL desta entrega, e a única que não emite erro nenhum: `client_to_user` é
+    // filtrado por `account = p_account`, e a coluna guarda 'oben'/'colacor' — o mesmo domínio que a
+    // view fresca filtra. Se um lado passasse o rótulo cru do run ('vendas'/'colacor_vendas', como o
+    // omie-analytics-sync faz de propósito, já que só usa doc_to_user, que é global), a prova voltaria
+    // VAZIA para sempre e a correção seria inerte em silêncio — indistinguível do estado de hoje.
+    expect(src, 'a RPC precisa receber a MESMA variável de conta que filtra a view').toMatch(
+      /rpc\('omie_sync_identity_snapshot', \{ p_account: account \}\)/,
+    );
+    expect(src, 'REGRESSÃO: o pré-load da view deixou de filtrar pela mesma variável').toMatch(
+      /\.eq\('account', account\)/,
+    );
+  });
+
+  it('o canário de deploy reporta a cobertura da prova (o sensor da fase seguinte)', () => {
+    expect(src, 'sem clientes_provados não há como saber se a prova saiu do zero em produção').toContain(
+      'clientes_provados: clientesProvados',
+    );
+    expect(src, 'sem codigos_revogados não há como medir o achado se manifestando').toContain(
+      'codigos_revogados: codigosRevogados',
+    );
   });
 });
 
