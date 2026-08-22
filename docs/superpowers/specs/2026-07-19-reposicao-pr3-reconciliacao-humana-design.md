@@ -3,6 +3,8 @@
 > Fecha o ciclo PR1→PR2→PR4. **Estado:** desenho aprovado pela realidade — os pedidos 281/286 já
 > percorreram este caminho na mão em 2026-07-19 e provaram que a porta não existe.
 > Contexto anterior: `2026-07-11-reposicao-reconciliacao-po-excluido-omie-design.md`.
+>
+> **Errata (2026-08-22, no rebase que destravou este PR após 33 dias):** as citações de caminho envelheceram — `PedidoRow.tsx` hoje é `src/components/reposicao/cicloHoje/PedidoRow.tsx`. O **buraco de produto continua aberto**: verificado em prod nesta data, `cancelar_pedido_sugerido()` ainda traz o guard que recusa `disparado`.
 
 ## 1. O problema, provado em produção
 
