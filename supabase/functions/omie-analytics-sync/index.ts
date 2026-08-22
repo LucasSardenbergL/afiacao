@@ -3,6 +3,7 @@ import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { comRegistro, type DbRegistro } from "../_shared/registro-execucao.ts";
 import { fetchAll } from "../_shared/paginate.ts";
 import { STATUS_NAO_VENDA_POSTGREST } from "../_shared/universo-pedidos.ts";
+import { agruparCestasPorSegmento, calcularRegrasDoSegmento, type RegraAssoc } from "../_shared/apriori.ts";
 import { montarUpsertsDeCusto } from "../_shared/cost-compute.ts";
 import { recomporCustoProducao } from "../_shared/recompor-custo-producao.ts";
 import { buildProductIdMap, montarCatalogoPorCod } from "../_shared/product-idmap.ts";
@@ -1867,13 +1868,58 @@ async function computeAssociationRules(db: SupabaseClient) {
     );
   }
 
+  // CONTA NULA: o mesmo tratamento que o status nulo acima, e pelo mesmo motivo. `account` é o
+  // eixo do denominador desta fatia — um pedido sem conta não pode ser atribuído a nenhum
+  // segmento nem ser jogado no maior "porque é mais provável". `agruparCestasPorSegmento`
+  // DESCARTA a linha sem conta e a CONTA; o guard aqui é a defesa em profundidade que impede o
+  // descarte de virar um denominador menor publicado com cara de universo completo (§2 —
+  // ausente ≠ zero, na forma de RÓTULO). Medido em prod (2026-08-21): 0 linhas.
+  const { count: pedidosSemConta, error: erroConta } = await db
+    .from("sales_orders")
+    .select("id", { count: "exact", head: true })
+    .is("account", null)
+    .is("deleted_at", null);
+  if (erroConta) throw new Error(`sales_orders/conta-nula: ${erroConta.message}`);
+  if ((pedidosSemConta ?? 0) > 0) {
+    throw new Error(
+      `${pedidosSemConta} pedido(s) sem account: as cestas seriam segmentadas por um eixo com ` +
+        `buraco, e o sample_size de cada conta mentiria sobre a base. Classifique a conta antes de recalcular.`,
+    );
+  }
+
+  // CÓDIGO DE PRODUTO REPETIDO ENTRE CONTAS — o guard que impede a segmentação de virar
+  // promessa vazia num consumidor (achado do challenge Codex xhigh, medido em prod depois).
+  // O isolamento entre as contas NÃO é garantido por chave: a UNIQUE de `omie_products` é
+  // `(omie_codigo_produto, account)`, então o MESMO código pode legitimamente existir nas duas.
+  // E `_carteira_mixgap_for_owner` casa o histórico do cliente por
+  //   `oi.product_id = op.id OR (oi.product_id IS NULL AND oi.omie_codigo_produto = op.omie_codigo_produto)`
+  // — o segundo ramo SEM qualificar pela conta, sobre 1.839 linhas de `order_items` que têm
+  // `product_id` nulo e código preenchido. Se um código passar a existir nas duas contas, um
+  // item de colacor materializa também o id de oben e uma regra de oben casa com o cliente
+  // errado: precisão > recall diz para NÃO publicar sob essa ambiguidade.
+  // Medido em prod (2026-08-21): 0 códigos em mais de uma conta — o isolamento é fato do DADO
+  // de hoje, não do desenho. Por isso ele é MEDIDO a cada execução, e não assumido. É a mesma
+  // forma dos dois guards acima, e o motivo é o de sempre: 0 hoje não é 0 amanhã.
+  const { data: codigosAmbiguos, error: erroAmbiguo } = await db
+    .rpc("omie_products_codigos_multi_conta")
+    .returns<{ omie_codigo_produto: string; contas: number }[]>();
+  if (erroAmbiguo) throw new Error(`omie_products/codigo-multi-conta: ${erroAmbiguo.message}`);
+  if ((codigosAmbiguos ?? []).length > 0) {
+    const amostra = (codigosAmbiguos ?? []).slice(0, 5).map((c) => c.omie_codigo_produto).join(", ");
+    throw new Error(
+      `${codigosAmbiguos!.length} código(s) de produto existem em mais de uma conta (ex.: ${amostra}). ` +
+        `O MixGap casa o histórico por código quando product_id é nulo, SEM qualificar a conta — ` +
+        `publicar regras segmentadas agora faria regra de uma conta alcançar cliente da outra.`,
+    );
+  }
+
   // O tipo declara a forma REAL da linha, INCLUSIVE o objeto embedado. Declarar só as duas
   // colunas era uma mentira de tipo — a resposta traz o `sales_orders` em cada uma das ~68 mil
   // linhas, e um tipo que esconde isso esconde também o custo de memória de quem for revisar.
   const items = await fetchAll<{
     sales_order_id: string | null;
     product_id: string | null;
-    sales_orders: { status: string | null; deleted_at: string | null } | null;
+    sales_orders: { status: string | null; deleted_at: string | null; account: string | null } | null;
   }>(
     (from, to) =>
       db
@@ -1881,7 +1927,10 @@ async function computeAssociationRules(db: SupabaseClient) {
         // `id` NÃO entra no select: o `.order()` não exige a coluna projetada (mesma
         // convenção de `useBundleEngine`), e são ~68 mil linhas — o uuid a mais seria
         // payload puro numa edge que já segura o universo inteiro em memória.
-        .select("sales_order_id, product_id, sales_orders!inner(status, deleted_at)")
+        // `account` entra no MESMO embed: segmentar com uma segunda leitura paginada seria
+        // 2×K instantes (§14 — paginar não faz snapshot), e a conta que classifica a cesta
+        // tem de vir do MESMO instante em que a cesta foi lida.
+        .select("sales_order_id, product_id, sales_orders!inner(status, deleted_at, account)")
         .not("product_id", "is", null)
         .not("sales_orders.status", "in", STATUS_NAO_VENDA_POSTGREST)
         .is("sales_orders.deleted_at", null)
@@ -1894,82 +1943,95 @@ async function computeAssociationRules(db: SupabaseClient) {
   // leitura virou exceção acima. Antes os dois estados chegavam aqui iguais.
   if (!items.length) return { rules_generated: 0, itens_lidos: 0 };
 
-  // Build transactions: Map<order_id, Set<product_id>>
-  const transactions = new Map<string, Set<string>>();
-  for (const item of items) {
-    if (!item.product_id || !item.sales_order_id) continue;
-    if (!transactions.has(item.sales_order_id)) transactions.set(item.sales_order_id, new Set());
-    transactions.get(item.sales_order_id)!.add(item.product_id);
+  // ── SEGMENTAÇÃO POR CONTA ────────────────────────────────────────────────────────────────
+  // O Apriori roda uma vez POR SEGMENTO, com o MESMO `s_min`. O porquê (e os números medidos
+  // em prod) está no cabeçalho de `_shared/apriori.ts`; o resumo é que `support` é razão, e
+  // misturar as duas contas num denominador só afoga o sinal da menor: com o universo
+  // corrigido pela Fatia 1, o global dá 2 regras e o segmentado dá 14 — sem tocar no piso.
+  //
+  // A leitura acima continua sendo UMA só: a partição é em MEMÓRIA, sobre as linhas que já
+  // vieram. Ler duas vezes (uma por conta) seria trocar um instante por dois (§14).
+  const { porSegmento, descartadas } = agruparCestasPorSegmento(
+    items.map((item) => ({
+      sales_order_id: item.sales_order_id,
+      product_id: item.product_id,
+      account: item.sales_orders?.account ?? null,
+    })),
+  );
+
+  // ALLOWLIST. O helper é genérico de propósito (ele não conhece o negócio), mas o
+  // ORQUESTRADOR tem de conhecer: uma conta que não é uma das empresas do grupo significa dado
+  // sujo a montante, e publicar um segmento inventado é publicar um denominador que ninguém
+  // sabe interpretar. `NULL` não é o único estado inválido — achado do challenge Codex xhigh.
+  const CONTAS_CONHECIDAS: readonly Empresa[] = ["oben", "colacor", "colacor_sc"];
+  const desconhecidos = Array.from(porSegmento.keys()).filter(
+    (s) => !CONTAS_CONHECIDAS.includes(s as Empresa),
+  );
+  if (desconhecidos.length > 0) {
+    throw new Error(
+      `conta(s) não reconhecida(s) em sales_orders.account: ${desconhecidos.join(", ")}. ` +
+        `As contas conhecidas são ${CONTAS_CONHECIDAS.join(", ")} — publicar um segmento ` +
+        `inventado publicaria um denominador que nenhum consumidor sabe interpretar.`,
+    );
   }
 
-  const totalTx = transactions.size;
-  if (totalTx < 5) return { rules_generated: 0, reason: "Insufficient transactions" };
+  const topRules: RegraAssoc[] = [];
+  const porSegmentoRelato: Record<string, { cestas: number; regras: number; itens_frequentes: number; truncadas: number }> = {};
+  let totalTx = 0;
+  let itensFrequentes = 0;
 
-  // Count single item support
-  const itemCounts = new Map<string, number>();
-  for (const [, basket] of transactions) {
-    for (const pid of basket) {
-      itemCounts.set(pid, (itemCounts.get(pid) || 0) + 1);
-    }
+  for (const [segmento, cestas] of porSegmento) {
+    const r = calcularRegrasDoSegmento(segmento, cestas, {
+      sMin: minSupport,
+      lMin: minLift,
+      // Teto POR SEGMENTO — ver `apriori.ts`. Um teto global deixaria a conta maior
+      // dominar o corte, que é o mesmo defeito num eixo diferente.
+      maxRegras: maxRules,
+    });
+    topRules.push(...r.regras);
+    totalTx += r.totalCestas;
+    itensFrequentes += r.itensFrequentes;
+    porSegmentoRelato[segmento] = {
+      cestas: r.totalCestas,
+      regras: r.regras.length,
+      itens_frequentes: r.itensFrequentes,
+      truncadas: r.truncadas,
+    };
   }
 
-  // Filter frequent items
-  const frequentItems = new Map<string, number>();
-  for (const [pid, count] of itemCounts) {
-    if (count / totalTx >= minSupport) {
-      frequentItems.set(pid, count);
-    }
+  // ⚠️ PERDA PARCIAL DE SEGMENTO — o buraco que o lote único abre, e que o TR001 NÃO cobre
+  // (achado do challenge Codex xhigh). Um lote com 12 regras de oben e ZERO de colacor não está
+  // vazio: ele passa em todas as validações e APAGA colacor da tabela. O sintoma seria "as
+  // regras de uma das contas sumiram", sem erro nenhum e sem nada dizendo que houve perda.
+  // Um segmento que rodou e não produziu regra é indistinguível, num array de regras, de um
+  // segmento esquecido por bug — então a checagem tem de ser sobre os segmentos PROCESSADOS,
+  // que só o produtor conhece. (A RPC guarda a outra metade: TR007 recusa o lote que perde um
+  // segmento já publicado. As duas defesas cobrem lados diferentes e nenhuma cobre a outra.)
+  const semRegras = Object.entries(porSegmentoRelato)
+    .filter(([, s]) => s.regras === 0)
+    .map(([seg, s]) => `${seg} (${s.cestas} cestas, ${s.itens_frequentes} itens frequentes)`);
+  if (semRegras.length > 0 && topRules.length > 0) {
+    throw new Error(
+      `segmento(s) sem nenhuma regra: ${semRegras.join("; ")}. Publicar o lote apagaria as regras ` +
+        `vigentes dessa(s) conta(s) e o consumidor não teria como saber que houve perda. ` +
+        `Investigue o universo do segmento antes de recalcular.`,
+    );
   }
 
-  // Count pair co-occurrences
-  const pairCounts = new Map<string, number>();
-  for (const [, basket] of transactions) {
-    const items = Array.from(basket).filter(p => frequentItems.has(p));
-    for (let i = 0; i < items.length; i++) {
-      for (let j = i + 1; j < items.length; j++) {
-        const key = [items[i], items[j]].sort().join("|");
-        pairCounts.set(key, (pairCounts.get(key) || 0) + 1);
-      }
-    }
+  // O teto da RPC (TR003) é de 1.000 no LOTE INTEIRO, enquanto o `maxRules` é por segmento —
+  // com 2 contas e o default de 500 o limite é justo, e com uma terceira conta o lote estouraria.
+  // Falhar aqui, dizendo o número, é o oposto de truncar em silêncio: truncar faria o lote
+  // publicado parecer completo, e seria a conta que ordena por último a perder as regras (§8).
+  // ⚠️ A saída NÃO é "baixe o max": isso truncaria EVIDÊNCIA para caber na infraestrutura, e o
+  // corte cairia sobre a conta menor (achado Codex xhigh). Quem precisa subir é o teto da RPC.
+  if (topRules.length > 1000) {
+    throw new Error(
+      `lote de ${topRules.length} regras (${porSegmento.size} segmentos × max ${maxRules}/segmento) ` +
+        `excede o teto de 1000 da RPC (TR003). Suba o teto da RPC por migration — baixar ` +
+        `max_association_rules truncaria evidência real para caber na infraestrutura, e o corte ` +
+        `cairia sobre o segmento que ordenar por último.`,
+    );
   }
-
-  // Generate rules
-  interface Rule {
-    antecedent: string[];
-    consequent: string[];
-    support: number;
-    confidence: number;
-    lift: number;
-  }
-
-  const rules: Rule[] = [];
-
-  for (const [pairKey, pairCount] of pairCounts) {
-    const [a, b] = pairKey.split("|");
-    const supportAB = pairCount / totalTx;
-    if (supportAB < minSupport) continue;
-
-    const supportA = (frequentItems.get(a) || 0) / totalTx;
-    const supportB = (frequentItems.get(b) || 0) / totalTx;
-
-    // Rule A→B
-    const confAB = supportAB / supportA;
-    const liftAB = confAB / supportB;
-    if (liftAB >= minLift) {
-      rules.push({ antecedent: [a], consequent: [b], support: supportAB, confidence: confAB, lift: liftAB });
-    }
-
-    // Rule B→A
-    const confBA = supportAB / supportB;
-    const liftBA = confBA / supportA;
-    if (liftBA >= minLift) {
-      rules.push({ antecedent: [b], consequent: [a], support: supportAB, confidence: confBA, lift: liftBA });
-    }
-  }
-
-  // Sort by lift*confidence descending, take top N
-  rules.sort((a, b) => (b.lift * b.confidence) - (a.lift * a.confidence));
-  const topRules = rules.slice(0, maxRules);
 
   // Troca ATÔMICA do lote. Antes: `delete()` de tudo seguido de um INSERT POR REGRA —
   // qualquer falha no meio deixava a tabela vazia ou PELA METADE, e o `error` só decrementava
@@ -1980,18 +2042,34 @@ async function computeAssociationRules(db: SupabaseClient) {
     // Zero regra é sintoma de dado faltando a montante, não motivo pra apagar o que vale.
     // (A RPC recusaria com TR001; não chamamos só pra tomar o erro.)
     console.warn(`[AssocRules] 0 regras de ${totalTx} transações — regras vigentes preservadas`);
-    return { rules_generated: 0, total_transactions: totalTx, frequent_items: frequentItems.size, preservadas: true };
+    return {
+      rules_generated: 0,
+      total_transactions: totalTx,
+      frequent_items: itensFrequentes,
+      preservadas: true,
+      por_segmento: porSegmentoRelato,
+    };
   }
 
+  // LOTE ÚNICO com os dois segmentos, e a RPC segue trocando a tabela INTEIRA numa transação.
+  // A alternativa (uma chamada por segmento, com `DELETE WHERE cluster_segment = …`) foi
+  // descartada de propósito: ela quebraria a atomicidade que o #1840 construiu e criaria o
+  // estado misto "colacor novo + oben velho" quando a segunda chamada falhasse — sem nada na
+  // tabela dizendo que houve mistura de instantes. Com lote único os estados possíveis
+  // continuam sendo dois: tudo velho, ou tudo novo.
+  // `sample_size` e `cluster_segment` saem de CADA regra, não da soma: o denominador é o do
+  // segmento que a gerou (§ "por que" em `apriori.ts`). Publicar `totalTx` aqui seria repor,
+  // pela porta dos fundos, o denominador global que esta fatia existe para tirar.
   const { data: inserted, error: erroSubstituir } = await db.rpc("farmer_association_rules_substituir", {
     p_regras: topRules.map((rule) => ({
-      antecedent_product_ids: rule.antecedent,
-      consequent_product_ids: rule.consequent,
+      antecedent_product_ids: rule.antecedent_product_ids,
+      consequent_product_ids: rule.consequent_product_ids,
       support: rule.support,
       confidence: rule.confidence,
       lift: rule.lift,
-      rule_type: "association",
-      sample_size: totalTx,
+      rule_type: rule.rule_type,
+      sample_size: rule.sample_size,
+      cluster_segment: rule.cluster_segment,
     })),
   });
 
@@ -2006,16 +2084,27 @@ async function computeAssociationRules(db: SupabaseClient) {
   // (isso é fatia própria), mas o retorno cai no registro de execução — e sem estes campos
   // "24 regras" e "2 regras" são indistinguíveis na auditoria, que foi exatamente como o cap
   // de 1.000 sobreviveu: o número publicado nunca vinha acompanhado do universo que o gerou.
+  // A PROVENIÊNCIA agora é POR SEGMENTO — e é isso que torna o `support` publicado auditável.
+  // Um total agregado ("14 regras de 30.257 cestas") esconderia justamente o que a fatia
+  // corrige: qual denominador gerou qual regra. `por_segmento` cai no registro de execução, ao
+  // lado do `cluster_segment` que vai para a tabela; os dois lados têm de bater.
+  const detalhe = Object.entries(porSegmentoRelato)
+    .map(([seg, s]) => `${seg}=${s.regras}r/${s.cestas}c${s.truncadas ? ` (${s.truncadas} truncadas)` : ""}`)
+    .join(" ");
   console.log(
-    `[AssocRules] ${inserted} regras de ${totalTx} cestas (${items.length} itens lidos) ` +
-      `— s_min=${minSupport} l_min=${minLift} max=${maxRules}`,
+    `[AssocRules] ${inserted} regras de ${totalTx} cestas em ${porSegmento.size} segmento(s) ` +
+      `[${detalhe}] (${items.length} itens lidos, ${descartadas} descartados) ` +
+      `— s_min=${minSupport} l_min=${minLift} max=${maxRules}/segmento`,
   );
   return {
     rules_generated: inserted,
     total_transactions: totalTx,
-    frequent_items: frequentItems.size,
+    frequent_items: itensFrequentes,
     itens_lidos: items.length,
-    params: { s_min: minSupport, l_min: minLift, max_rules: maxRules },
+    itens_descartados: descartadas,
+    segmentos: porSegmento.size,
+    por_segmento: porSegmentoRelato,
+    params: { s_min: minSupport, l_min: minLift, max_rules_por_segmento: maxRules },
   };
 }
 
@@ -2145,17 +2234,28 @@ Deno.serve(async (req) => {
           // auditoria pareceria existir. Achado do challenge Codex xhigh, conferido na linha.
           // Sem estes campos, "24 regras" e "2 regras" são indistinguíveis no registro — que
           // é exatamente como o cap de 1.000 sobreviveu por tanto tempo.
+          // ⚠️ Reincidiu na fatia do SEGMENTO (2026-08-21, mesmo challenge): a função passou a
+          // devolver `por_segmento`/`segmentos`/`itens_descartados` — a proveniência do
+          // DENOMINADOR de cada regra — e sem estes campos aqui a promessa de auditoria morria
+          // de novo no mesmo lugar. É o par do `cluster_segment` que vai para a tabela: os dois
+          // lados têm de bater, senão a coluna vira evidência inerte (nada com que confrontá-la).
           (r) => {
             const a = r as {
               rules_generated?: number;
               total_transactions?: number;
               itens_lidos?: number;
+              itens_descartados?: number;
+              segmentos?: number;
+              por_segmento?: Record<string, unknown>;
               params?: Record<string, number>;
             };
             return {
               rules_generated: a.rules_generated ?? null,
               total_transactions: a.total_transactions ?? null,
               itens_lidos: a.itens_lidos ?? null,
+              itens_descartados: a.itens_descartados ?? null,
+              segmentos: a.segmentos ?? null,
+              por_segmento: a.por_segmento ?? null,
               params: a.params ?? null,
             };
           },
