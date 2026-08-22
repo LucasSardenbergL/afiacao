@@ -517,8 +517,11 @@ o pré, não casa o pós (`src/lib/gates/erro-colapsado-em-vazio.ts`).
 | forma | sítios | o que o usuário vê na falha |
 |---|---|---|
 | **auto-ocultação** — `return null` guardado pela leitura | **46** (36 arquivos) | o componente inteiro some sem rastro |
-| `{data && <X/>}` | 94 | some um trecho; a página continua na tela |
+| `{data && <X/>}` | 93 | some um trecho; a página continua na tela |
 | default no binding (`data: x = []`) | 86 | o vazio afirma "não há" |
+
+O 94º sítio de `jsx-&&` foi o **host** que escondia o card do #1859 — corrigido nesta mesma
+leva, e é por isso que a contagem fecha em 93.
 
 Só a primeira entrou no gate. As outras duas estão medidas e nomeadas: gatear `jsx-&&`
 faria a baseline crescer por motivo benigno em idioma legítimo, e baseline que cresce por
