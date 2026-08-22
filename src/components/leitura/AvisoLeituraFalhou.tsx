@@ -1,6 +1,6 @@
 import { CloudOff, AlertTriangle } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import type { EstadoLeitura } from '@/lib/leitura/estado-de-leitura';
+import type { EstadoSemLeitura } from '@/lib/leitura/estado-de-leitura';
 
 /**
  * O que uma tela mostra quando a leitura NÃO ACONTECEU — o oposto de sumir.
@@ -22,7 +22,7 @@ export function AvisoLeituraFalhou({
 }: {
   /** o que não pôde ser lido, em minúscula e no meio da frase: "os alertas de fluxo de caixa" */
   oque: string;
-  estado: Extract<EstadoLeitura, 'erro' | 'sem-rede'>;
+  estado: EstadoSemLeitura;
   variante?: 'inline' | 'bloco';
   className?: string;
 }) {

@@ -39,6 +39,9 @@ export type EstadoLeitura =
   /** respondeu; só aqui `data` fala pela realidade */
   | 'pronta';
 
+/** Os estados em que a leitura NÃO aconteceu — o que `<AvisoLeituraFalhou>` sabe mostrar. */
+export type EstadoSemLeitura = Extract<EstadoLeitura, 'erro' | 'sem-rede'>;
+
 export function estadoDeLeitura(q: FatiaDeQuery): EstadoLeitura {
   if (q.status === 'error') return 'erro';
   if (q.status === 'success') return 'pronta';
@@ -56,7 +59,12 @@ export function estadoDeLeitura(q: FatiaDeQuery): EstadoLeitura {
  * mensagem, nunca a decisão de FALAR. `carregando` e `desabilitada` ficam de fora de
  * propósito — a primeira é transitória e se resolve sozinha; a segunda é a pergunta
  * que não foi feita, e inventar aviso nela seria alarme fabricado (precisão > recall).
+ *
+ * É um TYPE GUARD de propósito: o consumidor precisa passar `estado` adiante para o
+ * <AvisoLeituraFalhou>, que só aceita os dois. Devolver `boolean` obrigaria cada chamador
+ * a re-afirmar o tipo na unha — e um `as` reintroduziria, por cast, exatamente a confusão
+ * de estados que este módulo existe para impedir.
  */
-export function naoConsegui(e: EstadoLeitura): boolean {
+export function naoConsegui(e: EstadoLeitura): e is EstadoSemLeitura {
   return e === 'erro' || e === 'sem-rede';
 }
