@@ -203,3 +203,82 @@ rg -n "replace\(/--\[\^" src/ supabase/ scripts/ db/
 ```
 
 Quem lê SQL deve importar `removerComentariosSql` de `scripts/lib/sql-comentarios.ts`.
+
+## Variante 3 — o comentário prometia o stripper; o código não tinha nenhum (2026-08-22)
+
+O gate de citações (`scripts/docs-citacoes-gate-check.ts`) nasceu com esta linha logo acima do
+laço que mede:
+
+```
+// Bloco de código não é citação — é exemplo. (Heurística barata: linha dentro de ``` é pulada.)
+```
+
+Não havia variável de estado de cerca em lugar nenhum do arquivo — a varredura por
+`dentro|fence|```` devolvia só a própria linha do comentário. Toda citação escrita dentro de um
+bloco cercado, como EXEMPLO do formato, era cobrada como afirmação real sobre o repo: quem
+quisesse documentar o próprio gate teria de inventar um alvo válido para o exemplo.
+
+É a classe deste doc pelo avesso. Lá o stripper existia e apagava demais; aqui o comentário
+descrevia um stripper que nunca existiu. O efeito é o mesmo: **quem lê o gate acredita numa
+proteção que não está lá** — e o comentário é lido por quem revisa, não pelo CI.
+
+### O que o reuso ingênuo teria feito (medido, não presumido)
+
+A correção óbvia é reusar `removerCodigo`, do gate irmão de links, em vez de escrever um segundo
+stripper. Medido sobre os docs vivos, 2026-08-22:
+
+| stripper | citações que sobrevivem à limpeza |
+| --- | --- |
+| nenhum (estado anterior) | 22 |
+| `removerCodigo` (cerca **+ crase inline**) | **0** |
+| `removerCercas` (só cerca) | 22 |
+
+`removerCodigo` também esvazia trecho entre crases — e a citação canônica deste repo NASCE entre
+crases. Rodando o gate real com essa troca:
+
+```
+docs-citacoes-gate: ✓ 0 citação(ões) verificada(s) contra o conteúdo real · 0 externa(s).   # exit 0
+```
+
+Verde, silencioso, medindo nada. A mesma falha deste doc, agora causada pelo próprio remédio.
+
+**A lição nova: stripper compartilhado não é UM — tem camadas, e a camada certa depende do que o
+gate MEDE.** Por isso `scripts/lib/markdown-codigo.ts` expõe as duas com nome (`removerCercas` e
+`removerCodigo`) em vez de um flag booleano: quem chama escolhe explicitamente, e cada gate prende
+a escolha com um **teste-sentinela** que fica vermelho quando alguém "limpa" trocando uma pela
+outra. Sem esse sentinela, a troca é um diff de uma palavra que passa em qualquer revisão.
+
+### O preço do skip, pago à vista
+
+Pular cerca abre um modo de falha novo: cerca que nunca fecha esvazia tudo abaixo dela, e o gate
+mede só o que sobrou. Herdou do gate de links a regra inteira — vira achado apontando a linha da
+abertura, e **só quando escondeu citação de fato**, senão o gate passaria a cobrar estilo de
+markdown, que não é o assunto dele.
+
+### Falsificação (exigida nos dois sentidos)
+
+| sabotagem | resultado |
+| --- | --- |
+| citação com trecho errado DENTRO de ``` num doc vivo | gate **verde**, exit 0 — é exemplo |
+| a MESMA citação FORA da cerca | gate **vermelho**, exit 1, apontando linha e conteúdo real |
+| reverter o skip (voltar ao texto cru) | 3 testes vermelhos |
+| trocar `removerCercas` por `removerCodigo` | **7 vermelhos, incluindo o sentinela** |
+| cerca aberta deixar de virar achado | 1 vermelho — só o dela |
+
+### O terceiro gate de markdown
+
+`scripts/docs-indice-gate-check.ts` não usa stripper nenhum. Ele lê célula de TABELA de README, e
+a exposição foi MEDIDA, não presumida: 0 linhas de tabela dentro de cerca em todos os `README.md`
+do repo hoje, gate verde. Risco latente registrado, sem caso ativo — quem mexer nele já sabe onde
+mora o stripper.
+
+### Assinatura para varredura futura
+
+```bash
+for f in $(grep -ln "endsWith('.md')" scripts/*.ts); do
+  grep -q "lib/markdown-codigo" "$f" || echo "SEM STRIPPER: $f"
+done
+```
+
+Medido em 2026-08-22 devolve **1** — o gate de índice, classificado acima. Qualquer match novo é
+um gate de markdown nascendo sem ter tomado a decisão de camada.

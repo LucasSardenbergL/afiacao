@@ -25,32 +25,79 @@ const msgs = (r: { achados: { msg: string }[] }) => r.achados.map((a) => a.msg).
 
 describe('parseCitacoes — o que conta como citação', () => {
   it('captura caminho, linha e âncora', () => {
-    const [c] = parseCitacoes(DOC, 'veja `src/a.ts:12`<!--cita: const x-->');
+    const [c] = parseCitacoes(DOC, 'veja `src/a.ts:12`<!--cita: const x-->').citacoes;
     expect(c).toMatchObject({ alvo: 'src/a.ts', linhas: ['12'], ancora: 'const x' });
   });
 
   it('âncora ausente vira null (e não string vazia)', () => {
-    const [c] = parseCitacoes(DOC, 'veja `src/a.ts:12` e mais nada');
+    const [c] = parseCitacoes(DOC, 'veja `src/a.ts:12` e mais nada').citacoes;
     expect(c.ancora).toBeNull();
   });
 
   it('tolera espaço e parêntese ao redor da âncora', () => {
-    const [c] = parseCitacoes(DOC, '(`src/a.ts:12`<!--   cita:   const x   -->)');
+    const [c] = parseCitacoes(DOC, '(`src/a.ts:12`<!--   cita:   const x   -->)').citacoes;
     expect(c.ancora).toBe('const x');
   });
 
   it('captura a forma multi-linha para o auditor poder recusá-la', () => {
-    const [c] = parseCitacoes(DOC, '`a.md:133,416`');
+    const [c] = parseCitacoes(DOC, '`a.md:133,416`').citacoes;
     expect(c.linhas).toEqual(['133', '416']);
   });
 
   it('link markdown comum NÃO é citação (não tem :linha)', () => {
-    expect(parseCitacoes(DOC, '[roadmap](../ux-audit/03-roadmap.md)')).toHaveLength(0);
+    expect(parseCitacoes(DOC, '[roadmap](../ux-audit/03-roadmap.md)').citacoes).toHaveLength(0);
   });
 
   it('registra a linha do DOC, para a mensagem apontar onde consertar', () => {
-    const [c] = parseCitacoes(DOC, 'linha1\nlinha2\n`src/a.ts:9`<!--cita: z-->');
+    const [c] = parseCitacoes(DOC, 'linha1\nlinha2\n`src/a.ts:9`<!--cita: z-->').citacoes;
     expect(c.linhaDoDoc).toBe(3);
+  });
+});
+
+describe('parseCitacoes — bloco de código é exemplo, não citação', () => {
+  it('PULA citação dentro de cerca ``` — ali ela ilustra o formato, não afirma nada sobre o repo', () => {
+    const { citacoes } = parseCitacoes(
+      DOC,
+      'antes\n```\n`src/a.ts:12`<!--cita: nunca existiu-->\n```\ndepois',
+    );
+    expect(citacoes).toHaveLength(0);
+  });
+
+  it('PULA dentro de ~~~ também, e ``` não fecha um bloco aberto com ~~~', () => {
+    const { citacoes } = parseCitacoes(DOC, '~~~\n```\n`src/a.ts:12`<!--cita: x-->\n~~~');
+    expect(citacoes).toHaveLength(0);
+  });
+
+  // SENTINELA de cegueira. A citação canônica deste repo NASCE entre crases, então o stripper
+  // tem de ser `removerCercas` e nunca `removerCodigo`: medido em 2026-08-22, trocar um pelo
+  // outro leva as 22 citações vivas a 0 e o gate fica verde sem ter olhado NADA. Este teste é o
+  // que fica vermelho quando alguém faz essa troca "de limpeza".
+  it('NÃO pula citação entre crases inline — é a forma CANÔNICA, não um exemplo', () => {
+    const { citacoes } = parseCitacoes(DOC, 'veja `src/a.ts:12`<!--cita: const x--> aqui');
+    expect(citacoes).toHaveLength(1);
+  });
+
+  it('volta a cobrar depois da cerca fechar, com a numeração de linha intacta', () => {
+    const { citacoes } = parseCitacoes(DOC, '```\nexemplo\n```\n`src/a.ts:9`<!--cita: z-->');
+    expect(citacoes).toHaveLength(1);
+    expect(citacoes[0].linhaDoDoc).toBe(4);
+  });
+
+  // O skip abre um modo de falha NOVO: uma cerca que nunca fecha apaga todas as citações abaixo
+  // dela. Descartar isso em silêncio é a cegueira de `gates-textuais-cegos.md` — então vira achado.
+  it('cerca ABERTA que engole citação vira achado, apontando a linha da abertura', () => {
+    const { citacoes, achados } = parseCitacoes(DOC, 'a\n```ts\n`src/a.ts:12`<!--cita: x-->');
+    expect(citacoes).toHaveLength(0);
+    expect(achados).toHaveLength(1);
+    expect(achados[0].linhaDoDoc).toBe(2);
+    expect(achados[0].msg).toContain('nunca fechada');
+  });
+
+  // Cerca aberta que não escondeu citação nenhuma não cega nada — reprovar aí seria cobrar estilo
+  // de markdown, que não é o assunto deste gate.
+  it('cerca aberta que NÃO engole citação não vira achado', () => {
+    const { achados } = parseCitacoes(DOC, 'a\n```ts\nconst x = 1;');
+    expect(achados).toHaveLength(0);
   });
 });
 

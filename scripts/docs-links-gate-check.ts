@@ -102,6 +102,7 @@ import { existsSync } from 'node:fs';
 import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { basename, dirname, join, normalize, relative } from 'node:path/posix';
+import { type CercaAberta, removerCodigo } from './lib/markdown-codigo';
 
 export interface DocMd {
   /** caminho do doc, relativo à raiz do repo, sempre com `/` (posix, como o git guarda) */
@@ -133,85 +134,6 @@ export interface AchadoLink {
   alvo: string;
   causa: CausaLink;
   msg: string;
-}
-
-/** Uma cerca aberta e nunca fechada — invariante 4, o modo de falha que cegaria a medição. */
-export interface CercaAberta {
-  linha: number;
-  marca: string;
-  /** o texto cru que a cerca engoliu (da abertura ao fim do arquivo) — quem julga é o auditor */
-  textoEngolido: string;
-}
-
-/**
- * Esvazia o que é CÓDIGO (cerca ``` / ~~~ e trecho entre crases), preservando a numeração de linha.
- *
- * Devolve também a cerca não fechada, se houver: quem chama transforma isso em erro em vez de
- * aceitar um bloco grande descartado em silêncio (a lição de `gates-textuais-cegos.md`).
- */
-export function removerCodigo(texto: string): { texto: string; cercaAberta: CercaAberta | null } {
-  const linhas = texto.split('\n');
-  const saida: string[] = [];
-  let cerca: { marca: string; tamanho: number; linha: number } | null = null;
-
-  for (let i = 0; i < linhas.length; i++) {
-    const linha = linhas[i];
-    // Cerca: >= 3 crases/tis, até 3 espaços de indentação. O fechamento é do MESMO caractere e não
-    // tem info string — `~~~` não fecha ```, e ```ts abre sem fechar.
-    const m = /^ {0,3}(`{3,}|~{3,})\s*(\S*)/.exec(linha);
-    if (m) {
-      const [, marca, info] = m;
-      if (!cerca) {
-        cerca = { marca: marca[0], tamanho: marca.length, linha: i + 1 };
-        saida.push('');
-        continue;
-      }
-      if (marca[0] === cerca.marca && marca.length >= cerca.tamanho && info === '') {
-        cerca = null;
-        saida.push('');
-        continue;
-      }
-    }
-    saida.push(cerca ? '' : removerCrasesDaLinha(linha));
-  }
-
-  return {
-    texto: saida.join('\n'),
-    cercaAberta: cerca
-      ? {
-          linha: cerca.linha,
-          marca: cerca.marca.repeat(cerca.tamanho),
-          textoEngolido: linhas.slice(cerca.linha - 1).join('\n'),
-        }
-      : null,
-  };
-}
-
-/**
- * Remove os trechos entre crases de UMA linha. A restrição à linha é o ponto: uma crase sem par
- * NÃO abre um bloco que come o resto do documento — sem par, ela é texto, porque é isso que ela é.
- */
-function removerCrasesDaLinha(linha: string): string {
-  let saida = '';
-  let i = 0;
-  while (i < linha.length) {
-    if (linha[i] !== '`') {
-      saida += linha[i++];
-      continue;
-    }
-    let n = 0;
-    while (linha[i + n] === '`') n++;
-    const abre = '`'.repeat(n);
-    const fim = linha.indexOf(abre, i + n);
-    // Fechamento tem de ser uma run EXATA de n crases, não o prefixo de uma maior.
-    if (fim === -1 || linha[fim + n] === '`') {
-      saida += linha.slice(i, i + n);
-      i += n;
-      continue;
-    }
-    i = fim + n;
-  }
-  return saida;
 }
 
 /**
