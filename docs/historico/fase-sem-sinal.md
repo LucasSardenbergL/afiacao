@@ -402,3 +402,49 @@ O head mostra **uma**. O log mostra **três**. Se o sensor tivesse ficado só no
 original, que estava verde com 49 asserts e 6 falsificações —, a resposta a *"com que frequência
 isso roda?"* seria "uma vez", e as outras duas teriam sido sobrescritas sem deixar rastro. A lição do
 capítulo anterior deixou de ser argumento e virou medição: **na primeira execução real**.
+
+---
+
+## O sensor que colapsa TRÊS estados em um (MixGap, 2026-08-21)
+
+Continuação direta da fatia do denominador (`farmer-apriori-denominador.md`, #1853): ao segmentar o Apriori por conta, o MixGap sai de **116 para ~84 clientes com gap**. A pergunta que a mudança faz nascer — *"a queda foi a esperada, ou o card quebrou?"* — era **irrespondível**, e não por falta de dado: por falta de **discriminante**.
+
+```tsx
+if (totalComGap > 0 && !tracked.current) track('carteira.mixgap_visto', { total_com_gap: totalComGap });
+if (!data || data.totalComGap === 0) return null;
+```
+
+`useMyMixGap` **lança** quando a RPC falha, então no erro `data` fica `undefined` — a **mesma** condição do zero. Três estados, uma tela em branco e um silêncio:
+
+| estado real | tela | PostHog |
+|---|---|---|
+| zero oportunidades | (nada) | (nada) |
+| erro de leitura | (nada) | (nada) |
+| vendedor nunca abriu | (nada) | (nada) |
+
+É a irmã de UI do §6/§12 do money-path: lá a leitura falha calada e o motivo morre no `catch`; aqui os dois chegam à tela **como ausência de oportunidade**. E é a forma mais barata do "zero sem denominador não julga desenho": o zero existia, só não era distinguível de nada.
+
+### A regra que isto acrescenta
+
+**Um sensor de adoção precisa distinguir "não houve" de "não consegui" ANTES de ser usado como denominador.** Um contador que soma os dois mede uma coisa que não existe. O tell é sintático e barato de procurar: **um `return null` que serve mais de um estado**, ou um `?? 0` no payload de telemetria.
+
+Duas consequências no desenho:
+
+- **O evento sai com `total_com_gap: null` no erro, nunca `0`.** Mandar zero somaria falha de leitura à série de "carteiras sem oportunidade" e fabricaria exatamente o número que o sensor existe para medir (§2 — ausente ≠ zero). O assert que carrega isso é `expect(ev.total_com_gap).not.toBe(0)`, e a falsificação correspondente (trocar `null` por `0`) fica vermelha só nele.
+- **Ausência de ACESSO não é um estado do card.** `get_meu_mixgap` devolve `NULL` para não-staff; contar isso como "visto" poluiria o denominador com quem nunca poderia ver a tela. Não renderiza e **não emite** — a única ausência de evento legítima.
+
+E a guarda de "emitir uma vez" passou de booleano para **o estado emitido**: `erro → zero → com_gap` na mesma montagem é a transição que separa falha transitória de carteira realmente vazia, e um `useRef<boolean>` a engoliria.
+
+### Medição que também recalibrou a fila
+
+Ao medir os candidatos de fatia (todos com denominador, prod via `psql-ro`), a ordem de gravidade que eu havia proposto **se inverteu**:
+
+| defeito (denominador) | ativo hoje | após o deploy do #1853 |
+|---|---|---|
+| tupla fabricada — MixGap (139 grupos / 116 clientes) | 9 grupos; 5 clientes com score inflado 14,3%; **0 mudam de família** | **0 de 130** |
+| tupla fabricada — Melhorias (16 consequentes) | **0** | 0 |
+| `recommend` sem filtro de status (23.113 pares) | **5 pares, 3 clientes** (0,02%) | igual |
+
+Eu havia chamado a tupla fabricada (`max(confidence)` × `max(lift)` de regras diferentes) de "o único que fabrica número na tela" e recomendado corrigi-la primeiro. O número **é** fabricado, mas não muda a decisão em nenhum cliente — e a própria segmentação a zera, porque com regras por conta cada grupo passa a ter uma regra só. A previsão do Codex de que pioraria com mais regras **não se confirmou**: 14 regras segmentadas produzem menos grupos multi-regra que 24 globais.
+
+**A lição de método:** severidade herdada de um parecer — inclusive de uma revisão adversária boa — continua sendo hipótese até ter denominador. As três medições custaram três queries e trocaram a fatia inteira.
