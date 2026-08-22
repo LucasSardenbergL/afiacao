@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **482** custom migrations totais
-- **1670** objetos esperados (criados por estas migrations)
+- **483** custom migrations totais
+- **1671** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 495
+  - `function`: 496
   - `rls_policy`: 446
   - `index`: 244
   - `cron_job`: 164
@@ -4055,6 +4055,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.omie_products_codigos_multi_conta` | — |
 | `function` | `public.farmer_association_rules_substituir` | — |
+
+### `20260822000358_recommend_cluster_agregado.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.recommend_cluster_agregado` | — |
 
 ## Próximos passos por status
 
