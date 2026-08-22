@@ -570,7 +570,10 @@ describe('guardrail money-path: identidade dos pedidos pela RPC atômica + contr
   // ── A1 VENDAS: docToUserMap vem do snapshot atômico + validação estrita de contrato ──
   it('A1 vendas: docToUserMap vem da RPC via parseIdentitySnapshot (não paginação, não helper antigo)', () => {
     expect(src, 'edge vendas não chama mais a RPC').toContain("rpc('omie_sync_identity_snapshot'");
-    expect(src, 'REGRESSÃO: docToUserMap não vem mais de parseIdentitySnapshot').toMatch(/docToUserMap[\s\S]{0,40}=[\s\S]{0,40}parseIdentitySnapshot\(/);
+    // O gap era {0,40}: o destructuring do PR-2/A2 ganhou `clientToUser` e `revokedClientCodes` e
+    // passou de 50 chars entre `docToUserMap` e `=`. Ampliado ao mínimo que acomoda as 4 chaves — a
+    // âncora (docToUserMap … = … parseIdentitySnapshot) continua a mesma.
+    expect(src, 'REGRESSÃO: docToUserMap não vem mais de parseIdentitySnapshot').toMatch(/docToUserMap[\s\S]{0,80}=[\s\S]{0,40}parseIdentitySnapshot\(/);
     expect(src, 'erro da RPC deve ser FAIL-CLOSED (throw)').toMatch(/if \(snapErr\) throw new Error/);
     expect(src, 'REVERSÃO Lovable? voltou a paginar profiles por keyset').not.toMatch(/from\('profiles'\)[\s\S]{0,200}\.order\('user_id'\)[\s\S]{0,120}\.gt\('user_id'/);
     expect(src, 'REVERSÃO: voltou a chamar o helper TS antigo').not.toMatch(/buildDocUserMapFailClosed\(/);
@@ -662,13 +665,28 @@ describe('guardrail money-path: prova positiva client_to_user sobre o cache de i
   it('o edge USA o helper: DEFINE o espelho E o CHAMA (≥2 menções)', () => {
     expect(src).toMatch(/function aplicarProvaPositivaNoCache\(/);
     expect(src, 'REGRESSÃO: o edge não chama mais aplicarProvaPositivaNoCache').toMatch(
-      /aplicarProvaPositivaNoCache\(clientCache, clientToUser\)/,
+      /aplicarProvaPositivaNoCache\(clientCache, clientToUser, revokedClientCodes\)/,
     );
     expect(count(src, 'aplicarProvaPositivaNoCache')).toBeGreaterThanOrEqual(2);
   });
 
-  it('o edge destrutura clientToUser do snapshot (senão a prova nunca chega ao cache)', () => {
-    expect(src).toMatch(/const \{ docToUserMap, ambiguousDocs, clientToUser \} = parseIdentitySnapshot\(snap\)/);
+  it('o edge destrutura clientToUser E revokedClientCodes do snapshot', () => {
+    expect(src).toMatch(
+      /const \{ docToUserMap, ambiguousDocs, clientToUser, revokedClientCodes \} = parseIdentitySnapshot\(snap\)/,
+    );
+  });
+
+  it('a REVOGAÇÃO acontece ANTES de unknownCodes — senão o código podre nunca vai à API', () => {
+    // O par indispensável da prova (challenge Codex): a prova positiva só EMITE o código quando a
+    // evidência ainda concorda com a linha que alimenta a view, então em estado estável ela sempre
+    // concorda e omitir o vínculo podre deixa o cache servindo-o igual. Quem fecha o achado é o
+    // `delete` do cache — e ele só tem efeito se acontecer antes de `unknownCodes` ser calculado,
+    // porque é `unknownCodes` que decide quem é refeito pelo ConsultarCliente.
+    const iProva = src.indexOf('aplicarProvaPositivaNoCache(clientCache');
+    const iUnknown = src.indexOf('const unknownCodes = uniqueClientCodes.filter');
+    expect(iProva, 'sobreposição/revogação sumiu do syncPedidos').toBeGreaterThan(-1);
+    expect(iUnknown, 'âncora quebrada: não achei o cálculo de unknownCodes').toBeGreaterThan(-1);
+    expect(iProva, 'REGRESSÃO: a revogação passou a rodar DEPOIS de unknownCodes — vira no-op').toBeLessThan(iUnknown);
   });
 
   it('a sobreposição vem DEPOIS do pré-load da view — não no lugar dele', () => {
@@ -720,6 +738,9 @@ describe('guardrail money-path: prova positiva client_to_user sobre o cache de i
   it('o canário de deploy reporta a cobertura da prova (o sensor da fase seguinte)', () => {
     expect(src, 'sem clientes_provados não há como saber se a prova saiu do zero em produção').toContain(
       'clientes_provados: clientesProvados',
+    );
+    expect(src, 'sem codigos_revogados não há como medir o achado se manifestando').toContain(
+      'codigos_revogados: codigosRevogados',
     );
   });
 });
