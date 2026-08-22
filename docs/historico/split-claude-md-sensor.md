@@ -89,5 +89,70 @@ Rode `bun run claude:instr` depois de alguns dias de uso real e olhe a seção 1
 
 ## Estado
 
-Fase 0 (sensor) instalada. Fase 1 (mover as 413 palavras) **bloqueada até haver medição** —
-deliberadamente. Zero regra movida até agora.
+**Fase 1 (2026-08-22, ~1h depois): decisão = NÃO MOVER NADA. Zero das 413 palavras.**
+Não porque a medição reprovou — porque **a medição não tem controle ainda**.
+
+### O que o `claude:instr` mostrou
+
+7 eventos, 0 erro de sensor, **7/7 `session_start` · 7/7 `principal`**. Janela real:
+19:40→20:36 UTC do mesmo dia — **56 minutos**, não os "alguns dias de uso real" que a
+própria fase 0 prescreveu.
+
+As três perguntas, e o que a coleta responde:
+
+| # | Pergunta | Resposta |
+|---|---|---|
+| 1 | regra `paths:` chega no subagente? | **sem dado** — 0 evento de subagente |
+| 2 | o que sobrevive ao `/compact`? | **sem dado** — 0 evento `compact` |
+| 3 | peso de cada arquivo | **sem dado** — era 0 fabricado (abaixo) |
+
+### Por que "0 subagente" NÃO é a resposta negativa
+
+A fase 0 previa `CLAUDE.md ⟵ <algum agent_type>` como **linha de base**. Ela não apareceu.
+Isso tem duas leituras opostas — (a) o carregamento não alcança subagente · (b) nenhum
+subagente rodou — e confundi-las inverteria a decisão. **É (b), verificado nas transcrições:**
+nenhuma das 7 sessões medidas tem diretório `<sessao>/subagents/`. A sonda foi falsificada
+antes de valer (57 transcrições do mesmo `~/.claude/projects` **têm** `isSidechain` ⇒ o padrão
+casa quando existe o caso) — e a 1ª versão dela procurava no arquivo errado, porque subagente
+mora em diretório próprio, não no `.jsonl` da sessão.
+
+⇒ **Criar a `.claude/rules/*.md` de teste agora seria um experimento SEM CONTROLE:** um
+negativo ali seria indistinguível de "o sensor nunca observa subagente". O gate da fase 2 é
+por isso um sinal **positivo**, não um calendário.
+
+### O sensor fabricava um número (corrigido nesta fase)
+
+`chars: 0` em **todos** os 7 eventos. Falsificado alimentando o hook com payload sintético:
+com `file_content` → `chars: 5`; sem → `chars: 0`. O hook está certo; **o payload do
+`InstructionsLoaded` não traz `file_content`**, e o `// ""` transformava ausência na medida 0 —
+a mesma fabricação que `Number(null)===0` é no money-path, dentro do instrumento que existe
+para decidir. Agora: `null` (renderizado `n/d`), e o hook grava **`campos`** = a lista de chaves
+do payload, para o contrato parar de ser adivinhado.
+
+O mesmo defeito de classe segue latente em `agente: (.agent_type // "principal")` — subagente
+cujo payload omitisse `agent_type` seria rotulado "principal" e responderia a pergunta 1
+**errado e calado**. Com `campos` no log isso passa a ser detectável.
+
+E o relatório passou a imprimir o **denominador** (`N sessões · N eventos de subagente`) com
+aviso explícito quando é zero: sem denominador, a seção 1 lê-se como resposta negativa. Regra
+da casa aplicada ao próprio instrumento — *"exija ≥1 sinal POSITIVO com denominador"*.
+
+### Gate da fase 2 (positivo, não calendário)
+
+Rode `bun run claude:instr`; só destrave quando **ambos** aparecerem:
+
+1. **≥1 linha na seção 1 com um `agent_type`** — prova que o sensor ENXERGA subagente. Só
+   então criar a 1ª `.claude/rules/*.md` com `paths:` e reler: se ELA nunca aparecer com
+   `agent_type`, aí sim é resposta negativa ⇒ não mover convenção de frontend.
+2. **≥1 evento `motivo: compact`** — responde a pergunta 2.
+
+### A inclinação, agora MEDIDA
+
+De quebra, a tese do "nível × inclinação" saiu do argumento e virou número: `CLAUDE.md` em
+**2.306 palavras no merge do #1879** e **2.337 quatro horas / quatro PRs depois** (#1880-#1883)
+— **+31 palavras**, sem ninguém pretender engordá-lo. No mesmo ritmo, os 294 de folga que a
+compactação comprou duram ~38 PRs. O teto por seção continua sendo a correção de CLASSE;
+mover as 413 palavras compraria nível de novo, não inclinação — mais um motivo para não
+apressar a fase 2 e gastar o esforço no ratchet por seção.
+
+Enquanto isso: núcleo em 2.337 palavras, zero regra movida, zero regra fail-open tocada.
