@@ -72,7 +72,7 @@ sleep 5 && gh pr view <N> --json state,mergeStateStatus,statusCheckRollup,url
 ⚠️ **`mergeStateStatus` é calculado sob demanda e a sonda cega no PR FRIO** — que é exatamente
 o PR de sessão parada que a `/fecho` audita. Medido em 2026-08-21: **6 de 7 PRs abertos** vieram
 `UNKNOWN` na 1ª chamada; a 2ª devolveu **5 `CONFLICTING`**. O único que respondeu de primeira
-tinha 0 dia de idade. → [mergeabilidade-assincrona.md](../../docs/historico/mergeabilidade-assincrona.md)
+tinha 0 dia de idade. → [mergeabilidade-assincrona.md](../../../docs/historico/mergeabilidade-assincrona.md)
 
 **Default do passo: sem leitura POSITIVA, não libera.** `UNKNOWN` é ausência de dado, nunca "não
 está em conflito" — ler assim é o `Number(null) === 0` da mergeabilidade, e é fail-OPEN num ritual
