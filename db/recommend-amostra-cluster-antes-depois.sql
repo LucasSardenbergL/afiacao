@@ -23,8 +23,11 @@
 --   atencao |       100 |   1000 |  12 |   0,120 |         50 |   1000 |  12 |   0,240 |     4     3     1
 --   estavel |       100 |   1000 |  10 |   0,100 |         50 |   1000 |  10 |   0,200 |     8     1     0
 -- E o denominador de uso, que é o que torna isto evidência e não impressão:
---   recommendation_log = 666 `cross_sell` + 27 `repurchase` + ZERO `cluster_based`. O ramo de
---   APRESENTAÇÃO nunca disparou; o SINAL de ranking (peso 0,20 via minMaxNorm) sempre esteve vivo.
+--   recommendation_log ANTES do deploy = 666 `cross_sell` + 27 `repurchase` + ZERO
+--   `cluster_based` em 693 impressões desde fevereiro. O ramo de APRESENTAÇÃO nunca havia
+--   disparado; o SINAL de ranking (peso 0,20 via minMaxNorm) sempre esteve vivo.
+--   DEPOIS do deploy manual da edge (2026-08-22 02:52 UTC): `cluster_based` apareceu, com
+--   `score_sim` 0,1800. Ver a última query deste arquivo.
 \pset pager off
 
 \echo == composicao dos clusters (a causa: linha sem venda valida no denominador) ==
@@ -84,6 +87,24 @@ SELECT a.k AS cluster,
        round(d.maxn::numeric / d.den, 3) AS simmax_depois, d.c10 AS c10_depois, d.c15 AS c15_depois, d.c20 AS c20_depois
 FROM antes a JOIN depois d USING (k);
 
-\echo == denominador de uso: o ramo cluster_based ja disparou alguma vez? ==
-SELECT recommendation_type, count(*) AS impressoes, max(created_at)::date AS ultima
+\echo == denominador de uso: quais ramos ja dispararam, e quando ==
+SELECT recommendation_type, count(*) AS impressoes, max(created_at) AS ultima
 FROM recommendation_log GROUP BY 1 ORDER BY 2 DESC;
+
+\echo == CANARIA DE DEPLOY: score_sim > 0,12 e impossivel sob o denominador ANTIGO ==
+-- Por que 0,12 e nao a presenca de `cluster_based`: o TIPO pode nao aparecer mesmo com o
+-- codigo novo, porque `hasPurchased` e `assoc > 0` PRECEDEM o teste de cluster no `if` de
+-- recommend/index.ts — ausencia dele e ambigua. Ja `score_sim` e aritmetica do denominador:
+-- sob den=100 o teto medido nos tres clusters era 0,04 / 0,12 / 0,10, entao 0,12 e o maximo
+-- absoluto que o codigo VELHO conseguia produzir. Testemunha CONTINUA sobrevive a preempcao;
+-- testemunha do tipo ENUM nao. Trocar o corte se os tetos por cluster mudarem.
+--
+-- LEITURA COM DENOMINADOR: `impressoes_no_periodo` = 0 significa que NINGUEM abriu a tela —
+-- ausencia de dado, NAO "o deploy falhou". So julgue o deploy se o denominador for > 0.
+SELECT count(*)                                                  AS impressoes_no_periodo,
+       round(max(score_sim)::numeric, 4)                         AS max_score_sim,
+       count(*) FILTER (WHERE score_sim > 0.12)                  AS acima_do_teto_antigo,
+       count(*) FILTER (WHERE recommendation_type='cluster_based') AS cluster_based,
+       max(created_at)                                           AS mais_recente
+FROM recommendation_log
+WHERE created_at > '2026-08-21 20:04:57+00';   -- ultima impressao ANTES do deploy desta entrega
