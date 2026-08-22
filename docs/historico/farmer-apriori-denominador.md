@@ -112,6 +112,26 @@ O risco mais concreto não é o tamanho da conta: é a **ativação binária**. 
 
 A query de decisão responde **por geração**: segmentos 2/2, denominador por segmento, clientes elegíveis / alcançados / overlap. "14 regras" é observação, não contrato.
 
+## A primeira leitura de produção (2026-08-22)
+
+O desenho acima foi verificado **em produção**, não só em PG17. Vale registrar duas coisas: os números, e o intervalo em que eles não existiam.
+
+**A migration mergeou às 00:45 UTC e não estava aplicada às 01:29 UTC** — `merge na main ≠ produção`, a falha silenciosa de sempre. Quem a pegou não foi ninguém olhando para esta entrega: foi o **audit de migrations do #1854**, que confere o que terceiros mergearam na janela. As três sondas liam `AUSENTE / AUSENTE / NÃO` (constraint, sensor, `TR006` no corpo). Sem esse audit, o cron das 07:30 UTC teria rodado com a edge nova contra a RPC velha — e o `jsonb_to_recordset` **descartaria `cluster_segment` em silêncio**, publicando 14 regras sem proveniência. Verde na tela, errado na tabela. A ordem `migration → edge` não é preferência: é a única direção cujo modo de falha é alto.
+
+Aplicada e recomputada, `net._http_response` (id 57611, **HTTP 200**, 02:21:45 UTC):
+
+| | cestas | regras | truncadas |
+|---|---|---|---|
+| colacor | 19.030 | 2 | 0 |
+| oben | 11.227 | 12 | 0 |
+| **total** | **30.257** | **14** | **0** |
+
+`itens_descartados: 0`, `segmentos: 2`, `params` `s_min=0.01 / l_min=1.2 / max_rules_por_segmento=500`. As cestas somam exatamente o universo da Fatia 1 (19.030 + 11.227 = 30.257), e os pares 2/12 são os previstos aqui — mesmos pisos, denominador por conta. Na tabela: 14 linhas, `cluster_segment` NULL em **0**, `sample_size` = 19.030 para colacor e 11.227 para oben. `lift` de 5,39 a 53,21 em oben; 5,41 em colacor.
+
+Três invariantes que a escrita **não** quebrou, medidas depois dela: o ACL da RPC seguiu `postgres | service_role | sandbox_exec_…` — o fence de escritor único do #1840 sobrevive ao `CREATE OR REPLACE`, como o cabeçalho da migration argumentava; o sensor `omie_products_codigos_multi_conta()` leu **0**, então o isolamento entre contas continua sendo fato medido e não suposição; e o `CHECK`, que nasceu `NOT VALID` para poupar as 24 linhas legadas, foi validado depois que o recompute as substituiu — `pg_get_constraintdef` já não traz o sufixo.
+
+**O que esta leitura ainda NÃO diz.** Ela confirma a *produção* das regras, não o *efeito* delas. A tabela A/B/C acima projeta cobertura — MixGap 84 (16,0%), recommend+cross-sell 351 (29,1%), melhoria 8 — e nada disso foi medido em prod ainda: são números do consumidor, a jusante. Contar 14 regras e concluir "funcionou" seria trocar o eixo da decisão pelo que é fácil de contar, que é o defeito que esta fatia inteira corrige. O próximo sinal é a cobertura por geração, com denominador — e ele vem do `farmer_recommendation_desfecho` (#1851, já aplicado), não daqui.
+
 ## Provas
 
 - `supabase/functions/_shared/apriori_test.ts` — 8 testes Deno do helper puro. O universo de brinquedo (100 cestas numa conta, 20 na outra) reproduz o fenômeno em aritmética verificável à mão: mesmo piso, global = 0 regras, segmentado = 2.
