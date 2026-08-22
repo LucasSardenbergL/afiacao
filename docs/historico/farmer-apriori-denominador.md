@@ -132,6 +132,11 @@ Três invariantes que a escrita **não** quebrou, medidas depois dela: o ACL da 
 
 **O que esta leitura ainda NÃO diz.** Ela confirma a *produção* das regras, não o *efeito* delas. A tabela A/B/C acima projeta cobertura — MixGap 84 (16,0%), recommend+cross-sell 351 (29,1%), melhoria 8 — e nada disso foi medido em prod ainda: são números do consumidor, a jusante. Contar 14 regras e concluir "funcionou" seria trocar o eixo da decisão pelo que é fácil de contar, que é o defeito que esta fatia inteira corrige. O próximo sinal é a cobertura por geração, com denominador — e ele vem do `farmer_recommendation_desfecho` (#1851, já aplicado), não daqui.
 
+**Se precisar reconferir a promoção do `CHECK`.** A constraint é `farmer_association_rules_cluster_segment_check` — o nome fica escrito aqui de propósito: `git grep` por ele passa a trazer esta nota junto com a migration, e sem isso a busca só acha o arquivo cujo rodapé lê como pendente (lá o `VALIDATE` é **comentário**, e nenhum PR do repo o executa — quem procurar o artefato por `git grep "VALIDATE CONSTRAINT" origin/main`, que é a busca certa, não acha nada e conclui errado). Duas armadilhas na conferência:
+
+- **`WHERE cluster_segment IS NULL` mede METADE da asserção.** O predicado tem duas condições (`IS NOT NULL` **e** `length(btrim(…)) > 0`); uma linha com `''` ou `'   '` derruba o `VALIDATE` com esse `count(*)` marcando 0 — verde por medir meia condição. Conte o predicado inteiro, negado: `WHERE NOT (<predicado>)`. Medido em 2026-08-22 pelos dois critérios: 0 e 0, sobre as 14 linhas.
+- **Re-colar a `20260821200000` hoje NÃO reverte a promoção.** O `ADD CONSTRAINT … NOT VALID` mora dentro de `DO $$ … IF NOT EXISTS (SELECT 1 FROM pg_constraint …) $$` e a constraint existe, então o bloco não faz nada. É a armadilha do #1509 ("re-colar migration antiga reverte hardening posterior, em silêncio") **não** disparando — e por um motivo específico, não genérico: o guard testa a EXISTÊNCIA do objeto, e `VALIDATE` não muda existência. Um `DROP`+`ADD` no lugar do `IF NOT EXISTS` teria revertido calado.
+
 ## Provas
 
 - `supabase/functions/_shared/apriori_test.ts` — 8 testes Deno do helper puro. O universo de brinquedo (100 cestas numa conta, 20 na outra) reproduz o fenômeno em aritmética verificável à mão: mesmo piso, global = 0 regras, segmentado = 2.
