@@ -448,3 +448,51 @@ Ao medir os candidatos de fatia (todos com denominador, prod via `psql-ro`), a o
 Eu havia chamado a tupla fabricada (`max(confidence)` × `max(lift)` de regras diferentes) de "o único que fabrica número na tela" e recomendado corrigi-la primeiro. O número **é** fabricado, mas não muda a decisão em nenhum cliente — e a própria segmentação a zera, porque com regras por conta cada grupo passa a ter uma regra só. A previsão do Codex de que pioraria com mais regras **não se confirmou**: 14 regras segmentadas produzem menos grupos multi-regra que 24 globais.
 
 **A lição de método:** severidade herdada de um parecer — inclusive de uma revisão adversária boa — continua sendo hipótese até ter denominador. As três medições custaram três queries e trocaram a fatia inteira.
+
+## O alarme que se apaga por ser olhado (gatilho da fase 2 do Farmer, 2026-08-21)
+
+`db/gatilho-farmer-fase2.sql` existe para impedir que a fase 2 seja aberta sem denominador. Ele
+cometeu a própria falha que vigia — **uma camada acima, sobre PESSOAS em vez de linhas.**
+
+O veredito `ESTAGNADO` foi escrito com todas as letras para dizer *"aguardar não produz sinal
+quando a superfície não está em uso"*. Mas a condição implementada era **temporal**:
+`exec_7d = 0`. E verificar o sensor **é uma execução**. Quem abre a tela para conferir renova
+`exec_7d`, derruba o veredito para `AGUARDE` ("o sinal está vindo") e apaga o alarme — **justo
+quando alguém foi olhar.** Um sensor que se cala ao ser observado não relata: ele consola.
+
+Medido em 21/08 (prod, `psql-ro`), depois de a época descartar o período contaminado:
+
+| o que o gatilho dizia | o que o dado dizia |
+|---|---|
+| `AGUARDE — 3/20 julgaveis, 3 execucoes nos ultimos 7 dias` | as **14** execuções que existem na tabela são de **1 farmer só** — o founder, verificando |
+| `1/3 farmers com carteira ja executaram` (no texto, sem efeito no veredito) | os outros 2 **nunca** abriram a tela |
+| — | excluindo o founder, o gatilho devolve **`SEM DENOMINADOR`**: adoção real = **zero**, não "baixa" |
+
+E o defeito latente era pior que o cosmético: **`ENCERRE` ficava ACIMA de qualquer checagem de
+ator.** Com 20 julgáveis, ele afirma *"o vazio-de-verdade não acontece neste motor — encerre a
+linha"*. O executor único já havia produzido **14 dos 20**: seis cliques a mais e o gatilho
+encerraria uma linha de produto com **n=1**, e com a autoridade de quem mostra denominador.
+
+### A regra que isto acrescenta
+
+1. **Um denominador de adoção tem de excluir — ou no mínimo NOMEAR — o rastro de quem verifica.**
+   Quem mede faz parte do que é medido; sem separar os dois, o sensor lê a própria pegada como uso.
+   Detecção que não depende de saber *quem* é o verificador: `farmers = 1` enquanto
+   `farmers_com_carteira > 1` já basta — **um ator não é população**, seja ele quem for.
+2. **Afirmação UNIVERSAL exige amostra populacional; EXISTENCIAL não.** `ENCERRE` ("não acontece")
+   precisa e por isso passou a ficar **abaixo** do corte de ator único; `DECIDA` ("aconteceu ao
+   menos uma vez") não precisa e continua **acima** — amostra enviesada derruba o universal, nunca
+   o existencial. Rebaixar os dois juntos seria trocar um erro por outro.
+3. **Reportar o fato não é o mesmo que poder concluir sobre ele.** `farmers` e
+   `farmers_com_carteira` já saíam na linha — o comentário do código até nomeava a adoção. Faltava
+   o veredito **agir**. Sensor que enxerga e não decide adia o erro para o leitor, e o leitor lê a
+   palavra em caixa alta, não a coluna.
+
+Ramo `MONOUSUARIO` + prova executável em `db/test-gatilho-farmer-fase2.sh` (9 asserts, com
+falsificação: sem o ramo, o caso de 20-de-1-ator vira `ENCERRE`).
+
+**Lição de método:** o teste reprovou o **caso 5** e o defeito estava na *fixture*, não no fix — eu
+tinha suposto a forma de um "vazio julgável" em vez de lê-la (`scores.n > 0` **e** `vendaveis.n > 0`
+**e** a cobertura declarada). O teste barato pagou-se antes de existir PR: sem ele, eu teria
+entregue um ramo que atropelava a existência e só descobriria isso quando o primeiro vazio real
+chegasse — e aí ele viria mudo.
