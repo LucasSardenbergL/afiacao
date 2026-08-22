@@ -22,10 +22,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 ## Resumo
 
 - **481** custom migrations totais
-- **1624** objetos esperados (criados por estas migrations)
+- **1670** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 495
-  - `rls_policy`: 400
+  - `rls_policy`: 446
   - `index`: 244
   - `cron_job`: 164
   - `table`: 156
@@ -102,6 +102,8 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `table` | `public.fin_sync_log` | — |
 | `index` | `public.idx_fin_sync_log_started` | `fin_sync_log` |
+| `rls_policy` | `public.fin_sync_log_select` | `fin_sync_log` |
+| `rls_policy` | `public.fin_sync_log_service` | `fin_sync_log` |
 
 ### `20260328200500_financeiro_v2.sql`
 
@@ -178,6 +180,10 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `table` | `public.vendor_sip_credentials` | — |
 | `index` | `public.idx_vendor_sip_credentials_user_id` | `vendor_sip_credentials` |
 | `trigger` | `public.vendor_sip_credentials_updated_at_trigger` | `vendor_sip_credentials` |
+| `rls_policy` | `public.Master can read all vendor SIP credentials` | `vendor_sip_credentials` |
+| `rls_policy` | `public.Master can insert vendor SIP credentials` | `vendor_sip_credentials` |
+| `rls_policy` | `public.Master can update vendor SIP credentials` | `vendor_sip_credentials` |
+| `rls_policy` | `public.Master can delete vendor SIP credentials` | `vendor_sip_credentials` |
 
 ### `20260517100000_enable_realtime_dashboard_v3.sql`
 
@@ -443,6 +449,8 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `index` | `public.idx_score_recalc_queue_pending` | `score_recalc_queue` |
 | `index` | `public.uniq_score_recalc_queue_pending` | `score_recalc_queue` |
 | `trigger` | `public.trg_farmer_calls_enqueue_recalc` | `farmer_calls` |
+| `rls_policy` | `public.Staff can view recalc queue` | `score_recalc_queue` |
+| `rls_policy` | `public.Staff can insert recalc queue` | `score_recalc_queue` |
 
 ### `20260518120000_visit_intelligence_v1.sql`
 
@@ -459,6 +467,10 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `index` | `public.uniq_visit_score_queue_pending` | `visit_score_recalc_queue` |
 | `trigger` | `public.trg_route_visits_enqueue_visit_recalc` | `route_visits` |
 | `trigger` | `public.trg_farmer_client_scores_enqueue_visit_recalc` | `farmer_client_scores` |
+| `rls_policy` | `public.Staff can view their visit scores` | `customer_visit_scores` |
+| `rls_policy` | `public.Staff can manage their visit scores` | `customer_visit_scores` |
+| `rls_policy` | `public.Staff can view visit recalc queue` | `visit_score_recalc_queue` |
+| `rls_policy` | `public.Staff can insert visit recalc queue` | `visit_score_recalc_queue` |
 
 ### `20260519000000_fin_a1_eventos.sql`
 
@@ -538,6 +550,10 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `index` | `public.idx_call_log_farmer_started` | `call_log` |
 | `index` | `public.idx_call_log_missed_unack` | `call_log` |
 | `cron_job` | `cron.call-log-missed-backstop` | — |
+| `rls_policy` | `public.call_log own select` | `call_log` |
+| `rls_policy` | `public.call_log own insert` | `call_log` |
+| `rls_policy` | `public.call_log own update` | `call_log` |
+| `rls_policy` | `public.call_log team select` | `call_log` |
 
 ### `20260523210000_drop_audit_trigger_fin_config_cashflow.sql`
 
@@ -606,6 +622,13 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `index` | `public.idx_carteira_owner` | `carteira_assignments` |
 | `index` | `public.idx_carteira_owner_eligible` | `carteira_assignments` |
 | `index` | `public.idx_coverage_covering_active` | `carteira_coverage` |
+| `rls_policy` | `public.Staff view vendedor map` | `omie_vendedor_map` |
+| `rls_policy` | `public.Master manage vendedor map` | `omie_vendedor_map` |
+| `rls_policy` | `public.View carteira por visibilidade` | `carteira_assignments` |
+| `rls_policy` | `public.Master manage carteira` | `carteira_assignments` |
+| `rls_policy` | `public.View coverage envolvido` | `carteira_coverage` |
+| `rls_policy` | `public.Master ou coberto cria coverage` | `carteira_coverage` |
+| `rls_policy` | `public.Master ou coberto edita coverage` | `carteira_coverage` |
 
 ### `20260524120000_fin_regime_inputs.sql`
 
@@ -697,6 +720,7 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.get_minha_positivacao` | — |
 | `table` | `public.carteira_positivacao_snapshot` | — |
 | `index` | `public.idx_sales_orders_kpi_date` | `sales_orders` |
+| `rls_policy` | `public.Staff vê snapshot positivação` | `carteira_positivacao_snapshot` |
 
 ### `20260525130000_fin_analise_dimensoes_rpc.sql`
 
@@ -763,6 +787,7 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.log_impersonation_start` | — |
 | `function` | `public.end_impersonation` | — |
 | `table` | `public.impersonation_audit` | — |
+| `rls_policy` | `public.master vê audit de impersonação` | `impersonation_audit` |
 
 ### `20260526020000_rls_score_carteira_hardening.sql`
 
@@ -841,6 +866,8 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.mark_mixgap_feedback` | — |
 | `function` | `public._carteira_mixgap_for_owner` | — |
 | `table` | `public.farmer_mixgap_feedback` | — |
+| `rls_policy` | `public.mixgap feedback select` | `farmer_mixgap_feedback` |
+| `rls_policy` | `public.mixgap feedback iud` | `farmer_mixgap_feedback` |
 
 ### `20260527010000_rls_copilot_sessions_select_own_only.sql`
 
@@ -1692,6 +1719,11 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `table` | `public.cliente_classificacao` | — |
 | `table` | `public.fornecedor_excecao` | — |
+| `rls_policy` | `public.staff read classificacao` | `cliente_classificacao` |
+| `rls_policy` | `public.service_role manage classificacao` | `cliente_classificacao` |
+| `rls_policy` | `public.staff read excecao` | `fornecedor_excecao` |
+| `rls_policy` | `public.master manage excecao` | `fornecedor_excecao` |
+| `rls_policy` | `public.service_role manage excecao` | `fornecedor_excecao` |
 
 ### `20260606170000_reposicao_fix_aplicar_promocoes.sql`
 
@@ -1777,6 +1809,7 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `table` | `public.reposicao_alerta_pedido_minimo` | — |
 | `index` | `public.reposicao_alerta_pedido_minimo_ativo` | `reposicao_alerta_pedido_minimo` |
 | `cron_job` | `cron.reposicao-alerta-pedido-minimo` | — |
+| `rls_policy` | `public.Staff lê alertas de pedido mínimo` | `reposicao_alerta_pedido_minimo` |
 
 ### `20260609150000_tint_sync_promote.sql`
 
@@ -1791,6 +1824,8 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `table` | `public.tint_keys_snapshots` | — |
 | `index` | `public.idx_tsp_precos_chave` | `tint_staging_precos_base` |
 | `index` | `public.idx_tint_formulas_ativas` | `tint_formulas` |
+| `rls_policy` | `public.Staff can view tint_staging_precos_base` | `tint_staging_precos_base` |
+| `rls_policy` | `public.Staff can view tint_keys_snapshots` | `tint_keys_snapshots` |
 
 ### `20260609160000_reposicao_ciclo_intraday.sql`
 
@@ -1828,6 +1863,7 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.reposicao_alerta_pedido_minimo_tick` | — |
 | `table` | `public.reposicao_auto_aprovacao_log` | — |
 | `index` | `public.reposicao_auto_aprovacao_log_criado_em` | `reposicao_auto_aprovacao_log` |
+| `rls_policy` | `public.Staff lê log de auto-aprovação` | `reposicao_auto_aprovacao_log` |
 
 ### `20260610200000_push_vendedora.sql`
 
@@ -2230,6 +2266,7 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.reposicao_alerta_pedido_minimo_tick` | — |
 | `table` | `public.reposicao_auto_aprovacao_log` | — |
 | `index` | `public.reposicao_auto_aprovacao_log_criado_em` | `reposicao_auto_aprovacao_log` |
+| `rls_policy` | `public.Staff lê log de auto-aprovação` | `reposicao_auto_aprovacao_log` |
 
 ### `20260615210000_tint_get_prices_batch.sql`
 
@@ -2632,6 +2669,7 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
+| `rls_policy` | `storage.Public can view avatars` | `objects` |
 | `rls_policy` | `storage.tarefa_comprov_update_master` | `objects` |
 | `rls_policy` | `storage.tarefa_comprov_delete_master` | `objects` |
 
@@ -2872,8 +2910,6 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `index` | `public.idx_fin_divida_parcelas_naopago` | `fin_divida_parcelas` |
 | `trigger` | `public.trg_fin_dividas_autor` | `fin_dividas` |
 | `trigger` | `public.trg_fin_divida_completude_autor` | `fin_divida_completude` |
-| `rls_policy` | `public.%I_select_master` | `public` |
-| `rls_policy` | `public.%I_write_master` | `public` |
 
 ### `20260704160000_fin_sync_watchdog_retry_sem_efeito.sql`
 
@@ -3089,6 +3125,8 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `table` | `public.carteira_membership_ledger` | — |
 | `index` | `public.idx_cml_identity_state` | `carteira_membership_ledger` |
 | `trigger` | `public.trg_omie_clientes_to_ledger` | `omie_clientes` |
+| `rls_policy` | `public.Staff can manage carteira membership ledger` | `carteira_membership_ledger` |
+| `rls_policy` | `public.Users can view their own membership` | `carteira_membership_ledger` |
 
 ### `20260713010000_whatsapp_templates_hsm.sql`
 
@@ -3282,7 +3320,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 ### `20260718100000_filas_recalc_rls_master_only.sql`
 
-> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `rls_policy` | `public.Master can view recalc queue` | `score_recalc_queue` |
+| `rls_policy` | `public.Master can insert recalc queue` | `score_recalc_queue` |
+| `rls_policy` | `public.Master can view visit recalc queue` | `visit_score_recalc_queue` |
+| `rls_policy` | `public.Master can insert visit recalc queue` | `visit_score_recalc_queue` |
 
 ### `20260718120000_pot_nid_receb_retencao.sql`
 
@@ -3459,9 +3502,7 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 ### `20260720160000_authz_cap_compras_ler_alertas_auto_aprovacao_fu4h.sql`
 
-| Tipo | Objeto | Parent |
-| --- | --- | --- |
-| `rls_policy` | `public.%I` | `public` |
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ### `20260721190000_reposicao_pos_candidatos.sql`
 
@@ -3481,6 +3522,9 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `table` | `public.acoes_execucoes` | — |
 | `index` | `public.acoes_execucoes_acao_idx` | `acoes_execucoes` |
+| `rls_policy` | `public.Staff le execucoes` | `acoes_execucoes` |
+| `rls_policy` | `public.Staff registra execucao propria` | `acoes_execucoes` |
+| `rls_policy` | `public.Staff fecha execucao propria` | `acoes_execucoes` |
 
 ### `20260722100001_tint_gate_revalida_submit.sql`
 
@@ -3517,6 +3561,7 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `view` | `public.inventory_position_operacional` | — |
+| `rls_policy` | `public.Staff can manage inventory` | `inventory_position` |
 | `rls_policy` | `public.staff_inventory_position_select` | `inventory_position` |
 
 ### `20260723140000_authz_custo_fu4f_fase1.sql`
@@ -3987,7 +4032,9 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 ### `20260820225840_farmer_assoc_rules_escritor_unico.sql`
 
-> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `rls_policy` | `public.Staff can read association rules` | `farmer_association_rules` |
 
 ### `20260821194411_farmer_recomendacao_desfecho.sql`
 

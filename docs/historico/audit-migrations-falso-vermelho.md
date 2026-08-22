@@ -137,10 +137,29 @@ modelado. ⇒ **Fence de permissão não se prova por existência; prova-se por 
 por `proacl`.** Foi o `/fecho` (que confere o OBJETO com query própria) que pegou o fence, não o audit
 — e isso não é acidente, é a consequência do desenho.
 
-## Resíduo acionável (NÃO feito aqui)
+## Resíduo acionável — ✅ FEITO (PR-EXTRATOR)
 
-- Corrigir a regex de policy em `scripts/lib/migration-objects.ts` para aceitar identificador citado
-  com espaço (`"([^"]+)"|(\w+)`) — **não há teste** para esse arquivo hoje (`scripts/lib/__tests__/`
-  não existe), então o conserto pede teste antes, com os 20 arquivos perdidos como corpus.
-- Regenerar o audit depois disso é o de sempre: ímã de conflito sob auto-merge (§2), então em PR
-  próprio e curto.
+- ~~Corrigir a regex de policy~~ **feito.** `"([^"]+)"|([\w%]+)` + descarte de `%` + `IF NOT EXISTS`.
+  Corpus depois: **446 extraídas + 3 descartadas = 449 — zero perdidas** (era 400/449).
+  Teste novo: `scripts/lib/migration-objects.test.ts` (co-localizado como os `authz-*.test.ts`; o repo
+  não usa `__tests__/`), 14 casos com SQL real + um sensor que varre as migrations custom e exige que
+  TODA ocorrência de `CREATE POLICY` vire objeto. Falsificado nos dois eixos: regex antiga ⇒ 12
+  vermelhos; descarte alargado até o corpo ⇒ 2 vermelhos (o `LIKE 'AF%'` e o próprio sensor).
+- ~~Regenerar o audit~~ **feito**, em PR próprio e curto.
+
+### O que a correção ensinou além do previsto
+
+1. **`CREATE POLICY IF NOT EXISTS` existe no corpus** (`20260328200400_fix_cron_sync`) e **não é
+   sintaxe do PostgreSQL**. Conferido em prod via `psql-ro`: as duas policies do `fin_sync_log`
+   **existem** — a migration aplicou. Entram como ✅, não como vermelho.
+2. **Descartar `%` só no NOME não bastava.** As 3 entradas fantasma tinham `parent = 'public'`: em
+   `ON public.%I` a regex não casa `%I` como tabela, recua, e casa **`public` como TABELA** —
+   produzindo o objeto `public.public.%I`. ⇒ o descarte cobre nome, schema **e** tabela.
+3. **Falsificação inócua é teatro.** A 1ª sabotagem do descarte (`m[0].includes('%')`) passou verde:
+   `m[0]` termina na tabela, então era **equivalente** ao filtro dos 3 campos. Sabotagem que não muda
+   o comportamento não prova poder de teste — refeita alcançando o corpo, aí ficou vermelha.
+
+### Ainda NÃO resolvido (limite de desenho, não bug)
+
+Migration de **fence** (`REVOKE` + `DROP POLICY` + `CREATE POLICY` do mesmo nome) segue não
+verificável por **existência** — o sinal é uma remoção e um ACL. Continua valendo a seção acima.
