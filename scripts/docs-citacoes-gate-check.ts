@@ -57,6 +57,7 @@
  */
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve } from 'node:path';
+import { removerCercas } from './lib/markdown-codigo';
 
 /** Docs VIVOS — os que precisam estar certos hoje. Congelados ficam fora (ver cabeçalho). */
 export const ALVOS_VIVOS = ['CLAUDE.md', 'docs/agent', 'docs/visual-direction', 'docs/runbooks'];
@@ -103,16 +104,51 @@ export interface Achado {
   msg: string;
 }
 
-/** Extrai as citações de um markdown. Puro: recebe texto, devolve estrutura. */
-export function parseCitacoes(doc: string, texto: string): Citacao[] {
+/**
+ * Extrai as citações de um markdown. Puro: recebe texto, devolve estrutura.
+ *
+ * Bloco cercado (```/~~~) fica de fora: ali a citação ILUSTRA o formato, não afirma nada sobre o
+ * repo — cobrar `arquivo.md:123<!--cita: trecho-->` escrito como exemplo obrigaria o autor a
+ * inventar um alvo real só para documentar o gate. Sai só a CERCA, nunca a crase inline: a citação
+ * canônica deste repo nasce entre crases, e passar o texto pelo `removerCodigo` do gate de links
+ * levaria as 22 citações vivas a 0 (medido em 2026-08-22) — verde por cegueira, não por acerto.
+ */
+export function parseCitacoes(
+  doc: string,
+  texto: string,
+): { citacoes: Citacao[]; achados: Achado[] } {
+  const { texto: semCercas, cercaAberta } = removerCercas(texto);
+  const citacoes = citacoesEm(doc, semCercas);
+
+  // O skip cobra um preço: cerca que nunca fecha esvazia tudo abaixo dela, e um gate que mede só
+  // o que sobrou fica verde sem ter olhado. Vira achado — mas só quando escondeu citação de fato,
+  // senão o gate passaria a cobrar estilo de markdown, que não é o assunto dele.
+  const escondidas = cercaAberta
+    ? citacoesEm(doc, cercaAberta.textoEngolido, cercaAberta.linha - 1)
+    : [];
+  const achados: Achado[] =
+    cercaAberta && escondidas.length > 0
+      ? [
+          {
+            doc,
+            linhaDoDoc: cercaAberta.linha,
+            msg: `cerca de código \`${cercaAberta.marca}\` aberta aqui e nunca fechada — ela engole o resto do arquivo, e com ele ${escondidas.length} citação(ões) que somem da medição em silêncio. Feche o bloco.`,
+          },
+        ]
+      : [];
+
+  return { citacoes, achados };
+}
+
+/** O regex sobre um texto JÁ limpo. `offsetLinha` recoloca a numeração do trecho no doc inteiro. */
+function citacoesEm(doc: string, texto: string, offsetLinha = 0): Citacao[] {
   const out: Citacao[] = [];
   const linhas = texto.split('\n');
   for (let i = 0; i < linhas.length; i++) {
-    // Bloco de código não é citação — é exemplo. (Heurística barata: linha dentro de ``` é pulada.)
     for (const m of linhas[i].matchAll(RE_CITACAO)) {
       out.push({
         doc,
-        linhaDoDoc: i + 1,
+        linhaDoDoc: offsetLinha + i + 1,
         alvo: m[1],
         linhas: m[2].split(','),
         ancora: m[4] !== undefined ? m[4] : null,
@@ -264,7 +300,8 @@ export function lerDocsVivos(raiz = '.'): string[] {
 if (import.meta.main) {
   const raiz = process.cwd();
   const docs = lerDocsVivos(raiz);
-  const citacoes = docs.flatMap((d) => parseCitacoes(d, readFileSync(join(raiz, d), 'utf8')));
+  const parses = docs.map((d) => parseCitacoes(d, readFileSync(join(raiz, d), 'utf8')));
+  const citacoes = parses.flatMap((p) => p.citacoes);
   const idx = indexarRepo(raiz);
   const r = auditarCitacoes(citacoes, raiz, idx, (p) => {
     try {
@@ -274,13 +311,14 @@ if (import.meta.main) {
     }
   });
 
+  const achados = [...parses.flatMap((p) => p.achados), ...r.achados];
   const resumo = `${r.verificadas} citação(ões) verificada(s) contra o conteúdo real · ${r.externas} externa(s)`;
-  if (r.achados.length === 0) {
+  if (achados.length === 0) {
     console.log(`docs-citacoes-gate: ✓ ${resumo}.`);
     process.exit(0);
   }
-  console.error(`docs-citacoes-gate: ✗ ${r.achados.length} citação(ões) quebrada(s). ${resumo}.\n`);
-  for (const a of r.achados) console.error(`  ${a.doc}:${a.linhaDoDoc} — ${a.msg}`);
+  console.error(`docs-citacoes-gate: ✗ ${achados.length} citação(ões) quebrada(s). ${resumo}.\n`);
+  for (const a of achados) console.error(`  ${a.doc}:${a.linhaDoDoc} — ${a.msg}`);
   console.error(
     `\nUma citação de linha só vale se disser o que espera achar lá. Formato:\n  \`caminho/arquivo.md:123\`<!--cita: trecho literal da linha 123-->`,
   );
