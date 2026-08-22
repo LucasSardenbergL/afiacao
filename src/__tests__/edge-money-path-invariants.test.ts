@@ -703,6 +703,20 @@ describe('guardrail money-path: prova positiva client_to_user sobre o cache de i
     expect(objeto).toMatch(/source: "document",/);
   });
 
+  it('o p_account da RPC e o filtro da view usam a MESMA expressão de conta', () => {
+    // A falha MAIS PROVÁVEL desta entrega, e a única que não emite erro nenhum: `client_to_user` é
+    // filtrado por `account = p_account`, e a coluna guarda 'oben'/'colacor' — o mesmo domínio que a
+    // view fresca filtra. Se um lado passasse o rótulo cru do run ('vendas'/'colacor_vendas', como o
+    // omie-analytics-sync faz de propósito, já que só usa doc_to_user, que é global), a prova voltaria
+    // VAZIA para sempre e a correção seria inerte em silêncio — indistinguível do estado de hoje.
+    expect(src, 'a RPC precisa receber a MESMA variável de conta que filtra a view').toMatch(
+      /rpc\('omie_sync_identity_snapshot', \{ p_account: account \}\)/,
+    );
+    expect(src, 'REGRESSÃO: o pré-load da view deixou de filtrar pela mesma variável').toMatch(
+      /\.eq\('account', account\)/,
+    );
+  });
+
   it('o canário de deploy reporta a cobertura da prova (o sensor da fase seguinte)', () => {
     expect(src, 'sem clientes_provados não há como saber se a prova saiu do zero em produção').toContain(
       'clientes_provados: clientesProvados',

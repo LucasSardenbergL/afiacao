@@ -428,7 +428,12 @@ const OMIE_SNAPSHOT_CODIGO_RE = /^[1-9][0-9]*$/;
 
 function parseIdentitySnapshot(
   snap: unknown,
-): { docToUserMap: Map<string, string>; ambiguousDocs: Set<string>; clientToUser: Map<number, string> } {
+): {
+  docToUserMap: Map<string, string>;
+  ambiguousDocs: Set<string>;
+  clientToUser: Map<number, string>;
+  revokedClientCodes: Set<number>;
+} {
   if (!snap || typeof snap !== "object" || Array.isArray(snap)) {
     throw new Error("identity snapshot: resposta não é objeto (fail-closed)");
   }
@@ -483,7 +488,29 @@ function parseIdentitySnapshot(
     }
     clientToUser.set(Number(codigo), user);
   }
-  return { docToUserMap, ambiguousDocs, clientToUser };
+  // PR-2/A2 — REVOGAÇÃO. Sem ela a prova só OMITE, e omitir não corrige nada: o código obsoleto
+  // continua no cache do leitor. Aqui vêm os códigos cuja evidência EXISTE mas deixou de sustentar o
+  // vínculo (doc migrou de dono, virou ambíguo, ou o profile sumiu) — o leitor os REMOVE do cache e
+  // refaz pela API. Ausente/não-array é contrato QUEBRADO: `[]` silencioso reabriria o fail-open.
+  const rev = s.revoked_client_codes;
+  if (!Array.isArray(rev)) {
+    throw new Error("identity snapshot: revoked_client_codes ausente ou não-array (fail-closed)");
+  }
+  const revokedClientCodes = new Set<number>();
+  for (const codigo of rev) {
+    if (typeof codigo !== "string" || !OMIE_SNAPSHOT_CODIGO_RE.test(codigo) || !Number.isSafeInteger(Number(codigo))) {
+      throw new Error("identity snapshot: código de cliente inválido em revoked_client_codes (fail-closed)");
+    }
+    const cod = Number(codigo);
+    // disjunção: um código não pode ser provado E revogado (seria fail-open da RPC). A UNIQUE
+    // (omie_codigo_cliente, account) garante 1 linha por código/conta, então os dois conjuntos nascem
+    // disjuntos; ver os dois juntos significa que a RPC no ar não é a deste contrato.
+    if (clientToUser.has(cod)) {
+      throw new Error("identity snapshot: código em client_to_user E revoked_client_codes — fail-open da RPC (fail-closed)");
+    }
+    revokedClientCodes.add(cod);
+  }
+  return { docToUserMap, ambiguousDocs, clientToUser, revokedClientCodes };
 }
 // MIRROR-END
 

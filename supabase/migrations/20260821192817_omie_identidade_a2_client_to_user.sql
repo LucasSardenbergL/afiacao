@@ -88,6 +88,30 @@ BEGIN ATOMIC
       AND m.source  = 'document'
       AND m.evidence_document_normalized IS NOT NULL
       AND m.updated_at >= now() - interval '7 days'
+  ),
+  -- REVOGAÇÃO — o par indispensável de client_prova (achado do challenge Codex xhigh, 2026-08-21).
+  -- Sem ela a prova apenas OMITE o vínculo, e omitir NÃO corrige nada: o leitor continua servindo o
+  -- vínculo obsoleto que já está no cache da view. Pior, o argumento "o TTL de 7d expira sozinho" é
+  -- FALSO — `register_carteira_member` (conferida em prod) faz `ON CONFLICT ... updated_at = now()`
+  -- SEM tocar a evidência e trocando `source` para 'rpc': a linha errada renova o frescor para sempre.
+  -- Por isso a revogação NÃO filtra `source='document'` (filtrar deixaria escapar exatamente a linha
+  -- que aquele writer converteu) — basta TER evidência que não sustenta mais o vínculo.
+  -- `evidence IS NULL` continua FORA daqui: é o "sem prova, nunca houve" das linhas antigas, que
+  -- degrada para o status quo em vez de jogar 10.822 códigos no fallback da API do Omie.
+  -- Disjunto de client_prova por construção: UNIQUE(omie_codigo_cliente, account) garante 1 linha por
+  -- código/conta, e os predicados são a negação um do outro. O parser do edge assere essa disjunção.
+  client_revogado AS (
+    SELECT m.omie_codigo_cliente::text AS codigo
+    FROM public.omie_customer_account_map m
+    WHERE m.account = p_account
+      AND m.evidence_document_normalized IS NOT NULL
+      AND m.updated_at >= now() - interval '7 days'
+      AND NOT EXISTS (
+        SELECT 1 FROM doc_agg d
+        WHERE d.doc     = m.evidence_document_normalized
+          AND d.n_users = 1
+          AND d.user_id = m.user_id::text
+      )
   )
   SELECT jsonb_build_object(
     'doc_to_user',
@@ -95,18 +119,34 @@ BEGIN ATOMIC
     'ambiguous_docs',
       coalesce((SELECT jsonb_agg(doc ORDER BY doc)   FROM doc_agg WHERE n_users > 1), '[]'::jsonb),
     'client_to_user',
-      coalesce((SELECT jsonb_object_agg(codigo, user_id) FROM client_prova), '{}'::jsonb)
+      coalesce((SELECT jsonb_object_agg(codigo, user_id) FROM client_prova), '{}'::jsonb),
+    'revoked_client_codes',
+      coalesce((SELECT jsonb_agg(codigo ORDER BY codigo) FROM client_revogado), '[]'::jsonb)
   );
 END;
 
 -- CREATE OR REPLACE preserva o ACL, mas reemitir é idempotente e barato — e o custo de um ACL resetado
 -- aqui é PII (documento + user_id) exposta a anon/authenticated. Nomeando as roles: REVOKE FROM PUBLIC
 -- não tira grant explícito de anon/authenticated (CLAUDE.md).
+-- ── 3. LGPD: a evidência é CPF/CNPJ, e pode ser o de OUTRA pessoa ─────────────────────────────────
+-- Medido em prod (2026-08-21): a tabela tem `authenticated=arwdDxtm` e a policy "Users can view their
+-- own account map" (auth.uid() = user_id) — um cliente logado LÊ a própria linha. No cenário A2 a linha
+-- ainda pertence a u1 enquanto `evidence_document_normalized` já é o documento de u2: a coluna nova
+-- vazaria o CPF de um terceiro. Achado do challenge Codex xhigh, confirmado por `pg_class.relacl`.
+-- Fecho por GRANT DE COLUNA, não revogando a tabela: a view `omie_customer_account_map_fresco` é
+-- `security_invoker=on`, então o leitor precisa continuar com SELECT nas 8 colunas que ela projeta —
+-- revogar a tabela inteira quebraria a view (e o customer360 / useUnifiedOrder, que leem por ela).
+-- Idempotente: REVOKE+GRANT podem ser recolados. As roles são NOMEADAS — `REVOKE FROM PUBLIC` não tira
+-- grant explícito de anon/authenticated (CLAUDE.md). service_role mantém o acesso total (é o writer).
+REVOKE SELECT ON public.omie_customer_account_map FROM anon, authenticated;
+GRANT  SELECT (id, user_id, account, omie_codigo_cliente, omie_codigo_vendedor, source, created_at, updated_at)
+  ON public.omie_customer_account_map TO anon, authenticated;
+
 REVOKE EXECUTE ON FUNCTION public.omie_sync_identity_snapshot(text) FROM PUBLIC, anon, authenticated;
 GRANT  EXECUTE ON FUNCTION public.omie_sync_identity_snapshot(text) TO service_role;
 
 COMMENT ON FUNCTION public.omie_sync_identity_snapshot(text) IS
-  'PR-1/A1 + PR-2/A2: identidade num snapshot atômico (sql STABLE). {doc_to_user, ambiguous_docs, client_to_user}. doc ambíguo (2+ users) fica FORA de doc_to_user. client_to_user = prova positiva codigo_omie→user por conta: source=document + evidence_document_normalized única (n_users=1) e consistente (mesmo user do vínculo) + TTL 7d. Só service_role executa.';
+  'PR-1/A1 + PR-2/A2: identidade num snapshot atômico (sql STABLE). {doc_to_user, ambiguous_docs, client_to_user, revoked_client_codes}. doc ambíguo (2+ users) fica FORA de doc_to_user. client_to_user = prova positiva codigo_omie→user por conta (source=document + evidência única e consistente + TTL 7d). revoked_client_codes = códigos cuja evidência EXISTE mas não sustenta mais o vínculo (qualquer source) — o leitor os REMOVE do cache e refaz pela API. Só service_role executa.';
 
 -- PostgREST cacheia o schema: sem isto a 1ª chamada pós-apply pode devolver PGRST202.
 NOTIFY pgrst, 'reload schema';

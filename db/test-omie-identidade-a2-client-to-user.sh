@@ -63,6 +63,8 @@ U8=00000000-0000-0000-0000-000000000008
 U9=00000000-0000-0000-0000-000000000009
 U10=00000000-0000-0000-0000-000000000010
 U11=00000000-0000-0000-0000-000000000011
+U12=00000000-0000-0000-0000-000000000012
+U13=00000000-0000-0000-0000-000000000013
 FN='public.omie_sync_identity_snapshot(text)'
 echo "=== setup pronto (PG17 :$PORT) ==="
 
@@ -104,7 +106,7 @@ SENT=$(Pq -c "SELECT (pg_get_functiondef(to_regprocedure('$FN')::oid) LIKE '%cli
 P -q <<'SQL'
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 INSERT INTO auth.users(id) SELECT ('00000000-0000-0000-0000-0000000000' || lpad(i::text,2,'0'))::uuid
-  FROM generate_series(1,11) i ON CONFLICT DO NOTHING;
+  FROM generate_series(1,13) i ON CONFLICT DO NOTHING;
 INSERT INTO public.profiles(user_id, document) VALUES
   ('00000000-0000-0000-0000-000000000001', '11111111111'),  -- unico
   ('00000000-0000-0000-0000-000000000002', '22222222222'),  -- ambiguo com u3
@@ -132,7 +134,15 @@ INSERT INTO public.omie_customer_account_map (user_id, account, omie_codigo_clie
   ('00000000-0000-0000-0000-000000000008','oben',   108,'rpc',     '66666666666', now()),  -- N5a source rpc
   ('00000000-0000-0000-0000-000000000009','oben',   109,'manual',  '77777777777', now()),  -- N5b source manual
   ('00000000-0000-0000-0000-000000000010','oben',   110,'document','88888888888', now() - interval '8 days'), -- N6 STALE
-  ('00000000-0000-0000-0000-000000000011','oben',   111,'document','99999999999', now());  -- N7 profile inexistente
+  ('00000000-0000-0000-0000-000000000011','oben',   111,'document','99999999999', now()),  -- N7 profile inexistente
+  -- O caso que MATA o argumento do TTL (achado Codex, confirmado em prod): register_carteira_member faz
+  -- ON CONFLICT ... updated_at=now() SEM tocar a evidencia e trocando source p/ 'rpc'. A linha errada
+  -- renova o frescor para sempre. Evidencia = doc do u1, vinculo do u12 => tem de ser REVOGADA.
+  ('00000000-0000-0000-0000-000000000012','oben',   112,'rpc',     '11111111111', now()),
+  -- STALE **e** com evidencia MORTA. O 110 acima nao serve para provar o TTL da revogacao: a evidencia
+  -- dele esta VIVA, entao ele ficaria fora da revogacao com ou sem o filtro de 7d -- o assert passaria
+  -- pelo motivo errado (foi o que a falsificacao F12 flagrou). Aqui SO o TTL o exclui.
+  ('00000000-0000-0000-0000-000000000013','oben',   113,'document','11111111111', now() - interval '8 days');
 SQL
 
 # ══ ZONA 4 — asserts ══
@@ -219,6 +229,34 @@ eq "G5 segue SECURITY INVOKER (prosecdef=false)" \
 eq "G6 segue STABLE (provolatile='s') -- snapshot atomico depende disto" \
    "$(Pq -c "SELECT provolatile FROM pg_proc WHERE proname='omie_sync_identity_snapshot';")" "s"
 
+echo "-- asserts: REVOGACAO (o par que de fato fecha o achado) --"
+REVOGA() { RS "SELECT public.omie_sync_identity_snapshot('oben')->'revoked_client_codes' @> '[\"$1\"]';"; }
+eq "V1 evidencia TROCADA e REVOGADA (nao so omitida) -- sem isto o cache segue servindo o dono velho" "$(REVOGA 105)" "t"
+eq "V2 evidencia AMBIGUA e REVOGADA (design 6: doc ambiguo MATA o vinculo)"                            "$(REVOGA 102)" "t"
+eq "V3 profile do dono sumiu -> REVOGADO"                                                              "$(REVOGA 111)" "t"
+eq "V4 evidencia AUSENTE (NULL) NAO e revogada -- e o estado das 16.118 linhas: status quo, nao 10.822 chamadas de API" "$(REVOGA 106)" "f"
+eq "V5a codigo PROVADO nao aparece revogado (disjuncao)"                                               "$(REVOGA 101)" "f"
+eq "V5b codigo PROVADO nao aparece revogado (disjuncao)"                                               "$(REVOGA 104)" "f"
+eq "V6 source='rpc' com evidencia VIVA e consistente: nem provado nem revogado (status quo)"           "$(REVOGA 108)" "f"
+eq "V7 source='rpc' com evidencia MORTA E REVOGADO -- o writer que renova updated_at sem prova nao escapa" "$(REVOGA 112)" "t"
+eq "V8a vinculo STALE com evidencia VIVA nao e revogado (a evidencia sustenta o vinculo)"               "$(REVOGA 110)" "f"
+eq "V8b vinculo STALE com evidencia MORTA tambem nao e revogado -- fora da view, revogar seria ruido"   "$(REVOGA 113)" "f"
+eq "V9 DENOMINADOR: exatamente 3+1 revogados em 'oben' (105,102,111,112)" \
+   "$(RS "SELECT jsonb_array_length(public.omie_sync_identity_snapshot('oben')->'revoked_client_codes');")" "4"
+eq "V10 conta desconhecida -> array VAZIO (nunca NULL: o parser exige array)" \
+   "$(RS "SELECT public.omie_sync_identity_snapshot('conta_que_nao_existe')->>'revoked_client_codes';")" "[]"
+eq "V11 as 4 chaves do contrato estao presentes" \
+   "$(RS "SELECT (s ? 'doc_to_user') AND (s ? 'ambiguous_docs') AND (s ? 'client_to_user') AND (s ? 'revoked_client_codes') FROM (SELECT public.omie_sync_identity_snapshot('oben') s) t;")" "t"
+
+echo "-- asserts: LGPD (a evidencia e CPF/CNPJ e pode ser o de OUTRA pessoa) --"
+T='public.omie_customer_account_map'
+eq "L1 authenticated NAO le a coluna de evidencia" "$(Pq -c "SELECT has_column_privilege('authenticated','$T','evidence_document_normalized','SELECT');")" "f"
+eq "L2 anon NAO le a coluna de evidencia"          "$(Pq -c "SELECT has_column_privilege('anon','$T','evidence_document_normalized','SELECT');")" "f"
+eq "L3 authenticated SEGUE lendo as colunas antigas (a view fresca e security_invoker e depende disso)" \
+   "$(Pq -c "SELECT has_column_privilege('authenticated','$T','omie_codigo_cliente','SELECT') AND has_column_privilege('authenticated','$T','user_id','SELECT') AND has_column_privilege('authenticated','$T','source','SELECT');")" "t"
+eq "L4 service_role (o writer/leitor real) SEGUE lendo a evidencia" \
+   "$(Pq -c "SELECT has_column_privilege('service_role','$T','evidence_document_normalized','SELECT');")" "t"
+
 # ══ ZONA 5 — FALSIFICACAO (Lei #3) ══
 # Cada defesa e sabotada SOZINHA, por `sed` cirurgico sobre a migration REAL -- assim o mutante e
 # provadamente "a versao que vai a producao MENOS uma defesa", nao uma reescrita a mao que poderia
@@ -280,17 +318,17 @@ falsifica "F2 unicidade da evidencia (N3)" "$Q102" "f" "t" '/AND d.n_users = 1/d
 # seria no-op semantico e a falsificacao mentiria). O mutante ADICIONA o ramo que faltava: os vinculos
 # de evidencia NULA entram pelo user do proprio vinculo -- que e o fail-open do backfill.
 falsifica "F3 exigencia de evidencia (N1)" "$Q106" "f" "t" \
-  "s|      AND m.updated_at >= now() - interval '7 days'|&\n    UNION ALL SELECT m2.omie_codigo_cliente::text, m2.user_id::text FROM public.omie_customer_account_map m2 WHERE m2.account = p_account AND m2.source = 'document' AND m2.evidence_document_normalized IS NULL AND m2.updated_at >= now() - interval '7 days'|"
+  "/client_prova AS (/,/^  ),\$/ s|      AND m.updated_at >= now() - interval '7 days'|& UNION ALL SELECT m2.omie_codigo_cliente::text, m2.user_id::text FROM public.omie_customer_account_map m2 WHERE m2.account = p_account AND m2.source = 'document' AND m2.evidence_document_normalized IS NULL AND m2.updated_at >= now() - interval '7 days'|"
 
 # F4 -- ISOLAMENTO POR CONTA: o codigo Omie e numerado por conta; sem o filtro, o 201 da colacor vaza.
 falsifica "F4 isolamento por conta (N4)" "$Q201" "f" "t" \
-  's|WHERE m.account = p_account|WHERE (m.account = p_account OR true)|'
+  's|WHERE m.account = p_account|WHERE (m.account = p_account OR true)|1'
 
 # F5 -- SOURCE: v1 so aceita 'document'.
-falsifica "F5 restricao a source=document (N5a)" "$Q108" "f" "t" '/AND m.source  = /d'
+falsifica "F5 restricao a source=document (N5a)" "$Q108" "f" "t" '/client_prova AS (/,/^  ),$/ { /AND m.source  = /d; }'
 
 # F6 -- TTL: espelha a janela da view fresca que este mapa sobrepoe.
-falsifica "F6 TTL de 7 dias (N6)" "$Q110" "f" "t" '/AND m.updated_at >= now/d'
+falsifica "F6 TTL de 7 dias em client_prova (N6)" "$Q110" "f" "t" '/client_prova AS (/,/^  ),$/ { /AND m.updated_at >= now/d; }'
 
 # F7 -- CHECK do formato: dropar a constraint faz o doc FORMATADO ser aceito (e ai o JOIN nunca casaria
 # -- a correcao inteira viraria INERTE em silencio, que e o risco real desta coluna).
@@ -323,6 +361,33 @@ eq "F8 com o grant explicito authenticated PASSA a executar => G3 ficaria VERMEL
 P -q -f "$MIG2" >/dev/null
 eq "F8 restaurado: authenticated NAO executa" \
    "$(Pq -c "SELECT has_function_privilege('authenticated','$FN','EXECUTE');")" "f"
+
+Q112="SELECT public.omie_sync_identity_snapshot('oben')->'revoked_client_codes' @> '[\"112\"]';"
+Q106R="SELECT public.omie_sync_identity_snapshot('oben')->'revoked_client_codes' @> '[\"106\"]';"
+
+# F9 -- a REVOGACAO nao pode filtrar source='document'. Este e o achado do Codex: register_carteira_member
+# converte a linha para 'rpc' PRESERVANDO a evidencia velha e renovando updated_at. Filtrar por source
+# deixaria escapar exatamente a linha que fica fresca para sempre com o dono errado.
+falsifica "F9 revogacao sem filtro de source (V7)" "$Q112" "t" "f" \
+  "/client_revogado AS (/,/^  )\$/ s|      AND m.evidence_document_normalized IS NOT NULL|& AND m.source = 'document'|"
+
+# F10 -- a revogacao NAO pode alcancar evidencia NULA: alcancar jogaria os 10.822 vinculos frescos sem
+# evidencia no fallback ConsultarCliente de uma vez -> rate-limit no Omie. "Sem prova" != "prova morta".
+falsifica "F10 revogacao nao alcanca evidencia NULA (V4)" "$Q106R" "f" "t" \
+  '/client_revogado AS (/,/^  )$/ { /AND m.evidence_document_normalized IS NOT NULL/d; }'
+
+# F11 -- LGPD: o grant de TABELA (o estado de hoje na prod: authenticated=arwdDxtm) devolve a leitura da
+# evidencia ao cliente logado, que pela policy "Users can view their own account map" le a propria linha.
+P -q -c "GRANT SELECT ON public.omie_customer_account_map TO authenticated;"
+eq "F11 com o grant de TABELA authenticated volta a ler a evidencia => L1 ficaria VERMELHO" \
+   "$(Pq -c "SELECT has_column_privilege('authenticated','public.omie_customer_account_map','evidence_document_normalized','SELECT');")" "t"
+P -q -f "$MIG2" >/dev/null
+eq "F11 restaurado: authenticated NAO le a evidencia" \
+   "$(Pq -c "SELECT has_column_privilege('authenticated','public.omie_customer_account_map','evidence_document_normalized','SELECT');")" "f"
+
+# F12 -- TTL da REVOGACAO: revogar fora da janela da view seria ruido (o codigo nem esta no cache).
+falsifica "F12 TTL de 7 dias na revogacao (V8b)" "SELECT public.omie_sync_identity_snapshot('oben')->'revoked_client_codes' @> '[\"113\"]';" "f" "t" \
+  '/client_revogado AS (/,/^  )$/ { /AND m.updated_at >= now/d; }'
 
 # ══ ZONA 6 — ESCALA (gate de crescimento do design 4.1: o risco futuro e 57014, nao o payload) ══
 # Semeia volume ~2x a prod de hoje (16.118 vinculos / 16k profiles) numa conta SEPARADA, para nao
