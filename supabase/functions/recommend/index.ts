@@ -182,23 +182,38 @@ async function recommend(
   // Cluster similarity - load cluster customers + their purchases in parallel
   const customerCluster = clientScore?.health_class || "misto";
 
-  const { clusterUserIds, clusterPurchases, amostraNoTeto } = await carregarCluster(banco, customerCluster);
+  const { clusterUserIds, usuariosAmostrados, clusterPurchases, amostraNoTeto } = await carregarCluster(
+    banco,
+    customerCluster,
+  );
   if (amostraNoTeto) {
     // O sinal do teto tem de CHEGAR em alguém: um campo que ninguém lê é o cap silencioso com
     // outro nome (2ª rodada do Codex — "contrato novo morto"). O log da edge é o consumidor
     // barato; expor no `meta` da resposta mudaria o contrato da API e é decisão de produto.
     console.warn(
       `[Recommend] amostra de similaridade NO TETO (${clusterPurchases.length} compras de ` +
-        `${clusterUserIds.length} clientes do cluster "${customerCluster}") — sim_score pode ser parcial`,
+        `${usuariosAmostrados.length} clientes amostrados, de ${clusterUserIds.length} elegíveis ` +
+        `no cluster "${customerCluster}") — sim_score pode ser parcial`,
     );
   }
-  // ⚠️ DENOMINADOR PRÉ-EXISTENTE, preservado verbatim: `clusterSize` conta os até 100 clientes
-  // do cluster, mas as compras vêm só dos 50 primeiros — então `sim` sai sistematicamente pela
-  // METADE. `minMaxNorm` é invariante a fator uniforme (o `sim_score` normalizado do ranking não
-  // muda), mas os CORTES em `sim` crus abaixo (0.1 do ctx, 0.15 do recType, 0.2 da explicação)
-  // são afetados. É defeito de outro eixo — desenho da amostra, não truncagem de transporte —
-  // e corrigi-lo aqui misturaria duas mudanças de ranking no mesmo diff.
-  const clusterSize = Math.max(clusterUserIds.length, 1);
+  // DENOMINADOR = de quem as compras foram DE FATO buscadas. Antes contava os até 100 clientes
+  // LIDOS enquanto o numerador vinha só dos 50 amostrados, e `sim` saía sistematicamente pela
+  // METADE. `carregarCluster` já devolvia `usuariosAmostrados` no contrato para isto.
+  //
+  // O que a correção move, e o que NÃO move (medido em prod 2026-08-21, psql-ro):
+  //   · NÃO move o componente `score_sim` do score ponderado (peso 0,20): `minMaxNorm` é
+  //     `(v-min)/(max-min)`, afim-invariante, e um fator uniforme cancela;
+  //   · MOVE os três cortes em `sim` CRU abaixo (0,10 do ctx, 0,15 do recType, 0,20 da
+  //     explicação) — são comparações contra constante, onde fator uniforme não cancela;
+  //   · MOVE o caminho `simNorm → sigmoid → probability → eip → minMaxNorm`, de peso 0,35 (o
+  //     MAIOR): o sigmoide não é linear, então dobrar `sim` não é um reescalonamento uniforme
+  //     de `eip` e a normalização não o desfaz;
+  //   · MOVE `probability`, que NÃO é número interno: o vendedor o vê como "Prob. conversão"
+  //     em `src/components/RecommendationCard.tsx`.
+  // Sozinha esta linha não acende o ramo de cluster em `critico` (0,04 → 0,08, ainda < 0,10):
+  // ela depende do filtro de amostra em `carregarCluster`, e é por isso que as duas mudanças
+  // saem na MESMA entrega. Detalhe e o que segue aberto: `_shared/recommend-leituras.ts`.
+  const clusterSize = Math.max(usuariosAmostrados.length, 1);
 
   const clusterProductCounts: Record<string, Set<string>> = {};
   for (const p of clusterPurchases) {

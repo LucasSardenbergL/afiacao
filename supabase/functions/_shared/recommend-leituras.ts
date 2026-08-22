@@ -202,8 +202,30 @@ export const TETO_CLUSTER_USUARIOS_AMOSTRA = 50;
 /** Teto de linhas de compra da amostra. */
 export const TETO_CLUSTER_COMPRAS = 1000;
 
+/**
+ * Os `sales_history_status` que ENTRAM na amostra de similaridade — whitelist POSITIVA.
+ *
+ * Espelha `SalesHistoryStatus` de `src/lib/scoring/salesHistoryStatus.ts` menos
+ * `'sem_historico'` (Deno não importa de `src/`); lá a união é FECHADA em três valores, e o
+ * gate de paridade que pega a divergência está em
+ * `src/__tests__/edge-money-path-invariants.test.ts`.
+ *
+ * Por que whitelist e não `.neq('sem_historico')`, que seria mais curto: a coluna é NULLABLE
+ * (zero nulos hoje, mas o schema permite) e negação no PostgREST é NULL-blind — o `.neq`
+ * excluiria NULL por efeito colateral invisível. E um status NOVO que signifique "sem venda"
+ * entraria SOZINHO na amostra sob `.neq`, reabrindo este defeito em silêncio. Whitelist falha
+ * FECHADA: status desconhecido fica de fora até alguém decidir.
+ *
+ * `sem_historico` é mais estrito que "não tem linha em `order_items`": significa "sem venda
+ * VÁLIDA monetizada", e a RPC que alimenta a coluna já aplica blocklist de status e
+ * `deleted_at IS NULL`. Medido em prod hoje bate EXATAMENTE com os 5.406 `critico` sem nenhuma
+ * compra (0 falso-positivo, 0 falso-negativo), e a divergência futura é na direção desejada:
+ * cliente cujos únicos pedidos foram cancelados sai da amostra.
+ */
+export const CLUSTER_STATUS_COM_HISTORICO = ["ativo", "stale"] as const;
+
 export interface ClusterRecommend {
-  /** Os até `TETO_CLUSTER_CLIENTES` clientes do mesmo `health_class`. */
+  /** Os até `TETO_CLUSTER_CLIENTES` clientes do mesmo `health_class` COM histórico de venda. */
   clusterUserIds: string[];
   /** O recorte de `clusterUserIds` de quem as compras foram efetivamente buscadas. */
   usuariosAmostrados: string[];
@@ -308,13 +330,36 @@ export async function carregarInsumos(
  * na execução seguinte — o `sim_score` do mesmo cliente mudava sem nada ter mudado), o `error`
  * passa a LANÇAR, e a saturação vira campo em vez de silêncio.
  *
- * ⚠️ O QUE ISTO **NÃO** CONSERTA, dito por extenso para não passar por consertado (challenge
- * Codex): `.order("id").limit(100)` não é AMOSTRAGEM — é o PREFIXO por PK. Dos 6.185 clientes
- * `critico` medidos em prod, saem sempre os mesmos 100, e provavelmente os mais antigos. O
- * ganho aqui é reprodutibilidade (o mesmo cliente recebe a mesma recomendação), não
- * representatividade; a regra de amostra continua indefinida e o viés, agora, é ESTÁVEL em vez
- * de aleatório. Trocar por amostra por hash/seed ou estratificada é decisão de produto sobre o
- * ranking — outro eixo que o desta entrega, que é truncagem de transporte.
+ * ⚠️ O QUE ESTA ENTREGA CONSERTA — e o que segue aberto (medido em prod 2026-08-21, psql-ro).
+ *
+ * `.order("id").limit(100)` NÃO é prefixo temporal: `farmer_client_scores.id` é UUID
+ * `gen_random_uuid()`, então os 100 menores são amostra pseudoaleatória DETERMINÍSTICA, e a
+ * reprodutibilidade é o ganho real do #1836. (A versão anterior deste comentário dizia
+ * "provavelmente os mais antigos" — estava factualmente errado.)
+ *
+ * O defeito dominante era OUTRO: o cluster `critico` tem 6.185 linhas, das quais 5.406 (87%)
+ * são `sales_history_status = 'sem_historico'` — cliente sem venda válida monetizada. A
+ * amostra pegava ~42 dessas linhas vazias, que entravam no DENOMINADOR de `sim` e nunca no
+ * numerador. Medido: dos 50 amostrados, 8 tinham qualquer compra; 321 linhas de compra; máximo
+ * de 4 clientes por produto ⇒ `sim` máximo 0,04. Com o filtro: 749 linhas, 299 produtos,
+ * máximo 9 ⇒ `sim` máximo 0,18. O conserto do denominador vive no consumidor
+ * (`recommend/index.ts`) e só vale junto com este filtro: sozinhos, nenhum dos dois faz `sim`
+ * cruzar 0,10 em `critico` (0,08 e 0,09 respectivamente).
+ *
+ * ⚠️ SEGUE ABERTO, nomeado para não passar por consertado (challenge Codex gpt-5.6-sol/xhigh):
+ *   · AUTO-INCLUSÃO: o cliente que recebe a recomendação pode estar entre os 50 e contar no
+ *     próprio denominador — falta leave-one-out com reposição da vaga;
+ *   · o TETO PLANO de 1.000 compras MORDE hoje em `atencao` e `estavel` (1.000 exatas, medido).
+ *     Como `order_items.id` também é UUID, o corte é amostra de LINHAS e não janela temporal:
+ *     comprador pesado ocupa mais linhas e pode deixar outro cliente do cluster sem nenhuma
+ *     linha observada — que o denominador então trata como "não comprou". O certo é agregar no
+ *     banco (últimos K PEDIDOS por cliente, dedup `(cliente, produto)`) via RPC;
+ *   · o cluster é global por `health_class` e ignora `farmer_id`, embora a coluna exista;
+ *   · `TETO_CLUSTER_CLIENTES` (100) segue maior que a amostra de fato (50): lemos 100 e medimos
+ *     sobre 50;
+ *   · os cortes 0,10/0,15/0,20 de `recommend/index.ts` NÃO foram recalibrados. Com n=50 e
+ *     comparação estrita eles exigem 6, 8 e 11 clientes distintos; o máximo medido depois do
+ *     conserto é 9, então a explicação percentual (>0,20) segue inalcançável em `critico`.
  */
 export async function carregarCluster(
   db: BancoPostgrest,
@@ -324,6 +369,7 @@ export async function carregarCluster(
     await db.from<{ customer_user_id: string }>("farmer_client_scores")
       .select("customer_user_id")
       .eq("health_class", healthClass)
+      .in("sales_history_status", CLUSTER_STATUS_COM_HISTORICO)
       .order("id", { ascending: true })
       .limit(TETO_CLUSTER_CLIENTES),
     "farmer_client_scores (cluster)",
