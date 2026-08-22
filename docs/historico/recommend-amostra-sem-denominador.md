@@ -40,8 +40,10 @@ o vendedor VÊ como "Prob. conversão". "Não muda nada" era verdade só em `cri
 
 ## O sinal: evidência com denominador
 
-`recommendation_log` = 666 impressões `cross_sell` (última no próprio dia) + 27 `repurchase` +
-**zero `cluster_based`, sempre**. A edge roda; o ramo nunca disparou.
+`recommendation_log`, medido em 2026-08-21 **antes do deploy** = 666 impressões `cross_sell`
+(última no próprio dia) + 27 `repurchase` + **zero `cluster_based`, em 693 impressões desde
+fevereiro**. A edge rodava; o ramo nunca havia disparado. (Deixou de ser verdade em 2026-08-22,
+por causa desta entrega — ver a seção de verificação no fim.)
 
 E a prova é **construtiva**, não estatística: com denominador 100 o `sim` máximo era 0,04 /
 0,12 / 0,10 nos três clusters, e o corte de `cluster_based` é 0,15 — inalcançável nos três.
@@ -82,6 +84,48 @@ que signifique "sem venda" entraria sozinho na amostra e reabriria o defeito em 
   e 11 clientes distintos; o máximo medido depois do conserto é 9. A explicação percentual segue
   inalcançável em `critico` — e o Codex tem razão em não baixá-la agora: em 9/50 o intervalo de
   95% vai de ~10% a ~31%, e mostrar "18%" como fato ao vendedor é afirmar mais do que se mediu.
+
+## Verificado em produção (2026-08-22, pós-deploy manual da edge)
+
+O deploy da edge é manual pelo chat do Lovable, então merge na main não bastava. Verificado
+abrindo a aba **Oportunidades** de um cliente `atencao` no app logado: o painel renderizou e a
+edge gravou 5 impressões novas às 02:52 UTC — as primeiras desde 21/08 20:04.
+
+| tipo | `score_sim` | clientes se den=50 | se den=100 |
+|---|---|---|---|
+| **`cluster_based`** | **0,1800** | **9** | 18 |
+| `repurchase` | 0,0600 | 3 | 6 |
+| `cross_sell` ×3 | 0,0000 | 0 | 0 |
+
+Dois fatos independentes, cada um conclusivo sozinho:
+
+1. **`score_sim = 0,18` era impossível no código velho.** Com denominador 100 o teto absoluto
+   medido nos três clusters era 0,12 (`atencao`, 12/100); 0,18 exigiria 18 clientes distintos
+   no mesmo produto, e o máximo medido em `atencao` é 12. Com denominador 50, 0,18 são 9
+   clientes — que cabe. A coluna "se den=100" existe para mostrar a leitura absurda que o
+   código antigo precisaria.
+2. **`cluster_based` apareceu pela primeira vez em 698 impressões.** Exige `sim > 0,15`,
+   inalcançável sob o teto de 0,12.
+
+Método que vale reusar: **a assinatura de versão não foi o tipo novo, foi o VALOR impossível.**
+`cluster_based` podia não aparecer mesmo com o código certo, porque `hasPurchased` e `assoc > 0`
+precedem o teste de cluster no `if`. Já `score_sim > 0,12` não depende de precedência nenhuma —
+é aritmética do denominador. Escolher a assinatura que o caminho de código NÃO consegue suprimir
+é o que separa prova de indício. (É a técnica do `docs/agent/deploy.md` §"a edge que ESCREVE numa
+tabela carrega a prova do próprio deploy", com a diferença de que aqui a testemunha é um valor
+CONTÍNUO, não um enum — e por isso sobrevive à preempção.)
+
+### O que a primeira observação real já mostrou
+
+A linha `cluster_based` saiu com `explanation_key = **margin**`, não `cluster`. Não é defeito
+novo: é a **inconsistência entre gates** que o challenge Codex havia derivado no papel, agora
+visível em produção. O tipo usa `sim > 0,15` e a explicação usa `sim > 0,20`, então a faixa
+[0,15 · 0,20] produz uma recomendação ROTULADA como "cluster" que **explica outra coisa** ao
+vendedor. Com o máximo medido em 0,18 (`critico`) e 0,24 (`atencao`), essa faixa não é canto
+raro — é onde a maior parte do sinal vive hoje. Fica para a entrega de recalibragem, com o
+gatilho já satisfeito (existe sinal com denominador); o que NÃO se deve fazer é baixar 0,20
+para 0,15 sem antes decidir o que a explicação percentual afirma, porque em 9/50 o intervalo
+de 95% vai de ~10% a ~31%.
 
 ## Prova reproduzível
 
