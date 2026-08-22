@@ -197,10 +197,30 @@ comprava o que hoje está descontinuado — 146/780 = **18,7%** em `critico`, 14
 LEVES: 427 linhas no total, média 2,9, **mediana 2**, e 38% têm uma linha só. Um cliente de 2 linhas
 contribuiria no máximo 2 produtos entre 957 — para quase todo produto ele é um "não comprou"
 legítimo, ativo ou não. Então isto é **[P2]: escolha de denominador com viés medido**, não a
-fabricação grosseira que a primeira leitura sugeria. Registrado sem correção porque mudar o
-denominador altera ranking em produção e é decisão de produto, não de implementação — mas agora com
-número, não com opinião. O que fica como regra durável, independente da magnitude: **filtro de
-PRODUTO não pertence ao denominador de uma proporção sobre CLIENTES.**
+fabricação grosseira que a primeira leitura sugeria. O que fica como regra durável, independente
+da magnitude: **filtro de PRODUTO não pertence ao denominador de uma proporção sobre CLIENTES.**
+
+### Resolvido: o founder decidiu trocar (2026-08-22)
+
+O achado foi apresentado com os dois números — o viés (18,7%) e a contra-medição que o rebaixa
+(mediana 2 linhas) — e a decisão foi **trocar o denominador para `observados`**.
+
+⚠️ **A correção NÃO precisou de migration**, e isso vale registrar como método: `observados` já
+existia no contrato da RPC, calculado e devolvido, apenas rotulado como "DIAGNÓSTICO, não
+denominador". A entrega inteira é `Math.max(denominador, 1)` → `Math.max(observados ?? 0, 1)` no
+consumidor, mais a justificativa e o gate que a pina. Antes de escrever SQL novo, **verifique se o
+dado que você quer já está atravessando o contrato** — aqui estava, e a diferença é entre um deploy
+de edge e um par migration-manual + edge.
+
+Como consequência, as duas ordens de deploy são seguras (não há janela ruim): migration nova não
+existe, e a RPC em produção já devolve os dois campos — a edge velha usa população (comportamento de
+ontem), a nova usa observados. Nenhuma combinação quebra.
+
+Efeito: `critico` deixa de estar MUDO — sai de simmax 0,096 com **nenhum** produto cruzando 0,10
+para 0,118 com **dois**; `atencao` vai de 12 para 15 produtos em 0,10; `estavel` não muda
+(observados = população = 100). O `?? 0` não fabrica: `observados` só é `null` sob truncagem, e aí
+`simIndisponivel` já desligou o componente. Medição reproduzível em
+`db/recommend-denominador-observados.sql` (roda contra prod, `EXIT=0`).
 
 ## Segue aberto (nomeado para não passar por consertado)
 

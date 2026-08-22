@@ -31,7 +31,7 @@ export const respostaSonda = criarRespostaSonda("recommend");
  * e sem ela "a edge nova está no ar?" e "a função existe no banco?" seriam duas perguntas sem
  * resposta em vez de uma consulta e uma sonda.
  */
-export const VERSAO = "v1.4-sonda-antes-do-gate";
+export const VERSAO = "v1.5-denominador-observados";
 
 /** Efeito citado no 400 de `probe` ambíguo. */
 export const EFEITO =

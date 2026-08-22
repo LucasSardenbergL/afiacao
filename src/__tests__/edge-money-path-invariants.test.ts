@@ -2867,10 +2867,16 @@ describe('guardrail money-path: denominador e amostra do sim_score (recommend)',
     expect(fonteStatus).toContain('SalesHistoryStatus');
   });
 
-  it('DENOMINADOR: `clusterSize` é a POPULAÇÃO do cluster vinda da RPC, não uma amostra', () => {
+  it('DENOMINADOR: `clusterSize` sai de `observados` — população conta quem NÃO é mensurável', () => {
+    // Medido em prod 2026-08-22: dos 780 elegíveis de `critico`, 146 têm compra e pedido válido
+    // e são eliminados SÓ por `omie_products.ativo`. Contá-los como "não comprou" é o
+    // `Number(null)===0` mudado do numerador para o denominador. Detalhe e contra-medição (eles
+    // são leves: mediana 2 linhas) em `docs/historico/recommend-teto-linhas-cluster.md`.
     const limpo = removerComentarios(consumidor);
-    expect(limpo, 'clusterSize deixou de sair do denominador da RPC — `sim` volta a sair de amostra')
-      .toMatch(/clusterSize\s*=\s*Math\.max\(\s*denominador\s*,\s*1\s*\)/);
+    expect(limpo, 'clusterSize deixou de sair de `observados` — volta a contar quem não é mensurável')
+      .toMatch(/clusterSize\s*=\s*Math\.max\(\s*observados\s*\?\?\s*0\s*,\s*1\s*\)/);
+    expect(limpo, 'REGRESSÃO: clusterSize voltou à população elegível (o zero fabricado no denominador)')
+      .not.toMatch(/clusterSize\s*=\s*Math\.max\(\s*denominador\s*,/);
     expect(limpo, 'REGRESSÃO: clusterSize voltou a contar uma amostra local')
       .not.toMatch(/clusterSize\s*=\s*Math\.max\(\s*(clusterUserIds|usuariosAmostrados)\.length/);
   });
