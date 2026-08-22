@@ -449,6 +449,47 @@ Eu havia chamado a tupla fabricada (`max(confidence)` × `max(lift)` de regras d
 
 **A lição de método:** severidade herdada de um parecer — inclusive de uma revisão adversária boa — continua sendo hipótese até ter denominador. As três medições custaram três queries e trocaram a fatia inteira.
 
+### Revisão independente RETROATIVA (2026-08-22): o card separado, montado atrás de um `&&`
+
+O `/codex` não rodou antes do merge (a sessão fechou) — rodou depois, com o #1859 já em produção. O
+achado principal **não estava no componente**:
+
+```tsx
+// src/pages/FarmerCalls.tsx:33 — `error` nem é desestruturado
+const { data: positivacao } = useMyPositivacao();   // useMyPositivacao.ts:43 → if (error) throw
+// :436 — único ponto de montagem do card no app inteiro
+{positivacao && ( … <MixGapCard /> )}
+```
+
+As duas RPCs saem pelo mesmo PostgREST, então a falha correlacionada é o caso COMUM. Quando ela
+acontece, `positivacao` fica `undefined` e **o card nem monta**: os três estados novos, a tela de erro
+nova e o evento em todos os ramos ficam inacessíveis exatamente na situação que motivou a correção.
+
+**A regra que isto acrescenta: um teste de componente ISOLADO não prova o estado que o HOST decide.**
+Os 6 testes montam `<MixGapCard />` direto e são verdes num contexto que não existe em produção — é o
+"gate que mente por não conhecer a forma real do repo", na forma de harness. Ao separar estados num
+card, o teste tem de montar o host, ou no mínimo asseverar que o host não o esconde atrás do `&&` de
+uma query irmã. O tell para procurar: `{<algo> && (<Card/>)}` onde `<algo>` vem de um hook que lança.
+
+Os outros achados que sobreviveram à verificação:
+
+- **Quarto estado — offline.** Com `networkMode:'online'` (default, sem override) a query fica
+  `fetchStatus:'paused'`/`status:'pending'`: `isLoading` (v5 = `isPending && isFetching`) é **false**,
+  `data` `undefined`, `error` `null` ⇒ cai em `semAcesso`, some da tela e **não emite**. Num PWA de
+  campo esse não é o caso raro. As duas análises (Codex e a minha, escrita antes de abrir o parecer)
+  chegaram nele por caminhos separados.
+- **A dedup por estado não reseta na troca de sujeito.** `trackedEstado` sobrevive à mudança de
+  `effectiveUserId` ("Ver como"): alvo diferente com o mesmo estado não emite — e a 1ª emissão não
+  marca que era impersonação, então o denominador de adoção conta staff como vendedor.
+- **Severidade herdada, de novo.** O parecer marcou `coverage ?? []` (4/4 consumidores de
+  `useMyActiveCoverage`, nenhum lendo `error`) como CRÍTICO. Medido em prod: `carteira_coverage` tem
+  **0 linhas** ⇒ dano hoje **zero**. Vira MÉDIO **com gatilho**: corrigir antes do primeiro cadastro,
+  porque depois some em silêncio. Mesma lição do parágrafo acima, agora aplicada ao parecer que revisa
+  o PR que a escreveu.
+
+Denominador do card: `commercial_roles` = **3 vendedores**. Com n=3 o argumento do sensor fica mais
+forte, não mais fraco — um evento perdido é um terço da série.
+
 ## O alarme que se apaga por ser olhado (gatilho da fase 2 do Farmer, 2026-08-21)
 
 `db/gatilho-farmer-fase2.sql` existe para impedir que a fase 2 seja aberta sem denominador. Ele
