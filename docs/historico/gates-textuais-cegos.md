@@ -199,10 +199,39 @@ fora dessas 8 é reincidência da classe.
 O eixo `--` (SQL) tem assinatura própria — casa quem limpa comentário de SQL sem gramática:
 
 ```bash
-rg -n "replace\(/--\[\^" src/ supabase/ scripts/ db/
+rg -n "replace\(/--" src/ supabase/ scripts/ db/
 ```
 
 Quem lê SQL deve importar `removerComentariosSql` de `scripts/lib/sql-comentarios.ts`.
+
+### O `[^` da assinatura era um furo (2026-08-22)
+
+A assinatura acima era `replace\(/--\[\^` até esta data, e o `[^` **estreitava demais**: casava a
+forma `--[^\n]*` e era cega à equivalente `--.*$` (com `/m`). Resultado — `extractObjects` de
+`scripts/lib/migration-objects.ts`, o **2º consumidor** do eixo (alimenta `bun run audit:migrations`
+e o `wt-preflight-migration`), atravessou a varredura de 2026-08-20 intacto, com
+`sql.replace(/--.*$/gm, '')`. Foi achado por LEITURA, não pela varredura: assinatura estreita demais
+devolve **ausência de dado**, não ausência de sítio — e devolve verde. A forma acima casa as duas.
+
+Neste sítio a classe mordia nos **dois** sentidos, não só no de sempre:
+
+| sentido | mecanismo | efeito no audit |
+| --- | --- | --- |
+| objeto **some** | `--` dentro de literal/identificador citado come até o fim da linha | a DDL seguinte não vira objeto → **ausência** (o pior modo de falha de um audit) |
+| objeto **é inventado** | comentário de BLOCO não era removido | DDL comentada para rollback entra como objeto esperado → **vermelho eterno** (o banco nunca vai tê-la) |
+
+Trocado com a mesma prova de neutralidade que barateou a adoção anterior: **1671 objetos em 483
+migrations custom antes e depois — zero somem, zero surgem** — e `bun run audit:migrations`
+regenerado dá **diff vazio** nos dois artefatos (2ª medição, pelo pipeline real). Exposição ativa
+hoje: **zero** `CREATE POLICY` dentro de bloco no corpus ⇒ é endurecimento, não correção de falha
+em produção. Casos em `scripts/lib/migration-objects.test.ts`, falsificados nos dois eixos (voltar
+ao stripper local ⇒ 3 vermelhos; stripper no-op ⇒ o guarda de comentário de linha também cai).
+
+Re-medido no HEAD pós-troca, a assinatura ampliada devolve **4**, e a classificação é a de sempre:
+3 legítimas (`scripts/lib/sql-comentarios.ts:5` e `scripts/lib/migration-objects.ts:88` citam a
+forma ANTIGA no cabeçalho para explicá-la; `scripts/sql-comentarios.test.ts:9` é o controle
+deliberado) + **1 uso ATIVO**, o `import-tint-formulas-aposentada-gate.test.ts` já aberto acima.
+
 
 ## Variante 3 — o comentário prometia o stripper; o código não tinha nenhum (2026-08-22)
 
