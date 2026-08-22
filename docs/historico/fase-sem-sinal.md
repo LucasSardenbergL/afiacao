@@ -498,6 +498,52 @@ Os outros achados que sobreviveram à verificação:
 Denominador do card: `commercial_roles` = **3 vendedores**. Com n=3 o argumento do sensor fica mais
 forte, não mais fraco — um evento perdido é um terço da série.
 
+## A CLASSE, varrida e gateada (2026-08-22) — de instância a assinatura
+
+A revisão retroativa acima descreveu o defeito do MixGap como padrão. Esta entrada é a
+erradicação: assinatura calibrada, varredura completa, corte por dano medido e gate.
+
+**A assinatura teve de virar AST.** A primeira tentativa foi textual e mentiu nos dois
+sentidos. Falso NEGATIVO: perguntar "o arquivo trata erro?" com grep de `error` casa
+`text-status-error` do Tailwind — e esconde justamente os piores casos. Falso negativo nº2:
+o silêncio quase nunca pendura no alias cru, e sim numa **derivada** (`const check =
+data?.find(...)` → `if (!check) return null`), que foi como o `DataHealthBanner` escapou da
+1ª varredura. A assinatura final é estrutural — *a desestruturação liga `error`?* — com
+propagação de taint por ponto fixo, e está calibrada contra o par pré/pós-fix do #1859: casa
+o pré, não casa o pós (`src/lib/gates/erro-colapsado-em-vazio.ts`).
+
+**Duas formas, dano bem diferente** (1.456 fontes varridas):
+
+| forma | sítios | o que o usuário vê na falha |
+|---|---|---|
+| **auto-ocultação** — `return null` guardado pela leitura | **46** (36 arquivos) | o componente inteiro some sem rastro |
+| `{data && <X/>}` | 94 | some um trecho; a página continua na tela |
+| default no binding (`data: x = []`) | 86 | o vazio afirma "não há" |
+
+Só a primeira entrou no gate. As outras duas estão medidas e nomeadas: gatear `jsx-&&`
+faria a baseline crescer por motivo benigno em idioma legítimo, e baseline que cresce por
+motivo benigno ensina a atualizá-la no automático — que é como um gate morre.
+
+**O corte saiu por dano MEDIDO em prod, não por severidade herdada** (a mesma lição que a
+seção anterior aprendeu, agora aplicada ao próprio parecer que a escreveu):
+
+| alvo | denominador (psql-ro, 2026-08-22) | veredito |
+|---|---|---|
+| `AlertasStack` (fluxo de caixa) | **14 alertas vivos, 2 CRÍTICOS**, nas 3 empresas | corrigido agora |
+| `DataHealthBanner` (financeiro + cockpit de reposição) | os 3 `source` montados existem em `_data_health_compute` ⇒ `!check` hoje **é** falha de leitura | corrigido agora |
+| `CarteiraSaudePanel` (gêmeo exato do #1859) | 3 vendedores em `commercial_roles`; evento `carteira.saude_vista` só saía COM data | corrigido agora |
+| `CoveragePanel` + 4 consumidores de `useMyActiveCoverage` | `carteira_coverage` = **0 linhas** | dano hoje ZERO → chip com gatilho |
+
+O `DataHealthBanner` merece nota à parte: o padrão correto estava **20 linhas ao lado o
+tempo todo**. `DataHealthBadge` faz `isError ? 'red' : badgeLevel(data ?? [])` — fail-closed.
+O banner, MESMO hook, fazia `const { data } = useDataHealth()` e desaparecia da tela
+financeira. A classe não é falta de conhecimento no repo; é falta de *fiscal*.
+
+**O quarto estado virou teste.** O offline (`pending` + `paused`: `isLoading` FALSE, `data`
+undefined, `error` null) tinha sido MEDIDO no #1874 e registrado só como nota. Agora é
+guarda permanente, nos três componentes e na tabela exaustiva de `estadoDeLeitura` — as 9
+combinações de `status × fetchStatus` têm nome, porque estado sem nome colapsa no vizinho.
+
 ## O alarme que se apaga por ser olhado (gatilho da fase 2 do Farmer, 2026-08-21)
 
 `db/gatilho-farmer-fase2.sql` existe para impedir que a fase 2 seja aberta sem denominador. Ele

@@ -5,6 +5,8 @@ import { useCarteiraSaude } from '@/hooks/useCarteiraSaude';
 import { statusCron, statusSync, statusCoverage, nivelAgregado } from '@/lib/carteira-saude/status';
 import { track } from '@/lib/analytics';
 import type { SaudeNivel } from '@/lib/carteira-saude/types';
+import { estadoDeLeitura, naoConsegui, type EstadoLeitura } from '@/lib/leitura/estado-de-leitura';
+import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
 
 const DOT: Record<SaudeNivel, string> = {
   green: 'bg-status-success-bold',
@@ -33,28 +35,66 @@ function Row({ nivel, label, detail, acao }: { nivel: SaudeNivel; label: string;
   );
 }
 
+/**
+ * ⚠️ FAIL-CLOSED de propósito — este painel é o gêmeo exato do MixGap do #1859, e o
+ * agravante é que ele É o painel de saúde:
+ *
+ *     const { data, isLoading } = useCarteiraSaude();
+ *     if (!data || tracked.current) return;          // o evento só saía COM data
+ *     if (!data) return null;                        // erro e vazio no mesmo silêncio
+ *
+ * `useCarteiraSaude` lança quando a RPC falha ⇒ `data` fica `undefined` no erro, na
+ * mesma condição de "nunca carregou". Um painel que existe para dizer "cron parado,
+ * sync velho, cobertura furada" DESAPARECENDO quando não consegue ler é a forma mais
+ * cara da classe: a ausência afirma verde (docs/historico/fase-sem-sinal.md).
+ *
+ * O evento de adoção segue as duas regras do #1859:
+ *   · sai em TODO estado resolvido (erro inclusive), senão o denominador de
+ *     `carteira.saude_vista` soma falha de leitura a "ninguém abriu";
+ *   · leva `nivel: null` no erro, NUNCA um nível fabricado — mandar 'green' seria
+ *     inventar exatamente o número que o sensor existe para medir (§2 do money-path:
+ *     ausente ≠ zero). Denominador medido em prod: 3 vendedores em `commercial_roles`,
+ *     então um evento errado é um terço da série.
+ *   · a dedup é pelo ESTADO EMITIDO, não por booleano: `erro → pronta` na mesma
+ *     montagem é justamente a transição que separa falha transitória de carteira vazia,
+ *     e um `useRef<boolean>` a engoliria.
+ */
 export function CarteiraSaudePanel() {
-  const { data, isLoading } = useCarteiraSaude();
+  const q = useCarteiraSaude();
+  const { data } = q;
+  const estado = estadoDeLeitura(q);
 
-  const tracked = useRef(false);
+  const trackedEstado = useRef<EstadoLeitura | null>(null);
   useEffect(() => {
-    if (!data || tracked.current) return;
-    tracked.current = true;
-    const niveis = [
-      ...data.crons.map((c) => statusCron(c, c.jobname === MENSAL ? MENSAL_MAX_AGE : NIGHTLY_MAX_AGE).nivel),
-      statusSync(data.sync).nivel,
-      statusCoverage(data.score_coverage).nivel,
-    ];
-    track('carteira.saude_vista', { nivel: nivelAgregado(niveis) });
-  }, [data]);
+    if (estado === 'carregando' || estado === 'desabilitada') return;
+    if (trackedEstado.current === estado) return;
+    trackedEstado.current = estado;
+    const nivel = data
+      ? nivelAgregado([
+          ...data.crons.map((c) => statusCron(c, c.jobname === MENSAL ? MENSAL_MAX_AGE : NIGHTLY_MAX_AGE).nivel),
+          statusSync(data.sync).nivel,
+          statusCoverage(data.score_coverage).nivel,
+        ])
+      : null;
+    track('carteira.saude_vista', { estado, nivel });
+  }, [estado, data]);
 
-  if (isLoading) {
+  if (naoConsegui(estado)) {
+    return (
+      <Card className="p-4">
+        <AvisoLeituraFalhou oque="a saúde da carteira" estado={estado} className="mb-0" />
+      </Card>
+    );
+  }
+  if (estado === 'carregando') {
     return (
       <Card className="p-6 flex justify-center">
         <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
       </Card>
     );
   }
+  // `desabilitada` (query sem `enabled`) e o `data` nulo da RPC = ausência de ACESSO,
+  // não um estado do painel: não renderiza e — acima — não emite.
   if (!data) return null;
 
   const cronRows = data.crons.map((c) => {
