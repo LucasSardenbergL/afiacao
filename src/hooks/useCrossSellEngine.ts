@@ -497,28 +497,60 @@ export const useCrossSellEngine = () => {
       // expiraria a carteira inteira do farmer e apagaria cross-sells legítimos de todos os
       // clientes dele. Expirar por farmer só é seguro se o snapshot for COMPLETO — então a
       // completude precisa ser verificada, não presumida (achado do challenge Codex xhigh).
-      const { data: assocRules, error: erroAssoc } = (await supabase
-        .from('farmer_association_rules')
-        .select('antecedent_product_ids, consequent_product_ids, confidence, lift, support')
-        .gte('confidence', 0.05)
-        .gte('lift', 1.0)) as unknown as { data: AssocRuleRow[] | null; error: unknown };
-      if (erroAssoc) {
+      // PAGINADA, com `.order('id')` (PK ⇒ ordem TOTAL) ANTES do `.range`: era a ÚLTIMA leitura
+      // crua do motor — todas as vizinhas já passaram por `fetchAllPages`. A coluna de ordem não
+      // precisa estar no `select`.
+      //
+      // Hoje isto é defesa em profundidade, NÃO conserto de corte ativo: a RPC que publica as
+      // regras recusa lote acima de 1.000 (`TR003`) — conferido VIVO em prod por
+      // `pg_get_functiondef`, não no repo — e o escritor é único, então a tabela cabe numa
+      // página. Mas esse invariante mora numa FUNÇÃO DE BANCO aplicada à mão no SQL Editor, sem
+      // ligação nenhuma com este arquivo, e nenhum teste daqui consegue provar que a prod ainda
+      // o tem: DDL manual diverge do repo por desenho. Depender dele deste lado é depender de
+      // algo que ninguém enxerga ao editar esta linha.
+      //
+      // ⚠️ Se a tabela um dia passar de 1.000 DE VERDADE (subir `TR003` é migration de uma
+      // linha), mais páginas NÃO são a resposta: o publicador faz DELETE+INSERT na mesma
+      // transação e há DOIS gatilhos (cron 07:30 UTC e o botão staff “Regras de Associação”,
+      // em horário comercial) — uma substituição no meio da paginação mistura duas gerações de
+      // modelo e serve associação que NENHUMA das duas produziu. Aí a correção é ler o lote
+      // inteiro num ÚNICO tuple (`jsonb_agg` numa RPC), atômico por construção.
+      const assocRules = await fetchAllPages<AssocRuleRow>(
+        (de, ate) =>
+          supabase
+            .from('farmer_association_rules')
+            .select('antecedent_product_ids, consequent_product_ids, confidence, lift, support')
+            .gte('confidence', 0.05)
+            .gte('lift', 1.0)
+            .order('id', { ascending: true })
+            .range(de, ate) as unknown as PromiseLike<{ data: AssocRuleRow[] | null; error: unknown }>,
+        'farmer_association_rules/cross-sell',
+      ).catch((erro: unknown) => {
+        // Bug de CÓDIGO sobe CRU (#1782): rotular um `TypeError` de encadeamento quebrado como
+        // “não consegui ler as regras” é o mascaramento que `ehFalhaDePagina` existe para
+        // impedir — o defeito chegaria à vendedora com cara de falha de transporte.
+        if (!ehFalhaDePagina(erro)) throw erro;
         // NÃO move o head: este caminho lança SEM limpar a tela, então a execução não
         // concluiu e o que o operador vê segue sendo o resultado anterior. O head registra
         // execução CONCLUÍDA — mover aqui afirmaria um desfecho que não houve.
-        throw new Error(
-          mensagemDeErro(erroAssoc) ??
+        //
+        // A mensagem sai da CAUSA, não do erro assinado: a dele é jargão de helper
+        // (`fetchAllPages: página 0 (0-999) falhou`), que diz à vendedora MENOS do que o
+        // servidor já tinha dito.
+        throw erroComCausa(
+          mensagemDeErro(erro.cause) ??
             'Não consegui ler as regras de associação — o cálculo seria parcial e substituiria as recomendações atuais, então nada foi alterado.',
+          erro,
         );
-      }
+      });
       // `regras` NÃO é obrigatório-não-vazio: base sem padrão de coocorrência é estado
       // legítimo e o motor ainda recomenda por popularidade. Mas `ok: false` acima degrada,
       // porque aí o universo foi lido pela metade.
-      insumos.regras = { ok: true, n: (assocRules || []).length };
+      insumos.regras = { ok: true, n: assocRules.length };
 
       // Build map: antecedent product -> consequent products with scores
       const assocMap = new Map<string, { productId: string; confidence: number; lift: number; support: number }[]>();
-      for (const rule of assocRules || []) {
+      for (const rule of assocRules) {
         for (const ant of rule.antecedent_product_ids || []) {
           if (!assocMap.has(ant)) assocMap.set(ant, []);
           for (const cons of rule.consequent_product_ids || []) {
