@@ -1016,7 +1016,10 @@ serve(async (req) => {
   const pins: Array<{ arquivo: string; presente: RegExp; motivo: string }> = [
     {
       arquivo: 'supabase/functions/_shared/paginate.ts',
-      presente: /if \(!Array\.isArray\(data\)\) throw new FalhaLeituraCritica\(label, \{ code: ['"]MALFORMADA['"] \}\)/,
+      // Mesmo cuidado, e a âncora é ASCII (lição #1483): `buscarTodasPaginas` só aparece no
+      // comentário deste ramo. A janela é 900 e a distância real hoje é 709 — medida, não
+      // chutada; uma janela curta demais dá falso VERMELHO, que é como este pin nasceu.
+      presente: /src\/lib\/postgrest\.ts e buscarTodasPaginas[\s\S]{0,900}?if \(!Array\.isArray\(data\)\) throw new FalhaLeituraCritica\(label, \{ code: ['"]MALFORMADA['"] \}\)/,
       motivo: 'fetchAll voltaria a converter data:null em pagina vazia (EOF falso)',
     },
     // O ramo do `error` é o OUTRO desfecho da mesma pagina, e o pin acima nao o cobre: dava
@@ -1028,7 +1031,12 @@ serve(async (req) => {
     // `import` orfao passaria verde enquanto o throw continuasse vazando.
     {
       arquivo: 'supabase/functions/_shared/paginate.ts',
-      presente: /if \(error\) throw new FalhaLeituraCritica\(label, error\)/,
+      // Âncora com o comentário SEGUINTE, que só existe neste ramo. A versão sem contexto
+      // (`/if \(error\) throw new FalhaLeituraCritica\(label, error\)/` sozinha) ficava VERDE
+      // ao sabotar o `fetchAll`, porque casava na ocorrência do `fetchAllKeyset` logo abaixo —
+      // dois helpers no mesmo arquivo, um pin cobrindo os dois e portanto nenhum. É a lição
+      // #1483 (âncora ASCII, caixa fixa) com a metade que faltava: EXCLUSIVA do ramo.
+      presente: /if \(error\) throw new FalhaLeituraCritica\(label, error\);\n    \/\/ `data == null` sem `error` é resposta MALFORMADA/,
       motivo: 'fetchAll voltaria a vazar o MESSAGE do Postgres (PII) no corpo da resposta HTTP',
     },
     // `fetchAllKeyset` nasceu (#1856) repetindo o `new Error(label + error.message)` que o irmão
