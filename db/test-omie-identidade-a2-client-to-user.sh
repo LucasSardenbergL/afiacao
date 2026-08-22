@@ -447,15 +447,37 @@ INSERT INTO public.omie_customer_account_map (user_id, account, omie_codigo_clie
 ANALYZE public.profiles; ANALYZE public.omie_customer_account_map;
 SQL
 LINHAS=$(Pq -c "SELECT count(*) FROM public.omie_customer_account_map;")
+# statement_timeout REAL: sem ele, uma query catastrofica que nunca retorna jamais alcancaria o assert
+# de duracao -- o teste ficaria pendurado em vez de vermelho (achado da 2a rodada do Codex). Com o
+# timeout, o modo de falha vira 57014, que e o erro que a producao veria.
 T0=$(Pq -c "SELECT (extract(epoch FROM clock_timestamp())*1000)::bigint;")
-NKEYS=$(RS "SELECT count(*) FROM jsonb_object_keys(public.omie_sync_identity_snapshot('escala')->'client_to_user');")
+NKEYS=$(Pq -c "SET ROLE service_role; SET statement_timeout = '10s'; SELECT count(*) FROM jsonb_object_keys(public.omie_sync_identity_snapshot('escala')->'client_to_user');" 2>&1 | tail -1)
 T1=$(Pq -c "SELECT (extract(epoch FROM clock_timestamp())*1000)::bigint;")
 MS=$((T1-T0))
-BYTES=$(RS "SELECT pg_column_size(public.omie_sync_identity_snapshot('escala'));")
-echo "  escala: ${LINHAS} vinculos, ${NKEYS} provados, ${MS} ms, ${BYTES} bytes de payload"
+# Mede os BYTES QUE TRAFEGAM (texto JSON pelo PostgREST), nao a representacao binaria interna do jsonb:
+# o edge recebe texto, e e o texto que precisa caber na resposta HTTP.
+BYTES=$(RS "SELECT octet_length(public.omie_sync_identity_snapshot('escala')::text);")
+BYTES_JSONB=$(RS "SELECT pg_column_size(public.omie_sync_identity_snapshot('escala'));")
+echo "  escala: ${LINHAS} vinculos, ${NKEYS} provados, ${MS} ms, ${BYTES} bytes no wire (jsonb interno: ${BYTES_JSONB})"
 if [ "$NKEYS" -ge 15000 ]; then ok "E1 a prova positiva escala (>=15000 vinculos provados em ${LINHAS} linhas)"; else bad "E1 so ${NKEYS} vinculos provados -- o JOIN nao esta casando em volume"; fi
-if [ "$MS" -lt 10000 ]; then ok "E2 duracao ${MS}ms < 10s (teto de catastrofe; risco futuro e 57014)"; else bad "E2 duracao ${MS}ms >= 10s -- investigar plano antes de aplicar"; fi
-if [ "$BYTES" -lt 8000000 ]; then ok "E3 payload ${BYTES}B < 8MB"; else bad "E3 payload ${BYTES}B >= 8MB -- o edge nao aguenta"; fi
+case "$NKEYS" in
+  *57014*|*timeout*) bad "E2 a RPC estourou statement_timeout de 10s (57014) -- e o modo de falha que a prod veria" ;;
+  *) if [ "$MS" -lt 10000 ]; then ok "E2 duracao ${MS}ms < 10s sob statement_timeout REAL"; else bad "E2 duracao ${MS}ms >= 10s"; fi ;;
+esac
+if [ "$BYTES" -lt 8000000 ]; then ok "E3 payload ${BYTES}B no WIRE (texto JSON) < 8MB"; else bad "E3 payload ${BYTES}B >= 8MB -- o edge nao aguenta"; fi
+
+NREV=$(RS "SELECT jsonb_array_length(public.omie_sync_identity_snapshot('escala')->'revoked_client_codes');")
+# O seed de escala vincula TODO profile ainda sem vinculo -- inclusive o u3, que divide o doc ambiguo
+# 22222222222 com o u2. Logo a revogacao aqui NAO e zero: e exatamente 1, e esse 1 e o ambiguo. O assert
+# comeca esperando zero e ficou vermelho; a investigacao mostrou que o CODIGO estava certo e o assert
+# errado. Nesta forma ele prova mais: que a revogacao opera em VOLUME, achando a agulha entre 16 mil.
+eq "E4a em volume a revogacao acha exatamente o vinculo ambiguo (1 em 16 mil), nao zero nem tudo" "$NREV" "1"
+REV_COD=$(RS "SELECT public.omie_sync_identity_snapshot('escala')->'revoked_client_codes'->>0;")
+REV_AMB=$(Pq -c "SELECT (SELECT count(DISTINCT p.user_id) FROM public.profiles p WHERE regexp_replace(p.document,'\\D','','g') = m.evidence_document_normalized) > 1 FROM public.omie_customer_account_map m WHERE m.account='escala' AND m.omie_codigo_cliente::text = '$REV_COD';")
+eq "E4b e o revogado e mesmo um doc AMBIGUO (nao um falso positivo qualquer)" "$REV_AMB" "t"
+# E o teto de 30% do helper: em base sadia a revogacao e ~0%, ordens de grandeza abaixo do guard.
+PCT=$(( NREV * 100 / LINHAS ))
+if [ "$PCT" -lt 5 ]; then ok "E4c revogacao em base sadia = ${PCT}% do cache -- longe do teto de 30% que aborta o run"; else bad "E4c revogacao em ${PCT}% -- o teto de 30% dispararia em base sadia"; fi
 
 # ── veredito ──
 echo "──────────────────────────────"
