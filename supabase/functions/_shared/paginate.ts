@@ -22,6 +22,7 @@
 // A irmã single-shot (`leitura-critica.ts`) e a paginação passam então a lançar a MESMA classe:
 // quem trata falha de leitura no money-path ramifica uma vez só, e não por cardinalidade.
 import { FalhaLeituraCritica, type ErroPostgrest } from "./leitura-critica.ts";
+import { mensagemDeErro } from "./erro-mensagem.ts";
 
 const PAGE = 1000;
 
@@ -108,7 +109,11 @@ export async function fetchAll<T>(
       if (e instanceof FalhaLeituraCritica) throw e;
       throw new FalhaLeituraCritica(label, {
         code: 'REJEITADA',
-        message: e instanceof Error ? e.message : String(e),
+        // `mensagemDeErro`, não `e instanceof Error ? e.message : String(e)`: para um objeto
+        // sem `message` aquele idiom devolve "[object Object]" — um texto que PARECE
+        // diagnóstico e não é (classe #1642, gate `erro-object-object`). Aqui o destino é
+        // `cause`, o que torna o lixo ainda mais caro: some no log em vez de gritar.
+        message: mensagemDeErro(e) ?? 'rejeição sem mensagem utilizável',
       });
     }
     const { data, error } = resposta;
@@ -186,7 +191,11 @@ export async function fetchAllKeyset<T, K extends string | number>(
       if (e instanceof FalhaLeituraCritica) throw e;
       throw new FalhaLeituraCritica(label, {
         code: 'REJEITADA',
-        message: e instanceof Error ? e.message : String(e),
+        // `mensagemDeErro`, não `e instanceof Error ? e.message : String(e)`: para um objeto
+        // sem `message` aquele idiom devolve "[object Object]" — um texto que PARECE
+        // diagnóstico e não é (classe #1642, gate `erro-object-object`). Aqui o destino é
+        // `cause`, o que torna o lixo ainda mais caro: some no log em vez de gritar.
+        message: mensagemDeErro(e) ?? 'rejeição sem mensagem utilizável',
       });
     }
     const { data, error } = resposta;
