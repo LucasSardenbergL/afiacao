@@ -96,7 +96,10 @@ Deno.test("keyset: abaixo do cap, 1 request", async () => {
   const t = fakeKeyset(() => dados);
   const rows = await fetchAllKeyset<{ id: number }, number>(t.build, (l) => l.id, "t");
   assertEquals(rows.length, 292);
-  assertEquals(t.calls(), 1);
+  // +1 request em relação ao contrato antigo: o EOF passou a ser página VAZIA (antes era
+  // página curta), para desacoplar o helper do `max-rows` do PostgREST. A requisição extra
+  // é o preço de o fim da tabela ser um fato OBSERVADO.
+  assertEquals(t.calls(), 2);
 });
 
 Deno.test("keyset: acima do cap, devolve a cauda inteira em 3 requests", async () => {
@@ -105,7 +108,7 @@ Deno.test("keyset: acima do cap, devolve a cauda inteira em 3 requests", async (
   const rows = await fetchAllKeyset<{ id: number }, number>(t.build, (l) => l.id, "t");
   assertEquals(rows.length, 2300);
   assertEquals(rows[2299].id, 2299);
-  assertEquals(t.calls(), 3);
+  assertEquals(t.calls(), 4); // + a vazia que confirma o fim
 });
 
 Deno.test("keyset: exatamente no cap, 1 request extra vazio, sem duplicar", async () => {

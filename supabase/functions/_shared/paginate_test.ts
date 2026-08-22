@@ -48,7 +48,10 @@ Deno.test("abaixo do cap: retorna tudo em 1 request (estado real hoje: 292 linha
   const t = fakeTable(292);
   const rows = await fetchAll<{ id: number }>(t.build, "t");
   assertEquals(rows.length, 292);
-  assertEquals(t.calls(), 1);
+  // +1 request em relação ao contrato antigo: o EOF passou a ser página VAZIA (antes era
+  // página curta), para desacoplar o helper do `max-rows` do PostgREST. A requisição extra
+  // é o preço de o fim da tabela ser um fato OBSERVADO.
+  assertEquals(t.calls(), 2);
 });
 
 Deno.test("ACIMA do cap (o bug): retorna a cauda inteira, não trunca em 1000", async () => {
@@ -56,7 +59,7 @@ Deno.test("ACIMA do cap (o bug): retorna a cauda inteira, não trunca em 1000", 
   const rows = await fetchAll<{ id: number }>(t.build, "t");
   assertEquals(rows.length, 2300); // sem paginação, o PostgREST devolveria só 1000
   assertEquals((rows[2299] as { id: number }).id, 2299);
-  assertEquals(t.calls(), 3); // 1000 + 1000 + 300
+  assertEquals(t.calls(), 4); // 1000 + 1000 + 300 + a vazia que confirma o fim
 });
 
 Deno.test("exatamente no cap: 1 request extra vazio, sem perder nem duplicar", async () => {
@@ -70,7 +73,7 @@ Deno.test("dois caps cheios + resto: 2001 linhas em 3 requests", async () => {
   const t = fakeTable(2001);
   const rows = await fetchAll<{ id: number }>(t.build, "t");
   assertEquals(rows.length, 2001);
-  assertEquals(t.calls(), 3);
+  assertEquals(t.calls(), 4); // + a vazia que confirma o fim
 });
 
 Deno.test("tabela vazia: 1 request, zero linhas", async () => {
@@ -320,5 +323,5 @@ Deno.test("keyset — o caminho FELIZ continua igual: pagina a cauda inteira em 
     "k_feliz",
   );
   assertEquals(linhas.length, 2300);
-  assertEquals(chamadas, 3);
+  assertEquals(chamadas, 4); // + a vazia que confirma o fim (EOF desacoplado do max-rows)
 });

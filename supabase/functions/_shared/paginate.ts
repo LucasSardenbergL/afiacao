@@ -153,8 +153,24 @@ export async function fetchAll<T>(
     if (!Array.isArray(data)) throw new FalhaLeituraCritica(label, { code: 'MALFORMADA' });
     const rows = data;
     out.push(...rows);
-    if (rows.length < PAGE) break;
-    from += PAGE;
+    // EOF é página VAZIA, não página CURTA; e o offset avança pelo que de fato VEIO, não pelo
+    // que foi PEDIDO. Os dois juntos desacoplam o helper do `max-rows` do PostgREST.
+    //
+    // Antes: `PAGE` (1000) era igual ao `max-rows` medido em prod (1000), então pedir o cap
+    // inteiro funcionava — por coincidência numérica que nada vigiava. Se o cap baixasse para
+    // 500, a 1ª página viria com 500 linhas, `500 < 1000` seria lido como "acabou" e a leitura
+    // truncaria EM SILÊNCIO: a classe do #1836 por outra porta. E avançar `from += PAGE` sobre
+    // um servidor que devolveu menos PULARIA a diferença — 500 linhas invisíveis por página.
+    //
+    // Custo: uma requisição a mais por leitura (a que volta vazia). É o preço de o EOF passar a
+    // ser um FATO observado em vez de uma inferência a partir de um número que o servidor
+    // escolhe e pode mudar sem avisar.
+    //
+    // Descartada a alternativa registrada antes (baixar `PAGE` para 900): protege só contra caps
+    // entre 900 e 999 — com cap 500 o `500 < 900` continua sendo EOF falso — e paga +11% de
+    // requisições em TODA leitura, não só uma por laço.
+    if (rows.length === 0) break;
+    from += rows.length;
   }
   return out;
 }
@@ -264,7 +280,10 @@ export async function fetchAllKeyset<T, K extends string | number>(
       anterior = k;
     }
     out.push(...rows);
-    if (rows.length < PAGE) break;
+    // Mesma razão do `fetchAll`: página CURTA não é fim, é o `max-rows` podendo ser menor que
+    // `PAGE`. Aqui não há offset a corrigir — o cursor já avança pela última linha REAL —, mas o
+    // critério de parada tinha o mesmo acoplamento.
+    if (rows.length === 0) break;
     const proximo = chave(rows[rows.length - 1]);
     // O cursor tem de avançar ESTRITAMENTE. Os dois modos de violar o contrato falham aqui,
     // e nenhum dos dois se denuncia sozinho:
