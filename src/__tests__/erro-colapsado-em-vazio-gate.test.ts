@@ -52,6 +52,7 @@ function listarFontes(dir: string, acc: string[] = []): string[] {
 // painel de saúde da carteira) porque neles a ausência AFIRMA segurança e o dano estava
 // medido em prod. O resto sai por domínio, e a ordem é por dano — não por facilidade.
 const BASELINE = new Map<string, number>([
+  ["src/components/carteira/CarteiraSaudePanel.tsx", 1],
   ["src/components/adminPrime/PrimePlanosTab.tsx", 1],
   ["src/components/customer/CustomerProfile360Summary.tsx", 1],
   ["src/components/customerDashboard/RecomendacoesCliente.tsx", 1],
