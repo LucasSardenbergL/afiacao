@@ -1,6 +1,6 @@
 // Testa o CÓDIGO REAL de `fetchAll` (não uma cópia) no runtime real (Deno).
 // Roda com: deno test supabase/functions/_shared/paginate_test.ts
-import { fetchAll } from "./paginate.ts";
+import { fetchAll, fetchAllKeyset } from "./paginate.ts";
 import { FalhaLeituraCritica } from "./leitura-critica.ts";
 
 function assertEquals(a: unknown, b: unknown, msg?: string) {
@@ -228,4 +228,97 @@ Deno.test("data:{} (objeto, não array) também LANÇA — a forma é que decide
     fetchAll((_f, _t) => Promise.resolve({ data: {} as unknown as string[], error: null }), "t_objeto")
   );
   assertEquals(erro.codigo, "MALFORMADA");
+});
+
+// ── O helper IRMÃO (keyset) nasceu com o mesmo vazamento ─────────────────────────────
+// `fetchAllKeyset` entrou no mesmo módulo em PR paralelo (#1856) e repetiu
+// ``new Error(`${label}: ${error.message}`)`` — o defeito voltaria por uma porta recém-aberta.
+// Os testes abaixo são os mesmos eixos do `fetchAll`, porque o SINK é o mesmo: o `catch` do
+// `Deno.serve` devolve `.message` no corpo da resposta HTTP.
+//
+// As violações de CONTRATO do keyset (chave ausente, página fora de ordem, cursor parado) são
+// erro de PROGRAMAÇÃO do call-site, não falha de transporte — mas interpolavam o VALOR da chave
+// na mensagem, e a chave é uma coluna da linha. O valor vai para `cause`; a mensagem pública
+// nomeia só o modo da violação.
+
+function paginaKeyset(n: number, de = 0) {
+  return Array.from({ length: n }, (_, i) => ({ id: String(de + i).padStart(6, "0") }));
+}
+
+Deno.test("keyset — erro na página: FalhaLeituraCritica com o code, sem o texto do servidor", async () => {
+  const erro = await capturarFalha(() =>
+    fetchAllKeyset<{ id: string }, string>(
+      () =>
+        Promise.resolve({
+          data: null,
+          error: { message: "boom cpf 52998224725", code: "42501" },
+        }),
+      (l) => l.id,
+      "k_fonte",
+    )
+  );
+  assertEquals(erro.codigo, "42501", "o code do PostgREST se perdeu no envelope do keyset");
+  assertEquals(erro.fonte, "k_fonte");
+  if (erro.message.includes("52998224725")) {
+    throw new Error(`PII vazou na mensagem publica do keyset: ${erro.message}`);
+  }
+  assertEquals((erro.cause as { message?: string } | undefined)?.message, "boom cpf 52998224725");
+});
+
+Deno.test("keyset — data não-array: MALFORMADA, não fim da tabela", async () => {
+  const erro = await capturarFalha(() =>
+    fetchAllKeyset<{ id: string }, string>(
+      () => Promise.resolve({ data: "CPF" as unknown as { id: string }[], error: null }),
+      (l) => l.id,
+      "k_texto",
+    )
+  );
+  assertEquals(erro.codigo, "MALFORMADA");
+});
+
+Deno.test("keyset — build que REJEITA: a rejeição crua não escapa", async () => {
+  const erro = await capturarFalha(() =>
+    fetchAllKeyset<{ id: string }, string>(
+      () => Promise.reject(new Error("CPF-RAW-52998224725")),
+      (l) => l.id,
+      "k_rejeita",
+    )
+  );
+  assertEquals(erro.codigo, "REJEITADA");
+  if (erro.message.includes("52998224725")) {
+    throw new Error(`a rejeicao crua vazou no keyset: ${erro.message}`);
+  }
+});
+
+Deno.test("keyset — violação de contrato: o VALOR da chave não vai à mensagem pública", async () => {
+  // Cursor parado (chave repetida): a mensagem citava `JSON.stringify(proximo)`, e a chave é
+  // uma coluna da linha. O modo da violação é domínio fechado; o valor é dado.
+  const repetida = [{ id: "AAA" }, { id: "AAA" }];
+  const erro = await capturarFalha(() =>
+    fetchAllKeyset<{ id: string }, string>(
+      () => Promise.resolve({ data: repetida, error: null }),
+      (l) => l.id,
+      "k_parado",
+    )
+  );
+  assertEquals(erro.codigo, "KEYSET_CHAVE_REPETIDA");
+  if (erro.message.includes("AAA")) {
+    throw new Error(`o valor da chave vazou na mensagem publica: ${erro.message}`);
+  }
+});
+
+Deno.test("keyset — o caminho FELIZ continua igual: pagina a cauda inteira em ordem", async () => {
+  // Guarda de não-regressão: o envelope não pode ter mudado a mecânica do cursor.
+  let chamadas = 0;
+  const linhas = await fetchAllKeyset<{ id: string }, string>(
+    (cursor) => {
+      chamadas++;
+      const de = cursor === null ? 0 : Number(cursor) + 1;
+      return Promise.resolve({ data: paginaKeyset(Math.min(1000, 2300 - de), de), error: null });
+    },
+    (l) => l.id,
+    "k_feliz",
+  );
+  assertEquals(linhas.length, 2300);
+  assertEquals(chamadas, 3);
 });

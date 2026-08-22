@@ -49,15 +49,25 @@ export type RespostaLeitura<T> = {
  * justamente para fechá-la (`codigoDoErro({ code: '52998224725' }) === '52998224725'`, medido
  * no challenge Codex desta entrega). O domínio real é pequeno e enumerável, então é ele que
  * vale: SQLSTATE tem EXATAMENTE 5 caracteres, o PostgREST usa `PGRST` + 3 dígitos, e os
- * códigos INTERNOS desta família são três — nenhum deles colide com SQLSTATE (que não tem `_`
- * nem passa de 5 chars, e portanto não alcança `MALFORMADA`/`SEM_LINHAS`/`REJEITADA`).
+ * códigos INTERNOS desta família são seis — nenhum deles colide com SQLSTATE (que não tem `_`
+ * nem passa de 5 chars, e portanto não alcança nenhum deles).
  *
  * Fora do domínio vira `desconhecido`: perder a granularidade de um código exótico custa menos
  * que devolver texto do servidor com nome de "código sanitizado".
  */
 const SQLSTATE = /^[0-9A-Z]{5}$/;
 const CODIGO_POSTGREST = /^PGRST[0-9]{3}$/;
-const CODIGOS_INTERNOS = new Set(['MALFORMADA', 'SEM_LINHAS', 'REJEITADA']);
+const CODIGOS_INTERNOS = new Set([
+  'MALFORMADA',
+  'SEM_LINHAS',
+  'REJEITADA',
+  // Violação do CONTRATO do keyset — erro de programação do call-site, não de transporte. Três
+  // códigos e não um: o MODO da violação é constante do código (domínio fechado) e por isso pode
+  // ser público, enquanto o VALOR da chave que o revelou é dado da LINHA e fica em `cause`.
+  'KEYSET_CHAVE_AUSENTE',
+  'KEYSET_FORA_DE_ORDEM',
+  'KEYSET_CHAVE_REPETIDA',
+]);
 
 export function codigoDoErro(erro: ErroPostgrest | null | undefined): string {
   const bruto = erro?.code;

@@ -1031,6 +1031,14 @@ serve(async (req) => {
       presente: /if \(error\) throw new FalhaLeituraCritica\(label, error\)/,
       motivo: 'fetchAll voltaria a vazar o MESSAGE do Postgres (PII) no corpo da resposta HTTP',
     },
+    // `fetchAllKeyset` nasceu (#1856) repetindo o `new Error(label + error.message)` que o irmão
+    // acabava de perder — o vazamento voltando por uma porta recem-aberta no MESMO arquivo. Pin
+    // proprio: o do `fetchAll` nao cobre este ramo, e helper novo nao herda guarda de vizinho.
+    {
+      arquivo: 'supabase/functions/_shared/paginate.ts',
+      presente: /if \(error\) throw new FalhaLeituraCritica\(label, error\);\n    \/\/ Mesmo fail-closed de `fetchAll`/,
+      motivo: 'fetchAllKeyset voltaria a vazar o MESSAGE do Postgres (PII) no corpo da resposta HTTP',
+    },
     {
       arquivo: 'src/lib/scoring/rpcPaginada.ts',
       presente: /throw new Error\(`\$\{rotulo\} pág\.\$\{pagina\}: data null sem error/,

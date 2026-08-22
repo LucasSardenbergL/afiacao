@@ -169,21 +169,32 @@ export async function fetchAllKeyset<T, K extends string | number>(
   build: (
     cursor: K | null,
     limite: number,
-  ) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>,
+  ) => PromiseLike<{ data: T[] | null; error: ErroPostgrest | null }>,
   chave: (linha: T) => K,
   label: string,
 ): Promise<T[]> {
   let cursor: K | null = null;
   const out: T[] = [];
   for (;;) {
-    const { data, error } = await build(cursor, PAGE);
-    if (error) throw new Error(`${label}: ${error.message}`);
-    // Mesmo fail-closed de `fetchAll`: `data:null` sem `error` é resposta MALFORMADA,
-    // não fim da tabela — devolver o acumulado parcial seria a truncagem silenciosa que
-    // o #1581 tirou de 24 call-sites.
-    if (data == null) {
-      throw new Error(`${label}: data null sem error — resposta malformada, não é fim da tabela`);
+    // Mesmo envelope do irmão `fetchAll`, pelos mesmos três desfechos e pelo mesmo motivo: o
+    // `catch` do `Deno.serve` devolve `.message` no CORPO da resposta HTTP, e o MESSAGE do
+    // Postgres interpola valor de LINHA. Ver o cabeçalho deste módulo.
+    let resposta: { data: T[] | null; error: ErroPostgrest | null };
+    try {
+      resposta = await build(cursor, PAGE);
+    } catch (e) {
+      if (e instanceof FalhaLeituraCritica) throw e;
+      throw new FalhaLeituraCritica(label, {
+        code: 'REJEITADA',
+        message: e instanceof Error ? e.message : String(e),
+      });
     }
+    const { data, error } = resposta;
+    if (error) throw new FalhaLeituraCritica(label, error);
+    // Mesmo fail-closed de `fetchAll`: `data` que não é ARRAY é resposta MALFORMADA, não fim
+    // da tabela — devolver o acumulado parcial seria a truncagem silenciosa que o #1581 tirou
+    // de 24 call-sites, e `push(...rows)` espalharia uma string em caracteres.
+    if (!Array.isArray(data)) throw new FalhaLeituraCritica(label, { code: 'MALFORMADA' });
     const rows = data;
     // Varre a PÁGINA INTEIRA antes de acumular nada. Três violações do contrato do keyset
     // caem aqui, e as três resolveriam em SILÊNCIO sem esta varredura:
@@ -204,14 +215,25 @@ export async function fetchAllKeyset<T, K extends string | number>(
     for (const linha of rows) {
       const k = chave(linha);
       if (k === null || k === undefined) {
-        throw new Error(
-          `${label}: chave do keyset ausente numa linha — a coluna do cursor precisa estar no .select()`,
-        );
+        throw new FalhaLeituraCritica(label, {
+          code: 'KEYSET_CHAVE_AUSENTE',
+          message: 'chave do keyset ausente numa linha — a coluna do cursor precisa estar no .select()',
+        });
       }
       if (anterior !== null && k <= anterior) {
-        throw new Error(
-          `${label}: página fora de ordem ASCENDENTE (${JSON.stringify(anterior)} → ${JSON.stringify(k)}) — o keyset exige .order(chave, { ascending: true }) e chave ÚNICA no recorte`,
-        );
+        // O VALOR das chaves ia na mensagem por `JSON.stringify` — e a chave é uma COLUNA da
+        // linha (PK, código de cliente). O modo da violação é constante do código e fica
+        // público; os valores vão para `cause`, com o resto do diagnóstico.
+        // Igualdade e decrescente são MODOS distintos e têm conserto distinto: chave repetida
+        // significa "a coluna não é única no recorte" (troque a chave); decrescente significa
+        // "o `.order()` está ao contrário". Fundir os dois em `k <= anterior` sem separar o
+        // código manda o leitor caçar um `.order()` que está correto.
+        throw new FalhaLeituraCritica(label, {
+          code: k === anterior ? 'KEYSET_CHAVE_REPETIDA' : 'KEYSET_FORA_DE_ORDEM',
+          message: k === anterior
+            ? `chave repetida em ${JSON.stringify(k)} dentro da mesma página — a chave precisa ser ÚNICA no recorte`
+            : `página fora de ordem ASCENDENTE (${JSON.stringify(anterior)} → ${JSON.stringify(k)}) — o keyset exige .order() ascendente na MESMA coluna do cursor`,
+        });
       }
       anterior = k;
     }
@@ -232,7 +254,11 @@ export async function fetchAllKeyset<T, K extends string | number>(
       const modo = proximo === cursor
         ? `chave repetida em ${JSON.stringify(proximo)} — a chave precisa ser ÚNICA no recorte`
         : `cursor RECUOU (${JSON.stringify(cursor)} → ${JSON.stringify(proximo)}) — o keyset exige .order() ASCENDENTE na mesma coluna`;
-      throw new Error(`${label}: cursor não avançou: ${modo}`);
+      // Idem: o modo classifica, os valores ficam em `cause`.
+      throw new FalhaLeituraCritica(label, {
+        code: proximo === cursor ? 'KEYSET_CHAVE_REPETIDA' : 'KEYSET_FORA_DE_ORDEM',
+        message: `cursor não avançou: ${modo}`,
+      });
     }
     cursor = proximo;
   }
