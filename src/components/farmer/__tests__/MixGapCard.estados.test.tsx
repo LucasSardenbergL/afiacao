@@ -182,6 +182,10 @@ describe('MixGapCard — os três estados se separam', () => {
 afterEach(() => {
   // `onlineManager` é estado GLOBAL do react-query: deixar offline vazaria para os outros arquivos.
   onlineManager.setOnline(true);
+  // E o `spyOn(supabase)` do teste de CARREGANDO sobrevive ao teste que o criou: sem restaurar,
+  // os casos seguintes recebem a promise DAQUELE teste (já resolvida com sucesso) e ficam verdes
+  // sem nunca exercitar o ramo de erro — um mock vazado é gate que mente.
+  vi.restoreAllMocks();
 });
 
 describe('MixGapCard — offline é um estado, não ausência de acesso', () => {
@@ -231,6 +235,24 @@ describe('MixGapCard — offline é um estado, não ausência de acesso', () => 
     await waitFor(() => expect(eventosVistos()).toHaveLength(1));
   });
 
+  it('erro E DEPOIS queda de rede: a tela passa a falar de conexão, não de suporte', async () => {
+    resposta = { data: null, error: { message: 'timeout' } };
+    const { qc } = renderCard();
+    await screen.findByText(/Não consegui carregar as oportunidades/i);
+
+    onlineManager.setOnline(false);
+    await act(async () => { void qc.invalidateQueries({ queryKey: ['my-mixgap'] }); });
+
+    // O `error` anterior continua no cache e a query fica pausada ao mesmo tempo. Mandar o
+    // vendedor "avisar o suporte" quando o problema é o sinal do celular dele queima o canal de
+    // incidente — o motivo ATUAL é o acionável.
+    expect(await screen.findByText(/sem conexão/i)).toBeTruthy();
+    expect(screen.queryByText(/avise o suporte/i)).toBeNull();
+    await waitFor(() =>
+      expect(eventosVistos().map((e) => e.estado)).toEqual(['erro', 'aguardando_rede']),
+    );
+  });
+
   it('quando a rede VOLTA, o estado real sai DEPOIS do aguardando_rede, nesta ordem', async () => {
     onlineManager.setOnline(false);
     resposta = { data: COM_GAP, error: null };
@@ -262,8 +284,11 @@ describe('MixGapCard — dado bom no cache sobrevive à atualização que falha'
     resposta = { data: null, error: { message: 'timeout' } };
     await act(async () => { await qc.refetchQueries({ queryKey: ['my-mixgap'] }).catch(() => {}); });
 
+    // A lista não pode nem PISCAR para fora: já está na tela no repaint seguinte à falha...
     expect(screen.getByText('Marcenaria Alfa')).toBeTruthy();
-    expect(screen.getByText(/desatualizada/i)).toBeTruthy();
+    // ...e continua depois que o aviso de desatualização entra (o re-render do erro é assíncrono).
+    expect(await screen.findByText(/desatualizada/i)).toBeTruthy();
+    expect(screen.getByText('Marcenaria Alfa')).toBeTruthy();
     // A tela de erro TOTAL (a que troca a lista por um aviso) não deve aparecer aqui.
     expect(screen.queryByText(/Não consegui carregar as oportunidades/i)).toBeNull();
   });

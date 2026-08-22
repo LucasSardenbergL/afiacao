@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { MoreVertical, Search, AlertTriangle } from 'lucide-react';
+import { MoreVertical, Search, AlertTriangle, WifiOff } from 'lucide-react';
 import { Card, CardHeader } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -34,37 +34,98 @@ import { track } from '@/lib/analytics';
  * ⚠️ O evento leva `total_com_gap: null` no erro, nunca `0`. Mandar zero seria fabricar o
  * número que o sensor existe para medir (§2 — ausente ≠ zero): a série de adoção passaria a
  * somar falhas de leitura como se fossem carteiras sem oportunidade.
+ *
+ * ── QUARTO estado, achado na revisão adversária retroativa do #1859 (Codex e a análise da casa
+ * chegaram nele por caminhos separados). Com `networkMode:'online'` (default do QueryClient
+ * global, sem `persistQueryClient` no repo) e o navegador offline, a query fica
+ * `status:'pending'`/`fetchStatus:'paused'`/`data:undefined`/`error:null`. Em v5
+ * `isLoading = isPending && isFetching`, e pausada NÃO está fetching ⇒ `isLoading` é **false**:
+ * o predicado antigo (`!isLoading && !error && data === undefined`) casava e o card devolvia
+ * `null`. Ou seja, o estado OFFLINE caía no balde "não é staff" — tela em branco e silêncio no
+ * PostHog, exatamente a classe de defeito que o #1859 corrigiu. Num PWA de vendedor em campo
+ * isso não é hipotético. Daí `fetchStatus` entrar no discriminante: `data === undefined` é
+ * pendente, pausado OU desabilitado; só `data === null` é a RPC dizendo "sem acesso".
+ *
+ * ⚠️ DECISÃO — `aguardando_rede` EMITE evento (com `total_com_gap: null`). Não emitir recriaria
+ * o buraco que o #1859 fechou: "vendedor offline" viraria indistinguível de "vendedor nunca
+ * abriu". E emitir não contamina o denominador de adoção porque o estado é explícito na série:
+ * adoção se calcula sobre os estados com número honesto (`com_gap`/`zero`), como já era preciso
+ * fazer com `erro`. O que continua MUDO é `semAcesso` — quem nunca poderia ver o card não
+ * pertence ao denominador, e por isso a ausência de acesso não gera linha nenhuma.
+ *
+ * ⚠️ E o erro tinha precedência sobre o dado STALE, o que custava a lista inteira: um refetch
+ * ruim trocava as oportunidades por um aviso, com o cache ainda cheio. Honesto para o sensor,
+ * regressão para quem está na rua. O desenho composto (lista PRESERVADA + faixa de aviso +
+ * `desatualizado: 'erro' | 'sem_rede'` no evento) serve aos dois: o vendedor não perde a
+ * carteira e a série sabe separar "viu número fresco" de "agiu sobre número velho".
  */
-type EstadoMixGap = 'com_gap' | 'zero' | 'erro';
+type EstadoMixGap = 'com_gap' | 'zero' | 'erro' | 'aguardando_rede';
+/** Por que o número na tela pode estar velho. `null` = acabou de ser lido com sucesso. */
+type MotivoDesatualizado = 'erro' | 'sem_rede';
+
+function AvisoDesatualizado({ motivo }: { motivo: MotivoDesatualizado }) {
+  const Icone = motivo === 'sem_rede' ? WifiOff : AlertTriangle;
+  return (
+    <div className="flex items-start gap-2 px-3 py-2 border-b border-border bg-muted/40 text-2xs text-status-warning">
+      <Icone className="w-3.5 h-3.5 shrink-0 mt-px" />
+      <span>
+        Informação desatualizada — {motivo === 'sem_rede' ? 'sem conexão agora' : 'a última atualização falhou'}.
+        É a última leitura que deu certo; pode ter mudado desde então.
+      </span>
+    </div>
+  );
+}
 
 export function MixGapCard() {
-  const { data, error, isLoading } = useMyMixGap();
+  const { data, error, isPending, fetchStatus } = useMyMixGap();
   const { mutate: markFeedback } = useMarkMixGapFeedback();
   const { isImpersonating } = useImpersonation();
 
-  // `data === null` é a RPC dizendo "você não é staff" (ela retorna NULL sem uid/sem role):
-  // não é um estado do card, é ausência de acesso — e aí o card não deve existir mesmo.
-  // `undefined` com a query desabilitada (sem user) cai no mesmo lugar.
-  const semAcesso = !isLoading && !error && (data === null || data === undefined);
-  const estado: EstadoMixGap | null =
-    isLoading || semAcesso ? null : error ? 'erro' : (data!.totalComGap > 0 ? 'com_gap' : 'zero');
+  // `data === null` é a RPC dizendo "você não é staff" (ela retorna NULL sem uid/sem role) — e isso
+  // só existe DEPOIS de a query RESOLVER. `undefined` NÃO é sinônimo: é pendente, pausada ou
+  // desabilitada, três coisas diferentes. Ler os dois como "sem acesso" foi o defeito de origem.
+  const semAcesso = data === null;
+  const temDado = data != null;
+  const pausado = fetchStatus === 'paused';        // offline: o react-query nem dispara a request
+  const inerte = isPending && fetchStatus === 'idle';   // query desabilitada (sem user)
+  const carregando = isPending && fetchStatus === 'fetching';
 
-  const trackedEstado = useRef<EstadoMixGap | null>(null);
+  // Pausado ANTES de erro: se a rede caiu depois de uma falha, "sem conexão" é o motivo atual e o
+  // acionável (recarregar não resolve; voltar para a área coberta, sim).
+  const desatualizado: MotivoDesatualizado | null =
+    !temDado ? null : pausado ? 'sem_rede' : error ? 'erro' : null;
+
+  const estado: EstadoMixGap | null =
+    semAcesso || inerte || carregando
+      ? null
+      : temDado
+        ? (data.totalComGap > 0 ? 'com_gap' : 'zero')
+        : pausado
+          ? 'aguardando_rede'
+          : error
+            ? 'erro'
+            : null;
+
+  const trackedChave = useRef<string | null>(null);
   useEffect(() => {
-    // Um evento por estado RESOLVIDO. A guarda por estado (e não por booleano) deixa passar a
-    // transição erro → zero → com_gap dentro da mesma montagem, que é o dado que separa uma
-    // falha transitória de uma carteira realmente vazia.
-    if (!estado || trackedEstado.current === estado) return;
-    trackedEstado.current = estado;
+    // Um evento por estado RESOLVIDO — e a chave inclui o MOTIVO de desatualização, senão a dedup
+    // engoliria a transição "carteira fresca" → "agindo sobre número velho", que é precisamente o
+    // sinal de leitura falhando em campo. A guarda por chave (e não por booleano) deixa passar
+    // erro → zero → com_gap na mesma montagem, que separa falha transitória de carteira vazia.
+    if (!estado) return;
+    const chave = `${estado}:${desatualizado ?? 'fresco'}`;
+    if (trackedChave.current === chave) return;
+    trackedChave.current = chave;
     track('carteira.mixgap_visto', {
       estado,
-      total_com_gap: estado === 'erro' ? null : data!.totalComGap,
+      total_com_gap: temDado ? data.totalComGap : null,
+      desatualizado,
     });
-  }, [estado, data]);
+  }, [estado, desatualizado, temDado, data]);
 
-  if (semAcesso) return null;
+  if (semAcesso || inerte) return null;
 
-  if (isLoading) {
+  if (carregando) {
     return (
       <Card>
         <CardHeader className="pb-2">
@@ -80,7 +141,20 @@ export function MixGapCard() {
     );
   }
 
-  if (error) {
+  if (estado === 'aguardando_rede') {
+    return (
+      <Card>
+        <EmptyState
+          tone="operational"
+          icon={WifiOff}
+          title="Sem conexão — não consegui consultar"
+          description="As oportunidades da sua carteira precisam de rede para carregar. Isto NÃO significa que não há oportunidades: assim que a conexão voltar, o card se atualiza sozinho."
+        />
+      </Card>
+    );
+  }
+
+  if (estado === 'erro') {
     return (
       <Card>
         <EmptyState
@@ -93,9 +167,14 @@ export function MixGapCard() {
     );
   }
 
-  if (data!.totalComGap === 0) {
+  // Exaustividade: todo estado SEM dado já saiu acima. Se um caso novo escapar, o card some —
+  // mas em nenhuma hipótese fabrica número.
+  if (data == null) return null;
+
+  if (data.totalComGap === 0) {
     return (
       <Card>
+        {desatualizado && <AvisoDesatualizado motivo={desatualizado} />}
         <EmptyState
           tone="operational"
           icon={Search}
@@ -108,14 +187,15 @@ export function MixGapCard() {
 
   return (
     <Card>
+      {desatualizado && <AvisoDesatualizado motivo={desatualizado} />}
       <CardHeader className="pb-2">
         <h2 className="text-base font-medium">Oportunidades de cross-sell</h2>
         <p className="text-2xs text-muted-foreground">
-          {data!.totalComGap} clientes da sua carteira sem uma família que clientes parecidos compram
+          {data.totalComGap} clientes da sua carteira sem uma família que clientes parecidos compram
         </p>
       </CardHeader>
       <div className="divide-y divide-border">
-        {data!.lista.slice(0, 20).map((g) => (
+        {data.lista.slice(0, 20).map((g) => (
           <div key={g.customer_user_id} className="p-3 flex items-center justify-between gap-3 hover:bg-muted/30">
             <Link
               to={`/admin/customers/${g.customer_user_id}/360`}
