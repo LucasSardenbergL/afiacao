@@ -1,4 +1,4 @@
-# Evidência POSITIVA — e as seis armadilhas de shell que fabricam verde
+# Evidência POSITIVA — e as sete armadilhas de shell que fabricam verde
 
 > **A regra que sobrou no CLAUDE.md:** validação só conta com **evidência positiva** — rode o
 > comando autoritativo, confirme que **terminou**, capture `exit 0`. Este doc guarda o *porquê*
@@ -11,7 +11,7 @@
 
 **Ausência de sinal NÃO é aprovação.** São *ausência de dado*, não veredito:
 
-- processo **enfileirado** (o `heavy` pode estar esperando o semáforo, não rodando);
+- processo **enfileirado** (o `heavy` pode estar esperando o semáforo, não rodando — §7);
 - log **sem a linha de conclusão** (começou ≠ terminou);
 - `grep` **sem ocorrência** — ⚠️ confira **caixa e acento** antes de concluir "não existe";
 - **linter que não tem a regra** (verde porque não olhou, não porque está limpo).
@@ -21,7 +21,7 @@ rodar** (glob não expandido, arquivo inexistente, flag inválida) devolve zero 
 na tela, a uma busca que rodou e não achou nada. Só o **exit code** e o **formato da saída**
 distinguem os dois.
 
-## As seis armadilhas
+## As sete armadilhas
 
 ### 1. `cmd | tail` ENGOLE o exit code
 O pipeline devolve o status do **último** componente. `bun run test | tail -5` é sempre verde.
@@ -59,12 +59,49 @@ fallback. ⇒ valide o **FORMATO esperado** da saída, não o exit do 1º ramo, 
 contratos por stub. Caso medido e o idioma correto: `docs/agent/worktrees.md`
 (§Portabilidade BSD × GNU).
 
-## O padrão por trás das seis
+### 7. O WRAPPER devolve exit≠0 por conta PRÓPRIA — igualzinho ao comando embrulhado
+```
+heavy: timeout (1800s) esperando vaga — abortando. (posição 1 na fila)
+exit=1
+```
+Medido em 2026-08-22 (sessão do #1893): o `heavy` (semáforo de RAM) abortou **na fila** e devolveu
+`exit=1` — o mesmo código de um teste vermelho. O vitest **nunca rodou**. É a mais traiçoeira da
+lista porque não produz ausência, produz um **veredito**: entrega um número plausível para reportar
+como "falhou". Vale para todo wrapper (`heavy`, `timeout`, retry, `xargs`, `sudo`, `docker run`) —
+o exit dele ocupa a mesma faixa do exit do comando de dentro, e código nenhum separa sozinho
+"rodou e falhou" de "nem começou".
 
-Todas produzem **verde por construção**, não por mérito: o sinal que você lê não é o sinal que
-você acha que está lendo. A contramedida é sempre a mesma — **exigir uma afirmação POSITIVA e
-com formato conhecido** (exit code capturado colado, saída não-vazia, formato conferido), em vez
-de aceitar a ausência de vermelho.
+⇒ exija **sinal do comando INTERNO**: a linha `Test Files N passed` do vitest, ou um marcador que o
+lado de DENTRO escreveu.
+```bash
+# roda-tudo.sh — tudo isto corre DENTRO do wrapper
+bun run typecheck > tc.log 2>&1; echo "TYPECHECK_EXIT=$?" >> exits.txt   # colado (§2)
+bun run test      > vt.log 2>&1; echo "VITEST_EXIT=$?"    >> exits.txt
+echo FIM >> exits.txt
+
+heavy bash roda-tudo.sh    # o wrapper embrulha o script INTEIRO
+```
+O consumidor **não lê código nenhum antes de achar a linha `FIM`**: sem ela o veredito é "não
+rodou", nunca "falhou" — e isso independe do que o `heavy` devolveu. O caso concreto tinha sido
+anotado só de passagem em `docs/historico/medicao-trabalho-nao-entregue.md`; a classe é geral.
+
+**Irmã, na mesma sessão — a conclusão impressa por `echo`:**
+```bash
+command grep -rn 'padrao' src --include=*.tsx   # sem aspas o zsh expande o glob: o grep NEM RODA
+echo "(vazio = nenhum consumidor)"              # imprime a conclusão do mesmo jeito
+```
+A frase-veredito não depende do comando: sai idêntica se ele rodou limpo, se falhou ou se nem
+existiu. ⇒ aspe o glob (`--include='*.tsx'`) e **derive a conclusão do resultado** em vez de
+escrevê-la ao lado dele. (É o §2 por outro ângulo: lá o `echo` sobrescreve o `$?`; aqui ele fabrica
+o veredito.)
+
+## O padrão por trás das sete
+
+Seis produzem **verde por construção**, não por mérito — e a sétima mostra que o mesmo defeito
+fabrica **vermelho** com a mesma facilidade: o sinal que você lê não é o sinal que você acha que
+está lendo. A contramedida é sempre a mesma — **exigir uma afirmação POSITIVA e com formato
+conhecido** (exit code capturado colado, saída não-vazia, marcador de conclusão, formato conferido),
+em vez de ler qualquer coisa na ausência dela.
 
 É a mesma família de `WHEN OTHERS THEN 'OK'` (SQL) e `toThrow()` pelado (TS): o teste passa sem
 provar nada. Ver `docs/historico/tothrow-pelado.md`.
