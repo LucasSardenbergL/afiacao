@@ -584,6 +584,8 @@ Deno.test("omie_products sob flip de ativo: nenhum SKU ativo some do catálogo",
   // já inativado. Só a identidade denuncia.
   if (sumiram.length > 0) {
     throw new Error(`${sumiram.length} SKU(s) ATIVO(s) sumiram do catálogo: ${sumiram.slice(0, 3).join(", ")}`);
+  }
+});
 
 // ── 9. Desenho da AMOSTRA: quem entra no cluster é quem entra no DENOMINADOR de `sim` ──
 //
