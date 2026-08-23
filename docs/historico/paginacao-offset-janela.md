@@ -154,8 +154,17 @@ ordem/unicidade removida.
 ## Tentativa retroativa (2026-08-22): cota AINDA esgotada — e a pergunta em aberto fechada por MEDIÇÃO
 
 Segunda tentativa do ritual: `codex-async.sh -m gpt-5.6-terra -r xhigh -t 1200` saiu de novo
-com `COTA_ESGOTADA` (**exit 75**) — a janela rolante de 7 dias não virou. **O marcador acima
-continua de pé: nenhuma revisão independente rodou nesta entrega.**
+com `COTA_ESGOTADA` (**exit 75**). **O marcador acima continua de pé: nenhuma revisão
+independente rodou nesta entrega.**
+
+📅 **Não é "esperar a janela de 7 dias virar" — a data é 2026-09-20.** O
+[`recommend-teto-linhas-cluster.md`](recommend-teto-linhas-cluster.md) já tinha medido isso em
+2026-08-22 por ping mínimo independente, e o #1887 chegou ao mesmo em paralelo. Esta tentativa
+é a **terceira** confirmação do mesmo fato no mesmo dia. Modelo e transporte estavam certos
+(`gpt-5.6-terra`, preflight passou, classificação correta como cota e não como modelo recusado
+— o conserto do #1880 está no disco deste worktree): o que falta é **calendário**, não
+configuração. Registrar aqui para a próxima sessão não gastar meia hora redescobrindo: antes de
+20/09 o ritual não roda, e reconferir é barato mas re-diagnosticar não é.
 
 ⚠️ **O prompt guardado está DEFASADO — não reenviar como está.** Escrito em 2026-08-21, ANTES
 do #1889: ele cita `if (rows.length < PAGE) break`, que o #1889 trocou por `rows.length === 0`.
