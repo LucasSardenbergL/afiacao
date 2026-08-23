@@ -11,6 +11,11 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 // carteira inteira de títulos antecipáveis, subdimensionando o gap de funding e a
 // concentração por sacado. O canônico lança nos dois casos (money-path §6/§9).
 import { fetchAll } from "../_shared/paginate.ts";
+// Gate da SONDA, não da edge: o `authorizeMaster` abaixo exige `Authorization: Bearer` + role
+// master e nunca leu `x-cron-secret` — que é como o founder invoca do SQL Editor. A sonda vem
+// antes dele e traz o seu próprio (ver versao.ts, lista GATE_PROPRIO do gate de contrato).
+import { authorizeCronOrStaff } from "../_shared/auth.ts";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -355,20 +360,44 @@ type A4Response = {
 
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+
+  // Sonda de versão — ANTES do gate normal, do parse de `company` e do `createClient`, com gate
+  // PRÓPRIO. A ordem importa duas vezes: o gate normal exige Bearer + master (o `x-cron-secret` do
+  // SQL Editor morreria nele, como na `recommend` em #1883), e a validação de `company` abaixo
+  // recusaria `{"probe":true}` com um 400 de campo obrigatório — indistinguível de "bundle velho".
+  // Ver versao.ts / _shared/sonda-versao.ts.
+  // `corpoJsonInvalido` existe para não PERDER um diagnóstico ao subir o parse: antes, body
+  // malformado caía no `catch` do bloco de `company` e devolvia "Body JSON inválido". Com o parse
+  // aqui em cima esse catch nunca mais dispara, e sem a flag um JSON quebrado passaria a responder
+  // "Campo 'company' obrigatório" — mensagem que manda o chamador consertar a coisa errada.
+  let corpoBruto: unknown = {};
+  let corpoJsonInvalido = false;
+  try {
+    corpoBruto = await req.json();
+  } catch {
+    corpoJsonInvalido = true;
+  }
+
+  const decisaoSonda = classificarSonda(corpoBruto);
+  if (decisaoSonda.tipo !== "disparo") {
+    const authSonda = await authorizeCronOrStaff(req);
+    if (!authSonda.ok) return authSonda.response;
+    if (decisaoSonda.tipo === "sonda") return jsonResponse(respostaSonda(VERSAO), 200);
+    return jsonResponse({ error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }, 400);
+  }
+
   const auth = await authorizeMaster(req);
   if (!auth.ok) return auth.response;
 
-  // Parse request body
-  let company: string;
-  try {
-    const body = await req.json() as { company?: unknown };
-    if (!body.company || typeof body.company !== "string") {
-      return jsonResponse({ error: "Campo 'company' obrigatório no body (string)." }, 400);
-    }
-    company = body.company;
-  } catch {
-    return jsonResponse({ error: "Body JSON inválido." }, 400);
+  // Parse request body — `corpoBruto` já foi lido acima (o corpo de um Request só se lê UMA vez;
+  // um segundo `req.json()` aqui lançaria "Body already consumed"), então a validação passa a ler
+  // dele em vez de reabrir o stream.
+  if (corpoJsonInvalido) return jsonResponse({ error: "Body JSON inválido." }, 400);
+  const body = corpoBruto as { company?: unknown };
+  if (!body.company || typeof body.company !== "string") {
+    return jsonResponse({ error: "Campo 'company' obrigatório no body (string)." }, 400);
   }
+  const company: string = body.company;
 
   const db: DbClient = createClient(SUPABASE_URL, SERVICE_ROLE);
   const hoje = new Date();

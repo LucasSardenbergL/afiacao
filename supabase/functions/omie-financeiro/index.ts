@@ -3,6 +3,11 @@ import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 // malformada ≠ fim da tabela). Substitui o laço à mão do carregarBaixaMapDRE, cujo
 // `data ?? []` produzia baixaMap PARCIAL → double-count/perda no DRE-caixa.
 import { fetchAll } from "../_shared/paginate.ts";
+// Gate da SONDA, não da edge: o `validateCaller` do handler ACEITA `x-cron-secret`, mas exige o
+// client Supabase — que só nasce depois do ponto onde a sonda tem de responder. Por isso ela vem
+// antes, com gate próprio (ver versao.ts, lista GATE_PROPRIO do gate de contrato).
+import { authorizeCronOrStaff } from "../_shared/auth.ts";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 // Guards do total declarado pelo Omie (PISO, não verdade — docs/agent/sync.md):
 // proximoTotalPaginas mantém o piso monotônico entre respostas (uma intermediária sem o
 // campo NÃO encolhe o teto), avaliarPagina separa "fim real" de "página vazia antes do
@@ -2250,6 +2255,25 @@ Deno.serve(async (req) => {
     return new Response("ok", { headers: corsHeaders });
   }
 
+  // Sonda de versão — ANTES do `createClient` e do `validateCaller`, com gate PRÓPRIO.
+  // O gate normal desta edge aceita `x-cron-secret`, mas tem assinatura `validateCaller(req,
+  // supabase)`: usá-lo aqui obrigaria a criar o client primeiro, que é justamente o que o gate
+  // estrutural "a sonda responde ANTES do createClient" proíbe — a sonda deixaria de ser o único
+  // caminho sem IO. Ver versao.ts / _shared/sonda-versao.ts.
+  const corpoBruto = await req.json().catch(() => ({}));
+  const decisaoSonda = classificarSonda(corpoBruto);
+  if (decisaoSonda.tipo !== "disparo") {
+    const authSonda = await authorizeCronOrStaff(req);
+    if (!authSonda.ok) return authSonda.response;
+    const corpo = decisaoSonda.tipo === "sonda"
+      ? respostaSonda(VERSAO)
+      : { error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) };
+    return new Response(JSON.stringify(corpo), {
+      status: decisaoSonda.tipo === "sonda" ? 200 : 400,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
   const supabase = createClient(
     Deno.env.get("SUPABASE_URL")!,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
@@ -2274,8 +2298,10 @@ Deno.serve(async (req) => {
     // Marca origem no audit log para todas as mutações desta invocação
     await setAuditOrigem(supabase, 'omie_sync');
 
+    // Lê de `corpoBruto` (já consumido acima pela sonda): o corpo de um Request só se lê UMA vez,
+    // e um segundo `req.json()` aqui lançaria "Body already consumed".
     const { action, company, companies, filtro_data_de, filtro_data_ate, ano, mes, meses, maxPages, entidade, ncodcc, regime: requestedRegime } =
-      await req.json();
+      corpoBruto as Record<string, any>;
 
     const targetCompanies = resolveCompanies({ companies, company, allowed: ALLOWED_COMPANIES }) as Company[];
 

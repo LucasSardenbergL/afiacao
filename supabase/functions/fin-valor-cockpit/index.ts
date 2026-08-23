@@ -8,6 +8,11 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 // pedidos/custos/estoque/CR parciais viram margem e EVP inflados no cockpit, sem sinal
 // nenhum na tela. O canônico lança nos dois casos (money-path §6/§9).
 import { fetchAll } from "../_shared/paginate.ts";
+// Gate da SONDA, não da edge: o `authorizeGestorOuMaster` abaixo exige `Authorization: Bearer` +
+// role comercial e nunca leu `x-cron-secret` — que é como o founder invoca do SQL Editor. A sonda
+// vem antes dele e traz o seu próprio (ver versao.ts, lista GATE_PROPRIO do gate de contrato).
+import { authorizeCronOrStaff } from "../_shared/auth.ts";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -406,6 +411,21 @@ const CONFIG_DEFAULT: CockpitConfig = { margem_minima_pct: 0.15, desconto_max_pc
 
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+
+  // Sonda de versão — ANTES do gate normal e do `createClient`, com gate PRÓPRIO.
+  // Antes do gate normal porque ele exige Bearer + role e o caminho documentado de invocação
+  // (net.http_post do SQL Editor, com `x-cron-secret`) morreria nele — foi exatamente o que
+  // aconteceu com a `recommend` em prod (#1883). Com gate próprio para que "antes do gate normal"
+  // não vire "sem auth nenhuma". Ver versao.ts / _shared/sonda-versao.ts.
+  const corpoBruto = await req.json().catch(() => ({}));
+  const decisaoSonda = classificarSonda(corpoBruto);
+  if (decisaoSonda.tipo !== "disparo") {
+    const authSonda = await authorizeCronOrStaff(req);
+    if (!authSonda.ok) return authSonda.response;
+    if (decisaoSonda.tipo === "sonda") return jsonResponse(respostaSonda(VERSAO), 200);
+    return jsonResponse({ error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }, 400);
+  }
+
   const auth = await authorizeGestorOuMaster(req);
   if (!auth.ok) return auth.response;
   const db = createClient(SUPABASE_URL, SERVICE_ROLE);
