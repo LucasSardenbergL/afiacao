@@ -150,3 +150,67 @@ uma varredura da PÁGINA INTEIRA, que custa uma comparação por linha contra um
 Falsificado 4× (cada guarda sabotada exigiu vermelho, e o vermelho veio): cursor pela primeira
 linha da página · guarda de cursor removida · guarda de ordem removida · guarda de
 ordem/unicidade removida.
+
+## Tentativa retroativa (2026-08-22): cota AINDA esgotada — e a pergunta em aberto fechada por MEDIÇÃO
+
+Segunda tentativa do ritual: `codex-async.sh -m gpt-5.6-terra -r xhigh -t 1200` saiu de novo
+com `COTA_ESGOTADA` (**exit 75**) — a janela rolante de 7 dias não virou. **O marcador acima
+continua de pé: nenhuma revisão independente rodou nesta entrega.**
+
+⚠️ **O prompt guardado está DEFASADO — não reenviar como está.** Escrito em 2026-08-21, ANTES
+do #1889: ele cita `if (rows.length < PAGE) break`, que o #1889 trocou por `rows.length === 0`.
+A pergunta (3) dele ("página curta como EOF trunca se o max-rows cair para 500 — errei em não
+baixar PAGE para 900?") pergunta por um defeito que o #1889 **já consertou**. Reenviar queima
+cota numa pergunta morta e continua sem revisar #1877/#1882/#1889, que o prompt nem menciona.
+Regenerar contra o código VIVO antes de rodar.
+
+⚠️ **Armadilha de evidência — variante nova da 7ª (`| tail` engole o exit code).** O wrapper
+rodou em background e o harness reportou **"exit code 0"**: esse era o exit do ÚLTIMO comando
+do compound (`wc -c`), não o do `codex-async.sh`. O `echo "CODEX_EXIT=$?"` colado logo após o
+comando foi o que revelou o **75**. Sem ele, "exit 0" + arquivo de parecer criado leria como
+sucesso — e o arquivo tinha **0 bytes**. **Regra: o compound termina no comando que você quer
+medir, ou o `$?` vai colado nele. Arquivo de saída CRIADO não é arquivo de saída ESCRITO.**
+
+### A pergunta em aberto: CONFIRMADA — mas o vetor não era o que se supunha
+
+Ficou em aberto se inicializar `anterior = null` (em vez de `anterior = cursor`) na varredura
+de página era buraco real, já que a primeira linha de cada página não é comparada ao cursor da
+anterior. A defesa registrada era *"a checagem de cursor no fim do laço já cobre isso, só que
+uma página depois"*. Medido em vez de argumentado — a defesa está **meio certa**, e a metade
+errada é a que importa:
+
+| vetor | a checagem de cursor pega? | desfecho antes do fix |
+|---|---|---|
+| **sistemático** (`.gte` no lugar de `.gt`) | sim, mas só na página **TERMINAL** | lança — tabela inteira lida, 1 duplicata por página no acumulado |
+| **pontual** (retry com cursor velho, lag de réplica, ramo do call-site que tira o cursor de outra coluna) | **NUNCA** | **resolve em silêncio**: 2.310 linhas, 10 duplicadas |
+
+O motivo de a guarda não alcançar o caso pontual: ela compara só a **última** linha da página.
+Uma página que recomeça atrás do cursor e termina à frente dele passa pelas duas guardas — está
+ascendente por dentro (varredura interna passa) e avançou por fora (checagem de cursor passa).
+É exatamente a duplicata silenciosa que este helper inteiro existe para tornar impossível.
+
+**Fix:** `anterior` começa em `cursor`. Na 1ª página `cursor` é `null` ⇒ comportamento
+idêntico; nas demais exige `k > cursor`, que é literalmente o contrato do keyset — call-site
+correto não tem como tropeçar, então não há falso-positivo a pagar. Código **próprio**
+(`KEYSET_PAGINA_SOBREPOSTA`), não reuso de `CHAVE_REPETIDA`: com `.gte`, `k === cursor` é linha
+repetida ENTRE PÁGINAS, não chave não-única — o conserto é o operador do filtro, não a escolha
+da coluna, e mandar trocar uma chave que já é única é diagnóstico que parece diagnóstico e não é.
+
+**Latente, não vivo:** os 2 call-sites (`order_items`, `omie_products`) usam `.gt("id", cursor)`
+corretamente, conferido. Isto fecha a classe antes do 3º call-site, não conserta leitura torta
+em produção.
+
+**LIÇÃO GERAL — guarda de fronteira que só olha um extremo do lote não cobre o outro.** A
+varredura interna e a checagem de cursor pareciam redundantes e não são: uma vigia o MIOLO da
+página, a outra vigia o SALTO entre páginas, e a primeira linha de cada página caía no vão
+entre as duas. O sintoma diagnóstico é a assimetria — se a guarda de saída compara a última
+linha, a guarda de entrada tem de comparar a primeira, contra o estado que sobreviveu à volta
+anterior. Corolário do que já estava nesta página: **violação sistemática é a fácil; a que
+escapa é a pontual, porque ela se conserta sozinha na página seguinte e some do rastro.**
+
+Gate: RED verificado antes do fix (`esperava lançar KEYSET_PAGINA_SOBREPOSTA, mas resolveu`) ·
+848 testes de edge, 0 falhas · **3 falsificações com dente**: reverter `anterior = cursor` (os
+2 vetores voltam, cada um com o seu vermelho) · `atravessaPagina` fixo em `false` (ambos
+vermelhos por **código errado**, provando que o teste casa a classificação e não "lançou algo")
+· tirar `KEYSET_PAGINA_SOBREPOSTA` da allowlist (`veio desconhecido`, provando que a entrada é
+carga e não enfeite).
