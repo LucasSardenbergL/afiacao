@@ -282,3 +282,57 @@ Deno.test("keyset: página fora de ordem NO MEIO lança (não só extremos troca
     "ordem",
   );
 });
+
+// ── Revisão retroativa do #1856 (2026-08-22) ────────────────────────────────────────
+// A varredura de página validava monotonia estrita DENTRO da página mas começava em
+// `anterior = null`: a PRIMEIRA linha de cada página não era comparada ao cursor da
+// anterior. A defesa era "a checagem de cursor no fim do laço cobre, uma página depois".
+// Medido: cobre a violação SISTEMÁTICA e não cobre a PONTUAL.
+
+Deno.test("keyset: sobreposição SISTEMÁTICA (.gte no lugar de .gt) morre na 1ª fronteira, não na página terminal", async () => {
+  // A checagem de cursor JÁ fechava este caso, mas TARDE: com `.gte` toda página recomeça
+  // na linha do cursor, o laço só para na página terminal (que devolve exatamente [max], e
+  // aí `proximo === cursor` lança) — tabela inteira lida, uma duplicata por página no
+  // acumulado. Com `anterior = cursor` o erro sai no 2º request, na linha que o causou.
+  // O `calls` é o dente do teste: sem ele isto passaria igual com a guarda tardia.
+  const dados = Array.from({ length: 2300 }, (_, i) => ({ id: i }));
+  let calls = 0;
+  const build = (cursor: number | null, limite: number) => {
+    calls++;
+    return Promise.resolve({
+      data: dados.filter((l) => cursor === null || l.id >= cursor).slice(0, limite),
+      error: null,
+    });
+  };
+  await assertFalhaFechada(
+    () => fetchAllKeyset<{ id: number }, number>(build, (l) => l.id, "t"),
+    "KEYSET_PAGINA_SOBREPOSTA",
+    "atrás do cursor",
+  );
+  assertEquals(calls, 2, `esperava morrer no 2º request; morreu no ${calls}º (guarda tardia)`);
+});
+
+Deno.test("keyset: página que RECOMEÇA atrás do cursor lança em vez de duplicar em silêncio", async () => {
+  // O vetor que a checagem de cursor NÃO alcança: a sobreposição acontece UMA vez e o
+  // cursor volta a se comportar (retry com cursor velho, lag de réplica, um ramo do
+  // call-site que recalcula o cursor de outra coluna). A página está ascendente, então a
+  // varredura interna passa; a ÚLTIMA linha avançou, então a checagem de cursor passa; e
+  // as linhas do começo da página já tinham sido lidas. Antes do fix: resolvia com 2.310
+  // linhas e 10 duplicadas, sem uma palavra — a duplicata silenciosa que este helper
+  // inteiro existe para tornar impossível.
+  const dados = Array.from({ length: 2300 }, (_, i) => ({ id: i }));
+  let calls = 0;
+  const build = (cursor: number | null, limite: number) => {
+    calls++;
+    const efetivo = (calls === 2 && cursor !== null) ? cursor - 10 : cursor;
+    return Promise.resolve({
+      data: dados.filter((l) => efetivo === null || l.id > efetivo).slice(0, limite),
+      error: null,
+    });
+  };
+  await assertFalhaFechada(
+    () => fetchAllKeyset<{ id: number }, number>(build, (l) => l.id, "t"),
+    "KEYSET_PAGINA_SOBREPOSTA",
+    "atrás do cursor",
+  );
+});
