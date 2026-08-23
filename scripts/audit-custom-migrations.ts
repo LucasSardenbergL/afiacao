@@ -329,6 +329,25 @@ function emitMarkdown(audits: MigrationAudit[]): string {
   return lines.join('\n');
 }
 
+/**
+ * Bytes UTF-8 reais de `conteudo` — a unidade que `ls -la`, `wc -c` e o git usam.
+ *
+ * NÃO trocar por `String.length`: ela conta unidades UTF-16, e os dois artefatos são pt-BR
+ * acentuado com alguns emoji (astral ⇒ 2 unidades cada). Medido em 2026-08-22, o `.length`
+ * subcontava o `.sql` em 194 bytes e o `.md` em 2.023.
+ *
+ * Por que importa (custo real, não estético): validar uma mudança no extrator é rodar
+ * `bun run audit:migrations` e comparar o resultado com o commitado. Quem confere o número
+ * deste log contra o `ls -la` conclui que o arquivo MUDOU e sai caçando uma regressão que não
+ * existe — aconteceu ao entregar o #1894 e custou um ciclo de apuração até o `git diff` (vazio)
+ * desempatar.
+ *
+ * Casa com o `writeFileSync(…, conteudo)` logo abaixo, que grava em utf8 por default.
+ */
+function bytesUtf8(conteudo: string): number {
+  return Buffer.byteLength(conteudo, 'utf8');
+}
+
 function main() {
   if (!existsSync(MIGRATIONS_DIR)) {
     console.error(`Migrations dir não encontrado: ${MIGRATIONS_DIR}`);
@@ -344,11 +363,11 @@ function main() {
 
   const sql = emitSql(audits);
   writeFileSync(SQL_OUT, sql);
-  console.log(`✓ Escrito ${SQL_OUT} (${sql.length} bytes)`);
+  console.log(`✓ Escrito ${SQL_OUT} (${bytesUtf8(sql)} bytes)`);
 
   const md = emitMarkdown(audits);
   writeFileSync(MD_OUT, md);
-  console.log(`✓ Escrito ${MD_OUT} (${md.length} bytes)`);
+  console.log(`✓ Escrito ${MD_OUT} (${bytesUtf8(md)} bytes)`);
 
   const totalObjects = audits.reduce((sum, a) => sum + a.objects.length, 0);
   console.log(`\nResumo: ${audits.length} migrations, ${totalObjects} objetos esperados.`);
