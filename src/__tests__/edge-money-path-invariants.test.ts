@@ -3099,7 +3099,10 @@ describe('canária VERSIONADA: omie-vendas-sync (identidade fail-closed)', () =>
   const src = read(VENDAS);
   const deployDoc = read(DEPLOY_DOC);
   const CONTRATO = 'identidade-fail-closed-v1';
-  const bloco = src.match(/case "identidade_probe":[\s\S]*?\n {6}case /)?.[0] ?? '';
+  // Sobre a fonte SEM comentários: a prosa que EXPLICA o campo cita o campo (`// \`canary: true\`
+  // acompanha o probe_no_ar...`), então um assert POSITIVO sobre o texto cru passa lendo o
+  // comentário e sobrevive à remoção do código. Falsificação S3 pegou exatamente isso.
+  const bloco = removerComentarios(src).match(/case "identidade_probe":[\s\S]*?\n {6}case /)?.[0] ?? '';
 
   it('sentinela: o bloco da canária existe', () => {
     expect(bloco, 'sumiu a action identidade_probe — sem ela não há prova do DEPLOY, só da fonte').not.toBe('');
@@ -3145,7 +3148,8 @@ describe('canária VERSIONADA: omie-analytics-sync (doc ambíguo não vira vínc
   const src = read(ANALYTICS);
   const deployDoc = read(DEPLOY_DOC);
   const CONTRATO = 'doc-ambiguo-fail-closed-v1';
-  const bloco = src.match(/case "doc_ambiguo_probe":[\s\S]*?\n {6}(?=case |default:)/)?.[0] ?? '';
+  // Idem vendas-sync: medir o CÓDIGO, não a prosa que o descreve.
+  const bloco = removerComentarios(src).match(/case "doc_ambiguo_probe":[\s\S]*?\n {6}(?=case |default:)/)?.[0] ?? '';
 
   it('sentinela: o bloco da canária existe', () => {
     expect(bloco, 'sumiu a action doc_ambiguo_probe — sem ela não há prova do DEPLOY, só da fonte').not.toBe('');
