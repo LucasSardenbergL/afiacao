@@ -811,7 +811,7 @@ população que não a da tela.
 |---|---|---|---|
 | master (founder) | 2026-08-22 21:56 (agora) | 2 | 4 |
 | employee A | 2026-08-14 14:03 (8 dias) | **0** | **0** |
-| employee B | (nenhuma sessão jamais) | **0** | **0** |
+| employee B | (nenhuma sessão VIVA — ver correção 2026-08-23) | **0** | **0** |
 
 O #1892 mergeou às 19:12 BRT de sábado; o Publish saiu entre 19:12 e 20:31 BRT. Na janela
 inteira, a única pessoa que abriu o app foi quem escreveu o código. **`aguardando_rede` é
@@ -831,8 +831,10 @@ segundo termo: **quando medir E sobre quem** — e o denominador vem do gate que
 não da tabela que o nome do papel sugere.
 
 Corolário para o MixGap: a fase N+1 não é ler o PostHog. É descobrir por que dois `employee`
-não abrem o app — um deles nunca. Um sensor sobre população inerte é a versão de telemetria
+não abrem o app — um deles nunca.[^corr] Um sensor sobre população inerte é a versão de telemetria
 do fusível que nunca foi ligado (o piloto Sayerlack, no topo deste arquivo).
+
+[^corr]: **Corrigido em 2026-08-23:** o "nunca" era leitura de `auth.sessions`, que é fotografia do vivo e não histórico. A employee B logou em **2026-04-13** (`last_sign_in_at`) e a sessão dela expirou. Ver a seção final deste arquivo.
 
 ### 6. A armadilha de medição que quase inverteu a conclusão
 
@@ -866,3 +868,118 @@ O controle que separa (b) de (c) vai junto, na mesma leitura: `SELECT count() FR
 WHERE timestamp > …` sem filtro de evento. Série do evento vazia **com** o controle positivo
 é dado real; as duas vazias é sensor não chegando — a distinção que o item 1 não pôde fazer.
 
+
+---
+
+## O zero da employee B não era conta morta — era sessão expirada (2026-08-23)
+
+O item 4 acima registrou "employee B — (nenhuma sessão jamais)" e o item 5 tirou dali a fase N+1:
+*"descobrir por que dois `employee` não abrem o app — um deles nunca"*. O **"nunca" está errado**, e
+o erro é da mesma família das outras sete casas deste arquivo: uma tabela foi lida como histórico
+quando é fotografia.
+
+### 1. A hipótese morreu na primeira fronteira
+
+A suspeita era defeito de onboarding — convite não entregue, `profiles` ausente, `is_approved`
+falso. Instrumentando cada fronteira (`auth.users` → `profiles` → `user_roles` → sessão), a
+hipótese caiu antes da segunda:
+
+| fronteira | employee B (`atendimentocolacor@gmail.com`) | veredito |
+|---|---|---|
+| `confirmation_sent_at` | 2026-04-10 11:04:53 | e-mail SAIU |
+| `confirmed_at` / `email_confirmed_at` | 2026-04-10 11:05:42 | clicou **49s depois** |
+| `encrypted_password` | definida | ✓ |
+| `banned_until` / `deleted_at` | nulos | ✓ |
+| `profiles` (por `user_id`) | existe, criado 2026-04-10 | ✓ |
+| `is_approved` / `is_employee` | `t` / `t` | ✓ |
+| `user_roles.role` | `employee` | ✓ (passa no gate da `get_meu_mixgap`) |
+| `auth.identities` | 1, provider `email` | ✓ |
+| **`last_sign_in_at`** | **2026-04-13 13:51:09** | **ela LOGOU** |
+| `recovery_sent_at` | **NULL** | nunca pediu recuperação de senha |
+| `auth.sessions` / `auth.refresh_tokens` | 0 / 0 | sessão encerrada e podada |
+
+**Não há defeito, e portanto não há SQL de correção.** A conta foi provisionada, o e-mail chegou,
+ela confirmou em 49 segundos, logou 3 dias depois e nunca mais voltou — nem tentou, já que
+`recovery_sent_at` é nulo nos três usuários. Escrever um `UPDATE` "de conserto" aqui seria
+fabricar reparo para máquina inteira: a correção mais cara deste arquivo é a que conserta o que
+não está quebrado e declara o problema resolvido.
+
+### 2. A armadilha nova: `auth.sessions` é fotografia do VIVO, não histórico
+
+Sessão que expira ou faz logout é **apagada**, e leva os `refresh_tokens` junto por cascade. Zero
+linhas significa "nenhuma sessão viva agora" — não distingue *nunca logou* de *logou e expirou*.
+
+O par de armadilhas erra para **lados opostos**, e é por isso que nenhuma das duas é medida de uso
+sozinha:
+
+| coluna | erra para | por quê |
+|---|---|---|
+| `auth.users.last_sign_in_at` | **subestima** uso | só se move em login NOVO; PWA persistente usa meses sem tocá-la |
+| `count(auth.sessions)` | **superestima** inatividade | a sessão encerrada não deixa rastro nenhum |
+
+A leitura conjunta correta: `last_sign_in_at` responde **"logou alguma vez?"** (é piso — não-nulo
+⇒ logou, naquela data); `auth.refresh_tokens.created_at` responde **"com que frequência?"**.
+`auth.sessions` não responde nem uma nem outra: ela só diz quem está logado neste instante.
+
+### 3. Três ausências de dado que quase viraram veredito
+
+Todas foram pegas pelo mesmo movimento — aplicar o predicado ao **founder**, que comprovadamente
+usa o app, e exigir que ele desse positivo:
+
+1. **`profiles` liga por `user_id`, não por `id`.** O join ingênuo (`p.id = ur.user_id`) devolveu
+   "nenhum dos 3 tem profiles" — *incluindo o master que abre o app todo dia*. Foi o controle que
+   denunciou; sem ele, o falso-negativo teria virado o defeito de onboarding procurado.
+2. **`auth.audit_log_entries` tem 0 linhas no total.** A fonte autoritativa de histórico de login
+   não existe neste projeto. Consultada por usuário devolve zero, que lê como "nenhum evento" e é
+   "nenhum conteúdo". Só o `count(*)` sem filtro separa os dois.
+3. **`sales_orders.created_by` não é uso do app.** A employee A tem 29.095 linhas — que começam em
+   **2020-06-22**, anos antes de o app existir: é atribuição de venda vinda do Omie. O
+   discriminador é `origem`, e ele é brutal: `origem='web_staff'` (pedido nascido no app) tem
+   **2 linhas em 30.979** — uma da employee A (13/06) e uma do founder (08/08). Ler as 29 mil como
+   adoção inverteria a conclusão do arquivo inteiro.
+
+O `count(*)` sem filtro ao lado de todo count filtrado deixou de ser zelo e virou o formato padrão
+da medição: **tabela morta e usuária inerte produzem o mesmo zero.**
+
+### 4. O denominador honesto da employee A
+
+`auth.refresh_tokens.created_at` é a melhor trilha de uso que o banco tem: uma linha por refresh de
+JWT, que só acontece com o cliente **aberto**. A leitura foi verificada duas vezes antes de virar
+número:
+
+- **cadência** — os 5 tokens de 22/04 estão em 11:11, 12:17, 13:14, 15:11, 17:34: ~1h de distância,
+  a assinatura de app aberto ao longo de um dia de trabalho, não de um evento automático;
+- **completude** — o primeiro token nasce **32ms** depois do `created_at` da sessão, então a cadeia
+  está inteira desde o início e a contagem é registro completo, não piso.
+
+| mês | dias com o app aberto |
+|---|---|
+| abr (a partir do dia 15) | 3 — dias 15, 17 e 22 (10 refreshes) |
+| mai | 1 — dia 28 |
+| jun | 3 — dias 12, 17 e 23 |
+| **jul** | **0** |
+| ago | 1 — dia 14 |
+
+**8 dias em 122.** E o formato importa mais que o total: abril foi tentativa real (dia 22 ela ficou
+com o app aberto das 11h às 17h34), e o que veio depois é **decaimento**, não recusa. A pergunta
+para ela não é "por que você não usa" — é "o que parou de valer a pena".
+
+### 5. A regra que isto acrescenta
+
+O item 5 pediu população exposta antes de ler a série. Este item diz **com que régua** se mede a
+exposição:
+
+> **Nenhuma tabela de sessão mede adoção.** `auth.sessions` é estado presente, `last_sign_in_at` é
+> um piso, e as duas erram para lados opostos. Antes de afirmar "nunca usou", exija a coluna que
+> só se move com um login que aconteceu de fato — e antes de afirmar "usa", exija a trilha que só
+> se move com o cliente aberto.
+
+Corolário para este caso: o app não tem um problema de contas quebradas. Tem **duas vendedoras que
+o experimentaram e o abandonaram**, uma depois de 8 dias de uso espalhados por 4 meses, outra
+depois de um único login. Toda telemetria instalada nas telas de carteira continua ilegível — mas
+agora por uma causa nomeada, que não se conserta com SQL.
+
+*(Observação estrutural, não defeito: a conta da employee B é `atendimentocolacor@gmail.com` — a
+caixa **compartilhada** de atendimento, com o nome pessoal dela no `profiles`. Conta de função não
+tem dono; é candidata natural a ninguém sentir que é sua. Vale conferir com o founder antes de
+tratar como conta individual.)*
