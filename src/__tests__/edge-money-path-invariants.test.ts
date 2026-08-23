@@ -131,6 +131,70 @@ describe('guardrail money-path: analyze-unified-order USA o helper de merge de p
   });
 });
 
+// ── Prompt caching: vigia o WIRING, não só o módulo ──
+// `prompt-sistema_test.ts` (Deno) prova o MÓDULO — e continuaria VERDE se um deploy do Lovable
+// revertesse o index.ts para o `system: systemPrompt` de string única: o módulo ficaria íntegro,
+// porém ÓRFÃO, e o cache voltaria a 100% miss sem nenhum sinal. Foi assim que o #1445→#1478
+// apagou o wiring de uma edge 4h depois do merge. Só assert POSITIVO aqui: `not.toMatch` sobre
+// fonte com comentários removidos viraria tautologia verde (§"O ALVO mente" do money-path.md).
+describe('guardrail money-path: analyze-unified-order mantém o prompt caching LIGADO', () => {
+  const src = read(ANALYZE);
+  const codigo = removerComentarios(src);
+  const modulo = read('supabase/functions/analyze-unified-order/prompt-sistema.ts');
+
+  it('sentinela: leu o edge real e o módulo de montagem do prompt', () => {
+    expect(src).toContain('prompt-sistema.ts');
+    expect(modulo).toMatch(/export function montarSystemBlocks/);
+  });
+
+  it('o edge USA o montador: importa E chama (≥2 menções)', () => {
+    expect(codigo, 'edge não importa mais de prompt-sistema.ts').toMatch(/from "\.\/prompt-sistema\.ts"/);
+    expect(
+      codigo,
+      'REGRESSÃO: edge não chama mais montarSystemBlocks — voltou ao prompt de string única?',
+    ).toMatch(/montarSystemBlocks\(\s*searchCustomer/);
+    expect(
+      count(codigo, 'montarSystemBlocks'),
+      'montarSystemBlocks deve ser IMPORTADO e CHAMADO (≥2 menções)',
+    ).toBeGreaterThanOrEqual(2);
+  });
+
+  it('o parâmetro `system` recebe os DOIS blocos (sem isso não há breakpoint de cache)', () => {
+    expect(
+      codigo,
+      'system voltou a receber uma string única — o prefixo volta a começar pelo catálogo e todo cache é miss',
+    ).toMatch(/system:\s*blocosSistema\b/);
+  });
+
+  it('o cache_control ephemeral segue no bloco ESTÁVEL (a decisão do #1608 era não ter nenhum)', () => {
+    expect(modulo, 'sumiu o cache_control — voltou ao estado do #1608, sem cache algum').toMatch(
+      /text: montarBlocoEstavel\(searchCustomer\),\s*\n\s*cache_control: \{ type: "ephemeral" \}/,
+    );
+  });
+
+  it('a instrumentação de hit rate está viva (o número é a PROVA, não a suposição)', () => {
+    expect(
+      codigo,
+      'sumiu a leitura do usage de cache — o hit rate voltaria a ser suposição (crítica do Codex no #1608)',
+    ).toMatch(/resumirUsoCache\(\s*resposta\.usage\s*\)/);
+    expect(codigo, 'os contadores de cache não chegam mais ao log').toMatch(
+      /escrita=\$\{numero\(usoCache\.escrita\)\}/,
+    );
+  });
+
+  it('o detector do #1608 (paga escrita e NUNCA lê) segue ligado', () => {
+    // Um alerta só de "escrita=0 E leitura=0" NÃO pega o desastre do #1608: prefixo que muda a
+    // cada request gera escrita>0/leitura=0 SEMPRE. Achado do challenge Codex nesta entrega.
+    expect(
+      codigo,
+      'sumiu o acumulador por variante — uma chamada isolada não distingue cold miss de miss permanente',
+    ).toMatch(/acumularUsoCache\(/);
+    expect(codigo, 'sumiu o alerta de escrita paga sem nenhuma leitura').toMatch(
+      /pagaEscritaSemNuncaLer\(\s*acc\s*\)/,
+    );
+  });
+});
+
 describe('guardrail money-path: algorithm-a-audit (margem)', () => {
   const src = read(AUDIT);
 
