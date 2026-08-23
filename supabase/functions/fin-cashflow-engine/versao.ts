@@ -21,7 +21,15 @@ import { criarRespostaSonda } from "../_shared/sonda-versao.ts";
 export const respostaSonda = criarRespostaSonda("fin-cashflow-engine");
 
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
-export const VERSAO = "v1.0-sensor-inicial";
+//
+// v1.0 → v1.1: o #1889 mudou `_shared/paginate.ts`, que esta edge importa — EOF passou a ser página
+// VAZIA (não CURTA) e o offset avança pelas linhas REAIS devolvidas. O bump não é cosmético: ele é a
+// ÚNICA prova possível deste deploy. O #1889 é deliberadamente no-op nos dados de hoje (o `max-rows`
+// de prod é 1000, igual ao `PAGE` do helper — o comportamento antigo funciona por coincidência
+// numérica), então NENHUMA canária de comportamento consegue discriminar bundle novo de velho aqui:
+// os dois produzem bytes idênticos. Sem mexer no marcador, a sonda responderia "v1.0-sensor-inicial"
+// tendo o deploy acontecido ou não — o "mente verde" da ⚠️ #2 de docs/agent/deploy.md.
+export const VERSAO = "v1.1-paginacao-eof-vazio";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

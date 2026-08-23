@@ -28,6 +28,7 @@ import * as cashflow from "../fin-cashflow-engine/versao.ts";
 import * as syncEstoque from "../omie-sync-estoque/versao.ts";
 import * as syncNfes from "../omie-sync-nfes-recebidas/versao.ts";
 import * as nfeWebhook from "../omie-nfe-webhook/versao.ts";
+import * as analyticsSync from "../omie-analytics-sync/versao.ts";
 
 /**
  * `respostaSonda` (a maioria) ou `respostaSondaTactical` (a `generate-tactical-plan`, que embrulha o
@@ -69,6 +70,12 @@ const EDGES: Array<{ nome: string; mod: ModSonda }> = [
   // própria medição de acerto. Não é leitura pura — por isso não cai na exceção declarada
   // acima (fin-funding, fin-valor-engine).
   { nome: "recommend", mod: recommendMod },
+  // Quinta leva (#1889 paginação): a `omie-analytics-sync` escreve product_costs, order_items,
+  // sales_orders e inventory_position — mesma regra da terceira leva. Ela JÁ tinha uma canária
+  // (`doc_ambiguo_probe`), mas NÃO-VERSIONADA: responde `probe_no_ar:true` igual num bundle de hoje
+  // e num de três fatias atrás, então não discrimina deploy integralmente velho (a ⚠️ #2 de
+  // docs/agent/deploy.md, que classifica versioná-las como dívida aberta). O marcador fecha isso.
+  { nome: "omie-analytics-sync", mod: analyticsSync },
 ];
 
 /** As cinco da terceira leva — os gates estruturais abaixo varrem todas. */
@@ -79,6 +86,7 @@ const ESCRITA_NOSSO_BANCO = [
   "omie-sync-estoque",
   "omie-sync-nfes-recebidas",
   "omie-nfe-webhook",
+  "omie-analytics-sync",
 ];
 
 /** Destas o gate NÃO aceita `x-cron-secret`, então a sonda precisa de gate PRÓPRIO. */
