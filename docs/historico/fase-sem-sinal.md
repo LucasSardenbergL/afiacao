@@ -642,6 +642,23 @@ Duas coisas ficaram LOCAIS de propósito, e a fronteira é a lição:
   o `satisfies` é o que a faz **falhar a compilação** se o helper ganhar um terceiro estado, em vez
   de mandar `undefined` para o PostHog.
 
+**Complemento (mesmo dia, sessão paralela): o `satisfies` protege o MAPA, não a FRONTEIRA.**
+`MOTIVO_NA_SERIE` falha a compilação se o helper ganhar um estado novo — mas não tem como impedir
+que alguém mande o estado do helper ao PostHog **por fora dele** (`track(…, { …, leitura })`). E
+essa rota não acende nenhuma das defesas de sempre: a tela não muda, e `track(event,
+Record<string, unknown>)` não tipa payload, então o `tsc` fica verde.
+
+Os 15 testes do card também não pegam, e isso foi MEDIDO por falsificação sobre o card já
+consolidado: acrescentando `leitura` ao payload, **15 verdes, 0 vermelhos** — porque eles usam
+`toMatchObject`, que ignora chave EXTRA. "Os testes passaram sem edição" prova que o refactor
+preservou comportamento; **não** prova que o literal está preso.
+
+O que prende é um assert MECÂNICO sobre o payload inteiro — *nenhum valor string do evento contém
+hífen* —, porque o vocabulário da leitura é hifenizado e o da série nunca é. Ele vale para o
+literal que ainda não foi inventado, que é justamente o que uma allowlist de valores conhecidos
+não cobre. Vive em `MixGapCard.estados.test.tsx`, describe "o alfabeto do evento não muda por
+refactor".
+
 ⚠️ **O que manteve o arquivo fora do gate `erro-colapsado-em-vazio` foi acidente feliz, e vale saber
 por quê:** o gate exige que a desestruturação do hook ligue alguma de `{error, isError, …, status}`.
 A versão antiga passava por causa do `error`; a nova passa por causa do **`status`**, que o helper

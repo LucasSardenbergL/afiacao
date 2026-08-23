@@ -347,3 +347,105 @@ describe('MixGapCard — dado bom no cache sobrevive à atualização que falha'
     expect(eventosVistos()[1]).toMatchObject({ estado: 'com_gap', desatualizado: 'sem_rede' });
   });
 });
+
+/**
+ * FRONTEIRA DE TELEMETRIA — o alfabeto do evento é CONGELADO aqui, e de propósito.
+ *
+ * O card fala DUAS línguas que se parecem o bastante para serem trocadas sem ninguém ver:
+ *
+ *   `estadoDeLeitura` (@/lib/leitura/estado-de-leitura) devolve `'sem-rede'` — com HÍFEN;
+ *   o evento `carteira.mixgap_visto` emite `'sem_rede'`/`'aguardando_rede'` — com UNDERSCORE.
+ *
+ * Enquanto o card derivava a máquina de estados à mão os dois nunca se encontravam. Desde o
+ * #1904 ele CONSOME o helper, e os dois passaram a ficar a um `?:` de distância. O #1904 fez a
+ * tradução certa (`MOTIVO_NA_SERIE`, com `satisfies`), mas o `satisfies` protege o mapa — não
+ * protege quem decidir mandar o estado do helper adiante por FORA dele. E esse desvio não
+ * quebra nada que o compilador veja: `track(event, properties?: Record<string, unknown>)` não
+ * tipa o payload, então o `tsc` fica verde e a tela continua idêntica. O que quebra é a
+ * SÉRIE — os eventos passariam a sair sob um literal novo e a continuidade morreria no meio.
+ *
+ * E aqui não há volume que conserte: são 3 vendedores em `commercial_roles`. Uma série que
+ * reinicia não se recupera pela lei dos grandes números — é a mesma poluição de denominador
+ * que o #1859 existe para impedir (`docs/historico/fase-sem-sinal.md`).
+ *
+ * Por isso a asserção é sobre o LITERAL, não sobre o comportamento: o comportamento
+ * sobreviveria à troca. A regra mecânica — nenhum valor do payload contém hífen — pega
+ * qualquer vazamento do vocabulário do helper, inclusive um que ainda não existe.
+ */
+describe('MixGapCard — o alfabeto do evento não muda por refactor', () => {
+  const ESTADOS = ['com_gap', 'zero', 'erro', 'aguardando_rede'];
+  const MOTIVOS = ['erro', 'sem_rede'];
+
+  /** O literal do helper vaza com HÍFEN; o do evento é sempre underscore. */
+  function conferirAlfabeto(ev: Record<string, unknown>) {
+    expect(ESTADOS, `estado fora do alfabeto congelado: ${String(ev.estado)}`)
+      .toContain(ev.estado);
+    if (ev.desatualizado !== null && ev.desatualizado !== undefined) {
+      expect(MOTIVOS, `motivo fora do alfabeto congelado: ${String(ev.desatualizado)}`)
+        .toContain(ev.desatualizado);
+    }
+    // Rede de segurança genérica, e ela varre o payload INTEIRO — não as duas chaves que
+    // hoje conhecemos. É o único assert aqui que pega o vazamento que ninguém fixou, e isso
+    // foi MEDIDO contra o card do #1904: acrescentar `leitura` ao payload (o estado do helper,
+    // `'sem-rede'` quando offline) deixa os 15 testes originais VERDES — eles usam
+    // `toMatchObject`, que ignora chave extra. O vocabulário do helper é hifenizado e o do
+    // evento nunca é; a regra mecânica vale inclusive para o literal que ainda não existe.
+    for (const [chave, v] of Object.entries(ev)) {
+      if (typeof v === 'string') {
+        expect(v, `\`${chave}\` veio hifenizado (\`${v}\`) — é o vocabulário de ` +
+          '`estadoDeLeitura` vazando para o PostHog: a tela continua certa e a série QUEBRA')
+          .not.toMatch(/-/);
+      }
+    }
+  }
+
+  it('OFFLINE sem cache: o estado é `aguardando_rede`, nunca o `sem-rede` do helper', async () => {
+    onlineManager.setOnline(false);
+    resposta = { data: COM_GAP, error: null };
+    renderCard();
+
+    await waitFor(() => expect(eventoVisto()).toBeTruthy());
+    const ev = eventoVisto()!;
+    expect(ev.estado).toBe('aguardando_rede');
+    expect(ev.estado).not.toBe('sem-rede');
+    conferirAlfabeto(ev);
+  });
+
+  it('OFFLINE com cache: o motivo é `sem_rede`, nunca o `sem-rede` do helper', async () => {
+    resposta = { data: COM_GAP, error: null };
+    const { qc } = renderCard();
+    await screen.findByText('Marcenaria Alfa');
+
+    onlineManager.setOnline(false);
+    await act(async () => { void qc.invalidateQueries({ queryKey: ['my-mixgap'] }); });
+
+    await waitFor(() => expect(eventosVistos()).toHaveLength(2));
+    const ev = eventosVistos()[1];
+    expect(ev.desatualizado).toBe('sem_rede');
+    expect(ev.desatualizado).not.toBe('sem-rede');
+    conferirAlfabeto(ev);
+  });
+
+  it('a máquina INTEIRA percorrida: todo evento sai no alfabeto congelado', async () => {
+    // fresco → refetch que falha (desatualizado:'erro') → rede cai (desatualizado:'sem_rede').
+    resposta = { data: COM_GAP, error: null };
+    const { qc } = renderCard();
+    await screen.findByText('Marcenaria Alfa');
+
+    resposta = { data: null, error: { message: 'timeout' } };
+    await act(async () => { await qc.refetchQueries({ queryKey: ['my-mixgap'] }).catch(() => {}); });
+    await waitFor(() => expect(eventosVistos()).toHaveLength(2));
+
+    onlineManager.setOnline(false);
+    await act(async () => { void qc.invalidateQueries({ queryKey: ['my-mixgap'] }); });
+    await waitFor(() => expect(eventosVistos()).toHaveLength(3));
+
+    // Controle POSITIVO: sem isto o `forEach` abaixo passaria de graça numa lista vazia —
+    // "nenhum evento fora do alfabeto" é verdade trivial quando não houve evento nenhum.
+    const vistos = eventosVistos();
+    expect(vistos.length, 'a fixture parou de produzir eventos — o sweep viraria teatro')
+      .toBeGreaterThanOrEqual(3);
+    expect(vistos.map((e) => e.desatualizado)).toEqual([null, 'erro', 'sem_rede']);
+    vistos.forEach(conferirAlfabeto);
+  });
+});
