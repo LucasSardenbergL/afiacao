@@ -49,6 +49,32 @@ Vale reparar que é a Forma 1 outra vez, mas com a defasagem colapsada de três 
 
 O que reduz o dano, na ordem: **(a)** depois de uma leva de merges, disparar o `workflow_dispatch` do CI na `main` (`gh workflow run CI --ref main`) — não adianta consultar runs de push, eles não existem; **(b)** quando o PR adiciona *arquivo* de uma categoria gateada (`docs/`, `src/` sob o `manifesto.gate`, migrations), conferir se algum PR **recém-mergeado** criou gate novo sobre ela; **(c)** ao entregar um gate estrutural, varrer os PRs **abertos** por violações que já existem neles — o gate nasce sabendo o que a `main` tem, não o que está a caminho.
 
+## Forma 4 — o trabalho já foi refeito, num lugar que busca nenhuma alcança (#1326, 661 commits atrás)
+
+Medida em 2026-08-22, ao tentar reviver o [#1326](https://github.com/LucasSardenbergL/afiacao/pull/1326) (achado A2 da identidade Omie, draft desde 14/07). A redução ao diferencial correu bem: o PR-1/A1 já tinha mergeado, então dos 16 arquivos só **2 commits** eram delta real. O que condenou o PR não foi o conflito — foi o **pré-voo contra a PROD**.
+
+Nos 661 commits de intervalo, a `omie_customer_account_map` ganhou um **4º `source`: `'rpc'`** (21 linhas, escrito por `register_carteira_member`, do workstream "carteira"). O `client_to_user` do #1326 cobria só `document` e `manual`. Entregá-lo em agosto embarcaria uma **regressão de money-path**: um writer que troca `source` sem tocar a evidência renova o frescor para sempre, e a linha errada nunca expira. É a mesma classe que o challenge do Codex pegara no `manual` — só que o ramo `rpc` não existia ainda para ser corrigido.
+
+Ao procurar quem introduziu o `'rpc'`, o `git log --all -S"'rpc'"` devolveu três commits de **2026-08-21** com mensagens do mesmo trabalho (`wip(omie): PR-2/A2 migration + prova PG17`, `fix(omie): … evidencia nao sobrevive ao writer rpc`). `git branch -r --contains` deu **vazio**: nenhum branch remoto. `git branch -a --contains` achou o dono — `claude/friendly-jackson-769b49`, **local, nunca pushado, sem PR**, 10 commits, **28** atrás da `main` (contra 661), duas rodadas de Codex, prova PG17 de 486 linhas. O A2 estava pronto e melhor, a um `git push` de distância.
+
+**Por que nenhuma busca de rotina acha isso.** O CLAUDE.md já manda procurar o **artefato**, não o título do PR — `git fetch && git grep <símbolo> origin/main`. Essa regra existe porque busca por título é cega ao que mergeou com outro nome. Mas ela é, por construção, cega a um branch que **nunca foi pushado**: não está na `main`, não tem PR, não aparece em `gh pr list`, e o `git grep origin/main` por `client_to_user` devolvia só o teste do A1. Três sondas legítimas, três negativos, e o trabalho existindo o tempo todo.
+
+A sonda que funciona é por **conteúdo, em TODAS as refs**:
+
+```bash
+git log --all -S'<simbolo>' --oneline    # pickaxe: acha o commit onde o símbolo entrou/saiu
+git branch -a --contains <sha>           # e em qual branch ele vive (inclusive local)
+```
+
+Com ~40 worktrees paralelas vivas, isto **não é acidente** — é estrutural: a chance de outra sessão já ter refeito a tarefa parada é alta, e o resultado dela pode nunca ter saído da máquina. O `git worktree list` é o complemento (localiza a pasta), mas repare que o branch estava **órfão**: a worktree dele já tinha trocado para outro branch, e ainda assim o trabalho estava íntegro.
+
+Dois detalhes de método que decidiram o desempate:
+
+- **Não confie na mensagem de commit** — `fix(omie): … evidencia nao sobrevive ao writer rpc` *afirma* tratar o caso; quem provou foi ler a migration e ver `m.source = ANY (ARRAY['document','rpc'])` no ramo de revogação, e contar `revoked_client_codes` = **0 ocorrências** no #1326.
+- **Distância da `main` é melhor discriminante que data** — o branch novo tinha medido a PROD por conta própria (`document=16.097, rpc=21`) e os números **bateram com a medição independente feita na hora**. Isso corrobora que a base dele era a realidade atual, coisa que "é mais recente" sozinho não prova.
+
+Desfecho: o #1326 foi **fechado apontando o substituto**, e o branch local virou o [#1888](https://github.com/LucasSardenbergL/afiacao/pull/1888), mergeado no mesmo dia. Reviver o PR pedido teria sido trabalho perdido **e** uma regressão.
+
 ## Artefato gerado não se resolve, se regenera
 
 Os 2 conflitos do #1332 eram `docs/migrations-audit.md` e `scripts/audit-custom-migrations.sql` — **saída idempotente** de `bun run audit:migrations`. Escolher lado ali é errado nos dois sentidos (perde as migrations da main ou as do PR). Rodar o gerador sobre a árvore já mesclada deu o inventário correto: 626 migrations = 624 da main + 2 do branch, conferido com `comm -23` contra `git ls-tree origin/main` para provar que nenhuma da main se perdeu.
@@ -79,5 +105,7 @@ O que separa isso de um defeito real é evidência lateral, não fé: **o mesmo 
 1. **PR não-draft em conflito é um PR que ninguém está segurando de propósito** — o freio do repo é o draft ([CLAUDE.md](../../CLAUDE.md), §Merge). Conflito não é freio, é esquecimento. Varrer `gh pr list --json mergeable` acha os que caíram nessa — **mas a varredura one-shot MENTE**: o campo é calculado sob demanda e o PR frio devolve `UNKNOWN`, não o estado. Rodada aqui em 21/08, ela deu `UNKNOWN` em 6 de 7 e a segunda chamada devolveu 5 `CONFLICTING`. Consulte, espere, **re-consulte** — e trate `UNKNOWN` como ausência de dado. → [mergeabilidade-assincrona.md](mergeabilidade-assincrona.md)
 2. **CI verde antigo não vale como validação** — re-rode depois do merge da `main`, sempre.
 3. **Depois de uma leva de merges, valide a `main` de propósito** — `gh workflow run CI --ref main`. O verde do PR atesta a base do momento do *run*, e entre ele e o merge cabe outro PR que muda a régua (aqui coube em 135s). Consultar runs de push **não** funciona: o auto-merge usa `GITHUB_TOKEN` e o push dele não aciona workflow nenhum.
-3. **PR de dead code tem prazo de validade curto**: a premissa é sobre o repo inteiro. Se passou de algumas semanas, o barato é medir de novo (`typecheck` + `knip`), não confiar na lista original.
-4. **Antes do rerun de step vermelho, procure o passe vizinho.** Sem evidência de que a causa é ambiental, rerun apaga sinal em vez de destravar.
+4. **PR de dead code tem prazo de validade curto**: a premissa é sobre o repo inteiro. Se passou de algumas semanas, o barato é medir de novo (`typecheck` + `knip`), não confiar na lista original.
+5. **Antes de reviver um PR parado, procure o trabalho REFEITO — em todas as refs, não só na `main`.** `git log --all -S'<simbolo>'` + `git branch -a --contains <sha>`. Com ~40 worktrees vivas, outra sessão pode já ter entregue a tarefa num branch **local, nunca pushado** — invisível a `gh pr list`, a `git grep origin/main` e a busca por título. → [Forma 4](#forma-4--o-trabalho-já-foi-refeito-num-lugar-que-busca-nenhuma-alcança-1326-661-commits-atrás)
+6. **Antes de reviver um PR parado, pré-voe o SQL/os invariantes contra a PROD.** O que envelhece não é só a régua do CI: o **dado** muda. Foi um `source` novo em produção — não um gate — que revelou que o #1326 embarcaria regressão. → `~/.config/afiacao/psql-ro`
+7. **Antes de rerun de step vermelho, procure o passe vizinho.** Sem evidência de que a causa é ambiental, rerun apaga sinal em vez de destravar.
