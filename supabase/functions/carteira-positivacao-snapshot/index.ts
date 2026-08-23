@@ -23,6 +23,7 @@ import {
 } from '../_shared/mapas-paginados.ts';
 import type { BancoPostgrest } from '../_shared/paginate.ts';
 import { montarLinhasSnapshot } from './montar-linhas.ts';
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from './versao.ts';
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
@@ -30,12 +31,29 @@ Deno.serve(async (req) => {
   const auth = await authorizeCronOrStaff(req);
   if (!auth.ok) return auth.response;
 
+  // O parse do corpo SUBIU para cá (era depois do `createClient`): a sonda tem de decidir sem ter
+  // aberto conexão — é o que o gate estrutural "a sonda responde ANTES do createClient" exige, e é
+  // o que a torna o único caminho sem custo desta edge. Ver versao.ts / _shared/sonda-versao.ts.
+  // O gate acima já aceita `x-cron-secret`, então a sonda não precisa de gate próprio.
+  const body = await req.json().catch(() => ({} as { mes?: string }));
+
+  const decisaoSonda = classificarSonda(body);
+  if (decisaoSonda.tipo === 'sonda') {
+    return new Response(JSON.stringify(respostaSonda(VERSAO)), {
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+  if (decisaoSonda.tipo === 'ambiguo') {
+    return new Response(
+      JSON.stringify({ error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }),
+      { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+    );
+  }
+
   const supabase = createClient(
     Deno.env.get('SUPABASE_URL')!,
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
   );
-
-  const body = await req.json().catch(() => ({} as { mes?: string }));
 
   // Resolve mês-alvo (default = mês anterior em BRT).
   const nowBrt = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));

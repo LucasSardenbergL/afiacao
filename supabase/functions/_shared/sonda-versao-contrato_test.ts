@@ -29,6 +29,11 @@ import * as syncEstoque from "../omie-sync-estoque/versao.ts";
 import * as syncNfes from "../omie-sync-nfes-recebidas/versao.ts";
 import * as nfeWebhook from "../omie-nfe-webhook/versao.ts";
 import * as analyticsSync from "../omie-analytics-sync/versao.ts";
+import * as valorCockpit from "../fin-valor-cockpit/versao.ts";
+import * as finFunding from "../fin-funding/versao.ts";
+import * as algoAudit from "../algorithm-a-audit/versao.ts";
+import * as positivacao from "../carteira-positivacao-snapshot/versao.ts";
+import * as omieFinanceiro from "../omie-financeiro/versao.ts";
 
 /**
  * `respostaSonda` (a maioria) ou `respostaSondaTactical` (a `generate-tactical-plan`, que embrulha o
@@ -76,6 +81,20 @@ const EDGES: Array<{ nome: string; mod: ModSonda }> = [
   // e num de três fatias atrás, então não discrimina deploy integralmente velho (a ⚠️ #2 de
   // docs/agent/deploy.md, que classifica versioná-las como dívida aberta). O marcador fecha isso.
   { nome: "omie-analytics-sync", mod: analyticsSync },
+  // Sexta leva (#1889 paginação, parte 2): as cinco edges de MAIOR leitura entre as 17 que
+  // ainda serviam o `paginate.ts` velho. Duas delas — `fin-valor-cockpit` e `fin-funding` —
+  // são leitura PURA, que a terceira leva excluiu de propósito ("chamá-la já é grátis, então a
+  // sonda não resolve problema que ela tenha"). A exceção segue válida para o problema que ela
+  // endereçava (efeito colateral caro) e NÃO cobre este: o #1889 é no-op por DESENHO enquanto o
+  // `max-rows` de prod for 1000, então a resposta do fluxo real é byte-idêntica nos dois
+  // bundles e chamar a edge — de graça ou não — não diz qual está no ar
+  // (docs/historico/deploy-no-op-por-desenho.md). Barato de chamar e possível de verificar são
+  // propriedades diferentes; só o marcador dá a segunda.
+  { nome: "fin-valor-cockpit", mod: valorCockpit },
+  { nome: "fin-funding", mod: finFunding },
+  { nome: "algorithm-a-audit", mod: algoAudit },
+  { nome: "carteira-positivacao-snapshot", mod: positivacao },
+  { nome: "omie-financeiro", mod: omieFinanceiro },
 ];
 
 /** As cinco da terceira leva — os gates estruturais abaixo varrem todas. */
@@ -89,12 +108,41 @@ const ESCRITA_NOSSO_BANCO = [
   "omie-analytics-sync",
 ];
 
+/**
+ * Os gates estruturais abaixo (fail-closed, IO-free, nunca sem auth) varrem ESTA lista, não só a
+ * terceira leva: a FORMA que eles exigem não tem nada a ver com escrever no banco — vale para
+ * qualquer edge instrumentada. A sexta leva entra junto porque nasceu já nessa forma; as levas 1
+ * e 2 ficam de fora porque têm formas legadas que nunca foram normalizadas, e alargar a
+ * varredura para elas é mudança de escopo próprio, não carona desta.
+ */
+const FORMA_NORMALIZADA = [
+  ...ESCRITA_NOSSO_BANCO,
+  "fin-valor-cockpit",
+  "fin-funding",
+  "algorithm-a-audit",
+  "carteira-positivacao-snapshot",
+  "omie-financeiro",
+];
+
 /** Destas o gate NÃO aceita `x-cron-secret`, então a sonda precisa de gate PRÓPRIO. */
 // `recommend` entra aqui porque seu gate normal é JWT e o `getUser` PRECISA do client — mas a
 // sonda responde ANTES do `createClient` (o gate acima exige). Sobrava só o
 // `startsWith("Bearer ")`: verificado em PROD, `Authorization: Bearer x` (token inválido)
 // devolvia a versão. Semi-público por acidente, não por decisão.
-const GATE_PROPRIO = ["omie-cliente", "omie-nfe-webhook", "recommend"];
+// `fin-valor-cockpit` (authorizeGestorOuMaster), `fin-funding` (authorizeMaster) e
+// `omie-financeiro` entram pelo mesmo motivo com causas distintas: as duas primeiras exigem
+// `Authorization: Bearer` + role e nunca leram `x-cron-secret`; a terceira LÊ o cron-secret, mas
+// dentro de `validateCaller(req, supabase)` — que precisa do client, criado depois do ponto onde
+// a sonda tem de responder. Nos três casos o caminho do SQL Editor não chega ao gate normal, e a
+// sonda só pode vir antes dele trazendo `authorizeCronOrStaff` própria.
+const GATE_PROPRIO = [
+  "omie-cliente",
+  "omie-nfe-webhook",
+  "recommend",
+  "fin-valor-cockpit",
+  "fin-funding",
+  "omie-financeiro",
+];
 
 Deno.test("toda edge instrumentada declara VERSAO no formato vN.N-slug", () => {
   for (const { nome, mod } of EDGES) {
@@ -298,11 +346,11 @@ Deno.test("toda edge instrumentada RESPONDE à sonda (chamar classificarSonda n�
   }
 });
 
-Deno.test("terceira leva: a sonda decide por classificarSonda, não por `=== true` cru", () => {
+Deno.test("forma normalizada: a sonda decide por classificarSonda, não por `=== true` cru", () => {
   // Mesmo motivo do gate da generate-bundle-argument: o founder invoca do SQL Editor, onde
   // `jsonb_build_object('probe', true)` vira a STRING "true" com facilidade. Aqui o preço de cair
   // no fluxo real é criar placeholder+profile, reescrever saldo ou gravar projeção de caixa.
-  for (const nome of ESCRITA_NOSSO_BANCO) {
+  for (const nome of FORMA_NORMALIZADA) {
     const codigo = codigoDaEdge(nome);
     if (!/classificarSonda\(/.test(codigo)) {
       throw new Error(`${nome}: não chama classificarSonda — a sonda não é fail-closed`);
@@ -313,10 +361,10 @@ Deno.test("terceira leva: a sonda decide por classificarSonda, não por `=== tru
   }
 });
 
-Deno.test("terceira leva: a sonda responde ANTES do createClient do handler", () => {
+Deno.test("forma normalizada: a sonda responde ANTES do createClient do handler", () => {
   // O valor da sonda é ser o único caminho sem custo. Na `omie-sync-nfes-recebidas` o parse do
   // corpo estava DEPOIS do `createClient` e teve de subir; este gate é o que impede a volta.
-  for (const nome of ESCRITA_NOSSO_BANCO) {
+  for (const nome of FORMA_NORMALIZADA) {
     const h = trechoDoHandler(nome);
     const posSonda = h.indexOf("classificarSonda(");
     const posCliente = h.indexOf("createClient(");
