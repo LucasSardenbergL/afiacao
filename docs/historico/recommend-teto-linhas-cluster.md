@@ -222,6 +222,25 @@ para 0,118 com **dois**; `atencao` vai de 12 para 15 produtos em 0,10; `estavel`
 `simIndisponivel` já desligou o componente. Medição reproduzível em
 `db/recommend-denominador-observados.sql` (roda contra prod, `EXIT=0`).
 
+### Falsificar em MEMÓRIA, não in-place — a sabotagem sobreviveu ao processo que ia desfazê-la
+
+A primeira tentativa de falsificar o gate seguiu o padrão do repo: `perl -i` sabota o arquivo, roda
+o teste, `git checkout --` restaura. O `vitest` levou mais que o teto de 10 min (a máquina estava em
+thrashing de swap: 6,6 GB de 7 GB usados, 45 worktrees), **o comando foi morto no meio e o
+`git checkout` nunca executou** — o arquivo money-path ficou sabotado no disco. `money-path.md` já
+avisa que `trap … EXIT` é obrigatório nesses scripts; o que este caso acrescenta é que **um comando
+de shell composto não tem trap nenhum**, e o timeout do harness mata entre os `&&`.
+
+⇒ Quando a propriedade a provar é TEXTUAL (gate de regex sobre fonte), sabote **uma cópia em
+memória**: leia o arquivo, aplique o mesmo `removerComentarios` que o gate usa, rode as regexes
+VERBATIM do teste contra a cópia sã e contra as sabotadas. Prova a mesma coisa — que o gate
+discrimina —, custa segundos em vez de dez minutos, não carrega o runner, e **não existe janela em
+que o repo esteja sabotado**. Exige duas disciplinas para não virar teatro: (a) `assert` de que a
+substituição REALMENTE mudou o texto (senão você compara a fonte com ela mesma e tudo "passa"); e
+(b) importar o stripper REAL, não reescrever um — a cegueira do gate costuma morar nele.
+
+Medido aqui: `aprovaReal=SIM · pegaSabotagem1=SIM · pegaSabotagem2=SIM`, com o repo limpo ao fim.
+
 ## Segue aberto (nomeado para não passar por consertado)
 
 - **auto-inclusão**: diluída para 0,13%/0,29%/1,00%, não consertada — falta leave-one-out;
