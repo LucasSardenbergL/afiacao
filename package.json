@@ -36,7 +36,7 @@
     "wt:preflight": "bun scripts/wt-preflight-migration.ts",
     "claude:size": "bash scripts/check-claude-md-budget.sh",
     "claude:instr": "bash scripts/instrucoes-relatorio.sh",
-    "test:hooks": "for t in heavy pr-collision pr-duplicata migration-collision branch-pos-squash destructive-bash migration-immutability edge-guardrail; do bash scripts/test-$t-guard.sh || exit 1; done; for t in orfaos-custosos wt-status wt-orfas bash-contexto-nudge read-contexto-nudge stop-contexto-caro stop-moneypath-nudge wt-prune wt-clean wt-reap codex-async claude-md-budget hooks-sessionstart pr-watch preflight-migration tokens-report verify-edge-pat lovable-revert-scan; do bash scripts/test-$t.sh || exit 1; done",
+    "test:hooks": "for t in heavy pr-collision pr-duplicata migration-collision branch-pos-squash destructive-bash migration-immutability edge-guardrail; do bash scripts/test-$t-guard.sh || exit 1; done; for t in orfaos-custosos wt-status wt-orfas bash-contexto-nudge read-contexto-nudge stop-contexto-caro stop-moneypath-nudge wt-prune wt-clean wt-reap codex-async claude-md-budget hooks-sessionstart pr-watch preflight-migration tokens-report verify-edge-pat lovable-revert-scan posthog-query; do bash scripts/test-$t.sh || exit 1; done",
     "heavy:install": "bash scripts/heavy-install.sh"
   },
   "dependencies": {

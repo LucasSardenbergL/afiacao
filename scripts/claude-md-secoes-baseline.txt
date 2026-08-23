@@ -5,8 +5,8 @@
 # Por que teto por seção (e não só do arquivo inteiro): topo de scripts/check-claude-md-budget.sh.
 110	(preâmbulo)
 312	## Preferências do founder (Lucas)
-170	## Índice — `docs/agent/` (referência operacional, LEIA o doc ANTES de tocar o domínio)
-1083	## ⚠️ Armadilhas recorrentes (caras — a maioria money-path/banco; detalhe no doc/agent indicado)
+181	## Índice — `docs/agent/` (referência operacional, LEIA o doc ANTES de tocar o domínio)
+1079	## ⚠️ Armadilhas recorrentes (caras — a maioria money-path/banco; detalhe no doc/agent indicado)
 84	## Merge (auto)
 158	## Stack
 148	## Design System (v3 — "fintech premium": Vercel/Mercury/Stripe Dashboard)
