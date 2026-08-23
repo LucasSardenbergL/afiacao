@@ -238,22 +238,36 @@ export async function fetchAllKeyset<T, K extends string | number>(
     // de 24 call-sites, e `push(...rows)` espalharia uma string em caracteres.
     if (!Array.isArray(data)) throw new FalhaLeituraCritica(label, { code: 'MALFORMADA' });
     const rows = data;
-    // Varre a PÁGINA INTEIRA antes de acumular nada. Três violações do contrato do keyset
-    // caem aqui, e as três resolveriam em SILÊNCIO sem esta varredura:
+    // Varre a PÁGINA INTEIRA antes de acumular nada. Quatro violações do contrato do keyset
+    // caem aqui, e as quatro resolveriam em SILÊNCIO sem esta varredura:
     //
     //   chave AUSENTE  — a coluna-chave ficou fora do `.select()`. O `.select()` é uma
     //     string e a interface da linha PROMETE o campo, então o typecheck passa e só o
     //     runtime descobre; o cursor viraria `undefined` e o `.gt()` filtraria o que desse.
     //   ordem DESC     — `.order(chave,{ascending:false})` no call-site. Precisa ser pego
-    //     aqui e não na comparação de cursor lá embaixo: sob DESC a 2ª página já volta
-    //     curta, o laço encerraria pelo `length < PAGE` e a comparação nunca rodaria.
+    //     aqui e não na comparação de cursor lá embaixo: aquela só olha a ÚLTIMA linha, que
+    //     sob DESC é a MENOR da página — o diagnóstico sairia como "cursor recuou", que
+    //     descreve o sintoma e manda o leitor caçar tudo menos o `.order()` invertido.
     //   ordem ARBITRÁRIA — `.limit()` sem `.order()`. Comparar só os extremos da página
     //     deixaria passar a que tem o miolo embaralhado, e aí a última linha não é a maior
     //     chave: o cursor salta e a faixa entre ela e a real nunca é lida.
+    //   página SOBREPOSTA — a página recomeça ATRÁS do cursor: linha já lida voltando no
+    //     começo da próxima. É por isso que `anterior` começa em `cursor` e não em `null`.
+    //     A primeira linha da página é a ÚNICA que a checagem de cursor lá embaixo não
+    //     alcança, porque aquela compara só a última. Violação SISTEMÁTICA (`.gte` no lugar
+    //     de `.gt`) ela até pega — mas só na página TERMINAL, com a tabela inteira já lida e
+    //     uma duplicata por página no acumulado. Violação PONTUAL (retry com cursor velho,
+    //     lag de réplica, ramo do call-site que tira o cursor de outra coluna) ela não pega
+    //     NUNCA: a página está ascendente, então esta varredura passava; a última linha
+    //     avançou, então a checagem de cursor passava; e a leitura RESOLVIA com duplicata.
+    //     Medido antes deste fix, com sobreposição de 10 linhas sobre 2.300: devolvia 2.310
+    //     linhas e 10 duplicadas, em silêncio — exatamente o desfecho que este helper existe
+    //     para tornar impossível.
     //
     // Custa uma comparação por linha (≤1.000 por página) — a leitura em si é uma ida à
     // rede, então isto não aparece no perfil.
-    let anterior: K | null = null;
+    let anterior: K | null = cursor;
+    let primeira = true;
     for (const linha of rows) {
       const k = chave(linha);
       if (k === null || k === undefined) {
@@ -266,18 +280,32 @@ export async function fetchAllKeyset<T, K extends string | number>(
         // O VALOR das chaves ia na mensagem por `JSON.stringify` — e a chave é uma COLUNA da
         // linha (PK, código de cliente). O modo da violação é constante do código e fica
         // público; os valores vão para `cause`, com o resto do diagnóstico.
-        // Igualdade e decrescente são MODOS distintos e têm conserto distinto: chave repetida
-        // significa "a coluna não é única no recorte" (troque a chave); decrescente significa
-        // "o `.order()` está ao contrário". Fundir os dois em `k <= anterior` sem separar o
-        // código manda o leitor caçar um `.order()` que está correto.
+        // Os MODOS são distintos e têm conserto distinto: chave repetida significa "a coluna
+        // não é única no recorte" (troque a chave); decrescente significa "o `.order()` está
+        // ao contrário"; sobreposta significa "o filtro do cursor não bate com a chave".
+        // Fundir tudo em `k <= anterior` sem separar o código manda o leitor caçar um
+        // `.order()` que está correto.
+        // A fronteira precisa de código PRÓPRIO e não pode reusar CHAVE_REPETIDA: com `.gte`
+        // no call-site, `k === cursor` é uma linha REPETIDA ENTRE PÁGINAS, não uma chave
+        // não-única — o conserto é o operador do filtro, não a escolha da coluna, e mandar o
+        // leitor trocar uma chave que já é única é o diagnóstico que parece diagnóstico e
+        // não é.
+        const atravessaPagina = primeira && cursor !== null;
         throw new FalhaLeituraCritica(label, {
-          code: k === anterior ? 'KEYSET_CHAVE_REPETIDA' : 'KEYSET_FORA_DE_ORDEM',
-          message: k === anterior
+          code: atravessaPagina
+            ? 'KEYSET_PAGINA_SOBREPOSTA'
+            : k === anterior
+            ? 'KEYSET_CHAVE_REPETIDA'
+            : 'KEYSET_FORA_DE_ORDEM',
+          message: atravessaPagina
+            ? `página recomeçou em ${JSON.stringify(k)}, atrás do cursor ${JSON.stringify(cursor)} — a linha já foi lida; o call-site precisa filtrar .gt(cursor), não .gte, e na MESMA coluna de que sai a chave`
+            : k === anterior
             ? `chave repetida em ${JSON.stringify(k)} dentro da mesma página — a chave precisa ser ÚNICA no recorte`
             : `página fora de ordem ASCENDENTE (${JSON.stringify(anterior)} → ${JSON.stringify(k)}) — o keyset exige .order() ascendente na MESMA coluna do cursor`,
         });
       }
       anterior = k;
+      primeira = false;
     }
     out.push(...rows);
     // Mesma razão do `fetchAll`: página CURTA não é fim, é o `max-rows` podendo ser menor que
