@@ -1,5 +1,6 @@
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { comRegistro, type DbRegistro } from "../_shared/registro-execucao.ts";
 import { fetchAll } from "../_shared/paginate.ts";
 import { STATUS_NAO_VENDA_POSTGREST } from "../_shared/universo-pedidos.ts";
@@ -2184,13 +2185,52 @@ Deno.serve(async (req) => {
   const auth = await authorizeCronOrStaff(req);
   if (!auth.ok) return auth.response;
 
+  // ⚠️ SONDA DE VERSÃO — logo após o gate (que já aceita x-cron-secret) e ANTES do createClient,
+  // porque o valor da sonda é ser o único caminho sem custo. Ver versao.ts / _shared/sonda-versao.ts.
+  //
+  // O parse subiu para cá: `req.json()` é one-shot, então o corpo lido aqui é reaproveitado como
+  // `action`/`account`/... abaixo, em vez de lido duas vezes. Dois desfechos mudam de forma, e os
+  // dois para MELHOR: corpo com JSON inválido devolvia 500 pelo catch geral (erro do cliente
+  // contado como falha nossa) e agora devolve 400; e corpo `null` estourava TypeError no
+  // destructuring — agora vira `{}` e cai no "Ação desconhecida", que é o que ele sempre foi.
+  let corpoBruto: unknown;
+  try {
+    corpoBruto = await req.json();
+  } catch {
+    return new Response(JSON.stringify({ error: "invalid JSON" }), {
+      status: 400,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+  const decisaoSonda = classificarSonda(corpoBruto);
+  if (decisaoSonda.tipo === "sonda") {
+    return new Response(JSON.stringify(respostaSonda(VERSAO)), {
+      status: 200,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+  if (decisaoSonda.tipo === "ambiguo") {
+    return new Response(JSON.stringify({ error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }), {
+      status: 400,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
   try {
     const supabaseAdmin = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
 
-    const { action, account = "vendas", start_page, max_pages } = await req.json();
+    // Corpo já consumido pela sonda acima. Não-objeto vira {} — cai no "Ação desconhecida" do
+    // `default`, como antes.
+    const { action, account = "vendas", start_page, max_pages } =
+      (typeof corpoBruto === "object" && corpoBruto !== null ? corpoBruto : {}) as {
+        action?: string;
+        account?: string;
+        start_page?: number;
+        max_pages?: number;
+      };
     // Registro de execuções (acoes_execucoes): cast estrutural — o client untyped satisfaz o mínimo.
     const dbRegistro = supabaseAdmin as unknown as DbRegistro;
     let result: unknown;

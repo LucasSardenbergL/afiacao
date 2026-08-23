@@ -13,6 +13,7 @@ import { useMarkMixGapFeedback } from '@/hooks/useMarkMixGapFeedback';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { buildPorQue } from '@/lib/mixgap/format';
 import { track } from '@/lib/analytics';
+import { estadoDeLeitura, desatualizado, type EstadoSemLeitura } from '@/lib/leitura/estado-de-leitura';
 
 /**
  * O card colapsava TRÊS estados numa tela em branco só, e o evento só saía num deles.
@@ -58,10 +59,30 @@ import { track } from '@/lib/analytics';
  * regressão para quem está na rua. O desenho composto (lista PRESERVADA + faixa de aviso +
  * `desatualizado: 'erro' | 'sem_rede'` no evento) serve aos dois: o vendedor não perde a
  * carteira e a série sabe separar "viu número fresco" de "agiu sobre número velho".
+ *
+ * ── CONSOLIDAÇÃO (#1886 + #1892, que atacaram esta classe em paralelo sem colidir em código).
+ * Os dois discriminantes acima — "a leitura aconteceu?" e "o que está na tela está velho?" — eram
+ * derivados À MÃO aqui, porque o #1892 pousou antes de o helper existir. Agora saem de
+ * `@/lib/leitura/estado-de-leitura`: `estadoDeLeitura` (mapeamento EXAUSTIVO de status × fetchStatus)
+ * e `desatualizado` (o composto "pronta PORÉM desatualizada", com a precedência `sem-rede` > `erro`).
+ * Metade canônica e metade artesanal é pior que as duas artesanais: a artesanal envelhece calada
+ * enquanto a canônica ganha estado novo, e o estado que sobra colapsa no vizinho — que é
+ * literalmente o defeito que este card já teve duas vezes. O que fica LOCAL é o que é local de
+ * verdade: `data === null` ("não é staff" — resposta da RPC, não estado de leitura) e a tradução do
+ * motivo para a chave que a série do PostHog já usa.
  */
 type EstadoMixGap = 'com_gap' | 'zero' | 'erro' | 'aguardando_rede';
+
+/**
+ * O helper fala a língua da camada pura (`'sem-rede'`); a SÉRIE do PostHog já tem `sem_rede`
+ * gravado desde o #1892. Renomear a chave partiria o histórico do evento em duas séries que
+ * ninguém soma depois — então a tradução mora AQUI, na fronteira da telemetria, e não no helper.
+ * O `satisfies` é o que a torna exaustiva: se `EstadoSemLeitura` ganhar um terceiro membro, isto
+ * PARA DE COMPILAR em vez de mandar `undefined` para o PostHog.
+ */
+const MOTIVO_NA_SERIE = { 'sem-rede': 'sem_rede', erro: 'erro' } as const satisfies Record<EstadoSemLeitura, string>;
 /** Por que o número na tela pode estar velho. `null` = acabou de ser lido com sucesso. */
-type MotivoDesatualizado = 'erro' | 'sem_rede';
+type MotivoDesatualizado = (typeof MOTIVO_NA_SERIE)[EstadoSemLeitura];
 
 function AvisoDesatualizado({ motivo }: { motivo: MotivoDesatualizado }) {
   const Icone = motivo === 'sem_rede' ? WifiOff : AlertTriangle;
@@ -77,34 +98,37 @@ function AvisoDesatualizado({ motivo }: { motivo: MotivoDesatualizado }) {
 }
 
 export function MixGapCard() {
-  const { data, error, isPending, fetchStatus } = useMyMixGap();
+  const { data, status, fetchStatus } = useMyMixGap();
   const { mutate: markFeedback } = useMarkMixGapFeedback();
   const { isImpersonating } = useImpersonation();
 
+  // `status`+`fetchStatus` é a fatia INTEIRA que decide se a leitura aconteceu — a mesma que o
+  // <AvisoLeituraFalhou>, o DataHealthBanner e o AlertasStack consomem. Derivar isto na mão aqui
+  // (o que o #1892 fez, antes de o helper existir) é como o estado OFFLINE some: o mapeamento
+  // (status × fetchStatus) precisa ser EXAUSTIVO, e uma cópia artesanal só é exaustiva no dia em
+  // que foi escrita. `status` também é o que mantém este arquivo fora do gate erro-colapsado-em-vazio.
+  const leitura = estadoDeLeitura({ status, fetchStatus });
+
   // `data === null` é a RPC dizendo "você não é staff" (ela retorna NULL sem uid/sem role) — e isso
-  // só existe DEPOIS de a query RESOLVER. `undefined` NÃO é sinônimo: é pendente, pausada ou
-  // desabilitada, três coisas diferentes. Ler os dois como "sem acesso" foi o defeito de origem.
+  // NÃO é um estado de leitura: é a resposta, e por isso não sai do helper. `undefined` não é
+  // sinônimo (é pendente, pausada ou desabilitada); ler os dois como "sem acesso" foi o defeito de
+  // origem, e é por isso que `semAcesso` continua tendo precedência sobre tudo aqui embaixo.
   const semAcesso = data === null;
   const temDado = data != null;
-  const pausado = fetchStatus === 'paused';        // offline: o react-query nem dispara a request
-  const inerte = isPending && fetchStatus === 'idle';   // query desabilitada (sem user)
-  const carregando = isPending && fetchStatus === 'fetching';
 
-  // Pausado ANTES de erro, e a ordem só decide ALGUMA coisa aqui: `fetchState` (query-core) zera
-  // `error`/`status` ao iniciar um fetch APENAS quando `data === undefined` — sem dado, erro e
-  // pausa nunca coexistem; COM dado no cache o erro é preservado e os dois se sobrepõem. Nesse
-  // caso o motivo acionável é o atual: recarregar não resolve falta de sinal.
-  const desatualizado: MotivoDesatualizado | null =
-    !temDado ? null : pausado ? 'sem_rede' : error ? 'erro' : null;
+  // A precedência (`sem-rede` ganha de `erro`) e a razão de ela só decidir algo COM dado no cache
+  // moram no helper, junto do teste que a falsifica — não replicadas aqui.
+  const motivo = desatualizado({ status, fetchStatus }, temDado);
+  const desatualizacao: MotivoDesatualizado | null = motivo === null ? null : MOTIVO_NA_SERIE[motivo];
 
   const estado: EstadoMixGap | null =
-    semAcesso || inerte || carregando
+    semAcesso || leitura === 'desabilitada' || leitura === 'carregando'
       ? null
       : data != null
         ? (data.totalComGap > 0 ? 'com_gap' : 'zero')
-        : pausado
-          ? 'aguardando_rede'   // sem dado os dois ramos são exclusivos (ver `desatualizado`)
-          : error
+        : leitura === 'sem-rede'
+          ? 'aguardando_rede'   // sem dado, 'sem-rede' e 'erro' são exclusivos (ver helper)
+          : leitura === 'erro'
             ? 'erro'
             : null;
 
@@ -115,19 +139,19 @@ export function MixGapCard() {
     // sinal de leitura falhando em campo. A guarda por chave (e não por booleano) deixa passar
     // erro → zero → com_gap na mesma montagem, que separa falha transitória de carteira vazia.
     if (!estado) return;
-    const chave = `${estado}:${desatualizado ?? 'fresco'}`;
+    const chave = `${estado}:${desatualizacao ?? 'fresco'}`;
     if (trackedChave.current === chave) return;
     trackedChave.current = chave;
     track('carteira.mixgap_visto', {
       estado,
       total_com_gap: data != null ? data.totalComGap : null,
-      desatualizado,
+      desatualizado: desatualizacao,
     });
-  }, [estado, desatualizado, data]);
+  }, [estado, desatualizacao, data]);
 
-  if (semAcesso || inerte) return null;
+  if (semAcesso || leitura === 'desabilitada') return null;
 
-  if (carregando) {
+  if (leitura === 'carregando') {
     return (
       <Card>
         <CardHeader className="pb-2">
@@ -176,7 +200,7 @@ export function MixGapCard() {
   if (data.totalComGap === 0) {
     return (
       <Card>
-        {desatualizado && <AvisoDesatualizado motivo={desatualizado} />}
+        {desatualizacao && <AvisoDesatualizado motivo={desatualizacao} />}
         <EmptyState
           tone="operational"
           icon={Search}
@@ -189,7 +213,7 @@ export function MixGapCard() {
 
   return (
     <Card>
-      {desatualizado && <AvisoDesatualizado motivo={desatualizado} />}
+      {desatualizacao && <AvisoDesatualizado motivo={desatualizacao} />}
       <CardHeader className="pb-2">
         <h2 className="text-base font-medium">Oportunidades de cross-sell</h2>
         <p className="text-2xs text-muted-foreground">
