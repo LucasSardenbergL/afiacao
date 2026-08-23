@@ -97,6 +97,18 @@ Canária prova **comportamento** com fixture; a **sonda** prova só **qual bundl
 
 ⚠️ **Canária que não discrimina é teatro verde.** Se a mudança for no-op nos dados de hoje (caso do #1397: 0 conflitos em prod), a resposta do fluxo REAL é byte-idêntica com código velho ou novo — não prova deploy nenhum. A fixture tem de exercitar **o comportamento que mudou**, e o teste tem de provar que sob o comportamento ANTIGO a canária ficaria vermelha (ver `rebuild-helpers.test.ts` → "a fixture DISCRIMINA"; e `_shared/omie-paginacao_test.ts` → bloco "CONTROLE DE CALIBRAÇÃO", que roda a forma pré-#1598 sobre os fixtures homônimos da `paginacao_probe`). Sem esse assert, a canária só prova que a função responde.
 
+⚠️ **No-op por DESENHO: quando NENHUMA fixture existe, e o marcador vira a única prova.**
+A armadilha acima é no-op por **acaso dos dados** (#1397: 0 conflitos em prod) e conserta-se com
+fixture melhor. Há um caso em que isso é impossível: o PR cujo ganho é **proteção contra mudança
+futura**, que por desenho não altera comportamento nenhum hoje — bundle novo e velho produzem
+bytes IDÊNTICOS (o #1889 da paginação: o `max-rows` de prod é 1000, igual ao `PAGE` do helper).
+Procurar fixture aí é procurar o que o PR garante não haver. Sobra a **sonda de versão** — e ela
+só prova se o marcador for **bumpado ANTES do deploy**: marcador igual na `main` e em prod
+responde a mesma string tendo o deploy acontecido ou não. **Compare `main`×prod no PRÉ-FLIGHT**;
+iguais, a viagem é inverificável e o bump vira pré-requisito, não consequência. Nas 3 edges do
+#1889 as três falhavam nisso, uma delas por canária NÃO-VERSIONADA (a ⚠️ #2 acima).
+→ `docs/historico/deploy-no-op-por-desenho.md`
+
 **Como o founder invoca uma probe sem terminal** (ele não tem acesso de shell ao backend): cole no **SQL Editor do Lovable** — o segredo sai do vault, nunca do chat — e leia a resposta em `net._http_response`. Mesmo mecanismo do cron, com `timeout_milliseconds` EXPLÍCITO (default 5s mata silencioso). Trocando `action`/`url`, serve para as outras probes:
 
 ```sql
