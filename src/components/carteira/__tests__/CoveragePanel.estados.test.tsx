@@ -98,7 +98,9 @@ describe('CoveragePanel — "não consegui ler" não pode sair como "não há co
       commercial_roles: { data: VENDEDORES, error: null },
     };
     renderPainel();
-    expect(await screen.findByText(AVISO)).toBeTruthy();
+    // Offline pausa AS DUAS queries, então os dois avisos saem — por isso a asserção mira o
+    // texto ESPECÍFICO das coberturas em vez da frase comum, que aqui casaria em duplicata.
+    expect(await screen.findByText(/as coberturas ativas/)).toBeTruthy();
     expect(screen.queryByText(VAZIO)).toBeNull();
   });
 

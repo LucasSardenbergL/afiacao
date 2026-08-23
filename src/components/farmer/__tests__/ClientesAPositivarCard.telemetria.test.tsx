@@ -48,9 +48,13 @@ describe('ClientesAPositivarCard — churn desconhecido não pode virar churn ba
     expect(evento!.churn_alto).not.toBe(false);
   });
 
-  it('a fronteira 60 continua inclusiva — a correção não mexeu no limiar', () => {
+  // Dois `render()` no mesmo `it` empilhariam o card no DOM e o getByText acharia dois —
+  // a fronteira vira dois casos separados, cada um com o seu DOM limpo.
+  it('fronteira 60: inclusiva (>= 60), a correção não mexeu no limiar', () => {
     expect(abrirPrimeiro([cliente({ churn_risk: 60 })])!.churn_alto).toBe(true);
-    track.mockClear();
+  });
+
+  it('fronteira 60: 59 continua abaixo', () => {
     expect(abrirPrimeiro([cliente({ churn_risk: 59 })])!.churn_alto).toBe(false);
   });
 });

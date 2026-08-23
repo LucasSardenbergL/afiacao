@@ -10,14 +10,18 @@ import { estadoDeLeitura, naoConsegui, type EstadoSemLeitura } from '@/lib/leitu
  * RLS (Sub-PR A) garante que só master OU o próprio coberto pode inserir.
  */
 
-export interface ActiveCoverage {
+// Sem `export` nos dois abaixo: com os 4 consumidores migrados para
+// `useCarteirasQueEuCubro`, ninguém de fora importa o hook cru nem o seu tipo — e o knip
+// reprova export sem consumidor (mesma pedra que o #1886 pisou com `FormaDeSilencio`).
+// Continuam PÚBLICOS na prática via a costura interpretada, que é a API que se quer usada.
+interface ActiveCoverage {
   id: string;
   covered_user_id: string;
   valid_until: string | null;
 }
 
 /** user_ids cujas carteiras EU cubro agora (cobertura ativa e dentro da validade). */
-export function useMyActiveCoverage() {
+function useMyActiveCoverage() {
   const { user } = useAuth();
   return useQuery({
     queryKey: ['my-active-coverage', user?.id],
