@@ -36,13 +36,37 @@ OAuth), e a lógica fica **versionada e testada** no repo em vez de num plugin o
 ### Instalar a key (só o founder faz — a key NUNCA passa pelo chat)
 
 1. https://us.posthog.com/settings/user-api-keys → **New personal API key**.
-2. Escopos **apenas de leitura**: `query:read`, `insight:read`, `event:read`. **Não** dar escopo de
-   escrita. Em "Organization & project access", liberar o projeto do Afiação.
-3. No terminal. O `read -rs` é deliberado: a key entra por **prompt**, então não passa por `argv`
-   (visível em `ps`) nem pelo histórico do zsh — colar num `printf` deixaria o segredo nos dois.
+2. Escopos **apenas de leitura** — na UI eles têm nome legível, e **não existe um escopo "Event"
+   avulso** (medido em 2026-08-23; a lista traz *Event definition* e *Event filter*). O mínimo que
+   faz o `/query/` funcionar é **Query → Read**; os outros só ampliam descoberta:
+
+   | linha na UI | valor | para quê |
+   |---|---|---|
+   | **Query** | Read | **essencial** — é o escopo do endpoint `/query/` |
+   | Insight | Read | ler insights salvos |
+   | Event definition | Read | descobrir quais eventos existem de fato |
+   | Property definition | Read | descobrir os nomes de propriedade de um evento |
+
+   Todo o resto fica em **No access** — em especial *Session recording* e *Person*, que são os
+   pesados em PII. Nenhum **Write**, em lugar nenhum.
+
+   Em "Organization & project access", escolher **Projects** e marcar só o projeto do Afiação
+   (`423408`) — não "All access".
+3. Com a key ainda na área de transferência (o PostHog só a mostra **uma vez**), mande o clipboard
+   direto pro arquivo. Assim o segredo não passa por `argv` (`ps`) nem pelo histórico do shell, e
+   não depende de TTY:
 
 ```bash
-mkdir -p ~/.config/afiacao && umask 077 && read -rs "?Cole a Personal API Key (phx_...): " k && printf '%s\n' "$k" > ~/.config/afiacao/posthog-ro && unset k && chmod 600 ~/.config/afiacao/posthog-ro && echo "" && echo "instalado: $(wc -c < ~/.config/afiacao/posthog-ro) bytes"
+mkdir -p ~/.config/afiacao && umask 077 && pbpaste > ~/.config/afiacao/posthog-ro && chmod 600 ~/.config/afiacao/posthog-ro && awk 'NR==1{print (/^phx_/ ? "OK: key phx_ com " length($0) " chars" : "PROBLEMA: o clipboard nao tem uma key phx_")}' ~/.config/afiacao/posthog-ro
+```
+
+   Se o clipboard já tiver sido perdido, o fallback é por prompt — **e note o dialeto**: a forma
+   `read -rs "?prompt" var` é **só zsh**. Em bash ela falha (`?prompt` vira nome de variável), o
+   `&&` interrompe a cadeia e **nenhum arquivo é criado** — falha silenciosa que já aconteceu aqui
+   em 2026-08-23. A forma abaixo roda nos dois:
+
+```bash
+mkdir -p ~/.config/afiacao && umask 077 && printf 'Cole a key: ' && IFS= read -rs k && printf '%s\n' "$k" > ~/.config/afiacao/posthog-ro && unset k && chmod 600 ~/.config/afiacao/posthog-ro && printf '\n' && awk 'NR==1{print (/^phx_/ ? "OK: " length($0) " chars" : "PROBLEMA: nao comeca com phx_")}' ~/.config/afiacao/posthog-ro
 ```
 
    Depois que este PR mergear, o atalho curto (opcional, espelha o `psql-ro`):
@@ -51,8 +75,10 @@ mkdir -p ~/.config/afiacao && umask 077 && read -rs "?Cole a Personal API Key (p
 ln -sf /Users/lucassardenberg/Projetos/afiacao/scripts/posthog-query.sh ~/.config/afiacao/posthog-query && echo "symlink pronto"
 ```
 
-4. Se a key for **escopada a um projeto**, `@current` pode não resolver (HTTP 403). Nesse caso grave
-   o id numérico (está na URL do PostHog, `/project/<id>/`) em `~/.config/afiacao/posthog-project-id`.
+4. O id do projeto já está fixado em `~/.config/afiacao/posthog-project-id` (`423408`, lido da URL
+   `us.posthog.com/project/423408/…` — não é segredo). Fixá-lo é o que torna a key **escopada a um
+   projeto** segura de usar: sem ele o wrapper cai em `@current`, que resolve pelo `current_team` da
+   conta e devolve **403** quando os dois divergem.
 
 ## 3. Uso
 
