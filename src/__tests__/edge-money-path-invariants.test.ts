@@ -3014,3 +3014,185 @@ describe('guardrail money-path: denominador e amostra do sim_score (recommend)',
     ).toEqual(daFonte);
   });
 });
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// VERSIONAMENTO DAS 3 CANÁRIAS QUE NASCERAM SEM MARCADOR DE CONTRATO
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// A ⚠️ #2 de docs/agent/deploy.md §Canárias ("mente verde"): um deploy INTEGRALMENTE VELHO carrega a
+// canária de uma fatia anterior — com o `expected` VELHO junto — e compara velho×velho. Responde
+// `canary:true, ok:true` e passa como aprovado, sem discriminar reversão de fatia. O `ok` sozinho
+// separa "a função respondeu" de nada; o `contrato` é o que separa "respondeu" de "é a versão que eu
+// deployei". Enquanto houve `contrato = —` na tabela do deploy.md, a dívida ficou aberta
+// (docs/historico/deploy-no-op-por-desenho.md, lição 2: "canária não-versionada é meia-canária").
+//
+// O marcador NOMEIA a fatia que a canária verifica HOJE — não `v1.0-sensor-inicial`, que só é
+// honesto quando o sensor nasce na mesma fatia. Estas três canárias são PRÉ-EXISTENTES: o marcador
+// nomeia o contrato que cada uma já verificava, e o BUMP passa a ser obrigatório a cada fatia que
+// mude esse contrato (senão a próxima reversão volta a passar despercebida).
+//
+// Cada gate abaixo amarra as DUAS pontas — produtor (a edge emite o marcador) e consumidor (a linha
+// da tabela do deploy.md fixa o valor esperado). Sem a segunda, o produtor emite e o verificador
+// segue aceitando `ok` sozinho: foi exatamente o que o Codex R7 bloqueou no carteira-rebuild.
+
+const DEPLOY_DOC = 'docs/agent/deploy.md';
+
+// Matcher ANCORADO na LINHA da tabela: `| \`<edge>\` | <rota> | \`<contrato>\` | …`. Um `toContain`
+// solto aceitaria o valor em qualquer trecho do doc — inclusive na prosa que explica a armadilha.
+const linhaDaTabela = (edge: string, contrato: string) =>
+  new RegExp(`\\|\\s*\`${edge}\`\\s*\\|[^|]*\\|\\s*\`${contrato}\`\\s*\\|`);
+
+describe('canária VERSIONADA: analyze-unified-order (praticado vence Omie)', () => {
+  const src = read(ANALYZE);
+  const deployDoc = read(DEPLOY_DOC);
+  const CONTRATO = 'praticado-vence-omie-v1';
+
+  it('a canária emite o VERSION MARKER `contrato`', () => {
+    expect(
+      src,
+      'sumiu o marcador `contrato` da canária de preço — um deploy integralmente velho responderia ok:true comparando velho×velho',
+    ).toMatch(/contrato: ['"]praticado-vence-omie-v1['"]/);
+  });
+
+  it('a LINHA da tabela do deploy.md fixa o MESMO marcador (senão o verificador não sabe o que exigir)', () => {
+    expect(
+      deployDoc,
+      'a linha do `analyze-unified-order` na tabela de canárias não fixa `praticado-vence-omie-v1` — o founder leria `—` e aceitaria `ok` sozinho',
+    ).toMatch(linhaDaTabela('analyze-unified-order', CONTRATO));
+  });
+
+  it('o marcador NOMEIA a fatia — nada de `v1.0-sensor-inicial` genérico numa canária pré-existente', () => {
+    // Regra 1 de deploy.md: `v1.0-sensor-inicial` só é honesto quando o sensor NASCE ali. Esta
+    // canária existe desde o #1089; o marcador tem de nomear o contrato que ela verifica hoje.
+    expect(CONTRATO).not.toMatch(/sensor-inicial/);
+    expect(CONTRATO, 'marcador genérico não discrimina fatia').toMatch(/praticado|preco|omie/);
+  });
+
+  it('decide a canária pelo classificador ROBUSTO — `canary === true` cru manda a string do SQL Editor pro LLM', () => {
+    const limpo = removerComentarios(src);
+    expect(
+      limpo,
+      'a canária voltou a decidir por `canary === true` cru: `jsonb_build_object(\'canary\', true)` vira a STRING "true" com facilidade e cairia no FLUXO REAL (análise de pedido com LLM), cuja resposta é indistinguível de "bundle velho"',
+    ).not.toMatch(/canary === true/);
+    expect(
+      limpo,
+      'a canária não usa classificarFlag — sem ele o valor não reconhecido executa em vez de recusar',
+    ).toMatch(/classificarFlag\(\s*body\s*,\s*['"]canary['"]\s*\)/);
+  });
+
+  it('valor AMBÍGUO recusa com 400 em vez de gastar LLM', () => {
+    const limpo = removerComentarios(src);
+    expect(
+      limpo,
+      'o ramo ambíguo da canária não recusa com 400 — valor não reconhecido cairia no fluxo real caro',
+    ).toMatch(/ambiguo[\s\S]{0,400}status:\s*400/);
+  });
+
+  it('a canária continua PURA (não toca LLM/Omie/DB) — é o que a torna barata de sondar', () => {
+    const bloco = removerComentarios(src).match(/tipo === ['"]sonda['"][\s\S]*?\n {4}\}/)?.[0] ?? '';
+    expect(bloco, 'âncora: não achei o bloco da canária').not.toBe('');
+    expect(bloco, 'canária faz escrita no DB — deve ser dry-run puro').not.toMatch(/\.(upsert|insert|update|delete)\(/);
+    expect(bloco, 'canária chama a Anthropic — deixaria de ser barata e gastaria token').not.toMatch(/anthropic|messages\.create/i);
+  });
+});
+
+describe('canária VERSIONADA: omie-vendas-sync (identidade fail-closed)', () => {
+  const src = read(VENDAS);
+  const deployDoc = read(DEPLOY_DOC);
+  const CONTRATO = 'identidade-fail-closed-v1';
+  const bloco = src.match(/case "identidade_probe":[\s\S]*?\n {6}case /)?.[0] ?? '';
+
+  it('sentinela: o bloco da canária existe', () => {
+    expect(bloco, 'sumiu a action identidade_probe — sem ela não há prova do DEPLOY, só da fonte').not.toBe('');
+  });
+
+  it('a canária emite o VERSION MARKER `contrato`', () => {
+    expect(
+      bloco,
+      'sumiu o marcador `contrato` do identidade_probe — a canária responderia igual num bundle de hoje e num de três fatias atrás',
+    ).toMatch(/contrato: ['"]identidade-fail-closed-v1['"]/);
+  });
+
+  it('emite TAMBÉM `canary: true` — a receita SQL do deploy.md lê esse campo', () => {
+    // A probe nasceu respondendo só `probe_no_ar`. A receita documentada faz
+    // `content::jsonb->'canary'` e leria NULL: o verificador não conseguiria aplicar o predicado
+    // dos cinco campos sem uma variante por edge. `probe_no_ar` FICA (o gate acima o exige).
+    expect(bloco, 'a canária não expõe `canary: true` — a receita SQL do deploy.md leria NULL').toMatch(/canary: true/);
+    expect(bloco, 'sumiu `probe_no_ar` — o campo histórico da probe').toContain('probe_no_ar');
+  });
+
+  it('a LINHA da tabela do deploy.md fixa o MESMO marcador', () => {
+    expect(
+      deployDoc,
+      'a linha do `omie-vendas-sync` na tabela de canárias não fixa `identidade-fail-closed-v1`',
+    ).toMatch(linhaDaTabela('omie-vendas-sync', CONTRATO));
+  });
+
+  it('o marcador NOMEIA a fatia que a canária verifica hoje', () => {
+    expect(CONTRATO).not.toMatch(/sensor-inicial/);
+    expect(CONTRATO, 'marcador genérico não discrimina fatia').toMatch(/identidade/);
+  });
+
+  it('a fixture DISCRIMINA: o caso de divergência advisory×derivado está na tabela-verdade', () => {
+    // É o coração do P0-B. Sob a forma ANTIGA (advisory sobrescrevia o derivado) este caso responde
+    // {ok:true, codigo_cliente:999} em vez de {ok:false, reason:'divergence'} → canária VERMELHA.
+    // Sem este caso a probe só provaria que a função responde.
+    expect(bloco, 'sumiu o caso divergencia_supplied — a canária pararia de discriminar o override').toContain('divergencia_supplied');
+    expect(bloco).toMatch(/reason: ['"]divergence['"]/);
+  });
+});
+
+describe('canária VERSIONADA: omie-analytics-sync (doc ambíguo não vira vínculo)', () => {
+  const src = read(ANALYTICS);
+  const deployDoc = read(DEPLOY_DOC);
+  const CONTRATO = 'doc-ambiguo-fail-closed-v1';
+  const bloco = src.match(/case "doc_ambiguo_probe":[\s\S]*?\n {6}(?=case |default:)/)?.[0] ?? '';
+
+  it('sentinela: o bloco da canária existe', () => {
+    expect(bloco, 'sumiu a action doc_ambiguo_probe — sem ela não há prova do DEPLOY, só da fonte').not.toBe('');
+  });
+
+  it('a canária emite o VERSION MARKER `contrato`', () => {
+    expect(
+      bloco,
+      'sumiu o marcador `contrato` do doc_ambiguo_probe — foi a canária citada em docs/historico/deploy-no-op-por-desenho.md como "tinha canária, mas NÃO-VERSIONADA"',
+    ).toMatch(/contrato: ['"]doc-ambiguo-fail-closed-v1['"]/);
+  });
+
+  it('emite TAMBÉM `canary: true`, sem perder `probe_no_ar`', () => {
+    expect(bloco, 'a canária não expõe `canary: true` — a receita SQL do deploy.md leria NULL').toMatch(/canary: true/);
+    expect(bloco, 'sumiu `probe_no_ar` — o campo histórico da probe').toContain('probe_no_ar');
+  });
+
+  it('a LINHA da tabela do deploy.md fixa o MESMO marcador', () => {
+    expect(
+      deployDoc,
+      'a linha do `omie-analytics-sync` na tabela de canárias não fixa `doc-ambiguo-fail-closed-v1`',
+    ).toMatch(linhaDaTabela('omie-analytics-sync', CONTRATO));
+  });
+
+  it('o marcador NOMEIA a fatia que a canária verifica hoje', () => {
+    expect(CONTRATO).not.toMatch(/sensor-inicial/);
+    expect(CONTRATO, 'marcador genérico não discrimina fatia').toMatch(/ambiguo/);
+  });
+
+  it('o deploy.md avisa que esta resposta vem EMBRULHADA em `data` (senão a receita lê NULL)', () => {
+    // Esta edge responde `{success:true, data:{...}}`; as outras respondem no topo. Uma receita que
+    // só faz `content::jsonb->'canary'` devolve NULL aqui — e NULL lido como "sem canária" é a
+    // ausência de dado sendo lida como veredito.
+    expect(
+      deployDoc,
+      'a receita SQL do guia não desce no envelope `data` — leria NULL nesta edge e o verificador concluiria "não tem canária"',
+    ).toMatch(/COALESCE\(content::jsonb->'data',\s*content::jsonb\)/);
+    expect(
+      deployDoc,
+      'a linha da tabela não avisa que esta resposta vem embrulhada em `data`',
+    ).toMatch(/`omie-analytics-sync`[^|]*\|[^|]*embrulhada em `data`/);
+  });
+
+  it('a fixture DISCRIMINA: o caso de 2 códigos distintos no mesmo doc está na tabela-verdade', () => {
+    // Sob um helper sempre-∅ (a regressão que o Lovable já causou em #1272/#1273) este caso responde
+    // [] em vez de ["111"] → canária VERMELHA. É o caso que o run normal NUNCA exercita, porque não
+    // há duplicata-CNPJ real em prod: some sem deixar rastro no dado.
+    expect(bloco, 'sumiu o caso doc_2_codigos_distintos — a canária pararia de discriminar o helper sempre-∅').toContain('doc_2_codigos_distintos');
+  });
+});

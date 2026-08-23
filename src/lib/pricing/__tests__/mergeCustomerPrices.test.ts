@@ -98,3 +98,52 @@ describe("isValidUnitPrice — guard money-path (finito e > 0)", () => {
     }
   });
 });
+
+// ════════ CONTROLE DE CALIBRAÇÃO da canária `?canary=1` (analyze-unified-order) ════════
+// "Canária que não discrimina é teatro verde" (docs/agent/deploy.md): a fixture tem de exercitar o
+// comportamento que MUDOU, e é preciso PROVAR que sob a implementação ANTIGA ela ficaria VERMELHA.
+// Sem estes asserts, a probe só provaria que a edge responde — que é exatamente a diferença entre
+// canária versionada e "meia-canária" (docs/historico/deploy-no-op-por-desenho.md, lição 2).
+//
+// O bloco reimplementa a forma PRÉ-#1077/#1080 e roda o MESMO fixture que a canária carrega
+// (local=123, Omie=999, expected=123), exigindo que o resultado DIVIRJA do `expected`. O fixture é
+// repetido aqui de propósito: se alguém mudar os números na edge sem mudar aqui, o diff mostra.
+describe("CALIBRAÇÃO: a canária de preço fica VERMELHA sob a forma pré-#1077", () => {
+  // A forma antiga: o segundo laço não tinha o guard `!(productId in priceMap)`, então o histórico
+  // do Omie SOBRESCREVIA o preço praticado em vez de só preencher gap. Era o bug money-path que o
+  // deploy do Lovable já reverteu uma vez (2026-06-26) — e é o que a canária vigia.
+  const mergeAntigo = (
+    localPrices: ReadonlyArray<{ product_id?: string | null; unit_price?: number | null }>,
+    omiePrices: Record<string, number>,
+  ): Record<string, number> => {
+    const priceMap: Record<string, number> = {};
+    for (const row of localPrices) {
+      if (row?.product_id && isValidUnitPrice(row?.unit_price)) priceMap[row.product_id] = row.unit_price;
+    }
+    for (const [productId, price] of Object.entries(omiePrices)) {
+      if (productId && isValidUnitPrice(price)) priceMap[productId] = price; // ← sem o guard: sobrescreve
+    }
+    return priceMap;
+  };
+
+  const FIXTURE_LOCAL = [{ product_id: "CANARY", unit_price: 123 }];
+  const FIXTURE_OMIE = { CANARY: 999 };
+  const EXPECTED = 123; // o `expected` que a canária carrega
+
+  it("a forma ANTIGA produz 999 — divergindo do `expected` que a canária carrega", () => {
+    expect(mergeAntigo(FIXTURE_LOCAL, FIXTURE_OMIE).CANARY).toBe(999);
+    expect(mergeAntigo(FIXTURE_LOCAL, FIXTURE_OMIE).CANARY).not.toBe(EXPECTED);
+  });
+
+  it("a forma ATUAL produz 123 — a canária fica verde só com o helper certo deployado", () => {
+    expect(mergeCustomerPrices(FIXTURE_LOCAL, FIXTURE_OMIE).CANARY).toBe(EXPECTED);
+  });
+
+  it("controle positivo: nos casos SEM conflito as duas concordam (o teste não é vacuamente verde)", () => {
+    // Se divergissem em TUDO, o assert de divergência não provaria que a FIXTURE foi bem escolhida —
+    // provaria só que são funções diferentes. O gap (só Omie tem preço) é onde elas têm de concordar.
+    const soOmie = { GAP: 50 };
+    expect(mergeAntigo([], soOmie).GAP).toBe(50);
+    expect(mergeCustomerPrices([], soOmie).GAP).toBe(50);
+  });
+});

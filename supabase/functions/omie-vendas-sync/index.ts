@@ -3561,8 +3561,19 @@ Deno.serve(async (req) => {
           const resolved = decideAccountIdentity(c.input);
           return { caso: c.caso, resolved, expected: c.expected, ok: stableId(resolved) === stableId(c.expected) };
         });
+        // `contrato` é o VERSION MARKER exigido por docs/agent/deploy.md §Canárias. Sem ele esta
+        // canária responde IGUAL num bundle de hoje e num de três fatias atrás: um deploy
+        // integralmente velho carrega o `expected` VELHO junto, compara velho×velho e responde
+        // ok:true mentindo verde (a ⚠️ #2 do guia). O nome NOMEIA a fatia que a canária verifica —
+        // a tabela-verdade fail-closed do P0-B (1-dono resolve; divergência advisory×derivado,
+        // ambiguidade espelho/Omie, ausência e bigint fora de range TODOS recusam).
+        // ⚠️ BUMP obrigatório a cada fatia que mude essa tabela-verdade.
+        // `canary: true` acompanha o `probe_no_ar` histórico porque a receita SQL do guia lê
+        // `content::jsonb->'canary'`: sem o campo o verificador leria NULL e concluiria "sem canária".
         result = {
           success: true,
+          canary: true,
+          contrato: "identidade-fail-closed-v1",
           probe_no_ar: true, // a action respondeu → a derivação P0-B está no build deployado
           account,
           ok: casosId.every((c) => c.ok), // true = a tabela-verdade deployada bate em TODOS os fixtures

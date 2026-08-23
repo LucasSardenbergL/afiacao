@@ -124,6 +124,15 @@ do bot do Lovable.
    Comparar o marcador da `main` com o de prod é parte do **pré-flight**, não da verificação.
 2. **Canária não-versionada é meia-canária.** Ela prova que a função responde, não que o bundle é
    o novo. Enquanto houver `contrato = —` na tabela do `deploy.md`, a dívida está aberta.
+   → **Fechada em 2026-08-23**: as 3 últimas sem marcador foram versionadas — `analyze-unified-order`
+   (`praticado-vence-omie-v1`), `omie-vendas-sync` (`identidade-fail-closed-v1`) e
+   `omie-analytics-sync` (`doc-ambiguo-fail-closed-v1`), cada uma com o controle de calibração que
+   prova a fixture ficando VERMELHA sob a forma antiga. Duas descobertas do caminho, que valem para a
+   próxima canária: (a) as duas `omie-*` respondiam `probe_no_ar`, **não** `canary`, e a
+   `omie-analytics-sync` embrulha a resposta em `data` — a receita SQL documentada lia **NULL** nas
+   duas, e NULL se lê como "não tem canária" (ausência de dado virando veredito); (b) emitir o
+   marcador não basta — o **consumidor** tem de exigir o VALOR, senão o card de Governança segue
+   pintando verde com `ok` sozinho, que é o furo original visto do outro lado.
 3. **PR concorrente pode ser aliado.** O #1898 (`recommend`) e o #1901 (bug ATIVO de duplicata
    silenciosa no mesmo `paginate.ts`) estavam com auto-merge armado. Deployar antes deles teria
    custado 3 viagens manuais desperdiçadas e publicado um helper com bug conhecido. **Antes de
