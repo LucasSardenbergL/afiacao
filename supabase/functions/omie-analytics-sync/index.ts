@@ -2491,8 +2491,18 @@ Deno.serve(async (req) => {
           const expected = canon(c.expected);
           return { caso: c.caso, resolved, expected, ok: stableId(resolved) === stableId(expected) };
         });
+        // `contrato` é o VERSION MARKER exigido por docs/agent/deploy.md §Canárias. Esta canária é o
+        // caso NOMEADO em docs/historico/deploy-no-op-por-desenho.md: ela TINHA canária e mesmo
+        // assim precisou de sonda de versão, porque respondia igual num bundle de hoje e num de três
+        // fatias atrás — "ter canária não dispensa marcador". O nome NOMEIA a fatia que ela verifica:
+        // o fail-closed do P1b (doc com >1 código no Omie não vira vínculo).
+        // ⚠️ BUMP obrigatório a cada fatia que mude essa tabela-verdade.
+        // `canary: true` acompanha o `probe_no_ar` histórico para a receita SQL do guia — que aqui
+        // precisa descer no envelope `data` (esta edge responde `{success,data}`, não no topo).
         result = {
           success: true,
+          canary: true,
+          contrato: "doc-ambiguo-fail-closed-v1",
           probe_no_ar: true, // a action respondeu → o helper P1b está no build deployado
           ok: casosDoc.every((c) => c.ok), // true = a tabela-verdade deployada bate em TODOS os fixtures
           casos: casosDoc,

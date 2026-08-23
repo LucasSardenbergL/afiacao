@@ -65,13 +65,13 @@ Grep na `main` prova a **fonte**; a canária prova o **deploy**. Chame com `?can
 canary === true   E   contrato === '<marcador da fatia>'   E   ok === true
 ```
 
-Nas canárias ainda **não-versionadas** (`contrato` = `—`) só há `canary` + `ok`, o que **não** protege contra deploy integralmente velho (ver ⚠️ abaixo) — versioná-las é dívida aberta.
+**As 6 canárias estão versionadas** (a dívida das 3 sem marcador fechou em 2026-08-23). Canária sem `contrato` só tem `canary` + `ok`, o que **não** protege contra deploy integralmente velho (ver ⚠️ abaixo): canária nova nasce COM marcador — e o marcador **nomeia a fatia** que ela verifica, nunca um `v1.0-sensor-inicial` genérico (esse só é honesto quando o sensor nasce na mesma fatia).
 
 | edge | rota | `contrato` esperado | o que a fixture discrimina |
 |---|---|---|---|
-| `analyze-unified-order` | Governança → Auditoria (card "Canária de preço") | — | praticado 123 vence Omie 999 |
-| `omie-vendas-sync` | `identidade_probe` | — | identidade derivada por documento |
-| `omie-analytics-sync` | `doc_ambiguo_probe` | — | doc ambíguo não vira vínculo |
+| `analyze-unified-order` | Governança → Auditoria (card "Canária de preço") | `praticado-vence-omie-v1` | praticado 123 vence Omie 999 (velho: o Omie sobrescrevia → `resolved=999`) |
+| `omie-vendas-sync` | `identidade_probe` | `identidade-fail-closed-v1` | identidade derivada por documento: 1-dono resolve, e divergência advisory×derivado / ambiguidade / ausência / bigint fora de range **recusam** (velho: o advisory sobrescrevia o derivado) |
+| `omie-analytics-sync` | `doc_ambiguo_probe` ⚠️ resposta embrulhada em `data` | `doc-ambiguo-fail-closed-v1` | doc ambíguo não vira vínculo (velho: helper sempre-∅ → `[]` no caso de 2 códigos) |
 | `carteira-rebuild` | `?canary=1` | `trava-saida-v1` | conflito permanece com `eligible=false` (velho: some) **+** trava de saída do bootstrap (velho: grava ~Hunter) |
 | `generate-tactical-plan` | `{"canary":true}` | `v1.0-custo-fora-do-browser` | margem ausente degrada em vez de fabricar (velho: NULL→`?? 0`→R$0/h; #1498) |
 | `omie-financeiro` | `paginacao_probe` | `paginacao-guards-v1` | guards de paginação do #1598: piso NÃO encolhe (vazia antes do fim = anomalia; velho: `\|\| 1` → "fim"), reversa só completa com sonda vazia (velho: `pagina < 1` → complete), fingerprint sem colisão (velho: `1ºcódigo:count`), resposta sem array LANÇA (velho: `\|\| []` → "página vazia" = fim) |
@@ -119,11 +119,18 @@ SELECT net.http_post(
   body := jsonb_build_object('action','paginacao_probe'),
   timeout_milliseconds := 20000) AS request_id;
 -- ANOTE o request_id devolvido acima. ~5s depois, na MESMA aba, LEIA POR ELE:
-SELECT status_code, content::jsonb->'canary' AS canary, content::jsonb->'contrato' AS contrato,
-       content::jsonb->'ok' AS ok,
-       (SELECT jsonb_agg(c->'caso') FROM jsonb_array_elements(content::jsonb->'casos') c
+-- ⚠️ COALESCE: a `omie-analytics-sync` responde `{success,data:{...}}` (envelope de action), as
+-- demais respondem no TOPO. Sem descer no `data`, a leitura devolve NULL nela — e NULL lido como
+-- "não tem canária" é ausência de dado virando veredito. O `corpo` abaixo serve as duas formas.
+WITH r AS (
+  SELECT status_code,
+         COALESCE(content::jsonb->'data', content::jsonb) AS corpo
+  FROM net._http_response WHERE id = <request_id>   -- NÃO `ORDER BY id DESC LIMIT 1`
+)
+SELECT status_code, corpo->'canary' AS canary, corpo->>'contrato' AS contrato, corpo->'ok' AS ok,
+       (SELECT jsonb_agg(c->'caso') FROM jsonb_array_elements(corpo->'casos') c
         WHERE (c->>'ok')::bool IS NOT TRUE) AS casos_vermelhos
-FROM net._http_response WHERE id = <request_id>;   -- NÃO `ORDER BY id DESC LIMIT 1`
+FROM r;
 ```
 
 ⚠️ **`ORDER BY id DESC LIMIT 1` fabrica veredito NEGATIVO — leia pelo `request_id`.** Este banco recebe resposta de cron o tempo todo (só o watchdog responde a cada ~5 min, e há timestamps com DUAS respostas no mesmo microssegundo), então "a última linha" quase nunca é a sua: entre disparar e ler, um tick alheio entra na frente. Mordido ao vivo em 2026-08-23, com a receita desta seção: a sonda da `recommend` respondeu `{"ok":true,"probe":true,"versao":"v1.5-…","edge":"recommend"}` no id 58859, o `SELECT` pegou o 58858 (`{"modo":"watchdog",…}`, 41s antes) e devolveu `edge NULL, versao NULL, status_code 200` — que é **exatamente a assinatura de "bundle pré-sensor ignorou o probe e rodou o fluxo real"** (armadilha 1 abaixo). Um deploy correto lido como deploy ausente, e o desfecho seguinte é redeployar uma edge money-path à toa. O `id` de `net._http_response` **é** o `request_id` devolvido pelo `net.http_post` — filtrar por ele é determinístico e não custa nada. Sem o número em mãos, o desempate possível é `WHERE content::jsonb->>'edge' = '<nome-da-edge>'` (o campo nasceu para isso), mas ele **degrada para zero linhas** justamente no caso que mais importa — bundle velho não emite `edge` —, e zero linhas é indistinguível de "a resposta ainda não chegou": aí confirme com `SELECT max(id) FROM net._http_response` antes de concluir.
@@ -228,7 +235,7 @@ O bot `gpt-engineer-app[bot]` commita direto na `main` SEM CI ("Changes"/"Deploy
 - **Guardrails como rede (testes-invariantes):** `src/lib/reposicao/__tests__/edges-onorder-guardrail.test.ts` (janela on-order #1072/#1076) e `src/__tests__/edge-money-path-invariants.test.ts` (analyze: helper espelhado + paridade edge×src + gate de fallback `!(… in priceMap)` + canária #1077/#1080/#1089; e margem do `algorithm-a-audit`) **quebram o CI** se a regressão volta ao REPO. Em refactor legítimo, **reescrever o teste junto** — não deletar.
 - **Restauração rápida** (o que destravou #1076/#1085): `git checkout <sha-da-correção> -- <arquivo>` → abrir **PR** (auto-merge no verde). **Nunca** restaurar direto na `main` (vira guerra de commits com o bot).
 - ⚠️ **O `lovable-watch` só enxerga o ÚLTIMO commit do push — reversão no PENÚLTIMO passa em silêncio (2026-07-23).** O workflow roda `git diff HEAD^ HEAD`, e o bot empurra em LOTE (`Changes` + `Deployed …` no mesmo push): o GitHub dispara UM run, no HEAD, e o commit intermediário nem tem run próprio. Medido: `018e8abc` ("Changes") removeu de novo as 3 linhas da RPC `farmer_association_rules_substituir` do `types.ts`; o run rodou em `54691cc5` (HEAD), cujo diff contra o pai **já não continha a remoção** → nenhuma issue aberta, `conclusion: success`. Na rodada anterior o gate acusou (issue #1583) só porque a reversão calhou de estar no HEAD do push. ⇒ **o gate cobre ~metade dos casos**; até ser corrigido (varrer `github.event.before..HEAD`, não `HEAD^..HEAD`), o **ritual manual abaixo continua obrigatório** — `git fetch` + conferir o diff de TODOS os commits do bot desde o último merge, não só o último. Corolário da causa-raiz: o bot regenera `types.ts` **a partir do BANCO**, então toda migration entregue e NÃO aplicada vira uma bomba-relógio — o próximo deploy de edge remove a RPC do types e quebra o build do Publish (loop observado 2×; some sozinho quando a migration é aplicada).
-- **Ritual pós-Lovable:** após qualquer Publish/chat-edit, além da verificação de deploy de edge (acima), `git fetch origin main` e cheque o commit do bot — tocou money-path sem intenção → restaure na hora. Para o **edge de preço** (`analyze-unified-order`), confirme o COMPORTAMENTO deployado pela **canária**: Governança → Auditoria — o card "Canária de preço" **roda sozinho ao abrir** (botão "Verificar de novo" para re-checar). Verde = praticado 123 vence Omie 999; vermelho/erro = edge revertida → restaure. É a única prova do que está SERVIDO em prod (o invariante do CI só prova o repo). Evite editar pelo Lovable arquivos mantidos via PR.
+- **Ritual pós-Lovable:** após qualquer Publish/chat-edit, além da verificação de deploy de edge (acima), `git fetch origin main` e cheque o commit do bot — tocou money-path sem intenção → restaure na hora. Para o **edge de preço** (`analyze-unified-order`), confirme o COMPORTAMENTO deployado pela **canária**: Governança → Auditoria — o card "Canária de preço" **roda sozinho ao abrir** (botão "Verificar de novo" para re-checar). Verde = praticado 123 vence Omie 999 **E** o contrato bate (`praticado-vence-omie-v1`); vermelho/erro = edge revertida → restaure. ⚠️ Esta é a única das 6 canárias que **não** sai pelo SQL Editor: ela é gated por **JWT de staff** (não aceita `x-cron-secret`), então a leitura é a TELA — o card imprime o `detalhe`, que nomeia o contrato recebido vs o esperado quando a fatia diverge. É a única prova do que está SERVIDO em prod (o invariante do CI só prova o repo). Evite editar pelo Lovable arquivos mantidos via PR.
 
 ## Verificação de deploy
 

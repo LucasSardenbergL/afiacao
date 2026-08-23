@@ -38,12 +38,30 @@ const SONDA_NAO = new Set(["false", "0"]);
  * Sem isso, todo tick viraria sonda e o trabalho do dia não sairia.
  */
 export function classificarSonda(body: unknown): DecisaoSonda {
+  return classificarFlag(body, "probe");
+}
+
+/**
+ * O MESMO classificador, sobre um campo de nome diferente.
+ *
+ * Existe porque a `analyze-unified-order` liga a canária pelo campo `canary` e decidia por
+ * `canary === true` CRU. As duas regras acima valem lá inteiras, com o lado caro trocado: quem
+ * invoca é o founder pelo SQL Editor, onde `jsonb_build_object('canary', true)` vira a STRING
+ * "true" com facilidade, e o fluxo real dessa edge é uma análise de pedido com LLM. O prejuízo não
+ * é só o token: a resposta do fluxo real fica INDISTINGUÍVEL de "bundle velho ignorou o parâmetro"
+ * (a armadilha 1 de `docs/agent/deploy.md` §Canárias), então o diagnóstico sai errado no exato
+ * momento em que se está tentando provar o deploy.
+ *
+ * É extração, não cópia: um classificador money-path com duas implementações vira duas verdades, e
+ * a que não tiver teste é a que decide errado.
+ */
+export function classificarFlag(body: unknown, campo: string): DecisaoSonda {
   if (typeof body !== "object" || body === null || Array.isArray(body)) {
     return { tipo: "disparo" };
   }
-  if (!("probe" in body)) return { tipo: "disparo" };
+  if (!(campo in body)) return { tipo: "disparo" };
 
-  const bruto = (body as { probe: unknown }).probe;
+  const bruto = (body as Record<string, unknown>)[campo];
   if (typeof bruto === "boolean") return { tipo: bruto ? "sonda" : "disparo" };
 
   if (typeof bruto === "string" || typeof bruto === "number") {
@@ -86,6 +104,17 @@ export function criarRespostaSonda(edge: string) {
 
 /** Mensagem do 400 de `probe` ambíguo. `efeito` descreve o custo real daquela edge. */
 export function erroSondaAmbigua(valor: string, efeito: string): string {
-  return `Parâmetro 'probe' com valor não reconhecido (${valor}). Use {"probe":true} para a sonda ` +
+  return erroFlagAmbigua("probe", valor, efeito);
+}
+
+/**
+ * A mesma recusa, NOMEANDO o campo que veio ambíguo.
+ *
+ * O campo entra na mensagem porque a recusa é uma instrução de conserto: quem colou
+ * `jsonb_build_object('canary', …)` no SQL Editor e recebe "use {"probe":true}" vai corrigir o
+ * campo errado e sondar de novo — duas viagens manuais, e a segunda também falha.
+ */
+export function erroFlagAmbigua(campo: string, valor: string, efeito: string): string {
+  return `Parâmetro '${campo}' com valor não reconhecido (${valor}). Use {"${campo}":true} para a sonda ` +
     `de versão, ou omita a chave para executar. Recusado por segurança: ${efeito}.`;
 }

@@ -141,3 +141,49 @@ describe('canária identidade_probe: mecânica de comparação + fixtures (mesma
     expect(stableId(resolved)).not.toBe(stableId(sabotado));
   });
 });
+
+// ════════ CONTROLE DE CALIBRAÇÃO da canária `identidade_probe` (omie-vendas-sync) ════════
+// "Canária que não discrimina é teatro verde" (docs/agent/deploy.md): sem provar que a fixture fica
+// VERMELHA sob a forma ANTIGA, a probe só prova que a edge responde. Os nomes dos casos são os da
+// probe de propósito — renomear lá sem atualizar aqui é ruído que se vê no diff.
+describe('CALIBRAÇÃO: a canária identidade_probe fica VERMELHA sob a forma pré-P0-B', () => {
+  // A forma antiga: o código do payload era ADVISORY na aparência e AUTORIDADE na prática — quando
+  // vinha preenchido, vencia o derivado em vez de ser verificado contra ele. É o ataque que o P0-B
+  // fechou (payload escolhe o cliente ⇒ pedido no CNPJ errado).
+  const decideAntigo = (input: DecideInput): DecideResult => {
+    if (input.suppliedCodigo != null) {
+      return { ok: true, source: 'mirror', codigo_cliente: input.suppliedCodigo, codigo_vendedor: 7, backfill: false };
+    }
+    return decideAccountIdentity(input);
+  };
+
+  const FIX_DIVERGENCIA: DecideInput = {
+    account: A, suppliedCodigo: 999,
+    mirrorRows: [{ omie_codigo_cliente: 123, omie_codigo_vendedor: 7, empresa_omie: A }],
+    omieMatches: null,
+  };
+
+  it('`divergencia_supplied`: a forma ANTIGA resolve 999 em vez de recusar — diverge do `expected`', () => {
+    const antigo = decideAntigo(FIX_DIVERGENCIA);
+    expect(antigo).toEqual({ ok: true, source: 'mirror', codigo_cliente: 999, codigo_vendedor: 7, backfill: false });
+    // o `expected` que a canária carrega para este caso:
+    expect(antigo).not.toEqual({ ok: false, reason: 'divergence' });
+  });
+
+  it('`divergencia_supplied`: a forma ATUAL recusa — a canária fica verde só com o P0-B deployado', () => {
+    expect(decideAccountIdentity(FIX_DIVERGENCIA)).toEqual({ ok: false, reason: 'divergence' });
+  });
+
+  it('controle positivo: em `supplied_confirma` as duas concordam (o teste não é vacuamente verde)', () => {
+    // Advisory que CONFIRMA o derivado: as duas formas resolvem 123. Se divergissem em TUDO, o
+    // assert acima provaria só que são funções diferentes — não que a FIXTURE foi bem escolhida.
+    const confirma: DecideInput = {
+      account: A, suppliedCodigo: 123,
+      mirrorRows: [{ omie_codigo_cliente: 123, omie_codigo_vendedor: 7, empresa_omie: A }],
+      omieMatches: null,
+    };
+    const esperado = { ok: true, source: 'mirror', codigo_cliente: 123, codigo_vendedor: 7, backfill: false };
+    expect(decideAntigo(confirma)).toEqual(esperado);
+    expect(decideAccountIdentity(confirma)).toEqual(esperado);
+  });
+});

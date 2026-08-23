@@ -13,6 +13,7 @@ export type StatusCanaria = "ok" | "falha" | "erro" | "desconhecido";
 
 export interface RespostaCanaria {
   canary?: boolean;
+  contrato?: string;
   resolved?: number;
   expected?: number;
   ok?: boolean;
@@ -25,6 +26,12 @@ export interface ResultadoCanaria {
 
 const PRECO_PRATICADO = 123; // local (order_items) — deve VENCER
 const PRECO_OMIE = 999; // fallback — só preenche gap
+
+// VERSION MARKER da fatia (docs/agent/deploy.md §Canárias, ⚠️ #2). Exigir o VALOR é o que separa
+// "a edge respondeu" de "a edge é a versão que eu deployei": um deploy INTEGRALMENTE VELHO carrega
+// a canária de uma fatia anterior — com o `expected` VELHO junto — compara velho×velho e responde
+// ok:true. Sem esta constante o card pintava verde nesse caso. Bump aqui E na edge, juntos.
+const CONTRATO_ESPERADO = "praticado-vence-omie-v1";
 
 export function classificarCanaria(
   data: RespostaCanaria | null | undefined,
@@ -44,7 +51,24 @@ export function classificarCanaria(
       detalhe: "A edge não retornou o envelope de canária ({canary:true}). Confirme que o deploy inclui a canária do #1089.",
     };
   }
-  // Verde SÓ com os 3 campos batendo: o praticado venceu o Omie.
+  // Marcador ausente = a canária no ar é PRÉ-marcador, ou seja bundle anterior a esta fatia. Não é
+  // "sem dados": a edge respondeu, e o que ela respondeu prova que está velha.
+  if (data.contrato === undefined || data.contrato === null) {
+    return {
+      status: "falha",
+      detalhe: `Canária respondeu sem o marcador de contrato (esperado \`${CONTRATO_ESPERADO}\`). O bundle no ar é ANTERIOR ao versionamento da canária — deploy pendente.`,
+    };
+  }
+  // Marcador de OUTRA fatia = deploy velho comparando velho×velho. É a mentira verde que o marcador
+  // existe para pegar: `ok`, `resolved` e `expected` podem estar todos "certos" e ainda assim serem
+  // os da fatia errada.
+  if (data.contrato !== CONTRATO_ESPERADO) {
+    return {
+      status: "falha",
+      detalhe: `Canária de OUTRA fatia no ar: contrato=\`${data.contrato}\`, esperado \`${CONTRATO_ESPERADO}\`. O \`ok\` desta resposta compara o expected VELHO com o helper VELHO — não prova o deploy.`,
+    };
+  }
+  // Verde SÓ com os 3 campos batendo E o contrato da fatia: o praticado venceu o Omie.
   if (data.ok === true && data.resolved === PRECO_PRATICADO && data.expected === PRECO_PRATICADO) {
     return {
       status: "ok",

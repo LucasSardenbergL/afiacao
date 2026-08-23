@@ -7,6 +7,7 @@ import {
   prepararImagens,
 } from "./imagem-helpers.ts";
 import { extrairToolUseUnico, sanitizarListaIA } from "./saida-ia.ts";
+import { classificarFlag, erroFlagAmbigua } from "../_shared/sonda-versao.ts";
 import {
   type AcumuladorCache,
   acumularUsoCache,
@@ -216,20 +217,53 @@ Deno.serve(async (req) => {
       }
     }
 
-    const { text, imageBase64, imagesBase64, products, userTools, customerUserId, searchCustomer, canary } = await req.json();
+    const body = await req.json();
+    const { text, imageBase64, imagesBase64, products, userTools, customerUserId, searchCustomer } = body;
 
     // CANÁRIA COMPORTAMENTAL (staff-gated — já passou pelo gate de auth+staff acima). Prova que o
     // merge de preço REALMENTE DEPLOYADO honra "order_items vence o Omie": local=123 deve vencer
     // Omie=999. Probe HTTP = única evidência de que o deploy do Lovable não reverteu a lógica.
     // Roda o helper REAL (não uma cópia do teste) e não toca LLM/Omie/DB. Ver edge-money-path-invariants.
-    if (canary === true) {
+    //
+    // CLASSIFICADOR ROBUSTO (não `canary === true` cru): quem invoca é o founder pelo SQL Editor, e
+    // `jsonb_build_object('canary', true)` vira a STRING "true" com facilidade. Sob a comparação
+    // crua isso caía no FLUXO REAL — uma análise de pedido com LLM, que gasta token E devolve uma
+    // resposta INDISTINGUÍVEL de "bundle velho ignorou o parâmetro" (armadilha 1 de
+    // docs/agent/deploy.md §Canárias). Valor presente mas não reconhecido é AMBÍGUO → recusa 400,
+    // nunca execução por omissão. Chave AUSENTE segue direto para o fluxo real (o chamador normal).
+    const decisaoCanaria = classificarFlag(body, "canary");
+    if (decisaoCanaria.tipo === "ambiguo") {
+      return new Response(
+        JSON.stringify({
+          error: erroFlagAmbigua(
+            "canary",
+            decisaoCanaria.valor,
+            "esta edge analisa o pedido com LLM (token gasto) e a resposta ficaria indistinguível de bundle velho",
+          ),
+        }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+    if (decisaoCanaria.tipo === "sonda") {
       const resolved = mergeCustomerPrices(
         [{ product_id: "CANARY", unit_price: 123 }],
         { CANARY: 999 },
       ).CANARY;
       const expected = 123;
+      // `contrato` é o VERSION MARKER exigido por docs/agent/deploy.md §Canárias: sem ele um deploy
+      // INTEGRALMENTE VELHO carrega o `expected` VELHO junto, compara velho×velho e responde
+      // ok:true mentindo verde. O `ok` sozinho separa "a função respondeu" de nada — o marcador é o
+      // que separa "respondeu" de "é a versão que eu deployei". O nome NOMEIA a fatia (a canária é
+      // pré-existente, do #1089, então `v1.0-sensor-inicial` seria desonesto aqui). ⚠️ BUMP
+      // obrigatório a cada fatia que mude o contrato desta canária.
       return new Response(
-        JSON.stringify({ canary: true, resolved, expected, ok: resolved === expected }),
+        JSON.stringify({
+          canary: true,
+          contrato: "praticado-vence-omie-v1",
+          resolved,
+          expected,
+          ok: resolved === expected,
+        }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }

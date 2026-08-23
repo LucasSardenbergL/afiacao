@@ -6,7 +6,7 @@
 // pedido submetido no portal do fornecedor (`enviar-pedido-portal-sayerlack`). Por isso o default
 // cai no lado caro: `probe` presente mas não reconhecido é AMBÍGUO, nunca execução por omissão.
 
-import { classificarSonda, criarRespostaSonda, erroSondaAmbigua } from "./sonda-versao.ts";
+import { classificarFlag, classificarSonda, criarRespostaSonda, erroFlagAmbigua, erroSondaAmbigua } from "./sonda-versao.ts";
 
 function assertEquals(a: unknown, b: unknown, msg?: string) {
   if (JSON.stringify(a) !== JSON.stringify(b)) {
@@ -118,4 +118,81 @@ Deno.test("CALIBRAÇÃO: nos casos SEGUROS as duas concordam (o teste não é va
   assertEquals(classificarSonda({ probe: true }).tipo, "sonda");
   assertEquals(classificarSondaIngenua({ empresa: "OBEN" }), "disparo");
   assertEquals(classificarSonda({ empresa: "OBEN" }).tipo, "disparo");
+});
+
+// ════════ `classificarFlag` — o MESMO classificador sobre um campo de nome diferente ════════
+// A `analyze-unified-order` decide a canária pelo campo `canary`, não `probe`, e decidia por
+// `canary === true` CRU. O founder invoca a canária pelo SQL Editor, onde
+// `jsonb_build_object('canary', true)` vira a STRING "true" com facilidade — e ali o lado caro não
+// é um PO no ERP, é uma análise de pedido com LLM (token gasto) cuja resposta fica INDISTINGUÍVEL
+// de "bundle velho ignorou o parâmetro". Mesmas duas regras, outro campo: por isso a lógica é
+// extraída em vez de reescrita — um classificador money-path com duas cópias vira duas verdades.
+
+Deno.test("classificarFlag: o campo é parâmetro — `canary` classifica igual a `probe`", () => {
+  assertEquals(classificarFlag({ canary: true }, "canary").tipo, "sonda");
+  assertEquals(classificarFlag({ canary: "true" }, "canary").tipo, "sonda");
+  assertEquals(classificarFlag({ canary: "1" }, "canary").tipo, "sonda");
+  assertEquals(classificarFlag({ canary: 1 }, "canary").tipo, "sonda");
+  assertEquals(classificarFlag({ canary: "  TRUE  " }, "canary").tipo, "sonda");
+  assertEquals(classificarFlag({ canary: false }, "canary").tipo, "disparo");
+  assertEquals(classificarFlag({ canary: "0" }, "canary").tipo, "disparo");
+});
+
+Deno.test("classificarFlag: campo AUSENTE é o fluxo real (a análise de pedido de verdade)", () => {
+  // O chamador legítimo do analyze-unified-order não manda `canary` nenhum. Se ausência virasse
+  // canária, a edge pararia de analisar pedido — quebra visível, mas quebra.
+  assertEquals(classificarFlag({ text: "2x tinta branca" }, "canary").tipo, "disparo");
+  assertEquals(classificarFlag({}, "canary").tipo, "disparo");
+});
+
+Deno.test("classificarFlag: `canary` presente e não reconhecido → AMBÍGUO (não gasta LLM)", () => {
+  const d = classificarFlag({ canary: "sim" }, "canary");
+  assertEquals(d.tipo, "ambiguo");
+  assertEquals(d.tipo === "ambiguo" ? d.valor : null, '"sim"');
+});
+
+Deno.test("classificarFlag: o campo NÃO vaza — `probe` não liga a canária nem vice-versa", () => {
+  // Um classificador que ignorasse o parâmetro e olhasse sempre `probe` passaria nos testes acima
+  // por acidente (os corpos só têm um campo cada). Este caso separa os dois.
+  assertEquals(classificarFlag({ probe: true }, "canary").tipo, "disparo");
+  assertEquals(classificarFlag({ canary: true }, "probe").tipo, "disparo");
+});
+
+Deno.test("classificarSonda é `classificarFlag(body,'probe')` — uma lógica, não duas", () => {
+  for (const corpo of [{ probe: true }, { probe: "true" }, { probe: "talvez" }, { probe: false }, {}]) {
+    assertEquals(classificarSonda(corpo), classificarFlag(corpo, "probe"), `divergiu em ${JSON.stringify(corpo)}`);
+  }
+});
+
+Deno.test("CALIBRAÇÃO: a forma `canary === true` CRUA manda a string do SQL Editor para o LLM", () => {
+  // É a forma que estava deployada na analyze-unified-order. Sob ela, o founder que colasse
+  // `jsonb_build_object('canary', true)` e recebesse a string "true" pagaria uma análise de pedido
+  // com LLM e leria a resposta como "bundle velho" — o diagnóstico errado, pelo custo errado.
+  const canariaCrua = (body: unknown) => ((body as { canary?: unknown })?.canary === true ? "canaria" : "fluxo_real");
+  assertEquals(canariaCrua({ canary: "true" }), "fluxo_real");
+  assertEquals(classificarFlag({ canary: "true" }, "canary").tipo, "sonda");
+  // e o valor não reconhecido: a crua EXECUTA, a robusta RECUSA
+  assertEquals(canariaCrua({ canary: "sim" }), "fluxo_real");
+  assertEquals(classificarFlag({ canary: "sim" }, "canary").tipo, "ambiguo");
+  // Controle positivo: nos casos seguros as duas concordam (senão o assert de divergência só
+  // provaria que são funções diferentes).
+  assertEquals(canariaCrua({ canary: true }), "canaria");
+  assertEquals(classificarFlag({ canary: true }, "canary").tipo, "sonda");
+  assertEquals(canariaCrua({ text: "2x tinta" }), "fluxo_real");
+  assertEquals(classificarFlag({ text: "2x tinta" }, "canary").tipo, "disparo");
+});
+
+Deno.test("erroFlagAmbigua: a recusa NOMEIA o campo — dizer 'probe' na canária manda corrigir o campo errado", () => {
+  const msg = erroFlagAmbigua("canary", '"sim"', "esta edge analisa o pedido com LLM (token gasto)");
+  if (!msg.includes("'canary'")) throw new Error(`recusa não cita o campo 'canary': ${msg}`);
+  if (msg.includes("'probe'")) throw new Error(`recusa cita 'probe' numa canária de campo 'canary': ${msg}`);
+  if (!msg.includes('"sim"')) throw new Error(`recusa não cita o valor: ${msg}`);
+  if (!msg.includes("analisa o pedido com LLM")) throw new Error(`recusa não cita o efeito: ${msg}`);
+});
+
+Deno.test("erroSondaAmbigua é `erroFlagAmbigua('probe', …)` — o texto das 18 sondas não muda", () => {
+  assertEquals(
+    erroSondaAmbigua('"talvez"', "cria PO no Omie"),
+    erroFlagAmbigua("probe", '"talvez"', "cria PO no Omie"),
+  );
 });

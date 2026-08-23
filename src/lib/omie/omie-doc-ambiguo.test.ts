@@ -118,3 +118,37 @@ describe('canária doc_ambiguo_probe: mecânica de comparação + fixtures (mesm
     expect(stableId(resolved)).not.toBe(stableId(canon([])));
   });
 });
+
+// ════════ CONTROLE DE CALIBRAÇÃO da canária `doc_ambiguo_probe` (omie-analytics-sync) ════════
+// "Canária que não discrimina é teatro verde" (docs/agent/deploy.md). Aqui a calibração vale dobrado:
+// a ausência deste helper é INDETECTÁVEL por sonda de dados — a proof-table só encolhe quando há
+// duplicata-CNPJ real na conta, e não há em prod. No run normal o guard nunca é exercitado, então ele
+// some sem deixar rastro no dado (foi o que o deploy do Lovable fez em #1272/#1273). A única prova é
+// rodar o helper deployado sobre um fixture SINTÉTICO — e este bloco prova que o fixture discrimina.
+describe('CALIBRAÇÃO: a canária doc_ambiguo_probe fica VERMELHA sob o helper revertido', () => {
+  // A regressão real: o helper some do bundle e o chamador segue sem marcar ninguém como ambíguo —
+  // last-write-wins volta e um código arbitrário vira vínculo na proof-table.
+  const semGuard = (_registros: ReadonlyArray<{ doc: string; codigo: number }>): Set<string> => new Set();
+
+  const FIX_AMBIGUO = [{ doc: '111', codigo: 100 }, { doc: '111', codigo: 200 }];
+
+  it('`doc_2_codigos_distintos`: o helper revertido devolve ∅ — diverge do `expected` ["111"]', () => {
+    expect([...semGuard(FIX_AMBIGUO)].sort()).toEqual([]);
+    expect([...semGuard(FIX_AMBIGUO)].sort()).not.toEqual(['111']);
+  });
+
+  it('`doc_2_codigos_distintos`: o helper ATUAL marca "111" — a canária fica verde só com o P1b no ar', () => {
+    expect([...docsComCodigoAmbiguoNoOmie(FIX_AMBIGUO)].sort()).toEqual(['111']);
+  });
+
+  it('controle positivo: nos casos LIMPOS as duas concordam (o teste não é vacuamente verde)', () => {
+    // 1 código por doc e o mesmo código repetido: ambas devolvem ∅. Sem este controle, a divergência
+    // acima provaria só que `semGuard` é uma função diferente — não que a FIXTURE foi bem escolhida.
+    const limpo = [{ doc: '111', codigo: 100 }];
+    const repetido = [{ doc: '111', codigo: 100 }, { doc: '111', codigo: 100 }];
+    expect([...semGuard(limpo)]).toEqual([]);
+    expect([...docsComCodigoAmbiguoNoOmie(limpo)]).toEqual([]);
+    expect([...semGuard(repetido)]).toEqual([]);
+    expect([...docsComCodigoAmbiguoNoOmie(repetido)]).toEqual([]);
+  });
+});
