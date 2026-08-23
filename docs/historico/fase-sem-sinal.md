@@ -621,6 +621,36 @@ comentário do código afirmava um conflito inexistente e o teste passava por n�
 mecanismo é outro. Investigue o mecanismo antes de aceitar o verde — foi o que produziu o único
 teste que mede a precedência de verdade (erro no cache + rede caindo depois).
 
+### Consolidação (2026-08-22, pós-merge do #1886): o card deixou de ter metade artesanal
+
+O #1886 (varredura da CLASSE) e o #1892 (o quarto estado) atacaram o mesmo defeito em paralelo e
+não colidiram em código — o que deixou o `MixGapCard` como **único** consumidor derivando na mão o
+que já era canônico em `src/lib/leitura/estado-de-leitura.ts`. Trocado: `estadoDeLeitura({status,
+fetchStatus})` no lugar de `isPending`/`fetchStatus`/`error` soltos, e `desatualizado(q, temDado)`
+no lugar do ternário local. Os 15 testes de `MixGapCard.estados.test.tsx` passaram **sem edição** —
+que é a asserção que importa: teste que precisa mudar num refactor de consolidação está medindo a
+implementação, não o comportamento.
+
+Duas coisas ficaram LOCAIS de propósito, e a fronteira é a lição:
+
+- **`data === null` ("não é staff") não é estado de leitura** — é a resposta da RPC. Subir isso para
+  o helper misturaria "a leitura não aconteceu" com "a leitura aconteceu e disse não", que é
+  exatamente o par que o #1859 colapsou. Continua com precedência sobre tudo no card.
+- **`'sem-rede'` (helper) ≠ `'sem_rede'` (PostHog).** A série já tem a chave com underscore gravada
+  desde o #1892; renomear partiria o histórico do evento em duas séries que ninguém soma depois. A
+  tradução mora na fronteira da telemetria, num mapa `satisfies Record<EstadoSemLeitura, string>` —
+  o `satisfies` é o que a faz **falhar a compilação** se o helper ganhar um terceiro estado, em vez
+  de mandar `undefined` para o PostHog.
+
+⚠️ **O que manteve o arquivo fora do gate `erro-colapsado-em-vazio` foi acidente feliz, e vale saber
+por quê:** o gate exige que a desestruturação do hook ligue alguma de `{error, isError, …, status}`.
+A versão antiga passava por causa do `error`; a nova passa por causa do **`status`**, que o helper
+exige. Se a consolidação tivesse escondido a fatia atrás de um objeto (`const q = {...}` fora da
+desestruturação), o gate voltaria a acusar o card — corretamente, porque a estrutura que ele lê é a
+desestruturação. Verificado com falsificação: removendo `status` da desestruturação,
+`contarAutoOcultacao` sobe de **0 para 1**. Gate que não foi falsificado no arquivo em questão é
+contagem, não prova.
+
 ## O que sobra quando a correção mergeia por outra sessão (2026-08-22): o sensor e o guard
 
 O achado retroativo do #1859 (seção acima) virou DUAS entregas paralelas no mesmo dia, em sessões
@@ -662,6 +692,7 @@ tela faz. O #1886 mudou `FarmerCalls.tsx` sem nenhum teste que MONTE `FarmerCall
   desta entrega a main ganhou 12 commits, dois deles exatamente sobre os arquivos em questão. Metade
   do que estava pronto e verificado virou descarte — corretamente. O tell barato: `git diff
   origin/main --stat` acusando arquivos que você nunca tocou.
+
 ## A leitura do sensor do MixGap (2026-08-22): não havia população exposta para ler
 
 > Continuação das duas seções acima (quarto estado + o sensor que sobrou do #1886). O chip
@@ -783,3 +814,4 @@ ORDER BY n DESC
 O controle que separa (b) de (c) vai junto, na mesma leitura: `SELECT count() FROM events
 WHERE timestamp > …` sem filtro de evento. Série do evento vazia **com** o controle positivo
 é dado real; as duas vazias é sensor não chegando — a distinção que o item 1 não pôde fazer.
+
