@@ -13,6 +13,8 @@
 #   5. dono morto libera o slot (recuperação de órfão que já existia — não regrediu)
 #   6. waiter morto não trava a fila atrás dele (risco NOVO que o FIFO introduz)
 #   7. exit code do comando é preservado (mudou de `"$@"` para `"$@" & wait`)
+#   8. o TIMEOUT nomeia quem segura a vaga — pid, comando e há quanto tempo (2026-08-23)
+#   9. …e NÃO fabrica um dono quando não há nenhum (ausência de dado ≠ dado)
 #
 # macOS/local, como o próprio heavy (usa sysctl/stat -f). Não roda no CI (ubuntu).
 # Uso: bash scripts/test-heavy.sh   (exit 0 = tudo verde).  Leva ~50s.
@@ -158,6 +160,44 @@ zerar
 AFIACAO_MAX_HEAVY=1 "$HEAVY" true >/dev/null 2>&1
 rc=$?
 if [ "$rc" = "0" ]; then ok "exit 0 propagado"; else bad "exit 0 virou $rc"; fi
+
+# ─────────── 8. timeout NOMEIA quem segura a vaga (pid, comando e há quanto tempo)
+# "posição 1 na fila" é afirmação sobre MIM, não sobre a CAUSA. Medido 2026-08-23:
+# 3 tentativas morreram na fila (~25min, zero dado) e a mensagem não dava fio nenhum
+# pra puxar — a causa real (8 zsh órfãos queimando 5,5 dos 8 cores havia 17h) só
+# apareceu 25min depois, por acidente. O `--status` já sabia imprimir o dono.
+# Ver docs/historico/heavy-caminho-rapido-eixo-errado.md.
+# Asserções ASCII, caixa fixa, sem -i (armadilha #1483: acento vira ruído de locale).
+zerar
+sleep 300$TAG & dono=$!
+mkdir -p "$LK/slot-1"
+echo "$dono" > "$LK/slot-1/pid"
+echo "bun run test SENTINELA-DONO" > "$LK/slot-1/cmd"
+# backdata o mtime do slot: é dele que sai "há quanto tempo segura". Sem backdatar,
+# um "0s" hardcoded passaria na asserção de duração. perl porque `date -v` é BSD e
+# `date -d` é GNU — o heavy.sh já depende de perl no fallback do agora_ns.
+touch -t "$(perl -e 'my @t=localtime(time-300); printf "%04d%02d%02d%02d%02d.%02d", $t[5]+1900,$t[4]+1,$t[3],$t[2],$t[1],$t[0]')" "$LK/slot-1"
+saida8="$LK/timeout-com-dono.txt"
+AFIACAO_MAX_HEAVY=1 AFIACAO_HEAVY_TIMEOUT=1 "$HEAVY" true >/dev/null 2>"$saida8"
+for par in "slot-1:nomeia o SLOT" "pid $dono:nomeia o PID do dono" \
+           "5min:diz HA QUANTO TEMPO o dono segura" "SENTINELA-DONO:mostra o COMANDO do dono"; do
+  agulha="${par%%:*}"; rotulo="${par#*:}"
+  if grep -qF -- "$agulha" "$saida8"; then ok "timeout $rotulo"
+  else bad "timeout $rotulo — nao achei '$agulha' em: $(tr '\n' '|' < "$saida8" | cut -c1-160)"; fi
+done
+disown "$dono" 2>/dev/null || true; kill "$dono" 2>/dev/null || true
+
+# ─────────── 9. sem dono algum, o timeout NÃO fabrica um (ausência de dado ≠ dado)
+# Teto 0 = ninguém entra e ninguém segura. Se o diagnóstico imprimisse um slot aqui,
+# estaria inventando causa — pior que não dizer nada.
+zerar
+saida9="$LK/timeout-sem-dono.txt"
+AFIACAO_MAX_HEAVY=0 AFIACAO_HEAVY_TIMEOUT=1 "$HEAVY" true >/dev/null 2>"$saida9"
+if grep -qF -- "slot-" "$saida9"; then
+  bad "sem dono, o timeout INVENTOU um slot: $(tr '\n' '|' < "$saida9" | cut -c1-160)"
+else ok "sem dono, timeout nao inventa slot"; fi
+if grep -qF -- "nenhum" "$saida9"; then ok "sem dono, timeout diz isso em PALAVRAS"
+else bad "sem dono, timeout ficou mudo — silencio nao distingue 'ninguem segura' de 'nao consegui olhar'"; fi
 
 echo
 [ "$fail" = "0" ] && echo "TUDO VERDE" || echo "HOUVE FALHA"
