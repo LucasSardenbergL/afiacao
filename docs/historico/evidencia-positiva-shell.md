@@ -1,4 +1,4 @@
-# Evidência POSITIVA — e as sete armadilhas de shell que fabricam verde
+# Evidência POSITIVA — e as oito armadilhas de shell que fabricam verde
 
 > **A regra que sobrou no CLAUDE.md:** validação só conta com **evidência positiva** — rode o
 > comando autoritativo, confirme que **terminou**, capture `exit 0`. Este doc guarda o *porquê*
@@ -21,7 +21,7 @@ rodar** (glob não expandido, arquivo inexistente, flag inválida) devolve zero 
 na tela, a uma busca que rodou e não achou nada. Só o **exit code** e o **formato da saída**
 distinguem os dois.
 
-## As sete armadilhas
+## As oito armadilhas
 
 ### 1. `cmd | tail` ENGOLE o exit code
 O pipeline devolve o status do **último** componente. `bun run test | tail -5` é sempre verde.
@@ -95,11 +95,48 @@ existiu. ⇒ aspe o glob (`--include='*.tsx'`) e **derive a conclusão do result
 escrevê-la ao lado dele. (É o §2 por outro ângulo: lá o `echo` sobrescreve o `$?`; aqui ele fabrica
 o veredito.)
 
-## O padrão por trás das sete
+### 8. O `; echo "exit=$?"` no fim mente para o HARNESS — mesmo imprimindo a verdade
 
-Seis produzem **verde por construção**, não por mérito — e a sétima mostra que o mesmo defeito
-fabrica **vermelho** com a mesma facilidade: o sinal que você lê não é o sinal que você acha que
-está lendo. A contramedida é sempre a mesma — **exigir uma afirmação POSITIVA e com formato
+Irmã do §2, e mais traiçoeira, porque o número **impresso está certo**:
+
+```bash
+bash scripts/pr-watch.sh 1888; echo "PR-WATCH exit=$?"
+#            \_ devolve 5 (sem desfecho)   \_ imprime "PR-WATCH exit=5"  <- VERDADE
+# ...mas o exit status do COMPOUND e o do `echo` = 0                       <- o que sobra
+```
+
+O `$?` foi capturado colado e a linha diz o certo. A mentira mora num **segundo canal**: o status
+do comando composto, que é o do último elemento — o `echo`. Quem lê o *exit code* (o harness que
+reporta a task, um `&&` encadeado, um step de CI) vê **0** e nunca lê a linha impressa.
+
+Medido **duas vezes na mesma sessão** (2026-08-22, PR #1888), por quem já conhecia o §2:
+
+| Comando | Harness reportou | Verdade, na saída |
+|---|---|---|
+| `heavy bun run typecheck; echo …` | `completed (exit code 0)` | `heavy: timeout (1800s) — abortando` — **nunca rodou** |
+| `bash scripts/pr-watch.sh 1888; echo …` | `completed (exit code 0)` | `PR-WATCH exit=5` — consultei, **sem desfecho** |
+
+O segundo caso é o pior possível: no contrato do `pr-watch`, **exit 0 significa MERGEADO**. A máscara
+não produziu "desconhecido", produziu uma **afirmação falsa e específica** — um merge que não tinha
+acontecido, pronto para ser reportado ao founder. O que salvou foi a regra do CLAUDE.md de confirmar
+desfecho com `gh pr view <nº>` antes de avisar: ela existe justamente porque o canal do watcher não é
+confiável sozinho.
+
+⇒ **não termine em `echo` um comando cujo exit code alguém vai ler.** Rode pelado, ou preserve:
+```bash
+cmd > log 2>&1; rc=$?; echo "exit=$rc"; exit $rc     # o compound volta a valer o que mede
+exec bash scripts/pr-watch.sh 1888                   # ou: nada depois dele
+```
+Combina com o §7: lá o wrapper **fabrica** um veredito; aqui o `echo` **apaga** o veredito — inclusive
+o do wrapper. No caso do typecheck as duas agiram juntas, e o `abortando` do `heavy` só apareceu porque
+alguém foi ler o log em vez do código de saída.
+
+## O padrão por trás das oito
+
+Seis produzem **verde por construção**, não por mérito; a sétima mostra que o mesmo defeito
+fabrica **vermelho** com a mesma facilidade; e a oitava, que o veredito certo pode existir e ainda
+assim não ser o que o consumidor lê: o sinal que você lê não é o sinal que você acha que está
+lendo. A contramedida é sempre a mesma — **exigir uma afirmação POSITIVA e com formato
 conhecido** (exit code capturado colado, saída não-vazia, marcador de conclusão, formato conferido),
 em vez de ler qualquer coisa na ausência dela.
 
