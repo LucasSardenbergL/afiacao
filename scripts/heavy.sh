@@ -165,6 +165,25 @@ fmt_espera() {
   if [ "$s" -ge 60 ]; then echo "$((s/60))min$(printf '%02d' $((s%60)))s"; else echo "${s}s"; fi
 }
 
+# Quem segura os slots AGORA — pid, comando e HA QUANTO TEMPO. O mtime do slot e
+# o instante do `mkdir` que venceu a corrida, entao serve de relogio de posse.
+# Saida VAZIA = ninguem segurando; quem chama distingue isso de "nao consegui
+# olhar" e diz em palavras (ausencia de dado nunca vira dono fabricado).
+donos_dos_slots() {
+  local slot pid cmd agora held
+  agora=$(date +%s)
+  for slot in "$LOCK_ROOT"/slot-*; do
+    [ -d "$slot" ] || continue
+    slot_ocupado "$slot" || continue
+    pid=$(cat "$slot/pid" 2>/dev/null || echo "?")
+    cmd=$(cat "$slot/cmd" 2>/dev/null || echo "?")
+    held=$(( agora - $(mtime_de "$slot") ))
+    [ "$held" -lt 0 ] && held=0     # relogio andou pra tras: 0, nunca "-5min"
+    printf '%s: pid %s segura ha %s — %s\n' \
+      "$(basename "$slot")" "$pid" "$(fmt_espera "$held")" "$cmd"
+  done
+}
+
 # ──────────────────────────────────────────────────────────────────── --status
 
 if [ "${1:-}" = "--status" ]; then
@@ -238,7 +257,7 @@ trap 'cleanup; exit 143' TERM
 # ────────────────────────────────────────────────── acquire (BUGs 2 e 3)
 
 acquire() {
-  local waited_ms=0 vivos vagas pos pos_ant=-1 i slot teto
+  local waited_ms=0 vivos vagas pos pos_ant=-1 i slot teto donos
   TICKET="$(agora_ns)-$$"
   printf '%s\n' "$*" > "$QUEUE_DIR/$TICKET"
 
@@ -271,6 +290,18 @@ acquire() {
 
     if [ "$waited_ms" -ge $(( MAX_WAIT * 1000 )) ]; then
       echo "heavy: timeout (${MAX_WAIT}s) esperando vaga — abortando. (posição $pos na fila)" >&2
+      # "posição 1 na fila" é uma afirmação sobre MIM, não sobre a CAUSA. Sem o
+      # dono, quem levou timeout não tem fio nenhum pra puxar — foi o que custou
+      # 25min em 2026-08-23 (a causa era carga órfã, não o semáforo). Ver
+      # docs/historico/heavy-caminho-rapido-eixo-errado.md.
+      donos=$(donos_dos_slots || true)
+      if [ -n "$donos" ]; then
+        echo "heavy: quem segura a vaga agora:" >&2
+        printf '  • %s\n' "$donos" >&2
+        echo "heavy: se o dono está preso há muito mais do que o normal, o problema pode não ser a fila — confira \`uptime\` e órfãos (ps -Ao ppid,pid,time,command | awk '\$1==1')." >&2
+      else
+        echo "heavy: nenhum dono para apontar neste instante — a vaga drenou entre a última checagem e o timeout, ou o teto está em 0 (AFIACAO_MAX_HEAVY)." >&2
+      fi
       return 1
     fi
     if [ "$pos" != "$pos_ant" ]; then
