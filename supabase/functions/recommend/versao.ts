@@ -30,8 +30,25 @@ export const respostaSonda = criarRespostaSonda("recommend");
  * que a sonda serve ao propósito para que nasceu — este deploy depende de uma MIGRATION manual,
  * e sem ela "a edge nova está no ar?" e "a função existe no banco?" seriam duas perguntas sem
  * resposta em vez de uma consulta e uma sonda.
+ *
+ * `v1.6`: o #1901 mudou `_shared/paginate.ts`, que esta edge empacota — `fetchAllKeyset` passou a
+ * inicializar `anterior` com o `cursor` em vez de `null`, fechando a sobreposição PONTUAL de página
+ * (linha já lida reaparecendo no começo da próxima, que a checagem de cursor no fim do laço não
+ * alcança porque só olha a ÚLTIMA linha). O bump não é cosmético: `recommend` é a ÚNICA edge com
+ * call-site vivo de `fetchAllKeyset` (`order_items` e `omie_products`, via
+ * `_shared/recommend-leituras.ts`), então é aqui que o fix importa — e era aqui que ele não tinha
+ * como se provar.
+ *
+ * Por que o bump do #1898 NÃO cobriu isto, que é a armadilha a registrar: o #1905 concluiu que a
+ * `recommend` estava "resolvida de graça" porque o #1898 já a levara a `v1.5`. Verdade para o
+ * #1889 — mas o #1901 mergeou às 01:26Z, 27 minutos DEPOIS do #1898 (00:59:52Z) e 12 antes do
+ * #1905, e não bumpou nada. Resultado medido em 2026-08-23: `main` e prod respondiam ambas
+ * `v1.5-denominador-observados`, então a sonda devolvia a mesma string tendo o deploy do #1901
+ * acontecido ou não. É exatamente o pré-flight `main`×prod que o `deploy.md` firmou em 765e984ba —
+ * e a lição concreta é que o marcador cobre a fatia que o BUMPOU, não a janela de tempo: uma fatia
+ * que entra DEPOIS do bump e ANTES do deploy volta a ser invisível.
  */
-export const VERSAO = "v1.5-denominador-observados";
+export const VERSAO = "v1.6-keyset-cursor-na-primeira-linha";
 
 /** Efeito citado no 400 de `probe` ambíguo. */
 export const EFEITO =

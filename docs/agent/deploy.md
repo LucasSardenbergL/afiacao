@@ -118,13 +118,15 @@ SELECT net.http_post(
     'x-cron-secret',(SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name='CRON_SECRET' LIMIT 1)),
   body := jsonb_build_object('action','paginacao_probe'),
   timeout_milliseconds := 20000) AS request_id;
--- ~5s depois, na MESMA aba:
+-- ANOTE o request_id devolvido acima. ~5s depois, na MESMA aba, LEIA POR ELE:
 SELECT status_code, content::jsonb->'canary' AS canary, content::jsonb->'contrato' AS contrato,
        content::jsonb->'ok' AS ok,
        (SELECT jsonb_agg(c->'caso') FROM jsonb_array_elements(content::jsonb->'casos') c
         WHERE (c->>'ok')::bool IS NOT TRUE) AS casos_vermelhos
-FROM net._http_response ORDER BY id DESC LIMIT 1;
+FROM net._http_response WHERE id = <request_id>;   -- NÃO `ORDER BY id DESC LIMIT 1`
 ```
+
+⚠️ **`ORDER BY id DESC LIMIT 1` fabrica veredito NEGATIVO — leia pelo `request_id`.** Este banco recebe resposta de cron o tempo todo (só o watchdog responde a cada ~5 min, e há timestamps com DUAS respostas no mesmo microssegundo), então "a última linha" quase nunca é a sua: entre disparar e ler, um tick alheio entra na frente. Mordido ao vivo em 2026-08-23, com a receita desta seção: a sonda da `recommend` respondeu `{"ok":true,"probe":true,"versao":"v1.5-…","edge":"recommend"}` no id 58859, o `SELECT` pegou o 58858 (`{"modo":"watchdog",…}`, 41s antes) e devolveu `edge NULL, versao NULL, status_code 200` — que é **exatamente a assinatura de "bundle pré-sensor ignorou o probe e rodou o fluxo real"** (armadilha 1 abaixo). Um deploy correto lido como deploy ausente, e o desfecho seguinte é redeployar uma edge money-path à toa. O `id` de `net._http_response` **é** o `request_id` devolvido pelo `net.http_post` — filtrar por ele é determinístico e não custa nada. Sem o número em mãos, o desempate possível é `WHERE content::jsonb->>'edge' = '<nome-da-edge>'` (o campo nasceu para isso), mas ele **degrada para zero linhas** justamente no caso que mais importa — bundle velho não emite `edge` —, e zero linhas é indistinguível de "a resposta ainda não chegou": aí confirme com `SELECT max(id) FROM net._http_response` antes de concluir.
 
 Verde = `status_code 200` **E** `canary true` **E** `contrato` batendo com a tabela acima **E** `ok true` **E** `casos_vermelhos NULL` (os cinco, não só o `ok`). `400` com `"Ação desconhecida"` = **bundle velho**, a probe não subiu — e a lista `acoes_disponiveis` da resposta é a confirmação (não cita a action nova). ⚠️ Probe é **dry-run**: se um dia uma delas abrir linha em `fin_sync_log`, ela fabrica frescor — `_data_health_compute` e `fin_calcular_confiabilidade` leem essa tabela **sem filtrar `action`** (só o `fin_sync_heartbeat` filtra). No `omie-financeiro` isso é o `PROBE_ACTIONS` → `logId=""`, pinado no `edge-money-path-invariants`.
 
