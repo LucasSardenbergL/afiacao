@@ -30,8 +30,9 @@ OAuth), e a lógica fica **versionada e testada** no repo em vez de num plugin o
   `claude_ro.pgpass`. O wrapper **recusa** permissão mais frouxa que `600`.
 - **Wrapper:** [`scripts/posthog-query.sh`](../../scripts/posthog-query.sh) — versionado, `shellcheck`-limpo,
   com suíte hermética em `scripts/test-posthog-query.sh` (roda no `bun run test:hooks`).
-- `~/.config/afiacao/posthog-query` é um **symlink** para o script no checkout principal, para o
-  caminho curto continuar existindo como no `psql-ro`.
+- **Chame pelo caminho do repo** (`bash scripts/posthog-query.sh …`), de qualquer worktree com a
+  main mergeada. Ao contrário do `psql-ro`, aqui **não** há atalho em `~/.config/afiacao/` — o
+  porquê está no passo 3 da instalação.
 
 ### Instalar a key (só o founder faz — a key NUNCA passa pelo chat)
 
@@ -69,10 +70,16 @@ mkdir -p ~/.config/afiacao && umask 077 && pbpaste > ~/.config/afiacao/posthog-r
 mkdir -p ~/.config/afiacao && umask 077 && printf 'Cole a key: ' && IFS= read -rs k && printf '%s\n' "$k" > ~/.config/afiacao/posthog-ro && unset k && chmod 600 ~/.config/afiacao/posthog-ro && printf '\n' && awk 'NR==1{print (/^phx_/ ? "OK: " length($0) " chars" : "PROBLEMA: nao comeca com phx_")}' ~/.config/afiacao/posthog-ro
 ```
 
-   Depois que este PR mergear, o atalho curto (opcional, espelha o `psql-ro`):
+   **Não** criar symlink `~/.config/afiacao/posthog-query` → checkout principal, como o `psql-ro`
+   sugeriria. O `psql-ro` é auto-contido; este script vive no git, e o checkout principal passa a
+   maior parte do tempo em branch de feature (medido em 2026-08-23: `claude/projeto-verificado-sayerlack`,
+   com ~30 worktrees vivas). O link **dangla** sempre que a main não está lá, e falha com
+   `No such file or directory` — que não parece problema de caminho.
+
+   Chame pelo caminho do repo, de qualquer worktree que tenha a main mergeada:
 
 ```bash
-ln -sf /Users/lucassardenberg/Projetos/afiacao/scripts/posthog-query.sh ~/.config/afiacao/posthog-query && echo "symlink pronto"
+bash scripts/posthog-query.sh "SELECT count() FROM events WHERE timestamp > now() - INTERVAL 7 DAY"
 ```
 
 4. O id do projeto já está fixado em `~/.config/afiacao/posthog-project-id` (`423408`, lido da URL
