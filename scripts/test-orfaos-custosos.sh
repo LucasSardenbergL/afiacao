@@ -49,6 +49,11 @@ falha() { printf '  \033[31mFALHA\033[0m %s\n' "$1"; falhas=$((falhas + 1)); }
 # ambiente e não por desenho (#1483).
 cat > "$tmp/ps" <<'STUB'
 #!/bin/sh
+# Ruído de AMBIENTE no stderr, sob demanda. Imita o que o ubuntu do CI faz de
+# verdade: lá `pt_BR.UTF-8` não existe e o bash cospe "warning: setlocale: ..."
+# no stderr. O bash do macOS é silencioso nesse caso, então sem este gerador a
+# regressão não teria como ser reproduzida na máquina de quem escreve.
+[ -z "${PS_RUIDO_STDERR:-}" ] || echo "warning: setlocale: LC_ALL: cannot change locale (pt_BR.UTF-8)" >&2
 [ "${PS_RC:-0}" = "0" ] || exit "$PS_RC"
 case "${LC_ALL:-C}" in
   pt_BR*|*pt_BR*) sed 's/\([0-9]\)\.\([0-9]\)/\1,\2/g' "$PS_FIXTURE" ;;
@@ -211,8 +216,13 @@ quero     "ps falhou -> marcador SEM-MEDIDA"                 "$saida_rc" "SEM-ME
 nao_quero "ps falhou -> NAO afirma 'nenhum orfao'"           "$saida_rc" "nenhum orfao"
 
 echo "── --resumo: 1 linha pro hook, SILÊNCIO quando não há nada ──"
-r_com="$(PATH="$tmp:$PATH" PS_FIXTURE="$tmp/fix-real.txt" bash "$ALVO" --resumo 2>&1)"
-r_sem="$(PATH="$tmp:$PATH" PS_FIXTURE="$tmp/fix-vazio.txt" bash "$ALVO" --resumo 2>&1)"
+# 2>/dev/null e não 2>&1 pelo mesmo motivo da asserção de locale mais abaixo:
+# estas duas MEDEM (contam linhas, exigem vazio) em vez de procurar um padrão,
+# então qualquer ruído de ambiente no stderr as reprova sozinho. `grep -qF` é
+# imune a isso; contagem e igualdade não são. Descartar o stderr não cega o
+# teste: script quebrado devolve stdout vazio, que reprova em ambas.
+r_com="$(PATH="$tmp:$PATH" PS_FIXTURE="$tmp/fix-real.txt" bash "$ALVO" --resumo 2>/dev/null)"
+r_sem="$(PATH="$tmp:$PATH" PS_FIXTURE="$tmp/fix-vazio.txt" bash "$ALVO" --resumo 2>/dev/null)"
 quero "resumo cita o pid culpado" "$r_com" "91234"
 if [ "$(printf '%s' "$r_com" | grep -c .)" -eq 1 ]; then ok "resumo tem exatamente 1 linha"
 else falha "resumo tem $(printf '%s' "$r_com" | grep -c .) linhas — o hook vira parede de texto"; fi
@@ -220,10 +230,28 @@ if [ -z "$r_sem" ]; then ok "sem órfão caro → resumo SILENCIA (hook não vir
 else falha "resumo falou sem ter o que falar: $r_sem"; fi
 
 echo "── o relato é ESTÁVEL entre locales (o ps emite 68,4 sob pt_BR) ──"
-n_c="$(LC_ALL=C PATH="$tmp:$PATH" PS_FIXTURE="$tmp/fix-real.txt" bash "$ALVO" --resumo 2>&1)"
-n_br="$(LC_ALL=pt_BR.UTF-8 PATH="$tmp:$PATH" PS_FIXTURE="$tmp/fix-real.txt" bash "$ALVO" --resumo 2>&1)"
-if [ "$n_c" = "$n_br" ]; then ok "mesma linha sob C e pt_BR.UTF-8"
+# STDOUT, nunca 2>&1: o contrato é o relato que o hook captura (ele lê a sonda
+# com 2>/dev/null), e stderr aqui é ambiente, não contrato. Medir 2>&1 já custou
+# um CI vermelho — no ubuntu o locale pt_BR.UTF-8 não existe e o bash cospe
+# "warning: setlocale" no stderr de UM dos dois lados, e só dele: a asserção
+# reprovava por ruído de ambiente, com o relato idêntico. Ironia do #1483: a
+# asserção que existe pra não variar com o ambiente variava com o ambiente.
+# `-n` é a trava que impede o par vazio=vazio de passar por "estável".
+relato() { LC_ALL="$1" PATH="$tmp:$PATH" PS_FIXTURE="$tmp/fix-real.txt" bash "$ALVO" --resumo 2>/dev/null; }
+n_c="$(relato C)"
+n_br="$(relato pt_BR.UTF-8)"
+if [ -n "$n_c" ] && [ "$n_c" = "$n_br" ]; then ok "mesma linha sob C e pt_BR.UTF-8"
 else falha "relato muda com o locale (#1483): C='$n_c' vs pt_BR='$n_br'"; fi
+
+# Trava da regressão acima, e portável: com ruído no stderr do alvo, o relato
+# tem de continuar idêntico. É o ambiente do CI reproduzido em qualquer SO.
+n_cr="$(PS_RUIDO_STDERR=1 relato C)"
+n_brr="$(PS_RUIDO_STDERR=1 relato pt_BR.UTF-8)"
+if [ -n "$n_cr" ] && [ "$n_cr" = "$n_brr" ] && [ "$n_cr" = "$n_c" ]; then
+  ok "ruido de ambiente no stderr nao contamina o relato"
+else
+  falha "ruido no stderr mudou o relato: '$n_cr' vs '$n_brr' (limpo: '$n_c')"
+fi
 
 printf '\n'
 if [ "$falhas" -eq 0 ]; then echo "VERDE — orfaos-custosos.sh cumpre o contrato"; exit 0; fi
