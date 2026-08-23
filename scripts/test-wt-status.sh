@@ -69,6 +69,17 @@ STUB
 # PS_MODO: normal | gigante (acima do limiar medido de 318 KB → SIGPIPE 5/5)
 cat > "$stub/ps" <<'STUB'
 #!/bin/sh
+# A varredura de órfãos pede `ppid`; a de RSS, não. Só assim um `ps` que falha
+# na consulta de órfãos (ORFAOS_PS_RC) não contamina a seção de RSS — que é o
+# que o caso 8 precisa isolar.
+for a in "$@"; do
+  case "$a" in
+    *ppid*)
+      [ "${ORFAOS_PS_RC:-0}" = "0" ] || exit "$ORFAOS_PS_RC"
+      printf '91234     1  1015:22.33  68.4 /bin/zsh -c while :; do :; done\n'
+      exit 0 ;;
+  esac
+done
 case "${PS_MODO:-normal}" in
   gigante) awk 'BEGIN { for (i = 1; i <= 6000; i++)
              printf "%d /Applications/Um/Caminho/Bem/Longo/Que/Imita/O/comm/Do/macOS/processo-%d\n", i, i }' ;;
@@ -252,6 +263,39 @@ if printf '%s' "$saida" | secao_nm | command grep -q 'medidos: 4 de 4'; then
   ok "sem vm_stat/sysctl → as secoes POSTERIORES ainda medem"
 else
   falha "sem vm_stat/sysctl → perdeu as secoes seguintes"
+fi
+
+# ── caso 8 — órfão custoso: a seção existe E não derruba o script ─────────
+# O vigia era CEGO ao que de fato matou a máquina em 2026-08-23 (8 zsh órfãos
+# em ~5,5 dos 8 cores por 16h55min): media SESSÕES e worktrees, nunca ppid/pcpu.
+# Aqui só se prova a INTEGRAÇÃO — o critério em si é do test-orfaos-custosos.sh,
+# e duplicá-lo aqui seria dívida.
+saida="$(roda)"
+if printf '%s' "$saida" | command grep -q '91234'; then
+  ok "orfao custoso aparece no wt:status"
+else
+  falha "orfao custoso NAO aparece — a secao nao foi integrada"
+fi
+
+# O irmão do #1838, e o que mais dói: wt-status.sh roda sob `set -euo pipefail`,
+# e a sonda de órfãos sai 3 quando NÃO consegue varrer. Sem guarda no ponto de
+# chamada, esse 3 mata o wt-status inteiro — a sonda nova derrubaria o sensor
+# velho, justo na máquina saturada em que os dois existem pra falar.
+saida="$(ORFAOS_PS_RC=1 roda)"
+if [ "${saida##*EXIT=}" = "0" ]; then
+  ok "sonda de orfaos falhando (exit 3) NAO derruba o wt:status"
+else
+  falha "sonda de orfaos falhando levou o script junto: EXIT=${saida##*EXIT=}"
+fi
+if printf '%s' "$saida" | secao_nm | command grep -q 'medidos: 4 de 4'; then
+  ok "sonda de orfaos falhando → secoes POSTERIORES ainda medem"
+else
+  falha "sonda de orfaos falhando → perdeu as secoes seguintes"
+fi
+if printf '%s' "$saida" | command grep -q 'SEM-MEDIDA'; then
+  ok "sonda de orfaos falhando → declara falta de dado (nao 'esta limpo')"
+else
+  falha "sonda de orfaos falhando → silenciou; ausencia de dado virou aprovacao"
 fi
 
 echo

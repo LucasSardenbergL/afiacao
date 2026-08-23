@@ -41,6 +41,53 @@ else
   echo "  FAIL  não avisou node_modules ausente: $out"; fail=1
 fi
 
+echo "── vigia-worktree.sh: órfãos custosos ──"
+# 2026-08-23: 8 `zsh` órfãos (PPID=1) queimaram ~5,5 dos 8 cores por 16h55min e
+# este hook não tinha como vê-los — ele contava SESSÕES, que é o que o founder
+# já enxerga. Levou 17 horas, por acidente. Sandbox próprio: `ps` stubado e a
+# sonda REAL copiada pra dentro (nunca o ps da máquina, que traria os órfãos de
+# verdade e faria a asserção variar com o humor do Mac).
+orf="$tmp/orf"
+mkdir -p "$orf/scripts" "$orf/stub"
+cp "$here/orfaos-custosos.sh" "$orf/scripts/orfaos-custosos.sh" 2>/dev/null || true
+echo '{}' > "$orf/package.json"; mkdir -p "$orf/node_modules"   # cala o bloco 1
+cat > "$orf/stub/ps" <<'STUB'
+#!/bin/sh
+case "${ORF_MODO:-caro}" in
+  caro) printf '91234     1  1015:22.33  68.4 /bin/zsh -c while :; do :; done\n' ;;
+  *)    printf '91235     1     9:32.85   3.5 /Users/x/.bun/bin/bun worker-service\n' ;;
+esac
+STUB
+chmod +x "$orf/stub/ps"
+
+out="$(cd "$orf" && PATH="$orf/stub:$PATH" ORF_MODO=caro bash "$HOOKS/vigia-worktree.sh" 2>/dev/null)"
+ctx="$(printf '%s' "$out" | jq -r '.hookSpecificOutput.additionalContext // ""' 2>/dev/null)"
+if printf '%s' "$ctx" | grep -q '91234'; then
+  echo "  ok    orfao custoso -> avisa com o pid"
+else
+  echo "  FAIL  orfao custoso NAO chegou ao aviso: $out"; fail=1
+fi
+
+# Silêncio quando não há órfão CARO é metade do valor: hook que fala a cada boot
+# o founder aprende a ignorar, e aí volta a levar 17h. Âncora ASCII de caixa
+# fixa (ORFAO), nunca a palavra acentuada — `grep` daqui dobra acento (#1483).
+out="$(cd "$orf" && PATH="$orf/stub:$PATH" ORF_MODO=barato bash "$HOOKS/vigia-worktree.sh" 2>/dev/null)"
+ctx="$(printf '%s' "$out" | jq -r '.hookSpecificOutput.additionalContext // ""' 2>/dev/null)"
+if printf '%s' "$out" | jq -e 'type == "object"' >/dev/null 2>&1 && ! printf '%s' "$ctx" | grep -q 'ORFAO'; then
+  echo "  ok    orfao BARATO (claude-mem) -> silencio"
+else
+  echo "  FAIL  falou de orfao sem ter orfao caro: $out"; fail=1
+fi
+
+# Sonda ausente (worktree anterior a ela): sensor degrada, hook não quebra.
+rm -f "$orf/scripts/orfaos-custosos.sh"
+out="$(cd "$orf" && PATH="$orf/stub:$PATH" bash "$HOOKS/vigia-worktree.sh" 2>/dev/null)"
+if printf '%s' "$out" | jq -e 'type == "object"' >/dev/null 2>&1; then
+  echo "  ok    sonda ausente -> JSON valido (degrada, nao quebra)"
+else
+  echo "  FAIL  sonda ausente quebrou o hook: $out"; fail=1
+fi
+
 echo "── vigia-worktree.sh: bloco 4 (semáforo heavy) ──"
 # Sandbox git PRÓPRIO deste bloco, dentro do $tmp já trapado acima (nunca toca
 # ~/.local/bin real nem /tmp/afiacao-heavy-slots — há ~40 worktrees/sessões
