@@ -7,6 +7,10 @@
 #    alarme de CI (diagnóstico 2026-07).
 # 2) swap alto / muitas sessões Claude vivas → aviso de higiene (a alavanca real
 #    de RAM na M2 8GB é FECHAR sessões — wt:status mostra as ociosas).
+# 4) semáforo `heavy` divergente do repo → aviso (nunca instala sozinho).
+# 5) processo ÓRFÃO (PPID=1) QUEIMANDO CPU → o ponto cego de 2026-08-23, que
+#    custou 17h de máquina inutilizável: 1)-4) mediam só o que o founder já vê
+#    na tela (deps, swap, sessões, heavy) e ninguém olhava ppid/pcpu.
 #
 # Melhor-esforço: nunca bloqueia; qualquer falha interna vira silêncio ('{}').
 set -u
@@ -87,6 +91,36 @@ if [ -x scripts/heavy-install.sh ]; then
       avisos="${avisos}não consegui verificar o heavy (${st:-sem detalhe; pode ter sido o teto de 3s}) — isto é FALTA DE DADO, a comparação nem rodou; rode 'bash scripts/heavy-install.sh --status' manualmente pra ver a causa. "
       ;;
   esac
+fi
+
+# --- 5) processos ÓRFÃOS custosos ---------------------------------------------
+# O ponto cego que custou 17 horas. Em 2026-08-23 esta máquina ficou com load
+# 83,92 e 83MB livres por 16h55min por causa de 8 `zsh` ÓRFÃOS (PPID=1) em ~5,5
+# dos 8 cores — restos de um `eval` de carga sintética cuja sessão Claude morreu
+# sem matá-los. Os blocos 1-4 acima mediam node_modules, swap, SESSÕES e o heavy:
+# tudo que o founder JÁ VÊ. Nenhum media ppid/pcpu. Descoberto por acidente.
+#
+# O critério (dois eixos) e o porquê de TIME sozinho ser o eixo errado vivem em
+# scripts/orfaos-custosos.sh — num lugar só, como o bloco 4 faz com o
+# heavy-install.sh --status. Reimplementar aqui é como os dois vigias divergem.
+#
+# Mesmo teto de 3s do bloco 4 e pelo mesmo motivo: este hook morre inteiro se
+# estourar o timeout:10 do SessionStart, levando junto os avisos já prontos.
+# Sonda ausente (worktree anterior a ela) → silêncio: é SENSOR, não script que
+# apaga — degradar é o certo aqui.
+if [ -f scripts/orfaos-custosos.sh ]; then
+  # shellcheck disable=SC2086  # ${TO:+$TO 3} split de propósito: 0 ou 2 palavras
+  orf="$(${TO:+$TO 3} bash scripts/orfaos-custosos.sh --resumo 2>/dev/null)"
+  rc=$?
+  if [ -n "$orf" ]; then
+    # rc=3 já vem com o próprio SEM-MEDIDA no texto; rc=0 com texto é achado.
+    avisos="${avisos}${orf} "
+  elif [ "$rc" -ne 0 ]; then
+    # Vazio COM rc≠0 é a varredura que nem rodou (teto de 3s, tipicamente).
+    # Silenciar aqui seria ausência de dado virando "está limpo" — o mesmo erro
+    # que deixou os 8 órfãos vivos por 17h.
+    avisos="${avisos}Não consegui varrer processos órfãos (a sonda saiu ${rc}; provável teto de 3s) — isto é FALTA DE DADO, não 'está limpo': rode 'bash scripts/orfaos-custosos.sh'. "
+  fi
 fi
 
 # --- saída --------------------------------------------------------------------

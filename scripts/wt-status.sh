@@ -109,6 +109,24 @@ case "$swap" in
 esac
 
 echo
+# Órfãos custosos vêm LOGO DEPOIS da RAM, e antes de disco/worktrees, porque é a
+# ordem em que a pergunta "por que o Mac está lento?" se responde: em 2026-08-23
+# a resposta não estava em node_modules nem em sessões — eram 8 zsh órfãos em
+# ~5,5 dos 8 cores havia 16h55min, e este relatório inteiro era cego a eles.
+#
+# `|| true` no ponto de CHAMADA: a sonda sai 3 quando não consegue varrer (e ela
+# mesma imprime SEM-MEDIDA). Sob o `set -e` deste script, esse 3 mataria o
+# wt-status inteiro — a sonda nova derrubando o sensor velho, que é o #1838 de
+# novo. Sonda ausente (worktree antiga) declara a ausência em vez de silenciar.
+sonda_orfaos="$(dirname "$0")/orfaos-custosos.sh"
+if [ -f "$sonda_orfaos" ]; then
+  bash "$sonda_orfaos" || true
+else
+  echo "═══ processos órfãos custosos (PPID=1 queimando CPU) ═══"
+  echo "  SEM-MEDIDA: sonda ausente ($sonda_orfaos) — worktree anterior a ela?"
+fi
+
+echo
 echo "═══ disco (/) ═══"
 df -h / 2>/dev/null | awk 'NR==1 || NR==2 { printf "  %s\n", $0 }'
 
