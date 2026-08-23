@@ -535,7 +535,7 @@ seção anterior aprendeu, agora aplicada ao próprio parecer que a escreveu):
 | `AlertasStack` (fluxo de caixa) | **14 alertas vivos, 2 CRÍTICOS**, nas 3 empresas | corrigido agora |
 | `DataHealthBanner` (financeiro + cockpit de reposição) | os 3 `source` montados existem em `_data_health_compute` ⇒ `!check` hoje **é** falha de leitura | corrigido agora |
 | `CarteiraSaudePanel` (gêmeo exato do #1859) | 3 vendedores em `commercial_roles`; evento `carteira.saude_vista` só saía COM data | corrigido agora |
-| `CoveragePanel` + 4 consumidores de `useMyActiveCoverage` | `carteira_coverage` = **0 linhas** | dano hoje ZERO → chip com gatilho |
+| `CoveragePanel` + 4 consumidores de `useMyActiveCoverage` | `carteira_coverage` = **0 linhas** | dano hoje ZERO → chip com gatilho — **quitado na leva seguinte** (ver abaixo) |
 
 O `DataHealthBanner` merece nota à parte: o padrão correto estava **20 linhas ao lado o
 tempo todo**. `DataHealthBadge` faz `isError ? 'red' : badgeLevel(data ?? [])` — fail-closed.
@@ -546,6 +546,40 @@ financeira. A classe não é falta de conhecimento no repo; é falta de *fiscal*
 undefined, `error` null) tinha sido MEDIDO no #1874 e registrado só como nota. Agora é
 guarda permanente, nos três componentes e na tabela exaustiva de `estadoDeLeitura` — as 9
 combinações de `status × fetchStatus` têm nome, porque estado sem nome colapsa no vizinho.
+
+### O IRMÃO da classe: ausente degradado para VAZIO (2026-08-22, leva seguinte)
+
+A varredura acima mira "erro vira silêncio" (`data` undefined → `return null`). O irmão é a
+mesma colisão na direção oposta: **`data` undefined vira `[]`**, e a tela segue renderizando —
+completa por fora, incompleta por dentro. `useMyActiveCoverage` LANÇA quando o SELECT falha, e
+os quatro consumidores faziam `(coverage ?? []).map(...)` sem ler `error`; o efeito é
+`ownerIds = [eu]`, com a carteira COBERTA sumindo de sugestões de visita, scores, plano tático
+e copilot. Nada quebra, nada avisa: o vendedor vê uma carteira menor e plausível.
+
+A correção não foi espalhar `estadoDeLeitura` por quatro arquivos, e sim criar **uma costura
+só** — `useCarteirasQueEuCubro()`, que devolve os ids **e** `coberturaIndisponivel`. `coveredIds`
+segue degradando para `[]` de propósito (a MINHA carteira continua verdade, e derrubar a tela
+tiraria do vendedor em campo o que ele tem); o que mudou é que a ausência agora viaja
+ACOMPANHADA do motivo, e as telas falam.
+
+**Dois achados que sobrevivem a este PR:**
+
+1. **O gate NÃO enxerga esta sub-forma, e isso é estrutural.** `acharColapsos` só registra o
+   sítio quando há default no destructuring (`{ data = [] }`) ou silêncio (`return null`).
+   `const { data: coverage } = useX()` seguido de `(coverage ?? []).map(...)` **na linha de
+   baixo** não tem nenhum dos dois: 2 dos 4 consumidores eram invisíveis ao contador, e só
+   apareceram porque a leitura humana foi ao consumidor, não ao relatório. Gate mede a forma
+   que sabe medir — a fatia que ele cala não é fatia limpa.
+
+2. **A medição que impediu uma correção INERTE.** O chip listava `UnifiedOrder.tsx:255-256`
+   (`num_itens`/`valor_total` com `?? 0`) como o mesmo defeito. Aplicando o próprio aviso do
+   money-path §2 — *meça se a ausência chega COMO null antes de trocar* — `lastOrderData` é
+   construído LOCALMENTE em TS (`items` de um `.map`, `total` de uma soma), nunca atravessa a
+   rede: os campos não podem faltar, e o `?? 0` ali é defesa morta. Trocar teria produzido um
+   diff plausível, um item a mais no PR e zero mudança de comportamento — *fix* inerte é
+   indistinguível de *fix* real no relatório, e só a medição separa os dois. O sítio de fato
+   nulo era outro (`churn_risk: number | null` na telemetria de `ClientesAPositivarCard`), e
+   esse foi corrigido. **A lista do chip é hipótese; o tipo e a origem do dado é que decidem.**
 
 ## O alarme que se apaga por ser olhado (gatilho da fase 2 do Farmer, 2026-08-21)
 

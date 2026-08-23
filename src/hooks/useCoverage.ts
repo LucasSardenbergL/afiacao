@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
+import { estadoDeLeitura, naoConsegui, type EstadoSemLeitura } from '@/lib/leitura/estado-de-leitura';
 
 /**
  * Cobertura de carteira (carteira-Omie, Sub-PR B). "Tati cobre Regina de D1 a D2" = 1 linha.
@@ -34,6 +35,39 @@ export function useMyActiveCoverage() {
       return (data ?? []).filter((c) => !c.valid_until || c.valid_until > nowIso);
     },
   });
+}
+
+/**
+ * A cobertura JÁ INTERPRETADA: os ids que eu cubro **e** o estado da leitura, juntos.
+ *
+ * POR QUE EXISTE (classe "erro colapsado em vazio" — docs/historico/fase-sem-sinal.md):
+ * os quatro consumidores de `useMyActiveCoverage` faziam `(coverage ?? []).map(...)` sem
+ * ler `error`. Como o hook LANÇA quando o SELECT falha, `data` fica `undefined` — a MESMA
+ * condição de "não cubro ninguém". O resultado é `ownerIds = [eu]`: a carteira coberta some
+ * de sugestões de visita, scores, plano tático e copilot, e a tela não tem como saber que
+ * está incompleta. Ausente degradado para vazio, que é o irmão do erro virar silêncio.
+ *
+ * Hoje o dano é ZERO, e isso foi MEDIDO (psql-ro, 2026-08-22: `carteira_coverage` tem 0
+ * linhas). O gatilho é o PRIMEIRO cadastro de cobertura — a partir dele o defeito passa a
+ * ser silencioso. Por isso a correção vem ANTES do primeiro uso, não depois do primeiro dano.
+ *
+ * `coveredIds` SEGUE degradando para `[]` de propósito: a MINHA carteira continua sendo
+ * verdade quando a cobertura não pôde ser lida, e derrubar a lista inteira tiraria do
+ * vendedor em campo justamente o que ele tem. O que muda é que a ausência agora vem
+ * ACOMPANHADA de `coberturaIndisponivel` — a tela mostra o que sabe e FALA do que não sabe.
+ * Quem consome os ids sem renderizar aviso não fica errado; fica incompleto e calado, que
+ * é exatamente o estado que esta função existe para tornar impossível de ignorar.
+ */
+export function useCarteirasQueEuCubro(): {
+  coveredIds: string[];
+  coberturaIndisponivel: EstadoSemLeitura | null;
+} {
+  const q = useMyActiveCoverage();
+  const estado = estadoDeLeitura(q);
+  return {
+    coveredIds: (q.data ?? []).map((c) => c.covered_user_id),
+    coberturaIndisponivel: naoConsegui(estado) ? estado : null,
+  };
 }
 
 /** Coberturas que EU criei/sou parte (pra UI de gestão). Master vê todas via RLS. */

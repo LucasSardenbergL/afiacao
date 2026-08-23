@@ -47,10 +47,17 @@ function listarFontes(dir: string, acc: string[] = []): string[] {
 // baseline por arquivo aceitaria um 2º sítio no mesmo arquivo em silêncio. A lista só
 // ENCOLHE, e encolhe registrada — diminuir também reprova, pedindo a atualização.
 //
-// DÍVIDA (2026-08-22): estes 46 sítios são a classe medida, não sítios aprovados. A fatia
+// DÍVIDA (2026-08-22): estes 44 sítios são a classe medida, não sítios aprovados. A fatia
 // de maior dano saiu nesta leva (banner de saúde de dados, alertas de fluxo de caixa,
 // painel de saúde da carteira) porque neles a ausência AFIRMA segurança e o dano estava
 // medido em prod. O resto sai por domínio, e a ordem é por dano — não por facilidade.
+//
+// QUITADO nesta leva — o IRMÃO da classe: ausente degradado para VAZIO, em vez de erro
+// virando silêncio. Os dois consumidores de `useMyActiveCoverage` que faziam
+// `(coverage ?? [])` sem ler `error` passaram a usar `useCarteirasQueEuCubro()`, que
+// devolve os ids E o estado da leitura. O gatilho não era dano em prod — `carteira_coverage`
+// tem 0 linhas (psql-ro, 2026-08-22) — e sim o PRIMEIRO cadastro de cobertura, a partir do
+// qual a carteira coberta sumiria calada de sugestões, scores, plano tático e copilot.
 const BASELINE = new Map<string, number>([
   ["src/components/adminPrime/PrimePlanosTab.tsx", 1],
   ["src/components/customer/CustomerProfile360Summary.tsx", 1],
@@ -61,8 +68,6 @@ const BASELINE = new Map<string, number>([
   ["src/components/dashboard/MinhasVisitasResultadoCard.tsx", 1],
   ["src/components/farmer/ChamadasPendentesNudge.tsx", 1],
   ["src/components/farmer/copilot/OfertaCruaCard.tsx", 1],
-  ["src/components/farmer/copilot/useFarmerCopilot.ts", 1],
-  ["src/components/farmer/tacticalPlan/useFarmerTacticalPlan.ts", 1],
   ["src/components/financeiro/cashflow/EventosOnboarding.tsx", 1],
   ["src/components/knowledge-base/RendimentoCalculator.tsx", 1],
   ["src/components/knowledge-base/VersionHistory.tsx", 1],

@@ -4,7 +4,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
-import { useMyActiveCoverage } from '@/hooks/useCoverage';
+import { useCarteirasQueEuCubro } from '@/hooks/useCoverage';
 import { useUrlState } from '@/hooks/useUrlState';
 import { useTacticalPlan, type PlanType, type FiltroFila } from '@/hooks/useTacticalPlan';
 import { supabase } from '@/integrations/supabase/client';
@@ -25,8 +25,7 @@ export function useFarmerTacticalPlan() {
   const { effectiveUserId, isImpersonating } = useImpersonation();
   // Cobertura: o dropdown inclui também os clientes que EU cubro agora (paridade com
   // useMyCarteiraScores). Fora da lente: [eu, ...cobertos]; na lente: só o alvo.
-  const { data: coverage } = useMyActiveCoverage();
-  const coveredIds = (coverage ?? []).map((c) => c.covered_user_id);
+  const { coveredIds, coberturaIndisponivel } = useCarteirasQueEuCubro();
   const coveredKey = coveredIds.join(',');
   const ownerIds = isImpersonating && effectiveUserId ? [effectiveUserId] : (user ? [user.id, ...coveredIds] : []);
   const { plans, loading, generating, totalNaFila, loadPlans, generatePlan, checkEfficiency, recordResult } = useTacticalPlan();
@@ -145,6 +144,8 @@ export function useFarmerTacticalPlan() {
     setExpandedPlan(expandedPlan === planId ? null : planId);
 
   return {
+    /** `erro`/`sem-rede` na cobertura: a lista está INCOMPLETA e a tela precisa dizer isso. */
+    coberturaIndisponivel,
     plans,
     loading,
     generating,

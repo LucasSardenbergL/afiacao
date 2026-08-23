@@ -322,6 +322,7 @@ export const MODULOS: ModuloApp[] = [
       "src/hooks/__tests__/telemetria-plano-tatico.test.tsx",
       "src/hooks/__tests__/useLastVisit.test.tsx",
       "src/hooks/__tests__/useMyVisitSuggestions.test.ts",
+      "src/hooks/__tests__/cobertura-erro-nao-e-vazio.test.tsx",
       "src/hooks/__tests__/useDashboardCompany.test.ts",
       "src/pages/__tests__/FarmerBundles.erro-honesto.test.tsx",
       "src/pages/__tests__/FarmerDashboard.erro-honesto.test.tsx",

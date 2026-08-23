@@ -15,6 +15,8 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Users, X, CalendarClock } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
+import { estadoDeLeitura, naoConsegui } from '@/lib/leitura/estado-de-leitura';
+import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
 import {
   useSalespeople,
   useCoverageList,
@@ -24,8 +26,18 @@ import {
 
 export function CoveragePanel() {
   const { user, isMaster, isStaff } = useAuth();
-  const { data: people = [] } = useSalespeople();
-  const { data: coverages = [], isLoading } = useCoverageList();
+  // A leitura que falha NÃO pode virar "não há": com `data = []` no destructuring e sem
+  // ler `error`, uma falha de SELECT deixava este painel afirmando "Nenhuma cobertura
+  // ativa." e servindo um dropdown vazio — indistinguíveis de um cadastro legitimamente
+  // vazio. É a tela onde a cobertura é CRIADA: afirmar vazio aqui convida o gestor a
+  // recadastrar uma cobertura que talvez já exista.
+  const pessoasQuery = useSalespeople();
+  const coberturasQuery = useCoverageList();
+  const people = pessoasQuery.data ?? [];
+  const coverages = coberturasQuery.data ?? [];
+  const estadoPessoas = estadoDeLeitura(pessoasQuery);
+  const estadoCoberturas = estadoDeLeitura(coberturasQuery);
+  const isLoading = coberturasQuery.isLoading;
   const createCoverage = useCreateCoverage();
   const endCoverage = useEndCoverage();
 
@@ -79,6 +91,9 @@ export function CoveragePanel() {
         </p>
       </CardHeader>
       <CardContent className="space-y-4">
+        {naoConsegui(estadoPessoas) && (
+          <AvisoLeituraFalhou oque="a lista de vendedores" estado={estadoPessoas} className="mb-0" />
+        )}
         {/* Formulário */}
         <div className="grid gap-3 sm:grid-cols-[1fr_1fr_auto_auto] sm:items-end">
           <div className="space-y-1">
@@ -123,7 +138,9 @@ export function CoveragePanel() {
 
         {/* Lista de coberturas ativas */}
         <div className="border-t border-border pt-3">
-          {isLoading ? (
+          {naoConsegui(estadoCoberturas) ? (
+            <AvisoLeituraFalhou oque="as coberturas ativas" estado={estadoCoberturas} className="mb-0" />
+          ) : isLoading ? (
             <p className="text-2xs text-muted-foreground">Carregando…</p>
           ) : coverages.length === 0 ? (
             <p className="text-2xs text-muted-foreground">Nenhuma cobertura ativa.</p>

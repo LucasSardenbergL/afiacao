@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { useMyVisitSuggestions } from '@/hooks/useMyVisitSuggestions';
 import type { MissionType } from '@/lib/visit-scoring/types';
+import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
 
 interface MissionMeta {
   label: string;
@@ -42,12 +43,29 @@ const fmtMissao = (v: number | null) => (v == null ? 'não avaliada' : String(Ma
 
 export function VisitSuggestionsCard() {
   const [city, setCity] = useState<string | undefined>();
-  const { cities, suggestions, selectedCity, isLoading } = useMyVisitSuggestions({ city });
+  const { cities, suggestions, selectedCity, isLoading, coberturaIndisponivel } =
+    useMyVisitSuggestions({ city });
 
   if (isLoading) {
     return (
       <Card className="p-6 flex justify-center">
         <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+      </Card>
+    );
+  }
+
+  // A cobertura ilegível não pode sumir JUNTO com o card. Quando ela falha, a lista de
+  // cidades pode estar vazia justamente por faltar a carteira coberta — e o `return null`
+  // abaixo esconderia tudo, entregando ao vendedor a mesma tela de "não há visita a
+  // sugerir". Aqui o card sobrevive só para dizer que a leitura não aconteceu.
+  if (coberturaIndisponivel && cities.length === 0) {
+    return (
+      <Card className="p-4">
+        <AvisoLeituraFalhou
+          oque="as carteiras que você cobre"
+          estado={coberturaIndisponivel}
+          className="mb-0"
+        />
       </Card>
     );
   }
@@ -78,6 +96,15 @@ export function VisitSuggestionsCard() {
           </SelectContent>
         </Select>
       </CardHeader>
+      {coberturaIndisponivel && (
+        <div className="px-6 pb-2">
+          <AvisoLeituraFalhou
+            oque="as carteiras que você cobre"
+            estado={coberturaIndisponivel}
+            className="mb-0"
+          />
+        </div>
+      )}
       <div className="divide-y divide-border">
         {suggestions.map(s => {
           const meta = MISSION_META[s.primary_mission];

@@ -4,7 +4,7 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
-import { useMyActiveCoverage } from '@/hooks/useCoverage';
+import { useCarteirasQueEuCubro } from '@/hooks/useCoverage';
 import { useCopilotEngine, type CopilotContext } from '@/hooks/useCopilotEngine';
 import { useTacticalPlan, type TacticalPlan } from '@/hooks/useTacticalPlan';
 import { supabase } from '@/integrations/supabase/client';
@@ -23,8 +23,7 @@ export function useFarmerCopilot() {
   // edge) é write — bloqueado na lente pelo write-guard + botão "Iniciar" disabled.
   const { effectiveUserId, isImpersonating } = useImpersonation();
   // Cobertura: dropdown inclui clientes que EU cubro agora (paridade com useMyCarteiraScores).
-  const { data: coverage } = useMyActiveCoverage();
-  const coveredIds = (coverage ?? []).map((c) => c.covered_user_id);
+  const { coveredIds, coberturaIndisponivel } = useCarteirasQueEuCubro();
   const coveredKey = coveredIds.join(',');
   const ownerIds = isImpersonating && effectiveUserId ? [effectiveUserId] : (user ? [user.id, ...coveredIds] : []);
   const copilot = useCopilotEngine();
@@ -273,6 +272,8 @@ export function useFarmerCopilot() {
   const SugIcon = analysis ? (suggestionTypeIcons[analysis.suggestionType] || fallbackSuggestionIcon) : fallbackSuggestionIcon;
 
   return {
+    /** `erro`/`sem-rede` na cobertura: a lista está INCOMPLETA e a tela precisa dizer isso. */
+    coberturaIndisponivel,
     navigate,
     isStaff,
     isImpersonating,
