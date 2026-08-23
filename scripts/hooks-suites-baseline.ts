@@ -20,9 +20,11 @@ export const SUITES_FORA_DO_CI: SuiteForaDoCI[] = [
     arquivo: 'test-heavy.sh',
     motivo:
       'macOS-only: exercita o semáforo de RAM real (sysctl/stat -f, BSD) com N processos em ' +
-      'disputa — o `heavy` não existe no runner ubuntu (exit 127). Além disso é FLAKY sob carga ' +
-      '(medido 2026-08-22: 2 verdes e 1 vermelho em 3 execuções na M2 com 36 sessões vivas) e ' +
-      'leva ~50s. Rodar à mão na M2 ao mexer em scripts/heavy.sh.',
+      'disputa — o `heavy` não existe no runner ubuntu (exit 127). Leva ~50s. Rodar à mão na M2 ' +
+      'ao mexer em scripts/heavy.sh. (Era também FLAKY: 2 vermelhos em 13 execuções, ~15%, ' +
+      'sempre na asserção do `--status` sob sobrecarga — o setup sincronizava por `sleep` fixo e ' +
+      'sob carga alta media um mundo meio-montado. Consertado com espera por CONDIÇÃO; o motivo ' +
+      'de estar aqui é só o macOS-only.)',
   },
   {
     arquivo: 'test-heavy-install.sh',
