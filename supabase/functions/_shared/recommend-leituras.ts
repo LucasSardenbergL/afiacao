@@ -147,21 +147,28 @@ export const CLUSTER_STATUS_COM_HISTORICO = ["ativo", "stale"] as const;
 
 export interface ClusterRecommend {
   /**
-   * Denominador de `sim`: quantos clientes ELEGÍVEIS o cluster tem (whitelist de
-   * `sales_history_status` aplicada). População, não "quem comprou alguma coisa".
+   * População ELEGÍVEL do cluster (whitelist de `sales_history_status` aplicada).
    *
-   * Os dois DIVERGEM em prod — 779 vs 633 em `critico`, 348 vs 334 em `atencao` — e a escolha
-   * muda comportamento observável (com população, zero produtos cruzam o corte de 0,10 em
-   * `critico`; com observados, dois cruzam). População é o certo porque a leitura é EXAUSTIVA:
-   * cliente sem par é fato OBSERVADO ("li o histórico inteiro dele e X não está lá"), não
-   * truncagem. Dividir pelos observados é viés de seleção — o denominador filtrado pelo
-   * numerador — e infla `sim` sistematicamente.
+   * ⚠️ NÃO é o denominador de `sim` — foi, e a mudança está medida. Ele é o eixo do DISJUNTOR
+   * (o teto é sobre custo, e custo escala com população) e o sensor que mostra a distância
+   * entre "quantos existem" e "sobre quantos dá para responder".
    */
   denominador: number;
   /**
-   * Quantos dos elegíveis têm ≥1 par no recorte. DIAGNÓSTICO, não denominador: é o sensor que
-   * permite ver a distância entre população e observação sem ter que inferi-la. `null` quando
+   * Quantos dos elegíveis têm ≥1 par no recorte. **É o denominador de `sim`.** `null` quando
    * `truncado`.
+   *
+   * Os dois DIVERGEM em prod (780 vs 634 em `critico`, 347 vs 333 em `atencao`) e a escolha muda
+   * comportamento observável. A versão anterior dividia pela população, argumentando que a
+   * leitura é exaustiva e portanto cliente sem par é fato observado. MEDIDO, não era: os 146 de
+   * `critico` que ficam de fora TÊM compra, os pedidos passam no filtro de universo, e quem os
+   * elimina é só `omie_products.ativo` — um filtro de PRODUTO decidindo quem entra num
+   * denominador de CLIENTES. São clientes sobre quem a pergunta não é respondível, e contá-los
+   * como "não comprou" é o `Number(null)===0` mudado do numerador para o denominador.
+   *
+   * ⚠️ Não confundir com viés de seleção: `observados` não é "quem comprou o produto X" (aí o
+   * denominador sairia filtrado pelo numerador) — é "quem tem ao menos um par mensurável", que
+   * é condição sobre a legibilidade do CLIENTE, não sobre o produto sendo pontuado.
    */
   observados: number | null;
   /**

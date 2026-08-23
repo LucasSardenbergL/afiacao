@@ -205,18 +205,42 @@ async function recommend(
   } else {
     console.log(
       `[Recommend] similaridade sobre o cluster "${customerCluster}" INTEIRO: ` +
-        `${denominador} elegíveis, ${observados} com compra no recorte, ` +
+        `${denominador} elegíveis, ${observados} com compra no recorte (DIVISOR), ` +
         `${Object.keys(clientesPorProduto ?? {}).length} produtos`,
     );
   }
 
-  // DENOMINADOR = população elegível do cluster, vinda do banco. Duas correções em relação ao
-  // que havia aqui: (a) não é mais `usuariosAmostrados.length` (a amostra deixou de existir), e
-  // (b) o numerador não vem mais de uma leitura capada em 1.000 linhas que zerava clientes
-  // reais — 5 em `atencao` e 2 em `estavel`, medido. O `Math.max(…, 1)` continua sendo só
-  // guarda de divisão por zero: com denominador 0 não há produto no agregado, então nenhum
-  // `sim` chega a ser calculado.
-  const clusterSize = Math.max(denominador, 1);
+  // DENOMINADOR = clientes com par MENSURÁVEL (`observados`), NÃO a população elegível.
+  //
+  // A entrega anterior dividia pela população e justificou assim: "a leitura é exaustiva, então
+  // cliente sem par é fato observado — li o histórico inteiro dele e o produto X não está lá".
+  // MEDIDO em prod (2026-08-22), a justificativa não se sustenta. Dos 780 elegíveis de
+  // `critico`, 146 ficam fora do numerador — e:
+  //     sem_par=146 · tem_order_items=146 · sobrevive_universo=146 · zero_linhas_de_todo=0
+  // Todos TÊM compra e os pedidos passam no filtro de universo. Quem os elimina é
+  // exclusivamente `omie_products.ativo`. Não são "clientes que não compraram X": são clientes
+  // sobre quem a pergunta não é RESPONDÍVEL com este recorte, e contá-los como "não comprou" é
+  // o mesmo `Number(null)===0` que esta entrega tirou do numerador — mudado de lugar.
+  //
+  // A raiz é misturar, no mesmo denominador, um filtro de CLIENTE (`health_class`,
+  // `sales_history_status`, que define a população) com um de PRODUTO (`ativo`, que define o
+  // que é recomendável). ⚠️ E o viés NÃO é neutro: correlaciona com o eixo do próprio cluster,
+  // porque quem parou de comprar comprava o que hoje está descontinuado — 18,7% em `critico`,
+  // 4,0% em `atencao`, 0 em `estavel`.
+  //
+  // Efeito medido: `critico` sai de simmax 0,096 (NENHUM produto cruza 0,10 — o cluster fica
+  // mudo) para 0,118, com 2 produtos acendendo o boost de contexto; `atencao` 0,213 → 0,222
+  // (12 → 15 produtos em 0,10); `estavel` não muda (observados = população = 100).
+  //
+  // ⚠️ Isto NÃO é o viés de seleção que a versão anterior temia. `observados` não é "quem
+  // comprou o produto X" (aí sim o denominador sairia filtrado pelo numerador) — é "quem tem
+  // ao menos UM par mensurável", que é uma condição sobre a legibilidade do cliente, não sobre
+  // o produto sendo pontuado.
+  //
+  // `?? 0` não fabrica: `observados` só vem `null` sob truncagem, e aí `simIndisponivel` já é
+  // `true`, `sim` é `null` e este divisor não chega a ser usado. O `Math.max(…, 1)` segue sendo
+  // guarda de divisão por zero — com 0 observados o agregado está vazio e nenhum `sim` existe.
+  const clusterSize = Math.max(observados ?? 0, 1);
 
   // O que a correção move, e o que NÃO move (medido em prod, psql-ro):
   //   · NÃO move o componente `score_sim` do score ponderado: `minMaxNorm` é `(v-min)/(max-min)`,
