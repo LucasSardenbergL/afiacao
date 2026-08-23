@@ -76,7 +76,9 @@ vi.mock('@/integrations/supabase/client', () => ({
 }));
 vi.mock('@/contexts/ImpersonationContext', () => ({ useImpersonation: () => ({ isImpersonating: false, effectiveUserId: OWNER }) }));
 vi.mock('@/contexts/AuthContext', () => ({ useAuth: () => ({ user: { id: OWNER }, isStaff: true }) }));
-vi.mock('@/hooks/useCoverage', () => ({ useMyActiveCoverage: () => ({ data: [] }) }));
+vi.mock('@/hooks/useCoverage', () => ({
+  useCarteirasQueEuCubro: () => ({ coveredIds: [], coberturaIndisponivel: null }),
+}));
 vi.mock('@/hooks/useTacticalPlan', () => ({
   useTacticalPlan: () => ({
     plans: [], loading: false, generating: false,

@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
-import { useMyActiveCoverage } from '@/hooks/useCoverage';
+import { useCarteirasQueEuCubro } from '@/hooks/useCoverage';
 import type { ScoreAdjustment } from '@/lib/scoring/types';
 
 export interface CarteiraScoreRow {
@@ -43,8 +43,7 @@ export interface CarteiraScoreRow {
 export function useMyCarteiraScores() {
   const { user } = useAuth();
   const { isImpersonating, effectiveUserId } = useImpersonation();
-  const { data: coverage } = useMyActiveCoverage();
-  const coveredIds = (coverage ?? []).map((c) => c.covered_user_id);
+  const { coveredIds } = useCarteirasQueEuCubro();
   const ownerIds = isImpersonating && effectiveUserId ? [effectiveUserId] : (user ? [user.id, ...coveredIds] : []);
   const baseId = isImpersonating ? effectiveUserId : user?.id;
 

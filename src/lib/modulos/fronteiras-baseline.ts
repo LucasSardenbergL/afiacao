@@ -51,6 +51,7 @@ export const FRONTEIRAS_BASELINE: Aresta[] = [
   { de: "src/components/customer360/components.tsx", para: "src/lib/customer-contact/types.ts", deModulo: "farmer-inteligencia", paraModulo: "admin-crm", kind: "runtime" },
   { de: "src/components/customer360/CustomerHero.tsx", para: "src/components/call/CallButton.tsx", deModulo: "farmer-inteligencia", paraModulo: "telefonia-whatsapp-rota", kind: "runtime" },
   { de: "src/components/customer360/viewTypes.ts", para: "src/hooks/useCustomerContacts.ts", deModulo: "farmer-inteligencia", paraModulo: "admin-crm", kind: "type" },
+  { de: "src/components/dashboard/__tests__/AgendaTodayList.cobertura.test.tsx", para: "src/contexts/webrtc-call-context.ts", deModulo: "farmer-inteligencia", paraModulo: "telefonia-whatsapp-rota", kind: "runtime" },
   { de: "src/components/dashboard/AgendaTodayList.tsx", para: "src/contexts/webrtc-call-context.ts", deModulo: "farmer-inteligencia", paraModulo: "telefonia-whatsapp-rota", kind: "runtime" },
   { de: "src/components/dashboard/CloserDashboard.tsx", para: "src/components/tarefas/MinhasTarefasCard.tsx", deModulo: "farmer-inteligencia", paraModulo: "tarefas", kind: "runtime" },
   { de: "src/components/dashboard/FarmerDashboardV2.tsx", para: "src/components/tarefas/MinhasTarefasCard.tsx", deModulo: "farmer-inteligencia", paraModulo: "tarefas", kind: "runtime" },

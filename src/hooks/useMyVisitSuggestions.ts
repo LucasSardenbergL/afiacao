@@ -17,7 +17,7 @@ import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
-import { useMyActiveCoverage } from '@/hooks/useCoverage';
+import { useCarteirasQueEuCubro } from '@/hooks/useCoverage';
 import { pickDailyMix } from '@/lib/visit-scoring/mix-selector';
 import type { MissionType, VisitScore } from '@/lib/visit-scoring/types';
 
@@ -59,8 +59,7 @@ export function useMyVisitSuggestions(opts: {
   const { user } = useAuth();
   const { isImpersonating, effectiveUserId } = useImpersonation();
   const userId = user?.id;
-  const { data: coverage } = useMyActiveCoverage();
-  const coveredIds = (coverage ?? []).map((c) => c.covered_user_id);
+  const { coveredIds, coberturaIndisponivel } = useCarteirasQueEuCubro();
   const baseId = isImpersonating && effectiveUserId ? effectiveUserId : userId;
   // Opção A: farmer_id = dono. Minha lista = minha carteira + carteiras que eu cubro agora.
   // Em impersonação: escopar apenas ao alvo (ignorar cobertura do master).
@@ -187,6 +186,8 @@ export function useMyVisitSuggestions(opts: {
   });
 
   return {
+    /** `erro`/`sem-rede` na cobertura: a lista está INCOMPLETA e a tela precisa dizer isso. */
+    coberturaIndisponivel,
     cities: citiesQuery.data ?? [],
     suggestions: suggestionsQuery.data ?? [],
     selectedCity,

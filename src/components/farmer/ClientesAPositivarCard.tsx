@@ -27,7 +27,12 @@ export function ClientesAPositivarCard({ clientes }: { clientes: ClienteAPositiv
             to={`/admin/customers/${c.customer_user_id}/360`}
             onClick={() => track('carteira.a_positivar_cliente_aberto', {
               dias_sem_comprar: c.days_since_last_purchase,
-              churn_alto: (c.churn_risk ?? 0) >= 60,
+              // `churn_risk` é `number | null` (medido em @/lib/positivacao/types). O
+              // `?? 0` reportava risco DESCONHECIDO como risco BAIXO — ausente virando
+              // zero dentro do payload, que é o §2 do money-path aplicado à telemetria:
+              // o denominador de "clientes de churn alto" ficava contaminado por linhas
+              // que nunca foram medidas, e o erro só aparece como um número plausível.
+              churn_alto: c.churn_risk == null ? null : c.churn_risk >= 60,
             })}
             className="p-3 flex items-center justify-between gap-3 hover:bg-muted/30"
           >

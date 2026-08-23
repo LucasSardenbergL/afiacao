@@ -42,7 +42,14 @@ vi.mock('@/contexts/AuthContext', () => ({ useAuth: () => ({ user: { id: 'master
 
 // Cobertura controlada (evita useQuery/QueryClientProvider no teste do hook).
 const coverageMock = vi.fn((): { data: Array<{ covered_user_id: string }> } => ({ data: [] }));
-vi.mock('@/hooks/useCoverage', () => ({ useMyActiveCoverage: () => coverageMock() }));
+vi.mock('@/hooks/useCoverage', () => ({
+  // O hook passou a consumir a costura interpretada; deriva do MESMO mock para que o que
+  // este teste controla (quem eu cubro, sob a lente) siga sendo a única variável.
+  useCarteirasQueEuCubro: () => ({
+    coveredIds: (coverageMock().data ?? []).map((c) => c.covered_user_id),
+    coberturaIndisponivel: null,
+  }),
+}));
 
 import { useTacticalPlan } from '../useTacticalPlan';
 import { useFarmerTacticalPlan } from '@/components/farmer/tacticalPlan/useFarmerTacticalPlan';

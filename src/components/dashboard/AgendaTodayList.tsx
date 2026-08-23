@@ -6,6 +6,8 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Phone, AlertTriangle, TrendingUp, Clock, Loader2, UserPlus } from 'lucide-react';
 import { useMyAgendaToday, type AgendaItem } from '@/hooks/useMyAgendaToday';
+import { useCarteirasQueEuCubro } from '@/hooks/useCoverage';
+import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
 import { useWebRTCCallContext } from '@/contexts/webrtc-call-context';
 import { toast } from 'sonner';
 import { SignalModifierBadge } from './SignalModifierBadge';
@@ -24,6 +26,10 @@ const AGENDA_META: Record<AgendaItem['agenda_type'], { label: string; icon: type
  */
 export function AgendaTodayList() {
   const { agenda, isLoading } = useMyAgendaToday(10);
+  // A agenda sai de `farmer_client_scores` filtrado por [eu, ...cobertos]. Se a cobertura
+  // não pôde ser lida, ela encolhe em silêncio — e o texto de vazio abaixo manda
+  // "Recalcular", instrução ATIVA sobre um vazio que talvez não exista.
+  const { coberturaIndisponivel } = useCarteirasQueEuCubro();
   const { makeCall } = useWebRTCCallContext();
 
   // Hydrate phones em batch das profiles
@@ -52,6 +58,18 @@ export function AgendaTodayList() {
     );
   }
 
+  if (coberturaIndisponivel && agenda.length === 0) {
+    return (
+      <Card className="p-4">
+        <AvisoLeituraFalhou
+          oque="as carteiras que você cobre"
+          estado={coberturaIndisponivel}
+          className="mb-0"
+        />
+      </Card>
+    );
+  }
+
   if (agenda.length === 0) {
     return (
       <Card className="p-6 text-center text-xs text-muted-foreground">
@@ -74,6 +92,15 @@ export function AgendaTodayList() {
 
   return (
     <Card className="divide-y divide-border">
+      {coberturaIndisponivel && (
+        <div className="p-3">
+          <AvisoLeituraFalhou
+            oque="as carteiras que você cobre"
+            estado={coberturaIndisponivel}
+            className="mb-0"
+          />
+        </div>
+      )}
       {agenda.map((item) => {
         const meta = AGENDA_META[item.agenda_type];
         const Icon = meta.icon;

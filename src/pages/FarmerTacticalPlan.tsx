@@ -9,6 +9,7 @@ import { useFarmerTacticalPlan } from '@/components/farmer/tacticalPlan/useFarme
 import { GerarPlanoCard } from '@/components/farmer/tacticalPlan/GerarPlanoCard';
 import { EfficiencyAlertDialog } from '@/components/farmer/tacticalPlan/EfficiencyAlertDialog';
 import { PlanCard } from '@/components/farmer/tacticalPlan/PlanCard';
+import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
 
 const ROTULO_FILA: Record<FiltroFila, string> = {
   pendentes: 'pendentes',
@@ -53,6 +54,7 @@ const FarmerTacticalPlan = () => {
     confirmGenerate,
     handleGenerateWithCheck,
     recordResult,
+    coberturaIndisponivel,
   } = useFarmerTacticalPlan();
 
   if (!isStaff) { navigate('/', { replace: true }); return null; }
@@ -61,6 +63,13 @@ const FarmerTacticalPlan = () => {
     <div className="min-h-screen bg-background pb-24">
 
       <main className="px-4 py-4 space-y-3 max-w-lg mx-auto">
+        {coberturaIndisponivel && (
+          <AvisoLeituraFalhou
+            oque="as carteiras que você cobre"
+            estado={coberturaIndisponivel}
+            className="mb-0"
+          />
+        )}
         {/* Header */}
         <Card className="bg-gradient-to-br from-primary/10 to-primary/5 border-primary/20">
           <CardContent className="p-4">

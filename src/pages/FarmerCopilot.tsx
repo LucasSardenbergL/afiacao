@@ -12,6 +12,7 @@ import { OfertaCruaCard } from '@/components/farmer/copilot/OfertaCruaCard';
 import { ManualTextInput } from '@/components/farmer/copilot/ManualTextInput';
 import { TranscriptCard } from '@/components/farmer/copilot/TranscriptCard';
 import { AnalysisHistoryCard } from '@/components/farmer/copilot/AnalysisHistoryCard';
+import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
 
 // Motor de voz headless (embute o SDK @elevenlabs/react): lazy para o SDK não
 // entrar no chunk desta página — só baixa ao iniciar uma sessão de voz.
@@ -48,6 +49,7 @@ const FarmerCopilot = () => {
     dir,
     DirIcon,
     SugIcon,
+    coberturaIndisponivel,
   } = useFarmerCopilot();
 
   if (!isStaff) { navigate('/', { replace: true }); return null; }
@@ -56,6 +58,13 @@ const FarmerCopilot = () => {
     <div className="min-h-screen bg-background pb-24">
 
       <main className="px-4 py-4 space-y-3 max-w-lg mx-auto">
+        {coberturaIndisponivel && (
+          <AvisoLeituraFalhou
+            oque="as carteiras que você cobre"
+            estado={coberturaIndisponivel}
+            className="mb-0"
+          />
+        )}
         {/* Motor de voz (headless, retorna null) — montado só com sessão de voz.
             key={token}: troca de token REMONTA o motor (1 instância = 1 conexão;
             guards não vazam entre conexões — achado Codex, 3ª rodada). */}
