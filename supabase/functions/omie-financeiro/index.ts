@@ -2300,8 +2300,13 @@ Deno.serve(async (req) => {
 
     // Lê de `corpoBruto` (já consumido acima pela sonda): o corpo de um Request só se lê UMA vez,
     // e um segundo `req.json()` aqui lançaria "Body already consumed".
+    //
+    // SEM cast: `req.json()` já devolve `any`, que é exatamente o tipo que este destructuring tinha
+    // antes de o parse subir. Um `as Record<string, any>` aqui seria `any` ESCRITO, que o
+    // `@typescript-eslint/no-explicit-any` reprova — e reprovou (o único erro do `bun lint` nesta
+    // fatia; os outros 75 são warnings pré-existentes).
     const { action, company, companies, filtro_data_de, filtro_data_ate, ano, mes, meses, maxPages, entidade, ncodcc, regime: requestedRegime } =
-      corpoBruto as Record<string, any>;
+      corpoBruto;
 
     const targetCompanies = resolveCompanies({ companies, company, allowed: ALLOWED_COMPANIES }) as Company[];
 
