@@ -1,4 +1,4 @@
-# Evidência POSITIVA — e as oito armadilhas de shell que fabricam verde
+# Evidência POSITIVA — e as oito armadilhas de shell que fabricam VEREDITO
 
 > **A regra que sobrou no CLAUDE.md:** validação só conta com **evidência positiva** — rode o
 > comando autoritativo, confirme que **terminou**, capture `exit 0`. Este doc guarda o *porquê*
