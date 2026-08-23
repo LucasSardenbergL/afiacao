@@ -342,10 +342,22 @@ function emitMarkdown(audits: MigrationAudit[]): string {
  * existe — aconteceu ao entregar o #1894 e custou um ciclo de apuração até o `git diff` (vazio)
  * desempatar.
  *
- * Casa com o `writeFileSync(…, conteudo)` logo abaixo, que grava em utf8 por default.
+ * Casa com o `writeFileSync(…, conteudo)` do `main()`, que grava em utf8 por default.
  */
 function bytesUtf8(conteudo: string): number {
   return Buffer.byteLength(conteudo, 'utf8');
+}
+
+/**
+ * A linha que o script imprime por artefato gravado: `✓ Escrito <caminho> (<n> bytes)`.
+ *
+ * É função, e não interpolação no call site, porque o bug do #1897 morava JUSTAMENTE no call
+ * site (`${sql.length} bytes`) — um teste do `bytesUtf8` sozinho ficaria verde com o call
+ * site errado. Com a aritmética aqui dentro, `audit-custom-migrations.test.ts` prende o número
+ * ao que o filesystem enxerga, e o call site não tem mais o que errar.
+ */
+export function linhaArtefatoEscrito(caminho: string, conteudo: string): string {
+  return `✓ Escrito ${caminho} (${bytesUtf8(conteudo)} bytes)`;
 }
 
 function main() {
@@ -363,15 +375,15 @@ function main() {
 
   const sql = emitSql(audits);
   writeFileSync(SQL_OUT, sql);
-  console.log(`✓ Escrito ${SQL_OUT} (${bytesUtf8(sql)} bytes)`);
+  console.log(linhaArtefatoEscrito(SQL_OUT, sql));
 
   const md = emitMarkdown(audits);
   writeFileSync(MD_OUT, md);
-  console.log(`✓ Escrito ${MD_OUT} (${bytesUtf8(md)} bytes)`);
+  console.log(linhaArtefatoEscrito(MD_OUT, md));
 
   const totalObjects = audits.reduce((sum, a) => sum + a.objects.length, 0);
   console.log(`\nResumo: ${audits.length} migrations, ${totalObjects} objetos esperados.`);
   console.log(`Próximo passo: abra ${basename(SQL_OUT)} no Supabase SQL Editor e rode.`);
 }
 
-main();
+if (import.meta.main) main();
