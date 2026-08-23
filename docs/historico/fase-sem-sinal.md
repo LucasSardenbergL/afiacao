@@ -983,3 +983,79 @@ agora por uma causa nomeada, que não se conserta com SQL.
 caixa **compartilhada** de atendimento, com o nome pessoal dela no `profiles`. Conta de função não
 tem dono; é candidata natural a ninguém sentir que é sua. Vale conferir com o founder antes de
 tratar como conta individual.)*
+
+---
+
+## A série do MixGap era LEGÍVEL — e ninguém tinha como ler (2026-08-23)
+
+O §7 do topo deixou uma query "para quando houver exposição". Ao tentar rodá-la descobriu-se algo
+anterior: **não havia via de leitura nenhuma.** As quatro foram medidas e as quatro estavam fechadas
+— plugin PostHog desabilitado em `.claude/settings.json`, nenhuma Personal API Key em lugar algum,
+navegador (headless e real) caindo em `/login`, e nenhum espelho de `carteira.*` no banco.
+`VITE_POSTHOG_KEY` existe, mas é `phc_` — chave **pública de ingestão**, que escreve evento e não
+consulta.
+
+Isto é mais grave que uma pendência de medição: **a regra deste arquivo era incumprível por
+construção.** O repo instalava sensor (`carteira.mixgap_visto`, `carteira.positivacao_vista`,
+`dashboard.*`, `offline.*`) sem que ninguém pudesse lê-lo. "Quando medir é query, não recado" só
+vale se a query for executável.
+
+A via foi construída (`scripts/posthog-query.sh` + Personal API Key read-only 0600; detalhe em
+[docs/agent/analytics.md](../agent/analytics.md)) e as queries rodaram:
+
+| leitura | resultado |
+|---|---|
+| sanidade — `count()` de eventos em 30d | **699** |
+| **série** de `carteira.mixgap_visto` desde o Publish do #1892 | **vazia** (0 linhas) |
+| **controle** — mesma janela, sem filtro de evento | **11 eventos, 1 pessoa** |
+
+### 1. O controle positivo não bastava — quem decidiu foi o IRMÃO
+
+Série vazia **com controle positivo** é, pela regra do §7, dado real. Mas o controle sozinho é fraco:
+prova que *alguma* telemetria chega, não que chegaria *deste* sensor. A prova forte veio de um
+terceiro eixo — o **irmão na mesma superfície**:
+
+- `carteira.positivacao_vista` chegou ao PostHog **3×** em 90 dias (última: `2026-08-14T17:03:20Z`);
+- `carteira.mixgap_visto` **nunca** chegou — zero em 90 dias;
+- os dois montam na **mesma página**, `src/pages/FarmerCalls.tsx` (`PositivacaoHero` e `MixGapCard`).
+
+Logo o caminho evento→PostHog está provado **para esta tela**, e a série vazia não pode ser falha de
+transporte. Some-se que os 11 eventos da janela são só `$autocapture`/`$pageview`/`$pageleave`/`$set`
+— **nenhum evento custom**: a única pessoa ativa depois do Publish nunca abriu a FarmerCalls.
+
+### 2. Terceira fonte independente para o denominador da employee A
+
+A seção anterior deste arquivo estabeleceu, por `auth.refresh_tokens`, que agosto da employee A foi
+**1 dia — o dia 14**. A telemetria, medida sem conhecer aquele número, põe o último
+`carteira.positivacao_vista` em `2026-08-14T17:03:20Z`.
+
+São **três** trilhas independentes convergindo no mesmo dia: `auth.sessions` (§6 do topo),
+`auth.refresh_tokens` (seção anterior) e PostHog. E a convergência tem valor além da confirmação:
+a seção anterior mostrou que `auth.sessions` **superestima inatividade** e `last_sign_in_at`
+**subestima uso** — a telemetria de produto não tem nenhum dos dois vieses, porque só existe se
+alguém renderizou a tela. É a única das três que mede **exposição ao sensor**, que é exatamente o
+denominador que o §5 do topo pediu.
+
+O que ela acrescenta ao caso do MixGap: o dia 14 é **8 dias ANTES** do Publish do #1892. A employee A
+nunca teve como ver o card.
+
+### 3. Achado lateral: o sensor de dashboard tem os dois lados desencontrados
+
+`dashboard.viewed` disparou **8×** (1 pessoa) em 30 dias, enquanto `dashboard_visits` — a tabela
+criada em 2026-05-17 justamente para registrar visita server-side — segue com **0 linhas**
+(reconfirmado via `psql-ro`). O sensor client-side funciona; o server-side nunca foi ligado. O §6 do
+topo registrava a tabela vazia como "mais um sensor que nunca mediu"; agora sabe-se que a visita
+**ocorre** e só o registro server-side falha — o que é **bug**, não ausência de uso.
+
+Denominador de 30 dias, para calibrar leituras futuras: **3 pessoas distintas**, 699 eventos.
+
+### 4. A regra que isto acrescenta
+
+**A via de leitura é PRÉ-REQUISITO de instalar o sensor, não consequência.** Um `track()` sem caminho
+de consulta não é telemetria: é código morto que *parece* medição, e passa em todo CI. Antes de
+mergear sensor novo, a pergunta é "qual comando lê esta série, e ele roda?" — se a resposta não é um
+comando executável, a fase N+1 é construir a via, não instalar mais sensor.
+
+**Corolário sobre o controle:** controle positivo prova que a telemetria chega, **não** que chegaria
+daquele sensor. Quando existir um **irmão na mesma superfície** com histórico, ele é a testemunha
+mais forte — foi o que separou "ninguém abriu a tela" de "o evento se perdeu" aqui.

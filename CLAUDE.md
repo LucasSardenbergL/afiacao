@@ -28,6 +28,7 @@
 | tintométrico (fórmula↔receita, preço fail-closed, import) | [tintometrico.md](docs/agent/tintometrico.md) |
 | lente "Ver como" (impersonação, write-guard) | [impersonation.md](docs/agent/impersonation.md) |
 | telefonia (WebRTC, SIP, LGPD) | [telefonia.md](docs/agent/telefonia.md) |
+| analytics · ler PostHog (HogQL read-only, sensores) | [analytics.md](docs/agent/analytics.md) |
 | skills & MCPs (roteamento canônico) | [skills.md](docs/agent/skills.md) |
 | **mapa do app** ("onde faço X" · rotas/gates · **3 empresas** · princípios) | [mapa-do-app.md](docs/agent/mapa-do-app.md) |
 | worktrees · multi-sessão · RAM/Node · `heavy` | [worktrees.md](docs/agent/worktrees.md) |
