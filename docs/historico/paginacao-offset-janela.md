@@ -173,6 +173,15 @@ baixar PAGE para 900?") pergunta por um defeito que o #1889 **já consertou**. R
 cota numa pergunta morta e continua sem revisar #1877/#1882/#1889, que o prompt nem menciona.
 Regenerar contra o código VIVO antes de rodar.
 
+📅 **JÁ AGENDADO — não abra sessão nova para isso.** A tarefa
+`codex-retroativo-consolidado-setembro` dispara em **2026-09-22 09:47 BRT** e cobre os TRÊS
+docs com pendência viva de uma vez (este, `duplicata-por-objetivo.md` e
+`recommend-teto-linhas-cluster.md`), porque os três esperam a MESMA cota — três sessões
+separadas pagariam três vezes o prelúdio de ~21k tokens do `codex exec` para o mesmo bloqueio.
+O prompt dela é auto-contido e usa o gerador acima. Se você chegou aqui antes de 22/09 vindo de
+outra worktree: **não duplique**; se chegou depois e o marcador ainda está de pé, a tarefa
+falhou ou a cota não voltou — confira antes de recomeçar do zero.
+
 ⚠️ **Armadilha de evidência — variante nova da 7ª (`| tail` engole o exit code).** O wrapper
 rodou em background e o harness reportou **"exit code 0"**: esse era o exit do ÚLTIMO comando
 do compound (`wc -c`), não o do `codex-async.sh`. O `echo "CODEX_EXIT=$?"` colado logo após o
