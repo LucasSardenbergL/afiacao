@@ -12,6 +12,7 @@ import { SlaCardMeuDia } from '@/components/whatsapp/SlaCardMeuDia';
 import { FilaDoDia } from '@/components/fila/FilaDoDia';
 import { PositivacaoHero } from '@/components/farmer/PositivacaoHero';
 import { useMyPositivacao } from '@/hooks/useMyPositivacao';
+import { useSinalPositivacao } from '@/hooks/useSinalPositivacao';
 import { DadosVendaParciaisBanner } from './DadosVendaParciaisBanner';
 import { AtivarNotificacoesCard } from '@/components/push/AtivarNotificacoesCard';
 import { ChamadasPendentesNudge } from '@/components/farmer/ChamadasPendentesNudge';
@@ -30,6 +31,7 @@ import { ChamadasPendentesNudge } from '@/components/farmer/ChamadasPendentesNud
 export function FarmerDashboardV2() {
   const [modoAntigoAberto, setModoAntigoAberto] = useState(false);
   const { data: positivacao } = useMyPositivacao();
+  useSinalPositivacao(false);
   const onToggleModoAntigo = (open: boolean) => {
     setModoAntigoAberto(open);
     // sinal do piloto: se ela abre o modo antigo todo dia, a fila não está servindo.

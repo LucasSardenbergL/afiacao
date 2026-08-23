@@ -3,6 +3,7 @@ import { CacaConteudo } from '@/components/caca/CacaConteudo';
 import { ChamadasPendentesNudge } from '@/components/farmer/ChamadasPendentesNudge';
 import { PositivacaoHero } from '@/components/farmer/PositivacaoHero';
 import { useMyPositivacao } from '@/hooks/useMyPositivacao';
+import { useSinalPositivacao } from '@/hooks/useSinalPositivacao';
 import { DadosVendaParciaisBanner } from './DadosVendaParciaisBanner';
 
 /**
@@ -19,6 +20,7 @@ import { DadosVendaParciaisBanner } from './DadosVendaParciaisBanner';
  */
 export function HunterDashboard() {
   const { data: positivacao } = useMyPositivacao();
+  useSinalPositivacao(true);
 
   return (
     <div className="container mx-auto p-4 space-y-4 max-w-5xl">

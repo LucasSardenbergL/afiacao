@@ -19,6 +19,7 @@ import { AgendaQueueCard } from '@/components/farmer/calls/AgendaQueueCard';
 import { CallListPanel } from '@/components/farmer/calls/CallListPanel';
 import { NewCallDialog } from '@/components/farmer/calls/NewCallDialog';
 import { useMyPositivacao } from '@/hooks/useMyPositivacao';
+import { useSinalPositivacao } from '@/hooks/useSinalPositivacao';
 import { estadoDeLeitura, naoConsegui } from '@/lib/leitura/estado-de-leitura';
 import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
 import { useMyCommercialRole } from '@/hooks/useMyCommercialRole';
@@ -42,6 +43,9 @@ const FarmerCalls = () => {
   const estadoPositivacao = estadoDeLeitura(qPositivacao);
   const { data: commercialRole } = useMyCommercialRole();
   const isHunter = commercialRole === 'hunter';
+  // Sensor: emite `carteira.positivacao_vista` em TODO desfecho (o #1886 consertou o que a
+  // tela mostra no erro; o que ela mede continuava só no ramo de sucesso).
+  useSinalPositivacao(isHunter);
   const { isImpersonating, effectiveUserId } = useImpersonation();
 
   // Real Nvoip call integration for the dialog timer
