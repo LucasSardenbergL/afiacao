@@ -696,3 +696,124 @@ tela faz. O #1886 mudou `FarmerCalls.tsx` sem nenhum teste que MONTE `FarmerCall
   desta entrega a main ganhou 12 commits, dois deles exatamente sobre os arquivos em questão. Metade
   do que estava pronto e verificado virou descarte — corretamente. O tell barato: `git diff
   origin/main --stat` acusando arquivos que você nunca tocou.
+## A leitura do sensor do MixGap (2026-08-22): não havia população exposta para ler
+
+> Continuação das duas seções acima (quarto estado + o sensor que sobrou do #1886). O chip
+> pedia a leitura que este arquivo existe para cobrar:
+> a série de `carteira.mixgap_visto` por `estado` e por `desatualizado` desde o Publish —
+> em especial se `aguardando_rede` e `desatualizado != null` ocorrem em campo, já que a
+> correção do #1892 foi feita sobre uma hipótese de PWA de vendedor na rua nunca observada.
+>
+> **A série continua NÃO LIDA.** O que mudou é que agora se sabe por quê, e a resposta não
+> era nenhuma das três hipóteses previstas.
+
+### 1. O acesso ao PostHog não existia na sessão — e isso não é a resposta
+
+Quatro vias, todas fechadas, todas verificadas por evidência positiva e não por suposição:
+
+| via | verificação | resultado |
+|---|---|---|
+| MCP/plugin PostHog | `.claude/settings.json`; `ListPlugins`; busca de ferramenta | `"posthog@claude-plugins-official": false`; lista vazia; nenhuma tool `mcp__posthog__*` |
+| Personal API Key (`phx_…`) | `.env` do worktree e do repo principal, env vars, `~/.config/afiacao/`, `~/.config/posthog` | inexistente. Só `VITE_POSTHOG_KEY` (`phc_…`), que é de **ingestão** — escreve, não consulta |
+| navegador logado | `/browse` headless e o Chrome real | ambos redirigem `/sql` → `/login`; nenhuma sessão ativa |
+| espelho no banco | `information_schema` via `psql-ro` | nenhuma tabela replica eventos `carteira.*` (`posthog_error_webhook_log` é do webhook de erro de e-mail) |
+
+**Ausência de acesso não é ausência de eventos.** Nada aqui autoriza dizer que a série está
+vazia — inclusive porque há motivo para ela **não** estar (item 4).
+
+### 2. O que dava para medir sem o PostHog — e que reenquadra a pergunta
+
+O Publish **saiu**. Varredura por bytes do bundle de produção (`verify-bundle-multi.sh`,
+333 chunks, 6.132.861 bytes, closure do Vite ∪ precache do Workbox):
+
+```
+carteira.mixgap_visto         1  FarmerCalls-CmLY9tuD.js
+aguardando_rede               1  FarmerCalls-CmLY9tuD.js     <- exclusivo do #1892
+sem_rede                      1  FarmerCalls-CmLY9tuD.js     <- exclusivo do #1892
+Oportunidades de cross-sell   1  (controle POSITIVO)
+zzz_controle_negativo_9f3     0  (controle NEGATIVO)
+```
+
+E as outras duas hipóteses de "sensor não chegando" também caem: **o PostHog inicializa**
+(1 chave `phc_` distinta embutida no bundle + `us.i.posthog.com` no chunk `index`; o gate de
+`analytics.ts` só desliga sem `KEY` ou em DEV) e **o card monta** (`FarmerCalls.tsx:440`).
+
+E o card monta **fora** do `&&` do host: a correção do #1886 (merge 19:39 BRT) entrou no mesmo
+Publish — a string exclusiva dela (`"Sem conexão — não foi possível verificar "`, de
+`AvisoLeituraFalhou.tsx`) está no bundle ao lado da do #1892. Ou seja, nem o gate do host
+suprime a emissão. O que **não** está publicado é o #1896 (merge 21:56 BRT, depois desta
+varredura) — irrelevante para `mixgap_visto`, que ele não toca.
+
+### 3. O denominador do chip estava errado — e o erro é do tipo que infla adoção
+
+O chip dizia "`commercial_roles` tem 3 vendedores". O gate real não é esse. Quem a RPC atende:
+
+```sql
+IF NOT (has_role(uid,'master') OR has_role(uid,'employee')) THEN RETURN NULL; END IF;
+```
+
+`commercial_role` (`farmer`/gestor) é **ortogonal** ao `app_role` que abre a porta. A população
+que pode ver o card é **2 `employee` + 1 `master`** — não três vendedores. O número bateu por
+coincidência; a composição, não. Denominador tirado da tabela de papel comercial mede outra
+população que não a da tela.
+
+### 4. A medição que responde ao chip: a exposição é de UMA pessoa, e é o founder
+
+| papel | última sessão | sessões desde o merge do #1892 | desde o #1859 |
+|---|---|---|---|
+| master (founder) | 2026-08-22 21:56 (agora) | 2 | 4 |
+| employee A | 2026-08-14 14:03 (8 dias) | **0** | **0** |
+| employee B | (nenhuma sessão jamais) | **0** | **0** |
+
+O #1892 mergeou às 19:12 BRT de sábado; o Publish saiu entre 19:12 e 20:31 BRT. Na janela
+inteira, a única pessoa que abriu o app foi quem escreveu o código. **`aguardando_rede` é
+hipótese de vendedor na rua — e nenhum vendedor abre o app há 8+ dias.**
+
+Daí o desfecho: é o caso (c) — sensor não chegando — mas por uma causa que não estava na lista
+("Publish não saiu" / "PostHog não inicializou" / "vendedor não abriu a tela"). Os três foram
+descartados por medição. O que resta é mais fundo: **não há população exposta ao sensor.**
+
+### 5. A regra que isto acrescenta
+
+**Antes de LER a série, prove que houve população exposta na janela.** Sensor instalado não é
+sensor legível: sem exposição, a série vazia é indistinguível de "o estado não ocorre" — e ler
+essa série como evidência cometeria o erro deste arquivo uma casa adiante, agora com a
+autoridade de um número. O "quando medir" que o arquivo já exigia como query precisa de um
+segundo termo: **quando medir E sobre quem** — e o denominador vem do gate que serve a tela,
+não da tabela que o nome do papel sugere.
+
+Corolário para o MixGap: a fase N+1 não é ler o PostHog. É descobrir por que dois `employee`
+não abrem o app — um deles nunca. Um sensor sobre população inerte é a versão de telemetria
+do fusível que nunca foi ligado (o piloto Sayerlack, no topo deste arquivo).
+
+### 6. A armadilha de medição que quase inverteu a conclusão
+
+`auth.users.last_sign_in_at` dava **4 meses** para os dois `employee` (abr/2026) — leitura que
+sustentaria "ninguém nunca usou". `auth.sessions.updated_at` deu **8 dias** para um deles.
+As duas medem coisas diferentes: `last_sign_in_at` só se move em **login novo**, e não em
+refresh de token — quem fica logado no PWA usa o app por meses sem tocá-la. Sozinha, ela é
+**ausência de dado** vestida de data. A conclusão do item 4 só é afirmável porque duas fontes
+independentes foram cruzadas, e a segunda mudou o número.
+
+(`dashboard_visits`, a tabela criada em 2026-05-17 justamente para registrar visita
+server-side, tem **0 linhas** — mais um sensor desta família que nunca chegou a medir.)
+
+### 7. A query, para quando houver exposição
+
+Rodar no PostHog (SQL insight) quando ≥1 `employee` tiver sessão posterior ao Publish:
+
+```sql
+SELECT properties.estado          AS estado,
+       properties.desatualizado   AS desatualizado,
+       count()                    AS n,
+       count(DISTINCT person_id)  AS pessoas
+FROM events
+WHERE event = 'carteira.mixgap_visto'
+  AND timestamp > toDateTime('2026-08-22 22:12:36')
+GROUP BY estado, desatualizado
+ORDER BY n DESC
+```
+
+O controle que separa (b) de (c) vai junto, na mesma leitura: `SELECT count() FROM events
+WHERE timestamp > …` sem filtro de evento. Série do evento vazia **com** o controle positivo
+é dado real; as duas vazias é sensor não chegando — a distinção que o item 1 não pôde fazer.
