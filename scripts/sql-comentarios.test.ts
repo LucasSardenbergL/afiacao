@@ -93,12 +93,42 @@ describe('invariantes sobre as migrations REAIS', () => {
   });
 
   // Alarme que nunca se viu disparar é decoração — este prova que ele dispara.
+  //
+  // ⚠️ NÃO volte a envenenar "a maior migration, no quarto inicial": essa premissa é acidente do
+  // corpus, não invariante. Um `/*` só engole até o PRÓXIMO `*/` — e neste repo `*/` aparece
+  // DENTRO de comentário `--` como EXPRESSÃO DE CRON (`*/30`, `*/15`, `*/5`), que toda migration
+  // de Sentinela carrega. Em 2026-08-24 a 20260824091755 (sonda de identidade da carteira) passou
+  // a ser a maior do corpus e o veneno morreu num `watchdog */30` 165 linhas adiante: o teste
+  // reprovou sem nenhum defeito real, nem na migration nem no walker.
+  //
+  // Premissa robusta no lugar: envenenar o MAIOR VÃO CONTÍGUO SEM `*/` de todo o corpus. Medido
+  // em 2026-08-24 sobre 485 migrations: 53 admitem vão > 300 e 18 admitem > 600; o escolhido dá
+  // 1095 linhas, ~3,6× o teto — a mesma folga da calibração original (676–762 sobre 300), só que
+  // deixando de depender de qual arquivo é o maior.
   it('o sentinela DISPARA num arquivo envenenado (alarme não é decorativo)', () => {
-    const maior = [...migrations].sort((a, b) => b.sql.length - a.sql.length)[0];
-    const linhas = maior.sql.split('\n');
-    const corte = Math.floor(linhas.length / 4);
-    const envenenado = [...linhas.slice(0, corte), '/* bloco que nunca fecha', ...linhas.slice(corte)].join('\n');
-    expect(maiorBlocoDescartadoSql(maior.sql)).toBeLessThanOrEqual(TETO_BLOCO);
+    // início e tamanho do maior trecho de linhas consecutivas que não contêm `*/`
+    const maiorVaoSemFecho = (linhas: string[]) => {
+      const fechos = linhas.flatMap((l, i) => (l.includes('*/') ? [i] : []));
+      const marcos = [-1, ...fechos, linhas.length];
+      let melhor = { n: 0, ini: 0 };
+      for (let i = 0; i < marcos.length - 1; i++) {
+        const n = marcos[i + 1] - marcos[i];
+        if (n > melhor.n) melhor = { n, ini: marcos[i] + 1 };
+      }
+      return melhor;
+    };
+    const alvo = migrations
+      .map((m) => {
+        const linhas = m.sql.split('\n');
+        return { m, linhas, vao: maiorVaoSemFecho(linhas) };
+      })
+      .sort((a, b) => b.vao.n - a.vao.n)[0];
+    const envenenado = [
+      ...alvo.linhas.slice(0, alvo.vao.ini),
+      '/* bloco que nunca fecha',
+      ...alvo.linhas.slice(alvo.vao.ini),
+    ].join('\n');
+    expect(maiorBlocoDescartadoSql(alvo.m.sql)).toBeLessThanOrEqual(TETO_BLOCO);
     expect(maiorBlocoDescartadoSql(envenenado)).toBeGreaterThan(TETO_BLOCO);
   });
 });
