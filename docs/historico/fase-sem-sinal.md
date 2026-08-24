@@ -1059,3 +1059,61 @@ comando executável, a fase N+1 é construir a via, não instalar mais sensor.
 **Corolário sobre o controle:** controle positivo prova que a telemetria chega, **não** que chegaria
 daquele sensor. Quando existir um **irmão na mesma superfície** com histórico, ele é a testemunha
 mais forte — foi o que separou "ninguém abriu a tela" de "o evento se perdeu" aqui.
+
+---
+
+## Revisão independente RETROATIVA do #1896 (2026-08-23): o sensor mede, mas rotula errado
+
+O `/codex` do #1896 falhou com **exit 75 (cota esgotada)** e o PR mergeou pelo Caminho B, marcado
+`REVISÃO INDEPENDENTE PENDENTE`. A cota voltou e o challenge rodou retroativo (`gpt-5.6-terra`,
+xhigh, exit 0), com o código já em produção e **intocado desde o merge**. Como no #1859, escrevi a
+minha análise ANTES de abrir o parecer — três achados saíram nos dois, por caminhos separados.
+
+### O que sobreviveu à verificação
+
+- **`is_hunter` fabricado, e o offline torna isso DETERMINÍSTICO.** `FarmerCalls.tsx:44` faz
+  `const { data: commercialRole } = useMyCommercialRole()` e **descarta o `isLoading` que o hook
+  expõe** (`useMyCommercialRole.ts:23,53`); `isHunter` vira `false` enquanto o papel não chega. Sem
+  rede as duas queries pausam juntas, então **todo** evento `'sem-rede'` de hunter sai
+  `is_hunter:false` — não é corrida, é sempre. E a dedup por estado impede a correção quando o papel
+  chega. **Medido** (vitest, exit 0): `{"estado":"sem-rede",…,"is_hunter":false}` e **1** evento no
+  total depois do papel resolver como `hunter`. Nos dashboards o valor é hardcoded e está CERTO —
+  `CommercialDashboard.tsx:21` gateia com `isLoading`. O buraco é só no host que não gateia.
+- **A dedup não reseta na troca de SUJEITO** (mesmo achado do #1859, herdado). `trackedEstado`
+  (`useSinalPositivacao.ts:48`) é um ref que sobrevive à mudança de `effectiveUserId`, porque
+  `ImpersonationProvider` é Context (`App.tsx:224`) e a rota não remonta. Alvo diferente com o mesmo
+  estado não emite, e o payload não leva sujeito nem `isImpersonating` ⇒ o denominador de adoção
+  conta staff impersonando como vendedor.
+- **`sem-rede` COM cache é invisível, e `erro` COM cache leva número real.** `estadoDeLeitura`
+  testa `status==='success'` (`estado-de-leitura.ts:47`) ANTES do `fetchStatus`, então cache quente
+  + sem sinal devolve `'pronta'`. **Medido:** `{"estado":"pronta","pct":55,"total_eligible":40}` com
+  a rede desligada — indistinguível de leitura fresca. No ramo `erro`, `data ? … : null`
+  (`useSinalPositivacao.ts:57-60`) manda os números do cache, contra o que o próprio comentário
+  :25-27 promete. O irmão **#1892 já resolveu isto** no MixGapCard (`desatualizado:'erro'|'sem_rede'`
+  + dedup por `estado:motivo`); o #1896 não herdou. `desatualizado()` já existe pronto em
+  `estado-de-leitura.ts:90`.
+- **Os dois dashboards silenciam o estado que o sensor registra.** `FarmerDashboardV2.tsx:57` e
+  `HunterDashboard.tsx:38` fazem `{positivacao && <PositivacaoHero/>}` sem aviso nenhum, enquanto
+  `FarmerCalls.tsx:450-452` monta `AvisoLeituraFalhou`. O sensor agora PROVA que erro/offline
+  acontecem lá — e é exatamente a classe que o #1859/#1886 existem para matar, viva em dois hosts.
+
+### A lição durável: um teste de HOST pode ser tão cego quanto o de componente isolado
+
+O #1896 nasceu para consertar "nenhum teste montava o host". Ele monta — e **ainda assim** não
+percebe a regressão que motivou o #1886. **Falsificado, medido:** com o código intacto a suíte dá
+`6 passed`; removendo o bloco `AvisoLeituraFalhou` de `FarmerCalls.tsx:450-452`, a suíte dá
+`6 passed` **de novo**. A asserção do caso de erro é negativa (`queryByText(/Toda a carteira…/)`
+=== null) e usa o MixGap como âncora positiva, então ela sobrevive a uma tela que voltou a silenciar
+a falha.
+
+**A regra:** montar o host prova que o componente é ALCANÇÁVEL; não prova que o host ainda DIZ
+alguma coisa. Guard de estado-de-falha precisa de asserção POSITIVA sobre a fala (existe aviso), não
+só negativa sobre a mentira (não afirma o contrário) — e a falsificação tem de sabotar **o host**,
+não o componente.
+
+**Corolário de sensor:** o mock que resolve uma dependência de forma SÍNCRONA apaga a dimensão que
+ela introduz. `useMyCommercialRole: () => ({data:null, isLoading:false})`
+(`FarmerCalls.mixgap-fora-do-gate.test.tsx:103`) e o `useImpersonation` fixo (:97) tornam A1 e a
+troca de sujeito **impossíveis de falhar** ali. Não é tautologia da asserção: é cegueira do harness.
+E o guard de "1 escritor por slug" não existe — a helper `evento()` (:165) faz `.reverse().find()`,
+lê só a ÚLTIMA chamada, então um segundo escritor do mesmo slug passaria verde inflando o denominador.
