@@ -135,14 +135,19 @@ for backoff in "${backoffs[@]}"; do
   fi
   # modelo recusado = erro de CONFIG. Não é cota (esperar não resolve) nem transitório
   # (repetir não resolve): as duas saídas erradas custam tempo apontando para o lugar errado.
-  # ⚠️ O eixo é o MODELO, não o acesso da conta — a nota anterior aqui dizia o contrário e
-  # estava errada. Medido 2026-08-22 (challenge retroativo do #1859), stderr cru do servidor:
-  #   gpt-5.6-sol  → 400 "The 'gpt-5.6-sol' model is not supported when using Codex with a
-  #                  ChatGPT account" — IDÊNTICO em -r high e -r xhigh (o effort não é a causa)
-  #   gpt-5.6      → mesmo 400
-  #   gpt-5.6-terra / gpt-5.6-luna → rc=0, respondem normalmente
-  # Ou seja: "nenhum modelo passa ⇒ é a conta" é inferência de ausência de dado. Trocar o
-  # modelo RESOLVE. Só suspeite do login se um modelo SABIDAMENTE servido também falhar.
+  # ⚠️ HISTÓRICO DESTA NOTA — ela já esteve errada DUAS vezes, em sentidos opostos, e é o
+  # melhor aviso que este arquivo tem sobre como se erra aqui:
+  #   v1 dizia "é o acesso da conta"        → corrigida em 22/08 por parecer errada;
+  #   v2 dizia "o eixo é o MODELO, não a conta; trocar o modelo RESOLVE; só suspeite do
+  #      login se um modelo SABIDAMENTE servido também falhar" → **também errada**, e foi
+  #      esta que custou 2 dias rodando no tier de baixo.
+  # O que se mediu em 23/08: o 400 do `sol` vinha do `plan_type` CONGELADO num token de
+  # 21/08 que dizia `free` numa conta paga. `codex logout && codex login` reemitiu o token e
+  # o `sol` voltou NA HORA — mesmos pings, mesmo dia, 400 → rc=0.
+  # ⇒ A heurística da v2 é FALSA: `terra`/`luna` respondiam porque são o tier de baixo, que
+  #   segue servido com o plano rebaixado. **Um modelo responder NÃO inocenta o login.**
+  #   Trocar o modelo remove o SINTOMA sem explicá-lo — e foi isso que encerrou a
+  #   investigação com a causa intacta. Verifique o token ANTES (custa uma linha de JSON).
   if classifica 'model is not supported|unsupported_model|model_not_found'; then
     echo "MODELO_NAO_ACEITO: o servidor recusou o modelo '$modelo' (HTTP 400)." >&2
     echo "  1) SUSPEITE PRIMEIRO DO TOKEN, não do direito de acesso: o servidor cobra pelo" >&2
