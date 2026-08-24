@@ -180,6 +180,37 @@ SELECT count(*) FROM dashboard_visits WHERE visited_at > '<deploy do sensor>';
 | `gravou` > linhas, **com** `dashboard.visita_erro` | o banco recusou — ver a RLS de INSERT |
 | `gravou` > linhas, **sem** `dashboard.visita_erro` | requisição perdida na rede (o `keepalive` do `pagehide` não é garantido) — antes deste sensor, indistinguível de tudo o mais |
 | `gravou` = 0 e o resto > 0 | o dashboard é aberto, mas nenhuma sessão qualifica: leia o `motivo` |
+| **evento ausente por completo** | **terceiro estado: a ingestão pode ter RECUSADO** — ver abaixo |
+
+⚠️ **Série vazia tem um terceiro estado que só a TABELA distingue.** "Não emitiu" e "emitiu e a
+ingestão recusou" são o mesmo silêncio no PostHog. Em 2026-08-24 o POST para `us.i.posthog.com/i/v0/e/`
+voltou **503** com três retries, e nenhum evento entrou — nem `$pageview`. Um `GET` no mesmo host
+devolve `400` (host vivo), então **sondar o host não desmente o 503 do POST autenticado**. A tabela
+`dashboard_visits` é o lado **imune**: o INSERT vai direto ao Supabase e não passa pelo PostHog. Daí a
+assimetria útil — **linha sem evento** é telemetria caída com o app são; **evento sem linha** é o app
+falhando com a telemetria sã. Quando os dois zeram, comece pela tabela: ela tem menos partes móveis.
+
+⚠️ **E o zero pode nem ser zero: a CONSULTA também falha, por outro endpoint.** No mesmo 2026-08-24,
+a query de breakdown por `properties.motivo` voltou **504** de `us.posthog.com` com
+`"Query has hit the max execution time"` — agregação por propriedade em `events` é cara. Um
+`count()` simples na mesma janela respondeu `[[0]]`, exit 0. São **três** resultados distintos
+chegando pelo mesmo cano, e só um é medição:
+
+| o que voltou | é dado? |
+|---|---|
+| `{"results":[[0]]}` com exit 0 | **sim** — zero medido |
+| **503** na ingestão (`us.i.posthog.com/i/v0/e/`) | não — o evento nunca entrou |
+| **504** na consulta (`us.posthog.com`) | não — a query não terminou |
+
+**Antes de ler um zero do PostHog como ausência de uso, prove que a query TERMINOU** — e prefira
+`count()` simples ao `GROUP BY` de propriedade quando só precisar do denominador. Um `GET` no host de
+ingestão devolve `400` mesmo com a ingestão recusando POSTs, então **sondar o host não é sonda de
+saúde**.
+
+⚠️ **`via='pagehide'` ainda não tem exercício real.** A prova de 2026-08-24 (`dashboard_visits`
+`id=1`) veio com `keepalive: false`, ou seja, pelo caminho do **unmount**. O `emitirComKeepalive` do
+#1949 é código no ar sem observação — trate `via='pagehide'` como não-verificado até aparecer o
+primeiro.
 
 ⚠️ **`sessao_curta` domina por desenho, não por defeito.** O guard de 5 min (`MIN_SESSION_MS`) existe
 para um F5 não anular os deltas — uma proporção alta dele é o guard funcionando. Ele só vira sintoma
