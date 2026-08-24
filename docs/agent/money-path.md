@@ -231,6 +231,17 @@ Helper TS puro (testado com vitest) **espelhado verbatim** no edge (Deno não im
 
 Edge só-TS (sem contraparte SQL): a paridade vira **textual no CI** — bloco entre `// MIRROR-START/END` comparado normalizado src×edge (pega reescrita do Lovable no deploy) — **mais** uma **canária comportamental** `{canary:true}` staff-gated que roda o helper REAL deployado com fixture fixo e retorna `{resolved, expected, ok}`. Probe HTTP = única prova do COMPORTAMENTO em produção: o guard textual cobre a FONTE, a canária cobre o DEPLOY. ⚠️ A canária prova "helper deployado + lógica certa", **não** que o real-path usa o helper (isso é o guard textual + paridade). Ex.: merge de preço do `analyze-unified-order` (#1089); `identidade_probe` (`omie-vendas-sync`); `doc_ambiguo_probe` (`omie-analytics-sync`, P1b — indispensável ali: a ausência do helper é invisível no dado, a proof-table só encolhe com duplicata-CNPJ real na conta, que não há).
 
+## A MESMA exceção pode ser defesa num writer e defeito em outro — a diferença é a EVIDÊNCIA
+
+`omie_customer_account_map` tem duas UNIQUEs (`(user_id,account)` e `(codigo,account)`), e dois writers gravavam com o mesmo `ON CONFLICT (user_id, account)`. Quando um código muda de dono, o `23505` da segunda UNIQUE não é tratado. Nos dois writers é a mesma SQLSTATE — e o veredito é oposto:
+
+- **RPC pontual (`register_carteira_member`), SEM evidência documental:** o `23505` é a única barreira contra roubo de vínculo. É fail-closed CORRETO. O harness a chama de defesa e a falsifica (A8/F3 em `db/test-register-carteira-member.sh`). **Não toque.**
+- **Bulk document-first (`omie-analytics-sync`), COM evidência:** ali a mesma exceção derrubava o run inteiro (chunk de 500 + propagação). E nem era defesa coerente: **só dispara quando o código já estava mapeado** — o mesmo "roubo" sobre código novo passava livre.
+
+A lição de leitura: **antes de copiar um veredito de teste para outro call-site, pergunte que evidência aquele writer tem.** Uma defesa que só funciona metade das vezes é acidente, não desenho.
+
+E a lição de desenho, que custou uma refutação do Codex (2026-08-24): **documento prova o PAREAMENTO ATUAL, não a AUTORIZAÇÃO da transferência.** Migração legítima e captura de vínculo por edição do CNPJ no ERP produzem input IDÊNTICO — transferir automaticamente promove qualquer editor do Omie a autoridade sobre dono de pedido e comissão. Regra: **evidência autoriza CRIAÇÃO e REFRESH; mudança de dono vira CONFLITO** (não aplica, quarantina os dois lados, exige revisão humana). Corolário desconfortável e honesto: **nenhum teste distingue migração de roubo com os inputs atuais** — só um segundo fato (aprovação independente atrelada à transição exata) permite essa asserção. Não finja que o teste que você tem prova isso.
+
 ## Idempotência: a chave é o ciclo do CONSUMIDOR, não o do produtor
 
 Trava do tipo "já fiz isso hoje?" casa com a periodicidade de quem PRODUZ. Se quem consome trabalha noutro ritmo, a mesma trava — correta, testada, e criada para um incidente real — passa a **autorizar exatamente uma cópia por ciclo do produtor**. É invisível como defeito: nada falha, nada alerta, e o volume parece adoção.

@@ -3205,3 +3205,114 @@ describe('canária VERSIONADA: omie-analytics-sync (doc ambíguo não vira vínc
     expect(bloco, 'sumiu o caso doc_2_codigos_distintos — a canária pararia de discriminar o helper sempre-∅').toContain('doc_2_codigos_distintos');
   });
 });
+
+// ── P1-c: colisão onConflict(user_id,account) × UNIQUE(omie_codigo_cliente,account) ────────────────
+// O writer document-first gravava a proof com um ON CONFLICT que não enxerga a 2ª unicidade: um código
+// que muda de dono levantava 23505, e o `throw` derrubava o chunk de 500 e o run inteiro. A correção NÃO
+// é aplicar a transferência — parecer Codex (gpt-5.6-sol xhigh, 2026-08-24): o documento prova o
+// PAREAMENTO ATUAL, não a AUTORIZAÇÃO da transferência; migração legítima e captura de vínculo por edição
+// do CNPJ no Omie são observacionalmente IDÊNTICAS. Transferir automaticamente promoveria qualquer editor
+// do Omie a autoridade sobre dono de pedido e comissão.
+const ANALYTICS_TC = 'supabase/functions/omie-analytics-sync/index.ts';
+const HELPER_TC = 'src/lib/omie/omie-transferencia-codigo.ts';
+
+describe('guardrail money-path: P1-c transferência de código (writer NÃO transfere dono)', () => {
+  const src = read(ANALYTICS_TC);
+  const helper = read(HELPER_TC);
+
+  it('sentinela: leu os arquivos reais (edge + helper)', () => {
+    expect(src).toContain('omie_customer_account_map');
+    expect(helper).toContain('classificarLoteProof');
+  });
+
+  it('o helper puro existe e exporta as duas funções de decisão', () => {
+    expect(helper).toMatch(/export function classificarEntradaProof/);
+    expect(helper).toMatch(/export function classificarLoteProof/);
+  });
+
+  // Bloco INTEIRO da action transferencia_probe (até o próximo case/default). A probe TAMBÉM chama o
+  // classificador — sem removê-la, o assert de "o edge chama o helper" passaria mesmo se a chamada do
+  // REAL-PATH (syncCustomers) sumisse, e o guard viraria teatro. Mesma mecânica do PROBE_RE do P1b.
+  const PROBE_TC_RE = /case "transferencia_probe":[\s\S]*?\n {6}(?=case |default:)/;
+
+  it('o edge USA o classificador NO REAL-PATH (define o espelho E o chama FORA da canária)', () => {
+    expect(src, 'edge não define mais o classificador espelhado').toMatch(/function classificarLoteProof/);
+    expect(
+      src,
+      'REGRESSÃO: edge não chama mais classificarLoteProof — o lote voltaria a ir cru para o upsert (23505 derruba o run)',
+    ).toMatch(/classificarLoteProof\(/);
+    const semProbe = src.replace(PROBE_TC_RE, '');
+    expect(
+      semProbe,
+      'REGRESSÃO: a ÚNICA chamada a classificarLoteProof está na canária — o real-path (syncCustomers) parou ' +
+        'de classificar e o lote volta cru para o upsert',
+    ).toMatch(/classificarLoteProof\(/);
+  });
+
+  it('a canária existe e discrimina: tem o caso de transferência E o de refresh (falsificam-se mutuamente)', () => {
+    const bloco = src.match(PROBE_TC_RE)?.[0] ?? '';
+    expect(bloco, 'sumiu a action transferencia_probe — o helper deployado volta a ser inverificável').not.toBe('');
+    // um classificador sempre-"aplicar" reprova no primeiro; um sempre-"transferencia" reprova no segundo
+    expect(bloco, 'sumiu o caso transferencia_de_dono — a canária pararia de pegar um classificador sempre-aplicar').toContain('transferencia_de_dono');
+    expect(bloco, 'sumiu o caso refresh_mesmo_user — a canária pararia de pegar um classificador sempre-transferencia').toContain('refresh_mesmo_user');
+    expect(bloco, 'canária sem VERSION MARKER (deploy.md §Canárias): responderia igual num bundle velho').toContain('contrato');
+  });
+
+  it('o upsert recebe o lote FILTRADO por "aplicar" — não o lote cru', () => {
+    // é exatamente a pré-condição que impede a violação de uq_ocam_codigo_account
+    expect(
+      src,
+      'REGRESSÃO: mapRows voltou a ser o lote cru (Array.from(accountMapByUser.values())) — a transferência ' +
+        'volta a bater na UNIQUE e derrubar o run',
+    ).toMatch(/const mapRows = candidatos\.filter\([\s\S]{0,120}"aplicar"/);
+  });
+
+  it('a transferência NÃO é aplicada em silêncio: há aviso nomeando o conflito de dono', () => {
+    expect(
+      src,
+      'REGRESSÃO: sumiu a observabilidade do conflito de dono — o evento de identidade mais caro do sistema ' +
+        'passaria despercebido',
+    ).toMatch(/P1-c CONFLITO DE DONO/);
+  });
+
+  it('o incumbente é QUARANTINADO (identity_state=conflict), fail-closed dos dois lados', () => {
+    expect(
+      src,
+      'REGRESSÃO: sumiu a marcação conflict — o incumbente seguiria gerando comissão sobre um cliente cuja ' +
+        'identidade está em disputa',
+    ).toMatch(/identity_state: "conflict"/);
+  });
+
+  it('a quarentena TEM saída: existe a reversão conflict→verified (senão é catraca de mão única)', () => {
+    // o §11 do design nomeia a catraca como defeito: doc corrigido no Omie deixaria o incumbente sem
+    // comissão PARA SEMPRE, dependendo de um UPDATE manual que ninguém saberia que precisa fazer
+    expect(
+      src,
+      'REGRESSÃO: sumiu a reversão de conflict — o quarantine virou catraca de mão única',
+    ).toMatch(/\.eq\("identity_state", "conflict"\)[\s\S]{0,200}\.in\("user_id", reverterCf/);
+  });
+
+  it('a reversão usa mapRows (APLICADOS), não accountMapByUser — o critério estrito', () => {
+    // accountMapByUser inclui quem virou transferência; reverter por ele soltaria o conflito na hora
+    // exata em que ele foi detectado, zerando a quarentena
+    expect(
+      src,
+      'REGRESSÃO: a reversão de conflict voltou a usar accountMapByUser — soltaria o incumbente ainda em disputa',
+    ).toMatch(/const aplicados = new Set\(mapRows\.map/);
+  });
+
+  it('a UNIQUE do schema permanece — a correção é no writer, não afrouxando a constraint', () => {
+    expect(
+      src,
+      'REGRESSÃO: alguém dropou/alterou uq_ocam_codigo_account pelo edge — ela é a barreira do writer SEM ' +
+        'evidência (a RPC pontual), cujo 23505 é fail-closed correto',
+    ).not.toMatch(/DROP CONSTRAINT uq_ocam_codigo_account/);
+  });
+
+  it('PARIDADE: o bloco espelhado no edge é IDÊNTICO ao helper de src/ (pega reversão do Lovable)', () => {
+    expect(
+      mirrorBlockNamed(src, 'omie transferencia-codigo'),
+      'edge divergiu do helper de src/ — o Lovable reescreveu o classificador no deploy?',
+    ).toBe(mirrorBlockNamed(helper, 'omie transferencia-codigo'));
+  });
+});
