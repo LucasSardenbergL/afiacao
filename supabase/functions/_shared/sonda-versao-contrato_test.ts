@@ -34,6 +34,7 @@ import * as finFunding from "../fin-funding/versao.ts";
 import * as algoAudit from "../algorithm-a-audit/versao.ts";
 import * as positivacao from "../carteira-positivacao-snapshot/versao.ts";
 import * as omieFinanceiro from "../omie-financeiro/versao.ts";
+import * as analyzeOrder from "../analyze-unified-order/versao.ts";
 
 /**
  * `respostaSonda` (a maioria) ou `respostaSondaTactical` (a `generate-tactical-plan`, que embrulha o
@@ -95,6 +96,13 @@ const EDGES: Array<{ nome: string; mod: ModSonda }> = [
   { nome: "algorithm-a-audit", mod: algoAudit },
   { nome: "carteira-positivacao-snapshot", mod: positivacao },
   { nome: "omie-financeiro", mod: omieFinanceiro },
+  // Sétima leva (#1622 prompt invertido): a PRIMEIRA que entra sem escrever no nosso banco E sem
+  // ser leitura barata. O critério dela é o SEGUNDO motivo do #1520 — "não existe caminho de
+  // prova": é chamada pelo BROWSER, então não deixa rastro em `net._http_response` nem linha em
+  // `cron.job_run_details`, o par que torna uma edge auditável de fora. Ela TEM canária desde o
+  // d8cf07152, e a canária é versionada — mas o `contrato` dela nomeia a fatia do MERGE DE PREÇO,
+  // não a do prompt, e ela vive depois do gate de staff. Ver `analyze-unified-order/versao.ts`.
+  { nome: "analyze-unified-order", mod: analyzeOrder },
 ];
 
 /** As cinco da terceira leva — os gates estruturais abaixo varrem todas. */
@@ -122,6 +130,10 @@ const FORMA_NORMALIZADA = [
   "algorithm-a-audit",
   "carteira-positivacao-snapshot",
   "omie-financeiro",
+  // Sétima leva: não escreve no banco, mas manda o catálogo inteiro para o modelo (token pago) —
+  // paga o mesmo preço se um `probe` mal grafado cair no fluxo real, que é o que estes gates
+  // existem para impedir. Confirma a regra do bloco acima: a FORMA não tem a ver com escrever.
+  "analyze-unified-order",
 ];
 
 /** Destas o gate NÃO aceita `x-cron-secret`, então a sonda precisa de gate PRÓPRIO. */
@@ -135,6 +147,12 @@ const FORMA_NORMALIZADA = [
 // dentro de `validateCaller(req, supabase)` — que precisa do client, criado depois do ponto onde
 // a sonda tem de responder. Nos três casos o caminho do SQL Editor não chega ao gate normal, e a
 // sonda só pode vir antes dele trazendo `authorizeCronOrStaff` própria.
+// `analyze-unified-order` é o caso mais agudo da lista: ela não tem `authorizeCronOrStaff`
+// NENHUM no fluxo real — o gate é JWT de usuário + `user_roles` (employee/master), precedido de um
+// `startsWith("Bearer ")` que responde antes de tudo. Sem gate próprio a sonda ou ficaria
+// inalcançável pelo SQL Editor, ou obrigaria a afrouxar o gate de uma edge que lê perfil de
+// cliente e paga o modelo. É também o que a separa da canária de preço dela, que vive DEPOIS
+// desse gate e por isso só o app logado alcança.
 const GATE_PROPRIO = [
   "omie-cliente",
   "omie-nfe-webhook",
@@ -142,6 +160,7 @@ const GATE_PROPRIO = [
   "fin-valor-cockpit",
   "fin-funding",
   "omie-financeiro",
+  "analyze-unified-order",
 ];
 
 Deno.test("toda edge instrumentada declara VERSAO no formato vN.N-slug", () => {
@@ -396,7 +415,15 @@ Deno.test("gate próprio: onde o gate da edge não aceita cron-secret, a sonda N
   }
 });
 
-Deno.test("recommend: a sonda vem ANTES do gate de Bearer do handler", () => {
+/**
+ * Edges cujo handler tem um `startsWith("Bearer ")` PRÓPRIO antes do fluxo real. Nelas a sonda
+ * precisa vir antes dele, senão `x-cron-secret` nunca alcança o `authorizeCronOrStaff`. Virou
+ * lista quando a segunda apareceu: herdar a regra é o que impede a terceira nessa forma de ficar
+ * de fora em silêncio.
+ */
+const BEARER_NO_HANDLER = ["recommend", "analyze-unified-order"];
+
+Deno.test("onde o handler tem gate de Bearer próprio, a sonda vem ANTES dele", () => {
   // Medido em prod (2026-08-22): `net.http_post` com `x-cron-secret` e SEM `Authorization`
   // devolveu 401 {"error":"Não autorizado"} — a mensagem do HANDLER, não do helper. Causa: o
   // `startsWith("Bearer ")` do handler estava ANTES da sonda, então o request morria ali e
@@ -406,16 +433,20 @@ Deno.test("recommend: a sonda vem ANTES do gate de Bearer do handler", () => {
   // que o helper reconhece (cron secret, service role, JWT), só as que por acaso vêm em
   // `Authorization: Bearer` chegam até ele. O caminho documentado (SQL Editor via
   // net.http_post) é exatamente o que não passa.
-  const h = trechoDoHandler("recommend");
-  const posSonda = h.indexOf("classificarSonda(");
-  const posBearer = h.indexOf('startsWith("Bearer ")');
-  if (posSonda < 0 || posBearer < 0) {
-    throw new Error("recommend: âncoras não encontradas (controle positivo vazio)");
-  }
-  if (posSonda > posBearer) {
-    throw new Error(
-      "recommend: a sonda está DEPOIS do gate de Bearer — x-cron-secret nunca chega ao authorizeCronOrStaff",
-    );
+  // A `analyze-unified-order` tem o MESMO desenho e chegou pelo #1622: gate de JWT de usuário +
+  // `user_roles`, com o `startsWith("Bearer ")` respondendo antes de tudo.
+  for (const nome of BEARER_NO_HANDLER) {
+    const h = trechoDoHandler(nome);
+    const posSonda = h.indexOf("classificarSonda(");
+    const posBearer = h.indexOf('startsWith("Bearer ")');
+    if (posSonda < 0 || posBearer < 0) {
+      throw new Error(`${nome}: âncoras não encontradas (controle positivo vazio)`);
+    }
+    if (posSonda > posBearer) {
+      throw new Error(
+        `${nome}: a sonda está DEPOIS do gate de Bearer — x-cron-secret nunca chega ao authorizeCronOrStaff`,
+      );
+    }
   }
 });
 

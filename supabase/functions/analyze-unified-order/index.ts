@@ -8,6 +8,8 @@ import {
 } from "./imagem-helpers.ts";
 import { extrairToolUseUnico, sanitizarListaIA } from "./saida-ia.ts";
 import { classificarFlag, erroFlagAmbigua } from "../_shared/sonda-versao.ts";
+import { authorizeCronOrStaff } from "../_shared/auth.ts";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import {
   type AcumuladorCache,
   acumularUsoCache,
@@ -177,6 +179,47 @@ Deno.serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
+  // ⚠️ SONDA DE VERSÃO — ANTES do gate de `Bearer ` do handler e ANTES do createClient. Ver
+  // versao.ts / _shared/sonda-versao.ts. A ordem não é estética: o gate abaixo é JWT de usuário e
+  // NÃO conhece `x-cron-secret`, então uma sonda colocada depois dele seria inalcançável pelo
+  // caminho documentado (SQL Editor via net.http_post) — exatamente o defeito que o #1882 corrigiu
+  // na `recommend`. É também o que separa esta sonda da CANÁRIA de preço logo abaixo: aquela vive
+  // depois do gate de staff, então só o app logado a alcança, e o `contrato` dela nomeia a fatia
+  // do MERGE DE PREÇO, não a do prompt.
+  //
+  // O parse subiu para cá porque `req.json()` é one-shot: o corpo lido aqui é reaproveitado como
+  // `body` pelo fluxo real. JSON inválido passa a responder 400 em vez de 500 pelo catch geral
+  // (erro do cliente contado como falha nossa), e corpo `null` — que estourava TypeError no
+  // destructuring — vira `{}` e cai na validação de "texto ou imagem é obrigatório", que é o que
+  // ele sempre foi.
+  //
+  // SEM anotação de tipo de propósito: `req.json()` devolve `any`, e é essa inferência que o
+  // destructuring do fluxo real herda. Anotar (`unknown` + cast) somaria 2 erros ao baseline do
+  // `edges:typecheck` sem consertar nada — são defeitos PRÉ-EXISTENTES, o principal sendo
+  // `montarSystemBlocks` declarando `searchCustomer: boolean` e recebendo a STRING do termo de
+  // busca (funciona por truthiness; corrigir mexe no prompt CACHEADO do #1622, que é money-path).
+  let corpoBruto;
+  try {
+    corpoBruto = await req.json();
+  } catch {
+    return new Response(JSON.stringify({ error: "invalid JSON" }), {
+      status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+  const decisaoSonda = classificarSonda(corpoBruto);
+  if (decisaoSonda.tipo !== "disparo") {
+    const auth = await authorizeCronOrStaff(req);
+    if (!auth.ok) return auth.response;
+    if (decisaoSonda.tipo === "sonda") {
+      return new Response(JSON.stringify(respostaSonda(VERSAO)), {
+        status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    return new Response(JSON.stringify({ error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }), {
+      status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
   try {
     const authHeader = req.headers.get("Authorization");
     if (!authHeader?.startsWith("Bearer ")) {
@@ -217,7 +260,9 @@ Deno.serve(async (req) => {
       }
     }
 
-    const body = await req.json();
+    // Corpo já consumido pela sonda acima (`req.json()` é one-shot). Não-objeto vira {} — cai na
+    // validação de "texto ou imagem é obrigatório" logo abaixo, exatamente como antes.
+    const body = (typeof corpoBruto === "object" && corpoBruto !== null ? corpoBruto : {});
     const { text, imageBase64, imagesBase64, products, userTools, customerUserId, searchCustomer } = body;
 
     // CANÁRIA COMPORTAMENTAL (staff-gated — já passou pelo gate de auth+staff acima). Prova que o
