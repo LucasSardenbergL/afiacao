@@ -139,3 +139,107 @@ do bot do Lovable.
    pedir deploy de edge, cheque `gh pr list` pelo arquivo — não pelo título.**
 4. **Ao instrumentar, meça o custo do bundle VELHO ignorando o parâmetro.** É ele que decide se
    sondar às cegas é inócuo (`400` da `omie-analytics-sync`) ou caro (a projeção de 13 semanas).
+
+## 7ª leva (mesmo dia) — as 7 INVERIFICÁVEIS e as 3 presas no marcador antigo
+
+O #1905 fechou 3 edges. Sobrava o resto do conjunto: das **19** que servem o
+`_shared/paginate.ts`, 8 já carregavam #1889 + #1901 em produção, mas **7 não tinham sensor
+nenhum** — nem sonda, nem canária — e **3 tinham marcador que não discriminava** (a mesma string
+na `main` e em prod). O estado das 7 é pior que o das 3: ali não havia nem uma resposta errada
+para corrigir, havia **nenhuma resposta possível** para "qual bundle está no ar?".
+
+### O custo do bundle VELHO ignorando `probe` — medido ANTES de instrumentar
+
+É a lição 4 do #1905 aplicada como pré-requisito, não como observação. O bundle pré-sensor
+**ignora o parâmetro e roda o fluxo real** (armadilha 1 de `deploy.md` §Canárias), então o que
+decide se sondar às cegas é seguro é o que a edge faz com um corpo que ela não entende:
+
+| edge | gate | bundle VELHO com `{"probe":true}` do SQL Editor | sondar às cegas |
+|---|---|---|---|
+| `sync-reprocess` | `authorizeCron` | roteia por `action`; sem action conhecida cai no `default` **400 "Ação desconhecida"** após 1 leitura de config | **barato** |
+| `ai-ops-agent` | JWT staff + `user_roles` | **401 "Unauthorized"** antes de tocar banco ou modelo — o SQL Editor não manda `Bearer` | **inócuo** |
+| `calculate-scores` | `authorizeCronOrStaff` | não lê o corpo → toma o lease de 15 min e aplica `apply_score_updates` | **caro** |
+| `omie-sync-status-produtos` | `authorizeCronOrStaff` | lê só `empresa`; `resolverEmpresas(null)`=OBEN → pagina o Omie inteiro e reescreve `sku_status_omie` | **caro** |
+| `scoring-recalc-batch` | `authorizeCronOrStaff` | não lê o corpo → fan-out para `scoring-recalc-client` (drain 500 + decay) | **caro, e fora desta edge** |
+| `visit-score-recalc-batch` | `authorizeCronOrStaff` | idem, para `visit-score-recalc-client` | **caro, e fora desta edge** |
+| `tactical-plans-batch` | `authorizeCron` | não lê o corpo → dispara `generate-tactical-plan` por cliente elegível, **1 chamada de LLM cada** | **caro** |
+
+Duas coisas que a tabela ensina e que uma leitura por amostragem não daria:
+
+1. **O gate mais restritivo é o que torna a sonda mais barata.** A `ai-ops-agent` é a única
+   INÓCUA justamente porque o gate dela é o mais fechado (JWT de usuário staff) — o mesmo fato
+   que a obrigou a ter gate PRÓPRIO para a sonda ser alcançável pelo SQL Editor. Segurança e
+   custo-de-sonda apontam para o mesmo lado aqui, ao contrário de segurança e verificabilidade
+   na tese deste documento.
+2. **"Caro" não é uma escala só.** Nos três batches o efeito **não acontece nesta edge** — ele cai
+   na edge de baixo. Um disparo acidental deixa rastro onde ninguém vai procurar, o que é pior
+   para diagnosticar do que um efeito local do mesmo tamanho. Por isso eles têm lista própria no
+   gate de contrato (`FAN_OUT_QUE_ESCREVE`) em vez de uma linha a mais em `ESCRITA_NOSSO_BANCO`.
+
+### Gates de auth: 3 formatos, e nenhum era o "padrão"
+
+`deploy.md` já mandava conferir **qual** gate a edge tem antes de copiar o padrão (o #1767 achou
+dois formatos que o original não previa). Aqui apareceram três: `authorizeCronOrStaff` (4 edges),
+`authorizeCron` (2) e **JWT de usuário staff com `user_roles`** (`ai-ops-agent`). Só o terceiro
+exigiu gate próprio — os dois primeiros aceitam `x-cron-secret` por comparação de env pura, que é
+como o founder invoca, então a sonda pôde vir **depois** do gate e continuar IO-free.
+
+### Duas armadilhas de forma que só apareceram ao instrumentar
+
+- **O corpo de um `Request` só se lê UMA vez.** A sonda obriga o parse a subir para antes do
+  client; onde já havia uma leitura depois, ela teve de passar a reusar a variável. Na
+  `omie-sync-status-produtos`, uma segunda leitura faria o `empresa` do corpo ser silenciosamente
+  ignorado — o run mudaria de escopo **sem erro nenhum**. Gate novo: `sétima leva: o corpo do
+  Request é lido UMA vez só`.
+- **Subir o parse pode trocar a mensagem de erro.** Na `sync-reprocess` o parse era
+  `await req.json()` PELADO: corpo quebrado virava 500. Trocá-lo por `.catch(() => ({}))` faria um
+  JSON inválido responder `400 "Ação desconhecida"` — mandando o chamador consertar a coisa errada.
+  O erro é guardado e **relançado no ponto antigo**; gate novo o exige.
+- **A âncora do gate estrutural nem sempre é `createClient(`.** A `omie-sync-status-produtos` cria
+  o client por `makeClient()`, uma fábrica de topo de arquivo — o gate de posição não achava a
+  âncora e caía em "controle positivo vazio". Resolvido com um mapa declarado (`ANCORA_CLIENT`),
+  não afrouxando o gate: renomear a fábrica sem atualizar o mapa deixa o CI **vermelho**.
+
+### O gate que fecha a CLASSE, não os 7 casos
+
+`nenhuma edge que serve o paginate.ts fica SEM prova de deploy` varre `supabase/functions/*` e
+exige, de toda edge que importe `_shared/paginate.ts`, ou registro em `EDGES` (sonda) ou uma
+entrada em `VERIFICAVEL_POR_CANARIA` **cujo contrato a edge ainda emita** (hoje só a
+`omie-vendas-sync`, com `identidade-fail-closed-v1`). O problema desta fatia não foi "faltou sonda
+em 7 edges" — foi que a falta só aparecia na hora de verificar um deploy, quando já era tarde,
+porque o marcador precisa existir ANTES. Mede o import LITERAL e está declarado como piso: uma
+dependência que chegue só por um terceiro módulo escapa, e fechar isso exigiria um resolvedor de
+módulos, não um regex.
+
+### A falsificação — 50 sabotagens, cada uma exigindo vermelho que NOMEIE o alvo
+
+O gate passou 27/27 assim que as 7 foram registradas, e isso não valia nada: ele já passava pelas
+23 edges anteriores. Cada asserção foi sabotada e teve de ficar vermelha **citando a edge**
+(arnês que sabota → roda → restaura com `git checkout --`; por isso o commit veio antes):
+
+| sabotagem | alvos | vermelho exigido |
+|---|---|---|
+| apagar a linha que RESPONDE a sonda | as 7 | `<edge>: classifica a sonda mas nunca chama respostaSonda` |
+| mover a sonda para depois do client | as 7 | `<edge>: a sonda desceu para depois do createClient(`/`makeClient(` |
+| voltar o `body.probe === true` cru | as 7 | `<edge>: voltou o body.probe === true cru` |
+| quebrar o formato do marcador | as 7 | `<edge>: VERSAO fora do formato vN.N-slug` |
+| trocar a identidade na resposta | as 7 | `<edge>: a sonda se identifica como "edge-errada"` |
+| ler `req.json()` duas vezes | as 7 | `<edge>: o handler lê req.json() 2×` |
+| **regredir o bump** | as 3 | `<edge>: marcador REGREDIU para <valor antigo>` |
+| engolir o erro de parse | `sync-reprocess` | `o erro de parse não é relançado` |
+| tirar a edge de `EDGES` | `calculate-scores` | `sem prova de deploy: calculate-scores` |
+| exceção de canária caducada | `omie-vendas-sync` | `não emite mais 'contrato-que-nao-existe-v9'` |
+| tirar o gate próprio da sonda | `ai-ops-agent` | `a sonda responde sem gate próprio` |
+| apagar a âncora declarada | `omie-sync-status-produtos` | `âncoras não encontradas (procurei createClient()` |
+
+**50/50 vermelhas.** A que mais importa é a 7ª: `git revert` do bump devolveria a sonda a
+"responde verde sem provar nada" — o pior estado possível, porque **parece** verificado.
+
+### O que falta (e é do founder)
+
+O bump é pré-requisito **cumprido**; o deploy, não. As 10 edges precisam subir pelo chat do
+Lovable, e só então a sonda vira prova. Ler pelo `request_id` em `net._http_response` — nunca
+`ORDER BY id DESC LIMIT 1`, que já fabricou veredito negativo neste banco (§Canárias do
+`deploy.md`). Marcador esperado: `v1.0-sensor-inicial` nas 7 novas (nenhum bundle anterior
+responde `versao`) e `v1.1-paginacao-eof-e-cursor` nas 3 bumpadas — string que **não existia em
+lugar nenhum** antes desta fatia.
