@@ -1117,3 +1117,79 @@ ela introduz. `useMyCommercialRole: () => ({data:null, isLoading:false})`
 troca de sujeito **impossíveis de falhar** ali. Não é tautologia da asserção: é cegueira do harness.
 E o guard de "1 escritor por slug" não existe — a helper `evento()` (:165) faz `.reverse().find()`,
 lê só a ÚLTIMA chamada, então um segundo escritor do mesmo slug passaria verde inflando o denominador.
+
+## O INSERT que nunca saiu do browser — `dashboard_visits` (2026-08-23)
+
+O §3 da seção anterior fechou em "é bug, não ausência de uso" e deixou o bug sem nome. Ele tem nome,
+e não é o que a intuição do repo sugere.
+
+**A hipótese natural estava errada.** "INSERT barrado por RLS não levanta erro visível no cliente" é
+armadilha real e documentada aqui — mas não era esta. As policies estavam corretas
+(`dashboard_visits_user_insert` com `WITH CHECK (auth.uid() = user_id)`) e o ACL cru de `pg_class`
+mostrava `authenticated=arwdDxtm`, com o `a` de INSERT, idêntico a `profiles`/`user_roles`.
+
+> **Nota de método:** a primeira leitura de grants usou `information_schema.role_table_grants` e veio
+> **vazia** — o que parecia prova de "sem permissão". Não era: aquela view é filtrada pelas roles do
+> usuário corrente, e `claude_ro` é restrito. Vazio ali é **ausência de dado**. Quem responde sem
+> viés de role é `pg_class.relacl`.
+
+**A causa-raiz: o query builder do PostgREST é um _thenable preguiçoso_.** O `fetch()` mora **dentro**
+de `then()` (`postgrest-js/src/PostgrestBuilder.ts`). O código era:
+
+```ts
+void supabase.from('dashboard_visits').insert({ ... });   // ← monta a query, não manda NADA
+```
+
+O operador `void` avalia o operando e descarta. Ele **não** chama `.then()`. Logo nenhum HTTP era
+emitido — não havia requisição para o RLS barrar. Provado com o postgrest-js real e um `fetch` dublê:
+
+| expressão | `fetch` disparado |
+|---|---|
+| `void builder.insert(...)` | **0×** |
+| `await builder.insert(...)` | 1× |
+| `builder.insert(...).then(…)` | 1× |
+
+Contraste que delimita o risco: `supabase.functions.invoke()` e `supabase.auth.getSession()` devolvem
+**Promise de verdade** e disparam sozinhos. Só o builder de `supabase.from(...)` é preguiçoso — as
+outras duas ocorrências de `void supabase` no repo estão corretas.
+
+### Por que sobreviveu 3 meses
+
+Três camadas de silêncio empilhadas, e nenhuma delas é "ninguém olhou":
+
+1. **A mitigação foi projetada e descartada.** O spec (`2026-05-17-dashboard-visits-design.md`, l. 185)
+   listava o risco "RLS quebra insert silenciosamente" com a mitigação `dashboard.visit.failed` +
+   `logger.warn`. Nunca implementada. E `void` descarta até o objeto `error` — o código ficou sem
+   nenhuma superfície de falha.
+2. **O CI ficava verde porque o mock não era fiel.** O teste mockava `supabase.from` com `vi.fn()`
+   comum. Um `vi.fn()` não tem a preguiça do builder, então `void` "funcionava" no teste. O write path
+   tinha **0 testes** — as 5 asserções existentes cobriam só leitura.
+3. **A tabela vazia lia como "sensor que nunca mediu"**, que é a interpretação que o §6 do topo deste
+   arquivo registrou. Só o cruzamento com PostHog (45 visitas em 90 dias) separou as duas leituras.
+
+### O que quase virou um segundo bug
+
+Corrigir **só** o `void` teria piorado a tabela, por duas razões que a tabela vazia mascarava:
+
+- **3 escritores.** `useLastVisit` monta 3× por dashboard (`DashboardBody` → `BriefZone` →
+  `DeltasStrip` → `useBriefDeltas`), cada um com seu `mountedAtRef`. Destravado o INSERT, viravam
+  3 linhas por visita, com timestamps a milissegundos de distância.
+- **Off-by-one no read.** O spec assumia escrita no **mount** e por isso lia `range(1, 1)` ("segunda
+  mais recente"); a implementação escreve no **unmount**. Com a tabela cheia, `range(1,1)` devolveria
+  a **penúltima** visita. Com a tabela vazia, o fallback pra `localStorage` escondia isso.
+
+Correção: escritor único (`useRegistrarVisitaDashboard`, 1 chamador), `range(0, 0)`, `.then()` com
+`track('dashboard.visita_erro')`, e `persona`/`company_selection` — colunas que existiam desde
+2026-05-17 e nunca eram escritas.
+
+### A regra que isto acrescenta
+
+**Thenable preguiçoso não falha: ele não acontece.** Um builder descartado com `void` não gera erro,
+não gera log, não gera requisição — some sem rastro, e nenhum gate do repo (typecheck, lint,
+`no-floating-promises`, RLS, CI) vê. `void` sobre um builder do PostgREST é sempre bug; sobre uma
+Promise real é só "não estou aguardando".
+
+**E o corolário de teste:** um mock que não reproduz a **preguiça** da dependência testa a si mesmo.
+O dublê tem que só registrar a chamada quando alguém **puxa** a promise — senão o teste fica verde
+exatamente no bug que deveria pegar. Falsificado nos três eixos: restaurar o `void`, devolver o
+`range(1,1)` e reintroduzir a escrita duplicada deixam o arquivo vermelho.
