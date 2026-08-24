@@ -169,7 +169,10 @@ glob e a órfã. Zero falso-positivo.
 **Fora do eixo 2 DE PROPÓSITO:** as ~250 `db/test-*.sh`. Não são órfãs por descuido — são harnesses
 "PROVA PG17" que exigem um PostgreSQL 17 vivo (ritual `prove-sql-money-path`, rodado à mão antes
 de entregar migration). Cobrá-las geraria ~250 isenções de baseline no dia 1, e gate que nasce com
-250 falsos-positivos ninguém lê.
+250 falsos-positivos ninguém lê. **Gatilho** (para esta nota não repetir a dívida da Lição 6):
+quando o CI tiver um PostgreSQL 17 de serviço, as ~250 isenções somem — aí o 3º eixo
+(`db/test-*.sh` × um laço que as execute) vira chip. Até lá a cobertura delas é o ritual
+manual, e o CI não finge que as roda.
 
 **Lição 6.** *Uma nota de "fora de escopo" num doc é dívida com data de validade.* A desta página
 sobreviveu um dia e só fechou porque estava **escrita**. Deixar o eixo de fora foi certo (não
