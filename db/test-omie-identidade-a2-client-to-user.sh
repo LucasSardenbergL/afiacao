@@ -107,7 +107,7 @@ SENT=$(Pq -c "SELECT (pg_get_functiondef(to_regprocedure('$FN')::oid) LIKE '%cli
 P -q <<'SQL'
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 INSERT INTO auth.users(id) SELECT ('00000000-0000-0000-0000-0000000000' || lpad(i::text,2,'0'))::uuid
-  FROM generate_series(1,14) i ON CONFLICT DO NOTHING;
+  FROM generate_series(1,16) i ON CONFLICT DO NOTHING;
 INSERT INTO public.profiles(user_id, document) VALUES
   ('00000000-0000-0000-0000-000000000001', '11111111111'),  -- unico
   ('00000000-0000-0000-0000-000000000002', '22222222222'),  -- ambiguo com u3
@@ -117,7 +117,12 @@ INSERT INTO public.profiles(user_id, document) VALUES
   ('00000000-0000-0000-0000-000000000006', '55555555555'),  -- unico, mas o vinculo dele nao tem evidence
   ('00000000-0000-0000-0000-000000000008', '66666666666'),  -- unico, vinculo source='rpc'
   ('00000000-0000-0000-0000-000000000009', '77777777777'),  -- unico, vinculo source='manual'
-  ('00000000-0000-0000-0000-000000000010', '88888888888');  -- unico, vinculo STALE (>7d)
+  ('00000000-0000-0000-0000-000000000010', '88888888888'),  -- unico, vinculo STALE (>7d)
+  -- FRONTEIRA do TTL (B10/B11). Docs UNICOS e CONSISTENTES com o proprio vinculo de proposito: assim a
+  -- UNICA coisa que separa 115 de 116 e o `updated_at`. Se o doc nao casasse, o assert passaria pelo
+  -- motivo errado -- foi exatamente o que a F12 flagrou no 110.
+  ('00000000-0000-0000-0000-000000000015', '15151515151'),  -- unico, vinculo a 7.25d (FORA por TTL)
+  ('00000000-0000-0000-0000-000000000016', '16161616161');  -- unico, vinculo a 6.75d (DENTRO por TTL)
 -- u11 existe em auth.users e NAO tem profile: o doc da evidencia dele sumiu do mundo.
 GRANT SELECT ON public.profiles                  TO service_role;
 GRANT SELECT ON public.omie_customer_account_map TO service_role;
@@ -147,7 +152,14 @@ INSERT INTO public.omie_customer_account_map (user_id, account, omie_codigo_clie
   -- Override HUMANO com evidencia MORTA (evidencia = doc do u1, vinculo do u14). O repo da imunidade
   -- explicita a 'manual' (o delete de ambiguos do syncCustomers filtra source IN document/rpc pelo mesmo
   -- motivo): revogar aqui faria evidencia historica derrubar decisao de gente.
-  ('00000000-0000-0000-0000-000000000014','oben',   114,'manual',  '11111111111', now());
+  ('00000000-0000-0000-0000-000000000014','oben',   114,'manual',  '11111111111', now()),
+  -- ── FRONTEIRA do TTL (B10/B11 + F_M4/F_M5) ────────────────────────────────────────────────────────
+  -- O 110 (STALE a 8d) NAO fecha a fronteira: 8d dista um dia inteiro do corte, entao um mutante que
+  -- AFROUXA 7d->7.5d sobrevive a ele (8d segue fora dos dois). Estes dois cercam o corte por <=0.25d:
+  -- so um TTL de EXATAMENTE 7 dias os classifica assim. Tudo o mais neles e valido (doc unico, vivo e
+  -- consistente), logo o TTL e a unica variavel.
+  ('00000000-0000-0000-0000-000000000015','oben',   115,'document','15151515151', now() - interval '7.25 days'),
+  ('00000000-0000-0000-0000-000000000016','oben',   116,'document','16161616161', now() - interval '6.75 days');
 SQL
 
 # ══ ZONA 4 — asserts ══
@@ -185,8 +197,22 @@ eq "P1 101 -> u1 (evidencia presente, unica e consistente)" \
    "$(RS "SELECT public.omie_sync_identity_snapshot('oben')->'client_to_user'->>'101';")" "$U1"
 eq "P2 104 -> u4 (evidencia com mascara normaliza igual ao doc_to_user)" \
    "$(RS "SELECT public.omie_sync_identity_snapshot('oben')->'client_to_user'->>'104';")" "$U4"
-eq "P3 DENOMINADOR: client_to_user('oben') tem EXATAMENTE 2 chaves (nada mais vazou)" \
-   "$(RS "SELECT count(*) FROM jsonb_object_keys(public.omie_sync_identity_snapshot('oben')->'client_to_user');")" "2"
+eq "P3 DENOMINADOR: client_to_user('oben') tem EXATAMENTE 3 chaves (nada mais vazou)" \
+   "$(RS "SELECT count(*) FROM jsonb_object_keys(public.omie_sync_identity_snapshot('oben')->'client_to_user');")" "3"
+
+# ── B10/B11 — FRONTEIRA do TTL, cercada por <=0.25d de cada lado ──────────────────────────────────
+# Por que nao bastava o N6 (STALE a 8d): 8d esta a um dia inteiro do corte, entao ele morre igual sob
+# um TTL de 7d, 7.5d ou 7.9d. Um mutante que AFROUXA o corte passa por baixo desse assert. Estes dois
+# medem que o corte e 7d EXATO -- e sao o que a F_M4/F_M5 sabotam. (Achado do challenge do diff do
+# PR-2 no #1326; o harness do #1888 nao o herdou -- ver §11 do design.)
+eq "B10 FRONTEIRA ALTA: vinculo a 7.25d fica FORA de client_to_user (so o TTL o exclui)" \
+   "$(RS "SELECT public.omie_sync_identity_snapshot('oben')->'client_to_user' ? '115';")" "f"
+eq "B11 FRONTEIRA BAIXA: vinculo a 6.75d fica DENTRO (o TTL nao pode estar apertado demais)" \
+   "$(RS "SELECT public.omie_sync_identity_snapshot('oben')->'client_to_user' ? '116';")" "t"
+# O 115 sai pelo TTL, nao por evidencia podre: se a evidencia dele fosse invalida, B10 passaria pelo
+# motivo errado e F_M4 nao teria o que mover. Este assert prende esse pressuposto.
+eq "B10b PRESSUPOSTO: o doc do 115 resolve para o PROPRIO dono em doc_to_user (evidencia sadia)" \
+   "$(RS "SELECT public.omie_sync_identity_snapshot('oben')->'doc_to_user'->>'15151515151';")" "00000000-0000-0000-0000-000000000015"
 eq "P4 conta colacor ve o SEU vinculo (201 -> u1)" \
    "$(RS "SELECT public.omie_sync_identity_snapshot('colacor')->'client_to_user'->>'201';")" "$U1"
 eq "P5 DENOMINADOR: client_to_user('colacor') tem EXATAMENTE 1 chave" \
@@ -366,6 +392,27 @@ falsifica "F5 restricao a source=document (N5a)" "$Q108" "f" "t" '/client_prova 
 
 # F6 -- TTL: espelha a janela da view fresca que este mapa sobrepoe.
 falsifica "F6 TTL de 7 dias em client_prova (N6)" "$Q110" "f" "t" '/client_prova AS (/,/^  ),$/ { /AND m.updated_at >= now/d; }'
+
+# F_M4/F_M5 -- o mutante que a F6 NAO mata. A F6 DELETA a clausula de TTL; contra isso um assert em 8d
+# (o N6/Q110) basta, porque sem clausula TUDO entra. Mas um mutante que so AFROUXA o corte (7d -> 7.5d)
+# sobrevive ao Q110: 8d continua fora dos dois. Quem o mata e a fronteira de 7.25d (B10). Simetrico para
+# APERTAR (7d -> 6.5d), que mata o 6.75d (B11). Sao os dois mutantes que o harness do #1888 nao tinha.
+Q115="SELECT public.omie_sync_identity_snapshot('oben')->'client_to_user' ? '115';"
+Q116="SELECT public.omie_sync_identity_snapshot('oben')->'client_to_user' ? '116';"
+falsifica "F_M4 TTL AFROUXADO 7d->7.5d em client_prova (B10; a F6 nao pega este)" "$Q115" "f" "t" \
+  "/client_prova AS (/,/^  ),\$/ s|interval '7 days'|interval '7.5 days'|"
+falsifica "F_M5 TTL APERTADO 7d->6.5d em client_prova (B11)" "$Q116" "t" "f" \
+  "/client_prova AS (/,/^  ),\$/ s|interval '7 days'|interval '6.5 days'|"
+# Prova que o par acima e ESPECIFICO: sob o TTL afrouxado, o N6 (8d) permanece fora -- ou seja, o
+# assert antigo sozinho daria VERDE com o mutante no ar. E a demonstracao de que B10 era necessario.
+cp "$MIG2" "$MUT"
+sed "/client_prova AS (/,/^  ),\$/ s|interval '7 days'|interval '7.5 days'|" "$MUT" > "$MUT.tmp" && mv "$MUT.tmp" "$MUT"
+if cmp -s "$MIG2" "$MUT"; then bad "F_M4b SABOTAGEM NO-OP (o sed nao casou)"; else
+  P -q -f "$MUT" >/dev/null
+  eq "F_M4b sob o TTL afrouxado o N6(8d) segue FORA => o assert VELHO sozinho ficaria VERDE (por isso B10)" \
+     "$(RS "$Q110")" "f"
+  P -q -f "$MIG2" >/dev/null
+fi
 
 # F7 -- CHECK do formato: dropar a constraint faz o doc FORMATADO ser aceito (e ai o JOIN nunca casaria
 # -- a correcao inteira viraria INERTE em silencio, que e o risco real desta coluna).
