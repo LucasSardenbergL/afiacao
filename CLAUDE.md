@@ -37,7 +37,7 @@ Diário de PR/entregas: `docs/historico/` (`bugs-resolvidos.md`, `programas-vend
 
 ## ⚠️ Armadilhas recorrentes (caras — a maioria money-path/banco; detalhe no doc/agent indicado)
 
-- **Lovable = 3 deploys MANUAIS** (Publish frontend · edge pelo chat · migration no SQL Editor) — **merge na `main` ≠ produção**. Migration custom **não** auto-aplica (falha SILENCIOSA). **Nunca** mexer em `supabase/migrations/` (snapshot é a fonte de DR). → `deploy.md`/`database.md`
+- **Lovable: 3 deploys MANUAIS** (Publish · edge · migration) — **merge ≠ produção**; custom **não** auto-aplica (SILENCIOSA); **nunca** tocar `supabase/migrations/` (=DR). **4ª: o SW só troca de build quando o cliente clica** — bytes = **disponibilidade, não adoção**. → `deploy.md`/`database.md`
 - **Acesso ao banco:** **leitura/diagnóstico EU rodo direto** via `~/.config/afiacao/psql-ro` (role `claude_ro`, read-only blindado — confiro migration aplicada/frescor/`pg_get_functiondef`/`net._http_response` sem o founder). **Escrita** só via SQL Editor do Lovable (founder cola). → `database.md` §1
 - **Sync bidirecional do Lovable pode REVERTER a main:** commit "Changes" empurra o workspace VELHO por cima de arquivo recém-mergeado (#1445→#1478). Após merge que toca `supabase/functions/`, **confira `git log -S <símbolo-novo>` do arquivo** antes de pedir o deploy; se um "Changes" atropelou, restaure por PR. → `deploy.md`
 - **PL/pgSQL é late-bound:** `CREATE` passa, a função só falha em RUNTIME → **teste EXECUTANDO** (PG17 `db/test-*.sh` / skill `prove-sql-money-path`), nunca só criando. → `money-path.md`
