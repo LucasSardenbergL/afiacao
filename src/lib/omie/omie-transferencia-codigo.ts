@@ -22,7 +22,7 @@
 // Espelhado no edge (Deno não importa de src/); paridade textual no CI em
 // src/__tests__/edge-money-path-invariants.test.ts.
 
-export type DecisaoProof =
+type DecisaoProof =
   | "aplicar" // código livre, ou já é deste user: criação/refresh — o caso normal
   | "transferencia" // o código pertence a OUTRO user na mesma conta: NÃO aplica, vira conflito
   | "manual_protegido"; // a linha do próprio user é override HUMANO: automação não rebaixa
