@@ -5,7 +5,7 @@ import { DashboardEditModeProvider } from '@/contexts/DashboardEditModeContext';
 import { useRegisterShortcuts } from '@/components/shell/ShortcutsRegistry';
 import { useNavigate } from 'react-router-dom';
 import { track } from '@/lib/analytics';
-import { useLastVisit } from '@/hooks/useLastVisit';
+import { useLastVisit, useRegistrarVisitaDashboard } from '@/hooks/useLastVisit';
 import { useCompany } from '@/contexts/CompanyContext';
 import { BriefZone } from './BriefZone';
 import { CockpitGrid } from './CockpitGrid';
@@ -34,6 +34,12 @@ function DashboardBody() {
   const { persona, source } = useDashboardPersonaContext();
   const { selection } = useCompany();
   const { minutesSinceLastVisit } = useLastVisit();
+
+  // ESCRITOR ÚNICO de dashboard_visits (useLastVisit é só leitura e monta 3× aqui)
+  useRegistrarVisitaDashboard({
+    persona,
+    companySelection: selection === 'all' ? 'all' : String(selection),
+  });
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
