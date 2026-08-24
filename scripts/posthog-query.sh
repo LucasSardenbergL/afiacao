@@ -21,6 +21,7 @@
 #   scripts/posthog-query.sh "SELECT count() FROM events WHERE ..."
 #   echo "SELECT ..." | scripts/posthog-query.sh
 #   scripts/posthog-query.sh --cru "SELECT ..."    # payload inteiro do PostHog
+#   scripts/posthog-query.sh --cache "SELECT ..."  # aceita cache (rapido, pode MENTIR)
 #
 # Saída (default): {"columns":[…],"results":[…],"row_count":N} — compacto de
 # PROPÓSITO: o payload cru traz clickhouse/hogql/explain/metadata e queima
@@ -28,6 +29,7 @@
 # SQL gerado pra depurar.
 #
 # Exit: 0=respondeu · 64=uso errado · 65=HogQL inválido (HTTP 400) ·
+#       73=query estourou o tempo (HTTP 504) — ausência de dado, NÃO zero ·
 #       68=rede/HTTP inesperado · 69=dependência ausente/quebrada ·
 #       75=rate limit (HTTP 429) · 77=sem auth (key ruim, ou HTTP 401/403)
 #
@@ -43,9 +45,17 @@ HOST="${POSTHOG_API_HOST:-https://us.posthog.com}"
 
 cru=0
 query=""
+# `force_blocking` RECALCULA sempre. O default do PostHog serve do CACHE quando a
+# query e' BYTE-A-BYTE identica a uma anterior — e devolve o resultado velho SEM
+# marcar que e' velho. Em 2026-08-24 isso custou horas: `SELECT count(), max(ts)
+# FROM events` repetida ao longo do dia congelou em 2.630/23-08 enquanto o valor
+# real ja era 2.631/24-08, e a conclusao "a ingestao aceita e DESCARTA" nasceu
+# dai. Medicao paga o recalculo; quem quiser velocidade pede --cache.
+refresh="force_blocking"
 while [ $# -gt 0 ]; do
   case "$1" in
     --cru) cru=1 ;;
+    --cache) refresh="force_cache" ;;
     -h|--help) sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     -*) echo "❌ flag desconhecida: $1 (só existem --cru e --help)" >&2; exit 64 ;;
     *) query="$1" ;;
@@ -105,7 +115,7 @@ umask 077
 tmp="$(mktemp -d)" || { echo "❌ mktemp falhou" >&2; exit 68; }
 trap 'rm -rf "$tmp"' EXIT
 
-jq -n --arg q "$query" '{query: {kind: "HogQLQuery", query: $q}}' > "$tmp/payload.json" || {
+jq -n --arg q "$query" --arg r "$refresh" '{query: {kind: "HogQLQuery", query: $q}, refresh: $r}' > "$tmp/payload.json" || {
   echo "❌ jq falhou ao montar o corpo da requisição" >&2; exit 68; }
 
 # A key vai pelo --config e NÃO por -H: argv é visível em `ps` pra qualquer
@@ -137,6 +147,10 @@ case "$status" in
        [ "$projeto" = "@current" ] && echo "   → se a key é ESCOPADA a um projeto, @current pode não resolver: grave o id numérico em $IDFILE" >&2
        exit 77 ;;
   429) echo "❌ HTTP 429 — rate limit do PostHog. Espere e repita." >&2; exit 75 ;;
+  504) echo "❌ HTTP 504 — a query estourou o tempo de execucao do PostHog." >&2
+       echo "   Isto e' AUSENCIA DE DADO, nao zero: nada foi medido." >&2
+       echo "   → estreite a janela/colunas, ou use --cache se um valor recente servir." >&2
+       exit 73 ;;
   *) echo "❌ HTTP $status inesperado de $HOST" >&2
      head -c 800 "$tmp/body.json" >&2; echo >&2; exit 68 ;;
 esac
