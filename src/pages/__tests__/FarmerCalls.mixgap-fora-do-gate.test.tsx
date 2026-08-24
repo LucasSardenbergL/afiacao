@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider, onlineManager } from '@tanstack/react-query';
 
 /**
@@ -23,6 +23,18 @@ import { QueryClient, QueryClientProvider, onlineManager } from '@tanstack/react
  *
  * Os hooks rodam de verdade (só o supabase é dublê): a cadeia "RPC falha → hook lança →
  * `data` undefined → gate fecha" é justamente o que precisa ser provado.
+ *
+ * ⚠️ A revisão independente RETROATIVA do #1896 achou DOIS falsos verdes NESTE arquivo, os dois
+ * medidos (`docs/historico/fase-sem-sinal.md`):
+ *
+ *   1. montar o host prova ALCANCE, não FALA. A asserção do caso de erro era só NEGATIVA
+ *      (`queryByText(/já comprou/) === null`) com o MixGap de âncora, e a suíte dava `6 passed`
+ *      COM e SEM o `<AvisoLeituraFalhou>` no host. Agora o caso afirma POSITIVAMENTE que o aviso
+ *      existe, ancorado em `data-testid` — a copy é desenho do #1886 e pode mudar, a âncora não.
+ *   2. nenhuma asserção CONTAVA emissões. `evento()` devolvia só a ÚLTIMA chamada, então um
+ *      segundo escritor do mesmo slug passava verde: payload duplicado é IDÊNTICO, nenhum
+ *      `toMatchObject` reprova, e o denominador da série de adoção dobra. Agora todo desfecho
+ *      exige exatamente UMA emissão (`umaEmissao`).
  */
 
 const FARMER = 'farmer-a';
@@ -162,10 +174,46 @@ function renderPagina() {
   );
 }
 
+/** TODOS os payloads de um evento, na ordem em que saíram — a contagem é o que guarda o slug. */
+function eventos(nome: string): Record<string, unknown>[] {
+  return track.mock.calls
+    .filter((c) => c[0] === nome)
+    .map((c) => c[1] as Record<string, unknown>);
+}
+
 /** Último payload de um evento, ou undefined se ele nunca saiu. */
 function evento(nome: string): Record<string, unknown> | undefined {
-  const c = [...track.mock.calls].reverse().find((c) => c[0] === nome);
-  return c?.[1] as Record<string, unknown> | undefined;
+  const todos = eventos(nome);
+  return todos[todos.length - 1];
+}
+
+/**
+ * Espera o desfecho SAIR e o React ASSENTAR — nesta ordem, e antes de qualquer contagem.
+ *
+ * `waitFor` sozinho para na PRIMEIRA emissão: uma segunda, vinda do commit seguinte, chegaria
+ * depois da contagem e `umaEmissao` leria 1. Seria uma corrida a favor do verde — exatamente o
+ * modo de falhar que este arquivo existe para matar.
+ */
+async function aguardarDesfecho(nome: string): Promise<void> {
+  await waitFor(() => expect(eventos(nome).length).toBeGreaterThan(0));
+  // dois flushes de effects: um emissor irmão que só monta no commit seguinte já emitiu aqui.
+  await act(async () => { await Promise.resolve(); });
+  await act(async () => { await Promise.resolve(); });
+}
+
+/**
+ * UM desfecho = UMA emissão — "1 escritor por slug" (CLAUDE.md §Design System / ação global).
+ *
+ * `toMatchObject` é CEGO a isto. Um segundo `useSinalPositivacao(isHunter)` no host — ou o
+ * `track()` de volta para dentro do `PositivacaoHero`, de onde o #1896 o tirou — emite o payload
+ * IDÊNTICO: toda asserção de FORMA continua verde e só o denominador muda. E denominador inflado
+ * não é ruído, é a série afirmando que a tela é menos usada do que é (money-path §denominador).
+ */
+function umaEmissao(nome: string): void {
+  expect(
+    eventos(nome).map((p) => p.estado),
+    `\`${nome}\` saiu mais de uma vez no MESMO desfecho — dois escritores do mesmo slug`,
+  ).toHaveLength(1);
 }
 
 beforeEach(() => {
@@ -186,9 +234,12 @@ describe('FarmerCalls — o MixGap não depende da leitura da positivação', ()
 
     expect(await screen.findByText('Oportunidades de cross-sell')).toBeTruthy();
     expect(screen.getByText('Positivação MTD')).toBeTruthy();
-    await waitFor(() => expect(evento('carteira.mixgap_visto')).toBeTruthy());
+    await aguardarDesfecho('carteira.mixgap_visto');
+    await aguardarDesfecho('carteira.positivacao_vista');
     expect(evento('carteira.mixgap_visto')).toMatchObject({ estado: 'com_gap', total_com_gap: 2 });
     expect(evento('carteira.positivacao_vista')).toMatchObject({ estado: 'pronta', total_eligible: 40 });
+    umaEmissao('carteira.mixgap_visto');
+    umaEmissao('carteira.positivacao_vista');
   });
 
   it('positivação FALHA e mixgap OK: o card de cross-sell continua na tela e instrumentado', async () => {
@@ -203,11 +254,16 @@ describe('FarmerCalls — o MixGap não depende da leitura da positivação', ()
       'o MixGapCard sumiu porque a OUTRA leitura falhou — a correção do #1859 é inalcançável',
     ).toBeTruthy();
     expect(screen.getByText('Marcenaria Alfa')).toBeTruthy();
-    await waitFor(() => expect(evento('carteira.mixgap_visto')).toBeTruthy());
+    await aguardarDesfecho('carteira.mixgap_visto');
     expect(
       evento('carteira.mixgap_visto'),
       'sem o evento a adoção do MixGap fica sem denominador justamente no dia ruim',
     ).toMatchObject({ estado: 'com_gap', total_com_gap: 2 });
+    umaEmissao('carteira.mixgap_visto');
+    // a leitura que FALHOU também tem um só escritor: o dia ruim é o dia em que o denominador
+    // mais importa, e é onde duplicar dói mais.
+    await aguardarDesfecho('carteira.positivacao_vista');
+    umaEmissao('carteira.positivacao_vista');
   });
 
   it('mixgap FALHA e positivação OK: o hero continua na tela (a independência vale nos dois sentidos)', async () => {
@@ -217,23 +273,42 @@ describe('FarmerCalls — o MixGap não depende da leitura da positivação', ()
 
     expect(await screen.findByText('Positivação MTD')).toBeTruthy();
     expect(await screen.findByText('Não consegui carregar as oportunidades')).toBeTruthy();
-    await waitFor(() => expect(evento('carteira.mixgap_visto')).toBeTruthy());
+    await aguardarDesfecho('carteira.mixgap_visto');
     expect(evento('carteira.mixgap_visto')).toMatchObject({ estado: 'erro', total_com_gap: null });
+    umaEmissao('carteira.mixgap_visto');
   });
 });
 
 describe('FarmerCalls — a positivação que falha também tem estado explícito', () => {
-  it('erro: a tela não AFIRMA "carteira já positivada" onde a verdade é falha de leitura', async () => {
-    // Asserção deliberadamente ancorada em COMPORTAMENTO, não em copy: o desenho do aviso de
-    // erro é do #1886 (`AvisoLeituraFalhou`), e casar a string dele aqui prenderia este guard a
-    // uma implementação. O que NENHUMA implementação pode fazer é afirmar o contrário do que
-    // sabe — e o empty state do "Clientes a positivar" diz exatamente isso.
+  it('erro: o host DIZ que não conseguiu ler — e não afirma "carteira já positivada"', async () => {
+    // As duas metades são asserções DIFERENTES, e a versão anterior só tinha a segunda:
+    //   POSITIVA — a tela FALA (existe aviso de leitura que falhou);
+    //   NEGATIVA — a tela não MENTE (não afirma carteira positivada).
+    // Só a negativa passa verde numa tela que emudeceu: nada afirmar satisfaz "não afirmou o
+    // contrário". Medido no #1896: `6 passed` com e SEM o `<AvisoLeituraFalhou>` no host.
+    //
+    // A âncora é `data-testid` e NÃO a copy: o desenho do aviso é do #1886 e pode mudar sem que
+    // o contrato ("no erro esta tela fala") mude — prender o guard à string trocaria um falso
+    // verde por um falso vermelho.
     respostaPositivacao = { data: null, error: ERRO_TIMEOUT };
 
     renderPagina();
 
-    // âncora positiva primeiro: prova que a página montou (senão o queryByText abaixo é vácuo).
+    // âncora de MONTAGEM primeiro: separa "a página não subiu" de "subiu e emudeceu" — sem ela
+    // as duas falhas ficariam indistinguíveis, que é como o defeito do #1859 nasceu.
     await screen.findByText('Oportunidades de cross-sell');
+
+    const aviso = await screen.findByTestId('aviso-positivacao').catch(() => null);
+    expect(
+      aviso,
+      'o host EMUDECEU na falha de leitura: sem o aviso a tela fica idêntica à do mês parado, e ' +
+      'o vendedor decide por uma tela que não sabe de nada',
+    ).not.toBeNull();
+    expect(
+      aviso!.getAttribute('data-estado'),
+      'o aviso montou com o estado errado — `erro` e `sem-rede` doem diferente para quem lê',
+    ).toBe('erro');
+
     expect(
       screen.queryByText(/Toda a carteira elegível já comprou/i),
       'afirmou carteira positivada onde a verdade é falha de leitura',
@@ -251,12 +326,13 @@ describe('FarmerCalls — a positivação que falha também tem estado explícit
 
     renderPagina();
 
-    await waitFor(() => expect(evento('carteira.positivacao_vista')).toBeTruthy());
+    await aguardarDesfecho('carteira.positivacao_vista');
     const payload = evento('carteira.positivacao_vista')!;
     // 'sem-rede' e NÃO 'erro': vendedor em campo sem sinal não é a RPC quebrada, e colapsar os
     // dois faria a série culpar o backend por cobertura de celular.
     expect(payload.estado, 'offline virou "sem acesso" e o sensor calou').toBe('sem-rede');
     expect(payload.total_eligible, 'offline fabricou número em vez de degradar para null').toBeNull();
+    umaEmissao('carteira.positivacao_vista');
   });
 
   it('erro: o evento sai com estado "erro" e números NULL — nunca zero fabricado', async () => {
@@ -264,7 +340,8 @@ describe('FarmerCalls — a positivação que falha também tem estado explícit
 
     renderPagina();
 
-    await waitFor(() => expect(evento('carteira.positivacao_vista')).toBeTruthy());
+    await aguardarDesfecho('carteira.positivacao_vista');
+    umaEmissao('carteira.positivacao_vista');
     const payload = evento('carteira.positivacao_vista')!;
     expect(payload.estado, 'sem `estado` a série de adoção não separa falha de mês parado').toBe('erro');
     // §2 do money-path: ausente ≠ zero. Mandar 0 somaria falha de leitura como se fosse

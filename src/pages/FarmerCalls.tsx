@@ -448,7 +448,14 @@ const FarmerCalls = () => {
         {/* ─── Positivação da carteira (hero principal) ─── */}
         <div className="space-y-3">
           {naoConsegui(estadoPositivacao) && (
-            <AvisoLeituraFalhou oque="a positivação da sua carteira" estado={estadoPositivacao} />
+            /* `testId` próprio: esta página tem DUAS leituras que podem falhar (positivação e
+               mixgap), e um id compartilhado deixaria o guard de uma passar verde pelo aviso
+               da outra — o falso verde por âncora frouxa é a classe do #1896. */
+            <AvisoLeituraFalhou
+              oque="a positivação da sua carteira"
+              estado={estadoPositivacao}
+              testId="aviso-positivacao"
+            />
           )}
           {positivacao && (
             <>

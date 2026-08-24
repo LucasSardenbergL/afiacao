@@ -13,24 +13,35 @@ import type { EstadoSemLeitura } from '@/lib/leitura/estado-de-leitura';
  * NÃO tem botão de "tentar de novo" por padrão: o react-query já refaz sozinho
  * (retry 2 + refetch por intervalo nos consumidores que o configuram), e um botão que
  * não conserta ensina o usuário a clicar e concluir que está tudo bem.
+ *
+ * `data-testid`/`data-estado` são ÂNCORA DE GUARD, não estilo: um teste de host precisa afirmar
+ * POSITIVAMENTE que a tela FALA no estado de falha, e casar a copy daqui prenderia esse guard a
+ * este desenho. A revisão retroativa do #1896 mediu o custo de não ter âncora — o guard do
+ * FarmerCalls dava `6 passed` com e SEM este aviso no host (docs/historico/fase-sem-sinal.md).
  */
 export function AvisoLeituraFalhou({
   oque,
   estado,
   variante = 'inline',
   className,
+  testId = 'aviso-leitura-falhou',
 }: {
   /** o que não pôde ser lido, em minúscula e no meio da frase: "os alertas de fluxo de caixa" */
   oque: string;
   estado: EstadoSemLeitura;
   variante?: 'inline' | 'bloco';
   className?: string;
+  /** âncora de teste — host com mais de uma leitura dá um id PRÓPRIO a cada aviso, senão o
+   *  guard de uma passa verde pelo aviso da outra. */
+  testId?: string;
 }) {
   const semRede = estado === 'sem-rede';
   const Icon = semRede ? CloudOff : AlertTriangle;
   return (
     <div
       role="status"
+      data-testid={testId}
+      data-estado={estado}
       className={cn(
         'flex items-start gap-2 rounded-md border px-3 py-2 text-sm',
         'bg-status-warning-bg border-status-warning/30 text-status-warning',
