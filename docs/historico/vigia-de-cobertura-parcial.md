@@ -110,6 +110,48 @@ O que isso autoriza dizer — e o que não autoriza:
 Evidência boa, não prova. Foi registrar o `load` de cada execução que tornou essa distinção
 visível: colher só o exit code teria produzido um "15/15" que soa definitivo e não é.
 
+### O controle positivo ficou VERDE — e por isso o "15/15" não era a evidência (2026-08-24)
+
+Repetir a medição não resolve a dúvida acima, porque repetir num regime fácil só produz verdes
+baratos. O desenho que resolveria é um **controle positivo**: rodar também a versão *sabotada*
+(o `sleep` fixo pré-conserto) sob a MESMA condição. Se a sabotada não fica vermelha, a condição
+não reproduz o defeito — e aí nenhum verde do código atual significa nada.
+
+Feito assim: 6 instâncias sabotadas + 6 atuais **no mesmo pool simultâneo** (pareamento exato de
+carga), 3 rodadas.
+
+| Braço | Código | Resultado |
+|---|---|---|
+| C | sabotado (`sleep 1` / `sleep 2`) | **18/18 verdes** ← devia falhar |
+| D | atual (`esperar_slots`) | 18/18 verdes |
+
+**O controle falhou.** Logo o braço D não prova nada — é ausência de dado, não aprovação. E o
+mesmo vale retroativamente para o "15/15" da seção anterior.
+
+Por que não reproduziu, medido em vez de suposto — cronometrando o que o bug de fato dependia,
+o tempo até o ocupante REGISTRAR o slot (n=20, `load` ~5):
+
+| | |
+|---|---|
+| mediana | 0,026 s |
+| p90 | 0,034 s |
+| máximo | 0,043 s |
+| limiar que o código sabotado dava | 1,000 s |
+
+Margem de **23× a 55×**. A máquina precisaria estar ~23 vezes mais lenta para o `sleep 1` estourar
+— e em 2026-08-23 ela estava (`load` 30–79 com swap em thrashing, contra ~5 agora).
+
+**A evidência que fecha a questão não é amostral, é estrutural.** O código antigo esperava 1 s
+fixo e media; o novo espera a CONDIÇÃO por até 15 s. Para qualquer latência L: se L ≤ 1 s os dois
+passam; se 1 s < L ≤ 15 s o antigo falha e o novo passa; se L > 15 s ambos falham, mas o novo
+reporta falha de SETUP em vez de acusar o `--status`. O novo **domina** o antigo — nunca pior,
+15× mais folga. Isso vale sem depender de reproduzir o flaky, que é bom, porque reproduzi-lo
+exige uma máquina em sofrimento que ninguém consegue agendar.
+
+**Regra que fica.** *Quando o controle positivo não fica vermelho, o braço verde não vale nada* — e
+medir a MARGEM (quanto o limiar excede a latência real) substitui a estatística de amostra com
+vantagem: dá um número mecanicista em 20 execuções de 40 ms, em vez de um `n` que nunca fecha.
+
 ## Lições
 
 1. **Gate anti-órfão é código como outro qualquer — pergunte de que ele é cego.** O sintoma é
