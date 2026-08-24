@@ -36,6 +36,8 @@ Os 10 restantes são entrypoints com prova documental, não dead code:
 - `carga.ts`, `medir.ts`, `importar-carteira.ts`, `backfill-dre-competencia.ts` — CLIs
   documentados no próprio cabeçalho / em `docs/historico/`
 - `test-migration-objects.ts` — teste executável (`bun scripts/test-migration-objects.ts`)
+  ⚠️ **superada em 2026-08-23:** era ÓRFÃ (ninguém a rodava); asserções migradas para
+  `scripts/lib/migration-objects.test.ts` e o arquivo apagado — ver `vigia-de-cobertura-parcial.md`
 - `radar/types.ts` — cascata: era acusado só porque `carga.ts` era
 
 ## A decisão que dá valor à mudança: `scripts/lib/**` fora do `entry`

@@ -101,6 +101,76 @@ Duas lições de método:
 5. **Antes de catalogar dívida, RODE.** Órfã vermelha ou flaky não vira linha de baseline: vira
    conserto, remoção, ou isenção com o motivo técnico escrito por extenso.
 
-**Fora de escopo, fica registrado:** `scripts/test-migration-objects.ts` também não é rodado por
-ninguém (não casa o `scripts/**/*.test.ts` do vitest nem os laços do `test:hooks`) — mesma classe,
-outra extensão.
+## O 2º eixo: a mesma classe em `.ts` (2026-08-23)
+
+A nota de "fora de escopo" acima era, ela mesma, dívida — e envelheceu bem: `scripts/test-migration-objects.ts`
+existia desde o #922, **verde**, com 13 asserções, e ninguém a rodava. Não casava o
+`scripts/**/*.test.ts` do vitest (`vitest.config.ts:11`) — é `test-*.ts`, não `*.test.ts` — nem os
+laços do `test:hooks`, nem nenhum `run:` de workflow.
+
+**O que ela guardava:** as ÚNICAS asserções do repo sobre `view`, `function` (identidade por
+assinatura/overload), `table`, `index`, `trigger`, `cron_job` e `enum_value` do extrator do
+preflight de migration. O gêmeo que roda no CI (`scripts/lib/migration-objects.test.ts`) cobre
+`CREATE POLICY`, DDL dinâmica e comentário — **zero** ocorrência dos outros sete kinds. As duas
+eram complementares, não duplicadas: ligar a órfã não era formalidade, era recuperar cobertura
+real do gap que motivou o #922 (as views `v_grupo_*` ficavam cegas no audit).
+
+**O detalhe que fecha o círculo.** O helper do gêmeo dizia, em comentário:
+*"só as policies — o resto do extrator tem cobertura própria via corpus"*. Tinha cobertura — na
+órfã. O teste de corpus só varre `CREATE POLICY`. **O comentário AFIRMAVA uma cobertura que
+existia e não rodava**, que é exatamente como a classe se esconde: não é o teste que falta, é o
+teste que ninguém executa sendo contado como se executasse.
+
+**Remédio escolhido — nem renomear nem chamar explicitamente.** As duas opções óbvias eram
+renomear para `scripts/migration-objects.test.ts` (entra no vitest sozinha) ou chamá-la num script
+do `package.json`. Achar o gêmeo mudou a conta: as 12 asserções únicas foram **migradas para o
+gêmeo** (a 13ª, `ignora CREATE comentado`, já estava lá e mais forte) e a órfã foi apagada. Ganho
+decisivo no gate: o critério de "coberta" vira só *"casa o glob do vitest"*, **sem lista de
+exceção**. A alternativa obrigaria o vigia a aceitar "é citada num script do package.json" como
+prova — que é a fraqueza *menção ≠ execução* que este mesmo doc denuncia na seção anterior.
+
+**O gate.** `scripts/hooks-guard-cobertura.test.ts` passou a ter DOIS eixos com critérios
+deliberadamente diferentes, porque o runner de cada extensão é outro:
+
+| eixo | superfície | "coberta" significa |
+|---|---|---|
+| 1 (`.sh`) | `scripts/test-*.sh` | roda num laço do `test:hooks` |
+| 2 (`.ts`) | suíte `.ts` em `scripts/` + `db/` | casa um glob do `test.include` do `vitest.config.ts` |
+
+O eixo 2 **lê o glob da fonte do `vitest.config.ts`** em vez de repetir a string: trocar o include
+faz o gate acompanhar, não mentir. É a lição 3 (*prefira o conjunto-alvo ao identificador*)
+aplicada ao outro eixo. E o detector de "é suíte" tem dois sentidos — por NOME (`test-x.ts`,
+`x.test.ts`, `x.spec.ts`) **ou** por CONTEÚDO (importa `vitest`) — porque cada um pega o que o
+outro perde: a órfã de 2026 não importava vitest (tinha `check()` próprio), e uma suíte futura
+pode importar vitest com nome fora de qualquer convenção.
+
+**Falsificação de graça.** O gate foi escrito com a órfã ainda em disco e rodado ANTES de apagá-la:
+reprovou nomeando `scripts/test-migration-objects.ts` na mensagem. Só então o arquivo saiu, e o
+gate ficou verde. Vermelho→verde pelo movimento certo, sem sabotagem inventada.
+
+**Custo no CI: ~3ms — e o caminho até o número é a lição.** O diff óbvio (rodar os 2 arquivos
+antes×depois no vitest) **não enxerga o efeito**. Com n=5 por braço, sob load ~40–50 e ~30
+worktrees, o `tests` deu ANTES `200·221·226·289·318`ms (mediana 226) e DEPOIS
+`218·250·266·332·357`ms (mediana 266) — faixas sobrepostas quase inteiras — e a mediana de
+wall-clock ficou *menor* no DEPOIS (1,43s × 1,84s) **com 25 testes a mais**. O piso de ruído da
+máquina (±100ms) é maior que o efeito; ler "+40ms" ali seria inventar sinal.
+
+O número real veio de medir o custo **isolado**: dos 25 testes novos, 22 são regex em memória
+(sub-ms) e 3 compartilham UMA varredura de disco. Cronometrada direto, n=50, lendo os 52 `.ts` de
+`scripts/`+`db/`: **2,76ms por rodada**. Daí o ~3ms — e daí, também, o motivo de o diff ser cego.
+
+*Método, para a próxima:* quando o efeito esperado for menor que o ruído do harness, **não meça
+pelo diff do harness** — meça o trabalho acrescentado, isolado, com n alto. O diff só serve para
+mostrar que o efeito é pequeno; ele não sabe dizer *quanto*.
+
+**Calibração, medida:** dos 53 `.ts` de `scripts/`+`db/`, o detector marca 17 — 16 já cobertos pelo
+glob e a órfã. Zero falso-positivo.
+
+**Fora do eixo 2 DE PROPÓSITO:** as ~250 `db/test-*.sh`. Não são órfãs por descuido — são harnesses
+"PROVA PG17" que exigem um PostgreSQL 17 vivo (ritual `prove-sql-money-path`, rodado à mão antes
+de entregar migration). Cobrá-las geraria ~250 isenções de baseline no dia 1, e gate que nasce com
+250 falsos-positivos ninguém lê.
+
+**Lição 6.** *Uma nota de "fora de escopo" num doc é dívida com data de validade.* A desta página
+sobreviveu um dia e só fechou porque estava **escrita**. Deixar o eixo de fora foi certo (não
+inchar o #1902); não escrevê-lo teria sido a falha.
