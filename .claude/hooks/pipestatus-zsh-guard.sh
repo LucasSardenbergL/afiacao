@@ -137,6 +137,21 @@ ramo="$(printf '%s' "$cmd" | awk '
     if (pend) inhd = 1
     emite("\n")
   }
+  # Janela de ~40 chars de cada lado do match, para o sensor. Deliberadamente NAO e o comando
+  # inteiro: o log vai para disco e comando de agente carrega token/senha. Segredo nao costuma
+  # ficar colado em PIPESTATUS, entao a janela estreita e o que basta para julgar VP/FP sem
+  # arrastar credencial junto. Tabs/newlines viram espaco (a linha do log tem de ser UMA linha).
+  # `re` chega como STRING, nunca como /literal/: em awk, /re/ em posicao de argumento
+  # AVALIA para 0 ou 1 ($0 ~ /re/) e a funcao receberia um numero. Foi assim que o trecho
+  # saiu vazio na 1a versao — e pior, casou por acidente onde o comando tinha um "0".
+  function janela(re,   ini, s) {
+    if (!match(vis, re)) return ""
+    ini = RSTART - 40; if (ini < 1) ini = 1
+    s = substr(vis, ini, RLENGTH + 80)
+    gsub(/[\t\n]/, " ", s); gsub(/  +/, " ", s)
+    return s
+  }
+  function grita(ramo, re) { printf "%s\t%s\n", ramo, janela(re); exit }
   END {
     # A palavra NUA (sem `$`) so e perigosa onde algo AVALIA identificador como aritmetica:
     # (( … )), [[ … ]] e `let` tratam parametro ausente como 0. Fora dai, `PIPESTATUS` solto e
@@ -145,15 +160,16 @@ ramo="$(printf '%s' "$cmd" | awk '
     arit = (vis ~ /\(\(/ || vis ~ /\[\[/ || vis ~ /(^|[^A-Za-z0-9_])let([^A-Za-z0-9_]|$)/)
     # (A) bash-ism: PIPESTATUS nao existe no zsh -> vazio. `[^}]*` cobre flags de parametro do zsh
     # como ${(e)PIPESTATUS[0]} e ${#PIPESTATUS[@]}.
-    if (vis ~ /\$\{[^}]*PIPESTATUS/ || vis ~ /\$PIPESTATUS([^A-Za-z0-9_]|$)/) { print "BASHISM"; exit }
-    if (arit && vis ~ /(^|[^A-Za-z0-9_])PIPESTATUS([^A-Za-z0-9_]|$)/)            { print "BASHISM"; exit }
+    if (vis ~ /\$\{[^}]*PIPESTATUS/ || vis ~ /\$PIPESTATUS([^A-Za-z0-9_]|$)/) { grita("BASHISM", "\\$\\{?[^}]*PIPESTATUS") }
+    if (arit && vis ~ /(^|[^A-Za-z0-9_])PIPESTATUS([^A-Za-z0-9_]|$)/)            { grita("BASHISM", "PIPESTATUS") }
     # (B) zsh e 1-INDEXED: pipestatus[0…] e sempre vazio. Indice que COMECA em 0 pega [0] e [0+0].
-    if (vis ~ /\$\{[^}]*pipestatus\[[[:space:]]*0/ || vis ~ /\$pipestatus\[[[:space:]]*0/) { print "INDICE-ZERO"; exit }
-    if (arit && vis ~ /(^|[^A-Za-z0-9_])pipestatus\[[[:space:]]*0/)                            { print "INDICE-ZERO"; exit }
+    if (vis ~ /\$\{[^}]*pipestatus\[[[:space:]]*0/ || vis ~ /\$pipestatus\[[[:space:]]*0/) { grita("INDICE-ZERO", "\\$\\{?[^}]*pipestatus\\[[[:space:]]*0") }
+    if (arit && vis ~ /(^|[^A-Za-z0-9_])pipestatus\[[[:space:]]*0/)                            { grita("INDICE-ZERO", "pipestatus\\[[[:space:]]*0") }
   }
 ')"
 
 [ -n "$ramo" ] || exit 0
+trecho="${ramo#*$'\t'}"; ramo="${ramo%%$'\t'*}"
 
 # PIPESTATUS-BASHISM-NO-ZSH / PIPESTATUS-INDICE-ZERO sao CONTRATO DE TESTE: marcadores ASCII, caixa
 # fixa, exclusivos de um ramo. scripts/test-pipestatus-zsh-guard.sh casa por eles com `command grep`
@@ -183,6 +199,60 @@ else
 
 $idioma"
 fi
+
+# ── SENSOR DE CAMPO ───────────────────────────────────────────────────────────────────────────
+# Sem isto, a frase "endurecer para deny e fase N+1" seria inalcancavel POR CONSTRUCAO: o aviso vai
+# para o contexto e evapora, e ninguem consegue responder "quantas vezes disparou, e em que"
+# (docs/historico/fase-sem-sinal.md — superficie de uso nasce COM o sensor). Quem LE isto e
+# `scripts/pipestatus-guard-sinal.sh`; um log sem query nao e sensor, e lixo.
+#
+# FORA do repo de proposito: ~30 worktrees compartilham este guard, e um log versionado viraria ima
+# de conflito (a mesma razao pela qual o CLAUDE.md proibe roadmap em arquivo compartilhado).
+# Escrita concorrente sem lock so e segura enquanto a linha couber no `PIPE_BUF` — que no macOS e
+# 512 bytes (`getconf PIPE_BUF /`), NAO os 4096 do Linux. Dai o teto abaixo, que e invariante de
+# CORRETUDE (linha picotada envenena a query), nao estetica.
+#
+# ARMADILHA MEDIDA: truncar o CAMPO nao limita a LINHA — o escape do JSON infla depois do corte.
+# Com trecho ja cortado em 160, medi 642 bytes so de aspas (cada " vira \") e 1282 bytes de bytes
+# de controle (cada um vira \u00XX, 6 bytes). A versao anterior media 176 bytes com dado TIPICO e
+# declarava o invariante provado — pior caso e outra medicao. Por isso o teto e conferido na LINHA
+# PRONTA, num laco que encolhe o trecho ate caber.
+# Falha de log NUNCA cala o aviso: todo o bloco e best-effort.
+TETO_LINHA=511   # 511 + o "\n" = 512 = PIPE_BUF do macOS, o mais estrito das plataformas em jogo
+registrar_sinal() {
+  local log dir linha wt corte janela ts
+  log="${PIPESTATUS_GUARD_LOG:-$HOME/.claude/afiacao-pipestatus-guard.jsonl}"
+  dir="${log%/*}"
+  [ -d "$dir" ] || (umask 077; mkdir -p "$dir") 2>/dev/null || return 0
+  # Nasce 0600: o arquivo guarda FRAGMENTO DE COMANDO. A criacao vem com umask 077 para nao
+  # existir janela em que ele esteja 0644, e o chmod conserta log legado (custa um fork, mas so
+  # no caminho de DISPARO, que e raro por construcao — o caminho quente saiu no portao barato).
+  [ -e "$log" ] || (umask 077; : >> "$log") 2>/dev/null || return 0
+  chmod 600 "$log" 2>/dev/null || true
+  # Redacao: a janela e estreita, mas se um segredo encostar nela ele NAO vai para o disco.
+  local seguro
+  seguro="$(printf '%s' "$1" | sed -E \
+    -e 's/(eyJ[A-Za-z0-9_.-]{8,})/<JWT-REDIGIDO>/g' \
+    -e 's/((token|key|secret|senha|password|passwd|pwd|auth|apikey)["'"'"']?[=:][[:space:]]*)[^[:space:]"'"'"']+/\1<REDIGIDO>/gI' \
+    -e 's/([Bb]earer[[:space:]]+)[^[:space:]]+/\1<REDIGIDO>/g' 2>/dev/null)"
+  seguro="${seguro:-$1}"
+  ts="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)"
+  wt="$(printf '%.48s' "${PWD##*/}")"
+  # `jq -a` forca saida ASCII pura => ${#linha} conta BYTES em QUALQUER locale, sem fork de `wc`.
+  for corte in 160 80 40 0; do
+    if [ "$corte" -eq 0 ]; then janela='<TRECHO-OMITIDO-LINHA-LONGA>'
+    else janela="$(printf "%.${corte}s" "$seguro")"; fi
+    linha="$(jq -n -c -a --arg ts "$ts" --arg ramo "$2" --arg trecho "$janela" --arg wt "$wt" \
+      '{ts:$ts, ramo:$ramo, trecho:$trecho, wt:$wt}' 2>/dev/null)" || return 0
+    [ -n "$linha" ] || return 0
+    [ "${#linha}" -lt "$TETO_LINHA" ] && break
+  done
+  # Guarda final: se nem o marcador coube (ramo absurdo), NAO grava — linha picotada envenena a
+  # query, e um sensor que mente e pior que sensor nenhum.
+  [ "${#linha}" -lt "$TETO_LINHA" ] || return 0
+  printf '%s\n' "$linha" >> "$log" 2>/dev/null || return 0
+}
+registrar_sinal "$trecho" "$ramo"
 
 jq -n --arg m "$msg" --arg c "$ctx" \
   '{systemMessage:$m, hookSpecificOutput:{hookEventName:"PreToolUse", additionalContext:$c}}'

@@ -188,6 +188,28 @@ miniatura: um detector de padrão de shell não herda a semântica do shell.** U
 negativo E falso positivo comprovados não tem a precisão que justifica bloquear — e como aviso o
 falso positivo custa uma linha de contexto, o que permitiu ampliar a detecção em vez de encolhê-la.
 
+
+**O sensor, e o invariante que eu tinha "provado" no caso típico.** Aviso sem registro é promessa
+inalcançável — "endurecer quando houver dado" precisa do dado. O hook grava JSONL em
+`~/.claude/afiacao-pipestatus-guard.jsonl` e `scripts/pipestatus-guard-sinal.sh` é a query (log sem
+query não é sensor, é lixo). Segunda rodada de `/codex` defensivo, três achados, todos reais:
+
+- **Truncar o campo não limita a linha.** Eu cortava o trecho em 160 e media 176 bytes — com dado
+  típico. O escape do JSON infla DEPOIS do corte: cada `"` vira `\"`, cada byte de controle vira
+  `\u00XX` (6 bytes). Medido no pior caso: **1010 bytes** — o dobro do `PIPE_BUF` do macOS, que é
+  **512** e não os 4096 do Linux. Acima dele o append entre as ~30 worktrees pode picotar. O teto
+  passou a ser conferido na LINHA PRONTA, num laço que encolhe o trecho até caber; `jq -a` força
+  saída ASCII para que `${#linha}` conte bytes em qualquer locale, sem fork.
+- **Parse OK não é schema OK.** Um JSONL de linhas válidas sem os campos do sensor produzia
+  relatório de `null` com exit 0 — ausência de dado servida como medição, o vício que o sensor
+  existe para não cometer. Agora é `SCHEMA-ESTRANHO` (exit 65), e log misto declara o que ignorou.
+- **Log de fragmento de comando nascia 0644.** Herdado do umask, nunca medido. Nasce 0600.
+
+E a lição de método, que veio da falsificação e não do Codex: **o caso de teste pode não exercitar
+o invariante que o teste afirma provar.** Sabotei o teto e o teste seguiu VERDE — porque eu enchia
+o comando de acentos, que param em 414 bytes sozinhos. O vetor real era match GRANDE, não comando
+grande: `\$\{[^}]*PIPESTATUS` não tem limite, então a janela de contexto cresce junto com ele.
+Sem a falsificação eu teria entregue um teste que passa com e sem o código que ele testa.
 ## O padrão por trás das nove
 
 Seis produzem **verde por construção**, não por mérito; a sétima mostra que o mesmo defeito
