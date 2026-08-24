@@ -16,6 +16,19 @@ Padrão em `gerar-pedidos-diario`/`disparar-pedidos-aprovados`. O guard `src/__t
 
 Como provar o que está **SERVIDO** nesse host (hash do index + grep nos chunks): skill `lovable-deploy-verify` — o método vive lá, não é duplicado aqui.
 
+## O que BLOQUEIA o PR — leia o `ci.yml` INTEIRO, não os primeiros steps
+
+O job `validate` do `.github/workflows/ci.yml` tem **muito mais que os 5 gates óbvios**. Em 2026-08-23 eram 15 steps: `tsc` (app) · `scripts:typecheck` · `test` · `test:edges` (Deno) · `edges:typecheck` · `build` · `lint` · `claude:size` · `test:hooks` · `authz:check` · `bunpin:check` · `docs:indice` · `docs:citacoes` · `docs:links` · **`bunx knip`** (dead code). Mais o job `mutation-check` (`mutcheck:selftest` + `mutcheck`).
+
+⚠️ **`bunx knip` É bloqueante** — export sem consumidor derruba PR. O `/health` roda o mesmo knip localmente, mas "também roda no /health" **não** significa "só roda no /health".
+
+**A armadilha real (mordido 2026-08-23):** ler `sed -n '1,80p' ci.yml` de um arquivo de **424 linhas**, não achar o knip, e afirmar que ele não é gate. O arquivo tem ~30 linhas de comentário por step, então os 5 primeiros gates ocupam as primeiras 230 linhas e **os 10 restantes ficam fora de qualquer leitura truncada**. Custo: um PR vermelho e uma errata errada escrita em 3 documentos. Use `grep -n "^      - name:" .github/workflows/ci.yml` — cabe numa tela e não mente.
+
+**Dois gates costumam pegar código novo, e são independentes:**
+
+1. **`manifesto.gate.test.ts`** (dentro do `bun run test`) — todo arquivo de `src/` precisa de **1 dono declarado** em `src/lib/modulos/manifesto.ts` (`codigo`/`testes` do módulo). Arquivo novo sem entrada sai como `[orfao]`. Sobreposição de globs entre módulos e glob que não casa nada também são erro. `NAO_CLASSIFICADOS` é dívida datada e está VAZIO — não seja o primeiro a sujá-lo.
+2. **`bunx knip`** — export sem consumidor. Núcleo de domínio novo, ainda sem UI, tende a bater aqui: os testes tornam as *funções* alcançáveis (o `vitest.config.ts` é entry no `knip.json`), mas **tipo/interface exportado que só o próprio arquivo usa fica órfão**. Correção certa é tirar o `export` do que é interno — reexportar quando a fase seguinte lhe der consumidor —, não engordar o `ignore` do `knip.json`.
+
 ## Merge na `main` ≠ produção — 3 deploys MANUAIS e independentes
 
 1. **Migration** → colar o SQL no **SQL Editor do Lovable** → Run → validar com query de contagem. O Lovable **NÃO** aplica migration de nome custom sozinho (falha SILENCIOSA: a feature compila e quebra em runtime). Detalhe + ritual + skill `lovable-db-operator`: `docs/agent/database.md`.

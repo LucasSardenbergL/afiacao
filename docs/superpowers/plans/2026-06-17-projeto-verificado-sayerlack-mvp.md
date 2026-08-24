@@ -1,16 +1,11 @@
 # Projeto Verificado Sayerlack — MVP Implementation Plan
 
-> ⛔ **ESTADO EM 2026-08-22 — NADA DISTO ESTÁ IMPLEMENTADO.** Este documento foi resgatado do
-> [PR #947](https://github.com/LucasSardenbergL/afiacao/pull/947) (draft desde 2026-06-17), que
-> ficou **64 dias parado, 1.139 commits atrás da `main`**. Só o pensamento veio para cá; o código
-> da **Fase 1** (`src/lib/projeto-verificado/` — `estado.ts`, `consumo.ts`, `check-proporcao.ts`
-> + testes) **continua no branch `claude/projeto-verificado-sayerlack`**, intacto e não-mergeado.
->
-> **Por que separado:** o núcleo é domínio puro e **não tem nenhum consumidor** na `main`. O gate
-> `bunx knip` (dead code, no `ci.yml`) reprova exports órfãos, então a Fase 1 **não consegue
-> mergear sozinha** — ela precisa vir junto com a Fase 2, que lhe dá chamador. Trazer só a spec
-> preserva a parte cara (estratégia revisada por painel adversário de 3 modelos) onde ela é
-> pesquisável, sem carregar dead code nem brigar com o gate.
+> 📍 **ESTADO EM 2026-08-23 — Fase 1 CONCLUÍDA (Tasks 1-4); Fase 0 e Fases 2+ ABERTAS.**
+> As 3 tarefas TDD e a verificação final estão feitas: `src/lib/projeto-verificado/`, 17 testes
+> verdes, módulo declarado no manifesto, knip limpo. **A Fase 0 (discovery) continua inteira** — é
+> trabalho do founder/jurídico, e é ela que bloqueia as Fases 2+. Sobre os dois gates de CI que a
+> Fase 1 teve de vencer (`manifesto.gate` e `bunx knip`) e a errata do diagnóstico, ver o topo da
+> [spec](../specs/2026-06-17-projeto-verificado-sayerlack-design.md).
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -75,7 +70,7 @@ A inovação central da v2: o estado `sistema_documentado` só se sustenta se a 
 - Create: `src/lib/projeto-verificado/check-proporcao.ts`
 - Test: `src/lib/projeto-verificado/__tests__/check-proporcao.test.ts`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 // src/lib/projeto-verificado/__tests__/check-proporcao.test.ts
@@ -135,12 +130,12 @@ describe('avaliarProporcao', () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `heavy bunx vitest run src/lib/projeto-verificado/__tests__/check-proporcao.test.ts`
 Expected: FAIL — `Cannot find module '../check-proporcao'`.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 ```ts
 // src/lib/projeto-verificado/check-proporcao.ts
@@ -212,12 +207,12 @@ export function avaliarProporcao(
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `heavy bunx vitest run src/lib/projeto-verificado/__tests__/check-proporcao.test.ts`
 Expected: PASS (4 tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/lib/projeto-verificado/check-proporcao.ts src/lib/projeto-verificado/__tests__/check-proporcao.test.ts
@@ -234,7 +229,7 @@ O coração da v2: dado o conjunto de fatos comprovados de um projeto, retorna o
 - Create: `src/lib/projeto-verificado/estado.ts`
 - Test: `src/lib/projeto-verificado/__tests__/estado.test.ts`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 // src/lib/projeto-verificado/__tests__/estado.test.ts
@@ -297,12 +292,12 @@ describe('calcularEstado', () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `heavy bunx vitest run src/lib/projeto-verificado/__tests__/estado.test.ts`
 Expected: FAIL — `Cannot find module '../estado'`.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 ```ts
 // src/lib/projeto-verificado/estado.ts
@@ -354,12 +349,12 @@ export function calcularEstado(f: FatosProjeto): EstadoProjeto {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `heavy bunx vitest run src/lib/projeto-verificado/__tests__/estado.test.ts`
 Expected: PASS (8 tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/lib/projeto-verificado/estado.ts src/lib/projeto-verificado/__tests__/estado.test.ts
@@ -376,7 +371,7 @@ Classifica o volume dosado contra o consumo esperado (área ÷ rendimento) em **
 - Create: `src/lib/projeto-verificado/consumo.ts`
 - Test: `src/lib/projeto-verificado/__tests__/consumo.test.ts`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 // src/lib/projeto-verificado/__tests__/consumo.test.ts
@@ -422,12 +417,12 @@ describe('classificarConsumo', () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `heavy bunx vitest run src/lib/projeto-verificado/__tests__/consumo.test.ts`
 Expected: FAIL — `Cannot find module '../consumo'`.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 ```ts
 // src/lib/projeto-verificado/consumo.ts
@@ -477,12 +472,12 @@ export function classificarConsumo(p: ParametrosConsumo): ResultadoConsumo {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `heavy bunx vitest run src/lib/projeto-verificado/__tests__/consumo.test.ts`
 Expected: PASS (5 tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/lib/projeto-verificado/consumo.ts src/lib/projeto-verificado/__tests__/consumo.test.ts
@@ -493,17 +488,17 @@ git commit -m "feat(projeto-verificado): faixa de consumo (bandas amplas)"
 
 ### Task 4: Verificação final da Fase 1
 
-- [ ] **Step 1: Rodar a suíte completa do módulo**
+- [x] **Step 1: Rodar a suíte completa do módulo**
 
 Run: `heavy bunx vitest run src/lib/projeto-verificado`
 Expected: PASS (17 tests: 4 + 8 + 5).
 
-- [ ] **Step 2: Typecheck (strict)**
+- [x] **Step 2: Typecheck (strict)**
 
 Run: `heavy bun run typecheck`
 Expected: sem erros (o módulo é puro, sem dependências externas).
 
-- [ ] **Step 3: Lint**
+- [x] **Step 3: Lint**
 
 Run: `bun lint`
 Expected: sem erros no diretório novo.
