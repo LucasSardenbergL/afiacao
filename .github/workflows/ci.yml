@@ -246,6 +246,25 @@ jobs:
         # sem `heavy` aqui: o semáforo de RAM é da M2 local e nao existe no runner (exit 127).
         run: bun run test:hooks
 
+      # Falsificação das suítes acima — blocking. O step anterior prova que os hooks fazem o que a
+      # suíte diz; ESTE prova que a suíte SABE FICAR VERMELHA. Cada alvo é sabotado com `sed`, uma
+      # regra por vez, e a suíte tem de reprovar em cada sabotagem; se ficar verde, aquela asserção
+      # era teatro. Sem ele, um PR pode afrouxar as asserções e o `test:hooks` continua verde.
+      #
+      # Nasceu como job separado no #1947, com a justificativa de que não caberia aqui — e o
+      # primeiro run REFUTOU a própria justificativa: **0,9min** contra `validate` em 8,15min e
+      # timeout de 15. A estimativa vinha da M2 do founder (swap, ~30 worktrees, fila do `heavy`),
+      # onde o mesmo comando varia ~3x entre execuções e o `test:hooks` leva 24min — medição local
+      # não projeta runner. Com o número real, a escolha se inverte: dentro do `validate` ele BARRA
+      # (é o único check required, e o auto-merge só espera os required), enquanto em job próprio
+      # o merge acontecia ANTES de ele terminar — vermelho depois do merge que ninguém lê, a mesma
+      # classe do gate de dead-code medida no #1212.
+      #
+      # Custo: ~11% no wall-clock do job, ~6min de folga ainda no timeout. Se um dia apertar, o
+      # corte certo é a fixture da suíte (foi de onde vinha o custo), não a cobertura.
+      - name: Falsificação — sabota o alvo e EXIGE vermelho em cada regra
+        run: bun run test:falsificacao
+
       # Anti-regressão de gate de autorização em RPCs SECURITY DEFINER sensíveis (custo/preço/
       # estoque). Mata o padrão "CREATE OR REPLACE derrubou o gate" — 3 ocorrências (5 views #1246,
       # get_tint_prices, fin_estimar_estoque_omie #1264). Estático: lê supabase/migrations/ no
@@ -423,41 +442,3 @@ jobs:
       - name: mutcheck — contratos de cobertura money-path (.mut)
         run: bun run mutcheck
 
-  # ─── Falsificação das suítes de hook (job PRÓPRIO, paralelo ao `validate`) ──────────────
-  # As suítes `scripts/test-*.sh` que têm modo `--falsificar` sabotam o alvo com `sed`, uma regra
-  # por vez, e EXIGEM que a suíte fique vermelha em cada sabotagem. É o que impede a suíte verde de
-  # ser verde por asserção frouxa. Até 2026-08-23 esse modo NUNCA rodou no CI: `grep -o falsificar
-  # package.json .github/workflows/*.yml` não devolvia nada. Só rodava quando alguém digitava à mão
-  # — ou seja, era exatamente o que a baseline de scripts/hooks-suites-baseline.ts proíbe: teste que
-  # existe e não roda é AUSÊNCIA DE DADO, não aprovação. Uma edição podia afrouxar as asserções (ou
-  # o alvo mudar e o `sed` deixar de casar, virando "falsificação vazia") sem nada ficar vermelho.
-  #
-  # Por que job SEPARADO e não um step do `validate`: medido em 2026-08-23, o `validate` leva 6–8min
-  # com `timeout-minutes: 15`. A falsificação é a suíte inteira re-executada por sabotagem x locale
-  # (2 alvos, 15 sabotagens, 30 execuções) — enfiá-la lá dentro comeria a margem que sobra do
-  # timeout, e o modo de falha seria o pior de todos: PR alheio morrendo por relógio, não por
-  # defeito. Em job próprio ela roda em PARALELO, com timeout dela, e não atrasa o merge de ninguém.
-  #
-  # ⚠️ NÃO é required na branch protection ainda — só `validate` é. Enquanto não for, este job é
-  # SINAL, não barreira: o auto-merge não o espera. Promover a required é 1 clique do founder
-  # (Settings → Branches → main → require `falsificacao`) e está proposto no PR que criou este job,
-  # com o tempo REAL do primeiro run como evidência — a medição local não projeta o runner (a M2 do
-  # founder, com swap e ~30 worktrees, roda o `test:hooks` em 24min contra ~1–2min aqui).
-  #
-  # Sem `bun install` de propósito: o laço só chama bash/sed/jq/ps, tudo já no runner. O `bun` entra
-  # apenas para ler o `test:falsificacao` do package.json, que é a fonte ÚNICA da lista de alvos —
-  # a mesma que scripts/falsificacao-cobertura.test.ts lê para cobrar suíte nova.
-  falsificacao:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v5
-
-      # Semver estrito, mesmo motivo do job `validate` (3ª ocorrência — bump alinha as três).
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.14
-
-      - name: Falsificação — sabota o alvo e EXIGE vermelho em cada regra
-        run: bun run test:falsificacao

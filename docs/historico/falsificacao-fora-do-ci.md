@@ -76,14 +76,25 @@ e emite a vírgula decimal sem consultar o sistema — a asserção vale no ubun
 ausente. Trocar por `C.UTF-8` faria o stub cair no ramo neutro, emitir ponto nos dois locales e
 **esvaziar** a asserção. Mesma família de bug, correções opostas.
 
-**3. Job próprio, não step do `validate`.** O `validate` leva **6–8min** com `timeout-minutes: 15`,
-e a falsificação é a suíte inteira re-executada ~30 vezes. Dentro dele, comeria a margem do timeout
-e o modo de falha seria o pior possível: PR alheio morrendo por relógio, não por defeito. Em job
-paralelo tem timeout próprio e não atrasa merge de ninguém.
+**3. Onde ligar — e a estimativa que a medição derrubou.** O `validate` leva **6–8min** com
+`timeout-minutes: 15`, e a falsificação re-executa a suíte ~30 vezes. Extrapolando da M2, isso
+comeria a margem do timeout, então o #1947 a pôs em **job separado**, paralelo, com a ressalva de
+que o número honesto viria do CI.
 
-**Pendência conhecida:** o job **não é required** — só `validate` é, e o auto-merge só espera os
-required. Enquanto não for promovido na branch protection, ele é **sinal, não barreira**. É 1 clique
-do founder, e a evidência para decidir é o tempo real do primeiro run.
+Veio, e **refutou a justificativa**: o job levou **0,9min** (contra `validate` em 8,15min). A
+estimativa estava inflada porque nasceu de uma máquina onde o mesmo comando varia ~3× e o
+`test:hooks` leva 24min. Com o número real a escolha se inverte, e o #1948 moveu a falsificação
+para **dentro do `validate`**.
+
+Por que a inversão importa: `validate` é o **único check required**, e o auto-merge só espera os
+required. Em job separado o merge acontecia **antes de o job terminar** — vermelho depois do merge,
+que é a mesma classe do gate de dead-code medida no #1212 (*"medição de gate FORA do CI expira"*).
+Como sinal, ele não barraria um PR que afrouxasse as asserções; como step, barra. Custo: ~11% no
+wall-clock do job, com ~6min de folga ainda no timeout.
+
+A lição de método é essa: **estimativa tirada de máquina ruidosa é hipótese, não medida**. O certo
+foi entregar com a ressalva explícita, medir no ambiente real e **voltar para corrigir a decisão** —
+não deixar a decisão de pé porque já estava escrita e comentada.
 
 ## Resíduo
 
