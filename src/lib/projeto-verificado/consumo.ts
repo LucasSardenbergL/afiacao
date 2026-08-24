@@ -4,7 +4,7 @@
 // sem rendimento/área válidos → 'indeterminado', não fabrica classe.
 // Os limiares são calibráveis (default conservador); valores finais via discovery.
 
-export type ClassificacaoConsumo = 'compativel' | 'baixo' | 'suspeito' | 'indeterminado';
+type ClassificacaoConsumo = 'compativel' | 'baixo' | 'suspeito' | 'indeterminado';
 
 export interface ParametrosConsumo {
   areaM2: number;

@@ -1,16 +1,25 @@
 # Projeto Verificado Sayerlack — design (v2)
 
-> ⛔ **ESTADO EM 2026-08-22 — NADA DISTO ESTÁ IMPLEMENTADO.** Este documento foi resgatado do
-> [PR #947](https://github.com/LucasSardenbergL/afiacao/pull/947) (draft desde 2026-06-17), que
-> ficou **64 dias parado, 1.139 commits atrás da `main`**. Só o pensamento veio para cá; o código
-> da **Fase 1** (`src/lib/projeto-verificado/` — `estado.ts`, `consumo.ts`, `check-proporcao.ts`
-> + testes) **continua no branch `claude/projeto-verificado-sayerlack`**, intacto e não-mergeado.
+> 📍 **ESTADO EM 2026-08-23 — Fase 1 (núcleo de domínio puro) entregue; Fases 2+ bloqueadas pelo
+> discovery (§9).** `src/lib/projeto-verificado/` (`check-proporcao.ts`, `estado.ts`, `consumo.ts`
+> + 17 testes), declarado como módulo `projeto-verificado` no manifesto. **Sem rota e sem
+> consumidor de produção** — é domínio puro, e assim fica até D1/D3 destravarem a Fase 2.
 >
-> **Por que separado:** o núcleo é domínio puro e **não tem nenhum consumidor** na `main`. O gate
-> `bunx knip` (dead code, no `ci.yml`) reprova exports órfãos, então a Fase 1 **não consegue
-> mergear sozinha** — ela precisa vir junto com a Fase 2, que lhe dá chamador. Trazer só a spec
-> preserva a parte cara (estratégia revisada por painel adversário de 3 modelos) onde ela é
-> pesquisável, sem carregar dead code nem brigar com o gate.
+> **Sobre a nota de 2026-08-22 (que dizia que o knip impedia o merge):** ela estava **certa no
+> gate e forte demais na conclusão**. `bunx knip` É step bloqueante do `ci.yml` — mas o que ele
+> apontou foram **4 tipos exportados sem consumidor** (`TipoComponente`, `ComponenteNaoAcabamento`,
+> `Faltante`, `ClassificacaoConsumo`), não o módulo inteiro: as *funções* já eram alcançáveis pelos
+> testes (`vitest.config.ts` é entry no `knip.json`). Tirar o `export` de tipo que só o próprio
+> arquivo usa resolveu — a Fase 1 **não** precisava esperar a Fase 2 para lhe dar chamador.
+> Havia ainda um **segundo** gate que a nota não mencionava: o `manifesto.gate.test.ts`, que exige
+> 1 dono declarado por arquivo de `src/` e apontava os 6 como `[orfao]`.
+>
+> **⚠️ Errata da errata (2026-08-23).** Uma versão anterior desta nota afirmou que *"knip não está
+> no `ci.yml`"* e tratou a nota de 08-22 como refutada. **Isso era falso.** A afirmação nasceu de
+> ler `sed -n '1,80p'` de um `ci.yml` de **424 linhas** — o step do knip está na linha 322. O PR
+> foi vermelho exatamente nele. **Classe de erro:** *concluir ausência a partir de leitura
+> truncada*. "Não encontrei" só vira "não existe" depois de olhar o arquivo inteiro; para lista de
+> steps, `grep -n "^      - name:" .github/workflows/ci.yml`. Registrado em `docs/agent/deploy.md`.
 
 > Spec de produto/estratégia. Combate ao **desvio de especificação** de acabamentos Sayerlack (pintor/marcenaria aplica tinta automotiva ou de concorrente imitando só a cor) **fundido** ao **programa de relacionamento com arquitetos**.
 >

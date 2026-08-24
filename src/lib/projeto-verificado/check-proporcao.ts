@@ -4,8 +4,8 @@
 // componente comprado fora da Colacor (`externo`) NÃO conta como documentado.
 // Os VALORES de proporção vêm do discovery (D3); aqui só vive a lógica.
 
-export type TipoComponente = 'acabamento' | 'fundo' | 'catalisador' | 'diluente';
-export type ComponenteNaoAcabamento = Exclude<TipoComponente, 'acabamento'>;
+type TipoComponente = 'acabamento' | 'fundo' | 'catalisador' | 'diluente';
+type ComponenteNaoAcabamento = Exclude<TipoComponente, 'acabamento'>;
 
 /** Um item comprado e vinculado ao projeto. */
 export interface ItemCesta {
@@ -20,7 +20,7 @@ export interface RequisitoSistema {
   proporcaoMinima: Partial<Record<ComponenteNaoAcabamento, number>>;
 }
 
-export interface Faltante {
+interface Faltante {
   tipo: TipoComponente;
   requeridoL: number;
   presenteL: number;
