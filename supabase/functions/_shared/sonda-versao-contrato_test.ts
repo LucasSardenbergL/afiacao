@@ -35,6 +35,13 @@ import * as algoAudit from "../algorithm-a-audit/versao.ts";
 import * as positivacao from "../carteira-positivacao-snapshot/versao.ts";
 import * as omieFinanceiro from "../omie-financeiro/versao.ts";
 import * as analyzeOrder from "../analyze-unified-order/versao.ts";
+import * as calcScores from "../calculate-scores/versao.ts";
+import * as aiOps from "../ai-ops-agent/versao.ts";
+import * as statusProdutos from "../omie-sync-status-produtos/versao.ts";
+import * as scoringBatch from "../scoring-recalc-batch/versao.ts";
+import * as syncReprocess from "../sync-reprocess/versao.ts";
+import * as tacticalBatch from "../tactical-plans-batch/versao.ts";
+import * as visitBatch from "../visit-score-recalc-batch/versao.ts";
 
 /**
  * `respostaSonda` (a maioria) ou `respostaSondaTactical` (a `generate-tactical-plan`, que embrulha o
@@ -103,6 +110,20 @@ const EDGES: Array<{ nome: string; mod: ModSonda }> = [
   // d8cf07152, e a canária é versionada — mas o `contrato` dela nomeia a fatia do MERGE DE PREÇO,
   // não a do prompt, e ela vive depois do gate de staff. Ver `analyze-unified-order/versao.ts`.
   { nome: "analyze-unified-order", mod: analyzeOrder },
+  // Oitava leva (#1889/#1901 paginação, parte 3): as 7 dependentes do `paginate.ts` que não
+  // tinham sensor NENHUM — nem sonda, nem canária. Enquanto a sexta leva tratava edges cujo
+  // deploy era mal verificável, estas eram INVERIFICÁVEIS: sem marcador e sem fixture possível
+  // (o #1889 é no-op por DESENHO), a única resposta para "qual bundle está no ar?" era nenhuma.
+  // Quatro escrevem direto no nosso banco; três são batches que escrevem por FAN-OUT, chamando
+  // outra edge — o custo sai desta edge e cai na de baixo, o que torna o rastro mais difícil de
+  // ler depois, não mais fácil. As duas listas abaixo separam os dois casos.
+  { nome: "calculate-scores", mod: calcScores },
+  { nome: "ai-ops-agent", mod: aiOps },
+  { nome: "omie-sync-status-produtos", mod: statusProdutos },
+  { nome: "sync-reprocess", mod: syncReprocess },
+  { nome: "scoring-recalc-batch", mod: scoringBatch },
+  { nome: "visit-score-recalc-batch", mod: visitBatch },
+  { nome: "tactical-plans-batch", mod: tacticalBatch },
 ];
 
 /** As cinco da terceira leva — os gates estruturais abaixo varrem todas. */
@@ -114,6 +135,30 @@ const ESCRITA_NOSSO_BANCO = [
   "omie-sync-nfes-recebidas",
   "omie-nfe-webhook",
   "omie-analytics-sync",
+  // Oitava leva: escrita DIRETA. `calculate-scores` aplica `apply_score_updates`; `ai-ops-agent`
+  // apaga e regrava `ai_decisions`; `omie-sync-status-produtos` reescreve `sku_status_omie` e o
+  // flag `ativo` de `omie_products`; `sync-reprocess` deleta/reinsere `order_items` e faz upsert
+  // em `product_costs`.
+  "calculate-scores",
+  "ai-ops-agent",
+  "omie-sync-status-produtos",
+  "sync-reprocess",
+];
+
+/**
+ * Oitava leva, o outro caso: batches que NÃO escrevem — eles CHAMAM a edge que escreve.
+ *
+ * Lista própria, e não uma linha a mais em `ESCRITA_NOSSO_BANCO`, porque a diferença é operacional
+ * e muda o veredito de quem sonda: aqui o efeito de um disparo acidental não aparece nesta edge,
+ * aparece na de baixo (`scoring-recalc-client`, `visit-score-recalc-client`,
+ * `generate-tactical-plan`). Chamar isso de "escrita no nosso banco" faria o próximo leitor
+ * procurar o rastro no lugar errado. A FORMA exigida delas é a mesma — por isso entram inteiras em
+ * `FORMA_NORMALIZADA` logo abaixo.
+ */
+const FAN_OUT_QUE_ESCREVE = [
+  "scoring-recalc-batch",
+  "visit-score-recalc-batch",
+  "tactical-plans-batch",
 ];
 
 /**
@@ -134,7 +179,24 @@ const FORMA_NORMALIZADA = [
   // paga o mesmo preço se um `probe` mal grafado cair no fluxo real, que é o que estes gates
   // existem para impedir. Confirma a regra do bloco acima: a FORMA não tem a ver com escrever.
   "analyze-unified-order",
+  ...FAN_OUT_QUE_ESCREVE,
 ];
+
+/**
+ * Onde o client do handler NÃO nasce de um `createClient(` literal.
+ *
+ * O gate de posição abaixo compara a sonda com a criação do client, e a `omie-sync-status-produtos`
+ * a esconde atrás de `makeClient()` — uma fábrica de topo de arquivo que existe para capturar o
+ * tipo do client por inferência. Sem este mapa o gate não acha a âncora e cai no ramo
+ * "controle positivo vazio", que é vermelho — correto, mas pela razão errada.
+ *
+ * O default fica no `??` para que uma edge NOVA não precise de linha aqui; declarar o desvio é o
+ * caso raro. Renomear a fábrica sem atualizar este mapa deixa o gate VERMELHO por âncora ausente,
+ * que é o desfecho certo: melhor um gate que para do que um que mede a coisa errada.
+ */
+const ANCORA_CLIENT: Record<string, string> = {
+  "omie-sync-status-produtos": "makeClient(",
+};
 
 /** Destas o gate NÃO aceita `x-cron-secret`, então a sonda precisa de gate PRÓPRIO. */
 // `recommend` entra aqui porque seu gate normal é JWT e o `getUser` PRECISA do client — mas a
@@ -153,6 +215,11 @@ const FORMA_NORMALIZADA = [
 // inalcançável pelo SQL Editor, ou obrigaria a afrouxar o gate de uma edge que lê perfil de
 // cliente e paga o modelo. É também o que a separa da canária de preço dela, que vive DEPOIS
 // desse gate e por isso só o app logado alcança.
+// `ai-ops-agent` entra pela causa mais direta de todas: o gate dela é JWT de usuário staff
+// (`Authorization: Bearer` + `user_roles` em employee/master) e é a PRIMEIRA coisa do handler. O
+// `net.http_post` do SQL Editor manda `x-cron-secret` e nenhum Bearer, então uma sonda atrás desse
+// gate seria inalcançável exatamente para quem precisa dela — o furo medido em prod na `recommend`
+// (#1882). A contrapartida é que a sonda não pode responder sem auth nenhuma: daí o gate próprio.
 const GATE_PROPRIO = [
   "omie-cliente",
   "omie-nfe-webhook",
@@ -161,6 +228,7 @@ const GATE_PROPRIO = [
   "fin-funding",
   "omie-financeiro",
   "analyze-unified-order",
+  "ai-ops-agent",
 ];
 
 Deno.test("toda edge instrumentada declara VERSAO no formato vN.N-slug", () => {
@@ -385,13 +453,16 @@ Deno.test("forma normalizada: a sonda responde ANTES do createClient do handler"
   // corpo estava DEPOIS do `createClient` e teve de subir; este gate é o que impede a volta.
   for (const nome of FORMA_NORMALIZADA) {
     const h = trechoDoHandler(nome);
+    const ancora = ANCORA_CLIENT[nome] ?? "createClient(";
     const posSonda = h.indexOf("classificarSonda(");
-    const posCliente = h.indexOf("createClient(");
+    const posCliente = h.indexOf(ancora);
     if (posSonda < 0 || posCliente < 0) {
-      throw new Error(`${nome}: âncoras não encontradas no handler (controle positivo vazio)`);
+      throw new Error(
+        `${nome}: âncoras não encontradas no handler (procurei \`${ancora}\`) — controle positivo vazio`,
+      );
     }
     if (posSonda > posCliente) {
-      throw new Error(`${nome}: a sonda desceu para depois do createClient — deixou de ser IO-free`);
+      throw new Error(`${nome}: a sonda desceu para depois do ${ancora} — deixou de ser IO-free`);
     }
   }
 });
@@ -468,6 +539,19 @@ Deno.test("CALIBRAÇÃO: os gates da terceira leva reprovam a forma errada", () 
   if (!/\bbody\.probe\s*===\s*true/.test(cru)) {
     throw new Error("o padrão do `=== true` cru não casa a própria forma que proíbe");
   }
+
+  // A âncora DECLARADA (`ANCORA_CLIENT`) tem de reprovar igual à padrão. Sem este caso, trocar o
+  // valor do mapa por uma string que não existe no arquivo faria o gate cair no ramo de âncora
+  // ausente para SEMPRE — vermelho, mas por não achar nada, e um gate que nunca mede vira ruído
+  // que a próxima pessoa silencia.
+  const handlerFabrica = 'Deno.serve(async (req) => {\n  const c = makeClient();\n  classificarSonda(body);\n';
+  const ancoraFabrica = ANCORA_CLIENT["omie-sync-status-produtos"];
+  if (handlerFabrica.indexOf(ancoraFabrica) < 0) {
+    throw new Error("a âncora declarada não casa nem a forma que ela existe para medir");
+  }
+  if (!(handlerFabrica.indexOf("classificarSonda(") > handlerFabrica.indexOf(ancoraFabrica))) {
+    throw new Error("o gate de posição não reprovaria uma sonda depois da fábrica de client");
+  }
 });
 
 Deno.test("omie-cliente: o EFEITO precisa nomear `profiles` — o discriminante dos aliases fiscais", () => {
@@ -543,6 +627,154 @@ Deno.test("duas edges NUNCA produzem respostas de sonda idênticas", () => {
       `respostas de sonda indistinguíveis entre edges: ${
         colisoes.map((e) => e.join(" ≡ ")).join("; ")
       }`,
+    );
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Oitava leva (#1889/#1901) — o que é específico DESTA fatia. Os gates de FORMA acima já varrem
+// as 7 novas; o que sobra aqui é o que elas trouxeram de próprio: o BUMP como pré-requisito, o
+// parse de corpo que teve de subir, e a cobertura do conjunto que serve o `paginate.ts`.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** As 7 que nasceram com sensor nesta fatia — o `FORMA_NORMALIZADA` as varre, isto as NOMEIA. */
+const OITAVA_LEVA = [
+  "calculate-scores",
+  "ai-ops-agent",
+  "omie-sync-status-produtos",
+  "sync-reprocess",
+  ...FAN_OUT_QUE_ESCREVE,
+];
+
+Deno.test("bump #1889/#1901: as 3 edges com sonda pré-existente não podem voltar ao marcador antigo", () => {
+  // A regra que este gate materializa (docs/historico/deploy-no-op-por-desenho.md, lição 1): o
+  // #1889 é no-op por DESENHO — enquanto o `max-rows` de prod for 1000, bundle novo e velho
+  // devolvem bytes idênticos, então nenhuma canária de comportamento discrimina o deploy. Só o
+  // marcador prova, e marcador IGUAL na `main` e em prod responde a mesma string tendo o deploy
+  // acontecido ou não. Era exatamente a situação destas três: `omie-cliente` e
+  // `reposicao-depara-sayerlack-auto` presas em `v1.0-sensor-inicial`, e `generate-tactical-plan`
+  // em `v1.0-custo-fora-do-browser` desde o #1754.
+  //
+  // Um `git revert` do bump devolveria a sonda a "responde verde sem provar nada" — o pior estado,
+  // porque parece verificado. O gate lê o valor ANTIGO literal para que a regressão seja nomeada.
+  const BUMPADAS: Array<{ nome: string; mod: ModSonda; antigo: string }> = [
+    { nome: "omie-cliente", mod: omieCliente, antigo: "v1.0-sensor-inicial" },
+    { nome: "reposicao-depara-sayerlack-auto", mod: deparaAuto, antigo: "v1.0-sensor-inicial" },
+    { nome: "generate-tactical-plan", mod: tactical, antigo: "v1.0-custo-fora-do-browser" },
+  ];
+  for (const { nome, mod, antigo } of BUMPADAS) {
+    if (mod.VERSAO === antigo) {
+      throw new Error(
+        `${nome}: marcador REGREDIU para ${antigo} — o valor que já respondia em produção. A sonda ` +
+          `volta a responder igual com ou sem deploy, e o #1889 não tem canária que discrimine.`,
+      );
+    }
+  }
+});
+
+Deno.test("oitava leva: o corpo do Request é lido UMA vez só", () => {
+  // O corpo de um `Request` só se lê uma vez: a segunda chamada devolve `{}` (ou lança). Como a
+  // sonda obrigou o parse a SUBIR para antes do client, toda leitura que existia depois teve de
+  // passar a reusar a variável. Um `req.json()` a mais reintroduz o bug em SILÊNCIO — na
+  // `omie-sync-status-produtos` ele faria o `empresa` do corpo ser ignorado e o sync mudar de
+  // escopo sem erro nenhum; na `sync-reprocess`, o `action` sumiria e todo run viraria
+  // "Ação desconhecida".
+  for (const nome of OITAVA_LEVA) {
+    const ocorrencias = trechoDoHandler(nome).match(/req\.json\(\)/g) ?? [];
+    if (ocorrencias.length !== 1) {
+      throw new Error(
+        `${nome}: o handler lê req.json() ${ocorrencias.length}× — o corpo só se lê UMA vez, ` +
+          `a segunda leitura devolve vazio e o parâmetro é descartado em silêncio`,
+      );
+    }
+  }
+});
+
+Deno.test("sync-reprocess: o parse que subiu PRESERVA o throw do corpo inválido", () => {
+  // Aqui o parse não pôde ser `.catch(() => ({}))` como nas outras seis. O código original era
+  // `await req.json()` PELADO dentro do try geral: corpo quebrado virava 500 com a mensagem do
+  // catch. Engolir o erro mudaria o desfecho para `action: undefined` → `400 "Ação desconhecida"`,
+  // que manda o chamador consertar a coisa errada (a mesma armadilha que o `corpoJsonInvalido` do
+  // `fin-funding` existe para evitar). O erro é guardado e RELANÇADO no ponto antigo.
+  const h = trechoDoHandler("sync-reprocess");
+  if (!/throw erroParseCorpo/.test(h)) {
+    throw new Error(
+      "sync-reprocess: o erro de parse não é relançado — corpo JSON quebrado passou a responder " +
+        "'Ação desconhecida' em vez do 500 original",
+    );
+  }
+  const posSonda = h.indexOf("classificarSonda(");
+  const posThrow = h.indexOf("throw erroParseCorpo");
+  if (posSonda < 0 || posThrow < 0) {
+    throw new Error("sync-reprocess: âncoras não encontradas (controle positivo vazio)");
+  }
+  if (posThrow < posSonda) {
+    throw new Error(
+      "sync-reprocess: o relance subiu para ANTES da sonda — corpo inválido passaria a dar 500 " +
+        "sem nem classificar o probe, e a sonda ficaria refém do JSON do chamador",
+    );
+  }
+});
+
+/**
+ * Dependente do `paginate.ts` cuja prova de deploy NÃO é sonda, e sim canária VERSIONADA.
+ *
+ * Só a `omie-vendas-sync`: o `identidade_probe` dela responde `contrato:"identidade-fail-closed-v1"`,
+ * um marcador que nomeia a fatia — logo discrimina bundle novo de velho, que é tudo o que se pede
+ * aqui. Exigir sonda dela seria exigir um segundo sensor para responder a mesma pergunta.
+ *
+ * O valor no mapa é conferido CONTRA O ARQUIVO: uma exceção que aponta para um contrato que a edge
+ * não emite mais é pior que exceção nenhuma, porque some da lista de pendências parecendo resolvida.
+ */
+const VERIFICAVEL_POR_CANARIA: Record<string, string> = {
+  "omie-vendas-sync": "identidade-fail-closed-v1",
+};
+
+Deno.test("nenhuma edge que serve o paginate.ts fica SEM prova de deploy", () => {
+  // O gate que fecha a classe, em vez de fechar os 7 casos de hoje. O problema desta fatia não foi
+  // "faltou sonda em 7 edges" — foi que ninguém percebia a falta até precisar verificar um deploy,
+  // e aí já era tarde (o marcador tem de existir ANTES). Uma edge NOVA que passe a importar o
+  // helper nasce agora com o sensor obrigatório, ou fica vermelha com o próprio nome no erro.
+  //
+  // Mede o import LITERAL do `_shared/paginate.ts` — inclusive o `import type`, que é como as
+  // edges que paginam via `_shared/mapas-paginados.ts` aparecem. NÃO resolve o grafo transitivo:
+  // uma dependência que chegue só por um terceiro módulo escapa daqui, e fechar isso exigiria um
+  // resolvedor de módulos, não um regex. É um piso, e está declarado como piso.
+  const registradas = new Set(EDGES.map((e) => e.nome));
+  const semProva: string[] = [];
+  const excecaoPodre: string[] = [];
+
+  for (const entrada of Deno.readDirSync("supabase/functions")) {
+    if (!entrada.isDirectory || entrada.name === "_shared") continue;
+    let codigo: string;
+    try {
+      codigo = Deno.readTextFileSync(`supabase/functions/${entrada.name}/index.ts`);
+    } catch {
+      continue; // diretório sem index.ts não é uma edge
+    }
+    if (!codigo.includes("_shared/paginate.ts")) continue;
+    if (registradas.has(entrada.name)) continue;
+
+    const contrato = VERIFICAVEL_POR_CANARIA[entrada.name];
+    if (!contrato) {
+      semProva.push(entrada.name);
+    } else if (!codigo.includes(contrato)) {
+      excecaoPodre.push(`${entrada.name} (não emite mais \`${contrato}\`)`);
+    }
+  }
+
+  if (excecaoPodre.length > 0) {
+    throw new Error(
+      `exceção de VERIFICAVEL_POR_CANARIA apontando para contrato que a edge não emite: ` +
+        `${excecaoPodre.join(", ")} — a dispensa da sonda caducou junto`,
+    );
+  }
+  if (semProva.length > 0) {
+    throw new Error(
+      `edges que servem o _shared/paginate.ts sem prova de deploy: ${semProva.join(", ")} — ` +
+        `instale a sonda (\`_shared/sonda-versao.ts\`) e registre em EDGES, ou declare a canária ` +
+        `VERSIONADA em VERIFICAVEL_POR_CANARIA. Sem marcador o deploy é inverificável, e o #1889 ` +
+        `é no-op por desenho: não há canária de comportamento que discrimine.`,
     );
   }
 });

@@ -27,8 +27,19 @@ import { criarRespostaSonda } from "../_shared/sonda-versao.ts";
 /** Resposta da sonda desta edge, com a identidade embutida (ver `criarRespostaSonda`). */
 export const respostaSonda = criarRespostaSonda("omie-cliente");
 
-/** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
-export const VERSAO = "v1.0-sensor-inicial";
+/**
+ * BUMP #1889/#1901 (paginação). O marcador anterior era `v1.0-sensor-inicial` — a MESMA string que já
+ * respondia em produção. Marcador igual dos dois lados responde idêntico tendo o deploy acontecido
+ * ou não, e o #1889 é no-op por DESENHO (enquanto o `max-rows` de prod for 1000, bundle novo e
+ * velho devolvem os mesmos bytes), então NENHUMA canária de comportamento consegue discriminar
+ * este deploy. O bump é PRÉ-REQUISITO da viagem, não consequência dela.
+ * → `docs/historico/deploy-no-op-por-desenho.md`
+ *
+ * `v1.1-paginacao-eof-e-cursor` nomeia os dois fixes que esta fatia carrega até a edge: EOF por
+ * página VAZIA (não mais página curta, #1889) e cursor comparado à PRIMEIRA linha da página
+ * (#1901). Nenhum bundle anterior a esta fatia pode responder esta string.
+ */
+export const VERSAO = "v1.1-paginacao-eof-e-cursor";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

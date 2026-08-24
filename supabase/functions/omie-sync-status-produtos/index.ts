@@ -8,6 +8,7 @@ import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { fetchAll } from "../_shared/paginate.ts";
 import { resolverEmpresas, type Empresa } from "../_shared/empresas.ts";
 import { coletarProdutosAlvo, type OmieProduto } from "./paginacao.ts";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
 // Captura o tipo do client pela INFERÊNCIA da chamada (createClient(url,key) infere
 // <any,"public",any>); `ReturnType<typeof createClient>` cru daria os defaults <unknown,never>.
@@ -495,6 +496,28 @@ Deno.serve(async (req) => {
   const auth = await authorizeCronOrStaff(req);
   if (!auth.ok) return auth.response;
 
+  // Sonda de versão ({"probe":true}) — ANTES do client, para seguir sendo o único caminho sem
+  // custo. Ver `versao.ts` (que documenta o custo do bundle VELHO: uma paginação inteira do
+  // catálogo do Omie + reescrita de status) e `_shared/sonda-versao.ts`. O gate acima já aceita
+  // `x-cron-secret`, que é como o founder invoca do SQL Editor, então não há gate próprio.
+  //
+  // ⚠️ O corpo de um Request só se lê UMA vez: `corpoBruto` é lido AQUI e REUSADO na resolução de
+  // `empresa` logo abaixo. Reler devolveria `{}` e o `empresa` do corpo passaria a ser ignorado em
+  // silêncio — o run mudaria de escopo sem erro nenhum.
+  const corpoBruto = await req.json().catch(() => ({}));
+  const decisaoSonda = classificarSonda(corpoBruto);
+  if (decisaoSonda.tipo === "sonda") {
+    return new Response(JSON.stringify(respostaSonda(VERSAO)), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+  if (decisaoSonda.tipo === "ambiguo") {
+    return new Response(
+      JSON.stringify({ error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }),
+      { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    );
+  }
+
   const supabase = makeClient();
 
   // Resolve o parâmetro `empresa` (query ou body). Aceita OBEN, COLACOR ou ALL.
@@ -503,7 +526,7 @@ Deno.serve(async (req) => {
     const url = new URL(req.url);
     empresaInput = url.searchParams.get("empresa");
     if (req.method === "POST") {
-      const body = await req.json().catch(() => ({}));
+      const body = corpoBruto as { empresa?: unknown };
       if (body?.empresa) empresaInput = String(body.empresa);
     }
   } catch (_) { /* parse de body opcional */ }

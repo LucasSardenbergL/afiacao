@@ -38,12 +38,31 @@ import { authorizeCronOrStaff, corsHeaders } from '../_shared/auth.ts';
 import { carregarExcluidosDaCarteira, carregarOwnerMap } from '../_shared/mapas-paginados.ts';
 import { exigirLeitura } from '../_shared/leitura-critica.ts';
 import type { BancoPostgrest } from '../_shared/paginate.ts';
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from './versao.ts';
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
   const auth = await authorizeCronOrStaff(req);
   if (!auth.ok) return auth.response;
+
+  // Sonda de versão ({"probe":true}) — ANTES do createClient, para seguir sendo o único caminho
+  // sem custo. Ver `versao.ts` (que documenta o custo do bundle VELHO) e `_shared/sonda-versao.ts`.
+  // O gate acima já aceita `x-cron-secret`, que é como o founder invoca do SQL Editor, então a
+  // sonda não precisa de gate próprio.
+  const corpoBruto = await req.json().catch(() => ({}));
+  const decisaoSonda = classificarSonda(corpoBruto);
+  if (decisaoSonda.tipo === 'sonda') {
+    return new Response(JSON.stringify(respostaSonda(VERSAO)), {
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+  if (decisaoSonda.tipo === 'ambiguo') {
+    return new Response(
+      JSON.stringify({ error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }),
+      { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+    );
+  }
 
   const supabase = createClient(
     Deno.env.get('SUPABASE_URL')!,

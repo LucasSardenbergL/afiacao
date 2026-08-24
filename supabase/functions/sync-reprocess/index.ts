@@ -18,6 +18,7 @@ import {
 import { acumularPosicoesDaPagina, type PosicaoEstoque } from "../_shared/pos-estoque.ts";
 import { carregarProductMap } from "../_shared/mapas-paginados.ts";
 import type { BancoPostgrest } from "../_shared/paginate.ts";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import {
   chunked,
   particionarCustos,
@@ -753,12 +754,43 @@ Deno.serve(async (req) => {
   if (!auth.ok) return auth.response;
 
   try {
+    // Sonda de versão ({"probe":true}) — ANTES do createClient, para seguir sendo o único caminho
+    // sem custo. Ver `versao.ts` (que documenta o custo do bundle VELHO: aqui ele é BAIXO, porque
+    // um corpo sem `action` conhecida cai no `default` 400 lá embaixo) e `_shared/sonda-versao.ts`.
+    // O `authorizeCron` acima aceita exatamente o `x-cron-secret` do SQL Editor ⇒ sem gate próprio.
+    //
+    // ⚠️ O corpo de um Request só se lê UMA vez, e o parse teve de SUBIR para cá. O erro de JSON
+    // inválido é guardado e RELANÇADO no ponto antigo (abaixo), para que a resposta continue sendo
+    // o 500 do catch geral: trocá-lo por um corpo vazio faria um JSON quebrado responder
+    // "Ação desconhecida", mandando o chamador consertar a coisa errada.
+    let corpoBruto: { action?: string; account?: Account; window_days?: number } = {};
+    let erroParseCorpo: unknown = null;
+    try {
+      corpoBruto = await req.json();
+    } catch (e) {
+      erroParseCorpo = e;
+    }
+
+    const decisaoSonda = classificarSonda(corpoBruto);
+    if (decisaoSonda.tipo === "sonda") {
+      return new Response(JSON.stringify(respostaSonda(VERSAO)), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    if (decisaoSonda.tipo === "ambiguo") {
+      return new Response(
+        JSON.stringify({ error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+
     const supabaseAdmin = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
 
-    const body = await req.json();
+    if (erroParseCorpo) throw erroParseCorpo;
+    const body = corpoBruto;
     const { action, account = "oben" } = body;
 
     const cfg = await loadReprocessConfig(supabaseAdmin);

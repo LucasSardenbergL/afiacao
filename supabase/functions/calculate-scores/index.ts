@@ -1,5 +1,6 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 // `leaseIndisponivel` saiu do import: deixou de ser chamado aqui e passou a ser consultado DENTRO
 // de `decidirClaim`, que decide o passo inteiro do claim. Mantê-lo importado viraria símbolo órfão.
 import { decidirClaim, esperaClaimMs } from "../_shared/lease.ts";
@@ -314,6 +315,24 @@ Deno.serve(async (req) => {
 
   const auth = await authorizeCronOrStaff(req);
   if (!auth.ok) return auth.response;
+
+  // Sonda de versão ({"probe":true}) — ANTES do createClient, para seguir sendo o único caminho
+  // sem custo. Ver `versao.ts` (que documenta o custo do bundle VELHO: lease de 15min + reescrita
+  // do snapshot de scores) e `_shared/sonda-versao.ts`. O gate acima já aceita `x-cron-secret`, que
+  // é como o founder invoca do SQL Editor, então a sonda não precisa de gate próprio.
+  const corpoBruto = await req.json().catch(() => ({}));
+  const decisaoSonda = classificarSonda(corpoBruto);
+  if (decisaoSonda.tipo === 'sonda') {
+    return new Response(JSON.stringify(respostaSonda(VERSAO)), {
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+  if (decisaoSonda.tipo === 'ambiguo') {
+    return new Response(
+      JSON.stringify({ error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }),
+      { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+    );
+  }
 
   // ── Service client for privileged operations ──
   // FORA do try: o finally precisa dele p/ liberar o lease mesmo quando o corpo lança.
