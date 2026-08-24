@@ -31,12 +31,22 @@ import { MODELO, toolDoModo } from "./plano-helpers.ts";
  * Marcador de versão servido pela edge. **Atualize a cada mudança relevante de comportamento** —
  * é ele que distingue um bundle novo de um velho em produção.
  *
- * `v1.0-custo-fora-do-browser` = o contrato do #1520 (FU4-F fase 3 PR-B: o custo sai do browser e
- * `product_costs` fecha). Nasce nomeando essa fatia de propósito: era a entrega que não se
- * conseguiu provar, e um bundle que responde este marcador é necessariamente ≥ este PR, que a
- * contém. A pergunta que ficou sem resposta em 2026-08-14 passa a ter uma.
+ * `v1.0-custo-fora-do-browser` foi o contrato do #1520 (FU4-F fase 3 PR-B: o custo sai do browser
+ * e `product_costs` fecha) — nasceu nomeando aquela fatia de propósito, porque era a entrega que
+ * não se conseguiu provar.
+ *
+ * BUMP #1889/#1901 (paginação): aquele marcador já era o que respondia em produção, e marcador
+ * igual na `main` e em prod responde idêntico tendo o deploy acontecido ou não. Como o #1889 é
+ * no-op por DESENHO (enquanto o `max-rows` de prod for 1000, bundle novo e velho devolvem os
+ * mesmos bytes), nenhuma canária de comportamento discrimina esta viagem — nem a canária de margem
+ * desta própria edge, cujo `contrato` é o marcador daqui. O bump é PRÉ-REQUISITO do deploy.
+ * → `docs/historico/deploy-no-op-por-desenho.md`
+ *
+ * `v1.1-paginacao-eof-e-cursor` nomeia os dois fixes que a fatia carrega: EOF por página VAZIA
+ * (não mais página curta, #1889) e cursor comparado à PRIMEIRA linha da página (#1901). Um bundle
+ * que responde esta string é necessariamente ≥ esta fatia — e, por transitividade, ≥ o #1520.
  */
-export const VERSAO = "v1.0-custo-fora-do-browser";
+export const VERSAO = "v1.1-paginacao-eof-e-cursor";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

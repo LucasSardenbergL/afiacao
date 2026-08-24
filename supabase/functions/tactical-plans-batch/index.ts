@@ -81,6 +81,7 @@ import {
 import { inicioDiaOperacional } from '../_shared/dia-operacional.ts';
 import { inicioDaJanelaFila } from '../_shared/tactical-fila.ts';
 import { mensagemDeErro } from '../_shared/erro-mensagem.ts';
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from './versao.ts';
 
 // TOP_N é a taxa de entrada de clientes NOVOS por vendedora por dia — não o tamanho da fila.
 // Com a janela de 7 dias (tactical-fila.ts), a fila estabiliza em TOP_N × 7 por vendedora:
@@ -115,6 +116,24 @@ Deno.serve(async (req) => {
   // staff não pode acioná-lo (usaria o modo front da edge, escopado à própria carteira).
   const auth = authorizeCron(req);
   if (!auth.ok) return auth.response;
+
+  // Sonda de versão ({"probe":true}) — ANTES do createClient, para seguir sendo o único caminho
+  // sem custo. Ver `versao.ts` (que documenta o custo do bundle VELHO: um fan-out de LLM pela base
+  // inteira) e `_shared/sonda-versao.ts`. O `authorizeCron` acima aceita exatamente o
+  // `x-cron-secret` do SQL Editor, então a sonda não precisa de gate próprio.
+  const corpoBruto = await req.json().catch(() => ({}));
+  const decisaoSonda = classificarSonda(corpoBruto);
+  if (decisaoSonda.tipo === 'sonda') {
+    return new Response(JSON.stringify(respostaSonda(VERSAO)), {
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+  if (decisaoSonda.tipo === 'ambiguo') {
+    return new Response(
+      JSON.stringify({ error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }),
+      { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+    );
+  }
 
   const supabase = createClient(
     Deno.env.get('SUPABASE_URL')!,

@@ -1,5 +1,10 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { fetchAll } from "../_shared/paginate.ts";
+// Gate da SONDA, não da edge: o guard abaixo exige `Authorization: Bearer` + role staff e
+// nunca leu `x-cron-secret` — que é como o founder invoca do SQL Editor. A sonda vem antes
+// dele e traz o seu próprio (ver versao.ts, lista GATE_PROPRIO do gate de contrato).
+import { authorizeCronOrStaff } from "../_shared/auth.ts";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
 const ALLOWED_ORIGIN = Deno.env.get("ALLOWED_ORIGIN") || "*";
 
@@ -204,6 +209,29 @@ Deno.serve(async (req) => {
   }
 
   try {
+    // Sonda de versão ({"probe":true}) — ANTES do gate de Bearer e do createClient, para seguir
+    // sendo o único caminho sem custo. Ver `versao.ts` / `_shared/sonda-versao.ts`.
+    //
+    // A ORDEM é o ponto: o gate abaixo morre em 401 quando não há `Authorization`, e o caminho
+    // documentado de invocação (SQL Editor via net.http_post, que manda `x-cron-secret` e nenhum
+    // Bearer) é exatamente esse caso. Sonda depois do gate = sonda inalcançável para quem precisa
+    // dela — o furo medido em prod na `recommend` (#1882). Sem gate NENHUM, porém, ela ficaria
+    // anônima; daí o `authorizeCronOrStaff` próprio, entre a classificação e a resposta.
+    const corpoBruto = await req.json().catch(() => ({}));
+    const decisaoSonda = classificarSonda(corpoBruto);
+    if (decisaoSonda.tipo !== 'disparo') {
+      const authSonda = await authorizeCronOrStaff(req);
+      if (!authSonda.ok) return authSonda.response;
+      const ehSonda = decisaoSonda.tipo === 'sonda';
+      const corpo = ehSonda
+        ? respostaSonda(VERSAO)
+        : { error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) };
+      return new Response(JSON.stringify(corpo), {
+        status: ehSonda ? 200 : 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
     // ── Auth guard ──
     const authHeader = req.headers.get('Authorization');
     if (!authHeader?.startsWith('Bearer ')) {
