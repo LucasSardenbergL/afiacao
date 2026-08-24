@@ -549,6 +549,126 @@ function docsComCodigoAmbiguoNoOmie(
 }
 // MIRROR-END
 
+// MIRROR-START omie transferencia-codigo — espelhado verbatim de src/lib/omie/omie-transferencia-codigo.ts
+// P1-c (fail-closed money-path): o writer document-first grava a proof com `onConflict(user_id,account)`,
+// que NÃO enxerga a segunda unicidade da tabela — `uq_ocam_codigo_account UNIQUE(omie_codigo_cliente,
+// account)`. Quando um código migra de dono (user1 → user2 na MESMA conta), a linha antiga ainda segura o
+// código: o INSERT viola a UNIQUE com 23505, que o ON CONFLICT declarado não trata, e o `throw` derruba o
+// chunk de 500 e o run inteiro. Um único código migrando matava o sync do dia.
+//
+// A correção NÃO é aplicar a transferência. Parecer Codex (gpt-5.6-sol xhigh, 2026-08-24): o documento
+// prova o PAREAMENTO ATUAL, não a AUTORIZAÇÃO da transferência. Migração legítima e captura de vínculo por
+// edição do CNPJ no Omie produzem input IDÊNTICO — "código X agora tem o documento D2, que é do user2".
+// Deletar a linha antiga automaticamente promoveria qualquer editor do Omie a autoridade sobre dono de
+// pedido e comissão. Então: documento autoriza CRIAÇÃO e REFRESH; transferência vira CONFLITO.
+//
+// Trocar o onConflict para (codigo,account) — a outra "correção óbvia" — é PIOR: resolve a troca de dono e
+// quebra a troca de código (INSERT de um código novo para um user que já tem linha viola
+// uq_ocam_user_account), que é o caso COMUM do recadastro. E implementa exatamente a transferência que o
+// caso A8 de db/test-register-carteira-member.sh existe para barrar.
+//
+// A UNIQUE permanece intocada no schema: ela segue sendo a barreira do writer SEM evidência (a RPC pontual
+// `register_carteira_member`, cujo 23505 é fail-closed correto e tem teste com dente). O que muda é só que
+// o writer COM evidência para de bater nela por acidente.
+// Espelhado no edge (Deno não importa de src/); paridade textual no CI em
+// src/__tests__/edge-money-path-invariants.test.ts.
+
+type DecisaoProof =
+  | "aplicar" // código livre, ou já é deste user: criação/refresh — o caso normal
+  | "transferencia" // o código pertence a OUTRO user na mesma conta: NÃO aplica, vira conflito
+  | "manual_protegido"; // a linha do próprio user é override HUMANO: automação não rebaixa
+
+interface EntradaProof {
+  readonly user_id: string;
+  readonly omie_codigo_cliente: number;
+}
+
+/** Linha JÁ existente na proof-table, da MESMA conta. */
+interface LinhaIncumbente {
+  readonly user_id: string;
+  readonly omie_codigo_cliente: number;
+  readonly source: string;
+}
+
+interface ClassificacaoProof {
+  readonly decisao: DecisaoProof;
+  /** Só em `transferencia`: o dono ATUAL do código, que perde o vínculo se a transferência for aprovada. */
+  readonly incumbente?: string;
+}
+
+/**
+ * Decide, para UMA entrada do lote document-first, se ela pode ser gravada na proof-table.
+ *
+ * Duas linhas incumbentes importam, e o Codex nomeou as duas — proteger só uma deixa o furo aberto:
+ *   · a que detém o CÓDIGO  (`porCodigo`) → transferência de dono;
+ *   · a que pertence ao USER (`porUser`)  → o upsert manda `source:'document'` e rebaixaria um
+ *     override humano do próprio user, apesar de o delete de ambíguos preservá-lo explicitamente.
+ *     Hoje há ZERO linhas `manual` em produção (medido: 16097 `document` + 21 `rpc`), então o furo é
+ *     LATENTE — a promessa de imunidade existe no código e nunca foi exercitada pelo dado.
+ */
+function classificarEntradaProof(
+  entrada: EntradaProof,
+  porCodigo: ReadonlyMap<number, LinhaIncumbente>,
+  porUser: ReadonlyMap<string, LinhaIncumbente>,
+): ClassificacaoProof {
+  // 1) Override humano do PRÓPRIO user vence a automação, mesmo que o código não mude. Vem antes da
+  //    checagem de transferência: se a linha do user é manual, nada da automação a toca — nem para
+  //    reescrever o mesmo código, porque o upsert rebaixaria `source` para 'document'.
+  const doUser = porUser.get(entrada.user_id);
+  if (doUser && doUser.source === "manual") return { decisao: "manual_protegido" };
+
+  // 2) O código já tem dono? Se for OUTRO user, é transferência — fail-closed, não aplica.
+  const doCodigo = porCodigo.get(entrada.omie_codigo_cliente);
+  if (doCodigo && doCodigo.user_id !== entrada.user_id) {
+    return { decisao: "transferencia", incumbente: doCodigo.user_id };
+  }
+
+  // 3) Código livre, ou já é deste user: criação/refresh. É o caminho de ~100% do volume.
+  return { decisao: "aplicar" };
+}
+
+/**
+ * Classifica o LOTE inteiro. Existe além do caso-a-caso por um motivo que a checagem contra o banco NÃO
+ * cobre: a colisão pode nascer DENTRO do próprio lote.
+ *
+ * O `docsComCodigoAmbiguoNoOmie` (P1b) detecta um DOC com 2+ códigos. O inverso — um CÓDIGO que aparece com
+ * 2+ documentos na mesma paginação, casando com users diferentes — não era detectado por ninguém, e produz
+ * exatamente a mesma 23505: duas entradas do lote disputando `uq_ocam_codigo_account`, sem nenhuma linha
+ * pré-existente envolvida. Fail-closed simétrico ao P1b: se 2+ users disputam um código, NENHUM o leva —
+ * não há como saber qual documento é o correto, e escolher o último seria o last-write-wins que este épico
+ * inteiro existe para matar.
+ *
+ * Retorna um Map por user_id (a mesma chave de `accountMapByUser`, para o chamador filtrar direto).
+ */
+function classificarLoteProof(
+  entradas: ReadonlyArray<EntradaProof>,
+  porCodigo: ReadonlyMap<number, LinhaIncumbente>,
+  porUser: ReadonlyMap<string, LinhaIncumbente>,
+): Map<string, ClassificacaoProof> {
+  // Quantos users DISTINTOS disputam cada código dentro do lote. `Set` e não contador: o mesmo user
+  // repetido (duplicata pura da paginação do Omie) não é disputa e não pode zerar o vínculo.
+  const usersPorCodigo = new Map<number, Set<string>>();
+  for (const e of entradas) {
+    const s = usersPorCodigo.get(e.omie_codigo_cliente) ?? new Set<string>();
+    s.add(e.user_id);
+    usersPorCodigo.set(e.omie_codigo_cliente, s);
+  }
+
+  const out = new Map<string, ClassificacaoProof>();
+  for (const e of entradas) {
+    const disputantes = usersPorCodigo.get(e.omie_codigo_cliente);
+    if (disputantes && disputantes.size > 1) {
+      // Disputa intra-lote. `incumbente` fica ausente de propósito: não há dono anterior a preservar —
+      // o conflito é entre candidatos, não com o estado gravado.
+      out.set(e.user_id, { decisao: "transferencia" });
+      continue;
+    }
+    out.set(e.user_id, classificarEntradaProof(e, porCodigo, porUser));
+  }
+  return out;
+}
+// MIRROR-END
+
 // MIRROR-START omie-codigo-vendedor — espelhado verbatim de src/lib/omie/codigo-vendedor.ts
 // Extrai o vendedor do cadastro Omie (ListarClientes) — money-path P0-B-bis (vendedor → carteira → comissão).
 // O vendedor mora em recomendacoes.codigo_vendedor (o codigo_vendedor RAIZ vem vazio no ListarClientes);
@@ -802,9 +922,49 @@ async function syncCustomers(db: SupabaseClient, account: OmieAccount) {
 
     // Fatia 3 (proof-table ADITIVA): upsert em omie_customer_account_map por (user_id, account). NÃO
     // toca omie_clientes (o espelho poluído fica intocado) — esta tabela é a fonte account-correta dos
-    // consumidores de leitura. onConflict composto = uq_ocam_user_account; UNIQUE(código,account) barra
-    // colisão cross-account no casamento. document-first → dedup por user_id basta (account é fixo).
-    const mapRows = Array.from(accountMapByUser.values());
+    // consumidores de leitura. onConflict composto = uq_ocam_user_account; document-first → dedup por
+    // user_id basta (account é fixo).
+    //
+    // ── P1-c: o onConflict acima NÃO enxerga a 2ª unicidade (`uq_ocam_codigo_account`). Quando um código
+    // migra de dono, a linha antiga ainda o segura e o INSERT levanta 23505 — que o ON CONFLICT declarado
+    // não trata e o `throw` abaixo transforma em queda do run inteiro. Por isso o lote passa antes pelo
+    // classificador: ele separa CRIAÇÃO/REFRESH (aplica) de TRANSFERÊNCIA (não aplica, vira conflito).
+    // A UNIQUE segue no schema, intocada — ela é a barreira do writer SEM evidência (a RPC pontual, cujo
+    // 23505 é fail-closed correto). O que muda é só o writer COM evidência parar de bater nela.
+    // Leitura PRÓPRIA da proof, e não o `userByCodigo` de :700 (`fetchCodigoUserMap`), por duas razões:
+    // aquele Map mistura a fonte `alias` com a proof (aqui só a proof decide quem é o incumbente) e não
+    // traz `source` — sem ele não dá para distinguir override HUMANO de linha automatizada. Custo: mais
+    // um `fetchAll` paginado por conta (~5,6k linhas), num run que já pagina milhares de registros do Omie.
+    const proofAtual = await fetchAll<{ omie_codigo_cliente: number | null; user_id: string | null; source: string | null }>(
+      (from, to) =>
+        db
+          .from("omie_customer_account_map")
+          .select("omie_codigo_cliente, user_id, source")
+          .eq("account", empresaMap)
+          .order("omie_codigo_cliente", { ascending: true })
+          .order("user_id", { ascending: true })
+          .range(from, to),
+      `fetch proof p/ classificar transferências (${empresaMap})`,
+    );
+    const incumbentePorCodigo = new Map<number, { user_id: string; omie_codigo_cliente: number; source: string }>();
+    const incumbentePorUser = new Map<string, { user_id: string; omie_codigo_cliente: number; source: string }>();
+    for (const r of proofAtual) {
+      if (r.omie_codigo_cliente == null || !r.user_id) continue;
+      const l = { user_id: r.user_id, omie_codigo_cliente: Number(r.omie_codigo_cliente), source: r.source ?? "document" };
+      incumbentePorCodigo.set(l.omie_codigo_cliente, l);
+      incumbentePorUser.set(l.user_id, l);
+    }
+
+    const candidatos = Array.from(accountMapByUser.values());
+    const decisoes = classificarLoteProof(
+      candidatos.map((c) => ({ user_id: c.user_id, omie_codigo_cliente: c.omie_codigo_cliente })),
+      incumbentePorCodigo,
+      incumbentePorUser,
+    );
+    const mapRows = candidatos.filter((c) => decisoes.get(c.user_id)?.decisao === "aplicar");
+    const transferencias = candidatos.filter((c) => decisoes.get(c.user_id)?.decisao === "transferencia");
+    const manualProtegidos = candidatos.filter((c) => decisoes.get(c.user_id)?.decisao === "manual_protegido");
+
     for (let i = 0; i < mapRows.length; i += 500) {
       const chunk = mapRows.slice(i, i + 500);
       const { error: mapErr } = await db
@@ -812,7 +972,70 @@ async function syncCustomers(db: SupabaseClient, account: OmieAccount) {
         .upsert(chunk, { onConflict: "user_id,account" });
       if (mapErr) throw new Error(`upsert omie_customer_account_map: ${mapErr.message}`);
     }
-    console.log(`[Sync ${account}] proof-table omie_customer_account_map: ${mapRows.length} vínculos por documento`);
+    // DENOMINADOR explícito: sem ele, um lote que encolheu por retenção seria indistinguível de um run
+    // parcial do Omie — "5598 vínculos" não diz se 2 foram retidos ou se 2 clientes sumiram da fonte.
+    console.log(
+      `[Sync ${account}] proof-table omie_customer_account_map: ${mapRows.length}/${candidatos.length} vínculos por documento ` +
+        `(retidos: ${transferencias.length} conflito de dono, ${manualProtegidos.length} override humano)`,
+    );
+
+    // ── P1-c observabilidade: transferência de dono é, provavelmente, o evento de identidade mais caro do
+    // sistema (cliente → dono do pedido → comissão) e NÃO pode ser resolvida em silêncio. Sem PII: só a
+    // contagem e os CÓDIGOS (que não são dado pessoal); documento e user_id ficam fora do texto.
+    if (transferencias.length > 0) {
+      const amostraCods = transferencias.slice(0, 5).map((t) => t.omie_codigo_cliente).join(", ");
+      console.warn(
+        `[Sync ${account}] P1-c CONFLITO DE DONO: ${transferencias.length} código(s) mudaram de user no Omie — ` +
+          `NÃO aplicados (documento prova pareamento, não autoriza transferência). Códigos: ${amostraCods}`,
+      );
+    }
+    // ⚠️ CONSEQUÊNCIA DELIBERADA, não esquecimento: a linha `manual` deixa de ser tocada, logo o
+    // `updated_at` dela NÃO é renovado e ela sai da view `omie_customer_account_map_fresco` (TTL de 7d)
+    // se ninguém mais a escrever. O comportamento ANTERIOR mantinha a linha fresca — mas só ao custo de
+    // rebaixá-la para `source:'document'`, isto é, destruindo o override que ela representa. Trocamos
+    // "override destruído, porém fresco" por "override preservado, porém envelhece".
+    // Não renovamos o `updated_at` de propósito: o §11 do design nomeia exatamente esse anti-padrão na
+    // `register_carteira_member` — renovar frescor SEM evidência nova deixa o vínculo fresco na view e
+    // fora tanto de `client_prova` quanto de `client_revogado`, reiniciando o relógio dos 7d sem que nem
+    // a prova nem a revogação tenham o que dizer. O TTL de uma linha `manual` é questão do desenho de
+    // `manual` (hoje: ZERO linhas em prod), não deste writer.
+    if (manualProtegidos.length > 0) {
+      console.warn(
+        `[Sync ${account}] P1-c: ${manualProtegidos.length} vínculo(s) com override HUMANO ('manual') preservados — a automação não os rebaixa`,
+      );
+    }
+
+    // Quarentena do INCUMBENTE: ele mantém a linha (a transferência não foi aplicada), mas o Omie já diz
+    // que o código é de outro documento — então o vínculo dele virou DUVIDOSO. `identity_state='conflict'`
+    // já existe no CHECK do ledger desde a Fatia 0 e o carteira-rebuild já o quarantina, porque filtra por
+    // NEGAÇÃO (`identity_state !== 'verified'`, carteira-rebuild:177): zero mudança no consumidor.
+    // Fail-closed dos DOIS lados — o candidato não ganha o vínculo e o incumbente para de gerar comissão
+    // sobre um cliente cuja identidade está em disputa, até revisão humana.
+    // SÓ o run oben escreve, mesma regra D5 do `ambiguous` (:744): identity_state é coluna GLOBAL (1 row
+    // por user) e o conflito é detectado POR CONTA — os 3 runs escrevendo se sobrescreveriam.
+    if (account === "vendas" && transferencias.length > 0) {
+      const incumbentes = Array.from(
+        new Set(
+          transferencias
+            .map((t) => decisoes.get(t.user_id)?.incumbente)
+            .filter((u): u is string => typeof u === "string"),
+        ),
+      );
+      const nowIso = new Date().toISOString();
+      for (let i = 0; i < incumbentes.length; i += 200) {
+        const { error: cfErr } = await db
+          .from("carteira_membership_ledger")
+          .update({ identity_state: "conflict", updated_at: nowIso })
+          .eq("identity_state", "verified") // não rebaixa nem promove outro estado (ambiguous continua ambiguous)
+          .in("user_id", incumbentes.slice(i, i + 200));
+        if (cfErr) throw new Error(`marca conflict carteira_membership_ledger: ${cfErr.message}`);
+      }
+      if (incumbentes.length > 0) {
+        console.warn(
+          `[Sync ${account}] P1-c: ${incumbentes.length} incumbente(s) → identity_state='conflict'; QUARANTINADOS no próximo carteira-rebuild (eligible=false, zero comissão) até revisão humana`,
+        );
+      }
+    }
 
     // ── P0-B-bis Fatia 2: reversão `ambiguous` → `verified`, SIMÉTRICA ao delete/marcação acima. Quem ESTE run
     // PROVOU limpo volta a valer: `accountMapByUser` é exatamente o conjunto casado por DOCUMENTO, e os
@@ -850,6 +1073,40 @@ async function syncCustomers(db: SupabaseClient, account: OmieAccount) {
         }
         console.log(
           `[Sync ${account}] Fatia 2: ${reverter.length} membro(s) ambiguous→verified (documento voltou a ser inequívoco) — saem do quarantine no próximo carteira-rebuild`,
+        );
+      }
+
+      // ── P1-c: reversão `conflict` → `verified`, SIMÉTRICA à marcação acima. Sem ela o conflito seria
+      // CATRACA DE MÃO ÚNICA — o §11 do design nomeia exatamente esse defeito no quarantine de
+      // ambiguidade: doc corrigido no Omie deixaria o incumbente sem comissão PARA SEMPRE, dependendo de
+      // um UPDATE manual que ninguém saberia que precisa fazer.
+      // O critério é mais estrito que o do `ambiguous`: não basta o user estar no lote (`accountMapByUser`
+      // inclui quem virou transferência) — ele tem de ter sido APLICADO, isto é, o código voltou a casar
+      // com ele e não há mais disputa. Por isso lê `mapRows`, não `accountMapByUser`.
+      const aplicados = new Set(mapRows.map((r) => r.user_id));
+      const cfRows = await fetchAll<{ user_id: string }>(
+        (from, to) =>
+          db
+            .from("carteira_membership_ledger")
+            .select("user_id")
+            .eq("identity_state", "conflict")
+            .order("user_id", { ascending: true })
+            .range(from, to),
+        "lê conflict do carteira_membership_ledger",
+      );
+      const reverterCf = cfRows.map((r) => r.user_id).filter((uid) => aplicados.has(uid));
+      if (reverterCf.length > 0) {
+        const nowIsoCf = new Date().toISOString();
+        for (let i = 0; i < reverterCf.length; i += 200) {
+          const { error: revCfErr } = await db
+            .from("carteira_membership_ledger")
+            .update({ identity_state: "verified", updated_at: nowIsoCf })
+            .eq("identity_state", "conflict") // restringe ao que o P1-c populou (não toca ambiguous/inactive)
+            .in("user_id", reverterCf.slice(i, i + 200));
+          if (revCfErr) throw new Error(`reverte conflict carteira_membership_ledger: ${revCfErr.message}`);
+        }
+        console.log(
+          `[Sync ${account}] P1-c: ${reverterCf.length} membro(s) conflict→verified (o código voltou a casar com o incumbente) — saem do quarantine no próximo carteira-rebuild`,
         );
       }
     }
@@ -2506,6 +2763,64 @@ Deno.serve(async (req) => {
           probe_no_ar: true, // a action respondeu → o helper P1b está no build deployado
           ok: casosDoc.every((c) => c.ok), // true = a tabela-verdade deployada bate em TODOS os fixtures
           casos: casosDoc,
+        };
+        break;
+      }
+      case "transferencia_probe": {
+        // CANÁRIA COMPORTAMENTAL do P1-c — NÃO escreve, NÃO chama o Omie, NÃO toca o DB. Roda o
+        // `classificarLoteProof` DEPLOYADO (o bloco MIRROR deste arquivo, não o de src/) sobre fixtures
+        // fixos. Mesma razão de existir da `doc_ambiguo_probe`: o Lovable JÁ reverteu um helper espelhado
+        // num deploy (#1272/#1273), e a ausência DESTE é indetectável por sonda de dados — a relação
+        // código↔user é 1:1 perfeita em prod (medido 2026-08-24), então no run normal o classificador
+        // nunca é exercitado e sumiria sem deixar rastro. Só executá-lo sobre fixture sintético prova
+        // que ele está no bundle.
+        // Enumeração COMPLETA do oráculo (espelha src/lib/omie/omie-transferencia-codigo.test.ts): os
+        // casos se falsificam MUTUAMENTE — um classificador sempre-"aplicar" reprova o caso de
+        // transferência; um sempre-"transferencia" reprova os de criação/refresh.
+        const U_A = "aaaaaaaa-0000-0000-0000-000000000001";
+        const U_B = "bbbbbbbb-0000-0000-0000-000000000002";
+        const inc = (u: string, c: number, src = "document") => ({ user_id: u, omie_codigo_cliente: c, source: src });
+        const fixturesTc: Array<{
+          caso: string;
+          entradas: Array<{ user_id: string; omie_codigo_cliente: number }>;
+          porCodigo: Array<{ user_id: string; omie_codigo_cliente: number; source: string }>;
+          porUser: Array<{ user_id: string; omie_codigo_cliente: number; source: string }>;
+          expected: Record<string, string>;
+        }> = [
+          // código livre → aplicar (o caminho de ~100% do volume)
+          { caso: "codigo_livre", entradas: [{ user_id: U_A, omie_codigo_cliente: 100 }], porCodigo: [], porUser: [], expected: { [U_A]: "aplicar" } },
+          // código já é DESTE user → aplicar (refresh diário, não é transferência)
+          { caso: "refresh_mesmo_user", entradas: [{ user_id: U_A, omie_codigo_cliente: 100 }], porCodigo: [inc(U_A, 100)], porUser: [inc(U_A, 100)], expected: { [U_A]: "aplicar" } },
+          // código de OUTRO user → transferencia (o coração do P1-c: NÃO aplica, vira conflito)
+          { caso: "transferencia_de_dono", entradas: [{ user_id: U_B, omie_codigo_cliente: 100 }], porCodigo: [inc(U_A, 100)], porUser: [], expected: { [U_B]: "transferencia" } },
+          // override HUMANO do próprio user → automação não rebaixa
+          { caso: "manual_protegido", entradas: [{ user_id: U_A, omie_codigo_cliente: 100 }], porCodigo: [], porUser: [inc(U_A, 100, "manual")], expected: { [U_A]: "manual_protegido" } },
+          // 2 users disputando o mesmo código DENTRO do lote → nenhum leva
+          { caso: "disputa_intra_lote", entradas: [{ user_id: U_A, omie_codigo_cliente: 100 }, { user_id: U_B, omie_codigo_cliente: 100 }], porCodigo: [], porUser: [], expected: { [U_A]: "transferencia", [U_B]: "transferencia" } },
+          // mesmo user repetido (duplicata da paginação do Omie) NÃO é disputa — senão zeraria vínculo bom
+          { caso: "duplicata_paginacao", entradas: [{ user_id: U_A, omie_codigo_cliente: 100 }, { user_id: U_A, omie_codigo_cliente: 100 }], porCodigo: [], porUser: [], expected: { [U_A]: "aplicar" } },
+        ];
+        const casosTc = fixturesTc.map((f) => {
+          const decid = classificarLoteProof(
+            f.entradas,
+            new Map(f.porCodigo.map((l) => [l.omie_codigo_cliente, l])),
+            new Map(f.porUser.map((l) => [l.user_id, l])),
+          );
+          const resolved: Record<string, string> = {};
+          for (const [u, d] of decid) resolved[u] = d.decisao;
+          const chaves = Object.keys(f.expected).sort();
+          const ok = chaves.length === Object.keys(resolved).length &&
+            chaves.every((k) => resolved[k] === f.expected[k]);
+          return { caso: f.caso, resolved, expected: f.expected, ok };
+        });
+        result = {
+          canary: true,
+          // VERSION MARKER (docs/agent/deploy.md §Canárias): responder já prova que o bundle no ar é o
+          // desta árvore (senão viria "Ação desconhecida" = binário velho). ⚠️ BUMP obrigatório a cada
+          // fatia que mude esta tabela-verdade.
+          contrato: "transferencia-codigo-fail-closed-v1",
+          ok: casosTc.every((c) => c.ok), // true = o classificador deployado bate em TODOS os fixtures
+          casos: casosTc,
         };
         break;
       }
