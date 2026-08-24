@@ -1419,3 +1419,29 @@ lado frágil. Tivéssemos confiado só no PostHog, o veredito de hoje seria "con
 que é **ausência de dado**, não zero. Um `count()` simples respondeu: `[[0]]`, exit 0. **503 na
 ingestão e 504 na consulta chegam pelo mesmo cano e só um dos três resultados é medição.** Antes de
 ler um zero do PostHog como ausência de uso, prove que a query terminou.
+
+### O sensor que falta: a versão que o cliente EXECUTA
+
+O fecho do `#1934` deixou uma pergunta cuja única resposta hoje é abrir o browser de alguém: **qual
+build cada cliente está executando?** Levou um teste inteiro para descobrir que a resposta era
+`index-DghZxghH.js` enquanto o servidor entregava `index-DnOk4g4H.js` — e a descoberta foi acidental,
+por um toast de "Nova versão disponível" aparecer num screenshot.
+
+Enquanto isso exigir inspeção manual, **a adoção do service worker é inobservável** — que é este
+arquivo aplicado à própria camada de deploy: uma fase (o Publish) declarada concluída sem sinal de que
+chegou. A diferença é que aqui o denominador não é "quantos podiam usar", é "quantos já aceitaram".
+
+O sensor é barato e o lugar dele é o payload de todo evento: **o hash do bundle em execução**
+(`import.meta.env.VITE_BUILD_ID`, ou o próprio nome do chunk do entry). Com ele:
+
+```
+adoção do deploy = clientes com build_id = <atual> / clientes que emitiram qualquer evento
+```
+
+e a pergunta "o fix está no ar?" ganha a segunda metade que faltava — **"…e quantos já o executam?"**.
+Sem isso, `verify-frontend.sh` continua respondendo sozinho uma pergunta que tem duas partes.
+
+**Não construído de propósito.** A regra deste arquivo vale para ele mesmo: a fase N aqui é o 503 da
+ingestão do PostHog, ativo em 2026-08-24 — enquanto nenhum evento entra, um sensor novo no payload
+não teria como ser lido, e instalá-lo agora seria fase N+1 sem sinal da fase N. A ordem é destravar a
+ingestão, confirmar que evento volta a chegar, e só então acrescentar o campo.
