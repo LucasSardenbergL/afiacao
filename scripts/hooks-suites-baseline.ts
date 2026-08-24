@@ -23,8 +23,9 @@ export const SUITES_FORA_DO_CI: SuiteForaDoCI[] = [
       'disputa — o `heavy` não existe no runner ubuntu (exit 127). Leva ~50s. Rodar à mão na M2 ' +
       'ao mexer em scripts/heavy.sh. (Era também FLAKY: 2 vermelhos em 13 execuções, ~15%, ' +
       'sempre na asserção do `--status` sob sobrecarga — o setup sincronizava por `sleep` fixo e ' +
-      'sob carga alta media um mundo meio-montado. Consertado com espera por CONDIÇÃO; o motivo ' +
-      'de estar aqui é só o macOS-only.)',
+      'sob carga alta media um mundo meio-montado. Consertado com espera por CONDIÇÃO e ' +
+      're-medido em 2026-08-24: 15/15 verdes, 8 delas sob load >=20 — o regime que produzia ' +
+      'o flaky. O motivo de estar aqui é só o macOS-only.)',
   },
   {
     arquivo: 'test-heavy-install.sh',
