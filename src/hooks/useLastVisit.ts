@@ -67,6 +67,11 @@ export function useLastVisit(): UseLastVisitReturn {
  *
  * Grava no unmount se a sessão durou ≥5min: localStorage sempre, server quando
  * há usuário.
+ *
+ * Emite `dashboard.visita_tentativa` em TODA execução do cleanup (com `motivo`),
+ * antes das desistências — sem isso, "não gravou" e "não tentou" são o mesmo
+ * sintoma. Fechar a aba não roda cleanup, logo não emite: essa quarta saída só
+ * é observável como `dashboard.viewed` − `dashboard.visita_tentativa`.
  */
 export function useRegistrarVisitaDashboard(contexto: RegistroVisitaContexto): void {
   const { user } = useAuth();
@@ -78,10 +83,28 @@ export function useRegistrarVisitaDashboard(contexto: RegistroVisitaContexto): v
     return () => {
       if (typeof window === 'undefined') return;
       const sessionDuration = Date.now() - mountedAtRef.current;
+      const sessionMinutes = Math.floor(sessionDuration / 60_000);
+
+      // Sensor de TENTATIVA — emitido ANTES de qualquer `return`. O cleanup
+      // tinha duas saídas MUDAS (sessão curta, sem usuário) que colapsavam com
+      // a terceira (aba fechada — fora do alcance do hook: cleanup nem roda)
+      // num sintoma único: tabela vazia. Só a quarta (banco recusa) emitia
+      // sinal, então `dashboard_visits` vazio era indistinguível de "ninguém
+      // ficou 5min". `motivo` separa "não gravou" de "não tentou"; e como
+      // `dashboard.viewed` sai no MOUNT do mesmo DashboardShell, a diferença
+      // viewed − visita_tentativa mede as saídas por fechar a aba / F5.
+      const motivo =
+        sessionDuration < MIN_SESSION_MS ? 'sessao_curta' : !user?.id ? 'sem_usuario' : 'gravou';
+      track('dashboard.visita_tentativa', {
+        motivo,
+        session_minutes: sessionMinutes,
+        persona: contextoRef.current.persona,
+        company_selection: contextoRef.current.companySelection,
+      });
+
       if (sessionDuration < MIN_SESSION_MS) return;
 
       const now = new Date().toISOString();
-      const sessionMinutes = Math.floor(sessionDuration / 60_000);
 
       // local (sempre)
       localStorage.setItem(STORAGE_KEY, now);

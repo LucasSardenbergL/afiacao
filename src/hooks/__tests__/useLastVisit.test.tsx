@@ -231,4 +231,67 @@ describe('useRegistrarVisitaDashboard', () => {
       expect(mockedTrack).toHaveBeenCalledWith('dashboard.visita_erro', expect.objectContaining({ code: '42501' })),
     );
   });
+
+  /**
+   * O sensor de TENTATIVA. Sem ele o cleanup tem TRES saidas mudas colapsadas em
+   * "tabela vazia": sessao curta, sem usuario, e (fora do alcance do hook) aba
+   * fechada — nenhuma emitia nada, e so a QUARTA (banco recusa) tinha sinal.
+   * Medir `dashboard_visits` vazio era indistinguivel de "ninguem ficou 5min".
+   */
+  it('emite visita_tentativa com motivo=sessao_curta quando desiste por tempo (o return mudo da :81)', () => {
+    mockedUseAuth.mockReturnValue({ user: { id: 'user-14' } } as ReturnType<typeof useAuth>);
+    const { builder, insert } = criarInsertPreguicoso();
+    mockedFrom.mockReturnValue(builder as unknown as ReturnType<typeof supabase.from>);
+
+    const agora = Date.now();
+    const relogio = vi.spyOn(Date, 'now').mockReturnValue(agora);
+    const { unmount } = renderHook(() => useRegistrarVisitaDashboard(contexto), { wrapper });
+    relogio.mockReturnValue(agora + 4 * 60_000);
+    unmount();
+    relogio.mockRestore();
+
+    expect(insert).not.toHaveBeenCalled();
+    expect(mockedTrack).toHaveBeenCalledWith(
+      'dashboard.visita_tentativa',
+      expect.objectContaining({ motivo: 'sessao_curta', session_minutes: 4 }),
+    );
+  });
+
+  it('emite visita_tentativa com motivo=sem_usuario quando ficou 5min mas nao ha user (o return mudo da :90)', () => {
+    mockedUseAuth.mockReturnValue({ user: null } as unknown as ReturnType<typeof useAuth>);
+    const { builder, insert } = criarInsertPreguicoso();
+    mockedFrom.mockReturnValue(builder as unknown as ReturnType<typeof supabase.from>);
+
+    const agora = Date.now();
+    const relogio = vi.spyOn(Date, 'now').mockReturnValue(agora);
+    const { unmount } = renderHook(() => useRegistrarVisitaDashboard(contexto), { wrapper });
+    relogio.mockReturnValue(agora + 8 * 60_000);
+    unmount();
+    relogio.mockRestore();
+
+    expect(insert).not.toHaveBeenCalled();
+    expect(mockedTrack).toHaveBeenCalledWith(
+      'dashboard.visita_tentativa',
+      expect.objectContaining({ motivo: 'sem_usuario', session_minutes: 8 }),
+    );
+  });
+
+  it('emite visita_tentativa com motivo=gravou no caminho feliz (o denominador do INSERT)', async () => {
+    mockedUseAuth.mockReturnValue({ user: { id: 'user-15' } } as ReturnType<typeof useAuth>);
+    const { builder, emitidos } = criarInsertPreguicoso();
+    mockedFrom.mockReturnValue(builder as unknown as ReturnType<typeof supabase.from>);
+
+    const agora = Date.now();
+    const relogio = vi.spyOn(Date, 'now').mockReturnValue(agora);
+    const { unmount } = renderHook(() => useRegistrarVisitaDashboard(contexto), { wrapper });
+    relogio.mockReturnValue(agora + 6 * 60_000);
+    unmount();
+    relogio.mockRestore();
+
+    await waitFor(() => expect(emitidos).toHaveLength(1));
+    expect(mockedTrack).toHaveBeenCalledWith(
+      'dashboard.visita_tentativa',
+      expect.objectContaining({ motivo: 'gravou', session_minutes: 6 }),
+    );
+  });
 });
