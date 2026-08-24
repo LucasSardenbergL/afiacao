@@ -19,7 +19,7 @@ import { join } from 'node:path';
 import { extractObjects, objectKey } from './migration-objects';
 import { removerComentariosSql } from './sql-comentarios';
 
-/** só as policies — o resto do extrator tem cobertura própria via corpus */
+/** só as policies — os demais kinds têm bloco próprio abaixo (migrado da órfã, 2026-08-23) */
 const policies = (sql: string) => extractObjects(sql).filter((o) => o.kind === 'rls_policy');
 
 describe('extractObjects — CREATE POLICY', () => {
@@ -160,6 +160,96 @@ describe('extractObjects — comentário é o do POSTGRES, não `--` até o fim 
     expect(policies(sql).map((p) => p.name)).toEqual(['ativa']);
   });
 });
+/**
+ * Os DEMAIS kinds do extrator — migrados de `scripts/test-migration-objects.ts` em 2026-08-23.
+ *
+ * Aquele arquivo era uma suíte ÓRFÃ: nasceu no #922 como `bun scripts/test-migration-objects.ts`,
+ * verde, com as únicas asserções que este repo tinha sobre `view`/`function`/`table`/`index`/
+ * `trigger`/`cron_job`/`enum_value` — e NINGUÉM a rodava. Não casava o `scripts/**` + `*.test.ts`
+ * do vitest (`vitest.config.ts:11`) nem os laços do `test:hooks`, e nenhum workflow a citava.
+ * Mesma classe do #1902 (`docs/historico/vigia-de-cobertura-parcial.md`), outro eixo: lá `.sh`,
+ * aqui `.ts`.
+ *
+ * O detalhe que fecha o círculo: o helper `policies()` acima dizia *"o resto do extrator tem
+ * cobertura própria via corpus"*. Tinha cobertura — na órfã. O teste de corpus abaixo só varre
+ * `CREATE POLICY`. O comentário AFIRMAVA uma cobertura que existia e não rodava, que é
+ * exatamente como a classe se esconde.
+ */
+describe('extractObjects — CREATE VIEW (o gap que o audit não cobria)', () => {
+  it('extrai view com schema EXPLÍCITO (views v_grupo_* ficavam cegas)', () => {
+    expect(extractObjects('CREATE OR REPLACE VIEW public.v_grupo_x AS SELECT 1;')).toContainEqual(
+      expect.objectContaining({ kind: 'view', schema: 'public', name: 'v_grupo_x' }),
+    );
+  });
+
+  it('assume public quando o schema é IMPLÍCITO', () => {
+    expect(extractObjects('CREATE VIEW v_simple AS SELECT 1;')).toContainEqual(
+      expect.objectContaining({ kind: 'view', schema: 'public', name: 'v_simple' }),
+    );
+  });
+
+  it('a chave IGNORA o schema implícito x explícito — as duas colidem entre si', () => {
+    const explicito = extractObjects('CREATE OR REPLACE VIEW public.v_grupo_x AS SELECT 1;')[0];
+    const implicito = extractObjects('CREATE OR REPLACE VIEW v_grupo_x AS SELECT 2;')[0];
+    expect(objectKey(implicito)).toBe(objectKey(explicito));
+  });
+});
+
+describe('extractObjects — FUNCTION: identidade do PG é nome + tipos de arg', () => {
+  const fInt = extractObjects('CREATE OR REPLACE FUNCTION foo(x integer) RETURNS void AS $$ $$ LANGUAGE sql;');
+  const fTxt = extractObjects('CREATE OR REPLACE FUNCTION foo(x text) RETURNS void AS $$ $$ LANGUAGE sql;');
+  const fIntOutroCorpo = extractObjects('CREATE OR REPLACE FUNCTION foo(x integer) RETURNS int AS $$ select 1 $$ LANGUAGE sql;');
+
+  it('extrai a function', () => {
+    expect(fInt).toContainEqual(expect.objectContaining({ kind: 'function', schema: 'public', name: 'foo' }));
+  });
+
+  it('overload NÃO colide: foo(integer) e foo(text) são objetos distintos', () => {
+    expect(objectKey(fTxt[0])).not.toBe(objectKey(fInt[0]));
+  });
+
+  it('mesma assinatura COLIDE, mesmo com corpo diferente — é o caso que o preflight existe pra pegar', () => {
+    expect(objectKey(fIntOutroCorpo[0])).toBe(objectKey(fInt[0]));
+  });
+});
+
+describe('extractObjects — paridade de kinds com o audit original', () => {
+  it('table', () => {
+    expect(extractObjects('CREATE TABLE IF NOT EXISTS public.t (id int);')).toContainEqual(
+      expect.objectContaining({ kind: 'table', schema: 'public', name: 't' }),
+    );
+  });
+
+  it('index (com a tabela como parent)', () => {
+    expect(extractObjects('CREATE UNIQUE INDEX idx_x ON public.t (id);')).toContainEqual(
+      expect.objectContaining({ kind: 'index', name: 'idx_x', parent: 't' }),
+    );
+  });
+
+  it('trigger (com a tabela como parent)', () => {
+    const sql = 'CREATE TRIGGER trg AFTER INSERT ON public.t FOR EACH ROW EXECUTE FUNCTION f();';
+    expect(extractObjects(sql)).toContainEqual(expect.objectContaining({ kind: 'trigger', name: 'trg', parent: 't' }));
+  });
+
+  it('cron_job', () => {
+    expect(extractObjects("SELECT cron.schedule('job_x','* * * * *',$$ select 1 $$);")).toContainEqual(
+      expect.objectContaining({ kind: 'cron_job', name: 'job_x' }),
+    );
+  });
+
+  it('enum_value (com o enum como parent)', () => {
+    expect(extractObjects("ALTER TYPE public.my_enum ADD VALUE IF NOT EXISTS 'val';")).toContainEqual(
+      expect.objectContaining({ kind: 'enum_value', name: 'val', parent: 'my_enum' }),
+    );
+  });
+
+  it('rls_policy', () => {
+    expect(extractObjects('CREATE POLICY "p_sel" ON public.t FOR SELECT USING (true);')).toContainEqual(
+      expect.objectContaining({ kind: 'rls_policy', name: 'p_sel', parent: 't' }),
+    );
+  });
+});
+
 describe('corpus real — nenhuma CREATE POLICY custom fica fora do inventário', () => {
   const DIR = join(process.cwd(), 'supabase', 'migrations');
   const UUID = /_[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\.sql$/;

@@ -4,7 +4,10 @@ import { join } from 'node:path';
 import { SUITES_FORA_DO_CI } from './hooks-suites-baseline';
 
 /**
- * Vigia de FORMA: toda suíte `scripts/test-*.sh` tem de ser EXECUTADA pelo `test:hooks`.
+ * Vigia de FORMA, em DOIS eixos — toda suíte que existe tem de ser EXECUTADA por alguém:
+ *   • EIXO 1 (`.sh`): todo `scripts/test-*.sh` roda num laço do `test:hooks`.
+ *   • EIXO 2 (`.ts`): toda suíte `.ts` de `scripts/`+`db/` casa o glob do `vitest.config.ts`.
+ *     (critérios DIFERENTES de propósito — o runner de cada extensão é outro; ver §EIXO 2.)
  *
  * Por quê: até 2026-08-19 existiam 7 suítes de guard e o loop rodava 5 — `destructive-bash` e
  * `migration-immutability` eram órfãs. Teste que existe e não roda é AUSÊNCIA DE DADO, não
@@ -85,6 +88,7 @@ describe('suitesNoDisco — parser', () => {
   });
 });
 
+// ═══ EIXO 1: suítes .sh × os laços do test:hooks ═══
 describe('cobertura real: package.json x scripts/', () => {
   const pkg = JSON.parse(readFileSync(join(RAIZ, 'package.json'), 'utf8')) as {
     scripts: Record<string, string>;
@@ -146,6 +150,187 @@ describe('cobertura real: package.json x scripts/', () => {
     expect(
       semMotivo,
       `Isenção sem motivo explicado: ${semMotivo.join(', ')}.`,
+    ).toEqual([]);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// EIXO 2: suítes `.ts`. Mesmo defeito de classe, outra extensão.
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+//
+// 2026-08-23: `scripts/test-migration-objects.ts` era ÓRFÃ desde o #922 — verde, 13 asserções,
+// as ÚNICAS do repo sobre view/function/table/index/trigger/cron/enum do extrator, e ninguém a
+// rodava. Não casava o `scripts/**/*.test.ts` do vitest (é `test-*.ts`, não `*.test.ts`) nem os
+// laços do `test:hooks`. Ficou registrada como fora de escopo no #1902 e voltou aqui.
+//
+// ⚠️ O critério de "coberta" para `.ts` NÃO é o `test:hooks` — é o **glob do vitest**. E o gate
+// lê o glob do `vitest.config.ts` DE VERDADE em vez de repetir a string: se alguém trocar o
+// include, o gate acompanha em vez de mentir. É a lição 3 do doc da classe (prefira o
+// conjunto-alvo ao identificador) aplicada ao outro eixo.
+//
+// Fora deste gate DE PROPÓSITO: as ~250 `db/test-*.sh`. Não são órfãs por descuido — são
+// harnesses "PROVA PG17" que precisam de um PostgreSQL 17 vivo (ritual `prove-sql-money-path`,
+// rodado à mão antes de entregar migration). Cobrá-las aqui geraria ~250 isenções de baseline
+// no dia 1, e gate que nasce com 250 falsos-positivos ninguém lê.
+
+/** Escapa metacaractere de regex — tudo que não for curinga do glob é literal. */
+function escaparRegex(c: string): string {
+  return /[.*+?^${}()|[\]\\]/.test(c) ? `\\${c}` : c;
+}
+
+/**
+ * Converte um glob do `vitest.config.ts` em RegExp. Suporta o que o config usa hoje:
+ * `**` (atravessa diretórios), `*` (não atravessa `/`) e `{a,b}` (alternância).
+ */
+export function globParaRegex(glob: string): RegExp {
+  let re = '';
+  for (let i = 0; i < glob.length; i++) {
+    const c = glob[i];
+    if (c === '*' && glob[i + 1] === '*' && glob[i + 2] === '/') {
+      re += '(?:[^/]+/)*';
+      i += 2;
+    } else if (c === '*' && glob[i + 1] === '*') {
+      re += '.*';
+      i += 1;
+    } else if (c === '*') {
+      re += '[^/]*';
+    } else if (c === '{') {
+      const fim = glob.indexOf('}', i);
+      if (fim < 0) {
+        re += '\\{';
+        continue;
+      }
+      re += `(?:${glob
+        .slice(i + 1, fim)
+        .split(',')
+        .map((alt) => [...alt].map(escaparRegex).join(''))
+        .join('|')})`;
+      i = fim;
+    } else {
+      re += escaparRegex(c);
+    }
+  }
+  return new RegExp(`^${re}$`);
+}
+
+/** Os globs do `test.include` do vitest.config.ts, lidos da FONTE (não repetidos aqui). */
+export function globsDoVitest(cfg: string): string[] {
+  const bloco = /include\s*:\s*\[([^\]]*)\]/.exec(cfg);
+  if (!bloco) return [];
+  return [...bloco[1].matchAll(/["'`]([^"'`]+)["'`]/g)].map((m) => m[1]);
+}
+
+/**
+ * Um `.ts` "tem cara de suíte" por NOME (convenção: `test-x.ts`, `x.test.ts`, `x.spec.ts`) ou
+ * por CONTEÚDO (importa vitest). Os dois eixos, porque cada um pega o que o outro perde: a órfã
+ * de 2026 não importava vitest (tinha `check()` próprio), e uma suíte futura pode importar
+ * vitest com nome que não segue convenção nenhuma.
+ */
+const NOME_DE_SUITE = /(?:^|\/)(?:test-[^/]+|[^/]+[.-](?:test|spec))\.tsx?$/;
+
+export function suitesTs(arquivos: { caminho: string; fonte: string }[]): string[] {
+  return arquivos
+    .filter((a) => NOME_DE_SUITE.test(a.caminho) || /\bfrom\s*["']vitest["']/.test(a.fonte))
+    .map((a) => a.caminho)
+    .sort();
+}
+
+/** Lista recursiva de `.ts` sob um diretório, com caminho relativo à raiz do repo. */
+function listarTs(dir: string, prefixo: string): { caminho: string; fonte: string }[] {
+  const out: { caminho: string; fonte: string }[] = [];
+  for (const e of readdirSync(join(RAIZ, dir), { withFileTypes: true })) {
+    const rel = `${prefixo}${e.name}`;
+    if (e.isDirectory()) out.push(...listarTs(`${dir}/${e.name}`, `${rel}/`));
+    else if (e.name.endsWith('.ts') || e.name.endsWith('.tsx'))
+      out.push({ caminho: rel, fonte: readFileSync(join(RAIZ, dir, e.name), 'utf8') });
+  }
+  return out;
+}
+
+describe('globParaRegex — parser', () => {
+  it('`**/` atravessa diretórios, inclusive NENHUM', () => {
+    const re = globParaRegex('scripts/**/*.test.ts');
+    expect(re.test('scripts/lib/migration-objects.test.ts')).toBe(true);
+    expect(re.test('scripts/hooks-guard-cobertura.test.ts')).toBe(true);
+  });
+
+  it('NÃO casa a órfã — é `test-x.ts`, não `x.test.ts` (o buraco de 2026-08-23)', () => {
+    expect(globParaRegex('scripts/**/*.test.ts').test('scripts/test-migration-objects.ts')).toBe(false);
+  });
+
+  it('`*` sozinho não atravessa `/`', () => {
+    expect(globParaRegex('scripts/*.test.ts').test('scripts/lib/x.test.ts')).toBe(false);
+  });
+
+  it('expande `{a,b}` (o config usa `{test,spec}.{ts,tsx}`)', () => {
+    const re = globParaRegex('src/**/*.{test,spec}.{ts,tsx}');
+    expect(re.test('src/a/b.spec.tsx')).toBe(true);
+    expect(re.test('src/a/b.teste.ts')).toBe(false);
+  });
+
+  it('o `.` do glob é literal, não curinga', () => {
+    expect(globParaRegex('scripts/*.test.ts').test('scripts/aXtest.ts')).toBe(false);
+  });
+});
+
+describe('globsDoVitest — parser', () => {
+  it('extrai os globs do include', () => {
+    expect(globsDoVitest('test: { include: ["src/**/*.test.ts", "scripts/**/*.test.ts"] }')).toEqual([
+      'src/**/*.test.ts',
+      'scripts/**/*.test.ts',
+    ]);
+  });
+
+  it('devolve vazio quando não há include (não finge cobertura)', () => {
+    expect(globsDoVitest('test: { environment: "jsdom" }')).toEqual([]);
+  });
+});
+
+describe('suitesTs — detector', () => {
+  it('pega por NOME, nas três convenções', () => {
+    expect(
+      suitesTs([
+        { caminho: 'scripts/test-x.ts', fonte: '' },
+        { caminho: 'scripts/y.test.ts', fonte: '' },
+        { caminho: 'scripts/z.spec.ts', fonte: '' },
+        { caminho: 'scripts/gate-check.ts', fonte: 'export const x = 1;' },
+      ]),
+    ).toEqual(['scripts/test-x.ts', 'scripts/y.test.ts', 'scripts/z.spec.ts']);
+  });
+
+  it('pega por CONTEÚDO quando o nome não denuncia', () => {
+    expect(suitesTs([{ caminho: 'scripts/verificacoes.ts', fonte: "import { it } from 'vitest';" }])).toEqual([
+      'scripts/verificacoes.ts',
+    ]);
+  });
+
+  it('não confunde CLI com suíte (o falso-positivo que mataria o gate)', () => {
+    expect(suitesTs([{ caminho: 'scripts/testar-conexao.ts', fonte: '// roda à mão' }])).toEqual([]);
+  });
+});
+
+describe('cobertura real: vitest.config.ts x scripts/ + db/', () => {
+  const globs = globsDoVitest(readFileSync(join(RAIZ, 'vitest.config.ts'), 'utf8'));
+  const arquivos = [...listarTs('scripts', 'scripts/'), ...listarTs('db', 'db/')];
+  const suites = suitesTs(arquivos);
+  const coberta = (caminho: string) => globs.some((g) => globParaRegex(g).test(caminho));
+
+  it('o include do vitest não veio vazio (falsifica um regex que casou com nada)', () => {
+    expect(globs.length).toBeGreaterThan(0);
+  });
+
+  it('o detector achou suítes de verdade (falsifica um detector que não casa nada)', () => {
+    expect(suites.length).toBeGreaterThan(5);
+  });
+
+  it('nenhuma suíte `.ts` é ÓRFÃ — toda uma casa o glob do vitest', () => {
+    const orfas = suites.filter((s) => !coberta(s));
+    expect(
+      orfas,
+      `Suíte(s) .ts que o vitest NÃO roda: ${orfas.join(', ')}. ` +
+        `Renomeie para \`<nome>.test.ts\` sob um diretório do \`include\` do vitest.config.ts ` +
+        `(é o remédio barato — entra sozinha), ou acrescente o caminho ao \`include\`. ` +
+        `Suíte que existe e não roda é AUSÊNCIA DE DADO, não aprovação.`,
     ).toEqual([]);
   });
 });
