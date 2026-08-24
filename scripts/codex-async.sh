@@ -69,6 +69,24 @@ if [ -z "${CODEX_API_KEY:-}${OPENAI_API_KEY:-}" ] && [ ! -f "${CODEX_HOME:-$HOME
   exit 77
 fi
 
+# Plano DECLARADO no claim do token (não é a assinatura viva — é o que o servidor
+# obedece). Lê só `chatgpt_plan_type`; o token em si NUNCA é impresso. Sem `jq`: ele não
+# está no PATH mínimo dos testes, e o payload de um JWT é base64 comum, não cifra.
+# SENSOR, não guard: se não der para ler, devolve "desconhecido" — a instrução manual
+# continua valendo e nada é fabricado.
+plano_do_token() {
+  local auth="${CODEX_HOME:-$HOME/.codex}/auth.json" tok payload
+  [ -r "$auth" ] || { printf 'desconhecido'; return; }
+  tok="$(grep -o '"access_token"[[:space:]]*:[[:space:]]*"[^"]*"' "$auth" 2>/dev/null | head -1 | sed 's/.*"\([^"]*\)"$/\1/')"
+  case "$tok" in *.*.*) ;; *) printf 'desconhecido'; return ;; esac
+  payload="${tok#*.}"; payload="${payload%%.*}"
+  payload="$(printf '%s' "$payload" | tr '_-' '/+')"
+  case $(( ${#payload} % 4 )) in 2) payload="${payload}==" ;; 3) payload="${payload}=" ;; esac
+  printf '%s' "$payload" | openssl base64 -d -A 2>/dev/null \
+    | sed -n 's/.*"chatgpt_plan_type"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+    | head -1 | grep . || printf 'desconhecido'
+}
+
 out="$(mktemp -t codex-async.XXXXXX)" || exit 70
 err="$(mktemp -t codex-async-err.XXXXXX)" || exit 70
 trap 'rm -f "$err"' EXIT
@@ -130,7 +148,17 @@ for backoff in "${backoffs[@]}"; do
 
   # cota esgotada = NÃO-transitório → Caminho B na hora (money-path.md)
   if classifica 'usage limit|quota|plan limit'; then
-    echo "COTA_ESGOTADA: janela rolante de 7d do ChatGPT Plus esgotou. Siga o Caminho B (validação adversária própria + registrar 'REVISÃO INDEPENDENTE PENDENTE') — docs/agent/money-path.md." >&2
+    echo "COTA_ESGOTADA: o servidor recusou por limite de uso." >&2
+    echo "  plano DECLARADO no seu token: $(plano_do_token)" >&2
+    echo "  ⚠️ CONFIRA ESSE PLANO ANTES de aceitar o limite como real: o servidor cobra pelo" >&2
+    echo "     CLAIM do token, não pela assinatura viva — um token velho declara o plano" >&2
+    echo "     ANTIGO. Em 2026-08-23 o 'limite' era o do 'free' declarado por um token de 2" >&2
+    echo "     dias atrás, numa conta PAGA, e a mensagem mandava esperar quase um mês." >&2
+    echo "     Se o plano acima não é o que você assina, reemita o token:" >&2
+    echo "       codex logout && codex login" >&2
+    echo "  → Se o plano BATE com o que você assina, aí o limite é real: siga o Caminho B" >&2
+    echo "    (validação adversária própria + registrar 'REVISÃO INDEPENDENTE PENDENTE')" >&2
+    echo "    — docs/agent/money-path.md." >&2
     exit 75
   fi
   # modelo recusado = erro de CONFIG. Não é cota (esperar não resolve) nem transitório

@@ -13,8 +13,19 @@ ASYNC="$here/codex-async.sh"
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
-mkdir -p "$tmp/bin" "$tmp/codexhome_ok" "$tmp/codexhome_vazio"
+mkdir -p "$tmp/bin" "$tmp/codexhome_ok" "$tmp/codexhome_vazio" "$tmp/codexhome_free" "$tmp/codexhome_pago"
 : > "$tmp/codexhome_ok/auth.json"
+
+# auth.json com JWT FALSO carregando só o claim do plano (nada de segredo — o payload de um
+# JWT é base64, não cifra). Serve para provar que a mensagem de cota LÊ o plano declarado.
+jwt_com_plano() { # plano → token falso `header.payload.assinatura`
+  local payload
+  payload=$(printf '{"https://api.openai.com/auth":{"chatgpt_plan_type":"%s"}}' "$1" \
+    | openssl base64 -A | tr '+/' '-_' | tr -d '=')
+  printf 'ZmFrZQ.%s.assinatura-irrelevante' "$payload"
+}
+printf '{"tokens":{"access_token":"%s"}}' "$(jwt_com_plano free)"    > "$tmp/codexhome_free/auth.json"
+printf '{"tokens":{"access_token":"%s"}}' "$(jwt_com_plano prolite)" > "$tmp/codexhome_pago/auth.json"
 
 # stub de codex: comportamento por CODEX_STUB_MODE; conta invocações em CODEX_STUB_COUNT
 cat >"$tmp/bin/codex" <<'STUB'
@@ -67,6 +78,14 @@ run() {
     CODEX_HOME="$tmp/codexhome_ok" CODEX_STUB_MODE="$mode" CODEX_STUB_COUNT="$tmp/count" \
     CODEX_ASYNC_BACKOFFS="0 0 0" bash "$ASYNC" "$@" </dev/null
 }
+# igual ao run(), mas com CODEX_HOME escolhido (para variar o plano declarado no token)
+run_home() {
+  local home="$1" mode="$2"; shift 2
+  : > "$tmp/count"
+  env -i PATH="$tmp/bin:/usr/bin:/bin" HOME="$HOME" TMPDIR="$tmp" \
+    CODEX_HOME="$tmp/$home" CODEX_STUB_MODE="$mode" CODEX_STUB_COUNT="$tmp/count" \
+    CODEX_ASYNC_BACKOFFS="0 0 0" bash "$ASYNC" "$@" </dev/null
+}
 invocacoes() { wc -l < "$tmp/count" | tr -d ' '; }
 
 caso_exit() { # nome want_exit rc
@@ -95,6 +114,38 @@ if [ "$(invocacoes)" -eq 1 ]; then echo "  ok    cota NÃO faz retry (1 invocaç
 else echo "  FAIL  cota fez retry ($(invocacoes) invocações)"; fail=1; fi
 run quota_sem_prefixo "x" >/dev/null 2>&1
 caso_exit "cota SEM prefixo ERROR: também vira 75" 75 $?
+
+echo "── cota: suspeitar do TOKEN antes de aceitar o limite ──"
+# 2026-08-23: o COTA_ESGOTADA mandou esperar até 20/09 — mas a "cota" era a do plano FREE
+# que um token congelado declarava, numa conta paga. Relogar devolveu tudo. A mensagem tem
+# de mostrar o plano DECLARADO no token e mandar conferi-lo antes de aceitar o limite.
+saida=$(run_home codexhome_free quota "x" 2>&1); rc=$?
+caso_exit "cota continua 75" 75 "$rc"
+case "$saida" in
+  *free*) echo "  ok    mostra o plano declarado no token (free)" ;;
+  *) echo "  FAIL  não mostra o plano — o humano não vê que o token está rebaixado"; fail=1 ;;
+esac
+case "$saida" in
+  *logout*) echo "  ok    plano rebaixado → manda REEMITIR o token (logout+login)" ;;
+  *) echo "  FAIL  não manda relogar: repete o erro que custou 2 dias"; fail=1 ;;
+esac
+
+saida=$(run_home codexhome_pago quota "x" 2>&1)
+case "$saida" in
+  *prolite*) echo "  ok    plano pago é mostrado tal como declarado" ;;
+  *) echo "  FAIL  não mostra o plano pago"; fail=1 ;;
+esac
+case "$saida" in
+  *Caminho\ B*) echo "  ok    plano confere → Caminho B (aí sim o limite é real)" ;;
+  *) echo "  FAIL  perdeu o Caminho B no caso em que ele é a ação certa"; fail=1 ;;
+esac
+
+# sensor ausente degrada (auth.json sem JWT legível) — mensagem informativa, não guard
+saida=$(run_home codexhome_ok quota "x" 2>&1)
+case "$saida" in
+  *desconhecido*) echo "  ok    plano ilegível → 'desconhecido', sem fingir que leu" ;;
+  *) echo "  FAIL  não degradou o sensor de plano"; fail=1 ;;
+esac
 
 echo "── modelo recusado pela conta ──"
 # 400 do servidor quando o modelo do config não vale para a conta (2026-08-22: os 10
