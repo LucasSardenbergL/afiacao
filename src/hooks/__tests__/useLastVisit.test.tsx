@@ -17,14 +17,20 @@ vi.mock('@/lib/analytics', () => ({
   track: vi.fn(),
 }));
 
+vi.mock('@/lib/impersonation/lens-write-guard', () => ({
+  isLensActive: vi.fn(() => false),
+}));
+
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 import { track } from '@/lib/analytics';
-import { useLastVisit, useRegistrarVisitaDashboard } from '../useLastVisit';
+import { isLensActive } from '@/lib/impersonation/lens-write-guard';
+import { useLastVisit, useRegistrarVisitaDashboard, useTrackDashboardViewed } from '../useLastVisit';
 
 const mockedUseAuth = vi.mocked(useAuth);
 const mockedFrom = vi.mocked(supabase.from);
 const mockedTrack = vi.mocked(track);
+const mockedIsLensActive = vi.mocked(isLensActive);
 
 function wrapper({ children }: { children: ReactNode }) {
   const client = new QueryClient({
@@ -37,6 +43,9 @@ beforeEach(() => {
   mockedUseAuth.mockReset();
   mockedFrom.mockReset();
   mockedTrack.mockReset();
+  mockedIsLensActive.mockReset();
+  mockedIsLensActive.mockReturnValue(false);
+  vi.unstubAllGlobals();
   localStorage.clear();
 });
 
@@ -293,5 +302,317 @@ describe('useRegistrarVisitaDashboard', () => {
       'dashboard.visita_tentativa',
       expect.objectContaining({ motivo: 'gravou', session_minutes: 6 }),
     );
+  });
+});
+
+/**
+ * Leitura da visita anterior. `pendente: true` devolve uma promise que NUNCA
+ * resolve — é assim que se reproduz a corrida que deixava
+ * `time_since_last_visit_min` nulo em 39 de 46 eventos.
+ */
+function criarLeituraVisita(iso: string | null, { pendente = false } = {}) {
+  const maybeSingle = vi.fn(() =>
+    pendente
+      ? new Promise(() => {})
+      : Promise.resolve({ data: iso ? { visited_at: iso } : null }),
+  );
+  const selectFn = vi.fn().mockReturnValue({
+    eq: vi.fn().mockReturnValue({
+      order: vi.fn().mockReturnValue({ range: vi.fn().mockReturnValue({ maybeSingle }) }),
+    }),
+  });
+  return { select: selectFn } as unknown as ReturnType<typeof supabase.from>;
+}
+
+describe('useRegistrarVisitaDashboard — fecho de aba (pagehide)', () => {
+  const contexto = { persona: 'gestao', companySelection: 'all' };
+
+  function autenticar(userId: string) {
+    mockedUseAuth.mockReturnValue({
+      user: { id: userId },
+      session: { access_token: 'token-abc' },
+    } as unknown as ReturnType<typeof useAuth>);
+  }
+
+  it('GRAVA ao fechar a aba: React nao roda cleanup no unload, entao pagehide e a unica chance', () => {
+    autenticar('user-21');
+    const { builder } = criarInsertPreguicoso();
+    mockedFrom.mockReturnValue(builder as unknown as ReturnType<typeof supabase.from>);
+    const fetchSpy = vi.fn().mockResolvedValue({ ok: true, status: 201 });
+    vi.stubGlobal('fetch', fetchSpy);
+
+    const agora = Date.now();
+    const relogio = vi.spyOn(Date, 'now').mockReturnValue(agora);
+    renderHook(() => useRegistrarVisitaDashboard(contexto), { wrapper });
+    relogio.mockReturnValue(agora + 6 * 60_000);
+    window.dispatchEvent(new Event('pagehide'));
+    relogio.mockRestore();
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(String(url)).toContain('/rest/v1/dashboard_visits');
+    expect(JSON.parse(String(init.body))).toMatchObject({
+      user_id: 'user-21',
+      session_minutes: 6,
+      persona: 'gestao',
+      company_selection: 'all',
+    });
+  });
+
+  it('usa keepalive: sem isso o browser CANCELA a request ao destruir o documento', () => {
+    autenticar('user-22');
+    mockedFrom.mockReturnValue(criarInsertPreguicoso().builder as unknown as ReturnType<typeof supabase.from>);
+    const fetchSpy = vi.fn().mockResolvedValue({ ok: true, status: 201 });
+    vi.stubGlobal('fetch', fetchSpy);
+
+    const agora = Date.now();
+    const relogio = vi.spyOn(Date, 'now').mockReturnValue(agora);
+    renderHook(() => useRegistrarVisitaDashboard(contexto), { wrapper });
+    relogio.mockReturnValue(agora + 6 * 60_000);
+    window.dispatchEvent(new Event('pagehide'));
+    relogio.mockRestore();
+
+    const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(init.keepalive).toBe(true);
+    expect(init.method).toBe('POST');
+    expect((init.headers as Record<string, string>).Authorization).toBe('Bearer token-abc');
+  });
+
+  it('nao duplica: gravou no pagehide, o unmount seguinte NAO grava de novo', () => {
+    autenticar('user-23');
+    const { builder, emitidos } = criarInsertPreguicoso();
+    mockedFrom.mockReturnValue(builder as unknown as ReturnType<typeof supabase.from>);
+    const fetchSpy = vi.fn().mockResolvedValue({ ok: true, status: 201 });
+    vi.stubGlobal('fetch', fetchSpy);
+
+    const agora = Date.now();
+    const relogio = vi.spyOn(Date, 'now').mockReturnValue(agora);
+    const { unmount } = renderHook(() => useRegistrarVisitaDashboard(contexto), { wrapper });
+    relogio.mockReturnValue(agora + 9 * 60_000);
+    window.dispatchEvent(new Event('pagehide'));
+    unmount();
+    relogio.mockRestore();
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(emitidos).toHaveLength(0);
+  });
+
+  it('pagehide antes de 5min nao grava (o guard anti-F5 vale nos dois caminhos)', () => {
+    autenticar('user-24');
+    mockedFrom.mockReturnValue(criarInsertPreguicoso().builder as unknown as ReturnType<typeof supabase.from>);
+    const fetchSpy = vi.fn().mockResolvedValue({ ok: true, status: 201 });
+    vi.stubGlobal('fetch', fetchSpy);
+
+    const agora = Date.now();
+    const relogio = vi.spyOn(Date, 'now').mockReturnValue(agora);
+    renderHook(() => useRegistrarVisitaDashboard(contexto), { wrapper });
+    relogio.mockReturnValue(agora + 4 * 60_000);
+    window.dispatchEvent(new Event('pagehide'));
+    relogio.mockRestore();
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('lente "ver como" ativa: o fetch cru nao pode furar o write-guard', () => {
+    autenticar('user-25');
+    mockedIsLensActive.mockReturnValue(true);
+    mockedFrom.mockReturnValue(criarInsertPreguicoso().builder as unknown as ReturnType<typeof supabase.from>);
+    const fetchSpy = vi.fn().mockResolvedValue({ ok: true, status: 201 });
+    vi.stubGlobal('fetch', fetchSpy);
+
+    const agora = Date.now();
+    const relogio = vi.spyOn(Date, 'now').mockReturnValue(agora);
+    renderHook(() => useRegistrarVisitaDashboard(contexto), { wrapper });
+    relogio.mockReturnValue(agora + 6 * 60_000);
+    window.dispatchEvent(new Event('pagehide'));
+    relogio.mockRestore();
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('sensor: o fecho de aba emite visita_tentativa com via=pagehide (a quarta saida vira MEDIDA)', () => {
+    autenticar('user-27');
+    mockedFrom.mockReturnValue(criarInsertPreguicoso().builder as unknown as ReturnType<typeof supabase.from>);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 201 }));
+
+    const agora = Date.now();
+    const relogio = vi.spyOn(Date, 'now').mockReturnValue(agora);
+    renderHook(() => useRegistrarVisitaDashboard(contexto), { wrapper });
+    relogio.mockReturnValue(agora + 6 * 60_000);
+    window.dispatchEvent(new Event('pagehide'));
+    relogio.mockRestore();
+
+    expect(mockedTrack).toHaveBeenCalledWith(
+      'dashboard.visita_tentativa',
+      expect.objectContaining({ motivo: 'gravou', via: 'pagehide' }),
+    );
+  });
+
+  it('sensor: lente ativa nao fica MUDA — emite motivo=lente_ativa em vez de sumir', () => {
+    autenticar('user-28');
+    mockedIsLensActive.mockReturnValue(true);
+    mockedFrom.mockReturnValue(criarInsertPreguicoso().builder as unknown as ReturnType<typeof supabase.from>);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 201 }));
+
+    const agora = Date.now();
+    const relogio = vi.spyOn(Date, 'now').mockReturnValue(agora);
+    renderHook(() => useRegistrarVisitaDashboard(contexto), { wrapper });
+    relogio.mockReturnValue(agora + 6 * 60_000);
+    window.dispatchEvent(new Event('pagehide'));
+    relogio.mockRestore();
+
+    expect(mockedTrack).toHaveBeenCalledWith(
+      'dashboard.visita_tentativa',
+      expect.objectContaining({ motivo: 'lente_ativa', via: 'pagehide' }),
+    );
+  });
+
+  it('sensor: o unmount depois do pagehide emite motivo=ja_gravado (nao vira silencio)', () => {
+    autenticar('user-29');
+    mockedFrom.mockReturnValue(criarInsertPreguicoso().builder as unknown as ReturnType<typeof supabase.from>);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 201 }));
+
+    const agora = Date.now();
+    const relogio = vi.spyOn(Date, 'now').mockReturnValue(agora);
+    const { unmount } = renderHook(() => useRegistrarVisitaDashboard(contexto), { wrapper });
+    relogio.mockReturnValue(agora + 8 * 60_000);
+    window.dispatchEvent(new Event('pagehide'));
+    unmount();
+    relogio.mockRestore();
+
+    expect(mockedTrack).toHaveBeenCalledWith(
+      'dashboard.visita_tentativa',
+      expect.objectContaining({ motivo: 'ja_gravado', via: 'unmount' }),
+    );
+  });
+
+  it('desmontou: o listener de pagehide sai junto (nao grava por componente morto)', () => {
+    autenticar('user-26');
+    const { builder } = criarInsertPreguicoso();
+    mockedFrom.mockReturnValue(builder as unknown as ReturnType<typeof supabase.from>);
+    const fetchSpy = vi.fn().mockResolvedValue({ ok: true, status: 201 });
+    vi.stubGlobal('fetch', fetchSpy);
+
+    const agora = Date.now();
+    const relogio = vi.spyOn(Date, 'now').mockReturnValue(agora);
+    const { unmount } = renderHook(() => useRegistrarVisitaDashboard(contexto), { wrapper });
+    relogio.mockReturnValue(agora + 2 * 60_000);
+    unmount();
+    relogio.mockReturnValue(agora + 30 * 60_000);
+    window.dispatchEvent(new Event('pagehide'));
+    relogio.mockRestore();
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('useLastVisit — sinal de que a leitura resolveu', () => {
+  it('visitaResolvida e FALSE enquanto a leitura do servidor nao voltou', () => {
+    mockedUseAuth.mockReturnValue({ user: { id: 'user-31' } } as ReturnType<typeof useAuth>);
+    mockedFrom.mockReturnValue(criarLeituraVisita(null, { pendente: true }));
+
+    const { result } = renderHook(() => useLastVisit(), { wrapper });
+
+    expect(result.current.visitaResolvida).toBe(false);
+  });
+
+  it('visitaResolvida vira TRUE quando a leitura resolve', async () => {
+    mockedUseAuth.mockReturnValue({ user: { id: 'user-32' } } as ReturnType<typeof useAuth>);
+    const iso = new Date(Date.now() - 90 * 60_000).toISOString();
+    mockedFrom.mockReturnValue(criarLeituraVisita(iso));
+
+    const { result } = renderHook(() => useLastVisit(), { wrapper });
+
+    await waitFor(() => expect(result.current.visitaResolvida).toBe(true));
+    expect(result.current.minutesSinceLastVisit).toBeGreaterThanOrEqual(90);
+  });
+
+  it('sem usuario a leitura ja nasce resolvida (so localStorage, disponivel sincrono)', () => {
+    mockedUseAuth.mockReturnValue({ user: null } as ReturnType<typeof useAuth>);
+
+    const { result } = renderHook(() => useLastVisit(), { wrapper });
+
+    expect(result.current.visitaResolvida).toBe(true);
+  });
+});
+
+describe('useTrackDashboardViewed', () => {
+  const contexto = {
+    persona: 'gestao',
+    personaSource: 'auto',
+    companyMode: 'all' as const,
+    companyId: 'all',
+  };
+
+  it('NAO dispara dashboard.viewed antes da leitura resolver (era isso que enchia o evento de null)', () => {
+    mockedUseAuth.mockReturnValue({ user: { id: 'user-41' } } as ReturnType<typeof useAuth>);
+    mockedFrom.mockReturnValue(criarLeituraVisita(null, { pendente: true }));
+
+    renderHook(() => useTrackDashboardViewed(contexto), { wrapper });
+
+    expect(mockedTrack).not.toHaveBeenCalled();
+  });
+
+  it('dispara com time_since_last_visit_min PREENCHIDO quando a leitura resolve', async () => {
+    mockedUseAuth.mockReturnValue({ user: { id: 'user-42' } } as ReturnType<typeof useAuth>);
+    const iso = new Date(Date.now() - 200 * 60_000).toISOString();
+    mockedFrom.mockReturnValue(criarLeituraVisita(iso));
+
+    renderHook(() => useTrackDashboardViewed(contexto), { wrapper });
+
+    await waitFor(() => expect(mockedTrack).toHaveBeenCalledTimes(1));
+    const [evento, props] = mockedTrack.mock.calls[0] as [string, Record<string, unknown>];
+    expect(evento).toBe('dashboard.viewed');
+    expect(props.time_since_last_visit_min).toBeGreaterThanOrEqual(200);
+    expect(props.persona).toBe('gestao');
+    expect(props.time_since_last_visit_resolvido).toBe(true);
+  });
+
+  it('timeout ja disparou e a leitura resolve DEPOIS — o evento nao pode sair duas vezes', async () => {
+    vi.useFakeTimers();
+    try {
+      mockedUseAuth.mockReturnValue({ user: { id: 'user-43' } } as ReturnType<typeof useAuth>);
+      let resolverLeitura: (v: { data: { visited_at: string } }) => void = () => {};
+      const maybeSingle = vi.fn(
+        () => new Promise<{ data: { visited_at: string } }>((r) => { resolverLeitura = r; }),
+      );
+      mockedFrom.mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue({
+            order: vi.fn().mockReturnValue({ range: vi.fn().mockReturnValue({ maybeSingle }) }),
+          }),
+        }),
+      } as unknown as ReturnType<typeof supabase.from>);
+
+      renderHook(() => useTrackDashboardViewed(contexto), { wrapper });
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(mockedTrack).toHaveBeenCalledTimes(1);
+
+      resolverLeitura({ data: { visited_at: new Date(Date.now() - 10 * 60_000).toISOString() } });
+      await vi.advanceTimersByTimeAsync(500);
+
+      expect(mockedTrack).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('leitura travada: o timeout de seguranca dispara mesmo assim (evento nunca pode sumir)', async () => {
+    vi.useFakeTimers();
+    try {
+      mockedUseAuth.mockReturnValue({ user: { id: 'user-44' } } as ReturnType<typeof useAuth>);
+      mockedFrom.mockReturnValue(criarLeituraVisita(null, { pendente: true }));
+
+      renderHook(() => useTrackDashboardViewed(contexto), { wrapper });
+      expect(mockedTrack).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(3_000);
+
+      expect(mockedTrack).toHaveBeenCalledTimes(1);
+      const [, props] = mockedTrack.mock.calls[0] as [string, Record<string, unknown>];
+      expect(props.time_since_last_visit_resolvido).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
