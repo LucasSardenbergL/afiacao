@@ -399,6 +399,21 @@ export const MODULOS: ModuloApp[] = [
     risco: { moneyPath: true, offlineFirst: false, authSensitive: false },
   },
   {
+    // Núcleo de domínio PURO da Fase 1 (spec 2026-06-17): escada de estados,
+    // Check de Proporção e faixa de consumo. Ainda SEM rota/consumidor — a UI e a
+    // persistência são as Fases 2+, bloqueadas pelo discovery (D1 export do
+    // Sayersystem, D3 parâmetros técnicos). moneyPath: a escada é o que condiciona
+    // prazo no boleto e seguro de retrabalho (spec Fase 5), então erra-se para cima.
+    id: "projeto-verificado",
+    nome: "Projeto Verificado (Sayerlack)",
+    kind: "negocio",
+    rotaPrefixos: [],
+    gates: [],
+    codigo: ["src/lib/projeto-verificado/*.ts"],
+    testes: ["src/lib/projeto-verificado/__tests__/**"],
+    risco: { moneyPath: true, offlineFirst: false, authSensitive: false },
+  },
+  {
     id: "estoque-recebimento",
     nome: "Estoque / Recebimento",
     kind: "negocio",
