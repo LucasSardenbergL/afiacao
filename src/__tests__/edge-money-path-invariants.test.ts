@@ -152,7 +152,12 @@ describe('guardrail money-path: analyze-unified-order mantém o prompt caching L
     expect(
       codigo,
       'REGRESSÃO: edge não chama mais montarSystemBlocks — voltou ao prompt de string única?',
-    ).toMatch(/montarSystemBlocks\(\s*searchCustomer/);
+      // `(?:!!)?` porque o call-site normaliza: `searchCustomer` chega do corpo da
+      // requisição como a STRING do termo de busca, e o `!!` é o que torna honesto o
+      // parâmetro declarado `boolean` (bytes do prompt cacheado pinados em
+      // prompt-sistema_test.ts). As duas grafias passam; `!searchCustomer` NÃO —
+      // uma negação simples INVERTERIA a variante do prompt, que é defeito, não estilo.
+    ).toMatch(/montarSystemBlocks\(\s*(?:!!)?searchCustomer/);
     expect(
       count(codigo, 'montarSystemBlocks'),
       'montarSystemBlocks deve ser IMPORTADO e CHAMADO (≥2 menções)',
