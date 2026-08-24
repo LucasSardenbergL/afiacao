@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useMemo, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { DashboardPersonaProvider, useDashboardPersonaContext } from '@/contexts/DashboardPersonaContext';
 import { DashboardEditModeProvider } from '@/contexts/DashboardEditModeContext';
 import { useRegisterShortcuts } from '@/components/shell/ShortcutsRegistry';
 import { useNavigate } from 'react-router-dom';
 import { track } from '@/lib/analytics';
-import { useLastVisit, useRegistrarVisitaDashboard } from '@/hooks/useLastVisit';
+import { useRegistrarVisitaDashboard, useTrackDashboardViewed } from '@/hooks/useLastVisit';
 import { useCompany } from '@/contexts/CompanyContext';
 import { BriefZone } from './BriefZone';
 import { CockpitGrid } from './CockpitGrid';
@@ -33,27 +33,23 @@ export function DashboardShell() {
 function DashboardBody() {
   const { persona, source } = useDashboardPersonaContext();
   const { selection } = useCompany();
-  const { minutesSinceLastVisit } = useLastVisit();
-
   // ESCRITOR ÚNICO de dashboard_visits (useLastVisit é só leitura e monta 3× aqui)
   useRegistrarVisitaDashboard({
     persona,
     companySelection: selection === 'all' ? 'all' : String(selection),
   });
+
+  // dashboard.viewed — espera a leitura da visita anterior resolver antes de
+  // emitir, senão `time_since_last_visit_min` sai nulo (era o caso em 39 de 46).
+  useTrackDashboardViewed({
+    persona,
+    personaSource: source,
+    companyMode: selection === 'all' ? 'all' : 'single',
+    companyId: selection,
+  });
+
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-
-  // dashboard.viewed na montagem
-  useEffect(() => {
-    track('dashboard.viewed', {
-      persona,
-      persona_source: source,
-      company_mode: selection === 'all' ? 'all' : 'single',
-      company_id: selection,
-      time_since_last_visit_min: minutesSinceLastVisit,
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   // Coleta priorities das 6 zonas — todos os hooks rodam sempre (ordem fixa hook react)
   const vendas = useVendasZone();
