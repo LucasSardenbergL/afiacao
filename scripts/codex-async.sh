@@ -15,7 +15,7 @@
 # Uso:
 #   scripts/codex-async.sh [-m MODELO] [-r low|medium|high|xhigh] [-t SEGUNDOS] "PROMPT"
 #   echo "PROMPT" | scripts/codex-async.sh -r xhigh -
-# Defaults: -m gpt-5.6-terra · -r high · -t 1200 (20min hard-stop)
+# Defaults: -m gpt-5.6-sol · -r xhigh · -t 1200 (20min hard-stop)
 #
 # Garantias:
 #   - preflight (binário + auth) ANTES de gastar tempo/quota, com instrução clara;
@@ -28,16 +28,23 @@
 set -u
 
 # gpt-5.6-* exige codex-cli ≥ 0.143 (server rejeita CLI antigo com 400).
-# ⚠️ O default É MEDIÇÃO, não escolha: `gpt-5.6-sol` era o default e está MORTO para esta
-# conta — todo ritual /codex do repo falhava. Ping `codex exec --model M --sandbox read-only
-# "responda apenas: OK"` em 2026-08-22 (codex-cli 0.144.1, conta ChatGPT):
-#   gpt-5.6-terra → rc=0 "OK"     gpt-5.6-luna  → rc=0 "OK"
-#   gpt-5.6-sol   → 400           gpt-5.6       → 400        gpt-5.1-codex-max → 400
-# Default = `terra` porque é o degrau mais ALTO entre os que respondem (o frontier `sol`
-# está fora): o /codex é a rede de segurança do money-path, então o default é o teto
-# disponível, não o degrau rápido. A disponibilidade muda por tier — RE-MEÇA com o ping
-# acima antes de confiar nesta lista.
-modelo="gpt-5.6-terra"; reasoning="high"; timeout_s=1200
+# ⚠️ O default É MEDIÇÃO, não escolha. Ping `codex exec --model M -c
+# model_reasoning_effort="xhigh" --sandbox read-only "responda apenas: OK"`, 2026-08-23,
+# codex-cli 0.144.1, conta paga (plan_type=prolite):
+#   gpt-5.6-sol → rc=0 (97s)   gpt-5.6-terra → rc=0 (45s)   gpt-5.6-luna → rc=0 (87s)
+#   gpt-5.6 → 400   ·   gpt-5.3-codex → 400   ·   gpt-5.1-codex-max → 400
+# `sol` é o frontier da família 5.6 ⇒ é o default, em `xhigh` (decisão do founder: a 2ª
+# opinião do money-path roda sempre no teto).
+#
+# 🔴 A LIÇÃO que custou 2 dias: em 22/08 estes MESMOS pings davam 400 para `sol`, e a
+# conclusão foi "esta conta não tem direito ao sol" → o default virou `terra`. Era FALSO.
+# A causa era o `plan_type` CONGELADO num token de 21/08 que dizia `free` (a conta é paga):
+# o servidor cobra pelo CLAIM do token, não pela assinatura viva, e `codex logout && codex
+# login` reemitiu o token e devolveu o `sol` na hora. `terra`/`luna` respondiam porque são
+# do tier de baixo — e foi justamente isso que fez a heurística "se ALGUM modelo passa, o
+# login está OK" dar o login por bom. Ela é falsa: um token pode estar VÁLIDO e mentir
+# sobre o plano. Trocar de modelo "resolve" o sintoma e esconde a causa.
+modelo="gpt-5.6-sol"; reasoning="xhigh"; timeout_s=1200
 while getopts "m:r:t:" opt; do
   case "$opt" in
     m) modelo="$OPTARG" ;;
@@ -128,20 +135,31 @@ for backoff in "${backoffs[@]}"; do
   fi
   # modelo recusado = erro de CONFIG. Não é cota (esperar não resolve) nem transitório
   # (repetir não resolve): as duas saídas erradas custam tempo apontando para o lugar errado.
-  # ⚠️ O eixo é o MODELO, não o acesso da conta — a nota anterior aqui dizia o contrário e
-  # estava errada. Medido 2026-08-22 (challenge retroativo do #1859), stderr cru do servidor:
-  #   gpt-5.6-sol  → 400 "The 'gpt-5.6-sol' model is not supported when using Codex with a
-  #                  ChatGPT account" — IDÊNTICO em -r high e -r xhigh (o effort não é a causa)
-  #   gpt-5.6      → mesmo 400
-  #   gpt-5.6-terra / gpt-5.6-luna → rc=0, respondem normalmente
-  # Ou seja: "nenhum modelo passa ⇒ é a conta" é inferência de ausência de dado. Trocar o
-  # modelo RESOLVE. Só suspeite do login se um modelo SABIDAMENTE servido também falhar.
+  # ⚠️ HISTÓRICO DESTA NOTA — ela já esteve errada DUAS vezes, em sentidos opostos, e é o
+  # melhor aviso que este arquivo tem sobre como se erra aqui:
+  #   v1 dizia "é o acesso da conta"        → corrigida em 22/08 por parecer errada;
+  #   v2 dizia "o eixo é o MODELO, não a conta; trocar o modelo RESOLVE; só suspeite do
+  #      login se um modelo SABIDAMENTE servido também falhar" → **também errada**, e foi
+  #      esta que custou 2 dias rodando no tier de baixo.
+  # O que se mediu em 23/08: o 400 do `sol` vinha do `plan_type` CONGELADO num token de
+  # 21/08 que dizia `free` numa conta paga. `codex logout && codex login` reemitiu o token e
+  # o `sol` voltou NA HORA — mesmos pings, mesmo dia, 400 → rc=0.
+  # ⇒ A heurística da v2 é FALSA: `terra`/`luna` respondiam porque são o tier de baixo, que
+  #   segue servido com o plano rebaixado. **Um modelo responder NÃO inocenta o login.**
+  #   Trocar o modelo remove o SINTOMA sem explicá-lo — e foi isso que encerrou a
+  #   investigação com a causa intacta. Verifique o token ANTES (custa uma linha de JSON).
   if classifica 'model is not supported|unsupported_model|model_not_found'; then
-    echo "MODELO_NAO_ACEITO: o modelo '$modelo' não é aceito por esta conta Codex (HTTP 400)." >&2
-    echo "  → passe outro com -m, ou ajuste 'model =' em \${CODEX_HOME:-~/.codex}/config.toml;" >&2
-    echo "  → medidos OK nesta conta (2026-08-22): gpt-5.6-terra, gpt-5.6-luna. Recusados: -sol, gpt-5.6;" >&2
-    echo "  → só se um SABIDAMENTE servido também falhar é acesso da conta: 'codex login' e confira a assinatura." >&2
-    echo "  (não é cota nem falha transitória: esperar e repetir não consertam config.)" >&2
+    echo "MODELO_NAO_ACEITO: o servidor recusou o modelo '$modelo' (HTTP 400)." >&2
+    echo "  1) SUSPEITE PRIMEIRO DO TOKEN, não do direito de acesso: o servidor cobra pelo" >&2
+    echo "     CLAIM do token, e um token velho carrega o plano ANTIGO ('free' numa conta" >&2
+    echo "     paga). Em 2026-08-23 era exatamente isso — 'codex logout && codex login'" >&2
+    echo "     reemitiu o token e devolveu o modelo na hora. Confira o plano com:" >&2
+    echo "       codex login status   (e o claim chatgpt_plan_type do ~/.codex/auth.json)" >&2
+    echo "  ⚠️ Outro modelo responder NÃO inocenta o login: os tiers de baixo (terra/luna)" >&2
+    echo "     seguem servidos com o plano rebaixado. Foi essa inferência que custou 2 dias." >&2
+    echo "  2) Só depois troque o modelo com -m, ou ajuste 'model =' em \${CODEX_HOME:-~/.codex}/config.toml;" >&2
+    echo "     medidos OK em 2026-08-23 (conta paga): gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna." >&2
+    echo "  (não é cota nem falha transitória: esperar e repetir não consertam nenhum dos dois.)" >&2
     exit 78
   fi
   # 400 de requisição inválida é PERMANENTE: repetir manda exatamente o mesmo request.

@@ -114,6 +114,15 @@ case "$saida" in
   *"codex login"*|*config.toml*) echo "  ok    diz o que FAZER (login/config)" ;;
   *) echo "  FAIL  não instrui a ação"; fail=1 ;;
 esac
+# 2026-08-23: o 400 de modelo NÃO era direito de acesso — era o `plan_type` CONGELADO num
+# token velho (dizia `free`; a conta é paga). `terra`/`luna` respondiam, então a heurística
+# "se algum modelo passa, o login está OK" deu o login por bom e mandou trocar de modelo.
+# Trocar o modelo "resolveu" o sintoma e escondeu a causa por 2 dias. A mensagem tem de
+# oferecer a hipótese barata de verificar.
+case "$saida" in
+  *logout*) echo "  ok    oferece a hipótese do token/plano congelado (logout+login)" ;;
+  *) echo "  FAIL  não cita relogin — a causa real de 2026-08-23 fica invisível"; fail=1 ;;
+esac
 case "$saida" in
   *Caminho\ B*) echo "  FAIL  mandou para o Caminho B (esperar não conserta config)"; fail=1 ;;
   *) echo "  ok    NÃO manda para o Caminho B" ;;

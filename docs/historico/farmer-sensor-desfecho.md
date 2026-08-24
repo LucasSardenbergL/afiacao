@@ -321,6 +321,31 @@ do diagnóstico acima:
   rodou no CI. Registrado. Restam 8 órfãos no mesmo padrão (`test-<x>.sh` sem `-guard`), que
   o `hooks-guard-cobertura.test.ts` não vigia porque ele só cobre `test-<x>-guard.sh`.
 
+### A causa real: o token mentia sobre o plano (2026-08-23)
+
+O `gpt-5.6-sol` nunca esteve fora do alcance da conta. O 400 vinha do **`plan_type`
+congelado** num token emitido em 21/08 que dizia `free` — a conta é paga. O servidor cobra
+pelo **CLAIM do token**, não pela assinatura viva, então uma credencial velha rebaixa a
+conta inteira até ser reemitida. `codex logout && codex login` devolveu o `sol` na hora
+(medido: mesmos pings, mesmo dia, 400 → rc=0).
+
+**O erro de raciocínio — que é a parte que se repete:** `terra` e `luna` respondiam. Isso
+"provou" que o login estava bom e empurrou o diagnóstico para o direito de acesso ao
+modelo. Mas os tiers de baixo seguem servidos com o plano rebaixado, então **um modelo
+responder não inocenta o login**. A heurística que estava escrita no próprio script — *"só
+suspeite do login se um modelo SABIDAMENTE servido também falhar"* — é FALSA, e foi ela que
+mandou trocar o default. Trocar o modelo fez o sintoma sumir, o que encerrou a investigação
+com a causa intacta: 2 dias rodando no tier errado, achando que era limite da conta.
+
+> **A classe:** medir o sintoma não é medir a causa. Quando a correção que "funciona" é
+> justamente a que **remove o sintoma sem explicá-lo**, ela compra silêncio, não conserto —
+> e o silêncio parece sucesso. O teste que faltava era barato: ler o `chatgpt_plan_type` do
+> token e comparar com o plano que se PAGA. Uma linha de JSON contra dois dias.
+
+Depois disso o default virou `gpt-5.6-sol` em `xhigh` (frontier da 5.6, medido), e o
+`MODELO_NAO_ACEITO` passa a mandar suspeitar do TOKEN antes do direito de acesso — com o
+aviso explícito de que outro modelo responder não é álibi.
+
 ### O ritual rodado de verdade achou um erro na própria correção (2026-08-22)
 
 Rodar o `/codex` real logo após o merge — com um prompt propositalmente venenoso (4×
