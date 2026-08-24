@@ -707,7 +707,13 @@ Deno.serve(async (req) => {
     // A ordem é INVERTIDA em relação ao #1608 de propósito: as REGRAS vêm
     // primeiro (prefixo cacheável) e os DADOS depois. O porquê, as duas variantes
     // de cache e as referências posicionais reescritas estão em prompt-sistema.ts.
-    const blocosSistema = montarSystemBlocks(searchCustomer, {
+    // `!!` porque `searchCustomer` chega do corpo da requisição como a STRING do
+    // termo de busca, não como boolean — o prompt sempre a consumiu por truthiness
+    // (`searchCustomer ? A : B`), então normalizar aqui é o que o runtime JÁ fazia
+    // e os bytes do prefixo cacheado não mudam (pinado em prompt-sistema_test.ts).
+    // Sem ele o parâmetro declarado `boolean` mente, e a mentira fica invisível
+    // enquanto o corpo for `any`.
+    const blocosSistema = montarSystemBlocks(!!searchCustomer, {
       produtosLista,
       ferramentasLista,
       servicosLista,
