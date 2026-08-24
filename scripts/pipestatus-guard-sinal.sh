@@ -52,7 +52,7 @@ fi
 # Parse OK nao e schema OK. Um JSONL de linhas validas porem SEM os campos do sensor produzia
 # relatorio de "null" com exit 0 — ou seja, ausencia de dado servida como medicao, exatamente o
 # vicio que este sensor existe para nao cometer. Daqui para baixo tudo le a fatia VALIDADA.
-VALIDO="$(mktemp -t pipestatus-sinal)" || { echo "não consegui criar arquivo temporário" >&2; exit 70; }
+VALIDO="$(mktemp "${TMPDIR:-/tmp}/pipestatus-sinal.XXXXXX")" || { echo "não consegui criar arquivo temporário" >&2; exit 70; }
 trap 'rm -f "$VALIDO"' EXIT
 # `try…catch empty` porque o `ts` tem de sobreviver ao `fromdateiso8601` usado nas agregacoes:
 # validar so o TIPO deixaria passar "ontem" e a query morreria la na frente.

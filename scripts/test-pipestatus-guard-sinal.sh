@@ -83,8 +83,9 @@ prova "S8b linha inflada continua JSON valido (corte multibyte sanitizado)" "JSO
 
 # S8c PERMISSAO: o log guarda FRAGMENTO DE COMANDO. World-readable (0644) era o default herdado do
 # umask, e ninguem tinha medido — o Codex mediu.
-prova "S8c log nasce 0600" "log criado como $(stat -f '%Sp' "$LOG" 2>/dev/null) — legivel por outros" \
-      [ "$(stat -f '%Sp' "$LOG" 2>/dev/null)" = "-rw-------" ]
+# shellcheck disable=SC2012  # SC2012 alerta sobre parsear NOME de arquivo; aqui so leio o modo
+perm="$(ls -l "$LOG" 2>/dev/null | cut -c1-10)"   # stat -f e BSD; no GNU o -f e FILE SYSTEM, imprime outra coisa e sai 0
+prova "S8c log nasce 0600" "log criado como ${perm:-?}" [ "$perm" = "-rw-------" ]
 
 # S9 FAIL-OPEN: log impossivel de escrever NAO pode calar o aviso
 saida="$(dispara 'x | y; echo ${PIPESTATUS[0]}' "/dev/null/impossivel/x.jsonl")"
