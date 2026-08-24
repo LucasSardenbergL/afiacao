@@ -42,6 +42,7 @@ import * as scoringBatch from "../scoring-recalc-batch/versao.ts";
 import * as syncReprocess from "../sync-reprocess/versao.ts";
 import * as tacticalBatch from "../tactical-plans-batch/versao.ts";
 import * as visitBatch from "../visit-score-recalc-batch/versao.ts";
+import * as monthlyReport from "../monthly-report/versao.ts";
 
 /**
  * `respostaSonda` (a maioria) ou `respostaSondaTactical` (a `generate-tactical-plan`, que embrulha o
@@ -124,6 +125,14 @@ const EDGES: Array<{ nome: string; mod: ModSonda }> = [
   { nome: "scoring-recalc-batch", mod: scoringBatch },
   { nome: "visit-score-recalc-batch", mod: visitBatch },
   { nome: "tactical-plans-batch", mod: tacticalBatch },
+  // Nona leva (#1889 paginação, parte 4): a edge que o `git grep -l` do helper NÃO enxergava.
+  // Separada da oitava de propósito — aquelas eram edges SEM sensor; esta estava fora da própria
+  // ENUMERAÇÃO. `monthly-report` chega ao `paginate.ts` por um salto (`_shared/relatorio-mensal.ts`),
+  // então nunca aparecia na lista de "quem serve o helper" — a relação é de grafo, o grep é local
+  // (docs/historico/enumerar-consumidores-de-helper.md). Entra pelo critério mais duro da lista:
+  // o bundle VELHO ignorando `probe` não erra um número, ele ENVIA e-mail para a base inteira,
+  // porque os defaults do corpo armam o envio por omissão. Ver `monthly-report/versao.ts`.
+  { nome: "monthly-report", mod: monthlyReport },
 ];
 
 /** As cinco da terceira leva — os gates estruturais abaixo varrem todas. */
@@ -180,6 +189,11 @@ const FORMA_NORMALIZADA = [
   // existem para impedir. Confirma a regra do bloco acima: a FORMA não tem a ver com escrever.
   "analyze-unified-order",
   ...FAN_OUT_QUE_ESCREVE,
+  // Nona leva: entra na varredura estrutural pelo mesmo motivo da sétima — o preço de um `probe`
+  // mal grafado caindo no fluxo real. Aqui ele é o mais alto de todos (e-mail a clientes reais,
+  // que não se desfaz). Fica FORA de GATE_PROPRIO de propósito: o gate dela é
+  // `authorizeCronOrStaff`, que já aceita o `x-cron-secret` do SQL Editor.
+  "monthly-report",
 ];
 
 /**
