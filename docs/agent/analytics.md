@@ -109,6 +109,19 @@ permissão frouxa/401/403).
   exposta na janela, série vazia é indistinguível de "o estado não ocorre". Sempre rode o **controle
   sem filtro de evento** junto — série do evento vazia **com** controle positivo é dado real; as duas
   vazias é sensor não chegando.
+
+- **Em janela CURTA o controle sem filtro de evento não controla nada.** O corolário da armadilha
+  acima, e ele morde na direção oposta. Um controle numa janela **maior** que a da série não
+  compartilha nada com ela e não prova exposição; um controle na **mesma** janela de minutos é
+  vazio por construção — passar do tempo é o que falta, não o sinal — e devolve "sensor não
+  chegando" para um app perfeitamente saudável. Os dois erram, em sentidos contrários.
+  O que separa é trocar a pergunta: não *"houve evento na janela?"*, e sim **"este silêncio é
+  anômalo?"** — o que se responde pelo **padrão histórico**, não por um count. Medido em
+  2026-08-24 (`toDayOfWeek`, 1=seg, 60 dias): seg 207/4d · ter 381/8d · qua 309/7d · qui 229/6d ·
+  sex 227/6d · **sáb 32/5d** · **dom 72/5d**. Uma manhã de segunda sem evento algum, precedida de
+  um domingo, é o esperado — e não evidência de ingestão morta.
+  **A regra:** o controle só controla pelo eixo que ele **não** compartilha com a série; em janela
+  curta esse eixo é a sazonalidade, e por isso a janela igual é justamente a que não serve.
 - **`phc_` ≠ `phx_`.** A primeira escreve, a segunda consulta. O wrapper diagnostica a troca.
 - **Arquivo de key VAZIO passa despercebido.** `~/.config/afiacao/supabase-pat` existe com **0 bytes**
   desde 2026-07-27 — criado e nunca preenchido. O wrapper trata `-s` (vazio) como falha explícita,
@@ -124,3 +137,54 @@ permissão frouxa/401/403).
 `carteira.mixgap_visto` (`estado`, `total_com_gap`, `desatualizado`) ·
 `carteira.positivacao_vista` · `dashboard.*` e `offline.*` (walkthrough de 2026-05-17).
 Convenção de nome: `<area>.<action>`, emitido por `track()` de `@/lib/analytics`.
+
+### `dashboard.visita_tentativa` — como ler (2026-08-24, #1945 + #1949)
+
+O sensor que separa **"não gravou"** de **"não tentou"** em `dashboard_visits`. Emitido no cleanup do
+`useEffect` de `useRegistrarVisitaDashboard` **e** no `pagehide`, **antes de qualquer `return`** — por
+isso `count()` dele é o denominador de saídas do dashboard, não só das que gravaram.
+
+⚠️ **Contrato de duas entregas, no mesmo dia.** O #1945 instalou o evento com 3 motivos e sem `via`;
+o #1949 acrescentou o caminho `pagehide` (`fetch` com `keepalive`, que aceita os headers do
+PostgREST — `sendBeacon` não), a guarda de idempotência e os motivos `ja_gravado`/`lente_ativa`/
+`sem_token`. Uma leitura que cruze a fronteira das 11:37Z de 2026-08-24 mistura os dois contratos:
+antes disso **não existe** `via`, e `motivo` só assume 3 valores. Filtre por janela ou trate a
+ausência de `via` como `unmount`.
+
+Duas dimensões, e nenhuma das duas é opcional na leitura:
+
+| propriedade | valores | o que responde |
+|---|---|---|
+| `motivo` | `gravou` · `sessao_curta` · `sem_usuario` · `ja_gravado` · `lente_ativa` · `sem_token` | por que a visita virou (ou não) linha |
+| `via` | `unmount` · `pagehide` | por qual caminho a pessoa saiu do dashboard |
+
+```sql
+-- distribuição das saídas: o breakdown que era invisível até 2026-08-24
+SELECT properties.motivo, properties.via, count()
+FROM events
+WHERE event = 'dashboard.visita_tentativa' AND timestamp > toDateTime('<deploy do sensor>')
+GROUP BY 1, 2 ORDER BY 3 DESC;
+```
+
+⚠️ **O par que fecha a conta é evento × TABELA, não evento sozinho.** `motivo='gravou'` diz que o
+INSERT foi **despachado**, não que ele chegou. Compare sempre com a fonte:
+
+```sql
+-- no Postgres, mesma janela:
+SELECT count(*) FROM dashboard_visits WHERE visited_at > '<deploy do sensor>';
+```
+
+| `gravou` vs. linhas | leitura |
+|---|---|
+| iguais | caminho saudável de ponta a ponta |
+| `gravou` > linhas, **com** `dashboard.visita_erro` | o banco recusou — ver a RLS de INSERT |
+| `gravou` > linhas, **sem** `dashboard.visita_erro` | requisição perdida na rede (o `keepalive` do `pagehide` não é garantido) — antes deste sensor, indistinguível de tudo o mais |
+| `gravou` = 0 e o resto > 0 | o dashboard é aberto, mas nenhuma sessão qualifica: leia o `motivo` |
+
+⚠️ **`sessao_curta` domina por desenho, não por defeito.** O guard de 5 min (`MIN_SESSION_MS`) existe
+para um F5 não anular os deltas — uma proporção alta dele é o guard funcionando. Ele só vira sintoma
+se `gravou` for **zero** por muitos dias com o dashboard sendo aberto.
+
+⚠️ **`lente_ativa` e `sem_token` são recusas DELIBERADAS do caminho `pagehide`** (write-guard da lente
+"ver como" e fetch cru sem como autenticar). Contá-los como falha inverte o sinal: são o gate
+funcionando, e no caso do `sem_token` a visita ainda pode gravar pelo unmount.
