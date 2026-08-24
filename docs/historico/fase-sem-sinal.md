@@ -1318,3 +1318,41 @@ fecham a aba — e aí a correção é `pagehide`, não RLS. Os três eram o mes
 **O sensor é a fase N+1 legítima**: não mede adoção de produto, mede a *própria verificabilidade* de
 uma correção que já está no ar. Instalá-lo não precisa de denominador — precisa dele quem for
 concluir alguma coisa a partir dele.
+
+#### ⚠️ ERRATA — a fórmula da subtração morreu no mesmo dia (2026-08-24, PR desta seção)
+
+A frase acima — *"e aí a correção é `pagehide`, não RLS"* — foi executada horas depois, e ao ser
+executada **invalidou a fórmula que a antecede**. Registrado aqui porque uma fórmula de medição que
+envelhece errada é pior que fórmula nenhuma: ela continua rodando e devolvendo um número plausível.
+
+`useRegistrarVisitaDashboard` agora grava por DOIS caminhos, e ambos emitem `visita_tentativa`:
+
+| Caminho | Quando | Emissão |
+|---|---|---|
+| `unmount` (cleanup do effect) | navegação in-app | client do supabase |
+| `pagehide` | fechar aba · F5 · sair do site | `fetch` com `keepalive: true` |
+
+Logo `count(viewed) − count(visita_tentativa)` **não mede mais** saídas por fechar a aba: essas
+saídas passaram a emitir `visita_tentativa` também. A subtração agora tende a zero — e um zero por
+mudança de instrumentação é indistinguível, para quem lê a fórmula velha, de "ninguém mais fecha a
+aba". Exatamente o colapso de significados que o sensor existia para desfazer.
+
+A quarta saída deixou de ser inferida por subtração e passou a ser **medida direto**, pelo novo
+campo `via`:
+
+```
+saídas por fechar aba / F5   = count(visita_tentativa WHERE via='pagehide')
+saídas por navegação in-app  = count(visita_tentativa WHERE via='unmount')
+aberturas que qualificam     = count(visita_tentativa WHERE motivo='gravou')   -- inalterado
+```
+
+`motivo` também cresceu, e os três valores novos são **desistências que antes não existiam** (não
+são renomeações — não há série histórica a reconciliar): `ja_gravado` (o `unmount` que vem depois de
+um `pagehide` que já gravou — dedup, não perda), `lente_ativa` (a lente "ver como" barrando o fetch
+cru, que não passa pelo write-guard do client) e `sem_token` (sessão sem `access_token` para
+autenticar o fetch; o `unmount` ainda pode gravar pelo client).
+
+**A lição, que é do próprio arquivo:** a fase N+1 aqui não foi "usar o sensor", foi *corrigir o furo
+que o sensor tornou visível* — e a correção mudou o instrumento. Sensor e correção competem pelo
+mesmo denominador. Ao fechar um furo que o sensor media por ausência, **reescreva a query junto com
+o código**, no mesmo PR: a query mora no doc, mas ela é parte da mudança, não comentário sobre ela.

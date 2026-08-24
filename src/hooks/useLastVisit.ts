@@ -4,6 +4,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 import { isLensActive } from '@/lib/impersonation/lens-write-guard';
 import { track } from '@/lib/analytics';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 
 const STORAGE_KEY = 'dashboardLastVisit';
 const MIN_SESSION_MS = 5 * 60 * 1000; // 5min — evita F5 anular deltas
@@ -122,7 +123,10 @@ function emitirComKeepalive(payload: PayloadVisita, token: string): void {
       }
     })
     .catch((erro: unknown) => {
-      track('dashboard.visita_erro', { code: 'keepalive_network', message: String(erro) });
+      track('dashboard.visita_erro', {
+        code: 'keepalive_network',
+        message: mensagemDeErro(erro) ?? 'fetch keepalive falhou sem mensagem',
+      });
     });
 }
 
