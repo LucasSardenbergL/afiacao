@@ -137,6 +137,38 @@ FROM r;
 
 ⚠️ **`ORDER BY id DESC LIMIT 1` fabrica veredito NEGATIVO — leia pelo `request_id`.** Este banco recebe resposta de cron o tempo todo (só o watchdog responde a cada ~5 min, e há timestamps com DUAS respostas no mesmo microssegundo), então "a última linha" quase nunca é a sua: entre disparar e ler, um tick alheio entra na frente. Mordido ao vivo em 2026-08-23, com a receita desta seção: a sonda da `recommend` respondeu `{"ok":true,"probe":true,"versao":"v1.5-…","edge":"recommend"}` no id 58859, o `SELECT` pegou o 58858 (`{"modo":"watchdog",…}`, 41s antes) e devolveu `edge NULL, versao NULL, status_code 200` — que é **exatamente a assinatura de "bundle pré-sensor ignorou o probe e rodou o fluxo real"** (armadilha 1 abaixo). Um deploy correto lido como deploy ausente, e o desfecho seguinte é redeployar uma edge money-path à toa. O `id` de `net._http_response` **é** o `request_id` devolvido pelo `net.http_post` — filtrar por ele é determinístico e não custa nada. Sem o número em mãos, o desempate possível é `WHERE content::jsonb->>'edge' = '<nome-da-edge>'` (o campo nasceu para isso), mas ele **degrada para zero linhas** justamente no caso que mais importa — bundle velho não emite `edge` —, e zero linhas é indistinguível de "a resposta ainda não chegou": aí confirme com `SELECT max(id) FROM net._http_response` antes de concluir.
 
+#### Sondar VÁRIAS edges numa tacada (leva inteira) — e as 3 armadilhas do SQL Editor
+
+Uma leva tem 5–10 edges, e repetir o par disparo/leitura por edge convida ao erro de trocar o `request_id`
+entre uma e outra. O padrão é disparar todas com `net.http_post` sobre um `VALUES` de nomes, agregar com
+`jsonb_object_agg(edge, request_id)::text` numa **célula única** para copiar, e no passo 2 reidratar com
+`jsonb_each_text('<colado>'::jsonb)`. Medido 2026-08-24 sondando a oitava leva (#1937).
+
+- ⚠️ **A trava do bloco perigoso tem de ser `CASE`, NÃO `WHERE`.** Quando parte da leva só pode ser sondada
+  DEPOIS do deploy confirmado (bundle pré-sensor ignora o `probe` e dispara o run), a tentação é
+  `... FROM alvos, guard WHERE guard.confirmei = 'sim'`. **Isso não protege**: o Postgres avalia a projeção
+  independentemente do filtro, e o `http_post` sai do mesmo jeito. Falsificado nos dois sentidos com
+  `1/(length(edge)-1)` no lugar do post: sob `WHERE` explode com a trava FECHADA (avaliou), sob
+  `CASE WHEN guard.confirmei = 'sim' THEN net.http_post(…) END` só explode com ela ABERTA. Guard por `WHERE`
+  aqui é teatro — a classe "sonda de script destrutivo é fail-CLOSED" aplicada ao SQL.
+- ⚠️ **A leitura tem de partir da lista canônica de edges, não dos ids.** Com `FROM ids JOIN esperado`, colar
+  o JSON do bloco errado devolve **zero linhas** — e zero linhas lê-se como "nada a reportar", não como erro.
+  Inverta (`FROM esperado LEFT JOIN ids`) e dê um ramo próprio ao id ausente: toda edge esperada aparece
+  SEMPRE, e a sem id se acusa. Mesmo motivo do `LEFT JOIN` contra `net._http_response`: sem ele, "a resposta
+  ainda não chegou" e "veredito negativo" ficam indistinguíveis.
+- ⚠️ **Placeholder que quebra o batch não é proteção — é sorte.** Um `'<COLE_AQUI>'::jsonb` literal aborta com
+  `22P02 invalid input syntax for type json`, e o SQL Editor faz **rollback do batch inteiro**; como o `pg_net`
+  só envia após o COMMIT, nada é disparado (confirmado ao vivo em 2026-08-24: `http_request_queue` vazia e
+  zero respostas de sonda, com a tabela viva e recebendo cron). Foi o erro que salvou a viagem — mas depender
+  disso é depender de o founder colar o arquivo INTEIRO e de o Editor abortar no ponto certo. Use um
+  placeholder VÁLIDO (`'{}'::jsonb`, que cai no ramo "sem id") e ponha a trava real no `CASE` acima.
+- **Distinga rejeição de execução no veredito.** `status_code >= 400` sem `versao` é bundle velho que
+  **recusou** o request (401 do gate de JWT na `ai-ops-agent`, 400 do `default` na `sync-reprocess`) —
+  nada executou. Só `200` sem `versao` é "ignorou o `probe` e RODOU o fluxo real". Um veredito que junta os
+  dois manda investigar efeito colateral que não houve.
+- **`net._http_response` retém ~6h** (medido 2026-08-24: 195 linhas, 04:10→10:05 UTC). Sonde e leia na mesma
+  sessão; expirada a linha, o `LEFT JOIN` devolve "aguarde" para sempre e a ambiguidade volta.
+
 Verde = `status_code 200` **E** `canary true` **E** `contrato` batendo com a tabela acima **E** `ok true` **E** `casos_vermelhos NULL` (os cinco, não só o `ok`). `400` com `"Ação desconhecida"` = **bundle velho**, a probe não subiu — e a lista `acoes_disponiveis` da resposta é a confirmação (não cita a action nova). ⚠️ Probe é **dry-run**: se um dia uma delas abrir linha em `fin_sync_log`, ela fabrica frescor — `_data_health_compute` e `fin_calcular_confiabilidade` leem essa tabela **sem filtrar `action`** (só o `fin_sync_heartbeat` filtra). No `omie-financeiro` isso é o `PROBE_ACTIONS` → `logId=""`, pinado no `edge-money-path-invariants`.
 
 ### Assinatura no PRÓPRIO log da edge — N3 retroativo, sem canária e sem sonda
