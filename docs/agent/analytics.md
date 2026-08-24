@@ -132,6 +132,40 @@ permissão frouxa/401/403).
   **obrigatória** — query mal-escapada devolveria número **errado** em vez de falhar, que é
   fabricação de dado (regra do money-path).
 
+### ⚠️ O PostHog serve CACHE para query idêntica — e não avisa (2026-08-24)
+
+`SELECT count(), max(timestamp) FROM events` repetida ao longo de um dia devolveu
+`2.630 / 2026-08-23T11:09Z` durante **horas**, enquanto o valor real já era
+`2.631 / 2026-08-24T21:59Z`. O cache do PostHog casa a query **byte a byte** e
+devolve o resultado velho **sem marcar que é velho** — o JSON compacto do wrapper
+não mostra `is_cached`.
+
+O custo foi um diagnóstico inteiro na direção errada: a leitura "a ingestão aceita
+com `200 Ok` e DESCARTA o evento" nasceu de comparar um POST novo contra um
+`count()` congelado. Não havia descarte nenhum; o evento estava lá.
+
+**Corrigido em `scripts/posthog-query.sh`:** o default agora manda
+`refresh: "force_blocking"` (recalcula sempre). Para aceitar cache — mais rápido,
+e legítimo quando um valor recente basta — passe `--cache`.
+
+```bash
+scripts/posthog-query.sh "SELECT ..."            # recalcula (default, correto p/ medir)
+scripts/posthog-query.sh --cache "SELECT ..."    # aceita cache (rápido, pode MENTIR)
+scripts/posthog-query.sh --cru "SELECT ..." | jq .is_cached   # confere quem serviu
+```
+
+Falsificado: com a mesma query, o default responde `is_cached=false` e `--cache`
+responde `is_cached=true`.
+
+**A regra generalizada:** um resultado repetido não é uma segunda medição. Se duas
+leituras iguais são a sua evidência de que "nada mudou", confirme que a segunda
+foi de fato **executada** — em cache, "estável" e "congelado" são idênticos.
+
+**Irmão disso, mesmo dia:** a API de consulta pode devolver **HTTP 504**
+(*"Query has hit the max execution time"*). O wrapper agora sai com **exit 73** e
+diz que aquilo é **ausência de dado, não zero** — antes, um 504 e um `[[0]]`
+chegavam pelo mesmo cano e só um deles era medição.
+
 ## 5. Sensores de frontend já instalados
 
 `carteira.mixgap_visto` (`estado`, `total_com_gap`, `desatualizado`) ·
