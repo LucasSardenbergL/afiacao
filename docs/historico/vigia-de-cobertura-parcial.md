@@ -89,6 +89,27 @@ Duas lições de método:
 - **Número apressado vira dívida.** "1 em 3" (n=3) e "1 em 7" (n=13) levam a decisões diferentes, e
   o primeiro já estava commitado. Amostra pequena merece o `n` explícito ao lado.
 
+### A verificação que faltava: 15/15 verdes, e o poder do teste (2026-08-24)
+
+O conserto acima foi entregue com a causa provada e **zero execuções registradas depois dele** —
+"consertado" saiu da análise causal, não de medida. É a lição de `falsificacao-fora-do-ci.md`
+aplicada na direção inversa: *teste que existe e não roda é ausência de dado* vale igual para
+*conserto que não foi re-medido*.
+
+Medido em 2026-08-24, 15 execuções seguidas na M2 (73 worktrees, swap 4,35 GB de 5,12 GB em uso):
+**15 verdes, 0 vermelhos**, nenhuma linha `FAIL`, 32–49 s cada.
+
+O que isso autoriza dizer — e o que não autoriza:
+
+- Se a taxa tivesse continuado nos ~15% medidos antes, 15 verdes seguidos teriam ~8,7% de chance
+  (0,85 elevado a 15). O conserto é de longe a explicação mais provável.
+- Mas o `load` caiu de **41,7 na run 1 para 5,2 na run 15** — a máquina foi esvaziando durante a
+  série. Só **8** das 15 rodaram no regime que produzia o flaky (`load` ≥ 20), e 8 verdes sob
+  p=0,15 têm ~27% de chance de sair por sorte. **O n efetivo sob carga é 8, não 15.**
+
+Evidência boa, não prova. Foi registrar o `load` de cada execução que tornou essa distinção
+visível: colher só o exit code teria produzido um "15/15" que soa definitivo e não é.
+
 ## Lições
 
 1. **Gate anti-órfão é código como outro qualquer — pergunte de que ele é cego.** O sintoma é
