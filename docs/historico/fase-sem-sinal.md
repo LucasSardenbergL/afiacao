@@ -1118,6 +1118,32 @@ troca de sujeito **impossíveis de falhar** ali. Não é tautologia da asserçã
 E o guard de "1 escritor por slug" não existe — a helper `evento()` (:165) faz `.reverse().find()`,
 lê só a ÚLTIMA chamada, então um segundo escritor do mesmo slug passaria verde inflando o denominador.
 
+### Desfecho: os dois buracos do guard fechados (2026-08-24)
+
+Os dois falsos verdes acima viraram asserção, e **cada um foi falsificado no host** — não no teste:
+
+- **A FALA.** O caso de erro agora afirma POSITIVAMENTE que o aviso existe, ancorado em
+  `data-testid` (`aviso-positivacao`) e não na copy: o desenho é do #1886 e pode mudar sem que o
+  contrato mude, e casar a string trocaria o falso verde por um falso vermelho. A âncora de
+  MONTAGEM continua antes dela, para separar "a página não subiu" de "subiu e emudeceu".
+  **Falsificado:** removendo o bloco de `FarmerCalls.tsx:450-452`, `1 failed | 5 passed`, exit 1 —
+  onde a versão anterior dava `6 passed`.
+- **A CONTAGEM.** `evento()` passou a delegar a `eventos()`, e todo desfecho exige exatamente UMA
+  emissão (`umaEmissao`). **Falsificado:** com um segundo `useSinalPositivacao(isHunter)` no host,
+  `4 failed | 2 passed`, exit 1 — e o diff mostra por que `toMatchObject` jamais pegaria isto:
+  `['pronta','pronta']`, `['erro','erro']`, `['sem-rede','sem-rede']`. Payload **idêntico**; só a
+  contagem muda.
+
+**A armadilha da contagem:** contar logo depois do `waitFor` que espera o evento é corrida a favor
+do verde — o `waitFor` para na PRIMEIRA emissão, e uma segunda vinda do commit seguinte chegaria
+depois da leitura. Daí `aguardarDesfecho()`: espera sair **e** ASSENTA o React (dois flushes de
+effects) antes de qualquer `toHaveLength`. Um guard de duplicata que não assenta mede o instante
+errado e volta a ser decorativo.
+
+Continuam ABERTOS os achados de PRODUTO da mesma revisão (`is_hunter` fabricado sem gate de
+`isLoading`, dedup que não reseta na troca de sujeito, `sem-rede` com cache lido como `pronta`, e os
+dois dashboards que silenciam o estado que o sensor registra) — este PR é só do guard.
+
 ## O INSERT que nunca saiu do browser — `dashboard_visits` (2026-08-23)
 
 O §3 da seção anterior fechou em "é bug, não ausência de uso" e deixou o bug sem nome. Ele tem nome,
