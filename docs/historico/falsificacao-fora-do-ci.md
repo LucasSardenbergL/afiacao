@@ -24,12 +24,16 @@ Corolário para a próxima varredura: procurar a palavra mede vocabulário, não
 
 ## O custo era fixture, não falsificação
 
-Medido na M2 (limpo, em série):
+Medido na M2, em série. ⚠️ **A medição de parede desta máquina não é reprodutível**: o *mesmo*
+`read --falsificar` deu **484s, 302s e 143s** em três momentos, e o `orfaos` deu **59s, 72s e 27s** —
+variação de ~3× conduzida pela carga (swap alto, ~30 worktrees, outras sessões no semáforo `heavy`),
+não pelo código. Quem comparar "antes" e "depois" por duas execuções em momentos diferentes vai ler
+ruído como ganho. O número honesto do custo no CI é **o do próprio CI**, no primeiro run do job.
 
-| | antes | depois |
-|---|---|---|
-| `test-read-contexto-nudge.sh --falsificar` | 484s | 302s |
-| `test-orfaos-custosos.sh --falsificar` | 59s | 72s |
+O que é sólido porque foi medido **isolado e controlado** é a origem do custo: o laço de fixture,
+cronometrado sozinho, custava **17,7s** contra **80ms** do idioma equivalente — razão de ~200×, com
+saída byte-a-byte idêntica (`cmp -s`). Esse é o achado; a diferença no total de parede é consistente
+com ele, mas não o prova sozinha.
 
 O que segurava o `read` **não era a falsificação** — era um laço de fixture com `>>` por iteração,
 que abria e fechava o arquivo 12.000 vezes: **17,7s medidos isolados**, mais que a suíte inteira. E
