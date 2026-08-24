@@ -44,11 +44,26 @@ if [ "${1:-}" = "--falsificar" ]; then
   falhou=0
   printf '== falsificacao (sabota o hook e EXIGE vermelho) ==\n'
 
+  # Locale UTF-8 por SONDA POSITIVA, não por nome fixo (mesmo padrão de test-claude-md-budget.sh).
+  # `pt_BR.UTF-8` cravado aqui dá 2 locales na M2 e (C, C) no runner ubuntu, onde pt_BR NÃO existe:
+  # o bash cai para C, avisa no stderr, e a metade UTF-8 vira uma 2ª passada em C — metade da
+  # cobertura fingindo ser inteira, que é a falsificação-em-UM-ambiente do #1483. Com a sonda:
+  # pt_BR.UTF-8 na M2, C.UTF-8 no ubuntu — UTF-8 de verdade nos dois.
+  utf8=""
+  for cand in pt_BR.UTF-8 pt_BR.utf8 en_US.UTF-8 en_US.utf8 C.UTF-8 C.utf8; do
+    if [ "$(LC_ALL="$cand" locale charmap 2>/dev/null)" = "UTF-8" ]; then utf8="$cand"; break; fi
+  done
+  if [ -z "$utf8" ]; then
+    printf '  \033[31mFALHA\033[0m nenhum locale UTF-8 (pt_BR/en_US/C) — a metade UTF-8 nao rodaria.\n'
+    printf '  Rodar so LC_ALL=C e chamar de verde e a falsificacao em UM ambiente do #1483.\n'
+    exit 1
+  fi
+
   # sabota <descricao> <regra-que-deve-quebrar> <expressao-sed>
   # O delimitador do sed é `%` porque os padrões contêm `|` (o `||` do shell) —
   # reusar `|` como delimitador produziria um sed INVÁLIDO, que escreveria uma
   # cópia vazia. Cópia vazia também fica vermelha, e a falsificação passaria
-  # parecendo boa sem ter sabotado regra nenhuma. Daí as 3 travas abaixo.
+  # parecendo boa sem ter sabotado regra nenhuma. Daí as 4 travas abaixo.
   sabota() {
     local desc="$1" regra="$2" expr="$3" copia="$tmp/sabotado.sh" erro
     erro="$(sed "$expr" "$HOOK" 2>&1 >"$copia")"
@@ -61,7 +76,27 @@ if [ "${1:-}" = "--falsificar" ]; then
     if ! bash -n "$copia" 2>/dev/null; then
       printf '  \033[31mFALHA\033[0m "%s": quebrou a SINTAXE — vermelho pelo motivo errado\n' "$desc"; falhou=1; return
     fi
-    for loc in C pt_BR.UTF-8; do
+    # (4) o miolo do hook é um programa jq dentro de STRING — `bash -n` não entra nele, então um
+    #     jq inválido passa pelas 3 travas acima. Aqui o sintoma NÃO é ruído: o alvo silencia o
+    #     stderr do jq (`… | jq -r '…' 2>/dev/null`), então o jq quebrado devolve campo vazio, o
+    #     `[ "$tool" = "Read" ]` falha e o hook vira NO-OP CEGO — que cala TODA asserção de fala e
+    #     é indistinguível, por comportamento, da sabotagem legítima "sempre silencia". Por isso a
+    #     trava é ESTRUTURAL: destampa o stderr numa 2ª cópia e deixa o jq falar.
+    #     (O irmão test-orfaos-custosos.sh usa a mesma ideia sem destampar, porque o awk dele
+    #     escapa para o stderr sozinho — a trava de lá não transfere literalmente.)
+    #     Marcadores ASCII, sem `-i`, via `command grep` (o grep do shell é shim p/ ugrep). O
+    #     `awk` fica na alternância de propósito: se o hook ganhar um, a trava já o cobre.
+    #     `stat` NÃO entra: o alvo usa `stat -c` (GNU) e o macOS cospe "illegal option" em toda
+    #     execução — casá-lo reprovaria as 6 sabotagens legítimas na máquina do founder.
+    sed 's%2>/dev/null%%g' "$copia" > "$copia.fumaca"
+    fumaca="$(jq -nc --arg f "$HOOK" \
+                '{hook_event_name:"PreToolUse", tool_name:"Read", session_id:"fumaca",
+                  tool_input:{file_path:$f}}' | bash "$copia.fumaca" 2>&1 >/dev/null)"
+    if printf '%s' "$fumaca" | command grep -qE 'jq:|awk|AWK|compile error'; then
+      printf '  \033[31mFALHA\033[0m "%s": quebrou o programa jq (%s) — vermelho pelo motivo errado\n' \
+        "$desc" "${fumaca:0:60}"; falhou=1; return
+    fi
+    for loc in C "$utf8"; do
       if LC_ALL="$loc" HOOK_SOB_TESTE="$copia" bash "$0" >/dev/null 2>&1; then
         printf '  \033[31mFALHA\033[0m [%s] "%s" passou VERDE — a suite nao cobre: %s\n' "$loc" "$desc" "$regra"
         falhou=1
@@ -99,8 +134,9 @@ fi
 # dói de verdade (docs/historico/bugs-resolvidos.md: 376 linhas, 486KB) — poucas
 # linhas MUITO longas, que estouram mesmo dentro do teto de 2000 linhas do Read.
 linha="$(printf 'x%.0s' $(seq 1 1000))"
-grande="$tmp/grande.md";  : > "$grande"
-for _ in $(seq 1 400); do printf '%s\n' "$linha" >> "$grande"; done
+# O redirect fica FORA do laço: com `>>` por iteração o arquivo era aberto e fechado 400 vezes.
+grande="$tmp/grande.md"
+for _ in $(seq 1 400); do printf '%s\n' "$linha"; done > "$grande"
 pequeno="$tmp/pequeno.ts"; printf 'export const a = 1;\n%.0s' $(seq 1 50) > "$pequeno"
 imagem="$tmp/diagrama.png"; printf 'PNG%s' "$linha" > "$imagem"
 
@@ -182,8 +218,10 @@ else bad "leitura de 13k deveria desaconselhar subagente (veio: '${peq_out:0:80}
 
 # 7. o teto de 2000 linhas do Read entra na conta: arquivo de linhas CURTAS cujo
 #    total passa de 10k tok, mas cujas 2000 primeiras linhas não → silêncio.
-curto="$tmp/muitas-linhas-curtas.ts"; : > "$curto"
-for _ in $(seq 1 12000); do printf 'const x = 1;\n' >> "$curto"; done
+# Mesmo idioma do `$pequeno` lá em cima (`printf 'FMT%.0s' $(seq …)`): um único printf, um
+# único open. O laço com `>>` abria o arquivo 12.000 vezes e custava ~26s SOZINHO — mais que
+# toda a suíte —, e a falsificação re-executa a suíte inteira por sabotagem x locale.
+curto="$tmp/muitas-linhas-curtas.ts"; printf 'const x = 1;\n%.0s' $(seq 1 12000) > "$curto"
 check "60k linhas curtas (teto de 2000 linhas) → silêncio" silencio "$(run "$curto" s7)"
 
 # --- (b) releitura -----------------------------------------------------------

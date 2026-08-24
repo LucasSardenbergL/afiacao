@@ -114,6 +114,14 @@ if [ "${1:-}" = "--falsificar" ]; then
     if printf '%s' "$fumaca" | grep -qiE 'awk|syntax error'; then
       falha "\"$desc\": quebrou o programa AWK (${fumaca:0:60}) — vermelho pelo motivo errado"; falhou=1; return
     fi
+    # `pt_BR.UTF-8` é literal AQUI de propósito — NÃO troque pela sonda de locale que o irmão
+    # test-read-contexto-nudge.sh usa. Ali o alvo é o hook real e o locale precisa EXISTIR para
+    # mudar o comportamento; aqui quem decide é o stub do `ps` lá em cima, que casa a STRING
+    # (`case "${LC_ALL:-C}" in pt_BR*`) e emite a vírgula decimal sem consultar o sistema. Por
+    # isso a asserção continua valendo no runner ubuntu, onde pt_BR não existe: o bash avisa no
+    # stderr (ruído que PS_RUIDO_STDERR reproduz na M2) e o stub emite "68,4" do mesmo jeito.
+    # Trocar por C.UTF-8 aqui faria o stub cair no ramo `*)`, emitir ponto nos DOIS locales e
+    # esvaziar a asserção — verde por cegueira.
     for loc in C pt_BR.UTF-8; do
       if LC_ALL="$loc" ORFAOS_ALVO="$copia" bash "$0" >/dev/null 2>&1; then
         falha "[$loc] \"$desc\" passou VERDE — a suite nao cobre: $regra"; falhou=1
