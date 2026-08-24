@@ -303,5 +303,19 @@ O SW usa `registerType: 'prompt'` (não `autoUpdate`): a versão nova **instala 
 - **`clientsClaim: true` NÃO se remove junto** — parecem par, mas não são. Sem ele, na **1ª instalação** o SW não controla a aba atual até o próximo reload → se a rede cair na mesma sessão, **offline-first não funciona no primeiro acesso**. Ele não causa reload-surpresa (só o `skipWaiting` causava); só faz claim quando o SW ativa (que na atualização só ocorre após o clique).
 - **Registro do SW tem fallback** — `main.tsx` faz `import('./lib/pwa-update')` guardado por `__PWA_ENABLED__` (build const = `production && !preview`; DCE remove em dev/preview, onde `virtual:pwa-register` nem existe). No `.catch`, cai pra `navigator.serviceWorker.register('/sw.js')`: offline-first não pode depender de um import lazy resolver.
 - **A verificação de deploy NÃO é cegada pelo prompt mode** — `verify-frontend.sh` usa `curl` direto no host (sem service worker), então mede os **bytes do servidor**, não um cliente com SW velho. O cron não é um browser.
+  ⚠️ **Mas ela mede DISPONIBILIDADE, nunca ADOÇÃO — e no modelo `prompt` os dois divergem por tempo
+  indefinido.** A frase acima é verdadeira para o que o script mede e foi lida como garantia do que
+  ele NÃO mede: em 2026-08-24 os PRs #1934/#1945/#1949 estavam todos servidos (`verify-bundle-multi`
+  exit 0, 334/334 chunks, com controle positivo e negativo) enquanto o browser do founder executava
+  um entry anterior, servido do precache pelo SW — o app inclusive exibia "Nova versão disponível".
+  Resultado: uma visita ao dashboard gerada de propósito para testar o fix **testou o código de antes
+  do fix**, e a tabela vazia quase virou "o fix não pegou". Não é caso de borda: com `skipWaiting`
+  removido de propósito, **esperar é o comportamento correto**, e o cliente fica no build velho até
+  clicar. Assets antigos continuam servidos com **200** (imutáveis por hash), então o SW consegue
+  sustentar o build velho indefinidamente.
+  **A regra:** *"está no ar"* e *"está rodando"* são estados diferentes, e o segundo é **por
+  cliente**. Bytes no servidor não fecham nenhuma verificação cujo sujeito seja o usuário — para
+  essa, o oráculo tem de ser um efeito que só o código novo produz (uma linha que só ele grava, um
+  evento que só ele emite), e o cliente precisa aceitar o update antes do teste.
 - **Prova de build** (não confiar na config): `dist/sw.js` deve ter `skipWaiting` **só dentro do listener de `message`** (não no `install`) + `clientsClaim` presente. `dist/index.html` **sem** auto-register (por `injectRegister: false`).
 - **Transição única no 1º Publish com prompt mode:** clientes com o SW antigo (autoUpdate) auto-recarregam **uma última vez** ao pegar este build; daí em diante toda atualização vira o toast. Inerente, não dá pra evitar.

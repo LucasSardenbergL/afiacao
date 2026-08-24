@@ -180,6 +180,15 @@ SELECT count(*) FROM dashboard_visits WHERE visited_at > '<deploy do sensor>';
 | `gravou` > linhas, **com** `dashboard.visita_erro` | o banco recusou — ver a RLS de INSERT |
 | `gravou` > linhas, **sem** `dashboard.visita_erro` | requisição perdida na rede (o `keepalive` do `pagehide` não é garantido) — antes deste sensor, indistinguível de tudo o mais |
 | `gravou` = 0 e o resto > 0 | o dashboard é aberto, mas nenhuma sessão qualifica: leia o `motivo` |
+| **evento ausente por completo** | **terceiro estado: a ingestão pode ter RECUSADO** — ver abaixo |
+
+⚠️ **Série vazia tem um terceiro estado que só a TABELA distingue.** "Não emitiu" e "emitiu e a
+ingestão recusou" são o mesmo silêncio no PostHog. Em 2026-08-24 o POST para `us.i.posthog.com/i/v0/e/`
+voltou **503** com três retries, e nenhum evento entrou — nem `$pageview`. Um `GET` no mesmo host
+devolve `400` (host vivo), então **sondar o host não desmente o 503 do POST autenticado**. A tabela
+`dashboard_visits` é o lado **imune**: o INSERT vai direto ao Supabase e não passa pelo PostHog. Daí a
+assimetria útil — **linha sem evento** é telemetria caída com o app são; **evento sem linha** é o app
+falhando com a telemetria sã. Quando os dois zeram, comece pela tabela: ela tem menos partes móveis.
 
 ⚠️ **`sessao_curta` domina por desenho, não por defeito.** O guard de 5 min (`MIN_SESSION_MS`) existe
 para um F5 não anular os deltas — uma proporção alta dele é o guard funcionando. Ele só vira sintoma
