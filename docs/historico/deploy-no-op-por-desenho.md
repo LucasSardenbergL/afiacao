@@ -140,7 +140,7 @@ do bot do Lovable.
 4. **Ao instrumentar, meça o custo do bundle VELHO ignorando o parâmetro.** É ele que decide se
    sondar às cegas é inócuo (`400` da `omie-analytics-sync`) ou caro (a projeção de 13 semanas).
 
-## 7ª leva (mesmo dia) — as 7 INVERIFICÁVEIS e as 3 presas no marcador antigo
+## 8ª leva (mesmo dia) — as 7 INVERIFICÁVEIS e as 3 presas no marcador antigo
 
 O #1905 fechou 3 edges. Sobrava o resto do conjunto: das **19** que servem o
 `_shared/paginate.ts`, 8 já carregavam #1889 + #1901 em produção, mas **7 não tinham sensor
