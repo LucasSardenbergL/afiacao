@@ -568,16 +568,33 @@ describe('useTrackDashboardViewed', () => {
     expect(props.time_since_last_visit_resolvido).toBe(true);
   });
 
-  it('dispara UMA vez so — re-render depois de resolver nao pode duplicar o evento', async () => {
-    mockedUseAuth.mockReturnValue({ user: { id: 'user-43' } } as ReturnType<typeof useAuth>);
-    mockedFrom.mockReturnValue(criarLeituraVisita(new Date(Date.now() - 10 * 60_000).toISOString()));
+  it('timeout ja disparou e a leitura resolve DEPOIS — o evento nao pode sair duas vezes', async () => {
+    vi.useFakeTimers();
+    try {
+      mockedUseAuth.mockReturnValue({ user: { id: 'user-43' } } as ReturnType<typeof useAuth>);
+      let resolverLeitura: (v: { data: { visited_at: string } }) => void = () => {};
+      const maybeSingle = vi.fn(
+        () => new Promise<{ data: { visited_at: string } }>((r) => { resolverLeitura = r; }),
+      );
+      mockedFrom.mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue({
+            order: vi.fn().mockReturnValue({ range: vi.fn().mockReturnValue({ maybeSingle }) }),
+          }),
+        }),
+      } as unknown as ReturnType<typeof supabase.from>);
 
-    const { rerender } = renderHook(() => useTrackDashboardViewed(contexto), { wrapper });
-    await waitFor(() => expect(mockedTrack).toHaveBeenCalledTimes(1));
-    rerender();
-    rerender();
+      renderHook(() => useTrackDashboardViewed(contexto), { wrapper });
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(mockedTrack).toHaveBeenCalledTimes(1);
 
-    expect(mockedTrack).toHaveBeenCalledTimes(1);
+      resolverLeitura({ data: { visited_at: new Date(Date.now() - 10 * 60_000).toISOString() } });
+      await vi.advanceTimersByTimeAsync(500);
+
+      expect(mockedTrack).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('leitura travada: o timeout de seguranca dispara mesmo assim (evento nunca pode sumir)', async () => {
