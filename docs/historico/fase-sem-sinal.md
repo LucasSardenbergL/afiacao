@@ -1356,3 +1356,66 @@ autenticar o fetch; o `unmount` ainda pode gravar pelo client).
 que o sensor tornou visível* — e a correção mudou o instrumento. Sensor e correção competem pelo
 mesmo denominador. Ao fechar um furo que o sensor media por ausência, **reescreva a query junto com
 o código**, no mesmo PR: a query mora no doc, mas ela é parte da mudança, não comentário sobre ela.
+
+## ✅ FECHADO — `dashboard_visits` tem `id = 1` (2026-08-24 12:29:32Z)
+
+A tabela vazia há três meses recebeu a primeira linha. O `#1934` está **provado em produção**:
+
+```
+ id |         visited_at         |  persona  | company_selection | session_minutes
+----+----------------------------+-----------+-------------------+-----------------
+  1 | 2026-08-24 12:29:32.543+00 | comprador | all               |               7
+```
+
+Vigília no `psql-ro` a cada 40s: `12:29:16Z linhas=0` · `12:29:58Z linhas=1`. As duas colunas que
+existiam desde 2026-05-17 e nunca tinham sido escritas (`persona`, `company_selection`) vieram
+preenchidas.
+
+**A linha se corrobora sozinha, e é o que a torna evidência e não relato.** A sessão que conduziu o
+teste informou o mount às **12:22:28Z**, *antes de a linha existir*. `12:29:32.543 − 12:22:28 =
+7min 04s`, `Math.floor` → **7**, que é exatamente o `session_minutes` gravado. Nenhuma linha espúria
+bateria com um horário fornecido antes do fato — a checagem não depende de confiar em quem reportou.
+
+Do lado do browser (interceptor de `fetch`, sessão `interesting-driscoll-dfb6e1`): POST com
+`keepalive: false`, corpo com os 5 campos, resposta **201** em 416ms.
+
+⚠️ **`keepalive: false` ⇒ o que se provou foi o caminho do UNMOUNT.** Dizer "o #1949 está provado"
+seria forte demais: o `emitirComKeepalive` do `pagehide` **continua sem exercício real**. Provado
+está o INSERT chegando ao banco pela saída de navegação SPA — o caminho clássico. É a mesma
+disciplina do resto deste arquivo: um sinal genérico não prova a asserção específica.
+
+### A sequência causal: os três PRs estavam certos o tempo todo
+
+| # | corrigiu | era o que travava? |
+|---|---|---|
+| #1934 | o thenable preguiçoso sem `.then()` | real, mas não era o último bug |
+| #1945 | o cleanup com 3 saídas mudas (sensor) | real, e também não travava |
+| #1949 | a visita perdida ao fechar a aba | real, e também não travava |
+| — | **o aceite do SW pelo cliente** | **era isto** |
+
+O browser executava `index-DghZxghH.js` enquanto o servidor entregava `index-DnOk4g4H.js`. Nenhum
+dos três fixes estava rodando no cliente. **O que faltava não era código: era a quarta camada de
+deploy** — `registerType: 'prompt'` com `skipWaiting` removido de propósito faz o build novo instalar
+e **esperar o clique**, por tempo indefinido, por cliente. Detalhe e a regra geral em
+[`deploy.md`](../agent/deploy.md); o ponto para este arquivo é outro:
+
+> **Uma verificação por bytes prova DISPONIBILIDADE. A pergunta "o fix está agindo?" é sobre ADOÇÃO,
+> e adoção não se lê no servidor.** Foi por isso que três `exit 0` seguidos e um Publish confirmado
+> conviveram, sem contradição aparente, com uma tabela vazia.
+
+O teste só produziu dado depois de forçar o aceite: `offline_queue_v1` verificada vazia (vive no
+`localStorage`, que `caches.delete` não toca) → `unregister()` + `caches.delete('workbox-precache-v2-…')`
+→ reload → bundle trocou → sessão de 7 min → saída por navegação SPA → **201**. Ambiente restaurado
+depois (SW reinstalado e `activated`, 8 caches, fila ainda vazia).
+
+### E o desfecho previsto do par tabela × evento aconteceu: **linha SEM evento**
+
+Nenhum `dashboard.visita_tentativa` chegou ao PostHog — a ingestão estava devolvendo **503**. O par
+se comportou como projetado: a tabela é o lado **imune** (INSERT direto no Supabase), o evento é o
+lado frágil. Tivéssemos confiado só no PostHog, o veredito de hoje seria "continua quebrado".
+
+⚠️ **E uma armadilha nova, que quase entrou neste registro como número:** a query de breakdown por
+`properties.motivo` voltou **504** (`"Query has hit the max execution time"`) da API de consulta —
+que é **ausência de dado**, não zero. Um `count()` simples respondeu: `[[0]]`, exit 0. **503 na
+ingestão e 504 na consulta chegam pelo mesmo cano e só um dos três resultados é medição.** Antes de
+ler um zero do PostHog como ausência de uso, prove que a query terminou.
