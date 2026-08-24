@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 484
+-- Total de custom migrations: 485
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -525,7 +525,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260821192817', 'omie_identidade_a2_client_to_user', '20260821192817_omie_identidade_a2_client_to_user.sql'),
   ('20260821194411', 'farmer_recomendacao_desfecho', '20260821194411_farmer_recomendacao_desfecho.sql'),
   ('20260821200000', 'farmer_assoc_rules_segmento', '20260821200000_farmer_assoc_rules_segmento.sql'),
-  ('20260822000358', 'recommend_cluster_agregado', '20260822000358_recommend_cluster_agregado.sql')
+  ('20260822000358', 'recommend_cluster_agregado', '20260822000358_recommend_cluster_agregado.sql'),
+  ('20260824091755', 'data_health_carteira_identidade_quarentena', '20260824091755_data_health_carteira_identidade_quarentena.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2187,7 +2188,10 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('farmer_recomendacao_desfecho', 'trigger', 'public', 'trg_frec_desfecho_imutavel', 'farmer_recommendations'),
   ('farmer_assoc_rules_segmento', 'function', 'public', 'omie_products_codigos_multi_conta', ''),
   ('farmer_assoc_rules_segmento', 'function', 'public', 'farmer_association_rules_substituir', ''),
-  ('recommend_cluster_agregado', 'function', 'public', 'recommend_cluster_agregado', '')
+  ('recommend_cluster_agregado', 'function', 'public', 'recommend_cluster_agregado', ''),
+  ('data_health_carteira_identidade_quarentena', 'function', 'public', '_data_health_compute', ''),
+  ('data_health_carteira_identidade_quarentena', 'function', 'public', 'data_health_watchdog', ''),
+  ('data_health_carteira_identidade_quarentena', 'function', 'public', 'fin_sync_heartbeat', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -3897,7 +3901,10 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('farmer_recomendacao_desfecho', 'trigger', 'public', 'trg_frec_desfecho_imutavel', 'farmer_recommendations'),
   ('farmer_assoc_rules_segmento', 'function', 'public', 'omie_products_codigos_multi_conta', ''),
   ('farmer_assoc_rules_segmento', 'function', 'public', 'farmer_association_rules_substituir', ''),
-  ('recommend_cluster_agregado', 'function', 'public', 'recommend_cluster_agregado', '')
+  ('recommend_cluster_agregado', 'function', 'public', 'recommend_cluster_agregado', ''),
+  ('data_health_carteira_identidade_quarentena', 'function', 'public', '_data_health_compute', ''),
+  ('data_health_carteira_identidade_quarentena', 'function', 'public', 'data_health_watchdog', ''),
+  ('data_health_carteira_identidade_quarentena', 'function', 'public', 'fin_sync_heartbeat', '')
 )
 SELECT
   e.migration,
