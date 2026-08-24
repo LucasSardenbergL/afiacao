@@ -1,5 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import {
   type BancoPostgrest,
   montarRelatorios,
@@ -233,6 +234,25 @@ Deno.serve(async (req) => {
   const auth = await authorizeCronOrStaff(req);
   if (!auth.ok) return auth.response;
 
+  // Sonda de versão — ANTES do createClient, para continuar sendo o único caminho sem custo.
+  // Ver versao.ts / _shared/sonda-versao.ts. O gate acima já aceita `x-cron-secret`, que é como o
+  // founder invoca do SQL Editor, então a sonda não precisa de gate próprio.
+  // O corpo é lido AQUI e reaproveitado pelo fluxo real abaixo: `req.json()` consome o stream uma
+  // única vez, e reler devolveria "body already consumed" — o que quebraria o cron, não a sonda.
+  const corpoBruto = await req.json().catch(() => ({}));
+  const decisaoSonda = classificarSonda(corpoBruto);
+  if (decisaoSonda.tipo === 'sonda') {
+    return new Response(JSON.stringify(respostaSonda(VERSAO)), {
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+  if (decisaoSonda.tipo === 'ambiguo') {
+    return new Response(
+      JSON.stringify({ error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }),
+      { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+    );
+  }
+
   try {
 
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
@@ -241,7 +261,7 @@ Deno.serve(async (req) => {
 
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    const body = await req.json().catch(() => ({}));
+    const body = corpoBruto;
     const targetUserId = body.user_id;
     const sendEmail = body.send_email !== false;
     const previewOnly = body.preview_only === true;
