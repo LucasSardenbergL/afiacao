@@ -1236,3 +1236,59 @@ depois **navegar para outra rota** antes de fechar), ou instalar o sensor que fa
 próprio cleanup, antes do `if (sessionDuration < MIN_SESSION_MS) return`, que registre a tentativa e
 o motivo da desistência. Enquanto ele não existir, a diferença entre "não gravou" e "não tentou"
 continua invisível — a mesma ausência de dado, um degrau adiante.
+
+### A reavaliação pedida logo em seguida (2026-08-24 10:23Z): o relógio não andou
+
+Pedido de reavaliar o veredito acima, com a query da janela `> 2026-08-24 10:12:00`. As leituras
+vieram idênticas — e a razão é que a medição anterior tinha **13 minutos**. O #1939 mediu
+10:10–10:20Z; a releitura é 10:23Z. Ler `dashboard_visits` de novo **não é dado novo**.
+
+A prova de que nada correu não é a série repetida, é o controle: `max(timestamp)` de *todos* os
+eventos continuava `2026-08-23T11:09:23Z` nas duas medições. Mesmo último evento ⇒ **nenhum evento
+entrou entre elas**. (O total subiu 2.618 → 2.630 só porque o #1939 filtrou 90 d e esta leitura não
+filtrou: 12 eventos mais antigos que a janela, não 12 novos. Contador que muda de recorte não mede
+crescimento.)
+
+**Reavaliação exige um EVENTO, não um pedido.** O gatilho registrado acima — "quando houver ≥1
+`dashboard.viewed` posterior ao Publish" — é uma condição sobre o mundo; reexecutar a query sem ela
+gasta uma sessão para reproduzir o mesmo `null`. Quando o gatilho é temporal, o veredito anterior
+já contém a resposta.
+
+#### Duas armadilhas de medição, ambas capazes de inverter o veredito
+
+1. **A janela estava no FUTURO.** `toDateTime('2026-08-24 10:12:00')` é **UTC**, e às 10:23Z isso
+   cobria 11 minutos. A série vazia era vazia **por construção**. Uma janela em UTC contra um
+   relógio local (`-03`) parece 3 h de dados e é zero — e o zero se disfarça de sintoma.
+2. **O controle herdou a variável sob teste.** Rodar o controle *com a mesma janela* devolveu
+   `0` também, e série-vazia-**com**-controle-vazio é a assinatura de "sensor não chegando"
+   (`analytics.md` §4) — o diagnóstico oposto. Só o controle **sem** filtro de tempo (2.630 eventos,
+   ingestão viva) mostrou que o zero era dado real.
+
+> **Um controle positivo só controla o que ele NÃO compartilha com a série sob teste.** Se ele herda
+> a janela, o filtro ou a fonte, ele morre junto e confirma qualquer coisa. Ao montar o par
+> série/controle, a pergunta é: *que variável eu quero descartar?* — e é exatamente essa que o
+> controle não pode conter.
+
+#### O que foi feito em vez de remedir: o sensor que separa "não gravou" de "não tentou"
+
+Escolhida a segunda opção que a seção anterior oferecia. `dashboard.visita_tentativa` passa a sair no
+**topo do cleanup**, antes de qualquer `return`, com `motivo` ∈ {`sessao_curta`, `sem_usuario`,
+`gravou`} — os dois primeiros eram os `return` mudos das linhas 81 e 90, o tell sintático que este
+arquivo manda procurar (*um `return` que serve mais de um estado*). A quarta saída — aba fechada,
+onde o cleanup **nem roda** — continua fora do alcance do hook, mas deixa de ser invisível: como
+`dashboard.viewed` sai no **mount** do mesmo `DashboardShell` e `visita_tentativa` no **unmount**, ela
+é a diferença entre os dois contadores.
+
+```
+aberturas que qualificam   = count(dashboard.visita_tentativa WHERE motivo='gravou')
+saídas por fechar aba / F5 = count(dashboard.viewed) - count(dashboard.visita_tentativa)
+```
+
+Com isso a próxima medição do #1934 é conclusiva **sem** depender de sessão manual: `motivo='gravou'`
+com 0 linhas em `dashboard_visits` é falha real do INSERT (investigar RLS); `motivo='sessao_curta'`
+dominante diz que ninguém fica 5 min; e nenhum `visita_tentativa` com `viewed > 0` diz que todos
+fecham a aba — e aí a correção é `pagehide`, não RLS. Os três eram o mesmo zero até aqui.
+
+**O sensor é a fase N+1 legítima**: não mede adoção de produto, mede a *própria verificabilidade* de
+uma correção que já está no ar. Instalá-lo não precisa de denominador — precisa dele quem for
+concluir alguma coisa a partir dele.
