@@ -64,6 +64,60 @@ Deno.test("INVARIANTE DO CACHE: o bloco estável é idêntico com dados totalmen
   }
 });
 
+// O `montarSystemBlocks` declara `searchCustomer: boolean`, mas o call-site do
+// `index.ts` recebe esse campo do CORPO da requisição, onde ele é a STRING do termo
+// de busca do cliente. O prompt sempre consumiu o parâmetro por truthiness
+// (`searchCustomer ? A : B` e `!searchCustomer`), então em runtime a string sempre
+// funcionou — o que mentia era o TIPO, invisível enquanto o corpo for `any`.
+//
+// O conserto é `!!searchCustomer` no call-site, e o que ele NÃO pode fazer é mudar
+// um byte do prefixo cacheado do #1622. Este teste pina as duas metades:
+//   (a) a normalização é inerte — string crua e boolean geram bytes idênticos;
+//   (b) se alguém trocar um ternário por `searchCustomer === true` dentro do prompt,
+//       a string crua passa a cair no ramo ERRADO e isto fica vermelho aqui, em vez
+//       de virar prefixo variável pagando 1,25× de escrita em TODO request sem nunca
+//       ler — que é exatamente a assinatura do #1608.
+Deno.test("coerção do call-site: a STRING do termo de busca gera os MESMOS bytes que o boolean", () => {
+  // Os valores REAIS que o corpo da requisição entrega neste campo.
+  const truthyReais = ["serra fita", "colacor", "0", "false"];
+  const falsyReais = ["", undefined, null];
+
+  for (const cru of truthyReais) {
+    const comCru = montarSystemBlocks(cru as unknown as boolean, DADOS_A);
+    const comBool = montarSystemBlocks(!!cru, DADOS_A);
+    assertEquals(
+      comCru,
+      comBool,
+      `searchCustomer=${JSON.stringify(cru)} (truthy) deixou de bater com \`true\` — ` +
+        "o `!!` do call-site parou de ser inerte e o prefixo cacheado MUDOU",
+    );
+    assertEquals(
+      comCru[0].text === montarBlocoEstavel(true),
+      true,
+      `o bloco ESTÁVEL com searchCustomer=${JSON.stringify(cru)} divergiu de montarBlocoEstavel(true)`,
+    );
+  }
+
+  for (const cru of falsyReais) {
+    const comCru = montarSystemBlocks(cru as unknown as boolean, DADOS_A);
+    assertEquals(
+      comCru,
+      montarSystemBlocks(false, DADOS_A),
+      `searchCustomer=${JSON.stringify(cru)} (falsy) deixou de bater com \`false\` — ` +
+        "a variante SEM cliente mudou de bytes",
+    );
+  }
+
+  // As duas variantes continuam DIFERENTES entre si: sem isto o teste acima passaria
+  // trivialmente caso o parâmetro deixasse de ter qualquer efeito sobre o prompt.
+  assertEquals(
+    montarBlocoEstavel(true) === montarBlocoEstavel(false),
+    false,
+    "as variantes com e sem cliente ficaram idênticas — o parâmetro perdeu o efeito " +
+      "e a igualdade provada acima virou tautologia",
+  );
+});
+
 Deno.test("nenhum dado do request vaza para o bloco estável (sentinelas únicas)", () => {
   const sentinelas: DadosVariaveis = {
     produtosLista: "SENTINELA_PRODUTO_7Q2",

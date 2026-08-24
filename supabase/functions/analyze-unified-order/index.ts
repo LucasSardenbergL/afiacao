@@ -194,10 +194,19 @@ Deno.serve(async (req) => {
   // ele sempre foi.
   //
   // SEM anotação de tipo de propósito: `req.json()` devolve `any`, e é essa inferência que o
-  // destructuring do fluxo real herda. Anotar (`unknown` + cast) somaria 2 erros ao baseline do
-  // `edges:typecheck` sem consertar nada — são defeitos PRÉ-EXISTENTES, o principal sendo
-  // `montarSystemBlocks` declarando `searchCustomer: boolean` e recebendo a STRING do termo de
-  // busca (funciona por truthiness; corrigir mexe no prompt CACHEADO do #1622, que é money-path).
+  // destructuring do fluxo real herda. Anotar soma erros ao baseline do `edges:typecheck` sem
+  // consertar nada: `Record<string, unknown>` leva ESTE arquivo de 15 para 24 erros (medido), porque
+  // cada campo do corpo vira `unknown` e estoura nos consumidores que esperam string/array.
+  //
+  // O defeito que este `any` escondia já foi consertado: `montarSystemBlocks` declara
+  // `searchCustomer: boolean` e recebia a STRING do termo de busca. Hoje o call-site normaliza com
+  // `!!`, e os bytes do prompt cacheado do #1622 estão pinados em `prompt-sistema_test.ts`.
+  // ⚠️ Consertar aquilo NÃO mexeu neste contador — `any` é atribuível a `boolean`, então o erro
+  // nunca esteve entre os 15; ele só aparece SOB anotação. Contador de `deno check` não é o sensor
+  // desta classe de defeito: o sensor é o teste.
+  //
+  // O que RESTA escondido aqui: `conteudoUsuario.push({ type: "text", text })` (linha ~766) com
+  // `text: string | undefined`.
   let corpoBruto;
   try {
     corpoBruto = await req.json();
@@ -707,7 +716,13 @@ Deno.serve(async (req) => {
     // A ordem é INVERTIDA em relação ao #1608 de propósito: as REGRAS vêm
     // primeiro (prefixo cacheável) e os DADOS depois. O porquê, as duas variantes
     // de cache e as referências posicionais reescritas estão em prompt-sistema.ts.
-    const blocosSistema = montarSystemBlocks(searchCustomer, {
+    // `!!` porque `searchCustomer` chega do corpo da requisição como a STRING do
+    // termo de busca, não como boolean — o prompt sempre a consumiu por truthiness
+    // (`searchCustomer ? A : B`), então normalizar aqui é o que o runtime JÁ fazia
+    // e os bytes do prefixo cacheado não mudam (pinado em prompt-sistema_test.ts).
+    // Sem ele o parâmetro declarado `boolean` mente, e a mentira fica invisível
+    // enquanto o corpo for `any`.
+    const blocosSistema = montarSystemBlocks(!!searchCustomer, {
       produtosLista,
       ferramentasLista,
       servicosLista,
