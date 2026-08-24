@@ -40,6 +40,22 @@ bad()  { echo "  FAIL  $1"; fail=1; }
 zerar(){ rm -rf "${LK:?}"/slot-* "${LK:?}"/fila 2>/dev/null; mkdir -p "$LK/fila"; }
 n_slots(){ local s n=0; for s in "$LK"/slot-*; do [ -d "$s" ] && n=$((n+1)); done; echo "$n"; }
 
+# Espera CONDIÇÃO, não duração. Sincronizar por `sleep` fixo era a causa do flaky medido em
+# 2026-08-23 (13 execuções, ~15% vermelho, SEMPRE em "--status explica a sobrecarga"): sob a carga
+# real desta máquina (load 30-79, ~36 sessões) os 2 segundos nem sempre bastavam para o 2º ocupante
+# registrar o slot, e a asserção media um mundo MEIO-MONTADO — o teste acusava o `--status` de um
+# defeito que era do próprio setup. Fail-CLOSED: se a condição não chega, isso é reportado como
+# falha de SETUP, nunca engolido (esperar e seguir em frente seria trocar um vermelho confuso por
+# um verde mentiroso).
+esperar_slots(){ # $1=quantos slots  $2=timeout em segundos (default 15)
+  local alvo="$1" lim="${2:-15}" i=0
+  while [ "$(n_slots)" -lt "$alvo" ]; do
+    i=$((i+1)); [ "$i" -gt $((lim * 10)) ] && return 1
+    sleep 0.1
+  done
+  return 0
+}
+
 echo "test-heavy.sh — alvo: $HEAVY"
 echo "lockdir isolado: $LK"
 
@@ -67,9 +83,9 @@ wait "$w" 2>/dev/null
 # ─────────────────────────────────── 2. --status nunca reporta vaga negativa
 zerar
 AFIACAO_MAX_HEAVY=2 "$HEAVY" sleep "30$TAG" >/dev/null 2>&1 & a=$!
-sleep 1
+esperar_slots 1 || bad "setup: o 1º ocupante não registrou slot (não é defeito do --status)"
 AFIACAO_MAX_HEAVY=2 "$HEAVY" sleep "30$TAG" >/dev/null 2>&1 & b=$!
-sleep 2
+esperar_slots 2 || bad "setup: o 2º ocupante não registrou slot (não é defeito do --status)"
 st=$(AFIACAO_MAX_HEAVY=1 "$HEAVY" --status 2>/dev/null | grep "em uso")
 case "$st" in
   *-[0-9]*livre*) bad "--status negativo com o total encolhido: $st" ;;
