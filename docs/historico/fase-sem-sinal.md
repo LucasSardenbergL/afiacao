@@ -1193,3 +1193,46 @@ Promise real é só "não estou aguardando".
 O dublê tem que só registrar a chamada quando alguém **puxa** a promise — senão o teste fica verde
 exatamente no bug que deveria pegar. Falsificado nos três eixos: restaurar o `void`, devolver o
 `range(1,1)` e reintroduzir a escrita duplicada deixam o arquivo vermelho.
+
+### O desfecho: medido em 2026-08-24, veredito é "ainda sem denominador"
+
+Publish confirmado por bytes (a sentinela literal `dashboard.visita_erro` no chunk
+`StaffDashboard-*.js` do entry servido, `verify-frontend.sh` **exit 0**, 2026-08-24 10:12Z). O
+código do fix **está no ar**. O efeito, não:
+
+| sinal | valor | fonte |
+|---|---|---|
+| numerador — `count(*)` de `dashboard_visits` | **0** (nunca teve linha) | `psql-ro` |
+| denominador — `dashboard.viewed` desde o Publish | **0** | PostHog |
+| último `dashboard.viewed` de todos | **2026-08-14 22:00Z** (10 dias antes) | PostHog |
+| controle sem filtro de evento (90d) | **2.618 eventos**, último em 2026-08-23 11:09Z | PostHog |
+| `dashboard.visita_erro` | **0** | PostHog |
+
+O controle é o que dá dente: com 2.618 eventos em 90 dias a ingestão está viva, então a série vazia
+de `dashboard.viewed` é **dado real** — ninguém abriu o dashboard — e não sensor sem chegar. A
+cadência histórica é de 1–4 aberturas por semana, 1 pessoa; as semanas de 16/08 e 23/08 têm **zero**.
+
+**Nem confirma nem reprova.** 0 linhas com denominador 0 é a ausência de dado que este arquivo
+inteiro existe para não deixar virar veredito. `auth.sessions` mostrava o master com sessão tocada
+às 09:57Z do mesmo dia — e ainda assim zero evento: `updated_at` avança no **refresh de token**, que
+é presença de token, não de uso. Reavaliar quando houver ≥1 `dashboard.viewed` posterior ao Publish.
+
+### ⚠️ E o denominador certo é mais estreito do que "abriu o dashboard"
+
+Lendo o writer para desenhar a reavaliação, aparece uma condição que a tabela vazia escondia: o
+INSERT mora no **cleanup do `useEffect`**, e só dispara se a sessão durou ≥5 min (`MIN_SESSION_MS`).
+Não há `beforeunload` nem `pagehide` em `useLastVisit.ts` — e **cleanup de `useEffect` não roda
+quando a aba fecha ou leva F5**. Logo:
+
+> só vira linha quem ficou ≥5 min no dashboard **e saiu por navegação SPA** (ou logout). Fechar a
+> aba — a saída mais comum — não grava, e **não emite `dashboard.visita_erro`**, porque não chegou a
+> tentar.
+
+Isso muda a leitura da próxima medição: `dashboard.viewed > 0` **com** 0 linhas **não** prova que o
+fix não pegou; é indistinguível de "abriu e fechou a aba". Para separar as duas, o denominador tem
+de ser *aberturas que qualificam*, e hoje **nenhum sensor mede isso**. Quem for reavaliar escolhe:
+tratar `viewed` como limite superior e exigir uma sessão manual controlada (≥5 min no dashboard,
+depois **navegar para outra rota** antes de fechar), ou instalar o sensor que falta — um `track()` no
+próprio cleanup, antes do `if (sessionDuration < MIN_SESSION_MS) return`, que registre a tentativa e
+o motivo da desistência. Enquanto ele não existir, a diferença entre "não gravou" e "não tentou"
+continua invisível — a mesma ausência de dado, um degrau adiante.
