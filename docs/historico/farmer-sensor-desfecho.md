@@ -370,10 +370,12 @@ auto-sabotava não produziu classificação errada — 1 tentativa, sem retry, c
 diagnóstico certo. O `EXIT=75` que ele devolveu era **cota REAL**, confirmada por ping
 direto ao CLI, não falso positivo.
 
-> ⚠️ **Cota do Codex esgotada até 20/09/2026 22:37** (medido 2026-08-22). A mensagem
-> sugere conta sem Plus ativo ("start a free trial of Plus today"). Enquanto isso, todo
-> trabalho money-path cai no **Caminho B** (validação adversária própria + registrar
-> "REVISÃO INDEPENDENTE PENDENTE") — `docs/agent/money-path.md`.
+> ⚠️ ~~**Cota do Codex esgotada até 20/09/2026 22:37**~~ — **NOTA SUPERADA em 23/08.**
+> As duas afirmações estavam erradas: a conta **não** está sem Plus (é paga), e aquele
+> "limite até 20/09" era a cota do plano **`free`** que um token congelado declarava.
+> `codex logout && codex login` devolveu tudo na hora. Ver a seção "A causa real: o token
+> mentia sobre o plano" acima. Fica registrada porque é o exemplo dentro deste próprio
+> documento de uma nota que envelheceu ERRADA e continuou parecendo evidência datada.
 
 O default do modelo virou **medição datada dentro do próprio script** (o ping dos 5 nomes,
 com a data e a versão do codex-cli), não uma escolha: disponibilidade muda por tier, e o
