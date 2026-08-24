@@ -243,3 +243,94 @@ Lovable, e só então a sonda vira prova. Ler pelo `request_id` em `net._http_re
 `deploy.md`). Marcador esperado: `v1.0-sensor-inicial` nas 7 novas (nenhum bundle anterior
 responde `versao`) e `v1.1-paginacao-eof-e-cursor` nas 3 bumpadas — string que **não existia em
 lugar nenhum** antes desta fatia.
+
+## 9ª leva (mesmo dia) — a que a ENUMERAÇÃO não via, e a que já estava pronta há meses
+
+Depois que a 8ª leva fechou 10 das 12 dependentes do `paginate.ts`, sobraram duas. Elas não são
+uma leva por tamanho, e sim porque falham num ponto **diferente** do que a 8ª tratou: aquelas eram
+edges sem sensor; estas são uma edge fora da **lista** e uma edge com sensor pronto e nunca
+deployado. Chamar as duas de "as que faltavam" esconderia que o motivo de faltarem não é o mesmo.
+
+### `monthly-report` — o problema era a lista, não o sensor
+
+Ela não cita `_shared/paginate.ts` em lugar nenhum: chega ao helper por um salto, via
+`_shared/relatorio-mensal.ts`, que importa `fetchAll`. É o Erro 1 de
+`enumerar-consumidores-de-helper.md` acontecendo em produção — a relação é de **grafo**, o `grep`
+é local. Nenhuma quantidade de rigor na instrumentação teria ajudado, porque ela nunca entrava na
+fila de coisas a instrumentar.
+
+### O custo do bundle VELHO — medido, e desta vez ele não era um número errado
+
+O passo obrigatório (§8ª leva) deu o resultado mais caro da série. Três defaults, cada um razoável
+sozinho, conspiram para armar o envio **por omissão**:
+
+```
+targetUserId = body.user_id               -> undefined => TODA a base (5.276 perfis)
+sendEmail    = body.send_email !== false  -> TRUE      => envio ARMADO por omissão
+previewOnly  = body.preview_only === true -> false     => nada segura
+```
+
+Um `{"probe":true}` contra o bundle pré-sonda não erra um cálculo: dispara o relatório mensal por
+e-mail para a base inteira, fora de época, por `fetch` real na Resend. E-mail entregue não se
+recalcula. Nas outras edges "deploy primeiro, sonda depois" é higiene; aqui é **contenção**.
+
+Detalhe de forma que o padrão não cobria: o fluxo real já lia o corpo, e `req.json()` consome o
+stream **uma vez**. A sonda lê antes (como o gate de posição exige) e o fluxo real reusa a
+variável — reler devolveria `body already consumed` e quebraria o **cron**, não a sonda.
+
+### `omie-vendas-sync` — o sensor existia desde abril; faltava o deploy
+
+Zero linha de código. Ela já tinha canária **versionada** (`identidade-fail-closed-v1`, criada em
+`d8cf07152`) e nunca fora deployada. O que torna isso prova e não torcida é a ancestralidade:
+`git merge-base --is-ancestor b559e8bdd d8cf07152` responde SIM, então um bundle capaz de
+responder aquele contrato **necessariamente** carrega o #1889. Custou uma conferência de grafo de
+commits e substituiu uma instrumentação inteira — vale procurar o sensor que já existe antes de
+escrever o próximo.
+
+### O desfecho (evidência positiva, lida por `request_id`)
+
+| edge | `request_id` | corpo | status |
+|---|---|---|---|
+| `monthly-report` | 59281 | `versao=v1.0-sensor-inicial`, `edge=monthly-report`, `probe=true`, `ok=true` | 200 |
+| `omie-vendas-sync` | 59286 | `contrato=identidade-fail-closed-v1`, `canary=true`, `probe_no_ar=true`, `ok=true` | 200 |
+
+Gates do PR #1946, com exit colado: `test:edges` 0 (**883 passed | 0 failed**, 27 casos do
+contrato) · `edges:typecheck` 0 · `bun lint` 0 (75 problems, **0 errors**) · `vitest` 0 (729
+files | 6973 tests). Falsificação refeita **depois** do rebase — o gate ganhou 7 edges e duas
+listas com o #1937, então a rodada anterior já não falava do código final: controle 27/27, três
+sabotagens em exit 1, cada vermelho **nomeando** `monthly-report`.
+
+### A lição nova: o `request_id` copiado à mão fabricou "verificado"
+
+Dos quatro ids reportados para leitura, **três apontavam para crons**: 59102
+(`{"success":true,"data":{"updated":2477}}`), 59103 (`{"modo":"watchdog",...}` — o tick do #1915
+em pessoa) e 59283 (`{"success":true,"imported":0,"skipped":3}`). As sondas reais eram 59281 e
+59286, achadas buscando o **conteúdo**, não o id.
+
+O erro só foi detectável porque a resposta da sonda carrega `edge`/`versao`/`contrato` no corpo.
+Uma sonda que respondesse só `{"ok":true}` teria sido confundida com um cron — e o deploy, dado
+como provado sem prova. Isto é a irmã do #1915: lá o `ORDER BY id DESC LIMIT 1` pegava o watchdog
+e fabricava veredito **negativo**; aqui o id colado à mão pega o watchdog e fabrica veredito
+**positivo**, que é pior, porque ninguém investiga um verde. O campo de identidade no corpo da
+sonda não é enfeite — é o que separa "li a resposta certa" de "li alguma resposta".
+
+Consequência prática: o bloco canônico de `deploy.md` precisa capturar o id na **mesma** execução
+do `http_post`, em vez de pedir que ele seja copiado entre abas.
+
+### Rodapé — um vermelho que era da máquina, e a primeira explicação estava ERRADA
+
+A rodada inicial do `vitest` acusou 4 falhas. Nenhuma era asserção: `Test timed out in 20000ms`
+nos gates que varrem o repo inteiro. A primeira hipótese foi a óbvia — eu rodara os outros três
+gates **em paralelo** numa M2 de 8GB, com só o `vitest` sob o `heavy`, que protege quem o invoca e
+não sabe do vizinho. Ela estava incompleta: ao repetir tudo **em série**, o `vitest` estourou de
+novo, em outro arquivo (`paginacao-artesanal-gate`), e a mesma suíte que levara 193s levou 537s.
+
+A causa não é a concorrência ENTRE gates: `bun run test` satura a máquina sozinho — 734 arquivos
+com workers paralelos — e qualquer gate que leia o repo inteiro sob um teto de 20s vira flaky por
+CARGA. Rodar em paralelo piora; rodar em série não cura.
+
+O que fica como regra, então, não é "rode em série", e sim: **`timeout` não é `AssertionError`**.
+Diante de um vermelho, ler qual dos dois é vem ANTES de qualquer hipótese sobre o código — os dois
+arquivos acusados levaram 3,9s e 3,1s quando rodados sozinhos, contra o teto de 20s. E vale contra
+o próprio diagnóstico: a primeira explicação daqui sobreviveu a uma rodada e morreu na seguinte,
+porque "rodei em paralelo" explicava o sintoma sem ter sido testada contra o caso em série.

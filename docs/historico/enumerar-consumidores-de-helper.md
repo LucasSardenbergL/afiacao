@@ -89,3 +89,16 @@ lint + test); rodar dois e declarar verde é ausência de dado, não aprovação
 inferido, o tipo que aquele destructuring tinha antes — restaurar o status quo, não inventar
 interface nova. Verificação de que não sobrou resíduo: o lint saiu de `76 problems (1 error, 75
 warnings)` para `75 problems (0 errors, 75 warnings)`.
+
+## Rodapé 2 — o Erro 1 cobrou o preço previsto
+
+O doc previu que o `git grep -l` perde quem chega por um intermediário. A conta veio: das 20 edges
+do fechamento, a **última** a ganhar sensor foi a `monthly-report`, justamente a que chega ao
+`paginate.ts` por um salto (`_shared/relatorio-mensal.ts`). Ela não ficou por último por ser
+difícil — ficou por último porque **nenhuma lista a continha**, e listas erradas não produzem
+sintoma: produzem silêncio.
+
+O agravante é o custo dela. Um `probe` às cegas contra o bundle antigo dessa edge manda o
+relatório mensal por e-mail para os 5.276 perfis (`deploy-no-op-por-desenho.md`, §9ª leva). A
+edge mais perigosa da fatia era, também, a única invisível ao método de enumeração usado — não por
+azar, mas porque as duas propriedades têm a mesma raiz: ninguém tinha olhado para ela.
