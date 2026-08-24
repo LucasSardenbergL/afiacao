@@ -173,6 +173,21 @@ Achado no próprio trabalho, não em laboratório: nesta sessão um `git push �
 exit code e nenhum dado dentro. O push tinha funcionado, mas quem provou isso foi
 `git rev-parse HEAD origin/<branch> | uniq -c` (duas refs, uma linha), não a linha do exit.
 
+**Gate estrutural (contramedida textual reincide).** O hook PreToolUse
+`.claude/hooks/pipestatus-zsh-guard.sh` AVISA quando o comando lê esse exit code — inclusive na
+forma sem cifrão, porque a aritmética do zsh (`(( ))`, `[[ ]]`, `let`) avalia o identificador NU e
+trata ausente como 0. Menção não dispara: aspas simples, heredoc quoted, comentário e `$'...'` saem
+por um scanner de quoting, então `git commit -m` e `grep` pelo nome seguem calados.
+
+Ele nasceu BLOQUEANTE e foi rebaixado a aviso pela revisão adversária (`/codex`, enquadramento
+defensivo de COBERTURA): o Codex mostrou que a aposta "se o zsh expande, é bug; se não expande, é
+legítimo" tem furo nos DOIS sentidos — deixava passar `(( PIPESTATUS[0] == 0 ))` e barrava
+`echo x # ${PIPESTATUS[0]}` (comentário não expande nada), que é o precedente de 2026-06-24 se
+repetindo no guard que jurava tê-lo fechado por construção. **A moral é a 10ª armadilha em
+miniatura: um detector de padrão de shell não herda a semântica do shell.** Um guard com falso
+negativo E falso positivo comprovados não tem a precisão que justifica bloquear — e como aviso o
+falso positivo custa uma linha de contexto, o que permitiu ampliar a detecção em vez de encolhê-la.
+
 ## O padrão por trás das nove
 
 Seis produzem **verde por construção**, não por mérito; a sétima mostra que o mesmo defeito
