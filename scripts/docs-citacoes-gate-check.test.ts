@@ -1,7 +1,13 @@
-import { describe, expect, it } from 'vitest';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { afterAll, describe, expect, it } from 'vitest';
 import {
   auditarCitacoes,
   CONGELADOS,
+  contarCitacoesEm,
+  formatarResumo,
+  lerDocsForaDoEscopo,
   lerDocsVivos,
   parseCitacoes,
   type Citacao,
@@ -12,6 +18,21 @@ const DOC = 'docs/agent/exemplo.md';
 
 /** Leitor injetado: o auditor não toca disco, então o "repo" é este Map. */
 const repo = (arquivos: Record<string, string>) => (p: string) => arquivos[p] ?? null;
+
+/** Repo de mentira em disco: quem anda em diretório de verdade precisa de diretório de verdade. */
+const fixtures: string[] = [];
+const fixture = (arquivos: Record<string, string>) => {
+  const raiz = mkdtempSync(join(tmpdir(), 'citacoes-gate-'));
+  fixtures.push(raiz);
+  for (const [rel, texto] of Object.entries(arquivos)) {
+    mkdirSync(dirname(join(raiz, rel)), { recursive: true });
+    writeFileSync(join(raiz, rel), texto);
+  }
+  return raiz;
+};
+afterAll(() => {
+  for (const f of fixtures) rmSync(f, { recursive: true, force: true });
+});
 
 const cita = (alvo: string, linhas: string[], ancora: string | null): Citacao => ({
   doc: DOC,
@@ -243,5 +264,101 @@ describe('lerDocsVivos — escopo', () => {
     expect(vivos.some((v) => v.startsWith('docs/historico/'))).toBe(false);
     expect(vivos.some((v) => v.startsWith('docs/superpowers/'))).toBe(false);
     expect(vivos.some((v) => v.startsWith('docs/ux-audit/'))).toBe(false);
+  });
+});
+
+describe('parseCitacoes — o que foi PULADO também é relato', () => {
+  // "21 citações verificadas ✓" lê como cobertura TOTAL tanto quando o gate cobriu tudo quanto
+  // quando deixou centenas de fora. Corte deliberado que não aparece no log é indistinguível de
+  // cobertura completa para quem lê o CI — é o "no silent caps" da skill `matar-classe`.
+  it('conta a citação pulada por cerca em vez de sumir com ela', () => {
+    const p = parseCitacoes(DOC, 'antes\n```\n`src/a.ts:12`<!--cita: exemplo-->\n```\ndepois');
+    expect(p.citacoes).toHaveLength(0);
+    expect(p.emCerca).toBe(1);
+  });
+
+  // Calibração inversa: sem ela, um contador que devolve sempre "tem pulo" passaria igual.
+  it('não inventa pulo onde não houve — citação inline conta 0 em cerca', () => {
+    const p = parseCitacoes(DOC, 'veja `src/a.ts:12`<!--cita: const x--> aqui');
+    expect(p.citacoes).toHaveLength(1);
+    expect(p.emCerca).toBe(0);
+  });
+
+  it('a citação engolida por cerca ABERTA também entra na conta de pulos', () => {
+    const p = parseCitacoes(DOC, 'a\n```ts\n`src/a.ts:12`<!--cita: x-->');
+    expect(p.citacoes).toHaveLength(0);
+    expect(p.emCerca).toBe(1);
+  });
+});
+
+describe('fora do escopo — o gate diz o que NÃO olhou', () => {
+  it('lista o doc congelado por diretório, que o varredor de vivos nunca vê', () => {
+    const raiz = fixture({
+      'docs/agent/vivo.md': 'vivo',
+      'docs/historico/datado.md': 'datado',
+      'docs/superpowers/specs/plano.md': 'spec',
+    });
+    const fora = lerDocsForaDoEscopo(raiz);
+    expect(fora).toContain('docs/historico/datado.md');
+    expect(fora).toContain('docs/superpowers/specs/plano.md');
+    expect(fora).not.toContain('docs/agent/vivo.md');
+  });
+
+  // Calibração inversa OBRIGATÓRIA: sem este caso, um contador travado em 0 passaria no de cima
+  // (que só exige "≥ 1 fora") e o relato voltaria a mentir cobertura total.
+  it('reporta ZERO quando o repo não tem doc nenhum fora do escopo', () => {
+    expect(lerDocsForaDoEscopo(fixture({ 'docs/agent/vivo.md': 'só vivo aqui' }))).toEqual([]);
+  });
+
+  // Artefato datado que mora DENTRO de pasta viva sai pelo nome — e sair do escopo é sair do
+  // escopo: ele conta como pulo igual ao congelado por diretório.
+  it('o arquivo nominal de CONGELADOS também conta como fora do escopo', () => {
+    const raiz = fixture({ [CONGELADOS[0]]: 'revisão fechada', 'docs/agent/vivo.md': 'vivo' });
+    expect(lerDocsForaDoEscopo(raiz)).toEqual([CONGELADOS[0]]);
+  });
+
+  // O caso que mordeu em 2026-08-25: um doc que ENSINA sobre gate cego, citando quatro PRs, mora
+  // na zona não varrida. Ninguém verificava as citações dele, e o log não dizia isso.
+  it('o doc real que motivou o relato aparece como fora do escopo', () => {
+    expect(lerDocsForaDoEscopo('.')).toContain('docs/historico/verificar-sonda-versao.md');
+  });
+
+  it('conta as citações que moram nos docs não varridos', () => {
+    const n = contarCitacoesEm(['a.md', 'b.md'], (d) =>
+      d === 'a.md' ? '`src/x.ts:1`<!--cita: z--> e `src/y.ts:2`<!--cita: w-->' : '`src/k.ts:3`',
+    );
+    expect(n).toBe(3);
+  });
+
+  // Segunda calibração inversa, agora do contador de citações.
+  it('conta zero quando o doc fora do escopo não cita nada', () => {
+    expect(contarCitacoesEm(['a.md'], () => 'prosa sem citação nenhuma')).toBe(0);
+  });
+
+  // No congelado ninguém verifica NADA — nem o que está entre crases, nem o que está em cerca.
+  it('no doc não varrido a citação em cerca conta como pulo igual', () => {
+    expect(contarCitacoesEm(['a.md'], () => '```\n`src/x.ts:1`<!--cita: z-->\n```')).toBe(1);
+  });
+
+  it('o resumo nomeia quantos pulos houve e por QUAL motivo', () => {
+    const s = formatarResumo({ achados: [], verificadas: 21, externas: 2 }, {
+      emDocNaoVarrido: 553,
+      emCerca: 6,
+    });
+    expect(s).toContain('21 citação(ões) verificada(s)');
+    expect(s).toContain('2 externa(s)');
+    expect(s).toContain('559 fora do escopo');
+    expect(s).toContain('553 em doc não varrido');
+    expect(s).toContain('6 em cerca');
+    expect(s).not.toContain('\n'); // uma linha só — é log de CI, não relatório
+  });
+
+  // Terceira calibração inversa: o resumo tem de saber dizer "não pulei nada".
+  it('com cobertura total o resumo diz 0 fora do escopo, em vez de omitir a cláusula', () => {
+    const s = formatarResumo({ achados: [], verificadas: 3, externas: 0 }, {
+      emDocNaoVarrido: 0,
+      emCerca: 0,
+    });
+    expect(s).toContain('0 fora do escopo');
   });
 });
