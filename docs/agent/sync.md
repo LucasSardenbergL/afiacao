@@ -43,6 +43,17 @@ ao milissegundo (`60031`/`60032` ambos `12:25:00.317984`), o que é o tell.
 fila, não o tempo da edge. A coluna serve para `status_code`, `timed_out` e cadência — nada além.
 Retenção medida: **~6h** (206 linhas cobrindo `06:50`→`12:45`).
 
+⚠️ **E `timed_out` NÃO é o campo que marca o estouro.** Medido 2026-08-25: a resposta `59887`, cortada
+com `error_msg = "Timeout of 150000 ms reached. Total time: 150004.306000 ms"`, tinha `timed_out` **NULL**
+e `status_code` **NULL**. `count(*) FILTER (WHERE timed_out)` devolveu **0 com um estouro real na tabela** —
+é o `Number(null) === 0` da observabilidade de cron, e aprova por CEGUEIRA exatamente na query que alguém
+roda para perguntar "algum cron está estourando?". **Filtre pelo que se preenche:**
+
+```sql
+SELECT id, created, status_code, error_msg FROM net._http_response
+WHERE error_msg IS NOT NULL OR status_code IS NULL;   -- NUNCA `WHERE timed_out`
+```
+
 ## Padrão de cron (canônico)
 
 - Auth: header `x-cron-secret` = `(SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name='CRON_SECRET' LIMIT 1)`. O secret já está no Vault.
