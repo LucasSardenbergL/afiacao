@@ -113,12 +113,15 @@ BASE="http://127.0.0.1:$PORT"
 
 PASS=0; FAIL=0
 
-# run_case: descr, url, alvo, exit_esperado, [substring_esperada_na_saída]
+# run_case: descr, url, alvo, exit_esperado, [substring_esperada], [substring_PROIBIDA]
+# As substrings são marcas ASCII de caixa fixa (CONTROLE_NEGATIVO_OK, …) de propósito: o grep
+# daqui é shim e dobra acento — casar "✓ controle negativo" seria casar sorte, não a asserção.
 run_case() {
-  local descr="$1" url="$2" alvo="$3" exp="$4" want="${5:-}" out got ok=1
+  local descr="$1" url="$2" alvo="$3" exp="$4" want="${5:-}" nao="${6:-}" out got ok=1
   out=$(bash "$SCRIPT_REL" "$alvo" "$url" 2>&1); got=$?
   [ "$got" = "$exp" ] || ok=0
   if [ -n "$want" ]; then printf '%s' "$out" | grep -q -- "$want" || ok=0; fi
+  if [ -n "$nao" ]; then printf '%s' "$out" | grep -q -- "$nao" && ok=0; fi
   if [ "$ok" = 1 ]; then
     printf '  [ok ] %s (exit %s)\n' "$descr" "$got"; PASS=$((PASS+1))
   else
@@ -159,6 +162,15 @@ if [ "$FALSIFY" = 0 ]; then
            "$BASE/site-broken" "qualquer" 2
 
   echo ""
+  echo "  controle negativo EMBUTIDO (o verde audita a si mesmo — +1 request, exit 2 se cego):"
+  run_case "alvo presente: o controle RODA no chunk que casou e a sonda discrimina" \
+           "$BASE/site" "SENTINELA_DEEP_XYZ" 0 "CONTROLE_NEGATIVO_OK"
+  run_case "alvo presente via precache: idem no ramo do órfão (o controle não depende da fonte)" \
+           "$BASE/site" "ORPHAN_MARKER" 0 "CONTROLE_NEGATIVO_OK"
+  run_case "alvo AUSENTE: o controle NÃO roda — ele audita o falso POSITIVO, e este ramo é o outro" \
+           "$BASE/site" "NAO_EXISTE_NO_BUNDLE_123" 1 "CONTROLE_NEGATIVO_NAO_SE_APLICA" "CONTROLE_NEGATIVO_OK"
+
+  echo ""
   echo "  --pai (prova de exclusividade da sentinela — fail-closed, exit 3):"
   run_case_pai "sentinela NÃO-exclusiva: já existia no pai -> RECUSA (mesmo estando no bundle)" \
                "$REPO" 3 "SENTINELA_NAO_EXCLUSIVA" --pai "$SHA_PAI" "PAGEB_MARKER" "$BASE/site"
@@ -172,6 +184,8 @@ if [ "$FALSIFY" = 0 ]; then
                "$FIX/site" 3 "" --pai "$SHA_PAI" "SENTINELA_DEEP_XYZ" "$BASE/site"
   run_case_pai "--pai com valor vazio -> RECUSA (uso incorreto não degrada para varredura)" \
                "$REPO" 3 "" --pai "" "SENTINELA_DEEP_XYZ" "$BASE/site"
+  run_case_pai "guard --pai E controle negativo no MESMO run (um prova a sentinela, o outro a sonda)" \
+               "$REPO" 0 "CONTROLE_NEGATIVO_OK" --pai "$SHA_PAI" "SENTINELA_DEEP_XYZ" "$BASE/site"
   run_case_pai "sem --pai: varre igual, mas AVISA que a exclusividade não foi provada" \
                "$REPO" 0 "EXCLUSIVIDADE_NAO_PROVADA" "SENTINELA_DEEP_XYZ" "$BASE/site"
   echo ""
