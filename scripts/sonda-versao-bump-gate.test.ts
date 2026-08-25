@@ -3,6 +3,8 @@ import {
   auditarBump,
   contaComoCorpo,
   extrairVersao,
+  main,
+  montarEstado,
   normalizarFonte,
   type EstadoEdge,
 } from './sonda-versao-bump-gate';
@@ -202,5 +204,38 @@ describe('auditarBump — fail-CLOSED: sem marcador legível o gate REPROVA, nã
       }),
     ]);
     expect(achados[0].motivo).toBe('sem-bump');
+  });
+});
+
+describe('montarEstado — desinstrumentar não pode ser a saída silenciosa do gate', () => {
+  // leitor injetado: o `versao.ts` EXISTE na base e sumiu no HEAD; o corpo mudou junto.
+  const ler = (rev: string | null, caminho: string): string | null => {
+    if (caminho.endsWith('versao.ts')) return rev === 'BASE' ? 'export const VERSAO = "v1.0-a";' : null;
+    return rev === 'BASE' ? 'const maxPages = 10;' : 'const maxPages = 500;';
+  };
+
+  it('marcador REMOVIDO no HEAD com corpo alterado → o gate reprova, não pula', () => {
+    const estados = montarEstado(['supabase/functions/e/index.ts'], 'BASE', 'HEAD', ler);
+    const achados = auditarBump(estados);
+    expect(achados).toHaveLength(1);
+    expect(achados[0].edge).toBe('e');
+    expect(achados[0].motivo).toBe('marcador-ilegivel');
+  });
+
+  it('edge que NUNCA foi instrumentada continua fora do gate (sem marcador nos DOIS lados)', () => {
+    const semMarcador = (rev: string | null, caminho: string): string | null =>
+      caminho.endsWith('versao.ts') ? null : rev === 'BASE' ? 'const a = 1;' : 'const a = 2;';
+    const estados = montarEstado(['supabase/functions/e/index.ts'], 'BASE', 'HEAD', semMarcador);
+    expect(auditarBump(estados)).toEqual([]);
+  });
+});
+
+describe('main — fail-CLOSED de verdade: lista vazia por ERRO não é lista vazia por mérito', () => {
+  it('--head que NÃO resolve reprova (hoje ele imprime ✓ e devolve 0)', () => {
+    expect(main(['--base', 'HEAD', '--head', 'inexistente-xyz-000'])).toBe(1);
+  });
+
+  it('controle: o MESMO par com --head válido mede e passa', () => {
+    expect(main(['--base', 'HEAD', '--head', 'HEAD'])).toBe(0);
   });
 });
