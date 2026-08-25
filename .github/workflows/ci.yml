@@ -234,6 +234,18 @@ jobs:
         if: github.event_name == 'pull_request'
         run: bun run sonda:bump
 
+      # A METADE que o `sonda:bump` acima deixa aberta, e ele diz isso no próprio comentário:
+      # `_shared/` fica FORA dele de propósito (cobri-lo daria ~12 bumps À MÃO por PR). Só que a
+      # mudança de comportamento pode chegar INTEIRA por lá — medido: o 8ee8afa15 trouxe metade da
+      # reescrita do pós-login Sayerlack via `_shared/sayerlack-pos-login.ts`, e nenhum `VERSAO`
+      # mudou. Aqui o fan-out não custa disciplina porque o CI REGENERA o fingerprint.
+      #
+      # Roda em TODO evento (≠ do `sonda:bump`, que é `pull_request`-only): é gate de ESTADO, não
+      # de diff — não precisa de base ref, então cobre o `push` do Lovable e o cron da main, e
+      # descobre desvio ANTIGO, não só o da fatia.
+      - name: Sonda de versão — fingerprint da fonte bate com o mapa servido
+        run: bun run sonda:fingerprint
+
       - name: Build
         run: bun run build
         env:

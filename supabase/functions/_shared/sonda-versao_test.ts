@@ -23,13 +23,32 @@ Deno.test("respostaSonda: eco `probe` + a versão que o chamador passou + a EDGE
   // O `edge` também não: `versao` nasce IGUAL em toda uma leva, então sem ele duas respostas de
   // edges diferentes são byte a byte idênticas e o veredito por edge se perde — aconteceu em
   // 2026-08-18 com 10 sondas respondidas (docs/historico/verificar-sonda-versao.md §7).
+  //
+  // O `fonte` entrou no #1996: fingerprint da FONTE da edge (fecho transitivo dos imports locais,
+  // `_shared/` incluso). Ele responde a pergunta que o `versao` não alcança — mudança que chega
+  // inteira por `_shared/` não muda o marcador humano, e o gate `sonda:bump` deixa `_shared/` de
+  // fora por medição. Aqui a edge é fictícia, então cai no literal auto-denunciante do `??`.
   const respostaSonda = criarRespostaSonda("edge-x");
   assertEquals(respostaSonda("v1.0-x"), {
     ok: true,
     probe: true,
     versao: "v1.0-x",
     edge: "edge-x",
+    fonte: "nao-mapeada",
   });
+});
+
+Deno.test("respostaSonda: edge REAL serve o fingerprint do mapa, não o literal do fallback", () => {
+  // O teste acima usa edge fictícia e por isso exercita o ramo `??`. Sem este par, o `fonte` de
+  // TODA edge real poderia ser "nao-mapeada" e a suíte seguiria verde — o gate mediria o fallback
+  // e passaria por garantia que não dá.
+  const resposta = criarRespostaSonda("omie-analytics-sync")("v1.1-mapa-codigo-sem-alias");
+  if (!/^[0-9a-f]{64}$/.test(resposta.fonte)) {
+    throw new Error(
+      `omie-analytics-sync: fonte deveria ser SHA-256 do mapa, veio ${JSON.stringify(resposta.fonte)}. ` +
+        `Rode \`bun run sonda:fingerprint -- --write\`.`,
+    );
+  }
 });
 
 Deno.test("criarRespostaSonda: fábricas de edges distintas NÃO colidem", () => {
