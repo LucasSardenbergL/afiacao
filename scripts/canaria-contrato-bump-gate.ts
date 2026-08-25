@@ -83,11 +83,19 @@
  * e `fingerprintPagina` (que a `paginacao_probe` testa e que moram em `_shared/omie-paginacao.ts`)
  * dentro do que o gate enxerga. Sem isso, essa canária ficaria coberta só pelas próprias fixtures.
  *
- * ## Fail-CLOSED
+ * ## Fail-CLOSED — inclusive na fronteira de I/O, que é onde a cegueira mora
  *
- * Sem base determinável, ou com uma emissão de `contrato` cujo bloco não dá para delimitar, o gate
- * REPROVA. Gate que degrada para verde quando não consegue medir é indistinguível de verde por
- * mérito.
+ * Reprova quando não consegue medir: base indeterminável, `--head` que não resolve, `ls-tree` que
+ * FALHA (saída vazia por falha é indistinguível de "não há arquivo aqui"), `index.ts` que o
+ * `ls-tree` da base LISTA mas o `git show` não lê (ler isso como "a canária nasce" faz o gate
+ * PASSAR), enumeração de ZERO diretórios de edge, e emissão de `contrato` cujo bloco não dá para
+ * delimitar.
+ *
+ * Isso não é zelo abstrato: a 1ª versão deste gate tinha os quatro primeiros furos, e a prova é
+ * direta — rodada contra um `--head` que não resolve, ela imprimia `✓ 0 canária(s) conferida(s)` e
+ * saía 0. É a classe que o #2004 mediu no gate irmão (status do `git diff` descartado ⇒ "nenhuma
+ * edge mudou" ⇒ ✓), e a lição dele vale igual aqui: **os furos moram FORA do núcleo puro**, então a
+ * fronteira ganhou costura testável (`exigirListagem`/`exigirFonteDaBase`) e um assert por furo.
  *
  * ⚠️ **Limite conhecido, declarado em vez de descoberto depois.** A superfície é resolvida por
  * TEXTO (definições de topo casadas por nome), não por um resolvedor de módulos: símbolo
@@ -357,10 +365,58 @@ function lerLado(rev: string, caminho: string, headRev: string | null): string |
   return CACHE_FONTE.get(chave)!;
 }
 
+/**
+ * "Não consegui MEDIR" — categoria distinta de "medi e está em ordem".
+ *
+ * O #2004 mediu a classe no gate irmão: lá o status do `git diff` era descartado, e comando que
+ * FALHA devolve saída vazia, que o gate lia como "nenhuma edge tocada" e imprimia o ✓. Um fiscal
+ * que promete fail-CLOSED no cabeçalho e aprova por cegueira é a assinatura de falha mais cara que
+ * existe. Aqui a saída vazia de um `ls-tree`/`show` que falhou LANÇA, e o `main` converte em exit 1.
+ */
+export class FalhaAoMedir extends Error {}
+
+/**
+ * Costura testável da fronteira de I/O: recebe o resultado CRU do `ls-tree` e devolve a lista,
+ * LANÇANDO quando o comando falhou. Existe separada da chamada ao git porque o furo mora aqui, e
+ * furo em fronteira não-testável foi exatamente o que o núcleo puro do gate irmão não alcançou
+ * (23 testes verdes, dois falsos-verdes vivos — #2004).
+ */
+export function exigirListagem(
+  alvo: string,
+  dir: string,
+  r: { ok: boolean; saida: string },
+): string[] {
+  if (!r.ok) {
+    throw new FalhaAoMedir(
+      `\`git ls-tree ${alvo} -- ${dir}\` falhou. Lista vazia por falha é indistinguível de ` +
+        '"não há arquivo aqui", e é assim que um gate aprova por cegueira.',
+    );
+  }
+  return r.saida.split('\n').filter((l) => l !== '');
+}
+
+/**
+ * A outra metade da mesma costura: fonte ausente na BASE só é legítima quando o `ls-tree` da base
+ * também não lista o arquivo. Listado-porém-ilegível é falha de git — e lê-la como "a canária nasce
+ * nesta fatia" faz o gate PASSAR, que é o desfecho errado.
+ */
+export function exigirFonteDaBase(
+  caminho: string,
+  listadoNaBase: boolean,
+  fonte: string | null,
+): string | null {
+  if (listadoNaBase && fonte === null) {
+    throw new FalhaAoMedir(
+      `\`git show\` de ${caminho} falhou, mas o \`ls-tree\` da BASE lista o arquivo. Ler isso como ` +
+        '"a canária nasce nesta fatia" faria o gate passar sem medir.',
+    );
+  }
+  return listadoNaBase ? fonte : null;
+}
+
 function arquivosDoLado(rev: string, headRev: string | null, dir: string): string[] {
   const alvo = rev === LADO_HEAD ? (headRev ?? 'HEAD') : rev;
-  const { ok, saida } = git(['ls-tree', '-r', '--name-only', alvo, '--', dir]);
-  return ok ? saida.split('\n').filter((l) => l !== '') : [];
+  return exigirListagem(alvo, dir, git(['ls-tree', '-r', '--name-only', alvo, '--', dir]));
 }
 
 /**
@@ -400,6 +456,12 @@ export function coletarEstadoCanarias(base: string, headRev: string | null): Est
       ),
     ),
   ].filter((d) => d !== '_shared');
+  if (edges.length === 0) {
+    throw new FalhaAoMedir(
+      `enumerei ZERO diretórios de edge em ${RAIZ_EDGES} — este repo tem dezenas. Medição vazia ` +
+        'não é medição limpa.',
+    );
+  }
 
   const estados: EstadoCanaria[] = [];
   for (const edge of edges.sort()) {
@@ -408,7 +470,16 @@ export function coletarEstadoCanarias(base: string, headRev: string | null): Est
     const canariasHead = localizarCanarias(removerComentarios(indexHead));
     if (canariasHead.length === 0) continue;
 
-    const indexBase = lerNaRev(base, `${RAIZ_EDGES}/${edge}/index.ts`);
+    // Distinguir "a edge não existia na base" (legítimo: a canária NASCE) de "o `git show` falhou"
+    // é o que impede o segundo virar o primeiro — e o primeiro faz o gate PASSAR.
+    const caminhoIndex = `${RAIZ_EDGES}/${edge}/index.ts`;
+    const arquivosBase = arquivosDoLado(base, headRev, `${RAIZ_EDGES}/${edge}`);
+    const listado = arquivosBase.includes(caminhoIndex);
+    const indexBase = exigirFonteDaBase(
+      caminhoIndex,
+      listado,
+      listado ? lerNaRev(base, caminhoIndex) : null,
+    );
     const canariasBase = new Map(
       (indexBase === null ? [] : localizarCanarias(removerComentarios(indexBase))).map((c) => [
         c.chave,
@@ -433,7 +504,7 @@ export function coletarEstadoCanarias(base: string, headRev: string | null): Est
       ? []
       : [
           ...new Set([
-            ...arquivosDoLado(base, headRev, `${RAIZ_EDGES}/${edge}`),
+            ...arquivosBase,
             ...arquivosDoLado(LADO_HEAD, headRev, `${RAIZ_EDGES}/${edge}`),
           ]),
         ]
@@ -489,6 +560,19 @@ export function main(argv: string[]): number {
   const baseArg = iBase >= 0 ? argv[iBase + 1] : process.env.SONDA_BASE;
   const headRev = iHead >= 0 ? argv[iHead + 1] : null;
 
+  // O `--head` entrava CRU (o mesmo furo #1 do #2004 no gate irmão): rev que não resolve faz todo
+  // `git show` falhar, e o gate leria "nada mudou". Valida antes de medir.
+  if (headRev !== null) {
+    const r = git(['rev-parse', '--verify', `${headRev}^{commit}`]);
+    if (!r.ok || r.saida === '') {
+      console.error(
+        `canaria-bump-gate: ✗ o \`--head ${headRev}\` não resolve para um commit. Sem HEAD legível ` +
+          'todo `git show` falha e a medição sairia vazia — o gate REPROVA em vez de degradar.',
+      );
+      return 1;
+    }
+  }
+
   const base = resolverBase(baseArg);
   if (base === null) {
     console.error(
@@ -502,7 +586,17 @@ export function main(argv: string[]): number {
     return 1;
   }
 
-  const estados = coletarEstadoCanarias(base, headRev);
+  let estados: EstadoCanaria[];
+  try {
+    estados = coletarEstadoCanarias(base, headRev);
+  } catch (e) {
+    if (!(e instanceof FalhaAoMedir)) throw e;
+    console.error(
+      `canaria-bump-gate: ✗ não consegui MEDIR — ${e.message}\n` +
+        '  Reprova de propósito: não medir não é o mesmo que estar em ordem.',
+    );
+    return 1;
+  }
   const achados = auditarContratos(estados);
   if (achados.length === 0) {
     console.log(

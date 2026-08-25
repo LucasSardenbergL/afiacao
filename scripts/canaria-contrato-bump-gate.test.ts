@@ -5,6 +5,9 @@ import { RAIZ_EDGES } from './sonda-versao-bump-gate';
 import {
   auditarContratos,
   contaComoFonteVisivel,
+  exigirFonteDaBase,
+  exigirListagem,
+  FalhaAoMedir,
   indexarDefinicoes,
   localizarCanarias,
   superficieCanaria,
@@ -289,6 +292,40 @@ const SOB_TESTE: Array<{ edge: string; chave: string; simbolo: string }> = [
   { edge: 'omie-financeiro', chave: 'case:paginacao_probe', simbolo: 'desfechoVarreduraReversa' },
   { edge: 'omie-vendas-sync', chave: 'case:identidade_probe', simbolo: 'decideAccountIdentity' },
 ];
+
+// A fronteira de I/O é onde o gate irmão embarcou DOIS falsos-verdes com 23 testes de núcleo
+// verdes (#2004): o status do `git diff` era descartado, e comando que falha devolve saída vazia,
+// que o gate lia como "nada mudou". Aqui a fronteira é costurada e testada.
+describe('fail-CLOSED na fronteira de I/O — vazio por FALHA não pode virar "nada mudou"', () => {
+  it('`ls-tree` que FALHA lança, em vez de devolver lista vazia', () => {
+    expect(() => exigirListagem('abc123', 'supabase/functions', { ok: false, saida: '' })).toThrow(
+      FalhaAoMedir,
+    );
+  });
+
+  it('`ls-tree` que SUCEDE vazio é resposta legítima — o diretório pode não existir naquela rev', () => {
+    expect(exigirListagem('abc123', 'supabase/functions', { ok: true, saida: '' })).toEqual([]);
+  });
+
+  it('`ls-tree` que sucede devolve as linhas', () => {
+    expect(exigirListagem('abc', 'd', { ok: true, saida: 'a/x.ts\nb/y.ts' })).toEqual([
+      'a/x.ts',
+      'b/y.ts',
+    ]);
+  });
+
+  it('fonte ILEGÍVEL que o `ls-tree` da base LISTA lança — senão vira "a canária nasce" e PASSA', () => {
+    expect(() => exigirFonteDaBase('a/index.ts', true, null)).toThrow(FalhaAoMedir);
+  });
+
+  it('fonte ausente que o `ls-tree` da base NÃO lista é a canária nascendo — legítimo', () => {
+    expect(exigirFonteDaBase('a/index.ts', false, null)).toBeNull();
+  });
+
+  it('fonte legível passa intacta', () => {
+    expect(exigirFonteDaBase('a/index.ts', true, 'const a = 1;')).toBe('const a = 1;');
+  });
+});
 
 describe('CALIBRAÇÃO: a superfície das canárias REAIS enxerga o código sob teste', () => {
   it.each(SOB_TESTE)('$edge [$chave] resolve `$simbolo`', ({ edge, chave, simbolo }) => {
