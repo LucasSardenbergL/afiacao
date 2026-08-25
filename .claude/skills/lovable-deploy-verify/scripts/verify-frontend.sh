@@ -15,13 +15,66 @@
 # os chunks como "assets/x.js" (sem barra, entre aspas). O regex aqui é SEM barra, casando
 # os dois formatos, e normaliza com a barra.
 #
-# Uso:   verify-frontend.sh '<string-literal-unica-do-commit>' [https://app.url]
+# A ESCOLHA da sentinela é o outro furo, e o pior deles: o script acha os bytes de QUALQUER
+# string presente no bundle — inclusive uma que já estava lá ANTES do PR que se verifica. Verde
+# assim confirma um Publish que talvez não tenha acontecido, e falso positivo ENCERRA a
+# verificação (o falso negativo ao menos a prolonga). Por isso `--pai <sha>`: prova, no git e
+# antes de tocar a rede, que a sentinela é EXCLUSIVA do PR. Mordido em 2026-08-24 no #1949
+# (`visita_tentativa` era do #1945, mesmo arquivo, publicado horas antes).
+#
+# Uso:   verify-frontend.sh [--pai <sha>] [--novo <sha>] '<string-literal-unica-do-commit>' [https://app.url]
+#        --pai  <sha>  commit ANTERIOR ao PR: exige 0 ocorrência da sentinela nele (exclusividade)
+#        --novo <sha>  commit que INTRODUZIU a sentinela (default HEAD): exige >= 1 ocorrência
 # Exit:  0 = ALVO presente (no ar) · 1 = ausente (Publish pendente / alvo não-único)
 #        2 = enumeração quebrada (formato do bundler/Workbox mudou — NÃO confie no resultado)
+#        3 = o script se RECUSA a dar veredito: uso inválido, ou a prova de exclusividade
+#            falhou/não pôde ser feita. NUNCA é uma afirmação sobre o deploy. Fail-CLOSED de
+#            propósito: guard que degrada para "não provei" vira guard que não guarda nada.
 set -uo pipefail
 
-ALVO="${1:?uso: verify-frontend.sh '<string-alvo-literal-do-commit>' [url]}"
-APP="${2:-https://steu.lovable.app}"
+recusa() { printf '%s\n' "$@" >&2; exit 3; }
+
+PAI=""; NOVO="HEAD"; PAI_SET=0; ALVO=""; ALVO_SET=0; APP=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --pai)  [ $# -ge 2 ] || recusa "❌ [--pai] USO_INVALIDO — --pai exige <sha>"
+            PAI_SET=1; PAI="$2"; shift 2 ;;
+    --novo) [ $# -ge 2 ] || recusa "❌ [--pai] USO_INVALIDO — --novo exige <sha>"
+            NOVO="$2"; shift 2 ;;
+    *)      if [ "$ALVO_SET" = 0 ]; then ALVO="$1"; ALVO_SET=1; else APP="$1"; fi; shift ;;
+  esac
+done
+[ "$ALVO_SET" = 1 ] && [ -n "$ALVO" ] || recusa "uso: verify-frontend.sh [--pai <sha>] '<string-alvo-literal-do-commit>' [url]"
+APP="${APP:-https://steu.lovable.app}"
+
+# ---- guard de EXCLUSIVIDADE da sentinela (roda ANTES de qualquer curl) ----
+if [ "$PAI_SET" = 1 ]; then
+  [ -n "$PAI" ] || recusa "❌ [--pai] USO_INVALIDO — --pai exige um <sha> não-vazio"
+  # `command -v git` NÃO basta: presente-porém-quebrado esvazia o guard igual. Exigimos resposta
+  # POSITIVA de cada consulta — sem repo, sem sha resolvido, sem veredito.
+  _topo=$(git rev-parse --show-toplevel 2>/dev/null) || _topo=""
+  [ -n "$_topo" ] || recusa "❌ [--pai] GIT_INDISPONIVEL — 'git rev-parse --show-toplevel' não respondeu (fora de um repositório? git quebrado?). Rode do worktree do PR."
+  _sha_pai=$(git rev-parse --verify --quiet "$PAI^{commit}" 2>/dev/null) || _sha_pai=""
+  [ -n "$_sha_pai" ] || recusa "❌ [--pai] SHA_NAO_RESOLVIDO — '$PAI' não é um commit deste repositório"
+  _sha_novo=$(git rev-parse --verify --quiet "$NOVO^{commit}" 2>/dev/null) || _sha_novo=""
+  [ -n "$_sha_novo" ] || recusa "❌ [--pai] SHA_NAO_RESOLVIDO — '$NOVO' (--novo) não é um commit deste repositório"
+
+  # LADO POSITIVO primeiro: sem ele o zero no pai é AUSÊNCIA DE DADO (sha ou pathspec errado),
+  # não prova de novidade. Mesma semântica de casamento do grep dos chunks (BRE, sem -F).
+  _n_novo=$(git grep -c -e "$ALVO" "$_sha_novo" -- src/ 2>/dev/null | wc -l | tr -d ' ')
+  [ "$_n_novo" != 0 ] || recusa \
+    "❌ [--pai] SENTINELA_AUSENTE_NO_COMMIT_NOVO — a sentinela não aparece em src/ nem no commit ${NOVO} ($_sha_novo)." \
+    "   O 0 no pai NÃO vale nada aqui: isso é sha/pathspec errado, ou string não-literal (minificada, comentário, template)."
+  _n_pai=$(git grep -c -e "$ALVO" "$_sha_pai" -- src/ 2>/dev/null | wc -l | tr -d ' ')
+  if [ "$_n_pai" -ne 0 ]; then
+    printf '%s\n' "❌ [--pai] SENTINELA_NAO_EXCLUSIVA — já existia em ${PAI} ($_sha_pai), em $_n_pai arquivo(s) de src/:" >&2
+    git grep -c -e "$ALVO" "$_sha_pai" -- src/ 2>/dev/null | sed 's/^/     /' >&2
+    recusa "   Um verde com ela confirmaria bytes de um PR ANTERIOR, não este Publish. Escolha uma sentinela introduzida por ESTE PR."
+  fi
+  echo "✓ sentinela exclusiva: 0 ocorrências em $PAI · $_n_novo arquivo(s) em $NOVO (pathspec src/)"
+else
+  echo "⚠️  EXCLUSIVIDADE_NAO_PROVADA — sem --pai <sha-do-commit-anterior>: se a sentinela já existia antes deste PR, o verde abaixo é de um Publish anterior"
+fi
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
