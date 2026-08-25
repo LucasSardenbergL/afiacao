@@ -854,6 +854,31 @@ Deno.test("bump v1.1-mapa-codigo-sem-alias: omie-analytics-sync não pode voltar
   }
 });
 
+Deno.test("bump 8ee8afa15: as 2 edges Sayerlack não podem voltar ao marcador congelado", () => {
+  // Quarta e quinta ocorrências da classe, achadas pela auditoria do #1982 (o critério: último
+  // commit em `index.ts` mais novo que o último que alterou a linha `VERSAO`). O 8ee8afa15 mudou
+  // 203 linhas numa e 85 na outra — reescreveu o pós-login do portal — e nenhuma foi bumpada.
+  //
+  // Marcadores DISTINTOS de propósito, apesar de a fatia ser a mesma: as duas edges deployam
+  // separado, então marcador compartilhado não discriminaria o deploy de cada uma. É o caso que o
+  // gate "marcadores são únicos por edge" descreve no comentário mas não pega — ele só afere o
+  // valor inicial.
+  const CONGELADO = "v1.0-sensor-inicial";
+  const PARES: Array<{ nome: string; versao: string }> = [
+    { nome: "enviar-pedido-portal-sayerlack", versao: portalSayerlack.VERSAO },
+    { nome: "sayerlack-captura-precos", versao: capturaPrecos.VERSAO },
+  ];
+  for (const { nome, versao } of PARES) {
+    if (versao === CONGELADO) {
+      throw new Error(
+        `${nome}: marcador REGREDIU para ${CONGELADO} — o valor em que ficou congelado enquanto o ` +
+          `8ee8afa15 reescrevia o pós-login. Estas edges EFETIVAM no portal do FORNECEDOR, então ` +
+          `deploy não provado aqui é pedido real que ninguém sabe se saiu do bundle certo.`,
+      );
+    }
+  }
+});
+
 Deno.test("oitava leva: o corpo do Request é lido UMA vez só", () => {
   // O corpo de um `Request` só se lê uma vez: a segunda chamada devolve `{}` (ou lança). Como a
   // sonda obrigou o parse a SUBIR para antes do client, toda leitura que existia depois teve de
