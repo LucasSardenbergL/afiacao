@@ -119,6 +119,41 @@ Montar pro founder colar no chat do Lovable (um por edge tocada):
 > regressão: `evals/verify-frontend-eval.sh` (harness local determinístico — 2º nível, precache, exit
 > 0/1/2 + `--falsify`; entra no gate `evals/run.sh`).
 
+**A sentinela tem de ser EXCLUSIVA do PR que se verifica — a não-exclusiva dá falso POSITIVO
+(2026-08-24).** O script devolve `exit 0` para qualquer string que esteja no bundle, **inclusive uma
+que já estava lá antes do seu PR**: se ela veio de um PR ANTERIOR que tocou o mesmo arquivo, o verde
+confirma um Publish que talvez não tenha acontecido. Prove a exclusividade ANTES de rodar, e em PAR:
+
+```bash
+git grep -c '<sentinela>' <sha-do-commit-ANTERIOR-ao-PR> -- src/   # tem de dar 0 (exit 1, saída vazia)
+git grep -c '<sentinela>' <sha-do-PR> -- src/                      # tem de dar >=1, senão errou sha/pathspec
+```
+
+Arquivo **QUENTE** (vários PRs no mesmo dia) é onde isso morde. Verificando o #1949
+(`src/hooks/useLastVisit.ts`, o **terceiro** PR no arquivo depois de #1934 e #1945), a sentinela
+sugerida de início foi `visita_tentativa` — mas ela era do **#1945**, mergeado e publicado HORAS
+antes: `git grep -c visita_tentativa b7a9f5a8a -- src/` (o pai do #1949) casava 2 arquivos (4 linhas
+no hook, 6 no teste) ⇒ teria dado verde com o #1949 **inteiro** fora do ar. O erro foi pego antes de
+rodar; as sentinelas usadas de fato foram `keepalive_network` e `time_since_last_visit_resolvido`,
+ambas com ZERO no pai. É o **irmão** da armadilha do id de EXEMPLO (`deploy.md` §Canárias), não a
+mesma: lá o erro é falso NEGATIVO (reprova um deploy correto — caro, mas a verificação CONTINUA);
+aqui é falso POSITIVO, estritamente pior, porque **ENCERRA** a verificação.
+
+**Controle negativo no mesmo fôlego** — a regra de evidência positiva aplicada à própria sonda:
+
+```bash
+.claude/skills/lovable-deploy-verify/scripts/verify-frontend.sh 'sentinela_de_controle_negativo_xyz'
+# TEM de dar exit != 0. Dois `exit 0` seguidos não distinguem "está no ar" de "o script dá verde pra tudo".
+```
+
+Custa o **pior caso** do script (sem alvo não há halt-on-hit: varre os 300+ chunks, ~1 min) — é o
+preço do veredito, não um extra.
+
+**Sinal auxiliar de graça: o hash do chunk muda a cada build.** A saída já imprime `entry:` e
+`✅ ALVO em <chunk>`, e os dois nomes carregam hash de conteúdo. **Anote-os.** Hash IGUAL ao da
+verificação anterior = bundle velho, suspeite antes de comemorar — no #1949 o deploy trocou
+`StaffDashboard-DzAIuK90.js` (o do #1934) por `StaffDashboard-BEQNVZMq.js`.
+
 **Escolher a string-alvo — refactor visual NÃO tem texto novo.** A sentinela ideal é texto de UI
 literal e único do commit. Mas refactor puramente visual (spinner→skeleton, cor→token, troca de
 layout) não adiciona texto — e a string precisa estar em **JSX renderizado**: comentário (`//`),
