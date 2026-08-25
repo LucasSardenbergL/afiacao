@@ -296,3 +296,60 @@ corpo** (aqui, `total_skus_esperados`/`paginas_omie`).
 Nenhuma escrita indevida e nenhum sync disparado à toa: as 2 edges perigosas foram provadas **sem**
 serem invocadas. Quando a via passiva existe, ela é estritamente melhor que a sonda — não custa nada
 e não pode errar para o lado caro.
+
+## 9. O gate de contrato provava que a sonda é CHAMADA — não que ela RESPONDE (2026-08-24)
+
+Achado ao falsificar uma sonda experimental na `omie-vendas-sync` (2026-08-23, worktree
+zen-zhukovsky-29a5d9; aquela sonda **não** foi entregue — o #1937 declarou a edge
+`VERIFICAVEL_POR_CANARIA` e a entrega virou estender a `identidade_probe`). Trocar
+
+```ts
+return new Response(JSON.stringify(respostaSondaX(...)), { ... })
+// por
+console.log(respostaSondaX(...));
+return new Response(JSON.stringify({ ok: true }), { ... })
+```
+
+deixava **todos** os gates verdes. O teste "toda edge instrumentada RESPONDE à sonda" afirmava duas
+coisas — que `respostaSonda\w*(` aparece e que a edge ramifica em `"sonda"` — e nenhuma das duas nota a
+diferença entre montar o corpo e devolvê-lo. Medido no gate antigo: sabotando a
+`disparar-pedidos-aprovados` assim, `bun run test:edges` = **893 passed | 0 failed, exit 0**.
+
+O preço em produção é a pior leitura possível: a edge responde 200 **sem** o eco `probe:true`, e
+ausência de `probe:true` é exatamente o corpo pelo qual a canária conclui *"bundle velho, e ele rodou o
+efeito caro"* (`docs/agent/deploy.md` §Canárias, armadilha 1). Sonda muda não é sonda calada — é sonda
+mentindo para o lado caro. O buraco **não** era de nenhuma edge: valia para as 32 instrumentadas.
+
+### Por que o assert é POSICIONAL, e não uma lista de embrulhos
+
+A medição das 32 (2026-08-24) achou **quatro** formas legítimas, não duas:
+
+| Forma | n | Shape |
+| --- | --- | --- |
+| A | 21 | `return new Response(JSON.stringify(respostaSonda(VERSAO)), …)` |
+| B | 5 | `return jsonRes(respostaSonda(VERSAO), 200)` |
+| C | 4 | `return jsonResponse(respostaSonda(VERSAO), 200)` |
+| D | 2 | **indireta** — `const corpo = … ? respostaSonda(VERSAO) : …` e o `return` embrulha a VARIÁVEL |
+
+A forma D (`ai-ops-agent`, `omie-financeiro`) é a que mata a enumeração: ali não há embrulho nenhum
+adjacente à chamada, então `(JSON\.stringify|jsonRes)\(respostaSonda\w*\(` reprovaria **edge correta** —
+e o conserto de um gate que reprova código certo é sempre afrouxá-lo. O gate entregue exige que a
+chamada esteja na **cadeia de um `return`** (prefixo da sentença desde o `;`/`{`/`}` mais próximo; na
+forma indireta, que o PRÓXIMO `return` embrulhe a variável atribuída). Embrulho novo passa sem tocar no
+teste; `console.log` não passa.
+
+### Falsificação (exigida em código real, não só no texto da calibração)
+
+Sabotadas 5 edges reais, uma por forma — `disparar-pedidos-aprovados` (A), `recommend` (B),
+`fin-cashflow-engine` (C), `ai-ops-agent` e `omie-financeiro` (D): **5/5 vermelhas**, todas acusando o
+gate certo (a mensagem cita a edge e "o corpo não alcança nenhum return"). A calibração no próprio teste
+cobre os dois lados: 3 formas "calcula e descarta" que ele **tem** de reprovar (incluindo guardar numa
+variável e retornar outra), as 4 formas reais + um embrulho inventado que ele **tem** de aprovar, e o
+caso da resposta certa existindo só em **comentário**.
+
+### Assinatura para varredura futura
+
+Gate que casa o **nome** de uma função e conclui que o **efeito** dela aconteceu. `respostaSonda(`
+presente prova montagem, não entrega; `track(` presente prova chamada, não evento gravado. Quando o
+valor de retorno É o produto, o assert tem de seguir o valor até a fronteira (o `return`, o `await`, o
+`INSERT`) — senão o gate mede o texto certo e afirma a coisa errada.
