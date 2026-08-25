@@ -305,7 +305,7 @@ sem `error` passa a `failLease` em vez de encerrar o laço com a carteira TRUNCA
 bumpamos**, e a razão é a deste documento: o fix está em prod há semanas, bump tardio não devolve
 discriminação perdida, e o bump agora compraria um deploy no-op sem responder nada que já não
 esteja respondido. O bump certo é o da PRÓXIMA fatia dela — e é justamente esse que ninguém
-lembra, porque nenhum gate cobra.
+lembra, porque nenhum gate cobra. **→ passou a cobrar em 2026-08-25; ver a última seção.**
 
 **O desenho que já resolve isso está no repo, na `generate-tactical-plan`:** ela serve o marcador
 da canária no campo `versao`, o MESMO símbolo da sonda. Sendo o mesmo símbolo, a canária herda o
@@ -548,3 +548,67 @@ FROM sync_state WHERE entity_type = 'products' AND account = 'colacor_vendas';
 ⚠️ **`last_sync_at` anterior ao deploy = ausência de dado, não veredito.** Ler a linha acima sem
 conferir o timestamp é o mesmo erro que a auditoria quase cometeu ao tratar `last_page=43` como
 prova de travessia: o bundle velho gravava `last_page` com o total DECLARADO pelo Omie.
+## O gate que faltava — `bun run canaria:bump` (2026-08-25)
+
+A seção acima fecha a auditoria dizendo que o furo "não é um contrato parado — é a falta de gate", e
+que o bump certo é o da PRÓXIMA fatia, "justamente esse que ninguém lembra, porque nenhum gate
+cobra". `scripts/canaria-contrato-bump-gate.ts` é esse gate, no `validate`, só em `pull_request`.
+
+**Controle positivo, e é o caso desta casa:** o `f6561b0b2` — os 4 guards money-path na
+`carteira-rebuild` com o `trava-saida-v1` de 8 dias antes, exatamente o exemplo que a seção acima
+usa para nomear o furo. `--base f6561b0b2^ --head f6561b0b2` sai com **exit 1** nomeando a edge. Ele
+está 21 fatias fora da janela de medição abaixo, então é prova histórica, não amostra.
+
+### A régua, e o denominador que a escolheu
+
+Medir antes de escolher é o que decidiu o desenho do #1993, e aqui pagou de novo. 400 fatias de
+`main` (até `80dbdbbe0`; 75 tocam `supabase/functions`), com o próprio gate decidindo:
+
+| régua | reprovaria | veredito |
+|---|---|---|
+| corpo servido inteiro, para TODA canária | **8** pares em 10 fatias | **errada** |
+| só o BLOCO da canária | 0 | cega para o código sob teste, que é o que a canária atesta |
+| dividida por "a edge tem sonda?" | **2** | a instalada |
+
+A primeira reprova o #1938 na `analyze-unified-order` — fatia que mexeu no prompt e **não** no
+`mergeCustomerPrices` que a canária dela verifica. **7 das 8 são desse tipo:** o `contrato` nomeia a
+fatia que a canária VERIFICA, não a edge inteira, então medir a edge inteira é medir outra coisa.
+
+O que divide as duas metades é o `contrato` fazer **dois** trabalhos: (a) identificar o bundle e
+(b) nomear o contrato verificado. A tabela da seção anterior já dá a chave: as 4 edges com sonda
+entraram no mapa de fingerprints do #1998 e as 2 sem sonda ficaram fora. Onde há sonda, (a) tem
+DOIS mecanismos (o `sonda:bump` e o `fonte` servido) e cobrar um terceiro marcador pelo mesmo motivo
+é o "gate que grita 12× por PR" que o #1993 recusou — lá a régua vira a **superfície da canária**:
+o bloco dela mais o fecho dos símbolos que ela exercita. Onde não há, o `contrato` é o único
+marcador que existe e a régua é a do irmão. As 2 reprovações da janela são justamente dessas:
+`5f5523df9` (#1694, especificador do `supabase-js` na `carteira-rebuild`) e `2eb237532` (#1685,
+`Deno.serve` na `omie-financeiro`, cuja `versao.ts` só nasceu 16 dias depois). Mesma fronteira
+"encanamento × fluxo" que o irmão assumiu no `dc67b4261`.
+
+⚠️ **`_shared/` entra neste gate por SÍMBOLO, e continua fora do `sonda:bump` por ARQUIVO — a
+granularidade é o que reconcilia os dois números.** Medir `_shared/` por arquivo dá 290 pares
+(edge, fatia); medir só a função que a canária exercita custou **zero** reprovação a mais nas mesmas
+400 fatias, e é o que põe `desfechoVarreduraReversa` e `fingerprintPagina` (que a `paginacao_probe`
+testa e que moram em `_shared/omie-paginacao.ts`) dentro do que o gate enxerga.
+
+### A falsificação — e o que ela mostra que a leitura não mostraria
+
+Sabotar `desfechoVarreduraReversa` em `_shared/omie-paginacao.ts` deixa este gate **vermelho
+nomeando a edge** e o `sonda:bump` **verde**, porque ele não olha `_shared/` e o `index.ts` da edge
+não foi tocado. O inverso também: inserir uma linha no topo do `omie-financeiro/index.ts` reprova o
+`sonda:bump` e **não** reprova este — é a divisão de trabalho funcionando, um marcador por motivo,
+que é a diferença entre o desenho medido e a régua ingênua. Os dois ramos fail-CLOSED foram
+exercitados junto (base indeterminável; emissão de `contrato` sem bloco delimitável).
+
+⚠️ **O risco desta régua não é gritar demais, é ficar CEGA em silêncio.** A superfície é resolvida
+por texto: se o índice de definições parar de casar, ela encolhe para o bloco puro e o gate fica
+verde sem enxergar o código sob teste. A trava é a **calibração**: 18 testes sabotam a função sob
+teste de cada uma das 6 canárias reais e exigem que a superfície mude, com controle NEGATIVO
+(sabotar símbolo fora do alcance não pode mudar nada — senão a régua virou "o arquivo inteiro") e
+sentinela de que nenhuma emissão de `contrato` do repo escapa da medição.
+
+**O que continua aberto**, e a seção anterior já aponta onde: nas 2 edges sem sonda, `_shared/` não é
+coberto nem por este gate nem pelo fingerprint. O desenho que fecha é o da `generate-tactical-plan`
+— servir o marcador da canária no campo `versao`, o mesmo símbolo da sonda, e herdar os dois
+mecanismos de graça. Este gate cobre a disciplina do marcador na janela do PR; ele não substitui
+isso.
