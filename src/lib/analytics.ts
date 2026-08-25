@@ -78,14 +78,26 @@ export function initAnalytics(): void {
         // Capture page views automaticamente quando rota muda
         capture_pageview: false, // gerenciamos manualmente via PageViewTracker
         capture_pageleave: true,
-        // Session Replay (vem com o plano free; mascarar inputs por padrão pra privacidade)
-        session_recording: {
-          maskAllInputs: true,
-          maskInputOptions: {
-            password: true,
-            email: false,
-          },
-        },
+        // Session Replay DESLIGADO (2026-08-25, ritual Codex sobre o #1984).
+        //
+        // Estava ligado com `session_recording: { maskAllInputs: true }`, e a
+        // descrição desse config era ERRADA num sentido caro: `maskAllInputs`
+        // mascara CAMPO DE FORMULÁRIO, não o texto RENDERIZADO. A máscara de
+        // texto é outra opção (`maskTextSelector`) e ela nunca esteve aqui —
+        // então o replay gravava a tela como ela aparece: razão social, CNPJ,
+        // preço, saldo, nome de cliente. Num app B2B isso é dado pessoal de
+        // terceiro trafegando para um processador nos EUA sem finalidade
+        // documentada, o que é problema de necessidade/minimização (LGPD art.
+        // 6º, III) — e não se resolve com máscara mais forte enquanto ninguém
+        // souber para que a gravação serve.
+        //
+        // Desligar é a escolha correta ENQUANTO não houver finalidade escrita:
+        // replay é a única superfície de telemetria que captura conteúdo de
+        // tela, e as outras (autocapture com allowlist de seletor, track()
+        // nominal) já cobrem o que decide. Para religar: escrever a finalidade,
+        // o prazo de retenção e `maskTextSelector: '*'` — e o teste-sentinela
+        // em `analytics-privacidade.test.ts` obriga a passar por aqui.
+        disable_session_recording: true,
         autocapture: {
           // Capturar clicks em botões e links automaticamente (sem precisar instrumentar tudo)
           dom_event_allowlist: ['click', 'submit', 'change'],

@@ -554,7 +554,10 @@ resolve o cliente externo", cobre 100% do que existe, e (b) recuperaria **zero**
 regra generalizada: *antes de pagar por uma saída que recupera uma população, CONTE a população.*
 Um denominador de 5.664 que na verdade vale 0 é a mesma falha de fabricação de `Number(null)===0`.
 
-⚠️ **O first-party de verdade é IMPOSSÍVEL neste hosting — e o barato não é first-party.** Medido:
+⚠️ **O first-party de verdade está FORA DO MODELO DE DEPLOY — e o barato não é first-party.**
+(Esta frase dizia "é IMPOSSÍVEL"; o ritual Codex de 2026-08-25 derrubou a palavra e ela fica
+corrigida aqui, não apagada. O que a medição prova é que não há rewrite no domínio ATUAL — não
+que não exista caminho: custom domain + CDN próprio na frente é caminho, e caro.) Medido:
 `https://steu.lovable.app/ingest/`, `/ingest/e/` e `/api/health` devolvem os três **HTTP 200,
 `text/html`, 8.307 bytes** — o `index.html` do SPA. Não há camada de rewrite: todo path cai no
 fallback estático, servido por Cloudflare **da Lovable** (`cf-ray …GRU`, `185.41.148.1/2`), cujo
@@ -572,31 +575,78 @@ pública (`verify_jwt=false`, o SDK não manda JWT), isto é, um **relay aberto*
 first-party não é otimização de entrega — sua função é fazer com que a recusa técnica do usuário
 **deixe de funcionar**. Analytics de produto em app logado costuma se apoiar em legítimo interesse
 (LGPD art. 7º, IX), mas o art. 10, II ancora o balanceamento nas *expectativas legítimas do
-titular*, e o art. 18, §2º lhe dá direito de oposição — instalar bloqueador é a forma mais
-inequívoca de exercê-lo. Contornar não é "coletar sob legítimo interesse": é desenhar em volta de
-uma recusa, e enfraquece a própria base que justificaria a coleta. Com `session_recording` LIGADO
-(gravação de tela, mesmo com `maskAllInputs`) o peso sobe outro degrau. E o fecho do argumento:
+titular*, e a necessidade/minimização (art. 6º, III) limita o quanto se coleta para a finalidade
+declarada. Contornar não é "coletar sob legítimo interesse": é desenhar em volta de uma recusa, e
+enfraquece a própria base que justificaria a coleta.
+
+⚠️ **Não force o art. 18, §2º aqui — esta doc já forçou, e fica registrado.** A versão anterior
+dizia que aquele dispositivo "dá direito de oposição" e que "instalar bloqueador é a forma mais
+inequívoca de exercê-lo". É esticado: o §2º trata de oposição a tratamento fundado em hipótese de
+dispensa de consentimento **em caso de descumprimento da lei**, e não equipara automaticamente um
+ad blocker a uma manifestação formal ao controlador. O argumento que se sustenta é o de
+**expectativa legítima + necessidade + minimização + transparência**, avaliado por finalidade — e
+ele basta. Um proxy first-party de telemetria própria também **não** é ilícito por definição: não
+muda finalidade, controlador, operador nem transferência internacional. *Postura não é ilegalidade,
+e vender uma como a outra enfraquece as duas.*
+
+E o peso sobe quando há gravação de tela — que é justamente o que este PR desligou (ver o bloco
+do Session Replay adiante). O fecho do argumento:
 **hoje o único bloqueado medido é o próprio founder** — (b) seria construir contorno de opt-out
 para contornar o opt-out de si mesmo. Quando houver cliente externo o conflito PIORA, porque os
 titulares passam a ser terceiros.
 
 **O gatilho que reabre (b)** — nomeado para que "não fizemos o proxy" seja escolha registrada e não
-pendência esquecida. Reabrir SÓ quando as DUAS condições forem verdadeiras:
+pendência esquecida. ⚠️ **A primeira versão deste gatilho era TARDIA e CEGA, e as duas falhas foram
+achadas pelo Codex, não pela revisão:**
 
-1. existe ≥1 customer aprovado (hoje `0`):
+- **Tardia.** Ela disparava em "≥1 customer **já aprovado** e já censurado". Aprovar customer é ato
+  administrativo NOSSO, então existe um instante observável ANTES do primeiro uso — e esperar a
+  primeira censura garante perder a primeira sessão, que é a mais informativa que existirá. Dado
+  histórico não se coleta retroativamente. **O eixo certo é "customer PRESTES a ser aprovado".**
+- **Cega.** Ela pedia "linha em `dashboard_visits` sem evento na mesma janela". Isso mede *captura
+  client-side ausente*, não *bloqueador*: SDK que não inicializou, `unload`, offline, identidade
+  divergente e erro de config produzem o mesmo par. Pior — **`dashboard_visits` não tem coluna de
+  aparelho** (`id, user_id, visited_at, persona, company_selection, session_minutes`), então o
+  pareamento só existe por USUÁRIO, e um evento do celular "explica" uma visita bloqueada no
+  desktop. Isto é a §4 desta mesma doc (*"sempre decomponha por aparelho"*) sendo violada três
+  seções abaixo dela: **regra escrita não se aplica sozinha ao texto seguinte.**
+
+**A forma corrigida.** Reabrir (b) só com as duas:
+
+1. um customer está **prestes** a ser aprovado (o gate roda ANTES do `UPDATE`, não depois):
 
    ```sql
    SELECT count(*) FROM profiles p JOIN user_roles ur ON ur.user_id = p.user_id
-   WHERE ur.role = 'customer' AND p.is_approved;
+   WHERE ur.role = 'customer' AND p.is_approved;   -- hoje 0; >0 = a janela JÁ abriu
    ```
 
-2. a censura EXTERNA está medida, não suposta: esse customer tem linha em `dashboard_visits` e
-   **nenhum** evento no PostHog na mesma janela — o par tabela × evento do `#1997` aplicado a ele.
-   Linha sem evento = bloqueado; nem linha nem evento = não usou. Sem (2), um zero externo continua
-   sendo os dois estados colapsados, e o proxy estaria resolvendo um problema não observado.
+2. a censura está medida por **probe pareado**, não por ausência: um `attempt_id` aleatório gerado
+   no boot autenticado, gravado (i) na tabela e (ii) como propriedade de um evento PostHog, e
+   reconciliado após atraso fixo. **Dois `attempt_id` sem par, em sessões distintas do MESMO
+   aparelho**, tornam censura persistente a explicação plausível. Um só não conclui nada.
 
-Mesmo com o gatilho aberto, a primeira saída a considerar **não** é o proxy: é instrumentar
-server-side o que decide — que é (c), sem tocar no opt-out de ninguém.
+Enquanto o probe não existir, a condição (2) é falsificável no papel e inconclusiva na prática —
+que é o estado de hoje. **Instalar o probe é pré-requisito de aprovar o primeiro customer**, não
+tarefa posterior.
+
+⚠️ **E mesmo com o gatilho aberto, a primeira saída NÃO é o proxy — nem (c) puro.** É a quarta
+saída abaixo, que o ritual Codex trouxe e que domina as duas: ela não depende de browser, então
+não há o que bloquear, e não contorna a escolha de ninguém.
+
+### A quarta saída: outbox server-side (preferida sobre (c) puro)
+
+**Backend como fonte de verdade + outbox único + PostHog secundário.** Fato de negócio que já é
+persistido (pedido criado, aprovado, concluído) sai das tabelas de domínio; **na mesma transação**
+uma `analytics_outbox` recebe só os eventos DECISÓRIOS; um worker os envia server-side com
+`event_id` idempotente. Interação puramente de UI segue client-side e assumidamente censurável.
+Para jornada crítica sem mutação de domínio, um ledger autenticado — **não 111 tabelas**.
+
+Por que isto domina (c) puro: **"sinal que decide" muda DEPOIS da coleta.** Um evento classificado
+hoje como conveniência vira métrica decisória amanhã, e aí o histórico dele já nasceu censurado —
+retroatividade que nenhuma regra de estilo conserta. Dual-write manual espalhado por N tabelas
+produz divergência; a outbox transacional, não. E vale o lembrete que a tabela própria não dispensa:
+**dado em tabela nossa continua sendo tratamento de dado pessoal** — (c) resolve censura, nunca
+obrigação de LGPD.
 
 ⚠️ **(c) é regra, não hábito — e hoje ela está cumprida em 1 de 111.** O app tem **111 sensores
 `track()` distintos** e **um** com espelho em tabela (`dashboard_visits`). A regra não é espelhar os
@@ -604,3 +654,29 @@ server-side o que decide — que é (c), sem tocar no opt-out de ninguém.
 resultado vai fundamentar uma fase N+1 (ver [fase-sem-sinal.md](../historico/fase-sem-sinal.md))
 nasce com o espelho — senão a decisão herda a censura, e o par tabela × evento do `#1997` vira
 exceção em vez de desenho.
+
+### Session Replay: DESLIGADO — e por que o config anterior mentia (2026-08-25)
+
+⚠️ **`maskAllInputs` mascara CAMPO DE FORMULÁRIO, não o texto da TELA.** O `posthog.init()` trazia
+`session_recording: { maskAllInputs: true }` com o comentário *"mascarar inputs por padrão pra
+privacidade"* — e essa frase induzia ao erro que ela mesma parecia afastar. A máscara de texto
+renderizado é outra opção (`maskTextSelector: '*'`), e **ela nunca esteve no config**. O replay
+gravava a tela como ela aparece: razão social, CNPJ, preço, saldo, nome de cliente. Num app B2B
+isso é dado pessoal de TERCEIRO indo para um processador nos EUA sem finalidade escrita —
+problema de **necessidade e minimização** (art. 6º, III), que máscara mais forte não resolve
+enquanto ninguém souber para que a gravação serve.
+
+Decidido: **desligado** (`disable_session_recording: true`), não "mascarado mais". Replay é a
+única superfície de telemetria do app que captura CONTEÚDO de tela; o autocapture já roda com
+allowlist de seletor e o `track()` é nominal, então o que decide continua medido sem ele. Para
+religar: escrever finalidade + prazo de retenção, e voltar com `maskTextSelector: '*'`.
+
+⚠️ **A lição que generaliza é sobre o COMENTÁRIO, não sobre a flag.** Aquele config passou por
+revisão porque a linha ao lado dizia "privacidade" — o comentário descrevia a INTENÇÃO e foi lido
+como se descrevesse o COMPORTAMENTO. Um comentário que afirma uma garantia é uma asserção sem
+teste até que exista um gate; `grep -rn session_recording src scripts` devolvia **uma** linha, o
+próprio config, e nada no CI olhava para ela. Agora olha:
+`src/lib/__tests__/analytics-privacidade.test.ts`, que lê a fonte com o stripper COMPARTILHADO
+(`removerComentarios`) — obrigatório aqui e não zelo abstrato, porque o comentário que documenta o
+desligamento cita `session_recording` e `maskTextSelector` de propósito, e um regex ingênuo casaria
+com a própria explicação em vez do código.
