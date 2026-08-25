@@ -108,7 +108,9 @@ Montar pro founder colar no chat do Lovable (um por edge tocada):
   --pai <sha-do-commit-ANTERIOR-ao-PR> \
   'COLE_UMA_STRING_LITERAL_UNICA_DO_COMMIT'   # 2º posicional opcional: a URL (default steu.lovable.app)
 # saída: "✓ sentinela exclusiva: …" + "chunks (closure ∪ precache): N" + "✅ ALVO em <chunk>"
-# exit 0 = no ar · 1 = ausente (Publish pendente / alvo não-literal) · 2 = enumeração quebrada
+#        + "✓ CONTROLE_NEGATIVO_OK — <chunk> não casa controle_negativo_<hex>"
+# exit 0 = no ar E o controle negativo passou · 1 = ausente (Publish pendente / alvo não-literal)
+#      2 = a MECÂNICA da sonda não é confiável: enumeração quebrada OU SONDA_NAO_DISCRIMINA
 #      3 = RECUSA: uso inválido, ou exclusividade da sentinela não provada — NUNCA é veredito
 #          sobre o deploy (`--novo <sha>` muda o lado positivo; default HEAD)
 ```
@@ -160,15 +162,50 @@ $ verify-frontend.sh --pai b7a9f5a8a --novo a7571a596 'keepalive_network'
 NEGATIVO (reprova um deploy correto — caro, mas a verificação CONTINUA); aqui é falso POSITIVO,
 estritamente pior, porque **ENCERRA** a verificação.
 
-**O guard NÃO substitui o controle negativo da sonda** — ele prova que a sentinela é nova, não que o
-script sabe dizer "não":
+**O guard não prova que a sonda sabe dizer "não" — isso é o CONTROLE NEGATIVO, e ele virou
+embutido (2026-08-24).** Um `exit 0` sozinho não distingue "está no ar" de "o script dá verde pra
+tudo". Era recado (`verify-frontend.sh 'sentinela_de_controle_negativo_xyz'` num 2º comando,
+exigindo exit≠0) — e recado depende de alguém lembrar, que é **exatamente** como a armadilha da
+sentinela não-exclusiva acima passou. Agora, **quando o ALVO casa**, o script auto-audita antes de
+devolver 0: reexecuta o **mesmo pipeline** (`curl`+`grep -q`+captura do `$HIT`) no **mesmo chunk que
+acabou de casar**, com uma string hex aleatória nascida naquele processo. Se ela "casar" →
+`SONDA_NAO_DISCRIMINA`, **exit 2**, e o `✅` acima não vale nada. Sem entropia pra gerar a string, o
+script **recusa** (exit 3) antes de tocar a rede — mesma disciplina fail-closed do `--pai`.
 
-```bash
-verify-frontend.sh 'sentinela_de_controle_negativo_xyz'   # TEM de dar exit 1
+**Por que UM chunk e não uma 2ª varredura inteira — a conta, medida em prod (2026-08-24, 334 chunks):**
+
+| etapa | requests | tempo |
+|---|---|---|
+| enumeração (closure ∪ precache) | ~337 | **73 s** |
+| grep do alvo, varrendo tudo (sem hit) | 334 | **18 s** |
+| **controle A** — 2ª invocação completa (o recado antigo) | **+671** | **+91 s** |
+| **controle A′** — embutido reusando a lista, só o 2º grep | **+334** | **+18 s** |
+| **controle B** — 1 chunk, mesmo pipeline (**o implementado**) | **+1** | **+0,14 s** |
+
+B custa **0,3%** dos requests de A′ e **0,15%** dos de A. E prova a mesma coisa: **discriminar é
+propriedade do par (padrão, `grep`), não do chunk** — o padrão é o mesmo e o `grep` é a mesma
+invocação, então repetir em 334 chunks é redundância, não informação nova. Os modos de falha que o
+controle existe pra pegar (alvo vazio na expansão, `grep` trocado/shim, o `&&` virando `;`, `$HIT`
+com lixo, `[ -n "$HIT" ]` invertido) são todos globais ao mecanismo; **nenhum** deles é visível em
+334 chunks e invisível em 1. Os dois furos que sobram — servidor devolvendo conteúdo constante que
+contém o alvo (fallback SPA), e alvo degenerado tipo `.*` — escapam **igualmente** de A e de B, logo
+não são argumento a favor da versão cara. Roda contra prod:
+
+```console
+✅ ALVO em /assets/StaffDashboard-CM-hPkx2.js
+✓ CONTROLE_NEGATIVO_OK — /assets/StaffDashboard-CM-hPkx2.js não casa controle_negativo_90896fde…
 ```
 
-Dois `exit 0` seguidos não distinguem "está no ar" de "o script dá verde pra tudo". Custa o pior caso
-(sem alvo não há halt-on-hit: varre os 300+ chunks, ~1 min).
+⚠️ **O que um controle EMBUTIDO não pode pegar, por construção:** a asserção é feita pelo próprio
+script, então ele não denuncia "o script inteiro mente" (bloco do controle comentado, `exit 0`
+plantado antes). Essa hipótese é de outra camada e tem dono: o gate `evals/run.sh --falsify`, que
+sabota o script e **exige** vermelho — asserção externa, em commit-time. Runtime e commit-time
+cobrem coisas diferentes; nenhum substitui o outro.
+
+⚠️ **O ramo `exit 1` (alvo ausente) segue SEM controle** — e a saída diz isso
+(`CONTROLE_NEGATIVO_NAO_SE_APLICA`). O controle negativo audita o falso **positivo**; ali o risco é o
+falso **negativo** (sonda cega — curl 403/rede caída — lê idêntico a "Publish pendente"), que pede um
+controle **positivo** (uma string que comprovadamente ESTÁ no bundle). Lacuna conhecida, não fechada.
 
 **Sinal auxiliar de graça: o hash do chunk muda a cada build.** A saída já imprime `entry:` e
 `✅ ALVO em <chunk>`, e os dois nomes carregam hash de conteúdo. **Anote-os.** Hash IGUAL ao da
@@ -196,8 +233,9 @@ num comentário → falso "ausente", não prova nada). Duas saídas:
     `ProtectedRoute` eager): `animate-spin text-primary`=0 (removido) **+** `animate-spin text-muted-foreground`≥1
     (gates vizinhos intocados = controle).
 
-⚠️ Guard embutido (exit 2): contagem 0/1 = enumeração quebrada (formato do bundler/Workbox mudou) —
-NÃO conclua "não está no ar"; conserte o script primeiro. Os bytes provam que o **código subiu**; se a
+⚠️ Guards embutidos que dão **exit 2** (= a mecânica da sonda não é confiável; NÃO conclua "não está
+no ar", conserte o script primeiro): contagem 0/1 de chunks = **enumeração quebrada** (formato do
+bundler/Workbox mudou); controle negativo casando = **`SONDA_NAO_DISCRIMINA`**. Os bytes provam que o **código subiu**; se a
 mudança for **visual** (renderização/comportamento na tela), a prova complementar é o **QA visual do
 Passo 4b** — o maior sinal sem o founder continua sendo este, pelos bytes.
 
@@ -308,6 +346,14 @@ falso `"fora do ar"` (exit 2) — não é o site caído, é a URL malformada.
 
 ## Estado / pendências
 - [x] Enumeração = **UNIÃO** (fechamento transitivo do Vite ∪ precache do Workbox) — nenhuma fonte sozinha é completa (closure 274 ⊃ precache 268; precache omite 6). Validado em prod + Codex; empacotado em `scripts/verify-frontend.sh`.
+- [x] **Controle negativo EMBUTIDO (2026-08-24):** deixou de ser 2º comando manual e passou a rodar
+  sozinho no ramo do hit — mesmo pipeline, mesmo chunk, string hex aleatória do processo; casou =
+  `SONDA_NAO_DISCRIMINA` + exit 2. Escolhido o controle de **1 chunk** sobre a 2ª varredura completa
+  com número, não opinião (prod, 334 chunks: **1 req / 0,14 s** contra **334 req / 18 s** ou **671 req
+  / 91 s**), porque discriminar é propriedade do par (padrão, `grep`) e não do chunk. Harness: +4 casos
+  e +2 sabotagens (grep degenerado → o controle acusa; controle trocado por string que DEVE casar →
+  prova que ele exercita a rede e não é enfeite). Lacuna aberta: o ramo `exit 1` não tem controle
+  positivo. Detalhe no Passo 4.
 - [x] `evals/` = **gate dos 2 passos**: classificação de diff (8 casos, Passo 1) **+** verificação por bytes (harness local `verify-frontend-eval.sh`, Passo 4: 2º nível, precache, exit 0/1/2), ambos com `--falsify`. Um `bash evals/run.sh` cobre tudo.
 - [x] Domínio canônico `steu.lovable.app` confirmado (HTTP 200).
 - [x] **Edge:** verificação por escada — N1 existência (`verify-edge.sh`, OPTIONS, automático) · N2 versão (Management API — indisponível aqui: Supabase da org do Lovable, não peça PAT) · N3 comportamento (probe gated). Fecha a assimetria com o frontend.
