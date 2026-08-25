@@ -90,7 +90,7 @@ bash scripts/posthog-query.sh "SELECT count() FROM events WHERE timestamp > now(
 ## 3. Uso
 
 ```bash
-~/.config/afiacao/posthog-query "SELECT count() FROM events WHERE timestamp > now() - INTERVAL 30 DAY"
+bash scripts/posthog-query.sh "SELECT count() FROM events WHERE timestamp > now() - INTERVAL 30 DAY"
 ```
 
 Aceita HogQL por argumento **ou** stdin. Saída **compacta por padrão** —
@@ -253,3 +253,84 @@ se `gravou` for **zero** por muitos dias com o dashboard sendo aberto.
 ⚠️ **`lente_ativa` e `sem_token` são recusas DELIBERADAS do caminho `pagehide`** (write-guard da lente
 "ver como" e fetch cru sem como autenticar). Contá-los como falha inverte o sinal: são o gate
 funcionando, e no caso do `sem_token` a visita ainda pode gravar pelo unmount.
+
+## 6. Adoção do deploy — qual BUILD o cliente está EXECUTANDO (`build_id`)
+
+Todo evento carrega `build_id` = o hash do chunk do entry que o browser carregou
+(ex.: `index-TTF9Kw1g`). Nasce em `src/lib/build-id.ts`, é registrado como **super
+property** no `initAnalytics()` (`src/lib/analytics.ts`) e por isso alcança **todo**
+evento — inclusive `$autocapture`, `$pageview`, `$pageleave` e `$exception`, que não
+passam por `track()`.
+
+**Por que isto existe:** o `verify-frontend.sh` prova o que o servidor **entrega**,
+nunca o que o browser **executa** — mede DISPONIBILIDADE, não ADOÇÃO. Com
+`registerType: 'prompt'` e `skipWaiting` removido de propósito, o SW novo instala e
+**espera indefinidamente** por um clique humano (`docs/agent/deploy.md`). Em
+2026-08-24 os #1934/#1945/#1949 estavam todos servidos e nenhum executava; a
+descoberta foi acidental. Esta é a instrumentação que faltava.
+
+### A conta
+
+```
+adoção = clientes com build_id = <atual> / clientes que emitiram qualquer evento
+```
+
+O `<atual>` **não se chuta** — sai do mesmo eixo que o verificador lê do servidor:
+
+```bash
+curl -fsS https://steu.lovable.app/ | grep -oE '/assets/index-[A-Za-z0-9_-]+\.js' | head -1
+```
+
+Distribuição por build nos últimos 7 dias (numerador e denominador na MESMA query —
+o denominador é a soma da coluna, não uma segunda leitura):
+
+```bash
+./scripts/posthog-query.sh "
+SELECT coalesce(properties.build_id, '(sem instrumentacao)') AS build,
+       count(DISTINCT distinct_id) AS clientes,
+       count() AS eventos,
+       max(timestamp) AS ultimo
+FROM events
+WHERE timestamp > now() - INTERVAL 7 DAY
+GROUP BY build ORDER BY clientes DESC"
+```
+
+### Armadilhas de leitura
+
+- ⚠️ **Ausente, `'desconhecido'` e um hash são TRÊS estados, não dois.** Propriedade
+  **ausente** = cliente executando um build **anterior a esta instrumentação** — é
+  sinal legítimo de NÃO-adoção, e é o estado esperado da maioria logo após o Publish
+  deste PR. `'desconhecido'` = build atual, mas o entry não foi encontrado no HTML
+  (dev, ou o Vite mudou a forma do `index.html` — investigar). Um hash = leitura boa.
+  Colapsar os três num só é o que cega a medição. Por isso o `coalesce` acima nomeia
+  o ausente em vez de deixá-lo virar `NULL` silencioso.
+- ⚠️ **Esta query é o caso clássico do cache da §4**: ela é IDÊNTICA a cada leitura
+  (mesmo texto, sempre), então é exatamente onde `--cache` devolveria a medição
+  anterior com cara de medição nova. O default do wrapper (`force_blocking`) já
+  protege — **não passe `--cache` aqui**. Confira com `--cru | jq .is_cached`.
+- ⚠️ **`distinct_id`, não `person_id`:** o SDK roda com `person_profiles:
+  'identified_only'`, então quem não logou não tem perfil de pessoa. O denominador
+  "clientes que emitiram qualquer evento" precisa incluí-los.
+- ⚠️ **Adoção baixa é o comportamento CORRETO, não um defeito.** Com o modelo
+  `prompt`, o cliente fica no build velho até clicar "Atualizar". A query responde
+  *quantos* e *quem* — a decisão (esperar, avisar, ou forçar) é de produto.
+- ⚠️ **HTTP 504 = ausência de dado, não zero** (exit 73 no wrapper) — vale aqui como
+  em toda leitura desta doc.
+- ⚠️ **O executável é `scripts/posthog-query.sh`, no repo — `~/.config/afiacao/` guarda só a KEY.**
+  O exemplo da §3 chamava `~/.config/afiacao/posthog-query`, que **não existe** (exit 127, medido
+  2026-08-24) e que a própria §2 **proíbe criar como symlink**. Corrigido na §3; registrado aqui
+  porque o sintoma (`127`) não se parece com "caminho errado" e custa uma ida ao `ls`.
+
+### Baseline no dia da instalação (2026-08-24, ANTES do Publish)
+
+A query acima rodou com `exit 0` e devolveu **uma linha só**:
+
+```
+(sem instrumentacao) | 3 clientes | 66 eventos | ultimo 2026-08-24T21:59:38Z
+```
+
+Isso é o **controle negativo** do sensor, e vale guardar: pré-Publish, 100% dos eventos têm de cair
+em `(sem instrumentacao)`. Um `build_id` com hash aparecendo aqui antes do Publish significaria que a
+leitura está medindo outra coisa. O `ultimo` também é o controle POSITIVO de ingestão — 66 eventos
+na janela provam que a fase N (ingestão viva) segue de pé e que uma série vazia adiante seria sinal
+real, não silêncio de canal morto.

@@ -1445,3 +1445,35 @@ Sem isso, `verify-frontend.sh` continua respondendo sozinho uma pergunta que tem
 ingestão do PostHog, ativo em 2026-08-24 — enquanto nenhum evento entra, um sensor novo no payload
 não teria como ser lido, e instalá-lo agora seria fase N+1 sem sinal da fase N. A ordem é destravar a
 ingestão, confirmar que evento volta a chegar, e só então acrescentar o campo.
+
+#### Construído (2026-08-24, à noite): a fase N deu sinal e o sensor entrou
+
+O pré-requisito acima foi cumprido no mesmo dia — a ingestão voltou (evento `diagnostico.ingestao`
+chegando às 21:59Z, `total=2631`); o 503 de ~12:17–12:30Z foi transitório, não estado. Com sinal da
+fase N, o sensor deixou de ser fase N+1 no escuro e foi construído.
+
+**A escolha que mudou em relação à spec acima:** era `VITE_BUILD_ID` **ou** o nome do chunk do entry.
+Ficou o **chunk do entry**, e a razão desqualifica a primeira opção em vez de só preferir a segunda:
+o builder do Lovable **não tem `.git`** (confirmado 2026-06-19, comentário no `vite.config.ts`) e
+nenhuma env de SHA de plataforma foi identificada até hoje — tanto que o `__BUILD_ENV_KEYS__` ainda
+está lá como probe justamente para descobrir o nome dela. Um `VITE_BUILD_ID` derivado de commit
+degradaria para a constante `"dev"` em produção, e **um id constante entre builds não identifica
+build**: o sensor nasceria verde e cego, que é a falha exata que este arquivo cataloga.
+
+O hash do entry não tem essa dependência — é content-hash do Vite, nasce sempre, e muda se e somente
+se o app mudou. Melhor ainda, é o **mesmo eixo** que o `verify-frontend.sh:50` já extrai do servidor
+(`grep -oE '/assets/index-[A-Za-z0-9_-]+\.js'`), então "entregue" e "executado" comparam sem tabela
+de tradução. O risco que isso cria é os dois regexes andarem separado — e o sintoma seria "adoção
+0%", indistinguível de ninguém ter atualizado. Por isso a paridade entre eles é presa por teste
+(`src/lib/__tests__/build-id-paridade.test.ts`), e a falsificação que a valida é sutil de propósito:
+tirar `_` e `-` do charset deixa o teste da extração **verde** (o hash da amostra não os usa) e só a
+paridade acusa.
+
+**Três estados, não dois** — a decisão de leitura que evita a próxima cegueira: propriedade
+**ausente** = build anterior à instrumentação (não-adoção legítima, e o estado da maioria logo após
+este Publish); `'desconhecido'` = build atual com entry não encontrado (dev, ou o HTML mudou de
+forma); hash = leitura boa. Colapsar os três num só reproduziria o erro de origem num lugar novo.
+
+⚠️ **Este PR não tem sinal de si mesmo até ser publicado E aceito.** A primeira leitura útil da
+adoção vem depois do Publish, e ela vai começar perto de 0% — que aqui é o sensor funcionando, não
+falhando. Ler antes disso é o erro que este arquivo inteiro descreve.
