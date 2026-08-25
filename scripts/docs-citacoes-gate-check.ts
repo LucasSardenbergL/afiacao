@@ -49,6 +49,14 @@
  *    falha de `docs/historico/gates-textuais-cegos.md` de novo. Cerca que nunca FECHA engole o
  *    resto do arquivo e vira achado, quando esconde citação.
  *
+ * Exclusão CALADA, porém, é o mesmo veneno noutra forma. "21 citações verificadas ✓" lê como
+ * cobertura TOTAL tanto quando o gate cobriu tudo quanto quando deixou 596 de fora (medido em
+ * 2026-08-25) — quem lê o log do CI não tem como separar os dois casos, e corte deliberado vira
+ * indistinguível de cobertura completa. Por isso o resumo conta o PULADO por motivo, no verde e no
+ * vermelho, com os zeros explícitos. O caso que cobrou: o §10 de
+ * `docs/historico/verificar-sonda-versao.md` ensina sobre gate cego e cita quatro PRs — de dentro
+ * da zona não varrida, o que só se descobriu lendo o fonte deste gate por outro motivo.
+ *
  * Basename nu (`index.ts:397`) NÃO é exceção: **reprova**. O repo tem 99 `index.ts`, então resolver
  * no chute seria fábrica de falso-positivo — mas *pular* é pior, porque vira a saída de emergência
  * que esvazia o gate (basta escrever o nome curto para nunca mais ser cobrado). Até o #1820 eles
@@ -122,8 +130,9 @@ export interface Achado {
 export function parseCitacoes(
   doc: string,
   texto: string,
-): { citacoes: Citacao[]; achados: Achado[] } {
+): { citacoes: Citacao[]; achados: Achado[]; emCerca: number } {
   const { texto: semCercas, cercaAberta } = removerCercas(texto);
+  const brutas = citacoesEm(doc, texto);
   const citacoes = citacoesEm(doc, semCercas);
 
   // O skip cobra um preço: cerca que nunca fecha esvazia tudo abaixo dela, e um gate que mede só
@@ -143,7 +152,11 @@ export function parseCitacoes(
         ]
       : [];
 
-  return { citacoes, achados };
+  // O que a cerca comeu volta como NÚMERO. A cerca esvazia linha a linha e preserva a numeração,
+  // então a citação que sobrevive ao strip é sempre um subconjunto da bruta — a diferença é
+  // exatamente o pulo. Inclui o que a cerca ABERTA engoliu: aquilo também vira achado, mas pulado
+  // é pulado, e some da medição do mesmo jeito.
+  return { citacoes, achados, emCerca: brutas.length - citacoes.length };
 }
 
 /** O regex sobre um texto JÁ limpo. `offsetLinha` recoloca a numeração do trecho no doc inteiro. */
@@ -164,10 +177,16 @@ function citacoesEm(doc: string, texto: string, offsetLinha = 0): Citacao[] {
   return out;
 }
 
+/**
+ * O que não é "o repo" para este gate: saída de build, vendor — e `.claude`, que hospeda as
+ * WORKTREES. Descer ali reencontraria o repo inteiro uma vez por worktree viva, o que estragaria
+ * tanto o índice de basename quanto a conta do que ficou fora do escopo.
+ */
+const IGNORA = new Set(['node_modules', '.git', 'dist', 'build', '.claude', 'coverage']);
+
 /** Índice basename → caminhos, para resolver citação sem `/` só quando ela for ÚNICA. */
 export function indexarRepo(raiz: string): Map<string, string[]> {
   const idx = new Map<string, string[]>();
-  const IGNORA = new Set(['node_modules', '.git', 'dist', 'build', '.claude', 'coverage']);
   const anda = (d: string) => {
     for (const e of readdirSync(d, { withFileTypes: true })) {
       if (IGNORA.has(e.name)) continue;
@@ -303,6 +322,67 @@ export function lerDocsVivos(raiz = '.'): string[] {
   return out.sort();
 }
 
+/**
+ * O COMPLEMENTO de `lerDocsVivos`: todo markdown do repo que este gate não varre. Calculado, e não
+ * listado à mão, de propósito — uma lista de zonas congeladas dessincroniza da realidade em
+ * silêncio, e o relato voltaria a mentir cobertura. Pega os dois formatos de exclusão: a zona por
+ * diretório (o que não está em `ALVOS_VIVOS`) e o artefato nominal de `CONGELADOS`.
+ */
+export function lerDocsForaDoEscopo(raiz = '.'): string[] {
+  const vivos = new Set(lerDocsVivos(raiz));
+  const out: string[] = [];
+  const anda = (d: string) => {
+    for (const e of readdirSync(d, { withFileTypes: true })) {
+      if (IGNORA.has(e.name)) continue;
+      const q = join(d, e.name);
+      if (e.isDirectory()) anda(q);
+      else if (e.name.endsWith('.md')) {
+        const rel = relative(raiz, q);
+        if (!vivos.has(rel)) out.push(rel);
+      }
+    }
+  };
+  anda(raiz);
+  return out.sort();
+}
+
+/**
+ * Quantas citações moram nos docs que o gate não varre. Conta TUDO que casa com o formato, cerca
+ * inclusive: no doc não varrido ninguém verifica nada, então separar por sub-motivo ali seria
+ * precisão inventada.
+ */
+export function contarCitacoesEm(docs: string[], ler: (doc: string) => string): number {
+  let n = 0;
+  for (const d of docs) {
+    const p = parseCitacoes(d, ler(d));
+    n += p.citacoes.length + p.emCerca;
+  }
+  return n;
+}
+
+/** O que o gate deixou de fora, por MOTIVO. */
+export interface ForaDoEscopo {
+  /** citações em markdown que o gate não varre — congelado por diretório ou nominal */
+  emDocNaoVarrido: number;
+  /** citações dentro de cerca de código, nos docs que ele varre */
+  emCerca: number;
+}
+
+/**
+ * A linha que o CI mostra. Diz o que foi verificado E o que ficou de fora, por motivo — "21
+ * citações verificadas ✓" lê como cobertura TOTAL tanto quando o gate cobriu tudo quanto quando
+ * deixou centenas fora, e quem lê o log não tem como separar os dois casos. Corte deliberado que
+ * não se anuncia é indistinguível de cobertura completa; os zeros ficam explícitos justamente para
+ * o "não pulei nada" ser uma afirmação, e não a ausência da cláusula.
+ */
+export function formatarResumo(r: Resultado, fora: ForaDoEscopo): string {
+  const total = fora.emDocNaoVarrido + fora.emCerca;
+  return (
+    `${r.verificadas} citação(ões) verificada(s) contra o conteúdo real · ${r.externas} externa(s)` +
+    ` · ${total} fora do escopo (${fora.emDocNaoVarrido} em doc não varrido, ${fora.emCerca} em cerca)`
+  );
+}
+
 if (import.meta.main) {
   const raiz = process.cwd();
   const docs = lerDocsVivos(raiz);
@@ -318,7 +398,12 @@ if (import.meta.main) {
   });
 
   const achados = [...parses.flatMap((p) => p.achados), ...r.achados];
-  const resumo = `${r.verificadas} citação(ões) verificada(s) contra o conteúdo real · ${r.externas} externa(s)`;
+  const resumo = formatarResumo(r, {
+    emDocNaoVarrido: contarCitacoesEm(lerDocsForaDoEscopo(raiz), (d) =>
+      readFileSync(join(raiz, d), 'utf8'),
+    ),
+    emCerca: parses.reduce((soma, p) => soma + p.emCerca, 0),
+  });
   if (achados.length === 0) {
     console.log(`docs-citacoes-gate: ✓ ${resumo}.`);
     process.exit(0);
