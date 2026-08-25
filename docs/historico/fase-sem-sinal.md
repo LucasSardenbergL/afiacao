@@ -1851,7 +1851,7 @@ esperava.
 
 ### 1. O sensor do `#1964` funciona end-to-end — evidência POSITIVA
 
-A previsão registrada em [`fase-sem-sinal.md:1478`](fase-sem-sinal.md#L1478)
+A previsão registrada em `docs/historico/fase-sem-sinal.md:1478`
 <!--cita: que aqui é o sensor funcionando, não--> — *"que aqui é o sensor funcionando, não
 falhando"* — estava **sem veredito** por falta de cano. Agora tem, e é **CONFIRMADA**:
 
@@ -1869,7 +1869,7 @@ porque executa build anterior ao `#1964`. Os dois estados que a §6 proíbe cola
 ### 2. A inferência sobre o iPhone CAIU — ele voltou a emitir sozinho
 
 O `#1984` registrou, com a honestidade de marcá-la como não-medida, que o iPhone parado desde 23/08
-[`fase-sem-sinal.md:1784`](fase-sem-sinal.md#L1784)
+`docs/historico/fase-sem-sinal.md:1784`
 <!--cita: é a mesma classe (bloqueador de conteúdo no Safari)--> *"é a mesma classe (bloqueador de
 conteúdo no Safari), é a explicação mais simples"*.
 
