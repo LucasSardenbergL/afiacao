@@ -247,6 +247,64 @@ casos defendidos por outra, e teria dado verde a uma sabotagem que não sabotou 
 **Quando o código tem N regras independentes, cada caso de falsificação precisa depender da regra
 que você está desligando** — senão o vermelho (ou o verde) vem por motivo alheio.
 
+
+**A revisão retroativa do sensor: cinco defeitos, e a maioria era "mede errado", não "quebra".**
+A primeira revisão do sensor ficou pela metade (o Codex morreu por infra). Refeita com calma, as
+medições próprias acharam:
+
+- **A redação de segredo cobria pouco.** Só `Bearer`, JWT e `chave=valor`. Escapavam para o disco em
+  texto plano: `Authorization: token ghp_…`, `curl -u user:senha`, `postgres://u:senha@host` e
+  `--password senha` (com **espaço**, não `=`). Log é disco, e o CLAUDE.md proíbe segredo em texto
+  plano em disco.
+- **Uma única linha picotada matava o relatório inteiro.** `jq -s` aborta na primeira linha
+  inválida, então `exit 65` e 100% do sinal perdido — num log que ~30 worktrees escrevem em append,
+  onde picote é acidente esperado. Agora é `jq -R 'fromjson? // empty'`: a linha ruim vira `empty`,
+  as boas contam, e o relatório **declara** quantas ignorou.
+- **`wt` gravava o basename do CWD, não da worktree.** Rodando de `<worktree>/src/lib` o log dizia
+  `lib`. O agrupamento "por worktree" era ficção, e duas worktrees em `src/lib` colidiriam.
+- **"Padrões distintos" contava INSTÂNCIAS.** Três disparos do mesmo erro, diferindo só no nome do
+  arquivo de log, viravam três "padrões" — e o veredito manda o humano classificar um por um, o que
+  torna "zero falso positivo" inatingível por construção. Agora a query normaliza caminhos e números
+  antes de agrupar, e exibe um exemplo real.
+- **Corte silencioso.** Top-15 de padrões e top-8 de worktrees sem dizer quantos ficaram de fora —
+  enquanto o veredito mandava "classificar os N padrões **acima**". O CLAUDE.md já proíbe isso
+  (`no silent caps`); o sensor o cometia no próprio relatório.
+
+O `/codex` retroativo então achou o que eu não tinha achado, e era o pior de todos: **o critério de
+veredito contava linhas BRUTAS.** Dois eventos reais mais dezoito linhas de outro schema imprimiam,
+na mesma tela, `Disparos: 2`, `18 ignoradas` e `[x] >= 20 disparos` → "Volume e janela OK". O sensor
+construído para não fabricar veredito fabricava o próprio. **Passou pela suíte porque o ramo
+POSITIVO do veredito nunca teve teste** — toda fixture existente ficava abaixo do limiar, então o
+caminho que continha o bug nunca era executado. Junto vieram: "14 dias de observação" que era só a
+distância entre o primeiro e o último evento (um disparo em 01/08 e dezenove retries em 20/08
+satisfaziam janela e volume), e agrupamento por `trecho` sem o `ramo`, que juntava ramos diferentes
+numa classe só quando o trecho colidia.
+
+Ele também derrubou uma premissa que eu tinha escrito como garantia: **`PIPE_BUF` não é o limite
+normativo para arquivo regular** — vale para pipe/FIFO. O que protege o append é o `O_APPEND` e a
+linha curta tornar provável um único `write`; em NFS o append é simulado pelo cliente e pode
+corromper de todo jeito. A defesa real não é o teto, é a query tolerar linha picotada.
+
+E três asserções não provavam o que diziam: `all(.trecho != "")` passa com o campo AUSENTE
+(`null != ""` é true em jq); a que "agrupava padrões" procurava só `2x`, string que também aparece
+na seção de worktrees; e a de permissão media DEPOIS do `chmod`, então não distinguia "nasceu 0600"
+de "nasceu 0644 e foi corrigido".
+
+Duas armadilhas de manutenção apareceram no caminho, e valem mais que os fixes: **renomear a
+mensagem quebrou o teste que casava por ela** — e o nome novo tinha acento, que é justamente o que
+o #1483 proíbe em marcador de teste (ASCII, caixa fixa, sem `-i`). E **a falsificação existente
+virou inócua sem ninguém notar**: ela sabotava a redação de `Bearer` e exigia que `sk-segredo-123`
+vazasse, mas o regex novo de tokens conhecidos passou a cobrir `sk-` — a proteção ficou redundante
+e a sabotagem deixou de ser observável. **Endurecer o código pode aposentar a falsificação que o
+vigiava**, e nada avisa: o teste segue verde, só que agora por motivo errado.
+
+**A mesma armadilha, três vezes na mesma sessão.** A falsificação do critério de volume ficou verde
+porque a fixture era barrada por OUTRA regra (dias ativos), e não pela que eu havia desligado.
+Antes disso, a do teto de bytes passou por escolher um vetor que parava sozinho, e a do "último
+comando" mediu um caso defendido pela exigência de `echo`. A regra final: **a fixture de uma
+falsificação precisa passar em todas as outras regras, para que só a sabotada decida o resultado.**
+Caso contrário o verde vem por motivo alheio — e verde por motivo alheio é indistinguível de prova.
+
 ## O padrão por trás das nove
 
 Seis produzem **verde por construção**, não por mérito; a sétima mostra que o mesmo defeito
