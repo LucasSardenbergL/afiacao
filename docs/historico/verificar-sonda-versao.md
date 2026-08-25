@@ -434,3 +434,96 @@ Gate: `src/lib/gates/retorno-consumido.ts`, calibrado nos dois sentidos em
 `src/lib/gates/__tests__/retorno-consumido.test.ts` (28 casos: 7 formas de descarte que reprovam, 6
 formas legítimas REAIS + 1 inventada que aprovam, cegueira, 1-de-2, definição≠chamada, e as 9 edges
 de hoje).
+
+## 11. A varredura da §10 nos gates de SQL: o suspeito de novo não existia, e o furo era a GRAFIA (2026-08-25)
+
+Briefing em `db/diagnostico/BRIEFING-varredura-gates-sql.md`, queries em
+`db/diagnostico/authz-funcoes-acl-real.sql`. Alvo: `scripts/authz-funcoes.test.ts` + o manifesto
+(`AUTHZ_MANIFEST`/`ACKNOWLEDGED_SENSITIVE`/`ACL_ONLY_INTERNAL`), secundário
+`scripts/sonda-versao-sql.test.ts`.
+
+**O suspeito nomeado não existe — medido, não deduzido.** O briefing apostava no vetor
+`DROP FUNCTION`+`CREATE` reabrindo função em prod sem nenhum `GRANT` no repo. Prod diz que não:
+`bun run authz:funcoes:prod` sai **0** ("o EXECUTE de prod bate com o contrato nas 43"), e a query 4
+(`proacl IS NULL`, o rastro do reset) devolve **0 linhas** — toda função de `public` tem ACL
+explícito. Panorama das 454 de `public`: 196 INVOKER (RLS aplica), 189 SECURITY DEFINER com
+**1 só** alcançável por `anon` — `public.get_public_tool_history(uuid)`, deliberada
+(`20260604180000_public_tool_history_rpc.sql`, consumida por `src/queries/useUserTools.ts`) — e 69
+de trigger, que a query 3 acusa mas o PostgREST não expõe como RPC. Nada a revogar.
+
+**O furo estava no GATE, e a assinatura com controle o achou em dois pontos.** A forma errada do
+briefing REPROVA (`FUNCAO_RECRIADA_SEM_FECHO`). Sondadas as grafias VIZINHAS, 18 no total contra as
+666 migrations reais: **7 passavam caladas**.
+
+| # | Grafia | Por quê passava |
+| --- | --- | --- |
+| 1 | `DROP FUNCTION IF EXISTS public.f;` | `alvosDrop` exigia `nome(` |
+| 2 | idem + `CASCADE` | idem |
+| 3 | idem com aspas / 4 sem schema / 5 sem `IF EXISTS` | idem |
+| 6 | `DROP ROUTINE …` (com ou sem args) | o statement casava só `^DROP FUNCTION` |
+| 7 | lista MISTA (`public.a(uuid), public.f`) | o elemento sem parêntese sumia |
+
+Não é grafia exótica: a lista de argumentos é **opcional desde o PG10** quando o nome é único no
+schema, e `ROUTINE` é sinônimo. Provado em PG17 descartável: `DROP FUNCTION public.f;` + `CREATE`
+deixa `proacl` NULL e devolve `EXECUTE` a `anon` **igual** à forma com args; `DROP ROUTINE`, idem;
+`CREATE OR REPLACE` preserva o ACL (o controle); e com overload o PG **recusa** omitir os args — a
+fronteira do furo é "nome único", medida, não suposta.
+
+**O segundo ponto é pior que o primeiro, e apareceu por sondar o ramo vizinho.**
+`GRANT EXECUTE ON ALL ROUTINES IN SCHEMA public TO anon;` reabre as **43 de uma vez, sem citar
+nenhuma pelo nome** — e passava calado, porque `parseAcl` lia só a palavra `FUNCTION(S)`. Mesma
+cegueira no aviso de `ALTER DEFAULT PRIVILEGES … ON ROUTINES`. E `GRANT … ON ROUTINE public.f(uuid)
+TO service_role` — legítimo — caía no fail-closed: o gate reprovava código correto, que é o começo
+de todo afrouxamento.
+
+**Conserto POSICIONAL, no padrão do #2001:** o corte é o NOME que ABRE cada elemento da lista do
+`DROP` (args opcionais, vírgula de topo, `CASCADE`/`RESTRICT` fora), e `ROUTINE(S)` entra como
+sinônimo em `parseAcl`. `PROCEDURES` fica de fora **de propósito** — o PG não derruba função por
+`DROP PROCEDURE` nem alcança função com `ALL PROCEDURES`, então incluí-la seria falso-positivo.
+De quebra, o ramo do `DROP` ganhou o fail-closed que o ramo do `GRANT` já tinha
+(`FUNCAO_DROP_NAO_PARSEAVEL`): **os dois ramos do mesmo arquivo divergiam, e só um não podia afirmar
+que estava tudo bem.**
+
+Calibração nos dois sentidos: 18/18 grafias erradas reprovam (era 11/18) e as formas legítimas
+seguem caladas — inclusive `REVOKE … ON ALL ROUTINES`, `GRANT ON ROUTINE` a role permitida e
+`ALL PROCEDURES`. Contra o repo real, o conjunto de achados é **byte-idêntico ao da `main`**
+(666 migrations, 0 achados): zero falso-positivo. Falsificação em código real, 3 sabotagens:
+tirar o corte posicional = **15 vermelhas**; tirar o `ROUTINE` = **5**; tirar o fail-closed = **1**.
+
+### A varredura completa — 16 sites, 1 afetado
+
+Critério (o da §10, traduzido para SQL): *o gate casa uma GRAFIA e conclui o EFEITO?* Varridos os
+gates que leem SQL como texto:
+
+- **Afetado (1):** `scripts/lib/authz-funcoes.ts` (+ a calibração em `scripts/authz-funcoes.test.ts`).
+- **Imunes por construção (5):** `scripts/lib/authz-contract.ts`, `scripts/lib/migration-objects.ts`,
+  `src/__tests__/import-tint-formulas-aposentada-gate.test.ts` casam `CREATE … FUNCTION` — e
+  **`CREATE ROUTINE` não existe no PostgreSQL**, então a grafia é única e não há o que escapar;
+  `scripts/lib/authz-reescrita.ts` exclui `EXECUTE FUNCTION|PROCEDURE`, que também esgota a sintaxe.
+  `scripts/lib/authz-grants.ts` (Parte C, tabelas) já era **fail-closed** e nem depende de parsear
+  `DROP`: julga o `CREATE TABLE` sozinho. Era o irmão bem-feito ao lado do furo.
+- **Falso-positivo da assinatura (10):** `scripts/sonda-versao-sql.test.ts` (o alvo secundário do
+  briefing — o valor de retorno de `gerarSqlDaLeva` **é** o SQL que o assert lê, então o assert já
+  segue o valor até a fronteira), `scripts/audit-custom-migrations.ts` e
+  `scripts/wt-preflight-migration.ts` (heurístico DECLARADO, e o que afirmam é inventário/colisão,
+  não efeito), `scripts/sql-comentarios.test.ts` (é o stripper compartilhado, com sentinela),
+  `scripts/docs-links-gate-check.ts`, `scripts/cep-aberto/importar-carteira.ts`,
+  `scripts/authz-gate-check{,.test}.ts`, `scripts/lib/migration-objects.test.ts`, e os três gates de
+  PARIDADE (`afinidade-nao-e-dinheiro`, `titulo-status-paridade`, `BotoesDesfechoRecomendacao`), que
+  já trazem CONTROLE explícito contra regex que não casa.
+
+**Cobertura fora de `supabase/migrations/` — medida, não presumida.** O gate estático só lê
+`supabase/migrations/`, e o projeto tem um canal paralelo (`db/*.sql` aplicado à mão, como o #1090).
+Varridos os 52 `db/*.sql` contra as 43 do contrato: **0 pares `DROP`+`CREATE`**. O único `CREATE OR
+REPLACE` (`prod-sentinela-base-20260702.sql` → `_data_health_compute`) preserva o ACL, logo não é
+vetor. O canal existe e hoje está vazio; quem o cobre de verdade é `authz:funcoes:prod`.
+
+### A lição que generaliza
+
+A §9 disse "o assert tem de seguir o valor até a fronteira". A §11 acrescenta o eixo que faltava:
+**quando a fronteira é uma LINGUAGEM, seguir o valor não basta — é preciso cobrir as grafias que a
+linguagem trata como equivalentes.** `FUNCTION`/`ROUTINE`, args opcionais, `ALL … IN SCHEMA`: o
+gate media a palavra e afirmava o alcance. O teste barato que pega isso não é ler o regex, é
+**montar a forma errada em N grafias e contar quantas o gate deixa passar** — 7 de 18 aqui, e
+nenhuma delas visível na leitura.
+

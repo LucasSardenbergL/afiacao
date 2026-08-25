@@ -182,7 +182,6 @@ describe('auditGrantsFuncoes — reabertura por GRANT', () => {
   const REABRE_POR_ROUTINE: [string, string][] = [
     ['ON ROUTINE com args', 'GRANT EXECUTE ON ROUTINE public.f(uuid) TO anon;'],
     ['ON ROUTINE sem args', 'GRANT EXECUTE ON ROUTINE public.f TO anon;'],
-    ['ON ALL ROUTINES IN SCHEMA — atinge sem citar o nome', 'GRANT EXECUTE ON ALL ROUTINES IN SCHEMA public TO anon;'],
   ];
 
   it.each(REABRE_POR_ROUTINE)('GRANT com a grafia ROUTINE acusa FUNCAO_REABERTURA: %s', (_nome, sql) => {
@@ -190,6 +189,28 @@ describe('auditGrantsFuncoes — reabertura por GRANT', () => {
     expect(cods(r)).toEqual(['FUNCAO_REABERTURA']);
     expect(r[0].funcao).toBe('public.f');
     expect(r[0].level).toBe('error');
+  });
+
+  // A forma ALL é a séria, e o assert tem de dizer POR QUÊ: ela atinge TODA função do schema sem
+  // citar nenhuma pelo nome. Afirmar um achado só descreveria mal o estrago — em prod são as 43.
+  it('GRANT ON ALL ROUTINES IN SCHEMA acusa TODAS as funções do schema, sem citar nome', () => {
+    const r = auditGrantsFuncoes(
+      [ANCORA, { file: '20260202000000_x.sql', sql: 'GRANT EXECUTE ON ALL ROUTINES IN SCHEMA public TO anon;' }],
+      ALLOW,
+    );
+    expect(r.map((f) => f.funcao).sort()).toEqual(['public.f', 'public.g']);
+    expect(new Set(cods(r))).toEqual(new Set(['FUNCAO_REABERTURA']));
+    expect(r.every((f) => f.level === 'error')).toBe(true);
+  });
+
+  // Controle da forma ALL: OUTRO schema não alcança as do contrato — senão o assert acima seria
+  // compatível com "a palavra ALL ROUTINES acusa sempre".
+  it('GRANT ON ALL ROUTINES IN SCHEMA de OUTRO schema não alcança', () => {
+    const r = auditGrantsFuncoes(
+      [ANCORA, { file: '20260202000000_x.sql', sql: 'GRANT EXECUTE ON ALL ROUTINES IN SCHEMA outro TO anon;' }],
+      ALLOW,
+    );
+    expect(r).toEqual([]);
   });
 
   // Sentido oposto: a MESMA grafia usada legitimamente tem de ficar quieta. Sem isto o bloco acima
