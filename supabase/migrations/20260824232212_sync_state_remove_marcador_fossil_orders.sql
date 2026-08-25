@@ -1,0 +1,53 @@
+-- ============================================================
+-- sync_state: remove o marcador FÓSSIL 'orders'/'vendas'
+--
+-- POR QUE: o writer desse marcador foi APOSENTADO em 2026-06-24 (#1057,
+-- commit 73be4515) — `syncOrdersIncremental` virou no-op puro (`return
+-- { deprecated: true, ... }`, NÃO toca sync_state) e `orders` saiu do
+-- `sync_all`. A linha congelou no estado deixado pelo ÚLTIMO run real
+-- (status='running', last_sync_at NULL, last_page=0, total_synced=0,
+-- updated_at=2026-06-24 06:00:44 = a janela do cron `sync-products-customers-daily`
+-- daquele dia) e nunca mais foi tocada. Zero writers vivos no repo inteiro:
+-- `sync-reprocess` grava entity_type='orders' em `sync_reprocess_log`, que é
+-- OUTRA tabela.
+--
+-- A ENTIDADE NÃO ESTÁ PARADA — só mudou de caminho. Pedidos de venda entram
+-- pela RPC `criar_pedidos_com_itens` (edge `omie-vendas-sync`), que loga em
+-- `fin_sync_log` (action='sync_pedidos'), crons `vendas-sync-pedidos-oben-2h`
+-- (5 */2) e `-colacor-2h` (20 */2). Medido 2026-08-25 02:11 UTC: 6 runs
+-- consecutivos `complete`, o mais recente às 02:05 (6 min antes). Não é
+-- money-path parado; é marcador órfão.
+--
+-- O QUE ISTO CONSERTA: o check `sync_state_saude` (#1980) tem um EIXO 1 que
+-- varre a tabela INTEIRA sem lista — de propósito, pra que entidade nova nasça
+-- vigiada. Esse eixo classifica `running` órfão >6h como 'broken', e a
+-- severidade do source é FIXA em 'critical'. Sem esta remoção o check nasce
+-- vermelho-PERMANENTE sobre um fantasma de 62 dias, e a mensagem "todos os
+-- marcadores saudaveis" nunca poderia aparecer.
+--
+-- POR QUE DELETE E NÃO "consertar o writer": a aposentadoria foi decisão
+-- deliberada e documentada (o writer legado poluía `sales_price_history` —
+-- 3.995 linhas excedentes). Ressuscitá-lo recriaria o bug que o #1057 matou.
+--
+-- SEGURO PORQUE (medido na PROD via psql-ro, 2026-08-25 02:2x UTC):
+--   • 1 linha alvo; `entity_type='orders'` só existe para account='vendas';
+--   • 0 FKs apontando para public.sync_state (nada cascateia);
+--   • o EIXO 2 do check (estagnação, lista explícita de pares com SLA) NÃO
+--     lista 'orders' — conferido em `pg_get_functiondef` da função DEPLOYADA,
+--     não no arquivo do repo. Por isso apagar a linha faz o check ESQUECER o
+--     par, em vez de reclassificá-lo.
+--     ⚠️ CONTRASTE que vale registrar: 'products' ESTÁ na lista do eixo 2.
+--     Apagar o marcador `products/vendas` (hoje 'partial') NÃO é o mesmo
+--     movimento — viraria 'broken' por "marcador AUSENTE (nunca rodou)".
+--     Só se apaga marcador que o eixo 2 não lista.
+--   • leitores de sync_state em SQL (claim_*/finalizar_*/tint_watchdog_*/
+--     _data_health_compute) não referenciam o par orders/vendas; 0 views leem
+--     a tabela; a UI (`useAnalyticsSync.ts`) faz `select().order('entity_type')`
+--     genérico — perde uma linha no painel admin, não quebra.
+--
+-- IDEMPOTENTE: re-colar é no-op (o WHERE não casa mais nada).
+-- ============================================================
+
+DELETE FROM public.sync_state
+WHERE entity_type = 'orders'
+  AND account = 'vendas';
