@@ -23,6 +23,7 @@
     "docs:citacoes": "bun scripts/docs-citacoes-gate-check.ts",
     "docs:indice": "bun scripts/docs-indice-gate-check.ts",
     "docs:links": "bun scripts/docs-links-gate-check.ts",
+    "sonda:sql": "bun scripts/sonda-versao-sql.ts",
     "mutcheck": "bash scripts/mutcheck-all.sh",
     "mutcheck:selftest": "bash scripts/mutcheck.sh --selftest",
     "wt": "bash scripts/new-worktree.sh",
