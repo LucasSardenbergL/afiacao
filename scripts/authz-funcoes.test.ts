@@ -173,6 +173,69 @@ describe('auditGrantsFuncoes — reabertura por GRANT', () => {
     expect(r).toEqual([]);
   });
 
+  // ══════════════════════════════════════════════════════════════════════════════════════
+  // `ROUTINE`/`ROUTINES` é sinônimo de `FUNCTION`/`FUNCTIONS` no PG11+ e alcança as mesmas
+  // funções. Ler só a grafia `FUNCTION` media a PALAVRA e concluía o alcance — e o pior caso não
+  // é uma função: `GRANT EXECUTE ON ALL ROUTINES IN SCHEMA public TO anon` reabre TODAS as 43
+  // do contrato de uma vez, sem citar nenhuma pelo nome (medido: passava calado).
+  // ══════════════════════════════════════════════════════════════════════════════════════
+  const REABRE_POR_ROUTINE: [string, string][] = [
+    ['ON ROUTINE com args', 'GRANT EXECUTE ON ROUTINE public.f(uuid) TO anon;'],
+    ['ON ROUTINE sem args', 'GRANT EXECUTE ON ROUTINE public.f TO anon;'],
+    ['ON ALL ROUTINES IN SCHEMA — atinge sem citar o nome', 'GRANT EXECUTE ON ALL ROUTINES IN SCHEMA public TO anon;'],
+  ];
+
+  it.each(REABRE_POR_ROUTINE)('GRANT com a grafia ROUTINE acusa FUNCAO_REABERTURA: %s', (_nome, sql) => {
+    const r = auditGrantsFuncoes([ANCORA, { file: '20260202000000_x.sql', sql }], ALLOW);
+    expect(cods(r)).toEqual(['FUNCAO_REABERTURA']);
+    expect(r[0].funcao).toBe('public.f');
+    expect(r[0].level).toBe('error');
+  });
+
+  // Sentido oposto: a MESMA grafia usada legitimamente tem de ficar quieta. Sem isto o bloco acima
+  // seria compatível com "a palavra ROUTINE acusa sempre" — e o conserto de um gate que reprova
+  // código correto é sempre afrouxá-lo.
+  it('GRANT ON ROUTINE a role PERMITIDA fica quieto', () => {
+    const r = auditGrantsFuncoes(
+      [ANCORA, { file: '20260202000000_x.sql', sql: 'GRANT EXECUTE ON ROUTINE public.f(uuid) TO authenticated, service_role;' }],
+      ALLOW,
+    );
+    expect(r).toEqual([]);
+  });
+
+  it('REVOKE ON ALL ROUTINES IN SCHEMA restaura o fecho tanto quanto ALL FUNCTIONS', () => {
+    const r = auditGrantsFuncoes(
+      [
+        ANCORA,
+        {
+          file: '20260202000000_x.sql',
+          sql: 'GRANT EXECUTE ON FUNCTION public.f(uuid) TO anon;\nREVOKE EXECUTE ON ALL ROUTINES IN SCHEMA public FROM anon;',
+        },
+      ],
+      ALLOW,
+    );
+    expect(r).toEqual([]);
+  });
+
+  // Precisão: `PROCEDURES` NÃO alcança função (o PG separa as categorias), então tratá-la como
+  // alcance seria falso-positivo. A distinção é medida, não suposta.
+  it('ALL PROCEDURES IN SCHEMA não alcança função — não inventa achado', () => {
+    const r = auditGrantsFuncoes(
+      [ANCORA, { file: '20260202000000_x.sql', sql: 'GRANT EXECUTE ON ALL PROCEDURES IN SCHEMA public TO anon;' }],
+      ALLOW,
+    );
+    expect(r).toEqual([]);
+  });
+
+  it('ALTER DEFAULT PRIVILEGES sobre ROUTINES avisa igual a FUNCTIONS', () => {
+    const r = auditGrantsFuncoes(
+      [ANCORA, { file: '20260202000000_x.sql', sql: 'ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT EXECUTE ON ROUTINES TO anon;' }],
+      ALLOW,
+    );
+    expect(cods(r)).toEqual(['FUNCAO_DEFAULT_PRIVILEGE_ALTERADO']);
+    expect(r[0].level).toBe('warn');
+  });
+
   it('GRANT dentro de COMENTÁRIO não acusa', () => {
     const r = auditGrantsFuncoes(
       [ANCORA, { file: '20260202000000_x.sql', sql: '-- GRANT EXECUTE ON FUNCTION public.g() TO anon;\nSELECT 1;' }],
@@ -313,6 +376,97 @@ describe('auditGrantsFuncoes — recriação que RESETA o ACL (o vetor DROP+CREA
     expect(r).toEqual([]);
   });
 
+  // ══════════════════════════════════════════════════════════════════════════════════════
+  // A lista de argumentos é OPCIONAL (PG10+, nome único no schema) e `ROUTINE` é sinônimo. Exigir
+  // `nome(` media a GRAFIA e concluía o EFEITO — 7 de 18 grafias passavam caladas. Provado em PG17:
+  // `DROP FUNCTION public.f;` + CREATE deixa proacl NULL e devolve EXECUTE a anon, igual à forma com
+  // args; `DROP ROUTINE`, idem; `CREATE OR REPLACE` preserva o ACL (o controle).
+  // ══════════════════════════════════════════════════════════════════════════════════════
+  const SEM_PARENTESE: [string, string][] = [
+    ['sem lista de argumentos', 'DROP FUNCTION IF EXISTS public.g;'],
+    ['sem args + CASCADE', 'DROP FUNCTION IF EXISTS public.g CASCADE;'],
+    ['sem args, identificador entre aspas', 'DROP FUNCTION IF EXISTS public."g";'],
+    ['sem args e sem schema (public implícito)', 'DROP FUNCTION IF EXISTS g;'],
+    ['sem args, sem IF EXISTS', 'DROP FUNCTION public.g;'],
+    ['ROUTINE com args', 'DROP ROUTINE IF EXISTS public.g();'],
+    ['ROUTINE sem args', 'DROP ROUTINE IF EXISTS public.g;'],
+    ['lista MISTA: outra com args, o alvo sem', 'DROP FUNCTION IF EXISTS public.outra(uuid), public.g;'],
+  ];
+
+  it.each(SEM_PARENTESE)('recriação SEM parêntese acusa mesmo assim: %s', (_nome, dropSql) => {
+    const r = auditGrantsFuncoes(
+      [ANCORA, { file: '20260202000000_x.sql', sql: `${dropSql}\n${create('public.g')}` }],
+      ALLOW,
+    );
+    expect(cods(r)).toEqual(['FUNCAO_RECRIADA_SEM_FECHO']);
+    expect(r[0].funcao).toBe('public.g');
+  });
+
+  // Calibração no sentido OPOSTO: a mesma grafia sem parêntese, COM o REVOKE que restaura o fecho,
+  // tem de ficar quieta. Sem isto o bloco acima seria compatível com "acusa sempre".
+  it.each(SEM_PARENTESE)('a MESMA grafia com REVOKE das duas roles fica quieta: %s', (_nome, dropSql) => {
+    const r = auditGrantsFuncoes(
+      [
+        ANCORA,
+        {
+          file: '20260202000000_x.sql',
+          sql: `${dropSql}\n${create('public.g')}\nREVOKE EXECUTE ON FUNCTION public.g() FROM anon, authenticated;`,
+        },
+      ],
+      ALLOW,
+    );
+    expect(r).toEqual([]);
+  });
+
+  // Cegueira (lição do #2001: calibração negativa que aponta para o nome errado fica verde de graça).
+  // A sentinela é o CONTROLE: se a grafia sem parêntese acusasse por acidente de âncora textual, este
+  // DROP de função NÃO classificada também acusaria — e ele tem de ficar quieto.
+  it('SENTINELA: DROP sem parêntese de função FORA do contrato não inventa achado', () => {
+    const r = auditGrantsFuncoes(
+      [ANCORA, { file: '20260202000000_x.sql', sql: `DROP FUNCTION IF EXISTS public.nao_classificada;\n${create('public.nao_classificada')}` }],
+      ALLOW,
+    );
+    expect(r).toEqual([]);
+  });
+
+  // Sufixo/homônima continuam desambiguadas na forma sem parêntese — o corte é o NOME inteiro.
+  it('nome com SUFIXO não é confundido na grafia sem parêntese', () => {
+    const r = auditGrantsFuncoes(
+      [ANCORA, { file: '20260202000000_x.sql', sql: `DROP FUNCTION IF EXISTS public.g_extra;\n${create('public.g_extra')}` }],
+      ALLOW,
+    );
+    expect(r).toEqual([]);
+  });
+
+  it('homônima em OUTRO schema não é confundida na grafia sem parêntese', () => {
+    const r = auditGrantsFuncoes(
+      [ANCORA, { file: '20260202000000_x.sql', sql: `DROP FUNCTION IF EXISTS outro.g;\nCREATE FUNCTION outro.g() RETURNS int LANGUAGE sql AS $$ SELECT 1 $$;` }],
+      ALLOW,
+    );
+    expect(r).toEqual([]);
+  });
+
+  // Fail-closed simétrico ao do GRANT: DROP que CITA a protegida numa forma que o parser não leu
+  // não pode sair calado. `DROP PROCEDURE` é o caso concreto — o PG recusa derrubar função por ele,
+  // então não é vetor, mas também não é motivo para o gate afirmar que está tudo bem.
+  it('DROP numa forma que o parser não entende é fail-closed', () => {
+    const r = auditGrantsFuncoes(
+      [ANCORA, { file: '20260202000000_x.sql', sql: 'DROP FUNCTION IF EXISTS (SELECT public.g);' }],
+      ALLOW,
+    );
+    expect(cods(r)).toEqual(['FUNCAO_DROP_NAO_PARSEAVEL']);
+    expect(r[0].funcao).toBe('public.g');
+    expect(r[0].level).toBe('error');
+  });
+
+  it('DROP que NÃO cita função protegida segue silencioso mesmo sem ser parseável', () => {
+    const r = auditGrantsFuncoes(
+      [ANCORA, { file: '20260202000000_x.sql', sql: 'DROP FUNCTION IF EXISTS (SELECT public.nada_a_ver);' }],
+      ALLOW,
+    );
+    expect(r).toEqual([]);
+  });
+
   it('DROP+CREATE ANTERIOR à âncora não conta', () => {
     const r = auditGrantsFuncoes(
       [{ file: '20250101000000_antes.sql', sql: `${drop('public.g')}\n${create('public.g')}` }, ANCORA],
@@ -435,6 +589,49 @@ describe('auditGrantsFuncoes — contra o repo REAL', () => {
     ];
     for (const fn of alvo) {
       const r = auditGrantsFuncoes(semRevokeNaMigrationDoDrop(fn), AUTHZ_FUNCOES_FECHADAS).filter(
+        (f) => f.codigo === 'FUNCAO_RECRIADA_SEM_FECHO' && f.funcao === fn,
+      );
+      expect(r.length, fn).toBeGreaterThan(0);
+    }
+  });
+
+  /** Reescreve o `DROP FUNCTION <fn>(args)` REAL para a grafia SEM parêntese, e tira o REVOKE da
+   *  mesma migration. É a sabotagem do #2001 aplicada à grafia nova: se o detector voltasse a
+   *  exigir o `(`, este DROP some do radar e o teste abaixo fica verde por CEGUEIRA. */
+  const semParenteseNoDropReal = (fn: string) =>
+    migrations.map((m) =>
+      m.sql.includes(`DROP FUNCTION IF EXISTS ${fn}`)
+        ? {
+            ...m,
+            sql: m.sql
+              .replace(new RegExp(`DROP FUNCTION IF EXISTS ${fn}\\s*\\([^)]*\\)`, 'g'), `DROP FUNCTION IF EXISTS ${fn}`)
+              .replace(/REVOKE\s+(?:EXECUTE|ALL)[^;]*;/gi, '-- revoke removido'),
+          }
+        : m,
+    );
+
+  // Anti-inércia da grafia NOVA, contra o repo REAL — não contra fixture. Sem isto, os casos
+  // sintéticos acima seriam compatíveis com "o detector novo nunca roda no pipeline de verdade".
+  it('a grafia SEM parêntese é enxergada no repo REAL (não só em fixture)', () => {
+    const alvo = [
+      'public.get_ultimos_precos_cliente',
+      'public.get_regua_preco',
+      'public.tint_calc_preco_final',
+      'public.tint_recalc_preco_oficial',
+    ];
+    for (const fn of alvo) {
+      const mutadas = semParenteseNoDropReal(fn);
+      // SENTINELA: a reescrita tem de ter MUDADO alguma migration. Regex que não casa devolveria o
+      // repo intacto — zero achados — e o `toBeGreaterThan(0)` abaixo falharia por motivo errado,
+      // ou pior, um dia passaria por acidente. O controle é a mutação, não o achado.
+      const mudou = mutadas.filter((m, i) => m.sql !== migrations[i].sql);
+      expect(mudou.length, `a sabotagem de ${fn} não alterou nenhuma migration`).toBeGreaterThan(0);
+      expect(
+        mudou.some((m) => new RegExp(`DROP FUNCTION IF EXISTS ${fn}\\s*;`).test(m.sql)),
+        `${fn}: a reescrita não produziu a grafia sem parêntese`,
+      ).toBe(true);
+
+      const r = auditGrantsFuncoes(mutadas, AUTHZ_FUNCOES_FECHADAS).filter(
         (f) => f.codigo === 'FUNCAO_RECRIADA_SEM_FECHO' && f.funcao === fn,
       );
       expect(r.length, fn).toBeGreaterThan(0);
