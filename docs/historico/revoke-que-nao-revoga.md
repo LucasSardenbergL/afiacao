@@ -1,8 +1,9 @@
 # O REVOKE que não revoga — e o "read-only blindado" que era só do wrapper
 
 > 2026-08-25. Auditoria do papel `claude_ro` no Postgres de produção (`fzvklzpomgnyikkfkzai`).
-> Lição durável em `docs/agent/database.md` §1. **Nada foi aplicado no banco por esta sessão** — leitura
-> e um PG17 local descartável; o único bloco de escrita está no fim, para o founder colar.
+> Lição durável em `docs/agent/database.md` §1. A auditoria em si não escreveu no banco (leitura + PG17
+> local descartável); o founder **aplicou os blocos no mesmo dia** — o resultado medido está na seção
+> **Pós-apply**, no fim, inclusive um defeito do SQL que eu entreguei.
 
 ## Veredito em 5 linhas
 
@@ -292,3 +293,57 @@ Três avisos que o Codex acrescentou e que valem para o ticket:
   contrário é ausência de dado se passando por prova (mesma família de `evidencia-positiva-shell.md`). Foi
   o `/codex` que virou a mesa: em auditoria, a 2ª opinião ataca a **suposição de completude**, que é
   justamente a que o autor não enxerga.
+
+---
+
+## Pós-apply — 2026-08-25 (medido, não presumido)
+
+O founder colou os blocos. Verificação por `psql-ro` e por sessão `psql -X`:
+
+| o que | esperado | medido |
+|---|---|---|
+| `pg_read_all_data` no papel | removido | **0 memberships** ✅ |
+| GUC preso ao papel | `on` | `pg_db_role_setting` = `{default_transaction_read_only=on}` ✅ |
+| GUC **fora** do wrapper (`psql -X`) | `on` | `txn_ro=on`, `sessao_ro=on` (antes: `off`/`off`) ✅ |
+| cobertura do `GRANT` em `public` | sem no-op | **413/413** com SELECT, 0 de fora ✅ |
+| `cron.job` · `net._http_response` (canária) | legíveis | `t` · `t` ✅ |
+| `auth.refresh_tokens.token` | negado | `ERROR: permission denied` ✅ |
+
+**O `rolconfig` continua `NULL`** — o valor foi para `pg_db_role_setting`, porque o bloco usou
+`ALTER ROLE … IN DATABASE postgres SET …`. Quem verificar só `pg_roles.rolconfig` vai concluir que não
+aplicou. Foi um aviso do Codex que entrou no bloco e quase virou falso-vermelho na conferência.
+
+### O defeito do SQL que eu entreguei
+
+O `GRANT SELECT (…) ON auth.refresh_tokens` **pousou** — `information_schema.column_privileges` mostra as 7
+colunas, com `token` e `parent` corretamente de fora. Mas ele é **inalcançável**: eu concedi USAGE em
+`public`, `supabase_migrations` e `cron` e **esqueci `auth`**. O USAGE de `auth` vinha do
+`pg_read_all_data` — implícito, invisível no `nspacl`, exatamente o mecanismo que o Achado 5 celebra. Ao
+tirar a membership, ele foi junto. O erro que volta não é `permission denied for column`, é
+**`permission denied for schema auth`**.
+
+E não dá para consertar: `auth` é de `supabase_admin` e o `postgres` tem `U` **sem `*`** ⇒
+`GRANT USAGE ON SCHEMA auth TO claude_ro` seria **mais um no-op silencioso**, a terceira vez neste mesmo
+arquivo.
+
+**Saldo:** segurança **melhor** que o desenho (o schema `auth` inteiro ficou fora, não só duas colunas);
+promessa **não cumprida** — a telemetria de login do `fase-sem-sinal.md` morreu, e morreu em definitivo. Para
+medir uso, sobra o PostHog. Junto foram-se `storage`, `realtime`, `graphql_public` e `extensions`; nenhum é
+consultado em prod por este repo (verificado por `git grep`), então ficam como estão.
+
+### A lição, que é a mesma do Achado 1 aplicada a mim
+
+Eu conferi o **grant option da tabela** (`postgres=ar*wdDxtm`) e comemorei que o `GRANT` por coluna era
+executável. Não conferi o **alcance do schema**. Privilégio de tabela sem USAGE de schema é gaveta trancada
+dentro de sala trancada: o `GRANT` "funciona", o catálogo registra, e o acesso não existe.
+
+⇒ **Ao remover `pg_read_all_data`, liste os schemas que o papel alcançava POR HERANÇA antes de escrever o
+bloco** — `has_schema_privilege` responde `t` para eles enquanto a membership existe, e vira `f` no instante
+seguinte. A conferência que pega isso é *rodar a consulta real*, não somar privilégios no papel.
+
+### Não verificável daqui em diante
+
+Se o bloco 3 (invalidar os 8 refresh tokens vivos) foi rodado, **eu não tenho mais como conferir** — perdi a
+leitura da tabela. Isso é consequência desejada do fecho, não lacuna: com o `pg_read_all_data` fora, o
+`claude_ro` não colhe token independentemente de terem sido revogados. O bloco 3 só importa sob hipótese de
+colheita **anterior** ao fecho.
