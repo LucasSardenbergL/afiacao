@@ -59,6 +59,7 @@ falha, e **não foi auditado aqui**. Que a classe é real ali também está prov
 bumpou o `contrato` da `omie-vendas-sync` de `identidade-fail-closed-v1` para
 `identidade-a2-client-to-user-v2` justamente porque o marcador velho não nomeava mais a fatia que
 a canária verifica. Auditar os `contrato` pelo mesmo critério é o próximo passo natural.
+**→ FEITO em 2026-08-25; o resultado está na última seção deste documento.**
 
 ## O bump do #1974 no ar — a tese deste doc exercitada ponta a ponta (2026-08-25, 02:5x UTC)
 
@@ -249,3 +250,97 @@ toque em `_shared/`, as ~30 edges passam a reportar fonte diferente da `main` at
 redeployadas — é VERDADE (elas rodam código velho), mas é volume de alarme, e deploy de edge aqui
 é manual. Quem sonda deve ler `fonte` como "de que fonte este bundle foi buildado", não como
 "pendência a zerar".
+## O escopo que ficou aberto: auditoria dos 7 `contrato` de CANÁRIA (2026-08-25)
+
+A ⚠️ "Escopo desta auditoria" acima fecha aqui. Critério idêntico ao das sondas, adaptado: para
+cada canária, o commit que definiu o `contrato` atual, e depois **os commits que alteraram os
+símbolos que a fixture EXERCITA** — não "tocou o diretório", que confunde vizinhança com
+comportamento.
+
+**Resultado: nenhum dos 7 contratos está congelado.** O caso que motivou a auditoria (#1974,
+`omie-vendas-sync`) era genuíno e já estava corrigido; a classe não reincidiu nos outros seis.
+
+| canária (edge · rota) | `contrato` atual | commit que o definiu | fatias que entraram depois | congelado? |
+|---|---|---|---|---|
+| `analyze-unified-order` · card de Governança | `praticado-vence-omie-v1` | 49f824abd (2026-08-23) | e70bfa050 (#1938, `searchCustomer` STRING) · e2a4acc2c (corpo tipado) | **não** — `mergeCustomerPrices` intocado; as duas fatias são de prompt/corpo e a SONDA (`v1.1-corpo-tipado`) as cobre |
+| `omie-vendas-sync` · `identidade_probe` | `identidade-a2-client-to-user-v2` | 97194df1b (#1974) | nenhuma | **não** — caso de referência, já corrigido |
+| `omie-analytics-sync` · `doc_ambiguo_probe` | `doc-ambiguo-fail-closed-v1` | d8cf07152 (2026-08-23) | 81f9a111c (#1991) · 883080edb · c63820508 (#1992) | **não** — `docsComCodigoAmbiguoNoOmie` intocado |
+| `omie-analytics-sync` · `transferencia_probe` | `transferencia-codigo-fail-closed-v1` | 81f9a111c (#1991) | 883080edb · c63820508 (#1992) | **não** — `classificarLoteProof` intocado |
+| `carteira-rebuild` · `?canary=1` | `trava-saida-v1` | 56f9f58b3 (2026-07-20) | f6561b0b2 (4 guards de paginação) · 5f5523df9 (import) | **não** pelo critério — mas ver "o furo que a auditoria achou" |
+| `generate-tactical-plan` · `{"canary":true}` | `v1.1-paginacao-eof-e-cursor` (campo `versao`) | 7f1198cf0 (2026-08-24) | nenhuma | **não** |
+| `omie-financeiro` · `paginacao_probe` | `paginacao-guards-v1` | dba6593fa (2026-07-29) | 2eb237532 (`Deno.serve`) · 5b8501144 (sonda) | **não** — `desfechoVarreduraReversa`/`fingerprintPagina`/`listaOmie` intocados; a sonda cobre as duas fatias por ancestralidade |
+
+⚠️ **`git log -L :função:arquivo` produziu um falso positivo, e por pouco não virou veredito.** Ele
+apontou o `81f9a111c` como tendo alterado `docsComCodigoAmbiguoNoOmie` — a tabela-verdade da
+`doc_ambiguo_probe`. Não alterou: o commit ADICIONA um bloco MIRROR novo logo após o `MIRROR-END`
+da função, e o `-L` seguiu o **hunk header**, que nomeia a função ENCLOSING por proximidade, não
+por alteração. `-G'function <nome>'` restrito ao `index.ts` separa os dois. A lição da auditoria
+das sondas se repete um nível abaixo: ali era a intuição que errava o alvo, aqui é a ferramenta.
+
+### O furo que a auditoria achou não é um contrato parado — é a falta de gate
+
+O resultado limpo esconde uma assimetria de mecanismo, e a seção anterior (o fingerprint SERVIDO
+do #1998) **aumentou** essa assimetria em vez de fechá-la — medido, não suposto:
+
+| das 6 edges com canária | tem sonda (`versao.ts`) | entra no mapa de `_shared/sonda-fingerprints.ts` |
+|---|---|---|
+| `analyze-unified-order` · `omie-analytics-sync` · `generate-tactical-plan` · `omie-financeiro` | sim | **sim** (4 das 32) |
+| `omie-vendas-sync` · `carteira-rebuild` | **não** | **não** |
+
+As duas de fora são exatamente aquelas cuja ÚNICA prova de deploy é a canária. As outras quatro
+têm canária **e** sonda, e agora ganharam de brinde um discriminador que não depende de disciplina
+nenhuma — o `fonte` servido muda sozinho quando a fonte muda. Ou seja: o mecanismo novo foi
+para quem já tinha duas provas, e não alcançou quem tem uma só. Não é crítica ao #1998 (ele
+resolve outro problema, e o declara); é onde o próximo esforço rende.
+
+Depois do #1993, **omissão** de bump tem gate para SONDA e não tem para CANÁRIA: `scripts/sonda-versao-bump-gate.ts` pula toda edge sem
+`versao.ts` (`if (fonteHead === null) continue`), e o teste de contrato pega só a REGRESSÃO. As
+duas canárias **sem sonda** — `carteira-rebuild` e `omie-vendas-sync` — ficam fora de tudo: o
+gate substituto que o comentário do script cita (`nenhuma edge que serve o paginate.ts fica SEM
+prova de deploy`) não alcança a `carteira-rebuild`, que não importa o `paginate.ts`.
+
+O caso concreto: o `f6561b0b2` instalou 4 guards money-path na `carteira-rebuild` — `data == null`
+sem `error` passa a `failLease` em vez de encerrar o laço com a carteira TRUNCADA — e o
+`trava-saida-v1` é de 8 dias antes. A canária responde a mesma string com ou sem os guards. **Não
+bumpamos**, e a razão é a deste documento: o fix está em prod há semanas, bump tardio não devolve
+discriminação perdida, e o bump agora compraria um deploy no-op sem responder nada que já não
+esteja respondido. O bump certo é o da PRÓXIMA fatia dela — e é justamente esse que ninguém
+lembra, porque nenhum gate cobra.
+
+**O desenho que já resolve isso está no repo, na `generate-tactical-plan`:** ela serve o marcador
+da canária no campo `versao`, o MESMO símbolo da sonda. Sendo o mesmo símbolo, a canária herda o
+gate do `sonda:bump` de graça. Custo de copiar: a resposta passa a ter `versao` no lugar de
+`contrato`, e a §Canárias do `deploy.md` manda exigir o campo `contrato` — quem verificar pelo
+nome errado lê `undefined` e reprova canária sadia. Por isso a tabela de lá agora marca o campo.
+
+### Achados colaterais — e o único bump que esta auditoria produziu
+
+1. **Uma 7ª canária existia fora da tabela.** A `transferencia_probe` (#1991) nasceu versionada e
+   correta e ficou 1 dia invisível para quem verifica deploy, porque a tabela do `deploy.md` é a
+   lista que o verificador lê. Ela também torna o par (edge, canária) **1:N** — "a canária da
+   `omie-analytics-sync`" virou ambíguo, e a `action` é quem desempata.
+
+2. **Duas afirmações no repo diziam que a `doc_ambiguo_probe` é "NÃO-versionada"** (no `versao.ts`
+   da edge e no teste de contrato), e ela é versionada desde d8cf07152. Ambas eram o ARGUMENTO
+   para instrumentar a edge com sonda. O argumento sobrevive, mas por outra razão — e a diferença
+   é exatamente a tese deste documento: a canária não é cega por FALTA de marcador, é cega porque
+   o marcador dela está parado enquanto a edge andou três fatias. Corrigidas.
+
+3. **A sonda da `omie-analytics-sync` congelou pela TERCEIRA vez** — e este é o bump efetivo que a
+   auditoria produziu (`v1.1-mapa-codigo-sem-alias` → `v1.2-produtos-teto-500-e-partial-honesto`).
+   O #1992 (c63820508) trocou o teto de páginas de `products` (10 → 500), consolidou o
+   `updateSyncState` que gravava `status:"complete"` INCONDICIONALMENTE no que grava
+   `complete ? "complete" : "partial"`, e tirou o `syncProducts` do full sync. Passou porque o
+   gate do #1993 **mergeou depois dele** (`git merge-base --is-ancestor d79fb41d7 c63820508` →
+   não): gate de transição não enxerga omissão antiga, como ele mesmo declara. Achado rodando o
+   gate **para trás** — `--base c63820508^ --head c63820508`, exit 1 —, que é uma varredura que
+   vale repetir a cada instalação de gate de transição: ele nasce cego para todo o passado.
+
+⚠️ **O congelamento cobrou o preço DENTRO desta auditoria, não em tese.** Para decidir se o bump
+pegava carona num deploy pendente ou criava um no-op, precisei responder "o #1992 já está no ar?".
+Não consegui: o dado de prod é ambíguo (`sync_state` de `products/colacor_vendas` diz `complete`,
+4297, `last_page` 43 — e 43 > 10 **não** prova travessia, porque o bundle velho gravava `last_page`
+com o total DECLARADO pelo Omie) e a sonda responde a mesma string tendo o #1992 subido ou não.
+Foi a pergunta que o marcador existe para responder, feita no momento exato para o qual ele existe,
+e a resposta foi silêncio. Isso desempata o custo do "deploy no-op" que este documento adverte: o
+deploy desta edge não é no-op, ele **compra a resposta que hoje não existe**.
