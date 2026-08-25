@@ -526,3 +526,81 @@ ainda, e dizê-lo é a leitura correta.
 pós-Publish (`414a9727`, 12 visitas em `dashboard_visits` até 09:46:31Z, controle de fora do cano)
 executa build **anterior** à instrumentação. É o comportamento correto do `registerType: 'prompt'`
 — e agora é uma não-adoção **medida**, não uma ausência de observação.
+
+### DECISÃO: o proxy first-party foi RECUSADO — e o gatilho que o reabre (2026-08-25, #1984)
+
+A censura do `#1984` tinha três saídas: **(a)** liberar `us.i.posthog.com` nos aparelhos internos ·
+**(b)** reverse proxy first-party (o remédio documentado do PostHog) · **(c)** aceitar a censura e
+manter todo sinal que DECIDE em tabela própria. **Decidido: (a) agora, (c) como regra permanente,
+(b) recusado atrás de um gatilho nomeado.** O que a medição desfez não foi o custo de (b) — foi a
+premissa dele.
+
+⚠️ **A "população externa" que (b) devolveria é VAZIA — e isso se mede, não se supõe.** O
+argumento a favor de (b) era ser o único caminho que recupera o cliente que bloqueia. Medido em
+2026-08-25, antes de decidir:
+
+| medição | resultado |
+|---|---|
+| contas com role `customer` (`user_roles`) | **5.664** |
+| customers **aprovados** (`profiles.is_approved`) | **0** — e o default da coluna é `false` |
+| profiles aprovados no total | **4**, todos internos (Lucas ×2, Tatyana, atendimentocolacor) |
+| `selfservice_cliente_allowlist` | **0 linhas** |
+| `orders` | **0 linhas, 0 usuários** |
+| `distinct_id` com `$lib='web'` em 30 d | **4** — os 3 internos acima + a sonda (`01a036b3`) |
+
+Os 5.664 são cadastro importado da Omie, não usuários: sem `is_approved` o customer não entra. A
+população inteira do app cabe em três pessoas, **todas internas** — então (a), descrita como "não
+resolve o cliente externo", cobre 100% do que existe, e (b) recuperaria **zero** usuário hoje. A
+regra generalizada: *antes de pagar por uma saída que recupera uma população, CONTE a população.*
+Um denominador de 5.664 que na verdade vale 0 é a mesma falha de fabricação de `Number(null)===0`.
+
+⚠️ **O first-party de verdade é IMPOSSÍVEL neste hosting — e o barato não é first-party.** Medido:
+`https://steu.lovable.app/ingest/`, `/ingest/e/` e `/api/health` devolvem os três **HTTP 200,
+`text/html`, 8.307 bytes** — o `index.html` do SPA. Não há camada de rewrite: todo path cai no
+fallback estático, servido por Cloudflare **da Lovable** (`cf-ray …GRU`, `185.41.148.1/2`), cujo
+edge não é nosso. Não há `vercel.json`/`netlify.toml`/`_redirects` no repo, e o Lovable não os
+leria. Um proxy na MESMA origem exigiria sair do Lovable Cloud ou pôr CDN próprio na frente —
+reescrever o modelo de deploy inteiro, no ponto onde este repo já tem 3 camadas manuais e histórico
+de reversão pelo sync bidirecional. A versão barata (edge function Supabase; o código já custaria
+zero, `VITE_POSTHOG_HOST` existe desde sempre) **não é first-party**: `*.supabase.co` é outro
+domínio, a proteção seria "ainda não está na lista" e não "é o meu domínio". Isso é obscuridade, e
+ela expira na próxima atualização de filtro. A latência não é o obstáculo (medido: edge Supabase
+**0,49 s** vs PostHog direto **0,55 s**) — o obstáculo é arquitetural, e a edge precisaria ser
+pública (`verify_jwt=false`, o SDK não manda JWT), isto é, um **relay aberto** para o nosso projeto.
+
+⚠️ **E há o conflito que não é técnico: (b) contorna uma escolha explícita do titular.** Um proxy
+first-party não é otimização de entrega — sua função é fazer com que a recusa técnica do usuário
+**deixe de funcionar**. Analytics de produto em app logado costuma se apoiar em legítimo interesse
+(LGPD art. 7º, IX), mas o art. 10, II ancora o balanceamento nas *expectativas legítimas do
+titular*, e o art. 18, §2º lhe dá direito de oposição — instalar bloqueador é a forma mais
+inequívoca de exercê-lo. Contornar não é "coletar sob legítimo interesse": é desenhar em volta de
+uma recusa, e enfraquece a própria base que justificaria a coleta. Com `session_recording` LIGADO
+(gravação de tela, mesmo com `maskAllInputs`) o peso sobe outro degrau. E o fecho do argumento:
+**hoje o único bloqueado medido é o próprio founder** — (b) seria construir contorno de opt-out
+para contornar o opt-out de si mesmo. Quando houver cliente externo o conflito PIORA, porque os
+titulares passam a ser terceiros.
+
+**O gatilho que reabre (b)** — nomeado para que "não fizemos o proxy" seja escolha registrada e não
+pendência esquecida. Reabrir SÓ quando as DUAS condições forem verdadeiras:
+
+1. existe ≥1 customer aprovado (hoje `0`):
+
+   ```sql
+   SELECT count(*) FROM profiles p JOIN user_roles ur ON ur.user_id = p.user_id
+   WHERE ur.role = 'customer' AND p.is_approved;
+   ```
+
+2. a censura EXTERNA está medida, não suposta: esse customer tem linha em `dashboard_visits` e
+   **nenhum** evento no PostHog na mesma janela — o par tabela × evento do `#1997` aplicado a ele.
+   Linha sem evento = bloqueado; nem linha nem evento = não usou. Sem (2), um zero externo continua
+   sendo os dois estados colapsados, e o proxy estaria resolvendo um problema não observado.
+
+Mesmo com o gatilho aberto, a primeira saída a considerar **não** é o proxy: é instrumentar
+server-side o que decide — que é (c), sem tocar no opt-out de ninguém.
+
+⚠️ **(c) é regra, não hábito — e hoje ela está cumprida em 1 de 111.** O app tem **111 sensores
+`track()` distintos** e **um** com espelho em tabela (`dashboard_visits`). A regra não é espelhar os
+111: é *sinal que DECIDE nasce em tabela própria; PostHog é conveniência*. Sensor novo cujo
+resultado vai fundamentar uma fase N+1 (ver [fase-sem-sinal.md](../historico/fase-sem-sinal.md))
+nasce com o espelho — senão a decisão herda a censura, e o par tabela × evento do `#1997` vira
+exceção em vez de desenho.
