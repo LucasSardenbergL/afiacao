@@ -28,8 +28,17 @@ import { criarRespostaSonda } from "../_shared/sonda-versao.ts";
 /** Resposta da sonda desta edge, com a identidade embutida (ver `criarRespostaSonda`). */
 export const respostaSonda = criarRespostaSonda("omie-analytics-sync");
 
-/** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
-export const VERSAO = "v1.0-sensor-inicial";
+/**
+ * Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho.
+ *
+ * `v1.1-mapa-codigo-sem-alias` (#1971): `fetchCodigoUserMap` deixou de unir
+ * `customer_canonical_alias` ao espelho — a fonte alias saiu, e o mapa passou a resolver só por
+ * `omie_customer_account_map`. O #1971 mudou a edge e NÃO bumpou este marcador, então por um
+ * intervalo a sonda respondia idêntico no bundle #1905 e no #1971: ela provava "≥ #1905" e nada
+ * mais. Este bump reata a discriminação para o PRÓXIMO deploy — ele não recupera a do #1971, que
+ * está perdida (ver `docs/historico/sonda-marcador-congelado.md`).
+ */
+export const VERSAO = "v1.1-mapa-codigo-sem-alias";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
