@@ -207,10 +207,20 @@ SAB_B="$FIX/sab_precache.sh"
 # shellcheck disable=SC2016
 sed 's#\$APP/sw\.js#\$APP/sw-INEXISTENTE-falsify.js#' "$SCRIPT_REL" > "$SAB_B"
 
-# falsify_case: descr, script_sabotado, alvo, exit_normal (esperamos got != normal)
+# falsify_case: descr, script_sabotado, alvo, exit_normal, [exit_exigido], [marca_exigida]
+# Sem os dois últimos basta divergir do normal. COM eles a asserção casa a MARCA DO RAMO —
+# "divergiu" aceitaria um exit 1 vindo de outro defeito da sabotagem, que não prova nada.
 falsify_case() {
-  local descr="$1" scr="$2" alvo="$3" normal="$4" got
-  bash "$scr" "$alvo" "$BASE/site" >/dev/null 2>&1; got=$?
+  local descr="$1" scr="$2" alvo="$3" normal="$4" exato="${5:-}" marca="${6:-}" got out
+  out=$(bash "$scr" "$alvo" "$BASE/site" 2>&1); got=$?
+  if [ -n "$exato" ] && [ "$got" != "$exato" ]; then
+    printf '  [XX ] divergiu pelo motivo ERRADO: %s (exigido exit %s, obtido %s)\n' "$descr" "$exato" "$got"
+    FAIL=$((FAIL+1)); return
+  fi
+  if [ -n "$marca" ] && ! printf '%s' "$out" | grep -q -- "$marca"; then
+    printf '  [XX ] exit certo, marca ausente: %s (exigida a marca %s)\n' "$descr" "$marca"
+    FAIL=$((FAIL+1)); return
+  fi
   if [ "$got" != "$normal" ]; then
     printf '  [ok ] divergiu: %s (normal %s -> sabotado %s)\n' "$descr" "$normal" "$got"; PASS=$((PASS+1))
   else
@@ -243,6 +253,21 @@ if [ "$got_d" != 3 ]; then
 else
   printf '  [XX ] NÃO divergiu (harness cego): lado positivo morto continuou recusando (%s)\n' "$got_d"; FAIL=$((FAIL+1))
 fi
+
+# Sabotagem E: DEGENERA o casamento (o padrão do grep do worker vira "" -> casa toda linha).
+# É a sonda-cega de verdade: o alvo "acha" no 1º chunk... e o controle negativo TAMBÉM acha,
+# que é como ele denuncia. Sem o controle embutido isto sairia exit 0 e ninguém veria.
+SAB_E="$FIX/sab_sonda_cega.sh"
+# shellcheck disable=SC2016
+sed 's#grep -q -- "\$3"#grep -q -- ""#' "$SCRIPT_ABS" > "$SAB_E"
+falsify_case "grep degenerado (casa tudo) -> controle acusa SONDA_NAO_DISCRIMINA" "$SAB_E" "SENTINELA_DEEP_XYZ" 0 2 "SONDA_NAO_DISCRIMINA"
+
+# Sabotagem F: troca a string do controle pelo PRÓPRIO alvo — que comprovadamente está no chunk.
+# Prova que o controle EXERCITA a rede de verdade (curl+grep no chunk), e não é um `echo ✓`
+# decorativo: se fosse decorativo, um controle impossível-de-passar continuaria dando exit 0.
+SAB_F="$FIX/sab_controle_decorativo.sh"
+sed 's#^CONTROLE="controle_negativo_.*#CONTROLE="$ALVO"#' "$SCRIPT_ABS" > "$SAB_F"
+falsify_case "controle que DEVERIA casar -> exit 2 (logo o controle roda mesmo, não é enfeite)" "$SAB_F" "SENTINELA_DEEP_XYZ" 0 2 "SONDA_NAO_DISCRIMINA"
 
 echo ""
 if [ "$FAIL" -eq 0 ]; then echo "--falsify: $PASS/$((PASS+FAIL)) divergiram (harness tem dente)"; exit 0

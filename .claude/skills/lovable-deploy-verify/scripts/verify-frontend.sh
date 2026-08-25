@@ -22,11 +22,23 @@
 # antes de tocar a rede, que a sentinela é EXCLUSIVA do PR. Mordido em 2026-08-24 no #1949
 # (`visita_tentativa` era do #1945, mesmo arquivo, publicado horas antes).
 #
+# O CONTROLE NEGATIVO da sonda era o outro recado — e recado depende de alguém lembrar, que é
+# exatamente como a armadilha acima passou. Um `exit 0` sozinho não distingue "está no ar" de "o
+# script dá verde pra tudo", então quando o ALVO casa o script AUTO-AUDITA: reexecuta o MESMO
+# pipeline (curl+grep+captura) no MESMO chunk que acabou de casar, com uma string aleatória
+# nascida neste processo. Se ela "casar", o verde não vale nada -> exit 2.
+#   Por que UM chunk e não uma 2ª varredura inteira: discriminar é propriedade do par
+#   (padrão, grep), não do chunk — repetir em 334 chunks é redundância, não informação nova.
+#   Medido em prod 2026-08-24: varredura completa = 334 req / 18s; este controle = 1 req / 0,14s.
+#
 # Uso:   verify-frontend.sh [--pai <sha>] [--novo <sha>] '<string-literal-unica-do-commit>' [https://app.url]
 #        --pai  <sha>  commit ANTERIOR ao PR: exige 0 ocorrência da sentinela nele (exclusividade)
 #        --novo <sha>  commit que INTRODUZIU a sentinela (default HEAD): exige >= 1 ocorrência
-# Exit:  0 = ALVO presente (no ar) · 1 = ausente (Publish pendente / alvo não-único)
-#        2 = enumeração quebrada (formato do bundler/Workbox mudou — NÃO confie no resultado)
+# Exit:  0 = ALVO presente (no ar) E o controle negativo passou · 1 = ausente (Publish pendente /
+#            alvo não-único)
+#        2 = a MECÂNICA da sonda não é confiável — NÃO confie no resultado. Duas causas: a
+#            enumeração quebrou (formato do bundler/Workbox mudou), ou o casamento não
+#            discrimina (SONDA_NAO_DISCRIMINA). Conserte a sonda antes de concluir qualquer coisa.
 #        3 = o script se RECUSA a dar veredito: uso inválido, ou a prova de exclusividade
 #            falhou/não pôde ser feita. NUNCA é uma afirmação sobre o deploy. Fail-CLOSED de
 #            propósito: guard que degrada para "não provei" vira guard que não guarda nada.
@@ -46,6 +58,17 @@ while [ $# -gt 0 ]; do
 done
 [ "$ALVO_SET" = 1 ] && [ -n "$ALVO" ] || recusa "uso: verify-frontend.sh [--pai <sha>] '<string-alvo-literal-do-commit>' [url]"
 APP="${APP:-https://steu.lovable.app}"
+
+# ---- string do CONTROLE NEGATIVO — gerada ANTES de tocar a rede, como o guard --pai ----
+# Hex puro: o grep dos chunks é BRE (sem -F), então um metacaractere aqui poderia mudar a
+# semântica do controle. Aleatória e nascida neste processo: "não casou" só tem uma explicação
+# possível, e é a que queremos provar. Sonda de guard é fail-CLOSED — sem entropia, sem veredito.
+_ent=$(head -c 32 /dev/urandom 2>/dev/null | od -An -tx1 2>/dev/null | tr -dc 'a-f0-9')
+case "$_ent" in *[!0-9a-f]* | '') _ent="" ;; esac
+[ "${#_ent}" -ge 24 ] || recusa \
+  "❌ [controle] ENTROPIA_INDISPONIVEL — não consegui gerar a string do controle negativo (/dev/urandom + od + tr)." \
+  "   Sem ela um verde não seria auditável, e verde não-auditável é o falso positivo que ENCERRA a verificação."
+CONTROLE="controle_negativo_${_ent}"
 
 # ---- guard de EXCLUSIVIDADE da sentinela (roda ANTES de qualquer curl) ----
 if [ "$PAI_SET" = 1 ]; then
@@ -126,18 +149,43 @@ echo "  só-closure (servidos fora do precache): $(comm -23 "$TMP/closure.txt" "
 # GUARD: o método antigo dava 0. Contagem 0/1 = enumeração quebrada — não conclua nada.
 if [ "$N" -lt 2 ]; then echo "❌ enumeração suspeita ($N chunks) — formato do bundler/Workbox mudou; NÃO conclua 'não está no ar'"; exit 2; fi
 
-# grep da string-alvo em TODOS os chunks da união, EM PARALELO com HALT-ON-HIT: o 1º worker
-# que casa faz exit 255 -> o xargs para de disparar novos (os em-voo terminam). O stdout traz
-# o(s) chunk(s) que casaram; sem match em nenhum, o xargs varre tudo e o stdout fica vazio.
-# shellcheck disable=SC2016  # $1..$3 são do `sh` FILHO — aspas simples de propósito
-HIT=$(xargs -P "$PAR" -I {} sh -c '
-  curl -fsS "$2$1" 2>/dev/null | grep -q -- "$3" && { echo "$1"; exit 255; }
-  exit 0
-' _ {} "$APP" "$ALVO" < "$TMP/chunks.txt" 2>/dev/null)
+# varre <arquivo-de-chunks> <padrão>: grepa o padrão em TODOS os chunks do arquivo, EM PARALELO
+# e com HALT-ON-HIT — o 1º worker que casa faz exit 255 -> o xargs para de disparar novos (os
+# em-voo terminam). Imprime o(s) chunk(s) que casaram; sem match, varre tudo e imprime nada.
+# É o ÚNICO caminho de casamento do script: veredito e controle negativo passam pelos MESMOS
+# curl+grep+captura, senão o controle não estaria auditando o que produz o veredito.
+varre() {
+  # $1..$3 são do `sh` FILHO (não do bash pai) — aspas simples de propósito.
+  # shellcheck disable=SC2016
+  xargs -P "$PAR" -I {} sh -c '
+    curl -fsS "$2$1" 2>/dev/null | grep -q -- "$3" && { echo "$1"; exit 255; }
+    exit 0
+  ' _ {} "$APP" "$2" < "$1" 2>/dev/null
+}
+
+HIT=$(varre "$TMP/chunks.txt" "$ALVO")
 
 if [ -n "$HIT" ]; then
   printf '%s\n' "$HIT" | while read -r c; do [ -n "$c" ] && echo "✅ ALVO em $c"; done
+
+  # ---- CONTROLE NEGATIVO (automático neste ramo, +1 request) ----
+  # O ramo do hit é o perigoso: falso positivo ENCERRA a verificação. Aqui o mesmo pipeline
+  # procura, no MESMO chunk que acabou de casar, uma string que não pode estar lá. Casar =
+  # o mecanismo não discrimina, e o "✅ ALVO" acima é ruído com cara de prova.
+  _c1=$(printf '%s\n' "$HIT" | head -1)
+  printf '%s\n' "$_c1" > "$TMP/controle.txt"
+  if [ -n "$(varre "$TMP/controle.txt" "$CONTROLE")" ]; then
+    printf '%s\n' \
+      "❌ [controle] SONDA_NAO_DISCRIMINA — o MESMO grep 'achou' $CONTROLE em $_c1." \
+      "   Essa string é aleatória e nasceu neste processo: casá-la é impossível para um mecanismo" \
+      "   que funciona. Logo o ✅ acima NÃO é evidência de nada — a sonda está dando verde pra" \
+      "   tudo (grep/curl/pipeline degradados). Conserte a sonda ANTES de concluir sobre o deploy." >&2
+    exit 2
+  fi
+  echo "✓ CONTROLE_NEGATIVO_OK — $_c1 não casa $CONTROLE (a sonda sabe dizer não)"
   echo "→ no ar ✓ (entry $ENTRY)"; exit 0
 fi
 echo "→ ❌ ALVO ausente nos $N chunks: Publish pendente, OU o ALVO não é literal/único no bundle"
+echo "   CONTROLE_NEGATIVO_NAO_SE_APLICA: ele audita o falso POSITIVO, e este ramo é o outro. O risco"
+echo "   aqui é falso NEGATIVO — sonda cega lê idêntico a 'Publish pendente' — e pede controle POSITIVO."
 exit 1
