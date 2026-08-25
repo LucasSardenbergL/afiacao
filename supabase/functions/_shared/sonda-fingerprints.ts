@@ -28,7 +28,7 @@ export const FONTE_SHA256: Record<string, string> = {
   "generate-tactical-plan": "5a538e47802433f15a6f9e03ec1d05265592e346326be0c509a54cb1de895c6f",
   "gerar-pedidos-diario": "445e8028fe4f6fa01dcdd65774e0a51121905fe1fd1c0596047c34a04aa36411",
   "monthly-report": "696cbc63b3a72fccca4574c3d04cc30832068aed97e60796255dd531a6b53066",
-  "omie-analytics-sync": "ffcf6dba506e05d495967d04530f862d978f3e7988a76f84aa4617e7c00f880d",
+  "omie-analytics-sync": "d326e16d20e74c6607be49d4a3d7ff4743234c16a821d26464dbf8d0f3857195",
   "omie-cliente": "ccba61f0caef5c18af6ebba7c39167bc36aaed0511f235c3e9dad754fe1ba769",
   "omie-financeiro": "bb48e15bf8c0537b39774948e58e5eb35bdeeff24a5de535e68522aab6607f16",
   "omie-nfe-recebimento": "035279dacb799470cdd32a7143a6e48d5de9ba4dc5d21909d4a7635551cd2681",
