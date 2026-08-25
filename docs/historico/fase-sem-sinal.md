@@ -1477,3 +1477,56 @@ forma); hash = leitura boa. Colapsar os três num só reproduziria o erro de ori
 ⚠️ **Este PR não tem sinal de si mesmo até ser publicado E aceito.** A primeira leitura útil da
 adoção vem depois do Publish, e ela vai começar perto de 0% — que aqui é o sensor funcionando, não
 falhando. Ler antes disso é o erro que este arquivo inteiro descreve.
+
+## O controle positivo de ingestão somava DOIS canos — e o do browser está sem entregar
+
+O `#1964` construiu o sensor de `build_id` depois de dar por cumprido o pré-requisito que o `#1957`
+tinha posto: *"a ordem é destravar a ingestão, confirmar que evento volta a chegar, e só então
+acrescentar o campo"*. A ingestão de fato voltou; o `503` de ~12:17–12:30Z de 24/08 foi transitório.
+O que não se sustenta é o **controle** — e o desfecho mostrou por quê.
+
+O `#1964` toma os 66 eventos da janela de 7 dias como **`controle POSITIVO de ingestão`**, concluindo
+que *"uma série vazia adiante seria sinal real, não silêncio de canal morto"*. A **mesma query**,
+decomposta por `properties.$lib` — que o `posthog-js` preenche e uma captura por `curl` não —, mostra
+que os 66 nunca foram um conjunto só:
+
+| via | n | primeiro | último |
+|---|---|---|---|
+| browser (`$lib='web'`) | 65 | 2026-08-18T09:25Z | **2026-08-23T11:09Z** |
+| API direta (sem `$lib`) | 1 | — | **2026-08-24T21:59Z** |
+
+65 + 1 fecham os 66. Todos os 65 eventos de browser são **anteriores ao 503** — o último por ~25
+horas. O único evento posterior ao incidente entrou por `curl`. O controle prova que o **servidor
+voltou a aceitar um POST**; não prova que o **`posthog-js` volta a emitir**.
+
+### E não é "sem exercício": o cano do browser foi exercitado e não entregou
+
+Enquanto isto era escrito, o `#1965` fez o teste que faltava — dashboard montado **em produção**,
+autenticado, bundle correto, sessão de 8 min encerrada por fecho de aba, em `2026-08-25T00:17:10Z`.
+Medição independente do PostHog às `00:45Z` (`force_blocking`, já com o fix de cache do `#1959`):
+**zero eventos de qualquer tipo em 25/08** — nem o `dashboard.viewed` do mount.
+
+O app rodou e **nada chegou**. O cano do browser não está "não-provado": está **provado sem
+entregar**. Um controle positivo agregado leu como saudável um canal que, exercitado, não entrega —
+e essa é a diferença entre não ter medido e ter medido a coisa errada.
+
+### Por que isso morde o sensor que o `#1964` acabou de instalar
+
+`build_id` é super property do `initAnalytics`: sai **pelo cano do browser**, o que não entrega. Pior,
+o `#1964` já deixou a leitura pré-resolvida — *"primeira leitura útil da adoção vem depois do
+Publish, e ela vai começar perto de 0%"*, *"que aqui é o sensor funcionando, não falhando"*. Com o
+cano mudo, **0% é ambíguo** (ninguém adotou × nada chega), e a instrução de leitura já resolve a
+ambiguidade no sentido otimista. É a cegueira de origem reproduzida num lugar novo, que o próprio
+`#1964` se propôs a evitar ao separar *ausente* de `'desconhecido'` de *hash*.
+
+**A regra:** cano com dois caminhos exige **controle POR CAMINHO**. Controle positivo agregado é
+sinal genérico lido como específico — o mesmo vício que o `#1955` flagrou no `keepalive:false`. E não
+há o que fabricar: **o primeiro evento com `$lib='web'` é a prova**, porque o `posthog-js` o emite
+sozinho no `$pageview`. Enquanto ele não vier, toda leitura de adoção é indistinguível de canal morto.
+
+```
+SELECT toDate(timestamp) AS dia,
+       if(isNull(properties.$lib),'API_direta','browser_SDK') AS via,
+       count() AS n, max(timestamp) AS ultimo
+FROM events WHERE timestamp > now() - INTERVAL 7 DAY GROUP BY dia, via ORDER BY dia DESC
+```
