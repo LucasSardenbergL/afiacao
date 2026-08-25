@@ -850,13 +850,25 @@ Deno.test("bump v1.1-mapa-codigo-sem-alias: omie-analytics-sync não pode voltar
   // bundle inclui esta entrega e, por ancestralidade, o #1971. Falso NEGATIVO (marcador velho num
   // bundle que já tem o #1971) segue possível até o próximo deploy, e é o lado certo da assimetria:
   // ele faz continuar verificando, ao contrário do falso positivo, que encerra.
-  const ANTIGO = "v1.0-sensor-inicial";
+  // ⚠️ SEGUNDO valor aposentado nesta mesma edge (auditoria dos contratos de canária, 2026-08-25).
+  // O `v1.1-mapa-codigo-sem-alias` congelou por sua vez: o #1992 (c63820508) mudou o teto de
+  // páginas de products (10 → 500), o `status` complete/partial e o caminho de full sync, sem
+  // tocar o marcador. Passou porque o gate por diff (#1993) mergeou DEPOIS dele — gate de
+  // TRANSIÇÃO não vê omissão antiga. Terceira ocorrência na MESMA edge.
+  //
+  // O comentário original deste teste dizia que a `doc_ambiguo_probe` é "NÃO-versionada": isso
+  // deixou de valer em 2026-08-23 (d8cf07152 versionou as 3 que faltavam). A conclusão continua
+  // de pé por outro motivo — o `contrato` dela está parado em d8cf07152 e a edge andou três
+  // fatias desde então, então ela discrimina "≥ d8cf07152" e nada além.
+  const APOSENTADOS = ["v1.0-sensor-inicial", "v1.1-mapa-codigo-sem-alias"];
   const versaoAnalytics: string = analyticsSync.VERSAO;
-  if (versaoAnalytics === ANTIGO) {
+  if (APOSENTADOS.includes(versaoAnalytics)) {
     throw new Error(
-      `omie-analytics-sync: marcador REGREDIU para ${ANTIGO} — o valor que ficou congelado do ` +
-        `#1905 ao #1971. A canária que a edge já tinha (doc_ambiguo_probe) é NÃO-versionada e ` +
-        `responde igual em qualquer bundle, então nada mais discrimina o deploy desta edge.`,
+      `omie-analytics-sync: marcador REGREDIU para ${versaoAnalytics} — valor já aposentado ` +
+        `(congelados: v1.0-sensor-inicial do #1905→#1971, v1.1-mapa-codigo-sem-alias do ` +
+        `#1971→#1992). A canária desta edge (doc_ambiguo_probe) carrega um contrato PRÓPRIO, ` +
+        `parado em d8cf07152, então ela não cobre o deploy destas fatias: sem o marcador da ` +
+        `sonda andando, nada discrimina o bundle servido.`,
     );
   }
 });
