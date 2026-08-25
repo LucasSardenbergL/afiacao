@@ -1841,3 +1841,88 @@ as duas foram pegas pelo mesmo mecanismo — **contradição entre duas medidas 
 
 > **A regra:** antes de ler ausência num filtro, confira o **denominador** dele. Um recorte que não
 > acha nada e um recorte que não olha produzem a mesma saída vazia — e só o total distingue os dois.
+
+## O gate abriu: a previsão do `#1964` tem veredito — e o numerador da adoção era a SONDA
+
+O `#1984` provou a causa do silêncio (bloqueador de ingestão no Chrome do founder) e deixou o gate
+desta fase explícito: enquanto não houvesse evento com `$lib='web'`, toda releitura de adoção
+reconfirmaria o mesmo zero. **O gate abriu**, e as três coisas que ele destravou não são a que se
+esperava.
+
+### 1. O sensor do `#1964` funciona end-to-end — evidência POSITIVA
+
+A previsão registrada em `docs/historico/fase-sem-sinal.md:1478`
+<!--cita: que aqui é o sensor funcionando, não--> — *"que aqui é o sensor funcionando, não
+falhando"* — estava **sem veredito** por falta de cano. Agora tem, e é **CONFIRMADA**:
+
+| elo | medida |
+|---|---|
+| servidor entrega | `<script … src="/assets/index-D1GiFr1h.js">`, lido do HTML com âncora `/assets/` (não com o `grep -o` que truncou o `vendor-` no `#1973`) |
+| browser executa e emite | `$pageleave`, `$lib='web'`, `$host='steu.lovable.app'`, `2026-08-25T02:15:38Z` |
+| o valor que chegou | `build_id = index-D1GiFr1h` — **idêntico** ao hash servido |
+
+O sensor nasce no browser, atravessa o cano e chega com o hash certo. E o **outro** estado apareceu
+no mesmo dia, no cliente certo: `414a9727`, ativo às 09:39–09:50Z, emite `(sem instrumentacao)`
+porque executa build anterior ao `#1964`. Os dois estados que a §6 proíbe colapsar apareceram
+**simultaneamente e separados** — que é o controle mais forte que esse sensor podia receber.
+
+### 2. A inferência sobre o iPhone CAIU — ele voltou a emitir sozinho
+
+O `#1984` registrou, com a honestidade de marcá-la como não-medida, que o iPhone parado desde 23/08
+`docs/historico/fase-sem-sinal.md:1784`
+<!--cita: é a mesma classe (bloqueador de conteúdo no Safari)--> *"é a mesma classe (bloqueador de
+conteúdo no Safari), é a explicação mais simples"*.
+
+**Não é.** Às `09:39:36–09:50:09Z` de 25/08 o iPhone emitiu **13 eventos** — `iOS / Mobile Safari`,
+`distinct_id 414a9727`, o mesmo aparelho dos 2027 eventos. Ninguém desbloqueou nada que esta sessão
+tenha pedido. O silêncio de 23/08 11:09 → 25/08 09:39 **não era bloqueio**.
+
+**E a causa positiva apareceu no cruzamento dos dois canos.** O founder confirmou não ter mexido em
+nada no iPhone — e bloqueio não se desliga sozinho. O que explica os dois lados é o **aparelho de
+onde veio cada sessão**, visível ao alinhar `dashboard_visits` (PostgREST, imune à lista) com os
+eventos por `$os`:
+
+| janela | `dashboard_visits` | eventos de browser | leitura |
+|---|---|---|---|
+| 01:04:48 → 03:30:06Z | **11 visitas** | **zero** de iOS (só o `$pageleave` do Chromium às 02:15) | uso pelo **Mac**, cujo Chrome está bloqueado |
+| 09:39:36 → 09:51:18Z | 1 visita (`09:46:31`) | **14 eventos iOS** — `$pageview`, `$set`, 11 `$autocapture`, `$pageleave` | uso pelo **iPhone**, livre |
+
+A visita de `09:46:31Z` cai **dentro** da janela de eventos do iPhone: ali os dois canos concordam.
+Nas 11 visitas da madrugada eles discordam — e é exatamente onde o Chrome bloqueado grava na tabela
+e não emite evento.
+
+**O silêncio de 46 h do iPhone era ausência de USO, não censura.** Assim que foi usado, emitiu o
+repertório inteiro em 12 minutos, sem perder nada. E o contraste quantifica a censura do outro
+aparelho: 14 eventos para uma sessão livre, **0 para onze** sessões bloqueadas.
+
+A lição é a do próprio `#1973`: *a explicação mais simples* é exatamente quando o rótulo "inferido"
+precisa aguentar peso, porque ela é a que mais convida a virar fato por repetição. Aguentou — o
+`#1984` a marcou, e por isso a queda custou uma linha em vez de um diagnóstico. O que a derrubou
+não foi uma medição nova do PostHog, e sim o **par tabela × evento** decomposto por aparelho: dois
+eixos que o `#1984` já tinha estabelecido, aplicados juntos.
+
+### 3. A sonda entrou no numerador da própria medição
+
+Com o cano vivo, a query de adoção da §6 finalmente roda. Pós-Publish ela vê **2 clientes de
+browser**, **1** com o build atual: `1/2` = **50%**.
+
+Os `50%` são fabricação, e por um caminho que nem o deslocamento de janelas (`#1977`) nem a censura
+por bloqueador (`#1984`) descrevem. O cliente do numerador — `01a036b3`, `Mac OS X / Chrome` — é o
+**Chromium limpo que foi aberto para testar o canal**. Não existe em `profiles.user_id` (sessão sem
+login, sem `identify()`), enquanto `414a9727` e `700657a1` existem — o controle positivo que torna
+essa ausência um dado e não uma sonda cega. Sendo um browser recém-instalado, não tinha SW velho em
+cache: **nasceu no build atual**. O instrumento de diagnóstico virou o numerador da métrica.
+
+> **A regra:** um cliente aberto para diagnosticar o canal passa a integrar a população que o canal
+> mede. Sob amostra censurada — onde os clientes reais estão bloqueados — a sonda pode ser a
+> **maioria** dos observáveis, e a taxa mede o instrumento, não o parque. Exclua do denominador
+> todo `distinct_id` que você mesmo criou **antes** de dividir.
+
+**A leitura honesta: `0 de 1`.** O único usuário real ativo pós-Publish é `414a9727` — 12 visitas em
+`dashboard_visits` até `09:46:31Z`, o controle de fora do cano — e ele executa build anterior à
+instrumentação. Não-adoção **medida**, pela primeira vez, em vez de ausência de observação. É o
+`registerType: 'prompt'` funcionando: o cliente fica no build velho até clicar "Atualizar".
+
+E o desfecho tem a ironia que fecha o arquivo: as três leituras `0/3` (`#1977`), `1/2` e `0/1`
+saem do **mesmo estado do mundo**. Só a última mede adoção. As outras duas medem, respectivamente,
+uma janela e um instrumento — e nenhuma das três avisa qual é qual.
