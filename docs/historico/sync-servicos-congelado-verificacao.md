@@ -99,12 +99,55 @@ ali significa sem custo computacional (não cria client, não chama Omie), não 
 Sondar por `curl` sem header devolve `401`. O caminho é o SQL Editor com o `x-cron-secret` vindo
 do Vault dentro da própria query.
 
-## Observação viva
+## Lição 4 — a "observação viva" se auto-refutou: o timeout mede a RESPOSTA, não o TRABALHO
 
-O run levou **57,5s** contra o `timeout_milliseconds := 60000` do cron 155 — margem de ~2,5s. Se
-estourar, o `pg_net` marca `timed_out` e você perde o **sinal HTTP**, não o sync (a edge segue
-rodando e é ela quem escreve o `sync_state`). Degradação de observabilidade, não de dado — mas é
-o tipo de coisa que vira incidente confuso meses depois.
+Fechado o incidente, sobrou uma observação: o run levou **57,5s** contra o `timeout_milliseconds := 60000`
+do cron 155 — margem de ~2,5s; se estourasse, o `pg_net` marcaria `timed_out` e se perderia o sinal HTTP
+(não o sync). Parecia ajuste óbvio de folga. **Era erro de categoria, e medir matou a premissa em vez de
+calibrar o número.**
+
+O `case "sync_customers"` responde **`202 {"accepted":true,"background":true}` na hora** e joga o trabalho
+em `EdgeRuntime.waitUntil` (`supabase/functions/omie-analytics-sync/index.ts:2480`). O que o
+`timeout_milliseconds` cronometra é a **resposta HTTP**, que chega em milissegundos. Os 57,5s são a duração
+do background — que o pg_net não observa e não corta. A margem não é de 2,5s: é o teto inteiro.
+
+E está em PROD, não só no repo: a sonda de `2026-08-25 12:35` devolveu
+`versao: v1.2-produtos-teto-500-e-partial-honesto`, idêntica ao `VERSAO` de `origin/main`, e esse main
+carrega o `accepted: true, background: true`. O `waitUntil` entrou em **2026-05-28 (#438, `ad6675d4c`)** —
+no MESMO commit que criou o cron dedicado. O `60000` nunca foi dimensionado para o trabalho; foi escolhido
+para um 202.
+
+O irmão confirma de graça. Os **três** `sync_customers` medidos no mesmo dia, todos `timeout:=60000`, todos
+`complete` (disparo em `cron.job_run_details` → fim em `sync_state.last_sync_at`):
+
+| jobid | conta | disparo | fim | trabalho |
+| --- | --- | --- | --- | --- |
+| 104 | vendas | `05:00:00.709` | `05:02:53.300` | **172,6s** (2,9× o teto) |
+| 154 | colacor_vendas | `05:20:00.244` | `05:20:56.934` | 56,7s |
+| 155 | servicos | `05:40:00.274` | `05:41:00.096` | 59,8s |
+
+3× de variação numa métrica que ninguém está cronometrando — e o `vendas` "estourando" há meses sem
+consequência alguma.
+
+**Decisão: não mexer.** Nem no 155, nem no 104/154. Re-agendar com `120000` seria escrita em prod para
+consertar problema inexistente, e deixaria no banco a evidência de que alguém acreditou que aquele número
+media o sync.
+
+> **Regra** (movida para `docs/agent/sync.md` §Padrão de cron): antes de folgar um `timeout_milliseconds`,
+> leia o `case` da action. Se ela retorna `202`/`accepted`, o teto não cobre o trabalho — aumentá-lo não
+> compra nada.
+
+### Varredura do parque (o irmão do default-5s)
+
+`51` crons ativos usam `net.http_post` e **`0` estão sem `timeout_milliseconds`** — a armadilha do default
+de 5s está fechada em prod. Dos `10` com teto ≤60s: `103`/`104`/`154`/`155` respondem `202` (imunes);
+`44`/`60`/`102`/`109` rodaram na janela de retenção de `net._http_response` com **`timed_out=0` em 206
+respostas**; `75` dispara só `sync_categorias` (max 4,1s) e `sync_contas_correntes` (max 28,3s) por
+`fin_sync_log`/30d; `59` se dimensiona para ~10s no próprio arquivo (`index.ts:139`). Nenhum aperto real.
+
+O mais estreito do parque é outro, e é **síncrono**: `omie-financeiro`/`sync_movimentacoes` (jobids 78/79,
+teto 150000) tem **max 124,1s** e p95 98,3s em 30 dias — 83% do teto. Sem estouro (`fin_sync_log`: 4549
+`complete`, 0 sem `completed_at`), mas é ali que uma folga compraria alguma coisa, não no 155.
 
 ## Como revalidar
 
