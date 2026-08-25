@@ -385,8 +385,35 @@ be ''`), não pelo mérito: pega, mas não explica.
 
 **O suspeito que a §9 nomeou — `track(` presente ⇒ "evento gravado" — NÃO existe.** Zero gates
 textuais sobre `track(` no repo. Era hipótese, não medição; fica registrado para ninguém re-varrer.
-(De quebra, o #1984 mostrou que o canal PostHog é censurado por bloqueador de rastreador no cliente,
-então um gate assim seria cego duas vezes: no texto e no dado.)
+De quebra, o #1984 mostrou que o canal PostHog é censurado por bloqueador de rastreador no cliente, e
+um gate assim seria cego **duas vezes**: no texto, porque `track(` presente prova chamada e não
+gravação; e no dado, porque DENTRO do PostHog o cliente bloqueado e o que nunca usou produzem o mesmo
+zero.
+
+**A segunda cegueira tem antídoto MEDIDO** — registrado aqui porque a frase acima, sozinha, sugere que
+a censura é inescapável, e ela só é inescapável para quem olha um cano só. Os dois zeros separam-se de
+FORA, pelo par tabela×evento decomposto por APARELHO. Medição do #1997, mesmo usuário, dois aparelhos:
+
+| Janela (Z) | `dashboard_visits` | eventos | Leitura |
+| --- | --- | --- | --- |
+| 01:04→03:30 | 11 visitas | 0 | Mac/Chrome com bloqueador |
+| 09:39→09:51 | 1 visita (09:46:31) | 14 (iOS) | iPhone livre — os canos concordam |
+
+Linha na tabela **sem** evento = bloqueado. Nenhuma linha **e** nenhum evento = não usou. Nenhum dos
+dois eixos sozinho separa. O princípio de que o controle vem de FORA do cano é do #1977 (está em
+`fase-sem-sinal.md`); o #1997 é a aplicação que o mediu por aparelho.
+
+### Classe-irmã, não medida aqui: o CONTADOR prova a cobertura
+
+A assinatura desta varredura é "o NOME prova o efeito". A vizinha é **"o número prova a cobertura"** —
+um gate que reporta `N verificadas` sem dizer o que ficou de FORA. Não é a mesma coisa que gate cego:
+o `docs:citacoes` exclui `docs/historico/`, `docs/superpowers/` e `docs/ux-audit/` por PRECISÃO
+deliberada e documentada no próprio arquivo (553 das 580 citações do repo vivem lá, e cobrar história
+para acompanhar a `main` é churn e falso-positivo permanente). O que falta não é o escopo, é o
+RELATO: a mensagem idêntica antes e depois faz o corte deliberado ler como cobertura total ("no silent
+caps", `matar-classe` passo 4). Consequência direta para este documento: **§10 vive em
+`docs/historico/`, então as citações dele não são verificadas por gate nenhum** — as deste parágrafo
+foram conferidas à mão (#1997 e #1977 mergeados em 2026-08-25, 10:12:06Z e 02:09:43Z).
 
 ### O critério fraco tinha um buraco, e a falsificação o encontrou
 
