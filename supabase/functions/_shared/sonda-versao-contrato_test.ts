@@ -426,24 +426,139 @@ function trechoDoHandler(nome: string): string {
   return codigo.slice(i);
 }
 
+/** Trecho entre o delimitador de sentença mais próximo (`;`, `{` ou `}`) e a posição dada. */
+function prefixoDaSentenca(codigo: string, ate: number): string {
+  const inicio = Math.max(
+    codigo.lastIndexOf(";", ate),
+    codigo.lastIndexOf("{", ate),
+    codigo.lastIndexOf("}", ate),
+  );
+  return codigo.slice(inicio + 1, ate);
+}
+
+/**
+ * O corpo da sonda ALCANÇA a resposta HTTP — ou é calculado e descartado?
+ *
+ * Buraco medido ao falsificar uma sonda experimental na `omie-vendas-sync` (2026-08-23): trocar
+ * `return new Response(JSON.stringify(respostaSonda(VERSAO)), …)` por
+ * `console.log(respostaSonda(VERSAO)); return new Response(JSON.stringify({ ok: true }), …)`
+ * deixava TODOS os gates VERDES — o de baixo afirmava que a função é CHAMADA e que a edge ramifica
+ * em "sonda", e nenhum dos dois nota a diferença. Em produção isso é uma sonda que responde 200 SEM
+ * o eco `probe:true` — e `probe:true` ausente é exatamente o corpo pelo qual a canária conclui
+ * "bundle velho, e ele rodou o efeito caro" (docs/agent/deploy.md §Canárias, armadilha 1). A edge
+ * passaria por instrumentada enquanto faz a canária dizer a mentira mais cara que existe.
+ *
+ * Por que NÃO enumerar os embrulhos (`JSON.stringify|jsonRes|jsonResponse`): a medição de
+ * 2026-08-24 achou QUATRO formas legítimas entre as edges instrumentadas — as três acima e uma
+ * INDIRETA (`ai-ops-agent`, `omie-financeiro`), em que o corpo vai para uma variável e o `return`
+ * embrulha a VARIÁVEL, sem embrulho nenhum adjacente à chamada. Uma lista de nomes reprovaria essas
+ * duas hoje e a próxima forma amanhã, e o conserto de um gate que reprova edge correta é sempre
+ * afrouxá-lo. Por isso o teste aqui é POSICIONAL: exige que a chamada esteja na cadeia de um
+ * `return`, não que o embrulho tenha nome conhecido. Embrulho novo passa sem tocar neste arquivo;
+ * `console.log` não passa.
+ */
+function corpoDaSondaViraResposta(codigo: string): boolean {
+  // `\w*` porque a resposta pode ter nome próprio: `generate-tactical-plan` exporta
+  // `respostaSondaTactical()`. Exigir o nome exato reprovava uma edge que responde certo.
+  const chamada = /respostaSonda\w*\(/g;
+  for (let m = chamada.exec(codigo); m; m = chamada.exec(codigo)) {
+    const prefixo = prefixoDaSentenca(codigo, m.index);
+    // Forma direta (A/B/C): `return <embrulho>(… respostaSonda(VERSAO) …)`. O delimitador de
+    // sentença é o que impede o falso verde: o `return` de uma LINHA anterior fica fora do prefixo.
+    if (/\breturn\b/.test(prefixo)) return true;
+    // Forma indireta (D): o corpo vai para uma variável e o `return` seguinte embrulha ELA. O
+    // identificador exclui `$` de propósito — ele é metacaractere de regex, e um nome não
+    // reconhecido aqui deixa o gate VERMELHO (falha segura), nunca verde por acidente.
+    const atribuicao = /\b(?:const|let|var)\s+([A-Za-z_][\w]*)\s*=/.exec(prefixo);
+    if (!atribuicao) continue;
+    // O PRÓXIMO `return`, não qualquer um: um `return` distante que mencione um nome comum
+    // (`corpo`) provaria coincidência de nome, não caminho de dados.
+    const posReturn = codigo.indexOf("return", m.index);
+    if (posReturn < 0) continue;
+    const fim = codigo.indexOf(";", posReturn);
+    const sentenca = codigo.slice(posReturn, fim < 0 ? codigo.length : fim);
+    if (new RegExp(`\\b${atribuicao[1]}\\b`).test(sentenca)) return true;
+  }
+  return false;
+}
+
 Deno.test("toda edge instrumentada RESPONDE à sonda (chamar classificarSonda não basta)", () => {
   // Buraco encontrado ao falsificar a canária da `recommend`: apagar a linha que RESPONDE
   // (`if (decisao.tipo === "sonda") return ...respostaSonda(VERSAO)`) deixava todos os gates
   // VERDES. Os vizinhos afirmam que `classificarSonda` é CHAMADA e que vem antes do
   // `createClient` — nenhum afirma que a decisão vira RESPOSTA. Uma edge assim classifica a
-  // sonda e seguve para o fluxo real: o efeito caro roda, e quem sondou lê o resultado do
+  // sonda e segue para o fluxo real: o efeito caro roda, e quem sondou lê o resultado do
   // disparo como se fosse diagnóstico. É o pior desfecho que a sonda existe para evitar,
   // passando por instrumentado.
   for (const { nome } of EDGES) {
     const codigo = codigoDaEdge(nome);
-    // `\w*` porque a resposta pode ter nome próprio: `generate-tactical-plan` exporta
-    // `respostaSondaTactical()`. Exigir o nome exato reprovava uma edge que responde certo.
     if (!/respostaSonda\w*\(/.test(codigo)) {
       throw new Error(`${nome}: classifica a sonda mas nunca chama respostaSonda — o diagnóstico não sai`);
+    }
+    // E o corpo montado tem de virar a RESPOSTA. Sem este assert, `console.log(respostaSonda(…))`
+    // seguido de um `return` qualquer passa pelos dois vizinhos — ver `corpoDaSondaViraResposta`.
+    if (!corpoDaSondaViraResposta(codigo)) {
+      throw new Error(
+        `${nome}: chama respostaSonda mas o corpo não alcança nenhum return — a sonda responde 200 SEM \`probe:true\`, e a canária lê isso como "bundle velho que rodou o efeito caro"`,
+      );
     }
     if (!/["\x27]sonda["\x27]/.test(codigo)) {
       throw new Error(`${nome}: não ramifica no tipo "sonda" — a decisão é calculada e descartada`);
     }
+  }
+});
+
+Deno.test("CALIBRAÇÃO: o gate de RESPOSTA reprova a forma `calcula e descarta`", () => {
+  // Sem isto o gate acima nasceria cego igual ao que ele substitui: um predicado que devolve `true`
+  // para tudo passa nas 32 edges reais sem afirmar nada. Cada forma abaixo é montada como TEXTO —
+  // não dá para sabotar as edges reais de dentro do teste.
+  const reprovadas: Array<[string, string]> = [
+    [
+      "console.log — a forma exata medida na omie-vendas-sync",
+      'console.log(respostaSonda(VERSAO));\n  return new Response(JSON.stringify({ ok: true }), { status: 200 });',
+    ],
+    [
+      "calcula, guarda e descarta",
+      'const corpo = respostaSonda(VERSAO);\n  return new Response(JSON.stringify({ ok: true }), { status: 200 });',
+    ],
+    [
+      "guarda numa variável e retorna OUTRA",
+      'const corpo = respostaSonda(VERSAO);\n  const saida = { ok: true };\n  return jsonRes(saida, 200);',
+    ],
+  ];
+  for (const [rotulo, forma] of reprovadas) {
+    if (corpoDaSondaViraResposta(forma)) {
+      throw new Error(`o gate aprovaria a forma que existe para barrar (${rotulo})`);
+    }
+  }
+
+  // Controle positivo: as QUATRO formas reais medidas em 2026-08-24 têm de passar, senão o gate
+  // reprova edge correta — e o conserto de um gate assim é afrouxá-lo até parar de medir.
+  const aprovadas: Array<[string, string]> = [
+    ["A: new Response(JSON.stringify(", 'if (d.tipo === "sonda") {\n  return new Response(JSON.stringify(respostaSonda(VERSAO)), { status: 200 });\n}'],
+    ["B: jsonRes(", 'if (d.tipo === "sonda") return jsonRes(respostaSonda(VERSAO), 200);'],
+    ["C: jsonResponse(", 'if (d.tipo === "sonda") return jsonResponse(respostaSonda(VERSAO), 200);'],
+    [
+      "D: indireta, o return embrulha a variável",
+      'const ehSonda = d.tipo === "sonda";\n  const corpo = ehSonda\n    ? respostaSonda(VERSAO)\n    : { error: erroSondaAmbigua(d.valor, EFEITO) };\n  return new Response(JSON.stringify(corpo), {\n    status: ehSonda ? 200 : 400,\n  });',
+    ],
+    // Embrulho que ainda não existe: o gate é posicional de propósito, então a próxima edge não
+    // precisa vir aqui pedir licença. Este caso é o que trava a volta para uma lista de nomes.
+    ["embrulho novo, nome desconhecido", "return respostaJson(respostaSondaTactical(), 200);"],
+    ["nome próprio (generate-tactical-plan)", "return new Response(JSON.stringify(respostaSondaTactical()), { status: 200 });"],
+  ];
+  for (const [rotulo, forma] of aprovadas) {
+    if (!corpoDaSondaViraResposta(forma)) {
+      throw new Error(`o gate reprovaria uma forma legítima (${rotulo}) — edge correta ficaria vermelha`);
+    }
+  }
+
+  // O gate mede o código SEM comentário (`codigoDaEdge` passa pelo `removerComentarios`
+  // compartilhado). Sem este caso, uma edge cuja única resposta certa está COMENTADA passaria — é
+  // a mesma cegueira dos gates textuais de docs/historico/gates-textuais-cegos.md.
+  const soEmComentario = '// return new Response(JSON.stringify(respostaSonda(VERSAO)), { status: 200 });\n  console.log(respostaSonda(VERSAO));\n  return new Response(JSON.stringify({ ok: true }), { status: 200 });';
+  if (corpoDaSondaViraResposta(removerComentarios(soEmComentario))) {
+    throw new Error("o gate aprovaria uma edge cuja resposta certa está COMENTADA");
   }
 });
 
