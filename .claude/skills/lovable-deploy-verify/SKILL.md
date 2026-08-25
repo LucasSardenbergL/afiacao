@@ -105,9 +105,12 @@ Montar pro founder colar no chat do Lovable (um por edge tocada):
 
 ```bash
 .claude/skills/lovable-deploy-verify/scripts/verify-frontend.sh \
-  'COLE_UMA_STRING_LITERAL_UNICA_DO_COMMIT'   # 2º arg opcional: a URL (default steu.lovable.app)
-# saída: "chunks (closure ∪ precache): N" + "✅ ALVO em <chunk>"
+  --pai <sha-do-commit-ANTERIOR-ao-PR> \
+  'COLE_UMA_STRING_LITERAL_UNICA_DO_COMMIT'   # 2º posicional opcional: a URL (default steu.lovable.app)
+# saída: "✓ sentinela exclusiva: …" + "chunks (closure ∪ precache): N" + "✅ ALVO em <chunk>"
 # exit 0 = no ar · 1 = ausente (Publish pendente / alvo não-literal) · 2 = enumeração quebrada
+#      3 = RECUSA: uso inválido, ou exclusividade da sentinela não provada — NUNCA é veredito
+#          sobre o deploy (`--novo <sha>` muda o lado positivo; default HEAD)
 ```
 
 > **Varredura PARALELA (não estoura mais o timeout).** O crawl e o grep do alvo rodam com `xargs -P 8`
@@ -117,37 +120,55 @@ Montar pro founder colar no chat do Lovable (um por edge tocada):
 > min**, menos no caso comum (string presente para cedo). Cada worker escreve no próprio arquivo → **sem
 > intercalação** de linhas; a lógica da UNIÃO (fechamento transitivo ∪ precache) é **idêntica**. Rede de
 > regressão: `evals/verify-frontend-eval.sh` (harness local determinístico — 2º nível, precache, exit
-> 0/1/2 + `--falsify`; entra no gate `evals/run.sh`).
+> 0/1/2/3, guard `--pai` nos dois lados + `--falsify`; entra no gate `evals/run.sh`).
 
 **A sentinela tem de ser EXCLUSIVA do PR que se verifica — a não-exclusiva dá falso POSITIVO
-(2026-08-24).** O script devolve `exit 0` para qualquer string que esteja no bundle, **inclusive uma
+(2026-08-24).** O script acha os bytes de **qualquer** string presente no bundle, **inclusive uma
 que já estava lá antes do seu PR**: se ela veio de um PR ANTERIOR que tocou o mesmo arquivo, o verde
-confirma um Publish que talvez não tenha acontecido. Prove a exclusividade ANTES de rodar, e em PAR:
+confirma um Publish que talvez não tenha acontecido. **Por isso `--pai` deixou de ser recado e virou
+guard**: com ele o script prova a exclusividade no git — e **antes de tocar a rede** — recusando com
+**exit 3** em vez de varrer. Os dois lados são exigidos, nesta ordem:
 
-```bash
-git grep -c '<sentinela>' <sha-do-commit-ANTERIOR-ao-PR> -- src/   # tem de dar 0 (exit 1, saída vazia)
-git grep -c '<sentinela>' <sha-do-PR> -- src/                      # tem de dar >=1, senão errou sha/pathspec
+| lado | o que exige | por quê |
+|---|---|---|
+| **positivo** (`--novo`, default HEAD) | ≥1 ocorrência em `src/` | sem ele o zero no pai é **ausência de dado** (sha ou pathspec errado, string não-literal), não prova de novidade |
+| **negativo** (`--pai`) | **0** ocorrência em `src/` | é o que separa "este Publish" de "bytes de um PR anterior" |
+
+Fail-CLOSED: fora de repo git, sha que não resolve ou `--pai` sem valor **recusam** — guard que
+degrada para "não provei" não guarda nada. `command -v git` não basta (presente-porém-quebrado
+esvazia o guard igual): cada consulta exige resposta POSITIVA. **Sem `--pai` o script varre igual,
+mas imprime `EXCLUSIVIDADE_NAO_PROVADA`** — o verde continua sendo seu, e a lacuna fica dita.
+
+Arquivo **QUENTE** (vários PRs no mesmo dia) é onde isso morde, e foi onde mordeu: verificando o
+#1949 (`src/hooks/useLastVisit.ts`, o **terceiro** PR no arquivo depois de #1934 e #1945), a
+sentinela sugerida de início foi `visita_tentativa` — que era do **#1945**, mergeado e publicado
+HORAS antes. É o caso que o guard hoje recusa, rodado no repo de verdade:
+
+```console
+$ verify-frontend.sh --pai b7a9f5a8a --novo a7571a596 'visita_tentativa'
+❌ [--pai] SENTINELA_NAO_EXCLUSIVA — já existia em b7a9f5a8a (…), em 2 arquivo(s) de src/:
+     …:src/hooks/__tests__/useLastVisit.test.tsx:6
+     …:src/hooks/useLastVisit.ts:4
+   Um verde com ela confirmaria bytes de um PR ANTERIOR, não este Publish.        # exit 3
+
+$ verify-frontend.sh --pai b7a9f5a8a --novo a7571a596 'keepalive_network'
+✓ sentinela exclusiva: 0 ocorrências em b7a9f5a8a · 1 arquivo(s) em a7571a596 (pathspec src/)
 ```
 
-Arquivo **QUENTE** (vários PRs no mesmo dia) é onde isso morde. Verificando o #1949
-(`src/hooks/useLastVisit.ts`, o **terceiro** PR no arquivo depois de #1934 e #1945), a sentinela
-sugerida de início foi `visita_tentativa` — mas ela era do **#1945**, mergeado e publicado HORAS
-antes: `git grep -c visita_tentativa b7a9f5a8a -- src/` (o pai do #1949) casava 2 arquivos (4 linhas
-no hook, 6 no teste) ⇒ teria dado verde com o #1949 **inteiro** fora do ar. O erro foi pego antes de
-rodar; as sentinelas usadas de fato foram `keepalive_network` e `time_since_last_visit_resolvido`,
-ambas com ZERO no pai. É o **irmão** da armadilha do id de EXEMPLO (`deploy.md` §Canárias), não a
-mesma: lá o erro é falso NEGATIVO (reprova um deploy correto — caro, mas a verificação CONTINUA);
-aqui é falso POSITIVO, estritamente pior, porque **ENCERRA** a verificação.
+`keepalive_network` e `time_since_last_visit_resolvido` foram as sentinelas usadas de fato. É o
+**irmão** da armadilha do id de EXEMPLO (`deploy.md` §Canárias), não a mesma: lá o erro é falso
+NEGATIVO (reprova um deploy correto — caro, mas a verificação CONTINUA); aqui é falso POSITIVO,
+estritamente pior, porque **ENCERRA** a verificação.
 
-**Controle negativo no mesmo fôlego** — a regra de evidência positiva aplicada à própria sonda:
+**O guard NÃO substitui o controle negativo da sonda** — ele prova que a sentinela é nova, não que o
+script sabe dizer "não":
 
 ```bash
-.claude/skills/lovable-deploy-verify/scripts/verify-frontend.sh 'sentinela_de_controle_negativo_xyz'
-# TEM de dar exit != 0. Dois `exit 0` seguidos não distinguem "está no ar" de "o script dá verde pra tudo".
+verify-frontend.sh 'sentinela_de_controle_negativo_xyz'   # TEM de dar exit 1
 ```
 
-Custa o **pior caso** do script (sem alvo não há halt-on-hit: varre os 300+ chunks, ~1 min) — é o
-preço do veredito, não um extra.
+Dois `exit 0` seguidos não distinguem "está no ar" de "o script dá verde pra tudo". Custa o pior caso
+(sem alvo não há halt-on-hit: varre os 300+ chunks, ~1 min).
 
 **Sinal auxiliar de graça: o hash do chunk muda a cada build.** A saída já imprime `entry:` e
 `✅ ALVO em <chunk>`, e os dois nomes carregam hash de conteúdo. **Anote-os.** Hash IGUAL ao da
