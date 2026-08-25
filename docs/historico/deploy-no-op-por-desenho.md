@@ -235,14 +235,54 @@ O gate passou 27/27 assim que as 7 foram registradas, e isso não valia nada: el
 **50/50 vermelhas.** A que mais importa é a 7ª: `git revert` do bump devolveria a sonda a
 "responde verde sem provar nada" — o pior estado possível, porque **parece** verificado.
 
-### O que falta (e é do founder)
+### O desfecho — 10/10 provadas em produção (2026-08-25, 00:12–00:15 UTC)
 
-O bump é pré-requisito **cumprido**; o deploy, não. As 10 edges precisam subir pelo chat do
-Lovable, e só então a sonda vira prova. Ler pelo `request_id` em `net._http_response` — nunca
-`ORDER BY id DESC LIMIT 1`, que já fabricou veredito negativo neste banco (§Canárias do
-`deploy.md`). Marcador esperado: `v1.0-sensor-inicial` nas 7 novas (nenhum bundle anterior
-responde `versao`) e `v1.1-paginacao-eof-e-cursor` nas 3 bumpadas — string que **não existia em
-lugar nenhum** antes desta fatia.
+O bump era pré-requisito **cumprido**; o deploy veio depois, pelo chat do Lovable, e só então a
+sonda virou prova. Lido por `request_id` em `net._http_response`, nunca `ORDER BY id DESC LIMIT 1`:
+
+| edge | `request_id` | marcador respondido |
+|---|---|---|
+| `calculate-scores` | 59652 | `v1.0-sensor-inicial` |
+| `omie-sync-status-produtos` | 59653 | `v1.0-sensor-inicial` |
+| `scoring-recalc-batch` | 59654 | `v1.0-sensor-inicial` |
+| `tactical-plans-batch` | 59655 | `v1.0-sensor-inicial` |
+| `visit-score-recalc-batch` | 59656 | `v1.0-sensor-inicial` |
+| `ai-ops-agent` | 59662 | `v1.0-sensor-inicial` |
+| `sync-reprocess` | 59663 | `v1.0-sensor-inicial` |
+| `omie-cliente` | 59664 | `v1.1-paginacao-eof-e-cursor` |
+| `generate-tactical-plan` | 59665 | `v1.1-paginacao-eof-e-cursor` |
+| `reposicao-depara-sayerlack-auto` | 59666 | `v1.1-paginacao-eof-e-cursor` |
+
+As 3 bumpadas responderam a string que **não existia em lugar nenhum** antes desta fatia — é o
+fecho do argumento de abertura: sendo o #1889 no-op por desenho, nenhuma fixture comportamental
+podia discriminar o deploy, e o marcador era a única prova possível. Ela veio.
+
+**Nenhuma executou efeito.** As 5 caras (a classe que num bundle pré-sensor teria disparado batch
+de score, sync de status e o fan-out que escreve por OUTRA edge) responderam 200 com `probe:true`:
+a sonda respondeu antes do `createClient`, como o gate estrutural exige. E o `ai-ops-agent`
+respondendo **200 com `versao`** prova de quebra o gate PRÓPRIO — no bundle anterior o mesmo
+request, vindo do SQL Editor com `x-cron-secret`, teria batido em 401.
+
+### A checagem cruzada da 9ª leva passou — e o que a fez passar
+
+A lição da 9ª leva (abaixo) é que **id copiado à mão fabrica "verificado"**: três dos quatro ids
+reportados lá apontavam para crons, e o verde era do watchdog. Aqui a conferência foi explícita —
+nas 10, o campo `edge` do corpo bate com o nome do par, **zero suspeitas**. Não é sorte de quem
+copiou com cuidado: a receita em lote (#1941) agrega `jsonb_object_agg(edge, request_id)` na
+**mesma execução** do `http_post`, então o id nunca viaja sozinho, e o `edge` do corpo tem com o
+que ser confrontado. O `pg_net` só envia após o COMMIT, então a cópia entre execuções continua
+inevitável; o que deixou de existir foi o id **solto**.
+
+### Duas coisas que só apareceram ao verificar
+
+- ⚠️ **O ramo "AGUARDE" evitou um veredito negativo fabricado.** A primeira leitura do bloco de 5
+  voltou `status_code NULL` nas cinco — a resposta HTTP levou ~10s para aparecer. Com `JOIN` em vez
+  de `LEFT JOIN` contra `net._http_response`, isso teria voltado **zero linhas**; com o `LEFT JOIN`
+  mas sem o ramo próprio, teria caído em "bundle pré-sensor". Qualquer um dos dois manda redeployar
+  dez edges à toa. "Ainda não chegou" precisa de nome próprio no veredito.
+- ⚠️ **A trava do bloco perigoso por `WHERE` seria teatro** — o Postgres avalia a projeção mesmo com
+  o filtro descartando tudo, e o `http_post` sairia igual. Falsificado nos dois sentidos e corrigido
+  para `CASE` antes de a receita ir ao ar (#1941, §Sondar VÁRIAS edges do `deploy.md`).
 
 ## 9ª leva (mesmo dia) — a que a ENUMERAÇÃO não via, e a que já estava pronta há meses
 
