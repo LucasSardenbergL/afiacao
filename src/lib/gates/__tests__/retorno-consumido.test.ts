@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { chamadasQueConsomemRetorno, usosDoRetorno } from '../retorno-consumido';
+import { usosDoRetorno, vereditoFronteira } from '../retorno-consumido';
 
 const CWD = resolve(__dirname, '../../../..');
 const read = (rel: string) => readFileSync(resolve(CWD, rel), 'utf8');
@@ -28,13 +28,13 @@ describe('retorno-consumido: as formas que CALCULAM E DESCARTAM têm de reprovar
     it(`reprova: ${forma}`, () => {
       // Sentinela: sem isto, um fixture que perdesse a chamada passaria por CEGUEIRA (0 de 0).
       expect(usosDoRetorno(codigo, nome), `fixture "${forma}" não contém chamada a ${nome}`).not.toHaveLength(0);
-      expect(chamadasQueConsomemRetorno(codigo, nome), `"${forma}" deveria ser 0 consumos`).toBe(0);
+      expect(vereditoFronteira(codigo, nome), `"${forma}" deveria ser reprovada`).not.toBe('ok');
     });
   }
 
   it('reprova a chamada certa que existe SÓ em comentário (o stripper compartilhado é obrigatório)', () => {
     const soComentario = '// const x = decidirIdentidadeSelfService(args);\ndecidirIdentidadeSelfService(args);';
-    expect(chamadasQueConsomemRetorno(soComentario, 'decidirIdentidadeSelfService')).toBe(0);
+    expect(vereditoFronteira(soComentario, 'decidirIdentidadeSelfService')).not.toBe('ok');
   });
 });
 
@@ -53,13 +53,30 @@ describe('retorno-consumido: as formas LEGÍTIMAS medidas no repo têm de aprova
 
   for (const [forma, nome, codigo] of LEGITIMAS) {
     it(`aprova ${forma}`, () => {
-      expect(chamadasQueConsomemRetorno(codigo, nome), `forma ${forma} reprovada — o gate ficou APERTADO demais`).toBeGreaterThan(0);
+      expect(vereditoFronteira(codigo, nome), `forma ${forma} reprovada — o gate ficou APERTADO demais`).toBe('ok');
     });
   }
 
   it('aprova uma forma INVENTADA (o gate é posicional, não uma lista de embrulhos)', () => {
     const nova = 'const r = pipe(dados, (d) => classificarLoteProof(d), coletar);\nuse(r);';
-    expect(chamadasQueConsomemRetorno(nova, 'classificarLoteProof')).toBeGreaterThan(0);
+    expect(vereditoFronteira(nova, 'classificarLoteProof')).toBe('ok');
+  });
+
+  it('VERMELHO quando o helper sumiu: 0 chamadas não é aprovação (a classe, de novo)', () => {
+    // `descartes === 0` sozinho aprovaria isto — uma renomeação apagaria o guard em silêncio.
+    expect(vereditoFronteira('const x = outraCoisa(1);\nuse(x);', 'buildOwnerMap')).toContain('NENHUMA chamada');
+  });
+
+  it('VERMELHO com UMA das duas chamadas descartada (o critério fraco "≥1 consome" passaria)', () => {
+    // Medido em omie-sync: `decidirIdentidadeSelfService` é chamado 2x. Sabotar só a primeira
+    // deixava o gate verde enquanto o critério era "alguma chamada consome".
+    const uma = [
+      'const viaView = { tipo: "cru" } as never;',
+      'decidirIdentidadeSelfService({ viewRow });',
+      'const viaOmie = decidirIdentidadeSelfService({ viewRow: null });',
+      'return viaView ?? viaOmie;',
+    ].join('\n');
+    expect(vereditoFronteira(uma, 'decidirIdentidadeSelfService')).toContain('1 de 2');
   });
 
   it('não confunde a DEFINIÇÃO do helper com uma chamada', () => {
@@ -81,12 +98,22 @@ describe('retorno-consumido: as edges REAIS de hoje passam (controle da varredur
     ['supabase/functions/omie-sync-sku-items/index.ts', 'skuItemsCompararFila'],
     ['supabase/functions/omie-sync-sku-items/index.ts', 'agregarItensRecebimento'],
     ['supabase/functions/analyze-unified-order/index.ts', 'acumularUsoCache'],
-    ['supabase/functions/omie-vendas-sync/index.ts', 'deriveOmieAccountIdentity'],
   ];
 
   for (const [arquivo, nome] of REAIS) {
     it(`${nome} entrega o retorno em ${arquivo.split('/')[2]}`, () => {
-      expect(chamadasQueConsomemRetorno(read(arquivo), nome)).toBeGreaterThan(0);
+      expect(vereditoFronteira(read(arquivo), nome)).toBe('ok');
     });
   }
+
+  it('deriveOmieAccountIdentity tem 1 descarte LEGÍTIMO — e é por isso que ele não usa este gate', () => {
+    // `omie-vendas-sync:3092` chama a derivação pelo EFEITO (revalidar a edição), sem produto a
+    // receber; o site do produto é o `const ident = await ...` que alimenta `criarPedidoVenda`.
+    // Aplicar o veredito forte aqui reprovaria código correto — o assert certo para ele é o
+    // POSICIONAL que já existe no gate money-path. Este `it` pina a contagem: virar 2 descartes
+    // significa que o site do produto caiu.
+    const usos = usosDoRetorno(read('supabase/functions/omie-vendas-sync/index.ts'), 'deriveOmieAccountIdentity');
+    expect(usos.filter((u) => !u.consumido)).toHaveLength(1);
+    expect(usos.filter((u) => u.consumido), 'sumiu o site que ALIMENTA criarPedidoVenda').not.toHaveLength(0);
+  });
 });

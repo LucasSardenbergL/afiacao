@@ -89,18 +89,28 @@ export function usosDoRetorno(fonteCrua: string, nome: string): UsoDoRetorno[] {
   return usos;
 }
 
-/** Quantas chamadas a `nome(` entregam o retorno a alguém. `0` = o gate estaria mentindo. */
-export function chamadasQueConsomemRetorno(fonte: string, nome: string): number {
-  return usosDoRetorno(fonte, nome).filter((u) => u.consumido).length;
-}
-
 /**
- * Mensagem para o assert: nomeia a classe e mostra a forma encontrada, para o vermelho explicar
- * o que fazer em vez de só dizer "não casou".
+ * Veredito do assert, em UMA string — `'ok'` ou a explicação do que está errado.
+ *
+ * Por que uma string e não `expect(descartes).toBe(0)`: zero chamadas também dá zero descartes, e
+ * um gate que fica verde porque não encontrou nada é EXATAMENTE a classe que este arquivo mata
+ * (uma renomeação do helper apagaria o guard em silêncio). O caso "nenhuma chamada" tem de ser
+ * VERMELHO, e num assert só ele fica impossível de esquecer.
+ *
+ * O critério é "NENHUMA chamada descarta", não "alguma consome": onde o helper tem 2 chamadas,
+ * sabotar só uma passaria pelo critério fraco — medido em 2026-08-25 com
+ * `decidirIdentidadeSelfService` (2 chamadas em `omie-sync`). Os 9 helpers puros sob este gate
+ * têm 0 descartes na `main` de hoje, então o critério forte não custa falso-positivo. Ele NÃO
+ * serve para função chamada pelo efeito colateral (`await deriveOmieAccountIdentity(...)` solto,
+ * legítimo em `omie-vendas-sync`) — ali o assert certo é o posicional do próprio site.
  */
-export function explicarDescarte(fonte: string, nome: string): string {
+export function vereditoFronteira(fonte: string, nome: string): string {
   const usos = usosDoRetorno(fonte, nome);
-  if (usos.length === 0) return `${nome} não é chamado em lugar nenhum`;
-  const formas = usos.map((u) => `${u.motivo}${u.prefixo ? ` ("${u.prefixo.slice(-48)}")` : ''}`);
-  return `${nome} é chamado ${usos.length}x mas NENHUMA entrega o retorno: ${formas.join(' | ')}`;
+  if (usos.length === 0) {
+    return `${nome}: NENHUMA chamada encontrada — renomeado/removido? O gate ficaria verde por cegueira`;
+  }
+  const maus = usos.filter((u) => !u.consumido);
+  if (maus.length === 0) return 'ok';
+  const formas = maus.map((u) => `${u.motivo}${u.prefixo ? ` ("${u.prefixo.slice(-40)}")` : ''}`);
+  return `${nome}: ${maus.length} de ${usos.length} chamada(s) DESCARTAM o retorno — ${formas.join(' | ')}`;
 }

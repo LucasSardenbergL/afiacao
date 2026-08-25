@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { removerComentarios } from '@/lib/gates/limpeza-fonte';
-import { chamadasQueConsomemRetorno, explicarDescarte } from '@/lib/gates/retorno-consumido';
+import { vereditoFronteira } from '@/lib/gates/retorno-consumido';
 
 // repo root: src/__tests__ → src → repo (2 níveis).
 const CWD = resolve(__dirname, '../..');
@@ -199,9 +199,9 @@ describe('guardrail money-path: analyze-unified-order mantém o prompt caching L
     // a função é CHAMADA, nunca que o produto dela chegou a alguém. `acumularUsoCache(args);` solto ficava
     // VERDE aqui. O assert é POSICIONAL — qualquer posição que RECEBA o retorno passa.
     expect(
-      chamadasQueConsomemRetorno(codigo, 'acumularUsoCache'),
-      `REGRESSÃO: o acumulador é calculado e DESCARTADO — o alerta de escrita-sem-leitura nunca dispara — ${explicarDescarte(codigo, 'acumularUsoCache')}`,
-    ).toBeGreaterThan(0);
+      vereditoFronteira(codigo, 'acumularUsoCache'),
+      'REGRESSÃO: o acumulador é calculado e DESCARTADO — o alerta de escrita-sem-leitura nunca dispara',
+    ).toBe('ok');
     expect(codigo, 'sumiu o alerta de escrita paga sem nenhuma leitura').toMatch(
       /pagaEscritaSemNuncaLer\(\s*acc\s*\)/,
     );
@@ -557,9 +557,9 @@ describe('guardrail money-path: P1b doc-ambíguo-Omie (syncCustomers USA o helpe
     // a função é CHAMADA, nunca que o produto dela chegou a alguém. `docsComCodigoAmbiguoNoOmie(args);` solto ficava
     // VERDE aqui. O assert é POSICIONAL — qualquer posição que RECEBA o retorno passa.
     expect(
-      chamadasQueConsomemRetorno(semProbe, 'docsComCodigoAmbiguoNoOmie'),
-      `REGRESSÃO: o real-path calcula os docs ambíguos e DESCARTA — o fail-closed do P1b evapora — ${explicarDescarte(semProbe, 'docsComCodigoAmbiguoNoOmie')}`,
-    ).toBeGreaterThan(0);
+      vereditoFronteira(semProbe, 'docsComCodigoAmbiguoNoOmie'),
+      'REGRESSÃO: o real-path calcula os docs ambíguos e DESCARTA — o fail-closed do P1b evapora',
+    ).toBe('ok');
     expect(
       count(src, 'docsComCodigoAmbiguoNoOmie'),
       'helper deve ser DEFINIDO e CHAMADO (≥2 menções)',
@@ -861,9 +861,9 @@ describe('guardrail money-path: omie-sync self-service USA view fresca account-c
     // a função é CHAMADA, nunca que o produto dela chegou a alguém. `decidirIdentidadeSelfService(args);` solto ficava
     // VERDE aqui. O assert é POSICIONAL — qualquer posição que RECEBA o retorno passa.
     expect(
-      chamadasQueConsomemRetorno(src, 'decidirIdentidadeSelfService'),
-      `REGRESSÃO: a identidade é decidida e DESCARTADA — o espelho direto volta a mandar — ${explicarDescarte(src, 'decidirIdentidadeSelfService')}`,
-    ).toBeGreaterThan(0);
+      vereditoFronteira(src, 'decidirIdentidadeSelfService'),
+      'REGRESSÃO: a identidade é decidida e DESCARTADA — o espelho direto volta a mandar',
+    ).toBe('ok');
     expect(
       count(src, 'decidirIdentidadeSelfService'),
       'helper deve ser DEFINIDO e CHAMADO (≥2 menções)',
@@ -1627,9 +1627,9 @@ describe('guardrail money-path: ai-ops-agent resolve farmer_id da carteira (Opç
     // a função é CHAMADA, nunca que o produto dela chegou a alguém. `buildOwnerMap(args);` solto ficava
     // VERDE aqui. O assert é POSICIONAL — qualquer posição que RECEBA o retorno passa.
     expect(
-      chamadasQueConsomemRetorno(src, 'buildOwnerMap'),
-      `REGRESSÃO: o owner-map é construído e DESCARTADO — farmer_id volta a sair de mapa vazio — ${explicarDescarte(src, 'buildOwnerMap')}`,
-    ).toBeGreaterThan(0);
+      vereditoFronteira(src, 'buildOwnerMap'),
+      'REGRESSÃO: o owner-map é construído e DESCARTADO — farmer_id volta a sair de mapa vazio',
+    ).toBe('ok');
     expect(src, 'edge não chama mais resolveOwner').toMatch(/resolveOwner\(/);
     expect(
       count(src, 'buildOwnerMap'),
@@ -1674,16 +1674,16 @@ describe('guardrail money-path: omie-sync-sku-items (fila de leadtime)', () => {
     // a função é CHAMADA, nunca que o produto dela chegou a alguém. `skuItemsElegivel(args);` solto ficava
     // VERDE aqui. O assert é POSICIONAL — qualquer posição que RECEBA o retorno passa.
     expect(
-      chamadasQueConsomemRetorno(src, 'skuItemsElegivel'),
-      `REGRESSÃO: a elegibilidade é avaliada e DESCARTADA — poison volta a entupir a fila — ${explicarDescarte(src, 'skuItemsElegivel')}`,
-    ).toBeGreaterThan(0);
+      vereditoFronteira(src, 'skuItemsElegivel'),
+      'REGRESSÃO: a elegibilidade é avaliada e DESCARTADA — poison volta a entupir a fila',
+    ).toBe('ok');
     // FRONTEIRA (classe do #1985, medida de novo em 2026-08-25): `toMatch(/skuItemsCompararFila\(/)` prova que
     // a função é CHAMADA, nunca que o produto dela chegou a alguém. `skuItemsCompararFila(args);` solto ficava
     // VERDE aqui. O assert é POSICIONAL — qualquer posição que RECEBA o retorno passa.
     expect(
-      chamadasQueConsomemRetorno(src, 'skuItemsCompararFila'),
-      `REGRESSÃO: a comparação roda e é DESCARTADA — o sort vira no-op e as antigas nunca são alcançadas — ${explicarDescarte(src, 'skuItemsCompararFila')}`,
-    ).toBeGreaterThan(0);
+      vereditoFronteira(src, 'skuItemsCompararFila'),
+      'REGRESSÃO: a comparação roda e é DESCARTADA — o sort vira no-op e as antigas nunca são alcançadas',
+    ).toBe('ok');
   });
 
   it('PARIDADE: o bloco espelhado no edge é IDÊNTICO ao helper de src/ (pega reversão do Lovable)', () => {
@@ -3302,9 +3302,9 @@ describe('guardrail money-path: P1-c transferência de código (writer NÃO tran
     // a função é CHAMADA, nunca que o produto dela chegou a alguém. `classificarLoteProof(args);` solto ficava
     // VERDE aqui. O assert é POSICIONAL — qualquer posição que RECEBA o retorno passa.
     expect(
-      chamadasQueConsomemRetorno(semProbe, 'classificarLoteProof'),
-      `REGRESSÃO: o lote é classificado e DESCARTADO — vai cru para o upsert (23505 derruba o run) — ${explicarDescarte(semProbe, 'classificarLoteProof')}`,
-    ).toBeGreaterThan(0);
+      vereditoFronteira(semProbe, 'classificarLoteProof'),
+      'REGRESSÃO: o lote é classificado e DESCARTADO — vai cru para o upsert (23505 derruba o run)',
+    ).toBe('ok');
   });
 
   it('a canária existe e discrimina: tem o caso de transferência E o de refresh (falsificam-se mutuamente)', () => {
