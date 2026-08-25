@@ -260,15 +260,15 @@ comportamento.
 **Resultado: nenhum dos 7 contratos está congelado.** O caso que motivou a auditoria (#1974,
 `omie-vendas-sync`) era genuíno e já estava corrigido; a classe não reincidiu nos outros seis.
 
-| canária (edge · rota) | `contrato` atual | commit que o definiu | fatias que entraram depois | congelado? |
-|---|---|---|---|---|
-| `analyze-unified-order` · card de Governança | `praticado-vence-omie-v1` | 49f824abd (2026-08-23) | e70bfa050 (#1938, `searchCustomer` STRING) · e2a4acc2c (corpo tipado) | **não** — `mergeCustomerPrices` intocado; as duas fatias são de prompt/corpo e a SONDA (`v1.1-corpo-tipado`) as cobre |
-| `omie-vendas-sync` · `identidade_probe` | `identidade-a2-client-to-user-v2` | 97194df1b (#1974) | nenhuma | **não** — caso de referência, já corrigido |
-| `omie-analytics-sync` · `doc_ambiguo_probe` | `doc-ambiguo-fail-closed-v1` | d8cf07152 (2026-08-23) | 81f9a111c (#1991) · 883080edb · c63820508 (#1992) | **não** — `docsComCodigoAmbiguoNoOmie` intocado |
-| `omie-analytics-sync` · `transferencia_probe` | `transferencia-codigo-fail-closed-v1` | 81f9a111c (#1991) | 883080edb · c63820508 (#1992) | **não** — `classificarLoteProof` intocado |
-| `carteira-rebuild` · `?canary=1` | `trava-saida-v1` | 56f9f58b3 (2026-07-20) | f6561b0b2 (4 guards de paginação) · 5f5523df9 (import) | **não** pelo critério — mas ver "o furo que a auditoria achou" |
-| `generate-tactical-plan` · `{"canary":true}` | `v1.1-paginacao-eof-e-cursor` (campo `versao`) | 7f1198cf0 (2026-08-24) | nenhuma | **não** |
-| `omie-financeiro` · `paginacao_probe` | `paginacao-guards-v1` | dba6593fa (2026-07-29) | 2eb237532 (`Deno.serve`) · 5b8501144 (sonda) | **não** — `desfechoVarreduraReversa`/`fingerprintPagina`/`listaOmie` intocados; a sonda cobre as duas fatias por ancestralidade |
+| canária (edge · rota) | `contrato` atual | commit que o definiu | fatias que entraram depois | congelado? | bump proposto |
+|---|---|---|---|---|---|
+| `analyze-unified-order` · card de Governança | `praticado-vence-omie-v1` | 49f824abd (2026-08-23) | e70bfa050 (#1938, `searchCustomer` STRING) · e2a4acc2c (corpo tipado) | **não** — `mergeCustomerPrices` intocado; as duas fatias são de prompt/corpo e a SONDA (`v1.1-corpo-tipado`) as cobre | — |
+| `omie-vendas-sync` · `identidade_probe` | `identidade-a2-client-to-user-v2` | 97194df1b (#1974) | nenhuma | **não** — caso de referência, já corrigido | — (feito no #1974) |
+| `omie-analytics-sync` · `doc_ambiguo_probe` | `doc-ambiguo-fail-closed-v1` | d8cf07152 (2026-08-23) | 81f9a111c (#1991) · 883080edb · c63820508 (#1992) | **não** — `docsComCodigoAmbiguoNoOmie` intocado | — |
+| `omie-analytics-sync` · `transferencia_probe` | `transferencia-codigo-fail-closed-v1` | 81f9a111c (#1991) | 883080edb · c63820508 (#1992) | **não** — `classificarLoteProof` intocado | — |
+| `carteira-rebuild` · `?canary=1` | `trava-saida-v1` | 56f9f58b3 (2026-07-20) | f6561b0b2 (4 guards de paginação) · 5f5523df9 (import) | **não** pelo critério — mas ver "o furo que a auditoria achou" | `trava-saida-e-guards-paginacao-v2`, **na próxima fatia** — não agora (ver abaixo) |
+| `generate-tactical-plan` · `{"canary":true}` | `v1.1-paginacao-eof-e-cursor` (campo `versao`) | 7f1198cf0 (2026-08-24) | nenhuma | **não** | — |
+| `omie-financeiro` · `paginacao_probe` | `paginacao-guards-v1` | dba6593fa (2026-07-29) | 2eb237532 (`Deno.serve`) · 5b8501144 (sonda) | **não** — `desfechoVarreduraReversa`/`fingerprintPagina`/`listaOmie` intocados; a sonda cobre as duas fatias por ancestralidade | — |
 
 ⚠️ **`git log -L :função:arquivo` produziu um falso positivo, e por pouco não virou veredito.** Ele
 apontou o `81f9a111c` como tendo alterado `docsComCodigoAmbiguoNoOmie` — a tabela-verdade da
