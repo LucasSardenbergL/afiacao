@@ -341,9 +341,28 @@ dentro de sala trancada: o `GRANT` "funciona", o catálogo registra, e o acesso 
 bloco** — `has_schema_privilege` responde `t` para eles enquanto a membership existe, e vira `f` no instante
 seguinte. A conferência que pega isso é *rodar a consulta real*, não somar privilégios no papel.
 
-### Não verificável daqui em diante
+### Bloco 3 — rodado e verificado, mas NÃO por mim
 
-Se o bloco 3 (invalidar os 8 refresh tokens vivos) foi rodado, **eu não tenho mais como conferir** — perdi a
-leitura da tabela. Isso é consequência desejada do fecho, não lacuna: com o `pg_read_all_data` fora, o
-`claude_ro` não colhe token independentemente de terem sido revogados. O bloco 3 só importa sob hipótese de
-colheita **anterior** ao fecho.
+Invalidar os refresh tokens vivos foi aplicado horas depois, e **eu já não conseguia conferir** (perdi a
+leitura de `auth`). A saída foi entregar um bloco que **se auto-verifica** — a consulta devolve a evidência
+em vez de "Success" —, e o founder colou os números de volta:
+
+```
+vivos_antes = 3 · revogados_agora = 3 · ainda_vivos = 0
+```
+
+Coerente nos dois eixos: `antes == revogados` (ninguém entrou entre o `count` e o `UPDATE`, mesma snapshot
+do statement) e a confirmação independente em `0`.
+
+**Eram 8 na auditoria e 3 na hora do apply** — não é discrepância, é a natureza do dado: refresh token
+rotaciona e expira, então "8 vivos, 6 de master" era **retrato datado**, nunca estoque. É a mesma regra do
+§2 do `database.md` ("evidência de banco tem VALIDADE"), aqui aplicada a uma tabela que se move sozinha:
+a contagem serve para dimensionar a exposição, não para conferir o fecho — quem confere o fecho é o `0`.
+
+⚠️ **`jwt_exp = 3600`:** revogar o refresh token **não** derruba o access JWT já emitido. O staff só é
+efetivamente deslogado conforme os tokens correntes expiram, em até **1 hora**. Para corte imediato não há
+alavanca no banco — a validade do JWT é verificada pela assinatura, sem consulta.
+
+⇒ **Quando quem aplica não é quem consegue verificar, o bloco entregue tem de carregar a própria
+verificação** (CTE que reporta antes/depois), e a confirmação tem de ser um 2º statement independente. Pedir
+"me diga se deu certo" devolve o "Success" do editor — que este arquivo inteiro existe para desqualificar.
