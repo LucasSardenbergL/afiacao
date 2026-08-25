@@ -716,6 +716,29 @@ Deno.test("bump v1.1-corpo-tipado: analyze-unified-order não pode voltar ao mar
   }
 });
 
+Deno.test("bump v1.1-mapa-codigo-sem-alias: omie-analytics-sync não pode voltar ao marcador do #1905", () => {
+  // Terceira ocorrência da MESMA classe, e a que prova que o gate acima é rede-de-baixo e não
+  // regra: ele mergeou às 01:24 UTC de 2026-08-25 e o #1971 repetiu a omissão às 01:31 — 7 minutos
+  // depois, noutra edge. O `v1.0-sensor-inicial` nasceu no #1905 e o #1971 alterou o `index.ts`
+  // (removeu a fonte `customer_canonical_alias` do `fetchCodigoUserMap`) sem tocar o marcador.
+  //
+  // ⚠️ Este bump NÃO recupera a discriminação do #1971 — ela está perdida. Quem sondar prod e
+  // receber `v1.0-sensor-inicial` continua sem saber se o bundle é o do #1905 ou o do #1971. O que
+  // o bump devolve é o sentido POSITIVO: `v1.1-mapa-codigo-sem-alias` na resposta prova que o
+  // bundle inclui esta entrega e, por ancestralidade, o #1971. Falso NEGATIVO (marcador velho num
+  // bundle que já tem o #1971) segue possível até o próximo deploy, e é o lado certo da assimetria:
+  // ele faz continuar verificando, ao contrário do falso positivo, que encerra.
+  const ANTIGO = "v1.0-sensor-inicial";
+  const versaoAnalytics: string = analyticsSync.VERSAO;
+  if (versaoAnalytics === ANTIGO) {
+    throw new Error(
+      `omie-analytics-sync: marcador REGREDIU para ${ANTIGO} — o valor que ficou congelado do ` +
+        `#1905 ao #1971. A canária que a edge já tinha (doc_ambiguo_probe) é NÃO-versionada e ` +
+        `responde igual em qualquer bundle, então nada mais discrimina o deploy desta edge.`,
+    );
+  }
+});
+
 Deno.test("oitava leva: o corpo do Request é lido UMA vez só", () => {
   // O corpo de um `Request` só se lê uma vez: a segunda chamada devolve `{}` (ou lança). Como a
   // sonda obrigou o parse a SUBIR para antes do client, toda leitura que existia depois teve de
