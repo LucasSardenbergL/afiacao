@@ -41,6 +41,7 @@ HTML
 cat > "$FIX/site/assets/index-AAA111.js" <<'JS'
 const __vite__mapDeps=(i)=>i.map(i=>d[i]);
 const d=["assets/PageA-BBB222.js","assets/PageB-CCC333.js"];
+const k="TOKEN_LONGO_DE_FIXTURE_NAO_E_SEGREDO_0123456789abcdef0123456789";
 console.log("entry");
 JS
 
@@ -212,6 +213,9 @@ if [ "$FALSIFY" = 0 ]; then
            "$BASE/site-fallback" "NAO_EXISTE_NO_BUNDLE_123" 2 "ENTRY_NAO_E_JS" "CONTROLE_POSITIVO_OK"
   run_case "alvo presente: o positivo NÃO roda — o próprio HIT já é a evidência de que enxerga" \
            "$BASE/site" "SENTINELA_DEEP_XYZ" 0 "CONTROLE_NEGATIVO_OK" "CONTROLE_POSITIVO_OK"
+  run_case "agulha longa sai TRUNCADA: em prod o maior token do entry é a anon key (pública, mas com cara de credencial)" \
+           "$BASE/site" "NAO_EXISTE_NO_BUNDLE_123" 1 "CONTROLE_POSITIVO_OK" \
+           "TOKEN_LONGO_DE_FIXTURE_NAO_E_SEGREDO_0123456789abcdef0123456789"
 
   echo ""
   echo "  --pai (prova de exclusividade da sentinela — fail-closed, exit 3):"

@@ -214,10 +214,15 @@ _agulha=$(tr -c 'A-Za-z0-9_' '\n' < "$TMP/entry.js" | awk '{ if (length($0) > le
 if [ -z "$_cego" ] && [ "${#_agulha}" -lt 12 ]; then
   _cego="AGULHA_INDISPONIVEL — o corpo de $ENTRY ($(wc -c < "$TMP/entry.js" | tr -d ' ') bytes) não deu token de 12+ caracteres"
 fi
+# EXIBIÇÃO truncada (o grep segue usando a agulha INTEIRA): medido contra prod em 2026-08-25, o
+# maior token do entry é o payload da anon key do Supabase — pública por desenho, ela VAI no
+# bundle, mas 200+ chars com cara de credencial não têm por que entrar na transcrição a cada run.
+_agulha_vis="$_agulha"
+[ "${#_agulha}" -le 20 ] || _agulha_vis="$(printf '%.8s' "$_agulha")...(${#_agulha} chars)"
 if [ -z "$_cego" ]; then
   printf '%s\n' "$ENTRY" > "$TMP/controle_positivo.txt"
   [ -n "$(varre "$TMP/controle_positivo.txt" "$_agulha")" ] || \
-    _cego="AGULHA_NAO_CASOU — '$_agulha' saiu do corpo de $ENTRY e o mesmo curl+grep não a acha lá"
+    _cego="AGULHA_NAO_CASOU — '$_agulha_vis' saiu do corpo de $ENTRY e o mesmo curl+grep não a acha lá"
 fi
 if [ -n "$_cego" ]; then
   printf '%s\n' \
@@ -227,7 +232,7 @@ if [ -n "$_cego" ]; then
     "   não está provado. Conserte a sonda (CDN/rede/DNS/formato) ANTES de pedir outro Publish." >&2
   exit 2
 fi
-echo "✓ CONTROLE_POSITIVO_OK — $ENTRY ainda devolve bytes e o mesmo grep acha '$_agulha' neles"
+echo "✓ CONTROLE_POSITIVO_OK — $ENTRY ainda devolve bytes e o mesmo grep acha '$_agulha_vis' neles"
 
 echo "→ ❌ ALVO ausente nos $N chunks: Publish pendente, OU o ALVO não é literal/único no bundle"
 echo "   CONTROLE_NEGATIVO_NAO_SE_APLICA: ele audita o falso POSITIVO, e este ramo é o outro — aqui"
