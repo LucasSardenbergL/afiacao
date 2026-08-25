@@ -686,6 +686,36 @@ Deno.test("bump #1889/#1901: as 3 edges com sonda pré-existente não podem volt
   }
 });
 
+Deno.test("bump v1.1-corpo-tipado: analyze-unified-order não pode voltar ao marcador congelado do #1930", () => {
+  // Mesma classe do gate acima, mas o congelamento aqui aconteceu SEM ninguém reverter nada: o
+  // #1930 escreveu `v1.0-prompt-invertido-cacheado` e o #1938 alterou a edge sem bumpar. A sonda
+  // então provava "≥ #1930" e nada mais — respondia byte-idêntico para os dois bundles. Medido em
+  // prod 2026-08-25 (request_id 59657): `versao=v1.0-prompt-invertido-cacheado`, uma resposta que
+  // não distingue o bundle de #1930 do de #1938.
+  //
+  // ⚠️ O que este gate cobre e o que NÃO cobre. Ele impede a REGRESSÃO (voltar ao valor que já
+  // respondia em produção); ele não força o bump na PRÓXIMA fatia — nenhum gate de texto sabe se
+  // uma mudança de comportamento mereceu marcador novo. A trava real dessa metade é humana e está
+  // escrita no `versao.ts`: bumpar ANTES do deploy. O gate é a rede de baixo, não a regra.
+  //
+  // A canária de preço NÃO substitui isto: o `contrato` dela (`praticado-vence-omie-v1`) nomeia a
+  // fatia do MERGE DE PREÇO, não a do corpo/prompt, e responde igual antes e depois desta entrega.
+  // `: string` é NECESSÁRIO, não ruído — mesma razão documentada no gate da `generate-tactical-plan`
+  // acima: `VERSAO` é `const`, o TS a estreita ao tipo literal e recusa a comparação com TS2367
+  // ("no overlap"), porque o compilador já sabe que HOJE difere. O que este teste guarda é a
+  // mudança FUTURA, que é runtime. (O `BUMPADAS` logo acima escapa disso por passar pelo tipo
+  // `ModSonda`, cujo `VERSAO: string` já alarga.)
+  const ANTIGO = "v1.0-prompt-invertido-cacheado";
+  const versaoAnalyze: string = analyzeOrder.VERSAO;
+  if (versaoAnalyze === ANTIGO) {
+    throw new Error(
+      `analyze-unified-order: marcador REGREDIU para ${ANTIGO} — o valor que ficou congelado do ` +
+        `#1930 ao #1938. A sonda volta a responder igual com ou sem deploy, e a canária de preço ` +
+        `não discrimina esta fatia (o contrato dela é o do merge de preço).`,
+    );
+  }
+});
+
 Deno.test("oitava leva: o corpo do Request é lido UMA vez só", () => {
   // O corpo de um `Request` só se lê uma vez: a segunda chamada devolve `{}` (ou lança). Como a
   // sonda obrigou o parse a SUBIR para antes do client, toda leitura que existia depois teve de

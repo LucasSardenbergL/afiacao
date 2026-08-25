@@ -135,6 +135,37 @@ interface AISuggestion {
   servico_descricao?: string;
 }
 
+/**
+ * Corpo da requisição — o CONTRATO que o chamador manda, não uma validação dele.
+ *
+ * `req.json()` devolve `any`, e enquanto o corpo ficou sem anotação todo o destructuring do fluxo
+ * real herdava `any`: o TypeScript ficava CEGO a defeito de tipo neste caminho inteiro. Dois já
+ * moraram nessa cegueira — `montarSystemBlocks(searchCustomer)` declarado `boolean` recebendo a
+ * string do termo de busca (#1938), e o `push({ type: "text", text })` com `text` possivelmente
+ * `undefined`. Anotar não conserta os dois (o primeiro já está consertado, o segundo é inerte);
+ * conserta o TERCEIRO, o que ainda não aconteceu.
+ *
+ * ⚠️ Anotação NÃO é validação: o corpo chega de fora e ninguém garante que os campos venham com
+ * estes tipos. Quem protege contra corpo não-objeto é o guard de runtime no `const body` abaixo, e
+ * contra corpo vazio é o `if (!text && allImages.length === 0)`. O tipo descreve o que o
+ * `useUnifiedAIAssistant` envia; o runtime continua defendendo o resto.
+ *
+ * `searchCustomer` é `unknown` de PROPÓSITO — o código só o consome por truthiness (`!!`, `if`,
+ * ternário), e `unknown` é o único tipo que deixa isso passar E faz o TS RECUSAR a passagem do
+ * valor cru para um parâmetro `boolean`. Ou seja: o defeito #1938 vira erro de compilação em vez
+ * de mentira silenciosa. Trocar por `boolean` faria o `!!` do call-site parecer sobra e convidaria
+ * a removê-lo.
+ */
+type CorpoRequisicao = {
+  text?: string;
+  imageBase64?: string;
+  imagesBase64?: string[];
+  products?: ProdutoCatalogo[];
+  userTools?: UserToolRow[];
+  customerUserId?: string;
+  searchCustomer?: unknown;
+};
+
 /** Content block da Anthropic: texto ou imagem base64 com media type real. */
 type BlocoConteudo = { type: "text"; text: string } | BlocoImagem;
 
@@ -193,21 +224,18 @@ Deno.serve(async (req) => {
   // destructuring — vira `{}` e cai na validação de "texto ou imagem é obrigatório", que é o que
   // ele sempre foi.
   //
-  // SEM anotação de tipo de propósito: `req.json()` devolve `any`, e é essa inferência que o
-  // destructuring do fluxo real herda. Anotar soma erros ao baseline do `edges:typecheck` sem
-  // consertar nada: `Record<string, unknown>` leva ESTE arquivo de 15 para 24 erros (medido), porque
-  // cada campo do corpo vira `unknown` e estoura nos consumidores que esperam string/array.
+  // ANOTADO (`CorpoRequisicao`, no topo do arquivo): sem isto `req.json()` devolvia `any` e o
+  // destructuring do fluxo real herdava `any` — o TS ficava cego a defeito de tipo no caminho
+  // inteiro. `| null` porque o guard de runtime logo abaixo existe para o corpo `null`, e a
+  // anotação não pode apagar da vista do TS o caso que o guard trata.
   //
-  // O defeito que este `any` escondia já foi consertado: `montarSystemBlocks` declara
-  // `searchCustomer: boolean` e recebia a STRING do termo de busca. Hoje o call-site normaliza com
-  // `!!`, e os bytes do prompt cacheado do #1622 estão pinados em `prompt-sistema_test.ts`.
-  // ⚠️ Consertar aquilo NÃO mexeu neste contador — `any` é atribuível a `boolean`, então o erro
-  // nunca esteve entre os 15; ele só aparece SOB anotação. Contador de `deno check` não é o sensor
-  // desta classe de defeito: o sensor é o teste.
-  //
-  // O que RESTA escondido aqui: `conteudoUsuario.push({ type: "text", text })` (linha ~766) com
-  // `text: string | undefined`.
-  let corpoBruto;
+  // ⚠️ O CONTADOR do `deno check` não é o sensor desta classe: `any` é atribuível a qualquer coisa,
+  // então enquanto o corpo foi `any` os defeitos de tipo daqui simplesmente NÃO existiam para o
+  // compilador — consertá-los não movia o número, e anotar não o abaixa. O sensor é o TESTE; o
+  // número serve só para provar que a anotação não INTRODUZIU erro (baseline 15, medido antes e
+  // depois). `Record<string, unknown>` levaria a 24 (medido) porque cada campo viraria `unknown`
+  // e estouraria nos consumidores — por isso o tipo nomeia os campos reais.
+  let corpoBruto: CorpoRequisicao | null;
   try {
     corpoBruto = await req.json();
   } catch {
@@ -271,7 +299,7 @@ Deno.serve(async (req) => {
 
     // Corpo já consumido pela sonda acima (`req.json()` é one-shot). Não-objeto vira {} — cai na
     // validação de "texto ou imagem é obrigatório" logo abaixo, exatamente como antes.
-    const body = (typeof corpoBruto === "object" && corpoBruto !== null ? corpoBruto : {});
+    const body: CorpoRequisicao = (typeof corpoBruto === "object" && corpoBruto !== null ? corpoBruto : {});
     const { text, imageBase64, imagesBase64, products, userTools, customerUserId, searchCustomer } = body;
 
     // CANÁRIA COMPORTAMENTAL (staff-gated — já passou pelo gate de auth+staff acima). Prova que o
@@ -771,8 +799,24 @@ Deno.serve(async (req) => {
         text: text || "Identifique os produtos, ferramentas e cliente nestas imagens e sugira os itens para o pedido:",
       });
       conteudoUsuario.push(...preparadas.blocos);
-    } else {
+    } else if (text) {
       conteudoUsuario.push({ type: "text", text });
+    } else {
+      // INALCANÇÁVEL, e o ramo existe para o TS ENXERGAR isso — não para tratar um caso real.
+      // `allImages` vazio só chega aqui se o guard "texto ou imagem é obrigatório" (~linha 361)
+      // tiver visto `text` truthy, e `allImages` não é mutado depois dele (os dois `push` ficam nas
+      // linhas ~356/358, ANTES). Sem o `else if`, `text` é `string | undefined` no push e o bloco
+      // mente no tipo — inerte hoje, mas é a mentira que esconde a próxima.
+      //
+      // Por que `throw` e não um texto padrão: não há valor honesto a inventar aqui. Fabricar um
+      // prompt faria o modelo devolver itens que ninguém pediu, e eles viram sugestão de PEDIDO na
+      // tela do vendedor (money-path §3: a IA nunca fabrica o número firme). Cair sem push também
+      // não serve — `conteudoUsuario` vazio manda um request sem conteúdo ao modelo e o erro chega
+      // disfarçado de falha da Anthropic. O 500 do catch geral, com esta mensagem no log, é o
+      // desfecho honesto de um invariante quebrado.
+      throw new Error(
+        "invariante quebrado: sem imagem e sem texto depois do guard de 'texto ou imagem é obrigatório'",
+      );
     }
 
     // Build tool schema

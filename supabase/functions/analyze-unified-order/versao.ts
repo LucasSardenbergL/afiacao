@@ -56,13 +56,27 @@ export const respostaSonda = criarRespostaSonda("analyze-unified-order");
 /**
  * Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho.
  *
- * Nasce nomeando a FATIA e não `v1.0-sensor-inicial` (mesma escolha da `generate-tactical-plan` e
+ * Nasceu nomeando a FATIA e não `v1.0-sensor-inicial` (mesma escolha da `generate-tactical-plan` e
  * da `generate-bundle-argument`): o primeiro deploy desta sonda carrega junto o #1622, cujo deploy
  * é justamente o que estava por provar quando ela foi escrita. Carimbar "sensor-inicial" apagaria a
  * informação pela qual o marcador existe — e é o erro que congelou a sonda da `generate-tactical-plan`
  * respondendo a mesma constante por várias fatias seguidas.
+ *
+ * ⚠️ E foi EXATAMENTE nesse erro que esta sonda caiu na primeira oportunidade. `v1.0-…` ficou
+ * congelado do #1930 (que o escreveu) até aqui, atravessando o #1938 sem bump: medida em prod em
+ * 2026-08-25, a sonda respondeu `versao=v1.0-prompt-invertido-cacheado` (request_id 59657) — o que
+ * prova "o bundle é ≥ #1930" e NADA MAIS. Se o #1938 subiu ou não, a resposta era byte-idêntica.
+ * A regra que faltou não é "criar o marcador", é **bumpar ANTES do deploy**: marcador igual na
+ * `main` e em prod responde a mesma string tendo o deploy acontecido ou não.
+ *
+ * `v1.1-corpo-tipado` nomeia a fatia desta entrega — o corpo da requisição anotado
+ * (`CorpoRequisicao` no `index.ts`), que devolve ao TypeScript a visão do caminho inteiro do fluxo
+ * real. Ela carrega junto, e passa a provar, o `!!searchCustomer` do #1938.
+ *
+ * O gate que impede o retorno ao valor congelado: `_shared/sonda-versao-contrato_test.ts`,
+ * "bump v1.1-corpo-tipado". Um `git revert` deste bump devolveria a sonda a "responde verde sem provar nada".
  */
-export const VERSAO = "v1.0-prompt-invertido-cacheado";
+export const VERSAO = "v1.1-corpo-tipado";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
