@@ -33,17 +33,24 @@
  *     resposta da própria sonda, que passou a dizer qual edge respondeu.)
  *   · comentário e formatação — gate que grita em prosa é gate que alguém afrouxa.
  *
- * Medido contra as 400 fatias da `main` anteriores a 2026-08-25: 24 tocam alguma edge
- * instrumentada e esta régua reprovaria 6 — com o #1938 (`e70bfa050`) entre elas, que é o controle
- * positivo. Régua sem o filtro de teste reprovaria 7; a diferença é uma fatia que só mexeu em
- * `*_test.ts`.
+ * Medido contra as 414 fatias da `main` anteriores a 2026-08-25, com o próprio gate decidindo:
+ * **26 tocam uma das 32 edges instrumentadas** (com marcador já presente na fatia) e esta régua
+ * reprovaria **6** — o #1938 (`e70bfa050`) entre elas, que é o controle positivo, e nenhuma
+ * reprovação sem mudança real de `index.ts`. Régua sem o filtro de teste reprovaria 7; a diferença
+ * é uma fatia que só mexeu em `*_test.ts`.
+ *
+ * ⚠️ Reconciliação com `docs/historico/sonda-marcador-congelado.md`, que mede a MESMA janela e
+ * reporta ~68: lá o denominador são os **94** diretórios de edge do repo; aqui são as **32**
+ * instrumentadas, que é o universo onde este gate pode agir. Na mesma medição, 72 fatias tocam
+ * alguma das 94 e 54 tocam `_shared/` (o doc reporta 55). Números diferentes, perguntas diferentes.
  *
  * ## O que fica DE FORA de propósito: `supabase/functions/_shared/`
  *
  * Uma mudança em `_shared/paginate.ts` altera o comportamento de toda edge que o empacota — foi
  * literalmente o #1901, que congelou a `recommend`. Incluir `_shared/` no gate parece óbvio e é a
- * decisão errada, porque foi MEDIDO: nas mesmas 400 fatias, 31 tocam `_shared/*.ts` não-teste, e
- * cobri-las produziria 290 pares (edge, fatia) — cerca de 12 marcadores a bumpar por PR, num repo
+ * decisão errada, porque foi MEDIDO: nas mesmas fatias, 31 tocam `_shared/*.ts` não-teste, e
+ * cobri-las produziria 290 pares (edge, fatia) em 25 delas — cerca de 12 marcadores a bumpar por
+ * PR, num repo
  * onde a maior parte dessas mudanças (um helper de CORS, o stripper de comentários) não altera
  * comportamento de edge nenhuma. Precisão > recall: gate que grita 12× por PR treina a ignorar.
  * O que cobre essa metade hoje é humano + o gate `nenhuma edge que serve o paginate.ts fica SEM

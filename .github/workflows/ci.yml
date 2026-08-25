@@ -225,9 +225,10 @@ jobs:
       # 2026-08-25 (request_id 59657), provando "≥ #1930" e nada mais. O gate `bump
       # v1.1-corpo-tipado` do `_shared/sonda-versao-contrato_test.ts` barra a REGRESSÃO (voltar ao
       # literal antigo); só o DIFF sabe da OMISSÃO, e é isto aqui.
-      # Régua medida contra as 400 fatias anteriores a 2026-08-25: 24 tocam edge instrumentada e 6
-      # reprovariam — o #1938 entre elas, e nenhum falso-positivo. `_shared/` fica FORA de propósito
-      # (cobri-lo daria 290 pares edge×fatia, ~12 bumps por PR); detalhe no cabeçalho do script.
+      # Régua medida contra as 414 fatias anteriores a 2026-08-25, com o próprio gate decidindo: 26
+      # tocam uma das 32 edges instrumentadas e 6 reprovariam — o #1938 entre elas, e nenhuma sem
+      # mudança real de `index.ts`. `_shared/` fica FORA de propósito (cobri-lo daria 290 pares
+      # edge×fatia em 25 fatias, ~12 bumps por PR); detalhe no cabeçalho do script.
       # Só em `pull_request`: no `push`/`schedule` da main não existe "a fatia" contra a qual medir.
       - name: Sonda de versão — bump obrigatório na edge alterada
         if: github.event_name == 'pull_request'

@@ -142,3 +142,61 @@ fonte em Deno Deploy. Fica como limite conhecido, não como promessa.
 ⚠️ **Custo a aceitar de olhos abertos:** com o fingerprint no grafo transitivo, um toque em
 `_shared/` marca ~30 edges como desatualizadas até cada uma ser redeployada à mão. É verdade, não
 ruído — mas é volume de alarme, e deploy de edge aqui é MANUAL.
+
+## A forma 1 foi INSTALADA, com os dois furos do Codex fechados (2026-08-25)
+
+`scripts/sonda-versao-bump-gate.ts` (`bun run sonda:bump`, no job `validate`, só em
+`pull_request`) é o **gate por diff** da seção acima, com as duas objeções concretas do Codex já
+resolvidas: o checkout do `validate` passou a carregar `fetch-depth: 0`, e o gate compara o
+**valor literal** de `VERSAO` extraído dos dois lados — não "o arquivo foi tocado", que edição de
+comentário satisfaz. É o par que faltava do gate do #1970: aquele barra a REGRESSÃO (voltar a um
+valor aposentado), este barra a **OMISSÃO**, e nenhum predicado sobre o estado ATUAL do repo
+alcança a segunda, porque "mudou" só existe contra uma base.
+
+**Corpo servido** — a régua — exclui `*_test.ts` (o bundle é byte-idêntico com o teste mudado), o
+próprio `versao.ts` (é o marcador, e é quase todo prosa: o commit que deu `respostaSonda` às 16
+edges teria exigido 16 bumps de uma vez) e o que não sobrevive ao `removerComentarios`
+compartilhado — comentário e reindentação não pedem marcador.
+
+**Medição, com o próprio gate decidindo** (414 fatias da `main` até 2026-08-25): **26** tocam uma
+das 32 edges instrumentadas e **6** reprovariam.
+
+| fatia | edge | veredito |
+|---|---|---|
+| e70bfa050 (#1938) | `analyze-unified-order` | o controle positivo |
+| 883080edb (#1971) · 81f9a111c · d8cf07152 | `omie-analytics-sync` | genuínos |
+| 8ee8afa15 | `enviar-pedido-portal-sayerlack` + `sayerlack-captura-precos` | genuínos |
+| dc67b4261 | `disparar-pedidos-aprovados` | **fronteira** — ver abaixo |
+
+⚠️ **Reconciliação com o "68" da seção anterior:** lá o denominador são os **94** diretórios de
+edge do repo; aqui são as **32** instrumentadas, que é o universo onde este gate pode agir. Na
+mesma janela, 72 fatias tocam alguma das 94 e 54 tocam `_shared/` (a seção reporta 55). Perguntas
+diferentes, não medições em conflito.
+
+⚠️ **A auditoria acima marca `dc67b4261` como falso positivo ("só encanamento da sonda") e o gate
+o reprova.** A divergência é de JULGAMENTO, não defeito: aquela fatia trocou `respostaSonda()` por
+`respostaSonda(VERSAO)` e a mensagem do 400 ambíguo por `erroSondaAmbigua(…)` — duas mudanças
+**observáveis em produção**, ainda que dentro do encanamento da própria sonda. Nenhum gate separa
+"mudou o fluxo real" de "mudou o encanamento" sem análise semântica, e a assimetria manda para que
+lado errar: um marcador a mais custa uma linha, um deploy inverificável de money-path custa o que
+este documento inteiro descreve.
+
+**`_shared/` fica de fora, e isso confirma o argumento da seção anterior em número:** das mesmas
+fatias, 31 tocam `_shared/*.ts` não-teste e cobri-las produziria **290 pares (edge, fatia)** em 25
+delas — ~12 marcadores por PR. É exatamente o "só é insuportável se um humano bumpar 30 arquivos à
+mão": com bump humano, inviável; com o CI **regenerando** um fingerprint, de graça. Ou seja, a
+medição não enfraquece o desenho do `FONTE_SHA256` — ela o sustenta.
+
+**Este gate não dispensa o fingerprint, e não é o mesmo remédio.** Ele cobre a disciplina do slug
+humano na janela do PR; o fingerprint cobriria a discriminação em produção sem depender de
+disciplina nenhuma, além do fan-out de `_shared/`. Se o `FONTE_SHA256` for feito, este gate
+continua útil (o slug segue sendo o que NOMEIA a fatia para quem lê a resposta) mas deixa de ser a
+única rede.
+
+**Limites conhecidos, herdados da forma 1 e declarados aqui em vez de descobertos depois:** só
+`pull_request` — o `push` do Lovable **é** diffável pelo `before`/`after` do payload e ficou de
+fora por escolha, porque na `main` o merge já aconteceu e reprovar ali produz vermelho sem ação
+possível a não ser um deploy no-op só para alinhar marcador (o custo que a seção "o que o bump
+tardio recupera" já nomeia); o `schedule` é estruturalmente cego (evento sem base); e omissão
+ANTIGA não é descoberta — o gate é de transição. É **fail-CLOSED**: sem base determinável ou sem
+`VERSAO` legível, reprova.
