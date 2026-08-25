@@ -369,6 +369,26 @@ GROUP BY build ORDER BY clientes DESC"
 - ⚠️ **Adoção baixa é o comportamento CORRETO, não um defeito.** Com o modelo
   `prompt`, o cliente fica no build velho até clicar "Atualizar". A query responde
   *quantos* e *quem* — a decisão (esperar, avisar, ou forçar) é de produto.
+- ⚠️ **O denominador desta query NÃO é a janela de exposição — e por isso `0/N` pode não ser
+  adesão nenhuma.** A fórmula divide *clientes com o build atual* por *clientes na janela de 7
+  dias*: o numerador só pode existir DEPOIS do Publish, o denominador vem dos sete dias inteiros.
+  Se ninguém emitiu evento desde o Publish, `0/3` sai com cara de medição de não-adoção quando é
+  **ausência de observação** — e a razão colapsa os dois estados sem avisar. Antes de reportar a
+  taxa, meça o denominador PÓS-Publish:
+
+  ```sql
+  SELECT count() AS eventos, count(DISTINCT distinct_id) AS clientes
+  FROM events WHERE timestamp > toDateTime('<hora do Publish>', 'UTC')
+  ```
+
+  Zero ali não é adoção zero: é a taxa ainda sem o que medir.
+- ⚠️ **O controle de exposição precisa vir de FORA do cano medido.** Corolário duro do `#1967`:
+  ele mostrou que um cano com dois caminhos exige controle POR caminho — mas esse controle ainda
+  vive DENTRO do PostHog e emudece junto quando o PostHog inteiro emudece. Um controle que só
+  existe no canal sob suspeita não separa *não houve fenômeno* de *o canal não entrega*. O
+  controle independente aqui é a tabela `dashboard_visits`, que escreve pelo **PostgREST**: se ela
+  ganha linha na mesma janela em que o PostHog não ganha evento, o zero do PostHog é do CANAL, e
+  isso se lê sem login com o `psql-ro`. Medido em 2026-08-25 (abaixo).
 - ⚠️ **HTTP 504 = ausência de dado, não zero** (exit 73 no wrapper) — vale aqui como
   em toda leitura desta doc.
 - ⚠️ **O executável é `scripts/posthog-query.sh`, no repo — `~/.config/afiacao/` guarda só a KEY.**
@@ -386,6 +406,57 @@ A query acima rodou com `exit 0` e devolveu **uma linha só**:
 
 Isso é o **controle negativo** do sensor, e vale guardar: pré-Publish, 100% dos eventos têm de cair
 em `(sem instrumentacao)`. Um `build_id` com hash aparecendo aqui antes do Publish significaria que a
-leitura está medindo outra coisa. O `ultimo` também é o controle POSITIVO de ingestão — 66 eventos
-na janela provam que a fase N (ingestão viva) segue de pé e que uma série vazia adiante seria sinal
-real, não silêncio de canal morto.
+leitura está medindo outra coisa.
+
+⚠️ **A segunda metade desta nota estava ERRADA, e fica registrada como tal.** Ela dizia que os 66
+eventos eram o *controle POSITIVO de ingestão*, e que por isso uma série vazia adiante seria sinal
+real e não silêncio de canal morto. O `#1967` decompôs os MESMOS 66 por `properties.$lib`: **65 são
+de browser e nenhum é posterior a `2026-08-23T11:09Z`**; o 66º entrou por `curl`. O agregado somava
+dois canos e leu como saudável um canal que, exercitado, não entrega. **Um controle positivo que
+mistura canos não controla nenhum deles** — e esta frase ficou de pé na doc canônica por um dia
+depois de refutada no histórico, que é o jeito mais barato de uma medição errada sobreviver.
+### Primeira leitura PÓS-Publish (2026-08-25T01:33Z) — e por que ela ainda NÃO é adoção
+
+O Publish saiu: o entry passou de `index-IM3W0waG` para **`index-D1GiFr1h`**. E o bundle servido
+**contém o sensor** — `e.register({build_id:ii()})` aparece literal no `index-D1GiFr1h.js`
+(236 KB, `curl` `rc=0`). Isso elimina *publicou sem a instrumentação* pelo método do `#1973`:
+mede-se o que o servidor entrega, sem login. Vale sempre — o hash mudar prova que **um** build novo
+está no ar, não que é **este**.
+
+A query da §6, `exit 0` e `is_cached=false`, devolveu **a mesma linha do baseline**:
+
+```
+(sem instrumentacao) | 3 clientes | 66 eventos | ultimo 2026-08-24T21:59:38Z
+```
+
+Aritmeticamente, adoção = **0 de 3 = 0%**. Só que isso **não é adoção 0%**; é medição que ainda não
+pode acontecer, e três leituras separam as duas coisas:
+
+| leitura | resultado |
+|---|---|
+| eventos após `2026-08-25T00:50Z` (servidor ainda no build velho) | **0 eventos, 0 clientes** |
+| último evento com `$lib` preenchido — o cano por onde o `build_id` sai | **`2026-08-23T11:09:23Z`** (~38 h) |
+| via do único evento recente do denominador | `API_direta` (o próprio `curl`), não cliente |
+
+Decompondo os 3 clientes: **2 de browser** (65 eventos, todos ≤ 23/08) e **1 de API direta** (1
+evento). O denominador é inteiramente pré-Publish, e o cano que carregaria o `build_id` está mudo.
+
+**E não é falta de gente usando o app** — aqui entra o controle de fora do cano. Na mesma janela,
+`dashboard_visits` ganhou linha, a última em `2026-08-25T01:32:30Z`, **um minuto antes desta
+leitura**, com `company_selection='oben'` e 16 min de sessão (o critério de uso real do `#1972`).
+App exposto, autenticado, gravando em produção — e PostHog com zero. **O zero é do canal, não do
+fenômeno.**
+
+Consequência para a previsão do `#1964`
+(`docs/historico/fase-sem-sinal.md:1478` <!--cita: que aqui é o sensor funcionando, não-->) —
+*"que aqui é o sensor funcionando, não falhando"*: ela não foi confirmada **nem** refutada. Com o cano mudo, `0%` é compatível com as duas, exatamente como o
+`#1967` advertiu. **O gate que destrava a leitura de adoção não é outra query de adoção — é o
+primeiro evento com `$lib='web'`:**
+
+```bash
+./scripts/posthog-query.sh "SELECT max(timestamp) AS ultimo_browser FROM events
+  WHERE timestamp > now() - INTERVAL 2 DAY AND NOT isNull(properties.\$lib)"
+```
+
+Enquanto esse valor não passar de `2026-08-23T11:09:23Z`, repetir a query de build só reconfirma o
+zero — e cada repetição parece uma medição nova.
