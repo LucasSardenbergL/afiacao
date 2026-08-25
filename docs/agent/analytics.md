@@ -241,10 +241,32 @@ chegando pelo mesmo cano, e só um é medição:
 ingestão devolve `400` mesmo com a ingestão recusando POSTs, então **sondar o host não é sonda de
 saúde**.
 
-⚠️ **`via='pagehide'` ainda não tem exercício real.** A prova de 2026-08-24 (`dashboard_visits`
-`id=1`) veio com `keepalive: false`, ou seja, pelo caminho do **unmount**. O `emitirComKeepalive` do
-#1949 é código no ar sem observação — trate `via='pagehide'` como não-verificado até aparecer o
-primeiro.
+⚠️ **`via='pagehide'` FOI exercitado e NÃO gravou (2026-08-25 00:17Z).** Teste controlado: dashboard
+montado em produção com o bundle correto (`build_sha 36f7f5be`, que contém o #1949), sessão de 8 min,
+aba **fechada**. Um interceptor de `fetch` persistido em `localStorage` — porque a aba morre e leva a
+memória junto — capturou o despacho:
+
+```
+fase: chamado   t: 2026-08-25T00:17:10.299Z   keepalive: true   POST
+corpo: {"user_id":"…","visited_at":"2026-08-25T00:17:10.295Z","session_minutes":8,
+        "persona":"comprador","company_selection":"all"}
+```
+
+O `emitirComKeepalive` **rodou**: `keepalive: true`, corpo íntegro, e o `dashboardLastVisit` do
+`localStorage` avançou para o mesmo instante — ou seja, o código percorreu o caminho inteiro. E
+**nenhuma linha entrou em `dashboard_visits`** (três leituras no `psql-ro`, 00:17:22Z / 00:17:44Z /
+00:18:07Z, todas com a mesma única linha `id=1` de 12:29Z).
+
+Este é o estado **"`gravou` > linhas, sem `visita_erro`"** da tabela acima, observado pela primeira
+vez. A causa ainda **não** está estabelecida — o `.then()` que reportaria o erro não roda, porque a
+página já morreu, e é justamente por isso que o caminho é opaco. Descartado: a env var
+(`VITE_SUPABASE_PUBLISHABLE_KEY` é a mesma que o client oficial usa) e o bundle velho (SW já estava
+no build novo). Restam **keepalive cortado no unload** e **token/RLS** — e distinguir exige disparar
+o `pagehide` com a **página viva** (`dispatchEvent`), que é o único jeito de a resposta chegar.
+
+⚠️ **E o PostHog não ajuda a diagnosticar isto hoje:** na mesma janela, **zero eventos de qualquer
+tipo** entraram (re-medido com `refresh: force_blocking`, já com o fix do cache do #1959) — nem o
+`dashboard.viewed` dos mounts. Com a telemetria de frontend muda, **a tabela é o único oráculo**.
 
 ⚠️ **`sessao_curta` domina por desenho, não por defeito.** O guard de 5 min (`MIN_SESSION_MS`) existe
 para um F5 não anular os deltas — uma proporção alta dele é o guard funcionando. Ele só vira sintoma
