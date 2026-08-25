@@ -241,32 +241,48 @@ chegando pelo mesmo cano, e só um é medição:
 ingestão devolve `400` mesmo com a ingestão recusando POSTs, então **sondar o host não é sonda de
 saúde**.
 
-⚠️ **`via='pagehide'` FOI exercitado e NÃO gravou (2026-08-25 00:17Z).** Teste controlado: dashboard
-montado em produção com o bundle correto (`build_sha 36f7f5be`, que contém o #1949), sessão de 8 min,
-aba **fechada**. Um interceptor de `fetch` persistido em `localStorage` — porque a aba morre e leva a
-memória junto — capturou o despacho:
+⚠️ **`via='pagehide'` não entrega quando a aba FECHA — causa raiz isolada em 2026-08-25.**
 
-```
-fase: chamado   t: 2026-08-25T00:17:10.299Z   keepalive: true   POST
-corpo: {"user_id":"…","visited_at":"2026-08-25T00:17:10.295Z","session_minutes":8,
-        "persona":"comprador","company_selection":"all"}
-```
+Dois testes controlados no mesmo build (`36f7f5be`, que contém o #1949), mesma conta, mesmo caminho
+de código. **A única condição que muda é se a página está morrendo:**
 
-O `emitirComKeepalive` **rodou**: `keepalive: true`, corpo íntegro, e o `dashboardLastVisit` do
-`localStorage` avançou para o mesmo instante — ou seja, o código percorreu o caminho inteiro. E
-**nenhuma linha entrou em `dashboard_visits`** (três leituras no `psql-ro`, 00:17:22Z / 00:17:44Z /
-00:18:07Z, todas com a mesma única linha `id=1` de 12:29Z).
+| teste | como o `pagehide` foi disparado | despachou? | resposta | linha? |
+|---|---|---|---|---|
+| 00:17:10Z | **aba fechada** de verdade | sim, `keepalive: true` | **nunca chegou** | ❌ |
+| 01:04:48Z | `dispatchEvent` com a **página viva** | sim, `keepalive: true` | **201** em 637ms | ✅ `id=3` |
 
-Este é o estado **"`gravou` > linhas, sem `visita_erro`"** da tabela acima, observado pela primeira
-vez. A causa ainda **não** está estabelecida — o `.then()` que reportaria o erro não roda, porque a
-página já morreu, e é justamente por isso que o caminho é opaco. Descartado: a env var
-(`VITE_SUPABASE_PUBLISHABLE_KEY` é a mesma que o client oficial usa) e o bundle velho (SW já estava
-no build novo). Restam **keepalive cortado no unload** e **token/RLS** — e distinguir exige disparar
-o `pagehide` com a **página viva** (`dispatchEvent`), que é o único jeito de a resposta chegar.
+O corpo, os headers, o token e a policy são os mesmos nos dois. **O código está correto**: com a
+página viva ele grava em 637ms. O que falha é o `fetch` com `keepalive: true` **não sobreviver ao
+unload** neste contexto — a flag promete isso e não cumpre.
 
-⚠️ **E o PostHog não ajuda a diagnosticar isto hoje:** na mesma janela, **zero eventos de qualquer
-tipo** entraram (re-medido com `refresh: force_blocking`, já com o fix do cache do #1959) — nem o
-`dashboard.viewed` dos mounts. Com a telemetria de frontend muda, **a tabela é o único oráculo**.
+**Refutadas por medição, não por argumento** (cada uma custaria um fix errado):
+
+| hipótese | como caiu |
+|---|---|
+| env var errada | `VITE_SUPABASE_PUBLISHABLE_KEY` é a mesma que o client oficial usa |
+| bundle velho no browser | `build_sha` = `36f7f5be`, que contém o #1949 |
+| RLS / GRANT | ACL de `dashboard_visits` **idêntico** ao da tabela-controle `profiles` (`authenticated=arwdDxtm`, o `a` é INSERT); policy `cmd=a` com `auth.uid() = user_id`, que é o que o payload manda |
+| token expirado no `tokenRef` | o `AuthContext` escuta `onAuthStateChange` e faz `setSession`, então o ref segue fresco — e o mesmo token devolveu **201** |
+| service worker interceptando | `dashboard_visits` **não aparece** no `sw.js` de produção (0 ocorrências) e o Workbox só registra rotas `"GET"` (8) — o POST vai direto à rede |
+
+⚠️ **A instrumentação teve de ser persistida em `localStorage`**: a aba morre e leva a memória junto,
+então um interceptor que só acumula em variável não sobrevive para ser lido. E o `.then()` do próprio
+app nunca roda no fecho real — é exatamente por isso que este caminho ficou opaco desde o #1949: ele
+**não consegue reportar o próprio fracasso**.
+
+**O que isto implica para o desenho:** gravar no `pagehide` é uma aposta na boa vontade do browser, e
+ela não paga. As saídas que o repo consegue capturar com confiança são o **unmount** (navegação SPA,
+provado 3×) — fechar a aba continua perdendo a visita. Duas correções possíveis, e a escolha é de
+produto porque muda o significado do dado:
+
+- **timer ao cruzar `MIN_SESSION_MS`** — grava assim que a sessão qualifica, independente de como o
+  usuário sai. Mais robusto; em troca, `session_minutes` na tabela vira o **limiar** (5), e a duração
+  real passa a existir só no evento do PostHog.
+- **`visibilitychange` → `hidden`** — dispara antes do unload, com a página ainda viva, então o fetch
+  normal entrega. Em troca, uma aba trocada e retomada conta como visita encerrada.
+
+Enquanto nenhuma das duas existir, leia `motivo='gravou'` com `via='pagehide'` como **tentativa**, não
+como visita registrada — e confira contra a tabela.
 
 ⚠️ **Contar eventos da janela como "a ingestão está viva" soma DOIS canos.** O `posthog-js` preenche
 `properties.$lib`; uma captura por `curl` não — e só a decomposição separa os dois. Medido em
