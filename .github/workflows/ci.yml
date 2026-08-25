@@ -246,6 +246,23 @@ jobs:
       - name: Sonda de versão — fingerprint da fonte bate com o mapa servido
         run: bun run sonda:fingerprint
 
+      # O outro MARCADOR. As canárias versionam por `contrato`, com a mesma classe de falha:
+      # congelado, a canária responde a mesma string tendo o deploy acontecido ou não, e um deploy
+      # integralmente velho compara `expected` velho com código velho e mente `ok:true`. A auditoria
+      # dos 7 `contrato` (`5d8f1f779`) fechou dizendo que o furo "não é um contrato parado — é a
+      # falta de gate"; é este.
+      # A régua NÃO é a dos dois gates acima, e a diferença foi MEDIDA: exigir bump do `contrato` a
+      # cada mudança do corpo reprovaria 8 de 10 fatias, 7 delas mexendo em parte da edge que a
+      # canária não atesta. Ela é escolhida pelo que a edge tem — sem `versao.ts` (logo também fora
+      # do mapa de fingerprints) o `contrato` é o único marcador de bundle, e a régua é o corpo
+      # servido; com `versao.ts` os dois gates acima já respondem por isso, e a régua vira a
+      # SUPERFÍCIE da canária (o bloco dela + o fecho dos símbolos que ela exercita, `_shared/`
+      # incluído por SÍMBOLO). Assim medido: 2 reprovações em 400 fatias, mais o `f6561b0b2` — o
+      # caso concreto que a auditoria acima aponta — logo antes da janela. Limites no cabeçalho.
+      - name: Canária de deploy — bump obrigatório do `contrato` que ela atesta
+        if: github.event_name == 'pull_request'
+        run: bun run canaria:bump
+
       - name: Build
         run: bun run build
         env:

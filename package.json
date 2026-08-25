@@ -16,6 +16,7 @@
     "edges:typecheck": "bun scripts/edges-typecheck-gate.ts",
     "sonda:bump": "bun scripts/sonda-versao-bump-gate.ts",
     "sonda:fingerprint": "bun scripts/sonda-fingerprint.ts",
+    "canaria:bump": "bun scripts/canaria-contrato-bump-gate.ts",
     "audit:migrations": "bun scripts/audit-custom-migrations.ts",
     "authz:check": "bun scripts/authz-gate-check.ts",
     "authz:grants:prod": "bun db/audit-grants-tabelas-fechadas.ts",
