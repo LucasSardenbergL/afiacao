@@ -363,7 +363,8 @@ LINHA (`while IFS= read -r`) e **exigir o `✓` positivo** para classificar como
 reprovou" e "o gate recusou medir" são estados diferentes que produzem o MESMO `exit 1` — quem
 lê só o código de saída não os distingue, e ausência de `✗` é ausência de dado.
 
-Resultado com a régua real — 32 edges, 12 fatias pós-bump, **10 limpas, 2 reprovam, 0 indeterminadas**:
+Resultado com a régua real, na medição das **09:5x UTC** — 32 edges, 12 fatias pós-bump,
+**10 limpas, 2 reprovam, 0 indeterminadas**:
 
 | edge | fatia | marcador congelado | o que a fatia mudou |
 |---|---|---|---|
@@ -374,11 +375,18 @@ Resultado com a régua real — 32 edges, 12 fatias pós-bump, **10 limpas, 2 re
 `v1.1-pos-login-no-envio` e `v1.1-pos-login-na-captura`. Uma medição por `git log` **sem** o
 stripper de comentários as acusa; a régua real, não.
 
+⚠️ **RE-MEDIDO após rebase, e o número MUDOU: hoje resta 1.** Uma worktree paralela bumpou a
+`omie-analytics-sync` para `v1.2-produtos-teto-500-e-partial-honesto` (`5d8f1f779`), que nomeia
+exatamente a fatia do #1992. A régua agora devolve 11 fatias pós-bump e **1 congelada**
+(`disparar-pedidos-aprovados`). Registrar as duas medições é o ponto: **auditoria de débito tem
+prazo de validade em repo com ~30 worktrees**, e afirmar "2 congeladas" sem re-medir antes de
+entregar seria reportar um retrato vencido.
+
 ⚠️ **O `#1992` escapou do gate por 7 minutos** (mergeou 00:46:13, o gate `#1993` às 00:53:04).
 É a mesma distância do `#1970`→`#1971` que abriu este documento. O limite "gate de transição não
 descobre omissão antiga" não é teórico: ele nasceu com um caso dentro.
 
-### A decisão: NENHUMA das duas é bumpada
+### A decisão: nenhuma bumpada por MIM — e a paralela decidiu o contrário numa delas
 
 O corolário deste documento manda o bump pegar carona num deploy **já obrigatório**. Nas duas, ele
 não pega:
@@ -398,7 +406,16 @@ não pega:
   resposta domina o valor do marcador nessa transição** — bumpar compraria um deploy manual da
   edge de money-path mais cara do repo para provar o que a resposta já prova.
 
-As duas se curam sozinhas na próxima fatia real, porque o gate agora está lá para exigir.
+⚠️ **A worktree paralela bumpou a `omie-analytics-sync` assim mesmo, e a divergência é de
+JULGAMENTO, não de fato.** As duas leituras são defensáveis e a delas erra para o lado mais
+seguro: com `main` em `v1.2-…` e prod ainda respondendo `v1.1-mapa-codigo-sem-alias` (último
+probe, `request_id` 59941), a sonda passou a dar **falso NEGATIVO** — que este documento já
+classifica como o lado certo da assimetria, porque faz continuar verificando. O preço é concreto e
+é o que a análise acima previu: **fica um deploy de edge PENDENTE** só para realinhar o marcador
+de um fix que já está no ar. Quem for fechar isso, feche pela camada de edge, não por migration.
+
+A `disparar-pedidos-aprovados` segue congelada por decisão, e se cura sozinha na próxima fatia
+real — porque o gate agora está lá para exigir.
 
 ## O `FONTE_SHA256` por LEDGER: o desenho que PERDEU para "servir" (2026-08-25)
 
