@@ -26,7 +26,13 @@ entrada() { # <comando> [tool_name]
   jq -n -c --arg cmd "$1" --arg tool "${2:-Bash}" '{tool_name:$tool, tool_input:{command:$cmd}}'
 }
 
-executa() { printf '%s' "$1" | bash "$HOOK" 2>/dev/null; }
+# O log do SENSOR vai para um temporario: sem isto, cada rodada da suite injeta ~39 disparos
+# SINTETICOS no log real (~/.claude/afiacao-pipestatus-guard.jsonl) e a query de campo passa a
+# medir teste como se fosse uso. Sensor que mede a propria suite nao mede nada.
+LOGTESTE="$(mktemp "${TMPDIR:-/tmp}/pipestatus-guard-suite.XXXXXX")"
+trap 'rm -f "$LOGTESTE"' EXIT
+
+executa() { printf '%s' "$1" | PIPESTATUS_GUARD_LOG="$LOGTESTE" bash "$HOOK" 2>/dev/null; }
 
 checa() { # <titulo> <esperado: MARCADOR|VAZIO> <json>
   local titulo="$1" esperado="$2" json="$3" saida
@@ -52,6 +58,7 @@ checa() { # <titulo> <esperado: MARCADOR|VAZIO> <json>
 
 A="PIPESTATUS-BASHISM-NO-ZSH"
 Z="PIPESTATUS-INDICE-ZERO"
+E="ECO-DE-EXIT-FABRICA-VEREDITO"
 
 rodada() {
   echo "--- locale: ${LC_ALL:-(herdado)} ---"
@@ -99,6 +106,47 @@ rodada() {
   checa "N15 outra ferramenta" "VAZIO" "$(entrada 'echo "${PIPESTATUS[0]}"' 'Read')"
   checa "N16 comando trivial" "VAZIO" "$(entrada 'ls -la')"
 
+  # ── ECO-DE-EXIT: `cmd; echo "EXIT=$?"` no fim ────────────────────────────────────────────────
+  # O numero impresso esta certo; o exit do COMPOUND e que passa a ser o do echo (=0). Quem le o
+  # codigo em vez do texto — harness, notificacao de tarefa, `&&` adiante — ve SUCESSO.
+  checa "E1 echo EXIT=\$? no fim" "$E" \
+    "$(entrada 'bun run test:hooks > /tmp/x.log 2>&1; echo "EXIT=$?"')"
+  checa "E2 em linha separada (o caso que me pegou 3x)" "$E" \
+    "$(entrada 'cmd > /tmp/x.log 2>&1
+echo "EXIT=$?" >> /tmp/x.log')"
+  checa "E3 printf tambem conta" "$E" "$(entrada 'git push; printf "rc=%s\n" "$?"')"
+  checa "E4 sem aspas" "$E" "$(entrada 'make; echo EXIT=$?')"
+
+  # ── NEGATIVOS do ramo: PRECISAO acima de recall, porque `echo $?` e comum e quase sempre ok ──
+  # Sem estes, o ramo vira ruido e o founder aprende a ignorar o guard inteiro — pior que nao ter.
+  checa "E5 echo \$? sozinho (nao ha trabalho antes para mentir sobre)" "VAZIO" \
+    "$(entrada 'echo $?')"
+  checa "E6 rc capturado e USADO no fim (o idioma correto)" "VAZIO" \
+    "$(entrada 'cmd > /tmp/x.log 2>&1; rc=$?; head -c 100 /tmp/x.log; [ "$rc" -eq 0 ]')"
+  checa "E7 echo no MEIO — quem decide o exit e o ultimo" "VAZIO" \
+    "$(entrada 'cmd; echo "EXIT=$?"; exit 1')"
+  checa "E8 mencao em aspas simples (commit sobre o proprio padrao)" "VAZIO" \
+    "$(entrada 'git commit -m '"'"'guard: nao termine com echo "EXIT=$?"'"'"'')"
+  checa "E9 mencao em comentario" "VAZIO" "$(entrada 'ls -la   # echo $?')"
+  checa "E10 heredoc quoted documentando o padrao" "VAZIO" \
+    "$(entrada 'cat > doc.md <<'"'"'FIM'"'"'
+errado: cmd; echo "EXIT=$?"
+FIM')"
+  checa "E11 echo no fim SEM \$?" "VAZIO" "$(entrada 'cmd; echo pronto')"
+
+  # ── E12-E16: achados do /codex defensivo, cada um reproduzido em zsh -f antes de virar teste ──
+  # FN que passavam: o `;` terminal deixava `ultimo` VAZIO, e o `&` de `>&2` era lido como
+  # separador de comando. Os dois sao formas cotidianas do mesmo defeito.
+  checa "E12 ; terminal (o FN mais comum)" "$E" "$(entrada 'false; echo "EXIT=$?";')"
+  checa "E13 redirecao >&2 depois do relator" "$E" "$(entrada 'false; echo "EXIT=$?" >&2')"
+  # FP que o Codex chamou de "o mais perigoso para a credibilidade": depois de `&&`/`||` o relator
+  # NAO fabrica sucesso — se o trabalho falha o echo nem executa, e o compound devolve 1, fiel.
+  checa "E14 && nao mente (echo nem executa se falhar)" "VAZIO" "$(entrada 'false && echo "EXIT=$?"')"
+  checa "E15 || e handler intencional" "VAZIO" "$(entrada 'false || echo "falhou: $?"')"
+  checa "E16 && DENTRO de \$( ) — quem decide o exit e o test" "VAZIO" \
+    "$(entrada 'test -z "$(true && echo "$?")"')"
+
+
   # ── REGRESSAO: achados da revisao adversaria do Codex (2026-08-23) ────────────────────────
   # POSITIVOS que a v1 liberava — reproduzidos em `zsh -f`, todos fabricam veredito.
   checa "C1 aritmetica (( )) SEM cifrao" "$A" "$(entrada 'false | true; (( PIPESTATUS[0] == 0 )) && echo OK')"
@@ -120,7 +168,7 @@ rodada() {
 
   # ── ROBUSTEZ ───────────────────────────────────────────────────────────────────────────────
   local saida
-  saida="$(printf '%s' 'isto nao e json' | bash "$HOOK" 2>/dev/null)"
+  saida="$(printf '%s' 'isto nao e json' | PIPESTATUS_GUARD_LOG="$LOGTESTE" bash "$HOOK" 2>/dev/null)"
   if [ -z "$saida" ]; then printf '  ok   R1 entrada invalida -> silencio\n'
   else printf '  FALHA R1 entrada invalida falou: %s\n' "$saida"; falhas=$((falhas + 1)); fi
 
@@ -145,7 +193,7 @@ fi
 echo "-- falsificacao: scanner deixa de reconhecer aspas simples --"
 BKP="$(mktemp)"; cp "$HOOK" "$BKP"
 restaura() { cp "$BKP" "$HOOK"; rm -f "$BKP"; }
-trap restaura EXIT
+trap 'restaura; rm -f "$LOGTESTE"' EXIT   # o `restaura` sobrescreveria o trap do LOGTESTE
 
 perl -0pi -e 's/\{ st = 1; i\+\+; continue \}/{ st = 0; i++; continue }/' "$HOOK"
 if cmp -s "$BKP" "$HOOK"; then
@@ -165,6 +213,32 @@ else
   fi
 fi
 restaura; trap - EXIT
+
+# FALSIFICAÇÃO 2 — a precisao do ramo ECO-DE-EXIT vem de TRES regras independentes, e cada
+# negativo depende de UMA delas: E5 (`echo $?` sozinho) vive de `pos > 0`; E6 (rc usado no fim)
+# vive da exigencia de echo/printf; E7 (echo no MEIO) vive de olhar so o ULTIMO segmento, ancorado.
+# Esta sabotagem ataca a terceira — logo os casos tem de ser os de E7, e nao E5/E6, que seguiriam
+# calados por motivo alheio e dariam VERDE a uma falsificacao que nao falsificou nada.
+BKP2="$(mktemp)"; cp "$HOOK" "$BKP2"
+trap 'cp "$BKP2" "$HOOK"; rm -f "$BKP2"' EXIT
+perl -0pi -e 's/ultimo = substr\(linhaf, pos \+ 1\)/ultimo = linhaf/' "$HOOK"
+perl -0pi -e 's/ultimo \~ \/\^\[\[:space:\]\]\*\(echo\|printf\)/ultimo ~ \/[[:space:]]*(echo|printf)/' "$HOOK"
+if cmp -s "$BKP2" "$HOOK"; then
+  echo "  FALHA a sabotagem 2 NAO alterou o hook — seria teatro"
+  falhas=$((falhas + 1))
+else
+  pegou2=0
+  for caso in 'cmd; echo "EXIT=$?"; exit 1' 'cmd; echo "EXIT=$?"; ls -la'; do
+    [ -n "$(executa "$(entrada "$caso")")" ] && pegou2=$((pegou2 + 1))
+  done
+  if [ "$pegou2" -eq 2 ]; then
+    echo "  ok   sabotagem 2 ficou VERMELHA nos 2 casos (a regra do ULTIMO comando e o que da precisao)"
+  else
+    echo "  FALHA sabotagem 2 passou despercebida em $((2 - pegou2)) caso(s) — E7 nao prova precisao"
+    falhas=$((falhas + 1))
+  fi
+fi
+cp "$BKP2" "$HOOK"; rm -f "$BKP2"; trap - EXIT
 
 echo
 if [ "$falhas" -eq 0 ]; then echo "PIPESTATUS-GUARD: TODOS OS TESTES PASSARAM"; exit 0; fi

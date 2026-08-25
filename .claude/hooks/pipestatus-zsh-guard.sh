@@ -62,6 +62,8 @@ entrada="$(cat)"
 # partir DENTRO de "PIPE" ainda escapa. Custo: `set -o pipefail` e afins pagam o jq+awk (~70ms).
 case "$entrada" in
   *[Pp][Ii][Pp][Ee]*) ;;
+  *'$?'*) ;;   # 2o gatilho: eco de $? no fim. Perde o caso patologico de continuacao de
+                 # linha ENTRE o $ e o ? — casar so '$' pegaria toda variavel e faria fork a toa.
   *) exit 0 ;;
 esac
 
@@ -165,6 +167,48 @@ ramo="$(printf '%s' "$cmd" | awk '
     # (B) zsh e 1-INDEXED: pipestatus[0…] e sempre vazio. Indice que COMECA em 0 pega [0] e [0+0].
     if (vis ~ /\$\{[^}]*pipestatus\[[[:space:]]*0/ || vis ~ /\$pipestatus\[[[:space:]]*0/) { grita("INDICE-ZERO", "\\$\\{?[^}]*pipestatus\\[[[:space:]]*0") }
     if (arit && vis ~ /(^|[^A-Za-z0-9_])pipestatus\[[[:space:]]*0/)                            { grita("INDICE-ZERO", "pipestatus\\[[[:space:]]*0") }
+    # ECO-DE-EXIT: `cmd; echo "EXIT=$?"` como ULTIMO comando. O NUMERO impresso esta certo — e o do
+    # cmd — mas o exit code do COMPOUND passa a ser o do `echo`, que e 0 sempre. Quem le o conjunto
+    # em vez do texto (o harness, a notificacao de tarefa em background, um `&&` adiante) recebe
+    # SUCESSO com o trabalho quebrado. Mesma familia do PIPESTATUS: veredito fabricado.
+    # PRECISAO > RECALL, porque `echo $?` e comum e quase sempre legitimo. Exige as DUAS condicoes:
+    #   (a) o echo/printf com $? e o ULTIMO comando — se vier outra coisa depois, o exit e dela;
+    #   (b) existe comando ANTES dele — `echo $?` sozinho nao mente sobre trabalho nenhum.
+    # LIMITES MEDIDOS (/codex defensivo, cada um reproduzido em zsh -f). Ficam como FN de
+    # proposito: fecha-los custaria balanceamento de parenteses/aspas no scanner, e o preco de um
+    # guard barulhento e alto — ele perde a credibilidade dos TRES ramos de uma vez.
+    #   `false; echo "EXIT=$? $(printf x | cat)"` — o `|` DENTRO de $( ) rouba o separador;
+    #   `false; echo "nota; EXIT=$?"`             — `;` textual dentro de aspas duplas idem;
+    #   `false; { echo "EXIT=$?"; }` / `(...)` / `time` / `command` / `eval` / funcao — o segmento
+    #     nao COMECA por echo|printf;
+    #   `false; echo "EXIT=$?" || true`           — curto-circuito poe outra coisa depois;
+    #   `false; echo "EXIT=$?" | tee`             — o pipe engole (e a propria ajuda ja avisa disso).
+    linhaf = vis
+    sub(/[[:space:]]+$/, "", linhaf)
+    sub(/[[:space:]]*;+[[:space:]]*$/, "", linhaf)   # `;` TERMINAL: sem isto `ultimo` fica vazio e
+                                                     # `cmd; echo "EXIT=$?";` — comum — passa batido
+    pos = 0; cond = 0
+    for (kk = 1; kk <= length(linhaf); kk++) {
+      cc = substr(linhaf, kk, 1)
+      # REDIRECAO nao e separador: em `>&2`, `2>&1` e `&>` o `&` nao inicia comando nenhum.
+      if (cc == ">" || cc == "<") { kk++; continue }
+      if (cc == "&" && substr(linhaf, kk + 1, 1) == ">") { kk++; continue }
+      if (cc == ";" || cc == "\n") { pos = kk; cond = 0; continue }
+      if (cc == "&" || cc == "|") {
+        if (substr(linhaf, kk + 1, 1) == cc) {         # `&&` / `||`: CURTO-CIRCUITO
+          pos = kk + 1; cond = 1; kk++
+        } else { pos = kk; cond = 0 }
+      }
+    }
+    # `cond` mata o FP mais caro do ramo: em `false && echo "EXIT=$?"` o echo NEM EXECUTA quando o
+    # trabalho falha — o compound devolve 1, fiel. E em `true && echo "$?"` devolve 0, tambem fiel.
+    # Depois de `&&`/`||` o relator nunca fabrica sucesso, entao avisar ali e so ruido.
+    if (pos > 0 && !cond) {
+      ultimo = substr(linhaf, pos + 1)
+      if (ultimo ~ /^[[:space:]]*(echo|printf)([[:space:]]|$)/ && ultimo ~ /\$\?/) {
+        grita("ECO-DE-EXIT", "(echo|printf)[^;&|]*\\$\\?")
+      }
+    }
   }
 ')"
 
@@ -188,7 +232,29 @@ string vazia) de silencio em ABORTO — e a leitura passa a falhar alto em vez d
 Isto e um AVISO, nao um bloqueio: se o seu caso e um dos legitimos (comentario, KSH_ZERO_SUBSCRIPT,
 texto que vai rodar noutro shell), siga em frente. Para silenciar: PIPESTATUS_INTENCIONAL=1 <cmd>'
 
-if [ "$ramo" = "BASHISM" ]; then
+# shellcheck disable=SC2016  # a ajuda ENSINA o idioma: $? e $rc sao literais, nao para expandir
+idioma_eco='Idioma correto (escolha um):
+  1. PROPAGUE o veredito — a ultima instrucao decide o exit do conjunto:
+       cmd > /tmp/saida.log 2>&1; rc=$?
+       head -c 1500 /tmp/saida.log
+       [ "$rc" -eq 0 ]        # <- ultima instrucao: o conjunto REPROVA junto com o cmd
+  2. Se voce QUER so registrar o codigo, registre — mas ESTE aviso vai disparar de novo, e esta
+     certo: gravar no log nao conserta o exit do conjunto, so lhe da onde ler a verdade.
+       cmd > /tmp/saida.log 2>&1
+       echo "EXIT=$?" >> /tmp/saida.log       # <- o exit do conjunto continua sendo 0, MENTINDO
+       command grep EXIT= /tmp/saida.log      # <- a evidencia e ESTA linha, nao a notificacao
+     Prefira (1) sempre que alguem — harness, `&&`, `if` — for LER o codigo do conjunto.
+Nos dois casos vale a regra: `| tail`/`| head` no fim engolem o exit code do trabalho, e `$?` depois
+de um pipe e do ULTIMO estagio. Capture o rc ANTES de recortar a saida.
+
+Isto e um AVISO, nao um bloqueio. Para silenciar: PIPESTATUS_INTENCIONAL=1 <cmd>'
+
+if [ "$ramo" = "ECO-DE-EXIT" ]; then
+  msg="🔴 \`echo \$?\` no fim: o exit do CONJUNTO vira o do echo (=0) — quem le o codigo, nao o texto, ve SUCESSO"
+  ctx="ECO-DE-EXIT-FABRICA-VEREDITO: este comando termina com um \`echo\`/\`printf\` que imprime \`\$?\`. O NUMERO impresso esta certo — e o do comando anterior — mas o exit code do COMPOUND passa a ser o do \`echo\`, que e 0 SEMPRE. Quem le o codigo em vez do texto recebe SUCESSO com o trabalho quebrado: o harness, a notificacao de tarefa em background, um \`&&\` adiante, um \`if\` que envolva a chamada. Nao e teorico — numa unica sessao de 2026-08-24 este padrao produziu TRES notificacoes de 'exit code 0' enganosas: uma para um \`bun run test:hooks\` que tinha 4 falhas, uma para um \`codex exec\` que falhou nas 3 tentativas por DNS, e uma terceira num watcher. E a mesma familia do PIPESTATUS vazio: veredito fabricado a partir de dado que nao foi consultado (ausente != zero, docs/agent/money-path.md).
+
+$idioma_eco"
+elif [ "$ramo" = "BASHISM" ]; then
   msg="🔴 PIPESTATUS e bash-ism — no zsh (que roda este comando) expande para VAZIO, e vazio vale 0 = SUCESSO"
   ctx="PIPESTATUS-BASHISM-NO-ZSH: este comando le \`PIPESTATUS\`, mas o Bash tool roda em /bin/zsh — onde essa variavel NAO EXISTE. Ela expande para VAZIO, e no \`[\` do zsh a string vazia vale 0, que e o exit code de SUCESSO. Entao \`false | true\` seguido de \`[ \"\${PIPESTATUS[0]}\" -eq 0 ]\` imprime PIPELINE OK: o comando FABRICA um veredito de sucesso a partir de dado AUSENTE (ausente != zero, docs/agent/money-path.md). Nada avisa — o \`[\` nem reclama. Vale igual sem o cifrao: \`(( PIPESTATUS[0] == 0 ))\`, \`[[ PIPESTATUS[0] -eq 0 ]]\` e \`let\` avaliam o identificador NU e tratam ausente como 0.
 

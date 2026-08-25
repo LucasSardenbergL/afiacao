@@ -210,6 +210,43 @@ o invariante que o teste afirma provar.** Sabotei o teto e o teste seguiu VERDE 
 o comando de acentos, que param em 414 bytes sozinhos. O vetor real era match GRANDE, não comando
 grande: `\$\{[^}]*PIPESTATUS` não tem limite, então a janela de contexto cresce junto com ele.
 Sem a falsificação eu teria entregue um teste que passa com e sem o código que ele testa.
+
+**O 3º ramo: `; echo "EXIT=$?"` no fim.** Mesma família, gatilho diferente. O número impresso está
+certo — é o do comando anterior — mas o exit code do **compound** passa a ser o do `echo`, que é 0
+sempre. Quem lê o código em vez do texto (o harness, a notificação de tarefa em background, um
+`&&` adiante) recebe SUCESSO com o trabalho quebrado. Numa única sessão isto produziu **três**
+notificações de "exit code 0" enganosas: um `test:hooks` com 4 falhas, um `codex exec` que falhou
+por DNS nas 3 tentativas, e um watcher. O ramo se validou sozinho: disparou duas vezes nos meus
+próprios comandos durante a implementação dele.
+
+O `/codex` defensivo (rodada de cobertura, nunca "como burlar") derrubou a primeira versão em três
+pontos, todos reproduzidos em `zsh -f` antes de virar código. **O falso positivo era o mais caro:**
+`false && echo "EXIT=$?"` disparava, mas ali o `echo` nem executa quando o trabalho falha — o
+compound devolve 1, fiel. Depois de `&&`/`||` o relator nunca fabrica sucesso, então avisar é puro
+ruído, e ruído custa a credibilidade dos **três** ramos de uma vez. Os dois falsos negativos eram
+cotidianos: `cmd; echo "EXIT=$?";` com **ponto-e-vírgula terminal** (o último segmento ficava vazio)
+e `echo "EXIT=$?" >&2`, onde o `&` da redireção era lido como separador de comando.
+
+Precisão acima de recall, porque `echo $?` é comum e quase sempre legítimo — guard que vira ruído
+ensina a ignorar os outros dois ramos. Exige TRÊS condições, e cada negativo depende de uma
+diferente: existe trabalho antes (`echo $?` sozinho não mente sobre nada) · o último segmento
+começa com `echo`/`printf` (`rc=$?` usado adiante é o idioma CORRETO) · contém `$?`.
+
+**O sensor media a própria suíte.** A suíte do guard invocava o hook sem isolar
+`PIPESTATUS_GUARD_LOG`, então cada `bun run test:hooks` injetava ~39 disparos sintéticos no log de
+campo — a query passaria a contar teste como uso real. Não foi o Codex nem o teste que revelou:
+foi olhar o log e ver que os "disparos" eram `false | true; [[ pipestatus[0] -eq 0 ]]`, ou seja, os
+próprios casos P1-P10. **Sensor cujo ruído vem do seu próprio teste não mede nada** — e a suíte é
+o ruído mais fácil de esquecer, porque roda em CI, sem ninguém olhando.
+
+**A falsificação errou o alvo — de novo, na mesma sessão.** Para falsificar a regra do "último
+comando", sabotei a extração do segmento e testei com E6 (`rc=$?` usado no fim) e E7 (echo no
+meio). E6 seguiu calado — e seguiria de qualquer jeito, porque E6 nem tem `echo`: ele é protegido
+pela exigência de `echo|printf`, não pela regra sabotada. A falsificação atacava uma regra e media
+casos defendidos por outra, e teria dado verde a uma sabotagem que não sabotou nada.
+**Quando o código tem N regras independentes, cada caso de falsificação precisa depender da regra
+que você está desligando** — senão o vermelho (ou o verde) vem por motivo alheio.
+
 ## O padrão por trás das nove
 
 Seis produzem **verde por construção**, não por mérito; a sétima mostra que o mesmo defeito
