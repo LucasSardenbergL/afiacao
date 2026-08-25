@@ -16,7 +16,13 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PGVER=17
 PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"
-PORT="${PGPORT_TEST:-5471}"
+# porta LIVRE automatica: ~30 worktrees rodam harnesses em paralelo e uma porta fixa colide
+if [ -n "${PGPORT_TEST:-}" ]; then PORT="$PGPORT_TEST"; else
+  PORT=""; for c in $(seq 5471 5520); do
+    if ! (exec 3<>/dev/tcp/127.0.0.1/"$c") 2>/dev/null; then PORT=$c; break; else exec 3<&- 3>&-; fi
+  done
+  [ -n "$PORT" ] || { echo "sem porta livre em 5471-5520"; exit 1; }
+fi
 SLUG="sync-state-saude"
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
 export LC_ALL=C LANG=C          # sem isso o postmaster aborta ("became multithreaded during startup")
@@ -46,6 +52,15 @@ CREATE OR REPLACE FUNCTION auth.role() RETURNS text LANGUAGE sql STABLE AS $f$ S
 ALTER ROLE service_role BYPASSRLS;   -- espelha o admin role do Supabase (semear sem esbarrar em RLS)
 SQL
 
+# ── helpers de assert (pass/fail contados; exit 1 no fim se houve fail) ──
+PASS=0; FAIL=0
+ok()  { PASS=$((PASS+1)); echo "  ✅ $1"; }
+bad() { FAIL=$((FAIL+1)); echo "  ❌ $1"; }
+eq()  { if [ "$2" = "$3" ]; then ok "$1 (=$2)"; else bad "$1 — esperado [$3], veio [$2]"; fi; }
+# exige que um comando SQL FALHE (caminho negativo grosso). Pra checar a SQLSTATE exata, use o
+# padrão DO/EXCEPTION de references/assert-patterns.md (preferível — Lei #2).
+must_fail() { if P -q -c "$1" >/dev/null 2>&1; then bad "$2 — devia ter falhado e PASSOU"; else ok "$2 (rejeitado)"; fi; }
+
 # ══════════════════════════════════════════════════════════════════════════════
 # ZONA 1 — PRÉ-REQUISITOS  ·  ZONA 2 — MIGRATION REAL (Lei #1)
 # ══════════════════════════════════════════════════════════════════════════════
@@ -56,11 +71,13 @@ P -q -f "$MIG"
 echo "═══ migration REAL aplicada ($(basename "$MIG")) ═══"
 
 # ── leitores do check sob teste + asserts de substring (sentinela ASCII, caixa fixa) ──
-CK="SELECT %s FROM public._data_health_compute() WHERE source='sync_state_saude';"
-st()   { Pq -c "$(printf "$CK" status)"; }
-msg()  { Pq -c "$(printf "$CK" message)"; }
-sev()  { Pq -c "$(printf "$CK" severity)"; }
+ck()   { Pq -c "SELECT $1 FROM public._data_health_compute() WHERE source='sync_state_saude';"; }
+st()   { ck status; }
+msg()  { ck message; }
+sev()  { ck severity; }
 nlin() { Pq -c "SELECT count(*)::int FROM public._data_health_compute() WHERE source='sync_state_saude';"; }
+# ocorrencias de um par no resumo — o DISTINCT ON protege a CONTAGEM/listagem, nao o nº de linhas
+ndup() { msg | grep -o "$1" | wc -l | tr -d ' '; }
 has()   { case "$2" in *"$3"*) ok "$1";; *) bad "$1 — nao achei [$3] em [$2]";; esac; }
 hasnt() { case "$2" in *"$3"*) bad "$1 — achei [$3] e NAO devia";; *) ok "$1";; esac; }
 
@@ -112,7 +129,8 @@ P -q -c "UPDATE public.sync_state SET status='error', error_message='colisao de 
 eq  "C1 broken"                  "$(st)"  "broken"
 has "C2 nomeia customers/servicos" "$(msg)" "customers/servicos (falhou)"
 eq  "C3 1 linha (acende nos DOIS eixos, dedup por DISTINCT ON)" "$(nlin)" "1"
-has "C4 last_error propagado"    "$(Pq -c "$(printf "$CK" last_error)")" "colisao de codigo"
+eq  "C5 par nos DOIS eixos listado UMA vez (dedup)" "$(ndup 'customers/servicos')" "1"
+has "C4 last_error propagado"    "$(ck last_error)" "colisao de codigo"
 
 echo; echo "═══ D · running orfao vs running fresco ═══"
 seed_base
@@ -160,14 +178,14 @@ eq "I2 compute inteiro SEM source duplicado (senao o watchdog aborta o laco)" \
 # cadeia inteira, EXECUTANDO (late-bound: plpgsql so falha em runtime)
 seed_base
 P -q -c "UPDATE public.sync_state SET status='error', error_message='colisao de codigo' WHERE entity_type='customers' AND account='servicos';"
-P -q -c "TRUNCATE public.fin_alertas; SELECT public.data_health_watchdog();"
+P -q -c "TRUNCATE public.fin_alertas;"; Pq -c "SELECT public.data_health_watchdog();" >/dev/null
 eq "I3 watchdog gerou ALERTA ATIVO do check novo" \
    "$(Pq -c "SELECT count(*)::int FROM public.fin_alertas WHERE tipo='data_health_sync_state_saude' AND dismissed_at IS NULL;")" "1"
 has "I4 mensagem do alerta nomeia o sync parado" \
     "$(Pq -c "SELECT mensagem FROM public.fin_alertas WHERE tipo='data_health_sync_state_saude' LIMIT 1;")" "customers/servicos"
 # resolucao automatica: sync consertado ⇒ o alerta fecha sozinho
 seed_base
-P -q -c "SELECT public.data_health_watchdog();"
+Pq -c "SELECT public.data_health_watchdog();" >/dev/null
 eq "I5 sync consertado => alerta RESOLVIDO automaticamente" \
    "$(Pq -c "SELECT count(*)::int FROM public.fin_alertas WHERE tipo='data_health_sync_state_saude' AND dismissed_at IS NULL;")" "0"
 
@@ -215,8 +233,8 @@ falsifica "eixo 2 (estagnacao) cego" \
 seed_base
 P -q -c "UPDATE public.sync_state SET status='error', error_message='x', last_sync_at=now()-interval '37 days'
          WHERE entity_type='customers' AND account='servicos';"
-falsifica "dedup (par acende nos 2 eixos => 2 linhas quebram o watchdog)" \
-  "s/SELECT DISTINCT ON (u.entity_type, u.account)/SELECT/" 'nlin' "1"
+falsifica "dedup (par nos 2 eixos seria contado/listado 2x)" \
+  "s/SELECT DISTINCT ON (u.entity_type, u.account)/SELECT/" "ndup 'customers/servicos'" "1"
 
 seed_base
 P -q -c "UPDATE public.sync_state SET status='error', error_message='x', updated_at=now()-interval '30 hours'
