@@ -90,6 +90,38 @@ cat > "$FIX/site-broken/index.html" <<'HTML'
 <!doctype html><html><body><h1>sem entry aqui</h1></body></html>
 HTML
 
+# site-cego: index.html e /sw.js VIVOS, /assets/* inexistente (404) — é o CDN devolvendo 403/404
+# só nos chunks, ou a rede caindo DEPOIS do HTML. A varredura fica vazia e lê IDÊNTICO a "Publish
+# pendente"; sem controle POSITIVO o script afirma ausência sem ter enxergado byte nenhum.
+mkdir -p "$FIX/site-cego"
+cat > "$FIX/site-cego/index.html" <<'HTML'
+<!doctype html><html><head>
+<script type="module" crossorigin src="/assets/index-AAA111.js"></script>
+</head><body></body></html>
+HTML
+# precache com 3 chunks: mantém N>=2, então o guard de enumeração NÃO pega este caso — de
+# propósito, senão o fixture provaria o guard velho em vez do controle novo.
+cat > "$FIX/site-cego/sw.js" <<'JS'
+self.__WB_MANIFEST=[{"url":"/assets/index-AAA111.js"},{"url":"/assets/orphan-EEE555.js"},{"url":"/assets/PageB-CCC333.js"}];
+JS
+
+# site-fallback: /assets/* responde 200 com o HTML do SPA (fallback catch-all do CDN) em vez do JS.
+# O `-f` do curl não pega isto — o corpo VEM, só não é o chunk. Uma agulha derivada desse corpo
+# casaria em si mesma: verde por CEGUEIRA. O marcador de 29 chars existe pra que o caso reprove
+# pelo motivo CERTO (é HTML) e não por falta de token longo.
+mkdir -p "$FIX/site-fallback/assets"
+cat > "$FIX/site-fallback/index.html" <<'HTML'
+<!doctype html><html><head>
+<meta name="generator" content="FALLBACK_SPA_CONSTANTE_MARKER">
+<script type="module" crossorigin src="/assets/index-AAA111.js"></script>
+</head><body></body></html>
+HTML
+cp "$FIX/site-fallback/index.html" "$FIX/site-fallback/assets/index-AAA111.js"
+cp "$FIX/site-fallback/index.html" "$FIX/site-fallback/assets/orphan-EEE555.js"
+cat > "$FIX/site-fallback/sw.js" <<'JS'
+self.__WB_MANIFEST=[{"url":"/assets/index-AAA111.js"},{"url":"/assets/orphan-EEE555.js"}];
+JS
+
 # ---- http.server em porta efêmera (não depende de porta fixa livre) ----
 python3 -c '
 import http.server, socketserver, sys, os
@@ -171,6 +203,17 @@ if [ "$FALSIFY" = 0 ]; then
            "$BASE/site" "NAO_EXISTE_NO_BUNDLE_123" 1 "CONTROLE_NEGATIVO_NAO_SE_APLICA" "CONTROLE_NEGATIVO_OK"
 
   echo ""
+  echo "  controle POSITIVO embutido (o ramo AUSENTE prova que ainda enxerga — +1 request, exit 2 se cega):"
+  run_case "ausente com a sonda ENXERGANDO: prova a visão ANTES de afirmar ausência" \
+           "$BASE/site" "NAO_EXISTE_NO_BUNDLE_123" 1 "CONTROLE_POSITIVO_OK"
+  run_case "sonda CEGA (chunks 404, index.html vivo): não afirma ausência, recusa com exit 2" \
+           "$BASE/site-cego" "NAO_EXISTE_NO_BUNDLE_123" 2 "SONDA_CEGA" "CONTROLE_POSITIVO_OK"
+  run_case "fallback SPA (chunk devolve HTML com 200): agulha casaria em si mesma -> exit 2" \
+           "$BASE/site-fallback" "NAO_EXISTE_NO_BUNDLE_123" 2 "ENTRY_NAO_E_JS" "CONTROLE_POSITIVO_OK"
+  run_case "alvo presente: o positivo NÃO roda — o próprio HIT já é a evidência de que enxerga" \
+           "$BASE/site" "SENTINELA_DEEP_XYZ" 0 "CONTROLE_NEGATIVO_OK" "CONTROLE_POSITIVO_OK"
+
+  echo ""
   echo "  --pai (prova de exclusividade da sentinela — fail-closed, exit 3):"
   run_case_pai "sentinela NÃO-exclusiva: já existia no pai -> RECUSA (mesmo estando no bundle)" \
                "$REPO" 3 "SENTINELA_NAO_EXCLUSIVA" --pai "$SHA_PAI" "PAGEB_MARKER" "$BASE/site"
@@ -207,12 +250,21 @@ SAB_B="$FIX/sab_precache.sh"
 # shellcheck disable=SC2016
 sed 's#\$APP/sw\.js#\$APP/sw-INEXISTENTE-falsify.js#' "$SCRIPT_REL" > "$SAB_B"
 
-# falsify_case: descr, script_sabotado, alvo, exit_normal, [exit_exigido], [marca_exigida]
-# Sem os dois últimos basta divergir do normal. COM eles a asserção casa a MARCA DO RAMO —
-# "divergiu" aceitaria um exit 1 vindo de outro defeito da sabotagem, que não prova nada.
+# falsify_case: descr, script_sabotado, alvo, exit_normal, [exit_exigido], [marca_exigida], [url]
+# Sem exit/marca basta divergir do normal. COM eles a asserção casa a MARCA DO RAMO — "divergiu"
+# aceitaria um exit 1 vindo de outro defeito da sabotagem, que não prova nada.
+# A url é o 7º e tem default LOCAL: sabotagem que caísse em produção varreria prod de verdade.
 falsify_case() {
-  local descr="$1" scr="$2" alvo="$3" normal="$4" exato="${5:-}" marca="${6:-}" got out
-  out=$(bash "$scr" "$alvo" "$BASE/site" 2>&1); got=$?
+  local descr="$1" scr="$2" alvo="$3" normal="$4" exato="${5:-}" marca="${6:-}" url="${7:-$BASE/site}" got out base
+  # O `normal` DECLARADO pode mentir — quem escreve a sabotagem antes da feature declara o exit do
+  # script que ainda vai existir, e "divergiu do que eu disse" viraria verde sem sabotagem nenhuma.
+  # Mede-se o script REAL na mesma url antes de comparar: evidência positiva, não declaração.
+  bash "$SCRIPT_ABS" "$alvo" "$url" >/dev/null 2>&1; base=$?
+  if [ "$base" != "$normal" ]; then
+    printf '  [XX ] normal DECLARADO não bate com o medido: %s (declarado %s, script real %s)\n' "$descr" "$normal" "$base"
+    FAIL=$((FAIL+1)); return
+  fi
+  out=$(bash "$scr" "$alvo" "$url" 2>&1); got=$?
   if [ -n "$exato" ] && [ "$got" != "$exato" ]; then
     printf '  [XX ] divergiu pelo motivo ERRADO: %s (exigido exit %s, obtido %s)\n' "$descr" "$exato" "$got"
     FAIL=$((FAIL+1)); return
@@ -270,6 +322,32 @@ SAB_F="$FIX/sab_controle_decorativo.sh"
 # shellcheck disable=SC2016
 sed 's#^CONTROLE="controle_negativo_.*#CONTROLE="$ALVO"#' "$SCRIPT_ABS" > "$SAB_F"
 falsify_case "controle que DEVERIA casar -> exit 2 (logo o controle roda mesmo, não é enfeite)" "$SAB_F" "SENTINELA_DEEP_XYZ" 0 2 "SONDA_NAO_DISCRIMINA"
+
+# Sabotagem G: mata o VEREDITO de cegueira (o guard que converte "não enxerguei" em exit 2).
+# Contra o site-cego (chunks 404, index.html vivo) o script sabotado volta a AFIRMAR ausência —
+# que é o falso NEGATIVO que faz o operador pedir um Publish desnecessário.
+SAB_G="$FIX/sab_controle_positivo.sh"
+# shellcheck disable=SC2016
+sed 's#^if \[ -n "\$_cego" \]; then#if [ 1 = 0 ]; then#' "$SCRIPT_ABS" > "$SAB_G"
+falsify_case "veredito de cegueira morto -> volta a AFIRMAR ausência com os chunks em 404" \
+             "$SAB_G" "NAO_EXISTE_NO_BUNDLE_123" 2 1 "" "$BASE/site-cego"
+
+# Sabotagem H: troca a agulha DERIVADA por uma que não está em lugar nenhum. Espelha a F do lado
+# negativo: se o controle positivo fosse um `echo ✓` decorativo, uma agulha impossível continuaria
+# dando exit 1. Roda no site BOM — o que muda é só a agulha.
+SAB_H="$FIX/sab_agulha_impossivel.sh"
+# shellcheck disable=SC2016
+sed 's#^_agulha=\$(tr .*#_agulha="agulha_impossivel_zzz9999_falsify"#' "$SCRIPT_ABS" > "$SAB_H"
+falsify_case "agulha trocada por uma impossível -> exit 2 (logo o controle vai à rede de verdade)" \
+             "$SAB_H" "NAO_EXISTE_NO_BUNDLE_123" 1 2 "AGULHA_NAO_CASOU"
+
+# Sabotagem I: mata o check "o entry é JS, não HTML". Sem ele a agulha nasce do próprio fallback
+# do SPA e casa em si mesma -> CONTROLE_POSITIVO_OK mentiroso e exit 1. É o furo circular que o
+# check existe pra fechar, e o caso normal do site-fallback só prova isso se esta sabotagem virar.
+SAB_I="$FIX/sab_entry_html.sh"
+sed "s#^  '<') _cego=#  '<XXX') _cego=#" "$SCRIPT_ABS" > "$SAB_I"
+falsify_case "check de HTML morto -> fallback do SPA vira 'ausente' provado por si mesmo" \
+             "$SAB_I" "NAO_EXISTE_NO_BUNDLE_123" 2 1 "" "$BASE/site-fallback"
 
 echo ""
 if [ "$FAIL" -eq 0 ]; then echo "--falsify: $PASS/$((PASS+FAIL)) divergiram (harness tem dente)"; exit 0

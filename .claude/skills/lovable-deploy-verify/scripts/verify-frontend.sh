@@ -31,14 +31,24 @@
 #   (padrão, grep), não do chunk — repetir em 334 chunks é redundância, não informação nova.
 #   Medido em prod 2026-08-24: varredura completa = 334 req / 18s; este controle = 1 req / 0,14s.
 #
+# O CONTROLE POSITIVO é o irmão dele no ramo AUSENTE, onde o risco se inverte: ali o script AFIRMA
+# "Publish pendente", e uma sonda CEGA produz a MESMA saída — se os chunks passam a falhar (CDN 403
+# em /assets/*, rate limit, DNS) enquanto o index.html ainda responde, a varredura vem vazia por
+# não ter enxergado nada, e o operador pede um Publish que não era necessário. Ausência de sinal
+# não é sinal. Então, antes de afirmar ausência, uma AGULHA derivada do corpo do entry é procurada
+# NO entry pelo MESMO varre(). Não é circular: o corpo (baixado lá no closure) só ESCOLHE a agulha;
+# o veredito sai de um curl+grep NOVO, no momento da conclusão — se a rede caiu no meio da
+# varredura, é esse request que denuncia. Falhou -> SONDA_CEGA + exit 2, nunca exit 1. +1 request.
+#
 # Uso:   verify-frontend.sh [--pai <sha>] [--novo <sha>] '<string-literal-unica-do-commit>' [https://app.url]
 #        --pai  <sha>  commit ANTERIOR ao PR: exige 0 ocorrência da sentinela nele (exclusividade)
 #        --novo <sha>  commit que INTRODUZIU a sentinela (default HEAD): exige >= 1 ocorrência
 # Exit:  0 = ALVO presente (no ar) E o controle negativo passou · 1 = ausente (Publish pendente /
-#            alvo não-único)
-#        2 = a MECÂNICA da sonda não é confiável — NÃO confie no resultado. Duas causas: a
-#            enumeração quebrou (formato do bundler/Workbox mudou), ou o casamento não
-#            discrimina (SONDA_NAO_DISCRIMINA). Conserte a sonda antes de concluir qualquer coisa.
+#            alvo não-único) E o controle positivo provou que a sonda ainda enxergava
+#        2 = a MECÂNICA da sonda não é confiável — NÃO confie no resultado. Três causas: a
+#            enumeração quebrou (formato do bundler/Workbox mudou); o casamento não discrimina
+#            (SONDA_NAO_DISCRIMINA, ramo do hit); ou a sonda não enxerga nada (SONDA_CEGA, ramo
+#            ausente). Conserte a sonda antes de concluir qualquer coisa.
 #        3 = o script se RECUSA a dar veredito: uso inválido, ou a prova de exclusividade
 #            falhou/não pôde ser feita. NUNCA é uma afirmação sobre o deploy. Fail-CLOSED de
 #            propósito: guard que degrada para "não provei" vira guard que não guarda nada.
@@ -127,8 +137,11 @@ ENTRY=$(curl -fsS "$APP/" 2>/dev/null | grep -oE '/assets/index-[A-Za-z0-9_-]+\.
 [ -n "$ENTRY" ] || { echo "❌ não achei o entry em $APP/ — site fora do ar ou HTML mudou de forma"; exit 2; }
 echo "entry: $ENTRY"
 
-# (A) fechamento transitivo
-{ curl -fsS "$APP/"; curl -fsS "$APP$ENTRY"; } 2>/dev/null | extrai | sort -u > "$TMP/closure.txt"
+# (A) fechamento transitivo. O CORPO do entry fica SALVO: é dele que sai a agulha do controle
+# positivo do ramo ausente, e o download já acontecia aqui — nesta etapa o controle custa 0
+# request a mais. Em disco, não em variável: o entry real passa de 200KB.
+curl -fsS "$APP$ENTRY" 2>/dev/null > "$TMP/entry.js"
+{ curl -fsS "$APP/" 2>/dev/null; cat "$TMP/entry.js"; } | extrai | sort -u > "$TMP/closure.txt"
 cp "$TMP/closure.txt" "$TMP/frontier.txt"
 while [ -s "$TMP/frontier.txt" ]; do
   crawl_deps "$TMP/frontier.txt" | sort -u > "$TMP/deps.txt"          # curls do nível em PARALELO
@@ -185,7 +198,39 @@ if [ -n "$HIT" ]; then
   echo "✓ CONTROLE_NEGATIVO_OK — $_c1 não casa $CONTROLE (a sonda sabe dizer não)"
   echo "→ no ar ✓ (entry $ENTRY)"; exit 0
 fi
+# ---- CONTROLE POSITIVO (automático neste ramo, +1 request) ----
+# Roda ANTES de imprimir o veredito, de propósito: se a sonda está cega o script não deve nem
+# ENUNCIAR "ausente" — a frase é uma afirmação sobre o mundo, e ele não teria olhado pra ele.
+_cego=""
+# Fallback do SPA / página de erro com 200 passa batido pelo -f do curl: o corpo VEM, só não é o
+# chunk. Aí a agulha nasceria do próprio fallback e casaria em si mesma — verde por CEGUEIRA.
+case "$(head -c 512 "$TMP/entry.js" | tr -d '[:space:]' | cut -c1)" in
+  '<') _cego="ENTRY_NAO_E_JS — $ENTRY respondeu HTML (fallback do SPA / erro com 200), não JavaScript" ;;
+esac
+# Agulha = o MAIOR token [A-Za-z0-9_] do corpo. DERIVADA, nunca fixa — string fixa do bundle
+# quebra no build seguinte e viraria exit 2 espúrio. Alfanumérica porque o grep dos chunks é BRE:
+# metacaractere aqui mudaria a semântica do controle, mesma razão do hex puro no negativo.
+_agulha=$(tr -c 'A-Za-z0-9_' '\n' < "$TMP/entry.js" | awk '{ if (length($0) > length(m)) m = $0 } END { print m }')
+if [ -z "$_cego" ] && [ "${#_agulha}" -lt 12 ]; then
+  _cego="AGULHA_INDISPONIVEL — o corpo de $ENTRY ($(wc -c < "$TMP/entry.js" | tr -d ' ') bytes) não deu token de 12+ caracteres"
+fi
+if [ -z "$_cego" ]; then
+  printf '%s\n' "$ENTRY" > "$TMP/controle_positivo.txt"
+  [ -n "$(varre "$TMP/controle_positivo.txt" "$_agulha")" ] || \
+    _cego="AGULHA_NAO_CASOU — '$_agulha' saiu do corpo de $ENTRY e o mesmo curl+grep não a acha lá"
+fi
+if [ -n "$_cego" ]; then
+  printf '%s\n' \
+    "❌ [controle] SONDA_CEGA: $_cego" \
+    "   Logo NÃO dá pra afirmar 'ausente': varredura vazia por 'nenhum chunk casou' e por 'nenhum" \
+    "   chunk RESPONDEU' são a mesma saída, e esta é a segunda. Publish pendente segue possível — só" \
+    "   não está provado. Conserte a sonda (CDN/rede/DNS/formato) ANTES de pedir outro Publish." >&2
+  exit 2
+fi
+echo "✓ CONTROLE_POSITIVO_OK — $ENTRY ainda devolve bytes e o mesmo grep acha '$_agulha' neles"
+
 echo "→ ❌ ALVO ausente nos $N chunks: Publish pendente, OU o ALVO não é literal/único no bundle"
-echo "   CONTROLE_NEGATIVO_NAO_SE_APLICA: ele audita o falso POSITIVO, e este ramo é o outro. O risco"
-echo "   aqui é falso NEGATIVO — sonda cega lê idêntico a 'Publish pendente' — e pede controle POSITIVO."
+echo "   CONTROLE_NEGATIVO_NAO_SE_APLICA: ele audita o falso POSITIVO, e este ramo é o outro — aqui"
+echo "   o risco é o falso NEGATIVO (sonda cega lê idêntico a 'Publish pendente'), e quem o cobre é"
+echo "   o CONTROLE_POSITIVO acima."
 exit 1

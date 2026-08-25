@@ -108,9 +108,12 @@ Montar pro founder colar no chat do Lovable (um por edge tocada):
   --pai <sha-do-commit-ANTERIOR-ao-PR> \
   'COLE_UMA_STRING_LITERAL_UNICA_DO_COMMIT'   # 2º posicional opcional: a URL (default steu.lovable.app)
 # saída: "✓ sentinela exclusiva: …" + "chunks (closure ∪ precache): N" + "✅ ALVO em <chunk>"
-#        + "✓ CONTROLE_NEGATIVO_OK — <chunk> não casa controle_negativo_<hex>"
-# exit 0 = no ar E o controle negativo passou · 1 = ausente (Publish pendente / alvo não-literal)
-#      2 = a MECÂNICA da sonda não é confiável: enumeração quebrada OU SONDA_NAO_DISCRIMINA
+#        + "✓ CONTROLE_NEGATIVO_OK — <chunk> não casa controle_negativo_<hex>"   (ramo do hit)
+#        + "✓ CONTROLE_POSITIVO_OK — <entry> ainda devolve bytes e o mesmo grep acha '<agulha>'"
+# exit 0 = no ar E o controle negativo passou · 1 = ausente E o controle POSITIVO provou que a
+#          sonda enxergava (Publish pendente / alvo não-literal)
+#      2 = a MECÂNICA da sonda não é confiável: enumeração quebrada, SONDA_NAO_DISCRIMINA (ramo
+#          do hit) ou SONDA_CEGA (ramo ausente)
 #      3 = RECUSA: uso inválido, ou exclusividade da sentinela não provada — NUNCA é veredito
 #          sobre o deploy (`--novo <sha>` muda o lado positivo; default HEAD)
 ```
@@ -202,10 +205,36 @@ plantado antes). Essa hipótese é de outra camada e tem dono: o gate `evals/run
 sabota o script e **exige** vermelho — asserção externa, em commit-time. Runtime e commit-time
 cobrem coisas diferentes; nenhum substitui o outro.
 
-⚠️ **O ramo `exit 1` (alvo ausente) segue SEM controle** — e a saída diz isso
-(`CONTROLE_NEGATIVO_NAO_SE_APLICA`). O controle negativo audita o falso **positivo**; ali o risco é o
-falso **negativo** (sonda cega — curl 403/rede caída — lê idêntico a "Publish pendente"), que pede um
-controle **positivo** (uma string que comprovadamente ESTÁ no bundle). Lacuna conhecida, não fechada.
+**O ramo `exit 1` tem o controle POSITIVO — o irmão, no ramo onde o risco se inverte.** O negativo
+audita o falso **positivo**; ali o risco é o falso **negativo**: `exit 1` **afirma** "Publish
+pendente", e uma sonda CEGA produz a MESMA saída — se os chunks passam a falhar (CDN 403 em
+`/assets/*`, rate limit, DNS) enquanto o `index.html` ainda responde, a varredura volta vazia por não
+ter enxergado nada, e o operador pede um Publish que não era necessário. Então, **antes de enunciar a
+ausência**, uma **agulha** derivada do corpo do entry é procurada NO entry pelo MESMO `varre()`:
+
+```console
+✓ CONTROLE_POSITIVO_OK — /assets/index-TTF9Kw1g.js ainda devolve bytes e o mesmo grep acha '__vite__mapDeps' neles
+→ ❌ ALVO ausente nos 334 chunks: Publish pendente, OU o ALVO não é literal/único no bundle
+```
+
+```console
+❌ [controle] SONDA_CEGA: AGULHA_INDISPONIVEL — o corpo de /assets/index-TTF9Kw1g.js (0 bytes) não deu token de 12+ caracteres
+   Logo NÃO dá pra afirmar 'ausente': varredura vazia por 'nenhum chunk casou' e por 'nenhum
+   chunk RESPONDEU' são a mesma saída, e esta é a segunda.                                     (exit 2)
+```
+
+**Por que não é circular:** o corpo baixado lá no closure só **escolhe** a agulha; o veredito sai de um
+`curl`+`grep` **novo**, no momento da conclusão — se a rede caiu no meio dos 18 s de varredura, é esse
+request que denuncia. A agulha é **derivada, nunca fixa** (string fixa do bundle quebraria no build
+seguinte e viraria `exit 2` espúrio) e **alfanumérica** — o maior token `[A-Za-z0-9_]` do corpo —
+porque o `grep` dos chunks é BRE, e metacaractere mudaria a semântica do controle (mesma razão do hex
+puro no negativo). Três modos de cegueira, marcas ASCII discrimináveis: `ENTRY_NAO_E_JS` (o chunk
+respondeu HTML com 200 — fallback do SPA / erro; o `-f` do curl não pega, o corpo VEM, e sem esse
+check a agulha nasceria do próprio fallback e casaria em si mesma), `AGULHA_INDISPONIVEL` (corpo
+vazio/curto — é o caso do curl que falhou) e `AGULHA_NAO_CASOU`. **Custo:** o download do entry já
+acontecia no closure e passou a ser salvo (0 request a mais ali); o controle é **1 request / 0,14 s**
+sobre os 91 s do pior caso do script — **+0,15%**. Nos dois ramos a marca `CONTROLE_NEGATIVO_NAO_SE_APLICA`
+continua saindo: ela diz qual dos dois controles está falando, não que falta controle.
 
 **Sinal auxiliar de graça: o hash do chunk muda a cada build.** A saída já imprime `entry:` e
 `✅ ALVO em <chunk>`, e os dois nomes carregam hash de conteúdo. **Anote-os.** Hash IGUAL ao da
@@ -352,8 +381,15 @@ falso `"fora do ar"` (exit 2) — não é o site caído, é a URL malformada.
   com número, não opinião (prod, 334 chunks: **1 req / 0,14 s** contra **334 req / 18 s** ou **671 req
   / 91 s**), porque discriminar é propriedade do par (padrão, `grep`) e não do chunk. Harness: +4 casos
   e +2 sabotagens (grep degenerado → o controle acusa; controle trocado por string que DEVE casar →
-  prova que ele exercita a rede e não é enfeite). Lacuna aberta: o ramo `exit 1` não tem controle
-  positivo. Detalhe no Passo 4.
+  prova que ele exercita a rede e não é enfeite). Detalhe no Passo 4.
+- [x] **Controle POSITIVO no ramo `exit 1` (2026-08-25):** a lacuna acima fechada — "ausente" só é
+  ENUNCIADO depois de o script provar que ainda enxerga, com uma agulha DERIVADA do corpo do entry
+  procurada pelo MESMO `varre()`; cega → `SONDA_CEGA` + exit 2, nunca exit 1. **+1 request / 0,14 s
+  sobre 91 s (+0,15%)**, porque o download do entry já acontecia no closure. Harness: +4 casos (2
+  fixtures novos — `site-cego` com `/assets/*` em 404 e `site-fallback` servindo HTML com 200) e +3
+  sabotagens. E um furo do PRÓPRIO harness saiu junto: `falsify_case` aceitava o `exit_normal`
+  **declarado**, então uma sabotagem escrita antes da feature ficava verde sem sabotar nada — agora
+  o normal é **medido** no script real antes de comparar. Detalhe no Passo 4.
 - [x] `evals/` = **gate dos 2 passos**: classificação de diff (8 casos, Passo 1) **+** verificação por bytes (harness local `verify-frontend-eval.sh`, Passo 4: 2º nível, precache, exit 0/1/2), ambos com `--falsify`. Um `bash evals/run.sh` cobre tudo.
 - [x] Domínio canônico `steu.lovable.app` confirmado (HTTP 200).
 - [x] **Edge:** verificação por escada — N1 existência (`verify-edge.sh`, OPTIONS, automático) · N2 versão (Management API — indisponível aqui: Supabase da org do Lovable, não peça PAT) · N3 comportamento (probe gated). Fecha a assimetria com o frontend.
