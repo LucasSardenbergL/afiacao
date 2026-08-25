@@ -1689,3 +1689,35 @@ publicado e servido; o que falta não é dele.
 **O gate é um evento com `$lib='web'`.** Enquanto `max(timestamp)` desse recorte não passar de
 `2026-08-23T11:09:23Z`, toda releitura da adoção reconfirma o mesmo zero com cara de medição nova —
 e a §4 já ensinou o quanto isso custa.
+
+### O sinal que fecha a fase: o app passou a gravar SOZINHO (2026-08-25)
+
+> Esta seção e a do `keepalive` acima são o **mesmo dia por dois lados**: lá, o PostHog em zero é do
+> CANAL; aqui, a tabela recebendo prova que o app está sendo usado. As duas juntas é que sustentam o
+> veredito — nenhuma sozinha sustentaria.
+
+A tabela que ficou 3 meses vazia tem **5 linhas** — e duas delas **não vieram de teste nenhum**:
+
+```
+ id |         visited_at         | company_selection | session_minutes |  origem
+----+----------------------------+-------------------+-----------------+------------------
+  1 | 2026-08-24 12:29:32.543+00 | all               |               7 | teste (unmount)
+  2 | 2026-08-25 00:45:45.947+00 | oben              |              38 | ← USO REAL
+  3 | 2026-08-25 01:04:48.071+00 | all               |               6 | teste (pagehide vivo)
+  4 | 2026-08-25 01:10:33.998+00 | oben              |              23 | ← USO REAL
+  5 | 2026-08-25 01:18:57.880+00 | all               |               6 | teste (pagehide vivo)
+```
+
+**A coluna que separa teste de uso é `company_selection`:** os testes rodaram com `all`; as linhas 2
+e 4 têm `oben`, uma empresa que nenhum teste selecionou, e durações de **38 e 23 minutos** —
+incompatíveis com sessão dirigida. São visitas de gente trabalhando.
+
+Isto é o que este arquivo cobra em todo lugar e raramente consegue: **≥1 sinal POSITIVO de uso em
+produção**, não "está no ar e ninguém reclamou". O #1934 sai de "provado sob teste" para
+**"funcionando em uso"**, e a fase N finalmente tem denominador próprio.
+
+⚠️ **Com a ressalva que não desaparece:** as 4 linhas de 25/08 vieram do caminho **unmount** (ou de
+`pagehide` com a página viva). Fechar a aba continua perdendo a visita — o `keepalive` não sobrevive
+ao unload (causa raiz em [`analytics.md`](../agent/analytics.md)). Então **5 linhas é um piso**, não a
+contagem de visitas: quantas se perderam no fecho de aba segue desconhecido, e será desconhecido até
+o writer parar de depender de como o usuário sai.
