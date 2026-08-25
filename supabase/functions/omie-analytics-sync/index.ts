@@ -1277,7 +1277,20 @@ async function syncNaoVinculados(db: SupabaseClient, account: OmieAccount) {
 
 // ======== SYNC PRODUCTS ========
 
-async function syncProducts(db: SupabaseClient, account: OmieAccount, startPage = 1, maxPages = 10) {
+// Teto ANTI-RUNAWAY, não orçamento de lote (espelha MAX_PAGINAS_PRODUTOS de
+// omie-sync-metadados e de sync-reprocess/products-lote.ts): 500 × 100 = 50k >> catálogo
+// real (~4,3k colacor / ~3,7k oben). O laço termina no EOF de verdade (`pagina > totalPaginas`),
+// então o teto nunca é o que corta — é só rede contra `total_de_paginas` mentiroso da Omie.
+//
+// ⚠️ ERA 10, e isso truncava em SILÊNCIO: 10 páginas contra 37 = 27% do catálogo, todo dia,
+// sempre as MESMAS páginas 1–10 (o `nextPage` que esta função retorna nunca teve quem o
+// consumisse — não há retomada). O marcador `sync_state` products/vendas dizia 'partial' desde
+// sempre e ninguém lia, enquanto `acoes_execucoes` carimbava 'sucesso' (35 runs, 32 ok desde
+// 21/07). Quem chamava sem argumento herdava a truncagem: o `sync_all` e o botão do painel
+// admin (`useAnalyticsSync.ts` invoca com `{action, account}`, sem `max_pages`).
+const MAX_PAGINAS_PRODUTOS = 500;
+
+async function syncProducts(db: SupabaseClient, account: OmieAccount, startPage = 1, maxPages = MAX_PAGINAS_PRODUTOS) {
   await updateSyncState(db, "products", account, { status: "running", error_message: null });
   let pagina = startPage;
   // Piso da run: começa na página pedida (garante a entrada no laço) e daí só cresce.
@@ -1355,12 +1368,11 @@ async function syncProducts(db: SupabaseClient, account: OmieAccount, startPage 
       pagesProcessed++;
     }
 
-    await updateSyncState(db, "products", account, {
-      status: "complete",
-      total_synced: totalSynced,
-      last_sync_at: new Date().toISOString(),
-      last_page: totalPaginas,
-    });
+    // [2026-08-25] Havia AQUI um segundo upsert, ANTES deste, que carimbava 'complete'
+    // INCONDICIONALMENTE (com last_page=totalPaginas) e era sobrescrito na linha seguinte.
+    // Era write morto E uma janela de mentira: um leitor que caísse entre os dois upserts via
+    // 'complete' com o total de páginas do catálogo — exatamente o oposto do que um run truncado
+    // fez. Quem decide o status é o `complete` abaixo; só ele grava.
     const complete = fimReal || pagina > totalPaginas;
     await updateSyncState(db, "products", account, {
       status: complete ? "complete" : "partial",
@@ -2486,7 +2498,7 @@ Deno.serve(async (req) => {
         });
       }
       case "sync_products":
-        result = await syncProducts(supabaseAdmin, account, start_page || 1, max_pages || 10);
+        result = await syncProducts(supabaseAdmin, account, start_page || 1, max_pages || MAX_PAGINAS_PRODUTOS);
         break;
       case "sync_orders":
         result = await syncOrdersIncremental(supabaseAdmin, account);
@@ -2602,9 +2614,21 @@ Deno.serve(async (req) => {
         // e RE-prendia sync_state.customers em 'running' a cada passada — clobberava o estado curado.
         const acct = account as OmieAccount;
         result = await comRegistro(dbRegistro, "analytics_sync.sync_completo", auth, async () => {
-          const products = await syncProducts(supabaseAdmin, acct);
           // orders REMOVIDO do sync_all (2026-06-24): syncOrdersIncremental foi aposentado (no-op que
           // poluía sales_price_history). A fonte de pedidos é a RPC criar_pedidos_com_itens (omie-vendas-sync).
+          //
+          // products REMOVIDO do sync_all (2026-08-25): era REDUNDANTE e TRUNCADO. Redundante porque
+          // `omie-sync-metadados` (cron 30 8, accounts vendas+colacor_vendas) reescreve o catálogo
+          // INTEIRO na MESMA tabela `omie_products`, com os MESMOS params da Omie (registros_por_pagina
+          // 100, apenas_importado_api N, filtrar_apenas_omiepdv N) e um SUPERSET estrito de colunas
+          // (as mesmas 15 + tipo_produto) — 2,5h DEPOIS, logo ela é a última escritora e vence.
+          // Truncado porque este caminho herdava `maxPages` default e só varria as páginas 1–10.
+          // Medido em 2026-08-25: omie_products oben 3.694/3.695 linhas frescas em 24h — se a
+          // truncagem custasse frescor, ~2.700 estariam velhas. Custava só chamada de API à toa.
+          // Dois escritores no mesmo espelho também violava "1 escritor por slug" (CLAUDE.md).
+          // ⚠️ `colacor_vendas` NÃO foi mexido de propósito: o cron dedicado dele passa
+          // `max_pages: 50` explícito e varre o catálogo COMPLETO — é redundância que serve de
+          // failover, não truncagem. Aqui a redundância era cega.
           const inventory = await syncInventory(supabaseAdmin, acct);
           // Motores registrados com os PRÓPRIOS slugs: o sync_all recalcula custos/regras DE VERDADE,
           // e a caption dos cards precisa refletir isso (a verdade é por slug).
@@ -2617,7 +2641,7 @@ Deno.serve(async (req) => {
             dbRegistro, "analytics_sync.recalcular_regras", auth,
             () => computeAssociationRules(supabaseAdmin),
           );
-          return { products, inventory, costs, assocRules };
+          return { inventory, costs, assocRules };
         });
         break;
       }
