@@ -282,7 +282,71 @@ inevitável; o que deixou de existir foi o id **solto**.
   dez edges à toa. "Ainda não chegou" precisa de nome próprio no veredito.
 - ⚠️ **A trava do bloco perigoso por `WHERE` seria teatro** — o Postgres avalia a projeção mesmo com
   o filtro descartando tudo, e o `http_post` sairia igual. Falsificado nos dois sentidos e corrigido
-  para `CASE` antes de a receita ir ao ar (#1941, §Sondar VÁRIAS edges do `deploy.md`).
+  para `CASE` antes de a receita ir ao ar (#1941, §Sondar VÁRIAS edges do `deploy.md`). Refinado
+  logo abaixo: o `WHERE` é dependente de PLANO e protege na forma simples — engana quem o testa fora
+  da forma agregada, que é a do lote.
+
+### Segunda verificação, independente e HORAS depois — o que ela acrescenta
+
+O desfecho acima foi lido às 00:12–00:15. Uma sessão paralela, sem saber dele, refez a verificação
+das mesmas 10 às **00:38** (5) e **01:47** (5), com `request_id` próprios (59675–59679 e
+59703–59707): marcadores idênticos, `edge` batendo em todas. Repetir não foi desperdício — foi a
+única forma de responder uma pergunta que a primeira leitura não responde: **o deploy GRUDOU?**
+Neste host o sync bidirecional do Lovable já reverteu arquivo recém-mergeado, e "provado às 00:15"
+não é "no ar às 01:47". Re-sondar edge que já tem sonda custa uma query e é inócuo por construção;
+é o teste de durabilidade mais barato que existe aqui.
+
+**Sondar por ONDA de custo, não por leva.** A tabela do custo por edge (§8ª leva) particiona o
+trabalho: as 5 que um bundle velho RECUSA (`ai-ops-agent` 401, `sync-reprocess` 400 do `default`)
+ou que já respondiam sonda antes desta fatia foram sondadas primeiro, e só com elas verdes as 5
+caras foram armadas. A onda barata exercita bloco, nome do segredo, header e leitura a risco zero.
+Sondar as 10 de uma vez economiza uma viagem e aposta a base inteira num bloco nunca executado.
+
+### O `WHERE` não é "teatro" sempre — é dependente de PLANO, e falha justamente na forma do lote
+
+O bullet acima (e a §Sondar VÁRIAS edges do `deploy.md`) diz que o Postgres avalia a projeção mesmo
+com o filtro descartando tudo. Refeita a falsificação com uma divisão por zero no lugar do
+`http_post`, em quatro formas, o resultado é mais fino:
+
+| forma | trava fechada | resultado |
+|---|---|---|
+| `WHERE` + projeção simples | fechada | **não avaliou** — o filtro desceu antes |
+| `WHERE` + agregação por cima | fechada | **explodiu: disparou com a trava fechada** |
+| `CASE` + agregação | fechada | devolveu nulos, nada avaliado |
+| `CASE` + agregação | aberta | explodiu — a trava governa de fato |
+
+Às vezes o `WHERE` protege, e é aí que ele engana: quem testasse a trava na forma simples leria
+"seguro" e levaria para produção o bloco em lote — **agregação por cima**, exatamente a forma em que
+ele dispara. `CASE` não depende de plano: é semântica da linguagem, não escolha do planejador.
+E a trava `CASE` foi confirmada em PROD, não só em bancada: o bloco das 5 caras foi colado uma vez
+com `nao` e devolveu os 5 ids nulos, sem disparar nada.
+
+### "A sonda é IO-free" prova-se na TABELA DE DESTINO, não na leitura do código
+
+Que a sonda retorna antes do `createClient` é o gate de posição do CI, e vale para o código. Que ela
+não escreveu **nesta invocação** é outra afirmação, e o lugar de medi-la é o destino do efeito:
+sondas às 01:47 UTC contra a última escrita de cada tabela cara — `farmer_client_scores` e
+`health_score_history` em 24/08 06:25, `customer_visit_scores` 24/08 07:00, `farmer_tactical_plans`
+24/08 08:01, `ai_decisions` em 17/07. Todas de horas antes, e cada uma casando com o horário do cron
+que a explica. Nenhum lease, nenhum fan-out, nenhuma chamada de LLM.
+
+Custa uma query, e troca "a sonda deveria ser barata" (inferência a partir do código) por "a sonda
+não escreveu" (evidência no dado) — que é a diferença que este repo cobra em todo o resto.
+
+### Artefato para o founder é BLOCO COMPLETO — fragmento não é instrução, é montagem
+
+O único tropeço da rodada não foi técnico. Ao pedir para armar a trava, o passo foi apresentado como
+a linha do `WITH` isolada; sozinha ela não é comando, e o Editor devolveu `syntax error at end of
+input` apontando `LINE 0`. O bloco no arquivo estava correto — provado depois com `EXPLAIN`, que
+planeja sem executar: `net.http_post` é VOLÁTIL, logo nunca é avaliada no planejamento, e um
+`EXPLAIN` valida a sintaxe de um bloco de sonda **sem disparar nada**. Vale como ferramenta: bloco
+perigoso pode ser conferido antes de sair da minha mão.
+
+Salvou-se pelo mecanismo que o próprio doc já registra — erro de sintaxe faz o Editor abortar o
+batch, e o `pg_net` só envia após o COMMIT (conferido: `http_request_queue` em 0 e nenhuma resposta
+de sonda depois do baseline). Mas depender disso é a "proteção por sorte" que a §Canárias condena. A
+regra: **todo artefato colável nasce executável de ponta a ponta**, do primeiro token ao `;`, e o
+que o founder edita é UMA palavra DENTRO dele — nunca uma linha que ele tenha de emendar no resto.
 
 ## 9ª leva (mesmo dia) — a que a ENUMERAÇÃO não via, e a que já estava pronta há meses
 
