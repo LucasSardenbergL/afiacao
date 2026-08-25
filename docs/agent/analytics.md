@@ -250,6 +250,7 @@ de código. **A única condição que muda é se a página está morrendo:**
 |---|---|---|---|---|
 | 00:17:10Z | **aba fechada** de verdade | sim, `keepalive: true` | **nunca chegou** | ❌ |
 | 01:04:48Z | `dispatchEvent` com a **página viva** | sim, `keepalive: true` | **201** em 637ms | ✅ `id=3` |
+| 01:18:57Z | `dispatchEvent` com a **página viva** (repetição) | sim, `keepalive: true` | **201** em 605ms | ✅ `id=5` |
 
 O corpo, os headers, o token e a policy são os mesmos nos dois. **O código está correto**: com a
 página viva ele grava em 637ms. O que falha é o `fetch` com `keepalive: true` **não sobreviver ao
