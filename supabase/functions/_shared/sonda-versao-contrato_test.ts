@@ -809,9 +809,16 @@ Deno.test("bump v1.1-corpo-tipado: analyze-unified-order não pode voltar ao mar
   // não distingue o bundle de #1930 do de #1938.
   //
   // ⚠️ O que este gate cobre e o que NÃO cobre. Ele impede a REGRESSÃO (voltar ao valor que já
-  // respondia em produção); ele não força o bump na PRÓXIMA fatia — nenhum gate de texto sabe se
-  // uma mudança de comportamento mereceu marcador novo. A trava real dessa metade é humana e está
-  // escrita no `versao.ts`: bumpar ANTES do deploy. O gate é a rede de baixo, não a regra.
+  // respondia em produção); ele não força o bump na PRÓXIMA fatia, porque nenhum gate que lê só o
+  // estado ATUAL do repo sabe se o valor mudou — e foi a OMISSÃO, não a regressão, que aconteceu
+  // no #1938.
+  //
+  // Essa outra metade tem dono desde então, e não é humana: `scripts/sonda-versao-bump-gate.ts`
+  // (`bun run sonda:bump`, no job `validate`) lê o DIFF contra o merge-base e reprova quando o
+  // corpo servido de uma edge instrumentada muda sem o `VERSAO` mudar junto. Os dois gates são
+  // complementares e nenhum cobre o outro: este aqui nomeia o valor antigo LITERAL (sobrevive a um
+  // `git revert` que restaure a fatia inteira, diff incluso); o outro não sabe qual valor é
+  // proibido, mas sabe que mudou.
   //
   // A canária de preço NÃO substitui isto: o `contrato` dela (`praticado-vence-omie-v1`) nomeia a
   // fatia do MERGE DE PREÇO, não a do corpo/prompt, e responde igual antes e depois desta entrega.
