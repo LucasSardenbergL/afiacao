@@ -4,6 +4,7 @@ import { omieDateToIso, classifyOmieTransient, classifyPedidosPage, gerarJanelas
 import { carregarProductMap } from "../_shared/mapas-paginados.ts";
 import { classificarErroAtpGate, classificarRetornoAtpGate } from "../_shared/atp-gate.ts";
 import { deltaEdicaoOben } from "../_shared/atp-edicao.ts";
+import { avaliarAssinaturaA2, CONTRATO_A2 } from "./assinatura-a2.ts";
 import type { BancoPostgrest } from "../_shared/paginate.ts";
 import { avaliarPagina, MAX_PAGINAS_LISTAGEM, MAX_PAGINAS_PEDIDOS, MAX_PAGINAS_POS_ESTOQUE, proximoTotalPaginas } from "../_shared/omie-paginacao.ts";
 
@@ -3570,14 +3571,34 @@ Deno.serve(async (req) => {
         // ⚠️ BUMP obrigatório a cada fatia que mude essa tabela-verdade.
         // `canary: true` acompanha o `probe_no_ar` histórico porque a receita SQL do guia lê
         // `content::jsonb->'canary'`: sem o campo o verificador leria NULL e concluiria "sem canária".
+        // ASSINATURA A2 (#1888): a tabela-verdade acima cobre o `decideAccountIdentity` do P0-B, e o
+        // #1888 não tocou aquele bloco (0 linhas) — sem isto a canária responde IGUAL num bundle com
+        // a prova positiva e num sem ela. Puro e IO-free como o resto do bloco: exercita
+        // `parseIdentitySnapshot` e `aplicarProvaPositivaNoCache` DEPLOYADOS sobre fixtures, mutando
+        // só Maps criados dentro do avaliador. Detalhe do desenho em `assinatura-a2.ts`.
+        const assinaturaA2 = avaliarAssinaturaA2({
+          parse: parseIdentitySnapshot,
+          aplicar: aplicarProvaPositivaNoCache,
+        });
         result = {
           success: true,
           canary: true,
-          contrato: "identidade-fail-closed-v1",
+          // ⚠️ O marcador NOMEIA a fatia que a canária verifica HOJE. O `identidade-fail-closed-v1`
+          // do #1922 já provava o #1888 por TRANSITIVIDADE (nasceu depois dele), mas responderia
+          // idêntico antes e depois desta fatia — e é esta que instala a prova COMPORTAMENTAL do A2,
+          // a única que sobrevive a um deploy em que o Lovable reinterpreta o código (#1272,
+          // #1445→#1478). Bumpar aqui exige bumpar junto o gate de `edge-money-path-invariants`, a
+          // tabela de `docs/agent/deploy.md` e o mapa de `_shared/sonda-versao-contrato_test.ts`.
+          contrato: "identidade-a2-client-to-user-v2",
           probe_no_ar: true, // a action respondeu → a derivação P0-B está no build deployado
           account,
-          ok: casosId.every((c) => c.ok), // true = a tabela-verdade deployada bate em TODOS os fixtures
+          // O `ok` agregado inclui a assinatura DE PROPÓSITO: se ficasse só com a tabela do P0-B, um
+          // bundle com o A2 revertido responderia `ok:true` e a receita de leitura concluiria
+          // "íntegro" — o falso verde que esta fatia existe para fechar.
+          ok: casosId.every((c) => c.ok) && assinaturaA2.ok,
           casos: casosId,
+          contrato_a2: CONTRATO_A2,
+          assinatura_a2: assinaturaA2,
         };
         break;
       }
