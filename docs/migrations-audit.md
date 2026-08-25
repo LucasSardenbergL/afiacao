@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **487** custom migrations totais
-- **1678** objetos esperados (criados por estas migrations)
+- **488** custom migrations totais
+- **1679** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 503
+  - `function`: 504
   - `rls_policy`: 446
   - `index`: 244
   - `cron_job`: 164
@@ -4087,6 +4087,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20260824232212_sync_state_remove_marcador_fossil_orders.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260824234500_sync_state_products_vendas_aposenta_writer_truncado.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
 
 ## Próximos passos por status
 
