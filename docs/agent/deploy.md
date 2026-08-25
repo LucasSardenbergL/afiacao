@@ -318,5 +318,15 @@ O SW usa `registerType: 'prompt'` (não `autoUpdate`): a versão nova **instala 
   cliente**. Bytes no servidor não fecham nenhuma verificação cujo sujeito seja o usuário — para
   essa, o oráculo tem de ser um efeito que só o código novo produz (uma linha que só ele grava, um
   evento que só ele emite), e o cliente precisa aceitar o update antes do teste.
+- **A 4ª camada tem SENSOR desde 2026-08-24: `build_id` em todo evento de analytics.** As 3 camadas
+  manuais do Lovable (Publish · edge · migration) terminam em "servido"; a 4ª é o **ACEITE do
+  cliente**, e ela não tinha medição — a divergência de 2026-08-24 só apareceu porque um toast
+  "Nova versão disponível" caiu num screenshot. Agora todo evento carrega o hash do chunk do entry
+  que o browser executou (`src/lib/build-id.ts` → super property no `initAnalytics`), no **mesmo
+  eixo** que o `verify-frontend.sh` (linha do `ENTRY=`, na skill `lovable-deploy-verify`) extrai do servidor (`/assets/index-*.js`) — os dois lados
+  comparam sem tabela de tradução, e um teste de paridade (`build-id-paridade.test.ts`) impede que
+  um dos regexes ande sozinho. Como ler e a conta de adoção: `docs/agent/analytics.md` §6.
+  ⚠️ **O sensor só responde a partir do Publish que o contém** — antes disso a propriedade é
+  ausente em 100% dos eventos, e ausente significa "build anterior à instrumentação", não "erro".
 - **Prova de build** (não confiar na config): `dist/sw.js` deve ter `skipWaiting` **só dentro do listener de `message`** (não no `install`) + `clientsClaim` presente. `dist/index.html` **sem** auto-register (por `injectRegister: false`).
 - **Transição única no 1º Publish com prompt mode:** clientes com o SW antigo (autoUpdate) auto-recarregam **uma última vez** ao pegar este build; daí em diante toda atualização vira o toast. Inerente, não dá pra evitar.
