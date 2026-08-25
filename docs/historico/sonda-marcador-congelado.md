@@ -481,3 +481,70 @@ testável sem git. **Os dois se cobriam** — tirar um deixava o outro segurando
 suíte ganhou um assert por furo, e a falsificação virou contrato executável em
 `scripts/mutcheck.d/sonda-versao-bump-gate.mut` (9 mutações, 8 PEGA, controle+ ✓): falsificação
 que só roda à mão é ausência de dado.
+
+## O bump da auditoria no ar — e a primeira leitura em produção do `fonte` (2026-08-25, ~12:3x UTC)
+
+O #2002 mergeou às **10:46:08 UTC**, deploy manual pedido pelo chat do Lovable **nomeando os quatro
+arquivos do diretório** (o bump vive em `versao.ts`; deployar só o `index.ts` deixaria o marcador
+velho e a verificação falharia por motivo errado). Sondado pela rota `{"probe":true}`:
+
+| campo | lido |
+|---|---|
+| `status_code` | 200 |
+| `edge` | `omie-analytics-sync` |
+| `versao` | **`v1.2-produtos-teto-500-e-partial-honesto`** |
+| `fonte` | **`d326e16d…f3857195`** — idêntico ao mapa da `main` |
+| `ok` · `probe` | `true` · `true` |
+
+**Esta é a primeira leitura em produção do campo `fonte`**, o fingerprint SERVIDO que o #1998
+instalou horas antes — e ela fecha o ciclo daquele PR: o mecanismo não só passa no CI, ele
+responde em prod e bate com o repo.
+
+**O que o `fonte` acrescenta ao `versao`, e o que ele continua NÃO provando.** O `versao` prova
+"o bundle é ≥ a fatia que definiu este slug" — é ancestralidade, e depende de alguém ter bumpado.
+O `fonte` prova que o **fecho transitivo dos imports** (o `index.ts`, os irmãos locais e o
+`_shared/` alcançável) tem os mesmos bytes da `main` — inclusive a metade que chega por `_shared/`
+sem tocar `index.ts` nem `versao.ts`, que é exatamente onde o bump por diff é cego. Os dois juntos
+respondem perguntas diferentes: *o que* mudou (slug) e *se a fonte inteira confere* (hash).
+⚠️ O que ele **não** prova continua valendo, e é do próprio #1998: **atomicidade** do deploy
+manual. O mapa `sonda-fingerprints.ts` é fonte também — um deploy que levasse o mapa novo com o
+`index.ts` velho responderia o hash novo e mentiria junto. Aqui os quatro arquivos foram pedidos
+de uma vez, mas isso é disciplina do pedido, não garantia do mecanismo.
+
+### A pergunta que a auditoria não conseguiu responder: metade resolvida, metade perdida — de propósito
+
+A seção anterior registra que, ao auditar, não deu para saber se o #1992 estava no ar: o dado era
+ambíguo e a sonda respondia igual nos dois casos. O deploy resolveu a metade que importa e **não**
+resolveu a outra, e a distinção é a tese deste documento:
+
+- **Resolvida (operacional):** o #1992 está no ar **agora**, provado — e por ancestralidade, não
+  por inspeção de dado. O `partial` de 27% do catálogo está corrigido em produção.
+- **Perdida (histórica):** se ele já estava no ar ONTEM continua sem resposta e **vai continuar**.
+  Bump tardio não devolve discriminação — é o corolário do início deste doc, agora exercitado numa
+  pergunta real que alguém de fato quis responder.
+
+Que a metade perdida seja irrelevante para a operação é sorte desta vez, não propriedade do
+método: bastaria a pergunta ser "desde quando o catálogo está completo?" para o silêncio custar.
+
+### Quando medir o sinal de PRODUTO — query, não recado
+
+O deploy prova que o CÓDIGO está servido; não prova que o comportamento mudou o dado. Linha de
+base no instante do deploy (`sync_state`, products/colacor_vendas): `status=complete`,
+`total_synced=4297`, `last_page=43`, `last_sync_at=2026-08-25 06:17:57+00` — run **anterior** ao
+deploy, e por isso não interpretável (é o run cuja natureza a auditoria não conseguiu decidir).
+
+O primeiro run POSTERIOR já roda com o `MAX_PAGINAS_PRODUTOS=500` e com o `status` honesto
+(`complete ? "complete" : "partial"`, sem o update incondicional que gravava `complete` por cima).
+A partir dele o campo passa a **significar** o que diz:
+
+```sql
+SELECT entity_type, account, status, total_synced, last_page, last_sync_at
+FROM sync_state WHERE entity_type = 'products' AND account = 'colacor_vendas';
+-- interpretável só com last_sync_at > 2026-08-25 10:46 UTC (o deploy):
+--   status='complete' => percorreu até o fim de verdade
+--   status='partial'  => não terminou — e agora isso é VERDADE, não o rótulo otimista de antes
+```
+
+⚠️ **`last_sync_at` anterior ao deploy = ausência de dado, não veredito.** Ler a linha acima sem
+conferir o timestamp é o mesmo erro que a auditoria quase cometeu ao tratar `last_page=43` como
+prova de travessia: o bundle velho gravava `last_page` com o total DECLARADO pelo Omie.
