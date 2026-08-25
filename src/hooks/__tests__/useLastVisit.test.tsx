@@ -224,6 +224,117 @@ describe('useRegistrarVisitaDashboard', () => {
     expect(emitidos).toHaveLength(0);
   });
 
+  /**
+   * O TIMER. Provado em produção (2026-08-25): o `fetch` com `keepalive:true` do
+   * `pagehide` NÃO sobrevive ao unload — mesmo caminho, mesmo token, mesma policy
+   * devolvem 201 com a página VIVA e nada quando a aba fecha de verdade. Enquanto
+   * a gravação dependesse de COMO o usuário sai, fechar a aba perdia a visita.
+   * O timer torna a gravação independente da saída: ao cruzar MIN_SESSION_MS a
+   * visita já está no banco.
+   */
+  it('GRAVA ao cruzar MIN_SESSION_MS sem unmount e sem pagehide — a saída deixou de ser requisito', async () => {
+    mockedUseAuth.mockReturnValue({ user: { id: 'user-timer' } } as ReturnType<typeof useAuth>);
+    const { builder, emitidos } = criarInsertPreguicoso();
+    mockedFrom.mockReturnValue(builder as unknown as ReturnType<typeof supabase.from>);
+
+    vi.useFakeTimers();
+    const agora = Date.now();
+    const relogio = vi.spyOn(Date, 'now').mockReturnValue(agora);
+    renderHook(() => useRegistrarVisitaDashboard(contexto), { wrapper });
+
+    relogio.mockReturnValue(agora + 5 * 60_000);
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+
+    expect(emitidos).toHaveLength(1);
+    expect(emitidos[0]).toMatchObject({ user_id: 'user-timer', persona: 'gestao' });
+
+    relogio.mockRestore();
+    vi.useRealTimers();
+  });
+
+  it('o timer NAO duplica: depois de gravar, o unmount reporta ja_gravado e nao insere de novo', async () => {
+    mockedUseAuth.mockReturnValue({ user: { id: 'user-timer2' } } as ReturnType<typeof useAuth>);
+    const { builder, emitidos } = criarInsertPreguicoso();
+    mockedFrom.mockReturnValue(builder as unknown as ReturnType<typeof supabase.from>);
+
+    vi.useFakeTimers();
+    const agora = Date.now();
+    const relogio = vi.spyOn(Date, 'now').mockReturnValue(agora);
+    const { unmount } = renderHook(() => useRegistrarVisitaDashboard(contexto), { wrapper });
+
+    relogio.mockReturnValue(agora + 5 * 60_000);
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    expect(emitidos).toHaveLength(1);
+
+    relogio.mockReturnValue(agora + 9 * 60_000);
+    unmount();
+    relogio.mockRestore();
+    vi.useRealTimers();
+
+    expect(emitidos).toHaveLength(1);
+    expect(mockedTrack).toHaveBeenCalledWith(
+      'dashboard.visita_tentativa',
+      expect.objectContaining({ motivo: 'ja_gravado' })
+    );
+  });
+
+  /**
+   * O effect tem deps `[user?.id]`: quando o login resolve DEPOIS do mount, ele
+   * re-roda e reagenda o timer. Se o reagendamento usasse MIN_SESSION_MS cru, a
+   * contagem reiniciaria e uma sessão que já corria há 4min só gravaria aos 9 —
+   * a espera dobra silenciosamente. Por isso o `restante` sai de `mountedAtRef`.
+   */
+  it('re-run do effect (login tardio) NAO reinicia a contagem — o restante sai do mount, nao do re-run', async () => {
+    mockedUseAuth.mockReturnValue({ user: undefined } as unknown as ReturnType<typeof useAuth>);
+    const { builder, emitidos } = criarInsertPreguicoso();
+    mockedFrom.mockReturnValue(builder as unknown as ReturnType<typeof supabase.from>);
+
+    vi.useFakeTimers();
+    const agora = Date.now();
+    const relogio = vi.spyOn(Date, 'now').mockReturnValue(agora);
+    const { rerender } = renderHook(() => useRegistrarVisitaDashboard(contexto), { wrapper });
+
+    // 4min sem usuário; o login só resolve agora
+    relogio.mockReturnValue(agora + 4 * 60_000);
+    await vi.advanceTimersByTimeAsync(4 * 60_000);
+    mockedUseAuth.mockReturnValue({ user: { id: 'user-tardio' } } as ReturnType<typeof useAuth>);
+    rerender();
+
+    // +1min => 5min DESDE O MOUNT. Com MIN_SESSION_MS cru o timer só cairia aos 9.
+    relogio.mockReturnValue(agora + 5 * 60_000);
+    await vi.advanceTimersByTimeAsync(1 * 60_000);
+
+    expect(emitidos).toHaveLength(1);
+    expect(emitidos[0]).toMatchObject({ user_id: 'user-tardio' });
+
+    relogio.mockRestore();
+    vi.useRealTimers();
+  });
+
+  it('desmontar ANTES dos 5min cancela o timer — nao grava depois de a tela ter sumido', async () => {
+    mockedUseAuth.mockReturnValue({ user: { id: 'user-timer3' } } as ReturnType<typeof useAuth>);
+    const { builder, emitidos, insert } = criarInsertPreguicoso();
+    mockedFrom.mockReturnValue(builder as unknown as ReturnType<typeof supabase.from>);
+
+    vi.useFakeTimers();
+    const agora = Date.now();
+    const relogio = vi.spyOn(Date, 'now').mockReturnValue(agora);
+    const { unmount } = renderHook(() => useRegistrarVisitaDashboard(contexto), { wrapper });
+
+    relogio.mockReturnValue(agora + 2 * 60_000);
+    await vi.advanceTimersByTimeAsync(2 * 60_000);
+    unmount();
+
+    // passa MUITO do limiar: se o timer sobrevivesse ao unmount, gravaria aqui
+    relogio.mockReturnValue(agora + 30 * 60_000);
+    await vi.advanceTimersByTimeAsync(28 * 60_000);
+    relogio.mockRestore();
+    vi.useRealTimers();
+
+    expect(insert).not.toHaveBeenCalled();
+    expect(emitidos).toHaveLength(0);
+  });
+
   it('reporta dashboard.visita_erro quando o banco recusa o insert (falha nao pode ser silenciosa)', async () => {
     mockedUseAuth.mockReturnValue({ user: { id: 'user-13' } } as ReturnType<typeof useAuth>);
     const { builder } = criarInsertPreguicoso({ code: '42501', message: 'permission denied' });
