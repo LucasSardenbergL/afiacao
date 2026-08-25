@@ -1628,3 +1628,64 @@ registra que parte veio de uso real, não de teste) — enquanto o PostHog, na *
 tinha **zero** eventos de browser. App gravando e telemetria muda, ao mesmo tempo, medidos lado a
 lado: é o estado *linha sem evento* do par tabela × evento em forma pura, e a prova de que o
 silêncio não é o app parado nem o deploy quebrado.
+
+## O Publish saiu e a adoção continuou 0% — mas o zero é do CANAL, e isso se prova de fora
+
+A primeira leitura pós-Publish do `build_id` aconteceu em `2026-08-25T01:33Z`, e é o caso limpo da
+armadilha que este arquivo persegue: **um número perfeitamente calculável que não mede o que parece
+medir.**
+
+O Publish saiu — entry de `index-IM3W0waG` para `index-D1GiFr1h` — e o bundle servido **contém o
+sensor**, `e.register({build_id:ii()})` literal no chunk de 236 KB. As duas hipóteses baratas
+morreram antes da query: não é *o Publish não saiu*, nem *saiu sem a instrumentação*.
+
+A query de adoção devolveu **a linha do baseline, intacta**: `(sem instrumentacao) | 3 clientes |
+66 eventos`. Adoção = `0/3` = **0%**.
+
+### Por que reportar "0% de adoção" ali seria fabricar
+
+A fórmula da `analytics.md` §6 divide *clientes com o build atual* por *clientes na janela de 7
+dias*. O numerador só pode nascer depois do Publish; o denominador vem dos sete dias inteiros. Os
+dois lados da razão vivem em janelas que **não se sobrepõem**, e a divisão não avisa:
+
+| leitura | resultado |
+|---|---|
+| eventos após `00:50Z` (servidor ainda no build velho) | **0 eventos, 0 clientes** |
+| último evento com `$lib` — o cano do `build_id` | `2026-08-23T11:09:23Z` (~38 h) |
+| via do único evento recente do denominador | `API_direta` (o próprio `curl`) |
+
+O denominador inteiro é pré-Publish. `0/3` não é *três clientes viram e nenhum atualizou*; é
+**nenhuma observação desde o Publish** — o mesmo `0%` impresso por dois estados do mundo diferentes.
+
+### O controle que decide não estava no PostHog
+
+A tentação seguinte era explicar o silêncio pela sazonalidade — 22 h de uma segunda, e a hora `01Z`
+tem 9 eventos em 2 dias dos últimos 30. O argumento é sedutor e **estava errado**: `dashboard_visits`
+mostra, na mesma madrugada, linha às `01:10:33Z` e outra às `01:32:30Z` — esta **um minuto antes da
+leitura do PostHog** —, ambas `company_selection='oben'`, 23 e 16 minutos de sessão. Gente usando o
+app, autenticada, em produção, enquanto o PostHog registrava zero.
+
+**A regra:** o `#1967` estabeleceu que um cano com dois caminhos exige controle POR caminho. O
+corolário que faltava é mais duro — **o controle de exposição precisa vir de FORA do cano medido**.
+Um controle interno some junto com o canal que ele deveria vigiar: se o PostHog inteiro emudece, o
+controle por caminho emudece também, e o silêncio volta a ser indistinguível de ausência de
+fenômeno. Aqui o controle de fora foi o **PostgREST** — outro transporte, outro destino, mesmo
+browser, mesma janela. Um entregou, o outro não. Isso não localiza a causa, mas **elimina a classe
+inteira** de explicações do lado do fenômeno (ninguém usou, ninguém adotou, fim de expediente) e
+deixa só o canal.
+
+Vale a simetria com a rede: `*.supabase.co` entrega e `us.i.posthog.com` não, no mesmo browser e nos
+mesmos minutos — o que é o feitio de bloqueador de rastreadores, e não o de rede caída. O `#1973` já
+tinha eliminado o servidor (178/178 chunks, key embutida, `initAnalytics` chamado); o par de canos
+elimina o resto do que se mede daqui.
+
+### O que fica pendurado
+
+A previsão do `#1964` — *"que aqui é o sensor funcionando, não falhando"* — segue **sem veredito**.
+Não foi confirmada nem refutada: com o cano mudo, `0%` é compatível com as duas leituras, que é
+exatamente o que o `#1967` advertiu que aconteceria. O sensor de `build_id` está construído,
+publicado e servido; o que falta não é dele.
+
+**O gate é um evento com `$lib='web'`.** Enquanto `max(timestamp)` desse recorte não passar de
+`2026-08-23T11:09:23Z`, toda releitura da adoção reconfirma o mesmo zero com cara de medição nova —
+e a §4 já ensinou o quanto isso custa.
