@@ -141,13 +141,29 @@ media o sync.
 
 `51` crons ativos usam `net.http_post` e **`0` estão sem `timeout_milliseconds`** — a armadilha do default
 de 5s está fechada em prod. Dos `10` com teto ≤60s: `103`/`104`/`154`/`155` respondem `202` (imunes);
-`44`/`60`/`102`/`109` rodaram na janela de retenção de `net._http_response` com **`timed_out=0` em 206
-respostas**; `75` dispara só `sync_categorias` (max 4,1s) e `sync_contas_correntes` (max 28,3s) por
+`44`/`60`/`102`/`109` rodaram na janela de retenção de `net._http_response` sem estouro (ver a ⚠️ abaixo:
+o filtro certo é `error_msg IS NOT NULL`, **não** `timed_out`); `75` dispara só `sync_categorias` (max 4,1s) e `sync_contas_correntes` (max 28,3s) por
 `fin_sync_log`/30d; `59` se dimensiona para ~10s no próprio arquivo (`index.ts:139`). Nenhum aperto real.
 
 O mais estreito do parque é outro, e é **síncrono**: `omie-financeiro`/`sync_movimentacoes` (jobids 78/79,
 teto 150000) tem **max 124,1s** e p95 98,3s em 30 dias — 83% do teto. Sem estouro (`fin_sync_log`: 4549
 `complete`, 0 sem `completed_at`), mas é ali que uma folga compraria alguma coisa, não no 155.
+
+### ⚠️ A varredura acima quase aprovou por CEGUEIRA (achado do fecho, 2026-08-25)
+
+A primeira passada contou `count(*) FILTER (WHERE timed_out)` e leu **`0` em 206 respostas** como "nenhum
+estouro". **`timed_out` não é o campo que se preenche.** A resposta `59887` estava cortada aos 150s —
+`error_msg = "Timeout of 150000 ms reached. Total time: 150004.306000 ms"` — com `timed_out` **NULL** e
+`status_code` **NULL**. O filtro certo é `error_msg IS NOT NULL OR status_code IS NULL`.
+
+Ou seja: **existe ≥1 estouro real de `150000` na janela de 6h** e a conclusão "nenhum aperto real" vale só
+para os crons cujo teto foi provado por OUTRA via (o `202` do 103/104/154/155, o `fin_sync_log` do 75, o
+dimensionamento do 59). Qual cron emitiu o `59887` ficou **em aberto**: 20 crons dispararam naquele
+`08:30:00` e o `net._http_response` não carrega a URL — é a ambiguidade de emissor de sempre. Fechá-la
+exige observar dentro da janela de retenção; virou chip próprio.
+
+Isto é a lição 1 da própria `/fecho` aplicada a si mesma: **ausência de sinal não é aprovação** — e um
+campo que nunca se preenche produz ausência de sinal indistinguível de saúde.
 
 ## Como revalidar
 
