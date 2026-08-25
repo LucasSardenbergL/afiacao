@@ -49,6 +49,7 @@ type FuncaoCodigo =
   | 'FUNCAO_ANCORA_NAO_DECLARADA'
   | 'FUNCAO_FECHO_PENDENTE'
   | 'FUNCAO_GRANT_NAO_PARSEAVEL'
+  | 'FUNCAO_DROP_NAO_PARSEAVEL'
   | 'FUNCAO_DEFAULT_PRIVILEGE_ALTERADO'
   // exclusivos do audit de prod (compararExecuteProd):
   | 'FUNCAO_AUSENTE_EM_PROD'
@@ -81,15 +82,55 @@ function mencionaFuncao(stmt: string, schema: string, name: string): boolean {
   return new RegExp(`(?<![\\w.])(?:${schema}\\.)?"?${name}"?(?!\\w)`, 'i').test(stmt);
 }
 
-/** Alvos de `DROP FUNCTION [IF EXISTS] a(…), b(…)` — normalizados. Lista múltipla é SQL válido. */
-function alvosDrop(stmt: string): string[] {
-  const m = /^DROP\s+FUNCTION\s+(?:IF\s+EXISTS\s+)?([\s\S]+)$/i.exec(stmt);
-  if (!m) return [];
+/** Elementos de topo de uma lista separada por vírgula. A vírgula DENTRO de parênteses não separa:
+ *  `f(uuid, text)` e `numeric(10,2)` são um elemento só. */
+function elementosDeTopo(lista: string): string[] {
   const out: string[] = [];
-  const re = new RegExp(`(?:(${IDENT})\\s*\\.\\s*)?(${IDENT})\\s*\\(`, 'gi');
-  let g: RegExpExecArray | null;
-  while ((g = re.exec(m[1])) !== null) out.push(`${unq(g[1]) || 'public'}.${unq(g[2])}`);
+  let prof = 0;
+  let atual = '';
+  for (const ch of lista) {
+    if (ch === '(') prof++;
+    else if (ch === ')') prof--;
+    else if (ch === ',' && prof === 0) {
+      out.push(atual);
+      atual = '';
+      continue;
+    }
+    atual += ch;
+  }
+  out.push(atual);
   return out;
+}
+
+/** Alvos de `DROP FUNCTION|ROUTINE [IF EXISTS] a(…), b, c(…) [CASCADE|RESTRICT]` — normalizados.
+ *
+ *  O corte é POSICIONAL: o NOME que ABRE cada elemento da lista. Casar `nome(` — exigir o
+ *  parêntese — media a GRAFIA e concluía o EFEITO, e o efeito é o mesmo sem ela: a lista de
+ *  argumentos é OPCIONAL desde o PG10 quando o nome é único no schema, e `ROUTINE` é sinônimo que
+ *  derruba função igual. Medido em PG17: `DROP FUNCTION public.f;` + `CREATE` deixa `proacl` NULL
+ *  e devolve EXECUTE a `anon` exatamente como a forma com args (`DROP ROUTINE`, idem) — enquanto
+ *  `CREATE OR REPLACE` preserva o ACL. Sete grafias passavam caladas por esse `(`.
+ *
+ *  `entendido: false` marca elemento que o parser NÃO leu; o chamador trata como fail-closed,
+ *  igual ao ramo do GRANT. `DROP PROCEDURE` fica de fora de propósito: o PG recusa derrubar função
+ *  por ele (`is not a procedure`), então não é vetor — e se um dia mencionar função protegida, cai
+ *  no fail-closed do chamador em vez de virar alvo inventado. */
+function alvosDrop(stmt: string): { alvos: string[]; entendido: boolean } {
+  const m = /^DROP\s+(?:FUNCTION|ROUTINE)\s+(?:IF\s+EXISTS\s+)?([\s\S]+)$/i.exec(stmt);
+  if (!m) return { alvos: [], entendido: true };
+  const cabeca = new RegExp(`^(?:(${IDENT})\\s*\\.\\s*)?(${IDENT})`, 'i');
+  const alvos: string[] = [];
+  let entendido = true;
+  for (const el of elementosDeTopo(m[1])) {
+    const t = el.trim().replace(/\s*\b(?:CASCADE|RESTRICT)\s*$/i, '').trim();
+    const g = t === '' ? null : cabeca.exec(t);
+    if (!g) {
+      entendido = false;
+      continue;
+    }
+    alvos.push(`${unq(g[1]) || 'public'}.${unq(g[2])}`);
+  }
+  return { alvos, entendido };
 }
 
 /** Alvo de `CREATE [OR REPLACE] FUNCTION x(…)`. Julga o ALVO, não a menção: o CORPO de uma função
@@ -118,8 +159,12 @@ function parseAcl(stmt: string, verbo: 'GRANT' | 'REVOKE'): AclStmt | null {
   const [, privRaw, onRaw, rolesRaw] = m;
   const execute = /\bEXECUTE\b/i.test(privRaw) || /\bALL\b/i.test(privRaw);
   if (!execute && !/\b(SELECT|INSERT|UPDATE|DELETE|USAGE|TRIGGER|REFERENCES)\b/i.test(privRaw)) return null; // privilégio irreconhecível → fail-closed
-  const all = /\bALL\s+FUNCTIONS\s+IN\s+SCHEMA\s+(\S+)/i.exec(onRaw);
-  const temAlvo = all !== null || /\bFUNCTION\b/i.test(onRaw);
+  // `ROUTINES` alcança as FUNÇÕES do schema tanto quanto `FUNCTIONS` (PG11+), e `ROUTINE` é
+  // sinônimo de `FUNCTION` no alvo singular. Ler só a grafia `FUNCTION` media a PALAVRA e concluía
+  // o alcance: `GRANT EXECUTE ON ALL ROUTINES IN SCHEMA public TO anon` reabria as 43 de uma vez,
+  // calado (medido). `PROCEDURES` fica de fora de propósito — não alcança função.
+  const all = /\bALL\s+(?:FUNCTIONS|ROUTINES)\s+IN\s+SCHEMA\s+(\S+)/i.exec(onRaw);
+  const temAlvo = all !== null || /\b(?:FUNCTION|ROUTINE)\b/i.test(onRaw);
   const roles = rolesRaw
     .replace(/\bWITH\s+GRANT\s+OPTION\b/i, '')
     .replace(/\bCASCADE\b|\bRESTRICT\b/gi, '')
@@ -172,13 +217,14 @@ export function auditGrantsFuncoes(
   // da medição. Fora do laço por função: o achado é do projeto, não de uma função.
   for (const m of pre) {
     for (const st of m.stmts) {
-      if (/^ALTER\s+DEFAULT\s+PRIVILEGES\b/i.test(st) && /\bON\s+FUNCTIONS\b/i.test(st)) {
+      // `ON ROUTINES` muda a MESMA premissa que `ON FUNCTIONS` — a grafia difere, o efeito não.
+      if (/^ALTER\s+DEFAULT\s+PRIVILEGES\b/i.test(st) && /\bON\s+(?:FUNCTIONS|ROUTINES)\b/i.test(st)) {
         out.push({
           level: 'warn',
           codigo: 'FUNCAO_DEFAULT_PRIVILEGE_ALTERADO',
           funcao: '—',
           file: m.file,
-          msg: `ALTER DEFAULT PRIVILEGES sobre FUNCTIONS — o ACL que uma função recriada herda mudou. A medição que sustenta scripts/authz-funcoes-fechadas.ts (pg_default_acl, 2026-08-15) precisa ser refeita.`,
+          msg: `ALTER DEFAULT PRIVILEGES sobre FUNCTIONS/ROUTINES — o ACL que uma função recriada herda mudou. A medição que sustenta scripts/authz-funcoes-fechadas.ts (pg_default_acl, 2026-08-15) precisa ser refeita.`,
         });
       }
     }
@@ -250,8 +296,24 @@ export function auditGrantsFuncoes(
       for (const st of m.stmts) {
         if (!st) continue;
 
-        if (/^DROP\s+FUNCTION\b/i.test(st)) {
-          if (alvosDrop(st).includes(chave)) dropPendente = true;
+        if (/^DROP\s+(?:FUNCTION|ROUTINE)\b/i.test(st)) {
+          const d = alvosDrop(st);
+          if (d.alvos.includes(chave)) {
+            dropPendente = true;
+            continue;
+          }
+          // fail-closed simétrico ao ramo do GRANT: um DROP que CITA a função protegida sem que ela
+          // tenha saído da lista de alvos é forma que o parser não leu — e um parser que não leu não
+          // pode afirmar que o ACL sobreviveu.
+          if (mencionaFuncao(st, schema, name)) {
+            out.push({
+              level: 'error',
+              codigo: 'FUNCAO_DROP_NAO_PARSEAVEL',
+              funcao: chave,
+              file: m.file,
+              msg: `DROP FUNCTION/ROUTINE menciona ${chave} numa forma que o parser não entendeu — não posso garantir que o ACL sobreviveu (fail-closed). DROP+CREATE reseta o ACL e devolve EXECUTE ao default do projeto. Ajuste scripts/lib/authz-funcoes.ts.`,
+            });
+          }
           continue;
         }
         if (/^CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\b/i.test(st)) {
