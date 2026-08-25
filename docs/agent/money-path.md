@@ -231,6 +231,20 @@ Helper TS puro (testado com vitest) **espelhado verbatim** no edge (Deno não im
 
 Edge só-TS (sem contraparte SQL): a paridade vira **textual no CI** — bloco entre `// MIRROR-START/END` comparado normalizado src×edge (pega reescrita do Lovable no deploy) — **mais** uma **canária comportamental** `{canary:true}` staff-gated que roda o helper REAL deployado com fixture fixo e retorna `{resolved, expected, ok}`. Probe HTTP = única prova do COMPORTAMENTO em produção: o guard textual cobre a FONTE, a canária cobre o DEPLOY. ⚠️ A canária prova "helper deployado + lógica certa", **não** que o real-path usa o helper (isso é o guard textual + paridade). Ex.: merge de preço do `analyze-unified-order` (#1089); `identidade_probe` (`omie-vendas-sync`); `doc_ambiguo_probe` (`omie-analytics-sync`, P1b — indispensável ali: a ausência do helper é invisível no dado, a proof-table só encolhe com duplicata-CNPJ real na conta, que não há).
 
+**"Define E chama" não prova que o produto do helper CHEGA a alguém.** O guard usual do espelho —
+`expect(src).toMatch(/helper\(/)` mais a contagem de ≥2 menções — casa o NOME e conclui o EFEITO.
+Quando o helper é PURO (o valor de RETORNO é o produto), `helper(args);` como sentença solta calcula
+tudo e joga fora, e o gate fica verde sobre a edge que voltou ao comportamento proibido. Medido em
+2026-08-25: 7 asserts do `edge-money-path-invariants` aprovavam a forma descartada (identidade
+self-service, fail-closed de doc ambíguo, classificação de lote, owner-map, elegibilidade e ordem da
+fila de leadtime, acumulador de uso de cache). Ancore na FRONTEIRA com `vereditoFronteira` de
+`@/lib/gates/retorno-consumido` — assert POSICIONAL, porque enumerar embrulhos (`const X = helper(`)
+reprova predicado de `.filter`, comparador de `.sort`, propriedade de objeto e ramo de ternário, e o
+conserto de um gate que reprova código correto é sempre afrouxá-lo. Cuidado gêmeo: `descartes === 0`
+sozinho aprova ZERO chamadas — o veredito trata "não encontrei" como vermelho, senão uma renomeação
+apaga o guard em silêncio. Não vale para função chamada pelo EFEITO colateral (`await derivar(...)`
+solto é legítimo): ali o assert certo é o posicional do próprio site.
+
 ## A MESMA exceção pode ser defesa num writer e defeito em outro — a diferença é a EVIDÊNCIA
 
 `omie_customer_account_map` tem duas UNIQUEs (`(user_id,account)` e `(codigo,account)`), e dois writers gravavam com o mesmo `ON CONFLICT (user_id, account)`. Quando um código muda de dono, o `23505` da segunda UNIQUE não é tratado. Nos dois writers é a mesma SQLSTATE — e o veredito é oposto:
