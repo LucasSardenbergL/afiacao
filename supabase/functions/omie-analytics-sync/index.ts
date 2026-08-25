@@ -281,30 +281,22 @@ async function updateSyncState(
 // sync_state preso em 'running'). Mesmo padrão provado do syncNaoVinculados (#383): paginado p/
 // furar o cap de 1000 do PostgREST.
 
-// Map<omie_codigo_cliente, user_id> — quem JÁ está vinculado, resolvido por CÓDIGO.
+// Map<omie_codigo_cliente, user_id> — quem JÁ está vinculado, resolvido por CÓDIGO, DENTRO da conta.
 //
 // [P0-B-bis Fatia 5] Esta era a ÚLTIMA leitura de `omie_clientes` em edge alguma, e o `DROP TABLE`
 // a quebraria.
 //
-// ⚠️ PARA QUE ESTE MAPA AINDA SERVE, depois do hotfix Codex-C (#1444): **só para chavear as TAGS**
-// do cadastro Omie (`is_fornecedor` / `excluir_da_carteira`, :733). Ele NÃO alimenta mais nem o
-// ledger nem a proof — o #1444 passou os dois para a lista DOCUMENT-first (`accountMapByUser`),
-// justamente porque resolver por código a partir do espelho sem conta podia escolher o user errado
-// numa admissão nova. Uma versão anterior deste comentário justificava a união dizendo que "migrar
-// só para a proof ENCOLHERIA a membership": esse argumento MORREU com o #1444 e não deve ser
-// ressuscitado — a membership dos 1633 clones já está no ledger desde o backfill da Fatia 0, e o
-// acumulador não encolhe.
+// ⚠️ PARA QUE ESTE MAPA SERVE, depois do hotfix Codex-C (#1444): **só para chavear as TAGS** do
+// cadastro Omie (`is_fornecedor` / `excluir_da_carteira`). Ele NÃO alimenta o ledger nem a proof —
+// o #1444 passou os dois para a lista DOCUMENT-first (`accountMapByUser`), justamente porque
+// resolver por código a partir do espelho sem conta podia escolher o user errado numa admissão nova.
 //
-// O que continua valendo, e é o motivo REAL da união: a tag `excluir_da_carteira` decide se um
-// cliente sai da carteira. Aplicá-la ao user errado — ou deixar de aplicá-la — é money-path. Então o
-// mapa tem de resolver o user CERTO, e resolver o máximo de clientes DA CONTA DO RUN:
-//   • `omie_customer_account_map` (proof) é DOCUMENT-first ⇒ os ~1633 "clones" (users Omie sem
-//     `profiles.document`, os aliases fiscais legítimos do grupo) nunca entram nela.
-//   • `customer_canonical_alias.alias_omie_codigo` tem justamente o par (clone → código) que falta.
-// Sem o alias, no run `servicos` os clones deixariam de ser resolvidos por código e cairiam em
-// `userByDoc` — que não os tem (não têm profile) ⇒ ficariam SEM tag, mudança silenciosa de
-// comportamento. Com o filtro de conta abaixo, o alias só entra no run a que pertence (todos os
-// 1633 são `alias_conta='servicos'`; na conta oben eles são ZERO, medido).
+// ⚠️ E as tags são `vendas`-ONLY (`tagRows = account === "vendas" ? … : []`), assim como o ledger.
+// Em `servicos` e `colacor_vendas` este mapa alimenta só `upsertByUser`, que NINGUÉM lê — ou seja,
+// fora de `vendas` ele é INERTE. Foi exatamente por isso que a união com `customer_canonical_alias`
+// pôde congelar o sync de `servicos` por 37 dias sem deixar um único número ERRADO no banco: o dano
+// foi de AUSÊNCIA (proof e frescor parados), não de valor adulterado. A fonte alias saiu em
+// 2026-08-25; a medição que prova o no-op está no bloco dentro da função.
 //
 // ⚠️ O MAPA É POR CONTA, não global — corrigido após `/codex challenge` xhigh, que refutou a 1ª
 // versão (Map global) e a refutação foi VERIFICADA por medição. `omie_codigo_cliente` é único
@@ -312,27 +304,6 @@ async function updateSyncState(
 // global, o último `map.set` vence em silêncio e um código do run oben podia resolver o user de
 // colacor — que então receberia as tags Omie de OUTRO cliente, inclusive `excluir_da_carteira`.
 // Colisão hoje é zero, mas isso é coincidência de DADO, não invariante de schema.
-//
-// É também o que responde à crítica do hotfix Codex-C a este mapa ("vem do espelho legado SEM conta
-// — a mesma fonte poluída que este épico inteiro existe para aposentar"): com o filtro de conta ele
-// deixa de ser sem-conta. A resolução por código passa a ser account-correta, como já era em
-// `fetchAllOmieClienteCodigos`.
-//
-// A medição que fechou a questão (psql-ro, 2026-07-18) — filtrar por conta parece "perder" 37 pares
-// do espelho, e não perde nada:
-//   • 37/37 têm o par (código, user) casando em OUTRA conta ⇒ era o espelho guardando o código
-//     NÃO-oben do user (ele é `UNIQUE(user_id)`, 1 linha sobrescrita — o "mix de contas" conhecido).
-//     No run oben esses códigos NUNCA aparecem: o Omie oben só devolve códigos oben. Filtrar CORRIGE
-//     um falso-positivo, não encolhe cobertura.
-//   • 37/37 já estão no ledger ⇒ a membership não muda.
-//   • Códigos de alias presentes na conta oben: ZERO. Os 1.633 aliases são todos `alias_conta =
-//     'servicos'`; no Map global eles eram 1.633 entradas que jamais casavam no run oben.
-// É a mesma correção que `fetchAllOmieClienteCodigos` já aplica logo abaixo (`.eq("account", ...)`).
-//
-// FILTRA `customer_canonical_alias.status='active'` — também correção do Codex. O argumento "não
-// encolher a membership" que eu usara para não filtrar é INVÁLIDO aqui: o ledger é acumulador, então
-// filtrar na ADMISSÃO não remove ninguém já admitido. Sem o filtro, um alias rebaixado a `inactive`
-// seguiria admitindo membro novo como `verified` — e a admissão é irreversível.
 async function fetchCodigoUserMap(
   db: SupabaseClient,
   account: OmieAccount,
@@ -365,31 +336,33 @@ async function fetchCodigoUserMap(
   // ordem indefinida e uma linha pode repetir ou SUMIR entre páginas. Desempate por user: ordenar
   // só pelo código deixa a paginação INSTÁVEL se o código repetir.
 
-  // 1) aliases fiscais (clones) DA CONTA DO RUN: o par (código → user) que a proof document-first
-  // nunca tem. `alias_conta` guarda o slug INTERNO do Omie (o mesmo enum de `account`), ≠ da proof,
-  // que guarda o canônico (`empresa`).
-  const aliasRows = await fetchAll<{ alias_omie_codigo: number | null; alias_user_id: string | null }>(
-    (from, to) =>
-      db
-        .from("customer_canonical_alias")
-        .select("alias_omie_codigo, alias_user_id")
-        .eq("alias_conta", account)
-        .eq("status", "active")
-        .not("alias_omie_codigo", "is", null)
-        .order("alias_omie_codigo")
-        .order("alias_user_id")
-        .range(from, to),
-    `fetch customer_canonical_alias map (${account})`,
-  );
-  for (const r of aliasRows) {
-    if (r.alias_omie_codigo != null && r.alias_user_id) {
-      setOuFalha("alias", Number(r.alias_omie_codigo), r.alias_user_id);
-    }
-  }
-  const nAlias = map.size;
-
-  // 2) proof account-correta DA MESMA conta. Se um código aparecer nas duas fontes com users
-  // diferentes, `setOuFalha` aborta — dentro de uma conta isso é corrupção, não preferência.
+  // FONTE ÚNICA: a proof account-correta DA CONTA DO RUN.
+  //
+  // Até 2026-08-25 este mapa lia TAMBÉM `customer_canonical_alias` (os aliases fiscais / clones
+  // `@placeholder.local`, sem `profiles`) — e a UNIÃO das duas fontes congelou o sync de `servicos`
+  // por 37 dias. As duas guardam, POR DESENHO, duas identidades da MESMA entidade comercial (o clone
+  // e o canônico), então `setOuFalha` via 1633 "colisões" e abortava o run todo dia
+  // (`sync_state.status='error'`, 2026-07-19 → 2026-08-24). Em 1633/1633 o user da proof era
+  // exatamente o `canonical_user_id` do alias: falso-positivo de 100%.
+  //
+  // Ler só a proof é NO-OP DE COMPORTAMENTO, não escolha de preferência — cada passo medido:
+  //   • o alias só acrescentava CONFLITO: os 1633 códigos de alias JÁ estavam todos na proof
+  //     (0 códigos exclusivos do alias) ⇒ o mapa resultante é idêntico;
+  //   • aliases ativos existem SÓ com `alias_conta='servicos'` (0 em vendas / colacor_vendas) — e é
+  //     justamente em `servicos` que este mapa não tem consumidor: tags são `vendas`-only
+  //     (`tagRows = account === "vendas" ? … : []`) e o ledger também. `upsertByUser`, o único outro
+  //     destino, não é lido por ninguém;
+  //   • a proof (`accountMapByUser`) é montada por DOCUMENTO, não por este mapa, e o `continue` logo
+  //     após a resolução não a altera: sem match por documento não nasce linha de proof de todo jeito.
+  // ⇒ o argumento antigo — "sem o alias os clones ficariam SEM tag no run servicos" — era FALSO: o run
+  // `servicos` não grava tag nenhuma. Não o ressuscite.
+  //
+  // A validação alias×proof continua desejável, mas como DATA-HEALTH separado: ela não pode derrubar
+  // um sync cujo resultado não depende de alias (parecer Codex gpt-5.6-sol xhigh, 2026-08-25).
+  //
+  // `setOuFalha` PERMANECE: hoje `UNIQUE(omie_codigo_cliente, account)` torna a colisão impossível
+  // dentro de uma conta, mas isso é invariante de SCHEMA da proof — se a fonte mudar, o guard é a
+  // única coisa entre um código ambíguo e o user errado no ledger.
   const proofRows = await fetchAll<{ omie_codigo_cliente: number | null; user_id: string | null }>(
     (from, to) =>
       db
@@ -409,8 +382,7 @@ async function fetchCodigoUserMap(
   }
 
   console.log(
-    `[Sync ${account}] mapa código→user (conta ${empresa}): ${map.size} códigos ` +
-      `(alias ${nAlias} + proof ${map.size - nAlias})`,
+    `[Sync ${account}] mapa código→user (conta ${empresa}): ${map.size} códigos (fonte: proof)`,
   );
   return map;
 }
