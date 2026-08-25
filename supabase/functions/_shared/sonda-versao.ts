@@ -11,6 +11,8 @@
 // tem de ter UM dono e UM conjunto de testes. Cada edge contribui só o seu marcador `VERSAO`.
 // (Import entre diretórios de function não é sancionado no deploy do Supabase; `_shared/` é.)
 
+import { FONTE_SHA256 } from "./sonda-fingerprints.ts";
+
 export type DecisaoSonda =
   | { tipo: "sonda" }
   | { tipo: "disparo" }
@@ -94,11 +96,27 @@ export function classificarFlag(body: unknown, campo: string): DecisaoSonda {
  * vez no `versao.ts` da edge — o `index.ts` segue chamando `respostaSonda(VERSAO)` sem mudança, e
  * não há como uma chamada nova esquecer de passar o nome.
  */
+/**
+ * O `fonte` da resposta — fingerprint da FONTE da edge (fecho transitivo dos imports locais,
+ * `_shared/` incluso), gerado por `scripts/sonda-fingerprint.ts`.
+ *
+ * Por que ele existe ao lado do `versao`, e não no lugar dele: os dois respondem perguntas
+ * diferentes. O `versao` é humano e NOMEIA a fatia ("v1.1-mapa-codigo-sem-alias") — é o que faz a
+ * resposta ser legível. O `fonte` é derivado e diz QUE a fonte mudou, sem depender de ninguém
+ * lembrar de bumpar. O gate `sonda:bump` (#1993) cobre a omissão dentro da pasta da edge e deixou
+ * `_shared/` de fora por medição (~12 bumps à mão por PR); o `fonte` cobre justamente `_shared/`,
+ * porque o CI o REGENERA e o fan-out não custa disciplina.
+ *
+ * `?? "nao-mapeada"` em vez de lançar: esta função roda no caminho da SONDA, e sonda que derruba a
+ * edge apaga a única prova de deploy que existe. O valor literal é auto-denunciante na resposta, e
+ * o gate `sonda:fingerprint` já reprova edge instrumentada ausente do mapa — a falha fica no CI,
+ * onde alguém a lê, e não em runtime, onde ela cegaria a verificação.
+ */
 export function criarRespostaSonda(edge: string) {
   return function respostaSonda(
     versao: string,
-  ): { ok: true; probe: true; versao: string; edge: string } {
-    return { ok: true, probe: true, versao, edge };
+  ): { ok: true; probe: true; versao: string; edge: string; fonte: string } {
+    return { ok: true, probe: true, versao, edge, fonte: FONTE_SHA256[edge] ?? "nao-mapeada" };
   };
 }
 

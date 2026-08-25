@@ -200,3 +200,52 @@ possível a não ser um deploy no-op só para alinhar marcador (o custo que a se
 tardio recupera" já nomeia); o `schedule` é estruturalmente cego (evento sem base); e omissão
 ANTIGA não é descoberta — o gate é de transição. É **fail-CLOSED**: sem base determinável ou sem
 `VERSAO` legível, reprova.
+
+## A METADE de `_shared/` fechada por fingerprint SERVIDO (2026-08-25)
+
+O gate acima diz, no próprio cabeçalho, o que não alcança: `_shared/` fica **fora** dele de
+propósito, e a razão é medida — cobri-lo daria 290 pares edge×fatia em 25 fatias, **~12 bumps À
+MÃO por PR**. A conclusão está certa; o buraco continua aberto. Mudança de comportamento pode
+chegar inteira por `_shared/` sem tocar `index.ts` nem `versao.ts`: foi o que o `8ee8afa15` fez,
+trazendo metade da reescrita do pós-login Sayerlack via `_shared/sayerlack-pos-login.ts`.
+
+`scripts/sonda-fingerprint.ts` (`bun run sonda:fingerprint`) fecha isso pela via que o Codex
+apontou — **mudar a propriedade, não o verificador**. Para cada edge instrumentada, SHA-256 sobre
+o **fecho transitivo dos imports locais** a partir do `index.ts`, `_shared/` incluso; o mapa vai
+em `_shared/sonda-fingerprints.ts` e é **servido** por `criarRespostaSonda` no campo `fonte`.
+
+Três propriedades que o gate por diff não tem:
+
+1. **O fan-out deixa de custar disciplina.** Os ~12 bumps por PR eram inviáveis porque um HUMANO
+   os escrevia. O CI **regenera** — e o fan-out é CORRETO: os 12 bundles mudaram mesmo. Medido ao
+   vivo: um `echo` em `_shared/auth.ts` fez o gate sinalizar **27 edges**.
+2. **Roda em TODO evento.** É gate de ESTADO, não de diff: não precisa de base ref, então cobre o
+   `push` do Lovable e o cron da `main` — e descobre desvio ANTIGO, não só o da fatia.
+3. **Servir é o que fecha o furo indecidível.** Um fingerprint só no repo é escrituração: com
+   `VERSAO=X` em prod e o repo dizendo X↔F1 enquanto o HEAD está em F2, não dá para saber se prod
+   tem F1 ou F2 — os dois estados respondem idêntico. Quem discrimina é a RESPOSTA mudar. É também
+   por isso que regravar só o hash deixa de ser exploit: a resposta muda junto, logo a
+   discriminação foi preservada.
+
+**Calibração** (`scripts/sonda-fingerprint.test.ts`, 14 casos): mexer em `index.ts`, em helper
+local, **em dependência `_shared/`**, renomear (bytes idênticos) e deletar (fail-closed, lança)
+TÊM de mover o hash; mexer em `*_test.ts` **não** pode. O mapa gerado fica fora do próprio fecho —
+senão gravá-lo mudaria o hash (ponto-fixo), provado por caso dedicado e por `--write` idempotente.
+
+⚠️ **Par de controle no teste da resposta.** O teste que pina a forma usa edge FICTÍCIA, então
+exercita o ramo `?? "nao-mapeada"`. Sem um segundo caso sobre edge REAL, o `fonte` de todas elas
+poderia ser o literal do fallback e a suíte seguiria verde — o gate mediria o fallback e passaria
+por garantia que não dá. O par exige SHA-256 de 64 hex numa edge real.
+
+⚠️ **Limites que ficam, e são para dizer, não para esconder:** é fingerprint da **FONTE**, não
+hash do bundle (não há `deno.lock` versionado e há range aberto `npm:@supabase/supabase-js@2`,
+então a mesma fonte pode resolver dependência externa diferente); e ele **não prova atomicidade**
+do deploy manual — deploy que misture `_shared/` novo com `index.ts` velho faz o mapa (que é fonte
+também) mentir junto. Só hash calculado em RUNTIME fecharia isso, e a edge não lê a própria fonte
+em Deno Deploy.
+
+⚠️ **Custo aceito:** o `fonte` de cada edge só muda em prod no PRÓXIMO deploy dela. Depois de um
+toque em `_shared/`, as ~30 edges passam a reportar fonte diferente da `main` até serem
+redeployadas — é VERDADE (elas rodam código velho), mas é volume de alarme, e deploy de edge aqui
+é manual. Quem sonda deve ler `fonte` como "de que fonte este bundle foi buildado", não como
+"pendência a zerar".
