@@ -165,7 +165,10 @@ entre uma e outra. O padrão é disparar todas com `net.http_post` sobre um `VAL
   independentemente do filtro, e o `http_post` sai do mesmo jeito. Falsificado nos dois sentidos com
   `1/(length(edge)-1)` no lugar do post: sob `WHERE` explode com a trava FECHADA (avaliou), sob
   `CASE WHEN guard.confirmei = 'sim' THEN net.http_post(…) END` só explode com ela ABERTA. Guard por `WHERE`
-  aqui é teatro — a classe "sonda de script destrutivo é fail-CLOSED" aplicada ao SQL.
+  aqui é teatro — a classe "sonda de script destrutivo é fail-CLOSED" aplicada ao SQL. ⚠️ E o `WHERE`
+  é dependente de PLANO: na forma SIMPLES (projeção sem agregação) ele filtra antes e parece proteger —
+  quem testar a trava assim lê "seguro" e leva para produção o bloco agregado, que é onde ela falha
+  (4 formas medidas em `docs/historico/deploy-no-op-por-desenho.md`).
 - ⚠️ **A leitura tem de partir da lista canônica de edges, não dos ids.** Com `FROM ids JOIN esperado`, colar
   o JSON do bloco errado devolve **zero linhas** — e zero linhas lê-se como "nada a reportar", não como erro.
   Inverta (`FROM esperado LEFT JOIN ids`) e dê um ramo próprio ao id ausente: toda edge esperada aparece
