@@ -1589,3 +1589,42 @@ console.log(r.status, await r.text())   // 201 => unload é o culpado · 401/403
 ```
 
 `persona: 'teste'` marca a linha como sintética — dá para distinguir de visita real depois.
+
+### E a telemetria muda NÃO é o deploy: 178/178 chunks servidos, incluindo o do PostHog
+
+A hipótese natural para "o browser não entrega" era a 4ª camada de novo — bundle incompleto, chunk
+faltando, key não embutida. **Nenhuma sobreviveu**, e o servidor é verificável sem login:
+
+| hipótese | medida | resultado |
+|---|---|---|
+| key não foi embutida no build | `grep phc_` no entry servido | **1** ocorrência (negativo: `0`) |
+| host do PostHog ausente | `grep us.i.posthog.com` | **1** ocorrência |
+| `opt_out` ligado em produção | `analytics.ts:100` | só sob `import.meta.env.DEV` |
+| `initAnalytics` nunca chamado | `App.tsx:212` | chamado |
+| chunk do `posthog-js` não servido | os **178** chunks do entry, um a um | **0 faltando** — o do PostHog responde `200`, 190KB |
+
+Ou seja: o build servido está íntegro e o PostHog **carrega**. O que impede a emissão está no
+**cliente** — bloqueador de rastreador, extensão ou rede local —, e isso não se mede daqui: `us.i.
+posthog.com` está nas listas de bloqueio mais comuns, e um `curl` (que foi o que entregou o evento de
+24/08 21:59Z) não passa por nenhuma delas.
+
+⚠️ **Esta tabela quase saiu com uma causa-raiz FALSA na última linha.** Extraí o nome do chunk com
+`grep -o 'posthog[A-Za-z0-9_.-]*'` e testei `posthog-Do2CBfqi.js`: **404**, igual ao chunk inventado
+de controle. Parecia conclusivo — entry referencia, servidor não serve, PostHog não inicializa,
+explica todos os zeros. **O nome real é `vendor-posthog-Do2CBfqi.js`**: o padrão começava em
+`posthog` e comeu o prefixo `vendor-`. O 404 era do nome que eu inventei sem perceber, e o chunk
+verdadeiro responde `200`.
+
+O que salvou foi a **contradição entre duas medidas**: a varredura dos 178 disse `0 faltando` no
+mesmo minuto em que o teste avulso dizia `404`. Duas medidas do mesmo fato discordando é sinal de que
+uma delas mede outra coisa — aqui, um nome. **Um 404 só é evidência de ausência depois que o NOME é
+verificado contra a fonte**, do mesmo jeito que uma citação. É a armadilha do `+` do diff e do `*` do
+JSDoc numa terceira roupa: o recorte que trunca o identificador e devolve um resultado coerente,
+porém sobre outro objeto.
+
+**E a medição que fecha o argumento veio sozinha, minutos depois.** Às `2026-08-25T01:24Z` a tabela
+tinha **5 linhas** — quatro delas gravadas naquela madrugada, a última há cinco minutos (o `#1972`
+registra que parte veio de uso real, não de teste) — enquanto o PostHog, na **mesma janela de 24h**,
+tinha **zero** eventos de browser. App gravando e telemetria muda, ao mesmo tempo, medidos lado a
+lado: é o estado *linha sem evento* do par tabela × evento em forma pura, e a prova de que o
+silêncio não é o app parado nem o deploy quebrado.
