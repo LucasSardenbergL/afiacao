@@ -3107,7 +3107,11 @@ describe('canária VERSIONADA: analyze-unified-order (praticado vence Omie)', ()
 describe('canária VERSIONADA: omie-vendas-sync (identidade fail-closed)', () => {
   const src = read(VENDAS);
   const deployDoc = read(DEPLOY_DOC);
-  const CONTRATO = 'identidade-fail-closed-v1';
+  // Bumpado ao a canária ganhar a assinatura comportamental do #1888 (PR-2/A2). O marcador
+  // anterior nasceu no #1922, DEPOIS do #1888, então já provava aquela fatia por transitividade
+  // — mas responderia idêntico antes e depois da prova COMPORTAMENTAL, que é a única a
+  // sobreviver a um deploy em que o Lovable reinterpreta o código (#1272, #1445→#1478).
+  const CONTRATO = 'identidade-a2-client-to-user-v2';
   // Sobre a fonte SEM comentários: a prosa que EXPLICA o campo cita o campo (`// \`canary: true\`
   // acompanha o probe_no_ar...`), então um assert POSITIVO sobre o texto cru passa lendo o
   // comentário e sobrevive à remoção do código. Falsificação S3 pegou exatamente isso.
@@ -3121,7 +3125,7 @@ describe('canária VERSIONADA: omie-vendas-sync (identidade fail-closed)', () =>
     expect(
       bloco,
       'sumiu o marcador `contrato` do identidade_probe — a canária responderia igual num bundle de hoje e num de três fatias atrás',
-    ).toMatch(/contrato: ['"]identidade-fail-closed-v1['"]/);
+    ).toMatch(new RegExp(`contrato: ['"]${CONTRATO}['"]`));
   });
 
   it('emite TAMBÉM `canary: true` — a receita SQL do deploy.md lê esse campo', () => {
@@ -3135,7 +3139,7 @@ describe('canária VERSIONADA: omie-vendas-sync (identidade fail-closed)', () =>
   it('a LINHA da tabela do deploy.md fixa o MESMO marcador', () => {
     expect(
       deployDoc,
-      'a linha do `omie-vendas-sync` na tabela de canárias não fixa `identidade-fail-closed-v1`',
+      `a linha do \`omie-vendas-sync\` na tabela de canárias não fixa \`${CONTRATO}\``,
     ).toMatch(linhaDaTabela('omie-vendas-sync', CONTRATO));
   });
 

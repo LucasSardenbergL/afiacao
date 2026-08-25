@@ -763,7 +763,7 @@ Deno.test("sync-reprocess: o parse que subiu PRESERVA o throw do corpo inválido
 /**
  * Dependente do `paginate.ts` cuja prova de deploy NÃO é sonda, e sim canária VERSIONADA.
  *
- * Só a `omie-vendas-sync`: o `identidade_probe` dela responde `contrato:"identidade-fail-closed-v1"`,
+ * Só a `omie-vendas-sync`: o `identidade_probe` dela responde um `contrato` versionado,
  * um marcador que nomeia a fatia — logo discrimina bundle novo de velho, que é tudo o que se pede
  * aqui. Exigir sonda dela seria exigir um segundo sensor para responder a mesma pergunta.
  *
@@ -771,7 +771,10 @@ Deno.test("sync-reprocess: o parse que subiu PRESERVA o throw do corpo inválido
  * não emite mais é pior que exceção nenhuma, porque some da lista de pendências parecendo resolvida.
  */
 const VERIFICAVEL_POR_CANARIA: Record<string, string> = {
-  "omie-vendas-sync": "identidade-fail-closed-v1",
+  // Bumpado de `identidade-fail-closed-v1` ao ganhar a assinatura comportamental do #1888
+  // (`assinatura-a2.ts`): o marcador nomeia a fatia que a canária verifica HOJE, e a de hoje
+  // cobre o P0-B E o A2. Ver `omie-vendas-sync/assinatura-a2.ts`.
+  "omie-vendas-sync": "identidade-a2-client-to-user-v2",
 };
 
 Deno.test("nenhuma edge que serve o paginate.ts fica SEM prova de deploy", () => {

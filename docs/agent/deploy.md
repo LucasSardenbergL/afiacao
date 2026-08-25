@@ -83,7 +83,7 @@ canary === true   E   contrato === '<marcador da fatia>'   E   ok === true
 | edge | rota | `contrato` esperado | o que a fixture discrimina |
 |---|---|---|---|
 | `analyze-unified-order` | Governança → Auditoria (card "Canária de preço") | `praticado-vence-omie-v1` | praticado 123 vence Omie 999 (velho: o Omie sobrescrevia → `resolved=999`) |
-| `omie-vendas-sync` | `identidade_probe` | `identidade-fail-closed-v1` | identidade derivada por documento: 1-dono resolve, e divergência advisory×derivado / ambiguidade / ausência / bigint fora de range **recusam** (velho: o advisory sobrescrevia o derivado) |
+| `omie-vendas-sync` | `identidade_probe` | `identidade-a2-client-to-user-v2` | identidade derivada por documento: 1-dono resolve, e divergência advisory×derivado / ambiguidade / ausência / bigint fora de range **recusam** (velho: o advisory sobrescrevia o derivado). **+ assinatura A2 (#1888)** em `assinatura_a2`: o `client_to_user` do snapshot é exigido (ausente = fail-closed), a prova positiva VENCE o cache divergente, o revogado SAI do cache e a revogação em massa aborta. ⚠️ `ok` já agrega os dois — mas leia `assinatura_a2.ok` e `casos` para saber QUAL lado falhou |
 | `omie-analytics-sync` | `doc_ambiguo_probe` ⚠️ resposta embrulhada em `data` | `doc-ambiguo-fail-closed-v1` | doc ambíguo não vira vínculo (velho: helper sempre-∅ → `[]` no caso de 2 códigos) |
 | `carteira-rebuild` | `?canary=1` | `trava-saida-v1` | conflito permanece com `eligible=false` (velho: some) **+** trava de saída do bootstrap (velho: grava ~Hunter) |
 | `generate-tactical-plan` | `{"canary":true}` | `v1.1-paginacao-eof-e-cursor` | margem ausente degrada em vez de fabricar (velho: NULL→`?? 0`→R$0/h; #1498) |
