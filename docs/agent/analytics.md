@@ -268,6 +268,23 @@ o `pagehide` com a **página viva** (`dispatchEvent`), que é o único jeito de 
 tipo** entraram (re-medido com `refresh: force_blocking`, já com o fix do cache do #1959) — nem o
 `dashboard.viewed` dos mounts. Com a telemetria de frontend muda, **a tabela é o único oráculo**.
 
+⚠️ **Contar eventos da janela como "a ingestão está viva" soma DOIS canos.** O `posthog-js` preenche
+`properties.$lib`; uma captura por `curl` não — e só a decomposição separa os dois. Medido em
+2026-08-24 (7 dias): **browser `$lib='web'`: 65 eventos, último 23/08 11:09Z** — *antes* do 503 de
+~12:17–12:30Z de 24/08 — contra **API direta: 1 evento, 24/08 21:59Z**. O agregado (66) leu como
+saudável um canal que, exercitado no dia seguinte, não entregou nada. **Um POST por `curl` que volta
+`200` prova que o servidor aceita, não que o browser emite**: CORS, batch, retry e adblock não são
+atravessados por ele — do mesmo modo que o `GET` no host não desmentia o 503. É por esse cano que
+saem `dashboard.viewed`, `dashboard.visita_tentativa` e o `build_id` da §6. **A prova específica não
+precisa ser fabricada: o primeiro evento com `$lib='web'` é ela.**
+
+```
+SELECT toDate(timestamp) AS dia,
+       if(isNull(properties.$lib),'API_direta','browser_SDK') AS via,
+       count() AS n, max(timestamp) AS ultimo
+FROM events WHERE timestamp > now() - INTERVAL 7 DAY GROUP BY dia, via ORDER BY dia DESC
+```
+
 ⚠️ **`sessao_curta` domina por desenho, não por defeito.** O guard de 5 min (`MIN_SESSION_MS`) existe
 para um F5 não anular os deltas — uma proporção alta dele é o guard funcionando. Ele só vira sintoma
 se `gravou` for **zero** por muitos dias com o dashboard sendo aberto.
