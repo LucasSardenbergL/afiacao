@@ -31,12 +31,32 @@ Mordido diagnosticando o deploy das 6 edges de scoring/carteira: a query voltou 
 
 Foi assim que o 502 das 00:00 saiu de "um dos 11 crons daquele minuto" para o `sayerlack-portal-watchdog`: dos 11, só 3 usavam `net.http_post`, e a série `*/5` do watchdog tinha um buraco exatamente em 00:00 (23:55 → **[502 às 00:00:04]** → 00:06:37, atrasada). Transitório de gateway, recuperado sozinho no ciclo seguinte — mas `job_run_details` marcou os 11 como `succeeded`, inclusive o que falhou.
 
+### ⚠️ `created` NÃO é a hora em que a resposta CHEGOU (2026-08-25)
+
+É a hora em que o **worker do pg_net iniciou o envio** — anterior até ao trabalho da edge. Provado: o
+cron 41 (`compute_costs`) enfileirou às `12:45:00.248` (`job_run_details`), a resposta ganhou
+`created=12:45:02.024`, e o trabalho só rodou de `12:45:04.94` a `12:45:06.19` (`acoes_execucoes`) — o
+`created` **precede o próprio trabalho**. Respostas do mesmo ciclo do worker compartilham o timestamp
+ao milissegundo (`60031`/`60032` ambos `12:25:00.317984`), o que é o tell.
+
+⇒ **Não existe duração HTTP nesta tabela.** `created - job_run_details.start_time` mede o atraso da
+fila, não o tempo da edge. A coluna serve para `status_code`, `timed_out` e cadência — nada além.
+Retenção medida: **~6h** (206 linhas cobrindo `06:50`→`12:45`).
+
 ## Padrão de cron (canônico)
 
 - Auth: header `x-cron-secret` = `(SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name='CRON_SECRET' LIMIT 1)`. O secret já está no Vault.
 - `cron.schedule(nome, schedule, comando)` faz **upsert por nome** → idempotente.
 - ⚠️ **`cron.timezone` está VAZIO → todo schedule é lido em UTC, nunca em BRT.** `'5 11 * * *'` dispara às **08:05 BRT** (= 11:05 UTC), não às 11:05 da manhã de Brasília. Provado 2026-07-21: o `afiacao_ciclo_oportunidade_diario` (`'5 11 * * *'`, jobid 24) registrou execução às **08:05:00 BRT** em `acoes_execucoes`. Ao ESCREVER um schedule, converta explícito (**BRT = UTC−3** → hora desejada **+3**); ao LER um cron existente (ou uma spec que cita horário), confira em qual base o número está antes de concluir que "não rodou na hora". A spec do ciclo de oportunidade assumiu 11:05 BRT e descreveu um horário que nunca existiu — o erro não aparece no CI, só num diagnóstico à toa.
 - **Todo cron `net.http_post` PRECISA de `timeout_milliseconds` explícito** — o default do `pg_net` é **5s** e mata SILENCIOSAMENTE qualquer função >5s (o `job_run_details` ainda diz "succeeded"). Teto padrão da casa: **150000** (150s).
+- ⚠️ **`timeout_milliseconds` mede o tempo até a RESPOSTA — não a duração do TRABALHO**, e o irmão do
+  default-5s é **folgar um teto que já estava certo**. Numa edge que responde **202 + `EdgeRuntime.waitUntil`**
+  (`sync_customers`, `start_nao_vinculados`, `sync_inventory_full`, `sync_custo_producao`…) a resposta chega em
+  **milissegundos** por mais que o background rode minutos. Comparar `sync_state` início→fim com esse teto é
+  **erro de categoria**: fabrica uma "margem apertada" que não existe. Medido 2026-08-25 nos três
+  `sync_customers` — todos `timeout:=60000`, todos `complete`: vendas **172,6s**, colacor_vendas **56,7s**,
+  servicos **59,8s** de trabalho, e **nenhum** é observado pelo pg_net. ⇒ **Antes de mexer num timeout, leia o
+  `case` da action:** se ela retorna `202`/`accepted`, o número está certo como está.
 - **Crons devem ser versionados em migration** — um cron que vive só no banco some sem rastro (já aconteceu: vendas ficou 8 dias morto porque o cron nunca foi versionado).
 - 🔄 **Mantenha fresco o safety-net `20260527230000_cron_baseline.sql`** — versiona TODOS os crons ativos (**regenerado 2026-07-04, 45→75**; ficou stale ~5 semanas). Quando a topologia mudar, **regenere** (NÃO edite à mão — o guard de migração bloqueia Edit/Write): o header traz o generator (`string_agg` de `cron.job WHERE active` com `regexp_replace(command,'\s+',' ')` → 1 statement/linha) → substitui o corpo (header intacto) → `wt:preflight` + `audit:migrations` → **PR que MERGEIA** (baseline não-mergeado não vale como safety-net). Apply só pra DR (troca o jobid → sob demanda). Histórico da dívida: #1178.
 
