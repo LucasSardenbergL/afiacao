@@ -173,7 +173,7 @@ export function useRegistrarVisitaDashboard(contexto: RegistroVisitaContexto): v
       return 'gravou';
     };
 
-    const gravar = (via: 'unmount' | 'pagehide') => {
+    const gravar = (via: 'unmount' | 'pagehide' | 'timer') => {
       if (typeof window === 'undefined') return;
 
       const viaFechoDeAba = via === 'pagehide';
@@ -229,9 +229,19 @@ export function useRegistrarVisitaDashboard(contexto: RegistroVisitaContexto): v
         });
     };
 
+    // Grava assim que a sessão QUALIFICA, sem esperar a saída. Medido em produção
+    // (2026-08-25): o `fetch` com `keepalive:true` do `pagehide` não sobrevive ao
+    // unload — mesmo caminho e mesmo token devolvem 201 com a página VIVA e nada
+    // quando a aba fecha de verdade. Enquanto a gravação dependesse de COMO o
+    // usuário sai, fechar a aba perdia a visita. `unmount`/`pagehide` continuam
+    // como rede de segurança e caem em `ja_gravado` quando o timer chegou antes.
+    const restante = Math.max(0, MIN_SESSION_MS - (Date.now() - mountedAtRef.current));
+    const timer = window.setTimeout(() => gravar('timer'), restante);
+
     const aoEsconderPagina = () => gravar('pagehide');
     window.addEventListener('pagehide', aoEsconderPagina);
     return () => {
+      window.clearTimeout(timer);
       window.removeEventListener('pagehide', aoEsconderPagina);
       gravar('unmount');
     };
