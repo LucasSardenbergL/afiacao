@@ -1721,3 +1721,123 @@ produção**, não "está no ar e ninguém reclamou". O #1934 sai de "provado so
 ao unload (causa raiz em [`analytics.md`](../agent/analytics.md)). Então **5 linhas é um piso**, não a
 contagem de visitas: quantas se perderam no fecho de aba segue desconhecido, e será desconhecido até
 o writer parar de depender de como o usuário sai.
+
+## A telemetria muda tem causa PROVADA, e ela não é do app: o bloqueador do cliente
+
+O `#1973` fechou a investigação do servidor com um veredito correto e incompleto: *"o que impede a
+emissão está no cliente — bloqueador de rastreador, extensão ou rede local —, e isso não se mede
+daqui"*. **Mede sim.** O que faltava não era acesso, era um **par de falsificação** — a mesma
+medição em dois clientes que diferem por uma variável só.
+
+### O par que decide
+
+Mesma máquina (o Mac do founder), mesma rede, mesmo alvo, mesmo minuto:
+
+| cliente | `fetch('https://us.i.posthog.com/i/v0/e/')` |
+|---|---|
+| Chromium limpo, sem extensões | **`200 {"status":"Ok"}` em 1112 ms** |
+| Chrome real do founder (151, logado) | **`TypeError: Failed to fetch` em 4 ms** |
+
+**4 ms não é ida e volta a `us-east-1`.** É requisição terminada dentro do browser. E o controle por
+host isola o alvo com precisão cirúrgica — no MESMO Chrome do founder:
+
+| alvo | resultado |
+|---|---|
+| `us.i.posthog.com` (**ingestão**) | **Failed to fetch — 13 ms** |
+| `us-assets.i.posthog.com` (CDN do PostHog) | OK — 547 ms |
+| `fzvklzpomgnyikkfkzai.supabase.co` (backend do app) | OK — 422 ms |
+| `fonts.googleapis.com` | OK — 154 ms |
+
+Passa **o outro host do PostHog**. Morre só o endpoint de ingestão — que é exatamente o que
+EasyPrivacy/uBlock listam. Não é rede, não é DNS (`/etc/hosts` sem entrada, resolvers do roteador,
+`us.i.posthog.com` resolvendo para os ELB reais), não é CORS, não é o app.
+
+E o positivo fecha por cima: o Chromium limpo emitiu um **`$pageleave` com `$lib='web'` e
+`build_id=index-D1GiFr1h`** às `2026-08-25T02:15:38Z` — o **primeiro evento de browser desde
+`2026-08-23T11:09Z`**. O cano estava intacto o tempo inteiro.
+
+### O reenquadramento que o `$lib_version` e o `$os` forçaram
+
+Antes de achar a causa, duas queries derrubaram a premissa da investigação. **`$lib_version` é
+constante em `1.373.4`** nos 30 dias (693 eventos) — o range flutuante `^1.226.0` do `package.json`
+**não** trocou de SDK na fronteira, apesar de poder. E o breakdown por aparelho mostrou que o cano
+que "funcionava e parou" **nunca foi uma frota**:
+
+| SO / navegador | eventos (janela total) | último |
+|---|---|---|
+| **iOS / Mobile Safari** | **2027** — 3 versões, contínuo desde 28/05 | 2026-08-23T11:09Z |
+| Windows / Chrome | 538 | 2026-08-18T13:53Z |
+| Mac OS X / Chrome | 61, em **rajadas de teste** (51 num dia; 2 em 3 segundos) | 2026-07-01T21:25Z |
+
+**Nos últimos 30 dias um único iPhone respondeu por 97,7% do sinal** (677 de 693; na janela total, iOS é 77% — 2027 de 2630). O Mac nunca foi fonte de telemetria — e é onde o founder
+trabalha. Ler "65 eventos na semana" como saúde do canal era ler a saúde de **um aparelho**, e o
+`#1964` fez exatamente isso ao tomar os 66 como controle positivo agregado. O `#1965` já tinha
+flagrado o vício ("controle POR CAMINHO"); o eixo que faltava era o **aparelho**.
+
+> **A regra:** um agregado de telemetria é a soma de clientes que falham de forma **independente**.
+> Enquanto o breakdown por `$device_id`/`$os` não for parte da leitura, "o canal está vivo" quer
+> dizer "**pelo menos um** cliente está vivo" — e num app de 3 empresas isso é quase nada.
+
+### O que fica INFERIDO, e o teste que o resolve
+
+O bloqueio do Chrome do Mac está **provado**. O do iPhone — o aparelho dos 2027 eventos, parado em
+23/08 — **não**: é a mesma classe (bloqueador de conteúdo no Safari), é a explicação mais simples, e
+não tenho medição. Registrar como provado seria fabricar. O teste é abrir no Safari do iPhone:
+
+```
+https://us.i.posthog.com/i/v0/e/
+```
+
+Responde **HTTP 400 `request missing data payload`** quando o caminho está livre (verificado). Erro
+de conexão ou página em branco = bloqueado.
+
+### Por que isto é maior que "desligue o bloqueador"
+
+Desligar resolve o aparelho do founder e **não resolve a leitura**. Um bloqueador não deixa a amostra
+esparsa: deixa **censurada**, e a censura **correlaciona com o perfil do usuário** — quem bloqueia
+tende a ser justamente quem usa mais. Toda decisão de "fase N+1 exige sinal da fase N" lida pelo
+PostHog herda esse viés, e ele é invisível na série: cliente bloqueado e cliente que não usou
+produzem **exatamente o mesmo zero**.
+
+É por isso que o par **tabela × evento** (`#1957`) não é redundância: `dashboard_visits` sai pelo
+domínio do próprio app e é **imune** à lista; o PostHog não é. A noite de 24→25/08 é a demonstração
+pura — **9 linhas na tabela, zero eventos no PostHog**, mesmo usuário, mesmas sessões.
+
+As saídas, em ordem de custo: **(a)** liberar `us.i.posthog.com` nos aparelhos internos — barato,
+resolve só o interno, não resolve o cliente; **(b)** **reverse proxy first-party** (servir a ingestão
+por um caminho do próprio domínio), que é o remédio documentado do PostHog e o único que devolve a
+população externa; **(c)** aceitar a censura e mover todo sinal que decide para tabela própria,
+tratando o PostHog como conveniência. **Decisão do founder** — (b) mexe em como o app coleta dado de
+terceiros e merece a conversa, não um default meu.
+
+### Dois achados de brinde, medidos no caminho
+
+**1. O Chrome do founder roda build VELHO.** `index-DnOk4g4H.js` enquanto o servidor serve
+`index-D1GiFr1h.js` — a 4ª camada de novo, o SW esperando o clique. Confirmado por dentro: a
+persistência do PostHog dele **não tem `build_id`**, e a do Chromium limpo tem. O sensor do `#1964`
+está com **0% de adoção na própria máquina de quem o construiu** — e, com o cano bloqueado ali,
+seria ilegível de qualquer forma.
+
+**2. A pendência irmã do `keepalive` está RESOLVIDA.** O teste prescrito no fim deste arquivo rodou
+no Chrome real do founder, autenticado, com a página **viva**: o POST do `emitirComKeepalive` voltou
+**`201` em 636 ms**, e a linha `id=9 persona='teste'` está no banco (evidência positiva, não só o
+status). Pela regra de decisão do próprio teste: **não é auth, não é RLS — é o unload.** Sobra o que
+o `#1969` já apontava: os headers de auth que o PostgREST exige são o que tira a request do conjunto
+"simples" e a torna frágil no unload. O caminho é uma edge que aceite POST simples e valide o JWT no
+corpo, liberando `sendBeacon`.
+
+### E as duas vezes que o INSTRUMENTO quase fabricou o veredito (de novo)
+
+O `#1973` catalogou o `grep` que comeu o prefixo `vendor-`. A mesma classe mordeu duas vezes aqui, e
+as duas foram pegas pelo mesmo mecanismo — **contradição entre duas medidas do mesmo fato**:
+
+- Extraí os chunks do entry com `/assets/[A-Za-z0-9_.-]+\.js` e o PostHog "sumiu". O Vite referencia
+  **relativo** (`./vendor-posthog-Do2CBfqi.js`): o padrão casou **zero chunks no total** — absurdo
+  para um entry de 236 KB, e é o absurdo que denuncia. Um filtro que devolve 0 no denominador não
+  está medindo ausência do numerador, está quebrado.
+- `read_network_requests` do browser devolveu "nenhuma requisição ao posthog" — e também não mostrou
+  o **Supabase**, que o app obviamente chama. A ferramenta só registra **mesma origem**. "Nenhuma
+  requisição a X" de um instrumento que não enxerga X é a sonda cega do `command -v` numa roupa nova.
+
+> **A regra:** antes de ler ausência num filtro, confira o **denominador** dele. Um recorte que não
+> acha nada e um recorte que não olha produzem a mesma saída vazia — e só o total distingue os dois.
