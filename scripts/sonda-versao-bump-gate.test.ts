@@ -1,6 +1,7 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   auditarBump,
+  coletarEstado,
   contaComoCorpo,
   extrairVersao,
   main,
@@ -231,8 +232,19 @@ describe('montarEstado — desinstrumentar não pode ser a saída silenciosa do 
 });
 
 describe('main — fail-CLOSED de verdade: lista vazia por ERRO não é lista vazia por mérito', () => {
-  it('--head que NÃO resolve reprova (hoje ele imprime ✓ e devolve 0)', () => {
-    expect(main(['--base', 'HEAD', '--head', 'inexistente-xyz-000'])).toBe(1);
+  it('`git diff` que FALHA lança — lista vazia por erro não pode virar lista vazia por mérito', () => {
+    expect(() => coletarEstado('inexistente-xyz-000', null)).toThrow(/falhou/);
+  });
+
+  it('--head que NÃO resolve reprova NOMEANDO o --head (e não por acidente de outro ramo)', () => {
+    const erros: string[] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((...a) => void erros.push(a.join(' ')));
+    try {
+      expect(main(['--base', 'HEAD', '--head', 'inexistente-xyz-000'])).toBe(1);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(erros.join('\n')).toMatch(/--head/);
   });
 
   it('controle: o MESMO par com --head válido mede e passa', () => {
