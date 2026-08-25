@@ -263,8 +263,10 @@ export function gerarSqlDaLeva(opts: OpcoesLeva): string {
         `--    de o deploy estar confirmado por outro caminho.\n` +
         `-- ⚠️ A trava é CASE e NÃO um filtro: o Postgres avalia a projeção mesmo descartando todas\n` +
         `--    as linhas, então travar por filtro deixa o http_post sair igual (falsificado —\n` +
-        `--    docs/agent/deploy.md §"Sondar VÁRIAS edges numa tacada"). Trava fechada devolve\n` +
-        `--    {"edge": null}, que o passo seguinte lê como SEM ID.\n` +
+        `--    docs/agent/deploy.md §"Sondar VÁRIAS edges numa tacada"). E NÃO valide um filtro numa\n` +
+        `--    consulta simples para se convencer: lá ele filtra antes e PARECE proteger; é nesta\n` +
+        `--    forma, agregada, que ele falha. Trava fechada devolve {"edge": null}, que o passo\n` +
+        `--    seguinte lê como SEM ID.\n` +
         blocoDisparo(ref, leva, 4, true),
       `-- PASSO 4 — lê e julga as CARAS. Cole o JSON do PASSO 3 no lugar do {}.\n` +
         blocoLeitura(leva),
