@@ -166,6 +166,36 @@ foi de fato **executada** — em cache, "estável" e "congelado" são idênticos
 diz que aquilo é **ausência de dado, não zero** — antes, um 504 e um `[[0]]`
 chegavam pelo mesmo cano e só um deles era medição.
 
+### ⚠️ A amostra é CENSURADA, não esparsa — bloqueador de rastreador (2026-08-25)
+
+`us.i.posthog.com` está nas listas de bloqueio comuns (EasyPrivacy/uBlock). Medido no Chrome do
+founder, com par de falsificação contra um Chromium limpo na **mesma máquina, rede e minuto**:
+`fetch` na ingestão morre em **4 ms** (`TypeError: Failed to fetch`) enquanto o limpo responde
+**200 em 1112 ms**. O CDN `us-assets.i.posthog.com`, o Supabase e o Google Fonts **passam** no mesmo
+browser — morre só o endpoint de ingestão.
+
+Três consequências para toda leitura daqui:
+
+1. **Cliente bloqueado e cliente que não usou produzem o mesmo zero.** Não há como distinguir na
+   série. Sinal que DECIDE não pode morar só no PostHog — é o que torna o par tabela × evento
+   obrigatório, não redundante (a tabela sai pelo domínio do app e é imune à lista).
+2. **O viés correlaciona com o perfil**: quem bloqueia costuma ser quem usa mais. A censura não é
+   ruído aleatório que some no agregado.
+3. **Sempre decomponha por aparelho.** Em 2026-08-25 um único iPhone respondia por **97,7%** dos
+   eventos de browser dos últimos 30 dias (677 de 693) — 77% na janela total (2027 de 2630). "O
+   canal está vivo" queria dizer "**um** cliente está vivo": agregado é soma de clientes que
+   falham de forma independente.
+
+```sql
+-- o breakdown que precede qualquer leitura de série
+SELECT properties.$os AS so, properties.$browser AS nav,
+       uniq(properties.$device_id) AS aparelhos, count() AS n, max(timestamp) AS ultimo
+FROM events WHERE properties.$lib='web' GROUP BY so, nav ORDER BY ultimo DESC
+```
+
+Teste de 1 linha para saber se um aparelho bloqueia — abrir `https://us.i.posthog.com/i/v0/e/` no
+navegador dele: **HTTP 400 `request missing data payload`** = livre; erro de conexão = bloqueado.
+
 ## 5. Sensores de frontend já instalados
 
 `carteira.mixgap_visto` (`estado`, `total_com_gap`, `desatualizado`) ·
