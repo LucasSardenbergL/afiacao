@@ -43,8 +43,8 @@ Critério: último commit que tocou `<edge>/index.ts` mais NOVO que o último qu
 | edge | commit da mudança | veredito |
 |---|---|---|
 | `omie-analytics-sync` | #1971 (883080edb) | **genuíno** — corrigido aqui |
-| `enviar-pedido-portal-sayerlack` | 8ee8afa15 (203 linhas) | **genuíno** — segue congelado |
-| `sayerlack-captura-precos` | 8ee8afa15 (85 linhas) | **genuíno** — segue congelado |
+| `enviar-pedido-portal-sayerlack` | 8ee8afa15 (203 linhas) | **genuíno** — bumpado depois, `v1.1-pos-login-no-envio` |
+| `sayerlack-captura-precos` | 8ee8afa15 (85 linhas) | **genuíno** — bumpado depois, `v1.1-pos-login-na-captura` |
 | `disparar-pedidos-aprovados` | dc67b4261 | falso positivo — só encanamento da sonda |
 
 ⚠️ As 5 edges que a suspeita inicial apontava (`fin-cashflow-engine`, `omie-cliente`,
