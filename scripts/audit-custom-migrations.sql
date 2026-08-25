@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 488
+-- Total de custom migrations: 489
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -529,7 +529,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260824091755', 'data_health_carteira_identidade_quarentena', '20260824091755_data_health_carteira_identidade_quarentena.sql'),
   ('20260824225107', 'data_health_sync_state_saude', '20260824225107_data_health_sync_state_saude.sql'),
   ('20260824232212', 'sync_state_remove_marcador_fossil_orders', '20260824232212_sync_state_remove_marcador_fossil_orders.sql'),
-  ('20260824234500', 'sync_state_products_vendas_aposenta_writer_truncado', '20260824234500_sync_state_products_vendas_aposenta_writer_truncado.sql')
+  ('20260824234500', 'sync_state_products_vendas_aposenta_writer_truncado', '20260824234500_sync_state_products_vendas_aposenta_writer_truncado.sql'),
+  ('20260825124938', 'cron_metadados_timeout_240s', '20260825124938_cron_metadados_timeout_240s.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2197,7 +2198,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('data_health_carteira_identidade_quarentena', 'function', 'public', 'fin_sync_heartbeat', ''),
   ('data_health_sync_state_saude', 'function', 'public', '_data_health_compute', ''),
   ('data_health_sync_state_saude', 'function', 'public', 'data_health_watchdog', ''),
-  ('sync_state_products_vendas_aposenta_writer_truncado', 'function', 'public', '_data_health_compute', '')
+  ('sync_state_products_vendas_aposenta_writer_truncado', 'function', 'public', '_data_health_compute', ''),
+  ('cron_metadados_timeout_240s', 'cron_job', 'cron', 'omie-sync-metadados-daily', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -3913,7 +3915,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('data_health_carteira_identidade_quarentena', 'function', 'public', 'fin_sync_heartbeat', ''),
   ('data_health_sync_state_saude', 'function', 'public', '_data_health_compute', ''),
   ('data_health_sync_state_saude', 'function', 'public', 'data_health_watchdog', ''),
-  ('sync_state_products_vendas_aposenta_writer_truncado', 'function', 'public', '_data_health_compute', '')
+  ('sync_state_products_vendas_aposenta_writer_truncado', 'function', 'public', '_data_health_compute', ''),
+  ('cron_metadados_timeout_240s', 'cron_job', 'cron', 'omie-sync-metadados-daily', '')
 )
 SELECT
   e.migration,
