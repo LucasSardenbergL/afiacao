@@ -1461,7 +1461,7 @@ degradaria para a constante `"dev"` em produção, e **um id constante entre bui
 build**: o sensor nasceria verde e cego, que é a falha exata que este arquivo cataloga.
 
 O hash do entry não tem essa dependência — é content-hash do Vite, nasce sempre, e muda se e somente
-se o app mudou. Melhor ainda, é o **mesmo eixo** que o `verify-frontend.sh:50` já extrai do servidor
+se o app mudou. Melhor ainda, é o **mesmo eixo** que o `verify-frontend.sh` (linha do `ENTRY=`, na skill `lovable-deploy-verify`) já extrai do servidor
 (`grep -oE '/assets/index-[A-Za-z0-9_-]+\.js'`), então "entregue" e "executado" comparam sem tabela
 de tradução. O risco que isso cria é os dois regexes andarem separado — e o sintoma seria "adoção
 0%", indistinguível de ninguém ter atualizado. Por isso a paridade entre eles é presa por teste

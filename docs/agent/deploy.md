@@ -323,7 +323,7 @@ O SW usa `registerType: 'prompt'` (não `autoUpdate`): a versão nova **instala 
   cliente**, e ela não tinha medição — a divergência de 2026-08-24 só apareceu porque um toast
   "Nova versão disponível" caiu num screenshot. Agora todo evento carrega o hash do chunk do entry
   que o browser executou (`src/lib/build-id.ts` → super property no `initAnalytics`), no **mesmo
-  eixo** que o `verify-frontend.sh:50` extrai do servidor (`/assets/index-*.js`) — os dois lados
+  eixo** que o `verify-frontend.sh` (linha do `ENTRY=`, na skill `lovable-deploy-verify`) extrai do servidor (`/assets/index-*.js`) — os dois lados
   comparam sem tabela de tradução, e um teste de paridade (`build-id-paridade.test.ts`) impede que
   um dos regexes ande sozinho. Como ler e a conta de adoção: `docs/agent/analytics.md` §6.
   ⚠️ **O sensor só responde a partir do Publish que o contém** — antes disso a propriedade é
