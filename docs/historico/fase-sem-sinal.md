@@ -1877,12 +1877,29 @@ conteúdo no Safari), é a explicação mais simples"*.
 `distinct_id 414a9727`, o mesmo aparelho dos 2027 eventos. Ninguém desbloqueou nada que esta sessão
 tenha pedido. O silêncio de 23/08 11:09 → 25/08 09:39 **não era bloqueio**.
 
-⚠️ **O que fica sem confirmar:** se o founder mexeu em alguma configuração do iPhone nesse
-intervalo. Sem isso, o silêncio anterior fica **sem causa provada** — o que é o estado correto, e
-melhor que a causa plausível e errada. A lição é a do próprio `#1973`: *a explicação mais simples*
-é exatamente quando o rótulo "inferido" precisa aguentar peso, porque ela é a que mais convida a
-virar fato por repetição. Aguentou — o `#1984` a marcou, e por isso a queda custou uma linha em vez
-de um diagnóstico.
+**E a causa positiva apareceu no cruzamento dos dois canos.** O founder confirmou não ter mexido em
+nada no iPhone — e bloqueio não se desliga sozinho. O que explica os dois lados é o **aparelho de
+onde veio cada sessão**, visível ao alinhar `dashboard_visits` (PostgREST, imune à lista) com os
+eventos por `$os`:
+
+| janela | `dashboard_visits` | eventos de browser | leitura |
+|---|---|---|---|
+| 01:04:48 → 03:30:06Z | **11 visitas** | **zero** de iOS (só o `$pageleave` do Chromium às 02:15) | uso pelo **Mac**, cujo Chrome está bloqueado |
+| 09:39:36 → 09:51:18Z | 1 visita (`09:46:31`) | **14 eventos iOS** — `$pageview`, `$set`, 11 `$autocapture`, `$pageleave` | uso pelo **iPhone**, livre |
+
+A visita de `09:46:31Z` cai **dentro** da janela de eventos do iPhone: ali os dois canos concordam.
+Nas 11 visitas da madrugada eles discordam — e é exatamente onde o Chrome bloqueado grava na tabela
+e não emite evento.
+
+**O silêncio de 46 h do iPhone era ausência de USO, não censura.** Assim que foi usado, emitiu o
+repertório inteiro em 12 minutos, sem perder nada. E o contraste quantifica a censura do outro
+aparelho: 14 eventos para uma sessão livre, **0 para onze** sessões bloqueadas.
+
+A lição é a do próprio `#1973`: *a explicação mais simples* é exatamente quando o rótulo "inferido"
+precisa aguentar peso, porque ela é a que mais convida a virar fato por repetição. Aguentou — o
+`#1984` a marcou, e por isso a queda custou uma linha em vez de um diagnóstico. O que a derrubou
+não foi uma medição nova do PostHog, e sim o **par tabela × evento** decomposto por aparelho: dois
+eixos que o `#1984` já tinha estabelecido, aplicados juntos.
 
 ### 3. A sonda entrou no numerador da própria medição
 
