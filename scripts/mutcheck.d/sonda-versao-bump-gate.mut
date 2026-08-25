@@ -1,0 +1,21 @@
+# Poder de discriminação da suíte do GATE DE BUMP do marcador de sonda. É money-path por
+# consequência: o marcador é a ÚNICA prova de qual bundle de edge está em produção, e um gate
+# que aprova por cegueira devolve "deploy verificado" sem ter verificado nada.
+# A falsificação vive AQUI, e não só na sabotagem à mão, porque falsificação que só roda à mão
+# é ausência de dado (docs/historico/falsificacao-fora-do-ci.md).
+#
+# ⚠️ As 3 primeiras mutações são os falsos-verdes REAIS que o #1993 embarcou e que foram
+# corrigidos em 2026-08-25 — não são hipóteses. As duas primeiras se COBRIAM (tirar uma deixava
+# a outra segurando o teste), e foi por isso que a suíte ganhou um assert por furo.
+# @src: scripts/sonda-versao-bump-gate.ts
+# @test: scripts/sonda-versao-bump-gate.test.ts
+# Rode: scripts/mutcheck.sh scripts/sonda-versao-bump-gate.ts scripts/sonda-versao-bump-gate.test.ts scripts/mutcheck.d/sonda-versao-bump-gate.mut
+PEGA      | falha do git vira sucesso (o furo #1)      | s/ok: r\.status === 0/ok: true/
+PEGA      | --head cru, sem resolver (o furo #2)       | s/if \(iHead >= 0\) \{/if (iHead >= 999) {/
+PEGA      | marcador removido volta a pular (furo #3)  | s/const fonteHead = ler\(headRev, marcador\);/const fonteHead = ler(headRev, marcador); if (fonteHead === null) continue;/
+PEGA      | omissao deixa de reprovar (nucleo)         | s/if \(e\.versaoHead !== e\.versaoBase\) continue;/if (e.versaoHead === e.versaoBase) continue;/
+PEGA      | edge que NASCE deixa de ser isenta         | s/if \(e\.versaoBase === null\) continue;/if (e.versaoBase === undefined) continue;/
+PEGA      | nada mais conta como corpo servido         | s/const EXT_CORPO = \['\.ts'/const EXT_CORPO = ['.zz'/
+PEGA      | fronteira de string, nao de segmento       | s/if \(!caminho\.startsWith\(prefixo\)\) return false;/if (!caminho.startsWith(prefixo.slice(0, -1))) return false;/
+PEGA      | comentario passa a pedir bump (ruido)      | s/return removerComentarios\(fonte\)/return (fonte)/
+SOBREVIVE | largura do sha no texto do OK (cosmetico)  | s/base\.slice\(0, 9\)/base.slice(0, 7)/
