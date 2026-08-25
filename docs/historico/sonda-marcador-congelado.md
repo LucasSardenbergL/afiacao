@@ -344,3 +344,140 @@ com o total DECLARADO pelo Omie) e a sonda responde a mesma string tendo o #1992
 Foi a pergunta que o marcador existe para responder, feita no momento exato para o qual ele existe,
 e a resposta foi silêncio. Isso desempata o custo do "deploy no-op" que este documento adverte: o
 deploy desta edge não é no-op, ele **compra a resposta que hoje não existe**.
+
+## O débito que o gate por diff NÃO vê — auditado com o próprio gate (2026-08-25)
+
+O gate aceita `--base`/`--head`, então uma fatia histórica pode ser julgada pela régua real:
+`bun scripts/sonda-versao-bump-gate.ts --base <c>^ --head <c>`. Método: para cada uma das 32
+edges instrumentadas, achar o último commit que mudou o **valor** de `VERSAO`
+(`git log -G'^export const VERSAO'` — **`-S` não serve**: ele conta ocorrências da string, e
+mudar só o valor mantém a contagem, dando falso negativo), e rodar o gate em cada fatia posterior.
+
+⚠️ **A primeira passada FABRICOU VEREDITO, e a armadilha é de shell — não do gate.** O laço era
+`for c in $fatias`, com `$fatias` sendo a saída multi-linha do `git log`. **O `zsh` não faz
+word-splitting em expansão não-citada**: o laço rodou UMA vez com o blob inteiro como revisão, o
+`git rev-parse` recusou, o gate reprovou fail-CLOSED ("não consegui determinar a BASE") e o
+`grep` por `✗ <edge>:` não casou — o que foi contabilizado como **limpo**. Saíam 21 edges limpas
+e 1 reprovação, com ar de medição. O conserto tem duas partes e as duas importam: iterar por
+LINHA (`while IFS= read -r`) e **exigir o `✓` positivo** para classificar como limpa. "O gate
+reprovou" e "o gate recusou medir" são estados diferentes que produzem o MESMO `exit 1` — quem
+lê só o código de saída não os distingue, e ausência de `✗` é ausência de dado.
+
+Resultado com a régua real, na medição das **09:5x UTC** — 32 edges, 12 fatias pós-bump,
+**10 limpas, 2 reprovam, 0 indeterminadas**:
+
+| edge | fatia | marcador congelado | o que a fatia mudou |
+|---|---|---|---|
+| `disparar-pedidos-aprovados` | `dc67b4261` (14/08) | `v1.1-marco-causal` | encanamento da sonda: `respostaSonda()` → `respostaSonda(VERSAO)` e a mensagem do 400 ambíguo |
+| `omie-analytics-sync` | `c63820508` (#1992) | `v1.1-mapa-codigo-sem-alias` | `MAX_PAGINAS_PRODUTOS` 10 → 500 (truncava 27% do catálogo, todo dia) |
+
+⚠️ **As duas edges Sayerlack não estão congeladas** — foram bumpadas em `6776341f7` para
+`v1.1-pos-login-no-envio` e `v1.1-pos-login-na-captura`. Uma medição por `git log` **sem** o
+stripper de comentários as acusa; a régua real, não.
+
+⚠️ **RE-MEDIDO após rebase, e o número MUDOU: hoje resta 1.** Uma worktree paralela bumpou a
+`omie-analytics-sync` para `v1.2-produtos-teto-500-e-partial-honesto` (`5d8f1f779`), que nomeia
+exatamente a fatia do #1992. A régua agora devolve 11 fatias pós-bump e **1 congelada**
+(`disparar-pedidos-aprovados`). Registrar as duas medições é o ponto: **auditoria de débito tem
+prazo de validade em repo com ~30 worktrees**, e afirmar "2 congeladas" sem re-medir antes de
+entregar seria reportar um retrato vencido.
+
+⚠️ **O `#1992` escapou do gate por 7 minutos** (mergeou 00:46:13, o gate `#1993` às 00:53:04).
+É a mesma distância do `#1970`→`#1971` que abriu este documento. O limite "gate de transição não
+descobre omissão antiga" não é teórico: ele nasceu com um caso dentro.
+
+### A decisão: nenhuma bumpada por MIM — e a paralela decidiu o contrário numa delas
+
+O corolário deste documento manda o bump pegar carona num deploy **já obrigatório**. Nas duas, ele
+não pega:
+
+- **`omie-analytics-sync` — o fix JÁ ESTÁ EM PRODUÇÃO, provado por DADO, não pela sonda.** A sonda
+  é justamente quem não consegue responder: em 2026-08-25 09:59:35 UTC (`request_id` 59941) prod
+  respondeu `{"ok":true,"probe":true,"versao":"v1.1-mapa-codigo-sem-alias","edge":"omie-analytics-sync"}`
+  — o MESMO marcador da `main`, compatível com o deploy tendo ou não acontecido. Quem desempatou
+  foi o sensor de dados: `sync_state` de `products` está `complete` com `total_synced = 4297` às
+  06:17:58 UTC. Com `maxPages = 10` e `registros_por_pagina: 100` o teto é 1.000 e o `complete`
+  seria impossível — o run é pós-fix. Bumpar agora só criaria **deploy no-op**, e o bump tardio
+  não devolve a discriminação perdida.
+- **`disparar-pedidos-aprovados` — a fatia tem 11 dias e a discriminação já existe de graça, por
+  FORMA.** A mudança é encanamento da própria sonda. E o `ad43dd625` (18/08, **posterior** a
+  `dc67b4261`) passou a emitir o campo `edge` na resposta: um probe que devolva
+  `"edge":"disparar-pedidos-aprovados"` prova bundle ≥ 18/08, logo ≥ `dc67b4261`. **A forma da
+  resposta domina o valor do marcador nessa transição** — bumpar compraria um deploy manual da
+  edge de money-path mais cara do repo para provar o que a resposta já prova.
+
+⚠️ **A worktree paralela bumpou a `omie-analytics-sync` assim mesmo, e a divergência é de
+JULGAMENTO, não de fato.** As duas leituras são defensáveis e a delas erra para o lado mais
+seguro: com `main` em `v1.2-…` e prod ainda respondendo `v1.1-mapa-codigo-sem-alias` (último
+probe, `request_id` 59941), a sonda passou a dar **falso NEGATIVO** — que este documento já
+classifica como o lado certo da assimetria, porque faz continuar verificando. O preço é concreto e
+é o que a análise acima previu: **fica um deploy de edge PENDENTE** só para realinhar o marcador
+de um fix que já está no ar. Quem for fechar isso, feche pela camada de edge, não por migration.
+
+A `disparar-pedidos-aprovados` segue congelada por decisão, e se cura sozinha na próxima fatia
+real — porque o gate agora está lá para exigir.
+
+## O `FONTE_SHA256` por LEDGER: o desenho que PERDEU para "servir" (2026-08-25)
+
+⚠️ **Esta seção nasceu meio obsoleta, e COMO isso aconteceu é a lição mais cara dela.** Ela
+registra uma avaliação independente do desdobramento, conduzida em paralelo — e, enquanto corria,
+a seção "A METADE de `_shared/` fechada por fingerprint SERVIDO" acima **entregou o mecanismo**,
+com escopo maior e desenho melhor. A checagem de coordenação que eu fiz antes do PR procurou
+colisão nos MEUS arquivos (`git grep montarEstado origin/main`) e **não pelo ARTEFATO da tarefa**
+— que é precisamente o eixo que o `CLAUDE.md` manda conferir ("a tarefa pode já estar ENTREGUE na
+main sem colidir com arquivo seu") e o único que teria pego isto. Buscar o próprio símbolo é
+buscar colisão, não duplicação.
+
+O que a avaliação apurou, e que continua valendo como registro do caminho NÃO tomado:
+
+O contra a fechar era: *sem histórico, nada impede regravar a impressão sem bumpar o `VERSAO`* —
+os dois estados finais são internamente consistentes, logo indecidíveis por qualquer predicado
+sobre o estado atual do repo. O desenho que eu levei ao Codex (`gpt-5.6-sol`, `xhigh`) fechava
+isso com um **ledger append-only** no próprio `versao.ts` (pares `{versao, sha256}`) e duas
+metades: sem-estado (impressão bate com a última entrada · `VERSAO` é o da última · **`versao` é
+ÚNICO no ledger**) e com-diff (o ledger da base é PREFIXO do do HEAD). A unicidade é o fecho: quem
+regrava sem bumpar apenda uma segunda entrada com o slug que já está lá, e "um marcador nomeia UMA
+impressão" é decidível sem histórico nenhum.
+
+**E mesmo assim perde para o que foi entregue, por uma razão só e ela é decisiva:** o ledger fecha
+o furo no CI; **servir o fingerprint fecha o furo na PRODUÇÃO**. Regravar o hash deixa de ser
+exploit não porque um fiscal reclama, mas porque a resposta da sonda muda junto — a discriminação
+foi preservada, que é a propriedade que se queria desde o começo. É o "mudar a PROPRIEDADE, não o
+verificador" da seção de desenho, e eu o havia subestimado ao me concentrar na variante guardada.
+
+O que o Codex acrescentou e sobrevive à entrega:
+
+1. **A fuga que o ledger NÃO alcança é acidental, não sabotagem:** um `push` direto (o sync
+   bidirecional do Lovable é exatamente isso) muda o corpo e regrava a impressão; a metade
+   sem-estado passa e a com-diff **não roda**, porque o gate de diff é `pull_request`. Fechar isso
+   pedia dar base ao diff no `push` (`github.event.before`), não carregar estado no arquivo.
+   "Mudou" exige uma base — o ledger era uma tentativa de fingir que tinha uma.
+2. **Duas entradas novas na mesma fatia driblam a metade sem-estado:** prefixo, unicidade e
+   impressão atual passam com a PENÚLTIMA entrada falsa. Exigiria "no máximo uma entrada nova por
+   edge por transição" — mais superfície ainda.
+3. **Bootstrap não é histórico.** A primeira entrada só abençoa o corpo atual sob um slug que pode
+   estar congelado há fatias — nas duas edges auditadas acima seria literalmente isso. Chamar
+   aquilo de `HISTORICO_FONTE` venderia o que não se sabe.
+4. **Nome:** com `_shared/` de fora, a impressão não seria do bundle nem do "corpo servido" — o
+   fecho transitivo do desenho entregue é justamente o que torna o nome honesto.
+
+## Os dois falsos-verdes que o `#1993` embarcou — e que valiam mais que o mecanismo novo
+
+A 2ª opinião apontou dois, e os dois são REAIS. Estavam ambos FORA do núcleo puro, que tinha 23
+testes verdes e não os alcançava — a moral é que gate se testa também na fronteira de I/O.
+
+1. **O status do `git diff` era descartado** (`const { saida } = git(args)`). Comando que falha
+   devolve saída vazia → "nenhuma edge tocada" → imprime o `✓`. MEDIDO: a MESMA fatia que reprova
+   (`--base e70bfa050^ --head e70bfa050` → `rc=1`) devolvia **`rc=0` com o `✓`** trocando o
+   `--head` por rev inexistente — porque o `--head` entrava CRU no comando, sem nunca ser
+   resolvido. Um gate cujo cabeçalho promete fail-CLOSED aprovava por cegueira.
+2. **`versao.ts` ausente no HEAD era `continue` silencioso.** Apagar o marcador junto com a
+   mudança de corpo DESINSTRUMENTA a edge e o gate aplaudia. Quem separa os dois casos é a BASE:
+   edge que nunca teve marcador segue isenta (`versaoBase === null`); edge que TINHA e perdeu vira
+   `marcador-ilegivel`.
+
+Corrigidos com o seam `montarEstado(tocados, base, head, ler)`, que torna a fronteira de I/O
+testável sem git. **Os dois se cobriam** — tirar um deixava o outro segurando o teste —, então a
+suíte ganhou um assert por furo, e a falsificação virou contrato executável em
+`scripts/mutcheck.d/sonda-versao-bump-gate.mut` (9 mutações, 8 PEGA, controle+ ✓): falsificação
+que só roda à mão é ausência de dado.

@@ -75,6 +75,7 @@
  */
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 import { removerComentarios } from '@/lib/gates/limpeza-fonte';
 
 /** raiz das edge functions, relativa à raiz do repo */
@@ -238,14 +239,22 @@ function lerNoHead(headRev: string | null, caminho: string): string | null {
   return existsSync(caminho) ? readFileSync(caminho, 'utf8') : null;
 }
 
-/** Coleta o estado das edges instrumentadas que a fatia tocou. */
-export function coletarEstado(base: string, headRev: string | null): EstadoEdge[] {
-  const args = ['diff', '--name-only', base];
-  if (headRev) args.push(headRev);
-  args.push('--', RAIZ_EDGES);
-  const { saida } = git(args);
-  const tocados = saida.split('\n').filter((l) => l !== '');
+/** Lê uma fonte numa revisão. `rev === null` significa a árvore de trabalho. */
+export type LeitorFonte = (rev: string | null, caminho: string) => string | null;
 
+/**
+ * Monta o estado das edges a partir da lista de caminhos tocados — o miolo do coletor, SEM git.
+ *
+ * O leitor é injetado porque o furo que este seam fecha só aparece na fronteira de I/O, e um
+ * gate que só se testa por dentro é o mesmo que não se testar: os dois falsos-verdes corrigidos
+ * aqui (2026-08-25) estavam ambos FORA do núcleo puro, que tinha 23 testes verdes.
+ */
+export function montarEstado(
+  tocados: string[],
+  base: string,
+  headRev: string | null,
+  ler: LeitorFonte,
+): EstadoEdge[] {
   const porEdge = new Map<string, string[]>();
   for (const caminho of tocados) {
     const m = caminho.match(new RegExp(`^${RAIZ_EDGES}/([^/]+)/`));
@@ -259,23 +268,46 @@ export function coletarEstado(base: string, headRev: string | null): EstadoEdge[
   const estados: EstadoEdge[] = [];
   for (const [edge, arquivos] of [...porEdge].sort()) {
     const marcador = `${RAIZ_EDGES}/${edge}/${ARQ_MARCADOR}`;
-    const fonteHead = lerNoHead(headRev, marcador);
-    // Edge sem `versao.ts` no HEAD não é instrumentada — quem cobre essa classe é o gate
-    // `nenhuma edge que serve o paginate.ts fica SEM prova de deploy`, no contrato da sonda.
-    if (fonteHead === null) continue;
-    const fonteBase = lerNaRev(base, marcador);
+    const fonteBase = ler(base, marcador);
+    // ⚠️ O `versao.ts` AUSENTE no HEAD já foi um `continue` silencioso aqui, e isso dava ao gate
+    // uma saída pela porta dos fundos: apagar o marcador junto com a mudança de corpo
+    // DESINSTRUMENTA a edge e o gate aplaudia. Quem separa os dois casos é a BASE — edge que
+    // nunca teve marcador cai no `versaoBase === null` do `auditarBump` e continua fora do gate;
+    // edge que TINHA e perdeu vira `marcador-ilegivel`, que é a verdade.
+    const fonteHead = ler(headRev, marcador);
     estados.push({
       edge,
       versaoBase: fonteBase === null ? null : extrairVersao(fonteBase),
-      versaoHead: extrairVersao(fonteHead),
+      versaoHead: fonteHead === null ? null : extrairVersao(fonteHead),
       corpo: arquivos.map((caminho) => ({
         caminho,
-        base: lerNaRev(base, caminho),
-        head: lerNoHead(headRev, caminho),
+        base: ler(base, caminho),
+        head: ler(headRev, caminho),
       })),
     });
   }
   return estados;
+}
+
+/** Coleta o estado das edges instrumentadas que a fatia tocou. */
+export function coletarEstado(base: string, headRev: string | null): EstadoEdge[] {
+  const args = ['diff', '--name-only', base];
+  if (headRev) args.push(headRev);
+  args.push('--', RAIZ_EDGES);
+  const { ok, saida } = git(args);
+  // ⚠️ O status do `git diff` era DESCARTADO aqui. Falha do comando devolvia saída vazia, que
+  // virava "nenhuma edge tocada" e imprimia o ✓ — lista vazia por ERRO é indistinguível de lista
+  // vazia por MÉRITO, e o gate que promete fail-CLOSED no próprio cabeçalho aprovava por cegueira.
+  if (!ok) {
+    throw new Error(
+      `\`git ${args.join(' ')}\` falhou. Sem diff não há o que medir, e não medir não é o ` +
+        'mesmo que estar em ordem.',
+    );
+  }
+  const tocados = saida.split('\n').filter((l) => l !== '');
+  return montarEstado(tocados, base, headRev, (rev, caminho) =>
+    rev === null ? lerNoHead(null, caminho) : lerNaRev(rev, caminho),
+  );
 }
 
 export function main(argv: string[]): number {
@@ -297,7 +329,28 @@ export function main(argv: string[]): number {
     return 1;
   }
 
-  const achados = auditarBump(coletarEstado(base, headRev));
+  // ⚠️ O `--head` entrava CRU no `git diff`, sem nunca ser resolvido. Rev inexistente fazia o
+  // comando falhar, a saída vazia virava "nada tocado" e o gate imprimia o ✓ — o mesmo modo de
+  // falha do `--pai` sem valor no `verify-frontend.sh`, e a razão de ele recusar em vez de seguir.
+  if (iHead >= 0) {
+    const r = headRev ? git(['rev-parse', '--verify', `${headRev}^{commit}`]) : { ok: false, saida: '' };
+    if (!r.ok) {
+      console.error(
+        `sonda-bump-gate: ✗ \`--head ${headRev ?? '<sem valor>'}\` não resolve para um commit.\n` +
+          '  O gate RECUSA em vez de medir contra o nada — rev que não resolve devolveria diff\n' +
+          '  vazio, e diff vazio se lê como "nenhuma edge mudou".',
+      );
+      return 1;
+    }
+  }
+
+  let achados: Achado[];
+  try {
+    achados = auditarBump(coletarEstado(base, headRev));
+  } catch (e) {
+    console.error(`sonda-bump-gate: ✗ ${mensagemDeErro(e) ?? 'erro sem mensagem ao coletar o diff'}`);
+    return 1;
+  }
   if (achados.length === 0) {
     console.log(
       `sonda-bump-gate: ✓ toda edge instrumentada alterada nesta fatia bumpou o VERSAO (base ${base.slice(0, 9)}).`,
