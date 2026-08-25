@@ -19,6 +19,7 @@
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { authorizeCronOrStaff, corsHeaders } from '../_shared/auth.ts';
+import { classificarSonda, erroSondaAmbigua, EFEITO, respostaSonda, VERSAO } from './versao.ts';
 
 type CarteiraSource = 'omie' | 'hunter_orphan';
 interface OmieClienteRow { customer_user_id: string; omie_codigo_vendedor: number | null; }
@@ -283,6 +284,38 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   const auth = await authorizeCronOrStaff(req);
   if (!auth.ok) return auth.response;
+
+  // ⚠️ SONDA DE VERSÃO — logo após o gate (que já aceita x-cron-secret) e ANTES de qualquer I/O,
+  // inclusive antes da canária abaixo: ela é o caminho mais barato que existe aqui. Ver versao.ts.
+  //
+  // O parse é DEFENSIVO de propósito, e é aqui que esta edge diverge da `omie-analytics-sync`
+  // (que devolve 400 em JSON inválido): lá o corpo é OBRIGATÓRIO — sem `action` não há o que
+  // fazer. Aqui o fluxo real é dirigido por QUERY PARAM (`?canary=1`, e os `searchParams` mais
+  // abaixo) e nunca leu o corpo, então um POST sem body é chamada LEGÍTIMA. Fazer `req.json()`
+  // reprovar o corpo ausente transformaria todo chamador de hoje em 400 — a sonda derrubaria o
+  // rebuild que ela existe para verificar. Corpo ausente/ilegível ⇒ `{}` ⇒ `disparo` ⇒ segue.
+  //
+  // `req.json()` é one-shot, mas aqui não há segunda leitura: o corpo não é usado adiante.
+  let corpoSonda: unknown = {};
+  try {
+    corpoSonda = await req.json();
+  } catch {
+    corpoSonda = {};
+  }
+  const decisaoSonda = classificarSonda(corpoSonda);
+  if (decisaoSonda.tipo === 'sonda') {
+    return new Response(JSON.stringify(respostaSonda(VERSAO)), {
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+  if (decisaoSonda.tipo === 'ambiguo') {
+    // Fail-CLOSED: `probe` com valor não reconhecido NUNCA cai no fluxo real por omissão — o
+    // efeito aqui é o rebuild completo, e o EFEITO no texto diz isso a quem tomou o 400.
+    return new Response(JSON.stringify({ error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }), {
+      status: 400,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
 
   // ── CANÁRIA DE DEPLOY (?canary=1) — a ÚNICA prova do que está SERVIDO em produção ──────────────
   // Por que existe (lacuna exposta no deploy do #1397): a paridade textual do CI cobre a FONTE (o repo),
