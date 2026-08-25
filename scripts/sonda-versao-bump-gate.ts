@@ -199,7 +199,13 @@ export function auditarBump(edges: EstadoEdge[]): Achado[] {
 
 // ─── I/O: git ────────────────────────────────────────────────────────────────────────────────
 
-function git(args: string[]): { ok: boolean; saida: string } {
+/**
+ * Plumbing de git EXPORTADO porque o gate irmão (`canaria-contrato-bump-gate.ts`, marcador
+ * `contrato` das canárias) mede a MESMA fatia contra a MESMA base. Duplicar a resolução de base
+ * seria criar duas noções de "a fatia" que podem divergir — e a divergência apareceria como um
+ * gate verde e o outro vermelho no mesmo PR, sem ninguém saber qual está certo.
+ */
+export function git(args: string[]): { ok: boolean; saida: string } {
   const r = spawnSync('git', args, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
   return { ok: r.status === 0, saida: (r.stdout ?? '').replace(/\n$/, '') };
 }
@@ -226,7 +232,7 @@ export function resolverBase(explicita?: string): string | null {
   return null;
 }
 
-function lerNaRev(rev: string, caminho: string): string | null {
+export function lerNaRev(rev: string, caminho: string): string | null {
   const r = spawnSync('git', ['show', `${rev}:${caminho}`], {
     encoding: 'utf8',
     maxBuffer: 64 * 1024 * 1024,
@@ -234,7 +240,7 @@ function lerNaRev(rev: string, caminho: string): string | null {
   return r.status === 0 ? (r.stdout ?? '') : null;
 }
 
-function lerNoHead(headRev: string | null, caminho: string): string | null {
+export function lerNoHead(headRev: string | null, caminho: string): string | null {
   if (headRev) return lerNaRev(headRev, caminho);
   return existsSync(caminho) ? readFileSync(caminho, 'utf8') : null;
 }
