@@ -43,6 +43,7 @@ import * as syncReprocess from "../sync-reprocess/versao.ts";
 import * as tacticalBatch from "../tactical-plans-batch/versao.ts";
 import * as visitBatch from "../visit-score-recalc-batch/versao.ts";
 import * as monthlyReport from "../monthly-report/versao.ts";
+import * as carteiraRebuild from "../carteira-rebuild/versao.ts";
 
 /**
  * `respostaSonda` (a maioria) ou `respostaSondaTactical` (a `generate-tactical-plan`, que embrulha o
@@ -133,6 +134,15 @@ const EDGES: Array<{ nome: string; mod: ModSonda }> = [
   // o bundle VELHO ignorando `probe` não erra um número, ele ENVIA e-mail para a base inteira,
   // porque os defaults do corpo armam o envio por omissão. Ver `monthly-report/versao.ts`.
   { nome: "monthly-report", mod: monthlyReport },
+  // Décima leva (#1999): a edge MAIS desprotegida do repo, achada na auditoria das CANÁRIAS. Ela
+  // tinha canária versionada (`trava-saida-v1`) e nenhuma sonda — e a canária acumulava os dois
+  // papéis: provar COMPORTAMENTO (a fixture da trava de saída) e provar DEPLOY. Falhava no segundo,
+  // porque o contrato ficou parado de 2026-07-20 a 2026-08-08 enquanto duas fatias reais entravam.
+  // A pior delas é a de paginação (f6561b0b2): no-op por DESENHO enquanto o `max-rows` de prod for
+  // 1000, logo NENHUMA fixture a discrimina — só marcador. Nenhum gate a alcançava: sem `versao.ts`
+  // ficava fora do `sonda:bump` e do `sonda:fingerprint`, e não importa `paginate.ts`, então o gate
+  // de "prova de deploy" a pulava (ele se declara piso — não é furo dele).
+  { nome: "carteira-rebuild", mod: carteiraRebuild },
 ];
 
 /** As cinco da terceira leva — os gates estruturais abaixo varrem todas. */
@@ -152,6 +162,9 @@ const ESCRITA_NOSSO_BANCO = [
   "ai-ops-agent",
   "omie-sync-status-produtos",
   "sync-reprocess",
+  // Décima leva: toma o lease e reescreve ~6909 assignments de cliente↔vendedor — o mapa que
+  // decide carteira e comissão.
+  "carteira-rebuild",
 ];
 
 /**
@@ -194,6 +207,10 @@ const FORMA_NORMALIZADA = [
   // que não se desfaz). Fica FORA de GATE_PROPRIO de propósito: o gate dela é
   // `authorizeCronOrStaff`, que já aceita o `x-cron-secret` do SQL Editor.
   "monthly-report",
+  // Décima leva: entra na varredura estrutural pelo motivo mais direto — o preço de um `probe` mal
+  // grafado caindo no fluxo real é o rebuild completo (lease + ~6909 upserts). Fica FORA de
+  // GATE_PROPRIO: o gate dela é `authorizeCronOrStaff`, que já aceita o `x-cron-secret`.
+  "carteira-rebuild",
 ];
 
 /**
