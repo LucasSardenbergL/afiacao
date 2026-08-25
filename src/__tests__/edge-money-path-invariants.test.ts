@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { removerComentarios } from '@/lib/gates/limpeza-fonte';
+import { vereditoFronteira } from '@/lib/gates/retorno-consumido';
 
 // repo root: src/__tests__ → src → repo (2 níveis).
 const CWD = resolve(__dirname, '../..');
@@ -194,6 +195,13 @@ describe('guardrail money-path: analyze-unified-order mantém o prompt caching L
       codigo,
       'sumiu o acumulador por variante — uma chamada isolada não distingue cold miss de miss permanente',
     ).toMatch(/acumularUsoCache\(/);
+    // FRONTEIRA (classe do #1985, medida de novo em 2026-08-25): `toMatch(/acumularUsoCache\(/)` prova que
+    // a função é CHAMADA, nunca que o produto dela chegou a alguém. `acumularUsoCache(args);` solto ficava
+    // VERDE aqui. O assert é POSICIONAL — qualquer posição que RECEBA o retorno passa.
+    expect(
+      vereditoFronteira(codigo, 'acumularUsoCache'),
+      'REGRESSÃO: o acumulador é calculado e DESCARTADO — o alerta de escrita-sem-leitura nunca dispara',
+    ).toBe('ok');
     expect(codigo, 'sumiu o alerta de escrita paga sem nenhuma leitura').toMatch(
       /pagaEscritaSemNuncaLer\(\s*acc\s*\)/,
     );
@@ -545,6 +553,13 @@ describe('guardrail money-path: P1b doc-ambíguo-Omie (syncCustomers USA o helpe
       semProbe,
       'REGRESSÃO: a ÚNICA chamada a docsComCodigoAmbiguoNoOmie está na canária — o real-path (syncCustomers) parou de aplicar o fail-closed',
     ).toMatch(/docsComCodigoAmbiguoNoOmie\(/);
+    // FRONTEIRA (classe do #1985, medida de novo em 2026-08-25): `toMatch(/docsComCodigoAmbiguoNoOmie\(/)` prova que
+    // a função é CHAMADA, nunca que o produto dela chegou a alguém. `docsComCodigoAmbiguoNoOmie(args);` solto ficava
+    // VERDE aqui. O assert é POSICIONAL — qualquer posição que RECEBA o retorno passa.
+    expect(
+      vereditoFronteira(semProbe, 'docsComCodigoAmbiguoNoOmie'),
+      'REGRESSÃO: o real-path calcula os docs ambíguos e DESCARTA — o fail-closed do P1b evapora',
+    ).toBe('ok');
     expect(
       count(src, 'docsComCodigoAmbiguoNoOmie'),
       'helper deve ser DEFINIDO e CHAMADO (≥2 menções)',
@@ -842,6 +857,13 @@ describe('guardrail money-path: omie-sync self-service USA view fresca account-c
       src,
       'REGRESSÃO: edge não chama mais decidirIdentidadeSelfService — voltou a usar o espelho direto?',
     ).toMatch(/decidirIdentidadeSelfService\(/);
+    // FRONTEIRA (classe do #1985, medida de novo em 2026-08-25): `toMatch(/decidirIdentidadeSelfService\(/)` prova que
+    // a função é CHAMADA, nunca que o produto dela chegou a alguém. `decidirIdentidadeSelfService(args);` solto ficava
+    // VERDE aqui. O assert é POSICIONAL — qualquer posição que RECEBA o retorno passa.
+    expect(
+      vereditoFronteira(src, 'decidirIdentidadeSelfService'),
+      'REGRESSÃO: a identidade é decidida e DESCARTADA — o espelho direto volta a mandar',
+    ).toBe('ok');
     expect(
       count(src, 'decidirIdentidadeSelfService'),
       'helper deve ser DEFINIDO e CHAMADO (≥2 menções)',
@@ -1601,6 +1623,13 @@ describe('guardrail money-path: ai-ops-agent resolve farmer_id da carteira (Opç
   it('o edge USA o helper espelhado (define buildOwnerMap E chama), ≥2 menções', () => {
     expect(src, 'edge não define mais o helper espelhado owner-map').toMatch(/function buildOwnerMap/);
     expect(src, 'edge não chama mais buildOwnerMap — voltou à lógica inline?').toMatch(/buildOwnerMap\(/);
+    // FRONTEIRA (classe do #1985, medida de novo em 2026-08-25): `toMatch(/buildOwnerMap\(/)` prova que
+    // a função é CHAMADA, nunca que o produto dela chegou a alguém. `buildOwnerMap(args);` solto ficava
+    // VERDE aqui. O assert é POSICIONAL — qualquer posição que RECEBA o retorno passa.
+    expect(
+      vereditoFronteira(src, 'buildOwnerMap'),
+      'REGRESSÃO: o owner-map é construído e DESCARTADO — farmer_id volta a sair de mapa vazio',
+    ).toBe('ok');
     expect(src, 'edge não chama mais resolveOwner').toMatch(/resolveOwner\(/);
     expect(
       count(src, 'buildOwnerMap'),
@@ -1641,6 +1670,20 @@ describe('guardrail money-path: omie-sync-sku-items (fila de leadtime)', () => {
       .toMatch(/skuItemsElegivel\(/);
     expect(src, 'REGRESSÃO: edge não ordena mais a fila — antigas voltam a nunca ser alcançadas')
       .toMatch(/skuItemsCompararFila\(/);
+    // FRONTEIRA (classe do #1985, medida de novo em 2026-08-25): `toMatch(/skuItemsElegivel\(/)` prova que
+    // a função é CHAMADA, nunca que o produto dela chegou a alguém. `skuItemsElegivel(args);` solto ficava
+    // VERDE aqui. O assert é POSICIONAL — qualquer posição que RECEBA o retorno passa.
+    expect(
+      vereditoFronteira(src, 'skuItemsElegivel'),
+      'REGRESSÃO: a elegibilidade é avaliada e DESCARTADA — poison volta a entupir a fila',
+    ).toBe('ok');
+    // FRONTEIRA (classe do #1985, medida de novo em 2026-08-25): `toMatch(/skuItemsCompararFila\(/)` prova que
+    // a função é CHAMADA, nunca que o produto dela chegou a alguém. `skuItemsCompararFila(args);` solto ficava
+    // VERDE aqui. O assert é POSICIONAL — qualquer posição que RECEBA o retorno passa.
+    expect(
+      vereditoFronteira(src, 'skuItemsCompararFila'),
+      'REGRESSÃO: a comparação roda e é DESCARTADA — o sort vira no-op e as antigas nunca são alcançadas',
+    ).toBe('ok');
   });
 
   it('PARIDADE: o bloco espelhado no edge é IDÊNTICO ao helper de src/ (pega reversão do Lovable)', () => {
@@ -3255,6 +3298,13 @@ describe('guardrail money-path: P1-c transferência de código (writer NÃO tran
       'REGRESSÃO: a ÚNICA chamada a classificarLoteProof está na canária — o real-path (syncCustomers) parou ' +
         'de classificar e o lote volta cru para o upsert',
     ).toMatch(/classificarLoteProof\(/);
+    // FRONTEIRA (classe do #1985, medida de novo em 2026-08-25): `toMatch(/classificarLoteProof\(/)` prova que
+    // a função é CHAMADA, nunca que o produto dela chegou a alguém. `classificarLoteProof(args);` solto ficava
+    // VERDE aqui. O assert é POSICIONAL — qualquer posição que RECEBA o retorno passa.
+    expect(
+      vereditoFronteira(semProbe, 'classificarLoteProof'),
+      'REGRESSÃO: o lote é classificado e DESCARTADO — vai cru para o upsert (23505 derruba o run)',
+    ).toBe('ok');
   });
 
   it('a canária existe e discrimina: tem o caso de transferência E o de refresh (falsificam-se mutuamente)', () => {

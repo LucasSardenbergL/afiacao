@@ -353,3 +353,57 @@ Gate que casa o **nome** de uma função e conclui que o **efeito** dela acontec
 presente prova montagem, não entrega; `track(` presente prova chamada, não evento gravado. Quando o
 valor de retorno É o produto, o assert tem de seguir o valor até a fronteira (o `return`, o `await`, o
 `INSERT`) — senão o gate mede o texto certo e afirma a coisa errada.
+
+## 10. A varredura da §9: 7 irmãos vivos, e o suspeito nomeado não existia (2026-08-25)
+
+Assinatura rodada em `src/**/*.test.ts(x)`, `supabase/functions/**/*_test.ts` e `scripts/`: regex ou
+`includes` que casa `<identificador>(` contra código lido como TEXTO. 63 arquivos leem fonte com
+`readFileSync`/`Deno.readTextFileSync`; a assinatura casou 5 deles.
+
+**Triagem — o critério é "o valor de RETORNO da função casada é o produto que o teste afirma?"**, não
+a forma do assert. `classificarSonda(`/`avaliarPagina(` são assert de FORMA; `escritaCritica(` e
+`await deriveOmieAccountIdentity(...)` solto são a chamada COMO efeito (não há retorno-produto).
+Esses são falso-positivo da assinatura e ficaram como estão.
+
+**7 afetados, todos no `edge-money-path-invariants.test.ts`** — medidos, não deduzidos: montada a
+forma "calcula e descarta" em código REAL das edges, o gate deu **237 passed, exit 0**.
+
+| Helper | Edge | O que o gate deixava passar |
+| --- | --- | --- |
+| `decidirIdentidadeSelfService` | `omie-sync` | identidade self-service decidida e jogada fora |
+| `docsComCodigoAmbiguoNoOmie` | `omie-analytics-sync` | fail-closed do P1b evapora → last-write-wins |
+| `classificarLoteProof` | `omie-analytics-sync` | lote cru no upsert (23505 derruba o run) |
+| `buildOwnerMap` | `ai-ops-agent` | `farmer_id` saindo de mapa vazio |
+| `skuItemsElegivel` | `omie-sync-sku-items` | filtro sempre-true → poison entope a fila |
+| `skuItemsCompararFila` | `omie-sync-sku-items` | `sort` vira no-op → antigas nunca alcançadas |
+| `acumularUsoCache` | `analyze-unified-order` | alerta de escrita-paga-sem-leitura nunca dispara |
+
+Já-corretos, e é deles que saiu o formato do conserto: `farmer_id: resolveOwner(...)` e
+`criarPedidoVenda(supabaseAdmin, sales_order_id, ident.codigo_cliente, ...)` — asserts POSICIONAIS.
+`agregarItensRecebimento` reprovou a sabotagem por ACIDENTE de âncora textual (`expected '' not to
+be ''`), não pelo mérito: pega, mas não explica.
+
+**O suspeito que a §9 nomeou — `track(` presente ⇒ "evento gravado" — NÃO existe.** Zero gates
+textuais sobre `track(` no repo. Era hipótese, não medição; fica registrado para ninguém re-varrer.
+(De quebra, o #1984 mostrou que o canal PostHog é censurado por bloqueador de rastreador no cliente,
+então um gate assim seria cego duas vezes: no texto e no dado.)
+
+### O critério fraco tinha um buraco, e a falsificação o encontrou
+
+Primeira versão do gate exigia "≥1 chamada consome o retorno". Na falsificação, **5 de 7** acusaram:
+`decidirIdentidadeSelfService` é chamado 2x em `omie-sync`, e sabotar só a primeira passava. Medição
+dos 9 helpers puros na `main`: **0 descartes em todos** ⇒ o critério virou "NENHUMA chamada descarta",
+sem custo de falso-positivo. Falsificação final: **7/7 vermelhas**, cada uma citando a marca do ramo
+("N de M chamada(s) DESCARTAM o retorno"). Suíte canônica na árvore restaurada: 740 arquivos,
+7176 passed, exit 0.
+
+**A armadilha se repetiu DENTRO do conserto, duas vezes** — vale mais que o conserto:
+1. A primeira calibração negativa extraía o nome do alvo por regex do próprio fixture. Nome errado ⇒
+   zero chamadas ⇒ zero consumos ⇒ **verde por cegueira**. Nome agora vai explícito, com sentinela.
+2. `expect(descartes).toBe(0)` aprova zero chamadas. O assert virou um VEREDITO em string, em que
+   "NENHUMA chamada encontrada" é vermelho — senão renomear o helper apaga o guard em silêncio.
+
+Gate: `src/lib/gates/retorno-consumido.ts`, calibrado nos dois sentidos em
+`src/lib/gates/__tests__/retorno-consumido.test.ts` (28 casos: 7 formas de descarte que reprovam, 6
+formas legítimas REAIS + 1 inventada que aprovam, cegueira, 1-de-2, definição≠chamada, e as 9 edges
+de hoje).
