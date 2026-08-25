@@ -266,6 +266,8 @@ falsify_case "grep degenerado (casa tudo) -> controle acusa SONDA_NAO_DISCRIMINA
 # Prova que o controle EXERCITA a rede de verdade (curl+grep no chunk), e não é um `echo ✓`
 # decorativo: se fosse decorativo, um controle impossível-de-passar continuaria dando exit 0.
 SAB_F="$FIX/sab_controle_decorativo.sh"
+# O `$ALVO` do replacement é LITERAL: ele vai PARA o script sabotado, não expande aqui.
+# shellcheck disable=SC2016
 sed 's#^CONTROLE="controle_negativo_.*#CONTROLE="$ALVO"#' "$SCRIPT_ABS" > "$SAB_F"
 falsify_case "controle que DEVERIA casar -> exit 2 (logo o controle roda mesmo, não é enfeite)" "$SAB_F" "SENTINELA_DEEP_XYZ" 0 2 "SONDA_NAO_DISCRIMINA"
 
