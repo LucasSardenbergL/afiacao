@@ -278,6 +278,39 @@ describe('useRegistrarVisitaDashboard', () => {
     );
   });
 
+  /**
+   * O effect tem deps `[user?.id]`: quando o login resolve DEPOIS do mount, ele
+   * re-roda e reagenda o timer. Se o reagendamento usasse MIN_SESSION_MS cru, a
+   * contagem reiniciaria e uma sessão que já corria há 4min só gravaria aos 9 —
+   * a espera dobra silenciosamente. Por isso o `restante` sai de `mountedAtRef`.
+   */
+  it('re-run do effect (login tardio) NAO reinicia a contagem — o restante sai do mount, nao do re-run', async () => {
+    mockedUseAuth.mockReturnValue({ user: undefined } as unknown as ReturnType<typeof useAuth>);
+    const { builder, emitidos } = criarInsertPreguicoso();
+    mockedFrom.mockReturnValue(builder as unknown as ReturnType<typeof supabase.from>);
+
+    vi.useFakeTimers();
+    const agora = Date.now();
+    const relogio = vi.spyOn(Date, 'now').mockReturnValue(agora);
+    const { rerender } = renderHook(() => useRegistrarVisitaDashboard(contexto), { wrapper });
+
+    // 4min sem usuário; o login só resolve agora
+    relogio.mockReturnValue(agora + 4 * 60_000);
+    await vi.advanceTimersByTimeAsync(4 * 60_000);
+    mockedUseAuth.mockReturnValue({ user: { id: 'user-tardio' } } as ReturnType<typeof useAuth>);
+    rerender();
+
+    // +1min => 5min DESDE O MOUNT. Com MIN_SESSION_MS cru o timer só cairia aos 9.
+    relogio.mockReturnValue(agora + 5 * 60_000);
+    await vi.advanceTimersByTimeAsync(1 * 60_000);
+
+    expect(emitidos).toHaveLength(1);
+    expect(emitidos[0]).toMatchObject({ user_id: 'user-tardio' });
+
+    relogio.mockRestore();
+    vi.useRealTimers();
+  });
+
   it('desmontar ANTES dos 5min cancela o timer — nao grava depois de a tela ter sumido', async () => {
     mockedUseAuth.mockReturnValue({ user: { id: 'user-timer3' } } as ReturnType<typeof useAuth>);
     const { builder, emitidos, insert } = criarInsertPreguicoso();
