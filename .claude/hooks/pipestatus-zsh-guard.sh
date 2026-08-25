@@ -274,9 +274,11 @@ fi
 #
 # FORA do repo de proposito: ~30 worktrees compartilham este guard, e um log versionado viraria ima
 # de conflito (a mesma razao pela qual o CLAUDE.md proibe roadmap em arquivo compartilhado).
-# Escrita concorrente sem lock so e segura enquanto a linha couber no `PIPE_BUF` — que no macOS e
-# 512 bytes (`getconf PIPE_BUF /`), NAO os 4096 do Linux. Dai o teto abaixo, que e invariante de
-# CORRETUDE (linha picotada envenena a query), nao estetica.
+# Escrita concorrente sem lock: o teto de 511 bytes e PRAGMATICO, nao garantia normativa. O POSIX
+# so promete nao-intercalacao abaixo de `PIPE_BUF` para PIPE/FIFO — para arquivo regular o que
+# protege e o O_APPEND do `>>` posicionar no EOF por write, e linha curta tornar provavel que o
+# shell emita UM write so. Em NFS o append e simulado pelo cliente e pode corromper mesmo assim.
+# Por isso a QUERY tolera linha picotada (`fromjson? // empty`) em vez de confiar no teto.
 #
 # ARMADILHA MEDIDA: truncar o CAMPO nao limita a LINHA — o escape do JSON infla depois do corte.
 # Com trecho ja cortado em 160, medi 642 bytes so de aspas (cada " vira \") e 1282 bytes de bytes
@@ -286,7 +288,7 @@ fi
 # Falha de log NUNCA cala o aviso: todo o bloco e best-effort.
 TETO_LINHA=511   # 511 + o "\n" = 512 = PIPE_BUF do macOS, o mais estrito das plataformas em jogo
 registrar_sinal() {
-  local log dir linha wt corte janela ts
+  local log dir linha wt corte janela ts d
   log="${PIPESTATUS_GUARD_LOG:-$HOME/.claude/afiacao-pipestatus-guard.jsonl}"
   dir="${log%/*}"
   [ -d "$dir" ] || (umask 077; mkdir -p "$dir") 2>/dev/null || return 0
@@ -297,13 +299,31 @@ registrar_sinal() {
   chmod 600 "$log" 2>/dev/null || true
   # Redacao: a janela e estreita, mas se um segredo encostar nela ele NAO vai para o disco.
   local seguro
+  # MEDIDO: a versao anterior so cobria Bearer/JWT/`chave=valor`. Escapavam para o disco, em texto
+  # plano: `Authorization: token ghp_...`, `curl -u user:senha`, `postgres://u:senha@host` e
+  # `--password senha` (com ESPACO, nao `=`). O CLAUDE.md proibe segredo em texto plano em disco, e
+  # log tambem e disco.
   seguro="$(printf '%s' "$1" | sed -E \
     -e 's/(eyJ[A-Za-z0-9_.-]{8,})/<JWT-REDIGIDO>/g' \
-    -e 's/((token|key|secret|senha|password|passwd|pwd|auth|apikey)["'"'"']?[=:][[:space:]]*)[^[:space:]"'"'"']+/\1<REDIGIDO>/gI' \
+    -e 's/(gh[pousr]_|github_pat_|xox[baprs]-|sk-)[A-Za-z0-9_-]{6,}/\1<REDIGIDO>/g' \
+    -e 's/([Aa]uthorization[[:space:]]*:[[:space:]]*[A-Za-z]+[[:space:]]+)[^[:space:]"'"'"']+/\1<REDIGIDO>/g' \
+    -e 's|([a-zA-Z][a-zA-Z0-9+.-]*://[^:/[:space:]]+:)[^@[:space:]]+@|\1<REDIGIDO>@|g' \
+    -e 's/(-u[[:space:]]+[^:[:space:]]+:)[^[:space:]"'"'"']+/\1<REDIGIDO>/g' \
+    -e 's/(--?(password|passwd|pwd|token|secret|api-?key)[[:space:]]+)[^[:space:]"'"'"']+/\1<REDIGIDO>/gI' \
+    -e 's/((token|key|secret|senha|password|passwd|pwd|auth|apikey|pat)["'"'"']?[=:][[:space:]]*["'"'"']?)[^[:space:]"'"'"']+/\1<REDIGIDO>/gI' \
     -e 's/([Bb]earer[[:space:]]+)[^[:space:]]+/\1<REDIGIDO>/g' 2>/dev/null)"
-  seguro="${seguro:-$1}"
+  seguro="${seguro:-<REDACAO-FALHOU-TRECHO-DESCARTADO>}"
   ts="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)"
-  wt="$(printf '%.48s' "${PWD##*/}")"
+  # MEDIDO: `${PWD##*/}` grava o basename do CWD — rodando de `<worktree>/src/lib` o log dizia
+  # `lib`, e o agrupamento "por worktree" da query virava ficcao (duas worktrees em src/lib
+  # colidiriam). Sobe a arvore ate o `.git`, em bash puro: o caminho de disparo nao paga fork.
+  local d="$PWD"
+  wt=""
+  while [ -n "$d" ] && [ "$d" != "/" ]; do
+    if [ -e "$d/.git" ]; then wt="${d##*/}"; break; fi
+    d="${d%/*}"
+  done
+  wt="$(printf '%.48s' "${wt:-${PWD##*/}}")"
   # `jq -a` forca saida ASCII pura => ${#linha} conta BYTES em QUALQUER locale, sem fork de `wc`.
   for corte in 160 80 40 0; do
     if [ "$corte" -eq 0 ]; then janela='<TRECHO-OMITIDO-LINHA-LONGA>'
