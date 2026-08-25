@@ -60,6 +60,39 @@ bumpou o `contrato` da `omie-vendas-sync` de `identidade-fail-closed-v1` para
 `identidade-a2-client-to-user-v2` justamente porque o marcador velho não nomeava mais a fatia que
 a canária verifica. Auditar os `contrato` pelo mesmo critério é o próximo passo natural.
 
+## O bump do #1974 no ar — a tese deste doc exercitada ponta a ponta (2026-08-25, 02:5x UTC)
+
+O parágrafo acima usa o #1974 como prova de que a classe existe nas canárias. Ele fechou, e o
+fecho vale registrar porque é a tese deste documento funcionando: **o bump foi o que tornou o
+deploy verificável.**
+
+O #1974 mergeou às **02:15:13 UTC**. Deploy de edge no Lovable é manual, então nesse instante a
+`main` andou e a produção não — e a única coisa capaz de expor a diferença era o marcador. Deploy
+pedido pelo chat do Lovable (com `assinatura-a2.ts`, arquivo NOVO: só o `index.ts` derrubaria o
+boot por import inexistente) e sondado logo depois pela rota `identidade_probe`:
+
+| campo | lido no `request_id` 59734 |
+|---|---|
+| `status_code` | 200 |
+| `canary` | `true` |
+| `contrato` | **`identidade-a2-client-to-user-v2`** |
+| `ok` | `true` |
+| `casos_vermelhos` | vazio (9 fixtures, todas verdes) |
+
+Os **cinco** campos que a §Canárias do `deploy.md` exige, não só o `ok`.
+
+**A identidade se resolve pelo `contrato`, sem o campo `edge`.** A canária da `omie-vendas-sync` não
+emite `edge` — o discriminante do #1789, que separou as 10 sondas da oitava leva, não existe aqui.
+Ele não fez falta porque a string `identidade-a2-client-to-user-v2` aparece em UM arquivo só
+(`omie-vendas-sync/index.ts`) e **nasceu no próprio #1974**: `git grep` no commit pai devolve zero.
+Nenhuma outra edge e nenhum bundle anterior conseguem produzi-la, então ler essa string já é o
+veredito. É o mesmo critério do `edge` por outro caminho — **unicidade provada**, não presumida.
+
+E é exatamente o que o marcador congelado destrói: mantido em `identidade-fail-closed-v1`, o probe
+responderia a MESMA string antes e depois do deploy, e a verificação teria dado verde sem provar
+nada — o modo de falha que este documento nomeia. O bump não foi consequência da fatia; foi o
+pré-requisito de conseguir enxergá-la no ar.
+
 ## Se for instalar gate: o desenho que sobreviveu à 2ª opinião (Codex, xhigh)
 
 Medido neste repo (30 dias, 414 commits): **68** tocam alguma edge instrumentada (~16%) e **55**
