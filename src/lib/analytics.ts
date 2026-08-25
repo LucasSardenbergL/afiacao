@@ -1,6 +1,7 @@
 import type { PostHog } from 'posthog-js';
 import { logger } from '@/lib/logger';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
+import { resolverBuildId } from '@/lib/build-id';
 
 /**
  * Wrapper de telemetria sobre PostHog. Centraliza:
@@ -101,6 +102,18 @@ export function initAnalytics(): void {
           }
         },
       });
+      // Carimbo do build que está EXECUTANDO neste browser, em TODO evento.
+      // `register` (super property) e não um carimbo dentro de track(): o
+      // autocapture, o $pageview e o $exception NÃO passam por track(), e sem
+      // eles o DENOMINADOR da adoção ("clientes que emitiram qualquer evento")
+      // ficaria num universo diferente do numerador.
+      //
+      // ⚠️ ORDEM: antes de `ph` e antes do drain abaixo. O drain despeja a fila
+      // pré-init direto em `posthog.capture`; registrar depois dele mandaria os
+      // primeiros eventos da sessão — justamente os do boot, os que mais
+      // importam pra medir adoção — sem build_id, ou pior, com o build ANTERIOR
+      // que ficou persistido no localStorage do cliente que acabou de atualizar.
+      posthog.register({ build_id: resolverBuildId() });
       ph = posthog;
       // Drena os eventos que chegaram enquanto o SDK baixava (1º pageview etc.)
       const queued = preInitQueue.splice(0);
