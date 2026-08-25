@@ -681,6 +681,7 @@ export const MODULOS: ModuloApp[] = [
       "src/lib/modulos/**",
       "src/lib/agruparPorMes.ts",
       "src/lib/analytics.ts",
+      "src/lib/build-id.ts",
       "src/lib/erro-mensagem.ts",
       "src/lib/escape-html.ts",
       // Compartilhado entre `vendas` (useCrossSellEngine) e `farmer-inteligencia`
