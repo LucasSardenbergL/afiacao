@@ -1778,23 +1778,18 @@ describe('guardrail money-path: snapshot de não-vinculados lê a proof por cont
     ).toBe(0);
     // Contar 0 sozinho NÃO prova que a capacidade sobreviveu — apagar a função deixaria isto verde.
     // ⚠️ Pós-hotfix Codex-C (#1444) este mapa NÃO alimenta mais o ledger nem a proof (ambos passaram à
-    // lista document-first `accountMapByUser`). Ele sobrevive para chavear as TAGS do cadastro Omie:
-    // resolver o user errado — ou não resolver — erra `excluir_da_carteira`, que decide se o cliente
-    // sai da carteira. Não reintroduza o argumento "senão a membership encolhe": ele morreu com o
-    // #1444 (os 1633 clones já estão no ledger desde o backfill, e o acumulador não encolhe).
+    // lista document-first `accountMapByUser`). Ele sobrevive para chavear as TAGS do cadastro Omie —
+    // e as tags são `vendas`-ONLY, o que é a metade do invariante que a versão anterior deste bloco
+    // não enxergava (ver abaixo).
     expect(
       src,
       'REGRESSÃO: sumiu a resolução código→user (userByCodigo) — sem ela as tags do cadastro Omie ' +
         '(is_fornecedor / excluir_da_carteira) deixam de ser aplicadas',
     ).toMatch(/async function fetchCodigoUserMap\(/);
-    for (const fonte of ['customer_canonical_alias', 'omie_customer_account_map']) {
-      expect(
-        src,
-        `REGRESSÃO: fetchCodigoUserMap parou de ler ${fonte}. A união resolve a conta INTEIRA: a ` +
-          'proof é document-first e não tem os ~1633 clones (sem profile); sem o alias eles ficariam ' +
-          'SEM tag no run `servicos`, em silêncio',
-      ).toMatch(new RegExp(`\\.from\\("${fonte}"\\)`));
-    }
+    expect(
+      src,
+      'REGRESSÃO: fetchCodigoUserMap parou de ler a proof — é a ÚNICA fonte do mapa desde 2026-08-25',
+    ).toMatch(/\.from\("omie_customer_account_map"\)/);
     // ── invariantes que o /codex xhigh obrigou (a 1ª versão do mapa era GLOBAL) ──
     // O código Omie só é único DENTRO de uma conta: `UNIQUE(codigo, account)` NÃO o torna único
     // globalmente. Um mapa global deixa o último `map.set` vencer em silêncio e pode resolver o
@@ -1809,16 +1804,28 @@ describe('guardrail money-path: snapshot de não-vinculados lê a proof por cont
       src,
       'REGRESSÃO: a leitura da proof perdeu o filtro de conta (.eq("account", empresa))',
     ).toMatch(/\.from\("omie_customer_account_map"\)[\s\S]{0,200}\.eq\("account", empresa\)/);
+    // ── A fonte `customer_canonical_alias` SAIU deste mapa (2026-08-25) ─────────────────────────
+    // Ela congelou o sync de `servicos` por 37 dias: alias e proof guardam, por DESENHO, duas
+    // identidades da MESMA entidade comercial (clone sem `profiles` × canônico com `profiles`), e o
+    // guard de colisão lia isso como corrupção — 1633 desacordos, e em 1633/1633 o user da proof era
+    // exatamente o `canonical_user_id` do alias. Falso-positivo de 100%.
+    // Reintroduzir a união RECONGELA o sync. O argumento que a justificava ("sem o alias os clones
+    // ficam SEM tag no run servicos") é FALSO e está travado pelo teste de tags `vendas`-only abaixo.
+    expect(
+      count(src, '.from("customer_canonical_alias")'),
+      'REGRESSÃO: a fonte alias voltou ao fetchCodigoUserMap — foi ela que congelou o sync de ' +
+        '`servicos` por 37 dias (1633 colisões alias×proof que são o par canônico, não corrupção)',
+    ).toBe(0);
+    // A OUTRA METADE do invariante: retirar o alias só é NO-OP porque as tags são `vendas`-only. Se
+    // alguém ligar tags fora de `vendas` sem reavaliar a resolução código→user, o run `servicos`
+    // passa a gravar `excluir_da_carteira` a partir de um mapa que nunca foi exercitado em produção
+    // — e aí a decisão de qual user recebe a tag (clone × canônico) deixa de ser inerte.
     expect(
       src,
-      'REGRESSÃO: a leitura de alias perdeu o filtro de conta (.eq("alias_conta", account))',
-    ).toMatch(/\.from\("customer_canonical_alias"\)[\s\S]{0,200}\.eq\("alias_conta", account\)/);
-    // Alias `inactive` não pode admitir membro novo: o ledger é acumulador, a admissão é irreversível.
-    expect(
-      src,
-      'REGRESSÃO: a leitura de alias perdeu o filtro de status — alias rebaixado a `inactive` ' +
-        'voltaria a ADMITIR membro novo no ledger, e admissão no acumulador não se desfaz',
-    ).toMatch(/\.from\("customer_canonical_alias"\)[\s\S]{0,260}\.eq\("status", "active"\)/);
+      'MUDANÇA DE CONTRATO: as tags do cadastro Omie deixaram de ser `vendas`-only. Reavalie ' +
+        'fetchCodigoUserMap ANTES de liberar: em servicos o mapa era inerte, e a retirada da fonte ' +
+        'alias (2026-08-25) foi provada no-op justamente por isso',
+    ).toMatch(/const tagRows = account === "vendas"/);
     // Colisão dentro da MESMA conta é corrupção — resolver "o último que chegou" anexaria o cliente
     // ao vendedor errado. Fail-closed: aborta o run.
     expect(
@@ -1829,10 +1836,7 @@ describe('guardrail money-path: snapshot de não-vinculados lê a proof por cont
     // Paginação com `.range()` exige `.order` estável (§CLAUDE.md) — E com desempate: ordenar só
     // pelo código deixa a ordem indefinida se o código repetir, e linha que some entre páginas vira
     // membro a menos no ledger, em silêncio.
-    for (const [col, desempate] of [
-      ['alias_omie_codigo', 'alias_user_id'],
-      ['omie_codigo_cliente', 'user_id'],
-    ]) {
+    for (const [col, desempate] of [['omie_codigo_cliente', 'user_id']]) {
       expect(
         src,
         `REGRESSÃO: a paginação de ${col} perdeu o .order estável com desempate por ${desempate} — ` +
