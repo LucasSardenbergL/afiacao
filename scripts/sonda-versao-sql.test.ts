@@ -165,6 +165,8 @@ describe('PASSO 2 — a leitura parte da lista CANÔNICA e nomeia os 5 ramos', (
 
   it('lê pelo request_id — nunca `ORDER BY id DESC LIMIT 1` nem id de EXEMPLO', () => {
     const sql = gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a'] });
+    // Controle POSITIVO: sem ele as duas negativas abaixo passariam medindo um SQL vazio.
+    expect(sql).toMatch(/ON r\.id = i\.request_id/);
     expect(sql).not.toMatch(/ORDER BY id DESC/i);
     expect(sql).not.toMatch(/WHERE\s+r?\.?id\s*=\s*\d+/i);
   });

@@ -167,7 +167,8 @@ VELHO" numa edge que está no ar (e o desfecho é redeployar edge de money-path 
 Edge sem `versao.ts` derruba a geração inteira (nada de SQL parcial em silêncio), e `--caro` que não
 casa um nome da leva também — o typo deixaria a edge cara no bloco SEM trava. Testes:
 `scripts/sonda-versao-sql.test.ts` (a falsificação sabota o `versao.ts` e exige que o marcador velho
-suma do SQL).
+suma do SQL) + `scripts/mutcheck.d/sonda-versao-sql.mut`, que no CI prova que a suíte **pega** a
+trava trocada por `WHERE`, o `LEFT JOIN` virado `JOIN` e o marcador hardcoded.
 
 - ⚠️ **A trava do bloco perigoso tem de ser `CASE`, NÃO `WHERE`.** Quando parte da leva só pode ser sondada
   DEPOIS do deploy confirmado (bundle pré-sensor ignora o `probe` e dispara o run), a tentação é
