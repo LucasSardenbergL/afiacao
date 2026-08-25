@@ -4,6 +4,13 @@ import path from "path";
 
 export default defineConfig({
   plugins: [react()],
+  // Espelha os `define` do vite.config: sem isto, código que lê uma const injetada
+  // (ex. `__COMMIT_SHA__` em analytics.ts) lança ReferenceError SÓ no teste — o
+  // ambiente de teste divergir do de build é bug latente, não detalhe de config.
+  define: {
+    __COMMIT_SHA__: JSON.stringify("testsha1"),
+    __PWA_ENABLED__: JSON.stringify(false),
+  },
   test: {
     environment: "jsdom",
     globals: true,

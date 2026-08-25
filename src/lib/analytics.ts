@@ -2,6 +2,9 @@ import type { PostHog } from 'posthog-js';
 import { logger } from '@/lib/logger';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
 
+/** Injetado pelo `define` do Vite (`resolveCommitSha`): SHA curto do build, ou 'dev'. */
+declare const __COMMIT_SHA__: string;
+
 /**
  * Wrapper de telemetria sobre PostHog. Centraliza:
  *  - inicialização condicional (só roda em production OU quando VITE_POSTHOG_KEY existe)
@@ -96,6 +99,12 @@ export function initAnalytics(): void {
         // Não enviar em desenvolvimento por padrão (opt-out explícito em DEV pra evitar
         // poluir dashboard de produção). Pra testar local, comente o opt_out abaixo.
         loaded: (instance) => {
+          // Super-property em TODO evento: qual build o cliente está EXECUTANDO.
+          // Não é o mesmo que o build servido — o SW usa `registerType:'prompt'` e
+          // espera o clique, então cliente e servidor divergem por tempo indefinido
+          // (2026-08-24: 3 PRs servidos, browser rodando o anterior). Sem isto, saber
+          // a versão de um cliente exige abrir o browser dele. → `docs/agent/deploy.md`
+          instance.register({ build_sha: __COMMIT_SHA__ });
           if (import.meta.env.DEV) {
             instance.opt_out_capturing();
           }
