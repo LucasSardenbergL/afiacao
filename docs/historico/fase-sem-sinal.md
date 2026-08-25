@@ -1530,3 +1530,62 @@ SELECT toDate(timestamp) AS dia,
        count() AS n, max(timestamp) AS ultimo
 FROM events WHERE timestamp > now() - INTERVAL 7 DAY GROUP BY dia, via ORDER BY dia DESC
 ```
+
+## O `keepalive` que não grava: cinco causas ELIMINADAS por medição, e a que sobra não é lá
+
+O `#1965` deixou a causa em aberto com honestidade — restam *"keepalive cortado no unload"* e *"token/RLS"* — porque o `.then()` que reportaria o erro não roda: a página já morreu. Esse é o ponto
+que torna o caminho opaco, e é também o que faz a eliminação valer mais que o palpite: **tudo que é
+do lado do SERVIDOR é verificável sem browser**, e nada disso sobreviveu.
+
+| hipótese | como foi medida | resultado |
+|---|---|---|
+| falta `GRANT` de INSERT | `has_table_privilege('authenticated','dashboard_visits','INSERT')` | **`t`** — existe (ACL `arwdDxtm`) |
+| policy de INSERT ausente/errada | `pg_policies` | existe: `WITH CHECK (auth.uid() = user_id)` |
+| `auth.uid()` não resolve o JWT | `set_config('request.jwt.claims', …)` em transação | **`policy_passaria = true`**; sem claim → `NULO` |
+| URL/key divergentes do client oficial | `useLastVisit.ts:107` × `client.ts:6` | **a mesma** `VITE_SUPABASE_URL` / `VITE_SUPABASE_PUBLISHABLE_KEY` |
+| token velho no `tokenRef` | `AuthContext.tsx:241` | `onAuthStateChange` → `setSession` em **todo** evento (inclui `TOKEN_REFRESHED`) → re-render → ref fresco |
+
+⚠️ **A consulta de grants por `information_schema` quase fabricou a primeira linha ao contrário:**
+`role_table_grants` voltou **vazia** para a tabela — e vazio ali parece "não há GRANT". Ela filtra
+pelo que a role da CONEXÃO enxerga, e o `claude_ro` não enxerga esses grantees. O ACL bruto
+(`pg_class.relacl` + `has_table_privilege`) mostra o oposto. **Ausência em `information_schema` é
+ausência de VISIBILIDADE, não de privilégio** — a mesma armadilha de sempre, num catálogo novo.
+
+E o CORS também não é: o preflight do endpoint responde **200 em 0,22s**, libera
+`authorization,apikey,content-type,prefer` e manda **`access-control-max-age: 3600`**. Como o próprio
+`useLastVisit` **lê** essa mesma URL no mount, o preflight já está em cache quando o `pagehide`
+dispara — a explicação "o preflight não completa no unload" perde a força.
+
+### O que sobra, e por que a assimetria é a pista
+
+Sobra o **transporte durante o unload**. E a assimetria observada é coerente com ela e com mais nada:
+o `unmount` grava (linha `id=1`) usando o **client oficial**, com a página viva; o `pagehide` não
+grava usando `fetch` cru, com a página morrendo. Mesmo token, mesma URL, mesma policy, mesmo grant —
+muda o **momento**.
+
+O comentário do `emitirComKeepalive` registra o trade-off que fecha o círculo: *"`sendBeacon` não
+serve — não deixa mandar os headers de auth que o PostgREST exige"*. Os headers de auth são
+exatamente o que tira a request do conjunto "simples" do CORS; a escolha feita para poder autenticar
+é a mesma que põe a request na categoria mais frágil no unload. **A solução escolhida carrega a causa
+provável da falha** — o que não se resolve mexendo no fetch, e sim tirando a autenticação do header
+(uma edge que aceite POST simples e valide o JWT no corpo torna `sendBeacon` utilizável).
+
+### O teste que decide, em 30 segundos
+
+Não é preciso mais análise: com a página **VIVA** o `.then()` roda e o status HTTP aparece. No console
+do dashboard autenticado, o mesmo POST do `emitirComKeepalive` — se voltar **201**, a request é
+válida e o culpado é o unload; se voltar **401/403**, é auth/RLS e esta tabela está errada:
+
+```js
+const { data: { session } } = await window.supabase.auth.getSession()
+const r = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/rest/v1/dashboard_visits`, {
+  method: 'POST', keepalive: true,
+  headers: { 'Content-Type': 'application/json', apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+             Authorization: `Bearer ${session.access_token}`, Prefer: 'return=minimal' },
+  body: JSON.stringify({ user_id: session.user.id, visited_at: new Date().toISOString(),
+                         session_minutes: 9, persona: 'teste', company_selection: 'all' }),
+})
+console.log(r.status, await r.text())   // 201 => unload é o culpado · 401/403 => auth/RLS
+```
+
+`persona: 'teste'` marca a linha como sintética — dá para distinguir de visita real depois.
