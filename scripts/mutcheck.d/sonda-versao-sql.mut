@@ -1,0 +1,20 @@
+# Poder de discriminação da suíte do GERADOR do SQL de sondagem de versão (docs/agent/deploy.md
+# §"Sondar VÁRIAS edges numa tacada"). Não é money-path por si, mas decide sobre money-path: um
+# veredito falso daqui manda redeployar edge de money-path à toa — ou dá deploy por confirmado.
+# A falsificação vive AQUI, e não só na sabotagem de fixture dentro do teste, porque falsificação
+# que só roda à mão é ausência de dado (docs/historico/falsificacao-fora-do-ci.md).
+# @src: scripts/sonda-versao-sql.ts
+# @test: scripts/sonda-versao-sql.test.ts
+# Rode: scripts/mutcheck.sh scripts/sonda-versao-sql.ts scripts/sonda-versao-sql.test.ts scripts/mutcheck.d/sonda-versao-sql.mut
+PEGA      | trava do bloco caro CASE -> WHERE (teatro) | s/CASE WHEN g\.confirmei/WHERE g.confirmei/
+PEGA      | leitura sai da lista canonica (LEFT->JOIN) | s/LEFT JOIN ids i/JOIN ids i/
+PEGA      | resposta ausente vira veredito (LEFT->JOIN)| s/LEFT JOIN net\._http_response/JOIN net._http_response/
+PEGA      | ramo AGUARDE some do veredito              | s/'AGUARDE —/'AGUARDOU —/
+PEGA      | placeholder do bloco que le fica invalido  | s/jsonb_each_text\('\{\}'::jsonb\)/jsonb_each_text('<COLE_AQUI>'::jsonb)/
+PEGA      | marcador hardcoded em vez de lido do arquivo | s/lit\(e\.versao\)/lit('v1.0-sensor-inicial')/
+PEGA      | timeout_milliseconds implicito (default 5s) | s/timeout_milliseconds := 20000/-- sem timeout/
+PEGA      | --caro forasteira aceita em silencio       | s/!edges\.includes\(c\)/false/
+PEGA      | edge sem sensor degrada em vez de lancar   | s/if \(problemas\.length > 0\)/if (false)/
+PEGA      | eco probe:true dispensado no CONFIRMADO    | s/AND l\.corpo ->> 'probe' = 'true'/AND true/
+SOBREVIVE | timeout 20s -> 30s (valor nao e pinado)    | s/timeout_milliseconds := 20000/timeout_milliseconds := 30000/
+SOBREVIVE | ORDER BY por posicao (cosmetico)           | s/ORDER BY l\.edge;/ORDER BY 1;/
