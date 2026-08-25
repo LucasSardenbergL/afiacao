@@ -491,3 +491,38 @@ primeiro evento com `$lib='web'`:**
 
 Enquanto esse valor não passar de `2026-08-23T11:09:23Z`, repetir a query de build só reconfirma o
 zero — e cada repetição parece uma medição nova.
+
+### O gate ABRIU — e o numerador da adoção era a SONDA (2026-08-25T09:50Z)
+
+O gate da subseção anterior passou: `max(timestamp)` com `$lib` preenchido foi de
+`2026-08-23T11:09:23Z` para **`2026-08-25T02:15:38Z`**. A adoção ficou legível pela primeira vez, e
+a leitura ingênua dela é **errada num sentido novo** — pior que o `0/3`, porque `50%` parece um
+resultado.
+
+Decomposição pós-Publish (`> 00:50Z`, `exit 0`, `is_cached=false`), por aparelho — o eixo que o
+`#1984` provou ser obrigatório:
+
+| distinct_id | SO / navegador | `build_id` | eventos | janela |
+|---|---|---|---|---|
+| `414a9727` | **iOS / Mobile Safari** | **`(sem instrumentacao)`** | 13 | 09:39:36 → 09:50:09Z |
+| `01a036b3` | Mac OS X / Chrome | **`index-D1GiFr1h`** | 1 | 02:15:38Z |
+
+A query canônica desta §6 leria `1 de 2 clientes` = **50% de adoção**. É fabricação, e a causa não
+está na fórmula nem nas janelas:
+
+⚠️ **O `01a036b3` é a SONDA.** É o Chromium limpo que o founder abriu *para testar se o canal
+entrega* (confirmado por ele). Ele não existe em `profiles.user_id` — sessão sem login, portanto
+sem `identify()` — enquanto `414a9727` e `700657a1` existem, o que faz do teste um controle
+positivo e não uma sonda cega. Aberto para medir o canal, ele nasceu **no build atual** (browser
+limpo, sem SW velho em cache) e por isso entrou no **numerador** da adoção.
+
+**A regra:** um cliente aberto para diagnosticar o canal entra na população que o canal mede.
+Numa amostra censurada — onde os clientes reais estão bloqueados (`#1984`) — a sonda pode virar a
+**maioria** dos observáveis, e a taxa passa a medir o instrumento. Antes de dividir, exclua do
+denominador todo `distinct_id` que você mesmo criou; se o que sobra é `0/1`, a taxa não existe
+ainda, e dizê-lo é a leitura correta.
+
+**A adoção real, excluindo o instrumento: `0 de 1` usuário.** O único usuário do parque ativo
+pós-Publish (`414a9727`, 12 visitas em `dashboard_visits` até 09:46:31Z, controle de fora do cano)
+executa build **anterior** à instrumentação. É o comportamento correto do `registerType: 'prompt'`
+— e agora é uma não-adoção **medida**, não uma ausência de observação.
