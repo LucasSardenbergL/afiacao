@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import YAML from 'yaml';
 
 import { AUTHZ_MANIFEST } from './authz-manifest';
 import { AUTHZ_TABELAS_FECHADAS } from './authz-tabelas-fechadas';
@@ -324,21 +323,47 @@ describe('fingerprint sobre o contrato REAL', () => {
 // ══════════════════════════════════════════════════════════════════════════════════════════════
 describe('ci.yml — o job authz-sentinela', () => {
   const yml = readFileSync(join(RAIZ, '.github', 'workflows', 'ci.yml'), 'utf8');
-  const wf = YAML.parse(yml) as {
-    jobs: Record<string, { if?: string; steps: { id?: string; name?: string; run?: string; with?: { script?: string } }[] }>;
-  };
-  const job = wf.jobs['authz-sentinela'];
-  const script = job?.steps.find((s) => s.name === 'Sincroniza a Issue authz-prod')?.with?.script ?? '';
+
+  /**
+   * Extração TEXTUAL, sem parser de YAML — de propósito: `yaml` não é dependência declarada do
+   * repo (só um pin em `overrides`), e declará-la mexeria no lockfile, que é ímã de conflito num
+   * repo com ~30 worktrees. Os marcadores abaixo são o CONTRATO deste teste: se o workflow mudar
+   * de forma, ele falha ALTO em vez de silenciar — que é o comportamento certo para um sentinela.
+   */
+  function blocoDoScript(nomeDoStep: string): string {
+    const i = yml.indexOf(`- name: ${nomeDoStep}`);
+    expect(i, `step \`${nomeDoStep}\` sumiu do ci.yml`).toBeGreaterThan(-1);
+    const j = yml.indexOf('script: |', i);
+    expect(j, `step \`${nomeDoStep}\` não tem \`script: |\``).toBeGreaterThan(-1);
+    const linhas = yml.slice(yml.indexOf('\n', j) + 1).split('\n');
+    const recuo = (linhas[0].match(/^ */) as RegExpMatchArray)[0].length;
+    const corpo: string[] = [];
+    for (const l of linhas) {
+      if (l.trim() !== '' && (l.match(/^ */) as RegExpMatchArray)[0].length < recuo) break;
+      corpo.push(l.slice(recuo));
+    }
+    return corpo.join('\n');
+  }
+
+  const script = blocoDoScript('Sincroniza a Issue authz-prod');
 
   it('roda SÓ na main (nunca segura PR de ninguém)', () => {
-    expect(job).toBeDefined();
-    expect(job.if).toBe("github.ref == 'refs/heads/main'");
+    const i = yml.indexOf('  authz-sentinela:');
+    expect(i, 'job authz-sentinela sumiu').toBeGreaterThan(-1);
+    expect(yml.slice(i, i + 200)).toContain("if: github.ref == 'refs/heads/main'");
   });
 
   it('o step bloqueante do `validate` NÃO usa --exigir-frescor (idade não barra PR)', () => {
-    const v = wf.jobs.validate.steps.find((s) => s.run === 'bun run authz:carimbo');
-    expect(v, 'step `bun run authz:carimbo` sumiu do job validate').toBeDefined();
-    expect(v?.run).not.toContain('--exigir-frescor');
+    const i = yml.indexOf('- name: Authz carimbo de prod');
+    expect(i, 'step do carimbo sumiu do job validate').toBeGreaterThan(-1);
+    const trecho = yml.slice(i, i + 160);
+    expect(trecho).toContain('run: bun run authz:carimbo');
+    expect(trecho).not.toContain('--exigir-frescor');
+  });
+
+  it('o job sentinela USA --exigir-frescor (senão os dois eixos dele ficam mudos)', () => {
+    expect(blocoDoScript.name).toBe('blocoDoScript'); // sanidade do helper
+    expect(yml).toContain('bun run authz:carimbo -- --exigir-frescor --json');
   });
 
   const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor as new (...a: string[]) => (...a: unknown[]) => Promise<void>;
