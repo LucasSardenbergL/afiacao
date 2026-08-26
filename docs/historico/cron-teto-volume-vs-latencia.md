@@ -118,3 +118,81 @@ atraso em ≤25 NF-e pendentes.** Isso é o que sustenta a decisão de não mexe
   ~92s e removeria a dependência do isolate acidental. Não foi feito: exige deploy de edge (manual no
   Lovable) e não elimina o crescimento, só o adia. O teto novo compra a folga; a paralelização é o
   próximo degrau se a duração voltar a encostar.
+
+---
+
+# Sequela (2026-08-25, mesmo dia): a coleira — e o gate que eu achei que a cobria
+
+Fecha o 2º item do "Fica em aberto" acima, para o jobid 162. **Não** fecha as outras 22 edges.
+
+## O que a coleira precisa ser (e por que o teto por request não basta)
+
+`AbortSignal.timeout(25s)` sozinho ainda deixa o run cruzar o kill: 3 tentativas de 25s mais os
+backoffs passam de 75s, e a **última pode COMEÇAR faltando 1s** para o kill. Quando o kill chega no
+meio de um request o isolate morre sem passar pelo catch — que é exatamente a linha órfã `running`
+que `docs/agent/sync.md` §Enumeração pesada manda evitar. Por isso o teto de cada request e o sleep
+de cada retry saem de um **deadline compartilhado** do run, não de uma constante por chamada.
+
+A aritmética virou helper puro (`supabase/functions/_shared/omie-deadline.ts`, 13 testes Deno) em vez
+de ficar solta em 23 `omieCall`s. Duas funções, e cada uma existe por um furo concreto:
+
+- `timeoutRequestMs(agora, deadline, teto)` → `min(teto, restante)`, e **0 quando o restante não paga
+  um request viável**. O 0 é a parte que importa: um request condenado a abortar gasta o mesmo socket,
+  devolve erro genérico e não traz dado — recusar deixa a cobertura parcial explícita (aqui,
+  `truncada:true` no payload, que é o MESMO campo que provou `truncada:false` no diagnóstico do #2017).
+- `cabeEspera(agora, deadline, espera)` → exige espaço para o sleep **e** para a chamada seguinte. Um
+  guard escrito como `Date.now() + backoff >= deadline` — a forma que a edge de referência
+  `omie-sync-status-produtos` usa — aprova um sleep de 10s com 11s de sobra, e o 1s restante não paga
+  nem o handshake (81ms de TLS + ~1,5s de listagem, medidos). O sleep cabe; o retry não.
+
+## O achado de método: `edges:typecheck` **tolera** a classe de erro que este refactor produz
+
+Ao mudar a assinatura de `omieCall` eu troquei a ordem dos parâmetros na declaração e não no
+call-site — passei `deadline` onde ia `payload`. Rodei `bun run edges:typecheck` **com o bug**:
+
+```
+EXIT=0   ✅ 0 erros de classe-crash.
+         112 erro(s) de outras classes tolerados (dívida conhecida): TS2345:42 …
+```
+
+Verde. O gate é de **precisão, não de recall** (por desenho — `docs/superpowers/specs/2026-07-21-edges-typecheck-gate-design.md`), e `TS2345` (*argument of type X is not assignable to Y*) está na dívida tolerada. Ou seja: **a perna de tipos dos "3 gates de edge" não pega troca de ordem de argumentos** — justamente o erro que um refactor de assinatura comete. O que pega é `deno check --no-remote <arquivo>` direto:
+
+```
+TS2345 [ERROR]: Argument of type 'number' is not assignable to parameter of type 'Record<string, unknown>'.
+EXIT=1
+```
+
+A confirmação cruzada veio de graça no gate agregado: depois do fix, o contador foi de **TS2345:42 → 41**. O erro estava lá o tempo todo, diluído num número que o gate imprime e aprova.
+
+**Regra:** ao mexer em ASSINATURA de função de edge, `deno check --no-remote` no arquivo tocado — o `edges:typecheck` do CI conta esse erro e segue verde. O agregado responde "a dívida não cresceu de classe", não "o seu arquivo está são".
+
+## Falsificação (helper)
+
+Três sabotagens, cada uma no invariante de uma função, com `git checkout --` entre elas (o commit veio antes — `restaurar()` aqui é literalmente checkout):
+
+| Sabotagem | Efeito no verde |
+|---|---|
+| `timeoutRequestMs` devolve o teto fixo (ignora o restante) | 11 passed / **2 failed** |
+| `cabeEspera` sem reservar o request (`>= esperaMs`) | 10 passed / **3 failed** |
+| piso vira passe-livre (`restante <= 0`) | 12 passed / **1 failed** |
+| restaurado | **13 passed / 0 failed**, exit 0 |
+
+## Números
+
+- Edges que chamam `app.omie.com.br`: **26**. Sem nenhum `AbortSignal` antes desta entrega: **23**. Depois: **22**.
+- Gates: `test:edges` **910 passed / 0 failed**; `edges:typecheck` exit 0 (TS2345 42→41); `deno check` do arquivo exit 0.
+
+## Priorização das 22 restantes (medida, não estimada)
+
+Cruzamento de `cron.job WHERE active` com a lista de edges sem coleira — **9 têm cron direto**, e 5 mais entram pelo orquestrador `omie-cron-diario` (jobid 52, teto 120s), que não aparece numa busca por cron:
+
+| Urgência | Edges | Por quê |
+|---|---|---|
+| Alta (cron + money-path) | `omie-sync-estoque` (31/124, teto **90s**), `omie-sync-metadados` (32, 240s), `omie-sync-sku-items` (53), `omie-vendas-sync` (85/86/**140 `*/6`**), `omie-analytics-sync` (**12 crons**) | catálogo/estoque/vendas; o teto de 90s do `omie-sync-estoque` é o mais apertado do conjunto |
+| Alta (via orquestrador) | `omie-sync-pedidos-compra`, `omie-sync-nfes-recebidas`, `omie-sync-ctes-recebidos`, `omie-sync-vendas-items` | steps ORDENADOS do jobid 52 — um step pendurado atrasa os seguintes, que LEEM o espelho do anterior |
+| Média | `omie-sync` (44, 60s), `omie-nfe-recebimento-sync` (157), `cmc-snapshot-backfill` (148, 600s), `disparar-pedidos-aprovados` (29), `sync-reprocess` (34/35) | cron, money-path indireto |
+| Baixa | `omie-nfe-recebimento`, `process-nfe`, `tint-omie-sync`, `verify-employee`, `omie-malha-sync`, `omie-aplicar-parametros`, `analyze-unified-order`, `cmc-snapshot-smoke` | sem cron — invocação humana, que tem um humano olhando o relógio |
+
+⚠️ **O deadline não é transferível por cópia:** cada edge tem de derivar `MAX_DURACAO_MS` do teto do
+SEU cron, e os tetos vão de **60s a 600s**. Copiar o `120_000` daqui para uma edge cujo cron corta em
+60s produz um guard que nunca morde — coleira decorativa, pior que nenhuma, porque parece coberta.

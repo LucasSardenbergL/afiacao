@@ -273,3 +273,38 @@ Sinal para revisão: **tabela de intenção que cresce sem a contagem de entidad
 ## Diagnóstico
 
 "Diagnosticado ≠ corrigido" — ver `diagnose-supabase-sync` (estados rígidos de saída; só declara RECUPERADO com novo ciclo + efeito no dado; a ação corretiva é entregue ao humano, nunca aplicada às cegas).
+
+## Guard alcançável, fusível ancorado, fila que não anda
+
+Medido na classe dos 206 SKUs OBEN sem `ponto_pedido`/`estoque_maximo` (2026-08-26). Narrativa completa e
+números em `docs/historico/fila-de-prontidao-e-sensor-de-derivada.md`.
+
+- **Antes de "corrigir" um ramo de CASE, prove que a população CHEGA nele.** Um `WHEN` anterior pode absorver
+  100% dos casos — medido: 135/135 param no primeiro ramo (`pp_sug IS NULL → 'sem_mudanca'`) e o guard acusado
+  de causar o deadlock **nunca é atingido**. Patch em ramo inalcançável é no-op indistinguível de correção: passa
+  em todo teste de "a função ainda funciona", e o relatório diz "corrigido".
+- **Guard e fusível que compartilham a ÂNCORA morrem juntos.** `WHEN max_antes IS NULL OR max_antes <= 0 THEN
+  'bloqueado_validacao'` e o fusível `WHEN max_antes > 0 AND max_sug > 3*max_antes THEN 'segurado'` leem a mesma
+  coluna: remover o guard faz `NULL > 0` ser falso ⇒ o fusível não dispara ⇒ escrita automática de parâmetro de
+  compra **sem teto de magnitude**. Falha ABERTA. ⇒ Ao propor derrubar uma barreira, **enumere o que mais lê a
+  mesma condição** — não basta ler o ramo que se está mexendo.
+- **`status` de cascata ordenada é o PRIMEIRO bloqueador, não a composição da fila.** `GROUP BY status_sugestao`
+  responde "onde cada um parou primeiro", e some com os degraus seguintes. Para estimar o **rendimento** de uma
+  ação corretiva, calcule a matriz completa de pré-requisitos — senão você promete N e entrega ~1 (aqui:
+  "classificar os 54 em grupo" liberaria 54 pelo status e **nenhum** de fato, porque 54/54 param em fornecedor).
+- **Sensor de DERIVADA fica verde com a fila CONGELADA.** Watchdog que só alerta em "saltou +N num dia" — e cujo
+  `ELSE` faz `dismissed_at = now()` — trata ausência de piora como saúde. Série real: 146 → 119 em 2 meses, depois
+  **congelada há 20 dias**, alerta verde o tempo todo. Fila parada exige **nível + composição + idade**; mantenha
+  o de delta ao lado, para o propósito original — não no lugar.
+- **`NULL` de parâmetro é semântica correta; estagnação de NULL é defeito operacional.** Preencher com número
+  sintético para "ficar visível ao motor" é `ausente ≠ zero` aplicado ao parâmetro — compra estoque com número
+  inventado. Mas fail-closed **não** é sinônimo de saudável: `NULL` é bom para o *valor* e péssimo como *máquina
+  de estados* (falta motivo, idade, próximo passo, rota de saída).
+- **Rotas paralelas criam VÃO — um `NOT EXISTS` decide quem fica de fora para sempre.** O cold-start só CRIA para
+  SKU **sem linha** e só GRADUA quem tem `parametro_cold_start=true`: linha órfã (existe, com parâmetro NULL) não
+  é atendida por nenhum dos dois. ⇒ Ao herdar "a feature X não cobre estes registros", **ache o predicado de
+  exclusão antes de escrever feature nova** — o destravamento defensável eram 18 SKUs e R$ 2.913,50, não 206.
+- **Parecer de 2ª opinião é hipótese de alta qualidade, não evidência.** No mesmo ritual o Codex acertou dois
+  achados que eu não tinha visto (a graduação escreve por fora do fusível; usar o denominador de *habilitados*)
+  e errou o dimensionamento de um terceiro (a rota de primeira compra cobre **5**, não os 81). Verifique cada
+  alegação verificável antes de replanejar em cima dela.
