@@ -3154,7 +3154,7 @@ describe('canária VERSIONADA: omie-vendas-sync (identidade fail-closed)', () =>
   // anterior nasceu no #1922, DEPOIS do #1888, então já provava aquela fatia por transitividade
   // — mas responderia idêntico antes e depois da prova COMPORTAMENTAL, que é a única a
   // sobreviver a um deploy em que o Lovable reinterpreta o código (#1272, #1445→#1478).
-  const CONTRATO = 'identidade-a2-client-to-user-v2';
+  const CONTRATO = 'identidade-a2-client-to-user-v3';
   // Sobre a fonte SEM comentários: a prosa que EXPLICA o campo cita o campo (`// \`canary: true\`
   // acompanha o probe_no_ar...`), então um assert POSITIVO sobre o texto cru passa lendo o
   // comentário e sobrevive à remoção do código. Falsificação S3 pegou exatamente isso.
@@ -3189,6 +3189,27 @@ describe('canária VERSIONADA: omie-vendas-sync (identidade fail-closed)', () =>
   it('o marcador NOMEIA a fatia que a canária verifica hoje', () => {
     expect(CONTRATO).not.toMatch(/sensor-inicial/);
     expect(CONTRATO, 'marcador genérico não discrimina fatia').toMatch(/identidade/);
+  });
+
+  it('a canária ecoa TAMBÉM o `versao` da sonda — o discriminador de BUNDLE', () => {
+    // Os dois marcadores têm trabalhos diferentes e nenhum cobre o outro: o `contrato` acima nomeia
+    // a FATIA que a fixture verifica e pode ficar parado de forma legítima; o `versao` diz qual
+    // BUNDLE respondeu e é gateado pelo `sonda:bump`, então não depende de alguém lembrar.
+    // Sem este eco, verificar a canária exigiria uma segunda chamada (a rota `probe`) para saber
+    // se o bundle que respondeu é o que se deployou — que é o buraco desta edge até 2026-08-25.
+    expect(
+      bloco,
+      'sumiu o eco `versao: VERSAO` do identidade_probe — a canária volta a não discriminar bundle',
+    ).toMatch(/versao: VERSAO/);
+  });
+
+  it('a sonda da edge existe e é servida pelo `versao.ts` dela', () => {
+    // O eco acima só vale se `VERSAO` vier do módulo da sonda — um literal local responderia a
+    // mesma string sem entrar no `sonda:bump` nem no mapa de fingerprints.
+    expect(
+      removerComentarios(src),
+      'o `VERSAO` do eco não vem de `./versao.ts` — sem isso ele não é gateado por nada',
+    ).toMatch(/import \{[^}]*\bVERSAO\b[^}]*\} from ['"]\.\/versao\.ts['"]/);
   });
 
   it('a fixture DISCRIMINA: o caso de divergência advisory×derivado está na tabela-verdade', () => {
