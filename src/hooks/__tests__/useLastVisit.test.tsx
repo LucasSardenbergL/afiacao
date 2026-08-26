@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
@@ -225,114 +225,33 @@ describe('useRegistrarVisitaDashboard', () => {
   });
 
   /**
-   * O TIMER. Provado em produção (2026-08-25): o `fetch` com `keepalive:true` do
-   * `pagehide` NÃO sobrevive ao unload — mesmo caminho, mesmo token, mesma policy
-   * devolvem 201 com a página VIVA e nada quando a aba fecha de verdade. Enquanto
-   * a gravação dependesse de COMO o usuário sai, fechar a aba perdia a visita.
-   * O timer torna a gravação independente da saída: ao cruzar MIN_SESSION_MS a
-   * visita já está no banco.
-   */
-  it('GRAVA ao cruzar MIN_SESSION_MS sem unmount e sem pagehide — a saída deixou de ser requisito', async () => {
-    mockedUseAuth.mockReturnValue({ user: { id: 'user-timer' } } as ReturnType<typeof useAuth>);
-    const { builder, emitidos } = criarInsertPreguicoso();
-    mockedFrom.mockReturnValue(builder as unknown as ReturnType<typeof supabase.from>);
-
-    vi.useFakeTimers();
-    const agora = Date.now();
-    const relogio = vi.spyOn(Date, 'now').mockReturnValue(agora);
-    renderHook(() => useRegistrarVisitaDashboard(contexto), { wrapper });
-
-    relogio.mockReturnValue(agora + 5 * 60_000);
-    await vi.advanceTimersByTimeAsync(5 * 60_000);
-
-    expect(emitidos).toHaveLength(1);
-    expect(emitidos[0]).toMatchObject({ user_id: 'user-timer', persona: 'gestao' });
-
-    relogio.mockRestore();
-    vi.useRealTimers();
-  });
-
-  it('o timer NAO duplica: depois de gravar, o unmount reporta ja_gravado e nao insere de novo', async () => {
-    mockedUseAuth.mockReturnValue({ user: { id: 'user-timer2' } } as ReturnType<typeof useAuth>);
-    const { builder, emitidos } = criarInsertPreguicoso();
-    mockedFrom.mockReturnValue(builder as unknown as ReturnType<typeof supabase.from>);
-
-    vi.useFakeTimers();
-    const agora = Date.now();
-    const relogio = vi.spyOn(Date, 'now').mockReturnValue(agora);
-    const { unmount } = renderHook(() => useRegistrarVisitaDashboard(contexto), { wrapper });
-
-    relogio.mockReturnValue(agora + 5 * 60_000);
-    await vi.advanceTimersByTimeAsync(5 * 60_000);
-    expect(emitidos).toHaveLength(1);
-
-    relogio.mockReturnValue(agora + 9 * 60_000);
-    unmount();
-    relogio.mockRestore();
-    vi.useRealTimers();
-
-    expect(emitidos).toHaveLength(1);
-    expect(mockedTrack).toHaveBeenCalledWith(
-      'dashboard.visita_tentativa',
-      expect.objectContaining({ motivo: 'ja_gravado' })
-    );
-  });
-
-  /**
    * O effect tem deps `[user?.id]`: quando o login resolve DEPOIS do mount, ele
    * re-roda e reagenda o timer. Se o reagendamento usasse MIN_SESSION_MS cru, a
    * contagem reiniciaria e uma sessão que já corria há 4min só gravaria aos 9 —
    * a espera dobra silenciosamente. Por isso o `restante` sai de `mountedAtRef`.
    */
-  it('re-run do effect (login tardio) NAO reinicia a contagem — o restante sai do mount, nao do re-run', async () => {
+  it('re-run do effect (login tardio) NAO reinicia a contagem — a duracao sai do mount', () => {
     mockedUseAuth.mockReturnValue({ user: undefined } as unknown as ReturnType<typeof useAuth>);
     const { builder, emitidos } = criarInsertPreguicoso();
     mockedFrom.mockReturnValue(builder as unknown as ReturnType<typeof supabase.from>);
 
-    vi.useFakeTimers();
     const agora = Date.now();
     const relogio = vi.spyOn(Date, 'now').mockReturnValue(agora);
-    const { rerender } = renderHook(() => useRegistrarVisitaDashboard(contexto), { wrapper });
+    const { rerender, unmount } = renderHook(() => useRegistrarVisitaDashboard(contexto), { wrapper });
 
     // 4min sem usuário; o login só resolve agora
     relogio.mockReturnValue(agora + 4 * 60_000);
-    await vi.advanceTimersByTimeAsync(4 * 60_000);
     mockedUseAuth.mockReturnValue({ user: { id: 'user-tardio' } } as ReturnType<typeof useAuth>);
     rerender();
 
-    // +1min => 5min DESDE O MOUNT. Com MIN_SESSION_MS cru o timer só cairia aos 9.
-    relogio.mockReturnValue(agora + 5 * 60_000);
-    await vi.advanceTimersByTimeAsync(1 * 60_000);
+    // +2min => 6min DESDE O MOUNT. Se a contagem saísse do re-run seriam 2min,
+    // e a visita morreria em `sessao_curta` — perdida por ter logado tarde.
+    relogio.mockReturnValue(agora + 6 * 60_000);
+    unmount();
+    relogio.mockRestore();
 
     expect(emitidos).toHaveLength(1);
-    expect(emitidos[0]).toMatchObject({ user_id: 'user-tardio' });
-
-    relogio.mockRestore();
-    vi.useRealTimers();
-  });
-
-  it('desmontar ANTES dos 5min cancela o timer — nao grava depois de a tela ter sumido', async () => {
-    mockedUseAuth.mockReturnValue({ user: { id: 'user-timer3' } } as ReturnType<typeof useAuth>);
-    const { builder, emitidos, insert } = criarInsertPreguicoso();
-    mockedFrom.mockReturnValue(builder as unknown as ReturnType<typeof supabase.from>);
-
-    vi.useFakeTimers();
-    const agora = Date.now();
-    const relogio = vi.spyOn(Date, 'now').mockReturnValue(agora);
-    const { unmount } = renderHook(() => useRegistrarVisitaDashboard(contexto), { wrapper });
-
-    relogio.mockReturnValue(agora + 2 * 60_000);
-    await vi.advanceTimersByTimeAsync(2 * 60_000);
-    unmount();
-
-    // passa MUITO do limiar: se o timer sobrevivesse ao unmount, gravaria aqui
-    relogio.mockReturnValue(agora + 30 * 60_000);
-    await vi.advanceTimersByTimeAsync(28 * 60_000);
-    relogio.mockRestore();
-    vi.useRealTimers();
-
-    expect(insert).not.toHaveBeenCalled();
-    expect(emitidos).toHaveLength(0);
+    expect(emitidos[0]).toMatchObject({ user_id: 'user-tardio', session_minutes: 6 });
   });
 
   it('reporta dashboard.visita_erro quando o banco recusa o insert (falha nao pode ser silenciosa)', async () => {
@@ -615,49 +534,190 @@ describe('useRegistrarVisitaDashboard — fecho de aba (pagehide)', () => {
 
     expect(fetchSpy).not.toHaveBeenCalled();
   });
+});
 
-  /**
-   * ALCANÇABILIDADE do keepalive, com relógio e timers andando JUNTOS.
-   *
-   * Os testes acima deste adiantam só `Date.now()` e deixam o `setTimeout`
-   * parado — um mundo onde 6min se passaram e o timer dos 5min não disparou.
-   * Esse mundo não existe no browser. Com os dois em sincronia, o timer do
-   * #1978 grava aos 5min pelo client oficial e marca `gravadoRef`; logo, todo
-   * `pagehide` de sessão que QUALIFICA (>=5min) chega como `ja_gravado`, e
-   * abaixo de 5min para em `sessao_curta`. Não sobra faixa para
-   * `emitirComKeepalive`: o transporte frágil virou código inalcançável.
-   *
-   * Se algum dia o timer sair, ESTE teste fica vermelho — é o sentinela de que
-   * o caminho de fecho de aba voltou a carregar a gravação.
-   */
-  it('keepalive é INALCANÇÁVEL com timers e relógio em sincronia: o timer grava antes', async () => {
-    autenticar('user-alcance');
+
+/**
+ * `visibilitychange` → `hidden`: a última callback com a página VIVA.
+ *
+ * O `pagehide` grava com fetch cru + keepalive porque o documento já está
+ * morrendo — e medido em produção (2026-08-25) esse transporte NÃO entrega. O
+ * `hidden` dispara ANTES, com o documento vivo, então grava pelo client oficial
+ * (o caminho provado no unmount) e a duração sai REAL.
+ */
+describe('useRegistrarVisitaDashboard — aba oculta (visibilitychange)', () => {
+  const contexto = { persona: 'gestao', companySelection: 'all' };
+
+  function autenticar(userId: string) {
+    mockedUseAuth.mockReturnValue({
+      user: { id: userId },
+      session: { access_token: 'token-abc' },
+    } as unknown as ReturnType<typeof useAuth>);
+  }
+
+  /** jsdom expõe visibilityState read-only — só `defineProperty` troca. */
+  function ocultarAba() {
+    Object.defineProperty(document, 'visibilityState', {
+      value: 'hidden',
+      configurable: true,
+    });
+    document.dispatchEvent(new Event('visibilitychange'));
+  }
+
+  function revelarAba() {
+    Object.defineProperty(document, 'visibilityState', {
+      value: 'visible',
+      configurable: true,
+    });
+    document.dispatchEvent(new Event('visibilitychange'));
+  }
+
+  afterEach(() => {
+    Object.defineProperty(document, 'visibilityState', {
+      value: 'visible',
+      configurable: true,
+    });
+  });
+
+  it('GRAVA pelo client oficial (nao pelo fetch cru): a pagina ainda esta viva', () => {
+    autenticar('user-31');
     const { builder, emitidos } = criarInsertPreguicoso();
     mockedFrom.mockReturnValue(builder as unknown as ReturnType<typeof supabase.from>);
     const fetchSpy = vi.fn().mockResolvedValue({ ok: true, status: 201 });
     vi.stubGlobal('fetch', fetchSpy);
 
-    vi.useFakeTimers();
     const agora = Date.now();
     const relogio = vi.spyOn(Date, 'now').mockReturnValue(agora);
     renderHook(() => useRegistrarVisitaDashboard(contexto), { wrapper });
-
-    relogio.mockReturnValue(agora + 6 * 60_000);
-    await vi.advanceTimersByTimeAsync(6 * 60_000);
-
-    window.dispatchEvent(new Event('pagehide'));
+    relogio.mockReturnValue(agora + 23 * 60_000);
+    ocultarAba();
     relogio.mockRestore();
-    vi.useRealTimers();
 
     expect(emitidos).toHaveLength(1);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  /**
+   * O que o #1978 custava: o timer gravava ao cruzar o limiar, então TODA
+   * sessão marcava exatamente 5. Medido na tabela: 10 de 10 linhas pré-timer
+   * tinham duração real (média 15,7min, máx 38); 5 de 5 pós-timer marcaram 5.
+   * Este teste é o sentinela desse número — 23 tem que chegar como 23.
+   */
+  it('session_minutes e a duracao REAL, nao o limiar de 5 (a regressao do #1978)', () => {
+    autenticar('user-32');
+    const { builder, emitidos } = criarInsertPreguicoso();
+    mockedFrom.mockReturnValue(builder as unknown as ReturnType<typeof supabase.from>);
+
+    const agora = Date.now();
+    const relogio = vi.spyOn(Date, 'now').mockReturnValue(agora);
+    renderHook(() => useRegistrarVisitaDashboard(contexto), { wrapper });
+    relogio.mockReturnValue(agora + 23 * 60_000);
+    ocultarAba();
+    relogio.mockRestore();
+
+    expect(emitidos[0]).toMatchObject({ user_id: 'user-32', session_minutes: 23 });
+  });
+
+  it('voltar para visible NAO grava: so o hidden encerra a visita', () => {
+    autenticar('user-33');
+    const { builder, emitidos } = criarInsertPreguicoso();
+    mockedFrom.mockReturnValue(builder as unknown as ReturnType<typeof supabase.from>);
+
+    const agora = Date.now();
+    const relogio = vi.spyOn(Date, 'now').mockReturnValue(agora);
+    renderHook(() => useRegistrarVisitaDashboard(contexto), { wrapper });
+    relogio.mockReturnValue(agora + 9 * 60_000);
+    revelarAba();
+    relogio.mockRestore();
+
+    expect(emitidos).toHaveLength(0);
+  });
+
+  it('hidden antes de 5min nao grava (o guard anti-F5 vale aqui tambem)', () => {
+    autenticar('user-34');
+    const { builder, emitidos } = criarInsertPreguicoso();
+    mockedFrom.mockReturnValue(builder as unknown as ReturnType<typeof supabase.from>);
+
+    const agora = Date.now();
+    const relogio = vi.spyOn(Date, 'now').mockReturnValue(agora);
+    renderHook(() => useRegistrarVisitaDashboard(contexto), { wrapper });
+    relogio.mockReturnValue(agora + 2 * 60_000);
+    ocultarAba();
+    relogio.mockRestore();
+
+    expect(emitidos).toHaveLength(0);
+    expect(mockedTrack).toHaveBeenCalledWith(
+      'dashboard.visita_tentativa',
+      expect.objectContaining({ via: 'oculta', motivo: 'sessao_curta' })
+    );
+  });
+
+  /**
+   * O fecho de aba real passa por `hidden` ANTES do `pagehide`. Como o hidden
+   * grava com a página viva, o pagehide chega tarde — e é isso que tira o
+   * transporte frágil do caminho crítico, em vez de tentar consertá-lo.
+   */
+  it('no fecho de aba o hidden grava PRIMEIRO e o pagehide cai em ja_gravado', () => {
+    autenticar('user-35');
+    const { builder, emitidos } = criarInsertPreguicoso();
+    mockedFrom.mockReturnValue(builder as unknown as ReturnType<typeof supabase.from>);
+    const fetchSpy = vi.fn().mockResolvedValue({ ok: true, status: 201 });
+    vi.stubGlobal('fetch', fetchSpy);
+
+    const agora = Date.now();
+    const relogio = vi.spyOn(Date, 'now').mockReturnValue(agora);
+    renderHook(() => useRegistrarVisitaDashboard(contexto), { wrapper });
+    relogio.mockReturnValue(agora + 12 * 60_000);
+    ocultarAba();
+    window.dispatchEvent(new Event('pagehide'));
+    relogio.mockRestore();
+
+    expect(emitidos).toHaveLength(1);
+    expect(emitidos[0]).toMatchObject({ session_minutes: 12 });
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(mockedTrack).toHaveBeenCalledWith(
       'dashboard.visita_tentativa',
       expect.objectContaining({ via: 'pagehide', motivo: 'ja_gravado' })
     );
   });
-});
 
+  it('desmontou: o listener de visibilitychange sai junto', () => {
+    autenticar('user-36');
+    const { builder, emitidos } = criarInsertPreguicoso();
+    mockedFrom.mockReturnValue(builder as unknown as ReturnType<typeof supabase.from>);
+
+    const agora = Date.now();
+    const relogio = vi.spyOn(Date, 'now').mockReturnValue(agora);
+    const { unmount } = renderHook(() => useRegistrarVisitaDashboard(contexto), { wrapper });
+    relogio.mockReturnValue(agora + 2 * 60_000);
+    unmount(); // < 5min: o unmount nao grava
+    relogio.mockReturnValue(agora + 30 * 60_000);
+    ocultarAba();
+    relogio.mockRestore();
+
+    expect(emitidos).toHaveLength(0);
+  });
+
+  it('a lente "ver como" nao grava visita: o write-guard do client barra', () => {
+    autenticar('user-37');
+    mockedIsLensActive.mockReturnValue(true);
+    const { builder, emitidos } = criarInsertPreguicoso();
+    mockedFrom.mockReturnValue(builder as unknown as ReturnType<typeof supabase.from>);
+
+    const agora = Date.now();
+    const relogio = vi.spyOn(Date, 'now').mockReturnValue(agora);
+    renderHook(() => useRegistrarVisitaDashboard(contexto), { wrapper });
+    relogio.mockReturnValue(agora + 11 * 60_000);
+    ocultarAba();
+    relogio.mockRestore();
+
+    expect(emitidos).toHaveLength(0);
+    expect(mockedTrack).toHaveBeenCalledWith(
+      'dashboard.visita_tentativa',
+      expect.objectContaining({ via: 'oculta', motivo: 'lente_ativa' })
+    );
+  });
+});
 describe('useLastVisit — sinal de que a leitura resolveu', () => {
   it('visitaResolvida e FALSE enquanto a leitura do servidor nao voltou', () => {
     mockedUseAuth.mockReturnValue({ user: { id: 'user-31' } } as ReturnType<typeof useAuth>);
