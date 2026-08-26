@@ -757,14 +757,16 @@ achadas pelo Codex, não pela revisão:**
    aparelho**, tornam censura persistente a explicação plausível. Um só não conclui nada.
 
 **Instalar o probe é pré-requisito de aprovar o primeiro customer**, não tarefa posterior — e ele
-está CONSTRUÍDO desde 2026-08-25 (subseção seguinte). Até a migration ser colada no SQL Editor, a
-condição (2) segue inconclusiva na prática: o código existe no repo, a tabela ainda não em prod.
+EXISTE desde 2026-08-26 (subseção seguinte). A tabela está APLICADA em prod e verificada; o que
+falta para a condição (2) virar leitura é o Publish do frontend e a primeira sessão autenticada.
+⚠️ Até lá `probe-censura.sh` responde 🟡 *"nenhum probe fora da carência"* — e isso é **ausência de
+observação**, não ausência de censura. Não leia o 🟡 como "não há bloqueador".
 
 ⚠️ **E mesmo com o gatilho aberto, a primeira saída NÃO é o proxy — nem (c) puro.** É a quarta
 saída abaixo, que o ritual Codex trouxe e que domina as duas: ela não depende de browser, então
 não há o que bloquear, e não contorna a escolha de ninguém.
 
-### O probe de `attempt_id` — como LER (2026-08-25)
+### O probe de `attempt_id` — como LER (2026-08-26)
 
 A condição (2) do gatilho acima deixou de ser recado. O par é `public.telemetria_probes`
 (PostgREST, domínio do app — imune à lista) × evento `telemetria.probe` (censurável), e a chave de
