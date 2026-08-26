@@ -286,3 +286,46 @@ entrega, não a primeira.
 
 Saem da lista da seção anterior as 5 deste PR. Segue no topo `omie-sync-estoque` (teto de **90s**, o
 mais apertado do conjunto) — e ele tem cron próprio, então ali o aviso ⚠️ original vale como escrito.
+
+## Ritual Codex — onde ele estava certo, e onde o dado o contradiz
+
+**Certo, e virou correção (money-path):** o deadline é propriedade do RUN, não do item. Em
+`omie-sync-sku-items` a exceção de deadline caía no mesmo catch da falha de consulta e chamava
+`marcarTentativa` — backoff de **6h/24h/72h** para uma NFe que nunca foi consultada, até 4 por vez
+(o guard do laço só roda a cada 5). Foi uma regressão **introduzida pela própria coleira**. A
+correção não precisou de classe de erro nova: basta checar o deadline **antes do `sleep` de
+cadência** e sair do laço — a NFe nem entra no `try`. Abort de request que de fato saiu para o Omie
+continua marcando tentativa, que aí é falha da consulta mesmo.
+
+**A lição geral:** ao pôr coleira num laço que trata falha POR ITEM, pergunte sempre quem paga a
+conta do limite do run. Se o item herda a punição, a coleira criou um dano novo enquanto consertava
+outro.
+
+**Certo, mas parcialmente:** ele apontou 4 `sleep` de cadência sem guarda. Em `sku` era real e foi
+corrigido (5s, guard a cada 5 itens). Em `nfes` (1,1s) e `vendas` (1,1s) o guard do laço roda a
+**cada** iteração e o catch não agenda backoff — o dano é dormir ~1s a mais. Ficam anotados, não
+corrigidos: dizer "nenhum sleep cruza o deadline" seria afirmar mais do que se entregou. O que vale
+é: **nenhum sleep de RETRY cruza**, e em `sku` nenhum de cadência também.
+
+**Contradito pelo dado:** ele alegou que o p95 estaria **censurado** — runs mortos por wall-clock
+não teriam `completed_at` e ficariam fora do percentil. É uma boa objeção metodológica, e foi
+verificada:
+
+```
+action               status    n     sem completed_at
+sync_pedidos         complete  336   0
+sync_nfes_recebidas  complete  168   0
+sync_sku_items       complete  182   0
+```
+
+**100% dos runs estão `complete`, zero sem `completed_at`, zero `running`/`partial`/`error`.** Não
+há cauda cortada: o p95 de 120s é a distribuição inteira. A decisão de não arbitrar teto de run em
+`pedidos` segue de pé pelo mesmo motivo de antes — e agora com a censura descartada, não suposta.
+
+**Fora de escopo, registrado:** o desenho definitivo que ele propõe (cursor/checkpoint por
+`pipeline_run_id`, `partial` + retomada na invocação seguinte, publicar só no fim legítimo da
+paginação) elimina a categoria "truncamento" em vez de escolher um valor para ela. É a resposta
+certa para o problema de VOLUME — e é projeto próprio, não emenda de um PR de latência.
+
+⚠️ O parecer saiu com `REVISÃO INDEPENDENTE PENDENTE`: a segunda instância do ritual não conseguiu
+criar temporário sob o sandbox read-only (`mktemp`, exit 70). É auditoria de uma cabeça só.
