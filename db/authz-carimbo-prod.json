@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "medidoEm": "2026-08-26T00:19:30.088Z",
+  "sourceHead": "7795504dd1027badb9f2770f6d1e2374793d79d7",
+  "alvo": {
+    "usuario": "claude_ro",
+    "servidor": "PostgreSQL 17.6",
+    "somenteLeitura": true,
+    "projetoHash": "a0010e4a9b3b3e6b"
+  },
+  "audits": {
+    "funcoes": {
+      "script": "authz:funcoes:prod",
+      "exit": 0,
+      "resumo": "✅ o EXECUTE de prod bate com o contrato nas 43 função(ões) da allowlist.",
+      "denominador": "🔎 authz:funcoes:prod — 43 definição(ões) lida(s) para 43 chave(s) da allowlist.",
+      "contratoFingerprint": "a53fc101e98295206c9f67a6ae56e8e9087b46d098077359b1fcb90a189c836c",
+      "auditorFingerprint": "aa77829a21039155a403dd0222e28c77a2024a69bf36b6b77e6c6a2ce3c12b83",
+      "achados": []
+    },
+    "grants": {
+      "script": "authz:grants:prod",
+      "exit": 1,
+      "resumo": "audit-grants — 1 divergencia(s) entre prod e o contrato (scripts/authz-tabelas-fechadas.ts).",
+      "denominador": null,
+      "contratoFingerprint": "a30df79275ec861caa72d352a05739b1887871d14f26151102abce883ba54c64",
+      "auditorFingerprint": "23016f8e55bc15155b356b18a5392a7d4e547a101ec43cd6b376d418074aff83",
+      "achados": [
+        {
+          "id": "9dfa6c98be2d8318",
+          "linha": "❌ [DRIFT_PROD] public.sales_orders: anon tem INSERT,DELETE fora do permitido [nenhum] — grant aplicado à mão em prod (drift).",
+          "primeiraVez": "2026-08-13",
+          "ultimaVez": "2026-08-26"
+        }
+      ]
+    },
+    "audit": {
+      "script": "authz:audit:prod",
+      "exit": 0,
+      "resumo": "✅ gate do manifest vale no corpo VIVO das 19 funções, e as 3 reescritas baselinadas batem no md5 de prod.",
+      "denominador": "🔎 authz:audit:prod — 19 definição(ões) lida(s) para 19 chave(s) do manifest.",
+      "contratoFingerprint": "63af77f2ac72dea36a6df3c6ad669605429481b35573593c1aac1d65ba7c5446",
+      "auditorFingerprint": "fdf594ce0842f3608c60b1c831556b76de4956b41e03f7c52262e45d68d3d3bf",
+      "achados": []
+    }
+  }
+}
