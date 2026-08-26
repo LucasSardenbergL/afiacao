@@ -68,3 +68,53 @@ revogue **nomeando as roles**.
 `heavy bun run test` (canônico do CI). PR próprio, respondendo no corpo **"instância única ou
 classe?"** (passo 0 da skill `matar-classe`) e listando **todos** os sites varridos, inclusive os
 limpos — prova de varredura completa, não de amostra.
+
+---
+
+## Medição de 2026-08-25 21:22 — leia antes de repetir o trabalho
+
+Rodada contra a prod pelo wrapper read-only. **Dois resultados mudam o plano acima.**
+
+### A hipótese do `DROP`+`CREATE` está REFUTADA
+
+`proacl IS NULL` em **0 de 336** funções próprias (fora extensões). Toda função tem ACL explícito,
+nenhuma no default do Postgres. Não existe em produção rastro de `DROP FUNCTION` + `CREATE` sem
+`REVOKE`. A query 4 devolver zero linhas **é** esse resultado, não uma falha.
+
+O grant a `anon` vem de outro lugar: é explícito (`anon=X/postgres`), no padrão do template Supabase
+(`GRANT ... ON ALL FUNCTIONS IN SCHEMA public TO anon, authenticated`). Continue a varredura por aí,
+não pelo reset.
+
+### O que sobra depois de tirar o ruído
+
+212 funções são executáveis por `anon`, mas o número bruto engana:
+
+| Fatia | n | Alcançável por RPC? |
+| --- | --- | --- |
+| extensão `pgvector` | 118 | ruído |
+| funções de **trigger** | 46 | não — o Postgres recusa chamada direta |
+| chamáveis, `SECURITY INVOKER` | 47 | sim, mas o RLS da tabela decide |
+| chamáveis, **`SECURITY DEFINER`** | **1** | sim, e **bypassa RLS** |
+
+A única definer alcançável por `anon` é `public.get_public_tool_history(p_tool_id uuid)`, com
+`anon=X` explícito. O nome sugere intencional e ela é usada em `src/queries/useUserTools.ts` — **não
+tratada como furo**; precisa de veredito de produto sobre o histórico ser público.
+
+**Ainda NÃO medido, e é o próximo passo:** 22 das 47 invoker ESCREVEM (`aprovar_pedido_sugerido`,
+`cancelar_pedido_sugerido`, `gerar_pedidos_sugeridos_ciclo`, `registrar_aumento_via_vision` e
+outras). Sendo invoker, o RLS de cada tabela decide se `anon` escreve de fato. Medir policy a policy
+é o trabalho que sobrou.
+
+### O achado de GATE é melhor do que a hipótese original
+
+**O manifesto cobre 38 funções. A prod tem 336.**
+
+O assert `'nenhuma entrada permite anon'` é literalmente verdadeiro **e vazio**:
+`get_public_tool_history` permite `anon` e simplesmente não é uma entrada. O gate mede 38 de 38 e
+reporta verde, e nada no verde diz que o universo é 336.
+
+É a classe numa variação mais afiada: não é "o NOME prova o efeito", é **"o MANIFESTO prova o
+universo"** — falta o DENOMINADOR. Prima da classe-irmã registrada na §10 de
+`docs/historico/verificar-sonda-versao.md` (`N verificadas` sem dizer quantas ficaram fora) e do que
+o CLAUDE.md já diz sobre sinal sem denominador. **É provavelmente aqui que o conserto deve morar**:
+o gate tem de saber, e dizer, quantas funções da prod ele NÃO classifica.
