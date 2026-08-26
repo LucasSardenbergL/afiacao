@@ -27,6 +27,35 @@ Há um usuário **read-only** no Postgres de produção (`claude_ro`) acessível
 - **A leitura de `net._http_response` (ritual de canária, `deploy.md`) sobrevive a qualquer `REVOKE` em `net`:** `pg_read_all_data` dá `SELECT` **e USAGE de schema implícito**, fora do ACL — provado em prod (leio `cron.job`, 90 linhas, sem `USAGE` no `nspacl` de `cron`) e na falsificação PG17 (após o dono revogar `ALL … FROM PUBLIC`, `SELECT` continuou `t` e `EXECUTE`/`INSERT` viraram `f`).
 - **Como foi montado:** o Lovable NÃO expõe a connection string, mas dá pra montar (ref + user `claude_ro.<ref>` + senha definida no `CREATE ROLE` + região do pooler **descoberta por brute-force**: `aws-1-eu-west-1`). A conexão direta `db.<ref>.supabase.co` NÃO existe (projetos novos só têm o pooler Supavisor).
 
+### Cadência dos 3 audits de prod — o CARIMBO (desde 2026-08-25)
+
+Os audits `authz:funcoes:prod` / `authz:grants:prod` / `authz:audit:prod` são a **única** guarda que
+enxerga `GRANT` colado à mão no SQL Editor e migration mergeada-e-nunca-aplicada — e não rodavam
+periodicamente em lugar nenhum (`rg` em `.github/`: zero). O CI não alcança o banco e **não deve**:
+a credencial é local. A ponte é o carimbo `db/authz-carimbo-prod.json`.
+
+- **Escrever:** `bun run authz:carimbo:gravar` (só na máquina com `psql-ro`) → roda os 3 e grava a
+  evidência. **Commite o JSON** — é ele que o CI lê. Recusa `AUTHZ_*_TEST_JSON` e `PSQL_RO`
+  alternativo, e pina o cluster pelo hash do `system_identifier`.
+- **Ler:** `bun run authz:carimbo` (step do `validate`, bloqueante) e
+  `bun run authz:carimbo -- --exigir-frescor` (job `authz-sentinela`, só main, Issue `authz-prod`).
+- ⚠️ **A severidade se divide por "um PR consegue consertar isto?"** — contrato/auditor mudou sem
+  re-medir e carimbo ausente **bloqueiam PR**; idade (>14d) e achado vivo em prod **não**, porque o
+  conserto é paste do founder no SQL Editor e travar a fila puniria quem não pode consertar.
+- ⚠️ **`exit 2` de um audit NÃO vira carimbo.** Erro de execução não é resultado sobre produção; se
+  virasse, uma falha de rede renovaria a data e a idade recomeçaria do zero.
+- ⚠️ **`primeiraVez` de um achado nunca é resetada por re-execução** — senão renovar o carimbo lava
+  a dívida e o achado fica "conhecido e fresco" para sempre.
+- 🚨 **O carimbo atesta TRÊS FATIAS CURADAS, não "a autorização de prod".** Pontos cegos **medidos**:
+  o audit de grants mede 6 dos 8 privilégios do tipo `Priv` (**`REFERENCES` e `TRIGGER` são
+  declaráveis e nunca medidos**); ACL por **coluna** fica fora (`has_table_privilege` é table-level
+  — e é o vetor que importa em `sales_orders`); **RLS vivo** (`relrowsecurity`, policies,
+  `qual`/`with_check`) não é reconciliado por nenhum dos três. Narrativa, falsificação e o parecer
+  Codex: [carimbo-evidencia-authz-prod.md](../historico/carimbo-evidencia-authz-prod.md).
+- ⚠️ **Fingerprint de contrato NUNCA por `JSON.stringify`** — `Set`/`Map` serializam `{}` sem erro, e
+  o contrato de authz tem os dois. Use `canonicalizar()` de `scripts/lib/authz-carimbo.ts`, que
+  **lança** em valor que não sabe representar.
+
 ### Escrita — SOMENTE via SQL Editor do Lovable
 O founder NÃO tem terminal/psql/CLI **de escrita** pro backend. Toda DDL/DML/migration é colada no **SQL Editor do Lovable** → Run. Eu nunca aplico escrita; preparo o material (via `lovable-db-operator`) e o founder cola. Formatar blocos SQL: fenced ` ```sql `, terminando com ` ``` ` numa linha sozinha (o app renderiza o botão Copy), rótulo `🟣 Lovable → SQL Editor → cola → Run`.
 
