@@ -140,3 +140,58 @@ não é alcançado.
 
 A regra durável foi acrescentada em **⚠️ Armadilhas recorrentes** (guard/fusível com âncora comum + `status` de
 cascata ≠ composição da fila + sensor de derivada). Este arquivo é o detalhe.
+
+---
+
+## Desfecho — o que foi entregue (#2033, aplicado em prod 2026-08-26 ~03:00 UTC)
+
+O founder aprovou **A** (sensor) e **B** (fusível); **C** (adoção dos 18 órfãos) ficou de fora.
+
+**A — `reposicao_param_fila_sensor` + `v_reposicao_param_fila` + `reposicao_param_fila_log`** (cron 11:45,
+*depois* do watchdog das 11:30, que popula a série que ele lê — agendar antes o deixaria mudo).
+O watchdog de derivada **não** foi substituído: segue detectando a regressão do #521. Fail-closed de
+leitura: sem série suficiente **não alerta e não dismissa** — ausência de dado não é saúde.
+
+**B — fusível na graduação**, usando a MESMA chave `param_auto_fusivel_mult` (um knob, não dois).
+Salto acima do limite ou **âncora ausente** (`max <= 0`/NULL) vira `acao='segurado'` com os números.
+Calibrado por dado: os 8 graduados saltaram **1,5×–2,5×** ⇒ com `v_mult=3`, **zero** graduação histórica
+seria bloqueada. B depende de A: segurar sem visibilidade recriaria o vão silencioso deste mesmo doc.
+
+### Pendência deste doc que a implementação FECHOU
+
+> *"dois deles gravaram `cobertura_alvo_dias` de 286 e 136 dias — investigar o cap de cobertura"*
+
+**Investigado: não era buraco.** `reposicao_teto_cobertura_oben_*` (ativa, b=90/c=60) é aplicado no
+**MOTOR** (`gerar_pedidos_sugeridos_ciclo`), não no parâmetro, com rastro em
+`reposicao_teto_cobertura_log`: **733 linhas capadas entre 29/07 e 26/08** — vivo e funcionando.
+Cobertura de 286d no parâmetro **não** vira compra de 286 dias. ⇒ A severidade que este doc atribuiu à
+cobertura estava **alta demais**; o buraco real era só o fusível de magnitude, que é proteção
+**independente** (compara com o valor ANTERIOR, não com a demanda — se a demanda estiver errada, o teto
+de cobertura usa a MESMA demanda errada e não protege).
+
+### O que o PG17 pegou antes de ir a prod
+
+`column reference "total" is ambiguous` — colisão com a coluna OUT do `RETURNS TABLE`. Passou no
+`CREATE OR REPLACE` e só quebraria ao **EXECUTAR**, dentro do cron, em silêncio. É a classe late-bound
+inteira num caso só. Harness: `db/test-param-fila-e-fusivel.sh` (22 asserts · 3 sabotagens · exit 0).
+
+⚠️ **Três premissas minhas estavam erradas e só a medição pegou** — vale como método, não como anedota:
+`sku_parametros` **não tem `criado_em`** (a idade foi deliberadamente deixada de fora da view, em vez de
+derivada de `ultima_atualizacao_calculo`, que é tocada a cada run mesmo sem escrita ⇒ fabricaria número);
+`is_staff` **não existe** (o padrão das tabelas irmãs é `private.cap_compras_ler`); e
+`fin_alertas.severidade` aceita só `info|aviso|critico` — `'atencao'` teria violado o CHECK no apply.
+**Escrever SQL contra um schema lembrado, e não medido, produz as três de uma vez.**
+
+### Verificação pós-apply (2026-08-26 03:02 UTC)
+
+Objetos `1|1|1|1`; **corpo vivo** com fusível e ramo `segurado` (md5 `4827f9b8…` → `4d095c9e…`);
+CHECK aceita `segurado`; RLS on + 1 policy; ACL `f|f|f`. A view **executa**: 206 na view = 206 travados
+(completude exata), composição `71 FORA_JANELA_DEMANDA / 81 AGUARDANDO_SEGUNDA_ORDEM / 54 SEM_LEADTIME`,
+batendo com o diagnóstico. Confirmação cruzada independente: `28+59+32 = 119` habilitados — exatamente o
+`limbo_count` da série do watchdog.
+
+**Não verificável por `psql-ro`:** a EXECUÇÃO do sensor e da graduação (ambos escrevem; o wrapper é
+read-only). Quem garante que executam é o harness PG17, não a validação pós-apply. A confirmação real é
+`reposicao_param_fila_log` ter linhas após a 1ª run — e a 1ª run **deve** disparar
+`reposicao_param_fila_estagnada` (série congelada em 119 há 21 dias > janela de 14). **Alerta esperado,
+não incidente novo.**
