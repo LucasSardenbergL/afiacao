@@ -279,6 +279,39 @@ E prefira, quando existir, a via que **não depende de escopo nenhum**: uma prop
 carimba no próprio evento mora em `events`, que a key lê sem discussão. Foi o que fechou o caso do
 replay — `$recording_status` valeu mais que as duas tabelas de gravação juntas.
 
+#### O corolário que morde ao contrário: "403 no REST ⇒ cego no HogQL" é FALSO (medido 2026-08-25)
+
+A inversão tentadora do quadro acima é promover o REST a discriminante: *"a chamada REST é a
+honesta — 403 = a key é cega naquela tabela, 200 = ela enxerga"*. É **falsa**, e falha justamente
+no caso que a motivou. Quatro famílias de escopo em `No access`, as quatro REST-403, mesma key e
+mesmo minuto:
+
+| tabela HogQL | escopo que falta (REST 403) | HogQL |
+|---|---|---|
+| `persons` | `person:read` | **5** |
+| `person_distinct_ids` | `person:read` | **11** |
+| `heatmaps` | `heatmap:read` | **98** |
+| `session_replay_events` · `raw_session_replay_events` | `session_recording:read` | 0 |
+| `error_tracking_issue_fingerprint_overrides` · `logs` | `error_tracking:read` | 0 |
+
+**Três** das cinco linhas voltam NÃO-VAZIAS com o REST em 403. O 403 é **constante na coluna
+inteira** — não discrimina nada; a variação mora toda do outro lado. O gate é do **endpoint**:
+`/query/` pede `query:read` e não reaplica o escopo da tabela.
+
+Quem escrevesse a regra invertida concluiria, sobre este mesmo caso, *"somos cegos, não dá para
+saber se o replay gravou"* — fail-OPEN numa pergunta de LGPD, com a resposta certa ao alcance da
+mão. O zero do replay era **real**; quem o prova é o par de terceira tabela acima, não o REST.
+
+`heatmaps` é o **segundo falsificador, e vale mais que o primeiro** por vir de outra família de
+escopo: só com `persons`, a explicação alternativa *"a tabela `persons` é que é especial"* seguia
+de pé. Os três testes passam nela — 98 linhas, `columns` com 11 campos, e
+`SELECT coluna_que_nao_existe FROM heatmaps` → 400 `Unable to resolve field`.
+
+**Error tracking: zero CONFIRMADO**, e pela via preferida, a que não depende de escopo nenhum —
+`$exception` em `events` também é **0**. As duas tabelas e a rota livre de escopo concordam. Um
+zero de tabela sozinho continuaria não se provando; o que o promove a fato é o **acordo** com
+`events`.
+
 ## 5. Sensores de frontend já instalados
 
 `carteira.mixgap_visto` (`estado`, `total_com_gap`, `desatualizado`) ·
@@ -795,3 +828,40 @@ próprio config, e nada no CI olhava para ela. Agora olha:
 (`removerComentarios`) — obrigatório aqui e não zelo abstrato, porque o comentário que documenta o
 desligamento cita `session_recording` e `maskTextSelector` de propósito, e um regex ingênuo casaria
 com a própria explicação em vez do código.
+
+### Heatmaps: a terceira superfície de coleta — e o `grep` do config não a vê (2026-08-25)
+
+Caiu no colo ao falsificar o discriminante de escopo da §4: `SELECT count() FROM heatmaps` → **98**.
+Ninguém tinha inventariado essa superfície, e `grep -rni heatmap src scripts supabase` devolve
+**zero** — não existe linha de config nossa pedindo heatmap.
+
+⚠️ **O mecanismo é o `capture_pageleave`, não o toggle do projeto.** O `/decide` responde
+`heatmaps: false` e a tabela enche assim mesmo. Quem alimenta é o `capture_pageleave: true` do
+nosso `posthog.init()`: o SDK carimba `$prev_pageview_max_scroll` /
+`$prev_pageview_max_content_percentage` / `$viewport_width` no `$pageleave`, e a ingestão deriva
+daí a linha `type='scrolldepth'`. Provado por **igualdade exata**, não por parecença: há 108
+`$pageleave` com scroll, dos quais **10** são anteriores à primeira linha de heatmap e **98**
+posteriores — e `heatmaps` tem exatamente **98** linhas. O último evento e a última linha batem no
+**mesmo milissegundo** (`2026-08-25T09:51:18.165Z`), e não existe evento `$$heatmap` no projeto
+(0), que era a única outra origem possível. O flag `heatmaps` do `/decide` governa click/rageclick
+— e esses de fato nunca ocorreram: as 98 linhas são **todas** `scrolldepth`.
+
+**O que a linha guarda:** `session_id`, `distinct_id`, `x`/`y`, `scale_factor`, viewport,
+`current_url`, `timestamp`, `type`. **Não guarda conteúdo de tela** — é o que separa isto do
+replay. As 9 URLs distintas são rotas ESTÁTICAS (`/admin/reposicao/pedidos` 72 · `/sales/new` 8 ·
+`/` 8 · `/sales` · `/telefonia` · `/settings` · `/meu-dia` · `/financeiro/cockpit` ·
+`/admin/route-planner`), sem id no path nem query string: nenhum identificador de cliente escapa
+pela URL. Janela 2026-05-29 → 2026-08-25, 3 `distinct_id`, 75 sessões.
+
+**Veredito: não é exposição nova, e não há o que tratar.** `distinct_id` + rota + horário já estão
+no `$pageview`, que capturamos de propósito; o heatmap acrescenta profundidade de rolagem e
+tamanho de viewport. Fica registrado porque (a) inventário que só lista o que alguém lembrou de
+configurar não é inventário, e (b) se um dia a decisão for cortar esta coleta, o desligamento
+**não** é o toggle do projeto nem uma linha com a palavra `heatmap`: é `capture_pageleave: false`,
+que levaria junto o `$pageleave` inteiro. Não mexer sem essa conta.
+
+⚠️ **A lição que generaliza:** superfície de coleta não se enumera pelo `grep` do config. Este
+config não menciona heatmap e alimenta uma tabela; o config do replay mencionava e não alimentava
+nenhuma. **Config é INTENÇÃO; tabela é EFEITO** — inventário de coleta se faz pelo lado que
+ARMAZENA, varrendo as tabelas do HogQL, e o lado que PEDE serve para explicar o achado, não para
+produzir a lista.
