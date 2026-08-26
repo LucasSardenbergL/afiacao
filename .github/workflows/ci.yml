@@ -319,6 +319,58 @@ jobs:
       - name: Falsificação — sabota o alvo e EXIGE vermelho em cada regra
         run: bun run test:falsificacao
 
+      # Evals da skill lovable-deploy-verify — blocking. A skill decide se um Publish está NO AR
+      # (Passo 4, verify-frontend.sh) e quais das 3 camadas de deploy um diff exige (Passo 1,
+      # classify.sh). Errar isso é dar "está no ar" para mudança que não subiu — e os evals que
+      # protegem essa decisão rodavam em lugar NENHUM: medido em 2026-08-26,
+      # `grep -rn 'verify-frontend-eval|lovable-deploy-verify' .github/ package.json` deu ZERO
+      # ocorrências. 25 casos + 12 sabotagens do Passo 4 e 8 casos + 8 sabotagens do Passo 1
+      # dormentes, valendo só quando alguém lembrasse de rodar à mão — mesma classe do `test:edges`
+      # antes do #1498 (suíte pronta no repo, script pronto no package.json, CI nunca chamou).
+      #
+      # Roda o AGREGADOR (evals/run.sh), não o verify-frontend-eval direto: run.sh é a fonte única
+      # que encadeia os DOIS evals e propaga o exit (`|| rc=1` em cada, `exit "$rc"`). Propagação
+      # PROVADA, não lida: sabotando o regex do entry no verify-frontend.sh real, run.sh saiu 1 com
+      # 19 casos vermelhos. Chamar só o do Passo 4 deixaria o Passo 1 dormente pelo mesmo motivo
+      # que este step existe.
+      #
+      # Dependências no runner: python3 (http.server das fixtures + o eval do classify) e git
+      # (fixture do guard --pai). Ambos vêm no ubuntu-latest, mas o que garante o step não é a
+      # presença e sim o comportamento na AUSÊNCIA — com um python3 quebrado no PATH os DOIS modos
+      # saem exit 2 ("servidor de fixtures não subiu") antes de qualquer caso: fail-CLOSED, nunca
+      # verde por dependência faltando (`command -v` não bastaria: presente-porém-quebrada esvazia
+      # o guard igual). A largada do servidor é poll de 100x0,05s com exit 2 no estouro, não sleep
+      # fixo, então runner frio não vira flake. Zero rede externa: as fixtures são servidas em
+      # 127.0.0.1 numa porta EFÊMERA e toda url dos casos é local — nenhum caso varre produção.
+      - name: Evals da skill lovable-deploy-verify (Passo 1 + Passo 4)
+        # sem `heavy` aqui: o semáforo de RAM é da M2 local e nao existe no runner (exit 127).
+        run: bun run evals:deploy-verify
+
+      # Falsificação dos evals acima — blocking, e o step anterior NÃO a cobre. Aquele prova que a
+      # skill faz o que os evals dizem; ESTE sabota a skill (20 sabotagens: fechamento transitivo,
+      # fonte precache, guard de exclusividade, sonda do 2º emissor, gabarito do classify) e exige
+      # que cada eval fique VERMELHO. Sem ele um PR afrouxa as asserções e o step de cima segue
+      # verde — teatro. As sabotagens são feitas em CÓPIAS dentro do mktemp do harness; o script
+      # versionado nunca é mutado (conferido: árvore limpa depois do run), então não há resíduo.
+      #
+      # DENTRO do `validate`, não em job próprio — é a mesma escolha já medida no #1947 logo acima,
+      # e vale igual aqui: `validate` é o único check required e o auto-merge só espera os required,
+      # então em job separado o merge acontece ANTES deste terminar (vermelho depois do merge que
+      # ninguém lê — classe do gate de dead-code do #1212). Tornar o job separado required também
+      # não serve: exigiria mudar branch protection fora do repo e, com `paths:`, o check nunca
+      # reporta quando o filtro não casa e o PR fica pendente pra sempre.
+      #
+      # O custo de blast-radius que um gate compartilhado costuma ter está INVERTIDO aqui: estes
+      # evals não leem `src/`, `package.json`, `node_modules` (usam cwd neutro de propósito) nem a
+      # rede, então PR de produto não consegue deixá-los vermelhos — só PR que toca a própria
+      # skill, que é exatamente quando devem barrar. Custo: NÃO estimado daqui de propósito — o
+      # mesmo comando mediu de 6s a 70s nesta M2 conforme a carga (~30 worktrees), e o `bun run`
+      # não é o culpado (bash direto deu 70s no mesmo instante em que o `bun run` deu 45s). O
+      # #1947 já ensinou que medição local não projeta runner: o número que vale é o do primeiro
+      # run no Actions. Se um dia apertar o timeout de 15min, o corte é a fixture, não a cobertura.
+      - name: Falsificação — sabota a skill e EXIGE vermelho em cada eval
+        run: bun run evals:deploy-verify:falsificacao
+
       # Anti-regressão de gate de autorização em RPCs SECURITY DEFINER sensíveis (custo/preço/
       # estoque). Mata o padrão "CREATE OR REPLACE derrubou o gate" — 3 ocorrências (5 views #1246,
       # get_tint_prices, fin_estimar_estoque_omie #1264). Estático: lê supabase/migrations/ no
