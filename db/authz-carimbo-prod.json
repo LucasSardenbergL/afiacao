@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "medidoEm": "2026-08-26T00:19:30.088Z",
-  "sourceHead": "7795504dd1027badb9f2770f6d1e2374793d79d7",
+  "medidoEm": "2026-08-26T02:50:51.657Z",
+  "sourceHead": "e3468628daccb46a0e05be4fa5cac9fb1cf9d5c4",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -41,6 +41,15 @@
       "denominador": "🔎 authz:audit:prod — 19 definição(ões) lida(s) para 19 chave(s) do manifest.",
       "contratoFingerprint": "63af77f2ac72dea36a6df3c6ad669605429481b35573593c1aac1d65ba7c5446",
       "auditorFingerprint": "fdf594ce0842f3608c60b1c831556b76de4956b41e03f7c52262e45d68d3d3bf",
+      "achados": []
+    },
+    "claudeRo": {
+      "script": "authz:claude-ro:prod",
+      "exit": 0,
+      "resumo": "✅ 25 asserções batem. O endurecimento continua de pé.",
+      "denominador": null,
+      "contratoFingerprint": "6ca53b9c00f11c40eebb4d8baed8da29c0e9e576267f724a7ecdd22f62093c4c",
+      "auditorFingerprint": "8cdb88649e4d4132d719b6e27370b61bfeb85da6ca43ca941123060448a4e158",
       "achados": []
     }
   }

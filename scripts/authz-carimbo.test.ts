@@ -13,6 +13,7 @@ import {
   VENCIDO_DIAS,
   RAIZ,
   avaliarCarimbo,
+  escolherResumo,
   canonicalizar,
   fingerprintContrato,
   fingerprintAuditor,
@@ -423,5 +424,30 @@ describe('ci.yml — o job authz-sentinela', () => {
     const req = (m: string) => (m === 'fs' ? { readFileSync: () => 'não é json' } : null);
     await new AsyncFunction('github', 'context', 'core', 'require', script)(github, { repo: { owner: 'o', repo: 'r' }, serverUrl: '', runId: 1 }, core, req);
     expect(feitas.some((x) => x.startsWith('FAILED:'))).toBe(true);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════
+// escolherResumo — a regra que eu ERREI na 1ª versão. Fica testada porque raspar texto de saída
+// humana é contrato acidental, e a única defesa possível é fixar a forma de cada audit real.
+// ══════════════════════════════════════════════════════════════════════════════════════════════
+describe('escolherResumo — o veredito é a ÚLTIMA linha ✅, não a primeira', () => {
+  it('pega o SUMÁRIO quando há muitas asserções ✅ (a forma do authz:claude-ro:prod)', () => {
+    const saida = ['🔒 sentinela', '  ✅ papel existe: SIM', '  ✅ memberships herdadas: 0', '✅ 25 asserções batem. O endurecimento continua de pé.'];
+    expect(escolherResumo(saida)).toBe('✅ 25 asserções batem. O endurecimento continua de pé.');
+    expect(escolherResumo(saida)).not.toContain('papel existe');
+  });
+
+  it('pega o ✅ único (a forma do authz:funcoes:prod / authz:audit:prod)', () => {
+    expect(escolherResumo(['🔎 43 lidas', '✅ o EXECUTE de prod bate com o contrato'])).toBe('✅ o EXECUTE de prod bate com o contrato');
+  });
+
+  it('cai para a última linha quando NÃO há ✅ (a forma do audit que sai 1)', () => {
+    const saida = ['❌ [DRIFT_PROD] public.sales_orders: anon tem INSERT,DELETE', 'audit-grants — 1 divergencia(s).'];
+    expect(escolherResumo(saida)).toBe('audit-grants — 1 divergencia(s).');
+  });
+
+  it('saída vazia devolve string vazia, não explode', () => {
+    expect(escolherResumo([])).toBe('');
   });
 });

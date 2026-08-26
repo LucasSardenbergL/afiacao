@@ -46,7 +46,7 @@ achado que nenhum PR consegue consertar. Gate vermelho-na-chegada é gate que mo
 
 ## O desenho: a medição fica onde está a credencial, o sinal onde já há cadência
 
-`db/authz-carimbo-prod.json` é escrito **só** por `bun run authz:carimbo:gravar` (roda os 3 audits
+`db/authz-carimbo-prod.json` é escrito **só** por `bun run authz:carimbo:gravar` (roda os 4 audits
 sob `psql-ro`) e lido por `bun run authz:carimbo` (roda no CI, sem banco).
 
 ### Duas severidades, divididas por uma pergunta
@@ -110,6 +110,34 @@ novo entra por default, e a direção do erro passa a ser fail-safe.
 no audit de grants, ACL por coluna, reconciliação de RLS vivo, saída JSON estruturada dos audits, e
 a máquina de SLA/assignee com bloqueio direcionado. São conserto do **instrumento**; esta entrega é
 a **cadência** dele. Misturar as duas entregaria as duas pela metade.
+
+## O 4º audit chegou no meio da entrega — e entrou
+
+Enquanto esta entrega estava em voo, o [#e59591b9](https://github.com/LucasSardenbergL/afiacao/commit/e59591b9)
+mergeou um **quarto** audit de prod, `authz:claude-ro:prod` (`db/audit-claude-ro-hardening.ts`),
+também sem runner periódico. O cabeçalho dele enuncia a mesma classe: *"Estado que nenhum artefato
+versionado defende regride em silêncio… esta sentinela é o único artefato que afirma, com evidência,
+que o estado de 2026-08-25 ainda é o estado de hoje."*
+
+Entrou no carimbo. Um mecanismo de cadência que enumerasse 3 de 4 nasceria vencido — e a regra que
+fica é a inversa: **audit de prod novo nasce sem cadência; acrescentá-lo a `AUDITS` é parte de
+criá-lo.** Está registrado em `docs/agent/database.md` §1.
+
+Duas coisas que a integração dele revelou:
+
+1. **Um bug meu, pego pela forma diferente.** O `resumo` usava o PRIMEIRO `✅` da saída. Os três
+   audits originais emitem um `✅` só, então funcionava por coincidência; o `claude-ro` emite 25
+   asserções `✅` e o carimbo passou a atestar *"papel existe: SIM"* como se fosse a conclusão. É
+   literalmente o *"'última linha' é um contrato acidental"* que o parecer do Codex tinha nomeado.
+   Corrigido para o ÚLTIMO `✅`, extraído para `escolherResumo()` e travado por teste com as
+   quatro formas reais.
+2. **Nem todo audit tem contrato em módulo.** A baseline do `claude-ro` mora dentro do próprio
+   auditor, então `contratoFingerprint` e `auditorFingerprint` coincidem para ele
+   (`contratoEmArquivo: true`). Redundante, mas verdadeiro — fingir dois eixos independentes onde
+   há um só seria inventar separação que não existe.
+
+E a prova de que a invariante nº 3 do runner funciona fora do teste: ao regravar o carimbo com o
+4º audit, `primeiraVez` do `sales_orders` continuou **2026-08-13**. A re-execução não lavou a dívida.
 
 ## Limites declarados
 

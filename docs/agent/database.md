@@ -29,14 +29,17 @@ Há um usuário **read-only** no Postgres de produção (`claude_ro`) acessível
 
 ### Cadência dos 3 audits de prod — o CARIMBO (desde 2026-08-25)
 
-Os audits `authz:funcoes:prod` / `authz:grants:prod` / `authz:audit:prod` são a **única** guarda que
+Os audits `authz:funcoes:prod` / `authz:grants:prod` / `authz:audit:prod` / `authz:claude-ro:prod` são a **única** guarda que
 enxerga `GRANT` colado à mão no SQL Editor e migration mergeada-e-nunca-aplicada — e não rodavam
 periodicamente em lugar nenhum (`rg` em `.github/`: zero). O CI não alcança o banco e **não deve**:
 a credencial é local. A ponte é o carimbo `db/authz-carimbo-prod.json`.
 
-- **Escrever:** `bun run authz:carimbo:gravar` (só na máquina com `psql-ro`) → roda os 3 e grava a
+- **Escrever:** `bun run authz:carimbo:gravar` (só na máquina com `psql-ro`) → roda os 4 e grava a
   evidência. **Commite o JSON** — é ele que o CI lê. Recusa `AUTHZ_*_TEST_JSON` e `PSQL_RO`
   alternativo, e pina o cluster pelo hash do `system_identifier`.
+- **Audit novo nasce SEM cadência.** Ao criar um audit de prod, acrescente-o a `AUDITS` em
+  `scripts/lib/authz-carimbo.ts` — foi o que aconteceu com o `authz:claude-ro:prod`, que chegou 12
+  commits depois do carimbo e teria ficado de fora.
 - **Ler:** `bun run authz:carimbo` (step do `validate`, bloqueante) e
   `bun run authz:carimbo -- --exigir-frescor` (job `authz-sentinela`, só main, Issue `authz-prod`).
 - ⚠️ **A severidade se divide por "um PR consegue consertar isto?"** — contrato/auditor mudou sem
@@ -46,7 +49,7 @@ a credencial é local. A ponte é o carimbo `db/authz-carimbo-prod.json`.
   virasse, uma falha de rede renovaria a data e a idade recomeçaria do zero.
 - ⚠️ **`primeiraVez` de um achado nunca é resetada por re-execução** — senão renovar o carimbo lava
   a dívida e o achado fica "conhecido e fresco" para sempre.
-- 🚨 **O carimbo atesta TRÊS FATIAS CURADAS, não "a autorização de prod".** Pontos cegos **medidos**:
+- 🚨 **O carimbo atesta QUATRO FATIAS CURADAS, não "a autorização de prod".** Pontos cegos **medidos**:
   o audit de grants mede 6 dos 8 privilégios do tipo `Priv` (**`REFERENCES` e `TRIGGER` são
   declaráveis e nunca medidos**); ACL por **coluna** fica fora (`has_table_privilege` é table-level
   — e é o vetor que importa em `sales_orders`); **RLS vivo** (`relrowsecurity`, policies,

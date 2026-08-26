@@ -64,7 +64,7 @@ export const SCHEMA_VERSION = 1;
 export const AVISO_DIAS = 7;
 export const VENCIDO_DIAS = 14;
 
-export type ChaveAudit = 'funcoes' | 'grants' | 'audit';
+export type ChaveAudit = 'funcoes' | 'grants' | 'audit' | 'claudeRo';
 
 /** Os 3 audits, com o script npm que os roda e os arquivos que compõem cada FINGERPRINT.
  *
@@ -72,7 +72,18 @@ export type ChaveAudit = 'funcoes' | 'grants' | 'audit';
  *  comparação. São eixos distintos e o bug de `REFERENCES`/`TRIGGER` é a prova de por quê: com
  *  contrato idêntico e instrumento incompleto, o verde é cegueira. Mexer no instrumento invalida a
  *  medição anterior tanto quanto mexer no contrato — logo os dois entram no carimbo. */
-export const AUDITS: Record<ChaveAudit, { script: string; auditorFiles: string[] }> = {
+export const AUDITS: Record<
+  ChaveAudit,
+  {
+    script: string;
+    auditorFiles: string[];
+    /** `true` quando o CONTRATO daquele audit é a baseline embutida no próprio auditor, e não um
+     *  módulo de contrato do repo. Nesse caso os dois fingerprints coincidem — redundante, mas
+     *  VERDADEIRO: editar o arquivo muda as duas coisas ao mesmo tempo, e fingir que são eixos
+     *  independentes seria inventar uma separação que não existe. */
+    contratoEmArquivo?: true;
+  }
+> = {
   funcoes: {
     script: 'authz:funcoes:prod',
     auditorFiles: ['db/audit-grants-funcoes-fechadas.ts', 'scripts/lib/authz-funcoes.ts'],
@@ -84,6 +95,15 @@ export const AUDITS: Record<ChaveAudit, { script: string; auditorFiles: string[]
   audit: {
     script: 'authz:audit:prod',
     auditorFiles: ['db/audit-authz-reescritas-prod.ts', 'scripts/lib/authz-contract.ts'],
+  },
+  // Chegou 12 commits DEPOIS deste carimbo nascer (#e59591b9), e entrou aqui pela mesma razão que
+  // o carimbo existe: o cabeçalho dela diz ser "o único artefato que afirma, com evidência, que o
+  // estado de 2026-08-25 ainda é o estado de hoje" — e não tinha runner periódico nenhum. Um
+  // carimbo que enumerasse 3 de 4 nasceria vencido.
+  claudeRo: {
+    script: 'authz:claude-ro:prod',
+    auditorFiles: ['db/audit-claude-ro-hardening.ts'],
+    contratoEmArquivo: true,
   },
 };
 
@@ -168,10 +188,19 @@ function dadoDoContrato(chave: ChaveAudit): unknown {
     case 'audit':
       // As DUAS entradas: o audit checa o gate do manifest no corpo vivo E o md5 das reescritas.
       return { manifest: AUTHZ_MANIFEST, reescritas: AUTHZ_REESCRITAS_CONHECIDAS };
+    case 'claudeRo':
+      // Sem módulo de contrato: a baseline mora no próprio auditor (ver `contratoEmArquivo`).
+      return null;
   }
 }
 
 export function fingerprintContrato(chave: ChaveAudit): string {
+  if (AUDITS[chave].contratoEmArquivo) {
+    // O contrato É o arquivo. Hash dos bytes, pelo mesmo motivo do fingerprint de auditor: numa
+    // baseline embutida, comentário também é contrato.
+    const partes = AUDITS[chave].auditorFiles.map((rel) => `${rel}\n${readFileSync(join(RAIZ, rel), 'utf8')}`);
+    return sha256(`v${SCHEMA_VERSION}|${chave}|arquivo|${partes.join('\n---\n')}`);
+  }
   return sha256(`v${SCHEMA_VERSION}|${chave}|${canonicalizar(dadoDoContrato(chave))}`);
 }
 
@@ -201,6 +230,22 @@ export function idFinding(chave: ChaveAudit, linha: string): string {
   const m = /\[([A-Z_]+)\]\s*([^:]+):/.exec(norm);
   const base = m ? `${m[1]}|${m[2].trim()}` : norm;
   return sha256(`${chave}|${base}`).slice(0, 16);
+}
+
+/**
+ * Escolhe a linha de VEREDITO na saída de um audit.
+ *
+ * 🔴 Bug real, pego ao integrar o 4º audit: a 1ª versão usava `find` (primeiro `✅`). O
+ * `authz:claude-ro:prod` imprime 25 asserções `✅` e só a derradeira é a conclusão — o carimbo
+ * passou a atestar "papel existe: SIM" como se fosse o veredito. Sumário vem no FIM.
+ *
+ * ⚠️ Isto é um contrato ACIDENTAL: raspar texto de saída humana é frágil por natureza, e a
+ * correção definitiva é os audits emitirem resultado estruturado. Enquanto não emitem, a regra
+ * fica aqui, nomeada e testada, em vez de escondida numa expressão dentro do runner.
+ */
+export function escolherResumo(linhas: string[]): string {
+  const ultimoOk = [...linhas].reverse().find((l) => l.startsWith('✅'));
+  return (ultimoOk ?? linhas[linhas.length - 1] ?? '').slice(0, 300);
 }
 
 export interface ResultadoAudit {

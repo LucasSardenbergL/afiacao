@@ -37,6 +37,7 @@ import {
   RAIZ,
   SCHEMA_VERSION,
   fingerprintAuditor,
+  escolherResumo,
   fingerprintContrato,
   idFinding,
   type Achado,
@@ -167,7 +168,7 @@ function main(): void {
     audits[chave] = {
       script: AUDITS[chave].script,
       exit,
-      resumo: (linhas.find((l) => l.startsWith('✅')) ?? linhas[linhas.length - 1] ?? '').slice(0, 300),
+      resumo: escolherResumo(linhas),
       denominador: linhas.find((l) => l.startsWith('🔎'))?.slice(0, 300) ?? null,
       contratoFingerprint: fingerprintContrato(chave),
       auditorFingerprint: fingerprintAuditor(chave),
