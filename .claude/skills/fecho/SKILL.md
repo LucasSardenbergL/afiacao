@@ -209,8 +209,21 @@ Veredito: PODE ARQUIVAR a sessão. / AINDA NÃO — falta (1)…
 
 **Diga "pode ARQUIVAR", não "pode excluir".** Arquivar para o processo, limpa o worktree
 (mesma RAM e mesmo disco que excluir) e ainda deixa a sessão reabrível — não há motivo para
-recomendar a via destrutiva. Se o founder arquiva sessão a sessão na mão, mencione UMA vez a
-preferência **"Auto-archive on PR close"** nas Settings, que resolve isso estruturalmente.
+recomendar a via destrutiva.
+
+⚠️ **A menção ao "Auto-archive on PR close" é CONDICIONAL — e o passo 1 já mediu a condição.**
+Só mencione, uma vez, se a sessão fechou com **exatamente UM PR**: é o único formato em que
+"PR fechado" e "entrega concluída" coincidem. O gatilho do setting é o **PR**; a unidade deste
+ritual é a **ENTREGA**. Em sessão de arco longo — 2+ PRs, ou 1 mergeado com o próximo ainda por
+abrir — os dois divergem, e recomendar o toggle ali é sugerir que a sessão morra no meio do
+trabalho. Ao mencionar, diga o gatilho em voz alta ("fecha por PR, não por entrega") e **não**
+afirme o que ele faz com N PRs: esta skill não verificou, e "resolve estruturalmente" é uma
+garantia que ela não tem como dar.
+
+A classe: **recomendação embutida em ritual sai com a AUTORIDADE do ritual.** O founder lê "o
+fecho mandou", não "o agente sugeriu" — então recomendação daqui carrega a própria pré-condição
+junto, ou vira conselho errado dito com voz de veredito. É o defeito dos #1677 e #1863 deslocado
+do veredito para o rodapé: fail-open não deixa de ser fail-open por estar no fim da página.
 
 Nunca diga "pode arquivar" com item ❌/⏳ crítico em aberto sem nomeá-lo na lista do founder —
 e nunca com pendência SEM um dos 4 destinos acima ("fica na sua mão lembrar" não é destino).
