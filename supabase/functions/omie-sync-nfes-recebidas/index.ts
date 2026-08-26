@@ -24,6 +24,7 @@
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { classifyOmieResponse, computeBackoffMs } from "./retry.ts";
+import { cabeEspera, timeoutRequestMs } from "../_shared/omie-deadline.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -74,6 +75,10 @@ const TIMEOUT_GUARD_MS = 130_000;
 // consumir toda a janela e deixar a linha fin_sync_log 'running' órfã (sem
 // completeSync). Cede ANTES do backfill (130s) p/ sobrar tempo ao completeSync.
 const MAIN_LOOP_GUARD_MS = 120_000;
+// Teto de RELÓGIO por request (#2017). Os guards acima são do RUN e só são LIDOS entre páginas —
+// um socket pendurado nunca devolve o controle ao loop, então o guard não chega a ser consultado
+// e o isolate morre com a linha fin_sync_log 'running' órfã, exatamente o que os 130s protegiam.
+const FETCH_TIMEOUT_MS = 25_000;
 
 // Tipos minimos pra responses da Omie (campos opcionais — Omie nem sempre devolve tudo)
 interface OmieNFeCabec {
@@ -186,6 +191,7 @@ async function callOmie(
   app_secret: string,
   call: "ListarRecebimentos" | "ConsultarRecebimento",
   param: Record<string, unknown>,
+  deadline: number,
 ): Promise<OmieGenericResponse> {
   const body = { call, app_key, app_secret, param: [param] };
 
@@ -195,10 +201,18 @@ async function callOmie(
   // nunca devolve faultstring transitório ao caller, senão o syncEmpresa o leria
   // como erro de negócio e abortaria a página (o incidente OBEN de 05/07).
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    // O teto do request ENCOLHE conforme o run se aproxima do deadline. LANÇA quando não sobra
+    // tempo viável: deadline NÃO é transitório (não leva o prefixo OMIE_TRANSIENT), é o fim do
+    // orçamento deste run — retentar não faria diferença nenhuma.
+    const timeoutMs = timeoutRequestMs(Date.now(), deadline, FETCH_TIMEOUT_MS);
+    if (timeoutMs === 0) {
+      throw new Error(`Omie ${call}: deadline do run atingido antes da chamada`);
+    }
     const res = await fetch(OMIE_ENDPOINT, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     const text = await res.text();
     let json: OmieGenericResponse;
@@ -210,6 +224,11 @@ async function callOmie(
     if (verdict.kind === "retry") {
       if (attempt < MAX_RETRIES) {
         const delay = computeBackoffMs(fs ?? "", attempt);
+        // Backoff que cruza o deadline é sono que nunca acorda — o isolate morre DENTRO do sleep,
+        // sem completeSync, e sobra a linha 'running' órfã que o guard de 130s existe para evitar.
+        if (!cabeEspera(Date.now(), deadline, delay)) {
+          throw new Error(`Omie ${call}: ${verdict.reason} e o backoff de ${delay / 1000}s não cabe antes do deadline do run`);
+        }
         console.warn(`[sync-nfes] ${call} ${verdict.reason} (retry ${attempt + 1}/${MAX_RETRIES}) wait ${delay / 1000}s`);
         await sleep(delay);
         continue;
@@ -412,6 +431,9 @@ async function syncEmpresa(
   dataInicialOverride?: string,
   dataFinalOverride?: string,
 ): Promise<EmpresaSummary> {
+  // Deadline do loop PRINCIPAL, derivado do MESMO t0 e do MESMO guard que o laço já consulta —
+  // não é um relógio novo, é o guard existente ficando visível para o request e para o backoff.
+  const deadline = t0 + MAIN_LOOP_GUARD_MS;
   const summary: EmpresaSummary = {
     empresa,
     nfes_processadas: 0,
@@ -464,7 +486,7 @@ async function syncEmpresa(
         cEtapa: "",
       };
       if (fornecedorCodigo) param.nIdFornecedor = fornecedorCodigo;
-      resp = (await callOmie(app_key, app_secret, "ListarRecebimentos", param)) as OmieListRecebimentosResponse;
+      resp = (await callOmie(app_key, app_secret, "ListarRecebimentos", param, deadline)) as OmieListRecebimentosResponse;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`[sync-nfes] ${empresa} pag=${pagina} ListarRecebimentos erro: ${msg}`);
@@ -511,7 +533,7 @@ async function syncEmpresa(
         await sleep(RATE_LIMIT_DELAY_MS);
         let detalhe: OmieConsultarRecebimentoResponse;
         try {
-          detalhe = (await callOmie(app_key, app_secret, "ConsultarRecebimento", { nIdReceb })) as OmieConsultarRecebimentoResponse;
+          detalhe = (await callOmie(app_key, app_secret, "ConsultarRecebimento", { nIdReceb }, deadline)) as OmieConsultarRecebimentoResponse;
         } catch (errDet) {
           const msgDet = errDet instanceof Error ? errDet.message : String(errDet);
           // Falha esgotada/transitória do ConsultarRecebimento NÃO prova ausência de
@@ -598,6 +620,9 @@ async function backfillRawData(
   fornecedorCodigo: number | undefined,
   t0: number,
 ): Promise<BackfillSummary> {
+  // O backfill roda DEPOIS do loop principal e cede mais tarde (130s, não 120s) — por isso o
+  // deadline daqui é o TIMEOUT_GUARD_MS, o mesmo que o guard desta função já usa.
+  const deadline = t0 + TIMEOUT_GUARD_MS;
   const out: BackfillSummary = {
     nfes_identificadas_para_backfill: 0,
     nfes_backfilled: 0,
@@ -650,7 +675,7 @@ async function backfillRawData(
 
     try {
       await sleep(RATE_LIMIT_DELAY_MS);
-      const detalhe = (await callOmie(app_key, app_secret, "ConsultarRecebimento", { cChaveNFe: chave })) as OmieConsultarRecebimentoResponse;
+      const detalhe = (await callOmie(app_key, app_secret, "ConsultarRecebimento", { cChaveNFe: chave }, deadline)) as OmieConsultarRecebimentoResponse;
 
       if (!detalhe || detalhe?.faultstring) {
         const fs = String(detalhe?.faultstring ?? "vazio");

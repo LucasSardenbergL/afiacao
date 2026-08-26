@@ -7,6 +7,7 @@
 
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { avaliarPagina, proximoTotalPaginas } from "../_shared/omie-paginacao.ts";
+import { cabeEspera, timeoutRequestMs } from "../_shared/omie-deadline.ts";
 
 // ─── Type definitions ───
 
@@ -115,6 +116,10 @@ const corsHeaders = {
 const OMIE_NF_URL = "https://app.omie.com.br/api/v1/produtos/nfconsultar/";
 const RATE_LIMIT_MS = 1100;
 const TIMEOUT_GUARD_MS = 25_000; // retornar antes do gateway cortar (~30s)
+// Teto de RELÓGIO por request (#2017). O guard acima é do RUN inteiro; sem teto por request um
+// socket pendurado consome os 25s sozinho e o isolate morre sem passar pelo catch. Fica abaixo do
+// guard de propósito: request algum do Omie leva 20s em operação normal.
+const FETCH_TIMEOUT_MS = 20_000;
 const MAX_RETRIES = 3;
 // Teto anti-runaway do ListarNF: 500 × 50 = 25k NF-es numa janela >> volume real de 180d.
 const MAX_PAGINAS_NF = 500;
@@ -181,8 +186,16 @@ async function omieCall(
   app_secret: string,
   call: string,
   param: Record<string, unknown>,
+  deadline: number,
 ): Promise<OmieCallResult> {
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    // O teto do request ENCOLHE conforme o run se aproxima do deadline — 3 tentativas de 20s mais
+    // os backoffs passariam MUITO do TIMEOUT_GUARD_MS de 25s. 0 = não sobra tempo viável, e aí nem
+    // abrimos socket: o caller LANÇA em `!result.ok` (fail-closed), nunca lê isto como fim da fonte.
+    const timeoutMs = timeoutRequestMs(Date.now(), deadline, FETCH_TIMEOUT_MS);
+    if (timeoutMs === 0) {
+      return { ok: false, status: 0, error: "deadline do run atingido antes da chamada Omie" };
+    }
     try {
       const res = await fetch(OMIE_NF_URL, {
         method: "POST",
@@ -193,6 +206,7 @@ async function omieCall(
           app_secret,
           param: [param],
         }),
+        signal: AbortSignal.timeout(timeoutMs),
       });
 
       if (res.status === 425) {
@@ -206,6 +220,9 @@ async function omieCall(
 
       if (res.status === 429) {
         const wait = 2000 * (attempt + 1);
+        if (!cabeEspera(Date.now(), deadline, wait)) {
+          return { ok: false, status: 429, error: "rate limit Omie sem tempo de espera antes do deadline do run" };
+        }
         console.warn(`429 received, waiting ${wait}ms (attempt ${attempt + 1})`);
         await sleep(wait);
         continue;
@@ -238,7 +255,11 @@ async function omieCall(
       return { ok: true, status: res.status, data };
     } catch (err) {
       console.error(`omieCall network error attempt ${attempt + 1}:`, err);
-      await sleep(1000 * (attempt + 1));
+      const wait = 1000 * (attempt + 1);
+      if (!cabeEspera(Date.now(), deadline, wait)) {
+        return { ok: false, status: 0, error: `erro de rede sem tempo de retry antes do deadline do run: ${String(err)}` };
+      }
+      await sleep(wait);
     }
   }
   return { ok: false, status: 0, error: "max retries exceeded" };
@@ -276,6 +297,10 @@ Deno.serve(async (req) => {
   }
 
   const startedAt = Date.now();
+  // Relógio ÚNICO do run: todo request e todo backoff do omieCall se medem contra ESTE instante,
+  // o mesmo que o TIMEOUT_GUARD_MS do laço de paginação usa. Teto por request isolado não bastaria
+  // — a última tentativa poderia COMEÇAR faltando 1s para o guard e morrer no meio, sem catch.
+  const deadline = startedAt + TIMEOUT_GUARD_MS;
 
   try {
     const body = await req.json().catch(() => ({}));
@@ -359,7 +384,7 @@ Deno.serve(async (req) => {
         ordenar_por: "CODIGO",
       };
 
-      const result = await omieCall(creds.app_key, creds.app_secret, "ListarNF", param);
+      const result = await omieCall(creds.app_key, creds.app_secret, "ListarNF", param, deadline);
       consultas_detalhadas++;
 
       if (result.apiBlocked) {
