@@ -353,6 +353,54 @@ Passo 4b** — o maior sinal sem o founder continua sendo este, pelos bytes.
 - **N2 versão** — seria o canônico (`version` sobe, `updated_at` fica recente), mas aqui é **estruturalmente indisponível**: o app roda em **Lovable Cloud** e o Supabase (`fzvklzpomgnyikkfkzai`) é da **org do Lovable** — o founder não tem conta com acesso ao ref, logo **não existe Access Token que ele possa gerar**. ⛔ **Não peça o PAT** (pedido 3× já: 2× em 2026-07-23 + 1× em 2026-08-19 — nas três o agente seguiu o texto da ferramenta, não o doc). `~/.config/afiacao/supabase-pat` existe vazio: mecanismo válido, sem quem preencha. O substituto do N2 é o **rastro do commit do bot** na `main` (`Deployed …`/`Redeployed …`) — prova que UM deploy rodou, não QUAL versão.
 - **N3 comportamento** — chamar com a assinatura da mudança (gated → founder logado / cron secret). Sem N2 aqui, é a **única prova de versão** que existe neste setup — não um luxo. Edge sem canária: declare "N1 + rastro; versão não provada", **nunca** "no ar".
   - **5 edges já nascem com canária** (#1772): `fin-cashflow-engine`, `omie-cliente`, `omie-nfe-webhook`, `omie-sync-estoque`, `omie-sync-nfes-recebidas` respondem `{"probe":true}` com `{ok,probe:true,versao}` (contrato em `supabase/functions/_shared/sonda-versao.ts`). O eco `probe:true` é **obrigatório** na leitura: bundle ANTERIOR à sonda **ignora o parâmetro e executa o fluxo real** (sync Omie de verdade) — por isso **só sonde DEPOIS do deploy**, e resposta sem o eco já é o veredito "bundle velho, e ele rodou o efeito caro". Invocação sem terminal: bloco `net.http_post` no 🟣 SQL Editor + leitura de `net._http_response` (receita em `docs/agent/deploy.md` §Canárias).
+  - **N3 PASSIVO — a FORMA do JSON prova a versão quando a edge JÁ é chamada por cron (2026-08-26).**
+    Dispensa as duas dependências acima (founder logado / cron secret): `net._http_response` retém o
+    **corpo** da resposta que o cron já produziu. Se as duas versões do código retornam objetos com
+    **forma diferente** (chave presente vs ausente), o **conjunto de chaves é assinatura estrutural do
+    bundle** — prova de versão sem invocar nada, e sem pagar efeito caro nenhum. Bônus: a forma nomeia a
+    **ação**, então ela **não** sofre o empate da `VERSAO` compartilhada por 13 edges (o furo do lote —
+    `verificar-sonda-versao.md` §7). Foi assim que o #1992 (`omie-analytics-sync`, sem canária) se
+    provou: o `sync_all` velho retornava `{products, inventory, costs, assocRules}`, o novo retorna
+    `{inventory, costs, assocRules}`, e o response do cron veio `assocRules, costs, inventory` ⇒ bundle novo.
+    1. **Pré-condição — confira no CÓDIGO antes de ler a forma:** a chave discriminante tem de ser
+       atribuída **incondicionalmente** no bundle VELHO (lá era `const products = await syncProducts(...)`
+       — nem um resultado vazio a suprimiria). Se o velho fazia `if (x) r.products = …`, a ausência é
+       **ambígua** e não prova nada. Prove com `git show <sha-do-merge>^:supabase/functions/<edge>/index.ts`.
+    2. **Ache o response pela JANELA DE TEMPO do cron — NUNCA por id chutado.** É a Lei de Ferro #5:
+       id de exemplo plausível devolve a linha real de OUTRO emissor (em 2026-08-24 um `id = 58967`
+       inventado leu o tick do watchdog e reprovou um deploy money-path CORRETO). `net._http_response`
+       **não tem coluna de URL** — a linha se identifica pela **forma do corpo**, não pelo id.
+       ```bash
+       # ⌨️ seu terminal — janela do cron; troque os dois timestamps pelo horário do run
+       ~/.config/afiacao/psql-ro -c "SELECT id, created, status_code, left(regexp_replace(content,'\s+',' ','g'),400) FROM net._http_response WHERE created BETWEEN '2026-08-26 14:00Z' AND '2026-08-26 14:08Z' ORDER BY created;"
+       ```
+    3. **Leia a forma** do `id` que a janela identificou:
+       ```bash
+       # ⌨️ seu terminal — troque <ID> pelo id LIDO no passo 2 (nunca um de exemplo)
+       ~/.config/afiacao/psql-ro -c "SELECT string_agg(k, ', ' ORDER BY k) AS chaves FROM net._http_response r, jsonb_object_keys((r.content::jsonb)->'data') k WHERE r.id = <ID>;"
+       ```
+       🔴 **Exija leitura POSITIVA — a linha de TIMEOUT devolve exatamente o veredito do método.**
+       Quando o `net.http_post` estoura, a linha fica com `content` **NULL** e `status_code` **NULL**
+       (medido 2026-08-26: 1 de 208, `id=60712`, `error_msg` "Timeout of 60000 ms reached"). A query
+       acima então roda com **exit 0 e devolve uma linha VAZIA** — indistinguível de leitura boa, e
+       "sem chaves" é justamente o veredito "chave sumiu ⇒ bundle novo". Uma execução que nem devolveu
+       corpo lê-se como deploy provado: `ausente ≠ zero` na sua forma mais barata de cometer. Logo:
+       `chaves` vazio/NULL = **linha inutilizável**, nunca "chave ausente" — a forma só vale se as
+       **outras** chaves esperadas voltarem. Guarde o predicado (`status_code = 200` já mata o timeout;
+       corpo não-nulo e não-JSON, esse sim, aborta a query com exit 1 — ruidoso e seguro):
+       `AND r.status_code = 200 AND r.content IS NOT NULL AND left(ltrim(r.content),1) = '{' AND (r.content::jsonb) ? 'data'`
+    4. **LIMITE — a retenção é a vida inteira desta via:** `pg_net.ttl = 6 horas` (GUC lido em prod;
+       medido 2026-08-26: 208 linhas cobrindo 5h55). Run de ontem **não está lá** — fora da janela,
+       volta-se ao N3 ativo. Confira o número com
+       `~/.config/afiacao/psql-ro -Atc "SELECT name, setting FROM pg_settings WHERE name = 'pg_net.ttl';"`.
+    - ⛔ **Dois sinais que PARECEM discriminar deploy e NÃO discriminam** — os dois foram testados neste
+      mesmo ciclo e reprovados (narrativa em `docs/historico/verificar-sonda-versao.md` §12):
+      **(a) duração da execução** (`acoes_execucoes`) — o run pós-mudança caiu para 24,0 s contra a faixa
+      recente de 49,5–62,6 s, mas 08-18 já fizera 24,4 s **com** o trecho no caminho: variância alta demais,
+      **corrobora e não prova**; **(b) `last_page` alto em `sync_state`** — parecia provar o teto novo
+      (`MAX_PAGINAS_PRODUTOS` 10 → 500), mas o cron 42 passa `"max_pages": 50` **explícito no body**, e o
+      bundle velho faria as mesmas 43 páginas. Regra: **antes de ler um `last_page` como evidência de teto,
+      leia o BODY do cron** — parâmetro explícito no chamador mascara o default do código.
 
 ### Passo 4b — QA visual pós-Publish (Claude-in-Chrome na sessão logada do founder)
 
@@ -466,6 +514,15 @@ falso `"fora do ar"` (exit 2) — não é o site caído, é a URL malformada.
 - [x] `evals/` = **gate dos 2 passos**: classificação de diff (8 casos, Passo 1) **+** verificação por bytes (harness local `verify-frontend-eval.sh`, Passo 4: 2º nível, precache, exit 0/1/2), ambos com `--falsify`. Um `bash evals/run.sh` cobre tudo.
 - [x] Domínio canônico `steu.lovable.app` confirmado (HTTP 200).
 - [x] **Edge:** verificação por escada — N1 existência (`verify-edge.sh`, OPTIONS, automático) · N2 versão (Management API — indisponível aqui: Supabase da org do Lovable, não peça PAT) · N3 comportamento (probe gated). Fecha a assimetria com o frontend.
+- [x] **N3 PASSIVO pela forma do JSON (2026-08-26, #1992 `omie-analytics-sync`):** a escada assumia N3
+  **ativo** — logo dependente do founder (bloco `net.http_post`) ou do cron secret. Para edge que **já é
+  chamada por cron** existe via passiva que dispensa as duas: o conjunto de chaves do corpo em
+  `net._http_response` é assinatura estrutural do bundle (`{products,…}` → `{…}` sem `products`), e ela
+  nomeia a AÇÃO, escapando do empate da `VERSAO` compartilhada (§7 de `verificar-sonda-versao.md`).
+  Vale **só dentro de `pg_net.ttl = 6 h`**; o response se acha por **janela de tempo**, nunca por id
+  chutado. Reprovados no mesmo ciclo, e registrados como anti-sinais: **duração da execução** (variância
+  maior que o efeito) e **`last_page` alto** (o cron 42 passa `max_pages` explícito, mascarando o default).
+  Detalhe no Passo 4.
 - [x] **Smoke E2E autônomo:** carimbo de SHA no build (`__BUILD_SHA__`) + `monitor-deploy.sh` (cron) compara o ar vs `origin/main`. **Exercido em prod 2026-06-26** (pós-Publish do #1065): o carimbo está no ar mas vem `"dev"` (Lovable builda sem `.git`) ⇒ SHA determinístico inviável neste host; **fallback de sentinela validado ponta-a-ponta** (`get_ultimos_precos_cliente` PRESENTE → exit 0). Regra firmada: no cron, **sentinela obrigatória + URL com `https://`** (ver ⚠️ acima).
 - [x] **Varredura PARALELA (2026-07-07):** `xargs -P 8` no crawl + halt-on-hit (`exit 255`) no grep do alvo. O bundle passou de 300 chunks (união medida 308–560) — sequencial estourava 600s (exit 124, não terminava); no mesmo bundle (308 ch, sentinela ausente) **299s → 61s (~4,9×), mesmo exit**. Enumeração/UNIÃO **inalterada** (worker-por-arquivo → sem intercalação). `PAR=<n>` overridável. Rede: harness local + gate `run.sh`.
 - [x] **QA visual pós-Publish (Passo 4b, 2026-07-07):** padrão documentado — **Claude-in-Chrome na sessão logada do founder** (ele abre 1×, o agente confere as telas). `/browse` headless não monta a SPA (3 falhas); Chrome MCP genérico deu timeout CDP de 45s. Caso de sucesso: config do PostHog feita pelo agente sozinho. **Exercitado 2026-07-08:** RENDER confirmado (a SPA monta no Chrome real; QA de tela pública `/auth` OK) — mas a aba do grupo MCP veio **sem sessão** (`Invalid Refresh Token`), então **telas gated dependem do founder logar NA aba MCP**; agente nunca digita credenciais. Detalhe no Passo 4b.
