@@ -329,3 +329,58 @@ certa para o problema de VOLUME — e é projeto próprio, não emenda de um PR 
 
 ⚠️ O parecer saiu com `REVISÃO INDEPENDENTE PENDENTE`: a segunda instância do ritual não conseguiu
 criar temporário sob o sandbox read-only (`mktemp`, exit 70). É auditoria de uma cabeça só.
+
+---
+
+# Sequela 3 (2026-08-26): `omie-sync-estoque` — e a patologia flagrada VIVA no mesmo dia
+
+## O discriminador que faltava: a edge tem cron PRÓPRIO?
+
+A sequela 2 concluiu que edge sem guard de duração não ganha teto de run de brinde. `omie-sync-estoque`
+também não tem guard de duração — e mesmo assim ganhou `MAX_DURACAO_MS`. Não é contradição; é o
+discriminador ficando explícito:
+
+| situação | o kill já existe? | o que fazer |
+|---|---|---|
+| edge com cron próprio (`omie-sync-estoque`, 90s) | **sim**, o `timeout_milliseconds` do cron | deadline **derivado do teto** — converte kill BRUTO em saída controlada |
+| step de orquestrador (`pedidos-compra`) | **não** — a filha é solta em background | só teto por request; inventar teto de run é arbitrar truncamento |
+
+**A pergunta certa não é "tem guard interno?", é "existe um kill, e quem o dá?".** Onde há kill,
+o deadline só torna a morte legível. Onde não há, ele CRIA uma morte que não existia.
+
+## O achado: 60s de sono dentro de um run de 90s
+
+O ramo 429 do `callOmie` dormia **60 segundos** — dois terços do orçamento inteiro — e depois era
+morto pelo cron sem gravar nada e sem dizer por quê. `cabeEspera` agora recusa explicitamente, e
+quase nunca vai caber: **não há como respeitar um rate-limit de 60s dentro de um run de 90s.**
+Falhar dizendo isso é melhor que dormir até o corte. É o mesmo raciocínio do sleep de 5s no `sku`,
+uma ordem de grandeza mais caro.
+
+## A edge não escreve em `fin_sync_log` — a sonda é a única prova
+
+53 enqueues em 7 dias (`cron.job_run_details`, jobids 31 e 124, todos `succeeded`) contra **4**
+registros de `sync_estoque` em 14 dias — que nem são desta edge, porque ela não grava lá. Logo não
+há p95 para esta edge, e o teto do cron é o único número honesto disponível. Consequência prática:
+**a sonda de versão é a ÚNICA prova de qual bundle está no ar** — por isso o bump aqui não é
+burocracia.
+
+## Flagrante: a mesma assinatura, hoje, noutra edge
+
+`net._http_response` guarda ~1 dia. Nesse dia havia **1** erro, e é a assinatura exata do #2017:
+
+```
+2026-08-26 13:00:01 | Timeout of 60000 ms reached. Total time: 60001.316 ms
+                      (DNS 158.844 ms, TCP/SSL handshake 639.897 ms,
+                       HTTP Request/Response 59202.467 ms)
+```
+
+DNS e handshake somam 0,8s; **59,2s foram request/response**. Dois crons de teto 60000 partiram
+naquele segundo: `omie-sync` (jobid 44, `0 * * * *`, chama o Omie, **sem coleira**) e
+`dispatch-notifications` (jobid 102, não chama o Omie, mas tem 3 `fetch` externos sem coleira).
+**Não dá para cravar qual foi** — e registrar o empate é mais útil que escolher o palpite bonito.
+
+O que o flagrante prova, independente de qual seja: a patologia não é histórica, está acontecendo
+agora, e a janela de 1 dia dessa tabela significa que a maioria das ocorrências **nunca é vista**.
+`omie-sync` sobe na fila da próxima fatia: roda 24×/dia contra 7 do estoque.
+
+## Sequela: 16 restantes
