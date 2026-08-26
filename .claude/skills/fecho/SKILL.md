@@ -141,13 +141,31 @@ Contexto: `docs/agent/database.md` §1 · `docs/historico/revoke-que-nao-revoga.
 ### Passo 3 — Edges
 
 ```bash
-git log origin/main --oneline -10 -- supabase/functions/
+# o que ESTA sessão tocou
 git diff --name-only origin/main...HEAD -- supabase/functions/
+
+# ⚠️ E o que OUTRAS sessões mergearam na janela desta — MESMO argumento do passo 2, e ele vale
+# aqui palavra por palavra: edge de terceiro entra na main sem ninguém aqui saber, também NÃO
+# se auto-deploya (chat do Lovable, manual) e a falha é igualmente SILENCIOSA.
+git log origin/main --since="<hora de início da sessão>" --name-only --format="" -- supabase/functions/ | sort -u
 ```
 
 Se a sessão tocou edge: ela foi deployada via chat do Lovable? (Evidência: o founder confirmou
 na conversa, ou a canária/probe respondeu com o comportamento novo.) Pendente → inclua o prompt
 de deploy verbatim (skill `lovable-deploy-verify`, passo 3) na mensagem de fecho.
+
+⚠️ **"Se a sessão tocou edge" NÃO é o gatilho deste passo — é só o gatilho da metade dele.**
+Edge de TERCEIRO na janela é pendência desta `/fecho` do mesmo jeito que migration de terceiro é,
+e pela mesma razão. Medido em 2026-08-26, na sessão do #2023/#2027: o `7e076f1f7`
+(`fix(omie)`, coleira de relógio no reconcile) mergeou dentro da janela tocando
+`omie-nfe-reconcile/index.ts` e um `_shared/omie-deadline.ts` NOVO. Só apareceu porque o agente
+alargou a consulta por conta própria — pela letra deste passo, ele teria olhado a saída do
+`git log`, visto commit que não era dele, e seguido em frente.
+
+Destino de edge de terceiro **não é** "deployar por ela" nem "assumir que a outra sessão já
+pediu": é **chip** (a sessão dona pode ter fechado sem pedir o deploy), com o prompt mandando
+CONFIRMAR antes de pedir deploy redundante. E o prompt tem de nomear **todos** os arquivos,
+`_shared` novo incluído — prompt que nomeia um só deixa a edge sem bootar (#2020).
 
 ### Passo 4 — Publish do frontend
 
