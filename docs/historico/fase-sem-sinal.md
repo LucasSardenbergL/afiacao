@@ -1791,6 +1791,62 @@ https://us.i.posthog.com/i/v0/e/
 Responde **HTTP 400 `request missing data payload`** quando o caminho está livre (verificado). Erro
 de conexão ou página em branco = bloqueado.
 
+⚠️ **As duas afirmações acima foram REFUTADAS por medição em 2026-08-26.** Ficam escritas porque o
+erro é reutilizável, não porque valem: (1) o iPhone **não** está bloqueado, e (2) este teste **não
+testa o bloqueio** — ele responde "livre" num aparelho comprovadamente bloqueado. Os dois blocos a
+seguir são a medição.
+
+### O teste de 1 linha era MÁQUINA DE FALSO NEGATIVO: navegação ≠ XHR (2026-08-26)
+
+Par de falsificação no **mesmo browser, mesmo endpoint, mesmos minutos** — Chrome 152 do founder,
+o aparelho cujo bloqueio o `#1984` provou:
+
+| como o request foi feito | resultado |
+|---|---|
+| **navegação top-level** para `https://us.i.posthog.com/i/v0/e/` (o teste da doc) | **`request missing data payload`** — passou |
+| **`fetch` a partir de `https://steu.lovable.app`** (o request que o SDK faz) | **`TypeError: Failed to fetch`** — 351 ms, e **5 ms** na 2ª tentativa |
+| controle: `fetch` para o Supabase, mesma página, mesmo minuto | **HTTP 401 em 370 ms** — passou |
+
+Bloqueador de conteúdo casa por **tipo de request e por parte** (`xmlhttprequest`, `third-party`),
+não por domínio nu. Digitar a URL na barra é navegação **first-party** — a classe que a EasyPrivacy
+não bloqueia. O teste inteiro media a categoria errada e devolvia verde para o aparelho que este
+mesmo documento provou estar bloqueado.
+
+> **A regra:** um teste de bloqueio precisa reproduzir o request **que o produto faz** — mesmo
+> método, mesmo tipo, **e mesma origem**. Trocar `fetch` de terceira parte por navegação de primeira
+> parte não é "simplificar o teste": é medir outra coisa e chamar de a mesma.
+
+E ele falha na direção pior. Um falso **positivo** viraria caça a um bloqueio inexistente e morreria
+na primeira verificação; este é falso **negativo**, e o veredito dele — "está livre" — é
+exatamente a conclusão que ninguém volta a checar.
+
+**O teste que serve** (roda no aparelho, no Safari/Chrome, com a página do app aberta —
+`steu.lovable.app`, console do browser):
+
+```js
+const t = performance.now();
+fetch('https://us.i.posthog.com/i/v0/e/', { method: 'POST', body: '' })
+  .then(r => r.text().then(b => `LIVRE ${r.status} em ${Math.round(performance.now()-t)}ms — ${b}`))
+  .catch(e => `BLOQUEADO ${e} em ${Math.round(performance.now()-t)}ms`)
+  .then(console.log);
+```
+
+### E o iPhone NÃO está bloqueado — refutado por evidência positiva (2026-08-26)
+
+O que fechou a pergunta não foi o teste: foi a série, decomposta por aparelho. O `019e6e05`
+(iOS/Mobile Safari, os 2001 eventos) emitiu **sessão completa em 2026-08-25, 09:39–09:51Z** —
+`$pageview`, `$set`, 10 `$autocapture`, `$pageleave` — e aparece em **23 dos últimos 30 dias**.
+Aparelho bloqueado não emite; emitiu.
+
+O "parou em 23/08" que fundou a inferência era a leitura de uma janela que ainda não tinha fechado:
+24/08 sem uso, e o 25/08 chegou depois da medição. **Silêncio de 2 dias num aparelho com 7 lacunas
+em 30 dias não é anomalia** — é a §4 de [analytics.md](../agent/analytics.md) (*"este silêncio é
+anômalo?"*, respondida pelo padrão histórico) aplicada ao aparelho em vez de ao agregado.
+
+> **A regra:** "é a mesma classe, é a explicação mais simples" é **hipótese**, e hipótese barata é a
+> que mais rápido vira premissa. Quando a refutação custa uma query já escrita — a decomposição por
+> `$device_id` que esta mesma doc exige — rodar a query vem **antes** de registrar a inferência.
+
 ### Por que isto é maior que "desligue o bloqueador"
 
 Desligar resolve o aparelho do founder e **não resolve a leitura**. Um bloqueador não deixa a amostra
