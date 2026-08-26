@@ -22,6 +22,12 @@
 # antes de tocar a rede, que a sentinela é EXCLUSIVA do PR. Mordido em 2026-08-24 no #1949
 # (`visita_tentativa` era do #1945, mesmo arquivo, publicado horas antes).
 #
+# Mas o --pai prova exclusividade NO GIT, e o bundle servido também carrega node_modules: quando a
+# sentinela é o nome de uma OPÇÃO DE API da própria lib, há um 2º EMISSOR que nenhum `git grep`
+# alcança (medido 2026-08-25: `vendor-posthog-*.js` sozinho tem `session_recording` 13x). Por isso a
+# sonda SENTINELA_TAMBEM_NA_LIB, também pré-rede — que AVISA e nunca recusa, porque node_modules é
+# preditor do 2º emissor e não prova dele (tree-shaking decide o que chega ao bundle).
+#
 # O CONTROLE NEGATIVO da sonda era o outro recado — e recado depende de alguém lembrar, que é
 # exatamente como a armadilha acima passou. Um `exit 0` sozinho não distingue "está no ar" de "o
 # script dá verde pra tudo", então quando o ALVO casa o script AUTO-AUDITA: reexecuta o MESMO
@@ -107,6 +113,67 @@ if [ "$PAI_SET" = 1 ]; then
   echo "✓ sentinela exclusiva: 0 ocorrências em $PAI · $_n_novo arquivo(s) em $NOVO (pathspec src/)"
 else
   echo "⚠️  EXCLUSIVIDADE_NAO_PROVADA — sem --pai <sha-do-commit-anterior>: se a sentinela já existia antes deste PR, o verde abaixo é de um Publish anterior"
+fi
+
+# ---- sonda do SEGUNDO EMISSOR: a sentinela também é emitida pela LIB? (roda ANTES da rede) ----
+# O guard --pai acima prova exclusividade NO GIT (`git grep` em src/). Mas o que o curl baixa não é
+# src/: é o BUNDLE, e o bundle carrega node_modules. Quando a sentinela é o NOME DE UMA OPÇÃO DE
+# API da própria lib, existe um 2º EMISSOR que nenhum `git grep` alcança. Medido em prod
+# 2026-08-25: `vendor-posthog-*.js` sozinho tem `session_recording` 13x e `disable_session_recording`
+# 5x — sem uma linha nossa. Detalhe: docs/historico/sentinela-segundo-emissor.md
+#
+# Roda com E sem --pai de propósito: a pergunta daqui ("existe emissor FORA do git?") é ortogonal à
+# do --pai ("é nova DENTRO do git?"), e sem --pai o operador está no modo mais fraco — é onde calar
+# custa mais. O EXCLUSIVIDADE_NAO_PROVADA fala do git; não diz nada sobre a lib.
+#
+# AVISA, NUNCA RECUSA — medido, não gentileza: `maskAllInputs` está em 10 arquivos de
+# node_modules/posthog-js/dist/ e em 0 ocorrências do chunk servido. Minificação e tree-shaking
+# decidem o que sobrevive até o bundle, logo node_modules é PREDITOR do 2º emissor, não PROVA dele.
+# Guard que recusasse no hit reprovaria sentinela legítima — e guard que reprova o certo é desarmado
+# no primeiro dia. Nada aqui toca o exit code.
+#
+# UNIVERSO = arquivos de código JS, não a árvore inteira, e o corte foi medido nesta node_modules
+# (637 MB / 54.843 arquivos): sem filtro custa 38-63s E o "valor nosso" input[type="checkbox"] —
+# a sentinela que o doc prova ser a BOA — acusava 3 arquivos (um readme.md, o preflight.css do
+# tailwind, um css de demo). Ruído contra a resposta certa é como se desarma um aviso. Com o filtro:
+# ~2s, e o mesmo alvo cai para 1 arquivo (jsdom, devDep que nunca vai ao bundle). O corte é por "é
+# código JS?" e NÃO por "onde a lib guarda" — restringir a dist/ criaria falso negativo de verdade.
+_raiz_nm=$(git rev-parse --show-toplevel 2>/dev/null) || _raiz_nm=""
+[ -n "$_raiz_nm" ] || _raiz_nm="$PWD"
+_nm="$_raiz_nm/node_modules"
+if [ ! -d "$_nm" ]; then
+  printf '%s\n' \
+    "⚠️  LIB_NAO_CONSULTADA — não existe $_nm (worktree recém-criada? o 'bun install' é passo à parte)." \
+    "   Isto NÃO é 'a sentinela está limpa' — é AUSÊNCIA DE DADO. Se ela for nome de opção/API de uma" \
+    "   dependência, o 2º emissor segue possível e este run não teria como enxergá-lo."
+else
+  # rc do grep discrimina os três estados: 0 = achou · 1 = LIMPO de verdade · >=2 = erro (não
+  # consultei). Sem isso, "saída vazia" confundiria 'não achei' com 'nem consegui olhar'.
+  _lib_hits=$(grep -rlF --include='*.js' --include='*.mjs' --include='*.cjs' -- "$ALVO" "$_nm" 2>/dev/null); _lib_rc=$?
+  if [ -n "$_lib_hits" ]; then
+    _n_lib=$(printf '%s\n' "$_lib_hits" | wc -l | tr -d ' ')
+    echo "⚠️  SENTINELA_TAMBEM_NA_LIB — o ALVO também é emitido por $_n_lib arquivo(s) de código em node_modules/:"
+    # Os caminhos SÃO a informação: 'posthog-js/dist/' se lê como 2º emissor provável, 'jsdom/' como
+    # devDep que nunca vai ao bundle. Contagem sozinha não deixaria o operador julgar.
+    _i=0
+    printf '%s\n' "$_lib_hits" | while IFS= read -r _f; do
+      _i=$((_i + 1)); [ "$_i" -le 3 ] || break
+      printf '     %s\n' "${_f#"$_raiz_nm"/}"
+    done
+    [ "$_n_lib" -le 3 ] || echo "     ... (+$((_n_lib - 3)) arquivo(s))"
+    printf '%s\n' \
+      "   node_modules é PREDITOR do 2º emissor, não prova (tree-shaking decide o que chega ao bundle)" \
+      "   — por isso isto AVISA e não recusa. Mas então um ✅ abaixo pode ser bytes da LIB, e uma" \
+      "   AUSÊNCIA não prova remoção nenhuma enquanto ela emitir a string. Prefira um VALOR nosso" \
+      "   (texto de UI, seletor que nós escolhemos) a uma CHAVE da lib; ou leia o objeto de config no" \
+      "   bundle por âncora + janela de bytes (docs/historico/sentinela-segundo-emissor.md)."
+  elif [ "$_lib_rc" = 1 ]; then
+    echo "✓ LIB_SEM_A_SENTINELA — 0 arquivo(s) de código JS em node_modules/ emitem o ALVO"
+  else
+    printf '%s\n' \
+      "⚠️  LIB_NAO_CONSULTADA — o grep em $_nm não devolveu nem hit nem zero (rc=$_lib_rc)." \
+      "   Isto NÃO é 'a sentinela está limpa' — é AUSÊNCIA DE DADO, e um 2º emissor segue possível."
+  fi
 fi
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT

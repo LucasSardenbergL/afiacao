@@ -33,6 +33,13 @@ const PAGE_SIZE = 100; // MÁXIMO do PesquisarPedCompra — o Omie IGNORA >100 (
 const RATE_LIMIT_DELAY_MS = 1100;
 const RETRY_DELAY_MS = 5000;
 const MAX_RETRIES = 3;
+// Teto de RELÓGIO por request (#2017): o guard desta edge é MAX_PAGINAS — CONTAGEM não limita
+// tempo, e um socket pendurado come o run inteiro sem estourar página nenhuma (medido: 149.905ms
+// num único request do reconcile). SEM deadline compartilhado de propósito: esta edge não tem
+// guard de duração e roda com p95 de 120s / max 129s (fin_sync_log, 336 runs em 14d) — arbitrar
+// um teto de run truncaria carga legítima, e é este espelho que nfes/ctes leem no step seguinte.
+// A coleira aqui é só por request; o volume segue exatamente como está.
+const FETCH_TIMEOUT_MS = 25_000;
 
 // [fix paginação+janela 2026-06-26] espelho de omie-sync-estoque (#979/#1009/#1072) — MESMA armadilha Omie:
 // (a) PAGINAÇÃO — o nTotalPaginas SUB-REPORTA em listas grandes → confiar nele PARAVA a captura na 1ª página
@@ -446,6 +453,7 @@ async function callOmie(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
 
     const text = await res.text();

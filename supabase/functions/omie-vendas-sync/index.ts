@@ -1,5 +1,6 @@
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { omieDateToIso, classifyOmieTransient, classifyPedidosPage, gerarJanelasMensais } from "./pagination.ts";
 import { carregarProductMap } from "../_shared/mapas-paginados.ts";
 import { classificarErroAtpGate, classificarRetornoAtpGate } from "../_shared/atp-gate.ts";
@@ -2456,6 +2457,39 @@ Deno.serve(async (req) => {
   const __auth = await authorizeCronOrStaff(req);
   if (!__auth.ok) return __auth.response;
 
+  // SONDA DE VERSÃO — logo após o gate, sem gate próprio, e ANTES de qualquer client/log: ela não
+  // toca banco nenhum.
+  //
+  // Lê um CLONE do corpo de propósito. `req.json()` é one-shot, e a alternativa — içar o parse para
+  // cá e reaproveitá-lo no destructuring lá embaixo, como fez a `omie-analytics-sync` — obrigaria a
+  // dar um tipo ao `...params`, que hoje é `any` por vir do `req.json()` e é lido em ~36 campos
+  // livres (`start_page`, `max_pages`, `dry_run`, …). Com o clone, o fluxo real fica byte-idêntico
+  // e a sonda é puramente ADITIVA, que é a fronteira certa numa edge que escreve no Omie.
+  //
+  // Corpo ausente ou inválido: o parse do clone lança, tratamos como "não é sonda" e seguimos — o
+  // `await req.json()` de baixo lança igual e cai no catch geral, exatamente como hoje.
+  let corpoSonda: unknown = null;
+  try {
+    corpoSonda = await req.clone().json();
+  } catch {
+    corpoSonda = null;
+  }
+  const decisaoSonda = classificarSonda(corpoSonda);
+  if (decisaoSonda.tipo === "sonda") {
+    return new Response(JSON.stringify(respostaSonda(VERSAO)), {
+      status: 200,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+  // Fail-CLOSED: `probe` com valor não reconhecido NUNCA cai no fluxo real por omissão — o 400 cita
+  // o EFEITO para que quem sondou entenda o que teria disparado.
+  if (decisaoSonda.tipo === "ambiguo") {
+    return new Response(JSON.stringify({ error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }), {
+      status: 400,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
   // Admin client (service_role, bypassa RLS) + estado do log órfão-safe içados
   // pra fora do try: o catch precisa finalizar o log de sync como 'error' em vez
   // de deixar 'running' (senão o watchdog veria órfã eterna).
@@ -3583,13 +3617,23 @@ Deno.serve(async (req) => {
         result = {
           success: true,
           canary: true,
+          // ⚠️ BUMPADO para v3 (#2026): a fixture é a MESMA — o que mudou é a RESPOSTA, que passou
+          // a ecoar `versao`. E é bump legítimo, não burocracia: sem ele um bundle PRÉ-eco responde
+          // `…-v2` sem o campo, e quem verifica só o `contrato` concluiria "no ar" lendo o marcador
+          // de uma fatia que não subiu. Com o bump, o `contrato` sozinho já discrimina esta fatia.
           // ⚠️ O marcador NOMEIA a fatia que a canária verifica HOJE. O `identidade-fail-closed-v1`
           // do #1922 já provava o #1888 por TRANSITIVIDADE (nasceu depois dele), mas responderia
           // idêntico antes e depois desta fatia — e é esta que instala a prova COMPORTAMENTAL do A2,
           // a única que sobrevive a um deploy em que o Lovable reinterpreta o código (#1272,
           // #1445→#1478). Bumpar aqui exige bumpar junto o gate de `edge-money-path-invariants`, a
           // tabela de `docs/agent/deploy.md` e o mapa de `_shared/sonda-versao-contrato_test.ts`.
-          contrato: "identidade-a2-client-to-user-v2",
+          contrato: "identidade-a2-client-to-user-v3",
+          // O `contrato` acima nomeia a FATIA que a fixture verifica; o `versao` diz QUAL BUNDLE
+          // respondeu. São papéis distintos e o `contrato` pode ficar parado de forma legítima —
+          // por isso o discriminador de bundle viaja JUNTO, como na `generate-tactical-plan`:
+          // quem verifica a canária lê os dois sem uma segunda chamada. O `versao` é gateado pelo
+          // `sonda:bump`, então não depende de alguém lembrar de bumpá-lo.
+          versao: VERSAO,
           probe_no_ar: true, // a action respondeu → a derivação P0-B está no build deployado
           account,
           // O `ok` agregado inclui a assinatura DE PROPÓSITO: se ficasse só com a tabela do P0-B, um

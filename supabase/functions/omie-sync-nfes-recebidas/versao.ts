@@ -21,8 +21,17 @@ import { criarRespostaSonda } from "../_shared/sonda-versao.ts";
 /** Resposta da sonda desta edge, com a identidade embutida (ver `criarRespostaSonda`). */
 export const respostaSonda = criarRespostaSonda("omie-sync-nfes-recebidas");
 
-/** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
-export const VERSAO = "v1.0-sensor-inicial";
+/**
+ * Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho.
+ *
+ * BUMP (coleira de relógio, sequela do #2018/#2025): o `callOmie` passou a levar `AbortSignal.timeout`
+ * com deadline COMPARTILHADO — dois, aliás, um por fase: `MAIN_LOOP_GUARD_MS` no loop principal e
+ * `TIMEOUT_GUARD_MS` no backfill, ambos do mesmo `t0`. Sem bump, a sonda responderia a MESMA string
+ * tendo esta fatia subido ou não, e é justamente aqui que a prova importa: o sintoma que a coleira
+ * corrige (request pendurado) é INDISTINGUÍVEL de "o Omie estava lento" quando se olha só o
+ * resultado — sem saber qual bundle está no ar, não dá para dizer se a coleira falhou ou nem subiu.
+ */
+export const VERSAO = "v1.1-deadline-relogio";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

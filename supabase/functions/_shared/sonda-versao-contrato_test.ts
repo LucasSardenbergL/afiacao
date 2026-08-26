@@ -44,6 +44,7 @@ import * as tacticalBatch from "../tactical-plans-batch/versao.ts";
 import * as visitBatch from "../visit-score-recalc-batch/versao.ts";
 import * as monthlyReport from "../monthly-report/versao.ts";
 import * as carteiraRebuild from "../carteira-rebuild/versao.ts";
+import * as vendasSync from "../omie-vendas-sync/versao.ts";
 
 /**
  * `respostaSonda` (a maioria) ou `respostaSondaTactical` (a `generate-tactical-plan`, que embrulha o
@@ -143,6 +144,13 @@ const EDGES: Array<{ nome: string; mod: ModSonda }> = [
   // ficava fora do `sonda:bump` e do `sonda:fingerprint`, e não importa `paginate.ts`, então o gate
   // de "prova de deploy" a pulava (ele se declara piso — não é furo dele).
   { nome: "carteira-rebuild", mod: carteiraRebuild },
+  // Oitava leva (2026-08-25): a ÚLTIMA das 6 canárias sem sonda. Era a única entrada de
+  // `VERIFICAVEL_POR_CANARIA` — a dispensa que o gate de prova de deploy concede a quem tem
+  // canária — e a dispensa saiu junto com esta linha, porque agora ela É uma edge instrumentada.
+  // Mesma divisão de papéis do #2009: o `contrato` (`identidade-a2-client-to-user-v3`) nomeia a
+  // fatia que a fixture verifica e pode ficar parado de forma legítima; o `VERSAO` prova qual
+  // BUNDLE respondeu. Aqui os dois viajam juntos na resposta da canária.
+  { nome: "omie-vendas-sync", mod: vendasSync },
 ];
 
 /** As cinco da terceira leva — os gates estruturais abaixo varrem todas. */
@@ -970,10 +978,10 @@ Deno.test("sync-reprocess: o parse que subiu PRESERVA o throw do corpo inválido
  * não emite mais é pior que exceção nenhuma, porque some da lista de pendências parecendo resolvida.
  */
 const VERIFICAVEL_POR_CANARIA: Record<string, string> = {
-  // Bumpado de `identidade-fail-closed-v1` ao ganhar a assinatura comportamental do #1888
-  // (`assinatura-a2.ts`): o marcador nomeia a fatia que a canária verifica HOJE, e a de hoje
-  // cobre o P0-B E o A2. Ver `omie-vendas-sync/assinatura-a2.ts`.
-  "omie-vendas-sync": "identidade-a2-client-to-user-v2",
+  // VAZIO desde 2026-08-25, e o mapa FICA: ele é a válvula para uma edge nova que sirva o
+  // `paginate.ts` e prove deploy só por canária. A única entrada era a `omie-vendas-sync`, que
+  // ganhou `versao.ts` nesta fatia — com sonda ela é pulada pelo `registradas.has(...)` antes de
+  // o mapa ser consultado, então manter a entrada seria letra morta se passando por cobertura.
 };
 
 Deno.test("nenhuma edge que serve o paginate.ts fica SEM prova de deploy", () => {

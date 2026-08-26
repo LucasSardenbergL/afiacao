@@ -107,7 +107,29 @@ emissor num arquivo diferente do nosso, disputando o `halt-on-hit`.
 O `tail -c +N | head -c M` é o recorte por **bytes** — arquivo minificado é uma linha só, então
 qualquer recorte por linha traz o chunk inteiro ou nada.
 
-## A sugestão que fica (avaliar — **NÃO implementada**)
+## A sugestão que ficava — avaliada e **implementada** em 2026-08-26
+
+> **Desfecho.** Aprovada como aviso, **com um ajuste que a medição forçou**: o `grep -rlF "$ALVO"
+> node_modules/` proposto abaixo **não sobreviveu como está**. Medido na `node_modules` real
+> (637 MB / 54.843 arquivos), ele custa **38-63 s** — e, pior, acusa **3 arquivos** para
+> `input[type="checkbox"]`, o *valor nosso* que esta mesma página prova ser a sentinela **certa**
+> (os hits: um `readme.md`, o `preflight.css` do tailwind, um css de demo do `loglevel`). Um aviso
+> que dispara contra a resposta certa é um aviso desarmado no primeiro dia.
+>
+> Correção: restringir o universo a **código JS** (`--include` de `*.js`/`*.mjs`/`*.cjs`) — corte por
+> *"é código JS?"*, nunca por *"onde a lib guarda"* (restringir a `dist/` criaria falso negativo real).
+> Custo cai para **~2 s** e o sinal fica discriminante: `maskAllInputs` devolve 10 arquivos **todos em
+> `posthog-js/dist/`** (o preditor nomeia o pacote culpado), enquanto o valor nosso cai para 1
+> (`jsdom`, devDep de teste que nunca vai ao bundle) — ruído que o operador descarta num olhar,
+> porque a sonda imprime **os caminhos**, não só a contagem.
+>
+> Três marcas, e a terceira é o requisito que quase se perde: `SENTINELA_TAMBEM_NA_LIB`,
+> `LIB_SEM_A_SENTINELA` e `LIB_NAO_CONSULTADA`. Roda com **e sem** `--pai`: a pergunta é ortogonal à
+> dele, e sem `--pai` o operador está no modo mais fraco. Coberta no harness com os 3 estados + a
+> convivência com o `--pai`, e falsificada por **marca** — o aviso não mexe no exit code, então o
+> `falsify_case` que compara exits seria **cego** a ela.
+
+### A proposta original, como estava
 
 O `--pai` poderia ganhar um aviso quando a sentinela também aparece em `node_modules/` — algo como
 **`SENTINELA_TAMBEM_NA_LIB`**, no espírito do `EXCLUSIVIDADE_NAO_PROVADA`: **avisa, não recusa**. É

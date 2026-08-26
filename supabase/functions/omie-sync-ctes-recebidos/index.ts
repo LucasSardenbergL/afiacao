@@ -96,6 +96,11 @@ const PAGE_SIZE = 50;
 const RATE_LIMIT_DELAY_MS = 1100;
 const RETRY_DELAY_MS = 5000;
 const MAX_RETRIES = 3;
+// Teto de RELÓGIO por request (#2017): o guard desta edge é MAX_PAGINAS_RECEBIMENTOS — CONTAGEM
+// não limita tempo. SEM deadline compartilhado de propósito: esta edge não tem guard de duração
+// NEM registro em fin_sync_log, então não há p95 medido; arbitrar um teto de run seria decidir
+// truncamento no escuro. A coleira aqui é só por request; o volume segue como está.
+const FETCH_TIMEOUT_MS = 25_000;
 const CTE_MODELO = "57";
 // Teto anti-runaway do ListarRecebimentos: 500 × 50 = 25k recebimentos numa janela >> real.
 const MAX_PAGINAS_RECEBIMENTOS = 500;
@@ -182,6 +187,7 @@ async function callOmie(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
     const text = await res.text();
     let json: OmieApiResponse | null;

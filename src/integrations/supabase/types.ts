@@ -10,7 +10,7 @@ export type Database = {
   // Allows to automatically instantiate createClient with right options
   // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
   __InternalSupabase: {
-    PostgrestVersion: "14.1"
+    PostgrestVersion: "14.17"
   }
   public: {
     Tables: {
@@ -325,6 +325,57 @@ export type Database = {
           status?: string
           suggested_action?: string | null
           updated_at?: string
+        }
+        Relationships: []
+      }
+      analytics_outbox: {
+        Row: {
+          aceito_em: string | null
+          chave_dedup: string
+          distinct_id: string
+          event_id: string
+          evento: string
+          id: number
+          ocorrido_em: string
+          props: Json
+          proxima_tentativa_em: string
+          purgar_em: string
+          quarentena_em: string | null
+          tentativas: number
+          ultimo_erro: string | null
+          user_id: string | null
+        }
+        Insert: {
+          aceito_em?: string | null
+          chave_dedup: string
+          distinct_id: string
+          event_id?: string
+          evento: string
+          id?: number
+          ocorrido_em?: string
+          props?: Json
+          proxima_tentativa_em?: string
+          purgar_em?: string
+          quarentena_em?: string | null
+          tentativas?: number
+          ultimo_erro?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          aceito_em?: string | null
+          chave_dedup?: string
+          distinct_id?: string
+          event_id?: string
+          evento?: string
+          id?: number
+          ocorrido_em?: string
+          props?: Json
+          proxima_tentativa_em?: string
+          purgar_em?: string
+          quarentena_em?: string | null
+          tentativas?: number
+          ultimo_erro?: string | null
+          user_id?: string | null
         }
         Relationships: []
       }
@@ -11802,6 +11853,36 @@ export type Database = {
         }
         Relationships: []
       }
+      reposicao_param_fila_log: {
+        Row: {
+          criado_em: string
+          empresa: string
+          estagio: string
+          habilitados: number
+          id: number
+          medido_em: string
+          total: number
+        }
+        Insert: {
+          criado_em?: string
+          empresa: string
+          estagio: string
+          habilitados: number
+          id?: number
+          medido_em?: string
+          total: number
+        }
+        Update: {
+          criado_em?: string
+          empresa?: string
+          estagio?: string
+          habilitados?: number
+          id?: number
+          medido_em?: string
+          total?: number
+        }
+        Relationships: []
+      }
       reposicao_param_limbo_log: {
         Row: {
           criado_em: string
@@ -14102,6 +14183,30 @@ export type Database = {
           tipo_comprovacao?: string | null
           tolerancia_dias?: number
           updated_at?: string
+        }
+        Relationships: []
+      }
+      telemetria_probes: {
+        Row: {
+          attempt_id: string
+          build_id: string | null
+          criado_em: string
+          device_id: string
+          user_id: string
+        }
+        Insert: {
+          attempt_id: string
+          build_id?: string | null
+          criado_em?: string
+          device_id: string
+          user_id: string
+        }
+        Update: {
+          attempt_id?: string
+          build_id?: string | null
+          criado_em?: string
+          device_id?: string
+          user_id?: string
         }
         Relationships: []
       }
@@ -16633,6 +16738,15 @@ export type Database = {
       }
     }
     Views: {
+      analytics_outbox_reconciliacao: {
+        Row: {
+          confianca: string | null
+          evento: string | null
+          na_fonte: number | null
+          na_outbox: number | null
+        }
+        Relationships: []
+      }
       customer_metrics_mv: {
         Row: {
           atraso_relativo: number | null
@@ -17735,6 +17849,22 @@ export type Database = {
         }
         Relationships: []
       }
+      v_reposicao_param_fila: {
+        Row: {
+          empresa: string | null
+          estagio: string | null
+          fonte_leadtime: string | null
+          fornecedor_nome: string | null
+          habilitado: boolean | null
+          num_ordens: number | null
+          parametro_cold_start: boolean | null
+          sku_codigo_omie: number | null
+          sku_descricao: string | null
+          tipo_reposicao: string | null
+          ultima_atualizacao_calculo: string | null
+        }
+        Relationships: []
+      }
       v_reposicao_sku_sem_fornecedor: {
         Row: {
           empresa: string | null
@@ -18614,6 +18744,32 @@ export type Database = {
         Returns: Json
       }
       afiacao_os_sync_kick: { Args: never; Returns: Json }
+      analytics_ledger_registrar: {
+        Args: { p_chave: string; p_evento: string; p_props?: Json }
+        Returns: undefined
+      }
+      analytics_outbox_aceitar: { Args: { p_ids: number[] }; Returns: number }
+      analytics_outbox_claim: {
+        Args: { p_limite?: number }
+        Returns: {
+          distinct_id: string
+          event_id: string
+          evento: string
+          id: number
+          ocorrido_em: string
+          props: Json
+          tentativas: number
+        }[]
+      }
+      analytics_outbox_falhar: {
+        Args: { p_erro: string; p_ids: number[] }
+        Returns: number
+      }
+      analytics_outbox_purgar: { Args: never; Returns: number }
+      analytics_outbox_quarentena: {
+        Args: { p_erro: string; p_ids: number[] }
+        Returns: number
+      }
       aplicar_exclusao_fornecedores: { Args: never; Returns: Json }
       aplicar_parametros_automatico_diario: {
         Args: { p_empresa: string }
@@ -19937,6 +20093,14 @@ export type Database = {
       }
       reposicao_marco_pre_omie: { Args: never; Returns: string }
       reposicao_param_auto_resumo_tick: { Args: never; Returns: undefined }
+      reposicao_param_fila_sensor: {
+        Args: { p_empresa?: string }
+        Returns: {
+          estagios: number
+          estagnado: boolean
+          total: number
+        }[]
+      }
       reposicao_param_limbo_watchdog: { Args: never; Returns: undefined }
       reposicao_pedido_auto_aprovavel: {
         Args: {
