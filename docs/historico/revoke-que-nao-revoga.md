@@ -462,7 +462,12 @@ O fecho depende de `supabase_admin`, que o Supabase gerenciado não expõe ⇒ o
 Pedido redigido (PT + EN), com o bloco corrigido acima, o baseline medido e uma **query de verificação que
 foi executada contra prod antes de ser enviada** (`exit 0` — mandar SQL quebrado num ticket seria repetir o
 Achado 1 numa terceira ponta). Canal do Lovable, verificado em `lovable.dev/support`: **email para
-`support@lovable.dev`**, não há formulário de ticket. Entregue ao founder para o envio — o clique é dele.
+`support@lovable.dev`**, não há formulário de ticket (o `/support` não tem formulário e a home devolve 403
+a browser headless).
+
+**ENVIADO em 2026-08-26 03:06 UTC** — thread Gmail `1a03c0904655abf1`, confirmado com evidência positiva
+(label `SENT`, `toRecipients = support@lovable.dev`, assunto e corpo conferidos), não pelo retorno da
+chamada. **Aguardando resposta.**
 
 O pedido carrega as 4 perguntas que o registro deixou em aberto, uma delas a que mais importa a longo
 prazo: **como impedir que um upgrade do pg_net restaure as ACLs públicas.** Enquanto não houver resposta,
