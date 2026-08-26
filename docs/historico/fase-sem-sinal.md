@@ -1982,3 +1982,47 @@ instrumentação. Não-adoção **medida**, pela primeira vez, em vez de ausênc
 E o desfecho tem a ironia que fecha o arquivo: as três leituras `0/3` (`#1977`), `1/2` e `0/1`
 saem do **mesmo estado do mundo**. Só a última mede adoção. As outras duas medem, respectivamente,
 uma janela e um instrumento — e nenhuma das três avisa qual é qual.
+
+---
+
+## Desfecho (2026-08-26): o transporte saiu do caminho crítico
+
+O diagnóstico acima isolou o UNLOAD: mesmo POST, mesmo token, **201 em 636ms com a página viva** e
+nada quando a aba fecha. A conclusão natural — "então preciso de um transporte que sobreviva ao
+unload" — leva a `sendBeacon`, e `sendBeacon` não manda header de auth, o que levaria a uma edge com
+`verify_jwt = false`: um endpoint público validando JWT à mão para servir um `INSERT` de telemetria.
+
+**A pergunta melhor não era como sobreviver ao unload, e sim como não depender dele.**
+`visibilitychange` → `hidden` é a última callback que o browser entrega com o documento VIVO — a
+mesma condição que já devolvia 201. Grava pelo client oficial, sem edge, sem endpoint público, sem
+validação de JWT artesanal. O `pagehide` continua como rede, agora rotulado como o que é: um último
+recurso que, medido, não entrega.
+
+### Duas armadilhas que este arquivo custou caro para achar
+
+**1. O corretivo trocou o modo de falha, e o novo modo era invisível no eixo antigo.** O timer do
+#1978 gravava ao cruzar `MIN_SESSION_MS`: a linha passou a existir sempre, e `session_minutes`
+passou a valer sempre `5`. Quem media "a linha existe?" via sucesso. A fabricação só aparece
+perguntando *quanto* a linha diz — e aparecia em um `GROUP BY` de uma linha:
+
+```
+   fase    | linhas | acima_de_5 | media | maximo
+-----------+--------+------------+-------+--------
+ pre-timer |     10 |         10 |  15.7 |     38
+ pos-timer |      5 |          0 |   5.0 |      5
+```
+
+Gravar `5` quando o que se sabe é "≥5" converte um piso em medição — mesma família do
+`Number(null)===0` do money-path. **Corretivo prova-se no eixo que ele SACRIFICA**, não no que ele
+conserta.
+
+**2. Os testes não pegaram porque adiantavam o relógio sem adiantar os timers.** Os seis casos de
+`pagehide` mockavam só `Date.now()` (`+6min`) e deixavam o `setTimeout` parado — um mundo onde seis
+minutos passaram e o timer dos cinco não disparou. Esse mundo não existe: com os dois em sincronia,
+o timer gravava primeiro e todo `pagehide` de sessão que qualificava chegava como `ja_gravado`.
+**Seis testes verdes descreviam um caminho que a realidade não alcança.**
+
+O sentinela que provou isso foi escrito, rodado e **falsificado** (sabotar o timer → vermelho) antes
+de qualquer linha de correção — e depois descartado, porque com o timer fora ele perdeu o objeto.
+Em teste com relógio mockado, `Date.now()` e os timers têm de andar **juntos**
+(`vi.advanceTimersByTimeAsync`); senão o verde é do cenário, não do código.

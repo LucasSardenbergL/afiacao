@@ -628,9 +628,15 @@ describe('useRegistrarVisitaDashboard — aba oculta (visibilitychange)', () => 
     renderHook(() => useRegistrarVisitaDashboard(contexto), { wrapper });
     relogio.mockReturnValue(agora + 9 * 60_000);
     revelarAba();
+    expect(emitidos).toHaveLength(0);
+
+    // ...e o MESMO listener grava quando o estado é `hidden`. Sem esta segunda
+    // metade o teste passaria com o listener inexistente — negativo que não
+    // distingue "ignorou o visible" de "não escuta nada".
+    ocultarAba();
     relogio.mockRestore();
 
-    expect(emitidos).toHaveLength(0);
+    expect(emitidos).toHaveLength(1);
   });
 
   it('hidden antes de 5min nao grava (o guard anti-F5 vale aqui tambem)', () => {
