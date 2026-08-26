@@ -1,5 +1,25 @@
 # Proxy de ingestão do PostHog — plano de implementação
 
+> # ⛔ SUPERADO — NÃO IMPLEMENTAR
+>
+> **Este documento descreve trabalho que foi RECUSADO.** A decisão vigente está na `§DECISÃO` de
+> [`analytics.md`](../../agent/analytics.md) (PR #2010, mergeado em 2026-08-25 13:06Z — **13 minutos
+> antes** deste documento chegar à `main`).
+>
+> **A premissa daqui é falsa:** o proxy recuperaria a "população externa censurada", e essa
+> população é **vazia** — 5.664 contas com role customer, mas **0 aprovadas** (os 5.664 são cadastro
+> Omie sem `is_approved`). Some-se que `*.supabase.co` não é first-party, e que o único cliente
+> bloqueado medido era o próprio founder.
+>
+> O proxy chegou a ser **implementado e revisado** antes da descoberta, e foi descartado. As lições
+> técnicas que sobreviveram estão em
+> [`proxy-posthog-descartado.md`](../../historico/proxy-posthog-descartado.md); a colisão entre
+> sessões, em [`duplicata-por-objetivo.md`](../../historico/duplicata-por-objetivo.md).
+>
+> Mantido na `main` porque a `§DECISÃO` nomeia um **gatilho** que reabriria o assunto — se ele
+> disparar, o desenho é ponto de partida, não trabalho pendente.
+
+
 > **Para agentes:** SUB-SKILL OBRIGATÓRIA: use `superpowers:subagent-driven-development`
 > (recomendado) ou `superpowers:executing-plans` para executar tarefa a tarefa. Os passos usam
 > checkbox (`- [ ]`) para rastreio.

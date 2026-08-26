@@ -287,6 +287,60 @@ canônica — mitigado hoje pelo `RAISE` da linha 56, que é o guard estrutural,
 constraint. Um `CHECK` de canonicidade do hash seria o hardening residual honesto — não foi feito
 aqui (nenhuma instância, e é escopo novo).
 
+## 5ª ocorrência: o objetivo foi **RECUSADO**, e um "não" não deixa artefato (2026-08-25)
+
+As quatro acima têm um traço comum que passou despercebido por ser universal: em todas o objetivo
+tinha sido **ENTREGUE**. Entrega deixa código — por isso o detector prescrito aqui
+(`git grep <símbolo> origin/main`) funciona, e por isso a 4ª ocorrência foi notável (o grep deu
+**0** e ainda assim era duplicata, porque o desenho era outro).
+
+Em 2026-08-25 o eixo virou: **duas sessões chegaram a conclusões OPOSTAS sobre o mesmo trabalho, e
+as duas mergearam na `main` com 13 minutos de diferença.**
+
+| horário (UTC) | PR | o que entrou na main |
+|---|---|---|
+| 13:06 | [#2010](https://github.com/LucasSardenbergL/afiacao/pull/2010) | `docs(analytics)`: **"o proxy first-party foi RECUSADO"**, com a medição que sustenta a recusa |
+| 13:19 | [#2011](https://github.com/LucasSardenbergL/afiacao/pull/2011) | spec + plano **de construir o mesmo proxy** |
+
+A sessão do #2011 seguiu adiante e implementou as 5 tarefas do plano antes de descobrir. O trabalho
+foi descartado; o registro técnico está em [`proxy-posthog-descartado.md`](proxy-posthog-descartado.md).
+
+### Por que os DOIS detectores deste arquivo falham num "não"
+
+- **Recusa não produz símbolo.** Não há função, tabela, coluna nem rota para grepar — o produto de
+  um "não" é **prosa num doc**. `git grep <símbolo> origin/main` devolve `0` porque não existe
+  símbolo, exatamente como devolveria se ninguém tivesse pensado no assunto. Os dois estados são
+  **indistinguíveis** pelo detector.
+- **O grep por TÍTULO, que este arquivo declarou cego, aqui teria funcionado** — o título do #2010
+  diz literalmente "o proxy first-party foi RECUSADO". Inversão útil: o sensor fraco para entregas
+  é o forte para decisões, porque decisão **é** o texto. Isso não reabilita o título; significa que
+  os dois eixos cobrem coisas diferentes e **nenhum sozinho basta**.
+- **A janela do `gh pr list` não pega.** A varredura desta sessão rodou quando o #2010 ainda não
+  estava aberto; ele abriu, passou no CI e auto-mergeou dentro do intervalo. Com auto-merge, "não
+  há PR concorrente" tem validade de minutos.
+
+### O detector que teria pego
+
+Antes de **implementar** uma decisão — não só antes de abrir o PR —, grepar os **DOCS** da main
+pelo TEMA, não o código pelo símbolo:
+
+```bash
+git fetch && git grep -il 'posthog.*proxy' origin/main -- docs/
+# origin/main:docs/agent/analytics.md   <- a decisão estava aqui
+```
+
+> **A regra:** o grep do ARTEFATO responde *"alguém já fez?"*. Ele não responde *"alguém já decidiu
+> NÃO fazer?"* — e essa segunda pergunta só tem resposta nos **docs**, porque é o único lugar onde
+> uma decisão negativa deixa rastro. Antes de construir, faça as duas perguntas.
+
+### O que NÃO foi a causa
+
+Para não virar lição errada: não faltou coordenação humana nem aviso. O founder aprovou a
+construção nesta sessão, e a medição que derruba a premissa — **0 customers aprovados**, porque os
+5.664 são cadastro Omie sem `is_approved` — **não estava na mesa desta sessão**; foi a outra que a
+produziu. Duas decisões coerentes com a informação que cada uma tinha. O defeito é de **roteamento
+de informação entre sessões paralelas**, não de julgamento.
+
 ## Precedente
 
 | quando | caso | forma |
@@ -295,3 +349,4 @@ aqui (nenhuma instância, e é escopo novo).
 | 2026-08-06 | #1525/#1526 | duplicata detectada 6 min tarde demais; 26 arquivos jogados fora |
 | 2026-08-15 | as 3 acima | primeira vez com o entregador **já na main** — o que expôs a cegueira do detector por título |
 | 2026-08-22 | #928 (parado 65 d) | entregue sob **outro desenho** (`uniq_sales_orders_omie_hash`) — o grep do ARTEFATO dá **0** e ainda assim é duplicata; reviver seria **destrutivo** |
+| 2026-08-25 | #2010 × #2011 | objetivo **RECUSADO** por outra sessão 13 min antes; recusa não deixa artefato ⇒ grep de símbolo é cego, o dos **docs** é que pega |
