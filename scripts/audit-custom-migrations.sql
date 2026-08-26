@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 489
+-- Total de custom migrations: 491
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -530,7 +530,9 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260824225107', 'data_health_sync_state_saude', '20260824225107_data_health_sync_state_saude.sql'),
   ('20260824232212', 'sync_state_remove_marcador_fossil_orders', '20260824232212_sync_state_remove_marcador_fossil_orders.sql'),
   ('20260824234500', 'sync_state_products_vendas_aposenta_writer_truncado', '20260824234500_sync_state_products_vendas_aposenta_writer_truncado.sql'),
-  ('20260825124938', 'cron_metadados_timeout_240s', '20260825124938_cron_metadados_timeout_240s.sql')
+  ('20260825124938', 'cron_metadados_timeout_240s', '20260825124938_cron_metadados_timeout_240s.sql'),
+  ('20260826020000', 'reposicao_param_fila_sensor', '20260826020000_reposicao_param_fila_sensor.sql'),
+  ('20260826021000', 'reposicao_cold_start_fusivel_graduacao', '20260826021000_reposicao_cold_start_fusivel_graduacao.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2199,7 +2201,14 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('data_health_sync_state_saude', 'function', 'public', '_data_health_compute', ''),
   ('data_health_sync_state_saude', 'function', 'public', 'data_health_watchdog', ''),
   ('sync_state_products_vendas_aposenta_writer_truncado', 'function', 'public', '_data_health_compute', ''),
-  ('cron_metadados_timeout_240s', 'cron_job', 'cron', 'omie-sync-metadados-daily', '')
+  ('cron_metadados_timeout_240s', 'cron_job', 'cron', 'omie-sync-metadados-daily', ''),
+  ('reposicao_param_fila_sensor', 'function', 'public', 'reposicao_param_fila_sensor', ''),
+  ('reposicao_param_fila_sensor', 'view', 'public', 'v_reposicao_param_fila', ''),
+  ('reposicao_param_fila_sensor', 'table', 'public', 'reposicao_param_fila_log', ''),
+  ('reposicao_param_fila_sensor', 'index', 'public', 'uq_reposicao_param_fila_log_dia', 'reposicao_param_fila_log'),
+  ('reposicao_param_fila_sensor', 'cron_job', 'cron', 'reposicao-param-fila-sensor', ''),
+  ('reposicao_param_fila_sensor', 'rls_policy', 'public', 'staff le fila log', 'reposicao_param_fila_log'),
+  ('reposicao_cold_start_fusivel_graduacao', 'function', 'public', 'reposicao_cold_start_parametros', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -3916,7 +3925,14 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('data_health_sync_state_saude', 'function', 'public', '_data_health_compute', ''),
   ('data_health_sync_state_saude', 'function', 'public', 'data_health_watchdog', ''),
   ('sync_state_products_vendas_aposenta_writer_truncado', 'function', 'public', '_data_health_compute', ''),
-  ('cron_metadados_timeout_240s', 'cron_job', 'cron', 'omie-sync-metadados-daily', '')
+  ('cron_metadados_timeout_240s', 'cron_job', 'cron', 'omie-sync-metadados-daily', ''),
+  ('reposicao_param_fila_sensor', 'function', 'public', 'reposicao_param_fila_sensor', ''),
+  ('reposicao_param_fila_sensor', 'view', 'public', 'v_reposicao_param_fila', ''),
+  ('reposicao_param_fila_sensor', 'table', 'public', 'reposicao_param_fila_log', ''),
+  ('reposicao_param_fila_sensor', 'index', 'public', 'uq_reposicao_param_fila_log_dia', 'reposicao_param_fila_log'),
+  ('reposicao_param_fila_sensor', 'cron_job', 'cron', 'reposicao-param-fila-sensor', ''),
+  ('reposicao_param_fila_sensor', 'rls_policy', 'public', 'staff le fila log', 'reposicao_param_fila_log'),
+  ('reposicao_cold_start_fusivel_graduacao', 'function', 'public', 'reposicao_cold_start_parametros', '')
 )
 SELECT
   e.migration,

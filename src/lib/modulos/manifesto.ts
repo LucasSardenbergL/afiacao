@@ -699,6 +699,7 @@ export const MODULOS: ModuloApp[] = [
       "src/lib/postgrest.ts",
       "src/lib/pwa-update.ts",
       "src/lib/routeCrumbs.ts",
+      "src/lib/telemetria-probe.ts",
       "src/lib/utils.ts",
       "src/pages/Auth.tsx",
       "src/pages/ResetPassword.tsx",

@@ -14105,6 +14105,30 @@ export type Database = {
         }
         Relationships: []
       }
+      telemetria_probes: {
+        Row: {
+          attempt_id: string
+          build_id: string | null
+          criado_em: string
+          device_id: string
+          user_id: string
+        }
+        Insert: {
+          attempt_id: string
+          build_id?: string | null
+          criado_em?: string
+          device_id: string
+          user_id: string
+        }
+        Update: {
+          attempt_id?: string
+          build_id?: string | null
+          criado_em?: string
+          device_id?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       tier_preco_config: {
         Row: {
           company: string
