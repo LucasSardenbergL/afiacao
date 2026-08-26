@@ -96,6 +96,35 @@ Montar pro founder colar no chat do Lovable (um por edge tocada):
 
 ⚠️ Só depois do PR **mergeado** na main (Lei de Ferro #3).
 
+⚠️ **O prompt acima nomeia UM arquivo — e a fatia que instrumenta a edge tem mais de um.** Um arquivo
+basta enquanto a mudança é interna ao `index.ts`; deixa de bastar exatamente onde a verificação de
+deploy nasce. **Edge que ganha sonda nasce com `versao.ts` NOVO**, importado pelo `index.ts` — pedir só
+o `index.ts` manda o Lovable subir uma função cujo import não resolve, e o modo de falha é o pior
+possível: quem descobre é a sonda que existia para provar o deploy. O `_shared/` que a fatia altera
+entra junto no bundle daquela edge — `sonda-fingerprints.ts` alimenta o campo `fonte` da resposta;
+sem ele a sonda responde `nao-mapeada` e a prova nasce cega. **Derive a lista do COMMIT, não da
+memória:**
+
+```bash
+git show --name-status --format='' <sha-do-merge> -- supabase/functions/ | grep -v '_test\.ts$'
+# A = arquivo NOVO (é o que o prompt de 1 arquivo esquece) · M = modificado
+```
+
+E nomeie cada um, marcando o novo (teste e doc ficam de fora — não vão pro bundle):
+
+> Edit the edge function `<nome>` and update it from the `main` branch using the current contents of
+> these files. Deploy them **verbatim** — do NOT modify, reinterpret, "improve", or reformat the code:
+> - `supabase/functions/<nome>/index.ts` (modified)
+> - `supabase/functions/<nome>/versao.ts` (**NEW file** — `index.ts` imports it; without it the function will not boot)
+> - `supabase/functions/_shared/<módulo>.ts` (modified — shared module this function bundles)
+>
+> After deploying, confirm it shows **Active**.
+
+Exercitado no #2009 (`carteira-rebuild`, 3 arquivos de código, 1 deles novo): a sonda pós-deploy voltou
+`probe:true · versao:v1.0-sensor-inicial · edge:carteira-rebuild · fonte:8d2589d0…`, e o `fonte` bateu
+com o `bun run sonda:fingerprint` da main — que é justamente a prova de que o `_shared/` subiu junto, e
+não só o `index.ts` (#2018).
+
 ### Passo 4 — Verificar o frontend pelos bytes (após Publish)
 
 > **Validado em produção (2026-06-18) + 2ª opinião do Codex.** Enumerar os chunks tem furos sutis:
@@ -397,4 +426,10 @@ falso `"fora do ar"` (exit 2) — não é o site caído, é a URL malformada.
 - [x] **Varredura PARALELA (2026-07-07):** `xargs -P 8` no crawl + halt-on-hit (`exit 255`) no grep do alvo. O bundle passou de 300 chunks (união medida 308–560) — sequencial estourava 600s (exit 124, não terminava); no mesmo bundle (308 ch, sentinela ausente) **299s → 61s (~4,9×), mesmo exit**. Enumeração/UNIÃO **inalterada** (worker-por-arquivo → sem intercalação). `PAR=<n>` overridável. Rede: harness local + gate `run.sh`.
 - [x] **QA visual pós-Publish (Passo 4b, 2026-07-07):** padrão documentado — **Claude-in-Chrome na sessão logada do founder** (ele abre 1×, o agente confere as telas). `/browse` headless não monta a SPA (3 falhas); Chrome MCP genérico deu timeout CDP de 45s. Caso de sucesso: config do PostHog feita pelo agente sozinho. **Exercitado 2026-07-08:** RENDER confirmado (a SPA monta no Chrome real; QA de tela pública `/auth` OK) — mas a aba do grupo MCP veio **sem sessão** (`Invalid Refresh Token`), então **telas gated dependem do founder logar NA aba MCP**; agente nunca digita credenciais. Detalhe no Passo 4b.
 - [x] **"404 fantasma" pós-Publish (2026-07-12, QA visual do #1300):** rota nova 404 com bytes VERDES = **SW do PWA servindo o build anterior** (assinatura: `NotFound-*.js` de hash velho logando "non-existent route"); hard-reload ativa o SW novo. Regra: bytes verdes + 404 → suspeitar do SW, nunca concluir "Publish falhou" sem hard-reload. Detalhe no Passo 4b.
+- [x] **O prompt do Passo 3 nomeia TODOS os arquivos da fatia (2026-08-25):** o de 1 arquivo (`index.ts`)
+  quebra justamente na fatia que instrumenta a edge — **`versao.ts` é arquivo NOVO** e o `index.ts` o
+  importa, então deployar só o `index.ts` sobe função que não boota, e quem descobre é a sonda que
+  existia para provar o deploy. A lista sai do `git show --name-status` do merge (`A` = novo), não da
+  memória. Exercitado no #2009 (`carteira-rebuild`): 3 arquivos de código, e o `fonte` da sonda
+  pós-deploy batendo o `sonda:fingerprint` provou que o `_shared/` subiu junto (#2018).
 - [ ] (menor) Confirmar se há ambiente de **preview** distinto do publicado a checar.
