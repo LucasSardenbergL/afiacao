@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import YAML from 'yaml';
+
+import { AUTHZ_MANIFEST } from './authz-manifest';
+import { AUTHZ_TABELAS_FECHADAS } from './authz-tabelas-fechadas';
 
 import {
   AVISO_DIAS,
@@ -7,6 +12,7 @@ import {
   CARIMBO_PATH,
   SCHEMA_VERSION,
   VENCIDO_DIAS,
+  RAIZ,
   avaliarCarimbo,
   canonicalizar,
   fingerprintContrato,
@@ -266,5 +272,131 @@ describe('db/authz-carimbo-prod.json — o artefato commitado', () => {
         expect(a.primeiraVez <= a.ultimaVez, `${k}/${a.id}`).toBe(true);
       }
     }
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════
+// Sensibilidade sobre os contratos REAIS — mais forte que as formas sintéticas acima, porque
+// guarda contra a forma de verdade mudar. Medido: `authz-manifest.ts` levou 16 commits em 90 dias,
+// e é a lista de EXCLUSÃO que decide quantos deles cobram uma re-medição de prod. Se ela parar de
+// funcionar, ou o gate vira ruído (todo typo em `motivo` bloqueia PR) ou vira cego.
+// ══════════════════════════════════════════════════════════════════════════════════════════════
+describe('fingerprint sobre o contrato REAL', () => {
+  it('editar `motivo` NÃO move o fingerprint (senão typo em comentário bloqueia PR)', () => {
+    const base = canonicalizar(AUTHZ_MANIFEST);
+    const c = structuredClone(AUTHZ_MANIFEST);
+    c[Object.keys(c)[0]].motivo = `redação totalmente diferente ${'x'.repeat(50)}`;
+    expect(canonicalizar(c)).toBe(base);
+  });
+
+  it('trocar `requiredGate` MOVE (é decisão de política — o ponto de revisão consciente)', () => {
+    const base = canonicalizar(AUTHZ_MANIFEST);
+    const c = structuredClone(AUTHZ_MANIFEST);
+    c[Object.keys(c)[0]].requiredGate = { anyOf: [{ fn: 'sabotado' }] } as never;
+    expect(canonicalizar(c)).not.toBe(base);
+  });
+
+  it('entrada NOVA no manifest MOVE (função nunca verificada em prod tem de cobrar medição)', () => {
+    const base = canonicalizar(AUTHZ_MANIFEST);
+    const c = structuredClone(AUTHZ_MANIFEST);
+    c['public.funcao_inventada_pelo_teste'] = { sensitive: true, requiredGate: { allOf: [{ fn: 'g' }] }, motivo: 'x' } as never;
+    expect(canonicalizar(c)).not.toBe(base);
+  });
+
+  it('abrir `anon` numa tabela fechada MOVE (o vetor que a Parte C existe para pegar)', () => {
+    const base = canonicalizar(AUTHZ_TABELAS_FECHADAS);
+    const c = structuredClone(AUTHZ_TABELAS_FECHADAS);
+    c[Object.keys(c)[0]].permitido.anon = ['SELECT'];
+    expect(canonicalizar(c)).not.toBe(base);
+  });
+
+  it('os contratos reais são serializáveis (nenhum valor exótico escapa do canonicalizar)', () => {
+    for (const k of CHAVES) expect(() => fingerprintContrato(k)).not.toThrow();
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════
+// O JS embutido no workflow. Sem isto ele só seria exercitado PELA PRIMEIRA VEZ em produção, na
+// main — e é justamente o pedaço que decide se um achado vira incidente visível ou não. O repo já
+// tem o precedente de vitest que lê um artefato como TEXTO (o gate de forma das edges).
+// ⚠️ O caminho que mais importa é o 3: a Issue fecha contra uma MEDIÇÃO NOVA E LIMPA, nunca
+// porque "o workflow passou" — senão o monitor daria por resolvido o que ele não mediu.
+// ══════════════════════════════════════════════════════════════════════════════════════════════
+describe('ci.yml — o job authz-sentinela', () => {
+  const yml = readFileSync(join(RAIZ, '.github', 'workflows', 'ci.yml'), 'utf8');
+  const wf = YAML.parse(yml) as {
+    jobs: Record<string, { if?: string; steps: { id?: string; name?: string; run?: string; with?: { script?: string } }[] }>;
+  };
+  const job = wf.jobs['authz-sentinela'];
+  const script = job?.steps.find((s) => s.name === 'Sincroniza a Issue authz-prod')?.with?.script ?? '';
+
+  it('roda SÓ na main (nunca segura PR de ninguém)', () => {
+    expect(job).toBeDefined();
+    expect(job.if).toBe("github.ref == 'refs/heads/main'");
+  });
+
+  it('o step bloqueante do `validate` NÃO usa --exigir-frescor (idade não barra PR)', () => {
+    const v = wf.jobs.validate.steps.find((s) => s.run === 'bun run authz:carimbo');
+    expect(v, 'step `bun run authz:carimbo` sumiu do job validate').toBeDefined();
+    expect(v?.run).not.toContain('--exigir-frescor');
+  });
+
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor as new (...a: string[]) => (...a: unknown[]) => Promise<void>;
+
+  async function rodar(vereditos: unknown[], abertas: { number: number }[]): Promise<string[]> {
+    const feitas: string[] = [];
+    const github = { rest: { issues: {
+      createLabel: async () => { feitas.push('createLabel'); },
+      listForRepo: async () => ({ data: abertas }),
+      createComment: async (a: { issue_number: number; body: string }) => { feitas.push(`comment#${a.issue_number}`); },
+      create: async () => { feitas.push('CREATE'); return { data: { number: 99 } }; },
+      update: async (a: { issue_number: number; state: string }) => { feitas.push(`update#${a.issue_number}:${a.state}`); },
+    } } };
+    const context = { repo: { owner: 'o', repo: 'r' }, serverUrl: 'https://gh', runId: 1 };
+    const core = { info: () => {}, setFailed: (m: string) => { feitas.push(`FAILED:${m}`); } };
+    const req = (m: string) => (m === 'fs' ? { readFileSync: () => JSON.stringify({ vereditos }) } : null);
+    await new AsyncFunction('github', 'context', 'core', 'require', script)(github, context, core, req);
+    return feitas;
+  }
+
+  const achado = [{ codigo: 'CARIMBO_ACHADO', bloqueiaPR: false, mensagem: 'aberto desde 2026-08-13' }];
+
+  it('compila com `await` no topo (é assim que o github-script o executa)', () => {
+    expect(script).not.toBe('');
+    expect(() => new AsyncFunction('github', 'context', 'core', 'require', script)).not.toThrow();
+  });
+
+  it('achado + nenhuma Issue aberta ⇒ ABRE a Issue', async () => {
+    expect(await rodar(achado, [])).toContain('CREATE');
+  });
+
+  it('achado + Issue já aberta ⇒ COMENTA, não duplica', async () => {
+    const f = await rodar(achado, [{ number: 7 }]);
+    expect(f).toContain('comment#7');
+    expect(f).not.toContain('CREATE');
+  });
+
+  it('medição limpa + Issue aberta ⇒ FECHA (contra a medição, não contra "o workflow passou")', async () => {
+    expect(await rodar([], [{ number: 7 }])).toContain('update#7:closed');
+  });
+
+  it('medição limpa + nenhuma Issue ⇒ no-op (não cria Issue para dizer que está tudo bem)', async () => {
+    const f = await rodar([], []);
+    expect(f).not.toContain('CREATE');
+    expect(f.some((x) => x.startsWith('update#'))).toBe(false);
+  });
+
+  it('só CARIMBO_AVISO não é acionável ⇒ não abre incidente', async () => {
+    const f = await rodar([{ codigo: 'CARIMBO_AVISO', bloqueiaPR: false, mensagem: '8 dias' }], []);
+    expect(f).not.toContain('CREATE');
+  });
+
+  it('veredito ilegível ⇒ setFailed (o monitor não pode dar por limpo o que não leu)', async () => {
+    const feitas: string[] = [];
+    const core = { info: () => {}, setFailed: (m: string) => { feitas.push(`FAILED:${m}`); } };
+    const github = { rest: { issues: { createLabel: async () => {}, listForRepo: async () => ({ data: [] }), createComment: async () => {}, create: async () => ({ data: { number: 1 } }), update: async () => {} } } };
+    const req = (m: string) => (m === 'fs' ? { readFileSync: () => 'não é json' } : null);
+    await new AsyncFunction('github', 'context', 'core', 'require', script)(github, { repo: { owner: 'o', repo: 'r' }, serverUrl: '', runId: 1 }, core, req);
+    expect(feitas.some((x) => x.startsWith('FAILED:'))).toBe(true);
   });
 });
