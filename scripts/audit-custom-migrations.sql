@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 491
+-- Total de custom migrations: 493
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -532,7 +532,9 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260824234500', 'sync_state_products_vendas_aposenta_writer_truncado', '20260824234500_sync_state_products_vendas_aposenta_writer_truncado.sql'),
   ('20260825124938', 'cron_metadados_timeout_240s', '20260825124938_cron_metadados_timeout_240s.sql'),
   ('20260825214545', 'analytics_outbox', '20260825214545_analytics_outbox.sql'),
-  ('20260825225850', 'analytics_outbox_cron', '20260825225850_analytics_outbox_cron.sql')
+  ('20260825225850', 'analytics_outbox_cron', '20260825225850_analytics_outbox_cron.sql'),
+  ('20260826020000', 'reposicao_param_fila_sensor', '20260826020000_reposicao_param_fila_sensor.sql'),
+  ('20260826021000', 'reposicao_cold_start_fusivel_graduacao', '20260826021000_reposicao_cold_start_fusivel_graduacao.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2218,7 +2220,14 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('analytics_outbox', 'cron_job', 'cron', 'analytics-outbox-purgar', ''),
   ('analytics_outbox', 'rls_policy', 'public', 'analytics_outbox_service_all', 'analytics_outbox'),
   ('analytics_outbox', 'rls_policy', 'public', 'analytics_outbox_master_read', 'analytics_outbox'),
-  ('analytics_outbox_cron', 'cron_job', 'cron', 'analytics-outbox-drain', '')
+  ('analytics_outbox_cron', 'cron_job', 'cron', 'analytics-outbox-drain', ''),
+  ('reposicao_param_fila_sensor', 'function', 'public', 'reposicao_param_fila_sensor', ''),
+  ('reposicao_param_fila_sensor', 'view', 'public', 'v_reposicao_param_fila', ''),
+  ('reposicao_param_fila_sensor', 'table', 'public', 'reposicao_param_fila_log', ''),
+  ('reposicao_param_fila_sensor', 'index', 'public', 'uq_reposicao_param_fila_log_dia', 'reposicao_param_fila_log'),
+  ('reposicao_param_fila_sensor', 'cron_job', 'cron', 'reposicao-param-fila-sensor', ''),
+  ('reposicao_param_fila_sensor', 'rls_policy', 'public', 'staff le fila log', 'reposicao_param_fila_log'),
+  ('reposicao_cold_start_fusivel_graduacao', 'function', 'public', 'reposicao_cold_start_parametros', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -3952,7 +3961,14 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('analytics_outbox', 'cron_job', 'cron', 'analytics-outbox-purgar', ''),
   ('analytics_outbox', 'rls_policy', 'public', 'analytics_outbox_service_all', 'analytics_outbox'),
   ('analytics_outbox', 'rls_policy', 'public', 'analytics_outbox_master_read', 'analytics_outbox'),
-  ('analytics_outbox_cron', 'cron_job', 'cron', 'analytics-outbox-drain', '')
+  ('analytics_outbox_cron', 'cron_job', 'cron', 'analytics-outbox-drain', ''),
+  ('reposicao_param_fila_sensor', 'function', 'public', 'reposicao_param_fila_sensor', ''),
+  ('reposicao_param_fila_sensor', 'view', 'public', 'v_reposicao_param_fila', ''),
+  ('reposicao_param_fila_sensor', 'table', 'public', 'reposicao_param_fila_log', ''),
+  ('reposicao_param_fila_sensor', 'index', 'public', 'uq_reposicao_param_fila_log_dia', 'reposicao_param_fila_log'),
+  ('reposicao_param_fila_sensor', 'cron_job', 'cron', 'reposicao-param-fila-sensor', ''),
+  ('reposicao_param_fila_sensor', 'rls_policy', 'public', 'staff le fila log', 'reposicao_param_fila_log'),
+  ('reposicao_cold_start_fusivel_graduacao', 'function', 'public', 'reposicao_cold_start_parametros', '')
 )
 SELECT
   e.migration,

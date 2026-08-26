@@ -21,16 +21,16 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **491** custom migrations totais
-- **1697** objetos esperados (criados por estas migrations)
+- **493** custom migrations totais
+- **1704** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 511
-  - `rls_policy`: 448
-  - `index`: 247
-  - `cron_job`: 167
-  - `table`: 157
+  - `function`: 513
+  - `rls_policy`: 449
+  - `index`: 248
+  - `cron_job`: 168
+  - `table`: 158
   - `trigger`: 88
-  - `view`: 75
+  - `view`: 76
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -4126,6 +4126,23 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `cron_job` | `cron.analytics-outbox-drain` | — |
+
+### `20260826020000_reposicao_param_fila_sensor.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.reposicao_param_fila_sensor` | — |
+| `view` | `public.v_reposicao_param_fila` | — |
+| `table` | `public.reposicao_param_fila_log` | — |
+| `index` | `public.uq_reposicao_param_fila_log_dia` | `reposicao_param_fila_log` |
+| `cron_job` | `cron.reposicao-param-fila-sensor` | — |
+| `rls_policy` | `public.staff le fila log` | `reposicao_param_fila_log` |
+
+### `20260826021000_reposicao_cold_start_fusivel_graduacao.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.reposicao_cold_start_parametros` | — |
 
 ## Próximos passos por status
 
