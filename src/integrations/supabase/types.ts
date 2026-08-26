@@ -328,6 +328,57 @@ export type Database = {
         }
         Relationships: []
       }
+      analytics_outbox: {
+        Row: {
+          aceito_em: string | null
+          chave_dedup: string
+          distinct_id: string
+          event_id: string
+          evento: string
+          id: number
+          ocorrido_em: string
+          props: Json
+          proxima_tentativa_em: string
+          purgar_em: string
+          quarentena_em: string | null
+          tentativas: number
+          ultimo_erro: string | null
+          user_id: string | null
+        }
+        Insert: {
+          aceito_em?: string | null
+          chave_dedup: string
+          distinct_id: string
+          event_id?: string
+          evento: string
+          id?: number
+          ocorrido_em?: string
+          props?: Json
+          proxima_tentativa_em?: string
+          purgar_em?: string
+          quarentena_em?: string | null
+          tentativas?: number
+          ultimo_erro?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          aceito_em?: string | null
+          chave_dedup?: string
+          distinct_id?: string
+          event_id?: string
+          evento?: string
+          id?: number
+          ocorrido_em?: string
+          props?: Json
+          proxima_tentativa_em?: string
+          purgar_em?: string
+          quarentena_em?: string | null
+          tentativas?: number
+          ultimo_erro?: string | null
+          user_id?: string | null
+        }
+        Relationships: []
+      }
       atp_decisoes: {
         Row: {
           account: string
@@ -16687,6 +16738,15 @@ export type Database = {
       }
     }
     Views: {
+      analytics_outbox_reconciliacao: {
+        Row: {
+          confianca: string | null
+          evento: string | null
+          na_fonte: number | null
+          na_outbox: number | null
+        }
+        Relationships: []
+      }
       customer_metrics_mv: {
         Row: {
           atraso_relativo: number | null
@@ -18684,6 +18744,32 @@ export type Database = {
         Returns: Json
       }
       afiacao_os_sync_kick: { Args: never; Returns: Json }
+      analytics_ledger_registrar: {
+        Args: { p_chave: string; p_evento: string; p_props?: Json }
+        Returns: undefined
+      }
+      analytics_outbox_aceitar: { Args: { p_ids: number[] }; Returns: number }
+      analytics_outbox_claim: {
+        Args: { p_limite?: number }
+        Returns: {
+          distinct_id: string
+          event_id: string
+          evento: string
+          id: number
+          ocorrido_em: string
+          props: Json
+          tentativas: number
+        }[]
+      }
+      analytics_outbox_falhar: {
+        Args: { p_erro: string; p_ids: number[] }
+        Returns: number
+      }
+      analytics_outbox_purgar: { Args: never; Returns: number }
+      analytics_outbox_quarentena: {
+        Args: { p_erro: string; p_ids: number[] }
+        Returns: number
+      }
       aplicar_exclusao_fornecedores: { Args: never; Returns: Json }
       aplicar_parametros_automatico_diario: {
         Args: { p_empresa: string }
