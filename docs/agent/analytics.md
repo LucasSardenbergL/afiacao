@@ -813,6 +813,20 @@ transacional *estrita*. O que impede virar a "sonda que degrada em silêncio" é
 linha**: `aprovada` é prova (`aprovado_em` é imutável), `expirada` é indicativa (usa `atualizado_em`,
 que qualquer UPDATE reescreve).
 
+⚠️ **Os dois caminhos NÃO têm a mesma justificativa, e confundi-los repetiria o erro que matou o
+proxy.** A §DECISÃO acima mediu que a população do app são **3 pessoas internas** (customers
+aprovados = 0), e foi isso que derrubou o proxy: *antes de pagar por uma saída que recupera uma
+população, CONTE a população.* Aplicando a mesma régua aqui, honestamente:
+
+| caminho | a régua da população se aplica? |
+|---|---|
+| **(A) ciclo de compra** (trigger) | **Não.** Não há população a recuperar: o evento nasce no BANCO, dentro da transação de negócio, com ou sem browser aberto. São ~130 fatos/mês que já acontecem, e nenhum deles observa pessoa. |
+| **(B) ledger do MixGap** (RPC) | **Sim, e reduz o valor dele.** Ele depende de alguém abrir a tela, e esse alguém são os mesmos 3 internos que a saída (a) já cobre ao liberar o domínio no aparelho. Vale como seguro contra a fragilidade de (a) — aparelho novo, lista atualizada, pessoa nova — não como urgência. |
+
+Quem for medir adoção da fase 2 do MixGap: o denominador continua sendo 3, e o ledger não o
+aumenta. Ele só garante que, quando houver mais gente, o histórico não terá nascido censurado —
+que é a retroatividade da §"A quarta saída", não uma promessa de recuperar usuário hoje.
+
 ### Session Replay: DESLIGADO — e por que o config anterior mentia (2026-08-25)
 
 ⚠️ **`maskAllInputs` mascara CAMPO DE FORMULÁRIO, não o texto da TELA.** O `posthog.init()` trazia
