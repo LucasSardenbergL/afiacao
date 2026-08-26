@@ -56,11 +56,15 @@ export async function registrarNoLedger(
   if (isLensActive()) return;
 
   try {
-    const { error } = await supabase.rpc('analytics_ledger_registrar', {
+    // `as never`: os tipos de `src/integrations/supabase/types.ts` são gerados
+    // pelo Lovable a partir do banco, e a migration desta RPC ainda é apply
+    // MANUAL — até ela rodar, a função não existe nos tipos. Mesmo padrão de
+    // `consolidar_demanda_sku` e `registrar_substituicao_sku`.
+    const { error } = await supabase.rpc('analytics_ledger_registrar' as never, {
       p_evento: evento,
       p_chave: chave,
       p_props: props,
-    });
+    } as never);
     if (error) {
       logger.warn('Ledger de analytics não registrou', {
         evento,
