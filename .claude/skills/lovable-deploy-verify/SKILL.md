@@ -194,6 +194,31 @@ $ verify-frontend.sh --pai b7a9f5a8a --novo a7571a596 'keepalive_network'
 NEGATIVO (reprova um deploy correto — caro, mas a verificação CONTINUA); aqui é falso POSITIVO,
 estritamente pior, porque **ENCERRA** a verificação.
 
+**A exclusividade que o `--pai` NÃO alcança: a LIB também emite (2026-08-25, #2016).** O guard prova
+exclusividade **no git** (`git grep` em `src/`) — mas o bundle servido também contém `node_modules`.
+Quando a sentinela é o **nome de uma opção de API da própria lib**, existe um **segundo emissor** que
+o guard não enxerga: `disable_session_recording` sai **5×** e `session_recording` **13×** do
+`vendor-posthog-Do2CBfqi.js` **sozinho**, sem uma linha nossa (na `posthog-js/dist/`: 36 e 51
+arquivos). O `--pai` **não recusa** aqui, e está certo — em `src/` a exclusividade é verdadeira.
+Falha nos **dois** sentidos: verificar uma **ADIÇÃO** pela presença dá falso positivo (a lib já tinha
+a string antes do PR), e verificar uma **REMOÇÃO** pela presença ("ainda tem ⇒ Publish pendente")
+**também** — faria pedir ao founder um Publish **já feito**. Com `halt-on-hit` o veredito ainda vira
+**sorte de ordem**: no #2016 o hit calhou de sair no entry e a conclusão ficou certa; saindo em
+`vendor-posthog-*.js`, o `exit 0` seria verde por poluição, com a mesma cara (o controle negativo
+audita o par `(padrão, grep)`, não a **proveniência** da string).
+
+> **Receita:** ancore por **VALOR nosso**, não por **chave da lib** — `[role="button"]` e
+> `input[type="checkbox"]` (nosso `css_selector_allowlist`) têm **0** ocorrências na lib, então
+> localizam o NOSSO objeto de config. Aí **leia o config no contexto** em vez do grep binário:
+> `grep -F -b -o '<valor>' chunk.js` para o offset + `tail -c +N | head -c M` para a janela. O objeto
+> minificado é **contíguo**, então a janela mostra o config inteiro — imune à poluição, e é a única
+> forma que lê uma **remoção**:
+> `e.init(li,{…,disable_session_recording:!0,autocapture:{…css_selector_allowlist:["button","a","select",'input[type="checkbox"]','[role="button"]']}})`
+
+Detalhe, medições e a sugestão `SENTINELA_TAMBEM_NA_LIB` (avisa, **não** recusa — `maskAllInputs`
+está em 37 arquivos da lib e em **0** ocorrências do chunk servido, logo `node_modules` é *preditor*
+do 2º emissor, não prova): [`docs/historico/sentinela-segundo-emissor.md`](../../../docs/historico/sentinela-segundo-emissor.md).
+
 **O guard não prova que a sonda sabe dizer "não" — isso é o CONTROLE NEGATIVO, e ele virou
 embutido (2026-08-24).** Um `exit 0` sozinho não distingue "está no ar" de "o script dá verde pra
 tudo". Era recado (`verify-frontend.sh 'sentinela_de_controle_negativo_xyz'` num 2º comando,
