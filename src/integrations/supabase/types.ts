@@ -10,7 +10,7 @@ export type Database = {
   // Allows to automatically instantiate createClient with right options
   // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
   __InternalSupabase: {
-    PostgrestVersion: "14.1"
+    PostgrestVersion: "14.17"
   }
   public: {
     Tables: {
@@ -11802,6 +11802,36 @@ export type Database = {
         }
         Relationships: []
       }
+      reposicao_param_fila_log: {
+        Row: {
+          criado_em: string
+          empresa: string
+          estagio: string
+          habilitados: number
+          id: number
+          medido_em: string
+          total: number
+        }
+        Insert: {
+          criado_em?: string
+          empresa: string
+          estagio: string
+          habilitados: number
+          id?: number
+          medido_em?: string
+          total: number
+        }
+        Update: {
+          criado_em?: string
+          empresa?: string
+          estagio?: string
+          habilitados?: number
+          id?: number
+          medido_em?: string
+          total?: number
+        }
+        Relationships: []
+      }
       reposicao_param_limbo_log: {
         Row: {
           criado_em: string
@@ -17735,6 +17765,22 @@ export type Database = {
         }
         Relationships: []
       }
+      v_reposicao_param_fila: {
+        Row: {
+          empresa: string | null
+          estagio: string | null
+          fonte_leadtime: string | null
+          fornecedor_nome: string | null
+          habilitado: boolean | null
+          num_ordens: number | null
+          parametro_cold_start: boolean | null
+          sku_codigo_omie: number | null
+          sku_descricao: string | null
+          tipo_reposicao: string | null
+          ultima_atualizacao_calculo: string | null
+        }
+        Relationships: []
+      }
       v_reposicao_sku_sem_fornecedor: {
         Row: {
           empresa: string | null
@@ -19937,6 +19983,14 @@ export type Database = {
       }
       reposicao_marco_pre_omie: { Args: never; Returns: string }
       reposicao_param_auto_resumo_tick: { Args: never; Returns: undefined }
+      reposicao_param_fila_sensor: {
+        Args: { p_empresa?: string }
+        Returns: {
+          estagios: number
+          estagnado: boolean
+          total: number
+        }[]
+      }
       reposicao_param_limbo_watchdog: { Args: never; Returns: undefined }
       reposicao_pedido_auto_aprovavel: {
         Args: {
