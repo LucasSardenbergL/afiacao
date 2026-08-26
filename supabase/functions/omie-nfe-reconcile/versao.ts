@@ -11,7 +11,7 @@
 //     campo `versao` — e ele não serve.
 //
 // ⚠️ A ARMADILHA ESPECÍFICA DESTA EDGE: um campo `versao` na resposta do FLUXO REAL é o disfarce
-// mais perigoso que existe para a verificação de deploy. `index.ts:546` e `:612` emitem
+// mais perigoso que existe para a verificação de deploy. `index.ts:572` e `:638` emitem
 // `versao: "v3.3-paginacao-janelas"` — string HARDCODED, acesa à mão, que o #2025 (coleira de
 // relógio no `omieCall`, `7e076f1f7`) NÃO alterou. Ou seja: idêntica byte a byte no bundle velho e
 // no novo, e o diff do #2025 tampouco acrescentou qualquer campo à resposta. Quem sondasse leria
