@@ -53,6 +53,7 @@ JS
 # PageB: folha do 1º nível, sem deps — carrega um marcador renderizado
 cat > "$FIX/site/assets/PageB-CCC333.js" <<'JS'
 export const b="PAGEB_MARKER";
+export const o={LIB_OPTION_MARKER:!0};
 JS
 
 # deep: alvo SÓ alcançável pelo fechamento transitivo de 2º nível
@@ -81,10 +82,29 @@ gitq() { git -C "$REPO" -c user.email=eval@local -c user.name=eval -c commit.gpg
 printf 'export const b="PAGEB_MARKER";\n' > "$REPO/src/app.ts"
 gitq add -A; gitq commit -m pai
 SHA_PAI=$(git -C "$REPO" rev-parse HEAD 2>/dev/null)
-printf 'export const s="SENTINELA_DEEP_XYZ";\n' >> "$REPO/src/app.ts"
+printf 'export const s="SENTINELA_DEEP_XYZ";\nexport const o={LIB_OPTION_MARKER:!0};\n' >> "$REPO/src/app.ts"
 gitq add -A; gitq commit -m novo
 SHA_NOVO=$(git -C "$REPO" rev-parse HEAD 2>/dev/null)
 [ -n "$SHA_PAI" ] && [ -n "$SHA_NOVO" ] || { echo "❌ fixture git não subiu"; exit 2; }
+
+# ---- node_modules fixture: a sonda do SEGUNDO EMISSOR (SENTINELA_TAMBEM_NA_LIB) ----
+# Criado DEPOIS dos commits de propósito: `git add -A` versionaria node_modules e o fixture viraria
+# outra coisa. LIB_OPTION_MARKER imita o caso real medido (docs/historico/sentinela-segundo-emissor.md):
+# nome de opção de API que a LIB emite no próprio código E que também está no nosso src/ e no bundle
+# — o `git grep` do --pai não vê esse 2º emissor, a sonda vê.
+mkdir -p "$REPO/node_modules/fake-lib/dist"
+printf 'export const o={LIB_OPTION_MARKER:!0,x:1};\n' > "$REPO/node_modules/fake-lib/dist/lib.js"
+# SENTINELA_DEEP_XYZ (a sentinela LIMPA do harness) aparece aqui num .md DE PROPÓSITO: o universo da
+# sonda é código JS, então isto NÃO pode virar hit. Medido na node_modules real: sem o filtro de
+# extensão o "valor nosso" acusava readme.md/preflight.css e o aviso disparava contra a sentinela
+# CERTA. É o que a sabotagem J falsifica.
+printf 'exemplo de uso: SENTINELA_DEEP_XYZ\n' > "$REPO/node_modules/fake-lib/readme.md"
+
+# cwd NEUTRO dos casos que não exercitam git/node_modules: fora de repo git e sem node_modules, a
+# sonda responde LIB_NAO_CONSULTADA de forma determinística e a custo zero. Sem isto os casos
+# herdariam o node_modules REAL da máquina — ~2s cada e saída que varia por host, num harness cujo
+# cabeçalho promete ser DETERMINÍSTICO.
+mkdir -p "$FIX/neutro"
 
 # site-broken: HTML sem entry /assets/index-*.js -> enumeração quebrada (exit 2)
 cat > "$FIX/site-broken/index.html" <<'HTML'
@@ -151,7 +171,7 @@ PASS=0; FAIL=0
 # daqui é shim e dobra acento — casar "✓ controle negativo" seria casar sorte, não a asserção.
 run_case() {
   local descr="$1" url="$2" alvo="$3" exp="$4" want="${5:-}" nao="${6:-}" out got ok=1
-  out=$(bash "$SCRIPT_REL" "$alvo" "$url" 2>&1); got=$?
+  out=$(cd "$FIX/neutro" && bash "$SCRIPT_ABS" "$alvo" "$url" 2>&1); got=$?
   [ "$got" = "$exp" ] || ok=0
   if [ -n "$want" ]; then printf '%s' "$out" | grep -q -- "$want" || ok=0; fi
   if [ -n "$nao" ]; then printf '%s' "$out" | grep -q -- "$nao" && ok=0; fi
@@ -164,14 +184,17 @@ run_case() {
   fi
 }
 
-# run_case_pai: descr, cwd, exit_esperado, substring_esperada, args... (para o script)
-# Roda com cwd DENTRO do repo fixture — o guard --pai consulta o git do diretório corrente.
-run_case_pai() {
-  local descr="$1" cwd="$2" exp="$3" want="$4"; shift 4
+# run_case_cwd: descr, cwd, exit_esperado, substring_esperada, substring_PROIBIDA, args...
+# O cwd escolhe DOIS universos de uma vez: o git que o guard --pai consulta e o node_modules que a
+# sonda do 2º emissor consulta. Por isso ela também precisa da substring proibida — distinguir
+# "LIB_SEM_A_SENTINELA" de "SENTINELA_TAMBEM_NA_LIB" exige negar a outra, não só afirmar a sua.
+run_case_cwd() {
+  local descr="$1" cwd="$2" exp="$3" want="$4" nao="$5"; shift 5
   local out got ok=1
   out=$(cd "$cwd" && bash "$SCRIPT_ABS" "$@" 2>&1); got=$?
   [ "$got" = "$exp" ] || ok=0
   if [ -n "$want" ]; then printf '%s' "$out" | grep -q -- "$want" || ok=0; fi
+  if [ -n "$nao" ]; then printf '%s' "$out" | grep -q -- "$nao" && ok=0; fi
   if [ "$ok" = 1 ]; then
     printf '  [ok ] %s (exit %s)\n' "$descr" "$got"; PASS=$((PASS+1))
   else
@@ -219,22 +242,35 @@ if [ "$FALSIFY" = 0 ]; then
 
   echo ""
   echo "  --pai (prova de exclusividade da sentinela — fail-closed, exit 3):"
-  run_case_pai "sentinela NÃO-exclusiva: já existia no pai -> RECUSA (mesmo estando no bundle)" \
-               "$REPO" 3 "SENTINELA_NAO_EXCLUSIVA" --pai "$SHA_PAI" "PAGEB_MARKER" "$BASE/site"
-  run_case_pai "sentinela exclusiva do PR: 0 no pai e >=1 no novo -> segue e prova pelos bytes" \
-               "$REPO" 0 "deep-DDD444" --pai "$SHA_PAI" "SENTINELA_DEEP_XYZ" "$BASE/site"
-  run_case_pai "ausente TAMBÉM no commit novo (sha/pathspec errado) -> RECUSA, o 0 no pai não vale" \
-               "$REPO" 3 "SENTINELA_AUSENTE_NO_COMMIT_NOVO" --pai "$SHA_PAI" "NAO_EXISTE_EM_LUGAR_NENHUM_123" "$BASE/site"
-  run_case_pai "sha do pai inexistente -> RECUSA (não degrada para 'não provei')" \
-               "$REPO" 3 "" --pai "0000000000000000000000000000000000000000" "SENTINELA_DEEP_XYZ" "$BASE/site"
-  run_case_pai "fora de repositório git -> RECUSA (guard exige resposta POSITIVA do git)" \
-               "$FIX/site" 3 "" --pai "$SHA_PAI" "SENTINELA_DEEP_XYZ" "$BASE/site"
-  run_case_pai "--pai com valor vazio -> RECUSA (uso incorreto não degrada para varredura)" \
-               "$REPO" 3 "" --pai "" "SENTINELA_DEEP_XYZ" "$BASE/site"
-  run_case_pai "guard --pai E controle negativo no MESMO run (um prova a sentinela, o outro a sonda)" \
-               "$REPO" 0 "CONTROLE_NEGATIVO_OK" --pai "$SHA_PAI" "SENTINELA_DEEP_XYZ" "$BASE/site"
-  run_case_pai "sem --pai: varre igual, mas AVISA que a exclusividade não foi provada" \
-               "$REPO" 0 "EXCLUSIVIDADE_NAO_PROVADA" "SENTINELA_DEEP_XYZ" "$BASE/site"
+  run_case_cwd "sentinela NÃO-exclusiva: já existia no pai -> RECUSA (mesmo estando no bundle)" \
+               "$REPO" 3 "SENTINELA_NAO_EXCLUSIVA" "" --pai "$SHA_PAI" "PAGEB_MARKER" "$BASE/site"
+  run_case_cwd "sentinela exclusiva do PR: 0 no pai e >=1 no novo -> segue e prova pelos bytes" \
+               "$REPO" 0 "deep-DDD444" "" --pai "$SHA_PAI" "SENTINELA_DEEP_XYZ" "$BASE/site"
+  run_case_cwd "ausente TAMBÉM no commit novo (sha/pathspec errado) -> RECUSA, o 0 no pai não vale" \
+               "$REPO" 3 "SENTINELA_AUSENTE_NO_COMMIT_NOVO" "" --pai "$SHA_PAI" "NAO_EXISTE_EM_LUGAR_NENHUM_123" "$BASE/site"
+  run_case_cwd "sha do pai inexistente -> RECUSA (não degrada para 'não provei')" \
+               "$REPO" 3 "" "" --pai "0000000000000000000000000000000000000000" "SENTINELA_DEEP_XYZ" "$BASE/site"
+  run_case_cwd "fora de repositório git -> RECUSA (guard exige resposta POSITIVA do git)" \
+               "$FIX/site" 3 "" "" --pai "$SHA_PAI" "SENTINELA_DEEP_XYZ" "$BASE/site"
+  run_case_cwd "--pai com valor vazio -> RECUSA (uso incorreto não degrada para varredura)" \
+               "$REPO" 3 "" "" --pai "" "SENTINELA_DEEP_XYZ" "$BASE/site"
+  run_case_cwd "guard --pai E controle negativo no MESMO run (um prova a sentinela, o outro a sonda)" \
+               "$REPO" 0 "CONTROLE_NEGATIVO_OK" "" --pai "$SHA_PAI" "SENTINELA_DEEP_XYZ" "$BASE/site"
+  run_case_cwd "sem --pai: varre igual, mas AVISA que a exclusividade não foi provada" \
+               "$REPO" 0 "EXCLUSIVIDADE_NAO_PROVADA" "" "SENTINELA_DEEP_XYZ" "$BASE/site"
+
+  echo ""
+  echo "  sonda do SEGUNDO EMISSOR (a sentinela também vem da LIB? avisa, NUNCA recusa):"
+  run_case_cwd "sentinela é opção da LIB: node_modules/ também a emite -> AVISA (e o exit NÃO muda)" \
+               "$REPO" 0 "SENTINELA_TAMBEM_NA_LIB" "LIB_SEM_A_SENTINELA" "LIB_OPTION_MARKER" "$BASE/site"
+  run_case_cwd "sentinela LIMPA: nenhum código JS de node_modules/ a emite -> sem aviso" \
+               "$REPO" 0 "LIB_SEM_A_SENTINELA" "SENTINELA_TAMBEM_NA_LIB" "SENTINELA_DEEP_XYZ" "$BASE/site"
+  run_case_cwd "node_modules AUSENTE (worktree sem 'bun install'): diz que NÃO CONSULTOU, não cala" \
+               "$FIX/neutro" 0 "LIB_NAO_CONSULTADA" "LIB_SEM_A_SENTINELA" "LIB_OPTION_MARKER" "$BASE/site"
+  # O caso da classe inteira (docs/historico/sentinela-segundo-emissor.md): exclusiva NO GIT e com 2º
+  # emissor FORA dele são compatíveis — o --pai passa e o verde ainda pode ser bytes da lib.
+  run_case_cwd "exclusiva no git E com 2º emissor na lib: --pai aprova, a sonda avisa, exit segue 0" \
+               "$REPO" 0 "SENTINELA_TAMBEM_NA_LIB" "SENTINELA_NAO_EXCLUSIVA" --pai "$SHA_PAI" "LIB_OPTION_MARKER" "$BASE/site"
   echo ""
   if [ "$FAIL" -eq 0 ]; then echo "verify-frontend: $PASS/$((PASS+FAIL)) passaram"; exit 0
   else echo "verify-frontend: $FAIL FALHA(S) de $((PASS+FAIL))"; exit 1; fi
@@ -248,11 +284,11 @@ echo "verify-frontend --falsify (sabota o script; cada caso DEVE divergir do exi
 # O `\$TMP`/`\$APP` nos seds são LITERAIS (casam a string no script alvo) — aspas simples de propósito.
 SAB_A="$FIX/sab_transitivo.sh"
 # shellcheck disable=SC2016
-sed 's#\[ -s "\$TMP/frontier\.txt" \]#[ -s "/tmp/__falsify_nunca_existe__" ]#' "$SCRIPT_REL" > "$SAB_A"
+sed 's#\[ -s "\$TMP/frontier\.txt" \]#[ -s "/tmp/__falsify_nunca_existe__" ]#' "$SCRIPT_ABS" > "$SAB_A"
 # Sabotagem B: mata a fonte precache da UNIÃO (curl no sw.js -> path inexistente)
 SAB_B="$FIX/sab_precache.sh"
 # shellcheck disable=SC2016
-sed 's#\$APP/sw\.js#\$APP/sw-INEXISTENTE-falsify.js#' "$SCRIPT_REL" > "$SAB_B"
+sed 's#\$APP/sw\.js#\$APP/sw-INEXISTENTE-falsify.js#' "$SCRIPT_ABS" > "$SAB_B"
 
 # falsify_case: descr, script_sabotado, alvo, exit_normal, [exit_exigido], [marca_exigida], [url]
 # Sem exit/marca basta divergir do normal. COM eles a asserção casa a MARCA DO RAMO — "divergiu"
@@ -263,12 +299,12 @@ falsify_case() {
   # O `normal` DECLARADO pode mentir — quem escreve a sabotagem antes da feature declara o exit do
   # script que ainda vai existir, e "divergiu do que eu disse" viraria verde sem sabotagem nenhuma.
   # Mede-se o script REAL na mesma url antes de comparar: evidência positiva, não declaração.
-  bash "$SCRIPT_ABS" "$alvo" "$url" >/dev/null 2>&1; base=$?
+  ( cd "$FIX/neutro" && bash "$SCRIPT_ABS" "$alvo" "$url" ) >/dev/null 2>&1; base=$?
   if [ "$base" != "$normal" ]; then
     printf '  [XX ] normal DECLARADO não bate com o medido: %s (declarado %s, script real %s)\n' "$descr" "$normal" "$base"
     FAIL=$((FAIL+1)); return
   fi
-  out=$(bash "$scr" "$alvo" "$url" 2>&1); got=$?
+  out=$(cd "$FIX/neutro" && bash "$scr" "$alvo" "$url" 2>&1); got=$?
   if [ -n "$exato" ] && [ "$got" != "$exato" ]; then
     printf '  [XX ] divergiu pelo motivo ERRADO: %s (exigido exit %s, obtido %s)\n' "$descr" "$exato" "$got"
     FAIL=$((FAIL+1)); return
@@ -352,6 +388,61 @@ SAB_I="$FIX/sab_entry_html.sh"
 sed "s#^  '<') _cego=#  '<XXX') _cego=#" "$SCRIPT_ABS" > "$SAB_I"
 falsify_case "check de HTML morto -> fallback do SPA vira 'ausente' provado por si mesmo" \
              "$SAB_I" "NAO_EXISTE_NO_BUNDLE_123" 2 1 "" "$BASE/site-fallback"
+
+# falsify_marca: descr, script_sabotado, cwd, alvo, marca_que_DEVE_SUMIR, [marca_que_DEVE_SURGIR]
+# A sonda do 2º emissor AVISA e não recusa — de propósito, e medido. Logo ela não mexe no exit code,
+# e falsify_case (que compara exits) é CEGO a ela: sabotá-la deixaria todos os exits idênticos e o
+# harness diria "não divergiu" sem nunca ter olhado a asserção certa. Aqui a asserção é a MARCA.
+# Mede-se o script REAL primeiro — a marca tem de estar lá ANTES de sabotar, senão "sumiu" é uma
+# marca que nunca existiu, que é o teatro que a regra de evidência positiva proíbe.
+falsify_marca() {
+  local descr="$1" scr="$2" cwd="$3" alvo="$4" some="$5" surge="${6:-}" out
+  out=$(cd "$cwd" && bash "$SCRIPT_ABS" "$alvo" "$BASE/site" 2>&1)
+  if ! printf '%s' "$out" | grep -q -- "$some"; then
+    printf '  [XX ] marca ausente no script REAL: %s (esperava %s ANTES de sabotar)\n' "$descr" "$some"
+    FAIL=$((FAIL+1)); return
+  fi
+  out=$(cd "$cwd" && bash "$scr" "$alvo" "$BASE/site" 2>&1)
+  if printf '%s' "$out" | grep -q -- "$some"; then
+    printf '  [XX ] NÃO divergiu (harness cego): %s (a marca %s sobreviveu à sabotagem)\n' "$descr" "$some"
+    FAIL=$((FAIL+1)); return
+  fi
+  if [ -n "$surge" ] && ! printf '%s' "$out" | grep -q -- "$surge"; then
+    printf '  [XX ] marca sumiu pelo motivo ERRADO: %s (esperava %s no lugar)\n' "$descr" "$surge"
+    FAIL=$((FAIL+1)); return
+  fi
+  printf '  [ok ] divergiu: %s (%s sumiu)\n' "$descr" "$some"; PASS=$((PASS+1))
+}
+
+# Sabotagem J: tira o filtro de extensão da sonda -> o universo volta a ser a árvore INTEIRA e o
+# readme.md do fake-lib passa a casar. É a regressão medida na node_modules real (637MB): sem filtro,
+# o "valor nosso" acusava readme.md/preflight.css — o aviso disparando contra a sentinela CERTA, que
+# é como um aviso é desarmado. E custava 38-63s em vez de ~2s.
+SAB_J="$FIX/sab_filtro_extensao.sh"
+sed "s#--include='\*\.js' --include='\*\.mjs' --include='\*\.cjs' ##" "$SCRIPT_ABS" > "$SAB_J"
+falsify_marca "filtro de extensão removido -> o .md da lib vira hit e acusa a sentinela LIMPA" \
+              "$SAB_J" "$REPO" "SENTINELA_DEEP_XYZ" "LIB_SEM_A_SENTINELA" "SENTINELA_TAMBEM_NA_LIB"
+
+# Sabotagem K: aponta a sonda para um node_modules que não existe -> ela deixa de ver o 2º emissor.
+# Prova que o hit vem de uma CONSULTA de verdade ao disco, não de um `echo` decorativo — e que o
+# estado "não consultei" aparece exatamente onde a consulta não aconteceu.
+SAB_K="$FIX/sab_sonda_lib_morta.sh"
+# shellcheck disable=SC2016
+sed 's#_nm="\$_raiz_nm/node_modules"#_nm="$_raiz_nm/node_modules_INEXISTENTE_falsify"#' "$SCRIPT_ABS" > "$SAB_K"
+falsify_marca "sonda apontada para node_modules inexistente -> perde o 2º emissor que existia" \
+              "$SAB_K" "$REPO" "LIB_OPTION_MARKER" "SENTINELA_TAMBEM_NA_LIB" "LIB_NAO_CONSULTADA"
+
+# Sabotagem L: cala o ramo do node_modules AUSENTE (o printf vira `:`, que engole os argumentos).
+# É a fabricação que o requisito existe pra impedir: sem node_modules a sonda não consultou nada, e
+# silêncio nesse estado se lê como "limpo" — ausência de dado virando aprovação.
+SAB_L="$FIX/sab_ausente_calado.sh"
+# shellcheck disable=SC2016
+sed '/^if \[ ! -d "\$_nm" \]; then$/,/^else$/ s/^  printf /  : /' "$SCRIPT_ABS" > "$SAB_L"
+# O 6º arg não é decoração aqui: sem ele, um SAB_L com erro de SINTAXE também faria a marca sumir
+# (nada rodou) e a sabotagem passaria por motivo errado. Exigir CONTROLE_NEGATIVO_OK prova que o
+# script sabotado rodou ATÉ O FIM e deu verde — calado sobre não ter consultado, que é a fabricação.
+falsify_marca "estado 'não consultei' silenciado -> worktree sem node_modules lê como limpa" \
+              "$SAB_L" "$FIX/neutro" "LIB_OPTION_MARKER" "LIB_NAO_CONSULTADA" "CONTROLE_NEGATIVO_OK"
 
 echo ""
 if [ "$FAIL" -eq 0 ]; then echo "--falsify: $PASS/$((PASS+FAIL)) divergiram (harness tem dente)"; exit 0
