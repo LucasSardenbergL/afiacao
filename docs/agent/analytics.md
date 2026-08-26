@@ -51,6 +51,11 @@ OAuth), e a lógica fica **versionada e testada** no repo em vez de num plugin o
    Todo o resto fica em **No access** — em especial *Session recording* e *Person*, que são os
    pesados em PII. Nenhum **Write**, em lugar nenhum.
 
+   ⚠️ **`No access` gateia o REST, NÃO o `/query/`** (medido em 2026-08-25 — detalhe na §4).
+   `/api/projects/423408/persons/` devolve `403 person:read`; `SELECT count() FROM persons`, mesma
+   key e mesmo minuto, devolve **5**. O escopo mínimo continua certo — ele corta o REST inteiro e
+   todo o Write — mas **não** descreva esta key como incapaz de ler PII: pelo HogQL ela lê.
+
    Em "Organization & project access", escolher **Projects** e marcar só o projeto do Afiação
    (`423408`) — não "All access".
 3. Com a key ainda na área de transferência (o PostHog só a mostra **uma vez**), mande o clipboard
@@ -195,6 +200,40 @@ FROM events WHERE properties.$lib='web' GROUP BY so, nav ORDER BY ultimo DESC
 
 Teste de 1 linha para saber se um aparelho bloqueia — abrir `https://us.i.posthog.com/i/v0/e/` no
 navegador dele: **HTTP 400 `request missing data payload`** = livre; erro de conexão = bloqueado.
+
+### ⚠️ Escopo `No access` não cega o HogQL — logo um `0` dele precisa de PAR (2026-08-25)
+
+O `/query/` autoriza pelo escopo **`query:read` e mais nada**: ele não reaplica o escopo da tabela
+que a query toca. Medido, no mesmo minuto e com a mesma key:
+
+| pergunta | REST | HogQL |
+|---|---|---|
+| pessoas | `403 API key missing required scope 'person:read'` | `SELECT count() FROM persons` → **5** |
+| gravações | `403 API key missing required scope 'session_recording:read'` | `SELECT count() FROM session_replay_events` → **0** |
+
+Duas consequências opostas, e as duas mordem:
+
+1. **Para LER, a key alcança mais do que a §2 sugere.** `persons`, `session_replay_events`,
+   `raw_session_replay_events` e `sessions` respondem pelo HogQL. Isso é útil (foi o que permitiu
+   levantar o passivo de replay sem pedir escopo novo) e é também superfície de PII que a lista de
+   escopos não descreve.
+2. **Para CONCLUIR, um `0` do HogQL não se prova sozinho.** Se o `/query/` *tivesse* filtrado por
+   escopo, ele devolveria exatamente o mesmo `0` — indistinguível. Zero e cegueira chegam pelo
+   mesmo cano, como o 504 e o `[[0]]` da armadilha anterior.
+
+**O par que separa os dois** — e nenhum dos três passos é dispensável:
+
+- **par REST × HogQL numa tabela TERCEIRA**: pegue outra tabela igualmente `No access` no REST
+  (`persons` serve) e mostre-a **não-vazia** no HogQL. Não-vazio prova que o filtro não existe;
+  vazio não prova nada.
+- **schema resolve**: `SELECT * FROM <tabela> LIMIT 1` traz o array `columns` mesmo com 0 linhas —
+  se as colunas vêm, a tabela é real e foi mesmo consultada, não um alias que resolve para vazio.
+- **coluna inventada dá 400**: `SELECT coluna_que_nao_existe FROM <tabela>` tem de reprovar. Se
+  reprovar, o schema está sendo checado de verdade; se passar, você não estava lendo aquela tabela.
+
+E prefira, quando existir, a via que **não depende de escopo nenhum**: uma propriedade que o SDK
+carimba no próprio evento mora em `events`, que a key lê sem discussão. Foi o que fechou o caso do
+replay — `$recording_status` valeu mais que as duas tabelas de gravação juntas.
 
 ## 5. Sensores de frontend já instalados
 
@@ -660,8 +699,9 @@ exceção em vez de desenho.
 ⚠️ **`maskAllInputs` mascara CAMPO DE FORMULÁRIO, não o texto da TELA.** O `posthog.init()` trazia
 `session_recording: { maskAllInputs: true }` com o comentário *"mascarar inputs por padrão pra
 privacidade"* — e essa frase induzia ao erro que ela mesma parecia afastar. A máscara de texto
-renderizado é outra opção (`maskTextSelector: '*'`), e **ela nunca esteve no config**. O replay
-gravava a tela como ela aparece: razão social, CNPJ, preço, saldo, nome de cliente. Num app B2B
+renderizado é outra opção (`maskTextSelector: '*'`), e **ela nunca esteve no config**. Do jeito que
+o cliente estava escrito, o replay **gravaria** a tela como ela aparece: razão social, CNPJ, preço,
+saldo, nome de cliente — e o parágrafo seguinte mede o que de fato aconteceu. Num app B2B
 isso é dado pessoal de TERCEIRO indo para um processador nos EUA sem finalidade escrita —
 problema de **necessidade e minimização** (art. 6º, III), que máscara mais forte não resolve
 enquanto ninguém souber para que a gravação serve.
@@ -669,7 +709,38 @@ enquanto ninguém souber para que a gravação serve.
 Decidido: **desligado** (`disable_session_recording: true`), não "mascarado mais". Replay é a
 única superfície de telemetria do app que captura CONTEÚDO de tela; o autocapture já roda com
 allowlist de seletor e o `track()` é nominal, então o que decide continua medido sem ele. Para
-religar: escrever finalidade + prazo de retenção, e voltar com `maskTextSelector: '*'`.
+religar: escrever finalidade + prazo de retenção, voltar com `maskTextSelector: '*'` — **e ligar o
+toggle do projeto**, que é o que de fato liga a gravação (abaixo).
+
+✅ **E não gravou nada: o passivo é ZERO, medido em 2026-08-25.** Replay tem **dois** interruptores
+e o do PROJETO nunca foi ligado (é o default de projeto novo) — o `posthog.init()` sozinho não
+grava. Quatro medições, independentes entre si:
+
+| via | resultado |
+|---|---|
+| `POST us.i.posthog.com/decide/?v=3` com a chave pública do app | `{"sessionRecording": false}` |
+| `properties.$recording_status` em `events` | `disabled` em **2.645 de 2.645** eventos reais — 152 sessões, 11 aparelhos, do 1º evento (2026-05-15) ao dia do desligamento |
+| `session_replay_events` e `raw_session_replay_events` | **0** linhas (schema resolve, coluna inventada dá 400 — ver §4) |
+| `$snapshot` em `events` · `event_definitions?search=snapshot\|recording` | **0**, com controle positivo (`pageview`→1, 23 definições no total) |
+
+O `/decide` é a leitura **autoritativa**: é literalmente o que o servidor responde ao posthog-js
+antes de ele instanciar o rrweb. O `$recording_status` é a confissão do SDK evento a evento, e é a
+melhor das quatro porque **não depende de escopo** — mora em `events`. Nada a excluir no painel,
+nada correndo em retenção. A janela de exposição CONFIGURADA foi 2026-05-13 (`d2e59973f`) a
+2026-08-25 (`#2016`); a de exposição EFETIVA, vazia.
+
+⚠️ **A lição nova: um interruptor de produto pode ser um PAR, e ler só a metade que mora no repo é
+meia medição.** O `git grep` mede o que o cliente **pede**; só o servidor diz o que ele **faz**.
+Antes de afirmar que uma superfície de coleta esteve ligada — ou desligada — em produção, leia o
+lado remoto: `/decide` para a configuração e a propriedade que o SDK carimba no evento para o
+efeito. O mesmo `/decide` governa `autocapture_opt_out`, `capturePerformance` e as feature flags,
+então a checagem serve para os quatro.
+
+Isto **não** desfaz o desligamento: `disable_session_recording: true` é o cadeado do lado que nós
+controlamos, e quem ligar o toggle do projeto daqui a um ano não vai lembrar deste doc. Muda o
+registro do fato, que é o que um doc existe para guardar: **não houve vazamento**. Houve exposição
+configurada que um segundo cadeado — cuja existência ninguém no #2016 tinha medido — manteve
+fechada o tempo inteiro.
 
 ⚠️ **A lição que generaliza é sobre o COMENTÁRIO, não sobre a flag.** Aquele config passou por
 revisão porque a linha ao lado dizia "privacidade" — o comentário descrevia a INTENÇÃO e foi lido
