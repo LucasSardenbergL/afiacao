@@ -200,3 +200,21 @@ export function pageview(path: string): void {
 export function resetAnalytics(): void {
   withPosthog((p) => p.reset(), 'reset');
 }
+
+/**
+ * A telemetria vai MESMO sair deste browser?
+ *
+ * Existe para o probe de censura (`telemetria-probe.ts`), e a pergunta que ela
+ * responde não é cosmética: se o probe gravasse a linha na tabela num ambiente
+ * onde o PostHog está desligado por CONFIG, a reconciliação leria "attempt_id sem
+ * par" e concluiria CENSURA — em toda sessão de desenvolvimento. O sensor
+ * fabricaria o fenômeno que existe para medir.
+ *
+ * As duas condições espelham, deliberadamente, os dois `return`/opt-out de
+ * `initAnalytics()` acima: sem `KEY` a init aborta; em DEV ela chama
+ * `opt_out_capturing()` no `loaded`. Se um dia esses gates mudarem, este espelho
+ * mente — por isso `analytics-privacidade.test.ts` amarra os dois na fonte.
+ */
+export function telemetriaAtiva(): boolean {
+  return Boolean(KEY) && !import.meta.env.DEV;
+}

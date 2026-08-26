@@ -756,13 +756,99 @@ achadas pelo Codex, não pela revisão:**
    reconciliado após atraso fixo. **Dois `attempt_id` sem par, em sessões distintas do MESMO
    aparelho**, tornam censura persistente a explicação plausível. Um só não conclui nada.
 
-Enquanto o probe não existir, a condição (2) é falsificável no papel e inconclusiva na prática —
-que é o estado de hoje. **Instalar o probe é pré-requisito de aprovar o primeiro customer**, não
-tarefa posterior.
+**Instalar o probe é pré-requisito de aprovar o primeiro customer**, não tarefa posterior — e ele
+EXISTE desde 2026-08-26 (subseção seguinte). A tabela está APLICADA em prod e verificada; o que
+falta para a condição (2) virar leitura é o Publish do frontend e a primeira sessão autenticada.
+⚠️ Até lá `probe-censura.sh` responde 🟡 *"nenhum probe fora da carência"* — e isso é **ausência de
+observação**, não ausência de censura. Não leia o 🟡 como "não há bloqueador".
 
 ⚠️ **E mesmo com o gatilho aberto, a primeira saída NÃO é o proxy — nem (c) puro.** É a quarta
 saída abaixo, que o ritual Codex trouxe e que domina as duas: ela não depende de browser, então
 não há o que bloquear, e não contorna a escolha de ninguém.
+
+### O probe de `attempt_id` — como LER (2026-08-26)
+
+A condição (2) do gatilho acima deixou de ser recado. O par é `public.telemetria_probes`
+(PostgREST, domínio do app — imune à lista) × evento `telemetria.probe` (censurável), e a chave de
+junção é um `attempt_id` gerado no boot autenticado (`src/lib/telemetria-probe.ts`, disparado pelo
+`AnalyticsIdentify`).
+
+**O `attempt_id` EMBUTE o aparelho — `<device_id>.<uuid>`.** Não é enfeite: é a correção direta da
+cegueira que o `#2016` achou. `dashboard_visits` não tem coluna de aparelho, então lá o pareamento
+só existe por USUÁRIO e um evento do celular "explica" uma tentativa bloqueada no desktop. Aqui o
+aparelho viaja DENTRO da chave, de modo que a propriedade do evento carrega o eixo sozinha — sem
+depender de `identify()`, que a sonda do `#1984` não tinha.
+
+**Tabela dedicada, e não coluna nova em `dashboard_visits`** — a razão decisiva é temporal, não
+estética: `dashboard_visits` só ganha linha ao SAIR do dashboard após ≥5 min (`MIN_SESSION_MS`),
+enquanto o probe roda no boot, em qualquer rota. Acoplar teria perdido exatamente as sessões curtas
+do primeiro customer externo — as mais informativas. Somam-se: escritor único (aquela tabela tem
+UM, por desenho), cardinalidade (1 probe/boot × 1 visita/sessão-de-dashboard, e a UNIQUE
+`(user_id, visited_at)` colidiria) e retenção (probe é diagnóstico de 90 dias, visita é histórico).
+
+#### A leitura (executável — é ISTO que se roda, não duas queries cruzadas na cabeça)
+
+```bash
+scripts/probe-censura.sh              # carência 30min, janela 7 dias
+scripts/probe-censura.sh 60 14        # carência 60min, janela 14 dias
+```
+
+Ele lê os dois lados e cruza. Cruzar Postgres × PostHog na cabeça é precisamente onde este repo já
+fabricou veredito, então o cruzamento é do script. Os cinco desfechos, que **não** são
+intercambiáveis:
+
+| saída | significa |
+|---|---|
+| 🟢 sem órfãos | todo `attempt_id` gravado atravessou — sem sinal de censura na janela |
+| 🟡 órfãos, nenhum aparelho com ≥2 | **INCONCLUSIVO por desenho** — 1 órfão é compatível com fecho de aba, offline e SDK que não carregou |
+| 🔴 ≥1 aparelho com ≥2 órfãos | censura persistente é explicação PLAUSÍVEL — condição (2) do gatilho satisfeita |
+| 🔴 canal inteiro mudo | probes gravados e ZERO eventos: **não** é bloqueador por aparelho; é config/key/ingest (a lição do `#1967`) |
+| 🟡 nenhum probe fora da carência | ausência de OBSERVAÇÃO, não de censura — não há o que reconciliar |
+
+⚠️ **Exit ≠ 0 é ausência de dado, e o script recusa-se a chamá-la de zero.** `70` = lado imune
+(Postgres) não respondeu — inclui *a migration não foi aplicada*, que é o estado até o founder
+colar o SQL; `71` = lado censurável não respondeu (o `73`/HTTP 504 do wrapper chega aqui como 71).
+Um lado ausente jamais vira "0 órfãos": é a falha exata que o `#2016` documentou, e a razão de isto
+ser um script e não dois blocos SQL soltos nesta doc.
+
+⚠️ **A carência não é opcional.** Um probe de 2 minutos atrás ainda pode estar no batch do SDK;
+contá-lo como órfão inventa censura. O default de 30 min é folgado de propósito — a leitura é
+recorrente, não de tempo real.
+
+⚠️ **Órfão por aparelho vem SEMPRE com denominador** (`2/3`, não `2`). "Dois órfãos" sem "de
+quantos" é a mesma fabricação que a leitura de adoção `50%` desta §6 cometeu ao dividir pela sonda.
+
+⚠️ **O probe NÃO grava quando a telemetria está desligada por config** (`telemetriaAtiva()`: sem
+`VITE_POSTHOG_KEY`, ou em DEV, onde o SDK faz `opt_out_capturing()`). Sem esse gate, toda sessão de
+desenvolvimento produziria "attempt_id sem par" e o sensor fabricaria o fenômeno que existe para
+medir. Ele também desiste na lente "ver como" (o write-guard barraria o INSERT) e sem usuário (a
+RLS exige `auth.uid() = user_id`). Um teste-sentinela amarra `telemetriaAtiva()` aos gates reais de
+`initAnalytics()` lendo a fonte com o stripper compartilhado — se um dia divergirem, o probe
+passaria a mentir em silêncio.
+
+⚠️ **A ordem tabela→evento é o desenho, não preferência.** O INSERT vem primeiro e o evento só sai
+se ele deu certo: o lado imune registra a INTENÇÃO, o censurável confirma a ENTREGA. Invertida, um
+banco fora do ar produziria evento sem linha — ruído sem leitura possível.
+
+Consulta direta ao lado imune (quando quiser olhar o dado cru, sem o cruzamento):
+
+```bash
+~/.config/afiacao/psql-ro -c "
+  SELECT device_id, count(*) AS probes, min(criado_em) AS primeiro, max(criado_em) AS ultimo
+  FROM public.telemetria_probes
+  WHERE criado_em > now() - interval '7 days'
+  GROUP BY device_id ORDER BY probes DESC;"
+```
+
+✅ **Tabela nova nasce legível pelo `claude_ro` — medido, não suposto (2026-08-25).** Depois que o
+papel perdeu `pg_read_all_data` (§1 do `database.md`), a pergunta "a reconciliação vai conseguir
+ler?" deixou de ser óbvia. Existe `ALTER DEFAULT PRIVILEGES` de `postgres` no schema `public`
+incluindo `claude_ro=r/postgres`, e o SQL Editor do Lovable roda como `postgres` ⇒ toda tabela
+criada por ele já nasce com SELECT para o papel (conferido nas 6 tabelas mais recentes: todas
+`true`). E `rolbypassrls` do `claude_ro` é `true`, então a RLS da tabela não cega a leitura —
+o que importa aqui, porque RLS sem bypass devolveria **zero linhas em silêncio** em vez de erro.
+Se um dia a tabela for criada por outro papel (builder visual = `supabase_admin`), esse default
+NÃO se aplica e o grant tem de ser explícito.
 
 ### A quarta saída: outbox server-side (preferida sobre (c) puro)
 
