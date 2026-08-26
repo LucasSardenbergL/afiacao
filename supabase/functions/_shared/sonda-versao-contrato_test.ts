@@ -45,6 +45,7 @@ import * as visitBatch from "../visit-score-recalc-batch/versao.ts";
 import * as monthlyReport from "../monthly-report/versao.ts";
 import * as carteiraRebuild from "../carteira-rebuild/versao.ts";
 import * as vendasSync from "../omie-vendas-sync/versao.ts";
+import * as nfeReconcile from "../omie-nfe-reconcile/versao.ts";
 
 /**
  * `respostaSonda` (a maioria) ou `respostaSondaTactical` (a `generate-tactical-plan`, que embrulha o
@@ -151,6 +152,14 @@ const EDGES: Array<{ nome: string; mod: ModSonda }> = [
   // fatia que a fixture verifica e pode ficar parado de forma legítima; o `VERSAO` prova qual
   // BUNDLE respondeu. Aqui os dois viajam juntos na resposta da canária.
   { nome: "omie-vendas-sync", mod: vendasSync },
+  // Nona leva (2026-08-26): a edge cuja resposta do FLUXO REAL já trazia um campo `versao` — e por
+  // isso parecia verificável sem ser. `v3.3-paginacao-janelas` é hardcoded, marcador de FATIA, e
+  // não se moveu no #2025 (coleira de relógio no `omieCall`): idêntico byte a byte nos dois
+  // bundles, com N2 indisponível e nenhum campo novo no diff para discriminar. Sondar o bundle
+  // pré-sensor aqui é CARO (não roteia por `action` — o corpo desconhecido cai no default do cron
+  // e a varredura roda), o que a põe ao lado da `carteira-rebuild`, não da `omie-analytics-sync`.
+  // Ver `omie-nfe-reconcile/versao.ts` e `docs/historico/canaria-papel-duplo.md`.
+  { nome: "omie-nfe-reconcile", mod: nfeReconcile },
 ];
 
 /** As cinco da terceira leva — os gates estruturais abaixo varrem todas. */
@@ -173,6 +182,9 @@ const ESCRITA_NOSSO_BANCO = [
   // Décima leva: toma o lease e reescreve ~6909 assignments de cliente↔vendedor — o mapa que
   // decide carteira e comissão.
   "carteira-rebuild",
+  // Nona leva (2026-08-26): marca `nfe_recebimentos` como `efetivado` e grava o ledger
+  // `nfe_efetivacao_tentativas` — baixa de conferência que tira a NF do painel de pendências.
+  "omie-nfe-reconcile",
 ];
 
 /**
