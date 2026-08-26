@@ -27,6 +27,7 @@
 
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff, corsHeaders } from "../_shared/auth.ts";
+import { cabeEspera, timeoutRequestMs } from "../_shared/omie-deadline.ts";
 
 function jsonRes(body: Record<string, unknown>, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -251,15 +252,29 @@ async function registrarTentativa(
 // ── Retry with exponential backoff — PARA em REDUNDANT (re-tentar renova a trava) ──
 async function omieCall(
   url: string,
+  deadline: number, // timestamp absoluto do run: nenhum request nem backoff pode cruzá-lo
   payload: Record<string, unknown>,
   maxRetries = 3,
 ): Promise<OmieCallResult> {
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    // Coleira de RELÓGIO (#2017): o guard desta edge era só de CONTAGEM
+    // (MAX_CHAMADAS_LISTAGEM), e contagem não limita tempo — um socket pendurado consumiu
+    // 149.905ms dos 150s do cron com o Omie saudável. `timeoutMs === 0` = sem tempo viável
+    // antes do deadline: recusa honesta, que classificarRespostaOmie lê como falha da janela
+    // (httpOk:false) — NUNCA como página vazia/fim de paginação.
+    const timeoutMs = timeoutRequestMs(Date.now(), deadline, FETCH_TIMEOUT_MS);
+    if (timeoutMs === 0) {
+      // classificarRespostaOmie só extrai texto de `faultstring` — sem este warn a recusa sai no
+      // relatório como "HTTP ???" e some. Não fabricamos um faultstring: o Omie não disse nada.
+      console.warn(`[omie-nfe-reconcile] deadline do run atingido — request recusado sem abrir socket (tentativa ${attempt})`);
+      return { error: true, data: { message: "sem tempo viável antes do deadline do run" } };
+    }
     try {
       const res = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(timeoutMs),
       });
       const text = await res.text();
       let data: unknown;
@@ -274,20 +289,23 @@ async function omieCall(
           // trava anti-redundância: retry só renova o timer — devolve na hora
           return { error: true, status: res.status, data };
         }
-        if (attempt < maxRetries && res.status >= 500) {
-          const delay = Math.pow(2, attempt) * 500;
-          console.warn(`[omie-nfe-reconcile] Omie ${res.status}, retry ${attempt}/${maxRetries} in ${delay}ms`);
-          await new Promise((r) => setTimeout(r, delay));
+        const delayHttp = Math.pow(2, attempt) * 500;
+        if (attempt < maxRetries && res.status >= 500 && cabeEspera(Date.now(), deadline, delayHttp)) {
+          console.warn(`[omie-nfe-reconcile] Omie ${res.status}, retry ${attempt}/${maxRetries} in ${delayHttp}ms`);
+          await new Promise((r) => setTimeout(r, delayHttp));
           continue;
         }
         return { error: true, status: res.status, data };
       }
       return { error: false, data };
     } catch (err) {
-      if (attempt < maxRetries) {
-        const delay = Math.pow(2, attempt) * 500;
-        console.warn(`[omie-nfe-reconcile] Network error, retry ${attempt}/${maxRetries} in ${delay}ms:`, err);
-        await new Promise((r) => setTimeout(r, delay));
+      // O abort do AbortSignal.timeout chega aqui como TimeoutError. Re-tentar é legítimo (o
+      // socket pode ter travado só naquela conexão), mas SÓ com tempo para o sleep E para a
+      // chamada seguinte — senão o retry apenas adia o kill dentro do mesmo teto.
+      const delayRede = Math.pow(2, attempt) * 500;
+      if (attempt < maxRetries && cabeEspera(Date.now(), deadline, delayRede)) {
+        console.warn(`[omie-nfe-reconcile] Network error, retry ${attempt}/${maxRetries} in ${delayRede}ms:`, err);
+        await new Promise((r) => setTimeout(r, delayRede));
         continue;
       }
       return { error: true, data: { message: String(err) } };
@@ -324,8 +342,16 @@ const TREGUA_LISTAGEM_MS = 1500;
 // Guard global de chamadas de listagem por rodada (janelas × páginas). 7-8 chamadas/rodada
 // provadas sem trava em prod; 12 dá folga pra paginação sem virar rajada (~18s de tréguas).
 const MAX_CHAMADAS_LISTAGEM = 12;
+// Coleira de RELÓGIO da rodada (#2017, medido em prod 2026-08-25). O cron
+// `omie-nfe-reconcile-1h` (jobid 162) roda com `timeout_milliseconds:=150000`; o run aborta
+// honesto ANTES disso — fecha o log e reporta `truncada:true` — em vez de morrer no kill sem
+// passar pelo catch (o que deixa linha órfã `running` em fin_sync_log). O trabalho real medido
+// é ~20s: esta folga é grande DE PROPÓSITO, ela existe para o caso patológico, não para o normal.
+const MAX_DURACAO_MS = 120_000;
+const FETCH_TIMEOUT_MS = 25_000; // bound de CADA request (padrão da irmã omie-sync-status-produtos)
 
 Deno.serve(async (req) => {
+  const deadline = Date.now() + MAX_DURACAO_MS; // relógio ÚNICO do run: laços, tréguas e omieCall
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
@@ -418,6 +444,10 @@ Deno.serve(async (req) => {
 
       const paginas: unknown[] = [];
       for (const [j, janela] of janelas.entries()) {
+        if (!cabeEspera(Date.now(), deadline, j > 0 ? TREGUA_LISTAGEM_MS : 0)) {
+          listagemTruncada = true; // relógio cortou — cobertura parcial HONESTA (#2017)
+          break;
+        }
         if (j > 0) await new Promise((r) => setTimeout(r, TREGUA_LISTAGEM_MS));
         janelasConsultadas++;
         // v3.3: PAGINA janelas cheias (7 fora_da_listagem estagnaram em prod com janelas
@@ -429,9 +459,13 @@ Deno.serve(async (req) => {
             listagemTruncada = true; // cap global cortou — cobertura parcial honesta
             break;
           }
+          if (!cabeEspera(Date.now(), deadline, nPagina > 1 ? TREGUA_LISTAGEM_MS : 0)) {
+            listagemTruncada = true; // relógio cortou — cobertura parcial HONESTA (#2017)
+            break;
+          }
           if (nPagina > 1) await new Promise((r) => setTimeout(r, TREGUA_LISTAGEM_MS));
           chamadasListagem++;
-          const lst = await omieCall(RECEB_URL, {
+          const lst = await omieCall(RECEB_URL, deadline, {
             call: "ListarRecebimentos",
             app_key: creds.appKey,
             app_secret: creds.appSecret,
