@@ -438,8 +438,11 @@ falsify_marca "sonda apontada para node_modules inexistente -> perde o 2º emiss
 SAB_L="$FIX/sab_ausente_calado.sh"
 # shellcheck disable=SC2016
 sed '/^if \[ ! -d "\$_nm" \]; then$/,/^else$/ s/^  printf /  : /' "$SCRIPT_ABS" > "$SAB_L"
+# O 6º arg não é decoração aqui: sem ele, um SAB_L com erro de SINTAXE também faria a marca sumir
+# (nada rodou) e a sabotagem passaria por motivo errado. Exigir CONTROLE_NEGATIVO_OK prova que o
+# script sabotado rodou ATÉ O FIM e deu verde — calado sobre não ter consultado, que é a fabricação.
 falsify_marca "estado 'não consultei' silenciado -> worktree sem node_modules lê como limpa" \
-              "$SAB_L" "$FIX/neutro" "LIB_OPTION_MARKER" "LIB_NAO_CONSULTADA"
+              "$SAB_L" "$FIX/neutro" "LIB_OPTION_MARKER" "LIB_NAO_CONSULTADA" "CONTROLE_NEGATIVO_OK"
 
 echo ""
 if [ "$FAIL" -eq 0 ]; then echo "--falsify: $PASS/$((PASS+FAIL)) divergiram (harness tem dente)"; exit 0

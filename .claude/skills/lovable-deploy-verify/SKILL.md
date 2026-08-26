@@ -139,6 +139,8 @@ não só o `index.ts` (#2018).
 # saída: "✓ sentinela exclusiva: …" + "chunks (closure ∪ precache): N" + "✅ ALVO em <chunk>"
 #        + "✓ CONTROLE_NEGATIVO_OK — <chunk> não casa controle_negativo_<hex>"   (ramo do hit)
 #        + "✓ CONTROLE_POSITIVO_OK — <entry> ainda devolve bytes e o mesmo grep acha '<agulha>'"
+#        + LIB_SEM_A_SENTINELA | SENTINELA_TAMBEM_NA_LIB | LIB_NAO_CONSULTADA (sonda do 2º emissor,
+#          pré-rede: AVISA e nunca muda o exit — node_modules é preditor, não prova)
 # exit 0 = no ar E o controle negativo passou · 1 = ausente E o controle POSITIVO provou que a
 #          sonda enxergava (Publish pendente / alvo não-literal)
 #      2 = a MECÂNICA da sonda não é confiável: enumeração quebrada, SONDA_NAO_DISCRIMINA (ramo
@@ -215,9 +217,26 @@ audita o par `(padrão, grep)`, não a **proveniência** da string).
 > forma que lê uma **remoção**:
 > `e.init(li,{…,disable_session_recording:!0,autocapture:{…css_selector_allowlist:["button","a","select",'input[type="checkbox"]','[role="button"]']}})`
 
-Detalhe, medições e a sugestão `SENTINELA_TAMBEM_NA_LIB` (avisa, **não** recusa — `maskAllInputs`
-está em 37 arquivos da lib e em **0** ocorrências do chunk servido, logo `node_modules` é *preditor*
-do 2º emissor, não prova): [`docs/historico/sentinela-segundo-emissor.md`](../../../docs/historico/sentinela-segundo-emissor.md).
+**A sonda `SENTINELA_TAMBEM_NA_LIB` (implementada 2026-08-26)** roda pré-rede e nos **dois** modos —
+a pergunta dela ("existe emissor **fora** do git?") é ortogonal à do `--pai` ("é nova **dentro** do
+git?"), e sem `--pai` o operador está no modo mais fraco, que é onde calar custa mais. Ela **avisa e
+nunca recusa**: `maskAllInputs` está em **10** arquivos de `posthog-js/dist/` e em **0** ocorrências
+do chunk servido — tree-shaking decide o que chega ao bundle, logo `node_modules` é *preditor* do 2º
+emissor e não **prova** dele, e um guard que recusasse no hit reprovaria sentinela legítima. Três
+estados, e o terceiro é o que evita fabricar veredito:
+
+| marca | quando | por quê |
+|---|---|---|
+| `SENTINELA_TAMBEM_NA_LIB` | a lib emite o alvo | imprime os **caminhos**: `posthog-js/dist/` lê como 2º emissor provável, `jsdom/` como devDep que nunca vai ao bundle |
+| `LIB_SEM_A_SENTINELA` | 0 arquivos de código | a sentinela é sua |
+| `LIB_NAO_CONSULTADA` | sem `node_modules` (ou `grep` falhou) | worktree recém-criada não tem — o `bun install` é passo à parte, e **silêncio ali se leria como "limpo"** |
+
+O universo é **código JS** (`--include` de `*.js`/`*.mjs`/`*.cjs`), não a árvore inteira, e o corte
+foi medido na `node_modules` real (637 MB / 54.843 arquivos): sem filtro custa **38-63 s** e o *valor
+nosso* `input[type="checkbox"]` — a sentinela que esta própria seção recomenda — acusava 3 arquivos
+(`readme.md`, `preflight.css` do tailwind, css de demo). Aviso que dispara contra a resposta certa é
+aviso desarmado no primeiro dia. Com o filtro: **~2 s**, e o mesmo alvo cai para 1 (`jsdom`). Detalhe
+e medições: [`docs/historico/sentinela-segundo-emissor.md`](../../../docs/historico/sentinela-segundo-emissor.md).
 
 **O guard não prova que a sonda sabe dizer "não" — isso é o CONTROLE NEGATIVO, e ele virou
 embutido (2026-08-24).** Um `exit 0` sozinho não distingue "está no ar" de "o script dá verde pra
