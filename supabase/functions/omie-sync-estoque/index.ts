@@ -15,6 +15,7 @@ import {
   proximoTotalPaginas,
   varreduraTruncada as detectarVarreduraTruncada,
 } from "../_shared/omie-paginacao.ts";
+import { cabeEspera, timeoutRequestMs } from "../_shared/omie-deadline.ts";
 
 const corsHeaders = {
   ...sharedCors,
@@ -24,6 +25,13 @@ const corsHeaders = {
 const OMIE_ENDPOINT = "https://app.omie.com.br/api/v1/estoque/consulta/";
 const PAGE_SIZE = 500;
 const MAX_RETRIES = 3;
+// Coleira de RELÓGIO (#2017/#2031). Os guards desta edge são MAX_PAGINAS_* — CONTAGEM, que não
+// limita tempo: um socket pendurado come o run inteiro sem estourar página nenhuma. Aqui, diferente
+// dos steps do `omie-cron-diario`, a edge TEM cron próprio (jobids 31 e 124, teto 90s), então o kill
+// já existe — o deadline não inventa truncamento, converte kill BRUTO em saída controlada. Os 75s
+// deixam ~15s para o upsert final em chunks, que só roda DEPOIS da enumeração inteira.
+const MAX_DURACAO_MS = 75_000;
+const FETCH_TIMEOUT_MS = 20_000;
 
 type Empresa = "OBEN" | "COLACOR";
 
@@ -81,9 +89,17 @@ async function callOmie<T>(
   appSecret: string,
   call: string,
   param: Record<string, unknown>,
+  deadline: number,
 ): Promise<T> {
   let lastErr: unknown = null;
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    // O teto do request ENCOLHE conforme o run se aproxima do deadline. LANÇA quando não sobra
+    // tempo viável — este edge é fail-closed por desenho (varredura parcial jamais publica), então
+    // exceção é o caminho certo: o caller aborta sem gravar, como já faz no teto de páginas.
+    const timeoutMs = timeoutRequestMs(Date.now(), deadline, FETCH_TIMEOUT_MS);
+    if (timeoutMs === 0) {
+      throw new Error(`Omie ${call}: deadline do run atingido antes da chamada`);
+    }
     try {
       const res = await fetch(OMIE_ENDPOINT, {
         method: "POST",
@@ -94,9 +110,16 @@ async function callOmie<T>(
           app_secret: appSecret,
           param: [param],
         }),
+        signal: AbortSignal.timeout(timeoutMs),
       });
 
       if (res.status === 429) {
+        // 60s de sono num run cujo teto de cron é 90s: antes isto era dormir até o cron matar, sem
+        // gravar nada e sem dizer por quê. Agora recusa explicitamente — e quase nunca caberá, que
+        // é o veredito honesto: não há como respeitar um rate-limit de 60s dentro deste orçamento.
+        if (!cabeEspera(Date.now(), deadline, 60_000)) {
+          throw new Error(`Omie ${call}: rate limit pede 60s de espera, não cabe antes do deadline do run`);
+        }
         console.warn(`[omie-sync-estoque] 429 rate limit em ${call}, sleeping 60s`);
         await new Promise((r) => setTimeout(r, 60_000));
         continue;
@@ -122,7 +145,13 @@ async function callOmie<T>(
       lastErr = err;
       const msg = err instanceof Error ? err.message : String(err);
       if (msg.startsWith("AUTH_ERROR")) throw err;
+      // O catch engole TUDO e retenta, inclusive o TimeoutError do abort — sem esta guarda,
+      // 3 tentativas de 20s mais os backoffs passariam do teto de 90s do cron.
+      if (msg.includes("deadline do run")) throw err;
       const wait = 1000 * Math.pow(2, attempt - 1);
+      if (!cabeEspera(Date.now(), deadline, wait)) {
+        throw new Error(`Omie ${call}: falhou (${msg}) e o backoff de ${wait}ms não cabe antes do deadline do run`);
+      }
       console.warn(
         `[omie-sync-estoque] ${call} attempt ${attempt}/${MAX_RETRIES} falhou: ${msg}. retry em ${wait}ms`,
       );
@@ -224,8 +253,13 @@ function ddmmyyyyPed(d: Date): string {
 
 async function callOmiePedidos(
   appKey: string, appSecret: string, pagina: number, dataDe: string, dataAte: string,
+  deadline: number,
 ): Promise<OmiePedResponse> {
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    const timeoutMs = timeoutRequestMs(Date.now(), deadline, FETCH_TIMEOUT_MS);
+    if (timeoutMs === 0) {
+      throw new Error(`PesquisarPedCompra: deadline do run atingido antes da chamada`);
+    }
     const res = await fetch(OMIE_ENDPOINT_PEDIDOS, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -250,6 +284,7 @@ async function callOmiePedidos(
           dDataFinal: dataAte,
         }],
       }),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     const text = await res.text();
     // 200 com corpo não-JSON re-LANÇA (abaixo): o `catch { json = {} }` antigo colapsava a
@@ -259,6 +294,9 @@ async function callOmiePedidos(
     try { json = JSON.parse(text) as OmiePedResponse; } catch { json = null; }
     if (res.status === 429 || (json?.faultstring && /rate limit/i.test(json.faultstring))) {
       console.warn(`[omie-sync-estoque] PesquisarPedCompra 429 (tentativa ${attempt}/${MAX_RETRIES}), aguardando 5s`);
+      if (!cabeEspera(Date.now(), deadline, 5000)) {
+        throw new Error(`PesquisarPedCompra: rate limit e os 5s de espera não cabem antes do deadline do run`);
+      }
       await new Promise((r) => setTimeout(r, 5000));
       continue;
     }
@@ -323,6 +361,7 @@ async function computePendenteViaPedidosCompra(
   appKey: string, appSecret: string,
   habilitadoMap: Map<string, string | null>,
   supabase: SupabaseClient,
+  deadline: number,
 ): Promise<{ pendente: Map<string, number>; confiavel: boolean; problemas: string[] }> {
   const { numeros: emTransitoNumeros, codInts: emTransitoCodInts } = await fetchEmTransitoKeys(supabase);
 
@@ -345,7 +384,7 @@ async function computePendenteViaPedidosCompra(
   let pedidosVistos = 0, pedidosApp = 0, paginasLidas = 0, fim = false;
 
   for (let pagina = 1; pagina <= MAX_PAGINAS_PED; pagina++) {
-    const resp = await callOmiePedidos(appKey, appSecret, pagina, dataDe, dataAte);
+    const resp = await callOmiePedidos(appKey, appSecret, pagina, dataDe, dataAte, deadline);
     if (resp?.faultstring) {
       if (FIM_SEM_REGISTROS.test(resp.faultstring)) { fim = true; break; }
       throw new Error(`PesquisarPedCompra fault: ${resp.faultstring}`);
@@ -504,6 +543,7 @@ const MAX_PAGINAS_SALDO_PENDENTE = 200;
 
 async function computePendenteViaSaldoPendente(
   appKey: string, appSecret: string, habilitadoMap: Map<string, string | null>,
+  deadline: number,
 ): Promise<Map<string, number>> {
   const pendente = new Map<string, number>();
   let pPag = 1, pTot = 1;
@@ -511,6 +551,7 @@ async function computePendenteViaSaldoPendente(
     const resp = await callOmie<OmieSaldoPendenteResponse>(
       appKey, appSecret, "ListarSaldoPendente",
       { pagina: pPag, registros_por_pagina: PAGE_SIZE, tipo: "ENTRADA" },
+      deadline,
     );
     // Piso monotônico + teto fail-fast (_shared/omie-paginacao.ts): o `?? 1` por resposta
     // encolhia o teto e um pendente PARCIAL era gravado com pendenteConfiavel=true.
@@ -569,6 +610,9 @@ Deno.serve(async (req) => {
 
   const startedAt = new Date();
   const t0 = performance.now();
+  // Relógio ÚNICO do run. Em `Date.now()` de propósito: `t0` acima é `performance.now()`, que tem
+  // OUTRA origem — misturar as duas bases daria um deadline no passado ou no ano que vem.
+  const deadline = Date.now() + MAX_DURACAO_MS;
 
   // Refs para o catch conseguir gravar o marcador 'error' (só existem após o parse/criação no try;
   // falha ANTES disso fica sem marcador — o envelhecimento do last_sync_at cobre, stale às 4h).
@@ -655,6 +699,7 @@ Deno.serve(async (req) => {
       const resp = await callOmie<OmiePosEstoqueResponse>(
         appKey, appSecret, "ListarPosEstoque",
         { nPagina: page, nRegPorPagina: PAGE_SIZE, dDataPosicao: dataPosicao, cExibeTodos: "S" },
+        deadline,
       );
       // Piso monotônico + teto fail-fast (_shared/omie-paginacao.ts): o `?? 1` por resposta
       // encolhia o teto e a varredura PARCIAL completava — SKU habilitado da cauda perdida
@@ -699,13 +744,13 @@ Deno.serve(async (req) => {
     let pendenteConfiavel = true; // COLACOR (ListarSaldoPendente) sempre aplica; OBEN é gated pela confiabilidade
     let pendenteProblemas: string[] = [];
     if (empresa === "OBEN") {
-      const r = await computePendenteViaPedidosCompra(appKey, appSecret, habilitadoMap, supabase);
+      const r = await computePendenteViaPedidosCompra(appKey, appSecret, habilitadoMap, supabase, deadline);
       pendenteEntrada = r.pendente;
       pendenteConfiavel = r.confiavel;
       pendenteProblemas = r.problemas;
     } else {
       try {
-        pendenteEntrada = await computePendenteViaSaldoPendente(appKey, appSecret, habilitadoMap);
+        pendenteEntrada = await computePendenteViaSaldoPendente(appKey, appSecret, habilitadoMap, deadline);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         // Não-fatal ≠ zerar: sem confiável=false, o Map vazio do catch virava
