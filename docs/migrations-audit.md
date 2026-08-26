@@ -21,16 +21,16 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **489** custom migrations totais
-- **1680** objetos esperados (criados por estas migrations)
+- **491** custom migrations totais
+- **1697** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 504
-  - `rls_policy`: 446
-  - `index`: 244
-  - `cron_job`: 165
-  - `table`: 156
-  - `trigger`: 87
-  - `view`: 74
+  - `function`: 511
+  - `rls_policy`: 448
+  - `index`: 247
+  - `cron_job`: 167
+  - `table`: 157
+  - `trigger`: 88
+  - `view`: 75
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -4099,6 +4099,33 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `cron_job` | `cron.omie-sync-metadados-daily` | — |
+
+### `20260825214545_analytics_outbox.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.analytics_outbox_pedido_compra` | — |
+| `function` | `public.analytics_ledger_registrar` | — |
+| `function` | `public.analytics_outbox_purgar` | — |
+| `function` | `public.analytics_outbox_claim` | — |
+| `function` | `public.analytics_outbox_aceitar` | — |
+| `function` | `public.analytics_outbox_quarentena` | — |
+| `function` | `public.analytics_outbox_falhar` | — |
+| `view` | `public.analytics_outbox_reconciliacao` | — |
+| `table` | `public.analytics_outbox` | — |
+| `index` | `public.idx_analytics_outbox_fila` | `analytics_outbox` |
+| `index` | `public.idx_analytics_outbox_purga` | `analytics_outbox` |
+| `index` | `public.idx_analytics_outbox_titular` | `analytics_outbox` |
+| `trigger` | `public.trg_analytics_outbox_pedido_compra` | `pedido_compra_sugerido` |
+| `cron_job` | `cron.analytics-outbox-purgar` | — |
+| `rls_policy` | `public.analytics_outbox_service_all` | `analytics_outbox` |
+| `rls_policy` | `public.analytics_outbox_master_read` | `analytics_outbox` |
+
+### `20260825225850_analytics_outbox_cron.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `cron_job` | `cron.analytics-outbox-drain` | — |
 
 ## Próximos passos por status
 

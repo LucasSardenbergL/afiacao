@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 489
+-- Total de custom migrations: 491
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -530,7 +530,9 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260824225107', 'data_health_sync_state_saude', '20260824225107_data_health_sync_state_saude.sql'),
   ('20260824232212', 'sync_state_remove_marcador_fossil_orders', '20260824232212_sync_state_remove_marcador_fossil_orders.sql'),
   ('20260824234500', 'sync_state_products_vendas_aposenta_writer_truncado', '20260824234500_sync_state_products_vendas_aposenta_writer_truncado.sql'),
-  ('20260825124938', 'cron_metadados_timeout_240s', '20260825124938_cron_metadados_timeout_240s.sql')
+  ('20260825124938', 'cron_metadados_timeout_240s', '20260825124938_cron_metadados_timeout_240s.sql'),
+  ('20260825214545', 'analytics_outbox', '20260825214545_analytics_outbox.sql'),
+  ('20260825225850', 'analytics_outbox_cron', '20260825225850_analytics_outbox_cron.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2199,7 +2201,24 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('data_health_sync_state_saude', 'function', 'public', '_data_health_compute', ''),
   ('data_health_sync_state_saude', 'function', 'public', 'data_health_watchdog', ''),
   ('sync_state_products_vendas_aposenta_writer_truncado', 'function', 'public', '_data_health_compute', ''),
-  ('cron_metadados_timeout_240s', 'cron_job', 'cron', 'omie-sync-metadados-daily', '')
+  ('cron_metadados_timeout_240s', 'cron_job', 'cron', 'omie-sync-metadados-daily', ''),
+  ('analytics_outbox', 'function', 'public', 'analytics_outbox_pedido_compra', ''),
+  ('analytics_outbox', 'function', 'public', 'analytics_ledger_registrar', ''),
+  ('analytics_outbox', 'function', 'public', 'analytics_outbox_purgar', ''),
+  ('analytics_outbox', 'function', 'public', 'analytics_outbox_claim', ''),
+  ('analytics_outbox', 'function', 'public', 'analytics_outbox_aceitar', ''),
+  ('analytics_outbox', 'function', 'public', 'analytics_outbox_quarentena', ''),
+  ('analytics_outbox', 'function', 'public', 'analytics_outbox_falhar', ''),
+  ('analytics_outbox', 'view', 'public', 'analytics_outbox_reconciliacao', ''),
+  ('analytics_outbox', 'table', 'public', 'analytics_outbox', ''),
+  ('analytics_outbox', 'index', 'public', 'idx_analytics_outbox_fila', 'analytics_outbox'),
+  ('analytics_outbox', 'index', 'public', 'idx_analytics_outbox_purga', 'analytics_outbox'),
+  ('analytics_outbox', 'index', 'public', 'idx_analytics_outbox_titular', 'analytics_outbox'),
+  ('analytics_outbox', 'trigger', 'public', 'trg_analytics_outbox_pedido_compra', 'pedido_compra_sugerido'),
+  ('analytics_outbox', 'cron_job', 'cron', 'analytics-outbox-purgar', ''),
+  ('analytics_outbox', 'rls_policy', 'public', 'analytics_outbox_service_all', 'analytics_outbox'),
+  ('analytics_outbox', 'rls_policy', 'public', 'analytics_outbox_master_read', 'analytics_outbox'),
+  ('analytics_outbox_cron', 'cron_job', 'cron', 'analytics-outbox-drain', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -3916,7 +3935,24 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('data_health_sync_state_saude', 'function', 'public', '_data_health_compute', ''),
   ('data_health_sync_state_saude', 'function', 'public', 'data_health_watchdog', ''),
   ('sync_state_products_vendas_aposenta_writer_truncado', 'function', 'public', '_data_health_compute', ''),
-  ('cron_metadados_timeout_240s', 'cron_job', 'cron', 'omie-sync-metadados-daily', '')
+  ('cron_metadados_timeout_240s', 'cron_job', 'cron', 'omie-sync-metadados-daily', ''),
+  ('analytics_outbox', 'function', 'public', 'analytics_outbox_pedido_compra', ''),
+  ('analytics_outbox', 'function', 'public', 'analytics_ledger_registrar', ''),
+  ('analytics_outbox', 'function', 'public', 'analytics_outbox_purgar', ''),
+  ('analytics_outbox', 'function', 'public', 'analytics_outbox_claim', ''),
+  ('analytics_outbox', 'function', 'public', 'analytics_outbox_aceitar', ''),
+  ('analytics_outbox', 'function', 'public', 'analytics_outbox_quarentena', ''),
+  ('analytics_outbox', 'function', 'public', 'analytics_outbox_falhar', ''),
+  ('analytics_outbox', 'view', 'public', 'analytics_outbox_reconciliacao', ''),
+  ('analytics_outbox', 'table', 'public', 'analytics_outbox', ''),
+  ('analytics_outbox', 'index', 'public', 'idx_analytics_outbox_fila', 'analytics_outbox'),
+  ('analytics_outbox', 'index', 'public', 'idx_analytics_outbox_purga', 'analytics_outbox'),
+  ('analytics_outbox', 'index', 'public', 'idx_analytics_outbox_titular', 'analytics_outbox'),
+  ('analytics_outbox', 'trigger', 'public', 'trg_analytics_outbox_pedido_compra', 'pedido_compra_sugerido'),
+  ('analytics_outbox', 'cron_job', 'cron', 'analytics-outbox-purgar', ''),
+  ('analytics_outbox', 'rls_policy', 'public', 'analytics_outbox_service_all', 'analytics_outbox'),
+  ('analytics_outbox', 'rls_policy', 'public', 'analytics_outbox_master_read', 'analytics_outbox'),
+  ('analytics_outbox_cron', 'cron_job', 'cron', 'analytics-outbox-drain', '')
 )
 SELECT
   e.migration,

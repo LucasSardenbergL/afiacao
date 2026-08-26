@@ -13,6 +13,7 @@ import { useMarkMixGapFeedback } from '@/hooks/useMarkMixGapFeedback';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { buildPorQue } from '@/lib/mixgap/format';
 import { track } from '@/lib/analytics';
+import { registrarNoLedger } from '@/lib/analytics-ledger';
 import { estadoDeLeitura, desatualizado, type EstadoSemLeitura } from '@/lib/leitura/estado-de-leitura';
 
 /**
@@ -142,11 +143,19 @@ export function MixGapCard() {
     const chave = `${estado}:${desatualizacao ?? 'fresco'}`;
     if (trackedChave.current === chave) return;
     trackedChave.current = chave;
-    track('carteira.mixgap_visto', {
+    const carga = {
       estado,
       total_com_gap: data != null ? data.totalComGap : null,
       desatualizado: desatualizacao,
-    });
+    };
+    track('carteira.mixgap_visto', carga);
+    // Segundo canal, server-side e NÃO censurável por bloqueador de rastreador.
+    // Este card é o caso que originou o problema: a série de `mixgap_visto` era
+    // ilegível (#1900) e o cano do browser ficou ~38h mudo enquanto o app
+    // gravava em `dashboard_visits` — o zero era do CANAL. O `track()` acima
+    // continua, para não perder a série antiga; quem DECIDE a fase 2 é este.
+    // Fail-open lá dentro: nunca lança, nunca quebra o card.
+    void registrarNoLedger('carteira.mixgap_servido', chave, carga);
   }, [estado, desatualizacao, data]);
 
   if (semAcesso || leitura === 'desabilitada') return null;

@@ -1,0 +1,161 @@
+// analytics-outbox-drain — drena a `analytics_outbox` para o PostHog server-side.
+//
+// Por que server-side: a telemetria client-side é CENSURADA por bloqueadores
+// (PR #1984), e a censura correlaciona com perfil — quem bloqueia tende a usar
+// mais. O evento que fundamenta uma decisão de negócio não pode nascer num cano
+// que o navegador do usuário decide se entrega.
+//
+// Spec: docs/superpowers/specs/2026-08-25-analytics-outbox-design.md
+// A lógica PURA (payload, classificação, particionamento) vive em payload.ts,
+// com suíte Deno própria — aqui fica só a orquestração de I/O.
+//
+// ⚠️ O PostHog NÃO é fonte de autoridade nesta arquitetura, e isso é deliberado:
+// o token de captura é público (o mesmo tipo de chave roda no browser), então
+// qualquer pessoa pode empurrar um evento com qualquer nome para o projeto.
+// Quem decide continua sendo o Postgres — `pedido_compra_sugerido` e a
+// `analytics_outbox`. O PostHog é a superfície de LEITURA, não o registro.
+import { createClient } from "npm:@supabase/supabase-js@2";
+import { authorizeCronOrStaff } from "../_shared/auth.ts";
+import { comRegistro, type DbRegistro } from "../_shared/registro-execucao.ts";
+import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
+import {
+  classificarResposta,
+  type LinhaOutbox,
+  montarEvento,
+  particionar,
+  resumirErro,
+  TETO_EVENTOS_POR_LOTE,
+} from "./payload.ts";
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type, x-cron-secret",
+};
+
+const POSTHOG_HOST = Deno.env.get("POSTHOG_HOST") ?? "https://us.i.posthog.com";
+
+interface Resultado {
+  reivindicados: number;
+  aceitos: number;
+  transitorios: number;
+  quarentena: number;
+}
+
+Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+
+  const auth = await authorizeCronOrStaff(req);
+  if (!auth.ok) return auth.response;
+
+  const json = (corpo: unknown, status = 200) =>
+    new Response(JSON.stringify(corpo), {
+      status,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+
+  // ⚠️ Chave ausente é falha de CONFIGURAÇÃO e sai com status de erro. Degradar
+  // em silêncio aqui produziria exatamente a leitura envenenada que este
+  // trabalho existe para acabar: fila crescendo, cron verde, série vazia — e
+  // ninguém consegue distinguir "não houve fenômeno" de "o cano nunca abriu".
+  const ingestKey = Deno.env.get("POSTHOG_INGEST_KEY");
+  if (!ingestKey) {
+    console.error("[analytics-outbox-drain] POSTHOG_INGEST_KEY ausente — nada foi drenado");
+    return json({ erro: "POSTHOG_INGEST_KEY nao configurado" }, 500);
+  }
+
+  const db = createClient(
+    Deno.env.get("SUPABASE_URL")!,
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+  );
+
+  try {
+    const resultado = await comRegistro(
+      db as unknown as DbRegistro,
+      "analytics_outbox.drenar",
+      auth.via === "cron" ? { via: "cron" } : { via: "staff", userId: auth.userId },
+      () => drenar(db, ingestKey),
+      (r) => ({ ...r }),
+    );
+    return json(resultado);
+  } catch (e) {
+    // mensagemDeErro evita o "[object Object]" que esconde a causa no painel.
+    const msg = mensagemDeErro(e) ?? "(sem mensagem)";
+    console.error("[analytics-outbox-drain] falhou:", msg);
+    return json({ erro: msg }, 500);
+  }
+});
+
+// deno-lint-ignore no-explicit-any
+async function drenar(db: any, ingestKey: string): Promise<Resultado> {
+  // O claim é atômico e já aplica o backoff ANTES do HTTP (lease implícito):
+  // se este worker morrer no meio, a linha volta sozinha à fila em vez de ficar
+  // presa, e `FOR UPDATE SKIP LOCKED` impede que duas execuções sobrepostas do
+  // cron reivindiquem a mesma linha.
+  const { data, error } = await db.rpc("analytics_outbox_claim", {
+    p_limite: TETO_EVENTOS_POR_LOTE,
+  });
+  if (error) throw new Error(`claim: ${error.message}`);
+
+  const linhas = (data ?? []) as LinhaOutbox[];
+  const resultado: Resultado = {
+    reivindicados: linhas.length,
+    aceitos: 0,
+    transitorios: 0,
+    quarentena: 0,
+  };
+  if (linhas.length === 0) return resultado;
+
+  // Mantém o vínculo evento→linha para saber QUAIS ids marcar em cada desfecho.
+  const porUuid = new Map(linhas.map((l) => [l.event_id, l.id]));
+  const lotes = particionar(linhas.map(montarEvento));
+
+  for (const lote of lotes) {
+    const ids = lote.map((ev) => porUuid.get(ev.uuid)!).filter((id) => id !== undefined);
+    let status = 0;
+    let corpo = "";
+    try {
+      // ⚠️ NADA de `sent_at` na query string: o PostHog usa esse parâmetro para
+      // AJUSTAR o timestamp, e um timestamp ajustado quebra a dedup — o retry
+      // viraria evento novo e inflaria a contagem que ele deveria preservar.
+      const resp = await fetch(`${POSTHOG_HOST}/batch/`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ api_key: ingestKey, batch: lote }),
+      });
+      status = resp.status;
+      if (!resp.ok) corpo = (await resp.text()).slice(0, 200);
+    } catch (e) {
+      status = 0; // falha de rede antes de haver status
+      corpo = mensagemDeErro(e) ?? "falha de rede";
+    }
+
+    const desfecho = classificarResposta(status);
+    if (desfecho === "aceito") {
+      // "aceito" = ACEITE HTTP. O PostHog responde 200 e ainda assim descarta
+      // evento inválido — quem confere ingestão de verdade é a view
+      // `analytics_outbox_reconciliacao`, na origem.
+      const { error: e1 } = await db.rpc("analytics_outbox_aceitar", { p_ids: ids });
+      if (e1) throw new Error(`aceitar: ${e1.message}`);
+      resultado.aceitos += ids.length;
+    } else if (desfecho === "transitorio") {
+      // O backoff já foi aplicado no claim; aqui só fica o motivo.
+      await db.rpc("analytics_outbox_falhar", { p_ids: ids, p_erro: resumirErro(status, corpo) });
+      resultado.transitorios += ids.length;
+    } else {
+      // 400/401/403/413: insistir só queima quota e mantém dado pessoal parado
+      // na fila. Quarentena PARA de tentar, fica visível — e `purgar_em` já
+      // garante que ela também expira.
+      await db.rpc("analytics_outbox_quarentena", {
+        p_ids: ids,
+        p_erro: resumirErro(status, corpo),
+      });
+      resultado.quarentena += ids.length;
+      console.error(
+        `[analytics-outbox-drain] ${ids.length} evento(s) em quarentena — HTTP ${status}`,
+      );
+    }
+  }
+
+  return resultado;
+}

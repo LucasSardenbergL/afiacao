@@ -655,6 +655,48 @@ resultado vai fundamentar uma fase N+1 (ver [fase-sem-sinal.md](../historico/fas
 nasce com o espelho — senão a decisão herda a censura, e o par tabela × evento do `#1997` vira
 exceção em vez de desenho.
 
+### A outbox saiu do papel (2026-08-25) — e três coisas que a construção corrigiu no desenho
+
+Implementada em `20260825214545_analytics_outbox.sql` + edge `analytics-outbox-drain`. Conjunto
+mínimo: o ciclo de `pedido_compra_sugerido` (criada/aprovada/expirada/cancelada, por trigger) e
+`carteira.mixgap_servido` (por ledger). Spec:
+[`2026-08-25-analytics-outbox-design.md`](../superpowers/specs/2026-08-25-analytics-outbox-design.md).
+
+⚠️ **O fato de negócio óbvio estava MORTO.** "Pedido criado/aprovado/concluído" aponta para
+`public.orders`, que tem **zero linhas** na prod (total e 30 dias). Ancorar a outbox nela teria
+fabricado exatamente a *fase sem sinal* que o padrão existe para evitar — e nada no código diria
+isso: a tabela existe, tem RLS, tem tipos gerados. O fato vivo é `pedido_compra_sugerido`
+(44 aprovados × 84 expirados em 30 dias, e essa razão **é** a métrica do piloto de auto-aprovação).
+**Antes de instrumentar um fato, conte as linhas dele.**
+
+⚠️ **O PostHog NÃO deduplica por `$insert_id`.** A chave é `uuid` + `event` + `timestamp` +
+`distinct_id`, os quatro **top-level e idênticos** (posthog.com/docs/data/events). Três regras caem
+disso: o `uuid` vai fora de `properties`; o `timestamp` sai da linha **persistida**, nunca de `now()`
+no retry; e **nada de `sent_at`** na query string, que o PostHog usa para *ajustar* o timestamp.
+Errar isso não perde evento — **infla** a contagem, porque cada retry vira evento novo. Um retry que
+infla a métrica que decide compra é pior que um retry que perde.
+
+⚠️ **Espelhar identidade sem olhar a coluna é como se exporta PII sem querer.**
+`pedido_compra_sugerido.aprovado_por` é `text` e guarda **e-mail** (139/139 linhas), não uuid. E
+resolver e-mail→uuid é ambíguo: `profiles` tem **402 e-mails duplicados**. A saída foi não carregar
+pessoa nenhuma no caminho de domínio (`distinct_id = 'sistema:reposicao'`, `user_id NULL`) — o funil
+responde *quantos*, não *quem*, e *quem* já está na tabela. Minimização que sai do desenho, não de
+política. Só o ledger carrega titular, e ali o `auth.uid()` é uuid legítimo.
+
+**Retenção** (decidida no ritual Codex, contra a posição inicial): `purgar_em` é **NOT NULL** — 7
+dias após o aceite, teto de 30 dias desde a **criação** para pendente/retry (não desde a última
+tentativa, senão o retry renova o prazo para sempre), e a quarentena herda o mesmo teto. A posição
+"linha não enviada nunca é purgada" foi refutada: um payload inválido **nunca** vai atingir a
+finalidade, e retê-lo para sempre deixa guardada justamente a linha mais defeituosa. Nesta tabela
+não existe o estado "fica para sempre".
+
+**O fail-open do trigger só se sustenta com reconciliação.** Aprovar uma compra não pode falhar
+porque a telemetria caiu, então o `INSERT` tem `EXCEPTION WHEN OTHERS` — e isso deixa de ser outbox
+transacional *estrita*. O que impede virar a "sonda que degrada em silêncio" é a view
+`analytics_outbox_reconciliacao`, que compara a fonte com a outbox e **declara a confiança por
+linha**: `aprovada` é prova (`aprovado_em` é imutável), `expirada` é indicativa (usa `atualizado_em`,
+que qualquer UPDATE reescreve).
+
 ### Session Replay: DESLIGADO — e por que o config anterior mentia (2026-08-25)
 
 ⚠️ **`maskAllInputs` mascara CAMPO DE FORMULÁRIO, não o texto da TELA.** O `posthog.init()` trazia
