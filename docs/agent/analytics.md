@@ -418,18 +418,33 @@ app nunca roda no fecho real — é exatamente por isso que este caminho ficou o
 **não consegue reportar o próprio fracasso**.
 
 **O que isto implica para o desenho:** gravar no `pagehide` é uma aposta na boa vontade do browser, e
-ela não paga. As saídas que o repo consegue capturar com confiança são o **unmount** (navegação SPA,
-provado 3×) — fechar a aba continua perdendo a visita. Duas correções possíveis, e a escolha é de
-produto porque muda o significado do dado:
+ela não paga. As duas correções possíveis foram tentadas em sequência, e o desfecho é a lição:
 
-- **timer ao cruzar `MIN_SESSION_MS`** — grava assim que a sessão qualifica, independente de como o
-  usuário sai. Mais robusto; em troca, `session_minutes` na tabela vira o **limiar** (5), e a duração
-  real passa a existir só no evento do PostHog.
-- **`visibilitychange` → `hidden`** — dispara antes do unload, com a página ainda viva, então o fetch
-  normal entrega. Em troca, uma aba trocada e retomada conta como visita encerrada.
+- **timer ao cruzar `MIN_SESSION_MS`** (#1978, 2026-08-25) — gravava assim que a sessão qualificava,
+  independente de como o usuário saía. Resolveu a existência da linha e **custou a duração inteira**:
+  `session_minutes` virou o limiar. Medido na tabela no dia seguinte: **10 de 10** linhas pré-timer
+  tinham duração real (média 15,7min, máx 38), **0 de 5** pós-timer — todas exatamente `5`.
+- **`visibilitychange` → `hidden`** (#2027) — ficou. Dispara ANTES do unload, com a página viva, então
+  grava pelo client oficial e a duração sai real. Em troca, aba trocada e retomada conta como visita
+  encerrada: uma sessão retomada vira duas linhas, subestimando a duração — mas cada número gravado é
+  medido, não fabricado.
 
-Enquanto nenhuma das duas existir, leia `motivo='gravou'` com `via='pagehide'` como **tentativa**, não
-como visita registrada — e confira contra a tabela.
+⚠️ **O timer trocou o modo de falha, e o novo modo era invisível no eixo antigo.** Quem media "a linha
+existe?" via sucesso; a fabricação só aparece perguntando *quanto* a linha diz. Um corretivo precisa
+ser medido no eixo que ele SACRIFICA — aqui bastava um `GROUP BY` de uma linha, disponível no dia
+seguinte. É a mesma família do `Number(null)===0` do money-path: gravar `5` quando o que se sabe é
+"≥5" converte um piso em medição.
+
+⚠️ **E o teste não pegava porque adiantava o relógio sem adiantar os timers.** Os casos de `pagehide`
+mockavam só `Date.now()` (`+6min`) e deixavam o `setTimeout` parado — um mundo onde 6 minutos passaram
+e o timer dos 5 não disparou. Esse mundo não existe no browser: com os dois em sincronia, o timer
+gravava primeiro e **todo `pagehide` de sessão que qualificava chegava como `ja_gravado`**. Seis testes
+verdes descreviam um caminho inalcançável. Em teste com relógio mockado, **`Date.now()` e os timers têm
+de andar juntos** (`vi.advanceTimersByTimeAsync`) — senão o verde é do cenário, não do código.
+
+Leitura do sensor hoje: `via='oculta'` + `motivo='gravou'` é a gravação boa. `via='pagehide'` +
+`motivo='gravou'` significa aba morta sem passar por `hidden` — caiu na rede que **não entrega**, então
+conte como tentativa e confira na tabela. Se essa combinação virar rotina, o problema voltou.
 
 ⚠️ **Contar eventos da janela como "a ingestão está viva" soma DOIS canos.** O `posthog-js` preenche
 `properties.$lib`; uma captura por `curl` não — e só a decomposição separa os dois. Medido em

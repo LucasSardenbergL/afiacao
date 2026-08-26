@@ -53,10 +53,16 @@ interface PayloadVisita {
  * é SÓ leitura: react-query deduplica a query, mas escrita duplicada geraria 3
  * linhas por visita. Quem escreve é `useRegistrarVisitaDashboard`, 1 chamador só.
  *
- * `range(0, 0)` = linha MAIS recente. A visita atual só vira linha no fim da
- * sessão, então no mount a linha mais recente já é a anterior. (O `range(1, 1)`
- * original vinha do spec, que assumia escrita no mount — off-by-one: devolvia a
- * penúltima visita.)
+ * `range(0, 0)` = linha MAIS recente. A visita atual só vira linha quando a
+ * sessão TERMINA, então no mount a linha mais recente já é a anterior. (O
+ * `range(1, 1)` original vinha do spec, que assumia escrita no mount —
+ * off-by-one: devolvia a penúltima visita.)
+ *
+ * "Terminar" inclui ocultar a aba: quem volta depois de trocar de aba começa
+ * uma visita NOVA, e é por isso que a leitura segue correta. Já um F5 durante a
+ * sessão relê a linha que a própria sessão acabou de gravar — o delta então
+ * mede o trecho, não o intervalo entre visitas. É o preço de não depender do
+ * unload, e some no caso comum (F5 antes dos 5min não grava nada).
  */
 export function useLastVisit(): UseLastVisitReturn {
   const { user } = useAuth();
@@ -97,11 +103,18 @@ export function useLastVisit(): UseLastVisitReturn {
 }
 
 /**
- * Emissão que sobrevive à morte do documento.
+ * REDE do `pagehide` — best-effort, para a aba que morre sem passar por
+ * `hidden`.
  *
- * `keepalive: true` é o ponto todo: sem ele o browser cancela a request em voo
- * quando a aba fecha. `sendBeacon` não serve — não deixa mandar os headers de
- * auth que o PostgREST exige.
+ * `keepalive: true` impede o browser de cancelar a request em voo, e ainda
+ * assim ela NÃO chega: medido em produção (2026-08-25), o mesmo POST devolve
+ * 201 em 636ms com a página viva e nada no fecho real.
+ *
+ * Trocar por `sendBeacon` não salva: ele não manda os headers de auth que o
+ * PostgREST exige, e tirar a auth do header custaria uma edge com
+ * `verify_jwt = false` — endpoint público validando JWT à mão — para cobrir o
+ * caso que `visibilitychange` já pega com a página viva. Por isso a gravação
+ * saiu daqui: este caminho é o último recurso, não o plano.
  */
 function emitirComKeepalive(payload: PayloadVisita, token: string): void {
   const url = `${import.meta.env.VITE_SUPABASE_URL}/rest/v1/dashboard_visits`;
@@ -133,20 +146,26 @@ function emitirComKeepalive(payload: PayloadVisita, token: string): void {
 /**
  * ESCRITA da visita — chamar UMA vez por dashboard (DashboardBody).
  *
- * Uma visita termina de dois jeitos e SÓ UM deles passa pelo React:
- *  - navegação in-app → unmount → cleanup do effect → client do supabase;
- *  - fechar a aba / recarregar / sair do site → o cleanup NUNCA roda. A única
- *    chance é `pagehide` (mais confiável que `beforeunload`, e o único que o
- *    Safari/iOS honra), com `fetch keepalive`.
+ * Uma visita termina de três jeitos, e o truque é que só UM precisa sobreviver
+ * ao unload — justamente o que nenhum transporte consegue:
+ *  - `oculta` (`visibilitychange` → `hidden`) → PRINCIPAL. Dispara com a página
+ *    ainda VIVA, então grava pelo client do supabase, com duração real. Cobre
+ *    fechar a aba, recarregar, trocar de aba, minimizar e o switch de app no
+ *    mobile — que é como as sessões de verdade terminam;
+ *  - `unmount` (navegação in-app) → cleanup do effect → client do supabase;
+ *  - `pagehide` → REDE, para a aba que morre sem passar por `hidden`. Usa
+ *    `fetch keepalive` e é best-effort: medido em produção, não entrega.
  *
  * Grava no máximo uma vez por montagem (`gravadoRef`), e só se a sessão durou
- * ≥5min — o mesmo guard anti-F5 vale nos DOIS caminhos.
+ * ≥5min — o mesmo guard anti-F5 vale nos TRÊS caminhos.
  *
  * `dashboard.visita_tentativa` sai em TODA execução, antes de qualquer
  * desistência, com `motivo` — sem isso "não gravou" e "não tentou" viram o
  * mesmo sintoma (tabela vazia). O campo `via` diz por qual caminho a visita
- * terminou: a saída por fecho de aba, que antes só dava para inferir por
- * `viewed − visita_tentativa`, agora é MEDIDA direto (`via='pagehide'`).
+ * terminou — e é ele que mostra o desenho funcionando: `via='oculta'` com
+ * `motivo='gravou'` é a gravação boa; `via='pagehide'` com `motivo='gravou'`
+ * significa que a aba morreu SEM passar por `hidden` e caiu na rede que não
+ * entrega. Se essa segunda combinação virar rotina, o problema voltou.
  */
 export function useRegistrarVisitaDashboard(contexto: RegistroVisitaContexto): void {
   const { user, session } = useAuth();
@@ -165,7 +184,9 @@ export function useRegistrarVisitaDashboard(contexto: RegistroVisitaContexto): v
       if (duracao < MIN_SESSION_MS) return 'sessao_curta';
       // O fetch cru do pagehide NÃO passa pelo client embrulhado pelo
       // write-guard da lente "ver como" — o gate tem que ser aqui, na fonte.
-      if (viaFechoDeAba && isLensActive()) return 'lente_ativa';
+      // Vale para TODA via: o client barra as outras, mas depender de uma única
+      // camada é justamente o que deixa a lente furar o guard.
+      if (isLensActive()) return 'lente_ativa';
       if (!user?.id) return 'sem_usuario';
       // Sem token não dá para autenticar o fetch cru. Não queima a chance: se
       // ainda houver unmount, ele grava pelo client.
@@ -173,7 +194,7 @@ export function useRegistrarVisitaDashboard(contexto: RegistroVisitaContexto): v
       return 'gravou';
     };
 
-    const gravar = (via: 'unmount' | 'pagehide' | 'timer') => {
+    const gravar = (via: 'unmount' | 'pagehide' | 'oculta') => {
       if (typeof window === 'undefined') return;
 
       const viaFechoDeAba = via === 'pagehide';
@@ -229,19 +250,32 @@ export function useRegistrarVisitaDashboard(contexto: RegistroVisitaContexto): v
         });
     };
 
-    // Grava assim que a sessão QUALIFICA, sem esperar a saída. Medido em produção
-    // (2026-08-25): o `fetch` com `keepalive:true` do `pagehide` não sobrevive ao
-    // unload — mesmo caminho e mesmo token devolvem 201 com a página VIVA e nada
-    // quando a aba fecha de verdade. Enquanto a gravação dependesse de COMO o
-    // usuário sai, fechar a aba perdia a visita. `unmount`/`pagehide` continuam
-    // como rede de segurança e caem em `ja_gravado` quando o timer chegou antes.
-    const restante = Math.max(0, MIN_SESSION_MS - (Date.now() - mountedAtRef.current));
-    const timer = window.setTimeout(() => gravar('timer'), restante);
+    // `visibilitychange` → `hidden` é a ÚLTIMA callback que o browser entrega
+    // com a página AINDA VIVA (Page Lifecycle API). Por isso ela grava pelo
+    // client oficial, o mesmo caminho provado no unmount: o documento existe, a
+    // request completa normalmente, e `session_minutes` sai REAL.
+    //
+    // É o que o `pagehide` não consegue ser. Medido em produção (2026-08-25): o
+    // MESMO POST devolve 201 em 636ms com a página viva e NADA quando a aba
+    // fecha — o transporte não sobrevive ao unload. E a correção anterior
+    // (#1978, timer aos 5min) resolvia a existência da linha ao custo de
+    // congelar toda duração em 5: 10 de 10 sessões pré-timer tinham duração
+    // real (média 15,7min, máx 38); 5 de 5 pós-timer marcaram exatamente 5.
+    //
+    // Trade-off ACEITO: trocar de aba e voltar encerra a visita. Uma sessão
+    // retomada vira duas linhas — subestima a duração, mas cada número gravado
+    // é medido, não fabricado.
+    const aoOcultar = () => {
+      if (document.visibilityState === 'hidden') gravar('oculta');
+    };
+    document.addEventListener('visibilitychange', aoOcultar);
 
+    // Rede: cobre a aba que morre sem passar por `hidden`. Best-effort — o
+    // keepalive não sobrevive ao unload, mas custa nada e não tem alternativa.
     const aoEsconderPagina = () => gravar('pagehide');
     window.addEventListener('pagehide', aoEsconderPagina);
     return () => {
-      window.clearTimeout(timer);
+      document.removeEventListener('visibilitychange', aoOcultar);
       window.removeEventListener('pagehide', aoEsconderPagina);
       gravar('unmount');
     };
