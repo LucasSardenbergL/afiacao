@@ -615,6 +615,47 @@ describe('useRegistrarVisitaDashboard — fecho de aba (pagehide)', () => {
 
     expect(fetchSpy).not.toHaveBeenCalled();
   });
+
+  /**
+   * ALCANÇABILIDADE do keepalive, com relógio e timers andando JUNTOS.
+   *
+   * Os testes acima deste adiantam só `Date.now()` e deixam o `setTimeout`
+   * parado — um mundo onde 6min se passaram e o timer dos 5min não disparou.
+   * Esse mundo não existe no browser. Com os dois em sincronia, o timer do
+   * #1978 grava aos 5min pelo client oficial e marca `gravadoRef`; logo, todo
+   * `pagehide` de sessão que QUALIFICA (>=5min) chega como `ja_gravado`, e
+   * abaixo de 5min para em `sessao_curta`. Não sobra faixa para
+   * `emitirComKeepalive`: o transporte frágil virou código inalcançável.
+   *
+   * Se algum dia o timer sair, ESTE teste fica vermelho — é o sentinela de que
+   * o caminho de fecho de aba voltou a carregar a gravação.
+   */
+  it('keepalive é INALCANÇÁVEL com timers e relógio em sincronia: o timer grava antes', async () => {
+    autenticar('user-alcance');
+    const { builder, emitidos } = criarInsertPreguicoso();
+    mockedFrom.mockReturnValue(builder as unknown as ReturnType<typeof supabase.from>);
+    const fetchSpy = vi.fn().mockResolvedValue({ ok: true, status: 201 });
+    vi.stubGlobal('fetch', fetchSpy);
+
+    vi.useFakeTimers();
+    const agora = Date.now();
+    const relogio = vi.spyOn(Date, 'now').mockReturnValue(agora);
+    renderHook(() => useRegistrarVisitaDashboard(contexto), { wrapper });
+
+    relogio.mockReturnValue(agora + 6 * 60_000);
+    await vi.advanceTimersByTimeAsync(6 * 60_000);
+
+    window.dispatchEvent(new Event('pagehide'));
+    relogio.mockRestore();
+    vi.useRealTimers();
+
+    expect(emitidos).toHaveLength(1);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(mockedTrack).toHaveBeenCalledWith(
+      'dashboard.visita_tentativa',
+      expect.objectContaining({ via: 'pagehide', motivo: 'ja_gravado' })
+    );
+  });
 });
 
 describe('useLastVisit — sinal de que a leitura resolveu', () => {
