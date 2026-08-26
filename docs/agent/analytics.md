@@ -198,8 +198,52 @@ SELECT properties.$os AS so, properties.$browser AS nav,
 FROM events WHERE properties.$lib='web' GROUP BY so, nav ORDER BY ultimo DESC
 ```
 
-Teste de 1 linha para saber se um aparelho bloqueia — abrir `https://us.i.posthog.com/i/v0/e/` no
-navegador dele: **HTTP 400 `request missing data payload`** = livre; erro de conexão = bloqueado.
+⚠️ **O teste de 1 linha que estava aqui era FALSO NEGATIVO — não o use.** Ele mandava abrir
+`https://us.i.posthog.com/i/v0/e/` na barra do navegador e ler o `HTTP 400 request missing data
+payload` como "livre". Medido em 2026-08-26 no Chrome 152 do founder — o aparelho cujo bloqueio o
+`#1984` provou — a navegação top-level **passa** (`request missing data payload`) enquanto o `fetch`
+de dentro de `steu.lovable.app` **falha** (`TypeError: Failed to fetch`, 351 ms e **5 ms** na 2ª),
+com o Supabase respondendo `401` na mesma página e no mesmo minuto. Bloqueador casa por **tipo de
+request e por parte** (`xmlhttprequest`, `third-party`); digitar a URL é navegação **first-party**,
+a classe que a lista não bloqueia.
+
+**O teste que serve** roda com a página do app aberta, no console do aparelho:
+
+```js
+const t = performance.now();
+fetch('https://us.i.posthog.com/i/v0/e/', { method: 'POST', body: '' })
+  .then(r => r.text().then(b => `LIVRE ${r.status} em ${Math.round(performance.now()-t)}ms — ${b}`))
+  .catch(e => `BLOQUEADO ${e} em ${Math.round(performance.now()-t)}ms`)
+  .then(console.log);
+```
+
+E ele dá de graça o diagnóstico da CAMADA: navegação passando + XHR falhando é **extensão de
+bloqueio** (casa por tipo de request). DNS, `/etc/hosts` e firewall derrubariam as duas.
+
+### ⚠️ O aparelho bloqueado é INVISÍVEL no PostHog — a lista de quem liberar não sai daqui (2026-08-26)
+
+O breakdown acima lista **quem já emitiu**. Um aparelho censurado desde o primeiro dia não tem
+linha nenhuma: ele não aparece com zero, ele **não aparece**. Levantar "quais aparelhos precisam de
+allowlist" pelo PostHog é perguntar à amostra censurada quem ela censurou.
+
+Medido: o `$device_id` que vive no `localStorage` do Chrome do founder **agora** é
+`019e6c3b-71b8-77c2-b110-6c1edef31a0f`, e ele tem `count() = 0` **em toda a história do projeto** —
+o SDK subiu, cunhou identidade, persistiu, e nenhum evento chegou. Os três `Mac OS X / Chrome` que
+o breakdown mostra (`019f1f92` 01/07, `019e7fcc` 31/05, `019e2ec9` 16/05) são **outros** perfis, e
+lê-los como "o Mac emite às vezes" é confundir aparelho com identidade de armazenamento.
+
+**A via correta é do lado do cliente, e é uma linha no console do aparelho:**
+
+```js
+JSON.parse(localStorage[Object.keys(localStorage).find(k => k.startsWith('ph_'))]).$device_id
+```
+
+Esse id, com `count() = 0` no PostHog, é a prova de censura mais limpa que existe — e é também a
+**marca pré-registrada** da prova de que a liberação funcionou: qualquer linha desse `$device_id`
+depois da mudança fecha o caso, sem depender de "eu liberei".
+
+⚠️ E `count() = 0` só vale com **exit 0**: o `504` do wrapper (exit 73) é ausência de dado. Query
+com subconsulta neste eixo estoura o tempo — rode uma pergunta por vez.
 
 ### ⚠️ Escopo `No access` não cega o HogQL — logo um `0` dele precisa de PAR (2026-08-25)
 
