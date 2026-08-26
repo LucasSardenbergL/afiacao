@@ -8,6 +8,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { avaliarPagina, proximoTotalPaginas } from "../_shared/omie-paginacao.ts";
 import { cabeEspera, timeoutRequestMs } from "../_shared/omie-deadline.ts";
+import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 
 // ─── Type definitions ───
 
@@ -257,7 +258,10 @@ async function omieCall(
       console.error(`omieCall network error attempt ${attempt + 1}:`, err);
       const wait = 1000 * (attempt + 1);
       if (!cabeEspera(Date.now(), deadline, wait)) {
-        return { ok: false, status: 0, error: `erro de rede sem tempo de retry antes do deadline do run: ${String(err)}` };
+        // mensagemDeErro, não String(err): o erro do supabase-js é objeto PLANO e String() nele
+        // rende "[object Object]" — o motivo vai para log e para o resumo do run (gate #1642).
+        const detalhe = mensagemDeErro(err) ?? "erro de rede sem mensagem";
+        return { ok: false, status: 0, error: `erro de rede sem tempo de retry antes do deadline do run: ${detalhe}` };
       }
       await sleep(wait);
     }

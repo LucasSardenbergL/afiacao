@@ -831,6 +831,17 @@ Deno.serve(async (req) => {
         continue;
       }
 
+      // Deadline ANTES do sleep de cadência (5s), e não só a cada 5 NFes como o guard do topo.
+      // Dois motivos, e o segundo é money-path: (a) dormir 5s para o callOmie recusar em seguida
+      // gasta 10% do run à toa; (b) a NFe cairia no catch abaixo e ganharia `marcarTentativa` —
+      // backoff de 6h/24h/72h — por um limite do RUN, não por falha DELA. Tentativa só se conta
+      // quando a chamada de fato saiu para o Omie; abort de request aberto continua caindo no
+      // catch e marcando, que é o certo.
+      if (!cabeEspera(Date.now(), deadline, RATE_LIMIT_DELAY_MS)) {
+        summary.interrompido_por_timeout = true;
+        break;
+      }
+
       let detalhe: OmieConsultarRecebimentoResponse;
       try {
         await sleep(RATE_LIMIT_DELAY_MS);

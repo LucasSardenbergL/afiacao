@@ -949,11 +949,18 @@ serve(async (req) => {
    * é uma janela, e janela erra para os dois lados — a diferença é que aqui errar para MENOS não
    * deixa rastro: o gate simplesmente não olha, e a ausência de acusação parece aprovação.
    *
-   * Os 11 abaixo são os que ficam entre 260 e 1000 — perto o bastante do corte para merecerem
+   * Os 10 abaixo são os que ficam entre 260 e 1000 — perto o bastante do corte para merecerem
    * leitura. Foram lidos: são `RESEND_URL`, `${SUPABASE_URL}/rest/v1/…`, `api.resend.com` e a
    * API da Receita, todos dentro de arquivos cujo NOME ou vizinhança menciona Omie. Nenhum é
-   * chamada ao Omie, e alargar o corte para 1000 só traria 11 falsos positivos. O corte de 260
+   * chamada ao Omie, e alargar o corte para 1000 só traria 10 falsos positivos. O corte de 260
    * está certo; este teste é que vigia a próxima linha que cair nessa faixa.
+   *
+   * 2026-08-25 — a lista encolheu de 11 para 10: o `user_roles` de `omie-sync-vendas-items` saiu
+   * da faixa ao ganhar o deadline do run (PR dos 5 steps do `omie-cron-diario`), porque a linha
+   * nova empurrou a menção a "omie" para além dos 1000 chars. Foi LIDO: é chamada ao Supabase no
+   * gate de staff, não ao Omie — sair do radar do G6 não esconde chamada nenhuma ao ERP. Note o
+   * mecanismo, que vale para a próxima vez: **inserir código move fetch entre as faixas**, e a
+   * direção que importa é a que tira da vigilância sem ninguém ler.
    */
   const G6_VIZINHOS: ReadonlyMap<string, number> = new Map([
     ['supabase/functions/disparar-pedidos-aprovados/index.ts', 4],
@@ -963,7 +970,6 @@ serve(async (req) => {
     ['supabase/functions/omie-nfe-recebimento/index.ts', 1],
     ['supabase/functions/omie-nfe-reconcile/index.ts', 1],
     ['supabase/functions/omie-sync/index.ts', 1],
-    ['supabase/functions/omie-sync-vendas-items/index.ts', 1],
   ]);
 
   it('DENOMINADOR/G6: a vizinhança do corte de 260 não cresce sem alguém ler', () => {
