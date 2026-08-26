@@ -22,6 +22,7 @@
     "authz:grants:prod": "bun db/audit-grants-tabelas-fechadas.ts",
     "authz:funcoes:prod": "bun db/audit-grants-funcoes-fechadas.ts",
     "authz:audit:prod": "bun db/audit-authz-reescritas-prod.ts",
+    "authz:claude-ro:prod": "bun db/audit-claude-ro-hardening.ts",
     "bunpin:check": "bun scripts/bun-pin-gate-check.ts",
     "docs:citacoes": "bun scripts/docs-citacoes-gate-check.ts",
     "docs:indice": "bun scripts/docs-indice-gate-check.ts",

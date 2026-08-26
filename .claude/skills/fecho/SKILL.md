@@ -118,6 +118,26 @@ Pra cada migration da sessão, **prove no banco** (leitura direta — não pergu
 - Não existe → ❌ **PENDENTE: colar no SQL Editor do Lovable** — reentregue o bloco de handoff
   (skill `lovable-db-operator`) na mensagem de fecho.
 
+### Passo 2b — A sentinela do `claude_ro` (rápido, e é o único vigia que ele tem)
+
+```bash
+bun run authz:claude-ro:prod; echo "exit=$?"
+```
+
+O endurecimento do papel de leitura (2026-08-25) é **estado colado à mão**: não existe migration
+que o defenda, e não pode existir. Ninguém mais olha para ele — nem o CI (não tem `psql-ro`), nem o
+Sentinela de cron. Este passo é a vigília inteira.
+
+- `exit=0` → ✅ segue de pé, siga.
+- `exit=1` → ❌ **regrediu ou drifou.** O relatório nomeia a asserção. Se a divergência for só no
+  ACL do schema `net` **e** a linha `versão do pg_net` também divergir, a causa é um upgrade da
+  extensão feito pelo Supabase — reavalie o novo ACL e atualize o baseline em
+  `db/audit-claude-ro-hardening.ts`; **não** afrouxe a comparação.
+- `exit=2` → ⚠️ **não consegui medir** (psql-ro fora, sem rede, credencial revogada). Isso é
+  ausência de dado, não aprovação — **não feche a sessão anotando "ok"**. Diga que não mediu.
+
+Contexto: `docs/agent/database.md` §1 · `docs/historico/revoke-que-nao-revoga.md`.
+
 ### Passo 3 — Edges
 
 ```bash

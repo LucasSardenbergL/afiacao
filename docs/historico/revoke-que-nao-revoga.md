@@ -409,6 +409,53 @@ verificação** (CTE que reporta antes/depois), e a confirmação tem de ser um 
 
 ---
 
+## A sentinela — 2026-08-25, mesmo dia
+
+Tudo que este arquivo narra é **estado colado à mão**. Não há migration que o defenda, e não pode
+haver: um `ALTER ROLE claude_ro` em `supabase/migrations/` quebraria qualquer ambiente reconstruído
+do zero (item 5 da Decisão). Estado que nenhum artefato versionado defende regride em silêncio —
+outro bloco manual, um `GRANT` de rotina, um upgrade de extensão que o Supabase faz sem avisar.
+
+`bun run authz:claude-ro:prod` (`db/audit-claude-ro-hardening.ts`) é o artefato que faltava: 25
+asserções contra a PROD, exit `0`/`1`/`2`. Dente em `db/test-audit-claude-ro-hardening.sh` — PG17
+descartável com a topologia medida, 19 cenários, o binário REAL rodando com `PSQL_RO` redirecionado.
+
+**Quatro decisões de projeto vieram direto dos erros narrados acima:**
+
+1. **O GUC é lido da UNIÃO de `rolconfig` + `pg_db_role_setting`.** É a armadilha da seção
+   Pós-apply: o bloco usou `IN DATABASE`, `rolconfig` ficou `NULL`, e conferir só ele dá
+   falso-vermelho. O dente prova os dois caminhos — move o GUC de fonte e exige que o veredito
+   **não** mude.
+2. **A cobertura de `public` é "0 objetos sem SELECT", não "413".** O `413` é 332 tabelas + 79
+   views + 2 matviews, e o denominador cresce a cada migration. Congelar o total faria a sentinela
+   ficar vermelha na próxima tabela criada, e sentinela que grita à toa é desligada. O `0` é
+   invariante ao crescimento e ainda pega a regressão real: o `ALTER DEFAULT PRIVILEGES` só vale
+   para o que o `postgres` cria, então tabela nascida de outro dono nasce invisível.
+3. **Sonda executiva, porque catálogo não prova alcance.** `has_table_privilege` não conta o USAGE
+   do schema — foi exatamente assim que o `GRANT` de 7 colunas em `auth.refresh_tokens` pousou e
+   ficou inerte. A sentinela **roda** `SELECT` em `auth.refresh_tokens` e em
+   `vault.decrypted_secrets` e exige que falhem. O veredito casa a **SQLSTATE `42501`**, não o
+   texto: `lc_messages` do servidor pode mudar e "permission denied" viraria "permissão negada",
+   quebrando uma asserção que não tem nada a ver com privilégio.
+4. **Objeto AUSENTE é divergência, não "negado com sucesso".** `has_schema_privilege` erra com
+   `3F000` em schema inexistente; um objeto que sumiu lido como negado seria o falso-verde
+   perfeito — a sentinela comemorando por ter perdido o que vigiava.
+
+**E uma lição nova, que só apareceu ao escrever o dente:** um `GRANT` explícito a PUBLIC **não**
+restaura `proacl IS NULL`. Depois de `REVOKE … FROM PUBLIC` + `GRANT … TO PUBLIC`, o catálogo passa
+a registrar nominalmente o que antes era ACL *default*, e o fingerprint acusa — corretamente. "É o
+default" e "foi concedido a PUBLIC" conferem o mesmo privilégio hoje e são **estados diferentes**:
+o primeiro muda sozinho num upgrade da extensão, o segundo não. Só o `DROP`+`CREATE` da função
+devolve o `NULL`. Quem for reverter um fecho no `net` algum dia precisa saber disso, senão vai
+achar que a sentinela está com defeito.
+
+⚠️ **O baseline tem VALIDADE, como toda evidência de banco (§2 do `database.md`).** Um upgrade
+legítimo do pg_net vai fazer o fingerprint divergir — é o comportamento desejado, e a linha
+`versão do pg_net` no relatório existe para dizer na hora que a causa foi o upgrade. A resposta
+certa é **reavaliar o novo ACL e atualizar o baseline**, nunca afrouxar a comparação.
+
+---
+
 ## Encaminhado ao suporte — 2026-08-26
 
 O fecho depende de `supabase_admin`, que o Supabase gerenciado não expõe ⇒ o único caminho é o suporte.
@@ -420,7 +467,9 @@ Achado 1 numa terceira ponta). Canal do Lovable, verificado em `lovable.dev/supp
 O pedido carrega as 4 perguntas que o registro deixou em aberto, uma delas a que mais importa a longo
 prazo: **como impedir que um upgrade do pg_net restaure as ACLs públicas.** Enquanto não houver resposta,
 qualquer fecho aqui é **regressível** — o sentinela é reconferir `proacl`/`relacl` após todo bump da
-extensão.
+extensão. **Esse vigia existe desde a véspera e é automático:** `bun run authz:claude-ro:prod` compara o
+ACL inteiro do schema `net` com o baseline e acusa mudança em qualquer direção, com `extversion` como
+asserção ao lado — ver a seção anterior.
 
 ⚠️ **Só há resposta positiva quando o suporte colar a saída da query.** O "aplicamos, está resolvido" de um
 ticket é exatamente o mesmo *Success* que este arquivo inteiro existe para desqualificar — com o agravante
