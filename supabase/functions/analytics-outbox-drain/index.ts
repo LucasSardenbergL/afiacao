@@ -42,6 +42,16 @@ interface Resultado {
   quarentena: number;
 }
 
+/** Estrutural mínimo do client (service_role) — só o que este worker usa.
+ *  Mesmo padrão do `DbRegistro` de `_shared/registro-execucao.ts`: evita `any`
+ *  (que o ESLint do repo barra) sem arrastar o tipo inteiro do supabase-js. */
+interface DbRpc {
+  rpc(
+    fn: string,
+    params: Record<string, unknown>,
+  ): Promise<{ data: unknown; error: { message: string } | null }>;
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
@@ -74,7 +84,7 @@ Deno.serve(async (req) => {
       db as unknown as DbRegistro,
       "analytics_outbox.drenar",
       auth.via === "cron" ? { via: "cron" } : { via: "staff", userId: auth.userId },
-      () => drenar(db, ingestKey),
+      () => drenar(db as unknown as DbRpc, ingestKey),
       (r) => ({ ...r }),
     );
     return json(resultado);
@@ -86,8 +96,7 @@ Deno.serve(async (req) => {
   }
 });
 
-// deno-lint-ignore no-explicit-any
-async function drenar(db: any, ingestKey: string): Promise<Resultado> {
+async function drenar(db: DbRpc, ingestKey: string): Promise<Resultado> {
   // O claim é atômico e já aplica o backoff ANTES do HTTP (lease implícito):
   // se este worker morrer no meio, a linha volta sozinha à fila em vez de ficar
   // presa, e `FOR UPDATE SKIP LOCKED` impede que duas execuções sobrepostas do
