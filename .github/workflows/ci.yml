@@ -363,11 +363,14 @@ jobs:
       # O custo de blast-radius que um gate compartilhado costuma ter está INVERTIDO aqui: estes
       # evals não leem `src/`, `package.json`, `node_modules` (usam cwd neutro de propósito) nem a
       # rede, então PR de produto não consegue deixá-los vermelhos — só PR que toca a própria
-      # skill, que é exatamente quando devem barrar. Custo: NÃO estimado daqui de propósito — o
-      # mesmo comando mediu de 6s a 70s nesta M2 conforme a carga (~30 worktrees), e o `bun run`
-      # não é o culpado (bash direto deu 70s no mesmo instante em que o `bun run` deu 45s). O
-      # #1947 já ensinou que medição local não projeta runner: o número que vale é o do primeiro
-      # run no Actions. Se um dia apertar o timeout de 15min, o corte é a fixture, não a cobertura.
+      # skill, que é exatamente quando devem barrar. Custo REAL no runner, medido no primeiro run
+      # depois do #2041 (run 32983531687): 2s + 2s, contra `validate` em 570s — 0,7% do job.
+      # A medição LOCAL não previa isso e não devia mesmo (lição do #1947): nesta M2 o mesmo
+      # comando variou de 6s a 70s conforme a carga (~30 worktrees), e o `bun run` não era o
+      # culpado (bash direto deu 70s no instante em que o `bun run` deu 45s). O erro de projetar
+      # daqui é de UMA ORDEM DE GRANDEZA, e para o lado caro — quem estimar custo de CI pela M2
+      # vai recusar gate barato. Se um dia apertar o timeout de 15min do job, o corte certo é a
+      # fixture, não a cobertura.
       - name: Falsificação — sabota a skill e EXIGE vermelho em cada eval
         run: bun run evals:deploy-verify:falsificacao
 
