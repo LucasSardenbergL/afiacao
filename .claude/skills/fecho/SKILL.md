@@ -32,6 +32,8 @@ veredito, para nada ficar dependendo da memória dele:
 2. **Abrir CHIP (`spawn_task`)** — para tudo que merece sessão própria: prompt AUTO-CONTIDO
    (a sessão nova não vê esta conversa) + anunciar o **título exato** no chat. Vale também
    para os "opcionais": se valem a pena, viram chip; o founder decide clicando, não lembrando.
+   ⚠️ Chip é destino **perecível** — vale só até a sessão ser arquivada. Ver passo 6: se não for
+   clicado no fecho, o prompt também vai para um lugar durável.
 3. **Descartar COM o porquê** — dito explicitamente no veredito ("não vale porque X").
    Exceção: pendência que depende de decisão/etapa futura (ex.: fase 5 que espera a 3) fica
    registrada em doc/plano com o gatilho de quando virar chip — e isso é dito no veredito.
@@ -199,11 +201,31 @@ sleep 60 && gh run list --branch main --workflow CI --limit 1 --json databaseId,
 - Não deu tempo de esperar → entregue o link do run na mensagem de fecho como pendência com
   destino (o `schedule` diário das 09:17 UTC pega de qualquer forma, mas só no dia seguinte).
 
-### Passo 6 — Chips (spawn_task)
+### Passo 6 — Chips (spawn_task): criado ≠ CLICADO
 
 Liste TODO chip criado nesta sessão com o **título exato** e 1 linha do que faz — o founder é
 quem clica, e chip sem rastreio já gerou confusão ("não consegui identificar qual é este chip").
 Se um chip ficou obsoleto pelo próprio trabalho da sessão, diga explicitamente que pode ignorar.
+
+⚠️ **E aqui o passo GATEIA o veredito.** Criar o chip não entrega a pendência: o chip é um convite
+que só vira trabalho quando o founder CLICA. Havendo chip não clicado, o veredito **não** é "pode
+arquivar" — é "**clique os chips e então arquive**", com a lista na frente dele.
+
+**O clique não é verificável por sonda, e não tente.** O único caminho seria o `dismiss_task`, que
+até responde se o founder já agiu — mas RETIRA o chip quando ele ainda não agiu. Sonda que destrói
+o que mede não é sonda. Pergunte ao founder, ou liste e deixe o gate explícito.
+
+⚠️ **Chip não clicado é destino PERECÍVEL — e isso colide com o princípio desta skill.** O chip
+mora dentro da sessão que o criou, o `/tasks` é por-sessão e não há fila global. Arquivada a sessão
+antes do clique — pelo founder ou pelo auto-archive —, não há caminho conhecido de volta até aquele
+chip. Levantado em 2026-08-26: **não está documentado** se o chip sobrevive ao arquivamento (o
+`spawn_task` é MCP local, sem doc pública; em disco, `~/.claude/tasks/` guarda TodoWrite, não chip).
+Ausência de dado não é "sobrevive" — num ritual que termina em arquivamento, isso é **fail-CLOSED**.
+
+**A regra:** chip que não for clicado durante o fecho tem o prompt copiado para um lugar DURÁVEL
+antes do veredito — corpo do PR da sessão, `docs/historico/`, ou issue. O chip vira o atalho; o
+texto durável vira o destino. "Pendência sem destino não existe" vale **também** quando o destino
+é perecível.
 
 ### Passo 7 — Resumo de fecho (formato padrão)
 
@@ -238,25 +260,39 @@ Sugerir a limpeza manual em cima disso é redundante e faz o founder trabalhar �
 ✅ Main: CI completo verde (run <id>, disparado agora)
 Pendências (TODAS com destino — nenhuma "na memória"):
   ✔ <pendência resolvida agora, com a evidência>
-  🔘 chip "<título exato>" (faz X — clique quando quiser)
+  🔘 chip "<título exato>" (faz X — CLIQUE ANTES de arquivar; prompt salvo em <lugar durável>)
   🚫 <pendência descartada> — porquê em 1 linha
   📌 <pendência futura> — registrada em <doc/plano>, vira chip quando <gatilho>
 
-Veredito: PODE ARQUIVAR a sessão. / AINDA NÃO — falta (1)…
+Veredito: PODE ARQUIVAR a sessão. / CLIQUE OS CHIPS e então arquive. /
+         AINDA NÃO — falta (1)…
 ```
 
 **Diga "pode ARQUIVAR", não "pode excluir".** Arquivar para o processo, limpa o worktree
 (mesma RAM e mesmo disco que excluir) e ainda deixa a sessão reabrível — não há motivo para
 recomendar a via destrutiva.
 
-⚠️ **A menção ao "Auto-archive on PR close" é CONDICIONAL — e o passo 1 já mediu a condição.**
-Só mencione, uma vez, se a sessão fechou com **exatamente UM PR**: é o único formato em que
-"PR fechado" e "entrega concluída" coincidem. O gatilho do setting é o **PR**; a unidade deste
-ritual é a **ENTREGA**. Em sessão de arco longo — 2+ PRs, ou 1 mergeado com o próximo ainda por
-abrir — os dois divergem, e recomendar o toggle ali é sugerir que a sessão morra no meio do
-trabalho. Ao mencionar, diga o gatilho em voz alta ("fecha por PR, não por entrega") e **não**
-afirme o que ele faz com N PRs: esta skill não verificou, e "resolve estruturalmente" é uma
-garantia que ela não tem como dar.
+⚠️ **A menção ao auto-archive é CONDICIONAL — e os passos 1 e 6 já mediram as condições.**
+O nome exato é **"Auto-archive after PR merge or close"** e ele mora **só na UI do app desktop**
+(Settings → Claude Code): procurá-lo em `settings.json` não acha nada, e a ausência ali **não**
+significa desligado.
+
+**O gatilho é uma CONJUNÇÃO** (verificado em 2026-08-26, doc do desktop): PR mergeado *ou* fechado
+**E** a sessão *"finished running"*. Logo ele **não** arquiva sessão ocupada — a versão anterior
+deste rodapé temia isso e exagerava; corrigido. O que a doc **não** define é o que conta como
+"finished running" (subagente vivo? task enfileirada? chip pendente?) — então não afirme nada sobre
+isso.
+
+**O que sobra é o que importa aqui:** "finished running" quer dizer *o agente parou*, não *a
+entrega acabou*. Neste repo **merge ≠ produção** — a sessão que mergeou um PR com migration dentro
+e está parada esperando o founder colar o SQL no Lovable satisfaz as duas condições e arquiva com a
+pendência viva. O evento de PR não enxerga SQL Editor, deploy de edge nem Publish, e não enxerga
+**chip não clicado** (passo 6). Só mencione o toggle quando a sessão fechou com **exatamente UM PR,
+zero camada manual pendente e zero chip por clicar** — fora disso ele arquiva cedo demais.
+
+**E não dá para torná-lo condicional:** não há setting, flag ou hook documentado que suprima ou
+adie o arquivamento (levantado em 2026-08-26). O ritual não controla o gatilho; controla a **ORDEM**
+— o veredito segura o arquivamento até os chips serem clicados e as camadas manuais nomeadas.
 
 A classe: **recomendação embutida em ritual sai com a AUTORIDADE do ritual.** O founder lê "o
 fecho mandou", não "o agente sugeriu" — então recomendação daqui carrega a própria pré-condição
