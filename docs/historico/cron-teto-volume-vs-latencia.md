@@ -196,3 +196,93 @@ Cruzamento de `cron.job WHERE active` com a lista de edges sem coleira — **9 t
 ⚠️ **O deadline não é transferível por cópia:** cada edge tem de derivar `MAX_DURACAO_MS` do teto do
 SEU cron, e os tetos vão de **60s a 600s**. Copiar o `120_000` daqui para uma edge cujo cron corta em
 60s produz um guard que nunca morde — coleira decorativa, pior que nenhuma, porque parece coberta.
+
+---
+
+# Sequela 2 (2026-08-25): os 5 steps do `omie-cron-diario` — e a correção do aviso acima
+
+O aviso ⚠️ da seção anterior está **certo para edge com cron próprio e errado para step de
+orquestrador**, e a diferença custa o guard inteiro.
+
+## O teto do jobid 52 não é o relógio de nenhum step
+
+`omie-cron-diario` aborta o **cliente** em `STEP_TIMEOUT_MS = 25s` e reporta o step como
+`modo:"background"` — que **não é falha**: a edge filha commita por página e **segue rodando
+server-side** até o guard interno DELA (comentário de cabeçalho da edge, provado por efeito em
+2026-06-27). Logo, derivar `MAX_DURACAO_MS` dos 120s do jobid 52 produziria exatamente a "coleira
+decorativa" que o aviso alerta — só que pelo motivo inverso: o teto do cron é curto **demais**, não
+de menos, e a filha nunca é morta por ele.
+
+**A regra corrigida:** o deadline sai do teto do cron **daquela edge**; quando a edge não tem cron
+próprio e só é chamada por orquestrador, sai do **guard interno dela**. Em nenhum caso do teto do
+cron do orquestrador.
+
+## Medição antes de escolher o valor (`fin_sync_log`, 14 dias)
+
+| action | runs | média | p95 | max | guard de relógio |
+|---|---|---|---|---|---|
+| `sync_pedidos` | 336 | 55s | **120s** | **129s** | **NENHUM** |
+| `sync_nfes_recebidas` | 168 | 18s | 29s | 80s | 130s |
+| `sync_sku_items` | 182 | 11s | **61s** | 62s | **50s** |
+
+Duas leituras que só o dado dá:
+
+- **`sync_pedidos` roda com p95 de 120s e não tem guard nenhum.** Introduzir um `MAX_DURACAO_MS`
+  aqui não seria pôr coleira, seria **arbitrar truncamento** — e é este espelho que `nfes`/`ctes`
+  leem no step seguinte. Latência e volume são decisões separadas, com dados separados.
+- **`sync_sku_items` já bate no próprio guard** (p95 61s contra `TIMEOUT_GUARD_MS` de 50s). O guard
+  morde de verdade; o que faltava era ele valer também para o request e para o backoff.
+
+## Dois desenhos, escolhidos pelo terreno
+
+| edge | guard existente | o que recebeu |
+|---|---|---|
+| `omie-sync-nfes-recebidas` | 120s (loop) / 130s (backfill) | deadline compartilhado, um por função, do `t0` que ela já recebe |
+| `omie-sync-sku-items` | 50s | deadline compartilhado |
+| `omie-sync-vendas-items` | 25s | deadline compartilhado |
+| `omie-sync-pedidos-compra` | — | **só** teto por request |
+| `omie-sync-ctes-recebidos` | — | **só** teto por request |
+
+O deadline compartilhado nunca é relógio novo: é o guard que a função **já consulta** ficando
+visível para o `fetch` e para o `sleep`. `nfes` prova o ponto — o loop principal cede aos 120s e o
+backfill aos 130s, então são **dois** deadlines do mesmo `t0`, cada um alinhado ao guard da sua
+função. Um deadline único de 130s teria deixado o loop principal dormir 10s além do que ele mesmo
+já decidiu ceder.
+
+## Fail-closed: o abort não pode virar fim de paginação
+
+Os 5 wrappers já rejeitavam `faultcode`/`faultstring`, e isso não mudou. O que importa checar a cada
+edge é **para onde o `TimeoutError` vai**:
+
+- `pedidos`, `ctes`, `sku`, `nfes` — wrappers **throw-based**: a exceção propaga e mata a página com
+  erro. Nunca há um `json` vazio para o laço ler como fim.
+- `vendas-items` — wrapper **result-based** com `try/catch` que engole erro de rede: devolve
+  `{ok:false}` e o caller **lança** em `!result.ok` (linha 373). Fail-closed pela outra ponta.
+
+Esse `catch` de `vendas-items` é também o motivo de o deadline ser indispensável ali: ele captura o
+`TimeoutError` e **retenta**, e 3 tentativas de 20s mais backoff passam muito do guard de 25s.
+
+## Falsificação (a rede real deste refactor)
+
+O que protege um refactor de assinatura não é o gate do CI:
+
+| sabotagem | `deno check --no-remote` | classe |
+|---|---|---|
+| tirar `deadline` de um call-site | **rc=1** | TS2554 (aridade) |
+| trocar a ORDEM (`deadline` no lugar de `param`) | **rc=1** | **TS2345** |
+
+TS2345 é **exatamente a classe que o `edges:typecheck` tolera** (41 na dívida). O gate do CI teria
+passado verde nas duas sabotagens. Confirma a lição da sequela 1 por um segundo caminho.
+
+## Não existe gate exigindo `AbortSignal` — e ele não pode nascer ainda
+
+`edge-money-path-invariants.test.ts` tem um `toMatch(/signal: AbortSignal\.timeout\(/)`, mas ele
+vigia **uma** edge de reposição, não a família Omie. Um gate abrangente ("todo `fetch` para
+`app.omie.com.br` carrega `signal`") é o fecho natural desta série — e **só é instalável quando a
+última edge estiver coberta**, senão nasce vermelho com as 17 restantes. Instalar o gate é a última
+entrega, não a primeira.
+
+## Sequela: 17 restantes
+
+Saem da lista da seção anterior as 5 deste PR. Segue no topo `omie-sync-estoque` (teto de **90s**, o
+mais apertado do conjunto) — e ele tem cron próprio, então ali o aviso ⚠️ original vale como escrito.
