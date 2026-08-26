@@ -96,6 +96,35 @@ Montar pro founder colar no chat do Lovable (um por edge tocada):
 
 ⚠️ Só depois do PR **mergeado** na main (Lei de Ferro #3).
 
+⚠️ **O prompt acima nomeia UM arquivo — e a fatia que instrumenta a edge tem mais de um.** Um arquivo
+basta enquanto a mudança é interna ao `index.ts`; deixa de bastar exatamente onde a verificação de
+deploy nasce. **Edge que ganha sonda nasce com `versao.ts` NOVO**, importado pelo `index.ts` — pedir só
+o `index.ts` manda o Lovable subir uma função cujo import não resolve, e o modo de falha é o pior
+possível: quem descobre é a sonda que existia para provar o deploy. O `_shared/` que a fatia altera
+entra junto no bundle daquela edge — `sonda-fingerprints.ts` alimenta o campo `fonte` da resposta;
+sem ele a sonda responde `nao-mapeada` e a prova nasce cega. **Derive a lista do COMMIT, não da
+memória:**
+
+```bash
+git show --name-status --format='' <sha-do-merge> -- supabase/functions/ | grep -v '_test\.ts$'
+# A = arquivo NOVO (é o que o prompt de 1 arquivo esquece) · M = modificado
+```
+
+E nomeie cada um, marcando o novo (teste e doc ficam de fora — não vão pro bundle):
+
+> Edit the edge function `<nome>` and update it from the `main` branch using the current contents of
+> these files. Deploy them **verbatim** — do NOT modify, reinterpret, "improve", or reformat the code:
+> - `supabase/functions/<nome>/index.ts` (modified)
+> - `supabase/functions/<nome>/versao.ts` (**NEW file** — `index.ts` imports it; without it the function will not boot)
+> - `supabase/functions/_shared/<módulo>.ts` (modified — shared module this function bundles)
+>
+> After deploying, confirm it shows **Active**.
+
+Exercitado no #2009 (`carteira-rebuild`, 3 arquivos de código, 1 deles novo): a sonda pós-deploy voltou
+`probe:true · versao:v1.0-sensor-inicial · edge:carteira-rebuild · fonte:8d2589d0…`, e o `fonte` bateu
+com o `bun run sonda:fingerprint` da main — que é justamente a prova de que o `_shared/` subiu junto, e
+não só o `index.ts` (#2018).
+
 ### Passo 4 — Verificar o frontend pelos bytes (após Publish)
 
 > **Validado em produção (2026-06-18) + 2ª opinião do Codex.** Enumerar os chunks tem furos sutis:
@@ -110,6 +139,8 @@ Montar pro founder colar no chat do Lovable (um por edge tocada):
 # saída: "✓ sentinela exclusiva: …" + "chunks (closure ∪ precache): N" + "✅ ALVO em <chunk>"
 #        + "✓ CONTROLE_NEGATIVO_OK — <chunk> não casa controle_negativo_<hex>"   (ramo do hit)
 #        + "✓ CONTROLE_POSITIVO_OK — <entry> ainda devolve bytes e o mesmo grep acha '<agulha>'"
+#        + LIB_SEM_A_SENTINELA | SENTINELA_TAMBEM_NA_LIB | LIB_NAO_CONSULTADA (sonda do 2º emissor,
+#          pré-rede: AVISA e nunca muda o exit — node_modules é preditor, não prova)
 # exit 0 = no ar E o controle negativo passou · 1 = ausente E o controle POSITIVO provou que a
 #          sonda enxergava (Publish pendente / alvo não-literal)
 #      2 = a MECÂNICA da sonda não é confiável: enumeração quebrada, SONDA_NAO_DISCRIMINA (ramo
@@ -164,6 +195,48 @@ $ verify-frontend.sh --pai b7a9f5a8a --novo a7571a596 'keepalive_network'
 **irmão** da armadilha do id de EXEMPLO (`deploy.md` §Canárias), não a mesma: lá o erro é falso
 NEGATIVO (reprova um deploy correto — caro, mas a verificação CONTINUA); aqui é falso POSITIVO,
 estritamente pior, porque **ENCERRA** a verificação.
+
+**A exclusividade que o `--pai` NÃO alcança: a LIB também emite (2026-08-25, #2016).** O guard prova
+exclusividade **no git** (`git grep` em `src/`) — mas o bundle servido também contém `node_modules`.
+Quando a sentinela é o **nome de uma opção de API da própria lib**, existe um **segundo emissor** que
+o guard não enxerga: `disable_session_recording` sai **5×** e `session_recording` **13×** do
+`vendor-posthog-Do2CBfqi.js` **sozinho**, sem uma linha nossa (na `posthog-js/dist/`: 36 e 51
+arquivos). O `--pai` **não recusa** aqui, e está certo — em `src/` a exclusividade é verdadeira.
+Falha nos **dois** sentidos: verificar uma **ADIÇÃO** pela presença dá falso positivo (a lib já tinha
+a string antes do PR), e verificar uma **REMOÇÃO** pela presença ("ainda tem ⇒ Publish pendente")
+**também** — faria pedir ao founder um Publish **já feito**. Com `halt-on-hit` o veredito ainda vira
+**sorte de ordem**: no #2016 o hit calhou de sair no entry e a conclusão ficou certa; saindo em
+`vendor-posthog-*.js`, o `exit 0` seria verde por poluição, com a mesma cara (o controle negativo
+audita o par `(padrão, grep)`, não a **proveniência** da string).
+
+> **Receita:** ancore por **VALOR nosso**, não por **chave da lib** — `[role="button"]` e
+> `input[type="checkbox"]` (nosso `css_selector_allowlist`) têm **0** ocorrências na lib, então
+> localizam o NOSSO objeto de config. Aí **leia o config no contexto** em vez do grep binário:
+> `grep -F -b -o '<valor>' chunk.js` para o offset + `tail -c +N | head -c M` para a janela. O objeto
+> minificado é **contíguo**, então a janela mostra o config inteiro — imune à poluição, e é a única
+> forma que lê uma **remoção**:
+> `e.init(li,{…,disable_session_recording:!0,autocapture:{…css_selector_allowlist:["button","a","select",'input[type="checkbox"]','[role="button"]']}})`
+
+**A sonda `SENTINELA_TAMBEM_NA_LIB` (implementada 2026-08-26)** roda pré-rede e nos **dois** modos —
+a pergunta dela ("existe emissor **fora** do git?") é ortogonal à do `--pai` ("é nova **dentro** do
+git?"), e sem `--pai` o operador está no modo mais fraco, que é onde calar custa mais. Ela **avisa e
+nunca recusa**: `maskAllInputs` está em **10** arquivos de `posthog-js/dist/` e em **0** ocorrências
+do chunk servido — tree-shaking decide o que chega ao bundle, logo `node_modules` é *preditor* do 2º
+emissor e não **prova** dele, e um guard que recusasse no hit reprovaria sentinela legítima. Três
+estados, e o terceiro é o que evita fabricar veredito:
+
+| marca | quando | por quê |
+|---|---|---|
+| `SENTINELA_TAMBEM_NA_LIB` | a lib emite o alvo | imprime os **caminhos**: `posthog-js/dist/` lê como 2º emissor provável, `jsdom/` como devDep que nunca vai ao bundle |
+| `LIB_SEM_A_SENTINELA` | 0 arquivos de código | a sentinela é sua |
+| `LIB_NAO_CONSULTADA` | sem `node_modules` (ou `grep` falhou) | worktree recém-criada não tem — o `bun install` é passo à parte, e **silêncio ali se leria como "limpo"** |
+
+O universo é **código JS** (`--include` de `*.js`/`*.mjs`/`*.cjs`), não a árvore inteira, e o corte
+foi medido na `node_modules` real (637 MB / 54.843 arquivos): sem filtro custa **38-63 s** e o *valor
+nosso* `input[type="checkbox"]` — a sentinela que esta própria seção recomenda — acusava 3 arquivos
+(`readme.md`, `preflight.css` do tailwind, css de demo). Aviso que dispara contra a resposta certa é
+aviso desarmado no primeiro dia. Com o filtro: **~2 s**, e o mesmo alvo cai para 1 (`jsdom`). Detalhe
+e medições: [`docs/historico/sentinela-segundo-emissor.md`](../../../docs/historico/sentinela-segundo-emissor.md).
 
 **O guard não prova que a sonda sabe dizer "não" — isso é o CONTROLE NEGATIVO, e ele virou
 embutido (2026-08-24).** Um `exit 0` sozinho não distingue "está no ar" de "o script dá verde pra
@@ -397,4 +470,10 @@ falso `"fora do ar"` (exit 2) — não é o site caído, é a URL malformada.
 - [x] **Varredura PARALELA (2026-07-07):** `xargs -P 8` no crawl + halt-on-hit (`exit 255`) no grep do alvo. O bundle passou de 300 chunks (união medida 308–560) — sequencial estourava 600s (exit 124, não terminava); no mesmo bundle (308 ch, sentinela ausente) **299s → 61s (~4,9×), mesmo exit**. Enumeração/UNIÃO **inalterada** (worker-por-arquivo → sem intercalação). `PAR=<n>` overridável. Rede: harness local + gate `run.sh`.
 - [x] **QA visual pós-Publish (Passo 4b, 2026-07-07):** padrão documentado — **Claude-in-Chrome na sessão logada do founder** (ele abre 1×, o agente confere as telas). `/browse` headless não monta a SPA (3 falhas); Chrome MCP genérico deu timeout CDP de 45s. Caso de sucesso: config do PostHog feita pelo agente sozinho. **Exercitado 2026-07-08:** RENDER confirmado (a SPA monta no Chrome real; QA de tela pública `/auth` OK) — mas a aba do grupo MCP veio **sem sessão** (`Invalid Refresh Token`), então **telas gated dependem do founder logar NA aba MCP**; agente nunca digita credenciais. Detalhe no Passo 4b.
 - [x] **"404 fantasma" pós-Publish (2026-07-12, QA visual do #1300):** rota nova 404 com bytes VERDES = **SW do PWA servindo o build anterior** (assinatura: `NotFound-*.js` de hash velho logando "non-existent route"); hard-reload ativa o SW novo. Regra: bytes verdes + 404 → suspeitar do SW, nunca concluir "Publish falhou" sem hard-reload. Detalhe no Passo 4b.
+- [x] **O prompt do Passo 3 nomeia TODOS os arquivos da fatia (2026-08-25):** o de 1 arquivo (`index.ts`)
+  quebra justamente na fatia que instrumenta a edge — **`versao.ts` é arquivo NOVO** e o `index.ts` o
+  importa, então deployar só o `index.ts` sobe função que não boota, e quem descobre é a sonda que
+  existia para provar o deploy. A lista sai do `git show --name-status` do merge (`A` = novo), não da
+  memória. Exercitado no #2009 (`carteira-rebuild`): 3 arquivos de código, e o `fonte` da sonda
+  pós-deploy batendo o `sonda:fingerprint` provou que o `_shared/` subiu junto (#2018).
 - [ ] (menor) Confirmar se há ambiente de **preview** distinto do publicado a checar.

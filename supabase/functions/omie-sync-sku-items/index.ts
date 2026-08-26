@@ -23,6 +23,7 @@
 //   5) UPSERT em sku_leadtime_history (tracking_id, sku_codigo_omie).
 
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
+import { cabeEspera, timeoutRequestMs } from "../_shared/omie-deadline.ts";
 
 interface OmieItemCabec {
   nIdProduto?: number | string;
@@ -79,6 +80,10 @@ const RATE_LIMIT_DELAY_MS = 5000;
 const RETRY_DELAY_MS = 5000;
 const MAX_RETRIES = 3;
 const TIMEOUT_GUARD_MS = 50_000;
+// Teto de RELÓGIO por request (#2017). O guard acima é do RUN; sem teto por request um socket
+// pendurado consome os 50s sozinho e o isolate morre sem passar por catch nenhum — a NFe nem
+// chega a ser marcada como tentada. Abaixo do guard de propósito: request normal não leva 20s.
+const FETCH_TIMEOUT_MS = 20_000;
 const TIMEOUT_CHECK_EVERY_NFES = 5;
 
 function redundantWaitMs(faultstring: string): number | null {
@@ -354,15 +359,24 @@ async function callOmie(
   app_secret: string,
   call: "ConsultarRecebimento",
   param: Record<string, unknown>,
+  deadline: number,
 ): Promise<OmieConsultarRecebimentoResponse> {
   const body = { call, app_key, app_secret, param: [param] };
   let attempt = 0;
   while (attempt < MAX_RETRIES) {
     attempt++;
+    // O teto do request ENCOLHE conforme o run se aproxima do deadline. LANÇA quando não sobra
+    // tempo viável — este wrapper é throw-based e o caller trata a exceção por NFe (marcarTentativa),
+    // então a NFe fica registrada como TENTADA em vez de sumir junto com o isolate.
+    const timeoutMs = timeoutRequestMs(Date.now(), deadline, FETCH_TIMEOUT_MS);
+    if (timeoutMs === 0) {
+      throw new Error(`Omie ${call}: deadline do run atingido antes da chamada`);
+    }
     const res = await fetch(OMIE_ENDPOINT, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     const text = await res.text();
     let json: OmieConsultarRecebimentoResponse;
@@ -374,6 +388,11 @@ async function callOmie(
     const faultstring = typeof json?.faultstring === "string" ? json.faultstring : "";
     const waitMs = redundantWaitMs(faultstring) ?? RETRY_DELAY_MS;
     if (res.status === 429 || /rate limit|redundant|consumo redundante/i.test(faultstring)) {
+      // O Omie pede "Aguarde N segundos" e redundantWaitMs obedece — N pode passar do run inteiro.
+      // Dormir além do deadline é sono que nunca acorda: o isolate morre no sleep.
+      if (!cabeEspera(Date.now(), deadline, waitMs)) {
+        throw new Error(`Omie ${call}: limite pede ${Math.round(waitMs / 1000)}s de espera, não cabe antes do deadline do run`);
+      }
       console.warn(
         `[sync-sku-items] ${call} aguardando ${Math.round(waitMs / 1000)}s por limite Omie (try ${attempt}/${MAX_RETRIES})`,
       );
@@ -629,6 +648,10 @@ Deno.serve(async (req) => {
     return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
   const startedAt = Date.now();
+  // Relógio ÚNICO do run: requests e backoffs do callOmie se medem contra ESTE instante, o mesmo
+  // que o TIMEOUT_GUARD_MS do laço usa. Teto por request isolado não bastaria — 3 tentativas de
+  // 20s mais as esperas "Aguarde N segundos" do Omie passam MUITO dos 50s.
+  const deadline = startedAt + TIMEOUT_GUARD_MS;
   const supabase = createClient(
     Deno.env.get("SUPABASE_URL")!,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
@@ -808,13 +831,24 @@ Deno.serve(async (req) => {
         continue;
       }
 
+      // Deadline ANTES do sleep de cadência (5s), e não só a cada 5 NFes como o guard do topo.
+      // Dois motivos, e o segundo é money-path: (a) dormir 5s para o callOmie recusar em seguida
+      // gasta 10% do run à toa; (b) a NFe cairia no catch abaixo e ganharia `marcarTentativa` —
+      // backoff de 6h/24h/72h — por um limite do RUN, não por falha DELA. Tentativa só se conta
+      // quando a chamada de fato saiu para o Omie; abort de request aberto continua caindo no
+      // catch e marcando, que é o certo.
+      if (!cabeEspera(Date.now(), deadline, RATE_LIMIT_DELAY_MS)) {
+        summary.interrompido_por_timeout = true;
+        break;
+      }
+
       let detalhe: OmieConsultarRecebimentoResponse;
       try {
         await sleep(RATE_LIMIT_DELAY_MS);
         summary.consultas_tentadas++;
         detalhe = await callOmie(app_key, app_secret, "ConsultarRecebimento", {
           nIdReceb: Number(nIdReceb),
-        });
+        }, deadline);
         summary.consultas_detalhadas++;
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);

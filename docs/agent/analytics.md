@@ -51,6 +51,11 @@ OAuth), e a lógica fica **versionada e testada** no repo em vez de num plugin o
    Todo o resto fica em **No access** — em especial *Session recording* e *Person*, que são os
    pesados em PII. Nenhum **Write**, em lugar nenhum.
 
+   ⚠️ **`No access` gateia o REST, NÃO o `/query/`** (medido em 2026-08-25 — detalhe na §4).
+   `/api/projects/423408/persons/` devolve `403 person:read`; `SELECT count() FROM persons`, mesma
+   key e mesmo minuto, devolve **5**. O escopo mínimo continua certo — ele corta o REST inteiro e
+   todo o Write — mas **não** descreva esta key como incapaz de ler PII: pelo HogQL ela lê.
+
    Em "Organization & project access", escolher **Projects** e marcar só o projeto do Afiação
    (`423408`) — não "All access".
 3. Com a key ainda na área de transferência (o PostHog só a mostra **uma vez**), mande o clipboard
@@ -193,8 +198,119 @@ SELECT properties.$os AS so, properties.$browser AS nav,
 FROM events WHERE properties.$lib='web' GROUP BY so, nav ORDER BY ultimo DESC
 ```
 
-Teste de 1 linha para saber se um aparelho bloqueia — abrir `https://us.i.posthog.com/i/v0/e/` no
-navegador dele: **HTTP 400 `request missing data payload`** = livre; erro de conexão = bloqueado.
+⚠️ **O teste de 1 linha que estava aqui era FALSO NEGATIVO — não o use.** Ele mandava abrir
+`https://us.i.posthog.com/i/v0/e/` na barra do navegador e ler o `HTTP 400 request missing data
+payload` como "livre". Medido em 2026-08-26 no Chrome 152 do founder — o aparelho cujo bloqueio o
+`#1984` provou — a navegação top-level **passa** (`request missing data payload`) enquanto o `fetch`
+de dentro de `steu.lovable.app` **falha** (`TypeError: Failed to fetch`, 351 ms e **5 ms** na 2ª),
+com o Supabase respondendo `401` na mesma página e no mesmo minuto. Bloqueador casa por **tipo de
+request e por parte** (`xmlhttprequest`, `third-party`); digitar a URL é navegação **first-party**,
+a classe que a lista não bloqueia.
+
+**O teste que serve** roda com a página do app aberta, no console do aparelho:
+
+```js
+const t = performance.now();
+fetch('https://us.i.posthog.com/i/v0/e/', { method: 'POST', body: '' })
+  .then(r => r.text().then(b => `LIVRE ${r.status} em ${Math.round(performance.now()-t)}ms — ${b}`))
+  .catch(e => `BLOQUEADO ${e} em ${Math.round(performance.now()-t)}ms`)
+  .then(console.log);
+```
+
+E ele dá de graça o diagnóstico da CAMADA: navegação passando + XHR falhando é **extensão de
+bloqueio** (casa por tipo de request). DNS, `/etc/hosts` e firewall derrubariam as duas.
+
+### ⚠️ O aparelho bloqueado é INVISÍVEL no PostHog — a lista de quem liberar não sai daqui (2026-08-26)
+
+O breakdown acima lista **quem já emitiu**. Um aparelho censurado desde o primeiro dia não tem
+linha nenhuma: ele não aparece com zero, ele **não aparece**. Levantar "quais aparelhos precisam de
+allowlist" pelo PostHog é perguntar à amostra censurada quem ela censurou.
+
+Medido: o `$device_id` que vive no `localStorage` do Chrome do founder **agora** é
+`019e6c3b-71b8-77c2-b110-6c1edef31a0f`, e ele tem `count() = 0` **em toda a história do projeto** —
+o SDK subiu, cunhou identidade, persistiu, e nenhum evento chegou. Os três `Mac OS X / Chrome` que
+o breakdown mostra (`019f1f92` 01/07, `019e7fcc` 31/05, `019e2ec9` 16/05) são **outros** perfis, e
+lê-los como "o Mac emite às vezes" é confundir aparelho com identidade de armazenamento.
+
+**A via correta é do lado do cliente, e é uma linha no console do aparelho:**
+
+```js
+JSON.parse(localStorage[Object.keys(localStorage).find(k => k.startsWith('ph_'))]).$device_id
+```
+
+Esse id, com `count() = 0` no PostHog, é a prova de censura mais limpa que existe — e é também a
+**marca pré-registrada** da prova de que a liberação funcionou: qualquer linha desse `$device_id`
+depois da mudança fecha o caso, sem depender de "eu liberei".
+
+⚠️ E `count() = 0` só vale com **exit 0**: o `504` do wrapper (exit 73) é ausência de dado. Query
+com subconsulta neste eixo estoura o tempo — rode uma pergunta por vez.
+
+### ⚠️ Escopo `No access` não cega o HogQL — logo um `0` dele precisa de PAR (2026-08-25)
+
+O `/query/` autoriza pelo escopo **`query:read` e mais nada**: ele não reaplica o escopo da tabela
+que a query toca. Medido, no mesmo minuto e com a mesma key:
+
+| pergunta | REST | HogQL |
+|---|---|---|
+| pessoas | `403 API key missing required scope 'person:read'` | `SELECT count() FROM persons` → **5** |
+| gravações | `403 API key missing required scope 'session_recording:read'` | `SELECT count() FROM session_replay_events` → **0** |
+
+Duas consequências opostas, e as duas mordem:
+
+1. **Para LER, a key alcança mais do que a §2 sugere.** `persons`, `session_replay_events`,
+   `raw_session_replay_events` e `sessions` respondem pelo HogQL. Isso é útil (foi o que permitiu
+   levantar o passivo de replay sem pedir escopo novo) e é também superfície de PII que a lista de
+   escopos não descreve.
+2. **Para CONCLUIR, um `0` do HogQL não se prova sozinho.** Se o `/query/` *tivesse* filtrado por
+   escopo, ele devolveria exatamente o mesmo `0` — indistinguível. Zero e cegueira chegam pelo
+   mesmo cano, como o 504 e o `[[0]]` da armadilha anterior.
+
+**O par que separa os dois** — e nenhum dos três passos é dispensável:
+
+- **par REST × HogQL numa tabela TERCEIRA**: pegue outra tabela igualmente `No access` no REST
+  (`persons` serve) e mostre-a **não-vazia** no HogQL. Não-vazio prova que o filtro não existe;
+  vazio não prova nada.
+- **schema resolve**: `SELECT * FROM <tabela> LIMIT 1` traz o array `columns` mesmo com 0 linhas —
+  se as colunas vêm, a tabela é real e foi mesmo consultada, não um alias que resolve para vazio.
+- **coluna inventada dá 400**: `SELECT coluna_que_nao_existe FROM <tabela>` tem de reprovar. Se
+  reprovar, o schema está sendo checado de verdade; se passar, você não estava lendo aquela tabela.
+
+E prefira, quando existir, a via que **não depende de escopo nenhum**: uma propriedade que o SDK
+carimba no próprio evento mora em `events`, que a key lê sem discussão. Foi o que fechou o caso do
+replay — `$recording_status` valeu mais que as duas tabelas de gravação juntas.
+
+#### O corolário que morde ao contrário: "403 no REST ⇒ cego no HogQL" é FALSO (medido 2026-08-25)
+
+A inversão tentadora do quadro acima é promover o REST a discriminante: *"a chamada REST é a
+honesta — 403 = a key é cega naquela tabela, 200 = ela enxerga"*. É **falsa**, e falha justamente
+no caso que a motivou. Quatro famílias de escopo em `No access`, as quatro REST-403, mesma key e
+mesmo minuto:
+
+| tabela HogQL | escopo que falta (REST 403) | HogQL |
+|---|---|---|
+| `persons` | `person:read` | **5** |
+| `person_distinct_ids` | `person:read` | **11** |
+| `heatmaps` | `heatmap:read` | **98** |
+| `session_replay_events` · `raw_session_replay_events` | `session_recording:read` | 0 |
+| `error_tracking_issue_fingerprint_overrides` · `logs` | `error_tracking:read` | 0 |
+
+**Três** das cinco linhas voltam NÃO-VAZIAS com o REST em 403. O 403 é **constante na coluna
+inteira** — não discrimina nada; a variação mora toda do outro lado. O gate é do **endpoint**:
+`/query/` pede `query:read` e não reaplica o escopo da tabela.
+
+Quem escrevesse a regra invertida concluiria, sobre este mesmo caso, *"somos cegos, não dá para
+saber se o replay gravou"* — fail-OPEN numa pergunta de LGPD, com a resposta certa ao alcance da
+mão. O zero do replay era **real**; quem o prova é o par de terceira tabela acima, não o REST.
+
+`heatmaps` é o **segundo falsificador, e vale mais que o primeiro** por vir de outra família de
+escopo: só com `persons`, a explicação alternativa *"a tabela `persons` é que é especial"* seguia
+de pé. Os três testes passam nela — 98 linhas, `columns` com 11 campos, e
+`SELECT coluna_que_nao_existe FROM heatmaps` → 400 `Unable to resolve field`.
+
+**Error tracking: zero CONFIRMADO**, e pela via preferida, a que não depende de escopo nenhum —
+`$exception` em `events` também é **0**. As duas tabelas e a rota livre de escopo concordam. Um
+zero de tabela sozinho continuaria não se provando; o que o promove a fato é o **acordo** com
+`events`.
 
 ## 5. Sensores de frontend já instalados
 
@@ -302,18 +418,33 @@ app nunca roda no fecho real — é exatamente por isso que este caminho ficou o
 **não consegue reportar o próprio fracasso**.
 
 **O que isto implica para o desenho:** gravar no `pagehide` é uma aposta na boa vontade do browser, e
-ela não paga. As saídas que o repo consegue capturar com confiança são o **unmount** (navegação SPA,
-provado 3×) — fechar a aba continua perdendo a visita. Duas correções possíveis, e a escolha é de
-produto porque muda o significado do dado:
+ela não paga. As duas correções possíveis foram tentadas em sequência, e o desfecho é a lição:
 
-- **timer ao cruzar `MIN_SESSION_MS`** — grava assim que a sessão qualifica, independente de como o
-  usuário sai. Mais robusto; em troca, `session_minutes` na tabela vira o **limiar** (5), e a duração
-  real passa a existir só no evento do PostHog.
-- **`visibilitychange` → `hidden`** — dispara antes do unload, com a página ainda viva, então o fetch
-  normal entrega. Em troca, uma aba trocada e retomada conta como visita encerrada.
+- **timer ao cruzar `MIN_SESSION_MS`** (#1978, 2026-08-25) — gravava assim que a sessão qualificava,
+  independente de como o usuário saía. Resolveu a existência da linha e **custou a duração inteira**:
+  `session_minutes` virou o limiar. Medido na tabela no dia seguinte: **10 de 10** linhas pré-timer
+  tinham duração real (média 15,7min, máx 38), **0 de 5** pós-timer — todas exatamente `5`.
+- **`visibilitychange` → `hidden`** (#2027) — ficou. Dispara ANTES do unload, com a página viva, então
+  grava pelo client oficial e a duração sai real. Em troca, aba trocada e retomada conta como visita
+  encerrada: uma sessão retomada vira duas linhas, subestimando a duração — mas cada número gravado é
+  medido, não fabricado.
 
-Enquanto nenhuma das duas existir, leia `motivo='gravou'` com `via='pagehide'` como **tentativa**, não
-como visita registrada — e confira contra a tabela.
+⚠️ **O timer trocou o modo de falha, e o novo modo era invisível no eixo antigo.** Quem media "a linha
+existe?" via sucesso; a fabricação só aparece perguntando *quanto* a linha diz. Um corretivo precisa
+ser medido no eixo que ele SACRIFICA — aqui bastava um `GROUP BY` de uma linha, disponível no dia
+seguinte. É a mesma família do `Number(null)===0` do money-path: gravar `5` quando o que se sabe é
+"≥5" converte um piso em medição.
+
+⚠️ **E o teste não pegava porque adiantava o relógio sem adiantar os timers.** Os casos de `pagehide`
+mockavam só `Date.now()` (`+6min`) e deixavam o `setTimeout` parado — um mundo onde 6 minutos passaram
+e o timer dos 5 não disparou. Esse mundo não existe no browser: com os dois em sincronia, o timer
+gravava primeiro e **todo `pagehide` de sessão que qualificava chegava como `ja_gravado`**. Seis testes
+verdes descreviam um caminho inalcançável. Em teste com relógio mockado, **`Date.now()` e os timers têm
+de andar juntos** (`vi.advanceTimersByTimeAsync`) — senão o verde é do cenário, não do código.
+
+Leitura do sensor hoje: `via='oculta'` + `motivo='gravou'` é a gravação boa. `via='pagehide'` +
+`motivo='gravou'` significa aba morta sem passar por `hidden` — caiu na rede que **não entrega**, então
+conte como tentativa e confira na tabela. Se essa combinação virar rotina, o problema voltou.
 
 ⚠️ **Contar eventos da janela como "a ingestão está viva" soma DOIS canos.** O `posthog-js` preenche
 `properties.$lib`; uma captura por `curl` não — e só a decomposição separa os dois. Medido em
@@ -744,8 +875,9 @@ exceção em vez de desenho.
 ⚠️ **`maskAllInputs` mascara CAMPO DE FORMULÁRIO, não o texto da TELA.** O `posthog.init()` trazia
 `session_recording: { maskAllInputs: true }` com o comentário *"mascarar inputs por padrão pra
 privacidade"* — e essa frase induzia ao erro que ela mesma parecia afastar. A máscara de texto
-renderizado é outra opção (`maskTextSelector: '*'`), e **ela nunca esteve no config**. O replay
-gravava a tela como ela aparece: razão social, CNPJ, preço, saldo, nome de cliente. Num app B2B
+renderizado é outra opção (`maskTextSelector: '*'`), e **ela nunca esteve no config**. Do jeito que
+o cliente estava escrito, o replay **gravaria** a tela como ela aparece: razão social, CNPJ, preço,
+saldo, nome de cliente — e o parágrafo seguinte mede o que de fato aconteceu. Num app B2B
 isso é dado pessoal de TERCEIRO indo para um processador nos EUA sem finalidade escrita —
 problema de **necessidade e minimização** (art. 6º, III), que máscara mais forte não resolve
 enquanto ninguém souber para que a gravação serve.
@@ -753,7 +885,38 @@ enquanto ninguém souber para que a gravação serve.
 Decidido: **desligado** (`disable_session_recording: true`), não "mascarado mais". Replay é a
 única superfície de telemetria do app que captura CONTEÚDO de tela; o autocapture já roda com
 allowlist de seletor e o `track()` é nominal, então o que decide continua medido sem ele. Para
-religar: escrever finalidade + prazo de retenção, e voltar com `maskTextSelector: '*'`.
+religar: escrever finalidade + prazo de retenção, voltar com `maskTextSelector: '*'` — **e ligar o
+toggle do projeto**, que é o que de fato liga a gravação (abaixo).
+
+✅ **E não gravou nada: o passivo é ZERO, medido em 2026-08-25.** Replay tem **dois** interruptores
+e o do PROJETO nunca foi ligado (é o default de projeto novo) — o `posthog.init()` sozinho não
+grava. Quatro medições, independentes entre si:
+
+| via | resultado |
+|---|---|
+| `POST us.i.posthog.com/decide/?v=3` com a chave pública do app | `{"sessionRecording": false}` |
+| `properties.$recording_status` em `events` | `disabled` em **2.645 de 2.645** eventos reais — 152 sessões, 11 aparelhos, do 1º evento (2026-05-15) ao dia do desligamento |
+| `session_replay_events` e `raw_session_replay_events` | **0** linhas (schema resolve, coluna inventada dá 400 — ver §4) |
+| `$snapshot` em `events` · `event_definitions?search=snapshot\|recording` | **0**, com controle positivo (`pageview`→1, 23 definições no total) |
+
+O `/decide` é a leitura **autoritativa**: é literalmente o que o servidor responde ao posthog-js
+antes de ele instanciar o rrweb. O `$recording_status` é a confissão do SDK evento a evento, e é a
+melhor das quatro porque **não depende de escopo** — mora em `events`. Nada a excluir no painel,
+nada correndo em retenção. A janela de exposição CONFIGURADA foi 2026-05-13 (`d2e59973f`) a
+2026-08-25 (`#2016`); a de exposição EFETIVA, vazia.
+
+⚠️ **A lição nova: um interruptor de produto pode ser um PAR, e ler só a metade que mora no repo é
+meia medição.** O `git grep` mede o que o cliente **pede**; só o servidor diz o que ele **faz**.
+Antes de afirmar que uma superfície de coleta esteve ligada — ou desligada — em produção, leia o
+lado remoto: `/decide` para a configuração e a propriedade que o SDK carimba no evento para o
+efeito. O mesmo `/decide` governa `autocapture_opt_out`, `capturePerformance` e as feature flags,
+então a checagem serve para os quatro.
+
+Isto **não** desfaz o desligamento: `disable_session_recording: true` é o cadeado do lado que nós
+controlamos, e quem ligar o toggle do projeto daqui a um ano não vai lembrar deste doc. Muda o
+registro do fato, que é o que um doc existe para guardar: **não houve vazamento**. Houve exposição
+configurada que um segundo cadeado — cuja existência ninguém no #2016 tinha medido — manteve
+fechada o tempo inteiro.
 
 ⚠️ **A lição que generaliza é sobre o COMENTÁRIO, não sobre a flag.** Aquele config passou por
 revisão porque a linha ao lado dizia "privacidade" — o comentário descrevia a INTENÇÃO e foi lido
@@ -764,3 +927,40 @@ próprio config, e nada no CI olhava para ela. Agora olha:
 (`removerComentarios`) — obrigatório aqui e não zelo abstrato, porque o comentário que documenta o
 desligamento cita `session_recording` e `maskTextSelector` de propósito, e um regex ingênuo casaria
 com a própria explicação em vez do código.
+
+### Heatmaps: a terceira superfície de coleta — e o `grep` do config não a vê (2026-08-25)
+
+Caiu no colo ao falsificar o discriminante de escopo da §4: `SELECT count() FROM heatmaps` → **98**.
+Ninguém tinha inventariado essa superfície, e `grep -rni heatmap src scripts supabase` devolve
+**zero** — não existe linha de config nossa pedindo heatmap.
+
+⚠️ **O mecanismo é o `capture_pageleave`, não o toggle do projeto.** O `/decide` responde
+`heatmaps: false` e a tabela enche assim mesmo. Quem alimenta é o `capture_pageleave: true` do
+nosso `posthog.init()`: o SDK carimba `$prev_pageview_max_scroll` /
+`$prev_pageview_max_content_percentage` / `$viewport_width` no `$pageleave`, e a ingestão deriva
+daí a linha `type='scrolldepth'`. Provado por **igualdade exata**, não por parecença: há 108
+`$pageleave` com scroll, dos quais **10** são anteriores à primeira linha de heatmap e **98**
+posteriores — e `heatmaps` tem exatamente **98** linhas. O último evento e a última linha batem no
+**mesmo milissegundo** (`2026-08-25T09:51:18.165Z`), e não existe evento `$$heatmap` no projeto
+(0), que era a única outra origem possível. O flag `heatmaps` do `/decide` governa click/rageclick
+— e esses de fato nunca ocorreram: as 98 linhas são **todas** `scrolldepth`.
+
+**O que a linha guarda:** `session_id`, `distinct_id`, `x`/`y`, `scale_factor`, viewport,
+`current_url`, `timestamp`, `type`. **Não guarda conteúdo de tela** — é o que separa isto do
+replay. As 9 URLs distintas são rotas ESTÁTICAS (`/admin/reposicao/pedidos` 72 · `/sales/new` 8 ·
+`/` 8 · `/sales` · `/telefonia` · `/settings` · `/meu-dia` · `/financeiro/cockpit` ·
+`/admin/route-planner`), sem id no path nem query string: nenhum identificador de cliente escapa
+pela URL. Janela 2026-05-29 → 2026-08-25, 3 `distinct_id`, 75 sessões.
+
+**Veredito: não é exposição nova, e não há o que tratar.** `distinct_id` + rota + horário já estão
+no `$pageview`, que capturamos de propósito; o heatmap acrescenta profundidade de rolagem e
+tamanho de viewport. Fica registrado porque (a) inventário que só lista o que alguém lembrou de
+configurar não é inventário, e (b) se um dia a decisão for cortar esta coleta, o desligamento
+**não** é o toggle do projeto nem uma linha com a palavra `heatmap`: é `capture_pageleave: false`,
+que levaria junto o `$pageleave` inteiro. Não mexer sem essa conta.
+
+⚠️ **A lição que generaliza:** superfície de coleta não se enumera pelo `grep` do config. Este
+config não menciona heatmap e alimenta uma tabela; o config do replay mencionava e não alimentava
+nenhuma. **Config é INTENÇÃO; tabela é EFEITO** — inventário de coleta se faz pelo lado que
+ARMAZENA, varrendo as tabelas do HogQL, e o lado que PEDE serve para explicar o achado, não para
+produzir a lista.

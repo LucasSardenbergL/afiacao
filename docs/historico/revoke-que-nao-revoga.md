@@ -174,6 +174,21 @@ no `nspacl`, e mesmo assim `SELECT count(*) FROM cron.job` devolve **90**. Prova
 PG17, depois de o dono revogar `ALL ... FROM PUBLIC`, `has_table_privilege(leitor, ..., 'SELECT')` continuou
 `t` enquanto `EXECUTE`/`INSERT` viraram `f`.
 
+> 🔄 **ATUALIZAÇÃO 2026-08-26 — a conclusão continua certa, a JUSTIFICATIVA caiu no mesmo dia.** Este
+> achado apoiava a sobrevivência da canária em `pg_read_all_data` (que dá `SELECT` + USAGE implícito). Mas
+> o item 2 da Decisão foi aplicado horas depois e **removeu exatamente essa membership** — medido agora:
+> `pg_has_role('claude_ro','pg_read_all_data','MEMBER') = false`. A leitura de `net._http_response`
+> continua funcionando (`has_table_privilege = true`), só que hoje ela vem **exclusivamente do grant a
+> PUBLIC** — a única perna que sobrou. ⇒ O bloco de REVOKE **não pode** tocar o `SELECT` dessa tabela; se
+> alguém fechar, é preciso `GRANT SELECT ON net._http_response TO postgres, service_role, claude_ro` no
+> MESMO bloco, senão o ritual de verificação de deploy morre em silêncio.
+>
+> **A lição é sobre a forma do argumento, não sobre o ACL:** uma conclusão sustentada por UMA premissa
+> ("sobrevive *porque* `pg_read_all_data`") herda a validade dessa premissa. Quando o mesmo documento
+> **recomenda remover** a premissa numa seção e **depende dela** noutra, o registro fica internamente
+> inconsistente no instante do apply — e ninguém percebe, porque o comportamento observável não muda. ⇒ Ao
+> escrever "X sobrevive porque Y", procure no próprio texto se alguém está propondo matar o Y.
+
 ## Decisão
 
 1. **Não entregar o `REVOKE` em `net`.** Está provado que é no-op silencioso pelas duas pontas. Entregar SQL
@@ -235,27 +250,52 @@ tabela nova criada por outro dono nasce invisível ao `claude_ro`.
 
 ```sql
 -- Requer o DONO (supabase_admin). Como postgres: exit 0 + WARNING + nada muda.
-REVOKE EXECUTE ON FUNCTION net.http_post(text,jsonb,jsonb,jsonb,integer) FROM PUBLIC;
-REVOKE EXECUTE ON FUNCTION net.http_get(text,jsonb,jsonb,integer)        FROM PUBLIC;
-REVOKE EXECUTE ON FUNCTION net.http_delete(text,jsonb,jsonb,integer,jsonb) FROM PUBLIC;
-REVOKE EXECUTE ON FUNCTION net.wake(), net.worker_restart()              FROM PUBLIC;
-REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON net.http_request_queue, net._http_response FROM PUBLIC;
-REVOKE ALL ON ALL SEQUENCES IN SCHEMA net FROM PUBLIC;   -- a fila é bigserial: sem isto sobra caminho
+-- Conferido contra prod em 2026-08-26 00:53 UTC (pg_net 0.19.5).
 
--- OBRIGATÓRIO no mesmo bloco: sem isto, 52 dos 90 crons + 4 funções SECDEF de postgres param.
-GRANT EXECUTE ON FUNCTION net.http_post(text,jsonb,jsonb,jsonb,integer)
-  TO supabase_functions_admin, postgres, anon, authenticated, service_role;
-GRANT EXECUTE ON FUNCTION net.http_get(text,jsonb,jsonb,integer)
-  TO supabase_functions_admin, postgres, anon, authenticated, service_role;
-GRANT EXECUTE ON FUNCTION net.http_delete(text,jsonb,jsonb,integer,jsonb)
-  TO supabase_functions_admin, postgres, anon, authenticated, service_role;
-GRANT INSERT, UPDATE, DELETE ON net.http_request_queue, net._http_response
-  TO supabase_functions_admin, postgres, service_role;
+-- 1) Fechar PUBLIC
+REVOKE EXECUTE ON FUNCTION net.http_post(text,jsonb,jsonb,jsonb,integer)   FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION net.http_get(text,jsonb,jsonb,integer)          FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION net.http_delete(text,jsonb,jsonb,integer,jsonb) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION net.wake()                                      FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION net.worker_restart()                            FROM PUBLIC;
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON net.http_request_queue          FROM PUBLIC;
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON net._http_response              FROM PUBLIC;
+REVOKE ALL ON SEQUENCE net.http_request_queue_id_seq                       FROM PUBLIC;
+
+-- 2) OBRIGATÓRIO no mesmo bloco: sem isto, 52 dos 90 crons + 4 funções SECDEF de postgres param.
+GRANT EXECUTE ON FUNCTION net.http_post(text,jsonb,jsonb,jsonb,integer)   TO supabase_functions_admin, postgres, service_role;
+GRANT EXECUTE ON FUNCTION net.http_get(text,jsonb,jsonb,integer)          TO supabase_functions_admin, postgres, service_role;
+GRANT EXECUTE ON FUNCTION net.http_delete(text,jsonb,jsonb,integer,jsonb) TO supabase_functions_admin, postgres, service_role;
+GRANT EXECUTE ON FUNCTION net.wake()                                      TO supabase_functions_admin, postgres, service_role;
+GRANT INSERT, UPDATE, DELETE ON net.http_request_queue                    TO supabase_functions_admin, postgres, service_role;
+GRANT USAGE, SELECT, UPDATE ON SEQUENCE net.http_request_queue_id_seq     TO supabase_functions_admin, postgres, service_role;
 ```
+
+> ⚠️ **A versão anterior deste bloco tinha TRÊS defeitos que só apareceram ao re-medir para o ticket
+> (2026-08-26).** Ficam à vista porque a lição é o erro — e porque os três são a MESMA classe: *revoguei um
+> privilégio e re-concedi outro*, prima do "GRANT que pousa e não alcança" da seção Pós-apply.
+>
+> 1. **`net.wake()` era revogado e nunca re-concedido.** As três `http_*` são **`SECURITY INVOKER`**
+>    (`prosecdef = false`, medido) e chamam `net.wake()` no fim — logo quem precisa do `EXECUTE` é o
+>    **chamador** (`postgres`), não o dono. Sem a linha de `GRANT … wake()`, os 52 crons quebram com todo o
+>    resto correto.
+> 2. **A sequence era revogada e nunca re-concedida.** `net.http_request_queue.id` é `bigserial`
+>    (`default=nextval('net.http_request_queue_id_seq'::regclass)`, medido — não é `IDENTITY`), e `nextval`
+>    exige `USAGE`/`UPDATE` **do chamador**. O `REVOKE ALL ON ALL SEQUENCES` com re-`GRANT` só nas TABELAS
+>    dava `permission denied for sequence http_request_queue_id_seq`.
+> 3. **O `GRANT` incluía `anon, authenticated`** — contradizendo o aviso escrito três linhas abaixo dele.
+>    O bloco desmentia o próprio texto.
+>
+> ⚠️ **Não generalizar para `ALL FUNCTIONS IN SCHEMA net`.** `http_post` também chama
+> `net._urlencode_string` e `net._encode_url_with_params_array`, ainda como INVOKER: um
+> `REVOKE ALL ON ALL FUNCTIONS IN SCHEMA net FROM PUBLIC` quebra os crons mesmo com as três `http_*`
+> re-concedidas. O raio do REVOKE aqui se mede pelo **call graph do INVOKER**, não pelo nome do schema.
+>
+> ⚠️ **`SELECT` em `net._http_response` fica de fora do REVOKE de propósito** — ver Achado 5, que MUDOU.
 
 Três avisos que o Codex acrescentou e que valem para o ticket:
 
-- **Revogar só o `EXECUTE` de `net.http_post` não fecha nada.** Em 0.19.5 a função é SQL: ela **insere na
+- **Revogar só o `EXECUTE` de `net.http_post` não fecha nada.** Em 0.19.5 a função é **plpgsql e `SECURITY INVOKER`**: ela **insere na
   `net.http_request_queue`** e chama **`net.wake()`**. Com a fila em `PUBLIC ALL` e `wake()` em
   `PUBLIC EXECUTE`, o chamador reproduz os dois passos na mão. Por isso o bloco acima revoga fila,
   sequências e `wake()`/`worker_restart()` — não só as três `http_*`.
@@ -366,3 +406,72 @@ alavanca no banco — a validade do JWT é verificada pela assinatura, sem consu
 ⇒ **Quando quem aplica não é quem consegue verificar, o bloco entregue tem de carregar a própria
 verificação** (CTE que reporta antes/depois), e a confirmação tem de ser um 2º statement independente. Pedir
 "me diga se deu certo" devolve o "Success" do editor — que este arquivo inteiro existe para desqualificar.
+
+---
+
+## A sentinela — 2026-08-25, mesmo dia
+
+Tudo que este arquivo narra é **estado colado à mão**. Não há migration que o defenda, e não pode
+haver: um `ALTER ROLE claude_ro` em `supabase/migrations/` quebraria qualquer ambiente reconstruído
+do zero (item 5 da Decisão). Estado que nenhum artefato versionado defende regride em silêncio —
+outro bloco manual, um `GRANT` de rotina, um upgrade de extensão que o Supabase faz sem avisar.
+
+`bun run authz:claude-ro:prod` (`db/audit-claude-ro-hardening.ts`) é o artefato que faltava: 25
+asserções contra a PROD, exit `0`/`1`/`2`. Dente em `db/test-audit-claude-ro-hardening.sh` — PG17
+descartável com a topologia medida, 19 cenários, o binário REAL rodando com `PSQL_RO` redirecionado.
+
+**Quatro decisões de projeto vieram direto dos erros narrados acima:**
+
+1. **O GUC é lido da UNIÃO de `rolconfig` + `pg_db_role_setting`.** É a armadilha da seção
+   Pós-apply: o bloco usou `IN DATABASE`, `rolconfig` ficou `NULL`, e conferir só ele dá
+   falso-vermelho. O dente prova os dois caminhos — move o GUC de fonte e exige que o veredito
+   **não** mude.
+2. **A cobertura de `public` é "0 objetos sem SELECT", não "413".** O `413` é 332 tabelas + 79
+   views + 2 matviews, e o denominador cresce a cada migration. Congelar o total faria a sentinela
+   ficar vermelha na próxima tabela criada, e sentinela que grita à toa é desligada. O `0` é
+   invariante ao crescimento e ainda pega a regressão real: o `ALTER DEFAULT PRIVILEGES` só vale
+   para o que o `postgres` cria, então tabela nascida de outro dono nasce invisível.
+3. **Sonda executiva, porque catálogo não prova alcance.** `has_table_privilege` não conta o USAGE
+   do schema — foi exatamente assim que o `GRANT` de 7 colunas em `auth.refresh_tokens` pousou e
+   ficou inerte. A sentinela **roda** `SELECT` em `auth.refresh_tokens` e em
+   `vault.decrypted_secrets` e exige que falhem. O veredito casa a **SQLSTATE `42501`**, não o
+   texto: `lc_messages` do servidor pode mudar e "permission denied" viraria "permissão negada",
+   quebrando uma asserção que não tem nada a ver com privilégio.
+4. **Objeto AUSENTE é divergência, não "negado com sucesso".** `has_schema_privilege` erra com
+   `3F000` em schema inexistente; um objeto que sumiu lido como negado seria o falso-verde
+   perfeito — a sentinela comemorando por ter perdido o que vigiava.
+
+**E uma lição nova, que só apareceu ao escrever o dente:** um `GRANT` explícito a PUBLIC **não**
+restaura `proacl IS NULL`. Depois de `REVOKE … FROM PUBLIC` + `GRANT … TO PUBLIC`, o catálogo passa
+a registrar nominalmente o que antes era ACL *default*, e o fingerprint acusa — corretamente. "É o
+default" e "foi concedido a PUBLIC" conferem o mesmo privilégio hoje e são **estados diferentes**:
+o primeiro muda sozinho num upgrade da extensão, o segundo não. Só o `DROP`+`CREATE` da função
+devolve o `NULL`. Quem for reverter um fecho no `net` algum dia precisa saber disso, senão vai
+achar que a sentinela está com defeito.
+
+⚠️ **O baseline tem VALIDADE, como toda evidência de banco (§2 do `database.md`).** Um upgrade
+legítimo do pg_net vai fazer o fingerprint divergir — é o comportamento desejado, e a linha
+`versão do pg_net` no relatório existe para dizer na hora que a causa foi o upgrade. A resposta
+certa é **reavaliar o novo ACL e atualizar o baseline**, nunca afrouxar a comparação.
+
+---
+
+## Encaminhado ao suporte — 2026-08-26
+
+O fecho depende de `supabase_admin`, que o Supabase gerenciado não expõe ⇒ o único caminho é o suporte.
+Pedido redigido (PT + EN), com o bloco corrigido acima, o baseline medido e uma **query de verificação que
+foi executada contra prod antes de ser enviada** (`exit 0` — mandar SQL quebrado num ticket seria repetir o
+Achado 1 numa terceira ponta). Canal do Lovable, verificado em `lovable.dev/support`: **email para
+`support@lovable.dev`**, não há formulário de ticket. Entregue ao founder para o envio — o clique é dele.
+
+O pedido carrega as 4 perguntas que o registro deixou em aberto, uma delas a que mais importa a longo
+prazo: **como impedir que um upgrade do pg_net restaure as ACLs públicas.** Enquanto não houver resposta,
+qualquer fecho aqui é **regressível** — o sentinela é reconferir `proacl`/`relacl` após todo bump da
+extensão. **Esse vigia existe desde a véspera e é automático:** `bun run authz:claude-ro:prod` compara o
+ACL inteiro do schema `net` com o baseline e acusa mudança em qualquer direção, com `extversion` como
+asserção ao lado — ver a seção anterior.
+
+⚠️ **Só há resposta positiva quando o suporte colar a saída da query.** O "aplicamos, está resolvido" de um
+ticket é exatamente o mesmo *Success* que este arquivo inteiro existe para desqualificar — com o agravante
+de que quem aplica não é quem consegue verificar. Por isso a query foi ao ticket com o **antes** colado ao
+lado do **depois esperado**.

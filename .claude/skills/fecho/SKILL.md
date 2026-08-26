@@ -118,16 +118,54 @@ Pra cada migration da sessão, **prove no banco** (leitura direta — não pergu
 - Não existe → ❌ **PENDENTE: colar no SQL Editor do Lovable** — reentregue o bloco de handoff
   (skill `lovable-db-operator`) na mensagem de fecho.
 
+### Passo 2b — A sentinela do `claude_ro` (rápido, e é o único vigia que ele tem)
+
+```bash
+bun run authz:claude-ro:prod; echo "exit=$?"
+```
+
+O endurecimento do papel de leitura (2026-08-25) é **estado colado à mão**: não existe migration
+que o defenda, e não pode existir. Ninguém mais olha para ele — nem o CI (não tem `psql-ro`), nem o
+Sentinela de cron. Este passo é a vigília inteira.
+
+- `exit=0` → ✅ segue de pé, siga.
+- `exit=1` → ❌ **regrediu ou drifou.** O relatório nomeia a asserção. Se a divergência for só no
+  ACL do schema `net` **e** a linha `versão do pg_net` também divergir, a causa é um upgrade da
+  extensão feito pelo Supabase — reavalie o novo ACL e atualize o baseline em
+  `db/audit-claude-ro-hardening.ts`; **não** afrouxe a comparação.
+- `exit=2` → ⚠️ **não consegui medir** (psql-ro fora, sem rede, credencial revogada). Isso é
+  ausência de dado, não aprovação — **não feche a sessão anotando "ok"**. Diga que não mediu.
+
+Contexto: `docs/agent/database.md` §1 · `docs/historico/revoke-que-nao-revoga.md`.
+
 ### Passo 3 — Edges
 
 ```bash
-git log origin/main --oneline -10 -- supabase/functions/
+# o que ESTA sessão tocou
 git diff --name-only origin/main...HEAD -- supabase/functions/
+
+# ⚠️ E o que OUTRAS sessões mergearam na janela desta — MESMO argumento do passo 2, e ele vale
+# aqui palavra por palavra: edge de terceiro entra na main sem ninguém aqui saber, também NÃO
+# se auto-deploya (chat do Lovable, manual) e a falha é igualmente SILENCIOSA.
+git log origin/main --since="<hora de início da sessão>" --name-only --format="" -- supabase/functions/ | sort -u
 ```
 
 Se a sessão tocou edge: ela foi deployada via chat do Lovable? (Evidência: o founder confirmou
 na conversa, ou a canária/probe respondeu com o comportamento novo.) Pendente → inclua o prompt
 de deploy verbatim (skill `lovable-deploy-verify`, passo 3) na mensagem de fecho.
+
+⚠️ **"Se a sessão tocou edge" NÃO é o gatilho deste passo — é só o gatilho da metade dele.**
+Edge de TERCEIRO na janela é pendência desta `/fecho` do mesmo jeito que migration de terceiro é,
+e pela mesma razão. Medido em 2026-08-26, na sessão do #2023/#2027: o `7e076f1f7`
+(`fix(omie)`, coleira de relógio no reconcile) mergeou dentro da janela tocando
+`omie-nfe-reconcile/index.ts` e um `_shared/omie-deadline.ts` NOVO. Só apareceu porque o agente
+alargou a consulta por conta própria — pela letra deste passo, ele teria olhado a saída do
+`git log`, visto commit que não era dele, e seguido em frente.
+
+Destino de edge de terceiro **não é** "deployar por ela" nem "assumir que a outra sessão já
+pediu": é **chip** (a sessão dona pode ter fechado sem pedir o deploy), com o prompt mandando
+CONFIRMAR antes de pedir deploy redundante. E o prompt tem de nomear **todos** os arquivos,
+`_shared` novo incluído — prompt que nomeia um só deixa a edge sem bootar (#2020).
 
 ### Passo 4 — Publish do frontend
 
@@ -209,8 +247,21 @@ Veredito: PODE ARQUIVAR a sessão. / AINDA NÃO — falta (1)…
 
 **Diga "pode ARQUIVAR", não "pode excluir".** Arquivar para o processo, limpa o worktree
 (mesma RAM e mesmo disco que excluir) e ainda deixa a sessão reabrível — não há motivo para
-recomendar a via destrutiva. Se o founder arquiva sessão a sessão na mão, mencione UMA vez a
-preferência **"Auto-archive on PR close"** nas Settings, que resolve isso estruturalmente.
+recomendar a via destrutiva.
+
+⚠️ **A menção ao "Auto-archive on PR close" é CONDICIONAL — e o passo 1 já mediu a condição.**
+Só mencione, uma vez, se a sessão fechou com **exatamente UM PR**: é o único formato em que
+"PR fechado" e "entrega concluída" coincidem. O gatilho do setting é o **PR**; a unidade deste
+ritual é a **ENTREGA**. Em sessão de arco longo — 2+ PRs, ou 1 mergeado com o próximo ainda por
+abrir — os dois divergem, e recomendar o toggle ali é sugerir que a sessão morra no meio do
+trabalho. Ao mencionar, diga o gatilho em voz alta ("fecha por PR, não por entrega") e **não**
+afirme o que ele faz com N PRs: esta skill não verificou, e "resolve estruturalmente" é uma
+garantia que ela não tem como dar.
+
+A classe: **recomendação embutida em ritual sai com a AUTORIDADE do ritual.** O founder lê "o
+fecho mandou", não "o agente sugeriu" — então recomendação daqui carrega a própria pré-condição
+junto, ou vira conselho errado dito com voz de veredito. É o defeito dos #1677 e #1863 deslocado
+do veredito para o rodapé: fail-open não deixa de ser fail-open por estar no fim da página.
 
 Nunca diga "pode arquivar" com item ❌/⏳ crítico em aberto sem nomeá-lo na lista do founder —
 e nunca com pendência SEM um dos 4 destinos acima ("fica na sua mão lembrar" não é destino).
