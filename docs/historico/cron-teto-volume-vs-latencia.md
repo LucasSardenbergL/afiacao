@@ -384,3 +384,37 @@ agora, e a janela de 1 dia dessa tabela significa que a maioria das ocorrências
 `omie-sync` sobe na fila da próxima fatia: roda 24×/dia contra 7 do estoque.
 
 ## Sequela: 16 restantes
+
+## Pendência aberta no fecho (2026-08-27): 4 edges de TERCEIROS sem prova de deploy
+
+O fecho da sessão varreu a janela inteira (25→27/08), não só o que esta sessão tocou — porque edge
+de terceiro entra na main sem ninguém aqui saber e **também** não se auto-deploya. Achado:
+`_shared/sonda-versao.ts` e `_shared/sonda-fingerprints.ts` mudaram na janela, e os dois são
+importados por **toda** edge com sonda.
+
+**Provadas no ar** pelo `fonte` (fingerprint da fonte servida) batendo com a main:
+`omie-nfe-reconcile`, `omie-sync-estoque`, `omie-sync-nfes-recebidas`, `omie-vendas-sync`.
+
+O `omie-vendas-sync` é a demonstração de que o método discrimina de verdade: às 21:48 respondia
+`d0d0580c…` (bundle velho) e às 22:04 respondia `47c046a5…` (o da main) — a mesma `VERSAO`
+(`v1.0-sensor-inicial`) nas duas, ou seja, **o `versao` não teria visto o deploy e o `fonte` viu**.
+
+**Sem prova, e por isso pendentes:** `carteira-rebuild`, `omie-analytics-sync`,
+`enviar-pedido-portal-sayerlack`, `sayerlack-captura-precos` — nenhuma sondada na janela de 6h do
+`pg_net.ttl`.
+
+Como fechar (o chip "Confirmar deploy de 4 edges de terceiros (janela 25-27/08)" carrega o mesmo
+roteiro; isto aqui existe porque **chip morre com a sessão**):
+
+1. Ler o `fonte` das sondas recentes e comparar com `_shared/sonda-fingerprints.ts` da main:
+   ```
+   ~/.config/afiacao/psql-ro -Atc "SELECT DISTINCT (content::jsonb->>'edge') || ' ' || (content::jsonb->>'fonte') FROM net._http_response WHERE status_code=200 AND content IS NOT NULL AND left(ltrim(content),1)='{' AND (content::jsonb) ? 'fonte' AND created > now() - interval '6 hours';"
+   ```
+2. Edge que não aparecer: pedir ao founder disparar a sonda pelo SQL Editor (`deploy.md` §Canárias),
+   lendo **pelo `request_id`** — `ORDER BY id DESC LIMIT 1` pega o tick de outro cron.
+3. ⚠️ **Só sonde DEPOIS do deploy:** bundle anterior à sonda ignora o `probe` e executa o fluxo real.
+4. Desatualizada → prompt de deploy nomeando **todos** os arquivos da fatia
+   (`git show --name-status --format='' <sha> -- supabase/functions/`), `_shared/` incluído.
+
+**Confirme antes de pedir** — a sessão dona pode já ter pedido o deploy, e pedido redundante gasta
+o founder à toa.
