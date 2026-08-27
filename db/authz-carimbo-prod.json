@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "medidoEm": "2026-08-27T21:49:35.389Z",
-  "sourceHead": "c311c5d98fcfc554211bec1c336213581cc7affa",
+  "medidoEm": "2026-08-27T22:22:35.845Z",
+  "sourceHead": "f17832314fcd3d488414fcd12ccd062b2ff86a56",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -24,7 +24,7 @@
       "resumo": "✅ audit-grants — 3 tabela(s) conferida(s); prod bate com o contrato.",
       "denominador": null,
       "contratoFingerprint": "a30df79275ec861caa72d352a05739b1887871d14f26151102abce883ba54c64",
-      "auditorFingerprint": "23016f8e55bc15155b356b18a5392a7d4e547a101ec43cd6b376d418074aff83",
+      "auditorFingerprint": "c8bfa51c1f3b96b4466c8ca1cff352a2ad75d055db82c0b08f053ef32e4a42af",
       "achados": []
     },
     "audit": {
