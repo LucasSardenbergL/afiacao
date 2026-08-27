@@ -802,8 +802,20 @@ intercambiáveis:
 | 🟢 sem órfãos | todo `attempt_id` gravado atravessou — sem sinal de censura na janela |
 | 🟡 órfãos, nenhum aparelho com ≥2 | **INCONCLUSIVO por desenho** — 1 órfão é compatível com fecho de aba, offline e SDK que não carregou |
 | 🔴 ≥1 aparelho com ≥2 órfãos | censura persistente é explicação PLAUSÍVEL — condição (2) do gatilho satisfeita |
-| 🔴 canal inteiro mudo | probes gravados e ZERO eventos: **não** é bloqueador por aparelho; é config/key/ingest (a lição do `#1967`) |
+| 🟡 probe ausente, canal VIVO | há eventos de OUTROS tipos na janela: quase sempre **adoção de build**, não censura — `registerType: 'prompt'` mantém o cliente no build anterior, e build sem o probe não emite nem grava |
+| 🔴 canal inteiro mudo | ZERO eventos de **qualquer** tipo: **não** é bloqueador por aparelho; é config/key/ingest (a lição do `#1967`) |
 | 🟡 nenhum probe fora da carência | ausência de OBSERVAÇÃO, não de censura — não há o que reconciliar |
+
+⚠️ **O denominador do canal é INDEPENDENTE do probe — e a primeira leitura real provou por quê
+(2026-08-27).** A versão inicial do script lia "zero eventos `telemetria.probe`" como *canal morto*
+e imprimiu **🔴 CANAL INTEIRO MUDO** num dia em que o PostHog recebera 7 eventos. O canal estava
+vivo; o que faltava era **build**: os clientes ainda executavam builds anteriores ao probe, e build
+sem o probe não emite nem grava. São diagnósticos OPOSTOS — falha de canal × adoção de build — e o
+instrumento construído para medir censura cometeu, na estreia, a mesma falha de denominador que
+esta §6 documenta. Hoje o script consulta o volume de eventos de **qualquer** tipo antes de opinar
+sobre o canal, e imprime os `build_id` vistos para que a hipótese de adoção seja verificável na
+hora. **Amostra < 2 nunca produz veredito forte** — "um só não conclui nada" vale para o ramo de
+canal tanto quanto para o de aparelho, e a versão inicial aplicava a regra só no segundo.
 
 ⚠️ **Exit ≠ 0 é ausência de dado, e o script recusa-se a chamá-la de zero.** `70` = lado imune
 (Postgres) não respondeu — inclui *a migration não foi aplicada*, que é o estado até o founder
