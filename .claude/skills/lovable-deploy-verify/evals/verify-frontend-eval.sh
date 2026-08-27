@@ -271,6 +271,21 @@ if [ "$FALSIFY" = 0 ]; then
   # emissor FORA dele são compatíveis — o --pai passa e o verde ainda pode ser bytes da lib.
   run_case_cwd "exclusiva no git E com 2º emissor na lib: --pai aprova, a sonda avisa, exit segue 0" \
                "$REPO" 0 "SENTINELA_TAMBEM_NA_LIB" "SENTINELA_NAO_EXCLUSIVA" --pai "$SHA_PAI" "LIB_OPTION_MARKER" "$BASE/site"
+  # ---- sonda do DELIMITADOR: fonte e bundle são universos com REPRESENTAÇÕES diferentes ----
+  # Medido em prod 2026-08-27 (chunk StaffDashboard servido): 'oculta' = 0 ocorrências e "oculta" = 1.
+  # O guard --pai mede a FONTE e APROVA; a varredura mede o BUNDLE e não acha => exit 1 FALSO, com os
+  # três guards verdes (exclusiva + LIB_SEM_A_SENTINELA + CONTROLE_POSITIVO_OK). O controle positivo
+  # não cobre isso por construção: prova que a rede e o grep funcionam, não que a sentinela seja
+  # REPRESENTÁVEL. Sem sabotagem própria porque a sonda AVISA e nunca move o exit (igual à de lib) —
+  # a rede aqui é BIDIRECIONAL: detector sempre-falso derruba o 1º caso, sempre-verdadeiro os outros.
+  run_case_cwd "sentinela DELIMITADA ausente do bundle: avisa que a ausência pode ser de REPRESENTAÇÃO" \
+               "$FIX/neutro" 1 "SENTINELA_DELIMITADA" "" "'SENTINELA_DEEP_XYZ'" "$BASE/site"
+  run_case_cwd "sentinela SEM delimitador: a sonda CALA (não vira ruído no caso comum)" \
+               "$FIX/neutro" 0 "deep-DDD444" "SENTINELA_DELIMITADA" "SENTINELA_DEEP_XYZ" "$BASE/site"
+  # Aspas no MEIO são CONTEÚDO e sobrevivem à minificação — input[type="checkbox"] é justamente a
+  # sentinela que o Passo 4 recomenda. Aviso que disparasse nela estaria desarmado no primeiro dia.
+  run_case_cwd "aspas no MEIO (o 'valor nosso' do Passo 4): a sonda CALA" \
+               "$FIX/neutro" 1 "" "SENTINELA_DELIMITADA" 'a[type="x"]b' "$BASE/site"
   echo ""
   if [ "$FAIL" -eq 0 ]; then echo "verify-frontend: $PASS/$((PASS+FAIL)) passaram"; exit 0
   else echo "verify-frontend: $FAIL FALHA(S) de $((PASS+FAIL))"; exit 1; fi
