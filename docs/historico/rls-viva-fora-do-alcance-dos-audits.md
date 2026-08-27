@@ -155,20 +155,51 @@ funcionando.
 > ⚠️ Método: **commite antes de falsificar**. A restauração é `git checkout --`, e sem o commit ela
 > apaga o trabalho em vez da sabotagem.
 
-## 6. O que ficou de fora desta entrega, e por quê
+## 6. A integração ao carimbo — e o achado que ela produziu
 
-A tarefa pedia integrar a guarda ao **carimbo de evidência** — quarta chave em `AUDITS` de
-`scripts/lib/authz-carimbo.ts`, mais o bump de `SCHEMA_VERSION`. Medido antes de codar: esse
-arquivo **não existe na `main`**. Ele vive no PR #2044, aberto, não-draft e com `mergeable:
-CONFLICTING` — e o `AUDITS` de lá já tem **quatro** chaves, não três (`funcoes`, `grants`, `audit`
-e `claudeRo`, esta última acrescentada 12 commits depois de o carimbo nascer). A chave de RLS seria
-a **quinta**.
+A tarefa pedia integrar a guarda ao **carimbo de evidência**, e a medição inicial dizia que isso
+não era possível: `scripts/lib/authz-carimbo.ts` não existia na `main`, vivia no PR #2044, aberto e
+com `mergeable: CONFLICTING`. A guarda foi desenhada e entregue autônoma por causa disso. **O #2044
+mergeou no meio da sessão** (`8962f213c`), e a integração entrou no mesmo PR, feita de verdade:
 
-Basear esta entrega no branch do #2044 herdaria o conflito e prenderia a guarda numa fila que não
-controlo; trazer o carimbo inteiro para cá duplicaria o trabalho de outra sessão. A guarda foi
-entregue **autônoma na main**, no mesmo formato dos outros quatro audits — que é o padrão do repo,
-não um mecanismo novo: o carimbo é a camada que os *enumera*, e enumerar um audit que já existe é
-uma edição de poucas linhas. O acoplamento pendente está registrado no `database.md` §1 e num chip.
+- 5ª chave `rls` em `AUDITS` (não a 4ª — o `claudeRo` já tinha entrado 12 commits depois de o
+  carimbo nascer), com `auditorFiles` apontando para o runner **e** para o comparador puro;
+- `dadoDoContrato('rls')` devolve os **três** eixos, porque mexer só nos predicados muda o que prod
+  tem de satisfazer tanto quanto mexer numa policy;
+- `SCHEMA_VERSION` 1 → **2**. O bump não é cosmético: um carimbo v1 não tem o campo `audits.rls`, e
+  sem o bump o gate leria essa ausência como "nada a dizer sobre RLS" em vez de "isto nunca foi
+  medido". Fail-closed é o comportamento certo, e a renovação é o que devolve o verde — com o eixo
+  novo medido junto;
+- o cabeçalho do carimbo, que **listava a lacuna de RLS como ponto cego**, foi reescrito para
+  descrever a cobertura REAL (interruptor universal, conteúdo curado em 7 de 335) em vez de
+  continuar afirmando um buraco que já não existe. Contrato falso é pior que lacuna nos dois
+  sentidos: o que finge cobrir e o que finge não cobrir.
+
+### O achado: `PREDICADOS_PLATAFORMA` é um `Set`, e o eixo mais permissivo dos três
+
+O canônico do carimbo trata `Set` com tag de tipo justamente porque `JSON.stringify(new Set(['a']))`
+é `'{}'`. O contrato de RLS entrega um `Set` (`PREDICADOS_PLATAFORMA`) — e ele é o eixo cuja
+mudança **afrouxa**: mover uma função para dentro dele é dizer "o corpo desta não precisa mais ser
+congelado". Um fingerprint cego ali seria cego no pior lugar possível. Travado por teste.
+
+### O achado adjacente, que valia sozinho o exercício
+
+`recusarEnvDeTeste()`, no runner do carimbo, era uma **lista literal** de dois nomes
+(`AUTHZ_FUNCOES_TEST_JSON`, `AUTHZ_GRANTS_TEST_JSON`). O audit de RLS chegou com um terceiro,
+`AUTHZ_RLS_TEST_JSON`, que a lista não conhecia — e o runner teria **carimbado um contrato
+sintético como se fosse produção**, sem uma linha de aviso. A guarda existia, estava correta no dia
+em que foi escrita, e apodreceu na primeira extensão do sistema que ela protege.
+
+A correção não foi acrescentar o terceiro nome: foi mover a regra para o núcleo puro
+(`envDeTesteSetadas`) e casar por **PREFIXO** (`/^AUTHZ_[A-Z0-9_]*_TEST_JSON$/`), com um teste que
+percorre `Object.keys(AUDITS)` e exige que a env canônica de **cada** audit seja recusada. Falso-
+positivo ali custa uma mensagem de erro; falso-negativo custa um carimbo mentiroso — a assimetria
+decide a direção. Audit futuro nasce coberto.
+
+> **Classe:** *guarda com lista literal do que ela protege apodrece na primeira extensão.* A lista
+> nasce completa e correta; quem a torna incompleta é o crescimento do próprio sistema, e nada no
+> ponto de extensão avisa que ela existe. Quando a guarda pode ser expressa como PADRÃO do que
+> protege, o padrão é o que sobrevive.
 
 ---
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * authz-carimbo-gravar.ts — RUNNER do carimbo. Roda os 3 audits de prod sob `psql-ro` e grava a
+ * authz-carimbo-gravar.ts — RUNNER do carimbo. Roda os audits de prod sob `psql-ro` e grava a
  * evidência em `db/authz-carimbo-prod.json`. É o único escritor do carimbo.
  *
  * Uso:  bun run authz:carimbo:gravar ; echo $?   → 0 gravou · 2 não gravou (medição inválida)
@@ -39,6 +39,7 @@ import {
   fingerprintAuditor,
   escolherResumo,
   fingerprintContrato,
+  envDeTesteSetadas,
   idFinding,
   type Achado,
   type Carimbo,
@@ -68,10 +69,10 @@ const SEMENTE_PRIMEIRA_VEZ: Record<string, string> = {
 };
 
 function recusarEnvDeTeste(): void {
-  for (const v of ['AUTHZ_FUNCOES_TEST_JSON', 'AUTHZ_GRANTS_TEST_JSON']) {
-    if (process.env[v]) {
-      abortar(`${v} está setada — isso troca o CONTRATO por uma allowlist de teste. Carimbo tem de sair do contrato REAL.`);
-    }
+  // A regra mora no núcleo PURO (`envDeTesteSetadas`), não aqui, porque aqui ela não é testável —
+  // e porque ela era uma LISTA LITERAL de dois nomes que o audit de RLS já tinha ultrapassado.
+  for (const v of envDeTesteSetadas(process.env)) {
+    abortar(`${v} está setada — isso troca o CONTRATO por uma allowlist de teste. Carimbo tem de sair do contrato REAL.`);
   }
   const psql = process.env.PSQL_RO;
   if (psql && psql !== PSQL_PADRAO) {
