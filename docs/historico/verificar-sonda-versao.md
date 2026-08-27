@@ -664,3 +664,106 @@ novo (`MAX_PAGINAS_PRODUTOS = 500`). Não prova nada — o cron **42** (`sync-co
 leia o **body do chamador**. Parâmetro explícito no cron torna o default irrelevante — e o observado
 passa a ser evidência do *chamador*, não do bundle. Vale para qualquer teto, janela ou limite que o
 código define e o cron pode sobrescrever (`max_pages`, `window_days`, `timeout_milliseconds`).
+
+## 13. A §12 é cega para o diff que só ACRESCENTA um early-return — e quem provou foi a sonda de OUTRA sessão (2026-08-27, #2049)
+
+Substrato: verificar o deploy de `omie-nfe-reconcile` (PR #2049, merge `dfa6e99e1`, 08:12). A pergunta
+era a de sempre — "o bundle novo subiu?" — e o interesse era **não pedir deploy redundante**, porque
+com ~16 sessões vivas em worktrees paralelas outra sessão pode já ter feito. Três achados, e o mais
+barato é o terceiro.
+
+### 13.1 A segunda pré-condição da §12: a forma só discrimina se o diff MUDA a forma
+
+A §12 registrou uma pré-condição (a chave discriminante tem de ser atribuída **incondicionalmente** no
+bundle velho). Faltava outra, que só aparece quando o diff é de **instrumentação**: o diff precisa
+alterar a forma **do caminho que o cron exercita**.
+
+O #2049 não altera. Ele acrescenta o ramo da sonda, e esse ramo faz `return` **antes** do fluxo real —
+logo o corpo que o cron produz é byte a byte o mesmo nos dois bundles. **Sonda que retorna cedo é, por
+construção, invisível ao caminho que o cron percorre.** Generalizando: a §12 lê diffs que *modificam* o
+fluxo e é cega para diffs que *adicionam um ramo antes* dele. Como instrumentação de deploy tem
+exatamente essa forma, **a via passiva da §12 e a sonda são complementares, nunca substitutas** — e é
+erro esperar que a §12 verifique o PR que instala a sonda.
+
+Como se checa antes de tentar (o diff, não a memória):
+
+```bash
+git show --stat dfa6e99e1 -- supabase/functions/omie-nfe-reconcile/index.ts
+# o ramo do probe retorna antes do fluxo real ⇒ resposta do cron INALTERADA ⇒ §12 não discrimina
+```
+
+### 13.2 O disfarce do `versao` do fluxo real, confirmado em produção
+
+O `versao.ts` desta edge já advertia que o `versao: "v3.3-paginacao-janelas"` da resposta do fluxo real
+é string **hardcoded e anterior à sonda**. A janela de retenção confirmou de fato, sem ambiguidade:
+
+```
+6 runs do fluxo real | 2026-08-27 16:10 -> 21:10 UTC | com probe: 0 | com o marcador de fatia: 6
+```
+
+Seis respostas carregando um campo chamado `versao`, e **zero** delas dizendo qualquer coisa sobre qual
+bundle respondeu. Quem lesse esse campo concluiria "verificado" e teria verificado nada — é o mesmo
+julgamento que o #2052 tirou do SQL de sondagem ("o bundle sem o mapa de fingerprints saía DEPLOY
+CONFIRMADO"). **Um campo se chamar `versao` não o torna sensor de bundle.**
+
+### 13.3 O achado operacional: a sonda de OUTRA sessão fica retida 6 h, e é evidência de primeira classe
+
+O que provou o deploy não foi o cron — foi uma sonda ativa que **outra sessão** havia disparado 2
+minutos antes, e que o `pg_net` reteve:
+
+```
+61653 | 2026-08-27 21:48:06.209343 | 200 | {"ok":true,"probe":true,"versao":"v1.0-sensor-inicial",
+        "edge":"omie-nfe-reconcile","fonte":"844e96d1d018a01374951da346d5d3d267b12431ebab1f7b8f032d117414e3c0"}
+```
+
+Ela veio num lote de três (`omie-sync-nfes-recebidas`, `omie-vendas-sync`, `omie-nfe-reconcile`), no
+mesmo tick de coleta do worker do pg_net.
+
+**A regra que sai daqui, e que é barata a ponto de virar primeiro passo:** em repo multi-sessão, antes
+de pedir deploy — e antes de sondar, o que num bundle pré-sensor **paga o efeito caro** — varra
+`net._http_response` por `"probe"`. A sonda de qualquer sessão é evidência para todas as outras
+enquanto durar o TTL:
+
+```bash
+~/.config/afiacao/psql-ro -c "SELECT id, created AT TIME ZONE 'UTC' AS utc, status_code, left(content,200) FROM net._http_response WHERE content ILIKE '%\"probe\"%' ORDER BY created DESC LIMIT 10;"
+```
+
+O canal de coordenação entre worktrees paralelas não é só `git`/`gh pr list`: **é também o rastro que
+as sessões deixam em produção.** Ninguém estava lendo esse.
+
+⚠️ O que a leitura estabelece é um **limite superior**, não o instante: prova que o bundle novo já
+respondia às 21:48 UTC, não a hora em que o deploy rodou. Para "quando", o rastro do bot na `main` é o
+que existe — e ele prova que **um** deploy rodou, nunca qual versão (§6).
+
+### 13.4 O controle de exclusividade — o `--pai` do fingerprint
+
+Um `fonte` que bate com a `main` só prova **este** deploy se ele não pudesse ter vindo de um PR
+anterior. É a armadilha da sentinela não-exclusiva da `lovable-deploy-verify` (falso positivo, que
+*encerra* a verificação) transposta para o fingerprint. Os dois lados, no commit pai:
+
+```bash
+git show dfa6e99e1^:supabase/functions/_shared/sonda-fingerprints.ts | grep -c '844e96d1'          # 0
+git show dfa6e99e1^:supabase/functions/_shared/sonda-fingerprints.ts | grep -c 'omie-nfe-reconcile' # 0
+git show dfa6e99e1^:supabase/functions/omie-nfe-reconcile/versao.ts                                 # não existe
+```
+
+Zero nos dois, e a edge **nem era instrumentada** antes — o hash é estritamente novo do #2049. Do lado
+positivo, `bun run sonda:fingerprint` devolveu `✓ 35 edge(s) — mapa bate com a fonte`, que é o que
+impede ler um mapa *stale* como prova. Sem essa segunda metade, o zero no pai seria ausência de dado.
+
+### 13.5 Por que o `fonte`, e não o `versao`, fechou o veredito
+
+Os quatro sinais da resposta cobrem coisas diferentes, e só o último alcança o `_shared/`:
+
+| sinal | o que fecha |
+| --- | --- |
+| eco `probe:true` | bundle **novo** — o velho ignora o campo e roda a varredura (o efeito caro vem junto com o veredito) |
+| `edge` | a identidade, que resolve o empate do lote da §7 |
+| `versao` | o `VERSAO` do `versao.ts` **novo** ⇒ o arquivo de status `A` subiu (sem ele a função não bootaria) |
+| `fonte` | o fecho transitivo de imports locais idêntico byte a byte ⇒ **verbatim, com o `_shared/` junto** |
+
+É o complemento exato do #2054 ("o eco de `versao` na canária promete demais — `_shared/` só o `fonte`
+cobre, e ele não viaja ali"): lá a canária da `omie-vendas-sync` ecoa `versao` **sem** o `fonte`, e por
+isso não cobre `_shared/`; aqui a sonda ecoa o `fonte`, e é justamente ele que fecha o degrau. Ao
+projetar uma sonda nova, **o `fonte` não é enfeite ao lado do `versao` — é o único campo que responde
+"a fatia inteira subiu?"**.
