@@ -187,5 +187,10 @@ problema.
 
 ## Pendente do founder
 
-O alarme de `sales_orders` fica de pé até o `REVOKE` ser colado no SQL Editor do Lovable. O bloco e
+O alarme de `sales_orders` ficou de pé até o `REVOKE` ser colado no SQL Editor — o que aconteceu
+em **2026-08-27**, encerrando 14 dias de dívida dormente. Os 4 audits saem 0 e o carimbo entra em
+produção **verde**. Vale registrar o que isso NÃO prova: um carimbo verde no dia do nascimento é o
+melhor caso, não a validação do mecanismo — a prova de que ele serve virá do primeiro vermelho que
+ele levantar sozinho. Até lá, o que está medido é que os dois eixos disparam sob sabotagem
+(falsificação 4/4) e que o eixo de achado disparou de verdade uma vez, contra o `sales_orders` do Lovable. O bloco e
 a query de validação pós-apply estão no corpo do PR.

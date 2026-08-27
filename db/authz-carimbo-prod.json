@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "medidoEm": "2026-08-26T02:50:51.657Z",
-  "sourceHead": "e3468628daccb46a0e05be4fa5cac9fb1cf9d5c4",
+  "medidoEm": "2026-08-27T21:49:35.389Z",
+  "sourceHead": "c311c5d98fcfc554211bec1c336213581cc7affa",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -20,19 +20,12 @@
     },
     "grants": {
       "script": "authz:grants:prod",
-      "exit": 1,
-      "resumo": "audit-grants — 1 divergencia(s) entre prod e o contrato (scripts/authz-tabelas-fechadas.ts).",
+      "exit": 0,
+      "resumo": "✅ audit-grants — 3 tabela(s) conferida(s); prod bate com o contrato.",
       "denominador": null,
       "contratoFingerprint": "a30df79275ec861caa72d352a05739b1887871d14f26151102abce883ba54c64",
       "auditorFingerprint": "23016f8e55bc15155b356b18a5392a7d4e547a101ec43cd6b376d418074aff83",
-      "achados": [
-        {
-          "id": "9dfa6c98be2d8318",
-          "linha": "❌ [DRIFT_PROD] public.sales_orders: anon tem INSERT,DELETE fora do permitido [nenhum] — grant aplicado à mão em prod (drift).",
-          "primeiraVez": "2026-08-13",
-          "ultimaVez": "2026-08-26"
-        }
-      ]
+      "achados": []
     },
     "audit": {
       "script": "authz:audit:prod",
